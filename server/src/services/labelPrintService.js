@@ -22,6 +22,21 @@
  *    这两次读（`V1BitableGateway` 的 create / update / delete 一次都不调）。
  *    业务负责人 2026-10-08 的口径：这个功能**只读表**，就不该有任何写入路径。
  *
+ * ⭐⭐ **2026-10-15：数据源第二次定案 = 「货品信息 ∪ 实时库存」（按「编号」去重）**。
+ *    她的原话：「编号对呀，我们的编号**只要它在货品信息里就行了**，不一定非要在库存里面有啊」，
+ *    并说清批量打印的用途 = 「**一次给一批新货打码**（新店开业 / 换季上架）」——
+ *    ⚠️ **新货常常还没有入库**（真机只读核过：测试 Base 里 440 个编号有 **16 个**在「实时库存」
+ *    里一行都没有）⇒ 只认库存的话，这批新货一张标签都打不出来。
+ *    · 有「实时库存」行的编号 ⇒ 照旧（`sizes` = 各尺码数量，一张 = 一个编号）；
+ *    · **没有库存行、但在「货品信息」里的编号 ⇒ 也出一张标签**：`sizes = []`
+ *      （页面据此**不印「尺码」那一行** —— 她选的版式：新品标签上不印"尺码 + 库存数量"）；
+ *    · 「货品信息」原来只用来**补价格 / 品牌**，现在还要出「货号 / 颜色 / 类别」（新货的这三样
+ *      只有那里有）。
+ *    ⚠️ 筛选口径如实：`keyword` / `category` / `recentDays` 两边都参与；
+ *      `size` / `state` **无库存的那批不参与**（它的尺码与所属状态无从得知）——
+ *      **排除并计数**（`without_stock_skipped` ＋ 一条 warn），**不静默丢** ✗。
+ *    🔴 仍然是**只读**：依旧只有 `listAll('liveInventory')` / `listAll('product')` 两次读。
+ *
  * ⚠️ **二维码内容是单一真源**：模板来自 `config/tagQrCode.js` 的 `SCAN_URL.urlTemplate`
  *    （`https://hm.bamamei.online/s/{编号}`），替换用 `services/tagQrCodeService.js` 导出的
  *    `buildScanUrl`（只编码值、不编码模板）。本文件**不抄第二份 URL 模板** —— 旧的那条
@@ -118,10 +133,29 @@ const formatPrice = (amount, priceConfig = {}) => {
 };
 
 /**
- * 一条（`rowFromRecord` 解析出来的）库存记录的前三段 = **编号**
- * （`货号|颜色|类别`，与「货品信息.编号」同格式，见 `docs/production-base-changes-2026-10-08.md`）。
+ * 三段拼成**编号**（`货号|颜色|类别`）—— 「实时库存.库存键」前 3 段与「货品信息.编号」是**同一个格式**
+ * （见 `docs/production-base-changes-2026-10-08.md`）。
  */
-const numberOf = (row) => `${row.item_no}|${row.color || ''}|${row.category_code || ''}`;
+const compoundNumber = (itemNo, color, categoryCode) => `${itemNo}|${color || ''}|${categoryCode || ''}`;
+
+/**
+ * 一条（`rowFromRecord` 解析出来的）库存记录的前三段 = **编号**。
+ */
+const numberOf = (row) => compoundNumber(row.item_no, row.color, row.category_code);
+
+/**
+ * 一个**编号**拆回三段（`货号|颜色|类别`）—— 与 `numberOf()` 是**一对**。
+ * ⭐ 2026-10-15：没有库存的那些编号，只有「货品信息」这一处能给出这三段
+ *   （表里也有「货号 / 颜色 / 类别」三列；列读不出来才用编号自己拆，**不猜**别的）。
+ */
+const partsOfNumber = (number) => {
+  const [itemNo, color, categoryCode] = String(number ?? '').split('|');
+  return {
+    item_no: String(itemNo ?? '').trim(),
+    color: String(color ?? '').trim(),
+    category_code: String(categoryCode ?? '').trim(),
+  };
+};
 
 /**
  * 尺码比较器 —— **配置先行**：`sizes.compare` 决定按数值还是按文本（她定案：**数值**，
@@ -184,28 +218,58 @@ const rowFromRecord = (record, { fieldNames, createdTimeField }) => {
 };
 
 /**
- * 「货品信息」→ `编号 ⇒ { price, brand, record_id }` 的索引（只读一次表就够）。
- * 同一个编号出现多条时：**第一条非空**的价格 / 品牌为准（不覆盖已有值）。
+ * 「货品信息」→ `编号 ⇒ { price, brand, record_id, item_no, color, category_code, category, created_at }`
+ * 的索引（只读一次表就够）。
+ * 同一个编号出现多条时：**第一条非空**的价格 / 品牌 / 三段 / 创建时间为准（不覆盖已有值）。
  *
  * ⭐ 2026-10-14：多留一个 `record_id` —— 标签上的二维码从 `/s/{编号}` 改成
  *   `/r/{记录 ID}`（她 2026-10-12 定案：「新二维码一律 `https://hm.bamamei.online/r/{recordId}`」；
  *   依据见 `docs/qr-record-id-and-js-2026-10-12.md`）。QR 里装的是**接口读到的** record_id
  *   （她那个「记录 ID」公式列有延迟 ⇒ 只作交叉校验，以接口值为准）。
+ *
+ * ⭐ 2026-10-15：这张索引**不再只是价格 / 品牌的字典** —— 没有库存行的编号就是靠它出标签的
+ *   （`item_no` / `color` / `category_code` 取列，列读不出来才拆编号；`created_at` 供「最近新增」筛）。
+ *   `createdTimeFields` 是**候选名列表**（见 `PRODUCT_CREATED_TIME_TYPES` 的说明）：
+ *   按顺序取第一个读得出的时间，**不猜**（都读不出 ⇒ 0）。
  */
-const buildProductIndex = (records, fields = {}, brandFieldName = '') => {
+const buildProductIndex = (records, fields = {}, brandFieldName = '', createdTimeFields = []) => {
   const index = new Map();
+  const createdFields = [].concat(createdTimeFields || []).filter(Boolean);
+  const firstText = (record, fieldName) => (fieldName ? textValue(record?.fields?.[fieldName]).trim() : '');
   for (const record of records || []) {
     const number = fields.number ? textValue(record?.fields?.[fields.number]).trim() : '';
     if (!number) continue;
-    const entry = index.get(number) || { price: null, brand: '', record_id: '' };
+    const parts = partsOfNumber(number);
+    const entry = index.get(number) || {
+      price: null, brand: '', record_id: '', item_no: '', color: '', category_code: '', category: '', created_at: 0,
+    };
     const price = fields.price ? asAmount(record?.fields?.[fields.price]) : null;
     if (entry.price === null && price !== null) entry.price = price;
     const brand = brandFieldName ? textValue(record?.fields?.[brandFieldName]).trim() : '';
     if (!entry.brand && brand) entry.brand = brand;
     if (!entry.record_id && record?.record_id) entry.record_id = String(record.record_id);
+    if (!entry.item_no) entry.item_no = firstText(record, fields.itemNo) || parts.item_no;
+    if (!entry.color) entry.color = firstText(record, fields.color) || parts.color;
+    if (!entry.category_code) entry.category_code = firstText(record, fields.category) || parts.category_code;
+    // 「货品信息」**没有**「品类」列（标签上那个"颜色 · 品类"的品类是「实时库存」的公式列）
+    // ⇒ 无库存的那批没有品类，如实拿「类别」顶上（页面默认不印这一项，见 `FIELDS.category`）。
+    if (!entry.category) entry.category = entry.category_code;
+    if (!entry.created_at) entry.created_at = createdAtOf(record, createdFields);
     index.set(number, entry);
   }
   return index;
+};
+
+/**
+ * 一条记录上**第一个读得出**的「创建时间」候选列（毫秒）；都读不出回 `0`（= 不知道，**不猜**）。
+ */
+const createdAtOf = (record, createdFields = []) => {
+  for (const fieldName of [].concat(createdFields || [])) {
+    if (!fieldName) continue;
+    const value = asTimestamp(record?.fields?.[fieldName]);
+    if (value > 0) return value;
+  }
+  return 0;
 };
 
 /**
@@ -270,20 +334,75 @@ const parseLabelScanUrl = (raw, config = LABEL_PRINT) => {
   return { ok: false, reason: 'not_label_code', message: texts.notLabelCode };
 };
 
+/**
+ * ⭐ 2026-10-15：「货品信息」那个**创建时间**列怎么找（**只看飞书字段类型，不写死列名**）。
+ *
+ * ⚠️ 为什么不能写死「创建时间」：**只读核过测试 Base 真表**（`appTableField.list`，2026-10-15）——
+ *   「货品信息」里**没有**叫「创建时间」的列：她把它改名叫 **「上架日期」**，
+ *   但**类型仍是 `1001 = CreatedTime`（飞书自动字段）**；而「更新日期」是 `1002 = ModifiedTime`
+ *   （**不是**创建时间 —— 拿它当"最近新增"会把"她刚改过的老货"当成新货 ✗）。
+ *   ⚠️ 这正是 `AGENTS.md` 里说的**表改名闸门拦不住**的那类静默失效（闸门按 tableId 校验字段名）。
+ * ⇒ 解析顺序：
+ *   ① `config.fieldNamesPendingSchema.productCreatedTime`（**字段名归配置**，最优先）；
+ *   ② 读「货品信息」的字段表（`gateway.listFields`，**只读**、网关自己有缓存）⇒
+ *      取**第一个 `type: 1001`** 的列（= 飞书自动的"创建时间"，改多少次名都认）；
+ *   ③ 都拿不到 ⇒ 那一条 `created_at = 0`：「最近新增」时计进 `missing_created_at` 并**如实 warn**，不猜。
+ */
+const PRODUCT_CREATED_TIME_TYPES = Object.freeze({ createdTime: 1001 });
+
 const createLabelPrintService = (gateway, options = {}) => {
   if (!gateway) throw new Error('LabelPrintService requires gateway');
   const config = options.config || LABEL_PRINT;
   const now = options.now || (() => Date.now());
 
   /**
+   * 「货品信息」的创建时间列候选名（见 `PRODUCT_CREATED_TIME_TYPES` 的说明）。
+   * 只有「最近新增」真的要用时才解析（平时**一次都不问**，不给这条只读链路加请求）。
+   */
+  const resolveProductCreatedTimeFields = async () => {
+    const configured = String(config.fieldNamesPendingSchema?.productCreatedTime || '').trim();
+    if (configured) return [configured];
+    if (typeof gateway.listFields !== 'function') return [];
+    let fields = [];
+    try {
+      fields = (await gateway.listFields('product')) || [];
+    } catch (error) {
+      // 读不到字段表 ⇒ 如实 warn（不能"安静地按没有创建时间处理"）。
+      logWarn('workbench.labels.product_created_time_unresolved', {
+        error: error.message,
+        hint: '读「货品信息」的字段表失败，没有库存的编号在这次「最近新增」里按"读不到创建时间"处理（会计数并 warn，不静默）',
+      });
+      return [];
+    }
+    const created = fields.find((field) => Number(field?.type) === PRODUCT_CREATED_TIME_TYPES.createdTime);
+    const name = created ? String(created.field_name || '').trim() : '';
+    if (!name) {
+      logWarn('workbench.labels.product_created_time_unresolved', {
+        hint: '「货品信息」里没有飞书自动的创建时间列（字段类型 1001），没有库存的编号用不了「最近新增」筛选',
+      });
+      return [];
+    }
+    logInfo('workbench.labels.product_created_time_resolved', {
+      field_name: name,
+      source: 'field_type_1001',
+    });
+    return [name];
+  };
+
+  /**
    * 她按条件挑出要打的货 → **每个编号一张标签**、每张印什么。
    *
+   * ⭐ 2026-10-15：数据源 = **「货品信息」∪「实时库存」**（按**编号**去重，见文件头）。
+   *
    * filters（全部可选，可组合）：
-   *   keyword     货号 / 颜色 / 品类 的模糊包含（大小写不敏感）
-   *   state       「所属状态」精确匹配（空 = 不限）—— 只影响**哪些库存算进来**
-   *   category    「品类」精确匹配（空 = 不限）
-   *   size        尺码精确匹配（空 = 不限）—— 只印这个尺码（该编号其余尺码不进这一轮）
-   *   recentDays  「最近新增」= 「创建时间」在最近 N 天内（0 = 不限）
+   *   keyword     编号 / 货号 / 颜色 / 类别（库存那批还有「品类」）的模糊包含（大小写不敏感）
+   *   state       「所属状态」精确匹配（空 = 不限）—— 只影响**哪些库存算进来**；
+   *               ⚠️ 没有库存行的编号**不参与**（所属状态无从得知）⇒ 排除并计数，**不静默**
+   *   category    「品类」（库存那批）/「类别」（没有库存的那批）精确匹配（空 = 不限）
+   *   size        尺码精确匹配（空 = 不限）—— 只印这个尺码（该编号其余尺码不进这一轮）；
+   *               ⚠️ 没有库存行的编号**不参与**（尺码无从得知）⇒ 排除并计数，**不静默**
+   *   recentDays  「最近新增」= 创建时间在最近 N 天内（0 = 不限）：有库存的看「实时库存.创建时间」，
+   *               没有库存的看「货品信息」那个**创建时间列**（按飞书字段类型 1001 解析，见常量说明）
    *   sort        'shelf'（默认，货架顺序）| 'recent'（最近新增在前）
    */
   const listLabels = async (filters = {}) => {
@@ -313,11 +432,17 @@ const createLabelPrintService = (gateway, options = {}) => {
 
     const skipped = { stock_key: 0, state: 0 };
     let rows = [];
+    // ⭐ 「**有库存行**的编号」集合 —— 只认「库存键」解析得出的编号（**与所属状态无关**：
+    //    所属状态为空的那条仍然是"入库过"的行，只是不参与标签）。
+    //    它就是「货品信息 ∪ 实时库存」的**去重判据**：在这里面 ⇒ 走库存那一套；不在 ⇒ 出新品标签。
+    const stockedNumbers = new Set();
     for (const record of records || []) {
+      const key = parseStockKey(record?.fields?.[fieldNames.stockKey]);
+      if (key) stockedNumbers.add(compoundNumber(key.itemNo, key.color, key.category));
       const row = rowFromRecord(record, { fieldNames, createdTimeField });
       if (!row) {
         // 分辨"是库存键不完整还是所属状态为空"，只为了日志/提示能说清；不改变"跳过"这个结论。
-        if (parseStockKey(record?.fields?.[fieldNames.stockKey])) skipped.state += 1;
+        if (key) skipped.state += 1;
         else skipped.stock_key += 1;
         continue;
       }
@@ -325,13 +450,29 @@ const createLabelPrintService = (gateway, options = {}) => {
     }
     const parsedTotal = rows.length;
 
-    // ── 「最近新增」筛选（读「创建时间」）──────────────────────────────────
+    // ── 读二：整张「货品信息」（原来只为补价格 / 品牌；现在**没有库存行的编号也由它出标签**）──
+    const brandFieldName = config.brand?.from === 'table' ? String(config.brand.tableFieldName || '').trim() : '';
+    const productRecords = await gateway.listAll('product');
+    const productCreatedTimeFields = recentDays > 0 ? await resolveProductCreatedTimeFields() : [];
+    const productIndex = buildProductIndex(productRecords, productFields, brandFieldName, productCreatedTimeFields);
+
+    // ⭐ **没有库存行、但在「货品信息」里的编号 ⇒ 每个编号一张「新品标签」**
+    //    （`sizes` = 空数组 ⇒ 页面**不印「尺码」那一行**，这是她要的版式）。
+    let withoutStock = [];
+    for (const [number, product] of productIndex) {
+      if (stockedNumbers.has(number)) continue;
+      withoutStock.push({ number, product });
+    }
+
+    // ── 「最近新增」筛选：有库存的看「实时库存.创建时间」，没有库存的看「货品信息」那个创建时间列 ──
     let missingCreatedAt = 0;
+    let missingCreatedAtWithoutStock = 0;
     if (recentDays > 0) {
-      const available = rows.some((row) => row.created_at > 0);
+      const available = rows.some((row) => row.created_at > 0)
+        || withoutStock.some((item) => item.product.created_at > 0);
       if (!available) {
         // **不静默**：宁可她看到一句"读不到创建时间"，也不要"筛了等于没筛"或"一张都不剩"。
-        throw new Error(`读不到「实时库存.${createdTimeField || '创建时间'}」，暂时不能用「最近新增」筛选`);
+        throw new Error('读不到「实时库存」/「货品信息」的创建时间列，暂时不能用「最近新增」筛选');
       }
       const cutoff = now() - recentDays * 24 * 60 * 60 * 1000;
       rows = rows.filter((row) => {
@@ -339,21 +480,41 @@ const createLabelPrintService = (gateway, options = {}) => {
         missingCreatedAt += 1;
         return false;
       });
+      withoutStock = withoutStock.filter((item) => {
+        if (item.product.created_at > 0) return item.product.created_at >= cutoff;
+        missingCreatedAt += 1;
+        missingCreatedAtWithoutStock += 1;
+        return false;
+      });
     }
 
-    // ── 条件筛选（货号 / 颜色 / 品类 模糊，状态 / 品类 / 尺码 精确）────────────
-    // 「品类」下拉的候选 = 从**解析出来的全部记录**去重（在筛选之前算，否则她越筛选项越少）；
-    // 与筛选用的是同一个来源 ⇒ 选了一定有结果，不会出现"选了某个品类却 0 张"。
-    const categoryOptions = [...new Set(rows.map((row) => row.category).filter(Boolean))]
-      .sort((left, right) => String(left).localeCompare(String(right), 'zh-CN'));
+    // ── 条件筛选（编号 / 货号 / 颜色 / 类别 模糊；状态 / 品类 / 尺码 精确）────────
+    // 「品类」下拉的候选 = 从**解析出来的全部记录 + 没有库存的那批**去重（在筛选之前算，
+    // 否则她越筛选项越少）；与筛选用的是同一个来源 ⇒ 选了一定有结果，不会"选了某个品类却 0 张"。
+    const categoryOptions = [...new Set([
+      ...rows.map((row) => row.category),
+      ...withoutStock.map((item) => item.product.category),
+    ].filter(Boolean))].sort((left, right) => String(left).localeCompare(String(right), 'zh-CN'));
     const normalizedKeyword = keyword.toLowerCase();
+    const matchesKeyword = (values) => !normalizedKeyword
+      || values.some((value) => String(value ?? '').toLowerCase().includes(normalizedKeyword));
+
+    // ⭐ **没有库存的那批：`size` / `state` 两个条件它不参与**（尺码与所属状态无从得知）——
+    //    排除 + **计数**（响应 `without_stock_skipped` ＋ 一条 warn），**绝不静默丢** ✗。
+    const withoutStockSkipped = [];
+    const withoutStockKept = [];
+    for (const item of withoutStock) {
+      if (!matchesKeyword([item.number, item.product.item_no, item.product.color, item.product.category])) continue;
+      if (category && item.product.category !== category) continue;
+      if (size !== null || state) { withoutStockSkipped.push(item); continue; }
+      withoutStockKept.push(item);
+    }
+
     rows = rows.filter((row) => {
       if (state && row.state !== state) return false;
       if (category && row.category !== category) return false;
       if (size !== null && row.size !== size) return false;
-      if (!normalizedKeyword) return true;
-      return [row.item_no, row.color, row.category]
-        .some((value) => String(value).toLowerCase().includes(normalizedKeyword));
+      return matchesKeyword([numberOf(row), row.item_no, row.color, row.category]);
     });
 
     // ── 按**编号**聚合（一张标签 = 一个编号）───────────────────────────────
@@ -374,6 +535,7 @@ const createLabelPrintService = (gateway, options = {}) => {
           states: new Set(),
           record_ids: [],
           created_at: 0,
+          without_stock: false,
         };
         groups.set(number, group);
       }
@@ -381,6 +543,22 @@ const createLabelPrintService = (gateway, options = {}) => {
       group.states.add(row.state);
       group.record_ids.push(row.record_id);
       if (row.created_at > group.created_at) group.created_at = row.created_at;
+    }
+    // ⭐ 没有库存行的编号：`sizes` / `states` / `record_ids` **都是空的**（**不许编一个尺码出来** ✗）。
+    for (const item of withoutStockKept) {
+      if (groups.has(item.number)) continue;
+      groups.set(item.number, {
+        number: item.number,
+        item_no: item.product.item_no,
+        color: item.product.color,
+        category_code: item.product.category_code,
+        category: item.product.category,
+        sizes: new Map(),
+        states: new Set(),
+        record_ids: [],
+        created_at: item.product.created_at || 0,
+        without_stock: true,
+      });
     }
 
     // ── 排序（货架顺序：货号 → 颜色 → 类别；最近新增：组内最新的那条在前）──────
@@ -398,15 +576,9 @@ const createLabelPrintService = (gateway, options = {}) => {
     const visible = ordered.slice(0, maxLabels);
     const totalPairs = ordered.reduce((sum, group) => sum + group.record_ids.length, 0);
 
-    // ── 读二：整张「货品信息」（只为**补价格 / 品牌**；一次读、按编号建索引）──
-    const brandFieldName = config.brand?.from === 'table' ? String(config.brand.tableFieldName || '').trim() : '';
-    const productIndex = buildProductIndex(
-      await gateway.listAll('product'),
-      productFields,
-      brandFieldName,
-    );
-
     // ── 每张标签要印什么（先同步算完数据，再异步出二维码 SVG）──────────────
+    // ⚠️ 2026-10-15：「货品信息」那次读**已经上移到"读二"**了（没有库存的编号也要靠它出标签，
+    //    不能等到截断之后才读）—— 这里不再有第二次 listAll。
     const stateRank = (value) => {
       const index = config.filters.stateOptions.indexOf(value);
       return index === -1 ? config.filters.stateOptions.length : index;
@@ -478,6 +650,10 @@ const createLabelPrintService = (gateway, options = {}) => {
         // 这一个编号是由哪几条「实时库存」聚合出来的（排障 / 对数用）。
         record_ids: group.record_ids,
         record_count: group.record_ids.length,
+        // ⭐ 2026-10-15：这个编号**在「实时库存」里有没有行**。
+        //    `false` = 还在「货品信息」里、没入库的新货 ⇒ `sizes` 一定是空数组
+        //    （页面据此**不印「尺码 + 库存数量」那一行**，她选的版式）。
+        has_stock: group.without_stock !== true,
         created_at: group.created_at ? new Date(group.created_at).toISOString() : '',
         scan_url: scanUrl,
         footer_text: buildText(config.footer.template, footerValues, config.texts.missingValue),
@@ -497,6 +673,12 @@ const createLabelPrintService = (gateway, options = {}) => {
     })));
 
     const grid = resolveGrid(config);
+    // ⭐ 2026-10-15：这一轮标签的**来路**（有库存 / 还没入库）—— 真机排查时一眼看出"新货有没有进来"。
+    const withStockMatched = ordered.filter((group) => group.without_stock !== true).length;
+    const withoutStockMatched = matchedTotal - withStockMatched;
+    const productRecordsNoNumber = (productRecords || [])
+      .filter((record) => !(productFields.number ? textValue(record?.fields?.[productFields.number]).trim() : ''))
+      .length;
     logInfo('workbench.labels.listed', {
       keyword: keyword || undefined,
       state: state || undefined,
@@ -506,6 +688,13 @@ const createLabelPrintService = (gateway, options = {}) => {
       sort,
       scanned_records: (records || []).length,
       parsed_records: parsedTotal,
+      product_records: (productRecords || []).length,
+      product_records_no_number: productRecordsNoNumber || undefined,
+      // ⭐ 有库存的编号 / 还没有库存行的编号（**两张来路各多少张**）。
+      with_stock: withStockMatched,
+      without_stock: withoutStockMatched,
+      // ⭐ 因为按尺码/所属状态筛，被排除的**还没有库存的编号**数（响应同名字段，**不静默**）。
+      without_stock_skipped: withoutStockSkipped.length || undefined,
       matched_labels: matchedTotal,
       matched_pairs: totalPairs,
       returned_labels: labels.length,
@@ -513,10 +702,29 @@ const createLabelPrintService = (gateway, options = {}) => {
       skipped_stock_key: skipped.stock_key || undefined,
       skipped_state: skipped.state || undefined,
       missing_created_at: missingCreatedAt || undefined,
+      missing_created_at_without_stock: missingCreatedAtWithoutStock || undefined,
       missing_price: missingPrice || undefined,
       missing_price_no_product: missingPriceNoProduct || undefined,
       missing_qr_record_id: missingQrRecordId || undefined,
     });
+    if (withoutStockSkipped.length) {
+      // **不静默**：这几个编号在「货品信息」里、但「实时库存」里一行都没有 ⇒
+      // 按尺码 / 所属状态筛的时候它们**无从判断**，所以这一轮不参与。
+      // ⚠️ hint 写成**一条字面量**、串里不带花括号（守门用例靠最近的 `;` / `}` 认日志语句）。
+      logWarn('workbench.labels.without_stock_skipped', {
+        without_stock_skipped: withoutStockSkipped.length,
+        filtered_by_size: size !== null,
+        filtered_by_state: Boolean(state),
+        hint: '这些编号在「货品信息」里、但「实时库存」里还没有行，尺码与所属状态无从得知，所以按尺码或所属状态筛的时候它们不参与；去掉这两个条件就能看到它们',
+      });
+    }
+    if (missingCreatedAtWithoutStock) {
+      // **不静默**：没有库存的那批读不到「货品信息」的创建时间列 ⇒ 「最近新增」筛不了它们（如实计数）。
+      logWarn('workbench.labels.without_stock_missing_created_at', {
+        missing_created_at_without_stock: missingCreatedAtWithoutStock,
+        hint: '「货品信息」的创建时间列读不出来，这些还没有库存的编号在「最近新增」里被排除；请核对那一列的字段类型（飞书自动字段 CreatedTime / type 1001）',
+      });
+    }
     if (skipped.stock_key || skipped.state) {
       logWarn('workbench.labels.skipped_records', {
         skipped_stock_key: skipped.stock_key,
@@ -548,6 +756,10 @@ const createLabelPrintService = (gateway, options = {}) => {
       total_matched: matchedTotal,
       total_returned: labels.length,
       total_pairs: totalPairs,
+      // ⭐ 2026-10-15：匹配到的这些标签里，**有库存的** / **还没有入库的**各多少张
+      //    （`without_stock` 那批的 `sizes` 一定是空数组 ⇒ 页面不印「尺码 + 数量」那一行）。
+      total_with_stock: withStockMatched,
+      total_without_stock: withoutStockMatched,
       truncated,
       max_labels: maxLabels,
       skipped_records: {
@@ -555,7 +767,10 @@ const createLabelPrintService = (gateway, options = {}) => {
         state: skipped.state,
         total: skipped.stock_key + skipped.state,
       },
+      // ⭐ 按 `size` / `state` 筛时被排除的**还没有库存的编号**数（**不静默**：同一件事还有一条 warn）。
+      without_stock_skipped: withoutStockSkipped.length,
       missing_created_at: missingCreatedAt,
+      missing_created_at_without_stock: missingCreatedAtWithoutStock,
       missing_price: missingPrice,
       missing_price_no_product: missingPriceNoProduct,
       // ⭐ 二维码拿不到记录 ID 的张数（那几张退回了旧的编号版 URL，见上面的 warn 日志）。
@@ -637,7 +852,101 @@ const createLabelPrintService = (gateway, options = {}) => {
     return { ...data, labels: exact, total_matched: exact.length, total_returned: exact.length };
   };
 
-  return { listLabels, labelForRecord };
+  /**
+   * ⭐⭐ 2026-10-15：`GET /api/workbench/products/numbers` 的取数（**只读**）。
+   *
+   * 契约（**冻结**，前端同学并行按它写）：
+   *   `{ total, truncated, numbers: [{ number, itemNo, color, category, hasStock, recordId }] }`
+   *   · 数据源 = 只读**「货品信息」**整张（`listAll('product')`），按**编号**去重（同一编号多条记录取第一条）；
+   *   · `keyword`：按 编号 / 货号 / 颜色 / 类别 模糊（**大小写不敏感**）；空 = 全部；
+   *   · `hasStock`：该「编号」在**「实时库存」里有没有行**（只读一次、只算一次 —— 前端用它提示"还没入库"）；
+   *   · `limit`：1..500，默认 200；超出上限**如实**回 `truncated: true`（**不静默截断**）；
+   *   · 排序：按「编号」`localeCompare('zh-CN')` 升序（稳定、可预期）。
+   * 🔴 **只读诊断/查询**：不写任何业务表、不改任何状态（只有 `listAll` 两次读 + 一条 info 日志）。
+   *
+   * ⚠️ 阈值的家本应在 `config/labelPrint.js`（**本轮不在本任务的写作用域里**）⇒ 这里读
+   *    `config.productNumbers` 这一组（注入了就用注入的），没配才用契约里写死的默认 200 / 500。
+   */
+  const listProductNumbers = async (filters = {}) => {
+    const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
+    if (!productFields.number) {
+      throw new Error('「货品信息」缺少必要的字段映射（编号），请先补 v1BitableSchema.product');
+    }
+    const inventoryFields = V1_BITABLE_SCHEMA.tables.liveInventory?.fields || {};
+
+    const limits = config.productNumbers || {};
+    const defaultLimit = Number.isInteger(limits.defaultLimit) && limits.defaultLimit > 0 ? limits.defaultLimit : 200;
+    const maxLimit = Number.isInteger(limits.maxLimit) && limits.maxLimit > 0 ? limits.maxLimit : 500;
+    const limitText = String(filters.limit ?? '').trim();
+    let limit = defaultLimit;
+    if (limitText) {
+      if (!/^\d+$/.test(limitText) || Number(limitText) < 1) {
+        throw userError(`limit 必须是 1 到 ${maxLimit} 之间的整数`);
+      }
+      limit = Number(limitText);
+      if (limit > maxLimit) throw userError(`limit 最多 ${maxLimit}`);
+    }
+    const keyword = String(filters.keyword ?? '').trim().toLowerCase();
+
+    // ── 读一：「货品信息」整张（这个端点的主数据）────────────────────────────
+    const products = await gateway.listAll('product');
+
+    // ── 读二：「实时库存」整张（只为回答"这个编号有没有入库过"；只用它的「库存键」）──
+    const stockRecords = await gateway.listAll('liveInventory');
+    const stockedNumbers = new Set();
+    for (const record of stockRecords || []) {
+      const key = parseStockKey(record?.fields?.[inventoryFields.stockKey]);
+      if (key) stockedNumbers.add(compoundNumber(key.itemNo, key.color, key.category));
+    }
+
+    // ── 「货品信息」→ 编号去重（同一个编号取**第一条**记录，与 `buildProductIndex` 同一口径）──
+    const seen = new Set();
+    const numbers = [];
+    let withoutNumber = 0;
+    for (const record of products || []) {
+      const number = textValue(record?.fields?.[productFields.number]).trim();
+      if (!number) { withoutNumber += 1; continue; }
+      if (seen.has(number)) continue;
+      seen.add(number);
+      const parts = partsOfNumber(number);
+      const itemNo = (productFields.itemNo ? textValue(record?.fields?.[productFields.itemNo]).trim() : '') || parts.item_no;
+      const color = (productFields.color ? textValue(record?.fields?.[productFields.color]).trim() : '') || parts.color;
+      const category = (productFields.category ? textValue(record?.fields?.[productFields.category]).trim() : '') || parts.category_code;
+      numbers.push({
+        number,
+        itemNo,
+        color,
+        category,
+        hasStock: stockedNumbers.has(number),
+        recordId: String(record?.record_id || ''),
+      });
+    }
+
+    const matched = numbers
+      .filter((item) => !keyword || [item.number, item.itemNo, item.color, item.category]
+        .some((value) => String(value ?? '').toLowerCase().includes(keyword)))
+      // 排序**稳定、可预期**：按编号中文序升序。
+      .sort((left, right) => String(left.number).localeCompare(String(right.number), 'zh-CN'));
+
+    const total = matched.length;
+    const truncated = total > limit;
+    const page = matched.slice(0, limit);
+    logInfo('workbench.products.numbers.listed', {
+      keyword: keyword || undefined,
+      limit,
+      product_records: (products || []).length,
+      product_records_no_number: withoutNumber || undefined,
+      stock_records: (stockRecords || []).length,
+      total,
+      returned: page.length,
+      with_stock: matched.filter((item) => item.hasStock).length,
+      without_stock: matched.filter((item) => !item.hasStock).length,
+      truncated: truncated || undefined,
+    });
+    return { total, truncated, numbers: page };
+  };
+
+  return { listLabels, labelForRecord, listProductNumbers };
 };
 
 module.exports = {
@@ -649,7 +958,10 @@ module.exports = {
   buildProductIndex,
   formatPrice,
   asAmount,
+  compoundNumber,
   numberOf,
+  partsOfNumber,
+  createdAtOf,
   buildText,
   asTimestamp,
   rowFromRecord,

@@ -352,6 +352,39 @@ const createWorkbenchRouter = (options = {}) => {
     }
   });
   /**
+   * ⭐⭐ 2026-10-15：**批量打印要"一次给一批新货打码"** ⇒ 先要一份能挑的**编号清单**。
+   *
+   * 依据（**都在文件里**）：业务负责人 2026-10-15 逐字「编号对呀，我们的编号**只要它在货品信息里
+   * 就行了**，不一定非要在库存里面有啊」＋ 批量打印的用途 =「一次给一批新货打码（新店开业 / 换季上架）」
+   * ⇒ `docs/`（本任务的验收标准 AC-N5）。
+   *
+   * `GET /api/workbench/products/numbers?keyword=<str>&limit=<1..500，默认 200>`
+   *   · 契约（**冻结**，前端并行按它写）：
+   *     `{ success:true, total, truncated, numbers:[{ number, itemNo, color, category, hasStock, recordId }] }`
+   *   · `keyword` 按 编号 / 货号 / 颜色 / 类别 模糊（大小写不敏感）；空 = 全部；
+   *   · `hasStock` = 该编号在「实时库存」里**有没有行**（前端提示"还没入库"）；
+   *   · 排序 = 按编号 `localeCompare('zh-CN')` 升序；`limit` 超出上限**如实**回 `truncated:true`。
+   * 🔴 **只读诊断/查询**（**不写任何业务表、不改任何状态** ✗）：取数全在
+   *    `services/labelPrintService.js#listProductNumbers`（两次 `listAll` + 一条 info 日志）。
+   * 🔴 **不新开鉴权**：它就挂在本文件既有那道 `requireWorkbenchAccess` 之后（未启用认证 503 /
+   *    未登录 401 / 白名单外 403 —— 与其它工作台接口**同一个函数**）。
+   * ⚠️ 失败口径**复用**控制器那一份（`respondQueryFailure`：她填错的 400 原样回显 /
+   *    飞书数据没准备好的 503 / 其余 500 不回显内部细节），**不另写一套**。
+   */
+  router.get('/products/numbers', async (req, res) => {
+    try {
+      const result = await labelPrint.listProductNumbers({
+        keyword: req.query.keyword,
+        limit: req.query.limit,
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      return controller.respondQueryFailure(res, error, {
+        requestId: req.requestId, event: 'workbench.products.numbers.failed', fallback: '标签数据读取失败',
+      });
+    }
+  });
+  /**
    * ⭐⭐ 2026-10-15：**扫码打印的客户端诊断上报**（她真机反馈「扫码打印好像没调用成功」之后加的）。
    *   为什么需要：飞书 JSSDK 在手机里"装死"（`h5sdk.ready` 不回调）时**只有客户端知道原因** ——
    *   页面上只有一行小字、服务端**一条日志都没有** ✗ ⇒ 她一说"没成功"，我们只能猜。
