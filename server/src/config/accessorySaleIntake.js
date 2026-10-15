@@ -78,6 +78,24 @@ const ACCESSORY_SALE_REASONS = Object.freeze({
   amountTooSmallForSplit: (raw, count) => `「金额」${raw} 摊不成 ${count} 行（一行至少 1 个最小单位）⇒ 不记这一笔`,
   paymentMethodMissing: '「收款方式」取不到 ⇒ 不敢猜一个方式',
   fallbackUnavailable: (missing) => `事件未带全（缺：${(missing || []).join('/')}）且无法回退读表`,
+  // ⭐⭐ 2026-10-15（生产事故修复）：事件的关联值**只带显示文本、不带 record id** 是允许发生的
+  //   ⇒ 按「名称」在「其他配品」里反查；**多于一条**时**不许挑一个**（挑错=记错账 ✗）
+  nameAmbiguous: (text, count) => `「名称」${text} 在「其他配品」里有 ${count} 条同名记录 ⇒ 不知道是哪一件，请重选`,
+});
+
+/**
+ * ⭐⭐ 2026-10-15（生产事故修复）：**「名称」→ 配品 record id** 的解析口径（配置先行 ✓）。
+ *   事故现场：事件的 `field_value` 只带 `[{ text: '鞋垫', type: 'text' }]`（**没有 `record_ids`**）
+ *   ⇒ 旧代码把它 `String()` 成了 `'[object Object]'` 当 id 用 ⇒ 下游查不到 ⇒ 被当成"配品不存在"拒单 ✗。
+ *   ⇒ 现在的兜底：id 取不到 / 核实不到时，用「名称」显示文本在**这张表**里反查，**唯一命中才用** ✓。
+ */
+const resolveAccessorySaleLookup = (env = process.env) => Object.freeze({
+  // 总开关（显式布尔；空串 = 关 ✓）。关掉 ⇒ 退回"只用事件里的 id、取不到就如实拒单" ✓
+  enabled: readFlag(env, 'ACCESSORY_SALE_LOOKUP_ENABLED', true),
+  // 反查哪张表（默认就是「其他配品」的语义键；换表只改配置 ✓）
+  tableKey: readString(env, 'ACCESSORY_SALE_LOOKUP_TABLE_KEY', 'accessory'),
+  // 表里哪一列是「名称」（与 `v1BitableSchema` 的 `accessory.name` 一致 ✓）
+  nameField: readString(env, 'ACCESSORY_SALE_LOOKUP_NAME_FIELD', '名称'),
 });
 
 /**
@@ -89,6 +107,8 @@ const resolveAccessorySaleIntakeConfig = (env = process.env) => ({
   enabled: readFlag(env, ACCESSORY_SALE_ENABLED_ENV_KEY, true),
   tableId: readString(env, ACCESSORY_SALE_TABLE_ID_ENV_KEY, DEFAULT_ACCESSORY_SALE_TABLE_ID),
   fields: ACCESSORY_SALE_FIELDS,
+  // ⭐⭐ 2026-10-15（生产事故修复）：「名称」文本兜底反查的口径（见 ACCESSORY_SALE_LOOKUP 注释）
+  accessoryLookup: resolveAccessorySaleLookup(env),
   // ⚠️ 事件 `after_value` 里带的是**飞书列 id**（`fldxxxx`）⇒ 想走"主路径零读取"就要在这里
   //   配列 id（可配 ✓，不写死 ✗）。**没配** ⇒ 事件里的值认不出 ⇒ 自动走 `getByTableId` 兜底读表
   //   （**如实 warn**，不是静默、也不是错 ✗）—— 两条路都能办成事 ✓
