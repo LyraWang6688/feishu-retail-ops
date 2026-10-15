@@ -827,7 +827,11 @@ test('AC12 「验收到货」：接线层只把这一批交给既有核对链路
   });
 
   const result = await service.confirmArrival({
-    batchNo: 'B1', actualAmount: 1200, acceptanceText: '跟单子一样', operatorOpenId: 'ou_1',
+  // ⭐⭐ 2026-10-16（她逐字「数据表里面已经没有验收原话了…你必须得删」）
+  //   · 改前逐字：`batchNo: 'B1', actualAmount: 1200, acceptanceText: '跟单子一样', operatorOpenId: 'ou_1',`
+  //   · 改后逐字：去掉 `acceptanceText`（工作台这条已经没有那个输入框 ✓）
+  //   · 依据：同上；⭐ 反向钉住 ⇒ 把透传塞回即红 ✓
+    batchNo: 'B1', actualAmount: 1200, operatorOpenId: 'ou_1',
   });
   assert.equal(result.message, '已入库 2 行');
   // 只读既有查询拿到这一批的申请行 id（不自己读表、不自己算明细）
@@ -837,7 +841,10 @@ test('AC12 「验收到货」：接线层只把这一批交给既有核对链路
   assert.deepEqual(calls[1].input.batch.request_ids, ['pr1', 'pr2']);
   assert.equal(calls[1].input.batch.batch_no, 'B1');
   assert.equal(calls[1].input.actualAmount, 1200);
-  assert.equal(calls[1].input.acceptanceText, '跟单子一样');
+  // ⭐⭐ 2026-10-16（同上）· 改前逐字：`assert.equal(calls[1].input.acceptanceText, '跟单子一样');`
+  //   · 改后逐字：改成**反向**断言（工作台不再带这个字段 ✓）· 依据：她 2026-10-16 逐字 ✓
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[1].input, 'acceptanceText'), false,
+    '⛔ 工作台这条**不再传**原话（她把那个框删了 ✓；扫码线照旧 ✓）');
   assert.equal(calls[1].input.operatorOpenId, 'ou_1');
 
   // 空批次 / 找不到明细：人话拒绝且**一次都没调**核对链路
@@ -966,9 +973,15 @@ test('AC13 「验收到货」路由：走既有闸门、原因原样回到页面
     assert.equal(body.success, true);
     assert.equal(body.message, '已入库 2 行');
   });
+  // ⭐⭐ 2026-10-16（她逐字「到货说明必须得删……数据表里已经没有验收原话了」）
+  //   · 改前逐字：`assert.deepEqual(calls[0], { batchNo: 'B1', actualAmount: 1200, acceptanceText: '跟单子一样', operatorOpenId: 'ou_test_user' });`
+  //   · 改后逐字：期望对象里**去掉** `acceptanceText`（路由不再转这个参 ✓）
+  //   · 依据：同上；⭐ 反向钉住 ⇒ 把转参塞回即红 ✓
   assert.deepEqual(calls[0], {
-    batchNo: 'B1', actualAmount: 1200, acceptanceText: '跟单子一样', operatorOpenId: 'ou_test_user',
+    batchNo: 'B1', actualAmount: 1200, operatorOpenId: 'ou_test_user',
   });
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[0], 'acceptanceText'), false,
+    '⛔ 路由不许再把「到货说明」转下去 ✗');
 
   // ② 她填错的（statusCode=400）→ 400 + 原话
   const badApp = appWith({

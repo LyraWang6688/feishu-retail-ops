@@ -237,11 +237,17 @@ test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 
   //      （下面那条 `assert.match(config, /arrivalConfirm: .../)` 照旧 ✓）。
   for (const needle of [
     'data-action="verify-arrival"', 'data-action="submit-arrival"',
-    'data-field="arrival-amount"', 'data-field="arrival-note"',
+  // ⭐⭐ 2026-10-16（她逐字：「**「到货说明」，到货说明必须得删**。因为目前我们的**数据表里面已经没有
+  //   验收原话了**，这个是**之前我们的群聊链路**，跟这个**已经没有关系了**。**你必须得删**」）
+  //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
+  //   · 改后逐字：该沿用项删除 ＋ 新增反向断言 `assert.equal(orders.includes('data-field="arrival-note"'), false)`
+  //   · 依据：她 2026-10-16 逐字（同上）；⭐ 反向钉住 ⇒ 把框塞回即红 ✓
+    'data-field="arrival-amount"',
     'api.post(ARRIVAL_FULL_API.accept, {',
   ]) {
     assert.ok(orders.includes(needle), `既有验收逻辑少了 ${needle}`);
   }
+  assert.equal(orders.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
   assert.match(config, /arrivalConfirm: '\/api\/workbench\/purchase\/arrivals\/confirm'/);
 });
 

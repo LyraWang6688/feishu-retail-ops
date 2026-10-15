@@ -44,9 +44,14 @@ test('AC2 ⭐⭐ 「验收」挂的是**既有验收模块**（orders/purchase�
     '领域骨架仍走既有 kind:orders 分派（没为验收新造分支）');
   // 既有订单模块里就是那套验收 UI（四个哨兵仍在 ⇒ 我们只是"挂回去"，没改它）
   const orders = read('features/orders/index.js');
-  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"', 'data-field="arrival-note"', 'data-view="purchase-arrived"']) {
+  // ⭐⭐ 2026-10-16（她逐字：「到货说明必须得删……数据表里面已经没有验收原话了……你必须得删」）
+  //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
+  //   · 改后逐字：该项删除 ＋ 下面那条**反向**断言（塞回即红 ✓）
+  //   · 依据 = 她 2026-10-16 逐字（同上）✓
+  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"', 'data-view="purchase-arrived"']) {
     assert.ok(orders.includes(needle), `既有验收 UI 少了 ${needle}`);
   }
+  assert.equal(orders.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
 });
 
 test('AC3 ⭐⭐ 等价哨兵：验收**只有一处实现 + 一个接口** ⇒ 从工作台提交与从扫码页提交**不可能不同**', () => {

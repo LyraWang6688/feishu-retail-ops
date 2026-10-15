@@ -349,16 +349,24 @@ test('AC-P6 既有验收链路一字未改（按钮 / 表单 / 接口 / 载荷�
   for (const needle of [
     'data-action="verify-arrival"',
     'data-action="submit-arrival"',
+    // ⭐⭐ 2026-10-16（她逐字：「到货说明必须得删……数据表里面已经没有验收原话了」）
+    //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
+    //   · 改后逐字：该项删除（⭐ 反向钉住：塞回即红 ✓）· 依据：她 2026-10-16 逐字 ✓
     'data-field="arrival-amount"',
-    'data-field="arrival-note"',
     'api.post(ARRIVAL_FULL_API.accept, {',
     '[ARRIVAL_FULL_FIELDS.lines]: built.lines,',
   ]) {
     assert.ok(source.includes(needle), `既有验收逻辑少了 ${needle}`);
   }
-  // 金额 / 说明的既有校验（提交前后端还会再判一次）
+  assert.equal(source.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
+  // 金额的既有校验（提交前后端还会再判一次）
   assert.ok(source.includes("if (!/^\\d+(\\.\\d+)?$/.test(rawAmount) || Number(rawAmount) <= 0)"));
-  assert.ok(source.includes('if (!acceptanceText)'));
+  // ⭐⭐ 2026-10-16（她逐字「数据表里面已经没有验收原话了…你必须得删」）
+  //   · 改前逐字：`assert.ok(source.includes('if (!acceptanceText)'));`（钉前端的「必须有到货说明」）
+  //   · 改后逐字：`assert.equal(source.includes('if (!acceptanceText)'), false)` ＋ 反向断言
+  //   · 依据：同上；⭐ 反向钉住 ⇒ 把那行必填塞回即红 ✓
+  assert.equal(source.includes('if (!acceptanceText)'), false, '⛔ 那条前端必填已随框退场 ✓');
+  assert.equal(source.includes('arrival-note'), false, '⛔ 那个输入框不许再回来 ✗');
 
   // ③ 渲染出来的验收表单逐字（一张卡一颗按钮 + 一个折叠表单）
   const html = orders.purchaseOrdersHtml([

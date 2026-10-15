@@ -43,9 +43,14 @@ test('AC-AW1b ⭐ 那一屏**有**提交到既有 confirm 接口的表单（判�
   assert.equal(ORDERS_CONFIG.includes("arrivalConfirm: '/api/workbench/purchase/arrivals/confirm'"), true,
     '接口路径只在这里写一次 ✓');
   // ② 工作台内那张表单三件套（实际金额 / 验收原话 / 提交按钮）都在
-  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"', 'data-field="arrival-note"', 'data-action="submit-arrival"']) {
+  // ⭐⭐ 2026-10-16（她逐字：「到货说明必须得删……数据表里面已经没有验收原话了……你必须得删」）
+  //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
+  //   · 改后逐字：该项删除 ＋ 下面那条**反向**断言（塞回即红 ✓）
+  //   · 依据 = 她 2026-10-16 逐字（同上）✓
+  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"', 'data-action="submit-arrival"']) {
     assert.ok(FEATURE.includes(needle), `卡上缺 ${needle}（工作台内的确认路径 ✓）`);
   }
+  assert.equal(FEATURE.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
   // ③ 明细（只读）也在：批次号 + 每行货号/尺码/数量
   assert.ok(/data-purchase-batch=/.test(FEATURE) && /order-line/.test(FEATURE), '明细那一块还在 ✓');
 });
@@ -110,8 +115,14 @@ test('AC-AW7 ⭐ 既有断言：没有"工作台点验收会跳扫码页"的哨�
 test('AC-AW8/9 回归：`confirmArrival` 语义与入库路径**一字不动**', () => {
   const route = read('src/routes/workbench.js');
   assert.match(route, /router\.post\('\/purchase\/arrivals\/confirm'/, '确认到货接口仍在 ✓');
-  assert.match(route, /confirmArrival\(\{[\s\S]{0,200}?batchNo[\s\S]{0,200}?actualAmount[\s\S]{0,200}?acceptanceText/,
-    '整批一键 + 实际金额 + 验收原话 的入参形状未变 ✓');
+  // ⭐⭐ 2026-10-16（她逐字「到货说明必须得删……数据表里已经没有验收原话了」）
+  //   · 改前逐字：`/confirmArrival\(\{[\s\S]{0,200}?batchNo[\s\S]{0,200}?actualAmount[\s\S]{0,200}?acceptanceText/`（含"验收原话"）
+  //   · 改后逐字：去掉尾部那段 ⇒ 只钉 `batchNo` + `actualAmount`（＋下面反向断言"不许再传原话"）
+  //   · 依据 = 她 2026-10-16 逐字 ✓
+  assert.match(route, /confirmArrival\(\{[\s\S]{0,200}?batchNo[\s\S]{0,200}?actualAmount/,
+    '整批一键 + 实际金额 的入参形状未变 ✓（"验收原话"已按她那句退场 ✓）');
+  assert.equal(/confirmArrival\(\{[\s\S]{0,300}?acceptanceText/.test(route), false,
+    '⛔ 不许再把「到货说明」传给 confirmArrival ✗');
   // 工作台侧**不许直连表**：那一支里不该出现任何 bitable/网关写调用
   const slice = route.slice(route.indexOf("router.post('/purchase/arrivals/confirm'"), route.indexOf("router.post('/purchase/arrivals/confirm'") + 800);
   assert.equal(/gateway|bitable|v1BitableGateway/.test(slice), false, '工作台路由不许直连表（入库只走 InventoryService ✓）');

@@ -160,7 +160,7 @@ const createWorkbenchRouter = (options = {}) => {
   // ⭐ 2026-10-09（业务负责人当天 15:07：「**采购**，按照**采购订单**，有**验收到货**的按钮」）：
   //   订单列表 · **采购**子 tab 那一行上的「验收到货」。
   //   🔴 **不新开鉴权**：它就挂在这条 `requireWorkbenchAccess` 之后（与其它工作台接口同一道闸门）。
-  //   🔴 **不新写一套入库**：本路由只收 `{ batchNo, actualAmount, acceptanceText }`，
+  //   🔴 **不新写一套入库**：本路由只收 `{ batchNo, actualAmount }`（她 2026-10-16：「到货说明必须得删」），
   //      原样交给 `WorkbenchPurchaseArrivalService` → 既有
   //      `PurchaseArrivalConversationService.confirmBatchArrival` →
   //      既有 `PurchaseWebhookService.confirmArrival`（逐条 `InventoryService.applyPurchase`）。
@@ -196,7 +196,6 @@ const createWorkbenchRouter = (options = {}) => {
       const result = await resolvePurchaseArrival().confirmArrival({
         batchNo,
         actualAmount: req.body?.actualAmount,
-        acceptanceText: req.body?.acceptanceText,
         operatorOpenId: req.workbenchUser?.open_id,
       });
       return res.json({ success: true, ...result });
