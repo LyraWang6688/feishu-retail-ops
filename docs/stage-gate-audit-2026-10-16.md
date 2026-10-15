@@ -58,3 +58,40 @@
 
 - 上表 **5 个文件未逐个核**（预算内没做，**没有猜测性结论** ✗）
 - 🔴 `server/src/**` **一个字节没改** ✓ · `scanWriteService.js` 未动 ✓ · 判据**没删/skip/放宽任何真判据** ✓ · 未部署 ✓
+
+---
+
+## 5. 2026-10-16 第二次体检（本刀 · task-61）：把上一刀"未逐个核"的 **5 个文件**核完 ＋ 清掉最后一条自足替身
+
+**判定方法**（可复现 ✓）：① `grep -c "require('../src/" 文件` 看它**是否 import 真实现**；
+② `grep -n "待激活" -B3 文件` **读它的激活条件**（条件是"真源码地标/真配置" ⇒ 真分阶段／真闸门 ✓；条件不存在、只断言文件内自造物 ⇒ **自足替身** ✗）。
+
+| 文件 | 命中 | **判定** | 依据（激活条件是什么） |
+| --- | --- | --- | --- |
+| `paymentStatusLegacyReject.test.js` | 7 | ⭐ **真分阶段** ✓ | `AC-PR3` 的条件是**源码里出现实现标志 `MARKERS`**（真读源码 ⇒ 实现一落**自动**变真判据 ✓） |
+| `purchaseAmountByRealm.test.js` | 8 | ⭐ **真分阶段** ✓ | `AC-AR3` 等读**真实配置**（如 `'required' in PURCHASE_AMOUNT` / 分档键）⇒ config 一落自动变真 ✓ |
+| `purchaseAmountRealmWiring.test.js` | 1 | ⭐ **登记性引用**（非活闸门）✓ | 该行在**文件头注释**里，指向 `purchaseAmountByRealm` 的 `AC-AR5/AR6` ✓ |
+| `scanMoneyPageTwoStepVerify.test.js` | 2 | ⭐ **登记性引用（且已翻）** ✓ | 两处都在**注释**里，记录"期望已翻"的**改前逐字 → 改后逐字**历史 ✓（⚠️ 该文件被全量跑排除，属既有约定 ✓） |
+| `successPageAcceptance.test.js` | 2 | ⭐ **真闸门** ✓ | `AC-SP1c` 的条件是 **`JSON.stringify(SCAN_PAGE).includes(统一文案)`**（真配置地标 ⇒ 一落自动生效 ✓） |
+| `saleSuccessHintRemoval.test.js` | 1 | ⭐ **登记性引用**（非活闸门）✓ | 该行在注释里，说明"同句第三个落点不在本刀作用域" ✓ |
+| `multiItemOrderRouteWiring.test.js` | 1 | ⭐ **登记性引用**（非活闸门）✓ | 该行在注释里，指向既有 13 条（`multiItemOrderRoute.test.js`）✓ |
+
+⇒ **结论：上一刀没核的 5 个（＋新增 2 个）里，没有一个是自足替身** ✓（**一条也不用改** ✗）
+⇒ ⚠️ 只剩一处真正的自足替身：**`saleAmountAndSizeRequired.e2e.test.js`**（见下节，**本次已处理** ✓）
+
+## 6. `saleAmountAndSizeRequired.e2e.test.js`：**不是删，而是"只加断言"变成真判据** ✓（优选路径）
+
+**为什么优先"只加断言"而不是方案 B（删 + 覆盖证明）**：实现**已经落地** ⇒ 真判据**今天就能写出来** ✓（她 2026-10-16 逐字：「实收金额的输入框用户必须填写」「只有用户填了**尺码和金额**才可以提交」「**不用做那个为空去单价的功能了**」）
+
+**改前逐字 → 改后逐字 → 依据**（写在源文件头部 ✓）：
+- 改前逐字：4 个 `assertGatePending({ id: 'AC-ASR…', … })` 壳（**只打印 `[待激活]` 就通过** ✗ 不 import 实现 ✗）＋ 一个 `assertGatePending` 助手
+- 改后逐字：**删掉助手与全部 `[待激活]` 壳** ⇒ 4 条全部改为**对真实产物的断言**：
+  · `AC-ASR1`（⑤ 文案）⇒ **真配置** `SCAN_WRITE.texts.amountLabel` / `amountPlaceholder` 不许含旧承诺（实测：`'实收金额'` / `''` ✓）
+  · `AC-ASR2`（④ 不读单价兜底）⇒ **真源码**扫 `services/scanWriteService.js` + `routes/scanPage.js`（剥注释后）**必须 0 处**（实测 0 ✓）
+  · `AC-ASR3`（①②③）⇒ **真配置** `MULTI_ITEM_ORDER.chains`：补货 `amountRequired:false`（她「补货不需要金额」✓）/ 退货 `true` ✓
+    ＋ **真源码** `size_missing` 拦截路径必须存在 ＋ **覆盖证明**（覆盖者 `AC-AR5`/`AC-AR6` 必须真的存在 ⇒ 改名即红 ✓）
+- 依据：她 2026-10-16 逐字 ＋ 实现已落地（`config/scanWrite.js` 文案已改 / `chains[*].amountRequired` 已分档 / `size_missing` 路径在）✓
+
+**变异真红 2 组**（全还原 · md5 逐字节一致 ✓）：① 真配置塞回 `实收金额（可不填）` ⇒ **AC-ASR1 红** ✓ ② 覆盖者 `AC-AR5` 改名 ⇒ **AC-ASR3 红** ✓
+
+**判据统计**：本文件 4 条**全部**从"壳"变成真判据（**净增真判据 0 / 净减壳 4** ✗ 判据总数不变、**没有删掉任何真判据** ✓）
