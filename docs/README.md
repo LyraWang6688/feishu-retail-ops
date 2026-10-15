@@ -91,6 +91,7 @@
 | [label-print-entries-2026-10-14.md](label-print-entries-2026-10-14.md) | 「货品 → 标签打印」的入口结构（2026-10-14 晚 · 业务负责人逐字） |
 | [money-page-v2-spec-2026-10-14.md](money-page-v2-spec-2026-10-14.md) | 资金页 v2 · 施工规格（2026-10-14 晚 · 业务负责人逐字） |
 | [multi-item-order-design-2026-10-15.md](multi-item-order-design-2026-10-15.md) | 「一单多货品」设计（单据草稿 + 批量提交 · 共用模块） |
+| [multi-item-sales-recon-2026-10-16.md](multi-item-sales-recon-2026-10-16.md) | ⭐ **「一单多货」接到【销售】领域**（task-59 · 只读核对 + 甲′ 取舍 + 判据落点）：🔴 **性质订正 = 销售今天就已经有自己的一单多件机制**（`add_line` → `addSaleLine` → `sale.lines` ⇒ 资金页 ⇒ 既有 `submitSale`），本刀只是**补上货品页那个入口 +「本单已加的货品」列表**（**不是**新建机制 ✗、**不是**"销售不支持多件" ✗）＋ 三条实现约束（`multiItemBlockHtml` 调用点被 AC-MIR1 钉成恰好 2 ⇒ 销售那块要落在 `saleFormHtml`；加货那颗必须是本表单 submit；`chains.sales` 需成对迁移 AC-RT7b）＋ 门控与判据落点（`test/multiItemOrderSalesChain.test.js`） |
 | [parallel-development-protocol-2026-10-15.md](parallel-development-protocol-2026-10-15.md) | 并行开发协作约定（Lead + 其他 AI 同时在这个仓库干活时用） |
 | [remaining-queue-2026-10-14-night.md](remaining-queue-2026-10-14-night.md) | 剩余队列 · 落点与依据（2026-10-14 夜 · 业务负责人逐字） |
 | [sales-async-write-2026-10-14.md](sales-async-write-2026-10-14.md) | 销售提交「异步写入」验收标准（2026-10-14 晚 · 业务负责人逐字） |
