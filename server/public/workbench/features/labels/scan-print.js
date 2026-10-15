@@ -258,9 +258,18 @@ export function createScanPrintAction(options = {}) {
         // 一次扫码 = 一次提交意图（同一把幂等键 ⇒ 连点也只建一个任务）。
         submit_key: options.submitKey ? String(options.submitKey()) : `${Date.now()}`,
       });
-      notice(result?.reused ? texts.reused : texts.enqueued);
+      // ⭐⭐ 2026-10-15 晚 **成对翻新**（她真机截图：大绿字「✅ 已提交打印：这一张」＋
+      //   下面小字**同一句话**又说一遍 ⇒ 同一件事说两遍 ✗）：
+      //   改前逐字：`notice(result?.reused ? texts.reused : texts.enqueued);`
+      //             `resultLine(scanResultText(result, texts));`
+      //   改后逐字：**成功只留大字那一行** —— 小字那行清空（不然还留着"正在打印这一张…"那句旧的），
+      //             成功/重复提交的措辞**全在** `scanResultText` 里（`reused` 那支照旧说"刚刚已经发过"✓）
+      //   依据：她 2026-10-15 真机截图**两行重复** ✗；判据**没放宽**——成功那句话一条没丢，
+      //        只是从"两行"收成"一行（大字）" ✓；失败 / 取消 / 超时 / 没扫到**仍走 `notice(...)`** ✗
+      notice('');
       // ⭐⭐ 2026-10-15：**大字结果**（编号是主角）+ 按钮改成「再扫一张」——
       //   她真机反馈"扫完又回到这一页、不知道刚才打了哪张" ⇒ 结果必须**一眼看见** ✓
+      //   ⚠️ 编号来自服务端响应里的 `numbers`（`/label-print/jobs` 加的那个字段 ✓ 不编假话 ✗）。
       resultLine(scanResultText(result, texts));
       // ⚠️ 按钮文案**不在这里改**：`runWriteAction` 在动作结束时会**把文案还原成点击前那份**
       //   （它的职责就是"忙完复原"）⇒ 在这里改会被它覆盖掉 ✗ ⇒ 交给 `runWithFeedback` 在**它之后**改 ✓
