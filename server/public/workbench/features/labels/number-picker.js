@@ -110,14 +110,23 @@ const withTimeout = (promise, ms) => new Promise((resolve, reject) => {
 });
 
 /**
- * 这一块的控制器。`options` 全部可注入（`api` / `config` / `texts` / `timeoutMs`）⇒ 用例不碰真网络。
- * 返回 `{ mount, load, state, texts }`；`mount(host)` 返回**首次拉取**的 Promise（用例好等）。
+ * 这一块的控制器。`options` 全部可注入（`api` / `config` / `texts` / `timeoutMs` /
+ * `inputDebounceMs`）⇒ 用例不碰真网络、也不真等。
+ * 返回 `{ mount, load, ensureLoaded, state, texts }`；
+ * `mount(host)` **只挂监听 + 摆一句人话**（懒加载：**一个请求都不发**，见 `ensureLoaded`）。
  */
 export function createNumberPicker(options = {}) {
   const api = options.api || defaultApi;
   const config = options.config || NUMBER_PICKER;
   const texts = pickerTexts(options.texts || config.texts);
-  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : Number(config.timeoutMs) || 8000;
+  // 超时阈值**来自配置**（`config/numberPicker.js` 的 `timeoutMs`，冷启动 ≈11.4s ⇒ 现在 15000）；
+  // 注入的 `options.timeoutMs` 优先（用例用它把 15s 缩到几十毫秒）。
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : Number(config.timeoutMs) || 15000;
+  // 输入防抖：可注入（用例），否则读配置；`0` = 不防抖。
+  const rawDebounce = options.inputDebounceMs !== undefined
+    ? Number(options.inputDebounceMs)
+    : Number(config.inputDebounceMs);
+  const debounceMs = Number.isFinite(rawDebounce) && rawDebounce >= 0 ? rawDebounce : 0;
   const state = { loading: false, failed: false, loaded: false, count: 0, picked: null };
 
   let input = null;
@@ -127,9 +136,25 @@ export function createNumberPicker(options = {}) {
   let items = new Map();
   /** 请求序号：她连着打字时，**只有最后那一次**算（过期的回包丢掉，免得选项跳来跳去）。 */
   let seq = 0;
+  /** 防抖窗口：她还在打字 ⇒ 上一个定时器取消、那一次的 promise **当场了结**（不悬着）。 */
+  let debounceTimer = null;
+  let debounceResolve = null;
 
   const renderStatus = () => {
     if (statusHost) statusHost.textContent = String(pickerStatusText(state, config));
+  };
+
+  /** 取消挂起的那一次（被打字的下一次 / 回车接管时调用；被取消的那次 promise 立即了结）。 */
+  const cancelDebounce = () => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    if (debounceResolve) {
+      const done = debounceResolve;
+      debounceResolve = null;
+      done(state);
+    }
   };
 
   const setExpanded = (expanded) => {
@@ -211,6 +236,28 @@ export function createNumberPicker(options = {}) {
     ? Promise.resolve(state)
     : load(input?.value || ''));
 
+  /**
+   * ⭐⭐ **输入防抖**（Lead 2026-10-15 晚批准；阈值在 `config/numberPicker.js` 的 `inputDebounceMs`）：
+   *   她还在打字 ⇒ 只留**最后那一次**（敲 4 个字 = **1 个请求**，不是 4 个）。
+   *   为什么非做不可：一次请求 ≈ **11.4s** 的整表读（561 + 1362 行）⇒ 每敲一个字发一次，
+   *   服务端要白读好几次（序号守卫只能保证"只有最后一次**算数**"，拦不住已经发生的读 ✗）。
+   *   ⚠️ `0` = 不防抖（立刻发）；**回车 / 聚焦 / 点开都不走这里**（它们立即发）。
+   *   ⚠️ 被下一次打字取消时，**那一次的 promise 当场了结**（不悬着——用例 `await` 它不会挂）。
+   */
+  const loadDebounced = () => new Promise((resolve) => {
+    cancelDebounce();
+    if (debounceMs <= 0) {
+      resolve(load(input?.value || ''));
+      return;
+    }
+    debounceResolve = resolve;
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      debounceResolve = null;
+      resolve(load(input?.value || ''));
+    }, debounceMs);
+  });
+
   return {
     state,
     texts,
@@ -234,13 +281,24 @@ export function createNumberPicker(options = {}) {
       optionsHost.setAttribute('aria-label', String(config.aria?.listLabel || ''));
 
       // ⭐ 她**点开 / 聚焦**输入框 ⇒ 才拉（`focus` 与 `click` 都接上；tap 上两个都会来，
-      //   `ensureLoaded` 的 `state.loading` 兜底 ⇒ 只会发一个请求）。
+      //   `ensureLoaded` 的 `state.loading` 兜底 ⇒ 只会发一个请求）。**这一次不走防抖**（立刻发）。
       input.addEventListener('focus', () => ensureLoaded());
       input.addEventListener('click', () => ensureLoaded());
-      // 输入即搜（关键字**交给服务端**过滤）；已经在拉 / 已拉过时由序号守卫决定谁算数。
-      input.addEventListener('input', () => load(input.value));
+      // 输入即搜（关键字**交给服务端**过滤）—— 走防抖：她停下来才发那一次。
+      input.addEventListener('input', () => loadDebounced());
       input.addEventListener('keydown', (event) => {
-        if (event?.key === 'Escape') setExpanded(false);
+        if (event?.key === 'Escape') {
+          cancelDebounce();
+          setExpanded(false);
+          return;
+        }
+        // ⭐ 回车 = **立即搜、不等防抖窗口**（她按了回车就是"现在就要"）。
+        // ⚠️ **不 preventDefault**：回车那条"提交表单 ⇒ 打开既有落点"的路一个字没改（落点仍由
+        //    `config/domains.js` 的 `targetTemplate` 决定，选择器不参与跳转）。
+        if (event?.key === 'Enter') {
+          cancelDebounce();
+          void load(input.value);
+        }
       });
       // 点选项 ⇒ 填进输入框（`closest` 兼容"点到里面那层 span"）。
       optionsHost.addEventListener('click', (event) => {
