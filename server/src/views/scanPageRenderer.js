@@ -329,6 +329,9 @@ const REALM_BAR_STYLE = `.realm-tab { white-space: nowrap; font-size: var(--font
   overflow: hidden; text-overflow: clip; letter-spacing: 0; min-width: 0; text-align: center; }
 .realm-bar { grid-auto-rows: minmax(var(--control-height), auto); }`;
 
+/** 第 5 格「扫一扫」的内部标记（不是领域 ⇒ 不与 `REALM_TABS` 的对象混用 ✓）。 */
+const SCAN_TAB_MARKER = Symbol('scan-tab');
+
 const PAYMENT_STEP_STYLE = `.pay-status__options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .pay-status__option { display: flex; align-items: center; justify-content: center; gap: 4px;
   border: 1px solid #d9d9d9; border-radius: 8px; padding: 8px 4px; font-size: 14px; }
@@ -400,10 +403,29 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
  *    不是脚本在浏览器里切 class —— 没 JS 也完全正确。
  * 领域顺序 / 名字全部来自 `views/scanPageRealm.js`（加减领域只改那个文件）。
  */
-const realmBarHtml = (realm = DEFAULT_REALM) => {
-  // ⭐⭐ 2026-10-13（她最终顺序）：**两行三列** —— 第一行 销售·补货·库存；第二行 标签·上新·配品。
-  //   · 每一行一个 `grid` 三列（不靠 CSS 文件也能成形 ⇒ 服务端渲染立即生效 ✓）
-  //   · `上新` 不是页面领域 ⇒ 渲染成**直达外链**（`realmBar.newFormUrl`，服务端配置 ✓）
+/**
+ * ⭐⭐ 2026-10-15（业务负责人逐字）：「…**我希望我们的排序可以改下，库存、销售、补货、退货、扫一扫**。默认还是销售页。」
+ *   ⇒ 上条的**显示顺序**由 `SCAN_PAGE.realmBar.order` 定（**配置先行** ✓）：
+ *     `scanPageRealm.js` 只回答「**有哪些领域**」（成员唯一真源 ✓），"先摆哪个"是**视图参数** ⇒ 放配置里。
+ *   ⚠️ **兜底（不静默丢格 ✗）**：配置缺失 / 与 `REALM_TABS` **不是同一个集合** ⇒ 回落 `REALM_TABS`
+ *      自己的顺序（宁可顺序旧，也不能少一格/多一格 ✗）。
+ */
+const orderedRealmTabs = () => {
+  const configured = (SCAN_PAGE.realmBar && SCAN_PAGE.realmBar.order) || [];
+  const ids = REALM_TABS.map((item) => item.id);
+  const picked = configured.map(String).filter((id) => ids.includes(id));
+  if (picked.length !== ids.length || new Set(picked).size !== ids.length) return REALM_TABS;
+  return picked.map((id) => REALM_TABS.find((item) => item.id === id));
+};
+
+/** 第 5 格：「扫一扫」（AppLink；**只在调得起来的设备上出现** —— 文案来自配置 ✓）。 */
+const scanCellHtml = () => `<a class="realm-tab realm-tab--scan" data-realm-id="scan" href="${escapeHtml(SCAN_PAGE.scanNext.applink)}" rel="noopener">${escapeHtml((SCAN_PAGE.realmBar && SCAN_PAGE.realmBar.scanLabel) || SCAN_PAGE.texts.scanNextLabel)}</a>`;
+
+const realmBarHtml = (realm = DEFAULT_REALM, userAgent = '') => {
+  // ⭐⭐ 2026-10-15（现状，改了就要同步这里）：**一整排** = 4 个领域（顺序见上面的 `orderedRealmTabs`）
+  //   ＋（只有飞书客户端）第 5 格「扫一扫」；列数 = 格数 ⇒ 铺满整宽、手机上不需要横滑 ✓
+  //   ⚠️ 2026-10-13 那个"两行三列 / 标签·上新·配品"的版式**已经不存在了**（配品搬去工作台、
+  //      上新与标签不上条 ⇒ 见 `scanPageRealm.js` 的沿革）—— 别再照那句话理解本函数 ✗
   const tabHtml = (item) => {
     if (item.external === true) {
       return `<a class="realm-tab" data-realm-id="${escapeHtml(item.id)}" href="${escapeHtml(SCAN_PAGE.realmBar.newFormUrl)}" target="_blank" rel="noopener">${escapeHtml(item.label)}</a>`;
@@ -416,10 +438,19 @@ const realmBarHtml = (realm = DEFAULT_REALM) => {
   //   ⇒ 每个 row 只占容器宽的 1/3，右边那一列空着 ✗（看起来就是"没铺满 + 最后一格像被截"）
   //   ⇒ 现在：容器**一整列**（每个 row 占满整宽 ✓）＋ **一行六格**、六列等分（`minmax(0,1fr)` ✓）
   //     每格 `min-width: 0`（长文案不会撑宽自己 ⇒ 不会把最后一格挤出去 ✗）；窄屏交给 `overflow-x: auto` ✓
-  const row = (items) => `<div class="realm-row" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));width:100%;gap:8px">${items.map(tabHtml).join('')}</div>`;
-  const items = REALM_TABS;
+  // ⭐⭐ 2026-10-15：列数 = **实际格数**（4 个领域，飞书客户端再加「扫一扫」这第 5 格）——
+  //   改前逐字：`repeat(6, minmax(0,1fr))`（固定 6 列 ⇒ 4 格时右边空两列 ✗ 看着"没铺满"）
+  //   改后逐字：`repeat(${cells.length}, minmax(0,1fr))` ⇒ **整排铺满、等分**，手机上**不需要横滑** ✓
+  //   ⚠️ `minmax(0,1fr)` 与每格 `min-width: 0`（见 `REALM_BAR_STYLE`）一起保证长文案不撑宽 ✗
+  const row = (htmlCells) => `<div class="realm-row" style="display:grid;grid-template-columns:repeat(${htmlCells.length},minmax(0,1fr));width:100%;gap:8px">${htmlCells.join('')}</div>`;
+  // 第 5 格只在**能调起飞书扫一扫**的设备上出现（电脑 / 普通浏览器不给假按钮 ✗ —— 那里照旧由
+  // 本单条的 `scanNextHint` 说人话 ✓，见 `draftBarHtml`）。
+  const cells = orderedRealmTabs().slice();
+  const scanTab = canScanNextWithFeishu(userAgent);
+  if (scanTab) cells.push(SCAN_TAB_MARKER);
+  const rendered = cells.map((item) => (item === SCAN_TAB_MARKER ? scanCellHtml() : tabHtml(item)));
   return `<nav class="realm-bar" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
-${row(items)}
+${row(rendered)}
 </nav>`;
 };
 
@@ -434,7 +465,7 @@ ${row(items)}
  */
 const noScriptHtml = () => `<noscript>
 <nav class="realm-bar realm-bar--plain" aria-label="${escapeHtml(REALM_TEXTS.barLabel)}">
-${REALM_TABS.map((realm) => (realm.external === true
+${orderedRealmTabs().map((realm) => (realm.external === true
   ? `<a class="realm-link" href="${escapeHtml(SCAN_PAGE.realmBar.newFormUrl)}" target="_blank" rel="noopener">${escapeHtml(realm.label)}</a>`
   : `<a class="realm-link" href="?from=${escapeHtml(realm.id)}">${escapeHtml(realm.label)}</a>`)).join('\n')}
 </nav>
@@ -492,14 +523,22 @@ const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}
   const submitHtml = canSubmitHere && saleEnabled && count > 0 && !moneyFormOnPage
     ? `<a class="btn btn--primary" href="?from=${escapeHtml(REALM_TEXTS.defaultRealmId || 'sales')}" rel="noopener">${escapeHtml(texts.submitOnSalesRealmLabel || texts.submitButton)}</a>`
     : '';
-  // 【继续扫下一个】：飞书客户端（手机）给真链接；其余设备给一句如实的人话。
+  // 【继续扫下一个】⭐⭐ 2026-10-15（业务负责人逐字：「…**库存、销售、补货、退货、扫一扫**」）：
+  //   飞书客户端里这一颗**已经搬去顶部那一排做第 5 格**（`realmBarHtml` 的 `scanCellHtml`）⇒
+  //   本单条**不再重复放它**（同一件事说两遍、还白占一行 ✗）；
+  //   ⚠️ **非飞书**（电脑 / 普通浏览器）**照旧**给那句人话 —— 那里没有第 5 格，
+  //      不给一句人话就是"点了没反应"的死路 ✗（她 2026-10-14 报过桌面端这个现象 ✓）。
   const scanNextHtml = canScanNextWithFeishu(userAgent)
-    ? `<a class="btn" href="${escapeHtml(config.scanNext.applink)}" rel="noopener">${escapeHtml(texts.scanNextLabel)}</a>`
+    ? ''
     : `<p class="hint">${escapeHtml(texts.scanNextHint)}</p>`;
   // 「刚加入本单」那一句：文案来自配置、只有数字来自会话（**没有回显注入面**）。
   const noticeHtml = write && write.notice
     ? `<p class="notice">${escapeHtml(write.notice)}</p>`
     : '';
+  // ⭐⭐ 2026-10-15：条里**一件东西都没有时**（飞书 + 没草稿 + 没反馈）⇒ **整条不渲染** ——
+  //   她的目的就是"少占地方" ✓ 一张空白卡（只剩内边距）比不渲染更占地方 ✗。
+  //   ⚠️ 非飞书**永远有那句人话** ⇒ 照旧渲染（AC-DB1 那些"没草稿也有这条"的判据都走这条路 ✓）。
+  if (!noticeHtml && !submitHtml && !scanNextHtml) return '';
   return `<section class="card draft-bar" data-view="draft-bar" aria-label="${escapeHtml(texts.draftBarLabel)}">
 ${noticeHtml}
 ${submitHtml}
@@ -1541,7 +1580,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
     //   ⇒ **货品卡在上、6 格 tab 条在下** ✓（原来是反的 ✗）· 只改顺序 ✓ 内容一字不动 ✗
     content: `${bar}
 ${identityHtml(view, config)}
-${realmBarHtml(safeRealm)}
+${realmBarHtml(safeRealm, page?.userAgent)}
 ${noScriptHtml()}
 ${fallbackHint}
 ${block}

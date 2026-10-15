@@ -764,7 +764,21 @@ const SCAN_PAGE = Object.freeze({
     inventory: Object.freeze({ group: null, groupWhenDegraded: false, missing: false, checkMissingByDefault: false }),
     replenish: Object.freeze({ group: null, groupWhenDegraded: false, missing: true, checkMissingByDefault: true }),
   }),
-  realmBar: { newFormUrl: resolveProductNewFormUrl(process.env) },
+  // ⭐⭐ 2026-10-15（业务负责人逐字，Lead 转达确认）：
+  //   「第一个卡片包含：销售、补货、库存、退货，以及一个"继续扫下一个"的卡片，那么
+  //    **我希望我们的排序可以改下，库存、销售、补货、退货、扫一扫**。默认还是销售页。」
+  //   ⇒ ① **显示顺序进配置**（改前逐字 = 渲染顺序就是 `scanPageRealm.js` 里 REALMS 的声明顺序
+  //        `销售 · 补货 · 库存 · 退货`；改后逐字 = 下面 `order`：**库存 · 销售 · 补货 · 退货**）
+  //      ⚠️ `scanPageRealm.js` 只管「**有哪些领域**」（成员唯一真源），显示顺序是**视图参数** ⇒ 放这里 ✓
+  //      ⚠️ 默认领域**一个字没动**（仍是销售，`DEFAULT_REALM`）—— 她：「默认还是销售页」✓
+  //   ⇒ ② 那一格「扫一扫」= 原来独占一行的【继续扫下一个】AppLink ⇒ 做成条上**第 5 格** ✓
+  //      文案**新键**（与领域名等长、一排好看；改文案只改配置 ✓）——
+  //      ⚠️ 「继续扫下一个」那句**留在本单条**给**非飞书**设备（电脑上没有第 5 格 ⇒ 必须有人话 ✗ 不许死按钮）
+  realmBar: {
+    newFormUrl: resolveProductNewFormUrl(process.env),
+    order: ['inventory', 'sales', 'replenish', 'purchase_return'],
+    scanLabel: '扫一扫',
+  },
   paymentStep: PAYMENT_STEP,
   saleSuccess: SALE_SUCCESS,
   number: NUMBER,

@@ -27,17 +27,40 @@ const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
 
 const SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
 // 2026-10-14 re-pointed: sales, replenish, inventory, purchase_return(returns), accessory(add-ons), new
-// ⭐ 2026-10-14 晚：配品搬去工作台 + 上新去掉 ⇒ 条上**四个**（销售·补货·库存·退货 ✓）
-const NAMES = ['\u9500\u552e', '\u8865\u8d27', '\u5e93\u5b58', '\u9000\u8d27'];
+// ⭐⭐ 2026-10-15（业务负责人逐字，Lead 转达确认）：
+//   「第一个卡片包含：销售、补货、库存、退货，以及一个"继续扫下一个"的卡片，那么
+//    **我希望我们的排序可以改下，库存、销售、补货、退货、扫一扫**。默认还是销售页。」
+//   改前逐字：`const NAMES = ['销售', '补货', '库存', '退货'];`（= `scanPageRealm.js` 的声明顺序）
+//   改后逐字：下面这一行（**库存 · 销售 · 补货 · 退货**）
+//   依据：她 2026-10-15 那句（上）—— 顺序已进**配置**（`SCAN_PAGE.realmBar.order` ✓ 配置先行）
+//   🔴 **判据一条没放宽**：仍是「这一排**有哪些格、什么顺序**」**逐字**钉（**4 格不变** ✗
+//      只是顺序按她的新口径；飞书客户端那第 5 格另有一条 ✓）
+const NAMES = ['库存', '销售', '补货', '退货'];
 
 const pageHtml = () => renderScanPage({
   found: false, number: 'X', rows: [], columns: [],
 }, SCAN_PAGE, null, 'sales', {});
 
-test('AC-BAR1 ⭐ 六个 tab 名称与顺序逐字 = 销售·补货·库存·标签·上新·配品（回归）', () => {
+test('AC-BAR1 ⭐ 这一排的名称与顺序逐字 = 库存·销售·补货·退货（默认页仍是销售）', () => {
+  const labels = (html) => [...html.matchAll(/<a[^>]*class="[^"]*realm-tab[^"]*"[^>]*>([^<]*)<\/a>/g)]
+    .map((m) => m[1].trim());
+  // ① 非飞书（本用例 UA 为空）：**4 格**、顺序逐字（第 5 格只在能扫码的设备上出现 ✓）
   const html = pageHtml();
-  const labels = [...html.matchAll(/<a[^>]*class="[^"]*realm-tab[^"]*"[^>]*>([^<]*)<\/a>/g)].map((m) => m[1].trim());
-  assert.deepEqual(labels.slice(0, 4), NAMES, `四个 tab 的名称/顺序必须逐字（实际 ${JSON.stringify(labels)}）`);
+  const names = labels(html);
+  assert.deepEqual(names, NAMES, `四个领域的名称/顺序必须逐字（实际 ${JSON.stringify(names)}）`);
+  assert.equal(names.length, 4, '非飞书：条上**只有 4 格**（不给"点了没反应"的假按钮 ✗）');
+  // ② 默认页仍是**销售**（她那句里的后半句「默认还是销售页」✓ 一个字没动）
+  assert.match(html, /class="realm-tab realm-tab--active" data-realm-id="sales"[^>]*aria-current="page"/,
+    '裸扫开 = 销售页高亮 ✓（她：「默认还是销售页」）');
+  // ⭐⭐ 2026-10-15：飞书客户端 ⇒ 条上**多一格「扫一扫」**（第 5 格，= 原来独占本单条一行的那颗 AppLink）
+  const feishu = renderScanPage({
+    found: false, number: 'X', rows: [], columns: [],
+  }, SCAN_PAGE, null, 'sales', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Lark/7.0' });
+  const feishuNames = labels(feishu);
+  assert.deepEqual(feishuNames, [...NAMES, SCAN_PAGE.realmBar.scanLabel],
+    `飞书：4 个领域 + 第 5 格「扫一扫」（实际 ${JSON.stringify(feishuNames)}）`);
+  assert.match(feishu, new RegExp(`<a class="realm-tab realm-tab--scan"[^>]*href="${SCAN_PAGE.scanNext.applink.replace(/[/.]/g, '\\$&')}"`),
+    '第 5 格是**真 AppLink**（点一下就能扫下一个 ✓ 不是死按钮）');
 });
 
 test('AC-BAR2 🔴 每个标签各在自己那一格（**不许**出现「库存标签」连在一起 ✗）', () => {

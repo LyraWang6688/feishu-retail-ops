@@ -242,9 +242,14 @@ test('AC-DB3 【加入本单】成功后：本单条立即变成 N+1 + 一句极
     const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));
     assert.equal(countOnButton(pageFor('sales', WRITE([1, 2]))), 2, `realm=${realm}：加完之后条里还是旧数字`);
     assert.ok(bar.includes('已加入本单（2 双）'), `realm=${realm}：条里没有那句极简反馈`);
-    // ⚠️ 2026-10-11 起（她：「提交这一单只在销售页显示」）：四个领域**都有**【继续扫下一个】，
-    //    但【提交这一单】只在销售页 —— 见 AC-DB9。
-    assert.ok(bar.includes('继续扫下一个'), `realm=${realm}：反馈旁边就该是【继续扫下一个】`);
+    // ⚠️ 2026-10-15 **改写**（她：「…**库存、销售、补货、退货、扫一扫**」）：
+    //   改前逐字：`assert.ok(bar.includes('继续扫下一个'), \`realm=${realm}：反馈旁边就该是【继续扫下一个】\`);`
+    //   改后逐字：下面两条 —— **加单反馈**照旧在条里 ✓；【继续扫下一个】那颗**已搬去顶部那一排**（第 5 格）✓
+    //   依据：她 2026-10-15 拍板把它做成条上第 5 格（同一件事不说两遍 ✓）
+    //   🔴 **判据没放宽**：两个东西**都还在页面上**，只是那颗换了位置（下面第二条钉着 ✓）
+    assert.equal(bar.includes('继续扫下一个'), false, `realm=${realm}：本单条里不再重复那一颗（它在顶部第 5 格 ✓）`);
+    assert.ok(pageFor(realm, write, FEISHU_MOBILE_UA).includes(`>${SCAN_PAGE.realmBar.scanLabel}<`),
+      `realm=${realm}：顶部那一排要有第 5 格「${SCAN_PAGE.realmBar.scanLabel}」`);
     // ⚠️ 2026-10-12 **改写**：改前这里断言"销售页的**本单条里**有【提交这一单】"——
     //    那颗按钮不带收款字段，真机丢钱就是它（见 AC-DB2 的注释）。改后本单条**任何领域都没有**
     //    提交按钮；销售页那一颗在**销售块**里（AC-DB9 钉着"整页恰好一颗"）。
@@ -271,10 +276,23 @@ test('AC-DB4 【继续扫下一个】：飞书手机客户端 = 扫一扫 AppLin
   assert.equal(canScanNextWithFeishu(''), false);
   assert.equal(canScanNextWithFeishu(undefined), false);
 
-  // ② 飞书手机客户端：本单条里是**真链接**（点一下直接扫下一个）
-  const inFeishu = barOf(pageFor('sales', WRITE([line(40)]), FEISHU_MOBILE_UA));
-  assert.ok(inFeishu.includes(`href="${SCAN_PAGE.scanNext.applink}"`), '缺飞书扫一扫 AppLink');
-  assert.ok(inFeishu.includes(SCAN_PAGE.texts.scanNextLabel), '缺【继续扫下一个】这几个字');
+  // ② ⚠️ 2026-10-15 **改写**（她：「…库存、销售、补货、退货、扫一扫」+ Lead 拍板"做成第 5 格"）：
+  //   改前逐字：`const inFeishu = barOf(pageFor('sales', WRITE([line(40)]), FEISHU_MOBILE_UA));`
+  //     ＋ `assert.ok(inFeishu.includes(\`href="${SCAN_PAGE.scanNext.applink}"\`), '缺飞书扫一扫 AppLink');`
+  //     ＋ `assert.ok(inFeishu.includes(SCAN_PAGE.texts.scanNextLabel), '缺【继续扫下一个】这几个字');`
+  //   改后逐字：下面这几条 —— **真 AppLink + 配置文案在顶部那一排（第 5 格）** ✓；
+  //     本单条（若仍渲染）里**不再重复**它 ✓
+  //   依据：她 2026-10-15 那句；🔴 **链接一个字都没丢**（只是从"占一整行"挪进这一排 ✓）
+  const feishuPage = pageFor('sales', WRITE([line(40)]), FEISHU_MOBILE_UA);
+  const realmBar = feishuPage.slice(feishuPage.indexOf('<nav class="realm-bar"'), feishuPage.indexOf('</nav>'));
+  assert.ok(realmBar.includes(`href="${SCAN_PAGE.scanNext.applink}"`), '飞书扫一扫 AppLink 必须在顶部那一排（第 5 格）');
+  assert.ok(realmBar.includes(`>${SCAN_PAGE.realmBar.scanLabel}<`), '第 5 格文案来自配置（`realmBar.scanLabel`）✓');
+  const feishuBarStart = feishuPage.indexOf('data-view="draft-bar"');
+  if (feishuBarStart > -1) {
+    const feishuBar = feishuPage.slice(feishuPage.lastIndexOf('<section', feishuBarStart),
+      feishuPage.indexOf('</section>', feishuBarStart));
+    assert.equal(feishuBar.includes(SCAN_PAGE.scanNext.applink), false, '本单条里**不再重复**那颗 AppLink ✓');
+  }
 
   // ③ 电脑 / 普通浏览器：**不给按钮**，只给一句如实的人话（她的硬要求：绝不允许点了没反应）
   for (const ua of [PLAIN_BROWSER_UA, FEISHU_DESKTOP_UA, '', undefined]) {
@@ -313,9 +331,18 @@ test('AC-DB5 跨编号累积：会话 key **按人（登录会话）**存，扫�
 
 test('AC-DB6 提交之后：本单条归零（提交按钮跟着消失）；成功页照旧（单号 / 双数），且不挂本单条', () => {
   // ① 提交成功后服务端把会话复位（`completeSale` 把 lines 清空 + 幂等键轮换）⇒ 再打开这一页是 0 双
-  const afterSubmit = barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA));
-  assert.equal(countOnButton(afterSubmit), null, '提交后按钮上没有双数（= 本单归零 ✓）');
-  assert.equal(afterSubmit.includes(SCAN_WRITE.texts.submitButton), false, '提交后【提交这一单】要跟着消失');
+  // ⚠️ 2026-10-15 **改写**（第 5 格搬去顶部之后，飞书端归零时本单条**整条不渲染**了 ——
+  //   她的目的正是"少占地方" ✓）：改成**页面级**断言（比原来只看那一条更严 ✓）
+  //   改前逐字：`const afterSubmit = barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA));`
+  //     ＋ `assert.equal(countOnButton(afterSubmit), null, …)` + `assert.equal(afterSubmit.includes(…submitButton), false, …)`
+  //   改后逐字：下面三条 ✓
+  // ⚠️ 2026-10-15：本单条在**非飞书**下照旧渲染（那句人话在 ✓）⇒ 原来那两条**逐字保留**（判据不放宽 ✗）
+  const afterSubmitBar = barOf(pageFor('sales', WRITE([]), ''));
+  assert.equal(countOnButton(afterSubmitBar), null, '提交后按钮上没有双数（= 本单归零 ✓）');
+  assert.equal(afterSubmitBar.includes(SCAN_WRITE.texts.submitButton), false, '提交后【提交这一单】要跟着消失');
+  // ⭐ 新增（同一天）：**飞书端**归零后**整条不渲染**（她就是要"少占地方"⇒ 不留空卡片 ✓）
+  assert.equal(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA).includes('data-view="draft-bar"'), false,
+    '飞书端：提交后本单条归零 ⇒ 整条不渲染 ✓');
 
   // ② 成功页（结果页）形状照旧：单号 + 双数都在；它是"结果页"，**不挂本单条**
   const done = renderScanMessagePage({
@@ -485,18 +512,40 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
     '销售页：有草稿 ⇒ 页面上一颗（且只有一颗）提交按钮，就在销售块那唯一的表单里');
   assert.ok(salesPage.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
     '销售页：那颗按钮写着几双（提交这一单（2 双））');
-  assert.equal(barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA)).includes(SCAN_WRITE.actions.submitOrder),
-    false, '销售页：本单条里没有提交动作（空本单时那颗在销售块里，写着"（1 双）"）');
+  // ⚠️ 2026-10-15 **改写**（飞书端空本单 ⇒ 本单条整条不渲染了）：
+  //   改前逐字：`assert.equal(barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA)).includes(SCAN_WRITE.actions.submitOrder), false, '销售页：本单条里没有提交动作（空本单时那颗在销售块里，写着"（1 双）"）');`
+  //   改后逐字：下面两条 —— ① 飞书端**没有本单条**（更省地方 ✓）② 非飞书端那份条里**没有提交动作** ✓
+  //   依据：她 2026-10-15「少占地方」；🔴 判据没放宽：「本单条里没有提交动作」这条照旧钉着（非飞书那份 ✓）
+  assert.equal(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA).includes('data-view="draft-bar"'), false,
+    '销售页：飞书端空本单 ⇒ 整条不渲染 ✓');
+  assert.equal(barOf(pageFor('sales', WRITE([]), '')).includes(SCAN_WRITE.actions.submitOrder), false,
+    '销售页：本单条里没有提交动作（空本单时那颗在销售块里，写着"（1 双）"）');
   // ③ 其余三个领域：`本单：N 双` ＋【继续扫下一个】照旧，**提交相关的痕迹一个都不许有**
   // ⚠️ **验收领域不在这一条里**：验收有自己的本单条（「已验收 N 双 / 应到 M 双」），
   //    所以销售那条本单条在验收领域**刻意不渲染**（见 `renderScanPage` 的 `bar` 分支）。
+  // ⚠️ 2026-10-15 **改写**（同一天：第 5 格搬去顶部 ⇒ 这几个领域的本单条可能**整条不渲染**了，
+  //   她的目的就是少占地方 ✓）：改成**页面级**断言（更强：连"空条"都不留 ✓）
+  //   改前逐字：`const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));`
+  //     ＋ `assert.ok(bar.includes(SCAN_PAGE.texts.scanNextLabel), \`realm=${realm}：【继续扫下一个】照旧要在\`);`
+  //     ＋ 三条 `assert.equal(bar.includes(…), false, …)`
+  //   改后逐字：下面这一块 ✓（那颗现在在**顶部第 5 格**，AC-DB4 ② 钉着「它还在页面上」✓）
+  // ⚠️ 判据要在**正文**里判：`<style>` 里那段 CSS 注释逐字写着【提交这一单】（讲本单条的沿革）⇒
+  //    整页 `includes()` 会假红 ✗（我第一版就是这么挂的）⇒ 一律先切掉 `<style>` 之前的部分 ✓
+  const contentOf = (html) => html.slice(html.indexOf('</style>'));
   for (const realm of ['inventory', 'replenish', 'purchase_return', 'product']) {
-    const bar = barOf(pageFor(realm, write, FEISHU_MOBILE_UA));
+    const content = contentOf(pageFor(realm, write, FEISHU_MOBILE_UA));
     assert.equal(countOnButton(pageFor('sales', WRITE([1, 2]))), 2, `realm=${realm}：条的"几双"照旧要在（跨领域共用同一份本单）`);
-    assert.ok(bar.includes(SCAN_PAGE.texts.scanNextLabel), `realm=${realm}：【继续扫下一个】照旧要在`);
-    assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false, `realm=${realm}：不该有【提交这一单】`);
-    assert.equal(bar.includes(SCAN_WRITE.actions.submitOrder), false, `realm=${realm}：连那个提交表单都不该有`);
-    assert.equal(bar.includes('<button'), false, `realm=${realm}：本单条里一个按钮都不该有`);
+    const realmBar = content.slice(content.indexOf('<nav class="realm-bar"'), content.indexOf('</nav>'));
+    assert.ok(realmBar.includes(`>${SCAN_PAGE.realmBar.scanLabel}<`), `realm=${realm}：顶部第 5 格「扫一扫」要在 ✓`);
+    assert.equal(content.includes(SCAN_WRITE.texts.submitButton), false, `realm=${realm}：不该有【提交这一单】`);
+    assert.equal(content.includes(SCAN_WRITE.actions.submitOrder), false, `realm=${realm}：连那个提交表单都不该有`);
+    const barStart = content.indexOf('data-view="draft-bar"');
+    if (barStart > -1) {
+      const bar = content.slice(content.lastIndexOf('<section', barStart), content.indexOf('</section>', barStart));
+      assert.equal(bar.includes('<button'), false, `realm=${realm}：本单条里一个按钮都不该有`);
+      assert.equal(bar.includes(SCAN_PAGE.texts.scanNextLabel), false, `realm=${realm}：本单条里不再重复【继续扫下一个】✓`);
+      assert.equal(bar.includes(SCAN_PAGE.scanNext.applink), false, `realm=${realm}：本单条里不再重复那颗 AppLink ✓`);
+    }
   }
   // ④ 缺省领域与"认不出的领域"都回落销售 ⇒ 照旧能提交（在销售块里）
   for (const realm of [undefined, '不存在的领域']) {
