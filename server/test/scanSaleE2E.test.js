@@ -390,6 +390,30 @@ const addLine = (base, cookie, number, size) => postForm(pageUrlOf(base, number)
 
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
+/**
+ * ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人 2026-10-12 逐字「我可没有说过，
+ *   **我们是能够进行动态交互的**」＋ 她 2026-10-16 亲口点的「页面标注模式」（扫码页 + 工作台 ✓））：
+ *
+ *   改前逐字：本文件三处"整页只该有那一段提交反馈脚本 / 资金页仍只有一段脚本 /
+ *            **不许新增脚本**（实际 N 段 ✗）"——数的都是**全部** `<script>`。
+ *   改后逐字：三处都改成数**业务**脚本（`businessScriptCountOf`），
+ *            并另加一条"那一段标注脚本必须在且**必须早退**"。
+ *
+ *   依据：「扫码页零 JS」是**我方（agent 侧）**的约束、**不是她的口径**；而"带 `?annotate=1`
+ *     才出现"这道闸门**只能落在脚本内部** —— 查询串只有 `routes/scanPage.js` 拿得到，
+ *     那个文件**不在本任务写作用域内**（另有主）。
+ *   ⚠️ **没放宽**：三处上限一个字没动，只是把"脚本"点明成**业务**脚本，
+ *     并把标注那一段单独钉住（**必须在 ＋ 必须早退**）✓
+ */
+const ANNOTATE_MARK = '<script data-view="annotate">';
+const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
+const annotateScriptOnlyEarlyExits = (html) => {
+  const at = html.indexOf(ANNOTATE_MARK);
+  if (at < 0) return false;
+  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
+  return body.includes('location.search') && body.includes('if (!enabled()) return');
+};
+
 // ⭐⭐ 2026-10-14（业务负责人逐字：「只删「本单：N 双」这一个数、按钮原地留着」＋「补货/库存/退货/配品**不需要**看到本单几双」）：
 //   顶部计数已删 ✓ ⇒ 「本单几双」改从 ⭐ 提交按钮上的双数读（只在销售页 ✓）
 //   🔴 判据强度不变 ✗ · ⚠️ 不用共享 class draft-bar__count 当判据 ✗
@@ -427,8 +451,10 @@ test('AC-E2E-1 扫第一个码 ⇒ /s/{编号}?from=sales 是销售页：尺码�
 
       // 第7步：页面**零前端脚本**（手机白屏事故之后定的底线）
       // ⭐ 2026-10-12：销售页有提交按钮 ⇒ 只允许那一段反馈脚本
-      assert.equal(scriptCountOf(page.html), 1, '第7步：整页只该有那一段提交反馈脚本');
+      // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `scriptCountOf` 上面那段注释）
+      assert.equal(businessScriptCountOf(page.html), 1, '第7步：整页只该有那一段提交反馈脚本（业务脚本）');
       assert.ok(page.html.includes('<script data-view="submit-feedback">'));
+      assert.equal(annotateScriptOnlyEarlyExits(page.html), true, '那段标注脚本必须在且必须早退 ✓');
     });
   } finally { e2e.cleanup(); }
 });
@@ -1972,7 +1998,8 @@ test('AC-ACT1 🔴 不带 action 的真提交 ⇒ 窄化兜底认出"提交这�
       assert.equal(first.status, 200, `第一步要能到资金页（实际 ${first.status}）`);
       const firstHtml = await first.clone().text();
       assert.ok(firstHtml.includes('data-view="payment-step"'), '第一步到的是资金页（她不再被卡 ✓）');
-      assert.equal((firstHtml.match(/<script/g) || []).length, 1, '资金页仍只有一段脚本');
+      assert.equal(businessScriptCountOf(firstHtml), 1, '资金页仍只有一段脚本（业务脚本）');
+      assert.equal(annotateScriptOnlyEarlyExits(firstHtml), true, '那段标注脚本必须在且必须早退 ✓');
       const response = await followPaymentStep(base, cookie, first);
       assert.equal(response.status, 200, `要能建单（实际 ${response.status}）`);
       const html = await response.text();
@@ -2023,8 +2050,9 @@ test('AC-TAP1 ⭐ 点击即时反馈：钩子 + 配置文案 + CSS :active + **�
       //   改后：那块退场 ⇒ 这个钩子**必须没有** ✓（其余"点击即时反馈"判据一个字没动 ✓）
       assert.equal(/data-tap-target="batch:/.test(rendererSrc), false, '验收自助块那排批次行已退场 ⇒ 钩子也没了 ✓');
       assert.match(html, /\.realm-tab:active[^{]*\{[^}]*opacity/, 'CSS :active 要有（按住即变淡 ✓ 零脚本 ✓）');
-      const scripts = html.match(/<script[\s>]/gi) || [];
-      assert.ok(scripts.length <= 1, `**不许新增脚本**（实际 ${scripts.length} 段 ✗）`);
+      const scripts = html.match(/<script(?! data-view="annotate")[\s>]/gi) || [];
+      assert.ok(scripts.length <= 1, `**不许新增业务脚本**（实际 ${scripts.length} 段 ✗）`);
+      assert.equal(annotateScriptOnlyEarlyExits(html), true, '那段标注脚本必须在且必须早退 ✓');
       assert.ok(/navigator\.sendBeacon/.test(html), '同一段脚本里要有上报（keepalive ✓）');
     });
   } finally { e2e.cleanup(); }

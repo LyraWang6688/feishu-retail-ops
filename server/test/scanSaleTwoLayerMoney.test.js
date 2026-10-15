@@ -291,7 +291,28 @@ const WRITE = (overrides = {}) => ({
   ...overrides,
 });
 
-const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
+/**
+ * ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人 2026-10-12 逐字「我可没有说过，
+ *   **我们是能够进行动态交互的**」＋ 她 2026-10-16 亲口点的「页面标注模式」（扫码页 + 工作台 ✓））：
+ *
+ *   改前逐字：`const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;`
+ *            … `assert.equal(scriptCountOf(html), 1, '销售页只该有那一段提交反馈脚本');`
+ *   改后逐字：加上 `(?! data-view="annotate")`（只数**业务**脚本），
+ *            并另加一条"那一段标注脚本必须在且**必须早退**"。
+ *
+ *   依据：「扫码页零 JS」是**我方（agent 侧）**的约束、**不是她的口径**；而"带 `?annotate=1`
+ *     才出现"这道闸门**只能落在脚本内部** —— 查询串只有 `routes/scanPage.js` 拿得到，
+ *     那个文件**不在本任务写作用域内**（另有主）。
+ *   ⚠️ **没放宽**：仍然是"恰好 1 段"，只是把"那一段"点明成业务脚本，并把标注脚本单独钉住 ✓
+ */
+const ANNOTATE_MARK = '<script data-view="annotate">';
+const scriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
+const annotateScriptOnlyEarlyExits = (html) => {
+  const at = html.indexOf(ANNOTATE_MARK);
+  if (at < 0) return false;
+  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
+  return body.includes('location.search') && body.includes('if (!enabled()) return');
+};
 
 test('AC-1 销售页只有两层：每件填「实收金额」；资金区**没有**「付款情况」三档、收款行预置 1 行', () => {
   const write0 = WRITE();
@@ -379,7 +400,9 @@ test('AC-1 销售页只有两层：每件填「实收金额」；资金区**没�
   assert.match(STYLE, /\.form-row--pay/);
   // ⑦ 零 JS 的底线不许破（2026-10-09 白屏事故之后的既有约束）
   // ⭐ 2026-10-12：销售页只允许那一段提交反馈脚本
-  assert.equal(scriptCountOf(html), 1, '销售页只该有那一段提交反馈脚本');
+  // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `scriptCountOf` 上面那段注释）
+  assert.equal(scriptCountOf(html), 1, '销售页只该有那一段提交反馈脚本（业务脚本）');
+  assert.equal(annotateScriptOnlyEarlyExits(html), true, '那段标注脚本必须在且必须早退 ✓');
   assert.equal(/on(click|load|submit)\s*=/i.test(html), false, '不许有内联事件');
 });
 
