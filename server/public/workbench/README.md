@@ -45,8 +45,10 @@ Tab 页的顺序从左往右是：**销售、库存、采购和货品**」）：
 - ⚠️ **保留**（她要的）：`inventory-adjustment.html`（库存 · 手工调整）· `label-print.html`（货品 · 标签打印）·
   订单列表模块 · 扫码页 · `features/domains/**`。
 - ⚠️ 先留着没删（**当前没有任何页面挂载，属孤儿**，等她一句话再决定）：
-  `features/common/index.js` + `config/home.js`（信息录入三张卡）· `features/purchase/{index,links}.js`
-  （老采购管理 / 采购和退货页的模块）。
+  `features/common/index.js` + `config/home.js`（信息录入三张卡）。
+  ⭐ **老采购管理 / 采购和退货页那两个模块（`features/purchase/` **整目录**）已于 2026-10-15 删除**
+  —— 业务负责人逐字「**采购页的老文件是死代码，给删除了吧**」⇒ 它当年那两条真判据（表名 / 文案同步）
+  已迁到活着的采购页上继续钉（逐条清单见 PR #607）；`config/links.js` 里那两个飞书表单 URL 常量**照旧保留** ✓。
 - 原「信息查询」的**两个板块**没有被丢掉，而是各回各的领域：
   `sales-query` → 销售 · 销售查询；`inventory-query` → 库存 · **全仓查询**（清单仍在 `config/query.js`，
   URL 仍只在 `config/links.js`：`SALES_QUERY_PAGE_URL` / `INVENTORY_QUERY_PAGE_URL`）。

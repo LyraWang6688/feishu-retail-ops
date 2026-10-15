@@ -242,7 +242,7 @@ test('AC-6R1 五个领域逐字 = 销售 · 补货 · 库存 · 退货 · 标签
   assert.equal(DEFAULT_REALM, 'sales', '缺省领域仍 = 销售');
 });
 
-test('AC-6R2 ⭐ 切换条：6 条真链接 + **一行六格铺满整宽**（窄屏可横滑、每格 ≥44px、零 JS）', () => {
+test('AC-6R2 ⭐ 切换条：4 条真链接 + **一行铺满整宽**（列数=格数、每格 ≥44px、零 JS）', () => {
   const html = htmlFor('sales');
   const bar = html.slice(html.indexOf('<nav class="realm-bar"'), html.indexOf('</nav>'));
   // ⚠️ 2026-10-13 **改写**（逐字）：
@@ -252,7 +252,13 @@ test('AC-6R2 ⭐ 切换条：6 条真链接 + **一行六格铺满整宽**（窄
   //   理由：她 2026-10-13 的最终版 —— 第一行 销售·补货·库存；第二行 标签·上新·配品 ✓
   const links = [...bar.matchAll(/<a class="realm-tab[^"]*" data-realm-id="([^"]+)" href="([^"]+)"[^>]*>/g)]
     .map((match) => ({ id: match[1], href: match[2], tag: match[0] }));
-  assert.deepEqual(links.map((item) => item.id), REALM_TABS.map((realm) => realm.id), '条上四个 = REALM_TABS');
+  // ⚠️ 2026-10-15 **改写**（她：「…**库存、销售、补货、退货、扫一扫**」）：
+  //   改前逐字：`assert.deepEqual(links.map((item) => item.id), REALM_TABS.map((realm) => realm.id), '条上四个 = REALM_TABS');`
+  //   改后逐字：**顺序**对配置（`SCAN_PAGE.realmBar.order` ✓ 配置先行）；**集合**对 REALM_TABS ✓
+  //   依据：她 2026-10-15 那句 —— 🔴 判据没放宽：一格不少、一格不多、顺序逐字 ✓
+  assert.deepEqual(links.map((item) => item.id), [...SCAN_PAGE.realmBar.order], '条上四个 = 配置顺序（库存·销售·补货·退货）✓');
+  assert.deepEqual(links.map((item) => item.id).slice().sort(), REALM_TABS.map((realm) => realm.id).slice().sort(),
+    '条上的格 = REALM_TABS 的**集合**（不多不少 ✓）');
   for (const link of links.filter((item) => item.id !== 'new')) {
     assert.equal(link.href, `?from=${link.id}`, `内部领域的 href 仍 = ?from=<id>`);
   }
@@ -272,8 +278,14 @@ test('AC-6R2 ⭐ 切换条：6 条真链接 + **一行六格铺满整宽**（窄
   assert.match(barRule, /grid-template-columns:\s*1fr;/, '容器一整列（每行占满整宽 ✓）');
   assert.match(barRule, /width:\s*100%/, '容器整宽 ✓');
   assert.match(barRule, /overflow-x:\s*auto/, '⭐ 窄屏允许横向滚动（不裁切 ✗）');
-  assert.ok(style.includes('repeat(6,minmax(0,1fr))') && style.includes('width:100%'),
-    '行 = 四列等分整宽 ✓（一格都不许被挤出容器）');
+  // ⚠️ 2026-10-15 **改写**：行**列数 = 实际格数**（`repeat(${htmlCells.length}, …)`）——
+  //   改前逐字：`assert.ok(style.includes('repeat(6,minmax(0,1fr))') && style.includes('width:100%'), '行 = 四列等分整宽 ✓…')`
+  //   改后逐字：下面两条（源码形状 + **渲染出来的列数 === 格数**）
+  //   依据：固定 6 列在 4 格时右边空两列（= 她说的"没铺满"✗）⇒ 列数跟格数走 ✓
+  assert.ok(style.includes('grid-template-columns:repeat(${htmlCells.length},minmax(0,1fr));width:100%'),
+    '行 = 列数=格数、等分整宽 ✓（一格都不许被挤出容器）');
+  const renderedCols = Number((bar.match(/grid-template-columns:repeat\((\d+)/) || [])[1]);
+  assert.equal(renderedCols, links.length, `渲染列数必须 === 格数（实际 ${renderedCols} 列 / ${links.length} 格）`);
   const tabRule = style.match(/\n\.realm-tab \{[^}]*\}/)[0];
   assert.match(tabRule, /min-height:\s*var\(--control-height\)/, '每格 ≥44px（复用既有可点高度）');
 });

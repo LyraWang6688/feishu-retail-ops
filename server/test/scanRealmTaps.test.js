@@ -84,14 +84,23 @@ test('AC5 ⭐ 每一格的可点高度 ≥44px（`--control-height`，她的老�
 
 const TOKENS = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'styles', 'tokens.css'), 'utf8');
 
-test('AC6 ⭐⭐ 切换条铺满整宽：容器**一整列**、行 = 六列等分 + width:100%、每格 min-width:0', () => {
+test('AC6 ⭐⭐ 切换条铺满整宽：容器**一整列**、行 = 列数=格数 + width:100%、每格 min-width:0', () => {
   const css = stripped(source);
   // ① 容器：一整列（**原来它是 3 列**，而里面有两个 row ⇒ 每个 row 只占 1/3 ⇒ 右边空着 ✗ 这正是"没铺满"）
   assert.match(css, /\.realm-bar\s*\{[^}]*grid-template-columns:\s*1fr;/, '容器必须是一整列（row 才能占满整宽 ✓）');
   assert.match(css, /\.realm-bar\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%;/, '容器整宽 ✓');
   assert.match(css, /\.realm-bar\s*\{[^}]*overflow-x:\s*auto;/, '窄屏**横向滚动**而不是裁切 ✗');
-  // ② 行：六列等分 + 整宽
-  assert.match(source, /grid-template-columns:repeat\(6,minmax\(0,1fr\)\);width:100%/, '一行六格、六列等分、整宽 ✓');
+  // ② 行：**列数 = 实际格数** + 整宽
+  // ⚠️ 2026-10-15 **改写**（4 个领域 + 飞书多一格「扫一扫」）：
+  //   改前逐字：`assert.match(source, /grid-template-columns:repeat\(6,minmax\(0,1fr\)\);width:100%/, '一行六格、六列等分、整宽 ✓');`
+  //   改后逐字：下面这两条（`repeat(${htmlCells.length}, …)` + **渲染列数 === 格数**）✓
+  //   依据：固定 6 列在 4 格时右边空两列；列数跟格数走才真"铺满整宽"✓（判据没放宽 ✗）
+  assert.match(source, /grid-template-columns:repeat\(\$\{htmlCells\.length\},minmax\(0,1fr\)\);width:100%/, '一行铺满、列数=格数、整宽 ✓');
+  // ⚠️ 本文件只读**源码**（不渲染页面）⇒ "渲染列数 === 格数"这条由**渲染层**那两个用例做
+  //   （`scanPageRealmTabs` 的 AC-RB2 与 `scanPageSixRealms` 的 AC-6R2，都当场渲染并数格/数列 ✓）——
+  //   这里补一条源码级不变量：列数**不许写死**（写死 6/4/5 都会在格数变化时静默错位 ✗）。
+  assert.equal(/grid-template-columns:repeat\(\d/.test(source), false,
+    '列数**不许写死**（必须 repeat(${htmlCells.length}, …) ⇒ 跟格数走 ✓）');
   // ③ 每格 min-width:0（长文案不许把自己撑宽 ⇒ 不许把最后一格挤出容器 ✗）
   assert.match(css, /\.realm-tab\s*\{[^}]*min-width:\s*0;/, '每格 min-width:0 ✓');
   assert.match(css, /\.realm-tab\s*\{[^}]*white-space:\s*nowrap;/, '文字仍不许竖拆 ✓');
@@ -100,14 +109,20 @@ test('AC6 ⭐⭐ 切换条铺满整宽：容器**一整列**、行 = 六列等�
   assert.equal((source.match(/items\.slice\(/g) || []).length, 0, '不许再把六格切成两行 ✓');
 });
 
-test('AC7 ⭐ 算术推导：常见最窄手机宽下，六格每格仍 ≥44px（放不下 ⇒ 才是横向滚动）', () => {
+// ⚠️ 2026-10-15（同一天的口径）：条上最多 **5 格**（4 个领域 + 飞书的「扫一扫」）——
+//   改前逐字：`test('AC7 ⭐ 算术推导：常见最窄手机宽下，六格每格仍 ≥44px（放不下 ⇒ 才是横向滚动）', () => {`
+//     ＋ `const needed = 6 * 44 + 5 * gap;`
+//   改后逐字：下面这几行（按 **5 格**这一上界算）
+//   依据：她 2026-10-15「…库存、销售、补货、退货、扫一扫」；🔴 判据**变严**了（原来按 6 格宽松算，
+//        现在条上最多 5 格 ⇒ 常见手机更宽裕 ⇒「不需要横滑」这条更成立 ✓）
+test('AC7 ⭐ 算术推导：常见最窄手机宽下，**条上最多 5 格**每格仍 ≥44px（放不下 ⇒ 才是横向滚动）', () => {
   const height = Number(TOKENS.match(/--control-height:\s*(\d+)px/)[1]);
   assert.ok(height >= 44, `每格高度 ≥44px（实际 ${height}）`);
   const gap = 8; // 行内 gap:8px（与渲染一致 ✓）
-  const narrowest = 304; // 六格各 44 + 5 个 gap 8 = 304 ⇒ 屏幕 ≥304px 时每格都 ≥44px ✓
-  const needed = 6 * 44 + 5 * gap;
-  assert.equal(needed, narrowest, `六格各 ≥44px 需要 ${needed}px 可用宽`);
-  assert.ok(narrowest <= 320, '常见的 320px 手机也放得下 ⇒ 不必横滑 ✓（更窄才走 overflow-x:auto ✓）');
+  const narrowest = 252; // 五格各 44 + 4 个 gap 8 = 252 ⇒ 屏幕 ≥252px 时每格都 ≥44px ✓
+  const needed = 5 * 44 + 4 * gap;
+  assert.equal(needed, narrowest, `五格各 ≥44px 需要 ${needed}px 可用宽`);
+  assert.ok(narrowest <= 320, '常见的 320px 手机**宽裕**放得下 ⇒ 不必横滑 ✓（更窄才走 overflow-x:auto ✓）');
   // 文字完整（行数=1）：六个标签都是 2 个字 + nowrap ⇒ 在 ≥44px 宽里完整显示 ✓
   const realms = fs.readFileSync(path.join(__dirname, '..', 'src', 'views', 'scanPageRealm.js'), 'utf8');
   const labels = [...realms.matchAll(/Object\.freeze\(\{ id: '(\w+)', label: '([^']+)'(, external: true)? \}\)/g)]

@@ -83,7 +83,7 @@ test('AC-RB1 ⭐ 六 tab 名称与顺序逐字 = 销售·补货·库存·退货�
   assert.equal(resolveRealm('purchase_return'), 'purchase_return', '退货仍解析到自己 ✓');
 });
 
-test('AC-RB2 ⭐ 一行六格（2026-10-14 她：「没有铺满屏幕的水平方向……最后一格被截」——改成铺满整宽）', () => {
+test('AC-RB2 ⭐ 一行铺满（4 格；2026-10-14 她：「没有铺满屏幕的水平方向……最后一格被截」⇒ 列数=格数）', () => {
   const bar = barOf(htmlFor('sales'));
   const ids = [...bar.matchAll(/data-realm-id="([^"]+)"/g)].map((match) => match[1]);
   // ⚠️ 2026-10-14 **改写**（她：「没有铺满屏幕的水平方向」✗）——
@@ -91,14 +91,26 @@ test('AC-RB2 ⭐ 一行六格（2026-10-14 她：「没有铺满屏幕的水平�
   //              `assert.match(barRule, /repeat\(3,/, '三列（六个 = 两行）')` + `不许横滑`
   //   改后：**一行六格、等分铺满**（顺序不变 ✓）；窄屏允许横向滚动（不裁切 ✗）
   // ⚠️ 2026-10-14 改指向（同上）：条上六个 = 销售·补货·库存·退货·配品·上新 ✓
-  assert.deepEqual(ids, ['sales', 'replenish', 'inventory', 'purchase_return'], '四个领域、顺序逐字 ✓');
+  // ⚠️ 2026-10-15 **改写**（她：「…**库存、销售、补货、退货、扫一扫**」）：
+  //   改前逐字：`assert.deepEqual(ids, ['sales', 'replenish', 'inventory', 'purchase_return'], '四个领域、顺序逐字 ✓')`
+  //   改后逐字：`assert.deepEqual(ids, ['inventory', 'sales', 'replenish', 'purchase_return'], …)`
+  //   依据：她 2026-10-15 那句；顺序在**配置**里（`SCAN_PAGE.realmBar.order` ✓ 配置先行）
+  //   🔴 判据没放宽 ✗：仍是「四个领域 + 顺序逐字」；本用例 UA 为空 ⇒ 条上就是 4 格 ✓
+  assert.deepEqual(ids, ['inventory', 'sales', 'replenish', 'purchase_return'], '四个领域、顺序逐字 ✓（按她的新口径）');
   const style = fs.readFileSync(RENDERER_SRC, 'utf8');
   const barRule = style.match(/\.realm-bar \{[^}]*\}/)[0];
   assert.match(barRule, /grid-template-columns:\s*1fr;/, '容器一整列（每行占满整宽 ✓）');
   assert.match(barRule, /width:\s*100%/, '容器整宽 ✓');
   assert.match(barRule, /overflow-x:\s*auto/, '⭐ 窄屏**横向滚动**（不是裁切 ✗）');
-  assert.ok(style.includes('repeat(6,minmax(0,1fr))') && style.includes('width:100%'),
-    '行 = 六列等分整宽 ✓（一格都不许被挤出容器）');
+  // ⚠️ 2026-10-15 **改写**（同一天：4 个领域 + 飞书多一格「扫一扫」）：
+  //   改前逐字：`assert.ok(style.includes('repeat(6,minmax(0,1fr))') && style.includes('width:100%'), '行 = 六列等分整宽 ✓…')`
+  //   改后逐字：下面这两条 —— 行**列数 = 实际格数**（`repeat(${htmlCells.length}, …)`），
+  //             并要求**渲染出来的列数 === 渲染出来的格数**（4 格 4 列、铺满整宽 ⇒ 手机上不需要横滑 ✓）
+  //   依据：固定 6 列在只有 4 格时右边空两列（= 她说的"没铺满"✗）；列数跟格数走才是"铺满整宽"的正解 ✓
+  assert.ok(style.includes('grid-template-columns:repeat(${htmlCells.length},minmax(0,1fr));width:100%'),
+    '行 = 列数=格数、等分整宽 ✓（一格都不许被挤出容器）');
+  const renderedCols = Number((bar.match(/grid-template-columns:repeat\((\d+)/) || [])[1]);
+  assert.equal(renderedCols, ids.length, `渲染出来的列数必须 === 格数（实际 ${renderedCols} 列 / ${ids.length} 格）`);
 });
 
 test('AC-RB3 ⭐ 「退货」回到条上（逐字 ✓）而「货品」一个都不许回来（源码 + 渲染双哨兵）', () => {
