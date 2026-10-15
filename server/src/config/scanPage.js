@@ -748,7 +748,14 @@ const SCAN_PAGE = Object.freeze({
   //   · `reportPath` = 埋点上报路径（挂在**扫码路由**下 ⇒ 不动全局中间件 ✓ 见注释）
   tapFeedback: Object.freeze({
     enabled: true,
-    label: process.env.SCAN_TAP_FEEDBACK_LABEL || '正在打开…',
+    // ⭐⭐ 2026-10-15：改用**本文件既有的** `readString` 口径（与上面 `SCAN_NEXT_APPLINK` 一致 ✓）。
+    //   改前逐字：`label: process.env.SCAN_TAP_FEEDBACK_LABEL || '正在打开…',`
+    //   依据：`readString`（`config/envValue.js:25`）的语义是
+    //     「**没设 → 默认值；设了（含空串）→ 原样返回**」——先例：`PRIVATE_CHAT_DISABLED_NOTICE_TEXT`
+    //     「**空串 = 关掉那句话**」；而 `||` 会让"设成空串"**回落默认** ⇒ 这句**她可见**的文案
+    //     **关不掉** ✗（与仓库约定相反）。
+    //   ⚠️ 不是 `readFlag`：那是**布尔**专用（喂字符串会直接抛错 ✗）。
+    label: readString(process.env, 'SCAN_TAP_FEEDBACK_LABEL', '正在打开…'),
     // ⚠️ 为什么是 `/<prefix>/ui-tap` 而**不是** `/api/ui-tap`：扫码路由自带前缀（`/s` `/r`）且
     //    **不动 `app.js` 的鉴权/挂载** ⇒ 埋点跟着扫码页走最省事、风险最小 ✓
     reportPath: '/ui-tap',
