@@ -134,3 +134,19 @@ schema 注释 `:477` 逐字写着**保留**「到货状态 ＋ 实际数量 ＋ 
 **变异（实测）**：把某条链的落点列换成已删的 `acceptanceText` ⇒ **红** ✓（就是「到货说明」那种 ✗）；
 还原 ⇒ 全绿 ✓。（⚠️ 另一处"去掉一个已登记提交"的变异**没生效**（我的替换没命中）⇒ **不宣称**那条的实测，
 按构造它由 AC-LANDING-1 的差集保证 ✓）
+
+### 5.5 🔎 T3 续：**样品补货**那条链的落点（2026-10-16 补核 · 只读）
+
+四跳（都在代码里核过 ✓）：
+
+| 跳 | 位置 | 事实 |
+|---|---|---|
+| ① 前端 | `features/orders/index.js`（`data-field="sample-fill-size"`）| `api.post(ORDERS_API.sampleFill)` `:1144`，提交 `{ detailRecordId, size, requestId }` ✓ |
+| ②b 端点常量 | `public/workbench/config/orders.js:184` | `sampleFill: '/api/workbench/sales/sample-fill'` ✓ |
+| ② 路由 | `src/routes/workbench.js:431` | `router.post('/sales/sample-fill', …)` 读 `req.body?.detailRecordId` / `?.size` / `?.requestId` ✓ |
+| ③ 服务 | `src/services/salesFollowupService.js:349` `fillSample` → `src/services/sampleReplacementService.js`（`:161`/`:226`）| 调 `inventory.promoteToSample({ salesDetailRecordId, productRecordId, size }, { correlation })` ✓ |
+| ④ 落点 | `src/services/inventoryService.js:1127` `promoteToSample` | **改 `实时库存`（`liveInventory`）那一行**（按 `fields.stockKey` 定位 ⇒ 状态 **门盒 ↔ 样品** 互换）＋ 记一条 **`库存流水`（`inventoryLedger`）**（走 `findLedger` + `resolveSamplePromotionBehavior` ✓）|
+
+**等级 🔎（如实）**：**"改哪张表"已核**（`liveInventory` ＋ `inventoryLedger` ✓）；
+**列名按 schema**（`liveInventory.state` =「所属状态」/ `inventoryLedger.quantityChange` =「变动数量」/`behavior` =「库存行为」✓）
+—— ⚠️ 我**没有逐行看到**"写 `state` 那一行"（只核到它读该行 + 按 stockKey 定位 + 调行为）⇒ **不宣称 ✅** ✓
