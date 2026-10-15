@@ -142,10 +142,25 @@ const postForm = async (url, cookie, body) => fetch(url, {
   redirect: 'manual',
 });
 
-/** 三条链路各一条**合法**请求（她填好了 ⇒ 该成 ✓）。 */
+/**
+ * 三条链路各一条**合法**请求（她填好了 ⇒ 该成 ✓）。
+ *
+ * ⭐⭐ 2026-10-16（口子收尾 · **最小必要补齐输入数据**，断言**一个字都没改** ✗）：
+ *   「尺码 / 数量 / 空单」三类校验**搬回同步路径**之后，"合法请求"必须**真的带尺码** ——
+ *   改前逐字（两条 `extra`，**都没有 `sizes` / `return_sizes`**）：
+ *     `{ chain: 'replenish', realm: 'replenish', action: SCAN_WRITE.actions.replenish, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '1200', qty_41: '2' } },`
+ *     `{ chain: 'purchase_return', realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },`
+ *   改后逐字（各加一个尺码勾选 —— `sizes: '41'` / `return_sizes: '41'`）：
+ *     `… extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '1200', [`${SCAN_WRITE.fields.replenishSizes}`]: '41', qty_41: '2' } },`
+ *     `… extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnSizes}`]: '41', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },`
+ *   依据：业务负责人 2026-10-16 逐字「**异步只针对"写库"**；**校验必须当场同步拦**」
+ *     ⇒ `sizes` 空 = "一句明细都没有" = **空单** ⇒ 当场 400（本来就不该是"合法请求"✗）。
+ *   ⚠️ 这不是"放宽判据"：**AC-ASY1 / AC-ASY2-补货 的断言一行未动**（本条只是把
+ *     "她填好了"那份输入**真的填好** ✓ —— 改前它是"没填尺码"的数据 ✗）。
+ */
 const legalCases = () => ([
-  { chain: 'replenish', realm: 'replenish', action: SCAN_WRITE.actions.replenish, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '1200', qty_41: '2' } },
-  { chain: 'purchase_return', realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },
+  { chain: 'replenish', realm: 'replenish', action: SCAN_WRITE.actions.replenish, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '1200', [`${SCAN_WRITE.fields.replenishSizes}`]: '41', qty_41: '2' } },
+  { chain: 'purchase_return', realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnSizes}`]: '41', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },
   { chain: 'accept', realm: 'accept', action: SCAN_WRITE.actions.acceptFinish, extra: { accept_41: '2' } },
 ]);
 
@@ -243,11 +258,21 @@ test('AC-ASY2-补货 ⭐⭐ 补货不问金额：金额空 / 非数字**都不�
   //   ⇒ 补货这条链路上**没有**金额校验（填了也不看、不落表 —— 那是到货核对那一列的事 ✓）。
   //   ⚠️ 这条**不是** AC-ASY2 的放宽：退货那两条照旧 400 + 零写入（上面那条 ✓）；
   //     补货这一侧的期望值只是**跟着业务口径反向**了（旧"必须 400"已不再是正确行为 ✗）。
+  // ⭐⭐ 2026-10-16（口子收尾 · **最小必要补齐输入数据**，断言**一个字都没改** ✗）：
+  //   改前逐字（`body` 只有 `action` / `submit_key` / 金额 —— **没有尺码**）：
+  //     `action: SCAN_WRITE.actions.replenish, submit_key: 'scan_test:key:async', [SCAN_WRITE.fields.purchaseAmount]: amount,`
+  //   改后逐字（补上"她确实勾了一个尺码"那一格）：
+  //     `action: SCAN_WRITE.actions.replenish, submit_key: 'scan_test:key:async', [`${SCAN_WRITE.fields.replenishSizes}`]: '41', qty_41: '2', [SCAN_WRITE.fields.purchaseAmount]: amount,`
+  //   依据：本用例测的是"**补货不问金额**"（金额空 / 非数字 ⇒ 照样 200）——
+  //     它**不是**在测"空单也放行" ✗；尺码空 = 空单 ⇒ 按她 2026-10-16 的
+  //     「**异步只针对"写库"**；校验必须**当场同步拦**」**理应 400** ✓（不是这条用例的题 ✗）。
   for (const amount of ['abc', '']) {
     const write = createWriteSpy();
     await withServer(appWith(write), async (base) => {
       const res = await postForm(pageUrl(base, 'replenish'), sessionCookie(), {
-        action: SCAN_WRITE.actions.replenish, submit_key: 'scan_test:key:async', [SCAN_WRITE.fields.purchaseAmount]: amount,
+        action: SCAN_WRITE.actions.replenish, submit_key: 'scan_test:key:async',
+        [`${SCAN_WRITE.fields.replenishSizes}`]: '41', qty_41: '2',
+        [SCAN_WRITE.fields.purchaseAmount]: amount,
       });
       assert.equal(res.status, 200, `补货填「${amount || '(空)'}」⇒ 照旧成功页 ✓（她 2026-10-16：「补货不问金额」）`);
       await waitForPendingPurchaseBackgrounds();

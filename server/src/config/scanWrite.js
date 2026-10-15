@@ -918,6 +918,13 @@ const EVENTS = Object.freeze({
   //   ⚠️ 与 `failed`（写失败）**分开**：原因不同、修法也不同（她补一个数字 vs 我们去查库），
   //      一 grep 就分得清 —— 与 `unknownWriteAction` 那条同一个理由。
   purchaseAmountRequired: 'scan.write.purchase_amount_required',
+  // ⭐⭐ 2026-10-16（口子收尾）：「**尺码 / 数量 / 空单**这三类校验当场同步拦」——
+  //   命中它 = **她填错了**（不是系统写失败 ✗），而且**一个字都没写、一次后台都没排** ✓。
+  //   ⚠️ 与 `purchaseAmountRequired`（填漏了金额）**分开**、与 `failed`（写失败）**分开**：
+  //      三种原因、三种修法，一 grep 就分得清 ✓（与上面那条同一个理由）。
+  //   ⚠️ 判据的真源在 `config/scanPurchaseEntryRules.js`（与写层逐字同源 ✓）；
+  //      本条只放**事件名**（本文件不放判据 ✗）。
+  entryInvalid: 'scan.write.purchase_entry_invalid',
   // ⭐ 扫码验收（方案A）的正向证据
   acceptStarted: 'scan.accept.started',
   acceptLineAdded: 'scan.accept.line_added',
