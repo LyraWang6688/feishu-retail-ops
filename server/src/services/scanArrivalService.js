@@ -425,6 +425,8 @@ const createScanArrivalService = (options = {}) => {
         request_ids: session.request_ids,
       },
       acceptanceText,
+      // ⭐ 2026-10-16：扫码线**显式声明**「必须有那句原话」⇒ 判据与改前**逐字一致** ✓
+      requireAcceptanceText: true,
       actualAmount,
       operatorOpenId: operatorOpenId || session.operator_open_id || openId,
       // ⭐ 新增输入口：逐码实际到货（既有 buildPlan 的扫码分支）

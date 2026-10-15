@@ -415,9 +415,6 @@ const purchaseBatchCardHtml = (batch) => `
             <label class="form-field">${escapeHtml(T.arrivalAmount)}
               <input data-field="arrival-amount" type="text" inputmode="decimal" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
             </label>
-            <label class="form-field">${escapeHtml(T.arrivalNote)}
-              <input data-field="arrival-note" type="text" value="${escapeHtml(ARRIVAL_CONFIRM.defaultAcceptanceText)}">
-            </label>
             <button class="btn btn-primary" type="button" data-action="submit-arrival" data-batch="${escapeHtml(batch.batch_no)}">${escapeHtml(T.arrivalSubmit)}</button>
           </div>
         </details>
@@ -992,12 +989,12 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     const form = state.container.querySelector(`[data-arrival-batch="${batchNo}"]`);
     const read = (name) => String(form?.querySelector(`[data-field="${name}"]`)?.value ?? '').trim();
     const rawAmount = read('arrival-amount');
-    const acceptanceText = read('arrival-note');
+    // ⭐ 2026-10-16（她逐字：「数据表里已经没有验收原话了…你必须得删」）：工作台这条**不再有**
+    //    「到货说明」这个输入框 ⇒ 这里也不再有读值与必填（那条判据**随她这句一起退场** ✓）
     if (!batchNo) return renderResult('这一行没有报货批次号，不能验收到货', true);
     if (!/^\d+(\.\d+)?$/.test(rawAmount) || Number(rawAmount) <= 0) {
       return renderResult('请先填这次的「实际金额」（大于 0 的数字），再点验收到货', true);
     }
-    if (!acceptanceText) return renderResult('请先写一句到货说明，再点验收到货', true);
     // ⭐ 同上：点一下立刻有反馈 + 防连点（校验放在守卫**之前** —— 没填完不该置灰）
     return runWriteAction(button, async () => {
       renderResult('');
@@ -1050,7 +1047,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         const result = await api.post(ARRIVAL_FULL_API.accept, {
           [ARRIVAL_FULL_FIELDS.batchNo]: batchNo,
           [ARRIVAL_FULL_FIELDS.actualAmount]: Number(rawAmount),
-          [ARRIVAL_FULL_FIELDS.acceptanceText]: acceptanceText,
           [ARRIVAL_FULL_FIELDS.lines]: built.lines,
         });
         // 列表数据是唯一事实来源：重新读一次（到货状态会跟着更新）

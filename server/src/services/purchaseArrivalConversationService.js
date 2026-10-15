@@ -774,7 +774,11 @@ class PurchaseArrivalConversationService {
    * @returns {Promise<{ok: boolean, reason?: string, message: string, taskId?: string}>}
    *   `message` 是**给人看的一句话**（工作台直接显示它），不是内部术语。
    */
-  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null, timing = null } = {}) {
+  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null, timing = null,
+    // ⭐ 2026-10-16（她逐字「数据表里已经没有验收原话了…你必须得删」＋ Lead 裁决 ⓐ）：
+    //   那条「必须有原话」的判据**收窄成由调用方声明** —— 扫码线显式 true（判据一字不变 ✗），
+    //   工作台那条不传（它已经没有那个输入框了 ⇒ 不再要求、也不再写那一列 ✓）
+    requireAcceptanceText = false } = {}) {
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
       return { ok: false, reason: 'no_batch_no', message: pageMessages.m1 };
@@ -790,7 +794,8 @@ class PurchaseArrivalConversationService {
       };
     }
     const text = String(acceptanceText == null ? '' : acceptanceText).trim();
-    if (!text) {
+    // 🔴 扫码线照样必须非空（它自己声明 requireAcceptanceText: true ⇒ 判据一字不变 ✗）
+    if (!text && requireAcceptanceText) {
       return {
         ok: false,
         reason: 'acceptance_text_missing',

@@ -39,12 +39,12 @@ class WorkbenchPurchaseArrivalService {
   /**
    * 验收这一批到货并入库（**全部按申请数到货**）。
    *
-   * @param {{batchNo: string, actualAmount: number|string, acceptanceText?: string,
+   * @param {{batchNo: string, actualAmount: number|string,
    *   operatorOpenId?: string}} input
    * @returns {Promise<{message: string, alreadyPosted: boolean, batchNo: string}>}
    *   `message` = 给她看的一句话（页面直接显示）。
    */
-  async confirmArrival({ batchNo, actualAmount, acceptanceText = '', operatorOpenId = '' } = {}) {
+  async confirmArrival({ batchNo, actualAmount, operatorOpenId = '' } = {}) {
     const wanted = String(batchNo || '').trim();
     if (!wanted) {
       throw Object.assign(new Error(WORKBENCH_ARRIVAL_TEXTS.needBatchNo), { statusCode: 400 });
@@ -60,9 +60,10 @@ class WorkbenchPurchaseArrivalService {
         { statusCode: 400, reason: 'no_request_rows' },
       );
     }
+    // ⭐ 2026-10-16（她逐字「数据表里已经没有验收原话了…你必须得删」）：工作台这条**不再传**
+    //    `acceptanceText`（那个输入框整条退场 ✓）⇒ 会话层那条判据对**扫码线**照旧 ✗
     const result = await this.arrivalConversation.confirmBatchArrival({
       batch: { batch_no: wanted, request_ids: requestIds },
-      acceptanceText,
       actualAmount,
       operatorOpenId,
     });

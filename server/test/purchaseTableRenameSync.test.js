@@ -340,9 +340,14 @@ test('B7 ⭐ 工作台采购页（= 现在的「采购 → 验收」子页）：
     '到货状态的两个取值仍是当下的那两个（原样来自既有 arrival_status 字段）');
   assert.ok(copy.includes('验收原话'), '「验收原话」这一列还在（config/orders.js 的到货说明写进它）');
   // ② 面板的入口/字段照旧（她逐双录入那套；既有 AC 也钉着，这里再确认一次"活页面上真有这块"）
-  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"', 'data-field="arrival-note"']) {
+  // ⭐⭐ 2026-10-16（她逐字：「到货说明必须得删……数据表里面已经没有验收原话了……你必须得删」）
+  //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
+  //   · 改后逐字：该项删除 ＋ 下面那条**反向**断言（塞回即红 ✓）
+  //   · 依据 = 她 2026-10-16 逐字（同上）✓
+  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"']) {
     assert.ok(page.includes(needle), `验收面板少了 ${needle}`);
   }
+  assert.equal(page.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
   // ③ 当年删掉的东西**不许回来**（去注释后扫活页面 + 它的文案真源 —— 注释里留沿革不算 ✗）
   for (const gone of ['采购到货情况', '没有匹配的采购到货记录', '图片数', 'image_count', '到货日', '登记到货与验收情况']) {
     assert.equal(livingPage.includes(gone), false, `被删的列 / 文案不许再出现在验收面板上：${gone}`);
