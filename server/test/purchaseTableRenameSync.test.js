@@ -310,29 +310,44 @@ test('B6 ⭐ 同名不同物**不许被误删**：采购申请 PNG 出图器 `th
   assert.match(source, /await this\.images\.render\(/, '出图的调用点必须还在');
 });
 
-test('B7 工作台采购页：到货面板改读「报货批次」，列 = 到货状态 / 确认状态 / 验收原话', () => {
-  const rel = 'public/workbench/features/purchase/index.js';
-  const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
-  assert.match(source, /到货验收情况/, '子标签保留（这是"这一批到货了没有、核对确认了没有"的面板）');
-  assert.match(source, /没有匹配的到货验收记录/);
-  // 新列（到货信息的落点在批次行上）。
-  assert.match(source, /验收原话/);
-  assert.match(source, /到货状态/);
-  // ⚠️ 去注释后再核"旧东西不许再出现"：**注释里要留着沿革**
-  //（"原先这里有一列「图片数」…已删"），扫注释会把那段说明本身当成违规。
-  const codeOnly = source
+test('B7 ⭐ 工作台采购页（= 现在的「采购 → 验收」子页）：到货面板用**当下的列**，被删的列 / 文案不许回来', () => {
+  // ⚠️⚠️ 2026-10-15 **判据迁移**（业务负责人逐字：「**采购页的老文件是死代码，给删除了吧**」）——
+  //   改前逐字：
+  //     `const rel = 'public/workbench/features/purchase/index.js';`
+  //     `const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');`
+  //     ＋对着那一页断言：`到货验收情况` / `没有匹配的到货验收记录` / `验收原话` / `到货状态` 必须在，
+  //       且去注释后 `采购到货情况` / `没有匹配的采购到货记录` / `图片数` / `image_count` /
+  //       `到货日` / `登记到货与验收情况` 一个都不许有。
+  //   改后逐字：**同一批判据**改钉在**活着的**那一页 —— `features/orders/index.js`（「采购 → 验收」
+  //     挂的就是它，`kind:'orders'` / `mode:'purchase'`）＋ `config/orders.js`（它的文案真源）。
+  //   依据：老「采购管理」页 `features/purchase/**` 已**整目录删除**（它早已没有挂载点 ⇒ 是死代码）。
+  //     ⚠️ 但**判据本身一个字没变**：她 2026-10-09 定的口径是"到货信息的落点在「报货批次」那一行"
+  //     ⇒ 到货面板必须用**当下的列**、当年删掉的列 / 文案**不许回来** —— 这条不许跟着死文件一起消失 ✗
+  const page = fs.readFileSync(path.join(SERVER_ROOT, 'public/workbench/features/orders/index.js'), 'utf8');
+  const copy = fs.readFileSync(path.join(SERVER_ROOT, 'public/workbench/config/orders.js'), 'utf8');
+  const codeOnly = (source) => source
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '')
     .replace(/([^:])\/\/.*$/gm, '$1');
-  assert.equal(codeOnly.includes('采购到货情况'), false);
-  assert.equal(codeOnly.includes('没有匹配的采购到货记录'), false);
-  assert.equal(codeOnly.includes('图片数'), false, '列都被删了，这一列留着只会永远显示 0');
-  assert.equal(codeOnly.includes('image_count'), false);
-  // ⚠️ 不再显示「到货日」：批次行上那一列是飞书自动的**更新时间**，不是真的到货时刻
-  //    （写附件等动作也会刷新它）——拿它当"到货日"展示会误导。
-  assert.equal(codeOnly.includes('到货日'), false, '「到货日」是自动的更新时间 → 面板不展示它');
-  // ⚠️ 「到货验收」那张表已被删除 ⇒ 那张**表单**的快捷入口也不许再留在页面上（点了打不开）。
-  assert.equal(codeOnly.includes('登记到货与验收情况'), false, '被删表的表单入口要摘掉');
+  const livingPage = codeOnly(page);
+  const livingCopy = codeOnly(copy);
+
+  // ① 面板还在，列 = **当下的**（「报货批次」那一行的到货状态 ＋ 写进「验收原话」的说明）
+  //    ⚠️ 活页面上那列**由数据渲染**（`arrivalStatusOf` ＋ 两个配置取值），不是写死一句"到货状态" ✗
+  assert.ok(livingPage.includes('arrivalStatusOf'), '活着的验收面板仍在判「这一批到货了没有」');
+  assert.ok(livingPage.includes('ARRIVAL_STATUS_PENDING'), '卡片上那个到货状态小标签仍在（兜底取值来自配置）');
+  assert.ok(copy.includes("ARRIVAL_STATUS_PENDING = '未到货'") && copy.includes("ARRIVAL_STATUS_ARRIVED = '已到货'"),
+    '到货状态的两个取值仍是当下的那两个（原样来自既有 arrival_status 字段）');
+  assert.ok(copy.includes('验收原话'), '「验收原话」这一列还在（config/orders.js 的到货说明写进它）');
+  // ② 面板的入口/字段照旧（她逐双录入那套；既有 AC 也钉着，这里再确认一次"活页面上真有这块"）
+  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"', 'data-field="arrival-note"']) {
+    assert.ok(page.includes(needle), `验收面板少了 ${needle}`);
+  }
+  // ③ 当年删掉的东西**不许回来**（去注释后扫活页面 + 它的文案真源 —— 注释里留沿革不算 ✗）
+  for (const gone of ['采购到货情况', '没有匹配的采购到货记录', '图片数', 'image_count', '到货日', '登记到货与验收情况']) {
+    assert.equal(livingPage.includes(gone), false, `被删的列 / 文案不许再出现在验收面板上：${gone}`);
+    assert.equal(livingCopy.includes(gone), false, `被删的列 / 文案不许再出现在验收文案里：${gone}`);
+  }
 });
 
 test('B8 工作台查询接口：到货面板的数据来自「报货批次」，不再有 purchaseArrival 读点', () => {
