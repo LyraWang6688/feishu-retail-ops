@@ -46,6 +46,8 @@ const withServer = async (run) => {
   const app = express();
   app.use('/api/auth/feishu', createFeishuWebAuthRouter());
   const server = app.listen(0);
+  // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
+  server.keepAliveTimeout = 1;
   await new Promise((resolve) => server.once('listening', resolve));
   try {
     return await run(`http://127.0.0.1:${server.address().port}`);
