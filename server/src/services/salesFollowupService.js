@@ -21,6 +21,11 @@ const { isOrderIncomplete } = require('./v1WorkbenchService');
 const { ORDER_FIELD_KEYS, readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
 const { createWorkbenchOrdersCache } = require('./workbenchOrdersCache');
 const { logWarn } = require('../utils/logger');
+// ⭐⭐ 2026-10-15（她逐字「**需要加上**」）：订单列表的"读表瞬时错误自动重试"——
+//   次数/退避走这份配置（配置先行 ✓）；**瞬时判据复用 `config/pushRetry` 那一份**（不抄第二份 ✗）。
+const {
+  resolveOrderReadRetryConfig, isRetriableOrderReadError,
+} = require('../config/orderReadRetry');
 
 /**
  * ⭐⭐ 2026-10-15（⑰b-1 UI · 她逐字）：「失败落「**写入失败**」、工作台显示「**未完成，可点重试**」」
@@ -47,6 +52,11 @@ const writeFlagsOf = (order, fields) => {
 class SalesFollowupService {
   constructor(options = {}) {
     this.gateway = options.gateway || new V1BitableGateway();
+    // ⭐⭐ 2026-10-15：订单列表"读表瞬时错误自动重试"的**次数/退避**（可注入 ⇒ 用例能验"行为跟着配置变" ✓）
+    //   ⚠️ `sleep` 也可注入：用例**不等真时间**（本机降速时会 flake —— 这一夜实测过 ✗）
+    this.orderReadRetry = options.orderReadRetry || resolveOrderReadRetryConfig();
+    this.sleep = options.sleep
+      || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
     this.payments = options.payments || new PaymentService({ gateway: this.gateway });
     this.delivery = options.delivery || new SalesDeliveryService({ gateway: this.gateway });
     this.progress = options.progress || new SalesProgressService({ gateway: this.gateway });
@@ -96,6 +106,46 @@ class SalesFollowupService {
   }
 
   /**
+   * ⚠️ **只给读用**：`listAll` 命中**瞬时错误**时自动重试（次数/退避走 `this.orderReadRetry` ✓）。
+   *
+   * 口径与扫码页那条 `services/liveInventorySnapshot.js` 的 `listAllWithRetry` **同一套**：
+   *   逐次 `attempt`、线性退避（`delayMs * (attempt + 1)`）、**最后仍失败 ⇒ 抛原错** ✓
+   * 🔴 三条硬口径：
+   *   · **只重试可重试的**（飞书 `1254607 Data not ready` / HTTP 429 / 5xx / 网络类）；
+   *     `401 / 403 / 404` 这类**确定性错误一次都不重试**（判据来自 `config/pushRetry` ✓ 只有一处实现）
+   *   · **如实记日志**：命中重试记一条 `workbench.sales.orders.read_retry`（带 attempt / of / 退避 / 耗时）✓
+   *   · **绝不把失败吞成成功**：重试用完仍失败 ⇒ 抛原错 ⇒ 路由照旧
+   *     `workbench.sales.orders.failed` + **502** ✓
+   */
+  async listAllWithRetry(tableKey, options = {}) {
+    const retry = this.orderReadRetry || resolveOrderReadRetryConfig();
+    const maxRetries = Math.max(0, Number(retry.maxRetries) || 0);
+    const delayMs = Math.max(0, Number(retry.delayMs) || 0);
+    for (let attempt = 0; ; attempt += 1) {
+      const startedAt = Date.now();
+      try {
+        return await this.gateway.listAll(tableKey, options);
+      } catch (error) {
+        const retriable = isRetriableOrderReadError(error);
+        const left = maxRetries - attempt;
+        // 🔴 确定性错误（401/403/404…）**一次都不重试**；次数用完也**如实抛出**（不吞、不假成功 ✗）
+        if (!retriable || left <= 0) throw error;
+        const waitMs = delayMs * (attempt + 1);
+        logWarn('workbench.sales.orders.read_retry', {
+          table_key: tableKey,
+          reason: 'read_retry',
+          attempt: attempt + 1,
+          of: maxRetries + 1,
+          delay_ms: waitMs,
+          duration_ms: Date.now() - startedAt,
+          error: error?.message,
+        });
+        await this.sleep(waitMs);
+      }
+    }
+  }
+
+  /**
    * 真读那一次的实现（优化前就是这一整段）。
    *
    * ⭐ 2026-10-12：六次 `listAll` 都**按需取字段**（`ORDER_FIELD_KEYS` → 飞书 `field_names`）——
@@ -125,13 +175,16 @@ class SalesFollowupService {
       const names = (ORDER_FIELD_KEYS[tableKey] || []).map((key) => fields[key]).filter(Boolean);
       return names.length ? { fieldNames: names } : {};
     };
+    // ⭐⭐ 2026-10-15：这六次读**全部走带重试的那条路**（瞬时错误自动重试一次；确定性错误不重试）——
+    //   她那次 502 的根因就是这里某一张表回了 `1254607 Data not ready` ✓
+    //   ⚠️ **返回形状一个字没变**（还是这六个数组）⇒ 页面与下游**一个字都不用改** ✓
     const [orders, details, methods, payments, products, accessories] = await Promise.all([
-      this.gateway.listAll('salesEntry', fieldOptions('salesEntry')),
-      this.gateway.listAll('salesDetail', fieldOptions('salesDetail')),
-      this.gateway.listAll('paymentMethod', fieldOptions('paymentMethod')),
-      this.gateway.listAll('paymentRecord', fieldOptions('paymentRecord')),
-      this.gateway.listAll('product', fieldOptions('product')),
-      accessoryConfigured ? this.gateway.listAll('accessory', fieldOptions('accessory')) : Promise.resolve([]),
+      this.listAllWithRetry('salesEntry', fieldOptions('salesEntry')),
+      this.listAllWithRetry('salesDetail', fieldOptions('salesDetail')),
+      this.listAllWithRetry('paymentMethod', fieldOptions('paymentMethod')),
+      this.listAllWithRetry('paymentRecord', fieldOptions('paymentRecord')),
+      this.listAllWithRetry('product', fieldOptions('product')),
+      accessoryConfigured ? this.listAllWithRetry('accessory', fieldOptions('accessory')) : Promise.resolve([]),
     ]);
     const orderFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
