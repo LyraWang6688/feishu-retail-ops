@@ -66,7 +66,7 @@ const { isAfterSalesIntent, normalizeMessageIntent } = require('../config/saleIn
 const { isSalesCandidate, UNSUPPORTED_INTENT_REPLY } = require('../config/messageGate');
 // ⭐ 未知 / 已退场卡片动作的兜底人话（2026-10-12，业务负责人明确要的）：文案可配。
 const { UNKNOWN_CARD_ACTION_TOAST } = require('../config/unknownCardAction');
-const { salesStatusCard, salesProcessingCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
+const { salesStatusCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
 // ⭐【确认成交】按钮（2026-10-07 业务负责人拍板的**甲**：做在「已入账」终态卡上，不新发消息）：
 //   动作名 ＋ "要不要画这个按钮"的判据 ＋ 用户可见文案，全在那一份配置里（配置先行）。
 const {
@@ -78,7 +78,6 @@ const {
 } = require('../config/salesConfirmDeal');
 // 「点确认后那一次立即更新」那张卡片的可见文案 / 颜色（业务负责人 2026-10-07 拍板的 ⓐ）；
 // 调用时才解析（不在模块加载时求值，避免 dotenv 加载顺序事故）。
-const { resolveSalesProcessingCardConfig } = require('../config/salesProcessingCard');
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
 const { resolveAckReaction } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');

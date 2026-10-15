@@ -384,7 +384,10 @@ const salesCardFactElements = (draft) => salesCardFactsFor(draft).lines
 //   用户要补的链接其实就看不到了。所以我们在销售信息确认卡片里不需要放这个信息；
 //   等用户点击确认之后，卡片不是会更新吗？更新时再补这个信息。」
 //   ⇒ 这一段**不在**那张已退场的确认卡片上，而在**点确认之后**更新的
-//     `salesProcessingCard`（处理中卡）与 `salesStatusCard` 的**已入账终态卡**上。
+//     `salesStatusCard` 的**已入账终态卡**上。
+//   ⚠️ 2026-10-15（业务负责人拍板「清掉吧」）：原来这里还写着"处理中卡也有" ——
+//      **那张卡生产侧没人发**（她的口径改由 toast 承载，见 `terminalCardConfirmDeal.test.js`）
+//      ⇒ 随死代码清理退场 ✗；**这一段本身的文案与行格式一个字没改** ✓
 //   ⚠️ 位置变了，**文案与行格式一个字不改**；文案在 `config/productInfoGaps`，本函数只排布。
 //
 // 🔴 2026-10-07 **同一天里她把这"两张卡的取舍"改了两次** —— 以后再看到互相矛盾的说法，
@@ -482,9 +485,9 @@ const confirmDealElements = ({ salesEntryRecordId, draftId = '', settledAt, conf
 //   没显式打开的调用点，输出与改动前**逐字节相同**（既有 deepEqual 断言就是这条的哨兵）。
 //
 // ⚠️ 2026-10-07：`options.productInfoGaps` 是**终态卡这一张**的开关 ——
-//   **不是**这一段唯一的出现位置：处理中卡（`salesProcessingCard`）上也有，
-//   而且是**无条件**挂的（缺口为空时它自己返回 `[]`，见 `productInfoGapsElements`）。
-//   ⇒ 两张卡的**最终**口径见 `productInfoGapsElements` 的注释（她当天改过两次，
+//   ⚠️ 2026-10-15 改：`productInfoGaps` 现在是这一段**唯一**的挂载开关
+//   （处理中卡已随死代码清理退场 ✗；缺口为空时这一段自己返回 `[]`，见 `productInfoGapsElements`）。
+//   ⇒ **最终**口径见 `productInfoGapsElements` 的注释（她当天改过两次，
 //     最新 = 处理中卡 与 已入账终态卡 都要有）。
 //
 // ⭐ 同一天又多了第二个可选开关 `options.confirmDeal`（默认关，见上面 `confirmDealElements`）：
@@ -503,49 +506,6 @@ const salesStatusCard = (draft, title, message, template = 'blue', options = {})
     ...(options.confirmDeal ? confirmDealElements(options.confirmDeal) : []),
   ],
 });
-
-// ⭐ 2026-10-07「点了确认必须一眼看得出来」的**专用**渲染（业务负责人拍板的 ⓐ 方案）。
-//
-// 为什么另起一个函数、**不去改 `salesStatusCard`**：
-//   `salesStatusCard` 是通用结果卡渲染器 —— 取消 / 待修正 / 部分交付 / 已入账 / 重复终态
-//   全走它。在它里加"处理中样式"会让那些卡片的字节级输出**一起变**，
-//   而她**明确满意**「已入账」那张终态卡（一个字都不许动）。
-//   另起一个、只给确认链路那一次立即更新用 ⇒ 其余卡片的输出**可证不变**。
-//
-// 视觉上做两件事（她的目标：「不仔细看标题也能看出变了」）：
-//   ① 明细区整段套 `<font color='…'>` **变灰** —— 颜色写法用仓库既有的那种
-//      （`config/salesProcessingCard` 里配的 `<font color='grey'>`，`lark_md` 元素支持），
-//      **不自己发明 HTML**；
-//   ② 明细**上方**多一行醒目的「⏳ 正在写入…」提示（第一眼就能看到）。
-//
-// 文案 / 颜色**全部来自 `config/salesProcessingCard`**（配置先行）——本函数只排布，不写死字面量。
-// 传空串 = 那一项不要（例：`progressLine: ''` 不出提示行、`itemColor: ''` 不套颜色）。
-// ⚠️ 唯一一处**不**来自那份配置的是"补货品信息"段落（文案在 `config/productInfoGaps`）：
-//    她点完确认之后要能**立刻**看到补资料的链接，所以这一段**在这一张上**。
-// 🔴 2026-10-07 这一张带不带的**两次反复**（原话都留在 `productInfoGapsElements` 的注释里）：
-//    先"两边都放"(#220) → 她纠正「**不是，是只放在2上！**」→ 这里删掉(PR #221) →
-//    她当天**再改口**「**中间态也应该有提示**」⇒ **最终 = 这里也要有**（已加回来）。
-//    **不要**再按"只放在2上"那句话删掉下面这一行 —— 那是被推翻的中间版本。
-const salesProcessingCard = (draft, { title, template = 'blue', itemColor, progressLine, note } = {}) => {
-  const items = itemLines(draft?.items || [], 'actual_amount') || '销售订单';
-  const elements = [];
-  if (progressLine) elements.push({ tag: 'div', text: { tag: 'lark_md', content: progressLine } });
-  elements.push({
-    tag: 'div',
-    text: { tag: 'lark_md', content: itemColor ? `<font color='${itemColor}'>${items}</font>` : items },
-  });
-  // ⭐ 2026-10-07：补货品信息段落挂在这一张上（她点完确认**立刻**就能看见那几条补资料链接）。
-  //   缺口为空 → `[]`，卡片元素与没有这一段时逐字节相同（不留空壳）。
-  //   位置：明细之后、note 之前 —— note 一直是最后一行。
-  elements.push(...productInfoGapsElements(draft));
-  // 既有那句 note：**逐字保留**，结构与 `salesStatusCard` 一致（只是内容来自配置）。
-  elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: note }] });
-  return {
-    config: patchableCardConfig(),
-    header: { template, title: { tag: 'plain_text', content: title } },
-    elements,
-  };
-};
 
 const sampleReplacementCard = (taskId, { productNumber, remainingSizes = [], lookupFailed = false } = {}) => {
   const lines = remainingSizes.map((item) =>
@@ -859,15 +819,14 @@ module.exports = {
   purchaseArrivalReconcileStatusCard,
   salesStatusCard,
   // 「补货品信息」那一段（2026-10-07 从确认卡片挪到点确认之后的卡片；导出是为了单独测配置）。
-  // ⚠️ 生产调用点有**两处**：`salesProcessingCard`（处理中卡）与 `salesStatusCard`
-  //   （终态卡，走 `options.productInfoGaps`）—— **仍然保持可复用**（带 config 形参，
-  //   将来别处要用直接接；见函数注释）。**不要**因为它"调用点少"就改签名或内联。
+  // ⚠️ 生产调用点现在**只有一处**：`salesStatusCard`（终态卡，走 `options.productInfoGaps`）。
+  //   （原来还有「处理中卡」那一处；那张卡**生产侧没人发**、随 2026-10-15 的清理退场 ✗）
+  //   —— **仍然保持可复用**（带 config 形参，将来别处要用直接接；见函数注释）。
+  //   **不要**因为它"调用点少"就改签名或内联。
   productInfoGapsElements,
   // ⭐【确认成交】那一段（按钮 / 点完之后的说明）。导出理由与上面那条一样：单独测配置。
   //   生产调用点是 `salesStatusCard` 的 `options.confirmDeal`（**只有终态卡这一张**）。
   confirmDealElements,
-  // 「点确认后立刻看得出变了」那张（只给确认链路那一次立即更新用，见函数注释）。
-  salesProcessingCard,
   sampleReplacementCard,
   sampleReplacementStatusCard,
   sampleReplacementProcessingCard,

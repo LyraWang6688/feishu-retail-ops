@@ -327,18 +327,29 @@ test('明细卡片：新品按货号级标一次（多行/多颜色不重复）�
 });
 
 
-test('AC-退场哨兵 · 销售确认卡 + 售后 5 张卡都已退场（导出里没有它们；导出数 21 → 14）', () => {
+/** ⭐ 2026-10-15：`larkMvpService` 里是否还提到处理中卡（import / 调用都算）——摘干净了就该是 false ✓ */
+const salesProcessingCardWiring = (source) => /salesProcessingCard/.test(source);
+
+test('AC-退场哨兵 · 销售确认卡 + 售后 5 张卡 + 处理中卡都已退场（导出里没有它们；导出数 21 → 13）', () => {
+  // ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+  //   改前逐字：`…（导出里没有它们；导出数 21 → 14）` ＋ `assert.equal(Object.keys(cards).length, 14, '导出数 = 14（… → 14 再删 saleLookupCard）')`
+  //   改后逐字：`…（导出里没有它们；导出数 21 → 13）` ＋ `assert.equal(Object.keys(cards).length, 13, '… → 13 再删处理中卡（salesProcessingCard）')`
+  //   依据：`salesProcessingCard` 已随 2026-10-15 的死代码清理删除（`src/` 生产侧 0 调用 ⇒ 它不是"还在用"）
+  //     ⇒ 导出少一个；**并且**下面把它加进"**真的没了**"的名单（判据是**加强**，不是放宽 ✓）
   const cards = require('../src/utils/larkCards');
   assert.equal('salesConfirmationCard' in cards, false, '它必须已经从导出里消失');
-  assert.equal(Object.keys(cards).length, 14, '导出数 = 14（21 → 20 删销售确认卡 → 15 再删售后 5 张 → 14 再删 saleLookupCard）');
+  assert.equal(Object.keys(cards).length, 13, '导出数 = 13（21 → 20 删销售确认卡 → 15 再删售后 5 张 → 14 再删 saleLookupCard → 13 再删处理中卡）');
   // ⚠️ 2026-10-12（售后卡片链路退场）：原来这里断言"6 个都在" —— 售后那 5 个已随链路退场
   //    ⇒ 现在只断言**唯一还活着的那个**在；并逐个证明那 5 个**真的没了**（能力不是靠"忘了"活着）。
   assert.equal(typeof cards.salesStatusCard, 'function', '销售状态卡片有活调用方 ⇒ 必须在');
+  // ⭐ 2026-10-15 追加：处理中卡（`salesProcessingCard`）也**真的没了**（不是靠"忘了"活着）✓
   for (const gone of ['afterSalesConfirmationCard', 'afterSalesResultCard', 'afterSalesRetryCard',
-    'afterSalesStatusCard', 'afterSalesSettlementLabel']) {
+    'afterSalesStatusCard', 'afterSalesSettlementLabel', 'salesProcessingCard']) {
     assert.equal(gone in cards, false, `${gone} 已随售后卡片链路退场 ⇒ 不该还在导出里`);
   }
   const wiring = require('node:fs').readFileSync(require('node:path')
     .join(__dirname, '..', 'src', 'services', 'larkMvpService.js'), 'utf8');
   assert.equal(/salesConfirmationCard\s*[,}]/.test(wiring), false, '那行死 import 里的名字必须摘掉');
+  // ⭐ 2026-10-15：那两处**没用的 import** 也必须真的摘掉（`larkMvpService` 里不再出现这个名字）✓
+  assert.equal(salesProcessingCardWiring(wiring), false, '`salesProcessingCard` 的 import/调用必须摘干净');
 });

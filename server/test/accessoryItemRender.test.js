@@ -63,16 +63,23 @@ test('纯配品单（一个尺码都没有）：渲染成「腰带 × 1」，不
   assert.doesNotMatch(content, /码/, `纯配品单里一个「码」字都不该有，实际：${content}`);
 });
 
-test('结果卡与处理中卡的配品行同样不含「码」（三张卡共用同一个明细渲染器）', () => {
+// ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+//   改前逐字：`test('结果卡与处理中卡的配品行同样不含「码」（三张卡共用同一个明细渲染器）', …)`
+//            ＋ 里面用 `salesProcessingCard(…)` 渲染的那半
+//   改后逐字：`test('结果卡（两档）的配品行同样不含「码」（共用同一个明细渲染器）', …)`
+//            ＋ 用**另一张活卡分支**（`salesStatusCard` 的「部分交付」）渲染同一份 draft
+//   依据：这条判据的本意 =「**共用同一个明细渲染器** ⇒ 配品行在**哪张卡**上都不含硬拼出来的『码』」
+//     ⇒ 处理中卡退场后，用**两张活卡分支**钉**同一件事** ✓（判据没放宽 ✗）
+test('结果卡（两档）的配品行同样不含「码」（共用同一个明细渲染器）', () => {
   const statusContent = firstText(salesStatusCard(MIXED_DRAFT, '已入账', '销售单号：XSD-1'));
   assert.match(statusContent, /2\. 腰带 × 1 ￥140/, `结果卡实际：${statusContent}`);
   assert.doesNotMatch(statusContent, /腰带\s*码/);
 
-  const processingContent = firstText(salesProcessingCard(MIXED_DRAFT, {
-    title: '处理中', note: '已收到确认，正在写入销售记录和收款；请勿重复点击。',
-  }));
-  assert.match(processingContent, /2\. 腰带 × 1 ￥140/, `处理中卡实际：${processingContent}`);
-  assert.doesNotMatch(processingContent, /腰带\s*码/);
+  // ⚠️ 原来这里是 `salesProcessingCard`（处理中卡，已随死代码清理退场 ✗）——
+  //    换成**另一张活卡分支**：同一份 mixed draft 走「部分交付」那一档。
+  const partialContent = firstText(salesStatusCard(MIXED_DRAFT, '部分已交付', '销售单号：XSD-1', 'blue'));
+  assert.match(partialContent, /2\. 腰带 × 1 ￥140/, `部分交付卡实际：${partialContent}`);
+  assert.doesNotMatch(partialContent, /腰带\s*码/);
 });
 
 test('没有尺码的鞋（数据不齐）也不硬拼「码」——只写数量', () => {

@@ -1,122 +1,33 @@
-// 「点了确认必须一眼看得出来」这张卡片的回归测试（业务负责人 2026-10-07 拍板的 ⓐ 方案）。
+// 「点了确认必须一眼看得出来」那张**处理中卡片**的回归测试（业务负责人 2026-10-07 拍板的 ⓐ 方案）
+// —— **这张卡已随死代码清理退场（2026-10-15 她拍板「清掉吧」）**，本文件只剩**一条**还用得着的判据：
 //
-// 起因（她原话）：「我点击了确认后，卡片其实没变化，就会很让我迷惑，到底点击没点击」
-// ⇒ 点确认后**那一次立即更新**的卡片要：标题醒目「处理中/正在写入」＋ 明细区明显不同。
+//   ⭐ **「已入账」终态卡（`salesStatusCard`）逐字未变 —— 这是她满意的那张，不许动** ✓
 //
-// 本文件钉住的是**可见结果**（文案 / 颜色 / 结构），不是实现细节：
-//   ① 标题 = 配置里的处理中文案；② 明细区与确认卡片不同（整段变灰 + 多一行"正在写入"）；
-//   ③ note 逐字不变；④ 没有按钮；⑤ `stage` 仍是 `processing`；
-//   ⑥ `posted` 终态卡逐字未变；⑦ 配置四项都可覆盖。
+// 🔴 这一刀删了什么、为什么删（**不是丢口径**）：
+//   · 删掉的 4 条：**处理中卡自己的配置 / 渲染**（默认配置、环境变量覆盖、逐字渲染、
+//     颜色与处理中行配空串不留壳）—— 它们测的是**要一起删掉的那份配置**（`config/salesProcessingCard`）
+//     与**只有那张卡才有的排布** ⇒ 卡没了 ⇒ 判据无载体 ✗。
+//   · ⭐ 她那两条口径**一个字都没丢**，只是**载体换了**：
+//     ① 「**中间态也应该有提示**」（2026-10-07 ③）现在由**她真能看到的 toast** 承载，
+//        已由 `test/terminalCardConfirmDeal.test.js` `:498` `:563`（同一断言）
+//        ＋ `:772`（逐字 `config.shortStock === '这批还没到，先去入库再回来点'`）钉住 ✓；
+//     ② 「**不留空壳**」这条原则在活卡上由 `productInfoGapsElements`（无缺口 ⇒ 返回 `[]`）
+//        承载，已由 `test/productInfoGapsCardPlacement.test.js`「无缺口时…不多出空元素」钉住 ✓。
+//   · ⚠️ 原来本文件第 ⑤ 条「`stage` 仍是 `processing`」的**链路级**断言也随那张卡退场
+//     （它验的是"点确认后先 patch 一次处理中卡"那一步 —— 那一步已不存在 ✗）。
 //
-// ⚠️ 既有断言一条都不放宽：本文件是**新增**的；`test/larkMvpService.test.js` 里
-//   原来那两条 `/处理中/` 断言（`:409` 样品链路 / `:744` 销售确认链路）**原样保留**，
-//   默认标题因此刻意同时含「处理中」与「正在写入」，不需要改它们。
+// ⚠️ 本文件里那条留着的断言是**整卡精确 `deepEqual`**（没有一个字节放宽 ✗）。
 
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const test = require('node:test');
 
-const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { LarkMvpService } = require('../src/services/larkMvpService');
-const { salesStatusCard, salesProcessingCard } = require('../src/utils/larkCards');
-const {
-  SALES_PROCESSING_CARD_DEFAULTS,
-  resolveSalesProcessingCardConfig,
-} = require('../src/config/salesProcessingCard');
+const { salesStatusCard } = require('../src/utils/larkCards');
 
-process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
-
-const makeStore = () =>
-  new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sales-processing-card-')), idField: 'task_id' });
-
-// 两件明细：确认卡片这时**逐件显示金额**（`items.length > 1`），
-// 所以「明细文字」与处理中卡片完全相同 —— 唯一差别就是那层 `<font color='grey'>`。
-// 这样才能证明"看起来不一样"是**变灰**带来的，而不是别的巧合。
+// 两件明细：多件时 `salesStatusCard` **逐件显示金额**（这一段是下面那条断言的输入）。
 const TWO_ITEMS = [
   { item_no: 'A100', size: 38, quantity: 1, actual_amount: 99 },
   { item_no: 'A100', size: 39, quantity: 1, actual_amount: 99 },
 ];
-
-const elementTexts = (card) => card.elements.map((element) =>
-  element.content || element.text?.content || element.elements?.map((inner) => inner.content).join('') || '');
-
-test('处理中卡片的默认配置就是她要求的那张（标题醒目、明细变灰、note 逐字保留）', () => {
-  const config = resolveSalesProcessingCardConfig({});
-  assert.deepEqual(config, { ...SALES_PROCESSING_CARD_DEFAULTS });
-  // ① 标题必须一眼看出"已经点上了、正在写入"。
-  assert.match(config.title, /处理中/);
-  assert.match(config.title, /正在写入/);
-  // ② 明细变灰 + 一行醒目的处理中提示（两个都做，她要求"不仔细看标题也能看出变了"）。
-  assert.equal(config.itemColor, 'grey');
-  assert.equal(config.progressLine, '⏳ 正在写入销售记录与收款…');
-  // ③ note 逐字保留。
-  assert.equal(config.note, '已收到确认，正在写入销售记录和收款；请勿重复点击。');
-});
-
-test('四项显示配置（标题 / 卡片头颜色 / 明细颜色 / 处理中行 / note）都能被环境变量覆盖', () => {
-  const config = resolveSalesProcessingCardConfig({
-    SALES_PROCESSING_CARD_TITLE: '⏳ 正在写入…',
-    SALES_PROCESSING_CARD_TEMPLATE: 'orange',
-    SALES_PROCESSING_CARD_ITEM_COLOR: 'red',
-    SALES_PROCESSING_CARD_PROGRESS_LINE: '马上就好',
-    SALES_PROCESSING_CARD_NOTE: '别重复点',
-  });
-  assert.deepEqual(config, {
-    title: '⏳ 正在写入…',
-    template: 'orange',
-    itemColor: 'red',
-    progressLine: '马上就好',
-    note: '别重复点',
-  });
-  // 设成空串 = 显式"不要这一项"（不回退默认）——与 config/envValue 的总体规矩一致。
-  const blank = resolveSalesProcessingCardConfig({
-    SALES_PROCESSING_CARD_ITEM_COLOR: '',
-    SALES_PROCESSING_CARD_PROGRESS_LINE: '',
-  });
-  assert.equal(blank.itemColor, '');
-  assert.equal(blank.progressLine, '');
-});
-
-test('处理中卡片：明细整段变灰、多一行"正在写入"、note 与确认卡片一致、没有任何按钮', () => {
-  const config = resolveSalesProcessingCardConfig({});
-  const card = salesProcessingCard({ items: TWO_ITEMS }, config);
-  const texts = elementTexts(card);
-
-  // ① 标题来自配置。
-  assert.equal(card.header.title.content, config.title);
-  assert.equal(card.header.template, config.template);
-  // ② 明细区与确认卡片**明显不同**：整段被 `<font color='grey'>` 包住。
-  const detail = card.elements[1].text.content;
-  assert.ok(detail.startsWith("<font color='grey'>"));
-  assert.ok(detail.endsWith('</font>'));
-  assert.ok(detail.includes('1. A100 38码 × 1 ￥99'));
-  assert.ok(detail.includes('2. A100 39码 × 1 ￥99'));
-  // 去掉颜色标记之后，这两张卡片的明细文字**本来就一样** ⇒ 差别确实来自"变灰"。
-  const plainDetail = detail.replace(/^<font color='[^']*'>/, '').replace(/<\/font>$/, '');
-  // ⚠️ 2026-10-12（3b）：原来拿「确认卡」做对照，它随销售草稿卡片退场 ⇒ 换成**仍在跑**的状态卡片
-  const confirmationTexts = elementTexts(salesStatusCard({ items: TWO_ITEMS }, '已成交', '已经写好了'));
-  assert.ok(confirmationTexts.includes(plainDetail), '两边明细文字应当相同，差别只在颜色');
-  assert.notEqual(detail, plainDetail);
-  // 多出来的一行"正在写入"提示（在明细之前，第一眼就看到）。
-  assert.equal(card.elements[0].text.content, config.progressLine);
-  assert.ok(texts.includes(config.progressLine));
-  // ③ note 逐字不变（结构与 salesStatusCard 一致）。
-  const note = card.elements.at(-1);
-  assert.equal(note.tag, 'note');
-  assert.equal(note.elements[0].content, '已收到确认，正在写入销售记录和收款；请勿重复点击。');
-  // ④ 处理中卡片**不给任何按钮**（她点过了，不能重复点）。
-  assert.ok(!card.elements.some((element) => ['action', 'column_set'].includes(element.tag)));
-});
-
-test('颜色 / 处理中行配成空串时，那一项就不出现（不是渲染出一个空壳）', () => {
-  const card = salesProcessingCard({ items: TWO_ITEMS }, {
-    title: '处理中', template: 'blue', itemColor: '', progressLine: '', note: 'note',
-  });
-  assert.equal(card.elements.length, 2);
-  assert.equal(card.elements[0].text.content, '1. A100 38码 × 1 ￥99\n2. A100 39码 × 1 ￥99');
-});
 
 test('「已入账」终态卡（salesStatusCard）逐字未变 —— 这是她满意的那张，不许动', () => {
   const card = salesStatusCard({ items: TWO_ITEMS }, '销售订单已入账',
@@ -141,29 +52,11 @@ test('「已入账」终态卡（salesStatusCard）逐字未变 —— 这是她
         content: '销售单号：XSD-001；2 条明细已写入。尚未交付，库存未扣减。' }] },
     ],
   });
-  // 处理中卡片与终态卡**结构上就不是一张卡**（一个有 <font>、一个没有）。
-  const processing = salesProcessingCard({ items: TWO_ITEMS }, resolveSalesProcessingCardConfig({}));
-  assert.notDeepEqual(processing, card);
+  // ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+  //   改前逐字：`const processing = salesProcessingCard(…); assert.notDeepEqual(processing, card);`
+  //     （判据 = "处理中卡与终态卡**结构上不是一张卡**"）
+  //   改后逐字：**删掉那两行**（处理中卡已退场 ⇒ 那条对照无从表达 ✗）；
+  //     本用例**真正的判据**（上面那条整卡 `deepEqual` = 她满意的那张逐字未变 ✓）**一个字没动**。
+  //   依据：2026-10-15 她拍板清理死代码；她那条「中间态也要有提示」的口径现由 toast 承载
+  //     （见文件头）⇒ 删的是**无载体的死卡对照**，不是她的口径 ✓
 });
-
-// ── 走一遍真实链路（不是只测渲染函数）──────────────────────────────────────
-// 她点「确认」→ `handleCardAction` → 立即 patch 一次卡片（stage=processing）
-// → 入账 → 再 patch 一次终态卡（stage=posted）。
-// 用真实的 `updateInteractiveCard`（只打桩飞书 SDK 的 patch），并把结构化日志抓下来 ——
-// `stage` 就在日志里，这既是验收标准 ⑤，也是线上排查时看到的同一行。
-const captureLogs = async (run) => {
-  const lines = [];
-  const original = console.log;
-  console.log = (line) => { lines.push(line); };
-  try {
-    const result = await run();
-    return { result, lines };
-  } finally {
-    console.log = original;
-  }
-};
-
-const parseLogs = (lines) => lines.map((line) => {
-  try { return JSON.parse(line); } catch (_error) { return null; }
-}).filter(Boolean);
-

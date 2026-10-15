@@ -23,40 +23,6 @@
       }
     ]
   },
-  "salesProcessingCard": {
-    "header": {
-      "template": "blue",
-      "title": {
-        "tag": "plain_text",
-        "content": "⏳ 处理中，正在写入"
-      }
-    },
-    "elements": [
-      {
-        "tag": "div",
-        "text": {
-          "tag": "lark_md",
-          "content": "⏳ 正在写入销售记录与收款…"
-        }
-      },
-      {
-        "tag": "div",
-        "text": {
-          "tag": "lark_md",
-          "content": "<font color='grey'>1. A100 38码 × 1 ￥99\n2. A100 39码 × 1 ￥99</font>"
-        }
-      },
-      {
-        "tag": "note",
-        "elements": [
-          {
-            "tag": "plain_text",
-            "content": "已收到确认，请勿重复点击。"
-          }
-        ]
-      }
-    ]
-  },
   "sampleReplacementCard": {
     "header": {
       "template": "orange",

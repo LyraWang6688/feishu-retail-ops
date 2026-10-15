@@ -16,12 +16,20 @@
 //      「我要说一下，我刚才跟你说我们的补货品信息提示只在终态，其实还有一个中间态。
 //        我现在觉得，中间态也应该有提示。是的，中间态也应该有，所以也需要你补充下～」
 //      ⇒ **最终 = ① 和 ② 都要有**（处理中卡那一行已加回来）。
+//   🔴 2026-10-15（业务负责人拍板「**清掉吧**」）：**中间态那一刀随「处理中卡」退场而**
+//      **无载体**（那张卡生产侧没人发 ⇒ 她永远看不到它）⇒ 判据落到**她真能看到的**
+//      **toast** 上：点卡片按钮后 `larkMvpService.completeDealFromCard` 回的那三种 toast
+//      （`shortStock` / `askingToast` / `successToast`），**已由
+//      `test/terminalCardConfirmDeal.test.js`（`:498` `:563` `:772` 逐字）钉住** ✓
+//      ⇒ **口径一个字都没丢**，只是从"死卡的排布"搬到了"她真能看到的 toast"上 ✓
 //   ⚠️ 从头到尾**没变**的一条：**确认卡片（点之前）不要**。
 //
 // 验收标准（逐条钉在这里；括号里是钉它的用例）：
 //   ① 确认卡片**不含**该段落 —— 有缺口不含，无缺口**也不留空壳**（1）
-//   ② 处理中卡**含**该段落，行格式逐字、链接 url 逐字；且它的 `elements` **逐字等于**
-//      "进度行 + 明细 + 这一段 + note"那一份（防止将来又悄悄删掉 / 改位置）（2、3、9）
+//   ② ~~处理中卡**含**该段落…~~ **2026-10-15 起作废**：处理中卡随死代码清理退场
+//      （她的口径改由 toast 承载，见文件头）⇒ 原来钉"这张死卡排布"的两条**已删**
+//      —— **删的是无载体的死卡排布，不是她的口径** ✓；"这一段逐字 + 链接 url 逐字"
+//      仍由 ③（终态卡）与下面"链接 url"那条（两张活卡对照）钉着 ✓（判据没放宽 ✗）
 //   ③ 终态「已入账」卡**含**该段落，行格式逐字、链接 url 逐字（4、9；一条不许放宽）
 //   ④ 无缺口时，三张卡都**不出现**该段落（1、5）
 //   ⑤ 链接仍是那条货品记录的飞书 url（3、4、9；url 直接来自 `draft.product_info_gaps[].url`）
@@ -42,13 +50,13 @@ const test = require('node:test');
 
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
-const { salesStatusCard, salesProcessingCard, productInfoGapsElements } =
+// ⚠️ 2026-10-15：`salesProcessingCard`（处理中卡）已随死代码清理删除（生产侧没人发 ✗）
+const { salesStatusCard, productInfoGapsElements } =
   require('../src/utils/larkCards');
 const {
   PRODUCT_INFO_GAPS_DEFAULTS,
   resolveProductInfoGapsConfig,
 } = require('../src/config/productInfoGaps');
-const { resolveSalesProcessingCardConfig } = require('../src/config/salesProcessingCard');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
@@ -93,49 +101,31 @@ test('状态卡片：有缺口也不出现「补货品信息」段落（位置�
   assert.deepEqual(withGaps, withoutGaps);
 });
 
-// ── ② 处理中卡（点完确认立刻可见、1~2 分钟后被终态卡覆盖的那张）──────────────
-//     🔴 她 2026-10-07 的**最新口径**（逐字）：「**中间态也应该有提示**」
-//     ⇒ ① 这一张**含**该段落。下面两条是从 #221 的"不含"翻回"含"的**正向断言**
-//       （与 PR #220 的钉法一致，另外多加了一条 `elements` 逐字加固）。
+// ── ② 中间态（原「处理中卡」）：**那一刀随卡退场而无载体**（2026-10-15 拍板清理）──
+//     🔴 **删掉的是"无载体的死卡排布"，不是她的口径**：
+//        · 她 2026-10-07 ③「**中间态也应该有提示**」现在由**她真能看到的 toast** 承载
+//          （`completeDealFromCard` 的 `shortStock` / `askingToast` / `successToast`）
+//        · **已由活用例钉住**：`test/terminalCardConfirmDeal.test.js` `:498` `:563`（同一断言）
+//          ＋ `:772`（逐字断言 `config.shortStock === '这批还没到，先去入库再回来点'`）✓
+//        · 原来这条钉的是**那张死卡独有的排布**（`elements` 逐字 = 进度行 + 明细 + 这一段 + note
+//          ＋"note 仍是最后一行"）—— 卡没了 ⇒ 排布无从表达；**这一段本身**的逐字格式仍由
+//          下面 ③ 的终态卡用例（`:143`）与配置那几条（`:190` 起）钉着 ✓（一条都没放宽 ✗）
 
-test('处理中卡：含「补货品信息」段落，行格式与链接逐字（note 小字、note 仍是最后一行）', () => {
-  const config = resolveSalesProcessingCardConfig({});
-  const card = salesProcessingCard({ items: ITEMS, product_info_gaps: GAPS }, config);
-  const section = sectionElement(card);
-  assert.ok(section, '处理中卡上必须有这一段');
-  assert.equal(section.text.tag, 'lark_md');
-  assert.equal(section.text.content, EXPECTED_SECTION);
-  assert.match(section.text.content, /^补货品信息\n/);
-  assert.match(section.text.content, /还差：成本、样例图/);
-  // 段落位置：明细之后、note 之前 —— 既有那句 note 仍在最后一行（既有断言不变）。
-  assert.equal(card.elements.at(-1).tag, 'note');
-  assert.equal(card.elements.at(-1).elements[0].content, config.note);
-  assert.ok(card.elements.indexOf(section) < card.elements.length - 1);
-  // ⭐⭐ 加固（原 #221 那条"逐字等于没有该段"的反向断言，本次**改写成含该段的逐字断言**）：
-  //    `elements` 逐字 = 进度行 + 明细 + 这一段 + note —— 将来谁把它悄悄删掉、改位置、
-  //    换成一个空壳、或者顺手多塞一个元素，这里都会红。
-  assert.deepEqual(card.elements, [
-    { tag: 'div', text: { tag: 'lark_md', content: config.progressLine } },
-    { tag: 'div', text: { tag: 'lark_md', content: `<font color='${config.itemColor}'>1. 66356 42码 × 1 ￥99</font>` } },
-    { tag: 'div', text: { tag: 'lark_md', text_size: 'note', content: EXPECTED_SECTION } },
-    { tag: 'note', elements: [{ tag: 'plain_text', content: config.note }] },
-  ], '处理中卡的 elements 逐字 = 进度行 + 明细 + 补货品信息段 + note（第 3 个元素就是这一段）');
-  // 有缺口 = 4 个元素；缺口为空时该段自己返回 `[]`（无空壳）—— 见下面第 ④ 组用例。
-  const withoutGaps = salesProcessingCard({ items: ITEMS }, config);
-  assert.equal(withoutGaps.elements.length, 3, '无缺口时不留空壳');
-  assert.notDeepEqual(card, withoutGaps, '有缺口 / 无缺口的处理中卡必须不同（差别就是这一段）');
-});
-
-test('处理中卡：链接 url 逐字等于那条货品记录的飞书 url（不重拼、不改写）', () => {
-  const processing = salesProcessingCard({ items: ITEMS, product_info_gaps: GAPS },
-    resolveSalesProcessingCardConfig({}));
-  assert.ok(sectionElement(processing).text.content.includes(`(${GAP_URL})`),
-    'markdown 链接的 url 必须是 draft 里那一条，一个字都不能动');
-  // 同一份 draft 走终态卡：两张卡上的链接必须**逐字相同**（这次加回来的是"位置"，不是新拼法）。
-  const terminal = salesStatusCard({ items: ITEMS, product_info_gaps: GAPS },
+// ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+//   改前逐字：`const processing = salesProcessingCard(…)` ⇒ 再与终态卡比"这一段逐字相同"
+//   改后逐字：两张**活卡**（已入账 / 部分交付）比"这一段逐字相同"
+//   依据：这条判据的本意 =「**这一段的拼法只有一处、跟挂在哪张卡上无关**」⇒
+//     处理中卡退场后，用两张她**真能看到**的活卡钉**同一件事**（覆盖面不减 ✓ 判据没放宽 ✗）
+test('链接 url 逐字等于那条货品记录的飞书 url（不重拼、不改写）——两张活卡上的这一段逐字相同', () => {
+  const posted = salesStatusCard({ items: ITEMS, product_info_gaps: GAPS },
     '销售订单已入账', 'm', 'green', { productInfoGaps: true });
-  assert.equal(sectionElement(processing).text.content, sectionElement(terminal).text.content,
-    '处理中卡与终态卡上的这一段必须逐字相同');
+  assert.ok(sectionElement(posted).text.content.includes(`(${GAP_URL})`),
+    'markdown 链接的 url 必须是 draft 里那一条，一个字都不能动');
+  // 另一张**活卡**（部分交付）上的同一段必须**逐字相同**（这一段只有一处拼法 ✓）
+  const partial = salesStatusCard({ items: ITEMS, product_info_gaps: GAPS },
+    '部分已交付', 'm', 'blue', { productInfoGaps: true });
+  assert.equal(sectionElement(posted).text.content, sectionElement(partial).text.content,
+    '两张活卡上的这一段必须逐字相同（拼法只一处 ✓）');
 });
 
 // ── ③ 终态卡（已入账）—— 本次改动的关键 ──────────────────────────────────
@@ -165,19 +155,24 @@ test('终态卡：不显式打开开关时，输出与改动前**逐字相同**�
 
 // ── ④ 无缺口：三张卡都不出现（不留空壳）──────────────────────────────────
 
-test('无缺口时：确认卡 / 处理中卡 / 终态卡**三张**都不出现该段落，也不多出空元素', () => {
+// ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+//   改前逐字：`'确认卡 / 处理中卡 / 终态卡**三张**都不出现该段落，也不多出空元素'`
+//   改后逐字：`'确认卡 / 终态卡（已入账 + 部分交付两张）都不出现该段落，也不多出空元素'`
+//   依据：判据本意 =「**没有缺口时哪张卡都不许留空壳 / 不许出现那一段**」⇒
+//     处理中卡退场后改成**两张活卡的不同分支**（已入账 + 部分交付）⇒ 覆盖面不减 ✓
+test('无缺口时：确认卡 / 终态卡（已入账 + 部分交付）都不出现该段落，也不多出空元素', () => {
   const draft = { items: ITEMS, product_info_gaps: [] };
-  const processing = salesProcessingCard(draft, resolveSalesProcessingCardConfig({}));
-  assert.doesNotMatch(gapsCardText(processing), /补货品信息/);
-  assert.equal(processing.elements.length, 3, '一行提示 + 明细 + note，没有第 4 个空壳');
-  assert.equal(sectionElement(processing), undefined);
-  // `product_info_gaps` 整个字段缺失（老任务）也要当空处理。
-  const legacy = salesProcessingCard({ items: ITEMS }, resolveSalesProcessingCardConfig({}));
-  assert.deepEqual(legacy, processing);
-
   const posted = salesStatusCard(draft, '销售订单已入账', 'm', 'green', { productInfoGaps: true });
   assert.doesNotMatch(gapsCardText(posted), /补货品信息/);
   assert.equal(posted.elements.length, 2);
+  assert.equal(sectionElement(posted), undefined, '没有第 3 个空壳');
+  // `product_info_gaps` 整个字段缺失（老任务）也要当空处理 ⇒ 与"空数组"那张**逐字相同**。
+  const legacy = salesStatusCard({ items: ITEMS }, '销售订单已入账', 'm', 'green', { productInfoGaps: true });
+  assert.deepEqual(legacy, posted);
+  // 另一张**活卡**分支（部分交付）同样：不出现那一段、也不多出空元素。
+  const partial = salesStatusCard(draft, '部分已交付', 'm', 'blue', { productInfoGaps: true });
+  assert.doesNotMatch(gapsCardText(partial), /补货品信息/);
+  assert.equal(sectionElement(partial), undefined, '部分交付那张也不许有空壳 ✓');
 
   // 确认卡片（第一张）：无缺口时同样不留空壳 —— 与"有缺口"那张逐字相同。
   const confirmation = salesStatusCard(draft, '已成交', '已经写好了');
@@ -258,15 +253,18 @@ test('渲染：超过默认上限（6）时只列 6 条，最后一行是"{count
   assert.match(content, /还有 2 个颜色也缺资料/);
 });
 
-// ⭐ 新增（2026-10-07，她最新口径"中间态也要有提示"）：处理中卡上同样吃这一段的上限 ——
-//   证明加回来的**是同一个渲染器**（不是另抄一份），上限 / 溢出那句在哪张卡上都是同一套。
-test('处理中卡：缺口超过上限时同样只列这么多条，最后一行是"{count}"替换后的那句', () => {
+// ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+//   改前逐字：`test('处理中卡：缺口超过上限时同样只列这么多条…')`（钉"处理中卡也吃同一套上限"）
+//   改后逐字：`test('活卡（部分交付）：缺口超过上限时同样只列这么多条…')`
+//   依据：这条的本意 =「**上限 / 溢出那句跟挂在哪张卡上无关**（同一个渲染器、不是另抄一份）」
+//     ⇒ 处理中卡退场后换成**另一张活卡**（部分交付）钉**同一件事** ✓（判据没放宽 ✗）
+test('活卡（部分交付）：缺口超过上限时同样只列这么多条，最后一行是"{count}"替换后的那句', () => {
   const many = Array.from({ length: 8 }, (_unused, index) => ({
     record_id: `p_${index}`, label: `6635${index}白`, missing: ['成本'],
     missing_sample_image: false, url: `https://example.com/p/${index}`,
   }));
-  const card = salesProcessingCard({ items: ITEMS, product_info_gaps: many },
-    resolveSalesProcessingCardConfig({}));
+  const card = salesStatusCard({ items: ITEMS, product_info_gaps: many },
+    '部分已交付', 'm', 'blue', { productInfoGaps: true });
   const content = sectionElement(card).text.content;
   assert.match(content, /66350白/);
   assert.match(content, /66355白/);
@@ -280,8 +278,9 @@ test('终态卡：缺口超过上限时只列这么多条，最后一行是"{cou
     missing_sample_image: false, url: `https://example.com/p/${index}`,
   }));
   // 走终态卡（她最初点名要长期留着的那一张）：说明上限也照样在这张卡上生效。
-  // ⚠️ 「终态卡是这一段唯一的挂载点」是 #221 的过时说法 —— 她 2026-10-07 最新口径是
-  //    **处理中卡也有**（见本文件第 ② 组与上面新增的那条处理中卡上限用例）。
+  // ⚠️ 2026-10-15：处理中卡已随死代码清理退场（她的口径改由 toast 承载，见文件头）
+  //    ⇒ 这一段现在**就是**挂在终态卡（`options.productInfoGaps`）上；上面那条"部分交付
+  //    也吃同一套上限"是**另一张活卡**的对照 ✓
   const card = salesStatusCard({ items: ITEMS, product_info_gaps: many },
     '销售订单已入账', 'm', 'green', { productInfoGaps: true });
   const content = sectionElement(card).text.content;

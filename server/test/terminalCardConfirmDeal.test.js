@@ -742,14 +742,19 @@ test('卡片回调：handler **同步**返回 toast，重活在 setImmediate 里
 // 七、只改这张终态卡（AC-10）+ 配置先行（AC-4）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('只改这张终态卡：确认卡 / 处理中卡 / 第二次交付卡上都没有这个按钮', () => {
+// ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
+//   改前逐字：`test('只改这张终态卡：确认卡 / 处理中卡 / 第二次交付卡上都没有这个按钮', …)`
+//            ＋ 里面那条 `assert.equal(hasDealButton(larkCards.salesProcessingCard(…)), false)`
+//   改后逐字：`test('只改这张终态卡：确认卡 / 第二次交付卡上都没有这个按钮', …)`
+//            （**去掉处理中卡那一行** —— 那张卡已随死代码清理退场 ✗）
+//   依据：这条判据的本意 =「**这个成交按钮只许出现在终态卡上**」⇒ 处理中卡退场后，
+//     其余**活卡**（确认卡 / 第二次交付卡 / 到货核对卡）的反向断言**一条不少、照旧** ✓
+//     （判据没放宽 ✗：原来"三张都不许有"⇒ 现在"所有**在用的**卡都不许有" ✓）
+test('只改这张终态卡：确认卡 / 第二次交付卡上都没有这个按钮', () => {
   const items = [{ item_no: 'P1', size: 40, quantity: 1, actual_amount: 260 }];
   const action = SALES_CONFIRM_DEAL_ACTIONS.CONFIRM;
   const hasDealButton = (card) => cardButtons(card).some((button) => button.value?.action === action);
 
-  assert.equal(hasDealButton(larkCards.salesProcessingCard({ items }, {
-    title: 't', template: 'blue', itemColor: 'grey', progressLine: 'p', note: 'n',
-  })), false);
   assert.equal(hasDealButton(larkCards.secondDeliveryCard({
     orders: [{ orderNo: 'XSD-1', salesEntryRecordId: ENTRY_ID, tradeTypeLabel: '预定',
       quantity: 1, pendingAmount: 260, pendingDeliveryQuantity: 1 }],
