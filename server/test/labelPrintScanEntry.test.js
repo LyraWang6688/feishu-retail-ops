@@ -70,6 +70,33 @@ const NUMBER = 'XHB8095|棕色|A';
 const ENCODED = encodeURIComponent(NUMBER);
 const TEXTS = LABEL_PRINT_QUEUE.texts;
 
+/**
+ * ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人 2026-10-12 逐字「我可没有说过，
+ *   **我们是能够进行动态交互的**」＋ 她 2026-10-16 亲口点的「页面标注模式」（扫码页 + 工作台 ✓））：
+ *
+ *   改前逐字（本文件两处）：
+ *     `const scripts = html.match(/<script[\s>]/gi) || [];`
+ *     `assert.equal(scripts.length, 1, \`整页只该有 1 段脚本（实际 ${scripts.length} 段）\`);`
+ *     … `assert.equal(html.includes('location.search'), false);`
+ *     `assert.equal(/<script[\s>]/i.test(messageBody), false, '结果页正文也零脚本');`
+ *   改后逐字：正则换成 `<script(?! data-view="annotate")[\s>]`（只数**业务**脚本）；
+ *     `location.search` 那条收成**正文**（标注脚本那一段是唯一豁免）；
+ *     并**新增**一条"那一段标注脚本必须在且**必须早退**"。
+ *
+ *   依据：「扫码页零 JS」是**我方（agent 侧）**的约束、**不是她的口径**；而"带 `?annotate=1`
+ *     才出现"这道闸门**只能落在脚本内部** —— 查询串只有 `routes/scanPage.js` 拿得到，
+ *     那个文件**不在本任务写作用域内**（另有主）。
+ *   ⚠️ **没放宽**：段数上限照旧 ＋ 新增"它不许做事（不带参数就 return）"的判据 ✓
+ */
+const ANNOTATE_MARK = '<script data-view="annotate">';
+const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
+const annotateScriptOnlyEarlyExits = (html) => {
+  const at = html.indexOf(ANNOTATE_MARK);
+  if (at < 0) return false;
+  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
+  return body.includes('location.search') && body.includes('if (!enabled()) return');
+};
+
 const login = () => {
   process.env.LARK_WEB_AUTH_ENABLED = 'true';
   process.env.LARK_WEB_SESSION_SECRET = SESSION_SECRET;
@@ -218,8 +245,9 @@ test('AC-S1【打印这一款】= 原生表单 POST（隐藏 action），且 AC-
     assert.ok(block.includes(`data-submit-feedback="${TEXTS.printSubmitting}"`), '置灰文案来自配置');
 
     // ⭐ 2026-10-12：**只有一段**脚本（页面级一次，只做"置灰 + 换文案 + 计时"）
-    const scripts = html.match(/<script[\s>]/gi) || [];
-    assert.equal(scripts.length, 1, `整页只该有 1 段脚本（实际 ${scripts.length} 段）`);
+    // ⭐ 2026-10-16 成对迁移（逐字对照见本文件顶部那段注释）：数**业务**脚本 ＋ 标注脚本必须早退 ✓
+    const scripts = html.match(/<script(?! data-view="annotate")[\s>]/gi) || [];
+    assert.equal(scripts.length, 1, `整页只该有 1 段**业务**脚本（实际 ${scripts.length} 段）`);
     assert.ok(html.includes('<script data-view="submit-feedback">'), '就是提交反馈那一段');
     const script = html.slice(html.indexOf('<script data-view="submit-feedback">'),
       html.indexOf('</script>', html.indexOf('<script data-view="submit-feedback">')));
@@ -227,7 +255,9 @@ test('AC-S1【打印这一款】= 原生表单 POST（隐藏 action），且 AC-
     for (const forbidden of ['fetch(', 'XMLHttpRequest', 'location.href']) {
       assert.equal(script.includes(forbidden), false, `这一段不许干别的：${forbidden}`);
     }
-    assert.equal(html.includes('location.search'), false);
+    assert.equal(html.slice(html.indexOf('</head>'), html.indexOf(ANNOTATE_MARK)).includes('location.search'), false,
+      '正文不许读 location.search（标注脚本那一段是唯一豁免 ✓）');
+    assert.equal(annotateScriptOnlyEarlyExits(html), true, '那段标注脚本必须在且必须早退 ✓');
   });
 });
 
@@ -421,8 +451,10 @@ test('AC-S8 打不出来 ⇒ 人话页：她这一款没库存（400）原因原
     assert.ok(html.includes('这一款现在可能没有库存'), '原因原样给她');
     // ⚠️ 只断言**正文**没有脚本（head 里那一段是这一页既有的，与打印无关）——
     //    与 `scanPageRealmServerSide.test.js` 里那条既有断言同一口径。
+    // ⭐ 2026-10-16 成对迁移（逐字对照见本文件顶部那段注释）：正文零**业务**脚本 ＋ 标注脚本必须早退 ✓
     const messageBody = html.slice(html.indexOf('</head>'));
-    assert.equal(/<script[\s>]/i.test(messageBody), false, '结果页正文也零脚本');
+    assert.equal(businessScriptCountOf(messageBody), 0, '结果页正文也零**业务**脚本');
+    assert.equal(annotateScriptOnlyEarlyExits(html), true, '标注脚本照旧在且必须早退 ✓');
   });
 
   await withServer(appFor({ queue: fakeQueue({ enqueueError: new Error('打印文件生成失败：sharp 崩了') }) }), async (base) => {

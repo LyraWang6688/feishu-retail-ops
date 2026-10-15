@@ -47,6 +47,29 @@ const SERVER_DIR = path.join(__dirname, '..');
 const WORKBENCH = path.join(SERVER_DIR, 'public', 'workbench');
 const SHARED_CLIENT = path.join(WORKBENCH, 'shared', 'ui-tap.js');
 
+/**
+ * ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人 2026-10-12 逐字「我可没有说过，
+ *   **我们是能够进行动态交互的**」＋ 她 2026-10-16 亲口点的「页面标注模式」（扫码页 + 工作台 ✓））：
+ *
+ *   改前逐字：`assert.equal((html.match(/<script[\s>]/gi) || []).length, 1, '整页仍然只有一段脚本 ✓');`
+ *   改后逐字：`assert.equal(businessScriptCountOf(html), 1, '整页仍然只有一段**业务**脚本 ✓');`
+ *            ＋ `assert.equal(annotateScriptOnlyEarlyExits(html), true, …)`（**新增**的一条 ✓）
+ *
+ *   依据：「扫码页零 JS」是**我方（agent 侧）**的约束、**不是她的口径**；而"带 `?annotate=1`
+ *     才出现"这道闸门**只能落在脚本内部** —— 查询串只有 `routes/scanPage.js` 拿得到，
+ *     那个文件**不在本任务写作用域内**（另有主）。
+ *   ⚠️ **没放宽**：这一段"内联共享实现、只有一段"的判据照旧（只是点明成业务脚本），
+ *     另外**新增**一条"标注那一段必须早退"✓
+ */
+const ANNOTATE_MARK = '<script data-view="annotate">';
+const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
+const annotateScriptOnlyEarlyExits = (html) => {
+  const at = html.indexOf(ANNOTATE_MARK);
+  if (at < 0) return false;
+  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
+  return body.includes('location.search') && body.includes('if (!enabled()) return');
+};
+
 // 🔴 **顺序很重要**：`utils/uiTapReport.js` 在 require 时就把 `logInfo` 解构走了 ⇒
 //    必须在 require 它**之前**替换掉 logger 上那个函数，否则捕获不到（这条我踩过：日志 sink
 //    在模块加载时绑死 ⇒ 用例里拦不到 ✗）。本文件里其余模块都在这之后 require ✓。
@@ -401,7 +424,10 @@ test('AC-UT4c ⑤ **同一份实现**：两个路由都 require 同一个 util�
     paymentStatus: '', defaultPaymentStatus: '', paymentMethods: [], defaultPaymentMethod: '',
   };
   const html = renderScanPage(view, SCAN_PAGE, writeLike, 'replenish', {});
-  assert.equal((html.match(/<script[\s>]/gi) || []).length, 1, '整页仍然只有一段脚本 ✓');
+  // 扫码页那一页：脚本**还是只有一段**（业务脚本），而共享实现被**内联**进去了
+  // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `businessScriptCountOf` 上面那段注释）
+  assert.equal(businessScriptCountOf(html), 1, '整页仍然只有一段**业务**脚本 ✓');
+  assert.equal(annotateScriptOnlyEarlyExits(html), true, '那段标注脚本必须在且必须早退 ✓');
   assert.ok(html.includes('dshUiTap'), '那一段里就是**共享**的客户端实现（同一个 API ✓）');
   assert.ok(html.includes('ui-tap'), '上报路径仍在 ✓');
   assert.ok(html.includes('data-submit-feedback='), '（前提）这一页确实有带反馈属性的按钮 ✓');

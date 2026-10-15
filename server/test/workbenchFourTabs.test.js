@@ -228,7 +228,33 @@ const pageLabels = (domain) => domain.pages.map((page) => page.label);
 // AC1 一级 tab：恰好 4 个，顺序 = 销售 / 库存 / 采购 / 货品
 // ═══════════════════════════════════════════════════════════════════════════
 
-const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
+/**
+ * ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人 2026-10-12 逐字「我可没有说过，
+ *   **我们是能够进行动态交互的**」＋ 她 2026-10-16 亲口点的「页面标注模式」（扫码页 + 工作台 ✓））：
+ *
+ *   改前逐字（本文件两处）：
+ *     `const feedbackScripts = scriptCountOf(page);`
+ *     `assert.ok(feedbackScripts <= 1, \`最多只该有那一段反馈脚本（实际 ${feedbackScripts}）\`);`
+ *     `assert.equal(feedbackScripts, page.includes('data-submit-feedback=') ? 1 : 0,
+ *        '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');`
+ *     `assert.equal(/<script[\s>]/i.test(message), false, '结果页也没有任何脚本');`
+ *   改后逐字：数的是**业务**脚本（`businessScriptCountOf`）＋
+ *     **新增**一条"那一段标注脚本必须在且**必须早退**"。
+ *
+ *   依据：「扫码页零 JS」是**我方（agent 侧）**的约束、**不是她的口径**；而"带 `?annotate=1`
+ *     才出现"这道闸门**只能落在脚本内部** —— 查询串只有 `routes/scanPage.js` 拿得到，
+ *     那个文件**不在本任务写作用域内**（另有主）。
+ *   ⚠️ **没放宽**：上限与"结果页零脚本"一个字没放宽（零**业务**脚本 ✓），
+ *     另外**新增**"标注那一段必须早退"✓
+ */
+const ANNOTATE_MARK = '<script data-view="annotate">';
+const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
+const annotateScriptOnlyEarlyExits = (html) => {
+  const at = html.indexOf(ANNOTATE_MARK);
+  if (at < 0) return false;
+  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
+  return body.includes('location.search') && body.includes('if (!enabled()) return');
+};
 
 test('AC1 一级 tab = 扫一扫 · 销售 · 库存 · 采购 · 货品（2026-10-13 她裁定：扫一扫同级、放最前）', async () => {
   const modules = loadFrontendModules();
@@ -875,10 +901,12 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
     assert.equal(pageBody.includes(hasNot), false, `${id} 领域不该有「${hasNot}」`);
         // ⭐ 2026-10-12（她拍板：交互反馈是硬要求）：
         //    页面上**只要有带反馈属性的写按钮** ⇒ 恰好那一段脚本；没有写按钮的页面（纯库存）仍然 0 段。
-        const feedbackScripts = scriptCountOf(page);
+        // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `businessScriptCountOf` 上面那段注释）
+        const feedbackScripts = businessScriptCountOf(page);
         assert.ok(feedbackScripts <= 1, `最多只该有那一段反馈脚本（实际 ${feedbackScripts}）`);
         assert.equal(feedbackScripts, page.includes('data-submit-feedback=') ? 1 : 0,
           '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');
+        assert.equal(annotateScriptOnlyEarlyExits(page), true, '那段标注脚本必须在且必须早退 ✓');
   }
   // CSS 里也不再有按 data-realm 显隐的规则（更不会有"未设 realm 时全隐藏"那种白屏写法）
   assert.equal(STYLE.includes('data-realm'), false, 'CSS 不许再依赖 data-realm');
@@ -964,7 +992,10 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
   const message = renderScanMessagePage({ title: '没找到这个编号', body: '可能已删除、或编号变了。', number: 'NOPE|黑色|A', requestId: 'req_1' });
   const messageBody = message.slice(message.indexOf('</head>'));
   assert.ok(!messageBody.includes('realm-bar'), '结果页不挂领域切换');
-  assert.equal(/<script[\s>]/i.test(message), false, '结果页也没有任何脚本');
+  // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `businessScriptCountOf` 上面那段注释）：
+  //    结果页照旧零**业务**脚本；那一段标注脚本必须在且必须早退（不带参数时逐字不变 ✓）
+  assert.equal(businessScriptCountOf(messageBody), 0, '结果页也没有任何**业务**脚本');
+  assert.equal(annotateScriptOnlyEarlyExits(message), true, '那段标注脚本必须在且必须早退 ✓');
   assert.ok(message.includes('没找到这个编号'), '结果页内容照旧');
 });
 

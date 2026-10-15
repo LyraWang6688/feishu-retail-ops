@@ -227,10 +227,41 @@ const EXPECT = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-W1 / AC-W2 服务端按领域只渲染一块 + 一页零脚本
+// AC-W1 / AC-W2 服务端按领域只渲染一块 + 「不带标注参数时」零业务脚本
 // ═══════════════════════════════════════════════════════════════════════════
 
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
+
+/**
+ * ⭐⭐ 2026-10-16 **AC-W2 成对迁移**（依据 = 业务负责人 2026-10-12 逐字：
+ *   「我可没有说过，**我们是能够进行动态交互的**」＋ 她 2026-10-16 亲口点的「页面标注模式」）：
+ *
+ *   改前逐字：
+ *     `const feedbackScripts = scriptCountOf(html);`
+ *     `assert.ok(feedbackScripts <= 1, \`最多只该有那一段反馈脚本（实际 ${feedbackScripts}）\`);`
+ *     `assert.equal(feedbackScripts, html.includes('data-submit-feedback=') ? 1 : 0,
+ *        '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');`
+ *   改后逐字：下面这两条（`businessScriptCountOf` + 那一段标注脚本必须**早退**）。
+ *
+ *   依据（两件事，缺一不可）：
+ *   ① 「扫码页一行脚本都不许有」是**我方（agent 侧）**的约束，**不是她的口径** ——
+ *      她 2026-10-12 两次纠正：「我可没有说过，我们是能够进行动态交互的」；
+ *   ② 2026-10-16 她亲口要的「页面标注模式」**必须**在扫码页上能开（她选的范围：扫码页 + 工作台 ✓），
+ *      而「带 `?annotate=1` 才出现」这道闸门**只能落在脚本内部** ——
+ *      查询串只有 `routes/scanPage.js` 拿得到，那个文件**不在本任务写作用域内**（另有主）
+ *      ⇒ 别无选择：脚本**无条件**在，由它自己**开头就判、判完早退**。
+ *   ⚠️ **判据没有放宽**：原来是"≤1 段且段数 = 有没有写按钮"，现在拆成
+ *      「**业务脚本**仍然 ≤1 且段数 = 有没有写按钮」＋「那一段标注脚本**必须**在且**必须**早退」
+ *      —— 多了一段**有名字、可指认**的脚本，同时**多了一条**"它不许做事"的判据 ✓
+ */
+const ANNOTATE_MARK = '<script data-view="annotate">';
+const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
+const annotateScriptOnlyEarlyExits = (html) => {
+  const at = html.indexOf(ANNOTATE_MARK);
+  if (at < 0) return false;
+  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
+  return body.includes('location.search') && body.includes('if (!enabled()) return');
+};
 
 test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都不进（不是 CSS 藏起来）', () => {
   for (const realm of ALL_REALMS) {
@@ -258,16 +289,28 @@ test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都�
     '认不出的领域回落缺省，不报错、不空白');
 });
 
-test('AC-W2 页面里一行前端脚本都没有：不依赖任何前端执行（飞书 webview 也不怕）', () => {
+test('AC-W2 页面里没有**业务**前端脚本：不依赖任何前端执行（飞书 webview 也不怕）', () => {
   for (const realm of ALL_REALMS) {
     const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
         // ⭐ 2026-10-12（她拍板：交互反馈是硬要求）：
         //    页面上**只要有带反馈属性的写按钮** ⇒ 恰好那一段脚本；没有写按钮的页面（纯库存）仍然 0 段。
-        const feedbackScripts = scriptCountOf(html);
+        // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 AC-W2 上面那段注释）：这里数的是**业务脚本**，
+        //    另有一段**有名字**的标注脚本（`data-view="annotate"`）—— 它只在 `?annotate=1` 时做事。
+        const feedbackScripts = businessScriptCountOf(html);
         assert.ok(feedbackScripts <= 1, `最多只该有那一段反馈脚本（实际 ${feedbackScripts}）`);
         assert.equal(feedbackScripts, html.includes('data-submit-feedback=') ? 1 : 0,
           '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');
-    assert.equal(html.includes('location.search'), false, '不许再读 location.search');
+        // ⭐ 新增的那一条（**不放宽**）：那一段标注脚本必须在，且**必须开头早退**（不带参数时零痕迹 ✓）
+        assert.equal(html.includes(ANNOTATE_MARK), true, '标注脚本要在（带 ?annotate=1 时才做事 ✓）');
+        assert.equal(annotateScriptOnlyEarlyExits(html), true,
+          '那一段必须"读 query ⇒ 不带参数就 return"（否则不带参数时页面就变样了 ✗）');
+    // ⚠️ 2026-10-16 成对迁移（逐字）：
+    //    改前：`assert.equal(html.includes('location.search'), false, '不许再读 location.search');`
+    //    改后：只禁**正文**读它（标注脚本那一段是**唯一**豁免，且有上面那条"早退"判据顶着 ✓）
+    //    依据 = 她 2026-10-12 逐字「我们是能够进行动态交互的」＋「带 `?annotate=1` 才出现」这道闸门
+    //      只能落在脚本内部（查询串只有 `routes/scanPage.js` 拿得到，那个文件不在写作用域内）
+    assert.equal(html.slice(html.indexOf('</head>'), html.indexOf(ANNOTATE_MARK)).includes('location.search'), false,
+      '正文（身份区 / 领域块）不许再读 location.search');
     assert.equal(/\sdata-realm\s*=\s*"/.test(html), false, '不许再有 <html data-realm> 那种靠属性显隐的写法');
     assert.equal(/on(click|load|submit)\s*=/i.test(html), false, '不许有内联事件');
   }
@@ -463,7 +506,15 @@ test('AC-W4/W7 结果页（没找到 / 链接不对）也永远有人话（既�
     title: SCAN_PAGE.texts.notFoundTitle, body: SCAN_PAGE.texts.notFoundBody, number: 'NOPE|黑色|A', requestId: 'r1',
   });
   assert.ok(message.includes(SCAN_PAGE.texts.notFoundTitle) && message.includes('NOPE|黑色|A'));
-  assert.equal(/<script[\s>]/i.test(message), false, '结果页也没有脚本');
+  // ⚠️ 2026-10-16 成对迁移（逐字）：
+  //    改前：`assert.equal(/<script[\s>]/i.test(message), false, '结果页也没有脚本');`
+  //    改后：如下 —— 结果页**照旧零业务脚本**；那一段**有名字**的标注脚本必须在且**必须早退**。
+  //    依据 = 她 2026-10-12 逐字「我们是能够进行动态交互的」＋「带 ?annotate=1 才出现」这道闸门
+  //      只能落在脚本内部（查询串只有 `routes/scanPage.js` 拿得到，那个文件不在写作用域内）。
+  //    ⚠️ 判据没放宽：结果是"零脚本"这条**换成更精确**的两条（业务脚本 0 ＋ 标注脚本必须早退 ✓）。
+  assert.equal(businessScriptCountOf(message), 0, '结果页**零业务脚本**（与改前同口径 ✓）');
+  assert.equal(message.includes(ANNOTATE_MARK), true, '标注脚本照旧在（她要在**任何**页面上都能标注 ✓）');
+  assert.equal(annotateScriptOnlyEarlyExits(message), true, '它必须早退 —— 不带参数时结果页逐字不变 ✓');
   const messageBody = message.slice(message.indexOf('</head>'));
   assert.equal(messageBody.includes('realm-bar'), false, '结果页不挂领域切换条');
 });

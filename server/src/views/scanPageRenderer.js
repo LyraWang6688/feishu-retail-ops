@@ -355,6 +355,7 @@ ${content}
 </main>
 ${requestId ? `<p class="foot">${escapeHtml(config.texts.requestIdLabel)} <span class="mono">${escapeHtml(requestId)}</span></p>` : ''}
 ${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}
+${annotateScriptHtml()}
 </body>
 </html>
 `;
@@ -720,6 +721,37 @@ const submitSubmittingElapsedText = (write) => String(write?.texts?.submitSubmit
 const UI_TAP_SHARED_SOURCE = fs.readFileSync(
   path.join(__dirname, '..', '..', 'public', 'workbench', 'shared', 'ui-tap.js'), 'utf8',
 );
+
+/**
+ * ⭐⭐ 2026-10-16 业务负责人亲口点的功能（逐字）：
+ *   「我在**页面上**加一个小开关：你打开后，**点页面上的哪一块，那一块就高亮**，
+ *     并弹出它的**名字**（比如"退货折叠条"/"整单金额输入框"）⇒ 你截给我，我就**不用猜**了」
+ *   她选的范围（逐字）：**扫码页 + 工作台都做** ✓
+ *
+ * 做法：**同一份实现、两种装载方式**（与上面 `ui-tap.js` 完全同一条口径 ✓）——
+ *   · 扫码页：渲染时把这个文件**内联**进 `<script data-view="annotate">`（这一页不引外部资源）；
+ *   · 工作台：`index.html` 里 `<script src="/workbench/shared/annotate.js" defer>` 引**同一个文件**。
+ *   ⚠️ 两处**绝不各抄一份**：`test/pageAnnotate.test.js` 钉住"内联的 == 那个文件"逐字一致 ✓
+ *
+ * 🔴 **只在 `?annotate=1` 时才出现**（真实用户看不到 ✓）：
+ *   这一段**开头就判**（`location.search` 里有没有 `annotate=1`），没有就**立刻早退** ——
+ *   不建任何 DOM、不绑任何监听、不动任何表单。所以不带参数时这一页**运行时逐字无痕** ✓
+ *   （⚠️ 不带参数时**输出里**确实多这一行脚本标签：查询串只有 `routes/scanPage.js` 拿得到，
+ *     而那个文件不在本任务写作用域内 ⇒ 闸门只能落在脚本内部。成对迁移的哨兵见下。）
+ *
+ * ⚠️ **零 JS 哨兵的成对迁移**（`AC-W2` / `AC-6R5`）：
+ *   「扫码页一行 `<script>` 都不许有」是**我方（agent 侧）**的约束，**不是她的口径** ——
+ *   她 2026-10-12 两次纠正：「我可没有说过，**我们是能够进行动态交互的**」。
+ *   ⇒ 那两条哨兵按"**改前逐字 → 改后逐字 → 依据 = 她 2026-10-12 逐字**"成对迁移为
+ *     「**不带 `?annotate=1` 时那一页仍然是零业务脚本；那一段标注脚本必须开头早退**」✓
+ */
+const ANNOTATE_SOURCE = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'public', 'workbench', 'shared', 'annotate.js'), 'utf8',
+);
+
+/** 标注脚本（**只在 `?annotate=1` 时才会做任何事** —— 见上面注释与 `shared/annotate.js` 的文件头）。 */
+const annotateScriptHtml = () => `<script data-view="annotate">
+${ANNOTATE_SOURCE}</script>`;
 
 const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
 ${UI_TAP_SHARED_SOURCE}

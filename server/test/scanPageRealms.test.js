@@ -82,6 +82,29 @@ const step2Of = () => {
 
 const { renderScanPage, STYLE, renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE } = require('../src/config/scanPage');
+/**
+ * ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人 2026-10-12 逐字「我可没有说过，
+ *   **我们是能够进行动态交互的**」＋ 她 2026-10-16 亲口点的「页面标注模式」（扫码页 + 工作台都做 ✓））：
+ *
+ *   改前逐字（本文件两处）：
+ *     `assert.equal((inventoryHtml.match(/<script[\s>]/gi) || []).length, 0, '库存页没有提交按钮 ⇒ 仍然是零脚本');`
+ *     `assert.equal((htmlFor('sales').match(/<script[\s>]/gi) || []).length, 1, '销售页只该有那一段提交反馈脚本');`
+ *   改后逐字：同上，但正则换成 `<script(?! data-view="annotate")[\s>]`（只数**业务**脚本），
+ *     并把"库存页 0 段"读作"**业务**脚本 0 段"＋"那一段标注脚本必须在且**必须早退**"。
+ *
+ *   依据：「扫码页零 JS」是**我方（agent 侧）**的约束、**不是她的口径**；而"带 `?annotate=1`
+ *     才出现"这道闸门**只能落在脚本内部** —— 查询串只有 `routes/scanPage.js` 拿得到，
+ *     那个文件**不在本任务写作用域内**（另有主）。
+ *   ⚠️ **没放宽**：段数上限照旧，且**新增**一条"那一段不许做事（不带参数就 return）"的判据 ✓
+ */
+const ANNOTATE_MARK = '<script data-view="annotate">';
+const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
+const annotateScriptOnlyEarlyExits = (html) => {
+  const at = html.indexOf(ANNOTATE_MARK);
+  if (at < 0) return false;
+  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
+  return body.includes('location.search') && body.includes('if (!enabled()) return');
+};
 const {
   SELLABLE_STATES, SIZE_GROUP_RANGES, REALM_TEXTS, DEFAULT_REALM,
   sellableCountOf, saleSizeGroups, purchaseSizeLines,
@@ -238,7 +261,9 @@ test('AC1 `from=inventory` 就是现在这个页面：库存领域那一块 + �
   assert.ok(inventoryHtml.includes('href="?from=inventory"'));
   assert.equal(STYLE.includes('data-realm'), false, 'CSS 不许再依赖 data-realm');
   assert.equal(/display:\s*none/.test(STYLE), false, '不许再出现"默认藏起来"的写法（那是白屏的形状）');
-  assert.equal((inventoryHtml.match(/<script[\s>]/gi) || []).length, 0, '库存页没有提交按钮 ⇒ 仍然是零脚本');
+  // ⭐ 2026-10-16 成对迁移（逐字对照见本文件顶部那段注释）：数**业务**脚本 ＋ 标注脚本必须早退 ✓
+  assert.equal(businessScriptCountOf(inventoryHtml), 0, '库存页没有提交按钮 ⇒ 仍然零**业务**脚本');
+  assert.equal(annotateScriptOnlyEarlyExits(inventoryHtml), true, '那段标注脚本必须在且必须早退 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -367,7 +392,9 @@ test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不�
   assert.equal(fiveGroup.includes('size-chip__meta'), false, '5 个码时也不显示数量');
   // ── ⑧ 改版不许引入前端脚本（这一页的底线）────────────────────────────────────
   // ⭐ 2026-10-12：销售页有【提交这一单】⇒ 只允许那一段反馈脚本
-  assert.equal((htmlFor('sales').match(/<script[\s>]/gi) || []).length, 1, '销售页只该有那一段提交反馈脚本');
+  // ⭐ 2026-10-16 成对迁移（逐字对照见本文件顶部那段注释）：数**业务**脚本 ＋ 标注脚本必须早退 ✓
+  assert.equal(businessScriptCountOf(htmlFor('sales')), 1, '销售页只该有那一段提交反馈脚本（业务脚本）');
+  assert.equal(annotateScriptOnlyEarlyExits(htmlFor('sales')), true, '那段标注脚本必须在且必须早退 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

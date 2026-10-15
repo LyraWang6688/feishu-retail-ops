@@ -208,6 +208,32 @@ const sixRealmApp = (arrival) => {
 
 const scriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
+/**
+ * ⭐⭐ 2026-10-16 **AC-6R5 成对迁移**（依据 = 业务负责人 2026-10-12 逐字：
+ *   「我可没有说过，**我们是能够进行动态交互的**」＋ 她 2026-10-16 亲口点的「页面标注模式」）：
+ *
+ *   改前逐字：
+ *     `const feedbackScripts = scriptCountOf(html);`
+ *     `assert.ok(feedbackScripts <= 1, \`最多只该有那一段反馈脚本（实际 ${feedbackScripts}）\`);`
+ *     `assert.equal(feedbackScripts, html.includes('data-submit-feedback=') ? 1 : 0,
+ *        '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');`
+ *   改后逐字：数的是**业务脚本** ＋ 多一条"那一段标注脚本必须早退"（见下）。
+ *
+ *   依据：「扫码页零 JS」是**我方（agent 侧）**的约束，**不是她的口径**（她 2026-10-12 两次纠正）；
+ *     而她 2026-10-16 要的标注模式**必须**能在这六页上开，闸门（`?annotate=1`）只能落在脚本内部 ——
+ *     查询串只有 `routes/scanPage.js` 拿得到，那个文件**不在本任务写作用域内**（另有主）。
+ *   ⚠️ **没放宽**：原来"≤1 段"是**上限**，现在把它拆成「业务脚本仍然 ≤1」＋「多了的那一段
+ *     **必须**在、**必须**开头早退」—— 上限照旧，另外**新增**一条"它不许做事"的判据 ✓
+ */
+const ANNOTATE_MARK = '<script data-view="annotate">';
+const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
+const annotateScriptOnlyEarlyExits = (html) => {
+  const at = html.indexOf(ANNOTATE_MARK);
+  if (at < 0) return false;
+  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
+  return body.includes('location.search') && body.includes('if (!enabled()) return');
+};
+
 test('AC-6R1 五个领域逐字 = 销售 · 补货 · 库存 · 退货 · 标签（`purchase` / `accept` 都不在清单里）', () => {
   // ⚠️ 2026-10-13 **改写**（逐字）：
   //    改前：`['sales','replenish','purchase_return','accept','inventory','product']`
@@ -386,10 +412,16 @@ test('AC-6R5 零 JS：六个领域渲染出来的 HTML 里都没有 <script', ()
     const html = htmlFor(realm);
         // ⭐ 2026-10-12（她拍板：交互反馈是硬要求）：
         //    页面上**只要有带反馈属性的写按钮** ⇒ 恰好那一段脚本；没有写按钮的页面（纯库存）仍然 0 段。
-        const feedbackScripts = scriptCountOf(html);
+        // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 AC-6R5 上面那段注释）：这里数的是**业务脚本**，
+        //    另有一段**有名字**的标注脚本（`data-view="annotate"`）—— 它只在 `?annotate=1` 时做事。
+        const feedbackScripts = businessScriptCountOf(html);
         assert.ok(feedbackScripts <= 1, `最多只该有那一段反馈脚本（实际 ${feedbackScripts}）`);
         assert.equal(feedbackScripts, html.includes('data-submit-feedback=') ? 1 : 0,
           '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');
+        // ⭐ 新增的那一条（**不放宽**）：那一段标注脚本必须在，且**必须开头早退**（不带参数时零痕迹 ✓）
+        assert.equal(html.includes(ANNOTATE_MARK), true, '标注脚本要在（带 ?annotate=1 时才做事 ✓）');
+        assert.equal(annotateScriptOnlyEarlyExits(html), true,
+          '那一段必须"读 query ⇒ 不带参数就 return"（否则不带参数时页面就变样了 ✗）');
   }
 });
 
