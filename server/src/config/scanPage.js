@@ -842,12 +842,28 @@ const fillText = (template, values = {}, missing = TEXTS.missingValue) => String
     return value === undefined || value === null || value === '' ? missing : String(value);
   });
 
+
+/**
+ * ⭐ 2026-10-16（**一单多货品 · 渲染半**）：补货 / 退货**共用**那一块的文案（**一处定义** ✓ 不散写中文 ✗）。
+ *   · 为什么单独一块：渲染层只 `require` 本文件（`config/scanWrite.js` 是**写侧**的家，且本任务不许碰它 ✗）✓
+ *   · 全部**配置先行**：改字不用改代码 ✓；`fillText` 占位由渲染层填 ✓
+ */
+const MULTI_ITEM_RENDER_TEXTS = Object.freeze({
+  title: '本单已加的货品',
+  addButton: '＋ 再加一个货品',
+  hint: '加进来的货品会和上面对着的这一个一起提交；每个货品的尺码与数量在它自己的块里填。',
+  empty: '还没有加第二个货品。',
+  rowsTemplate: '{count} 行',
+  remove: '移除',
+});
+
 module.exports = {
   SIZE_SEGMENTS,
   expandRange,
   missingSizes,
   displaySizes,
   SCAN_PAGE,
+  MULTI_ITEM_RENDER_TEXTS,
   ROUTE,
   NUMBER,
   STATES,
