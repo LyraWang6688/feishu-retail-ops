@@ -33,17 +33,69 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 const { sellableKindOf } = require('../config/sellableKinds');
 const { resolveAccessorySaleIntakeConfig } = require('../config/accessorySaleIntake');
 
-/** 关联列的形状兼容（与网关里那句 `nested = [value.record_ids, value.link_record_ids]` 同一思路 ✓）。 */
+/**
+ * "像一个记录 id"的形状 = **单个 token**（字母/数字/下划线/连字符）。
+ *   ⚠️ **不**要求 `rec` 前缀：既有夹具/历史数据里有 `acc_oil` 这种写法，而"是不是真的配品"
+ *   由下游 `gateway.get('accessory', id)` **核实**（查到才算数 ✓），不靠前缀猜。
+ *   真正要拦住的是**坏值**：`'[object Object]'`（`String(对象)` 的产物）、JSON 串、带空格/方括号的文本 ✗。
+ */
+const RECORD_ID_RE = /^[A-Za-z0-9_-]+$/;
+const isRecordId = (value) => RECORD_ID_RE.test(String(value || '').trim());
+
+/**
+ * 关联列的形状兼容（与网关里那句 `nested = [value.record_ids, value.link_record_ids]` 同一思路 ✓）。
+ *
+ * 🔴🔴 2026-10-15 生产事故（她真机提交配品 ⇒ `accessory_unknown` 拒单）的**根因就在这个函数的
+ *   "数组里遇到对象就用 `String(item)`"** 那一步：
+ *   事件的 `field_value` 可能是 `[{ text: '鞋垫', type: 'text' }]`（**只带显示文本、不带 record_ids**）
+ *   ⇒ `String(item)` = `'[object Object]'` ⇒ 它被当成"一个 record id"混过去
+ *   ⇒ 下游 `gateway.get('accessory', '[object Object]')` 必然落空 ⇒ 被当成"配品不存在" ✗。
+ *   ⇒ 现在的纪律（两条，缺一不可）：
+ *     ① **只认字符串**（对象里只认 `record_ids` / `link_record_ids` / `record_id`，**绝不 `String(对象)`** ✗）；
+ *     ② 字符串本身还要**长得像 record id**（`rec…`）才收 —— 文本（'鞋垫'）不许当 id ✗。
+ *   ⚠️ 取不到 ⇒ 返回 `[]`（调用方走「名称」文本兜底 ⇒ 唯一命中才用，见 `resolveAccessory`）。
+ */
 const linkIdsOf = (value) => {
-  const nested = [value?.record_ids, value?.link_record_ids].find((ids) => Array.isArray(ids) && ids.length);
-  if (Array.isArray(nested)) return nested.map((id) => String(id || '').trim()).filter(Boolean);
-  if (Array.isArray(value)) {
-    const fromArray = value.map((item) => String(item?.record_id || item?.record_ids?.[0] || item || '').trim())
-      .filter(Boolean);
-    if (fromArray.length) return fromArray;
-  }
-  const single = String(value?.record_id || (typeof value === 'string' ? value : '')).trim();
-  return single ? [single] : [];
+  const out = [];
+  const push = (id) => {
+    const text = typeof id === 'string' ? id.trim() : '';
+    if (text && isRecordId(text) && !out.includes(text)) out.push(text);
+  };
+  const visit = (item) => {
+    if (item == null) return;
+    if (typeof item === 'string') { push(item); return; }
+    if (Array.isArray(item)) { item.forEach(visit); return; }
+    // 对象：只从**明确的 id 字段**里取；取完再看它自己的嵌套（不 `String(对象)` ✗）
+    if (Array.isArray(item.record_ids)) item.record_ids.forEach(push);
+    if (Array.isArray(item.link_record_ids)) item.link_record_ids.forEach(push);
+    push(item.record_id);
+  };
+  visit(value);
+  return out;
+};
+
+/**
+ * 关联列的**显示文本**（可多个）—— 给「名称」那条**文本兜底**用（id 取不到时按名字反查 ✓）。
+ *   ⚠️ 只**读文本**、不当 id 用；文本也不许猜（拿不到就是空数组 ⇒ 调用方如实拒单 ✗）。
+ *   认的形状：`[{ text }]` / `[{ text_arr: [...] }]` / `[{ name }]` / `{ text }` / 纯字符串。
+ */
+const linkTextsOf = (value) => {
+  const out = [];
+  const push = (text) => {
+    const item = typeof text === 'string' ? text.trim() : '';
+    if (item && !out.includes(item)) out.push(item);
+  };
+  const visit = (item) => {
+    if (item == null) return;
+    if (typeof item === 'string') { push(item); return; }
+    if (Array.isArray(item)) { item.forEach(visit); return; }
+    if (Array.isArray(item.text_arr)) item.text_arr.forEach(push);
+    push(item.text);
+    push(item.name);
+    push(item.en_name);
+  };
+  visit(value);
+  return out;
 };
 
 /** 关联列的**显示文本**（收款方式要的是名字/值；取不到 ⇒ 交给兜底读表，**不猜** ✗）。 */
@@ -175,6 +227,8 @@ const createAccessorySaleIntakeService = (options = {}) => {
   const saleFieldNames = [fields.name, fields.quantity, fields.paymentMethod, fields.amount].filter(Boolean);
   const readFromEvent = (afterValue) => ({
     nameIds: linkIdsOf(findFieldValue(afterValue, eventKey('name'))),
+    // ⭐ 2026-10-15（生产事故修复）：**显示文本**单独取一份 —— id 取不到时按「名称」反查（唯一命中才用）
+    nameTexts: linkTextsOf(findFieldValue(afterValue, eventKey('name'))),
     quantity: findFieldValue(afterValue, eventKey('quantity')),
     methodText: linkTextOf(findFieldValue(afterValue, eventKey('paymentMethod'))),
     amount: findFieldValue(afterValue, eventKey('amount')),
@@ -200,11 +254,76 @@ const createAccessorySaleIntakeService = (options = {}) => {
     const recordFields = record?.fields || {};
     return {
       nameIds: linkIdsOf(recordFields[fields.name]),
+      nameTexts: linkTextsOf(recordFields[fields.name]),
       quantity: recordFields[fields.quantity],
       methodText: linkTextOf(recordFields[fields.paymentMethod]),
       amount: recordFields[fields.amount],
       operatorIds: userIdsOf(recordFields[fields.operator]),
     };
+  };
+
+  /**
+   * ⭐⭐ 2026-10-15（生产事故修复）：把「名称」这一列**解析成一个真·配品 record_id**。
+   *
+   * 顺序（**每一步都不猜** ✗）：
+   *   ① 事件/兜底读到的 id（`rec…` 形状）→ 逐个 `gateway.get('accessory', id)` 核实**存在**才用 ✓；
+   *   ② id 取不到 / 核实不到 ⇒ 用「名称」**显示文本**在「其他配品」里反查：
+   *        · **恰好 1 条** ⇒ 用它 ✓（并如实记一条 warn：这是**兜底**命中，不是主路径）
+   *        · **多于 1 条** ⇒ 拒单「名称不唯一」（`reasons.nameAmbiguous`）✗ —— 绝不挑一个 ✗
+   *        · **0 条** ⇒ 拒单（沿用既有的"配品不在「其他配品」里"语义 ✓）
+   *   ③ 两边都没有 ⇒ 拒单（`reasons.nameMissing`）✓
+   *   ⚠️ 反查读的是**只读**的「其他配品」全表（`listAll`）；拿不到网关能力 ⇒ **不兜底**（如实拒单 ✗ 不猜）。
+   */
+  const resolveAccessory = async ({ ids = [], texts = [] } = {}) => {
+    const lookup = config.accessoryLookup || {};
+    // ① id 主路径：能在「其他配品」里查到，才算数（查不到 ⇒ 往文本兜底走）
+    if (lookup.enabled !== false && gateway && typeof gateway.get === 'function') {
+      for (const id of ids) {
+        // eslint-disable-next-line no-await-in-loop
+        const record = await gateway.get(lookup.tableKey || 'accessory', id).catch(() => null);
+        if (record) return { ok: true, id, via: 'id' };
+      }
+    } else if (ids.length) {
+      // 网关没有 `get`（例：老替身）⇒ 保持既有行为：id 原样交下游（下游仍会自己核一次 ✓）
+      return { ok: true, id: ids[0], via: 'id_passthrough' };
+    }
+    // ② 文本兜底：唯一命中才用
+    const nameText = texts.map(textOf).find(Boolean) || '';
+    if (!nameText) return { ok: false, reason: reasons.nameMissing };
+    if (lookup.enabled === false || !gateway || typeof gateway.listAll !== 'function') {
+      return { ok: false, reason: reasons.nameMissing };
+    }
+    const rows = await gateway.listAll(lookup.tableKey || 'accessory').catch(() => null);
+    if (!Array.isArray(rows)) return { ok: false, reason: reasons.nameMissing };
+    // ⚠️ 列名**只从配置取**（服务里不写死中文 —— `test/noHardcodedChinese.test.js` 的口径 ✓）
+    const nameField = lookup.nameField;
+    if (!nameField) return { ok: false, reason: reasons.nameMissing };
+    const hits = rows.filter((row) => textOf(row?.fields?.[nameField]) === nameText);
+    if (hits.length === 1) {
+      logWarn('accessory_sale_intake.name_fallback_hit', {
+        record_id: '', name: nameText, accessory_record_id: hits[0].record_id,
+        hint: '事件的关联值里没有可用的 record id ⇒ 按「名称」唯一命中兜底（不是主路径）',
+      });
+      return { ok: true, id: textOf(hits[0].record_id), via: 'name' };
+    }
+    if (hits.length > 1) return { ok: false, reason: reasons.nameAmbiguous(nameText, hits.length) };
+    return { ok: false, reason: reasons.nameMissing };
+  };
+
+  /**
+   * 🔴 2026-10-15（生产事故修复·同一处）：兜底读表的结果**只补它真的拿到的那些**，
+   *   **不覆盖事件已经给出来的** ✗。
+   *   为什么：事故那次事件的「名称」**只带显示文本**（`nameIds` 为空）⇒ 若整块用兜底结果替换，
+   *   连那份**文本**也一起丢了 ⇒ 文本兜底就没料可用了 ✗。
+   *   判"拿到"的口径：数组看 `length`，其余看非空（`''`/`null`/`undefined` 都算没拿到 ✓）。
+   */
+  const mergeValues = (fromEvent, filled) => {
+    const merged = { ...fromEvent };
+    for (const [key, value] of Object.entries(filled || {})) {
+      const got = Array.isArray(value) ? value.length > 0 : (value !== undefined && value !== null && value !== '');
+      if (got) merged[key] = value;
+    }
+    return merged;
   };
 
   /**
@@ -330,14 +449,24 @@ const createAccessorySaleIntakeService = (options = {}) => {
     ].filter(Boolean);
     if (missing.length) {
       try {
-        values = await readByFallback(recordId, missing);
+        // ⚠️ **合并**（兜底只补它真的拿到的）—— 整块替换会把事件里的显示文本也丢掉 ✗（见 mergeValues）
+        values = mergeValues(values, await readByFallback(recordId, missing));
       } catch (error) {
         logError('accessory_sale_intake.rejected', { record_id: recordId, reason: error.message });
         await writeBackStatus(recordId, { [writeBack.statusField]: writeBack.failedValue, [writeBack.reasonField]: error.message });
         return { ok: false, record_id: recordId, reason: error.message };
       }
     }
-    const checked = validate(values);
+    // ⭐⭐ 2026-10-15（生产事故修复）：「名称」→ **真·配品 record_id** 的解析（id 核实 + 文本兜底）
+    const accessory = await resolveAccessory({ ids: values.nameIds, texts: values.nameTexts });
+    if (!accessory.ok) {
+      logError('accessory_sale_intake.rejected', { record_id: recordId, reason: accessory.reason });
+      await writeBackStatus(recordId, {
+        [writeBack.statusField]: writeBack.failedValue, [writeBack.reasonField]: accessory.reason,
+      });
+      return { ok: false, record_id: recordId, reason: accessory.reason };
+    }
+    const checked = validate({ ...values, nameIds: [accessory.id] });
     if (!checked.ok) {
       logError('accessory_sale_intake.rejected', { record_id: recordId, reason: checked.reason });
       await writeBackStatus(recordId, {
@@ -384,7 +513,7 @@ const createAccessorySaleIntakeService = (options = {}) => {
           sessionKey,
           requestId,
           kind: 'accessory',
-          accessoryRecordId: values.nameIds[0],
+          accessoryRecordId: accessory.id,
           // ⭐ 2026-10-14 她的口径（与工作台**同源**）：配品默认现货来自**可售品配置**（不散写 if ✗）
           inStock: sellableKindOf({ kind: 'accessory' }).defaultInStock === true,
           // ⭐ 这一行的**实收金额**（分摊后的那一份）；引擎一行 = 一件 ⇒ 调 N 次就是 N 行 ✓
