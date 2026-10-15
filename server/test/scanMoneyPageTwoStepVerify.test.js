@@ -216,7 +216,17 @@ test(`V1/V2/V5 · 点提交=零写入 ⇒ 点资金页按钮才建单（+ 读回
     assert.deepEqual(afterStep1, before, '点「提交这一单」**不许**写任何一张表');
     assert.match(step1.html, /payment_pay/, '应当渲染资金页');
 
-    const step2 = await postPage(base, urlPath, cookie, { action: 'payment_pay', payment_status: '未付' });
+    // ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`{ action: 'payment_pay', payment_status: '未付' }` —— **已退场的档位字段** ✗
+    //   改后逐字：`{ action: 'payment_pay' }` —— **不填收款**（一分钱都没收到 ✓）
+    //   依据 = 她 2026-10-16 逐字：「**去掉三个单选、按金额自动算**」
+    //   ⚠️ 期望**暂不翻**：现行实现口径 =「她说欠才算欠」（`config/scanWrite.js:116` 未付档注释
+    //      ＋ `services/salesOrderService.js:308-324`：`owed` 为空 ⇒ 不挂未收款）⇒
+    //      "只记货、不写收款行"**仍与实现一致** ✓
+    //   🔴 **待激活**：Lead 2026-10-16 的口径「**差额（= 全额）写一条【未收款】**」是 **P1 未实现**那条
+    //      ⇒ 上线后本用例下面两条要**对调**成 `payment +1` ＋ 状态「未收款」/方式留空/金额 = 每件实收合计 ✗
+    //      （**不许提前改** ✓ 否则真表 E2E 会"假红"：判据要求了实现还没做的事 ✓）
+    const step2 = await postPage(base, urlPath, cookie, { action: 'payment_pay' });
     const afterStep2 = await counts(gateway);
     const orderNo = (step2.html.match(/XSD-\d{8}-\d{4}/) || [])[0] || '';
     SAY('② 点资金页按钮 HTTP', step2.status, '后四表 =', JSON.stringify(afterStep2), '· 单号 =', orderNo || '(无)');
@@ -235,8 +245,9 @@ test(`V1/V2/V5 · 点提交=零写入 ⇒ 点资金页按钮才建单（+ 读回
       JSON.stringify(payments.map((r) => ({ 金额: textValue(r.fields?.[PF.amount]), 状态: textValue(r.fields?.[PF.status]), 方式: textValue(r.fields?.[PF.method]) }))));
     assert.equal(mine.entryRows.length, 1, '单号唯一（只建一张单）');
     assert.equal(mine.detailRows.length, 1, '这一单只有一条明细');
-    assert.equal(afterStep2.payment - before.payment, 0, '扫码页口径：她填【未付】⇒ **不写**未收款行（与群聊口径不同，见报告）');
-    assert.equal(payments.length, 0, '未付 ⇒ 这一单不该有收款行');
+    assert.equal(afterStep2.payment - before.payment, 0,
+      '不填收款 ⇒ 现行「她说欠才算欠」⇒ **不挂未收款**（`salesOrderService.js:308-324` ✓）');
+    assert.equal(payments.length, 0, '这一单不该有收款行（同上；P1「差额进未收款」上线后 ⇒ 这两条要对调 ✗）');
     
 
     // ── V5：「库存流水.关联销售」写进去的 id 属于哪张表 ──────────────────────
@@ -269,8 +280,13 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
     const afterSubmit = await counts(gateway);
     assert.deepEqual(afterSubmit, before, '点提交仍然零写入');
     const [a, b] = await Promise.all([
-      postPage(base, urlPath, cookie, { action: 'payment_pay', payment_status: '未付' }),
-      postPage(base, urlPath, cookie, { action: 'payment_pay', payment_status: '未付' }),
+      // ⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：两发都带 `payment_status: '未付'`（档位**已退场** ✗）
+      //   改后逐字：两发都**不带档位**（`{ action: 'payment_pay' }` ✓）
+      //   依据 = 她 2026-10-16 逐字：「去掉三个单选、按金额自动算」
+      //   ⚠️ 本用例**只补输入**：断言（并发两枪只建一张单 / 明细+1 / 库存+1 / 收款行不增）**一个字不动** ✓
+      postPage(base, urlPath, cookie, { action: 'payment_pay' }),
+      postPage(base, urlPath, cookie, { action: 'payment_pay' }),
     ]);
     const after = await counts(gateway);
     const orderNo = ((a.html + b.html).match(/XSD-\d{8}-\d{4}/) || [])[0] || '';
@@ -278,7 +294,7 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
     assert.equal(after.entry - before.entry, 1, '并发两枪**只许建一张单**');
     assert.equal(after.detail - before.detail, 1, '明细只 +1');
     assert.equal(after.ledger - before.ledger, 1, '库存只扣一次（流水只 +1）');
-    assert.equal(after.payment - before.payment, 0, '未付 ⇒ 收款行不增（同上口径）');
+    assert.equal(after.payment - before.payment, 0, '不填收款 ⇒ 收款行不增（同上口径：她说欠才算欠 ✓）');
     if (orderNo) {
       const mine = await rowsOfOrder(gateway, orderNo);
       SAY('V3 该单号在主表有', mine.entryRows.length, '行 · 明细', mine.detailRows.length, '行');
