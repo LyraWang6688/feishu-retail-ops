@@ -65,6 +65,15 @@ const {enabled: feishuAuthEnabled,
   resolveScanNext, COOKIE_NAME, encodeSession } = require('./feishuWebAuth');
 const { SCAN_PAGE } = require('../config/scanPage');
 const { SCAN_WRITE, fillText: fillWriteText } = require('../config/scanWrite');
+// ⭐⭐ 2026-10-16（口子收尾 · 业务负责人口径「**异步只针对"写库"**；校验必须当场同步拦」）：
+//   **尺码 / 数量 / 空单**这三类校验的**唯一真源**（纯函数、不碰 IO、配置先行 ✓）——
+//   判据与写层 `services/scanWriteService.js:1397-1426`（补货）/ `:1556-1585`（退货）**逐字同源**
+//   （出处行号钉在配置里 ✓）。
+//   🔴 本文件**只调它**（`purchaseEntryViolation`），**不手抄任何一条 if-else** ✗ ——
+//     手抄一份就再也不会跟写层同步（那正是这一刀要避免的形状 ✗）。
+const {
+  ENTRY_RULE_TEXTS, purchaseEntryViolation,
+} = require('../config/scanPurchaseEntryRules');
 // ⭐ 2026-10-11：「货品」领域的【打印这一款】把任务排进**打印队列**（店里那台电脑负责出纸）。
 //   ⚠️ 队列是**进程内单例**（`services/labelPrintQueueRuntime.js`）—— 与电脑侧那条 SSE 路由
 //      **共用同一个实例**，不然任务排进去了、小助手永远看不到。
@@ -807,6 +816,44 @@ const createScanPageRouter = (options = {}) => {
     return sendHuman(res, 400, {
       title: writeConfig.texts.purchaseAmountInvalidTitle,
       body: writeConfig.texts.purchaseAmountInvalidBody,
+      requestId,
+      retryHint: writeConfig.texts.failedRetryHint,
+      backPath: postActionFor(
+        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+      ),
+      backLabel: writeConfig.texts.purchaseAmountBackLabel,
+    });
+  };
+
+  /**
+   * ⭐⭐ 2026-10-16（口子收尾 · 业务负责人**逐字**口径）：
+   *   「**异步只针对"写库"**；**校验必须当场同步拦**」——**尺码 / 数量 / 空单**这三类
+   *   （判据与写层同源：`config/scanPurchaseEntryRules.js` ⇒
+   *    `services/scanWriteService.js:1397-1426`（补货）/ `:1556-1585`（退货））。
+   *
+   * 🔴 命中 ⇒ **400 + 同一句人话 + 零写入 + 一次后台都不排** ✓
+   *   （拦在 `schedulePurchaseWrite(…)` **之前** —— 顺序不能反 ✗）；
+   *   通过 ⇒ 才排后台（异步那半**一个字不改** ✗）。
+   *
+   * ⚠️ 与"金额那两张页"**同形**（H1 + 人话 + 回上一页 + 埋点原因码 ✓）：
+   *   · 正文**就是写层那一句**（`violation.message` —— 配置里的 `TEXTS.*Body` ✓ 不新造第二句 ✗）；
+   *   · `code` 走 `markTapCode`（埋点能按它分辨是哪一类 ✓）；
+   *   · 日志走 `writeConfig.events.entryInvalid`（**与写失败 `failed` 分开**：原因不同、修法不同 ✓）。
+   * ⚠️ 这张页面**不写任何业务表**（`sendHuman` 只把 HTML 发出去 ✓）⇒「零写入」是**结构性**的 ✓。
+   */
+  const purchaseEntryInvalidPage = (req, res, requestId, realm, violation) => {
+    logWarn(writeConfig.events.entryInvalid, {
+      request_id: requestId,
+      realm,
+      reason: String(violation?.code || 'entry_invalid'),
+      target: String(scanTargetOf(req).value || '').slice(0, 120),
+    });
+    markTapCode(res, String(violation?.code || 'entry_invalid'));
+    return sendHuman(res, 400, {
+      title: ENTRY_RULE_TEXTS.entryInvalidTitle,
+      // 🔴 **写层那一句原样**（同一句人话 ✓）：`sizeUnknownBody` /
+      //    `quantityInvalidBody{max}` / `replenishNoneBody` / `returnNoneBody`。
+      body: String(violation?.message || writeConfig.texts.internalFailedBody),
       requestId,
       retryHint: writeConfig.texts.failedRetryHint,
       backPath: postActionFor(
@@ -2303,6 +2350,17 @@ return sendPaymentStep(res, req, {
         //     **不是**页面领域 id（那个恰好同名，但**别指望**它是同一个概念 —— 见下面退货那处）。
         if (purchaseAmountMissing(body, 'replenish')) return purchaseAmountMissingPage(req, res, requestId, realm);
         if (purchaseAmountInvalid(body, 'replenish')) return purchaseAmountInvalidPage(req, res, requestId, realm);
+        // ⭐⭐ 2026-10-16（口子收尾 · 她**逐字**：「**异步只针对"写库"**；校验必须**当场同步拦**」）：
+        //   **尺码 / 数量 / 空单**这三类**也留在同步路径**（与上面两道金额闸门**同形** ✓）——
+        //   命中 ⇒ **400 + 写层那一句人话 + 零写入 + 一次后台都不排** ✓（见 `purchaseEntryInvalidPage`）。
+        //   🔴 判据**只有一份真源**：`config/scanPurchaseEntryRules.js`（== 写层
+        //     `services/scanWriteService.js:1397-1426` 那一段，**逐字同源**）⇒ 本文件**不手抄 if-else** ✗。
+        //   🔴 位置**必须在 `schedulePurchaseWrite(…)` 之前**：先排后台再校验 = 把"她填错了"
+        //     变成"看起来成功" ✗（她最恨的那条；也是 AC-ASY2 的精神 ✓）。
+        const replenishViolation = purchaseEntryViolation({ chain: 'replenish', entries });
+        if (replenishViolation) {
+          return purchaseEntryInvalidPage(req, res, requestId, realm, replenishViolation);
+        }
         // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线 · 她 2026-10-16 逐字）：
         //   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」
         //   ⇒ **金额 / 单号认不出**仍留在**同步路径**（上面两道闸门 + 上面的 `notFoundPage`），
@@ -2364,6 +2422,15 @@ return sendPaymentStep(res, req, {
         //     ⇒ 判据 `test/purchaseAmountRealmWiring.test.js` 的 AC-PAWIRE2 **逐字**钉住这两处 ✓。
         if (purchaseAmountMissing(body, 'return')) return purchaseAmountMissingPage(req, res, requestId, realm);
         if (purchaseAmountInvalid(body, 'return')) return purchaseAmountInvalidPage(req, res, requestId, realm);
+        // ⭐⭐ 2026-10-16（口子收尾）：与补货那条**同形** —— **尺码 / 数量 / 空单**也在这里当场拦
+        //   （判据同一份真源 `config/scanPurchaseEntryRules.js` == 写层
+        //    `services/scanWriteService.js:1556-1585`，逐字同源 ✓）。
+        //   🔴 同样**必须在 `schedulePurchaseWrite(…)` 之前**：命中 ⇒ 400 + 写层那一句人话
+        //     ＋ **零写入** ＋ **一次后台都不排** ✓。
+        const returnViolation = purchaseEntryViolation({ chain: 'purchase_return', entries });
+        if (returnViolation) {
+          return purchaseEntryInvalidPage(req, res, requestId, realm, returnViolation);
+        }
         // ⭐⭐ 2026-10-15 **③ 写入已落地**（她裁决 ⓐ「复用「实际金额」」）——
         //   改前逐字：`// TODO(purchase-amount): 金额**还没落表** —— 落哪一列**待她裁决**（同上，
         //             采购明细没有金额列、「实际金额」已被"到货核对"占用）⇒ 不自己挑列写 ✗。`
@@ -2458,6 +2525,9 @@ return sendPaymentStep(res, req, {
  * 补货表单 → `[{ size, quantity }]`。
  * 表单里：勾了哪个尺码（`sizes` 多选）就在 `qty_<尺码>` 里填数量；
  * 勾了不填 ⇒ 交给写服务按配置的默认值（1 双）算 —— 这里**不替她决定**。
+ * ⚠️ 本函数**只做形状转换**（不判合法性 ✗）；三类校验走
+ *   `config/scanPurchaseEntryRules.js` 的 `purchaseEntryViolation`（与写层
+ *   `services/scanWriteService.js:1397-1426` 逐字同源 ✓）—— 判据**不许**在这里再抄一份 ✗。
  */
 const parseReplenishEntries = (body, fields, writeConfig) => {
   const rawSizes = body[fields.replenishSizes];
@@ -2472,6 +2542,8 @@ const parseReplenishEntries = (body, fields, writeConfig) => {
  * ⭐ 2026-10-11：**退货**表单 → `[{ size, quantity }]`（与补货那条**同一个形状**，
  * 只是字段名换成配置里的 `return_sizes` / `return_qty_<尺码>`）。
  * 勾了不填数量 ⇒ 交给写服务按配置的默认值算 —— 这里**不替她决定**。
+ * ⚠️ 与补货那条同一条口径：**只做形状转换**；三类校验走
+ *   `purchaseEntryViolation`（与写层 `services/scanWriteService.js:1556-1585` 逐字同源 ✓）。
  */
 const parseReturnEntries = (body, fields, writeConfig) => {
   const rawSizes = body[fields.returnSizes];
@@ -2504,9 +2576,17 @@ const positiveSize = (value) => {
  * ⚠️ 它是**运维开关**（`SCAN_REPLENISH_WRITE_ENABLED` / `SCAN_RETURN_WRITE_ENABLED`，显式布尔 ✓），
  *    不是她的输入 ⇒ 与「她填错了」那类校验**分开**：
  *   · **金额 / 单号认不出** ⇒ 仍在**同步路径**（`purchaseAmount*Page` / `notFoundPage` ✓）；
- *   · **尺码 / 数量 / 空单** ⇒ 在**写层**（`services/scanWriteService.js`，本刀**一个字不改** ✗）——
- *     它们跟着"写库那一步"进后台（**已知取舍**：写层失败 ⇒ 后台 warn ＋ 会话 `last_error`，
- *     不会静默；🔴 见 PR 说明，别当它不存在 ✗）。
+ *   · **尺码 / 数量 / 空单** ⇒ 也**已经**在**同步路径**（`purchaseEntryViolation` ⇒
+ *     `purchaseEntryInvalidPage`，**排后台之前** ⇒ 400 + 人话 + 零写入 + 不调度 ✓）。
+ *     ⚠️ **改前逐字**（2026-10-16 上半场 · #695 的已知取舍）：
+ *       `· **尺码 / 数量 / 空单** ⇒ 在**写层**（\`services/scanWriteService.js\`，本刀**一个字不改** ✗）——
+ *        它们跟着"写库那一步"进后台（**已知取舍**：写层失败 ⇒ 后台 warn ＋ 会话 \`last_error\`，
+ *        不会静默；🔴 见 PR 说明，别当它不存在 ✗）。`
+ *     ⚠️ **改后逐字**：本刀把这三类**搬到同步路径**（**移出后台** ✓）——
+ *       判据只有一份真源（`config/scanPurchaseEntryRules.js`，与写层
+ *       `services/scanWriteService.js:1397-1426` / `:1556-1585` 逐字同源 ✓），
+ *       **`scanWriteService.js` 一个字都不改** ✗（余量 0 硬红线）。
+ *       依据：业务负责人口径「**异步只针对"写库"**；**校验必须当场同步拦**」。
  *
  * @returns {null|{code:string, message:string}} `null` = 放行；否则调用方照旧
  *   `respondWriteFailure` ⇒ **400 + 人话 + 零写入**（与改前那张页逐字同形 ✓）。
