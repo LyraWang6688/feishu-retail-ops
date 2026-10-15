@@ -29,6 +29,16 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const RENDERER = readSrc('views/scanPageRenderer.js');
 const ROUTE = readSrc('routes/scanPage.js');
 
+/** ⭐ 2026-10-16（她「三处提示【全删】」的**第三个落点：说明书**）——
+ *  · 改前逐字：`- 下一步：**要补实收 / 收款 ⇒ 去工作台「销售」那一页**`（说明书 `docs/扫码页销售-操作说明书.md:54`）
+ *  · 改后逐字：`- 这一页**只有这一句话**……**已提交成功，数据会更新** —— **不再**给"要不要去工作台补实收 / 收款"之类的提示或链接 ✓`
+ *  · 依据：业务负责人 2026-10-16 逐字「（资金页那）**三处提示【全删】**……**全删就对了**」；
+ *    ①② （配置键 / 渲染引用）已删 ✓，**③ 说明书那处此前没人管**（本文件原来也**没扫它** ✗）⇒ 补上 ✓
+ */
+const DOC_PATH = path.join(__dirname, '..', '..', 'docs', '扫码页销售-操作说明书.md');
+const DOC_BANNED_CORES = Object.freeze(['要补实收', '去工作台「销售」']);
+const docsSurvivors = (text = fs.readFileSync(DOC_PATH, 'utf8')) => DOC_BANNED_CORES.filter((core) => text.includes(core));
+
 /** 她点名要删干净的那三串**逐字**（① 的括号那句 + ② 的整句 + ③ 跳过之后那句）。
  *  ⭐ 2026-10-16 落地时把 **③ 也钉进来**（改前逐字 → 改后逐字 → 依据）：
  *    · 改前逐字：`const BANNED = Object.freeze({ skipParenthetical: '…', workbenchHint: '…' });`（只两串）
@@ -89,6 +99,8 @@ test('AC-SK1 🔴 反向哨兵（**落地后就是真判据**）：三处提示�
   assert.deepEqual(bannedSurvivors(), [], '🔴 三处提示**一个字都不许回来**（她：「全删就对了」）');
   assert.equal(RENDERER.includes(BANNED.skipParenthetical), false, '渲染器里也不许写死①那句 ✗');
   assert.equal(RENDERER.includes(BANNED.workbenchHint), false, '渲染器里也不许写死②那句 ✗');
+  // ③ 的第三个落点：**说明书**（原来没人扫 ⇒ 提示就活在这里 ✗）
+  assert.deepEqual(docsSurvivors(), [], '🔴 说明书里也不许再写②那句 ✗（她：「全删就对了」）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -105,6 +117,10 @@ test('AC-SK2 ⭐ 探针：检测器**真能红**（证明 AC-SK1 / AC-SK3 **不�
   // ⭐ 2026-10-16 落地时补的探针：③「跳过之后的提示」塞回 ⇒ 也必须报红 ✓
   assert.deepEqual(bannedSurvivors({ paymentStep: { payPendingNote: BANNED.payPendingNote } }),
     ['payPendingNote'], '塞回③「跳过之后的提示」⇒ **必须**报红 ✓');
+  // ⭐ 说明书的探针（证明上面那条不是空跑 ✓）
+  assert.deepEqual(docsSurvivors('下一步：要补实收 / 收款 ⇒ 去工作台「销售」那一页'), ['要补实收', '去工作台「销售」'],
+    '塞回说明书那句 ⇒ **必须**报红 ✓');
+  assert.deepEqual(docsSurvivors('已提交成功，数据会更新'), [], '极简成功页那段 ⇒ 干净 ✓');
   assert.deepEqual(offendersOf('<p>已提交成功，数据会更新</p>'), [], '极简成功页 ⇒ 干净 ✓');
   assert.notDeepEqual(offendersOf('<p>已提交成功，数据会更新</p><a href="/s/NEW">再录一单</a>'), [],
     '塞回链接 ⇒ **必须**报红 ✓');
