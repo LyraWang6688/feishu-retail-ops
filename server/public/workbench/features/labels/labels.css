@@ -82,6 +82,14 @@
 .scan-only .data-caption { margin: 10px 0 0; }
 .scan-batch-link { color: var(--primary); text-decoration: none; }
 
+/* ⭐⭐ 2026-10-15（业务负责人逐字：「**可以，给隐藏掉吧**」）：`?scan=1`「只扫码」聚焦页上
+   **导航胶囊只留「返回完整工作台」**（那是"回家的路"，不许一起藏 ✗），其余两颗隐藏。
+   ⚠️ 只在 `html[data-scan-only="1"]` 下生效 —— 那个属性**只有** `mountScanOnlyPage`（`?scan=1`）
+      会标（见 `features/labels/scan-print.js` 的 `markScanOnlyPage`）⇒
+      **不带 `?scan` 的批量打印页、以及别的独立页一个字都不改** ✓
+   ⚠️ 被隐藏的两颗在 HTML 里标了 `data-nav-scan-only-hide`（标记在 `label-print.html`）。 */
+html[data-scan-only="1"] .standalone-nav [data-nav-scan-only-hide] { display: none; }
+
 /* ── 标签纸（屏幕预览 + 打印同一个 DOM）───────────────────────────────── */
 /* 手机上 A4 宽（210mm ≈ 794px）比屏幕宽 ⇒ 横向滚动看，不挤压排版。 */
 .label-sheet-scroll { overflow-x: auto; padding: 8px 0 16px; }
