@@ -1207,11 +1207,24 @@ const sizeGroupsHtml = (view, write) => {
 
 /**
  * ⭐⭐ 2026-10-14 晚（业务负责人**逐字**）：「**只写一个整单金额**（一次填一个总额，**和补货一样**～）」
- *   ⇒ **补货 / 退货共用这一个渲染片段**（一个输入、一个总额 ✓ 不按行分填 ✗）：
+ *   ⇒ **退货运这一个渲染片段**（一个输入、一个总额 ✓ 不按行分填 ✗）：
  *     · 字段名来自 `fields.purchaseAmount`（= 配置 `PURCHASE_AMOUNT.field` 的唯一来源 ✓）；
  *     · 标签 / 占位来自 `texts.purchaseAmount*`（改文案只改配置 ✓ 不写死 ✗）。
  *   ⚠️ 这里是**唯一**一处画这个输入的地方 —— 将来改版式/加输入属性只改这一个函数
- *     （两个表单各抄一份 = 迟早改漏一个 ✗）。
+ *     （各抄一份 = 迟早改漏一个 ✗）。
+ *
+ *   ⭐⭐ 2026-10-16（她逐字：「这个是报货的页面，**还是需要填写金额啊**」✗）**成对翻新**：
+ *     改前逐字：**补货 + 退货两个表单各调它一次**（两处都是无条件调用的那一行 ✗）；
+ *     改后逐字：**只有退货那一处无条件调它** ✓ —— 补货那一处改成
+ *       一个**三元表达式**：先问配置 `rp.amountRow`，真才调它（**按配置**决定画不画 ✓
+ *       缺省 `SCAN_PAGE.replenishForm.amountRow === false` ⇒ **她截图上那个框不再出现** ✓）。
+ *     ⚠️ 这里**刻意不把那两处的代码原文抄进注释**：本仓有**读源码数次数**的既有哨兵
+ *       （`test/scanPurchaseAmountRequired.test.js` AC-PA5 ④ 数"那个片段被调了几次"），
+ *       注释里抄一遍会让计数**凭空多出来** ⇒ 那是"注释把判据顶红"的假红 ✗。
+ *     依据：她 2026-10-16 真机截图（补货 tab · 货品 832-500）＋ 逐字「还是需要填写金额啊」
+ *       ＋（背景）她早定的「**补货不问金额**」（校验那一半 = `requiredByRealm.replenish === false` ✓ #689）。
+ *     ⚠️ **不是放宽**：这个函数**本身一个字没改**（退货的字段名/标签/占位逐字不变 ✓）；
+ *       补货那一侧是**更强的反向判据**（`test/replenishTrimThreeFixes.test.js` AC-RP1：塞回即红 ✓）。
  */
 const purchaseAmountRowHtml = (write) => {
   const texts = write?.texts || {};
@@ -1277,37 +1290,45 @@ const multiItemPayloadJson = (items = []) => JSON.stringify(
  *   · 「再加一个货品」是一颗**链接**（同一路径带参数 ⇒ 路由侧去记草稿；**路由没接前 = 能点、但没人读** ✓ 自洽）
  *   · 「已加货品」列表**由服务端**从 `view.multi_items` 渲染（拿不到 ⇒ 按下面的口径处理 ✓ 不编 ✗）
  *
- * ⭐⭐ 2026-10-16（`mode` 参数 · 业务负责人真机截图 + 逐字，**只点退货 tab 那三处**）：
- *   「退货确实没有了那个退货按钮，需要你**删除不必要的文字提示**」＋ 弹窗确认她选的是
- *   「**说明 + 「本单已加的货品」那整块都删**」（逐字在 lead 的弹窗记录里 ✓）。
+ * ⭐⭐ 2026-10-16（`mode` 参数 · 业务负责人真机截图 + 逐字）—— **两个领域先后各点了一次，同一个形状**：
+ *   · **退货 tab**（第一次）：「退货确实没有了那个退货按钮，需要你**删除不必要的文字提示**」
+ *     ＋ 弹窗确认她选的是「**说明 + 「本单已加的货品」那整块都删**」（逐字在 lead 的弹窗记录里 ✓）；
+ *   · **补货 tab**（第二次 · 她 2026-10-16）：「这个是**报货的页面，还是需要填写金额啊**，以及
+ *     **不需要的文字说明给删除**，**生成报货订单按钮文字改为补货**」
+ *     ⇒ 「不需要的文字说明」= **与退货同一条**（那次她选的是"说明 + 整块都删"）⇒ 这里**同样处理** ✓。
+ *     ⚠️ 她那次的选择**只对退货生效过**（补货那块当时**一个字没动** ✗）；**这一次她才点了补货** ✓
+ *       ⇒ 现在两块**都进精简档**（**依据 = 她 2026-10-16 补货 tab 的截图 + 逐字** ✓）。
  *
  *   ⚠️ **改前**这一块在**补货 / 退货两块共用同一份 DOM**（`t.hint` 那一段 + `t.title` 那个 `<h3>`
- *     + 空态那句 `t.empty` **无条件**渲染）⇒ 她那句"不必要的文字提示"在**两块**上都成立，
- *     但她**只点了退货** ✗ ⇒ 必须**按 tab 分叉**，不许顺手把补货那块一起删 ✗。
+ *     + 空态那句 `t.empty` **无条件**渲染）。
  *
- *   ⇒ **`mode === 'return'`（退货 tab 专用）**：
+ *   ⇒ **`mode === 'return'` / `mode === 'replenish'`（两块各自显式传自己那一档）**：
  *     · 🔴 **删** `t.hint` 那一段说明（她逐字：「删除不必要的文字提示」）；
  *     · 🔴 **删** `t.title` 那个标题 ＋ 空态那句 `t.empty`（弹窗：**"说明 + 整块都删"**）；
  *     · ⭐ **但"已加的货品列表"本身要保留** —— **只有真的加了第二个货品时才出现**
  *       ⇒ 空的时候 `data-view="multi-item-list"` 那个 `<ul>` **整块不渲染** ✓（有内容才显示 ✓）；
  *     · 🔴 **一个字都不动**：`data-multi-add` 那颗「＋ 再加一个货品」、那个 hidden `multi_items`
  *       字段、`data-view="multi-item"` 容器、以及 `attr(...)` 那几个 `data-product-*`（表单行为 ✓）。
- *   ⇒ **`mode` 缺省（= 补货那一块 + 既有直接调用它的用例）逐字不变** ✓
- *     —— 走**老分支**（`t.hint` / `t.title` / `t.empty` / 列表照旧）✓。
+ *   ⇒ **`mode` 缺省（`''`）仍逐字不变** ✓ —— 走**老分支**（`t.hint` / `t.title` / `t.empty` / 列表照旧）✓
+ *     （= 本函数被直接调用时的老形状；探针 AC-RT7 靠它 ✓ **不许把缺省也一起精简** ✗）。
  *
  *   📌 判据（成对迁移，改前逐字 → 改后逐字 → 依据 = 她 2026-10-16 真机截图 + 逐字
- *     ＋ 弹窗选择「说明 + 整块都删」）在 `test/multiItemOrderReturnTrim.test.js`（**新增**）：
- *     · 退货块：删掉的那三处 **塞回即红** ✓（反向哨兵）；
- *     · 退货块：**有第二个货品时列表仍要出现** ✓（**正向**判据 —— 防"删过头" ✗）；
- *     · 补货块：**那三处逐字还在** ✓（防扩大范围 ✗）。
+ *     ＋ 弹窗选择「说明 + 整块都删」）：
+ *     · 退货那三处 → `test/multiItemOrderReturnTrim.test.js`（AC-RT1..RT5）；
+ *     · 补货那三处 → `test/replenishTrimThreeFixes.test.js`（**本刀新增** AC-RP1 / AC-RP3）；
+ *     · 两块都：**有第二个货品时列表仍要出现** ✓（**正向**判据 —— 防"删过头" ✗）。
  */
 const multiItemBlockHtml = (write, view = {}, mode = '') => {
   if (!MULTI_ITEM_ORDER.enabled) return ''; // 🔴 开关关 ⇒ 空串 ⇒ 既有页面逐字不变 ✓
   const t = MULTI_ITEM_RENDER_TEXTS;
   const field = String(MULTI_ITEM_ORDER.field || '');
   if (!field) return ''; // 字段名空 ⇒ 宁可不渲染，也不发一个没人认的键 ✗
-  // ⭐ 退货 tab = **精简那一版**（她没有说"补货也这样" ✗ ⇒ 只按 `mode` 分叉 ✓ 不按环境/全局开关 ✗）
-  const trimmed = mode === 'return';
+  // ⭐ 精简那一版 = **退货 / 补货两块各自显式传自己的 `mode`** ✓
+  //   ⚠️ **缺省 `''` 仍是"照旧那一版"**（= 本函数被直接调用时的老形状 ✓ 探针 AC-RT7 靠它 ✓）——
+  //     所以这里**必须按显式 mode 分叉**，不能把缺省也一起精简 ✗（那会动到"没人认的调用方"）。
+  //   ⭐⭐ 2026-10-16（补货那三处 · 她真机截图 + 逐字）⇒ `'replenish'` 也进精简档 ✓
+  //     依据：她这次点的是**补货**（退货那次她已点过 ✓）—— 两边**同一个形状**、同一句依据 ✓。
+  const trimmed = mode === 'return' || mode === 'replenish';
   const first = {
     product_record_id: view.product_record_id, number: view.number, item_no: view.item_no,
     color: view.color, supplier_record_id: view.supplier_record_id, entries: [],
@@ -1321,14 +1342,14 @@ const multiItemBlockHtml = (write, view = {}, mode = '') => {
     return `<li class="multi-item-row">${escapeHtml(String(item?.number || item?.item_no || ''))}`
       + ` <span class="hint">${escapeHtml(fillText(t.rowsTemplate, { count: rows }))}</span></li>`;
   }).join('');
-  // 🔴 退货 tab：**空 ⇒ 整块（含 <ul>）不渲染** ✓；补货 tab：**空 ⇒ 保留那句空态人话**（**逐字不变** ✓）
+  // 🔴 精简档（退货 / **补货**）：**空 ⇒ 整块（含 <ul>）不渲染** ✓；缺省档：**空 ⇒ 保留那句空态人话** ✓
   const listHtml = trimmed
     ? (already.length ? `<ul class="multi-item__list" data-view="multi-item-list">${listRows}</ul>` : '')
     : `<ul class="multi-item__list" data-view="multi-item-list">`
       + `${already.length ? listRows : `<li class="hint">${escapeHtml(t.empty)}</li>`}</ul>`;
   // 「再加一个货品」：**零 JS** ⇒ 一颗指向本页的链接（路由按参数去记草稿；没接前点了不报错 ✓）
   const addHref = `${escapeHtml(write.postAction || '')}${String(write.postAction || '').includes('?') ? '&' : '?'}add=1`;
-  // 🔴 说明那一段 + 标题：**退货 tab 不渲染**（她那两句"不必要的文字提示"）；补货 tab 逐字不变 ✓
+  // 🔴 说明那一段 + 标题：**精简档（退货 / 补货）不渲染**（她那句"不必要的文字提示"）✓
   //   ⚠️ 拼法上把"删掉的行"做成**整行**（不是行内空串）—— 空串留在模板里会多出空行，
   //     "删掉"就应该是**那一行不在**（也让她截图里不会看到一段莫名的空隙 ✓）。
   const lines = [];
@@ -1346,6 +1367,11 @@ const replenishFormHtml = (view, write) => {
   const t = write.texts;
   const v = REALM_TEXTS;
   const fields = write.fields;
+  // ⭐⭐ 2026-10-16（补货那三处 · 她真机截图 + 逐字）：**补货领域的渲染文案与开关**走
+  //   `SCAN_PAGE.replenishForm`（与退货那一块的 `SCAN_PAGE.returnForm` 同一个形状 ✓）：
+  //   · `rp.submitLabel` —— 最下面那颗蓝色按钮的文字（改前逐字 `t.replenishButton` = '生成报货订单'）；
+  //   · `rp.amountRow`   —— 「整单金额」那一块**画不画**（缺省 false ⇒ 补货页上不画 ✓）。
+  const rp = SCAN_PAGE.replenishForm;
   const lines = purchaseSizeLines(view);
   const sizes = lines.length ? lines : (write.sizes || []).map((item) => ({
     size_text: item.size_text, sellable: null, missing: Boolean(item.missing), checked: Boolean(item.missing),
@@ -1367,8 +1393,28 @@ const replenishFormHtml = (view, write) => {
   const hasLines = groups.lines.length > 0 || groups.folded.length > 0;
   const visible = hasLines ? groups.lines : sizes;
   const folded = hasLines ? groups.folded : [];
-  const stockList = `<ul class="purchase-size-grid purchase-sizes" data-view="purchase-sizes" style="--size-cols: ${escapeHtml(String(columnsPerRow))}">${visible.map((item) => cellHtml(item)).join('')}</ul>`
-    + specialFoldShellHtml(folded, `<ul class="purchase-size-grid purchase-sizes" data-view="purchase-sizes-folded" style="--size-cols: ${escapeHtml(String(columnsPerRow))}">${folded.map((item) => cellHtml(item, ' size-fold__item')).join('')}</ul>`);
+  //   ⭐⭐ 2026-10-16（业务负责人真机截图 + 逐字，**补货领域**）：
+  //     「我记得我要把**补货的尺码 × 数量，不用一行一个尺码，而是改为一行 3 组尺码 × 数量**这样的模式」
+  //     ⚠️ **这不是"没做"** —— 2026-10-14 那次就已经加了 `.purchase-size-grid` ＋ `--size-cols`（3 列）
+  //       ✓，**但一根旧 CSS 把它顶掉了**，所以线上一直是**一行一个** ✗（她截图是对的 ✓）。
+  //     🔎 **根因（静默失效）**：那个 `<ul>` 上**同时挂着两个类** ——
+  //       `purchase-size-grid`（**新**的 3 列网格类）＋ `purchase-sizes`（**旧一列版式的残留**）：
+  //       ⚠️ 这两个类名**刻意不写成 `class="…"` 那种原文**（本仓有**读源码数次数**的既有哨兵，
+  //         注释里抄一遍会让计数凭空多出来 ⇒ 假红 ✗ —— 与上面 `purchaseAmountRowHtml` 同一类坑）。
+  //       · `.purchase-size-grid`（本文件 `:249`）= `repeat(var(--size-cols, 3), minmax(0, 1fr))` ⇒ **3 列** ✓
+  //       · `.purchase-sizes`（本文件 `:256`，**旧一列版式的残留**）= `minmax(0, 1fr)` ⇒ **1 列** ✗
+  //       两者**特异性相同**（都是单类选择器），`.purchase-sizes` 在**后面** ⇒ **后者赢** ⇒ 实际 1 列 ✗
+  //     ⇒ **修法 = 把那个已无用的旧类从这两个 `<ul>` 上摘掉**（`data-view="purchase-sizes"` 锚**保留** ✓）：
+  //       `.purchase-sizes` 规则随即**没有任何消费者** ⇒ `.purchase-size-grid` 的 3 列**真正生效** ✓
+  //       ⚠️ **刻意不动那条 CSS 规则本身**（不删也不改）：`STYLE` 里那段 CSS 文本另有
+  //         `test/fixtures/hardcodedChineseWhitelist.json` 的整块留档盯着（动它就要连带改那个夹具 ✗）
+  //         ⇒ 摘一个类名是**最小且够**的那一刀 ✓（谁把类塞回来 ⇒ `test/replenishTrimThreeFixes.test.js`
+  //         的 **AC-RP7** 当场红 ✓）。
+  //     🔴 **功能零变化**：勾选 / 数量输入 / 字段名 / 提交顺序 / 库存数量 / 缺码·现货标记语义
+  //       **一个字都没改** ✗（本刀只动那一个 `class` 属性里的一个旧类名 ✓）——
+  //       钉在 AC-RP8（同一个 POST 载荷逐字相同）＋ AC-RP9（组内元素逐字仍在）✓
+  const stockList = `<ul class="purchase-size-grid" data-view="purchase-sizes" style="--size-cols: ${escapeHtml(String(columnsPerRow))}">${visible.map((item) => cellHtml(item)).join('')}</ul>`
+    + specialFoldShellHtml(folded, `<ul class="purchase-size-grid" data-view="purchase-sizes-folded" style="--size-cols: ${escapeHtml(String(columnsPerRow))}">${folded.map((item) => cellHtml(item, ' size-fold__item')).join('')}</ul>`);
   const rows = sizeRowsHtml({
     sizes,
     name: fields.replenishSizes,
@@ -1385,9 +1431,9 @@ ${stockList}
 ${hiddenField(fields.action, write.actions.replenish)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.replenishKey)}
 ${rows}
-${purchaseAmountRowHtml(write)}
-${multiItemBlockHtml(write, view)}
-<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.replenishButton)}</button>
+${rp.amountRow ? purchaseAmountRowHtml(write) : ''}
+${multiItemBlockHtml(write, view, 'replenish')}
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rp.submitLabel)}</button>
 </form>
 </details>
 </section>`;

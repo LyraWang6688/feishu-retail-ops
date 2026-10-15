@@ -757,6 +757,46 @@ const RETURN_FORM = Object.freeze({
   submitLabel: '退货',
 });
 
+/**
+ * ⭐⭐ 2026-10-16（业务负责人**真机截图 + 逐字** · **补货（报货）tab** · 货品 `832-500`）：
+ *   「这个是**报货的页面，还是需要填写金额啊**，以及**不需要的文字说明给删除**，
+ *     **生成报货订单按钮文字改为补货**」
+ *
+ * 本对象 = **补货领域**（`replenish`）的渲染文案与开关，与 `RETURN_FORM` 同一个形状 /
+ * 同一个理由：**领域渲染文案只有一份家 = `src/config/**`** ✓（渲染层一个汉字都不写 ✗）。
+ * ⚠️ 补货那一块的"说明 / 标题 / 空态"三句仍住 `MULTI_ITEM_RENDER_TEXTS`（本刀只按 tab 分叉 ✓）；
+ *   本对象收的是她这次**另外点的**两处（金额行开关 ＋ 按钮文案 ✓）。
+ *
+ * ⚠️ 为什么新增在这里、而不是改 `config/scanWrite.js` 的 `replenishButton`：
+ *   ① 写侧文件**不在本任务写作用域内**（红线：那个文件一个字不动 ✗）；
+ *   ② 补货**领域**的渲染文案本来就该和 `RETURN_FORM` 放在一起（一处定义 ✓ 不各抄一份 ✗）；
+ *   ③ 写侧那句 `replenishButton` **一个字不动** ✗ —— 它随 `config/scanWrite.js` 原样留着
+ *      （本刀只换**页面上那一颗按钮**的文字 ✓ 不动写侧 / 不动行为 / 不动幂等 ✗）。
+ */
+const REPLENISH_FORM = Object.freeze({
+  // ⭐⭐ 2026-10-16 ③（她逐字）：「**生成报货订单按钮文字改为补货**」
+  //   改前逐字：那颗按钮的文字来自**写侧**配置 `SCAN_WRITE.texts.replenishButton = '生成报货订单'`
+  //     （`config/scanWrite.js:697`）—— 那是她 2026-10-14 晚定的「生成采购申请的文字变为生成报货订单」；
+  //   改后逐字：**补货 tab 这一颗**改读本键 = `'补货'`（**只动渲染层那一颗按钮的文字** ✓）。
+  //   依据：她 2026-10-16 真机截图（补货 tab · 货品 832-500）＋ 逐字「生成报货订单按钮文字改为补货」。
+  //   ⚠️ 配置先行：下次她再改字，**只改这一行**（渲染层读它 ✓ 不写死中文字面量 ✗）。
+  submitLabel: '补货',
+  /**
+   * ⭐⭐ 2026-10-16 ①（她逐字）：「这个是报货的页面，**还是需要填写金额啊**」✗
+   *   ⚠️ 背景：她早就定过「**补货不问金额**」⇒ **校验**那一半已经改了
+   *     （`SCAN_WRITE.purchaseAmount.requiredByRealm.replenish === false` ✓ #689 已上线 ✓
+   *      见 `config/scanWrite.js:178` ＋ `test/purchaseAmountRealmTiers.test.js` ✓），
+   *      **但页面还在画那个输入框** ✗（截图里就有 ✓）⇒ 她看到的正是这个矛盾。
+   *   ⇒ **补货领域渲染时不再画「整单金额」那一块** ✓（**与"校验不要求"对齐** ✓ ——
+   *     页面上没有的框，后端也不该因为它空而拦 ✓ 那一半已满足 ✓ 本对象只关"画不画" ✗ 不动校验 ✗）。
+   *   🔴 **退货 / 验收仍要**那份金额渲染 —— 它们走的是**另一条路**
+   *     （`RETURN_FORM` ＋ `views/scanPageRenderer.js` 的 `returnFormHtml` ✓ **一个字别动** ✗）。
+   *   ⚠️ **显式布尔**（`readFlag`）⇒ 清空 / 写 false 就真关掉，**不用 `||` 兜底**（那种"清空关不掉" ✗）；
+   *     缺省 **false** = 她这次要的终态（补货页上**没有**那个框 ✓）。
+   */
+  amountRow: readFlag(process.env, 'SCAN_PAGE_REPLENISH_AMOUNT_ROW_ENABLED', false),
+});
+
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
   // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（**显式布尔**，缺省 false）。
@@ -794,6 +834,8 @@ const SCAN_PAGE = Object.freeze({
    *   ⚠️ 用户可见文案都在 `src/config/**`（中文的家）✓ —— 渲染层与那段脚本**一个汉字都不写** ✗。
    */
   returnForm: RETURN_FORM,
+  // ⭐⭐ 2026-10-16（补货 tab 那三处 · 她真机截图 + 逐字）：按钮文案 ＋ 金额行开关（见上面 `REPLENISH_FORM`）。
+  replenishForm: REPLENISH_FORM,
   SIZE_ROW_GROUPS: Object.freeze({ GROUPED: 'instock+reserve' }),
   REALM_SIZE_BEHAVIOR: Object.freeze({
     sales: Object.freeze({ group: 'instock+reserve', groupWhenDegraded: false, missing: false, checkMissingByDefault: false }),

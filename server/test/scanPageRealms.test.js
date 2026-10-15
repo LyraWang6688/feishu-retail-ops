@@ -431,7 +431,27 @@ test('AC3 `from=replenish`：列出各尺码（样品+门盒）数量 + 【一�
     assert.ok(purchase.includes(`name="qty_${size}"`), `数量输入框缺 ${size}（数量可改）`);
   }
   assert.match(purchase, /name="qty_41"[^>]*value="1"/, '默认各 1 双');
-  assert.ok(purchase.includes('生成采购申请'), '生成采购申请 = 既有链路（既有写入口）');
+  // ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人真机截图 · 补货 tab · 货品 832-500 ＋ 逐字：
+  //   「这个是报货的页面，还是需要填写金额啊，以及不需要的文字说明给删除，
+  //     **生成报货订单按钮文字改为补货**」）：
+  //   改前逐字（本行）：
+  //     `assert.ok(purchase.includes('生成采购申请'), '生成采购申请 = 既有链路（既有写入口）');`
+  //     ⚠️ 那串字来自**本文件夹具**的 `WRITE.texts.replenishButton = '生成采购申请'`
+  //       （照抄写侧键名）—— 意思是"渲染层把写侧给的那句话摆出来了"。
+  //   改后逐字（下面两行）：
+  //     那颗按钮的文字**不再来自写侧夹具**，而是来自**渲染侧**配置
+  //     `SCAN_PAGE.replenishForm.submitLabel`（= `'补货'` ✓ 见 `config/scanPage.js`）✓
+  //   依据：她 2026-10-16 逐字「生成报货订单按钮文字改为补货」
+  //     （＋她 2026-10-14 晚定过的「生成采购申请的文字变为生成报货订单」那条已被她这次改掉 ✓）。
+  //   ⚠️ **不是放宽**：从"**裸词**出现在整页里"（弱 —— 夹具给什么就绿什么）改成
+  //     ①「**逐字**钉那颗按钮的收尾 `<label></button>`」＋ ②「**写侧夹具那个旧值绝不许出现在页面上**」
+  //     （两处都是**反向**可红的 ✓ 更严 ✓）。
+  //   ⚠️ 夹具里那行 `replenishButton: '生成采购申请',` **保留**（它现在是**哨兵的反例样本**：
+  //     拿它证明"那颗按钮**不再读写侧**" ✓ —— 不是"没人读的静默假绿" ✗）。
+  assert.ok(purchase.includes(`${SCAN_PAGE.replenishForm.submitLabel}</button>`),
+    '⭐ 补货那颗按钮的文字来自**渲染侧配置** `SCAN_PAGE.replenishForm.submitLabel` ✓');
+  assert.equal(purchase.includes(WRITE.texts.replenishButton), false,
+    `🔴 写侧夹具那句「${WRITE.texts.replenishButton}」**不再出现在页面上**（那颗按钮已改指向 ⇒ 塞回即红 ✓）`);
   assert.ok(purchase.includes(WRITE.replenishKey), '幂等键照旧在表单里');
 });
 
