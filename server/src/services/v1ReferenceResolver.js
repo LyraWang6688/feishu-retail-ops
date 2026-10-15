@@ -1,4 +1,4 @@
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { textValue } = require('./v1BitableGateway');
 const { isSalesTradeType } = require('../config/salesMovements');
 
 const normalizeText = (value) =>
@@ -246,19 +246,10 @@ class V1ReferenceResolver {
     return { recordId: matches[0].record_id, record: matches[0] };
   }
 
-  async findLiveInventory(productRecordId, size) {
-    const table = this.gateway.table('liveInventory');
-    const records = await this.gateway.listAll('liveInventory');
-    const expectedSize = Number(size);
-    return (
-      records.find((record) => {
-        const fields = record.fields || {};
-        const productIds = linkedRecordIds(fields[table.fields.product]);
-        const actualSize = Number(textValue(fields[table.fields.size]));
-        return productIds.includes(productRecordId) && actualSize === expectedSize;
-      }) || null
-    );
-  }
+  // ⭐⭐ 2026-10-15（她逐字：「和这些功能无关的代码都可以删除了」+ 审计 §3.2 待删-3）：
+  //   删掉**方法级零调用方**的 `findLiveInventory()` —— 它那时是**第二份**实现、而且**按数字读尺码**；
+  //   这条能力（**货品 + 尺码 ⇒ 实时库存那一行**）现在由 `InventoryService.findLiveInventory`
+  //   （`services/inventoryService.js:1531` → `findLiveInventoryIn`）承载 ✓ 判据没丢 ✗。
 }
 
 module.exports = {
