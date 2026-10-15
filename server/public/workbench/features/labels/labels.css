@@ -21,6 +21,34 @@
  */
 
 /* ── 筛选区（屏幕上）──────────────────────────────────────────────────── */
+/* ⭐ 2026-10-15（她：「批量，我觉得**当前的页面不太美观**，**我不知道批量要做什么**」）：
+   ① 用途写在页面上（`.label-batch-purpose`）；② 筛选收进一张卡、主按钮单独一行（只动 CSS 与文案）。
+   ⚠️ 颜色 / 间距 / 圆角 / 字号一律走 tokens.css 的令牌（本仓哨兵：CSS 里不许出现写死的颜色）。 */
+.label-page-head { margin-bottom: var(--space-4); }
+.label-batch-purpose {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+}
+.label-batch-purpose strong { font-size: var(--font-size-lg); color: var(--text); }
+.label-batch-purpose span { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.label-filter-card {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-4) 0 var(--space-2);
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+/* 卡片里自己管留白 ⇒ 两行筛选不再各带一圈外边距（"清爽"就是这一条 + 上面那张卡）。 */
+.label-filter-card .label-filters { margin: 0; }
+.label-filter-actions { display: grid; margin-top: var(--space-1); }
 .label-filters { flex-wrap: wrap; margin: 12px 0; }
 .label-preview { margin-top: 18px; }
 .label-print-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0 4px; }

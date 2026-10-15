@@ -39,6 +39,13 @@ import { escapeHtml } from '../../core/formatters.js';
 export const TEXTS = {
   title: '鞋盒标签打印',
   subtitle: '按条件挑出要打的货 → 每个「编号」一张标签（尺码那一项带各尺码的库存数量）→ 用浏览器打印，A4 一页铺多张',
+  // ⭐⭐ 2026-10-15（业务负责人逐字：「批量，我觉得**当前的页面不太美观**，**我不知道批量要做什么**」）
+  //   ⇒ 她当场确认用途 = **一次给一批新货打码**（新店开业 / 换季上架）。
+  //   ⚠️ 这一页**不是**四个领域 tab 里那种"说明书"页面：她要的就是"这一屏是干什么的"一句话
+  //      （原来四个领域页删掉的是"我怎么点"的步骤说明，别混为一谈 ✗）。
+  //   ⚠️ 只在**批量那一屏**（不带 `?keyword=`）出现：单款那一屏不显示"批量"的用途（免得文不对题）。
+  batchPurposeTitle: '批量打印：一次给一批新货打码',
+  batchPurposeText: '新店开业 / 换季上架 —— 一次把这一批新货挑出来打码贴盒：挑条件 → 每张 40×30mm → A4 一页铺多张 → 沿虚线剪开。只打一款 ⇒ 用「选择编号打印」或「扫码打印」。',
   printButton: '打印这些标签',
   printHint: '打印时选 A4、缩放 100%（不要"适应页面"）、关掉页眉页脚；出来就是标签纸的尺寸（见下面"每页 N 张"那句），沿虚线剪开贴鞋盒。',
   queryButton: '查询可打印的标签',
@@ -49,6 +56,18 @@ export const TEXTS = {
   printDisabled: '还没有可打印的标签',
   scanUrlCaption: '标签上的二维码指向：',
 };
+
+/**
+ * 「批量打印」那一块用途说明（她 2026-10-15 要的"我不知道批量要做什么"）。
+ * ⚠️ 文案全部来自上面的 `TEXTS`（这一页用户可见字的唯一出处）；这里只负责**怎么摆**。
+ * ⚠️ 不用 `<p>`（与领域页"界面不留说明书"的既有哨兵同一形状）。
+ */
+export const batchPurposeHtml = () => (TEXTS.batchPurposeTitle || TEXTS.batchPurposeText
+  ? `<div class="label-batch-purpose">
+        <strong>${escapeHtml(TEXTS.batchPurposeTitle || '')}</strong>
+        <span>${escapeHtml(TEXTS.batchPurposeText || '')}</span>
+      </div>`
+  : '');
 
 /** 筛选器的可选项（页面常量；服务端还会按 `layout.filters` 校验一遍）。 */
 export const FILTER_OPTIONS = {
@@ -261,6 +280,24 @@ export function planItemNoColor(label, layout) {
 }
 
 /**
+ * ⭐⭐ 2026-10-15（业务负责人逐字选 ①）：**新品（还没有库存）那张标签上，「尺码」那一行不印**。
+ *
+ * 判据（能真红的那个）：
+ *   · `sizes` 是数组 ⇒ **以它为准**（`sizes` 为空数组 = 这个编号一双库存都没有）⇒ 不印那一行；
+ *   · `sizes` 缺失（老调用方 / 反向兼容）⇒ 退回看 `size_lines` 里有没有**真尺码**；
+ *   · 一行里全是占位符（`—`）⇒ 也算"没有尺码" ⇒ 不印（**不是印「—」、不是印「0 双」** ✗）。
+ * ⚠️ 有尺码时**逐字不变**：这只是一个"整行印不印"的闸门，版式 / 字号 / 角标一个字节都没动。
+ */
+export const hasSizeRow = (label) => {
+  const realSize = (token) => String(token?.size ?? '').trim() !== '';
+  if (Array.isArray(label?.sizes)) {
+    return label.sizes.some((item) => realSize(item));
+  }
+  const lines = Array.isArray(label?.size_lines) ? label.size_lines : [];
+  return lines.some((tokens) => Array.isArray(tokens) && tokens.some((token) => realSize(token)));
+};
+
+/**
  * 尺码那一项：**在 service 已经分好的行**里，把每个尺码画成 `38` + 数量角标（小号字下沉）。
  * ⚠️ **不用 Unicode 下标字符** —— 角标是真的 `<span>`，字号 / 下沉量来自 config。
  * ⚠️ 两行都放不下时（`size_overflow`），**最后一行尾上补一个 `…`** —— 省略是看得见的。
@@ -315,7 +352,11 @@ const ROW_RENDERERS = {
     ? `<div class="label-state">${escapeHtml(value(label.state_text, layout))}</div>`
     : ''),
   // 下面：尺码区（带数量角标，数值升序，放不下自动换行、再溢出补 …）。
-  sizes: (label, layout) => (layout.fields?.size ? sizeLinesHtml(label, layout) : ''),
+  // ⭐ 2026-10-15：**没有尺码（新品 / 无库存）⇒ 这一行整块不画**（不是印「—」、不是印「0 双」）——
+  //    判据在 `hasSizeRow`（有尺码时逐字不变）。
+  sizes: (label, layout) => (layout.fields?.size && hasSizeRow(label)
+    ? sizeLinesHtml(label, layout)
+    : ''),
 };
 
 /**
