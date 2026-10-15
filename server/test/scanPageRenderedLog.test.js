@@ -29,11 +29,8 @@
  * ## 验收标准（**先写后做**；每条能真红 —— 见 PR 里的变异表）
  * · **AC-RL1** 裸扫（骨架屏开）⇒ 一条 `page:'skeleton'` + `trigger:'skeleton_first_entry'`；
  *   紧接着 `?data=1` ⇒ 一条 `page:'goods'`（**骨架那条路也留痕** ✓）
- * · **AC-RL2** `pending` + 草稿**有行** + `?from=sales` ⇒ `page:'pay'` +
- *   `trigger:'pending_mark:lines'`（**说得出是哪条判据命中** ✓）
- * · **AC-RL3** `pending` + 0 行 + `status:'draft'`（她那次最可能的形状）⇒ `page:'pay'` +
- *   `trigger:'pending_mark:status_not_submitted'`
- * · **AC-RL4** `pending` + **有已建单号** ⇒ `page:'pay'` + `trigger:'pending_mark:order'`
+ * · **AC-LR4**（⭐ task-60 加）**四个出口**（骨架 / 货品页 / 资金页 / 成功页）各一条 `scan.page.rendered`，
+ *   且 `page`·`trigger`·`query_keys`·`number` ＋ `request_id` **一个字段都不缺**（她点名要的那条 ✓）
  * · **AC-RL5** 残标记（`pending` + 0 行 + `submitted`）⇒ **`page:'goods'`**（不给资金页 ✓
  *   这一条是"修对了"的正面证据 —— 与 `scanPaymentStepStale.test.js` 的 AC-SM1 同形）
  * · **AC-RL6** `?data=1` + `pending`（骨架自取那一发）⇒ `page:'goods'`（**绕过接管** ✓ 说得出）
@@ -43,6 +40,16 @@
  * · **AC-RL9** 每次 GET **恰好一条** rendered（不重不漏）+ `success` / `not_found` 两个出口也留痕
  * · **AC-RL10** 既有边界**不放宽**：`salesContext` / `pendingMark === 'pending'` 那几条 **逐字仍在**；
  *   并且 `sendPaymentStep` 里那条日志**在 `sendHtml` 之前**（能真红：挪到后面就红）
+ *
+ * ⭐⭐ **task-60 搬移记录（**不许删判据** —— 判据一条没丢，只是换了文件 ✓）**：
+ *   原 **AC-RL2 / AC-RL3 / AC-RL4**（三条 `pending_mark:lines|order|status_not_submitted` 的 GET 接管用例）
+ *   在本文件里**够不着**了 —— 理由是**结构性**的，不是判据失效：
+ *     · 本文件按**线上形状**跑（`SCAN_PAGE_SKELETON_ENABLED=true` + `firstEntryOnly`）
+ *       ⇒ **裸扫**先回骨架（拿不到"资金页"那一发）；
+ *     · 而 `?from=sales`（那三条原来用的形状）**从 2026-10-16 起按她亲口选的 ② 先清掉未完成标记**
+ *       ⇒ 出货品页、**不再**给资金页（正面判据见 `test/scanLandingResetOnScan.test.js` 的 **AC-LR1**）。
+ *   ⇒ 那三条**搬到** `test/scanLandingResetOnScan.test.js` 的 **AC-LR2c ③**（那个文件**骨架屏关**，
+ *     裸扫真的走接管 ⇒ 三条 trigger **逐条原样**断言 ✓）—— **强度一点没降、一条没丢** ✓。
  *
  * ⚠️ 本文件是**新建**的（`server/test/**` 同时有别的任务在改 ⇒ 按"scan 相关、新文件优先"办）
  *    —— **一个字都不去动别人的用例文件** ✓。
@@ -240,52 +247,83 @@ test('AC-RL1 ⭐ 裸扫 ⇒ `page:skeleton`；`?data=1` ⇒ `page:goods`（骨�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-RL2 / AC-RL3 / AC-RL4 资金页接管：**说得出是哪条判据命中**
+// ⭐ task-60 **搬移**：原 AC-RL2 / AC-RL3 / AC-RL4 在这里（`?from=sales` + pending ⇒ 资金页）
+//   —— 她 2026-10-16 亲口选了 ② 之后，`?from=sales` 那一发**先清掉未完成 ⇒ 货品页**
+//   （正面判据：`test/scanLandingResetOnScan.test.js` 的 AC-LR1）；
+//   而**裸扫**在本文件（骨架屏**开**）够不着资金页那一发。
+//   ⇒ 那三条 trigger 断言**原样搬到** `test/scanLandingResetOnScan.test.js` 的 **AC-LR2c ③**
+//     （骨架屏关 ⇒ 裸扫真的走接管 ✓，三条 `pending_mark:*` 逐条断言 ✓）。
+//   🔴 **判据没删、也没放宽** —— 只是换了"能够让它们真的跑到"的那个文件 ✓。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RL2 ⭐ `pending` + 草稿**有行** ⇒ `page:pay` + `trigger:pending_mark:lines`', async () => {
-  login();
-  const write = fakeWriteService({
-    paymentStep: 'pending', status: 'draft',
-    lines: [{ product_number: NUMBER, size: 41, quantity: 1, amount: '399' }],
-  });
-  await withServer(appFor({ write }), async (base) => {
-    const { result, rendered } = await withLogs(() => getPage(base, '?from=sales'));
-    assert.ok(result.html.includes('data-view="payment-step"'), '这一页是资金页');
-    const event = only(rendered);
-    assert.equal(event.page, 'pay');
-    assert.equal(event.trigger, 'pending_mark:lines', '⭐ 命中的是"草稿有行"那一条判据');
-    assert.deepEqual(event.query_keys, ['from'], 'query_keys = [from]');
-  });
-});
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ AC-LR4（task-60 加）**四个出口**：都打得出来、字段齐（她点名要的那条 —— 以后每次排查都要用）
+//   骨架 · 货品页 · 资金页 · 成功页
+// ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RL3 ⭐⭐ `pending` + 0 行 + `status:draft`（**她那次最可能的形状**）⇒ `page:pay` + `trigger:pending_mark:status_not_submitted`', async () => {
+/** 🔴 AC-LR4 的公共判据：**四个字段一个都不许缺**（＋ requestId）。 */
+const assertFieldsComplete = (event, label) => {
+  assert.ok(Object.prototype.hasOwnProperty.call(event, 'page'), `${label}：要有 page ✓`);
+  assert.ok(String(event.page).length > 0, `${label}：page 不许为空`);
+  assert.ok(Object.prototype.hasOwnProperty.call(event, 'trigger'), `${label}：要有 trigger ✓`);
+  assert.ok(String(event.trigger).length > 0, `${label}：trigger 不许为空（"哪条条件命中"要说得出来 ✓）`);
+  assert.ok(Array.isArray(event.query_keys), `${label}：要有 query_keys（只字段名 ✓）`);
+  assert.ok(Object.prototype.hasOwnProperty.call(event, 'number'), `${label}：要有 number ✓`);
+  assert.ok(String(event.number).length > 0, `${label}：number 不许为空（这次扫的是哪一件要说得出来 ✓）`);
+  assert.ok(String(event.request_id || '').length > 0, `${label}：要有 requestId ✓`);
+};
+
+test('AC-LR4 ⭐⭐ 四个出口（骨架 / 货品页 / 资金页 / 成功页）**各一条** `scan.page.rendered`，且 `page`·`trigger`·`query_keys`·`number` 一个字段都不缺', async () => {
+  // ⚠️ task-60：资金页那个出口在本文件里用 **POST**（她点「提交这一单」）走到 —— 骨架屏**开**时
+  //    GET 那条接管够不着（见上面的搬移记录）；成功页用**POST 点资金页那颗按钮**走到 ✓。
   login();
-  // 提交那一步写出来的形状（`routes/scanPage.js` 那一笔：lines=[] + paymentStep:'pending'
-  // + status:'draft' + submitPending）—— 她没有点资金页那两颗按钮就离开了。
   const write = fakeWriteService({
-    paymentStep: 'pending', status: 'draft', lines: [],
+    status: 'submitted', lines: [], order_no: '', master_record_id: '', paymentStep: 'created',
     submitPending: { size: '41', amount: '399', gift: '' },
   });
   await withServer(appFor({ write }), async (base) => {
-    const { result, rendered } = await withLogs(() => getPage(base, '?from=sales'));
-    assert.ok(result.html.includes('data-view="payment-step"'),
-      '⭐ 这一形状就是"她点销售 ⇒ 直接出资金页"（本地复现 ✓）');
-    const event = only(rendered);
-    assert.equal(event.page, 'pay');
-    assert.equal(event.trigger, 'pending_mark:status_not_submitted',
-      '⭐ 命中的是"这一单还没交出去"（status !== submitted）那一条 —— 这正是她那次的关键判据');
-    assert.equal(Array.isArray(write.patches) && write.patches.length, 0, '这一形状**不许**清标记（她还要回来付 ✗）');
-  });
-});
+    // ① 骨架屏那个出口
+    const skeleton = await withLogs(() => getPage(base));
+    const skeletonEvent = only(skeleton.rendered);
+    assertFieldsComplete(skeletonEvent, '骨架屏出口');
+    assert.equal(skeletonEvent.page, 'skeleton');
 
-test('AC-RL4 ⭐ `pending` + **已建单号** ⇒ `page:pay` + `trigger:pending_mark:order`', async () => {
-  login();
-  const write = fakeWriteService({ paymentStep: 'pending', status: 'draft', lines: [], order_no: 'XSD-20261016-0001' });
-  await withServer(appFor({ write }), async (base) => {
-    const { result, rendered } = await withLogs(() => getPage(base, '?from=sales'));
-    assert.ok(result.html.includes('data-view="payment-step"'), '有单号没付完 ⇒ 照旧资金页');
-    assert.equal(only(rendered).trigger, 'pending_mark:order', '⭐ 命中的是"已经建过单"那一条');
+    // ② 货品页那个出口（骨架自取那一发）
+    const goods = await withLogs(() => getPage(base, '?data=1'));
+    const goodsEvent = only(goods.rendered);
+    assertFieldsComplete(goodsEvent, '货品页出口');
+    assert.equal(goodsEvent.page, 'goods');
+
+    // ③ 资金页那个出口（她点「提交这一单」⇒ POST ⇒ `sendPaymentStep`）
+    const pay = await withLogs(async () => {
+      const response = await post(base, submitOrderBody());
+      return { status: response.status, html: await response.text() };
+    });
+    assert.equal(pay.result.status, 200);
+    assert.ok(pay.result.html.includes('data-view="payment-step"'), '提交那一下照旧到资金页 ✓');
+    const payEvent = only(pay.rendered);
+    assertFieldsComplete(payEvent, '资金页出口');
+    assert.equal(payEvent.page, 'pay');
+    assert.equal(payEvent.trigger, 'payment_step', 'POST 那条出口的 trigger 是 `payment_step` ✓');
+
+    // ④ 成功页那个出口（她在资金页点那颗按钮 ⇒ 建单成功）
+    const success = await withLogs(async () => {
+      const response = await post(base, payBody());
+      return { status: response.status, html: await response.text() };
+    });
+    assert.equal(success.result.status, 200);
+    assert.equal(success.result.html.includes('data-view="payment-step"'), false, '建单成功 ⇒ 不再是资金页');
+    const successEvent = only(success.rendered);
+    assertFieldsComplete(successEvent, '成功页出口');
+    assert.equal(successEvent.page, 'success');
+    assert.equal(successEvent.trigger, 'write_ok');
+
+    // 四个出口 = 四个不同的 page 值（"渲染了哪一页"一眼分得开 ✓）
+    assert.deepEqual(
+      [skeletonEvent.page, goodsEvent.page, payEvent.page, successEvent.page],
+      ['skeleton', 'goods', 'pay', 'success'],
+      '⭐ 四个出口四个 page 值（互不混淆 ✓）',
+    );
   });
 });
 

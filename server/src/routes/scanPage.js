@@ -348,10 +348,12 @@ const createScanPageRouter = (options = {}) => {
     //   的锚点，在前面多一处就把锚点挤开 ✗（本刀真踩到过 ✓）。
     invalidateInventorySnapshot(requestId, multiItemOrderConfig.invalidateReasons[chain]);
     markRealmUsed(openId, realmOfAction(action));
+    // ⚠️ task-60：`req` 作**第 4 个实参**传进去 ⇒ 这条成功页的 `scan.page.rendered`
+    //    也带得上 `number`（字段齐 ✓）；🔴 **页面本身一个字都不受影响** ✗（那个参数只喂日志）。
     return sendSuccess(res, 200, {
       ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
       requestId,
-    });
+    }, req);
   };
 
   /**
@@ -739,9 +741,16 @@ const createScanPageRouter = (options = {}) => {
   // ⚠️ `req` 是**第 4 个可选参数**（task-58 加，只为那条 `scan.page.rendered` 日志 —— 成功页 =
   //    扫码这条链路的第三个落点 ✓）。不传照样能用（老调用点 / 用例不会炸 ✓），只是日志里
   //    `query_keys` 为空、`number` 为空 —— **判定与页面一个字都不受它影响** ✗。
+  //    ⭐ task-60：**9 个调用点一个不落全传了 `req`**（含"一单多货品"那条成功页 ✓）——
+  //      她点名要的"字段齐"（AC-LR4）就是这条：每一发 `page:'success'` 都说得出来"是哪一件" ✓。
   const sendSuccess = (res, status, payload, req = null) => {
     // ⭐ 成功页 = 她看到的落点之一（先记，再渲染 ⇒ "她看到的"与"日志记的"一致 ✓）
-    logRendered(req, { page: 'success', trigger: 'write_ok' });
+    //    `number` 与资金页那条**同一口径**（`scanTargetOf` ⇒ `/s` 用编号、`/r` 用记录 ID ✓）
+    logRendered(req, {
+      page: 'success',
+      trigger: 'write_ok',
+      number: String(scanTargetOf(req)?.value || ''),
+    });
     try {
       return sendHtml(res, status, renderSuccess(payload, config));
     } catch (error) {
@@ -1312,7 +1321,9 @@ const createScanPageRouter = (options = {}) => {
     if (String(req.query?.data || '') !== '1'
       && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
       const pendingSession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
-      const pendingMark = pendingSession?.sale?.paymentStep || pendingSession?.paymentStep;
+      // ⚠️ task-60：`const` → **`let`** —— 她选的 ② 要在下面把这条标记**清成"没有"**
+      //    （`pendingMark = ''`）⇒ 那条既有接管**不再命中**（它的那一行**逐字未动** ✓）。
+      let pendingMark = pendingSession?.sale?.paymentStep || pendingSession?.paymentStep;
       // 🔴 2026-10-14 晚（她真机：扫了码之后点「库存 / 补货 / 退货」**全都变成资金页**）：
       //   ⭐ 根因 = 上面这段"刷新仍给资金页"**没按领域限制** ✗ ⇒ 只要会话里还有 `pending`，
       //     她点**任何**领域都被资金页接管 ✗。
@@ -1321,6 +1332,68 @@ const createScanPageRouter = (options = {}) => {
       //     · 或**没带 `from`**（裸扫通常就是销售入口 ✓ 保持原有体验 ✓）
       //     · **其它领域**（库存/补货/退货/…）⇒ ⭐ **一律不接管**（照旧给那一块 ✓）
       const salesContext = String(req.query?.from || '') === '' || String(req.query?.from) === 'sales';
+      /**
+       * ⭐⭐ 2026-10-16（task-60 · 她真机 05:34「扫货品码却出现资金页」＋ **她当日亲口选的方案 ②**）：
+       *   我给的选项（逐字）：「① 接管前先核对"是不是这个货品" 还是 ② 重扫同一个货品就从头开始
+       *   （清掉那条未完成）？」⇒ 她答（逐字）：**「② 还是重扫同一个货品就从头开始（清掉那条未完成 ✓）」**。
+       *
+       * ⇒ **扫到货品、点「销售」那一发**（= 显式 `?from=sales`；realm tab 的链接就是它，
+       *   `views/scanPageRenderer.js` 的 `href="?from=<领域>"` ✓）**先把那条"未完成"的标记清掉**
+       *   ⇒ 这一发**从货品页开始** ✓（不再被"上一单的资金页"顶掉 ✗ —— 那正是她的截图）。
+       *
+       * 🔴 **清的范围（她逐字"清掉那条未完成"，别清过头 ✗）**：
+       *   · 只清 **`paymentStep`** ＋ 与它同笔的 **`submitPending`**（那是她 2026-10-15 定下的
+       *     "点按钮那一刻要写的那一双"pay 载荷 ⇒ `paymentStep` 一清它就没有读点，同笔清是纯卫生 ✓）；
+       *   · **`lines` / `order_no` / `master_record_id` / `status` / `completed` / `seq` 一个字都不碰** ✗
+       *     ⇒ 会话里那笔"已建单 / 已提交"的事实**原样留着**（她还能在工作台查到那一单 ✓）；
+       *   · **只写她这条会话**（`openIdOf(req)` 来自**签名 cookie** ⇒ 别人的会话碰不到 ✗）；
+       *   · **零业务表写入**：这一段只调 `sessions.saveDraftLines`（本地会话）—— 飞书一个字节都不写 ✓。
+       *
+       * ⚠️ **为什么只认显式 `?from=sales`、**裸扫不清** ✗**（这是本刀最容易做错的一处）：
+       *   裸扫那条路挂着她 2026-10-14 定的**「资金页刷新不丢」**（"点提交 ⇒ 到资金页 ⇒ 刷新仍在资金页"）
+       *   —— 判据是 `test/scanSalePayFront.test.js` 的 AC-PF4 ＋ `test/scanPaymentStepStale.test.js` 的
+       *   AC-SM2/SM3/SM7/SM8（那几条**一条都没改** ✓）。在裸扫上清 ⇒ 把她**刚填完、正停在资金页**
+       *   的那一单打回录入页 ✗ = **清过头**。
+       *   ⭐ **线上（骨架屏开 + `firstEntryOnly`）裸扫先回骨架、`?data=1` 又绕过接管**
+       *     ⇒ 能落到资金页的入口**只有她点「销售」这一发** ✓ ⇒ **就在这一发清** = 正好治她那一下 ✓
+       *     （上一任的只读诊断 §2.3/§3.1 已证；骨架屏**关**时裸扫也会到资金页，那也照旧不动 ✓）。
+       *   ⚠️ 与"**残标记自清理**"（下面那一段，**逐字未动** ✓）**各司其职**：
+       *     那条治"有 pending 但**没东西要付**"（2026-10-15 的 #598/#601）；这条治"**她主动重扫**"。
+       */
+      const explicitSalesScan = String(req.query?.from || '') === 'sales';
+      if (pendingMark === 'pending' && explicitSalesScan) {
+        const hadSubmitPending = Boolean(pendingSession?.sale?.submitPending);
+        let reset = false;
+        try {
+          // ⚠️ `undefined` = "这个键不在"（`services/scanSessionService.js` 默认 `sale` 的形状 ✓
+          //    既有表示、**不新造状态值** ✗）—— 与下面那条残标记清理**同一种清法** ✓。
+          await Promise.resolve(writeService.saveDraftLines?.(
+            openIdOf(req), { paymentStep: undefined, submitPending: undefined },
+          ));
+          reset = true;
+        } catch (error) {
+          // 清失败**不许破她的页面**（这是 GET 渲染路径）⇒ 只 warn，照旧出整页 ✓
+          logWarn(config.events?.paymentStepResetFailed || 'scan.payment_step.reset_failed', {
+            request_id: requestId, error: error.message,
+          });
+        }
+        // **不静默**：真机排查时这一条说明"那条未完成是**按她选的 ②** 清掉的"，并如实带旧状态 ✓
+        logInfo(config.events?.paymentStepResetOnScan || 'scan.payment_step.reset_on_scan', {
+          request_id: requestId,
+          open_id: openIdOf(req),
+          raw: String(pendingMark).slice(0, 32),
+          lines: Array.isArray(pendingSession?.sale?.lines) ? pendingSession.sale.lines.length : 0,
+          has_order: Boolean(String(pendingSession?.sale?.order_no || '').trim())
+            || Boolean(String(pendingSession?.sale?.master_record_id || '').trim()),
+          sale_status: String(pendingSession?.sale?.status || '').trim(),
+          had_submit_pending: hadSubmitPending,
+          reset,
+        });
+        // ⚠️ **这一句才是"别再接管"的开关**：把本地那份标记置空 ⇒ 下面那条
+        //    "刷新仍给资金页"的接管（`pendingMark === 'pending' && salesContext`，**逐字未动** ✓）
+        //    **不再命中** ⇒ 这一发继续走**正常整页渲染** ⇒ `page:'goods'` ✓（正是她选的 ②）。
+        pendingMark = '';
+      }
       if (pendingMark === 'pending' && salesContext) {
         const pendingView = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
         if (pendingView?.found) {
