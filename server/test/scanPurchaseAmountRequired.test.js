@@ -229,28 +229,56 @@ test('AC-PA2 补货 / 退货两个表单各**恰有一个**「整单金额」输
 // AC-PA3 空 ⇒ 400 + 人话（配置里那两句）+ **零写入**（写入口一次都没进）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PA3 整单金额为空 ⇒ 400 + 配置人话 + **零写入**（补货 / 退货两条动作都判）', async () => {
+test('AC-PA3 整单金额为空 ⇒ 400 + 配置人话 + **零写入**（**退货**那条 —— 判据一字未放宽）', async () => {
+  // ⭐⭐ 2026-10-16（A2/A3 接线）**成对迁移**（依据 = 她 2026-10-16 逐字「**补货不问金额**」）：
+  //   改前逐字：
+  //     `for (const [realm, action] of [`
+  //       `['purchase_return', SCAN_WRITE.actions.purchaseReturn],`
+  //       `['replenish', SCAN_WRITE.actions.replenish],`
+  //     `]) { … assert.equal(missingField.status, 400, \`${realm}：空金额 ⇒ 400\`); … }`
+  //   改后逐字：
+  //     · **退货那一半一个字没动**（空 ⇒ 400 + 配置三句人话 + **零写入** ✓）；
+  //     · **补货那一半**移出本用例 ⇒ 按**新口径反向**钉在下面的 **AC-PA3b**（空金额 ⇒ **200 + 真进写入口** ✓）。
+  //   依据：她 2026-10-16 逐字「**补货不问金额**」＋ 2026-10-14 晚「退货整单金额（必填），与补货同一套配置」
+  //     ⇒ **退货不受影响** ✓（本用例仍是 400 + 三句人话 + 零写入 ⇒ 判据**没放宽、没删** ✗）；
+  //     补货那条判据**没有消失**，只是**换了个方向**（AC-PA3b ＋ `purchaseAmountByRealm.test.js` 的
+  //     AC-AR5 ＋ `purchaseAmountRealmWiring.test.js` 的 AC-PAWIRE3 —— **三处真判** ✓）。
   login();
-  for (const [realm, action] of [
-    ['purchase_return', SCAN_WRITE.actions.purchaseReturn],
-    ['replenish', SCAN_WRITE.actions.replenish],
-  ]) {
+  const realm = 'purchase_return';
+  const action = SCAN_WRITE.actions.purchaseReturn;
+  const write = createWriteSpy();
+  await withServer(appWith(write), async (base) => {
+    // ① **一个字都没填**（整个字段都不带）—— 最真实的那种"她忘了"
+    const missingField = await postAction(base, realm, action, null);
+    assert.equal(missingField.status, 400, `${realm}：空金额 ⇒ 400`);
+    const html = await missingField.text();
+    assert.ok(html.includes(SCAN_WRITE.texts.purchaseAmountMissingTitle), 'H1 = 配置里的人话');
+    assert.ok(html.includes(SCAN_WRITE.texts.purchaseAmountMissingBody), '正文 = 配置里的人话（说清怎么填）');
+    assert.ok(html.includes(SCAN_WRITE.texts.purchaseAmountBackLabel), '给了"回上一页填金额"的出口');
+
+    // ② 空白串（她点了输入框又没打字 / 手改表单）
+    const blank = await postAction(base, realm, action, '   ');
+    assert.equal(blank.status, 400, `${realm}：空白串 ⇒ 400（不许当"填了"）`);
+
+    // ③ **零写入**：那道闸门在**任何写之前** ⇒ 写入口**一次都没被调用**
+    assert.deepEqual(write.calls, [], `${realm}：空金额 ⇒ 写入口一次都不许进（结构性零写入）`);
+  });
+});
+
+// ── AC-PA3b ⭐⭐ 2026-10-16 新口径：**补货不问金额** ⇒ 空 / 空白串都**照样能提交** ──────────
+test('AC-PA3b ⭐⭐ 补货不问金额：空金额 ⇒ **照样提交**（200 + 真进写入口；她 2026-10-16 逐字）', async () => {
+  login();
+  // ⚠️ 这一条是 AC-PA3 那半**迁过来的**（不是新加判据）：旧期望值（补货空 ⇒ 400）已**不再是**正确行为 ✗
+  //    ⇒ 按她 2026-10-16「**补货不问金额**」**反向**钉住；退货那条仍在 AC-PA3 里**原样**判 ✓。
+  for (const [amount, why] of [[null, '整个字段都不带'], ['   ', '空白串']]) {
     const write = createWriteSpy();
     await withServer(appWith(write), async (base) => {
-      // ① **一个字都没填**（整个字段都不带）—— 最真实的那种"她忘了"
-      const missingField = await postAction(base, realm, action, null);
-      assert.equal(missingField.status, 400, `${realm}：空金额 ⇒ 400`);
-      const html = await missingField.text();
-      assert.ok(html.includes(SCAN_WRITE.texts.purchaseAmountMissingTitle), 'H1 = 配置里的人话');
-      assert.ok(html.includes(SCAN_WRITE.texts.purchaseAmountMissingBody), '正文 = 配置里的人话（说清怎么填）');
-      assert.ok(html.includes(SCAN_WRITE.texts.purchaseAmountBackLabel), '给了"回上一页填金额"的出口');
-
-      // ② 空白串（她点了输入框又没打字 / 手改表单）
-      const blank = await postAction(base, realm, action, '   ');
-      assert.equal(blank.status, 400, `${realm}：空白串 ⇒ 400（不许当"填了"）`);
-
-      // ③ **零写入**：那道闸门在**任何写之前** ⇒ 写入口**一次都没被调用**
-      assert.deepEqual(write.calls, [], `${realm}：空金额 ⇒ 写入口一次都不许进（结构性零写入）`);
+      const res = await postAction(base, 'replenish', SCAN_WRITE.actions.replenish, amount);
+      assert.equal(res.status, 200, `补货空金额（${why}）⇒ **200**（她 2026-10-16 逐字「补货不问金额」✓）`);
+      assert.equal(write.calls.length, 1, `补货（${why}）要**真的**进写入口一次 ✓（不是被别的东西拦下 ✗）`);
+      assert.equal(write.calls[0].flow, 'replenish');
+      assert.equal('orderAmount' in write.calls[0].args, false,
+        '补货**仍然不写金额** ✓（她 2026-10-15 的裁决：补货不写、只有到货才写「实际金额」✓）');
     });
   }
 });
@@ -306,10 +334,20 @@ test('AC-PA5 源码哨兵：补货 / 退货共用同一个闸门；开关读配�
   const viewSrc = fs.readFileSync(path.join(SERVER_DIR, 'src', 'views', 'scanPageRenderer.js'), 'utf8');
 
   // ① 一处实现：判空 + 400 页面各只有一个定义，两条动作各调一次（不复制 ✗）
+  // ⭐⭐ 2026-10-16（A2/A3 接线）**成对迁移**（依据 = 她 2026-10-16 逐字「**补货不问金额**」）：
+  //   改前逐字：
+  //     `assert.equal((routeSrc.match(/purchaseAmountMissing\(body\)\) return purchaseAmountMissingPage\(/g) || []).length, 2, '补货 + 退货两条动作都走**同一个**闸门');`
+  //   改后逐字：
+  //     `assert.equal((routeSrc.match(/purchaseAmountMissing\(body, '(?:replenish|return)'\)\) return purchaseAmountMissingPage\(/g) || []).length, 2, '补货 + 退货两条动作都走**同一个**闸门（各自逐字带自己那条链路的**档位键** ✓）');`
+  //   依据：闸门改成**按链路分档**（`requiredByRealm`）⇒ 调用点必须显式告诉它「当前是哪条链路」。
+  //     ⚠️ 判据**没放宽**：仍是"数两处调用"，只是把签名换成**带档位键**的那种（更严 ✓）。
+  //     ⭐ 更强的**逐字**哨兵（补货 `'replenish'` / 退货 `'return'` 各 2 处 = 判空 + 非数字、
+  //       且**不许**再有"不带链路"的裸调用）在 `test/purchaseAmountRealmWiring.test.js` 的 **AC-PAWIRE2**
+  //       —— 那里对**剥掉整行注释**后的源码判（免得被本文件/路由里"改前逐字"的注记误伤 ✓）。
   assert.equal((routeSrc.match(/const purchaseAmountMissing = /g) || []).length, 1);
   assert.equal((routeSrc.match(/const purchaseAmountMissingPage = /g) || []).length, 1);
-  assert.equal((routeSrc.match(/purchaseAmountMissing\(body\)\) return purchaseAmountMissingPage\(/g) || []).length, 2,
-    '补货 + 退货两条动作都走**同一个**闸门');
+  assert.equal((routeSrc.match(/purchaseAmountMissing\(body, '(?:replenish|return)'\)\) return purchaseAmountMissingPage\(/g) || []).length, 2,
+    '补货 + 退货两条动作都走**同一个**闸门（各自逐字带自己那条链路的**档位键** ✓）');
   // ② 开关可关（`required === false` ⇒ 不拦）
   assert.ok(routeSrc.includes('writeConfig.purchaseAmount?.required === false'),
     '闸门必须能被配置关掉');

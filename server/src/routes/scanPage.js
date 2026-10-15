@@ -640,12 +640,46 @@ const createScanPageRouter = (options = {}) => {
   };
 
   /**
+   * ⭐⭐ 2026-10-16（A2/A3 接线 · 业务负责人**逐字**）：**当前这条链路**要不要「整单金额」。
+   *
+   * 依据（她**逐字**）：
+   *   · 2026-10-16：「**补货不问金额**」（＋「不用做那个为空去单价的功能了」）；
+   *   · 2026-10-14 晚：「**退货整单金额（必填），与补货同一套配置**」
+   * ⇒ **补货不问金额** ✓；**退货 / 验收不受影响** ✓（`requiredByRealm.return / .accept` 仍是显式 `true`）。
+   *
+   * ⭐ 实现 = **按链路分档**：取 `PURCHASE_AMOUNT.requiredByRealm[realm]`（一个链路一个**显式布尔** ✓）。
+   *   · **改前逐字**（两个闸门各自一行）：`if (writeConfig.purchaseAmount?.required === false) return false;`
+   *     —— 那是"**一个开关管两条链路**"：一关就把退货也放开 ✗（#667 查实的事实）。
+   *   · **改后逐字**：`if (purchaseAmountRequiredFor(realm) === false) return false;`
+   *   · 依据：她 2026-10-16「补货不问金额」＋ 2026-10-14「退货整单金额（必填），与补货同一套配置」。
+   *
+   * ⚠️ **只认显式布尔，不写 `||` 兜底** ✗ —— `requiredByRealm[realm] || 默认值` 那种形状会让
+   *   "清空变量"回退成默认值 ⇒ **关不掉**（见 `AGENTS.md`《配置先行》那条）。
+   * ⚠️ 老键 `required` **不改名、仍然先读**（兼容面：老 `.env` 里写 `false` / 空串 ⇒ **整套闸门关掉**，
+   *   **一个字节的老行为都没变** ✓）。它只会把闸门**关小**（更严），**不会**把退货那道必填**放开** ✗
+   *   ⇒ 所以「退货 / 验收不受影响」在**任何** `.env` 取值下都成立 ✓。
+   * ⚠️ `realm` 认不出来（**不该发生**：两个调用点都传**字面量**，见下面两处）⇒ 按"**要金额**"判（宁严不宽 ✓）。
+   * ⚠️ 调用点传的是**档位键**（`'replenish'` / `'return'`）——⚠️ 与页面的**领域 id**（`'purchase_return'`）
+   *   **故意不同名**：档位键由 `config/scanWrite.js` 的三个 `readFlag` 决定（`replenish` / `return` / `accept`），
+   *   所以退货那一处**逐字传 `'return'`** ✗ 不是 `'purchase_return'`（传错 = 拿错档位 ⇒ 判据会红 ✓）。
+   */
+  const purchaseAmountRequiredFor = (realm) => {
+    if (writeConfig.purchaseAmount?.required === false) return false;
+    const tiers = writeConfig.purchaseAmount?.requiredByRealm;
+    if (tiers && tiers[realm] === false) return false;
+    return true;
+  };
+
+  /**
    * 「整单金额**填了没有**」（补货 / 退货共用，只判空）——
    * 空 ⇒ `true`（调用方立刻回 400，**一步都不往下走**）；非空 ⇒ `false`（照旧提交 ✓）。
-   * ⚠️ 关掉闸门 = 配置 `SCAN_PURCHASE_AMOUNT_REQUIRED`（**显式布尔**，`readFlag` ✓）。
+   * ⭐⭐ 2026-10-16：**加"当前链路"入参** ⇒ 由 `purchaseAmountRequiredFor(realm)` **按链路**决定要不要判
+   *   （补货那一档 = `false` ⇒ 直接放行 ✓；退货那一档 = `true` ⇒ 照旧判 ✓）。
+   * ⚠️ 关掉闸门 = 配置 `SCAN_PURCHASE_AMOUNT_REQUIRED`（**显式布尔**，`readFlag` ✓）
+   *   ＋ **按链路** `SCAN_PURCHASE_AMOUNT_REQUIRED_{REPLENISH,RETURN,ACCEPT}`（各一个显式布尔 ✓）。
    */
-  const purchaseAmountMissing = (body) => {
-    if (writeConfig.purchaseAmount?.required === false) return false;
+  const purchaseAmountMissing = (body, realm) => {
+    if (purchaseAmountRequiredFor(realm) === false) return false;
     return String(body?.[writeConfig.fields.purchaseAmount] ?? '').trim() === '';
   };
 
@@ -658,12 +692,13 @@ const createScanPageRouter = (options = {}) => {
    *
    * ⚠️ 与"空"**分两道**（各有各的人话）：空 ⇒ `purchaseAmountMissingPage`（"还没填"）；
    *   非空但认不出数字 ⇒ 本函数 → `purchaseAmountInvalidPage`（"要填数字"）。
-   * ⚠️ 判据是**收紧**，不是放宽 ✓；关掉整套闸门仍是 `SCAN_PURCHASE_AMOUNT_REQUIRED` ✓。
+   * ⚠️ 判据是**收紧**，不是放宽 ✓；关掉整套闸门仍是 `SCAN_PURCHASE_AMOUNT_REQUIRED` ✓
+   *   ＋ **按链路** `SCAN_PURCHASE_AMOUNT_REQUIRED_RETURN`（那一档 = `false` ⇒ 这条也一起放行 ✓）。
    * ⚠️ 服务层还有**同一条**数值判据（`purchaseOrderBatchService.writeOrderAmount` 的
    *   `numericOrNull`）⇒ 就算有人绕过这条路由直调写服务，也**不会**写进坏值/空值 ✓（只会如实报失败）。
    */
-  const purchaseAmountInvalid = (body) => {
-    if (writeConfig.purchaseAmount?.required === false) return false;
+  const purchaseAmountInvalid = (body, realm) => {
+    if (purchaseAmountRequiredFor(realm) === false) return false;
     const raw = String(body?.[writeConfig.fields.purchaseAmount] ?? '').trim();
     if (raw === '') return false; // 空的那条由上面那道闸门管（各有各的人话 ✓）
     return !Number.isFinite(Number(raw));
@@ -1754,7 +1789,10 @@ const createScanPageRouter = (options = {}) => {
         const skippedDetails = [
           fillWriteText(writeConfig.texts.submittedOrderLine, { orderNo: skippedOrderNo || '—' }),
           fillWriteText(writeConfig.texts.submittedDetailLine, { count: skippedCount }),
-          ...(writeConfig.texts.submittedNextSteps ? [writeConfig.texts.submittedNextSteps] : []),
+          // 🔴 2026-10-16（A2/A3）：这里原来还会追加**一句"下一步去哪"的提示**（文案键在 `config/scanWrite.js`）
+          //   —— 业务负责人**逐字**：「（资金页那）三处提示【**全删**】……**全删就对了**」
+          //   ⇒ 那句**连键带两处引用一起删** ✓（她不要成功页上再出现那个去处 ✗）。
+          //   **塞回即红**：`test/saleSuccessHintRemoval.test.js` 的 AC-SNS1 / AC-SNS2 ✓。
         ];
         return sendSuccess(res, 200, {
           // ⭐ 与「提交成功」那条**逐字同形**：自动回销售首页那几个字段也必须有
@@ -2056,8 +2094,11 @@ return sendPaymentStep(res, req, {
         const details = [
           fillWriteText(texts.submittedOrderLine, { orderNo: result.order_no || '—' }),
           fillWriteText(texts.submittedDetailLine, { count: result.detail_count || 0 }),
-          // ⭐ 2026-10-12：下一步（她自己问过"那我接下来去哪补钱"）
-          ...(texts.submittedNextSteps ? [texts.submittedNextSteps] : []),
+          // 🔴 2026-10-16（A2/A3）：原来这里还有**一句"下一步去哪"的提示**（她 2026-10-12 问过
+          //   "那我接下来去哪补钱" ⇒ 当时加的）—— 她 2026-10-16 **逐字**：「（资金页那）三处提示
+          //   【**全删**】……**全删就对了**」⇒ 那句**连键带两处引用一起删** ✓
+          //   **塞回即红**：`test/saleSuccessHintRemoval.test.js` 的 AC-SNS1 / AC-SNS2
+          //   ＋ 渲染面 = `test/scanSaleE2E.test.js` 的 AC-E2E-14 ✓。
         ];
         // ⑥ ⭐ 2026-10-11（A）：现货行"提交即交付 + 扣库存"**没扣成** ⇒ 给她一张**如实**的结果页
         //    （单子记上了 / 哪几双没扣成 / 怎么办），**不是**一句"没成功"把整件事说反。
@@ -2164,8 +2205,13 @@ return sendPaymentStep(res, req, {
         //   ⚠️ 这段注释**刻意不写**那个 service 的名字 —— `routes/*` 有一条既有哨兵
         //     （`test/scanPage.test.js` ④「路由里不许出现写链路的服务」）会扫源码；按它的判据走，
         //     **不放宽它** ✓（只改我这句注释的措辞）。
-        if (purchaseAmountMissing(body)) return purchaseAmountMissingPage(req, res, requestId, realm);
-        if (purchaseAmountInvalid(body)) return purchaseAmountInvalidPage(req, res, requestId, realm);
+        // ⭐⭐ 2026-10-16（A2/A3 接线）：**把"当前是哪条链路"传进闸门** ⇒ 按 `requiredByRealm.replenish`
+        //   取档 —— 她 2026-10-16 逐字「**补货不问金额**」⇒ 那一档是 `false` ⇒ **补货这条不再要求金额** ✓
+        //   （**改前逐字**：`if (purchaseAmountMissing(body)) …` ＝ 与退货共用"一个开关" ⇒ 补货也被拦 ✗）。
+        //   ⚠️ 这里**逐字传档位键 `'replenish'`**（＝ `PURCHASE_AMOUNT.requiredByRealm` 的键名 ✓），
+        //     **不是**页面领域 id（那个恰好同名，但**别指望**它是同一个概念 —— 见下面退货那处）。
+        if (purchaseAmountMissing(body, 'replenish')) return purchaseAmountMissingPage(req, res, requestId, realm);
+        if (purchaseAmountInvalid(body, 'replenish')) return purchaseAmountInvalidPage(req, res, requestId, realm);
         const result = await writeService.submitReplenish({
           openId,
           requestId,
@@ -2212,8 +2258,16 @@ return sendPaymentStep(res, req, {
         // ⭐⭐ 2026-10-14 晚（她逐字）：「**退货整单金额（必填），与补货同一套配置**」
         //   ⇒ 与补货**同一个**闸门（一套配置 ✓ 不写两套 ✗）：空 ⇒ 400 + 人话 + **零写入** ✓；
         //     ⭐ 2026-10-15：**不是数字**也拦（要落数字列 ⇒ 不许假成功 ✗）。
-        if (purchaseAmountMissing(body)) return purchaseAmountMissingPage(req, res, requestId, realm);
-        if (purchaseAmountInvalid(body)) return purchaseAmountInvalidPage(req, res, requestId, realm);
+        // ⭐⭐ 2026-10-16（A2/A3 接线）：**传链路** ⇒ 按 `requiredByRealm.return` 取档 —— 她 2026-10-14
+        //   「退货整单金额（必填）」＋ 2026-10-16「补货不问金额」⇒ **退货这一档仍是 `true`** ⇒
+        //   空 / 非数字**照旧 400 + 人话 + 零写入** ✓（**她的口径：退货不受影响** ✓ 判据一个字没放宽 ✗）。
+        //   ⚠️ **逐字传档位键 `'return'`** —— ⚠️ **不是** `'purchase_return'`（那是页面的领域 id，
+        //     `views/scanPageRealm.js` 的 `PURCHASE_RETURN_REALM`）★ 两者**故意不同名**：
+        //     档位键由 `config/scanWrite.js` 的三个 `readFlag`（`…_REPLENISH` / `…_RETURN` / `…_ACCEPT`）决定。
+        //     传错 = 拿错档位（`requiredByRealm['purchase_return']` 是 `undefined` ⇒ 会退化成"要金额"）
+        //     ⇒ 判据 `test/purchaseAmountRealmWiring.test.js` 的 AC-PAWIRE2 **逐字**钉住这两处 ✓。
+        if (purchaseAmountMissing(body, 'return')) return purchaseAmountMissingPage(req, res, requestId, realm);
+        if (purchaseAmountInvalid(body, 'return')) return purchaseAmountInvalidPage(req, res, requestId, realm);
         // ⭐⭐ 2026-10-15 **③ 写入已落地**（她裁决 ⓐ「复用「实际金额」」）——
         //   改前逐字：`// TODO(purchase-amount): 金额**还没落表** —— 落哪一列**待她裁决**（同上，
         //             采购明细没有金额列、「实际金额」已被"到货核对"占用）⇒ 不自己挑列写 ✗。`

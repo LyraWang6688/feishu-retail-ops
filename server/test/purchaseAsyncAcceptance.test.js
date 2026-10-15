@@ -197,11 +197,27 @@ test('AC-ASY1b ⭐⭐ 验收（第三条链路）：**要么**成功页＋真的
 });
 
 // ── AC-ASY2：校验仍**【当场同步】拦** ✗（绝不许被顺手挪进后台）────────────────────────
-test('AC-ASY2 🔴 金额非法/空 ⇒ **当场 400 + 人话 + 写入口零调用**（补货 / 退货两条都判）', async () => {
+test('AC-ASY2 🔴 金额非法/空 ⇒ **当场 400 + 人话 + 写入口零调用**（**退货**那条 —— 判据一字未放宽）', async () => {
   login();
+  // ⭐⭐ 2026-10-16（A2/A3 接线）**成对迁移**（依据 = 她 2026-10-16 逐字「**补货不问金额**」）：
+  //   改前逐字（四条，补货 + 退货**都判**）：
+  //     `const cases = [`
+  //       `{ realm: 'replenish', action: SCAN_WRITE.actions.replenish, amount: 'abc', why: '非数字' },`
+  //       `{ realm: 'replenish', action: SCAN_WRITE.actions.replenish, amount: '', why: '空' },`
+  //       `{ realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, amount: 'abc', why: '非数字' },`
+  //       `{ realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, amount: '', why: '空' },`
+  //     `];`
+  //   改后逐字（两条，**只留退货**）：
+  //     `const cases = [`
+  //       `{ realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, amount: 'abc', why: '非数字' },`
+  //       `{ realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, amount: '', why: '空' },`
+  //     `];`
+  //   依据：她 2026-10-16 逐字「**补货不问金额**」（＋ 2026-10-14「退货整单金额（必填），与补货同一套配置」）
+  //     ⇒ **退货**那条闸门**照旧**（本用例的"当场同步拦 + 零写入"**一个字都没放宽** ✓）；
+  //     补货那条**不再有**金额校验 ⇒ 它的判据**按新口径反向钉住**（见下面 AC-ASY2-补货 ✓
+  //     ＋ `test/purchaseAmountRealmWiring.test.js` 的 AC-PAWIRE3 ＋ `test/purchaseAmountByRealm.test.js`
+  //     的 AC-AR5 也在真判 ✓）—— 判据**没有消失**，只是**换了个方向** ✓。
   const cases = [
-    { realm: 'replenish', action: SCAN_WRITE.actions.replenish, amount: 'abc', why: '非数字' },
-    { realm: 'replenish', action: SCAN_WRITE.actions.replenish, amount: '', why: '空' },
     { realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, amount: 'abc', why: '非数字' },
     { realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, amount: '', why: '空' },
   ];
@@ -216,6 +232,29 @@ test('AC-ASY2 🔴 金额非法/空 ⇒ **当场 400 + 人话 + 写入口零调�
       assert.ok(html.trim().length > 0, `${c.realm}：拦住时**必须给她人话**（不许干巴巴 400 ✗）`);
       await waitForPendingPurchaseBackgrounds();
       assert.equal(write.calls.length, 0, `${c.realm} · 金额${c.why} ⇒ **写入口一次都没进**（零写入 ✓ 且**同步**拦 ✓）`);
+    });
+  }
+});
+
+// ── AC-ASY2-补货：⭐ 2026-10-16 新口径「补货不问金额」⇒ 金额**空 / 非数字都不再拦** ────────────
+test('AC-ASY2-补货 ⭐⭐ 补货不问金额：金额空 / 非数字**都不再拦**（照样 200 + 后台真写一次 ✓）', async () => {
+  login();
+  // 依据 = 她 2026-10-16 逐字「**补货不问金额**」＋「不用做那个为空去单价的功能了」
+  //   ⇒ 补货这条链路上**没有**金额校验（填了也不看、不落表 —— 那是到货核对那一列的事 ✓）。
+  //   ⚠️ 这条**不是** AC-ASY2 的放宽：退货那两条照旧 400 + 零写入（上面那条 ✓）；
+  //     补货这一侧的期望值只是**跟着业务口径反向**了（旧"必须 400"已不再是正确行为 ✗）。
+  for (const amount of ['abc', '']) {
+    const write = createWriteSpy();
+    await withServer(appWith(write), async (base) => {
+      const res = await postForm(pageUrl(base, 'replenish'), sessionCookie(), {
+        action: SCAN_WRITE.actions.replenish, submit_key: 'scan_test:key:async', [SCAN_WRITE.fields.purchaseAmount]: amount,
+      });
+      assert.equal(res.status, 200, `补货填「${amount || '(空)'}」⇒ 照旧成功页 ✓（她 2026-10-16：「补货不问金额」）`);
+      await waitForPendingPurchaseBackgrounds();
+      assert.equal(write.calls.length, 1, '补货那条要**真的**走完写入口一次 ✓（不是被别的东西拦下 ✗）');
+      assert.equal(write.calls[0].flow, 'replenish');
+      assert.equal('orderAmount' in write.calls[0].args, false,
+        '补货**仍然不写金额** ✓（她 2026-10-15 的裁决：补货不写、只有到货才写「实际金额」✓）');
     });
   }
 });

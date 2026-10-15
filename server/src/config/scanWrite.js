@@ -614,8 +614,21 @@ const TEXTS = Object.freeze({
   submittedOrderLine: '销售单号：{orderNo}',
   submittedDetailLine: '明细：{count} 双（每双一行）',
   submittedNextHint: '接着扫下一款就可以开新的一单。',
-  // ⭐ 2026-10-12：结果页给她"下一步能做什么"（她自己问过"那我接下来去哪补钱"）。
-  submittedNextSteps: '要补实收 / 收款：去工作台「销售」那一页。',
+  // 🔴🔴 2026-10-16（A2/A3 接线 · 业务负责人**逐字**）：
+  //   「（资金页那）三处提示【**全删**】……**全删就对了**」
+  //   ⇒ 结果页原来那句「要补实收 / 收款：去工作台「销售」那一页。」**连键带两处引用一起删** ✓
+  //   · **改前逐字**（本键）：`submittedNextSteps: '要补实收 / 收款：去工作台「销售」那一页。',`
+  //   · **改前逐字**（两处引用，`routes/scanPage.js`）：
+  //       `...(writeConfig.texts.submittedNextSteps ? [writeConfig.texts.submittedNextSteps] : []),`（跳过那条成功页）
+  //       `...(texts.submittedNextSteps ? [texts.submittedNextSteps] : []),`（提交那条成功页）
+  //   · **改后逐字**：三处**全没了**（键不存在 ⇒ 两处引用也无处可取）。
+  //   ⇒ **塞回即红**：源码哨兵 = `test/saleSuccessHintRemoval.test.js` 的 AC-SNS1 / AC-SNS2
+  //     ＋ 渲染面哨兵 = `test/scanSaleE2E.test.js` 的 AC-E2E-14（成功页 HTML 里**不许**再出现那句）。
+  //   ⚠️ **同句还有一个落点**：`config/scanPage.js` 的 `paymentStep.workbenchHint`（资金页那句）——
+  //     那**不在 A2/A3 的写作用域**（`config/scanPage.js` / `views/**` 另有主 ⇒ 见"成功页极简"那一刀）
+  //     ⇒ **只报不改** ✗（`test/skipPathsMinimal.test.js` 的 AC-SK1 因此仍如实停在 [待激活]）。
+  //   ⚠️ **TEXTS 是页面文案的显式表** ⇒ 留一个同义的键名等于"悄悄复活那句话" ✗
+  //     ⇒ 正确做法就是**不留键**（要那句话 = 重新加回来，又是一次显式改动 ✓）。
   // ⭐⭐ 2026-10-11 晚：她**显式选了「全付」但一笔收款都没填**时给的一句人话。
   //    ⚠️ **只提示、不拦整单**（按「未付」落库：只记货、钱进待补充）—— 她真机就是被
   //       "全付必须相等"卡住的；"填了钱才算账"这条不能反过来变成"没填钱就不许记账"。
