@@ -114,3 +114,30 @@
 | **AC-SM-LIMIT** | 上限 = `SESSION.maxLines`（**50**，配置 ✓）⇒ 第 51 件**人话拦住 ＋ 零业务表写入**（会话草稿也不多一行 ✓） | ✅ 绿 |
 
 ⚠️ 判据**一条都不许删 / skip / 放宽** ✗ —— 要改就写成"改前逐字 → 改后逐字 → 依据"的**成对迁移** ✓
+
+---
+
+## 5. 落地（**本刀** · 依据 = Lead 裁决**甲′**，逐字见判据文件头）
+
+### 5.1 产品代码改了哪三处（**只有两处产品代码** ＋ 两处判据）
+
+| 文件 | 改了什么 | 依据 |
+| --- | --- | --- |
+| `config/multiItemOrder.js` | 新增 **`chains.sales`**（**纯描述链**）：`orderKeyPrefix = SCAN_WRITE.session.saleKeyPrefix` · `maxLines = SCAN_WRITE.session.maxLines` · `taskIdPrefix/behaviorCode = ''`（销售不落这条链）· `amountRequired: false`（金额挂在**每件实收**上 ✓）· **`persists: false`** ＋ **`writer: ''`**（🔴 不许配写入口） | 她 2026-10-16「**要：销售也接上**」＋ 甲′ |
+| `views/scanPageRenderer.js`（`saleFormHtml`） | **本单已有货品**时，那颗既有的 `action=add_line` submit 换成 **「＋ 再加一个货品」＋ `data-multi-add` 钩子**（**同一颗按钮、同一个动作** ⇒ **不新增第二颗同义按钮** ✗）；并渲「本单已加的货品」标题（列表沿用**既有** `draftLinesHtml` ⇒ 每行一个 `line_amount` ✓）。**本单为空 ⇒ 这一屏逐字回到今天**（既有领域判据 AC-W1/AC2/AC5/AC7 一条都不动 ✓） | 同上（"形状与补货一致" = 同一份 `MULTI_ITEM_RENDER_TEXTS` ＋ 同一个钩子 ✓） |
+| `test/multiItemOrderWriters.test.js`（**AC-RT7b**） | **成对迁移**：落库链集合**钉死 = {replenish, return}**（原文那句 writer 键判据**逐字保留**）＋ 新增**纯描述链反向钉**（`persists === false` ⇒ 不许有 `writer`、也不许出现在 `multiItemWriters()` 那批里） | `multiItemWriters()` 住在**冻结件** `scanWriteService.js`（余量 0 ⇒ 加不了 `sales` 这一支 ✗） |
+| `test/multiItemOrderSalesChain.test.js`（**AC-SM-A / A2**） | **成对迁移（⏳ 待激活 ⇒ ✓ 真判据）**：撤掉那两条"没实现就 `return`"的早退（**5 条既有 assert 一条没删/没松** ⇒ **更严** ✓）。⚠️ 不撤的后果是**静默假绿**：把入口删掉判据照样通过 ✗（= #711 点名清过的那种自足替身闸门） | 本刀就是"接线那一刀" ⇒ 闸门必须变真判据 ✓ |
+
+### 5.2 🔴 没碰的东西（硬红线）
+
+- `services/scanWriteService.js` —— **一个字没动**（AC-SM-F1 用**既有冻结基线**逐字节核 ✓）；
+- `services/multiItemOrderService.js` —— **一个字没动**（AC-SM-F1 记的指纹 ✓；Lead 明文不授权 ✗）；
+- `routes/scanPage.js` —— **一个字没动**（销售这条链**不新增写入路径**：`submitMultiItemOrder` 仍**只有**补货/退货 2 处调用 ✓ AC-SM-C2；`groups.length > 1` 仍**只有** 2 处 ✓ AC-SM-F2）；
+- `config/scanWrite.js` · `routes/workbench.js` · `public/workbench/**` —— 没碰 ✓。
+
+### 5.3 三条口径为什么"没变"（证据 = 判据，不是嘴说）
+
+- **资金页**：销售多货品的提交**照旧**先到资金页（AC-SM-C 断言"到资金页为止 `salesEntry` **零写入**" ✓）；
+- **券**：AC-SM-D 用**只记账**的券解析器把 N=1 的参数**逐字**钉住（`resolveRows([{method:'微信',amount:'240'}])` ＋ `adjustLineAmounts(['240'], 0)` ✓）；
+- **少付自动记未收款**：AC-SM-E 断言多件（500）少付（300）⇒ 收款明细 = `[200, 300]` 且那条 200 **方式留空** ✓
+  （口径在**冻结件** `scanWriteService.js:1047-1053`：`itemsCents` = **全部行累加** ⇒ 天然覆盖 N 件 ✓）。

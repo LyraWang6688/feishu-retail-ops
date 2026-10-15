@@ -62,10 +62,40 @@ test('AC-RT8a ⭐⭐【Lead 补的 RT8 的访问器那半】`behavior(chain)` �
 test('AC-RT7b ⭐ 它给引擎的键名 = `config.multiItemOrder.chains[].writer`（两边不许漂移 ✗）', () => {
   const writers = build().multiItemWriters();
   const cfg = resolveMultiItemOrderConfig({});
-  for (const chain of Object.keys(cfg.chains)) {
+  // ⭐⭐ 2026-10-16 **成对迁移**（销售「一单多货」· Lead 裁决 = **甲′**）：
+  //   改前逐字：
+  //     ```
+  //     for (const chain of Object.keys(cfg.chains)) {
+  //       const key = cfg.chains[chain].writer;
+  //       assert.equal(typeof writers[key], 'function',
+  //         `链 ${chain} 的 writer 键名「${key}」必须在访问器给的这批里 ✓（改名 ⇒ 红）`);
+  //     }
+  //     ```
+  //   改后逐字：**下面这一版**（**只许更严** ✓，原意一个字没改 ✗）——
+  //     · **落库链**（`persists !== false`）**钉死 = {replenish, return}**（多一条落库链 ⇒ 红 ✓）
+  //       ＋ 它们的 writer 键**必须**在访问器那批里（与改前逐字同一句判据 ✓）；
+  //     · **纯描述链**（`persists === false`，今天 = `sales`）**反向钉**：
+  //       不许配 `writer`、也不许出现在访问器那批里（"塞回即红" ✓）。
+  //   依据：业务负责人 2026-10-16 逐字「**要：销售也接上**」＋ Lead 裁决**甲′**
+  //     （`server/test/multiItemOrderSalesChain.test.js` 文件头逐字：销售那 N 件**进既有
+  //      `session.sale.lines`**、**不走引擎** ✗、`scanWriteService.js` 一个字不改 ✗）。
+  //   为什么必须动这里：`multiItemWriters()` 住在**冻结件** `scanWriteService.js` 里
+  //     （余量 0 ⇒ 加不了 `sales` 这一支 ✗）⇒ 只能把"**描述链**"与"**落库链**"在配置上分开 ✓。
+  const persistent = Object.keys(cfg.chains).filter((chain) => cfg.chains[chain].persists !== false);
+  assert.deepEqual(persistent.sort(), ['replenish', 'return'],
+    '🔴 落库链**只有**补货 / 退货两条（多一条 ⇒ 红 ✓；销售是**纯描述链** ✗ 不落库）');
+  for (const chain of persistent) {
     const key = cfg.chains[chain].writer;
     assert.equal(typeof writers[key], 'function',
       `链 ${chain} 的 writer 键名「${key}」必须在访问器给的这批里 ✓（改名 ⇒ 红）`);
+  }
+  const descriptive = Object.keys(cfg.chains).filter((chain) => cfg.chains[chain].persists === false);
+  assert.deepEqual(descriptive.sort(), ['sales'], '🔴 纯描述链**只有**销售这一条（今天是它 ✓）');
+  for (const chain of descriptive) {
+    assert.equal(cfg.chains[chain].writer, '',
+      `🔴 纯描述链 ${chain} **不许配写入口**（配了 ⇒ 引擎的 submitDraft 会去写库 ⇒ "钱还没收就先落货" ✗）`);
+    assert.equal(writers[cfg.chains[chain].writer], undefined,
+      `🔴 纯描述链 ${chain} 的键**不许**出现在 multiItemWriters() 那批里（出现 ⇒ 红 ✓）`);
   }
   // ⚠️ 2026-10-16 **成对翻新**（切片 2b · Lead 选 A）：多一个 `behavior` 键
   //   改前逐字：`assert.deepEqual(Object.keys(writers).sort(), ['purchase', 'purchaseReturn']);`
