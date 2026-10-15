@@ -150,6 +150,10 @@ const operatorOpenIdOf = (event) => {
 
 const createAccessorySaleIntakeService = (options = {}) => {
   const gateway = options.gateway || null;
+  // ⭐⭐ 2026-10-15（业务负责人「配品走表单」）：工作台订单缓存的**同一个实例** ——
+  //   `options.ordersCache` 优先（用例注入），否则拿**进程级共享**那一份
+  //   （`routes/workbench.js` / `SalesFollowupService` 也用同一份 ⇒ 作废对两边都生效 ✓）。
+  const ordersCache = options.ordersCache || require('./workbenchOrdersCache').sharedWorkbenchOrdersCache();
   const config = options.config || resolveAccessorySaleIntakeConfig();
   // ⚠️ 写服务**注入优先**（用例替身；生产由路由现场建 ⇒ 不碰 `app.js` ✓）
   const scanWrite = options.scanWrite || null;
@@ -416,6 +420,14 @@ const createAccessorySaleIntakeService = (options = {}) => {
         line_amounts: lineAmounts.join(','), operator_open_id: operatorOpenId || '',
       });
       await writeBackStatus(recordId, { [writeBack.statusField]: writeBack.doneValue });
+      // ⭐⭐ 2026-10-15（她「配品走表单」把入口搬到这条链之后）：**这一单真的落下之后**作废工作台订单缓存 ——
+      //   与 `routes/workbenchOrderActions.js:39` **同一形状**（`ordersCache?.invalidate?.()`），
+      //   拿的是**进程级共享实例** ⇒ 工作台那边下一次读一定是真读 ✓。
+      //   ⚠️ **位置很关键**：放在「后台那一跑跑完（上面 `settled`）＋ 回写『已写入』之后」——
+      //     若在 `submitSale` 刚回单号时就作废，后台还没落完，缓存会被**旧数据重新填满** ⇒
+      //     她刷新还是看不到这一单 ✗（正是 Lead 点名的那条）。
+      //   ⚠️ 拒单 / 成单失败**不作废**（没有任何新数据落地，作废只是白丢一次缓存 ✓）—— 见 catch 分支。
+      ordersCache?.invalidate?.();
       return {
         ok: true, record_id: recordId, order_no: finalResult.order_no || result.order_no || '',
         reused: finalResult.reused === true || result.reused === true, line_count: lineAmounts.length,

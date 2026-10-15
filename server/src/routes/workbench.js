@@ -7,7 +7,8 @@ const controller = require('../controllers/workbenchController');
 // 不需要搬家。扫码路由 `routes/scanPage.js` 从这里 require 它。
 const { enabled: feishuAuthEnabled, getSessionUser, allowedOpenIds } = require('./feishuWebAuth');
 const { SalesFollowupService } = require('../services/salesFollowupService');
-const { createWorkbenchOrdersCache } = require('../services/workbenchOrdersCache');
+// ⭐ 2026-10-15：**进程级共享实例**（配品成单那条新链路也要能作废同一份缓存 ⇒ 见该模块注释）
+const { sharedWorkbenchOrdersCache } = require('../services/workbenchOrdersCache');
 const { readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createPurchaseQueryRouter } = require('./purchaseQuery');
@@ -35,9 +36,6 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 // 2026-10-14: the old acceptance flow moves into the workbench (reuse the existing arrival session service)
 const arrivalTab = require('../config/workbenchArrival');
 const { createScanArrivalService } = require('../services/scanArrivalService');
-const accessoryTab = require('../config/workbenchAccessory');
-const { sellableKindOf } = require('../config/sellableKinds');
-const { createPaymentMethodsService } = require('../services/paymentMethodsService');
 const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
 // ⭐⭐ 2026-10-14：「扫码打印」要的飞书 JSAPI 签名（服务在 `services/larkJsapiService.js`，
 //    密钥只从 env 读；本文件只把它挂到**既有**工作台闸门之后 —— 不新开鉴权 ✗）。
@@ -62,7 +60,7 @@ const createWorkbenchRouter = (options = {}) => {
   //      写成功之后由本层 `invalidate()`，她下一次读一定是新数据（不许看到旧数据）。
   //   TTL 在 `config/workbenchOrders.js`（`WORKBENCH_ORDERS_CACHE_MS`，默认 30 秒；`0` = 关掉）。
   const ordersConfig = options.ordersConfig || readWorkbenchOrdersConfig();
-  const ordersCache = options.ordersCache || createWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs });
+  const ordersCache = options.ordersCache || sharedWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs });
   const followup = options.followup || new SalesFollowupService({ ordersCache, ordersConfig });
   // ⭐ 工作台「扫一扫」这一屏要的两样：**AppLink 目标** + **本设备能不能调起飞书扫一扫**
   //    （服务端看 UA —— 与扫码页同一个判据 ✓ 电脑/手机自带浏览器 ⇒ canScan:false ⇒ 前端给人话+手输 ✗ 死按钮）
@@ -560,71 +558,16 @@ const createWorkbenchRouter = (options = {}) => {
       return res.status(500).json({ success: false, code: 'retry_failed', error: texts.saleRetryFailedBody });
     }
   });
-  router.get(accessoryTab.api.methods, async (req, res) => {
-    // ⭐⭐ 2026-10-14（她：「配品收款方式读『收款方式管理』表」）—— **只读**表 ✓ 有缓存 ✓
-    //   🔴 读不到 ⇒ **如实**（503 + 人话）⇒ 前端**不进录入** ✗ 绝不拿配置默认列表兜底 ✗
-    try {
-      const service = options.paymentMethods
-        || createPaymentMethodsService(options.gateway || new V1BitableGateway(), {});
-      const listed = await service.list();
-      if (!listed?.ok) {
-        logError('workbench.sales.payment_methods.unreadable', { request_id: req.requestId, reason: listed?.reason || '' });
-        return res.status(503).json({ success: false, error: accessoryTab.texts.methodsFailed });
-      }
-      return res.json({ success: true, methods: listed.items || [] });
-    } catch (error) {
-      logError('workbench.sales.payment_methods.failed', { request_id: req.requestId, error: error.message });
-      return res.status(503).json({ success: false, error: accessoryTab.texts.methodsFailed });
-    }
-  });
-  router.get(accessoryTab.api.list, async (req, res) => {
-    try {
-      const accessories = (await scanWrite.listAccessories()) || [];
-      return res.json({ success: true, accessories });
-    } catch (error) {
-      logError('workbench.sales.accessories.failed', { request_id: req.requestId, error: error.message });
-      return res.status(400).json({ success: false, error: accessoryTab.texts.listFailed });
-    }
-  });
-  router.post(accessoryTab.api.submit, async (req, res) => {
-    try {
-      const openId = req.workbenchUser?.open_id;
-      const requestId = req.body?.requestId || req.requestId;
-      const amountText = String(req.body?.[accessoryTab.fields.amount] ?? '').trim();
-      const amount = Number(amountText);
-      // ⭐ 成交金额**必填**（她 2026-10-14）⇒ 空 / 非正数 ⇒ 当场 400 + 人话，**一行都不写** ✗
-      if (!amountText || !Number.isFinite(amount) || amount <= 0) {
-        return res.status(400).json({ success: false, error: accessoryTab.texts.amountRequired });
-      }
-      const line = await scanWrite.addSaleLine({
-        openId, requestId, kind: 'accessory',
-        accessoryRecordId: req.body?.[accessoryTab.fields.accessoryId],
-        amount: amountText,
-        // ⭐ 2026-10-14 她：「并且配品都是默认的现货」⇒ 默认现货来自**可售品配置**（不散写 if ✗）
-        inStock: sellableKindOf({ kind: 'accessory' }).defaultInStock === true,
-      });
-      if (!line?.ok) return res.status(400).json({ success: false, error: line?.message || accessoryTab.texts.submitFailed });
-      const result = await scanWrite.submitSale({
-        openId, requestId,
-        // 🔴 **同一把 `submitKey`**（幂等不许拆 ✗）：连点两次 / 重试都走这一个键 ✓
-        submitKey: req.body?.[accessoryTab.fields.submitKey],
-        // ⭐ 2026-10-14 她：「配品收款方式读『收款方式管理』表」⇒ 那一行的收款方式 = **她选的那条** ✓
-        //   （选项清单由 `paymentMethodsService`（PR #538）供；未合前若没传 ⇒ 沿用配置默认 ✓ 不猜 ✗）
-        payments: [{
-          method: String(req.body?.[accessoryTab.fields.method] || '').trim() || SCAN_WRITE.sale.defaultPaymentMethod,
-          amount: amountText,
-        }],
-        paymentStatus: SCAN_WRITE.sale.paymentStatus.full,
-        paidAmount: amountText,
-      });
-      if (!result?.ok) return res.status(400).json({ success: false, error: result?.message || accessoryTab.texts.submitFailed });
-      ordersCache.invalidate();
-      return res.json({ success: true, order_no: result.order_no || '', reused: result.reused === true });
-    } catch (error) {
-      logError('workbench.sales.accessory.failed', { request_id: req.requestId, error: error.message });
-      return res.status(400).json({ success: false, error: error.message });
-    }
-  });
+  // ⭐⭐ 2026-10-15（业务负责人逐字）：「**配品就是走表单了～工作台自建写服务"可以删除了**」
+  //   ⇒ 这一整块（`GET /sales/payment-methods` 收款方式清单 / `GET /sales/accessories` 配品清单 /
+  //      `POST /sales/accessory-sales` 自建成单）**整段删除** —— 工作台点「配品」现在**直接跳她那张
+  //      飞书表单**（`config/domains.js` 的直跳页 + `config/links.js` 的 `ACCESSORY_SALE_FORM_URL`）✓
+  //   ⚠️ 这三条路由当年的**业务判据没有跟着消失**：一步成单 / 收款明细形状 / 不动库存 / 幂等（同一把键）/
+  //      失败如实 ⇒ 已迁到**新链路**（`services/accessorySaleIntakeService.js` ＋
+  //      `test/accessorySaleIntake.test.js` 的 **AC-MIG1/2/3/4**）—— 迁移清单见
+  //      `test/workbenchAccessoryTab.test.js` 文件头 ✓
+  //   ⚠️ `services/paymentMethodsService.js` **保留**（它有自己的用例 `test/paymentMethodsService.test.js`）——
+  //      这一刀**只删工作台自建那套**，**不删业务模块** ✗
   /**
    * ⭐⭐ 2026-10-11（方案甲之后**唯一的补充入口**）：**逐件补「实收金额」**。
    * 业务负责人 2026-10-11：「待补充的时候，**一定要把每件的实收都留下来**」。

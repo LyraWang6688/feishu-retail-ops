@@ -84,6 +84,10 @@ class SalesFollowupService {
     //      写入路由，写库之后由路由层 `invalidate()`；
     //    · 默认**每个实例一个**（不搞进程级单例）⇒ 测试之间不会串味。
     const ordersConfig = options.ordersConfig || readWorkbenchOrdersConfig();
+    // ⚠️ 这里**故意保持「每个实例一份」**（不回落到进程级共享）：本 service 也被
+    //   `routes/scanPage.js` / `samplePendingNoticeService` **按需新建**，共享缓存会把它们
+    //   彼此的状态串起来（实测：`test/ordersTransientRetry.test.js` 的用例被上一次的缓存命中掉 ✗）。
+    //   工作台那条路要的「同一个实例」由**调用方显式注入**（`routes/workbench.js` 传的就是共享那一份 ✓）。
     this.ordersCache = options.ordersCache || createWorkbenchOrdersCache({ ttlMs: ordersConfig.ordersCacheMs });
   }
 

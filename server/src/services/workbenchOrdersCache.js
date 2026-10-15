@@ -70,4 +70,31 @@ const createWorkbenchOrdersCache = (options = {}) => {
   };
 };
 
-module.exports = { createWorkbenchOrdersCache };
+/**
+ * ⭐⭐ 2026-10-15（业务负责人「配品就是走表单了」之后）：**进程级共享实例**。
+ *
+ * 为什么必须有它：配品成单的入口从工作台 router 搬到了
+ *   「飞书表单 → 表变更事件 → `services/accessorySaleIntakeService.js`」（**另一个 router、另一条链**）。
+ *   两边如果**各建一个** cache，就会出现"那边作废了、这边还在拿旧的" ——
+ *   她填完配品表单、切回工作台看订单列表，**最多 TTL（默认 30s）内可能还是旧数据** ✗。
+ * ⇒ 同一个进程里，**谁写库、谁读列表，都拿这一个**（`routes/workbench.js` /
+ *   `services/salesFollowupService.js` / `services/accessorySaleIntakeService.js` 都用它兜底）。
+ *
+ * ⚠️ 只在"调用方**没有显式注入**"时兜底（用例要隔离 ⇒ 自己 `createWorkbenchOrdersCache` 注入 ✓）。
+ * ⚠️ **只建一次**：第一次调用传进来的 `options`（`ttlMs` 等）生效 —— 三个调用点用的都是同一份
+ *   `ordersConfig.ordersCacheMs`，所以顺序无所谓 ✓。
+ */
+let sharedInstance = null;
+const sharedWorkbenchOrdersCache = (options = {}) => {
+  if (!sharedInstance) sharedInstance = createWorkbenchOrdersCache(options);
+  return sharedInstance;
+};
+
+/** 用例用：清掉共享实例（进程级状态 ⇒ 测试之间别互相污染）。 */
+const resetSharedWorkbenchOrdersCache = () => { sharedInstance = null; };
+
+module.exports = {
+  createWorkbenchOrdersCache,
+  sharedWorkbenchOrdersCache,
+  resetSharedWorkbenchOrdersCache,
+};
