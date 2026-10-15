@@ -22,7 +22,9 @@ import { FILTER_OPTIONS, TEXTS, pageStyleText, sheetHtml, sheetStyleVars, summar
 import { createLabelQueuePanel, queueBarHtml, submittedText } from './queue.js';
 // ⭐⭐ 2026-10-14：「**扫码打印**」—— 扫到的那一张**直接排进既有队列**（她选了 ⓐ「扫完直接打印」）。
 //    飞书 JSAPI 扫一扫（`h5sdk.config` + `tt.scanCode`）+ 既有 `/jobs` 接口，见该文件头。
-import { createScanPrintAction, scanPrintBarHtml, wantsScanFromSearch } from './scan-print.js';
+import {
+  createScanPrintAction, mountScanOnlyPage, scanPrintBarHtml, wantsScanFromSearch,
+} from './scan-print.js';
 
 const $ = (container, selector) => container.querySelector(selector);
 
@@ -246,6 +248,16 @@ export function createLabelPrintModule() {
   return {
     mount(container) {
       state.container = container;
+      // ⭐⭐ 2026-10-15（她真机反馈「整条链路不太友好」之后）：**`?scan=1` = 「只扫码」的聚焦页**。
+      //   原来这条入口（「货品 → 标签打印 → 扫码打印」）复用的是**批量打印那一页** ⇒
+      //   进页先跑一次 `/labels` 查询（**真机实测 23.6 秒**、扫 1362 条货品记录）⇒
+      //   她**先看到批量页干等**、相机才轮得到弹；扫完又回到批量页、看不到"刚才打的是哪张" ✗
+      //   ⇒ 命中这条入口就**只挂聚焦页并立刻 return**：不查批量、不挂筛选 / 预览纸张 / 打印队列 ✓
+      //   ⚠️ 批量打印那条入口（**不带** `?scan`）走的还是下面那条老路 —— **一个字节没改** ✓
+      if (wantsScanFromSearch(typeof window === 'undefined' ? '' : window.location.search)) {
+        mountScanOnlyPage(container, scanPrint);
+        return;
+      }
       renderShell(container);
       // ⭐ 「单个」入口带进来的编号 / 货号 → 预填筛选框（见上面 keywordFromUrl 的说明）。
       const preset = keywordFromUrl();
@@ -263,9 +275,9 @@ export function createLabelPrintModule() {
       //    那一格在「货品 → 标签打印 → 扫码打印」是一个**链接**（她点一下就是一次用户手势），
       //    落到这一页时直接弹相机；弹不起来 / 取消 ⇒ 按钮还在，她再点一次即可（**不留死按钮** ✗）。
       scanPrint.mount(panel());
-      if (wantsScanFromSearch(typeof window === 'undefined' ? '' : window.location.search)) {
-        void scanPrint.runWithFeedback();
-      }
+      // ⚠️ 2026-10-15：原来这里还有一段"`?scan=1` 就自动弹一次"—— 现在那条入口在函数开头
+      //   **已经 return 去挂聚焦页**（自动弹也在那边做了）⇒ 这段**不可能再命中**，删掉死代码 ✓
+      //   （判据不是猜的：两处用的是同一个 `wantsScanFromSearch(window.location.search)` ✓）
       applyLayout(fallbackLayout(), []);
       // 打开页面就先查一次（不填条件 = 全部库存，最多 config 里的张数）：
       // 免得她一进来看到一片空白、以为坏了。

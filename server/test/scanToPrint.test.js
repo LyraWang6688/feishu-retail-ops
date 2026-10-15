@@ -390,8 +390,37 @@ const fakeContainer = () => {
   const elements = {
     '[data-action="scan-print"]': make(),
     '[data-view="scan-print-notice"]': make(),
+    // ⭐ 2026-10-15：成功那一刻的**大字结果**（编号）
+    '[data-view="scan-print-result"]': make(),
   };
   return { elements, querySelector: (selector) => elements[selector] || null };
+};
+
+/**
+ * ⭐⭐ 2026-10-15：**「只扫码」聚焦页**用的假容器（`?scan=1` 那条入口）。
+ *   它要支持 `innerHTML = …`（聚焦壳）与 `querySelector('.panel')` ⇒ 与上面那个分开写 ✓
+ */
+const fakeScanOnlyContainer = () => {
+  const make = () => ({
+    textContent: '', className: '', disabled: false, dataset: {}, handlers: {},
+    addEventListener(type, handler) { this.handlers[type] = handler; },
+  });
+  const elements = {
+    '[data-action="scan-print"]': make(),
+    '[data-view="scan-print-notice"]': make(),
+    '[data-view="scan-print-result"]': make(),
+    '[data-view="scan-title"]': make(),
+    '[data-view="scan-subtitle"]': make(),
+    '[data-action="scan-batch-link"]': make(),
+  };
+  const panel = { querySelector: (selector) => elements[selector] || null };
+  return {
+    html: '',
+    elements,
+    set innerHTML(value) { this.html = String(value); },
+    get innerHTML() { return this.html; },
+    querySelector: (selector) => (selector === '.panel' ? panel : elements[selector] || null),
+  };
 };
 
 const fakeWin = ({ scanResult = { result: 'https://hm.bamamei.online/r/rec_brown', errMsg: 'scanCode:ok' }, fail = null } = {}) => {
@@ -528,7 +557,13 @@ test('AC-SP9 ⭐ 命中区 ≥44px + 工作台那一页真的挂上了这一块�
   assert.match(css, /\.scan-print-bar \.btn \{ min-height: 44px; \}/,
     '扫码打印那颗必须是 ≥44px 命中区（手机硬规矩）');
   const page = read('features/labels/index.js');
-  assert.match(page, /import \{ createScanPrintAction, scanPrintBarHtml, wantsScanFromSearch \} from '\.\/scan-print\.js';/);
+  // ⭐⭐ 2026-10-15 **成对翻新**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.match(page, /import \{ createScanPrintAction, scanPrintBarHtml, wantsScanFromSearch \} from '\.\/scan-print\.js';/);`
+  //   改后逐字：允许多行写法 + 多一个导出 `mountScanOnlyPage`（**判据没放宽**：仍然钉"这一块来自
+  //     `./scan-print.js`、不新开一套" ✓，只是不再钉**逐字的那一行**）
+  //   依据：`?scan=1` 改成挂「只扫码」聚焦页后，`index.js` 需要多引一个挂载器 ✓
+  assert.match(page, /import \{[^}]*createScanPrintAction[^}]*\} from '\.\/scan-print\.js';/s,
+    '扫码那一块必须从 `./scan-print.js` 引进来（不新开一套 ✓）');
   assert.match(page, /scanPrintBarHtml\(\)/, '页面要真的把这一块画出来');
   assert.match(page, /wantsScanFromSearch\(/, '`?scan=1` 进来 ⇒ 自动弹一次扫一扫');
   // 入口那一格：从 AppLink 改成"落到标签打印页 + scan=1"（JSAPI 那条路的起点）。
@@ -647,4 +682,88 @@ test('AC-SP13 ⭐⭐ 飞书**不回原因**（真机实测：`config` 失败但 
     '🔴 飞书**原样回的那句话**必须带上去（这是我们唯一的线索来源 ✓）');
   // 她那边仍要有人话（不许装死）
   assert.ok(String(container.elements['[data-view="scan-print-notice"]'].textContent || '').length > 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-15（她真机反馈「整条链路不太友好」之后）：
+//   AC-SP15 「只扫码」聚焦页 **绝不发那次 23.6 秒的批量查询** + 进页自动弹相机
+//   AC-SP16 扫完 ⇒ **大字结果里有编号** + 按钮变「再扫一张」
+//   AC-SP17 纯函数：聚焦壳只有扫码那一块；结果文案拿不到编号**不编**
+//   AC-SP18 源码哨兵：`?scan=1` 在标签页里**只调聚焦页并 return**
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-SP15 ⭐⭐ 「只扫码」聚焦页：进页**只发签名那一个请求**（绝不发批量查询）＋ 自动弹一次相机', async () => {
+  const module = await loadScanPrintModule();
+  const container = fakeScanOnlyContainer();
+  const calls = { get: [], post: [] };
+  const api = {
+    async get(url) {
+      calls.get.push(url);
+      return { appId: 'cli_x', timestamp: 1, nonceStr: 'n', signature: 's', jssdkUrl: 'https://cdn.test/h5sdk.js' };
+    },
+    async post(url, body) {
+      calls.post.push({ url, body });
+      return { success: true, total_labels: 1, numbers: ['T202-8|米色|B'] };
+    },
+  };
+  const { win, state: winState } = fakeWin();
+  const action = module.createScanPrintAction({ api, doc: null, win });
+  module.mountScanOnlyPage(container, action);
+  await new Promise((resolve) => { setTimeout(resolve, 20); }); // 自动弹是 fire-and-forget
+
+  // ① 壳里**没有批量那一套**：筛选 / 预览纸张 / 打印队列一个都没有 ✓
+  assert.equal(/data-field=/.test(container.html), false, '聚焦页不许带批量筛选 ✗');
+  // ⚠️ 判据要**精确**：扫码条自己带 `.label-queue-bar`（既有样式，必须留）⇒ 不能拿 `queue-bar` 当哨兵 ✗
+  assert.equal(/label-sheet|data-view="queue-jobs"|data-view="queue-badge"/.test(container.html), false,
+    '聚焦页不许带预览纸张 / 打印队列那一块 ✗');
+  // ② 🔴 **只发签名**：那条 **23.6 秒**的 `/labels` 查询绝不能发
+  //    （真机实测就是它让"先看到批量页干等、相机才弹" ✗）
+  assert.equal(calls.get.length, 1, `聚焦页只该发一个请求（实际：${JSON.stringify(calls.get)}）`);
+  assert.match(calls.get[0], /jsapi-signature/, '只发签名请求 ✓');
+  assert.equal(calls.get.some((u) => u.startsWith('/api/workbench/labels')), false,
+    '🔴 不许查批量标签（那一次真机要 23.6 秒 ✗）');
+  // ③ 进页**自动弹了一次**相机，并且**把那一张排进了队列**
+  assert.equal(winState.readyCalls, 1, '进页自动弹一次 ✓');
+  assert.equal(calls.post.filter((item) => item.url === '/api/workbench/label-print/jobs').length, 1);
+});
+
+test('AC-SP16 ⭐⭐ 扫完 ⇒ **大字结果里有编号** + 按钮变「再扫一张」（她不用猜刚才打的是哪张）', async () => {
+  const module = await loadScanPrintModule();
+  const container = fakeScanOnlyContainer();
+  const api = {
+    async get() { return { appId: 'cli_x', timestamp: 1, nonceStr: 'n', signature: 's', jssdkUrl: 'https://cdn.test/h5sdk.js' }; },
+    async post() { return { success: true, total_labels: 1, numbers: ['T202-8|米色|B'] }; },
+  };
+  const { win } = fakeWin();
+  const action = module.createScanPrintAction({ api, doc: null, win });
+  const button = action.mount(container);
+  assert.equal(container.elements['[data-view="scan-print-result"]'].textContent, '');
+  await button.handlers.click();
+  assert.equal(container.elements['[data-view="scan-print-result"]'].textContent, '✅ 已提交打印：T202-8|米色|B',
+    '结果必须是**带编号的大字**（一眼确认打了哪张 ✓）');
+  assert.equal(container.elements['[data-action="scan-print"]'].textContent, '📷 再扫一张',
+    '扫完按钮变「再扫一张」⇒ 她可以连着扫下一张 ✓');
+});
+
+test('AC-SP17 纯函数：聚焦壳**只有扫码那一块**；结果文案**拿不到编号就不编**', async () => {
+  const module = await loadScanPrintModule();
+  const html = module.scanOnlyShellHtml();
+  assert.ok(html.includes('data-action="scan-print"'), '有那颗按钮 ✓');
+  assert.ok(html.includes('data-view="scan-print-result"'), '有结果那一行 ✓');
+  assert.ok(html.includes('href="?"'), '去批量打印 = 同一页但**不带 `?scan`**（原来那一页 ✓）');
+  assert.equal(/data-field=/.test(html), false, '聚焦壳里不许有筛选框 ✗');
+  assert.equal(/label-sheet/.test(html), false, '聚焦壳里不许有预览纸张 ✗');
+  // 结果文案（编号是主角；拿不到就不编 ✗）
+  assert.equal(module.scanResultText({ numbers: ['A|黑|40', 'B|白|41'] }), '✅ 已提交打印：A|黑|40、B|白|41');
+  assert.equal(module.scanResultText({}), '✅ 已提交打印：这一张', '拿不到编号 ⇒ 不编 ✗');
+  assert.equal(module.scanResultText({ reused: true, numbers: ['A'] }), '✅ 刚刚已经发过这一张：A',
+    '重复提交要如实说（不假装又打了一张 ✓）');
+});
+
+test('AC-SP18 源码哨兵：`?scan=1` 在标签页里**只挂聚焦页并 return**（那条 23.6 秒的查询不会跑）', () => {
+  const page = read('features/labels/index.js');
+  assert.match(page, /if \(wantsScanFromSearch\([\s\S]{0,80}?\)\) \{\s*mountScanOnlyPage\(container, scanPrint\);\s*return;/,
+    '命中这条入口就直接挂聚焦页 + return ✓');
+  assert.match(page, /import \{[^}]*mountScanOnlyPage[^}]*\} from '\.\/scan-print\.js';/,
+    '聚焦页的挂载器来自 `scan-print.js`（**不新开一套启动逻辑** ✓）');
 });
