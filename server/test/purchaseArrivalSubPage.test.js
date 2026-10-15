@@ -331,15 +331,28 @@ test('AC-P6 既有验收链路一字未改（按钮 / 表单 / 接口 / 载荷�
       '/api/workbench/purchase/arrivals/detail', '/api/workbench/purchase/requests'],
     '采购的接口清单（2026-10-14 起 = 既有两条 + 老验收搬进工作台的两条 ✓）');
 
-  // ② 前端验收逻辑的四个哨兵逐字还在，且提交载荷形状没变
+  // ② 前端验收逻辑的哨兵逐字还在，且提交载荷形状没变
+  //    ⭐⭐ 2026-10-15（task-27 · **Lead 放行的两行**，逐字记录）：
+  //      改前逐字（本数组里最后两条）：
+  //        'api.post(ORDERS_API.arrivalConfirm, {',
+  //        'batchNo, actualAmount: Number(rawAmount), acceptanceText',
+  //      改后逐字：
+  //        'api.post(ARRIVAL_FULL_API.accept, {',
+  //        '[ARRIVAL_FULL_FIELDS.lines]: built.lines,',
+  //      依据：业务负责人 2026-10-15 逐字「**实际到多少就是到多少**」＋「（一键确认按申请数）……」
+  //        ⇒ 前端**不再有**"按申请数一键确认"的调用路径 ✗（那条调用自述「全部按申请数到货」，
+  //          会把少到的按申请数补齐 ⇒ 与她的口径正面冲突 ✗）⇒ 一律走 `accept`、提交她填的**实际值** ✓；
+  //        ⚠️ `POST /purchase/arrivals/confirm` **端点/服务一个字没动** ✓（`ORDERS_API.arrivalConfirm`
+  //          常量也保留 ✓ —— 上一段那条"接口清单"断言仍要它 ✓）。
+  //      **其它判据一条没动**（上面那四条哨兵、金额/说明两条校验、③ 的表单逐字 ✓）。
   const source = readWorkbench('features/orders/index.js');
   for (const needle of [
     'data-action="verify-arrival"',
     'data-action="submit-arrival"',
     'data-field="arrival-amount"',
     'data-field="arrival-note"',
-    'api.post(ORDERS_API.arrivalConfirm, {',
-    'batchNo, actualAmount: Number(rawAmount), acceptanceText',
+    'api.post(ARRIVAL_FULL_API.accept, {',
+    '[ARRIVAL_FULL_FIELDS.lines]: built.lines,',
   ]) {
     assert.ok(source.includes(needle), `既有验收逻辑少了 ${needle}`);
   }

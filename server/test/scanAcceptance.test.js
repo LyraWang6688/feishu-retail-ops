@@ -225,11 +225,20 @@ test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 
   assert.equal(/ARRIVAL_SCAN\.pagePath/.test(orders), false, '也不该再用它当入口 ✗');
   assert.match(config, /ARRIVAL_SCAN/);      // ⭐ 常量**保留**（别的调用方/老链接仍可能用 ✓）
   assert.match(config, /\/s\/accept/);        // ⭐ 扫码页那条路**保留** ✓
-  // 既有那条（全额验收表单 / 它的接口与载荷）**逐字还在**
+  // 既有那条（验收表单 / 它的接口与载荷）**逐字还在**
+  // ⭐⭐ 2026-10-15（task-27 · **Lead 放行**，逐字记录）：
+  //   改前逐字：`'api.post(ORDERS_API.arrivalConfirm, {'`
+  //   改后逐字：`'api.post(ARRIVAL_FULL_API.accept, {'`
+  //   依据：业务负责人 2026-10-15 逐字「（一键确认按申请数）……**实际到多少就是到多少**」
+  //     ⇒ 前端**不再有**"按申请数一键确认"的调用路径 ✗（那条自述「全部按申请数到货」⇒ 会把少到的补齐 ✗）
+  //     ⇒ 一律走 `accept`、提交她填的**实际值** ✓。
+  //   ⚠️ **判据没丢**：这条的本意是"这一页**确实通过某个接口提交**"⇒ 换接口名后**仍然钉着同一件事** ✓；
+  //      `POST /purchase/arrivals/confirm` 端点/服务与 `ORDERS_API.arrivalConfirm` 常量**保留** ✓
+  //      （下面那条 `assert.match(config, /arrivalConfirm: .../)` 照旧 ✓）。
   for (const needle of [
     'data-action="verify-arrival"', 'data-action="submit-arrival"',
     'data-field="arrival-amount"', 'data-field="arrival-note"',
-    'api.post(ORDERS_API.arrivalConfirm, {',
+    'api.post(ARRIVAL_FULL_API.accept, {',
   ]) {
     assert.ok(orders.includes(needle), `既有验收逻辑少了 ${needle}`);
   }
