@@ -134,7 +134,25 @@ const PAYMENT_STATUS = Object.freeze({
  */
 const PURCHASE_AMOUNT = Object.freeze({
   // **一个开关同时管**退货与补货（她：「与补货同一套配置」）。
+  // ⚠️ **兼容键，不改名**（老 `.env` / 老用例仍读它 ✓）；新逻辑按下面 `requiredByRealm` 分链路判 ✓。
   required: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED', true),
+  /**
+   * ⭐⭐ 2026-10-16（⑫ · 她逐字：「**不用做那个为空去单价的功能了**」＋「补货与退货共用同一道闸门」）：
+   *   #667 查实：补货与退货**共用同一个 `required`** ⇒ **不能靠一个开关分链路** ✗
+   *   （一关就把退货也放开 ✗）⇒ 改成**按链路分档**：一个链路一个**显式布尔**，
+   *   路由按"当前是哪条链路"取对应那一档 ⇒ **不改逻辑、只换配置** ✓。
+   *   · `replenish` —— 补货那条链路；
+   *   · `return`    —— 退货那条链路（**行为一个字不变** = true ✓）；
+   *   · `accept`    —— 验收那条链路（今天没有金额闸门 ⇒ 先钉 true，将来接上直接用 ✓）。
+   * ⚠️ 三个都走 `readFlag`（**显式布尔**：清空/写 0/false 就真关掉 ✓ **不用 `||` 兜底** ✗）。
+   * ⚠️ 默认值 = `required` 那一档 **不是**这里写死 `true`：**旧键说什么就是什么** ⇒
+   *    今天（`required=true`）三条链路全 `true` ⇒ **生产行为零变化** ✓。
+   */
+  requiredByRealm: Object.freeze({
+    replenish: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED_REPLENISH', true),
+    return: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED_RETURN', true),
+    accept: readFlag(process.env, 'SCAN_PURCHASE_AMOUNT_REQUIRED_ACCEPT', true),
+  }),
   // 表单字段名（HTML 的 `name`）—— 两个表单**用同一个**（一套配置管两边 ✓）。
   field: readString(process.env, 'SCAN_PURCHASE_AMOUNT_FIELD', 'purchase_amount'),
 });
@@ -495,8 +513,12 @@ const TEXTS = Object.freeze({
   draftAccessoryItem: '配品 · {name}',
   sizeLabel: '尺码',
   sizePlaceholder: '选尺码',
-  amountLabel: '实收金额（可不填）',
-  amountPlaceholder: '留空按货品单价',
+  amountLabel: '实收金额',
+  // ⚠️ 2026-10-16（⑫ · 她逐字：「**实收金额的输入框用户必须填写**……**不用做那个为空去单价的功能了**」）：
+  //   改前逐字 `'实收金额（可不填）'` ＋ placeholder `'留空按货品单价'` —— 那两句**与真实校验不一致**
+  //   ⇒ ①标签去掉「（可不填）」（**必填** ✓）；②placeholder **删掉"留空按货品单价"那个承诺** ✗
+  //     （那条兜底**不做了** ⇒ 不给一个不会发生的提示 ✓）。依据 = 她 2026-10-16 逐字 ✓
+  amountPlaceholder: '',
   // ⚠️ 2026-10-16：跳资金页前置判定**按她授权拆到第二刀（task-53）** ⇒ 当时加的两句文案
   //   一并**摘掉**（不许留孤儿 ✗；也不许再把旧列名字面量带回 config ✗ 见 `scanSaleTwoLayerMoney.test.js` 的 AC-11）
   // ⭐⭐ 2026-10-12（业务负责人拍板，逐字）：「② 「备注」还是「赠品」（表列名 / 页面标签）⇒ **赠品**」
