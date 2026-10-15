@@ -1771,7 +1771,54 @@ await writeService.saveDraftLines?.(openId, {
         if (writeConfig.lineAmountRequired !== false
           && lineAmounts.some((value) => String(value ?? '').trim() === '')) {
           logWarn('scan.write.line_amount_required', { request_id: requestId, lines: lineAmounts.length });
-          return sendPaymentStep(res, req, {
+                  // ⭐⭐ 2026-10-16（她逐字）：**能跳资金页的前提** = 拿得到尺码 ＋（她填的成交金额 ‖ 货品信息单价）
+        //   ⇒ 两个都取不到 ⇒ **拦住、不跳**，**停在货品页 + 人话** ✓
+        //   🔴 **位置写死**：放在**幂等/重复提交那套之后**（也就是**这一处**、资金页渲染之前 ✓）
+        //      —— 第一次实现放在更前面 ⇒ 第 2 次点提交被当成"没尺码"拦住 ⇒ 把"把上次结果还给她"
+        //      那条正常路堵死了 ✗（`AC-E2E-6/15/17` 就是这条路的**反向哨兵** ✓ 它们必须原样绿 ✓）
+        //   🔴 优先级：**她填的 > 货品单价**；取到的值**落回 `lineAmounts`**（既有通道 ✓）
+        //   ⚠️ 读次数：这条判定里**只调一次 `service.lookup`**（生产吃内存快照 ⇒ 0 次读 ✓ 不做逐行读 ✗）
+        {
+          const jumpHasSize = pendingDraftLines.length > 0 || Boolean(String(body[fields.size] ?? '').trim());
+          let jumpView = null;
+          if (jumpHasSize && lineAmounts.some((value) => String(value ?? '').trim() === '')) {
+            jumpView = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
+            const priceText = String(jumpView?.price_text || '').replace(/[^0-9.]/g, '');
+            const price = priceText ? Number(priceText) : 0;
+            if (Number.isFinite(price) && price > 0) {
+              for (let index = 0; index < lineAmounts.length; index += 1) {
+                if (String(lineAmounts[index] ?? '').trim() === '') lineAmounts[index] = String(price);
+              }
+            }
+          }
+          if (!jumpHasSize || lineAmounts.some((value) => String(value ?? '').trim() === '')) {
+            const jumpMessage = jumpHasSize
+              ? String(writeConfig.texts.jumpNeedsAmountBody || '')
+              : String(writeConfig.texts.jumpNeedsSizeBody || '');
+            logWarn('scan.write.jump_gate_blocked', {
+              request_id: requestId,
+              reason: jumpHasSize ? 'amount_unavailable' : 'size_missing',
+              lines: lineAmounts.length,
+            });
+            const blockedView = jumpView
+              || await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
+            if (blockedView?.found) {
+              const blockedWrite = await buildWriteContext(req, blockedView, 'sales', {
+                paymentRows: payments,
+                paymentStatus: String(body[fields.paymentStatus] || '').trim(),
+                paidAmount: body[fields.paidAmount] ?? '',
+                errorText: jumpMessage,
+              });
+              return sendHtml(res, 400, renderScan(
+                blockedView, config, blockedWrite, 'sales', { userAgent: req.headers['user-agent'] },
+              ));
+            }
+            return respondWriteFailure(
+              res, { ok: false, code: 'jump_gate_blocked', message: jumpMessage }, requestId,
+            );
+          }
+        }
+return sendPaymentStep(res, req, {
             realm,
             status: 400,
             notice: String(writeConfig.texts.lineAmountRequiredNote || ''),
