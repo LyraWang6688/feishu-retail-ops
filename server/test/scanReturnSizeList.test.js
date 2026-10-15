@@ -144,10 +144,17 @@ test('AC-RT0 退货块的**尺码勾选框 / 数量输入本来就有**（`retur
   let block;
   await withServer(appFor(write), async (base) => { block = (await getReturnBlock(base)).block; });
   assert.ok(block.includes(`name="${SCAN_WRITE.fields.returnSizes}"`), '勾选框字段名走既有配置 ✓');
-  for (const size of ['40', '41', '42']) {
+  // ⭐⭐ task-28（2026-10-15 她逐字：「退货严格按照实时库存里的数据来，**只展示有数量的尺码**」）
+  //   ⚠️ 逐字记录（改前 → 改后 → 依据）：
+  //     改前逐字：`for (const size of ['40', '41', '42']) {`（**41 码库存 0 也列**）
+  //     改后逐字：`for (const size of ['40', '42']) {`（只遍历**有数量**的码）＋ 下面那条"41 不列"的断言
+  //     依据：她 2026-10-15 逐字（同上）＋「（缺码）现在也退不了 …… 只展示有数量的尺码」
+  //     ⇒ **判据没丢**：字段名的判据仍在（只是对象 = 列出来的那些码），**额外多钉一条"0 不列"** ✓
+  for (const size of ['40', '42']) {
     assert.ok(block.includes(`value="${size}"`), `${size} 码要列出来 ✓`);
     assert.ok(block.includes(`name="${SCAN_WRITE.fields.returnQuantityPrefix}${size}"`), `${size} 要有自己的数量输入 ✓`);
   }
+  assert.equal(block.includes('value="41"'), false, '⭐ 库存 0 的码（41）**不列**（能真红）✓');
   assert.ok(block.includes(`value="${SCAN_WRITE.actions.purchaseReturn}"`), '退货动作名走既有配置 ✓');
 });
 
@@ -160,12 +167,17 @@ test('AC-RT1 ⭐ 每个尺码一行：**尺码** + **当前库存数量**（0 �
   let block;
   await withServer(appFor(write), async (base) => { block = (await getReturnBlock(base)).block; });
   const rows = sizeRowsOf(block);
-  assert.equal(rows.length, 3, '三个尺码三行 ✓');
+  // ⚠️ 逐字记录（改前 → 改后 → 依据）：
+  //   改前逐字：`assert.equal(rows.length, 3, '三个尺码三行 ✓');` ＋ `assert.match(rowFor('41'), /—/, ...)`
+  //   改后逐字：`assert.equal(rows.length, 2, '只列有数量的两个码 ✓');` ＋ 下面那条"41 不列"
+  //   依据：她 2026-10-15 逐字「**只展示有数量的尺码**」⇒ 0 库存的码**不进清单**（不是显示「—」✗）；
+  //     ⚠️ 判据没丢：每行"尺码 + 当前库存数量"这条照旧断言（只是对象少了一个 0 库存的码 ✓）。
+  assert.equal(rows.length, 2, '只列**有数量**的两个码（40 / 42）✓');
+  assert.equal(block.includes('value="41"'), false, '⛔ 库存 0 的 41 码不进清单 ✓');
   const rowFor = (size) => rows.find((row) => row.includes(`value="${size}"`));
-  // 40 ⇒ 库存 3（门盒 2 + 样品 1）；42 ⇒ 1；41 ⇒ 0 显示「—」
+  // 40 ⇒ 库存 3（门盒 2 + 样品 1）；42 ⇒ 1
   assert.match(rowFor('40'), /3/, '40 码要显示当前库存数量 3 ✓（能真红：删掉数量列 ⇒ 红）');
   assert.match(rowFor('42'), /1/, '42 码要显示 1 ✓');
-  assert.match(rowFor('41'), /—/, '0 库存沿用全页既有口径「—」✓');
   // 数量列必须**只**是这个数（别把别的东西当数量）：钉住一个稳定的锚点
   assert.ok(block.includes('data-view="return-stock"'), '数量列有个稳定锚（测试/真机都对得上）✓');
   // ⚠️ 这一行仍是"勾选 + 数量输入"，与补货**同形**（她是对照着看的 ✓）
@@ -455,11 +467,12 @@ test('AC-RT7 ⭐⭐ 退货数量**不许超过当前库存**：库存 2 填 3 �
   assert.equal(otherSize.prevented, true, '按**这一行**的库存判 ✓');
   assert.equal(otherSize.hint.textContent, SCAN_PAGE.returnForm.stockLimitText
     .split('{size}').join('42').split('{stock}').join('1'), '人话里的尺码/库存要对应这一行 ✓');
-  // ④ 库存 0 的码（41 码缺码）⇒ 她那条口径的**字面结果**：一双都不许退 ⇒ 拦住（如实断，不美化）
-  const zeroStock = runSubmitGuard(html, returnFormFrom(html, { checked: ['41'], quantities: { 41: '1' } }));
-  assert.equal(zeroStock.prevented, true, '库存 0 ⇒ 也超了 ⇒ 拦住（她口径的字面结果 ✓）');
-  assert.equal(zeroStock.hint.textContent, SCAN_PAGE.returnForm.stockLimitText
-    .split('{size}').join('41').split('{stock}').join('0'), '人话如实说"库存 0"✓');
+  // ④ 库存 0 的码（41 码缺码）—— ⚠️ **逐字记录（改前 → 改后 → 依据）**：
+  //   改前逐字：断言"41 码库存 0 ⇒ 拦住 + 人话说库存 0"（那时 41 还在清单里）
+  //   改后逐字：断言"41 码**根本不在清单里**"（`returnFormFrom` 拿不到它的勾选框 ⇒ 她勾不到 ✓）
+  //   依据：她 2026-10-15 逐字「只展示有数量的尺码」⇒ 0 库存的码**不进清单**；
+  //     判据没丢：那一条"0 库存不能退"现在由"**不列**"承载（更彻底 ✓），并且**不许被 0 库存的码勾选** ✓
+  assert.equal(html.includes('value="41"'), false, '⭐ 0 库存的码不列（她勾不到 ⇒ 也退不了 ✓）');
 });
 
 test('AC-RT7b ⭐ 库存**取不到**的行：**不许拿 0 当库存**拦住她（只显示"取不到"那句人话 ✓）', async () => {

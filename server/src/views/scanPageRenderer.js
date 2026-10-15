@@ -1273,9 +1273,16 @@ const returnFormHtml = (view, write) => {
   const v = REALM_TEXTS;
   const fields = write.fields;
   const lines = purchaseSizeLines(view);
-  const sizes = lines.length ? lines : (write.sizes || []).map((item) => ({
+  const declaredSizes = lines.length ? lines : (write.sizes || []).map((item) => ({
     size_text: item.size_text, sellable: null, missing: Boolean(item.missing), checked: false,
   }));
+  // ⭐⭐ 2026-10-15（task-28 · 她逐字）：「退货**严格按照实时库存里的数据来，只展示有数量的尺码**」
+  //   · `sellable === 0` ⇒ **不列**（不是"列出来但退不了"✗ —— 那是她上一条口径的字面结果，她不认 ✓）；
+  //   · `sellable` **不是数字** = **取不到 / 未确认** ⇒ ⭐ **仍然列出** + 标注"取不到" ✓
+  //     🔴「**0**」与「**取不到**」**必须区分** —— 把"取不到"也当 0 藏掉会把**能退的码**藏了 ✗。
+  const sizes = declaredSizes.filter((item) => !Number.isFinite(item.sellable) || item.sellable > 0);
+  // 整款都是 0（且有尺码这一读）⇒ 给她一句人话（**不是空白页** ✗）
+  const noReturnableStock = declaredSizes.length > 0 && sizes.length === 0;
   // ⭐⭐ 2026-10-15（task-23 · 她逐字：「直接就是出来实时库存里的**尺码和数量**」）：
   //   ① 每行多一个"当前库存数量"列 —— 数从**扫码那一次已经取到的** `sellable` 来（**不新增读表** ✗）；
   //      取不到（`sellable` 不是数字）⇒ **如实说"暂时取不到"**，**绝不用假数字占位** ✗；
@@ -1284,23 +1291,26 @@ const returnFormHtml = (view, write) => {
   //      （脚本里**不写死任何字段名/文字** ✗ —— 她 2026-10-09 白屏之后"只许一段脚本"那条规矩照旧 ✓）。
   const rf = SCAN_PAGE.returnForm;
   const returnConfig = SCAN_WRITE.purchaseReturn;
-  const rows = sizeRowsHtml({
+  const rows = noReturnableStock ? '' : sizeRowsHtml({
     sizes,
     name: fields.returnSizes,
     quantityPrefix: fields.returnQuantityPrefix,
     quantityLabel: t.replenishQuantityLabel,
     checkedOf: () => false,
     defaultQuantity: returnConfig.defaultQuantity,
+    // ⚠️ 走到这里的行**一定是"有数量"的**（0 已被上面滤掉 ✓）⇒ 数量列直接就是那个数；
+    //    `cap` = 她那条口径的判据（**退货数量 ≤ 当前库存** ✓ 原样保留）；
+    //    取不到的行（`sellable` 不是数字）⇒ 如实说"取不到"、**不带上限** ✓
     stockOf: (item) => (Number.isFinite(item.sellable)
-      // ⚠️ 0 沿用全页既有口径「—」（不写 0 ⇒ 与库存表那一列一致 ✓）
-      // ⭐ `cap` = 她那条口径的判据（**退货数量 ≤ 当前库存**）：库存 0 ⇒ 上限 0（她说了不许超 ✓）
-      ? { view: 'return-stock', text: item.sellable > 0 ? String(item.sellable) : '—', cap: item.sellable }
+      ? { view: 'return-stock', text: String(item.sellable), cap: item.sellable }
       : { view: 'return-stock-unknown', text: rf.stockUnknown, cap: null }),
   });
-  // ⚠️ 连尺码都取不到 ⇒ **不渲染假尺码** ✗，但那一块**仍在**（挂一句"取不到"的人话 ✓ 不整块消失 ✗）
-  const sizesNotice = sizes.length
-    ? ''
-    : `<p class="hint" data-view="return-sizes-unknown">${escapeHtml(rf.sizesUnknown)}</p>`;
+  // ⚠️ 三种"没东西可勾"要分清（都**不空白** ✓）：
+  //   · 整款 0 库存 ⇒ `return-no-stock`（她说的"这一款现在没有可退的库存" ✓）
+  //   · 尺码这一读**取不到** ⇒ `return-sizes-unknown`（如实说取不到 ✓ 不硬编假尺码 ✗）
+  const sizesNotice = noReturnableStock
+    ? `<p class="hint" data-view="return-no-stock">${escapeHtml(rf.noReturnableStock)}</p>`
+    : (sizes.length ? '' : `<p class="hint" data-view="return-sizes-unknown">${escapeHtml(rf.sizesUnknown)}</p>`);
   return `<section class="card">
 <details class="disclosure" data-view="purchase-return">
 <summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>
@@ -1319,8 +1329,8 @@ ${hiddenField(fields.submitKey, write.returnKey)}
 ${sizesNotice}
 <p class="hint" data-view="${escapeHtml(rf.hintView)}" hidden></p>
 ${rows}
-${purchaseAmountRowHtml(write)}
-<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>
+${sizes.length ? `${purchaseAmountRowHtml(write)}
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.returnButton)}</button>` : ''}
 </form>
 </details>
 </section>`;
