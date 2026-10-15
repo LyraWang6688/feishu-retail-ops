@@ -1,0 +1,288 @@
+'use strict';
+
+/**
+ * ⭐⭐ task-52 剩余：**补货 / 退货 / 验收「接异步」的验收判据**（她 2026-10-16 逐字）：
+ *   「对于我们**补货、退货还有验收，它都是异步的**……**用户提交之后都是一个成功页**，
+ *    说'已提交成功，数据会更新'类似这类的话就行了。**都是一个异步的提醒**」
+ *   ＋ 地基已合（`#664`）：`services/purchaseWriteBackgroundService.js`（**形状照销售那件** ✓）
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * 本文件只钉**三件**（其余归别的文件 ✓ 不重复造 ✗ —— 金额闸门本身在
+ * `test/scanPurchaseAmountRequired.test.js` 的 AC-PA1..PA6 ✓ 后台件本身在
+ * `test/purchaseWriteBackground.test.js` ✓）：
+ *
+ *  **AC-ASY1**（**分阶段 · 今天就能跑，接线后一个字都不用改** ✓）
+ *      三条链路各提一次合法请求 ⇒ 页面拿到成功页（200）⇒ **先回她** ✓
+ *      ⇒ `await waitForPendingPurchaseBackgrounds()` ⇒ **数据真落库**（写入口进过 ✓）
+ *      —— 今天走同步写：登记簿为空、`await` 立即返回、写入口**已**进过 ⇒ 绿 ✓
+ *        接线后走后台：登记簿里有在飞的一跑 ⇒ `await` **真等到**它跑完 ⇒ 仍绿 ✓
+ *      🔴 所以这条**既不 skip、也不放宽** ✓（她就是"先回成功页 ⇒ 数据最终真落库"✓）
+ *
+ *  **AC-ASY2**（今天就是真判据 ✓）**校验仍当场同步拦** ✗
+ *      金额**非法**（非数字）⇒ **当场 400 + 人话 + 写入口零调用**（补货 / 退货**两条都判** ✓）
+ *      ＋ 源码哨兵：**校验与写库仍在"成功响应之前"的同步路径上** ✗
+ *      （把写库那一步挪进后台 ⇒ 红 ✓ —— 那会把"填错了"变成"看起来成功其实没写"✗ 她最恨 ✓）
+ *
+ *  **AC-ASY3**（今天就是真判据 ✓）**后台失败 ⇒ 不许停在成功页当没事** ✗ ⇒ 可查 + 可重试 ✓
+ *      注入失败的 `runRest`（`ok:false` / 抛异常 两种形状都判）⇒
+ *      `markFailed` **被调用** ✓ · 返回 `ok:false` ✓（绝不吞成成功 ✗）· 日志留痕 ✓（warn 事件名走注入的 config ✓）
+ *      ＋ **探针**：登记簿**不是空跑**（带延迟的 runRest ⇒ `await` 之后确实已跑完 ✓）
+ *
+ *  **AC-ASY4**（幂等不拆）同一把 `submitKey` 连点两次 ⇒ 本件**原样透传**同一把键 ✓
+ *      （幂等责任在写层 ✓ 本件**一个字不拼、不改写、不加后缀** ✗）
+ *
+ * ⚠️ 本文件**只动 test/** ✓（`routes/**` · `views/**` · `config/**` · `services/**` 一律不改 ✗）
+ */
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const express = require('express');
+
+// 与 `scanPurchaseAmountRequired.test.js` 同一条做法：路由链在 require 期就要凭证 ⇒ 补一对**假**的
+// （`||` 保证本机有真凭证时**绝不覆盖** ✓）。
+process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_purchase_async_test';
+process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'purchase_async_test_secret';
+
+const { SCAN_PAGE } = require('../src/config/scanPage');
+const { SCAN_WRITE } = require('../src/config/scanWrite');
+const { createScanPageRouter } = require('../src/routes/scanPage');
+const {
+  createPurchaseWriteBackgroundService,
+  waitForPendingPurchaseBackgrounds,
+} = require('../src/services/purchaseWriteBackgroundService');
+
+const SESSION_SECRET = 'scan-purchase-async-test-secret';
+const NUMBER = 'YD6693-2|黑色|A';
+const SERVER_DIR = path.join(__dirname, '..');
+
+const login = () => {
+  process.env.LARK_WEB_AUTH_ENABLED = 'true';
+  process.env.LARK_WEB_SESSION_SECRET = SESSION_SECRET;
+  delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
+};
+
+const sessionCookie = (openId = 'ou_purchase_async') => {
+  const payload = Buffer.from(JSON.stringify({
+    open_id: openId, name: '测试用户', exp: Date.now() + 3600 * 1000,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `workbench_session=${payload}.${signature}`;
+};
+
+const withServer = async (app, run) => {
+  const server = await new Promise((resolve) => { const i = app.listen(0, '127.0.0.1', () => resolve(i)); });
+  server.keepAliveTimeout = 1;
+  try { return await run(`http://127.0.0.1:${server.address().port}`); } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+};
+
+const view = () => ({
+  found: true,
+  number: NUMBER,
+  item_no: 'YD6693-2',
+  color: '黑色',
+  category_name: '休闲鞋',
+  category_code: 'A',
+  price_text: '¥399',
+  total: 0,
+  columns: [{ key: '门盒', label: '门盒' }],
+  rows: [
+    { size_text: '40', cells: [{ count: 0 }], total: 0, missing: true },
+    { size_text: '41', cells: [{ count: 2 }], total: 2, missing: false },
+  ],
+  missing_count: 1,
+  sizes_degraded: false,
+  notes: [],
+  updated_at_text: '2026-10-16 10:00',
+  product_record_id: 'prod_1',
+});
+
+/** 替身写服务：既数"写入口进没进"，也把结果还给调用方（AC-ASY1 用它证"数据真落库"✓）。 */
+const createWriteSpy = ({ ok = true, message = '' } = {}) => {
+  const calls = [];
+  const record = (flow) => async (args) => {
+    calls.push({ flow, args });
+    if (!ok) return { ok: false, message, code: 'write_failed' };
+    return { ok: true, reused: false, batch_no: 'CGD-20261016-0001', request_count: 2 };
+  };
+  return {
+    calls,
+    sessions: {
+      get: async () => null,
+      submitKeyFor: () => 'scan_test:key:async',
+      setLastRealm: async () => {},
+    },
+    submitReplenish: record('replenish'),
+    submitPurchaseReturn: record('purchase_return'),
+    acceptFinish: record('accept'),
+  };
+};
+
+const appWith = (write) => {
+  const app = express();
+  app.use(express.urlencoded({ extended: true }));
+  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+    service: { lookup: async () => view() },
+    gateway: {},
+    writeService: write,
+  }));
+  return app;
+};
+
+const pageUrl = (base, realm) => `${base}/s/${encodeURIComponent(NUMBER)}?from=${realm}`;
+
+const postForm = async (url, cookie, body) => fetch(url, {
+  method: 'POST',
+  headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams(body).toString(),
+  redirect: 'manual',
+});
+
+/** 三条链路各一条**合法**请求（她填好了 ⇒ 该成 ✓）。 */
+const legalCases = () => ([
+  { chain: 'replenish', realm: 'replenish', action: SCAN_WRITE.actions.replenish, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '1200', qty_41: '2' } },
+  { chain: 'purchase_return', realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },
+  { chain: 'accept', realm: 'accept', action: SCAN_WRITE.actions.acceptFinish, extra: { accept_41: '2' } },
+]);
+
+// ── AC-ASY1：先回成功页 ⇒ 后台写完 ⇒ 数据真落库（**分阶段 · 接线前后同一个字** ✓）────────
+test('AC-ASY1 ⭐⭐ 补货 / 退货：先回成功页，等后台那一跑落地后**数据真落库**（接线前后同一份判据 ✓）', async () => {
+  login();
+  for (const c of legalCases().filter((x) => x.chain !== 'accept')) {
+    const write = createWriteSpy();
+    await withServer(appWith(write), async (base) => {
+      const res = await postForm(pageUrl(base, c.realm), sessionCookie(), {
+        action: c.action, submit_key: 'scan_test:key:async', ...c.extra,
+      });
+      // ① **先回她**：200 —— 不许把她挂在后台那一跑上 ✗
+      assert.equal(res.status, 200, `${c.chain}：合法提交 ⇒ 200（先回她 ✓）`);
+      const html = await res.text();
+      assert.ok(html.trim().length > 0, `${c.chain}：回她的那一页不是空的 ✓`);
+      // ② ⭐ 等"在飞的后台那一跑"跑完（今天为空 ⇒ 立即返回；接线后 ⇒ 真等到 ✓）
+      await waitForPendingPurchaseBackgrounds();
+      // ③ **数据真落库**：写入口**进过**（不是"看起来成功其实没写" ✗）
+      assert.equal(write.calls.length, 1, `${c.chain}：等后台跑完 ⇒ 写入口确实进过一次（数据落地 ✓）`);
+      assert.equal(write.calls[0].flow, c.chain, `${c.chain}：进的是**这条链路**的写入口 ✓`);
+    });
+  }
+});
+
+test('AC-ASY1b ⭐⭐ 验收（第三条链路）：**要么**成功页＋真的写了 —— **要么**如实不给她成功页＋**零写入** ✗ 绝不许"假成功"', async () => {
+  login();
+  const c = legalCases().find((x) => x.chain === 'accept');
+  const write = createWriteSpy();
+  await withServer(appWith(write), async (base) => {
+    const res = await postForm(pageUrl(base, c.realm), sessionCookie(), {
+      action: c.action, submit_key: 'scan_test:key:async', ...c.extra,
+    });
+    await waitForPendingPurchaseBackgrounds();
+    const html = await res.text();
+    const looksSuccess = res.status === 200 && /提交|成功|已接收|已收到/.test(html);
+    if (looksSuccess) {
+      // ① 说成功 ⇒ 必须**真的写了**（今天同步写 / 接线后由登记簿等到 ✓）
+      assert.equal(write.calls.length, 1,
+        '验收：**给了成功页就必须真的写了** ✗（不许假成功 —— 她最恨的那条 ✓）');
+      assert.equal(write.calls[0].flow, 'accept', '验收：进的是验收那条写入口 ✓');
+    } else {
+      // ② 没写 ⇒ **不许**看起来像成功 ✗（拿不到验收上下文时如实说 ✓）；且**一个字都没写** ✓
+      assert.equal(write.calls.length, 0, '验收：没给成功页 ⇒ **零写入** ✓（两边一致 ✓ 不骗她 ✓）');
+      assert.ok(res.status !== 200 || /没|未|不能|请|缺/.test(html),
+        `验收：非成功情形必须如实说（状态 ${res.status}）✓`);
+    }
+  });
+});
+
+// ── AC-ASY2：校验仍**【当场同步】拦** ✗（绝不许被顺手挪进后台）────────────────────────
+test('AC-ASY2 🔴 金额非法/空 ⇒ **当场 400 + 人话 + 写入口零调用**（补货 / 退货两条都判）', async () => {
+  login();
+  const cases = [
+    { realm: 'replenish', action: SCAN_WRITE.actions.replenish, amount: 'abc', why: '非数字' },
+    { realm: 'replenish', action: SCAN_WRITE.actions.replenish, amount: '', why: '空' },
+    { realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, amount: 'abc', why: '非数字' },
+    { realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, amount: '', why: '空' },
+  ];
+  for (const c of cases) {
+    const write = createWriteSpy();
+    await withServer(appWith(write), async (base) => {
+      const res = await postForm(pageUrl(base, c.realm), sessionCookie(), {
+        action: c.action, submit_key: 'scan_test:key:async', [SCAN_WRITE.fields.purchaseAmount]: c.amount,
+      });
+      assert.equal(res.status, 400, `${c.realm} · 金额${c.why} ⇒ **当场** 400（不是成功页 ✗）`);
+      const html = await res.text();
+      assert.ok(html.trim().length > 0, `${c.realm}：拦住时**必须给她人话**（不许干巴巴 400 ✗）`);
+      await waitForPendingPurchaseBackgrounds();
+      assert.equal(write.calls.length, 0, `${c.realm} · 金额${c.why} ⇒ **写入口一次都没进**（零写入 ✓ 且**同步**拦 ✓）`);
+    });
+  }
+});
+
+test('AC-ASY2b 🔴 源码哨兵：**校验与写库仍在"成功响应之前"的同步路径上**（挪进后台 ⇒ 红 ✗）', () => {
+  const source = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'scanPage.js'), 'utf8');
+  // ① 三条链路的写入口调用必须在路由里（不是"只在后台件里"✗）
+  for (const fn of ['submitReplenish', 'submitPurchaseReturn', 'acceptFinish']) {
+    assert.ok(source.includes(fn), `路由里必须仍能看见 \`${fn}\`（写库那一步 ✗ 不许只活在后台件里）`);
+  }
+  // ② 后台件**只接"写库那一步"**：它不该出现任何"校验"字样（金额 / 尺码 / 库存）
+  const bg = fs.readFileSync(path.join(SERVER_DIR, 'src', 'services', 'purchaseWriteBackgroundService.js'), 'utf8');
+  for (const forbidden of ['purchaseAmountMissing', 'sizes', 'inventory.apply']) {
+    assert.equal(bg.includes(forbidden), false,
+      `后台件里**不该**出现校验/库存相关的东西（\`${forbidden}\`）✗ —— 校验必须留在【同步】那一半 ✓`);
+  }
+  // ③ 幂等键**原样透传**（本件不拼、不加后缀 ✗）—— 见 AC-ASY4 的行为判据 ✓ 这里先钉"没有拼"的写法
+  assert.equal(/submitKey\s*[:=]\s*[`'"][^`'"]*\$\{/.test(bg), false,
+    '后台件里**不许**对 submitKey 做字符串拼接（幂等键必须原样透传 ✗）');
+});
+
+// ── AC-ASY3：后台失败 ⇒ 不许假装成功 ✗ ⇒ 可查 + 可重试 ────────────────────────────────
+test('AC-ASY3 ⭐⭐ 后台失败（`ok:false` / 抛异常）⇒ `markFailed` 被调用 + 返回 `ok:false`（绝不吞成成功 ✗）', async () => {
+  const shapes = [
+    { why: '返回 ok:false', runRest: async () => ({ ok: false, message: '飞书 500' }) },
+    { why: '抛异常', runRest: async () => { throw new Error('boom'); } },
+  ];
+  for (const s of shapes) {
+    const failed = [];
+    const svc = createPurchaseWriteBackgroundService({
+      runRest: s.runRest,
+      markFailed: async (info) => { failed.push(info); },
+      purchaseAsync: { backgroundTimeoutMs: 5000 },
+      config: { events: { restTiming: 'purchase.write.rest.timing', restFailed: 'purchase.write.rest.failed' } },
+    });
+    const result = await svc.schedulePurchaseRest({ chain: 'replenish', requestId: 'req_async', submitKey: 'scan_test:key:async' });
+    assert.equal(result?.ok, false, `${s.why} ⇒ **返回 ok:false**（绝不假装成功 ✗）`);
+    assert.equal(failed.length, 1, `${s.why} ⇒ **markFailed 被调用一次**（状态可查、可重试 ✓）`);
+    assert.equal(failed[0].chain, 'replenish', 'markFailed 拿到链路名 ✓（谁失败看得出 ✓）');
+    assert.equal(failed[0].submitKey, 'scan_test:key:async', 'markFailed 拿到**同一把** submitKey ✓（重试走同一把 ✓）');
+  }
+});
+
+test('AC-ASY3b ⭐ 探针：登记簿**不是空跑** —— 带延迟的后台那一跑 ⇒ `await` 之后确实已跑完', async () => {
+  let finished = false;
+  const svc = createPurchaseWriteBackgroundService({
+    runRest: async () => { await new Promise((r) => setTimeout(r, 25)); finished = true; return { ok: true }; },
+    config: { events: {} },
+  });
+  const promise = svc.schedulePurchaseRest({ chain: 'accept', requestId: 'req_probe', submitKey: 'k1' });
+  assert.equal(finished, false, '刚排下去时**还没跑完**（= 真的在飞 ✓ 不是同步跑完的空转 ✗）');
+  await waitForPendingPurchaseBackgrounds();
+  assert.equal(finished, true, '`await waitForPendingPurchaseBackgrounds()` 之后**确实跑完了** ✓（探针证明它真等 ✓）');
+  await promise;
+});
+
+// ── AC-ASY4：幂等不拆（同一把 submitKey 连点两次 ⇒ 原样透传）──────────────────────────
+test('AC-ASY4 ⭐ 幂等：同一把 `submitKey` 连点两次 ⇒ 本件**原样透传**同一把键（不拼、不改写 ✗）', async () => {
+  const seen = [];
+  const svc = createPurchaseWriteBackgroundService({
+    runRest: async ({ submitKey, chain, context }) => { seen.push({ submitKey, chain, context }); return { ok: true }; },
+    config: { events: {} },
+  });
+  const key = 'scan_test:key:same';
+  await svc.schedulePurchaseRest({ chain: 'replenish', requestId: 'r1', submitKey: key, context: { a: 1 } });
+  await svc.schedulePurchaseRest({ chain: 'replenish', requestId: 'r2', submitKey: key, context: { a: 1 } });
+  assert.equal(seen.length, 2, '两次都真的排了下去 ✓（本件不做去重 ✗ —— 幂等由**写层**用这同一把键保证 ✓）');
+  assert.deepEqual(seen.map((s) => s.submitKey), [key, key], '两次拿到的都是**同一把原样**键 ✓（没有加后缀/时间戳 ✗）');
+  assert.deepEqual(seen.map((s) => s.chain), ['replenish', 'replenish'], '链路名原样 ✓');
+});
