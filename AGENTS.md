@@ -125,8 +125,7 @@
 │   └── package.json
 ├── supabase/           # 历史数据库迁移脚本
 ├── server/uploads/     # 服务端临时上传目录（运行时自动创建）
-├── .env.example        # 环境变量模板
-└── Dockerfile          # 容器构建与部署入口
+└── .env.example        # 环境变量模板
 ```
 
 ## 关键入口 / 核心模块
