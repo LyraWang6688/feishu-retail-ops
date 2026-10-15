@@ -1322,7 +1322,6 @@ ${purchaseAmountRowHtml(write)}
 ${multiItemBlockHtml(write, view)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(t.replenishButton)}</button>
 </form>
-</details>
 </section>`;
 };
 
@@ -1419,16 +1418,22 @@ const returnFormHtml = (view, write) => {
   //      —— `<details>` **默认收起** ⇒ 首屏**只剩那颗 `<summary>`**：实心主色、通栏
   //      （:215 「.disclosure__summary」= background var(--primary) + color var(--surface)），
   //      文案 = v.purchaseReturn = **「退货」** ⇒ 她看到的就是「**一颗退货按钮**」✓，点它才展开出表单 ✓
-  //   ✅ **改后逐字**：`<details class="disclosure" data-view="purchase-return" open>`
-  //      —— 加 **`open`** ⇒ **进退货 tab 首屏即见**尺码清单 + 整单金额 + 「生成采购退货」✓
-  //      （保留 `<details>` 语义 ✓ 零 JS ✓；**只加一个属性**，领域条样式一个字没动 ✓）
-  //   **依据**：她 2026-10-16 逐字 ＋ 代码级根因（本行 ；Lead 2026-10-16 批准「加 open」✓）
-  //   ⚠️ 「一键补货」那个同形的 `<details>`（下面 one-tap-replenish）**这一刀不动** ✗（Lead 另去问她 ✓）
-  //   **判据**：`test/returnBlockFirstScreen.test.js`（去掉 open ⇒ 红 ✓）
+  //   ✅ **2026-10-16 晚 改后逐字（本刀）**：**去掉 `<details>` / `<summary>` 包壳**，表单直接渲染 ——
+  //      改前逐字：`<details class="disclosure" data-view="purchase-return" open>` + 下一行
+  //                 `<summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>`
+  //      改后逐字：**这两行都删掉**（`<section class="card">` 外层保留 ✓，`<form …>` 紧跟其后 ✓）
+  //      **依据**：她 2026-10-16 真机截图 + 逐字「退货那个确实点击了之后确实是出现了表单，
+  //        但是那个**退货按钮为什么还有呢，不需要了**」—— 上一刀加了 `open` ⇒ 表单**已经首屏可见** ✓
+  //        ⇒ 那颗实心通栏 `<summary>`（写着「退货」）就**纯多余**了 ✗（她还以为要多点一下 ✓）
+  //      **判据**：`test/returnBlockFirstScreen.test.js`（塞回 `<details>`/`<summary>` ⇒ 红 ✓）
+  //   ⭐⭐ **定位标记 `data-view="purchase-return"` 迁到 `<form>` 上**（**只去折叠壳、不动标记** ✓）：
+  //      全仓有 6+ 处用例拿它当"退货表单从哪开始"的**锚**（例：`html.indexOf('data-view="purchase-return"')`）
+  //      ⇒ 标记一起删掉会得到 `indexOf === -1` 的空切片 —— 那是**静默假绿** ✗（比红更坏）
+  //      ⇒ 标记留在语义相同的位置（**退货表单那一元素**上）✓ 那些用例一个字都不用改 ✓
+  //   ⚠️ 「一键补货」那个同形的 `<details>`（下面 one-tap-replenish）**这一刀不动** ✗
   return `<section class="card">
-<details class="disclosure" data-view="purchase-return" open>
-<summary class="disclosure__summary">${escapeHtml(v.purchaseReturn)}</summary>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form"
+data-view="purchase-return"
 data-return-sizes-field="${escapeHtml(fields.returnSizes)}"
 data-return-qty-prefix="${escapeHtml(fields.returnQuantityPrefix)}"
 data-return-max-sizes="${escapeHtml(String(returnConfig.maxSizes))}"

@@ -76,10 +76,17 @@ const blockOf = async () => {
   } finally { await new Promise((resolve) => { server.close(resolve); }); }
 };
 
-test('AC-RF1a 🔴 退货那个 `<details>` **必须带 `open`**（去掉 ⇒ 首屏又只剩一颗「退货」按钮 ⇒ 红 ✓）', async () => {
+test('AC-RF1a 🔴 退货块**不再是折叠块**：没有 `<details>` / `<summary>`，表单首屏直接可见', async () => {
   const block = await blockOf();
-  assert.match(block, /<details class="disclosure" data-view="purchase-return" open>/,
-    '🔴 退货块要 **open**（她："只有一个退货按钮，点它之后才出现下面的内容" ⇒ 不许再让她多点一次 ✗）');
+  // 改前逐字（上一刀）：
+  //   assert.match(block, /<details class="disclosure" data-view="purchase-return" open>/,
+  //     '🔴 退货块要 **open**（她："只有一个退货按钮，点它之后才出现下面的内容" ⇒ 不许再让她多点一次 ✗）');
+  // 改后逐字：下面三条
+  // 依据：她 **2026-10-16 真机截图 + 逐字**「但是那个**退货按钮为什么还有呢，不需要了**」
+  //   ⇒ 上一刀加 `open` 之后表单**已经首屏可见** ✓，那颗 summary 纯多余 ⇒ **连 `<details>` 一起去掉** ✓
+  assert.equal(/<details/i.test(block), false, '🔴 退货块里不许再有 `<details>` ✗（塞回即红 ✓）');
+  assert.equal(/disclosure__summary/.test(block), false, '🔴 也不许再有那颗 `<summary>`（她截图指的就是它 ✗）');
+  assert.match(block, /<form method="post"/, '表单**直接在块里** ⇒ 首屏可见 ✓（不靠 open ✗）');
 });
 
 test('AC-RF1b 🔴 **首屏**即见：尺码行 + 整单金额 + 生成按钮（都在退货块里）', async () => {
@@ -94,6 +101,24 @@ test('AC-RF1c ⭐ 这一刀**只动退货那一个**：一键补货的同形 `<d
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js'), 'utf8');
   assert.match(source, /<details class="disclosure" data-view="one-tap-replenish">/,
     '「一键补货」那个 `<details>` 这一刀**不许动** ✗（Lead 另去问她要不要一起改 ✓）');
-  assert.match(source, /<details class="disclosure" data-view="purchase-return" open>/,
-    '退货那个才是本刀改的 ✓');
+  // 改前逐字（上一刀）：assert.match(source, /<details class="disclosure" data-view="purchase-return" open>/,
+  //   '退货那个才是本刀改的 ✓');
+  // 改后逐字：下面这一行
+  // 依据：本刀（2026-10-16 晚）把退货的 `<details>` + `<summary>` **一并去掉** ✓（她："不需要了"）
+  // ⚠️ **必须【剥注释后】判** —— 本文件/渲染器里为了写「改前逐字」**引用了那串标记**，
+  //    不剥注释就会**假红** ✗（与 `test/multiItemOrderRoute.test.js` 的 RT5 同一个老教训 ✓）
+  //    剥法用**行位锚定**（只丢"整行是注释"的行）—— 不用 `[\s\S]*?` 多字符清洗（CodeQL 会点名 ✗）
+  const codeOnly = source.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
+  assert.equal(codeOnly.includes('data-view="purchase-return"'), false,
+    '退货那个 `<details>` 本刀已删 ✓（塞回代码 ⇒ 红 ✓）；「一键补货」那个**一个字没动** ✓');
+});
+
+test('AC-RF1d ⭐ **探针**：把 `<details>` / `<summary>` 塞回退货块 ⇒ 检测器**必须报红** ✓（证明 AC-RF1a 不空跑）', () => {
+  const offenders = (html) => /<details/i.test(html) || /disclosure__summary/.test(html);
+  assert.equal(offenders('<section class="card"><form method="post" class="write-form"></form></section>'), false,
+    '干净的表单块 ⇒ 不报红 ✓');
+  assert.equal(offenders('<details class="disclosure" data-view="purchase-return" open>'), true,
+    '塞回 `<details>` ⇒ **必须**报红 ✓');
+  assert.equal(offenders('<summary class="disclosure__summary">退货</summary>'), true,
+    '塞回那颗 `<summary>` ⇒ **必须**报红 ✓');
 });
