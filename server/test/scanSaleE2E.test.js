@@ -717,12 +717,27 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
 
       // 第3步：再打开（她接着扫下一个）⇒ 本单条归零、提交按钮跟着消失
       const again = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      const bar = draftBarOf(again.html);
+      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`const bar = draftBarOf(again.html);` ＋
+      //            `assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false, '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');`
+      //   改后逐字：改成断言**本单条整块不再渲染**（草稿已清）＋ 仍断言**不渲染提交按钮**（见下）
+      //   依据：异步之后余下转后台；**后台跑完才清草稿**（本文件在两个提交助手处都
+      //     `await waitForPendingSaleBackgrounds()` ⇒ 这里读到的就是"那一刻"）⇒ 草稿没了 ⇒
+      //     页面**根本不渲染本单条** ✓ —— 判据语义与改前一致（都是"本单归零、不能再提交"）✓，
+      //     只是从"本单条上显示 0 双"改成"本单条整块不渲染"（页面早先已按她的话把「本单：N 双」删了 ✓）。
+      assert.equal(again.html.includes('data-view="draft-bar"'), false,
+        '第3步：没有草稿 ⇒ 本单条**整块不再渲染**（不是显示 0 双）✓');
     // ⭐ 2026-10-14：顶部「本单：N 双」已按她的话删掉 ⇒ 改从**页面上仍然可见的那句**判同一个事实 ✓
     assert.equal(again.html.includes('class="draft-bar__count"'), false, '第3步：归零 ⇒ 顶部计数行已经不在了 ✓');
       assert.equal(/已加入本单（[1-9]/.test(again.html), false, '第3步：也不该再显示"已加入本单（N 双）"✓');
-      assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false,
-        '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');
+      // ⚠️ 2026-10-15（⑨b-2）**删掉一条空断言**（不是放宽判据，是它**从来就没判过东西**）：
+      //   改前逐字：`assert.equal(bar.includes(SCAN_WRITE.texts.submitButton), false,
+      //              '第3步：没有草稿 ⇒ 本单条上不再渲染【提交这一单】（不是灰按钮）');`
+      //   为什么删：2026-10-12 起**本单条根本不放提交按钮**（见本用例第1步的注释：
+      //     「本单条不再放提交按钮（真机丢钱就是它造成的）」）⇒ 在 `bar` 里找那颗按钮
+      //     **恒为 false**，它从被写下的那天起就是空断言 ✗。
+      //   ⇒ 它想表达的"没有草稿就不能再提交"由上面那条**更强的事实**覆盖：
+      //     **本单条整块不渲染** ✓（草稿没了，本单那一段就整个不存在）。
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第3步：表里仍然只有那一张单');
     });
   } finally { e2e.cleanup(); }
@@ -862,8 +877,13 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
         assert.equal(after.html.includes('已加入本单（'), false, '第5步：归零 ⇒ 页面上没有"已加入本单"那句 ✓');
       // ⚠️ 2026-10-12 改写：**本单条里不再有提交按钮**（真机丢钱就是它造成的）。
       //    ⚠️ 销售块那颗**照旧一直在**：空本单时它写着"（1 双）"，正是"一单一笔 = 选尺码 + 提交"的入口。
-      assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false,
-        '第5步：本单条里没有提交按钮');
+      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false, '第5步：本单条里没有提交按钮');`
+      //   改后逐字：`assert.equal(after.html.includes('data-view="draft-bar"'), false, '第5步：草稿已清 ⇒ 本单条整块不渲染（"本单条里没有提交按钮"更强地成立 ✓）');`
+      //   依据：同 AC-E2E-7 —— 异步之后余下转后台、**后台跑完才清草稿**（本文件提交助手已 await）⇒
+      //     草稿没了 ⇒ 本单条**整块不渲染** ✓（判据语义不变、还更强：连"本单条"都不存在了）。
+      assert.equal(after.html.includes('data-view="draft-bar"'), false,
+        '第5步：草稿已清 ⇒ 本单条整块不渲染（"本单条里没有提交按钮"更强地成立 ✓）');
       assert.ok(after.html.includes('提交这一单（1 双）'),
         '第5步：销售块那颗还在，文案回到"（1 双）"');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第5步：没有再建第二张单');
@@ -1031,7 +1051,12 @@ test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」�
       const html = await done.text();
       const mismatch = (html.match(/<p class="form-alert">([^<]*)<\/p>/) || [])[1] || '';
       assert.equal(done.status, 200, `第1步：提交要成功（400 时页面上那句人话 = ${mismatch}）：${html.slice(0, 200)}`);
-      assert.match(html, /您的提交已成功/, '第1步：结果页说提交好了');
+      // ⭐⭐ 2026-10-15（⑨b-2）**成对翻新**（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.match(html, /您的提交已成功/, '第1步：结果页说提交好了');`
+      //   改后逐字：`assert.match(html, /本单已创建成功（XSD-/, '第1步：结果页说**她逐字那一句**（异步：单号先出）');`
+      //   依据：她 2026-10-15 逐字「**统一文字改成：本单已创建成功（单号），其余文字不需要**」——
+      //     异步之后"提交整单付款"这一下**只回那一句**（含真单号）✓ 其余文字都不要 ✗。
+      assert.match(html, /本单已创建成功（XSD-/, '第1步：结果页说**她逐字那一句**（异步：单号先出）');
 
       const rows = rowsOf(e2e, 'paymentRecord');
       assert.equal(rows.length, 1, '🔴 收款明细必须有 **1 行**（真机那次是 0 行）');
