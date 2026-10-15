@@ -1282,29 +1282,37 @@ const createScanPageRouter = (options = {}) => {
           const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
           const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
           const pendingSize = String(pendingInfo.size || '').trim();
-          // ⭐⭐ 2026-10-14（她：配置先行 · 不散写 if-else）⇒ 用**已合入的那份纯函数**先做一次结算校验 ✓
-          //   🔴 它在 `config/saleSettlement.js`（表 + 纯函数 = 一份真源 ✓）
-          //   🔴 没过 ⇒ **原地重渲染资金页 + 一句话** ⇒ **一个字都不写表** ✗（不许假成功 ✓ 不许建单 ✓）
-          //   ⚠️ 它只是**前置**：`submitSale` 内部那条校验**仍然在**（双保险 ✓ 不改它 ✗）
+          // ⭐⭐ 2026-10-16 A2a（她：**页面去三档** ⇒ 档位**按金额自动定**）——
+          //   改前逐字：档位 = `Object.keys(payStatusMap).find((key) => payStatusMap[key] === pendingPaymentStatus) || ''`
+          //     （**从"请求体 / 已存档"反查** ✗）⇒ 页面去掉那三个单选框之后**必然查不到** ⇒ 被判 `unknown_mode` **拦住** ✓
+          //   改后逐字：`autoModeOf({ itemsCents, paymentsCents })` —— **按金额推档**（纯函数 ＋ 配置表 ✓ 真源一份 ✓）
+          //   依据 = 她 2026-10-16 逐字（"别让他带着这三个单选提交"）⇒ 本段是它的**前半刀**（页面 + 判据去档）✓
+          //   🔴 **本段仍然接受** body 里的旧档位（**不拒绝** ✗ —— 拒绝留到 A3 ✓）；它只是**不再是判据**了 ✓
+          const toCents = (value) => Math.round(Number(value || 0) * 100);
+          const itemsCents = pendingLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
+          const paymentsCents = pendingPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
           // eslint-disable-next-line global-require
-          const { resolveSettlement } = require('../config/saleSettlement');
-          // ⭐ 档位的真源在 `config/scanWrite.js` 的 `PAYMENT_STATUS`（语义键 full/partial/unpaid ↔ 中文档位 ✓）
-          //   ⚠️ 走 `writeConfig.paymentStatus` 拿不到（那份配置没把它摊平 ✗）⇒ 直接 require 真源 ✓ 不猜 ✗
+          const { resolveSettlement, autoModeOf } = require('../config/saleSettlement');
+          const auto = autoModeOf({ itemsCents, paymentsCents });
+          // ⭐ 档位的真源仍在 `config/scanWrite.js` 的 `PAYMENT_STATUS`（语义键 ↔ 中文取值 ✓ 不另抄一份 ✗）——
+          //   自动定档算出的是**语义键**；交给写服务时要换回**中文取值** ✓
           // eslint-disable-next-line global-require
           const { PAYMENT_STATUS } = require('../config/scanWrite');
           const payStatusMap = PAYMENT_STATUS || {};
-          const pendingMode = Object.keys(payStatusMap)
-            .find((key) => payStatusMap[key] === pendingPaymentStatus) || '';
-          const toCents = (value) => Math.round(Number(value || 0) * 100);
-          const settlement = resolveSettlement({
+          const pendingMode = auto.mode || '';
+          // ⭐ 交给写服务的档位 = **自动定出来的那一档**（不是请求体里那个旧档位 ✗）——
+          //   ⇒ "带着旧档位提交"也照新口径走 ⇒ 旧档位**不会**再把请求带进老分支 ✓（她 2026-10-16 口径 ✓）
+          const effectivePaymentStatus = payStatusMap[pendingMode] || '';
+          // 收多了 ⇒ 纯函数已经给了 `block`（与既有 `amount_mismatch` **同一句话** ✓ 不新编中文 ✗）
+          const settlement = auto.action === 'block' ? auto : resolveSettlement({
             mode: pendingMode,
-            itemsCents: pendingLineAmounts.reduce((sum, value) => sum + toCents(value), 0),
-            paymentsCents: pendingPayments.reduce((sum, row) => sum + toCents(row.amount), 0),
+            itemsCents,
+            paymentsCents,
             hasPaymentRows: pendingPayments.filter((row) => String(row.amount ?? '').trim()).length > 0,
             anyLineAmount: pendingLineAmounts.some((value) => String(value ?? '').trim()),
-            // ⭐ 「部分付」还要"实付多少"（她填的那个 ✓）—— 纯函数按 `paidCents` 判 ✓
-            //   ⚠️ 空串 ⇒ 传 `null`（= "没填"✓ 会被判 `partial_amount_missing`），**不许传 0** ✗
-            paidCents: String(pendingPaidAmount ?? '').trim() === '' ? null : toCents(pendingPaidAmount),
+            // ⭐ 新形状**页面上没有**「实付多少」这个框了（随三档一起去掉 ✓）⇒ "本次已收"**就是收款行合计** ✓
+            //   ⚠️ 若传 `null` 会被判 `partial_amount_missing` —— 那是**旧形状**才有的失败 ✗ 不传 ✗
+            paidCents: paymentsCents,
           });
           if (settlement.action === 'block') {
             // ⭐ 2026-10-14 晚（她批准埋点补充③：「失败日志带**人话原因码**」）——
