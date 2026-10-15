@@ -31,6 +31,15 @@
  * · **AC-SM4** 非销售领域（`from=inventory|replenish|return`）⇒ **一律不接管**（既有行为不变 ✓，
  *   且**不许**顺手清标记 —— 那不是这一块的账 ✗）
  * · **AC-SM5** 清掉之后**再扫一次** ⇒ 正常扫码页（回归：不再被顶到资金页 ✓）
+ * ── task-22（2026-10-15 晚 · **#598 引入的一处回退**）─────────────────────────
+ *   #598 的判据只管"0 行 + 没单号 + status=submitted"，却**没注意**：提交那一步**从来不写 `status`** ✗
+ *   ⇒ 上一单 `completeSale` 落的 `submitted` 会留到**第 2 单** ⇒ "刚提交、正停在资金页"恰好长成
+ *     残标记的样子 ⇒ 第 2 单在资金页**刷新一下**就被打回录入页 ✗
+ *   ⇒ 修法：提交那一步 `status` 落回 `draft`（这一单正在走 ✓）⇒ 两个状态彻底分开 ✓
+ * · **AC-SM8** 上一单 `submitted` + 新提交 ⇒ 刷新**仍是资金页**、**不许清标记**（去掉"落 draft"就红 ✓）
+ * · **AC-SM9** 提交那一步 `status` 落成 **`draft`**（真配置路径 `writeConfig.session.statuses` ✓，能真红）
+ * · **AC-SM10** 「重启补跑」扫描**不受影响**（`draft` + 没单号 / 草稿空 ⇒ 不当待补跑；对照组照样报得出来 ✓）
+ * · **AC-SM11** `submitPending` **同一笔**清掉，且**不影响**正常提交后点按钮建单（能真红）
  * · **AC-SM6** 既有用例**判据一条没放宽**：`scanPaymentStepRealmScope.test.js` 那两条源码哨兵
  *   （`pendingMark === 'pending' && salesContext` / `from` 的两个取值）**逐字仍在** ✓
  *
@@ -49,6 +58,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_p
 
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { SCAN_PAGE } = require('../src/config/scanPage');
+const { SCAN_WRITE } = require('../src/config/scanWrite');
 
 const SESSION_SECRET = 'scan_payment_stale_test_secret';
 // 她真机那双（Lead 的生产日志里就是 `N05`）。
@@ -106,6 +116,7 @@ const view = (overrides = {}) => ({
  */
 const fakeWriteService = (sale = {}) => {
   const patches = [];
+  const calls = [];
   const session = { sale: { ...sale } };
   const sessions = {
     async get() { return { sale: { ...session.sale } }; },
@@ -126,6 +137,12 @@ const fakeWriteService = (sale = {}) => {
     sessions,
     saveDraftLines: (openId, patch) => sessions.saveSaleProgress(openId, patch),
     listAccessories: async () => [],
+    // AC-SM11 用：点资金页按钮**才**建单（这里只记一笔，回一个像真的结果 ✓）
+    submitSale: async (input) => {
+      calls.push({ kind: 'submitSale', submitKey: input?.submitKey });
+      return { ok: true, order_no: 'XSD-SM11', sales_entry_record_id: 'rec_sm11', payment_count: 0 };
+    },
+    calls,
   };
 };
 
@@ -142,6 +159,37 @@ const appFor = ({ write, realmLookup = async () => view() } = {}) => {
     startSnapshot: false,
   }));
   return app;
+};
+
+/** 她点「提交这一单」那一下（POST，带选中的尺码 —— 就是生产里那个表单）。 */
+const submitOrder = (base, extra = {}) => fetch(`${base}/s/${ENCODED}`, {
+  method: 'POST',
+  redirect: 'manual',
+  headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    action: SCAN_WRITE.actions.submitOrder,
+    [SCAN_WRITE.fields.size]: '41',
+    ...extra,
+  }).toString(),
+});
+
+/** 她在资金页点那颗按钮（`payment_pay`）。 */
+const payOrder = (base, extra = {}) => fetch(`${base}/s/${ENCODED}`, {
+  method: 'POST',
+  redirect: 'manual',
+  headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    action: 'payment_pay',
+    payment_status: '未付',
+    submit_key: 'scan_sale:key:1',
+    ...extra,
+  }).toString(),
+});
+
+/** 上一单**刚完成**时 `completeSale` 落下的形状（第 2 单就从这里长出来）。 */
+const COMPLETED_SALE = {
+  status: 'submitted', lines: [], order_no: '', master_record_id: '',
+  paymentStep: 'created', submitPending: { size: '40', amount: '399' },
 };
 
 const getPage = async (base, query = '') => {
@@ -200,7 +248,16 @@ test('AC-SM1 ⭐ 残标记（`pending` + 草稿 0 行 + 无单号 + **`status:\'
 
   // ② 标记被清（**清成"这个键不在"** —— 默认 sale 的形状）
   assert.equal(write.patches.length, 1, '正好清一次（不许反复清 / 不许清别的）');
-  assert.deepEqual(Object.keys(write.patches[0]), ['paymentStep'], '只动这一个键（别的字段一个都不许碰）');
+  // ⚠️ task-22 改（**逐字**）：
+  //   改前逐字：`assert.deepEqual(Object.keys(write.patches[0]), ['paymentStep'], '只动这一个键（别的字段一个都不许碰）');`
+  //   改后逐字：`['paymentStep', 'submitPending']`（下面这行）。
+  //   依据：`paymentStep` 一清，`submitPending` 就**再没有读点**（pay / skip 两处都在
+  //     `paymentStep === 'pending'` 门内）⇒ 残标记那次它只是**上一单的残留 payload**，同笔清掉更干净 ✓
+  //     （Lead 手工清她会话时也是两个一起清的 ✓）。
+  //   🔴 **判据没有放宽**：仍然是"**只清这两笔、别的字段一个都不许碰**"（键集合**枚举**钉死 ✓），
+  //     而且"清成没走到资金这一步"的语义一条没动 ✓。
+  assert.deepEqual(Object.keys(write.patches[0]).sort(), ['paymentStep', 'submitPending'],
+    '⭐ 同笔清这两个键（别的字段一个都不许碰）');
   assert.equal(write.patches[0].paymentStep, undefined, '⭐ 清成"没走到资金这一步"的既有表示（= 这个键不在）');
   assert.equal(Object.prototype.hasOwnProperty.call(write.session.sale, 'paymentStep'), false,
     '清完之后会话里**真的**没有这个键了（下一次读就不会再被顶到资金页 ✓）');
@@ -333,6 +390,108 @@ test('AC-SM7 ⭐⭐ `pending` + 草稿 0 行 **但这一单还没交出去**（s
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AC-SM8 / AC-SM9 / AC-SM10 / AC-SM11（task-22）：#598 引入的那处回退
+//   —— 上一单已完成（status='submitted'）之后，**第 2 单**刚提交时 status 还是上一单的
+//      ⇒ #598 的残标记判据会把**正常**的资金页清掉 ⇒ 她在资金页**刷新一下**就被打回录入页 ✗
+//   修法：提交那一步把 `status` 落回 `draft`（这一单正在走 ✓）⇒ 两个状态彻底分开。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-SM9 ⭐ 提交那一步 `status` 落回 `draft`（能真红：删掉那一行 ⇒ 红）', async () => {
+  login();
+  const write = fakeWriteService({ ...COMPLETED_SALE });
+  await withServer(appFor({ write }), async (base) => {
+    const response = await submitOrder(base);
+    assert.equal(response.status, 200);
+    assert.ok((await response.text()).includes(PAYMENT_PAGE_MARK), '提交照旧渲染资金页 ✓');
+  });
+  const submitPatch = write.patches.find((patch) => patch.paymentStep === 'pending');
+  assert.ok(submitPatch, '提交那一笔要写 `paymentStep: \'pending\'` ✓');
+  assert.equal(submitPatch.status, SCAN_WRITE.session.statuses.draft,
+    '⭐ 提交 = 这一单正在走 ⇒ `status` 必须落回 `draft`（不许把上一单的 submitted 留给第 2 单 ✗）');
+  assert.equal(write.session.sale.status, SCAN_WRITE.session.statuses.draft, '会话里真的成了 draft ✓');
+  // ⚠️ 别再顺手改别的：这一笔仍然只有"这一单要写什么"那几个键 + status
+  assert.equal(submitPatch.paymentStep, 'pending');
+  assert.ok(Array.isArray(submitPatch.lines), 'lines 照旧原样带过去 ✓');
+  assert.ok(submitPatch.submitPending, 'submitPending 照旧原样带过去 ✓');
+});
+
+test('AC-SM8 ⭐⭐ 上一单 `submitted` + **新提交** ⇒ 刷新**仍是资金页**、**不许清标记**（#598 的回退不许再回来）', async () => {
+  login();
+  const write = fakeWriteService({ ...COMPLETED_SALE });
+  let firstHtml; let secondHtml;
+  await withServer(appFor({ write }), async (base) => {
+    firstHtml = await (await submitOrder(base)).text();      // 提交这一下
+    secondHtml = (await getPage(base)).html;                 // 她在资金页**刷新**
+  });
+  assert.ok(firstHtml.includes(PAYMENT_PAGE_MARK), '提交那一下是资金页 ✓');
+  assert.ok(secondHtml.includes(PAYMENT_PAGE_MARK),
+    '⭐ 第 2 单刚提交完 ⇒ 刷新**必须是资金页**（不许被当成残标记打回录入页 ✗）');
+  assert.equal(secondHtml.includes('realm-block--sales'), false, '更不许掉回录入页的销售块 ✗');
+  assert.equal(write.patches.some((patch) => patch.paymentStep === undefined), false,
+    '⭐ **不许**清标记（她刚提交、正停在资金页）');
+});
+
+test('AC-SM10 ⭐ 「重启补跑」扫描**不受影响**（`draft` + 没单号 / 草稿空 ⇒ 不当待补跑）', async () => {
+  const { createScanSessionService } = require('../src/services/scanSessionService');
+  // ① 提交那一步写出来的形状（AC-SM9）：draft + **没有单号** + 草稿可能为空
+  const afterSubmit = {
+    session_id: 'scan_session_after_submit', open_id: 'ou_after_submit',
+    expires_at: new Date(Date.now() + 6e5).toISOString(),
+    sale: {
+      status: 'draft', order_no: '', lines: [], paymentStep: 'pending',
+      submitPending: { size: '41', amount: '399' }, seq: 1, completed: [],
+    },
+  };
+  // ② 对照组：**真的**半截提交（draft + 单号 + 草稿有行，且那单不在 completed 里）⇒ 扫描**必须**能报出来
+  const reallyInFlight = {
+    session_id: 'scan_session_really_in_flight', open_id: 'ou_really',
+    expires_at: new Date(Date.now() + 6e5).toISOString(),
+    sale: {
+      status: 'draft', order_no: 'XSD-20261015-9999',
+      lines: [{ product_number: 'N05', size: 41, quantity: 1 }], seq: 1, completed: [],
+    },
+  };
+  const service = createScanSessionService({
+    config: SCAN_WRITE, store: { list: async () => [afterSubmit, reallyInFlight] },
+  });
+  assert.deepEqual(await service.findInterruptedSales(), [],
+    '⭐ 刚提交那一下不许被当成"可安全清草稿"的半截提交 ✗');
+  const uncertain = await service.findUncertainInFlightSales();
+  assert.deepEqual(uncertain.map((row) => row.sessionId), ['scan_session_really_in_flight'],
+    '⭐ 扫描本身还是灵的（真的半截提交照样报出来 ⇒ 不是"什么都不报"的假绿 ✓）');
+});
+
+test('AC-SM11 ⭐ `submitPending` **同一笔**清掉，且**不影响**正常提交后点按钮建单', async () => {
+  login();
+  // ① 残标记（她那次）：两个键**同一笔**清掉（`paymentStep` 一清，它就没有读点了 ⇒ 纯卫生 ✓）
+  const stale = fakeWriteService({
+    status: 'submitted', lines: [], order_no: '', master_record_id: '',
+    paymentStep: 'pending', submitPending: { size: '40', amount: '399' },
+  });
+  let staleHtml;
+  await withServer(appFor({ write: stale }), async (base) => { staleHtml = (await getPage(base)).html; });
+  assert.equal(staleHtml.includes(PAYMENT_PAGE_MARK), false, '残标记 ⇒ 不给资金页 ✓');
+  assert.equal(stale.patches.length, 1, '清理必须是**一笔**（不许写两次会话）');
+  assert.deepEqual(Object.keys(stale.patches[0]).sort(), ['paymentStep', 'submitPending'],
+    '⭐ 同笔清这两个键（**别的字段一个都不许碰**）');
+  assert.equal(Object.prototype.hasOwnProperty.call(stale.session.sale, 'submitPending'), false,
+    '残留 payload 真的没了 ✓');
+
+  // ② 正常路径：**提交 ⇒ 点按钮**照旧建单（payload 没被抹掉 ⇒ 建单拿得到她填的那一双 ✓）
+  const fresh = fakeWriteService({ ...COMPLETED_SALE });
+  await withServer(appFor({ write: fresh }), async (base) => {
+    await (await submitOrder(base)).text();
+    const paid = await payOrder(base);
+    assert.equal(paid.status, 200);
+    await paid.text();
+  });
+  assert.equal(fresh.calls.filter((call) => call.kind === 'submitSale').length, 1,
+    '⭐ 点资金页那颗按钮 ⇒ **照旧建单一次**（`submitPending` 没被误清 ✓）');
+  assert.equal(fresh.patches.some((patch) => patch.paymentStep === undefined), false,
+    '正常那一单**不许**走残标记清理 ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AC-SM6 既有哨兵不放宽（源码级：10-14 那两条判据逐字仍在）
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -352,4 +511,12 @@ test('AC-SM6 既有边界**逐字仍在**：只对销售上下文接管 + 新判
     '⭐ 只有"有东西要付"才接管（能真红）✓');
   assert.match(src, /stale_cleared/, '残标记要**如实记日志** ✓');
   assert.match(src, /stale_clear_failed/, '清标记失败也要留痕（不破页面）✓');
+  // ③ 配置路径必须走**真**的那条（`writeConfig.statuses` 不存在 ⇒ 取到 undefined ⇒ 500 ✗）
+  assert.match(src, /writeConfig\.session\.statuses\.draft/, '⭐ 提交那一步按真路径取 `draft` ✓');
+  assert.match(src, /writeConfig\?\.session\?\.statuses\?\.submitted/, '⭐ 残标记判据也按真路径取 `submitted` ✓');
+  //     ⚠️ 判据要**先去掉注释**再查 —— 源码注释里**故意**写着"`writeConfig.statuses` 不存在"这句说明
+  //        （那是给人看的警告），把它算成违规就会误报 ✗。
+  const codeOnly = src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.equal(/writeConfig\?\.statuses/.test(codeOnly), false,
+    '⭐ 代码里不许再出现不存在的 `writeConfig.statuses`（能真红）');
 });

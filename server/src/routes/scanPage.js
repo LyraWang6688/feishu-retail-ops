@@ -951,7 +951,11 @@ const createScanPageRouter = (options = {}) => {
           const hasOrder = Boolean(String(pendingSession?.sale?.order_no || '').trim())
             || Boolean(String(pendingSession?.sale?.master_record_id || '').trim());
           const saleStatus = String(pendingSession?.sale?.status || '').trim();
-          const submittedStatus = String(writeConfig?.statuses?.submitted || 'submitted');
+          // ⚠️ 2026-10-15 晚（task-22 顺带修正）：改前逐字 `writeConfig?.statuses?.submitted || 'submitted'`
+          //    —— `writeConfig.statuses` **不存在**（真路径是 `writeConfig.session.statuses`）⇒ 一直靠
+          //    **字面量兜底**在跑（值恰好相同 ⇒ 行为没变 ✓，但那是"配置先行"没做到 ✗）。
+          //    改后逐字：读**真路径**，兜底只在"配置竟然缺了"时保命（不改变任何现有行为 ✓）。
+          const submittedStatus = String(writeConfig?.session?.statuses?.submitted || 'submitted');
           // 「有东西要付」= 草稿有行 ∨ **已经建过单**（order_no / master_record_id）∨
           //                **这一单还没交出去**（status 不是 submitted ⇒ 她刚点过提交、正停在资金页 ✓）
           if (pendingLines.length > 0 || hasOrder || saleStatus !== submittedStatus) {
@@ -968,7 +972,16 @@ const createScanPageRouter = (options = {}) => {
           //   ⚠️ **不是** `'created'`（那是"**这一单已经建过**"的既有含义，写上去就是撒谎 ✗）；
           //   ⚠️ **不是**空串（那是**另造一个值**，注释里也点名过不许 ✗）；
           //   ⚠️ 清标记**失败不许破她的页面**（这是 GET 渲染路径）⇒ 只 warn，照旧出正常页 ✓。
-          const clearing = writeService.saveDraftLines?.(openIdOf(req), { paymentStep: undefined });
+          //   ⭐⭐ 2026-10-15 晚（task-22）：**`submitPending` 同一笔清掉**（纯卫生 ✓）——
+          //      `paymentStep` 一清，它在代码里就**再没有读点**（pay / skip 两处都在
+          //      `paymentStep === 'pending'` 的门内 ⇒ 这颗残留 payload 只会误导下次真机排查；
+          //      Lead 手工清她会话时也把它一起清了 ✓）。
+          //      🔴 **顺序不能反**：必须在"提交那一步把 `status` 落回 `draft`"（见提交分支）**之后**才敢这么清 ✗
+          //         —— 否则第 2 单刚提交那一下也会命中这条残标记分支 ⇒ 把她**点按钮要写的那一双**抹掉 ⇒ 建不了单 ✗。
+          const hadSubmitPending = Boolean(pendingSession?.sale?.submitPending);
+          const clearing = writeService.saveDraftLines?.(
+            openIdOf(req), { paymentStep: undefined, submitPending: undefined },
+          );
           await Promise.resolve(clearing).catch((error) => {
             logWarn('scan.payment_step.stale_clear_failed', {
               request_id: requestId, error: error.message,
@@ -982,6 +995,7 @@ const createScanPageRouter = (options = {}) => {
             lines: pendingLines.length,
             has_order: hasOrder,
             sale_status: saleStatus,
+            had_submit_pending: hadSubmitPending,
           });
         }
       }
@@ -1701,6 +1715,22 @@ const createScanPageRouter = (options = {}) => {
           lines: pendingDraftLines,
           // ⭐ 她（或 GET）据此判断"已经走到资金这一步了" ⇒ 刷新仍停在资金页 ✓
           paymentStep: 'pending',
+          // ⭐⭐ 2026-10-15 晚（task-22 · #598 引入的一处回退）：**这一单正在走 ⇒ status 落回 draft** ✓
+          //   🔴 改前只写 `lines/paymentStep/submitPending`、**一个字都不写 `status`** ✗ ⇒ 上一单
+          //      `completeSale` 落的 `status:'submitted'` 会**一直留着**（一单一笔的默认路径不点
+          //      「加入本单」⇒ 不会重置）⇒ **第 2 单起，"刚提交、正停在资金页"的形状恰好长成
+          //      #598 要清的那种残标记** ⇒ 她在资金页**刷新一下**就被打回录入页 ✗（更窄的一处回退）。
+          //   ⇒ 补这一行：提交 = 这一单**正在走**，本来就是 draft 态 ✓ ⇒ 两个状态**彻底分开**：
+          //      · 新一单刚提交 ⇒ `draft` ⇒ 刷新照旧给资金页 ✓
+          //      · 她那次那种**没有新提交**的残标记（status 仍是上一单的 `submitted`）⇒ 照旧清 ✓
+          //   ⚠️ 安全性：`status` 的另一批读点是"重启补跑"扫描（`scanSessionService` 的
+          //      `findInterruptedSales` / `findUncertainInFlightSales`：**同时**要求 `draft` +
+          //      `order_no` 非空 + `lines` 非空）⇒ 提交这一步**没有** `order_no`、`lines` 也可能为空
+          //      ⇒ **两个条件都不满足 ⇒ 不会被当成待补跑** ✓（用例 `AC-SM10` 钉着）。
+          // ⚠️ 配置路径是 `writeConfig.session.statuses`（= `config/scanWrite.js` 的 `SESSION.statuses`；
+          //    `writeConfig.statuses` **不存在** ⇒ 写错了会当场 `Cannot read properties of undefined` ⇒ 500 ✗
+          //    —— 我第一版就写错了，被全量/用例当场抓住 ✓ 现在按真路径取，并有用例钉着）。
+          status: writeConfig.session.statuses.draft,
           // ⭐ 点按钮那一刻要写的那一双（尺码/金额/赠品）—— **从提交这一下原样存下来**（拿不到就不存 ✓ 不编 ✗）
           submitPending: {
             size: String(body[fields.size] ?? '').trim(),
