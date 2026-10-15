@@ -92,19 +92,45 @@ test('AC-P3 🔴 飞书回错 ⇒ **如实抛**（**绝不静默返回空** ✗�
 // AC-P4 只读（源码哨兵）：只有读口，没有"按 table_id 写"的口
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-P4 🔴 它**只读**：源码里没有任何"按 tableId 写/删"的口（`createByTableId` 之类 ✗）', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'v1BitableGateway.js'), 'utf8');
-  for (const forbidden of ['createByTableId', 'updateByTableId', 'deleteByTableId', 'batchCreateByTableId']) {
-    assert.equal(source.includes(forbidden), false, `不许有 \`${forbidden}\` ✗（要写必须先有 schema 映射）`);
+// ⭐⭐ 2026-10-15（Lead 裁决 · **成对改指向**）：
+//   改前逐字：`assert.equal(source.includes('updateByTableId'), false, …)`（"这个口只读，不许有写口"）
+//   改后逐字：**允许 `updateByTableId` 存在**（他 2026-10-15 拍板「回写默认开」⇒ 回写要真写），
+//     但钉**三条更严的**：① `createByTableId` / `deleteByTableId` **仍然不许有** ✗（我们只更新状态，
+//     从不新建/删除记录）；② 全仓 `src/` 里 `updateByTableId(` 的**调用方只能有一个** ——
+//     `services/accessorySaleIntakeService.js` ✓（别的文件调 ⇒ 红）；③ `getByTableId` 那条**只读**哨兵**一字不动** ✓
+//   依据：回写要真写（⑤）vs 只读口不能写 —— 加**受配置把关**的写口是唯一出路；
+//     而"只更新状态、不新建不删除"是她表里的语义（她只加了两列状态列）✓
+test('AC-P4 🔴 读口只读 ✓ · **写口只许有一个调用方**、且**只更新不新建不删除** ✗', () => {
+  const readSource = (file) => fs.readFileSync(path.join(__dirname, '..', 'src', file), 'utf8');
+  const source = readSource(path.join('services', 'v1BitableGateway.js'));
+  // ① 新建 / 删除的口**不许有**（我们只更新状态 ✓）
+  for (const forbidden of ['createByTableId', 'deleteByTableId', 'batchCreateByTableId']) {
+    assert.equal(source.includes(forbidden), false, `不许有 \`${forbidden}\` ✗（只更新，不新建不删除）`);
   }
-  assert.match(source, /async getByTableId\(/, '只留这一个**只读**口 ✓');
-  // 它体内只许出现 `appTableRecord.get`（不许出现写方法）
-  const start = source.indexOf('async getByTableId(');
-  const body = source.slice(start, source.indexOf('\n  async getBatch(', start));
-  assert.match(body, /appTableRecord\.get\(/, '读 ✓');
+  assert.match(source, /async getByTableId\(/, '只读口在 ✓');
+  assert.match(source, /async updateByTableId\(/, '受配置把关的写口在 ✓（回写默认开 ⇒ 必须有）');
+  // ② `getByTableId` 的**函数体**里不许出现任何写方法（切片到下一个口为止 ⇒ 与写口相邻也不许混）
+  const read_ = source.indexOf('async getByTableId(');
+  const body = source.slice(read_, source.indexOf('\n  async updateByTableId(', read_));
+  assert.match(body, /appTableRecord\.get\(/, '读口只读 ✓');
   for (const write of ['appTableRecord.create', 'appTableRecord.update', 'appTableRecord.delete']) {
     assert.equal(body.includes(write), false, `\`getByTableId\` 体内不许写 ✗（${write}）`);
   }
+  // ③ **唯一调用方**：`updateByTableId(` 只许出现在入口 service 里
+  const callers = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(path.join(__dirname, '..', 'src', dir), { withFileTypes: true })) {
+      const rel = dir ? `${dir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) { walk(rel); continue; }
+      if (!entry.name.endsWith('.js')) continue;
+      if (rel === 'services/v1BitableGateway.js') continue; // 定义处不算调用方
+      if (readSource(rel).includes('updateByTableId(')) callers.push(rel);
+    }
+  };
+  walk('services');
+  walk('routes');
+  assert.deepEqual(callers, ['services/accessorySaleIntakeService.js'],
+    '`updateByTableId` 的调用方**只许**是入口 service ✓（别人调 ⇒ 红）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

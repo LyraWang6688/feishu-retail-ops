@@ -457,3 +457,135 @@ test('⑤ 没接线（service 上没有 tagQrCodes）→ 不抛错，并留下�
   );
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑦ 第二条按 table_id 分派的支路：「配品销售」= **AC-AS5**（业务负责人 2026-10-15 新建的那张表）
+//
+// 本刀的口径（她逐字）：「我新增了一个数据表，叫做**配品销售**……这就相当于实际上我们只是
+//   换了一个让用户交互的入口。但是我们**一旦收到这样的一个请求，还是要做同样的处理：
+//   销售主表、销售明细以及收款明细**」
+//
+// 路由层在这里**只做一件事**：按 **table_id** 认出"事件来自她那张配品销售表"，
+// 把整个 `action_list` **原样**交给 `accessorySaleIntakeService`（判定与写库都在那个 service 里）。
+//
+// ⚠️ 这条用例补的是上一位**如实标了"未钉"**的 AC-AS5（其余判据见
+//    `test/accessorySaleIntake.test.js`）。要能**真红**：把分派条件写宽（例如去掉 table_id 比较）
+//    ⇒ 下面第一条立刻红 ✓
+//
+// ⚠️ `setImmediate`：handler **同步返回 `{}`**（飞书要求及时响应），处理在下一拍才发生
+//    ⇒ 用例必须**等一拍**（沿用本文件既有的 `flushDispatch()` 手法 ✓）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 她那张表的 table_id（Lead 已按 table_id 只读核过；也是 `config/accessorySaleIntake` 的默认值）。
+const ACCESSORY_SALE_TABLE_ID = 'tblkT1QTUsESnl5b';
+// 「别的表」——用她原话里的形状，确保它**不等于**上面那个 id。
+const OTHER_TABLE_ID = 'tbl别的表';
+
+/** 计数替身：只记"被调用了几次、每次的 action_list 是什么"。 */
+const createAccessoryIntakeRecordingDouble = () => {
+  const calls = [];
+  return {
+    calls,
+    intake: {
+      handleTableChanges: async (actionList) => {
+        calls.push(actionList);
+        return { enabled: true, results: [] };
+      },
+    },
+  };
+};
+
+test('⑦ AC-AS5a 🔴 别的 table_id ⇒ 配品销售那条支路 **调用 0 次**（分派条件写宽 ⇒ 这条红）', async () => {
+  const { service } = createRecordingService();
+  const { intake, calls } = createAccessoryIntakeRecordingDouble();
+  const handlers = createLarkEventHandlers(service, { accessorySaleIntake: intake });
+
+  assert.doesNotThrow(() => handlers['drive.file.bitable_record_changed_v1'](
+    bitableEvent(OTHER_TABLE_ID, 'rec_other_table_sentinel'),
+  ));
+  await flushDispatch();
+
+  assert.deepEqual(calls, [],
+    `🔴 只有 ${ACCESSORY_SALE_TABLE_ID} 的事件才许进这条支路 ✗（\`${OTHER_TABLE_ID}\` 进来了 ⇒ 分派条件被写宽）`);
+});
+
+test('⑦ AC-AS5b ⭐ 她那张表 ⇒ 被调用 **恰好 1 次** ＋ `action_list` **原样**传下去（且等一拍才发生）', async () => {
+  const { service } = createRecordingService();
+  const { intake, calls } = createAccessoryIntakeRecordingDouble();
+  const handlers = createLarkEventHandlers(service, { accessorySaleIntake: intake });
+  const actionList = [
+    { record_id: 'rec_as_1', action: 'record_added', after_value: [{ field_id: 'fldVfSOmDg', field_value: 128 }] },
+    { record_id: 'rec_as_2', action: 'record_added' },
+  ];
+
+  const response = handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: ACCESSORY_SALE_TABLE_ID,
+    action_list: actionList,
+  });
+
+  assert.deepEqual(response, {}, '飞书要求及时响应：handler 同步返回 {} ✓');
+  assert.deepEqual(calls, [], '🔴 返回时还**没开始**处理（路由是 `setImmediate` 异步派发 ⇒ 用例要等一拍）✓');
+
+  await flushDispatch();
+
+  assert.equal(calls.length, 1, '她那张表的事件 ⇒ **恰好调用 1 次** ✓');
+  // 原样透传：**判定"哪条动作要办"不在这层**（口径在 config + service 里），所以
+  // 连第二条 `record_added`、以及 `after_value` 也一起交下去，不在这里筛、不在这里改形状。
+  assert.deepEqual(calls[0], actionList, '`action_list` **原样**传下去 ✓');
+});
+
+test('⑦ AC-AS5c ⭐ table_id **走配置**（不硬编码）：换一份 config ⇒ 认的表跟着换', async () => {
+  const { service } = createRecordingService();
+  const { intake, calls } = createAccessoryIntakeRecordingDouble();
+  const customTableId = 'tbl_custom_accessory_sale';
+  const handlers = createLarkEventHandlers(service, {
+    accessorySaleIntake: intake,
+    accessorySaleIntakeConfig: { tableId: customTableId },
+  });
+
+  // 她那张表（默认值）在这份 config 下**不该**被认（说明判据来自配置，不是写死的常量）
+  handlers['drive.file.bitable_record_changed_v1'](bitableEvent(ACCESSORY_SALE_TABLE_ID, 'rec_default_id'));
+  await flushDispatch();
+  assert.deepEqual(calls, [], '配置换成自定义表 ⇒ 默认表 id 不再被认 ✓');
+
+  handlers['drive.file.bitable_record_changed_v1'](bitableEvent(customTableId, 'rec_custom_id'));
+  await flushDispatch();
+  assert.equal(calls.length, 1, '认的是**配置里那张表** ✓');
+  assert.equal(calls[0][0].record_id, 'rec_custom_id');
+});
+
+test('⑦ AC-AS5d 🔴 这条新支路的**配置读不出来** ⇒ 只影响它自己：货品信息那条支路照跑（解耦）+ 如实 logError', async () => {
+  // 为什么要有这条：handler 里那句 `resolveAccessorySaleIntakeConfig()` 是在**事件到达时**求值的，
+  // 而 `readFlag` 对"认不出的值"是**当场抛**。若不在支路内部接住 ⇒ 一个配错的
+  // `ACCESSORY_SALE_INTAKE_ENABLED` 会把**同一次事件里另一条在线链路**（货品信息 → 标签二维码）
+  // 一起带走 —— 那正是本项目最忌讳的"一条链路的问题牵连别的链路"✗
+  const envKey = 'ACCESSORY_SALE_INTAKE_ENABLED';
+  const original = process.env[envKey];
+  const errors = [];
+  const originalError = console.error;
+  const { service, calls } = createTagQrRecordingService();
+  const { intake, calls: intakeCalls } = createAccessoryIntakeRecordingDouble();
+  const handlers = createLarkEventHandlers(service, { accessorySaleIntake: intake });
+
+  try {
+    process.env[envKey] = '这不是一个布尔值';
+    console.error = (line) => errors.push(String(line));
+    // ① 配品销售表：配置读不出来 ⇒ 这条支路**不办**，但**不许抛**
+    assert.doesNotThrow(() => handlers['drive.file.bitable_record_changed_v1'](
+      bitableEvent(ACCESSORY_SALE_TABLE_ID, 'rec_bad_config'),
+    ));
+    await flushDispatch();
+    assert.deepEqual(intakeCalls, [], '配置读不出来 ⇒ 这条支路不办（不许猜着办 ✗）');
+    assert.ok(errors.some((line) => line.includes('accessory_sale_intake.config_invalid')),
+      '必须**如实记一条 error**（配置读不出来的原因是排查线索 ✓）');
+
+    // ② 同一次"配错配置"的情况下，货品信息那条**既有**支路必须照跑
+    handlers['drive.file.bitable_record_changed_v1'](bitableEvent(PRODUCT_TABLE_ID, 'rec_qr_still_works'));
+    await flushDispatch();
+    assert.equal(calls.length, 1, '🔴 另一条链路**不许**被牵连（解耦 ✓）');
+  } finally {
+    if (original === undefined) delete process.env[envKey]; else process.env[envKey] = original;
+    console.error = originalError;
+  }
+});
+

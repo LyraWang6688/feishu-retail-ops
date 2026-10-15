@@ -417,6 +417,34 @@ class V1BitableGateway {
     return response.data?.record || null;
   }
 
+  /**
+   * ⭐⭐ 2026-10-15（task-19 ⑤ · Lead 裁决「回写默认开」）：按**原始 table_id** 回写**少量配置列** ——
+   *   给"不在 schema 里的入口表"（「配品销售」`tblkT1QTUsESnl5b`）写「写入状态 / 失败原因」两列用 ✓
+   *
+   * 🔴 **为什么它和 `getByTableId` 成对出现**：只读口只能读；而 Lead 2026-10-15 拍板**回写要真的用上**
+   *   ⇒ 必须有一个**写**口。⚠️ 它不是"随便哪张表都能写" ✗ —— 调用方由**配置**白名单把关
+   *   （`config/accessorySaleIntake.writeBack` 只在配置了那张表与那两个列名时才调它）✓
+   * ⚠️ `fieldNames` 由调用方给**飞书列名**；本层不认识业务字段名（与既有口径一致 ✓）
+   * ⚠️ 失败 ⇒ `assertSuccess` **如实抛** ⇒ 调用方自己决定"只记日志"（**不许在这里吞** ✗）
+   */
+  async updateByTableId({
+    tableId = '', recordId = '', fields = {}, correlation = {}, reason = '',
+  } = {}) {
+    const wantedTableId = String(tableId || '').trim();
+    const wantedRecordId = String(recordId || '').trim();
+    if (!wantedTableId) throw new Error('updateByTableId 需要 tableId（空表 ID 会打到 .../tables//records）');
+    if (!wantedRecordId) throw new Error('updateByTableId 需要 recordId');
+    if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+      throw new Error('updateByTableId 需要 fields（空对象是白跑一次调用）');
+    }
+    const response = await this.client.bitable.appTableRecord.update({
+      path: { app_token: this.schema.appToken, table_id: wantedTableId, record_id: wantedRecordId },
+      data: { fields },
+    });
+    this.assertSuccess(response, `按 table_id 回写记录（${reason || 'update_by_table_id'}）`);
+    return response.data?.record || null;
+  }
+
   async getBatch(tableKey, ids = [], options = {}) {
     const table = this.tableWithId(tableKey);
     const wanted = (Array.isArray(ids) ? ids : [])
