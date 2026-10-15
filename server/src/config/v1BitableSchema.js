@@ -120,6 +120,13 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PAYMENT_METHOD_TABLE_ID', 'tblH7YzA1v5vJzEi'),
       fields: {
         name: '收款方式',
+        // ⭐ 2026-10-16（她发截图定案）：这张表上有一列 **「团购券管理」（关联列）**，
+        //    指向 `tables.groupBuyVoucher`（「团购券管理」那张券表）；
+        //    **该列非空 ⇒ 这条收款方式是券** ⇒ 选中它时**金额可空** ✓（列空 ⇒ 照旧必填 ✓）
+        //    ⚠️ 列名放在配置里（**不把中文写进逻辑** ✗）；列的确切名字 / 类型 / `property.table_id`
+        //       必须由**服务器侧只读核生产真表**确认（见 `docs/payment-method-voucher-link-2026-10-16.md`）
+        //       —— 本机没有生产凭证，**我没有核过生产** ✗（如实标注，不猜 ✓）
+        voucher: '团购券管理',
       },
     },
     supplier: {
