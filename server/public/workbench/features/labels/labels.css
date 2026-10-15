@@ -46,6 +46,14 @@
 .label-summary { margin: 10px 0 0; font-size: 14px; }
 .label-notice { margin: 6px 0 0; font-size: 13px; color: var(--warning); }
 
+/* ⭐⭐ 2026-10-15：「只扫码」聚焦页（`?scan=1` 那条入口）—— 她真机反馈"不友好"之后做的。
+   ① 按钮做大（手机上单手好点）· ② 结果**大字**（一眼确认"刚才打的是哪一张" ✓）
+   · ③ 保留 ≥44px 命中区（既有哨兵 `.scan-print-bar .btn` 仍然成立 ✓）。 */
+.scan-only .scan-print-bar .btn { width: 100%; min-height: 56px; font-size: 17px; }
+.scan-print-result { margin: 10px 0 0; font-size: 18px; font-weight: 600; color: var(--success); }
+.scan-only .data-caption { margin: 10px 0 0; }
+.scan-batch-link { color: var(--primary); text-decoration: none; }
+
 /* ── 标签纸（屏幕预览 + 打印同一个 DOM）───────────────────────────────── */
 /* 手机上 A4 宽（210mm ≈ 794px）比屏幕宽 ⇒ 横向滚动看，不挤压排版。 */
 .label-sheet-scroll { overflow-x: auto; padding: 8px 0 16px; }

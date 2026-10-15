@@ -47,6 +47,15 @@ export const SCAN_PRINT_TEXTS = Object.freeze({
   timeout: '飞书扫一扫没响应（超时了）：请退出这一页重进再试一次；还不行就用上面「选择编号打印」。',
   // ⭐⭐ 2026-10-15：**失败原因已上报**（她看到人话的同时，我们日志里能查到确切原因 ✓）
   reported: '（已把失败原因记到日志，方便工程师查）',
+  // ⭐⭐ 2026-10-15：**「只扫码」聚焦页**（`?scan=1` 那条入口）的文案 ——
+  //   她真机反馈「整条链路不太友好」之后做的：原来这条入口复用的是**批量打印那一页**
+  //   ⇒ 进页先跑一次 `/labels` 查询（真机实测 **23.6 秒**）⇒ 她**先看到批量页干等**、相机才弹 ✗
+  title: '📷 扫码打印',
+  subtitle: '对着鞋盒标签上的二维码扫一下 —— 那一张就直接排进店里那台电脑的打印队列，这里不用选编号。',
+  scanAgain: '📷 再扫一张',
+  batchLink: '要一次打很多张？去「批量打印」→',
+  resultPrefix: '✅ 已提交打印：',
+  reusedPrefix: '✅ 刚刚已经发过这一张：',
 });
 
 /** 签名请求的地址：**页面地址原样带上**（签名必须与页面 URL 逐字一致，服务端只去掉 `#fragment`）。 */
@@ -90,7 +99,37 @@ export const scanPrintBarHtml = () => `
       <div class="label-queue-bar scan-print-bar" data-view="scan-print-bar">
         <button class="btn btn-primary" type="button" data-action="scan-print"></button>
       </div>
+      <p class="scan-print-result" data-view="scan-print-result"></p>
       <p class="label-notice" data-view="scan-print-notice"></p>`;
+
+/**
+ * ⭐⭐ 2026-10-15：**「只扫码」聚焦页的壳**（`?scan=1` = 「货品 → 标签打印 → 扫码打印」那条入口）。
+ *   🔴 它**只有这一块**：标题 + 一颗大按钮 + 结果那一行 + 一条去批量打印的链接 ——
+ *     **没有**筛选框 / 预览纸张 / 打印队列（那些是"批量打印"的事，进来会白跑一次 23.6 秒的查询 ✗）。
+ *   ⚠️ 要批量打印走下面那条链接（落到**不带** `?scan` 的同一页 = 原来那一页，**一个字节没改** ✓）。
+ */
+export const scanOnlyShellHtml = () => `
+    <section class="panel no-print scan-only">
+      <div class="panel-header">
+        <div>
+          <h2 data-view="scan-title"></h2>
+          <p class="subtitle" data-view="scan-subtitle"></p>
+        </div>
+      </div>
+      ${scanPrintBarHtml()}
+      <p class="data-caption"><a class="scan-batch-link" href="?" data-action="scan-batch-link"></a></p>
+    </section>`;
+
+/**
+ * 扫完那一刻给她看的那一行大字（**编号是主角** —— 她要一眼确认"刚才打的是哪一张" ✓）。
+ * 拿不到编号就**不编**（只说"这一张"）✗。
+ */
+export const scanResultText = (result, texts = SCAN_PRINT_TEXTS) => {
+  const merged = { ...SCAN_PRINT_TEXTS, ...(texts || {}) };
+  const numbers = Array.isArray(result?.numbers) ? result.numbers.filter(Boolean) : [];
+  const prefix = result?.reused ? merged.reusedPrefix : merged.resultPrefix;
+  return numbers.length ? `${prefix}${numbers.join('、')}` : `${merged.resultPrefix}这一张`;
+};
 
 /**
  * 这一块的控制器。`options` 全部可注入（用例用假 api / 假 `h5sdk`，**不碰真网络**）。
@@ -147,6 +186,11 @@ export function createScanPrintAction(options = {}) {
 
   const pick = (name) => (root ? root.querySelector(`[data-action="${name}"]`) : null);
   const view = (name) => (root ? root.querySelector(`[data-view="${name}"]`) : null);
+  /** 结果那一行大字（聚焦页与批量页**都有**这个节点；批量页上它就是"扫完的确认" ✓） */
+  const resultLine = (text) => {
+    const element = view('scan-print-result');
+    if (element) element.textContent = String(text || '');
+  };
   const notice = (text) => {
     const element = view('scan-print-notice');
     if (element) element.textContent = String(text || '');
@@ -215,6 +259,11 @@ export function createScanPrintAction(options = {}) {
         submit_key: options.submitKey ? String(options.submitKey()) : `${Date.now()}`,
       });
       notice(result?.reused ? texts.reused : texts.enqueued);
+      // ⭐⭐ 2026-10-15：**大字结果**（编号是主角）+ 按钮改成「再扫一张」——
+      //   她真机反馈"扫完又回到这一页、不知道刚才打了哪张" ⇒ 结果必须**一眼看见** ✓
+      resultLine(scanResultText(result, texts));
+      // ⚠️ 按钮文案**不在这里改**：`runWriteAction` 在动作结束时会**把文案还原成点击前那份**
+      //   （它的职责就是"忙完复原"）⇒ 在这里改会被它覆盖掉 ✗ ⇒ 交给 `runWithFeedback` 在**它之后**改 ✓
       report({ ok: true, phase: 'done', reason: result?.reused ? 'reused' : 'enqueued' });
       return result || null;
     } catch (error) {
@@ -260,27 +309,59 @@ export function createScanPrintAction(options = {}) {
     }
   }
 
+  /**
+   * 跑一次并带上**即时反馈**（按钮置灰 + 换文案 + 防连点），**手动点**与「进页自动弹一次」
+   * **两条路都走它**（只有一份实现 ✗ 不各写一份）。
+   * ⭐⭐ 2026-10-15：扫成功之后按钮变「再扫一张」—— 这一步**必须写在 `runWriteAction` 之后**
+   *   （它结束时会**把按钮文案还原** ⇒ 写在 `run()` 里会被覆盖 ✗；这是用例先红后改发现的 ✓）。
+   */
+  async function runWithFeedback() {
+    const button = pick('scan-print');
+    const result = await runWriteAction(button, () => run(), texts.scanning);
+    if (result && button) button.textContent = texts.scanAgain;
+    return result;
+  }
+
   return {
     state,
     texts,
     run,
-    /**
-     * 跑一次并带上**即时反馈**（按钮置灰 + 换文案 + 防连点）——
-     * 手动点按钮与"`?scan=1` 进页面自动弹一次"两条路都走它（**只有一份实现** ✗ 不各写一份）。
-     */
-    runWithFeedback() {
-      const button = pick('scan-print');
-      return runWriteAction(button, () => run(), texts.scanning);
-    },
+    runWithFeedback,
     mount(container) {
       root = container;
+      // ⭐⭐ 2026-10-15：聚焦页（`?scan=1`）的标题 / 说明 / "去批量打印"链接文案都在这里填
+      //   （批量页上没有这三个节点 ⇒ 一句都不改 ✓）
+      const title = view('scan-title');
+      if (title) title.textContent = texts.title;
+      const subtitle = view('scan-subtitle');
+      if (subtitle) subtitle.textContent = texts.subtitle;
+      const batchLink = pick('scan-batch-link');
+      if (batchLink) batchLink.textContent = texts.batchLink;
       const button = pick('scan-print');
       if (button) {
         button.textContent = texts.button;
         // ⭐ 即时反馈 + 防连点：点了**立刻**置灰 + 换文案（`core/ui.js` 的全仓同一个守卫）。
-        button.addEventListener('click', () => runWriteAction(button, () => run(), texts.scanning));
+        // ⭐⭐ 2026-10-15：走 `runWithFeedback` —— 手动点与"进页自动弹"**只有一份实现** ✓
+        //   （它多做的事只有一件：成功后把按钮改成「再扫一张」✓）
+        button.addEventListener('click', () => runWithFeedback());
       }
       return button;
     },
   };
 }
+
+/**
+ * ⭐⭐ 2026-10-15：**挂载「只扫码」的聚焦页**（`?scan=1` 那条入口）——这是**唯一的编排点**，
+ *   `features/labels/index.js` 命中这条入口时**只调它一下就 return**。
+ *   🔴 **一个字节的批量逻辑都不碰**：不查 `/labels`、不挂筛选 / 预览纸张 / 打印队列 ——
+ *     真机实测原来那次批量查询要 **23.6 秒**（扫 1362 条货品记录），正是"进页先看到批量页干等"的根因 ✗。
+ *   ⭐ 它只做三件事：渲染聚焦壳 → 挂扫码块 → **进页自动弹一次相机** ✓
+ *   ⚠️ `autoOpen: false` 供用例关掉自动弹（真机那条路是默认开的）。
+ */
+export const mountScanOnlyPage = (container, scanPrint, options = {}) => {
+  container.innerHTML = scanOnlyShellHtml();
+  const panel = container.querySelector('.panel') || container;
+  scanPrint.mount(panel);
+  if (options.autoOpen !== false) void scanPrint.runWithFeedback();
+  return panel;
+};
