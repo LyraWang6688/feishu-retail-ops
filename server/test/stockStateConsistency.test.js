@@ -73,7 +73,8 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { SCAN_STOCK_POLICY } = require('../src/config/scanStockPolicy');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
-const { SELLABLE_STATES, sellableCountOf, saleSizeGroups, purchaseSizeLines } = require('../src/views/scanPageRealm');
+// 改前逐字：`const { SELLABLE_STATES, … } = require(…)` ⇒ 改后：**名单已退场 ⇒ 不再 import** ✓
+const { sellableCountOf, saleSizeGroups, purchaseSizeLines } = require('../src/views/scanPageRealm');
 
 /** 四个 tab（渲染入口 = `?from=`；`realmBlockHtml` 只拼当前那一块）。 */
 const REALM_IDS = ['inventory', 'sales', 'replenish', 'purchase_return'];

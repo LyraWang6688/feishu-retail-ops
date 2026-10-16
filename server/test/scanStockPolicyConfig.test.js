@@ -36,7 +36,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  ENABLED_KEY, LEGACY_SELLABLE_STATES, SCAN_STOCK_POLICY, resolveScanStockPolicy,
+  // 改前逐字：有 `ENABLED_KEY` / `LEGACY_SELLABLE_STATES` ⇒ 改后：**都已退场 ⇒ 不再 import** ✓
+  SCAN_STOCK_POLICY, resolveScanStockPolicy,
   legacySellableCountOf, liveInventoryCountOf, countInStockOf, isInStock,
   sizeRangeOf, enterableSizesOf, normalSizesOf, specialSizesOf,
 } = require('../src/config/scanStockPolicy');

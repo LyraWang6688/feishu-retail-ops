@@ -284,7 +284,8 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   assert.deepEqual([...SELLABLE_STATES], ['门盒', '样品'], '开关关着时：可卖 = 样品 + 门盒（她 2026-10-09 的口径）');
   assert.equal(sellableCountOf(VIEW.rows[0], VIEW.columns), 1, '40：门盒 1');
   assert.equal(sellableCountOf(VIEW.rows[2], VIEW.columns), 2, '42：门盒 1 + 样品 1');
-  assert.equal(sellableCountOf(VIEW.rows[3], VIEW.columns), 0, '43：只有仓库 2 → 不算有货（开关关着时）');
+  // 改前逐字：`…, 0, '43：只有仓库 2 → 不算有货（开关关着时）'` ⇒ 改后：**2**（新口径：实时库存里有记录 = 有货 ✓）
+  assert.equal(sellableCountOf(VIEW.rows[3], VIEW.columns), 2, '43：仓库里有 2 双 ⇒ **算有货**（她 20:5x 新口径 ✓）');
   // 「老形状」（cells 上没有 key，既有夹具就是这种）也认 —— 按视图模型的列序取
   const legacyShape = {
     columns: VIEW.columns,
@@ -300,7 +301,8 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   //   ⇒ `folded` 为空 ✓（"第一组/第二组"的语义一个字没变 ✓）
   assert.deepEqual(saleSizeGroups(VIEW), {
     inStock: [{ size_text: '40', count: 1 }, { size_text: '42', count: 2 }],
-    prepaid: [{ size_text: '41', count: 0 }, { size_text: '43', count: 0 }, { size_text: '44', count: 0 }],
+    // 改前逐字：`prepaid: [{'41',0},{'43',0},{'44',0}]` ⇒ 改后：**43 已算有货 ⇒ 从预订组移走** ✓
+    prepaid: [{ size_text: '41', count: 0 }, { size_text: '44', count: 0 }],
     folded: [],
   }, '第一组 = 有货（现货）40 / 42；第二组 = 其余 41 / 43 / 44（预订）；第三组 = 缺货的特殊码（本例为空 ✓）');
 
@@ -323,7 +325,8 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
     assert.ok(inStock.includes(`name="size" value="${size}"`), `现货组缺尺码 ${size}`);
     assert.equal(prepaid.includes(`name="size" value="${size}"`), false, `${size} 有货，不该出现在预订组`);
   }
-  for (const size of ['41', '43', '44']) {
+  // 改前逐字：`['41','43','44']`（43 不算有货）⇒ 改后：**只剩 41 / 44**（43 已入现货组 ✓）
+  for (const size of ['41', '44']) {
     assert.ok(prepaid.includes(`name="size" value="${size}"`), `预订组缺尺码 ${size}`);
     assert.equal(inStock.includes(`name="size" value="${size}"`), false, `${size} 没货，不该出现在现货组`);
   }
@@ -372,7 +375,7 @@ test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不�
   const inStock = groupOf('in_stock');
   const prepaid = groupOf('prepaid');
   // ── ③ 分组与判据一个字不变：40 / 42 = 现货；41 / 43 / 44 = 预订 ─────────────────
-  assert.equal(chipsOf(inStock), 2, '现货组：40 / 42 两个码');
+  assert.equal(chipsOf(inStock), 3, '现货组：**40 / 42 / 43** 三个码（43 = 仓库 2 双 ⇒ 新口径算有货 ✓）');
   assert.equal(chipsOf(prepaid), 3, '预订组：41 / 43 / 44 三个码（3 个码就排一行 3 个）');
   // ── ④ 不显示数量：两组里一个「双」字都没有 ────────────────────────────────────
   for (const [name, group] of [['现货组', inStock], ['预订组', prepaid]]) {

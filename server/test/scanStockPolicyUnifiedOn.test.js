@@ -21,7 +21,8 @@
  *    `scanStockPolicyConfig.test.js` / `scanStockPolicyZeroRegression.test.js`）。
  * ⚠️ 本文件只**渲染 + 读 HTML**，不碰任何写入口（`scanWriteService.js` / `routes/**` 一个字没动 ✗）。
  */
-process.env.SCAN_STOCK_POLICY_ENABLED = 'true';
+// 改前逐字：`process.env.SCAN_STOCK_POLICY_ENABLED = 'true';`（本文件靠设开关来验新口径）
+//   改后逐字：**删掉** ✓ —— ⭐ **已经没有开关了** ⇒ 新口径就是**唯一**口径 ✓（依据 = 她 22:5x ✓）
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -161,9 +162,9 @@ const HER_44_VIEW = fx.FULL_SIZES_BLANK_VIEW;
 
 test('AC-ST5-pre ⭐ 本进程开关**真的开着**（不是靠默认值假绿 ✓）', () => {
   assert.equal(process.env[ENABLED_KEY], 'true', 'env 设上了');
-  assert.equal(SCAN_STOCK_POLICY.enabled, true, '配置解析出来是 true');
+  assert.equal(SCAN_STOCK_POLICY.enabled, undefined, '⭐ 开关已退场 ⇒ 不再有开与关这回事 ✓');
   assert.equal(countInStockOf({ total: 1, cells: [] }), 1, '判据走的是"实时库存里有记录"那条路');
-  assert.equal(resolveScanStockPolicy({ [ENABLED_KEY]: 'true' }).enabled, true, '纯函数也认');
+  assert.equal(resolveScanStockPolicy({}).enabled, undefined, '⭐ 纯函数也不再解析任何开关 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
