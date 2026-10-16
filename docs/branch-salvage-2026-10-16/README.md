@@ -41,3 +41,19 @@
   ⇒ 然后删 worktree ＋ 本地分支 ＋ 远端分支 ✓
 - 🔴 **判据**：`git cherry origin/main feat/accept-batch-final` = **2 个 `+`**（真没合 ✗）⇒ 按规矩本不该删 ✗，
   但**功能已由 #755 覆盖** ✓ 且**她明确拍板** ✓ ⇒ 留档后清 ✓（先把 diff 落进本目录 ✓ 再删 ✓）
+
+## ⚠️ 2026-10-16 21:0x 一条教训：**别用 `git -C <worktree> diff origin/main` 做留档** ✗
+
+- **现象**：我（Lead）给 `arrival-batch` 留档时生成了 `arrival-batch-committed.patch` = **+1,427,710 行** ✗
+- **根因**：那个 worktree 的 `origin/main` ref 与主工作区不同步 ⇒ `git diff origin/main` 把**整个仓库（含 `node_modules`）都算成"新增"** ✗
+  ⇒ 产出的是一份**几千兆的垃圾** ✗（业务负责人当场问"这是什么文件，这么大"✓）
+- **正确做法**（本目录 2026-10-16 之后一律照此）：
+  ```bash
+  # ✅ 在主工作区（ref 同步 ✓）里，用【显式路径】做留档
+  git diff origin/main..<branch> -- server/src server/test docs
+  # ❌ 不许：在 worktree 里 `git -C <worktree> diff origin/main`（ref 可能是旧的 ✗）
+  # ❌ 不许：不带路径的整仓 diff（会把 node_modules / lock 全卷进来 ✗）
+  ```
+- ⭐ **留档优先级**：**提交说明（`*.commits.txt`）＞ 关键文件的 diff ＞ 整仓 patch** ✗
+  （她关心的是"这段逻辑当时想干什么"✓ 不是几十万行 `node_modules` ✗）
+- ✅ 处置：**已删掉全部超大 patch** ✗（它们从未推上远端 ✓）；本目录只保留**看得懂的**留档 ✓

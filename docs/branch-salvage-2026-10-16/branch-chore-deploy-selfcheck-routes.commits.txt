@@ -1,0 +1,1 @@
+2e69df2 chore(scan): post-deploy self-check for the login redirects and workbench assets
