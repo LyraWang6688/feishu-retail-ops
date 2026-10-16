@@ -44,6 +44,15 @@ const SCAN_SUCCESS_PAGE = Object.freeze({
   minimalText,
   /** @deprecated 只为可读性：她原话里那句形状 ✓ 判据按 `minimalText` 走 ✓。 */
   defaultMinimalText: DEFAULT_MINIMAL_TEXT,
+  // ⭐⭐ 2026-10-17（她 2026-10-16 23:5x 逐字「**那我肯定能看到这个单号呀**」✓）
+  //   成功页上那一行【纯文案】的单号模板（`{orderNo}` 占位 ✓ 与 `fillText` 同形 ✓）。
+  //   ⚠️ 它**刻意不在 `minimalSuccessOverrides` 要清的那几个字段里**
+  //     （`number` / `backPath` / `returnPath` / `autoReturnUrl` / `extraActionsHtml` ✓）
+  //     ⇒ ⭐ 极简（零链接零按钮零自动跳）与"看得到单号"**同时成立** ✓
+  //   ＋ ⭐ 它属于**成功页这份配置**（与 `minimalSuccessOverrides` 同一个家 ✓）
+  //     ⇒ ⭐ **不必动 `config/scanPage.js`** ✓（她 22:5x「不需要开关」✓ 那句是另一件事 ✓）
+  //   ⚠️ 号为空 ⇒ 渲染层**整行不输出** ✓ ⇒ **逐字节不变** ✓（`AC-REG1` 锁着这件事 ✓）
+  orderNoText: '上一单已提交（{orderNo}）',
 });
 
 /**
@@ -52,6 +61,12 @@ const SCAN_SUCCESS_PAGE = Object.freeze({
  * 覆盖到什么程度（逐条对应她的原话 ✓）：
  *   · `body` ⇒ 统一那一句 ✓（"已提交成功，数据会更新"这类 ✓）
  *   · **不跳转** ⇒ `autoReturnUrl=''` ＋ `returnDelaySeconds=0` ⇒ 渲染层**不写 `<meta http-equiv="refresh">`** ✓
+ *     ⭐ **依据出处（不许靠记忆转述 ✓）**：⭐ **零链接 ＋ 零跳转** 与上游**零回归判据**
+ *       `test/successPageZeroRegression.test.js` 的 **`AC-REG1`**（**逐字节 sha256 ＋ 零 offender** ✓）**同一基线** ✓
+ *       ⇒ ⭐ 这是**技术设计与上游判据的自洽** ✓ —— ⚠️ **不是"她的口径"** ✗（技术取舍不许伪造出处 ✗）。
+ *       ⚠️ 2026-10-17 00:5x 记：Lead 曾在派活卡里误写「2 秒后自动回首页**保留**」✗（**转述错误** ✓ 他已认错撤回 ✓）
+ *       ⇒ 本注释据此**显式钉住"不跳转"的出处** ✓（防止下一次又靠记忆转述 ✗）；
+ *         他的正确裁决：⭐ **路 A = 不跳转** ✓（判据 `AC-R9` 已按此**反向钉住** ✓）
  *   · **不链接** ⇒ `backPath/backLabel/backHint` ＋ `returnPath/returnLabel` 全清 ⇒ 一个 `<a>` 都没有 ✓
  *   · 追加动作块（`extraActionsHtml`）也清 ✗（它同样是"跳走/再做一件事"的入口 ✓）
  *   · `details` 清 ✗（她说"就一句话" ✓；单号这类事实**进日志** ✓ 不占她的成功页 ✗）

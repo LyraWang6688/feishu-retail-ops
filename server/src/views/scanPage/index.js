@@ -116,6 +116,14 @@ const renderScanMessagePage = ({
   // ⭐⭐ 2026-10-16（task-52 收尾 · 成功页统一极简）：配置源（缺省 = `config/scanSuccessPage.js` ✓）
   //    判据可直接注入 `{ minimalEnabled: true, minimalText: '…' }` ⇒ 不必改 env ✓
   successPage = null,
+  // ⭐⭐ 2026-10-17 02:5x **成对迁移（补上缺失的消费者）· 改前逐字 → 改后逐字 → 依据**：
+  //   改前逐字：参数表里**没有 `order_no`** ✗ ⇒ 路由 payload 里的 `order_no`（`routes:2732` ✓）
+  //     被**静默丢掉** ⇒ 成功页上**看不到单号** ✗（她 23:5x 逐字：「**那我肯定能看到这个单号呀**」✓）
+  //   改后逐字：⭐ **收下它** ✓（`order_no` 就是 `routes:965` 那个 `payload` 的键 ✓ 原样传进来的 ✓）
+  //     ＋ ⭐ 在**极简覆盖之外**渲染一行**纯文案** ✓（否则会被 `minimalSuccessOverrides` 吃掉 ✗ —— 实测 ✓）
+  //   依据 = 她 2026-10-16 23:5x「**那我肯定能看到这个单号呀**」＋「**就一页、没有按钮没有链接、
+  //         也不自动跳（你得自己点返回），按照这个，保持现状**」✓（两句要**同时**满足 ✓）
+  order_no = '',
 }, config = SCAN_PAGE) => {
   // ⭐ **只在成功页**上套用；**开关关着 ⇒ minimal = {} ⇒ 下面每一处都逐字不变** ✓（零回归 ✓）
   const minimal = tone === 'success' ? minimalSuccessOverrides(successPage || SCAN_SUCCESS_PAGE) : {};
@@ -124,6 +132,20 @@ const renderScanMessagePage = ({
     returnPath, returnLabel, returnDelaySeconds, autoReturnUrl, extraActionsHtml,
     ...minimal,
   };
+  // ⭐⭐ 单号那一行（**极简覆盖之外** ✗ ⇒ 不会被吃掉 ✓）：
+  //   · ⭐ **号非空才出现** ✓（空 ⇒ 整行不出现 ✗ **不显示空括号** ✓）
+  //   · ⭐ **纯文案**（无 `<a>` / 无按钮 / 无跳转 ✓ —— 零链接零按钮零自动跳是她定的 ✓）
+  //   · ⭐ **文案走 config** ✗（模板里不写中文 ✓）—— ⭐ 取自 **`SCAN_SUCCESS_PAGE.orderNoText`** ✓
+  //     （⭐ **不读 `config.texts.…`** ✗：这文案属于**成功页**那份配置 ✓、与 `minimalSuccessOverrides` 同一个家 ✓
+  //       ⇒ ⭐ **不必动 `config/scanPage.js`** ✓ 依据 = 她 23:5x「那我肯定能看到这个单号呀」✓）
+  //   · ⭐ **键缺省为空 ⇒ 整行不出现** ✓（向后兼容 ✓ 且"没有号"时**逐字节不变** ✓ —— 判据 `AC-REG1` 锁着 ✓）
+  const orderNoNotice = String(order_no || '').trim();
+  const orderNoTemplate = String((successPage || SCAN_SUCCESS_PAGE).orderNoText || '').trim();
+  const orderNoHtml = tone === 'success' && orderNoNotice && orderNoTemplate
+    ? `<p class="foot" data-view="success-order-no">${escapeHtml(
+      orderNoTemplate.replace(/\{orderNo\}/g, orderNoNotice),
+    )}</p>`
+    : '';
   return renderDocument({
   title,
   config,
@@ -140,7 +162,7 @@ ${tone === 'success' ? '<p class="state-msg__mark" aria-hidden="true">✅</p>' :
 <h1${tone === 'success' ? ' class="state-msg__title--success"' : ''}>${escapeHtml(title)}</h1>
 <p>${escapeHtml(eff.body)}</p>
 ${eff.details.length ? `<ul class="result">${eff.details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
-${eff.number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(eff.number)}</span></p>` : ''}
+${eff.number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(eff.number)}</span></p>` : ''}${orderNoHtml}
 ${eff.retryHint ? `<p class="hint">${escapeHtml(eff.retryHint)}</p>` : ''}
 ${eff.backPath && eff.backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(eff.backPath)}">${escapeHtml(eff.backLabel)}${eff.backHint ? `<span>${escapeHtml(eff.backHint)}</span>` : ''}</a>` : ''}
 ${eff.returnPath && eff.returnLabel ? `<a class="btn" data-view="success-return" href="${escapeHtml(eff.returnPath)}">${escapeHtml(eff.returnLabel)}</a>` : ''}

@@ -336,8 +336,42 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
       html = await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), skipBody)).text();
     }
     assert.ok(html.includes(SCAN_WRITE.texts.submittedTitle), '成功页逐字「您的提交已成功」');
-    assert.ok(html.includes(`${SCAN_PAGE.route.recordBasePath}/${RECORD_ID}`),
-      `成功页的【再录一单】必须回 /r/${RECORD_ID}（不是 /s/<记录id>）`);
+    // ⭐⭐ 2026-10-16 23:4x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.ok(html.includes(`${SCAN_PAGE.route.recordBasePath}/${RECORD_ID}`),
+    //                '成功页的【再录一单】必须回 /r/{RECORD_ID}（不是 /s/<记录id>）');`
+    //   改后逐字：⭐ **成功页已经【零链接零按钮】** ✓（"再录一单"那颗**整个退场**了 ✗）
+    //     ⇒ ⭐ 判据**不删**、改成**反向钉住**：⭐ 成功页里**不许再出现 `/r/` 或 `/s/` 的任何链接** ✓
+    //   依据 = 她 23:4x「**单独发一小版，把那个开关删掉**」＋ 22:5x「**不需要开关**」✓
+    //          （口径：提交后**只有一个成功页**、没有按钮没有链接、只有同一句话 ✓）
+    assert.equal(html.includes(SCAN_PAGE.route.recordBasePath), false,
+      '⭐ 成功页**零链接**（不许再出现 /r/ 那种"再录一单"链接 ✗ —— 她 23:4x 要的就是这个 ✓）');
+    assert.equal(/href="[^"]*\/[rs]\//.test(html), false,
+      '⭐ 成功页里**没有任何指向 /r/ 或 /s/ 的链接**（零链接零按钮 ✓）');
+    // ⭐⭐ 2026-10-17 00:5x **第二次成对迁移**（口径更正 · 改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字（⭐ 我按 Lead 卡里**写错的那句**口径写的 ✗）：
+    //     `assert.ok(/setTimeout|http-equiv="refresh"|location\.replace|location\.href/.test(html)
+    //        || /2\s*秒|自动回/.test(html), '⭐ "2 秒后自动回首页"必须照旧保留 ✓（…不是自动回首页 ✓）');`
+    //   🔴 **为什么错**：⭐ Lead 卡里「2 秒后自动回首页**保留**」是**转述错误** ✗（他把旧成功页那个"带倒计时的页"
+    //     的行为抄进了卡 ✗）⇒ ⭐ 他已于 00:5x **明确认错并撤回** ✓
+    //     ⇒ ⭐ **这是"口径不许靠记忆转述、必须落文件"那条纪律的又一次实证** ✓（他今晚第二次踩 ✗）
+    //   改后逐字：⭐ **反向钉住"零跳转"** ✓ —— ⭐ 与**上游零回归判据 `AC-REG1`**（逐字节 sha256 ＋ 零 offender ✓）**同口径** ✓：
+    //     ① ⭐ 渲染层**不写** `<meta http-equiv="refresh">` ✗ ② ⭐ 无 `setTimeout` / `location.href|replace` 自动跳 ✓
+    //     ③ ⭐ 极简覆盖 `returnDelaySeconds === 0` ＋ `autoReturnUrl === ''` ✓（倒计时 0 ⇒ 就是不跳 ✓）
+    //   依据 = ⭐ **上游判据 ＋ config 注释 ＋ 成品代码 三者自洽** ✓
+    //     （`AC-REG1` 零 offender 逐字节基线 ✓ ＋ 注释逐字「**不跳转** ⇒ 渲染层不写 `<meta http-equiv="refresh">`」✓
+    //      ＋ 代码 `returnDelaySeconds: 0` / `autoReturnUrl: ''` ✓）
+    //   ⚠️ ⭐ **不写成"她的口径"** ✗ —— ⭐ 这是**技术设计与上游判据**的自洽 ✓（技术取舍不许伪造出处 ✗）
+    assert.equal(/http-equiv=["']refresh["']/i.test(html), false,
+      '⭐ 极简成功页**不写 refresh 跳转** ✓（零跳转 ✓ 与 `AC-REG1` 逐字节基线一致 ✓）');
+    assert.equal(/setTimeout|location\.(href|replace)\s*=/.test(html), false,
+      '⭐ 极简成功页**没有任何自动跳转脚本** ✓（零链接 ＋ 零跳转 ✓）');
+    const minimalCfg = require('../src/config/scanSuccessPage');
+    assert.equal(minimalCfg.SCAN_SUCCESS_PAGE.minimalEnabled, undefined,
+      '⭐ 开关已退场 ✓（成功页**永远极简** ✗ 不再有"关着的老样子" ✓）');
+    assert.equal(minimalCfg.minimalSuccessOverrides().returnDelaySeconds, 0,
+      '⭐ 倒计时 = 0 ⇒ **不跳转** ✓（成品与注释一致 ✓）');
+    assert.equal(minimalCfg.minimalSuccessOverrides().autoReturnUrl, '',
+      '⭐ `autoReturnUrl` 为空 ⇒ **不跳转** ✓（成品与注释一致 ✓）');
   });
 });
 

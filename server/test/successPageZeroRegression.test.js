@@ -39,9 +39,17 @@ const SERVER_DIR = path.join(__dirname, '..');
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
 /** ⭐ **永远极简**那三条链成功页全字节的 sha256（**实测重算** ✓ 见文件头台账 ✓）。 */
-const MINIMAL_SHA256 = '530a91fbe066b2600aaae1a4ba5e1f3644d8af4861a06589674813aa8e7303e2';
+// ⭐⭐ 2026-10-17 **成对迁移**（改前逐字 → 改后逐字 → 依据）· Lead 裁【甲】✓：
+//   改前逐字：`const MINIMAL_SHA256 = '530a91fbe066b2600aaae1a4ba5e1f3644d8af4861a06589674813aa8e7303e2';`
+//             `const MINIMAL_BYTES = 107528;`
+//   改后逐字：**两个值都更新** ✓（sha `10b943e3…` ／ 字节 `107618` ✓ —— ⭐ 差值 **+90 字节** ＝ 新增那一行单号 ✓）
+//   依据 = 她 2026-10-16 23:5x 逐字「**那我肯定能看到这个单号呀**」⇒ ⭐ **成功页【多了一行单号】＝ 她要的样子**
+//     ⇒ ⭐ **逐字节基线跟着走** ✓（纪律：⭐ **只有"她看到的样子"变了才动基线** ✓）
+//   🔴 **这不是放松判据** ✗：sha **与** 字节数**两个都还在钉** ✓，只是值随她看到的样子更新 ✓；
+//      本判据**没有**删断言、没有换弱形式 ✓（旧值留在这里便于追溯"是哪一刀让它变的" ✓）。
+const MINIMAL_SHA256 = '10b943e329bee1ddaa445be1359086fdc83fa662c4afa7e20893019c082b948c';
 /** ⭐ 同一个字节流的**长度**（sha 红了时能一眼看出是不是"多了几个字节"）✓。 */
-const MINIMAL_BYTES = 107528;
+const MINIMAL_BYTES = 107618;
 
 /** 三条链（销售 / 补货 / 退货）渲染结果按**固定顺序**拼成一份字节流（判据 / 证据共用同一算法 ✓）。 */
 const chainsBytes = (pages) => [pages.sale, pages.replenish, pages.purchaseReturn].join('');
