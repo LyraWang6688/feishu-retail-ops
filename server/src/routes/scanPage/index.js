@@ -2979,6 +2979,32 @@ return sendPaymentStep(res, req, {
               } : null,
             });
             // 🔴 失败**如实**：绝不带着空单号继续去资金页当她"成功了" ✗
+            // 成对迁移（改前逐字 → 改后逐字 → 依据）—— 2026-10-17（真 bug 修复）：
+            //   改前逐字：失败一律 `return respondWriteFailure(res, goods, requestId);` ⇒
+            //     连"主表已落、后面某步抛"（`sale_partial_failed`）也走**通用失败页**（"这一步没成功"）。
+            //   改后逐字：先判 `sale_partial_failed` ⇒ 给**"半成"页**（"单子记上了，后面还有一步没写完" + 单号）；
+            //     其余失败仍走 `respondWriteFailure`（逐字不动）。
+            //   依据 = 她 2026-10-12 定的口径「**绝不许**显示"提交已成功"，也**不许**跟"一个字都没写"混为一谈
+            //      （主表那条记录是真的落库了）⇒ 这一页给她**单号** + 怎么出去」＋ 她「失败要有人话」。
+            //   ⚠️ 与耗时日志是同一件事：④ 那把「货那一跑」从原段挪出来、原段成死代码 ⇒ 这一支也一起丢了。
+            if (goods && goods.code === 'sale_partial_failed') {
+              const orderLine = fillWriteText(writeConfig.texts.submittedOrderLine, {
+                orderNo: goods.order_no || '—',
+              });
+              return sendHuman(res, 500, {
+                title: writeConfig.texts.partialFailedTitle,
+                body: fillWriteText(writeConfig.texts.partialFailedBody, {
+                  orderNo: goods.order_no || '—',
+                }),
+                requestId,
+                details: [orderLine],
+                retryHint: writeConfig.texts.partialFailedRetryHint,
+                backPath: postActionFor(
+                  backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+                ),
+                backLabel: writeConfig.texts.submittedRecordAnother,
+              });
+            }
             if (!goods || goods.ok !== true) return respondWriteFailure(res, goods, requestId);
             goodsOrderNo = String(goods.order_no || '');
             logInfo(writeConfig.events.saleTiming, {
