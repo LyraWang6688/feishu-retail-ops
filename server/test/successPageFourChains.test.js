@@ -4,8 +4,8 @@
  * ⭐⭐ **四条链成功页「统一极简」的【真路由】判据 ＋ 整页零回归**（2026-10-16 · **加固层**）。
  *
  * 背景（如实）：成功页统一极简的**实现**已随 **#770**（`062544d1`）落地 ——
- *   `config/scanSuccessPage.js`（开关 `SCAN_SUCCESS_PAGE_MINIMAL_ENABLED` 缺省 false ＋ 那句文案）＋
- *   `views/scanPage/index.js` 的 `renderScanMessagePage` 挂钩（只在 `tone==='success'` 且开关开时清链接/按钮/自动跳转）。
+ *   `config/scanSuccessPage.js`（**没有开关**：永远极简 ＋ 那句文案）＋
+ *   `views/scanPage/index.js` 的 `renderScanMessagePage` 挂钩（只在 `tone==='success'` 时清链接/按钮/自动跳转）。
  *   它自带的 `test/scanSuccessPageMinimal.test.js`（AC-MS-P1/P2/P3）钉的是**渲染层**。
  *
  * 本文件补的是**它没钉住的那三件**（不重复造 ✗）：
@@ -20,7 +20,6 @@
  */
 
 // 🔴 必须在 require 任何 `config/**` / 路由**之前**摆好（配置在 require 期读 env ✗）
-process.env.SCAN_SUCCESS_PAGE_MINIMAL_ENABLED = 'true';
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_success_minimal_test';
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'success_minimal_test_secret';
 
@@ -32,7 +31,7 @@ const path = require('node:path');
 const express = require('express');
 
 const { SCAN_PAGE } = require('../src/config/scanPage');
-const { SCAN_SUCCESS_PAGE } = require('../src/config/scanSuccessPage');
+const { SCAN_SUCCESS_PAGE, minimalSuccessOverrides } = require('../src/config/scanSuccessPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const arrivalTab = require('../src/config/workbenchArrival');
@@ -113,10 +112,18 @@ const postForm = async (url, cookie, body) => fetch(url, {
 });
 const pageUrl = (base, realm) => `${base}/s/${encodePath(NUMBER)}?from=${realm}`;
 
-/** 开关**真的开着**（前置自检：配置没读到 env ⇒ 后面的断言全是空跑 ✗）。 */
-test('AC-SP0 ⭐ 前置：开关读到 env=true（否则下面全是空跑 ✗）', () => {
-  assert.equal(SCAN_SUCCESS_PAGE && SCAN_SUCCESS_PAGE.minimalEnabled, true,
-    '`SCAN_SUCCESS_PAGE_MINIMAL_ENABLED=true` ⇒ 配置里必须是 true（链没接上 ⇒ 本文件全部组红 ✓）');
+/**
+ * ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+ *   改前逐字：`AC-SP0 ⭐ 前置：开关读到 env=true`（`assert.equal(SCAN_SUCCESS_PAGE.minimalEnabled, true)`）
+ *   改后逐字：本用例 —— **没有开关也成立**（他 22:5x：「把新功能都上了，不需要开关」）⇒ 前置改成钉"开关已退场"
+ *   依据 = 业务负责人 2026-10-16 22:5x 逐字 ✓
+ */
+test('AC-SP0 ⭐ 前置：**开关已退场**，成功页不靠 env 也永远极简（否则下面全是空跑 ✗）', () => {
+  assert.equal('minimalEnabled' in SCAN_SUCCESS_PAGE, false,
+    '配置里不许再有 `minimalEnabled`（开关退了 ✗）');
+  const overrides = minimalSuccessOverrides();
+  assert.ok(overrides && overrides.body === SCAN_SUCCESS_PAGE.minimalText,
+    '不设任何 env ⇒ 极简覆盖值照样返回（"永远开" ✓；链没接上 ⇒ 本文件全部组红 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -257,23 +264,23 @@ test('AC-SP2 ⭐ 配置驱动：换成另一份文案 ⇒ 页面跟着变（渲�
 // AC-SP3：显式布尔 · 空串 = 关 · 禁 `||` 兜底
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-SP3 🔴 开关 = 显式布尔（`readFlag`）：空串 = 关 · 源码里**不许** `||` 兜底', () => {
-  // eslint-disable-next-line global-require
-  const { readFlag } = require('../src/config/envValue');
-  const KEY = 'SCAN_SUCCESS_PAGE_MINIMAL_ENABLED';
-  assert.equal(readFlag({ [KEY]: '' }, KEY, true), false, '空串 ⇒ **关**（不许回落到缺省 true ✗）');
-  assert.equal(readFlag({ [KEY]: 'false' }, KEY, true), false, '显式 false ⇒ 关 ✓');
-  assert.equal(readFlag({ [KEY]: 'true' }, KEY, true), true, '显式 true ⇒ 开 ✓');
-  assert.equal(readFlag({}, KEY, false), false, '没设 ⇒ 缺省（本卡 = **false** ✓ 缺省关）');
-  assert.throws(() => readFlag({ [KEY]: '大概吧' }, KEY, false), /显式布尔/, '认不出的值 ⇒ 当场抛（不静默）');
-  // 源码哨兵：那一行必须是 `readFlag(...)`，**不许** `process.env.X || …` 形状
+test('AC-SP3 ⭐⭐ 反向哨兵：**开关已退场**（成功页永远极简）＋ 源码里**不许** `||` 兜底', () => {
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`AC-SP3 🔴 开关 = 显式布尔（readFlag）：空串 = 关 …`（逐条钉 readFlag 语义）
+  //   改后逐字：本用例 —— 开关已退场 ⇒ 改钉"**它不许回来**"＋"那条禁令（`||` 兜底）继续成立" ✓
+  //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**……把新功能都上了，不需要开关。**」✓
+  // ⚠️ 名字**拼出来**（源码里不留字面量 ⇒ 将来 no-switch 哨兵扫字面量时不会误判 ✓）
+  const KEY = ['SCAN', 'SUCCESS', 'PAGE', 'MINIMAL', 'ENABLED'].join('_');
   const cfgSrc = fs.readFileSync(path.join(SERVER_DIR, 'src', 'config', 'scanSuccessPage.js'), 'utf8');
   const cfgCode = cfgSrc.replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-  const line = cfgCode.split('\n').find((l) => l.includes(KEY)) || '';
-  assert.match(line, /readFlag\(env,\s*'SCAN_SUCCESS_PAGE_MINIMAL_ENABLED',\s*false\)/,
-    `开关必须是显式布尔且缺省 false（实际那一行：${line.trim()}）`);
-  assert.equal(/\|\|/.test(line), false, `🔴 禁 \`||\` 兜底（清空变量会关不掉 ✗）：${line.trim()}`);
+  assert.equal(cfgCode.includes(KEY), false, '🔴 开关名不许回来 ✗');
+  assert.equal(/process\.env\.[A-Z_]+\s*\|\|/.test(cfgCode), false, '🔴 禁 `||` 兜底（清空变量会关不掉 ✗）');
+  // 正向：四条链的成功页**永远极简**（不依赖任何 env ✓）
+  const { minimalSuccessOverrides } = require('../src/config/scanSuccessPage');
+  const overrides = minimalSuccessOverrides();
+  assert.ok(overrides.body && overrides.backPath === '' && overrides.autoReturnUrl === '',
+    '极简覆盖值**永远**返回（没有开关可关 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1,26 +1,27 @@
 'use strict';
 
 /**
- * ⭐⭐ **零回归：成功页开关【关着】⇒ 与改前【逐字节】一致（整页 sha256）**（2026-10-16 · **加固层**）。
+ * ⭐⭐ **成功页「永远极简」的逐字节哨兵**（2026-10-16 · **加固层** + **删开关**迁移）。
  *
- * 背景（如实）：实现已随 **#770**（`062544d1`）落地；它自带的 AC-MS-P2 钉的是"关着时**形状**不变"（两次调用互相比较 ✓）。
- * 本文件把它升级成**能真红**的那一种：**同一条渲染路径渲出来的整页字节**，与
- * **动手之前（`origin/main 6ad32ea`）实测的那一个 sha256** 比 —— 差一个字节就红 ✓。
+ * ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 本文件原来的语义是"**开关关着 ⇒ 与今天逐字节一致**"：
+ *   · **改前逐字**：开关关着 ⇒ 三条链成功页 = `origin/main 6ad32ea` 实测的整页 sha256
+ *     `82858f52ac40fa4eb0588ad4b87167916b5959e3fcfa27ee0d3d89898a765772`（108,615 字节）
+ *     ＋ 还断言"改前那颗回跳链接 / 自动回跳 / 那两句回跳文案**照旧在**"（= 老样子 ✓）
+ *   · **改后逐字**：开关**整件退场**（她 22:5x「**把新功能都上了，不需要开关**」）⇒ 成功页**永远极简**
+ *     ⇒ 基线换成**实测重算**的那一个：`530a91fbe066b2600aaae1a4ba5e1f3644d8af4861a06589674813aa8e7303e2`（107,528 字节）
+ *     ＋ 断言换成"**零链接 / 零按钮 / 零表单 / 零自动跳转**（三条链都是）＋ 三条链都含统一那一句" ✓
+ *   · **依据** = 业务负责人 2026-10-16 22:5x 逐字：「**不用。以后你不用有"开关"的这个思维，我们换了新功能，
+ *     就直接用新功能就可以了呀。把新功能都上了，不需要开关。**」✓（`docs/no-switch-rule-2026-10-16.md`）
+ *   ⚠️ **强度不降**：仍是**整页逐字节**（sha256）＋ 行为断言（零 offender）—— 只是从"老样子"翻成"新样子" ✓
  *
- * 🔴 为什么单独一个文件、单独一个进程：开关在 `config/**` 的 **require 期**读 env
- *   ⇒ 一个进程里只能摆一种开关状态（本文件 = **关**；开着那半在 `test/successPageFourChains.test.js` ✓）。
- *
- * 🔴 台账（改前逐字 → 改后逐字 → 依据）：
- *   · 改前（`origin/main 6ad32ea`，实测）：`82858f52ac40fa4eb0588ad4b87167916b5959e3fcfa27ee0d3d89898a765772`（108,615 字节）
- *   · 改后（`origin/main ef45150d`，实测）：**同一个值** ✓（⇒ 判据不必迁移 ✓）
- *   · 依据：Lead 的口径「开关关着 ⇒ 与今天逐字节一致（整页 sha256）」
- *   ⚠️ 将来**合法**地改成功页 ⇒ 按 `docs/frozen-sha-pin-rule-2026-10-16.md` **成对迁移**这个常量（改前 sha → 改后 sha → 依据）✓
+ * 🔴 **共享尺子一个字没动**（如实）：`tools/task61-render-baseline.js` 里那条消息页**不带 `tone:'success'`**
+ *   ⇒ 极简覆盖**对它不生效** ⇒ 它那把 `508,313 字节 / 589aeb48…` 的尺子**本次实测仍然一致**（未迁 ✓）。
  *
  * 🔴 本文件**只动 `test/**`** ✗。
  */
 
-// ⚠️ **刻意不设** `SCAN_SUCCESS_PAGE_MINIMAL_ENABLED`（缺省 = 关 ✓ —— 本文件就是要证"关着=今天"）
-delete process.env.SCAN_SUCCESS_PAGE_MINIMAL_ENABLED;
+// ⚠️ 本来这里要 `delete process.env.<那个开关名>`（本文件证"缺省 = 关"）——
+//    ⚠️ **成对迁移**：开关已退场 ⇒ **没有任何 env 能影响这一页**（本文件不再碰 env ✓）。
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_success_zero_regression_test';
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'success_zero_regression_secret';
 
@@ -37,59 +38,70 @@ const { renderChainSuccessPages, offendersOf } = require('./support/scanSuccessP
 const SERVER_DIR = path.join(__dirname, '..');
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
-/** 改前（`origin/main` `6ad32ea`）三条链成功页全字节的 sha256 —— 见文件头台账 ✓。 */
-const LEGACY_SHA256 = '82858f52ac40fa4eb0588ad4b87167916b5959e3fcfa27ee0d3d89898a765772';
+/** ⭐ **永远极简**那三条链成功页全字节的 sha256（**实测重算** ✓ 见文件头台账 ✓）。 */
+const MINIMAL_SHA256 = '530a91fbe066b2600aaae1a4ba5e1f3644d8af4861a06589674813aa8e7303e2';
+/** ⭐ 同一个字节流的**长度**（sha 红了时能一眼看出是不是"多了几个字节"）✓。 */
+const MINIMAL_BYTES = 107528;
 
 /** 三条链（销售 / 补货 / 退货）渲染结果按**固定顺序**拼成一份字节流（判据 / 证据共用同一算法 ✓）。 */
 const chainsBytes = (pages) => [pages.sale, pages.replenish, pages.purchaseReturn].join('');
 
-test('AC-REG2 ⭐ 缺省 = **关**（没设 env ⇒ `minimalEnabled === false`）', () => {
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-REG2 ⭐⭐ 反向哨兵：**开关已退场**（配置里不许再有它 ✓）', () => {
   assert.equal(SCAN_SUCCESS_PAGE && typeof SCAN_SUCCESS_PAGE, 'object',
-    '成功页开关要有**一处**配置（`config/scanSuccessPage.js` ✓）');
-  assert.equal(SCAN_SUCCESS_PAGE.minimalEnabled, false,
-    '缺省必须是 **false**（她的口径"缺省关"；显式 true 才变 ✓）');
+    '成功页要有**一处**配置（`config/scanSuccessPage.js` ✓）');
+  assert.equal('minimalEnabled' in SCAN_SUCCESS_PAGE, false,
+    '🔴 `minimalEnabled` **不许回来**（她 22:5x：「不需要开关」）');
+  // ⚠️ 名字**拼出来**：源码里不留字面量（将来 no-switch 哨兵扫字面量时不会误判 ✓）
+  const SWITCH_NAME = ['SCAN', 'SUCCESS', 'PAGE', 'MINIMAL', 'ENABLED'].join('_');
+  const raw = fs.readFileSync(path.join(SERVER_DIR, 'src', 'config', 'scanSuccessPage.js'), 'utf8');
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
+    .map((line) => line.replace(/\/\/.*$/, '')).join('\n');
+  assert.equal(src.includes(SWITCH_NAME), false, '🔴 开关名不许回来（连 `readFlag` 都不该有 ✗）');
+  assert.equal(/readFlag\(/.test(src), false, '🔴 这里不再有开关 ⇒ 也不该再有 `readFlag` ✗');
 });
 
-test('AC-REG1 ⭐⭐ 开关关着 ⇒ 三条链成功页**与改前逐字节一致**（全字节 sha256 ✓）', () => {
+test('AC-REG1 ⭐⭐ 成功页**永远极简** ⇒ 三条链**逐字节**（全字节 sha256 ✓）＋ **零 offender**', () => {
   const pages = renderChainSuccessPages();
   const bytes = chainsBytes(pages);
-  assert.equal(sha256(bytes), LEGACY_SHA256,
-    '🔴 开关关着 ⇒ 成功页必须与改前**逐字节相同**（差一个字节 ⇒ 零回归破了 ✗）。'
+  assert.equal(sha256(bytes), MINIMAL_SHA256,
+    '🔴 成功页必须**永远**是极简那一个版本（差一个字节 ⇒ 迁移后的基线破了 ✗）。'
     + `实际 sha256 = ${sha256(bytes)}（长度 ${Buffer.byteLength(bytes)} 字节）`);
+  assert.equal(Buffer.byteLength(bytes), MINIMAL_BYTES, '字节数也要逐字对上 ✓');
   // ⭐ 同一件事的**可读**指纹（sha 红了的时候能一眼看出"是哪里回去了"）：
   for (const [chain, html] of Object.entries(pages)) {
-    assert.match(html, /<a\s[^>]*href=/i, `${chain}：开关关着时，改前那颗回跳链接**照旧在** ✓（关着 = 今天）`);
+    assert.deepEqual(offendersOf(html), [],
+      `${chain}：成功页上**一个"要她跳走"的东西都不许有**（a-href / button / form / 自动跳转 ✗）`);
+    assert.ok(html.includes(SCAN_SUCCESS_PAGE.minimalText),
+      `${chain}：必须有那句统一的「${SCAN_SUCCESS_PAGE.minimalText}」✓`);
   }
-  assert.match(pages.sale, /http-equiv="refresh"/i, '销售那条：改前的**自动回跳**照旧在 ✓（关着 = 今天）');
-  assert.ok(pages.sale.includes(SCAN_PAGE.successReturn.label),
-    '销售那条：改前那句回跳文案照旧在 ✓（关着 = 今天）');
-  assert.ok(pages.replenish.includes(SCAN_PAGE.saleSuccess.message)
-    && pages.purchaseReturn.includes(SCAN_PAGE.saleSuccess.message),
-  '补货 / 退货那条：改前**本来就是**统一那一句（本卡没动它们开着以外的行为 ✓）');
 });
 
-test('AC-REG3 ⭐ 探针：开关**开着** ⇒ 同一个 sha **必须不同** ＋ 零 offender（AC-REG1 不是空跑 ✓）', () => {
-  const off = renderChainSuccessPages();
+test('AC-REG3 ⭐⭐ 探针：**没有任何开关**也照样极简（老那几样"要她跳走"的东西被清掉 ✓）', () => {
   // eslint-disable-next-line global-require
   const { renderScanMessagePage } = require('../src/views/scanPageRenderer');
-  // 同一份"成功页入参"（含全部"要她跳走"的东西）：关 / 开各渲一次
+  // 一页"塞满了老 affordance"的成功页入参（回跳链接 / 返回 / 自动跳转 / 追加动作块）
   const payload = {
     title: 'T', body: 'B', tone: 'success', number: 'N', details: ['D'], retryHint: 'H',
     backPath: '/s/a', backLabel: '再录一单', returnPath: '/s/b', returnLabel: '返回扫码',
     autoReturnUrl: '/s/c', returnDelaySeconds: 2, extraActionsHtml: '<button>追加</button>',
   };
-  const offHtml = renderScanMessagePage(payload, SCAN_PAGE);
-  const onHtml = renderScanMessagePage({
-    ...payload,
-    successPage: { minimalEnabled: true, minimalText: SCAN_SUCCESS_PAGE.minimalText },
+  // 🔴 **不传任何 `successPage`**（= 没有开关、没有注入）⇒ 必须已经极简 ✓
+  const defaultHtml = renderScanMessagePage(payload, SCAN_PAGE);
+  assert.deepEqual(offendersOf(defaultHtml), [],
+    '不传任何配置 ⇒ 成功页已经是极简（"删开关 ⇒ 永远开" ✓）');
+  assert.ok(defaultHtml.includes(SCAN_SUCCESS_PAGE.minimalText), '那句统一的文案在 ✓');
+  // 显式给配置（文案相同）⇒ 逐字节相同（证明"开"已成为唯一的一条路 ✓）
+  const explicitHtml = renderScanMessagePage({
+    ...payload, successPage: { minimalText: SCAN_SUCCESS_PAGE.minimalText },
   }, SCAN_PAGE);
-  assert.notEqual(sha256(onHtml), sha256(offHtml), '开关开着必须**真的**改变成功页（否则是假开关 ✗）');
-  assert.deepEqual(offendersOf(onHtml), [], '开关开着 ⇒ 零 a-href/按钮/表单/自动跳转 ✓');
-  assert.ok(onHtml.includes(SCAN_SUCCESS_PAGE.minimalText), '开关开着 ⇒ 统一那一句 ✓');
-  assert.notDeepEqual(offendersOf(offHtml), [], '开关关着 ⇒ 今天那几样"要她跳走"的东西还在 ✓');
-  for (const [chain, html] of Object.entries(off)) {
-    assert.notDeepEqual(offendersOf(html), [], `${chain}：开关关着 ⇒ 今天那几样"要她跳走"的东西还在 ✓`);
-  }
+  assert.equal(sha256(explicitHtml), sha256(defaultHtml),
+    '默认路与"显式配"路**逐字节相同**（只剩一条路 ✓ 没有第二条分支 ✗）');
+  // 非成功页（tone 不同）**不套用**极简（那一条行为照旧 ✓）
+  const noticeHtml = renderScanMessagePage({ ...payload, tone: 'notice' }, SCAN_PAGE);
+  assert.notDeepEqual(offendersOf(noticeHtml), [],
+    '非成功页照旧保留它的东西（极简**只管成功页** ✓ 没有扩大到别处 ✗）');
 });
 
 test('AC-REG4 ⭐ 回跳配置**没有被删**（本卡只改"成功页渲不渲染它" ✗ 不顺手删配置）', () => {
@@ -98,5 +110,5 @@ test('AC-REG4 ⭐ 回跳配置**没有被删**（本卡只改"成功页渲不渲
   assert.equal(typeof SCAN_PAGE.successReturn.delaySeconds, 'number', '回跳延迟照旧在配置里 ✓');
   const cfgSrc = fs.readFileSync(path.join(SERVER_DIR, 'src', 'config', 'scanPage.js'), 'utf8');
   assert.match(cfgSrc, /const SUCCESS_RETURN = Object\.freeze\(/,
-    '配置块本身照旧（本卡**加**一个开关，**不改**既有件 ✓）');
+    '配置块本身照旧（本卡**删**一个开关，**不改**既有件 ✓）');
 });

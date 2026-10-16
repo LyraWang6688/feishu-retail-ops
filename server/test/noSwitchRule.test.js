@@ -68,6 +68,9 @@ const symbolHit = (line, symbol) => [
 const REMOVED_NAMES = [
   'SCAN_MULTI_ITEM_ASYNC_ENABLED',   // ① 一单多货异步（已删净 ✓）
   'SCAN_STOCK_POLICY_ENABLED',       // ② 四页库存口径（已删净 ✓）
+  // ⭐⭐ ③ 成功页极简（她 2026-10-16 23:4x「单独发一小版，把那个开关删掉」✓）：
+  //   实测 diff 证据（`git diff origin/main…` ✓）：`SCAN_SUCCESS_PAGE_MINIMAL_ENABLED` **2 处 ⇒ 0 处** ✓
+  'SCAN_SUCCESS_PAGE_MINIMAL_ENABLED',
 ];
 
 /** 已退场的符号（**逐批加** ✓ —— 删一个符号必须同时搜「定义 / 导出 / import / 消费者」四处 ✗）。 */
@@ -77,6 +80,10 @@ const REMOVED_SYMBOLS = [
   'LEGACY_SELLABLE_STATES',  // ② 老口径名单本体 ✓
   'legacySellableCountOf',   // ② 老口径计数 ✓
   'legacyStates',            // ② 挂在配置对象上的老口径 ✓
+  // ⭐⭐ ③ 成功页极简（她 23:4x「单独发一小版，把那个开关删掉」✓）：
+  //   ⚠️ 它是**对象属性**（挂在配置对象上 ✓）⇒ ⭐ 属【符号型】✓ **不是名字型** ✗
+  //   ⇒ ⭐ 谁把它塞回配置对象 ⇒ AC-NS2 必须红 ✓（**注射验证**已做 ✓）
+  'minimalEnabled',
 ];
 
 test('AC-NS1 ⭐ **名字型**：那些开关名**只许出现在注释里**（读取形态 0 处 ⇒ 名字回来即红 ✓）', () => {
