@@ -1,7 +1,6 @@
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
 const { REALM_TEXTS, REPLENISH_REALM, purchaseSizeLines, purchaseSizeGroups } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
-const { draftSaveButtonHtml } = require('./draftBlock');
 const { submitFeedbackAttrs } = require('./script');
 const { hiddenField, pageBuildField, specialFoldShellHtml } = require('./paymentBlock');
 const { multiItemBlockHtml, purchaseAmountRowHtml } = require('./multiItemBlock');
@@ -78,7 +77,6 @@ ${rows}
 ${rp.amountRow ? purchaseAmountRowHtml(write) : ''}
 ${multiItemBlockHtml(write, view, 'replenish', page)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rp.submitLabel)}</button>
-${draftSaveButtonHtml(write, REPLENISH_REALM, config, page)}
 </form>
 </details>
 </section>`;

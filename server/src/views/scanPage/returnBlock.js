@@ -2,7 +2,6 @@ const { SCAN_PAGE } = require('../../config/scanPage');
 const { SCAN_WRITE } = require('../../config/scanWrite');
 const { REALM_TEXTS, PURCHASE_RETURN_REALM, purchaseSizeLines } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
-const { draftSaveButtonHtml } = require('./draftBlock');
 const { submitFeedbackAttrs } = require('./script');
 const { hiddenField, pageBuildField } = require('./paymentBlock');
 const { multiItemBlockHtml, purchaseAmountRowHtml } = require('./multiItemBlock');
@@ -129,8 +128,8 @@ ${rows}
 ${sizes.length ? `${purchaseAmountRowHtml(write)}
 ${multiItemBlockHtml(write, view, 'return', page)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rf.submitLabel)}</button>
-${draftSaveButtonHtml(write, PURCHASE_RETURN_REALM, config, page)}` : ''}
 </form>
+` : ''}
 </section>`;
 };
 
