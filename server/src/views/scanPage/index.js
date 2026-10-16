@@ -7,7 +7,7 @@ const { SCAN_SUCCESS_PAGE, minimalSuccessOverrides } = require('../../config/sca
 const { DEFAULT_REALM, resolveRealm } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { identityHtml, noScriptHtml, realmBarHtml, renderDocument } = require('./layout');
-const { draftBarHtml, draftNoticeHtml } = require('./draftBlock');
+const { draftBarHtml } = require('./draftBlock');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');
 const { realmBlockHtml, realmEmptyHtml } = require('./realmBlock');
 
@@ -66,9 +66,11 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
       // ⭐ 2026-10-12：销售页上那颗**带钱**的提交表单就在下面 ⇒ 本单条不再放第二颗提交按钮。
       moneyFormOnPage: safeRealm === DEFAULT_REALM && Boolean(write),
     });
-  // ⭐⭐ 2026-10-16（task-S2 ·「你有一份草稿，接着录吗？」）—— **有草稿才出**（没有 = 空串 ✓）：
-  //   位置放在**最上面**（本单条之后、货品卡之前）⇒ 她一进来就看得到 ✓（她的口径："进去就提示"）。
-  const draftNotice = draftNoticeHtml(safeRealm, config, page);
+  // ⛔ 2026-10-16 22:0x（业务负责人逐字：「**存草稿的功能都删除吧……整个链路都删除**」）——
+  //   改前逐字：`const draftNotice = draftNoticeHtml(safeRealm, config, page);`（「你有一份草稿，接着录吗？」那张卡）
+  //   改后逐字：**这一处不渲染任何东西**（恒为空串 ✓；`${draftNotice}` 那个占位随之失效但**不改变页面输出** ✓）
+  //   依据 = 她 2026-10-16 22:0x 上面那句 ✓（整条存草稿链退场 ⇒ 提示条也退场 ✓）
+  const draftNotice = '';
   // ⭐⭐ 2026-10-12（编号兜底）：编号缺段（典型 = 缺「类别」）但按（货号 + 颜色）**唯一命中**时，
   //    页面上出**一条轻提示**（一句话，不写说明书）——她才知道"这个标签该重打了"。
   const fallbackHint = view.number_fallback

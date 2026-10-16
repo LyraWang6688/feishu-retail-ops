@@ -81,9 +81,14 @@ test('AC-SP-2 ⭐ 聚合源码：每块**都在、都按原文顺序**（那 30+
     'const identityHtml =',             // layout
     'const realmBarHtml =',             // layout
     'const noScriptHtml =',             // layout
-    'const draftBarHtml =',             // draftBlock
-    'const draftSaveButtonHtml =',      // draftBlock
-    'const draftNoticeHtml =',          // draftBlock
+    'const draftBarHtml =',             // draftBlock（**本单条** ⇒ 留 ✓）
+    'const draftSaveButtonHtml =',      // draftBlock（存草稿按钮 ⇒ 整条链退场时一起删 ✓）
+    // ⛔ 2026-10-16 22:0x：`'const draftNoticeHtml =',` 这一行**已删** ——
+    //   改前逐字：`'const draftNoticeHtml =',        // draftBlock`
+    //   改后逐字：（删除该行）
+    //   依据 = 她 2026-10-16 22:0x 逐字「**存草稿的功能都删除吧……整个链路都删除**」⇒
+    //     `draftNoticeHtml`（「你有一份草稿，接着录吗？」那张卡）**整块退场** ✓
+    //   🔴 本清单的**其余标记一个都没动**（`draftBarHtml` 是**本单条** ⇒ 留 ✓）。
     'const stockTableHtml =',           // stockBlock
     'const labelBlockHtml =',           // productBlock
     'const submitFeedbackScriptHtml =', // script

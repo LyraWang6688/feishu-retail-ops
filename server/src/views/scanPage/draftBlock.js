@@ -98,31 +98,17 @@ const draftSaveButtonHtml = (write, realm, config, page) => {
  *   · 【接着录】= 真链接（`?from=<当前领域>&<resumeQueryKey>=<resumeQueryValue>`）；
  *     ⚠️ **不点它 = 正常新建** ✓（页面上别的东西一个字都不动 ⇒ 她的零回归 ✓）。
  */
-const draftNoticeHtml = (realm, config, page) => {
-  const draft = draftUiOf(page);
-  if (!draft || draft.hasDraft !== true) return '';
-  const cfg = draftEntryConfigOf(config);
-  const products = Number(draft.productCount) > 0 ? Number(draft.productCount) : 0;
-  const lines = Number(draft.lineCount) > 0 ? Number(draft.lineCount) : 0;
-  const meta = (products || lines)
-    ? `<p class="hint" data-view="draft-notice-meta">${escapeHtml(fillText(cfg.noticeMeta || '', {
-      products, lines, updatedAt: String(draft.updatedAt || ''),
-    }))}</p>`
-    : '';
-  const queryKey = String(cfg.resumeQueryKey || 'resume');
-  const queryValue = String(cfg.resumeQueryValue ?? '1');
-  const href = `?from=${escapeHtml(resolveRealm(realm))}`
-    + `&${encodeURIComponent(queryKey)}=${encodeURIComponent(queryValue)}`;
-  return `<section class="card draft-notice" data-view="draft-notice">
-<p class="notice">${escapeHtml(cfg.noticeLabel || '')}</p>
-${meta}
-<a class="btn" data-draft-resume="1" href="${href}">${escapeHtml(cfg.resumeLabel || '')}</a>
-</section>`;
-};
 
+/* ⛔ 2026-10-16 22:0x（业务负责人逐字：「**存草稿的功能都删除吧，不需要了，前端和后端都不需要了，
+ *    整个链路都删除**」）——
+ *    改前逐字：这里有一个 `draftNoticeHtml(realm, config, page)` —— 渲染「**你有一份草稿，接着录吗？**」
+ *      那张卡（`data-view="draft-notice"` ＋ `data-draft-resume="1"` 的续录链接）。
+ *    改后逐字：**整块退场**（函数删除 ＋ 唯一调用点 `views/scanPage/index.js` 那处也去掉 ✓）。
+ *    依据 = 她 2026-10-16 22:0x 上面那句「整个链路都删除」✓。
+ *    🔴 同一文件里的 `draftBarHtml`（**「本单：N 双」＝ 一单多货的本单条**）**保留** ✗ —— 她【要】一单多货 ✓。
+ */
 
 module.exports = {
   draftBarHtml,
   draftSaveButtonHtml,
-  draftNoticeHtml,
 };
