@@ -5,7 +5,7 @@
  *   退货写库那条链（`services/purchaseReturnService.js`）**不自己造**出图链路：它只认注入的
  *   `options.webhooks`（`:142`：`const webhooks = options.webhooks || null;`）——设计上就该由
  *   **装配处**给。而装配处（`routes/scanPage/index.js` → `createScanWriteService`）**从来没给过**
- *   （`services/scanWriteService.js:235` 的 `...(options.purchaseReturnOptions || {})` 是唯一的读取点，
+ *   （`services/scanWriteService.js:239` 的 `...(options.purchaseReturnOptions || {})` 是唯一的读取点，
  *   全仓没有第二个调用方传它）⇒ `webhooks` 恒为空 ⇒ 线上每一次退货都走
  *   `returnImageFailed` 的 `reason: 'no_image_pipeline'`：**账走了、图一张没发** ✗
  *   （她 2026-10-16 20:12 那次的线上日志就是这个；⚠️ 单货品退货**同样**受影响，是老缺口，
