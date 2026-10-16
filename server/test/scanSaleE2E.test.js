@@ -1588,8 +1588,8 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       //   改后逐字：**两段都断言** —— 请求段（`phase` 不是 background）量出"建主表"；
       //            后台段（`phase === 'background'`）量出"明细/收款" ⇒ 覆盖**更全**（不是更少）✓
       //   依据：Lead 2026-10-15 拍板「**观测不缩水**」（她与仓库的硬口径：
-      //     「每个关键流程节点都要有日志和可排查路径」）—— 异步之后"建主表"在**请求阶段**、
-      //     "明细/收款/库存"在**后台那一跑** ⇒ 两段各自都要能查 ✓，不能因为转后台就断档 ✗。
+      //     「每个关键流程节点都要有日志和可排查路径」）—— ⚠️ **口径已随 ④ 更新**：⭐ **"建主表"在【货那一跑】那条 timing 上** ✓、
+      //     "明细/收款/库存"在**后台那一跑** ⇒ 两段各自都要能查 ✓，不能因为换跑法就断档 ✗。
       const timings = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming);
       const backgroundPhase = (SCAN_WRITE.timing && SCAN_WRITE.timing.phase
         && SCAN_WRITE.timing.phase.background) || 'background';
@@ -1604,7 +1604,13 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       }
       assert.equal(timing.ok, true);
       assert.ok(submitCalls.length > 0, '这一趟提交至少要打一次飞书');
-      assert.ok(requestTiming.master_ms > 0, `建主表那一段要能量出来（请求段；假网关每趟 60ms）：${requestTiming.master_ms}`);
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.ok(requestTiming.master_ms > 0, …请求段…)`（异步时代口径：建主表在【请求阶段】✗）
+      //   改后逐字：**钉「存在一条 timing 的 `master_ms > 0`」** ✓（④ 后建主表在【货那一跑】那条上 ✓）
+      //   依据 = ④ 口径（`docs/sale-money-split-recon-and-design-2026-10-16.md`）＋ 铁证三处：
+      //     `scanWriteService.js:1205 markStage('master_ms', …)` 仍在 ✓ / `routes/scanPage/index.js:3026 master_ms: …` 记在货那一跑 ✓
+      assert.ok(timings.some((t) => Number(t.master_ms) > 0),
+        '建主表那一段要能量出来（④ 后在【货那一跑】那条 timing 上）✓');
       assert.ok(backgroundTiming.detail_ms > 0, `明细/收款那一段要能量出来（**后台段**）：${backgroundTiming.detail_ms}`);
       // 分段之和**不许超过**这一趟的墙钟（分段是墙钟的子集；差值 = 本文件没打点的零头 + 渲染）。
       const parts = timing.queue_wait_ms + timing.lookup_ms + timing.prepare_ms
