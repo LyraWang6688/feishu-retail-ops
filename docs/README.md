@@ -258,5 +258,6 @@
 | [扫码页访问控制-2026-10-11.md](扫码页访问控制-2026-10-11.md) | 扫码页（标签二维码）的访问控制 —— 2026-10-11 实测结论 |
 | [扫码页销售-操作说明书.md](扫码页销售-操作说明书.md) | 扫码页 · 销售 操作说明书 |
 | [test-base-voucher-column-2026-10-16.md](test-base-voucher-column-2026-10-16.md) | 测试 Base 补「团购券管理」列 —— 留档（⭐**已建成** · type 21 · property 逐键对齐生产 + 闸门 5 条 + 券 e2e 如实记 ✓） |
+| [scan-page-split-plan-2026-10-16.md](scan-page-split-plan-2026-10-16.md) | ⭐⭐ `routes/scanPage.js`（3376 行）**拆分设计**（阶段一·只读）：八件形状（含 `render.js` 的理由）＋ **逐段真实行号**＋ 74 个测试文件的被引用清单 ＋ 共享状态怎么搬 ＋ 风险点（require 循环/路由顺序）＋ **薄壳建议** |
 - [worktree / 分支清理规矩](worktree-cleanup-rule-2026-10-16.md) —— 谁合谁清 · `git cherry` 判据 · 四条底线（2026-10-16 定）
 - [A 档 worktree 留档 2026-10-16](branch-salvage-2026-10-16/README.md) —— 7 个"重复/被她点头删除"的 diff 留档（2026-10-16）
