@@ -173,8 +173,12 @@ const makeHarness = ({ env = {}, chain = 'replenish', supplierRecordId = '', now
     logger,
     batchNoGenerator,
     now,
-    // ⚠️ 用例里把并发键**固定**成一把：两个并发调用才会落在同一个串行块里
-    //   （真实实现是按"会话"分键 —— 同一个人同一把键，行为一致 ✓）
+    // ⚠️ 这里注入一把**固定的**串行键：只是为了把 AC-D7 的断言与
+    //   `config.concurrentKeyFallback` 那个默认取值**解耦**（改配置文案不该动判据 ✓）。
+    //   真实实现那把键本来就是**一个常量**（缺省 `scan_draft_batch_no`）⇒ 所有人的草稿
+    //   共用同一把串行块（批次号是**全局每天**的号 ⇒ 取号必须全局串行 ✓）；
+    //   串行块里跑的步骤逐字相同 ⇒ 下面几条断言在两种情形下都成立 ✓
+    //   （默认值那条已单独跑过一次实证：两次并发 `generator_calls === 1`、两个草稿同一个批次号 ✓）。
     keyOf: () => 'test-serial-key',
   });
   const sideEffects = spies || makeSideEffectSpies();
