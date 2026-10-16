@@ -7,7 +7,7 @@
  *     `{"level":"warn","event":"scan.purchase_return.image_failed","reason":"no_image_pipeline",
  *       "batch_no":"CGD-20261016-0001","note":"没有接出图链路（用例 / 未接线）"}`
  *     —— 而 20:11:30 有 `purchase.return.batch.record_ensured` ⇒ **账走了、图一张没发** ✗；
- *   · 根因（只读核过，全仓只有这一处读它）：`services/scanWriteService.js:235`
+ *   · 根因（只读核过，全仓只有这一处读它）：`services/scanWriteService.js:239`
  *     的 `...(options.purchaseReturnOptions || {})` —— 三条生产装配处
  *     （`routes/scanPage/index.js` / `routes/workbench.js` / `routes/larkEvents.js`）**都没传**它
  *     ⇒ `purchaseReturnService` 的 `webhooks` 恒为空 ⇒ 必然走 `no_image_pipeline` ✗。
