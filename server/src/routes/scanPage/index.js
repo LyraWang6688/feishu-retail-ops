@@ -2462,7 +2462,17 @@ const createScanPageRouter = (options = {}) => {
         if (createdResult) markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
         const payTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
-        const paidOrderNo = String(createdResult?.order_no || body.order_no || '').trim().slice(0, 40);
+        // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修「成功页看不到单号」✗：
+        //   改前逐字：`const paidOrderNo = String(createdResult?.order_no || body.order_no || '').trim().slice(0, 40);`
+        //   改后逐字：本行（多一层**会话回落** ✓）
+        //   依据 = 业务负责人 2026-10-16 23:5x 逐字（她裁「**该带**」）：
+        //     「我先点了，我再点完货品的时候，我就创建单号了。**那为什么我在成功页里面看不到呢？那我肯定能看到这个单号呀**」
+        //   🔴 为什么需要回落：④ 永远开 ⇒ **货那一跑（第 1 步）就把单号出了**（`sales.order_no.generated` ✓）
+        //     ⇒ 钱那一跑是**同一把 `submitKey` 的复用**（`scanWriteService` 里 `wasResume = true` ✗）
+        //     ⇒ 那一次 `createdResult.order_no` **可能是空** ✗ ⇒ 页面就变成 `—`（她看不到号 ✗ = 真 bug ✓）
+        //     ⇒ **回落到会话里那个号**（= 她第 1 步看到的那个 ✓）才是对的 ✓
+        const sessionOrderNo = String(paySession?.sale?.order_no || paySession?.order_no || '').trim();
+        const paidOrderNo = String(createdResult?.order_no || sessionOrderNo || body.order_no || '').trim().slice(0, 40);
         const paidCount = Number(String(createdResult?.detail_count ?? body.count ?? '').trim() || 0) || 0;
         const paidReused = String(body.reused || '') === '1';
         const paidDetails = [
