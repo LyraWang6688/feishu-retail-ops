@@ -61,6 +61,10 @@ const { deliversOnSubmit } = require('../config/salesMovements');
 // 「这一件要不要尺码 / 要不要跟踪库存 / 要不要履约」——可售品的属性（配品：三样都不要）。
 const { SELLABLE_KINDS, sellableKindOf } = require('../config/sellableKinds');
 const { SCAN_WRITE, fillText } = require('../config/scanWrite');
+// ⭐⭐ 2026-10-16（task-62「货 / 钱分离」· 阶段二）：会话标记**取值的唯一来源**（配置先行）——
+//   本文件只读这个常量（**不读那个开关** `SCAN_MONEY_SPLIT_ENABLED` ✗：开关是**调用方**（routes）的事，
+//   本文件只有拿到 `deferFunds === true` 才走那条路 ⇒ 不传 / 传 false 时逐字同今天 ✓）。
+const { SESSION_MARKERS } = require('../config/saleMoneySplit');
 const { createScanSessionService } = require('./scanSessionService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 
@@ -700,6 +704,15 @@ const createScanWriteService = (options = {}) => {
     //   · 传了 ⇒ 会话（草稿 / 幂等 completed / 进度）按它分，而 `openId` **只**当操作人写 User 字段 ✓
     //     （「配品销售」那条入口：一行 = 一个会话 ⇒ 第 2 条记录不会被上一单的结果吸收 ✓）
     sessionKey = '',
+    // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」· 阶段二 · 冻结件成对迁移 · Lead 批准）：
+    //   `deferFunds === true` = **这一跑只写「货」那一半**（主表总金额/赠品/交易类型 ＋ 明细 ＋ 销售状态）：
+    //   🔴 **不写收款明细**（连那条【未收款】也不写）· **不置「资金状态」**（停在「未写入」）·
+    //       **不扣库存** · **不记 `completed`**（改记会话标记 `goods_created`）。
+    //   钱由**资金页那一跑**（同一个 `salesEntryRecordId`、同一把 `submitKey` ⇒ 走既有续写路径）收口 ✓。
+    //   ⚠️ **显式布尔**（下面 `deferFunds === true`）：不传 / 传 `false` ⇒ 每一个字节与今天逐字一致 ✗；
+    //   ⚠️ 货那一跑**带收款**（`payments` 里有金额行）⇒ **当场抛**（一个字都不写表）。
+    //   ⚠️ 那个开关（`SCAN_MONEY_SPLIT_ENABLED`）**不在本文件**：本文件不认识它 ✗（调用方决定走不走这条路）。
+    deferFunds = false,
   }) => {
     // ⭐⭐ 2026-10-15（⑨ 异步）：**先把"后台那一跑"的入参固化在这里** ——
     //   ⚠️ 必须在函数**最顶上**取：函数体后面有同名局部（`paidAmount` / `payments` …），
@@ -707,8 +720,17 @@ const createScanWriteService = (options = {}) => {
     //     —— 我在用例里真撞到过一次，所以固化点放在这里 ✓ 不在闸门那一行现取 ✗）。
     //   🔴 入参形状与"她点按钮那一次"**逐字相同**（同一把 `submitKey` ⇒ 走既有续写路径 ✓）
     //   ⚠️ `sessionKey` 也在里面：后台那一跑必须落回**同一个会话**（否则会另起一单 ✗）
+    // ⭐⭐ 2026-10-16（task-62）：**显式布尔**（`=== true`）—— 与业务层
+    //   `salesOrderService._confirm` 里那条闸门**同一个口径**（不写 truthy 判断 ✗：
+    //   那一改会把 `undefined` 之外的东西也当成"分离"）。
+    const fundsDeferred = deferFunds === true;
     const saleRestInput = {
       openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount, sessionKey,
+      // ⭐⭐ 2026-10-16（task-62）：**后台那一跑必须带着同一个 `deferFunds`** ✗ ——
+      //   否则"货那一跑"转了后台之后，后台那一跑会把**钱**也写了（一条【未收款】＝钱那一半的结论）
+      //   ⇒ 判据 AC-MSD4 真红（去掉这一行 ⇒ 红 ✓）。
+      //   ⚠️ 关着（不传 / `false`）时**这个键根本不出现** ⇒ 后台那一跑的入参逐字同今天 ✓
+      ...(fundsDeferred ? { deferFunds: true } : {}),
     };
     // ⭐⭐ 2026-10-12：**分阶段耗时**（业务负责人真机被卡住 / 收过 504 网关超时）——
     //    `timing` 是一个**可选出参**（与 `scanPageService.lookup` 那条 `timing` 同一套约定）：
@@ -899,6 +921,15 @@ const createScanWriteService = (options = {}) => {
       usedPayments.push({ amount: parsed.value, method, operatorOpenId: openId });
     }
 
+    // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑不许带收款** ——
+    //   带了就是"两个口都能写钱"（迟早写出两遍账 ✗）⇒ **当场抛**（这是**调用方契约错**，
+    //   不是她的输入错 ⇒ 不给她一张人话失败页，而是让写错的那一方立刻炸掉）。
+    //   ⚠️ 与业务层那条闸门**同一条口径**（`salesOrderService._confirm` 的 `fundsDeferred` 段 ✓）；
+    //      这里先拦的用处：**连主表都不建**（一个字都不写表 ✓）—— 判据 AC-MSD6 真红 ✓。
+    if (fundsDeferred && usedPayments.length > 0) {
+      throw new Error('「货 / 钱分离」的货那一跑不许带收款：钱那一半由资金页那一跑写');
+    }
+
     // ── ③ ⭐⭐ 「付款情况」（整单）→ 收款明细的写法 ──────────────────────────────
     //    她 2026-10-11 的最终口径（唯一权威），三档：
     //      · **全付**（默认）：收款合计 **必须 ==** 每件实收合计；
@@ -1059,6 +1090,13 @@ const createScanWriteService = (options = {}) => {
       //      她真填了的收款行**如实落**（如实记钱永远比替她判断更安全）。
     }
 
+    // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑没有"钱"的结论** ✗ ——
+    //   上面 ③ 那段（差额 = 累计 − 已收）只属于**资金页那一跑**；这一跑不许把它带进 `confirm`：
+    //   带了 ⇒ 业务层就会替她记一条【未收款】（那是**替她记了一笔账** ✗），
+    //   而且那条占位会把资金页那一跑**整表比对拦死**（反向证据 = `saleMoneySplitGoodsHalf.test.js`
+    //   的 AC-MSG5 ✓）。⇒ 这一跑 `owed` 恒不传（下面那一行本来就是 `owedCents > 0` 才带）。
+    if (fundsDeferred) owedCents = 0;
+
     // ④ 逐行把明细准备好。
     //    ⭐⭐ 2026-10-11（方案甲）：**她没填实收 ⇒ 不带 `actualAmount`**（那一列留空，
     //       表里不会出现"按单价顶上去的假数字"）；填了 ⇒ 带着她填的数（> 0，已在 ① 校验）。
@@ -1201,6 +1239,9 @@ const createScanWriteService = (options = {}) => {
           ok: true, reused: false, deferred: true,
           order_no: orderNo, sales_entry_record_id: salesEntryRecordId,
           detail_count: items.length, payment_count: payments.length,
+          // ⭐ 2026-10-16（task-62）：货那一跑**如实标"钱还没写"**（**调用方不许猜** ✗）；
+          //   关着时这个键不出现 ⇒ 返回对象逐字同今天 ✓
+          ...(fundsDeferred ? { funds_deferred: true } : {}),
           // ⚠️ 句柄（不是页面字段）—— 只给"等它跑完"的人（用例）✓
           background,
         };
@@ -1216,6 +1257,10 @@ const createScanWriteService = (options = {}) => {
         salesEntryRecordId,
         items,
         payments,
+        // ⭐⭐ 2026-10-16（task-62）：货那一跑 ⇒ 业务层**只写「货」那一半**（见
+        //   `salesOrderService._confirm` 的 `fundsDeferred` 段：不写收款 / 不置资金状态 / 不调 progress ✓）。
+        //   ⚠️ 关着时这个键**根本不出现** ⇒ 入参对象逐字同今天 ✓
+        ...(fundsDeferred ? { fundsDeferred: true } : {}),
         ...(owedCents > 0 ? { owed: owedCents / 100 } : {}),
         operatorOpenId: openId,
         knownRecordIds: {
@@ -1264,10 +1309,18 @@ const createScanWriteService = (options = {}) => {
       //    ⚠️ 明细 id 与 `items` **一一对应**（既有 `confirm` 就是按这个顺序建行的，群聊链路
       //       的 `deliverableItemIndexes` 也是同一个约定），所以这里按下标取。
       const stockStartedAt = Date.now();
-      const stock = await deliverStockLines({
-        items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
-        salesEntryRecordId, correlation,
-      });
+      // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑不扣库存** ✗ —— 两个理由，都是判据：
+      //   ① `SalesDeliveryService.deliver` 的前置是 `isPosted(postedOf(entry))`（**只认「资金状态」**）——
+      //      这一跑刚把资金状态停在「未写入」⇒ 硬要交付它**必然拒**（那会写出一次假的"库存没扣成" ✗）；
+      //   ② 她的口径：「什么时候付款…是在资金页里面确定的」⇒ 库存等**资金页那一跑**（钱写完）才扣 ✓。
+      //   ⚠️ 如实报 `requested: 0`（**没请求交付**，不是"交付成功" ✗）—— 判据 AC-MSD3：
+      //      "**进了资金页但没提交 ⇒ 库存一双未扣**"（去掉下面这个分支 ⇒ 真红 ✓）。
+      const stock = fundsDeferred
+        ? { requested: 0, delivered: 0, failed: 0, reasons: [] }
+        : await deliverStockLines({
+          items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
+          salesEntryRecordId, correlation,
+        });
       markStage('stock_ms', stockStartedAt);
       if (stock.failed > 0) {
         // 🔴 **失败要如实报错**：单子写了（货 / 钱是事实），但库存没扣成这件事必须回给她，
@@ -1280,6 +1333,24 @@ const createScanWriteService = (options = {}) => {
           reasons: stock.reasons.join(' | '), request_id: requestId,
         });
         return { ok: true, reused: false, stock, ...summary, order_no: summary.order_no };
+      }
+      // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑到此为止（不记 `completed`）** ✗ ——
+      //   `completed` 是"**这一单的收款也写过了**"的留档（连点 / 重放靠它吸收）；
+      //   而资金页那一跑拿的是**同一把 `submitKey`** ⇒ 记了它会把资金页那一跑**当"重放"吸收**，
+      //   钱永远写不上（**静默丢账** ✗）。⇒ 改记一个**新标记**「货已经落库」
+      //   （与今天的 `pending` / `created` 三个状态分开，取值在 `config/saleMoneySplit.js` ✓）——
+      //   判据 AC-MSD5 真红 ✓。⚠️ 关着时这一段**一行都不跑**（下面那两行逐字同今天 ✓）。
+      if (fundsDeferred) {
+        await sessions.saveSaleProgress(sessionId, {
+          [SESSION_MARKERS.goodsCreated]: true,
+        });
+        logInfo(config.events.saleSubmitted, {
+          session_id: current.session_id, submit_key: key, ...summary,
+          funds_deferred: true, funds_recorded: false,
+          stock_requested: stock.requested, stock_delivered: stock.delivered, request_id: requestId,
+        });
+        // ⚠️ 如实带 `funds_deferred: true`（**调用方不许猜**"钱写没写" ✗）。
+        return { ok: true, reused: false, funds_deferred: true, stock, ...summary };
       }
       await sessions.completeSale(sessionId, { key, result: summary });
       logInfo(config.events.saleSubmitted, {

@@ -1,0 +1,209 @@
+/**
+ * ⭐⭐⭐ **扫码页四 tab 的「库存口径」唯一真源**（业务负责人 2026-10-16 20:5x **亲口定的口径**）。
+ *
+ * 她的原话（逐字，**这就是需求**）：
+ *   「既然四个页面用的都是**实时库存**，那就**统一不用看状态**，只要在实时库存里**这个编号有尺码记录，
+ *     就都是有货**……也就是说**口径和库存是一样的了**。另外，实际上对于**退货**来说，它展示的是
+ *     **实时库存里所有的数据**。但像我们的**补货、销售以及库存**，尺码范围**男款是 38 到 48，
+ *     女款是 34 到 43**。而且我们之前有个规定要分**普通码和特殊码**：**普通码有货无货都要展示出来，
+ *     特殊码无货时则折叠**。所以你需要看一下，**补货、销售以及库存这边的口径是不是也是一致的**，
+ *     这个口径其实**也可以做一个配置**。因为对于我们的销售、库存还有补货来说，**它们底层逻辑都是一样的，
+ *     只不过在前端展示的方式不同，所以完全可以抽象出来**」
+ *
+ * ── 为什么放在 `config/` 而不是 `views/` ────────────────────────────────────
+ *   「怎么算有货」是**业务口径**（会变的东西），「怎么摆」才是视图参数。
+ *   她 2026-10-05 定的「配置先行」＋ 2026-10-16「这个口径其实也可以做一个配置」⇒
+ *   **口径的家在 `config/**`**，视图层**只读**它、**一个字都不自己判** ✗。
+ *   改前「有货 = `门盒 + 样品`」这条写死在 `views/scanPageRealm.js:184`（渲染层）——
+ *   这正是"四页打架"的根因之一：**前端在决定算不算** ✗。
+ *
+ * ── 这份配置收敛的三件事（**改口径只改这一处**）────────────────────────────
+ *  ① **「有货」怎么算**（`inStock`）：
+ *       开关**开着** ⇒ **实时库存里该【编号 + 尺码】有记录 = 有货**（**完全不看「所属状态」** ✗）；
+ *       开关**关着**（缺省 `false`）⇒ **与今天逐字一致**（`门盒 + 样品`，她 2026-10-09 的旧口径）。
+ *  ② **尺码范围**（`sizes`）：**指向既有那一处配置** `config/scanPage.js#sizeSegments.ranges`
+ *       （可录 `enterable` / 普通 `normal` / 特殊 `special`），本文件**不复制第二份** ✗ ——
+ *       只把语义名挂上去、并提供**只读**取值函数。
+ *  ③ **展示规则**（`display` / `realms`）：普通码**有货无货都展示**；
+ *       特殊码**无货折叠**（复用**已有那一处** helper `views/scanPageRealm.js#foldedSpecialRowsOf`，
+ *       **不在这里再写一遍 if** ✗）；**退货页全展示实时库存里的所有数据**
+ *       （与另外三页"有货才显示"的**展示**口径不同 —— 但**"有货"的判据仍是上面这一处** ✓）。
+ *
+ * 🔴 **开关是显式布尔**（`readFlag`，缺省 `false`）：**关着 = 今天的行为逐字节不变**
+ *    ⇒ 这里**禁止** `process.env.X || fallback`（那样"清空变量想关掉"会静默回退、**关不掉** ✗；
+ *      规则见 `config/envValue.js` 的文件头）。判据：AC-ST7（零回归）＋ AC-STP1（源码哨兵）。
+ *
+ * ⚠️ **本文件只做纯函数判定**：零飞书读、零 IO、不 require 任何 service。
+ */
+
+const { readFlag } = require('./envValue');
+const { SCAN_PAGE, expandRange } = require('./scanPage');
+
+/** 开关的变量名（**唯一一处**字面量）。 */
+const ENABLED_KEY = 'SCAN_STOCK_POLICY_ENABLED';
+
+/**
+ * ⭐ **旧口径**（开关关着时的可卖状态清单）—— 从视图层**搬过来的那一份**。
+ *
+ *   改前逐字（`views/scanPageRealm.js:184`）：`const SELLABLE_STATES = Object.freeze(['门盒', '样品']);`
+ *   改后逐字：**定义在这一处配置**（`views/scanPageRealm.js` 引用它 ⇒ 全仓只有一份 ✓）
+ *   依据：她 2026-10-16 20:5x「这个口径其实**也可以做一个配置**」
+ *     ＋ 她 2026-10-09「可卖 = **样品 + 门盒**」（旧口径本身**不改** ✗ —— 它是开关关着时的行为）。
+ */
+const LEGACY_SELLABLE_STATES = Object.freeze(['门盒', '样品']);
+
+/**
+ * ⭐ 取值（**纯函数**，进 `env` ⇒ 可单测、不碰全局 `process.env`）。
+ *   · 没设 ⇒ `false`（缺省关着 = 与今天逐字一致）；
+ *   · 设了（含空串）⇒ 显式取值（空串 = 关）；
+ *   · 认不出来的值 ⇒ **当场抛错**（`readFlag` 的语义，不猜）。
+ */
+const resolveScanStockPolicy = (env = process.env) => Object.freeze({
+  enabled: readFlag(env, ENABLED_KEY, false),
+  // ── ① 「有货」的两种口径（**判据本体在下面 `countInStockOf`**）────────────────
+  inStock: Object.freeze({
+    // 开着：实时库存里该【编号 + 尺码】**有记录**（**不看状态** ✗）—— 她 2026-10-16 20:5x 的口径
+    liveInventoryRecord: 'live-inventory-record',
+    // 关着（今天）：`门盒 + 样品` 两格之和 > 0 —— 她 2026-10-09 的旧口径
+    legacyStates: LEGACY_SELLABLE_STATES,
+  }),
+  // ── ② 尺码范围：**指向既有配置**（同一个对象引用 —— 不是第二份副本 ✗）──────────
+  sizes: Object.freeze({
+    source: 'config/scanPage.js#SCAN_PAGE.sizeSegments.ranges',
+    // ⚠️ `ranges` 是 `SCAN_PAGE.sizeSegments.ranges` **本身**（`===` 同一个对象）；
+    //    语义名：`enterable` = 可录范围（男 38–48 / 女 34–43）·
+    //             `normal`    = 普通码（有货无货都展示 ＋ 缺码判据）·
+    //             `special`   = 特殊码（无货折叠）。
+    ranges: SCAN_PAGE.sizeSegments.ranges,
+  }),
+  // ── ③ 展示规则（**只决定"怎么摆"**，不决定"算不算" ✗）──────────────────────
+  display: Object.freeze({
+    // 普通码：**有货无货都要展示出来**（她 2026-10-16 20:5x 逐字）
+    normal: 'always',
+    // 特殊码：**无货时折叠**（她 2026-10-16 20:5x 逐字）
+    special: 'fold-when-out-of-stock',
+    // 折叠的**判据**只有一处（`foldedSpecialRowsOf` = 缺货 ∩ 特殊码，销售/库存/补货共用 ✓）
+    foldedHelper: 'views/scanPageRealm.js#foldedSpecialRowsOf',
+  }),
+  // 四个 tab 各自"展示什么"（**判据同一处，展示可以不同** ✓ —— 她就是这么说的）
+  realms: Object.freeze({
+    sales: 'in-stock-first',
+    replenish: 'in-stock-first',
+    // 库存页：**基线** —— 表体 = 实时库存里每一行（本来就"都算" ✓）
+    inventory: 'all-live-inventory-records',
+    // ⭐ 退货页：她 2026-10-16 20:5x 逐字「**它展示的是实时库存里所有的数据**」
+    //    ⇒ 与另外三页"有货才显示"的展示口径**不同**（写在这里，免得下次又有人"顺手统一"✗）
+    purchase_return: 'all-live-inventory-records',
+  }),
+});
+
+/** 进程启动时取一次（与 `SCAN_PAGE.cache.enabled` / `snapshot.enabled` 同一套"模块级求值"惯例）。 */
+const SCAN_STOCK_POLICY = resolveScanStockPolicy(process.env);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ① 「有货」的**唯一判据**
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 一格的列名是不是"旧口径的可卖状态"（门盒 / 样品）。 */
+const isLegacySellableCell = (cell, states = LEGACY_SELLABLE_STATES) => (
+  states.includes(String(cell?.key ?? '').trim())
+);
+
+/**
+ * **旧口径**的数量 = `门盒 + 样品`（仓库不算）。
+ *
+ * 🔴 本函数体**逐字 = 改前 `views/scanPageRealm.js` 的 `sellableCountOf`**（搬过来，不改算法 ✗）：
+ *   两种形状都认（**单一判据，不猜**）：
+ *     ① 正常形状：`cells[].key` 就是列名（服务端视图模型一直这么给）；
+ *     ② 老形状 / 夹具：`cells` 上没有 `key` ⇒ 按**视图模型的列序**取
+ *        （`columns` 里第几个是"门盒 / 样品"，就取第几格）——
+ *        取不到列序时返回 0（宁可判成"没货 → 预订"，也不把仓库算成可卖）。
+ *   改前逐字 → 改后逐字 → 依据：见上面 `LEGACY_SELLABLE_STATES` 的注释（同一条）。
+ */
+const legacySellableCountOf = (row, columns = []) => {
+  const cells = Array.isArray(row?.cells) ? row.cells : [];
+  if (cells.some((cell) => String(cell?.key ?? '').trim())) {
+    return cells.reduce((sum, cell) => (isLegacySellableCell(cell) ? sum + Number(cell.count || 0) : sum), 0);
+  }
+  return (Array.isArray(columns) ? columns : []).reduce((sum, column, index) => (
+    LEGACY_SELLABLE_STATES.includes(String(column?.key ?? '').trim())
+      ? sum + Number(cells[index]?.count || 0)
+      : sum
+  ), 0);
+};
+
+/**
+ * **新口径**的数量 = 实时库存里该【编号 + 尺码】的**记录条数**（**完全不看「所属状态」** ✗）。
+ *
+ * ⚠️ 为什么就是视图模型那一行的 `total`：服务层（`services/scanPageService.js:1298`）
+ *    的行集 = `实时库存记录建出来的 buckets` ∪ `可录范围内的缺货尺码`，
+ *    且 `row.total` = 那一行**所有状态格之和** ⇒
+ *      **`total > 0` ⟺ 这个尺码在「实时库存」里至少有一条记录** ✓
+ *    —— 与库存页看到的是**同一份数**（"口径和库存是一样的了" ✓ 零新增读 ✓）。
+ * ⚠️ 「尺码未识别」那一行（`unknown_size`）**不是**一个【编号 + 尺码】⇒ 一律 0。
+ */
+const liveInventoryCountOf = (row) => (row?.unknown_size ? 0 : Number(row?.total ?? 0));
+
+/**
+ * ⭐⭐ **「有货」数量 —— 全仓唯一判据。**
+ *
+ *   开关**开着** ⇒ `liveInventoryCountOf`（实时库存里有记录，不看状态 ✓）
+ *   开关**关着** ⇒ `legacySellableCountOf`（今天：门盒 + 样品 ✓ 逐字不变）
+ *
+ * 销售 / 补货 / 退货三页**都从这里取**（`views/scanPageRealm.js` 的 `sellableCountOf` 只是转发）；
+ * 库存页那一行的 `total` 就是**同一个数**（基线对照 ✓）。⇒ **前端不再决定"算不算"** ✗
+ */
+const countInStockOf = (row, columns = [], policy = SCAN_STOCK_POLICY) => (
+  policy.enabled ? liveInventoryCountOf(row) : legacySellableCountOf(row, columns)
+);
+
+/** 这一行现在算不算"有货"（布尔 —— 与 `countInStockOf > 0` 同一判据，避免各处再写一遍比较 ✗）。 */
+const isInStock = (row, columns = [], policy = SCAN_STOCK_POLICY) => (
+  countInStockOf(row, columns, policy) > 0
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ② 尺码范围（**只读既有配置**：`config/scanPage.js` 的 `sizeSegments.ranges`）
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 这一款的类别（编号第 3 段，`A` / `B`）对应的那一段配置；认不出 ⇒ `null`（不猜 ✗）。 */
+const sizeRangeOf = (categoryCode, policy = SCAN_STOCK_POLICY) => (
+  policy.sizes.ranges[String(categoryCode ?? '').trim().toUpperCase()] || null
+);
+
+/** **可录范围**（`enterable`）展开成码数组 —— 男 38–48 / 女 34–43。 */
+const enterableSizesOf = (categoryCode, policy = SCAN_STOCK_POLICY) => (
+  expandRange(sizeRangeOf(categoryCode, policy)?.enterable)
+);
+
+/** **普通码**（`normal`）—— 有货无货都展示 ＋ 缺码判据；男 38–45 / 女 36–41（**以配置为准** ✓）。 */
+const normalSizesOf = (categoryCode, policy = SCAN_STOCK_POLICY) => (
+  expandRange(sizeRangeOf(categoryCode, policy)?.normal)
+);
+
+/**
+ * **特殊码**（`special`）—— 无货折叠。
+ * ⚠️ 它是**离散码清单**（女 = `[34,35,42,43]`），**不是区间** ⇒ **不许用 `expandRange`** ✗
+ *    （`expandRange([34,35,…)` 会把第 3 个元素当垃圾、把 34~35 当成一个区间 ⇒ 静默错 ✓）。
+ */
+const specialSizesOf = (categoryCode, policy = SCAN_STOCK_POLICY) => {
+  const range = sizeRangeOf(categoryCode, policy);
+  const special = range?.special;
+  return Array.isArray(special) ? special.map(Number).sort((a, b) => a - b) : [];
+};
+
+module.exports = {
+  ENABLED_KEY,
+  LEGACY_SELLABLE_STATES,
+  SCAN_STOCK_POLICY,
+  resolveScanStockPolicy,
+  isLegacySellableCell,
+  legacySellableCountOf,
+  liveInventoryCountOf,
+  countInStockOf,
+  isInStock,
+  sizeRangeOf,
+  enterableSizesOf,
+  normalSizesOf,
+  specialSizesOf,
+};

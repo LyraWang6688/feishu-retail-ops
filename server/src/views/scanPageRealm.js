@@ -49,10 +49,19 @@
 //      回跳停在**本单所在的领域**（表单 action 由 `routes/scanPage.js` 的
 //      `postActionFor(number, realm)` 带上 `?from=`，见那里的注释）。
 const { SCAN_PAGE } = require('../config/scanPage');
+// ⭐⭐ 2026-10-16 晚（业务负责人 20:5x 逐字）：「这个口径其实**也可以做一个配置**……
+//   对于我们的销售、库存还有补货来说，**它们底层逻辑都是一样的**，只不过在**前端展示的方式不同**，
+//   所以**完全可以抽象出来**」⇒ **「有货」怎么算 ＋ 尺码范围 ＋ 展示规则** 全部收敛到
+//   `config/scanStockPolicy.js`（**口径的家** ✓）。本文件从此**只决定"怎么摆"** ✗ **不决定"算不算"** ✓。
+const {
+  SCAN_STOCK_POLICY, LEGACY_SELLABLE_STATES, countInStockOf, specialSizesOf,
+} = require('../config/scanStockPolicy');
 
 // ⭐ 2026-10-09：男女两组尺码段**进配置**（`config/scanPage.js` 的 `sizeSegments`）——
 //   页面上那句"这一组是男 38–48"与**缺码判定**用的是**同一份配置**（唯一真源）。
-const SIZE_GROUP_RANGES = SCAN_PAGE.sizeSegments.ranges;
+// ⭐ 2026-10-16 晚：取值改成**经新配置转发**（`SCAN_STOCK_POLICY.sizes.ranges` 就是**同一个对象**
+//   `=== SCAN_PAGE.sizeSegments.ranges` ⇒ 仍然只有一份数据 ✓ 多一层只是让"尺码范围"有语义家 ✓）。
+const SIZE_GROUP_RANGES = SCAN_STOCK_POLICY.sizes.ranges;
 
 /**
  * ⭐⭐ 2026-10-11（业务负责人批准）：**扫码页六个领域**，顺序逐字 = 销售 · 补货 · 退货 · 验收 · 库存 · 货品。
@@ -178,10 +187,18 @@ const REALM_TEXTS = Object.freeze({
 });
 
 /**
- * ⭐ **可卖 = 样品 + 门盒**（业务负责人 2026-10-09：「系统能够给出目前**样品加门盒**的尺码」）。
- * 「仓库」仍然显示（作参考），但**不参与**「现货 / 预订」的判定 —— 见 `sellableCountOf`。
+ * ⭐⭐ 2026-10-16 晚（业务负责人 20:5x 逐字）：**「有货」的判定搬进配置** ——
+ *   改前逐字：本行 = `const SELLABLE_STATES = Object.freeze(['门盒', '样品']);`
+ *     （写死在**渲染层** ⇒ 她说的「前端展示的方式不同」被当成了"算不算"的来源 ✗）
+ *   改后逐字：`SELLABLE_STATES` **只是"开关关着时的旧口径"的别名** ——
+ *     真源 = `config/scanStockPolicy.js` 的 `LEGACY_SELLABLE_STATES`（全仓只有一份 ✓）；
+ *     「有货」的数量判据 = 同一份配置的 `countInStockOf`（**唯一判据** ✓）。
+ *   依据：她 2026-10-16 20:5x「这个口径其实**也可以做一个配置**」
+ *     ＋「**统一不用看状态**，只要在实时库存里**这个编号有尺码记录，就都是有货**」。
+ *   ⚠️ 名字保留（既有判据 `test/scanPageRealms.test.js` / `test/stockStateConsistency.test.js`
+ *     直接 import 它 ⇒ **一条判据都不用改** ✓）；语义 = **开关关着时的可卖状态清单** ✓。
  */
-const SELLABLE_STATES = Object.freeze(['门盒', '样品']);
+const SELLABLE_STATES = LEGACY_SELLABLE_STATES;
 
 // （`SIZE_GROUP_RANGES` 已上移到文件顶部：从 `config/scanPage.js` 的 `sizeSegments` 取，
 //   与缺码判定**同源**——2026-10-09 之前这里另有一份内联的硬编码副本。）
@@ -193,29 +210,20 @@ const sizeGroupOf = (categoryCode) => {
   return range ? { key, label: range.label, from: range.from, to: range.to } : null;
 };
 
-/** 一格的列名是不是"可卖"的那两种状态（门盒 / 样品）。 */
-const isSellableCell = (cell) => SELLABLE_STATES.includes(String(cell?.key ?? '').trim());
-
 /**
- * 一行（一个尺码）**可卖的**数量 = 门盒 + 样品（仓库不算）。
+ * ⭐⭐ 2026-10-16 晚（**成对迁移 · 改前逐字 → 改后逐字 → 依据**）：
+ *   改前逐字：本处有 `isSellableCell` ＋ `sellableCountOf` **两个函数体**（判定逻辑在渲染层）
+ *   改后逐字：两个都**删掉**，只留**一处转发**到 `config/scanStockPolicy.countInStockOf`
+ *     （门盒/样品那套算法**逐字搬进配置**；开关开着时改走"实时库存里有记录" ✓）
+ *   依据：她 2026-10-16 20:5x「**完全可以抽象出来**」＋
+ *     「对于我们的销售、库存还有补货来说，它们**底层逻辑都是一样的**」⇒
+ *     **口径只能有一处**（配置），本文件**一个 if 都不再写** ✗。
  *
- * 两种形状都认（**单一判据，不猜**）：
- *   ① 正常形状：`cells[].key` 就是列名（服务端视图模型一直这么给）；
- *   ② 老形状 / 夹具：`cells` 上没有 `key` ⇒ 按**视图模型的列序**取
- *      （`columns` 里第几个是"门盒 / 样品"，就取第几格）——
- *      取不到列序时返回 0（宁可判成"没货 → 预订"，也不把仓库算成可卖）。
+ * ⚠️ 签名与返回值**逐字不变**（`row, columns` ⇒ 数字）：既有调用方
+ *   （`realmBlock.js:61` / `replenishBlock` / `returnBlock` / `routes/scanPage/index.js` 经
+ *   `sellableSizeTexts`）与既有用例**一个字都不用改** ✓。
  */
-const sellableCountOf = (row, columns = []) => {
-  const cells = Array.isArray(row?.cells) ? row.cells : [];
-  if (cells.some((cell) => String(cell?.key ?? '').trim())) {
-    return cells.reduce((sum, cell) => (isSellableCell(cell) ? sum + Number(cell.count || 0) : sum), 0);
-  }
-  return (Array.isArray(columns) ? columns : []).reduce((sum, column, index) => (
-    SELLABLE_STATES.includes(String(column?.key ?? '').trim())
-      ? sum + Number(cells[index]?.count || 0)
-      : sum
-  ), 0);
-};
+const sellableCountOf = (row, columns = []) => countInStockOf(row, columns);
 
 /**
  * ⭐⭐ 2026-10-13「特殊尺码」（业务负责人逐字确认 · docs/size-range-special-sizes-2026-10-13.md）：
@@ -266,6 +274,9 @@ const sizeRowsOf = (view) => (Array.isArray(view?.rows) ? view.rows : [])
 /**
  * ⭐ 2026-10-14（她的最终口径）：这一款的**特殊码集合**（按编号第 3 段的类别取 `ranges[code].special`）
  *   —— 只读配置 ⇒ 零飞书读 ✓；认不出类别 / 关掉折叠 ⇒ 空集合（一条都不折 ✓ 不猜 ✗）
+ * ⭐ 2026-10-16 晚：取值改从 `config/scanStockPolicy.js` 的 `specialSizesOf(categoryCode)` 来
+ *   （它内部读的仍是**既有那一处** `config/scanPage.js#sizeSegments.ranges[code].special` ⇒
+ *    **不是第二份** ✗；`config/scanPage.js` 里那份 `special` 才是数据）。
  */
 const specialSizesOfView = (view) => {
   const cfg = SCAN_PAGE.specialSizes || {};
@@ -273,8 +284,7 @@ const specialSizesOfView = (view) => {
   const separator = SCAN_PAGE.number?.separator || '|';
   const parts = String(view?.number || '').split(separator);
   const categoryCode = String(parts[2] || '').trim().toUpperCase();
-  const range = SCAN_PAGE.sizeSegments?.ranges?.[categoryCode];
-  return new Set((range?.special || []).map((size) => String(size)));
+  return new Set(specialSizesOf(categoryCode).map((size) => String(size)));
 };
 
 const saleSizeGroups = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.sales) => {

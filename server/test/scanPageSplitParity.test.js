@@ -139,8 +139,11 @@ test('AC-SP-3 ⭐ 薄壳：`views/scanPageRenderer.js` 仍然导出**同一套**
 
 test('AC-SP-4 ⭐ 红线：拆分**没有**碰写侧服务（`services/scanWriteService.js` 逐字未改）', () => {
   const service = fs.readFileSync(path.join(SERVER, 'src/services/scanWriteService.js'));
+  // ⚠️ **2026-10-16 成对迁移**（task-62「货 / 钱分离」阶段二 · 业务负责人明确「允许改冻结文件」，
+  //    **一次性、只为本卡**）：改前逐字 `199551e1…35ca`（1699 行）⇒ 改后逐字 `49772bda…2c12`（1770 行）。
+  //    本刀（scanPage 拆分）自己在那份文件里**仍然一个字都没加** ✗ —— 判据没放宽，只是基线随授权的那一刀一起搬 ✓。
   assert.equal(crypto.createHash('sha256').update(service).digest('hex'),
-    '199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca',
+    '49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12',
     '🔴 `scanWriteService.js` 有"谁改一个字就红"的哨兵 —— 本刀**一个字都没动** ✓'
     + '（另见 `test/scanWriteServiceFrozen.test.js` 的同一份冻结基线 ✓）');
 });
