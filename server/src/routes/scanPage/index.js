@@ -2928,13 +2928,31 @@ return sendPaymentStep(res, req, {
         //   改前逐字：`if (resolveSaleMoneySplit` ＋ `Config().enabled === true) { … }`（开关关着 ⇒ 这段一个字都不跑）
         //   改后逐字：**闸门删掉** ⇒ 这段**永远跑**（货品页建单 / 现货当场扣 / 钱待补 ✓）
         //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**把新功能都上了，不需要开关。**」✓
-const goods = await writeService.submitSale({
+            const goods = await writeService.submitSale({
               openId,
               requestId,
               submitKey: body[fields.submitKey],
               payments: [],          // 🔴 货那一跑**不许带收款**（带了冻结件当场抛 ✓）
               deferFunds: true,      // ⭐ 阶段二（#763）已就位 ✓ 本刀只**接线** ✗ 不改冻结件 ✓
               lineAmounts,           // 与今天**同一个**取值口径 ✓
+              // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修 `session_empty`（400）✗：
+              //   改前逐字：这段 `submitSale({…})` **没有** `pendingLine`（旧流程里它是靠下面那条【死代码】补的 ✗）
+              //   改后逐字：本段末尾补上 `pendingLine`（**逐字照抄** 下面 :2948 那份既有形状 ✓ 不新造 ✗）
+              //   依据 = 我逐层核到的事实：`scanWriteService.js:833` 拿行只有两条路（会话里已有行 ／ 传了 `pendingLine` 就当场 addLine ✗）
+              //     ＋ ⭐ ④ 取消开关后，带 `pendingLine` 那条路（原 :2951）被这条货那一跑的 `return` 顶成了**死代码** ✗
+              //     ⇒ 她「选尺码 ＋ 一次 POST 提交」这条流**行没被加进会话** ⇒ `:867 lines=[]` ⇒ `:868` 抛 `session_empty` ⇒ 400 ✗
+              //   依据（业务口径）= 她 2026-10-16 23:5x 逐字：「我先点了，我再点完货品的时候，我就创建单号了。**那为什么我在成功页里面看不到呢？那我肯定能看到这个单号呀**」✓
+              pendingLine: submitView?.found ? {
+                productRecordId: submitView.product_record_id,
+                number: submitView.number,
+                itemNo: submitView.item_no,
+                color: submitView.color,
+                size: body[fields.size],
+                amount: body[fields.amount],
+                gift: body[fields.gift],
+                // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
+                inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
+              } : null,
             });
             // 🔴 失败**如实**：绝不带着空单号继续去资金页当她"成功了" ✗
             if (!goods || goods.ok !== true) return respondWriteFailure(res, goods, requestId);
