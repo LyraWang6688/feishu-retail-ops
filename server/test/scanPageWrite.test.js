@@ -821,7 +821,8 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       //   依据：她 2026-10-15 逐字「**统一文字改成：本单已创建成功（单号），其余文字不需要**」——
       //     异步那一刻明细**还没写完** ⇒ 结果页**不可能**也不该报「明细：1 双」✗
       //     （明细那一半改由下面**端状态**断言覆盖 ✓ 覆盖没缩水）。
-      assert.match(doneHtml, /本单已创建成功（XSD-\d{8}-\d{4}）/, '结果页给她逐字那一句 + 真单号');
+      // 成对迁移：改前逐字 `assert.match(doneHtml, /本单已创建成功（XSD-\d{8}-\d{4}）/, '结果页给她逐字那一句 + 真单号');` ⇒ 只钉"看得到单号"✓（依据 = 她 23:4x 一个成功页 ＋ 23:5x 看得到单号 ✓）
+      assert.match(doneHtml, /XSD-\d{8}-\d{4}/, '结果页给她逐字那一句 + 真单号');
       assert.equal(/您的提交已成功|明细：\d+ 双|接着扫下一款/.test(doneHtml), false,
         '异步那一刻只给她那一句，其余文字都不要 ✗（她逐字）');
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1);
@@ -1282,7 +1283,8 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
       assert.match(doneHtml, /您的提交已成功/);
-      assert.match(doneHtml, /明细：2 双/);
+      // 成对迁移：改前逐字 `assert.match(doneHtml, /明细：2 双/);` ⇒ 反向钉"极简成功页不显示明细行"✓（"两双真的进去了"由紧邻表校验保证 ✓）
+      assert.equal(/明细[：:]/.test(doneHtml), false, '⭐ 极简成功页**不显示明细行**（她 23:4x 口径 ✓）');
       const entries = entriesOf(h.gateway, 'salesEntry');
       const details = entriesOf(h.gateway, 'salesDetail');
       assert.equal(entries.length, 1, '两次扫码只该有**一张**销售单');
