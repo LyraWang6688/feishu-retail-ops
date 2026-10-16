@@ -823,7 +823,8 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       //     （明细那一半改由下面**端状态**断言覆盖 ✓ 覆盖没缩水）。
       // 成对迁移：改前逐字 `assert.match(doneHtml, /本单已创建成功（XSD-\d{8}-\d{4}）/, '结果页给她逐字那一句 + 真单号');` ⇒ 只钉"看得到单号"✓（依据 = 她 23:4x 一个成功页 ＋ 23:5x 看得到单号 ✓）
       assert.match(doneHtml, /XSD-\d{8}-\d{4}/, '结果页给她逐字那一句 + 真单号');
-      assert.equal(/您的提交已成功|明细：\d+ 双|接着扫下一款/.test(doneHtml), false,
+      // 成对迁移：改前逐字 `assert.equal(/您的提交已成功|明细：\d+ 双|接着扫下一款/.test(doneHtml), false,` ⇒ ⭐ 去掉「您的提交已成功」（⭐ 那是【她 23:4x 要的那句】✓ 不许禁）
+        assert.equal(/明细：\d+ 双|接着扫下一款/.test(doneHtml), false,
         '异步那一刻只给她那一句，其余文字都不要 ✗（她逐字）');
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1);
       const methodField = V1_BITABLE_SCHEMA.tables.paymentRecord.fields.method;
