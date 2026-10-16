@@ -2,6 +2,8 @@ const { multiItemBlockHtml, multiItemPayloadJson, MULTI_ITEM_ITEM_KEYS, MULTI_IT
 const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, SKELETON_STYLE, STYLE } = require('./styles');
 const { buildPaymentRows, paymentRowsHtml } = require('./paymentBlock');
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
+// ⭐⭐ 2026-10-16（task-52 收尾）：**成功页统一极简**的配置真源（开关 ＋ 那一句 ✓ 见 config/scanSuccessPage.js）
+const { SCAN_SUCCESS_PAGE, minimalSuccessOverrides } = require('../../config/scanSuccessPage');
 const { DEFAULT_REALM, resolveRealm } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { identityHtml, noScriptHtml, realmBarHtml, renderDocument } = require('./layout');
@@ -109,13 +111,24 @@ const renderScanMessagePage = ({
   returnPath = '', returnLabel = '', returnDelaySeconds = 0, autoReturnUrl = '',
   // ⭐ 2026-10-13（成功页三入口）：透明的"追加动作块"—— 不传 = 既有页面逐字不变 ✓
   extraActionsHtml = '',
-}, config = SCAN_PAGE) => renderDocument({
+  // ⭐⭐ 2026-10-16（task-52 收尾 · 成功页统一极简）：配置源（缺省 = `config/scanSuccessPage.js` ✓）
+  //    判据可直接注入 `{ minimalEnabled: true, minimalText: '…' }` ⇒ 不必改 env ✓
+  successPage = null,
+}, config = SCAN_PAGE) => {
+  // ⭐ **只在成功页**上套用；**开关关着 ⇒ minimal = {} ⇒ 下面每一处都逐字不变** ✓（零回归 ✓）
+  const minimal = tone === 'success' ? minimalSuccessOverrides(successPage || SCAN_SUCCESS_PAGE) : {};
+  const eff = {
+    body, details, number, retryHint, backPath, backLabel, backHint,
+    returnPath, returnLabel, returnDelaySeconds, autoReturnUrl, extraActionsHtml,
+    ...minimal,
+  };
+  return renderDocument({
   title,
   config,
   requestId,
   // ⚠️ 用 `<meta http-equiv="refresh">`（**不是 JS**）：老手机 / 禁脚本也能跳，且 URL 是**服务端写的** ✓
-  head: autoReturnUrl && returnDelaySeconds > 0
-    ? `<meta http-equiv="refresh" content="${Number(returnDelaySeconds)};url=${escapeHtml(autoReturnUrl)}">`
+  head: eff.autoReturnUrl && eff.returnDelaySeconds > 0
+    ? `<meta http-equiv="refresh" content="${Number(eff.returnDelaySeconds)};url=${escapeHtml(eff.autoReturnUrl)}">`
     : '',
   // ⚠️ **`<section class="card state-msg">` 这一串逐字不变**（连成功页也一样）：
   //    有断言按这串取"她看得见的那张卡"，在 section 上多加属性/class 会把它们悄悄打红。
@@ -123,15 +136,16 @@ const renderScanMessagePage = ({
   content: `<section class="card state-msg">
 ${tone === 'success' ? '<p class="state-msg__mark" aria-hidden="true">✅</p>' : ''}
 <h1${tone === 'success' ? ' class="state-msg__title--success"' : ''}>${escapeHtml(title)}</h1>
-<p>${escapeHtml(body)}</p>
-${details.length ? `<ul class="result">${details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
-${number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(number)}</span></p>` : ''}
-${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
-${backPath && backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(backPath)}">${escapeHtml(backLabel)}${backHint ? `<span>${escapeHtml(backHint)}</span>` : ''}</a>` : ''}
-${returnPath && returnLabel ? `<a class="btn" data-view="success-return" href="${escapeHtml(returnPath)}">${escapeHtml(returnLabel)}</a>` : ''}
-${extraActionsHtml}
+<p>${escapeHtml(eff.body)}</p>
+${eff.details.length ? `<ul class="result">${eff.details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
+${eff.number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(eff.number)}</span></p>` : ''}
+${eff.retryHint ? `<p class="hint">${escapeHtml(eff.retryHint)}</p>` : ''}
+${eff.backPath && eff.backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(eff.backPath)}">${escapeHtml(eff.backLabel)}${eff.backHint ? `<span>${escapeHtml(eff.backHint)}</span>` : ''}</a>` : ''}
+${eff.returnPath && eff.returnLabel ? `<a class="btn" data-view="success-return" href="${escapeHtml(eff.returnPath)}">${escapeHtml(eff.returnLabel)}</a>` : ''}
+${eff.extraActionsHtml}
 </section>`,
-});
+  });
+};
 
 /**
  * ⭐⭐ **提交成功页**（`POST submit_order` 写成功之后 POST 直接渲染的就是这一页；
