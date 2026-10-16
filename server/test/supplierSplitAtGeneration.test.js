@@ -47,8 +47,13 @@ const { resolveSupplierSplitConfig, BATCH_NO_POLICIES } = require('../src/config
 const { resolveScanDraftConfig } = require('../src/config/scanDraft');
 const { createScanDraftService } = require('../src/services/scanDraftService');
 
-/** 🔴 main 上那个冻结件的基线指纹（与 `test/scanWriteServiceFrozen.test.js` 的常量**同一个值** ✓）。 */
-const FROZEN_SHA256 = '199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca';
+/** 🔴 main 上那个冻结件的基线指纹（与 `test/scanWriteServiceFrozen.test.js` 的常量**同一个值** ✓）。
+ *  ⚠️ **2026-10-16 成对迁移**（task-62「货 / 钱分离」阶段二 · 业务负责人明确「允许改冻结文件」，**一次性、只为本卡**）：
+ *     改前逐字 `199551e1…35ca`（1699 行）⇒ 改后逐字 `49772bda…2c12`（1770 行）。
+ *     本刀（按供应商拆分）自己在那份文件里**仍然一个字都没加** ✗ —— 判据没放宽，只是基线随授权的那一刀一起搬 ✓。
+ *     ⚠️ 许可**不能复用**：下一次改它必须重新拿裁决（见冻结哨兵的「解冻台账」✓）。
+ */
+const FROZEN_SHA256 = '49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12';
 
 const SPLIT_SERVICE_PATH = path.join(__dirname, '..', 'src', 'services', 'supplierSplitService.js');
 const SPLIT_SERVICE_SRC = fs.readFileSync(SPLIT_SERVICE_PATH, 'utf8');

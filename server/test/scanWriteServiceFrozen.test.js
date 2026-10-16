@@ -14,12 +14,24 @@
  * - **AC-FRZ1** 🔴 指纹（sha256）＋ 行数与**基线**逐字一致 ⇒ 改/加/删**任意一个字节**就红 ✓
  * - **AC-FRZ2** ⭐ 探针：指纹函数**真能认出改动**（不是空跑）✓
  * - **AC-FRZ3** 🔴 冻结期内的**唯一合法动作**写在下面（解冻必须**显式**改本文件的常量 ✓）
+ * - **AC-FRZ4** 🔴 **解冻台账**：每一次授权解冻都必须在文件头留一行**逐字**记录
+ *   （改前 sha → 改后 sha → 依据）——**只改常量、不写台账 ⇒ 红** ✓（防"悄悄重设基线"✗）
  *
  * ## 🔴 解冻流程（要改那个文件时，**必须**按这个顺序）
  * 1. 先拿到 Lead / 业务负责人的**明确授权**（冻结是红线的产物 ✗ 不许自行解冻）
  * 2. 改完 `services/scanWriteService.js` 后，**同时**更新本文件的
  *    `FROZEN_SHA256` ＋ `FROZEN_LINES`（这一步是"解冻动作"的**显式闸门** ✓）
+ *    ⚠️ **同一份基线的其他副本也要一起搬**（都在注释里写着"与本案同一个值"）：
+ *    `test/scanPageSplitParity.test.js` · `test/scanDraftRouteWiring.test.js` ·
+ *    `test/scanDraftSaveResume.test.js` · `test/multiItemLogsAndRealmScan.test.js`
  * 3. 在 PR 描述里写「改前逐字 → 改后逐字 → 依据」（本仓口径 ✓）
+ *    ⚠️ 并在下面的**解冻台账**里加一行（AC-FRZ4 钉着 ✓）
+ *
+ * ## ⭐ 解冻台账（每一次改那个文件都必须往下加一行；**逐字**）
+ * - 2026-10-16 · **task-62「货 / 钱分离」· 阶段二**（`submitSale` 加 `deferFunds` 那一条路）：
+ *   改前逐字：sha `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）
+ *   ⇒ 改后逐字：sha `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`（1770 行）
+ *   依据 = 业务负责人 2026-10-16 明确「允许改冻结文件」（一次性、只为本卡）。
  *
  * ⚠️ 本文件**只读**那个文件（`readFileSync`），**不写入、不改行为、不加开关** ✓
  */
@@ -32,12 +44,13 @@ const path = require('node:path');
 
 const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.js');
 
-/** 🔴 基线指纹（`main 56b6550` 时实测）。
- *  · 改这一个常量 ⇒ 就是**一次显式解冻**（见文件头第 2 步 ✓）
- *  · ⚠️ `split('\n').length` = **1699**（`wc -l` 是 1698 —— 末行无换行符，两个数**都对**，别混用 ✓）
+/** 🔴 基线指纹（**最近一次授权解冻**后的逐字节基线；台账见文件头）。
+ *  · 改这一个常量 ⇒ 就是**一次显式解冻**（见文件头第 2 步 ✓）——⚠️ 但**必须**同时留台账（AC-FRZ4 ✓）
+ *  · ⚠️ `split('\n').length` = **1770**（`wc -l` 是 1769 —— 末行无换行符，两个数**都对**，别混用 ✓）
+ *  · 解冻历史：`199551e1…35ca`（1699 行 · 2026-10-16 task-62 阶段二之前）
  */
-const FROZEN_SHA256 = '199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca';
-const FROZEN_LINES = 1699;
+const FROZEN_SHA256 = '49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12';
+const FROZEN_LINES = 1770;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const linesOf = (text) => String(text).split('\n').length;
@@ -80,4 +93,21 @@ test('AC-FRZ3 🔴 冻结的**唯一**合法出口 = 显式更新本文件的基
   assert.match(source, /const FROZEN_LINES = \d+;/,
     '行数基线也必须写死 ✓');
   assert.match(source, /解冻流程/, '文件头必须留着"怎么解冻"的说明 ✓（否则后人只会把常量改掉 ✗）');
+});
+
+test('AC-FRZ4 🔴 **解冻台账**：授权解冻必须逐字留档（只改常量、不写台账 ⇒ 红 ✓）', () => {
+  const source = fs.readFileSync(__filename, 'utf8');
+  // ① 台账小节本身必须在（AC-FRZ3 只钉"怎么解冻"，这一条钉"解冻过什么" ✓）
+  assert.match(source, /解冻台账/, '文件头必须有「解冻台账」那一节 ✓');
+  // ② 2026-10-16 task-62 阶段二那一次**逐字**记录（改前 sha → 改后 sha → 依据）——
+  //    ⚠️ 这三个字符串**必须同时**出现：只改常量、不写台账 ⇒ 这里红 ✓
+  assert.ok(source.includes('199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca'),
+    '台账必须留**改前逐字**那把 sha ✓');
+  assert.ok(source.includes(FROZEN_SHA256),
+    '台账必须留**改后逐字**那把 sha（= 当前基线常量 ✓）');
+  assert.ok(source.includes('依据 = 业务负责人 2026-10-16 明确「允许改冻结文件」（一次性、只为本卡）。'),
+    '台账必须留**依据**那一句逐字 ✓（授权一次性、只为本卡 ✗ 不许复用）');
+  // ③ 台账不许"改前 = 改后"（那样等于没解冻过，只是想把常量改掉 ✗）
+  assert.notEqual(FROZEN_SHA256, '199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca',
+    '改后 sha 必须与 2026-10-16 之前的基线**不同** ✓');
 });
