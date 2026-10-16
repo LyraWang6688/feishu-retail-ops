@@ -100,6 +100,33 @@ if (result?.code === 'sale_partial_failed') {
 - ⚠️ **改的位置仍受 `AC-MSW2` 约束**（`test/saleMoneySplitWire.test.js:68` 正则钉着"调用点紧邻 `respondWriteFailure`"）
   ⇒ **只能在 `respondWriteFailure` 函数内部改**（见上文"正解"），**不许在调用点前面插分支**。
 
+### A2. ✅ **她的裁决（2026-10-17 01:19 · 逐字）：选（1）**
+
+> 「**（1）把通用那句改成「任务创建失败」** ⇒ **所有写失败页都变**」
+
+⇒ **口径定稿：把通用失败标题那句话改掉 ⇒ 所有写失败页统一显示「任务创建失败」。**
+
+**改哪一行（就一行）**：`server/src/config/scanWrite.js:826`
+```js
+failedTitle: '这一步没成功',      // ⇒ 改成  failedTitle: '任务创建失败',
+```
+
+**影响面（已核 · 必须一起处理）**：
+| 位置 | 内容 | 处理 |
+|---|---|---|
+| `server/test/scanPageWrite.test.js:1026` | `assert.match(html, /这一步没成功/);` | 🔴 **真断言 ⇒ 要迁**（改前逐字 → 改后逐字 → 依据 = 她 2026-10-17 01:19「（1）」） |
+| `server/test/workbenchFourTabs.test.js:1105` | `assert.ok(failed.includes('这一步没成功') && …)` | 🔴 **真断言 ⇒ 要迁**；⚠️ 先读 `:1104`（若它自己传 `title: '这一步没成功'`，这处**可能不用迁**） |
+| `server/test/workbenchFourTabs.test.js:1104` | `renderScanMessagePage({ title: '这一步没成功', … })` | ⚠️ **自造 title ⇒ 大概率不用动**（读原文确认） |
+| `server/test/scanPurchaseReturn.test.js:748` | 注释里的「改前逐字」 | ⚠️ 注释，按需更新 |
+
+**与 §A 的关系**：她选（1）⇒ **所有失败都显示「任务创建失败」** ⇒ §A 的修法可简化成
+**在 `respondWriteFailure` 里把标题改成「任务创建失败」**（不必再保留 `partialFailedTitle` 分支）。
+⚠️ **但仍受 `AC-MSW2` 约束**：改动必须在 `respondWriteFailure` **函数内部**（不许在调用点前面插分支）。
+⚠️ **`partialFailedTitle`（"单子记上了，后面还有一步没写完"）是否还要留** ⇒ 她只说"统一"；
+   若全部失败都显示"任务创建失败"，那个键就**没人用了** ⇒ **建议一并确认是否删除**（配置先行、别留死键）。
+
+**跑法（改完必须）**：`node --check` ＋ 该两条用例 ＋ **3 条已知绿** ＋ **全 9 文件** ＋ **两遍全量**。
+
 ### B. 🔴 全量 4 条红（344 文件）—— 只查清了 1 条
 
 - **已定**：`test/scanPage.test.js:322`「④ 只读（源码扫描）：config / service / view / route 四个文件里没有任何写调用」，
