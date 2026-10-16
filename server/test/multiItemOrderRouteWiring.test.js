@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * task-59「一单多货品 · **路由半**」的**反向哨兵 + 运行时判据**（本文件只加，不改既有 13 条 ✗）。
  *

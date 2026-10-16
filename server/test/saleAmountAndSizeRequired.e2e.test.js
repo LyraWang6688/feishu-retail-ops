@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * saleAmountAndSizeRequired.e2e.test.js —— 「实收金额**必填** + 尺码**必填**」的判据（货品页那一层）
  *

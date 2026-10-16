@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * ⭐⭐ task-60（2026-10-16 · 业务负责人真机 05:34 + **她当日亲口选的方案 ②**）
  *

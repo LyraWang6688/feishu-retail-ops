@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * ⚠️ 2026-10-12 旧断言改写（**真机 bug 修复**：采购单的「采购行为」原来写成了**库存**行为）：
  *  改前（逐字）：`assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_request'], '主表「采购行为」= 采购申请那一档（明细那列由它 Lookup 带出）');`

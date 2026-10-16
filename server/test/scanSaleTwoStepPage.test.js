@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-13「金额两步走 + 成功页三入口」的验收标准（**先写先红**）。

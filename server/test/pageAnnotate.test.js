@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 「页面标注模式」—— 业务负责人 2026-10-16 亲口点的功能（逐字）：

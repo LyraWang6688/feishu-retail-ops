@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * task-36（**第 1 步 / 影子跑**）：「一单多货品」—— 本单草稿 + 批量提交。
  *

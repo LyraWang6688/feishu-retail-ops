@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 // 2026-10-14：本文件测的是**按款缓存这个能力本身** ⇒ **显式打开** ✓
 //   （默认已按她拍板改成**关** ✗：「那份按款缓存：去掉（永远最新 ✓ 每次真读 ✓）」）
 process.env.SCAN_PAGE_CACHE_ENABLED = 'true';

@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * ⭐⭐ ⑨ B **异步写入** 的验收用例（`docs/sales-async-write-2026-10-14.md` 的 AC-AS1…AS10）。
  *

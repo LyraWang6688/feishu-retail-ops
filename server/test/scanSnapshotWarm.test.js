@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * ⭐⭐ 2026-10-14（她 02:31 那次扫码 `total_ms=7451`、`feishu_reads=2`）：**启动预热「实时库存」快照**。
  *
