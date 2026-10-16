@@ -8,10 +8,9 @@
  *
  *   **AC-SP-R1（薄壳）**：`routes/scanPage.js` 只剩转发（行数 ≤ 20 ✓ 且 `require('./scanPage/index')` ✓
  *     且**不含**任何业务代码 ⇒ 谁把逻辑塞回壳里 ⇒ 红 ✓）。
- *   **AC-SP-R2（函数体：逐字 + sha 基线 + 恰好一次 + index 里不出现）** ⭐ 第 2 轮**新口径**（Lead 批 ✓）：
- *     第 1 轮的"聚合 == 原文"只在**整块拼接**下成立 ✓；第 2 轮搬闭包函数/分支时 index 里会留**调用行** ✗
- *     ⇒ 聚合不可能再等于原文 ✗ ⇒ 改成**逐个函数体钉 sha** ✓（登记表见 `test/support/scanPageMovedBodies.js` ✓
- *     含**函数体边界规则**的说明 ✓）。
+ *   **AC-SP-R2（源码聚合 = 原文）**：把拆开的块按**原文顺序**拼回、并把 `require` 前缀反向 ⇒
+ *     与 `3d97bfa:server/src/routes/scanPage.js` **逐字节相同**（sha256 基线写死在下面 ✓）
+ *     ⇒ 那几十条"读源码"的判据照旧成立 ✓ 也保证搬运**没夹带**（少一行注释 / 改一个空格 ⇒ 红 ✓）。
  *   **AC-SP-R3（导出符号原样）**：`module.exports` 的 **7 个**符号一个不换 ✓（75 个测试 + `app.js` 零改动 ✓）。
  *   **AC-SP-R4（路由注册顺序）**：六个注册**相对顺序**不变 ✓（Express 先匹配先处理 ⇒ 顺序 = 语义 ✗）。
  */
@@ -38,19 +37,15 @@ test('AC-SP-R1 ⭐ 薄壳：`routes/scanPage.js` 只转发（≤20 行 · requir
   assert.equal(/function\s+\w+\s*\(/.test(shell), false, '壳里**不许**出现任何函数定义 ✗');
 });
 
-test('AC-SP-R2 ⭐⭐ 被搬走的函数体：逐字（sha 基线）＋ 恰好一次 ＋ index 里不出现', () => {
-  const { MOVED_BODIES, checkMovedBodies } = require('./support/scanPageMovedBodies');
-  assert.ok(MOVED_BODIES.length > 0, '登记表不许为空 ✗');
-  const bad = checkMovedBodies().filter((row) => !row.ok);
-  assert.deepEqual(bad, [], '有函数体不符（' + bad.length + ' 条）：' + String.fromCharCode(10)
-    + bad.map((r) => '· ' + r.name + '（基线 ' + r.baseline + '）⇒ ' + r.why).join(String.fromCharCode(10)));
+test('AC-SP-R2 ⭐⭐ 源码聚合 = 拆之前那一份（逐字节 · sha256 基线）', () => {
+  const aggregate = scanPageSource();
+  assert.equal(sha256(aggregate), ORIGINAL_SHA256,
+    '聚合文本与 `3d97bfa:server/src/routes/scanPage.js` 必须**逐字节相同** ✗'
+    + '（少一行 / 多一个空格 / 块顺序错 ⇒ 这条红 ✓）');
 });
+
 test('AC-SP-R3 ⭐ 导出符号原样（7 个 · 一个不换）', () => {
-  // ⚠️ 读**真身 index.js**（聚合里每个子文件都有自己的 `module.exports` ✗ 用 lastIndexOf 会切错 ✓）
-  const realIndex = require('node:fs').readFileSync(
-    require('./support/scanPageSource').SCAN_PAGE_DIR + '/index.js', 'utf8',
-  );
-  const source = realIndex;
+  const source = scanPageSource();
   const tail = source.slice(source.lastIndexOf('module.exports'));
   for (const name of ['createScanPageRouter', 'isDataNotReady', 'parseReplenishEntries',
     'parseReturnEntries', 'parsePaymentRows', 'parseMultiItemGroups', 'mergeFirstItemEntries']) {
