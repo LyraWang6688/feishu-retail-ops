@@ -76,7 +76,11 @@ const FROZEN_PATH = path.join(__dirname, '..', 'src', 'services', 'scanWriteServ
  *     本刀（存草稿 · 接着录）自己在那份文件里**仍然一个字都没加** ✗ —— 判据没放宽，只是基线随授权的那一刀一起搬 ✓。
  *     ⚠️ 许可**不能复用**：下一次改它必须重新拿裁决（见冻结哨兵的「解冻台账」✓）。
  */
-const FROZEN_SHA256 = '49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12';
+// ⭐⭐ 2026-10-16 成对迁移（**第 2 次解冻** · 改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：`333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f` ⇒ 改后逐字：`333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`
+//   依据 = 业务负责人 22:0x「**现货就是要扣库存**」＋「**啥叫钱没入账就不许出库存？不用呀。**」
+//          （冻结件只动批准的 5 行 ✓ `split('\n').length` = 1771 ✓）
+const FROZEN_SHA256 = '333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f';
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 

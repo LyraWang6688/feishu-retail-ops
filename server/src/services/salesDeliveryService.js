@@ -44,7 +44,11 @@ class SalesDeliveryService {
     return next;
   }
 
-  async _deliver({ salesEntryRecordId, detailRecordIds, paymentRecordIds = [], occurredAt } = {},
+  async _deliver({ salesEntryRecordId, detailRecordIds, paymentRecordIds = [], occurredAt,
+    // ⭐⭐ 2026-10-16（业务负责人 22:0x 逐字：「**啥叫钱没入账就不许出库存？不用呀。**」）：
+    //    **只给"货那一跑（货品页建单）"开这道口子** ✓ —— 显式布尔 · **缺省 false** ✓
+    //    ⇒ 其它调用方（资金页 / 工作台 / 二次交付）**行为一字不变** ✗。
+    allowUnposted = false } = {},
     options = {}) {
     if (!salesEntryRecordId) throw new Error('交付缺少销售主表 record_id');
     if (!Array.isArray(detailRecordIds) || !detailRecordIds.length) throw new Error('请选择交付的销售明细');
@@ -65,7 +69,10 @@ class SalesDeliveryService {
     // （旧「确认状态（旧）」已被业务负责人整列删除，没有回退可言）。
     // ⭐ 判据 = 「账做完了没有」：**两代字面量都算**（她手工填的「已入账」/ 代码写的「已写入」），
     // 配置在 config/salesStatusDimensions（POSTED_VALUES），不在这里散落字符串。
-    if (!isPosted(postedOf(entry, entryFields))) throw new Error('销售订单尚未确认入账');
+    // ⭐ 2026-10-16：**货与钱是两条独立的线**（她：「货就是货，资金就是资金，它俩是独立的呀」）
+    //    ⇒ 货那一跑（`allowUnposted: true`，**只在 `fundsDeferred === true` 时由冻结件传** ✓）
+    //      允许在资金状态尚未写入时交付 ✓；**其它调用方照旧** ✓。
+    if (!allowUnposted && !isPosted(postedOf(entry, entryFields))) throw new Error('销售订单尚未确认入账');
     const fields = this.gateway.table('salesDetail').fields;
     const listedDetails = (await withSalesReadRetry(
       () => this.gateway.listAll('salesDetail'), 'delivery_detail_list',

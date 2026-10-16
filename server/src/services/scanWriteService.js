@@ -609,7 +609,8 @@ const createScanWriteService = (options = {}) => {
    *
    * @returns {Promise<{requested:number, delivered:number, failed:number, reasons:string[]}>}
    */
-  const deliverStockLines = async ({ items, detailRecordIds, paymentRecordIds, salesEntryRecordId, correlation }) => {
+  const deliverStockLines = async ({ items, detailRecordIds, paymentRecordIds, salesEntryRecordId, correlation,
+    allowUnposted = false }) => {
     const deliverable = items
       .map((item, index) => ({ item, detailRecordId: String(detailRecordIds?.[index] || '') }))
       .filter(({ item, detailRecordId }) => detailRecordId && lineDeliversOnSubmit(item));
@@ -620,6 +621,7 @@ const createScanWriteService = (options = {}) => {
         salesEntryRecordId,
         detailRecordIds: detailIds,
         paymentRecordIds,
+        allowUnposted,
         occurredAt: now(),
       }, { correlation });
       const failures = invoice?.failures || [];
@@ -1309,18 +1311,16 @@ const createScanWriteService = (options = {}) => {
       //    ⚠️ 明细 id 与 `items` **一一对应**（既有 `confirm` 就是按这个顺序建行的，群聊链路
       //       的 `deliverableItemIndexes` 也是同一个约定），所以这里按下标取。
       const stockStartedAt = Date.now();
-      // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑不扣库存** ✗ —— 两个理由，都是判据：
-      //   ① `SalesDeliveryService.deliver` 的前置是 `isPosted(postedOf(entry))`（**只认「资金状态」**）——
-      //      这一跑刚把资金状态停在「未写入」⇒ 硬要交付它**必然拒**（那会写出一次假的"库存没扣成" ✗）；
-      //   ② 她的口径：「什么时候付款…是在资金页里面确定的」⇒ 库存等**资金页那一跑**（钱写完）才扣 ✓。
-      //   ⚠️ 如实报 `requested: 0`（**没请求交付**，不是"交付成功" ✗）—— 判据 AC-MSD3：
-      //      "**进了资金页但没提交 ⇒ 库存一双未扣**"（去掉下面这个分支 ⇒ 真红 ✓）。
-      const stock = fundsDeferred
-        ? { requested: 0, delivered: 0, failed: 0, reasons: [] }
-        : await deliverStockLines({
-          items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
-          salesEntryRecordId, correlation,
-        });
+      // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」· 业务负责人 22:0x **改口径** ✓）：
+      //   「**货就是货，资金就是资金，它俩是独立的呀**：货：看它是现货还是预订。**如果是现货，就是要扣库存**；
+      //     如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
+      //   ⇒ ⭐ **货那一跑照走交付**（`deliverStockLines` 内部按既有 `lineDeliversOnSubmit` 过滤 ⇒ **现货扣 / 预订不扣** ✓）；
+      //     钱的结论不受影响（`owedCents` 照旧由 `fundsDeferred` 那段决定 ⇒ 差额待补 ✓）。
+      //   ⚠️ `allowUnposted: fundsDeferred` —— **只有货那一跑**开这道口子（关着时传 `false` ⇒ 与今天逐字一致 ✗）。
+      const stock = await deliverStockLines({
+        items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
+        salesEntryRecordId, correlation, allowUnposted: fundsDeferred,
+      });
       markStage('stock_ms', stockStartedAt);
       if (stock.failed > 0) {
         // 🔴 **失败要如实报错**：单子写了（货 / 钱是事实），但库存没扣成这件事必须回给她，
@@ -1340,6 +1340,7 @@ const createScanWriteService = (options = {}) => {
       //   钱永远写不上（**静默丢账** ✗）。⇒ 改记一个**新标记**「货已经落库」
       //   （与今天的 `pending` / `created` 三个状态分开，取值在 `config/saleMoneySplit.js` ✓）——
       //   判据 AC-MSD5 真红 ✓。⚠️ 关着时这一段**一行都不跑**（下面那两行逐字同今天 ✓）。
+      //   ⭐ 2026-10-16 口径改（她 22:0x）：货那一跑**照扣库存**（现货 ✓）⇒ 这里的 `stock_*` 是**真的**交付结果 ✓。
       if (fundsDeferred) {
         await sessions.saveSaleProgress(sessionId, {
           [SESSION_MARKERS.goodsCreated]: true,
