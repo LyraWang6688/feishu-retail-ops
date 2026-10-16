@@ -3,9 +3,11 @@
 const { asList } = require('./shared');
 
 /**
- * ⭐⭐ 2026-10-16 拆分（阶段二 · 纯搬运 ✓）：**资金页**相关的纯函数。
- *   本轮先落 `parsePaymentRows`（后续层：pay / skip 两支 ＋ step2WriteOf ✓）。
+ * ⭐⭐ 2026-10-16 拆分（阶段二 · 纯搬运 ✓）：资金页相关的纯函数。
+ *   本轮先落 parsePaymentRows（后续层：pay／skip 两支 ＋ step2WriteOf ✓）。
  */
+
+// ===== 以下为原文逐字切片（聚合用；勿改 ✗）=====
 
 /**
  * 表单 → **多笔收款**（`[{ method, amount }]`，按下标对齐）。

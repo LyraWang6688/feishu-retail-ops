@@ -1,9 +1,11 @@
 'use strict';
 
 /**
- * ⭐⭐ 2026-10-16 拆分（阶段二 · 纯搬运 ✓）：**写库入口**相关的纯函数。
- *   本轮先落补货/退货的表单解析（后续层：submitOrder / replenish / purchaseReturn ＋ 拦截页 ✓）。
+ * ⭐⭐ 2026-10-16 拆分（阶段二 · 纯搬运 ✓）：写库入口相关的纯函数。
+ *   本轮先落补货／退货的表单解析（后续层：submitOrder／replenish／purchaseReturn ＋ 拦截页 ✓）。
  */
+
+// ===== 以下为原文逐字切片（聚合用；勿改 ✗）=====
 
 /**
  * 补货表单 → `[{ size, quantity }]`。
@@ -37,5 +39,4 @@ const parseReturnEntries = (body, fields, writeConfig) => {
     quantity: body[`${fields.returnQuantityPrefix}${size}`] ?? writeConfig.purchaseReturn.defaultQuantity,
   }));
 };
-
 module.exports = { parseReplenishEntries, parseReturnEntries };

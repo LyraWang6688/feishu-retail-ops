@@ -1,9 +1,11 @@
 'use strict';
 
 /**
- * ⭐⭐ 2026-10-16 拆分（阶段二 · 纯搬运 ✓）：**多货品**相关的纯函数。
- *   本轮先落 `parseMultiItemGroups` / `mergeFirstItemEntries`（后续层：multiItemOrder* 那几件 ✓）。
+ * ⭐⭐ 2026-10-16 拆分（阶段二 · 纯搬运 ✓）：多货品相关的纯函数。
+ *   本轮先落 parseMultiItemGroups／mergeFirstItemEntries（后续层：multiItemOrder* 那几件 ✓）。
  */
+
+// ===== 以下为原文逐字切片（聚合用；勿改 ✗）=====
 
 /**
  * ⭐⭐ 2026-10-16（task-59 · 路由半）：隐藏字段 `multi_items` → **分组数组**（纯函数 ✓ 用例直调 ✓）。
@@ -90,5 +92,4 @@ const positiveSize = (value) => {
 const purchaseWriteDisabledError = (chainConfig, texts) => (chainConfig?.enabled === false
   ? { code: 'disabled', message: texts.writeDisabledBody }
   : null);
-
 module.exports = { parseMultiItemGroups, mergeFirstItemEntries };

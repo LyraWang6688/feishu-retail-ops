@@ -3598,10 +3598,10 @@ return sendPaymentStep(res, req, {
 
   return router;
 };
-
 module.exports = {
   createScanPageRouter, isDataNotReady, parseReplenishEntries, parseReturnEntries, parsePaymentRows,
   // ⭐ 2026-10-16（task-59 · 路由半）：多货品那两个**纯函数**照上面几个的既有风格一起导出 ✓
   //   （用例直调它们钉"坏输入 ⇒ `[]`"与"只合并一次 ⇒ 数量不翻倍"✓）
   parseMultiItemGroups, mergeFirstItemEntries,
 };
+
