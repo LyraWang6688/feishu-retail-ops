@@ -321,10 +321,13 @@ const resolveDraftEntryConfig = (env = process.env) => Object.freeze({
   noticeMeta: readString(env, 'SCAN_DRAFT_NOTICE_META', '{products} 个货品 · {lines} 行'),
   resumeLabel: readString(env, 'SCAN_DRAFT_RESUME_LABEL', '接着录'),
   // 【接着录】那颗链接的查询键（**与 S3 的路由共用同一份配置** ⇒ 两边不各写一份 ✗）。
-  //   ⚠️ **S3 还没接住它**（本刀不碰 `routes/**` ✗）⇒ 如实标「**待接线**」：
-  //      渲染层已经把链接与查询键按配置画出来了，路由那一步在 S3 ✓。
   resumeQueryKey: readString(env, 'SCAN_DRAFT_RESUME_QUERY_KEY', 'resume'),
   resumeQueryValue: readString(env, 'SCAN_DRAFT_RESUME_QUERY_VALUE', '1'),
+  // ⭐⭐ 2026-10-16（task-S3）：「**存草稿成了**」那一发回跳的查询键（PRG ✓ 303 回本领域那一页）。
+  //   回来那一页据此给一句**看得见的反馈**（她那一句"不许无声" ✓）——文案的家在
+  //   `config/scanDraft.js` 的 `texts.saved`（**不在这里散写中文** ✗）。
+  savedQueryKey: readString(env, 'SCAN_DRAFT_SAVED_QUERY_KEY', 'saved'),
+  savedQueryValue: readString(env, 'SCAN_DRAFT_SAVED_QUERY_VALUE', '1'),
 });
 
 const DRAFT_ENTRY = resolveDraftEntryConfig(process.env);

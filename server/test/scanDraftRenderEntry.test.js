@@ -254,14 +254,24 @@ test('AC-D2f2 ⭐ 不点它 = 正常新建：页面里别的按钮 / 表单**一
   assert.ok(html.includes('href="?from=replenish&draft_resume=yes"'), '查询键 / 值跟着配置走 ✓');
 });
 
-test('AC-D2f3 ⚠️ 如实标「待接线」：今天不传 page.draft ⇒ 生产页面上一个草稿字节都不出现', () => {
-  // ⚠️ 「接着录」那一下（路由读 `?resume=1`）在 **S3** —— 本刀**不碰 `routes/**`** ✗。
-  //   ⇒ 本刀能证的是：**渲染层已按配置画好**（AC-D2f1 ✓），而**今天没有任何调用方传 `page.draft`**
-  //     ⇒ 线上页面**一个字都不会变**（零回归 ✓），也就**不会出现"点了没反应"的死按钮** ✓。
+test('AC-D2f3 不传 page.draft（或没草稿）⇒ 生产页面上一个草稿字节都不出现；闸门只有那两道', () => {
+  // ── ⭐⭐ **成对迁移（2026-10-16 · task-S3）**（改前逐字 → 改后逐字 → 依据）─────────
+  //   · **改前逐字**（S2 那一刀自己写的哨兵，**只对 S2 成立**）：
+  //     `assert.equal(/(?:resumeQueryKey|\bresume\b)/.test(src), false,
+  //        '🔴 routes/scanPage.js 里还没有读 ?resume（S3 才接）⇒ 本刀如实标「待接线」✓');`
+  //     `assert.match(RENDERER_SRC, /待接线/, '渲染层要如实写明这一步的接线在 S3 …');`
+  //   · **改后逐字**：那两条**换成**"路由接住了 `?resume`（查询键走配置）＋ 渲染层不再有待接线"
+  //     （本测试下面那两条）✓。
+  //   · **依据**：S3 落地了（`routes/scanPage.js` 读 `resumeQueryKey` 并把草稿填回页面 ✓
+  //     —— 判据在 `test/scanDraftRouteWiring.test.js` 的 AC-D3e ✓）⇒ "还没接"那两条断言
+  //     从**事实**变成了**过期断言**（留着就是"拿一句谎当哨兵" ✗）。
+  //   · ⚠️ **不是放宽** ✓：本测试真正要保的两条不变量**一个字都没动** ——
+  //     ① 不传 `page.draft` ⇒ 一个草稿字节都不出；② 两道闸门（`enabled` / `hasDraft`）还在 ✓。
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage.js'), 'utf8');
-  assert.equal(/(?:resumeQueryKey|\bresume\b)/.test(src), false,
-    '🔴 `routes/scanPage.js` 里**还没有**读 `?resume`（S3 才接）⇒ 本刀如实标「待接线」✓');
-  assert.match(RENDERER_SRC, /待接线/, '渲染层要**如实写明**这一步的接线在 S3（不假装已经接上 ✗）');
+  assert.match(src, /draftEntry\.resumeQueryKey/,
+    '⭐ 路由按**配置**里的查询键读 `?resume`（S3 已接；不写死 `resume` 字面量 ✓）');
+  assert.equal(/待接线/.test(RENDERER_SRC), false,
+    '渲染层**不再**标"待接线"（S3 已接上 ⇒ 那句话已经过期 ✗）');
   // 两个渲染点都必须先过 `page.draft.enabled === true` 这道闸（缺省 = 一个字节都不出 ✓）
   assert.match(RENDERER_SRC, /draft\.enabled !== true\) return null/,
     '两块草稿 UI 的**唯一**闸门 = `page.draft.enabled === true`（缺省不渲染 ✓）');

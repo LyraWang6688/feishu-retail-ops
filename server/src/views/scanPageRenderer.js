@@ -569,8 +569,8 @@ ${scanNextHtml}
  *
  * ⚠️ 这一块**没有一行 JS**：入口是**同一张表单里的第二颗 submit**（原生，带得走她刚填的尺码/数量）；
  *   【接着录】是一颗**真链接**（同一路径 + `?resume=1`，查询键走配置 ✓）。
- *   🔴 **如实标「待接线」**：【接着录】那一下要**路由**（S3）读 `?resume=1` 才真的接着录 ——
- *     本刀**不碰 `routes/**`** ✗ ⇒ 渲染层已按配置画好链接与查询键，**路由那一步在 S3** ✓。
+ *   ⭐ **接线已完成**（S3 · `routes/scanPage.js`）：路由读 `?resume=1` 把草稿填回页面 ✓、
+ *     并接住 `saveAction` 那个动作 ⇒ 渲染层这半边**已经接上**（配置一个字没改 ✓）。
  */
 const draftUiOf = (page) => {
   const draft = page && page.draft;
@@ -584,7 +584,7 @@ const draftEntryConfigOf = (config) => (config && config.draftEntry) || SCAN_PAG
 /**
  * 「存报货草稿」那一颗（**三处入口共用这一个渲染点** ⇒ 形状只有一份，不会三处各写一遍 ✗）。
  *   · 落在**既有那张表单里**（`write.fields.action` 是既有字段名 ⇒ 不新造隐藏字段 ✓）；
- *   · 提交的值 = 配置里的 `saveAction`（**路由 S3 按它分派**；今天还没有接住者 = **待接线** ✓）。
+ *   · 提交的值 = 配置里的 `saveAction`（**路由按它分派** ✓ —— S3 已接住，见 `routes/scanPage.js`）。
  */
 const draftSaveButtonHtml = (write, realm, config, page) => {
   if (!draftUiOf(page)) return '';
@@ -1987,7 +1987,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
     });
   // ⭐⭐ 2026-10-16（task-S2 ·「你有一份草稿，接着录吗？」）—— **有草稿才出**（没有 = 空串 ✓）：
   //   位置放在**最上面**（本单条之后、货品卡之前）⇒ 她一进来就看得到 ✓（她的口径："进去就提示"）。
-  //   🔴 **待接线**：【接着录】那颗链接的落点（路由读 `?resume=1`）在 **S3**（本刀不碰 `routes/**` ✗）。
+  //   ⭐ **接线已完成**（S3）：那颗链接的落点 = 路由读 `?resume=1` ⇒ 把草稿那几件填回同一个落点 ✓。
   const draftNotice = draftNoticeHtml(safeRealm, config, page);
   // ⭐⭐ 2026-10-12（编号兜底）：编号缺段（典型 = 缺「类别」）但按（货号 + 颜色）**唯一命中**时，
   //    页面上出**一条轻提示**（一句话，不写说明书）——她才知道"这个标签该重打了"。

@@ -464,7 +464,7 @@ AC-DR5 让 B 路多传一个 `submitKey` ⇒ 红；AC-DR9 把 `single` 改成 `p
 | **S1** ✅**已做** | `services/scanDraftService.js`（新建）：草稿本地存/读/TTL/覆盖留痕 + 表侧那一行（`到货状态=未报货`）+ **批次号沿用/新建（整段串行）**；**新 `data/scan_drafts/` 存储**（不与会话共 TTL）＋ `config/scanDraft.js`（配置先行）＋ `test/scanDraftSaveResume.test.js`（15 条全绿） | 只新建文件 ⇒ **与在跑的热点文件零交集** ✓（写作用域就这三个文件 ＋ `docs/**`） |
 | **S1b** ⏳**未做** | 把 `AC-DR5 / DR6 / DR7 / DR8` 那四条判据补上（提交半 / 9 点推送候选反向钉） | 它们要**路由半**或**既有服务的只读喂数** ⇒ 与 S3 一起做更省事 |
 | **S2** ✅**已做（2026-10-16 本刀）** | 渲染半：三处入口（销售货品页 / 补货页 / 退货页，**共用她点名那句「存报货草稿」**）＋「你有一份草稿，接着录吗？」提示条（`views/scanPageRenderer.js` ＋ `config/scanPage.js`）；**同一刀改 S1 的明细口径**：「**草稿也写明细**」（`services/scanDraftService.js` ＋ `config/scanDraft.js`，明细幂等键独立前缀）；判据 = `test/scanDraftRenderEntry.test.js` ＋ `test/scanDraftSaveResume.test.js` 的 **AC-D1 成对迁移** / AC-D2b / AC-D2c / AC-D2d。**详见第 11 节** | ⚠️ **不碰 `routes/**`**（`supplier-split` 在用它）⇒ 【接着录】与「存草稿」的接线（S3）如实标**待接线** |
-| **S3** | 路由半：GET 读草稿喂 `view`（吃 S1 的 `planView`）、`?resume=1` 采纳草稿、POST "存草稿"动作（**三处入口**：销售货品页那颗她点名的「**存报货草稿**」＋ 补货页 ＋ 退货页）；**生成报货单时按供应商拆分/分组** ＋ `未报货 ⇒ 未到货` | 🔴 **同一个 `routes/scanPage.js`**：与"总金额 / 金额核对 / 发生金额改名 / 销售多件 / 票据入口"**全都撞** ⇒ **必须串行**，等它们让出 ✓ |
+| **S3** | 路由半：GET 读草稿喂 `view`（吃 S1 的 `planView`）、`?resume=1` 采纳草稿、POST "存草稿"动作（**三处入口**：销售货品页那颗她点名的「**存报货草稿**」＋ 补货页 ＋ 退货页）；**生成报货单时按供应商拆分/分组** ＋ `未报货 ⇒ 未到货` | 🔴 **同一个 `routes/scanPage.js`**：与"总金额 / 金额核对 / 发生金额改名 / 销售多件 / 票据入口"**全都撞** ⇒ **必须串行**，等它们让出 ✓  ✅ **已做（2026-10-16 · 落地记录见 `docs/draft-save-resume-s3-2026-10-16.md`）** |
 | **S3b** | 生成报货单那一半：批次号**归属哪一方**、拆成**几条单 / 几个批次号**（⚠️ **她还没拍** ⇒ 先问她 Q7） | 等 Q7 |
 | **S4** | 配置 + `.env.example` + 开关翻真（先测试 Base 真跑 1 轮） | 等 S1–S3 |
 | **S5** | 全量测试 + 四件 CI + PR（**不合并**）；`v1:schema-check:purchase` 在**服务器**上对着生产跑一次 | 等 S4 |
