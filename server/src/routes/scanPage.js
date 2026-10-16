@@ -74,6 +74,13 @@ const { SCAN_WRITE, fillText: fillWriteText } = require('../config/scanWrite');
 //   · 🔴 **N=1 一个字节都不经过这条路** —— 只有"分组 > 1"才进（见下面两处 `groups.length > 1`）✓。
 const { resolveMultiItemOrderConfig } = require('../config/multiItemOrder');
 const { createMultiItemOrderService } = require('../services/multiItemOrderService');
+// ⭐⭐ 2026-10-16（task-61 · ②「领域内扫一扫」）：口径与配置见 `config/realmScan.js` 的文件头。
+//   · **不加第二套** ✗：仍然用既有 `services/larkJsapiService.js` 那一套飞书 JSAPI 签名
+//     （与工作台「扫码打印」同一条链 ✓）；
+//   · **落点只有一处区别**：扫完那件带 `?from=<当前领域>` ⇒ 落回**原领域** ✓
+//     （读它的那一位是既有 `views/scanPageRealm.js` 的 `resolveRealm` ✓ 不新造规则 ✗）。
+const { REALM_SCAN } = require('../config/realmScan');
+const { createLarkJsapiService } = require('../services/larkJsapiService');
 // ⭐⭐ 2026-10-16（口子收尾 · 业务负责人口径「**异步只针对"写库"**；校验必须当场同步拦」）：
 //   **尺码 / 数量 / 空单**这三类校验的**唯一真源**（纯函数、不碰 IO、配置先行 ✓）——
 //   判据与写层 `services/scanWriteService.js:1397-1426`（补货）/ `:1556-1585`（退货）**逐字同源**
@@ -272,6 +279,55 @@ const createScanPageRouter = (options = {}) => {
   const multiItemWire = options.multiItemWire !== undefined
     ? options.multiItemWire
     : (multiItemOrderConfig.addWireEnabled === true ? multiItemOrderConfig.wire : null);
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⭐⭐ 2026-10-16（task-61 · ②「领域内扫一扫」）
+  //   · **开关缺省关**（`config/realmScan.js`）⇒ 关着时：不发脚本、不发配置块、
+  //     签名端点也不回可用的签名 ⇒ **页面与今天逐字节一致** ✓（`AC-ML5`）；
+  //   · 开着时：加货成功 303 回本页会带 `?scan=1` ⇒ 本页内联那一段（**复用既有那一段脚本** ✓
+  //     不新增第二段 ✗）去调**飞书原生扫一扫** ⇒ 扫到的那件带 `?from=<本领域>` 落回来 ✓。
+  //   ⚠️ 用例可以注入一份假配置 / 假签名服务（`options.realmScan` / `options.larkJsapi` ✓
+  //     —— 与 `options.multiItemWire` 同一种注入法）。
+  // ══════════════════════════════════════════════════════════════════════════
+  const realmScanConfig = options.realmScan !== undefined ? options.realmScan : REALM_SCAN;
+  let larkJsapi = options.larkJsapi || null;
+  const resolveLarkJsapi = () => {
+    if (!larkJsapi) larkJsapi = createLarkJsapiService();
+    return larkJsapi;
+  };
+  /**
+   * 这一页的领域**现在**该不该接着扫（`AC-ML3` / `AC-ML5` 的判据就在这一个函数里）。
+   * 三条都要满足：① 开关开着 ② 这个领域配了链 ③ URL 上**明确**带了那个触发参数。
+   * ③ 是刻意的：**页面一加载就弹相机**（她没点过、或刷新一下又弹）是最糟的那种"乱跳" ✗。
+   */
+  const realmScanActive = (realm) => realmScanConfig?.enabled === true
+    && Boolean(realmScanConfig.realms && realmScanConfig.realms[realm]);
+  const realmScanTriggered = (req, realm) => realmScanActive(realm)
+    && String(req.query?.[realmScanConfig.triggerQueryKey] || '') === String(realmScanConfig.triggerQueryValue);
+  /**
+   * 这一页要给"扫完那件落回**本领域**"的那几样（**落点由客户端按扫到的那一串现算** ✓
+   *   —— 「扫到的是哪一件」只有扫完那一刻才知道，服务端在这里**不可能**先算出来 ✗）。
+   *
+   * 🔴 只给**参数**、不给结果：`realmQueryKey`（`from` ✓ 与 `resolveRealm` 同一个键）、
+   *   `recordBasePath`（扫到 id 时拼路径 ✓ 同一个真源）、`origin`（拼同源地址 ✓）＋ 文案与超时。
+   */
+  const realmScanPageConfig = (req, realm) => {
+    if (!realmScanTriggered(req, realm)) return null;
+    const origin = `${req.protocol}://${req.get('host') || ''}`;
+    return {
+      realm,
+      origin,
+      realmQueryKey: realmScanConfig.realmQueryKey,
+      recordBasePath: realmScanConfig.recordBasePath,
+      maxScannedLength: realmScanConfig.maxScannedLength,
+      scanNow: true,
+      texts: realmScanConfig.texts,
+      signaturePath: realmScanConfig.signaturePath,
+      sdkTimeoutMs: realmScanConfig.sdkTimeoutMs,
+      scanTimeoutMs: realmScanConfig.scanTimeoutMs,
+      // 只读上报也挂在本 router 下（复用同一道身份闸门 ✓ 不新开一个入口 ✗）
+      reportPath: realmScanConfig.signaturePath.replace(/[^/]+$/, 'scan-report'),
+    };
+  };
   // 用例可以注入一个假引擎（`options.multiItemOrder`）—— 与 `options.writeService` 同一种注入法 ✓
   let multiItemOrderEngine = options.multiItemOrder || null;
   /**
@@ -1348,6 +1404,70 @@ const createScanPageRouter = (options = {}) => {
     req, res, scope: 'scan', realm: resolveRealm(req.query?.from),
   }));
 
+  // ── ⭐⭐ 2026-10-16（task-61 · ②「领域内扫一扫」）──────────────────────────────
+  /**
+   * `GET /<prefix>/lark/jsapi-signature?url=<地址>`
+   *
+   * 🔴 **不新开第二套** ✗：用的就是**既有** `services/larkJsapiService.js`（与工作台「扫码打印」
+   *    同一个签名函数 ✓）；本路由**只转发**，不认识"扫一扫"这个词以外的任何业务 ✗。
+   * 🔴 **不新开鉴权** ✗：它挂在本 router 下 ⇒ **与扫码页同一道**飞书身份闸门（未启用 503 / 未登录 302 /
+   *    白名单外 403 —— 一字不变）✓。
+   * 🔴 **响应里不含任何密钥** ✗：只有 `h5sdk.config` 要的四样（＋公开的 JSSDK 地址 ✓）。
+   * ⚠️ 开关关着 ⇒ **当场 404**（连"有这么个端点"都不暴露 ✓ 页面也根本不会去调它 ✓）。
+   * ⚠️ **必须排在上面那条 `GET /:number` 之前**（否则 `lark` 会被当成一个编号 ✗）。
+   */
+  const realmScanSignaturePath = String(realmScanConfig?.signaturePath || '/lark/jsapi-signature');
+  router.get(realmScanSignaturePath, async (req, res) => {
+    if (realmScanConfig?.enabled !== true) return res.status(404).json({ success: false, error: 'not_enabled' });
+    const pageUrl = String(req.query?.url || '').trim();
+    try {
+      const result = await resolveLarkJsapi().signatureFor(pageUrl);
+      if (!result.ok) {
+        logWarn('scan.realm_scan.signature_failed', {
+          request_id: req.requestId, reason: result.reason,
+        });
+        return res.status(400).json({ success: false, error: result.message, reason: result.reason });
+      }
+      logInfo('scan.realm_scan.signature_ok', {
+        request_id: req.requestId,
+        // ⚠️ 只记域名（排障够用）；签名 / 票 / 密钥一个字都不进日志 ✗
+        host: (() => { try { return new URL(result.url).host; } catch { return ''; } })(),
+      });
+      return res.json({
+        success: true,
+        appId: result.appId,
+        timestamp: result.timestamp,
+        nonceStr: result.nonceStr,
+        signature: result.signature,
+        url: result.url,
+        jssdkUrl: resolveLarkJsapi().config?.jssdkUrl || '',
+        jsApiList: ['scanCode'],
+      });
+    } catch (error) {
+      const texts = resolveLarkJsapi().config?.texts || {};
+      return res.status(502).json({ success: false, error: texts.upstreamFailed });
+    }
+  });
+  /**
+   * `POST /<prefix>/lark/scan-report` —— 客户端那一段的**只读**上报（拿不到它就查不下去 ✗）。
+   * 🔴 **零业务写入** ✓（只 `logInfo` 一条）；⚠️ 上报失败**绝不影响她**（客户端本来就 fire-and-forget ✓）。
+   */
+  router.post(realmScanSignaturePath.replace(/[^/]+$/, 'scan-report'), (req, res) => {
+    if (realmScanConfig?.enabled !== true) return res.status(404).json({ success: false });
+    const body = req.body || {};
+    logInfo('scan.realm_scan.report', {
+      request_id: req.requestId,
+      ok: body.ok === true,
+      realm: String(body.realm || '').slice(0, 32),
+      reason: String(body.reason || '').slice(0, 64),
+      err_msg: String(body.err_msg || '').slice(0, 200),
+      // 「扫到了什么」只留**长度 + 前 80 字**（要能对上那一件，但不把一个长串整条塞进日志 ✗）
+      scanned_length: String(body.scanned || '').length,
+      scanned: String(body.scanned || '').slice(0, 80),
+    });
+    return res.json({ success: true });
+  });
+
 
   router.get(ROUTE_PATTERNS, async (req, res) => {
     const requestId = req.requestId;
@@ -1628,6 +1748,8 @@ const createScanPageRouter = (options = {}) => {
       }
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
       //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
+      // ⭐⭐ 2026-10-16（task-61 · ① 日志）：`renderLogs` 是渲染层**只读登记**用的（见下）。
+      const renderLogs = [];
       const html = renderScan(view, config, writeForRender, realm, {
         userAgent: req.headers['user-agent'],
         // ⭐⭐ 2026-10-13：提交后回跳带过来的单号 ⇒ 顶部那条"上一单已提交"的指引（没有就不显示 ✓）
@@ -1635,7 +1757,29 @@ const createScanPageRouter = (options = {}) => {
         // ⭐ 这一页挂在哪个前缀上（`/s` 或 `/r`）—— 自助块里的批次链接/手输表单必须**留在同一前缀**。
         basePath: req.baseUrl,
         print: printContext,
+        // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：**只有"加货刚成功、303 回来这一发"才给**
+        //   （`?scan=1` ✓）—— 其它任何时候都是 `null` ⇒ 页面上一个字都不多（`AC-ML5` ✓）。
+        realmScan: realmScanPageConfig(req, realm),
+        // ⭐⭐ 2026-10-16（task-61 · ① 日志）：渲染层把"**本单已加的货品**"那一笔**只读**登记在这里
+        //   （渲染层是纯函数 ⇒ 它自己不打日志 ✗；**由本路由在渲染之后统一打** ✓ —— 与既有
+        //   `logRendered` 同一处，且**失败也绝不会影响她的页面** ✗）。
+        logs: renderLogs,
       });
+      // ⭐⭐ 2026-10-16（task-61 · ① 第二条日志）：**渲染"本单已加的货品"列表**那一刻 ——
+      //   与加货那条（`…add`）一比就能答她那句「**扫了 B 但没看到 A**」：
+      //   `add` 说有（`added_count` ≥ 1）而 `render` 说没有（`item_nos` 里没有 A）⇒ 是**读出来那半边** ✗✓
+      //   🔴 纯 additive：**没有那一笔就一条都不打**（今天她看不到这个列表时，日志与今天逐字一致 ✓）。
+      for (const entry of renderLogs) {
+        const log = entry.fields || {};
+        logInfo(entry.event || 'scan.multi_item.render', {
+          request_id: requestId,
+          open_id: openIdOf(req),
+          [log.chainKey || 'chain']: String(entry.chain || ''),
+          [log.addedCountKey || 'added_count']: Number(entry.count) || 0,
+          [log.itemNosKey || 'item_nos']: (Array.isArray(entry.itemNos) ? entry.itemNos : []).slice(0, 50),
+          [log.modeKey || 'mode']: String(entry.chain || ''),
+        });
+      }
       timing.render_ms = Math.max(0, Date.now() - renderStartedAt);
       // ⭐⭐ task-58：**这就是"她最后看到货品页"那条正证据** —— 与资金页那条（`page:'pay'`）
       //   在日志里一眼分得开 ✓（改前两条都只打 `scan.page.viewed`，长得一模一样 ✗）
@@ -1721,9 +1865,22 @@ const createScanPageRouter = (options = {}) => {
     // ══════════════════════════════════════════════════════════════════════════
     if (isMultiItemAdd || isMultiItemRemove) {
       // ⚠️ 回跳口径与页面上的表单 `action` **同一处**（`:` 下面别的分支用的也是它 ✓ 不另拼一份 ✗）
-      const backPath = () => postActionFor(
-        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
+      const backPathOf = (realmId) => postActionFor(
+        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realmId,
       );
+      // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：**加货成功之后**，这一发回跳带上触发参数
+      //   ⇒ 回来的那一页（**同一个领域** ✓）才去调飞书扫一扫 ⇒ 扫到的那件带 `?from=<领域>` 落回来 ✓。
+      //   🔴 **只加在"加货"上，不加在"删除"上**（删完不该弹相机 ✗）；
+      //   🔴 **只在这一页的领域配了链、且开关开着时加**（关着 ⇒ 回跳与今天逐字一致 ✓ `AC-ML5`）。
+      const addBackPath = (realmId) => {
+        const page = backPathOf(realmId);
+        if (!realmScanActive(realmId)) return page;
+        const key = String(realmScanConfig.triggerQueryKey || '');
+        if (!key) return page;
+        return `${page}${page.includes('?') ? '&' : '?'}${encodeURIComponent(key)}=`
+          + encodeURIComponent(String(realmScanConfig.triggerQueryValue || ''));
+      };
+      const backPath = () => backPathOf(realm);
       // 认不出是哪条链（不是补货 / 退货那两块）⇒ 与既有的"认不出的动作"同一条口径：给它一句人话 ✓
       const draftChain = realm === 'replenish' ? 'replenish'
         : (realm === PURCHASE_RETURN_REALM ? 'return' : '');
@@ -1773,7 +1930,26 @@ const createScanPageRouter = (options = {}) => {
       const items = pending.items.slice();
       if (at >= 0) items[at] = added; else items.push(added);
       await writeMultiItemPending(openId, draftChain, { orderKey: pending.orderKey, items });
-      return res.redirect(303, backPath());
+      // ⭐⭐ 2026-10-16（task-61 · ①「补充日志和埋点」）：**加货那一刻**的那一条
+      //   —— 她当时问的是「扫了 B 但页面上没看到 A」：是**没存进去**、还是**存了没读出来** ✗✓
+      //   ⇒ 这一条说"存进去了几件、存的是哪一件"；渲染那一条（`scan.multi_item.render`）说"读出来几件"。
+      //   🔴 **纯 additive**：一个判定都不动（写完才打 ✓ 打日志失败也绝不影响她 ✗）；
+      //   🔴 键名**全从配置取**（`multiItemOrderConfig.logFields` ✓ 逻辑里不写死 ✗）；
+      //   🔴 关联键按既有口径带（`request_id` / `open_id` / `order_key` ✓ **拿不到就不传** ✗）。
+      {
+        const log = multiItemOrderConfig.logFields || {};
+        logInfo(log.addEvent || 'scan.multi_item.add', {
+          request_id: requestId,
+          open_id: openId,
+          [log.chainKey || 'chain']: draftChain,
+          [log.addedCountKey || 'added_count']: items.length,
+          [log.productKey || 'product']: keyOfItem(added) || '',
+          [log.entriesKey || 'entries']: (Array.isArray(added?.entries) ? added.entries : [])
+            .map((entry) => ({ size: String(entry?.size || ''), quantity: String(entry?.quantity || '') })),
+          [log.orderKeyKey || 'order_key']: String(pending.orderKey || ''),
+        });
+      }
+      return res.redirect(303, addBackPath(realm));
     }
 
     // ── ⭐⭐ 2026-10-11：扫码页「货品」领域 →【打印这一款】──────────────────────

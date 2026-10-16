@@ -71,9 +71,17 @@ test('AC-MIR1 🔴 补货 / 退货**两块都有**那个入口（去掉任一处
   //     现在钉的是"**必须恰好传 `'replenish'`**"（传空 / 传 `'return'` / 乱传 ⇒ 都红 ✓ 更严 ✓）。
   //     ⚠️ `mode` 的**缺省档 `''` 本身一个字没动**（仍是老形状 ⇒ AC-RT7 / 本文件 AC-MIR3 的
   //       子进程探针照旧靠它 ✓）。
-  assert.ok(replenish.includes("multiItemBlockHtml(write, view, 'replenish')"),
+  // ⭐⭐ 2026-10-16（task-61 · **领域内扫一扫**）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.ok(rendererSource.includes("multiItemBlockHtml(write, view, 'replenish')"))`
+  //     （那一处**只有三个实参**；第三个 = `mode`）
+  //   改后逐字：下面这一行（第三个仍是 `mode` **逐字不变** ✓，只多一个**第四个**实参 `page`）
+  //   依据 = 业务负责人 2026-10-16 14:38 逐字「**加一单改为这个领域的扫一扫，与全局扫一扫不同**」
+  //     ⇒ 「加货回来那一发接着扫」这件事**必须**把这一页的领域 / 落点交给渲染层（`page.realmScan` ✓）。
+  //   ⚠️ **不是放宽**：钉住的仍是"**补货那一处显式传 `'replenish'`**"（传空 / 传 `'return'` ⇒ 红 ✓），
+  //     只是把"紧跟右括号"放宽成"右括号前可能还有一个实参" ✓。
+  assert.match(replenish, /multiItemBlockHtml\(write, view, 'replenish'[^)]*\)/,
     '补货那一处**显式传自己那一档** `\'replenish\'` ⇒ 走补货的精简版 ✓（传空 / 传 `\'return\'` ⇒ 红 ✓）');
-  assert.equal(replenish.includes("multiItemBlockHtml(write, view, 'return')"), false,
+  assert.equal(/multiItemBlockHtml\(write, view, 'return'/.test(replenish), false,
     '🔴 补货那一处**绝不许**传 `\'return\'`（那是退货 tab 的档 ⇒ 传错就是"顺手把补货按退货办" ✗）');
 
   const html = renderer.multiItemBlockHtml({}, VIEW);
@@ -139,7 +147,16 @@ test('AC-MIR3 ⭐ N=1 逐字不变：开关关 ⇒ 那一块**空串**、两个�
   //          金额行仍然**回到原位**（在 `rows` 之后、多货品块之前）✓ —— 这就是"顺序不动"的真意 ✓）；
   //     ② 补货块的**金额行插槽确实按配置**（不是被删掉了 ✗）。
   //   ⚠️ 依据里的"既有顺序不动"**一个字没放宽**：上面①把三件的相对顺序逐字钉住了 ✓。
-  assert.ok(rendererSource.includes('${rows}\n${rp.amountRow ? purchaseAmountRowHtml(write) : \'\'}\n${multiItemBlockHtml(write, view, \'replenish\')}\n<button type="submit"'),
+  // ⭐⭐ 2026-10-16（task-61 · **领域内扫一扫**）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.ok(rendererSource.includes("multiItemBlockHtml(write, view, 'replenish')"))`
+  //     （那一处**只有三个实参**；第三个 = `mode`）
+  //   改后逐字：下面这一行（第三个仍是 `mode` **逐字不变** ✓，只多一个**第四个**实参 `page`）
+  //   依据 = 业务负责人 2026-10-16 14:38 逐字「**加一单改为这个领域的扫一扫，与全局扫一扫不同**」
+  //     ⇒ 「加货回来那一发接着扫」这件事**必须**把这一页的领域 / 落点交给渲染层（`page.realmScan` ✓）。
+  //   ⚠️ **不是放宽**：钉住的仍是"**补货那一处显式传 `'replenish'`**"（传空 / 传 `'return'` ⇒ 红 ✓），
+  //     只是把"紧跟右括号"放宽成"右括号前可能还有一个实参" ✓。
+  assert.match(rendererSource,
+    /\$\{rows\}\n\$\{rp\.amountRow \? purchaseAmountRowHtml\(write\) : ''\}\n\$\{multiItemBlockHtml\(write, view, 'replenish'[^)]*\)\}\n<button type="submit"/,
     '补货表单的顺序必须仍是 **`rows` → 金额行那一格 → 多货品块 → 提交按钮**（既有顺序不动 ✓）');
   assert.ok(rendererSource.includes("${rp.amountRow ? purchaseAmountRowHtml(write) : ''}"),
     '⭐ 中间那一格必须**按配置**决定画不画（缺省 false ⇒ 她截图上那个框不再出现 ✓）');

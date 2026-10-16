@@ -118,6 +118,19 @@ test('AC5 一级 tab 顺序回归：扫一扫 ▸ 销售 ▸ 库存 ▸ 采购 �
 //         她 2026-10-13 那句「统一走 AppLink，签名不需要」是**当时**的口径，被 10-14 的 ⓐ 覆盖。
 //   ⭐ **判据没放宽**：扫描面不变、判定从"一个都不许有"收窄成"**只能有这两个文件、多一个就红**"，
 //     而且"扫一扫那一格不许有签名"这条**仍在**（她 10-13 真正要保的那件事）。
+// ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：`assert.deepEqual(hits.sort(), ['public/workbench/features/labels/scan-print.js', 'src/routes/workbench.js'], …)`
+//     （闭集里**只有**工作台那条签名链）
+//   改后逐字：闭集里多两个文件 —— `src/config/realmScan.js`（领域内扫一扫的**签名端点参数**）
+//     ＋ `src/routes/scanPage.js`（**同一个** `createLarkJsapiService()` 的第二个调用方）
+//   依据 = 业务负责人 2026-10-16 14:32 / 14:38 逐字：
+//     「**加一单改为这个领域的扫一扫，与全局扫一扫不同**」＋「点击了退货里面的扫码「再加一单」，
+//      扫完之后，就是直接放到退货里面的货品」
+//     ⇒ 扫码页那一格也要**真的**调起飞书扫一扫 ⇒ 它必然要签名（**复用既有那一套** ✓ 不加第二套 ✗）。
+//   ⚠️ **不是放宽**：① 仍然是**闭集**（多一个文件就红 ✗）；② 扫的那个面（`src/**` ＋
+//     `public/workbench/**` 全量扫源码）**一个字没变**；③ 本测试**第二半**（工作台「扫一扫」
+//     那一格那条路 `main.js` / `tabs` / `features/scan` **仍不许有签名符号**）**一个字没动** ✓
+//     —— 她 2026-10-13 真正要保的那件事照旧 ✓。
 test('AC6 🔴 签名只许出现在「扫码打印」那两个文件里；扫一扫那一格仍走 AppLink（不用签名）', () => {
   const roots = [path.join(__dirname, '..', 'src'), path.join(__dirname, '..', 'public', 'workbench')];
   const hits = [];
@@ -135,8 +148,11 @@ test('AC6 🔴 签名只许出现在「扫码打印」那两个文件里；扫�
   // ⭐ **闭集**：只有这两处（工作台那条签名接口 + 扫码打印那一块页面）。多一个文件就红 ✗。
   assert.deepEqual(hits.sort(), [
     'public/workbench/features/labels/scan-print.js',
+    // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：扫码页那条链**复用同一个** `createLarkJsapiService()` ✓
+    'src/config/realmScan.js',
+    'src/routes/scanPage.js',
     'src/routes/workbench.js',
-  ], `签名符号只许出现在「扫码打印」这一条链上：\n${hits.join('\n')}`);
+  ], `签名符号只许出现在「扫码打印」/「领域内扫一扫」这两条链上：\n${hits.join('\n')}`);
 
   // ⭐ 她 10-13 真正要保的那件事**一个字没松**：扫一扫那一格那条路（首屏/面板/取入口）不许有签名符号。
   const scanPathFiles = ['main.js', 'config/tabs.js', 'core/tabs.js', 'features/scan/index.js'];
