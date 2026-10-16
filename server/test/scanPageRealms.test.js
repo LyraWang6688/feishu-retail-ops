@@ -274,10 +274,17 @@ test('AC1 `from=inventory` 就是现在这个页面：库存领域那一块 + �
 
 test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；其余 ⇒ 预订', () => {
   // ① 判据在视图层，且**只认「样品 + 门盒」**（仓库不算可卖）
-  assert.deepEqual([...SELLABLE_STATES], ['门盒', '样品'], '可卖 = 样品 + 门盒（她 2026-10-09 的口径）');
+  // ⭐⭐ 2026-10-16 晚（本刀）**成对迁移（注释级 · 断言一条没动）**：
+  //   改前逐字：这条说的是"**当前**可卖口径 = 样品 + 门盒"。
+  //   改后逐字：它说的是"**开关关着（缺省 = 今天）**时可卖 = 样品 + 门盒"——
+  //     口径的家已搬到 `config/scanStockPolicy.js`（`LEGACY_SELLABLE_STATES` / `countInStockOf`）；
+  //     开关**开着**时（"实时库存里有记录 = 有货"）见 `test/scanStockPolicyUnifiedOn.test.js`。
+  //   依据：业务负责人 2026-10-16 20:5x「**统一不用看状态**……这个口径其实也可以做一个配置」。
+  //   ⚠️ 断言值与强度**都没变**（本文件跑的进程 = 缺省关着 ✓）。
+  assert.deepEqual([...SELLABLE_STATES], ['门盒', '样品'], '开关关着时：可卖 = 样品 + 门盒（她 2026-10-09 的口径）');
   assert.equal(sellableCountOf(VIEW.rows[0], VIEW.columns), 1, '40：门盒 1');
   assert.equal(sellableCountOf(VIEW.rows[2], VIEW.columns), 2, '42：门盒 1 + 样品 1');
-  assert.equal(sellableCountOf(VIEW.rows[3], VIEW.columns), 0, '43：只有仓库 2 → 不算有货');
+  assert.equal(sellableCountOf(VIEW.rows[3], VIEW.columns), 0, '43：只有仓库 2 → 不算有货（开关关着时）');
   // 「老形状」（cells 上没有 key，既有夹具就是这种）也认 —— 按视图模型的列序取
   const legacyShape = {
     columns: VIEW.columns,
