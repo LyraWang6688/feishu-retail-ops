@@ -69,7 +69,8 @@ export const SCAN_ENTRIES = freeze({
   places: SCAN_PLACES,
   mechanisms: MECHANISMS,
   modes: MODES,
-  backParam: 'scan_added',
+  backParam: 'scan',
+  backValue: '1',
   texts: freeze({
     labelPrintButton: '📷 扫码打印',
     labelPrintTitle: '📷 扫码打印',

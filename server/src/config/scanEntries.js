@@ -93,11 +93,19 @@ const SCAN_ENTRIES = Object.freeze({
   mechanisms: MECHANISMS,
   modes: MODES,
   /**
-   * ③④⑤ 扫完回领域时，回跳 URL 上带的**触发参数**（`?<backParam>=1`）——
+   * ③④⑤ 扫完回领域时，回跳 URL 上带的**触发参数**（`?<backParam>=<backValue>`）——
    * 领域页据此知道"这一发是**扫完回来的**"（该把相机收起来、把草稿接着用 ✓）。
-   * ⚠️ 它是**配置**：改名不用改代码（`AC-5S2` 钉住三处都带它）。
+   *
+   * ⭐ **这里是唯一真源**（2026-10-16 夜 · A 套接线）：`config/realmScan.js` 的那两个键
+   *   （`triggerQueryKey` / `triggerQueryValue`）**默认值取自本行** ⇒ 五处行为由一份登记表说了算 ✓；
+   *   路由（`routes/scanPage/index.js` 的 `addBackPath`）与渲染层（`views/scanPage/paymentBlock.js`
+   *   的 `page.realmScan`）**都不自己拼这个键**（都从配置来 ✓）。
+   * ⚠️ **值 = 今天线上逐字那两个**（`scan` / `1`）⇒ 303 与今天**逐字节相同** ✓
+   *   （`test/salesRealmScan.test.js` 的 **AC-SR6** 三张表逐字钉着 ✓；本刀**不改它们** ✗）。
+   * ⚠️ **可配**：改名不用改代码（`SCAN_ENTRY_BACK_PARAM` / `SCAN_ENTRY_BACK_VALUE` ✓）。
    */
-  backParam: 'scan_added',
+  backParam: 'scan',
+  backValue: '1',
   /** 文案（**唯一真源**；页面/渲染层不许抄第二份 ✗）。 */
   texts: Object.freeze({
     labelPrintButton: '📷 扫码打印',
@@ -127,6 +135,7 @@ const placeById = (id, config = SCAN_ENTRIES) => {
 const resolveScanEntriesConfig = (env = process.env, base = SCAN_ENTRIES) => ({
   ...base,
   backParam: readString(env, 'SCAN_ENTRY_BACK_PARAM', base.backParam),
+  backValue: readString(env, 'SCAN_ENTRY_BACK_VALUE', base.backValue),
   texts: {
     ...base.texts,
     labelPrintButton: readString(env, 'SCAN_ENTRY_LABEL_PRINT_BUTTON', base.texts.labelPrintButton),
