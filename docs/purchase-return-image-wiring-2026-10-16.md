@@ -30,7 +30,7 @@
 | 环节 | 事实 |
 | --- | --- |
 | 谁调 `createScanWriteService` | **生产只有 3 处**：`routes/scanPage/index.js:277-279`（**扫码页**，`app.js:130` 用 `createScanPageRouter()` **不传参**挂载 ⇒ 这就是线上那条路）· `routes/workbench.js:581`（销售重试）· `routes/larkEvents.js:243`（配品成单）。三处都只传 `{ gateway, config }` |
-| 唯一读 `purchaseReturnOptions` 的地方 | `services/scanWriteService.js:235` 的 `...(options.purchaseReturnOptions || {})`（**全仓只有这一处**） |
+| 唯一读 `purchaseReturnOptions` 的地方 | `services/scanWriteService.js:239` 的 `...(options.purchaseReturnOptions || {})`（**全仓只有这一处**） |
 | 读到之后落到哪 | `services/purchaseReturnService.js:142` 的 `const webhooks = options.webhooks \|\| null;`；`:478` 有它 ⇒ 调 `deliverSupplierImages`；`:489` 没有 ⇒ 记 `reason: 'no_image_pipeline'` |
 | ⇒ 根因 | **装配处没人传** `purchaseReturnOptions` ⇒ `webhooks` 恒为空 ⇒ 退货出图**必然** `no_image_pipeline` ✗ |
 | 「已经能发图」的两条路怎么接的 | ① **补货**：`services/scanWriteService.js` 的 `purchase()` **自己** `new PurchaseWebhookService({ gateway, store, references })`；② **验收**：`services/scanArrivalService.js` 的 `arrivalConversationOf()` **自己** `new PurchaseWebhookService({ gateway })` ⇒ 都是"**需要出图的那条链拿到 webhook 实例**"，然后调**同一个** `deliverSupplierImages`（按供应商分组在它内部，用 `services/supplierSplitService.js` 那一处唯一的口径 —— task-761 已合）|
@@ -104,7 +104,7 @@
 | **AC-RI3a** 多货品 / 多供应商 | 2 家 ⇒ **按供应商分 2 组 · 2 张图** | 真路由 POST 带 `multi_items`（2 个货品）⇒ `renders=2`、每组只含该供应商的行、单据 2 张、群消息 4 条、主表仍**1 行**（她选的 ⓐ 同一批次号下分组）|
 | **AC-RI3b** 幂等 | 重放同一份提交 ⇒ **图 +0 · 群 +0 · 附件 +0** | 用**装配件给的那一份**真出图链路（不是用例自己拼的 `webhooks` ⇒ 这才测到接线 ✓）提交两次同一个 task ⇒ 四个计数一个都不涨，且主表不多行 |
 | **AC-RI4** 🔴 反向哨兵 | 装配那几行**不接** ⇒ `no_image_pipeline` **出现** | 关掉出图开关跑同一条真链路：账照走（主表 1 行）、**图 0 张 · 群 0 条**，并如实记 `returnImageFailed` ＋ `reason: no_image_pipeline` ⇒ 证明 AC-RI1/RI2 里那条"不许出现"的断言**真能红**（不是空跑 ✓）|
-| **AC-RI5** 🔴 冻结件 | `services/scanWriteService.js` **逐字节没动** | sha256 与 main 一致（`199551e1…35ca`）＋ 探针（多一个字节 ⇒ 指纹必变）|
+| **AC-RI5** 🔴 冻结件 | `services/scanWriteService.js` **逐字节没动** | sha256 与 main 一致（**合进 main 后 = `49772bda…2c12`**；原写的 `199551e1…35ca` 是**分支**上的值 —— **#763 已获授权解冻该文件**，成对迁移成前者 ✓）＋ 探针（多一个字节 ⇒ 指纹必变）|
 | **AC-RI6** 🔴 源码哨兵 | 装配处真的接上了 ＋ 路由**代码行**里没有写链路服务名 | `scanPageSource()` 里出现 `purchaseReturnOptions: resolvePurchaseReturnImageOptions({`；剥掉整行注释后，三个服务名一个都不出现（RT5 / AC-D3i2 的既有口径**不放宽** ✓）|
 
 **既有判据一条都没删 / skip / 放宽** ✓（退货链那 8 个既有用例文件 + 4 个哨兵文件全绿，见下）。
@@ -115,9 +115,15 @@
 
 | | 命令 | 结果 |
 | --- | --- | --- |
-| 第 1 遍 | `PATH=/usr/local/bin:$PATH CI=true pnpm test` | 见 PR（tests / pass / fail / skipped ＋ **真 EXIT**）|
-| 第 2 遍 | 同上 | 见 PR |
+| 第 1 遍 | `PATH=/usr/local/bin:$PATH CI=true pnpm test`（系统 node `/usr/local/bin/node` = `v24.14.1`） | 分支 `4314a22`：**tests 2957 · pass 2950 · fail 0 · skipped 7 · EXIT=0** |
+| 第 2 遍 | 同上 | **tests 2957 · pass 2950 · fail 0 · skipped 7 · EXIT=0**（与第 1 遍逐字相同）|
 | 两遍之间 | `git diff \| shasum -a 256` | 两次**逐字节一致**（空 diff：所有改动都已提交 ✓）|
+| 合进 main 后 | 同上（`6ad32ea`） | **tests 2989 · pass 2982 · fail 0 · skipped 7 · EXIT=0** |
+| 本次刷新（**纯 docs**） | 同上（`ef2b4a6` ＋ 本文件改动） | **tests 2998 · pass 2991 · fail 0 · skipped 7 · EXIT=0 ×2**（两遍之间 `git diff \| shasum -a 256` = `e3b0c442…` = 空 diff ✓）|
+
+⭐ 上表五个数字都在 **2026-10-16 收尾时【独立复跑】核过** ✓（三棵树各起一个独立 worktree ＋
+各自 `CI=true pnpm install --frozen-lockfile`；**EXIT 都没接管道**，取的是 `pnpm test` 自己的退出码）。
+⚠️ 合进 main 后总数比分支大，是因为同一时段还有别的 PR 合进来 —— **fail 0 / skipped 7 与基线一致** ✓。
 
 **变异（2 组，每组都在**独立 worktree** 上单独跑过、确认真红 ✓；跑完 `git checkout --` 还原，
 `shasum -a 256 -c` 逐字节一致 ✓）**：
