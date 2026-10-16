@@ -25,6 +25,11 @@
 
 const { fillText } = require('../config/scanWrite');
 const { MULTI_ITEM_ORDER } = require('../config/multiItemOrder');
+// ⭐⭐ 2026-10-16（业务负责人拍板 **ⓐ**：「同一个报货批次号下按供应商拆分/分组」）——
+//   分组口径只有一处（`config/supplierSplit.js` ＋ `services/supplierSplitService.js`）✓。
+//   ⚠️ 本模块照旧**不认识飞书表、不直连 gateway**（它只是一个**纯函数**：给明细、回几组）✗。
+const { SUPPLIER_SPLIT } = require('../config/supplierSplit');
+const { splitBySupplier } = require('./supplierSplitService');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 
 /** 正整数（认不出 ⇒ `null`；**不把空串当 0** —— "没填 ≠ 填 0"，见 §8 #6）。 */
@@ -320,6 +325,15 @@ const createMultiItemOrderService = (options = {}) => {
     }
     const first = items[0] || {};
     const single = items.length === 1;
+    // ⭐⭐ 2026-10-16（业务负责人拍板 **ⓐ**）：**在调写入口之前**就把"按供应商分的几组"算好 ✓
+    //   —— 分的是**明细行**（`flatItems`，每行自带自己的供应商 ✓）。
+    //   🔴 **批次号仍然只有一个**：`batchCount` 恒为 1（`splitBySupplier` 的 `batchCount: 1` ✓）——
+    //      她选的 ⓐ 是"单内分组"，**不是**"每个供应商各开一个新批次号"✗（判据 AC-SS3 钉着）。
+    //   ⚠️ 这里**只给"哪几家、哪些行"**（`supplier_key` / `indexes`）——
+    //      **组键 / 单据键由写入口生成**（它才知道批次号与批次幂等键那些身份 ✓ 不在这里编 ✗）。
+    const supplierSplit = splitBySupplier({
+      items: flatItems, taskId, config: SUPPLIER_SPLIT,
+    });
     const payload = {
       // 补货那条链的老形状里有它（"这一次是一批明细"）✓；退货那条链没有 —— **由配置说** ✓
       ...(chainConfig.payload?.isBatch === true ? { is_batch: true } : {}),
@@ -339,12 +353,23 @@ const createMultiItemOrderService = (options = {}) => {
       taskId,
       payload,
       details,
+      // ⭐ 供应商分组（**写入口之前**算好的那一份；写入口会拿它交叉核对，见 `publishPurchaseRequest`）
+      supplierGroups: supplierSplit.groups.map((group) => ({
+        supplier_key: group.supplier_key,
+        supplier_record_id: group.supplier_record_id,
+        indexes: group.indexes,
+        detail_count: group.detail_count,
+        pair_count: group.pair_count,
+      })),
       summary: {
         chain: chainConfig.id,
         order_key: String(draft?.order_key || ''),
         batch_count: 1,
         product_count: items.length,
         detail_count: details.length,
+        // 分了几组（单供应商 = 1 ⇒ 与今天**逐字等价** ✓）
+        supplier_group_count: supplierSplit.groupCount,
+        supplier_keys: supplierSplit.summary.supplier_keys,
         detail_keys: details.map((detail) => detail.idempotency_key),
       },
     };
@@ -416,7 +441,14 @@ const createMultiItemOrderService = (options = {}) => {
           return reject('writer_missing', texts.chainUnknown);
         }
         try {
-          await writer(plan.taskId, plan.payload);
+          // ⭐⭐ 2026-10-16（供应商拆分 · 她选的 ⓐ）：**第 3 个实参**＝调用方在调写入口**之前**
+          //   已经算好的那一份供应商分组（**同一个批次号下的几组** ✓，见 `planSubmission`）。
+          //   🔴 写入件（`publishPurchaseRequest`）**优先用它**、并**按草稿交叉核对**
+          //      （对不上 ⇒ 当场 warn，不静默挑一个 ✗）—— 老写入件签名是 `(taskId, task)`，
+          //      多一个可选实参**不影响**任何既有调用方 ✓（假写入件同理）。
+          await writer(plan.taskId, plan.payload, {
+            supplierGroups: plan.supplierGroups,
+          });
         } catch (error) {
           error_('multi_item_order.write_failed', {
             session_id: sessionIdOf(openId), chain: chainConfig.id, order_key: key,
