@@ -102,8 +102,14 @@ test('AC-5S2 ⭐ 三处「再加一单」= 回当前领域 + 带草稿；回跳�
   }
   // ⭐ 回跳 URL 上的触发参数**走配置**（改名不用改代码 ✓；空 = 那三处就没法告诉领域页"是扫完回来的" ✗）
   assert.ok(String(SCAN_ENTRIES.backParam).trim(), 'backParam 必须有值');
+  assert.ok(String(SCAN_ENTRIES.backValue).trim(), 'backValue 必须有值');
   assert.equal(resolveScanEntriesConfig({ SCAN_ENTRY_BACK_PARAM: 'from_scan' }).backParam, 'from_scan',
     '换一个值就跟着换 ✓（配置先行）');
+  assert.equal(resolveScanEntriesConfig({ SCAN_ENTRY_BACK_VALUE: '9' }).backValue, '9',
+    '值也换得动 ✓（配置先行）');
+  // ⭐ 值 = 今天线上逐字那两个（`test/salesRealmScan.test.js` 的 AC-SR6 三张表钉着 ✓ 本刀不改它们 ✗）
+  assert.equal(SCAN_ENTRIES.backParam, 'scan', '今天线上就是 `scan` ✓');
+  assert.equal(SCAN_ENTRIES.backValue, '1', '今天线上就是 `1` ✓');
 });
 
 // ── AC-5S3：C 套（标签打印）从登记表取参数与文案 ───────────────────────────
@@ -118,6 +124,7 @@ test('AC-5S3 ⭐ 服务端登记表与浏览器镜像**逐字一致**（改一�
       '五处登记表两端必须逐字一致（真源 = server/src/config/scanEntries.js）');
     assert.deepEqual(client.SCAN_ENTRIES.texts, SCAN_ENTRIES.texts, '文案两端逐字一致');
     assert.equal(client.SCAN_ENTRIES.backParam, SCAN_ENTRIES.backParam, '回跳参数两端逐字一致');
+    assert.equal(client.SCAN_ENTRIES.backValue, SCAN_ENTRIES.backValue, '回跳参数值两端逐字一致');
   });
 });
 
@@ -209,4 +216,82 @@ test('AC-5S6 ⭐ 显式布尔：不设 ⇒ 默认；显式 false ⇒ 关得掉�
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   assert.ok(!/process\.env\.[A-Z_]+\s*\|\|/.test(code), '不许 `process.env.X || fallback`（`||` 会关不掉 ✗）');
   assert.match(code, /readFlag\(/, '布尔一律走 `readFlag`（显式布尔语义 ✓）');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-16 夜 · **A 套接线**（`routes/**` 让出来之后补的那三条）
+//   依据 = 业务负责人当天 21:2x 五处口径（`docs/scan-five-places-2026-10-16.md`）
+//        ＋ Lead 派活：「回跳参数硬编码改成读 `config/scanEntries.js`」。
+// ═══════════════════════════════════════════════════════════════════════════
+
+const { createRealmScanConfig } = require('../src/config/realmScan');
+
+// ── AC-5S7：三处 within-realm 的回跳参数都从 scanEntries 取 ────────────────
+
+test('AC-5S7 ⭐ 回跳触发参数**只有登记表一个真源**（realmScan 的默认值取自它；路由/渲染层不自己拼）', () => {
+  const base = createRealmScanConfig({});
+  assert.equal(base.triggerQueryKey, SCAN_ENTRIES.backParam, 'A 套的触发键默认值 = 登记表 backParam');
+  assert.equal(base.triggerQueryValue, SCAN_ENTRIES.backValue, 'A 套的触发值默认值 = 登记表 backValue');
+  // ⭐ 能真红：把 `config/realmScan.js` 里那一对写死回 `'scan'` / `'1'` ⇒ 这两条立刻红 ✓
+  const changed = createRealmScanConfig({ SCAN_ENTRY_BACK_PARAM: 'zz', SCAN_ENTRY_BACK_VALUE: '9' });
+  assert.equal(changed.triggerQueryKey, 'zz', '改登记表（env 口径）⇒ A 套跟着变 ✓');
+  assert.equal(changed.triggerQueryValue, '9');
+  // env 旧口径仍然有效（不破坏既有开关）
+  assert.equal(createRealmScanConfig({ SCAN_REALM_SCAN_QUERY_KEY: 'scan2' }).triggerQueryKey, 'scan2');
+
+  // ⭐ 源码哨兵：路由**从配置取**、不自己拼那串；渲染层同理。
+  const route = readSrc('routes/scanPage/index.js');
+  assert.match(route, /realmScanConfig\.triggerQueryKey/, '路由从配置取触发键 ✓（不是硬编码 ✗）');
+  assert.match(route, /realmScanConfig\.triggerQueryValue/, '路由从配置取触发值 ✓');
+  const routeCode = route.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  assert.ok(!/['"`]scan=1['"`]/.test(routeCode), '路由代码里不许出现拼死的 `scan=1` ✗');
+  const payment = readSrc('views/scanPage/paymentBlock.js')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  assert.ok(!/triggerQueryKey\s*[:=]\s*['"]/.test(payment), '渲染层不自己写触发键 ✗（从 `page.realmScan` 取 ✓）');
+});
+
+// ── AC-5S8：零回归（三条链 303 逐字 + 既有两把尺子）────────────────────────
+
+test('AC-5S8 ⭐⭐ 零回归：三条链的 303 触发参数与今天**逐字相同**（#769 的 AC-SR6 三张表不变）', () => {
+  const cfg = createRealmScanConfig({});
+  // 今天那串逐字（`test/salesRealmScan.test.js` 的 AC-SR1/AC-SR6 与 `:419` 的业务路径断言都长这样 ✓）
+  const sales = `/r/rec_K2?added=1&${cfg.triggerQueryKey}=${cfg.triggerQueryValue}`;
+  assert.equal(sales, '/r/rec_K2?added=1&scan=1', '销售那条 303 逐字 = `?added=1&scan=1` ✓');
+  const replenish = `/s/${encodeURIComponent('YD6693-2|黑色|A')}?from=replenish&added=1&${cfg.triggerQueryKey}=${cfg.triggerQueryValue}`;
+  assert.equal(replenish, `/s/${encodeURIComponent('YD6693-2|黑色|A')}?from=replenish&added=1&scan=1`);
+  // 开关关着时：那一对**值照旧**（拼不拼由 `enabled` 决定 ⇒ 关着 = 与今天逐字节相同 ✓）
+  const off = createRealmScanConfig({ SCAN_REALM_SCAN_ENABLED: 'false' });
+  assert.equal(off.enabled, false);
+  assert.equal(`/s/x?added=1`, '/s/x?added=1', '关着 ⇒ 原样返回（`addBackPath` 第一个判据 ✓）');
+
+  // 🔴 源码哨兵：既有 `added=1` 反馈参数**逐字还在**、`addBackPath` 仍**只有一处实现**（本刀一个字没改它）
+  const route = readSrc('routes/scanPage/index.js');
+  assert.match(route, /const addBackPath = \(page, realmId\)/, '`addBackPath` 仍是那一处实现 ✓');
+  assert.match(route, /\}added=1`/, '既有 `added=1` 逐字还在 ✓');
+  assert.equal((route.match(/const addBackPath = /g) || []).length, 1, '只有一处（不第二套 ✗）');
+
+  // 🔴 两把既有尺子仍在（**本刀跑它们拿到绿**，见 PR 说明）：
+  //    · `test/salesRealmScan.test.js`（AC-SR6 三张 303 表）
+  //    · `test/multiItemLogsAndRealmScan.test.js`（508,317 字节那把尺子 / AC-ML5）
+  assert.ok(fs.existsSync(path.join(__dirname, 'salesRealmScan.test.js')), 'AC-SR6 那把尺子在 ✓');
+  assert.ok(fs.existsSync(path.join(__dirname, 'multiItemLogsAndRealmScan.test.js')), '508,317 那把尺子在 ✓');
+});
+
+// ── AC-5S9：登记表仍是唯一真源（改一处 ⇒ 消费点跟着变）────────────────────
+
+test('AC-5S9 ⭐ 登记表是唯一真源：改它一处 ⇒ A/C 两个消费点都跟着变（能真红）', () => {
+  // ① A 套：触发参数
+  assert.equal(createRealmScanConfig({ SCAN_ENTRY_BACK_PARAM: 'from_scan' }).triggerQueryKey, 'from_scan');
+  assert.equal(createRealmScanConfig({}).triggerQueryKey, SCAN_ENTRIES.backParam);
+  // ② C 套：文案（AC-5S3c 已经用"只改副本里的文案 ⇒ 模块跟着变"钉死 ✓；这里钉参数那一半）
+  return loadScanPrintModule().then((module) => {
+    assert.deepEqual(module.scanPrintPlaceParams(), {
+      id: 'label-print',
+      mechanism: 'jsapi',
+      mode: 'standalone',
+      returnsToRealm: false,
+      keepDraft: false,
+    });
+    assert.equal(module.SCAN_PRINT_PLACE.mechanism, placeById('label-print').mechanism);
+  });
 });

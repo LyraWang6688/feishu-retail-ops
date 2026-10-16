@@ -37,27 +37,42 @@
 | ④ | ⭐ **判据**（每条都演示过"能真红"） | **新** `server/test/scanFivePlaces.test.js`（AC-5S1 / 5S1b / 5S2 / 5S3 / 5S3b / 5S3c / 5S4 / 5S5 / 5S6） |
 | ⑤ | **回跳触发参数走配置**（`SCAN_ENTRIES.backParam`，默认 `scan_added`，env 可换） | 同上（A 套接线见下 ✗） |
 
-### ⏸ **因避让未做**（如实 ✗ —— 要动那三个文件得先报 Lead）
+### ✅ **A 套接线（2026-10-16 深夜补 · `routes/**` 让出之后）**
 
-- **A 套那三处"接线到本登记表"**：`routes/scanPage/index.js` 的返回 URL（`backParam`）、
-  `config/realmScan.js`、`views/scanPage/paymentBlock.js` —— 这三个文件**正被 `sales-scan` 改**
-  （`.local/sales-scan` 有未提交改动 ✓ Lead 明令避让 ✗）⇒ **本轮的登记表只做"声明 + 只读判据"**，
-  真正的接线等它合并后再补（补的时候只需把三处的 `scan_added` / 领域参数改成读 `scanEntries` ✓）。
+> 背景：上一轮 `config/realmScan.js` / `routes/scanPage/index.js` / `views/scanPage/paymentBlock.js`
+> **正被 `sales-scan`（#769）改** ⇒ 按 Lead 令避让。**#769 与 #772 都已合并** ⇒ 这三个文件空出 ⇒ 本轮补齐 ✓。
+
+| # | 逐处 before → after | 证据 |
+|---|---|---|
+| ① | `config/scanEntries.js`：`backParam: 'scan_added'` ⇒ **`backParam: 'scan'` ＋ 新增 `backValue: '1'`**（= 今天线上逐字那两个；env 可覆盖 `SCAN_ENTRY_BACK_PARAM` / `SCAN_ENTRY_BACK_VALUE`） | AC-5S2 / AC-5S8 |
+| ② | `config/realmScan.js:105-106`：`readString(env, 'SCAN_REALM_SCAN_QUERY_KEY', 'scan')` ⇒ **默认值改成 `resolveScanEntriesConfig(env).backParam`**（值同理）——**登记表成为唯一真源**；`SCAN_REALM_SCAN_QUERY_*` 覆盖照旧 ✓ | AC-5S7 / AC-5S9（env 改登记表 ⇒ A 套跟着变，**能真红**） |
+| ③ | `routes/scanPage/index.js`：**一个字没改** ✓ —— 它**本来就**从配置取（`addBackPath` 里 `realmScanConfig.triggerQueryKey` / `.triggerQueryValue`，`:653-656`），**没有硬编码那串**；既有 `added=1` 反馈参数逐字保留 ✗ | AC-5S7 源码哨兵（路由里不许有拼死的 `scan=1`）＋ AC-5S8 |
+| ④ | `views/scanPage/paymentBlock.js`：**一个字没改** ✓ —— 它渲染的 `page.realmScan` 由路由喂、路由由 ② 的配置喂 ⇒ **传递性接上了**（渲染层不自己写触发键） | AC-5S7 源码哨兵 |
+
+- ⚠️ **没碰 `routes/scanPage/index.js` / `views/**` 是有意的**：① 它俩本来就吃配置（改了才是重复实现 ✗）；
+  ② 另一条线 `.local/money-split-wire` **正在同一个文件里加"货/钱分离"**（未提交 ✗）⇒ 我不碰 ⇒ **零重叠** ✓（已报 Lead）。
 - **B 套实现**：按口径**保持不动** ✓（`views/scanPage/layout.js` 一个字没碰；AC-5S4 只读钉住"仍是 AppLink + 不带数据"）。
-- ⚠️ **`sales-scan` 正在做的"销售页接上领域内扫一扫"本身就是 A 套收敛的一半**（三个领域走同一个 `scanRealmScan` 件）
-  ⇒ 本轮**不重复做** ✓。
 
-### 判据 → 证据（**能真红**，3 组变异都跑过）
+### 判据 → 证据（**能真红**，共 6 组变异都跑过）
 
 ```
 AC-5S1  直接调 `tt.scanCode` 的只有 A/C 两处（闭集）   —— 变异：新写第三套实现 ⇒ 红 ✓
 AC-5S1b 五处都登记齐（缺任一参数键 ⇒ 红）
-AC-5S2  三处「再加一单」= 回领域 + 带草稿；backParam 走配置
+AC-5S2  三处「再加一单」= 回领域 + 带草稿；backParam/backValue 走配置
 AC-5S3  服务端登记表 ↔ 浏览器镜像逐字一致             —— 变异：只改镜像 ⇒ 红 ✓
 AC-5S3b C 套行为参数 = 登记表里那一行
 AC-5S3c 文案确实从配置取（只改配置副本 ⇒ 模块跟着变）  —— 变异：把文案写死回 scan-print.js ⇒ 红 ✓
 AC-5S4  B 套仍是 AppLink + 不带数据（与今天逐字一致）
 AC-5S5  零回归：C 套文案 / 两个 HTML 外壳 / 端点常量逐字节不变
 AC-5S6  显式布尔（不设 ⇒ 默认 / 显式 false ⇒ 关得掉 / 非法值 ⇒ 抛 / 禁 `||` 兜底）
+AC-5S7  ⭐ A 套触发参数只有登记表一个真源；路由/渲染层不自己拼
+                                     —— 变异：realmScan 写死 'scan'/'1' ⇒ 红 ✓；路由写死 `'scan'` ⇒ 红 ✓
+AC-5S8  ⭐⭐ 零回归：三条链 303 逐字（`?added=1&scan=1`）＋ 既有两把尺子仍在
+                                     —— 变异：改登记表值 ⇒ 红 ✓
+AC-5S9  ⭐ 登记表唯一真源：改它一处 ⇒ A/C 两个消费点跟着变
 ```
-。
+
+**既有两把尺子（本刀跑过，全绿）**：`test/salesRealmScan.test.js`（AC-SR1/AC-SR6 三张 303 表）＋
+`test/multiItemLogsAndRealmScan.test.js`（**508,317 字节**那把尺子 / AC-ML5）⇒ 合跑 **21 / 21 绿** ✓
+（#769 的销售那条 303 仍是 `/s/{编号}?added=1&scan=1` 逐字不变 ✓）
+

@@ -40,6 +40,11 @@
  */
 
 const { readFlag, readInt, readString } = require('./envValue');
+
+// ⭐⭐ 2026-10-16 夜（A 套接线）：**回跳触发参数**（`?scan=1` 那一对）的唯一真源是**五处登记表**
+//   （业务负责人当天 21:2x 五处口径 ⇒ `docs/scan-five-places-2026-10-16.md`）。
+//   本文件只**取默认值**（env 覆盖照旧 ✓），不再自己写一份 `'scan'` / `'1'` ✗。
+const { resolveScanEntriesConfig } = require('./scanEntries');
 // 路径段的**唯一真源**仍是扫码页那一份（`/r` ✓ 这里只读它、不另写一份 ✗）
 const { SCAN_PAGE } = require('./scanPage');
 
@@ -102,8 +107,13 @@ const createRealmScanConfig = (env = process.env) => Object.freeze({
   enabled: readFlag(env, 'SCAN_REALM_SCAN_ENABLED', true),
   // 「点完了接着扫」那个查询键：路由在**加货成功之后**303 回本页带上它，页面上的脚本才去调扫一扫。
   //   ⚠️ 只有它出现在 URL 上才会扫（**页面一加载就弹相机**那种 "点了没反应/乱弹" 的坑 ✗）。
-  triggerQueryKey: readString(env, 'SCAN_REALM_SCAN_QUERY_KEY', 'scan'),
-  triggerQueryValue: readString(env, 'SCAN_REALM_SCAN_QUERY_VALUE', '1'),
+  // ⭐⭐ 2026-10-16 夜（A 套接线）：这一对的**默认值从五处登记表取**
+  //   （`config/scanEntries.js` 的 `backParam` / `backValue` ✓ **唯一真源**）——
+  //   本文件不再自己写一份 `'scan'` / `'1'` ✗；env 覆盖仍有效（`SCAN_REALM_SCAN_QUERY_*` ✓）。
+  //   ⚠️ **值 = 今天线上逐字那两个** ⇒ 三条链的 303 与今天**逐字节相同** ✓
+  //     （`test/salesRealmScan.test.js` 的 AC-SR6 三张表钉着 ✓）。
+  triggerQueryKey: readString(env, 'SCAN_REALM_SCAN_QUERY_KEY', resolveScanEntriesConfig(env).backParam),
+  triggerQueryValue: readString(env, 'SCAN_REALM_SCAN_QUERY_VALUE', resolveScanEntriesConfig(env).backValue),
   // 飞书 JSAPI 签名端点（挂在本 router 下 ⇒ 复用既有一整道身份闸门 ✓ **不新开鉴权** ✗）。
   signaturePath: readString(env, 'SCAN_REALM_SCAN_SIGNATURE_PATH', '/lark/jsapi-signature'),
   // 扫完那件落回本领域用的查询键（**必须是 `resolveRealm` 读的那个**：`?from=` ✓ 不新造 ✗）。
