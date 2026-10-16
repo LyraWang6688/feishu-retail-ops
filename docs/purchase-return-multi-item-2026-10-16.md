@@ -141,7 +141,7 @@
 - ⚠️ **未做（如实标）①：退货出图在**线上**还没接线** —— 核到的事实：
   `purchaseReturnService` 的 `webhooks` 只有 **用例**注入（`test/scanPurchaseReturn.test.js` 的 AC-R10 等），
   **生产接线一处都没有**（`routes/scanPage/index.js` → `createScanWriteService({gateway, config})`
-  没给 `purchaseReturnOptions`；全仓 `purchaseReturnOptions` 只有 `scanWriteService.js:235` 那一处读取点）
+  没给 `purchaseReturnOptions`；全仓 `purchaseReturnOptions` 只有 `scanWriteService.js:239` 那一处读取点）
   ⇒ 线上退货那一步**永远**走 `returnImageFailed` 的 `reason: 'no_image_pipeline'`（只记一条 warn、图不发）。
   ⭐ 这是**本卡之前就存在**的缺口（单货品那条路同样受影响），**不是**多货品引入的；
   修它 = 给那条链接上真的 `PurchaseWebhookService`（一行量级的接线，但**改动线上行为**）
