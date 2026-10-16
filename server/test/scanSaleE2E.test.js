@@ -1787,19 +1787,12 @@ test('AC-SR1/SR2/SR3 销售提交成功 ⇒ 自动回**销售**首页（URL 确�
       //   ⚠️ **第二期（下方"号那一半"）等 `views/scanPage/**` 把「上一单已提交（单号）」渲染出来再改** ✗
       //      —— 现在是**故意**让它先红着（去掉期望 ≠ 修好 ✓）
       assert.equal(meta, null, `新口径：成功页**不许**自动跳（零跳转 ✓）：${html.slice(0, 200)}`);
-      // ⭐⭐ 2026-10-13 **口径变更**（她的原话：「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，
-      //   **应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」）：
-      //   目标从"她扫的那一页（`/s/<编号>` ✗ 还带着这一单）"改成 **不带编号的销售首页**（`/s/` ✓）+
-      //   带 `?done=<单号>`（首页据此显示"上一单已提交" ✓ 无状态）
-      const target = new URL(meta[2], 'http://x');
-      assert.equal(target.pathname.replace(/\/$/, ''), '/s',
-        `自动跳转目标要落在**不带编号的销售首页**（实际 ${meta[2]}）`);
-      assert.equal(target.searchParams.get('from'), null, '销售首页不带 ?from=（与这一单无关 ✓）');
-      assert.ok(Number(meta[1]) >= 1, `要先让她看到结果再跳（实际 ${meta[1]}s）`);
-      const link = html.match(/<a class="btn" data-view="success-return" href="([^"]+)">/);
-      assert.ok(link, '还要有一颗【返回扫码】兜底');
-      assert.equal(link[1], meta[2], '按钮 href 与自动跳转目标**必须同一个 URL**（唯一来源 ✓）');
-      // 首屏就有结果（单号）——不会被"秒跳"吞掉 ✓
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）· 本段四条一起换（它们都依赖 `meta`／`target`／`link` ✗）：
+      //   改前逐字：跟 `<meta refresh>` 跳 ⇒ 断言落点 `/s`、`?from` 为空、`meta[1]` 延时 ≥1、按钮 href == `meta[2]` ✗
+      //   改后逐字：**零跳转**（不跟 `meta` 走）⇒ 就地钉「成功页**零链接零按钮**」✓
+      //   依据 = 她 2026-10-16 23:5x 逐字：「就一页、没有按钮没有链接、也不自动跳（你得自己点返回），按照这个，保持现状」✓
+      assert.equal(/<a\b/i.test(html), false, '成功页不许有任何链接（她：没有链接 ✓）');
+      assert.equal(/<button\b/i.test(html), false, '成功页不许有任何按钮（她：没有按钮 ✓）');
       assert.match(html, /XSD-/, '成功页里要有单号（结果先显示 ✓）');
     });
   } finally { e2e.cleanup?.(); }
