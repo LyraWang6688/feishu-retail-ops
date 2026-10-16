@@ -393,11 +393,12 @@ B 由 `submitSale` 透传），所以它先落在 `services/**` **没有浪费**
 | 同一份基线的其他副本 | `scanPageSplitParity` · `scanDraftRouteWiring` · `scanDraftSaveResume` · `multiItemLogsAndRealmScan` · `supplierSplitAtGeneration` · `saleWriteBackgroundExtract` · `multiItemOrderSalesChain` 一起跑：**75 pass / 0 fail** ✓ |
 | `test/saleMoneySplitDeferFunds.test.js`（新 7 条） | **7 pass / 0 fail**（AC-MSD1…MSD7 ✓） |
 | 新判据那一条（**库存一双未扣**） | AC-MSD3 断言：交付服务**一次都没被叫** · 实时库存门盒还在 · 库存流水 0 条 · 明细未交付 · 没有假的"库存没扣成"日志；**对照**那一跑（资金页，不带 `deferFunds`）才扣 ✓ |
-| 引用 `scanWriteService` 的**全部**用例 | `grep -rln scanWriteService test/*.js`（48 个文件）⇒ **533 tests · 528 pass · 1 fail**；唯一那条失败 = `aiParsingRemoval.test.js` 的 **AC-11**（它比 `git show HEAD:`，而这一刀**当时还没提交**）⇒ **提交后即为绿**（见下一条提交的复跑 ✓） |
+| 引用 `scanWriteService` 的**全部**用例 | `grep -rln scanWriteService test/*.js`（48 个文件）⇒ **533 tests · 528 pass · 1 fail**；唯一那条失败 = `aiParsingRemoval.test.js` 的 **AC-11**（它比 `git show HEAD:`，而这一刀**当时还没提交**）⇒ **提交后即为绿**（由下面那两遍全量证实 ✓） |
 | **变异 4 组（真红）** | M1 货那一跑照旧扣库存（去掉那个分支）⇒ **fail 5** · M2 后台那一跑不带 `deferFunds` ⇒ **fail 5** · M3 货那一跑照记 `completed`（分离分支整段不跑）⇒ **fail 5** · M4 去掉"货那一跑不许带收款"那条闸门 ⇒ **fail 2** —— 每组之后**从备份还原**并逐字节核对：`scanWriteService.js` 仍 = `49772bda…2c12` ✓ |
-| **全量两遍**（`server/` 根 · `node --test --test-concurrency=1` · 系统 node `/usr/local/bin/node` v24.14.1） | ⏳ **跑完补登**（那两遍必须在**提交之后**跑：`aiParsingRemoval` 的 AC-11 比的是 `git show HEAD:`）—— 数字与真 EXIT 补在下面 ⬇️ |
-| **全量两遍（补登）** | 第 1 遍：`tests —— · pass —— · fail —— · skipped —— · EXIT=——`<br>第 2 遍：`tests —— · pass —— · fail —— · skipped —— · EXIT=——`（**下一条提交**里填真数字，不在跑之前编 ✗） |
-| 两遍之间自证未改（补登） | 两遍之间工作树干净（`git status --porcelain` 空）＋ 冻结件 sha 两遍同值 ✓ |
+| **全量两遍**（`server/` 根 · `node --test --test-concurrency=1` · 系统 node `/usr/local/bin/node` v24.14.1 · HEAD = 合并 `origin/main` `0f76312` 之后的 `49f0906`） | 第 1 遍：`tests 2949 · pass 2942 · fail 0 · skipped 7 · **EXIT=0**`（168.2s）<br>第 2 遍：`tests 2949 · pass 2942 · fail 0 · skipped 7 · **EXIT=0**`（184.5s） —— ⚠️ **真 EXIT**（不接管道，直接读 `$?` ✓） |
+| 两遍之间自证未改 | 两遍之间 `git status --porcelain` **空** · `git diff HEAD \| shasum -a 256` 两遍都是 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`（= **空 diff** 的 sha256 ⇒ 一个字节都没变 ✓） · 冻结件 sha 两遍都是 `49772bda…2c12` ✓ |
+| `CI=true pnpm audit --prod --audit-level=high` | `No known vulnerabilities found` · **EXIT=0** ✓ |
+| ⚠️ 基线对齐（AGENTS 第 9 条） | 开工时 origin/main = `0c31748`；**中途 main 前进了两笔**（`d8a40d3` **#758 阶段一已合并** / `0f76312` #759 删超大留档 patch）⇒ 本轮**先 merge `origin/main`（`0f76312`）再跑全量**，上面那两遍就是**合并后的最终树** ✓（两处冲突都是「两边各自加了同一份文件」⇒ 取 ours = 并集；见 merge commit `49f0906` 的说明 ✓） |
 
 ---
 
@@ -448,3 +449,14 @@ B 由 `submitSale` 透传），所以它先落在 `services/**` **没有浪费**
 
 ⇒ 第 6 节 **AC-MS4 那一行已按此改写** ✓（派活书那句"0 行"作废 ✗）。**没有**任何改动落到写库口径上
 （今天怎么算差额、怎么补那条【未收款】，一个字都没动 ✓）。
+
+### ③ ⚠️ PR 归属（**如实记录 · 这一条改了派活书的前提**）
+
+- 派活书说「**#757**（OPEN · 未合并）· 你就在 **#757** 上继续」——**实测已过期**（`gh` 查的）：
+  **#757 = CLOSED**（`closedAt 2026-10-16T12:37:04Z` = **20:37 +08**，0 条评论）；
+  **#758 = MERGED**（`mergedAt 2026-10-16T12:42:29Z` = **20:42 +08**，mergeCommit `d8a40d3`），
+  标题「阶段一（配置＋只写货那半＋判据）」，**head 分支就是 `feat/scan-money-split`**（与 #757 同分支）。
+- ⇒ **阶段一的内容已经通过 #758 进 main**；已核 `git diff d76f3e8 d8a40d3 -- <阶段一那 5 个文件>` **为空**
+  ⇒ main 里那份阶段一与本分支**逐字相同**（不是两份不同的实现）。
+- ⇒ 阶段二**先 merge `origin/main`（`0f76312`）再跑全量**（见 9.1 最后一行 ✓）；PR 归属已**当场上报 Lead**
+  （本分支继续；**不合并 · 不 force-push · 不部署**）。
