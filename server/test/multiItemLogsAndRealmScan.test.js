@@ -609,12 +609,14 @@ test('AC-ML8 🔴 `services/scanWriteService.js` **一个字不加/删/改**（�
   //   依据：本仓既有的冻结哨兵写法（`FROZEN_SHA256 = '199551e1…35ca'`）＋ 本文件头声明的红线（余量 0 ✓）
   const cryptoFrozen = require('node:crypto');
   const FROZEN_SCAN_WRITE_SHA256 = '199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca';
-  const FROZEN_SCAN_WRITE_LINES = 1698;
+  // ⚠️ 行数这条**刻意不写**：`split('\n').length` 与 `wc -l` **差 1**（文件末尾有无换行 ✓）
+  //    ⇒ 我第一版写成 1698 当场把自己判红 ✗ ⇒ **只留 sha256**（它本身就是"逐字节"最强判据 ✓ 且不依赖任何 ref ✓）
+  //    行数上限（余量 0）由既有哨兵 `scanWriteServiceFrozen.test.js` 的 AC-FRZ1 负责 ✓
   const actualSha = cryptoFrozen.createHash('sha256').update(WRITE_SERVICE_SRC, 'utf8').digest('hex');
   assert.equal(actualSha, FROZEN_SCAN_WRITE_SHA256,
     '🔴 `scanWriteService.js` 必须与**钉死的指纹**逐字节相同（本刀一个字都没动 ✓）');
-  assert.equal(WRITE_SERVICE_SRC.split('\n').length, FROZEN_SCAN_WRITE_LINES,
-    '🔴 行数也必须一致（多一行都不行 ✓）');
+  assert.equal(WRITE_SERVICE_SRC.includes('realmScan') || WRITE_SERVICE_SRC.includes('scan.multi_item'), false,
+    '🔴 冻结件里不许出现本刀的新逻辑/新事件名（它根本不该认识"领域内扫一扫" ✓）');
   // 本刀的新行为**不许**出现在那个文件里（反过来说：它根本不知道"领域内扫一扫"这件事 ✓）
   assert.equal(WRITE_SERVICE_SRC.includes('realmScan'), false, '冻结件不该认识新逻辑 ✓');
   assert.equal(WRITE_SERVICE_SRC.includes('scan.multi_item'), false, '冻结件不该出现新事件名 ✓');
