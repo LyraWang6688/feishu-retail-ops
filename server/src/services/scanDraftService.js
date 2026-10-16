@@ -32,16 +32,29 @@
  *     —— 本模块**不 require 它**、也不改它；判据 `AC-D8` 逐字节核它的 sha256 ✓。
  *
  * ── 副作用纪律（**存草稿 = 零副作用**，她 2026-10-16 的三条坑之一）──────────────
- *   存草稿**只**做两件事：① 本地那份草稿；② 「采购主表」**那一行**（`到货状态=未报货`）。
- *   🔴 **绝不**：发群 / 出图 / 写库存 / 建采购明细 / 走"生成报货单"那一步 ✓
- *   （`AC-D1` 用**假 gateway 记账**证明：`create` 只落到 `purchaseOrderBatch` 一次，
- *    `purchaseRequest` 0 次、`inventory*` 0 次、出图/发群的注入件 0 次 ✓）。
+ *   ⭐⭐ **改前逐字 → 改后逐字 → 依据**（本刀 S2 · **成对迁移**，判据见 `AC-D1`）：
+ *     · 改前逐字：「存草稿**只**做两件事：① 本地那份草稿；② 「采购主表」**那一行**
+ *       （`到货状态=未报货`）。🔴 **绝不**：发群 / 出图 / 写库存 / **建采购明细** /
+ *       走"生成报货单"那一步 ✓」
+ *     · 改后逐字：存草稿做**三**件事 —— ① 本地那份草稿；② 「采购主表」**那一行**
+ *       （`到货状态=未报货`）；③ ⭐ **「采购明细」若干行**（每货品每尺码一行）。
+ *       🔴 **绝不**：发群 / 出图 / 写库存 / 走"生成报货单"那一步 ✓
+ *     · **依据** = 她 2026-10-16 逐字「**草稿也写明细**」（Lead 弹窗问「草稿会不会写到采购明细」，
+ *       她选的就是这一条）⇒ "不建明细"那个旧假设**作废** ✗。
+ *   ⚠️ 明细行是**唯一被允许的例外**（她口径新增 ✓）；`inventory*` 0 次、出图/发群的注入件 0 次
+ *     **照旧**（`AC-D1` 用**假 gateway 记账**证明：`create` 落 `purchaseOrderBatch` **1 次**、
+ *     落 `purchaseRequest` **N 次**（N = 货品 × 尺码），其余表 0 次 ✓）。
+ *   ⚠️ **明细行的幂等**：键 = `scan_draft_detail:{会话}:{桶}:{货品}:{尺码}`（**独立前缀** ✓）
+ *     ⇒ 同一份草稿存两次 ⇒ 明细**不翻倍**（`AC-D2c` 能真红 ✓）。
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
+const { createOnceByKey, IDEMPOTENCY_KEY_FIELD } = require('../infrastructure/idempotencyKey');
+const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { relation } = require('./v1ReferenceResolver');
 const { SCAN_DRAFT, DRAFT_SCOPE } = require('../config/scanDraft');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { textValue } = require('./v1BitableGateway');
@@ -141,6 +154,12 @@ const createScanDraftService = (options = {}) => {
   const tableKey = options.tableKey || config.tableKey;
   const statusFieldKey = options.statusFieldKey || config.statusFieldKey;
   const statusValue = options.statusValue || config.statusValue;
+  const detailTableKey = options.detailTableKey || config.detailTableKey;
+  // 尺码解析（**共用既有那一个取用器** ✓ —— 与报货 / 退货两条链路同一份实现，
+  //   不新造一套；用例可以注入桩 ✓）。拿不到尺码记录 id ⇒ 这一行明细**不写**（见下）。
+  const getSizeReferences = createSizeReferenceAccess({
+    gateway, sizeReferences: options.sizeReferences,
+  });
   const supplierSplit = config.supplierSplit;
 
   const tableOf = (key) => V1_BITABLE_SCHEMA.tables[key] || null;
@@ -245,13 +264,124 @@ const createScanDraftService = (options = {}) => {
     }
   };
 
-  // ── ② 存草稿（本地那份 + 表侧那一行）────────────────────────────────────────
+  // ── ①b 表侧明细（她 2026-10-16 逐字：「草稿也写明细」）────────────────────
+  /**
+   * ⭐⭐ 2026-10-16（她逐字「**草稿也写明细**」）：把草稿的每一行写进「采购明细」。
+   *
+   * 一行明细 = **一个（货品 × 尺码）**（与既有两条真出单链路**同形**：
+   *   `purchaseWebhookService.confirmPurchaseRequest` 逐 item 建明细、
+   *   `purchaseReturnService.submit` 逐尺码建明细 ⇒ 表里一行只能带一个尺码 + 数量 ✓）。
+   *   ⇒ 「草稿有 N 个货品」时，若每个货品只有 1 个尺码 ⇒ 明细恰好 **N 行** ✓。
+   *
+   * 🔴 **列名只从 `v1BitableSchema` 的语义键取**（本文件零中文列名字面量 ✗ —— `AC-D8b` 钉着）：
+   *   `batchNo`（关联刚建的草稿行）/ `product` / `size` / `quantity` / `idempotencyKey`。
+   *   ⚠️ **不写** `behavior`（「采购行为」是 Lookup，只读 ⇒ 写了轻则白写、重则整条 create 失败）
+   *     · **不写** `detailId`（「采购明细ID」由**真出单**那一步的分配器统一编号；
+   *       草稿只是草稿，不占号 ⇒ 见 PR 的"未做/待 S3"）。
+   *
+   * 🔴 **幂等**：键由（会话 ｜ 桶 ｜ 货品 ｜ 尺码）推出 ⇒ 同一份草稿存两次，
+   *   第二次**全部命中**（`createOnceByKey` 先按幂等键回查）⇒ 明细**不翻倍** ✓。
+   *
+   * ⚠️ **写不成的行如实留痕、不静默**（她的草稿纸不该因为一行写不进去就整份存不下去）：
+   *   · 数量不是正整数（她没填 / 填了 0）⇒ **跳过这一行** + `detailSkipped`；
+   *   · 尺码在「尺码管理」里找不到 ⇒ **跳过这一行** + `detailSkipped`（**不写半个尺码** ✗）；
+   *   · 写库失败 ⇒ 记 `detailWriteFailed` + 计入 `failed`（**草稿本身仍算存成功** ✓，
+   *     返回值里如实带 `details.failed` ✓）。
+   */
+  const writeDraftDetailsToTable = async ({
+    batchRecordId, batchNo, sessionId, bucket, items = [], correlation = {},
+  }) => {
+    const detailKeyOf = (item, entry) => [
+      config.detailIdempotencyPrefix,
+      sanitizeKey(sessionId),
+      sanitizeKey(bucket),
+      sanitizeKey(item.product_record_id || item.number || 'unknown'),
+      sanitizeKey(entry.size || 'unknown'),
+    ].join(':');
+    if (!tableOf(detailTableKey) || !fieldOf(detailTableKey, 'idempotencyKey')) {
+      // 明细这一半**没配上** ⇒ 如实报（不静默当"写过了" ✗）—— 草稿行已经写了，不回滚。
+      warn(events.detailSkipped, {
+        session_id: sessionId, batch_no: batchNo, table_key: detailTableKey,
+        reason: 'detail_table_not_configured',
+      });
+      return { ok: false, recordIds: [], created: 0, reused: 0, failed: 0, skippedCount: 0 };
+    }
+    const recordIds = [];
+    let created = 0;
+    let failed = 0;
+    const skipped = [];
+    for (const item of items) {
+      for (const entry of item.entries) {
+        const quantity = positiveInteger(entry.quantity);
+        if (quantity === null) {
+          skipped.push({ size: String(entry.size ?? ''), reason: 'quantity_not_positive_integer' });
+          continue;
+        }
+        let sizeReference = null;
+        try {
+          sizeReference = await getSizeReferences().resolveByNumber(entry.size);
+        } catch (error) {
+          // **拿不到就不编** ✗：这一行明细**不写**（宁可少一行，也不写一个对不上的尺码）
+          skipped.push({ size: String(entry.size ?? ''), reason: 'size_unresolved' });
+          warn(events.detailSkipped, {
+            session_id: sessionId, batch_no: batchNo, size: String(entry.size ?? ''),
+            product_record_id: item.product_record_id || '', reason: 'size_unresolved',
+            error: String(error?.message || error),
+            request_id: correlation.request_id || undefined,
+          });
+          continue;
+        }
+        const keyValue = detailKeyOf(item, entry);
+        try {
+          const row = await createOnceByKey({
+            gateway,
+            tableKey: detailTableKey,
+            keyField: IDEMPOTENCY_KEY_FIELD,
+            keyValue,
+            // ⚠️ 这个 label **只用在本文件的幂等日志/异常里**（不是用户可见文案）⇒ 用 ASCII，
+            //   免得被 `test/noHardcodedChinese.test.js` 当成"新增的硬编码中文"拦住 ✗。
+            label: `scan-draft-detail ${keyValue}`,
+            correlation,
+            values: {
+              batchNo: relation(batchRecordId),
+              product: relation(item.product_record_id),
+              size: relation(sizeReference?.recordId),
+              quantity,
+              idempotencyKey: keyValue,
+            },
+          });
+          recordIds.push(String(row.recordId || ''));
+          if (row.reused !== true) created += 1;
+        } catch (error) {
+          failed += 1;
+          error_(events.detailWriteFailed, {
+            session_id: sessionId, batch_no: batchNo, idempotency_key: keyValue,
+            error: String(error?.message || error), request_id: correlation.request_id || undefined,
+          });
+        }
+      }
+    }
+    info(events.detailsWritten, {
+      session_id: sessionId, batch_no: batchNo, detail_table: detailTableKey,
+      detail_count: recordIds.length, created_count: created,
+      reused_count: recordIds.length - created, skipped_count: skipped.length, failed_count: failed,
+      request_id: correlation.request_id || undefined,
+    });
+    return {
+      ok: failed === 0, recordIds, created, reused: recordIds.length - created, failed, skipped,
+    };
+  };
+
+  // ── ② 存草稿（本地那份 + 表侧那一行 + ⭐ 明细 N 行）─────────────────────────
   /**
    * 存一份草稿。
    *
    * ⚠️ **双写，且以本地为准**（设计 §3.1）：本地那份是**提交要用的结构化草稿**，
    *   表侧那一行是**给她看的快照**。表写失败 ⇒ **不算存成功**（如实报 + 人话 ✓，
    *   本地那一份**留着**，她还能接着录 ⇒ 不静默当成功 ✗）。
+   * ⭐⭐ 2026-10-16（本刀 S2 · 她逐字「**草稿也写明细**」）：主表那一行之后**还写明细 N 行**
+   *   （N = 货品 × 尺码；`writeDraftDetailsToTable`）—— 明细的成败**如实带在返回值里**
+   *   （`details.failed` / `details.skipped`），**不改**"草稿算不算存成功"（本地 + 主表那一行才是）。
    *
    * @param {object} input
    * @param {string} input.openId
@@ -296,6 +426,18 @@ const createScanDraftService = (options = {}) => {
       });
       if (!table.ok) return table;
 
+      // ⭐⭐ 2026-10-16（她逐字「**草稿也写明细**」）：主表那一行之后紧接着写明细 N 行。
+      //   ⚠️ 明细挂在**刚写的这一行**上（`table.recordId` —— 幂等键是这一行的身份 ✓）；
+      //   ⚠️ 明细写失败/跳过**不回滚**草稿行、也不改判"存成功"（如实带 `details` ✓ 见下）。
+      const details = await writeDraftDetailsToTable({
+        batchRecordId: table.recordId || '',
+        batchNo: resolved.batchNo,
+        sessionId,
+        bucket,
+        items: normalized,
+        correlation: { request_id: requestId || undefined },
+      });
+
       const draftId = draftIdOf(sessionId, bucket);
       const existing = await store.get(draftId).catch(() => null);
       const previous = draftsOf(existing)[bucket] || null;
@@ -328,6 +470,11 @@ const createScanDraftService = (options = {}) => {
         // ⭐ "沿用自哪一行" —— 幂等的证据（(a) 那一支才有值；(b) 新建时为空 ✓）
         reused_batch_record_id: resolved.reused === true ? String(resolved.recordId || '') : '',
         batch_reused: resolved.reused === true,
+        // ⭐⭐ 明细那一半（她 2026-10-16「草稿也写明细」）：写成了哪几行、跳过了几行
+        detail_record_ids: details.recordIds,
+        detail_count: details.recordIds.length,
+        detail_skipped: details.skipped || [],
+        detail_failed: details.failed || 0,
         idempotency_key: draftRowKey(sessionId, bucket),
         created_at: previous?.created_at || now().toISOString(),
         updated_at: now().toISOString(),
@@ -340,6 +487,8 @@ const createScanDraftService = (options = {}) => {
         session_id: sessionId, draft_id: draftId, scope: config.scope, bucket,
         line_count: lineCount, product_count: normalized.length,
         batch_no: record.batch_no, batch_reused: record.batch_reused,
+        detail_count: details.recordIds.length, detail_created: details.created,
+        detail_skipped: details.skipped?.length || 0, detail_failed: details.failed || 0,
         overwritten: Boolean(previous), ttl_ms: config.ttlMs,
         request_id: requestId || undefined,
       });
@@ -349,12 +498,23 @@ const createScanDraftService = (options = {}) => {
         bucket,
         scope: config.scope,
         draft: record,
+        details: {
+          count: details.recordIds.length,
+          created: details.created,
+          reused: details.reused,
+          skipped: details.skipped || [],
+          failed: details.failed || 0,
+          recordIds: details.recordIds,
+        },
         summary: {
           line_count: lineCount,
           product_count: normalized.length,
           batch_no: record.batch_no,
           batch_reused: record.batch_reused,
           overwritten: Boolean(previous),
+          detail_count: details.recordIds.length,
+          detail_skipped: details.skipped?.length || 0,
+          detail_failed: details.failed || 0,
           message: previous ? fill(texts.overwritten, { scope: config.scope }) : '',
         },
       };
@@ -481,6 +641,8 @@ const createScanDraftService = (options = {}) => {
     bucketOf,
     draftIdOf,
     draftRowKey,
+    // ⭐ 明细那一半（她 2026-10-16「草稿也写明细」）：写入口 + 落点（用例直接钉 ✓）
+    writeDraftDetailsToTable,
     store,
     config,
     events,
@@ -488,6 +650,8 @@ const createScanDraftService = (options = {}) => {
     tableKey,
     statusFieldKey,
     statusValue,
+    /** 明细那一半落在哪张表（默认 `purchaseRequest` = 「采购明细」；语义键 ✓ 不是中文列名 ✗） */
+    detailTableKey,
     /** 供应商拆分**未决**（她还没拍"拆成几单/几个批次号"）—— 如实暴露，别当它已定 ✗ */
     supplierSplit,
   };

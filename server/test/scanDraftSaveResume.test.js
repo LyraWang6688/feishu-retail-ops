@@ -9,9 +9,27 @@
  *
  * ── 先写「按我们的链路应该实现的效果」，再跑，再逐条对照（她定的流程）────────────
  *
- *  AC-D1 **存草稿 ⇒ 零副作用**：不发群 / 不写库存 / 不出批次号（**不写采购明细** / 不建明细行）✓
+ *  AC-D1 **存草稿 ⇒ 零副作用**：不发群 / 不写库存 / 不出图 / 不调号源（**不建明细行** 那句见下 ⬇）
  *         —— 用**假 gateway 记账**证明：`create` 只落在 `purchaseOrderBatch` 一次；
  *            `purchaseRequest` 0 次；`inventory*` 0 次；出图 / 发群的注入件 0 次 ✓
+ *         ⭐⭐ **2026-10-16（本刀 S2）成对迁移**（依据 = 她逐字「**草稿也写明细**」）：
+ *           · **改前逐字**（文件头那两行 ＋ 用例名 ＋ 用例里那一句）：
+ *             `AC-D1 **存草稿 ⇒ 零副作用**：不发群 / 不写库存 / 不出批次号（**不写采购明细** / 不建明细行）✓`
+ *             `—— 用**假 gateway 记账**证明：create 只落在 purchaseOrderBatch 一次；purchaseRequest 0 次；…`
+ *             `test('AC-D1 存草稿 ⇒ 零副作用：只有一行草稿行，明细/库存/出图/发群/写入口**一次都没有**', …`
+ *             `assert.deepEqual(h.gateway.writesTo('purchaseRequest'), [], '不许建采购明细 ✗');`
+ *           · **改后逐字**：`AC-D1 存草稿 ⇒ 零副作用：主表一行（未报货）＋ 明细 N 行，库存/出图/发群/写入口一次都没有`
+ *             （断言改成 `主表 1 次 ＋ 明细 N 次`，其余**逐条照旧** ✓）。
+ *           · **依据**：她 2026-10-16 逐字「**草稿也写明细**」（Lead 弹窗问「草稿会不会写到采购明细」，
+ *             她选的就是这一条）⇒ #732 里按"**明细 0 次**"写的那个假设**作废** ✗。
+ *           · ⚠️ **不是放宽** ✗：明细那一项是**她口径新增的例外**（AC-D2b / AC-D2c 正面钉住它）；
+ *             其余（库存 0 次 / 出图 0 次 / 发群 0 次 / 写入口 0 次 / 草稿行 = 未报货）**一条都没动** ✓。
+ *  AC-D2b ⭐ **草稿也写明细**（她 2026-10-16）：存一次草稿 ⇒ 主表 **1 行**（`到货状态 = 未报货`）
+ *         ＋ 明细 **N 行**（**N = 货品数** —— 夹具每个货品恰好 1 个尺码 ⇒ 一行明细 = 一个货品 ✓；
+ *         一行明细的口径 = **一个（货品 × 尺码）**，与既有两条真出单链路同形 ✓）
+ *  AC-D2c ⭐ **幂等**：同一份草稿存两次 ⇒ 明细**不翻倍**（第二次全部命中同一把幂等键 ✓）
+ *  AC-D2d ⭐ 零副作用仍成立：**明细行是被允许的例外**（写明的只有它）＋ 发群 / 出图 / 写库存 /
+ *         调号源**照旧**不受影响 ✓（假件记账）
  *  AC-D2 找回 ⇒ **逐字还在**（尺码 / 数量 / 已加货品 / 供应商，含顺序）✓
  *  AC-D3 没有草稿 ⇒ **与今天逐字一致**（零回归：视图对象同一性 + 零文件写入 + 零远端调用）✓
  *  AC-D4 `draftScope='single'` ⇒ 第二次存**覆盖**第一份 ＋ **留痕**（`scan.draft.overwritten`）；
@@ -24,6 +42,9 @@
  *            但**没人"没碰"的证据**就等于零 ✗ ⇒ 加一条**只读**的指纹哨兵（也顺手挡住后来人误改）。
  *  AC-D8b 源码哨兵：草稿的**列名一个都不写死**（中文列名只从 `config/v1BitableSchema.js` 取）＋
  *         本刀**不 require 那个冻结件**（`scanWriteService.js`）✓
+ *          ⭐ 2026-10-16（本刀 S2）复核：明细那一半走**既有** `createOnceByKey`（`infrastructure/`）⇒
+ *            本文件里 `await gateway.create(` **仍然只有 1 处**（草稿行那一次）、
+ *            `await gateway.update(` **仍然是 0 处** ⇒ 那两条哨兵**一个字没改** ✓（不是放宽 ✓）。
  *
  * 每一条都写明"**去掉哪一句就该红**"（见文件末 `MUTATION` 注释与 PR 说明）——
  * 避免"名字出现过 = 有判据"那种假绿（AGENTS.md 第 1b 条③）。
@@ -67,12 +88,19 @@ const makeFakeGateway = () => {
     if (!tables.has(tableKey)) tables.set(tableKey, []);
     return tables.get(tableKey);
   };
-  const fieldNames = {
-    batchNo: V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.batchNo,
-    arrivalStatus: V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.arrivalStatus,
+  // ⭐⭐ 2026-10-16（本刀 S2）：**每张表各自的语义键 → 物理列名**（两张表都要映射 ——
+  //   明细那一半要用 `createOnceByKey` 按「幂等键」回查 ⇒ 假表里必须真的存着那一列 ✓）。
+  const fieldNamesOf = (tableKey) => {
+    const fields = (V1_BITABLE_SCHEMA.tables[tableKey] || {}).fields || {};
+    return Object.fromEntries(Object.entries(fields)
+      .filter(([semanticKey]) => [
+        'batchNo', 'arrivalStatus', 'idempotencyKey', 'product', 'size', 'quantity',
+      ].includes(semanticKey))
+      .map(([semanticKey, column]) => [semanticKey, column]));
   };
   /** 语义键 → 物理列名（表侧那一行在她 Base 里就是这样存的 ✓）。 */
-  const physical = (values) => {
+  const physical = (tableKey, values) => {
+    const fieldNames = fieldNamesOf(tableKey);
     const out = {};
     Object.entries(values || {}).forEach(([key, value]) => {
       out[fieldNames[key] || key] = value;
@@ -93,7 +121,7 @@ const makeFakeGateway = () => {
       calls.push({ op: 'create', table: tableKey, values: { ...values } });
       await Promise.resolve();
       seq += 1;
-      const record = { record_id: `rec_${tableKey}_${seq}`, fields: physical(values) };
+      const record = { record_id: `rec_${tableKey}_${seq}`, fields: physical(tableKey, values) };
       rowsOf(tableKey).push(record);
       return { record_id: record.record_id };
     },
@@ -101,7 +129,7 @@ const makeFakeGateway = () => {
       calls.push({ op: 'update', table: tableKey, record_id: recordId, values: { ...values } });
       await Promise.resolve();
       const row = rowsOf(tableKey).find((item) => item.record_id === recordId);
-      if (row) row.fields = { ...row.fields, ...physical(values) };
+      if (row) row.fields = { ...row.fields, ...physical(tableKey, values) };
       return { record_id: recordId };
     },
   };
@@ -110,12 +138,39 @@ const makeFakeGateway = () => {
     const id = recordId || `rec_seed_${rowsOf('purchaseOrderBatch').length + 1}`;
     rowsOf('purchaseOrderBatch').push({
       record_id: id,
-      fields: { [fieldNames.batchNo]: batchNo, [fieldNames.arrivalStatus]: '未报货' },
+      fields: {
+        [fieldNamesOf('purchaseOrderBatch').batchNo]: batchNo,
+        [fieldNamesOf('purchaseOrderBatch').arrivalStatus]: '未报货',
+      },
     });
     return id;
   };
   gateway.writesTo = (tableKey) => calls.filter((call) => call.op === 'create' && call.table === tableKey);
+  /** 明细行（假表里那个 `idempotencyKey` 列上的值 —— 幂等判据就用它 ✓） */
+  gateway.detailKeysOf = () => rowsOf('purchaseRequest')
+    .map((row) => String(row.fields[fieldNamesOf('purchaseRequest').idempotencyKey] || ''));
   return gateway;
+};
+
+/**
+ * 假尺码解析器（**与既有 `SizeReferenceService` 同一个取用形状**：`resolveByNumber(size)`）
+ * —— 明细行要往「采购明细.尺码」写**关联记录 id**，所以必须有它 ✓（真件在
+ * `services/sizeReferenceService.js`，本文件不 require 真客户端）。
+ */
+const makeFakeSizeReferences = (resolvable = null) => {
+  const asked = [];
+  return {
+    asked,
+    async resolveByNumber(value) {
+      asked.push(String(value));
+      const size = Number(value);
+      if (!Number.isFinite(size) || size <= 0) throw new Error(`尺码必须是正整数：${value}`);
+      if (resolvable && !resolvable.includes(String(value))) {
+        throw new Error(`尺码管理中找不到 ${value} 码，请先核对关联记录`);
+      }
+      return { recordId: `rec_size_${size}`, size };
+    },
+  };
 };
 
 /** 假号源：与既有 `PurchaseBatchNoGenerator` **同一个形状**（`next()` 返 `{batchNo, sequence}`）。 */
@@ -155,11 +210,15 @@ const makeSideEffectSpies = () => {
   };
 };
 
-const makeHarness = ({ env = {}, chain = 'replenish', supplierRecordId = '', now, spies } = {}) => {
+const makeHarness = ({
+  env = {}, chain = 'replenish', supplierRecordId = '', now, spies, resolvableSizes = null,
+} = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-draft-test-'));
   const config = resolveScanDraftConfig(env);
   const gateway = makeFakeGateway();
   const batchNoGenerator = makeFakeBatchNoGenerator();
+  // ⭐ 明细那一半要往「采购明细.尺码」写**关联记录 id** ⇒ 注入假尺码解析器（形状与真件一致 ✓）
+  const sizeReferences = makeFakeSizeReferences(resolvableSizes);
   const events = [];
   const logger = {
     logInfo: (event, detail) => events.push({ level: 'info', event, detail }),
@@ -172,6 +231,7 @@ const makeHarness = ({ env = {}, chain = 'replenish', supplierRecordId = '', now
     dir,
     logger,
     batchNoGenerator,
+    sizeReferences,
     now,
     // ⚠️ 这里注入一把**固定的**串行键：只是为了把 AC-D7 的断言与
     //   `config.concurrentKeyFallback` 那个默认取值**解耦**（改配置文案不该动判据 ✓）。
@@ -187,6 +247,7 @@ const makeHarness = ({ env = {}, chain = 'replenish', supplierRecordId = '', now
     config,
     gateway,
     batchNoGenerator,
+    sizeReferences,
     events,
     logger,
     service,
@@ -229,26 +290,33 @@ const SAMPLE_ITEMS = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-D1 存草稿 ⇒ 零副作用
+// AC-D1 存草稿 ⇒ 零副作用（**成对迁移**：改前逐字 → 改后逐字 → 依据，见文件头）
 // ═══════════════════════════════════════════════════════════════════════════
-test('AC-D1 存草稿 ⇒ 零副作用：只有一行草稿行，明细/库存/出图/发群/写入口**一次都没有**', async () => {
+test('AC-D1 存草稿 ⇒ 零副作用：主表一行（未报货）＋ 明细 N 行，库存/出图/发群/写入口**一次都没有**', async () => {
   const h = makeHarness();
   const spied = makeSideEffectSpies();
   const saved = await h.save({ items: SAMPLE_ITEMS, spies: spied });
   assert.equal(saved.ok, true, '存草稿要成功 ✓');
 
-  // ① 写接口只被调**一次**，而且只落在「采购主表」那张表上
+  // ① 写接口 = **主表那一行 1 次** ＋ **明细 N 行**（她 2026-10-16：「草稿也写明细」✓），
+  //    ⚠️ 除了这两张表，**别的一张都不许碰**（`update` 一次都没有 = 不覆盖任何既有事实 ✓）
   const writes = h.gateway.calls.filter((call) => call.op === 'create' || call.op === 'update');
-  assert.equal(writes.length, 1, `存一次草稿只许有一次写（实际 ${writes.length}）`);
-  assert.equal(writes[0].table, 'purchaseOrderBatch', '写只许落在「采购主表」那一行');
-  // ② **采购明细**一次都没碰（草稿绝不许被当成"已经出单的明细"）
-  assert.deepEqual(h.gateway.writesTo('purchaseRequest'), [], '不许建采购明细 ✗');
+  const batchWrites = writes.filter((call) => call.table === 'purchaseOrderBatch');
+  const detailWrites = writes.filter((call) => call.table === 'purchaseRequest');
+  // 一行明细 = 一个（货品 × 尺码）⇒ 本夹具 2 个货品 / 3 个尺码 ⇒ 明细 3 行
+  //   （「N = 货品数」那条口径的正向判据在下面 AC-D2b 的"每货品一个尺码"夹具里 ✓）
+  const expectedDetailLines = SAMPLE_ITEMS
+    .reduce((sum, item) => sum + item.entries.length, 0);
+  assert.deepEqual(batchWrites.map((call) => call.table), ['purchaseOrderBatch'],
+    '写只许落在「采购主表」那一行（一次 ✓）');
+  assert.equal(detailWrites.length, expectedDetailLines, `明细 = 货品 × 尺码（实际 ${detailWrites.length} 行）`);
+  assert.equal(writes.length, 1 + expectedDetailLines, '写 = 主表 1 次 ＋ 明细 N 次，**没有第三种写** ✗');
   assert.deepEqual(
-    h.gateway.calls.filter((call) => call.op === 'update' && call.table !== 'purchaseOrderBatch'),
+    h.gateway.calls.filter((call) => call.op === 'update'),
     [],
-    '除草稿行以外不许 update 任何表 ✗',
+    '草稿阶段**一次 update 都不许有**（不覆盖任何既有事实 ✗）',
   );
-  // ③ 她 2026-10-16 点名的三个副作用（发群 / 出图 / 写库存）**一个都不许发生**
+  // ② 她 2026-10-16 点名的三个副作用（发群 / 出图 / 写库存）**一个都不许发生**
   for (const name of [
     'inventory.applyPurchase', 'inventory.applyPurchaseReturn',
     'purchase.group.notice', 'purchase.supplier.images',
@@ -256,15 +324,134 @@ test('AC-D1 存草稿 ⇒ 零副作用：只有一行草稿行，明细/库存/�
   ]) {
     assert.equal(spied.callsOf(name).length, 0, `存草稿阶段绝不许调 ${name} ✗`);
   }
-  // ④ 草稿行写的是**她的"草稿状态"**（到货状态 = 未报货）
-  const values = writes[0].values;
+  // ③ 草稿行写的是**她的"草稿状态"**（到货状态 = 未报货）
+  const values = batchWrites[0].values;
   assert.equal(values.arrivalStatus, h.config.statusValue, '草稿行的到货状态 = 未报货（她的草稿状态）');
   assert.equal(values.arrivalStatus, '未报货');
   assert.match(values.batchNo, /^CGD-20261016-\d{4}$/, '草稿行带的是**新建**的那个批次号');
   assert.equal(values.idempotencyKey, h.service.draftRowKey('scan_session_ou_test', DRAFT_SCOPE.single));
-  // ⑤ 表写失败 ⇒ **不算存成功**（这条由 AC-D5 的兄弟用例单独钉；这里先证明"成功路径"的形状）
+  // ④ 表写失败 ⇒ **不算存成功**（这条由 AC-D5 的兄弟用例单独钉；这里先证明"成功路径"的形状）
   assert.equal(h.service.statusValue, '未报货');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-D2b ⭐ 草稿也写明细（她 2026-10-16 逐字）
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-D2b ⭐ 草稿也写明细：主表 1 行（未报货）＋ 明细 N 行（N = 货品数）', async () => {
+  // 夹具 = **每个货品恰好 1 个尺码** ⇒ 「N = 货品数」这条口径可以直接断言 ✓
+  const oneEach = SAMPLE_ITEMS.map((item) => ({ ...item, entries: [item.entries[0]] }));
+  const h = makeHarness();
+  const saved = await h.save({ items: oneEach });
+  assert.equal(saved.ok, true);
+
+  // ① 主表：**恰好 1 行**，到货状态 = 未报货（她的"草稿状态"）
+  const batchRows = h.gateway.writesTo('purchaseOrderBatch');
+  assert.equal(batchRows.length, 1, '主表那一行**只许 1 行** ✗');
+  assert.equal(batchRows[0].values.arrivalStatus, '未报货');
+  // ② 明细：**N 行 = 货品数**（一行明细 = 一个货品 × 一个尺码 ✓ 与既有真出单链路同形）
+  const detailRows = h.gateway.writesTo('purchaseRequest');
+  assert.equal(detailRows.length, oneEach.length, `明细行数 = 货品数（实际 ${detailRows.length}）`);
+  assert.deepEqual(detailRows.map((row) => row.values.product), oneEach.map((item) => [item.product_record_id]),
+    '每一行明细挂的是**那个货品的记录 id**（关联字段的形状 = 记录 id 数组 ✓）');
+  assert.deepEqual(detailRows.map((row) => row.values.size), oneEach.map((item) => [`rec_size_${item.entries[0].size}`]),
+    '每一行明细的尺码 = **尺码管理里那条记录的 id**（不是文本 ✗）');
+  assert.deepEqual(detailRows.map((row) => row.values.quantity), oneEach.map((item) => item.entries[0].quantity),
+    '数量逐字跟着草稿走 ✓');
+  const batchRecordId = String(h.gateway.tables.get('purchaseOrderBatch')[0].record_id);
+  assert.deepEqual(detailRows.map((row) => row.values.batchNo), oneEach.map(() => [batchRecordId]),
+    '每一行明细都挂在**刚建的主表那一行**上（同一批次 ✓）');
+  // ③ 明细的幂等键 = 配置里的那一套前缀（**独立前缀** ⇒ 不与真出单撞 ✓）
+  const prefix = `${h.config.detailIdempotencyPrefix}:scan_session_ou_test:single:`;
+  detailRows.forEach((row) => {
+    assert.ok(String(row.values.idempotencyKey).startsWith(prefix),
+      `明细幂等键要带配置里的前缀：${row.values.idempotencyKey}`);
+  });
+  assert.equal(new Set(detailRows.map((row) => row.values.idempotencyKey)).size, detailRows.length,
+    '同一份草稿里，每一行明细的幂等键**互不相同** ✓');
+  // ④ 返回值里如实带明细那几个数（S3 / 排查要用 ✓）
+  assert.equal(saved.details.count, oneEach.length);
+  assert.equal(saved.details.created, oneEach.length);
+  assert.equal(saved.details.failed, 0);
+  assert.equal(h.eventsNamed('scan.draft.details_written').length, 1);
+  // ⑤ 一行 = 一个（货品 × 尺码）：**多一个尺码就多一行**（SAMPLE_ITEMS 有 3 个尺码 ⇒ 3 行 ✓）
+  const h2 = makeHarness();
+  const saved2 = await h2.save({ items: SAMPLE_ITEMS });
+  assert.equal(saved2.details.count, 3, '2 个货品 / 3 个尺码 ⇒ 明细 3 行（一行一个尺码 ✓）');
+  assert.deepEqual(saved2.details.skipped, [], '这一份草稿**一行都没跳过** ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-D2c ⭐ 幂等：同一份草稿存两次 ⇒ 明细不翻倍
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-D2c ⭐ 幂等：同一份草稿存两次 ⇒ 明细**不翻倍**（第二次全部命中）', async () => {
+  const h = makeHarness();
+  const first = await h.save({ items: SAMPLE_ITEMS });
+  assert.equal(first.ok, true);
+  assert.equal(first.details.created, 3, '第一次：3 行明细都是**新建**的');
+  const keysAfterFirst = h.gateway.detailKeysOf();
+  assert.equal(keysAfterFirst.length, 3);
+
+  const second = await h.save({ items: SAMPLE_ITEMS });
+  assert.equal(second.ok, true);
+  // 🔴 假表里的明细行数**没有变**（翻倍 ⇒ 红 ✓）
+  assert.deepEqual(h.gateway.detailKeysOf(), keysAfterFirst, '明细**一行都没多**（不翻倍 ✓）');
+  assert.equal(second.details.created, 0, '第二次：一行都不新建 ✓');
+  assert.equal(second.details.reused, 3, '第二次：3 行**全部命中幂等**（reused ✓）');
+  assert.equal(h.gateway.writesTo('purchaseRequest').length, 3, '明细的 create 总次数仍是 3 ✓');
+  // ⚠️ 已知边界（**本刀没动那一半**，如实写在这里）：主表那一行仍按 S1 既有行为再建一次
+  //   （同一把幂等键）—— S3 接"存草稿"时要先按幂等键回查 / 复用那一行；**本刀只保证明细不翻倍** ✓
+  assert.equal(h.gateway.writesTo('purchaseOrderBatch').length, 2,
+    '主表那一行**仍是 S1 既有行为**（第二次也 create，同一把幂等键）—— 本刀没改它 ✗');
+  assert.equal(h.gateway.writesTo('purchaseOrderBatch')[0].values.idempotencyKey,
+    h.gateway.writesTo('purchaseOrderBatch')[1].values.idempotencyKey,
+    '两次用的是**同一把**草稿行幂等键（"只留一份"的身份 ✓）');
+});
+
+test('AC-D2c2 ⭐ 换了内容还是同一份草稿：明细按（货品 × 尺码）对齐 ⇒ 变了的那一行**命中同一把键**（不新增）', async () => {
+  const h = makeHarness();
+  const first = await h.save({ items: SAMPLE_ITEMS });
+  assert.equal(first.details.count, 3);
+  const keysAfterFirst = h.gateway.detailKeysOf();
+  // 同一份草稿再存一次，只把 A 货品 40 码的数量从 2 改成 5（她的草稿纸就是这样改的 ✓）
+  const changed = JSON.parse(JSON.stringify(SAMPLE_ITEMS));
+  changed[0].entries[0].quantity = 5;
+  const second = await h.save({ items: changed });
+  assert.equal(second.ok, true);
+  assert.equal(second.details.count, 3, '还是那 3 行（同一个草稿 ✓）');
+  assert.equal(second.details.reused, 3, '第二遍**全部命中**（键只由 会话/桶/货品/尺码 决定 ✓）');
+  assert.deepEqual(h.gateway.detailKeysOf(), keysAfterFirst, '明细那 3 把键**逐字没变**（不新增行 ✓）');
+  assert.equal(h.gateway.writesTo('purchaseRequest').length, 3, '明细没有多出来 ✗');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-D2d ⭐ 零副作用仍成立（明细那一项 = 被允许的例外）
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-D2d ⭐ 零副作用仍成立：明细是**唯一**被允许的例外（发群/出图/库存/号源照旧不受影响）', async () => {
+  const h = makeHarness();
+  const spied = makeSideEffectSpies();
+  const before = h.batchNoGenerator.assigned;
+  const saved = await h.save({ items: SAMPLE_ITEMS, spies: spied });
+  assert.equal(saved.ok, true);
+  // ① **被允许的例外**：只有「采购明细」那一种新写入（主表那一行是本来就有的 ✓）
+  const touchedTables = [...new Set(h.gateway.calls
+    .filter((call) => call.op === 'create' || call.op === 'update').map((call) => call.table))].sort();
+  assert.deepEqual(touchedTables, ['purchaseOrderBatch', 'purchaseRequest'],
+    '存草稿碰的表**只有这两张**（例外写明白：明细 ✓）');
+  // ② 三个副作用（发群 / 出图 / 写库存）+ 两条真出单写入口：**一次都没有** ✓
+  for (const name of [
+    'inventory.applyPurchase', 'inventory.applyPurchaseReturn',
+    'purchase.group.notice', 'purchase.supplier.images',
+    'purchase.publishPurchaseRequest', 'purchaseReturn.submit',
+  ]) {
+    assert.equal(spied.callsOf(name).length, 0, `存草稿（含明细）绝不许调 ${name} ✗`);
+  }
+  // ③ 号源行为**一个字没变**：没有未报货的号 ⇒ 恰好取一次（明细不会额外取号 ✗）
+  assert.equal(h.batchNoGenerator.assigned, before + 1, '取号次数与"只有主表那一行"时**逐字相同** ✓');
+  // ④ 发群 / 出图那两条**注入件**真的插上了（不是"没人调"的空断言）
+  spied.groupNotice(); spied.supplierImages();
+  assert.equal(spied.callsOf('purchase.group.notice').length, 1, '探针：这两个假件**真的能记账** ✓');
+});
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-D2 找回 ⇒ 逐字还在（含顺序）
@@ -576,3 +763,10 @@ test('AC-D8b 草稿不直连业务表列名：中文列名一个字都不出现�
   // ⑤ 本模块**不渲染页面**（那是 S2）：不许出现 HTML / 中文文案拼接
   assert.equal(/<form|<div|html/i.test(SERVICE_SRC), false, 'S1 不渲染页面 ✗');
 });
+
+// MUTATION（2026-10-16 本刀 S2 · 每组都单独跑过、确认**真红**，跑完逐字节还原 ✓）：
+//   ① 明细的幂等键里塞进 `Date.now()` / 随机数（= 每次都是新键）
+//      ⇒ **AC-D2c** 红（第二次存草稿明细翻倍 ✓）＋ AC-D2c2 红 ✓
+//   ② 把 `entry.size` 从明细幂等键里拿掉（= 一个货品一把键）
+//      ⇒ **AC-D1** 红（明细行数 3 → 2 ⇒ 与"货品 × 尺码"口径不符 ✓）＋ AC-D2c / AC-D2c2 红 ✓
+//   还原核验：`shasum -a 256 src/services/scanDraftService.js` 与变异前**逐字节一致** ✓
