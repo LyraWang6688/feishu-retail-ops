@@ -350,7 +350,7 @@ test('AC5 验收台那句说明必须不存在；验收台本身（批次卡 + �
   }
 
   // ③ 验收台本身（现在挂在**独立子页**的 host 上）：一张报货批次一张卡 + 每张卡都能
-  //    「验收到货」+ 实际金额必填
+  //    「验收到货」+ 发生金额必填
   const purchaseHtml = orders.purchaseOrdersHtml([
     { record_id: 'pr1', batch_no: 'CGD-1', product_number: 'XHB8095', size: 38, quantity: 2, arrival_status: '未到货' },
   ]);
@@ -371,7 +371,7 @@ test('AC5 验收台那句说明必须不存在；验收台本身（批次卡 + �
   assert.ok(detail.includes('XHB8095') && /38\s*码/.test(detail), '明细行照旧（明细层 ✓ 判据没丢）');
   assert.ok(purchaseHtml.includes('未到货'), '到货状态小标签照旧');
   assert.ok(purchaseHtml.includes('data-action="verify-arrival"'), '每张卡都有【验收到货】按钮');
-  assert.ok(purchaseHtml.includes('data-field="arrival-amount"'), '验收要填「实际金额」（既有必填口径）');
+  assert.ok(purchaseHtml.includes('data-field="arrival-amount"'), '验收要填「发生金额」（既有必填口径）');
   assert.ok(purchaseHtml.includes('data-action="submit-arrival"'));
 });
 
@@ -525,7 +525,7 @@ test('AC8 功能性内容一个都不能少：子 tab / 卡片标题与动作 / 
   // ⑤ 订单列表：功能按钮 / 字段标签 / 段头小标签与条数照旧（只删说明句）
   assert.equal(ordersConfig.ORDERS_TEXTS.verifyArrival, '验收到货');
   assert.ok(ordersConfig.ORDERS_TEXTS.arrivalSubmit && ordersConfig.ORDERS_TEXTS.arrivalAmount,
-    '验收的提交按钮与「实际金额」标签照旧');
+    '验收的提交按钮与「发生金额」标签照旧');
   const detail = orders.orderDetailHtml({
     record_id: 'o1', order_no: 'XSD-20261010-0001',
     fulfillment_status: '部分交付', payment_status: '部分收款',

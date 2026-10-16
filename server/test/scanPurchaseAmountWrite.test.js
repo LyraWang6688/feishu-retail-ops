@@ -6,7 +6,7 @@
  * 依据（业务负责人**逐字** + 裁决）：
  *   · 2026-10-14 晚：「**退货整单金额（必填），与补货同一套配置**」
  *     ＋「**只写一个整单金额**（一次填一个总额，**和补货一样**～）」
- *   · **2026-10-15 裁决 ⓐ**：列名 = **复用「实际金额」**
+ *   · **2026-10-15 裁决 ⓐ**：列名 = **复用「发生金额」**
  *     ⇒ `purchaseOrderBatch.actualAmount`（`config/v1BitableSchema.js` 已有映射，**不改 schema**）
  *   · Lead 的 **ⓐ+ⓓ**：**退货这条现在写**；**补货那条先不写**（那一列会被"到货核对"写同一行同一列，
  *     只读核过 ⇒ 待她裁；TODO 留在 `routes/scanPage.js` 里写清了原因）。
@@ -14,12 +14,12 @@
  * ─────────────────────────────────────────────────────────────────────────
  * 验收标准（**先写后做**；下面每条 test 的名字 = 这条 AC）
  *
- *  AC-PAW1 **退货**：非空金额提交 ⇒ 那一行「实际金额」**逐字**等于她填的数（Number，写进真列名）。
+ *  AC-PAW1 **退货**：非空金额提交 ⇒ 那一行「发生金额」**逐字**等于她填的数（Number，写进真列名）。
  *  AC-PAW2 **空 / 非数字 ⇒ 400 + 人话 + 零写入**（在**页面这条路由**上拦；写入口一次都不进）。
  *  AC-PAW3 **幂等**：同一把 `submitKey`（串行两跑 + 并发两跑）⇒ **恰一个批次行**、金额值唯一、第二跑 `reused`。
  *  AC-PAW4 🔴 **落表失败 ⇒ 如实报失败（不许假成功）**：金额没写进去 ⇒ `ok:false` + 人话；
  *         此时**只有批次行**（明细 0 / 库存流水 0）；**同一把键重试**接着写 ⇒ 全落 + 金额在 ✓。
- *  AC-PAW5 **只写这一列**：那次 `update` 的 fields **只有**「实际金额」（不碰「实际数量」「到货状态」）。
+ *  AC-PAW5 **只写这一列**：那次 `update` 的 fields **只有**「发生金额」（不碰「实际数量」「到货状态」）。
  *  AC-PAW6 **补货那条不写**（源码哨兵）：`writeOrderAmount` 的调用方**只有** `purchaseReturnService`；
  *         `purchaseWebhookService`（补货/报货建行那条）里**没有**它 ✓。
  *
@@ -175,16 +175,16 @@ const entries = (...pairs) => pairs.map(([size, quantity]) => ({ size, quantity 
 const batchesOf = (h) => h.tables.purchaseOrderBatch || [];
 const submitKeyOf = async (h, openId) => h.write.sessions
   .submitKeyFor(openId, await h.sessions.get(openId), 'purchase_return');
-/** 那一次「写「实际金额」」的网关记录（**只看这一列**）。 */
+/** 那一次「写「发生金额」」的网关记录（**只看这一列**）。 */
 const amountWritesOf = (h) => h.gateway.writes
   .filter((write) => write.op === 'update' && write.table === 'purchaseOrderBatch'
-    && Object.prototype.hasOwnProperty.call(write.fields, '实际金额'));
+    && Object.prototype.hasOwnProperty.call(write.fields, '发生金额'));
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-PAW1 非空 ⇒ 那一行「实际金额」逐字 = 她填的数
+// AC-PAW1 非空 ⇒ 那一行「发生金额」逐字 = 她填的数
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PAW1 ⭐ 退货非空金额 ⇒ 批次行「实际金额」**逐字**等于她填的数（Number，写进真列名）', async () => {
+test('AC-PAW1 ⭐ 退货非空金额 ⇒ 批次行「发生金额」**逐字**等于她填的数（Number，写进真列名）', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_paw_1';
@@ -196,7 +196,7 @@ test('AC-PAW1 ⭐ 退货非空金额 ⇒ 批次行「实际金额」**逐字**�
     const batches = batchesOf(h);
     assert.equal(batches.length, 1, '恰一个退货批次行');
     // 🔴 判据（逐字）：那一列就是她填的那个数
-    assert.equal(batches[0].fields['实际金额'], Number(AMOUNT), '「实际金额」= 她填的数（Number）✓');
+    assert.equal(batches[0].fields['发生金额'], Number(AMOUNT), '「发生金额」= 她填的数（Number）✓');
     // 老口径不许被碰：退货批次**仍然不写「到货状态」**（她 2026-10-07 的口径）
     assert.equal('到货状态' in batches[0].fields, false, '退货批次照旧不写「到货状态」✓');
     // 明细 / 库存照旧（这次改动一个字节都没动它们）
@@ -288,8 +288,8 @@ test('AC-PAW3 ⭐ 幂等：同一把 `submitKey`（串行两跑 + 并发两跑�
     assert.equal(second.ok, true, JSON.stringify(second));
     assert.equal(second.reused, true, '第二跑 = "这一单刚才已经交过了"（既有幂等路径 ✓）');
     assert.equal(batchesOf(serial).length, 1, '只建一个批次 ✓');
-    assert.equal(batchesOf(serial)[0].fields['实际金额'], Number(AMOUNT), '金额仍是那个数 ✓');
-    assert.equal(amountWritesOf(serial).length, 1, '「实际金额」**只写了一次**（重放不再写 ✓）');
+    assert.equal(batchesOf(serial)[0].fields['发生金额'], Number(AMOUNT), '金额仍是那个数 ✓');
+    assert.equal(amountWritesOf(serial).length, 1, '「发生金额」**只写了一次**（重放不再写 ✓）');
     assert.equal((serial.tables.purchaseRequest || []).length, 1, '明细只一条 ✓');
     assert.equal((serial.tables.inventoryLedger || []).length, 1, '库存只扣一次 ✓');
   } finally { serial.cleanup(); }
@@ -310,7 +310,7 @@ test('AC-PAW3 ⭐ 幂等：同一把 `submitKey`（串行两跑 + 并发两跑�
     assert.equal(b.ok, true, JSON.stringify(b));
     assert.equal([a, b].filter((item) => item.reused === true).length, 1, '并发两跑里恰有一次是"还她上一次的结果"');
     assert.equal(batchesOf(concurrent).length, 1, '并发也只建一个批次 ✓');
-    assert.equal(batchesOf(concurrent)[0].fields['实际金额'], Number(AMOUNT));
+    assert.equal(batchesOf(concurrent)[0].fields['发生金额'], Number(AMOUNT));
     assert.equal(amountWritesOf(concurrent).length, 1, '金额只写一次 ✓');
     assert.equal((concurrent.tables.inventoryLedger || []).length, 1, '库存只扣一次 ✓');
   } finally { concurrent.cleanup(); }
@@ -337,7 +337,7 @@ test('AC-PAW4 🔴 金额没写进去 ⇒ 如实报失败（**不许假成功**�
       '人话来自配置（说清"没写进去 + 再点一次会接着这一批写"）✓');
     // ② 那一刻**只有批次行**（金额没落、明细/库存都没动 ⇒ 没有半截账）
     assert.equal(batchesOf(h).length, 1, '批次行建了（重试的落点 ✓）');
-    assert.equal('实际金额' in batchesOf(h)[0].fields, false, '金额确实没写进去（如实）');
+    assert.equal('发生金额' in batchesOf(h)[0].fields, false, '金额确实没写进去（如实）');
     assert.equal((h.tables.purchaseRequest || []).length, 0, '明细一条都没写 ✓');
     assert.equal((h.tables.inventoryLedger || []).length, 0, '库存一针都没动 ✓');
 
@@ -345,7 +345,7 @@ test('AC-PAW4 🔴 金额没写进去 ⇒ 如实报失败（**不许假成功**�
     const retry = await h.write.submitPurchaseReturn(input);
     assert.equal(retry.ok, true, JSON.stringify(retry));
     assert.equal(batchesOf(h).length, 1, '重试**不建第二个批次** ✓');
-    assert.equal(batchesOf(h)[0].fields['实际金额'], Number(AMOUNT), '重试把金额写上了 ✓');
+    assert.equal(batchesOf(h)[0].fields['发生金额'], Number(AMOUNT), '重试把金额写上了 ✓');
     assert.equal((h.tables.purchaseRequest || []).length, 1, '明细补齐 ✓');
     assert.equal((h.tables.inventoryLedger || []).length, 1, '库存扣一次 ✓');
   } finally { h.cleanup(); }
@@ -355,7 +355,7 @@ test('AC-PAW4 🔴 金额没写进去 ⇒ 如实报失败（**不许假成功**�
 // AC-PAW5 只写这一列（不碰「实际数量」「到货状态」）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PAW5 ⭐ 那次写入**只碰「实际金额」一列**（不写「实际数量」/「到货状态」/时间列）', async () => {
+test('AC-PAW5 ⭐ 那次写入**只碰「发生金额」一列**（不写「实际数量」/「到货状态」/时间列）', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_paw_5';
@@ -365,8 +365,8 @@ test('AC-PAW5 ⭐ 那次写入**只碰「实际金额」一列**（不写「实�
     });
     const amountWrites = amountWritesOf(h);
     assert.equal(amountWrites.length, 1);
-    assert.deepEqual(Object.keys(amountWrites[0].fields), ['实际金额'],
-      '那一次 update 的 fields **只有**「实际金额」（一个多写的列都不许有 ✓）');
+    assert.deepEqual(Object.keys(amountWrites[0].fields), ['发生金额'],
+      '那一次 update 的 fields **只有**「发生金额」（一个多写的列都不许有 ✓）');
     // 时间字段纪律（她 2026-10-06）：代码不写任何时间列
     for (const forbidden of ['创建时间', '更新时间', '到货日']) {
       assert.equal(forbidden in amountWrites[0].fields, false, `不许写时间列：${forbidden} ✗`);
@@ -402,5 +402,5 @@ test('AC-PAW6 ⭐ 补货那条**不写**这一列：`writeOrderAmount` 的调用
   assert.match(batchService, /if \(quantityValue !== null\) values\.actualQuantity = quantityValue;/,
     '到货核对的写入点逐字未动 ✓');
   assert.match(batchService, /if \(amountValue !== null\) values\.actualAmount = amountValue;/,
-    '到货核对照旧写「实际金额」（**没有**加"已有值不覆盖"——那条要她裁 ✗）');
+    '到货核对照旧写「发生金额」（**没有**加"已有值不覆盖"——那条要她裁 ✗）');
 });

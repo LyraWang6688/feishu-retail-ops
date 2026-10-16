@@ -140,13 +140,13 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点 = 「报货
   // ② 落点：到货信息写在「报货批次」那一行上 ——
   //    ⛔ 2026-10-09：「验收原话」「确认状态」两列在生产真表上**也没有了**
   //      （她当天的只读核对：报货批次 12 列里找不到）⇒ 映射 + 写入点 + 读取投影一起删除。
-  //    ⭐ 保留下来的结构化验收是「到货状态」＋「实际数量」＋「实际金额」。
+  //    ⭐ 保留下来的结构化验收是「到货状态」＋「实际数量」＋「发生金额」。
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'acceptanceText'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'confirmStatus'), false);
   assert.equal(batch.arrivalStatus, '到货状态', '到货状态照旧（这一条本来就有）');
   assert.equal(batch.actualQuantity, '实际数量');
-  assert.equal(batch.actualAmount, '实际金额');
+  assert.equal(batch.actualAmount, '发生金额');
 
   // ③ ⚠️ 「到货日」「验收人」在真表上是**飞书自动字段**（更新时间 / 创建人）⇒ 不建映射、不写。
   //    只读需要时才会加，加的时候也要认清"它是自动的"——现在两处都不需要。

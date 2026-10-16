@@ -157,7 +157,7 @@ const WRITE = {
     //     原来"按钮文案"这一项在这一页**根本没判据**（夹具给的值没人读 ⇒ 静默假绿 ✗）✓
     acceptSummary: '已验收 {scanned} 双 / 应到 {expected} 双',
     acceptAddButton: '加入本次验收',
-    acceptFinishAmountLabel: '实际金额',
+    acceptFinishAmountLabel: '发生金额',
     acceptFinishSubmit: '确认完成验收',
   },
   fields: {

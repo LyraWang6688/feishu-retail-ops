@@ -17,7 +17,7 @@
  *     【未收款】的地方（`PaymentService.recordInitialBatch` 只负责按给定状态落行）。
  *   · **采购（补货 / 退货 / 验收）** — **不适用** ✗：那三条链路没有"收款明细 / 未收款"
  *     这条口径（金额闸门在 `config/scanWrite.js` 的 `PURCHASE_AMOUNT`，落点是到货核对的
- *     「实际金额」）—— 它们**不经过** `SalesOrderService`。
+ *     「发生金额」）—— 它们**不经过** `SalesOrderService`。
  *   · **售后（退货 / 换货 / 赔货）** — **不适用** ✗：`config/afterSales.js` 明确
  *     「未收款」**不在可改状态里**（那笔钱根本没收到，没有"退款"可言）。
  *

@@ -327,7 +327,7 @@ const seedArrivalTask = async (store, {
   batchRecordId = '',
   batchNo = '',
   acceptanceText = '',
-  // ⭐ 2026-10-09：「实际数量 / 实际金额」是到货核对那一步算好、放在草稿上的两个值
+  // ⭐ 2026-10-09：「实际数量 / 发生金额」是到货核对那一步算好、放在草稿上的两个值
   //   （「验收原话」那一列已被生产表删除，不再落库）。
   actualQuantity,
   actualAmount,
@@ -414,7 +414,7 @@ test('到货确认：加库存 + 到货信息写到**批次行**（不回写采�
   // 「报货信息」（采购申请表）**一个字都不动**：到货状态这一列**没有**被写过。
   assert.equal((await gateway.get('purchaseRequest', 'req_1')).fields.到货状态, undefined,
     '采购申请表的「到货状态」不许被到货链路回写');
-  // ⭐ 到货信息的落点 = 批次行：**2026-10-09 起只写「实际数量」「实际金额」**。
+  // ⭐ 到货信息的落点 = 批次行：**2026-10-09 起只写「实际数量」「发生金额」**。
   //    ⛔ 「验收原话」「确认状态」两列在生产真表上**已经被删掉**（她 2026-10-09 的只读核对：
   //       报货批次真表 12 列里找不到）⇒ 本用例按新口径改：那两列**一个字都不写**
   //       （写入点与 schema 映射都已经删除）。
@@ -422,7 +422,7 @@ test('到货确认：加库存 + 到货信息写到**批次行**（不回写采�
   assert.equal('验收原话' in batch.fields, false, '「验收原话」这一列已从真表删除，代码不许再写');
   assert.equal('确认状态' in batch.fields, false, '「确认状态」这一列已从真表删除，代码不许再写');
   assert.equal(batch.fields.实际数量, 1, '实际数量 = 草稿算出来的实际到货数合计');
-  assert.equal(batch.fields.实际金额, 1680, '实际金额 = 她填的整批金额（原样照写，不重算）');
+  assert.equal(batch.fields.发生金额, 1680, '发生金额 = 她填的整批金额（原样照写，不重算）');
   // 到货日 / 验收人是飞书自动字段（更新时间 / 创建人）—— 代码不写。
   assert.equal('到货日' in batch.fields, false);
   assert.equal('验收人' in batch.fields, false);

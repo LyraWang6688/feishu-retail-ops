@@ -127,7 +127,7 @@ test('AC-LANDING-3 ⭐ 范例：把"到货说明"那种形状塞回来 ⇒ **红
     '⭐「验收原话」那一列**确实**已不在 schema 里 ✓（她 2026-10-09 删的）⇒ 当时那个提交键在这里就会红 ✓');
   const missing = (table, column) => !V1_BITABLE_SCHEMA.tables[table]?.fields?.[column];
   assert.equal(missing('purchaseOrderBatch', 'acceptanceText'), true, '那条当时会红 ✓（这就是哨兵的意义）');
-  assert.equal(missing('purchaseOrderBatch', 'actualAmount'), false, '而现在的落点（实际金额）是真列 ✓');
+  assert.equal(missing('purchaseOrderBatch', 'actualAmount'), false, '而现在的落点（发生金额）是真列 ✓');
 });
 
 test('AC-LANDING-4 ⭐ 只读筛选**不许**出现在提交体里（防"筛选参数被误存进表" ✗）', () => {

@@ -276,10 +276,10 @@ test('⑤ 「报货批次」不再映射「验收原话 / 确认状态」；写�
   const fields = table('purchaseOrderBatch').fields;
   assert.equal(fields.acceptanceText, undefined);
   assert.equal(fields.confirmStatus, undefined);
-  // ⭐ 保留下来的结构化验收：到货状态 + 实际数量 + 实际金额（一个字都没动）。
+  // ⭐ 保留下来的结构化验收：到货状态 + 实际数量 + 发生金额（一个字都没动）。
   assert.equal(fields.arrivalStatus, '到货状态');
   assert.equal(fields.actualQuantity, '实际数量');
-  assert.equal(fields.actualAmount, '实际金额');
+  assert.equal(fields.actualAmount, '发生金额');
 
   assert.equal(PurchaseOrderBatchService.prototype.markConfirmed, undefined, '写「确认状态」的方法整个删除');
   // ── ⚠️ 2026-10-11 断言**翻转**（退货入口改走扫码页）────────────────────────────
@@ -305,7 +305,7 @@ test('⑤ 「报货批次」不再映射「验收原话 / 确认状态」；写�
   assert.equal(returnBatchAgain.created, false, '同一批只建一行（先按批次号回查复用）');
   assert.equal(returnBatchAgain.recordId, returnBatch.recordId);
 
-  // 写入点：`writeAcceptance` 只写实际数量 / 实际金额（行为级断言）。
+  // 写入点：`writeAcceptance` 只写实际数量 / 发生金额（行为级断言）。
   const gateway = makeGateway({ purchaseOrderBatch: [{ record_id: 'bat_1', fields: { 报货批次号: 'BH-1' } }] });
   const batches = new PurchaseOrderBatchService({ gateway });
   const written = await batches.writeAcceptance({
@@ -313,7 +313,7 @@ test('⑤ 「报货批次」不再映射「验收原话 / 确认状态」；写�
   });
   assert.equal(written.updated, true);
   const write = gateway.writes.at(-1);
-  assert.deepEqual(Object.keys(write.fields).sort(), ['实际金额', '实际数量'].sort());
+  assert.deepEqual(Object.keys(write.fields).sort(), ['发生金额', '实际数量'].sort());
 
   // 读取投影：工作台「到货验收情况」面板不再投影那两列。
   const querySource = stripComments(
