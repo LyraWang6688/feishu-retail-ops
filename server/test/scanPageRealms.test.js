@@ -321,7 +321,11 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   };
   const inStock = groupOf('in_stock');
   const prepaid = groupOf('prepaid');
-  for (const size of ['40', '42']) {
+  // ⭐ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`for (const size of ['40', '42'])`（现货组只有 40 / 42）
+  //   改后逐字：⭐ **`['40', '42', '43']`** ✓ —— ⭐ 43（只有仓库 2 双）在新口径下**也算有货** ✓
+  //   依据 = 她 20:5x「**统一不用看状态**，只要在实时库存里这个编号有尺码记录，就都是有货」＋ 22:5x「不需要开关」✓
+  for (const size of ['40', '42', '43']) {
     assert.ok(inStock.includes(`name="size" value="${size}"`), `现货组缺尺码 ${size}`);
     assert.equal(prepaid.includes(`name="size" value="${size}"`), false, `${size} 有货，不该出现在预订组`);
   }

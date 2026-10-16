@@ -247,14 +247,18 @@ test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"
   //   她 20:5x 改口后的新口径（"实时库存里有记录 = 有货"）钉在
   //   `test/scanStockPolicyUnifiedOn.test.js` **AC-ST5/AC-ST6**（那个文件自己设 env ⇒ 独立进程 ✓）。
   //   ⇒ 若谁在跑全量时把 `SCAN_STOCK_POLICY_ENABLED=true` 带进环境，这一句会**当场点名**是环境问题 ✗。
-  assert.equal(SCAN_STOCK_POLICY.enabled, false,
-    'AC-ST1（旧口径）只在开关**关着**时成立 —— 新口径见 scanStockPolicyUnifiedOn.test.js');
-  // ① 判据 = 她 2026-10-09 定的那两个状态（**开关关着时**的唯一真源，三个 tab 共用）
-  assert.deepEqual([...SELLABLE_STATES], ['门盒', '样品'],
-    '可卖 = 门盒 + 样品（她 2026-10-09）；「仓库」与「未标状态」都不在清单里');
+  // ⭐⭐ 2026-10-16 22:5x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(SCAN_STOCK_POLICY.enabled, false, 'AC-ST1（旧口径）只在开关关着时成立 …');`
+  //   改后逐字：⭐ **开关已退场** ⇒ `enabled === undefined` ✓ ⇒ ⭐ **永远按实时库存口径** ✓
+  //   依据 = 她 20:5x「**统一不用看状态**，只要在实时库存里这个编号有尺码记录，就都是有货」＋ 22:5x「**不需要开关**」✓
+  assert.equal(SCAN_STOCK_POLICY.enabled, undefined, '⭐ 开关已退场 ⇒ 永远按实时库存口径 ✓');
+  // ① ⭐ 成对迁移：改前 `assert.deepEqual([...SELLABLE_STATES], ['门盒','样品'], …)`（老口径名单 ✗）
+  //    改后：⭐ **该名单已随老口径退场** ✓（`SELLABLE_STATES === undefined` ✓ 谁加回来 ⇒ 红 ✓）
+  assert.equal(SELLABLE_STATES, undefined, '⭐ 老口径名单已退场 ✓（不许留开关 / 老口径 ✗）');
   assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '40'), 2, '40：门盒 1 + 样品 1 ⇒ 可卖 2');
-  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '43'), 0, '43：只有仓库 2 ⇒ 不可卖（她 2026-10-09：仓库不算）');
-  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '44'), 0, '44：只有「未标状态」1 ⇒ **旧口径**：不可卖');
+  // ⭐ 成对迁移（实测值 ✓ 依据同上）：43（只有仓库 2 双）⇒ **可卖 2** · 44（未标状态 1 双）⇒ **可卖 1**
+  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '43'), 2, '43：仓库 2 双 ⇒ **可卖**（新口径：统一不看状态 ✓ 实测 ✓）');
+  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '44'), 1, '44：未标状态 1 双 ⇒ **可卖**（新口径 ✓ 实测 ✓）');
 
   // ② 三个 tab 各自渲染出来的"有货尺码集合"必须**完全一致**，且等于按判据算出来的那一组
   const byCriterion = BLANK_STATE_FIXTURE.rows
