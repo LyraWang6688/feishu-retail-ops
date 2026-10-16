@@ -103,7 +103,12 @@ const resolveShared = (env) => {
   // 🔴 **总开关**：显式布尔（`readFlag` ✓ 空串 = 关掉 ⇒ **关得掉**；认不出的值当场抛 ✗ 不静默）。
   //   缺省 **false**（先关）：S1 只有存储层，页面/路由那两半（S2/S3）还没接 ——
   //   在没有入口的时候把开关打开，等于"存草稿"这件事**没人调得到**，反而看不出没接。
-  const enabled = readFlag(env, 'SCAN_DRAFT_ENABLED', false);
+    // ⭐⭐ 2026-10-16 业务负责人拍板（弹窗原话：「**开关打开**」）⇒ **缺省翻成 true** ✓
+  //   改前逐字：`const enabled = readFlag(env, 'SCAN_DRAFT_ENABLED', false);`
+  //   改后逐字：`const enabled = readFlag(env, 'SCAN_DRAFT_ENABLED', true);`
+  //   依据 = 她 2026-10-16 17:4x 在我弹窗「存报货草稿要不要打开？」上选的「**开关打开**」✓
+  //   🔴 仍是**显式布尔**（`readFlag` ✓）⇒ 想临时关掉只需配 `false` ✓（不是关不掉那种写法 ✓）
+  const enabled = readFlag(env, 'SCAN_DRAFT_ENABLED', true);
   const scope = readString(env, 'SCAN_DRAFT_SCOPE', DRAFT_SCOPE.single);
   if (![DRAFT_SCOPE.single, DRAFT_SCOPE.perSupplier].includes(scope)) {
     throw new Error(
