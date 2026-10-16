@@ -240,8 +240,14 @@ test('AC-RT6b 🔴 源码哨兵：`multiItemBlockHtml` 的**两处调用各自�
   // 改后逐字：下面这一行（补货那一处**显式传** `'replenish'` ✓）
   //   ⚠️ 依据 = 她 2026-10-16 逐字（补货页要删那三句）；**缺省档本身没动** ✓
   //     （`mode` 缺省 `''` 仍是老形状 ⇒ AC-RT7 的探针照旧靠它 ✓）
+  // ⭐⭐ 2026-10-16（task-61 · **领域内扫一扫**）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.deepEqual(calls, ["multiItemBlockHtml(write, view, 'replenish')", "multiItemBlockHtml(write, view, 'return')"])`
+  //   改后逐字：下面这一行 —— 只把**第四个实参 `page`** 算进去（第三个 `mode` **逐字不变** ✓）
+  //   依据 = 她 2026-10-16 14:38 逐字「加一单改为这个领域的扫一扫，与全局扫一扫不同」
+  //     ⇒ 那一发要把**本页领域 / 落点**交给渲染层 ✓
+  //   ⚠️ **不是放宽**：两处、**恰好两处**、每一处**显式传自己那一档**，一个字都没松 ✓
   assert.deepEqual(calls,
-    ["multiItemBlockHtml(write, view, 'replenish')", "multiItemBlockHtml(write, view, 'return')"],
+    ["multiItemBlockHtml(write, view, 'replenish', page)", "multiItemBlockHtml(write, view, 'return', page)"],
     '补货 / 退货各自显式传自己那一档 ✓ —— 谁把补货那一处改回"不传"（= 又画那三句）⇒ 红 ✓');
   // 配置一处定义：那三句中文只该在 **config** 里（渲染层不许散写 ✗）
   assert.equal(RENDERER_SRC.includes(OLD_HINT), false, '渲染层不许散写那句说明 ✗（走配置 ✓）');

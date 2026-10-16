@@ -200,6 +200,38 @@ const resolveEvents = (env) => Object.freeze({
 });
 
 /**
+ * ⭐⭐ 2026-10-16（task-61 · 业务负责人 14:38 逐字）：「好的，那**补充日志和埋点**吧」
+ *
+ * 起因（她刚试完一单多货时问的那件事）：她**扫了 B、但页面上没看到 A** ——
+ *   到底是「**A 没存进去**」还是「**存了、没读出来**」，当时**日志里一句话都没有** ✗。
+ * ⇒ 补两条**只读**日志（**纯 additive · 零判定改动** ✗），一条在"加货"那一刻、
+ *   一条在"把已加的货品渲染出来"那一刻 ⇒ 对着两条一比就分得出是哪半边 ✗✓。
+ *
+ * 🔴 **形状口径**（与仓库既有日志同一条）：
+ *   · 事件名 / 键名**全在这里**（配置先行 ✓ 逻辑里一个字符串都不写死 ✗）；
+ *   · 按她 2026-10-07 定下的口径 —— **写入类日志必须带「关联键」**（`request_id` ✓、
+ *     会话里的 `open_id` ✓、本单的 `order_key` ✓）；**拿不到就不传、不许编** ✗；
+ *   · **不采集任何表单值之外的个人信息**（尺码 / 数量 / 货品号是排障必需的业务键 ✓）。
+ */
+const resolveLogFields = (env) => Object.freeze({
+  addEvent: readString(env, 'SCAN_MULTI_ITEM_LOG_ADD', 'scan.multi_item.add'),
+  renderEvent: readString(env, 'SCAN_MULTI_ITEM_LOG_RENDER', 'scan.multi_item.render'),
+  // 键名（**改一个键只改这里** ✓）：`chain` = 补货 / 退货那两条链 ✓
+  chainKey: readString(env, 'SCAN_MULTI_ITEM_LOG_CHAIN_KEY', 'chain'),
+  // 「本单已加几件」——她那一问的**头号数字**（A 存进去没有，看它 ✓）
+  addedCountKey: readString(env, 'SCAN_MULTI_ITEM_LOG_ADDED_COUNT_KEY', 'added_count'),
+  // 这一次加进去的**是哪一个货品**（record_id 优先、回落编号 —— 与引擎同一套身份口径 ✓）
+  productKey: readString(env, 'SCAN_MULTI_ITEM_LOG_PRODUCT_KEY', 'product'),
+  // 这一次加进去那一件的尺码 + 数量（数组：`[{size, quantity}]` ✓）
+  entriesKey: readString(env, 'SCAN_MULTI_ITEM_LOG_ENTRIES_KEY', 'entries'),
+  // 渲染那一刻**列表里的货品号**（用来对"列表里到底有没有 A" ✓）
+  itemNosKey: readString(env, 'SCAN_MULTI_ITEM_LOG_ITEM_NOS_KEY', 'item_nos'),
+  // 「渲染列表」这一条要区分**是哪一块在渲染**（页面上三处调用同一个渲染函数 ✓）
+  modeKey: readString(env, 'SCAN_MULTI_ITEM_LOG_MODE_KEY', 'mode'),
+  orderKeyKey: readString(env, 'SCAN_MULTI_ITEM_LOG_ORDER_KEY', 'order_key'),
+});
+
+/**
  * ⭐ 提交成功后**作废「实时库存」内存快照**时用的理由串（`invalidateInventorySnapshot(reqId, reason)` ✓）。
  *
  * ⚠️ 值**与单货品那条路逐字相同**（`routes/scanPage.js` 里那两处既有字面量）——
@@ -237,6 +269,8 @@ const resolveMultiItemOrderConfig = (env = process.env) => {
     }),
     chains: resolveChains(env),
     events: resolveEvents(env),
+    // ⭐⭐ 2026-10-16（task-61）：两条只读日志的**事件名与键名**（配置先行 ✓ 见上面的长注释）
+    logFields: resolveLogFields(env),
     // ⭐ 提交成功后作废「实时库存」快照的理由串（值 = 单货品那条路**逐字**同一串 ✓）
     invalidateReasons: resolveInvalidateReasons(env),
   });

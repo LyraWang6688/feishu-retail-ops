@@ -42,6 +42,8 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 // ⭐ 2026-10-16（**一单多货品 · 渲染半**）：提交载荷的**字段名**与开关走 `config/multiItemOrder.js` ✓
 const { MULTI_ITEM_ORDER } = require('../config/multiItemOrder');
 const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('./scanPageRealm');
+// ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：那一段脚本与它要读的配置块（实现见 `scanRealmScan.js`）。
+const { realmScanConfigHtml, realmScanScriptSource } = require('./scanRealmScan');
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -354,7 +356,7 @@ ${head}
 ${content}
 </main>
 ${requestId ? `<p class="foot">${escapeHtml(config.texts.requestIdLabel)} <span class="mono">${escapeHtml(requestId)}</span></p>` : ''}
-${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}
+${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}
 ${annotateScriptHtml()}
 </body>
 </html>
@@ -994,6 +996,12 @@ ${UI_TAP_SHARED_SOURCE}
 </script>`;
 
 /**
+ * ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：**只有这一页真有那个配置块时才出现**（否则空串 ⇒
+ *   页面上**一个字都不多** ✓ `AC-ML5` 的零回归逐字节比对就靠它 ✓）。
+ */
+const realmScanScriptTagHtml = () => `<script data-view="realm-scan">${realmScanScriptSource()}</script>`;
+
+/**
  * ── 两个写入口的表单（销售建单 / 补货报单）────────────────────────────────────
  *
  * 都是**原生 HTML 表单**（没有一行业务 JS）：手机浏览器直接打开就能用，也不给这一页
@@ -1434,7 +1442,7 @@ const multiItemPayloadJson = (items = []) => JSON.stringify(
  *     · 补货那三处 → `test/replenishTrimThreeFixes.test.js`（**本刀新增** AC-RP1 / AC-RP3）；
  *     · 两块都：**有第二个货品时列表仍要出现** ✓（**正向**判据 —— 防"删过头" ✗）。
  */
-const multiItemBlockHtml = (write, view = {}, mode = '') => {
+const multiItemBlockHtml = (write, view = {}, mode = '', page = {}) => {
   if (!MULTI_ITEM_ORDER.enabled) return ''; // 🔴 开关关 ⇒ 空串 ⇒ 既有页面逐字不变 ✓
   const t = MULTI_ITEM_RENDER_TEXTS;
   const field = String(MULTI_ITEM_ORDER.field || '');
@@ -1517,7 +1525,42 @@ const multiItemBlockHtml = (write, view = {}, mode = '') => {
   lines.push(addEntry);
   lines.push(`<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson(payload))}">`);
   if (!trimmed) lines.push(`<h3 class="multi-item__title">${escapeHtml(t.title)}</h3>`);
+  // ⭐⭐ 2026-10-16（task-61 · 「本单已加的货品」列表）。**列表 + 载荷**两处都从那同一份 `already` 来
+  //   ⇒ 只报一次即可（列表上看得见的货品号 ✓ 与她眼睛看到的那一份逐字同源 ✓）。
+  //   🔴 纯 additive：只在**真的渲染这个块**时才产生；一个判定都不动 ✗。
+  if (Array.isArray(page.logs) && MULTI_ITEM_ORDER.enabled) {
+    page.logs.push({
+      event: (MULTI_ITEM_ORDER.logFields || {}).renderEvent || 'scan.multi_item.render',
+      fields: MULTI_ITEM_ORDER.logFields || {},
+      chain: String(mode || ''),
+      count: already.length,
+      itemNos: already.map((item) => String((item || {}).number || (item || {}).item_no || '')),
+    });
+  }
   if (listHtml) lines.push(listHtml);
+  // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：这一块的**扫一扫上下文**（只在开关开、且路由喂了才出 ✓）。
+  //   它**不是第二颗按钮**（那颗「＋ 再加一个货品」一个字都不动 ✗）—— 它只告诉
+  //   `views/scanRealmScan.js` 那一段脚本："加货回来这一发，接着扫、并落回**这个领域**" ✓。
+  const realmScanBlock = realmScanConfigHtml({
+    configJson: (page.realmScan
+      ? escapeHtml(JSON.stringify({
+        realm: String(page.realmScan.realm || ''),
+        // ⭐ 落点是**扫完那一刻现算**的（"扫到的是哪一件"服务端此刻不可能知道 ✗）——
+        //   所以这里只给**参数**：领域键 / 记录路径段 / 本页来源 ＋ 认不出的上限 ✓
+        origin: String(page.realmScan.origin || ''),
+        realmQueryKey: String(page.realmScan.realmQueryKey || ''),
+        recordBasePath: String(page.realmScan.recordBasePath || ''),
+        maxScannedLength: Number(page.realmScan.maxScannedLength) || 0,
+        signaturePath: String(page.realmScan.signaturePath || ''),
+        reportPath: String(page.realmScan.reportPath || ''),
+        sdkTimeoutMs: Number(page.realmScan.sdkTimeoutMs) || 0,
+        scanTimeoutMs: Number(page.realmScan.scanTimeoutMs) || 0,
+        texts: page.realmScan.texts || {},
+      }))
+      : ''),
+    scanNow: page.realmScan?.scanNow === true,
+  });
+  if (realmScanBlock) lines.push(realmScanBlock);
   return `<div class="card multi-item" data-view="multi-item"${attr('data-product-record-id', view.product_record_id)}${attr('data-product-number', view.number)}${attr('data-product-item-no', view.item_no)}${attr('data-product-color', view.color)}${attr('data-product-supplier-record-id', view.supplier_record_id)}>
 ${lines.join('\n')}
 </div>`;
@@ -1592,7 +1635,7 @@ ${hiddenField(fields.action, write.actions.replenish)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.replenishKey)}
 ${rows}
 ${rp.amountRow ? purchaseAmountRowHtml(write) : ''}
-${multiItemBlockHtml(write, view, 'replenish')}
+${multiItemBlockHtml(write, view, 'replenish', page)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rp.submitLabel)}</button>
 ${draftSaveButtonHtml(write, REPLENISH_REALM, config, page)}
 </form>
@@ -1734,7 +1777,7 @@ ${sizesNotice}
 <p class="hint" data-view="${escapeHtml(rf.hintView)}" hidden></p>
 ${rows}
 ${sizes.length ? `${purchaseAmountRowHtml(write)}
-${multiItemBlockHtml(write, view, 'return')}
+${multiItemBlockHtml(write, view, 'return', page)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rf.submitLabel)}</button>
 ${draftSaveButtonHtml(write, PURCHASE_RETURN_REALM, config, page)}` : ''}
 </form>

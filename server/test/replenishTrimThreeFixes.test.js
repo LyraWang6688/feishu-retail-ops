@@ -313,8 +313,12 @@ test('AC-RP3e ⭐ 源码：那三句中文**只有一处家**（渲染层不许�
   assert.equal(MULTI_ITEM_RENDER_TEXTS.empty, OLD_EMPTY, '配置里那句空态**仍在** ✓');
   // ⭐ 两处调用各自**显式传自己那一档**（缺省 `''` 仍 = 老形状 ✓ 探针 AC-RP6 靠它 ✓）
   const calls = RENDERER_SRC.match(/multiItemBlockHtml\(write, view[^)]*\)/g) || [];
+  // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.deepEqual(calls, ["multiItemBlockHtml(write, view, 'replenish')", "…'return')"])`
+  //   改后逐字：下面这一行（第三个 `mode` **逐字不变** ✓ 只多一个 `page` 实参 ✓）
+  //   依据 = 她 2026-10-16 14:38 逐字「加一单改为这个领域的扫一扫」；**不是放宽** ✓
   assert.deepEqual(calls,
-    ["multiItemBlockHtml(write, view, 'replenish')", "multiItemBlockHtml(write, view, 'return')"],
+    ["multiItemBlockHtml(write, view, 'replenish', page)", "multiItemBlockHtml(write, view, 'return', page)"],
     '补货 / 退货各自显式传自己那一档 ✓ —— 谁把补货那一处改回"不传"（= 又画那三句）⇒ 红 ✓');
 });
 

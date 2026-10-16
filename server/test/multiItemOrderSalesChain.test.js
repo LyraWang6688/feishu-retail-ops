@@ -672,8 +672,12 @@ test('AC-SM-F2 🔴 补货 / 退货那两条链**一处没动**（源码锚点 +
   assert.equal(cfg.chains.replenish.amountRequired, false, '补货不问金额（她 2026-10-15 裁的 ✓）');
   assert.equal(cfg.chains.return.amountRequired, true, '退货整单金额必填（既有键名 ✓）');
   // ② 渲染层那两处调用**逐字还在**（补货 / 退货各一处 ✓ "两块都加得了第二个货品" ✓）
-  assert.ok(RENDERER_SRC.includes("multiItemBlockHtml(write, view, 'replenish')"), '补货那一处还在 ✓');
-  assert.ok(RENDERER_SRC.includes("multiItemBlockHtml(write, view, 'return')"), '退货那一处还在 ✓');
+  // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`RENDERER_SRC.includes("multiItemBlockHtml(write, view, 'replenish')")`（只有三个实参）
+  //   改后逐字：下面两行（第三个 `mode` **逐字不变** ✓ 只多一个 `page` 实参 ✓）
+  //   依据 = 她 2026-10-16 14:38 逐字（领域内扫一扫要拿到本页领域 / 落点 ✓）；**不是放宽** ✓
+  assert.match(RENDERER_SRC, /multiItemBlockHtml\(write, view, 'replenish'[^)]*\)/, '补货那一处还在 ✓');
+  assert.match(RENDERER_SRC, /multiItemBlockHtml\(write, view, 'return'[^)]*\)/, '退货那一处还在 ✓');
   // ③ 路由里那两处 `groups.length > 1` 分流**逐字还在** ✓
   const branches = ROUTE_SRC.match(/if \(groups\.length > 1\) \{/g) || [];
   assert.equal(branches.length, 2, `补货/退货各一处「>1 组才走引擎」的分流（实得 ${branches.length}）✓`);
