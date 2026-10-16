@@ -309,11 +309,15 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   //   本例的 VIEW 是男鞋 A 段、缺货的是 41/43/44（**都在可录范围内、且都不是特殊码 46/47/48**）
   //   ⇒ `folded` 为空 ✓（"第一组/第二组"的语义一个字没变 ✓）
   assert.deepEqual(saleSizeGroups(VIEW), {
-    inStock: [{ size_text: '40', count: 1 }, { size_text: '42', count: 2 }],
+    // ⭐ 2026-10-16 23:2x 成对迁移（依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+    //   改前逐字：`inStock: [{ '40', 1 }, { '42', 2 }]`（旧口径：43 只有仓库 ⇒ 不算有货）
+    //   改后逐字：⭐ 43（只有仓库 2 双）新口径**算有货** ⇒ 进 `inStock`
+    //   ⚠️ 实测 `actual` 已含 `{ count: 2, size_text: '43' }` ✓（本处是【上一手漏迁的一处】✗ 已补 ✓）
+    inStock: [{ size_text: '40', count: 1 }, { size_text: '42', count: 2 }, { size_text: '43', count: 2 }],
     // 改前逐字：`prepaid: [{'41',0},{'43',0},{'44',0}]` ⇒ 改后：**43 已算有货 ⇒ 从预订组移走** ✓
     prepaid: [{ size_text: '41', count: 0 }, { size_text: '44', count: 0 }],
     folded: [],
-  }, '第一组 = 有货（现货）40 / 42；第二组 = 其余 41 / 43 / 44（预订）；第三组 = 缺货的特殊码（本例为空 ✓）');
+  }, '⭐ 新口径：第一组 = 有货（现货）40 / 42 / **43**（43 只有仓库 ⇒ 也算有货 ✓）；第二组 = 其余 41 / **44**（预订）；第三组 = 缺货的特殊码（本例为空 ✓）');
 
   // ② 男女两组（A = 男 38–48 / B = 女 34–43）——她去 2026-10-09 给的范围
   assert.deepEqual(SIZE_GROUP_RANGES.A, { label: '男', from: 38, to: 48, enterable: [38, 48], normal: [38, 45], default: [38, 45], special: [46, 47, 48] });
@@ -363,7 +367,12 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   // ④ 降级（拿不到该类别尺码）时：第二组为空、页面上说明只显示有库存的尺码
   const degraded = saleSizeGroups({ ...VIEW, sizes_degraded: true });
   assert.deepEqual(degraded.prepaid, [], '降级时不许编造"没有的尺码"');
-  assert.deepEqual(degraded.inStock.map((item) => item.size_text), ['40', '42']);
+  // ⭐ 2026-10-16 23:2x 成对迁移（依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+  //   改前逐字：`assert.deepEqual(degraded.inStock.map(…), ['40', '42']);`
+  //   改后逐字：⭐ 43（只有仓库 2 双）新口径**算有货** ⇒ 也在 `inStock`（实测 `actual: ['40','42','43']` ✓）
+  //   ⚠️ 这是 `AC2` 里**第二处**期望 `['40','42']` 的地方 ✗（同一判据多处 ⇒ 今晚第 5 次同型 ✓）
+  assert.deepEqual(degraded.inStock.map((item) => item.size_text), ['40', '42', '43'],
+    '⭐ 降级时 `inStock` 仍是新口径那一组：40 / 42 / 43（43 = 仓库 2 双 ⇒ 算有货 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

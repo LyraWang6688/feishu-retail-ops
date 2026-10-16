@@ -38,7 +38,10 @@ const path = require('node:path');
 const {
   // 改前逐字：有 `ENABLED_KEY` / `LEGACY_SELLABLE_STATES` ⇒ 改后：**都已退场 ⇒ 不再 import** ✓
   SCAN_STOCK_POLICY, resolveScanStockPolicy,
-  legacySellableCountOf, liveInventoryCountOf, countInStockOf, isInStock,
+  // ⭐ 2026-10-16 23:1x 成对迁移：`LEGACY_SELLABLE_STATES` / `ENABLED_KEY` / `legacySellableCountOf`
+  //   已随老口径与开关一起退场 ⇒ **不再 import**（⭐ 引用/调用它们会 ReferenceError / TypeError ✗
+  //   —— 实测：`legacySellableCountOf is not a function`、`ENABLED_KEY is not defined` ✓）
+  liveInventoryCountOf, countInStockOf, isInStock,
   sizeRangeOf, enterableSizesOf, normalSizesOf, specialSizesOf,
 } = require('../src/config/scanStockPolicy');
 const { SCAN_PAGE } = require('../src/config/scanPage');
@@ -55,27 +58,32 @@ const stripComments = (source) => source
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-STP1 ⭐⭐ 开关 = 显式布尔，缺省 `false`（关着 = 今天）；不许 `|| 兜底` ✗', () => {
-  // ① 变量名一处定义 + 用 readFlag（"空串 = 关""认不出 = 抛"那套语义的唯一实现）
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+  //   改前逐字：`assert.equal(ENABLED_KEY, 'SCAN_STOCK_POLICY_ENABLED', '开关变量名逐字')` 等（整段都在钉那个开关本身）
+  //   改后逐字：⭐ 开关已退场 ⇒ 改成【退场哨兵】；⭐ 条数不减、强度不降 ✗
+  //     用 `in` 判**模块导出面**（不引用标识符 ⇒ 不会 ReferenceError ✓ 且**注释免疫** ✓）
+  //     ⚠️ 我第一版想"读源码判字符串"✗ ⇒ 会被**迁移注释里逐字抄的旧名**命中 ✗（实测踩过 ✓）
   const policySrc = readSrc('config/scanStockPolicy.js');
-  assert.equal(ENABLED_KEY, 'SCAN_STOCK_POLICY_ENABLED', '开关变量名逐字');
-  assert.match(stripComments(policySrc), /readFlag\(env, ENABLED_KEY, false\)/,
-    '取开关只许用 `readFlag(env, ENABLED_KEY, false)`（缺省 false ✓）');
+  const policy = require('../src/config/scanStockPolicy');
+  assert.equal('ENABLED_KEY' in policy, false, '⭐ 开关变量名已退场（不许回来 ✗）');
+  assert.equal(/readFlag\(env,\s*ENABLED_KEY/.test(stripComments(policySrc)), false,
+    '⭐ 配置里不许再有任何开关读取（永远按实时库存口径 ✓）');
   assert.equal(/process\.env\.SCAN_STOCK_POLICY_ENABLED\s*\|\|/.test(policySrc), false,
     '🔴 不许 `process.env.X || 兜底`（清空变量想关掉时会静默回退 ⇒ 关不掉 ✗）');
   assert.equal(/SCAN_STOCK_POLICY_ENABLED[^\n]*\|\|/.test(policySrc), false,
     '🔴 `SCAN_STOCK_POLICY_ENABLED` 那一行不许出现 `||`');
 
-  // ② 四种取值语义（纯函数：不碰全局 process.env ⇒ 与别的用例并发也互不污染）
-  assert.equal(resolveScanStockPolicy({}).enabled, false, '没设 ⇒ false（缺省关着 = 今天）');
-  assert.equal(resolveScanStockPolicy({ [ENABLED_KEY]: '' }).enabled, false, '设成空串 ⇒ **关**（显式取值，不是回退）');
-  assert.equal(resolveScanStockPolicy({ [ENABLED_KEY]: 'true' }).enabled, true, 'true ⇒ 开');
-  assert.equal(resolveScanStockPolicy({ [ENABLED_KEY]: '0' }).enabled, false, '0 ⇒ 关');
-  assert.throws(() => resolveScanStockPolicy({ [ENABLED_KEY]: 'maybe' }), /显式布尔/,
-    '认不出来的值 ⇒ **当场抛错**（不静默按 true/false 处理 ✗）');
+  // ② ⭐ 四种取值语义【逐条保留、只换期望】：开关已退场 ⇒ 没有开关可解析 ⇒ 一律 `undefined`
+  assert.equal(resolveScanStockPolicy({}).enabled, undefined, '⭐ 没有开关可解析 ⇒ undefined（已退场 ✓）');
+  assert.equal(resolveScanStockPolicy({ SCAN_STOCK_POLICY_ENABLED: '' }).enabled, undefined, '⭐ 空串 ⇒ 仍无开关 ⇒ undefined ✓');
+  assert.equal(resolveScanStockPolicy({ SCAN_STOCK_POLICY_ENABLED: 'true' }).enabled, undefined, '⭐ true ⇒ 仍无开关 ⇒ undefined ✓');
+  assert.equal(resolveScanStockPolicy({ SCAN_STOCK_POLICY_ENABLED: '0' }).enabled, undefined, '⭐ 0 ⇒ 仍无开关 ⇒ undefined ✓');
+  assert.equal(resolveScanStockPolicy({ SCAN_STOCK_POLICY_ENABLED: 'maybe' }).enabled, undefined,
+    '⭐ 认不出的值也不再抛（没有开关可解析 ✓）');
 
-  // ③ 本进程（缺省）就是"关着"那条路 —— 下面几条判据都以此为前提
-  assert.equal(SCAN_STOCK_POLICY.enabled, false,
-    '缺省必须是关着（否则"与今天逐字一致"那条零回归判据无从谈起）');
+  // ③ ⭐ 本进程同样没有开关 —— 下面几条判据都以此为前提
+  assert.equal(SCAN_STOCK_POLICY.enabled, undefined,
+    '⭐ 开关已退场 ⇒ 永远按实时库存口径 ✓（不再是"缺省关着"）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -125,16 +133,22 @@ test('AC-STP3 ⭐⭐ 「有货」判定只有一处：视图层只转发，一�
     'realm 里不许再有"门盒/样品"那份**定义**（改前逐字就在这儿 ⇒ 已搬到配置 ✓）');
   assert.equal(/isSellableCell/.test(realmCode), false,
     'realm 里不许再有 `isSellableCell`（判定逻辑已搬进配置 ✓）');
-  assert.match(realmCode, /const SELLABLE_STATES = LEGACY_SELLABLE_STATES/,
-    'realm 只是**引用**配置里那一份旧口径（唯一真源 ✓）');
+  // ⭐ 2026-10-16 23:1x 成对迁移（依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+  //   改前逐字：`assert.match(realmCode, /const SELLABLE_STATES = LEGACY_SELLABLE_STATES/)`（视图须转发那份旧口径名单）
+  //   改后逐字：⭐ 名单与转发都已退场 ⇒ **反向**（强度不降 ✗）
+  assert.equal(/const SELLABLE_STATES = LEGACY_SELLABLE_STATES/.test(realmCode), false,
+    '⭐ realm 里那处旧口径名单转发已退场（不许回来 ✗）');
   assert.match(realmCode, /const sellableCountOf = \(row, columns = \[\]\) => countInStockOf\(row, columns\);/,
     '`sellableCountOf` 只剩**转发**（签名/返回值不变 ⇒ 既有调用方与用例一个字不用改 ✓）');
 
-  // ② 判据本体在配置里，且只有一处（`countInStockOf` 里那个二选一）
-  assert.match(policyCode, /const countInStockOf = \(row, columns = \[\], policy = SCAN_STOCK_POLICY\) => \(/,
-    '唯一判据 = 配置里的 `countInStockOf`');
-  assert.equal((policyCode.match(/policy\.enabled \?/g) || []).length, 1,
-    '「开关二选一」这句在配置里**只许出现一次**（多处 = 又散了 ✗）');
+  // ② 判据本体在配置里，且只有一处
+  //   ⭐ 成对迁移：改前 `const countInStockOf = (row, columns = [], policy = SCAN_STOCK_POLICY) => (`
+  //      ＋ 「`policy.enabled ?` 只许出现 **1** 次」
+  //   改后：⭐ 那个"二选一"**整段删净** ⇒ 签名变成只转发新口径 ⇒ **`policy.enabled ?` 必须 0 次**（不是 1 次）✗
+  assert.match(policyCode, /const countInStockOf = \(row\) => liveInventoryCountOf\(row\)/,
+    '⭐ 唯一判据 = 配置里的 `countInStockOf`，且**只转发新口径**（不再二选一 ✓）');
+  assert.equal((policyCode.match(/policy\.enabled \?/g) || []).length, 0,
+    '⭐ 「开关二选一」这句已整段删净 ⇒ 必须 **0 处**（不许回来 ✗）');
 
   // ③ 三个 tab 的入口都走同一个函数（销售 `saleSizeGroups` / 补货 `purchaseSizeLines` /
   //    退货 `returnFormHtml` → `purchaseSizeLines` / 库存页那一行的 `total`）
@@ -180,18 +194,26 @@ test('AC-STP4 ⭐⭐ 开关关着 ⇒ 算法与改前**逐字等价**（各种�
     { size_text: '40', cells: [{ key: '门盒' }], total: 0 },
   ];
   for (const row of cases) {
-    assert.equal(legacySellableCountOf(row, columns), beforeRefactorCountOf(row, columns),
-      `旧口径逐字等价：row=${JSON.stringify(row)}`);
-    // 缺省（本进程开关关着）走的就是这一条 ⇒ `countInStockOf` 与它同结论
-    assert.equal(countInStockOf(row, columns), beforeRefactorCountOf(row, columns),
-      `缺省口径 = 旧口径：row=${JSON.stringify(row)}`);
+    // ⭐ 2026-10-16 23:1x 成对迁移（依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+    //   改前逐字：`assert.equal(legacySellableCountOf(row, columns), beforeRefactorCountOf(row, columns), '旧口径逐字等价')`
+    //     ⇒ ⭐ 那个名字已随老口径退场 ⇒ 引用它就是 `ReferenceError` ✗（实测抓到 ✓）
+    //   改后逐字：⭐ 换成【新口径对表】——`countInStockOf` 必须 === `liveInventoryCountOf`
+    //     （= 实时库存里该【编号+尺码】行的全部记录，**不看状态** ✓）
+    assert.equal(countInStockOf(row, columns), liveInventoryCountOf(row),
+      `⭐ 新口径：countInStockOf === liveInventoryCountOf（不看状态 ✓）row=${JSON.stringify(row)}`);
+    // ⭐ 老的 `beforeRefactorCountOf`（只数门盒+样品）**保留在本文件里作留档** ✓
+    //   —— 它现在是"新口径的对照物"，不再是"缺省该走的路"：两条都算出来，**只断新口径那条** ✓
+    assert.equal(typeof beforeRefactorCountOf(row, columns), 'number',
+      '⭐ 老算法留档仍在（可算 ⇒ 供对照 ✓）但不作为期望 ✗');
   }
-  // 旧口径的状态清单本身也逐字不变
-  assert.deepEqual([...LEGACY_SELLABLE_STATES], ['门盒', '样品'], '旧口径 = 门盒 + 样品（她 2026-10-09）');
-  assert.deepEqual([...realm.SELLABLE_STATES], ['门盒', '样品'], 'realm 导出的那个名字仍指向同一份');
-  // 「仓库 2 双」在**旧口径**下不算有货（这一点**没被本刀改** ✗ —— 它只在开关开着时变）
-  assert.equal(isInStock(cases[2], columns), false, '旧口径：43 只有仓库 ⇒ 不算有货');
-  assert.equal(isInStock(cases[3], columns), false, '旧口径：44 只有未标状态 ⇒ 不算有货');
+  // ⭐ 成对迁移：两个旧名字都已退场 ⇒ 用 `in` 判**模块导出面**（不引用标识符 ⇒ 不会 ReferenceError ✓ 注释免疫 ✓）
+  //   ⚠️ `policy` 在 AC-STP1 里是**局部**变量 ⇒ 这里必须自己 require 一次（否则 `policy is not defined` ✗ 实测抓到 ✓）
+  const policyMod = require('../src/config/scanStockPolicy');
+  assert.equal('LEGACY_SELLABLE_STATES' in policyMod, false, '⭐ 旧口径名单已退场 ✓（不许回来 ✗）');
+  assert.equal('SELLABLE_STATES' in realm, false, '⭐ 视图那处转发也已退场 ✓（不许回来 ✗）');
+  // ⭐ 成对迁移：「仓库 2 双」「未标状态 1 双」在新口径下**都算有货** ⇒ 两条从 false ⇒ true（实测 ✓）
+  assert.equal(isInStock(cases[2], columns), true, '⭐ 新口径：43 只有仓库 ⇒ **算有货**（实测 ✓）');
+  assert.equal(isInStock(cases[3], columns), true, '⭐ 新口径：44 只有未标状态 ⇒ **算有货**（实测 ✓）');
 });
 
 test('AC-STP4b ⭐ 新口径的取数 = 视图模型那一行的 `total`（**不看状态** ✓）', () => {
@@ -200,11 +222,16 @@ test('AC-STP4b ⭐ 新口径的取数 = 视图模型那一行的 `total`（**不
   assert.equal(liveInventoryCountOf({ total: 0 }), 0, '没有记录 ⇒ 0');
   assert.equal(liveInventoryCountOf({ total: 3, unknown_size: true }), 0,
     '「尺码未识别」那一行**不是**一个【编号+尺码】⇒ 0（不许混进来 ✗）');
-  // 开关**开着**（显式注入 policy，不改全局 env）：与 total 一致、与旧口径不同
-  const on = resolveScanStockPolicy({ [ENABLED_KEY]: 'true' });
-  assert.equal(countInStockOf({ total: 2, cells: [{ key: '仓库', count: 2 }] }, [], on), 2, '开着 ⇒ 仓库也算有货');
-  assert.equal(countInStockOf({ total: 1, cells: [{ key: '', count: 1 }] }, [], on), 1, '开着 ⇒ 未标状态也算有货');
-  assert.equal(countInStockOf({ total: 0, cells: [] }, [], on), 0, '开着 ⇒ 没有记录 = 无货');
+  // ⭐ 2026-10-16 23:1x 成对迁移（依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+  //   改前逐字：`const on = resolveScanStockPolicy({ [ENABLED_KEY]: 'true' });` ＋ `countInStockOf(row, [], on)`
+  //     ⇒ ⭐ `ENABLED_KEY` 已退场（引用即 ReferenceError ✗）＋ `countInStockOf` 签名已变成 **`(row)`**（不再接 policy ✗）
+  //   改后逐字：⭐ 没有开关可传 ⇒ **只传 row**；断「**永远**按实时库存口径」（与 `liveInventoryCountOf` 同结论 ✓）
+  //     ＋ ⭐ 条数不减：原来 4 条，新的也是 4 条 ✓（多出来那条钉"开关已退场"✓）
+  const policyOn = resolveScanStockPolicy({});
+  assert.equal(policyOn.enabled, undefined, '⭐ 开关已退场 ⇒ 传什么都不再有开关（"开着"那条路已不存在 ✓）');
+  assert.equal(countInStockOf({ total: 2, cells: [{ key: '仓库', count: 2 }] }, []), 2, '⭐ 永远：仓库也算有货 ✓');
+  assert.equal(countInStockOf({ total: 1, cells: [{ key: '', count: 1 }] }, []), 1, '⭐ 永远：未标状态也算有货 ✓');
+  assert.equal(countInStockOf({ total: 0, cells: [] }, []), 0, '⭐ 永远：没有记录 = 无货 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
