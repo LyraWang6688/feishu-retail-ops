@@ -213,8 +213,12 @@ test('AC-ML9d 🔴 空结果 / 认不出的结果 / 取消 ⇒ **不跳**，且�
 test('AC-ML9e 🔴 页面**不掺任何密钥**：签名只从服务端端点要（响应里那四样 ✓）', async () => {
   const { state } = await runScript({});
   assert.equal(state.signatureCalls.length, 1, '签名恰好要一次 ✓');
-  assert.match(state.signatureCalls[0], new RegExp(`^${CONFIG.signaturePath.replace(/\//g, '\\/')}\\?url=`),
+  // ⚠️ 不做"手工转义再拼正则"（CodeQL 的 `js/incomplete-sanitization` 会红 ✗）——
+  //    直接把那个端点当**字面量子串**判就够（它本来就是 `/lark/jsapi-signature` ✓）。
+  const endpoint = state.signatureCalls[0].split('?')[0];
+  assert.equal(endpoint, CONFIG.signaturePath,
     '🔴 走的是配置里那个端点（`config.realmScan.signaturePath` ✓ 不写死 ✗）');
+  assert.equal(state.signatureCalls[0].indexOf('?url=') >= 0, true, '签名要带页面地址（官方要求逐字一致 ✓）');
   // 🔴 配置块（页面上的 JSON）里**不许**出现 ticket / secret / token 这类东西
   const blob = JSON.stringify(configOf());
   for (const forbidden of ['secret', 'ticket', 'tenant_access_token', 'appSecret']) {
