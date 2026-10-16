@@ -49,6 +49,32 @@ class SalesOrderService {
     if (!salesEntryRecordId) throw new Error('缺少销售主表 record_id');
     if (!Array.isArray(input.items) || !input.items.length) throw new Error('至少需要一条销售明细');
     await this.gateway.validateTables?.(['product', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord']);
+    // ⭐⭐ 2026-10-16（task-62 · 货/钱分离）：`input.fundsDeferred === true` = **只写「货」那一半**。
+    //
+    //   她的口径（逐字）：「**货和资金是可以分开的**……**销售主表和销售明细，只要货品信息那一页填完，
+    //   里面的金额就是定了的**……**什么时候付款、分几次付、付款方式是什么，是在资金页里面去确定的**」
+    //   ⇒ 这一跑：主表（总金额 / 赠品 / 交易类型）＋ 销售明细 ＋「销售状态=已写入」**照写**；
+    //      🔴 **不写「钱」那一半**：**0 条收款明细**（连那条【未收款】也不写）·
+    //         **不置「资金状态」**（它停在上面那次 `未写入`——正是她"待补充"在表里的样子）。
+    //
+    //   🔴 三条纪律：
+    //     · **显式布尔**（`=== true`）：没传 / 传别的值 ⇒ 下面**每一个字节与今天逐字一致** ✗
+    //       （不许写成 truthy 判断 —— 那一改就会把 `undefined` 之外的东西也当成"分离"）；
+    //     · **钱那一半仍然只有一条路**：资金页那一跑拿**同一个 `salesEntryRecordId`**再走一次
+    //       本函数（同一条 `累计 − 已收 ⇒ 那条【未收款】`口径）⇒ 幂等不拆 ✓；
+    //     · **货那一跑不许带收款**（下面当场抛）：带了就是"两个口都能写钱"，
+    //       那种形状迟早写出两遍账 —— 宁可当场拦住。
+    const fundsDeferred = input.fundsDeferred === true;
+    if (fundsDeferred) {
+      const paymentsGiven = (Array.isArray(input.payments) && input.payments.length > 0)
+        || Boolean(input.totalPaid) || Boolean(input.paymentMethod);
+      // `owed: 0` 与"没说欠"同义（见下面 `owedStated` 那一段）⇒ 不算"带了收款"。
+      const owedGiven = !(input.owed === undefined || input.owed === null
+        || String(input.owed).trim() === '' || Number(input.owed) === 0);
+      if (paymentsGiven || owedGiven) {
+        throw new Error('「货钱分离」的货那一跑不许带收款：钱那一半由资金页那一跑写');
+      }
+    }
     // ⭐ 关联键（2026-10-07 业务负责人拍板「日志改下吧！」）：
     //   这一整段（写主表状态 → 写销售明细 → 写收款明细 → 落表日志）以前**一个键都没有**，
     //   按 task_id grep 只能看到卡片那半，看不到明细 / 收款。
@@ -345,6 +371,43 @@ class SalesOrderService {
       // 她也能从表里一眼看出"明细是好的、坏在钱那一列"。
       await this.status.write(salesEntryRecordId, { sales: WRITE.sales.done }, correlation);
       const detailRecordIds = rows.map((row) => row.recordId);
+      // ⭐⭐ 2026-10-16（task-62 · 货/钱分离）：**「货」那一半到此为止** —— 见函数入口那段注释。
+      //   🔴 这里**一个字都不写钱**，三个"为什么"（都是判据，不是偏好）：
+      //     ① **不写那条【未收款】**：它是**钱的结论**（差额 = 累计 − 已收），
+      //        此刻"已收"还没发生 ⇒ 现在写一条"本该由资金页决定"的差额，等资金页那一跑再算时会与实际不符；
+      //        更要紧的是：收款那一半的幂等是**整表比对**（`PaymentService.recordInitialBatch`：
+      //        "已有收款与当前销售草稿不一致，已停止自动重试"）⇒ 先写一条占位会把**资金页那一跑直接拦死** ✗；
+      //     ② **不置「资金状态」**：它停在上面那次 `WRITE.funds.none`（未写入）——
+      //        这正是她「资金页里没写 ⇒ 待补充」在表里的**如实**样子
+      //        （⚠️ 往下游看：`isPosted(postedOf(...))` 只认「资金状态」⇒ 这一单在"钱写之前"
+      //         不会出现在工作台订单列表 / 不参与补收款 —— 这是**有意**的，不是漏配）；
+      //     ③ **不调 `progress.sync`**：它**只算不写**（见 `salesProgressService.sync` 的注释）
+      //        ⇒ 这里调它等于白读两张整表；钱那一跑还会算一次 ⇒ 省这一次 ✓
+      //        （⚠️ 它那条"累计收款不得超过实收"的校验在这里也不可能触发：本次已收 = 0）。
+      //   ⚠️ 返回值：**既有三个键一个都不许少**（`sourceNo` / `detailRecordIds` /
+      //      `paymentRecordIds` / `inventoryApplied`），另外如实带上 `fundsDeferred` 与
+      //      `totalCents` —— 调用方据此知道"钱那一半还没写"（**不许猜** ✗）。
+      if (fundsDeferred) {
+        const goodsSourceNo = textValue(entry?.fields?.[entryFields.orderNo]) || salesEntryRecordId;
+        logInfo('v1.sale.goods_posted', {
+          sales_entry_record_id: salesEntryRecordId,
+          order_no: goodsSourceNo,
+          detail_count: detailRecordIds.length,
+          total_cents: totalCents,
+          payment_count: 0,
+          step: 'goods',
+          funds_deferred: true,
+          ...correlation,
+        });
+        return {
+          sourceNo: goodsSourceNo,
+          detailRecordIds,
+          paymentRecordIds: [],
+          inventoryApplied: false,
+          fundsDeferred: true,
+          totalCents,
+        };
+      }
       // ⭐ **差额（分）** = 「每件实收合计 − 已收合计」—— 全仓**只有这一个**差额算法
       //   （整数分相减，落库时 ÷100 还原成元）。这里**不新写**一个 ✗。
       const outstandingCents = totalCents - paidCents;
@@ -431,7 +494,12 @@ class SalesOrderService {
           : detailsPersisted >= detailPlan ? WRITE.sales.done : WRITE.sales.partial;
       await this.status.write(salesEntryRecordId, {
         sales: salesStatus,
-        funds: financialRecorded ? WRITE.funds.done : WRITE.funds.failed,
+        // ⭐⭐ 2026-10-16（task-62）：**货钱分离那一跑，失败也不许写「资金状态」** ——
+        //   这一跑根本没试过写钱（`financialRecorded` 恒 false）⇒ 若照旧写 `写入失败`，
+        //   表里会留下"钱写失败了"这个**与事实相反**的结论（她最恨的"状态撒谎"✗）。
+        //   ⇒ 只写「销售」那一维；钱那一维**保持"未写入"**，由资金页那一跑去收口 ✓
+        //   ⚠️ 关着（`fundsDeferred !== true`）时这一行的形状与今天**逐字相同** ✗。
+        ...(fundsDeferred ? {} : { funds: financialRecorded ? WRITE.funds.done : WRITE.funds.failed }),
       }, correlation);
       // ⚠️ 2026-10-09：这里原来会把失败的**人话**回填进「失败原因」列（她照着改就能重试）。
       //    那一列被业务负责人从生产表删掉了 ⇒ **写入点随列一起删**（见
