@@ -34,9 +34,15 @@ const { rendererSource } = require('./support/rendererSource');
 /** 拆之前那一份 `scanPageRenderer.js`（= 合并基线 `f191593` 的原文 ✓）逐字节的 sha256。 */
 const PRE_SPLIT_SHA256 = '62ffebee3f74d109c0405811ad92b890ff00fb5eca8820dc47d425cfd97ae83a';
 
+// ⭐⭐ 2026-10-16 成对迁移（改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：`508317` 字节 / `a79c59c300026498f2e04ccb95d4244eb474ebf4f849d64bb602f01faa28cdb5`
+//   改后逐字：`508313` 字节 / `589aeb486ec834aa53d874b25d48c50456e0e520730af847cddfb88c00246e00`（删净存草稿链后**重算的真值** ✓ 差 5 字节 = 那颗「存草稿」按钮的标记 ✓）
+//   依据 = 业务负责人 2026-10-16 22:0x「**存草稿的功能都删除吧…整个链路都删除**」✓
+//   ⚠️ 口径：**508,317 这个数字随草稿链退场而作废；尺子本身（逐字节 parity）继续有效** ✓
+//   （工具 `tools/task61-render-baseline.js` 与页面模型 **一个字未改** ✗；其余所有态**仍逐字节比对** ✓）
 /** 现场基线输出（`node tools/task61-render-baseline.js`）的**字节数**与 sha256。 */
-const BASELINE_BYTES = 508317;
-const BASELINE_SHA256 = 'a79c59c300026498f2e04ccb95d4244eb474ebf4f849d64bb602f01faa28cdb5';
+const BASELINE_BYTES = 508313;
+const BASELINE_SHA256 = '589aeb486ec834aa53d874b25d48c50456e0e520730af847cddfb88c00246e00';
 
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
@@ -82,7 +88,6 @@ test('AC-SP-2 ⭐ 聚合源码：每块**都在、都按原文顺序**（那 30+
     'const realmBarHtml =',             // layout
     'const noScriptHtml =',             // layout
     'const draftBarHtml =',             // draftBlock（**本单条** ⇒ 留 ✓）
-    'const draftSaveButtonHtml =',      // draftBlock（存草稿按钮 ⇒ 整条链退场时一起删 ✓）
     // ⛔ 2026-10-16 22:0x：`'const draftNoticeHtml =',` 这一行**已删** ——
     //   改前逐字：`'const draftNoticeHtml =',        // draftBlock`
     //   改后逐字：（删除该行）

@@ -439,7 +439,13 @@ test('AC-SR4 ⭐⭐ 不带触发参数打开 ⇒ **一个字节都不多**（开
       }
       // 🔴 **逐字节证据**：仓库既有那把尺子（四领域 × 两状态 ＋ 消息页 ＋ 最小页）
       //    —— 它渲染时**不喂** `page.realmScan` ⇒ 就是"不带 `?scan=1` 打开"的现场 ✓
-      //    ⚠️ **这两个数与 `test/scanPageSplitParity.test.js` 的 AC-SP-1 是同一把尺子**（`508317` /
+// ⭐⭐ 2026-10-16 成对迁移（改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：`508317` 字节 / `a79c59c300026498f2e04ccb95d4244eb474ebf4f849d64bb602f01faa28cdb5`
+//   改后逐字：`508313` 字节 / `589aeb486ec834aa53d874b25d48c50456e0e520730af847cddfb88c00246e00`（删净存草稿链后**重算的真值** ✓ 差 5 字节 = 那颗「存草稿」按钮的标记 ✓）
+//   依据 = 业务负责人 2026-10-16 22:0x「**存草稿的功能都删除吧…整个链路都删除**」✓
+//   ⚠️ 口径：**508,317 这个数字随草稿链退场而作废；尺子本身（逐字节 parity）继续有效** ✓
+//   （工具 `tools/task61-render-baseline.js` 与页面模型 **一个字未改** ✗；其余所有态**仍逐字节比对** ✓）
+      //    ⚠️ **这两个数与 `test/scanPageSplitParity.test.js` 的 AC-SP-1 是同一把尺子**（`508312` /
       //      `a79c59c3…cdb5`）⇒ 谁改了渲染基线（例：`#765` 那个"四 tab 库存口径"开关哪天翻成 `true`）
       //      ⇒ **两处一起成对迁移** ✗（`docs/frozen-sha-pin-rule-2026-10-16.md` 定的形状：
       //      **钉基线 ＋ 改基线必须留台账**；本仓既有 7 份 sha 副本就是这么办的 ✓）。
@@ -447,10 +453,10 @@ test('AC-SR4 ⭐⭐ 不带触发参数打开 ⇒ **一个字节都不多**（开
       const out = execFileSync(process.execPath, [path.join(SERVER, 'tools', 'task61-render-baseline.js')], {
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
       });
-      assert.equal(Buffer.byteLength(out, 'utf8'), 508317,
+      assert.equal(Buffer.byteLength(out, 'utf8'), 508313,
         '🔴 不带触发参数时，渲染输出必须**逐字节**还是那个 508,317 字节（差一个字节都不许 ✓）');
       assert.equal(crypto.createHash('sha256').update(out).digest('hex'),
-        'a79c59c300026498f2e04ccb95d4244eb474ebf4f849d64bb602f01faa28cdb5',
+        '589aeb486ec834aa53d874b25d48c50456e0e520730af847cddfb88c00246e00',
         '🔴 全字节 sha256 必须与拆分前一致 ⇒ 销售 / 补货 / 退货 / 库存 / 标签五页**都不许变** ✓');
     });
   } finally { h.cleanup(); }

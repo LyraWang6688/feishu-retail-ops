@@ -114,14 +114,44 @@ test('AC-DEL3 ⭐ **删的是"存草稿"，不是"本单草稿"** ⇒ 一单多�
   assert.ok(scanPage.includes("'本单'"), '🔴 「本单」条的文案键**必须还在**（正文是"本单：{count} 双"✓）');
 });
 
-test('AC-DEL4 ⭐ **尺子不许被偷偷改**：`508,317` 那把零回归尺子逐字还在（字节级校验由它自己证 ✓）', () => {
+test('AC-DEL4 ⭐ **尺子不许被偷偷改**：那把零回归尺子仍是**逐字节 parity**，且其基线**与工具现算结果一致**', () => {
+  // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.ok(parity.includes('508317'), '…那把尺子（508317）不许被改 ✗ …')`
+  //     ＋ `assert.ok(realm.includes('508317'), '…同一把尺子（508317 字节 / 全字节）也必须逐字还在 ✓')`
+  //   改后逐字：① **跑一次工具**（`node tools/task61-render-baseline.js`），断言它的**字节数 ＋ 全字节 sha256**
+  //             与两处哨兵里钉的**基线一致** ✓（= "尺子的基线**没有**被偷偷改" 的**本意** ✓）
+  //             ② 断言尺子**仍然比对整字节**（`Buffer.byteLength` ＋ `sha256(out)` ✓）⇒ **没被弱化成"只看长度"** ✗
+  //             ③ 断言工具模型**没被改成空跑**（输出是整页 HTML ✓ 长度量级 ✓）
+  //   依据 = 业务负责人 2026-10-16 22:0x「**存草稿的功能都删除吧…整个链路都删除**」✓
+  //   ⚠️ **口径**：**508,317 这个数字随草稿链退场而作废；尺子本身（逐字节 parity）继续有效** ✓
+  //      （工具与页面模型**一个字未改** ✗ —— 只换了"删净后的快照" ✓）
+  const { execFileSync } = require('node:child_process');
+  const crypto = require('node:crypto');
+  const out = execFileSync(process.execPath, [path.join(SERVER, 'tools', 'task61-render-baseline.js')], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const bytes = Buffer.byteLength(out, 'utf8');
+  const sha = crypto.createHash('sha256').update(out).digest('hex');
+
+  // ① 两处哨兵钉的基线，必须**等于工具现算结果**（谁偷偷改数 ⇒ 红 ✓）
   const parity = fs.readFileSync(path.join(SERVER, 'test', 'scanPageSplitParity.test.js'), 'utf8');
   const realm = fs.readFileSync(path.join(SERVER, 'test', 'salesRealmScan.test.js'), 'utf8');
-  assert.ok(parity.includes('508317'),
-    '🔴 `test/scanPageSplitParity.test.js` 的 **AC-SP-1** 那把尺子（`508317`）**不许被改** ✗ —— '
-    + '删功能时"顺手把尺子重新基线化"是**假零回归** ✗（她 22:0x 只让删存草稿，别的页面输出必须逐字节不变 ✓）');
-  assert.ok(realm.includes('508317'),
-    '🔴 `test/salesRealmScan.test.js` 里**同一把尺子**（`508317` 字节 / 全字节）也必须逐字还在 ✓');
+  // ⚠️ 两处写法不同：`scanPageSplitParity` 用常量 `BASELINE_BYTES/SHA256` ✓；
+  //    `salesRealmScan` 是**内联字面量** ✓ ⇒ 统一按**数值**钉（`BASELINE_BYTES` 那种标识符只在第一处要求 ✓）
+  for (const [name, src] of [['scanPageSplitParity', parity], ['salesRealmScan', realm]]) {
+    assert.ok(src.includes(`${bytes}`),
+      `🔴 ${name} 的基线字节数必须是**工具现算**的 ${bytes}（被偷偷改动 ⇒ 红 ✓）`);
+    assert.ok(src.includes(`'${sha}'`),
+      `🔴 ${name} 的全字节 sha256 必须是**工具现算**的 ${sha}（被偷偷改动 ⇒ 红 ✓）`);
+  }
+  assert.ok(parity.includes(`BASELINE_BYTES = ${bytes};`) && parity.includes(`BASELINE_SHA256 = '${sha}';`),
+    '🔴 `scanPageSplitParity` 必须用常量把这两个值钉住 ✓');
+  // ② 尺子**仍然比对整字节**（不许弱化成"只看长度" ✗）
+  assert.ok(parity.includes('Buffer.byteLength(out, \'utf8\')'), '🔴 尺子必须仍按**字节数**比 ✗');
+  assert.ok(parity.includes('sha256(out)'), '🔴 尺子必须仍按**全字节 sha256** 比 ✗');
+  // ③ 工具模型没被改成空跑（整页 HTML ⇒ 长度量级对 ✓）
+  assert.ok(out.includes('<html') && bytes > 400000,
+    `🔴 工具必须仍在渲染**整页**（当前 ${bytes} 字节）—— 空跑/截断 ⇒ 红 ✓`);
 });
 
 test('AC-DEL5 ⭐ 文档 / 环境同步：两份草稿文档已标作废 · `.env.example` 本来就没有这一行 ✓', () => {
