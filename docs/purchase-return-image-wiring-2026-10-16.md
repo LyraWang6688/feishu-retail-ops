@@ -119,13 +119,16 @@
 | 第 2 遍 | 同上 | 见 PR |
 | 两遍之间 | `git diff \| shasum -a 256` | 两次**逐字节一致**（空 diff：所有改动都已提交 ✓）|
 
-**变异（≥2 组，每组都单独跑过、确认真红 ✓）**：
+**变异（2 组，每组都在**独立 worktree** 上单独跑过、确认真红 ✓；跑完 `git checkout --` 还原，
+`shasum -a 256 -c` 逐字节一致 ✓）**：
 
-1. 删掉 `routes/scanPage/index.js` 那两处装配（require ＋ `purchaseReturnOptions:`）
-   ⇒ **AC-RI1 / RI2 / RI3a 红**（`no_image_pipeline` 重现、`renders=0`）＋ **AC-RI6 红**（源码哨兵）✓
-2. 把 `config/scanWrite.js` 的 `imageDelivery.enabled` 缺省改成 `false`
-   ⇒ AC-RI1/RI2/RI3a 红（同 1）＋ **AC-RI4 反而变绿**（它本来就是"不接的时候该看到什么"）✓
-3. 还原核验：`git diff | shasum -a 256` 与变异前**逐字节一致** ✓
+| # | 变异 | 真红的是谁（实测） | 说明 |
+| --- | --- | --- | --- |
+| 1 | 删掉 `routes/scanPage/index.js` 那两处装配（`purchaseReturnOptions:` 那一段） | **AC-RI1 / RI2 / RI3a / RI6** 红（`renders=0`：出图那一步一次都没被调）＋ AC-RI4 **绿**（它本来就是"不接的时候该看到什么"） | 证明"装配那几行"是这批判据的**唯一支点** ✓ |
+| 2 | 把 `config/scanWrite.js` 的 `imageDelivery.enabled` 缺省改成 `false` | **AC-RI1 / RI2 / RI3a / RI3b** 红 ＋ AC-RI4 **绿** | 证明**配置开关**真的在把关（不是写死的常量）✓ |
+
+**还原核验**：两组都跑 `git checkout -- <改过的那个文件>` ⇒ `shasum -a 256 -c` 与变异前
+**逐字节一致** ✓（`server/src/routes/scanPage/index.js` / `server/src/config/scanWrite.js` 各一次）。
 
 ---
 
