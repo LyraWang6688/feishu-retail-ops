@@ -2947,26 +2947,6 @@ return sendPaymentStep(res, req, {
         //   改前逐字：`if (resolveSaleMoneySplit` ＋ `Config().enabled === true) { … }`（开关关着 ⇒ 这段一个字都不跑）
         //   改后逐字：**闸门删掉** ⇒ 这段**永远跑**（货品页建单 / 现货当场扣 / 钱待补 ✓）
         //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**把新功能都上了，不需要开关。**」✓
-            // ⚠️ **提交那一发先判一次（同源纯函数）** —— ④ 把「落货」拆成前一次调用之后，写服务里那条
-            //   「已收 > 每件实收 ⇒ 拦住、一个字都不写」（`scanWriteService.js:1056`）**没人先跑了** ✗
-            //   ⇒ `block` ⇒ **货那一跑根本不进** ⇒ 「被拒 ⇒ 零写入」恢复 ✓
-            //   依据 = 写服务契约同一句 ＋ 业务负责人 2026-10-16 23:5x「那我肯定能看到这个单号呀」（诚实口径）✓
-            // ⚠️ 与 `payment_pay` 那一支**同源**：同一个纯函数 ＋ 同一套 helper ✓ 不手搓 ✗
-            // eslint-disable-next-line global-require
-            const { autoModeOf: autoModeOfPre } = require('../../config/saleSettlement');
-            const toCentsPre = (value) => Math.round(Number(value || 0) * 100);
-            const prePayments = parsePaymentRows(body, fields);
-            const preAuto = autoModeOfPre({
-              itemsCents: (Array.isArray(lineAmounts) ? lineAmounts : []).reduce((s, v) => s + toCentsPre(v), 0),
-              paymentsCents: prePayments.reduce((s, row) => s + toCentsPre(row.amount), 0),
-            });
-            if (preAuto.action === 'block') {
-              return await respondSettlementBlock(res, req, {
-                settlement: preAuto, effectiveLineAmounts: lineAmounts, paidPayments: prePayments, realm,
-                body, fields, pendingLines: pendingDraftLines,
-                effectivePaymentStatus: '', pendingPaidAmount: '',
-              });
-            }
             const goods = await writeService.submitSale({
               openId,
               requestId,
