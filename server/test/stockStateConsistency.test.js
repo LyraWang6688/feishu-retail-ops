@@ -52,6 +52,17 @@
  * ─────────────────────────────────────────────────────────────────────────
  *
  * 🔴 本文件**只读**：只 require 视图层 / 配置，不碰任何写入口、不碰 `scanWriteService`、不碰路由。
+ *
+ * ⭐⭐ **2026-10-16 晚（本刀）成对迁移 · 改前逐字 → 改后逐字 → 依据**：
+ *   改前逐字：本文件把「未标状态**不算**有货」当作**当前（唯一）口径**来钉
+ *     （AC-ST1 的 `sellableOfRow(..., '44') === 0`、AC-ST2 的"预订段有 44"…）。
+ *   改后逐字：**断言一条都没动** ✗ —— 只加了一句**前提自证**（AC-ST1 开头）：
+ *     `SCAN_STOCK_POLICY.enabled === false` ⇒ 本文件钉的是**"开关关着（= 今天）"那条路**。
+ *   依据：业务负责人 2026-10-16 20:5x 亲口改了口径 ——「**统一不用看状态**，只要在实时库存里
+ *     这个编号**有尺码记录，就都是有货**」⇒ 她那把 44 码**在新口径下算有货**
+ *     （钉在新文件 `test/scanStockPolicyUnifiedOn.test.js` 的 **AC-ST6**）。
+ *     ⇒ 本文件不是"过期判据"：它是**新口径的零回归基线**（开关关着时必须逐字保持今天的样子 ✓）。
+ *   ⚠️ **没有删 / 没有 skip / 没有放宽**：仅仅是**把口径归属写明**（避免下一个人以为它错了 ✗）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -60,6 +71,7 @@ const path = require('node:path');
 
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
+const { SCAN_STOCK_POLICY } = require('../src/config/scanStockPolicy');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
 const { SELLABLE_STATES, sellableCountOf, saleSizeGroups, purchaseSizeLines } = require('../src/views/scanPageRealm');
 
@@ -230,12 +242,18 @@ const htmlOf = (view, realm) => renderScanPage(view, SCAN_PAGE, WRITE, realm);
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"有货"判据必须一致', () => {
-  // ① 判据仍是她 2026-10-09 定的那两个状态（**唯一真源**，三个 tab 共用）
+  // ⭐⭐ 2026-10-16 晚（本刀）**前提自证**：本文件钉的是**开关关着（= 今天）那条路**。
+  //   她 20:5x 改口后的新口径（"实时库存里有记录 = 有货"）钉在
+  //   `test/scanStockPolicyUnifiedOn.test.js` **AC-ST5/AC-ST6**（那个文件自己设 env ⇒ 独立进程 ✓）。
+  //   ⇒ 若谁在跑全量时把 `SCAN_STOCK_POLICY_ENABLED=true` 带进环境，这一句会**当场点名**是环境问题 ✗。
+  assert.equal(SCAN_STOCK_POLICY.enabled, false,
+    'AC-ST1（旧口径）只在开关**关着**时成立 —— 新口径见 scanStockPolicyUnifiedOn.test.js');
+  // ① 判据 = 她 2026-10-09 定的那两个状态（**开关关着时**的唯一真源，三个 tab 共用）
   assert.deepEqual([...SELLABLE_STATES], ['门盒', '样品'],
     '可卖 = 门盒 + 样品（她 2026-10-09）；「仓库」与「未标状态」都不在清单里');
   assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '40'), 2, '40：门盒 1 + 样品 1 ⇒ 可卖 2');
-  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '43'), 0, '43：只有仓库 2 ⇒ 不可卖（她：仓库不算）');
-  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '44'), 0, '44：只有「未标状态」1 ⇒ 当前口径：不可卖');
+  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '43'), 0, '43：只有仓库 2 ⇒ 不可卖（她 2026-10-09：仓库不算）');
+  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '44'), 0, '44：只有「未标状态」1 ⇒ **旧口径**：不可卖');
 
   // ② 三个 tab 各自渲染出来的"有货尺码集合"必须**完全一致**，且等于按判据算出来的那一组
   const byCriterion = BLANK_STATE_FIXTURE.rows

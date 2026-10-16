@@ -69,8 +69,20 @@ const pageOf = (realm, view = femaleView()) => renderScanPage(view, SCAN_PAGE, W
 test('AC-MF1 ⭐ 判据**只有一处**（缺货 ∩ 特殊码）：三处都调同一个 helper', () => {
   assert.match(REALM_SRC, /const specialSizesOfView = \(view\) => \{/, '共用判据 `specialSizesOfView` 在 realm 里（一处定义 ✓）');
   // 库存 / 补货 两条链都不许自己再写一遍"是不是特殊码"
-  const extra = (REALM_SRC.match(/range\?\.special/g) || []).length;
-  assert.equal(extra, 1, `"特殊码"的取值只许有一处（实际 ${extra} 处 ✗ 三处各写一遍 = 漂）`);
+  // ⭐⭐ 2026-10-16 晚 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：
+  //     `const extra = (REALM_SRC.match(/range\?\.special/g) || []).length;`
+  //     `assert.equal(extra, 1, '"特殊码"的取值只许有一处…')`（那一处在 `views/scanPageRealm.js`）
+  //   改后逐字：**取值搬进 `config/scanStockPolicy.js` 的 `specialSizesOf`**（仍然**恰好一处** ✓）
+  //     ⇒ 判据改成**两条**：配置里恰好 1 处 ＋ realm 里 **0 处**（第二份 = 漂 ✗）
+  //   依据：她 2026-10-16 20:5x「这个口径其实**也可以做一个配置**」「**完全可以抽象出来**」
+  //     ⇒ 口径的家是 `config/**`。
+  //   ⚠️ **没有放宽**：从"1 处"变成"1 处 ＋ 0 处"—— 比原来**更强** ✓。
+  const extraInRealm = (REALM_SRC.match(/range\?\.special/g) || []).length;
+  assert.equal(extraInRealm, 0, `realm 里**不许**再自己取特殊码（实际 ${extraInRealm} 处 ✗ 那是第二份 = 漂）`);
+  const POLICY_SRC = fs.readFileSync(path.join(__dirname, '../src/config/scanStockPolicy.js'), 'utf8');
+  const extraInPolicy = (POLICY_SRC.match(/range\?\.special/g) || []).length;
+  assert.equal(extraInPolicy, 1, `"特殊码"的取值只许在配置里有一处（实际 ${extraInPolicy} 处 ✗ 三处各写一遍 = 漂）`);
   assert.match(REALM_SRC, /const foldedSpecialRowsOf = \(view\)/, '库存/补货共用的"缺货 ∩ 特殊码"helper 存在 ✓');
 });
 
