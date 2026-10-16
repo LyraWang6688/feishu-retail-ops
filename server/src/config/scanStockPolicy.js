@@ -159,12 +159,8 @@ const specialSizesOf = (categoryCode, policy = SCAN_STOCK_POLICY) => {
 };
 
 module.exports = {
-  ENABLED_KEY,
-  LEGACY_SELLABLE_STATES,
   SCAN_STOCK_POLICY,
   resolveScanStockPolicy,
-  isLegacySellableCell,
-  legacySellableCountOf,
   liveInventoryCountOf,
   countInStockOf,
   isInStock,
