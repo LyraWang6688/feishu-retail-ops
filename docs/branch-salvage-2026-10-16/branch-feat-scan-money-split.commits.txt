@@ -1,0 +1,1 @@
+d76f3e8 feat(scan): 货/钱分离（task-62）阶段一 —— services 接缝 + 显式开关（缺省关）+ 8 条判据

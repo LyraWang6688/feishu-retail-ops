@@ -1,0 +1,2 @@
+2ed46bc fix(scan): realm tabs stay on one line (no more vertical split)
+a96bb52 fix(scan): build the purchase size reader from its factory
