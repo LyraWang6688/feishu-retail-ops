@@ -64,6 +64,18 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_l
 // ⭐ 本文件要的就是"**裸扫走既有接管**"那个形状 ⇒ 骨架屏**显式关**（缺省也是关 ✓ 这里写死只为不受环境干扰）
 process.env.SCAN_PAGE_SKELETON_ENABLED = 'false';
 
+// ⭐⭐ 成对迁移（2026-10-16 · `SCAN_DRAFT_ENABLED` 缺省翻 true 之后）—— 本文件测的不是草稿：
+//   它测的是 扫码落点重置（`pending` / `submitted` 残标记该不该接管）。
+//   🔴 **改前逐字**：本文件**不配** `SCAN_DRAFT_ENABLED` ⇒ 靠 `config/scanDraft.js` 的缺省拿到
+//     "草稿关"（`resolveShared` 里那一行当时代码是：`const enabled = readFlag(env, 'SCAN_DRAFT_ENABLED', false);`）。
+//   ✅ **改后逐字**：`process.env.SCAN_DRAFT_ENABLED = 'false';` ⇒ **显式**要"草稿关"。
+//   ⭐ **依据** = 业务负责人 2026-10-16「**开关打开**」（同一行缺省已翻成 `true`）⇒ 缺省不再是关态，
+//     所以"靠缺省"这条路**没有了**，必须自己写死。
+//   ⚠️ **强度不变（不是放宽）**：页面上那一份输出与迁移前**逐字节相同** —— 迁移前缺省就是 `false`
+//     （本文件在 main 上是绿的）；这里只把"碰巧的缺省"换成"自己声明的前置条件"，
+//     断言**一条没删、一条没 skip、一条没放宽**；缺省再翻也不会静默改掉本文件的语义 ✓。
+process.env.SCAN_DRAFT_ENABLED = 'false';
+
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
