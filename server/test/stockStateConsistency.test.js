@@ -317,7 +317,9 @@ test('AC-ST2 44 码 1 双在「未标状态」⇒ 四个 tab 的显示逐字钉�
   assert.equal(inventoryCellsOf(inventory, '44').join('|'), '—|—|—|1', '44 行四格逐字');
 
   const sales = htmlOf(FULL_SIZES_BLANK_FIXTURE, 'sales');
-  assert.ok(sales.includes('<span class="hint">这一款现在没有可选的尺码</span>'),
+  // ⭐ 2026-10-16 23:0x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：改前逐字：`assert.ok(sales.includes('…没有可选的尺码…'))`（旧口径：44 不算有货 ⇒ 有货段为空 ⇒ 出那句）
+  // 改后逐字：⭐ **永远按实时库存口径** ⇒ 44 算有货 ⇒ 有货段不空 ⇒ **那句不再出现**（断言方向反过来、强度不降 ✗）
+  assert.ok(!sales.includes('<span class="hint">这一款现在没有可选的尺码</span>'),
     '销售页有货段写着「这一款现在没有可选的尺码」（**她看到的那句**）');
   const inStockStart = sales.indexOf('data-stock-group="in_stock"');
   const inStockGroup = sales.slice(inStockStart, sales.indexOf('</fieldset>', inStockStart));
@@ -431,7 +433,9 @@ test('AC-ST4 端到端：她那一款（1 条记录、所属状态为空）⇒ �
   const row44 = view.rows.find((row) => row.size_text === '44');
   assert.deepEqual(row44.cells.map((cell) => cell.count), [0, 0, 0, 1], '44 码：只有空状态那一格 = 1');
   assert.equal(row44.missing, false, '44 不是缺码（它合计 = 1）');
-  assert.equal(sellableCountOf(row44, view.columns), 0, '可卖 = 门盒 + 样品 = 0（空状态不在清单里）');
+  // ⭐ 2026-10-16 23:0x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：改前逐字：`assert.equal(sellableCountOf(row44, view.columns), 0, '可卖 = 门盒 + 样品 = 0（空状态不在清单里）')`
+  // 改后逐字：⭐ 44（未标状态 1 双）**算有货** ⇒ **1**（实测 ✓）
+  assert.equal(sellableCountOf(row44, view.columns), 1, '可卖 = 实时库存里有记录 ⇒ 1（**不看状态** ✓ 实测 ✓）');
 
   // ② 渲染层：四个 tab 的结论与 AC-ST2（手写夹具）**完全一致** ⇒ 夹具没编错
   // ①b 「共 N 双」那一句必须把**空状态那一双**数进去（她自己看到的就是「共 1 双」）——
@@ -468,11 +472,11 @@ test('AC-ST0 判据自证：`sellableSizesOf` 真从 HTML 里读（改一行渲�
       ? { ...row, cells: [{ key: '门盒', count: 1 }, { key: '样品', count: 0 }, { key: '仓库', count: 0 }, { key: '', count: 0 }] }
       : row)),
   };
-  assert.deepEqual(sellableSizesOf(htmlOf(moved, 'sales'), 'sales').sort(), ['40', '44'],
+  assert.deepEqual(sellableSizesOf(htmlOf(moved, 'sales'), 'sales').sort(), ['40', '43', '44'],
     '44 进了门盒 ⇒ 销售页必须把它放进现货段');
-  assert.deepEqual(sellableSizesOf(htmlOf(moved, 'replenish'), 'replenish').sort(), ['40', '44'],
+  assert.deepEqual(sellableSizesOf(htmlOf(moved, 'replenish'), 'replenish').sort(), ['40', '43', '44'],
     '44 进了门盒 ⇒ 补货页必须给它「现货」tag');
-  assert.deepEqual(sellableSizesOf(htmlOf(moved, 'purchase_return'), 'purchase_return').sort(), ['40', '44'],
+  assert.deepEqual(sellableSizesOf(htmlOf(moved, 'purchase_return'), 'purchase_return').sort(), ['40', '43', '44'],
     '44 进了门盒 ⇒ 退货页必须列出它');
   assert.deepEqual(inventoryCellsOf(htmlOf(moved, 'inventory'), '44'), ['1', '—', '—', '—'],
     '库存页 44 那一行：门盒 = 1（同一份数据、四个 tab 一起变）');
