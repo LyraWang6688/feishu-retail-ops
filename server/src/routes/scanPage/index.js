@@ -2201,9 +2201,19 @@ const createScanPageRouter = (options = {}) => {
           const pendingPayments = parsePaymentRows(body, fields).length
             ? parsePaymentRows(body, fields)
             : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
-          const pendingLineAmounts = asList(body[fields.lineAmount]).some((v) => String(v ?? '').trim())
-            ? asList(body[fields.lineAmount])
-            : (Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : []);
+          // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— ⭐ 2026-10-16 深夜 · 修「资金页那一按 500」✗：
+          //   改前逐字：`asList(body[lineAmount]) 有值 ? 表单那份 : 会话那份`（**表单优先** ✗）
+          //   改后逐字：**会话那份优先**（= ⭐ **货那一跑已经落下的那份金额** ✓），表单只作兜底 ✓
+          //   依据 = 业务负责人 2026-10-16 23:4x 当次口径（ⓐ「**修**」）：
+          //     「让**资金页那一步别自己重算金额** ⇒ **直接用货那一半已经写好的那份**」✓
+          //   🔴 为什么必须同源：`services/salesOrderService.js:238` 那条守卫会拿
+          //     「已记录的销售明细」与**本次推导的** expected **逐值比金额**（含「实收金额」）✗
+          //     ⇒ 表单那份（例 `['150','130']`）与货那半落的（例 `['280']`）一比就 `sale_partial_failed` ⇒ **500** ✗
+          const sessionLineAmounts = Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : [];
+          const bodyLineAmounts = asList(body[fields.lineAmount]);
+          const pendingLineAmounts = sessionLineAmounts.some((v) => String(v ?? '').trim())
+            ? sessionLineAmounts
+            : bodyLineAmounts;
           const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
           const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
           const pendingSize = String(pendingInfo.size || '').trim();
