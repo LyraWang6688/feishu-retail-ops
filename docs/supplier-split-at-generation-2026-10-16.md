@@ -132,7 +132,8 @@
 | **AC-SS3** | 分组**不新增批次号** | 主表**只 1 行**；号源**只取 1 次**；3 行明细的「报货批次号」指向**同一个**批次记录；`splitBySupplier(...).batchCount === 1`（改前：ⓑ 会变成 3 行 / 3 个号 ⇒ 红） |
 | **AC-SS4** | **幂等**：同组重复生成 ⇒ **只出一次** | 重放（同一个 task）后：图 **0** 次新增、群消息 **0** 条新增、附件 **0** 次上传、`already_reported = 3 家`、`sent = []`、主表仍 1 行、号源仍只 1 次 |
 | **AC-SS4b** | 探针：AC-SS4 **不是空跑** | 手动把「单据」里那张图**拿掉**（= 其实没出过）⇒ **必须重出**（否则就是静默少发一家 ✗） |
-| **AC-SS5** | **存草稿阶段零副作用**（混 3 个供应商也一样） | 只建**那一行草稿行**（`到货状态 = 未报货`）、**采购明细 0 行**、`update` 0 次、附件上传 0 次；草稿里 **3 个供应商都还在**（存草稿**不拆** ✓） |
+| **AC-SS5** | **存草稿阶段零副作用**（混 3 个供应商也一样） | ⭐ **成对迁移过一次**（见下面的 ⚠️）：她的**三个副作用**（发群 / 出图 / 写库存）＋「单据」附件写入 **0 次**；草稿行**只 1 行**（那一行，`到货状态 = 未报货`）；草稿里 **3 个供应商都还在**（存草稿**不拆** ✓ —— 拆的那一下是「生成报货单」） |
+| ⚠️ AC-SS5 的**成对迁移**（main 上的 #735 改过 S1 的明细口径） | — | **改前逐字**：`assert.equal((gateway.tables.purchaseRequest \|\| []).length, 0, '🔴 **不建采购明细**（草稿不是报货单 ✗）');`<br>**改后逐字**：钉"3 行草稿明细的**幂等键前缀 = 草稿专用** `scan_draft_detail:*`（与真出单那套 `purchase_request:*` 分得开 ✓）"＋她点名的那三个副作用仍为零<br>**依据**：她 2026-10-16 逐字「**草稿也写明细**」⇒ #735（S2）已把 S1 的 `AC-D1`（"采购明细 0 次"）成对迁移 ⇒ 本文件**不许**再钉"0 行" ✗（旧断言会与 main 上那条口径打架，而且"明细"本来就**不是**她点名的那三个副作用之一 ✓） |
 | **AC-SS6** | ⭐ **口径落定哨兵** | `resolveScanDraftConfig({}).supplierSplit === 'generate_report'`；`config/scanDraft.js` 导出的 `SUPPLIER_SPLIT.batchNoPolicy === 'same_batch_no'`（**`undecided` 不许回来** ⇒ 写回去就红）；`SUPPLIER_SPLIT_BATCH_NO_POLICY=new_batch_no_per_supplier`（ⓑ）**当场抛**；组键稳定可算；空供应商落 `unspecified` 桶；`documentFileNameOf` 两例逐字 |
 | **AC-SS7** | 🔴 源码哨兵：**冻结件逐字节没动** | `services/scanWriteService.js` 的 sha256 = `199551e1…35ca`（与 main 一致） |
 | **AC-SS7b** | 源码哨兵：分组模块**不认识飞书** | `services/supplierSplitService.js`（剥掉注释后）**不出现** `gateway` / `v1BitableSchema` / `scanWriteService` / `createOnceByKey` / `store.update`，且**一个中文字面量都没有** |
@@ -145,6 +146,21 @@
 | ② | `supplierSplitService.splitBySupplier` 的 `batchCount: 1` ⇒ `groups.length`（= ⓑ 的口径） | **AC-SS3** |
 | ③ | `multiItemOrderService.planSubmission` 的 `payload` 里塞一个 `supplier_groups` | **AC-SS2** |
 | ④ | 删掉 `resolveSupplierSplitConfig` 对取值的那道校验 | **AC-SS6** |
+
+**两遍数字与自证**（在**rebase 到最新 `origin/main`（含 #734 / #735）之后**跑的两遍 ✓）：
+
+| | 命令 | 结果 |
+| --- | --- | --- |
+| 第 1 遍 | `pnpm test` | **2841 tests / 2834 pass / 0 fail · EXIT=0** |
+| 第 2 遍 | `pnpm test` | **2841 tests / 2834 pass / 0 fail · EXIT=0** |
+| 依赖门禁 | `pnpm audit --prod --audit-level=high` | `No known vulnerabilities found` · EXIT=0 |
+
+- 两遍之间 `git diff | shasum -a 256` **完全一致** ✓（变异期间也逐字节还原：三个源文件 `shasum -c` OK ✓）。
+- ⚠️ **基线漂移如实记**：本刀开在 `origin/main = 2471282`（S1 #732 之后）；
+  跑完第一轮时 main 已经前进到 `243410a`（**#734** docs pending ＋ **#735** S2：三处入口/提示条/**草稿也写明细**）
+  ⇒ **rebase 到最新 main 后重跑两遍**（上面的数字就是 rebase 之后的），
+  并按 #735 的口径把 **AC-SS5 成对迁移**（见 §4 那一行）✓。
+  🔴 **不 rebase 的后果会是真的**：旧断言"草稿不写明细"会与 main 上那条口径**打架** ✗。
 
 ---
 
