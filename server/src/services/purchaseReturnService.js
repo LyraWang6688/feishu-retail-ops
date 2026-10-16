@@ -40,11 +40,36 @@
  *    `ensurePostingPlan` / `ensureReturnPlan` 是同一个思路。
  * 🔴 **一双都退不成**（所有尺码的 available 都是 0）⇒ **一个字都不写**（连批次行都不建），
  *    把 `skipped: 'no_stock'` 交给调用方去说人话 —— 不建一条空退货批次。
+ *
+ * ⭐⭐ task-64（2026-10-16 · 业务负责人逐字：「**退货的多货品 + 供应商拆分要做**」＋
+ *   「**同一批次号下按供应商分组**」）—— **退货也支持一单多货 ＋ 出单按供应商分组**。
+ *
+ * ── 改前逐字 → 改后逐字 → 依据 ────────────────────────────────────────────────
+ * | | 逐字 |
+ * | --- | --- |
+ * | **改前**（只支持单货品） | ① `ensurePlan` 的可用量按**批次级** `draft.product_record_id` 查 ⇒ 多货品时那个值**是空串** ⇒ 每行 `available = 0` ⇒ **`skipped: 'no_stock'`、一个字都不写**（而引擎照样把草稿标成 submitted ⇒ 她看到成功页、账上啥也没有 ✗）；<br>② 每条明细的 `product` 与每条 `drawItems` 的 `supplier_record_id` 都取**批次级**那一个 ⇒ 混供应商的退货**整单落进「未标注供应商」那一张**（**错账级后果** ✗）；<br>③ 明细幂等键 = `purchase_return_doc:{taskId}:{size}` —— 两个货品**同尺码**会**撞同一把键**（第二行被当成重放吸收 ✗）；<br>④ 批次行的「采购行为」只认 `draft.behavior_record_id`（引擎的多货品载荷里**是空串** ⇒ 建出来的退货批次没有采购行为 ⇒ 工作台按"采购申请"分流 ✗） |
+ * | **改后** | 逐行算**货品**（`plan.items[*].product_record_id`）· 逐行算**供应商**（`supplier_record_id`；行上没有才由代码读「货品信息.供应商」，再拿不到才回落批次级）；多货品时明细幂等键带**货品**（`…:{productRecordId}:{size}`）；批次行的「采购行为」**拿不到就按本链路的 `config.behaviorCode` 解析一次** |
+ * | **依据** | 她 2026-10-16 15:12「退货的多货品 + 供应商拆分要做」＋ 2026-10-16 14:32「**同一批次号下按供应商分组**」（ⓐ）｜分组那一半**复用** `services/supplierSplitService.js`（纯函数 ✓）：本 service **只**保证"每条 `drawItems` 自带自己的供应商"，分桶仍由 `PurchaseWebhookService.deliverSupplierImages` 那一处做 ✓（**不另造第二套** ✗）｜「采购行为」那一条 = `test/scanPurchaseReturn.test.js` 的 AC-R2（主表要写退货那一档行为）＋ 该文件里就写明的"读不到行为记录时按现状=采购申请分流" |
+ *
+ * 🔴 **单货品 ⇒ 与今天逐字一致**（硬红线，判据 `test/purchaseReturnMultiItem.test.js` 的 AC-RS2）：
+ *   · 计划里**不多**任何键（`plan.items` 仍是 `{size, declared, available, taken, shortfall}`）；
+ *   · 明细幂等键仍是 `purchase_return_doc:{taskId}:{size}`；
+ *   · `drawItems` 仍是那 7 个键、批次级 `supplier_record_id` 照旧；
+ *   · 条件 = `needsRowIdentity(...)`：**批次级有货品 且 逐行只有一个货品** ⇒ 走老形状 ✓。
+ *
+ * 🔴 **每条明细的供应商从哪来**（只读核查结论，别再猜 ✗）：**代码读「货品信息.供应商」那条
+ *   *既有*关联列**（`v1BitableSchema.tables.product.fields.supplier`）——与单货品那条路
+ *   （`scanWriteService.submitPurchaseReturn` 的 `linkedRecordIds(product.fields[supplier])`）
+ *   **同一个字段**，只是这里**逐行**读（多货品时每行的货品不同 ⇒ 供应商也可能不同）；
+ *   🔴 **不新增列、不写「货品信息」、不写「采购明细.供应商」（公式列）** ✗。
+ *   ⚠️ 为什么必须由代码读：扫码页那条多货品载荷里 `supplier_record_id` **是空的**
+ *   （`views/scanPage/multiItemBlock.js` 从 `view.supplier_record_id` 取，而那个键**从来没有被赋过值**）
+ *   ⇒ 只认载荷就会把混供应商的退货整单落进「未标注供应商」✗。
  */
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { createOnceByKeys, IDEMPOTENCY_KEY_FIELD } = require('../infrastructure/idempotencyKey');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { relation } = require('./v1ReferenceResolver');
+const { relation, V1ReferenceResolver } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
 const { PurchaseBatchNoGenerator } = require('./purchaseBatchNoGenerator');
@@ -61,6 +86,34 @@ const { logInfo, logWarn } = require('../utils/logger');
 const purchaseReturnStates = () => STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE].consumes || [];
 
 const sumOf = (items, key) => items.reduce((sum, item) => sum + Number(item[key] || 0), 0);
+
+/**
+ * 一行退货明细的**货品 record_id**（逐行 ✓）。
+ * 老草稿 / 老计划里逐行没有它 ⇒ 退回**批次级**那一个（= 单货品那条路今天的形状 ✓ 不猜 ✗）。
+ */
+const rowProductIdOf = (item, draft) => String(
+  (item && (item.product_record_id || item.productRecordId)) || (draft && draft.product_record_id) || '',
+).trim();
+
+/** 一行退货明细的**供应商 record_id**（逐行 ✓；行上没有 ⇒ 退回批次级那一个）。 */
+const rowSupplierIdOf = (item, draft) => String(
+  (item && (item.supplier_record_id || item.supplierRecordId)) || (draft && draft.supplier_record_id) || '',
+).trim();
+
+/**
+ * ⭐ 这一次要不要**逐行**带身份（货品 + 供应商）——
+ *   · **批次级没有货品**（= 引擎的多货品载荷 `planSubmission` 在 `single === false` 时留空 ✓）⇒ 要；
+ *   · 或逐行真的是**多个货品** ⇒ 要；
+ *   · 单货品那条老路（`scanWriteService.submitPurchaseReturn`）两个都不满足 ⇒ **不要**
+ *     ⇒ 计划 / 明细 / 图 / 幂等键**逐字与今天一致**（硬红线 AC-RS2 ✓）。
+ */
+const needsRowIdentity = (items, draft) => {
+  const batchProduct = String((draft && draft.product_record_id) || '').trim();
+  const rowProducts = new Set(
+    (Array.isArray(items) ? items : []).map((item) => rowProductIdOf(item, {})).filter(Boolean),
+  );
+  return !batchProduct || rowProducts.size > 1;
+};
 
 /**
  * ⭐ task-65 的**回落路径**：注入的库存端口没有批量口（= 既有替身用例 / 未接线）时逐条调
@@ -88,6 +141,33 @@ const createPurchaseReturnService = (options = {}) => {
   // 只为"出退货单图"那一步（发群 / 回填附件都在它内部）；用例可以不注入（那就只记一条 warn）。
   const webhooks = options.webhooks || null;
   const batchNoGenerator = options.batchNoGenerator || new PurchaseBatchNoGenerator({ gateway });
+  // ⭐ task-64：**采购行为**那条既有解析器（`scanWriteService` 也是用它解析同一个编码 ✓）——
+  //   只在"草稿里没带行为"时用（引擎的多货品载荷正是这种形状 ✓）；懒建 ⇒ 单货品那条老路
+  //   **一次都不碰它**（零额外读 ✓）。
+  let references = options.references || null;
+  const resolveBehaviorRecordId = async () => {
+    if (!references) references = new V1ReferenceResolver(gateway);
+    const behavior = await references.resolveBehavior(config.behaviorCode);
+    return String((behavior && behavior.recordId) || '');
+  };
+  /**
+   * ⭐ task-64：**这一行**的供应商 —— 由**代码**读「货品信息.供应商」那条**既有**关联列
+   *   （与单货品那条路同一个字段 ✓；**不新增列、不写那张表** ✗）。
+   *   同一个货品只读一次（一单里同货品多尺码很常见 ✓）。
+   */
+  const supplierCache = new Map();
+  const resolveSupplierByProduct = async (productRecordId) => {
+    const wanted = String(productRecordId || '').trim();
+    if (!wanted) return '';
+    if (supplierCache.has(wanted)) return supplierCache.get(wanted);
+    const table = gateway.table('product');
+    const field = table && table.fields ? table.fields.supplier : '';
+    // 映射拿不到 ⇒ **不猜**（空供应商 ⇒ 出图那边照旧出"未标注供应商"那一张 ✓）
+    const record = field ? await gateway.get('product', wanted).catch(() => null) : null;
+    const supplierRecordId = linkedRecordIds(record && record.fields ? record.fields[field] : null)[0] || '';
+    supplierCache.set(wanted, supplierRecordId);
+    return supplierRecordId;
+  };
 
   /** 取下一个批次号（与既有报货那条同一个生成器、同一把串行锁）。 */
   const nextBatchNo = async () => {
@@ -100,6 +180,10 @@ const createPurchaseReturnService = (options = {}) => {
   /**
    * 冻结计划（**只算一次**）：批次号 + 每码的 `declared / available / taken / shortfall`。
    * 重试沿用落盘的那一份 ⇒ 不重新取号、不重算（重算一定与第一次不同 —— 库存已经动过了）。
+   *
+   * ⭐ task-64：**多货品**时顺手把**逐行身份**也冻进计划（`product_record_id` / `supplier_record_id`）——
+   *   重试时逐字复用 ⇒ 不重读货品、也不会把供应商重新算成另一个（幂等的物理基础 ✓）。
+   *   🔴 单货品**不带**这两个键（计划逐字与今天一致 ✓ AC-RS2）。
    */
   const ensurePlan = async (taskId, task) => {
     if (task?.plan?.version === 1) return task.plan;
@@ -109,23 +193,48 @@ const createPurchaseReturnService = (options = {}) => {
     const liveTable = gateway.table('liveInventory');
     const allLive = await gateway.listAll('liveInventory');
     const states = purchaseReturnStates();
+    // 这一次要不要逐行带身份（多货品 ⇒ 要；单货品 ⇒ 不要，逐字走今天那条 ✓）
+    const withRowIdentity = needsRowIdentity(items, draft);
     const planned = [];
     for (const item of items) {
       const sizeRef = await resolveSize(item.size);
+      const productRecordId = rowProductIdOf(item, draft);
       // 「这一款这一码现在能退几双」= 实时库存里（门盒 + 样品 + 仓库）那些"一双一条"的记录数。
       // ⚠️ 只按关联 record_id 比对，不从库存行反推尺码（坏行不会把整条退货链路拖挂）。
+      // ⭐ task-64：比的是**这一行那个货品**（改前是批次级那一个 ⇒ 多货品时空串 ⇒ available 恒 0 ✗）。
       const available = (allLive || []).filter((record) => (
-        linkedRecordIds(record?.fields?.[liveTable.fields.product]).includes(draft.product_record_id)
+        linkedRecordIds(record?.fields?.[liveTable.fields.product]).includes(productRecordId)
         && linkedRecordIds(record?.fields?.[liveTable.fields.size]).includes(sizeRef.recordId)
         && states.includes(textValue(record?.fields?.[liveTable.fields.state]))
       )).length;
       const declared = Number(item.quantity);
       const taken = Math.min(declared, available);
+      // 逐行供应商：**行上带的**优先（引擎 / 别的调用方 ✓）⇒ 没有才由**代码**读
+      // 「货品信息.供应商」（扫码页那条载荷正是这一种 ✓）⇒ 再拿不到才回落批次级。
+      const supplierRecordId = withRowIdentity
+        ? (String(item?.supplier_record_id || '').trim()
+          || await resolveSupplierByProduct(productRecordId)
+          || String(draft.supplier_record_id || '').trim())
+        : '';
       planned.push({
+        ...(withRowIdentity ? {
+          product_record_id: productRecordId,
+          supplier_record_id: supplierRecordId,
+          // ⚠️ 出图要用的那几个**展示字段**也冻进计划：重放时逐字复用（不回头读草稿 ——
+          //    草稿在第一跑收尾时会被换成 `drawItems`，第二跑再读它就成了另一份形状 ✗）。
+          product_number: String(item?.product_number || draft.product_number || ''),
+          item_no: String(item?.item_no || draft.item_no || ''),
+          color: String(item?.color || draft.color || ''),
+        } : {}),
         size: Number(item.size), declared, available, taken, shortfall: declared - taken,
       });
     }
     const plan = { version: 1, batch_no: draft.batch_no || (await nextBatchNo()), items: planned };
+    // ⭐ task-64：草稿里**没带**「采购行为」时（= 引擎那条多货品载荷的形状）按本链路的配置解析一次，
+    //   并**冻进计划**（重试逐字复用 ✓）。单货品那条老路草稿里本来就带着 ⇒ 这里一行都不走 ✓。
+    if (!String(draft.behavior_record_id || '').trim()) {
+      plan.behavior_record_id = await resolveBehaviorRecordId();
+    }
     await store.update(taskId, { plan, posting_stage: 'plan_frozen' });
     logInfo(events.returnPlanFrozen, {
       task_id: taskId, batch_no: plan.batch_no,
@@ -133,6 +242,11 @@ const createPurchaseReturnService = (options = {}) => {
       taken_count: sumOf(planned, 'taken'),
       shortfall: sumOf(planned, 'shortfall'),
       sizes: planned.map((item) => `${item.size}码:${item.taken}/${item.declared}`).join(','),
+      // ⭐ task-64（只读诊断键）：这一次是不是多货品、有几家的供应商拿到了、几家没拿到（没拿到 ⇒ 出图落"未标注"桶）
+      row_identity: withRowIdentity,
+      supplier_count: new Set(planned.map((item) => item.supplier_record_id).filter(Boolean)).size,
+      supplier_missing: planned.filter((item) => withRowIdentity && !item.supplier_record_id).length,
+      behavior_source: draft.behavior_record_id ? 'draft' : (plan.behavior_record_id ? 'resolved' : 'none'),
     });
     return plan;
   };
@@ -181,7 +295,13 @@ const createPurchaseReturnService = (options = {}) => {
     // ⭐ 2026-10-12：把这一批的**录入数量合计**（= 每码 `taken` 之和，上面已经算好）传给建行，
     //    写上「报货批次.录入数量」—— 她报货时填的数量，就是这一列。
     const batch = await orderBatches.createForReturnBatch(plan.batch_no,
-      { correlation, behaviorRecordId: draft.behavior_record_id, quantity: takenCount });
+      {
+        correlation,
+        // ⭐ task-64：草稿里没带行为时用**计划里冻结**的那一个（多货品那条引擎载荷的形状 ✓）；
+        //   单货品那条老路草稿里本来就带着 ⇒ 逐字不变（`undefined` ⇒ 网关跳过该列 ✓）。
+        behaviorRecordId: draft.behavior_record_id || plan.behavior_record_id,
+        quantity: takenCount,
+      });
     if (!batch.recordId) {
       throw new Error('采购退货批次那一行没建成：退货明细就没有落点，这次不写');
     }
@@ -192,6 +312,23 @@ const createPurchaseReturnService = (options = {}) => {
     logInfo(events.returnBatchCreated, {
       task_id: taskId, batch_no: plan.batch_no, batch_record_id: batchRecordId,
       created: batch.created === true, reused: batch.reused === true,
+    });
+
+    // ⭐⭐ task-64：**这一单是不是"多货品"** —— 判据只看**计划里那几行**（重放时计划已冻结 ⇒
+    //   判据逐字一致 ✓）；单货品 ⇒ 下面每一处都退回**批次级**那一个（与今天逐字相同 ✓）。
+    //   ⚠️ 老计划（改动前冻结的那一份）里没有 `product_record_id` ⇒ 全部回落批次级 ⇒ `false` ✓
+    //     （与它第一次写入时用的形状**同一条** ⇒ 重放不会换幂等键 ✗）。
+    const rowIdentity = needsRowIdentity(plan.items, draft);
+    /**
+     * 一行（明细 / 出图）的**身份**：逐行优先、拿不到退回批次级（**不猜** ✗）。
+     * ⚠️ 单货品那条老路上，三个 `||` 的右边**全中**（逐行与批次级本来就是同一个值）⇒ 逐字不变 ✓。
+     */
+    const lineOf = (item) => ({
+      product_record_id: rowProductIdOf(item, draft),
+      supplier_record_id: rowSupplierIdOf(item, draft),
+      product_number: String(item?.product_number || draft.product_number || ''),
+      item_no: String(item?.item_no || draft.item_no || ''),
+      color: String(item?.color || draft.color || ''),
     });
 
     // ⭐⭐ 2026-10-15（业务负责人裁决ⓐ）：**退货这一批的「整单金额」**
@@ -241,8 +378,13 @@ const createPurchaseReturnService = (options = {}) => {
       keyField: IDEMPOTENCY_KEY_FIELD,
       correlation,
       rows: drawnItems.map((item) => {
+        const line = lineOf(item);
         // 幂等键由「这个任务 + 这个尺码」推出 ⇒ 重放命中同一条远端记录，不写第二条。
-        const docKey = `purchase_return_doc:${taskId}:${item.size}`;
+        // ⭐ task-64：**多货品**时再带上**这一行的货品** —— 两个货品同尺码时会撞同一把键
+        //   （第二行被当成重放吸收 ⇒ 静默少一行 ✗）；单货品仍是那串**逐字**不变的键 ✓（AC-RS2）。
+        const docKey = rowIdentity
+          ? `purchase_return_doc:${taskId}:${line.product_record_id}:${item.size}`
+          : `purchase_return_doc:${taskId}:${item.size}`;
         return {
           keyValue: docKey,
           label: `采购退货明细 ${taskId} ${item.size}码`,
@@ -253,7 +395,8 @@ const createPurchaseReturnService = (options = {}) => {
             //    写它轻则被忽略、重则整条退货明细 create 失败。
             //    ⚠️ 与报货那条同一个待定项：主表的「采购行为」没有写入点（她 2026-10-07 说过不用管）
             //    ⇒ 退货明细的这一列也会是空的，分流判据读不到就按现状=采购申请分流。
-            product: relation(draft.product_record_id),
+            // ⭐ task-64：`product` 取**这一行**那个货品（改前是批次级那一个 ⇒ 多货品时是空串 ✗）
+            product: relation(line.product_record_id),
             size: relation(sizeRecordIdBySize.get(item.size)),
             quantity: item.taken,
             // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）
@@ -275,8 +418,10 @@ const createPurchaseReturnService = (options = {}) => {
     //    **依据**：她 2026-10-16「退货也需要批量提速」（#749 明细那半之后剩下的库存这一段）。
     //    ⚠️ 注入的库存端口**没有**批量口（既有替身用例）⇒ **退回逐条**，与改动前**逐字节同形**。
     //    ⚠️ 顺序仍是"明细先写实、库存后扣"；失败粒度见 `applyPurchaseReturnBatch` 的注释。
+    //    ⭐ task-64：`productRecordId` 取**这一行**那个货品（改前取批次级那一个 ⇒ 多货品时是空串 ⇒
+    //      库存引擎当场报"缺少商品 record_id"；单货品时两者本就是同一个值 ⇒ 逐字不变 ✓）。
     const stockPayloads = drawnItems.map((item) => ({
-      productRecordId: draft.product_record_id,
+      productRecordId: lineOf(item).product_record_id,
       size: item.size,
       quantity: item.taken,
       // `state` 只用于本地串行队列的键；真正扣哪些状态由注册表（门盒 + 样品 + 仓库）决定。
@@ -295,22 +440,28 @@ const createPurchaseReturnService = (options = {}) => {
       const item = drawnItems[index];
       const doc = docs[index];
       const change = changes[index];
+      // ⭐ task-64：这一行的**身份**逐行取（货品 / 货号 / 颜色 / 供应商）——
+      //   单货品时三个 `||` 右边**全中** ⇒ 与今天**逐字同一份** `drawItems`（AC-RS2 的 deepEqual ✓）。
+      const line = lineOf(item);
       requestIds.push(doc.recordId);
       logInfo(events.returnStockApplied, {
         task_id: taskId, batch_no: plan.batch_no, size: item.size, quantity: item.taken,
+        product_record_id: line.product_record_id,
         doc_id: doc.recordId, reused_doc: doc.reused === true,
         ledger_record_id: change?.ledgerRecordId || '',
         live_record_ids: change?.liveRecordIds || [],
         ...correlation,
       });
       drawItems.push({
-        product_record_id: draft.product_record_id,
-        product_number: draft.product_number,
-        item_no: draft.item_no,
-        color: draft.color,
+        product_record_id: line.product_record_id,
+        product_number: line.product_number,
+        item_no: line.item_no,
+        color: line.color,
         size: item.size,
         quantity: item.taken,
-        supplier_record_id: draft.supplier_record_id,
+        // ⭐ 每行**自带自己的供应商** ⇒ 既有出图链路（`deliverSupplierImages` →
+        //   `supplierSplitService.groupItemsBySupplier`）据此按供应商分组 ✓（**不另造第二套** ✗）
+        supplier_record_id: line.supplier_record_id,
       });
     }
 
