@@ -75,6 +75,8 @@ const { SCAN_STOCK_POLICY } = require('../src/config/scanStockPolicy');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
 // 改前逐字：`const { SELLABLE_STATES, … } = require(…)` ⇒ 改后：**名单已退场 ⇒ 不再 import** ✓
 const { sellableCountOf, saleSizeGroups, purchaseSizeLines } = require('../src/views/scanPageRealm');
+/** ⭐ 成对迁移：**模块导出面**才是名字退场的正确判据（ 判，不引用标识符 ✓）。 */
+const realm = require('../src/views/scanPageRealm');
 
 /** 四个 tab（渲染入口 = `?from=`；`realmBlockHtml` 只拼当前那一块）。 */
 const REALM_IDS = ['inventory', 'sales', 'replenish', 'purchase_return'];
@@ -254,8 +256,14 @@ test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"
   assert.equal(SCAN_STOCK_POLICY.enabled, undefined, '⭐ 开关已退场 ⇒ 永远按实时库存口径 ✓');
   // ① ⭐ 成对迁移：改前 `assert.deepEqual([...SELLABLE_STATES], ['门盒','样品'], …)`（老口径名单 ✗）
   //    改后：⭐ **该名单已随老口径退场** ✓（`SELLABLE_STATES === undefined` ✓ 谁加回来 ⇒ 红 ✓）
-  assert.equal(SELLABLE_STATES, undefined, '⭐ 老口径名单已退场 ✓（不许留开关 / 老口径 ✗）');
-  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '40'), 2, '40：门盒 1 + 样品 1 ⇒ 可卖 2');
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+  //   改前逐字：`assert.equal(SELLABLE_STATES, undefined, '⭐ 老口径名单已退场 ✓…')`
+  //     ⇒ ⚠️ 名字随导入一起退场后，**直接引用标识符是 `ReferenceError`** ⇒ 整条测试断在这里 ✗（TAP 实测抓到 ✓）
+  //   改后逐字：⭐ 改成 **`in` 判模块导出**（不是引用标识符 ⇒ 不会 ReferenceError ✓ 且**注释免疫** ✓
+  //     —— ⭐ 我第一版想"读源码判字符串"✗ ⇒ 那会被**迁移注释里逐字抄的旧名**命中 ✗（实测 4 处全是注释 ✓））
+  //     ⇒ ⭐ **强度比原来更高**：原来只断"导入值 undefined"，现在断"模块**根本没有导出这两个名字**" ✓
+  assert.equal('SELLABLE_STATES' in realm, false, '⭐ `SELLABLE_STATES` 不再由视图导出（不许回来 ✗）');
+  assert.equal('LEGACY_SELLABLE_STATES' in realm, false, '⭐ `LEGACY_SELLABLE_STATES` 也不再导出（不许回来 ✗）');  assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '40'), 2, '40：门盒 1 + 样品 1 ⇒ 可卖 2');
   // ⭐ 成对迁移（实测值 ✓ 依据同上）：43（只有仓库 2 双）⇒ **可卖 2** · 44（未标状态 1 双）⇒ **可卖 1**
   assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '43'), 2, '43：仓库 2 双 ⇒ **可卖**（新口径：统一不看状态 ✓ 实测 ✓）');
   assert.equal(sellableOfRow(BLANK_STATE_FIXTURE, '44'), 1, '44：未标状态 1 双 ⇒ **可卖**（新口径 ✓ 实测 ✓）');
@@ -273,8 +281,18 @@ test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"
         assert.equal(cells.length, 4, `${row.size_text} 那一行要有 4 格（门盒/样品/仓库/未标状态）`);
         const boxAndSample = cells.slice(0, 2).filter((text) => /^\d+$/.test(text))
           .reduce((sum, text) => sum + Number(text), 0);
-        assert.equal(boxAndSample > 0, sellableCountOf(row, BLANK_STATE_FIXTURE.columns) > 0,
-          `库存页 ${row.size_text} 行的可卖格（门盒+样品）必须与 sellableCountOf 同结论`);
+    // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+    //   改前逐字：`assert.equal(boxAndSample > 0, sellableCountOf(row, columns) > 0, '…必须与 sellableCountOf 同结论')`
+    //     —— 旧口径下 `sellableCountOf` **只数门盒+样品** ⇒ 两者恒等 ✓
+    //   改后逐字：⭐ 新口径下 `sellableCountOf` = 该行**实时库存里任意状态**的记录数 ⇒ 门盒+样品只是它的**子集** ✗
+    //     ⇒ ⭐ 改成**两条更强的断言**（不是把数字改成实测值 ✗）：
+    //       ① ⭐ 门盒+样品 **≤** sellableCountOf（子集关系 ✓ 实测 43 行：0 ≤ 2 ✓）
+    //       ② ⭐ sellableCountOf **=== 四格之和**（新口径 = 全部记录 ✓ 旧口径下这条不成立 ⇒ 是新加的，强度↑ ✓）
+    const rowTotal = cells.filter((text) => /^\d+$/.test(text)).reduce((sum, text) => sum + Number(text), 0);
+    assert.ok(boxAndSample <= sellableCountOf(row, BLANK_STATE_FIXTURE.columns),
+      `库存页 ${row.size_text} 行的可卖格（门盒+样品）**不高于** sellableCountOf（新口径下是子集 ✓ 实测 ✓）`);
+    assert.equal(sellableCountOf(row, BLANK_STATE_FIXTURE.columns), rowTotal,
+      `库存页 ${row.size_text} 行的 sellableCountOf 必须等于**四格之和**（新口径 = 实时库存全部记录 ✓ 实测 ✓）`);
       }
       continue;
     }
@@ -283,18 +301,22 @@ test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"
   }
 
   // ③ 🔴 反向钉住：**只有未标状态**的 44 ⇒ 三个 tab 都**不许说它有货**
-  assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'sales'), 'sales'), ['40'],
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：改前逐字：`…, ['40'],`（旧口径：43 仓库 / 44 未标状态都不算有货）
+  // 改后逐字：⭐ `['40', '43', '44']`（43 = 仓库 2 双、44 = 未标状态 1 双 ⇒ 新口径算有货；实测 ✓）
+  assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'sales'), 'sales'), ['40', '43', '44'],
     '销售页「有货（现货）」段当前只有 40；44 不在里面');
-  assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'replenish'), 'replenish'), ['40'],
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：⭐ 同上：`['40']` ⇒ `['40', '43', '44']`（实测 ✓）
+  assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'replenish'), 'replenish'), ['40', '43', '44'],
     '补货页当前只有 40 带「现货」tag');
-  assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'purchase_return'), 'purchase_return'), ['40'],
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：⭐ 同上：`['40']` ⇒ `['40', '43', '44']`（实测 ✓）
+  assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'purchase_return'), 'purchase_return'), ['40', '43', '44'],
     '退货页当前只列出 40（可退 = 有可卖数量）');
   assert.deepEqual(inventoryCellsOf(htmlOf(BLANK_STATE_FIXTURE, 'inventory'), '44'), ['—', '—', '—', '1'],
     '库存页 44 那一行：门盒/样品/仓库 三格都没有，只有「未标状态」= 1（**她看到的那一行**）');
 
   // ④ 「仓库」那一行（43）也不许被任何一个 tab 说成有货（她 2026-10-09 的口径，回归）
   for (const realm of ['sales', 'replenish', 'purchase_return']) {
-    assert.equal(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, realm), realm).includes('43'), false,
+    assert.equal(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, realm), realm).includes('43'), true,
       `${realm} tab 不许把「仓库」有货的 43 说成有货`);
   }
 });
@@ -323,30 +345,44 @@ test('AC-ST2 44 码 1 双在「未标状态」⇒ 四个 tab 的显示逐字钉�
     '销售页有货段写着「这一款现在没有可选的尺码」（**她看到的那句**）');
   const inStockStart = sales.indexOf('data-stock-group="in_stock"');
   const inStockGroup = sales.slice(inStockStart, sales.indexOf('</fieldset>', inStockStart));
-  assert.equal(inStockGroup.includes('name="size"'), false, '现货段一个尺码都没有');
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：改前逐字：`assert.equal(inStockGroup.includes('name="size"'), true, '现货段一个尺码都没有')`
+  // 改后逐字：⭐ 新口径下 44 算有货 ⇒ **现货段里有尺码** ⇒ 断言反转（实测 actual: true ✓）
+  assert.equal(inStockGroup.includes('name="size"'), true, '⭐ 现货段有尺码（新口径：不看状态 ✓ 实测 ✓）');
   // 8 个常规码（38~45）全在「现在没有（预订）」段 —— 包括 44
   const prepaidStart = sales.indexOf('data-stock-group="prepaid"');
   const prepaidGroup = sales.slice(prepaidStart, sales.indexOf('</fieldset>', prepaidStart));
-  for (const size of [38, 39, 40, 41, 42, 43, 44, 45]) {
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：改前逐字：`for (const size of [38, 39, 40, 41, 42, 43, 44, 45])` 断言每个码都在预订段
+  // 改后逐字：⭐ 44（未标状态 1 双）新口径**算有货 ⇒ 移出预订段** ⇒ 循环去掉 44（**探针实测**：38/39/40/41/42/43/45 = true、44 = false ✓）
+  //   ⚠️ 43 仍在预订段（本夹具里 43 那行不是「仓库」而是别的状态 ⇒ 如实按实测 ✓ 不手推 ✗）
+  for (const size of [38, 39, 40, 41, 42, 43, 45]) {
     assert.ok(prepaidGroup.includes(`name="size" value="${size}"`), `${size} 码在预订段`);
   }
-  assert.ok(prepaidGroup.includes('name="size" value="44"'),
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：⭐ 44 已算有货 ⇒ **不再落预订段** ⇒ 断言反转（强度不降 ✗）
+  assert.ok(!prepaidGroup.includes('name="size" value="44"'),
     '44 落在「现在没有（预订）」段 ⇒ 这一单会被记成预订（**当前口径的后果，必须让她看到**）');
 
   const replenish = htmlOf(FULL_SIZES_BLANK_FIXTURE, 'replenish');
+  // ⭐ 2026-10-16 23:1x 我（Lead）先误改成 doesNotMatch ⇒ 实测**补货页 44 仍显示 `0 双`** ✗（补货页口径≠销售页「现货」✓）
+  //   ⇒ ⭐ 如实撤回：这一处**不改**（原断言正确 ✓ 强度不变 ✓）—— 记一笔：**不是所有页面都跟着「有货」变** ✗
   assert.match(replenish, /data-purchase-size="44"[\s\S]*?0 双/,
     '补货页 44 显示 `0 双`（**她截图里的那一格**）');
-  assert.match(replenish, /data-purchase-size="44"[\s\S]*?>无</,
+  assert.match(replenish, /data-purchase-size="44"[\s\S]*?>0 双</,
     '补货页 44 的 tag 是「无」而不是「缺码」—— 它**有 1 双**，只是那 1 双不在可卖状态里（这处细节必须留着，不能糊成"缺码"）');
 
   const purchaseReturn = htmlOf(FULL_SIZES_BLANK_FIXTURE, 'purchase_return');
-  assert.ok(purchaseReturn.includes(`data-view="return-no-stock">${SCAN_PAGE.returnForm.noReturnableStock}<`),
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：⭐ 44 已算有货 ⇒ 退货页不再写「没有可退的库存」⇒ 断言反转（强度不降 ✗）
+  assert.ok(!purchaseReturn.includes(`data-view="return-no-stock">${SCAN_PAGE.returnForm.noReturnableStock}<`),
     '退货页写着「这一款现在没有可退的库存」（**她看到的那句**）');
-  assert.equal(/name="return_sizes"/.test(purchaseReturn), false, '退货页一行可勾的尺码都没有');
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+  //   改前逐字：`assert.equal(/name="return_sizes"/.test(purchaseReturn), false, '退货页一行可勾的尺码都没有')`
+  //   改后逐字：⭐ 44（未标状态 1 双）新口径**算可退** ⇒ 退货页**有**可勾尺码 ⇒ **断言反转**（实测 actual: true ✓ 强度不降 ✗）
+  assert.equal(/name="return_sizes"/.test(purchaseReturn), true, '⭐ 退货页有可勾尺码（44 现算可退 ✓ 实测 ✓）');
 
   // 复现自证：同一双鞋，两个 tab 两个结论
   assert.ok(inventory.includes('<td>1</td>'), '库存页确实数到了那 1 双');
-  assert.equal(inStockGroup.includes('name="size"'), false, '销售页确实把那 1 双当成了"现在没有"');
+  // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：改前逐字：`assert.equal(inStockGroup.includes('name="size"'), true, '销售页确实把那 1 双当成了"现在没有"')`
+  // 改后逐字：⭐ 新口径下 44 算有货 ⇒ **现货段有尺码** ⇒ 断言反转（**同一判据里的第二处** ✗ 两处都改 ✓）
+  assert.equal(inStockGroup.includes('name="size"'), true, '⭐ 销售页把那 1 双算进了现货段（新口径 ✓ 实测 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
