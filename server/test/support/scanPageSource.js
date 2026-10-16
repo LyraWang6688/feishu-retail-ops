@@ -34,6 +34,7 @@ const ADDED_REQUIRE_BLOCK = [
   "const { parsePaymentRows } = require('./payment');",
   "const { parseReplenishEntries, parseReturnEntries } = require('./posting');",
   "const { parseMultiItemGroups, mergeFirstItemEntries } = require('./multiItem');",
+  "const { purchaseWriteDisabledError } = require('./multiItem');",
 ].join('\n');
 
 /** 原文里**被搬走**的块的顺序（按**原文出现顺序** ✓ 顺序错 ⇒ sha 对不上 ⇒ 红 ✓）。 */

@@ -117,6 +117,7 @@ const { asList } = require('./shared');
 const { parsePaymentRows } = require('./payment');
 const { parseReplenishEntries, parseReturnEntries } = require('./posting');
 const { parseMultiItemGroups, mergeFirstItemEntries } = require('./multiItem');
+const { purchaseWriteDisabledError } = require('./multiItem');
 // ⭐⭐ 2026-10-14 晚（埋点 P0 ②④⑤）：点击埋点的**同一份实现**（与工作台共用；
 //   本文件只负责"挂在扫码路由上、写 POST 上带结果事件"）。
 const {
@@ -3604,4 +3605,3 @@ module.exports = {
   //   （用例直调它们钉"坏输入 ⇒ `[]`"与"只合并一次 ⇒ 数量不翻倍"✓）
   parseMultiItemGroups, mergeFirstItemEntries,
 };
-
