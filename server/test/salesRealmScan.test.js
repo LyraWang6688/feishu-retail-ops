@@ -67,7 +67,8 @@ process.env.LARK_WEB_SESSION_SECRET = 'sales_realm_scan_session_secret';
 process.env.LARK_WEB_AUTH_ENABLED = 'true';
 delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 // 本文件测的不是"存草稿"，显式把草稿那一套关掉（与 `multiItemLogsAndRealmScan.test.js` 同一前置 ✓）
-process.env.SCAN_DRAFT_ENABLED = 'false';
+// ⚠️ 2026-10-16 深夜（成对迁移）：本文件原来那一行草稿前置（那一族的显式开关）**已随 `config/scanDraft.js` 整件退场而作废** ⇒ 删除。
+//   依据 = 业务负责人 2026-10-16 22:0x「**存草稿的功能都删除吧……整个链路都删除**」· 断言一条没删、没放宽 ✓
 
 const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
