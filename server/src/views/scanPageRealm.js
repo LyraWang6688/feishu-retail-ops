@@ -54,7 +54,7 @@ const { SCAN_PAGE } = require('../config/scanPage');
 //   所以**完全可以抽象出来**」⇒ **「有货」怎么算 ＋ 尺码范围 ＋ 展示规则** 全部收敛到
 //   `config/scanStockPolicy.js`（**口径的家** ✓）。本文件从此**只决定"怎么摆"** ✗ **不决定"算不算"** ✓。
 const {
-  SCAN_STOCK_POLICY, LEGACY_SELLABLE_STATES, countInStockOf, specialSizesOf,
+  SCAN_STOCK_POLICY, countInStockOf, specialSizesOf,
 } = require('../config/scanStockPolicy');
 
 // ⭐ 2026-10-09：男女两组尺码段**进配置**（`config/scanPage.js` 的 `sizeSegments`）——
@@ -198,7 +198,6 @@ const REALM_TEXTS = Object.freeze({
  *   ⚠️ 名字保留（既有判据 `test/scanPageRealms.test.js` / `test/stockStateConsistency.test.js`
  *     直接 import 它 ⇒ **一条判据都不用改** ✓）；语义 = **开关关着时的可卖状态清单** ✓。
  */
-const SELLABLE_STATES = LEGACY_SELLABLE_STATES;
 
 // （`SIZE_GROUP_RANGES` 已上移到文件顶部：从 `config/scanPage.js` 的 `sizeSegments` 取，
 //   与缺码判定**同源**——2026-10-09 之前这里另有一份内联的硬编码副本。）
@@ -388,7 +387,6 @@ module.exports = {
   REALM_EMPTY_TEXT_KEYS,
   REALM_TEXTS,
   LABEL_PRINT_PATH,
-  SELLABLE_STATES,
   SIZE_GROUP_RANGES,
   resolveRealm,
   labelPrintUrls,

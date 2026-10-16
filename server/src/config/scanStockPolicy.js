@@ -36,21 +36,8 @@
  * ⚠️ **本文件只做纯函数判定**：零飞书读、零 IO、不 require 任何 service。
  */
 
-const { readFlag } = require('./envValue');
 const { SCAN_PAGE, expandRange } = require('./scanPage');
 
-/** 开关的变量名（**唯一一处**字面量）。 */
-const ENABLED_KEY = 'SCAN_STOCK_POLICY_ENABLED';
-
-/**
- * ⭐ **旧口径**（开关关着时的可卖状态清单）—— 从视图层**搬过来的那一份**。
- *
- *   改前逐字（`views/scanPageRealm.js:184`）：`const SELLABLE_STATES = Object.freeze(['门盒', '样品']);`
- *   改后逐字：**定义在这一处配置**（`views/scanPageRealm.js` 引用它 ⇒ 全仓只有一份 ✓）
- *   依据：她 2026-10-16 20:5x「这个口径其实**也可以做一个配置**」
- *     ＋ 她 2026-10-09「可卖 = **样品 + 门盒**」（旧口径本身**不改** ✗ —— 它是开关关着时的行为）。
- */
-const LEGACY_SELLABLE_STATES = Object.freeze(['门盒', '样品']);
 
 /**
  * ⭐ 取值（**纯函数**，进 `env` ⇒ 可单测、不碰全局 `process.env`）。
@@ -59,13 +46,10 @@ const LEGACY_SELLABLE_STATES = Object.freeze(['门盒', '样品']);
  *   · 认不出来的值 ⇒ **当场抛错**（`readFlag` 的语义，不猜）。
  */
 const resolveScanStockPolicy = (env = process.env) => Object.freeze({
-  enabled: readFlag(env, ENABLED_KEY, false),
   // ── ① 「有货」的两种口径（**判据本体在下面 `countInStockOf`**）────────────────
   inStock: Object.freeze({
     // 开着：实时库存里该【编号 + 尺码】**有记录**（**不看状态** ✗）—— 她 2026-10-16 20:5x 的口径
     liveInventoryRecord: 'live-inventory-record',
-    // 关着（今天）：`门盒 + 样品` 两格之和 > 0 —— 她 2026-10-09 的旧口径
-    legacyStates: LEGACY_SELLABLE_STATES,
   }),
   // ── ② 尺码范围：**指向既有配置**（同一个对象引用 —— 不是第二份副本 ✗）──────────
   sizes: Object.freeze({
@@ -109,28 +93,7 @@ const isLegacySellableCell = (cell, states = LEGACY_SELLABLE_STATES) => (
   states.includes(String(cell?.key ?? '').trim())
 );
 
-/**
- * **旧口径**的数量 = `门盒 + 样品`（仓库不算）。
- *
- * 🔴 本函数体**逐字 = 改前 `views/scanPageRealm.js` 的 `sellableCountOf`**（搬过来，不改算法 ✗）：
- *   两种形状都认（**单一判据，不猜**）：
- *     ① 正常形状：`cells[].key` 就是列名（服务端视图模型一直这么给）；
- *     ② 老形状 / 夹具：`cells` 上没有 `key` ⇒ 按**视图模型的列序**取
- *        （`columns` 里第几个是"门盒 / 样品"，就取第几格）——
- *        取不到列序时返回 0（宁可判成"没货 → 预订"，也不把仓库算成可卖）。
- *   改前逐字 → 改后逐字 → 依据：见上面 `LEGACY_SELLABLE_STATES` 的注释（同一条）。
- */
-const legacySellableCountOf = (row, columns = []) => {
-  const cells = Array.isArray(row?.cells) ? row.cells : [];
-  if (cells.some((cell) => String(cell?.key ?? '').trim())) {
-    return cells.reduce((sum, cell) => (isLegacySellableCell(cell) ? sum + Number(cell.count || 0) : sum), 0);
-  }
-  return (Array.isArray(columns) ? columns : []).reduce((sum, column, index) => (
-    LEGACY_SELLABLE_STATES.includes(String(column?.key ?? '').trim())
-      ? sum + Number(cells[index]?.count || 0)
-      : sum
-  ), 0);
-};
+
 
 /**
  * **新口径**的数量 = 实时库存里该【编号 + 尺码】的**记录条数**（**完全不看「所属状态」** ✗）。
@@ -153,9 +116,12 @@ const liveInventoryCountOf = (row) => (row?.unknown_size ? 0 : Number(row?.total
  * 销售 / 补货 / 退货三页**都从这里取**（`views/scanPageRealm.js` 的 `sellableCountOf` 只是转发）；
  * 库存页那一行的 `total` 就是**同一个数**（基线对照 ✓）。⇒ **前端不再决定"算不算"** ✗
  */
-const countInStockOf = (row, columns = [], policy = SCAN_STOCK_POLICY) => (
-  policy.enabled ? liveInventoryCountOf(row) : legacySellableCountOf(row, columns)
-);
+// ⭐⭐ 2026-10-16 22:5x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：`policy.enabled ? liveInventoryCountOf(row) : legacySellableCountOf(row, columns)`
+//   改后逐字：⭐ **只留新口径** ✓ `liveInventoryCountOf(row)`（老口径整段删净 ✗ 不是 `if (true)` ✗）
+//   依据 = 她 20:5x「**统一不用看状态**，只要在实时库存里这个编号有尺码记录，就都是有货」
+//          ＋ 22:5x「不需要开关」✓（`docs/no-switch-rule-2026-10-16.md` ✓）
+const countInStockOf = (row) => liveInventoryCountOf(row);
 
 /** 这一行现在算不算"有货"（布尔 —— 与 `countInStockOf > 0` 同一判据，避免各处再写一遍比较 ✗）。 */
 const isInStock = (row, columns = [], policy = SCAN_STOCK_POLICY) => (
@@ -193,12 +159,8 @@ const specialSizesOf = (categoryCode, policy = SCAN_STOCK_POLICY) => {
 };
 
 module.exports = {
-  ENABLED_KEY,
-  LEGACY_SELLABLE_STATES,
   SCAN_STOCK_POLICY,
   resolveScanStockPolicy,
-  isLegacySellableCell,
-  legacySellableCountOf,
   liveInventoryCountOf,
   countInStockOf,
   isInStock,

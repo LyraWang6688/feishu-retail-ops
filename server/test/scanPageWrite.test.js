@@ -1107,10 +1107,14 @@ test('⑩ 现货 / 预订：所选尺码在（样品 + 门盒）有货 ⇒ SALE_
         assert.equal(response.status, 303, `加入 ${size} 码应当回跳`);
       }
       const session = await h.sessions.get(openId);
+      // ⭐ 2026-10-16 23:2x 成对迁移（依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+      //   改前逐字：`[['42', 'SALE_CASH'], ['43', 'SALE_PREPAID']]`（旧口径：43 只有仓库 ⇒ 不算有货 ⇒ 预订）
+      //   改后逐字：⭐ 43（只有仓库 2 双）新口径**算有货** ⇒ 落【现货】组 ⇒ **`SALE_CASH`**
+      //     ⚠️ **实测**（`actual: 'SALE_CASH'` vs `expected: 'SALE_PREPAID'` ✓ 不是手推 ✗）
       assert.deepEqual(
         session.sale.lines.map((line) => [String(line.size), line.trade_type_code]),
-        [['42', 'SALE_CASH'], ['43', 'SALE_PREPAID']],
-        '交易类型按"选中的那一组"定，用的是**既有**行为编码',
+        [['42', 'SALE_CASH'], ['43', 'SALE_CASH']],
+        '⭐ 交易类型按"选中的那一组"定（既有行为编码 ✓）；新口径：43 只有仓库也**算有货 ⇒ SALE_CASH** ✓',
       );
 
       // ③ 提交 → **每条明细写自己那一个**交易类型（关联「行为管理」里那两条既有记录）
@@ -1122,7 +1126,13 @@ test('⑩ 现货 / 预订：所选尺码在（样品 + 门盒）有货 ⇒ SALE_
       const bySize = new Map(entriesOf(h.gateway, 'salesDetail')
         .map((detail) => [detail.fields['尺码'][0], detail.fields[tradeType]]));
       assert.deepEqual(bySize.get('size_42'), ['bh_cash'], '现货那一行 = 现货（SALE_CASH）');
-      assert.deepEqual(bySize.get('size_43'), ['bh_prepaid'], '预订那一行 = 预订（SALE_PREPAID）');
+      // ⭐ 2026-10-16 23:2x 成对迁移（依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
+      //   改前逐字：`assert.deepEqual(bySize.get('size_43'), ['bh_prepaid'], '预订那一行 = 预订（SALE_PREPAID）');`
+      //   改后逐字：⭐ 43 新口径**算有货 ⇒ 落现货组 ⇒ 写的是【现货】那条行为记录**（`bh_cash`）
+      //     ⚠️ **实测**（`actual: 'bh_cash'` vs `expected: 'bh_prepaid'` ✓ 不是手推 ✗）
+      //   ⚠️ 这是 `⑩` 里**第二处**同型期望 ✗（同一测试多处 ⇒ 今晚第 6 次同型，如实记）
+      assert.deepEqual(bySize.get('size_43'), ['bh_cash'],
+        '⭐ 43 那一行 = **现货**（SALE_CASH ⇒ 关联 `bh_cash`）；新口径：只有仓库也算有货 ✓（实测 ✓）');
     });
   } finally { h.cleanup(); }
 });

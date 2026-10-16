@@ -66,10 +66,22 @@ test('AC-NS4 ⭐ 现货/预订分组**照旧**（仍按可售状态分组、仍�
   //     「**统一不用看状态**」（新口径开关见 `config/scanStockPolicy.js` 的 `enabled`）。
   //   ⚠️ **没有放宽**：旧口径的字面量仍然**只存在一处**（只是从 realm 换成 config ✓）。
   const policyCode = stripped('src/config/scanStockPolicy.js');
-  assert.match(policyCode, /const LEGACY_SELLABLE_STATES = Object\.freeze\(\['门盒', '样品'\]\)/,
-    '开关关着时的可卖状态定义在配置里（**唯一一份** ✓）');
-  assert.match(code, /const SELLABLE_STATES = LEGACY_SELLABLE_STATES/,
-    'realm 只**引用**配置那一份（不再自己定义 ✗）');
+  // ⭐⭐ 2026-10-16 23:2x **成对迁移**（改前逐字 → 改后逐字 → 依据 · 第二刀：删开关②）：
+  //   改前逐字：`assert.match(policyCode, /const LEGACY_SELLABLE_STATES = Object\.freeze\(\['门盒', '样品'\]\)/)`
+  //            ＋ `assert.match(code, /const SELLABLE_STATES = LEGACY_SELLABLE_STATES/)`
+  //   改后逐字：⭐ 那份旧口径名单**连同开关一起退场**（policy 里 −48 行整段删净、realm 里转发退场）
+  //     ⇒ 两条都改成【反向哨兵】—— ⭐ 用 `in` 判**模块导出面**
+  //       （不引用标识符 ⇒ 不会 ReferenceError ✓ **注释免疫** ✓ —— 我第一版想"读源码判字符串"被迁移注释命中过 ✗）
+  //   依据：她 2026-10-16 22:5x「不要开关思维 ⇒ 既有开关要删掉（连同关着时的老分支）」
+  //   ⚠️ **没有放宽**：`assert.match`（必须存在）⇒ `assert.equal(… in …, false)`（必须不存在）——
+  //     两者都能真红（塞回去 ⇒ 立刻红 ✓）；
+  //   ⭐ 下面 `:73-80` 那几条（分组函数还在 / 仍分两组 / 仍只吃 view.rows）**照旧不动** ✗
+  const policyMod = require('../src/config/scanStockPolicy');
+  const realmMod = require('../src/views/scanPageRealm');
+  assert.equal('LEGACY_SELLABLE_STATES' in policyMod, false,
+    '⭐ 旧口径名单已随开关退场（不许回来 ✗）');
+  assert.equal('SELLABLE_STATES' in realmMod, false,
+    '⭐ realm 那处转发也已退场（不许回来 ✗）');
   // 2026-10-14：分组口径搬进 `config/scanPage.js`（配置先行）⇒ 签名多了可注入的 `behavior`；
   //   这条**不放宽**：既钉"函数还在 + 签名形状"，也钉"仍按可售数量分组、仍分两组" ✓
   assert.match(code, /const saleSizeGroups = \(view, behavior = SCAN_PAGE\.REALM_SIZE_BEHAVIOR\.sales\) => \{/,
