@@ -52,6 +52,17 @@ const { createPaymentMethodsService } = require('../../services/paymentMethodsSe
 const { createVoucherPaymentService } = require('../../services/voucherPaymentService');
 const { SalesFollowupService } = require('../../services/salesFollowupService');
 const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../../views/scanPageRenderer');
+// ⭐⭐ 2026-10-16（退货「出图发群」接线 · 本卡）：**采购退货**那条链要的「出图 / 发群 / 回填附件」
+//   装配件 —— 它把真的那个出图 webhook 实例接到退货写入件的 `webhooks` 上
+//   （与补货 / 验收**同一条路**：同一个类、同一个 `deliverSupplierImages` ✓ 不发明新写法 ✗）。
+//   🔴 **为什么单独一个文件**：本文件（`routes/**`）有**两条既有哨兵**
+//     （`test/multiItemOrderRoute.test.js` 的 RT5 ＋ `test/scanDraftRouteWiring.test.js` 的 AC-D3i2；
+//     ⚠️ 还有 `test/scanPage.test.js` ④ **连注释一起扫**）——
+//     路由里**不许出现**写链路那几个服务名（出图/报货那条、退货那条、以及那个类名）✗
+//     ⇒ 真名只住在那个装配件里，本文件只 require 它 ✓（⚠️ 连注释里都别写它们 ✗）。
+//   ⚠️ 接不接由**配置**决定（`config/scanWrite.js` 的 `PURCHASE_RETURN.imageDelivery.enabled` ✓
+//     配置先行）；发到哪个群仍是既有 `PURCHASE_CHAT_ID` ✓（本文件一行都不读它 ✗）。
+const { resolvePurchaseReturnImageOptions } = require('../../services/purchaseReturnImageWiring');
 // ⚠️ 只借这两个**纯函数**：所选尺码在「样品 + 门盒」有没有货（= 页面上那两个分组的判据），
 //    以及 `?from=` → 领域 id（认不出来回落缺省，不报错、不白屏）。
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, PURCHASE_RETURN_REALM } = require('../../views/scanPageRealm');
@@ -274,8 +285,23 @@ const createScanPageRouter = (options = {}) => {
   };
   // ⚠️ 写服务**只为 POST 与"本单还有几双"服务**；`GET` 的库存表一个字都不依赖它。
   //    用例可以注入一个假的（`options.writeService`），`false` = 这一版不挂写入口。
+  // ⭐⭐ 2026-10-16（退货「出图发群」接线 · 本卡）：把**采购退货的出图链路**装配上 ——
+  //   原来这里是 `{ gateway, config }`，**没有人传** `purchaseReturnOptions`
+  //   ⇒ 写链路的 `webhooks` 恒为空 ⇒ 退货**永远** `no_image_pipeline`（线上真缺陷，见
+  //   `services/purchaseReturnImageWiring.js` 的文件头：改前逐字 → 改后逐字 → 依据）。
+  //   ⚠️ **它惰性构造**（真正提交退货时才 `new`）⇒ 启动 / 建 router 这一层零副作用 ✓；
+  //   ⚠️ 用例想注入假出图 / 假 IM ⇒ `options.purchaseReturnImage`（与 `options.writeService` /
+  //     `options.multiItemWire` 同一种注入法 ✓）。
   const writeService = writeConfig && options.writeService !== false
-    ? (options.writeService || createScanWriteService({ gateway, config: writeConfig }))
+    ? (options.writeService || createScanWriteService({
+      gateway,
+      config: writeConfig,
+      purchaseReturnOptions: resolvePurchaseReturnImageOptions({
+        gateway,
+        config: writeConfig.purchaseReturn && writeConfig.purchaseReturn.imageDelivery,
+        overrides: options.purchaseReturnImage || {},
+      }),
+    }))
     : null;
 
   // ══════════════════════════════════════════════════════════════════════════

@@ -56,7 +56,20 @@ test('AC-NS3 ⭐⭐ 其他码：**库存里有的就显示**（不算特殊码 �
 test('AC-NS4 ⭐ 现货/预订分组**照旧**（仍按可售状态分组、仍只吃实时库存 rows ✓ 回归）', () => {
   // ⚠️ 我第一版用自造夹具去断言分组，夹具形状不对 ⇒ 改成**源码级**回归（分组的实现没动 ✓）
   const code = stripped('src/views/scanPageRealm.js');
-  assert.match(code, /const SELLABLE_STATES = Object\.freeze\(\['门盒', '样品'\]\)/, '可售状态定义没动 ✓');
+  // ⭐⭐ 2026-10-16 晚 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.match(code, /const SELLABLE_STATES = Object\.freeze\(\['门盒', '样品'\]\)/, '可售状态定义没动 ✓');`
+  //     （"可卖 = 门盒 + 样品"那份字面量**写在渲染层**）
+  //   改后逐字：那份字面量**搬进 `config/scanStockPolicy.js`**（名字 = `LEGACY_SELLABLE_STATES`）；
+  //     `views/scanPageRealm.js` 只**引用**它（`const SELLABLE_STATES = LEGACY_SELLABLE_STATES`）⇒
+  //     这条改成**两条**：配置里有那份定义 ＋ realm 里只是引用（**不许再定义第二份** ✗）
+  //   依据：她 2026-10-16 20:5x「这个口径其实**也可以做一个配置**」＋
+  //     「**统一不用看状态**」（新口径开关见 `config/scanStockPolicy.js` 的 `enabled`）。
+  //   ⚠️ **没有放宽**：旧口径的字面量仍然**只存在一处**（只是从 realm 换成 config ✓）。
+  const policyCode = stripped('src/config/scanStockPolicy.js');
+  assert.match(policyCode, /const LEGACY_SELLABLE_STATES = Object\.freeze\(\['门盒', '样品'\]\)/,
+    '开关关着时的可卖状态定义在配置里（**唯一一份** ✓）');
+  assert.match(code, /const SELLABLE_STATES = LEGACY_SELLABLE_STATES/,
+    'realm 只**引用**配置那一份（不再自己定义 ✗）');
   // 2026-10-14：分组口径搬进 `config/scanPage.js`（配置先行）⇒ 签名多了可注入的 `behavior`；
   //   这条**不放宽**：既钉"函数还在 + 签名形状"，也钉"仍按可售数量分组、仍分两组" ✓
   assert.match(code, /const saleSizeGroups = \(view, behavior = SCAN_PAGE\.REALM_SIZE_BEHAVIOR\.sales\) => \{/,

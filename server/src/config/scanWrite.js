@@ -477,6 +477,17 @@ const PURCHASE_RETURN = Object.freeze({
   // 退货单出图：与采购申请单共用渲染器，只换标题与文件名后缀（既有出图链路支持这两个参数）。
   imageTitle: readString(process.env, 'SCAN_RETURN_IMAGE_TITLE', '邯美皮鞋采购退货单'),
   fileNameSuffix: readString(process.env, 'SCAN_RETURN_FILE_SUFFIX', '采购退货单'),
+  // ⭐⭐ 2026-10-16（退货「出图发群」接线 · 本卡）：**装配处接不接出图链路**的唯一判据。
+  //   为什么今天才需要它：这条链路的 `webhooks` **一直是没人传**的 ⇒ 每一次退货出图那一步
+  //   都只打一条 `reason: 'no_image_pipeline'` 的 warn —— **账走了、图一张没发** ✗
+  //   （她 2026-10-16 20:12 那次真退货的线上日志就是这个；⚠️ 单货品退货**同样**中招，是老缺口）。
+  //   ⚠️ **显式布尔**（`config/envValue.js` 的 `readFlag`）：**设成空串 = 关**（不是"没配 ⇒ 回退默认"）
+  //     ⇒ 哪天不想让退货单进群，清空这个变量即可，不用改代码 ✓。
+  //   ⚠️ 发到**哪个群**不在这里：那是既有 `PURCHASE_CHAT_ID`（`config/groupPurchase.js` ✓ 本来就配置先行）；
+  //     没配时出图链路自己会**大声跳过**（`purchase.request.image.skipped` ＋ 人话 hint ✓ 绝不落回私聊）。
+  imageDelivery: Object.freeze({
+    enabled: readFlag(process.env, 'SCAN_WRITE_PURCHASE_RETURN_IMAGE_ENABLED', true),
+  }),
 });
 
 /**
