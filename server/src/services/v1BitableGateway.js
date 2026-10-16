@@ -489,6 +489,105 @@ class V1BitableGateway {
   }
 
   /**
+   * ⭐⭐ task-65（2026-10-16 · Lead 授权「给网关加 `deleteBatch`」）：**批量删除** —— 一次请求最多 500 条。
+   *
+   * 官方（curl 核过，2026-10-16，《删除多条记录》）：
+   *   `POST /open-apis/bitable/v1/apps/:app_token/tables/:table_id/records/batch_delete`，
+   *   请求体 `{ records: string[] }`（记录 ID 列表），**「单次调用中最多删除 500 条记录」**，
+   *   频率限制 **50 次/秒**；响应体 `data.records = [{ deleted, record_id }]`。
+   *
+   * 为什么要有它（真账）：采购退货扣库存那一段原来**每一双**一次 `delete`
+   *   （单货品 3 双 = 3 次、多货品 6 双 = 6 次）⇒ 批量之后整批 **1 次**。
+   *
+   * 语义与单条 `delete` **逐条一致**（这是硬要求，别在这里"顺手优化"）：
+   *   · **空数组 / 全空串 ⇒ 零请求**（返 `[]`，一次飞书都不打）；
+   *   · 分片 ≤ `BATCH_GET_CHUNK_SIZE`（500，与 `createBatch` / `getBatch` 同一把尺子）；
+   *   · 🔴 **只有请求的每一条都被如实回报 `deleted !== false` 才算这一片成功**；
+   *     条数对不上 / 少回 / 明说 `deleted: false` ⇒ **先记 requested/returned/missing 三个数，再抛**
+   *     —— **绝不把"部分成功"当全成功**，也**绝不把"全成功"当失败**（成功了就正常返回）；
+   *     ⚠️ 抛出的错误上挂 **`bitablePartialDelete` / `bitableDeletedRecordIds`**（官方**如实回报**的
+   *     那一份：哪几条真的删掉了）⇒ 调用方据此把"已删"记进本地 journal，续跑才不会把
+   *     "已删"当成"不存在"而卡住；**不挂 `bitableRejected`**（那一位的语义是"飞书明确拒绝 ⇒
+   *     确定没写入"，部分删除**不成立**）。
+   *   · 返回与入参**同序**的 `[{ recordId, deleted }]`（调用方按位置对账）；
+   *   · `options.correlation` **不透明**透传（只进日志，不进 payload）。
+   *   · 🔴 **单条 `delete` 一行没动**：既有调用方（`executeOperation` 等）行为**逐字不变**
+   *     —— 本方法只加能力，不改任何既有调用。
+   */
+  async deleteBatch(tableKey, ids = [], options = {}) {
+    const list = (Array.isArray(ids) ? ids : [])
+      .map((id) => String(id || '').trim()).filter(Boolean);
+    if (!list.length) return [];
+    const table = this.tableWithId(tableKey);
+    const correlation = correlationFields(options.correlation);
+    const deleted = [];
+    for (let offset = 0; offset < list.length; offset += BATCH_GET_CHUNK_SIZE) {
+      const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
+      const startedAt = Date.now();
+      try {
+        const response = await this.client.bitable.appTableRecord.batchDelete({
+          path: { app_token: this.schema.appToken, table_id: table.tableId },
+          data: { records: chunk },
+        });
+        // ⚠️ 措辞与单条 delete **逐字一致**（白名单里已有 `删除“{}”记录`，不新增硬编码中文）
+        this.assertSuccess(response, `删除“${table.tableName}”记录`);
+        const records = response.data?.records || [];
+        const byId = new Map(records.map((record) => [record?.record_id, record]));
+        // 官方口径是 `deleted` 布尔；只把**明说 false / 干脆没回**当成失败（不猜、不美化）。
+        const missing = chunk.filter((recordId) => !byId.has(recordId));
+        const notDeleted = chunk.filter((recordId) => byId.get(recordId)?.deleted === false);
+        if (records.length !== chunk.length || missing.length || notDeleted.length) {
+          // ⭐ 同 createBatch / updateBatch：先记 requested / returned / missing 三个数，**再抛**
+          logWarn('bitable.record.batch_write_mismatch', {
+            table_key: tableKey,
+            table_id: table.tableId,
+            operation: 'delete',
+            requested: chunk.length,
+            returned: records.length,
+            missing: Math.max(0, chunk.length - records.length),
+            not_deleted: notDeleted.length,
+            chunk_offset: offset,
+            ...correlation,
+          });
+          // 内部错误（正常不可达）：用**英文键**表述 ⇒ 不引入新的硬编码中文
+          const mismatch = new Error(`batch_delete_count_mismatch: expected ${chunk.length}, got ${records.length}`
+            + (notDeleted.length ? `, not_deleted ${notDeleted.length}` : ''));
+          // ⭐ 官方**如实回报的那一份**（哪几条真的删掉了）挂在错误上 —— 先例是 `assertSuccess`
+          //    往错误上挂 `bitableRejected` / `bitableCode`。调用方据此把"已删"记进本地 journal；
+          //    没有它，续跑（逐双）会把"已经删掉的那几条"当成"不存在"当场抛、要人工核对。
+          //    ⚠️ 只认**明说 `deleted: true`** 的：宁可少记（续跑会停下要人工核对），
+          //       也绝不把"可能没删"记成"已删"（那会静默少扣库存）。
+          mismatch.bitablePartialDelete = true;
+          mismatch.bitableDeletedRecordIds = chunk.filter(
+            (recordId) => byId.get(recordId)?.deleted === true,
+          );
+          throw mismatch;
+        }
+        deleted.push(...chunk.map((recordId) => ({ recordId, deleted: true })));
+        logInfo('bitable.record.batch_deleted', {
+          table_key: tableKey,
+          table_id: table.tableId,
+          count: chunk.length,
+          chunk_offset: offset,
+          duration_ms: Date.now() - startedAt,
+          ...correlation,
+        });
+      } catch (error) {
+        logError('bitable.record.batch_delete_failed', {
+          table_key: tableKey,
+          table_id: table.tableId,
+          count: chunk.length,
+          chunk_offset: offset,
+          error: error?.message || String(error),
+          ...correlation,
+        });
+        throw error;
+      }
+    }
+    return deleted;
+  }
+
+  /**
    * 整表读（翻页取完）。
    *
    * `options.fieldNames`（可选）：**只要这些列**（飞书 `field_names`）——
