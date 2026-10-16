@@ -376,9 +376,18 @@ test('AC-SP8 ⭐ 记录读不到 / 这一款没库存 ⇒ 400 人话（不是 50
 const loadScanPrintModule = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-print-ui-'));
   fs.copyFileSync(path.join(WORKBENCH, 'core/ui.js'), path.join(dir, 'ui.mjs'));
+  // ⚠️ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：只复制 `core/ui.js` 一份（`scan-print.js` 当时只 import 它）。
+  //   改后逐字：**多复制一份 `config/scanEntries.js`**（五处扫一扫登记表的浏览器镜像）——
+  //             `scan-print.js` 新增了 `from '../../config/scanEntries.js'` 这一条 import。
+  //   依据：业务负责人 2026-10-16 21:2x 五处口径（`docs/scan-five-places-2026-10-16.md`）
+  //        ⇒ 这一处的参数与文案收敛到登记表（`test/scanFivePlaces.test.js` 钉着 ✓）。
+  //   ⚠️ 只改**测试的加载器**（少复制一个文件 ⇒ 模块不存在 ⇒ 整份文件假红 ✗）；**判据一个字没放宽** ✓。
+  fs.copyFileSync(path.join(WORKBENCH, 'config/scanEntries.js'), path.join(dir, 'scanEntries.mjs'));
   fs.writeFileSync(path.join(dir, 'scan-print.mjs'),
     read('features/labels/scan-print.js')
-      .split("from '../../core/ui.js'").join("from './ui.mjs'"),
+      .split("from '../../core/ui.js'").join("from './ui.mjs'")
+      .split("from '../../config/scanEntries.js'").join("from './scanEntries.mjs'"),
     'utf8');
   return import(pathToFileURL(path.join(dir, 'scan-print.mjs')).href);
 };
