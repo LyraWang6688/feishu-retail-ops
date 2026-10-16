@@ -68,8 +68,11 @@ const resolveShared = (env) => ({
   detailKeyTemplate: readString(
     env, 'SCAN_MULTI_ITEM_DETAIL_KEY', 'purchase_request:{taskId}:{productKey}:{size}',
   ),
-  // 异步（**第二步才开** ⇒ 默认 `false`）；两个键照销售那条 `SALE.asyncWrite` 同形 ✓。
-  asyncEnabled: readFlag(env, 'SCAN_MULTI_ITEM_ASYNC_ENABLED', false),
+  // ⭐⭐ 2026-10-16 22:5x（业务负责人逐字：「**不用。以后你不用有"开关"的这个思维…把新功能都上了，
+  //   不需要开关。**」）· **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`asyncEnabled: readFlag(env, 'SCAN_MULTI_ITEM_ASYNC_ENABLED', false),`
+  //   改后逐字：**这一行删净** ✗（本键**全仓 0 处读取** ⇒ 一单多货的"提交即回"本来就是**永远开** ✓）
+  //   依据 = 她 22:5x 那句（见 `docs/no-switch-rule-2026-10-16.md` ✓ 不翻 true、直接删 ✗）
   asyncTimeoutMs: readInt(env, 'SCAN_MULTI_ITEM_ASYNC_TIMEOUT_MS', 180000, { min: 1000, max: 600000 }),
   // ⭐ 批次号：**复用既有生成器**（`config/purchaseBatchNo.js`）⇒ 这里**不新造** ✗（只留一个说明键，
   //   免得后来人以为漏了）。值不参与逻辑，只用于自检/文档。

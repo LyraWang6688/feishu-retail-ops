@@ -42,7 +42,9 @@ const GOLDEN_CASES = [
 
 test('AC-ST7-pre ⭐ 本进程开关**真的关着**（缺省 = 今天）', () => {
   assert.equal(process.env[ENABLED_KEY], undefined, '本文件不许设那个变量（缺省那条路）');
-  assert.equal(SCAN_STOCK_POLICY.enabled, false, '配置解析出来是关着');
+  // 改前逐字：`assert.equal(SCAN_STOCK_POLICY.enabled, false, '配置解析出来是关着')`
+  //   改后逐字：⭐ **已经没有开关这回事** ✓（`enabled` 不再是配置的一部分 ⇒ `undefined` ✓）
+  assert.equal(SCAN_STOCK_POLICY.enabled, undefined, '⭐ 开关已退场 ⇒ 永远按实时库存口径 ✓');
 });
 
 test('AC-ST7a ⭐⭐ 开关关着 ⇒ **整页 HTML 的 sha256 与改前逐字相同**（12 个，`assert.equal`）', () => {
