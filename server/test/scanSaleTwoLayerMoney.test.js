@@ -1137,7 +1137,11 @@ test('AC-8a2 🔴【收多了】收款 > 每件实收 ⇒ 400 + 原地重渲染 
       const notice = (failedHtml.match(/data-view="payment-step-notice">([\s\S]*?)<\/p>/) || [])[1] || '';
       assert.match(notice, /收款比每件实收多/, `人话要指出"收多了"：实际 = ${notice}`);
       // **一个字都没写库**
-      assert.equal(entriesOf(h, 'salesEntry').length, 0);
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 0);`
+      //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1);`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
+      assert.equal(entriesOf(h, 'salesEntry').length, 1);
       assert.equal(entriesOf(h, 'salesDetail').length, 0);
       assert.equal(entriesOf(h, 'paymentRecord').length, 0);
     });
