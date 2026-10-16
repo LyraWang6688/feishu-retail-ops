@@ -57,3 +57,16 @@
 - ⭐ **留档优先级**：**提交说明（`*.commits.txt`）＞ 关键文件的 diff ＞ 整仓 patch** ✗
   （她关心的是"这段逻辑当时想干什么"✓ 不是几十万行 `node_modules` ✗）
 - ✅ 处置：**已删掉全部超大 patch** ✗（它们从未推上远端 ✓）；本目录只保留**看得懂的**留档 ✓
+
+## 🗑 2026-10-16 20:4x：**A 档/B 档那 10 份 patch 已按业务负责人口径删除** ✗
+
+- **依据**：她 2026-10-16 明确「**删除**」（起因：她看到 `arrival-batch-committed.patch` = +1,427,710 行 ⇒ 我核出同目录 10 份 patch 是**同一根因**）
+- **根因**：那些 patch 是**在 worktree 里**跑 `git diff origin/main` 生成的 ⇒ 该 worktree 的 `origin/main` ref 不同步
+  ⇒ 把**整个仓库（含 `node_modules`）**都算成"新增" ⇒ 单份 30~110MB ✗ **共 87MB**（A/B 档）＋ 1.1GB（我批量清分支时又生成了 13 份）
+- **为什么删得掉**：它们的**内容已经全部合进 main** ✓
+  （A 档 7 份随 **#742** ✓、B 档相关随 **#744** ✓、`inv-special`/`speed2` 随 **#744** ✓）⇒ 留档价值 = 0 ✓
+- ⭐ **保留的是"看得懂的"那部分**：`README.md` · `README-B-TIER.md`（**人写的判定与结论** ✓）· 每个分支的 `*.commits.txt`（**提交说明** ✓）
+- ⭐ **正确做法**（本目录 2026-10-16 之后一律照此）：
+  · ✅ 在**主工作区**里、**带显式路径**：`git diff origin/main..<branch> -- server/src server/test docs`
+  · ❌ 不在 worktree 里跑 `git -C <worktree> diff origin/main`（ref 可能是旧的 ✗）
+  · ❌ 不做不带路径的整仓 diff（`node_modules`/lock 全会卷进来 ✗）
