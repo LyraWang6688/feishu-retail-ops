@@ -604,9 +604,11 @@ test('AC-RI6 🔴 源码哨兵：路由装配处出现 `purchaseReturnOptions` �
   }
 });
 
-// MUTATION（本卡 · 每组都单独跑过、确认**真红**，跑完逐字节还原 ✓）：
-//   ① 把 `routes/scanPage/index.js` 里那两处装配（require ＋ `purchaseReturnOptions:`）删掉
-//      ⇒ **AC-RI1 / RI2 / RI3a 红**（`no_image_pipeline` 重现、`renders`=0）＋ **AC-RI6 红**（源码哨兵）✓
+// MUTATION（本卡 · 2 组，每组都在**独立 worktree** 上单独跑过、确认真红，跑完逐字节还原 ✓）：
+//   ① 把 `routes/scanPage/index.js` 里那段装配（`purchaseReturnOptions:` 那一段）删掉
+//      ⇒ **AC-RI1 / RI2 / RI3a 红**（出图那一步一次都没被调：`renders`=0）＋ **AC-RI6 红**（源码哨兵）；
+//      ⚠️ **AC-RI4 仍是绿的** —— 它本来就是"不接的时候该看到什么"，所以它不参与这一组 ✓
 //   ② 把 `config/scanWrite.js` 的 `imageDelivery.enabled` 缺省改成 `false`
-//      ⇒ 同上（AC-RI4 的探针那一条**反而变绿**，其它红）✓
-//   还原核验：`git diff | shasum -a 256` 与变异前**逐字节一致** ✓
+//      ⇒ **AC-RI1 / RI2 / RI3a / RI3b 红**（装配件那一份也拿不到出图链路）＋ **AC-RI4 仍绿** ✓
+//   还原核验：`git checkout -- <改过的那个文件>` ⇒ `shasum -a 256 -c` 与变异前**逐字节一致** ✓
+//   （上面的清单**与实测一致**，不是照抄预期 —— 完整表见 `docs/purchase-return-image-wiring-2026-10-16.md` 第 6 节 ✓）
