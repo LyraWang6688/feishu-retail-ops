@@ -267,3 +267,4 @@
 | [scan-page-split-plan-2026-10-16.md](scan-page-split-plan-2026-10-16.md) | ⭐⭐ `routes/scanPage.js`（3376 行）**拆分设计**（阶段一·只读）：八件形状（含 `render.js` 的理由）＋ **逐段真实行号**＋ 74 个测试文件的被引用清单 ＋ 共享状态怎么搬 ＋ 风险点（require 循环/路由顺序）＋ **薄壳建议** |
 - [worktree / 分支清理规矩](worktree-cleanup-rule-2026-10-16.md) —— 谁合谁清 · `git cherry` 判据 · 四条底线（2026-10-16 定）
 - [A 档 worktree 留档 2026-10-16](branch-salvage-2026-10-16/README.md) —— 7 个"重复/被她点头删除"的 diff 留档（2026-10-16）
+| [scan-five-places-2026-10-16.md](scan-five-places-2026-10-16.md) | ⭐⭐ **五处「扫一扫」的统一口径**（业务负责人 2026-10-16 21:2x 逐字确认）：本质是**一处「点按钮 ⇒ 弹二维码」**，**参数只有两个**（扫完回哪 / 带不带之前的数据）⇒ **不许一个领域一个领域地补**；含现状三套机制（A `scanRealmScan.js` JSSDK / B `layout.js` AppLink / C 工作台前端 `scan-print.js`）与下一步收敛范围 |
