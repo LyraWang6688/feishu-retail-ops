@@ -600,12 +600,21 @@ test('AC-ML7b ⭐ **不加第二套**：复用既有 `services/larkJsapiService.
 
 test('AC-ML8 🔴 `services/scanWriteService.js` **一个字不加/删/改**（余量 0）', () => {
   // 与 `origin/main` 的那一份逐字节相同（本刀**只读**它 ✓）
-  const { execFileSync } = require('node:child_process');
-  const repo = path.join(__dirname, '..', '..');
-  const committed = execFileSync('git', ['show', 'origin/main:server/src/services/scanWriteService.js'],
-    { cwd: repo, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  assert.equal(WRITE_SERVICE_SRC, committed,
-    '🔴 `scanWriteService.js` 与 `origin/main` 必须**逐字节相同**（本刀一个字都没动 ✓）');
+  // ⭐⭐ 2026-10-16 修复（Lead 亲自改 · 原因：这条判据在 **CI 里红** ✗ 本地却是绿的）
+  //   改前逐字：`execFileSync('git', ['show', 'origin/main:server/src/services/scanWriteService.js'], …)`
+  //     ⇒ 依赖 **`origin/main` 这个 ref** ✗ —— 而 GitHub Actions 的 checkout **默认只取 PR 分支** ✗
+  //       ⇒ CI 里那个 ref 不存在/是旧的 ⇒ `git show` 抛错 ⇒ **本地绿、CI 红** ✗（本 PR 实测正是这条）
+  //   改后逐字：用**钉死的 sha256 常量 + 行数**（与既有哨兵 `scanWriteServiceFrozen.test.js:39` 同一口径 ✓）
+  //   ⭐ **不是放宽**：从"与某个可能过期的 ref 比"变成"与**钉死的指纹**比" ⇒ **更严**（甩不掉、也不受 clone 深度影响 ✓）
+  //   依据：本仓既有的冻结哨兵写法（`FROZEN_SHA256 = '199551e1…35ca'`）＋ 本文件头声明的红线（余量 0 ✓）
+  const cryptoFrozen = require('node:crypto');
+  const FROZEN_SCAN_WRITE_SHA256 = '199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca';
+  const FROZEN_SCAN_WRITE_LINES = 1698;
+  const actualSha = cryptoFrozen.createHash('sha256').update(WRITE_SERVICE_SRC, 'utf8').digest('hex');
+  assert.equal(actualSha, FROZEN_SCAN_WRITE_SHA256,
+    '🔴 `scanWriteService.js` 必须与**钉死的指纹**逐字节相同（本刀一个字都没动 ✓）');
+  assert.equal(WRITE_SERVICE_SRC.split('\n').length, FROZEN_SCAN_WRITE_LINES,
+    '🔴 行数也必须一致（多一行都不行 ✓）');
   // 本刀的新行为**不许**出现在那个文件里（反过来说：它根本不知道"领域内扫一扫"这件事 ✓）
   assert.equal(WRITE_SERVICE_SRC.includes('realmScan'), false, '冻结件不该认识新逻辑 ✓');
   assert.equal(WRITE_SERVICE_SRC.includes('scan.multi_item'), false, '冻结件不该出现新事件名 ✓');
