@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
 // ⭐⭐ 2026-10-14（业务负责人逐字）：「只要本次付的金额小于累计的，那么差额都是未收款，
 //   包括本次付款为 0」⇒ 本条断言从「不写」翻成「**恰写一条**」（判据没放宽 ✗ 依据见 PR 说明）

@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
 /**
  * task-59「销售一单多货」—— **判据 AC-SM-A…F ＋ 上限**（先写判据 → 再跑 → 逐条对照 ✓）。

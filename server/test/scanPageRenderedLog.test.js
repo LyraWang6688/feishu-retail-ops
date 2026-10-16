@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * ⭐⭐ task-58（2026-10-16 早 · 业务负责人真机 05:34，逐字）：
  *   「我用你最新的线上版本测试了一下，静态感觉很好，扫描了几个货品二维码，

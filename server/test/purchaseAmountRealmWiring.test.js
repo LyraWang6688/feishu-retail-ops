@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * ⭐⭐ 2026-10-16（A2/A3 ① · **接线那一刀**）：「**补货不问金额**」在**路由**上真正生效的判据。
  *

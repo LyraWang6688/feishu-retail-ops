@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * ⭐⭐ 「实时库存」**内存快照**的验收标准（业务负责人 2026-10-09 同意的两项优化之一）。
  *

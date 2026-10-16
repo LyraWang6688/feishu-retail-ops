@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * ⭐⭐ task-21（2026-10-15 晚 · 她真机 20:22，逐字）：
  *   「我扫码一双鞋点击销售，出来的是**资金页面**」

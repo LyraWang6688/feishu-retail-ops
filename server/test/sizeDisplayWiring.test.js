@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * ⭐⭐ 2026-10-14：**"展示尺码读 normal、特殊码只在有货时出现"这条接线**的**回归哨兵**。
  *
