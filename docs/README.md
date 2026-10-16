@@ -235,6 +235,7 @@
 | [scan-sales-payment-flow-2026-10-13.md](scan-sales-payment-flow-2026-10-13.md) | 销售扫码页：**录入**与**整单付款**必须分成两步（业务负责人 2026-10-13 口径） |
 | [scan-selling-caliber-2026-10-09.md](scan-selling-caliber-2026-10-09.md) | 扫码销售口径（业务负责人 2026-10-09 定） |
 | [scan-speed-decisions-2026-10-09.md](scan-speed-decisions-2026-10-09.md) | 扫码页提速与缺省领域（业务负责人 2026-10-09 定） |
+| [scan-stock-state-consistency-2026-10-16.md](scan-stock-state-consistency-2026-10-16.md) | ⭐ **四 tab 库存口径不一致的只读诊断**（她真机 2026-10-16 20:35 · 货品 8516 · 44 码 1 双在「未标状态」）：四 tab × 状态对照表（各读哪一份数据 / 把哪些状态算「有货」/ 有没有缓存分家）＋「未标状态」= `所属状态` 为空 **= 脏数据/残缺行**（`inventoryService.LIVE_STATES` 写不进空值 ⇒ **不是**第四种在库状态）＋ 结论（**三个 tab 与库存页都没"算错"，错在"两套口径同页且不解释"**）＋ 两条收敛到一处配置的修法（**A 算有货 / B 不算 —— 待她拍**）＋ 判据 `test/stockStateConsistency.test.js`（AC-ST0…ST4） |
 | [size-range-special-sizes-2026-10-13.md](size-range-special-sizes-2026-10-13.md) | 尺码范围与「特殊尺码」口径（业务负责人 2026-10-13） |
 | [state-and-prompt-matrix-2026-10-08.md](state-and-prompt-matrix-2026-10-08.md) | 状态 → 处理规则 → 提示 → 出口 总表（2026-10-08） |
 | [task-sample-image-drive-sync-2026-10-13.md](task-sample-image-drive-sync-2026-10-13.md) | 【待做任务】把每条货品的「样例图」自动写入云盘指定文件夹（业务负责人 2026-10-13 交办） |
