@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * ⭐⭐ 2026-10-14 **改指向**（她拍板：「把采购明细给删除了，把特殊码给去掉吧」✗）：
  *   本文件原来钉的是"**特殊码接线**"（路由里那次 `purchaseSizeReader.listSizes()` 读 + 失败降级 warn）——

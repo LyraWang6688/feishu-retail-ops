@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * ⭐⭐ task-58（2026-10-16 早 · 业务负责人真机 05:34，逐字）：
  *   「我用你最新的线上版本测试了一下，静态感觉很好，扫描了几个货品二维码，
@@ -66,6 +68,18 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_rende
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_rendered_log_secret';
 // ⭐ 线上取值（她的日志里有 `scan.page.skeleton`）⇒ 本文件按**线上那个形状**跑。
 process.env.SCAN_PAGE_SKELETON_ENABLED = 'true';
+
+// ⭐⭐ 成对迁移（2026-10-16 · `SCAN_DRAFT_ENABLED` 缺省翻 true 之后）—— 本文件测的不是草稿：
+//   它测的是 `scan.page.rendered` 那条渲染日志（四个出口各一条）。
+//   🔴 **改前逐字**：本文件**不配** `SCAN_DRAFT_ENABLED` ⇒ 靠 `config/scanDraft.js` 的缺省拿到
+//     "草稿关"（`resolveShared` 里那一行当时代码是：`const enabled = readFlag(env, 'SCAN_DRAFT_ENABLED', false);`）。
+//   ✅ **改后逐字**：`process.env.SCAN_DRAFT_ENABLED = 'false';` ⇒ **显式**要"草稿关"。
+//   ⭐ **依据** = 业务负责人 2026-10-16「**开关打开**」（同一行缺省已翻成 `true`）⇒ 缺省不再是关态，
+//     所以"靠缺省"这条路**没有了**，必须自己写死。
+//   ⚠️ **强度不变（不是放宽）**：页面上那一份输出与迁移前**逐字节相同** —— 迁移前缺省就是 `false`
+//     （本文件在 main 上是绿的）；这里只把"碰巧的缺省"换成"自己声明的前置条件"，
+//     断言**一条没删、一条没 skip、一条没放宽**；缺省再翻也不会静默改掉本文件的语义 ✓。
+process.env.SCAN_DRAFT_ENABLED = 'false';
 
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { SCAN_PAGE } = require('../src/config/scanPage');

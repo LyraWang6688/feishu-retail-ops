@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * ⭐⭐ 2026-10-12（治根）：**记录 ID 直达** —— 新二维码 `GET/POST /r/{recordId}`。
  *

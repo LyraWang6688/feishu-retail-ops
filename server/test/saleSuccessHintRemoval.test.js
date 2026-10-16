@@ -1,5 +1,7 @@
 'use strict';
 
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
+
 /**
  * 🔴🔴 2026-10-16（A2/A3 ② · 业务负责人**逐字**）：
  *   「（资金页那）三处提示【**全删**】……**全删就对了**」

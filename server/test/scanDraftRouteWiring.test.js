@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * ⭐⭐ **「补货 / 退货 / 销售 存草稿 · 接着录」S3（路由半）的验收标准** —— 2026-10-16。
  *

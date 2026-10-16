@@ -1,3 +1,4 @@
+require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * 「扫一扫」= 工作台一级 tab（放最前）· **2026-10-13 晚按她真机口径重做**：
  *   她（逐字）：「**就是点那个 tab 上的扫一扫**」（⇒ 那一格本身 = `<a href="<AppLink>">`，用户手势 ⇒ 弹 ✓）
@@ -150,7 +151,21 @@ test('AC6 🔴 签名只许出现在「扫码打印」那两个文件里；扫�
     'public/workbench/features/labels/scan-print.js',
     // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：扫码页那条链**复用同一个** `createLarkJsapiService()` ✓
     'src/config/realmScan.js',
+    // ⭐⭐ 2026-10-16（routes/scanPage.js 拆分）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`'src/routes/scanPage.js',`（闭集里的第 3 项）
+    //   改后逐字：`'src/routes/scanPage/index.js',`（**同一段代码**搬进了子目录 ✓ 内容一字未改 ✓）
+    //   依据 = 拆分是**纯搬运**（`docs/scan-page-split-plan-2026-10-16.md` ✓）：那段 `createLarkJsapiService()`
+    //     的调用点整段搬到 `scanPage/index.js` ⇒ 闭集**换的是路径、不是成员数** ✓
+    //   ⚠️ **不是放宽**：① 仍是**闭集**（多一个文件照样红 ✗）；② 扫描面（`src/**` ＋ `public/workbench/**`）
+    //     **一个字没变** ✓；③ 下面第二半（扫一扫那一格那条路不许有签名符号）**一个字没动** ✓
+    //   ⭐ 追加一行的理由（拆分层② 的聚合读取）：本判据是**走查 `src/**` 逐文件读**的 ✓
+    //     而 `src/routes/scanPage.js`（薄壳）在测试进程里被 `scanPageReadRedirect` 重定向成**聚合文本** ✓
+    //     ⇒ 它**也会命中**这段代码 ⇒ 闭集必须同时列出"真身 `index.js`"与"旧路径（重定向后 = 同一份代码）"
+    //     ⇒ **成员数 +1 但仍是闭集** ✓（谁再往别处塞签名符号 ⇒ 照样红 ✗）
+    //   ⚠️ 顺序按 `hits.sort()` 的**字典序** ✓：`'…/scanPage.js'` 排在 `'…/scanPage/index.js'` **之前**
+    //     （'.'(0x2E) < '/'(0x2F) ✓）—— 写反了这条会红 ✗
     'src/routes/scanPage.js',
+    'src/routes/scanPage/index.js',
     'src/routes/workbench.js',
   ], `签名符号只许出现在「扫码打印」/「领域内扫一扫」这两条链上：\n${hits.join('\n')}`);
 
