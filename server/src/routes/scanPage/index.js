@@ -2576,6 +2576,12 @@ const createScanPageRouter = (options = {}) => {
         //    🔴 **幂等不许拆** ✗ 绝不直调 `_confirm` ✓）
         const skipPending = skipMark === 'pending' || skipMark === 'created';
         let skipCreated = null;
+        // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修「成功页看不到单号」**第二处**✗：
+        //   改前逐字：跳过这条路上**没有**会话回落 ⇒ 只认 `skipCreated.order_no || body.order_no` ✗
+        //   改后逐字：本行 ＋ 下面 `skippedOrderNo` 那行都加**会话回落** ✓
+        //   依据 = 业务负责人 2026-10-16 23:5x 逐字：「我先点了…我就创建单号了…**那我肯定能看到这个单号呀**」✓
+        //   🔴 与 pay 路径同一处 bug 的第二份（取号逻辑被抄了两遍 ✗）⇒ 见 `test/scanPageOrderNoSource.test.js` 的"防第三处"哨兵 ✓
+        const skipSessionOrderNo = String(skipSession?.sale?.order_no || skipSession?.order_no || '').trim();
         // ⭐ 这一步的墙钟起点 + **打点载体**（服务端把各分段**写进这个对象** ✓ 与旧流程同一个形状 ✓）
         const skipStepStartedAt = Date.now();
         const skipStepTiming = {};
@@ -2684,7 +2690,7 @@ const createScanPageRouter = (options = {}) => {
             phase: writeConfig.timing.phase.request,
             ok: skipCreated.ok === true,
             code: skipCreated.code || '',
-            order_no: skipCreated.order_no || '',
+            order_no: skipCreated.order_no || skipSessionOrderNo || '',
             reused: skipCreated.reused === true,
             partial: skipCreated.code === 'sale_partial_failed',
             lines: Number(skipCreated.detail_count) || 0,
@@ -2699,7 +2705,7 @@ const createScanPageRouter = (options = {}) => {
           });
         }
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
-        const skippedOrderNo = String(skipCreated?.order_no || body.order_no || '').trim().slice(0, 40);
+        const skippedOrderNo = String(skipCreated?.order_no || skipSessionOrderNo || body.order_no || '').trim().slice(0, 40);
         const skippedCount = Number(String(skipCreated?.detail_count ?? body.count ?? '').trim() || 0) || 0;
         // ⭐ 她**再点一次**（同一把 `submitKey`）⇒ `submitSale` 返回 `reused` ✓ ⇒ 成功页要**如实**说
         //   「这一单刚才已经交过了」✓（不是失败 ✗ 也不是又写一遍 ✗）
