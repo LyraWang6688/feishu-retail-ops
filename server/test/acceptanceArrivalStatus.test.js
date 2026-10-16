@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-12（业务负责人口述版，落档 `docs/acceptance-scan-design-2026-10-12.md`）：
  *   「用户点验收的时候，**先默认带出我们采购申请里的尺码和数量**。用户可以在**给定的区域里
@@ -256,7 +257,7 @@ test('AC-AR2 🔴 扫码页那条"完成验收"的写入入口已退场（**源�
   assert.equal(/handleAcceptFinishRows|acceptanceContext/.test(routes), false, '完成验收那个分支/handler 必须已退场 ✗');
   assert.equal(/acceptanceLandingPath/.test(routes), false, '验收落地页的跳转路径也必须已退场 ✗');
   assert.equal(/handleAcceptFinishRows/.test(routes), false, '它的 handler 也必须已退场 ✗');
-  assert.equal(/renderAcceptancePage/.test(readSrc('views/scanPageRenderer.js')), false, '验收页渲染函数已退场 ✓');
+  assert.equal(/renderAcceptancePage/.test(rendererSource()), false, '验收页渲染函数已退场 ✓');
   const workbench = readSrc('routes/workbench.js');
   assert.match(workbench, /router\.post\('\/purchase\/arrivals\/confirm'/, '仍成立：工作台"确认到货"照旧 ✓');
 });
@@ -269,6 +270,6 @@ test('AC-AR3 🔴 那条"到货状态/金额/幂等"的验收标准已随验收�
   const inventory = fs.readFileSync(path.join(SRC, 'services/inventoryService.js'), 'utf8');
   assert.match(inventory, /applyPurchase/, '加库存仍走 `InventoryService.applyPurchase` ✓');
   // 而扫码页那条验收渲染/会话入口**必须没有** ✓
-  const renderer = fs.readFileSync(path.join(SRC, 'views/scanPageRenderer.js'), 'utf8');
+  const renderer = rendererSource();
   assert.equal(/data-view="acceptance"/.test(renderer), false, '扫码页验收块必须没有了 ✗');
 });

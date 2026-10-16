@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-16（task-54 · 业务负责人逐字：「**全删就对了**」）：资金页 / 跳过那**三处提示全删** ——
@@ -26,7 +27,7 @@ const SERVER = path.join(__dirname, '..');
 const readSrc = (relative) => fs.readFileSync(path.join(SERVER, 'src', relative), 'utf8');
 
 const { SCAN_PAGE } = require('../src/config/scanPage');
-const RENDERER = readSrc('views/scanPageRenderer.js');
+const RENDERER = rendererSource();
 const ROUTE = readSrc('routes/scanPage.js');
 
 /** ⭐ 2026-10-16（她「三处提示【全删】」的**第三个落点：说明书**）——

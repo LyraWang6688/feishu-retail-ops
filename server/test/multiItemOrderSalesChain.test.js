@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * task-59「销售一单多货」—— **判据 AC-SM-A…F ＋ 上限**（先写判据 → 再跑 → 逐条对照 ✓）。
  *
@@ -82,7 +83,7 @@ const { renderScanPage } = require('../src/views/scanPageRenderer');
 const SERVER = path.join(__dirname, '..');
 const readSrc = (rel) => fs.readFileSync(path.join(SERVER, rel), 'utf8');
 const ROUTE_SRC = readSrc('src/routes/scanPage.js');
-const RENDERER_SRC = readSrc('src/views/scanPageRenderer.js');
+const RENDERER_SRC = rendererSource();
 
 // ── 语义键 → 物理列名（照真 schema；写错语义键当场抛，别让夹具自己漂）─────────────
 const F = (table, key) => {

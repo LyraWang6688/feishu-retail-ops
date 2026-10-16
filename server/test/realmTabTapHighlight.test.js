@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-14「触屏按下去一定要有反馈」（业务负责人批准 → Lead 裁定（甲）✓）
  *
@@ -16,7 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const RENDERER = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+const RENDERER = rendererSource();
 
 // ══════════════════════════════════════════════════════════════════════════════
 test('AC-1 ⭐⭐ 六格 tab（与同组元素）的 CSS 里有 `-webkit-tap-highlight-color`（触屏原生高亮）', () => {

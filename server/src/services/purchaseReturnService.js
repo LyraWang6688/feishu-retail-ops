@@ -7,10 +7,18 @@
  *   | 这一步 | 走哪个既有件 |
  *   | --- | --- |
  *   | 「采购主表」建一行（批次号 + 幂等键 + **采购行为**；**不写到达状态**） | `PurchaseOrderBatchService.createForReturnBatch` |
- *   | 「报货信息」写退货明细（采购行为 = 退货行为） | `createOnceByKey`（远端幂等键回查，与报货同一套） |
+ *   | 「采购明细」写退货明细（**一次攒批**；幂等键一次认完 + 批量建行） | `createOnceByKeys`（`infrastructure/idempotencyKey`，与报货同一套语义） |
  *   | 扣库存 | `InventoryService.applyPurchaseReturn`（内部就是既有的 `applyChange`） |
  *   | 出「采购退货单」PNG → 发群 → 回填「报货批次.单据」 | `PurchaseWebhookService.deliverSupplierImages`（只换标题/文件名后缀） |
  *   | 批次号 | 既有 `PurchaseBatchNoGenerator`（`CGD-YYYYMMDD-NNNN`） |
+ *
+ * ⭐ 2026-10-16（业务负责人逐字「**退货也需要批量提速**」）：**明细写入由逐条改攒批** ——
+ *   改前：N 个尺码 ⇒ **N 次整表读**（逐条 `createOnceByKey` 的幂等回查，`listAll` 是翻页读）
+ *   ＋ **N 次单条 create**；改后：**1 次整表读 ＋ 1 次 `createBatch`**。落表内容一字不差。
+ *   ⚠️ **实时库存那一段（`ensurePlan`）本来就不慢**：整表读在**循环外只读一次**、
+ *   循环里只剩内存 filter（`resolveSize` 走 30 秒缓存）⇒ **一个字都没改**。
+ *   ⚠️ `inventoryService` 内部（逐尺码 `listAll('liveInventory')` ＋ 逐双 `get`/`delete`）
+ *   **本刀不许碰** ⇒ 那一半的调用次数如实留在测试里（见 `test/purchaseReturnBatchSpeedup.test.js`）。
  *
  * 🔴 **本文件自己不写任何业务表**：没有一处 `gateway.create/update/delete`
  *    （写入全部经上面的既有件；有一条例行哨兵钉着这一点）。
@@ -24,7 +32,7 @@
  *    把 `skipped: 'no_stock'` 交给调用方去说人话 —— 不建一条空退货批次。
  */
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { createOnceByKey, IDEMPOTENCY_KEY_FIELD } = require('../infrastructure/idempotencyKey');
+const { createOnceByKeys, IDEMPOTENCY_KEY_FIELD } = require('../infrastructure/idempotencyKey');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { relation } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
@@ -197,36 +205,51 @@ const createPurchaseReturnService = (options = {}) => {
     //    与报货那条**同一个分配器** ⇒ 同一批次内 01/02… 不重排、不重号、重放不重复占号）。
     const detailIdCursor = await detailIds.open({ batchRecordId, batchNo: plan.batch_no });
 
-    // ② 逐尺码：写一条退货明细（采购行为 = 退货行为）→ 扣库存（走 InventoryService）
-    const requestIds = [];
-    const drawItems = [];
+    // ② **一次攒批**：把这一批的退货明细一次写完（幂等键**一次认完** ＋ 批量建行）。
+    //    ⚠️ 顺序仍是**计划顺序**：`detailIdCursor.next()` 只在 `taken > 0` 的尺码上按序取号
+    //    （与逐条写法同一口径：跳过 `taken <= 0` 的尺码 ⇒ 它们**不占序号**）。
+    //    `resolveSize` 走 30 秒内存缓存 ⇒ 这一步**不发额外请求**（见文件头"这里本来就不慢"）。
+    const sizeRecordIdBySize = new Map();
     for (const item of plan.items) {
       if (item.taken <= 0) continue;
-      const sizeRef = await resolveSize(item.size);
-      // 幂等键由「这个任务 + 这个尺码」推出 ⇒ 重放命中同一条远端记录，不写第二条。
-      const docKey = `purchase_return_doc:${taskId}:${item.size}`;
-      const doc = await createOnceByKey({
-        gateway,
-        tableKey: 'purchaseRequest',
-        keyField: IDEMPOTENCY_KEY_FIELD,
-        keyValue: docKey,
-        label: `采购退货明细 ${taskId} ${item.size}码`,
-        correlation,
-        values: {
-          batchNo: relation(batchRecordId),
-          // 🔴 2026-10-12 热修（同一个 Lookup 列）：**不许再写「采购行为」** ——
-          //    「采购明细.采购行为」已被她改成 **Lookup（只读，按「报货批次号」关联采购主表）**，
-          //    写它轻则被忽略、重则整条退货明细 create 失败。
-          //    ⚠️ 与报货那条同一个待定项：主表的「采购行为」没有写入点（她 2026-10-07 说过不用管）
-          //    ⇒ 退货明细的这一列也会是空的，分流判据读不到就按现状=采购申请分流。
-          product: relation(draft.product_record_id),
-          size: relation(sizeRef.recordId),
-          quantity: item.taken,
-          // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）
-          detailId: detailIdCursor.next(),
-          idempotencyKey: docKey,
-        },
-      });
+      sizeRecordIdBySize.set(item.size, (await resolveSize(item.size)).recordId);
+    }
+    const drawnItems = plan.items.filter((item) => item.taken > 0);
+    const docs = await createOnceByKeys({
+      gateway,
+      tableKey: 'purchaseRequest',
+      keyField: IDEMPOTENCY_KEY_FIELD,
+      correlation,
+      rows: drawnItems.map((item) => {
+        // 幂等键由「这个任务 + 这个尺码」推出 ⇒ 重放命中同一条远端记录，不写第二条。
+        const docKey = `purchase_return_doc:${taskId}:${item.size}`;
+        return {
+          keyValue: docKey,
+          label: `采购退货明细 ${taskId} ${item.size}码`,
+          values: {
+            batchNo: relation(batchRecordId),
+            // 🔴 2026-10-12 热修（同一个 Lookup 列）：**不许再写「采购行为」** ——
+            //    「采购明细.采购行为」已被她改成 **Lookup（只读，按「报货批次号」关联采购主表）**，
+            //    写它轻则被忽略、重则整条退货明细 create 失败。
+            //    ⚠️ 与报货那条同一个待定项：主表的「采购行为」没有写入点（她 2026-10-07 说过不用管）
+            //    ⇒ 退货明细的这一列也会是空的，分流判据读不到就按现状=采购申请分流。
+            product: relation(draft.product_record_id),
+            size: relation(sizeRecordIdBySize.get(item.size)),
+            quantity: item.taken,
+            // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）
+            detailId: detailIdCursor.next(),
+            idempotencyKey: docKey,
+          },
+        };
+      }),
+    });
+
+    // ③ 逐尺码：扣库存（走 InventoryService；这一段**本刀一个字没动**）＋ 准备出图入参。
+    const requestIds = [];
+    const drawItems = [];
+    for (let index = 0; index < drawnItems.length; index += 1) {
+      const item = drawnItems[index];
+      const doc = docs[index];
       requestIds.push(doc.recordId);
       const change = await inventory.applyPurchaseReturn({
         productRecordId: draft.product_record_id,

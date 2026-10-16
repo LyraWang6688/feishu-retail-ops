@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /** ⚠️ 2026-10-12 旧断言改写（真机 bug：采购退货的「采购行为」原来写成了**库存**行为）：
  *  改前（逐字）：`assert.equal(SCAN_WRITE.purchaseReturn.behaviorCode, 'STOCK_PURCHASE_DECREASE');`
  *              ＋ `assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_return'], …);`
@@ -358,8 +359,7 @@ test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形�
       // 2026-10-14 re-pointed: purchase_return is the RETURNS form again (add-ons moved to `accessory`)
       assert.ok(returnHtml.includes('data-view="purchase-return"'), 'this page is the returns form');
       assert.equal(returnHtml.includes(SCAN_WRITE.fields.accessory), false, 'the add-on select is NOT on the returns page (its own realm now)');
-      const rendererSrc = require('node:fs').readFileSync(
-        require('node:path').join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+      const rendererSrc = rendererSource();
       assert.ok(rendererSrc.includes('returnFormHtml'), '退货表单的**能力保留**（returnFormHtml 仍在）✓');
       assert.equal(returnHtml.includes('退货说明'), false);
       assert.equal(returnHtml.includes(`name="action" value="${SCAN_WRITE.actions.replenish}"`), false,

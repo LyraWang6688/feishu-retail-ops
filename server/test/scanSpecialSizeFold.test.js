@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-14「特殊码折叠」的验收标准（**先写先红**）。
@@ -22,7 +23,7 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const realm = require('../src/views/scanPageRealm');
 
 const SERVICE_SRC = fs.readFileSync(path.join(__dirname, '../src/services/scanPageService.js'), 'utf8');
-const RENDERER_SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+const RENDERER_SRC = rendererSource();
 
 /** 造一个"这一款"的视图模型：只有 `rows`（每行缺码标记由服务层给）+ 编号（第 3 段 = 类别）。 */
 const viewOf = ({ number, stocked = [], missing = [] }) => ({

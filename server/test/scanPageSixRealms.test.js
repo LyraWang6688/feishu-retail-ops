@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 // ⭐⭐ 2026-10-14 晚（业务负责人逐字，**覆盖 10-13 的六领域口径**）：
 //   「配品给迁移到工作台销售里…整体都迁移过去」＋「把上新 tab 也给去掉」
 //   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
@@ -70,7 +71,7 @@ const { PurchaseArrivalConversationService } = require('../src/services/purchase
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
-const RENDERER_SRC = path.join(__dirname, '../src/views/scanPageRenderer.js');
+const RENDERER_SRC = rendererSource();
 const NUMBER = 'YD6693-2|黑色|A';
 const ENCODED = encodeURIComponent(NUMBER);
 const SESSION_SECRET = 'six-realms-session-secret';
@@ -296,7 +297,7 @@ test('AC-6R2 ⭐ 切换条：4 条真链接 + **一行铺满整宽**（列数=�
   assert.equal((bar.match(/realm-tab--active/g) || []).length, 1, '只有当前领域高亮');
 
   // 样式哨兵：grid 三列（6 格 = 两行）、**不许横滑**、每格 ≥44px（既有 --control-height）
-  const style = fs.readFileSync(RENDERER_SRC, 'utf8');
+  const style = RENDERER_SRC;
   const barRule = style.match(/\.realm-bar \{[^}]*\}/)[0];
   assert.match(barRule, /display:\s*grid/, '紧凑两行网格 = grid');
   // ⚠️ 2026-10-14 改写（她：「没有铺满屏幕的水平方向」✗）—— 改前逐字：

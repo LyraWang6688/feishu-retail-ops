@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * task-30（业务负责人 2026-10-15 逐字）：
  *   「**是否可以把 4 个领域和顶部的扫一扫合并到顶部一行的，这样也少占一些地方**」
@@ -246,7 +247,7 @@ test('AC-L5 ⭐⭐ 移动端**不横滑** + 每格 **≥44px**（列数=格数 �
     assert.equal(forbidden.test(bar), false, `行内样式里不许写死列数/像素宽（${forbidden} 会撑破容器 ⇒ 横滑 ✗）`);
   }
   // ② 每格：不换行（不竖拆）、可压缩（`min-width:0`）、命中区 ≥44px（tokens 里量）
-  const source = fs.readFileSync(path.join(__dirname, '..', 'src/views/scanPageRenderer.js'), 'utf8');
+  const source = rendererSource();
   const tabRule = source.match(/\n\.realm-tab \{([^}]*)\}/)[1];
   assert.match(tabRule, /min-height:\s*var\(--control-height\)/, '每格高度走 `--control-height`（≥44px ✓）');
   assert.match(tabRule, /min-width:\s*0/, '每格能压缩（长文案不撑破容器 ✓）');

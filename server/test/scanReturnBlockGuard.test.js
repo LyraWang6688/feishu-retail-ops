@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ task-31（2026-10-15 21:47 · 业务负责人真机）：扫 **有库存**的款（`HL55173-1|黑色|A`）点「退货」⇒
@@ -227,7 +228,7 @@ test('AC-RB4 ⭐⭐ 退货表单**没画出来**（写入口没接上 ⇒ `write
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-RB5 ⭐ 骨架的 `?data=1` 失败 ⇒ **人话 + 可重试**（不许无声停在"一张卡 + 一颗按钮" ✗）', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+  const src = rendererSource();
   // ① 失败必须走 `showProblem()`（人话 + 重试），不许 catch 里静默 return
   assert.match(src, /function showProblem\(\)/, '要有"出问题"那条路 ✓');
   // ⚠️ 源码里它们是 `setAttribute('data-view', 'scan-skeleton-error')` 这个形状（不是 HTML 属性 ✓）

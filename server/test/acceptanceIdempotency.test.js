@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「**`/s/accept` 这条路要彻底拆掉**」
@@ -24,7 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROUTES = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
-const RENDERER = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+const RENDERER = rendererSource();
 const WORKBENCH_ROUTES = fs.readFileSync(path.join(__dirname, '../src/routes/workbench.js'), 'utf8');
 const ARRIVAL = fs.readFileSync(path.join(__dirname, '../src/services/scanArrivalService.js'), 'utf8');
 

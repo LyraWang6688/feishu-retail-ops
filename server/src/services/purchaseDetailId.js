@@ -60,14 +60,19 @@ const nextPurchaseDetailSequence = (batchNo, { existingIds = [], rowCount = 0 } 
 /**
  * 分配器：`open({ batchRecordId, batchNo })` 读一次该批次的既有明细行，返回一个游标；
  * 调用方**每真的创建一条**才 `next()`（重放时不会走到这里 ⇒ 不重复占号）。
+ *
+ * ⭐⭐ 2026-10-16（采购写入提速）：`open({ …, rows })` —— **调用方已经读过这一份采购明细快照**
+ *   时把它传进来 ⇒ 这里**不再多读一次**（攒批那条路要按幂等键回查同一张表，
+ *   两次读的是**逐字相同的一份数据**，读两遍纯属浪费：飞书单次整表读实测 8~11 秒 ✗）。
+ *   ⚠️ 不传 `rows` ⇒ 行为与改动前**逐字不变**（自己读一次）✓。
  */
 const createPurchaseDetailIdAllocator = ({ gateway } = {}) => {
   if (!gateway) throw new Error('采购明细ID 分配器需要 gateway');
   return {
-    async open({ batchRecordId, batchNo } = {}) {
+    async open({ batchRecordId, batchNo, rows } = {}) {
       const fields = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
-      const rows = await gateway.listAll('purchaseRequest');
-      const inBatch = rows.filter((record) => linkedRecordIds(record.fields?.[fields.batchNo])
+      const all = Array.isArray(rows) ? rows : await gateway.listAll('purchaseRequest');
+      const inBatch = all.filter((record) => linkedRecordIds(record.fields?.[fields.batchNo])
         .includes(batchRecordId));
       let next = nextPurchaseDetailSequence(batchNo, {
         existingIds: inBatch.map((record) => textValue(record.fields?.[fields.detailId])),

@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 // ⭐⭐ 2026-10-14 晚（业务负责人逐字，**覆盖 10-13 的六 tab 口径**）：
 //   「把配品迁移到工作台销售里，新建一个子 tab，整体都迁移过去」＋「把上新 tab 也给去掉」
 //   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
@@ -33,7 +34,7 @@ const { REALMS, REALM_TABS, resolveRealm } = require('../src/views/scanPageRealm
 const { renderScanPage } = require('../src/views/scanPageRenderer');
 
 const SERVER = path.join(__dirname, '..');
-const RENDERER_SRC = path.join(SERVER, 'src/views/scanPageRenderer.js');
+const RENDERER_SRC = rendererSource();
 const REALM_SRC = path.join(SERVER, 'src/views/scanPageRealm.js');
 const WORKBENCH_LINKS = path.join(SERVER, 'public/workbench/config/links.js');
 
@@ -97,7 +98,7 @@ test('AC-RB2 ⭐ 一行铺满（4 格；2026-10-14 她：「没有铺满屏幕�
   //   依据：她 2026-10-15 那句；顺序在**配置**里（`SCAN_PAGE.realmBar.order` ✓ 配置先行）
   //   🔴 判据没放宽 ✗：仍是「四个领域 + 顺序逐字」；本用例 UA 为空 ⇒ 条上就是 4 格 ✓
   assert.deepEqual(ids, ['inventory', 'sales', 'replenish', 'purchase_return'], '四个领域、顺序逐字 ✓（按她的新口径）');
-  const style = fs.readFileSync(RENDERER_SRC, 'utf8');
+  const style = RENDERER_SRC;
   const barRule = style.match(/\.realm-bar \{[^}]*\}/)[0];
   assert.match(barRule, /grid-template-columns:\s*1fr;/, '容器一整列（每行占满整宽 ✓）');
   assert.match(barRule, /width:\s*100%/, '容器整宽 ✓');
@@ -119,9 +120,10 @@ test('AC-RB3 ⭐ 「退货」回到条上（逐字 ✓）而「货品」一个�
   //   ⭐ 强度不变：① 「货品」这个词在**代码**里仍不许出现 ✓（去注释后判 ✓）
   //                ② 条上**必须有**「退货」这一格（label 逐字 ✓）
   //                ③ 条上仍不许出现「货品」✓
-  for (const file of [RENDERER_SRC, REALM_SRC]) {
-    const code = stripComments(fs.readFileSync(file, 'utf8'));
-    assert.equal(code.includes('货品'), false, `${path.basename(file)} 的**代码**里不该再出现「货品」`);
+  // ⚠️ 2026-10-16（scanPageRenderer 按块拆分）：`RENDERER_SRC` 现在是**聚合源码**（不是路径 ✓）
+  for (const [name, text] of [['scanPageRenderer.js', RENDERER_SRC], ['scanPageRealm.js', fs.readFileSync(REALM_SRC, 'utf8')]]) {
+    const code = stripComments(text);
+    assert.equal(code.includes('货品'), false, `${name} 的**代码**里不该再出现「货品」`);
   }
   for (const realm of REALM_TABS.map((item) => item.id)) {
     const bar = barOf(htmlFor(realm));

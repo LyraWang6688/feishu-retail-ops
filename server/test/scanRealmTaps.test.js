@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * 切换条六格的「点了没反应」哨兵（2026-10-13 深夜真机）：
  *   她（逐字）：「点了库存、补货其他 5 个，**除了上新有跳转，其他都没有反应**」
@@ -10,8 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const RENDERER = path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js');
-const source = fs.readFileSync(RENDERER, 'utf8');
+const source = rendererSource();
 /** 去掉注释再判（⚠️ 我今晚因为没剥注释误判过两次 ✗） */
 const stripped = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 

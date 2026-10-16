@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-14「按下去立刻变灰」（业务负责人批准：「就按照这个」✓）
  *
@@ -14,7 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const RENDERER = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+const RENDERER = rendererSource();
 
 /** 取出 `<style>` 里的 CSS 片段（渲染器的样式都内联在这一个文件里）。 */
 const cssOf = (src) => (src.match(/\.[a-z-]+[^{}]*\{[^{}]*\}/g) || []).join('\n');
