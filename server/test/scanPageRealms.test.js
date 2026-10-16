@@ -376,7 +376,8 @@ test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不�
   const prepaid = groupOf('prepaid');
   // ── ③ 分组与判据一个字不变：40 / 42 = 现货；41 / 43 / 44 = 预订 ─────────────────
   assert.equal(chipsOf(inStock), 3, '现货组：**40 / 42 / 43** 三个码（43 = 仓库 2 双 ⇒ 新口径算有货 ✓）');
-  assert.equal(chipsOf(prepaid), 3, '预订组：41 / 43 / 44 三个码（3 个码就排一行 3 个）');
+  // 改前逐字：`chipsOf(prepaid), 3, '预订组：41 / 43 / 44 三个码…'` ⇒ 改后：**2**（43 已算有货 ⇒ 入现货组 ✓）
+  assert.equal(chipsOf(prepaid), 2, '预订组：**41 / 44** 两个码（43 已算有货 ✓ 依据 = 她 20:5x ✓）');
   // ── ④ 不显示数量：两组里一个「双」字都没有 ────────────────────────────────────
   for (const [name, group] of [['现货组', inStock], ['预订组', prepaid]]) {
     assert.equal(group.includes('size-chip__meta'), false, `${name}里还留着数量那一格`);
@@ -421,7 +422,8 @@ test('AC3 `from=replenish`：列出各尺码（样品+门盒）数量 + 【一�
     { size_text: '40', sellable: 1, missing: false, checked: false, special: false },
     { size_text: '41', sellable: 0, missing: true, checked: true, special: false },
     { size_text: '42', sellable: 2, missing: false, checked: false, special: false },
-    { size_text: '43', sellable: 0, missing: false, checked: false, special: false },
+    // 改前逐字：`{ size_text: '43', sellable: 0, … }` ⇒ 改后：**sellable: 2**（仓库 2 双 ⇒ 新口径算有货 ✓）
+    { size_text: '43', sellable: 2, missing: false, checked: false, special: false },
     { size_text: '44', sellable: 0, missing: true, checked: true, special: false },
   ], '缺码（三种状态都没有）默认勾上；43 只有仓库 → 不预勾；这个夹具的类别没有特殊码 ⇒ special 全 false ✓');
 
