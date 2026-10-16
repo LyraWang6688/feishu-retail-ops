@@ -761,7 +761,13 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       // ⭐ 2026-10-11：缺省领域改回**销售** ⇒ 缺省领域不带 `?from=`（URL 干净），
       //    但**绝不许掉到别的领域**。非缺省领域的回跳带上 `?from=`（见 `postActionFor`
       //    与 `scanPageDraftBar.test.js` 的 AC-DB7）。
-      assert.match(String(added.headers.get('location')), /added=1$/);
+      // ⭐⭐ 2026-10-16 21:1x **成对迁移**（本卡 =「销售也弹扫码框」· 业务负责人当天 21:1x 弹窗拍板）：
+      //   改前逐字：`assert.match(String(added.headers.get('location')), /added=1$/);`
+      //   改后逐字：下面这一行 —— `added=1` 仍是**一个完整的查询参数**（`?`/`&` 起、`&` 或结尾止 ✓）。
+      //   依据 = 她 2026-10-16 21:1x「要，销售也弹扫码框」⇒ 销售的 303 现在多带一个触发参数
+      //     （`?added=1&scan=1` ✓）—— "必须**结尾**"从来不是本条的本意 ✗（下面那条 `from=` 反向断言才是 ✓）。
+      //   🔴 **不是放宽**：`added=1` 必须**完整**存在这一条强度不变 ✓（"没多、没被黏住"一条不少 ✓）。
+      assert.match(String(added.headers.get('location')), /[?&]added=1(&|$)/);
       assert.equal(String(added.headers.get('location')).includes('from=inventory'), false,
         '加单回跳必须停在本单所在的领域（销售），不许掉到库存');
 

@@ -597,6 +597,38 @@ const createScanPageRouter = (options = {}) => {
       reportPath: realmScanConfig.signaturePath.replace(/[^/]+$/, 'scan-report'),
     };
   };
+  /**
+   * ⭐⭐ 2026-10-16 21:1x（本卡 ·「**销售也弹扫码框**」）：
+   *   **加货成功之后**那一发 303 回跳要不要**带上触发参数**（`?scan=1` ✓）。
+   *
+   * 🔴 **只有这一处实现**（两个调用点共用同一份 ✓ 不写第二套 ✗）：
+   *   · **补货 / 退货** —— 多货品那一支里那颗「＋ 再加一个货品」（`isMultiItemAdd` ⇒ 见下面 `addBackPathFor`）；
+   *   · **销售** —— 同一张表单里那颗 `action=add_line`（草稿非空时它的文案就是「＋ 再加一个货品」✓）。
+   *
+   * 判据（与改动前**一字不差**）：① 开关开着 ② **这一页的领域**配了链 ③ 有触发键 ——
+   *   缺任何一条 ⇒ **原样返回**（`page` 一个字不动）⇒ 开关关着 / 领域没配链时，回跳与今天**逐字节相同** ✓。
+   *   🔴 ③ 是刻意的：回来的那一页**只有**看见这个参数才去调扫一扫
+   *     ⇒ 「页面一加载就弹相机」那种坑从这里堵死 ✗（`AC-SR4` / `AC-ML5`）。
+   *
+   * ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+   *   改前逐字：这个函数**长在多货品那一支里面**、签名是 `addBackPath(realmId)`
+   *     （它自己调 `backPathOf(realmId)` 现算页路径）⇒ **只有补货 / 退货够得着它** ✗；
+   *   改后逐字：**提到工厂这一层**、签名改成 `addBackPath(page, realmId)`
+   *     （页路径由调用方按**它自己那条链**的既有口径拼好再传进来 ⇒ 拼法与改前**逐字节相同** ✓）；
+   *   依据 = 业务负责人 2026-10-16 21:1x 弹窗拍板「**要，销售也弹扫码框**」✓。
+   *   ⚠️ **不是新行为、不是放宽**：两个调用点拼出来的 Location 与改前逐字节相同（`AC-SR6` 逐字钉着 ✓）。
+   *
+   * @param {string} page 已经拼好的回跳地址（含领域与既有查询串）
+   * @param {string} realmId 这一页的领域 id（判据②要它）
+   * @returns {string} 需要接着扫时 = `page` ＋ 触发参数；否则 = `page`（原样 ✓）
+   */
+  const addBackPath = (page, realmId) => {
+    if (!realmScanActive(realmId)) return page;
+    const key = String(realmScanConfig.triggerQueryKey || '');
+    if (!key) return page;
+    return `${page}${page.includes('?') ? '&' : '?'}${encodeURIComponent(key)}=`
+      + encodeURIComponent(String(realmScanConfig.triggerQueryValue || ''));
+  };
   // 用例可以注入一个假引擎（`options.multiItemOrder`）—— 与 `options.writeService` 同一种注入法 ✓
   let multiItemOrderEngine = options.multiItemOrder || null;
   /**
@@ -2243,14 +2275,10 @@ const createScanPageRouter = (options = {}) => {
       //   ⇒ 回来的那一页（**同一个领域** ✓）才去调飞书扫一扫 ⇒ 扫到的那件带 `?from=<领域>` 落回来 ✓。
       //   🔴 **只加在"加货"上，不加在"删除"上**（删完不该弹相机 ✗）；
       //   🔴 **只在这一页的领域配了链、且开关开着时加**（关着 ⇒ 回跳与今天逐字一致 ✓ `AC-ML5`）。
-      const addBackPath = (realmId) => {
-        const page = backPathOf(realmId);
-        if (!realmScanActive(realmId)) return page;
-        const key = String(realmScanConfig.triggerQueryKey || '');
-        if (!key) return page;
-        return `${page}${page.includes('?') ? '&' : '?'}${encodeURIComponent(key)}=`
-          + encodeURIComponent(String(realmScanConfig.triggerQueryValue || ''));
-      };
+      //   ⭐⭐ 2026-10-16 21:1x（本卡）：实现**提到工厂那一层**（`addBackPath(page, realmId)` ✓）
+      //     —— 因为**销售**那条 303 也要用**同一份**（不写第二套 ✗）。这里只负责按**既有口径**
+      //     算出这一页的页路径（`backPathOf` ✓ 逐字没变 ✗），再交给它。
+      const addBackPathFor = (realmId) => addBackPath(backPathOf(realmId), realmId);
       const backPath = () => backPathOf(realm);
       // 认不出是哪条链（不是补货 / 退货那两块）⇒ 与既有的"认不出的动作"同一条口径：给它一句人话 ✓
       const draftChain = realm === 'replenish' ? 'replenish'
@@ -2320,7 +2348,7 @@ const createScanPageRouter = (options = {}) => {
           [log.orderKeyKey || 'order_key']: String(pending.orderKey || ''),
         });
       }
-      return res.redirect(303, addBackPath(realm));
+      return res.redirect(303, addBackPathFor(realm));
     }
 
     // ── ⭐⭐ 2026-10-11：扫码页「货品」领域 →【打印这一款】──────────────────────
@@ -2422,7 +2450,17 @@ const createScanPageRouter = (options = {}) => {
         logInfo(writeConfig.events.lineAdded, {
           request_id: requestId, number: view.number, count: result.count,
         });
-        return res.redirect(303, `${postActionFor(backTargetFor(req, view.number), realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
+        // ⭐⭐ 2026-10-16 21:1x（本卡 ·「**销售也弹扫码框**」）：
+        //   **销售这一条**「加货成功之后」的回跳，与补货 / 退货**同一个动作** ⇒ 也要**接着扫**。
+        //   依据 = 业务负责人当天 21:1x 弹窗拍板「**要，销售也弹扫码框**」✓
+        //     ＋ 14:32 逐字「**补货 / 销售 / 退货**里那颗『＋ 再加一个货品』**实际上也是扫一扫**」✓。
+        //   🔴 **复用同一处** `addBackPath`（不另写一套 ✗）；页路径那一段**逐字没动** ✗
+        //     （`?added=1` 那个既有反馈照旧 ✓）——只在它后面**多一个触发参数**：
+        //     `?added=1&scan=1` ⇒ 回来的那一页去调飞书扫一扫、扫到的那件带 `?from=sales`
+        //     落回**销售本单**（既有 `session.sale.lines` ✓ 落点不新造 ✗）。
+        //   🔴 开关关着 / 领域没配链 ⇒ `addBackPath` **原样返回** ⇒ Location 与今天**逐字节相同** ✓。
+        const addedBackPage = `${postActionFor(backTargetFor(req, view.number), realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`;
+        return res.redirect(303, addBackPath(addedBackPage, realm));
       }
 
       // ── ⭐ 2026-10-11（B）：把一件配品加进本单（与「加入本单」同一形状：只写本地会话）──

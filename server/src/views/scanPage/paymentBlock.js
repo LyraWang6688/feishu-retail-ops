@@ -1,6 +1,7 @@
 const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS, fillText } = require('../../config/scanPage');
 const { MULTI_ITEM_ORDER } = require('../../config/multiItemOrder');
 const { DEFAULT_REALM, REALM_TEXTS, saleSizeGroups } = require('../scanPageRealm');
+const { realmScanConfigHtml } = require('../scanRealmScan');
 const { escapeHtml } = require('./fields');
 const { draftSaveButtonHtml } = require('./draftBlock');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');
@@ -190,6 +191,44 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     : '';
   const addLineLabel = multiItemAdd
     ? MULTI_ITEM_RENDER_TEXTS.addButton : (t.addAnotherButton || t.addButton);
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⭐⭐ 2026-10-16 21:1x（本卡 ·「**销售也弹扫码框**」）——「加货成功、303 回来这一发接着扫」
+  //   的**销售那一份**（业务负责人当天 21:1x 弹窗拍板「**要，销售也弹扫码框**」✓）。
+  //
+  // 🔴 为什么**必须有这一块**（只改配置与那条 303 是不够的 ✗）：路由把"这一页该接着扫"喂进
+  //   `page.realmScan` 之后，**是渲染层**把那句话交给页面脚本的 ——
+  //   而 `views/scanRealmScan.js` 那一段脚本**只在页面上存在 `data-view="realm-scan-config"`
+  //   这个宿主时才启动**（`layout.js` 也**按同一个标记**决定发不发那一段 `<script>` ✓）——
+  //   补货 / 退货那一块一直有（`multiItemBlock.js` ✓），**销售这一块此前没有** ✗
+  //   ⇒ 销售页即使带 `?scan=1` 回来也**不会弹**（这正是本卡要补的那一格 ✓）。
+  //
+  // 🔴 **与 `multiItemBlock.js` 那一份逐字同形**（同一份 `page.realmScan` 参数、同一处
+  //   `<` ⇒ `\u003c` 的转义 —— CodeQL `js/incomplete-sanitization` 挡的就是"只过 escapeHtml"✗）。
+  //   判据把这件事钉死：`test/salesRealmScan.test.js` 的 **AC-SR2b** 把**销售**与**补货**两边
+  //   渲染出来的 `data-config` 逐字比一遍 ⇒ **哪一边漂了就红** ✓（不是"看着像" ✗）。
+  //
+  // 🔴 **只在 `page.realmScan` 非空时出**（= 开关开着 ＋ 这一页配了链 ＋ URL 上真带触发参数 ✓）
+  //   ⇒ 其余任何时候**一个字节都不多** ✓ —— 页面一加载就弹相机那种坑从这里堵死 ✗（`AC-SR4`）。
+  // ══════════════════════════════════════════════════════════════════════════
+  const realmScanBlock = realmScanConfigHtml({
+    configJson: (page.realmScan
+      ? escapeHtml(JSON.stringify({
+        realm: String(page.realmScan.realm || ''),
+        // ⭐ 落点是**扫完那一刻现算**的（"扫到的是哪一件"服务端此刻不可能知道 ✗）——
+        //   所以这里只给**参数**：领域键 / 记录路径段 / 本页来源 ＋ 认不出的上限 ✓
+        origin: String(page.realmScan.origin || ''),
+        realmQueryKey: String(page.realmScan.realmQueryKey || ''),
+        recordBasePath: String(page.realmScan.recordBasePath || ''),
+        maxScannedLength: Number(page.realmScan.maxScannedLength) || 0,
+        signaturePath: String(page.realmScan.signaturePath || ''),
+        reportPath: String(page.realmScan.reportPath || ''),
+        sdkTimeoutMs: Number(page.realmScan.sdkTimeoutMs) || 0,
+        scanTimeoutMs: Number(page.realmScan.scanTimeoutMs) || 0,
+        texts: page.realmScan.texts || {},
+      }).replace(/</g, '\\u003c'))
+      : ''),
+    scanNow: page.realmScan?.scanNow === true,
+  });
   return `<section class="card">
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
@@ -209,7 +248,7 @@ ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" c
 ${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.saleKey)}
 <button type="submit" class="btn btn--ghost"${submitFeedbackAttrs(write)}>${escapeHtml(t.clearButton)}</button>
-</form>` : ''}
+</form>` : ''}${realmScanBlock}
 </section>`;
 };
 

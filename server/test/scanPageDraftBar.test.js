@@ -452,7 +452,18 @@ test('AC-DB7 【加入本单】的 303 回跳**停在本单所在的领域**（�
     const salesKey = salesHtml.match(/name="submit_key" value="(scan_sale:[^"]+)"/)[1];
     const added = await post(bare, { action: SCAN_WRITE.actions.addLine, submit_key: salesKey, size: '40' });
     assert.equal(added.status, 303);
-    assert.match(String(added.headers.get('location')), /added=1$/, '缺省领域回跳不带 ?from=');
+    // ⭐⭐ 2026-10-16 21:1x **成对迁移**（本卡 =「销售也弹扫码框」· 业务负责人当天 21:1x 弹窗拍板）：
+    //   改前逐字：`assert.match(String(added.headers.get('location')), /added=1$/, '缺省领域回跳不带 ?from=');`
+    //   改后逐字：下面两行 —— ① `added=1` 仍是**一个完整的查询参数**（`?`/`&` 起、`&` 或结尾止 ✓
+    //     不许被别的东西黏住 ✗）；② **它真正要说的那件事**（缺省领域回跳**不带 `?from=`**）**显式**钉出来 ✓。
+    //   依据 = 她 2026-10-16 21:1x「要，销售也弹扫码框」⇒ 销售的 303 现在多带一个触发参数
+    //     （`?added=1&scan=1` ✓）—— `added=1$`（必须**结尾**）从来不是本条的本意 ✗。
+    //   🔴 **不是放宽**：原来只**隐式**靠"结尾"表达"没有 `?from=`"，现在**显式断言**它（更强 ✓）；
+    //     而且 `added=1` 必须是完整参数这一条也钉着 ✓。
+    const salesLocation = String(added.headers.get('location'));
+    assert.match(salesLocation, /[?&]added=1(&|$)/, '回跳必须带上 `added=1` 这个参数（本单看得见 ✓）');
+    assert.equal(salesLocation.includes('from='), false,
+      '🔴 缺省领域（销售）的回跳**不带 `?from=`**（URL 干净 ✓ —— 这才是本条的本意）');
 
     // ② 切到【库存】：（2026-10-11 改写，见文件头）
     //    **改前**：`assert.ok(barOf(inventoryHtml).includes(submitButton), '有草稿 ⇒ 库存页上也能提交')`

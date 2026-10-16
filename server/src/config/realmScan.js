@@ -9,7 +9,16 @@
  *
  * ⇒ 两种扫一扫**只有一处区别**（**不加第二套** ✗）：
  *   · 领域条那颗（`config/scanPage.js` 的 `SCAN_NEXT.applink`）= **全局**：扫完落**默认 / 记忆领域** ✓ 行为不变 ✗；
- *   · 补货 / 退货 表单里那颗「＋ 再加一个货品」= **带【当前领域】上下文** ✓：
+ *   · 补货 / **销售** / 退货 表单里那颗「＋ 再加一个货品」= **带【当前领域】上下文** ✓：
+ *     ⭐⭐ 2026-10-16 21:1x **成对迁移（补上「销售」这一条）**：
+ *       改前逐字：这一行只写「补货 / 退货」，且下面 `DEFAULT_REALM_CHAINS` 里**没有 `sales`**
+ *         （当时那段注释自己写着：「**销售那一页的「加入本单」是另一套**（`session.sale.lines` ✓
+ *           没有多货品草稿块）⇒ 这里没有 sales（如实，不是漏配 ✗）」）；
+ *       改后逐字：**三个领域都在**（`sales: 'sales'` ＋ 这一行写全）。
+ *       依据 = 业务负责人 **2026-10-16 21:1x 弹窗拍板「要，销售也弹扫码框」** ✓
+ *         ＋ 同一天 14:32 她逐字「**补货 / 销售 / 退货**里那颗『＋ 再加一个货品』**实际上也是扫一扫**」✓。
+ *       ⚠️ **销售那一套仍是它自己那一套** ✗：加货仍走既有 `action=add_line` ⇒ `addSaleLine`
+ *         ⇒ `session.sale.lines`（本卡**不新造写入口** ✗）；本卡只补"加货成功之后接着扫"这一个动作 ✓。
  *     点一下 ⇒ 先把当前这一件存进**本领域**的本单草稿（复用既有 `multi_item_add` 那一路 ✓）
  *     ⇒ 再**在同一个领域页上**调起飞书**原生扫一扫**（复用既有 `services/larkJsapiService.js` 那套签名 ✓）
  *     ⇒ 扫到的那件**落回原领域**（`?from=<领域>` ✓ `views/scanPageRealm.js` 的 `resolveRealm` 读懂它 ✓）。
@@ -37,17 +46,38 @@ const { SCAN_PAGE } = require('./scanPage');
 /**
  * 领域 id → `config/multiItemOrder.js` 的**链 id**。
  * 取值必须是 `views/scanPageRealm.js` 的领域 id（认不出的领域 ⇒ 页面上**不发**这个入口 ✓ 不猜 ✗）。
- * 🔴 只有**真有本单草稿的链**才在这里（补货 / 退货）—— 销售那一页的「加入本单」是**另一套**
- *   （`session.sale.lines` ✓ 没有多货品草稿块），所以这里**没有 sales** ✓（如实，不是漏配 ✗）。
+ *
+ * ⭐⭐ 2026-10-16 21:1x **成对迁移（`sales` 这一格）**：
+ *   改前逐字：
+ *     ```
+ *     // 🔴 只有**真有本单草稿的链**才在这里（补货 / 退货）—— 销售那一页的「加入本单」是**另一套**
+ *     //   （`session.sale.lines` ✓ 没有多货品草稿块），所以这里**没有 sales** ✓（如实，不是漏配 ✗）。
+ *     const DEFAULT_REALM_CHAINS = Object.freeze({
+ *       replenish: 'replenish',
+ *       purchase_return: 'return',
+ *     });
+ *     ```
+ *   改后逐字：下面这一份（多一格 `sales: 'sales'`）＋ 这一段说明。
+ *   依据 = 业务负责人 **2026-10-16 21:1x 弹窗拍板「要，销售也弹扫码框」** ✓
+ *     ＋ 同一天 14:32 逐字「**补货 / 销售 / 退货**里那颗『＋ 再加一个货品』**实际上也是扫一扫**」✓。
+ *   ⚠️ 链 id 取 **`sales`** —— 它是 `config/multiItemOrder.js` 的 `chains.sales`
+ *     （**既有**那条纯描述链；`orderKeyPrefix` = 既有 `SCAN_SALE_KEY_PREFIX` ✓）——
+ *     **不是我发明的名字** ✗，也不是新链路 ✓。
+ *   ⚠️ **不是放宽**：认不出的领域照旧"不发这个入口"（不猜 ✗）；`SCAN_REALM_SCAN_CHAINS`
+ *     一配就以它为准（缺省串只是把 `sales` 一起写上 ✓）。
  */
 const DEFAULT_REALM_CHAINS = Object.freeze({
   replenish: 'replenish',
   purchase_return: 'return',
+  sales: 'sales',
 });
 
 const resolveRealmChains = (env) => {
-  // 形状：`replenish:replenish,purchase_return:return`（空串 = 没有领域能用 ⇒ 这个入口整块不发 ✓）
-  const raw = readString(env, 'SCAN_REALM_SCAN_CHAINS', 'replenish:replenish,purchase_return:return');
+  // 形状：`replenish:replenish,purchase_return:return,sales:sales`
+  //   （空串 = 没有领域能用 ⇒ 这个入口整块不发 ✓）
+  // ⚠️ 缺省串与 `DEFAULT_REALM_CHAINS` **必须同一个集合**（两处不一致 ⇒ 配了空串时行为会与读代码的人以为的不同 ✗）。
+  const raw = readString(env, 'SCAN_REALM_SCAN_CHAINS',
+    'replenish:replenish,purchase_return:return,sales:sales');
   const out = {};
   for (const pair of String(raw || '').split(',')) {
     const [realm, chain] = String(pair || '').split(':').map((part) => String(part || '').trim());
@@ -87,7 +117,8 @@ const createRealmScanConfig = (env = process.env) => Object.freeze({
   //   她最恨"点了没反应"；超时一律给人话 ✓）。
   sdkTimeoutMs: readInt(env, 'SCAN_REALM_SCAN_SDK_TIMEOUT_MS', 8000, { min: 500, max: 60000 }),
   scanTimeoutMs: readInt(env, 'SCAN_REALM_SCAN_TIMEOUT_MS', 120000, { min: 5000, max: 600000 }),
-  // 领域 → 链（**只有这两个领域有本单草稿** ✓ 见上面 `DEFAULT_REALM_CHAINS`）。
+  // 领域 → 链（**三个领域各有各的本单草稿** ✓ 见上面 `DEFAULT_REALM_CHAINS`：
+  //   补货 / 退货走多货品草稿，销售走它自己的 `session.sale.lines` —— **落点不同，入口同一个** ✓）。
   realms: resolveRealmChains(env),
   // 全部用户可见文案（渲染层 / 脚本都不许散写中文 ✗；脚本拿到的是**这一份的 JSON** ✓）。
   texts: Object.freeze({
