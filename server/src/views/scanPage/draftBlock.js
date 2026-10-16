@@ -65,7 +65,6 @@ ${scanNextHtml}
  *
  * ⚠️ 这一块**没有一行 JS**：入口是**同一张表单里的第二颗 submit**（原生，带得走她刚填的尺码/数量）；
  *   【接着录】是一颗**真链接**（同一路径 + `?resume=1`，查询键走配置 ✓）。
- *   🔴 **如实标「待接线」**：【接着录】那一下要**路由**（S3）读 `?resume=1` 才真的接着录 ——
  *     本刀**不碰 `routes/**`** ✗ ⇒ 渲染层已按配置画好链接与查询键，**路由那一步在 S3** ✓。
  */
 const draftUiOf = (page) => {
@@ -80,7 +79,6 @@ const draftEntryConfigOf = (config) => (config && config.draftEntry) || SCAN_PAG
 /**
  * 「存报货草稿」那一颗（**三处入口共用这一个渲染点** ⇒ 形状只有一份，不会三处各写一遍 ✗）。
  *   · 落在**既有那张表单里**（`write.fields.action` 是既有字段名 ⇒ 不新造隐藏字段 ✓）；
- *   · 提交的值 = 配置里的 `saveAction`（**路由 S3 按它分派**；今天还没有接住者 = **待接线** ✓）。
  */
 const draftSaveButtonHtml = (write, realm, config, page) => {
   if (!draftUiOf(page)) return '';
