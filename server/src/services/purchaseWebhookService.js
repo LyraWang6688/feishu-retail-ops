@@ -44,10 +44,8 @@ const { buildArrivalCostPlan, isBlankCost, costValueOf } = require('./arrivalCos
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
-const { IDEMPOTENCY_KEY_FIELD, createOnceByKey, createBatchOnceByKey } = require('../infrastructure/idempotencyKey');
+const { IDEMPOTENCY_KEY_FIELD, createOnceByKey, createOnceByKeys } = require('../infrastructure/idempotencyKey');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
-// ⭐⭐ 2026-10-16（采购写入提速）：「同一批次的多条明细 ⇒ 一次批量写」的开关（配置先行）。
-const { resolvePurchaseDetailBatchWriteConfig } = require('../config/purchaseBatchWrite');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { withTimeout, withTimeoutProxy } = require('../utils/withTimeout');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -320,13 +318,6 @@ class PurchaseWebhookService {
     // ⭐ 2026-10-12：采购明细ID 的分配器（`{报货批次号}-{两位序号}`，同一批次内不重排/不重号）。
     //    用例可注入一个替身。⚠️ 必须放在 `this.gateway` 赋值**之后**。
     this.detailIds = options.detailIds || createPurchaseDetailIdAllocator({ gateway: this.gateway });
-    // ⭐⭐ 2026-10-16（采购写入提速 · 她当天点名「补货和验收两个都需要」）：
-    //    **同一批次的多条明细 ⇒ 一次批量写**（口径/依据见 `confirmPurchaseRequest` 那一段的注释）。
-    //    · 默认取 `config/purchaseBatchWrite`（`PURCHASE_DETAIL_BATCH_WRITE_ENABLED`，没设 = 开）；
-    //    · 用例可以显式注入 `detailBatchWrite: false`（**不碰全局 process.env** ⇒ 同进程并发跑用例不互相污染 ✓）。
-    this.detailBatchWrite = options.detailBatchWrite === undefined
-      ? resolvePurchaseDetailBatchWriteConfig().enabled
-      : options.detailBatchWrite === true;
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     // 「尺码」是指向「尺码管理」的关联字段，采购申请写入时通过它换算。
     this.getSizeReferences = createSizeReferenceAccess({
@@ -1824,7 +1815,8 @@ class PurchaseWebhookService {
     //     · 改之后 ⇒ **1 次整表读 + 1 次 createBatch** ✓
     //
     //  🔴 **语义一条不改**（"快了但少写一行"是绝对不行的 ✗）：
-    //     · **幂等**：仍按**同一把** `request_key` 回查远端（`createBatchOnceByKey`）；
+    //     · **幂等**：仍按**同一把** `request_key` 回查远端（复用**退货那一刀已经落进 main** 的
+    //       `infrastructure/idempotencyKey.createOnceByKeys` —— **不另发明第二套批量形态** ✗）；
     //       重放命中 ⇒ 复用原记录 id、不重发 values、不重复占号 ✓
     //     · **明细 ID**：`detailIdCursor.next()` 仍**只对"这一次真的要建"的那几条**、
     //       且仍在 `plan.items` 顺序上依次取（空档可接受、重号不可以 —— 见 `purchaseDetailId` 文件头）✓
@@ -1839,9 +1831,10 @@ class PurchaseWebhookService {
     //     · 前置判据（尺码解析不出来 / 幂等键在远端重复）变得**更早**抛 ⇒ 不再留半截批次
     //       （改前是"前面几条已落、到那条才炸"；由 `test/purchaseDetailBatchWrite.test.js` 的
     //        AC-PB9 / AC-PB4c 显式钉住 —— 这是本刀**唯一**一处、且是更安全方向的差别 ✓）
-    //  ⚠️ 关掉它（退回逐条）的两个办法：`PURCHASE_DETAIL_BATCH_WRITE_ENABLED=false`
-    //     （见 `config/purchaseBatchWrite`），或网关没有 `createBatch`（既有用例里的替身走这一支）✓
-    const detailBatchWrite = this.detailBatchWrite && typeof this.gateway.createBatch === 'function'
+    //  ⚠️ 退回逐条的唯一入口 = **网关没有 `createBatch`**（老替身 / 未接线）——
+    //     与 2026-10-13 验收那条 `applyPurchaseBatch`、2026-10-16 退货那条 `createOnceByKeys`
+    //     **同一套口径**（三条链一致：不另加开关；要回退 = 回滚这一次提交）✓
+    const detailBatchWrite = typeof this.gateway.createBatch === 'function'
       && typeof this.gateway.listAll === 'function';
     // 攒批时**先读一次**采购明细快照：幂等回查与明细取号**共用这一份**（两次读的是逐字相同的数据，
     // 读两遍纯属浪费 ✗）。退回逐条时不读（那条路的读法一个字都没动 ✓）。
@@ -1927,12 +1920,10 @@ class PurchaseWebhookService {
         // eslint-disable-next-line no-await-in-loop
         built.push({ ...entry, values: await buildRequestValues(entry.item) });
       }
-      const created = await createBatchOnceByKey({
+      const created = await createOnceByKeys({
         gateway: this.gateway,
         tableKey: 'purchaseRequest',
         keyField: IDEMPOTENCY_KEY_FIELD,
-        // ⚠️ 不给"批次级说明"：每一条明细都带自己的 `label`（`采购申请 <item_key>`），
-        //    批量级那一个只在"某条没写 label"时兜底 —— 由 `createBatchOnceByKey` 自己取第一条的 ✓
         correlation: baseCorrelation,
         // 幂等回查复用"取号那一次整表读"的快照 ⇒ 这一步零额外请求 ✓
         records: requestSnapshot,

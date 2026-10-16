@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /** ⚠️ 2026-10-12 旧断言改写（"**零 JS**"口径按业务负责人的要求改了）：
  *  改前（逐字）：`assert.equal(/<script[\s>]/i.
 test(html), false, '页面里一行前端脚本都没有');`
@@ -460,7 +461,7 @@ test('AC3 `from=replenish`：列出各尺码（样品+门盒）数量 + 【一�
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC4 三个领域共用业务处理层、各自独立出口（渲染层不认识业务写入）', () => {
-  const renderer = stripComments(readSrc('views/scanPageRenderer.js'));
+  const renderer = stripComments(rendererSource());
   // 渲染层一个写库调用都没有（写入口在 scanWriteService，路由只做接线）
   for (const pattern of [/gateway\.(create|update|delete)\s*\(/, /appTableRecord\.(create|update|delete)/,
     /(applySale|applyPurchase|applyChange|applyReturn)\s*\(/, /inventoryService|salesOrderService|purchaseWebhookService/]) {
@@ -476,7 +477,7 @@ test('AC4 三个领域共用业务处理层、各自独立出口（渲染层不�
     }
   }
   // 三块共用**同一份视图模型**（渲染层不自己查表：分组 / 补货清单都是纯函数算的）
-  const source = readSrc('views/scanPageRenderer.js');
+  const source = rendererSource();
   assert.match(source, /require\('\.\/scanPageRealm'\)/, '分组 / 补货清单来自视图层的同一份配置');
   assert.ok(source.includes('saleSizeGroups(view)') && source.includes('purchaseSizeLines(view)'),
     '销售与采购两块都拿同一份视图模型算（没有各领域自己再查一次表）');

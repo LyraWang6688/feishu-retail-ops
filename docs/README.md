@@ -12,6 +12,7 @@
 |---|---|
 | [README.md](README.md) | 文档索引 |
 | [async-and-success-page-plan-2026-10-16.md](async-and-success-page-plan-2026-10-16.md) | 补货 / 退货 / 验收 接异步 ＋ 成功页统一极简 —— **只读设计 + 改动清单 + 判据草案** |
+| [async-validation-checkpoints-2026-10-16.md](async-validation-checkpoints-2026-10-16.md) | ⭐ **补货 / 退货 / 验收 三条链路的【校验点清单】：哪些必须当场同步拦**（**只读盘点** ✓ `server/src/**` 零改动 ✗）—— base = 今天 main **`f13e998`**（旧分支 `6d18aa4` 的行号**全部过期** ✗ ⇒ 逐条重核、**更正 18 处** ✓ 含 3 处旧版完全没有的）· 每条写清「拦什么 / 今天哪一行 / 为什么不能挪后台 / 挪了会出什么坏事」· 🔴 **绝不能挪进后台的 X-1…X-7** ＋ ✅ 可以挪的那批 · ⭐ **事实核对：验收/报货写入【仍是逐条】**（`purchaseWebhookService.js:1812` 的 `for (const item of plan.items)`）⇒ **"验收提速成批量写"至今没做** ⇒ 属"可以挪后台/可以批量"那一类（批量口 `inventoryService.js:606 applyPurchaseBatch` 已现成）· 判据草案 AC-VC1…VC6 · **未做项 4 条** |
 | [ci-two-real-findings-2026-10-16.md](ci-two-real-findings-2026-10-16.md) | CI 两条红灯的两份体检（2026-10-16 · 都不是 flake ✗） |
 | [collapse-semantics-audit-2026-10-16.md](collapse-semantics-audit-2026-10-16.md) | 全仓「折叠/收起语义」审计（task-48 · **只读** ✓ 不改任何行为 ✗） |
 | [draft-save-resume-plan-2026-10-16.md](draft-save-resume-plan-2026-10-16.md) | ⭐ **补货 / 退货 / 销售「存草稿 · 后续接着录」**（业务负责人 2026-10-16 逐字）—— **只读核查 + 设计 + 追加口径 + 判据**：文首**追加节**是权威口径（**不加列** ✗ ⇒ 草稿 = 「采购主表」一行 `到货状态 = 「未报货」`）· ⭐ **批次号沿用 vs 新建**（有未报货的号 ⇒ 沿用；没有 ⇒ 新建 · **整段串行**防并发各建一个新号）· ⭐ **供应商拆分**在"生成报货单"那一下（拆成几单/几个号**待她拍** Q7）· ⭐⭐ **「草稿也写明细」**（主表 1 行 ＋ 采购明细 N 行）· 零副作用（不发群 / 不写库存 / 不出图；**明细是唯一被允许的例外**）· `draftScope: single\|per_supplier`（缺省 `single` · **不替她决定**）· **S1（独立存储层）已做**：`services/scanDraftService.js` ＋ `config/scanDraft.js` ＋ `test/scanDraftSaveResume.test.js`｜**S2（渲染半 ＋ 明细口径成对迁移）已做（第 11 节）**：三处入口 ＋「你有一份草稿，接着录吗？」提示条 ＋ 明细幂等｜S3（路由 / 生成报货单）未做 |
@@ -105,6 +106,7 @@
 | [scan-landing-reset-on-scan-2026-10-16.md](scan-landing-reset-on-scan-2026-10-16.md) | ⭐⭐ **按她当日亲口选的方案 ② 落地**（task-60）：点「销售」（`?from=sales`）那一发**先清掉那条未完成** ⇒ 从货品页开始；清的范围 / **不清什么**（裸扫仍走"刷新不丢"）逐条 ＋ `scan.page.rendered` 七个出口落地 ＋ 两条成对迁移 ＋ 4 组变异真红 |
 | [scan-page-architecture-2026-10-15.md](scan-page-architecture-2026-10-15.md) | 「扫一扫」页架构（2026-10-15 晚 · 她口述的落档） |
 | [scan-page-tabs-2026-10-14.md](scan-page-tabs-2026-10-14.md) | 扫码页 tab 最新口径（2026-10-14） |
+| [scan-page-renderer-split-2026-10-16.md](scan-page-renderer-split-2026-10-16.md) | ⭐⭐ `views/scanPageRenderer.js`（2344 行）**按块拆分**（业务负责人 2026-10-16 点头「可以进行拆分」）—— **纯搬运 · 零行为变化**：拆成 `views/scanPage/` 13 件（补货 / 退货 / 销售 / 多货品 / 资金页 / 存草稿 / 领域分派 / 库存 / 货品 / 脚本 / 样式 / 骨架 / 拼装）＋ `scanPageRenderer.js` **保留为薄壳**（re-export ⇒ 58 个文件 113 处按路径引用**一个字都不用改** ✓）· ⭐ **逐字节证据 = 508,317 字节 `cmp` 相同**（四领域 × 两状态 ＋ 消息页 ＋ 最小页）· 判据 `test/scanPageSplitParity.test.js`（AC-SP1…SP4）＋ 3 组变异真红 · 读源码那 51 处改走 `test/support/rendererSource.js`（**断言零放宽** ✗）· 🔴 **没碰** `routes/scanPage.js`（`draft-s3` 正在写 ✗） |
 | [scan-pay-front-async-constraint-2026-10-14.md](scan-pay-front-async-constraint-2026-10-14.md) | 资金页两刀 · 第二刀的**硬约束**（业务负责人原话，逐字） |
 | [scan-to-print-jsapi-2026-10-14.md](scan-to-print-jsapi-2026-10-14.md) | 「扫码打印」= 扫完**直接打印这一张**（2026-10-14 晚 · 业务负责人选了 ⓐ） |
 | [scan-write-fields-audit-2026-10-15.md](scan-write-fields-audit-2026-10-15.md) | 扫码页 · **写入字段核对表**（销售 / 补货 / 退货 / 配品） |
@@ -257,5 +259,6 @@
 | [扫码页访问控制-2026-10-11.md](扫码页访问控制-2026-10-11.md) | 扫码页（标签二维码）的访问控制 —— 2026-10-11 实测结论 |
 | [扫码页销售-操作说明书.md](扫码页销售-操作说明书.md) | 扫码页 · 销售 操作说明书 |
 | [test-base-voucher-column-2026-10-16.md](test-base-voucher-column-2026-10-16.md) | 测试 Base 补「团购券管理」列 —— 留档（⭐**已建成** · type 21 · property 逐键对齐生产 + 闸门 5 条 + 券 e2e 如实记 ✓） |
+| [scan-page-split-plan-2026-10-16.md](scan-page-split-plan-2026-10-16.md) | ⭐⭐ `routes/scanPage.js`（3376 行）**拆分设计**（阶段一·只读）：八件形状（含 `render.js` 的理由）＋ **逐段真实行号**＋ 74 个测试文件的被引用清单 ＋ 共享状态怎么搬 ＋ 风险点（require 循环/路由顺序）＋ **薄壳建议** |
 - [worktree / 分支清理规矩](worktree-cleanup-rule-2026-10-16.md) —— 谁合谁清 · `git cherry` 判据 · 四条底线（2026-10-16 定）
 - [A 档 worktree 留档 2026-10-16](branch-salvage-2026-10-16/README.md) —— 7 个"重复/被她点头删除"的 diff 留档（2026-10-16）

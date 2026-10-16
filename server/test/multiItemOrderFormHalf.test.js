@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * multiItemOrderFormHalf.test.js —— 「一单多货品」**表单半**（`views/**`）的判据（2026-10-16）。
@@ -47,8 +48,7 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { MULTI_ITEM_ORDER } = require('../src/config/multiItemOrder');
 const renderer = require('../src/views/scanPageRenderer');
 
-const RENDERER_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js'), 'utf8');
+const RENDERER_SRC = rendererSource();
 
 const NUMBER = '832-500|黑色|A';
 const COOKIE = (() => {

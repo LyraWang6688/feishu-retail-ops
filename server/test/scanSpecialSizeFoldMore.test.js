@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-14「特殊码折叠」**扩到库存 + 补货**，＋ 补货页新版式（**先写先红**）。
@@ -26,7 +27,7 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
 const { saleSizeGroups, purchaseSizeLines } = require('../src/views/scanPageRealm');
 
-const RENDERER_SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+const RENDERER_SRC = rendererSource();
 const REALM_SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRealm.js'), 'utf8');
 
 /** 女鞋（B）一款：36 有货；34/35/42/43 是缺货的特殊码；37..41 是缺货的普通码。 */

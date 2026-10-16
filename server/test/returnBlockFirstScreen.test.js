@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-16（task-47 · AC-RF1）：**进退货 tab，首屏就要看见表单** ✗ 不许先给一颗「退货」按钮
@@ -109,7 +110,7 @@ test('AC-RF1b 🔴 **首屏**即见：尺码行 + 整单金额 + 生成按钮（
 });
 
 test('AC-RF1c ⭐ 这一刀**只动退货那一个**：一键补货的同形 `<details>` 仍按原样（不改它 ✗）', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js'), 'utf8');
+  const source = rendererSource();
   assert.match(source, /<details class="disclosure" data-view="one-tap-replenish">/,
     '「一键补货」那个 `<details>` 这一刀**不许动** ✗（Lead 另去问她要不要一起改 ✓）');
   // 改前逐字（上一刀）：assert.match(source, /<details class="disclosure" data-view="purchase-return" open>/,

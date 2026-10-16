@@ -20,6 +20,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { scanTree, scanSource, evaluateGuard, buildWhitelist } = require('./support/hardcodedChinese.js');
+// ⭐ 2026-10-16：渲染层按块拆进 `views/scanPage/*.js` ⇒ 下面那两条「真文件」判据读**聚合源码**
+//   （= 拆之前那一份，逐字 ✓ 见 `support/rendererSource.js`）；
+//   而按**文件**登记的扫描与白名单照走 `ROOTS`（拆开之后的真实文件 ✓）。
+const { rendererSource } = require('./support/rendererSource');
 
 const SRC = path.join(__dirname, '../src');
 const WHITELIST_PATH = path.join(__dirname, 'fixtures/hardcodedChineseWhitelist.json');
@@ -152,7 +156,7 @@ function commentLineFlags(source) {
 
 test('AC-5b ⭐ 真文件：报出来的每一条都**不是注释**（本切片要治的"闸门说谎"）', () => {
   const relative = 'views/scanPageRenderer.js';
-  const raw = fs.readFileSync(path.join(SRC, relative), 'utf8');
+  const raw = rendererSource(); // ⭐ 聚合源码 = 拆之前那一份（逐字 ✓）
   // ⭐ 2026-10-13（业务负责人裁定）：判"她看得见的文案"之前，**先整段剥掉 `<style>`** ——
   //    CSS 注释/样式不是文案（`<style>` 里那些中文注释本来就在白名单里，不该被当成"报出来的文案"）。
   //    🔴 **绝对不剥 `<script>`**：JS 里的字符串**就是用户可见文案**（见
@@ -171,7 +175,7 @@ test('AC-5b ⭐ 真文件：报出来的每一条都**不是注释**（本切片
 
 test('AC-5b2 给真文件**只加一行注释** ⇒ 报出来的集合**一个字都不变**（这才是"只挡新增"）', () => {
   const relative = 'views/scanPageRenderer.js';
-  const source = fs.readFileSync(path.join(SRC, relative), 'utf8');
+  const source = rendererSource(); // ⭐ 聚合源码 = 拆之前那一份（逐字 ✓）
   const before = scanSource(relative, source).map((item) => item.text).sort();
   const after = scanSource(relative, `${source}\n// 她今天随手加的一行注释：门盒 / 仓库\n`).map((item) => item.text).sort();
   assert.deepEqual(after, before, '加注释不该改变扫描结果');

@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-12 真机事故（业务负责人，逐字）：
  *   「点完之后**没有 Toast、按键置灰**之类的提示，页面完全没有及时的交互反馈
@@ -335,7 +336,7 @@ test('AC-PF4 收到响应后横幅给「已下发到电脑 · 队列第 N 位」
 });
 
 test('AC-PF7 ⭐ 逐按钮：**每一个写操作按钮**点下去都会置灰 + 换文案（静态断言，六个领域全覆盖）', () => {
-  const renderer = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+  const renderer = rendererSource();
   // 渲染层里"会发起写操作的提交按钮"必须**统一**走 `submitFeedbackAttrs`（一处定义）
   const submitButtons = renderer.match(/<button[^>]*type="submit"[^>]*>/g) || [];
   assert.ok(submitButtons.length >= 8, `提交按钮总得有几个（实际 ${submitButtons.length}）`);

@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-13「金额两步走 + 成功页三入口」的验收标准（**先写先红**）。
  *
@@ -35,7 +36,7 @@ const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
 
 const SERVER = path.join(__dirname, '..');
-const RENDERER_SRC = fs.readFileSync(path.join(SERVER, 'src/views/scanPageRenderer.js'), 'utf8');
+const RENDERER_SRC = rendererSource();
 const CONFIG_SRC = fs.readFileSync(path.join(SERVER, 'src/config/scanWrite.js'), 'utf8')
   + fs.readFileSync(path.join(SERVER, 'src/config/scanPage.js'), 'utf8');
 

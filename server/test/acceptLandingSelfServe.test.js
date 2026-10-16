@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-12（业务负责人真机 + Lead 追到的日志）：
  *   她：「报单之后点验收 ⇒ 就提示这个，我不知道啥意思」。
@@ -176,7 +177,7 @@ test('AC-OFF1 🔴 路由里**没有** `/accept` 注册（扫码页那条路已�
 });
 
 test('AC-OFF2 🔴 渲染层里**没有**验收那一块的标记（`data-view="acceptance"` / `accept-pending`）', () => {
-  const renderer = readSrc('views/scanPageRenderer.js');
+  const renderer = rendererSource();
   assert.equal(renderer.includes('data-view="acceptance"'), false, '改前逐字：必须有 data-view="acceptance" ✗ ⇒ 改后：必须没有 ✓');
   assert.equal(renderer.includes('accept-pending'), false, '改前逐字：自助块 data-view="accept-pending" ✗ ⇒ 改后：必须没有 ✓');
   assert.equal(/renderAcceptance(Page|DonePage|SelfServe)/.test(renderer), false, '三个验收渲染函数随验收一起退场 ✓');
@@ -197,7 +198,7 @@ test('AC-OFF3 🔴 旧 `?from=accept` **回落销售**（不报错、不白屏�
 test('AC-OFF4 ✅ 仍成立、照旧不许动的（共享能力没跟着删）', () => {
   const routes = readSrc('routes/workbench.js');
   assert.match(routes, /router\.post\('\/purchase\/arrivals\/confirm'/, '工作台"确认到货"接口照旧 ✓');
-  const renderer = readSrc('views/scanPageRenderer.js');
+  const renderer = rendererSource();
   assert.ok(renderer.length > 0);
   const inventory = readSrc('services/inventoryService.js');
   assert.match(inventory, /applyPurchase/, '加库存仍只走 `InventoryService.applyPurchase` ✓');

@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ **「存草稿 · 接着录」S2（渲染半）的验收标准** —— 2026-10-16。
  *
@@ -42,8 +43,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_d
 const { renderScanPage, escapeHtml } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE, resolveDraftEntryConfig } = require('../src/config/scanPage');
 
-const RENDERER_PATH = path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js');
-const RENDERER_SRC = fs.readFileSync(RENDERER_PATH, 'utf8');
+const RENDERER_SRC = rendererSource();
 
 /** 三个领域（她说的那三页）—— 取值必须是 `views/scanPageRealm.js` 的 `REALMS[].id` ✓。 */
 const THREE_REALMS = ['sales', 'replenish', 'purchase_return'];

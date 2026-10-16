@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * 「取数据那一步把 from 丢了」的哨兵（2026-10-14 真机 + 线上日志）：
  *   日志逐字：`GET /r/<ID>?from=purchase_return => 200 (7428)` 之后
@@ -10,8 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const RENDERER = path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js');
-const source = fs.readFileSync(RENDERER, 'utf8');
+const source = rendererSource();
 
 /** 取数据那一行是否**丢了当前 query**（旧写法 = `pathname + '?data=1'` ✗） */
 function dropsCurrentQuery(text) {

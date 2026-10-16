@@ -44,10 +44,12 @@
  *           ／ 顺手"加个库存" ⇒ 红
  *   AC-PB7  ⭐ 两条链各自的数字（不是只快补给 ✗）：补货 = 整表读 1 / 写 1；
  *           验收 = 逐条 `create` **0 次**、批量写 **≤2 次**（它 10-13 已经批量，且**没被本刀弄回退**）
- *   AC-PB8  ⭐ 配置先行：`PURCHASE_DETAIL_BATCH_WRITE_ENABLED` 显式布尔
- *           （没设 ⇒ 默认开；设成 `false` / 空串 ⇒ 关；认不出的值 ⇒ **抛错不猜**）
- *           ＋ 关掉以后**退回逐条**且与"网关没有批量口"的那条路**逐字节同形**
- *           ／ 把 `readFlag` 换成 `|| true` ⇒ 红（`false` 会关不掉）
+ *   AC-PB8  ⭐ **模块化哨兵：不许第二套批量形态** —— 补货这条链必须复用
+ *           退货那一刀（#749）已经落进 main 的 `infrastructure/idempotencyKey.createOnceByKeys`，
+ *           仓库里**不许**再出现与之并列的第二个"批量幂等创建"实现
+ *           ／ 另起一个同功能的 helper ⇒ 红
+ *   AC-PB8b 网关**没有批量口**（老替身 / 未接线）⇒ 退回逐条：与改动前**逐字节同形**
+ *           （0 次 `createBatch`、N 次逐条 `create`、表内容与批那条路同一串明细 ID）
  *   AC-PB9  ⚠️ 边界如实说（不是"更快"的装饰）：重复幂等键 / 尺码解析不出来这类**前置判据**
  *           在攒批路径上**建行之前**就抛 ⇒ **一条明细都不建**（改前是"前面几条已建、到那条才抛"）。
  *           这条 AC 把它**钉成显式行为**，不许"悄悄变成半截批次" ✓
@@ -72,10 +74,7 @@ const { PurchaseOrderBatchService } = require('../src/services/purchaseOrderBatc
 const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { IDEMPOTENCY_KEY_FIELD, OPERATION_ITEM_KEY_FIELD } = require('../src/infrastructure/idempotencyKey');
-const {
-  resolvePurchaseDetailBatchWriteConfig, BATCH_WRITE_ENV_KEY,
-} = require('../src/config/purchaseBatchWrite');
+const { IDEMPOTENCY_KEY_FIELD, createOnceByKeys } = require('../src/infrastructure/idempotencyKey');
 
 const F = (key) => V1_BITABLE_SCHEMA.tables[key].fields;
 const tempDir = (label) => fs.mkdtempSync(path.join(os.tmpdir(), `purchase-detail-batch-${label}-`));
@@ -135,6 +134,13 @@ const createFakeGateway = ({
     },
     create: async (key, values) => {
       calls.push({ kind: 'create', table: key, values });
+      if (batchRejected) {
+        // 真飞书的"字段不存在"这类拒绝**逐条也会被拒** ⇒ 假件必须两边都拒，
+        // 否则"退回逐条"会假装成功（那就测不出真实行为了）
+        const error = new Error('create rejected: 字段不存在（用例故意）');
+        error.bitableRejected = true;
+        throw error;
+      }
       const record = push(key, values);
       return { recordId: record.record_id, record };
     },
@@ -199,7 +205,7 @@ const seedTables = (overrides = {}) => ({
 });
 
 const reportHarness = ({
-  batchCapable = true, failBatchAt = 0, batchRejected = false, partialWriteOnFail = 0, detailBatch, tables,
+  batchCapable = true, failBatchAt = 0, batchRejected = false, partialWriteOnFail = 0, tables,
 } = {}) => {
   const gateway = createFakeGateway({
     seed: seedTables(tables || {}), batchCapable, failBatchAt, batchRejected, partialWriteOnFail,
@@ -248,8 +254,6 @@ const reportHarness = ({
       next: async () => { batchNoCalls += 1; return { batchNo: 'CGD-20261016-0001' }; },
     },
     sandboxChatId: 'oc_test_group',
-    // ⚠️ 只在本文件的用例里显式注入（不改全局 process.env）；不传 = 走配置默认值
-    ...(detailBatch === undefined ? {} : { detailBatchWrite: detailBatch }),
   });
   return {
     gateway, service, renders, messages, inventoryCalls,
@@ -526,15 +530,16 @@ test('AC-PB4b ⭐ 批量那条路失败 ⇒ **回落逐条**（行为与改前�
   ['CGD-20261016-0001-01', 'CGD-20261016-0001-02', 'CGD-20261016-0001-03',
     'CGD-20261016-0001-04', 'CGD-20261016-0001-05'], '不重号、不跳号');
 
-  // ③ 飞书**结构化拒绝**（字段不存在这类，可以确定没写）⇒ 原样抛，**不回落**（与 createOnceByKey 同一条纪律）
+  // ③ 飞书**结构化拒绝**（字段不存在这类，可以确定没写）⇒ 如实抛、**一行都不许落**
+  //    （批量件把任何失败都退回逐条；逐条那一条会当场抛 ⇒ 落表 0 行、不静默、不半截）
   const rejected = reportHarness({ batchCapable: true, batchRejected: true });
   const rejectedTask = await seedTask(rejected.service, 't_pb4c3', reportDraft());
   const error = await rejected.service.publishPurchaseRequest('t_pb4c3', rejectedTask)
     .then(() => null, (e) => e);
   assert.ok(error, '结构化拒绝必须抛（不许静默吞掉）');
   assert.equal(error.bitableRejected, true, '标记照旧（上层据它区分"被拒"与"结果未知"）');
-  assert.equal(callCounts(rejected.gateway)['create:purchaseRequest'] || 0, 0,
-    '结构化拒绝 ⇒ **不回落逐条**（回落只会把同一条错重放 5 次）');
+  assert.equal((rejected.gateway.tables.purchaseRequest || []).length, 0,
+    '被拒 ⇒ 一行都不许落（半截批次比"没写"更难查）');
 });
 
 test('AC-PB4c 失败**文案**不变：重复幂等键 ⇒ 与逐条路径同一句「重复业务事实…请人工核对」', async () => {
@@ -695,37 +700,45 @@ test('AC-PB7 ⭐ 两条链各自的数字：补货 = 读 1 / 写 1；验收 = �
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-PB8 配置先行（显式布尔；关掉就退回逐条，且与"网关没有批量口"逐字同形）
+// AC-PB8 模块化：复用退货那一刀落进 main 的批量件（不许第二套）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PB8 ⭐ 开关：没设 ⇒ 默认开；空串 / false ⇒ 关；认不出的值 ⇒ 抛错不猜', () => {
-  assert.equal(BATCH_WRITE_ENV_KEY, 'PURCHASE_DETAIL_BATCH_WRITE_ENABLED');
-  assert.equal(resolvePurchaseDetailBatchWriteConfig({}).enabled, true, '没设 ⇒ 默认开');
-  for (const off of ['false', '', '0', 'off', 'no']) {
-    assert.equal(resolvePurchaseDetailBatchWriteConfig({ [BATCH_WRITE_ENV_KEY]: off }).enabled, false,
-      `显式关掉（${JSON.stringify(off)}）⇒ 必须真的关（写成 \`|| true\` 就会关不掉 ⇒ 红）`);
-  }
-  for (const on of ['true', '1', 'on', 'yes']) {
-    assert.equal(resolvePurchaseDetailBatchWriteConfig({ [BATCH_WRITE_ENV_KEY]: on }).enabled, true);
-  }
-  assert.throws(() => resolvePurchaseDetailBatchWriteConfig({ [BATCH_WRITE_ENV_KEY]: 'maybe' }),
-    /PURCHASE_DETAIL_BATCH_WRITE_ENABLED/, '认不出的取值 ⇒ 当场抛错（静默按 true/false 是最坏的一种）');
+test('AC-PB8 ⭐ 补货与退货**共用同一个批量件**（仓库里不许出现第二套"批量幂等创建"）', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'services', 'purchaseWebhookService.js'), 'utf8',
+  );
+  assert.match(source, /createOnceByKeys/,
+    '补货那条链必须调 `infrastructure/idempotencyKey.createOnceByKeys`（与退货同一个）');
+  assert.equal(typeof createOnceByKeys, 'function',
+    '那个批量件必须存在（退货那一刀 #749 落的；本刀只是复用它）');
+  // 服务层不许绕过批量件自己拼第二套（幂等回查会一起被绕过 ✗）
+  assert.equal(/gateway\.createBatch\(/.test(source), false,
+    '服务层不许直接 gateway.createBatch(...)（幂等回查会一起被绕过）');
+  // `infrastructure/` 里"按幂等键 + 批量建"只许有一处实现
+  const infraDir = path.join(__dirname, '..', 'src', 'infrastructure');
+  const offenders = fs.readdirSync(infraDir)
+    .filter((name) => name.endsWith('.js') && name !== 'idempotencyKey.js')
+    .filter((name) => {
+      const text = fs.readFileSync(path.join(infraDir, name), 'utf8');
+      return /createBatch\s*\(/.test(text) && /幂等键/.test(text);
+    });
+  assert.deepEqual(offenders, [],
+    `批量幂等创建只许有 idempotencyKey.js 一处（实际还有：${offenders.join('、')}）—— 别发明第二套 ✗`);
 });
 
-test('AC-PB8b 关掉开关 ⇒ 退回逐条（与"网关没有批量口"那条路**逐字节同形**）', async () => {
-  const off = reportHarness({ batchCapable: true, detailBatch: false });
-  const offTask = await seedTask(off.service, 't_pb8', reportDraft());
-  await off.service.publishPurchaseRequest('t_pb8', offTask);
-
+test('AC-PB8b 网关**没有批量口** ⇒ 退回逐条（与改动前**逐字节同形**）', async () => {
   const noBatchPort = reportHarness({ batchCapable: false });
   const noBatchTask = await seedTask(noBatchPort.service, 't_pb8', reportDraft());
-  await noBatchPort.service.publishPurchaseRequest('t_pb8', noBatchTask);
-
-  assert.equal(callCounts(off.gateway)['createBatch:purchaseRequest'] || 0, 0,
-    '关掉开关 ⇒ 一次批量都不许发（否则"关不掉"）');
-  assert.equal(callCounts(off.gateway)['create:purchaseRequest'], 5, '退回逐条 = 5 次 create');
-  assert.deepEqual(physicalRows(off.gateway, 'purchaseRequest'),
-    physicalRows(noBatchPort.gateway, 'purchaseRequest'), '两条"退回"的路必须逐字节同形');
+  const result = await noBatchPort.service.publishPurchaseRequest('t_pb8', noBatchTask);
+  const counts = callCounts(noBatchPort.gateway);
+  assert.equal(counts['createBatch:purchaseRequest'] || 0, 0, '没有批量口 ⇒ 一次批量都不发');
+  assert.equal(counts['create:purchaseRequest'], 5, '退回逐条 = 5 次 create（改动前就是这条路）');
+  assert.equal((noBatchPort.gateway.tables.purchaseRequest || []).length, 5);
+  assert.equal(result.request_ids.length, 5);
+  assert.deepEqual((noBatchPort.gateway.tables.purchaseRequest || [])
+    .map((row) => row.fields[F('purchaseRequest').detailId]),
+  ['CGD-20261016-0001-01', 'CGD-20261016-0001-02', 'CGD-20261016-0001-03',
+    'CGD-20261016-0001-04', 'CGD-20261016-0001-05'], '逐条那条路的明细 ID 与攒批那条路同一串');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

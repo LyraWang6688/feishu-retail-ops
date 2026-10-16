@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-12（业务负责人拍板，逐字）：
  *   「② 「备注」还是「赠品」（表列名 / 页面标签）⇒ **赠品**」
@@ -75,7 +76,7 @@ test('AC-GL1 销售页这一列的标签 = 「赠品（可不填）」；不再�
   //    （鞋表单 + **配品表单**）；她的口径是「扫码页里的**配品逻辑拿掉**」（配品改到工作台）
   //    ⇒ 配品表单整块退场 ⇒ 现在**只剩下鞋表单那一处** ✓。口径本身没变：
   //    仍然只有**一个真源** `t.giftLabel`，渲染层**不许**写死「备注」✓
-  const renderer = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+  const renderer = rendererSource();
   const labels = (renderer.match(/t\.giftLabel/g) || []).length;
   assert.equal(labels, 1, `配品表单退场后只剩鞋表单那一处（实际 ${labels} 处）`);
   assert.equal(/<label>[^<]*备注/.test(renderer), false, '渲染层不许有写死的「备注」标签');
