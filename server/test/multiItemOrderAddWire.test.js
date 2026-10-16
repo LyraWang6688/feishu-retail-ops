@@ -367,34 +367,50 @@ test('AC-MI-C ⭐⭐ N=1（没加过任何货品）⇒ 老路径原样被调 · 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 🔴 缺省（开关关）⇒ 页面逐字不变（零回归 ✓）
+// 🔴 开关**显式关** ⇒ 页面逐字不变（零回归 ✓）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MI-E 🔴 开关缺省关 ⇒ 那颗入口仍是**链接**、没有删除按钮（既有页面一个字节不变 ✓）', async () => {
+test('AC-MI-E 🔴 开关**显式关**（`SCAN_MULTI_ITEM_ADD_WIRE=false`）⇒ 那颗入口仍是**链接**、没有删除按钮', async () => {
   const writeService = makeWriteService();
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
-    // 按 URL 里扫到的那一款给视图（她第二件是**另一款** ✓）
-    service: { lookup: async (input) => viewOf(String((input && (input.number || input.recordId)) || '')) }, gateway: {}, writeService,
-    // ⚠️ **不注入** wire ⇒ 走缺省（= 配置里那个显式布尔，缺省 false ✓）
-    purchaseBackground: { schedulePurchaseRest: () => {} },
-    render: { success: () => '<html>OK</html>', message: () => '<html>ERR</html>' },
-    startSnapshot: false,
-  }));
-  await withServer(app, async (base) => {
-    const html = await getPage(base);
-    assert.match(html, /data-multi-add[^>]*href="/,
-      '⭐ 缺省 ⇒ 仍是今天那颗 `<a href="?add=1">`（既有判据 `Render:73` / `ReturnTrim:166` 原样绿 ✓）');
-    assert.equal(html.includes('data-multi-remove'), false, '缺省 ⇒ 没有删除按钮 ✓');
-  });
+  // ⭐⭐ 2026-10-16 下半场 **成对迁移**（**改指向、不放宽** ✓）：
+  //   改前逐字：本用例**不配**这个开关，靠"缺省 = `false`"成立（那时 `config/multiItemOrder.js`
+  //     的 `addWireEnabled` 缺省就是 `false` ✓）。
+  //   改后逐字：**显式配成 `false`**（下面那一行 ＋ `finally` 里删掉）—— 缺省已在**同一刀**里翻成
+  //     `true`（Lead 裁决"手术刀 ①"：**关着 = 她那个 bug 还活着** ✗ ⇒ 放出来 ✓）。
+  //   ⇒ 本条钉的"**关掉之后页面仍与今天逐字一致**"这条保证**一个字都没丢** ✓，
+  //     只是不再靠"缺省"、而是靠**显式关**来钉（`readFlag` ⇒ 空串 / `false` **关得掉** ✓）。
+  //   ⚠️ **三条断言一个字未改** ✓（入口仍是链接 / 没有删除按钮 ✓）。
+  process.env.SCAN_MULTI_ITEM_ADD_WIRE = 'false';
+  try {
+    app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+      // 按 URL 里扫到的那一款给视图（她第二件是**另一款** ✓）
+      service: { lookup: async (input) => viewOf(String((input && (input.number || input.recordId)) || '')) }, gateway: {}, writeService,
+      // ⚠️ **不注入** wire ⇒ 走配置那一位（本用例把它**显式配成关** ✓）
+      purchaseBackground: { schedulePurchaseRest: () => {} },
+      render: { success: () => '<html>OK</html>', message: () => '<html>ERR</html>' },
+      startSnapshot: false,
+    }));
+    await withServer(app, async (base) => {
+      const html = await getPage(base);
+      assert.match(html, /data-multi-add[^>]*href="/,
+        '⭐ 显式关 ⇒ 仍是那颗 `<a href="?add=1">`（"关态"的页面逐字不变 ✓）');
+      assert.equal(html.includes('data-multi-remove'), false, '关 ⇒ 没有删除按钮 ✓');
+    });
+  } finally {
+    delete process.env.SCAN_MULTI_ITEM_ADD_WIRE;
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 🔴 AC-MI-F ⭐ **生产那个开关真的能把它打开**（`SCAN_MULTI_ITEM_ADD_WIRE=true` ⇒ 路由半接线 ✓）
 //   ——上面几条都是**注入**接线位（`options.multiItemWire`）；这一条走的是**线上那条路**：
 //     环境变量 ⇒ `resolveMultiItemOrderConfig()` ⇒ `addWireEnabled` ⇒ 工厂自己把那一位交给路由与渲染 ✓。
-//   ⚠️ 缺省（没人配）⇒ 关（本文件最后那条 `AC-MI-E` 钉着 ✓）——**默认不改变她的页面** ✓。
+//   ⭐ 2026-10-16 下半场：`addWireEnabled` **缺省已翻成 `true`**（Lead 裁决"手术刀 ①"）⇒
+//     本条的"显式 `true`"与**缺省**是同一个结果（"缺省 = 开"由
+//     `multiItemCurrentItemDupHttp.test.js` 的 **AC-MID-1/2** 用真 HTTP 单独钉着 ✓）；
+//     **"显式关 ⇒ 回到那颗链接"**由上面 **AC-MI-E** 钉着 ✓（两条合起来 = 这个开关**两个方向都关得住 / 打得开** ✓）。
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-MI-F 🔴 `SCAN_MULTI_ITEM_ADD_WIRE=true` ⇒ 页面出按钮、POST 真的被接住（线上那条路 ✓）', async () => {
