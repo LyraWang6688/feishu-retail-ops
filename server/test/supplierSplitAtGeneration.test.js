@@ -43,9 +43,13 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const {
   splitBySupplier, documentFileNameOf, groupItemsBySupplier,
 } = require('../src/services/supplierSplitService');
-const { resolveSupplierSplitConfig, BATCH_NO_POLICIES } = require('../src/config/supplierSplit');
-const { resolveScanDraftConfig } = require('../src/config/scanDraft');
-const { createScanDraftService } = require('../src/services/scanDraftService');
+const { resolveSupplierSplitConfig, BATCH_NO_POLICIES, SPLIT_STAGE, SUPPLIER_SPLIT } = require('../src/config/supplierSplit');
+// ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+//   改前逐字：`const { resolveScanDraftConfig } = require('../src/config/scanDraft');`
+//             ＋ `const { createScanDraftService } = require('../src/services/scanDraftService');`
+//   改后逐字：**两条 require 删掉**（两个模块已随"存草稿链整件退场"删除 ✗）；本文件的口径真源
+//             改为**既有** `config/supplierSplit.js`（上面那一行 ✓）
+//   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**存草稿的功能都删除吧，不需要了，前端和后端都不需要了，整个链路都删除**」✓
 
 /** 🔴 main 上那个冻结件的基线指纹（与 `test/scanWriteServiceFrozen.test.js` 的常量**同一个值** ✓）。
  *  ⚠️ **2026-10-16 成对迁移**（task-62「货 / 钱分离」阶段二 · 业务负责人明确「允许改冻结文件」，**一次性、只为本卡**）：
@@ -442,72 +446,54 @@ test('AC-SS4b 探针：判据不是空跑 —— 把"单据"里那张图去掉 �
 //       （旧断言会与 main 上那条口径**打架**，而且它本来就**不是**她点名的那三个副作用之一 ✓）。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-SS5 ⭐ 存草稿（混 3 个供应商）⇒ 不发群 / 不出图 / 不写库存 / 不出报货单（明细按 #735 的新口径会写）', async () => {
-  const gateway = createFakeGateway({
-    sizeManagement: [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
-  });
-  let batchNoCalls = 0;
-  const draftService = createScanDraftService({
-    gateway,
-    config: resolveScanDraftConfig({ SCAN_DRAFT_ENABLED: 'true' }),
-    dir: tempDir('draft'),
-    idOf: (openId) => `scan_session_${openId}`,
-    batchNoGenerator: { next: async () => { batchNoCalls += 1; return { batchNo: `CGD-20261016-000${batchNoCalls}` }; } },
-  });
-  const saved = await draftService.saveDraft({
-    openId: 'ou_1',
-    items: [
-      { product_record_id: 'p1', number: 'K1|黑色|A', item_no: 'K1', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: '40', quantity: '2' }] },
-      { product_record_id: 'p2', number: 'K2|黑色|A', item_no: 'K2', color: '黑色', supplier_record_id: 'sup_b', entries: [{ size: '41', quantity: '1' }] },
-      { product_record_id: 'p3', number: 'K3|黑色|A', item_no: 'K3', color: '黑色', supplier_record_id: 'sup_c', entries: [{ size: '42', quantity: '1' }] },
-    ],
-  });
-  assert.equal(saved.ok, true);
-  // ① 主表：**只那一行草稿行**（`到货状态 = 未报货`）—— 一个批次号（她的①口径 ✓）
-  assert.equal(gateway.createdIn('purchaseOrderBatch').length, 1, '只建那一行草稿行 ✓');
-  // ①b 明细：**会写**（她 2026-10-16「草稿也写明细」⇒ #735 的新口径 ✓），
-  //     但用的是**草稿专用**幂等键前缀（**不复用**真出单那套 `purchase_request:*`）
-  //     ⇒ 草稿明细与"生成报货单"写出来的明细**在幂等键上就分得开** ✓
-  const detailKeys = (gateway.tables.purchaseRequest || []).map(
-    (record) => String(record.fields['幂等键'] || ''),
-  );
-  assert.equal(detailKeys.length, 3, '3 个货品 × 1 个尺码 ⇒ 3 行草稿明细（#735 的新口径 ✓）');
-  assert.ok(
-    detailKeys.every((key) => key.startsWith('scan_draft_detail:')),
-    `草稿明细的幂等键必须是**草稿专用前缀**（实得：${detailKeys.join(' | ')}）`,
-  );
-  // ② ⭐ **她点名的三个副作用（发群 / 出图 / 写库存）一个字都没有** ＋ 没有「单据」附件写入
-  assert.deepEqual(gateway.calls.upload, [], '不出图（连素材都不传）✓');
-  assert.equal(
-    gateway.calls.update.some((call) => JSON.stringify(call.values).includes('单据')
-      || Object.prototype.hasOwnProperty.call(call.values, 'document')), false,
-    '不往「单据」写任何附件（报货单那一步才写 ✓）',
-  );
-  assert.equal(
-    gateway.calls.create.concat(gateway.calls.update)
-      .some((call) => String(call.table).startsWith('inventory') || String(call.table) === 'liveInventory'),
-    false, '草稿阶段**不写库存** ✓',
-  );
-  // ③ 草稿里**3 个供应商都还在**（存草稿**不拆** ✓ —— 拆的那一下是「生成报货单」）
-  assert.deepEqual(
-    saved.draft.items.map((item) => item.supplier_record_id), ['sup_a', 'sup_b', 'sup_c'],
-    '存草稿阶段不拆组（拆 = 生成报货单那一下 ✓）',
-  );
-  assert.equal(resolveScanDraftConfig({}).supplierSplit, 'generate_report', '拆的那一步 = 生成报货单 ✓（不是存草稿 ✗）');
+test('AC-SS5 ⭐ 混 3 个供应商 ⇒ 拆分发生在【生成报货单】那一步（她选的 ⓐ：同一批次号）', async () => {
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`AC-SS5 ⭐ 存草稿（混 3 个供应商）⇒ 不发群 / 不出图 / 不写库存 / 不出报货单（明细按 #735 的新口径会写）`
+  //     —— 它证的是"**存草稿阶段不拆**"；而**存草稿那条链已整件退场** ✗ ⇒ 被测对象不存在了
+  //   改后逐字：本行 —— **改钉同一条语义的另一半**：拆分发生在**生成**那一步、且**不新增批次号** ✓
+  //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**存草稿的功能都删除吧，不需要了，前端和后端都不需要了，整个链路都删除**」✓
+  const cfg = resolveSupplierSplitConfig({});
+  assert.equal(cfg.stage, SPLIT_STAGE, '拆的那一步 = 生成报货单 ✓');
+  assert.equal(cfg.batchNoPolicy, BATCH_NO_POLICIES.sameBatchNo, '同一批次号下按供应商分组（她选的 ⓐ）✓');
+
+  // ① 行为（**既有生成链**，与 AC-SS1 同一套夹具）：混 3 个供应商 ⇒ **生成时**分成 3 组
+  const h = reportHarness();
+  const task = await seedTask(h.service, 't_ss5', reportTask({
+    supplierRecordId: '',
+    items: [line('sup_a', 40, 2), line('sup_b', 41, 1), line('sup_c', 42, 1)],
+  }));
+  await h.service.publishPurchaseRequest('t_ss5', task);
+  assert.equal(h.renders.length, 3, '生成那一步才拆：3 个供应商 ⇒ 3 张（能真红：不拆 ⇒ 只 1 张 ✗）');
+  const suppliers = h.renders.map((render) => [...new Set(render.items.map((item) => item.supplier_record_id))].join(','));
+  assert.deepEqual(suppliers.sort(), ['sup_a', 'sup_b', 'sup_c'], '每组只含自己那个供应商的行 ✓');
+
+  // ② ⭐ 源码哨兵：**拆分只在服务端生成那条路上**（页面 / 路由那条"装配 · 草稿"的路**一个调用点都不许有** ✗）
+  const callers = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith('.js')) continue;
+      if (/splitBySupplier\s*\(/.test(fs.readFileSync(full, 'utf8'))) {
+        callers.push(path.relative(path.join(__dirname, '..'), full));
+      }
+    }
+  };
+  walk(path.join(__dirname, '..', 'src'));
+  assert.ok(callers.some((file) => file.startsWith('src/services/')), `拆分要在服务端那条路上 ✓（实际：${callers.join(' / ')}）`);
+  assert.ok(!callers.some((file) => file.startsWith('src/routes/') || file.startsWith('src/views/')),
+    `拆分的调用点不许落在路由/页面（装配 · 草稿那条路）✗（实际：${callers.join(' / ')}）`);
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AC-SS6 口径落定哨兵（S1 留的 `undecided` 现在必须是她选的 ⓐ）
-// ═══════════════════════════════════════════════════════════════════════════
-
 test('AC-SS6 ⭐⭐ `supplierSplit` 不再是 `undecided`：落成她选的 ⓐ `same_batch_no`（ⓑ 配了就抛）', () => {
-  const draftConfig = resolveScanDraftConfig({});
-  assert.equal(draftConfig.supplierSplit, 'generate_report', '拆的那一步 = 生成报货单 ✓（不是存草稿 ✗）');
-  // 🔴 反向钉住：S1 那个"S1 未决"的写法**不许回来** —— 配置导出的口径现在必须是 ⓐ
-  const { SUPPLIER_SPLIT: DRAFT_SUPPLIER_SPLIT } = require('../src/config/scanDraft');
-  assert.equal(DRAFT_SUPPLIER_SPLIT.batchNoPolicy, 'same_batch_no',
-    '`config/scanDraft.js` 那个 S1 留的 `undecided` 必须已落成她选的 ⓐ（能真红：写回 undecided ⇒ 红）');
-  assert.equal(DRAFT_SUPPLIER_SPLIT.stage, 'generate_report');
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`const draftConfig = resolveScanDraftConfig({}); assert.equal(draftConfig.supplierSplit, 'generate_report', …)`
+  //             ＋ `const { SUPPLIER_SPLIT: DRAFT_SUPPLIER_SPLIT } = require('../src/config/scanDraft');`
+  //   改后逐字：下面这三行 —— 真源改为**既有** `config/supplierSplit.js`（草稿那一份已整件退场 ✗）
+  //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**整个链路都删除**」✓
+  assert.equal(SUPPLIER_SPLIT.stage, SPLIT_STAGE, '拆的那一步 = 生成报货单 ✓（不是存草稿 ✗）');
+  assert.equal(SUPPLIER_SPLIT.batchNoPolicy, 'same_batch_no', '她选的 ␐（不许回 `undecided` ✗）');
+  assert.equal(resolveSupplierSplitConfig({}).stage, 'generate_report');
   const splitConfig = resolveSupplierSplitConfig({});
   assert.equal(splitConfig.batchNoPolicy, BATCH_NO_POLICIES.sameBatchNo);
   assert.equal(splitConfig.batchNoPolicy, 'same_batch_no');
