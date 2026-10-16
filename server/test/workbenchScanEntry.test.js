@@ -162,8 +162,10 @@ test('AC6 🔴 签名只许出现在「扫码打印」那两个文件里；扫�
     //     而 `src/routes/scanPage.js`（薄壳）在测试进程里被 `scanPageReadRedirect` 重定向成**聚合文本** ✓
     //     ⇒ 它**也会命中**这段代码 ⇒ 闭集必须同时列出"真身 `index.js`"与"旧路径（重定向后 = 同一份代码）"
     //     ⇒ **成员数 +1 但仍是闭集** ✓（谁再往别处塞签名符号 ⇒ 照样红 ✗）
-    'src/routes/scanPage/index.js',
+    //   ⚠️ 顺序按 `hits.sort()` 的**字典序** ✓：`'…/scanPage.js'` 排在 `'…/scanPage/index.js'` **之前**
+    //     （'.'(0x2E) < '/'(0x2F) ✓）—— 写反了这条会红 ✗
     'src/routes/scanPage.js',
+    'src/routes/scanPage/index.js',
     'src/routes/workbench.js',
   ], `签名符号只许出现在「扫码打印」/「领域内扫一扫」这两条链上：\n${hits.join('\n')}`);
 
