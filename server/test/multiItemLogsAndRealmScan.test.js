@@ -631,8 +631,12 @@ test('AC-ML8 🔴 `services/scanWriteService.js` **一个字不加/删/改**（�
   //   改后逐字：用**钉死的 sha256 常量 + 行数**（与既有哨兵 `scanWriteServiceFrozen.test.js:39` 同一口径 ✓）
   //   ⭐ **不是放宽**：从"与某个可能过期的 ref 比"变成"与**钉死的指纹**比" ⇒ **更严**（甩不掉、也不受 clone 深度影响 ✓）
   //   依据：本仓既有的冻结哨兵写法（`FROZEN_SHA256 = '199551e1…35ca'`）＋ 本文件头声明的红线（余量 0 ✓）
+  //   ⚠️ **2026-10-16 成对迁移**（task-62「货 / 钱分离」阶段二 · 业务负责人明确「允许改冻结文件」，
+  //      **一次性、只为本卡**）：改前逐字 `199551e1…35ca`（1699 行）⇒ 改后逐字 `49772bda…2c12`（1770 行）。
+  //      本刀（多件明细日志 + 领域内扫一扫）自己在那份文件里**仍然一个字都没加** ✗
+  //      —— 判据没放宽，只是基线随授权的那一刀一起搬 ✓。
   const cryptoFrozen = require('node:crypto');
-  const FROZEN_SCAN_WRITE_SHA256 = '199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca';
+  const FROZEN_SCAN_WRITE_SHA256 = '49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12';
   // ⚠️ 行数这条**刻意不写**：`split('\n').length` 与 `wc -l` **差 1**（文件末尾有无换行 ✓）
   //    ⇒ 我第一版写成 1698 当场把自己判红 ✗ ⇒ **只留 sha256**（它本身就是"逐字节"最强判据 ✓ 且不依赖任何 ref ✓）
   //    行数上限（余量 0）由既有哨兵 `scanWriteServiceFrozen.test.js` 的 AC-FRZ1 负责 ✓
