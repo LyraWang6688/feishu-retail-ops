@@ -42,7 +42,7 @@ test('AC-AW1b ⭐ 那一屏**有**提交到既有 confirm 接口的表单（判�
   assert.ok(FEATURE.includes('ORDERS_API.arrivalConfirm'), '卡片上的提交走既有 confirm 接口 ✓');
   assert.equal(ORDERS_CONFIG.includes("arrivalConfirm: '/api/workbench/purchase/arrivals/confirm'"), true,
     '接口路径只在这里写一次 ✓');
-  // ② 工作台内那张表单三件套（实际金额 / 验收原话 / 提交按钮）都在
+  // ② 工作台内那张表单三件套（发生金额 / 验收原话 / 提交按钮）都在
   // ⭐⭐ 2026-10-16（她逐字：「到货说明必须得删……数据表里面已经没有验收原话了……你必须得删」）
   //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
   //   · 改后逐字：该项删除 ＋ 下面那条**反向**断言（塞回即红 ✓）
@@ -120,7 +120,7 @@ test('AC-AW8/9 回归：`confirmArrival` 语义与入库路径**一字不动**',
   //   · 改后逐字：去掉尾部那段 ⇒ 只钉 `batchNo` + `actualAmount`（＋下面反向断言"不许再传原话"）
   //   · 依据 = 她 2026-10-16 逐字 ✓
   assert.match(route, /confirmArrival\(\{[\s\S]{0,200}?batchNo[\s\S]{0,200}?actualAmount/,
-    '整批一键 + 实际金额 的入参形状未变 ✓（"验收原话"已按她那句退场 ✓）');
+    '整批一键 + 发生金额 的入参形状未变 ✓（"验收原话"已按她那句退场 ✓）');
   assert.equal(/confirmArrival\(\{[\s\S]{0,300}?acceptanceText/.test(route), false,
     '⛔ 不许再把「到货说明」传给 confirmArrival ✗');
   // 工作台侧**不许直连表**：那一支里不该出现任何 bitable/网关写调用

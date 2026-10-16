@@ -794,10 +794,10 @@ test('AC11 采购子 tab：按报货批次一张一行，字段口径与既有�
   assert.ok(/38\s*码/.test(detail) && /40\s*码/.test(detail), '尺码（明细层 ✓ 判据没丢）');
   assert.ok(detail.includes('申请 2') && detail.includes('申请 3'), '申请数量（明细层 ✓ 判据没丢）');
   assert.ok(html.includes('未到货') && html.includes('已到货'), '到货状态来自既有字段（不造词）');
-  // 每行都有「验收到货」按钮 + 一个收「实际金额」的表单（金额是既有必填口径）
+  // 每行都有「验收到货」按钮 + 一个收「发生金额」的表单（金额是既有必填口径）
   assert.equal((html.match(/data-action="verify-arrival"/g) || []).length, 2, '每一行都有一个验收按钮');
   assert.equal((html.match(/data-action="submit-arrival"/g) || []).length, 2, '每一行都有提交按钮');
-  assert.equal((html.match(/data-field="arrival-amount"/g) || []).length, 2, '每一行都收「实际金额」');
+  assert.equal((html.match(/data-field="arrival-amount"/g) || []).length, 2, '每一行都收「发生金额」');
   assert.ok(!/<table/i.test(html), '采购子 tab 也不许用 <table>（手机上会横向滚动）');
   assert.ok(module.purchaseOrdersHtml([]).includes('purchase-empty'), '空列表给人话');
 });
@@ -919,7 +919,7 @@ test('AC12b confirmBatchArrival：种进同一批的会话任务 → 既有 conf
   assert.deepEqual(confirmed[0].task.draft.actual, [
     { product_record_id: 'p1', item_no: 'XHB8095', color: '黑', size: 38, quantity: 2 },
   ], '「全部按申请数到货」= 实际数 = 申请数（复用既有 buildPlan）');
-  assert.equal(confirmed[0].task.draft.actual_amount, 1200, '她填的实际金额原样进草稿');
+  assert.equal(confirmed[0].task.draft.actual_amount, 1200, '她填的发生金额原样进草稿');
   assert.equal(confirmed[0].task.draft.acceptance_text, '跟单子一样，全部到货', '验收原话是她给的那句');
   assert.equal(confirmed[0].task.draft.batch_no, 'B1');
   assert.equal(confirmed[0].operatorOpenId, 'ou_1');
@@ -987,14 +987,14 @@ test('AC13 「验收到货」路由：走既有闸门、原因原样回到页面
   const badApp = appWith({
     purchaseArrival: {
       confirmArrival: async () => {
-        throw Object.assign(new Error('请先填这次的「实际金额」，再点验收到货'), { statusCode: 400 });
+        throw Object.assign(new Error('请先填这次的「发生金额」，再点验收到货'), { statusCode: 400 });
       },
     },
   });
   await withServer(badApp, async (base) => {
     const response = await post(base, '/api/workbench/purchase/arrivals/confirm', { batchNo: 'B1' }, sessionCookie());
     assert.equal(response.status, 400);
-    assert.equal((await response.json()).error, '请先填这次的「实际金额」，再点验收到货');
+    assert.equal((await response.json()).error, '请先填这次的「发生金额」，再点验收到货');
   });
 
   // ③ 业务拒绝（入库失败）→ 502 + 原话

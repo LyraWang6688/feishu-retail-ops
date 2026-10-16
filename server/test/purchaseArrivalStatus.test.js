@@ -206,7 +206,7 @@ const seedConfirmedTask = async (store, overrides = {}) => {
     batch_kind: ARRIVAL_BATCH_KINDS.PURCHASE_REQUEST,
     status: 'awaiting_confirmation',
     acceptance_text: '都到了',
-    // ⭐⭐ 2026-10-08：「实际金额」是**必填**（业务负责人：「必须让用户填」）——
+    // ⭐⭐ 2026-10-08：「发生金额」是**必填**（业务负责人：「必须让用户填」）——
     //   点「是」时这一批还没有金额会被 `confirmLocked` 拒绝（不写空的金额、一个字都不写）。
     //   生产上这个值由卡片表单提交进来；这里给"要走到入库"的用例补上前置条件。
     actual_amount: 12800,
@@ -285,7 +285,7 @@ test('⑧ 按批次号定位那一行：找不到就只 warn，不抛（写不�
 //    「验收原话」（入库之前写）＋「确认状态」（入库成功之后写）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('⭐ writeAcceptance：按**批次 record id** 写「实际数量 / 实际金额」（拿不到 id 时按批次号回查）', async () => {
+test('⭐ writeAcceptance：按**批次 record id** 写「实际数量 / 发生金额」（拿不到 id 时按批次号回查）', async () => {
   const records = { purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO } }] };
   const gateway = makeGateway(records);
   const service = new PurchaseOrderBatchService({ gateway, settings: resolvePurchaseArrivalStatusConfig({}) });
@@ -298,7 +298,7 @@ test('⭐ writeAcceptance：按**批次 record id** 写「实际数量 / 实际�
   assert.equal(byId.matched_by, 'record_id');
   const first = (await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields;
   assert.equal(first['实际数量'], 3);
-  assert.equal(first['实际金额'], 1680);
+  assert.equal(first['发生金额'], 1680);
   // ⛔ 2026-10-09：「验收原话」那一列在生产真表上**已经没有了** ⇒ 一个字都不写。
   assert.equal('验收原话' in first, false, '已经退场的那一列不许再写');
 

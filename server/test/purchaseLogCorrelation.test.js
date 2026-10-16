@@ -248,7 +248,7 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
       batch_record_id: 'batch_1',
       batch_no: '202610071',
       acceptance_text: '都到了',
-      // ⭐ 2026-10-09：那次 update 写的是「实际数量 / 实际金额」（「验收原话 / 确认状态」已退场）。
+      // ⭐ 2026-10-09：那次 update 写的是「实际数量 / 发生金额」（「验收原话 / 确认状态」已退场）。
       actual_quantity: 2,
       actual_amount: 1200,
       operator_open_id: 'ou_user_1',
@@ -321,12 +321,12 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
     assertGatewayCommon(row, 'liveInventory');
   }
 
-  // d. ⭐ 到货信息在**批次行**上的写入：这次确认只写一次「实际数量 / 实际金额」。
+  // d. ⭐ 到货信息在**批次行**上的写入：这次确认只写一次「实际数量 / 发生金额」。
   //    ⛔ 2026-10-09：原先这里是两次（「验收原话」＋「确认状态」）—— 两列在真表上都没有了，
   //       写入点删除 ⇒ 只剩这一次。「到货状态 = 已到货」不在这里写（由对话链路的
   //       `notifyBatchArrived` 负责，本用例只调 `confirmArrival`）。
   const batchRows = logs.logs('bitable.record.updated').filter((row) => row.table_key === 'purchaseOrderBatch');
-  assert.equal(batchRows.length, 1, '「实际数量 / 实际金额」写一次');
+  assert.equal(batchRows.length, 1, '「实际数量 / 发生金额」写一次');
   for (const row of batchRows) {
     assert.equal(row.task_id, TASK);
     assert.equal(row.batch_no, BATCH);
@@ -360,5 +360,5 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
 //     （那条造法本身就是"入口按包写回失败"，入口退场之后没有这个形状了）。
 //   它们钉的入口（`accept('supplier-report')`）与关联键 `purchase_report_record_id`
 //   （已从白名单删除）都随那张表一起退场。
-// ⭐ **保留**的是「到货确认」那条：写「实际数量 / 实际金额」＋「到货状态」＋加库存的日志
+// ⭐ **保留**的是「到货确认」那条：写「实际数量 / 发生金额」＋「到货状态」＋加库存的日志
 //    照旧带 `task_id ＋ batch_no ＋ purchase_batch_record_id`，且**不再有**入库明细行。

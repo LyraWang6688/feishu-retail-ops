@@ -256,7 +256,7 @@ test('AC-PAWIRE3 🔴 补货不填金额 ⇒ **照样能提交**；同一轮里�
     assert.equal(replenishWrite.calls.length, 1, '补货那条要**真的**进写入口一次 ✓（不是被别的东西拦下）');
     assert.equal(replenishWrite.calls[0].flow, 'replenish');
     assert.equal('orderAmount' in replenishWrite.calls[0].args, false,
-      '补货**仍然不写金额** ✓（她 2026-10-15 的裁决：补货不写、只有到货才写「实际金额」✓）');
+      '补货**仍然不写金额** ✓（她 2026-10-15 的裁决：补货不写、只有到货才写「发生金额」✓）');
     assert.equal(html.includes(SCAN_WRITE.texts.purchaseAmountMissingTitle), false,
       '补货这条路上**不许**再出现"还没填金额"那张页 ✗');
   });

@@ -180,7 +180,7 @@ const writesTo = (gateway, tableKey) => gateway.writes.filter((item) => item.tab
 const seedArrivalTask = async (store, {
   taskId, batchRecordId = BATCH_RECORD_ID, batchNo = BATCH_NO,
   acceptanceText = '都到了', actual = [], requests = [],
-  // ⭐ 2026-10-09：到货确认写进批次行的**结构化验收** = 「实际数量」「实际金额」
+  // ⭐ 2026-10-09：到货确认写进批次行的**结构化验收** = 「实际数量」「发生金额」
   //   （「验收原话 / 确认状态」两列已随生产表删列退场）。
   //   生产上这两个值由到货核对那一步算好放在草稿上；这里按 actual 逐行求和。
   actualQuantity = (actual || []).reduce((sum, item) => sum + Number(item?.quantity || 0), 0),
@@ -328,7 +328,7 @@ test('① 到货确认真实链路：一碰「采购入库」表就抛 —— �
   assert.equal(result.toast.type, 'success');
   assert.deepEqual(writesTo(gateway, DELETED_TABLE_KEY), [], '那张表一个字都不许写');
   assert.equal(inventoryCalls.length, 12, '12 行 → 12 次加库存（一行都不能少）');
-  // 「报货批次」那一行照旧写上**结构化验收**（2026-10-09 起只有实际数量 / 实际金额；
+  // 「报货批次」那一行照旧写上**结构化验收**（2026-10-09 起只有实际数量 / 发生金额；
   // 「验收原话」「确认状态」两列已随生产表删列一起退场 ⇒ 一个字都不写）。
   const batchWrites = writesTo(gateway, 'purchaseOrderBatch');
   assert.ok(batchWrites.some((item) => item.values['实际数量'] === 12), '「实际数量」要写到批次行');

@@ -200,9 +200,9 @@ test('AC-AR2 ⭐⭐ 验收链路**没有**金额闸门（回归哨兵：别被�
     const src = fs.readFileSync(path.join(SERVER_DIR, rel), 'utf8');
     assert.equal(/PURCHASE_AMOUNT|requiredByRealm/.test(src), false, `⛔ 验收链路不许引入金额闸门 ✗（${rel}）`);
   }
-  // ② 端到端那条：验收提交**不带金额字段**也能走（它自己那条链的必填只有"实际金额"，与补货那套**不同源** ✓）
+  // ② 端到端那条：验收提交**不带金额字段**也能走（它自己那条链的必填只有"发生金额"，与补货那套**不同源** ✓）
   const accept = fs.readFileSync(path.join(SERVER_DIR, 'src/services/workbenchPurchaseArrivalService.js'), 'utf8');
-  assert.match(accept, /actualAmount/, '验收那条仍是 `actualAmount`（=到货实际金额 ✓ 另一套语义 ✓）');
+  assert.match(accept, /actualAmount/, '验收那条仍是 `actualAmount`（=到货发生金额 ✓ 另一套语义 ✓）');
 });
 
 test('AC-AR3 ⭐ `requiredByRealm` **配置先行**（三档可配 ⇒ 换配置即换行为 ✓）', () => {

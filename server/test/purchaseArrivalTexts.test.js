@@ -13,8 +13,8 @@ const source = fs.readFileSync(path.join(__dirname, '../src/services/purchaseArr
 
 test('AC1 ⭐ 26 条文案**逐字不变**（期望值取自改前原文）', () => {
   assert.equal(config.pageMessages.m1, '这一行没有报货批次号，不能验收到货', '原行 :775 必须逐字不变');
-  assert.equal(config.pageMessages.m2, '请先填这次的「实际金额」，再点验收到货', '原行 :783 必须逐字不变');
-  assert.equal(config.pageMessages.m3, '「实际金额」要填一个大于 0 的数字（不能是 0 或负数）', '原行 :784 必须逐字不变');
+  assert.equal(config.pageMessages.m2, '请先填这次的「发生金额」，再点验收到货', '原行 :783 必须逐字不变');
+  assert.equal(config.pageMessages.m3, '「发生金额」要填一个大于 0 的数字（不能是 0 或负数）', '原行 :784 必须逐字不变');
   assert.equal(config.pageMessages.m4, '请先写一句到货说明（例如「跟单子一样，全部到货」），再点验收到货', '原行 :792 必须逐字不变');
   assert.equal(config.pageMessages.m5({ batchNo: 'CGD-20261012-0001' }), `这批（CGD-20261012-0001）已经验收入库过了，没有重复入库`, '原行 :809 必须逐字不变（带参那句走填参函数）');
   assert.equal(config.landingMessages.m1, '这一批没有找到采购申请明细，不能验收到货', '原行 :875 必须逐字不变');

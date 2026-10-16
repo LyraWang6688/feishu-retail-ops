@@ -279,7 +279,7 @@ test('AC-ASY2-补货 ⭐⭐ 补货不问金额：金额空 / 非数字**都不�
       assert.equal(write.calls.length, 1, '补货那条要**真的**走完写入口一次 ✓（不是被别的东西拦下 ✗）');
       assert.equal(write.calls[0].flow, 'replenish');
       assert.equal('orderAmount' in write.calls[0].args, false,
-        '补货**仍然不写金额** ✓（她 2026-10-15 的裁决：补货不写、只有到货才写「实际金额」✓）');
+        '补货**仍然不写金额** ✓（她 2026-10-15 的裁决：补货不写、只有到货才写「发生金额」✓）');
     });
   }
 });

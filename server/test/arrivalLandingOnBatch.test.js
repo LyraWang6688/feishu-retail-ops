@@ -9,7 +9,7 @@
  *    **「采购入库.采购到货批次」字段删除了，不需要了**，你重新看下～」
  *
  * 这张文件把**改动之后的验收标准**一条条钉住（按 brief 给的六条 + 两条补充）：
- *   □ ① 到货确认之后：**批次行**上有 到货状态=已到货 ＋ 实际数量 ＋ 实际金额
+ *   □ ① 到货确认之后：**批次行**上有 到货状态=已到货 ＋ 实际数量 ＋ 发生金额
  *        ⛔ 2026-10-09：「验收原话」「确认状态」两列在生产真表上**也没有了**
  *          （业务负责人的只读核对：报货批次 12 列里找不到）⇒ 它们**一个字都不写**；
  *          schema 映射、写入点（`markConfirmed`）、读取投影与单选取值契约一起退场。
@@ -160,7 +160,7 @@ const topicBatch = (overrides = {}) => ({
   ...overrides,
 });
 
-// ⭐⭐ 2026-10-08：「实际金额」是**必填**（业务负责人：「必须让用户填」）。
+// ⭐⭐ 2026-10-08：「发生金额」是**必填**（业务负责人：「必须让用户填」）。
 // 🔴 2026-10-16（「与 AI 分析有关的都停掉」）**判据迁移**（逐字留痕）：
 //   · 删前逐字：`const arriveAndConfirm = async (harness, text = '都到了') => { await harness.service.handleTopicMessage({ batch: topicBatch(), text, messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' }); const taskId = taskIdForBatch(BATCH_NO); await seedActualAmount(harness); const result = await harness.service.handleCardAction({ action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId }, { context: { open_message_id: 'om_card_1' } }, 'ou_1'); return { taskId, result }; };`
 //   · 为什么改：那两步（`handleTopicMessage` 解析出计划 → 卡片点「是」）里**第一步已删**
@@ -203,9 +203,9 @@ test('① 点「是」之后：到货信息的落点 = **「报货批次」那�
   assert.equal('验收原话' in fields, false, '「验收原话」那一列已从真表删除，不许再写');
   assert.equal('确认状态' in fields, false, '「确认状态」那一列已从真表删除，不许再写');
   assert.equal(fields['到货状态'], '已到货', '到货状态（这条本来就有，不许被写歪）');
-  // ⭐⭐ 2026-10-08：「实际数量」（代码算出来的）= 申请 2 + 2；「实际金额」= 她填的整批金额。
+  // ⭐⭐ 2026-10-08：「实际数量」（代码算出来的）= 申请 2 + 2；「发生金额」= 她填的整批金额。
   assert.equal(fields['实际数量'], 4, '实际数量 = plan.rows 的 actual 合计（代码算，不用她填）');
-  assert.equal(fields['实际金额'], AMOUNT, '实际金额 = 她在卡片表单里填的整批金额');
+  assert.equal(fields['发生金额'], AMOUNT, '发生金额 = 她在卡片表单里填的整批金额');
   // 批次行上的「报货批次号」一个字没动。
   assert.equal(fields['报货批次号'], BATCH_NO);
 });
@@ -315,10 +315,10 @@ test('④-2 崩溃恢复：本地进度丢了 → 重放仍用**同一个幂等�
 test('④-3 批次行写入本身也是幂等的：重跑写的是同一个值（不新建、不追加）', async () => {
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
   const { taskId } = await arriveAndConfirm(harness);
-  // ⚠️ 2026-10-09 起那次 update 写的是「实际数量 / 实际金额」（「验收原话」已从真表删除）。
+  // ⚠️ 2026-10-09 起那次 update 写的是「实际数量 / 发生金额」（「验收原话」已从真表删除）。
   const acceptanceWrites = writesTo(harness.gateway, 'purchaseOrderBatch')
     .filter((item) => item.values['实际数量'] !== undefined);
-  assert.equal(acceptanceWrites.length, 1, '「实际数量 / 实际金额」只写一次');
+  assert.equal(acceptanceWrites.length, 1, '「实际数量 / 发生金额」只写一次');
 
   // 再跑一次 confirmArrival（任务已经被置成 posted，直接早退 —— 连写都不发）。
   const before = writesTo(harness.gateway, 'purchaseOrderBatch').length;
@@ -379,7 +379,7 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
   assert.equal(fields['到货状态'], '已到货');
   // ⭐ 2026-10-08：实际数量 = 12 行 − 3 行 0 双 = 9（0 双的行加 0 ⇒ 与库存口径一致）。
   assert.equal(fields['实际数量'], 9, '实际数量只数真的到货的那些（0 双的行不影响合计）');
-  assert.equal(fields['实际金额'], AMOUNT);
+  assert.equal(fields['发生金额'], AMOUNT);
   // 「报货信息」（采购申请表）一个字都没写。
   assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), []);
 });
