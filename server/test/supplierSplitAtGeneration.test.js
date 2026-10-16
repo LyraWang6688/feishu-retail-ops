@@ -13,7 +13,9 @@
  *  AC-SS2 **单供应商** ⇒ 与今天**逐字一致**（生成前递给写入口的**载荷逐字相同** ＋ 出图/附件/主表行数不变）✓
  *  AC-SS3 分组**不新增批次号**（她选的 ⓐ）：**主表只 1 行**、号源**只取 1 次**（能真红：多一个号 ⇒ 红）✓
  *  AC-SS4 **幂等**：同一组重复生成 ⇒ **只出一次**（重放那一次 0 张图、0 条群消息、0 个新附件）✓
- *  AC-SS5 **存草稿阶段零副作用**：混 3 个供应商的草稿 ⇒ 不发群 / 不写库存 / **不建采购明细** / 不出报货单 ✓
+ *  AC-SS5 **存草稿阶段零副作用**：混 3 个供应商的草稿 ⇒ 不发群 / 不出图 / 不写库存 / 不出报货单 ✓
+ *         （⚠️ **成对迁移过一次**：她 2026-10-16 另外拍了「**草稿也写明细**」⇒ 明细**会**写，
+ *           判据改钉"草稿明细用**草稿专用**幂等键前缀" —— 见下面那一段的逐字留痕 ✓）
  *  AC-SS6 ⭐ **口径落定哨兵**：`scanDraft` 里那个 S1 留的 `supplierSplit.batchNoPolicy` **不再是
  *         `undecided`**，而是她选的 `same_batch_no`；ⓑ（每供应商一个新号）**不是可选项**（配了就抛 ✓）
  *  AC-SS7 🔴 **源码哨兵**：`services/scanWriteService.js`（余量 0 的冻结件）**逐字节没动**
@@ -419,11 +421,19 @@ test('AC-SS4b 探针：判据不是空跑 —— 把"单据"里那张图去掉 �
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-SS5 存草稿阶段零副作用（混 3 个供应商也一样）
+// AC-SS5 存草稿阶段**零副作用**（混 3 个供应商也一样）
+//   ⚠️ **成对迁移（2026-10-16 下半场 · main 上的 #735 S2）** —— 这一条**改过一次**，逐字留痕：
+//     · **改前逐字**：`assert.equal((gateway.tables.purchaseRequest || []).length, 0, '🔴 **不建采购明细**（草稿不是报货单 ✗）');`
+//     · **改后逐字**：下面那两段（① 明细**会**写但用的是**草稿专用**幂等键前缀；② 她点名的三个副作用仍为零）
+//     · **依据**：她 2026-10-16 逐字「**草稿也写明细**」（Lead 弹窗问"草稿会不会写到采购明细"时她选的）
+//       ⇒ #735 已把 S1 的 `AC-D1`（"采购明细 0 次"）**成对迁移**掉 ⇒ 本文件**不许**再钉"0 行" ✗
+//       （旧断言会与 main 上那条口径**打架**，而且它本来就**不是**她点名的那三个副作用之一 ✓）。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-SS5 ⭐ 存草稿（混 3 个供应商）⇒ 不发群 / 不写库存 / **不建采购明细** / 不出报货单', async () => {
-  const gateway = createFakeGateway();
+test('AC-SS5 ⭐ 存草稿（混 3 个供应商）⇒ 不发群 / 不出图 / 不写库存 / 不出报货单（明细按 #735 的新口径会写）', async () => {
+  const gateway = createFakeGateway({
+    sizeManagement: [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
+  });
   let batchNoCalls = 0;
   const draftService = createScanDraftService({
     gateway,
@@ -441,12 +451,31 @@ test('AC-SS5 ⭐ 存草稿（混 3 个供应商）⇒ 不发群 / 不写库存 /
     ],
   });
   assert.equal(saved.ok, true);
-  // ① 只写了**那一行草稿行**（到货状态 = 未报货）：一个批次号（她的①口径 ✓）＋ 零明细
+  // ① 主表：**只那一行草稿行**（`到货状态 = 未报货`）—— 一个批次号（她的①口径 ✓）
   assert.equal(gateway.createdIn('purchaseOrderBatch').length, 1, '只建那一行草稿行 ✓');
-  assert.equal((gateway.tables.purchaseRequest || []).length, 0, '🔴 **不建采购明细**（草稿不是报货单 ✗）');
-  // ② 零副作用：库存 / 出图 / 发群一个字都没有
-  assert.deepEqual(gateway.calls.update, [], '草稿阶段不 update 任何行 ✓');
+  // ①b 明细：**会写**（她 2026-10-16「草稿也写明细」⇒ #735 的新口径 ✓），
+  //     但用的是**草稿专用**幂等键前缀（**不复用**真出单那套 `purchase_request:*`）
+  //     ⇒ 草稿明细与"生成报货单"写出来的明细**在幂等键上就分得开** ✓
+  const detailKeys = (gateway.tables.purchaseRequest || []).map(
+    (record) => String(record.fields['幂等键'] || ''),
+  );
+  assert.equal(detailKeys.length, 3, '3 个货品 × 1 个尺码 ⇒ 3 行草稿明细（#735 的新口径 ✓）');
+  assert.ok(
+    detailKeys.every((key) => key.startsWith('scan_draft_detail:')),
+    `草稿明细的幂等键必须是**草稿专用前缀**（实得：${detailKeys.join(' | ')}）`,
+  );
+  // ② ⭐ **她点名的三个副作用（发群 / 出图 / 写库存）一个字都没有** ＋ 没有「单据」附件写入
   assert.deepEqual(gateway.calls.upload, [], '不出图（连素材都不传）✓');
+  assert.equal(
+    gateway.calls.update.some((call) => JSON.stringify(call.values).includes('单据')
+      || Object.prototype.hasOwnProperty.call(call.values, 'document')), false,
+    '不往「单据」写任何附件（报货单那一步才写 ✓）',
+  );
+  assert.equal(
+    gateway.calls.create.concat(gateway.calls.update)
+      .some((call) => String(call.table).startsWith('inventory') || String(call.table) === 'liveInventory'),
+    false, '草稿阶段**不写库存** ✓',
+  );
   // ③ 草稿里**3 个供应商都还在**（存草稿**不拆** ✓ —— 拆的那一下是「生成报货单」）
   assert.deepEqual(
     saved.draft.items.map((item) => item.supplier_record_id), ['sup_a', 'sup_b', 'sup_c'],
