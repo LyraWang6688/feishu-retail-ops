@@ -14,7 +14,7 @@
 | [async-and-success-page-plan-2026-10-16.md](async-and-success-page-plan-2026-10-16.md) | 补货 / 退货 / 验收 接异步 ＋ 成功页统一极简 —— **只读设计 + 改动清单 + 判据草案** |
 | [ci-two-real-findings-2026-10-16.md](ci-two-real-findings-2026-10-16.md) | CI 两条红灯的两份体检（2026-10-16 · 都不是 flake ✗） |
 | [collapse-semantics-audit-2026-10-16.md](collapse-semantics-audit-2026-10-16.md) | 全仓「折叠/收起语义」审计（task-48 · **只读** ✓ 不改任何行为 ✗） |
-| [draft-save-resume-plan-2026-10-16.md](draft-save-resume-plan-2026-10-16.md) | ⭐ **补货 / 退货「存草稿 · 后续接着录」**（业务负责人 2026-10-16 逐字）—— **只读核查 + 设计 + 判据草案 AC-DR1…AC-DR13**：现有草稿链路怎么工作（文件:行）· ⭐ **能不能绕开 `scanWriteService.js`（余量 0）→ 能**· 「草稿」落哪张表哪一列（真表**无可用列** ⇒ **请她加一列 `数据状态`** 的一句话）· 零副作用（不发群 / 不写库存 / 不出单号）· `draftScope: single\|per_supplier` 配置开关（缺省 `single` · **不替她决定**）· 要她拍板的 6 问（含"只留一份会不会覆盖"）；🔴 本步零代码 |
+| [draft-save-resume-plan-2026-10-16.md](draft-save-resume-plan-2026-10-16.md) | ⭐ **补货 / 退货 / 销售「存草稿 · 后续接着录」**（业务负责人 2026-10-16 逐字）—— **只读核查 + 设计 + 追加口径 + 判据**：文首**追加节**是权威口径（**不加列** ✗ ⇒ 草稿 = 「采购主表」一行 `到货状态 = 「未报货」`）· ⭐ **批次号沿用 vs 新建**（有未报货的号 ⇒ 沿用；没有 ⇒ 新建 · **整段串行**防并发各建一个新号）· ⭐ **供应商拆分**在"生成报货单"那一下（拆成几单/几个号**待她拍** Q7）· 零副作用（不发群 / 不写库存 / 不建明细 / 不出图）· `draftScope: single\|per_supplier`（缺省 `single` · **不替她决定**）· **S1（独立存储层）已做**：`services/scanDraftService.js` ＋ `config/scanDraft.js` ＋ `test/scanDraftSaveResume.test.js`（15 条绿）｜S2/S3 未做 |
 | [event-link-field-shape-2026-10-16.md](event-link-field-shape-2026-10-16.md) | 关联字段（link）事件形状 · 实测留档（2026-10-16） |
 | [handoff.md](handoff.md) | 交接说明：当前状态、硬约束、幂等现状、待办、采购改造方案与下一步建议 |
 | [handoff-douyin-content-co-creation.md](handoff-douyin-content-co-creation.md) | **抖音共创交接**（2026-10-04 新增协作线）：家族生意背景、既有飞书资产索引、能力边界与第一步请求 |
