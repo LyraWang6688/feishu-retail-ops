@@ -2208,23 +2208,18 @@ test('AC-H1/H2 ⭐ 「提交这一单」⇒ 落到**不带编号**的销售首�
       const sHtml = await submitted.text();
       const orderNo = (/XSD-[0-9-]+/.exec(sHtml) || [''])[0];
       assert.ok(orderNo, '成功页要有单号');
+      // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）· 分两期**：
+      //   改前逐字：「跟 `<meta refresh>` 跳到 `/s` ⇒ **在销售首页上**断言 notice ＋ 单号 ＋ 请扫下一个标签」
+      //   改后逐字：「**零跳转**（不跟 meta 走）⇒ **就地在这张成功页上**断言 notice ＋ 单号」
+      //   依据 = 业务负责人 2026-10-16 23:5x 逐字：「**就一页、没有按钮没有链接、也不自动跳（你得自己点返回），按照这个，保持现状**」
+      //          ＋ 同句「**那我肯定能看到这个单号呀**」（号必须就地可见 ✓）
       const meta = (sHtml.match(/http-equiv="refresh"[^>]*url=([^">]+)/) || [])[1] || '';
-      const noticeKey = require('../src/config/scanPage').SCAN_PAGE.successReturn.noticeKey || 'done';
-      assert.ok(meta.includes(`${noticeKey}=${encodeURIComponent(orderNo)}`), `回跳要带单号标记（实际 ${meta}）`);
-      const metaPath = meta.startsWith('http') ? new URL(meta).pathname + new URL(meta).search : meta;
-      // ⭐ ① 落点是**不带编号**的销售首页（路径就是挂载前缀本身 ✓）
-      assert.equal(new URL(`${base}${metaPath}`).pathname.replace(/\/$/, ''),
-        new URL(`${base}/s`).pathname.replace(/\/$/, ''), '提交后要落在不带编号的销售首页 ✗');
-      const home = await getPage(`${base}${metaPath}`, cookie);
-      const body = text(home.html);
-      // ⭐ ② 页面上**不出现任何编号/货号**（与上一单无关 ✓）
-      assert.equal(home.html.includes(NUMBER_A), false, `销售首页不许带上一单的编号 ✗（${NUMBER_A}）`);
-      assert.equal(home.html.includes(ITEM_A), false, `销售首页不许带任何货号 ✗（${ITEM_A}）`);
-      assert.equal(home.html.includes('data-view="draft-bar"'), false, '销售首页不该有本单清单 ✗');
-      // ⭐ ③ 单号逐字 + 请扫下一个标签
-      assert.ok(body.includes(orderNo), `要显示刚提交那一单的单号 ${orderNo}`);
-      assert.ok(body.includes(homeText().salesHomeTitle), `要有"${homeText().salesHomeTitle}"`);
-      assert.ok(home.html.includes('data-view="sales-home"'), '要有明确的数据视图标记 ✓');
+      assert.equal(meta, '', '新口径：成功页**不许**自动跳（零跳转 ✓）');
+      assert.equal(/<a\b/i.test(sHtml), false, '成功页不许有任何链接（她：没有链接 ✓）');
+      assert.equal(/<button\b/i.test(sHtml), false, '成功页不许有任何按钮（她：没有按钮 ✓）');
+      assert.ok(/data-view="success-order-no"/.test(sHtml), '成功页要有那条 notice 的数据视图 ✓');
+      assert.ok(text(sHtml).includes(`上一单已提交（${orderNo}）`), `成功页上要看得到「上一单已提交（${orderNo}）」✓`);
+      // ⚠️ 第二期（若"号在成功页上"仍缺）⇒ 停手报 Lead ✓（不许迁成"没有号"✗）
     });
   } finally { e2e.cleanup(); }
 });
