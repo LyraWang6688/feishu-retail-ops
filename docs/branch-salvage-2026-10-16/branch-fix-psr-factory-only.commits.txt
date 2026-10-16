@@ -1,0 +1,2 @@
+95750b8 docs(scan): pin down the two decouplings and the exact patch
+7f47dd7 fix(scan): build the purchase size reader from its factory
