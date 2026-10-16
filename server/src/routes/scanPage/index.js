@@ -68,6 +68,8 @@ const { resolvePurchaseReturnImageOptions } = require('../../services/purchaseRe
 const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, PURCHASE_RETURN_REALM } = require('../../views/scanPageRealm');
 // ⭐ 写操作之后**立刻作废**「实时库存」内存快照（她：库存必须准确，不是等 30 秒）。
 const { invalidateLiveInventorySnapshot } = require('../../services/liveInventorySnapshot');
+// ⭐⭐ 2026-10-16 task-62（货/钱分离）：开关（**显式布尔 · 缺省 false** ✓ 调用时读 ⇒ 改了当场认 ✓）
+const { resolveSaleMoneySplitConfig } = require('../../config/saleMoneySplit');
 const { requireWorkbenchAccess } = require('../workbench');
 // ⚠️ 会话读取/解码与回跳校验**复用 feishuWebAuth 里那一份**（`getSessionUser` =
 //    `requireWorkbenchAccess` 判 401 用的同一个函数），**不重写第二份**。
@@ -3245,11 +3247,31 @@ return sendPaymentStep(res, req, {
                 // ⚠️ 2026-10-16 P0：这一段 `saveDraftLines({ paymentStep:'pending', … })` **已上移到闸门之前** —— **这里不许再写第二份** ✗
 
         // ⭐ 资金页：还没建单 ⇒ `orderNo: ''`（**不编** ✗）· `count` 用草稿行数 ✓
+        // ⭐⭐ 2026-10-16 task-62（**货 / 钱分离** · 设计文档 §5 改动 A）：
+        //   开关开着 ⇒ **就在这一刻建单** —— **只写「货」那一半**（主表总金额/赠品/交易类型 ＋ 明细 ＋ 销售状态 ✓
+        //   **不扣库存** ✓ **不记 `completed`** ✓ 收款明细 0 行 ✓ —— 那是冻结件 `deferFunds: true` 的语义 ✓）；
+        //   🔴 开关**关着** ⇒ 下面这段**一个字都不跑** ⇒ `orderNo` 仍是 `''` ⇒ **页面 HTML 逐字节不变** ✓。
+        let goodsOrderNo = '';
+        if (resolveSaleMoneySplitConfig().enabled === true) {
+          const goods = await writeService.submitSale({
+            openId,
+            requestId,
+            submitKey: body[fields.submitKey],
+            payments: [],          // 🔴 货那一跑**不许带收款**（带了冻结件当场抛 ✓）
+            deferFunds: true,      // ⭐ 阶段二（#763）已就位 ✓ 本刀只**接线** ✗ 不改冻结件 ✓
+            lineAmounts,           // 与今天**同一个**取值口径 ✓
+          });
+          // 🔴 失败**如实**：绝不带着空单号继续去资金页当她"成功了" ✗
+          if (!goods || goods.ok !== true) return respondWriteFailure(res, goods, requestId);
+          goodsOrderNo = String(goods.order_no || '');
+        }
         return sendPaymentStep(res, req, {
           paymentMethods: await candidatePaymentMethods(req),
           realm,
           submitKey: body[fields.submitKey],
           count: pendingDraftLines.length,
+          // ⭐ 开着时如实给她单号；**关着 ⇒ 这个键根本不出现** ⇒ 页面逐字节不变 ✓
+          ...(goodsOrderNo ? { orderNo: goodsOrderNo } : {}),
         });
         // eslint-disable-next-line no-unreachable
         const result = await writeService.submitSale({
