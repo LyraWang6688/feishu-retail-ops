@@ -706,7 +706,11 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       //   改后逐字：`assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：**一个字都不写**（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
       //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：**一个字都不写**（主表 0）');
-      assert.equal(rowsOf(e2e, 'salesDetail').length, 0, '第1步：明细 0');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(rowsOf(e2e, 'salesDetail').length, 0, '第1步：明细 0');`
+      //   改后逐字：`assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第1步：明细 0');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 2** ✓）
+      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第1步：明细 0');
       assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第1步：库存流水 0');
 
       // 第2步：点资金页那颗【跳过】（未付 ⇒ 不写收款 ✓）⇒ **才建单**

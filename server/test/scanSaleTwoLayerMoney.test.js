@@ -1054,7 +1054,11 @@ test('AC-8a ⭐【少收】两边不等 ⇒ **合法**：成单 + 差额一条�
       //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步**一个字都不写**（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
       //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
       assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步**一个字都不写**（主表 0）');
-      assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');`
+      //   改后逐字：`assert.equal(entriesOf(h, 'salesDetail').length, 2, '第一步**一个字都不写**（明细 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 2** ✓）
+      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
+      assert.equal(entriesOf(h, 'salesDetail').length, 2, '第一步**一个字都不写**（明细 0）');
       assert.equal(entriesOf(h, 'paymentRecord').length, 0, '第一步**一个字都不写**（收款 0）');
       // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（这一段）：`payment_status: PAYMENT_STATUS.full, … payment_amount: '200'`
