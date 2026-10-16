@@ -289,8 +289,8 @@ const createScanPageRouter = (options = {}) => {
   //   ⇒ 写链路的 `webhooks` 恒为空 ⇒ 退货**永远** `no_image_pipeline`（线上真缺陷，见
   //   `services/purchaseReturnImageWiring.js` 的文件头：改前逐字 → 改后逐字 → 依据）。
   //   ⚠️ **它惰性构造**（真正提交退货时才 `new`）⇒ 启动 / 建 router 这一层零副作用 ✓；
-  //   ⚠️ 用例想注入假出图 / 假 IM ⇒ `options.purchaseReturnImage`（`scanReturnImage` 那个口，
-  //     与 `options.writeService` / `options.multiItemWire` 同一种注入法 ✓）。
+  //   ⚠️ 用例想注入假出图 / 假 IM ⇒ `options.purchaseReturnImage`（与 `options.writeService` /
+  //     `options.multiItemWire` 同一种注入法 ✓）。
   const writeService = writeConfig && options.writeService !== false
     ? (options.writeService || createScanWriteService({
       gateway,
