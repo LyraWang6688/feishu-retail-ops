@@ -420,7 +420,8 @@ test('AC-AS10 ⭐ 两步走不冲突：① 点提交 ⇒ **零写入**；② 点
       body: payBody(),
     });
     assert.equal(second.status, 200, '第二步 ⇒ 200 ✓');
-    assert.equal(calls.length, 1, '第二步：写入口恰一次 ✓');
+    // 成对迁移：改前逐字 `assert.equal(calls.length, 1, '第二步：写入口恰一次 ✓');` ⇒ ④ 后两跑各一次（货＋钱）＝ 恰 2 次 ✓（依据 = ④ 货/钱分离口径）
+    assert.equal(calls.length, 2, '第二步：写入口恰 2 次（第一步货那一跑 ＋ 第二步钱那一跑 ✓）');
     assert.equal(calls[0].openId, OPEN_ID, '入参照旧（老形状 ✓）');
     // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
     //   改前逐字：assert.ok((await second.text()).includes(`本单已创建成功（${ORDER_NO}）`), '第二步页面 = 那一句 ✓');
