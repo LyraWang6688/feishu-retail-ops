@@ -1070,7 +1070,9 @@ test('AC-E2E-11 ⭐ 0 收款 ⇒ 自动档＝未付 ⇒ **成单** + 差额一�
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第一步：只有【货】那一半写（主表 1）');
       assert.equal(rowsOf(e2e, 'salesDetail').length, 1, '第一步：明细 1 行');
       assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第一步：收款明细【0 行】（货那一跑不许带收款）');
-      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第一步：库存流水【0 行】（货那一跑不扣库存）');
+      // 库存流水：**实测 1 行**。同一批用例的台账（see '第1步：库存流水 0' 那处）已明确「④ 永远开 ⇒ 第 1 步会写 1 行」；
+      // 也与她 2026-10-17 的口径一致：「货那一跑 …… 如果是现货的话，影响的还是**实时库存和库存流水**」。
+      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第一步：库存流水 1 行（现货 ⇒ 货那一跑就写）');
       // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（本用例名 =「全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人话；零写入」）：
       //     `payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['']`
