@@ -11,6 +11,16 @@
 点一下 ⇒ 那一件进**销售本单**（既有 `session.sale.lines` ✓）⇒ 303 回**销售页**并带上 `?scan=1`
 ⇒ 那一页调飞书原生扫一扫 ⇒ 扫到的那件带 `?from=sales` 落回**销售页** ⇒ 接着加进**同一单** ✓。
 
+⭐ **与「五处扫一扫」那份口径对上**（`docs/scan-five-places-2026-10-16.md`，她 2026-10-16 21:2x 逐字）：
+那份把 ③④⑤ 定义成「**销售 / 补货 / 退货的「＋ 再加一个货品」** ⇒ **回当前领域 ＋ 带之前的数据**」，
+并定「**本质是一件事**（点按钮 ⇒ 弹二维码框）· **差别只有两处**：① 扫完回到哪 ② 带不带之前的数据」＋
+「**不许一个领域一个领域地补** ✗ —— 新入口一律走**同一处**，只传这两个参数」——
+⚠️ 那份文档落进 main 时（`#767`）**销售这一条正是它标的"没接"** ✗；
+**本卡就是补上那一格** ✓，而且走的正是**同一处**（A 套 = `views/scanRealmScan.js` ＋ 同一段脚本 ＋
+同一个 `addBackPath`），两个参数各自落在：
+`回哪` = 领域 id（`sales` ✓，由 `config/realmScan.js` 的领域→链配置给）·
+`带不带数据` = 各领域**自己那套本单草稿**（销售 = 既有 `session.sale.lines` ✓ 不动 ✗）。
+
 ⚠️ **本卡的关键发现（改动前必红的那一条）**：只改「领域→链」配置 ＋ 那条 303 **是不够的** ——
 销售页**根本没有**那个"该弹扫码"的配置块（`data-view="realm-scan-config"`）：
 
@@ -67,7 +77,7 @@ renderScanPage(view, SCAN_PAGE, write, realm, { realmScan: {…, scanNow:true} }
 | **AC-SR2** ⭐ | 带 `?scan=1` 打开销售页 ⇒ `data-view="realm-scan-config"` ＋ `data-scan-now="1"` ＋ `data-view="realm-scan"`（脚本内联）＋ `data-view="realm-scan-notice"`（人话落点）＋ 配置里 `realm=sales` | 同上（从 HTML 里读，**不信源码** ✗） |
 | **AC-SR2b** ⭐⭐ | 销售那一份 `data-config` 与**补货**那一份**逐字同形**（只有 `realm` 一格不同 ⇒ 归一后 `deepEqual`；键集也一致） | 「形状与补货一致」的**可执行**判据 ✓（哪一边漂了就红 ✓） |
 | **AC-SR3** ⭐⭐⭐ | 扫完那件**落进销售本单**：把**真渲染出来**的配置喂给那段脚本（`node:vm` 真跑 ✓）⇒ 落点 = `{同源}/r/rec_K2?from=sales` ⇒ 顺着它走**真路由** ⇒ 落回 `realm-block--sales` ⇒ 在那一页加货 ⇒ **真 `session.sale.lines` 里出现那一件**（尺码 = 她选的、货号 = 扫到的那一件 ✓） | **拿真链路的返回值钉** ✓ 不猜 ✗ |
-| **AC-SR4** ⭐⭐ | 不带触发参数打开（裸开 / `?from=sales` / `?from=sales&added=1`）⇒ **一个字节都不多**；＋ 仓库既有那把尺子 `tools/task61-render-baseline.js` = **508,317 字节 / sha `a79c59c3…cdb5`** 逐字节不变 ✓ | 不会乱弹 ✗（页面一加载就弹相机是最糟的 ✓） |
+| **AC-SR4** ⭐⭐ | 不带触发参数打开（裸开 / `?from=sales` / `?from=sales&added=1`）⇒ **一个字节都不多**；＋ 仓库既有那把尺子 `tools/task61-render-baseline.js` = **508,317 字节 / sha `a79c59c3…cdb5`** 逐字节不变 ✓ ⚠️ 这两个数与 `test/scanPageSplitParity.test.js` 的 **AC-SP-1** 是**同一把尺子** ⇒ 谁改渲染基线（例：`#765` 那个"四 tab 库存口径"开关哪天翻成 `true`）⇒ **两处一起成对迁移** ✗（`docs/frozen-sha-pin-rule-2026-10-16.md` 的形状） | 不会乱弹 ✗（页面一加载就弹相机是最糟的 ✓） |
 | **AC-SR5** 🔴 | 非飞书（没有 `tt`）⇒ 那段脚本写 `texts.noSdk` 那句人话（**真跑**那段脚本验的 ✓）且**绝不跳走**；＋ 销售页上**真有**那句人话的落点（`<p class="hint" data-view="realm-scan-notice">` ✓）⇒ **不留一个点了没反应的按钮** ✗ | 她最恨"点了没反应" ✓ |
 | **AC-SR6** ⭐⭐ | 三条链的 303 `Location` **逐字**钉住（开关**关**：三条都不带触发参数 ＋ 销售逐字 `?added=1`；开关**开**：补货 `?from=replenish&scan=1`、退货 `?from=purchase_return&scan=1`、销售 `?added=1&scan=1`）＋ 配品那一颗（`add_accessory`）**不带**触发参数（本卡刻意不碰 ✓）＋ 渲染层那把 508,317 字节的尺子 ✓ | 补货 / 退货**一个字都没变** ✓ |
 | **AC-SR6b** ⭐ | 配置先行：领域→链**可配**；`sales` 那一格 = `config/multiItemOrder.js` 的 `chains.sales.id`（**既有链名**，不是新发明 ✗）；`addBackPath` **只有一处定义**（源码哨兵 ✓） | 她定的"配置先行 / 不写第二套" ✓ |

@@ -439,6 +439,11 @@ test('AC-SR4 ⭐⭐ 不带触发参数打开 ⇒ **一个字节都不多**（开
       }
       // 🔴 **逐字节证据**：仓库既有那把尺子（四领域 × 两状态 ＋ 消息页 ＋ 最小页）
       //    —— 它渲染时**不喂** `page.realmScan` ⇒ 就是"不带 `?scan=1` 打开"的现场 ✓
+      //    ⚠️ **这两个数与 `test/scanPageSplitParity.test.js` 的 AC-SP-1 是同一把尺子**（`508317` /
+      //      `a79c59c3…cdb5`）⇒ 谁改了渲染基线（例：`#765` 那个"四 tab 库存口径"开关哪天翻成 `true`）
+      //      ⇒ **两处一起成对迁移** ✗（`docs/frozen-sha-pin-rule-2026-10-16.md` 定的形状：
+      //      **钉基线 ＋ 改基线必须留台账**；本仓既有 7 份 sha 副本就是这么办的 ✓）。
+      //    ⭐ 本卡**没有**让这个数变过：改前 / 改后各跑一次都是同一个字节数与 sha ✓。
       const out = execFileSync(process.execPath, [path.join(SERVER, 'tools', 'task61-render-baseline.js')], {
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
       });
