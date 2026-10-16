@@ -106,6 +106,7 @@
 | [scan-landing-reset-on-scan-2026-10-16.md](scan-landing-reset-on-scan-2026-10-16.md) | ⭐⭐ **按她当日亲口选的方案 ② 落地**（task-60）：点「销售」（`?from=sales`）那一发**先清掉那条未完成** ⇒ 从货品页开始；清的范围 / **不清什么**（裸扫仍走"刷新不丢"）逐条 ＋ `scan.page.rendered` 七个出口落地 ＋ 两条成对迁移 ＋ 4 组变异真红 |
 | [scan-page-architecture-2026-10-15.md](scan-page-architecture-2026-10-15.md) | 「扫一扫」页架构（2026-10-15 晚 · 她口述的落档） |
 | [scan-page-tabs-2026-10-14.md](scan-page-tabs-2026-10-14.md) | 扫码页 tab 最新口径（2026-10-14） |
+| [scan-page-renderer-split-2026-10-16.md](scan-page-renderer-split-2026-10-16.md) | ⭐⭐ `views/scanPageRenderer.js`（2344 行）**按块拆分**（业务负责人 2026-10-16 点头「可以进行拆分」）—— **纯搬运 · 零行为变化**：拆成 `views/scanPage/` 13 件（补货 / 退货 / 销售 / 多货品 / 资金页 / 存草稿 / 领域分派 / 库存 / 货品 / 脚本 / 样式 / 骨架 / 拼装）＋ `scanPageRenderer.js` **保留为薄壳**（re-export ⇒ 58 个文件 113 处按路径引用**一个字都不用改** ✓）· ⭐ **逐字节证据 = 508,317 字节 `cmp` 相同**（四领域 × 两状态 ＋ 消息页 ＋ 最小页）· 判据 `test/scanPageSplitParity.test.js`（AC-SP1…SP4）＋ 3 组变异真红 · 读源码那 51 处改走 `test/support/rendererSource.js`（**断言零放宽** ✗）· 🔴 **没碰** `routes/scanPage.js`（`draft-s3` 正在写 ✗） |
 | [scan-pay-front-async-constraint-2026-10-14.md](scan-pay-front-async-constraint-2026-10-14.md) | 资金页两刀 · 第二刀的**硬约束**（业务负责人原话，逐字） |
 | [scan-to-print-jsapi-2026-10-14.md](scan-to-print-jsapi-2026-10-14.md) | 「扫码打印」= 扫完**直接打印这一张**（2026-10-14 晚 · 业务负责人选了 ⓐ） |
 | [scan-write-fields-audit-2026-10-15.md](scan-write-fields-audit-2026-10-15.md) | 扫码页 · **写入字段核对表**（销售 / 补货 / 退货 / 配品） |

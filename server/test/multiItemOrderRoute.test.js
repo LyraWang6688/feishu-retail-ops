@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * task-46「一单多货品」**路由半**的判据 RT1..RT8 —— **只动 `server/test/**`** ✓
  *
@@ -26,7 +27,7 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const ROUTE_SRC = read('src/routes/scanPage.js');
-const RENDERER_SRC = read('src/views/scanPageRenderer.js');
+const RENDERER_SRC = rendererSource();
 
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { createMultiItemOrderService } = require('../src/services/multiItemOrderService');

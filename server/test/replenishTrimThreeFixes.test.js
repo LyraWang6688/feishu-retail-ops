@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * replenishTrimThreeFixes.test.js —— **补货（报货）tab 那三处**的成对迁移判据（2026-10-16）。
@@ -73,8 +74,7 @@ const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { MULTI_ITEM_ORDER } = require('../src/config/multiItemOrder');
 const renderer = require('../src/views/scanPageRenderer');
 
-const RENDERER_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js'), 'utf8');
+const RENDERER_SRC = rendererSource();
 const SCAN_WRITE_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'config', 'scanWrite.js'), 'utf8');
 

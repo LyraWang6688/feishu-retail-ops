@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 「页面标注模式」—— 业务负责人 2026-10-16 亲口点的功能（逐字）：
  *   「我在**页面上**加一个小开关：你打开后，**点页面上的哪一块，那一块就高亮**，
@@ -44,7 +45,7 @@ const RENDERER_PATH = path.join(SERVER, 'src', 'views', 'scanPageRenderer.js');
 const SHARED_PATH = path.join(SERVER, 'public', 'workbench', 'shared', 'annotate.js');
 const WORKBENCH_INDEX = path.join(SERVER, 'public', 'workbench', 'index.html');
 
-const RENDERER = fs.readFileSync(RENDERER_PATH, 'utf8');
+const RENDERER = rendererSource();
 const SHARED = fs.readFileSync(SHARED_PATH, 'utf8');
 const INDEX_HTML = fs.readFileSync(WORKBENCH_INDEX, 'utf8');
 

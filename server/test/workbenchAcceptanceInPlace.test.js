@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-14「验收改造进工作台」的验收标准（口径 (a) · **先写先红**）。
@@ -64,7 +65,7 @@ test('AC-AW4 🔴 `/s/accept` 那条路**已彻底拆掉**（本 AC 换判据 �
   //    ⚠️ 工作台那屏**照旧**（能力搬进工作台 ✓ 由本文件 AC-AW1/AW1b 罩着 ✓）
   const route = read('src/routes/scanPage.js');
   assert.equal(/router\.(get|post|all)\('\/accept'/.test(route), false, '扫码页那条验收路由必须已退场 ✗');
-  const renderer = read('src/views/scanPageRenderer.js');
+  const renderer = rendererSource();
   assert.equal(/renderAcceptance(Page|DonePage|SelfServe)/.test(renderer), false, '三个验收渲染函数必须已退场 ✗');
   assert.equal(/data-view="acceptance"/.test(renderer), false, '验收块也一并退场 ✗');
 });
