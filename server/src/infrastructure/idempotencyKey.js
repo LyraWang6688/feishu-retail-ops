@@ -117,6 +117,15 @@ const createOnceByKey = async ({
  *     与改前**逐字一致**（飞书结构化拒绝也照样如实抛）。
  *   · 返回值与入参**同序**（调用方按位置对账）。
  * 🔴 与逐条版**唯一的差别**是"少打几次飞书"：落表内容**一字不差**。
+ *
+ * ⭐⭐ 2026-10-16 下半场（**补货**那条链 · 业务负责人同一天点名「**补货和验收两个都需要**」）：
+ *   补货那条链（`purchaseWebhookService.confirmPurchaseRequest` 的明细那一段）**也是逐条**
+ *   `createOnceByKey` ⇒ 同一个 N+1，**复用本函数**（**不另发明第二套批量形态** ✗）。
+ *   ⚠️ 它比退货多一个约束：那一段还要给明细**取号**（`采购明细ID = {批次号}-01/02…`），
+ *   而取号本身也要**读一次同一张表**。两次读写的是**逐字相同的一份数据** ⇒ 读两遍纯属浪费
+ *   （飞书单次整表读实测 8~11 秒）。所以这里加一个**尾部可选**的 `records`：
+ *     · 传了 ⇒ 用调用方**已经读过**的那一份快照，**这次一次都不读**（零额外请求 ✓）；
+ *     · 不传 ⇒ 与今天**逐字不变**（自己读一次 —— 退货那条链就是这么调的 ✓）。
  */
 const createOnceByKeys = async ({
   gateway,
@@ -125,6 +134,8 @@ const createOnceByKeys = async ({
   rows = [],
   label = '',
   correlation,
+  // ⭐ 调用方已经读过的那一份快照（与"明细取号"共用同一次整表读时传它）。不传 = 自己读。
+  records,
 }) => {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return [];
@@ -162,8 +173,9 @@ const createOnceByKeys = async ({
   }
 
   // ① 整表**只读一次**：把所有幂等键一次认完（这是"快"的全部来源）。
+  //    ⭐ `records` 传了 ⇒ 用调用方那一份快照（补货那条链与"明细取号"共用同一次读 ⇒ 零额外请求）。
   const indexed = new Map();
-  for (const record of await gateway.listAll(tableKey)) {
+  for (const record of (Array.isArray(records) ? records : await gateway.listAll(tableKey))) {
     const key = keyOf(record, fieldName);
     if (!key) continue;
     const bucket = indexed.get(key);
@@ -192,8 +204,14 @@ const createOnceByKeys = async ({
     const created = await gateway.createBatch(
       tableKey, missing.map((entry) => entry.row.values), { correlation },
     );
+    // ⚠️ 条数对不上 ⇒ **绝不当成功**（上面那段注释本来就是这么写的，这里把它做实）：
+    //    真网关自己会抛 `batch_create_count_mismatch`；弱替身若"少返几条"，
+    //    这里若不拦，会把**空的 recordId** 当成绩落进进度（重放时就找不回那一行了）✗。
+    if (!Array.isArray(created) || created.length !== missing.length) {
+      throw new Error(`batch_create_count_mismatch: expected ${missing.length}, got ${created?.length}`);
+    }
     missing.forEach((entry, position) => {
-      results[entry.index] = { recordId: created[position]?.recordId || '', reused: false };
+      results[entry.index] = { recordId: created[position].recordId, reused: false };
     });
     return results;
   } catch (error) {

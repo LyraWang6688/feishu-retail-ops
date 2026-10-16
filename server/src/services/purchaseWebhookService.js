@@ -44,7 +44,7 @@ const { buildArrivalCostPlan, isBlankCost, costValueOf } = require('./arrivalCos
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
-const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
+const { IDEMPOTENCY_KEY_FIELD, createOnceByKey, createOnceByKeys } = require('../infrastructure/idempotencyKey');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { withTimeout, withTimeoutProxy } = require('../utils/withTimeout');
@@ -1805,53 +1805,138 @@ class PurchaseWebhookService {
     //    ⇒ 采购明细ID = `{报货批次号}-{两位序号}`（同一批次内按创建顺序；**已有行不重排**、
     //    后补的接着排、重放不重复占号）。号取自**主表那一行的报货批次号**（= `plan.batch_no`）。
     //    ⚠️ 逐条 `next()` 只在**真的创建**那一支调用（重放命中幂等 ⇒ 不动号）。
-    const detailIdCursor = await this.detailIds.open({ batchRecordId, batchNo: plan.batch_no });
+    //
+    // ⭐⭐ 2026-10-16（采购写入提速 · 业务负责人当天点名「**补货和验收两个都需要**」）：
+    //   这一段从「**逐条回查 + 逐条 create**」改成「**一次整表读（幂等回查与明细取号共用）
+    //   ＋ 一次 `createBatch`**」。改之前的真账（本文件同目录的
+    //   `test/purchaseDetailBatchWrite.test.js` 用计数网关量出来，不拿时间抖动当证据）：
+    //     · 5 条明细 ⇒ **5 次整表读 + 5 次 create**（外加取号那 1 次读 = 6 次读）；
+    //       飞书单次整表读实测 8~11 秒 ⇒ 光"明细"这一段就 ≈ 50 秒 ✗
+    //     · 改之后 ⇒ **1 次整表读 + 1 次 createBatch** ✓
+    //
+    //  🔴 **语义一条不改**（"快了但少写一行"是绝对不行的 ✗）：
+    //     · **幂等**：仍按**同一把** `request_key` 回查远端（复用**退货那一刀已经落进 main** 的
+    //       `infrastructure/idempotencyKey.createOnceByKeys` —— **不另发明第二套批量形态** ✗）；
+    //       重放命中 ⇒ 复用原记录 id、不重发 values、不重复占号 ✓
+    //     · **明细 ID**：`detailIdCursor.next()` 仍**只对"这一次真的要建"的那几条**、
+    //       且仍在 `plan.items` 顺序上依次取（空档可接受、重号不可以 —— 见 `purchaseDetailId` 文件头）✓
+    //     · **本地进度**：`posting_progress.requests` 与 `posting_stage: request_created:<item_key>`
+    //       仍**逐条、按原顺序**落盘 ⇒ 中断续跑与改动前逐字一致 ✓
+    //       （远端那一半已经是批量的：崩在"远端已写、本地没记"之间时，重放按幂等键回查即命中 ⇒ 不重复 ✓）
+    //     · **单据 / 出图 / 发群**：这一刀一个字都没碰（见 `deliverSupplierImages`）✓
+    //     · **失败**：飞书**结构化拒绝**（字段不存在这类，可以确定没写）⇒ 原样抛；
+    //       其余（超时 / 5xx = 写入结果未知）⇒ **不重发批量**，回落**逐条** `createOnceByKey`
+    //       （它自己先按幂等键回查 ⇒ 批量已写进去的那几条被复用、没写的补上 ⇒ **补齐且不重复**）✓
+    //       —— 也就是说：任何一条失败路径最终都落回**改动前那条逐条路**，不引入新的失败语义 ✓
+    //     · 前置判据（尺码解析不出来 / 幂等键在远端重复）变得**更早**抛 ⇒ 不再留半截批次
+    //       （改前是"前面几条已落、到那条才炸"；由 `test/purchaseDetailBatchWrite.test.js` 的
+    //        AC-PB9 / AC-PB4c 显式钉住 —— 这是本刀**唯一**一处、且是更安全方向的差别 ✓）
+    //  ⚠️ 退回逐条的唯一入口 = **网关没有 `createBatch`**（老替身 / 未接线）——
+    //     与 2026-10-13 验收那条 `applyPurchaseBatch`、2026-10-16 退货那条 `createOnceByKeys`
+    //     **同一套口径**（三条链一致：不另加开关；要回退 = 回滚这一次提交）✓
+    const detailBatchWrite = typeof this.gateway.createBatch === 'function'
+      && typeof this.gateway.listAll === 'function';
+    // 攒批时**先读一次**采购明细快照：幂等回查与明细取号**共用这一份**（两次读的是逐字相同的数据，
+    // 读两遍纯属浪费 ✗）。退回逐条时不读（那条路的读法一个字都没动 ✓）。
+    const requestSnapshot = detailBatchWrite ? await this.gateway.listAll('purchaseRequest') : undefined;
+    const detailIdCursor = await this.detailIds.open({
+      batchRecordId, batchNo: plan.batch_no, rows: requestSnapshot,
+    });
 
-    // 逐条创建采购申请
-    const requestIds = [];
-    for (const item of plan.items) {
-      let recordId = requestIdByItemKey[item.item_key];
-      if (!recordId) {
-        // ⚠️ 历史草稿可能带 `size === null`（采购退货那条链路，已随「信息填写」退场）：
-        //    那种行**不写「尺码」字段**（relation(undefined) 会被 gateway 的 fields() 跳过）；
-        //    采购申请本身仍然是"必须有尺码"，扫码补货报单每一步都给得出尺码。
-        const sizeReference = item.size === null ? null : await this.getSizeReferences().resolveByNumber(item.size);
+    // ── 明细：两种写法，语义（幂等 / 取号 / 进度 / 落盘顺序）**完全一致** ─────────────
+    //   · **攒批**（默认，`detailBatchWrite`）：一次整表读（取号 + 幂等回查共用）＋ 一次 `createBatch`；
+    //   · **逐条**（关掉开关 / 网关没有批量口）：`createOnceByKey` 一条一条 ——
+    //     **这就是改动前那一段的原样保留**（既有用例里的替身走的正是这一支 ⇒ 行为逐字不变 ✓）。
+    // ⚠️ 历史草稿可能带 `size === null`（采购退货那条链路，已随「信息填写」退场）：
+    //    那种行**不写「尺码」字段**（relation(undefined) 会被 gateway 的 fields() 跳过）；
+    //    采购申请本身仍然是"必须有尺码"，扫码补货报单每一步都给得出尺码。
+    const buildRequestValues = async (item) => {
+      const sizeReference = item.size === null ? null : await this.getSizeReferences().resolveByNumber(item.size);
+      return {
+        batchNo: relation(batchRecordId),
+        product: relation(item.product_record_id),
+        size: relation(sizeReference?.recordId),
+        quantity: item.quantity,
+        // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）：同一批次内唯一、不重排
+        detailId: detailIdCursor.next(),
+        // 🔴 2026-10-12 热修：**不许再写「采购行为」** —— 她今天把这一列改成了
+        //    **Lookup（19，按「报货批次号」关联采购主表的「采购行为」）**，Lookup 是**只读**的：
+        //    轻则白写被忽略，重则**整条明细 create 失败**（那样这批报货一条明细都建不出来）。
+        //    ⚠️ **只撤写入、保留读取**：`v1BitableSchema` 的映射留着，
+        //    工作台采购查询的分流判据（`purchaseQueryService.classifyReportBehavior`）还在读它。
+        //    ⚠️ 待定：主表的「采购行为」目前**没有写入点**（业务负责人 2026-10-07 说过
+        //    「报货批次里面的采购行为你不用管」）⇒ 这一列在明细上会是空的，
+        //    `classifyReportBehavior` 读不到就按现状=采购申请分流（口径待她确认）。
+        idempotencyKey: item.request_key,
+      };
+    };
+    // 「这一次真的要建」的明细（**按 `plan.items` 顺序**）：重放已命中幂等的不会进这里（⇒ 不动号、不重复建）。
+    const requestIds = new Array(plan.items.length);
+    const pendingItems = [];
+    plan.items.forEach((item, index) => {
+      const existing = requestIdByItemKey[item.item_key];
+      if (existing) {
+        requestIds[index] = existing;
+        return;
+      }
+      pendingItems.push({ index, item });
+    });
+
+    /** 本地进度**逐条、按原顺序**落盘（与改动前逐字一致：中断续跑的判据就是它 ✓）。 */
+    const persistRequestProgress = async (entry, recordId) => {
+      requestIds[entry.index] = recordId;
+      requestIdByItemKey[entry.item.item_key] = recordId;
+      progress.requests = requestIdByItemKey;
+      await this.store.update(taskId, {
+        posting_progress: progress,
+        posting_stage: `request_created:${entry.item.item_key}`,
+      });
+    };
+
+    if (!detailBatchWrite) {
+      // ── 退回逐条：**与改动前逐字一样**（先回查、再建、建完立刻落进度）──────────────
+      for (const entry of pendingItems) {
+        const values = await buildRequestValues(entry.item);
+        // eslint-disable-next-line no-await-in-loop
         const created = await createOnceByKey({
           gateway: this.gateway,
           tableKey: 'purchaseRequest',
           keyField: IDEMPOTENCY_KEY_FIELD,
-          keyValue: item.request_key,
-          label: `采购申请 ${item.item_key}`,
+          keyValue: entry.item.request_key,
+          label: `采购申请 ${entry.item.item_key}`,
           // ⚠️ 2026-10-09：这里原先还会补一个 `purchase_report_record_id`（那条报单记录）；
           //    报单入口退场 ⇒ 那个键**已无来源**（白名单里也删了），只留批次级关联键。
           correlation: baseCorrelation,
-          values: {
-            batchNo: relation(batchRecordId),
-            product: relation(item.product_record_id),
-            size: relation(sizeReference?.recordId),
-            quantity: item.quantity,
-            // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）：同一批次内唯一、不重排
-            detailId: detailIdCursor.next(),
-            // 🔴 2026-10-12 热修：**不许再写「采购行为」** —— 她今天把这一列改成了
-            //    **Lookup（19，按「报货批次号」关联采购主表的「采购行为」）**，Lookup 是**只读**的：
-            //    轻则白写被忽略，重则**整条明细 create 失败**（那样这批报货一条明细都建不出来）。
-            //    ⚠️ **只撤写入、保留读取**：`v1BitableSchema` 的映射留着，
-            //    工作台采购查询的分流判据（`purchaseQueryService.classifyReportBehavior`）还在读它。
-            //    ⚠️ 待定：主表的「采购行为」目前**没有写入点**（业务负责人 2026-10-07 说过
-            //    「报货批次里面的采购行为你不用管」）⇒ 这一列在明细上会是空的，
-            //    `classifyReportBehavior` 读不到就按现状=采购申请分流（口径待她确认）。
-            idempotencyKey: item.request_key,
-          },
+          values,
         });
-        recordId = created.recordId;
-        requestIdByItemKey[item.item_key] = recordId;
-        progress.requests = requestIdByItemKey;
-        await this.store.update(taskId, {
-          posting_progress: progress,
-          posting_stage: `request_created:${item.item_key}`,
-        });
+        // eslint-disable-next-line no-await-in-loop
+        await persistRequestProgress(entry, created.recordId);
       }
-      requestIds.push(recordId);
+    } else if (pendingItems.length) {
+      // ── 攒批：一次整表读（复用上面的快照）＋ 一次 `createBatch` ────────────────────
+      //    取号与组 values 仍**按 plan.items 顺序**依次发生（与逐条路径同一串号）✓
+      const built = [];
+      for (const entry of pendingItems) {
+        // eslint-disable-next-line no-await-in-loop
+        built.push({ ...entry, values: await buildRequestValues(entry.item) });
+      }
+      const created = await createOnceByKeys({
+        gateway: this.gateway,
+        tableKey: 'purchaseRequest',
+        keyField: IDEMPOTENCY_KEY_FIELD,
+        correlation: baseCorrelation,
+        // 幂等回查复用"取号那一次整表读"的快照 ⇒ 这一步零额外请求 ✓
+        records: requestSnapshot,
+        rows: built.map((entry) => ({
+          keyValue: entry.item.request_key,
+          label: `采购申请 ${entry.item.item_key}`,
+          values: entry.values,
+        })),
+      });
+      for (let i = 0; i < built.length; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await persistRequestProgress(built[i], created[i].recordId);
+      }
     }
 
     // ⛔ 2026-10-09：这里原有「批量更新所有报单记录状态为『已生成申请』＋关联采购申请」——
