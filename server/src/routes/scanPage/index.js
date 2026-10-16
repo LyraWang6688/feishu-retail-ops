@@ -2981,6 +2981,25 @@ return sendPaymentStep(res, req, {
             // 🔴 失败**如实**：绝不带着空单号继续去资金页当她"成功了" ✗
             if (!goods || goods.ok !== true) return respondWriteFailure(res, goods, requestId);
             goodsOrderNo = String(goods.order_no || '');
+            logInfo(writeConfig.events.saleTiming, {
+              request_id: requestId,
+              // 2026-10-15（⑨b-2）：她那次请求这一段（后台那一跑另打一条，同事件名 + `phase`）。
+              phase: writeConfig.timing.phase.request,
+              ok: goods.ok === true,
+              code: goods.code || '',
+              order_no: goods.order_no || '',
+              reused: goods.reused === true,
+              partial: goods.code === 'sale_partial_failed',
+              lines: lineAmounts.length,
+              submit_ms: Math.max(0, Date.now() - submitStartedAt),
+              queue_wait_ms: Number(saleTiming.queue_wait_ms) || 0,
+              lookup_ms: Number(saleTiming.lookup_ms) || 0,
+              prepare_ms: Number(saleTiming.prepare_ms) || 0,
+              master_ms: Number(saleTiming.master_ms) || 0,
+              status_ms: Number(saleTiming.status_ms) || 0,
+              detail_ms: Number(saleTiming.detail_ms) || 0,
+              stock_ms: Number(saleTiming.stock_ms) || 0,
+            });
         return sendPaymentStep(res, req, {
           paymentMethods: await candidatePaymentMethods(req),
           realm,
@@ -3013,27 +3032,7 @@ return sendPaymentStep(res, req, {
         });
         // ⭐⭐ **一条**汇总（与 `scan.lookup.timing` 同一形状）：她按 `scan.sale.timing` grep
         //    就能看出"这一次提交卡在哪一段"，不必再靠猜。
-        logInfo(writeConfig.events.saleTiming, {
-          request_id: requestId,
-          // ⭐⭐ 2026-10-15（⑨b-2）：她那次请求这一段（后台那一跑另打一条，同事件名 + `phase`）。
-          phase: writeConfig.timing.phase.request,
-          ok: result.ok === true,
-          code: result.code || '',
-          order_no: result.order_no || '',
-          reused: result.reused === true,
-          partial: result.code === 'sale_partial_failed',
-          lines: lineAmounts.length,
-          // 提交这一步的墙钟（含排队等前面的那次提交 —— 她连点 14 次时这一段会明显变大）。
-          submit_ms: Math.max(0, Date.now() - submitStartedAt),
-          queue_wait_ms: Number(saleTiming.queue_wait_ms) || 0,
-          lookup_ms: Number(saleTiming.lookup_ms) || 0,
-          prepare_ms: Number(saleTiming.prepare_ms) || 0,
-          master_ms: Number(saleTiming.master_ms) || 0,
-          status_ms: Number(saleTiming.status_ms) || 0,
-          detail_ms: Number(saleTiming.detail_ms) || 0,
-          stock_ms: Number(saleTiming.stock_ms) || 0,
-        });
-        if (!result.ok) {
+                if (!result.ok) {
           // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）抛错** ⇒ 如实说"半成"。
           //    🔴 判据用的是**既有**那一条：会话里已经落了主表 record_id（= 重试接着写的那条判据，
           //       见 `scanWriteService.submitSale` 里"建完立刻把 record_id 落进会话"那段）。
