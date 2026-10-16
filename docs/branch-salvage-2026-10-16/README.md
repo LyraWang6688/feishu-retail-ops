@@ -31,3 +31,13 @@
 - **A 档 7 份 patch 不受影响** ✓（#742 已合 ✓ 在 `docs/branch-salvage-2026-10-16/` 里 ✓）
 - **教训（已写进 `docs/worktree-cleanup-rule-2026-10-16.md` 的思路）**：🔴 **修冲突时一律 `merge`，不许 `push -f`** ✗
   （`-f` 会覆盖远端分支 ⇒ 把"待合并的留档"弄没 ✓ 这次就是这么丢的 ✗）
+
+## arrival-batch（`feat/accept-batch-final`）· 2026-10-16 20:33 业务负责人拍板「留档后清」
+
+- **背景**：验收的"批量写"早在 **2026-10-13** 就已进 main（`8077a73` `applyPurchaseBatch` 31→5 调用）；
+  本次 **库存写入批量化**（#755 ✓ 已合 `b24a046`）又把退货那半补齐 ⇒ ⭐ **这 2 个提交的独立价值已不存在** ✓
+- **处置**（业务负责人 2026-10-16 明确：「`arrival-batch` 留档后清」✓）：
+  留档 = `arrival-batch-committed.patch`（相对 main 的 diff）＋ `arrival-batch-uncommitted.patch`（当时未提交的 3 处）＋ `arrival-batch-commits.txt`（2 个提交的说明）
+  ⇒ 然后删 worktree ＋ 本地分支 ＋ 远端分支 ✓
+- 🔴 **判据**：`git cherry origin/main feat/accept-batch-final` = **2 个 `+`**（真没合 ✗）⇒ 按规矩本不该删 ✗，
+  但**功能已由 #755 覆盖** ✓ 且**她明确拍板** ✓ ⇒ 留档后清 ✓（先把 diff 落进本目录 ✓ 再删 ✓）
