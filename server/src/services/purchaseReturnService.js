@@ -8,7 +8,7 @@
  *   | --- | --- |
  *   | 「采购主表」建一行（批次号 + 幂等键 + **采购行为**；**不写到达状态**） | `PurchaseOrderBatchService.createForReturnBatch` |
  *   | 「采购明细」写退货明细（**一次攒批**；幂等键一次认完 + 批量建行） | `createOnceByKeys`（`infrastructure/idempotencyKey`，与报货同一套语义） |
- *   | 扣库存 | `InventoryService.applyPurchaseReturn`（内部就是既有的 `applyChange`） |
+ *   | 扣库存 | `InventoryService.applyPurchaseReturnBatch`（⭐ task-65：一批一次；没有批量口时回落 `applyPurchaseReturn`） |
  *   | 出「采购退货单」PNG → 发群 → 回填「报货批次.单据」 | `PurchaseWebhookService.deliverSupplierImages`（只换标题/文件名后缀） |
  *   | 批次号 | 既有 `PurchaseBatchNoGenerator`（`CGD-YYYYMMDD-NNNN`） |
  *
@@ -18,7 +18,17 @@
  *   ⚠️ **实时库存那一段（`ensurePlan`）本来就不慢**：整表读在**循环外只读一次**、
  *   循环里只剩内存 filter（`resolveSize` 走 30 秒缓存）⇒ **一个字都没改**。
  *   ⚠️ `inventoryService` 内部（逐尺码 `listAll('liveInventory')` ＋ 逐双 `get`/`delete`）
- *   **本刀不许碰** ⇒ 那一半的调用次数如实留在测试里（见 `test/purchaseReturnBatchSpeedup.test.js`）。
+ *   **上一刀不许碰** ⇒ 那一半的调用次数如实留在测试里（见 `test/purchaseReturnBatchSpeedup.test.js`）。
+ *
+ * ⭐⭐ task-65（2026-10-16「**退货也需要批量提速**」· 上面那条残留的**收口**）：
+ *   `inventoryService` 那一段**这一刀做了** —— 本 service 由「逐尺码调 `applyPurchaseReturn`」
+ *   改成「一次调 `applyPurchaseReturnBatch`」（形态与 2026-10-13 验收那条 `applyPurchaseBatch` 同一档）。
+ *   ⭐ **`delete` 那一半也做了**（Lead 当场授权）：网关**加了** `deleteBatch`
+ *   （单独一个提交、形态逐行对齐 `createBatch`、官方 `appTableRecord.batchDelete`、≤500/片）
+ *   ⇒ 退货扣库存那一段由「逐尺码整表读 ＋ 逐双 `get` ＋ 逐双 `delete`」收成
+ *   **一次整表读 ＋ 一次 `getBatch` ＋ 一次 `createBatch`（流水）＋ 一次 `deleteBatch`**。
+ *   🔴 **只加能力**：网关单条 `delete` 一行没动，既有调用方行为逐字不变。
+ *   ⚠️ 注入的库存端口没有批量口 ⇒ **退回逐条**（`applyReturnStockOneByOne`），与改动前逐字节同形。
  *
  * 🔴 **本文件自己不写任何业务表**：没有一处 `gateway.create/update/delete`
  *    （写入全部经上面的既有件；有一条例行哨兵钉着这一点）。
@@ -51,6 +61,16 @@ const { logInfo, logWarn } = require('../utils/logger');
 const purchaseReturnStates = () => STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE].consumes || [];
 
 const sumOf = (items, key) => items.reduce((sum, item) => sum + Number(item[key] || 0), 0);
+
+/**
+ * ⭐ task-65 的**回落路径**：注入的库存端口没有批量口（= 既有替身用例 / 未接线）时逐条调
+ * `applyPurchaseReturn` —— 与改动前**逐字同一条路**（顺序、返回值、异常都逐字相同）。
+ */
+const applyReturnStockOneByOne = async (inventory, payloads, options) => {
+  const results = [];
+  for (const payload of payloads) results.push(await inventory.applyPurchaseReturn(payload, options));
+  return results;
+};
 
 const createPurchaseReturnService = (options = {}) => {
   if (!options.gateway) throw new Error('PurchaseReturnService 需要 gateway');
@@ -244,23 +264,38 @@ const createPurchaseReturnService = (options = {}) => {
       }),
     });
 
-    // ③ 逐尺码：扣库存（走 InventoryService；这一段**本刀一个字没动**）＋ 准备出图入参。
+    // ③ 逐尺码：扣库存（走 InventoryService；这一段**上一刀一个字没动**）＋ 准备出图入参。
+    // ③ 扣库存（走 InventoryService；**本刀把它由"逐尺码"改成"一批一次"**）＋ 准备出图入参。
+    //    ⭐ task-65（业务负责人 2026-10-16 逐字「退货也需要批量提速」）——
+    //    **改前逐字**：`for (const item of drawnItems) { const change = await inventory.applyPurchaseReturn({...}) }`
+    //      ⇒ 每个尺码各一次 `applyChange`（逐尺码整表读 `liveInventory` ＋ 逐双 `get` ＋ 逐双 `delete`）。
+    //    **改后逐字**：一次 `inventory.applyPurchaseReturnBatch(payloads)` —— 形态与 2026-10-13
+    //      验收那条 `applyPurchaseBatch` **同一档**（1 次整表读 ＋ 1 次 `createBatch` ＋ 1 次 `getBatch`
+    //      ＋ 1 次 `deleteBatch`；`deleteBatch` 是 task-65 给网关新加的，≤500/片由网关分片）。
+    //    **依据**：她 2026-10-16「退货也需要批量提速」（#749 明细那半之后剩下的库存这一段）。
+    //    ⚠️ 注入的库存端口**没有**批量口（既有替身用例）⇒ **退回逐条**，与改动前**逐字节同形**。
+    //    ⚠️ 顺序仍是"明细先写实、库存后扣"；失败粒度见 `applyPurchaseReturnBatch` 的注释。
+    const stockPayloads = drawnItems.map((item) => ({
+      productRecordId: draft.product_record_id,
+      size: item.size,
+      quantity: item.taken,
+      // `state` 只用于本地串行队列的键；真正扣哪些状态由注册表（门盒 + 样品 + 仓库）决定。
+      state: '门盒',
+      purchaseBatchRecordId: batchRecordId,
+      purchaseBatchNo: plan.batch_no,
+      returnTaskId: taskId,
+    }));
+    const changes = typeof inventory.applyPurchaseReturnBatch === 'function'
+      ? await inventory.applyPurchaseReturnBatch(stockPayloads, { correlation })
+      : await applyReturnStockOneByOne(inventory, stockPayloads, { correlation });
+
     const requestIds = [];
     const drawItems = [];
     for (let index = 0; index < drawnItems.length; index += 1) {
       const item = drawnItems[index];
       const doc = docs[index];
+      const change = changes[index];
       requestIds.push(doc.recordId);
-      const change = await inventory.applyPurchaseReturn({
-        productRecordId: draft.product_record_id,
-        size: item.size,
-        quantity: item.taken,
-        // `state` 只用于本地串行队列的键；真正扣哪些状态由注册表（门盒 + 样品 + 仓库）决定。
-        state: '门盒',
-        purchaseBatchRecordId: batchRecordId,
-        purchaseBatchNo: plan.batch_no,
-        returnTaskId: taskId,
-      }, { correlation });
       logInfo(events.returnStockApplied, {
         task_id: taskId, batch_no: plan.batch_no, size: item.size, quantity: item.taken,
         doc_id: doc.recordId, reused_doc: doc.reused === true,
