@@ -463,7 +463,7 @@ AC-DR5 让 B 路多传一个 `submitKey` ⇒ 红；AC-DR9 把 `single` 改成 `p
 | **S0** | 她拍板 Q1–Q6（第六节）~~+ 她在表里加那一列~~（**已由她自己解决**：到货状态加了「未报货」✓ ⇒ **不需要加列** ✗） | **等 Lead 弹窗问她**（Q1 / Q2 / Q4 / Q5 / Q6 ＋ 新 Q7） |
 | **S1** ✅**已做** | `services/scanDraftService.js`（新建）：草稿本地存/读/TTL/覆盖留痕 + 表侧那一行（`到货状态=未报货`）+ **批次号沿用/新建（整段串行）**；**新 `data/scan_drafts/` 存储**（不与会话共 TTL）＋ `config/scanDraft.js`（配置先行）＋ `test/scanDraftSaveResume.test.js`（15 条全绿） | 只新建文件 ⇒ **与在跑的热点文件零交集** ✓（写作用域就这三个文件 ＋ `docs/**`） |
 | **S1b** ⏳**未做** | 把 `AC-DR5 / DR6 / DR7 / DR8` 那四条判据补上（提交半 / 9 点推送候选反向钉） | 它们要**路由半**或**既有服务的只读喂数** ⇒ 与 S3 一起做更省事 |
-| **S2** | 渲染半：提示条 + 【接着录】（`views/scanPageRenderer.js` + `config/scanPage.js` 文案） | ⚠️ **与在跑的 `replenish-trim` / `return-block` / `multi-item` 系改动冲突** ⇒ 需要 Lead 排期让出 |
+| **S2** ✅**已做（2026-10-16 本刀）** | 渲染半：三处入口（销售货品页 / 补货页 / 退货页，**共用她点名那句「存报货草稿」**）＋「你有一份草稿，接着录吗？」提示条（`views/scanPageRenderer.js` ＋ `config/scanPage.js`）；**同一刀改 S1 的明细口径**：「**草稿也写明细**」（`services/scanDraftService.js` ＋ `config/scanDraft.js`，明细幂等键独立前缀）；判据 = `test/scanDraftRenderEntry.test.js` ＋ `test/scanDraftSaveResume.test.js` 的 **AC-D1 成对迁移** / AC-D2b / AC-D2c / AC-D2d。**详见第 11 节** | ⚠️ **不碰 `routes/**`**（`supplier-split` 在用它）⇒ 【接着录】与「存草稿」的接线（S3）如实标**待接线** |
 | **S3** | 路由半：GET 读草稿喂 `view`（吃 S1 的 `planView`）、`?resume=1` 采纳草稿、POST "存草稿"动作（**三处入口**：销售货品页那颗她点名的「**存报货草稿**」＋ 补货页 ＋ 退货页）；**生成报货单时按供应商拆分/分组** ＋ `未报货 ⇒ 未到货` | 🔴 **同一个 `routes/scanPage.js`**：与"总金额 / 金额核对 / 发生金额改名 / 销售多件 / 票据入口"**全都撞** ⇒ **必须串行**，等它们让出 ✓ |
 | **S3b** | 生成报货单那一半：批次号**归属哪一方**、拆成**几条单 / 几个批次号**（⚠️ **她还没拍** ⇒ 先问她 Q7） | 等 Q7 |
 | **S4** | 配置 + `.env.example` + 开关翻真（先测试 Base 真跑 1 轮） | 等 S1–S3 |
@@ -525,3 +525,71 @@ services/purchaseOrderBatchService.js:132 createForReturnBatch  :201 setArrivalS
 services/purchasePendingBatchService.js :65 pendingStatus :135 候选 = 到货状态==未到货
 config/v1BitableSchema.js            :359 purchaseRequest（采购明细）  :427 purchaseOrderBatch（采购主表）
 ```
+
+---
+
+## 11. ⭐⭐ S2 已落地（2026-10-16 · **渲染半** ＋ **改 S1 的明细口径**）
+
+> 范围（Lead 的 brief）：`views/scanPageRenderer.js` ＋ `config/scanPage.js`（渲染半）＋
+> `services/scanDraftService.js` ＋ `config/scanDraft.js`（S1 的明细口径）。
+> 🔴 **不碰 `routes/**`**（`supplier-split` 在用它）· **不碰 `services/scanWriteService.js`**（余量 0）
+> · 不碰 `routes/workbench.js` / `public/workbench/**` / `config/scanWrite.js` ✗。
+
+### 11.1 ⭐ 她的口径（2026-10-16，**逐字**）—— 本刀按它做
+
+```
+① 存草稿的逻辑分两种：「1. 销售页和补货页存补货草稿  2. 退货页存退货草稿」
+② 保留 7 天 ✓ 只留一份 ✓
+③ 「打印的时候，这一份要按照供应商来进行打印」⇒ 生成报货单/出图发群时按供应商分组（worktree `supplier-split` 在做）
+④ ⭐⭐ 「草稿也写明细」⇒ 存草稿时：写「采购主表」1 行（到货状态 = 未报货）＋ 写「采购明细」若干行
+   ⚠️ 这推翻了 #732 的一个假设（AC-D1 当时按"明细 0 次"写 ✗）⇒ AC-D1 已【成对迁移】
+⑤ 生成报货单之后：那行草稿（主表那行）直接变成「未到货」（不另开新行 ✗ 不作废 ✗）—— **S3**
+```
+
+### 11.2 改前逐字 → 改后逐字（**成对迁移**，逐条）
+
+| # | 改前逐字（#732 / S1 及更早） | 改后逐字（本刀 S2） | 依据 |
+| --- | --- | --- | --- |
+| ① | `AC-D1 **存草稿 ⇒ 零副作用**：…（**不写采购明细** / 不建明细行）` ＋ `assert.deepEqual(h.gateway.writesTo('purchaseRequest'), [], '不许建采购明细 ✗')` | `AC-D1 存草稿 ⇒ 零副作用：主表一行（未报货）＋ 明细 N 行，库存/出图/发群/写入口**一次都没有**` | 她 2026-10-16「**草稿也写明细**」 |
+| ② | `services/scanDraftService.js` 文件头：「存草稿**只**做两件事：① 本地那份草稿；② 「采购主表」**那一行**…🔴 **绝不**：…**建采购明细**…」 | 同一段改成「存草稿做**三**件事：① 本地草稿；② 主表那一行；③ ⭐ 采购明细若干行」，并写明**明细是唯一被允许的例外** | 同上 |
+| ③ | `config/scanDraft.js` 只有草稿行那一个落点（`tableKey` / `statusFieldKey`） | 多一对明细落点：`detailTableKey`（缺省 `purchaseRequest`）＋ `detailIdempotencyPrefix`（缺省 `scan_draft_detail`） | 同上（列名仍只从 `v1BitableSchema` 语义键取 ✗ 零中文列名字面量） |
+| ④ | 页面**没有**任何「存草稿」入口、也没有提示条 | 三处入口（销售货品页 / 补货页 / 退货页）＋「你有一份草稿，接着录吗？」提示条；**两块都由 `page.draft` 闸门控制**（缺省 = 一个字节都不渲染 ✓） | 她 ADDENDUM-2「销售货品页上面也需要加一个按钮，叫「存报货草稿」」＋「补货和退货需要支持存草稿」＋「进去就提示，接着录」 |
+
+⚠️ **不许自己定**的那一条（Lead 明确）：补货页 / 退货页那两颗**她没点名** ✗
+⇒ 三处**共用同一句文案**（`SCAN_PAGE.draftEntry.saveLabel`，一处定义）；
+**来源如实登记**：该取值**取用销售货品页那颗（她 2026-10-16 逐字点名的那一句）**，
+补货 / 退货两处是**沿用**它，不是她的话。要分开命名 ⇒ 把这一处拆成三个键即可（**不改逻辑** ✓）。
+
+### 11.3 落点（她自己那张表，逐字）
+
+| 落点 | 写哪几列（语义键，全部来自 `config/v1BitableSchema.js`） | 幂等键 |
+| --- | --- | --- |
+| 「采购主表」`purchaseOrderBatch`（**一行**） | `batchNo` · `idempotencyKey` · `arrivalStatus = 未报货` | `scan_draft:{会话}:{桶}`（S1 既有 ✓） |
+| 「采购明细」`purchaseRequest`（**N 行**，一行 = 一个「货品 × 尺码」） | `batchNo`（关联刚建的主表行）· `product` · `size`（**尺码管理那条记录的 id**）· `quantity` · `idempotencyKey` | `scan_draft_detail:{会话}:{桶}:{货品}:{尺码}` ⭐ |
+
+⚠️ **不写**：`behavior`（「采购行为」是 Lookup，只读 ✗）· `detailId`（「采购明细ID」留给**真出单**那一步的分配器统一编号；草稿不占号）。
+⚠️ **写不成的行如实留痕**（不静默 ✗）：数量不是正整数 / 尺码在「尺码管理」里找不到 ⇒ **跳过那一行** ＋ `scan.draft.detail_skipped`；写库失败 ⇒ `scan.draft.detail_write_failed` ＋ 返回值 `details.failed`。
+
+### 11.4 判据（本刀新增 / 迁移，**每条都能真红**）
+
+| AC | 在哪 | 断言什么 | 真红的方式（变异） |
+| --- | --- | --- | --- |
+| **AC-D2a** | `test/scanDraftRenderEntry.test.js` | 三处入口都在（销售货品页 / 补货页 / 退货页，各**恰好一颗**、且在**既有那张 `<form>` 里**）；库存页 / 标签页**没有** | 把 `draftEntry.realms` 改空 ⇒ 红 |
+| **AC-D2a2** | 同上 | **名字走配置**：换一份 `draftEntry` ⇒ 三处文案 / 动作名一起变 | 让渲染层读模块级 `SCAN_PAGE`（不认传进来的 config）⇒ 红 |
+| **AC-D2b** ⭐ | `test/scanDraftSaveResume.test.js` | 存一次 ⇒ 主表 **1 行**（未报货）＋ 明细 **N 行**（N = 货品数；一行 = 一个「货品 × 尺码」） | 明细行少一行 / 多一行 ⇒ 红 |
+| **AC-D2c** ⭐ | 同上 | 同一份草稿存两次 ⇒ 明细**不翻倍**（第二次 `reused = N` / `created = 0`） | 幂等键里塞 `Date.now()` ⇒ 红 |
+| **AC-D2c2** | 同上 | 改了数量再存 ⇒ 仍是同一份草稿（命中同一把键，不新增行） | 同上 |
+| **AC-D2d** | 同上 | 零副作用仍成立：碰的表**只有**那两张（明细 = 被允许的例外）；发群 / 出图 / 写库存 / 真出单写入口 **0 次**；取号次数与只写主表时**逐字相同** | 顺手调一次库存 / 发群 ⇒ 红 |
+| **AC-D2e** ⭐ | `test/scanDraftRenderEntry.test.js` | **没有草稿 ⇒ 与今天逐字一致**：不传 `page.draft`（= 今天所有调用方）**一个草稿字节都没有**；开关开但没草稿 ⇒ **只有入口、没有提示条**，去掉入口后与今天**逐字相等** | 把提示条改成无条件渲染 ⇒ 红 |
+| **AC-D2f1/2** | 同上 | 提示条**有草稿才出**；【接着录】= 真链接（查询键 / 值走配置）；**不点它 = 正常新建**（页面里别的按钮 / 表单一个字不动） | 同上 |
+| **AC-D2f3** ⚠️ | 同上 | **如实标「待接线」**：`routes/scanPage.js` 里**还没有**读 `?resume`（S3 才接）⇒ 今天生产页面上一个草稿字节都不出现（**没有"点了没反应"的死按钮** ✓） | 提前在渲染层接住 resume ⇒ 红 |
+
+### 11.5 本刀**未做**的（如实标，别当成已完成 ✗）
+
+- **【接着录】的 POST / GET 接线**（`?resume=1` 采纳草稿）：**S3**（本刀不碰 `routes/scanPage.js` ✗）。
+- **「存报货草稿」那颗按钮的动作接住者**（`save_draft`）：**S3**（渲染层已按配置画好 ✓）。
+- **生成报货单**：`未报货 ⇒ 未到货` ＋ **按供应商拆分 / 分组**（Q7 待她拍）：**S3 / `supplier-split`**。
+- **提交之后草稿行怎么收尾**（Q6）· **按链各留一份**（Q8）：**待她拍**。
+- ⚠️ **已知边界**（本刀没动那一半）：同一份草稿**第二次存** ⇒ 主表那一行仍按 S1 既有行为再 create 一次
+  （**同一把幂等键**，`AC-D4` 的判据一个字没改）；S3 接"存草稿"时应先按幂等键回查 / 复用那一行。
+  本刀只保证**明细不翻倍**（`AC-D2c`）✓。

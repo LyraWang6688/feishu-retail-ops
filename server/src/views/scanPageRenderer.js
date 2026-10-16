@@ -549,6 +549,81 @@ ${scanNextHtml}
 </section>`;
 };
 
+/**
+ * ⭐⭐ 2026-10-16（task-S2 ·「**存草稿 · 接着录**」· **渲染半**）—— 两块 UI：
+ *   ① **三处入口**：销售货品页 / 补货页 / 退货页各一颗「**存报货草稿**」（她点名的是销售页那颗）；
+ *   ② **「你有一份草稿，接着录吗？」提示条**（她先前定的"进去就提示、接着录"）。
+ *
+ * 她的口径（逐字）与**不许自己定**的那一条：
+ *   · 「我们的**销售货品页上面也需要加一个按钮**，叫「**存报货草稿**」」← **只有这一颗被她点名**；
+ *   · 「我们的**补货和退货需要支持存草稿**功能」；
+ *   · ⚠️ 补货页 / 退货页那两颗**她没点名** ✗ ⇒ 本刀**三处共用同一句文案**（配置 `SCAN_PAGE.draftEntry`），
+ *     **不自己另起名字** ✗ —— 来源如实登记在 `config/scanPage.js` 的 `resolveDraftEntryConfig` ✓。
+ *
+ * 🔴 **零回归的物理保证**（`AC-D2e`）：两块都只在 `page.draft.enabled === true` 时才**可能**出字节；
+ *   **今天所有调用方都不传 `page.draft`**（路由那半步 = S3）⇒ 本函数返回**空串** ⇒
+ *   渲染结果与改动前**逐字相同** ✓（既有那几十条页面判据一条都不用改 ✓）。
+ *   ⚠️ **没有草稿**（`hasDraft !== true`）⇒ **提示条一个字都不出** ✓（塞进提示条 ⇒ `AC-D2e` 红 ✓）。
+ *
+ * ⚠️ 这一块**没有一行 JS**：入口是**同一张表单里的第二颗 submit**（原生，带得走她刚填的尺码/数量）；
+ *   【接着录】是一颗**真链接**（同一路径 + `?resume=1`，查询键走配置 ✓）。
+ *   🔴 **如实标「待接线」**：【接着录】那一下要**路由**（S3）读 `?resume=1` 才真的接着录 ——
+ *     本刀**不碰 `routes/**`** ✗ ⇒ 渲染层已按配置画好链接与查询键，**路由那一步在 S3** ✓。
+ */
+const draftUiOf = (page) => {
+  const draft = page && page.draft;
+  if (!draft || draft.enabled !== true) return null; // 缺省（今天所有调用方）⇒ 一个字节都不出 ✓
+  return draft;
+};
+
+/** 草稿那一块的配置（**优先用传进来的那一份** ⇒ 用例可以拿一份改过的 config 直接钉"改配置即改文案" ✓）。 */
+const draftEntryConfigOf = (config) => (config && config.draftEntry) || SCAN_PAGE.draftEntry || {};
+
+/**
+ * 「存报货草稿」那一颗（**三处入口共用这一个渲染点** ⇒ 形状只有一份，不会三处各写一遍 ✗）。
+ *   · 落在**既有那张表单里**（`write.fields.action` 是既有字段名 ⇒ 不新造隐藏字段 ✓）；
+ *   · 提交的值 = 配置里的 `saveAction`（**路由 S3 按它分派**；今天还没有接住者 = **待接线** ✓）。
+ */
+const draftSaveButtonHtml = (write, realm, config, page) => {
+  if (!draftUiOf(page)) return '';
+  if (!write || write.enabled === false) return '';
+  const cfg = draftEntryConfigOf(config);
+  const realms = Array.isArray(cfg.realms) ? cfg.realms.map((item) => String(item).trim()) : [];
+  // 认不出的领域 ⇒ 那一页**不显示**（绝不猜 ✗）；取值必须是 `scanPageRealm.js` 的 `REALMS[].id`
+  if (!realms.includes(resolveRealm(realm))) return '';
+  const fields = write.fields || {};
+  return `<button data-draft-save="1" type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(cfg.saveAction || '')}"${submitFeedbackAttrs(write)}>${escapeHtml(cfg.saveLabel || '')}</button>`;
+};
+
+/**
+ * 「你有一份草稿，接着录吗？」那一条。
+ *   · **只有真的有草稿才出** ✓（`page.draft.hasDraft === true`；路由用 S1 的 `readDraft` 判定 ✓）；
+ *   · 数字（几个货品 / 几行）**只有路由喂了才写** —— 拿不到就**不写**（**不编 0** ✗）；
+ *   · 【接着录】= 真链接（`?from=<当前领域>&<resumeQueryKey>=<resumeQueryValue>`）；
+ *     ⚠️ **不点它 = 正常新建** ✓（页面上别的东西一个字都不动 ⇒ 她的零回归 ✓）。
+ */
+const draftNoticeHtml = (realm, config, page) => {
+  const draft = draftUiOf(page);
+  if (!draft || draft.hasDraft !== true) return '';
+  const cfg = draftEntryConfigOf(config);
+  const products = Number(draft.productCount) > 0 ? Number(draft.productCount) : 0;
+  const lines = Number(draft.lineCount) > 0 ? Number(draft.lineCount) : 0;
+  const meta = (products || lines)
+    ? `<p class="hint" data-view="draft-notice-meta">${escapeHtml(fillText(cfg.noticeMeta || '', {
+      products, lines, updatedAt: String(draft.updatedAt || ''),
+    }))}</p>`
+    : '';
+  const queryKey = String(cfg.resumeQueryKey || 'resume');
+  const queryValue = String(cfg.resumeQueryValue ?? '1');
+  const href = `?from=${escapeHtml(resolveRealm(realm))}`
+    + `&${encodeURIComponent(queryKey)}=${encodeURIComponent(queryValue)}`;
+  return `<section class="card draft-notice" data-view="draft-notice">
+<p class="notice">${escapeHtml(cfg.noticeLabel || '')}</p>
+${meta}
+<a class="btn" data-draft-resume="1" href="${href}">${escapeHtml(cfg.resumeLabel || '')}</a>
+</section>`;
+};
+
 const stockTableHtml = (view, config) => {
   const head = [config.texts.columnSize, ...view.columns.map((column) => column.label)]
     .map((label) => `<th>${escapeHtml(label)}</th>`).join('');
@@ -1060,7 +1135,7 @@ const paymentRowsHtml = (write) => {
  *   · 总单加**「付款情况」三档**（全付（默认）/ 部分付 / 未付）+「实付多少」；
  *   · 收款明细**预置 1 行**（方式 + 金额，填了金额才算一笔）。
  */
-const saleFormHtml = (view, write) => {
+const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const t = write.texts;
   const fields = write.fields;
   const lines = write.draft?.lines || [];
@@ -1140,6 +1215,7 @@ ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
      ⇒ 录入页只留：每双 颜色 · 尺码 · 这一双的金额 ✓（那一组的字段名与标签字面量一个都不许留，否则 AC-2S1/AC-1 会打红） -->
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
 <button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>
+${draftSaveButtonHtml(write, DEFAULT_REALM, config, page)}
 </form>
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}
@@ -1447,7 +1523,7 @@ ${lines.join('\n')}
 </div>`;
 };
 
-const replenishFormHtml = (view, write) => {
+const replenishFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const t = write.texts;
   const v = REALM_TEXTS;
   const fields = write.fields;
@@ -1518,6 +1594,7 @@ ${rows}
 ${rp.amountRow ? purchaseAmountRowHtml(write) : ''}
 ${multiItemBlockHtml(write, view, 'replenish')}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rp.submitLabel)}</button>
+${draftSaveButtonHtml(write, REPLENISH_REALM, config, page)}
 </form>
 </details>
 </section>`;
@@ -1567,7 +1644,7 @@ ${stock ? `<span class="hint" data-view="${escapeHtml(stock.view)}">${escapeHtml
  *   · **一行业务逻辑都没有**：动作名 / 字段名 / 幂等键 / 文案全来自配置，
  *     写库在既有构件里（见 `services/purchaseReturnService.js` 的文件头）。
  */
-const returnFormHtml = (view, write) => {
+const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const t = write.texts;
   const v = REALM_TEXTS;
   const fields = write.fields;
@@ -1658,7 +1735,8 @@ ${sizesNotice}
 ${rows}
 ${sizes.length ? `${purchaseAmountRowHtml(write)}
 ${multiItemBlockHtml(write, view, 'return')}
-<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rf.submitLabel)}</button>` : ''}
+<button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rf.submitLabel)}</button>
+${draftSaveButtonHtml(write, PURCHASE_RETURN_REALM, config, page)}` : ''}
 </form>
 </section>`;
 };
@@ -1744,7 +1822,7 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
   if (id === REPLENISH_REALM) {
     // ⭐ 2026-10-11：**补货**从原「采购」领域里独立成一块（内容一个字没变）。
     const form = write && write.enabled !== false && write.replenishEnabled !== false
-      ? replenishFormHtml(view, write)
+      ? replenishFormHtml(view, write, page, config)
       : '';
     return wrap(form || realmEmptyHtml(REPLENISH_REALM, config));
   }
@@ -1753,7 +1831,7 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
     //   「退货」**回到条上** ✓ ⇒ 本块 = **退货表单**（`returnFormHtml` 一直在 ✓
     //   只是 2026-10-13 那版被"配品页"占着 ✗）· 能力一个字没删 ✗
     //   ⇒ 「配品」另开新领域 `accessory`（任务 B ✓ 待接路由/动作配置 ✓）
-    const form = write && write.enabled !== false ? returnFormHtml(view, write) : '';
+    const form = write && write.enabled !== false ? returnFormHtml(view, write, page, config) : '';
     // ⭐⭐ 2026-10-15（task-31 · 她真机 21:47「有库存点退货 ⇒ 只有一颗按钮」）：
     //   只读复现：**同一款 `HL55173-1|黑色|A` ⇒ `rows=11`、退货块 11 行** ✓（不是"有数据不画" ✗）；
     //   唯一能画出"一句人话 + **一颗**按钮"的是 `realmEmptyHtml` **通用兜底卡** —— 它只在
@@ -1800,7 +1878,7 @@ ${hiddenField(fields.submitKey, write.saleKey)}
   }
   // ⚠️ 2026-10-11：「刚加入本单」那一句**上移到顶部的本单条**（`draftBarHtml`）——
   //    她无论停在哪个领域（库存 / 补货 / 退货 / 验收 / 货品）都该立刻看见 N+1。
-  return wrap(saleFormHtml(view, write));
+  return wrap(saleFormHtml(view, write, page, config));
 };
 
 /**
@@ -1857,6 +1935,10 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
       // ⭐ 2026-10-12：销售页上那颗**带钱**的提交表单就在下面 ⇒ 本单条不再放第二颗提交按钮。
       moneyFormOnPage: safeRealm === DEFAULT_REALM && Boolean(write),
     });
+  // ⭐⭐ 2026-10-16（task-S2 ·「你有一份草稿，接着录吗？」）—— **有草稿才出**（没有 = 空串 ✓）：
+  //   位置放在**最上面**（本单条之后、货品卡之前）⇒ 她一进来就看得到 ✓（她的口径："进去就提示"）。
+  //   🔴 **待接线**：【接着录】那颗链接的落点（路由读 `?resume=1`）在 **S3**（本刀不碰 `routes/**` ✗）。
+  const draftNotice = draftNoticeHtml(safeRealm, config, page);
   // ⭐⭐ 2026-10-12（编号兜底）：编号缺段（典型 = 缺「类别」）但按（货号 + 颜色）**唯一命中**时，
   //    页面上出**一条轻提示**（一句话，不写说明书）——她才知道"这个标签该重打了"。
   const fallbackHint = view.number_fallback
@@ -1867,6 +1949,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
     // ⭐⭐ 2026-10-14（业务负责人逐字）：「**② 和 ③ 换一下位置，即先 3 后 2**」
     //   ⇒ **货品卡在上、6 格 tab 条在下** ✓（原来是反的 ✗）· 只改顺序 ✓ 内容一字不动 ✗
     content: `${bar}
+${draftNotice}
 ${identityHtml(view, config)}
 ${realmBarHtml(safeRealm, page?.userAgent)}
 ${noScriptHtml()}

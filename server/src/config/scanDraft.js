@@ -55,6 +55,21 @@ const DRAFT_STATUS_FIELD_KEY = 'arrivalStatus';
 const DEFAULT_DRAFT_IDEMPOTENCY_PREFIX = 'scan_draft';
 
 /**
+ * ⭐⭐ 2026-10-16（本刀 S2 · **改 S1 的明细口径**）：**草稿也写明细**。
+ *
+ * 她的口径（**逐字** = Lead 弹窗问「草稿会不会写到采购明细」时她选的那一个）：
+ *   「**草稿也写明细**」✓
+ * ⚠️ 这一条**推翻了 #732 的一个假设** ✗（S1 的 `AC-D1` 当时按"**采购明细 0 次**"写 ✗）
+ *   ⇒ 判据已**成对迁移**（改前逐字 → 改后逐字 → 依据，见 `test/scanDraftSaveResume.test.js`
+ *     的 AC-D1 那一段）。
+ *
+ * 明细行的幂等键前缀 —— ⚠️ **刻意独立**：不与草稿行（`scan_draft:*`）撞、
+ * 也不与真出单那两套（`purchase_request:*` / `purchase_return_doc:*`）撞 ✓。
+ * ⇒ 同一份草稿存两次 ⇒ 明细**不翻倍**（`createOnceByKey` 按这把键回查）✓。
+ */
+const DEFAULT_DRAFT_DETAIL_IDEMPOTENCY_PREFIX = 'scan_draft_detail';
+
+/**
  * 批次号沿用/新建的取值域。
  *   · `reuse_pending` = 她的原话（有未报货的号 ⇒ 沿用；没有 ⇒ 新建）✓ **缺省**；
  *   · 其余值**刻意不提供**：写成"总是新建"就等于违背她的口径 ⇒ 认不出的值**当场抛** ✓。
@@ -130,6 +145,12 @@ const resolveShared = (env) => {
     // 表侧落点（表 / 字段全部从 `config/v1BitableSchema.js` 取 ⇒ 本文件**不写中文列名** ✗）
     tableKey: readString(env, 'SCAN_DRAFT_TABLE_KEY', 'purchaseOrderBatch'),
     statusFieldKey: readString(env, 'SCAN_DRAFT_STATUS_FIELD_KEY', DRAFT_STATUS_FIELD_KEY),
+    // ⭐⭐ 2026-10-16（她：「**草稿也写明细**」）：明细那一半的落点 ——
+    //   表 / 列名同样**只从 schema 的语义键取**（本文件一个中文列名都不写 ✗）。
+    detailTableKey: readString(env, 'SCAN_DRAFT_DETAIL_TABLE_KEY', 'purchaseRequest'),
+    detailIdempotencyPrefix: readString(
+      env, 'SCAN_DRAFT_DETAIL_IDEMPOTENCY_PREFIX', DEFAULT_DRAFT_DETAIL_IDEMPOTENCY_PREFIX,
+    ),
   };
 };
 
@@ -148,6 +169,12 @@ const resolveEvents = (env) => Object.freeze({
   batchCreated: readString(env, 'SCAN_DRAFT_EVENT_BATCH_CREATED', 'scan.draft.batch_created'),
   tableWriteFailed: readString(env, 'SCAN_DRAFT_EVENT_TABLE_WRITE_FAILED', 'scan.draft.table_write_failed'),
   writeRejected: readString(env, 'SCAN_DRAFT_EVENT_WRITE_REJECTED', 'scan.draft.write_rejected'),
+  // ⭐⭐ 她 2026-10-16「草稿也写明细」那一半的两条留痕：
+  //   · 写成功（几条新建 / 几条命中幂等）；
+  //   · 这一行**没写成**（尺码解析不到 / 数量不是正整数 / 写库失败）—— **不静默** ✗。
+  detailsWritten: readString(env, 'SCAN_DRAFT_EVENT_DETAILS_WRITTEN', 'scan.draft.details_written'),
+  detailSkipped: readString(env, 'SCAN_DRAFT_EVENT_DETAIL_SKIPPED', 'scan.draft.detail_skipped'),
+  detailWriteFailed: readString(env, 'SCAN_DRAFT_EVENT_DETAIL_WRITE_FAILED', 'scan.draft.detail_write_failed'),
 });
 
 /**
@@ -212,6 +239,7 @@ module.exports = {
   BATCH_NO_POLICIES,
   DRAFT_STATUS_FIELD_KEY,
   DEFAULT_DRAFT_IDEMPOTENCY_PREFIX,
+  DEFAULT_DRAFT_DETAIL_IDEMPOTENCY_PREFIX,
   BATCH_NO_SOURCE,
   SUPPLIER_SPLIT,
 };
