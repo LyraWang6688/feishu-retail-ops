@@ -1049,7 +1049,11 @@ test('AC-8a ⭐【少收】两边不等 ⇒ **合法**：成单 + 差额一条�
       assert.equal(moneyPage.status, 200, '第一步只到资金页（200）');
       const moneyHtml = await moneyPage.text();
       assert.ok(moneyHtml.includes('data-view="payment-step"'), '第一步到的是**资金页**');
-      assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步**一个字都不写**（主表 0）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步**一个字都不写**（主表 0）');`
+      //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步**一个字都不写**（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+      assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步**一个字都不写**（主表 0）');
       assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');
       assert.equal(entriesOf(h, 'paymentRecord').length, 0, '第一步**一个字都不写**（收款 0）');
       // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
@@ -1215,7 +1219,11 @@ test('AC-8d ⭐【部分付】走真路由：实付 200 + 差额 300 落在收�
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
       });
       assert.equal(moneyPage.status, 200, await moneyPage.text());
-      assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步零写入（主表 0）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步零写入（主表 0）');`
+      //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步零写入（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+      assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步零写入（主表 0）');
       const done = await formPost(base, cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
         // 迁移依据（同上）：这里要钉的是「部分付 ⇒ 差额进未收款」，档位改由金额自动定出来 ⇒ 不再传档位

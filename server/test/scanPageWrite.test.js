@@ -790,7 +790,11 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       });
       assert.equal(moneyPage.status, 200);
       assert.ok((await moneyPage.clone().text()).includes('data-view="payment-step"'), '第一步到资金页');
-      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '第一步零写入');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '第一步零写入');`
+      //   改后逐字：`assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '第一步零写入');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '第一步零写入');
       const submitted = await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
