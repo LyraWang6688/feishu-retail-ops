@@ -258,3 +258,4 @@
 | [扫码页销售-操作说明书.md](扫码页销售-操作说明书.md) | 扫码页 · 销售 操作说明书 |
 | [test-base-voucher-column-2026-10-16.md](test-base-voucher-column-2026-10-16.md) | 测试 Base 补「团购券管理」列 —— 留档（⭐**已建成** · type 21 · property 逐键对齐生产 + 闸门 5 条 + 券 e2e 如实记 ✓） |
 - [worktree / 分支清理规矩](worktree-cleanup-rule-2026-10-16.md) —— 谁合谁清 · `git cherry` 判据 · 四条底线（2026-10-16 定）
+- [A 档 worktree 留档 2026-10-16](branch-salvage-2026-10-16/README.md) —— 7 个"重复/被她点头删除"的 diff 留档（2026-10-16）
