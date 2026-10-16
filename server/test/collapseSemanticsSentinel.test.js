@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-16（task-48 审计 · Lead 批的 ① + ②）：把**每一处 `<details>` 的收/展状态**钉进判据
@@ -24,7 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const RAW_SCAN = fs.readFileSync(path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js'), 'utf8');
+const RAW_SCAN = rendererSource();
 const RAW_ORDERS = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'workbench', 'features', 'orders', 'index.js'), 'utf8',
 );

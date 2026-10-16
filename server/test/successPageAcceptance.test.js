@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-16（task-52 · **AC-SP1**：成功页统一极简）：她逐字 ——
@@ -22,7 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { SCAN_PAGE } = require('../src/config/scanPage');
-const RENDERER = fs.readFileSync(path.join(__dirname, '..', 'src', 'views', 'scanPageRenderer.js'), 'utf8');
+const RENDERER = rendererSource();
 const strip = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');

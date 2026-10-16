@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⚠️ 2026-10-11 晚（业务负责人批准六领域）——本文件**改写**的断言（逐字）：
  *   改前：领域清单写 `['sales', 'inventory', 'purchase', 'product']`；补货那一块用 `?from=purchase`。
@@ -168,7 +169,7 @@ test('AC-S2 `views/**` 与两个 config 去注释后一句都不许留', () => {
     assert.equal(surface.includes(gone), false, `源码里还留着说明句：「${gone}」`);
   }
   // 渲染层也不许再画那几个 hint 容器（说明句的载体）
-  const renderer = stripComments(readSrc('views/scanPageRenderer.js'));
+  const renderer = stripComments(rendererSource());
   assert.equal(/realm-hint/.test(renderer), false, '领域条下面那句提示的容器不再画');
   assert.equal(/labelHint|purchaseSizesHint|saleInStockHint|salePrepaidHint|groupNote/.test(renderer), false,
     '渲染层不许再引用那些说明句');

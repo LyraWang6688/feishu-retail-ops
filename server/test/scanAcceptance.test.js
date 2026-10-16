@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-11（业务负责人**选定方案A**）：「**手机上打开工作台 → 采购 → 验收到货 →
  * 选「报货批次」里【未到货】的那个报货号 → 点【验收】⇒ 进入"验收模式"（连续扫） →
@@ -421,7 +422,7 @@ test('AC-A8 会话互不覆盖：销售本单 / 补货 / 退货 / 验收 四条�
 test('AC-A9 🔴 【继续扫下一个】那颗 AppLink 随验收页一起退场（不再是页面的一部分）', () => {
   // ⭐ 2026-10-14 晚 **改指向**：改前逐字"飞书 UA 给 AppLink / 桌面 UA 给人话"✗
   //   改后：渲染层里**不再有**验收那一块 ⇒ 也就没有那颗按钮 ✓（AppLink 生成器本身仍保留给别处 ✓）
-  const renderer = fs.readFileSync(path.join(SERVER_SRC, 'views/scanPageRenderer.js'), 'utf8');
+  const renderer = rendererSource();
   assert.equal(/data-view="acceptance"/.test(renderer), false, '验收块必须没有了 ✗');
   assert.ok(/applink/i.test(renderer) === true || /applink/i.test(renderer) === false, '（不强制：AppLink 生成器若还有别的调用方则保留 ✓）');
 });
@@ -448,7 +449,7 @@ test('AC-A10 一双都还没扫就点【完成验收】⇒ 拦住、一个字都
 test('AC-A11 🔴 静态哨兵：渲染层里**没有**验收块（那条"移动端布局"随它一起退场）', () => {
   // ⭐ 2026-10-14 晚 **改指向**：改前逐字 `assert.match(renderer, /data-view="acceptance"/)` ✗
   //   改后：**必须没有** ✓（扫码页整页的 ≥44px / 单列 / 不横滑 由既有那几条哨兵继续罩着 ✓）
-  const renderer = fs.readFileSync(path.join(SERVER_SRC, 'views/scanPageRenderer.js'), 'utf8');
+  const renderer = rendererSource();
   assert.equal(/data-view="acceptance"/.test(renderer), false, '验收块必须没有了 ✗');
   assert.match(renderer, /--control-height/, '页面级的 ≥44px 口径照旧 ✓');
 });

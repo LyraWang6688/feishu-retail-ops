@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 /**
  * 判据（她 2026-10-16 逐字）：
  * > 「按道理讲，**资金页实际上就应该有两个按钮**：**1. 信息填全了，直接提交** **2. 信息没填全，支持后续补充**就可以了呗」
@@ -24,7 +25,7 @@ const path = require('node:path');
 const rel = (p) => path.join(__dirname, '..', p);
 const read = (p) => fs.readFileSync(rel(p), 'utf8');
 
-const RENDERER = 'src/views/scanPageRenderer.js';
+const RENDERER = rendererSource();
 const CONFIG = 'src/config/scanPage.js';
 
 /** 资金页那段模板（她截图对应区）：从 `renderSalePaymentStepPage` 起到文件里那段结束。 */
@@ -49,7 +50,7 @@ const stripComments = (text) => String(text)
 
 // ── AC-PB1：资金页**恰好两颗**（提交 / 跳过）·「补整单付款」不许出现 ──────────────
 test('AC-PB1 ⭐⭐ 资金页恰好两颗可提交按钮（提交 / 跳过），**不许**出现「补整单付款」', () => {
-  const block = moneyStepBlock(read(RENDERER));
+  const block = moneyStepBlock(RENDERER);
   assert.ok(block.includes('step.payButton'), '主按钮 = `step.payButton`（提交整单付款）✓');
   assert.ok(block.includes('step.skipButton'), '次按钮 = `step.skipButton`（跳过…）✓');
   assert.ok(!block.includes('fillPaymentButton'), '资金页**不许**再渲染 `fillPaymentButton` ✗（塞回 ⇒ 本判据红 ✓）');
@@ -69,7 +70,7 @@ test('AC-PB2 ⭐⭐ 成功页**零链接**：那颗 `<a href={工作台}>` **已
   //   依据：业务负责人 2026-10-16 逐字「成功页它**不需要做任何跳转**，也**不需要做任何链接**」
   //     ⇒ 那颗跳工作台的 `<a>` **整颗删** ✗（不是放宽：原来钉"**恰一处、且必须是链接**"，
   //     现在钉"**零处**"，并留反向哨兵"塞回即红" ✓）
-  const src = read(RENDERER);
+  const src = RENDERER;
   // ⚠️ 只看**代码**（注释里的"改前逐字"不算违规 —— 与 noHardcodedChinese / AC-PB4 同口径 ✓）
   const hits = stripComments(src).split('\n').filter((line) => line.includes('fillPaymentButton'));
   assert.deepEqual(hits, [], `成功页那颗跳工作台的链接**已删** ✗（实际还有 ${hits.length} 处）`);
@@ -113,7 +114,7 @@ test('AC-PB4 ⭐ 全仓 `src/**` + `public/**` 里**零**处旧文案「补整�
 
 // ── AC-P0e：拦住时那句人话必须**醒目**（她"看着像坏了"要的那一条）─────────────
 test('AC-P0e ⭐⭐ 资金页那条拦截人话必须醒目（`form-alert` + `role="alert"`），删掉 ⇒ 红', () => {
-  const src = read(RENDERER);
+  const src = RENDERER;
   const tag = src.split('\n').find((line) => line.includes('data-view="payment-step-notice"'));
   assert.ok(tag, '要有那句人话的渲染点（`data-view="payment-step-notice"`）✓');
   assert.ok(/data-emphasis="alert"/.test(tag), '必须是**醒目告警**（`data-emphasis="alert"` ✓ 不靠改 class ✓）');

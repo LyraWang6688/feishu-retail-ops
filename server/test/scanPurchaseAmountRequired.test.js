@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 「**退货整单金额必填**」的验收用例（业务负责人 2026-10-14 晚**逐字**）：
@@ -365,7 +366,7 @@ test('AC-PA4 整单金额非空 ⇒ 照旧提交（200）：退货**逐字带上
 test('AC-PA5 源码哨兵：补货 / 退货共用同一个闸门；开关读配置；金额输入只有一处定义', () => {
   const routeSrc = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'scanPage.js'), 'utf8');
   const configSrc = fs.readFileSync(path.join(SERVER_DIR, 'src', 'config', 'scanWrite.js'), 'utf8');
-  const viewSrc = fs.readFileSync(path.join(SERVER_DIR, 'src', 'views', 'scanPageRenderer.js'), 'utf8');
+  const viewSrc = rendererSource();
 
   // ① 一处实现：判空 + 400 页面各只有一个定义，两条动作各调一次（不复制 ✗）
   // ⭐⭐ 2026-10-16（A2/A3 接线）**成对迁移**（依据 = 她 2026-10-16 逐字「**补货不问金额**」）：

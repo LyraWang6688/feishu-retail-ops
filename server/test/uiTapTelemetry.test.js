@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 埋点 P0 剩余三条（业务负责人 2026-10-14 晚批准的五条里剩下的 ②④⑤）：
@@ -403,7 +404,7 @@ test('AC-UT4c ⑤ **同一份实现**：两个路由都 require 同一个 util�
   assert.equal((wbRoute.match(/uiTapResultMiddleware\('workbench'\)/g) || []).length, 1);
 
   // 扫码页那一页：脚本**还是只有一段**，而共享实现被**内联**进去了
-  const renderer = fs.readFileSync(path.join(SERVER_DIR, 'src', 'views', 'scanPageRenderer.js'), 'utf8');
+  const renderer = rendererSource();
   assert.match(renderer, /UI_TAP_SHARED_SOURCE = fs\.readFileSync\(/, '共享实现是**读文件内联**（不抄第二份 ✓）');
   // ⚠️ 那一页的脚本只在"有带反馈属性的提交按钮"时才渲染（`content.includes('data-submit-feedback=')`）
   //    ⇒ 直接用**渲染层自己的入口**渲染一页（补货表单就有）—— 不走 HTTP，判据更直接 ✓

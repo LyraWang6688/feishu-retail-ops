@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ 2026-10-13 **真病根**（nginx 日志逐字）：
@@ -25,7 +26,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'record
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { renderScanSkeleton, renderScanPage } = require('../src/views/scanPageRenderer');
 
-const RENDERER_SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+const RENDERER_SRC = rendererSource();
 const RECORD_ID = 'rec28dZKS5qr58';
 
 test('AC-RD1 ⭐ 骨架的取数请求 = **当前页面自己的路径**（不再写死 /s/）', () => {

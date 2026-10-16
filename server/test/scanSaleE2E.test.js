@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 // ⭐⭐ 2026-10-14（业务负责人逐字）：「只要本次付的金额小于累计的，那么差额都是未收款，
 //   包括本次付款为 0」⇒ 本条断言从「不写」翻成「**恰写一条**」（判据没放宽 ✗ 依据见 PR 说明）
 // ⭐⭐ 2026-10-14（她裁决 ⓐ）：**每一双都要填「实收金额」**（商定好的价格）
@@ -1875,7 +1876,7 @@ test('AC-SR5 🔴 验收成功页（`renderAcceptanceDonePage`）已随验收页
   //   改前逐字：`const { renderAcceptanceDonePage } = require('../src/views/scanPageRenderer');`
   //             + 断言它渲染出「自动回未到货批次列表 + 按钮同 URL + 首屏实际数量/金额」✗
   //   改后：那个渲染函数**必须没有了** ✓；而**完成验收**这件事仍在**工作台**那条路上 ✓
-  const renderer = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+  const renderer = rendererSource();
   assert.equal(/renderAcceptanceDonePage/.test(renderer), false, '扫码页那个验收成功页已退场 ✗');
   assert.equal(/data-view="acceptance"/.test(renderer), false, '验收块也一并退场 ✗');
   const workbench = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/routes/workbench.js'), 'utf8');
@@ -1977,7 +1978,7 @@ test('AC-UA6 源码哨兵：warn 里带 page_build（缺失标 missing / 不一�
 });
 
 test('AC-UA7 渲染层：每个写表单的 action 后面**只加**一个 page_build（既有语义不动 ✓）', () => {
-  const renderer = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+  const renderer = rendererSource();
   const fields = (renderer.match(/\$\{pageBuildField\(\)\}/g) || []).length;
   // ⚠️ 2026-10-13 **改写**（能力退场）：原来是 8 处（含**配品表单**那一处）——
   //    她的口径是「扫码页里的**配品逻辑拿掉**」（配品改到工作台）⇒ 配品表单整块退场

@@ -1,3 +1,4 @@
+const { rendererSource } = require('./support/rendererSource');
 // ⭐⭐ 2026-10-14 晚（业务负责人逐字）：配品搬到工作台「销售 → 配品」+ 上新去掉
 //   ⇒ 扫码页**只剩 4 个领域**：销售 · 补货 · 库存 · 退货 ✓
 //   🔴 不是放宽 ✗：判据从"六个都在"翻成"**四个在 + 配品/上新不在**" ✓
@@ -25,7 +26,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'realm_
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { renderScanPage, STYLE } = require('../src/views/scanPageRenderer');
 
-const SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+const SRC = rendererSource();
 // 2026-10-14 re-pointed: sales, replenish, inventory, purchase_return(returns), accessory(add-ons), new
 // ⭐⭐ 2026-10-15（业务负责人逐字，Lead 转达确认）：
 //   「第一个卡片包含：销售、补货、库存、退货，以及一个"继续扫下一个"的卡片，那么

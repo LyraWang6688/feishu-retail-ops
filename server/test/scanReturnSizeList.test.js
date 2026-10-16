@@ -1,4 +1,5 @@
 'use strict';
+const { rendererSource } = require('./support/rendererSource');
 
 /**
  * ⭐⭐ task-23（2026-10-15 真机 · 业务负责人逐字）：
@@ -185,7 +186,7 @@ test('AC-RT1 ⭐ 每个尺码一行：**尺码** + **当前库存数量**（0 �
   assert.ok(rowFor('40').includes('size-qty'), '还是数量输入 ✓');
   // ⭐ 数量默认值**走配置**（不是写死 1）：钉住"渲染层确实读了写侧那一份配置" ✓
   //   （能真红：把 `defaultQuantity` 写回字面量 1 ⇒ 这条红）
-  const rendererSrc = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRenderer.js'), 'utf8');
+  const rendererSrc = rendererSource();
   assert.match(rendererSrc, /defaultQuantity: returnConfig\.defaultQuantity/,
     '⭐ 退货数量默认值来自 `SCAN_WRITE.purchaseReturn.defaultQuantity`（唯一真源 ✓）');
   assert.equal(SCAN_WRITE.purchaseReturn.defaultQuantity, 1, '（当前配置值就是 1；换值不用改代码 ✓）');
