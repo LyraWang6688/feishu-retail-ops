@@ -560,9 +560,17 @@ test('AC-SM-D ⭐⭐ N=1 ⇒ 老路（submit_order ⇒ 资金页 ⇒ submitSale�
       });
       //   改后逐字：`assert.equal(step.status, 200, 'N=1 ⇒ 停在**资金页**（与改前逐字同一条路 ✓）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 200 ⇒ **实测 400** ✓）
       //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
-      assert.equal(step.status, 400, 'N=1 ⇒ 停在**资金页**（与改前逐字同一条路 ✓）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：assert.equal(step.status, 400, 'N=1 ⇒ 停在**资金页**（与改前逐字同一条路 ✓）');
+      //   改后逐字：assert.equal(step.status, 200, 'N=1 ⇒ 停在**资金页**（④ 后：点提交先建货那一单、照旧到资金页 ✓）');
+      //   依据 = ④ 口径（点提交就建【货】那一单）＋ 她 22:5x「把新功能都上了，不需要开关」✓
+      assert.equal(step.status, 200, 'N=1 ⇒ 停在**资金页**（④ 后：点提交先建货那一单、照旧到资金页 ✓）');
       assert.ok(step.html.includes('整单付款'), '资金页真的渲染出来了 ✓');
-      assert.equal(valuesIn(h.tables, 'salesEntry', 'orderNo').length, 0, '资金页之前零写入 ✓');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：assert.equal(valuesIn(h.tables, 'salesEntry', 'orderNo').length, 0, '资金页之前零写入 ✓');
+      //   改后逐字：assert.equal(valuesIn(h.tables, 'salesEntry', 'orderNo').length, 1, '④ 后：点提交就建【货】那一单 ⇒ 资金页之前已有 1 张单 ✓');
+      //   依据 = ④ 口径（点提交就建【货】那一单）＋ 她 22:5x「把新功能都上了，不需要开关」✓
+      assert.equal(valuesIn(h.tables, 'salesEntry', 'orderNo').length, 1, '④ 后：点提交就建【货】那一单 ⇒ 资金页之前已有 1 张单 ✓');
 
       // ② 资金页那一按 ⇒ 既有 submitSale
       const pay = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
