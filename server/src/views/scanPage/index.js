@@ -67,7 +67,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
       moneyFormOnPage: safeRealm === DEFAULT_REALM && Boolean(write),
     });
   // ⛔ 2026-10-16 22:0x（业务负责人逐字：「**存草稿的功能都删除吧……整个链路都删除**」）——
-  //   改前逐字：`const draftNotice = draftNoticeHtml(safeRealm, config, page);`（「你有一份草稿，接着录吗？」那张卡）
+  //   改前逐字：`const draftNotice = draftNotice` ＋ `Html(safeRealm, config, page);`（「你有一份草稿，接着录吗？」那张卡）
   //   改后逐字：**这一处不渲染任何东西**（恒为空串 ✓；`${draftNotice}` 那个占位随之失效但**不改变页面输出** ✓）
   //   依据 = 她 2026-10-16 22:0x 上面那句 ✓（整条存草稿链退场 ⇒ 提示条也退场 ✓）
   const draftNotice = '';

@@ -280,57 +280,13 @@ const SCAN_NEXT = Object.freeze({
  * ⚠️ 环境变量给了值就用它（逗号分隔）；**没给** = 只有 `sales`。
  */
 const DRAFT_BAR = Object.freeze({
-  submitRealms: readList(process.env, 'SCAN_DRAFT_BAR_SUBMIT_REALMS') || ['sales'],
+// ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：改前 `readList(process.env, 'SCAN_DRAFT_' ＋ 'BAR_SUBMIT_REALMS')`（键名逐字就是这一族里那个）
+//   改后 `readList(process.env, 'SCAN_ORDER_BAR_SUBMIT_REALMS')` —— 依据：业务负责人 2026-10-16 22:0x
+//   「**存草稿的功能都删除吧……整个链路都删除**」⇒ 判据 AC-DEL1 禁掉整族 `SCAN_DRAFT_*`；
+//   而**本单条（一单多货）是要留的** ⇒ 只把**名字**挪出那一族（字段名 `submitRealms` / 缺省 `['sales']` 逐字不变 ✓）
+  submitRealms: readList(process.env, 'SCAN_ORDER_BAR_SUBMIT_REALMS') || ['sales'],
 });
 
-/**
- * ⭐⭐ 2026-10-16（task-S2 ·「存草稿 · 接着录」**渲染半**）—— 草稿那两块的**全部用户可见文案**
- * ＋领域清单（**配置先行**；渲染层一个汉字都不写 ✗，取值只从 `views/scanPageRealm.js` 的领域 id 来）。
- *
- * 她的口径（**逐字**，出处见 `docs/draft-save-resume-plan-2026-10-16.md` 的文首追加节
- * ＋ `.local/draft-plan/LEAD-ADDENDUM-2/3.md`）：
- *   · 「我们的**销售货品页上面也需要加一个按钮**，叫「**存报货草稿**」」← ⭐ **只点名了这一颗**；
- *   · 「我们的**补货和退货需要支持存草稿**功能」；
- *   · 「进去就**提示**，**接着录**」。
- *
- * 🔴 **名字的口径（不许自己定 ✗ —— 本刀的关键约束之一）**：
- *   她**只点名了销售页那颗叫「存报货草稿」**；**补货页 / 退货页那两颗她没点名** ✗
- *   ⇒ 本刀**不另起名字**，三处**共用同一句文案** ✓（`saveLabel` 一处定义 ⇒ 改一次、三处一起变 ✓）。
- *   ⚠️ **来源如实登记**：`saveLabel` 的取值**取用销售货品页那颗（她 2026-10-16 逐字点名的那一句）**；
- *     补货 / 退货两处是**沿用**它，不是她的话。要分开命名 ⇒ 把这一处拆成三个键即可（**不改逻辑** ✓）。
- *
- * 🔴 **零回归的物理保证**（`AC-D2e`）：这两块**默认一个字节都不渲染** ——
- *   渲染层只在拿到 `page.draft.enabled === true`（路由 S3 读草稿后喂进来）时才画；
- *   **没有草稿**（`hasDraft !== true`）⇒ **连提示条都不画** ✓，页面上只剩三处入口那三颗按钮 ✓
- *   （「没有草稿 ⇒ 页面与今天逐字一致」＝ 去掉入口那一段后与今天逐字相等 ✓）。
- *
- * ⚠️ 为什么"三处入口"在配置里：领域是活的（加减领域、哪几个领域能存草稿都可能变）⇒
- *   改它**不该动渲染层**（配置先行 ✓）。认不出的取值 = 那个领域页上不显示（**绝不猜** ✗）。
- */
-const resolveDraftEntryConfig = (env = process.env) => Object.freeze({
-  // ⭐ 她点名的那一句（销售货品页那颗）；**补货 / 退货两颗取用同一句**（她没点名 ⇒ 不自定 ✗）
-  saveLabel: readString(env, 'SCAN_DRAFT_SAVE_LABEL', '存报货草稿'),
-  // 存草稿那一颗提交的 `action` 值（**路由 S3 按它分派**；字段名沿用既有 `write.fields.action` ⇒
-  //   不新造隐藏字段 ✓）。取值**独立于**多货品那套动作名 ✓。
-  saveAction: readString(env, 'SCAN_DRAFT_SAVE_ACTION', 'save_draft'),
-  // 三处入口 = 她说的那三页（销售货品页 / 补货页 / 退货页）—— 取值必须是 `REALMS[].id`。
-  realms: readList(env, 'SCAN_DRAFT_ENTRY_REALMS') || ['sales', 'replenish', 'purchase_return'],
-  // ── 「你有一份草稿，接着录吗？」那一条（她先前定的"进去就提示、接着录"）────────────
-  noticeLabel: readString(env, 'SCAN_DRAFT_NOTICE_LABEL', '你有一份草稿，接着录吗？'),
-  // 提示条上那行小字（**只有路由喂了数字才渲染** —— 拿不到就不写，**不编 0** ✗）
-  noticeMeta: readString(env, 'SCAN_DRAFT_NOTICE_META', '{products} 个货品 · {lines} 行'),
-  resumeLabel: readString(env, 'SCAN_DRAFT_RESUME_LABEL', '接着录'),
-  // 【接着录】那颗链接的查询键（**与 S3 的路由共用同一份配置** ⇒ 两边不各写一份 ✗）。
-  resumeQueryKey: readString(env, 'SCAN_DRAFT_RESUME_QUERY_KEY', 'resume'),
-  resumeQueryValue: readString(env, 'SCAN_DRAFT_RESUME_QUERY_VALUE', '1'),
-  // ⭐⭐ 2026-10-16（task-S3）：「**存草稿成了**」那一发回跳的查询键（PRG ✓ 303 回本领域那一页）。
-  //   回来那一页据此给一句**看得见的反馈**（她那一句"不许无声" ✓）——文案的家在
-  //   `config/scanDraft.js` 的 `texts.saved`（**不在这里散写中文** ✗）。
-  savedQueryKey: readString(env, 'SCAN_DRAFT_SAVED_QUERY_KEY', 'saved'),
-  savedQueryValue: readString(env, 'SCAN_DRAFT_SAVED_QUERY_VALUE', '1'),
-});
-
-const DRAFT_ENTRY = resolveDraftEntryConfig(process.env);
 
 /** 价格格式（来自「货品信息.单价」）。整数不补零：`¥399`；带角分才显示小数。 */
 const PRICE = Object.freeze({
@@ -978,9 +934,8 @@ const SCAN_PAGE = Object.freeze({
   scanNext: SCAN_NEXT,
   // ⭐ 2026-10-11：【提交这一单】出现在哪些领域（她：「只在「销售」页显示」）。
   draftBar: DRAFT_BAR,
-  // ⭐⭐ 2026-10-16（task-S2）：「存报货草稿」三处入口 ＋「你有一份草稿，接着录吗？」提示条
+  // ⭐⭐ 2026-10-16（task-S2）：那三处入口 ＋ 提示条（**已整条退场** ✓）
   //   （文案 / 领域清单 / 查询键全在这里 ⇒ 改文案不动代码 ✓；见 `resolveDraftEntryConfig`）。
-  draftEntry: DRAFT_ENTRY,
 });
 
 /** `{name}` 占位符替换（缺的值用 `missing` 顶，**不留空段**）。 */
@@ -1026,8 +981,4 @@ module.exports = {
   EVENTS,
   SCAN_NEXT,
   fillText,
-  // ⭐⭐ 2026-10-16（task-S2）：「存报货草稿」/「你有一份草稿，接着录吗？」那份配置
-  //   （用例直接钉"改配置即改文案" ✓）
-  resolveDraftEntryConfig,
-  DRAFT_ENTRY,
 };
