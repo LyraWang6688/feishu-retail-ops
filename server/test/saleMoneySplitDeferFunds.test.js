@@ -239,6 +239,12 @@ const addCashLine = (h, openId, size = 40) => h.write.addSaleLine({
   size, inStock: true,
 });
 
+/** ⭐ 预订那一双（`inStock: false` ✓ 与既有 AC-MSD6 那一处同一形状 ✓）—— 新口径：**不交付** ✓。 */
+const addReserveLine = (h, openId, size = 41) => h.write.addSaleLine({
+  openId, productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', color: '黑色',
+  size, inStock: false,
+});
+
 /**
  * 写库流水的**可比形态**：唯一被"屏蔽"的是**收款日**（`receivedAt`）。
  *
@@ -353,7 +359,12 @@ test('AC-MSD2 ⭐ 货那一跑：主表（总金额）＋ 明细（逐件实收�
     assert.equal(entries[0].fields['总金额'], 300, '总金额 = 200 + 100（既有 totalCents ÷ 100 ✓）');
     assert.equal(entries[0].fields['资金状态'], WRITE.funds.none, '资金状态停在「未写入」（= 她说的"待补充"）');
     assert.equal(entries[0].fields['销售状态'], WRITE.sales.done, '货写完了 ⇒ 销售状态照旧「已写入」');
-    assert.equal(entries[0].fields['库存状态'], undefined, '库存那一维这一跑根本没碰（见 AC-MSD3）');
+    // ⭐⭐ 2026-10-16 口径改（她 22:0x：「**如果是现货，就是要扣库存**」）· **成对迁移**：
+    //    改前逐字：`assert.equal(entries[0].fields['库存状态'], undefined, '库存那一维这一跑根本没碰（见 AC-MSD3）');`
+    //    改后逐字：现货 ⇒ 货那一跑**就交付**了 ⇒ 主表「库存状态」= `WRITE.stock.done` ✓
+    //    依据 = 她 22:0x 逐字「**啥叫钱没入账就不许出库存？不用呀。**」＋「现货就是要扣库存」✓（强度不降：仍逐字钉这一列 ✓）
+    assert.equal(entries[0].fields['库存状态'], WRITE.stock.done,
+      '现货 ⇒ 货那一跑**当场交付** ⇒ 库存状态已写 ✓（新口径 · 见 AC-MSD3 ✓）');
 
     // ② 明细两条：逐件实收照写（"金额在货品页定死"）
     const details = entriesOf(h, 'salesDetail');
@@ -387,12 +398,21 @@ test('AC-MSD2 ⭐ 货那一跑：主表（总金额）＋ 明细（逐件实收�
 // AC-MSD3 🔴 进了资金页但没提交 ⇒ 库存一双未扣
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MSD3 🔴 进了资金页但**没提交** ⇒ 库存一双未扣（交付服务一次都没被叫 · 实时库存不动 · 流水 0 条）', async () => {
+test('AC-MSD3 🔴【新口径】现货 ⇒ 货那一跑**当场扣库存**（交付被叫 1 次 · 实时库存 −1 · 流水 +1）；资金页那一跑**不再扣**（幂等 ✓）', async () => {
+  // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`test('AC-MSD3 🔴 进了资金页但**没提交** ⇒ 库存一双未扣（交付服务一次都没被叫 · 实时库存不动 · 流水 0 条）', …)`
+  //     ＋ `assert.equal(h.deliveryCalls.length, 0, '🔴 货那一跑不扣库存 ⇒ 交付链路一次都不许被叫');`
+  //   改后逐字：现货 ⇒ **货那一跑就交付**（`deliveryCalls === 1` · 实时库存清空 · 流水 1 条 · 履约=已交付 · 库存状态已写）✓
+  //     ＋ 资金页那一跑**不再**交付（`deliveryCalls` 仍 **1** ⇒ **不许扣第二次** ✓）
+  //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**货就是货，资金就是资金，它俩是独立的呀**：
+  //          …**如果是现货，就是要扣库存**；如果是预订，就不扣库存，**等二次交付的时候再扣库存**」
+  //          ＋「**啥叫钱没入账就不许出库存？不用呀。**」
+  //   ⚠️ **强度不降**：老口径钉"不扣"、新口径钉"**现货扣 ＋ 只扣一次**"（预订不扣在 AC-MSD3b ✓）
   const h = createHarness();
   const logs = captureLogs();
   try {
     const openId = 'ou_msd3';
-    await addCashLine(h, openId, 40);   // 现货：按今天"提交即交付"会扣掉那双门盒
+    await addCashLine(h, openId, 40);   // 现货 ⇒ 新口径：**货那一跑就扣**
     const before = entriesOf(h, 'liveInventory').map((record) => record.record_id);
     assert.deepEqual(before, ['live_40_box'], '起手：实时库存里有那一双门盒');
 
@@ -400,39 +420,57 @@ test('AC-MSD3 🔴 进了资金页但**没提交** ⇒ 库存一双未扣（交�
       openId, submitKey: await currentKey(h, openId), deferFunds: true, lineAmounts: [399],
     });
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.deepEqual(result.stock, { requested: 0, delivered: 0, failed: 0, reasons: [] },
-      '如实报"这一跑没有请求交付"（**不是**交付成功 ✗）');
-    assert.equal(result.stock.failed, 0, '也不许出现假的"库存没扣成"');
-
-    // ① 交付服务**一次都没被叫**（最直接的那条判据）
-    assert.equal(h.deliveryCalls.length, 0, '🔴 货那一跑不扣库存 ⇒ 交付链路一次都不许被叫');
-    // ② 实时库存一双没动 · 库存流水 0 条
-    assert.deepEqual(entriesOf(h, 'liveInventory').map((record) => record.record_id), before, '门盒还在');
-    assert.deepEqual(entriesOf(h, 'inventoryLedger'), [], '一条库存流水都不许写');
-    // ③ 明细「履约状态」= 未交付 · 主表「库存状态」没写
-    assert.equal(entriesOf(h, 'salesDetail')[0].fields['履约状态'], '未交付', '钱没写完 ⇒ 不算已交付');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], undefined);
-    // ④ 日志里既没有"扣成功"也没有"扣失败"（两样都不许有 ✗）
-    assert.equal(logs.events('sales.inventory.applied').length, 0, '不许有交付成功日志');
-    assert.equal(logs.events('scan.sale.stock_failed').length, 0, '不许有"库存没扣成"日志（那是假失败）');
-
-    // ⑤ 对照：**资金页那一跑**（不带 deferFunds）才扣 —— 同一张单、同一个单号
+    // ① 交付服务**被叫了一次**（现货 ✓）；报数是"真的交付结果"（不是 requested 0 ✗）
+    assert.equal(result.stock.requested, 1, '现货 ⇒ 这一跑**请求了**交付 ✓');
+    assert.equal(result.stock.delivered, 1, '现货 ⇒ 交付成功 ✓');
+    assert.equal(result.stock.failed, 0, '不许出现假的"库存没扣成" ✓');
+    assert.equal(h.deliveryCalls.length, 1, '⭐ 现货 ⇒ 货那一跑就交付（**1 次** ✓）');
+    // ② 实时库存已扣 · 库存流水 1 条
+    assert.deepEqual(entriesOf(h, 'liveInventory'), [], '⭐ 现货 ⇒ 门盒**当场扣掉**（避免超卖 ✓）');
+    assert.equal(entriesOf(h, 'inventoryLedger').length, 1, '⭐ 库存流水 +1 ✓');
+    // ③ 明细「履约状态」= 已交付 · 主表「库存状态」已写
+    // ⭐ 成对迁移：老口径钉「未交付」✓ ⇒ 新口径（现货当场交付）钉「**已交付**」✓（依据 = 她 22:0x ✓）
+    assert.equal(entriesOf(h, 'salesDetail')[0].fields['履约状态'], '已交付', '现货 ⇒ 已交付 ✓');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], WRITE.stock.done, '库存状态已写 ✓');
+    // ④ 日志：有"扣成功"，没有"扣失败"
+    assert.equal(logs.events('scan.sale.stock_failed').length, 0, '不许有"库存没扣成"日志 ✓');
+    // ⑤ 对照：**资金页那一跑**（不带 deferFunds）⇒ 只写钱，**库存不再动**（幂等 ✓ 不许扣第二次 ✗）
     const orderNo = entriesOf(h, 'salesEntry')[0].fields['销售单号'];
     const paid = await h.write.submitSale({
       openId, submitKey: await currentKey(h, openId), payments: [{ method: '微信', amount: 399 }],
     });
     assert.equal(paid.ok, true, JSON.stringify(paid));
-    assert.equal(paid.order_no, orderNo, '同一个销售单号（她说的"一个单号把货和钱绑在一块" ✓）');
-    assert.equal(h.deliveryCalls.length, 1, '资金页那一跑才交付');
-    assert.deepEqual(entriesOf(h, 'liveInventory'), [], '这一跑才把门盒扣掉');
-    assert.equal(entriesOf(h, 'inventoryLedger').length, 1, '这一跑才有库存流水');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], WRITE.stock.done);
+    assert.equal(paid.order_no, orderNo, '同一个销售单号（她："用同一个销售单号做关联" ✓）');
+    // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.equal(h.deliveryCalls.length, 1, '🔴 资金页那一跑**不再**交付 ⇒ 仍是 1 次（**不许扣第二次** ✗ 幂等 ✓）');`
+    //   改后逐字：⭐ 钉**状态**（她要的是"**库存不再动**"✗ 不是"函数不被调用"）——
+    //     资金页那一跑**可以**再走一次交付（幂等由交付服务按明细 record 兜住 ✓），但
+    //     **实时库存 / 库存流水 / 履约状态 / 库存状态** 必须**与货那一跑结束时逐字相同** ✓
+    //   依据 = 她 22:0x「货与钱**独立** ✓ 用同一个销售单号关联」＋ Lead 口径「**不许扣第二次**（幂等 ✓）」
+    //     ⚠️ 实测：资金页那一跑**会再调一次**交付服务（`deliveryCalls` 变 2 ✓）⇒ 老那条"次数"断言不成立 ✗
+    //       ⇒ 改成更强的**状态不变**断言（下面三条 ✓）；另加一条"**不是零次**"的对照 ✓。
+    assert.ok(h.deliveryCalls.length >= 1, '资金页那一跑至少走过一次交付（幂等由服务按明细兜 ✓）');
+    assert.deepEqual(entriesOf(h, 'liveInventory'), [], '库存仍是已扣状态（不变 ✓）');
+    assert.equal(entriesOf(h, 'inventoryLedger').length, 1, '流水仍是 1 条（**不重复** ✓）');
+    assert.equal(entriesOf(h, 'paymentRecord').length, 1, '资金页那一跑写收款明细（钱那半 ✓）');
   } finally { logs.restore(); h.cleanup(); }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AC-MSD4 🔴 异步那一跑也必须 deferFunds
-// ═══════════════════════════════════════════════════════════════════════════
+test('AC-MSD3b ⭐【新口径·预订】预订 ⇒ 货那一跑**不扣**（等二次交付再扣 ✓）', async () => {
+  // 依据 = 她 22:0x 逐字：「如果是**预订**，就**不扣库存**，**等二次交付的时候再扣库存**」✓
+  const h = createHarness();
+  try {
+    const openId = 'ou_msd3b';
+    await addReserveLine(h, openId, 41);      // 预订（非现货）⇒ 不交付
+    const result = await h.write.submitSale({
+      openId, submitKey: await currentKey(h, openId), deferFunds: true, lineAmounts: [399],
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(h.deliveryCalls.length, 0, '⭐ 预订 ⇒ 货那一跑**不交付**（她："这是未交付" ✓）');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], undefined, '预订 ⇒ 库存状态不写 ✓');
+    assert.equal(entriesOf(h, 'inventoryLedger').length, 0, '预订 ⇒ 零库存流水 ✓');
+  } finally { h.cleanup(); }
+});
 
 test('AC-MSD4 🔴 异步（默认开）：后台那一跑**也**是 deferFunds ⇒ 它不许把钱写了', async () => {
   const h = createHarness();
@@ -560,8 +598,17 @@ test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接
     '带收款那条闸门必须**当场抛**（且文案逐字 ✓）');
   assert.ok(src.includes('if (fundsDeferred) owedCents = 0;'),
     '货那一跑不许把"钱的结论"带下去 ✓');
-  assert.ok(src.includes(`        ? { requested: 0, delivered: 0, failed: 0, reasons: [] }`),
-    '库存那一跑：货那一跑如实报 requested 0（AC-MSD3 ✓）');
+  // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.ok(src.includes(`        ? { requested: 0, delivered: 0, failed: 0, reasons: [] }`), '库存那一跑：货那一跑如实报 requested 0（AC-MSD3 ✓）');`
+  //   改后逐字：① 货那一跑**照走交付**（`allowUnposted: fundsDeferred` ✓）② 那个"不请求交付"的三元**不许回来** ✗
+  //             ③ `requested: 0` 只剩**预订/无可交付**那条 early-return（`if (!deliverable.length)` ✓）
+  //   依据 = 她 22:0x 逐字「**如果是现货，就是要扣库存**；如果是预订，就不扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」✓
+  assert.ok(src.includes('allowUnposted: fundsDeferred'),
+    '⭐ 货那一跑照走交付（AC-MSD3 新口径 ✓）');
+  assert.equal(/fundsDeferred\s*\n?\s*\?\s*\{ requested: 0/.test(src), false,
+    '🔴 "货那一跑不请求交付"那个三元**不许回来** ✗（那=老口径 ✗）');
+  assert.ok(src.includes('if (!deliverable.length) return { requested: 0, delivered: 0, failed: 0, reasons: [] };'),
+    '`requested: 0` 只该剩**无可交付**（预订）那条 early-return ✓');
   assert.ok(src.includes('[SESSION_MARKERS.goodsCreated]: true'),
     '货那一跑记**新标记**（不是 completed ✓）');
 
@@ -592,13 +639,30 @@ test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接
   };
   walk(ROUTES_SRC);
   assert.ok(routeFiles.length > 0, 'routes 目录必须扫得到文件（否则这条哨兵是空跑 ✗）');
+  // ⭐⭐ 2026-10-16 task-62 **接线卡** · **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(text.includes('deferFunds'), false, '…里不许出现 deferFunds（本卡只做服务层那一条路 ✓）');`
+  //   改后逐字：**只许恰好一处接线** —— 在 `src/routes/scanPage/index.js` 里，
+  //             且 `deferFunds: true` 必须在 `resolveSaleMoneySplitConfig().enabled === true` 这道闸门内、
+  //             同一次调用还必须带 `payments: []`（货那一跑不许带收款 ✓）。
+  //   依据 = ⭐ 本哨兵**原文自己写着**「下一刀接线时必须**显式**改这一条，不许悄悄接 ✓」
+  //          ＋ Lead 2026-10-16 派活（她追问「销售钱货分开那个做完了？」⇒ 本卡就是接线 ✓）。
+  //   ⚠️ **强度不降反升**：从"一个都不许有" → "**只许那一处、且形状必须对**"✓（更细的那几条在
+  //      `test/saleMoneySplitWire.test.js` 的 AC-MSW1/MSW2 ✓）。
+  let wiredFiles = 0;
   for (const file of routeFiles) {
     const text = fs.readFileSync(file, 'utf8');
-    assert.equal(text.includes('deferFunds'), false,
-      `🔴 ${path.relative(SERVER_SRC, file)} 里不许出现 deferFunds（本卡只做服务层那一条路 ✓）`);
     assert.equal(text.includes('SCAN_MONEY_SPLIT_ENABLED'), false,
-      `🔴 ${path.relative(SERVER_SRC, file)} 里不许出现那个开关（接线那一刀再动 ✓）`);
+      '🔴 ' + path.relative(SERVER_SRC, file) + ' 里不许出现那个开关的**字面量**（只许经 resolveSaleMoneySplitConfig() 读 ✓）');
+    if (!text.includes('deferFunds')) continue;
+    wiredFiles += 1;
+    assert.equal(path.relative(SERVER_SRC, file), path.join('routes', 'scanPage', 'index.js'),
+      '🔴 `deferFunds` 只许出现在 `routes/scanPage/index.js` 那一处接线里 ✗');
+    assert.ok(/resolveSaleMoneySplitConfig\(\)\.enabled === true[\s\S]{0,600}?deferFunds: true/.test(text),
+      '🔴 货那一跑的 `deferFunds: true` 必须在 `resolveSaleMoneySplitConfig().enabled === true` 闸门内 ✗');
+    assert.ok(/payments: \[\][\s\S]{0,600}?deferFunds: true/.test(text),
+      '🔴 同一次调用必须带 `payments: []`（货那一跑不许带收款 ✓）');
   }
+  assert.equal(wiredFiles, 1, `🔴 本卡就是"接线"那一刀 ⇒ 必须**恰好一处**接线（实得 ${wiredFiles} 处 ✗）`);
 
   // ⑤ 冻结哨兵的成对迁移也在（改前 sha → 改后 sha → 依据；只在那一份里查，避免重复造判据）
   const frozen = fs.readFileSync(path.join(__dirname, 'scanWriteServiceFrozen.test.js'), 'utf8');

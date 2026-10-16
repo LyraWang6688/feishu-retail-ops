@@ -30,7 +30,8 @@
  * ## ⭐ 解冻台账（每一次改那个文件都必须往下加一行；**逐字**）
  * - 2026-10-16 · **task-62「货 / 钱分离」· 阶段二**（`submitSale` 加 `deferFunds` 那一条路）：
  *   改前逐字：sha `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）
- *   ⇒ 改后逐字：sha `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`（1770 行）
+ //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
+ *   ⇒ 改后逐字：sha `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（1770 行）
  *   依据 = 业务负责人 2026-10-16 明确「允许改冻结文件」（一次性、只为本卡）。
  *
  * ⚠️ 本文件**只读**那个文件（`readFileSync`），**不写入、不改行为、不加开关** ✓
@@ -49,8 +50,16 @@ const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.j
  *  · ⚠️ `split('\n').length` = **1770**（`wc -l` 是 1769 —— 末行无换行符，两个数**都对**，别混用 ✓）
  *  · 解冻历史：`199551e1…35ca`（1699 行 · 2026-10-16 task-62 阶段二之前）
  */
-const FROZEN_SHA256 = '49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12';
-const FROZEN_LINES = 1770;
+//          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
+// ⭐⭐ 2026-10-16 成对迁移（**第 2 次解冻** · 改前逐字 → 改后逐字 → 依据）：
+//   改前逐字：sha `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`（`split('\n').length` = **1770** · 冻结件 `deferFunds`「货那一跑不扣库存」那一版）
+//   改后逐字：sha `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（**1771** 行 · 货那一跑**照扣库存**：`deliverStockLines` 形参/转发 ＋ `:1318` 三元）
+//   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**货就是货，资金就是资金，它俩是独立的呀**：
+//          **如果是现货，就是要扣库存**；如果是预订，就不扣库存，等二次交付的时候再扣库存」
+//          ＋「**啥叫钱没入账就不许出库存？不用呀。**」
+//          ⇒ 授权范围 = 冻结件 **5 行** ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（缺省 false ✓ 只给货那一跑 ✓）
+const FROZEN_SHA256 = '333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f';
+const FROZEN_LINES = 1771;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const linesOf = (text) => String(text).split('\n').length;

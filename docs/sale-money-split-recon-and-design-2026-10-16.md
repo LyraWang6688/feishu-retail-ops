@@ -387,7 +387,7 @@ B 由 `submitSale` 透传），所以它先落在 `services/**` **没有浪费**
 
 | 跑什么 | 结果 |
 | --- | --- |
-| `shasum -a 256 server/src/services/scanWriteService.js` | 改前 `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）⇒ 改后 `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`（1770 行）· 依据 = 第 11 节 ① |
+| `shasum -a 256 server/src/services/scanWriteService.js` | 改前 `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）⇒ 改后 `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（1770 行）· 依据 = 第 11 节 ① |
 | 冻结哨兵（改完**还没**成对迁移时） | **必然红**（AC-FRZ1 / AC-FRZ2 都红 ⇒ 证明那个哨兵**确实认得出**改动 ✓，不是空跑） |
 | `test/scanWriteServiceFrozen.test.js`（成对迁移后） | **4 pass / 0 fail**（AC-FRZ1…FRZ4；新增的 AC-FRZ4 = **解冻台账**：只改常量、不写台账 ⇒ 红 ✓） |
 | 同一份基线的其他副本 | `scanPageSplitParity` · `scanDraftRouteWiring` · `scanDraftSaveResume` · `multiItemLogsAndRealmScan` · `supplierSplitAtGeneration` · `saleWriteBackgroundExtract` · `multiItemOrderSalesChain` 一起跑：**75 pass / 0 fail** ✓ |
@@ -436,7 +436,7 @@ B 由 `submitSale` 透传），所以它先落在 `services/**` **没有浪费**
 | 条件 | 落地 |
 | --- | --- |
 | 1) **必须显式开关、缺省关** | 开关仍在**调用方**（`config/saleMoneySplit.js` 的 `SCAN_MONEY_SPLIT_ENABLED`，缺省 `false` · 显式布尔 · **调用时读**）；**服务层只认显式参数** `deferFunds === true` ⇒ 不传 / `false` = 与今天**逐字节一致**（AC-MSD1 用"两次写库流水 + 业务层入参 `deepEqual`"钉住 ✓） |
-| 2) **冻结哨兵必然红 ⇒ 成对迁移 ＋ 台账 ＋ PR 正文贴授权** | **改前逐字**：sha `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）⇒ **改后逐字**：sha `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`（1770 行）· **依据 = 业务负责人 2026-10-16 明确「允许改冻结文件」（一次性、只为本卡）**。哨兵**继续存在**（没删/没停用/没放宽 ✓）＋ 新增 **AC-FRZ4**（台账：只改常量、不写台账 ⇒ 红）＋ 同一份基线的 **6 份**副本**一起搬**（各带一行"改前 → 改后 → 依据"；第 6 份 `purchaseReturnMultiItem` 是合并 #761 之后由 CI 抓出来的 ✓）✓ ＋ **PR 正文贴了这条授权** ✓ |
+| 2) **冻结哨兵必然红 ⇒ 成对迁移 ＋ 台账 ＋ PR 正文贴授权** | **改前逐字**：sha `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）⇒ **改后逐字**：sha `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（1770 行）· **依据 = 业务负责人 2026-10-16 明确「允许改冻结文件」（一次性、只为本卡）**。哨兵**继续存在**（没删/没停用/没放宽 ✓）＋ 新增 **AC-FRZ4**（台账：只改常量、不写台账 ⇒ 红）＋ 同一份基线的 **6 份**副本**一起搬**（各带一行"改前 → 改后 → 依据"；第 6 份 `purchaseReturnMultiItem` 是合并 #761 之后由 CI 抓出来的 ✓）✓ ＋ **PR 正文贴了这条授权** ✓ |
 | 3) **改动面最小：只加 `deferFunds` 那一条路 ⇒ 既有三处调用方行为一行都不许变** | 既有三处调用方（`routes/scanPage/index.js:2654` 提交整单付款 / `:2887` 跳过 / `:3191` 死代码）**都不传 `deferFunds`** ⇒ 走今天的路（AC-MSD1 逐字同形 ＋ 全量回归面里那几条 routes E2E 全绿 ✓）；`deferFunds` 只被**新路**用（本卡**还没接线** ✓） |
 | 4) **`deliverStockLines`：货那一跑不扣库存（等资金页那一跑才扣）** | 落成 `const stock = fundsDeferred ? { requested: 0, delivered: 0, failed: 0, reasons: [] } : await deliverStockLines(…)` ⇒ **判据 AC-MSD3**：「**进了资金页但没提交 ⇒ 库存一双未扣**」（交付服务一次都没被叫 / 实时库存不动 / 流水 0 条 / 没有假失败日志）—— **能真红**（变异 M1 ⇒ **fail 5** ✓） |
 
@@ -472,3 +472,7 @@ B 由 `submitSale` 透传），所以它先落在 `services/**` **没有浪费**
   （改前 `199551e1…`（1699 行）→ 改后 `49772bda…`（1770 行）＋ 一行依据 ✓）＋ **重跑全量两遍**（见 9.1）。
   ⚠️ 教训（给下一刀）：**冻结基线的副本会随着别人合 PR 继续增殖** ⇒ 解冻之后**必须重新 fetch/merge main
   再跑一遍**；只按"开工时 grep 到的那几处"搬，CI 一定红 ✗。
+
+> ⭐⭐ **2026-10-16 成对迁移**（改前逐字 → 改后逐字 → 依据）：冻结件 sha 由 `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`
+> ⇒ `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f` ✓ 依据 = 业务负责人 22:0x「**现货就扣；啥叫钱没入账就不许出库存？不用呀**」
+> （只动批准的 5 行 ＋ `salesDeliveryService` 的 `allowUnposted` ✓）。
