@@ -581,8 +581,19 @@ test('AC-ML7 ⭐ 配置先行：事件名 / 键名 / 触发参数 / 领域→链
   const cfg = createRealmScanConfig({ SCAN_REALM_SCAN_CHAINS: 'purchase_return:return' });
   assert.deepEqual(cfg.realms, { purchase_return: 'return' }, '只配一个领域 ⇒ 只有它有 ✓');
   assert.equal(Boolean(cfg.realms.replenish), false, '没配的领域 ⇒ **不发**（不猜成别的链 ✗）');
-  assert.deepEqual(createRealmScanConfig({}).realms, { replenish: 'replenish', purchase_return: 'return' },
-    '缺省两个领域（**与既有那两条链一一对应** ✓）');
+  // ⭐⭐ 2026-10-16 21:1x **成对迁移（本卡 =「销售也弹扫码框」）**：
+  //   改前逐字：
+  //     `assert.deepEqual(createRealmScanConfig({}).realms, { replenish: 'replenish', purchase_return: 'return' },
+  //        '缺省两个领域（**与既有那两条链一一对应** ✓）');`
+  //   改后逐字：下面这一行（多一格 `sales: 'sales'` ＋ 说明跟着改）。
+  //   依据 = 业务负责人 **2026-10-16 21:1x 弹窗拍板「要，销售也弹扫码框」** ✓
+  //     ＋ 同一天 14:32 逐字「**补货 / 销售 / 退货**里那颗『＋ 再加一个货品』**实际上也是扫一扫**」✓。
+  //   🔴 **不是放宽**：仍然把**缺省集合**逐字 `deepEqual` 钉住（只是集合本身多了一格 ✓）——
+  //     上面那两条"只配一个领域 / 没配的领域不发"一个字没动 ✓。
+  assert.deepEqual(createRealmScanConfig({}).realms,
+    { replenish: 'replenish', purchase_return: 'return', sales: 'sales' },
+    '缺省三个领域（**与既有那三条链一一对应** ✓：补货 / 退货 / **销售**）；'
+    + '销售那一格 = 她 2026-10-16 21:1x「要，销售也弹扫码框」✓');
 
   // ③ 触发参数 / 端点 / 领域查询键**都可配**；领域查询键必须是既有 `resolveRealm` 认的那个 ✓
   const custom2 = createRealmScanConfig({

@@ -478,7 +478,15 @@ test('AC-E2E-2 加入本单（现货尺码、实收留空）⇒ 303 + 本单条 
       const added = await addLine(base, cookie, NUMBER_A, '40');
       assert.equal(added.status, 303, '第2步：加入本单 = Post-Redirect-Get 的 303（刷新不会重复提交）');
       const location = String(added.headers.get('location'));
-      assert.match(location, /added=1$/, '第2步：回跳带上 added=1（本单看得见）');
+      // ⭐⭐ 2026-10-16 21:1x **成对迁移**（本卡 =「销售也弹扫码框」· 业务负责人当天 21:1x 弹窗拍板）：
+      //   改前逐字：`assert.match(location, /added=1$/, '第2步：回跳带上 added=1（本单看得见）');`
+      //   改后逐字：下面这一行 —— `added=1` 仍是**一个完整的查询参数**（`?`/`&` 起、`&` 或结尾止 ✓）。
+      //   依据 = 她 2026-10-16 21:1x「要，销售也弹扫码框」⇒ 销售的 303 现在多带一个触发参数
+      //     （`?added=1&scan=1` ✓ —— 她手机上看到的那一页因此会接着弹扫码框 ✓）；
+      //     "必须**结尾**"从来不是本条的本意 ✗（本条要的是"回跳带上 added=1、本单看得见" ✓）。
+      //   🔴 **不是放宽**：`added=1` 必须**完整**存在这一条强度不变 ✓（★ 第 3 步照样去开 `${base}${location}`
+      //     那一页 ⇒ 连带把"多了触发参数之后那一页仍然打得开"一起验了 ✓）。
+      assert.match(location, /[?&]added=1(&|$)/, '第2步：回跳带上 added=1（本单看得见）');
 
       // 她手机上看到的是**303 回跳后的那一页**（带 added=1）—— 所以就按那一页断言
       const after = await getPage(`${base}${location}`, cookie);
