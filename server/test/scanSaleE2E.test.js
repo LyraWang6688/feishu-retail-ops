@@ -1596,6 +1596,9 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       const requestTiming = timings.find((entry) => entry.phase !== backgroundPhase);
       const backgroundTiming = timings.find((entry) => entry.phase === backgroundPhase);
       assert.ok(requestTiming, '请求阶段必须有一条 scan.sale.timing（她那一次请求走到哪一段）');
+    // 2026-10-17：提交那一发必须真的打出这条事件 ——
+    //   ④ 那刀曾把「货那一跑」从带 timing 的那段挪出去，导致所有 timing 都在死代码里、一条也不打。
+    assert.ok(timings.length > 0, '提交那一发必须打出 scan.sale.timing（④ 那刀曾把它挪丢过）');
       assert.ok(backgroundTiming, '后台那一跑**也必须有一条**（观测不缩水：转后台 ≠ 日志断档）✓');
       const timing = requestTiming;
       assert.ok(timing, '必须打出一条 scan.sale.timing（"一查日志就知道卡在哪一步"）');
