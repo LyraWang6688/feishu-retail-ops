@@ -87,19 +87,6 @@ const { SCAN_WRITE, fillText: fillWriteText } = require('../../config/scanWrite'
 //   · 🔴 **N=1 一个字节都不经过这条路** —— 只有"分组 > 1"才进（见下面两处 `groups.length > 1`）✓。
 const { resolveMultiItemOrderConfig } = require('../../config/multiItemOrder');
 const { createMultiItemOrderService } = require('../../services/multiItemOrderService');
-// ⭐⭐ 2026-10-16（task-S3 ·「存草稿 · 接着录」**路由半**）：口径与判据见
-//   `docs/draft-save-resume-plan-2026-10-16.md` ＋ `test/scanDraftRouteWiring.test.js`。
-//   · **存储层**（`services/scanDraftService.js` = S1 #732 ✓）管草稿的读写 / 批次号沿用 / 明细行；
-//   · **渲染半**（`views/scanPageRenderer.js` = S2 #735 ✓）管那两块 UI（只在 `page.draft.enabled`
-//     时才画 ⇒ 今天所有调用方不传 ⇒ 页面逐字不变 ✓）；
-//   · 🔴 **本文件只做三件事**：① GET 里喂 `page.draft`（**取自 S1 的 `readDraft`**，不自己另读 ✗）；
-//     ② 接住 `save_draft`（**只调 S1**，不自己写表 ✗）⇒ 303 回本领域（PRG ✓）；
-//     ③ 接住 `?resume=1`（把草稿填回页面 ⇒ **与"一次性录完"同一条提交路** ✓）。
-//   ⚠️ 配置**在 router 构建时读一次**（与既有 `resolveMultiItemOrderConfig()` 同一种形状 ✓）。
-const { SCAN_DRAFT } = require('../../config/scanDraft');
-const { createScanDraftService } = require('../../services/scanDraftService');
-const { PurchaseBatchNoGenerator } = require('../../services/purchaseBatchNoGenerator');
-const { PurchaseOrderBatchService } = require('../../services/purchaseOrderBatchService');
 // ⭐⭐ 2026-10-16（task-61 · ②「领域内扫一扫」）：口径与配置见 `config/realmScan.js` 的文件头。
 //   · **不加第二套** ✗：仍然用既有 `services/larkJsapiService.js` 那一套飞书 JSAPI 签名
 //     （与工作台「扫码打印」同一条链 ✓）；
@@ -326,257 +313,13 @@ const createScanPageRouter = (options = {}) => {
   const multiItemWire = options.multiItemWire !== undefined
     ? options.multiItemWire
     : (multiItemOrderConfig.addWireEnabled === true ? multiItemOrderConfig.wire : null);
-  // ══════════════════════════════════════════════════════════════════════════
-  // ⭐⭐ 2026-10-16（task-S3 ·「存草稿 · 接着录」**路由半** —— 本刀）
-  //   · `SCAN_DRAFT` 缺省 **不 enabled** ⇒ 本文件**一处都不读草稿**、渲染层也拿不到 `page.draft`
-  //     ⇒ 页面与今天**逐字节一致** ✓（配置先行：影子 / 回滚位就在这一个显式布尔上 ✓）；
-  //   · 用例可以注入一份假的 / 真的（`options.scanDraftService`）—— 与 `options.writeService`
-  //     同一种注入法 ✓；
-  //   · 🔴 **本文件不 require 冻结件**、也**不写任何业务表**：写表只经 S1 的 `saveDraft` ✓。
-  // ══════════════════════════════════════════════════════════════════════════
-  const draftConfig = options.draftConfig || SCAN_DRAFT;
-  const draftEntry = options.draftEntry || config.draftEntry || (SCAN_PAGE.draftEntry || {});
-  let draftServiceInstance = options.scanDraftService || null;
-  /**
-   * 懒建草稿服务（只有 `SCAN_DRAFT_ENABLED=true` 时才真的建）。
-   * ⚠️ 拿不到写服务的会话 / 号源 ⇒ 返回 `null` ⇒ **这条路现在走不了**（调用方一句人话 +
-   *    零写入，绝不静默"存成功" ✗）。
-   */
-  const draftService = () => {
-    if (draftServiceInstance) return draftServiceInstance;
-    if (draftConfig.enabled !== true) return null;
-    if (!writeService || !writeService.sessions) return null;
-    draftServiceInstance = createScanDraftService({
-      gateway,
-      config: draftConfig,
-      // 🔴 会话 id 的形状**只有 session 服务那一处真源**（各写一份公式必漂 ✗）
-      idOf: writeService.sessions.idOf,
-      sessions: writeService.sessions,
-      batchNoGenerator: new PurchaseBatchNoGenerator({ gateway }),
-      orderBatches: new PurchaseOrderBatchService({ gateway }),
-      logger: { logInfo, logWarn, logError },
-    });
-    return draftServiceInstance;
-  };
-  /** 这一页的领域在不在"三处入口"里（取值必须是 `REALMS[].id` ⇒ 认不出的领域**不显示** ✓）。 */
-  const draftRealmEnabled = (realm) => draftConfig.enabled === true
-    && Array.isArray(draftEntry.realms)
-    && draftEntry.realms.map((item) => String(item).trim()).includes(resolveRealm(realm));
-  /**
-   * ⭐⭐ **两种草稿**（Lead 转述她的口径，逐字）：「**1. 销售页和补货页存补货草稿
-   *   2. 退货页存退货草稿**」⇒ 领域 → 草稿链的**唯一一处**映射。
-   *   ⚠️ 认不出的领域 ⇒ `''`（**不猜**成补货 ✗）。
-   */
-  const draftChainOf = (realm) => {
-    const safe = resolveRealm(realm);
-    if (safe === DEFAULT_REALM || safe === 'replenish') return 'replenish';
-    if (safe === PURCHASE_RETURN_REALM) return 'return';
-    return '';
-  };
   /** 会话暂存那一条链的名字（`replenish` / `return`；认不出的领域 ⇒ `''` 不猜 ✗）。 */
   const multiItemChainOf = (realm) => {
     const safe = resolveRealm(realm);
     if (safe === 'replenish' || safe === PURCHASE_RETURN_REALM) return safe;
     return '';
   };
-  /**
-   * ⭐⭐ **这一页现在的草稿视图**（`page.draft`）—— **五个字段全部取自 S1 的 `readDraft`** ✓
-   *   · **没有草稿**（或过期 / 坏格式）⇒ `{ enabled: true, hasDraft: false }`
-   *     ⇒ 渲染层**只画那三颗入口、不画提示条** ✓（她的"没草稿就正常新建" ✓）；
-   *   · **开关关着 / 认不出的领域** ⇒ `null` ⇒ **一个字节都不出**（零回归的物理保证 ✓）。
-   *   ⚠️ 读的是**本地那一份**（S1 的 `readDraft`）—— 本文件**不另读文件、不读表** ✗。
-   */
-  const draftUiFor = async (req, realm) => {
-    if (!draftRealmEnabled(realm)) return null;
-    const service_ = draftService();
-    if (!service_) return null;
-    const loaded = await service_.readDraft({ openId: openIdOf(req), requestId: req.requestId })
-      .catch((error) => {
-        // 读草稿失败**不许破她的页面**（这是 GET 渲染路径）⇒ 只 warn，照旧出页面（**不出提示条** ✓）
-        logWarn(draftConfig.events?.corrupt || 'scan.draft.corrupt', {
-          request_id: req.requestId, realm: resolveRealm(realm), error: String(error?.message || error),
-        });
-        return null;
-      });
-    if (!loaded || loaded.status !== 'draft') {
-      // ⭐ 没有草稿 ⇒ **只有按钮**（`hasDraft: false` ⇒ 提示条一个字都不出 ✓）
-      return { enabled: true, hasDraft: false };
-    }
-    const draft = loaded.draft || {};
-    const items = Array.isArray(draft.items) ? draft.items : [];
-    return {
-      enabled: true,
-      hasDraft: true,
-      productCount: items.length,
-      lineCount: Number.isFinite(Number(draft.line_count))
-        ? Number(draft.line_count)
-        : items.reduce((sum, item) => sum + ((item && item.entries) || []).length, 0),
-      updatedAt: String(draft.updated_at || ''),
-      draftChain: String(draft.chain || ''),
-    };
-  };
-  /** `?resume=1` 是不是这一次的（查询键 / 值都走配置 ✓ 不写死 ✗）。 */
-  const draftResumeRequested = (req) => String(req.query?.[draftEntry.resumeQueryKey || 'resume'] || '')
-    === String(draftEntry.resumeQueryValue ?? '1');
-  /**
-   * ⭐⭐ **接着录**：把草稿里那几件**填回页面**（她点【接着录】那一颗才走这里 ✓ 不点就不走 ✓）。
-   *
-   * 两条链各填各的**同一个落点**（与"一次性录完"完全同一条提交路 ⇒ 零分叉 ✓）：
-   *   · 补货 / 退货 ⇒ 会话暂存（`readMultiItemPending` 那一段，渲染层据此画"已加货品"
-   *     ＋ 并进 hidden `multi_items` ✓）；
-   *   · 销售 ⇒ 会话里的**本单那几双**（`sale.lines`，她看得见、能提交 ✓）。
-   *
-   * 🔴 **读就是读**：这一步**不改草稿那一份**、不碰任何业务表（草稿照旧留在原地 ✓）。
-   * 🔴 **认不出是哪条链 / 别条链的草稿** ⇒ **什么都不填**（绝不把退货草稿填进补货页 ✗）。
-   */
-  const hydrateDraftForResume = async (req, realm, view = {}) => {
-    if (!draftRealmEnabled(realm) || !draftResumeRequested(req)) return false;
-    const service_ = draftService();
-    if (!service_ || !writeService || !writeService.sessions) return false;
-    const chain = draftChainOf(realm);
-    const chainName = multiItemChainOf(realm);
-    if (!chain) return false;
-    const loaded = await service_.readDraft({ openId: openIdOf(req), requestId: req.requestId })
-      .catch(() => null);
-    if (!loaded || loaded.status !== 'draft') return false;
-    const draft = loaded.draft || {};
-    const items = Array.isArray(draft.items) ? draft.items : [];
-    if (!items.length) return false;
-    // ⚠️ **同一条链才算**：草稿里记着它自己那条链（S1 记的 ✓）；记着的与这一页对不上 ⇒ 不填
-    //   （老草稿没有这个字段 ⇒ 按"对得上"处理，不因此丢她那份草稿 ✓）
-    const owner = String(draft.chain || '').trim();
-    if (owner && owner !== chain) return false;
-    const openId = openIdOf(req);
-    if (!openId) return false;
-    if (chainName) {
-      // ⭐⭐ **补货 / 退货**：填回**会话暂存**那一段（渲染层据此画"已加货品" ＋ 并进 hidden
-      //    `multi_items` ✓）—— 于是她点提交，走的与"一次性录完"**完全同一条路** ✓。
-      //   🔴 **当前这一件要排掉**（它与表单里那个"首件"是**同一件** ⇒ 两份都在的话，
-      //      提交时 `addItem` 会把**渲染层那份旧的空 entries** 写进去 ⇒ 静默丢值 ✗✗
-      //      —— 与渲染层 `others` 过滤、`mergeFirstItemEntries` **同一条口径** ✓）。
-      const currentKey = String(
-        (view && (view.product_record_id || view.number || view.item_no)) || '',
-      ).trim();
-      const others = currentKey
-        ? items.filter((item) => String(
-          (item && (item.product_record_id || item.number || item.item_no)) || '',
-        ).trim() !== currentKey)
-        : items;
-      if (!others.length) return false;
-      await writeMultiItemPending(openId, chainName, { orderKey: String(draft.order_key || ''), items: others });
-      return true;
-    }
-    // 销售：那几件进**本单**（`sale.lines`）—— 形状与 `scanWriteService.addSaleLine` 落的那一份同形 ✓
-    const lines = [];
-    items.forEach((item) => {
-      ((item && item.entries) || []).forEach((entry) => {
-        lines.push({
-          kind: 'shoe',
-          number: String(item.number || ''),
-          item_no: String(item.item_no || ''),
-          color: String(item.color || ''),
-          product_record_id: String(item.product_record_id || ''),
-          size: entry?.size,
-          amount: '',
-          gift: '',
-          added_at: new Date().toISOString(),
-        });
-      });
-    });
-    if (!lines.length) return false;
-    const { store, idOf } = writeService.sessions;
-    if (!store || typeof store.update !== 'function') return false;
-    // ⚠️ 与 `writeMultiItemPending` 同一条口径：会话还不存在 ⇒ **先建**（`update` 对不存在的
-    //    记录会抛「任务不存在」✗；她第一次就点【接着录】时正是这个形状）。
-    if (typeof writeService.sessions.ensure === 'function') {
-      await writeService.sessions.ensure(openId).catch(() => null);
-    }
-    await store.update(idOf(openId), (session) => {
-      const sale = (session && session.sale) || {};
-      return {
-        sale: {
-          ...sale,
-          status: SCAN_WRITE.session.statuses.draft,
-          lines,
-          master_record_id: '',
-          order_no: '',
-          detail_ids: [],
-          payment_ids: [],
-          last_error: '',
-        },
-      };
-    });
-    return true;
-  };
-  /**
-   * 把这一页她填的那一份收成草稿里的形状（**一行 = 一个货品 × 一个尺码** ✓ 与 S1 同口径）。
-   *
-   *   · **补货 / 退货**：本页勾的尺码/数量（`parseReplenishEntries` / `parseReturnEntries`
-   *     —— **既有那两个纯函数**，不手抄 ✗）＋ 已加的那几件（会话暂存 ✓）；
-   *   · **销售**：本页这一双（尺码 + 金额 → 草稿里记 1 双）＋ 会话里本单已经加的那几双 ✓
-   *     （销售没有数量输入 ⇒ 一件记 1 双，与"一行一件"的既有口径一致 ✓）。
-   *   ⚠️ **同一个货品只留一件**（后写的赢）：与引擎 `addItem` / 渲染层"排除当前这一件"**同一条口径** ✓
-   *     —— 否则同一件会在载荷里出现两次、被静默覆盖成旧值 ✗。
-   */
-  const draftItemsOf = async (req, view, realm) => {
-    const openId = openIdOf(req);
-    const chain = draftChainOf(realm);
-    const fields = writeConfig.fields;
-    const body = req.body || {};
-    const keyOfItem = (item) => String(
-      (item && (item.product_record_id || item.number || item.item_no)) || '',
-    ).trim();
-    const current = (entries) => ({
-      product_record_id: String(view?.product_record_id || ''),
-      number: String(view?.number || ''),
-      item_no: String(view?.item_no || ''),
-      color: String(view?.color || ''),
-      supplier_record_id: String(view?.supplier_record_id || ''),
-      entries: (Array.isArray(entries) ? entries : []).map((entry) => ({
-        size: String(entry?.size ?? '').trim(),
-        quantity: entry?.quantity ?? '',
-      })),
-    });
-    const items = [];
-    if (chain === 'return' || chain === 'replenish') {
-      // ⚠️ **顺序刻意**：先已加的、**最后**才是她这一页刚填的那一件 —— 合并那一步是
-      //    "同一件**后写的赢**"（与引擎 `addItem` **同一条口径** ✓），所以"她这一页刚填的
-      //    那一份"必须排在最后 ⇒ 绝不会被她上一次的草稿那份**旧值**盖掉 ✗（静默丢值）。
-      const pending = await readMultiItemPending(openId, chain).catch(() => ({ items: [] }));
-      (pending.items || []).forEach((item) => items.push(item));
-      const entries = chain === 'return'
-        ? parseReturnEntries(body, fields, writeConfig)
-        : parseReplenishEntries(body, fields, writeConfig);
-      items.push(current(entries));
-    } else {
-      // 销售：这一双 + 本单已经加的那几双（**两处形状不同** ⇒ 在这里归一成草稿那一份 ✓）
-      const size = String(body[fields.size] ?? '').trim();
-      items.push(current(size ? [{ size, quantity: 1 }] : []));
-      const session = await writeService?.sessions?.get?.(openId).catch(() => null);
-      ((session && session.sale && session.sale.lines) || []).forEach((line) => {
-        if (String(line?.kind || 'shoe') !== 'shoe') return; // 配品不在这份草稿里（如实留白，不硬塞 ✗）
-        items.push({
-          product_record_id: String(line.product_record_id || ''),
-          number: String(line.number || ''),
-          item_no: String(line.item_no || ''),
-          color: String(line.color || ''),
-          // ⚠️ 销售本单没记供应商（那是采购口径）⇒ **如实留空**（不编 ✗；S3 的供应商拆分不拿它当依据）
-          supplier_record_id: '',
-          entries: [{ size: String(line.size ?? '').trim(), quantity: 1 }],
-        });
-      });
-    }
-    // 同一件只留一件（后写的赢）+ 丢掉"一件也没有尺码"的那种空件（她只是扫开看了一眼 ✓）
-    const merged = [];
-    items.forEach((item) => {
-      if (!item.entries.length) return;
-      const key = keyOfItem(item);
-      const at = key ? merged.findIndex((one) => keyOfItem(one) === key) : -1;
-      if (at >= 0) merged[at] = item; else merged.push(item);
-    });
-    return merged;
-  };
-  // ══════════════════════════════════════════════════════════════════════════
+
   // ⭐⭐ 2026-10-16（task-61 · ②「领域内扫一扫」）
   //   · **开关缺省关**（`config/realmScan.js`）⇒ 关着时：不发脚本、不发配置块、
   //     签名端点也不回可用的签名 ⇒ **页面与今天逐字节一致** ✓（`AC-ML5`）；
@@ -989,15 +732,9 @@ const createScanPageRouter = (options = {}) => {
       // 校验失败时挂在表单上方的那句人话（差额）；成功路径上是空串。
       errorText: String(extra.errorText || ''),
       // 「刚加入本单」那一句（**文案来自配置**，只有数字来自会话 ⇒ 没有回显注入面）。
-      // ⭐⭐ 2026-10-16（task-S3）：`?saved=1`（存草稿 303 回来那一发）也给一句 ——
-      //   她那一句「存成功要**给她看得见的反馈**（不许无声 ✗）」；文案的家在 `config/scanDraft.js`
-      //   （本文件**不散写中文** ✗），查询键走 `config.scanPage.draftEntry` ✓。
       notice: String(req.query?.added || '') === '1' && lines.length
         ? fillWriteText(texts.lineAddedBanner, { count: lines.length })
-        : (String(req.query?.[draftEntry.savedQueryKey || 'saved'] || '')
-          === String(draftEntry.savedQueryValue ?? '1')
-          ? String(draftConfig.texts?.saved || '')
-          : ''),
+        : '',
     };
   };
 
@@ -2084,27 +1821,10 @@ const createScanPageRouter = (options = {}) => {
       //   ⚠️ 位置在**渲染之前**（`readMultiItemPending` 是工厂里上面的 `const` ⇒ 这里已初始化 ✓）。
       const multiItemChain = realm === 'replenish' ? 'replenish'
         : (realm === PURCHASE_RETURN_REALM ? 'return' : '');
-      // ⭐⭐ 2026-10-16（task-S3 ·「接着录」）：**她点过【接着录】才走这里**（`?resume=1` ✓）——
-      //   把草稿那几件填回**同一个落点**（补货 / 退货 = 会话暂存；销售 = 本单那几双）⇒
-      //   接下来的"加货 / 提交"与"一次性录完"**完全同一条路** ✓（零分叉 ✓）。
-      //   🔴 不点 ⇒ 这一段**一行都不走** ⇒ 与今天逐字一致 ✓（她那一句"不点就正常新建" ✓）。
-      const resumed = await hydrateDraftForResume(req, realm, view).catch((error) => {
-        logWarn(draftConfig.events?.corrupt || 'scan.draft.corrupt', {
-          request_id: requestId, realm: resolveRealm(realm), resume: true,
-          error: String(error?.message || error),
-        });
-        return false;
-      });
       if (multiItemChain && writeService?.sessions) {
         const pending = await readMultiItemPending(openIdOf(req), multiItemChain).catch(() => ({ items: [] }));
         if (pending.items.length) view.multi_items = pending.items;
       }
-      // ⭐⭐ 2026-10-16（task-S3）：把**这一页现在的草稿**喂给渲染层（`page.draft`）——
-      //   渲染半只在 `enabled === true` 时才画那两块（入口 / 提示条 ✓），
-      //   而**没有草稿**（`hasDraft !== true`）⇒ 只画三处入口、**提示条一个字都不出** ✓。
-      //   ⚠️ 位置在**渲染之前**；⚠️ 认不出的领域 / 开关关着 ⇒ `null`（一个字节都不多 ✓）。
-      const draftUi = await draftUiFor(req, realm);
-      if (resumed && draftUi) draftUi.resumed = true;
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
       //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
       // ⭐⭐ 2026-10-16（task-61 · ① 日志）：`renderLogs` 是渲染层**只读登记**用的（见下）。
@@ -2119,9 +1839,6 @@ const createScanPageRouter = (options = {}) => {
         // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：**只有"加货刚成功、303 回来这一发"才给**
         //   （`?scan=1` ✓）—— 其它任何时候都是 `null` ⇒ 页面上一个字都不多（`AC-ML5` ✓）。
         realmScan: realmScanPageConfig(req, realm),
-        // ⭐⭐ 2026-10-16（task-S3 ·「存草稿 · 接着录」）：`page.draft` —— **只有这一处**喂它 ✓
-        //   （渲染半 S2 只在 `enabled === true` 时才画 ⇒ 这里不喂 = 页面与今天逐字节一致 ✓）。
-        draft: draftUi,
         // ⭐⭐ 2026-10-16（task-61 · ① 日志）：渲染层把"**本单已加的货品**"那一笔**只读**登记在这里
         //   （渲染层是纯函数 ⇒ 它自己不打日志 ✗；**由本路由在渲染之后统一打** ✓ —— 与既有
         //   `logRendered` 同一处，且**失败也绝不会影响她的页面** ✗）。
@@ -2211,75 +1928,6 @@ const createScanPageRouter = (options = {}) => {
     const openId = openIdOf(req);
     // 「回跳到哪一块」= 这一页的领域（认不出来一律回落缺省；两个入口同一条口径）。
     const realm = resolveRealm(req.query?.from);
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // ⭐⭐ 2026-10-16（task-S3 ·「**存草稿**」）—— 三处入口那颗「存报货草稿」
-    //   （销售货品页 / 补货页 / 退货页，动作值 = `DRAFT_ENTRY.saveAction` = `save_draft` ✓）
-    //   · **只调 S1 的 `saveDraft`**（主表 1 行 = 未报货 ＋ 明细 N 行；批次号沿用/新建；
-    //     明细幂等 ⇒ 同一份存两次**不翻倍** ✓）—— 本文件**一个字节都不写表** ✓；
-    //   · 成功 ⇒ **303 回本领域那一页**（PRG：刷新不重复存 ✓）＋ `?saved=1`
-    //     ⇒ 回来那一页给一句**看得见的反馈**（不许无声 ✗）；
-    //   · 🔴 **排在 `writeService` 那道 503 闸门之前**吗？—— **不**：草稿要写「采购主表」，
-    //     它的号源 / 会话都挂在写服务那一套上 ⇒ 与既有的"写入口关着 ⇒ 503"同一条口径 ✓
-    //     （关着时给的是那句既有的人话，不是"点了没反应" ✓）。
-    //   · 认不出领域（不是那三页）⇒ 与既有"认不出的动作"同一条口径：给它一句人话 ✓
-    // ══════════════════════════════════════════════════════════════════════════
-    if (action === (draftEntry.saveAction || 'save_draft')) {
-      if (!draftRealmEnabled(realm)) {
-        return unknownActionFailure(req, res, requestId, action);
-      }
-      if (!writeService) {
-        markTapCode(res, 'write_disabled');
-        return sendHuman(res, 503, {
-          title: writeConfig.texts.writeDisabledTitle,
-          body: writeConfig.texts.writeDisabledBody,
-          requestId,
-        });
-      }
-      const service_ = draftService();
-      if (!service_) {
-        markTapCode(res, 'write_disabled');
-        return sendHuman(res, 503, {
-          title: writeConfig.texts.writeDisabledTitle,
-          body: writeConfig.texts.writeDisabledBody,
-          requestId,
-        });
-      }
-      const back = postActionFor(
-        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
-      );
-      const view_ = await service.lookup({ ...lookupInputOf(req), requestId });
-      if (!view_.found) {
-        return notFoundPage(res, requestId, {
-          number: view_.number, fallback: view_.fallback, realm, target: scanTargetOf(req),
-        });
-      }
-      const items = await draftItemsOf(req, view_, realm);
-      const saved = await service_.saveDraft({
-        openId,
-        items,
-        chain: draftChainOf(realm),
-        requestId,
-      });
-      if (!saved.ok) {
-        // 她填空了 / 行数超了 / 表写失败 ⇒ **当场一句人话**（不许"存成功"骗她 ✗）
-        markTapCode(res, `draft_${saved.code || 'failed'}`);
-        return respondWriteFailure(res, {
-          code: saved.code || 'draft_save_failed',
-          message: String(saved.message || writeConfig.texts.unknownActionBody),
-        }, requestId);
-      }
-      logInfo(draftConfig.events?.saved || 'scan.draft.saved', {
-        request_id: requestId, realm: resolveRealm(realm), chain: draftChainOf(realm),
-        draft_id: saved.draftId, batch_no: saved.summary?.batch_no,
-        product_count: saved.summary?.product_count, line_count: saved.summary?.line_count,
-        detail_count: saved.summary?.detail_count, overwritten: saved.summary?.overwritten,
-      });
-      const key = String(draftEntry.savedQueryKey || 'saved');
-      const value = String(draftEntry.savedQueryValue ?? '1');
-      return res.redirect(303, `${back}${back.includes('?') ? '&' : '?'}`
-        + `${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
-    }
 
     // ══════════════════════════════════════════════════════════════════════════
     // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）

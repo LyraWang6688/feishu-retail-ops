@@ -6,21 +6,21 @@
   "fullPageSha256": {
     "threeState": {
       "inventory": "8148568ca7c70e0cb268e2f51206822cc47268ecbe7b72e9cbbe89880eeccab8",
-      "sales": "8b19569d6e876d78de25190febd2f75e277e04aba38c86987434b7b614c906cf",
-      "replenish": "3feb5781c9d5888efaa569727ed9991f1a0ff5efce4853c0e27e6179a7ab524e",
-      "purchase_return": "169da2863ab1cfaf9166731a8491d219c9e2cfc1d0d4522fa0a29afe18e3e879"
+      "sales": "3cd7f848007b3c8744a11f92859b134804282a3cc41ce745b01dc1d86dde25f0",
+      "replenish": "cb7a78fe7f7341b832b84f45d8ae70f3e1b12d02bc19ad717157fe3cc378ac3d",
+      "purchase_return": "6a9c808ee6f6fb9de3a3951c55c48208f815dbd19d013f147a169d944262a1fc"
     },
     "fullSizesBlank": {
       "inventory": "e01b42f1835a7dcd6ae8101fa92800b7df5b0fbfc12f66f5a2a73b756c88c38c",
-      "sales": "25855829ed552f93a94b45f55a0d777c2230f99f65a5ab83cbe5705c4a3a487d",
-      "replenish": "0d4b37027e6768725d86cedb53e541e021aab9fac0b4879f6c0ee3b4beba3794",
-      "purchase_return": "0e3ad4dfd13ffeb2441c27b2922919e63d1a0a7a2c09582c9bab322d541aa3ff"
+      "sales": "395402dc34783a8e12e1e8e726a63a830fbc28d4b6f2ae85fc310f0ca7ec521b",
+      "replenish": "c13aefa8878763af62872ca29b13d176ba677c25042bb35a6fc192872eb1081b",
+      "purchase_return": "6f915e7bd95486bf57181c0c20e969ea933e3e945778fc5c9108ef9070302794"
     },
     "blankState": {
       "inventory": "ea17c1b56f4e10c62e973178d44c79f784196adeeeaa8e24e475a38d3d2c24dd",
-      "sales": "445e4e74280e500bc5785905645fb3bf526629549ca2e576a9a58865f9b356e1",
-      "replenish": "bd3c42bf5c55840a60c0e5438bfc2ad8f6a02651ffb65626171e1248161aa054",
-      "purchase_return": "bce0a3c927e0e539bb7ed9a1561ce7d12ada01a65a4ae61099b3eb93e7c26789"
+      "sales": "8d6c52f9e9df529745e6c317987dcbfb4528f5aabf90b12ae5e34e7816466f10",
+      "replenish": "4224dce39b001ef3d7602c11983238c4285f703b97296a20f7c7f74864cbe098",
+      "purchase_return": "c799748b32ada1ecfb6dc9db2c3bd9d259f280614d7972e5c734990e893cf9c8"
     }
   }
 }

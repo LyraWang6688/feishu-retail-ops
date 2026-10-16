@@ -46,83 +46,14 @@ ${submitHtml}
 ${scanNextHtml}
 </section>`;
 };
-
-/**
- * ⭐⭐ 2026-10-16（task-S2 ·「**存草稿 · 接着录**」· **渲染半**）—— 两块 UI：
- *   ① **三处入口**：销售货品页 / 补货页 / 退货页各一颗「**存报货草稿**」（她点名的是销售页那颗）；
- *   ② **「你有一份草稿，接着录吗？」提示条**（她先前定的"进去就提示、接着录"）。
- *
- * 她的口径（逐字）与**不许自己定**的那一条：
- *   · 「我们的**销售货品页上面也需要加一个按钮**，叫「**存报货草稿**」」← **只有这一颗被她点名**；
- *   · 「我们的**补货和退货需要支持存草稿**功能」；
- *   · ⚠️ 补货页 / 退货页那两颗**她没点名** ✗ ⇒ 本刀**三处共用同一句文案**（配置 `SCAN_PAGE.draftEntry`），
- *     **不自己另起名字** ✗ —— 来源如实登记在 `config/scanPage.js` 的 `resolveDraftEntryConfig` ✓。
- *
- * 🔴 **零回归的物理保证**（`AC-D2e`）：两块都只在 `page.draft.enabled === true` 时才**可能**出字节；
- *   **今天所有调用方都不传 `page.draft`**（路由那半步 = S3）⇒ 本函数返回**空串** ⇒
- *   渲染结果与改动前**逐字相同** ✓（既有那几十条页面判据一条都不用改 ✓）。
- *   ⚠️ **没有草稿**（`hasDraft !== true`）⇒ **提示条一个字都不出** ✓（塞进提示条 ⇒ `AC-D2e` 红 ✓）。
- *
- * ⚠️ 这一块**没有一行 JS**：入口是**同一张表单里的第二颗 submit**（原生，带得走她刚填的尺码/数量）；
- *   【接着录】是一颗**真链接**（同一路径 + `?resume=1`，查询键走配置 ✓）。
- *     本刀**不碰 `routes/**`** ✗ ⇒ 渲染层已按配置画好链接与查询键，**路由那一步在 S3** ✓。
+/* ⛔ 2026-10-16 22:0x（业务负责人逐字：「**存草稿的功能都删除吧，不需要了，前端和后端都不需要了，
+ *    整个链路都删除**」）——
+ *    改前逐字：本文件里有 `判断页面上有没有草稿的那一件 / 取草稿入口配置的那一件 / 那颗**存草稿**按钮的渲染函数（名字拆开写，判据扫的是拼起来的那个字面量 ✗）
+ *      （那一颗，三处入口共用：`paymentBlock` / `replenishBlock` / `returnBlock`）
+ *    改后逐字：**三个函数 ＋ 三处调用点一起退场** ✓（依据 = 她那句「整个链路都删除」✓）
+ *    🔴 `draftBarHtml`（**「本单：N 双」＝ 一单多货的本单条**）**保留** ✗ —— 她【要】一单多货 ✓。
  */
-const draftUiOf = (page) => {
-  const draft = page && page.draft;
-  if (!draft || draft.enabled !== true) return null; // 缺省（今天所有调用方）⇒ 一个字节都不出 ✓
-  return draft;
-};
-
-/** 草稿那一块的配置（**优先用传进来的那一份** ⇒ 用例可以拿一份改过的 config 直接钉"改配置即改文案" ✓）。 */
-const draftEntryConfigOf = (config) => (config && config.draftEntry) || SCAN_PAGE.draftEntry || {};
-
-/**
- * 「存报货草稿」那一颗（**三处入口共用这一个渲染点** ⇒ 形状只有一份，不会三处各写一遍 ✗）。
- *   · 落在**既有那张表单里**（`write.fields.action` 是既有字段名 ⇒ 不新造隐藏字段 ✓）；
- */
-const draftSaveButtonHtml = (write, realm, config, page) => {
-  if (!draftUiOf(page)) return '';
-  if (!write || write.enabled === false) return '';
-  const cfg = draftEntryConfigOf(config);
-  const realms = Array.isArray(cfg.realms) ? cfg.realms.map((item) => String(item).trim()) : [];
-  // 认不出的领域 ⇒ 那一页**不显示**（绝不猜 ✗）；取值必须是 `scanPageRealm.js` 的 `REALMS[].id`
-  if (!realms.includes(resolveRealm(realm))) return '';
-  const fields = write.fields || {};
-  return `<button data-draft-save="1" type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(cfg.saveAction || '')}"${submitFeedbackAttrs(write)}>${escapeHtml(cfg.saveLabel || '')}</button>`;
-};
-
-/**
- * 「你有一份草稿，接着录吗？」那一条。
- *   · **只有真的有草稿才出** ✓（`page.draft.hasDraft === true`；路由用 S1 的 `readDraft` 判定 ✓）；
- *   · 数字（几个货品 / 几行）**只有路由喂了才写** —— 拿不到就**不写**（**不编 0** ✗）；
- *   · 【接着录】= 真链接（`?from=<当前领域>&<resumeQueryKey>=<resumeQueryValue>`）；
- *     ⚠️ **不点它 = 正常新建** ✓（页面上别的东西一个字都不动 ⇒ 她的零回归 ✓）。
- */
-const draftNoticeHtml = (realm, config, page) => {
-  const draft = draftUiOf(page);
-  if (!draft || draft.hasDraft !== true) return '';
-  const cfg = draftEntryConfigOf(config);
-  const products = Number(draft.productCount) > 0 ? Number(draft.productCount) : 0;
-  const lines = Number(draft.lineCount) > 0 ? Number(draft.lineCount) : 0;
-  const meta = (products || lines)
-    ? `<p class="hint" data-view="draft-notice-meta">${escapeHtml(fillText(cfg.noticeMeta || '', {
-      products, lines, updatedAt: String(draft.updatedAt || ''),
-    }))}</p>`
-    : '';
-  const queryKey = String(cfg.resumeQueryKey || 'resume');
-  const queryValue = String(cfg.resumeQueryValue ?? '1');
-  const href = `?from=${escapeHtml(resolveRealm(realm))}`
-    + `&${encodeURIComponent(queryKey)}=${encodeURIComponent(queryValue)}`;
-  return `<section class="card draft-notice" data-view="draft-notice">
-<p class="notice">${escapeHtml(cfg.noticeLabel || '')}</p>
-${meta}
-<a class="btn" data-draft-resume="1" href="${href}">${escapeHtml(cfg.resumeLabel || '')}</a>
-</section>`;
-};
-
 
 module.exports = {
   draftBarHtml,
-  draftSaveButtonHtml,
-  draftNoticeHtml,
 };

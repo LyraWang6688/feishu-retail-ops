@@ -3,7 +3,6 @@ const { MULTI_ITEM_ORDER } = require('../../config/multiItemOrder');
 const { DEFAULT_REALM, REALM_TEXTS, saleSizeGroups } = require('../scanPageRealm');
 const { realmScanConfigHtml } = require('../scanRealmScan');
 const { escapeHtml } = require('./fields');
-const { draftSaveButtonHtml } = require('./draftBlock');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');
 
 
@@ -242,7 +241,6 @@ ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
      ⇒ 录入页只留：每双 颜色 · 尺码 · 这一双的金额 ✓（那一组的字段名与标签字面量一个都不许留，否则 AC-2S1/AC-1 会打红） -->
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
 <button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>
-${draftSaveButtonHtml(write, DEFAULT_REALM, config, page)}
 </form>
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}
