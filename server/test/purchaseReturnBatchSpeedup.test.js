@@ -32,6 +32,15 @@
  *   ＋ 逐双 `get` + `delete`。这一半**本文件一行都不改**（它是**另一刀的文件**），
  *   调用次数如实报在 `AC-RB1` 的结论里（见文件末尾的"残留"注释）。
  *
+ * ⭐⭐ **2026-10-16 下半场（task-65「库存写入批量化」）已经把那半也做完了** ⇒ 本文件的数字
+ *   **随之变了**（`inventoryService.applyPurchaseReturnBatch`：一次整表读 ＋ 一次 `getBatch`
+ *   ＋ 一次 `createBatch` 落流水 ＋ 一次 `deleteBatch` 删实时库存；`deleteBatch` 是 task-65
+ *   给网关**新加**的口，形态逐行对齐 `createBatch`、官方 `appTableRecord.batchDelete`、≤500/片）。
+ *   ⇒ 本文件里两处**成对迁移**已当场标注（改前逐字 → 改后逐字 → 依据）：
+ *     ① `AC-RB1` 的"单货品 ⇒ 等量"改成"更少"（26 ⇒ 19，收紧不是放宽）；
+ *     ② `batchGet` 替身的入参位置由 `params` 改成真契约的 `data`（它此前从未被走到过）。
+ *   新判据在 `test/inventoryReturnBatchWrite.test.js`（AC-IV1…IV6，含"逐双 get+delete 省了多少"）。
+ *
  * ─────────────────────────────────────────────────────────────────────────
  * 验收标准（**先写后做**；下面每条 test 的名字 = 这条 AC）
  *
@@ -241,9 +250,30 @@ const createStubClient = (store) => {
           setRows(path.table_id, rows.filter((row) => row.record_id !== path.record_id));
           return ok({ deleted: true });
         },
-        async batchGet({ path, params }) {
+        // ⚠️ 官方《删除多条记录》口径：请求体 `data.records` = id 数组；响应 `data.records` = `[{deleted, record_id}]`。
+        //    ⭐ 2026-10-16（task-65 库存写入批量化）：删实时库存由逐双 `delete` 改成一次 `batchDelete`
+        //    ⇒ 替身必须照真契约回话（否则"落表等价 / 不退化"的判据会拿替身的缺口当结论）。
+        async batchDelete({ path, data }) {
+          record('batchDelete', { path, data });
+          const wanted = (data?.records || []).map((id) => String(id).trim()).filter(Boolean);
+          const rows = rowsOf(path.table_id);
+          const deleted = wanted.filter((id) => rows.some((row) => row.record_id === id))
+            .map((id) => ({ deleted: true, record_id: id }));
+          const removed = new Set(deleted.map((entry) => entry.record_id));
+          setRows(path.table_id, rows.filter((row) => !removed.has(row.record_id)));
+          return ok({ records: deleted });
+        },
+        async batchGet({ path, data }) {
           record('batchGet', { path });
-          const wanted = (params?.record_ids || []).map((id) => String(id).trim()).filter(Boolean);
+          // ⚠️ 2026-10-16 成对迁移（task-65 库存写入批量化）：
+          //   **改前逐字**：`const wanted = (params?.record_ids || [])` —— 与飞书真实契约**不符**
+          //     （SDK 类型 + `test/bitableGatewayBatchGet.test.js` 都读 **`data.record_ids`**）。
+          //     它一直没被发现，是因为在这一刀之前**没有任何生产代码走过 `getBatch`**。
+          //   **改后逐字**：`const wanted = (data?.record_ids || [])`。
+          //   **依据**：task-65 让"删之前先确认那一条"由逐双 `get` 换成一次 `getBatch` ⇒
+          //     替身必须照真契约回话，否则等价性判据会拿"替身自己的 bug"当结论。
+          //     ⚠️ 这里**只修替身的入参位置**：断言一条没删、没 skip、没放宽。
+          const wanted = (data?.record_ids || []).map((id) => String(id).trim()).filter(Boolean);
           const items = wanted.map((id) => rowsOf(path.table_id).find((row) => row.record_id === id))
             .filter(Boolean);
           return ok({ records: items, forbidden_record_ids: [] });
@@ -429,16 +459,23 @@ test('AC-RB1 ⭐ 提速可量：明细写入由 N 次整表读 + N 次单条 cre
       assert.equal(afterRequest.create || 0, 0, `${key}: 改后不再逐条 create`);
       assert.equal(afterRequest.batchCreate, 1, `${key}: 改后 = 一次批量 create（非空转：真的走了批量口）`);
 
-      if (n > 1) {
-        assert.ok(after.total < before.total,
-          `${key}: 多货品 ⇒ 总请求数必须更少（改前 ${before.total} / 改后 ${after.total}）`);
-      } else {
-        // ⭐ **如实**：单货品（今天最常见那种）本来就只有"1 次回查 + 1 次 create"，
-        //    批量口换成"1 次回查 + 1 次批量 create" ⇒ **等量**（不退化、也谈不上提速）。
-        //    提速出现在 N ≥ 2（多货品退货）。
-        assert.equal(after.total, before.total,
-          `${key}: 单货品 ⇒ 总请求数**等量**（提速只在 N≥2 出现；这里不许"为了好看"多打或少打）`);
-      }
+      // ⚠️ 2026-10-16 **成对迁移**（task-65 库存写入批量化）：
+      //   · **改前逐字**（本行原来分两支）：
+      //       `if (n > 1) { assert.ok(after.total < before.total, '…必须更少…') }`
+      //       `else { assert.equal(after.total, before.total, '单货品 ⇒ 总请求数**等量**…') }`
+      //     —— 那时"批量口"只换了**明细写入**一处（1 次 `create` ⇒ 1 次 `createBatch`），
+      //     而**库存那一段仍是逐条**（逐尺码整表读 ＋ 逐双 `get`/`delete`）⇒ 单货品确实等量。
+      //   · **改后逐字**：两支合一 ⇒ `assert.ok(after.total < before.total, '…必须更少…')`。
+      //   · **依据**：业务负责人 2026-10-16「**退货也需要批量提速**」＋ task-65
+      //     （库存写入批量化）。库存那一段批量化之后，单货品（1 码 3 双）**26 ⇒ 19**
+      //     （逐双 `get` 6 次 ⇒ 1 次 `getBatch`；逐双 `delete` 3 次 ⇒ 1 次 `deleteBatch`；
+      //      逐尺码整表读 2 次 ⇒ 1 次；流水 1 次 `create` ⇒ 1 次 `createBatch`）
+      //     ⇒ **"等量"这个结论被新事实取代**。
+      //   ⭐ 口径**不放宽**：从"等量"改成"更少"是**收紧**（它同时排除了"变慢"），
+      //     逐双 `get+delete` 省掉多少的逐项数字在 `inventoryReturnBatchWrite.test.js` 的
+      //     AC-IV1 里显式贴出（不美化）。
+      assert.ok(after.total < before.total,
+        `${key}: 总请求数必须更少（改前 ${before.total} / 改后 ${after.total}）`);
 
       // ⭐ 如实贴出两边的真实数字（供回报引用）
       console.log(`[AC-RB1] ${run.label}`
@@ -623,15 +660,23 @@ test('AC-RB3b 远端同键两条 ⇒ 攒批路与逐条路**同样**当场停（
 // AC-RB4 续跑：写到一半中断 ⇒ 接着跑不重不漏
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RB4a 写到一半中断（第 3 次 delete 抛）⇒ 接着跑不重不漏（明细不翻倍、流水不重记、余量正确）', async () => {
-  const first = createHarness({ batch: true, failOnce: { api: 'delete', at: 3 } });
+test('AC-RB4a 写到一半中断（批量删那一步抛）⇒ 接着跑不重不漏（明细不翻倍、流水不重记、余量正确）', async () => {
+  // ⚠️ 2026-10-16 **成对迁移**（task-65 库存写入批量化）：
+  //   · **改前逐字**：`failOnce: { api: 'delete', at: 3 }` —— 那时实时库存是**逐双** `delete`，
+  //     第 3 次抛 ⇒ 前 2 双已经删掉、journal 也记了。
+  //   · **改后逐字**：`failOnce: { api: 'batchDelete', at: 1 }` —— 删除已经批量化，整批**一次** HTTP
+  //     ⇒ 注入点跟着"那一次 HTTP"走；这一次在**发请求之前**就抛 ⇒ 一双都没删。
+  //   · **依据**：task-65（Lead 授权给网关加 `deleteBatch`）；同一段行为、同一个"中断接着跑"语义。
+  //   ⚠️ 断言一条没删、没 skip、没放宽（"余量正确"那一句照旧）。
+  const first = createHarness({ batch: true, failOnce: { api: 'batchDelete', at: 1 } });
   const pairs = SCENARIOS.multi.pairs;
   try {
     await assert.rejects(() => first.purchaseReturn.submit('scan_return_rb4a', draftFor(pairs)),
       /injected transient failure/, '中断必须如实抛（不许假成功）');
-    // 中断时：明细已经一次批量写完（N 行），库存只落了一部分
+    // 中断时：明细已经一次批量写完（N 行），库存那一段只写了流水、一双都没删
     assert.equal(rowsOf(first, 'purchaseRequest').length, 3, '攒批 ⇒ 明细是一次写完的');
     assert.equal(rowsOf(first, 'purchaseOrderBatch').length, 1);
+    assert.equal(rowsOf(first, 'liveInventory').length, 8, '删那一步失败 ⇒ 实时库存一双都不许少');
 
     const second = first.rerun({ batch: true });
     try {
