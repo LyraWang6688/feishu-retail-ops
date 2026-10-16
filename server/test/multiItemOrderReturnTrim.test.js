@@ -47,6 +47,8 @@ delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS } = require('../src/config/scanPage');
+// ⭐ 2026-10-16 下半场：AC-RT5b 要钉"那颗接线 submit 的字段名" ⇒ 字段名**只从配置取**（不写死 ✗）
+const { MULTI_ITEM_ORDER } = require('../src/config/multiItemOrder');
 const renderer = require('../src/views/scanPageRenderer');
 
 const RENDERER_SRC = fs.readFileSync(
@@ -159,9 +161,15 @@ test('AC-RT4 ⭐⭐ **有第二个货品时列表仍要出现**（她删的是"�
 
 test('AC-RT5 🔴 最下面那颗蓝色按钮的文字 = 「退货」（改前逐字 `生成采购退货` ⇒ 塞回即红）', async () => {
   const block = await fetchRealm('purchase_return');
-  const button = block.match(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/);
-  assert.ok(button, '退货块里要有一颗提交按钮 ✓');
-  assert.equal(button[1], NEW_BUTTON,
+  // ⭐ 2026-10-16 下半场（Lead 裁决"手术刀 ①" ⇒ `SCAN_MULTI_ITEM_ADD_WIRE` 缺省 `true`）**成对迁移**：
+  //   改前逐字：`const button = block.match(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/);`
+  //     ＋ `assert.equal(button[1], NEW_BUTTON, …)` —— 那时开关关着、那张表单里**只有一颗**这样的按钮 ✓。
+  //   改后逐字：下面这两行 —— 取**最后一颗**（同一张表单里现在还有多货品那颗"＋ 再加一个货品"，
+  //     它在**上面** ✓）。**不是放宽**：本判据的原话就是"**最下面那颗**蓝色按钮" ⇒ 取末颗正是它 ✓；
+  //     多出来的那一颗由 `multiItemOrderFormHalf` 的 AC-MI-F1/F2 单独钉着 ✓（链接 / 位置 / 字段名都在）。
+  const buttons = [...block.matchAll(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/g)];
+  assert.ok(buttons.length, '退货块里要有一颗提交按钮 ✓');
+  assert.equal(buttons[buttons.length - 1][1], NEW_BUTTON,
     `改前逐字「${OLD_BUTTON}」⇒ 改后逐字「${NEW_BUTTON}」（依据 = 她 2026-10-16 真机截图 + 逐字）`);
   assert.equal(block.includes(OLD_BUTTON), false, `🔴 旧按钮名塞回即红：${OLD_BUTTON}`);
   // ⭐ 配置先行：那颗按钮的文字**只来自这一处**（她下次改字只改配置 ✓ 不散写成中文字面量 ✗）
@@ -173,7 +181,15 @@ test('AC-RT5b 🔴 她这次**没点**的几处一个字都不许动（尺码行
   const block = await fetchRealm('purchase_return');
   assert.match(block, /class="size-row"/, '尺码行还在 ✓');
   assert.match(block, /整单金额/, '「整单金额（必填）」还在 ✓');
-  assert.match(block, /data-multi-add[^>]*href="/, '「＋ 再加一个货品」那颗链接还在 ✓（零 JS 下唯一的"加"法 ✓）');
+  // ⭐ 2026-10-16 下半场 **成对迁移**（**改指向、不放宽** ✓）：
+  //   改前逐字：`assert.match(block, /data-multi-add[^>]*href="/, '「＋ 再加一个货品」那颗链接还在 ✓（零 JS 下唯一的"加"法 ✓）');`
+  //   改后逐字：下面这一行 —— 那颗入口由 `<a href="?add=1">`（GET **天生带不走**她填的尺码/数量 ✗）
+  //     **成对迁移**成**同一张表单里的第二颗 submit**（`SCAN_MULTI_ITEM_ADD_WIRE` 缺省 `true` ✓）。
+  //   ⇒ 钉的从"是链接"改成"**是那颗接线 submit ＋ 字段名走配置**"（**更有针对性** ✓；塞回链接 ⇒ 红 ✓）。
+  //   ⚠️ 它的"值不丢 / 只出现一次 / 在同一张表单里"由 `multiItemOrderAddWire`（AC-MI-A/F2）与
+  //     `multiItemCurrentItemDup`（AC-CID-*）单独钉着 ✓ —— 本条不再重复那一半。
+  assert.match(block, new RegExp(`<button type="submit"[^>]*data-multi-add[^>]*name="${MULTI_ITEM_ORDER.wire.addAction}"`),
+    '「＋ 再加一个货品」那颗入口仍在（同表单的第二颗 submit · 字段名走 `config/multiItemOrder.js` ✓）');
   assert.match(block, /name="multi_items"/, '字段名 `multi_items` 原样透传 ✓');
   assert.match(block, /name="return_sizes"/, '字段名原样 ✓');
   assert.match(block, /name="action" value="return_purchase"/, '动作名原样 ✓');

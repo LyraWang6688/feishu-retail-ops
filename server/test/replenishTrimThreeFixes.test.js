@@ -68,6 +68,9 @@ delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
+// ⭐ 2026-10-16 下半场：AC-RP8 的"控件名清单"要把多货品那两颗 **submitter** 排掉
+//   ⇒ 它们的字段名**只从配置取**（不写死 ✗）
+const { MULTI_ITEM_ORDER } = require('../src/config/multiItemOrder');
 const renderer = require('../src/views/scanPageRenderer');
 
 const RENDERER_SRC = fs.readFileSync(
@@ -167,9 +170,15 @@ const blockOf = (html, realm) => {
 };
 
 const submitButtonTextOf = (block) => {
-  const button = block.match(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/);
-  assert.ok(button, '这一块里要有一颗提交按钮 ✓');
-  return button[1];
+  // ⭐ 2026-10-16 下半场（Lead 裁决"手术刀 ①" ⇒ `SCAN_MULTI_ITEM_ADD_WIRE` 缺省 `true`）**成对迁移**：
+  //   改前逐字：`const button = block.match(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/);`
+  //     ＋ `return button[1];` —— 那时开关关着，这一块里**只有一颗**这样的按钮 ✓。
+  //   改后逐字：下面这两行 —— 取**最后一颗**（同一张表单里现在还有多货品那颗"＋ 再加一个货品"，
+  //     它在上面 ✓）。**不是放宽**：AC-RP4 / AC-RP5a 的原话就是"**最下面那颗**蓝色按钮" ⇒ 取末颗正是它 ✓；
+  //     多出来的那一颗由 `multiItemOrderFormHalf` 的 AC-MI-F1/F2 单独钉着 ✓。
+  const buttons = [...block.matchAll(/<button type="submit" class="btn btn--primary"[^>]*>([^<]*)<\/button>/g)];
+  assert.ok(buttons.length, '这一块里要有一颗提交按钮 ✓');
+  return buttons[buttons.length - 1][1];
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -460,8 +469,21 @@ test('AC-RP7 ⭐⭐ 补货的尺码清单**实际生效的列数 = 3**（她逐�
 
 /** 表单控件在 DOM 里的**出现顺序**（`name="…"` 逐个抽 ✓ 重复的也保留 ⇒ 顺序真被钉住 ✓）。
  *  ⚠️ 用**后行断言**排除 `data-qty-name="…"`（它是勾选框上的辅助属性，不是提交字段 ✗）——
- *    否则 `qty_<码>` 会被数两遍。 */
-const controlNamesOf = (block) => [...block.matchAll(/(?<![\w-])name="([^"]+)"/g)].map((m) => m[1]);
+ *    否则 `qty_<码>` 会被数两遍。
+ *  ⭐ 2026-10-16 下半场（`SCAN_MULTI_ITEM_ADD_WIRE` 缺省 `true`）**成对迁移**（**改指向、不放宽** ✓）：
+ *    多货品那两颗 **submit 按钮**（`＋ 再加一个货品` / 每行一颗"移除"）也是 `name="…"`，
+ *    但它们**不是这张表单"提交"时的字段** —— 点最下面那颗「补货」时浏览器**根本不送**它们
+ *    （按钮的 name/value 只有**它自己被点**才送 ✓）。⇒ 从"控件名清单"里**排掉那两个 submitter 的名字**
+ *    （名字**只从配置取** ✓ 不写死 ✗），留下的仍是她真正提交的那些字段、**顺序逐字不变** ✓
+ *    （改名前 / 调序 / 漏一个尺码 ⇒ 照旧红 ✓）。 */
+const controlNamesOf = (block) => {
+  const submitters = new Set([
+    MULTI_ITEM_ORDER.wire.addAction, MULTI_ITEM_ORDER.wire.removeField,
+  ].filter(Boolean));
+  return [...block.matchAll(/(?<![\w-])name="([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((name) => !submitters.has(name));
+};
 
 test('AC-RP8 ⭐⭐ 功能零变化：补货表单的**字段名与顺序**逐字未动（改版式不许碰提交 ✓）', async () => {
   const block = blockOf(await fetchRealm('replenish'), 'replenish');
