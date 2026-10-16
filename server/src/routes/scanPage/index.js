@@ -246,6 +246,69 @@ const createScanPageRouter = (options = {}) => {
       number: String(number || ''),
     });
   };
+  /**
+   * ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+   *   改前逐字：这段「被挡 ⇒ 渲染资金页（`status: 400`）＋ 把她刚填的钱原样带回」**只长在 `payment_pay` 那一支里** ✗
+   *   改后逐字：抽成本地 `async` 函数 `respondSettlementBlock(res, req, ctx)` ⇒ ⭐ **两处共用** ✓
+   *     （`payment_pay` 那一支 ＋ `submit_order` 里「货那一跑」之前的**预判** ✓ —— 预判下一轮接）
+   *   依据 = 写服务契约逐字「拦住、**一个字都不写**」＋ 业务负责人 2026-10-16 23:5x「**那我肯定能看到这个单号呀**」✓
+   *   🔴 **只搬不改**：文案 / 字段 / 中文 / `status: 400` 一个字不动 ✓
+   *     （唯一新增：`toCents` 那 1 行同式搬进来 —— 它原本声明在 `payment_pay` 支内，抽出来会跑出作用域 ✓）
+   */
+  const respondSettlementBlock = async (res, req, ctx) => {
+    const { settlement, effectiveLineAmounts, paidPayments, realm, body, fields, pendingLines,
+      effectivePaymentStatus, pendingPaidAmount } = ctx;
+    const toCents = (value) => Math.round(Number(value || 0) * 100);
+            const blockText = (() => {
+              const t = writeConfig.texts || {};
+              const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
+              // ⚠️ 用**解析后**那两个数（与上面 `settlement` / 与真正要落库的金额**同一份** ✓ 不两套算法）
+              const itemsCents = effectiveLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
+              const paymentsCents = paidPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
+              if (settlement.code === 'amount_mismatch' && t.amountMismatchBody) {
+                const diff = Math.abs(paymentsCents - itemsCents);
+                const side = itemsCents === 0
+                  ? fillWriteText(t.amountMismatchNoItems, { diff: money(diff) })
+                  : fillWriteText(
+                    paymentsCents > itemsCents ? t.amountMismatchOver : t.amountMismatchShort,
+                    { diff: money(diff) },
+                  );
+                return fillWriteText(t.amountMismatchBody, {
+                  items: money(itemsCents), payments: money(paymentsCents), side,
+                });
+              }
+              // 🔴🔴 2026-10-14 修（真 bug）：`settlement.code` 是 **snake_case**
+              //    （`full_without_money` / `partial_amount_missing` / `partial_amount_mismatch`），
+              //    而 `config/scanWrite.js` 的文案 key 是 **camelCase**（`fullWithoutMoneyBody` …）
+              //    ⇒ 原来直接拼 `${settlement.code}Body` **永远查不到** ⇒ 那三条 block 的人话
+              //    渲染成**空串**（页面只剩一个干巴巴的 400 + 满页表单）。
+              //    ⚠️ 这就是她 2026-10-14 真机"点了 6 次「提交整单付款」都只看到 400"的现场之一：
+              //      日志里当时**连原因都没有**（那条 `scan.write.settlement_blocked` 是后来才补的），
+              //      页面上也没有一句话 —— 两处都静默。
+              //    ⇒ 按 snake_case → camelCase 取真源文案（**不新编中文** ✓ 仍只用既有模板 ✓）。
+              const codeCamel = String(settlement.code || '')
+                .replace(/_([a-z])/g, (_, char) => char.toUpperCase());
+              return t[`${codeCamel}Body`] || t[settlement.code] || '';
+            })();
+            return sendPaymentStep(res, req, {
+              paymentMethods: await candidatePaymentMethods(req),
+              realm,
+              submitKey: body[fields.submitKey],
+              count: pendingLines.length,
+              notice: blockText,
+              // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓ 这就是旧流程那条"值还在"的要求 ✓）
+              // ⭐ 2026-10-16 A2a（接线）：档位改用**自动定出来的那一档**（`effectivePaymentStatus`）——
+              //   旧档位（请求体那个）**不再是判据**，这里也不该再把它带回去（带回去只会误导下一屏）。
+              paymentStatus: effectivePaymentStatus,
+              paidAmount: pendingPaidAmount,
+              // ⭐ 券那一刀：带回去的是**解析后**那一份（券行她本来就没填金额 ⇒ 只是把这一行的
+              //    **真实金额（平台结算款）**显示出来 ✓ 既不是替她改数、也不是藏起来 ✗）。
+              paymentRows: paidPayments,
+              // ⭐ 400 = "她能改"的那一类（与既有口径一致 ✓ 旧流程这条也是 400 ✓ 不放宽 ✗）
+              status: 400,
+            });
+  };
+
   const sendPaymentStep = (res, req, opts = {}) => {
     // ⭐ 她看到的这一页 = 这条日志记的（**在发页面之前**打 ⇒ 两件事不会分家 ✓）
     logRendered(req, {
@@ -2322,53 +2385,9 @@ const createScanPageRouter = (options = {}) => {
             });
             // ⚠️ 文案：**只用既有那几条模板**（`config/scanWrite.js` 的 texts ✓ **不编中文** ✗）
             //   ⭐「全付两边不等」那条要带上**差额金额**（她一眼看到"少多少/多多少"✓ 实测 AC-E2E-16 ✓）
-            const blockText = (() => {
-              const t = writeConfig.texts || {};
-              const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
-              // ⚠️ 用**解析后**那两个数（与上面 `settlement` / 与真正要落库的金额**同一份** ✓ 不两套算法）
-              const itemsCents = effectiveLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
-              const paymentsCents = paidPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
-              if (settlement.code === 'amount_mismatch' && t.amountMismatchBody) {
-                const diff = Math.abs(paymentsCents - itemsCents);
-                const side = itemsCents === 0
-                  ? fillWriteText(t.amountMismatchNoItems, { diff: money(diff) })
-                  : fillWriteText(
-                    paymentsCents > itemsCents ? t.amountMismatchOver : t.amountMismatchShort,
-                    { diff: money(diff) },
-                  );
-                return fillWriteText(t.amountMismatchBody, {
-                  items: money(itemsCents), payments: money(paymentsCents), side,
-                });
-              }
-              // 🔴🔴 2026-10-14 修（真 bug）：`settlement.code` 是 **snake_case**
-              //    （`full_without_money` / `partial_amount_missing` / `partial_amount_mismatch`），
-              //    而 `config/scanWrite.js` 的文案 key 是 **camelCase**（`fullWithoutMoneyBody` …）
-              //    ⇒ 原来直接拼 `${settlement.code}Body` **永远查不到** ⇒ 那三条 block 的人话
-              //    渲染成**空串**（页面只剩一个干巴巴的 400 + 满页表单）。
-              //    ⚠️ 这就是她 2026-10-14 真机"点了 6 次「提交整单付款」都只看到 400"的现场之一：
-              //      日志里当时**连原因都没有**（那条 `scan.write.settlement_blocked` 是后来才补的），
-              //      页面上也没有一句话 —— 两处都静默。
-              //    ⇒ 按 snake_case → camelCase 取真源文案（**不新编中文** ✓ 仍只用既有模板 ✓）。
-              const codeCamel = String(settlement.code || '')
-                .replace(/_([a-z])/g, (_, char) => char.toUpperCase());
-              return t[`${codeCamel}Body`] || t[settlement.code] || '';
-            })();
-            return sendPaymentStep(res, req, {
-              paymentMethods: await candidatePaymentMethods(req),
-              realm,
-              submitKey: body[fields.submitKey],
-              count: pendingLines.length,
-              notice: blockText,
-              // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓ 这就是旧流程那条"值还在"的要求 ✓）
-              // ⭐ 2026-10-16 A2a（接线）：档位改用**自动定出来的那一档**（`effectivePaymentStatus`）——
-              //   旧档位（请求体那个）**不再是判据**，这里也不该再把它带回去（带回去只会误导下一屏）。
-              paymentStatus: effectivePaymentStatus,
-              paidAmount: pendingPaidAmount,
-              // ⭐ 券那一刀：带回去的是**解析后**那一份（券行她本来就没填金额 ⇒ 只是把这一行的
-              //    **真实金额（平台结算款）**显示出来 ✓ 既不是替她改数、也不是藏起来 ✗）。
-              paymentRows: paidPayments,
-              // ⭐ 400 = "她能改"的那一类（与既有口径一致 ✓ 旧流程这条也是 400 ✓ 不放宽 ✗）
-              status: 400,
+            return respondSettlementBlock(res, req, {
+              settlement, effectiveLineAmounts, paidPayments, realm, body, fields, pendingLines,
+              effectivePaymentStatus, pendingPaidAmount,
             });
           }
           const pendingView = pendingSize
