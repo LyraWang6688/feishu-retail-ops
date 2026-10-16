@@ -27,6 +27,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { renderScanMessagePage } = require('../src/views/scanPage');
+const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_SUCCESS_PAGE, minimalSuccessOverrides, DEFAULT_MINIMAL_TEXT } = require('../src/config/scanSuccessPage');
 
 /** 四条链各自"成功页现在的样子"（标题/事实各异 ✓ 链接与自动跳转**都有** ✓）。 */
@@ -94,31 +95,59 @@ test('AC-MS-P1 ⭐⭐ 四条链：同一句话 ＋ **零链接零按钮零跳转
   assert.equal([...bodies][0], MINIMAL.minimalText);
 });
 
-test('AC-MS-P2 ⭐⭐ 零回归：开关关着（缺省）⇒ 成功页形状逐字不变', () => {
+test('AC-MS-P2 ⭐⭐ 迁移后：**成功页永远极简**（没有开关 ✓ 只剩一条路 ✓）', () => {
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`AC-MS-P2 ⭐⭐ 零回归：开关关着（缺省）⇒ 成功页形状逐字不变`
+  //     （`renderScanMessagePage(params)` 与"显式关"两种调用逐字相同 ＋ 断言"那颗链接 / refresh / 她给的原句**都还在**"）
+  //   改后逐字：本用例 —— 开关退场 ⇒ 改钉"**默认渲染 = 显式配极简**（只剩一条路 ✓）＋ 零链接零跳转 ＋ 统一那一句"
+  //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**……把新功能都上了，不需要开关。**」✓
+  //   ⚠️ **强度不降**：仍是**整页逐字**（`assert.equal` 两个方向的渲染）＋ 行为断言（零 offender）✓
   for (const { chain, params } of CHAINS) {
-    const offDefault = renderScanMessagePage(params);
-    const offExplicit = renderScanMessagePage({ ...params, successPage: { minimalEnabled: false, minimalText: 'X' } });
-    assert.equal(offDefault, offExplicit, `${chain}：关着时两种调用必须**逐字相同** ✓`);
-    assert.ok(offDefault.includes(`data-view="success-return"`), `${chain}：关着时那颗链接**还在** ✓`);
-    assert.equal(refreshCount(offDefault), 1, `${chain}：关着时自动跳转**还在** ✓`);
-    assert.ok(offDefault.includes(params.body), `${chain}：关着时她给的原句**照旧** ✓`);
-    assert.ok(offDefault.includes(params.number), `${chain}：关着时单号照旧 ✓`);
+    const byDefault = renderScanMessagePage(params);
+    const byExplicit = renderScanMessagePage({ ...params, successPage: { minimalText: SCAN_SUCCESS_PAGE.minimalText } });
+    assert.equal(byDefault, byExplicit, `${chain}：默认渲染与"显式配极简"必须**逐字相同**（只剩一条路 ✓）`);
+    assert.ok(byDefault.includes(DEFAULT_MINIMAL_TEXT), `${chain}：必须有那句统一的「${DEFAULT_MINIMAL_TEXT}」✓`);
+    assert.equal(byDefault.includes('data-view="success-return"'), false, `${chain}：那颗回跳链接**不许在** ✗`);
+    assert.equal(refreshCount(byDefault), 0, `${chain}：自动跳转**不许在** ✗`);
+    assert.equal(/<a\s[^>]*href=/i.test(byDefault), false, `${chain}：一个 a-href 都不许有 ✗`);
+    assert.equal(/<button\b/i.test(byDefault), false, `${chain}：一个 button 都不许有 ✗`);
+    // ⭐ 更强的一条（不靠"某句是不是子串"）：**payload 里的 body 被统一那句覆盖**
+    //   ⇒ 塞一个哨兵正文进去，页面必须**逐字不变** ✓（她给的原句不再决定这一页 ✓）
+    const withSentinelBody = renderScanMessagePage({ ...params, body: 'ZZ-哨兵正文' }, SCAN_PAGE);
+    assert.equal(withSentinelBody, byDefault,
+      `${chain}：成功页的正文=统一那句（payload 里的 body 已不起作用 ✓）`);
   }
-  assert.equal(SCAN_SUCCESS_PAGE.minimalEnabled, false, '⭐ 缺省必须是 **false**（关着＝与今天逐字一致 ✓）');
-  assert.deepEqual(minimalSuccessOverrides({ minimalEnabled: false }), {}, '关着 ⇒ 覆盖值必须为空对象 ✗');
 });
 
-test('AC-MS-P3 ⭐ 配置先行：显式布尔 · 缺省 false · 不许 `||` 兜底', () => {
+test('AC-MS-P3 ⭐⭐ 反向哨兵：**没有开关了**（开关名/`readFlag` 回来即红 ✓）＋ 禁 `||` 兜底', () => {
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`assert.ok(/readFlag\(env, 'SCAN_SUCCESS_PAGE_MINIMAL_ENABLED', false\)/.test(src), '开关必须是 readFlag …')`
+  //   改后逐字：本用例 —— **钉"开关不许回来"** ＋ 钉"永远极简"的行为（强度不降 ✓）
+  //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**以后你不用有"开关"的这个思维……把新功能都上了，不需要开关。**」✓
   const file = path.join(__dirname, '..', 'src', 'config', 'scanSuccessPage.js');
   const raw = fs.readFileSync(file, 'utf8');
-  // ⚠️ **先去掉注释**再判 ✗ —— 本文件的头部注释里**逐字引用了那条禁令**（`process.env.X || 默认` ✓）
-  //    ⇒ 不去注释会把"文档"判成"代码"（我第一次就是这么假红的 ✓ 已修 ✓ 强度不变 ✓）
+  // ⚠️ **先去掉注释**再判 ✗ —— 本文件的头部注释里**逐字引用了**那个开关名（留痕 ✓）
   const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
     .map((line) => line.replace(/\/\/.*$/, '')).join('\n');
-  assert.ok(/readFlag\(env, 'SCAN_SUCCESS_PAGE_MINIMAL_ENABLED', false\)/.test(src),
-    '开关必须是 `readFlag(env, …, false)`（显式布尔 · 缺省 false ✓）');
+  const SWITCH_NAME = ['SCAN', 'SUCCESS', 'PAGE', 'MINIMAL', 'ENABLED'].join('_');
+  assert.equal(src.includes(SWITCH_NAME), false,
+    '🔴 开关名**不许回来**（她 22:5x：「不需要开关」）');
+  assert.equal(/readFlag\(/.test(src), false, '🔴 这里不再有开关 ⇒ 也不该再有 `readFlag` ✗');
   assert.equal(/process\.env\.[A-Z_]+\s*\|\|/.test(src), false,
     '不许 `process.env.X || 默认值` ✗（`||` 会让"清空变量"回退默认 ⇒ 关不掉 ✗）');
   assert.ok(DEFAULT_MINIMAL_TEXT.length > 0 && src.includes(DEFAULT_MINIMAL_TEXT),
     '缺省那句必须在配置真源里 ✓（别处不许再抄一份 ✗）');
+});
+
+test('AC-MS-P3b ⭐⭐ 正向钉：**没有任何开关也能生效**（极简覆盖值永远返回 ✓）', () => {
+  // eslint-disable-next-line global-require
+  const { minimalSuccessOverrides } = require('../src/config/scanSuccessPage');
+  const overrides = minimalSuccessOverrides({ minimalText: 'XX' });
+  assert.equal(overrides.body, 'XX', '传了文案 ⇒ 用它 ✓');
+  for (const key of ['backPath', 'backLabel', 'backHint', 'returnPath', 'returnLabel', 'autoReturnUrl', 'extraActionsHtml']) {
+    assert.equal(overrides[key], '', `${key} 必须被清空（她不跳走、不链接 ✓）`);
+  }
+  assert.deepEqual(overrides.details, [], '`details` 清空（"就一句话" ✓）');
+  assert.equal(overrides.returnDelaySeconds, 0, '不自动回跳 ✓');
+  assert.equal(minimalSuccessOverrides({}).body, '已提交成功，数据会更新', '没给文案 ⇒ 缺省那句 ✓');
 });

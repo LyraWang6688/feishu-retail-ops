@@ -6,12 +6,11 @@
  * 本刀**只接线** ✗ 不改冻结件 ✓（`deferFunds` 是阶段二 #763 已在冻结件里就位的能力 ✓）。
  *
  * 判据：
- *   **AC-MSW1**：⭐ **开关关着 ⇒ 一个字节都不走新路** —— `config/saleMoneySplit.js` 缺省 `false` ✓
- *     且路由那段的闸门是 **`=== true`**（不是真值判断 ✗ —— `'false'` 字符串这类会被真值判断放过 ✗）
+ *   **AC-MSW1**：⭐⭐ **没有开关了 ⇒ 货/钱分离永远开** —— 配置里不许再有开关名/那个变量名/`readFlag` ✗
+ *     且路由那段**不再有闸门**（老分支删净 ⇒ 那段永远跑 ✓）
  *   **AC-MSW2**：⭐ **货那一跑的参数口径**：`payments: []`（**不许带收款** ✓）· `deferFunds: true` ✓ ·
  *     `lineAmounts`（与今天同一取值口径 ✓）· 且**不带** `paymentStatus` / `paidAmount`（那是钱那半的事 ✓）
- *   **AC-MSW3**：⭐ **账实相符**：`resolveSaleMoneySplitConfig({})` ⇒ `enabled === false` ✓（环境变量没设时）
- *     且 `.env.example` **已登记**该键 ✓（文档 §4.2 说"接线一落就该登记" ✓）
+ *   **AC-MSW3**：⭐ **反向哨兵**：配置里没有 `enabled` 键 ✓ ＋ `.env.example` 里那一行**已删** ✓
  */
 
 const test = require('node:test');
@@ -26,23 +25,36 @@ const ENV_EXAMPLE = path.join(SERVER, '..', '.env.example');
 
 const routesSrc = () => fs.readFileSync(ROUTES, 'utf8');
 
-/** 取出"接线那一段"（从闸门那行到它之后 20 行 ✓ 够覆盖那次 submitSale 调用 ✓）。 */
+/**
+ * 取出"接线那一段" —— ⚠️ **成对迁移**：改前锚在闸门那行（`…enabled === true`）✗ 闸门删掉后不能再用它
+ * ⇒ 改后锚在**货那一跑自己的参数**上（`deferFunds: true`）＋ 前后各取几行 ✓
+ */
 const wireBlock = () => {
   const lines = routesSrc().split('\n');
-  const at = lines.findIndex((l) => l.includes('resolveSaleMoneySplitConfig().enabled === true'));
-  assert.ok(at >= 0, '接线段的闸门不见了 ✗（`resolveSaleMoneySplitConfig().enabled === true`）');
-  return lines.slice(at, at + 20).join('\n');
+  const at = lines.findIndex((l) => l.includes('deferFunds: true'));
+  assert.ok(at >= 0, '接线那一段不见了 ✗（`deferFunds: true`）');
+  return lines.slice(Math.max(0, at - 3), at + 26).join('\n');
 };
 
-test('AC-MSW1 ⭐ 开关关着 ⇒ 一个字节都不走新路（缺省 false ＋ 闸门必须是 `=== true`）', () => {
-  const cfg = fs.readFileSync(CFG, 'utf8');
-  assert.ok(/readFlag\(env, ENABLED_ENV_KEY, false\)/.test(cfg), '缺省必须是 `false` ✗');
-  assert.ok(/enabled === true/.test(wireBlock()), '闸门必须是**显式** `=== true` ✗（真值判断会放过 `\'false\'` 这类 ✗）');
+test('AC-MSW1 ⭐⭐ 反向哨兵：**没有开关了**（货/钱分离永远开 · 老分支删净 ✓）', () => {
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`AC-MSW1 ⭐ 开关关着 ⇒ 一个字节都不走新路`（钉 `readFlag(env, ENABLED_ENV_KEY, false)` ＋ 闸门 `=== true`）
+  //   改后逐字：本用例 —— 开关退场 ⇒ 钉"**配置里没有它**"＋"**路由里没有闸门**" ✓
+  //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**把新功能都上了，不需要开关。**」✓
+  const SWITCH_NAME = ['SCAN', 'MONEY', 'SPLIT', 'ENABLED'].join('_');
+  const cfgCode = fs.readFileSync(CFG, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+  assert.equal(cfgCode.includes(SWITCH_NAME), false, '🔴 开关名不许回来 ✗');
+  assert.equal(cfgCode.includes('ENABLED_ENV_KEY'), false, '🔴 那个变量名也不许回来 ✗');
+  assert.equal(/readFlag\(/.test(cfgCode), false, '🔴 这里不再有开关 ⇒ 也不该再有 `readFlag` ✗');
   const { resolveSaleMoneySplitConfig } = require('../src/config/saleMoneySplit');
-  assert.equal(resolveSaleMoneySplitConfig({}).enabled, false, '环境变量没设 ⇒ **关** ✓');
-  assert.equal(resolveSaleMoneySplitConfig({ SCAN_MONEY_SPLIT_ENABLED: '' }).enabled, false, '空串 = 关 ✓');
-  assert.equal(resolveSaleMoneySplitConfig({ SCAN_MONEY_SPLIT_ENABLED: 'false' }).enabled, false, '`false` = 关 ✓');
-  assert.equal(resolveSaleMoneySplitConfig({ SCAN_MONEY_SPLIT_ENABLED: 'true' }).enabled, true, '`true` = 开 ✓');
+  assert.equal('enabled' in resolveSaleMoneySplitConfig(), false, '配置里不许再有 `enabled`（开关退了 ✗）');
+  // ⚠️ 判**原始文本**（不去注释）—— 路由里那条"改前逐字"的留痕**已经拆开写**（`…().` ＋ `enabled === true`）
+  //   ⇒ 原件里现在**一个** `resolveSaleMoneySplitConfig` 都不该有：既没有闸门、也没有那个配置入口 ✓
+  //   🔴 为什么不去注释：那个正则会被文件里字符串中的 `/*` / `//` 带偏（实测：会把真代码当注释吞掉 ✗）
+  assert.equal(routesSrc().includes('resolveSaleMoneySplitConfig'), false,
+    '🔴 路由里那条闸门（以及那个配置入口）不许回来 ✗');
+  assert.ok(/deferFunds:\s*true/.test(wireBlock()), '货那一跑照旧要走（永远跑 ✓）');
 });
 
 test('AC-MSW2 ⭐ 货那一跑的参数口径：`payments: []` ＋ `deferFunds: true` ＋ `lineAmounts`（不带钱那半的键）', () => {
@@ -57,7 +69,12 @@ test('AC-MSW2 ⭐ 货那一跑的参数口径：`payments: []` ＋ `deferFunds: 
     '货那一跑失败必须 `respondWriteFailure` 如实回报 ✗');
 });
 
-test('AC-MSW3 ⭐ `.env.example` 已登记该键（接线一落就登记 ✓）', () => {
+test('AC-MSW3 ⭐⭐ 反向哨兵：`.env.example` 里那一行**已删**（代码删净后没人读 ✓）', () => {
+  // ⚠️ 成对迁移：改前逐字 `assert.ok(/^SCAN_MONEY_SPLIT_ENABLED=false$/m.test(env), …)`
+  //   ⇒ 改后逐字本用例；依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」✓
+  //   ＋ ⭐ 线上 `.env` 那几行**不动**（她/Lead 的令 ✓ —— 那是部署之外的事 ✗）
+  const SWITCH_NAME = ['SCAN', 'MONEY', 'SPLIT', 'ENABLED'].join('_');
   const env = fs.readFileSync(ENV_EXAMPLE, 'utf8');
-  assert.ok(/^SCAN_MONEY_SPLIT_ENABLED=false$/m.test(env), '`.env.example` 必须登记 `SCAN_MONEY_SPLIT_ENABLED=false` ✓');
+  assert.equal(new RegExp('^' + SWITCH_NAME + '=', 'm').test(env), false,
+    '🔴 `.env.example` 里那一行必须已删（留着 = 又给了一个没人读的开关 ✗）');
 });

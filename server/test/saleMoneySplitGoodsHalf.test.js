@@ -67,7 +67,7 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { SalesStatusWriter } = require('../src/services/salesStatusWriter');
 const {
-  ENABLED_ENV_KEY, SESSION_MARKERS, resolveSaleMoneySplitConfig,
+  SESSION_MARKERS, resolveSaleMoneySplitConfig,
 } = require('../src/config/saleMoneySplit');
 
 const SERVICE_PATH = path.join(__dirname, '../src/services/salesOrderService.js');
@@ -229,41 +229,30 @@ const stripComments = (source) => source
 // AC-MSG1 ⭐ 开关：缺省关 · 显式布尔 · 调用时读
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MSG1 ⭐ 开关 `SCAN_MONEY_SPLIT_ENABLED`：**缺省 false** ＋ **显式布尔** ＋ 调用时读', () => {
-  assert.equal(ENABLED_ENV_KEY, 'SCAN_MONEY_SPLIT_ENABLED', '变量名逐字（她/Lead 指定）');
-  // ① 没配 ⇒ **关**（硬红线：关着 = 与今天逐字一致）。
-  assert.equal(resolveSaleMoneySplitConfig({}).enabled, false, '没配这个变量 ⇒ 必须是 `false`');
-  // ② 认得出的真值。
-  for (const raw of ['true', 'TRUE', '1', 'yes', 'on']) {
-    assert.equal(resolveSaleMoneySplitConfig({ [ENABLED_ENV_KEY]: raw }).enabled, true, `${raw} ⇒ true`);
-  }
-  // ③ **清空 / 显式假** ⇒ 关（**不是**回退默认 —— `||` 那种形状会让"清空"关不掉 ✗）。
-  for (const raw of ['', 'false', '0', 'no', 'off']) {
-    assert.equal(resolveSaleMoneySplitConfig({ [ENABLED_ENV_KEY]: raw }).enabled, false, `「${raw}」⇒ 关`);
-  }
-  // ④ 认不出的值 ⇒ **当场抛**（不猜真/假 —— 猜错就是"以为开着其实关着"）。
-  assert.throws(() => resolveSaleMoneySplitConfig({ [ENABLED_ENV_KEY]: 'maybe' }), /显式布尔/);
-  // ⑤ 会话标记：分离那一跑的新标记必须与今天两个**不同**（混了之后"她点过没有"分不清）。
+test('AC-MSG1 ⭐⭐ 反向哨兵：**没有开关了**（货/钱分离永远开 ✓）＋ 会话标记逐字', () => {
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`AC-MSG1 ⭐ 开关 \`SCAN_MONEY_SPLIT_ENABLED\`：**缺省 false** ＋ **显式布尔** ＋ 调用时读`
+  //     （逐条钉 `readFlag` 语义：''/'false'/'0' ⇒ 关，认不出 ⇒ 抛）
+  //   改后逐字：本用例 —— 开关退场 ⇒ 钉"**配置里没有它**（含那个变量名）"＋ 标记与既有两个状态**不同** ✓
+  //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**把新功能都上了，不需要开关。**」✓
+  const SWITCH_NAME = ['SCAN', 'MONEY', 'SPLIT', 'ENABLED'].join('_');
+  const cfgPath = path.join(__dirname, '..', 'src', 'config', 'saleMoneySplit.js');
+  const cfgCode = fs.readFileSync(cfgPath, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+  assert.equal(cfgCode.includes(SWITCH_NAME), false, '🔴 开关名不许回来 ✗');
+  assert.equal(cfgCode.includes('ENABLED_ENV_KEY'), false, '🔴 那个变量名也不许回来 ✗');
+  assert.equal(/readFlag\(/.test(cfgCode), false, '🔴 这里不再有开关 ⇒ 也不该再有 `readFlag` ✗');
+  // ② 配置里**没有** `enabled` 了（"永久开" ✓）—— 且**不依赖 env**（没有模块级快照的坑 ✓）
+  assert.equal('enabled' in resolveSaleMoneySplitConfig(), false, '配置里不许再有 `enabled`（开关退了 ✗）');
+  assert.equal('enabled' in resolveSaleMoneySplitConfig({ [SWITCH_NAME]: 'true' }), false,
+    '塞一个同名 env 也**不再有任何效果**（没有人读它 ✓）');
+  // ③ 会话标记：分离那一跑的新标记必须与今天两个**不同**（混了之后"她点过没有"分不清）。
   assert.equal(SESSION_MARKERS.goodsCreated, 'goods_created');
   assert.notEqual(SESSION_MARKERS.goodsCreated, 'pending');
   assert.notEqual(SESSION_MARKERS.goodsCreated, 'created');
-  // ⑥ 缺省**不读**模块加载那一刻的 `process.env`：同一个进程里改了环境变量，
-  //    下一次调用就要认新值（本仓 2026-10-06 的"早于 dotenv 求值"事故就是栽在模块级快照上）。
-  const key = ENABLED_ENV_KEY;
-  const before = process.env[key];
-  try {
-    process.env[key] = 'true';
-    assert.equal(resolveSaleMoneySplitConfig().enabled, true, '调用时读 ⇒ 改了就认（模块级快照做不到）');
-    process.env[key] = '';
-    assert.equal(resolveSaleMoneySplitConfig().enabled, false, '清空 ⇒ 关');
-  } finally {
-    if (before === undefined) delete process.env[key]; else process.env[key] = before;
-  }
+  // ④ 标记不靠 env：同一个进程里改 env ⇒ 拿到的标记**逐字不变** ✓
+  assert.equal(resolveSaleMoneySplitConfig().markers.goodsCreated, 'goods_created');
 });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AC-MSG2 🔴 关着 = 与今天逐字一致
-// ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-MSG2 🔴 关着（不传 / 显式 false）⇒ 表状态与写库流水**逐字相同**（deepEqual）', async () => {
   const items = [shoe(38, 200), shoe(39, 100)];
