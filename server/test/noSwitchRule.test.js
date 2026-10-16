@@ -34,12 +34,27 @@ const allSrc = () => walk(SRC).map((f) => ({
   file: path.relative(SERVER, f), text: stripComments(fs.readFileSync(f, 'utf8')),
 }));
 
-test('AC-NS1 + AC-NS2 ⭐ **一单多货异步那一刀**：`SCAN_MULTI_ITEM_ASYNC_ENABLED` / `asyncEnabled` **全仓 0 处**（回来即红 ✓）', () => {
-  const hits = allSrc().filter(({ text }) => text.includes('SCAN_MULTI_ITEM_ASYNC_ENABLED') || /\basyncEnabled\b/.test(text));
+test('AC-NS1 + AC-NS2 ⭐ **已删开关的名单**：名字**全仓 0 处代码**（回来即红 ✓）', () => {
+  // ⭐ 名单（**按批次加** ✗ 不新建文件 ✓）：开关名 ＋ 它退场时一起删掉的"料名"
+  const FORBIDDEN = [
+    // ① 一单多货异步（本批已做 ✓）
+    'SCAN_MULTI_ITEM_ASYNC_ENABLED', 'asyncEnabled',
+    // ② 四页库存口径（本批已做 ✓ —— ⭐ 她那条硬要求：这几个名字**必须**在名单里 ✓
+    //    ⇒ `SELLABLE_STATES` 那处迁移成"退场断言"**才不算放宽** ✓）
+    'SCAN_STOCK_POLICY_ENABLED', 'SELLABLE_STATES', 'LEGACY_SELLABLE_STATES',
+    'legacySellableCountOf', 'inStock.legacyStates',
+  ];
+  const hits = allSrc().filter(({ text }) => FORBIDDEN.some((name) => text.includes(name)));
   assert.deepEqual(hits.map((h) => h.file), [],
-    '⭐ 那个开关必须**删净** ✗（她 22:5x：不需要开关 ⇒ 永远开 ✓）—— 名字回来 ⇒ 红 ✓');
+    '⭐ 这些名字必须**删净** ✗（她 22:5x：不需要开关 ⇒ 永远用新功能 ✓）—— 名字回来 ⇒ 红 ✓');
   // ⭐ 行为还在（"永远开"）⇒ 后台那一跑的调度点必须仍在（不然就把功能删了 ✗）
   const routes = fs.readFileSync(path.join(SRC, 'routes', 'scanPage', 'index.js'), 'utf8');
   assert.ok(/schedulePurchaseRest|schedulePurchaseWrite/.test(routes),
     '⭐ "提交即回、后台那一跑"必须**照旧在** ✗（删开关 = 永远开 ✓ 不是把功能删了 ✗）');
+  // ⭐ **正向钉"行为还在"（② 那一刀）**：⭐ **四页仍按实时库存口径** ✓
+  const policy = fs.readFileSync(path.join(SRC, 'config', 'scanStockPolicy.js'), 'utf8');
+  assert.ok(/const countInStockOf = \(row\) => liveInventoryCountOf\(row\);/.test(policy),
+    '⭐ 「有货」判据必须**只剩新口径** ✓（`liveInventoryCountOf` ⇒ 实时库存里有记录就有货 ✓）');
+  assert.equal(/legacySellableCountOf|policy\.enabled/.test(policy), false,
+    '🔴 老口径（按门盒/样品那两格数）**不许留下任何一行** ✗');
 });
