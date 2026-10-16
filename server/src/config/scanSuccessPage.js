@@ -44,6 +44,15 @@ const SCAN_SUCCESS_PAGE = Object.freeze({
   minimalText,
   /** @deprecated 只为可读性：她原话里那句形状 ✓ 判据按 `minimalText` 走 ✓。 */
   defaultMinimalText: DEFAULT_MINIMAL_TEXT,
+  // ⭐⭐ 2026-10-17（她 2026-10-16 23:5x 逐字「**那我肯定能看到这个单号呀**」✓）
+  //   成功页上那一行【纯文案】的单号模板（`{orderNo}` 占位 ✓ 与 `fillText` 同形 ✓）。
+  //   ⚠️ 它**刻意不在 `minimalSuccessOverrides` 要清的那几个字段里**
+  //     （`number` / `backPath` / `returnPath` / `autoReturnUrl` / `extraActionsHtml` ✓）
+  //     ⇒ ⭐ 极简（零链接零按钮零自动跳）与"看得到单号"**同时成立** ✓
+  //   ＋ ⭐ 它属于**成功页这份配置**（与 `minimalSuccessOverrides` 同一个家 ✓）
+  //     ⇒ ⭐ **不必动 `config/scanPage.js`** ✓（她 22:5x「不需要开关」✓ 那句是另一件事 ✓）
+  //   ⚠️ 号为空 ⇒ 渲染层**整行不输出** ✓ ⇒ **逐字节不变** ✓（`AC-REG1` 锁着这件事 ✓）
+  orderNoText: '上一单已提交（{orderNo}）',
 });
 
 /**
