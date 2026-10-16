@@ -281,7 +281,12 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   //     开关**开着**时（"实时库存里有记录 = 有货"）见 `test/scanStockPolicyUnifiedOn.test.js`。
   //   依据：业务负责人 2026-10-16 20:5x「**统一不用看状态**……这个口径其实也可以做一个配置」。
   //   ⚠️ 断言值与强度**都没变**（本文件跑的进程 = 缺省关着 ✓）。
-  assert.deepEqual([...SELLABLE_STATES], ['门盒', '样品'], '开关关着时：可卖 = 样品 + 门盒（她 2026-10-09 的口径）');
+  // ⭐⭐ 2026-10-16 22:5x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.deepEqual([...SELLABLE_STATES], ['门盒', '样品'], '开关关着时：可卖 = 样品 + 门盒（她 2026-10-09 的口径）');`
+  //   改后逐字：⭐ **该名单已随老口径退场** ✓（`SELLABLE_STATES === undefined` ✓）——
+  //     ⚠️ 原句 `[...SELLABLE_STATES]` 在名字退场后会**当场抛** ✗ ⇒ ⭐ 整条 AC2 就断在这里（后面根本没跑到 ✗）
+  //   依据 = 她 20:5x「**统一不用看状态**，只要在实时库存里这个编号有尺码记录，就都是有货」＋ 22:5x「**不需要开关**」✓
+  assert.equal(SELLABLE_STATES, undefined, '⭐ 老口径名单已退场 ✓ 永远按实时库存口径 ✓（谁加回来 ⇒ 红 ✓）');
   assert.equal(sellableCountOf(VIEW.rows[0], VIEW.columns), 1, '40：门盒 1');
   assert.equal(sellableCountOf(VIEW.rows[2], VIEW.columns), 2, '42：门盒 1 + 样品 1');
   // 改前逐字：`…, 0, '43：只有仓库 2 → 不算有货（开关关着时）'` ⇒ 改后：**2**（新口径：实时库存里有记录 = 有货 ✓）
@@ -294,8 +299,12 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
       { size_text: '43', cells: [{ count: 0 }, { count: 0 }, { count: 2 }], total: 2, missing: false },
     ],
   };
-  assert.deepEqual(saleSizeGroups(legacyShape).inStock.map((item) => item.size_text), ['40'],
-    '没有 key 时按列序取（仓库那 2 双不算有货）');
+  // ⭐⭐ 2026-10-16 22:5x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.deepEqual(… .inStock.map((item) => item.size_text), ['40'], '没有 key 时按列序取（仓库那 2 双不算有货）');`
+  //   改后逐字：⭐ **`['40', '43']`** ✓（实测 ✓）—— ⭐ 老形状里 43 那一行是「仓库 2 双」⇒ **新口径算有货** ✓
+  //   依据 = 她 20:5x「**统一不用看状态**，只要在实时库存里这个编号有尺码记录，就都是有货」＋ 22:5x「不需要开关」✓
+  assert.deepEqual(saleSizeGroups(legacyShape).inStock.map((item) => item.size_text), ['40', '43'],
+    '没有 key 时按列序取 ✓（⭐ 新口径：仓库那 2 双**也算有货** ⇒ 43 进第一组 ✓）');
   // ⭐ 2026-10-14 改指向：`saleSizeGroups` 多返回一组 `folded`（**缺货 ∩ 特殊码** ⇒ 「特殊码」折叠块 ✓）
   //   本例的 VIEW 是男鞋 A 段、缺货的是 41/43/44（**都在可录范围内、且都不是特殊码 46/47/48**）
   //   ⇒ `folded` 为空 ✓（"第一组/第二组"的语义一个字没变 ✓）
