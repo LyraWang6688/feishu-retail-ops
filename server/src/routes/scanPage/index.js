@@ -53,12 +53,13 @@ const { createVoucherPaymentService } = require('../../services/voucherPaymentSe
 const { SalesFollowupService } = require('../../services/salesFollowupService');
 const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../../views/scanPageRenderer');
 // ⭐⭐ 2026-10-16（退货「出图发群」接线 · 本卡）：**采购退货**那条链要的「出图 / 发群 / 回填附件」
-//   装配件 —— 它把真 `PurchaseWebhookService` 接到 `purchaseReturnService` 的 `webhooks` 上
+//   装配件 —— 它把真的那个出图 webhook 实例接到退货写入件的 `webhooks` 上
 //   （与补货 / 验收**同一条路**：同一个类、同一个 `deliverSupplierImages` ✓ 不发明新写法 ✗）。
-//   🔴 **为什么单独一个文件**：本文件（`routes/**`）有一条**既有哨兵**
-//     （`test/multiItemOrderRoute.test.js` 的 RT5 ＋ `test/scanDraftRouteWiring.test.js` 的 AC-D3i2）
-//     —— 路由的**代码行**里**不许出现**写链路的服务名（`purchaseWebhookService` /
-//     `purchaseReturnService` / `PurchaseWebhookService`）⇒ 真名只住在那个装配件里，这里只 require 它 ✓。
+//   🔴 **为什么单独一个文件**：本文件（`routes/**`）有**两条既有哨兵**
+//     （`test/multiItemOrderRoute.test.js` 的 RT5 ＋ `test/scanDraftRouteWiring.test.js` 的 AC-D3i2；
+//     ⚠️ 还有 `test/scanPage.test.js` ④ **连注释一起扫**）——
+//     路由里**不许出现**写链路那几个服务名（出图/报货那条、退货那条、以及那个类名）✗
+//     ⇒ 真名只住在那个装配件里，本文件只 require 它 ✓（⚠️ 连注释里都别写它们 ✗）。
 //   ⚠️ 接不接由**配置**决定（`config/scanWrite.js` 的 `PURCHASE_RETURN.imageDelivery.enabled` ✓
 //     配置先行）；发到哪个群仍是既有 `PURCHASE_CHAT_ID` ✓（本文件一行都不读它 ✗）。
 const { resolvePurchaseReturnImageOptions } = require('../../services/purchaseReturnImageWiring');

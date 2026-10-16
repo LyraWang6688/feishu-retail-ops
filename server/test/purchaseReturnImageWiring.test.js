@@ -602,6 +602,13 @@ test('AC-RI6 🔴 源码哨兵：路由装配处出现 `purchaseReturnOptions` �
   for (const name of ['purchaseWebhookService', 'purchaseReturnService', 'PurchaseWebhookService']) {
     assert.equal(code.includes(name), false, `🔴 路由的代码行里不许出现 ${name} ✗`);
   }
+  // ⚠️ 还有**更严的那一条**（`test/scanPage.test.js` ④）：它**连注释一起扫**，
+  //    禁的是 `inventoryService|salesOrderService|purchaseWebhookService` ——
+  //    本卡真踩过一次（注释里写了 `purchaseWebhookService` ⇒ 全量 1 红 ✗）⇒ 在这里**照样钉住** ✓
+  for (const name of ['inventoryService', 'salesOrderService', 'purchaseWebhookService']) {
+    assert.equal(route.includes(name), false,
+      `🔴 路由里**连注释都不许**出现 ${name} ✗（既有哨兵 \`test/scanPage.test.js\` ④ 连注释一起扫 ✓）`);
+  }
 });
 
 // MUTATION（本卡 · 2 组，每组都在**独立 worktree** 上单独跑过、确认真红，跑完逐字节还原 ✓）：
