@@ -81,6 +81,17 @@ const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 //   本文件是"新建货品"与"写成本"两个写入口之一（另一个是 `tagQrCodeService` 写标签二维码）。
 //   传 `{ tableKey: 'product' }` 只作废货品那一份（写货品不影响库存，别让库存快照白重拉）。
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
+// ⭐⭐ 2026-10-16（业务负责人拍板 **ⓐ**：「同一个报货批次号下**按供应商拆分/分组**」）——
+//   分组口径 / 每组幂等键 / "没标注供应商"的桶只在 `config/supplierSplit.js` ＋
+//   `services/supplierSplitService.js` 一处（本文件**不抄第二份** ✗）。
+//   ⚠️ 它**不认识飞书**（不 require gateway / schema）、**不写表** ⇒ 本类照旧是**唯一**写库的地方。
+const { resolveSupplierSplitConfig } = require('../config/supplierSplit');
+const {
+  splitBySupplier, groupItemsBySupplier: groupItemsBySupplierOf, documentFileNameOf,
+} = require('./supplierSplitService');
+
+/** 「单据」里那张图的**缺省**文件名后缀（退货那条链会传自己的后缀 ✓ 值没变）。 */
+const DEFAULT_DOCUMENT_FILE_SUFFIX = '采购单';
 
 /**
  * 采购侧的关联键包（只进日志，**不改任何业务判断、不进任何业务 input**）。
@@ -370,6 +381,12 @@ class PurchaseWebhookService {
     // 测试用的显式群通道（见 sendPurchaseGroupNotice）：传了就只发这个 chat_id，
     // **不读环境变量**——一个进程里并发跑的用例不会因为 PURCHASE_CHAT_ID 互相污染。
     this.sandboxChatId = options.sandboxChatId || '';
+    // ⭐⭐ 2026-10-16（供应商拆分 · 业务负责人拍板 **ⓐ**：「同一个报货批次号下按供应商分组」）：
+    //   分组口径 / 每组幂等键 / "没标注供应商"的桶 / 事件名。
+    //   ⚠️ **构造时解析一次**（与 `this.orderBatches.settings` 同一种形状）：配置写错要在
+    //      服务起来那一刻就吵，而不是等她第一次报货才发现 ✓（`resolveSupplierSplitConfig` 认不出就抛）。
+    //   ⚠️ 用例可以注入一份假配置（`options.supplierSplit`）—— 与 `options.images` 同一种注入法 ✓。
+    this.supplierSplit = options.supplierSplit || resolveSupplierSplitConfig();
   }
 
   // ⛔⛔ 2026-10-09：**「信息填写」报单/退货入口整条链路已从这里删除**。
@@ -584,9 +601,18 @@ class PurchaseWebhookService {
    * **都已删除**（业务负责人逐条批准），`sendCard` 更早随私聊链路一起删——三条都得从
    * git 历史里取回（`git log -S 'purchaseRequestConfirmationCard'`）。
    */
-  async publishPurchaseRequest(taskId, task) {
+  async publishPurchaseRequest(taskId, task, options = {}) {
     // 免确认路径没有卡片消息可更新，明确跳过一次卡片 patch（否则会打无意义的告警日志）。
-    return this.confirmPurchaseRequest(taskId, task, {}, { skipCardUpdate: true });
+    return this.confirmPurchaseRequest(taskId, task, {}, {
+      skipCardUpdate: true,
+      // ⭐⭐ 2026-10-16（供应商拆分 · 她选的 ⓐ）：**调用方（引擎）在"调写入口之前"已经算好的
+      //   那一份分组** —— 原样带进写入口。
+      //   🔴 为什么必须由调用方给：她要的是"**生成报货单之前**就把组算好"（生成完再拆就晚了 ✗）。
+      //     本服务在"计划冻结"那一步**优先用它**，且会**交叉核对**（两边不一致 ⇒ 当场 warn ✓
+      //     见 `ensurePostingPlan`）——**不是**两边各算一份然后随便挑一个 ✗。
+      //   ⚠️ 缺省 `null` ⇒ 写入口按草稿**自己按同一条口径算**（老入口 / 单货品那条路 ✓ 逐字等价）。
+      supplierGroups: options.supplierGroups || null,
+    });
   }
 
   /**
@@ -685,17 +711,59 @@ class PurchaseWebhookService {
 
   // 同一个供应商的明细合成一张图。没有供应商的明细（历史草稿）归到一组，
   // 宁可出一张"未标注供应商"的图，也不能拆成一人一张。
+  //
+  // ⭐⭐ 2026-10-16（供应商拆分 · 她选的 ⓐ）：**分桶口径搬进 `services/supplierSplitService.js`**
+  //   —— 出图 / 分组键 / 判据现在是**同一个纯函数**（`groupItemsBySupplierOf`）✓。
+  //   行为**一个字没变**（同一趟遍历、同样"第一次出现的顺序"、同样把空供应商归一组 ✓）；
+  //   这里保留方法名，是因为它已经是被调用方与用例认识的口子（换名只会制造无谓的 diff ✗）。
   groupItemsBySupplier(items) {
-    const groups = new Map();
-    (items || []).forEach((item, index) => {
-      const supplierRecordId = item?.supplier_record_id || '';
-      const key = supplierRecordId || '__unknown__';
-      if (!groups.has(key)) groups.set(key, { supplierRecordId, items: [], indexes: [] });
-      const group = groups.get(key);
-      group.items.push(item);
-      group.indexes.push(index);
+    return groupItemsBySupplierOf(items, this.supplierSplit);
+  }
+
+  /**
+   * ⭐⭐ 2026-10-16（供应商拆分 · 业务负责人拍板 **ⓐ**）：**这一次要出的报货单 = 按供应商分的几组**。
+   *
+   * 组的**顺序与键**优先取「计划冻结」里那一份（= **生成报货单那一步**算好的 ✓，
+   * `ensurePostingPlan` → `plan.supplier_groups`）；拿不到（老计划 / 冻结计划没有那两个字段）
+   * 就按**同一条口径**现算（同一个纯函数 ✓ 不会漂）。
+   *
+   * 🔴 **批次号仍然是同一个**（她选的 ⓐ）⇒ 这里**只分组、不换号**：
+   *   所有组共用 `posting.batch_no`，出图那一步把每组的图都挂到**同一行**的「单据」上 ✓。
+   * 🔴 **不做"哪一组不在计划里就丢掉"** 这种事 ✗：草稿里有的供应商**必须都出图**
+   *   （丢一组 = 那一家的货没人去报，是最坏的一种静默失败）。
+   *
+   * @returns {Array<{key:string, supplierRecordId:string, items:Array, indexes:Array<number>,
+   *                  groupKey:string, documentKey:string, planned:boolean}>}
+   */
+  supplierReportGroups(task, posting = {}) {
+    const draft = task?.draft || {};
+    const items = Array.isArray(draft.items) ? draft.items : [];
+    const batchNo = posting.batch_no || draft.batch_no || '';
+    const plan = task?.posting_plan || {};
+    const batchKey = String(posting.batch_key || plan.batch_key || '');
+    const planned = Array.isArray(posting.supplier_groups) && posting.supplier_groups.length
+      ? posting.supplier_groups
+      : (Array.isArray(plan.supplier_groups) ? plan.supplier_groups : []);
+    const byKey = new Map((planned || []).map((group) => [String(group?.supplier_key || ''), group]));
+    return this.groupItemsBySupplier(items).map((group) => {
+      const match = byKey.get(String(group.key || '')) || null;
+      // 计划里有 ⇒ **逐字用它那把键**（那是"这一组"的身份）；没有 ⇒ 按同一条模板现算 ✓
+      const computed = splitBySupplier({
+        items: group.items,
+        batchNo,
+        batchKey,
+        config: this.supplierSplit,
+      }).groups[0] || { group_key: '', document_key: '' };
+      return {
+        key: group.key,
+        supplierRecordId: group.supplierRecordId,
+        items: group.items,
+        indexes: group.indexes,
+        groupKey: String(match?.group_key || computed.group_key || ''),
+        documentKey: String(match?.document_key || computed.document_key || ''),
+        planned: Boolean(match),
+      };
     });
-    return [...groups.values()];
   }
 
   async resolveSupplierName(supplierRecordId) {
@@ -761,6 +829,17 @@ class PurchaseWebhookService {
     }
     const sent = [];
     const failed = [];
+    // ⭐⭐ 2026-10-16（供应商拆分 · 她选的 ⓐ）：**某一组之前已经出过报货单** ⇒ 这一次跳过它
+    //   （AC-SS4「同一组重复生成 ⇒ 只出一次」）。判据是**已经落库的那张图**
+    //   （「单据」附件列里的文件名 = 这一组的报货单身份 ✓）——**不引新状态、不查第二张表** ✓。
+    //   ⚠️ 顺序上它是**先发图、后写附件**（下面的既有顺序）：所以"附件里有这张图"就等价于
+    //      "这一张已经发出去过了" ✓（图没发成功的那一组**不写附件** ⇒ 重试照旧会补发 ✓）。
+    const alreadyReported = [];
+    // 「这一组的报货单叫什么文件名」的**唯一一处解析** —— 下面的前置判据与
+    // `writeSupplierImageAttachment` 必须**同一个名字**，否则"已经出过"永远判不出来 ✗。
+    // ⚠️ 语义与改前逐字一致：**只有 `undefined` 才用缺省**（显式传空串 ⇒ 名字里就是空的 ✓ 不放宽）。
+    const fileNameSuffix = options.fileNameSuffix === undefined
+      ? DEFAULT_DOCUMENT_FILE_SUFFIX : options.fileNameSuffix;
     // 发到群里的每条消息的 message_id / thread_id：记进本地映射，
     // 供「话题里的消息 / 引用那条消息 → 是哪一批」反查。
     const groupMessages = [];
@@ -777,10 +856,38 @@ class PurchaseWebhookService {
     // 群里那条话术的**文案**（含 @ 标记 / 供应商占位 / 双数占位 / 未标注供应商的兜底写法）
     // 全在 `config/purchaseGroupNoticeText`：**调用时才解析**（不在模块加载时求值）。
     const noticeConfig = resolvePurchaseGroupNoticeConfig();
-    for (const group of this.groupItemsBySupplier(items)) {
+    // ⭐ 分组 = `supplierReportGroups`（**同一个批次号下的几组** ✓ 她选的 ⓐ）——
+    //   组键 / 单据键优先取**生成报货单那一步冻结好的计划**（见 `ensurePostingPlan`）。
+    const reportGroups = this.supplierReportGroups(task, posting);
+    if (reportGroups.length > 1) {
+      logInfo(this.supplierSplit.events.grouped, {
+        task_id: taskId, batch_no: batchNo, batch_count: 1, group_count: reportGroups.length,
+        supplier_keys: reportGroups.map((group) => group.key),
+        group_keys: reportGroups.map((group) => group.groupKey),
+        policy: this.supplierSplit.batchNoPolicy,
+      });
+    }
+    for (const group of reportGroups) {
       const supplierName = await this.resolveSupplierName(group.supplierRecordId).catch(() => '');
       // 供应商名取不到 → 用配置里的兜底写法（默认「未标注供应商」），**绝不编**。
       const label = supplierLabel(supplierName, noticeConfig);
+      // ⭐⭐ 这一组**已经出过报货单** ⇒ 跳过（连图都不渲染 ✓ AC-SS4）。
+      //   ⚠️ 判据只认**已经落库的事实**（「单据」里那张同名图）；拿不到批次身份 / 查询失败
+      //     ⇒ **当它没出过**（宁可多发一次，也绝不静默少发一家 ✗ —— 少发才是真事故）。
+      const fileName = documentFileNameOf(label, fileNameSuffix);
+      if (batchNo && typeof this.orderBatches?.findDocument === 'function') {
+        const known = await this.orderBatches.findDocument(batchNo, fileName).catch(() => null);
+        if (known?.exists) {
+          logInfo(this.supplierSplit.events.groupAlreadyReported, {
+            task_id: taskId, batch_no: batchNo, supplier: label,
+            group_key: group.groupKey, document_key: group.documentKey,
+            file_name: fileName, batch_record_id: known.recordId || '',
+            detail_count: group.items.length,
+          });
+          alreadyReported.push(label);
+          continue;
+        }
+      }
       // ⚠️ 双数口径**一个字没动**：还是这一组明细的 `quantity` 求和。
       //    2026-10-07 只改文案（删掉「N 条」）——`group.items.length`（条数）**不再要了**，
       //    连那个变量一起删（留着没人读的 `rowCount` 只会让下一个人以为文案里还有条数）。
@@ -876,7 +983,8 @@ class PurchaseWebhookService {
           // 「把这些信息挪到我们的'报货批次'里面」）—— 原来写的「采购申请单」那一列
           // 已被她**从生产表删掉**，再往那儿写只会 FieldNameNotFound。
           batchNo: posting.batch_no || draft.batch_no || '',
-          fileNameSuffix: options.fileNameSuffix,
+          // ⚠️ 传**上面已经解析好的那一份**（前置判据与它是同一个名字 ✓）—— 别再各解析一次 ✗
+          fileNameSuffix,
           // 附件写回也是写库：带上这一层的关联键（task_id ＋ batch_no）。
           correlation,
         });
@@ -920,6 +1028,12 @@ class PurchaseWebhookService {
     //（业务负责人：「一律在话题群里，以后私聊路线就没有了」）。
     const summary = {
       sent, failed, chat_id: target.chatId, thread_root_message_id: threadRootMessageId,
+      // ⭐ 2026-10-16（供应商拆分 · AC-SS4）：这一次**因为已经出过而跳过**的那几组。
+      //   与 `sent` 分开报 ⇒ 日志里一眼看得出"是重复生成、不是又出了几张" ✓（不混为一谈 ✗）。
+      already_reported: alreadyReported,
+      // 这一次一共分了几组（她选的 ⓐ：**批次号仍然只有一个** ✓ `batch_count` 恒为 1）。
+      group_count: reportGroups.length,
+      batch_count: 1,
     };
     if (failed.length) {
       // 图没发出去（例如机器人缺 im:resource 图片上传权限）时把失败留在任务里：
@@ -949,7 +1063,7 @@ class PurchaseWebhookService {
    *    她已经有图了，写不回附件只是"欠一次转发"，绝不是把已经发出去的采购单判成失败。
    */
   async writeSupplierImageAttachment({
-    taskId, supplierName, png, batchNo = '', fileNameSuffix = '采购单', correlation = {},
+    taskId, supplierName, png, batchNo = '', fileNameSuffix = DEFAULT_DOCUMENT_FILE_SUFFIX, correlation = {},
   }) {
     if (!String(batchNo || '').trim()) {
       logWarn('purchase.request.image.no_batch_no', { task_id: taskId, supplier: supplierName });
@@ -960,8 +1074,11 @@ class PurchaseWebhookService {
     }
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-request-image-'));
     try {
-      const safeName = String(supplierName || 'supplier').replace(/[^\w\u4e00-\u9fa5-]/g, '') || 'supplier';
-      const fileName = `${safeName}-${fileNameSuffix}.png`;
+      // ⭐ 2026-10-16：文件名拼法**搬进** `services/supplierSplitService.js` 的
+      //   `documentFileNameOf`（**唯一一处** ✓）—— 因为"这一组是不是已经出过了"的前置判据
+      //   （`deliverSupplierImagesInner`）必须与这里**逐字同名**，两处各写一份必然会漂 ✗。
+      //   取值规则与改前**逐字一致**（不安全字符去掉；去完为空 ⇒ `supplier` 兜底 ✓）。
+      const fileName = documentFileNameOf(supplierName, fileNameSuffix);
       // ⚠️ **上传之前**先判"这张图是不是已经在这一批的「单据」里了"：
       //    既有的语义是「重复执行**连上传都不做**」（重跑批次不该白传一次素材）。
       const existing = await this.orderBatches.findDocument(batchNo, fileName);
@@ -1531,8 +1648,19 @@ class PurchaseWebhookService {
    * 2. 崩溃后的恢复清单——知道「应该写几条、写到哪一条」。
    *
    * 所以它必须在任何远端写入之前落盘；落盘失败就不能开始写。
+   *
+   * ⭐⭐ 2026-10-16（供应商拆分 · 业务负责人拍板 **ⓐ**）：**「按供应商分组」也在这里冻结** ✓
+   *   —— 它在**任何远端写入之前**（建批次行 / 建明细 / 出图都在它之后）⇒ 正合她的口径
+   *   「生成报货单那一下就要分好组」（生成完再拆就晚了 ✗）。落进 `plan.supplier_groups`：
+   *     · **批次号仍然只有一个**（`batch_count` 恒为 1 ✓ 她选的 ⓐ —— 不是"每个供应商一个新号"✗）；
+   *     · 每组带 `group_key`（组级幂等键）与 `document_key`（这一组那张报货单的幂等键），
+   *       且**跟着计划一起落盘** ⇒ 重试时逐字复用（重试换键等于没有幂等 ✗）。
+   *
+   * options.supplierGroups：调用方（多货品引擎）**在调写入口之前**已经算好的那一份分组
+   *   —— 优先用它；两边算出来的**供应商组不一致**时**当场 warn**（不静默挑一个 ✗），
+   *   并按**草稿（= 真正要写的事实）**这一份继续（写谁就以谁为准）。
    */
-  async ensurePostingPlan(taskId, task) {
+  async ensurePostingPlan(taskId, task, options = {}) {
     if (task.posting_plan?.version === 1) return task.posting_plan;
     const draft = task.draft || {};
     const items = draft.items || [];
@@ -1550,6 +1678,11 @@ class PurchaseWebhookService {
         // ⛔ `report_record_id`（「信息填写」那条报单记录）**已删除（2026-10-09）**：
         //    报单入口退场 ⇒ 这个字段没有任何读方，留着只会在日志/排查里误导。
         product_record_id: item.product_record_id,
+        // ⭐ 2026-10-16（供应商拆分）：**每条明细自己的供应商也要冻结进计划** ——
+        //   分组就是按它分的（明细没带才退回批次级那一个；两个都没有 ⇒ 落"没标注"桶 ✓）。
+        //   ⚠️ 只管**分组/出图**，**不写表**：「采购明细.供应商」是公式列 /「采购主表.供应商」
+        //      是她在表上维护的（代码只读不写 ✗）——分组落在"每组一张报货单"上 ✓。
+        supplier_record_id: String(item.supplier_record_id || draft.supplier_record_id || ''),
         // 历史草稿可能带 `size: null`（采购退货那条链路，已退场）：这里保留 null，
         // 写入时**不写「尺码」字段**。不能写 Number(null)=0（0 会被尺码解析判成非法）。
         size: item.size === null || item.size === undefined ? null : Number(item.size),
@@ -1559,6 +1692,46 @@ class PurchaseWebhookService {
         behavior_record_id: item.behavior_record_id || draft.behavior_record_id || '',
       })),
     };
+    // ⭐⭐ 供应商拆分：**同一个批次号下**按供应商分组（她选的 ⓐ）—— 组顺序 = 明细里第一次出现的顺序。
+    const split = splitBySupplier({
+      items: plan.items,
+      batchNo: plan.batch_no,
+      batchKey: plan.batch_key,
+      taskId,
+      config: this.supplierSplit,
+    });
+    // 计划里只留**组的身份与键**（不塞一份明细副本进本地任务文件 —— 明细已经在 `plan.items` 里 ✓）。
+    plan.supplier_groups = split.groups.map((group) => ({
+      supplier_record_id: group.supplier_record_id,
+      supplier_key: group.supplier_key,
+      group_key: group.group_key,
+      document_key: group.document_key,
+      indexes: group.indexes,
+      detail_count: group.detail_count,
+      pair_count: group.pair_count,
+    }));
+    // 调用方（引擎）也算过一遍 ⇒ **交叉核对**：不一致就是真 bug（比如两边读的明细不是同一份），
+    // 如实吵一条，谁也别静默挑一个 ✗。写出去的那一份**以草稿为准**（写谁就以谁为准 ✓）。
+    const supplied = Array.isArray(options.supplierGroups) ? options.supplierGroups : [];
+    if (supplied.length) {
+      const suppliedKeys = supplied.map((group) => String(group?.supplier_key || '')).join('|');
+      if (suppliedKeys !== split.summary.supplier_keys.join('|')) {
+        logWarn(this.supplierSplit.events.mismatch, {
+          task_id: taskId, batch_no: plan.batch_no,
+          supplied_supplier_keys: suppliedKeys,
+          draft_supplier_keys: split.summary.supplier_keys.join('|'),
+          note: '调用方在调写入口之前算的那一组 与 写入口按草稿算的这一组 对不上，按草稿写',
+        });
+      }
+    }
+    // 单供应商（今天绝大多数情况）**不打**这条 —— 免得日常日志被刷屏（她只关心"混了供应商"那种）✓
+    if (split.groupCount > 1) {
+      logInfo(this.supplierSplit.events.grouped, {
+        task_id: taskId, batch_no: plan.batch_no, batch_count: split.batchCount,
+        group_count: split.groupCount, supplier_keys: split.summary.supplier_keys,
+        group_keys: split.summary.group_keys, policy: split.policy, stage: split.stage,
+      });
+    }
     const updated = await this.store.update(taskId, { posting_plan: plan, posting_stage: 'posting_plan_created' });
     return updated.posting_plan;
   }
@@ -1575,7 +1748,9 @@ class PurchaseWebhookService {
   async confirmPurchaseRequest(taskId, task, event = {}, options = {}) {
     const draft = task.draft;
     const isBatch = draft.is_batch === true;
-    const plan = await this.ensurePostingPlan(taskId, task);
+    // ⭐ 2026-10-16（供应商拆分）：把**调用方在调写入口之前算好的分组**交给"计划冻结"那一步
+    //   （它会优先用它、并交叉核对；见 `ensurePostingPlan`）。缺省 ⇒ 按草稿自己算（老入口 ✓）。
+    const plan = await this.ensurePostingPlan(taskId, task, { supplierGroups: options.supplierGroups });
     // 关联键（只进日志）：task_id ＋ 批次号（plan 里已经冻结好了，重试不会换号）；
     // 每条写入再按需补上**它自己那条报单记录**的 id。
     const baseCorrelation = purchaseCorrelation({ taskId, batchNo: plan.batch_no });
@@ -1698,15 +1873,29 @@ class PurchaseWebhookService {
       request_id_by_item_key: requestIdByItemKey,
       batch_record_id: batchRecordId,
       batch_no: plan.batch_no,
+      // 批次幂等键（**组级幂等键** `supplier_group:{batchKey}:{supplierKey}` 的一半就是它 ✓）
+      batch_key: plan.batch_key,
+      // ⭐⭐ 2026-10-16（供应商拆分 · 她选的 ⓐ）：**同一个批次号下**按供应商分的几组 ——
+      //   在"计划冻结"那一步就算好了（**任何远端写入之前** ✓），这里原样交给出图那一步
+      //   ⇒ 出图的每一组与计划里的每一组**一一对应**（不多一组、不少一组，组键也不漂 ✓）。
+      supplier_groups: plan.supplier_groups || [],
     };
     // 采购事实已经落地之后的收尾动作：按供应商出图 → 发给她 → 写回附件。
     // 现场出图失败也只记日志（方法内部已吞异常），绝不把任务判成失败。
-    await this.deliverSupplierImages(taskId, task, posting);
+    // ⭐ 2026-10-16（供应商拆分）：把出图那一跑的**结果**带回去（发了几组 / 哪几组**已经出过**）——
+    //   它现在是"生成报货单"这一步的可查产物（`image_delivery.group_count` / `already_reported` ✓），
+    //   调用方与判据都能直接看，不必去翻日志（AC-SS4 就是靠它钉"同一组只出一次"）。
+    const imageDelivery = await this.deliverSupplierImages(taskId, task, posting);
     // 更新卡片为"已完成"状态（免确认路径没有卡片，跳过）
     if (!options.skipCardUpdate) {
       await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, purchaseMessage.m1, purchaseMessage.m2({ plan, requestIds }), 'green'));
     }
-    return { toast: { type: 'success', content: purchaseToast.m1({ plan, requestIds }) }, ...posting };
+    return {
+      toast: { type: 'success', content: purchaseToast.m1({ plan, requestIds }) },
+      ...posting,
+      // ⭐ 出图那一跑的产物（**附加字段**，既有键名一个没动 ✓）：发了几组 / 哪几组已经出过
+      image_delivery: imageDelivery,
+    };
   }
 
   /**

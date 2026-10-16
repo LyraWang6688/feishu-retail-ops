@@ -636,7 +636,17 @@ test('AC-SM-F1 🔴 两个红线文件**逐字节未动**（谁改一个字就�
   // ② `services/multiItemOrderService.js`：Lead 2026-10-16 明文"**不授权**"改 ⇒ 记指纹基线（谁动一个字就红 ✓）。
   //    ⚠️ 基线 = 本判据落地时（`main b7ba07e`）**实测值**；那两处 `assert` 是**能真红**的证明 ✓
   //    （改动那个文件若**确属授权过的另一刀** ⇒ 按"成对迁移"更新这个常量 ✓ 不许静默 ✗）。
-  const MULTI_ITEM_SERVICE_SHA256 = 'eaa1f7fcb4045be5246e2f5c2447ca3648f84d3b9e9f777a904dd190efd8c7d5';
+  //
+  //    ⭐⭐ **成对迁移（2026-10-16 下半场 · 供应商拆分那一刀）** —— 走的正是上面那句"授权过的另一刀"：
+  //      · **改前逐字**：`const MULTI_ITEM_SERVICE_SHA256 = 'eaa1f7fcb4045be5246e2f5c2447ca3648f84d3b9e9f777a904dd190efd8c7d5';`
+  //      · **改后逐字**：下面那一行（`1bd02c71…5708`）
+  //      · **依据**：业务负责人 **2026-10-16 拍板 ⓐ**（「同一个报货批次号下**按供应商拆分/分组**」）
+  //        ＋ 本刀 brief **明文授权** `services/**`（"草稿/分组 ✓"）——
+  //        引擎是"**调写入口之前**把组算好"的那一半（`planSubmission` 多返回 `supplierGroups`、
+  //        `submitDraft` 把它作为第 3 个实参交给写入口 ✓），**载荷一个字段没动** ✓。
+  //        ⚠️ 本行**只**改这一个常量；判据本身（含探针）**一个字没放宽** ✗，
+  //        落点与逐条对照见 `docs/supplier-split-at-generation-2026-10-16.md` §3.5 / §4（AC-SS2/SS3）。
+  const MULTI_ITEM_SERVICE_SHA256 = '1bd02c712ec61bad419f51e8c4d2b23b2a9a009f3dd28792163f8a4250c45708';
   const enginePath = path.join(SERVER, 'src/services/multiItemOrderService.js');
   const engineRaw = fs.readFileSync(enginePath);
   const engineActual = crypto.createHash('sha256').update(engineRaw).digest('hex');

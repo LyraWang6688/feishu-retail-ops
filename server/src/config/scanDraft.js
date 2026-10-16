@@ -25,10 +25,13 @@
  *    「在**同一个报货批次号**里面，有可能会**混杂着不同的供应商**。我们在**生成报货单**的时候，
  *      需要**按照供应商进行拆分和分组**。」
  *    ⇒ **存草稿阶段【不拆】** ✓（草稿行只记 `draftScope` 与 `supplierRecordId`）；
- *      **拆的那一下是「生成报货单」** ⇒ 落在 **S3**（本刀 S1 = 只做存储层 ✗ 不生成报货单）。
- *      ⚠️ "拆出来是**同一批次号下图分供应商**还是**每个供应商一个新批次号**" ——
- *        **要她拍板**（Lead 便条 3 明文：这是要列成问题问她的一条）⇒ 本文件**不预设** ✗，
- *        只留 `supplierSplit.stage` / `supplierSplit.batchNoPolicy: 'undecided'` **如实标未决**。
+ *      **拆的那一下是「生成报货单」** ✓（`supplierSplit.stage` = `generate_report`）。
+ *      ⭐⭐ **2026-10-16 已落定**（她当天拍板 **ⓐ**：**同一批次号下**按供应商分组 ✓）：
+ *        改前逐字：`batchNoPolicy: 'undecided'`（S1 当时**如实标未决** —— "拆成几单 / 几个批次号
+ *          要列成问题问她"，真源在 `docs/pending-confirmations.md` 第 ② 条）；
+ *        改后逐字：**从 `config/supplierSplit.js` 读**（那边是**唯一真源** ⇒ 本文件不抄第二份 ✗）；
+ *        依据：业务负责人 2026-10-16 拍板 **ⓐ「同一批次号下按供应商分组」** ✓
+ *          （**不是** ⓑ「每个供应商各开一个新批次号」✗）。
  *
  * ── 其余口径的出处 ────────────────────────────────────────────────────────
  *   · **存哪**：`「报货批次」/「采购主表」表的一行**（她的"草稿状态"= 到货状态「未报货」）；
@@ -43,6 +46,8 @@
 const path = require('node:path');
 const { readFlag, readInt, readString } = require('./envValue');
 const { SCAN_WRITE } = require('./scanWrite');
+// ⭐ 供应商拆分口径的**唯一真源**（本文件只读它 ⇒ 两边不会漂 ✓；**单向** require，不成环 ✗）。
+const { SUPPLIER_SPLIT: DECIDED_SUPPLIER_SPLIT } = require('./supplierSplit');
 
 // ── 取值域（**字面量只在这里**；逻辑里只认这些常量 ✓）────────────────────────
 /** 同时留几份草稿：她选的是「只留一份当前草稿」⇒ 缺省 **single** ✓。 */
@@ -79,10 +84,15 @@ const BATCH_NO_POLICIES = Object.freeze({ reusePending: 'reuse_pending' });
 /** 号源（**只用于自检/文档**，值不参与逻辑 —— 免得后来人以为本文件自己造号）。 */
 const BATCH_NO_SOURCE = 'services/purchaseBatchNoGenerator.js';
 
-/** 供应商拆分：她说是「生成报货单」那一下拆；**拆成几单/几个批次号她还没拍** ⇒ 如实标未决。 */
+/**
+ * 供应商拆分：她说「**生成报货单**那一下拆」✓；**批次号口径她 2026-10-16 已拍板 = ⓐ**（同一批次号下分组）。
+ *
+ * ⚠️ 真源在 `config/supplierSplit.js`（那边还管每组的幂等键 / "没标注供应商"的桶 / 事件名）——
+ *    本文件**只读它**，**不抄第二份** ✗（抄了就一定会漂）。
+ */
 const SUPPLIER_SPLIT = Object.freeze({
-  stage: 'generate_report',
-  batchNoPolicy: 'undecided',
+  stage: DECIDED_SUPPLIER_SPLIT.stage,
+  batchNoPolicy: DECIDED_SUPPLIER_SPLIT.batchNoPolicy,
 });
 
 /**
