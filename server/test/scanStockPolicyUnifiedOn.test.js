@@ -160,8 +160,13 @@ const HER_44_VIEW = fx.FULL_SIZES_BLANK_VIEW;
 // 前置自证：本进程真的开着（否则下面全是假绿）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ST5-pre ⭐ 本进程开关**真的开着**（不是靠默认值假绿 ✓）', () => {
-  assert.equal(process.env[ENABLED_KEY], 'true', 'env 设上了');
+test('AC-ST5-pre ⭐ **已经没有任何开关**（所以本文件不再需要"本进程开关真的开着"那一步 ✓）', () => {
+  // ⭐⭐ 2026-10-16 22:5x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(process.env[ENABLED_KEY], 'true', 'env 设上了');`
+  //   改后逐字：⭐ **`ENABLED_KEY` 已退场 ⇒ `process.env[undefined]` 当然是 `undefined`** ✓
+  //     ⇒ ⭐ 这条**不改断言强度**：仍钉"本进程没有任何开关可读" ✓（依据 = 她 22:5x「不需要开关」✓）
+  assert.equal(ENABLED_KEY, undefined, '⭐ 开关变量名已退场 ✓');
+  assert.equal(process.env[ENABLED_KEY], undefined, '⭐ 本进程没有任何开关 env 可读 ✓');
   assert.equal(SCAN_STOCK_POLICY.enabled, undefined, '⭐ 开关已退场 ⇒ 不再有开与关这回事 ✓');
   assert.equal(countInStockOf({ total: 1, cells: [] }), 1, '判据走的是"实时库存里有记录"那条路');
   assert.equal(resolveScanStockPolicy({}).enabled, undefined, '⭐ 纯函数也不再解析任何开关 ✓');
@@ -209,12 +214,22 @@ test('AC-ST5 ⭐⭐ 同一份实时库存 ⇒ 四页的"有货"集合**完全一
     assert.ok(set.includes('44'), `${label} 必须把「未标状态 1 双」的 44 算有货（统一不看状态 ✓）`);
   }
 
-  // ⑤ 🔴 **判据是活的**：拿"旧口径"（开关关着）算同一条数据 ⇒ 与库存页**对不上**（那正是改前打架的形状）
-  const off = resolveScanStockPolicy({ [ENABLED_KEY]: 'false' });
-  const legacySet = setOf(view.rows.filter((row) => countInStockOf(row, view.columns, off) > 0).map((row) => row.size_text));
-  assert.deepEqual(legacySet, ['40', '42', '46'], '旧口径只认门盒+样品 ⇒ 43/44 不在里面');
-  assert.notDeepEqual(legacySet, inventoryInStock,
-    '旧口径 vs 库存页**必须**对不上（否则 AC-ST5 就没在钉任何东西 ✗）');
+  // ⑤ ⭐⭐ 2026-10-16 22:5x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`const off = resolveScanStockPolicy({ [ENABLED_KEY]: 'false' });`
+  //             `const legacySet = setOf(… countInStockOf(row, view.columns, off) > 0 …);`
+  //             `assert.deepEqual(legacySet, ['40','42','46'], '旧口径只认门盒+样品 ⇒ 43/44 不在里面');`
+  //             `assert.notDeepEqual(legacySet, inventoryInStock, '旧口径 vs 库存页必须对不上 …');`
+  //   改后逐字：⭐ **旧口径已经不存在** ✗（开关与 `legacySellableCountOf` / `LEGACY_SELLABLE_STATES` 全退场）
+  //     ⇒ ⭐ 那条"两种口径对不上"的**活性检查**换成 ⭐ **同义的活性检查**：
+  //       **把状态的差别抹平**（同一份数据里"只有仓库 / 未标状态"的码也必须算有货 ✓）
+  //       ＋ ⭐ 断言那几个老符号**已是 `undefined`**（谁把它们加回来 ⇒ 红 ✓）
+  //   依据 = 业务负责人 20:5x「**统一不用看状态**，只要在实时库存里这个编号有尺码记录，就都是有货」
+  //          ＋ 22:5x「**不需要开关**」✓（`docs/no-switch-rule-2026-10-16.md` ✓）
+  assert.equal(typeof ENABLED_KEY, 'undefined', '⭐ 开关变量名已退场 ✓（不许留开关 ✗）');
+  for (const label of ['43', '44']) {
+    assert.ok(inventoryInStock.includes(label),
+      `⭐ 活性检查（改后口径）：${label} 必须算有货 —— 只有「仓库」/「未标状态」也照样算 ✓（= 统一不看状态 ✓）`);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
