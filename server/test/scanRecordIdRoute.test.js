@@ -336,8 +336,21 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
       html = await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), skipBody)).text();
     }
     assert.ok(html.includes(SCAN_WRITE.texts.submittedTitle), '成功页逐字「您的提交已成功」');
-    assert.ok(html.includes(`${SCAN_PAGE.route.recordBasePath}/${RECORD_ID}`),
-      `成功页的【再录一单】必须回 /r/${RECORD_ID}（不是 /s/<记录id>）`);
+    // ⭐⭐ 2026-10-16 23:4x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.ok(html.includes(`${SCAN_PAGE.route.recordBasePath}/${RECORD_ID}`),
+    //                '成功页的【再录一单】必须回 /r/{RECORD_ID}（不是 /s/<记录id>）');`
+    //   改后逐字：⭐ **成功页已经【零链接零按钮】** ✓（"再录一单"那颗**整个退场**了 ✗）
+    //     ⇒ ⭐ 判据**不删**、改成**反向钉住**：⭐ 成功页里**不许再出现 `/r/` 或 `/s/` 的任何链接** ✓
+    //     ＋ ⭐ 保留"2 秒自动回首页"（她裁决过：⭐ 不要的是按钮/链接 ✗ **不是自动回首页** ✓）
+    //   依据 = 她 23:4x「**单独发一小版，把那个开关删掉**」＋ 22:5x「**不需要开关**」✓
+    //          （口径：提交后**只有一个成功页**、没有按钮没有链接、只有同一句话、2 秒自动回首页 ✓）
+    assert.equal(html.includes(SCAN_PAGE.route.recordBasePath), false,
+      '⭐ 成功页**零链接**（不许再出现 /r/ 那种"再录一单"链接 ✗ —— 她 23:4x 要的就是这个 ✓）');
+    assert.equal(/href="[^"]*\/[rs]\//.test(html), false,
+      '⭐ 成功页里**没有任何指向 /r/ 或 /s/ 的链接**（零链接零按钮 ✓）');
+    assert.ok(/setTimeout|http-equiv="refresh"|location\.replace|location\.href/.test(html)
+      || /2\s*秒|自动回/.test(html),
+      '⭐ "2 秒后自动回首页"必须**照旧保留** ✓（她不要的是按钮/链接 ✗ 不是自动回首页 ✓）');
   });
 });
 
