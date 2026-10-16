@@ -184,7 +184,7 @@ routes/scanPage/index.js:2654 / :2887
 | --- | --- | --- |
 | `server/src/services/scanWriteService.js`（🔴 **冻结件 · 成对迁移**） | `submitSale` 加 `deferFunds`（**显式布尔**）：① 入参多传 `fundsDeferred: true` 给业务层；② **不扣库存**（`deliver` 要"资金状态已写入"，这一跑必然拒 ⇒ 如实报 `requested: 0`）；③ **不记 `completed`**，改记会话标记 `goods_created`（否则资金页那一跑会被当"重放"吸收 ⇒ 静默丢账 ✗）；④ 货那一跑**带收款 ⇒ 当场抛**（连主表都不建）；⑤ 后台那一跑**必须**带同一个 `deferFunds` | **逐字不变**（不传 / `false`：`confirm` 入参**连键都不出现** · 照扣库存 · 照记 `completed`；AC-MSD1 用"两次写库流水 + 入参 `deepEqual`"钉住 ✓） |
 | `server/test/scanWriteServiceFrozen.test.js`（冻结哨兵） | **成对迁移基线**：`199551e1…`（1699 行）→ `49772bda…`（1770 行）＋ 新增 **AC-FRZ4 解冻台账**（改前 sha → 改后 sha → 依据，**只改常量不写台账 ⇒ 红**） | 哨兵**继续存在**（没删/没停用/没放宽 ✓，只是基线随授权那一刀一起搬 ✓） |
-| 另外 **5 份同一基线副本**（都在注释里写着"与冻结哨兵同一个值"）：`scanPageSplitParity` · `scanDraftRouteWiring` · `scanDraftSaveResume` · `multiItemLogsAndRealmScan` · `supplierSplitAtGeneration` | 同一把新 sha ＋ 各自一行"改前 → 改后 → 依据" | 判据形状**一条没改**（仍是"逐字节比"✓）；`multiItemOrderSalesChain` 是**读哨兵常量**的 ⇒ 自动跟随 ✓ |
+| 另外 **6 份同一基线副本**（都在注释里写着"与冻结哨兵同一个值"）：`scanPageSplitParity` · `scanDraftRouteWiring` · `scanDraftSaveResume` · `multiItemLogsAndRealmScan` · `supplierSplitAtGeneration` · **`purchaseReturnMultiItem`**（⚠️ 这一份是 **task-64 / #761** 后来才进 main 的 ⇒ 合并进来之后**一起搬**，见 9.1 最后一行） | 同一把新 sha ＋ 各自一行"改前 → 改后 → 依据" | 判据形状**一条没改**（仍是"逐字节比"✓）；`multiItemOrderSalesChain` 是**读哨兵常量**的 ⇒ 自动跟随 ✓ |
 | `server/test/saleWriteBackgroundExtract.test.js` | 那条 `oldLines < 1700`（**剥离效果的代理指标**）在授权新增之后不再成立 ⇒ 改成**登记确切行数 1770** | 真判据（"两处实现只在新文件里"）**一个字没动** ✓；代理指标从"不等式"变"等式"⇒ **更严** ✓ |
 | `server/test/saleMoneySplitDeferFunds.test.js` | **新增 7 条**判据（AC-MSD1…MSD7，见第 6.2 节） | — |
 
@@ -398,7 +398,7 @@ B 由 `submitSale` 透传），所以它先落在 `services/**` **没有浪费**
 | **全量两遍**（`server/` 根 · `node --test --test-concurrency=1` · 系统 node `/usr/local/bin/node` v24.14.1 · HEAD = 合并 `origin/main` `0f76312` 之后的 `49f0906`） | 第 1 遍：`tests 2949 · pass 2942 · fail 0 · skipped 7 · **EXIT=0**`（168.2s）<br>第 2 遍：`tests 2949 · pass 2942 · fail 0 · skipped 7 · **EXIT=0**`（184.5s） —— ⚠️ **真 EXIT**（不接管道，直接读 `$?` ✓） |
 | 两遍之间自证未改 | 两遍之间 `git status --porcelain` **空** · `git diff HEAD \| shasum -a 256` 两遍都是 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`（= **空 diff** 的 sha256 ⇒ 一个字节都没变 ✓） · 冻结件 sha 两遍都是 `49772bda…2c12` ✓ |
 | `CI=true pnpm audit --prod --audit-level=high` | `No known vulnerabilities found` · **EXIT=0** ✓ |
-| ⚠️ 基线对齐（AGENTS 第 9 条） | 开工时 origin/main = `0c31748`；**中途 main 前进了两笔**（`d8a40d3` **#758 阶段一已合并** / `0f76312` #759 删超大留档 patch）⇒ 本轮**先 merge `origin/main`（`0f76312`）再跑全量**，上面那两遍就是**合并后的最终树** ✓（两处冲突都是「两边各自加了同一份文件」⇒ 取 ours = 并集；见 merge commit `49f0906` 的说明 ✓） |
+| ⚠️ 基线对齐（AGENTS 第 9 条） | 开工时 origin/main = `0c31748`；**中途 main 前进了两笔**（`d8a40d3` **#758 阶段一已合并** / `0f76312` #759 删超大留档 patch）⇒ 先 merge `origin/main`（`0f76312`）再跑全量（那两遍见上，merge commit `49f0906`）✓；**随后 main 又前进两笔**（`ee9c889` #760 / `e1657f1` **#761 task-64 退货一单多货**）⇒ 再 merge 一次（merge commit `ce8efa5`），并且在 **CI 上门抓到第 7 处冻结基线副本**：`test/purchaseReturnMultiItem.test.js` 的 `FROZEN_SCAN_WRITE_SHA256`（**只有 CI 会拿"PR merge 进最新 main"的树跑** ⇒ 本地看不见 ✗）⇒ 同一套成对迁移（改前 `199551e1…` → 改后 `49772bda…` ＋ 一行依据 ✓）。⚠️ 这是"本地绿、CI 红"的**真实一次**，如实记在这里 ✓ |
 
 ---
 
@@ -436,7 +436,7 @@ B 由 `submitSale` 透传），所以它先落在 `services/**` **没有浪费**
 | 条件 | 落地 |
 | --- | --- |
 | 1) **必须显式开关、缺省关** | 开关仍在**调用方**（`config/saleMoneySplit.js` 的 `SCAN_MONEY_SPLIT_ENABLED`，缺省 `false` · 显式布尔 · **调用时读**）；**服务层只认显式参数** `deferFunds === true` ⇒ 不传 / `false` = 与今天**逐字节一致**（AC-MSD1 用"两次写库流水 + 业务层入参 `deepEqual`"钉住 ✓） |
-| 2) **冻结哨兵必然红 ⇒ 成对迁移 ＋ 台账 ＋ PR 正文贴授权** | **改前逐字**：sha `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）⇒ **改后逐字**：sha `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`（1770 行）· **依据 = 业务负责人 2026-10-16 明确「允许改冻结文件」（一次性、只为本卡）**。哨兵**继续存在**（没删/没停用/没放宽 ✓）＋ 新增 **AC-FRZ4**（台账：只改常量、不写台账 ⇒ 红）＋ 同一份基线的 5 份副本**一起搬**（各带一行"改前 → 改后 → 依据"）✓ ＋ **PR 正文贴了这条授权** ✓ |
+| 2) **冻结哨兵必然红 ⇒ 成对迁移 ＋ 台账 ＋ PR 正文贴授权** | **改前逐字**：sha `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）⇒ **改后逐字**：sha `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`（1770 行）· **依据 = 业务负责人 2026-10-16 明确「允许改冻结文件」（一次性、只为本卡）**。哨兵**继续存在**（没删/没停用/没放宽 ✓）＋ 新增 **AC-FRZ4**（台账：只改常量、不写台账 ⇒ 红）＋ 同一份基线的 **6 份**副本**一起搬**（各带一行"改前 → 改后 → 依据"；第 6 份 `purchaseReturnMultiItem` 是合并 #761 之后由 CI 抓出来的 ✓）✓ ＋ **PR 正文贴了这条授权** ✓ |
 | 3) **改动面最小：只加 `deferFunds` 那一条路 ⇒ 既有三处调用方行为一行都不许变** | 既有三处调用方（`routes/scanPage/index.js:2654` 提交整单付款 / `:2887` 跳过 / `:3191` 死代码）**都不传 `deferFunds`** ⇒ 走今天的路（AC-MSD1 逐字同形 ＋ 全量回归面里那几条 routes E2E 全绿 ✓）；`deferFunds` 只被**新路**用（本卡**还没接线** ✓） |
 | 4) **`deliverStockLines`：货那一跑不扣库存（等资金页那一跑才扣）** | 落成 `const stock = fundsDeferred ? { requested: 0, delivered: 0, failed: 0, reasons: [] } : await deliverStockLines(…)` ⇒ **判据 AC-MSD3**：「**进了资金页但没提交 ⇒ 库存一双未扣**」（交付服务一次都没被叫 / 实时库存不动 / 流水 0 条 / 没有假失败日志）—— **能真红**（变异 M1 ⇒ **fail 5** ✓） |
 
@@ -460,3 +460,15 @@ B 由 `submitSale` 透传），所以它先落在 `services/**` **没有浪费**
   ⇒ main 里那份阶段一与本分支**逐字相同**（不是两份不同的实现）。
 - ⇒ 阶段二**先 merge `origin/main`（`0f76312`）再跑全量**（见 9.1 最后一行 ✓）；PR 归属已**当场上报 Lead**
   （本分支继续；**不合并 · 不 force-push · 不部署**）。
+
+### ④ ⚠️ 又一次"main 在跑"（**本地绿、CI 红 · 真实一次**）
+
+- 第一次 push 之后 **CI `test` 红了**（2m32s），失败只有一条：
+  `purchaseReturnMultiItem.test.js` 的 **AC-RS6**（`FROZEN_SCAN_WRITE_SHA256` 仍是 `199551e1…`）。
+- **为什么本地看不见**：CI 跑的是「**PR merge 进最新 main**」那棵树 —— 而那时 main 又前进了两笔
+  （`ee9c889` #760 · `e1657f1` **#761 task-64**），#761 新加的那个测试文件里**复制了一份冻结基线** ✗。
+  本地那次全量跑在自己分支上（还没有那个文件）⇒ 必然绿。**这正是 AGENTS 里"本地绿、CI 红"那条**。
+- 处置：再 merge 一次 `origin/main`（`ce8efa5`）＋ 把第 7 处副本按同一套**成对迁移**搬过来
+  （改前 `199551e1…`（1699 行）→ 改后 `49772bda…`（1770 行）＋ 一行依据 ✓）＋ **重跑全量两遍**（见 9.1）。
+  ⚠️ 教训（给下一刀）：**冻结基线的副本会随着别人合 PR 继续增殖** ⇒ 解冻之后**必须重新 fetch/merge main
+  再跑一遍**；只按"开工时 grep 到的那几处"搬，CI 一定红 ✗。
