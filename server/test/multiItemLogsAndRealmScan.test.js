@@ -433,7 +433,10 @@ test('AC-ML3b ⭐⭐⭐ 退货里点「加货」⇒ 303 带上触发参数（**�
 test('AC-ML3c ⭐⭐ 开关关着 ⇒ 回跳**与今天逐字一致**（不多那个触发参数）＋签名端点 404', async () => {
   const writeService = makeWriteService();
   const engine = makeEngine();
-  const realmScan = createRealmScanConfig({}); // 缺省：关
+  // ⭐ 成对迁移（2026-10-16 业务负责人弹窗选「打开」⇒ 缺省翻 `true`）：
+  //   改前逐字：`createRealmScanConfig({}); // 缺省：关` —— 它其实是拿**缺省值**当"关" ✗。
+  //   改后：**显式配 `'false'`** ⇒ 这条测的才是"**关着**时回跳与今天逐字一致" ✓（更严，不是放宽 ✓）。
+  const realmScan = createRealmScanConfig({ SCAN_REALM_SCAN_ENABLED: 'false' }); // 显式关
   await withServer(appFor({ writeService, engine, realmScan }), async (base) => {
     const response = await postAdd(base, addBody({
       realm: 'purchase_return', chain: 'purchase_return', sizes: ['40'], quantity: '2',
@@ -476,11 +479,19 @@ test('AC-ML4 ⭐⭐ 全局那颗「扫一扫」**一个字都没动**（仍是�
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-ML5 ⭐⭐ 开关关着 ⇒ 页面上**一个字都不多**（脚本 / 配置块 / 触发参数都没有）', () => {
-  const off = createRealmScanConfig({}); // 缺省关
-  assert.equal(off.enabled, false, '缺省**关** ✓（显式布尔：空串也是关 ✓）');
+  // ⭐ 成对迁移（2026-10-16 业务负责人弹窗选「打开」⇒ 缺省翻 `true`）：
+  //   改前逐字：`const off = createRealmScanConfig({}); // 缺省关` ＋
+  //            `assert.equal(off.enabled, false, '缺省**关** ✓（显式布尔：空串也是关 ✓）');`
+  //   —— 那一条其实在测**缺省值**，不是在测关态 ✗。
+  //   改后：关态一律**显式**配 `'false'`（**更严**：真的在测"关着时页面一个字都不多" ✓）；
+  //        缺省值单独钉成 **开** ✓（依据 = 她 2026-10-16 弹窗选「打开」✓）。
+  const off = createRealmScanConfig({ SCAN_REALM_SCAN_ENABLED: 'false' }); // 显式关（缺省已是开）
+  assert.equal(off.enabled, false, '显式 `false` ⇒ 关 ✓（**关得掉** ✓ 不是 `||` 兜底那种关不掉 ✗）');
+  assert.equal(createRealmScanConfig({}).enabled, true,
+    '缺省 ⇒ **开** ✓（改前逐字：`assert.equal(off.enabled, false, \'缺省**关** ✓…\')` —— 依据：她 2026-10-16 弹窗选「打开」✓）');
   assert.equal(createRealmScanConfig({ SCAN_REALM_SCAN_ENABLED: '' }).enabled, false,
-    '空串 = 关 ✓（`readFlag` 显式布尔，不写 `||` 兜底 ✗）');
-  assert.equal(createRealmScanConfig({ SCAN_REALM_SCAN_ENABLED: 'true' }).enabled, true, '配 true 才开 ✓');
+    '空串 = 关 ✓（`readFlag` 显式布尔：**设成空串 = 显式关**，与"没设"不同 ✓ 不写 `||` 兜底 ✗）');
+  assert.equal(createRealmScanConfig({ SCAN_REALM_SCAN_ENABLED: 'true' }).enabled, true, '配 true 就开 ✓');
   assert.throws(() => createRealmScanConfig({ SCAN_REALM_SCAN_ENABLED: 'maybe' }),
     '认不出的值**当场抛** ✓（不静默回退 ✗）');
 
