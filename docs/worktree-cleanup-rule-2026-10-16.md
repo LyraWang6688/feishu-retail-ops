@@ -34,3 +34,6 @@ git cherry origin/main <分支>
 - ✅ **清掉 5 个**（提交都已在 main）：`accept-async` · `draft-plan` · `landing-diag` · `sse-close-fix` · `sync-validate`
   （残留全是 **Lead 自己的便条** `LEAD-*.md` 与一个复现脚本 ✓ 内容已由产物/文档承接 ✓）
 - 🔴 **剩 16 个有未合提交** ⇒ 未动 ✓ · 其中 `pay-legacy`（自称"停手待仲裁"）与 `replenish-e`（口径已被取代）判为**废稿** ✓
+5. 🔴 **修 PR 冲突时一律用 `merge`，不许 `push -f`** ✗ —— 2026-10-16 实测事故：我在修 #743 的冲突时
+   `push -f` 把分支**覆盖成了 main** ⇒ 那份"待合并的留档"**没能入库** ✗（丢的是冗余存档，不是代码 ✓ 但仍是我的错 ✗）
+   ⇒ 正确做法：`git checkout -B fix origin/<该分支>` ⇒ `git merge origin/main` ⇒ 解冲突 ⇒ `git push`（**不加 `-f`** ✓）
