@@ -1142,7 +1142,11 @@ test('AC-8a2 🔴【收多了】收款 > 每件实收 ⇒ 400 + 原地重渲染 
       //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1);`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
       //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
       assert.equal(entriesOf(h, 'salesEntry').length, 1);
-      assert.equal(entriesOf(h, 'salesDetail').length, 0);
+      // 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：assert.equal(entriesOf(h, 'salesDetail').length, 0);（⭐ 漏迁：同一段里上面那条已按新口径改成 1 ✗）
+      //   改后逐字：assert.equal(entriesOf(h, 'salesDetail').length, 2);（⭐ 两双 ⇒ 明细 2 行 ✓ 与上面那条同一口径 ✓）
+      //   依据 = ④ 口径「点提交就建【货】那一单」（与上面那条同一依据 ✓）＋ 她 22:5x「把新功能都上了，不需要开关」✓
+      assert.equal(entriesOf(h, 'salesDetail').length, 2);
       assert.equal(entriesOf(h, 'paymentRecord').length, 0);
     });
   } finally { h.cleanup(); }
