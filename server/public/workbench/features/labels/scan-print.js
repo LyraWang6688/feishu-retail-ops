@@ -19,6 +19,32 @@
  *      按钮命中区 **≥44px**（CSS：`.scan-print-bar .btn`）。
  */
 import { describeError, runWriteAction } from '../../core/ui.js';
+// ⭐⭐ 2026-10-16 21:2x（业务负责人五处口径 ⇒ `docs/scan-five-places-2026-10-16.md`）：
+//   **这一处在"五处扫一扫登记表"里的那一行** —— ⚠️ 「**扫完回哪 / 带不带之前的数据 / 文案**」
+//   一律**从登记表取** ✗ 不在这一页里写死（页面只决定"怎么摆" ✓ 不决定"算不算/带不带" ✗）。
+//   ⚠️ 真源是服务端 `src/config/scanEntries.js`；这里是它在浏览器里的**逐字镜像**
+//   （`test/scanFivePlaces.test.js` 的 AC-5S3 把两份逐字对比 ⇒ 改一边忘另一边就红）。
+import { SCAN_ENTRIES, SCAN_LABEL_PRINT_PLACE } from '../../config/scanEntries.js';
+
+/** ①标签打印在五处登记表里的那一行（`null` = 登记表里没有 ⇒ 这一页**不猜**、不硬弹相机）。 */
+export const SCAN_PRINT_PLACE = SCAN_LABEL_PRINT_PLACE;
+const PLACE_TEXTS = SCAN_ENTRIES.texts;
+
+/**
+ * 这一处的**行为参数**（登记表原样，只读）。
+ *   · `returnsToRealm` —— 扫完**回不回当前领域**（① = 不回：扫完就在这一页出结果 ✓）；
+ *   · `keepDraft` —— **带不带之前的数据**（① = 不带：标签打印与销售草稿无关 ✓）；
+ *   · `mechanism` —— 用哪套（① = `jsapi`：弹飞书相机）；
+ *   · `mode` —— `standalone`（不是"领域内扫"）。
+ * ⚠️ **别在这一页里再判一次**（那就等于把口径抄成第二份 ✗）。
+ */
+export const scanPrintPlaceParams = () => ({
+  id: SCAN_PRINT_PLACE ? SCAN_PRINT_PLACE.id : '',
+  mechanism: SCAN_PRINT_PLACE ? SCAN_PRINT_PLACE.mechanism : '',
+  mode: SCAN_PRINT_PLACE ? SCAN_PRINT_PLACE.mode : '',
+  returnsToRealm: Boolean(SCAN_PRINT_PLACE && SCAN_PRINT_PLACE.returnsToRealm),
+  keepDraft: Boolean(SCAN_PRINT_PLACE && SCAN_PRINT_PLACE.keepDraft),
+});
 
 /** 两个端点（**唯一真源**；AC-SP6 的源码哨兵钉的就是这里）。 */
 export const SCAN_PRINT_ENDPOINTS = Object.freeze({
@@ -32,9 +58,11 @@ export const SCAN_PRINT_ENDPOINTS = Object.freeze({
   jobs: '/api/workbench/label-print/jobs',
 });
 
-/** 页面侧文案（服务端 `texts` 下来时以服务端为准；这一份只是兜底，防"接口没下来时白屏"）。 */
+/** 页面侧文案（服务端 `texts` 下来时以服务端为准；这一份只是兜底，防"接口没下来时白屏"）。
+ *  ⚠️ `button` / `title` **取自五处登记表**（`config/scanEntries.js` ✓ 配置先行）——
+ *     今天它们与下面这句逐字相同 ⇒ **行为零变化** ✓。 */
 export const SCAN_PRINT_TEXTS = Object.freeze({
-  button: '📷 扫码打印',
+  button: PLACE_TEXTS.labelPrintButton,
   scanning: '正在唤起扫一扫…',
   printing: '正在打印这一张…',
   noSdk: '这台设备调不起飞书扫一扫：请在**飞书里**打开工作台，再点一次。',
@@ -50,7 +78,7 @@ export const SCAN_PRINT_TEXTS = Object.freeze({
   // ⭐⭐ 2026-10-15：**「只扫码」聚焦页**（`?scan=1` 那条入口）的文案 ——
   //   她真机反馈「整条链路不太友好」之后做的：原来这条入口复用的是**批量打印那一页**
   //   ⇒ 进页先跑一次 `/labels` 查询（真机实测 **23.6 秒**）⇒ 她**先看到批量页干等**、相机才弹 ✗
-  title: '📷 扫码打印',
+  title: PLACE_TEXTS.labelPrintTitle,
   subtitle: '对着鞋盒标签上的二维码扫一下 —— 那一张就直接排进店里那台电脑的打印队列，这里不用选编号。',
   scanAgain: '📷 再扫一张',
   batchLink: '要一次打很多张？去「批量打印」→',
