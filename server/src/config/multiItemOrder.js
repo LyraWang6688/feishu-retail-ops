@@ -137,6 +137,51 @@ const resolveChains = (env) => ({
       withBehavior: false,
     }),
   }),
+  /**
+   * ⭐⭐ 2026-10-16（task-59 · **销售也接上**）—— 业务负责人逐字：「**要：销售也接上**」
+   *   ＋ Lead 裁决 **甲′**（判据文件头逐字：`test/multiItemOrderSalesChain.test.js`）：
+   *   **销售那 N 件进【既有】`session.sale.lines`**（经既有 `action=add_line` → 既有 `addSaleLine` ✓）
+   *   ⇒ 再落回**今天的资金页**那条路 ⇒ **既有 `submitSale`** ✓。
+   *
+   * 🔴 所以这一块是**纯描述链**（`persists: false`）—— 它只回答"这条链的形状是什么"，
+   *   **一个字节都不参与落库** ✗：
+   *   · **没有**引擎写入件（`multiItemWriters()` 住在**冻结件** `scanWriteService.js` 里、加不了这一支 ✗）；
+   *   · **不许**配 `writer`（配了 ⇒ 引擎的 `submitDraft` 会去写库 ⇒ "钱还没收就先落货" ✗
+   *     与今天「先资金页收钱 ⇒ 再 `submitSale`」的**顺序**冲突 ✗）。
+   *   ⚠️ 反向哨兵（"塞回即红"）：`test/multiItemOrderWriters.test.js` 的 **AC-RT7b**
+   *     —— 落库链集合钉死 = `{replenish, return}`；纯描述链**不许**有 writer、也不许出现在访问器那批里 ✓。
+   *   ⚠️ 判据的另一半：`test/multiItemOrderSalesChain.test.js` 的 **AC-SM-A2**
+   *     （前缀 = 既有 `SCAN_SALE_KEY_PREFIX` ✓ · 上限 = 既有 `SESSION.maxLines` ✓ · 不带写入件 ✓）。
+   */
+  sales: Object.freeze({
+    id: 'sales',
+    label: '销售',
+    // 前缀**复用既有销售会话前缀**（`SCAN_SALE_KEY_PREFIX` ✓ 不新造 ✗；两处写死必漂 ✗）
+    orderKeyPrefix: SCAN_WRITE.session.saleKeyPrefix,
+    // 纯描述链：不落库 ⇒ **既没有引擎任务前缀，也没有（采购）行为编码**。
+    //   ⚠️ 销售的「现货 / 预订」行为编码由**既有写层**按即时库存推（`salesTradeTypeForStock` ✓），
+    //      **不在这条链上** ⇒ 这里留空是**如实**，不是"忘了配" ✗。
+    taskIdPrefix: '',
+    behaviorCode: '',
+    // 销售按「件」记（一行一件、不按数量 —— 与"每件实收"同一条口径 ✓）
+    defaultQuantity: 1,
+    maxQuantity: 1,
+    // ⭐ 上限**与既有 `SESSION.maxLines`（= 50）同一个数**（AC-SM-A2 逐字钉着 ✓ —— 两处写死必漂 ✗）
+    maxLines: SCAN_WRITE.session.maxLines,
+    scope: 'product_master',
+    // 多货品不设超量策略（销售不比库存上限；既有 `addSaleLine` 自己按件校验 ✓）
+    exceedPolicy: 'none',
+    // ⭐ 销售的金额挂在**每件实收**上（逐行 ✓），**不是**整单一个数 ⇒ 这里**不要求**整单金额 ✓
+    amountRequired: false,
+    // 🔴 **纯描述链**（唯一的落库链是 replenish / return）——AC-RT7b 的反向判据读它 ✓
+    persists: false,
+    // 🔴 **不许配写入口**（空串 = 没有 ⇒ 引擎那条路永远拿不到写入件 ⇒ 不可能偷偷落库 ✓）
+    writer: '',
+    payload: Object.freeze({
+      isBatch: false,
+      withBehavior: false,
+    }),
+  }),
 });
 
 /** 事件名（日志口径；排查时按它们 grep ✓）。 */

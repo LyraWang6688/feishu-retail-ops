@@ -1087,6 +1087,46 @@ const saleFormHtml = (view, write) => {
   //    （仓库里好几个用例自带最小 config —— 2026-10-12 实测：缺 `submitButtonCount`
   //      会让 `fillText(undefined)` 抛 ⇒ 整个销售块退化成一张空卡片）。
   const countLabel = fillText(t.submitButtonCount || t.submitButton, { count: Math.max(lines.length, 1) });
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⭐⭐ 2026-10-16（task-59 · **销售也接上「一单多货」**）—— 业务负责人逐字：「**要：销售也接上**」
+  //   ＋ Lead 裁决 **甲′**（逐字见 `test/multiItemOrderSalesChain.test.js` 的文件头）。
+  //
+  // 🔴 为什么**不复用** `multiItemBlockHtml`（那是补货 / 退货那一块）：
+  //   既有判据 `test/multiItemOrderRender.test.js` 的 **AC-MIR1** 把它的调用点数成**恰好 2**
+  //   ⇒ 销售这一块必须落在**这里**（本表单**本来就有一颗 `action=add_line` 的 submit** ✓）。
+  //   判据文件头逐字写明了这条约束 ⇒ **不放宽那条判据** ✗。
+  //
+  // ⭐ "形状与补货一致"的**可执行**含义（两条，都不是"看着像"）：
+  //   ① **同一份文案配置**（`MULTI_ITEM_RENDER_TEXTS` 的 `addButton` / `title` ⇒ **零新增中文** ✓）；
+  //   ② **同一个 `data-multi-add` 钩子**（补货那块那颗入口的钩子 ✓）。
+  //
+  // 🔴 加货这一下**必须是本表单里的 submit**（`<form method="post">`）——
+  //   补货/退货那颗是 `<a href="…?add=1">`（**GET ⇒ 天生带不走**她刚填的尺码/金额 ✗）；
+  //   销售这张表单本来就是 POST 的表单 ⇒ **用它自己那颗既有 submit**（`action=add_line` ✓
+  //   ⇒ 既有 `addSaleLine` ⇒ `session.sale.lines` ✓ **不新造写入口** ✗）。
+  //
+  // ⚠️ 开关关（`MULTI_ITEM_ORDER.enabled === false`）⇒ **那一颗逐字回到今天**（`t.addAnotherButton`）✓
+  //   ⇒ 既有页面判据（`scanSaleAccessoryAndRemark` 等）与"N=1 逐字不变"都靠这个闸门 ✓。
+  // ⚠️「本单已加的货品」标题**只在真的加了才出现**（本单为空时那一屏**逐字不变** ✓）；
+  //   列表本身沿用**既有** `draftLinesHtml`（每行一个 `line_amount` 输入框 ⇒ 她填的钱看得见、改得动 ✓）。
+  // ⚠️ 属性顺序**刻意**是 `data-multi-add` 在 `type="submit"` **之前**：
+  //   判据 AC-SM-A 从 `data-multi-add` 那一处切到下一个 `>` 再核 `type="submit"` / `name` / `value`
+  //   ⇒ 钩子必须出现在同一个元素**靠前**的位置（这不是风格问题，是判据切片的定义 ✓）。
+  //
+  // 🔴 **本单为空 ⇒ 这一屏逐字回到今天**（`t.addAnotherButton || t.addButton` ＋ **没有**任何新 DOM ✗）
+  //   —— 这是"N=1 逐字不变"落在**页面**上的那一半（既有的领域渲染判据 AC-W1 / AC2 / AC5 / AC7
+  //   都在空单下断言那一颗按钮的文字「加入本单」⇒ 本设计**一处都不动它们** ✓ 不需要成对迁移 ✓）。
+  // ⭐ **本单已有货品 ⇒ 换那颗入口**（同一颗按钮、**同一个 `action=add_line`** ✓ 只是文案与钩子换成
+  //   「＋ 再加一个货品」＋`data-multi-add`）—— **不新增第二颗同义按钮**（两颗一模一样的按钮更糟 ✗）。
+  //   ⚠️「加入本单」⇒「＋ 再加一个货品」是**有意的语义递进**：第一件叫"加入本单"，
+  //     已经在建多货品单了才叫"再加一个货品" ✓（依据 = 她 2026-10-16「要：销售也接上」）。
+  // ══════════════════════════════════════════════════════════════════════════
+  const multiItemAdd = MULTI_ITEM_ORDER.enabled === true && lines.length > 0;
+  const multiItemTitleHtml = multiItemAdd
+    ? `<h3 class="multi-item__title">${escapeHtml(MULTI_ITEM_RENDER_TEXTS.title)}</h3>\n`
+    : '';
+  const addLineLabel = multiItemAdd
+    ? MULTI_ITEM_RENDER_TEXTS.addButton : (t.addAnotherButton || t.addButton);
   return `<section class="card">
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
@@ -1094,12 +1134,12 @@ ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
 ${sizeInput}
 <div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
 ${alert}
-${draftLinesHtml(write)}
+${multiItemTitleHtml}${draftLinesHtml(write)}
 ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
 <!-- ⭐⭐ 2026-10-13（金额两步走）：整单那一组（档位 / 收款行 / 备注）**整块挪到第 2 步页**
      ⇒ 录入页只留：每双 颜色 · 尺码 · 这一双的金额 ✓（那一组的字段名与标签字面量一个都不许留，否则 AC-2S1/AC-1 会打红） -->
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
-<button type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addAnotherButton || t.addButton)}</button>
+<button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>
 </form>
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}

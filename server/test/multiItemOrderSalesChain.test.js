@@ -351,15 +351,25 @@ test('AC-SM-A-probe ⭐ **探针**：上面那个检测器**真能红** ✓（�
     '探针：换掉列表标题 ⇒ **必须**不认 ✓');
 });
 
-test('AC-SM-A ⏳ 销售货品页有「＋ 再加一个货品」入口 ＋「本单已加的货品」列表（形状与补货一致）', () => {
+test('AC-SM-A ⭐ 销售货品页有「＋ 再加一个货品」入口 ＋「本单已加的货品」列表（形状与补货一致）', () => {
+  // ⭐⭐ 2026-10-16 **成对迁移（⏳ 待激活 ⇒ ✓ 真判据）**——本刀就是"接线"那一刀：
+  //   改前逐字（⏳ 闸门）：
+  //     ```
+  //     const got = salesHasMultiItemEntry(html);
+  //     if (!got.entry || !got.hook || !got.title) {
+  //       console.log(`[AC-SM-A] 待激活：销售货品页还没接「一单多货」入口`
+  //         + `（entry=${got.entry} hook=${got.hook} title=${got.title}）`);
+  //       return;
+  //     }
+  //     ```
+  //   改后逐字：**下面这一段直接断言**（⏳ 撤掉、**闸门不再早退**）。
+  //   依据：接线那一刀（本刀）已经落地 ⇒ 闸门**必须**变真判据 ——
+  //     ⚠️ 留着 `return` 的后果是**静默假绿**：把入口删掉 ⇒ 这条判据照样"通过"（只打一行 log ✗），
+  //       而那正是 #711 点名清掉过的那种"永远待激活的自足替身闸门" ✗。
+  //   🔴 **不是放宽**：改前那 5 条 `assert` 一条没删、一条没松；只是**去掉了那条早退** ⇒ **更严** ✓。
+  //   ⚠️ 探针（`AC-SM-A-probe`，逐字未动 ✓）仍然证明这个检测器**真能红** ✓。
   const html = salesPageHtml([{ product_number: ITEM_A, size: 40, quantity: 1, amount: 240 }]);
   const got = salesHasMultiItemEntry(html);
-  if (!got.entry || !got.hook || !got.title) {
-    // 🔴 **不假装通过** ✗：只说一句"待激活"，并靠 AC-SM-A-probe 证明检测器真能红 ✓
-    console.log(`[AC-SM-A] 待激活：销售货品页还没接「一单多货」入口`
-      + `（entry=${got.entry} hook=${got.hook} title=${got.title}）`);
-    return;
-  }
   // 接线后 ⇒ 这里是**真判据** ✓
   // ① 「＋ 再加一个货品」那颗入口必须**真的还在**（**形状与补货一致**：同一份文案配置 ✓）
   assert.ok(got.entry, `销售货品页必须有「${MULTI_ITEM_RENDER_TEXTS.addButton}」✓`);
@@ -378,13 +388,22 @@ test('AC-SM-A ⏳ 销售货品页有「＋ 再加一个货品」入口 ＋「本
     '🔴 它走的必须是**既有** `action=add_line`（⇒ 既有 `addSaleLine` ⇒ `sale.lines` ✓ 不新造写入口 ✗）');
 });
 
-test('AC-SM-A2 ⏳ `chains.sales` 只描述这条链的形状（**不参与落库** ✓）', () => {
+test('AC-SM-A2 ⭐ `chains.sales` 只描述这条链的形状（**不参与落库** ✓）', () => {
   const cfg = resolveMultiItemOrderConfig({});
   const sales = cfg.chains.sales;
-  if (!sales) {
-    console.log('[AC-SM-A2] 待激活：`config/multiItemOrder.js` 还没有 `chains.sales`（Lead 裁决 = 甲′ 要加）');
-    return;
-  }
+  // ⭐⭐ 2026-10-16 **成对迁移（⏳ 待激活 ⇒ ✓ 真判据）**——与 AC-SM-A 同一刀、同一条依据：
+  //   改前逐字（⏳ 闸门）：
+  //     ```
+  //     if (!sales) {
+  //       console.log('[AC-SM-A2] 待激活：`config/multiItemOrder.js` 还没有 `chains.sales`（Lead 裁决 = 甲′ 要加）');
+  //       return;
+  //     }
+  //     ```
+  //   改后逐字：`assert.ok(sales, …)` ⇒ **没有 `chains.sales` 就红**（⏳ 撤掉、不再早退）。
+  //   依据：本刀已经把 `chains.sales` 加上 ⇒ 留着 `return` 就是**静默假绿**
+  //     （谁把这一块删掉，这条判据照样"通过" ✗ —— 与 #711 清掉的那种自足替身闸门同一个形状 ✗）。
+  //   🔴 **不是放宽**：下面那几条 `assert` 一条没删、一条没松，只是不再允许"没有这一块" ✓。
+  assert.ok(sales, '🔴 `config/multiItemOrder.js` 必须有 `chains.sales`（Lead 裁决 = 甲′ ✓；删掉 ⇒ 红 ✓）');
   // ① 形状位：前缀复用既有销售会话前缀（**不新造** ✓）＋ 上限 = 既有 `SESSION.maxLines`（**同一个数** ✓）
   assert.equal(sales.orderKeyPrefix, SCAN_WRITE.session.saleKeyPrefix,
     'chain 的前缀必须复用既有销售会话前缀（`SCAN_SALE_KEY_PREFIX` ✓ 改了就红 ✓）');
