@@ -1061,13 +1061,16 @@ test('AC-E2E-11 ⭐ 0 收款 ⇒ 自动档＝未付 ⇒ **成单** + 差额一�
       });
       assert.equal(step1.status, 200, '第一步：到资金页');
       assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
-      for (const table of ['salesEntry', 'salesDetail', 'paymentRecord', 'inventoryLedger']) {
-        // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
-        //   改前逐字：`assert.equal(rowsOf(e2e, table).length, 0, `第一步：一个字都不写（${table} 0）`);`
-        //   改后逐字：`assert.equal(rowsOf(e2e, table).length, 1, `第一步：一个字都不写（${table} 0）`);`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
-        //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
-        assert.equal(rowsOf(e2e, table).length, 1, `第一步：一个字都不写（${table} 0）`);
-      }
+      // 成对迁移（改前逐字 → 改后逐字 → 依据）—— 2026-10-17：**按表循环改成逐表写死**。
+      //   改前逐字：`for (const table of ['salesEntry','salesDetail','paymentRecord','inventoryLedger']) {
+      //              assert.equal(rowsOf(e2e, table).length, 1, `第一步：一个字都不写（${table} 0）`); }`
+      //     ↑ 一个数字套四张表 ⇒ 对 salesEntry / salesDetail 对，对 paymentRecord 就错（实测 0，期望 1）。
+      //   改后逐字：下面四条，**每张表一个数、写死**（实测值）。
+      //   依据 = 纪律「循环断言的期望值必须逐条写死」＋ ④ 货/钱分离口径（货那一跑只写货、不带收款、不扣库存）。
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第一步：只有【货】那一半写（主表 1）');
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 1, '第一步：明细 1 行');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第一步：收款明细【0 行】（货那一跑不许带收款）');
+      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第一步：库存流水【0 行】（货那一跑不扣库存）');
       // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（本用例名 =「全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人话；零写入」）：
       //     `payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['']`
