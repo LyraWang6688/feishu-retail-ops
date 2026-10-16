@@ -46,7 +46,7 @@ const BASELINE_SHA256 = '589aeb486ec834aa53d874b25d48c50456e0e520730af847cddfb88
 
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
-test('AC-SP-1 ⭐⭐ 零行为变化：四个领域 × 两种状态 ＋ 消息页 ＋ 最小页 = **508,317 字节 / 全字节**', () => {
+test('AC-SP-1 ⭐⭐ 零行为变化：四个领域 × 两种状态 ＋ 消息页 ＋ 最小页 = **508,313 字节 / 全字节**（删净草稿链后的基线 ✓ 见常量上的成对迁移说明 ✓）', () => {
   const out = execFileSync(process.execPath, [path.join(SERVER, 'tools/task61-render-baseline.js')], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   });
