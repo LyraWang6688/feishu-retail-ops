@@ -1,0 +1,9 @@
+0c06386 docs(scan): the moved read is not the missing fifth call (six attempts total)
+a2c8f64 docs(scan): fourth attempt on the attribution gap, and the four conditions
+b3843c0 docs(scan): third attempt at the attribution gap also reverted
+a2366e6 docs(scan): record the read-attribution gap and what was already tried
+fde657b docs(scan): record her decision that the product read is never cached
+18c4cc7 perf(scan): start the purchase-detail read alongside the product lookup
+6f547c5 test(scan): contract for starting the product and purchase-detail reads together
+285c524 perf(scan): let the purchase-sizes read claim the lookup timing
+c5af560 fix(scan): build the purchase size reader from its factory

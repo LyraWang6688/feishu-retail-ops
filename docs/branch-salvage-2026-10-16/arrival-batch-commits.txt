@@ -1,0 +1,4 @@
+c1379a6 feat(accept): batch write (calls 31->5, writes 10->2) + pending-batch short cache + phase timing; text slice reconciled
+3ec349e Merge remote-tracking branch 'origin/main' into feat/accept-batch-write-v2
+f42825d Merge remote-tracking branch 'origin/main' into feat/accept-batch-write-v2
+ee47e40 feat(accept): batch write for purchase arrival - 31 calls to 5, writes 10 to 2 (-84%) + phase timing

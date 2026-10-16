@@ -1,0 +1,1 @@
+9afff8b fix(scan): 补上 `config/scanWrite.js` —— 加单反馈文案（#311 漏提交的那一个文件）
