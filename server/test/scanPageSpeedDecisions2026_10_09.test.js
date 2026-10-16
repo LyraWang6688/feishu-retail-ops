@@ -302,14 +302,22 @@ test('A2 失效点齐不齐（源码哨兵）：库存三处 + 货品写入口�
   const codeOf = (rel) => fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
   const inventory = codeOf('src/services/inventoryService.js');
   // 三类写入路径各一行：**逐条三处**（executeOperation / transitionState / promoteToSample）
-  // ＋ ⭐ 2026-10-13 新增的**批量口**（`applyPurchaseBatch`，验收提速 ①）。
-  // 🔴 口径**不放宽**：三个逐条方法各一行照旧必须成立，批量口那一行**也**必须成立
+  // ＋ ⭐ 2026-10-13 新增的**批量口**（`applyPurchaseBatch`，验收提速 ①）
+  // ＋ ⭐ 2026-10-16 新增的**退货批量口**（`applyPurchaseReturnBatch`，task-65 库存写入批量化）。
+  // 🔴 口径**不放宽**：三个逐条方法各一行照旧必须成立，两个批量口那两行**也**必须成立
   //    （"写了实时库存就必须当场作废快照"这条纪律，对新的写路径同样有效）。
+  // ⚠️ 2026-10-16 **成对迁移**（task-65）：
+  //    · **改前逐字**：`assert.equal(inventory.split(line).length - 1, 4, '…四处…')`
+  //    · **改后逐字**：`assert.equal(inventory.split(line).length - 1, 5, '…五处…')`
+  //    · **依据**：新增了一条**写路径** `applyPurchaseReturnBatch`（退货扣库存的批量口），
+  //      它同样在写成功后当场作废快照 ⇒ 计数必须 +1。
+  //    ⚠️ 这是**等号对等号**的迁移（不是 `>=`、不是删断言）：纪律一字未变，只是把"新写路径"数进去。
   for (const line of [
     "invalidateLiveInventorySnapshot('inventory_changed');",
   ]) {
-    assert.equal(inventory.split(line).length - 1, 4,
-      'inventoryService 的四处（executeOperation / transitionState / promoteToSample / applyPurchaseBatch）各要一行');
+    assert.equal(inventory.split(line).length - 1, 5,
+      'inventoryService 的五处（executeOperation / transitionState / promoteToSample'
+      + ' / applyPurchaseBatch / applyPurchaseReturnBatch）各要一行');
   }
   // 「货品信息」的写入口：新建货品 / 写成本 / 写标签二维码。
   const purchase = codeOf('src/services/purchaseWebhookService.js');
