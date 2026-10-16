@@ -405,8 +405,12 @@ test('AC-MI8 ⭐⭐ 改配置即改行为 + **显式布尔**（空串 = 关掉�
   //   改后逐字：下面这一行（默认 `true`）
   //   依据：她那句 —— 影子阶段取消 ✗ ⇒ 真实写入成为默认；`''`（空串=关掉）那条**照旧**成立 ✓
   assert.equal(resolveMultiItemOrderConfig({}).enabled, true, '没配 ⇒ **默认直接走新逻辑**（不再影子）✓');
-  assert.equal(resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ASYNC_ENABLED: 'true' }).asyncEnabled, true,
-    '异步开关也在配置里（第二步才用 ✓）');
+  // ⭐⭐ 2026-10-16 22:5x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ASYNC_ENABLED: 'true' }).asyncEnabled, true, …)`
+  //   改后逐字：**那个开关已经不在了** ✗ —— 断言这个键**不存在** ✓（谁把它加回来 ⇒ 红 ✓）
+  //   依据 = 业务负责人 22:5x「**不需要开关**」✓（`docs/no-switch-rule-2026-10-16.md` ✓）
+  assert.equal('asyncEnabled' in resolveMultiItemOrderConfig({}), false,
+    '⭐ `asyncEnabled` 已经**退场** ✗（一单多货的"提交即回"是永远开 ✓ 不许留开关 ✗）');
   assert.throws(() => resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ENABLED: '也许' }),
     /显式布尔/, '认不出的值 ⇒ **当场抛**（绝不静默按 true/false 处理 ✓）');
 
