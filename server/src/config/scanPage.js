@@ -691,8 +691,8 @@ const resolveProductNewFormUrl = (env = process.env) => {
  */
 const PAYMENT_STEP = Object.freeze({
   // ⭐⭐ 2026-10-18（业务负责人逐字）：「**资金页面也得填写了，必须填写**；但**不一定要等于
-  //   货品合计的总金额**，**0 也可以填**，必须得填写金额」⇒ 标题不再写"可填可不填"。
-  heading: '整单付款（金额必填）',
+  //   货品合计的总金额**，**0 也可以填**，必须得填写金额」＋「标题改为**请填写付款信息**」。
+  heading: '请填写付款信息',
   statusLabel: '付款情况',
   methodLabel: '收款方式',
   amountLabel: '实付多少',

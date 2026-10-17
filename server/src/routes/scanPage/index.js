@@ -606,10 +606,55 @@ const createScanPageRouter = (options = {}) => {
     // 🔴 幂等键 = **本单的 `orderKey`**（一单一把；提交成功后引擎**轮换**它 ✓）——
     //    **不传**表单里那把 key：页面上的 key 在提交后仍是旧值，重放旧页面会把**第 2 单**
     //    算成第 1 单的同一个 `taskId` ⇒ 被第 1 单吸收 ✗（设计 §4.2 的动机）。
-    const result = await engine.submitDraft({
-      openId, chain, orderKey, submitKey: orderKey, requestId,
-    });
-    if (!result.ok) return respondWriteFailure(res, result, requestId);
+    // ⭐⭐ 2026-10-18（业务负责人：「一单多货也要异步」）：
+    //   **校验同步、写库后台、先回成功页** ✓；老引擎/假引擎（没有 readDraft/validateDraft）
+    //   ⇒ 退回**同步**跑（行为与改前逐字一致 ✓，不让"有没有异步"取决于注入的是什么）。
+    const supportsAsync = typeof engine.readDraft === 'function' && typeof engine.validateDraft === 'function';
+    if (supportsAsync) {
+      // ① 先**同步**校验（拒单 ⇒ 400 + 人话 + 零写入；**绝不能挪后台** ✗）
+      const loaded = await engine.readDraft({ openId, chain, orderKey });
+      if (!loaded.ok) return respondWriteFailure(res, loaded, requestId);
+      const checked = engine.validateDraft({
+        draft: loaded.draft,
+        chainConfig: multiItemOrderConfig.chains[chain],
+      });
+      if (!checked.ok) return respondWriteFailure(res, checked, requestId);
+      // ② 后台那一跑（与单货品同一套登记簿/日志/失败落痕 ✓）：先回成功页 ✓
+      const runMultiItemSubmit = () => engine.submitDraft({
+        openId, chain, orderKey, submitKey: orderKey, requestId,
+      });
+      const markMultiItemFailed = async ({ result, error } = {}) => {
+        const message = String(result?.message || error?.message || '').trim();
+        try {
+          const sessions = writeService && writeService.sessions;
+          if (chain === 'replenish' && typeof sessions?.markReplenishFailed === 'function') {
+            await sessions.markReplenishFailed(openId, message);
+          } else if (chain === 'purchase_return' && typeof sessions?.markPurchaseReturnFailed === 'function') {
+            await sessions.markPurchaseReturnFailed(openId, message);
+          }
+        } catch (markError) {
+          logWarn(writeConfig.events.purchaseBackgroundMarkFailed, {
+            request_id: requestId, chain, error: String(markError?.message || markError).slice(0, 200),
+          });
+        }
+      };
+      if (typeof purchaseBackground.scheduleCustomRest === 'function') {
+        purchaseBackground.scheduleCustomRest({
+          chain, requestId, submitKey: orderKey,
+          context: { openId, requestId },
+          run: runMultiItemSubmit,
+          markFailed: markMultiItemFailed,
+        });
+      } else {
+        const result = await runMultiItemSubmit();
+        if (!result.ok) return respondWriteFailure(res, result, requestId);
+      }
+    } else {
+      const result = await engine.submitDraft({
+        openId, chain, orderKey, submitKey: orderKey, requestId,
+      });
+      if (!result.ok) return respondWriteFailure(res, result, requestId);
+    }
     // ⚠️ 理由串**只从配置取**（`config/multiItemOrder.js` 的 `invalidateReasons`；值与单货品那条路
     //   逐字同一串 ✓）—— **不在源码里再写一遍那两个既有字面量**：它们是既有邻近哨兵 `AC-SR4`
     //   的锚点，在前面多一处就把锚点挤开 ✗（本刀真踩到过 ✓）。
