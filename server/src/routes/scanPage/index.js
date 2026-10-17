@@ -332,6 +332,8 @@ const createScanPageRouter = (options = {}) => {
       salesEntryRecordId: String(opts.salesEntryRecordId || ''),
       // ⭐ 结算没过时那一句人话（原地重渲染资金页 ✓）
       notice: String(opts.notice || ''),
+      // ⭐ 2026-10-17 E：**总金额**（她逐字要的）——调用方给；拿不到就不渲染那一行（不编 ✓）
+      totalAmountText: String(opts.totalAmountText || ''),
     }));
   };
   // ⚠️ 写服务**只为 POST 与"本单还有几双"服务**；`GET` 的库存表一个字都不依赖它。
@@ -3010,6 +3012,15 @@ return sendPaymentStep(res, req, {
           realm,
           submitKey: body[fields.submitKey],
           count: pendingDraftLines.length,
+          // ⭐ 2026-10-17 E（她逐字：「资金页要显示**总金额**」）：
+          //   总金额 = 本单各行成交金额之和（**同一份 `lineAmounts`**，不另算一份钱 ✗）。
+          //   拿不到（全空 / 非数字）⇒ 空串 ⇒ 页面不渲染那一行（不编 ✓）。
+          totalAmountText: (() => {
+            const cents = (Array.isArray(lineAmounts) ? lineAmounts : []).reduce(
+              (sum, value) => sum + Math.round(Number(String(value ?? '').trim() || 0) * 100), 0,
+            );
+            return cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '';
+          })(),
           // ⭐ 开着时如实给她单号；**关着 ⇒ 这个键根本不出现** ⇒ 页面逐字节不变 ✓
           ...(goodsOrderNo ? { orderNo: goodsOrderNo } : {}),
         });

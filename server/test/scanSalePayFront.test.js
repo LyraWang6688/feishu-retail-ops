@@ -148,6 +148,10 @@ test('AC-PF1 🔴 点「提交这一单」⇒ **不写任何表**（主表/明�
     assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1,
       `点提交**不许**建单（实际调用：${JSON.stringify(calls)}）`);
     assert.match(r.html, /payment_pay|资金|全付|部分付/, '应当渲染**资金页**（不是直接完成 ✓）');
+    // ⭐ 2026-10-17 E（她逐字：「资金页要显示**总金额**」）：
+    //   总金额 = 本单各行成交金额之和（这里一行 399 ⇒ ￥399）—— 一处渲染、不另算一份钱 ✓
+    assert.match(r.html, /总金额 ￥399/, '资金页要显示总金额 ✓');
+    assert.match(r.html, /data-view="payment-step-total"/, '总金额那一行要有稳定标记 ✓');
   });
 });
 

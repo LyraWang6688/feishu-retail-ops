@@ -204,6 +204,8 @@ const renderSalePaymentStepPage = ({
   // ⭐⭐ 2026-10-14（她：**点资金页按钮才建单**）：结算校验没过时**原地重渲染这一页**并把这句人话带回来 ✓
   //   （文案由**调用方**给 —— 用的是既有那几条文案真源 ✓ 这里只负责画 ✗ 不新造中文 ✓）
   notice = '',
+  // ⭐ 2026-10-17 E：**总金额**（调用方给；空串 ⇒ 这一行不渲染 —— 不编 ✓）
+  totalAmountText = '',
 } = {}) => {
   const step = { ...(config.paymentStep || {}) };
   const t = (write && write.texts) || {};
@@ -247,6 +249,9 @@ ${paymentFieldsHtml}
     content: `<section class="card state-msg" data-view="payment-step">
 <h1>${escapeHtml(step.heading)}</h1>
 ${orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : ''}
+${String(totalAmountText || '').trim()
+    ? `<p class="foot" data-view="payment-step-total">${escapeHtml(fillText(step.totalLabel || '', { amount: String(totalAmountText).trim() }))}</p>`
+    : ''}
 <p class="hint">${escapeHtml(step.pendingNote || '')}</p>
 ${String(notice || '').trim()
     // 🔴 2026-10-16 P0：拦下的原因**必须醒目**（她真机"看着像坏了"✗）——从 `hint`（小字）

@@ -92,6 +92,26 @@ test('AC-PB1 ⭐⭐ 资金页只有一颗提交按钮；「跳过」整块删；
   assert.ok(putBack.includes('step.skipButton'), '（塞回去后确实命中 ⇒ 判据会红 ✓）');
 });
 
+// ── AC-PB5：资金页**显示总金额**（她 2026-10-17 逐字要的）──────────────────
+test('AC-PB5 ⭐⭐ 资金页显示「总金额」（调用方给；拿不到就不渲染 —— 不编）', () => {
+  const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
+  const base = {
+    write: {
+      texts: {}, fields: {},
+      paymentRows: [{ method: '微信', amount: '' }],
+      paymentMethods: ['微信'], defaultPaymentMethod: '微信',
+    },
+    orderNo: 'XSD-TEST-1', postAction: '/s/TEST', submitKey: 'k', count: 1,
+  };
+  const withTotal = renderSalePaymentStepPage({ ...base, totalAmountText: '399.5' });
+  assert.ok(withTotal.includes('data-view="payment-step-total"'), '总金额那一行要在 ✓');
+  assert.ok(withTotal.includes('总金额 ￥399.5'), '文案 = 配置里那句（`totalLabel`）＋ 金额 ✓');
+  // 拿不到 ⇒ **不渲染那一行**（不编 ✗）
+  const withoutTotal = renderSalePaymentStepPage(base);
+  assert.equal(withoutTotal.includes('data-view="payment-step-total"'), false,
+    '拿不到总金额 ⇒ 不渲染（不编 ✗）');
+});
+
 // ── AC-PB2：成功页那颗**已整颗删掉**（成功页 = 零链接 ✗）─────────────────────────
 test('AC-PB2 ⭐⭐ 成功页**零链接**：那颗 `<a href={工作台}>` **已删** ✗（塞回 ⇒ 红 ✓）', () => {
   // ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）——
