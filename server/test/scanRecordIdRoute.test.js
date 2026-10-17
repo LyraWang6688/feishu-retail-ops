@@ -325,9 +325,10 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
       payment_status: '', payment_method: '', payment_amount: '', line_amount: '399',
     })).text());
     if (html.includes('data-view="payment-step"')) {
-      // ⚠️ 2026-10-17：本轮保留「跳过」⇒ helper 仍走 `payment_skip`（与改前逐字一致 ✓）。
+      // ⭐ 2026-10-17 成对迁移（她逐字「去「跳过」」）：改前找 `payment_skip` 那张表单；
+      //   改后找资金页唯一那张「提交整单付款」表单（`data-view="payment-pay"`，不填金额 = 未付 ✓）。
       const skipForm = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
-        .find((item) => item.includes('payment_skip')) || '';
+        .find((item) => item.includes('data-view="payment-pay"')) || '';
       const skipBody = {};
       for (const input of skipForm.match(/<input[^>]*>/g) || []) {
         const name = (input.match(/name="([^"]*)"/) || [])[1];

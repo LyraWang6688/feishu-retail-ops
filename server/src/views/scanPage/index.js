@@ -254,14 +254,14 @@ ${payForm}
      原来这里还有一句工作台提示（step.workbenchHint）——**整句删** ✗（键也一起删了 ✓）。 -->
 <!-- 🔴 2026-10-16（她逐字：「资金页实际上就应该有两个按钮」= 提交 / 跳过）⇒ **资金页不再渲染
      那颗跳工作台的链接** ✗（她把它误读成第三种付款方式）——补收款去成功页那颗 ✓ -->
-${postAction ? `<form method="post" action="${escapeHtml(postAction)}">
-<input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.skipAction)}">
-${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'submit_key')}" value="${escapeHtml(submitKey)}">` : ''}
-<input type="hidden" name="order_no" value="${escapeHtml(orderNo)}">
-<input type="hidden" name="count" value="${escapeHtml(String(count))}">
-${reused ? '<input type="hidden" name="reused" value="1">' : ''}
-<button type="submit" class="btn"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.skipButton)}</button>
-</form>` : ''}
+<!-- 🔴🔴 2026-10-17 C（业务负责人逐字：「**去「跳过」**」）：
+     原来这里还有**第二张表单**（skipAction = payment_skip ＋ skipButton = 「跳过」）——
+     **整块删** ✗。资金页现在**只有一颗**「提交整单付款」（payButton）。
+     ⚠️ 不写金额直接提交 = **未付**（差额自动挂一条【未收款】✓ 既有结算校验负责）；
+        收多了 ⇒ 拦住 + 说差额（既有 amount_mismatch 人话 ✓）。
+     ⚠️ 重复提交（同一把 submitKey）⇒ **仍然说「这一单刚才已经交过了」**（pay 分支已对齐 skip 口径 ✓）。
+     🔴 反向哨兵见 test/scanPagePaymentButtons.test.js AC-PB1（skipButton 回来即红 ✓）。
+     ⚠️ 路由侧的 payment_skip 处理器**保留**（既有判据仍直接 POST 它 ✓ 本次只删 UI ✗）。 -->
 </section>`,
   });
 };

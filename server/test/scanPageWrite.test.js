@@ -596,9 +596,10 @@ const login = () => {
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
   if (!html.includes('data-view="payment-step"')) return response;
-  // ⚠️ 2026-10-17：本轮保留「跳过」⇒ helper 仍走 `payment_skip`（与改前逐字一致 ✓）。
+  // ⭐ 2026-10-17 成对迁移（她逐字「去「跳过」」）：改前找 `payment_skip` 那张表单；
+  //   改后找资金页唯一那张「提交整单付款」表单（`data-view="payment-pay"`，不填金额 = 未付，终点同形 ✓）。
   const form = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
-    .find((item) => item.includes('payment_skip'));
+    .find((item) => item.includes('data-view="payment-pay"'));
   if (!form) return new Response(html, { status: response.status, headers: { 'content-type': 'text/html' } });
   const actionUrl = (form.match(/action="([^"]*)"/) || [])[1] || '';
   const params = new URLSearchParams();

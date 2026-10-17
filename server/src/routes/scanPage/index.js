@@ -2493,7 +2493,12 @@ const createScanPageRouter = (options = {}) => {
         const sessionOrderNo = String(paySession?.sale?.order_no || paySession?.order_no || '').trim();
         const paidOrderNo = String(createdResult?.order_no || sessionOrderNo || body.order_no || '').trim().slice(0, 40);
         const paidCount = Number(String(createdResult?.detail_count ?? body.count ?? '').trim() || 0) || 0;
-        const paidReused = String(body.reused || '') === '1';
+        // ⭐ 2026-10-17（C·去跳过）：与 skip 那条**逐字同口径** ——
+        //   改前逐字：`const paidReused = String(body.reused || '') === '1';`（只看表单隐藏字段）
+        //   改后逐字：**也看建单返回的 `reused`**（同一把 submitKey 再点一次 ⇒ `submitSale` 返回 reused ✓）
+        //   依据 = 她 2026-10-17「去「跳过」」＋ 既有口径「这一单刚才已经交过了」（`submittedAgainTitle`）
+        //   ⚠️ 不删断言、不放宽：重复提交仍然**只写一次**、但页面**如实**说"已经交过了" ✓
+        const paidReused = String(body.reused || '') === '1' || createdResult?.reused === true;
         const paidDetails = [
           fillWriteText(writeConfig.texts.submittedOrderLine, { orderNo: paidOrderNo || '—' }),
           fillWriteText(writeConfig.texts.submittedDetailLine, { count: paidCount }),
