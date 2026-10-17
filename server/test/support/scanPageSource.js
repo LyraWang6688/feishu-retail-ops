@@ -106,6 +106,7 @@ const scanPageSource = () => {
   // ⭐ 再把 require 深度反向换回 ✓（有一批用例会把聚合**当模块编译**，编译路径 = 拆分前那一份的位置 ✓）
   return body
     .replace(/require\('\.\.\/\.\.\//g, "require('../")
+    .replace(/require\('\.\/actions'\)/g, "require('./scanPage/actions')")
     .replace(/require\('\.\.\/(workbench|feishuWebAuth)'\)/g, "require('./$1')");
 };
 

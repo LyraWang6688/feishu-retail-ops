@@ -287,7 +287,12 @@ test('AC-ASY2-补货 ⭐⭐ 补货不问金额：金额空 / 非数字**都不�
 });
 
 test('AC-ASY2b 🔴 源码哨兵：**校验与写库仍在"成功响应之前"的同步路径上**（挪进后台 ⇒ 红 ✗）', () => {
-  const source = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'scanPage.js'), 'utf8');
+  // ⭐ 2026-10-18 成对迁移（拆分第 1 刀：动作分派搬进 `routes/scanPage/actions.js`）：
+  //   改前逐字：只看聚合后的 `routes/scanPage.js` 文本。
+  //   改后逐字：聚合文本 ＋ `routes/scanPage/actions.js`（同一批实现在两处，判据跟着看两处）。
+  //   依据：拆分是**纯搬运**；"写库入口仍在同步路径"的语义一个字没变（塞回/挪走仍会红 ✓）。
+  const source = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'scanPage.js'), 'utf8')
+    + '\n' + fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'scanPage', 'actions.js'), 'utf8');
   // ① 三条链路的写入口调用必须在路由里（不是"只在后台件里"✗）
   for (const fn of ['submitReplenish', 'submitPurchaseReturn', 'acceptFinish']) {
     assert.ok(source.includes(fn), `路由里必须仍能看见 \`${fn}\`（写库那一步 ✗ 不许只活在后台件里）`);
