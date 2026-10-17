@@ -40,7 +40,6 @@ const { InventoryService } = require('./inventoryService');
 //   （`config/reportReadRetry`）**全部随「信息填写」入口一起退场**，本文件不再 import。
 //   ⚠️ 「采购行为」分流（`classifyReportBehavior`）**仍在**，但已经不在本文件里用
 //   —— 它现在的调用方是 `services/purchaseQueryService`（按「报货信息.采购行为」分流）。
-const { buildArrivalCostPlan, isBlankCost, costValueOf } = require('./arrivalCostPolicy');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
@@ -1183,9 +1182,6 @@ class PurchaseWebhookService {
    * 建档是远端写入，按项目约定必须把已经写出的 record_id 落盘：任务失败后重试
    * 会重跑一次到货解析，那时飞书列表可能还没读到刚建的货品，只靠"再查一遍"不足以防重复。
    *
-   * 成本也一并落盘（arrival_cost_written）：写成本本身是**幂等赋值**，重复写同一个值不会
-   * 写坏数据，但"结果未知"（写完还没来得及记录就失败）不能当成"没写过"再走一遍决策——
-   * 尤其不能在第二次重试时把它当成"已有成本"而发一条误导的 warn。
    */
   async persistArrivalCreation(context) {
     if (!context.taskId) return;
@@ -1193,7 +1189,6 @@ class PurchaseWebhookService {
       await this.store.update(context.taskId, {
         arrival_created_products: context.createdLog,
         arrival_created_colors: context.createdColors,
-        arrival_cost_written: context.costWritten,
       });
     } catch (error) {
       logWarn('purchase.arrival.created_product_persist_failed', { task_id: context.taskId, error: error.message });
@@ -1206,7 +1201,6 @@ class PurchaseWebhookService {
   buildArrivalCreationContext(task) {
     const products = Array.isArray(task?.arrival_created_products) ? task.arrival_created_products : [];
     const colors = Array.isArray(task?.arrival_created_colors) ? task.arrival_created_colors : [];
-    const costWritten = Array.isArray(task?.arrival_cost_written) ? task.arrival_cost_written : [];
     const context = {
       taskId: task?.task_id || '',
       productCache: new Map(),
@@ -1214,12 +1208,6 @@ class PurchaseWebhookService {
       createdColors: colors.map((item) => ({ ...item })),
       createdLog: products.map((item) => ({ ...item })),
       colorTableLoaded: false,
-      // 本次到货的价格计划（item_no → 可信单价 / 冲突标记）。
-      // 由写草稿的一方从 task.recognized 里重建（见 ensureArrivalProducts）。
-      arrivalCostPlan: null,
-      // 已经处理过成本的货品（写成功，或已判定"不覆盖"）：重试时直接跳过，不重复写。
-      costApplied: new Map(costWritten.map((item) => [item.product_record_id, item.cost])),
-      costWritten: costWritten.map((item) => ({ ...item })),
     };
     // 上次已经建好的颜色先占位：重试时同一个颜色名不会再建第二条。
     for (const item of context.createdColors) {
@@ -1316,15 +1304,6 @@ class PurchaseWebhookService {
     const category = genderToCategory(raw.gender || raw.category);
     if (category) values.category = category;
 
-    // 成本：新品建档顺带把成本写上（产品负责人要求：货号/颜色/供应商/类别/成本一起落）。
-    // 合并口径（#63「识别到价格就写成本」× #64「可信价格才写」）：
-    //   价格来源统一走 buildArrivalCostPlan（它已按货号汇总、并把 unit_cost/unitCost/cost/price
-    //   几种模型写法都算进来）；同货号多行价格不一致（conflict）→ plan 里没有可用 cost，不写。
-    // 建档只会新建记录，不存在覆盖已有成本的问题——命中的老货品一律原样使用、不改动。
-    const costPlanEntry = context.arrivalCostPlan?.get(itemNo);
-    const createdAtCost = costPlanEntry && !costPlanEntry.conflict ? costPlanEntry.cost : null;
-    if (createdAtCost !== null) values.cost = createdAtCost;
-
     const created = await this.gateway.create('product', values, { correlation: context.correlation });
     const recordId = created?.recordId || created?.record_id || '';
     if (!recordId) throw new Error(`新品建档失败：${itemNo}${color}`);
@@ -1347,15 +1326,6 @@ class PurchaseWebhookService {
     context.createdLog.push({
       item_no: itemNo, color, product_record_id: recordId, supplier: supplierName, color_created: entry.color_created,
     });
-    // 建档时已经把成本写进去了：登记成"已处理"，applyArrivalCost 就不会再对它
-    // 走一次"成本为空 → 写"的判断（重试也不会）。
-    if (createdAtCost !== null) {
-      context.costApplied.set(recordId, createdAtCost);
-      context.costWritten.push({ item_no: itemNo, color, product_record_id: recordId, cost: createdAtCost, source: 'create' });
-      logInfo('purchase.arrival.cost_written', {
-        item_no: itemNo, color, product_record_id: recordId, cost: createdAtCost, source: 'create',
-      });
-    }
     // 先落盘再回读：哪怕回读或后续步骤失败，重试也能凭这条记录跳过重复建档。
     await this.persistArrivalCreation(context);
 
@@ -1384,7 +1354,7 @@ class PurchaseWebhookService {
    * 未合并分支 refactor/decouple-creation-and-stock 正把它原样剥成
    * services/productCreationService.js（输入改成结构化明细、不认 OCR / 图片 / 到货任务）。
    *
-   * 输入：task.draft.pending_creation（要建什么）+ task.recognized（价格来源）。
+   * 输入：task.draft.pending_creation（要建什么）。
    * 两者原先都由 processArrival 写进任务；形状不变，新流程照这个形状写就行。
    *
    * 幂等（三道，缺一不可）：
@@ -1399,7 +1369,7 @@ class PurchaseWebhookService {
    * 和原因写进草稿——确认那一步据此明确告诉她，并且再点一次就能重试。
    * 成本写失败**不算建档失败**（既有的规则：成本写不进去不挡入库，只记 warn）。
    *
-   * @returns {Promise<{state: 'done'|'failed', created: number, cost_written_count: number, failures: Array}>}
+   * @returns {Promise<{state: 'done'|'failed', created: number, failures: Array}>}
    */
   async ensureArrivalProducts(taskId, options = {}) {
     return this.creationQueue.run(taskId, async () => {
@@ -1416,23 +1386,6 @@ class PurchaseWebhookService {
       context.correlation = purchaseCorrelation({
         taskId, batchNo: draft.batch_no, batchRecordId: draft.batch_record_id,
       });
-      // 价格计划按任务里落盘的**到货明细**（task.recognized）重建：建档顺带写成本、
-      // 老货品补成本，两条路用的是同一份计划，规则仍然是"同货号价格冲突就整条不写"。
-      context.arrivalCostPlan = buildArrivalCostPlan(task.recognized || []);
-      // 同一货号读出多个不同单价 → 整条不写，这里**只打一条 warn**（否则同一货号的每个
-      // 尺码都会重复报一次）。这段原先在 processArrival 里，识别退场后挪到"建计划的地方"——
-      // 规则不变：谁建计划，谁负责报冲突。
-      for (const entry of context.arrivalCostPlan.values()) {
-        if (!entry.conflict) continue;
-        logWarn('purchase.arrival.cost_conflict', {
-          task_id: taskId,
-          batch_record_id: draft.batch_record_id || '',
-          item_no: entry.item_no,
-          prices: entry.prices,
-          reason: '同一货号读出多个不同单价，不写成本，请人工核对',
-        });
-      }
-
       const failures = [];
       for (const entry of pending) {
         try {
@@ -1441,26 +1394,6 @@ class PurchaseWebhookService {
           failures.push({ item_no: entry.item_no, color: entry.color, error: error.message });
           logWarn('purchase.arrival.product_create_failed', {
             task_id: taskId, item_no: entry.item_no, color: entry.color, error: error.message,
-          });
-        }
-      }
-
-      // 已经匹配到老货品的行：成本跟建档一起补（原来这个顺序由"发完卡片再写"决定，
-      // 卡片退场后只保留"成本和建档同一步完成"这个事实）。
-      // 按 货号+颜色+货品 去重，免得同一货品的每个尺码各读一次表。
-      const costSeen = new Set();
-      for (const item of draft.actual || []) {
-        if (item.created_product || !item.product_record_id) continue; // 新品的成本在建档时一起写了
-        const key = `${item.item_no}|${item.color}|${item.product_record_id}`;
-        if (costSeen.has(key)) continue;
-        costSeen.add(key);
-        try {
-          const record = await this.gateway.get('product', item.product_record_id).catch(() => null);
-          await this.applyArrivalCost(item, { recordId: item.product_record_id, record }, productTable, context);
-        } catch (error) {
-          // 成本这条线故意不算进 failures：写不进去不该把她挡在入库外面（见 applyArrivalCost 注释）。
-          logWarn('purchase.arrival.cost_write_failed', {
-            task_id: taskId, item_no: item.item_no, product_record_id: item.product_record_id, error: error.message,
           });
         }
       }
@@ -1504,83 +1437,14 @@ class PurchaseWebhookService {
         task_id: taskId, reason: options.reason || 'unknown', state: nextDraft.creation_state,
         pending_count: pending.length, created_product_count: createdProducts.length,
         created_color_count: nextDraft.created_colors.length,
-        cost_written_count: context.costWritten.length, failure_count: failures.length,
+        failure_count: failures.length,
       });
       return {
         state: nextDraft.creation_state,
         created: createdProducts.length,
-        cost_written_count: context.costWritten.length,
         failures,
       };
     });
-  }
-
-  /**
-   * 把到货单识别到的价格写进货品「成本」。
-   *
-   * 产品负责人的口径：「如果有的到货单上有价格的，那就是成本。」
-   * 单据上的「销售价 / 单价」列 → 「货品信息」的「成本」字段（number 字段，直接写数字）。
-   *
-   * 写入规则刻意保守（谁改这里都要先读一遍）：
-   *   1. 只在成本**为空**时写（含数字 0 都算已有值，见 arrivalCostPolicy.isBlankCost）；
-   *   2. 已有成本 → 不覆盖，记一条 warn（带 货号 / 已有值 / 识别到的值）；
-   *   3. 同一货号多行价格不一致 → 整条不写（conflict 由调用方统一记一条 warn）；
-   *   4. 价格转不成正数 → 不写（plan 里根本没有这个货号）；
-   *   5. 重试不重复写：写成功的货品记进 context.costApplied 并落盘，重试直接跳过。
-   *
-   * 写失败**不抛错**：成本写不进去不该把整批到货卡住（货已经到了，入库优先）；
-   * 记 warn 后由下一次重试再试（赋值幂等，重复写同一个值无害）。
-   *
-   * @returns {Promise<{applied: boolean, reason: string}|null>} 只用于日志/测试断言
-   */
-  async applyArrivalCost(raw, product, productTable, context) {
-    const itemNo = String(raw?.item_no || '').trim();
-    const entry = context.arrivalCostPlan?.get(itemNo);
-    if (!entry || entry.conflict || entry.cost === null) return null;
-    const recordId = product.recordId;
-    if (!recordId) return null;
-
-    // 本次（或上次重试）已经处理过这条货品：直接跳过，不重复写、也不再打日志。
-    if (context.costApplied.has(recordId)) return { applied: false, reason: 'already_applied' };
-
-    const existing = product.record?.fields?.[productTable.fields.cost];
-    if (!isBlankCost(existing)) {
-      // 已有成本一律不覆盖；只有「值真的不一样」才 warn。
-      // 值相同说明是上一次重试已经写成功了（这就是为什么必须先记账再往下走）。
-      if (costValueOf(existing) === entry.cost) {
-        context.costApplied.set(recordId, entry.cost);
-        logInfo('purchase.arrival.cost_already_set', {
-          item_no: itemNo, product_record_id: recordId, cost: entry.cost,
-        });
-      } else {
-        context.costApplied.set(recordId, entry.cost);
-        logWarn('purchase.arrival.cost_kept', {
-          item_no: itemNo,
-          product_record_id: recordId,
-          existing_cost: textValue(existing),
-          recognized_cost: entry.cost,
-          reason: '货品已有成本，识别到的到货单价不覆盖',
-        });
-      }
-      return { applied: false, reason: 'existing_cost' };
-    }
-
-    try {
-      await this.gateway.update('product', recordId, { cost: entry.cost }, { correlation: context.correlation });
-      // ⭐ 2026-10-09：改了货品（成本）⇒ 作废货品快照（下一次扫码从内存里读到的就是新值）。
-      invalidateLiveInventorySnapshot('product_cost_written', { tableKey: 'product' });
-    } catch (error) {
-      logWarn('purchase.arrival.cost_write_failed', {
-        item_no: itemNo, product_record_id: recordId, cost: entry.cost, error: error.message,
-      });
-      return { applied: false, reason: 'write_failed' };
-    }
-
-    context.costApplied.set(recordId, entry.cost);
-    context.costWritten.push({ item_no: itemNo, color: String(raw?.color || '').trim(), product_record_id: recordId, cost: entry.cost, source: 'update' });
-    await this.persistArrivalCreation(context);
-    logInfo('purchase.arrival.cost_written', { item_no: itemNo, product_record_id: recordId, cost: entry.cost, source: 'update' });
-    return { applied: true, reason: 'written' };
   }
 
   // ── 已删除：processArrival（拍照识别的唯一入口）────────────────────────────
@@ -1593,11 +1457,13 @@ class PurchaseWebhookService {
   //   · confirmArrival    —— **逐条加库存**（`inventory.applyPurchase`）＋ 把「报货批次」那一行写实
   //                          （到货文字说明（该列已从真表退场） / 确认状态；**不再回写采购申请表**，见该方法的注释）。
   //                          ⚠️ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ 这里**不再写任何入库明细行**。
-  //   · ensureArrivalProducts / ensureArrivalProduct / ensureArrivalColor / applyArrivalCost
-  //                       —— 新品建档 + 成本（未合并分支 refactor/decouple-creation-and-stock
+  //   · ensureArrivalProducts / ensureArrivalProduct / ensureArrivalColor
+  //                       —— 新品建档（未合并分支 refactor/decouple-creation-and-stock
   //                          正把它剥成 services/productCreationService.js）
+  //   ⛔ 2026-10-17：**成本写入整条删除**（到货单/价格识别已退场、`task.recognized` 无生产写入点）；
+  //      现在本文件**不写「货品.成本」**，该列由业务侧手工维护。
   //   · aggregateArrivalItems / resolvePurchaseInboundState
-  // 它们的输入（draft.actual / pending_creation / task.recognized）由
+  // 它们的输入（draft.actual / pending_creation）由
   // services/purchaseArrivalConversationService.js 写入，形状与 processArrival 原先落的草稿一致。
   //
   // ⚠️ 已删除：`findRequestRowForInbound`（2026-10-07 深夜）—— 它只用来把**入库行**的
