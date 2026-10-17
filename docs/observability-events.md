@@ -527,12 +527,12 @@
 | `scan.write.payment_amount_required` | 1 | src/config/scanWrite.js |
 | `scan.write.purchase_amount_required` | 1 | src/config/scanWrite.js |
 | `scan.write.purchase_entry_invalid` | 1 | src/config/scanWrite.js |
-| `scan.write.settlement_blocked` | 1 | src/routes/scanPage/index.js |
+| `scan.write.settlement_blocked` | 1 | src/routes/scanPage/handlers/payment.js |
 | `scan.write.unknown_action` | 1 | src/config/scanWrite.js |
-| `scan.write.voucher_blocked` | 1 | src/routes/scanPage/index.js |
+| `scan.write.voucher_blocked` | 1 | src/routes/scanPage/handlers/payment.js |
 | `scan.write.voucher_catalog_unreadable` | 1 | src/config/voucherPayment.js |
 | `scan.write.voucher_method_unmapped` | 1 | src/config/voucherPayment.js |
-| `scan.write.voucher_resolved` | 1 | src/routes/scanPage/index.js |
+| `scan.write.voucher_resolved` | 1 | src/routes/scanPage/handlers/payment.js |
 
 ## server
 
