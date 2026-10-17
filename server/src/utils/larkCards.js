@@ -175,7 +175,7 @@ const groupByItemNoAndColor = (items) => {
         // 新品是**货号级**判断（产品负责人 2026-10-05：新品按货号看，不细到颜色）：
         // 同一货号下只要有一行是新品，这个货号就标一次 🆕，多行不重复标。
         // 数据直接用明细里早就有的 created_product——匹配阶段就知道货品表里没有这个
-        // 货号+颜色（见 purchaseWebhookService 的 pending_creation），渲染时不额外查库。
+        // 货号+颜色（草稿里的 actual 明细），渲染时不额外查库。
         hasNew: rows.some((item) => item.created_product === true),
         colors: [...byColor.entries()]
           .sort((a, b) => compareGroupLabel(a[0], b[0]))

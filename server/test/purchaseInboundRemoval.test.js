@@ -202,11 +202,6 @@ const seedArrivalTask = async (store, {
       requests,
       actual,
       unrecognized: [],
-      pending_creation: [],
-      created_products: [],
-      created_colors: [],
-      creation_state: 'done',
-      creation_error: '',
     },
   });
   return store.get(taskId);

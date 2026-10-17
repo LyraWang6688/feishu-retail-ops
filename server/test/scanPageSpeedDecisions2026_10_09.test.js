@@ -322,8 +322,8 @@ test('A2 失效点齐不齐（源码哨兵）：库存三处 + 货品写入口�
   // 「货品信息」的写入口：新建货品 / 写标签二维码。
   // ⭐ 2026-10-17 迁移：**写成本**那条已随"到货单价格识别退场"整条删除（`task.recognized` 无生产写入点），
   //   所以这里不再钉 `product_cost_written`；`product_created` / `product_tag_qr_written` 一条没少。
-  const purchase = codeOf('src/services/purchaseWebhookService.js');
-  assert.match(purchase, /invalidateLiveInventorySnapshot\('product_created', \{ tableKey: 'product' \}\)/);
+  // ⭐ 2026-10-17：到货「建档」整条删除（货品建档唯一路径 = 工作台货品上新表单），
+  //   所以 `product_created` 的作废点也不存在了；`product_tag_qr_written` 仍钉着。
   const tagQr = codeOf('src/services/tagQrCodeService.js');
   assert.match(tagQr, /invalidateLiveInventorySnapshot\('product_tag_qr_written', \{ tableKey: 'product' \}\)/);
 });

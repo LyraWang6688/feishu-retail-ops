@@ -299,7 +299,7 @@ test('采购状态卡片：供应商分组保留，供应商内也是 货号 →
 // 链接」两条用例整条删除：它们断言的都是 purchaseArrivalDetailCard / newProductResultElements
 // 这两张**已删除**的卡片（"已建好基础资料"那句、"正在入库，如有新品，稍后把链接给你"那段、
 // 以及 open 开关才给链接的行为）。到货确认这一步整体退场，没有卡片可断言；
-// 建档能力本身的断言在 purchaseWebhookService.test.js 里保留（ensureArrivalProducts）。
+// 建档能力本身已于 2026-10-17 删除（唯一建档路径 = 工作台货品上新表单），判据见 arrivalCostRemoved.test.js。
 
 test('明细卡片：新品按货号级标一次（多行/多颜色不重复），颜色级不标', () => {
   const card = detailCard([

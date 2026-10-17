@@ -238,9 +238,14 @@ test('AC-10 ⭐⭐ 反方向：扫码链路 / 共享落库层 / 9 点推送 / �
     'server/src/services/pendingDealPushService.js',
   ];
   for (const rel of mustExist) assert.equal(exists(rel), true, `⛔ 保留清单里的 ${rel} 被误删了 ✗`);
-  // 建档 + 成本：还挂在到货确认链路上（`refactor/decouple-creation-and-stock` 那份剥离**没进 main**）
+  // ⭐ 2026-10-17 迁移（业务负责人：「到货单已经不用了」＋「货品建档唯一路径 = 工作台货品上新表单」）：
+  //   改前逐字：断言到货链路仍挂着「建档 + 成本」（`ensureArrivalProducts` 必须还在）。
+  //   改后逐字：两者**已按 A 方案整条删除** ⇒ 这里反过来钉"不许复活"（塞回即红）。
+  //   依据：到货单/价格识别退场后 `task.recognized` 无生产写入点、`pending_creation` 恒空；
+  //   判据见 `server/test/arrivalCostRemoved.test.js`。本条其余保留项一个字没动 ✗（不是放宽）。
   const webhook = read('server/src/services/purchaseWebhookService.js');
-  assert.match(webhook, /ensureArrivalProducts\s*\(/, '⛔ 到货建档能力必须还在 ✗');
+  assert.equal(/ensureArrivalProducts\s*\(/.test(webhook), false, '⛔ 到货建档死代码不许复活 ✗');
+  assert.equal(/applyArrivalCost\s*\(/.test(webhook), false, '⛔ 到货成本死代码不许复活 ✗');
   // 配品销售的两条链路
   assert.equal(exists('server/src/services/accessoryMatchPolicy.js'), true, '⛔ 配品匹配必须还在 ✗');
 });

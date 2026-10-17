@@ -334,7 +334,6 @@ const seedArrivalTask = async (store, {
   operatorOpenId = 'ou_1',
   actual = [],
   requests = [],
-  pendingCreation = [],
   recognized = [],
   inboundCreated = null,
 } = {}) => {
@@ -351,11 +350,6 @@ const seedArrivalTask = async (store, {
     requests,
     actual,
     unrecognized: [],
-    pending_creation: pendingCreation,
-    created_products: [],
-    created_colors: [],
-    creation_state: pendingCreation.length ? 'pending' : 'done',
-    creation_error: '',
   };
   if (inboundCreated) draft.inbound_created = inboundCreated;
   await store.update(id, { recognized, draft });
@@ -428,6 +422,31 @@ test('到货确认：加库存 + 到货信息写到**批次行**（不回写采�
   assert.equal('验收人' in batch.fields, false);
   assert.equal(inventory.calls.length, 1, '库存要跟着加一次');
   assert.equal(inventory.calls[0].quantity, 1, '加的是**实际数**');
+});
+
+test('到货确认：明细缺货品 record_id ⇒ 拒绝，且**批次行与库存都不写**（不再自动建档）', async () => {
+  const inventory = makeInventory();
+  const records = {
+    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-TEST-001', 到货状态: '未到货' } }],
+  };
+  const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
+  const task = await seedArrivalTask(store, {
+    taskId: 'purchase_arrival_missing_product',
+    batchRecordId: 'batch_1',
+    batchNo: 'BH-TEST-001',
+    actualQuantity: 1,
+    actualAmount: 100,
+    actual: [{ item_no: 'XHB8095', color: '黑', size: 38, quantity: 1 }],
+    requests: [],
+  });
+
+  await assert.rejects(() => service.confirmArrival(task.task_id, task, 'ou_1'), /没有对应货品/,
+    '缺货品记录的明细必须明确拒绝');
+  const batch = await gateway.get('purchaseOrderBatch', 'batch_1');
+  assert.equal(batch.fields.到货状态, '未到货', '拒绝发生在写批次行之前');
+  assert.equal('实际数量' in batch.fields, false, '拒绝时不许写实际数量');
+  assert.equal('发生金额' in batch.fields, false, '拒绝时不许写发生金额');
+  assert.equal(inventory.calls.length, 0, '拒绝时一条库存都不许动');
 });
 
 test('到货确认：同一货品+尺码的两条明细合成**一次**加库存（数量 2），重复确认不重复写', async () => {
@@ -585,204 +604,6 @@ test('A2 同时确认同一个到货：库存只加一次（confirmationQueue �
   assert.equal(inventory.calls.length, 1, '库存只应增加一次');
   assert.deepEqual(gateway.writes.filter((item) => item.op === 'create'), [], '不新建任何业务表记录');
   assert.equal((await store.get(task.task_id)).status, 'posted');
-});
-
-// ─── 建档（ensureArrivalProducts / ensureArrivalProduct）──
-
-test('建档：未知货号+颜色建一条货品，带上货号 / 颜色关联 / 供应商 / 类别', async () => {
-  const records = {
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
-    supplier: [{ record_id: 'sup_9', fields: { 供应商名称: '一代千金' } }],
-  };
-  const { service, store, gateway } = makeService({
-    gateway: makeGateway(records),
-    references: makeReferences({ resolveSupplier: async () => ({ recordId: 'sup_9', record: records.supplier[0] }) }),
-  });
-  const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_create',
-    pendingCreation: [{ item_no: '3602', color: '黑色', supplier: '一代千金', gender: '女' }],
-  });
-
-  const result = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  assert.equal(result.state, 'done');
-  assert.equal(records.product.length, 1, '同一「货号+颜色」只建一条');
-  assert.equal(records.product[0].fields.货号, '3602');
-  assert.deepEqual(records.product[0].fields.颜色, ['color_black']);
-  assert.deepEqual(records.product[0].fields.供应商, ['sup_9']);
-  assert.equal(records.product[0].fields.类别, 'B', '标签上是女鞋 → 类别 B');
-  assert.equal('编号' in records.product[0].fields, false, '「编号」是飞书公式字段，不能写');
-});
-
-test('建档：货号+颜色命中多条时只建一条，链接回填草稿', async () => {
-  const records = {
-    product: [],
-    color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }],
-    supplier: [],
-  };
-  const { service, store } = makeService({ gateway: makeGateway(records) });
-  const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_idem',
-    pendingCreation: [
-      // 同一 货号+颜色 的两个尺码：建档按 货号+颜色 去重。
-      { item_no: '1366-31', color: '黑色' },
-      { item_no: '1366-31', color: '黑色' },
-      { item_no: '1366-32', color: '黑色' },
-    ],
-  });
-
-  const result = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  assert.equal(result.created, 2, '两个货号各一条');
-  assert.equal(records.product.length, 2);
-  const saved = await store.get(task.task_id);
-  assert.equal(saved.draft.created_products.length, 2);
-  assert.match(saved.draft.created_products[0].url, /record=/, '链接要回填到草稿');
-  assert.match(saved.draft.created_products[0].url, new RegExp(`record=${records.product[0].record_id}`));
-
-  // 幂等：再跑一次不能多建一条。
-  const again = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  assert.equal(again.state, 'done');
-  assert.equal(records.product.length, 2, '重复跑建档不能多建一条');
-});
-
-test('建档：颜色表缺色时补一条；同类颜色只补一次', async () => {
-  const records = { product: [], color: [], supplier: [] };
-  const { service, store } = makeService({ gateway: makeGateway(records) });
-  const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_color',
-    pendingCreation: [
-      { item_no: '3602', color: '香芋紫' },
-      { item_no: '3603', color: '香芋紫色' },
-    ],
-  });
-
-  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  // normalizeColor 会去掉末尾的「色」：两个写法算同一个颜色，只补一条。
-  assert.equal(records.color.length, 1, '同一颜色（去尾「色」后同名）只补一条');
-  assert.equal(records.color[0].fields.颜色, '香芋紫');
-  assert.deepEqual(records.product[0].fields.颜色, [records.color[0].record_id]);
-});
-
-test('建档：供应商表里没有这个名字就留空，不新建、不猜', async () => {
-  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }], supplier: [] };
-  const { service, store } = makeService({
-    gateway: makeGateway(records),
-    references: makeReferences({ resolveSupplier: async () => { throw new Error('找不到供应商'); } }),
-  });
-  const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_sup',
-    pendingCreation: [{ item_no: '3602', color: '黑色', supplier: '不存在的供应商' }],
-  });
-
-  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  assert.equal(records.supplier.length, 0, '不在供应商表里就不新建');
-  assert.equal('供应商' in records.product[0].fields, false, '找不到就留空，绝不猜一个关联');
-});
-
-test('建档：标签没有男/女信息时类别留空', async () => {
-  const records = { product: [], color: [], supplier: [] };
-  const { service, store } = makeService({ gateway: makeGateway(records) });
-  const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_nogender',
-    pendingCreation: [{ item_no: '3602', color: '黑' }],
-  });
-
-  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  assert.equal('类别' in records.product[0].fields, false, '认不出男/女就留空——默认成 A 会把女鞋写进男鞋');
-});
-
-test('建档：缺失字段（公式 + 样例图）只落在草稿和日志里', async () => {
-  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑' } }], supplier: [] };
-  const gateway = makeGateway(records);
-  const originalGet = gateway.get;
-  // 「缺失信息说明」是飞书公式，后端只负责读：齐备时是「齐备」，否则是缺的字段名。
-  // 「样例图」是附件字段、不在公式里，要单独看。
-  gateway.get = async (tableKey, recordId) => {
-    if (tableKey === 'product') {
-      return { record_id: recordId, fields: { 货号: '3602', 颜色: ['color_black'], 缺失信息说明: '成本、品类', 样例图: [] } };
-    }
-    return originalGet(tableKey, recordId);
-  };
-  const { service, store } = makeService({ gateway });
-  const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_gaps',
-    pendingCreation: [{ item_no: '3602', color: '黑色' }],
-  });
-
-  await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  const saved = await store.get(task.task_id);
-  assert.deepEqual(saved.draft.created_products[0].missing, ['成本', '品类']);
-  assert.equal(saved.draft.created_products[0].missing_sample_image, true);
-  assert.equal(saved.draft.created_products[0].completeness_readable, true);
-});
-
-test('建档失败可重试：已经建好的那条不重复建，重试只补缺的', async () => {
-  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }], supplier: [] };
-  // 第一次建档：第一条成功、第二条失败——模拟"建了一半"。
-  // 成功那条的 record_id 会随任务落盘（arrival_created_products），重试必须复用它。
-  let createCalls = 0;
-  const gateway = makeGateway(records);
-  const innerCreate = gateway.create;
-  gateway.create = async (tableKey, semanticValues) => {
-    if (tableKey === 'product') {
-      createCalls += 1;
-      if (createCalls === 2) throw new Error('模拟第二条建档失败');
-    }
-    return innerCreate(tableKey, semanticValues);
-  };
-  const { service, store } = makeService({ gateway });
-  const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_retry',
-    pendingCreation: [
-      { item_no: '3602', color: '黑色' },
-      { item_no: '3603', color: '黑色' },
-    ],
-  });
-
-  const first = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  assert.equal(first.state, 'failed', '有一条没建成功，状态要标失败（不能静默）');
-  const afterFirst = await store.get(task.task_id);
-  assert.match(afterFirst.draft.creation_error, /模拟第二条建档失败/, '失败原因要写进草稿');
-  assert.equal(records.product.length, 1, '第一条已经建好了');
-  assert.equal(records.product[0].fields.货号, '3602');
-
-  const retry = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  assert.equal(retry.state, 'done');
-  assert.equal(records.product.length, 2, '重试只补建缺的那条，不重复建第一条');
-  assert.equal(createCalls, 3, '第一次 2 次（1 成功 1 失败）+ 重试 1 次');
-});
-
-test('建档一直失败：草稿给出原因，且 confirmArrival 拒绝假装入库', async () => {
-  const records = { product: [], color: [{ record_id: 'color_black', fields: { 颜色: '黑色' } }], supplier: [] };
-  const gateway = makeGateway(records);
-  gateway.create = async (tableKey, semanticValues) => {
-    if (tableKey === 'product') throw new Error('模拟建档总失败');
-    return makeGateway(records).create(tableKey, semanticValues);
-  };
-  const { service, store } = makeService({ gateway });
-  const task = await seedArrivalTask(store, {
-    taskId: 'purchase_arrival_create_fail',
-    pendingCreation: [{ item_no: '3602', color: '黑色' }],
-  });
-
-  const failed = await service.ensureArrivalProducts(task.task_id, { reason: 'test' });
-  assert.equal(failed.state, 'failed');
-  assert.match((await store.get(task.task_id)).draft.creation_error, /模拟建档总失败/);
-
-  const failedTask = await store.get(task.task_id);
-  await assert.rejects(
-    () => service.confirmArrival(failedTask.task_id, failedTask, 'ou_1'),
-    /新品建档没成功/,
-    '建档失败必须明确告诉她原因，不能静默',
-  );
-  assert.deepEqual(gateway.writes.filter((item) => item.op === 'create'), [],
-    '建不出货品就什么业务表记录都不写，更不能假装入了库');
-
-  // 失败可重试：修好之后再确认一次，走同一条幂等路径。
-  gateway.create = makeGateway(records).create;
-  const result = await service.confirmArrival(task.task_id, await store.get(task.task_id), 'ou_1');
-  assert.ok(result.toast.content.includes('采购已入库'), '修好之后要能成功入库');
-  assert.equal(records.product.length, 1);
 });
 
 // ─── 通用守卫（与到货链路无关，但原先挂在到货用例上）────────────────────────

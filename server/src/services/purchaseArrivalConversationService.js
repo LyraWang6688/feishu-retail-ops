@@ -299,7 +299,6 @@ class PurchaseArrivalConversationService {
     //    actual = 按实际调整完的明细（每行一条 货品+尺码+实际双数）
     //    requests = 申请行原样（⚠️ 2026-10-07 深夜起**不再**用来挂「采购入库」的「采购申请」——
     //              那张表已被整表删除；仍然照传，因为到货核对卡片/建档还要用它的形状）
-    //    pending_creation 空数组：到货的货品在建采购申请时就已经存在了，这里不建新品。
     // ⭐ 2026-10-07：`实际 = 0 双` 的行**到这里就被摘掉**，一张表都不写 ——
     //    不写任何入库明细、不调 inventory.applyPurchase（库存流水/实时库存都不动）。
     //    为什么在**建草稿这一步**摘（而不是塞给 confirmArrival 让它跳过）：
@@ -332,7 +331,6 @@ class PurchaseArrivalConversationService {
         size: row.size,
         quantity: row.actual,
       })),
-      pending_creation: [],
     };
     await this.store.update(taskId, { status: 'posting', draft, confirmed_by: String(operatorOpenId || '') });
     const latest = await this.store.get(taskId);
