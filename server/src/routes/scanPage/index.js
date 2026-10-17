@@ -93,6 +93,8 @@ const { createMultiItemOrderService } = require('../../services/multiItemOrderSe
 //     （读它的那一位是既有 `views/scanPageRealm.js` 的 `resolveRealm` ✓ 不新造规则 ✗）。
 const { REALM_SCAN, realmEntryParams } = require('../../config/realmScan');
 const { FUNNEL } = require('../../config/funnel');
+const { setTraceFields } = require('../../utils/traceContext');
+const { roleOf } = require('../../config/trace');
 const { createLarkJsapiService } = require('../../services/larkJsapiService');
 // ⭐⭐ 2026-10-16（口子收尾 · 业务负责人口径「**异步只针对"写库"**；校验必须当场同步拦」）：
 //   **尺码 / 数量 / 空单**这三类校验的**唯一真源**（纯函数、不碰 IO、配置先行 ✓）——
@@ -1474,9 +1476,11 @@ const createScanPageRouter = (options = {}) => {
     }
   };
 
-  const openIdOf = (req) => String(
-    req.workbenchUser?.open_id || getSessionUser(req)?.open_id || '',
-  );
+  const openIdOf = (req) => {
+    const openId = String(req.workbenchUser?.open_id || getSessionUser(req)?.open_id || '');
+    if (openId) setTraceFields({ role: roleOf(openId) });
+    return openId;
+  };
 
   /**
    * 表单的 POST 目标（= 处理完回跳到哪一页）。
