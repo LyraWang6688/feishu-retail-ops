@@ -37,23 +37,26 @@ test('summarize / recordsOfDay：分级、Top、未登记、错误、慢事件�
     line({ ts: '2026-10-17T01:01:00.000Z', level: 'info', event: 'scan.page.rendered', duration_ms: 5 }),
     line({ ts: '2026-10-17T01:02:00.000Z', level: 'warn', event: 'zzz.dynamic', unregistered: true }),
     line({ ts: '2026-10-17T01:03:00.000Z', level: 'error', event: 'bitable.record.create_failed', error: 'boom' }),
-    line({ ts: '2026-10-17T01:04:00.000Z', level: 'info', event: 'slow.event', duration_ms: 5000 }),
+    line({ ts: '2026-10-17T01:04:00.000Z', level: 'info', event: 'perf.request.completed', duration_ms: 5000, trace_id: 'trace-slow', chain: 'orders.list' }),
+    line({ ts: '2026-10-17T01:04:00.000Z', level: 'info', event: 'http.request.completed', duration_ms: 5000, trace_id: 'trace-slow' }),
     line({ ts: '2026-10-17T16:30:00.000Z', level: 'info', event: 'next.day.event' }), // +8 ⇒ 10-18
     'not json at all',
   ].join('\n'));
 
   const records = recordsOfDay([logFile], { date: '2026-10-17', timeZone: 'Asia/Shanghai' });
-  assert.equal(records.length, 5, '东八区 10-17 的 5 条（16:30Z 属于 10-18）');
+  assert.equal(records.length, 6, '东八区 10-17 的 6 条（16:30Z 属于 10-18）');
   const s = summarize(records, { topN: 3, slowMs: 3000 });
-  assert.equal(s.total, 5);
-  assert.equal(s.byLevel.info, 3);
+  assert.equal(s.total, 6);
+  assert.equal(s.byLevel.info, 4);
   assert.equal(s.byLevel.warn, 1);
   assert.equal(s.byLevel.error, 1);
   assert.deepEqual(s.topEvents[0], { event: 'scan.page.rendered', count: 2 });
   assert.deepEqual(s.unregistered, [{ event: 'zzz.dynamic', count: 1 }]);
   assert.equal(s.errors[0].event, 'bitable.record.create_failed');
   assert.equal(s.errors[0].error, 'boom');
-  assert.equal(s.slow[0].event, 'slow.event');
+  assert.equal(s.slow.length, 1, '同一 trace 只列一条慢事件');
+  assert.equal(s.slow[0].event, 'perf.request.completed');
+  assert.equal(s.slow[0].chain, 'orders.list');
   assert.equal(s.slow[0].duration_ms, 5000);
 });
 

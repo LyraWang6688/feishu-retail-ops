@@ -24,6 +24,7 @@ const createAlertMonitor = ({
   const windowMs = config.windowMinutes * 60 * 1000;
   const silentMs = config.silentMinutes * 60 * 1000;
   const critical = new Set(config.criticalEvents || []);
+  const slowEvents = new Set(config.slowEvents || ['perf.request.completed']);
   // 注入的测试配置可能没带 texts ⇒ 用默认那一份（同一真源）
   const texts = config.texts || OBSERVABILITY_ALERTS.texts;
   const events = [];
@@ -78,8 +79,14 @@ const createAlertMonitor = ({
       const alert = emit('critical', `critical:${event}`, `${config.prefix} ${formatText(texts.critical, { event })}`);
       if (alert) alerts.push(alert);
     }
-    if (Number.isFinite(duration) && duration >= config.slowMs) {
-      const alert = emit('slow', `slow:${event}`, `${config.prefix} ${formatText(texts.slow, { event, duration, threshold: config.slowMs })}`);
+    if (Number.isFinite(duration) && duration >= config.slowMs && slowEvents.has(event)) {
+      // 同一次请求可能被两层日志各记一次（perf + http）⇒ 按 trace_id 去重（没有 trace 才按事件名）
+      const traceKey = String(payload.trace_id || '').trim();
+      const chain = String(payload.chain || '').trim();
+      const alert = emit('slow', `slow:${traceKey || event}`,
+        `${config.prefix} ${formatText(texts.slow, {
+          event, chain: chain ? `（${chain}）` : '', duration, threshold: config.slowMs,
+        })}`);
       if (alert) alerts.push(alert);
     }
     return alerts;

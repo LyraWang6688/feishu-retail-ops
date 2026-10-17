@@ -89,7 +89,15 @@ export function summarize(records, { topN = 20, slowMs = 3000 } = {}) {
       });
     }
     const ms = Number(record.duration_ms ?? record.durationMs ?? record.ms);
-    if (Number.isFinite(ms) && ms >= slowMs) slow.push({ ts: record.ts, event, duration_ms: ms });
+    if (Number.isFinite(ms) && ms >= slowMs) {
+      // 同一请求（trace_id）可能被 perf/http 两层各记一次 ⇒ 只留第一条（通常是 perf，带 chain）
+      const traceId = String(record.trace_id || '').trim();
+      if (traceId && slow.some((item) => item.trace_id === traceId)) {
+        // 已有同一请求的慢事件 ⇒ 跳过（日报里不重复）
+      } else {
+        slow.push({ ts: record.ts, event, duration_ms: ms, trace_id: traceId, chain: String(record.chain || '') });
+      }
+    }
   }
   const topEvents = [...byEvent.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))

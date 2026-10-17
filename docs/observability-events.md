@@ -220,7 +220,7 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
-| `perf.request.completed` | 1 | src/utils/requestTiming.js |
+| `perf.request.completed` | 2 | src/config/alerts.js<br>src/utils/requestTiming.js |
 
 ## product
 

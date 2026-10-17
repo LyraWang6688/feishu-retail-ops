@@ -23,6 +23,9 @@ const OBSERVABILITY_ALERTS = Object.freeze({
   silentMinutes: readInt(process.env, 'OBSERVABILITY_ALERTS_SILENT_MINUTES', 60, { min: 1, max: 1440 }),
   maxPerWindow: readInt(process.env, 'OBSERVABILITY_ALERTS_MAX_PER_WINDOW', 3, { min: 1, max: 50 }),
   slowMs: readInt(process.env, 'OBSERVABILITY_ALERTS_SLOW_MS', 10000, { min: 1, max: 600000 }),
+  // 慢事件只对**业务链路**（perf.request.completed）报警：`http.request.completed` 是全局请求日志，
+  // 与它同一请求会重复报（实测 2026-10-18 03:29 同一次 18259ms 报了两条 ✗），且含长连接/静态资源。
+  slowEvents: readList(process.env, 'OBSERVABILITY_ALERTS_SLOW_EVENTS', ['perf.request.completed']),
   errorRate: Object.freeze({
     thresholdPct: readInt(process.env, 'OBSERVABILITY_ALERTS_ERROR_RATE_PCT', 5, { min: 1, max: 100 }),
     minErrors: readInt(process.env, 'OBSERVABILITY_ALERTS_MIN_ERRORS', 3, { min: 1, max: 1000 }),
@@ -38,7 +41,7 @@ const OBSERVABILITY_ALERTS = Object.freeze({
   texts: Object.freeze({
     errorRate: 'error 占比 {rate}%（{errors}/{total}，窗口 {minutes} 分钟，阈值 {threshold}%）',
     critical: '关键链路失败：{event}',
-    slow: '慢事件：{event} {duration}ms（阈值 {threshold}ms）',
+    slow: '慢事件：{event}{chain} {duration}ms（阈值 {threshold}ms）',
   }),
 });
 

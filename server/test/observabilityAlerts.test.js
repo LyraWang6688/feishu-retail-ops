@@ -23,6 +23,7 @@ const baseConfig = (over = {}) => ({
   silentMinutes: 60,
   maxPerWindow: 3,
   slowMs: 10000,
+  slowEvents: ['slow.event'],
   errorRate: { thresholdPct: 5, minErrors: 3, minTotal: 10 },
   criticalEvents: ['critical.event', 'critical.event2', 'critical.event3', 'critical.event4'],
   chatId: '',
@@ -135,4 +136,31 @@ test('收件人优先级：open_id（私发）优先于群，且 receive_id_type
 test('配置：open_id 默认空（默认仍关 + 无收件人时不乱发）', () => {
   assert.equal(OBSERVABILITY_ALERTS.openId, '');
   assert.equal(OBSERVABILITY_ALERTS.enabled, false);
+});
+
+
+test('慢事件白名单：默认只认 perf.request.completed（http 全局日志不再重复报警）', async () => {
+  const sent = [];
+  let t = 0;
+  const cfg = baseConfig({ slowEvents: ['perf.request.completed'] });
+  const monitor = createAlertMonitor({ config: cfg, now: () => t, notify: async (a) => sent.push(a) });
+  t += 1; monitor.record({ level: 'info', event: 'http.request.completed', duration_ms: 18259, trace_id: 'trace-1' });
+  await flush();
+  assert.equal(sent.length, 0, 'http.request.completed 不许再触发慢告警');
+  t += 1; monitor.record({ level: 'info', event: 'perf.request.completed', duration_ms: 18259, trace_id: 'trace-1', chain: 'orders.list' });
+  await flush();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /perf\.request\.completed/);
+  assert.match(sent[0].text, /orders\.list/, '文案必须带链名（一眼知道哪条链路慢）');
+});
+
+test('trace_id 去重：同一请求的 perf + http 两条慢日志只告警一次', async () => {
+  const sent = [];
+  let t = 0;
+  const cfg = baseConfig({ slowEvents: ['perf.request.completed', 'http.request.completed'] });
+  const monitor = createAlertMonitor({ config: cfg, now: () => t, notify: async (a) => sent.push(a) });
+  t += 1; monitor.record({ level: 'info', event: 'perf.request.completed', duration_ms: 18259, trace_id: 'trace-9', chain: 'orders.list' });
+  t += 1; monitor.record({ level: 'info', event: 'http.request.completed', duration_ms: 18259, trace_id: 'trace-9' });
+  await flush();
+  assert.equal(sent.length, 1, '同一 trace 只许一条慢告警');
 });
