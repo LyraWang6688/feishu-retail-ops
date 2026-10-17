@@ -20,6 +20,12 @@ export const REPO_ROOT = path.resolve(SERVER_ROOT, '..');
 
 const expandHome = (p) => (p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p);
 
+// Markdown 表格单元格转义：先转义反斜杠再转义竖线（只转义 `|` 会被 CodeQL 判
+// `js/incomplete-sanitization`：反斜杠没处理 ⇒ 仍可能破坏单元格）。
+const mdCell = (value) => String(value == null ? '' : value)
+  .replace(/\\/g, '\\\\')
+  .replace(/\|/g, '\\|');
+
 /** 展开 `--logs`：支持逗号分隔、`~`、目录内 `*` 通配（只展开一层，够 PM2 用）。 */
 export function expandLogs(spec) {
   const out = [];
@@ -126,7 +132,7 @@ export function renderMarkdown(summary, { date, timeZone = 'Asia/Shanghai', file
   lines.push('', '## 错误', '');
   if (summary.errors.length) {
     lines.push('| 时间 | 事件 | 错误 |', '| --- | --- | --- |');
-    for (const item of summary.errors) lines.push(`| ${item.ts} | \`${item.event}\` | ${String(item.error).replace(/\|/g, '\\|')} |`);
+    for (const item of summary.errors) lines.push(`| ${item.ts} | \`${item.event}\` | ${mdCell(item.error)} |`);
   } else lines.push('✅ 无');
   lines.push('', `## 慢事件（≥ ${slowMs} ms）`, '');
   if (summary.slow.length) {
