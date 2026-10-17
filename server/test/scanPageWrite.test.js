@@ -997,8 +997,8 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
       //     ＋ 01:19 逐字：「**（1）把通用那句改成「任务创建失败」⇒ 所有写失败页都变**」
       //   🔴 仍钉住旧口径的两条不许回来：不说"提交已成功"、不说"一个字都没写"。
       assert.match(html, new RegExp(SCAN_WRITE.texts.failedTitle));
-      assert.equal(html.includes(SCAN_WRITE.texts.partialFailedTitle), false,
-        '半成那句不再用（她选「统一」✗）');
+      assert.equal(html.includes('单子记上了'), false,
+        '旧「半成」文案不再用（她 2026-10-17 选「统一」✗）');
       assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false,
         '半成页上**不许**出现「您的提交已成功」');
       assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
@@ -1044,7 +1044,7 @@ test('⑨b 建单**本身**失败（主表都没建起来）⇒ 照旧报错页�
       assert.equal(html.includes('这一步没成功'), false, '旧通用标题不许回来 ✗');
       assert.match(html, /系统这边没处理成功/, '通用人话要在页面上');
       assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false, '一个字都没写 ⇒ 不许说成功');
-      assert.equal(html.includes(SCAN_WRITE.texts.partialFailedTitle), false, '主表都没建 ⇒ 不是"半成"');
+      assert.equal(html.includes('单子记上了'), false, '主表都没建 ⇒ 不是"半成"');
       assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
     });
   } finally { h.cleanup(); }
