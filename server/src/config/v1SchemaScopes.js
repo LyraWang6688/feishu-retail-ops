@@ -5,7 +5,13 @@ const V1_SCHEMA_SCOPES = {
   //    `v1:schema-check:all` 直接判红（TableIdNotFound 1254041）。
   //    售后 prepaid 通路随之下线（见 services/afterSalesService.assertPrepaidAvailable）；
   //    等她定了「已留存」的新落点，把新表加回这个列表即可。
-  sales: ['product', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord'],
+  // ⭐⭐ 2026-10-17（业务负责人指令）：「**把 2、3、17 加进 sales 闸门范围**」——
+  //   2 = 颜色管理（`color`）· 3 = 品类管理（`category`）· 17 = 付款明细（`paymentDetail`）。
+  //   为什么：这三张之前**不在任何 scope** ⇒ 表被删 / 漏配时 `v1:schema-check` **不会红**（运行时才炸）。
+  //   ⚠️ `paymentDetail` 的 `fields` 仍是空的 ⇒ 闸门**只验"这张表在不在"**，不验列（列她还没定）。
+  //   ⚠️ `color` / `category` 在 `product` 里是**关联字段** ⇒ 本闸门会去查它们**自己的字段名**；
+  //      `product.颜色/类别` 这两个字段的**存在性**仍由 `validateTable('product')` 钉着 ✓
+  sales: ['product', 'color', 'category', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord', 'paymentDetail'],
   purchase: [
     'product',
     'supplier',

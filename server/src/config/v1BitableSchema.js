@@ -375,10 +375,11 @@ const V1_BITABLE_SCHEMA = {
     //   · 全仓（`server/src`）grep：`付款明细` / `paymentDetail` 零读写点、零业务链路引用。
     // ⇒ 本次**只登记这张表**（表名 + table_id），**不建任何字段映射、不接任何写入点**：
     //   列还没定，此刻编一个映射，只会让她下一次改列名时踩空（"写库抛未配置语义字段"那一类坑）。
-    // ⚠️ **刻意不放进 `v1SchemaScopes`**（与 `groupBuyVoucher` 同一处置：可选项不拦部署）：
-    //   列都没定就纳入闸门，只会把"她还在建表"这件事变成部署红。
-    //   等她定了列 ⇒ ① 在这里补 `fields`；② 把新列接进对应链路（判断要不要写入点）；
-    //   ③ 再决定进不进 `V1_SCHEMA_SCOPES`。
+    // ⭐ 2026-10-17（业务负责人指令）**已进 `V1_SCHEMA_SCOPES.sales`** ——
+    //   改前逐字：「刻意不放进 `v1SchemaScopes`（与 `groupBuyVoucher` 同一处置：可选项不拦部署）」
+    //   改后逐字：进 sales 闸门，但 `fields` 仍为 `{}` ⇒ **只验"这张表在不在"**，不验列 ✓
+    //   依据 = 她 2026-10-17 逐字：「把 2、3、17 加进 sales 闸门范围」。
+    //   等她定了列 ⇒ ① 在这里补 `fields`；② 把新列接进对应链路（判断要不要写入点）。
     // ⚠️ table_id 仍走环境变量（`FEISHU_V1_PAYMENT_DETAIL_TABLE_ID`），默认值 = 生产真表的 id。
     paymentDetail: {
       tableName: '付款明细',

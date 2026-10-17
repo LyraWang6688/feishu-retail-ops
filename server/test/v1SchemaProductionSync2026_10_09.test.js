@@ -83,13 +83,17 @@ test('A(2026-10-09) 新表「付款明细」登记进 schema：只登记表，�
   //    ⇒ 一个字段映射都不许编（编了就是"凭空造逻辑"）。
   assert.deepEqual(table.fields, {}, '真表还没有业务列 ⇒ fields 必须是空的');
 
-  // ⚠️ 刻意**不进闸门范围**：列还没定，现在纳入只会让"她还在建表"变成部署红。
-  //    （与 `groupBuyVoucher` 同一处置：可选项不拦部署。）
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`V1_SCHEMA_SCOPES.all.includes('paymentDetail') === false`（理由：列还没定 ⇒ 不进闸门）
+  //   改后逐字：**进 `sales` 闸门（`all` 是并集 ⇒ 也为 true）**，但 `fields` 仍空 ⇒ 只验"表在不在" ✓
+  //   依据 = 业务负责人 2026-10-17 逐字：「**把 2、3、17 加进 sales 闸门范围**」
+  //   ⚠️ 不是放宽：从"完全不查"变成"查表在不在"（更严）✓
   assert.equal(
-    V1_SCHEMA_SCOPES.all.includes('paymentDetail'),
-    false,
-    '「付款明细」列还没定 ⇒ 不进 V1_SCHEMA_SCOPES.all',
+    V1_SCHEMA_SCOPES.sales.includes('paymentDetail'),
+    true,
+    '「付款明细」按她 2026-10-17 指令进 sales 闸门（只验表存在）',
   );
+  assert.equal(V1_SCHEMA_SCOPES.all.includes('paymentDetail'), true, '`all` 是并集 ⇒ 必须为 true');
 });
 
 test('A(2026-10-09) 「报货批次」新增列「供应商」：建只读映射，全仓没有任何写入点', () => {
