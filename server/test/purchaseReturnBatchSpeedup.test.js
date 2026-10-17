@@ -550,7 +550,8 @@ test('AC-RB2b ⭐ 多货品退货：批次 1 行 · 明细 N 行 · 每行货品
     assert.equal(batches.length, 1, '退货批次 1 行');
     assert.equal(batches[0].fields['到货状态'], undefined, '退货批次不写「到货状态」');
     assert.equal(batches[0].fields['发生金额'], 399, '「发生金额」= 整单金额');
-    assert.deepEqual(batches[0].fields['采购行为'], ['bh_return_purchase']);
+    // ⭐ 2026-10-17：主表行为列真表已改名「发生行为」（她逐字）
+    assert.deepEqual(batches[0].fields['发生行为'], ['bh_return_purchase']);
     assert.equal(batches[0].fields['录入数量'], 6, '录入数量 = 实退合计');
 
     const requests = rowsOf(h, 'purchaseRequest');

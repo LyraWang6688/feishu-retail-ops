@@ -408,7 +408,8 @@ test('AC-R2 提交退货 ⇒「采购明细」退货明细（行为列不写：L
       assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
     }
     // ⭐⭐ 2026-10-12（她确认要写）：退货那一档写**主表**行（明细由它 Lookup 带出）
-    assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_return_purchase'],
+    // ⭐ 2026-10-17：主表行为列真表已改名「发生行为」（她逐字）
+    assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['发生行为'], ['bh_return_purchase'],
       '主表「采购行为」= 采购退货那一档');
     for (const record of requests) {
       assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');

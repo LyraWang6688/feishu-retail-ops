@@ -82,7 +82,10 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       const batch = batchIds.length ? batchMap.get(batchIds[0]) : null;
       const batchNo = batch ? asText('purchaseOrderBatch', batch, 'batchNo') : '';
       const supplierIds = product ? asLinks('product', product, 'supplier') : [];
-      const behaviorIds = asLinks('purchaseRequest', record, 'behavior');
+      // ⭐⭐ 2026-10-17（业务负责人逐字）：「直接去看采购主表里面的采购行为（字段名改成了发生行为），
+      //   只筛选出『报货』的状态就可以了，退货的状态不用筛」
+      //   ⇒ 分流读**报货批次**那一行的行为（明细行的那个是 Lookup、一直是空 ⇒ 全被默认成报货 ✗）。
+      const behaviorIds = batch ? asLinks('purchaseOrderBatch', batch, 'behavior') : [];
       const behavior = behaviorIds.length ? behaviorMap.get(behaviorIds[0]) : null;
       const size = await getSizeReferences().resolveLinkedCell(
         record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.size]
@@ -150,7 +153,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       batch_no: asText('purchaseOrderBatch', record, 'batchNo'),
       arrival_status: asText('purchaseOrderBatch', record, 'arrivalStatus'),
       // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**——
-      //   「确认状态」「验收原话」两列在生产真表上没有了（写入点也一起退场），
+      //   「确认状态」「到货文字说明（该列已从真表退场）」两列在生产真表上没有了（写入点也一起退场），
       //   留着投影只会永远读出空串、把"没记"伪装成"记了但空"。
       // 兼容字段（前端与既有调用方原先读它）：到货落点搬到批次行之后**没有**可投影的日期
       // —— 批次行上那个「到货日」是自动的「更新时间」，不是真的到货时刻（见方法注释）。

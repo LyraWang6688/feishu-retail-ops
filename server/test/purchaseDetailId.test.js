@@ -277,7 +277,10 @@ test('AC-ID2 报货一次两双 ⇒ `-01` / `-02`（同一批次内递增且唯�
     assert.deepEqual(record.fields[BATCH_FIELD], [h.tables.purchaseOrderBatch[0].record_id]);
     assert.equal('采购行为' in record.fields, false, '明细那列是 Lookup：仍然不许写');
   }
-  assert.deepEqual(h.tables.purchaseOrderBatch[0].fields['采购行为'], ['bh_request'], '主表行为照旧');
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`fields['采购行为']`；改后逐字：`fields['发生行为']`；
+  //   依据 = 她逐字「采购主表里面的采购行为，目前字段名称改为了发生行为」（真表已改名，只读核过）。
+  assert.deepEqual(h.tables.purchaseOrderBatch[0].fields['发生行为'], ['bh_request'], '主表行为照旧');
 });
 
 test('AC-ID3 ⭐ 后补一行 ⇒ 接着排（03），已有两行一字未变', async () => {
@@ -356,7 +359,8 @@ test('AC-ID5 扫码采购退货那条链路同样写：同一批次内 01/02', a
     assert.equal('采购行为' in record.fields, false, '明细那列是 Lookup：不许写');
   }
   assert.equal(h.tables.purchaseOrderBatch[0].fields[BATCH_FIELD], batchNo);
-  assert.deepEqual(h.tables.purchaseOrderBatch[0].fields['采购行为'], ['bh_return'], '主表行为照旧');
+  // ⭐ 2026-10-17 同上迁移：主表行为列真表已改名「发生行为」
+  assert.deepEqual(h.tables.purchaseOrderBatch[0].fields['发生行为'], ['bh_return'], '主表行为照旧');
   // 重放：不重复占号
   const replay = await h.service.submit('task_1', returnDraft());
   assert.equal(replay.skipped, '');

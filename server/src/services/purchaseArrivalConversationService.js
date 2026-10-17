@@ -81,7 +81,7 @@ const hasActualAmount = (task) => {
  *      已经有一张卡片时她再补充/修正（或换了话题）→ **在当前话题重发一张新卡**，
  *      旧卡**尽力作废**（收掉按钮）—— 见 `retirePreviousCard` 的注释（2026-10-07 晚改）；
  *   ④ 点「是」→ 这是**唯一的入库点**：
- *        「验收原话」写到**「报货批次」那一行** → **逐条加库存**（`inventory.applyPurchase`，
+ *        「到货文字说明（该列已从真表退场）」写到**「报货批次」那一行** → **逐条加库存**（`inventory.applyPurchase`，
  *        「库存流水」/「实时库存」由它负责）→ 同一行的「确认状态」改成已确认；
  *        ⚠️ 2026-10-07 深夜起**不再写任何入库明细行**（「采购入库」表已被她整表删除），
  *        「到货状态 = 已到货」由本类的 `notifyBatchArrived` 在事后写；
@@ -249,7 +249,7 @@ class PurchaseArrivalConversationService {
         tier: 'confirm_duplicate', taskId, operator: operatorOpenId, event, task,
       });
     }
-    if (!Array.isArray(task.plan) || !task.plan.length || !task.acceptance_text
+    if (!Array.isArray(task.plan) || !task.plan.length
       || !task.request_ids?.length || !task.request_rows?.length) {
       // 她说的话我们还没算出结果 → 同样不能只弹 toast（那是"点了没反应"的另一种样子）。
       return this.visibleFailure({
@@ -317,8 +317,6 @@ class PurchaseArrivalConversationService {
       //    空时 `confirmArrival.writeAcceptance` 会按 `batch_no` 回查）。
       batch_record_id: String(task.batch_record_id || '').trim(),
       batch_no: task.batch_no || '',
-      // 「验收原话」随草稿传给 confirmArrival —— 由它写进批次行（本类不写业务表）。
-      acceptance_text: String(task.acceptance_text || ''),
       // ⭐⭐ 2026-10-08：这两个值也随草稿下去，由 `confirmArrival` → `writeAcceptance`
       //   在**同一次 update** 里写到「报货批次」那一行（本类自己仍然一张业务表都不写）：
       //     · actual_amount   = 她在卡片表单里填的**整批金额**（上面已校验：非空、非负、是数字）；
@@ -446,7 +444,7 @@ class PurchaseArrivalConversationService {
    *   ② 「全部按申请数到货」 —— 复用**既有** `buildPlan(rows, { same: true, differences: [] })`
    *      （不新增第二条"算实际到货"的算法）；
    *   ③ 把结果种进**同一批**的会话任务（task id 用同一个 `taskIdForBatch`），
-   *      然后调**既有** `confirmLocked` —— 建草稿、写「验收原话 / 实际数量 / 发生金额」、
+   *      然后调**既有** `confirmLocked` —— 建草稿、写「到货文字说明（该列已从真表退场） / 实际数量 / 发生金额」、
    *      逐条 `inventory.applyPurchase`、写「确认状态」「到货状态」**全部还是那一份实现**。
    *
    * 🔴 为什么不直接调 `PurchaseWebhookService.confirmArrival`：
@@ -456,7 +454,7 @@ class PurchaseArrivalConversationService {
    * ⚠️ 「发生金额」**必填**（业务负责人 2026-10-08：「金额这个是必填的，必须让用户填」）
    *    —— 工作台表单收的就是它；缺失 / 非数字 / 0 / 负数一律**一个字都不写**（与卡片
    *    表单那条路**同一个** `parseActualAmount`）。
-   * ⚠️ 「到货说明」（本地草稿里的 `acceptance_text`，也是**她给的**，默认值由前端配置给）：
+   * ⚠️ 「到货说明」这一输入**已随真表那一列的删除一起退场**（2026-10-09/10-16）：
    *    这里**不替她编一句话**，空了就拒绝 —— 它是**解析实际到货情况的输入**。
    *    ⚠️ 2026-10-09：这一段文字**不再落进表里**（那一列在真表上没有了），
    *      仍然逐字留在本地任务草稿上，供解析与排查复读。
@@ -465,11 +463,7 @@ class PurchaseArrivalConversationService {
    * @returns {Promise<{ok: boolean, reason?: string, message: string, taskId?: string}>}
    *   `message` 是**给人看的一句话**（工作台直接显示它），不是内部术语。
    */
-  async confirmBatchArrival({ batch, acceptanceText = '', actualAmount, operatorOpenId = '', scanLines = null, timing = null,
-    // ⭐ 2026-10-16（她逐字「数据表里已经没有验收原话了…你必须得删」＋ Lead 裁决 ⓐ）：
-    //   那条「必须有原话」的判据**收窄成由调用方声明** —— 扫码线显式 true（判据一字不变 ✗），
-    //   工作台那条不传（它已经没有那个输入框了 ⇒ 不再要求、也不再写那一列 ✓）
-    requireAcceptanceText = false } = {}) {
+  async confirmBatchArrival({ batch, actualAmount, operatorOpenId = '', scanLines = null, timing = null } = {}) {
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
       return { ok: false, reason: 'no_batch_no', message: pageMessages.m1 };
@@ -482,15 +476,6 @@ class PurchaseArrivalConversationService {
         message: amount.reason === 'amount_missing'
           ? pageMessages.m2
           : pageMessages.m3,
-      };
-    }
-    const text = String(acceptanceText == null ? '' : acceptanceText).trim();
-    // 🔴 扫码线照样必须非空（它自己声明 requireAcceptanceText: true ⇒ 判据一字不变 ✗）
-    if (!text && requireAcceptanceText) {
-      return {
-        ok: false,
-        reason: 'acceptance_text_missing',
-        message: pageMessages.m4,
       };
     }
     // ⭐⭐ 2026-10-11（方案A）：**扫码验收**走这里 —— `scanLines` = 逐码实际到货（她扫了什么）。
@@ -558,7 +543,6 @@ class PurchaseArrivalConversationService {
         request_rows: snapshot.rows,
         plan: plan.rows,
         differences: plan.differences,
-        acceptance_text: text,
         actual_amount: amount.value,
         status: 'awaiting_confirmation',
         source: scans ? 'scan' : 'workbench',
@@ -623,7 +607,7 @@ class PurchaseArrivalConversationService {
   // ── 已删除（2026-10-07 晚）：`createArrivalRecord` / `findExistingArrival` ──────────
   //
   // 两个方法都在往**已被业务负责人删除的**「到货验收」表里建行 / 回查：
-  //   · `createArrivalRecord`：写「报货批次号」+「验收原话」+「验收人」，并做
+  //   · `createArrivalRecord`：写「报货批次号」+「到货文字说明（该列已从真表退场）」+「验收人」，并做
   //     "同批次 + 同原话先回查再创建"的幂等；
   //   · `findExistingArrival`：上面那个回查。
   // 落点搬到「报货批次」那一行之后：

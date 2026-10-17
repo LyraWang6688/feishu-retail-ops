@@ -59,23 +59,27 @@ test('AC-AN4 配置里**0 孤儿**（能真红：把 `arrivalNote:` 塞回配置
   assert.equal(/^\s*acceptanceText,\s*$/m.test(service), false, '⛔ 也不许再透传 ✗');
 });
 
-test('AC-AN2 ⭐⭐ 工作台**不再要求**那句原话（能真红：把判据放回"无条件要求" ⇒ 红）', () => {
+test('AC-AN2 ⭐⭐「验收原话」整条概念已删净（真表无此列；能真红：塞回即红）', () => {
+  // ⭐ 2026-10-17 成对迁移（依据 = 她逐字「我们现在已经不走群聊和发语音了…数据库里面已经没有这个字段了…
+  //   为什么还有验收原话？要把这里删掉呀」）：
+  //   改前逐字：判据是"工作台不要求、扫码线仍要求那句原话"（两套行为）；
+  //   改后逐字：**两边都不再要求、也不再拼那句话** —— 这个概念整体退场 ✓
   const conversation = read('src/services/purchaseArrivalConversationService.js');
-  // ⭐ 判据收窄成"由调用方声明"：`!text && requireAcceptanceText`
-  assert.match(conversation, /if \(!text && requireAcceptanceText\)/,
-    '⭐ 空值拒绝必须**只在调用方声明时**生效（工作台那条不声明 ⇒ 验收照常成功 ✓）');
-  assert.equal(/if \(!text\) \{\s*return \{\s*ok: false,\s*reason: 'acceptance_text_missing'/.test(conversation), false,
-    '⛔ 不许再无条件要求（那会让工作台验收变成"假卡" ✗）');
-  assert.match(conversation, /requireAcceptanceText = false/, '默认**不要求** ⇒ 工作台直接可用 ✓');
+  assert.equal(/acceptanceText|acceptance_text|requireAcceptanceText/.test(conversation), false,
+    '⛔ 会话层不许再出现「验收原话」入参 / 判据 / 字段');
+  const scan = read('src/services/scanArrivalService.js');
+  assert.equal(/acceptanceText/.test(scan), false, '⛔ 扫码线也不许再拼 / 传那句话');
+  const writeConfig = read('src/config/scanWrite.js');
+  assert.equal(/acceptanceTextTemplate/.test(writeConfig), false, '⛔ 模板配置已随概念退场');
+  const arrivalConfig = read('src/config/workbenchArrival.js');
+  assert.equal(/acceptanceText/.test(arrivalConfig), false, '⛔ 验收配置里不许再有那个字段名');
 });
 
-test('AC-AN3 ⭐ 扫码线**非空要求照旧**（能真红：把它放水 ⇒ 红）', () => {
-  const scan = read('src/services/scanArrivalService.js');
-  assert.match(scan, /requireAcceptanceText: true/, '⭐ 扫码线必须**显式声明**要那句话 ✓');
-  assert.match(scan, /acceptanceText,/, '扫码线那条原话**照旧**传 ✓');
-  assert.match(scan, /acceptanceTextTemplate/, '模板仍走既有配置 `scanWrite.js` 的 acceptanceTextTemplate ✓');
-  const conversation = read('src/services/purchaseArrivalConversationService.js');
-  assert.match(conversation, /message: pageMessages\.m4/, '那条人话仍在（扫码线还在用 ✓）');
-  const texts = read('src/config/purchaseArrivalTexts.js');
-  assert.match(texts, /请先写一句到货说明/, '`pageMessages.m4` 原文**逐字不动** ✓');
+test('AC-AN3 ⭐ 真表 / 前端也不许把那个输入或字段带回来（反向哨兵）', () => {
+  const schema = read('src/config/v1BitableSchema.js');
+  assert.equal(/acceptanceText:/.test(schema), false, '⛔ schema 不许再映射那一列（真表已无）');
+  const copy = read('public/workbench/config/orders.js');
+  assert.equal(/acceptanceText/.test(copy), false, '⛔ 前端字段表不许再有 acceptanceText');
+  const landing = read('src/services/purchaseOrderBatchService.js');
+  assert.equal(/wrote_acceptance_text/.test(landing), false, '⛔ 写批次那条日志字段也已退场');
 });

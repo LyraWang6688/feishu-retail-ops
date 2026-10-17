@@ -197,7 +197,7 @@ export const DOMAIN_TABS = [
       // ⭐⭐ 2026-10-13 第 2 步（她：「先把骨架搭好，把之前在扫码页做好的，都先搬到工作台」）：
       //    「验收」子 tab **挂回既有验收模块**（`features/orders` 的 purchase 模式）——
       //    它本来就在（未到货优先 + 折叠「已到货（N）」+ 每张卡【验收到货】表单：
-      //    **实际金额 + 验收原话** ⇒ `POST /purchase/arrivals/confirm`），扫码页与工作台**共用这一处** ✓
+      //    **实际金额 + 到货文字说明（该列已从真表退场）** ⇒ `POST /purchase/arrivals/confirm`），扫码页与工作台**共用这一处** ✓
       //    ⇒ **不新造页面、不新开接口、服务层一行不改** ✓
       {
         id: 'purchase-acceptance',
