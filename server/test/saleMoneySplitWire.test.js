@@ -20,10 +20,15 @@ const path = require('node:path');
 
 const SERVER = path.join(__dirname, '..');
 const ROUTES = path.join(SERVER, 'src', 'routes', 'scanPage', 'index.js');
+// ⭐ 2026-10-18 成对迁移（深拆 P2：`submit_order` 分支体搬进 handlers/salesSubmit.js）：
+//   改前逐字：接线只看 `routes/scanPage/index.js`。
+//   改后逐字：看「index.js ＋ handlers/salesSubmit.js」（同一份职责，拆成两个文件）；
+//   判据语义未变：仍然"没有开关 / 没有闸门 / 货那一跑参数口径正确" ✓（塞回/放宽仍会红）。
+const HANDLER = path.join(SERVER, 'src', 'routes', 'scanPage', 'handlers', 'salesSubmit.js');
 const CFG = path.join(SERVER, 'src', 'config', 'saleMoneySplit.js');
 const ENV_EXAMPLE = path.join(SERVER, '..', '.env.example');
 
-const routesSrc = () => fs.readFileSync(ROUTES, 'utf8');
+const routesSrc = () => fs.readFileSync(ROUTES, 'utf8') + '\n' + fs.readFileSync(HANDLER, 'utf8');
 
 /**
  * 取出"接线那一段" —— ⚠️ **成对迁移**：改前锚在闸门那行（`…enabled === true`）✗ 闸门删掉后不能再用它

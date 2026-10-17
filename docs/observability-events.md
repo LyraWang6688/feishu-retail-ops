@@ -522,8 +522,8 @@
 | `scan.write.action_inferred` | 1 | src/routes/scanPage/index.js |
 | `scan.write.disabled` | 1 | src/config/scanWrite.js |
 | `scan.write.failed` | 2 | src/config/alerts.js<br>src/config/scanWrite.js |
-| `scan.write.jump_gate_blocked` | 1 | src/routes/scanPage/index.js |
-| `scan.write.line_amount_required` | 1 | src/routes/scanPage/index.js |
+| `scan.write.jump_gate_blocked` | 1 | src/routes/scanPage/handlers/salesSubmit.js |
+| `scan.write.line_amount_required` | 1 | src/routes/scanPage/handlers/salesSubmit.js |
 | `scan.write.payment_amount_required` | 1 | src/config/scanWrite.js |
 | `scan.write.purchase_amount_required` | 1 | src/config/scanWrite.js |
 | `scan.write.purchase_entry_invalid` | 1 | src/config/scanWrite.js |

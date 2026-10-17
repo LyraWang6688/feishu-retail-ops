@@ -657,8 +657,14 @@ test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接
       '🔴 ' + path.relative(SERVER_SRC, file) + ' 里不许出现那个开关的**字面量**（只许经 resolveSaleMoneySplitConfig() 读 ✓）');
     if (!text.includes('deferFunds')) continue;
     wiredFiles += 1;
-    assert.equal(path.relative(SERVER_SRC, file), path.join('routes', 'scanPage', 'index.js'),
-      '🔴 `deferFunds` 只许出现在 `routes/scanPage/index.js` 那一处接线里 ✗');
+    // ⭐ 2026-10-18 成对迁移（深拆 P2：`submit_order` 分支体搬进 `routes/scanPage/handlers/salesSubmit.js`）：
+    //   改前逐字：路径必须**恰好**是 `routes/scanPage/index.js`。
+    //   改后逐字：允许两处之一 —— 老位置 index.js 或新 handler 文件；**仍恰好一处**（强度未降 ✓）。
+    const rel = path.relative(SERVER_SRC, file);
+    assert.ok(
+      [path.join('routes', 'scanPage', 'index.js'), path.join('routes', 'scanPage', 'handlers', 'salesSubmit.js')].includes(rel),
+      '🔴 `deferFunds` 只许出现在 index.js 或 handlers/salesSubmit.js 那一处接线里 ✗（实际 ' + rel + '）',
+    );
     // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
     //   改前逐字：`assert.ok(/resolveSaleMoneySplitConfig\(\)\.enabled === true[\s\S]{0,600}?deferFunds: true/.test(text), '必须在闸门内')`
     //   改后逐字：**闸门已删** ⇒ 改成"**路由代码里没有那条闸门**"＋"货那一跑照旧带着 `payments: []` 一起走" ✓
