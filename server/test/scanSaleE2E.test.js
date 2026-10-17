@@ -1951,7 +1951,11 @@ test('AC-SR4 接线哨兵：**五路**成功页都走同一个 successReturnFiel
   assert.ok(payStart > -1, '第 2 步【提交整单付款】那段分支注释要在');
   const payEnd = source.indexOf('// ── 提交销售单', payStart);
   assert.ok(payEnd > payStart, '付款那段之后要能读到下一段分支注释（否则锚点失效 ⇒ 立刻红 ✓）');
-  assert.ok(source.slice(payStart, payEnd).includes('successReturnFields('),
+  // ⭐ 2026-10-18 成对迁移（深拆 P1：`payment_pay` 分支体搬进 `routes/scanPage/handlers/payment.js`）：
+  //   改前逐字：在聚合源码的「第 2 步付款」注释片段里找 `successReturnFields(`。
+  //   改后逐字：付款成功页现在在 **handler 文件**里 ⇒ 直接对该文件断言（强度未降：仍要求"复用同一来源" ✓）。
+  const paymentHandler = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage/handlers/payment.js'), 'utf8');
+  assert.ok(paymentHandler.includes('successReturnFields('),
     '第 2 步【付款】那条成功页必须复用同一个 successReturnFields(...)');
   for (const anchor of ['scan_sale_submitted', 'scan_replenish_submitted', 'scan_purchase_return_submitted']) {
     const at = source.indexOf(anchor);
