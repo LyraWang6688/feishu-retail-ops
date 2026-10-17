@@ -58,7 +58,10 @@ test('handleUiTap：step 不在白名单 ⇒ 只记 page.view（不猜）', () =
 });
 
 test('两个来源都接线了（源码哨兵）', () => {
-  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8');
+  // ⭐ 2026-10-18 成对迁移（拆分第 2 刀）：实现搬进 `routes/scanPage/renderContext.js`；
+  //   判据跟着看「路由 + renderContext」两处（语义未变：路由仍调用 logRendered ✓）。
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'renderContext.js'), 'utf8');
   assert.match(route, /logFunnelPage\(/, '扫码页必须在渲染时记漏斗');
   assert.match(route, /goods: 'entry'/, '主页面（goods）必须记 entry step');
   const client = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'shared', 'funnel.js'), 'utf8');

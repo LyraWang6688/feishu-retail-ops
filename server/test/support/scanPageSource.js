@@ -104,9 +104,23 @@ const scanPageSource = () => {
     ? prepared + '\n' + slices.join('\n')
     : prepared.slice(0, cut) + '\n' + slices.join('\n') + prepared.slice(cut);
   // ⭐ 再把 require 深度反向换回 ✓（有一批用例会把聚合**当模块编译**，编译路径 = 拆分前那一份的位置 ✓）
-  return body
+  // ⭐ 2026-10-18（拆分第 2 刀）：搬进独立模块的实现（actions / renderContext）也要进聚合文本 ——
+  //   否则"按源码文本钉行为"的既有判据会突然找不到实现（那是**判据失效**，不是行为变化 ✗）。
+  //   ⚠️ 追加在 `module.exports` 之前（顶层作用域，与 factory 内的同名薄包装**不在同一作用域** ⇒ 不冲突 ✓）；
+  //   去掉它们的 `module.exports`（子文件出口不属于旧单文件的语义 ✓）。
+  const extras = ['actions.js', 'renderContext.js']
+    .map((file) => path.join(SCAN_PAGE_DIR, file))
+    .filter((full) => fs.existsSync(full))
+    .map((full) => fs.readFileSync(full, 'utf8')
+      .replace(/\nmodule\.exports[\s\S]*$/, '')
+      // 子模块顶部的 `const {…} = require(…)` 与 index 顶层的 require **同名** ⇒ 聚合里会重复声明；
+      // 这些名字 index 顶层已经声明过（聚合执行时共享）⇒ 从 extras 里去掉 require 行即可（不删函数体 ✓）。
+      .replace(/^\s*const\s*\{[^}]*\}\s*=\s*require\([^)]*\);\s*$/gm, ''))
+    .join('\n');
+  return (body + '\n' + extras)
     .replace(/require\('\.\.\/\.\.\//g, "require('../")
     .replace(/require\('\.\/actions'\)/g, "require('./scanPage/actions')")
+    .replace(/require\('\.\/renderContext'\)/g, "require('./scanPage/renderContext')")
     .replace(/require\('\.\.\/(workbench|feishuWebAuth)'\)/g, "require('./$1')");
 };
 

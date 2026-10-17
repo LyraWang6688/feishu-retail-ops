@@ -384,7 +384,14 @@ test('AC-PA5 源码哨兵：补货 / 退货共用同一个闸门；开关读配�
   //     ⭐ 更强的**逐字**哨兵（补货 `'replenish'` / 退货 `'return'` 各 2 处 = 判空 + 非数字、
   //       且**不许**再有"不带链路"的裸调用）在 `test/purchaseAmountRealmWiring.test.js` 的 **AC-PAWIRE2**
   //       —— 那里对**剥掉整行注释**后的源码判（免得被本文件/路由里"改前逐字"的注记误伤 ✓）。
-  assert.equal((routeSrc.match(/const purchaseAmountMissing = /g) || []).length, 1);
+  // ⭐ 2026-10-18 成对迁移（拆分：实现搬进 `routes/scanPage/actions.js`）：
+  //   改前逐字：`const purchaseAmountMissing = ` **恰一处**（实现即定义）。
+  //   改后逐字：**一处薄包装**（index，调 `purchaseAmountMissingOf`）＋ **一处实现**（actions.js）；
+  //     仍然"不许复制"——两处都逐字钉住（谁再抄一份实现 ⇒ 红 ✓）。
+  assert.equal((routeSrc.match(/const purchaseAmountMissing = \(body, realm\) => purchaseAmountMissingOf\(body, realm, writeConfig\);/g) || []).length, 1,
+    'index 里必须**恰一处**薄包装');
+  assert.equal((routeSrc.match(/const purchaseAmountMissing = \(body, realm, writeConfig = SCAN_WRITE\) => \{/g) || []).length, 1,
+    'actions.js 里必须**恰一处**实现（复制一份 ⇒ 红）');
   assert.equal((routeSrc.match(/const purchaseAmountMissingPage = /g) || []).length, 1);
   assert.equal((routeSrc.match(/purchaseAmountMissing\(body, '(?:replenish|return)'\)\) return purchaseAmountMissingPage\(/g) || []).length, 2,
     '补货 + 退货两条动作都走**同一个**闸门（各自逐字带自己那条链路的**档位键** ✓）');
