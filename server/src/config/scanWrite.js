@@ -875,6 +875,8 @@ const EVENTS = Object.freeze({
   disabled: 'scan.write.disabled',
   lineAdded: 'scan.sale.line_added',
   draftCleared: 'scan.sale.draft_cleared',
+  // ⭐ 2026-10-18：资金页**金额没填**被拦下（可填 0，但不填不行）——同步拦、零写入 ✓
+  paymentAmountRequired: 'scan.write.payment_amount_required',
   // 2026-10-13 interrupted (account written, draft not cleared): detect + clear each logs one line
   interruptedDetected: 'scan.sale.interrupted_detected',
   interruptedCleared: 'scan.sale.interrupted_cleared',

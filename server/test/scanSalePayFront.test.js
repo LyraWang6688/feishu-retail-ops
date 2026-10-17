@@ -158,7 +158,8 @@ test('AC-PF1 🔴 点「提交这一单」⇒ **不写任何表**（主表/明�
 test('AC-PF2 🔴 点资金页按钮 ⇒ **才**建单（拿单号）', async () => {
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
-    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
+    // ⭐ 2026-10-18（金额必填 · 可填 0）：资金页金额必填 ⇒ 夹具填 `0`（= 未付）
+    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付', payment_method: '微信', payment_amount: '0' });
     // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
     //   改前逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '点按钮那一刻才建单 ✓');`
     //   改后逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 2, '点按钮那一刻才建单 ✓');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 1 ⇒ **实测 2** ✓）
@@ -170,8 +171,9 @@ test('AC-PF2 🔴 点资金页按钮 ⇒ **才**建单（拿单号）', async ()
 test('AC-PF3 🔴 同一 `submitKey` 两跑 ⇒ 两次都用**同一把键**（幂等不许拆 ✗）', async () => {
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
-    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
-    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
+    // ⭐ 2026-10-18（金额必填 · 可填 0）：资金页金额必填 ⇒ 夹具填 `0`（= 未付）
+    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付', payment_method: '微信', payment_amount: '0' });
+    await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付', payment_method: '微信', payment_amount: '0' });
     const keys = calls.filter((c) => c.kind === 'submitSale').map((c) => c.submitKey);
     assert.ok(keys.length >= 1, '至少要建单一次 ✓');
     // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）——⭐ 2026-10-17 **纠正上一手的迁法**：

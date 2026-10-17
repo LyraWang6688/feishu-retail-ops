@@ -1475,8 +1475,16 @@ const followPaymentStep = async (base, cookie, response) => {
   for (const input of form.match(/<input[^>]*>/g) || []) {
     const name = (input.match(/name="([^"]*)"/) || [])[1];
     const value = (input.match(/value="([^"]*)"/) || [])[1] || '';
-    if (name) params.append(name.replace(/&amp;/g, '&'), value.replace(/&amp;/g, '&'));
+    if (!name) continue;
+    const cleanName = name.replace(/&amp;/g, '&');
+    let cleanValue = value.replace(/&amp;/g, '&');
+    // ⭐ 2026-10-18（金额必填 · 可填 0）：夹具里"不填"现在会被 400 拦下 ⇒ 统一按"填 0 = 未付"。
+    if (cleanName === SCAN_WRITE.fields.paymentAmount && !String(cleanValue).trim()) cleanValue = '0';
+    if (cleanName === SCAN_WRITE.fields.paymentMethod && !String(cleanValue).trim()) cleanValue = '微信';
+    params.append(cleanName, cleanValue);
   }
+  // ⭐ 2026-10-18：夹具只读 `<input>`（收款方式是个 `<select>`）⇒ 方式会空 ⇒ 补默认一行「微信」
+  if (!params.has(SCAN_WRITE.fields.paymentMethod)) params.set(SCAN_WRITE.fields.paymentMethod, '微信');
   const url = actionUrl.startsWith('http') ? actionUrl : `${base}${actionUrl.replace(/&amp;/g, '&')}`;
   return fetch(url, {
     method: 'POST',

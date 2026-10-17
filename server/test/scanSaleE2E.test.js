@@ -358,8 +358,16 @@ const followPaymentStep = async (base, cookie, response) => {
   for (const input of form.match(/<input[^>]*>/g) || []) {
     const name = (input.match(/name="([^"]*)"/) || [])[1];
     const value = (input.match(/value="([^"]*)"/) || [])[1] || '';
-    if (name) params.append(name.replace(/&amp;/g, '&'), value.replace(/&amp;/g, '&'));
+    if (!name) continue;
+    const cleanName = name.replace(/&amp;/g, '&');
+    let cleanValue = value.replace(/&amp;/g, '&');
+    // ⭐ 2026-10-18（金额必填 · 可填 0）：夹具里"不填"现在会被 400 拦下 ⇒ 统一按"填 0 = 未付"。
+    if (cleanName === SCAN_WRITE.fields.paymentAmount && !String(cleanValue).trim()) cleanValue = '0';
+    if (cleanName === SCAN_WRITE.fields.paymentMethod && !String(cleanValue).trim()) cleanValue = '微信';
+    params.append(cleanName, cleanValue);
   }
+  // ⭐ 2026-10-18：夹具只读 `<input>`（收款方式是个 `<select>`）⇒ 方式会空 ⇒ 补默认一行「微信」
+  if (!params.has(SCAN_WRITE.fields.paymentMethod)) params.set(SCAN_WRITE.fields.paymentMethod, '微信');
   const url = actionUrl.startsWith('http') ? actionUrl : `${base}${actionUrl.replace(/&amp;/g, '&')}`;
   const finalResponse = await fetch(url, {
     method: 'POST',
@@ -576,7 +584,7 @@ const submitKeyOf = (html) => {
 // AC-E2E-4 提交这一单（资金全空）⇒ 成功页 + 一张单两行明细
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-E2E-4 提交这一单（资金全空）⇒ 成功页（单号 + 双数）：主表 1 条、明细 2 行、都挂同一张单', async () => {
+test('AC-E2E-4 提交这一单（资金行填 0 = 未付）⇒ 成功页（单号 + 双数）：主表 1 条、明细 2 行、都挂同一张单', async () => {
   login();
   const e2e = createE2E();
   const cookie = sessionCookie('ou_e2e_4');
@@ -818,7 +826,7 @@ test('AC-E2E-7 提交后本单归零：再打开 ⇒ 本单：0 双，本单条�
 //   改后逐字：第1步 `=== 1`（金额 99）、第2步累计 `=== 2`（99 / 280）· 依据 = 她 2026-10-14 裁决②
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-E2E-8 ⭐ 只填实收、收款行留空 ⇒ **一定能提交成单**；并**恰写一条**【未收款】（差额=累计）', async () => {
+test('AC-E2E-8 ⭐ 只填实收、收款行填 0（= 未付）⇒ **一定能提交成单**；并**恰写一条**【未收款】（差额=累计）', async () => {
   login();
   const e2e = createE2E();
   try {
@@ -865,7 +873,8 @@ test('AC-E2E-8 ⭐ 只填实收、收款行留空 ⇒ **一定能提交成单**�
       const second = await followPaymentStep(base, cookie2, await postForm(pageUrlOf(base, NUMBER_B), cookie2, {
         action: SCAN_WRITE.actions.submitOrder, submit_key: submitKeyOf(page2.html),
         payment_status: PAYMENT_STATUS.unpaid,
-        payment_method: '', payment_amount: '', line_amount: ['280'],
+        // ⭐ 2026-10-18（金额必填 · 可填 0）：资金页那行金额**必须填** ⇒ 这里填 `0`（= 未付，语义与改前「全空」一致）
+        payment_method: '微信', payment_amount: '0', line_amount: ['280'],
       }));
       const secondHtml = await second.text();
       assert.equal(second.status, 200, `第2步：什么都不填也要能提交：${secondHtml.slice(0, 300)}`);
@@ -1095,8 +1104,8 @@ test('AC-E2E-11 ⭐ 0 收款 ⇒ 自动档＝未付 ⇒ **成单** + 差额一�
       const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: submitKeyOf(page.html),
         // ⚠️ 新形状**没有** `payment_status`（页面已去三档 ✓）⇒ **刻意不传**：档位由**金额自动定** ✓
-        // ⚠️ 每件实收**必须填**（她 2026-10-14 裁决①）；整单收款仍**全空** ⇒ 差额 = 280 ✓
-        payment_method: '', payment_amount: '', line_amount: ['280'],
+        // ⚠️ 每件实收**必须填**（她 2026-10-14 裁决①）；整单收款**金额必填**（她 2026-10-18）⇒ 填 `0`（= 未付）⇒ 差额 = 280 ✓
+        payment_method: '微信', payment_amount: '0', line_amount: ['280'],
       });
       const html = await done.text();
       assert.equal(done.status, 200, `0 收款必须**成单**（改前这条是 400）：${html.slice(0, 300)}`);
@@ -2375,3 +2384,53 @@ test('AC-H4/H5 回归：编号页**不显示**"上一单已提交"；提交后�
 });
 
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-E2E-19 ⭐ 资金页金额**必填**（可填 0、不要求等于总金额；不填 ⇒ 400 + 人话 + 零写入）
+//   她 2026-10-18 逐字：「资金页面也得填写了，必须填写，但是填写的金额不一定要等于
+//   货品合计的总金额，0 也可以填，必须得填写金额」
+// ═══════════════════════════════════════════════════════════════════════════
+test('AC-E2E-19 ⭐ 资金页金额必填：不填 ⇒ 400 + 人话 + 零写入；填 0 ⇒ 成单（未付/待补充，不写"已收"）', async () => {
+  login();
+  const e2e = createE2E();
+  const cookie = sessionCookie('ou_e2e_19');
+  try {
+    await withServer(e2e.app, async (base) => {
+      await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      await addLine(base, cookie, NUMBER_A, '40');
+      const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
+      const key = submitKeyOf(page.html);
+      // 先点「提交这一单」到资金页（会话 `paymentStep='pending'` ⇒ 资金页那一支才生效）
+      const entry = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_WRITE.actions.submitOrder, submit_key: key, line_amount: ['280'],
+      });
+      assert.equal(entry.status, 200, '第一步：到资金页');
+      assert.ok((await entry.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
+      // ① 不填金额 ⇒ 400 + 「金额必须填写（可以填 0）」那句人话 + 零写入
+      const blocked = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: key,
+        [SCAN_WRITE.fields.paymentMethod]: '微信', [SCAN_WRITE.fields.paymentAmount]: '',
+      });
+      const blockedHtml = await blocked.text();
+      assert.equal(blocked.status, 400, `不填金额要被拦下（不是 200 / 不是成单）：${blockedHtml.slice(0, 200)}`);
+      assert.ok(blockedHtml.includes(SCAN_PAGE.paymentStep.amountRequiredNote),
+        '要给她「金额必须填写（可以填 0，但不填不行）」那句人话 ✓');
+      // ⚠️ 口径：④ 货/钱分离 ⇒ 点「提交这一单」时**货那一跑**已经把主表/明细写了；
+      //   "被拦时零写入"指的是**钱**那一半（本次资金页这一按一个字都不写）✓
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '货那一跑照旧建了主表（1）');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '被拦时**钱一个字都不写**（收款明细 0）');
+      // ② 填 0 ⇒ 成单（未付/待补充）；**不写"已收"行**（差额那条【未收款】照既有口径补）
+      const ok = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
+        action: SCAN_PAGE.paymentStep.payAction, submit_key: key,
+        [SCAN_WRITE.fields.paymentMethod]: '微信', [SCAN_WRITE.fields.paymentAmount]: '0',
+      });
+      const okHtml = await ok.text();
+      assert.equal(ok.status, 200, `填 0 要能成单：${okHtml.slice(0, 200)}`);
+      assert.match(okHtml, /您的提交已成功/, '填 0 ⇒ 成功页（未付/待补充，不是失败）');
+      await waitForPendingSaleBackgrounds();
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '填 0 ⇒ 成了一张单');
+      const money = rowsOf(e2e, 'paymentRecord');
+      assert.equal(money.length, 1, '本次已收 0 ⇒ **恰写一条**【未收款】（差额 = 累计，既有口径）');
+      assert.equal(money[0].fields[F('paymentRecord', 'status')], '未收款', '那条是「未收款」，不是「已收」');
+    });
+  } finally { e2e.cleanup(); }
+});
