@@ -110,9 +110,12 @@ const REALM_SCAN_SOURCE = `
     var raw = String(scanned || '').slice(0, Number(config.maxScannedLength) || 512);
     if (!raw) return '';
     var key = String(config.realmQueryKey || 'from');
+    // 2026-10-17: appendRealm=false (returnsToRealm=false) => do not append from=realm
+    var appendRealm = config.appendRealm !== false;
     var withRealm = function (url) {
       var text = String(url || '');
       if (!text) return '';
+      if (!appendRealm) return text;
       var hashAt = text.indexOf('#');
       var head = hashAt >= 0 ? text.slice(0, hashAt) : text;
       var hash = hashAt >= 0 ? text.slice(hashAt) : '';
@@ -142,7 +145,8 @@ const REALM_SCAN_SOURCE = `
     var id = trimStart(raw);
     if (!mount || !origin || !id || id.indexOf('?') >= 0 || id.indexOf('#') >= 0
       || /\s/.test(id)) return '';
-    return withRealm(origin + mount + '/' + encodeURIComponent(id));
+    var landed = origin + mount + '/' + encodeURIComponent(id);
+    return appendRealm ? withRealm(landed) : landed;
   };
   var run = function () {
     write(texts.scanning);

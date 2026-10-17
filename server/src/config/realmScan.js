@@ -44,7 +44,7 @@ const { readFlag, readInt, readString } = require('./envValue');
 // ⭐⭐ 2026-10-16 夜（A 套接线）：**回跳触发参数**（`?scan=1` 那一对）的唯一真源是**五处登记表**
 //   （业务负责人当天 21:2x 五处口径 ⇒ `docs/scan-five-places-2026-10-16.md`）。
 //   本文件只**取默认值**（env 覆盖照旧 ✓），不再自己写一份 `'scan'` / `'1'` ✗。
-const { resolveScanEntriesConfig } = require('./scanEntries');
+const { resolveScanEntriesConfig, SCAN_PLACES } = require('./scanEntries');
 // 路径段的**唯一真源**仍是扫码页那一份（`/r` ✓ 这里只读它、不另写一份 ✗）
 const { SCAN_PAGE } = require('./scanPage');
 
@@ -77,6 +77,22 @@ const DEFAULT_REALM_CHAINS = Object.freeze({
   sales: 'sales',
 });
 
+/** 每个领域的登记参数（`returnsToRealm` / `keepDraft`）—— 唯一真源 = `config/scanEntries.js` 的五处登记表。 */
+const DEFAULT_REALM_ENTRY = Object.freeze({ returnsToRealm: true, keepDraft: true });
+const resolveRealmEntries = (chains) => Object.freeze(Object.fromEntries(
+  Object.keys(chains || {}).map((realm) => {
+    const place = (SCAN_PLACES || []).find((item) => item.realm === realm) || null;
+    return [realm, Object.freeze({
+      returnsToRealm: place ? place.returnsToRealm === true : DEFAULT_REALM_ENTRY.returnsToRealm,
+      keepDraft: place ? place.keepDraft === true : DEFAULT_REALM_ENTRY.keepDraft,
+    })];
+  })
+));
+/** 取一个领域的登记参数（认不出的领域 ⇒ 保守默认：回领域 + 带草稿）。 */
+const realmEntryParams = (realm, config = REALM_SCAN) => (
+  (config && config.realmEntries && config.realmEntries[realm]) || DEFAULT_REALM_ENTRY
+);
+
 const resolveRealmChains = (env) => {
   // 形状：`replenish:replenish,purchase_return:return,sales:sales`
   //   （空串 = 没有领域能用 ⇒ 这个入口整块不发 ✓）
@@ -96,7 +112,9 @@ const resolveRealmChains = (env) => {
  * 解析一份配置（**每次调用都重新读 env** ⇒ 用例可以传不同的 env 验"改配置即改行为" ✓）。
  * @param {object} [env] 默认 `process.env`
  */
-const createRealmScanConfig = (env = process.env) => Object.freeze({
+const createRealmScanConfig = (env = process.env) => {
+  const realms = resolveRealmChains(env);
+  return Object.freeze({
   // 🔴 **总开关**：缺省 **开** ✓。
   //   依据 = **业务负责人 2026-10-16 弹窗选「打开」**（原话：「要不要现在打开？」⇒ 她选「打开」✓）——
   //   她的口径是「补货 / 销售 / 退货里那颗『＋ 再加一个货品』实际上也是扫一扫，在退货里点 ⇒
@@ -129,7 +147,9 @@ const createRealmScanConfig = (env = process.env) => Object.freeze({
   scanTimeoutMs: readInt(env, 'SCAN_REALM_SCAN_TIMEOUT_MS', 120000, { min: 5000, max: 600000 }),
   // 领域 → 链（**三个领域各有各的本单草稿** ✓ 见上面 `DEFAULT_REALM_CHAINS`：
   //   补货 / 退货走多货品草稿，销售走它自己的 `session.sale.lines` —— **落点不同，入口同一个** ✓）。
-  realms: resolveRealmChains(env),
+  realms,
+  // ⭐ 2026-10-17：A 套真正读这两个参数（returnsToRealm：扫完回不回本领域；keepDraft：带不带之前的数据）
+  realmEntries: resolveRealmEntries(realms),
   // 全部用户可见文案（渲染层 / 脚本都不许散写中文 ✗；脚本拿到的是**这一份的 JSON** ✓）。
   texts: Object.freeze({
     scanning: '正在打开飞书的「扫一扫」…扫下一个货品的标签，它就会加进这一单。',
@@ -142,7 +162,8 @@ const createRealmScanConfig = (env = process.env) => Object.freeze({
     // 只读上报失败时的那句人话（**上报失败不影响她** ✓ 但要说一句，不然日志里查不到 ✗）
     reportFailed: '（这次的扫码结果没报上来，工程师那边可能查不到）',
   }),
-});
+  });
+};
 
 /** 默认那一份（进程级；跟 `process.env` 走）。 */
 const REALM_SCAN = createRealmScanConfig();
@@ -174,9 +195,13 @@ const realmScanUrlFor = ({ scanned, realm, origin = '', config = REALM_SCAN } = 
   const wantedRealm = String(realm || '').trim();
   const raw = String(scanned || '').trim().slice(0, Number(config?.maxScannedLength) || 512);
   if (!raw || !wantedRealm) return '';
+  // ⭐ 2026-10-17（假配置接线）：`returnsToRealm=false` ⇒ 扫完**不回本领域** ⇒ 地址里不带 `from=<领域>`。
+  //   默认 `true`（三处都回本领域）⇒ 线上行为与改前逐字节相同 ✓。
+  const appendRealm = realmEntryParams(wantedRealm, config).returnsToRealm !== false;
   const withRealm = (url) => {
     const text = String(url || '');
     if (!text) return '';
+    if (!appendRealm) return text;
     const hashAt = text.indexOf('#');
     const head = hashAt >= 0 ? text.slice(0, hashAt) : text;
     const hash = hashAt >= 0 ? text.slice(hashAt) : '';
@@ -195,13 +220,15 @@ const realmScanUrlFor = ({ scanned, realm, origin = '', config = REALM_SCAN } = 
   const base = String(origin || '').trim().replace(/\/+$/, '');
   const id = raw.replace(/^\/+/, '');
   if (!mount || !base || !id || /[?#\s]/.test(id)) return '';
-  return withRealm(`${base}${mount}/${encodeURIComponent(id)}`);
+  const landed = `${base}${mount}/${encodeURIComponent(id)}`;
+  return appendRealm ? withRealm(landed) : landed;
 };
 
 module.exports = {
   createRealmScanConfig,
   REALM_SCAN,
   DEFAULT_REALM_CHAINS,
+  realmEntryParams,
   realmScanUrlFor,
 };
 

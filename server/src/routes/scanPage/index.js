@@ -91,7 +91,7 @@ const { createMultiItemOrderService } = require('../../services/multiItemOrderSe
 //     （与工作台「扫码打印」同一条链 ✓）；
 //   · **落点只有一处区别**：扫完那件带 `?from=<当前领域>` ⇒ 落回**原领域** ✓
 //     （读它的那一位是既有 `views/scanPageRealm.js` 的 `resolveRealm` ✓ 不新造规则 ✗）。
-const { REALM_SCAN } = require('../../config/realmScan');
+const { REALM_SCAN, realmEntryParams } = require('../../config/realmScan');
 const { createLarkJsapiService } = require('../../services/larkJsapiService');
 // ⭐⭐ 2026-10-16（口子收尾 · 业务负责人口径「**异步只针对"写库"**；校验必须当场同步拦」）：
 //   **尺码 / 数量 / 空单**这三类校验的**唯一真源**（纯函数、不碰 IO、配置先行 ✓）——
@@ -420,6 +420,12 @@ const createScanPageRouter = (options = {}) => {
     return {
       realm,
       origin,
+      // ⭐ 2026-10-17（假配置接线）：A 套真正读登记表的两个行为参数
+      //   · returnsToRealm=false ⇒ 扫完不追加/回跳不带 `from=<领域>`
+      //   · keepDraft=false     ⇒ 扫完回来先清旧草稿（"不带之前的数据"）
+      returnsToRealm: realmEntryParams(realm, realmScanConfig).returnsToRealm !== false,
+      keepDraft: realmEntryParams(realm, realmScanConfig).keepDraft !== false,
+      appendRealm: realmEntryParams(realm, realmScanConfig).returnsToRealm !== false,
       realmQueryKey: realmScanConfig.realmQueryKey,
       recordBasePath: realmScanConfig.recordBasePath,
       maxScannedLength: realmScanConfig.maxScannedLength,
@@ -457,11 +463,31 @@ const createScanPageRouter = (options = {}) => {
    * @param {string} realmId 这一页的领域 id（判据②要它）
    * @returns {string} 需要接着扫时 = `page` ＋ 触发参数；否则 = `page`（原样 ✓）
    */
+  /** 去掉回跳地址里的领域键（`from=<realm>`）—— `returnsToRealm:false` 时用。 */
+  const withoutRealmQuery = (page, key) => {
+    const text = String(page || '');
+    const wanted = String(key || '').trim();
+    if (!text || !wanted) return text;
+    const hashAt = text.indexOf('#');
+    const head = hashAt >= 0 ? text.slice(0, hashAt) : text;
+    const hash = hashAt >= 0 ? text.slice(hashAt) : '';
+    const queryAt = head.indexOf('?');
+    if (queryAt < 0) return text;
+    const base = head.slice(0, queryAt);
+    const pairs = head.slice(queryAt + 1).split('&')
+      .filter((part) => part && part.split('=')[0] !== wanted);
+    return pairs.length ? `${base}?${pairs.join('&')}${hash}` : `${base}${hash}`;
+  };
   const addBackPath = (page, realmId) => {
     if (!realmScanActive(realmId)) return page;
     const key = String(realmScanConfig.triggerQueryKey || '');
     if (!key) return page;
-    return `${page}${page.includes('?') ? '&' : '?'}${encodeURIComponent(key)}=`
+    // ⭐ 2026-10-17：`returnsToRealm=false` ⇒ 303 回跳**不带** `from=<领域>`（默认 true ⇒ 逐字节不变）
+    const entry = realmEntryParams(realmId, realmScanConfig);
+    const target = entry.returnsToRealm === false
+      ? withoutRealmQuery(page, realmScanConfig.realmQueryKey || 'from')
+      : page;
+    return `${target}${target.includes('?') ? '&' : '?'}${encodeURIComponent(key)}=`
       + encodeURIComponent(String(realmScanConfig.triggerQueryValue || ''));
   };
   // 用例可以注入一个假引擎（`options.multiItemOrder`）—— 与 `options.writeService` 同一种注入法 ✓
@@ -568,6 +594,30 @@ const createScanPageRouter = (options = {}) => {
       delete orders[multiItemPendingKey(chain)];
       return { [ordersField]: orders };
     });
+  };
+
+  /**
+   * ⭐ 2026-10-17（假配置接线）：扫完回来若 `keepDraft=false` ⇒ **先清掉这一领域的旧草稿**
+   *   （她定义的"不带之前的数据"）。默认 `true`（三处都带草稿）⇒ 线上行为与改前逐字节相同 ✓。
+   *   🔴 失败**不影响页面渲染**（只记 warn）—— 清草稿是"体验修正"，不是业务写入。
+   */
+  const clearDraftForScanIfNeeded = async (openId, realm) => {
+    const params = realmEntryParams(realm, realmScanConfig);
+    if (params.keepDraft !== false) return;
+    try {
+      if (realm === DEFAULT_REALM) {
+        if (writeService && typeof writeService.clearDraft === 'function') {
+          await writeService.clearDraft({ openId });
+        }
+        return;
+      }
+      const chain = String((realmScanConfig.realms && realmScanConfig.realms[realm]) || '').trim();
+      if (chain) await clearMultiItemPending(openId, chain);
+    } catch (error) {
+      logWarn('scan.entry.keep_draft_clear_failed', {
+        realm, error: String((error && error.message) || error).slice(0, 200),
+      });
+    }
   };
 
   /**
@@ -1901,6 +1951,8 @@ const createScanPageRouter = (options = {}) => {
           .catch(() => '');
         if (remembered) { realm = resolveRealm(remembered); realmSource = 'remembered'; }
       }
+      // ⭐ 2026-10-17（假配置接线）：扫完回来的这一发、且这一处登记 keepDraft=false ⇒ 先清旧草稿
+      if (realmScanTriggered(req, realm)) await clearDraftForScanIfNeeded(openIdOf(req), realm);
       const write = await buildWriteContext(req, view, realm);
       // ⚠️ 验收模式那一块**只用到文案 / 字段名 / 动作名**（它们都在配置里）——
       //    所以即使扫码写入口整个关着（`write` 为 null），验收模式照旧可用：
