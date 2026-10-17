@@ -325,6 +325,7 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
       payment_status: '', payment_method: '', payment_amount: '', line_amount: '399',
     })).text());
     if (html.includes('data-view="payment-step"')) {
+      // ⚠️ 2026-10-17：本轮保留「跳过」⇒ helper 仍走 `payment_skip`（与改前逐字一致 ✓）。
       const skipForm = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
         .find((item) => item.includes('payment_skip')) || '';
       const skipBody = {};

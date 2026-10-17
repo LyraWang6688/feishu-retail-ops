@@ -1465,8 +1465,7 @@ return { salesInfoOf };`;
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
   if (!html.includes('data-view="payment-step"')) return response;
-  // ⭐ 2026-10-13：「跳过」= **一个 POST 动作**（`payment_skip` ⇒ 走既有动作分发 ⇒ 成功页）✓
-  //    ⇒ 这里把那一颗按钮所在的表单**原样提交一次**（模拟她点【跳过】✓ 零 JS ✓）
+  // ⚠️ 2026-10-17：本轮保留「跳过」⇒ helper 仍走 `payment_skip`（与改前逐字一致 ✓）。
   const form = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
     .find((item) => item.includes('payment_skip'));
   if (!form) return new Response(html, { status: response.status, headers: { 'content-type': 'text/html' } });
