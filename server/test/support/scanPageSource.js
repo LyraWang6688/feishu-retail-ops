@@ -108,7 +108,7 @@ const scanPageSource = () => {
   //   否则"按源码文本钉行为"的既有判据会突然找不到实现（那是**判据失效**，不是行为变化 ✗）。
   //   ⚠️ 追加在 `module.exports` 之前（顶层作用域，与 factory 内的同名薄包装**不在同一作用域** ⇒ 不冲突 ✓）；
   //   去掉它们的 `module.exports`（子文件出口不属于旧单文件的语义 ✓）。
-  const extras = ['actions.js', 'renderContext.js']
+  const extras = ['actions.js', 'renderContext.js', 'sessionFlow.js']
     .map((file) => path.join(SCAN_PAGE_DIR, file))
     .filter((full) => fs.existsSync(full))
     .map((full) => fs.readFileSync(full, 'utf8')
@@ -121,6 +121,7 @@ const scanPageSource = () => {
     .replace(/require\('\.\.\/\.\.\//g, "require('../")
     .replace(/require\('\.\/actions'\)/g, "require('./scanPage/actions')")
     .replace(/require\('\.\/renderContext'\)/g, "require('./scanPage/renderContext')")
+    .replace(/require\('\.\/sessionFlow'\)/g, "require('./scanPage/sessionFlow')")
     .replace(/require\('\.\.\/(workbench|feishuWebAuth)'\)/g, "require('./$1')");
 };
 
