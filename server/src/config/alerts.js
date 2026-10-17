@@ -29,6 +29,9 @@ const OBSERVABILITY_ALERTS = Object.freeze({
     minTotal: readInt(process.env, 'OBSERVABILITY_ALERTS_MIN_TOTAL', 20, { min: 1, max: 100000 }),
   }),
   criticalEvents: readList(process.env, 'OBSERVABILITY_ALERT_CRITICAL_EVENTS', DEFAULT_CRITICAL_EVENTS),
+  // ⭐ 私发：优先发给这个 open_id（业务负责人 2026-10-17 指定「私发给我的邯美皮鞋账号」）。
+  //   ⚠️ 这是**只发不收**的出站消息，**不恢复私聊录入入口**（那条链路仍按 2026-10-07 口径删除）。
+  openId: readString(process.env, 'OBSERVABILITY_ALERTS_OPEN_ID', ''),
   chatId: readString(process.env, 'OBSERVABILITY_ALERTS_CHAT_ID', ''),
   prefix: readString(process.env, 'OBSERVABILITY_ALERTS_PREFIX', '【观测告警】'),
   // 用户可见文案的唯一真源（service 里不许写中文；占位符 `{name}` 由 alertMonitor 填）

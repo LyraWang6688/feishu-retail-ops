@@ -2,8 +2,10 @@
 
 /**
  * 观测告警的**发送器**（唯一依赖飞书的地方；与判定器解耦，测试注入假 sender 即可）。
- * 收件群：`OBSERVABILITY_ALERTS_CHAT_ID` 优先；否则复用既有 `PURCHASE_CHAT_ID`。
- * 没配群 ⇒ 只打 warn（`observability.alert.skipped`），绝不发私聊/回落到别的群。
+ * 收件人优先级：
+ *   ① `OBSERVABILITY_ALERTS_OPEN_ID`（**私发给业务负责人本人**；只发不收，不是恢复私聊入口）
+ *   ② `OBSERVABILITY_ALERTS_CHAT_ID` / `PURCHASE_CHAT_ID`（发群）
+ * 都没配 ⇒ 只打 warn（`observability.alert.skipped`），绝不乱发。
  */
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
@@ -22,18 +24,21 @@ const createAlertNotifier = ({ config = OBSERVABILITY_ALERTS, clientFactory } = 
     return client;
   };
   return async (alert) => {
-    const chatId = String(config.chatId || '').trim() || resolvePurchaseChatId();
-    if (!chatId) {
-      logWarn('observability.alert.skipped', { rule: alert.rule, reason: 'no_chat_id' });
+    const openId = String(config.openId || '').trim();
+    const chatId = openId ? '' : (String(config.chatId || '').trim() || resolvePurchaseChatId());
+    if (!openId && !chatId) {
+      logWarn('observability.alert.skipped', { rule: alert.rule, reason: 'no_receiver' });
       return false;
     }
+    const receiveIdType = openId ? 'open_id' : 'chat_id';
+    const receiveId = openId || chatId;
     try {
       const response = await getClient().im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: alert.text }) },
+        params: { receive_id_type: receiveIdType },
+        data: { receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text: alert.text }) },
       });
       if (response.code !== 0) throw new Error(`code=${response.code} msg=${response.msg}`);
-      logInfo('observability.alert.sent', { rule: alert.rule, key: alert.key });
+      logInfo('observability.alert.sent', { rule: alert.rule, key: alert.key, receive_id_type: receiveIdType });
       return true;
     } catch (error) {
       logWarn('observability.alert.failed', { rule: alert.rule, error: String(error.message || error).slice(0, 200) });
