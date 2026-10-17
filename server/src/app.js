@@ -78,6 +78,8 @@ if (process.env.ENABLE_CORS === 'true') {
 // 都会明显变大，所以给到 2mb（足够宽松，同时仍是一个明确的上限）。
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+// ⭐ 埋点第 4 刀：5 条链路请求耗时（只对 config/timing.js 登记的路径打点，其余零多余日志）
+app.use(require('./utils/requestTiming').requestTiming());
 app.use((req, res, next) => {
   const requestId = String(req.get('x-request-id') || crypto.randomUUID());
   req.requestId = requestId;
