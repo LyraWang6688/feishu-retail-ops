@@ -12,7 +12,7 @@ require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径
  * ⚠️ 2026-10-12 热修改写（**「采购明细.采购行为」是 Lookup = 只读**）：
  *  改前（逐字）：`assert.deepEqual(record.fields['采购行为'], ['bh_request'], '采购行为来自「行为管理」的既有编码');`
  *                （另一处同形：`assert.deepEqual(record.fields['采购行为'], ['bh_request']);`）
- *  改后（逐字）：`assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');`
+ *  改后（逐字）：`assert.equal('发生行为' in record.fields, false, '发生行为是 Lookup，不许写');`
  *  理由：业务负责人 2026-10-12 把「采购明细.采购行为」改成 **Lookup**（按「报货批次号」关联采购主表），
  *        Lookup **只读** —— 继续写轻则白写被忽略、重则**整条明细 create 失败**。
  *        ⚠️ **只撤写入、保留读取**（工作台采购查询的分流判据还在读这一列）。
@@ -499,10 +499,11 @@ test('⑥ 勾选尺码 + 填数量 → 生成采购申请（走既有采购链�
     for (const record of requests) {
       assert.deepEqual(record.fields['编号'], ['prod_1']);
       // 🔴 2026-10-12 热修：这一列是 Lookup（只读）⇒ **建明细行不许再写它**（写了会整条 create 失败）
-      assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
+      assert.equal('发生行为' in record.fields, false, '发生行为是 Lookup，不许写');
       // ⭐⭐ 2026-10-12（她确认要写）：值改由**主表**带出来 —— 主表行上必须有「采购行为」
       // ⭐ 2026-10-12：值 = **采购环节**的「报货」（`PURCHASE_ORDER`）—— 原来是库存环节的「采购增加」✗
-      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_order'],
+      // ⭐ 2026-10-17：主表行为列真表已改名「发生行为」（她逐字）
+      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['发生行为'], ['bh_order'],
         '主表「采购行为」= 采购环节的「报货」那一档（明细那列由它 Lookup 带出）');
       assert.ok(record.fields['幂等键'], '每条采购申请都有幂等键（既有 createOnceByKey 的回查依据）');
       assert.ok(record.fields['报货批次号'], '挂在同一个报货批次上');
@@ -1185,9 +1186,10 @@ test('⑪ 一键补货：勾了不填数量按 **1 双**算（填了就按她填
     for (const record of requests) {
       assert.ok(record.fields['幂等键'], '既有 createOnceByKey 的判据');
       // 🔴 2026-10-12 热修：同上（Lookup 只读）
-      assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
+      assert.equal('发生行为' in record.fields, false, '发生行为是 Lookup，不许写');
       // ⭐ 2026-10-12：同上（采购环节的「报货」，不是库存环节的「采购增加」✗）
-      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_order'],
+      // ⭐ 2026-10-17：同上（主表行为列已改名「发生行为」）
+      assert.deepEqual(entriesOf(h.gateway, 'purchaseOrderBatch')[0].fields['发生行为'], ['bh_order'],
         '主表「采购行为」照旧写上（采购环节的「报货」，明细由它带出）');
     }
   } finally { h.cleanup(); }

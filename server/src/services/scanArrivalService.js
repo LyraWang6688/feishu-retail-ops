@@ -406,11 +406,6 @@ const createScanArrivalService = (options = {}) => {
     const conversation = arrivalConversationOf();
     if (!conversation) return { ok: false, reason: 'not_wired', ...summary, message: texts.acceptRowsUnreadableBody };
 
-    const detail = (session.scans || []).map((item) => `${item.size} 码 ${item.quantity} 双`).join('、');
-    // 本地草稿里那句"到货说明" = **扫码事实的复述**（她不用写；表里也没有这一列）。
-    const acceptanceText = fillText(texts.acceptanceTextTemplate, {
-      detail, scanned: summary.scanned, expected: summary.expected,
-    });
     logInfo(events.acceptFinishing, {
       session_id: session.session_id, batch_no: session.batch_no,
       scanned: summary.scanned, expected: summary.expected, submit_key: String(submitKey || ''),
@@ -424,9 +419,6 @@ const createScanArrivalService = (options = {}) => {
         batch_record_id: session.batch_record_id,
         request_ids: session.request_ids,
       },
-      acceptanceText,
-      // ⭐ 2026-10-16：扫码线**显式声明**「必须有那句原话」⇒ 判据与改前**逐字一致** ✓
-      requireAcceptanceText: true,
       actualAmount,
       operatorOpenId: operatorOpenId || session.operator_open_id || openId,
       // ⭐ 新增输入口：逐码实际到货（既有 buildPlan 的扫码分支）

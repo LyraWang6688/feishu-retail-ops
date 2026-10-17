@@ -909,7 +909,6 @@ test('AC12b confirmBatchArrival：种进同一批的会话任务 → 既有 conf
 
   const result = await service.confirmBatchArrival({
     batch: { batch_no: 'B1', request_ids: ['pr1'] },
-    acceptanceText: '跟单子一样，全部到货',
     actualAmount: 1200,
     operatorOpenId: 'ou_1',
   });
@@ -920,7 +919,8 @@ test('AC12b confirmBatchArrival：种进同一批的会话任务 → 既有 conf
     { product_record_id: 'p1', item_no: 'XHB8095', color: '黑', size: 38, quantity: 2 },
   ], '「全部按申请数到货」= 实际数 = 申请数（复用既有 buildPlan）');
   assert.equal(confirmed[0].task.draft.actual_amount, 1200, '她填的发生金额原样进草稿');
-  assert.equal(confirmed[0].task.draft.acceptance_text, '跟单子一样，全部到货', '验收原话是她给的那句');
+  // ⭐ 2026-10-17：验收原话整条概念退场（真表无此列）⇒ 草稿里也不再有它 ✓
+  assert.equal(confirmed[0].task.draft.acceptance_text, undefined, '草稿里不再有验收原话');
   assert.equal(confirmed[0].task.draft.batch_no, 'B1');
   assert.equal(confirmed[0].operatorOpenId, 'ou_1');
   // ② 到货状态仍由既有 markBatchArrived 写（本方法不自己写批次行）

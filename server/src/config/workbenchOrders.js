@@ -102,7 +102,6 @@ const WORKBENCH_ARRIVAL_INPUT_REASONS = Object.freeze([
   'no_request_rows',
   'amount_missing',
   'amount_invalid',
-  'acceptance_text_missing',
 ]);
 
 /**

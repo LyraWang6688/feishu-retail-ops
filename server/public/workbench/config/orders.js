@@ -127,8 +127,8 @@ export const SALES_SECTIONS = [
  *    工作台这一下代表"按采购申请数全部到货"，**由她确认 / 可改**。
  */
 export const ARRIVAL_CONFIRM = {
-  // ⭐ 2026-10-16（她逐字：「数据表里已经没有验收原话了…你必须得删」）：
-  //   原来是 `defaultAcceptanceText: '工作台 · 验收到货：…'`（写进「验收原话」的那个默认值）
+  // ⭐ 2026-10-16（她逐字：「数据表里已经没有到货文字说明（该列已从真表退场）了…你必须得删」）：
+  //   原来是 `defaultAcceptanceText: '工作台 · 验收到货：…'`（写进「到货文字说明（该列已从真表退场）」的那个默认值）
   //   ⇒ **随那个输入框一起退场**（那一列在生产表里已经不存在 ⇒ 写了也没落点 ✗）
   amountPlaceholder: '例如 12800',
 };
@@ -303,7 +303,7 @@ export const ORDERS_TEXTS = {
   arrivalVerifyTitle: '验收到货',
   arrivalAmount: '实际金额',
   // ⭐ 2026-10-16（她逐字：「**「到货说明」，到货说明必须得删**。因为目前我们的**数据表里面已经没有
-  //   验收原话了**，这个是**之前我们的群聊链路**，跟这个**已经没有关系了**。**你必须得删**」）
+  //   到货文字说明（该列已从真表退场）了**，这个是**之前我们的群聊链路**，跟这个**已经没有关系了**。**你必须得删**」）
   //   ⇒ **这个输入框整条退场**（含 `arrivalNote` 标签与它的默认值）——
   //     **不留孤儿配置** ✗（源码哨兵钉住：`arrivalNote` 再出现即红 ✓）
   arrivalSubmit: '确认到货并入库',
@@ -334,7 +334,7 @@ export const ARRIVAL_FULL_API = {
   products: '/api/workbench/inventory/products',
 };
 export const ARRIVAL_FULL_FIELDS = {
-  batchNo: 'batchNo', actualAmount: 'actualAmount', acceptanceText: 'acceptanceText', lines: 'lines',
+  batchNo: 'batchNo', actualAmount: 'actualAmount', lines: 'lines',
   productRecordId: 'productRecordId', size: 'size', quantity: 'quantity',
 };
 export const ARRIVAL_FULL_TEXTS = {

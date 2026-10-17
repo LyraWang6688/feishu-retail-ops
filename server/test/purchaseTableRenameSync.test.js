@@ -65,13 +65,18 @@ test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列�
   assert.equal(Object.prototype.hasOwnProperty.call(request, 'attachment'), false,
     '「具体信息.采购申请单」已被她从生产表删除 → 映射必须删');
 
+  // ⭐ 2026-10-17：采购明细那一列也改名了（她逐字「采购明细里的采购行为字段名称改为了发生行为字段」）
+  assert.equal(request.behavior, '发生行为', '采购明细的行为列映射必须跟真表（发生行为）');
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
   assert.equal(batch.arrivalStatus, '到货状态');
   assert.equal(batch[PURCHASE_ARRIVAL_STATUS_FIELD_KEY], '到货状态', '到货状态的语义键与配置里声明的一致');
   assert.equal(batch.document, '单据');
   // ⭐ 她 2026-10-12（逐字）：「采购主表里面的采购行为确实是需要的，因为一个是报货，一个是退货」
   //    ⇒ 建主表行要写它（报货 = 采购申请 / 退货 = 采购退货）⇒ **必须映射**，否则写入抛"未配置语义字段"。
-  assert.equal(batch.behavior, '采购行为', '建主表行要写这一列 ⇒ 必须映射');
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`'采购行为'`；改后逐字：`'发生行为'`；
+  //   依据 = 她逐字「采购主表里面的采购行为，目前字段名称改为了发生行为」（真表已改名）。
+  assert.equal(batch.behavior, '发生行为', '建主表行要写这一列 ⇒ 必须映射（真表列名 = 发生行为）');
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'behavior'), true);
 
   // ⭐ 2026-10-09：9 点推送【采购】区要显示的供应商**改读「报货批次.供应商」这一列**
@@ -338,7 +343,10 @@ test('B7 ⭐ 工作台采购页（= 现在的「采购 → 验收」子页）：
   assert.ok(livingPage.includes('ARRIVAL_STATUS_PENDING'), '卡片上那个到货状态小标签仍在（兜底取值来自配置）');
   assert.ok(copy.includes("ARRIVAL_STATUS_PENDING = '未到货'") && copy.includes("ARRIVAL_STATUS_ARRIVED = '已到货'"),
     '到货状态的两个取值仍是当下的那两个（原样来自既有 arrival_status 字段）');
-  assert.ok(copy.includes('验收原话'), '「验收原话」这一列还在（config/orders.js 的到货说明写进它）');
+  // ⭐ 2026-10-17 成对迁移（依据 = 她逐字「数据库里已经没有这个字段了…要把这里删掉」）：
+  //   改前逐字：`assert.ok(copy.includes('验收原话'), '「验收原话」这一列还在…')`
+  //   改后逐字：**反向**钉住 —— 这个词 / 这一列**不许再回来** ✓
+  assert.equal(copy.includes('验收原话'), false, '⛔「验收原话」文案 / 字段不许再回来（真表已无该列）');
   // ② 面板的入口/字段照旧（她逐双录入那套；既有 AC 也钉着，这里再确认一次"活页面上真有这块"）
   // ⭐⭐ 2026-10-16（她逐字：「到货说明必须得删……数据表里面已经没有验收原话了……你必须得删」）
   //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`

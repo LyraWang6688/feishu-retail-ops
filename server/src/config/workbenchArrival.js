@@ -1,7 +1,7 @@
 /**
  * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「把**老验收整块搬进工作台**」——
  *   采购 → 验收 → 某批卡的展开里：**该批采购明细（只读）** ＋ **自定义尺码** ＋ **自定义货号**
- *   ＋ 发生金额 ＋ 验收原话 ⇒【确认到货】
+ *   ＋ 发生金额 ⇒【确认到货】
  * ⇒ 本文件 = 这一屏的**文案/字段/接口真源**（配置先行 ✓ 不散写 if ✗）。
  *
  * 🔴 写入**一行都不在这里**：复用既有 `services/scanArrivalService.js`（**只调用** ✓ 不改它 ✗）·
@@ -29,7 +29,6 @@ module.exports = {
   fields: Object.freeze({
     batchNo: 'batchNo',
     actualAmount: 'actualAmount',
-    acceptanceText: 'acceptanceText',
     lines: 'lines',
     productRecordId: 'productRecordId',
     itemNo: 'itemNo',
@@ -44,6 +43,8 @@ module.exports = {
     sizeInvalid: '尺码要填数字，数量要大于 0',
     acceptFailed: '没验收成功，请稍后再试',
     accepted: '已确认到货',
+    // ⭐ 2026-10-17（她逐字）：「验收就是我报货、货到了才验收；退货是发给别人，不用验收」
+    notRequestBatch: '这一批是退货批次，不需要验收（验收只针对「报货」的货）。',
     // ⭐⭐ 2026-10-16（task-56）：**异步成功页那一句** —— 唯一真源是 `SCAN_PAGE.saleSuccess.message`
     //   （「已提交成功，数据会更新」· 四条链路共用一处定义 ✓）⇒ 这里**只引用、不抄一份字面量** ✗。
     //   ⚠️ 它只承诺"**系统已收到**"（数据会更新 ✓），**不承诺"已入账/已写完"** ✗

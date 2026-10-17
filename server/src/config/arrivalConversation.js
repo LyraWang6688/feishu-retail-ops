@@ -101,8 +101,6 @@ const DEFAULTS = Object.freeze({
   maxTranscriptChars: 4000,
   // 一批最多核对多少条采购申请明细（防御性上限：异常数据不要打爆提示词）。
   maxRequestRows: 200,
-  // 多句原话归集成一个「验收原话」时用的连接符（该字段是单值文本，飞书里没有多值容器）。
-  acceptanceTextSeparator: '\n',
   // 卡片文案（用户可见文案一律可配，改文案不碰逻辑）。
   card: {
     title: '本次到货核对完毕，确认入库吗？',
@@ -183,7 +181,7 @@ const DEFAULTS = Object.freeze({
     //    用法：卡片会被 patch 成红色终态（标题 = `card.failedTitle`），同时把同一句回到话题里。
     //
     // ① 点「是」之后入库那一步抛错（含**到货信息写不进「报货批次」那一行**）：
-    //    可以从断点重试（入库本身有幂等兜底，「验收原话」写的是同一个值）。
+    //    可以从断点重试（入库本身有幂等兜底，同一份计划重放不会重复入库）。
     //    ⚠️ 2026-10-07 晚：原先还有一个 `arrivalCreateFailed`（"「到货验收」这一行没建成"）——
     //       那张表已被业务负责人删除，这里**不再建行**，失败原文由这一句承载 ⇒ 那个配置项删掉。
     inboundFailed: '入库没成功：{error}。请再点一次「是」，我会从断点接着写，不会重复入库。',
@@ -273,7 +271,6 @@ const resolveArrivalConversationConfig = (options = {}) => {
       options.maxTranscriptChars, DEFAULTS.maxTranscriptChars, 'maxTranscriptChars',
     ),
     maxRequestRows: positiveInteger(options.maxRequestRows, DEFAULTS.maxRequestRows, 'maxRequestRows'),
-    acceptanceTextSeparator: options.acceptanceTextSeparator ?? DEFAULTS.acceptanceTextSeparator,
     card,
     replies,
     summary,

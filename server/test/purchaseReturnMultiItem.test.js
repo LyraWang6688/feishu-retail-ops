@@ -456,7 +456,8 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
     assert.equal(h.batchNoCalls(), 1, '🔴 号源**只许取一次**');
     assert.equal(SCAN_WRITE.purchaseReturn.behaviorCode, 'PURCHASE_RETURN');
     // 「采购行为」= 退货那一档（引擎那条路草稿里没带 ⇒ **写入件自己按本链路的配置解析** ✓）
-    assert.deepEqual(batches[0].fields['采购行为'], ['bh_return_purchase'],
+    // ⭐ 2026-10-17：主表行为列真表已改名「发生行为」（她逐字）
+    assert.deepEqual(batches[0].fields['发生行为'], ['bh_return_purchase'],
       '多货品退货的批次行也要有「采购行为」= 采购退货那一档（空 ⇒ 工作台会按"采购申请"分流 ✗）');
 
     // ② 两行明细，各自带**自己的货品**、都挂在同一个批次行上

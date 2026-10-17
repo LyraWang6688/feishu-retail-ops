@@ -320,6 +320,13 @@ const createWorkbenchRouter = (options = {}) => {
     const lines = Array.isArray(req.body?.[arrivalTab.fields.lines]) ? req.body[arrivalTab.fields.lines] : [];
     if (!batchNo) return res.status(400).json({ success: false, error: arrivalTab.texts.batchMissing });
     try {
+      // ⭐⭐ 2026-10-17（业务负责人逐字）：「验收就是我报货、然后货到了，我需要验收；
+      //   退货是发给别人的，也就不用验收」⇒ **硬闸门**：只有「发生行为 = 报货」的批次能验收；
+      //   退货批次 ⇒ 400 ＋ 人话 ＋ **零写入**（`scanArrivalService` 自己不判行为，必须在这里挡）。
+      const batchRows = (await purchaseQueryForArrival().listPurchaseRequests({ batchNo })) || [];
+      if (batchRows.some((row) => row.report_behavior === 'purchase_return')) {
+        return res.status(400).json({ success: false, error: arrivalTab.texts.notRequestBatch });
+      }
       // ① 开会话（既有 `start` 读该批采购明细 ✓ 读不到 ⇒ 它自己的人话 `no_request_rows` ✓ 如实回 400 ✗）
       const started = await arrivalService.start({ openId, batchNo, operatorOpenId: openId });
       if (!started?.ok) {

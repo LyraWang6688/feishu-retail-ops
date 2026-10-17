@@ -11,7 +11,7 @@ const { rendererSource } = require('./support/rendererSource');
 /**
  * ⚠️ 2026-10-12 热修改写（**「采购明细.采购行为」是 Lookup = 只读**）：
  *  改前（逐字）：`assert.deepEqual(record.fields['采购行为'], ['bh_return'], '采购行为来自「行为管理」的退货编码');`
- *  改后（逐字）：`assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');`
+ *  改后（逐字）：`assert.equal('发生行为' in record.fields, false, '发生行为是 Lookup，不许写');`
  *  理由：她 2026-10-12 把这一列改成 **Lookup**（按「报货批次号」关联采购主表）⇒ 写入无效/可能整条失败；
  *        **读取照旧保留**（工作台采购查询靠它分流报货 / 退货）。⚠️ 退货明细的其余断言（数量=实退数 /
  *        批次号 / 幂等键 / 库存扣减）一条没放宽。
@@ -405,13 +405,14 @@ test('AC-R2 提交退货 ⇒「采购明细」退货明细（行为列不写：L
     for (const record of requests) {
       assert.deepEqual(record.fields['编号'], ['prod_1']);
       // 🔴 2026-10-12 热修：Lookup（只读）⇒ 退货明细也不许写这一列
-      assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
+      assert.equal('发生行为' in record.fields, false, '发生行为是 Lookup，不许写');
     }
     // ⭐⭐ 2026-10-12（她确认要写）：退货那一档写**主表**行（明细由它 Lookup 带出）
-    assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['采购行为'], ['bh_return_purchase'],
+    // ⭐ 2026-10-17：主表行为列真表已改名「发生行为」（她逐字）
+    assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['发生行为'], ['bh_return_purchase'],
       '主表「采购行为」= 采购退货那一档');
     for (const record of requests) {
-      assert.equal('采购行为' in record.fields, false, '采购行为是 Lookup，不许写');
+      assert.equal('发生行为' in record.fields, false, '发生行为是 Lookup，不许写');
       assert.ok(record.fields['幂等键'], '每条退货明细都有幂等键（既有 createOnceByKey 的判据）');
       assert.deepEqual(record.fields['报货批次号'], [entriesOf(h, 'purchaseOrderBatch')[0].record_id],
         '退货明细必须挂「报货批次号」（退货单 PNG 才有落点）');

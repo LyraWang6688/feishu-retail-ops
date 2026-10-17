@@ -991,7 +991,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     const form = state.container.querySelector(`[data-arrival-batch="${batchNo}"]`);
     const read = (name) => String(form?.querySelector(`[data-field="${name}"]`)?.value ?? '').trim();
     const rawAmount = read('arrival-amount');
-    // ⭐ 2026-10-16（她逐字：「数据表里已经没有验收原话了…你必须得删」）：工作台这条**不再有**
+    // ⭐ 2026-10-16（她逐字：「数据表里已经没有到货文字说明（该列已从真表退场）了…你必须得删」）：工作台这条**不再有**
     //    「到货说明」这个输入框 ⇒ 这里也不再有读值与必填（那条判据**随她这句一起退场** ✓）
     if (!batchNo) return renderResult('这一行没有报货批次号，不能验收到货', true);
     if (!/^\d+(\.\d+)?$/.test(rawAmount) || Number(rawAmount) <= 0) {

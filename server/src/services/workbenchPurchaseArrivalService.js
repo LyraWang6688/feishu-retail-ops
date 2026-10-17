@@ -60,7 +60,7 @@ class WorkbenchPurchaseArrivalService {
         { statusCode: 400, reason: 'no_request_rows' },
       );
     }
-    // ⭐ 2026-10-16（她逐字「数据表里已经没有验收原话了…你必须得删」）：工作台这条**不再传**
+    // ⭐ 2026-10-16（她逐字「数据表里已经没有到货文字说明（该列已从真表退场）了…你必须得删」）：工作台这条**不再传**
     //    `acceptanceText`（那个输入框整条退场 ✓）⇒ 会话层那条判据对**扫码线**照旧 ✗
     const result = await this.arrivalConversation.confirmBatchArrival({
       batch: { batch_no: wanted, request_ids: requestIds },
