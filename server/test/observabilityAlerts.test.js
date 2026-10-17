@@ -111,3 +111,28 @@ test('app 接线：只有开关打开才挂监听器（源码哨兵）', () => {
   assert.match(logger, /addLogListener/, 'logger 必须暴露监听口');
   assert.match(logger, /监听器失败不许影响业务日志/, '监听器异常必须被隔离');
 });
+
+test('收件人优先级：open_id（私发）优先于群，且 receive_id_type 正确', async () => {
+  const { createAlertNotifier } = require('../src/services/alertNotifier');
+  const calls = [];
+  const fake = { im: { message: { create: async (args) => { calls.push(args); return { code: 0 }; } } } };
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await createAlertNotifier({ config: { openId: 'ou_owner', chatId: 'oc_group' }, clientFactory: () => fake })(
+      { rule: 'r', key: 'k', text: 't' },
+    );
+    await createAlertNotifier({ config: { openId: '', chatId: 'oc_group' }, clientFactory: () => fake })(
+      { rule: 'r', key: 'k', text: 't' },
+    );
+  } finally { console.log = log; }
+  assert.equal(calls[0].params.receive_id_type, 'open_id', '有 open_id ⇒ 私发');
+  assert.equal(calls[0].data.receive_id, 'ou_owner');
+  assert.equal(calls[1].params.receive_id_type, 'chat_id', '没有 open_id ⇒ 回落到群');
+  assert.equal(calls[1].data.receive_id, 'oc_group');
+});
+
+test('配置：open_id 默认空（默认仍关 + 无收件人时不乱发）', () => {
+  assert.equal(OBSERVABILITY_ALERTS.openId, '');
+  assert.equal(OBSERVABILITY_ALERTS.enabled, false);
+});
