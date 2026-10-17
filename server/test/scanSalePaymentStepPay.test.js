@@ -153,7 +153,7 @@ test('PAY1 ⭐ 填了付款 ⇒ 走**既有那条链** `addPayment` 一次，参
   });
 });
 
-test('PAY2 ⭐ 没填 / 跳过 ⇒ **零写入** + 记成「待补充」（不是失败 ✗）', async () => {
+test('PAY2 ⭐ 没填 ⇒ **零写入** + 记成「待补充」（不是失败 ✗）', async () => {
   login();
   const followup = makeFakeFollowup();
   await withServer(buildApp(followup), async (base) => {
@@ -170,20 +170,10 @@ test('PAY2 ⭐ 没填 / 跳过 ⇒ **零写入** + 记成「待补充」（不�
     //   改后逐字：下面这条（**反向**：那句提示**不许再出现**）
     //   依据：业务负责人 2026-10-16 逐字「资金页上……**跳过也是成功页**……那三处提示【**全删**】……
     //     **全删就对了**」⇒ `payPendingNote`（"跳过之后的提示"）**整句删** ✗
-    //     （不是放宽：原来钉"**必须出现那句提示**"，现在钉"**那句提示不许出现**"＋页面照旧是成功页 ✓；
-    //      序号②那条"跳过 ⇒ 成功页"的断言**逐字未动** ✓、③"待补充不许说成失败"也**逐字未动** ✓）
+    //     （不是放宽：原来钉"**必须出现那句提示**"，现在钉"**那句提示不许出现**"＋页面照旧是成功页 ✓）
     assert.equal(/待补充|去工作台补收款/.test(paidHtml), false,
       '「跳过之后的提示」**已删** ✗（她：「那三处提示【全删】」——塞回 ⇒ 本判据红 ✓）');
     assert.equal(/没记上/.test(paidHtml), false, '待补充**不许**说成失败 ✗');
-    // ② 走【跳过】⇒ 同样零写入 + 到成功页
-    const skipped = await post(base, cookie, {
-      action: SCAN_PAGE.paymentStep.skipAction, submit_key: 'scan_sale:test:1',
-      order_no: 'XSD-20261013-0001', count: '1',
-    });
-    const skippedHtml = await skipped.text();
-    assert.equal(skipped.status, 200);
-    assert.equal(followup.calls.length, 0, '跳过 ⇒ 也一个字都不写 ✓');
-    assert.ok(skippedHtml.includes(SCAN_WRITE.texts.submittedTitle), '跳过 ⇒ 成功页 ✓');
   });
 });
 

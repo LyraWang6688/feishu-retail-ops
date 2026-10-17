@@ -15,7 +15,7 @@
  *   `routes/**` 有一条**既有哨兵**：`test/multiItemOrderRoute.test.js` 的 RT5 ——
  *   `routes/scanPage/index.js` 的**代码行**里不许出现
  *   `purchaseWebhookService` / `purchaseReturnService` / `PurchaseWebhookService` 这三个名字
- *   （`test/scanDraftRouteWiring.test.js` 的 AC-D3i2 也钉着"路由不许 require 它们"）。
+ *   （那条 `AC-D3i2` 已随草稿链退场删除 ✓；现在由本文件与路由的 require 清单钉着）。
  *   ⇒ 真名只在本文件里出现一次；路由只 require 这个**名字里不含那些服务名**的装配件 ✓。
  *
  * ── 与「已经能发图」的两条路**同构**（不发明新写法 ✓）──────────────────────────

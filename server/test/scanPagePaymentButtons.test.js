@@ -84,8 +84,11 @@ test('AC-PB1 ⭐⭐ 资金页只有一颗提交按钮；「跳过」整块删；
     '🔴 资金页**只有一颗**提交按钮（`type="submit"` 在脚本里也出现，故按 `<button` 数 ✓）');
   assert.equal(html.includes('value="payment_skip"'), false,
     '🔴 那张 `payment_skip` 表单不许回来（反向哨兵 ✗）');
-  assert.equal(html.includes(`>${SCAN_PAGE.paymentStep.skipButton}<`), false,
-    '🔴「跳过」那颗按钮不许回来（她 2026-10-17 ✗）');
+  assert.equal(html.includes('>跳过<'), false, '🔴「跳过」那颗按钮不许回来（她 2026-10-17 ✗）');
+  // ⭐⭐ 2026-10-17（她逐字「**去「跳过」**」）：**配置键也已删净**（不只是页面不画）——
+  //   塞回 `skipAction` / `skipButton` ⇒ 本判据红 ✓
+  assert.equal(SCAN_PAGE.paymentStep.skipAction, undefined, '🔴 `paymentStep.skipAction` 必须已删 ✗');
+  assert.equal(SCAN_PAGE.paymentStep.skipButton, undefined, '🔴 `paymentStep.skipButton` 必须已删 ✗');
 
   // 能真红：把改前那一行按原样塞回资金页那段 ⇒ 第一条必红 ✓
   const putBack = `${block}${'<button>' + 'step.' + 'skipButton</button>'}`;

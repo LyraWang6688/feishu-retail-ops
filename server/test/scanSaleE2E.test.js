@@ -341,9 +341,9 @@ const postForm = async (url, cookie, body) => {
 
 /**
  * ⭐ 2026-10-13「金额两步走」：提交成功后**先落到第 2 步「整单付款」页**
- * （能力去哪：`renderSalePaymentStepPage`），她点【跳过（稍后去工作台补）】才到**成功页**。
+ * （能力去哪：`renderSalePaymentStepPage`），她点【提交整单付款】（**不填金额 = 未付**）才到**成功页**。
  * ⇒ 原本"提交后看到成功页"的用例，顺着这一步再走一次 ✓（**成功页的内容断言一条没放宽** ✓）。
- * 🔴 第 2 步页**没有**"提交整单付款"按钮（没有诚实落库出口）⇒ 这里只可能点【跳过】✓
+ * 🔴 第 2 步页**只有**「提交整单付款」一颗提交按钮 ⇒ 这里点它（不填金额 = 未付 ✓）
  */
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
@@ -367,7 +367,7 @@ const followPaymentStep = async (base, cookie, response) => {
     headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
     body: params.toString(),
   });
-  // ⭐⭐ 2026-10-15（⑨b-2）：**真正建单的是这一步**（点资金页【跳过】⇒ 才建主表 ⇒ 余下转后台）——
+  // ⭐⭐ 2026-10-15（⑨b-2）：**真正建单的是这一步**（点资金页【提交整单付款】⇒ 才建主表 ⇒ 余下转后台）——
   //   它走的是**裸 `fetch`**（不走上面那个 `postForm`）⇒ 这里也要**确定性地等后台跑完**
   //   （等的是真 Promise ✓），否则下面那些**端状态断言**会读到"后台还没写完"的那一刻 ✗。
   //   🔴 判据一个字没改：端状态仍**逐字比**，只是先等它跑完 ✓。
@@ -731,7 +731,7 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
       assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第1步：库存流水 0');
 
-      // 第2步：点资金页那颗【跳过】（未付 ⇒ 不写收款 ✓）⇒ **才建单**
+      // 第2步：点资金页那颗【提交整单付款】（未填金额 = 未付 ⇒ 不写收款 ✓）⇒ **才建单**
       const step2 = await followPaymentStep(base, cookie, first);
       assert.equal(step2.status, 200, '第2步：要能建单');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第2步：销售主表只有 1 条');
@@ -740,7 +740,7 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       assert.equal(rowsOf(e2e, 'liveInventory').length, 0, '第2步：库存只扣了一次');
       assert.equal(rowsOf(e2e, 'paymentRecord').length, 1, '第2步：资金全空 ⇒ **恰写一条**【未收款】');
 
-      // 第3步：**再点一次**（提交 + 跳过，都是同一把键）⇒ 只有一个结果 + "已经交过了"那一页
+      // 第3步：**再点一次**（提交 + 资金页提交，都是同一把键）⇒ 只有一个结果 + "已经交过了"那一页
       const third = await followPaymentStep(base, cookie, await postForm(pageUrlOf(base, NUMBER_A), cookie, body));
       const thirdHtml = await third.text();
       assert.equal(third.status, 200, '第3步：第三次也是 200');
@@ -1794,7 +1794,7 @@ test('AC-SR1/SR2/SR3 销售提交成功 ⇒ 自动回**销售**首页（URL 确�
       await addLine(base, cookie, NUMBER_A, '40');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       // ⭐ 2026-10-13 改指向：成功页现在在【跳过】之后（第 2 步页多了一跳）
-      //    （能力去哪：renderSalePaymentStepPage → payment_skip）⇒ 跟完那一跳再断言「自动回首页」那几个字段 ✓
+      //    （能力去哪：renderSalePaymentStepPage → payment_pay · 不填金额 = 未付）⇒ 跟完那一跳再断言「自动回首页」那几个字段 ✓
       const response = await followPaymentStep(base, cookie, await submitOnceForTiming(base, cookie, page));
       assert.equal(response.status, 200, `提交要成（${response.status}）`);
       const html = await response.text();
@@ -1906,19 +1906,22 @@ test('AC-RF4 只在**写成功**时记：真提交一次销售 ⇒ 会话 last_r
 //   AC-SR5 验收成功页：自动跳转目标 = **未到货批次列表** · 返回按钮**同一 URL** · 首屏有实际数量/金额
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-SR4 接线哨兵：**六路**成功页都走同一个 successReturnFields（唯一来源 ✓）', () => {
+test('AC-SR4 接线哨兵：**五路**成功页都走同一个 successReturnFields（唯一来源 ✓）', () => {
   // ⭐ 2026-10-13 **改指向**（不是放宽 ✓）：原来只数销售/补货/退货**三路**；「金额两步走」之后
   //    第 2 步【跳过（稍后去工作台补）】也**复用同一个** `successReturnFields(...)`
   //    （她 2026-10-13 口径：第 2 步「**可写可不写**」⇒ 跳过 ⇒ 成功页 ✓）
-  //    ⇒ 第 4 路 = `payment_skip` 动作分支 ✓
+  //    ⇒ 第 4 路（`payment_skip` 动作分支）**已随跳过退场整段删除** ✗（2026-10-17 她逐字「去「跳过」」）
   //    ⇒ ⭐ 第 5 路 = `payment_pay` 动作分支（第 2 步【提交整单付款】写成功后给的成功页 ✓ 同一天加）
   //    本哨兵的**本意不变**：成功页 payload **只能有一个来源**，各路**不许各写一遍** ✓
   //    （下面两条断言都还在；如有第 6 处未登记 ⇒ 立刻红 ✓）
   // ⭐⭐ 2026-10-16（task-59「一单多货品 · 路由半」）**成对迁移** —— 上面那句"如有第 6 处未登记
   //    ⇒ 立刻红"**正是这次走的流程** ✓（本哨兵照设计抓到并逼我登记，**不是放宽** ✗）：
-  //    · **改前逐字**：`assert.equal(calls.length, 5,` ＋ 标题/口径写「**五路**」；
-  //    · **改后逐字**：`assert.equal(calls.length, 6,` ＋ 标题/口径写「**六路**」；
-  //    · **依据**：第 6 路 = **多货品单**（`groups.length > 1`）那条成功页 —— 它
+  //    · **改前逐字**（task-59 时）：`assert.equal(calls.length, 5,` ＋ 标题/口径写「**五路**」；
+  //    · **改后逐字**（task-59 时）：`assert.equal(calls.length, 6,` ＋ 标题/口径写「**六路**」；
+  //    ⭐⭐ 2026-10-17 **再迁移一次**（跳过退场）：**改前逐字** `calls.length, 6` / 标题「六路」
+  //      ⇒ **改后逐字** `calls.length, 5` / 标题「**五路**」（第 4 路 `payment_skip` 整段删除 ✗）；
+  //      **依据** = 她 2026-10-17 逐字「**去「跳过」**」。**不是放宽**：仍是"恰好 N 处"精确断言 ✓。
+  //    · **依据**（第 6 路，task-59）：= **多货品单**（`groups.length > 1`）那条成功页 —— 它
   //      **只调既有引擎**（`multiItemOrderService.submitDraft` ✓）、**不新写成功页**，
   //      payload 仍**只从这一处** `successReturnFields(...)` 出（设计 §3「不发明新文案」✓）；
   //      🔴 强度**未降**：仍是"**恰好** N 处调用"＋"定义只许一处"两条**精确**断言 ✓
@@ -1926,25 +1929,19 @@ test('AC-SR4 接线哨兵：**六路**成功页都走同一个 successReturnFiel
   const source = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
   // ⚠️ 只数**调用**（定义那行是 `const successReturnFields = (req, target)` ⇒ 带空格，不被这个正则算进来 ✓）
   const calls = source.match(/successReturnFields\(/g) || [];
-  assert.equal(calls.length, 6,
-    `六路（销售 / 补货 / 退货 / 第 2 步跳过 / 第 2 步付款 / 多货品单）都要接上（实际 ${calls.length} 处调用）`);
+  assert.equal(calls.length, 5,
+    `五路（销售 / 补货 / 退货 / 第 2 步付款 / 多货品单）都要接上（实际 ${calls.length} 处调用）`);
   // ⭐ 单一来源的**强度照保**：定义处只许有**一处**
   assert.equal((source.match(/const successReturnFields\s*=/g) || []).length, 1,
     'successReturnFields 只许有**一个**定义（不许各路各写一遍 ✗）');
-  // ⭐ 第 4 路必须真接在「跳过」那条分支上 —— **锚在分支注释上**（不数字数：
-  //    数窗口会随代码重排/加注释而变脆 ⇒ 2026-10-13 改成"从跳过分支的注释起、
-  //    到**下一段分支注释**止"这一段里必须出现 ✓ 分支本身挪走了也会立刻红 ✓）
-  const skipStart = source.indexOf('// ── 第 2 步【跳过');
-  assert.ok(skipStart > -1, '第 2 步【跳过】那段分支注释要在');
-  const nextBranch = source.indexOf('// ── 提交销售单', skipStart);
-  assert.ok(nextBranch > skipStart, '跳过那段之后要能读到下一段分支注释（否则锚点失效 ⇒ 立刻红 ✓）');
-  assert.ok(source.slice(skipStart, nextBranch).includes('successReturnFields('),
-    '第 2 步【跳过】那条成功页必须复用同一个 successReturnFields(...)');
+  // ⭐⭐ 2026-10-17（她逐字「去「跳过」」）：第 4 路（`payment_skip`）**已随跳过退场整段删除** ✗
+  //   ⇒ 原来那段"必须是跳过分支里那一处调用"的锚点判据**一并删除**（它守的东西已不存在）；
+  //   💡 强度**未降**：上面那条"恰好 N 处调用"＋下面"定义只许一处"仍是精确断言 ✓
   // ⭐ 第 5 路：第 2 步【提交整单付款】写成功那条也必须复用**同一个**来源 ✓
   const payStart = source.indexOf('// ── 第 2 步【提交整单付款】');
   assert.ok(payStart > -1, '第 2 步【提交整单付款】那段分支注释要在');
-  const payEnd = source.indexOf('// ── 第 2 步【跳过', payStart);
-  assert.ok(payEnd > payStart, '付款那段之后要能读到跳过那段的注释（否则锚点失效 ⇒ 立刻红 ✓）');
+  const payEnd = source.indexOf('// ── 提交销售单', payStart);
+  assert.ok(payEnd > payStart, '付款那段之后要能读到下一段分支注释（否则锚点失效 ⇒ 立刻红 ✓）');
   assert.ok(source.slice(payStart, payEnd).includes('successReturnFields('),
     '第 2 步【付款】那条成功页必须复用同一个 successReturnFields(...)');
   for (const anchor of ['scan_sale_submitted', 'scan_replenish_submitted', 'scan_purchase_return_submitted']) {

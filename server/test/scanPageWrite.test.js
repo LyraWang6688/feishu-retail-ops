@@ -589,9 +589,9 @@ const login = () => {
 
 /**
  * ⭐ 2026-10-13「金额两步走」：提交成功后**先落到第 2 步「整单付款」页**
- * （能力去哪：`renderSalePaymentStepPage`），她点【跳过（稍后去工作台补）】才到**成功页**。
+ * （能力去哪：`renderSalePaymentStepPage`），她点【提交整单付款】（**不填金额 = 未付**）才到**成功页**。
  * ⇒ 原本「提交后看到成功页」的用例，跟着这一跳再取一次页面 ✓（成功页的断言**一条没放宽** ✓）。
- * ⚠️ 形状与 `scanSaleE2E.test.js` 那份**逐字同形**（同一个动作 `payment_skip` ✓ 零 JS ✓）。
+ * ⚠️ 形状与 `scanSaleE2E.test.js` 那份**逐字同形**（同一个动作 `payment_pay` · 不填金额 = 未付 ✓ 零 JS ✓）。
  */
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
@@ -850,8 +850,8 @@ test('⑧ 路由：补货表单勾两个尺码 → **先回统一成功页**；�
       // ⚠️ 补货表单在 `from=replenish` 那一块（服务端只渲染当前领域）
       const html = await (await fetch(`${pageUrl}?from=replenish`, { headers: { cookie: sessionCookie(openId) } })).text();
       const replenishKey = html.match(/name="submit_key" value="(scan_replenish:[^"]+)"/)[1];
-      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
-      //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
+      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【提交整单付款】那一跳再取页面 ✓
+      //    （能力去哪：renderSalePaymentStepPage → payment_pay 动作 · 不填金额 = 未付）
       // ⭐⭐ 2026-10-14 晚**成对翻新**（业务负责人**逐字**）：
       //   「**退货整单金额（必填），与补货同一套配置**」＋「**只写一个整单金额**
       //   （一次填一个总额，**和补货一样**～）」
@@ -918,8 +918,8 @@ test('⑨ 【迁移·甲】没填实收 ⇒ **拦住 + 必填人话（醒目）*
       //   不然闸门会"以为取到了单价"而放行 ✗（这就是这条用例一直红的原因 ✓ 不是代码错 ✗）
       price_text: '',
     })), async (base) => {
-      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【跳过】那一跳再取页面 ✓
-      //    （能力去哪：renderSalePaymentStepPage → payment_skip 动作）
+      // ⭐ 2026-10-13 改指向：提交成功先落第 2 步「整单付款」页 ⇒ 跟着【提交整单付款】那一跳再取页面 ✓
+      //    （能力去哪：renderSalePaymentStepPage → payment_pay 动作 · 不填金额 = 未付）
       const response = await followPaymentStep(base, sessionCookie(openId), await fetch(`${base}/s/${encodeURIComponent('YD1111|白色|A')}`, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },

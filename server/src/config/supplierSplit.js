@@ -8,7 +8,8 @@
  *
  *   ⭐ 我追问之后她明确：**ⓐ「同一批次号下按供应商分组」** ✓
  *      （**不是** ⓑ「每个供应商各开一个新批次号」✗）。
- *   ⭐ 这条也是 `config/scanDraft.js` 里那个 **`supplierSplit.batchNoPolicy`** 的落定
+ *   ⭐ 这条原来也是 `config/scanDraft.js` 里那个 **`supplierSplit.batchNoPolicy`** 的落定
+ *     （该文件 **2026-10-16 22:0x 随草稿链整件退场删除** ✓）
  *      ——S1（#732）当时把它**如实标成 `undecided`** ✗（"拆成几单 / 几个批次号要列成问题问她"），
  *      本刀按她 2026-10-16 的选择**落成 `same_batch_no`** ✓（那边现在从本文件读，**不抄第二份** ✗）。
  *
@@ -17,7 +18,7 @@
  *     "拿不到供应商"落在哪个桶 · 事件名 —— **全是会改的口径**，改的时候只动这里，
  *     逻辑里一行都不许写死 ✗（`services/supplierSplitService.js` 里没有任何中文字面量）；
  *   · 🔴 **不碰 `config/scanWrite.js`**（红线：那个文件一个字不动 ✗）
- *     ⇒ 本文件**不 require 它**，也不 require `config/scanDraft.js`（**单向**：那边 require 这边 ✓）。
+ *     ⇒ 本文件**不 require 它**（`config/scanDraft.js` 也已删 ✓ —— 2026-10-16 22:0x 退场）。
  *
  * ── 表结构能不能表达"同一个批次号下多组"（**只读核对过，结论：能** ✓）────────────────
  *   三张落点全部**已有**，**一个新列都不需要** ✗（她 ADDENDUM-3 结论①：不加列）：
@@ -79,7 +80,7 @@ const resolveSupplierSplitConfig = (env = process.env) => {
     );
   }
   return Object.freeze({
-    // ⭐ 她的选择（ⓐ）—— 本文件是它的唯一真源；`config/scanDraft.js` 从这里读，不抄第二份 ✓
+    // ⭐ 她的选择（ⓐ）—— 本文件是它的唯一真源（原来的读方 `config/scanDraft.js` 已删 ✓，不抄第二份）。
     batchNoPolicy,
     stage: readString(env, 'SUPPLIER_SPLIT_STAGE', SPLIT_STAGE),
     // 「拿不到供应商」的桶（**显式可配**：留空串 = 空键 ⇒ 调用方按"认不出"处理，不静默回退 ✓）

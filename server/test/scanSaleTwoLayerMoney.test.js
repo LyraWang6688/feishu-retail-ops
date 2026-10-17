@@ -1458,9 +1458,9 @@ return { salesInfoOf };`;
 };
 /**
  * ⭐ 2026-10-13「金额两步走」：提交成功后**先落到第 2 步「整单付款」页**
- * （能力去哪：`renderSalePaymentStepPage`），她点【跳过（稍后去工作台补）】才到**成功页**。
+ * （能力去哪：`renderSalePaymentStepPage`），她点【提交整单付款】（**不填金额 = 未付**）才到**成功页**。
  * ⇒ 原本"提交后看到成功页"的用例，顺着这一步再走一次 ✓（**成功页的内容断言一条没放宽** ✓）。
- * 🔴 第 2 步页**没有**"提交整单付款"按钮（没有诚实落库出口）⇒ 这里只可能点【跳过】✓
+ * 🔴 第 2 步页**只有**「提交整单付款」一颗提交按钮 ⇒ 这里点它（不填金额 = 未付 ✓）
  */
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
