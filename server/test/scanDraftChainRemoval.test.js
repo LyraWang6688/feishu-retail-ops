@@ -161,7 +161,8 @@ test('AC-DEL5 ⭐ 文档 / 环境同步：两份草稿文档已标作废 · `.en
     assert.ok(line, `🔴 \`docs/README.md\` 里**必须**还有这两份文档的索引行（AC-DI1 逼着索引完整 ✓）：${doc}`);
     assert.match(line, /作废/,
       `🔴 ${doc} 的索引行**必须标「作废」**（她 22:0x 删了整条链 ⇒ 文档不许再当"现行"✗）—— 实际：${line.trim().slice(0, 120)}`);
-    const body = fs.readFileSync(path.join(DOCS, doc), 'utf8');
+    // ⭐ 2026-10-17 成对迁移：两份作废草稿文档已移入 docs/archive/
+    const body = fs.readFileSync(path.join(DOCS, 'archive', doc), 'utf8');
     assert.match(body.slice(0, 600), /作废/,
       `🔴 ${doc} 的**文首**要有作废横幅（"现行"的帽子必须摘掉 ✗）`);
   }

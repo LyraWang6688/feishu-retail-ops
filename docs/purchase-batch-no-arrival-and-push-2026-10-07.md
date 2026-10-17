@@ -299,4 +299,4 @@ Error: Cannot find module '../src/config/purchaseArrivalStatus'
 修完这两处后**必须在服务器上补跑一次 `all`**（见新文档第 5、8 节）。
 
 ⭐ 逐表核对结论 / 「图片」读写点清单 / 验收标准与逐条对照见
-[arrival-table-rename-and-images-field-removal-2026-10-07.md](arrival-table-rename-and-images-field-removal-2026-10-07.md)。
+[arrival-table-rename-and-images-field-removal-2026-10-07.md](archive/arrival-table-rename-and-images-field-removal-2026-10-07.md)。
