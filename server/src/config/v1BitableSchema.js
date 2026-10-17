@@ -77,7 +77,12 @@ const V1_BITABLE_SCHEMA = {
     // 表 ID 没有默认值：不同租户这张表不同，未配置时销售只支持鞋。
     accessory: {
       tableName: '其他配品',
-      tableId: getEnv('FEISHU_V1_ACCESSORY_TABLE_ID'),
+      // ⭐ 2026-10-17（业务负责人指令）：「把 id 写入到代码」—— 生产「其他配品」的 tableId 作为**兜底**：
+      //   改前逐字：`tableId: getEnv('FEISHU_V1_ACCESSORY_TABLE_ID'),`（无兜底 ⇒ 漏配即抛「未配置 table_id」）
+      //   改后逐字：加第二个参数（生产 id ＝ 她 2026-10-17 提供的 `tblxEeiXYAeUF4gH`）。
+      //   ⚠️ 环境变量仍然**优先**（`getEnv` = `process.env[key] || fallback`）；
+      //   ⚠️ **已知取舍**：兜底指向生产表 ⇒ 某台机器漏配 env 时会读**生产**（她明确要这个取舍）。
+      tableId: getEnv('FEISHU_V1_ACCESSORY_TABLE_ID', 'tblxEeiXYAeUF4gH'),
       fields: {
         name: '名称',
         category: '种类',
@@ -98,7 +103,11 @@ const V1_BITABLE_SCHEMA = {
     },
     sizeManagement: {
       tableName: '尺码管理',
-      tableId: getEnv('FEISHU_V1_SIZE_TABLE_ID'),
+      // ⭐ 2026-10-17（业务负责人指令）：「把 id 写入到代码」—— 生产「尺码管理」的 tableId 作为**兜底**：
+      //   改前逐字：`tableId: getEnv('FEISHU_V1_SIZE_TABLE_ID'),`（无兜底 ⇒ 漏配即抛「未配置 table_id」）
+      //   改后逐字：生产 id ＝ 她 2026-10-17 提供的 `tblrHyfMNiPLQkv9`。
+      //   ⚠️ env 仍优先；⚠️ 兜底 = 生产表（漏配会读生产，她已知并要这个取舍）。
+      tableId: getEnv('FEISHU_V1_SIZE_TABLE_ID', 'tblrHyfMNiPLQkv9'),
       fields: { size: '尺码' },
     },
     // 团购券的售价 / 面值 / 平台结算款由运营在飞书里维护，代码不写死券种。
