@@ -27,6 +27,8 @@
   <!-- tap telemetry: the ONE shared client implementation (also inlined by the scan page).
        It must load BEFORE the module script: the modules read window.dshUiTap. -->
   <script src="/workbench/shared/ui-tap.js"></script>
+  <script src="/workbench/shared/funnel.js"></script>
+  <script>if (window.dshFunnel) { dshFunnel.view("workbench", { step: "inventory_adjust" }); }</script>
   <script type="module" src="/workbench/standalone.js"></script>
 </body>
 </html>

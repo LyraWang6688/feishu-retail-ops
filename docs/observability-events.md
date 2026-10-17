@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **517** 个事件。按前缀分组：
+共 **519** 个事件。按前缀分组：
 
 ## accessory_sale_intake
 
@@ -552,6 +552,8 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `ui.page.view` | 1 | src/config/funnel.js |
+| `ui.step.enter` | 1 | src/config/funnel.js |
 | `ui.tap.repeated` | 1 | src/config/uiTap.js |
 | `ui.tap.result` | 1 | src/config/uiTap.js |
 
