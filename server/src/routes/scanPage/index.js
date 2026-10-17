@@ -146,6 +146,12 @@ const sendHtml = (res, status, html) => res.status(status)
 
 const createScanPageRouter = (options = {}) => {
   const config = options.config || SCAN_PAGE;
+  // 拆分第 2 刀：渲染日志/漏斗/回跳字段的实现搬到 `./renderContext.js`；这里只创建一次。
+  const renderContext = require('./renderContext').createRenderContext({
+    config,
+    postActionFor: (...args) => postActionFor(...args),
+  });
+  const { logFunnelPage, logRendered, successReturnFields } = renderContext;
   const writeConfig = options.writeConfig === undefined ? SCAN_WRITE : options.writeConfig;
   const gateway = options.gateway || new V1BitableGateway();
   // ⚠️ 只读那一半的 service：`options.service` 供用例注入一个假的（既有用例就是这么做的，
@@ -247,38 +253,6 @@ const createScanPageRouter = (options = {}) => {
    *   · `number` = 这次扫的编号 / 记录 ID（与 `scan.page.viewed` 同口径 ✓）
    *   · 事件名落 `config/scanPage.js` 的 `EVENTS.rendered`（配置先行 ✓）
    */
-  /**
-   * 前端漏斗（服务端侧）：`ui.page.view` + `ui.step.enter`。**页面渲染成功即记**（不依赖客户端 JS）。
-   * step 只取页面语义映射（entry / payment / success / error），不读用户输入、不采集表单值。
-   */
-  const logFunnelPage = (req, { page, step, realm = '', number = '' } = {}) => {
-    if (!FUNNEL.enabled) return;
-    const fields = {
-      request_id: req?.requestId,
-      page: String(page || 'scan'),
-      ...(step ? { step: String(step) } : {}),
-      ...(realm ? { realm: String(realm) } : {}),
-      ...(number ? { number: String(number).slice(0, 40) } : {}),
-    };
-    logInfo(FUNNEL.events.pageView, fields);
-    if (step) logInfo(FUNNEL.events.stepEnter, fields);
-  };
-  const logRendered = (req, { page, trigger, number = '' } = {}) => {
-    logInfo(config.events?.rendered || 'scan.page.rendered', {
-      request_id: req?.requestId,
-      page: String(page || ''),
-      trigger: String(trigger || ''),
-      query_keys: Object.keys(req?.query || {}).sort(),
-      number: String(number || ''),
-    });
-    const stepOfPage = { goods: 'entry', pay: 'payment', success: 'success', skeleton: 'entry', bad_number: 'error', not_found: 'error' };
-    logFunnelPage(req, {
-      page: String(page || 'scan'),
-      step: stepOfPage[String(page || '')] || '',
-      realm: resolveRealm(req?.query?.from),
-      number,
-    });
-  };
   /**
    * ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
    *   改前逐字：这段「被挡 ⇒ 渲染资金页（`status: 400`）＋ 把她刚填的钱原样带回」**只长在 `payment_pay` 那一支里** ✗
@@ -1098,30 +1072,6 @@ const createScanPageRouter = (options = {}) => {
   const markRealmUsed = (openId, realm) => markRealmUsedOf({
     writeService, openId, realm, event: config.events.failed, logWarn,
   });
-
-  const successReturnFields = (req, target, noticeNo = '') => {
-    const cfg = config.successReturn || {};
-    if (cfg.enabled === false) return {};
-    // ⭐⭐ 2026-10-13：回跳 URL 带**刚提交那一单的单号**（无状态 ✓）⇒ 编号页顶部据此给指引 ✓
-    //   ⚠️ 只加键名与单号（单号不是敏感数据 ✓）；不带任何表单值 ✗
-    // ⭐⭐ 2026-10-13（她的口径："提交这一单"⇒ 与这一单无关 ✓）：
-    //   销售领域的"首页"= **不带编号的入口页**（`config.successReturn.homePath` ✓ 一处改 ✓）
-    const homeRealm = cfg.homeRealm || DEFAULT_REALM;
-    const landing = cfg.homePath && homeRealm === DEFAULT_REALM
-      ? `${req.baseUrl}${cfg.homePath}`.replace(/\/+$/, '') + '/'
-      : '';
-    const base = landing || postActionFor(target, homeRealm);
-    const noticeKey = cfg.noticeKey || 'done';
-    const homePath = String(noticeNo || '').trim()
-      ? `${base}${base.includes('?') ? '&' : '?'}${encodeURIComponent(noticeKey)}=${encodeURIComponent(String(noticeNo).trim())}`
-      : base;
-    return {
-      returnPath: homePath,
-      returnLabel: cfg.label || '',
-      returnDelaySeconds: Number(cfg.delaySeconds) || 0,
-      autoReturnUrl: homePath,
-    };
-  };
 
   // ⚠️ `req` 是**第 4 个可选参数**（task-58 加，只为那条 `scan.page.rendered` 日志 —— 成功页 =
   //    扫码这条链路的第三个落点 ✓）。不传照样能用（老调用点 / 用例不会炸 ✓），只是日志里
