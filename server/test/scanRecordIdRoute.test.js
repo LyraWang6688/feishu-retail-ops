@@ -310,16 +310,16 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
       payment_status: '', payment_method: '', payment_amount: '', line_amount: '399',
     });
     // ⭐⭐ 2026-10-14（新流程**两步**：她：「确认状态是资金那页点击了按钮之后，才算是用户确认了」）：
-    //   ① 点提交 ⇒ **只到资金页**（还不建单 ✓）② 点资金页那颗【跳过】⇒ **才建单** ✓
+    //   ① 点提交 ⇒ **只到资金页**（还不建单 ✓）② 点资金页那颗【提交整单付款】（不填金额）⇒ **才建单** ✓
     await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), {
-      action: SCAN_PAGE.paymentStep.skipAction, submit_key: 'k',
+      action: SCAN_PAGE.paymentStep.payAction, submit_key: 'k',
     });
     const submit = writes.find((item) => item.submit)?.submit;
     assert.ok(submit, '要真的走到提交那一步');
     assert.equal(submit.pendingLine.productRecordId, RECORD_ID, '提交也拿得到那条记录');
     // 成功页要能出来（用同一个 writeService 替身）。
     // ⭐ 2026-10-13 改指向：提交成功**先落第 2 步「整单付款」页**（能力去哪：`renderSalePaymentStepPage`），
-    //    她点【跳过】才到成功页 ⇒ 这里跟着那一跳（`payment_skip` 那个 POST）再取一次 ✓ 断言一条没放宽 ✓
+    //    她点【提交整单付款】才到成功页 ⇒ 这里跟着那一跳（`payment_pay` 那个 POST）再取一次 ✓ 断言一条没放宽 ✓
     let html = (await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), {
       action: SCAN_WRITE.actions.submitOrder, submit_key: 'k2', size: '37',
       payment_status: '', payment_method: '', payment_amount: '', line_amount: '399',
@@ -327,15 +327,15 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
     if (html.includes('data-view="payment-step"')) {
       // ⭐ 2026-10-17 成对迁移（她逐字「去「跳过」」）：改前找 `payment_skip` 那张表单；
       //   改后找资金页唯一那张「提交整单付款」表单（`data-view="payment-pay"`，不填金额 = 未付 ✓）。
-      const skipForm = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
+      const payForm = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
         .find((item) => item.includes('data-view="payment-pay"')) || '';
-      const skipBody = {};
-      for (const input of skipForm.match(/<input[^>]*>/g) || []) {
+      const payBody = {};
+      for (const input of payForm.match(/<input[^>]*>/g) || []) {
         const name = (input.match(/name="([^"]*)"/) || [])[1];
         const value = (input.match(/value="([^"]*)"/) || [])[1] || '';
-        if (name) skipBody[name.replace(/&amp;/g, '&')] = value.replace(/&amp;/g, '&');
+        if (name) payBody[name.replace(/&amp;/g, '&')] = value.replace(/&amp;/g, '&');
       }
-      html = await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), skipBody)).text();
+      html = await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), payBody)).text();
     }
     assert.ok(html.includes(SCAN_WRITE.texts.submittedTitle), '成功页逐字「您的提交已成功」');
     // ⭐⭐ 2026-10-16 23:4x **成对迁移**（改前逐字 → 改后逐字 → 依据）：

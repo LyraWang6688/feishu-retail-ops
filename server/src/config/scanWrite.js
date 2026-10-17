@@ -660,7 +660,7 @@ const TEXTS = Object.freeze({
   //   ⇒ 结果页原来那句「要补实收 / 收款：去工作台「销售」那一页。」**连键带两处引用一起删** ✓
   //   · **改前逐字**（本键）：`submittedNextSteps: '要补实收 / 收款：去工作台「销售」那一页。',`
   //   · **改前逐字**（两处引用，`routes/scanPage.js`）：
-  //       `...(writeConfig.texts.submittedNextSteps ? [writeConfig.texts.submittedNextSteps] : []),`（跳过那条成功页）
+  //       `...(writeConfig.texts.submittedNextSteps ? [writeConfig.texts.submittedNextSteps] : []),`（原跳过那条成功页 · 已退场 ✓）
   //       `...(texts.submittedNextSteps ? [texts.submittedNextSteps] : []),`（提交那条成功页）
   //   · **改后逐字**：三处**全没了**（键不存在 ⇒ 两处引用也无处可取）。
   //   ⇒ **塞回即红**：源码哨兵 = `test/saleSuccessHintRemoval.test.js` 的 AC-SNS1 / AC-SNS2

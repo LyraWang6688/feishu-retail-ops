@@ -170,7 +170,7 @@ test('AC-SP1a ⭐⭐ 补货 / 退货：成功页 = 统一那一句 ＋ 零 `<a h
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-SP1b：销售（真路由 · 跳过付款那条成功页，`routes/scanPage/index.js:3011`）
+// AC-SP1b：销售（真路由 · 提交整单付款那条成功页，`routes/scanPage/index.js`）
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-SP1b ⭐⭐ 销售：成功页 = **同一句** ＋ 零 `<a href>`/按钮/表单/自动跳转', async () => {
@@ -178,12 +178,12 @@ test('AC-SP1b ⭐⭐ 销售：成功页 = **同一句** ＋ 零 `<a href>`/按�
   const write = writeStub();
   await withServer(appWith(write), async (base) => {
     const res = await postForm(pageUrl(base, 'sales'), sessionCookie(), {
-      action: SCAN_PAGE.paymentStep.skipAction,
+      action: SCAN_PAGE.paymentStep.payAction,
       submit_key: 'scan_test:key:success',
       order_no: 'XSD-20261016-0001',
       count: '2',
     });
-    assert.equal(res.status, 200, '销售（跳过付款）⇒ 200（先回她 ✓）');
+    assert.equal(res.status, 200, '销售（提交整单付款 · 未填金额）⇒ 200（先回她 ✓）');
     const html = await res.text();
     assert.ok(html.includes(UNIFIED), `销售成功页必须有那一句「${UNIFIED}」（四条链**同一句** ✓）`);
     assert.deepEqual(offendersOf(html), [],

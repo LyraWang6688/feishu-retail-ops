@@ -8,7 +8,7 @@ const { rendererSource } = require('./support/rendererSource');
  * ```
  * 货品页【➕ 还要加一双】  action=add_line  →  writeService.addSaleLine  →  session.sale.lines
  * 货品页【✅ 提交这一单】  action=submit_order  →  资金页（一个字都不写业务表 ✗）
- * 资金页【提交整单付款 / 跳过】 payment_pay / payment_skip  →  既有 submitSale（读【全部】sale.lines ✓）
+ * 资金页【提交整单付款】       payment_pay（不填金额 = 未付）  →  既有 submitSale（读【全部】sale.lines ✓）
  * ```
  * ⇒ 本刀 = **给【销售货品页】补上那个"一单多货"入口 ＋「本单已加的货品」列表** ✓
  *   **不是**新建机制 ✗ · **不是**"销售不支持多件" ✗

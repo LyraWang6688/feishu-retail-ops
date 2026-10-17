@@ -29,7 +29,7 @@
  * · **AC-J6 判据一次表都不读**：假网关**没有** `get` / `listAll` 调用记录。
  *   （变异：加回 `service.lookup` ⇒ 红。）
  * · **AC-J7 ⭐ 反向哨兵（不许拦）**：重复提交（会话标记 `paymentStep='pending'`）/ 带收款字段那一发 /
- *   资金页两颗动作（`payAction` / `skipAction`）⇒ **一律不是 400**。
+ *   资金页那颗动作（`payAction`）⇒ **一律不是 400**。
  *   （变异：把入口条件里的"不带收款字段"或 `paymentStep` 去掉 ⇒ 红。）
  *
  * ⚠️ 走**真的**扫码路由（准入闸门是它的第一层）+ 假 service / 假 writeService
@@ -288,7 +288,7 @@ test('AC-J7b ⭐ 反向哨兵：这一发**带着收款字段** ⇒ **不许**�
   });
 });
 
-test('AC-J7c ⭐ 反向哨兵：资金页两颗动作（`payAction` / `skipAction`）⇒ **一律不是 400**', async () => {
+test('AC-J7c ⭐ 反向哨兵：资金页那颗动作（`payAction`）⇒ **一律不是 400**', async () => {
   login();
   const write = fakeWriteService({
     lines: [{ kind: 'shoe', size: 40, amount: '280' }],
@@ -297,7 +297,7 @@ test('AC-J7c ⭐ 反向哨兵：资金页两颗动作（`payAction` / `skipActio
   });
   const gateway = fakeGateway();
   await withServer(appFor({ write, gateway }), async (base) => {
-    for (const action of [SCAN_PAGE.paymentStep.payAction, SCAN_PAGE.paymentStep.skipAction]) {
+    for (const action of [SCAN_PAGE.paymentStep.payAction]) {
       const response = await fetch(`${base}/s/${ENCODED}`, {
         method: 'POST',
         redirect: 'manual',
