@@ -214,12 +214,16 @@ const renderSalePaymentStepPage = ({
   // ⭐ 2026-10-16 A2a：**三档那一块不再渲染**（`paymentStatusHtml` 已退场 ✓ 见上面那条注释）——
   //    资金页现在只剩：**收款行**（`paymentRowsHtml`）＋ 赠品 ✓；档位由金额自动定（路由那一步 ✓）。
   const rowsBlock = paymentRowsHtml(write);
+  // ⭐⭐ 2026-10-17 C（她逐字：「默认一行 ＋ ＋ 再加一种付款方式」）：
+  //   加行 = **纯前端**（`data-payment-add`，克隆最后一行并清空值）——不提交、不写库 ✓。
+  //   ⚠️ 文案走配置（`step.addRowButton`）；不写死中文 ✗。
+  const addRowButtonHtml = `<button type="button" class="btn" data-payment-add>${escapeHtml(step.addRowButton || '')}</button>`;
   const giftFieldHtml = `<div class="form-row"><label>${escapeHtml(t.giftLabel || '')}</label><input name="${escapeHtml(fields.gift || 'gift')}"></div>`;
   // ⭐⭐ 2026-10-13 结构重排（**行为不变**）：三件套（三档 / 收款行 / 赠品）先攒成一块，
   //    由 `payForm` 统一放进"提交整单付款"那张表单里（**在表单外就是"提交上去什么都没有"** ✗）。
   //    ⚠️ 还没配 `payAction` 时 ⇒ 退化成原来那个 `<div class="payment-step">`（逐字同形 ✓ 不吃亏 ✓）
   //    ⭐ 2026-10-16 A2a：三件套里的**「三档」那件已退场** ⇒ 现在只有**收款行 + 赠品** ✓
-  const paymentFieldsHtml = `${rowsBlock}${giftFieldHtml}`;
+  const paymentFieldsHtml = `${rowsBlock}${addRowButtonHtml}${giftFieldHtml}`;
   const payForm = (postAction && step.payAction)
     ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay">
 <input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.payAction)}">

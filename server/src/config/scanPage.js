@@ -706,6 +706,11 @@ const PAYMENT_STEP = Object.freeze({
   //    （`routes/workbench.js:215` 的 `followup.addPayment(...)`，写同一张「收款明细」✓）
   payAction: 'payment_pay',
   payButton: '提交整单付款',
+  // ⭐⭐ 2026-10-17（业务负责人逐字：「**默认一行 ＋ ＋ 再加一种付款方式 ＋ 默认微信 ＋ 去「跳过」**」）：
+  //   默认只画**一行**收款（`paymentRowCount = 1` ✓ 既有）；要多一种方式 ⇒ 点这颗
+  //   （**纯前端加一行**：不提交、不写库 ✓）。文案走配置（渲染层不写死中文 ✗）。
+  //   口径来源 = `docs/goods-run-vs-money-page-2026-10-17.md`。
+  addRowButton: '＋ 再加一种付款方式',
   // 两种结果的人话（两条红线：写成功才说已收 ✓ / 失败就说失败 ✓）
   paidNote: '已记下这笔收款。',
   // 🔴 2026-10-16（她逐字：「资金页上……跳过也是成功页……那三处提示【全删】……全删就对了」）：

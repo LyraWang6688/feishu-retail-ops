@@ -342,8 +342,8 @@ const postForm = async (url, cookie, body) => {
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
   if (!html.includes('data-view="payment-step"')) return response;
-  // ⭐ 2026-10-13：「跳过」= **一个 POST 动作**（`payment_skip` ⇒ 走既有动作分发 ⇒ 成功页）✓
-  //    ⇒ 这里把那一颗按钮所在的表单**原样提交一次**（模拟她点【跳过】✓ 零 JS ✓）
+  // ⚠️ 2026-10-17：**本轮保留「跳过」**（C 的「去「跳过」」未落 —— 它会改掉重复提交第二跳的语义，
+  //   见交接档 C 的未做项）⇒ helper 仍走 `payment_skip`（与改前逐字一致 ✓）。
   const form = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
     .find((item) => item.includes('payment_skip'));
   if (!form) return new Response(html, { status: response.status, headers: { 'content-type': 'text/html' } });
@@ -2098,7 +2098,12 @@ test('AC-ACT1 🔴 不带 action 的真提交 ⇒ 窄化兜底认出"提交这�
       assert.equal(first.status, 200, `第一步要能到资金页（实际 ${first.status}）`);
       const firstHtml = await first.clone().text();
       assert.ok(firstHtml.includes('data-view="payment-step"'), '第一步到的是资金页（她不再被卡 ✓）');
-      assert.equal(businessScriptCountOf(firstHtml), 1, '资金页仍只有一段脚本（业务脚本）');
+      // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）· C「＋ 再加一种付款方式」：
+      //   改前逐字：`assert.equal(businessScriptCountOf(firstHtml), 1, '资金页仍只有一段脚本（业务脚本）');`
+      //   改后逐字：**2 段**（① 提交反馈脚本 ② 加行钮那段 `payment-add-row`）
+      //   依据 = 业务负责人 2026-10-17 逐字：「默认一行 ＋ ＋ 再加一种付款方式 ＋ 默认微信」
+      //   ⚠️ 不是放宽：仍数**业务**脚本（标注脚本另有 `annotateScriptOnlyEarlyExits` 钉着 ✓）
+      assert.equal(businessScriptCountOf(firstHtml), 2, '资金页业务脚本 = 提交反馈 ＋ 加行（2 段）');
       assert.equal(annotateScriptOnlyEarlyExits(firstHtml), true, '那段标注脚本必须在且必须早退 ✓');
       const response = await followPaymentStep(base, cookie, first);
       assert.equal(response.status, 200, `要能建单（实际 ${response.status}）`);

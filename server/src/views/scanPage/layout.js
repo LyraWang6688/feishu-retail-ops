@@ -2,7 +2,7 @@ const { SCAN_PAGE } = require('../../config/scanPage');
 const { REALM_TABS, DEFAULT_REALM, REALM_TEXTS } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { PAYMENT_STEP_STYLE, REALM_BAR_STYLE, SCAN_TAB_MARKER, SKELETON_STYLE, STYLE, canScanNextWithFeishu } = require('./styles');
-const { annotateScriptHtml, realmScanScriptTagHtml, submitFeedbackScriptHtml } = require('./script');
+const { annotateScriptHtml, realmScanScriptTagHtml, paymentAddRowScriptHtml, submitFeedbackScriptHtml } = require('./script');
 
 const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = '' }) => `<!doctype html>
 <html lang="zh-CN">
@@ -19,7 +19,7 @@ ${head}
 ${content}
 </main>
 ${requestId ? `<p class="foot">${escapeHtml(config.texts.requestIdLabel)} <span class="mono">${escapeHtml(requestId)}</span></p>` : ''}
-${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}
+${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}${content.includes('data-payment-add') ? `\n${paymentAddRowScriptHtml()}` : ''}
 ${annotateScriptHtml()}
 </body>
 </html>

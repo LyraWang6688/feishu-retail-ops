@@ -22,6 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { SCAN_PAGE } = require('../src/config/scanPage');
 
 const rel = (p) => path.join(__dirname, '..', p);
 const read = (p) => fs.readFileSync(rel(p), 'utf8');
@@ -49,13 +50,34 @@ const stripComments = (text) => String(text)
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n');
 
-// ── AC-PB1：资金页**恰好两颗**（提交 / 跳过）·「补整单付款」不许出现 ──────────────
-test('AC-PB1 ⭐⭐ 资金页恰好两颗可提交按钮（提交 / 跳过），**不许**出现「补整单付款」', () => {
+// ── AC-PB1：资金页两颗提交（提交 / 跳过）＋「＋ 再加一种付款方式」──────────
+test('AC-PB1 ⭐⭐ 资金页两颗提交（提交 / 跳过）＋ 加行钮是 type="button"', () => {
+  // ⭐ 2026-10-17 C：**本轮只加「＋ 再加一种付款方式」**（她 2026-10-17 口径的前三条）。
+  //   ⚠️「去「跳过」」这一条**本轮未落**：它会改掉"重复提交第二跳"的语义（AC-E2E-6 / AC-E2E-15
+  //     实测红）⇒ 待业务口径确认后再动（见交接档 C 的未做项）。所以这里**仍钉两颗提交**。
   const block = moneyStepBlock(RENDERER);
   assert.ok(block.includes('step.payButton'), '主按钮 = `step.payButton`（提交整单付款）✓');
-  assert.ok(block.includes('step.skipButton'), '次按钮 = `step.skipButton`（跳过…）✓');
+  assert.ok(block.includes('step.skipButton'), '次按钮 = `step.skipButton`（跳过）✓（本轮未删）');
+  assert.ok(block.includes('data-payment-add'), '要有「＋ 再加一种付款方式」的钩子 ✓');
+  assert.ok(/type="button"[^>]{0,80}data-payment-add|data-payment-add[^>]{0,80}type="button"/.test(block),
+    '加行钮必须是 `type="button"`（提交链之外 ✗ 否则点一下就把整单交了 ✗）');
   assert.ok(!block.includes('fillPaymentButton'), '资金页**不许**再渲染 `fillPaymentButton` ✗（塞回 ⇒ 本判据红 ✓）');
-  // 能真红：把那一行按改前逐字塞回资金页那段 ⇒ 上一句必红 ✓
+
+  // ⭐ 渲染级：真把资金页画出来，确认加行钮与脚本不是只写在源码里
+  const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
+  const html = renderSalePaymentStepPage({
+    write: {
+      texts: {}, fields: {},
+      paymentRows: [{ method: '微信', amount: '' }],
+      paymentMethods: ['微信', '现金'], defaultPaymentMethod: '微信',
+    },
+    orderNo: 'XSD-TEST-1', postAction: '/s/TEST', submitKey: 'k', count: 1,
+  });
+  assert.ok(html.includes('data-view="payment-pay"'), '提交表单要在 ✓');
+  assert.ok(html.includes('data-payment-add'), '渲染出来的页面上要有加行钮 ✓');
+  assert.ok(html.includes('data-view="payment-add-row"'), '加行脚本要在（点了真能加一行 ✓）');
+
+  // 能真红：把那一行按改前逐字塞回资金页那段 ⇒ 第一条必红 ✓
   const putBack = `${block}<p><a class="btn btn--primary" href="/workbench">${'fillPaymentButton'}</a></p>`;
   assert.ok(putBack.includes('fillPaymentButton'), '（塞回去后确实命中 ⇒ 判据会红 ✓）');
 });
