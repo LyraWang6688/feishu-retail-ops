@@ -153,14 +153,14 @@ test('PAY1 ⭐ 填了付款 ⇒ 走**既有那条链** `addPayment` 一次，参
   });
 });
 
-test('PAY2 ⭐ 没填 ⇒ **零写入** + 记成「待补充」（不是失败 ✗）', async () => {
+test('PAY2 ⭐ 收款填 0（= 未付）⇒ **零写入** + 记成「待补充」（不是失败 ✗）', async () => {
   login();
   const followup = makeFakeFollowup();
   await withServer(buildApp(followup), async (base) => {
     const cookie = sessionCookie();
-    // ① 付款那一下：金额留空 ⇒ 待补充
+    // ① 付款那一下：金额**必须填**（她 2026-10-18）⇒ 这里填 `0`（= 未付，语义与改前「留空」一致）
     const paid = await payAt(base, cookie, {
-      [SCAN_WRITE.fields.paymentMethod]: '', [SCAN_WRITE.fields.paymentAmount]: '',
+      [SCAN_WRITE.fields.paymentMethod]: '微信', [SCAN_WRITE.fields.paymentAmount]: '0',
     });
     const paidHtml = await paid.text();
     assert.equal(paid.status, 200, '不填**不是**失败 ✓');

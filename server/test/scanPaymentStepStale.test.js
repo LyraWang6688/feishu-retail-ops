@@ -198,6 +198,9 @@ const payOrder = (base, extra = {}) => fetch(`${base}/s/${ENCODED}`, {
   body: new URLSearchParams({
     action: 'payment_pay',
     payment_status: '未付',
+    // ⭐ 2026-10-18（金额必填 · 可填 0）：资金页金额必填 ⇒ 夹具默认填 `0`（= 未付）
+    [SCAN_WRITE.fields.paymentMethod]: '微信',
+    [SCAN_WRITE.fields.paymentAmount]: '0',
     submit_key: 'scan_sale:key:1',
     ...extra,
   }).toString(),

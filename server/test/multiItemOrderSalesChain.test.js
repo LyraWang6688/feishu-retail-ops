@@ -565,7 +565,7 @@ test('AC-SM-D ⭐⭐ N=1 ⇒ 老路（submit_order ⇒ 资金页 ⇒ submitSale�
       //   改后逐字：assert.equal(step.status, 200, 'N=1 ⇒ 停在**资金页**（④ 后：点提交先建货那一单、照旧到资金页 ✓）');
       //   依据 = ④ 口径（点提交就建【货】那一单）＋ 她 22:5x「把新功能都上了，不需要开关」✓
       assert.equal(step.status, 200, 'N=1 ⇒ 停在**资金页**（④ 后：点提交先建货那一单、照旧到资金页 ✓）');
-      assert.ok(step.html.includes('整单付款'), '资金页真的渲染出来了 ✓');
+      assert.ok(step.html.includes(SCAN_PAGE.paymentStep.heading), '资金页真的渲染出来了 ✓');
       // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字：assert.equal(valuesIn(h.tables, 'salesEntry', 'orderNo').length, 0, '资金页之前零写入 ✓');
       //   改后逐字：assert.equal(valuesIn(h.tables, 'salesEntry', 'orderNo').length, 1, '④ 后：点提交就建【货】那一单 ⇒ 资金页之前已有 1 张单 ✓');

@@ -606,10 +606,55 @@ const createScanPageRouter = (options = {}) => {
     // 🔴 幂等键 = **本单的 `orderKey`**（一单一把；提交成功后引擎**轮换**它 ✓）——
     //    **不传**表单里那把 key：页面上的 key 在提交后仍是旧值，重放旧页面会把**第 2 单**
     //    算成第 1 单的同一个 `taskId` ⇒ 被第 1 单吸收 ✗（设计 §4.2 的动机）。
-    const result = await engine.submitDraft({
-      openId, chain, orderKey, submitKey: orderKey, requestId,
-    });
-    if (!result.ok) return respondWriteFailure(res, result, requestId);
+    // ⭐⭐ 2026-10-18（业务负责人：「一单多货也要异步」）：
+    //   **校验同步、写库后台、先回成功页** ✓；老引擎/假引擎（没有 readDraft/validateDraft）
+    //   ⇒ 退回**同步**跑（行为与改前逐字一致 ✓，不让"有没有异步"取决于注入的是什么）。
+    const supportsAsync = typeof engine.readDraft === 'function' && typeof engine.validateDraft === 'function';
+    if (supportsAsync) {
+      // ① 先**同步**校验（拒单 ⇒ 400 + 人话 + 零写入；**绝不能挪后台** ✗）
+      const loaded = await engine.readDraft({ openId, chain, orderKey });
+      if (!loaded.ok) return respondWriteFailure(res, loaded, requestId);
+      const checked = engine.validateDraft({
+        draft: loaded.draft,
+        chainConfig: multiItemOrderConfig.chains[chain],
+      });
+      if (!checked.ok) return respondWriteFailure(res, checked, requestId);
+      // ② 后台那一跑（与单货品同一套登记簿/日志/失败落痕 ✓）：先回成功页 ✓
+      const runMultiItemSubmit = () => engine.submitDraft({
+        openId, chain, orderKey, submitKey: orderKey, requestId,
+      });
+      const markMultiItemFailed = async ({ result, error } = {}) => {
+        const message = String(result?.message || error?.message || '').trim();
+        try {
+          const sessions = writeService && writeService.sessions;
+          if (chain === 'replenish' && typeof sessions?.markReplenishFailed === 'function') {
+            await sessions.markReplenishFailed(openId, message);
+          } else if (chain === 'purchase_return' && typeof sessions?.markPurchaseReturnFailed === 'function') {
+            await sessions.markPurchaseReturnFailed(openId, message);
+          }
+        } catch (markError) {
+          logWarn(writeConfig.events.purchaseBackgroundMarkFailed, {
+            request_id: requestId, chain, error: String(markError?.message || markError).slice(0, 200),
+          });
+        }
+      };
+      if (typeof purchaseBackground.scheduleCustomRest === 'function') {
+        purchaseBackground.scheduleCustomRest({
+          chain, requestId, submitKey: orderKey,
+          context: { openId, requestId },
+          run: runMultiItemSubmit,
+          markFailed: markMultiItemFailed,
+        });
+      } else {
+        const result = await runMultiItemSubmit();
+        if (!result.ok) return respondWriteFailure(res, result, requestId);
+      }
+    } else {
+      const result = await engine.submitDraft({
+        openId, chain, orderKey, submitKey: orderKey, requestId,
+      });
+      if (!result.ok) return respondWriteFailure(res, result, requestId);
+    }
     // ⚠️ 理由串**只从配置取**（`config/multiItemOrder.js` 的 `invalidateReasons`；值与单货品那条路
     //   逐字同一串 ✓）—— **不在源码里再写一遍那两个既有字面量**：它们是既有邻近哨兵 `AC-SR4`
     //   的锚点，在前面多一处就把锚点挤开 ✗（本刀真踩到过 ✓）。
@@ -2263,8 +2308,10 @@ const createScanPageRouter = (options = {}) => {
           // ⚠️ 与提交那一下**同一套**解析（`parsePaymentRows` / `asList` ✓ 不新造 ✗）
           //   ⭐ 资金页那张表单**不带**"每件实收"（`line_amount`）⇒ ⭐ **优先用她提交时就填好的那份** ✓
           //     （实测 `AC-E2E-8`："她填的实收照旧落表" 就是靠这一条 ✓ 拿不到就退回表单 ✓ 不编 ✗）
-          const pendingPayments = parsePaymentRows(body, fields).length
-            ? parsePaymentRows(body, fields)
+          // ⚠️ 先保留**原始表单行**（券解析要看原始行 ✓）；"金额 0 = 未付不写收款"在下面 `paidPayments` 再滤 ✓
+          const formPayments = parsePaymentRows(body, fields);
+          const pendingPayments = formPayments.length
+            ? formPayments
             : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
           // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— ⭐ 2026-10-16 深夜 · 修「资金页那一按 500」✗：
           //   改前逐字：`asList(body[lineAmount]) 有值 ? 表单那份 : 会话那份`（**表单优先** ✗）
@@ -2317,8 +2364,37 @@ const createScanPageRouter = (options = {}) => {
               status: 400,
             });
           }
-          // 交给写层的收款行（券行金额 = 平台结算款 ✓）＋ 货品那一侧（券的抽佣已扣 ✓）
-          const paidPayments = voucher.payments;
+          // ⭐⭐ 2026-10-18（业务负责人逐字）：「**资金页面也得填写了，必须填写**；但**不一定要等于
+          //   货品合计的总金额**，**0 也可以填**，必须得填写金额」
+          //   ⇒ **金额必填闸门**（同步拦、零写入）：非券行的金额必须是**非负数字**（`0` 合法）；
+          //   ⚠️ **券行豁免**：券的金额 = **平台结算款**（自动算）⇒ 券行不要求手填金额 ✓。
+          const voucherMethods = new Set((voucher.voucherRows || []).map((row) => String(row.method || '')));
+          const invalidAmountRow = pendingPayments.find((row) => {
+            if (voucherMethods.has(String(row.method || ''))) return false;
+            const raw = String(row.amount ?? '').trim();
+            if (!raw) return true;
+            const value = Number(raw);
+            return !Number.isFinite(value) || value < 0;
+          });
+          if (!pendingPayments.length || invalidAmountRow) {
+            logWarn(writeConfig.events.paymentAmountRequired, {
+              request_id: requestId,
+              rows: pendingPayments.length,
+              empty: Boolean(invalidAmountRow),
+            });
+            return sendPaymentStep(res, req, {
+              paymentMethods: await candidatePaymentMethods(req),
+              realm,
+              submitKey: body[fields.submitKey],
+              count: pendingLines.length,
+              notice: config.paymentStep?.amountRequiredNote || '',
+              // ⭐ 她刚填的那几行**原样带回**（不许替她改数 ✗）
+              paymentRows: pendingPayments,
+              status: 400,
+            });
+          }
+          // ⭐ 交给写层的收款行：**金额 0 的行滤掉**（`0` = 这一单没收到钱 ⇒ 未付/待补充，不写收款明细 ✓）
+          const paidPayments = voucher.payments.filter((row) => Number(row.amount) > 0);
           const effectiveLineAmounts = voucherPayments
             .adjustLineAmounts(pendingLineAmounts, voucher.balanceDeltaCents).amounts;
           if (voucher.voucherRows.length) {
@@ -2524,8 +2600,9 @@ const createScanPageRouter = (options = {}) => {
           retryHint,
         });
         // 🔴 只认**填了金额**的行（PAY2 抓到的真 bug：空金额行也曾被当成「要记一笔」⇒ 会写出空账 ✗）
+        // ⭐ 2026-10-18：金额必填之后 `0` = 未付（不写收款）⇒ 老流程同样只写 >0 的行 ✓
         const rowsToPay = parsePaymentRows(body, fields)
-          .filter((row) => String(row.amount ?? '').trim());
+          .filter((row) => String(row.amount ?? '').trim() && Number(row.amount) > 0);
         // ⭐⭐ 2026-10-14（她：**点资金页按钮 = 确认 ⇒ 才建单**）：
         //   · 刚建单那一次（`createdResult` 有值 ✓）⇒ **这一单的收款已经由 `submitSale` 按同一份入参写好了** ✓
         //     ⇒ 🔴 **不能再走下面那条 `addPayment`** ✗（否则就是**第二遍写收款**✗ ——

@@ -190,6 +190,9 @@ const submitOrderBody = () => ({
 const payBody = () => ({
   action: SCAN_PAGE.paymentStep.payAction,
   [SCAN_WRITE.fields.paymentStatus]: '',
+  // ⭐ 2026-10-18（金额必填 · 可填 0）：资金页金额必填 ⇒ 夹具默认填 `0`（= 未付）
+  [SCAN_WRITE.fields.paymentMethod]: '微信',
+  [SCAN_WRITE.fields.paymentAmount]: '0',
   [SCAN_WRITE.fields.submitKey]: 'scan_sale:key:1',
 });
 

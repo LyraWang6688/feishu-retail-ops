@@ -109,7 +109,7 @@ const paymentRowsHtml = (write) => {
     });
   return rows.map((row) => `<div class="form-row form-row--pay">
 <select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}"><option value="">${escapeHtml(t.paymentNoneOption)}</option>${optionsHtml(write.paymentMethods, row.method)}</select>
-<input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
+<input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" required min="0" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
 </div>`).join('\n');
 };
 

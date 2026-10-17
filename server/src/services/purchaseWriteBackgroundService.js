@@ -101,7 +101,54 @@ const createPurchaseWriteBackgroundService = ({ runRest, markFailed, purchaseAsy
     return trackPurchaseBackground(promise);
   };
 
-  return { schedulePurchaseRest };
+  /**
+   * ⭐ 2026-10-18：**通用后台那一跑**（一单多货：整批 `engine.submitDraft`）——
+   *   与 `schedulePurchaseRest` **同一套**登记簿 / 日志 / 失败落痕（只是 `run` 由调用方给 ✓）。
+   *   失败 ⇒ 不报错给她（她已拿到成功页 ✓）⇒ 必须 warn ＋ 落"可重试"（会话 `last_error` ✓）。
+   */
+  const scheduleCustomRest = ({ chain = '', requestId = '', submitKey = '', context = {}, run, markFailed: markFailedFn } = {}) => {
+    const startedAt = Date.now();
+    const timeoutMs = Number(purchaseAsync.backgroundTimeoutMs) || 0;
+    const events = config.events || {};
+    const phase = config.timing?.phase?.background || 'background';
+    const promise = (async () => {
+      try {
+        const result = await (typeof run === 'function' ? run() : { ok: false, message: 'no run' });
+        const durationMs = Date.now() - startedAt;
+        if (events.restTiming) {
+          logInfo(events.restTiming, {
+            request_id: requestId, chain, phase, ok: result?.ok === true, duration_ms: durationMs,
+            reused: result?.reused === true, timeout_ms: timeoutMs,
+          });
+        }
+        if (result?.ok !== true) {
+          logWarn(events.restFailed || 'purchase.write.background.failed', {
+            request_id: requestId, chain, duration_ms: durationMs,
+            error: result?.message || 'unknown', hint: '后台写入没成功 ⇒ 状态可查、可点重试',
+          });
+          if (typeof markFailedFn === 'function') await markFailedFn({ chain, submitKey, context, result });
+        }
+        return result;
+      } catch (error) {
+        const durationMs = Date.now() - startedAt;
+        logWarn(events.restFailed || 'purchase.write.background.failed', {
+          request_id: requestId, chain, duration_ms: durationMs, error: error?.message,
+          hint: '后台写入抛错 ⇒ 状态可查、可点重试（绝不假装成功）',
+        });
+        if (typeof markFailedFn === 'function') {
+          try { await markFailedFn({ chain, submitKey, context, error }); } catch (markError) {
+            logWarn(events.markFailedError || 'purchase.write.background.mark_failed_error', {
+              request_id: requestId, chain, error: markError?.message,
+            });
+          }
+        }
+        return { ok: false, message: error?.message || 'background failed' };
+      }
+    })();
+    return trackPurchaseBackground(promise);
+  };
+
+  return { schedulePurchaseRest, scheduleCustomRest };
 };
 
 module.exports = {

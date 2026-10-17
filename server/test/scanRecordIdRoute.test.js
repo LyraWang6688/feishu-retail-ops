@@ -335,6 +335,9 @@ test('AC-R9 成功页那条【再录一单】**回跳 /r/{recordId}**', async ()
         const value = (input.match(/value="([^"]*)"/) || [])[1] || '';
         if (name) payBody[name.replace(/&amp;/g, '&')] = value.replace(/&amp;/g, '&');
       }
+      // ⭐ 2026-10-18（金额必填 · 可填 0）：资金页现在**金额必填** ⇒ 夹具补「填 0 = 未付」（方式也补默认）
+      if (!String(payBody[SCAN_WRITE.fields.paymentAmount] ?? '').trim()) payBody[SCAN_WRITE.fields.paymentAmount] = '0';
+      if (!String(payBody[SCAN_WRITE.fields.paymentMethod] ?? '').trim()) payBody[SCAN_WRITE.fields.paymentMethod] = '微信';
       html = await (await postR(base, RECORD_ID, sessionCookie('ou_r_submit'), payBody)).text();
     }
     assert.ok(html.includes(SCAN_WRITE.texts.submittedTitle), '成功页逐字「您的提交已成功」');

@@ -598,11 +598,11 @@ const TEXTS = Object.freeze({
   accessoryAmountLabel: '配品实收金额（可不填）',
   accessoryAmountPlaceholder: '留空按配品单价',
   accessoryAddedBanner: '已加入本单（{count} 项）',
-  submitButton: '提交这一单',
+  submitButton: '提交',
   // ⭐ 2026-10-12（她的意见：一单一笔居多）——按钮上直接写**几双**，一眼就知道这一单里有几双。
   //    ⚠️ 主按钮那颗就是"选好尺码直接提交"（一单一笔 = 选尺码 + 提交，**两下**）；
   //       多笔要显式点【➕ 还要加一双】。
-  submitButtonCount: '✅ 提交这一单（{count} 双）',
+  submitButtonCount: '提交（{count} 双）',
   addAnotherButton: '➕ 还要加一双',
   // 每件实收**可以留空**（她："不然太费劲"）—— 就写一句事实，不写说明书。
   clearButton: '清空本单',
@@ -688,7 +688,7 @@ const TEXTS = Object.freeze({
   //    她要知道的是三件事：单子已经记上了、哪几双没扣成、怎么办 —— 一句说明书都不写。
   stockFailedTitle: '这一单记上了，库存没扣成',
   stockFailedBody: '{failed} 双没扣成：{reason}',
-  stockFailedRetryHint: '照上面的原因处理一下，再点一次【提交这一单】就能接着扣（不会重复记账）。',
+  stockFailedRetryHint: '照上面的原因处理一下，再点一次【提交】就能接着扣（不会重复记账）。',
   // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）没写完** ⇒ 如实说"半成"。
   //    🔴 这一页**绝不许显示"提交已成功"**（她会以为钱货都落了）；
   //    🔴 也**不许**跟"一个字都没写"混为一谈（主表那条记录是真的落库了）。
@@ -875,6 +875,8 @@ const EVENTS = Object.freeze({
   disabled: 'scan.write.disabled',
   lineAdded: 'scan.sale.line_added',
   draftCleared: 'scan.sale.draft_cleared',
+  // ⭐ 2026-10-18：资金页**金额没填**被拦下（可填 0，但不填不行）——同步拦、零写入 ✓
+  paymentAmountRequired: 'scan.write.payment_amount_required',
   // 2026-10-13 interrupted (account written, draft not cleared): detect + clear each logs one line
   interruptedDetected: 'scan.sale.interrupted_detected',
   interruptedCleared: 'scan.sale.interrupted_cleared',

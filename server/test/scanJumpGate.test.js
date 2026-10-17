@@ -288,7 +288,7 @@ test('AC-J7b ⭐ 反向哨兵：这一发**带着收款字段** ⇒ **不许**�
   });
 });
 
-test('AC-J7c ⭐ 反向哨兵：资金页那颗动作（`payAction`）⇒ **一律不是 400**', async () => {
+test('AC-J7c ⭐ 反向哨兵：资金页那颗动作（`payAction` · 带金额）⇒ **不是 400**', async () => {
   login();
   const write = fakeWriteService({
     lines: [{ kind: 'shoe', size: 40, amount: '280' }],
@@ -302,7 +302,12 @@ test('AC-J7c ⭐ 反向哨兵：资金页那颗动作（`payAction`）⇒ **一�
         method: 'POST',
         redirect: 'manual',
         headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ action, submit_key: 'scan_sale:key:1' }).toString(),
+        // ⭐ 2026-10-18（金额必填 · 可填 0）：资金页现在**金额必填** ⇒ 这条反向哨兵补一个合法金额 `0`
+        //   （它守的是「跳转闸门不许拦资金页动作」；金额必填闸门由 `scanSaleE2E` 的 AC-E2E-19 单独钉）
+        body: new URLSearchParams({
+          action, submit_key: 'scan_sale:key:1',
+          [SCAN_WRITE.fields.paymentMethod]: '微信', [SCAN_WRITE.fields.paymentAmount]: '0',
+        }).toString(),
       });
       const html = await response.text();
       assert.notEqual(response.status, 400, `${action} 不许被拦成 400（实际 ${response.status}）：${html.slice(0, 200)}`);
