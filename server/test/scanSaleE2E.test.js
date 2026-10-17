@@ -329,8 +329,14 @@ const postForm = async (url, cookie, body) => {
   //   ⭐ 这里**确定性地等后台那一跑跑完**（等的是**真 Promise**，不是轮询、不靠计时器）✓
   //   🔴 **判据一个字没改**：下面那些**端状态断言**（明细几行 / 库存少几 / 只建一张单…）
   //     仍是**逐字比**，只是先等它跑完再比 ✓（不是我替它放宽 ✗）。
+  // ⭐⭐ 2026-10-17（Node 20 复现后定位）：**先把 body 读进内存，再等后台** ——
+  //   Node 20 的 undici 在"等后台（几十 ms）期间不读 body"时会把这条连接**终止**
+  //   ⇒ 之后 `response.clone().text()` 抛 `TypeError: terminated`（被 `.catch(()=>'')` 吞成空串）
+  //   ⇒ `followPaymentStep` 以为"这页不是资金页"⇒ **钱那一步根本没发**（AC-E2E-17/18 的根因）。
+  //   ⚠️ 只动**测试夹具**：真机上浏览器收到响应立刻读 body，不存在这个空窗。
+  const bufferedBody = await response.text().catch(() => '');
   await waitForPendingSaleBackgrounds();
-  return response;
+  return new Response(bufferedBody, { status: response.status, headers: response.headers });
 };
 
 /**
