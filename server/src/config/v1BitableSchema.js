@@ -22,7 +22,7 @@ const V1_BITABLE_SCHEMA = {
   tables: {
     product: {
       tableName: '货品信息',
-      tableId: getEnv('FEISHU_V1_PRODUCT_TABLE_ID', 'tbl9z4Oi8Vc57Kin'),
+      tableId: getEnv('FEISHU_V1_PRODUCT_TABLE_ID'),
       fields: {
         number: '编号',
         itemNo: '货号',
@@ -63,14 +63,14 @@ const V1_BITABLE_SCHEMA = {
     // （并告知用户），否则新品建不了档。
     color: {
       tableName: '颜色管理',
-      tableId: getEnv('FEISHU_V1_COLOR_TABLE_ID', 'tblZ947YJkRwgo3k'),
+      tableId: getEnv('FEISHU_V1_COLOR_TABLE_ID'),
       fields: { name: '颜色' },
     },
     // 「品类管理」：货品信息的「品类」也是关联字段。
     // 「类别」是它的适用类别（A=男鞋 / B=女鞋），建档时可用作参考。
     category: {
       tableName: '品类管理',
-      tableId: getEnv('FEISHU_V1_CATEGORY_TABLE_ID', 'tbleM3qxsw8s8jAI'),
+      tableId: getEnv('FEISHU_V1_CATEGORY_TABLE_ID'),
       fields: { name: '品类', category: '类别' },
     },
     // 配品（腰带、鞋油、袜子、包等）：没有尺码、不跟踪库存，销售明细里用它自己的关联字段。
@@ -87,7 +87,7 @@ const V1_BITABLE_SCHEMA = {
     },
     behavior: {
       tableName: '行为管理',
-      tableId: getEnv('FEISHU_V1_BEHAVIOR_TABLE_ID', 'tblbTvUT4AFsCK4K'),
+      tableId: getEnv('FEISHU_V1_BEHAVIOR_TABLE_ID'),
       fields: {
         name: '行为名称',
         code: '行为编码',
@@ -106,7 +106,7 @@ const V1_BITABLE_SCHEMA = {
     // "未配置结算金额，请补充"的追问上（不会写一个错的金额），不该把部署闸门拦下来。
     groupBuyVoucher: {
       tableName: '团购券管理',
-      tableId: getEnv('FEISHU_V1_GROUP_BUY_VOUCHER_TABLE_ID', 'tblz2kM1CIGkcWsM'),
+      tableId: getEnv('FEISHU_V1_GROUP_BUY_VOUCHER_TABLE_ID'),
       fields: {
         name: '券名称',
         purchasePrice: '售价',
@@ -117,7 +117,7 @@ const V1_BITABLE_SCHEMA = {
     },
     paymentMethod: {
       tableName: '收款方式管理',
-      tableId: getEnv('FEISHU_V1_PAYMENT_METHOD_TABLE_ID', 'tblH7YzA1v5vJzEi'),
+      tableId: getEnv('FEISHU_V1_PAYMENT_METHOD_TABLE_ID'),
       fields: {
         name: '收款方式',
         // ⭐ 2026-10-16（她发截图定案）：这张表上有一列 **「团购券管理」（关联列）**，
@@ -131,7 +131,7 @@ const V1_BITABLE_SCHEMA = {
     },
     supplier: {
       tableName: '供应商管理',
-      tableId: getEnv('FEISHU_V1_SUPPLIER_TABLE_ID', 'tblFfXkLct2ZIGGq'),
+      tableId: getEnv('FEISHU_V1_SUPPLIER_TABLE_ID'),
       fields: {
         name: '供应商名称',
       },
@@ -150,7 +150,7 @@ const V1_BITABLE_SCHEMA = {
           name: '金额核对', type: 19, uiType: 'Lookup', writable: false,
         }),
       }),
-      tableId: getEnv('FEISHU_V1_SALES_ENTRY_TABLE_ID', 'tblLjFe3NjU61xKB'),
+      tableId: getEnv('FEISHU_V1_SALES_ENTRY_TABLE_ID'),
       fields: {
         orderNo: '销售单号',
         sender: '录单人',
@@ -262,7 +262,7 @@ const V1_BITABLE_SCHEMA = {
     },
     salesDetail: {
       tableName: '销售明细',
-      tableId: getEnv('FEISHU_V1_SALES_DETAIL_TABLE_ID', 'tblxW5WMKDULyolA'),
+      tableId: getEnv('FEISHU_V1_SALES_DETAIL_TABLE_ID'),
       fields: {
         detailId: '销售明细ID',
         product: '编号',
@@ -291,7 +291,7 @@ const V1_BITABLE_SCHEMA = {
     },
     paymentRecord: {
       tableName: '收款明细',
-      tableId: getEnv('FEISHU_V1_PAYMENT_RECORD_TABLE_ID', 'tblTpLOtTLhWxXvm'),
+      tableId: getEnv('FEISHU_V1_PAYMENT_RECORD_TABLE_ID'),
       fields: {
         salesEntry: '关联销售单',
         // 产品负责人 2026-10-05 把这张表的「支付方式」改名为「收款方式」（字段本身不变，
@@ -383,7 +383,7 @@ const V1_BITABLE_SCHEMA = {
     // ⚠️ table_id 仍走环境变量（`FEISHU_V1_PAYMENT_DETAIL_TABLE_ID`），默认值 = 生产真表的 id。
     paymentDetail: {
       tableName: '付款明细',
-      tableId: getEnv('FEISHU_V1_PAYMENT_DETAIL_TABLE_ID', 'tblWaafeodl2oILI'),
+      tableId: getEnv('FEISHU_V1_PAYMENT_DETAIL_TABLE_ID'),
       fields: {},
     },
     // ⚠️ 表名沿革：「采购申请」→（2026-10-05）「单据信息」→（2026-10-07）「具体信息」
@@ -397,7 +397,7 @@ const V1_BITABLE_SCHEMA = {
       //    只读核过生产真表：`tbli1ygPtss5CWCH` 现在的名字就是「采购明细」）。
       //    改名闸门拦不住（闸门按 tableId 校验字段名、不校验表名）⇒ 这里必须自己同步。
       tableName: '采购明细',
-      tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID', 'tbli1ygPtss5CWCH'),
+      tableId: getEnv('FEISHU_V1_PURCHASE_REQUEST_TABLE_ID'),
       fields: {
         // 🔴 2026-10-12：「采购行为」这一列已被她改成 **Lookup（19，按「报货批次号」关联采购主表）**
         //   ⇒ **只读**：映射留着是为了**读**（工作台查询的分流判据），
@@ -469,7 +469,7 @@ const V1_BITABLE_SCHEMA = {
       //      ⇒ 留待她**连列名一起改**时再同步。
       tableName: '采购主表',
       // Current V1 tenant default; forks can override it with the environment variable.
-      tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID', 'tblwezby9wRea9qi'),
+      tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID'),
       fields: {
         batchNo: '报货批次号',
         // ⭐ 2026-10-12：「采购行为」（SingleLink → 行为管理）—— **建主表行时写**
@@ -565,7 +565,7 @@ const V1_BITABLE_SCHEMA = {
     //      那条链路 2026-10-05 退场、2026-10-07 晚「到货验收」表被删、**深夜「采购入库」表也被删**。
     inventoryLedger: {
       tableName: '库存流水',
-      tableId: getEnv('FEISHU_V1_INVENTORY_LEDGER_TABLE_ID', 'tbl7Xo4OPmaN2NdP'),
+      tableId: getEnv('FEISHU_V1_INVENTORY_LEDGER_TABLE_ID'),
       fields: {
         // ⚠️ 2026-10-12 只读核过生产真表：**「库存流水号」这一列已经不在表里了**
         //    （原来它是自动编号 `type=1005`）。按 AGENTS 的"两个都删"：
@@ -603,7 +603,7 @@ const V1_BITABLE_SCHEMA = {
     },
     liveInventory: {
       tableName: '实时库存',
-      tableId: getEnv('FEISHU_V1_LIVE_INVENTORY_TABLE_ID', 'tblTr5qgiZXPADLP'),
+      tableId: getEnv('FEISHU_V1_LIVE_INVENTORY_TABLE_ID'),
       fields: {
         stockKey: '库存键',
         product: '编号',

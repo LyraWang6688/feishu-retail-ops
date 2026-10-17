@@ -456,11 +456,24 @@ test('④-补 来源标识由**真实三元组**（批次记录 id | 货品 | �
 // G 单选「确认状态」纳入部署闸门契约
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('F 「具体信息」→「报货信息」→（2026-10-12）「采购明细」：tableName 同步、tableId 与语义键一个都没动', () => {
+test('F 「具体信息」→「报货信息」→（2026-10-12）「采购明细」：tableName 同步、语义键一个都没动（tableId 走环境变量）', () => {
   const request = V1_BITABLE_SCHEMA.tables.purchaseRequest;
-  // ⚠️ 2026-10-12 她又改了一次名：「报货信息」→「采购明细」（tableId `tbli1ygPtss5CWCH` 不变）
+  // ⚠️ 2026-10-12 她又改了一次名：「报货信息」→「采购明细」。
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(request.tableId, 'tbli1ygPtss5CWCH', 'tableId 不变（闸门按 tableId 校验…）')`
+  //   改后逐字：**代码已零硬编码**（她 2026-10-17：「统统从环境变量读」）⇒ 不能再对字面量断言；
+  //     改钉两件事：① 它**来自环境变量**（等于 `FEISHU_V1_PURCHASE_REQUEST_TABLE_ID`）；
+  //                ② **源码里不许再出现兜底字面量**（`getEnv('…_TABLE_ID', 'tbl…')`）
+  //   依据 = 业务负责人 2026-10-17 逐字：「代码里 15 个兜底默认值可以删除了，统统从环境变量读」
   assert.equal(request.tableName, '采购明细', '她的口径：这张表现在叫「采购明细」');
-  assert.equal(request.tableId, 'tbli1ygPtss5CWCH', 'tableId 不变（闸门按 tableId 校验，改了就全红）');
+  assert.equal(request.tableId, process.env.FEISHU_V1_PURCHASE_REQUEST_TABLE_ID,
+    'tableId 来自环境变量（代码零硬编码）');
+  const schemaSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'config', 'v1BitableSchema.js'), 'utf8');
+  assert.equal(
+    /getEnv\('FEISHU_V1_[A-Z_]+_TABLE_ID',\s*'tbl/.test(schemaSource),
+    false,
+    '🔴 表 id 的兜底字面量不许回来（漏配应报错，不能静默用写死的 id）',
+  );
   // ⚠️ 语义键名 `purchaseRequest` **可以不动**（brief 明确）——只改 tableName 与用户可见文案。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest, request);
   for (const semanticKey of ['detailId', 'batchNo', 'behavior', 'product', 'size', 'quantity', 'idempotencyKey']) {
