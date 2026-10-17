@@ -276,9 +276,10 @@ test('AC8 既有「正在读取订单…（已 N 秒）」不回归', () => {
 // AC9 写入语义一个字不变
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC9 三段分类与 10 条写接口一个字不变（本次只加"点了有反馈"）', async () => {
+test('AC9 两段分类与 10 条写接口一个字不变（本次只加"点了有反馈"）', async () => {
   const config = read('config/orders.js');
-  assert.match(config, /key: 'supplement', label: '补充信息单', tag: '待补充'/);
+  // ⭐ 2026-10-17 成对迁移：她逐字「只保留二次交割以及售后」⇒ 「补充信息单」退场（缺信息的单并入待交割）
+  assert.equal(config.includes("{ key: 'supplement'"), false, '🔴「补充信息单」那段不许回来 ✗');
   assert.match(config, /key: 'pending', label: '待交割单', tag: '待交割'/);
   assert.match(config, /key: 'afterSales', label: '售后列表', tag: '已两清'/);
   for (const endpoint of [

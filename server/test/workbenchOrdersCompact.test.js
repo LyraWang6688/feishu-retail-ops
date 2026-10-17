@@ -181,13 +181,14 @@ test('AC5 「打开」按钮与折叠行都仍是 ≥44px 命中区', async () =
 // AC6 三段分类与写入逻辑一个字不变
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC6 三段分类逐字不变（补充信息单 / 待交割单 / 售后列表），本次只动排版', async () => {
+test('AC6 两段分类逐字不变（待交割单 / 售后列表），本次只动排版', async () => {
   const { orders, config } = await loadOrdersModule();
+  // ⭐ 2026-10-17 成对迁移：她逐字「只保留二次交割以及售后」⇒ 「补充信息单」退场
+  //   （缺信息的单并入待交割 ⇒ 覆盖仍不重不漏 ✓）
   assert.deepEqual(config.SALES_SECTIONS.map((section) => [section.key, section.label, section.tag]), [
-    ['supplement', '补充信息单', '待补充'],
     ['pending', '待交割单', '待交割'],
     ['afterSales', '售后列表', '已两清'],
-  ], '三段分类一个字都没动');
+  ], '两段分类逐字不变');
   assert.deepEqual(config.SALES_GROUPS.map((group) => group.label),
     ['钱货两清', '有二次 · 货未交付', '有二次 · 资金未收', '有二次 · 两者都有']);
   // 判据（页面侧）也没动：三份单子的归属仍由 salesSectionOf 决定

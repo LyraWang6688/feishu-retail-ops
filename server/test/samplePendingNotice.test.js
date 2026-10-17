@@ -206,9 +206,13 @@ test('AC-PN4 通知的计数口径 ≡ 工作台订单列表的判据（同一�
   //    待补样品 2 条是"待补充 4 条"里的子集，**不重复加**）。
   assert.deepEqual(counts, { supplement: 4, sample: 2, pending: 1, afterSales: 1, total: 5 });
   // 前端同一份判据（真跑那个 ES 模块）
+  // ⭐ 2026-10-17 成对迁移（依据：她逐字「只保留二次交割以及售后」）：
+  //   前端订单列表**两段**（`pending` / `afterSales`）；通知仍**三段**（多一个「待补充」给提醒用）。
+  //   ⇒ `supplement`（缺信息 / 待补样品）在前端**并入 `pending`**；其余同名对得上 ✓
   const front = await loadFrontendOrders();
   for (const fixture of fixtures) {
-    assert.equal(front.salesSectionOf(fixture.order), fixture.section, `前端：${fixture.name}`);
+    const expected = fixture.section === 'supplement' ? 'pending' : fixture.section;
+    assert.equal(front.salesSectionOf(fixture.order), expected, `前端：${fixture.name}`);
   }
 });
 
@@ -216,7 +220,7 @@ test('AC-PN4 通知的计数口径 ≡ 工作台订单列表的判据（同一�
 // AC-PN5 🔴 2026-10-12 现场事故：`total` 与文案三段打架（`total=76` / `10+8+5=23`）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PN5 `total` = 待补充 + 待交割（恒等式）；文案里的数字与 counts 逐字一致；与工作台三段对得上', async () => {
+test('AC-PN5 `total` = 待补充 + 待交割（恒等式）；文案里的数字与 counts 逐字一致；与工作台两段对得上', async () => {
   const base = {
     fulfillment_status: '已交付', payment_status: '已收款',
     details: [{ product: 'X', color: '黑', size: 40, requires_size: true }],
@@ -260,13 +264,17 @@ test('AC-PN5 `total` = 待补充 + 待交割（恒等式）；文案里的数字
   const numbers = sent[0].match(/\d+/g).map(Number);
   assert.deepEqual(numbers, [counts.total, counts.supplement, counts.sample, counts.pending],
     '文案里出现的 4 个数字必须依次 = total / 待补充 / 待补样品 / 待交割');
-  // ④ 与**工作台页面**同一口径：前端 `salesSectionOf` 分出来的段数 = 通知里的段数
+  // ④ 与**工作台页面**同一口径（⭐ 2026-10-17：前端**两段** —— 待补充并入待交割；
+  //    通知仍三段，所以这里比的是"待补充 + 待交割 = 前端的待交割"）
   const front = await loadFrontendOrders();
   const sections = orders.map((order) => front.salesSectionOf(order));
-  assert.equal(sections.filter((section) => section === 'supplement').length, counts.supplement,
-    '待补充：通知与工作台页面必须一致');
-  assert.equal(sections.filter((section) => section === 'pending').length, counts.pending,
-    '待交割：通知与工作台页面必须一致');
+  assert.equal(sections.filter((section) => section === 'pending').length,
+    counts.supplement + counts.pending,
+    '前端「待交割」= 通知的「待补充 + 待交割」（缺信息的单并入待交割 ✓）');
+  assert.equal(sections.filter((section) => section === 'afterSales').length, counts.afterSales,
+    '售后：通知与工作台页面必须一致');
+  assert.equal(sections.filter((section) => section === 'supplement').length, 0,
+    '🔴 前端不再有「待补充」段（她 2026-10-17 ✗）');
   assert.equal(orders.filter((order) => order.sample_pending).length, counts.sample, '待补样品一致');
 });
 
