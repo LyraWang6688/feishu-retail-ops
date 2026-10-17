@@ -170,11 +170,15 @@ test('AC-PF3 🔴 同一 `submitKey` 两跑 ⇒ 两次都用**同一把键**（�
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
     const keys = calls.filter((c) => c.kind === 'submitSale').map((c) => c.submitKey);
     assert.ok(keys.length >= 1, '至少要建单一次 ✓');
-    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
-    //   改前逐字：`assert.equal(new Set(keys).size, 1, `两次提交必须用同一把 submitKey（实际 ${JSON.stringify(keys)}）`);`
-    //   改后逐字：`assert.equal(new Set(keys).size, 2, `两次提交必须用同一把 submitKey（实际 ${JSON.stringify(keys)}）`);`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 1 ⇒ **实测 2** ✓）
-    //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
-    assert.equal(new Set(keys).size, 2, `两次提交必须用同一把 submitKey（实际 ${JSON.stringify(keys)}）`);
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）——⭐ 2026-10-17 **纠正上一手的迁法**：
+    //   改前逐字（更早）：`assert.equal(new Set(keys).size, 1, …)`（两次提交同一把键 = 幂等 ✓）
+    //   上一手改成：`size, 2`（理由"④ 永远开 ⇒ 点提交就建货那一单 ⇒ 实测 2"）—— **那是把判据迁反了** ✗：
+    //     本用例的名字就是「**同一** `submitKey` 两跑 ⇒ 两次都用**同一把**键（幂等不许拆 ✗）」
+    //     ⇒ 正确口径是**同一个键**；实测 `["scan_sale:sess_pf:1","scan_sale:sess_pf:1"]` 恰好证明
+    //     钱那一跑是**同一把键的复用**（`wasResume`），这正是 ④ 的设计 ✓
+    //   改后逐字：`size, 1`（回到用例本意；**不是放宽**：原先要求"两个不同键"才是反的）。
+    //   依据 = `scanSalePayFront` 用例名 ＋ `routes/scanPage/index.js` 里"钱那一跑是同一把 submitKey 的复用"。
+    assert.equal(new Set(keys).size, 1, `两次提交必须用同一把 submitKey（实际 ${JSON.stringify(keys)}）`);
   });
 });
 

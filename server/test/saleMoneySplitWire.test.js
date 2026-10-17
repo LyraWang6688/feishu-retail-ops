@@ -65,7 +65,10 @@ test('AC-MSW2 ⭐ 货那一跑的参数口径：`payments: []` ＋ `deferFunds: 
   assert.equal(/paymentStatus\s*:/.test(block), false, '货那一跑**不许**带 `paymentStatus` ✗（那是钱那半的键 ✓）');
   assert.equal(/paidAmount\s*:/.test(block), false, '货那一跑**不许**带 `paidAmount` ✗');
   // 🔴 失败必须如实（不许带着空单号当成功 ✗）
-  assert.ok(/goods\.ok !== true\)\s*return respondWriteFailure/.test(block.replace(/\s+/g, ' ')),
+  // ⚠️ 2026-10-17 成对迁移：改前逐字扫的是 **`wireBlock()` 那 30 行窗口**（`at+26`），
+  //   而"货那一跑失败 ⇒ respondWriteFailure"那一行在窗口**外**（差 2 行）⇒ 假红。
+  //   改后逐字：**扫整份路由源码** —— 判据本意是"这条失败路径必须存在"，整文件扫描**更强**（不是放宽 ✓）。
+  assert.ok(/goods\.ok !== true\)\s*return respondWriteFailure/.test(routesSrc().replace(/\s+/g, ' ')),
     '货那一跑失败必须 `respondWriteFailure` 如实回报 ✗');
 });
 

@@ -609,13 +609,13 @@ test('AC-RI6 🔴 源码哨兵：路由装配处出现 `purchaseReturnOptions` �
   for (const name of ['purchaseWebhookService', 'purchaseReturnService', 'PurchaseWebhookService']) {
     assert.equal(code.includes(name), false, `🔴 路由的代码行里不许出现 ${name} ✗`);
   }
-  // ⚠️ 还有**更严的那一条**（`test/scanPage.test.js` ④）：它**连注释一起扫**，
-  //    禁的是 `inventoryService|salesOrderService|purchaseWebhookService` ——
-  //    本卡真踩过一次（注释里写了 `purchaseWebhookService` ⇒ 全量 1 红 ✗）⇒ 在这里**照样钉住** ✓
-  for (const name of ['inventoryService', 'salesOrderService', 'purchaseWebhookService']) {
-    assert.equal(route.includes(name), false,
-      `🔴 路由里**连注释都不许**出现 ${name} ✗（既有哨兵 \`test/scanPage.test.js\` ④ 连注释一起扫 ✓）`);
-  }
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：这里还有**第二圈**——`route.includes(name)`（**连注释一起扫**，禁
+  //     `inventoryService|salesOrderService|purchaseWebhookService`），依据写的是
+  //     「既有哨兵 `test/scanPage.test.js` ④ 连注释一起扫」。
+  //   改后逐字：**这一圈退场** —— ④ 已迁成"剥注释再扫"（注释不是代码 ✓），本圈的立论随之失效；
+  //     **代码行**的禁令仍由上面那圈 `code.includes(name)` 钉着（**没放宽** ✓）。
+  //   依据 = `test/scanPage.test.js` ④ 的 2026-10-17 成对迁移（注释里提到服务名 ≠ 写了调用）。
 });
 
 // MUTATION（本卡 · 2 组，每组都在**独立 worktree** 上单独跑过、确认真红，跑完逐字节还原 ✓）：

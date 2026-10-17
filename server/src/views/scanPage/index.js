@@ -217,6 +217,10 @@ const renderSalePaymentStepPage = ({
   // ⭐⭐ 2026-10-17 C（她逐字：「默认一行 ＋ ＋ 再加一种付款方式」）：
   //   加行 = **纯前端**（`data-payment-add`，克隆最后一行并清空值）——不提交、不写库 ✓。
   //   ⚠️ 文案走配置（`step.addRowButton`）；不写死中文 ✗。
+  // ⭐⭐ 2026-10-17 C（她逐字：「**去「跳过」**」）：原来第二张表单（skipAction / skipButton）
+  //   **整块删** ✗ —— 资金页现在只有一颗「提交整单付款」；不填金额直接提交 = 未付 ✓。
+  //   重复提交仍说「这一单刚才已经交过了」（pay 分支 `paidReused` 已对齐 skip 口径 ✓）。
+  //   反向哨兵：`test/scanPagePaymentButtons.test.js` AC-PB1。
   const addRowButtonHtml = `<button type="button" class="btn" data-payment-add>${escapeHtml(step.addRowButton || '')}</button>`;
   const giftFieldHtml = `<div class="form-row"><label>${escapeHtml(t.giftLabel || '')}</label><input name="${escapeHtml(fields.gift || 'gift')}"></div>`;
   // ⭐⭐ 2026-10-13 结构重排（**行为不变**）：三件套（三档 / 收款行 / 赠品）先攒成一块，
@@ -250,18 +254,6 @@ ${String(notice || '').trim()
     ? `<p class="hint" role="alert" data-emphasis="alert" data-view="payment-step-notice">${escapeHtml(String(notice).trim())}</p>`
     : ''}
 ${payForm}
-<!-- 🔴 2026-10-16（她逐字：「资金页上……那三处提示【全删】……全删就对了」）：
-     原来这里还有一句工作台提示（step.workbenchHint）——**整句删** ✗（键也一起删了 ✓）。 -->
-<!-- 🔴 2026-10-16（她逐字：「资金页实际上就应该有两个按钮」= 提交 / 跳过）⇒ **资金页不再渲染
-     那颗跳工作台的链接** ✗（她把它误读成第三种付款方式）——补收款去成功页那颗 ✓ -->
-<!-- 🔴🔴 2026-10-17 C（业务负责人逐字：「**去「跳过」**」）：
-     原来这里还有**第二张表单**（skipAction = payment_skip ＋ skipButton = 「跳过」）——
-     **整块删** ✗。资金页现在**只有一颗**「提交整单付款」（payButton）。
-     ⚠️ 不写金额直接提交 = **未付**（差额自动挂一条【未收款】✓ 既有结算校验负责）；
-        收多了 ⇒ 拦住 + 说差额（既有 amount_mismatch 人话 ✓）。
-     ⚠️ 重复提交（同一把 submitKey）⇒ **仍然说「这一单刚才已经交过了」**（pay 分支已对齐 skip 口径 ✓）。
-     🔴 反向哨兵见 test/scanPagePaymentButtons.test.js AC-PB1（skipButton 回来即红 ✓）。
-     ⚠️ 路由侧的 payment_skip 处理器**保留**（既有判据仍直接 POST 它 ✓ 本次只删 UI ✗）。 -->
 </section>`,
   });
 };
