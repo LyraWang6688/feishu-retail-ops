@@ -92,6 +92,7 @@ const { createMultiItemOrderService } = require('../../services/multiItemOrderSe
 //   · **落点只有一处区别**：扫完那件带 `?from=<当前领域>` ⇒ 落回**原领域** ✓
 //     （读它的那一位是既有 `views/scanPageRealm.js` 的 `resolveRealm` ✓ 不新造规则 ✗）。
 const { REALM_SCAN, realmEntryParams } = require('../../config/realmScan');
+const { FUNNEL } = require('../../config/funnel');
 const { createLarkJsapiService } = require('../../services/larkJsapiService');
 // ⭐⭐ 2026-10-16（口子收尾 · 业务负责人口径「**异步只针对"写库"**；校验必须当场同步拦」）：
 //   **尺码 / 数量 / 空单**这三类校验的**唯一真源**（纯函数、不碰 IO、配置先行 ✓）——
@@ -237,6 +238,22 @@ const createScanPageRouter = (options = {}) => {
    *   · `number` = 这次扫的编号 / 记录 ID（与 `scan.page.viewed` 同口径 ✓）
    *   · 事件名落 `config/scanPage.js` 的 `EVENTS.rendered`（配置先行 ✓）
    */
+  /**
+   * 前端漏斗（服务端侧）：`ui.page.view` + `ui.step.enter`。**页面渲染成功即记**（不依赖客户端 JS）。
+   * step 只取页面语义映射（entry / payment / success / error），不读用户输入、不采集表单值。
+   */
+  const logFunnelPage = (req, { page, step, realm = '', number = '' } = {}) => {
+    if (!FUNNEL.enabled) return;
+    const fields = {
+      request_id: req?.requestId,
+      page: String(page || 'scan'),
+      ...(step ? { step: String(step) } : {}),
+      ...(realm ? { realm: String(realm) } : {}),
+      ...(number ? { number: String(number).slice(0, 40) } : {}),
+    };
+    logInfo(FUNNEL.events.pageView, fields);
+    if (step) logInfo(FUNNEL.events.stepEnter, fields);
+  };
   const logRendered = (req, { page, trigger, number = '' } = {}) => {
     logInfo(config.events?.rendered || 'scan.page.rendered', {
       request_id: req?.requestId,
@@ -244,6 +261,13 @@ const createScanPageRouter = (options = {}) => {
       trigger: String(trigger || ''),
       query_keys: Object.keys(req?.query || {}).sort(),
       number: String(number || ''),
+    });
+    const stepOfPage = { goods: 'entry', pay: 'payment', success: 'success', skeleton: 'entry', bad_number: 'error', not_found: 'error' };
+    logFunnelPage(req, {
+      page: String(page || 'scan'),
+      step: stepOfPage[String(page || '')] || '',
+      realm: resolveRealm(req?.query?.from),
+      number,
     });
   };
   /**

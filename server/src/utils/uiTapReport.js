@@ -13,6 +13,7 @@
 // ⚠️ `tap_id` **只从 body 读**（不读 query / 头）：埋点 beacon 自己的 `tap_id` 在 **query** 里
 //    ⇒ 两者天然不会串（否则上报请求自己也会被记一条"结果" = 噪声 ✗）。
 const { UI_TAP } = require('../config/uiTap');
+const { FUNNEL, funnelStepOf } = require('../config/funnel');
 const { logInfo, logWarn } = require('./logger');
 
 /** 只截断、不拒绝（超长串不许把日志撑爆）；空 ⇒ 空串，由调用方决定 400。 */
@@ -86,6 +87,23 @@ const serverTapId = () => `srv-${Date.now().toString(36)}-${Math.random().toStri
  */
 const handleUiTap = ({ req, res, scope = 'scan', realm = '' }) => {
   const fields = UI_TAP.fields;
+  // 前端漏斗：同一个 beacon 端点，`kind=page_view`（不要求 target；与 tap 分支互不影响）
+  if (String(req?.query?.kind || '') === 'page_view') {
+    if (!FUNNEL.enabled) return res.status(204).end();
+    const page = clip(req?.query?.page, FUNNEL.maxPageLength) || 'unknown';
+    const step = funnelStepOf(req?.query?.step);
+    const funnelFields = {
+      request_id: req?.requestId,
+      scope,
+      page,
+      ...(step ? { step } : {}),
+      ...(realm ? { realm } : {}),
+      path: String(req?.originalUrl || '').split('?')[0],
+    };
+    logInfo(FUNNEL.events.pageView, funnelFields);
+    if (step) logInfo(FUNNEL.events.stepEnter, funnelFields);
+    return res.status(204).end();
+  }
   if (!UI_TAP.enabled) return res.status(204).end();
   const target = clip(req?.query?.[fields.target], UI_TAP.maxTargetLength);
   if (!target) return res.status(400).type('text').send('missing target');

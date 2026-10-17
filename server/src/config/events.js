@@ -443,6 +443,8 @@ const EVENTS = Object.freeze([
   'supplier.split.group_already_reported',
   'supplier.split.grouped',
   'supplier.split.mismatch',
+  'ui.page.view',
+  'ui.step.enter',
   'ui.tap.repeated',
   'ui.tap.result',
   'v1.sale.goods_posted',
