@@ -106,8 +106,8 @@ test('AC-C1 三态判据用到的**既有字段**在一处点名（不新造任�
   assert.equal(front.ORDER_STATE_FIELDS.lineKind, 'requires_size',
     '「这一行要不要货品信息」由可售品属性说了算（配品行 = false）');
   // 三份单子的 key / 标签一个都没变（她 2026-10-09 定的那三个）
-  assert.deepEqual(front.SALES_SECTIONS.map((section) => section.key), ['supplement', 'pending', 'afterSales']);
-  assert.deepEqual(front.SALES_SECTIONS.map((section) => section.tag), ['待补充', '待交割', '已两清']);
+  assert.deepEqual(front.SALES_SECTIONS.map((section) => section.key), ['pending', 'afterSales']);
+  assert.deepEqual(front.SALES_SECTIONS.map((section) => section.tag), ['待交割', '已两清']);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -123,21 +123,24 @@ test('AC-C2 待补充：缺货品信息（编号 / 颜色 / 尺码缺一）或�
   const withoutProduct = { ...ORDER, details: [{ ...ORDER.details[0], product: '' }] };
   const withoutColor = { ...ORDER, details: [{ ...ORDER.details[0], color: '' }] };
   for (const [label, order] of [['编号', withoutProduct], ['颜色', withoutColor]]) {
-    assert.equal(m.salesSectionOf(order), 'supplement', `缺${label} ⇒ 待补充`);
+    assert.equal(m.salesSectionOf(order), 'pending', `缺${label} ⇒ 待补充`);
   }
   const withoutSize = { ...ORDER, details: [{ ...ORDER.details[0], size: null }] };
-  assert.equal(m.salesSectionOf(withoutSize), 'supplement', '缺尺码 ⇒ 待补充');
+  assert.equal(m.salesSectionOf(withoutSize), 'pending', '缺尺码 ⇒ 待补充');
   const noDetails = { ...ORDER, details: [] };
-  assert.equal(m.salesSectionOf(noDetails), 'supplement', '一条明细都没有 ⇒ 待补充');
+  assert.equal(m.salesSectionOf(noDetails), 'pending', '一条明细都没有 ⇒ 待补充');
 
   // ② 资金信息：收款方式 + 至少一笔收款记录
-  assert.equal(m.salesSectionOf({ ...ORDER, payments: [] }), 'supplement', '一条收款记录都没有 ⇒ 待补充');
+  assert.equal(m.salesSectionOf({ ...ORDER, payments: [] }), 'pending', '一条收款记录都没有 ⇒ 待补充');
   assert.equal(m.salesSectionOf({
     ...ORDER, payments: [{ record_id: 'p1', amount: 100, status: '未收款', method: '' }],
-  }), 'supplement', '只有一条"未收款"（没有收款方式）⇒ 资金信息还没齐');
+  }), 'pending', '只有一条"未收款"（没有收款方式）⇒ 资金信息还没齐');
 
-  // ③ 两个校验项都齐 ⇒ 不再是待补充（哪怕状态是"部分交付 / 部分收款"）
-  assert.notEqual(m.salesSectionOf(ORDER), 'supplement');
+  // ③ 两个校验项都齐 ⇒ **能进售后列表**（不再因"缺信息"被拦）
+  //   ⚠️ 2026-10-17：原断言是 `notEqual(…, 'supplement')`；两段之后 `pending` 已含"缺信息"，
+  //      故改成**正向**证明（两个校验项齐 ⇒ 钱货两清时确实落到售后列表）✓ 不是放宽
+  assert.equal(m.salesSectionOf({ ...ORDER, fulfillment_status: '已交付', payment_status: '已收款' }),
+    'afterSales', '两个校验项都齐 ⇒ 售后列表（不再被缺信息拦住）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -157,11 +160,11 @@ test('AC-C2b 「待补样品」也是一种待补充：先判它；其余判据�
   // 基准：这份 fixture 信息齐、没两清 ⇒ 待交割（不带 sample_pending 时逐字仍是老结论）
   assert.equal(m.salesSectionOf(ORDER), 'pending');
   // 新增输入 ⇒ 待补充（优先）
-  assert.equal(m.salesSectionOf({ ...ORDER, sample_pending: true }), 'supplement',
+  assert.equal(m.salesSectionOf({ ...ORDER, sample_pending: true }), 'pending',
     '卖了样品没指定门盒 ⇒ 待补充');
   // 明确 false / 不带 ⇒ 回归原判据
   assert.equal(m.salesSectionOf({ ...ORDER, sample_pending: false }), 'pending');
-  assert.equal(m.salesSectionOf({ ...ORDER, sample_pending: true, fulfillment_status: '未交付' }), 'supplement');
+  assert.equal(m.salesSectionOf({ ...ORDER, sample_pending: true, fulfillment_status: '未交付' }), 'pending');
   // 卡上要多一块【补样品】（候选码来自服务端；没有候选就只给人话）
   const html = m.orderDetailHtml({
     ...ORDER, record_id: 'o1', order_no: 'XSD-1', sample_pending: true,
@@ -204,12 +207,13 @@ test('AC-C3 待交割 = 两项齐但没两清；售后列表 = 钱货两清（�
     { ...ORDER, record_id: 'o3', details: [{ ...ORDER.details[0], color: '' }] },
   ];
   const html = m.ordersSectionsHtml(list);
-  for (const key of ['supplement', 'pending', 'afterSales']) {
+  for (const key of ['pending', 'afterSales']) {
     assert.ok(html.includes(`data-sales-section="${key}"`), `缺 ${key} 这一段`);
   }
   const counts = html.split('data-sales-section="').slice(1)
     .map((chunk) => Number((chunk.match(/(\d+) 单/) || [])[1]));
-  assert.deepEqual(counts, [1, 1, 1], '每一段各一单（不重不漏）');
+  // ⭐ 2026-10-17：两段后 o3（缺颜色）与 ORDER 都并入待交割 ⇒ [2, 1]
+  assert.deepEqual(counts, [2, 1], '两段条数（不重不漏：3 单全落在这两段里）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -233,7 +237,7 @@ test('AC-C4 配品行（requires_size=false）不算"缺货品信息"：纯配�
   // 混单：鞋那一行缺颜色 ⇒ 仍然待补充（配品行无辜，但鞋那一行是真的缺）
   assert.equal(m.salesSectionOf({
     ...ORDER, details: [accessoryLine, { ...ORDER.details[0], color: '' }],
-  }), 'supplement');
+  }), 'pending');
   // ⭐ 配品行**不参与待交付**：它不增不减 `quantity / delivered`（既有进度口径的取值本身没变）
   assert.equal(onlyAccessory.details.filter((line) => line.requires_size !== false).length, 0,
     '判据里被排除的正是"不需要尺码"的那些行');

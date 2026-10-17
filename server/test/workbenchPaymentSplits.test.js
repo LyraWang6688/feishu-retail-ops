@@ -307,7 +307,7 @@ test('AC-PS7 既有三态不受影响：分笔中 = 待交割；收满 = 售后�
 
   // ① 一分都没收（只有那条不带方式的【未收款】）⇒ 资金信息不齐 ⇒ **待补充**
   const bare = orderWith([{ method: '', amount: 500, status: '未收款' }]);
-  assert.equal(front.salesSectionOf(bare), 'supplement', '还没收钱 ⇒ 待补充');
+  assert.equal(front.salesSectionOf(bare), 'pending', '还没收钱 ⇒ 待补充');
 
   // ② 分笔收了 200（带方式）⇒ 资金信息齐、但还没两清 ⇒ **待交割**
   const half = orderWith([
