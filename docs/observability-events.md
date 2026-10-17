@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **376** 个事件。按前缀分组：
+共 **510** 个事件。按前缀分组：
 
 ## accessory_sale_intake
 
@@ -67,6 +67,12 @@
 | `cleanup.ttl.failed` | 1 | src/utils/uploadCleanup.js |
 | `cleanup.ttl.started` | 1 | src/utils/uploadCleanup.js |
 | `cleanup.unlink_failed` | 1 | src/utils/uploadCleanup.js |
+
+## hm
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `hm.bamamei.online` | 1 | src/config/larkJsapi.js |
 
 ## http
 
@@ -138,11 +144,21 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `lark.after_sales.card.update.failed` | 1 | src/services/larkMvpService.js |
+| `lark.after_sales.card.update.skipped` | 1 | src/services/larkMvpService.js |
+| `lark.after_sales.card.update.started` | 1 | src/services/larkMvpService.js |
+| `lark.after_sales.card.update.succeeded` | 1 | src/services/larkMvpService.js |
+| `lark.after_sales.card.update.tick_failed` | 1 | src/services/larkMvpService.js |
 | `lark.bitable.record_changed` | 1 | src/routes/larkEvents.js |
 | `lark.bitable.record_changed.base_unconfigured` | 1 | src/routes/larkEvents.js |
 | `lark.card.handled` | 1 | src/routes/larkEvents.js |
 | `lark.card.received` | 1 | src/routes/larkEvents.js |
 | `lark.card.unknown_action` | 1 | src/services/larkMvpService.js |
+| `lark.card.update.failed` | 1 | src/infrastructure/interactiveCardFeedback.js |
+| `lark.card.update.skipped` | 1 | src/infrastructure/interactiveCardFeedback.js |
+| `lark.card.update.started` | 1 | src/infrastructure/interactiveCardFeedback.js |
+| `lark.card.update.succeeded` | 1 | src/infrastructure/interactiveCardFeedback.js |
+| `lark.card.update.tick_failed` | 1 | src/infrastructure/interactiveCardFeedback.js |
 | `lark.event.challenge` | 1 | src/routes/larkEvents.js |
 | `lark.event.received` | 1 | src/routes/larkEvents.js |
 | `lark.group.message.disabled` | 1 | src/services/larkMvpService.js |
@@ -168,10 +184,18 @@
 | `lark.sales.product_index.loaded` | 1 | src/services/larkMvpService.js |
 | `lark.sales.product_info.gaps` | 1 | src/services/larkMvpService.js |
 | `lark.sales.product_info.resolve_failed` | 1 | src/services/larkMvpService.js |
+| `lark.sales.product_missing.blocked` | 1 | src/config/salesProductRegistration.js |
+| `lark.sales.product_missing.guard_disabled` | 1 | src/config/salesProductRegistration.js |
+| `lark.sales.product_missing.undetermined` | 1 | src/config/salesProductRegistration.js |
 | `lark.sales.sample_candidates.failed` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.sample_card.fallback.failed` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.sample_card.fallback.sent` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.sample_card.fallback.skipped` | 1 | src/services/sampleReplacementService.js |
+| `lark.sales.sample_card.update.failed` | 1 | src/services/sampleReplacementService.js |
+| `lark.sales.sample_card.update.skipped` | 1 | src/services/sampleReplacementService.js |
+| `lark.sales.sample_card.update.started` | 1 | src/services/sampleReplacementService.js |
+| `lark.sales.sample_card.update.succeeded` | 1 | src/services/sampleReplacementService.js |
+| `lark.sales.sample_card.update.tick_failed` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.sample_feedback.failed` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.sample_notice.failed` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.sample_promotion.failed` | 1 | src/services/sampleReplacementService.js |
@@ -209,6 +233,11 @@
 | `product.tag_qr.sweep_failed` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.sweep.disabled` | 1 | src/app.js |
 | `product.tag_qr.sweep.done` | 1 | src/app.js |
+| `product.tag_qr.sweep.failed` | 1 | src/app.js |
+| `product.tag_qr.sweep.skipped` | 1 | src/app.js |
+| `product.tag_qr.sweep.started` | 1 | src/app.js |
+| `product.tag_qr.sweep.succeeded` | 1 | src/app.js |
+| `product.tag_qr.sweep.tick_failed` | 1 | src/app.js |
 | `product.tag_qr.sweep.too_soon` | 1 | src/app.js |
 | `product.tag_qr.upgraded_to_record_id` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.used_assembled` | 1 | src/services/tagQrCodeService.js |
@@ -252,6 +281,11 @@
 | `purchase.batch.order_amount.not_a_number` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.order_amount.update_failed` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.order_amount.written` | 1 | src/services/purchaseOrderBatchService.js |
+| `purchase.card.update.failed` | 1 | src/services/larkMvpService.js |
+| `purchase.card.update.skipped` | 1 | src/services/larkMvpService.js |
+| `purchase.card.update.started` | 1 | src/services/larkMvpService.js |
+| `purchase.card.update.succeeded` | 1 | src/services/larkMvpService.js |
+| `purchase.card.update.tick_failed` | 1 | src/services/larkMvpService.js |
 | `purchase.group_notice.failed` | 1 | src/services/purchaseWebhookService.js |
 | `purchase.group_notice.sent` | 1 | src/services/purchaseWebhookService.js |
 | `purchase.group_notice.skipped` | 1 | src/services/purchaseWebhookService.js |
@@ -278,9 +312,9 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
-| `push.transient_retry.exhausted` | 1 | src/config/pushRetry.js |
-| `push.transient_retry.skipped` | 1 | src/config/pushRetry.js |
-| `push.transient_retry.waiting` | 1 | src/config/pushRetry.js |
+| `push.transient_retry.exhausted` | 2 | src/config/pushRetry.js |
+| `push.transient_retry.skipped` | 2 | src/config/pushRetry.js |
+| `push.transient_retry.waiting` | 2 | src/config/pushRetry.js |
 
 ## sales
 
@@ -327,6 +361,11 @@
 | `sales.pending_deal_push.purchase_candidates_failed` | 1 | src/services/pendingPushCandidateService.js |
 | `sales.pending_deal_push.purchase_link.mapping_lookup_failed` | 1 | src/services/purchasePendingBatchService.js |
 | `sales.pending_deal_push.purchase_link.unmapped` | 1 | src/services/purchasePendingBatchService.js |
+| `sales.pending_deal_push.reminder.failed` | 1 | src/app.js |
+| `sales.pending_deal_push.reminder.skipped` | 1 | src/app.js |
+| `sales.pending_deal_push.reminder.started` | 1 | src/app.js |
+| `sales.pending_deal_push.reminder.succeeded` | 1 | src/app.js |
+| `sales.pending_deal_push.reminder.tick_failed` | 1 | src/app.js |
 | `sales.pending_deal_push.sent` | 1 | src/services/pendingDealPushService.js |
 | `sales.pending_deal_push.skipped` | 1 | src/services/pendingDealPushService.js |
 | `sales.pending_deal_push.voucher_settlements_failed` | 1 | src/services/pendingDealPushService.js |
@@ -334,6 +373,11 @@
 | `sales.second_delivery.card_settled.failed` | 1 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.card_settled.skipped` | 2 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.card_settled.store_failed` | 1 | src/services/secondDeliveryService.js |
+| `sales.second_delivery.card.update.failed` | 1 | src/services/secondDeliveryService.js |
+| `sales.second_delivery.card.update.skipped` | 1 | src/services/secondDeliveryService.js |
+| `sales.second_delivery.card.update.started` | 1 | src/services/secondDeliveryService.js |
+| `sales.second_delivery.card.update.succeeded` | 1 | src/services/secondDeliveryService.js |
+| `sales.second_delivery.card.update.tick_failed` | 1 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.completed` | 1 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.items.accessory_read_failed` | 1 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.items.incomplete` | 1 | src/services/secondDeliveryService.js |
@@ -369,28 +413,108 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `scan.accept.duplicate` | 1 | src/config/scanWrite.js |
+| `scan.accept.failed` | 1 | src/config/scanWrite.js |
+| `scan.accept.finished` | 1 | src/config/scanWrite.js |
+| `scan.accept.finishing` | 1 | src/config/scanWrite.js |
+| `scan.accept.line_added` | 1 | src/config/scanWrite.js |
+| `scan.accept.not_in_batch` | 1 | src/config/scanWrite.js |
 | `scan.accept.pending_batches_failed` | 1 | src/services/scanArrivalService.js |
 | `scan.accept.pending_cache.invalidate_failed` | 2 | src/services/purchaseWebhookService.js<br>src/services/scanArrivalService.js |
 | `scan.accept.pending_filter_failed` | 1 | src/services/purchasePendingBatchService.js |
+| `scan.accept.reused` | 1 | src/config/scanWrite.js |
+| `scan.accept.rows_set` | 1 | src/config/scanWrite.js |
+| `scan.accept.started` | 1 | src/config/scanWrite.js |
+| `scan.accept.timing` | 1 | src/config/scanWrite.js |
+| `scan.data.filter_fallback` | 1 | src/config/scanPage.js |
+| `scan.data.filtered_empty` | 1 | src/config/scanPage.js |
+| `scan.data.limit_exceeded` | 1 | src/config/scanPage.js |
 | `scan.entry.keep_draft_clear_failed` | 1 | src/routes/scanPage/index.js |
 | `scan.label_print.enqueued` | 1 | src/routes/scanPage/index.js |
 | `scan.label_print.failed` | 1 | src/routes/scanPage/index.js |
 | `scan.label_print.number_unresolved` | 1 | src/routes/scanPage/index.js |
 | `scan.label_print.ready_failed` | 1 | src/routes/scanPage/index.js |
+| `scan.lookup.timing` | 1 | src/config/scanPage.js |
+| `scan.multi_item.add` | 1 | src/config/multiItemOrder.js |
+| `scan.multi_item.render` | 1 | src/config/multiItemOrder.js |
+| `scan.page.bad_number` | 1 | src/config/scanPage.js |
+| `scan.page.cache_hit` | 1 | src/config/scanPage.js |
+| `scan.page.cache_miss` | 1 | src/config/scanPage.js |
+| `scan.page.failed` | 1 | src/config/scanPage.js |
+| `scan.page.login_redirect` | 1 | src/config/scanAuthRedirect.js |
+| `scan.page.not_found` | 1 | src/config/scanPage.js |
+| `scan.page.number_fallback` | 1 | src/config/scanPage.js |
+| `scan.page.number_fallback_ambiguous` | 1 | src/config/scanPage.js |
+| `scan.page.number_fallback_failed` | 1 | src/config/scanPage.js |
+| `scan.page.record_fallback` | 1 | src/config/scanPage.js |
+| `scan.page.record_lookup_failed` | 1 | src/config/scanPage.js |
+| `scan.page.record_missing` | 1 | src/config/scanPage.js |
+| `scan.page.record_viewed` | 1 | src/config/scanPage.js |
+| `scan.page.rendered` | 1 | src/config/scanPage.js |
+| `scan.page.viewed` | 1 | src/config/scanPage.js |
+| `scan.payment_step.reset_failed` | 1 | src/config/scanPage.js |
+| `scan.payment_step.reset_on_scan` | 1 | src/config/scanPage.js |
 | `scan.payment_step.stale_clear_failed` | 1 | src/routes/scanPage/index.js |
 | `scan.payment_step.stale_cleared` | 1 | src/routes/scanPage/index.js |
+| `scan.purchase_return.batch_created` | 1 | src/config/scanWrite.js |
+| `scan.purchase_return.image_failed` | 1 | src/config/scanWrite.js |
+| `scan.purchase_return.plan_frozen` | 1 | src/config/scanWrite.js |
+| `scan.purchase_return.reused` | 1 | src/config/scanWrite.js |
+| `scan.purchase_return.shortfall` | 1 | src/config/scanWrite.js |
+| `scan.purchase_return.stock_applied` | 1 | src/config/scanWrite.js |
+| `scan.purchase_return.submitted` | 1 | src/config/scanWrite.js |
+| `scan.purchase_return.submitting` | 1 | src/config/scanWrite.js |
+| `scan.purchase.background_failed` | 1 | src/config/scanWrite.js |
+| `scan.purchase.background_mark_failed` | 1 | src/config/scanWrite.js |
+| `scan.purchase.background.timing` | 1 | src/config/scanWrite.js |
+| `scan.purchase.regenerated` | 1 | src/config/scanWrite.js |
+| `scan.purchase.reused` | 1 | src/config/scanWrite.js |
+| `scan.purchase.submitted` | 1 | src/config/scanWrite.js |
+| `scan.purchase.submitting` | 1 | src/config/scanWrite.js |
 | `scan.realm_scan.report` | 1 | src/routes/scanPage/index.js |
 | `scan.realm_scan.signature_failed` | 1 | src/routes/scanPage/index.js |
 | `scan.realm_scan.signature_ok` | 1 | src/routes/scanPage/index.js |
-| `scan.sale.interrupted_detected` | 1 | src/services/scanSessionService.js |
-| `scan.sale.payment_methods_unreadable` | 1 | src/routes/scanPage/index.js |
+| `scan.sale.amount_mismatch` | 1 | src/config/scanWrite.js |
+| `scan.sale.background_done` | 1 | src/config/scanWrite.js |
+| `scan.sale.background_failed` | 1 | src/config/scanWrite.js |
+| `scan.sale.background_queued` | 1 | src/config/scanWrite.js |
+| `scan.sale.draft_cleared` | 1 | src/config/scanWrite.js |
+| `scan.sale.interrupted_cleared` | 1 | src/config/scanWrite.js |
+| `scan.sale.interrupted_detected` | 2 | src/config/scanWrite.js<br>src/services/scanSessionService.js |
+| `scan.sale.line_added` | 1 | src/config/scanWrite.js |
+| `scan.sale.partial_failed` | 1 | src/config/scanWrite.js |
+| `scan.sale.payment_methods_unreadable` | 2 | src/config/voucherPayment.js<br>src/routes/scanPage/index.js |
+| `scan.sale.reused` | 1 | src/config/scanWrite.js |
+| `scan.sale.stock_failed` | 1 | src/config/scanWrite.js |
+| `scan.sale.submitted` | 1 | src/config/scanWrite.js |
+| `scan.sale.submitting` | 1 | src/config/scanWrite.js |
+| `scan.sale.timing` | 1 | src/config/scanWrite.js |
+| `scan.sales_home.opened` | 1 | src/config/scanPage.js |
+| `scan.session.expired` | 1 | src/config/scanWrite.js |
+| `scan.session.started` | 1 | src/config/scanWrite.js |
+| `scan.size_consistency.mismatch` | 1 | src/config/scanPage.js |
+| `scan.size.unresolved` | 1 | src/config/scanPage.js |
+| `scan.sizes.scope_unavailable` | 1 | src/config/scanPage.js |
+| `scan.snapshot.invalidated` | 1 | src/config/scanPage.js |
+| `scan.snapshot.miss` | 1 | src/config/scanPage.js |
+| `scan.snapshot.refresh_failed` | 1 | src/config/scanPage.js |
+| `scan.snapshot.refreshed` | 1 | src/config/scanPage.js |
 | `scan.snapshot.warm.done` | 1 | src/app.js |
 | `scan.snapshot.warm.skipped` | 1 | src/app.js |
+| `scan.state.unexpected` | 1 | src/config/scanPage.js |
 | `scan.write.action_inferred` | 1 | src/routes/scanPage/index.js |
+| `scan.write.disabled` | 1 | src/config/scanWrite.js |
+| `scan.write.failed` | 1 | src/config/scanWrite.js |
 | `scan.write.jump_gate_blocked` | 1 | src/routes/scanPage/index.js |
 | `scan.write.line_amount_required` | 1 | src/routes/scanPage/index.js |
+| `scan.write.payment_amount_required` | 1 | src/config/scanWrite.js |
+| `scan.write.purchase_amount_required` | 1 | src/config/scanWrite.js |
+| `scan.write.purchase_entry_invalid` | 1 | src/config/scanWrite.js |
 | `scan.write.settlement_blocked` | 1 | src/routes/scanPage/index.js |
+| `scan.write.unknown_action` | 1 | src/config/scanWrite.js |
 | `scan.write.voucher_blocked` | 1 | src/routes/scanPage/index.js |
+| `scan.write.voucher_catalog_unreadable` | 1 | src/config/voucherPayment.js |
+| `scan.write.voucher_method_unmapped` | 1 | src/config/voucherPayment.js |
 | `scan.write.voucher_resolved` | 1 | src/routes/scanPage/index.js |
 
 ## server
@@ -398,6 +522,21 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `server.started` | 1 | src/app.js |
+
+## supplier
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `supplier.split.group_already_reported` | 1 | src/config/supplierSplit.js |
+| `supplier.split.grouped` | 1 | src/config/supplierSplit.js |
+| `supplier.split.mismatch` | 1 | src/config/supplierSplit.js |
+
+## ui
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `ui.tap.repeated` | 1 | src/config/uiTap.js |
+| `ui.tap.result` | 1 | src/config/uiTap.js |
 
 ## v1
 
@@ -411,6 +550,11 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `voucher_settlement.amount.fallback` | 1 | src/services/voucherSettlementService.js |
+| `voucher_settlement.card.update.failed` | 1 | src/services/pendingDealPushService.js |
+| `voucher_settlement.card.update.skipped` | 1 | src/services/pendingDealPushService.js |
+| `voucher_settlement.card.update.started` | 1 | src/services/pendingDealPushService.js |
+| `voucher_settlement.card.update.succeeded` | 1 | src/services/pendingDealPushService.js |
+| `voucher_settlement.card.update.tick_failed` | 1 | src/services/pendingDealPushService.js |
 | `voucher_settlement.confirm.already_settled` | 1 | src/services/voucherSettlementService.js |
 | `voucher_settlement.confirm.handled` | 1 | src/services/pendingDealPushService.js |
 | `voucher_settlement.confirm.partial_failed` | 1 | src/services/voucherSettlementService.js |
@@ -475,8 +619,13 @@
 | `workbench.sales.sample_pending.tasks_unreadable` | 1 | src/services/salesFollowupService.js |
 | `workbench.sample_pending_notice.counts_failed` | 1 | src/services/samplePendingNoticeService.js |
 | `workbench.sample_pending_notice.disabled` | 1 | src/app.js |
+| `workbench.sample_pending_notice.failed` | 1 | src/app.js |
 | `workbench.sample_pending_notice.not_sent` | 1 | src/services/samplePendingNoticeService.js |
 | `workbench.sample_pending_notice.send_failed` | 1 | src/services/samplePendingNoticeService.js |
 | `workbench.sample_pending_notice.sent` | 1 | src/services/samplePendingNoticeService.js |
+| `workbench.sample_pending_notice.skipped` | 1 | src/app.js |
 | `workbench.sample_pending_notice.skipped_empty` | 1 | src/services/samplePendingNoticeService.js |
+| `workbench.sample_pending_notice.started` | 1 | src/app.js |
+| `workbench.sample_pending_notice.succeeded` | 1 | src/app.js |
+| `workbench.sample_pending_notice.tick_failed` | 1 | src/app.js |
 | `workbench.size.unresolved` | 1 | src/services/v1WorkbenchService.js |

@@ -35,21 +35,57 @@ const walk = (dir, out = []) => {
   return out;
 };
 
+/** 动态事件的收集器：前缀 × 后缀（scheduler / card 反馈那两族都用 `eventPrefix`）。 */
+const prefixes = new Map();
+const suffixes = new Set();
+const PREFIX_RE = /eventPrefix\s*[:=]\s*'([a-z0-9][a-z0-9._-]*)'/g;
+const SUFFIX_RE = /\$\{eventPrefix\}\.([a-z][a-z0-9_]*)/g;
+/** 配置里的 `a.b.c` 事件名（只扫 config/ 目录）。 */
+const CONFIG_EVENT_RE = /'([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_-]*){2,})'/g;
+const addPrefix = (prefix, add) => {
+  const entry = prefixes.get(prefix) || new Set();
+  entry.add(add);
+  prefixes.set(prefix, entry);
+};
+
 /** 扫描源码 → Map<event, {count, files:Set}>（按事件名排序）。 */
 export function scanEvents(root = SERVER_ROOT) {
   const src = path.join(root, 'src');
   const result = new Map();
   for (const full of walk(src)) {
     if (full.endsWith(path.join('config', 'events.js'))) continue;
+    const rel = path.relative(root, full).replaceAll(path.sep, '/');
     const text = stripComments(fs.readFileSync(full, 'utf8'));
+    const add = (event, times = 1) => {
+      const entry = result.get(event) || { count: 0, files: new Set() };
+      entry.count += times;
+      entry.files.add(rel);
+      result.set(event, entry);
+    };
     let match;
     EVENT_RE.lastIndex = 0;
-    while ((match = EVENT_RE.exec(text))) {
-      const event = match[1];
-      const entry = result.get(event) || { count: 0, files: new Set() };
-      entry.count += 1;
-      entry.files.add(path.relative(root, full).replaceAll(path.sep, '/'));
-      result.set(event, entry);
+    while ((match = EVENT_RE.exec(text))) add(match[1]);
+
+    // ② 动态事件：`eventPrefix: '前缀'` × scheduler 模板 `${eventPrefix}.started` 等。
+    //    （这是运行时校验里 "unregistered" 的常见来源；能静态展开的就展开进目录。）
+    PREFIX_RE.lastIndex = 0;
+    while ((match = PREFIX_RE.exec(text))) addPrefix(match[1], add);
+    SUFFIX_RE.lastIndex = 0;
+    while ((match = SUFFIX_RE.exec(text))) suffixes.add(match[1]);
+
+    // ③ 配置里的事件名（如 `snapshotRefreshed: 'scan.snapshot.refreshed'`，调用点是
+    //    `logInfo(events.snapshotRefreshed, …)` —— 静态扫描看不到）。只认 config/ 下、
+    //    形如 `a.b.c` 的值，避免把普通英文短词/URL/中文当成事件。
+    if (rel.startsWith('src/config/')) {
+      CONFIG_EVENT_RE.lastIndex = 0;
+      while ((match = CONFIG_EVENT_RE.exec(text))) add(match[1]);
+    }
+  }
+  // 前缀 × 后缀展开（如 `product.tag_qr.sweep` × `.started` / `.tick_failed`）
+  for (const [prefix, adders] of prefixes) {
+    for (const suffix of suffixes) {
+      const event = `${prefix}.${suffix}`;
+      for (const add of adders) add(event);
     }
   }
   return new Map([...result.entries()].sort(([a], [b]) => a.localeCompare(b)));
