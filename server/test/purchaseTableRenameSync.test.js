@@ -65,6 +65,8 @@ test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列�
   assert.equal(Object.prototype.hasOwnProperty.call(request, 'attachment'), false,
     '「具体信息.采购申请单」已被她从生产表删除 → 映射必须删');
 
+  // ⭐ 2026-10-17：采购明细那一列也改名了（她逐字「采购明细里的采购行为字段名称改为了发生行为字段」）
+  assert.equal(request.behavior, '发生行为', '采购明细的行为列映射必须跟真表（发生行为）');
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
   assert.equal(batch.arrivalStatus, '到货状态');
   assert.equal(batch[PURCHASE_ARRIVAL_STATUS_FIELD_KEY], '到货状态', '到货状态的语义键与配置里声明的一致');

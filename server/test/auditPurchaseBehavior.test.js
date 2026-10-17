@@ -20,7 +20,7 @@ const { pathToFileURL } = require('node:url');
 const SCRIPT = pathToFileURL(path.join(__dirname, '../scripts/audit-purchase-behavior.mjs')).href;
 const SCHEMA = {
   tables: {
-    purchaseOrderBatch: { fields: { batchNo: '报货批次号', behavior: '采购行为' } },
+    purchaseOrderBatch: { fields: { batchNo: '报货批次号', behavior: '发生行为' } },
     behavior: { fields: { code: '行为编码', name: '行为名称' } },
   },
 };
@@ -28,7 +28,7 @@ const SCHEMA = {
 /**
  * 🔴🔴 **夹具必须与真表形状一致**（本件的教训：上一版用字符串 `'bh_order'` ⇒ 测试绿、现实红 ✗）。
  * 真表（业务负责人 2026-10-12 在服务器上读出的，逐字）：
- *   `采购行为: [{ record_ids: ["recvwcl7trmDGz"], text: "采购增加", type: "text" }]`
+ *   `发生行为: [{ record_ids: ["recvwcl7trmDGz"], text: "采购增加", type: "text" }]`
  */
 const link = (recordId, text) => ([{ record_ids: [recordId], text, text_arr: [text], type: 'text' }]);
 
@@ -56,7 +56,7 @@ const load = () => import(SCRIPT);
 test('AC-AB1 **只读**：执行体只调 `listAll`（写方法根本不存在）', async () => {
   const { runAudit } = await load();
   const gateway = readOnlyGateway([
-    { record_id: 'rec_1', fields: { 报货批次号: 'CGD-1', 采购行为: link('bh_stock_in', '采购增加') } },
+    { record_id: 'rec_1', fields: { 报货批次号: 'CGD-1', 发生行为: link('bh_stock_in', '采购增加') } },
   ]);
   await runAudit({ gateway, schema: SCHEMA });
   assert.deepEqual(gateway.calls.sort(), ['behavior', 'purchaseOrderBatch'], '只读这两张表');
@@ -68,8 +68,8 @@ test('AC-AB1 **只读**：执行体只调 `listAll`（写方法根本不存在�
 test('AC-AB2/AB6 分类正确 + 目标 id 来自行为表（采购增加⇒报货 · 采购减少⇒退货）', async () => {
   const { classifyBatches } = await load();
   const batches = [
-    { record_id: 'rec_1', fields: { 报货批次号: 'CGD-20261012-0001', 采购行为: link('bh_stock_in', '采购增加') } },
-    { record_id: 'rec_2', fields: { 报货批次号: 'CGD-20261012-0002', 采购行为: link('bh_stock_out', '采购减少') } },
+    { record_id: 'rec_1', fields: { 报货批次号: 'CGD-20261012-0001', 发生行为: link('bh_stock_in', '采购增加') } },
+    { record_id: 'rec_2', fields: { 报货批次号: 'CGD-20261012-0002', 发生行为: link('bh_stock_out', '采购减少') } },
   ];
   const { rows } = classifyBatches({ batchRecords: batches, behaviorRecords: BEHAVIORS, schema: SCHEMA });
   assert.equal(rows[0].currentName, '采购增加');
@@ -84,8 +84,8 @@ test('AC-AB2/AB6 分类正确 + 目标 id 来自行为表（采购增加⇒报�
 test('AC-AB3 已经对的**不许**再列进"需要改"', async () => {
   const { classifyBatches } = await load();
   const batches = [
-    { record_id: 'rec_ok1', fields: { 报货批次号: 'CGD-A', 采购行为: link('bh_order', '报货') } },
-    { record_id: 'rec_ok2', fields: { 报货批次号: 'CGD-B', 采购行为: link('bh_return', '退货') } },
+    { record_id: 'rec_ok1', fields: { 报货批次号: 'CGD-A', 发生行为: link('bh_order', '报货') } },
+    { record_id: 'rec_ok2', fields: { 报货批次号: 'CGD-B', 发生行为: link('bh_return', '退货') } },
   ];
   const { rows, summary } = classifyBatches({ batchRecords: batches, behaviorRecords: BEHAVIORS, schema: SCHEMA });
   assert.equal(summary.needFix, 0);
@@ -97,8 +97,8 @@ test('AC-AB3 已经对的**不许**再列进"需要改"', async () => {
 test('AC-AB4 认不出 / 为空的行为 ⇒ **不猜**（如实标"需人工看"）', async () => {
   const { classifyBatches } = await load();
   const batches = [
-    { record_id: 'rec_x', fields: { 报货批次号: 'CGD-X', 采购行为: [] } },
-    { record_id: 'rec_y', fields: { 报货批次号: 'CGD-Y', 采购行为: link('bh_unknown', '（认不出的行为）') } },
+    { record_id: 'rec_x', fields: { 报货批次号: 'CGD-X', 发生行为: [] } },
+    { record_id: 'rec_y', fields: { 报货批次号: 'CGD-Y', 发生行为: link('bh_unknown', '（认不出的行为）') } },
   ];
   const { rows, summary } = classifyBatches({ batchRecords: batches, behaviorRecords: BEHAVIORS, schema: SCHEMA });
   assert.equal(summary.needFix, 0, '认不出的不许算进"需要改"（不猜目标）');
@@ -113,9 +113,9 @@ test('AC-AB4 认不出 / 为空的行为 ⇒ **不猜**（如实标"需人工看
 test('AC-AB5 汇总行逐字 + 五列表头逐字', async () => {
   const { classifyBatches, renderReport } = await load();
   const batches = [
-    { record_id: 'rec_1', fields: { 报货批次号: 'CGD-1', 采购行为: link('bh_stock_in', '采购增加') } },
-    { record_id: 'rec_2', fields: { 报货批次号: 'CGD-2', 采购行为: link('bh_stock_out', '采购减少') } },
-    { record_id: 'rec_3', fields: { 报货批次号: 'CGD-3', 采购行为: link('bh_order', '报货') } },
+    { record_id: 'rec_1', fields: { 报货批次号: 'CGD-1', 发生行为: link('bh_stock_in', '采购增加') } },
+    { record_id: 'rec_2', fields: { 报货批次号: 'CGD-2', 发生行为: link('bh_stock_out', '采购减少') } },
+    { record_id: 'rec_3', fields: { 报货批次号: 'CGD-3', 发生行为: link('bh_order', '报货') } },
   ];
   const result = classifyBatches({ batchRecords: batches, behaviorRecords: BEHAVIORS, schema: SCHEMA });
   const text = renderReport(result);
@@ -127,9 +127,9 @@ test('AC-AB7 ⭐ **真表形状**（数组包对象）⇒ 正确分类；**空�
   const { classifyBatches } = await load();
   const batches = [
     // 真表现场那两行的形状（业务负责人 2026-10-12 跑出来的）
-    { record_id: 'reczz28KVvjZuU0p', fields: { 报货批次号: '202610071', 采购行为: link('bh_stock_in', '采购增加') } },
-    { record_id: 'reczz28MVt92mBNi', fields: { 报货批次号: 'CGD-20261012-0002', 采购行为: link('bh_order', '报货') } },
-    { record_id: 'rec_empty', fields: { 报货批次号: 'CGD-EMPTY', 采购行为: [] } },
+    { record_id: 'reczz28KVvjZuU0p', fields: { 报货批次号: '202610071', 发生行为: link('bh_stock_in', '采购增加') } },
+    { record_id: 'reczz28MVt92mBNi', fields: { 报货批次号: 'CGD-20261012-0002', 发生行为: link('bh_order', '报货') } },
+    { record_id: 'rec_empty', fields: { 报货批次号: 'CGD-EMPTY', 发生行为: [] } },
   ];
   const { rows, summary } = classifyBatches({ batchRecords: batches, behaviorRecords: BEHAVIORS, schema: SCHEMA });
   // ⭐ 判据（业务负责人给的）：真表那两行**不许**显示"(空)"
@@ -148,7 +148,7 @@ test('AC-AB7 ⭐ **真表形状**（数组包对象）⇒ 正确分类；**空�
 test('AC-AB8 有 record_ids 但没 text ⇒ 说"（有值但没名字）"，**不许**误报"(空)"', async () => {
   const { classifyBatches } = await load();
   const batches = [
-    { record_id: 'rec_noname', fields: { 报货批次号: 'CGD-NONAME', 采购行为: [{ record_ids: ['bh_stock_in'], type: 'text' }] } },
+    { record_id: 'rec_noname', fields: { 报货批次号: 'CGD-NONAME', 发生行为: [{ record_ids: ['bh_stock_in'], type: 'text' }] } },
   ];
   const { rows } = classifyBatches({ batchRecords: batches, behaviorRecords: BEHAVIORS, schema: SCHEMA });
   // 名字能从「行为管理」查到（bh_stock_in ⇒ 采购增加）⇒ 照样给准话
@@ -156,7 +156,7 @@ test('AC-AB8 有 record_ids 但没 text ⇒ 说"（有值但没名字）"，**�
   assert.equal(rows[0].should, '报货');
   // 行为表里也没有这条 ⇒ 才说"有值但没名字"
   const unknown = classifyBatches({
-    batchRecords: [{ record_id: 'rec_x', fields: { 报货批次号: 'CGD-X', 采购行为: [{ record_ids: ['bh_nope'], type: 'text' }] } }],
+    batchRecords: [{ record_id: 'rec_x', fields: { 报货批次号: 'CGD-X', 发生行为: [{ record_ids: ['bh_nope'], type: 'text' }] } }],
     behaviorRecords: BEHAVIORS,
     schema: SCHEMA,
   });

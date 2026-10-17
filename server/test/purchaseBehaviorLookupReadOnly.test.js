@@ -11,7 +11,7 @@
  * 处理：**只撤写入、保留读取**
  *   · 撤：`purchaseWebhookService.js`（报货/采购申请那条）与 `purchaseReturnService.js`
  *     （扫码采购退货那条）里 `tableKey: 'purchaseRequest'` 的 create payload **都不再有** `behavior:`；
- *   · 留：`v1BitableSchema` 的映射 `purchaseRequest.fields.behavior = '采购行为'` 仍在
+ *   · 留：`v1BitableSchema` 的映射 `purchaseRequest.fields.behavior = '发生行为'` 仍在（真表已改名）
  *     （工作台采购查询的分流判据 `purchaseQueryService.classifyReportBehavior` 还在**读**它）。
  *
  * ⭐⭐ **她 2026-10-12 已确认「采购主表.采购行为」要写**（原话逐字：
