@@ -18,7 +18,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const E2E = path.join(__dirname, 'scanMoneyPageTwoStepVerify.test.js');
+// ⭐ 2026-10-17：真实 Base 用例已迁到 test/realbase/（默认入口不再收它）⇒ 静态哨兵跟着读新路径
+const E2E = path.join(__dirname, 'realbase', 'scanMoneyPageTwoStepVerify.test.js');
 const source = fs.readFileSync(E2E, 'utf8');
 
 /** 剥掉注释（`//` 与 `/* *​/`）—— 只扫"真的会发出去的东西" ✓（改前逐字写在注释里不算 ✗） */
@@ -46,13 +47,20 @@ test('AC-V4-1 🔴 V4 的请求体**不带档位字段**（`payment_status` / �
 });
 
 // ── AC-V4-2：V4 的**三件断言**一件都不许少 ✗（删一条 ⇒ 红 ✓）────────────────────────
-test('AC-V4-2 🔴 V4 仍钉住三件：**零写入** ＋ **差额人话** ＋ **原地重渲染资金页**', () => {
+test('AC-V4-2 🔴 V4 仍钉住三件：**钱零写入** ＋ **金额必填人话** ＋ **原地重渲染资金页**', () => {
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.deepEqual(after, before` ＋ `/差|不符|对不上|金额|没提交成功/`
+  //     （旧口径：整单四表零写入 + 差额人话）
+  //   改后逐字：`assert.equal(after.payment - before.payment, 0` ＋ `/金额必须填写/`
+  //     （④ 后点提交已建「货」那一单 ⇒ "零写入"收窄成**钱那一半零写入**；
+  //      她 2026-10-18 起资金页金额必填，未填 ⇒ 400 +「金额必须填写」人话）
+  //   依据 = 她 2026-10-18 逐字：「资金页面也得填写了，必须填写…0 也可以填，必须得填写金额」
   const block = caseBlock('V4 · ');
-  assert.match(block, /assert\.deepEqual\(after, before/, 'V4 必须仍钉「零写入」（不许假成功 ✗）');
+  assert.match(block, /assert\.equal\(after\.payment - before\.payment, 0/,
+    'V4 必须仍钉「钱那一半零写入」（不许假成功 ✗）');
   assert.match(block, /payment_pay/, 'V4 必须仍钉「原地重渲染资金页」（她能改 ✓）');
-  // ⚠️ 必须钉**那一行断言本身**（变异验证过：只写 `/差|金额/` 会被别处的字面量满足 ⇒ 删掉也不红 ✗）
-  assert.match(block, /assert\.match\(bad\.html, \/差\|不符\|对不上\|金额\|没提交成功\//,
-    'V4 必须仍钉「差额给她一句人话」**那一条断言**（删掉 ⇒ 红 ✓；不许只靠别处出现「金额」二字 ✗）');
+  assert.match(block, /assert\.match\(bad\.html, \/金额必须填写\//,
+    'V4 必须仍钉「金额必须填写」那一条人话断言（删掉 ⇒ 红 ✓）');
 });
 
 // ── AC-V4-3：**整份真表 E2E 里一处都不许再有档位字段**（塞回 ⇒ 红 ✓）─────────────────
