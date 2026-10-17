@@ -34,14 +34,14 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const repoRoot = path.resolve(__dirname, '..', '..');
-for (const candidate of [path.join(repoRoot, '.env'), path.join(__dirname, '..', '.env')]) {
+const repoRoot = path.resolve(__dirname, '..', '..', '..'); // server/test/realbase → 仓库根
+for (const candidate of [path.join(repoRoot, '.env'), path.join(__dirname, '..', '..', '.env')]) {
   if (fs.existsSync(candidate)) { require('dotenv').config({ path: candidate, quiet: true }); break; }
 }
 
 const express = require('express');
-const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { V1BitableGateway, textValue, linkedRecordIds } = require('../src/services/v1BitableGateway');
+const { V1_BITABLE_SCHEMA } = require('../../src/config/v1BitableSchema');
+const { V1BitableGateway, textValue, linkedRecordIds } = require('../../src/services/v1BitableGateway');
 
 /** ⚠️ 在**注入假凭证之前**判定"本机有没有真凭证" —— 否则 CI 里判不出来（见下）。 */
 const HAS_REAL_APP_CREDS = Boolean(process.env.LARK_AGENT_APP_ID && process.env.LARK_AGENT_APP_SECRET);
@@ -73,9 +73,10 @@ process.env.LARK_WEB_AUTH_ENABLED = 'true';
 process.env.LARK_WEB_SESSION_SECRET = process.env.LARK_WEB_SESSION_SECRET || 'verify_ship_session_secret';
 delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 
-const { SCAN_PAGE } = require('../src/config/scanPage');
-const { SCAN_WRITE } = require('../src/config/scanWrite');
-const { createScanPageRouter } = require('../src/routes/scanPage');
+const { SCAN_PAGE } = require('../../src/config/scanPage');
+const { SCAN_WRITE } = require('../../src/config/scanWrite');
+const { createScanPageRouter } = require('../../src/routes/scanPage');
+const { waitForPendingSaleBackgrounds } = require('../../src/services/saleWriteBackgroundService');
 
 // ⭐ 跳过必须**看得见**（在输出里明说一次，别让人以为"跑了 0 条 = 绿"）
 if (SKIP) console.log(`[verify] 跳过：${SKIP}（有凭证时这条会真跑真表）`);
@@ -94,9 +95,12 @@ const SAY = (...args) => console.log(`[verify ${TAG}]`, ...args);
  *      金额本身没有业务含义（不是按货品单价推的假数据 ✗）。
  */
 const LINE_AMOUNT = '100';
+// ⭐ 2026-10-18（她逐字「资金页面也得填写了，必须填写…0 也可以填」）：
+//   资金页那一下**必须带一行收款金额**（0 = 一分钱没收到 ⇒ 未付/待补充）⇒ 这份真表用例跟着带。
+const PAY_ZERO = Object.freeze({ action: 'payment_pay', [SCAN_WRITE.fields.paymentMethod]: '微信', [SCAN_WRITE.fields.paymentAmount]: '0' });
 
 const resetSessions = () => {
-  const dir = process.env.SCAN_SESSION_DIR || path.join(__dirname, '..', 'data', 'scan_sessions');
+  const dir = process.env.SCAN_SESSION_DIR || path.join(__dirname, '..', '..', 'data', 'scan_sessions');
   fs.rmSync(dir, { recursive: true, force: true });
 };
 
@@ -217,7 +221,7 @@ const prepare = async () => {
   return { gateway, operator, cookie: cookieOf(operator), pick };
 };
 
-test(`V1/V2/V5 · 点提交=零写入 ⇒ 点资金页按钮才建单（+ 读回「关联销售」指向哪张表）`, { skip: SKIP || false }, async () => {
+test(`V1/V2/V5 · 点提交=只建【货】那一单 ⇒ 点资金页按钮才写【钱】（+ 读回「关联销售」指向哪张表）`, { skip: SKIP || false }, async () => {
   const { gateway, operator, cookie, pick } = await prepare();
   SAY('操作人 =', operator, '· 候选 =', JSON.stringify(pick));
   const urlPath = `${SCAN_PAGE.route.basePath}/${encodeURIComponent(pick.number)}`;
@@ -225,9 +229,22 @@ test(`V1/V2/V5 · 点提交=零写入 ⇒ 点资金页按钮才建单（+ 读回
     const before = await counts(gateway);
     SAY('① 点提交前四表 =', JSON.stringify(before));
     const step1 = await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size, [SCAN_WRITE.fields.lineAmount]: LINE_AMOUNT });
+    // ⭐ 2026-10-17：④ 货/钱分离之后，点提交会先建【货】那一单（主表+明细+销售状态；现货当场交付扣库存），
+    //   这些写库动作在**后台**跑 ⇒ 断言前先等它跑完（判据没放宽：仍是逐表逐值比）。
+    await waitForPendingSaleBackgrounds();
     const afterStep1 = await counts(gateway);
     SAY('① 点提交 HTTP', step1.status, '后四表 =', JSON.stringify(afterStep1), '| 是资金页?', /payment_pay/.test(step1.html));
-    assert.deepEqual(afterStep1, before, '点「提交这一单」**不许**写任何一张表');
+    // ⭐⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.deepEqual(afterStep1, before, '点「提交这一单」**不许**写任何一张表');`
+    //     —— 那是「点提交只到资金页、一个字都不写」的旧两步流程 ✗（④ 货/钱分离之后已不成立）
+    //   改后逐字：点提交 = **只建「货」那一半**：主表 +1 · 明细 +1 · 现货交付扣库存（流水 +1）·
+    //     **收款 0**、资金状态仍「未写入」（钱要等资金页那一下 ✓）
+    //   依据 = 业务负责人 2026-10-16「把新功能都上了，不需要开关」＋ ④ 货/钱分离口径
+    //     （`scanWriteService.submitSale` 的 `deferFunds: true` 段：不写收款 / 不置资金状态 / 不记 completed）
+    assert.equal(afterStep1.entry - before.entry, 1, '点提交 = 建「货」那一单（主表 +1）');
+    assert.equal(afterStep1.detail - before.detail, 1, '货那一跑写明细（+1）');
+    assert.equal(afterStep1.ledger - before.ledger, 1, '现货 ⇒ 提交即交付、扣库存（流水 +1）');
+    assert.equal(afterStep1.payment - before.payment, 0, '钱那一半还没跑 ⇒ 收款明细 **0**（钱要等资金页那一下）');
     assert.match(step1.html, /payment_pay/, '应当渲染资金页');
 
     // ⭐⭐ 2026-10-16 晚**第二次迁移**（改前逐字 → 改后逐字 → 依据）：
@@ -248,13 +265,16 @@ test(`V1/V2/V5 · 点提交=零写入 ⇒ 点资金页按钮才建单（+ 读回
     //               现在 = **直接对比金额**（收款合计 vs 货品/应收合计）✓
     //          ＋ 她 2026-10-14 逐字「**只要本次付的金额小于累计的，那么差额都是未收款，
     //             包括本次付款为 0**」（实现：`services/salesOrderService.js` 的 auto-owed）
-    const step2 = await postPage(base, urlPath, cookie, { action: 'payment_pay' });
+    const step2 = await postPage(base, urlPath, cookie, PAY_ZERO);
     const afterStep2 = await counts(gateway);
     const orderNo = (step2.html.match(/XSD-\d{8}-\d{4}/) || [])[0] || '';
     SAY('② 点资金页按钮 HTTP', step2.status, '后四表 =', JSON.stringify(afterStep2), '· 单号 =', orderNo || '(无)');
-    assert.equal(afterStep2.entry - before.entry, 1, '点按钮那一刻**才**建单（主表 +1）');
-    assert.equal(afterStep2.detail - before.detail, 1, '明细 +1');
-    assert.equal(afterStep2.ledger - before.ledger, 1, '现货 ⇒ 库存流水 +1');
+    // ⭐ 2026-10-17 迁移：点资金页按钮 = **钱那一跑**（货那一半上面已经写完）
+    assert.equal(afterStep2.entry - afterStep1.entry, 0, '资金页那一下**不再建单**（同一张单续写 ✓）');
+    assert.equal(afterStep2.detail - afterStep1.detail, 0, '明细不重复写');
+    assert.equal(afterStep2.ledger - afterStep1.ledger, 0, '库存不重复扣（货那一跑已交付）');
+    assert.equal(afterStep2.payment - afterStep1.payment, 1,
+      '⭐ 钱那一跑：差额（每件实收合计 − 已收 = LINE_AMOUNT）> 0 ⇒ **自动**挂一条【未收款】');
     assert.ok(orderNo, '成功页要给她单号（XSD-…）');
 
     const mine = await rowsOfOrder(gateway, orderNo);
@@ -303,8 +323,13 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
   await withServer(async (base) => {
     const before = await counts(gateway);
     await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size, [SCAN_WRITE.fields.lineAmount]: LINE_AMOUNT });
+    await waitForPendingSaleBackgrounds();
     const afterSubmit = await counts(gateway);
-    assert.deepEqual(afterSubmit, before, '点提交仍然零写入');
+    // ⭐ 2026-10-17 迁移（同 V1/V2）：点提交 = 只建「货」那一单（收款仍 0）
+    assert.equal(afterSubmit.entry - before.entry, 1, '点提交建「货」单（主表 +1）');
+    assert.equal(afterSubmit.detail - before.detail, 1, '明细 +1');
+    assert.equal(afterSubmit.ledger - before.ledger, 1, '现货交付扣库存（流水 +1）');
+    assert.equal(afterSubmit.payment - before.payment, 0, '钱还没写');
     const [a, b] = await Promise.all([
       // ⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字：两发都带 `payment_status: '未付'`（档位**已退场** ✗）
@@ -317,15 +342,15 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
       //       并发两枪 ⇒ **仍然只有这一条**（幂等判据不但没松，反而更严了：从"没有"变成"正好一条"）✓
       //     依据 = 她 2026-10-16 晚裁定「**客户少付 ⇒ 自动记一条【未收款】（差额）**」
       //            ＋ 她 2026-10-14 逐字「只要本次付的金额小于累计的，那么差额都是未收款」
-      postPage(base, urlPath, cookie, { action: 'payment_pay' }),
-      postPage(base, urlPath, cookie, { action: 'payment_pay' }),
+      postPage(base, urlPath, cookie, PAY_ZERO),
+      postPage(base, urlPath, cookie, PAY_ZERO),
     ]);
     const after = await counts(gateway);
     const orderNo = ((a.html + b.html).match(/XSD-\d{8}-\d{4}/) || [])[0] || '';
     SAY('V3 并发两枪 HTTP', a.status, '/', b.status, '· 四表', JSON.stringify(before), '→', JSON.stringify(after), '· 单号 =', orderNo || '(无)');
-    assert.equal(after.entry - before.entry, 1, '并发两枪**只许建一张单**');
-    assert.equal(after.detail - before.detail, 1, '明细只 +1');
-    assert.equal(after.ledger - before.ledger, 1, '库存只扣一次（流水只 +1）');
+    assert.equal(after.entry - afterSubmit.entry, 0, '并发两枪**不再建单**（同一张单续写 ✓）');
+    assert.equal(after.detail - afterSubmit.detail, 0, '明细不重复写');
+    assert.equal(after.ledger - afterSubmit.ledger, 0, '库存不重复扣（货那一跑已交付）');
     assert.equal(after.payment - before.payment, 1,
       '并发两枪 ⇒ 那条自动【未收款】**只许写一次**（改前断言 0；新口径下差额必须落，且只能落一条）');
     if (orderNo) {
@@ -336,11 +361,12 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
   });
 });
 
-test(`V4 · 金额不齐 ⇒ 零写入（如实记状态码）`, { skip: SKIP || false }, async () => {
+test(`V4 · 资金页金额不填 ⇒ 400 + 人话 + 钱零写入（金额必填口径）`, { skip: SKIP || false }, async () => {
   const { gateway, cookie, pick } = await prepare();
   const urlPath = `${SCAN_PAGE.route.basePath}/${encodeURIComponent(pick.number)}`;
   await withServer(async (base) => {
-    await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size });
+    await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size, [SCAN_WRITE.fields.lineAmount]: LINE_AMOUNT });
+    await waitForPendingSaleBackgrounds();
     const before = await counts(gateway);
     // ⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）：
     //   改前逐字：`{ action: 'payment_pay', payment_status: '部分付', payment_method: '微信', payment_amount: '' }`
@@ -356,9 +382,15 @@ test(`V4 · 金额不齐 ⇒ 零写入（如实记状态码）`, { skip: SKIP ||
     const after = await counts(gateway);
     SAY('V4 金额不齐 HTTP', bad.status, '· 四表', JSON.stringify(before), '→', JSON.stringify(after),
       '| 仍资金页?', /payment_pay/.test(bad.html), '| 有差额人话?', /差|不符|对不上|金额/.test(bad.html));
-    assert.deepEqual(after, before, '金额不齐 ⇒ 零写入（不许假成功 ✗）');
+    // ⭐⭐ 2026-10-17 迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.deepEqual(after, before, '金额不齐 ⇒ 零写入（不许假成功 ✗）')`
+    //     —— 旧口径下"金额可不填"；现在金额**必填**（她 2026-10-18 逐字），空 ⇒ 当场 400 ✓
+    //   改后逐字：**钱那一半零写入**（收款明细不增），页面原地重渲染资金页 + 人话「金额必须填写」
+    //   依据 = 她 2026-10-18：「资金页面也得填写了，必须填写，但是填写的金额不一定要等于
+    //           货品合计的总金额，0 也可以填，必须得填写金额」
+    assert.equal(after.payment - before.payment, 0, '金额没填 ⇒ **钱那一半零写入**（不许假成功 ✗）');
+    assert.equal(bad.status, 400, '金额必填 ⇒ 不填要被拦下（不是 200）');
     assert.match(bad.html, /payment_pay/, '应当原地重渲染资金页（她能改 ✓）');
-    // ⭐ 迁移时**加固**（不是放宽 ✓）：差额必须**给她一句人话** —— 她真机抱怨过"只看到 400、没有原因" ✓
-    assert.match(bad.html, /差|不符|对不上|金额|没提交成功/, '差额必须给她人话（不许干巴巴 400 ✗）');
+    assert.match(bad.html, /金额必须填写/, '要给她「金额必须填写（可以填 0，但不填不行）」那句人话 ✓');
   });
 });
