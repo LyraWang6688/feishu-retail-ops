@@ -19,7 +19,7 @@
 > 「**如果这个尺码算下来为 0，那么就不用入库啊！**」
 > ⇒ **单个尺码算出来 `实际 = 0` 是正常结果**：该行**不入库**、**但不阻断整单**；
 > 差异**类型**仍然只有三类（一样/多/少），本条修正**只**动"实际数量能不能是 0"。
-> 口径见 [arrival-zero-arrived-rule-2026-10-07.md](arrival-zero-arrived-rule-2026-10-07.md)，
+> 口径见 [arrival-zero-arrived-rule-2026-10-07.md](archive/arrival-zero-arrived-rule-2026-10-07.md)，
 > 实现与验收见 [reports/arrival-zero-actual-2026-10-07.md](reports/arrival-zero-actual-2026-10-07.md)。
 > **本文其余内容（含她 2026-10-06 的原话）按当时事实保留。**
 

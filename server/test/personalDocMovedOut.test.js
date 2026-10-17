@@ -38,7 +38,8 @@ const DOC_TITLE = ['手机里跟', 'AI-助手聊天'].join('-');
 const DOC_NAME_SUFFIX = ['需求说明', '2026-10-08'].join('-');
 const DOC_FILE_NAME = `${DOC_TITLE}-${DOC_NAME_SUFFIX}.md`;
 /** 唯一允许**历史留痕**提到它的文件（架构审计报告 §3.3 第 4 项 ＋ 它的 🔁 后续状态）。 */
-const HISTORY_RECORD_FILE = path.join('docs', 'architecture-audit-2026-10-15.md');
+// ⭐ 2026-10-17 成对迁移：架构审计报告已随文档整理移入 docs/archive/（内容一个字未改）
+const HISTORY_RECORD_FILE = path.join('docs', 'archive', 'architecture-audit-2026-10-15.md');
 /** 留痕必须与更正**成对**出现（改前逐字保留 + 改后逐字说明已移出）。 */
 const MOVED_OUT_MARKER = '已移出本仓';
 const KEPT_RECORD_MARKER = '不许我替她处理文档归属';

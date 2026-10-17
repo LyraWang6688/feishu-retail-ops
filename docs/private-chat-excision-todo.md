@@ -163,7 +163,7 @@
 **🔴 2026-10-07 收口：私聊【入口】也删了 —— 本节的"还没切"全部落地**
 （**方式**是业务负责人拍板的 ⓐ「代码里一行私聊都不留，测试全部迁到群聊入口」，
 见 [private-chat-removal-decision-2026-10-07.md](private-chat-removal-decision-2026-10-07.md)；
-验收标准、实现与测试证据见 [private-chat-removal-2026-10-07.md](private-chat-removal-2026-10-07.md)）
+验收标准、实现与测试证据见 [private-chat-removal-2026-10-07.md](archive/private-chat-removal-2026-10-07.md)）
 
 > 业务负责人口径（逐字）：「**以后私聊这条链路我们就没有了**」。
 

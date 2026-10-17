@@ -56,7 +56,8 @@ test('AC-DD2 ⭐⭐ 反方向：部署路径**逐字没被碰**（能真红：�
 });
 
 test('AC-DD3 「库存手工调整」口径 = **待优化**（能真红：把"待开发/方案未定"写回 ⇒ 红）', () => {
-  const audit = read('docs/architecture-audit-2026-10-15.md');
+  // ⭐ 2026-10-17 成对迁移：审计报告已移入 docs/archive/（内容未改）
+  const audit = read('docs/archive/architecture-audit-2026-10-15.md');
   const tabs = read('docs/workbench-tabs-and-subpages-2026-10-15.md');
   assert.match(tabs, /待优化/, '⭐ 子页清单要写"待优化" ✓');
   assert.ok((tabs.match(/待优化/g) || []).length >= 2, '两处口径都改了 ✓');
