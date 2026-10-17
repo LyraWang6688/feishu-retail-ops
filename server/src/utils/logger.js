@@ -1,4 +1,5 @@
 const { isRegisteredEvent } = require('../config/events');
+const { traceLogFields } = require('./traceContext');
 
 // 已登记事件表见 config/events.js（由 scripts/observability-events.mjs 生成）。
 // 未登记事件：默认**只打 `unregistered: true` 标记**（可用日志查询发现），不阻断业务；
@@ -46,6 +47,7 @@ const writeLog = (level, event, meta = {}) => {
     level,
     event,
     ...(unregistered ? { unregistered: true } : {}),
+    ...traceLogFields(),
     ...sanitizeMeta(meta),
   };
   if (listeners.size) {

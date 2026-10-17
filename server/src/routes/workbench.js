@@ -6,6 +6,8 @@ const controller = require('../controllers/workbenchController');
 // `require('./feishuWebAuth')`，而"扫码页也走同一道闸门"只要求**共用同一个函数**，
 // 不需要搬家。扫码路由 `routes/scanPage.js` 从这里 require 它。
 const { enabled: feishuAuthEnabled, getSessionUser, allowedOpenIds } = require('./feishuWebAuth');
+const { setTraceFields } = require('../utils/traceContext');
+const { roleOf } = require('../config/trace');
 const { SalesFollowupService } = require('../services/salesFollowupService');
 // ⭐ 2026-10-15：**进程级共享实例**（配品成单那条新链路也要能作废同一份缓存 ⇒ 见该模块注释）
 const { sharedWorkbenchOrdersCache } = require('../services/workbenchOrdersCache');
@@ -58,6 +60,8 @@ const requireWorkbenchAccess = (req, res, next) => {
   const allowed = allowedOpenIds();
   if (allowed.size && !allowed.has(user.open_id)) return res.status(403).json({ success: false, error: '当前飞书账号未被授权使用工作台' });
   req.workbenchUser = user;
+  // 埋点收尾刀：身份确定后补角色维度（只记 role 枚举，不记 open_id）
+  setTraceFields({ role: roleOf(user.open_id) });
   return next();
 };
 

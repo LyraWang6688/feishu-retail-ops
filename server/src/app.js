@@ -99,6 +99,8 @@ app.use((req, res, next) => {
   });
   next();
 });
+// 埋点收尾刀：每个请求一个 trace_id + 入口维度（角色由身份中间件随后补）
+app.use(require('./utils/traceMiddleware').traceMiddleware());
 
 // Feishu callbacks do not carry the project's x-api-key, so mount the verified
 // Lark event endpoint before the generic /api authentication middleware.
