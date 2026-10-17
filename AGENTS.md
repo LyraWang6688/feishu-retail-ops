@@ -255,8 +255,14 @@ pnpm run dev
 
 ```bash
 cd server
-pnpm test
+pnpm test            # 默认入口：只跑 test/*.test.js（不含真实 Base 用例）
+pnpm run test:realbase   # 真实测试 Base 的端到端（需 .env 里的测试 Base 凭证；会真写测试 Base）
 ```
+
+> ⭐ 2026-10-17（业务负责人实测反馈后定）：**真实 Base 用例必须走独立入口** ——
+> 默认 `pnpm test` 的预加载会先塞 `tbl_test_*`，与真实 Base 用例混跑会出现 `TableIdNotFound (1254041)`
+> （那**不是**线上链路坏了，是测试入口混用）。真实 Base 用例统一放 `test/realbase/`；
+> 它自带「目标 Base ≠ 授权测试 Base ⇒ 拒绝跑」的安全闸门，CI 缺凭证时明确 skip。
 
 ### Schema 校验（只读结构校验）
 
