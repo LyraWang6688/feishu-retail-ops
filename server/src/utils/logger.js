@@ -1,3 +1,10 @@
+const { isRegisteredEvent } = require('../config/events');
+
+// 已登记事件表见 config/events.js（由 scripts/observability-events.mjs 生成）。
+// 未登记事件：默认**只打 `unregistered: true` 标记**（可用日志查询发现），不阻断业务；
+// `LOG_EVENT_STRICT=true` 时另打一条 `log.event.unregistered` warn（同名只打一次，避免刷屏）。
+const unregisteredWarned = new Set();
+
 const redactValue = (value) => {
   if (value == null) return value;
   const str = String(value);
@@ -26,16 +33,24 @@ const sanitizeMeta = (meta = {}) => {
 };
 
 const writeLog = (level, event, meta = {}) => {
+  const unregistered = Boolean(event) && !isRegisteredEvent(event);
   const payload = {
     ts: new Date().toISOString(),
     level,
     event,
+    ...(unregistered ? { unregistered: true } : {}),
     ...sanitizeMeta(meta),
   };
   const line = JSON.stringify(payload);
   if (level === 'error') {
     console.error(line);
     return;
+  }
+  if (unregistered && process.env.LOG_EVENT_STRICT === 'true' && !unregisteredWarned.has(event)) {
+    unregisteredWarned.add(event);
+    console.warn(JSON.stringify({
+      ts: new Date().toISOString(), level: 'warn', event: 'log.event.unregistered', name: event,
+    }));
   }
   if (level === 'warn') {
     console.warn(line);

@@ -140,6 +140,10 @@ test('AC6 🔴 签名只许出现在「扫码打印」那两个文件里；扫�
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) { walk(full); continue; }
       if (!/\.(js|cjs|mjs)$/.test(entry.name)) continue;
+      // ⭐ 2026-10-17（埋点第一刀）：`src/config/events.js` 是**自动生成的事件名目录**（纯数据，
+      //   不含任何签名实现）——事件名里可能出现 `jsapi.signature` 字样，但不是签名代码。
+      //   ⇒ 显式排除它；闭集成员与"扫一扫那一格不许有签名"的判定**一个字没变**（不是放宽 ✗）。
+      if (path.relative(path.join(__dirname, '..'), full) === 'src/config/events.js') continue;
       if (/jsapi[-_]?signature|jsapiSignature|JSSDK_SIGNATURE_PATH|signJsapiTicket|startLarkScan|canUseLarkScan/i.test(fs.readFileSync(full, 'utf8'))) {
         hits.push(path.relative(path.join(__dirname, '..'), full));
       }
