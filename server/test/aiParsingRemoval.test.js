@@ -249,6 +249,18 @@ test('AC-10 ⭐⭐ 反方向：扫码链路 / 共享落库层 / 9 点推送 / �
 // ⑥ ⚠️ 冻结文件：逐字节未动
 // ═══════════════════════════════════════════════════════════════════════════
 
+test('AC-12 🔴 依赖侧也不许把 AI SDK 带回来（能真红：把 openai 塞回 dependencies ⇒ 红）', () => {
+  // ⚠️ 任务书写的是"补 AC-11"，但 AC-11 已被上面的冻结文件用例占用 ⇒ 顺延为 AC-12。
+  //   为什么要有这条：既有哨兵扫的是**代码标识符**（`doubaoService` / `parseSalesText` …），
+  //   抓不到**包名** —— `package.json` 里留着 `openai` 这种依赖，谁哪天 import 就复活了一条 AI 链路。
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'server/package.json'), 'utf8'));
+  const all = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  for (const banned of ['openai', 'doubao', 'volcengine-sdk', 'langchain']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(all, banned), false,
+      `⛔ 依赖里不许出现 AI SDK 包名「${banned}」（塞回 ⇒ 红）`);
+  }
+});
+
 test('AC-11 🔴 冻结文件 `scanWriteService.js` 逐字节未动（能真红：改一个字 ⇒ 红）', () => {
   // 基线 = **本次任务开工时的 origin/main** 内容（2026-10-16，`git show HEAD:` 读得到）。
   // ⚠️ 这条同时挡住"顺手把里面的注释也改了" —— 她的口径是**一个字都不许碰** ✗
