@@ -143,7 +143,7 @@
 
 | 入口                                                                                                                    | 说明                              |
 | --------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `POST /api/lark/events`                                                                                               | 飞书事件回调（**群聊 / 群话题**消息、卡片动作；私聊消息到达但**默认不处理**）   |
+| `POST /api/lark/events`                                                                                               | 飞书事件回调（**卡片动作** ＋ **多维表格记录变更**；**群聊 / 私聊消息到达即静默拒绝**，不建任务、不进 AI、不读表、不写表）   |
 | `GET /api/lark/events/health`                                                                                         | 事件回调健康检查                        |
 | `GET /api/auth/feishu/me`、`GET /api/auth/feishu/start`、`GET /api/auth/feishu/callback`、`POST /api/auth/feishu/logout` | 工作台飞书身份认证                       |
 | `GET /api/workbench/sales/orders`                                                                                     | 订单列表（交付 / 收款管理用；**写入类**那半的入口，2026-10-08 保留） |
@@ -191,14 +191,15 @@ pnpm run dev
 - `LARK_AGENT_VERIFICATION_TOKEN` / `LARK_AGENT_ENCRYPT_KEY` - 飞书事件回调校验与解密
 - `FEISHU_V1_BITABLE_APP_TOKEN` - V1 目标多维表格（无默认值，缺失直接报错）
 - `FEISHU_V1_*_TABLE_ID` - V1 各业务表 ID（货品、销售、采购、库存等）
-- `TEXT_LLM_API_KEY` / `TEXT_LLM_BASE_URL` / `TEXT_LLM_MODEL` - **文字**模型（销售录单、采购数量说明）
-- `PURCHASE_ARRIVAL_INTAKE_ENABLED` - 「采购到货 → 拍照识别」链路的显式开关（**已退场，无读取点**）
 - `API_KEY` - 非飞书 `/api` 接口的 `x-api-key` 鉴权
 
-**群聊采购链路（缺了不会报错，但会"安静地不工作"，所以必须显式配）** — 取值都在 `src/config/groupPurchase.js`
+> ⚠️ `TEXT_LLM_*` / `VISION_LLM_*` / `ARK_*` / `PURCHASE_ARRIVAL_INTAKE_ENABLED` **都已无运行期读取点**
+> （AI 解析与拍照识别链路已退场，见 `docs/ai-parsing-removal-2026-10-16.md`）⇒ **不要再配、也不要依赖它们**判断功能是否开启。
 
-- `PURCHASE_CHAT_ID` - 采购单发到哪个群（chat_id，形如 `oc_xxx`）。**没有默认值**：留空时采购申请照常写成，但图与说明不发，并打 `purchase.request.image.skipped` 警告（**不会**回落到经办人私聊）
-- `LARK_BOT_OPEN_ID` - 机器人自己的 open_id（形如 `ou_xxx`），判「群里有没有 @ 机器人」的唯一依据。**没有默认值**：留空时群聊消息一律不处理（并打 `lark.group.bot_open_id_missing` 警告）
+**采购分发 / 提醒（不是录入入口；取值在 `src/config/groupPurchase.js`）**
+
+- `PURCHASE_CHAT_ID` - 采购单 / 样品提醒**发到哪个群**（chat_id，形如 `oc_xxx`；**分发用**）。没有默认值：留空 ⇒ 图与提醒不发（打 `purchase.request.image.skipped` 警告），**扫码补货建单不受影响**。
+- `LARK_BOT_OPEN_ID` - **已无运行期读取点**（群聊入口 2026-10-12 退场后 `resolveBotOpenId` 没有调用方）⇒ **不要配、不要依赖**。
 
 > **私聊链路（已移除，2026-10-07）**：**没有恢复私聊入口 / 发送的开关** ——
 > 她拍板的是「代码里一行私聊都不留」（ⓐ）。
@@ -210,11 +211,10 @@ pnpm run dev
 > 私聊消息只记一条 `lark.private_chat.disabled`；没有群上下文的任务只记一条
 > `lark.private_chat.send_skipped`（全仓只有 `src/utils/privateChatSend.js` 一处定义）。
 > 见 `docs/private-chat-removal-2026-10-07.md`。
-- `LARK_ACK_REACTION` - 「收到」表情的 emoji_type，默认 `OneSecond`（真机验证有效）
+- `LARK_ACK_REACTION` - **已无运行期读取点**（群聊入口退场后无消费方）⇒ 不要再配。
 
-> 模型配置**没有默认值、也不跨供应商兜底**（原先缺省会回退到 `ARK_*` 豆包，已取消）：
-> 缺配置就在调用时报错，不静默改用别家——否则会造成「以为在用 A、实际在用 B」。
-> 取值由 `src/config/llmModels.js` 解析。
+> ⚠️ 模型配置（`TEXT_LLM_*` / `VISION_LLM_*` / `ARK_*`）**都已无运行期读取点**（AI 解析链路退场）；
+> `src/config/llmModels.js` 只保留历史解析函数，**没有业务调用方**。
 > `VISION_LLM_API_KEY` / `VISION_LLM_BASE_URL` / `VISION_LLM_MODEL` / `VISION_LLM_TIMEOUT_MS`
 > 与 `ARRIVAL_*`（等待与提示的四个阈值）**都已随识别链路退场删除，没有任何读取点**，不要再加回来。
 > `ARK_API_KEY` / `ARK_MODEL_ENDPOINT` / `ARK_API_BASE_URL` 同样**已无任何读取点**。

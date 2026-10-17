@@ -47,3 +47,33 @@ test('AGENTS 不许引用会漂移的具体行号（origin/main 第 N–M 行那
   assert.equal(/origin\/main\s*第/.test(source), false,
     '⛔ 不许写「origin/main 第 N–M 行」（行号会漂移；那段逻辑现在是拒绝分支）');
 });
+
+test('环境变量段：已无读取点的变量不许写成"当前核心/必须配"（塞回即红）', () => {
+  const coreStart = source.indexOf('**当前 V1 核心（缺一不可）**');
+  assert.ok(coreStart >= 0, 'AGENTS 必须有「当前 V1 核心」段');
+  // 核心段 = 标题 ＋ 随后的 bullet 列表；到第一个空行（后面跟的是"无读取点"说明，不算核心）
+  const blockEnd = source.indexOf('\n\n', coreStart + 10);
+  const core = source.slice(coreStart, blockEnd > 0 ? blockEnd : source.length);
+  for (const dead of ['TEXT_LLM', 'VISION_LLM', 'ARK_', 'PURCHASE_ARRIVAL_INTAKE_ENABLED']) {
+    assert.equal(core.includes(dead), false,
+      `⛔ 「当前 V1 核心」段里不许出现已无读取点的 ${dead}（塞回 ⇒ 红）`);
+  }
+  // 死变量只能以"无读取点"的形式出现（不是被当成开关/核心配置）
+  for (const line of lines.filter((row) => row.includes('TEXT_LLM'))) {
+    assert.match(line, /无运行期读取点|不要再配/, `⛔ TEXT_LLM 只能以"无读取点"说明出现：${line.trim().slice(0, 100)}`);
+  }
+  // 群聊/机器人/表情三个旧变量：不许再被描述成"必须显式配"的入口依赖
+  assert.equal(source.includes('群聊采购链路（缺了不会报错'), false,
+    '⛔ 不许再有「群聊采购链路（缺了不会报错…必须显式配）」这种入口依赖描述');
+  for (const dead of ['LARK_BOT_OPEN_ID', 'LARK_ACK_REACTION']) {
+    const line = lines.find((row) => row.trim().startsWith('- `' + dead + '`'));
+    assert.ok(line, `AGENTS 必须说明 ${dead} 的现状`);
+    assert.match(line, /无运行期读取点/, `⛔ ${dead} 必须明确标注"无运行期读取点"（塞回"必须配" ⇒ 红）`);
+  }
+  // HTTP 入口表：群聊/私聊不再是"处理"，而是静默拒绝
+  const row = lines.find((line) => line.includes('`POST /api/lark/events`'));
+  assert.ok(row, 'HTTP 入口表必须有 POST /api/lark/events 这一行');
+  assert.match(row, /静默拒绝/, '⛔ 该行必须写明"群聊/私聊消息到达即静默拒绝"');
+  assert.equal(row.includes('群聊 / 群话题**消息、卡片动作'), false,
+    '⛔ 不许再把"群聊/群话题消息"写成被处理的入口（塞回 ⇒ 红）');
+});
