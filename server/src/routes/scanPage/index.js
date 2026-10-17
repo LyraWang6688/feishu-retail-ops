@@ -93,6 +93,7 @@ const { createMultiItemOrderService } = require('../../services/multiItemOrderSe
 //     （读它的那一位是既有 `views/scanPageRealm.js` 的 `resolveRealm` ✓ 不新造规则 ✗）。
 const { REALM_SCAN, realmEntryParams } = require('../../config/realmScan');
 const { FUNNEL } = require('../../config/funnel');
+const { createMultiItemPending: createMultiItemPendingOf, createPurchaseScheduler: createPurchaseSchedulerOf } = require('./sessionFlow');
 const {
   realmOfAction: realmOfActionOf,
   purchaseAmountRequiredFor: purchaseAmountRequiredForOf,
@@ -373,6 +374,9 @@ const createScanPageRouter = (options = {}) => {
   //     与渲染半那份（模块级 `MULTI_ITEM_ORDER`）**同一个 env 源**，两边不会漂 ✓。
   // ══════════════════════════════════════════════════════════════════════════
   const multiItemOrderConfig = resolveMultiItemOrderConfig();
+  // 拆分第 3 刀：多货品暂存的读/写/清搬到 `./sessionFlow.js`（容器仍是引擎同一份会话）。
+  const { multiItemPendingKey, readMultiItemPending, writeMultiItemPending, clearMultiItemPending } =
+    createMultiItemPendingOf({ writeService, multiItemOrderConfig });
   // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）：加货 / 删除那两颗 submit 的**字段名 / 动作名**。
   //   🔴 **缺省 = `null` ⇒ 渲染层照旧是今天那颗 `<a href="?add=1">`** ⇒ **一个字都不变** ✓
   //     （既有判据 `multiItemOrderRender.test.js:73` / `multiItemOrderReturnTrim.test.js:166` 原样绿 ✓）。
@@ -555,54 +559,6 @@ const createScanPageRouter = (options = {}) => {
    *   只放**已加的** —— 当前这一件是表单里那个**首件** ✓。否则提交时 `addItem` 会拿草稿里
    *   那份旧 `entries` 覆盖她**刚填的** = **静默丢值** ✗（她最恨的那种假成功）。
    */
-  const multiItemPendingKey = (chain) => `${String(chain || '')}:pending`;
-  const readMultiItemPending = async (openId, chain) => {
-    if (!writeService || !writeService.sessions || !openId) return { orderKey: '', items: [] };
-    const { store, idOf } = writeService.sessions;
-    if (!store || typeof store.get !== 'function' || typeof idOf !== 'function') return { orderKey: '', items: [] };
-    const session = await store.get(idOf(openId)).catch(() => null);
-    const block = (session || {})[multiItemOrderConfig.session.ordersField] || {};
-    const entry = block[multiItemPendingKey(chain)] || {};
-    return {
-      orderKey: String(entry.orderKey || ''),
-      items: Array.isArray(entry.items) ? entry.items : [],
-    };
-  };
-  const writeMultiItemPending = async (openId, chain, { orderKey, items }) => {
-    if (!writeService || !writeService.sessions || !openId) return;
-    const { store, idOf } = writeService.sessions;
-    if (!store || typeof store.update !== 'function' || typeof idOf !== 'function') return;
-    // ⚠️ 这一发**就是**一次写 ⇒ 会话还不存在时先建出来：`store.update` 对不存在的记录会抛
-    //    「任务不存在」 ✗（她第一次进来就点「加货」、或第一次就点【接着录】时正是这个形状）。
-    //    `ensure` 是**既有**的会话入口（与 `addSaleLine` 那条路同一处 ✓ 不另造 ✗）；
-    //    `catch` 是兜底：会话建不出来时**照旧往下**（行为与改前逐字一致 ✓）。
-    if (typeof writeService.sessions.ensure === 'function') {
-      await writeService.sessions.ensure(openId).catch(() => null);
-    }
-    const ordersField = multiItemOrderConfig.session.ordersField;
-    await store.update(idOf(openId), (session) => {
-      const orders = { ...((session || {})[ordersField] || {}) };
-      const key = multiItemPendingKey(chain);
-      const next = { ...(orders[key] || {}), items: Array.isArray(items) ? items : [] };
-      // ⚠️ 只在**真的拿到** `orderKey` 时写它 —— 否则会把先前那份**抹掉** ✗
-      if (orderKey) next.orderKey = String(orderKey);
-      orders[key] = next;
-      return { [ordersField]: orders };
-    });
-  };
-  /** 清掉那一段暂存（提交走掉 / 这一单结束时叫）—— 不留残留，免得下一单看见上一单的 ✓。 */
-  const clearMultiItemPending = async (openId, chain) => {
-    if (!writeService || !writeService.sessions || !openId) return;
-    const { store, idOf } = writeService.sessions;
-    if (!store || typeof store.update !== 'function' || typeof idOf !== 'function') return;
-    const ordersField = multiItemOrderConfig.session.ordersField;
-    await store.update(idOf(openId), (session) => {
-      const orders = { ...((session || {})[ordersField] || {}) };
-      delete orders[multiItemPendingKey(chain)];
-      return { [ordersField]: orders };
-    });
-  };
-
   /**
    * ⭐ 2026-10-17（假配置接线）：扫完回来若 `keepDraft=false` ⇒ **先清掉这一领域的旧草稿**
    *   （她定义的"不带之前的数据"）。默认 `true`（三处都带草稿）⇒ 线上行为与改前逐字节相同 ✓。
@@ -811,9 +767,8 @@ const createScanPageRouter = (options = {}) => {
       //   它按"点 + background"这种属性访问扫源码）⇒ **不放宽那条哨兵** ✗、也不写那种写法 ✓。
     },
   });
-  /** 排一次「后台那一跑」（共用件登记在册 ✓ 用例可以 `waitForPendingPurchaseBackgrounds()` 等它）。 */
-  const schedulePurchaseWrite = ({ chain, requestId, submitKey, context, restInput }) =>
-    purchaseBackground.schedulePurchaseRest({ chain, requestId, submitKey, context, restInput });
+  // 拆分第 3 刀：排程也搬进 `./sessionFlow.js`（同一份 purchaseBackground 注入；幂等键原样透传）。
+  const { schedulePurchaseWrite } = createPurchaseSchedulerOf({ purchaseBackground });
   /**
    * ⭐⭐ 2026-10-12：**未到货批次**（要列出来的那几条）—— **全仓只有这一处**读它。
    *
