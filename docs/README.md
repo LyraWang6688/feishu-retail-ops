@@ -39,6 +39,7 @@
 | [docs/README.md](README.md) | 项目进展、已确认决策与后续路线 |
 | [feishu-v1-operations.md](feishu-v1-operations.md) | 飞书 V1 的运行与运维手册（部署、日志、排查） |
 | [observability-events.md](observability-events.md) | ⭐ **观测事件目录（自动生成）**：`server/src/config/events.js`（运行时校验的唯一真源）＋ 全仓日志事件名/次数/文件清单；新增或改名日志事件后跑 `cd server && pnpm run observability:events` |
+| [observability-daily.md](observability-daily.md) | **观测日报 + 日志轮转（第 2 刀）**：`scripts/observability-daily.mjs`（东八区按天汇总：分级/Top/未登记/错误/慢事件 → `docs/reports/observability-YYYY-MM-DD.{md,json}`）· `scripts/setup-pm2-logrotate.sh`（PM2 日志 10M/14 份/压缩/每天 0 点）· `scripts/setup-observability-cron.sh`（09:00 日报，幂等） |
 | [module-boundaries.md](module-boundaries.md) | 模块边界与职责划分 |
 | [idempotency-contract.md](idempotency-contract.md) | 采购与库存的远端幂等契约 |
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
