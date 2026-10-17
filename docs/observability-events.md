@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **514** 个事件。按前缀分组：
+共 **517** 个事件。按前缀分组：
 
 ## accessory_sale_intake
 
@@ -108,6 +108,7 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `label.print.enqueue` | 1 | src/config/timing.js |
 | `label.print.sizes_overflow` | 1 | src/services/labelPrintArtifactService.js |
 | `label.print.sizes_shrunk` | 1 | src/services/labelPrintArtifactService.js |
 | `label.print.vertical_overflow` | 1 | src/services/labelPrintArtifactService.js |
@@ -215,6 +216,12 @@
 | `observability.alert.sent` | 1 | src/services/alertNotifier.js |
 | `observability.alert.skipped` | 1 | src/services/alertNotifier.js |
 
+## perf
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `perf.request.completed` | 1 | src/utils/requestTiming.js |
+
 ## product
 
 | 事件 | 次数 | 文件 |
@@ -256,6 +263,7 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `purchase.arrival.accept` | 1 | src/config/timing.js |
 | `purchase.arrival.acceptance.skipped` | 1 | src/services/purchaseWebhookService.js |
 | `purchase.arrival.inventory_applied.persist_failed` | 1 | src/services/purchaseWebhookService.js |
 | `purchase.arrival.posted` | 1 | src/services/purchaseWebhookService.js |
