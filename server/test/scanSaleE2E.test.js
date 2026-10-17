@@ -35,7 +35,7 @@ const { rendererSource } = require('./support/rendererSource');
  *            **不显示数量**、页面**零 `<script>`**。
  *  AC-E2E-2 「加入本单」（现货尺码、实收留空）⇒ **303 + 本单条 1 双**；**业务表零写入**（只写本地会话）。
  *  AC-E2E-3 ⭐ **跨编号累积**：再扫**另一个**编号 → 加入本单 ⇒ **本单 2 双**（同一会话，不是新开一单）。
- *  AC-E2E-4 提交这一单（**资金全空**）⇒ 成功页（**单号 + 双数**）：**销售主表 1 条、销售明细 2 行**，都挂同一张单。
+ *  AC-E2E-4 提交（**资金全空**）⇒ 成功页（**单号 + 双数**）：**销售主表 1 条、销售明细 2 行**，都挂同一张单。
  *  AC-E2E-5 ⭐ **现货行 = 已交付 + 扣库存；预订行不扣**（走既有交付/库存链路；断言**库存真的少 1**、
  *            流水只多 1 条且只关联现货那一行）。
  *  AC-E2E-6 **幂等**：同一把提交键**连点两次（含并发）**⇒ 只建一张单、只扣一次库存。
@@ -434,7 +434,7 @@ const annotateScriptOnlyEarlyExits = (html) => {
 //   顶部计数已删 ✓ ⇒ 「本单几双」改从 ⭐ 提交按钮上的双数读（只在销售页 ✓）
 //   🔴 判据强度不变 ✗ · ⚠️ 不用共享 class draft-bar__count 当判据 ✗
 const countOnButton = (html) => {
-  const m = String(html).match(/提交这一单（(\d+) 双/);
+  const m = String(html).match(/提交（(\d+) 双/);
   return m ? Number(m[1]) : null;
 };
 
@@ -581,10 +581,10 @@ const submitKeyOf = (html) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-E2E-4 提交这一单（资金全空）⇒ 成功页 + 一张单两行明细
+// AC-E2E-4 提交（资金全空）⇒ 成功页 + 一张单两行明细
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-E2E-4 提交这一单（资金行填 0 = 未付）⇒ 成功页（单号 + 双数）：主表 1 条、明细 2 行、都挂同一张单', async () => {
+test('AC-E2E-4 提交（资金行填 0 = 未付）⇒ 成功页（单号 + 双数）：主表 1 条、明细 2 行、都挂同一张单', async () => {
   login();
   const e2e = createE2E();
   const cookie = sessionCookie('ou_e2e_4');
@@ -963,7 +963,7 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
         '第5步：草稿已清 ⇒ 本单条里**一行草稿都没有** ✓');
       assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false,
         '第5步：本单条里没有提交按钮');
-      assert.ok(after.html.includes('提交这一单（1 双）'),
+      assert.ok(after.html.includes('提交（1 双）'),
         '第5步：销售块那颗还在，文案回到"（1 双）"');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第5步：没有再建第二张单');
     });
@@ -1192,7 +1192,7 @@ test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」�
 // ⭐ 2026-10-12 UX：一眼看到成功 / 按钮带双数 / 重复提交不吓人
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-E2E-13 ⭐ 提交按钮文案带双数：「提交这一单（2 双）」', async () => {
+test('AC-E2E-13 ⭐ 提交按钮文案带双数：「提交（2 双）」', async () => {
   login();
   const e2e = createE2E();
   const cookie = sessionCookie('ou_e2e_13');
@@ -1202,7 +1202,7 @@ test('AC-E2E-13 ⭐ 提交按钮文案带双数：「提交这一单（2 双）�
       await addLine(base, cookie, NUMBER_A, '40');
       await addLine(base, cookie, NUMBER_B, '41');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      assert.match(page.html, /提交这一单（2 双）/,
+      assert.match(page.html, /提交（2 双）/,
         '按钮上直接写几双（她一眼知道这一单里有几双）');
     });
   } finally { e2e.cleanup(); }
@@ -1365,7 +1365,7 @@ test('AC-E2E-17 ⭐ 一单一笔 = **选尺码 + 提交**（两下）：空本�
     await withServer(e2e.app, async (base) => {
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       // ① 空本单：页面上那颗提交按钮就在**尺码同一个表单**里，文案是「（1 双）」
-      assert.match(page.html, /✅ 提交这一单（1 双）/, '空本单 ⇒ 主按钮就是"提交这一双"');
+      assert.match(page.html, /提交（1 双）/, '空本单 ⇒ 主按钮就是"提交这一双"');
       const formStart = page.html.lastIndexOf('<form', page.html.indexOf('value="submit_order"'));
       const form = page.html.slice(formStart, page.html.indexOf('</form>', formStart));
       assert.ok(form.includes('name="size"'), '尺码 radio 与提交按钮在**同一个表单**里（零 JS 也能一起提交）');
@@ -2134,7 +2134,7 @@ test('AC-ACT2 ⭐ 两处计数**故意不同**（不是 bug）：本单条数 vs
       const cookie = sessionCookie('ou_act_2');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
         assert.equal(page.html.includes('class="draft-bar__count"'), false, '空本单：顶部不再写"0 双"（她的话：只删那一个数 ✓）');
-      assert.match(page.html, /✅ 提交这一单（1 双）/, '空本单：按钮写"这一双" ✓（既有 AC-E2E-17 钉的设计 ✓）');
+      assert.match(page.html, /提交（1 双）/, '空本单：按钮写"这一双" ✓（既有 AC-E2E-17 钉的设计 ✓）');
     });
   } finally { e2e.cleanup(); }
 });

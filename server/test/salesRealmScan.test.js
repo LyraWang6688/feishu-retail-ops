@@ -454,10 +454,10 @@ test('AC-SR4 ⭐⭐ 不带触发参数打开 ⇒ **一个字节都不多**（开
       const out = execFileSync(process.execPath, [path.join(SERVER, 'tools', 'task61-render-baseline.js')], {
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
       });
-      assert.equal(Buffer.byteLength(out, 'utf8'), 508313,
+      assert.equal(Buffer.byteLength(out, 'utf8'), 508287,
         '🔴 不带触发参数时，渲染输出必须**逐字节**还是那个 508,317 字节（差一个字节都不许 ✓）');
       assert.equal(crypto.createHash('sha256').update(out).digest('hex'),
-        '589aeb486ec834aa53d874b25d48c50456e0e520730af847cddfb88c00246e00',
+        '17cad784a404e1939dc51af4fe0cadc629a0d358ac61df21cd38f0170691b146',
         '🔴 全字节 sha256 必须与拆分前一致 ⇒ 销售 / 补货 / 退货 / 库存 / 标签五页**都不许变** ✓');
     });
   } finally { h.cleanup(); }

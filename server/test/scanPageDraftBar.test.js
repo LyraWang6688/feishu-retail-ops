@@ -161,10 +161,10 @@ const barOf = (html) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ⭐⭐ 2026-10-14（业务负责人逐字：「只删「本单：N 双」这一个数、按钮原地留着」）：
-//   顶部那个计数已删 ✓ ⇒ 「本单几双」改从 ⭐ 提交按钮上的双数读（「✅ 提交这一单（N 双）」✓ 可见 ✓）
+//   顶部那个计数已删 ✓ ⇒ 「本单几双」改从 ⭐ 提交按钮上的双数读（「✅ 提交（N 双）」✓ 可见 ✓）
 //   🔴 判据强度不变 ✗ · ⚠️ 绝不用共享 class draft-bar__count 当判据 ✗（验收页/未报货页也在用 ⇒ 会假红）
 const countOnButton = (html) => {
-  const m = String(html).match(/提交这一单（(\d+) 双/);
+  const m = String(html).match(/提交（(\d+) 双/);
   return m ? Number(m[1]) : null;
 };
 const salesPageHas = (bar) => String(bar).includes('本单：');
@@ -196,10 +196,9 @@ test('AC-DB1 本单条在**每个领域**页面的**顶部**：显示 `本单：
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-DB2 【提交这一单】**有草稿才出现**（没有草稿时不渲染，不是灰按钮）；出现时真能提交', () => {
-  const submitText = SCAN_WRITE.texts.submitButton;
   // ① 没有草稿 ⇒ 本单条里**没有**提交按钮（也没有那个表单的痕迹）
   const empty = barOf(pageFor('inventory', WRITE([])));
-  assert.equal(empty.includes(submitText), false, '没有草稿时不许出现【提交这一单】');
+  assert.equal(empty.includes(SCAN_WRITE.actions.submitOrder), false, '没有草稿时不许出现【提交】那一颗');
   assert.equal(empty.includes('<button'), false, '没有草稿时本单条里一个按钮都不该有');
   assert.equal(empty.includes(SCAN_WRITE.actions.submitOrder), false);
   assert.equal(empty.includes('submit_key'), false);
@@ -223,8 +222,8 @@ test('AC-DB2 【提交这一单】**有草稿才出现**（没有草稿时不渲
   assert.ok(page.includes(SCAN_WRITE.fields.lineAmount), '录入页那颗按钮带着「每件实收」');
   assert.ok(step2Of().includes(SCAN_WRITE.fields.paymentMethod), '第 2 步页带着收款方式字段');
   assert.ok(step2Of().includes(SCAN_WRITE.fields.paymentAmount), '第 2 步页也带着收款金额字段');
-  assert.ok(page.includes(submitText) || page.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
-    '销售块那颗就是【提交这一单】（带双数）');
+  assert.ok(page.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
+    '销售块那颗就是【提交】（带双数）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -343,7 +342,7 @@ test('AC-DB6 提交之后：本单条归零（提交按钮跟着消失）；成�
   // ⚠️ 2026-10-15：本单条在**非飞书**下照旧渲染（那句人话在 ✓）⇒ 原来那两条**逐字保留**（判据不放宽 ✗）
   const afterSubmitBar = barOf(pageFor('sales', WRITE([]), ''));
   assert.equal(countOnButton(afterSubmitBar), null, '提交后按钮上没有双数（= 本单归零 ✓）');
-  assert.equal(afterSubmitBar.includes(SCAN_WRITE.texts.submitButton), false, '提交后【提交这一单】要跟着消失');
+  assert.equal(afterSubmitBar.includes(SCAN_WRITE.actions.submitOrder), false, '提交后【提交】那一颗要跟着消失');
   // ⭐ 新增（同一天）：**飞书端**归零后**整条不渲染**（她就是要"少占地方"⇒ 不留空卡片 ✓）
   assert.equal(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA).includes('data-view="draft-bar"'), false,
     '飞书端：提交后本单条归零 ⇒ 整条不渲染 ✓');
@@ -526,7 +525,7 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
   assert.equal((salesPage.match(new RegExp(`value="${SCAN_WRITE.actions.submitOrder}"`, 'g')) || []).length, 1,
     '销售页：有草稿 ⇒ 页面上一颗（且只有一颗）提交按钮，就在销售块那唯一的表单里');
   assert.ok(salesPage.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
-    '销售页：那颗按钮写着几双（提交这一单（2 双））');
+    '销售页：那颗按钮写着几双（提交（2 双））');
   // ⚠️ 2026-10-15 **改写**（飞书端空本单 ⇒ 本单条整条不渲染了）：
   //   改前逐字：`assert.equal(barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA)).includes(SCAN_WRITE.actions.submitOrder), false, '销售页：本单条里没有提交动作（空本单时那颗在销售块里，写着"（1 双）"）');`
   //   改后逐字：下面两条 —— ① 飞书端**没有本单条**（更省地方 ✓）② 非飞书端那份条里**没有提交动作** ✓
@@ -552,7 +551,7 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
     assert.equal(countOnButton(pageFor('sales', WRITE([1, 2]))), 2, `realm=${realm}：条的"几双"照旧要在（跨领域共用同一份本单）`);
     const realmBar = content.slice(content.indexOf('<nav class="realm-bar"'), content.indexOf('</nav>'));
     assert.ok(realmBar.includes(`>${SCAN_PAGE.realmBar.scanLabel}<`), `realm=${realm}：顶部第 5 格「扫一扫」要在 ✓`);
-    assert.equal(content.includes(SCAN_WRITE.texts.submitButton), false, `realm=${realm}：不该有【提交这一单】`);
+    assert.equal(content.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')), false, `realm=${realm}：不该有【提交】那一颗`);
     assert.equal(content.includes(SCAN_WRITE.actions.submitOrder), false, `realm=${realm}：连那个提交表单都不该有`);
     const barStart = content.indexOf('data-view="draft-bar"');
     if (barStart > -1) {

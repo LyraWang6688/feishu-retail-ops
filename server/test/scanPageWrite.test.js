@@ -1288,14 +1288,14 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
       // ⚠️ 2026-10-12 **改写**：改前断言"**本单条上**就有【提交这一单】"——
       //    那颗按钮不带收款字段，真机丢钱就是它（她在销售块填了钱、按了本单条那颗）。
       //    改后本单条只留 `本单：N 双` +【继续扫下一个】，提交按钮在**销售块那唯一的表单**里，
-      //    而且写着几双（`✅ 提交这一单（2 双）`）——"B 页上就能提交"这个语义**没变**。
+      //    而且写着几双（`✅ 提交（2 双）`）——"B 页上就能提交"这个语义**没变**。
       const bar = afterHtml.slice(afterHtml.indexOf('data-view="draft-bar"'));
       assert.equal(bar.slice(0, bar.indexOf('</section>')).includes(SCAN_WRITE.actions.submitOrder), false,
         '本单条里没有提交按钮（避免"点了提交却没记钱"）');
       assert.equal((afterHtml.match(/value="submit_order"/g) || []).length, 1,
         'B 页上恰好一颗提交按钮（在销售块里）');
       assert.ok(afterHtml.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
-        'B 页那颗按钮写着"提交这一单（2 双）"');
+        'B 页那颗按钮写着"提交（2 双）"');
 
       // ⑤ 就在 B 页提交这一单 → **一张主表 + 两行明细**
       // ⭐ 2026-10-13 改指向：提交成功先落第 2 步页 ⇒ 跟完【跳过】那一跳再断言 ✓

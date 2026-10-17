@@ -356,7 +356,7 @@ test('AC2 `from=sales` 尺码分两组：有货（样品+门盒）⇒ 现货；�
   assert.match(STYLE, /\.size-chip\s*\{[^}]*min-height:\s*var\(--control-height\)/s,
     '尺码卡片的命中区 ≥44px（手机上好点）');
   // 销售建单该有的东西一样不少（提交走既有链路）
-  assert.ok(sales.includes('加入本单') && sales.includes('提交这一单'));
+  assert.ok(sales.includes('加入本单') && sales.includes('value="submit_order"'));
   // ⚠️ 2026-10-10 断言翻转（她：「删掉解释我怎么用的句子」）：
   //    原先这里钉着「资金不是必填…」那句（`fundsPendingNote`）**要在页面上写着**；
   //    现在它必须不存在。**不放宽**：能填能点的（尺码 / 实收金额 / 收款方式 + 两颗按钮）照旧。

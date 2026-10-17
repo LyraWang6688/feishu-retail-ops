@@ -696,7 +696,7 @@ const PAYMENT_STEP = Object.freeze({
   statusLabel: '付款情况',
   methodLabel: '收款方式',
   amountLabel: '实付多少',
-  submitButton: '提交整单付款',
+  submitButton: '提交',
   // ⭐⭐ 2026-10-18（业务负责人逐字）：**金额必填**（可填 0、不要求等于总金额）——
   //   不填 ⇒ 路由**原地重渲染资金页 + 这句人话**（400），**一个字都不写** ✗。
   //   ⚠️ 措辞注意：这一组的注释与文案里**不要**出现那个 f-word（有 AC 用 /skip.{0,80}…/ 钉）。
@@ -705,7 +705,7 @@ const PAYMENT_STEP = Object.freeze({
   //    第 2 步【提交整单付款】= 一个 POST 动作 ⇒ 走**既有那条诚实钱路**
   //    （`routes/workbench.js:215` 的 `followup.addPayment(...)`，写同一张「收款明细」✓）
   payAction: 'payment_pay',
-  payButton: '提交整单付款',
+  payButton: '提交',
   // ⭐⭐ 2026-10-17（业务负责人逐字：「**默认一行 ＋ ＋ 再加一种付款方式 ＋ 默认微信 ＋ 去「跳过」**」）：
   //   默认只画**一行**收款（`paymentRowCount = 1` ✓ 既有）；要多一种方式 ⇒ 点这颗
   //   （**纯前端加一行**：不提交、不写库 ✓）。文案走配置（渲染层不写死中文 ✗）。

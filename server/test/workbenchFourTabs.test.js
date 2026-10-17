@@ -940,7 +940,7 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
     const foot = pageBody.indexOf('<p class="foot">', start);
     return pageBody.slice(start, foot > -1 ? foot : pageBody.length);
   };
-  assert.ok(blockOf('sales', 'sales').includes('加入本单') && blockOf('sales', 'sales').includes('提交这一单'), '销售领域 = 销售建单');
+  assert.ok(blockOf('sales', 'sales').includes('加入本单') && blockOf('sales', 'sales').includes('value="submit_order"'), '销售领域 = 销售建单');
   // ⚠️ 2026-10-10 断言翻转（她：「只留能点、能做的事，删掉解释我怎么用的句子」）：
   //    原先这里钉着「资金不是必填…」（`fundsPendingNote`）与「补货报单（勾选要补的尺码）」
   //    （`replenishHeading`）**要在页面上**；现在那两句必须不存在。
