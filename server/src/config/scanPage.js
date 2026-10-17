@@ -20,6 +20,8 @@
  */
 
 const { readFlag, readInt, readList, readString } = require('./envValue');
+// ⭐ 2026-10-17（假配置接线）：领域条第 5 格文案的**唯一真源** = 五处登记表（不再在两边各写一份）。
+const { SCAN_ENTRIES } = require('./scanEntries');
 
 /**
  * 路由挂载点：`GET /s/:number`。
@@ -883,7 +885,8 @@ const SCAN_PAGE = Object.freeze({
   realmBar: {
     newFormUrl: resolveProductNewFormUrl(process.env),
     order: ['inventory', 'sales', 'replenish', 'purchase_return'],
-    scanLabel: '扫一扫',
+    // ⭐ 2026-10-17：默认值从登记表取（`SCAN_ENTRY_REALM_BAR_LABEL` 可覆盖）⇒ 改一处即改页面 ✓
+    scanLabel: readString(process.env, 'SCAN_ENTRY_REALM_BAR_LABEL', SCAN_ENTRIES.texts.realmBarLabel),
   },
   paymentStep: PAYMENT_STEP,
   saleSuccess: SALE_SUCCESS,

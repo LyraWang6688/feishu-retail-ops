@@ -217,6 +217,8 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
         //   所以这里只给**参数**：领域键 / 记录路径段 / 本页来源 ＋ 认不出的上限 ✓
         origin: String(page.realmScan.origin || ''),
         realmQueryKey: String(page.realmScan.realmQueryKey || ''),
+        // ⭐ 2026-10-17：`returnsToRealm=false` ⇒ 扫完**不加** `from=<领域>`（假配置接线）
+        appendRealm: page.realmScan.appendRealm !== false,
         recordBasePath: String(page.realmScan.recordBasePath || ''),
         maxScannedLength: Number(page.realmScan.maxScannedLength) || 0,
         signaturePath: String(page.realmScan.signaturePath || ''),
