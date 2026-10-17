@@ -30,15 +30,14 @@ const APP_PATH = require.resolve('../src/app.js');
 const SCHEMA_PATH = require.resolve('../src/config/v1BitableSchema');
 
 // 假装这就是仓库根目录那份 .env 的内容。
-// 注意：⭐ 2026-10-17 之前这两张是"唯二没有兜底"的；现在**已有生产兜底**（她要求写入代码）——
-// 本用例仍然用 fixture 覆盖它们：**顺序错了会拿到兜底值（生产 id ≠ fixture）⇒ 断言照样能红** ✓
-// （其余"有硬编码兜底"的表 ID 仍然不放进来，避免掩盖顺序问题。）
+// 注意：只放**必须由 .env 提供**的值，不要放"有硬编码兜底"的表 ID——
+// 那些即使 .env 没加载也能取到值，放进来会掩盖顺序问题。
 const FIXTURE_ENV = {
   // app.js 在 require 阶段就会 new LarkMvpService → 取飞书凭证，缺了会当场抛错。
   // 这两项和本用例要钉的顺序无关，只是让 app.js 能被 require 进来。
   LARK_AGENT_APP_ID: 'cli_fixture_dotenv_order',
   LARK_AGENT_APP_SECRET: 'secret_fixture_dotenv_order',
-  // 受测目标：这两张**有生产兜底**，但 env 必须**优先**（顺序错 ⇒ 取到兜底值 ⇒ 下面 ② 红）。
+  // 受测目标：schema 里唯二没有默认值的 tableId。
   FEISHU_V1_SIZE_TABLE_ID: 'tbl_fixture_size',
   FEISHU_V1_ACCESSORY_TABLE_ID: 'tbl_fixture_accessory',
 };
@@ -86,12 +85,12 @@ test('app.js 必须在 require 任何业务模块之前把 .env 灌进 process.e
     configCalls[0].schemaLoadedAlready,
     false,
     'dotenv.config 执行时 v1BitableSchema 已经被 require 了：'
-    + 'schema 的 tableId 是模块级求值、之后永不重算，顺序错了会永久拿到**兜底值（生产 id）**而不是 .env 里的值',
+    + 'schema 的 tableId 是模块级求值、之后永不重算，没有兜底的表会永久拿到空串',
   );
   // .env 必须是仓库根目录那一份，别悄悄换位置。
   assert.equal(path.resolve(configCalls[0].path), path.resolve(__dirname, '../../.env'));
 
-  // ② 结果：**env 覆盖生效** —— 这两张取到的是 fixture 值，不是兜底值（顺序错就会是兜底值 ⇒ 红）。
+  // ② 结果：没有硬编码兜底的两张表真的取到了 .env 里的值。
   const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
   assert.equal(V1_BITABLE_SCHEMA.tables.sizeManagement.tableId, FIXTURE_ENV.FEISHU_V1_SIZE_TABLE_ID);
   assert.equal(V1_BITABLE_SCHEMA.tables.accessory.tableId, FIXTURE_ENV.FEISHU_V1_ACCESSORY_TABLE_ID);
