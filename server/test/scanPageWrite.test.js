@@ -987,11 +987,17 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
       }));
       assert.equal(response.status, 500);
       const html = await response.text();
-      // ⭐⭐ 2026-10-12（业务负责人口径）：这里抛的是【**主表已经建了、明细那一步没写成功**】——
-      //    按新口径给**如实**的"半成"页：单子记上了（带单号）+ 怎么出去（回扫码页再点一次）。
-      //    🔴 **绝不许**显示"提交已成功"（她会以为钱货都落了）；🔴 也**不许**把"一个字都没写"
-      //    当成事实（主表那条记录是真的落库了）。
-      assert.match(html, new RegExp(SCAN_WRITE.texts.partialFailedTitle));
+      // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）· 她裁决（甲）＋（1）：
+      //   这里抛的是【**主表已经建了、明细那一步没写成功**】——旧口径给她一张"半成"页
+      //   （`partialFailedTitle` = 单子记上了）。**新口径：失败一律说「任务创建失败」**（含这种）。
+      //   改前逐字：`assert.match(html, new RegExp(SCAN_WRITE.texts.partialFailedTitle));`
+      //   改后逐字：统一标题（`failedTitle`）＋ **半成那句不许再出现**（反向钉）
+      //   依据 = 她 2026-10-17 01:17 逐字：「**（甲）统一都显示「任务创建失败」—— 包括"单子已经建上了"那种**」
+      //     ＋ 01:19 逐字：「**（1）把通用那句改成「任务创建失败」⇒ 所有写失败页都变**」
+      //   🔴 仍钉住旧口径的两条不许回来：不说"提交已成功"、不说"一个字都没写"。
+      assert.match(html, new RegExp(SCAN_WRITE.texts.failedTitle));
+      assert.equal(html.includes(SCAN_WRITE.texts.partialFailedTitle), false,
+        '半成那句不再用（她选「统一」✗）');
       assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false,
         '半成页上**不许**出现「您的提交已成功」');
       assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
@@ -1029,7 +1035,12 @@ test('⑨b 建单**本身**失败（主表都没建起来）⇒ 照旧报错页�
       // 建单失败 ⇒ 与改前**逐字一致**的报错页（`sale_write_failed` → 500 + 通用人话）。
       assert.equal(response.status, 500);
       const html = await response.text();
-      assert.match(html, /这一步没成功/);
+      // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.match(html, /这一步没成功/);`
+      //   改后逐字：本行（统一标题）＋ 旧文案不许回来
+      //   依据 = 她 2026-10-17 01:19 逐字：「**（1）把通用那句改成「任务创建失败」⇒ 所有写失败页都变**」
+      assert.match(html, /任务创建失败/);
+      assert.equal(html.includes('这一步没成功'), false, '旧通用标题不许回来 ✗');
       assert.match(html, /系统这边没处理成功/, '通用人话要在页面上');
       assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false, '一个字都没写 ⇒ 不许说成功');
       assert.equal(html.includes(SCAN_WRITE.texts.partialFailedTitle), false, '主表都没建 ⇒ 不是"半成"');
