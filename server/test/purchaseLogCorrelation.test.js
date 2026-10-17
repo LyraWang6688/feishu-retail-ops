@@ -254,8 +254,6 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
       operator_open_id: 'ou_user_1',
       requests: [{ record_id: 'req_1', fields: { 编号: ['prod_1'], 尺码: ['size_36'] } }],
       actual: [{ product_record_id: 'prod_1', item_no: '8081', color: '黑色', size: 36, quantity: 2 }],
-      pending_creation: [],
-      created_products: [],
       inventory_applied: {},
     },
   });

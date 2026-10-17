@@ -460,8 +460,6 @@ test('⑧ 没有批次身份的孤儿调用：**不阻塞加库存**（既有能
       operator_open_id: 'ou_1',
       requests: [{ record_id: 'req_38', fields: { 编号: [PRODUCT_1], 尺码: sizeLink(38) } }],
       actual: [{ product_record_id: PRODUCT_1, item_no: 'XHB8095', color: '黑', size: 38, quantity: 1 }],
-      pending_creation: [],
-      created_products: [],
       inventory_applied: {},
     },
   });

@@ -8,13 +8,11 @@ const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { V1ReferenceResolver, person, relation, normalizeColor } = require('./v1ReferenceResolver');
-const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 // ⚠️ 2026-10-07 深夜：`config/purchaseBehaviors`（采购环节的 `PURCHASE_IN`）**随入库行一起退场**——
 //    它的唯一消费者就是"入库行的「采购行为」"那一列，而「采购入库」表已被业务负责人整表删除。
 //    ⇒ 别再把它 require 回来，也别拿 `inventoryService` 的 `STOCK_PURCHASE_INCREASE` 顶替：
 //      那是**库存环节**的另一条行为记录，用错了等于把流水挂到另一条行为上。
-const { recordUrl } = require('../utils/feishuLinks');
 // ⭐ 2026-10-08：飞书错误的真实 code / msg / log_id / method_id —— **唯一**取用口
 // （本文件下面那个 `larkErrorText` 就是它的薄壳，形状不变）。
 const { larkErrorText: larkErrorTextOf } = require('../utils/larkError');
@@ -206,16 +204,7 @@ const larkErrorText = (error) => larkErrorTextOf(error);
 // ⚠️ `sendNoticeText`（#86 曾跟着一起删，合并 #83 采购退货时为差额提示恢复）
 // 已于 2026-10-06「私聊切除」时**删除**：那条提示改走 `sendPurchaseGroupNotice` 发采购群
 //（业务负责人：「一律在话题群里，以后私聊路线就没有了」）。私聊出口不再需要它。
-// 保留下来的入库 / 建档 / 成本能力见 confirmArrival、ensureArrivalProducts 的注释。
-
-// 鞋盒/吊牌上的「品名」：女鞋 → B、男鞋 → A。单选选项就是 A/B 两个字。
-// 识别不出性别就留空：默认成 A 会把女鞋写进男鞋，比空着更难发现。
-const genderToCategory = (value) => {
-  const label = String(value || '').trim();
-  if (/女/.test(label)) return 'B';
-  if (/男/.test(label)) return 'A';
-  return '';
-};
+// 保留下来的入库能力见 confirmArrival 的注释（建档/成本均已随到货单链路删除，2026-10-17）。
 
 /**
  * 退货核对结果 → 一句人话（业务负责人的口径：「把差额明确告诉她」）。
@@ -263,37 +252,6 @@ const buildPurchaseReturnNotice = ({ itemNo, color, plan }) => {
     ...surpluses.map((entry) => (returnNotice.surplusLine({ entry, label, sizeText }))),
   ];
   return `采购退货：${parts.join('')}`;
-};
-
-/**
- * 从货品记录里读「还缺哪些资料」。
- *
- * 「缺失信息说明」是飞书公式：齐备时返回「齐备」，否则返回缺的字段名（如「成本、品类」）。
- * 和销售侧 loadProductIndex 同一个思路——不自己逐字段判断，单一数据源留在表里。
- * 「样例图」是附件字段，不在公式里，要单独看有没有图。
- *
- * 公式刚建完记录时可能还没算出来，所以 readable 要区分「齐备」和「读不到」，
- * 读不到时只敢说"还没齐、去补"，不敢说"齐备"。
- */
-const productInfoGaps = (record, productTable) => {
-  const fields = record?.fields || {};
-  const completeness = textValue(fields[productTable.fields.completeness]).trim();
-  const sampleImages = fields[productTable.fields.sampleImage];
-  return {
-    missing: completeness && completeness !== '齐备'
-      ? completeness.split('、').map((name) => name.trim()).filter(Boolean)
-      : [],
-    missingSampleImage: !(Array.isArray(sampleImages) && sampleImages.length > 0),
-    completeness_readable: Boolean(completeness),
-  };
-};
-
-// 记录链接只是给她点进去补资料用的：读不到 app token（本地/测试）时给不出链接，
-// 但绝不能因此打断建档和入库——货已经在仓库里了。
-const productRecordUrl = (tableId, recordId) => {
-  let appToken = '';
-  try { appToken = V1_BITABLE_SCHEMA.appToken; } catch { appToken = ''; }
-  return recordUrl({ appToken, tableId, recordId });
 };
 
 class PurchaseWebhookService {
@@ -356,16 +314,6 @@ class PurchaseWebhookService {
     // awaiting_confirmation 并各自走一遍副作用，把同一批采购事实写两遍；
     // 卡片上的「处理中」只是 UX，后端必须自己保证同一任务不并行。
     this.confirmationQueue = new KeyedSerialQueue();
-    // 新品建档按 taskId 串行：她点确认时兜底那次和别的调用方如果并行，两边各自从任务里
-    // 恢复建档进度，就会各建一条同名货品（幂等靠"先落盘再重试"的读回，挡不住真正的并发）。
-    // 两个队列不会互相等待死锁：确认走 confirmationQueue，建档走 creationQueue，方向是单向的。
-    //
-    // ⚠️ 2026-10-05：建档（ensureArrivalProducts）现在**没有调用方**了——
-    // 到货识别退场后，只有确认入库那一步会调它，而入库动作本身要等新的「对话到货」流程接。
-    // 这段能力**刻意保留**（它就是将来要用的「建档 + 成本」，也是未合并分支
-    // refactor/decouple-creation-and-stock 要剥成 services/productCreationService.js 的那一段），
-    // 所以队列、幂等落盘、回读全部原样留着。
-    this.creationQueue = new KeyedSerialQueue();
     // ⛔ 这里原有「读一条报单记录的重试」（`config/reportReadRetry`：读不到重试 3 次）
     //    —— 随报单入口退场（2026-10-09）；本文件不再 import 那份配置。
     // 「这一批里哪些（货品+尺码）正在加库存」的**进程内**进度（落盘那一份在 draft 上）。
@@ -1176,277 +1124,6 @@ class PurchaseWebhookService {
 
 
 
-  /**
-   * 建档进度落盘。
-   *
-   * 建档是远端写入，按项目约定必须把已经写出的 record_id 落盘：任务失败后重试
-   * 会重跑一次到货解析，那时飞书列表可能还没读到刚建的货品，只靠"再查一遍"不足以防重复。
-   *
-   */
-  async persistArrivalCreation(context) {
-    if (!context.taskId) return;
-    try {
-      await this.store.update(context.taskId, {
-        arrival_created_products: context.createdLog,
-        arrival_created_colors: context.createdColors,
-      });
-    } catch (error) {
-      logWarn('purchase.arrival.created_product_persist_failed', { task_id: context.taskId, error: error.message });
-    }
-  }
-
-  /**
-   * 从已落盘的任务里恢复上一次的建档结果，重试时直接复用，不再重复建。
-   */
-  buildArrivalCreationContext(task) {
-    const products = Array.isArray(task?.arrival_created_products) ? task.arrival_created_products : [];
-    const colors = Array.isArray(task?.arrival_created_colors) ? task.arrival_created_colors : [];
-    const context = {
-      taskId: task?.task_id || '',
-      productCache: new Map(),
-      colorIndex: new Map(),
-      createdColors: colors.map((item) => ({ ...item })),
-      createdLog: products.map((item) => ({ ...item })),
-      colorTableLoaded: false,
-    };
-    // 上次已经建好的颜色先占位：重试时同一个颜色名不会再建第二条。
-    for (const item of context.createdColors) {
-      if (item?.name) context.colorIndex.set(normalizeColor(item.name), item.color_record_id);
-    }
-    for (const item of context.createdLog) {
-      context.productCache.set(`${item.item_no}|${item.color}`, {
-        is_new: true,
-        recordId: item.product_record_id,
-        record: null,
-        item_no: item.item_no,
-        color: item.color,
-        supplier: item.supplier || '',
-        label: `${item.item_no}${item.color}`,
-        color_created: Boolean(item.color_created),
-        gaps: null,
-      });
-    }
-    return context;
-  }
-
-  /**
-   * 按颜色名找「颜色管理」的记录，找不到就新建一条并记下来。
-   *
-   * 颜色表是**共享主数据**：OCR 抖一下（「棕色」/「棕」）就多建一条，以后同一个颜色
-   * 会散成好几条，所以比对用 normalizeColor（去空白、去末尾「色」），
-   * 并且整张表只读一次、同一次到货里同名颜色只建一条。
-   */
-  async ensureArrivalColor(color, context) {
-    const colorTable = this.gateway.table('color');
-    if (!context.colorTableLoaded) {
-      for (const record of await this.gateway.listAll('color')) {
-        const name = normalizeColor(textValue(record?.fields?.[colorTable.fields.name]));
-        if (name && !context.colorIndex.has(name)) context.colorIndex.set(name, record.record_id);
-      }
-      context.colorTableLoaded = true;
-    }
-    const key = normalizeColor(color);
-    if (context.colorIndex.has(key)) return { recordId: context.colorIndex.get(key), created: false };
-
-    const created = await this.gateway.create('color', { name: color }, { correlation: context.correlation });
-    const recordId = created?.recordId || '';
-    if (!recordId) throw new Error(`颜色「${color}」新建失败`);
-    context.colorIndex.set(key, recordId);
-    context.createdColors.push({ name: color, color_record_id: recordId });
-    await this.persistArrivalCreation(context);
-    logInfo('purchase.arrival.color_created', { color, color_record_id: recordId });
-    return { recordId, created: true };
-  }
-
-  /**
-   * 给新品建一条「货品信息」，然后原样返回新记录。
-   *
-   * ⚠️ 只由 ensureArrivalProducts 调用。它原先的时序约束（"发确认卡片之前不做创建"）已随
-   * 到货卡片退场失效——现在没有卡片了，调用方自己决定什么时候建；幂等规则一字不变。
-   *
-   * 只写确定知道的字段（产品负责人 2026-10-05 定稿的建档内容）：
-   * 货号、颜色（关联）、供应商（关联，找不到就留空）、类别（识别出男/女才填，
-   * 认不出留空——默认成 A 会把女鞋写进男鞋）、成本（识别到价格才填，识别不出留空）。
-   * 刻意不写「编号」「货品状态」「缺失信息说明」——这三个在飞书里是公式字段，
-   * 写进去会直接 FieldNameNotFound，而且它们的值本来就该由表自己算。
-   * 也刻意不写「单价」：建档时看到的价格是采购成本，不是销售单价。
-   */
-  async ensureArrivalProduct(raw, context) {
-    const itemNo = String(raw.item_no || '').trim();
-    const color = String(raw.color || '').trim();
-    const cacheKey = `${itemNo}|${color}`;
-    const cached = context.productCache.get(cacheKey);
-    // 同一个「货号+颜色」在一次到货里会有多个尺码：复用第一条建好的记录（含上次重试建的），
-    // 不要再建第二条——这就是"重复建档只建一条"的落点。
-    if (cached) {
-      // 从上次重试恢复出来的条目还没有回读数据：补一次回读（只有日志/草稿用得上）。
-      if (!cached.gaps) {
-        cached.record = (await this.gateway.get('product', cached.recordId).catch(() => null)) || cached.record;
-        cached.gaps = productInfoGaps(cached.record, this.gateway.table('product'));
-      }
-      return { ...cached };
-    }
-
-    const productTable = this.gateway.table('product');
-    const values = { itemNo };
-    if (color) values.color = relation((await this.ensureArrivalColor(color, context)).recordId);
-
-    // 供应商也只在识别到名字、且供应商表里确实有这条时才关联；找不到留空，不新建、不猜。
-    const supplierName = String(raw.supplier || '').trim();
-    if (supplierName) {
-      try {
-        const supplier = await this.references.resolveSupplier(supplierName);
-        if (supplier?.recordId) values.supplier = relation(supplier.recordId);
-      } catch (error) {
-        logWarn('purchase.arrival.supplier_not_found', { item_no: itemNo, supplier: supplierName, error: error.message });
-      }
-    }
-    const category = genderToCategory(raw.gender || raw.category);
-    if (category) values.category = category;
-
-    const created = await this.gateway.create('product', values, { correlation: context.correlation });
-    const recordId = created?.recordId || created?.record_id || '';
-    if (!recordId) throw new Error(`新品建档失败：${itemNo}${color}`);
-    // ⭐ 2026-10-09：新建了货品 ⇒ 当场作废扫码页那份「货品信息」内存快照
-    //   （不然刚建档的新品在扫码页上最多 60 秒读不到单价/货品）。
-    invalidateLiveInventorySnapshot('product_created', { tableKey: 'product' });
-
-    const entry = {
-      is_new: true,
-      recordId,
-      record: created?.record || null,
-      item_no: itemNo,
-      color,
-      supplier: supplierName,
-      label: `${itemNo}${color}`,
-      color_created: context.createdColors.some((item) => normalizeColor(item.name) === normalizeColor(color)),
-      gaps: null,
-    };
-    context.productCache.set(cacheKey, entry);
-    context.createdLog.push({
-      item_no: itemNo, color, product_record_id: recordId, supplier: supplierName, color_created: entry.color_created,
-    });
-    // 先落盘再回读：哪怕回读或后续步骤失败，重试也能凭这条记录跳过重复建档。
-    await this.persistArrivalCreation(context);
-
-    // 建档后回读一次：公式（缺失信息说明）是飞书算的，创建响应里通常还没有值。
-    // 回读失败不影响入库；这些缺口现在只进日志和草稿，不再上卡片
-    //（产品负责人：卡片上不写"还差什么字段"）。
-    try {
-      entry.record = (await this.gateway.get('product', recordId)) || entry.record;
-    } catch (error) {
-      logWarn('purchase.arrival.created_product_readback_failed', { product_record_id: recordId, error: error.message });
-    }
-    entry.gaps = productInfoGaps(entry.record, productTable);
-    logInfo('purchase.arrival.product_created', {
-      item_no: itemNo, color, product_record_id: recordId, color_created: entry.color_created,
-      missing: entry.gaps.missing, missing_sample_image: entry.gaps.missingSampleImage,
-    });
-    return entry;
-  }
-
-  /**
-   * 到货新品建档 + 到货单价格写成本。
-   *
-   * ⚠️ 2026-10-05：**这个方法现在没有调用方**——它原本由 processArrival（发完卡片之后）
-   * 和到货卡片确认（confirmArrival 兜底）各调一次，两处都随「拍照识别」退场删掉了。
-   * **刻意保留**：它就是将来「对话到货」和「货品上新提前」要用的建档能力，
-   * 未合并分支 refactor/decouple-creation-and-stock 正把它原样剥成
-   * services/productCreationService.js（输入改成结构化明细、不认 OCR / 图片 / 到货任务）。
-   *
-   * 输入：task.draft.pending_creation（要建什么）。
-   * 两者原先都由 processArrival 写进任务；形状不变，新流程照这个形状写就行。
-   *
-   * 幂等（三道，缺一不可）：
-   *   ① 同一个 taskId 的多次调用走 creationQueue **串行**——调用方之间
-   *      不会同时从任务里读到"还没建"然后各建一条；
-   *   ② buildArrivalCreationContext 从任务里恢复上次已建的 record_id
-   *      （arrival_created_products 每建一条就落盘），重试时 ensureArrivalProduct
-   *      命中缓存直接返回，**不建第二条货品**；
-   *   ③ 颜色的去重靠颜色表整表读一次 + normalizeColor（同名颜色只建一条）。
-   *
-   * 失败处理：建档失败**不抛**（只有 store 坏了才抛），改成把 creation_state='failed'
-   * 和原因写进草稿——确认那一步据此明确告诉她，并且再点一次就能重试。
-   * 成本写失败**不算建档失败**（既有的规则：成本写不进去不挡入库，只记 warn）。
-   *
-   * @returns {Promise<{state: 'done'|'failed', created: number, failures: Array}>}
-   */
-  async ensureArrivalProducts(taskId, options = {}) {
-    return this.creationQueue.run(taskId, async () => {
-      const task = await this.store.get(taskId);
-      const draft = task?.draft;
-      // ⚠️ 2026-10-07 晚：原来这里跟着表名写成「到货验收草稿…」，但那**张表已被业务负责人删除**。
-      //    这句错误原文可能被上层拼进**她看得见**的回话/提示里，所以按现在的语义改成「到货核对草稿」。
-      if (!draft) throw new Error('到货核对草稿不存在或已过期');
-      const pending = Array.isArray(draft.pending_creation) ? draft.pending_creation : [];
-      const productTable = this.gateway.table('product');
-      const context = this.buildArrivalCreationContext(task);
-      // 建档 / 写成本也是写库动作：关联键（task_id ＋ 批次号 ＋ **报货批次记录 id**）挂在这个
-      // **只在本进程内传递**的 context 上 —— 不落盘、不进任何业务入参，只进日志。
-      context.correlation = purchaseCorrelation({
-        taskId, batchNo: draft.batch_no, batchRecordId: draft.batch_record_id,
-      });
-      const failures = [];
-      for (const entry of pending) {
-        try {
-          await this.ensureArrivalProduct(entry, context);
-        } catch (error) {
-          failures.push({ item_no: entry.item_no, color: entry.color, error: error.message });
-          logWarn('purchase.arrival.product_create_failed', {
-            task_id: taskId, item_no: entry.item_no, color: entry.color, error: error.message,
-          });
-        }
-      }
-
-      // 建档结果直接从缓存取（含上一次重试已经建好、本次识别里不再出现的条目）。
-      // 恢复出来的条目没有回读数据：缺口按"读不到"处理（这些字段只进日志/草稿，
-      // 到货明细卡片已随识别链路退场删除，所以不再有"还差什么"上卡片这件事）。
-      const createdEntries = [...context.productCache.values()];
-      for (const entry of createdEntries) {
-        if (!entry.gaps) entry.gaps = productInfoGaps(entry.record, productTable);
-      }
-      const createdProducts = createdEntries.map((entry) => ({
-        product_record_id: entry.recordId,
-        item_no: entry.item_no,
-        color: entry.color,
-        supplier: entry.supplier,
-        label: entry.label,
-        color_created: entry.color_created,
-        missing: entry.gaps.missing,
-        missing_sample_image: entry.gaps.missingSampleImage,
-        completeness_readable: entry.gaps.completeness_readable,
-        // 链接回填到草稿：她点确认之后的结果卡片就用它（她点进去补资料）。
-        url: productRecordUrl(productTable.tableId, entry.recordId),
-      }));
-
-      // 合并进**最新**草稿，不整份覆盖：她可能正好在这期间点了确认，
-      // 那一侧会往草稿里写 inbound_created，覆盖掉就等于把入库进度和链接一起冲没了。
-      const latest = (await this.store.get(taskId)) || task;
-      const creationError = failures.length
-        ? failures.map((item) => `${item.item_no || ''}${item.color || ''}：${item.error}`).join('；')
-        : '';
-      const nextDraft = {
-        ...latest.draft,
-        created_products: createdProducts,
-        created_colors: context.createdColors.map((item) => item.name),
-        creation_state: failures.length ? 'failed' : 'done',
-        creation_error: creationError,
-      };
-      await this.store.update(taskId, { draft: nextDraft });
-      logInfo('purchase.arrival.creation.finished', {
-        task_id: taskId, reason: options.reason || 'unknown', state: nextDraft.creation_state,
-        pending_count: pending.length, created_product_count: createdProducts.length,
-        created_color_count: nextDraft.created_colors.length,
-        failure_count: failures.length,
-      });
-      return {
-        state: nextDraft.creation_state,
-        created: createdProducts.length,
-        failures,
-      };
-    });
-  }
-
   // ── 已删除：processArrival（拍照识别的唯一入口）────────────────────────────
   // 它做过的事：读「采购到货」记录 → 写「识别中」→ 下载图片 → 视觉模型识别（鞋盒 / 到货单）
   // → 逐行匹配货品 → 组装草稿 → 写「识别成功」→ 发到货明细卡片 → 后台建档。
@@ -1457,13 +1134,11 @@ class PurchaseWebhookService {
   //   · confirmArrival    —— **逐条加库存**（`inventory.applyPurchase`）＋ 把「报货批次」那一行写实
   //                          （到货文字说明（该列已从真表退场） / 确认状态；**不再回写采购申请表**，见该方法的注释）。
   //                          ⚠️ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ 这里**不再写任何入库明细行**。
-  //   · ensureArrivalProducts / ensureArrivalProduct / ensureArrivalColor
-  //                       —— 新品建档（未合并分支 refactor/decouple-creation-and-stock
-  //                          正把它剥成 services/productCreationService.js）
-  //   ⛔ 2026-10-17：**成本写入整条删除**（到货单/价格识别已退场、`task.recognized` 无生产写入点）；
-  //      现在本文件**不写「货品.成本」**，该列由业务侧手工维护。
+  //   ⛔ 2026-10-17：**成本与建档整条删除**（到货单价格识别已退场；货品建档的唯一路径是
+  //      工作台「货品上新」→ 多维表格表单外链，提交后由表变更自动生成标签二维码）。
+  //      现在本文件**不写「货品.成本」、不建新品**；只保留加库存与本单批次写实。
   //   · aggregateArrivalItems / resolvePurchaseInboundState
-  // 它们的输入（draft.actual / pending_creation）由
+  // 它们的输入（draft.actual）由
   // services/purchaseArrivalConversationService.js 写入，形状与 processArrival 原先落的草稿一致。
   //
   // ⚠️ 已删除：`findRequestRowForInbound`（2026-10-07 深夜）—— 它只用来把**入库行**的
@@ -1902,18 +1577,7 @@ class PurchaseWebhookService {
     // ⚠️ 2026-10-07 晚：这句话原先写「到货验收已入库」，但那**张表已被业务负责人删除** ——
     //    改成按现在的落点说（批次行），她看到的就是"这一批已经入过库了"。
     if (task.status === 'posted') return { toast: { type: 'info', content: arrivalToast.m1 } };
-    // 她点确认时如果建档还没跑完（或上一次失败了），在这里同步补一次。
-    // 建档是幂等的、并且和别的调用方走同一个 creationQueue，所以不会建出第二条。
-    // 入库必须有货品记录，这一步不能省；失败就明确告诉她原因，别静默也不要"假装入库了"。
-    const creation = await this.ensureArrivalProducts(taskId, { reason: 'confirm' });
-    if (creation.state === 'failed') {
-      const reason = creation.failures
-        .map((item) => `${item.item_no || ''}${item.color || ''}：${item.error}`)
-        .join('；');
-      throw new Error(`新品建档没成功：${reason}。请再点一次「确认入库」，我先不入库`);
-    }
-    // 用**最新**草稿：建档刚把 created_products（含记录链接）写进去，
-    // 拿动作开始时那份旧草稿会既看不到链接、也拿不到新货品的 record_id。
+    // 用**最新**草稿（其它步骤可能刚更新过它）。
     const latest = (await this.store.get(taskId)) || task;
     const draft = latest.draft || task.draft;
     // 关联键（只进日志）：到货核对任务自己的 task_id（`arrival_reconcile_…`，
@@ -1927,22 +1591,14 @@ class PurchaseWebhookService {
     const correlation = purchaseCorrelation({
       taskId, batchNo, batchRecordId,
     });
-    // 新品的明细在建档前没有 product_record_id，这里按「货号+颜色」把刚建好的记录对上。
-    const productIdByKey = new Map((draft.created_products || [])
-      .map((item) => [`${item.item_no}|${item.color}`, item.product_record_id]));
-    const arrival = {
-      ...draft,
-      actual: (draft.actual || []).map((item) => (item.product_record_id ? item : {
-        ...item,
-        product_record_id: productIdByKey.get(`${item.item_no}|${item.color}`) || '',
-      })),
-    };
+    const arrival = { ...draft, actual: draft.actual || [] };
     const unresolved = arrival.actual.filter((item) => !item.product_record_id);
     if (unresolved.length > 0) {
-      // 走到这里说明建档"看着成功"但明细对不上货品（数据异常）。宁可停下来告诉她，
-      // 也不能把这几条静默丢掉、只入一部分库。
+      // 走到这里说明明细对不上货品（数据异常；代码已不再自动建档）。
+      // 宁可停下来告诉她，也不能把这几条静默丢掉、只入一部分库。
       throw new Error(`有 ${unresolved.length} 条到货明细没有对应货品（${unresolved
-        .map((item) => `${item.item_no || ''}${item.color || ''}`).join('、')}）。请再点一次「确认入库」`);
+        .map((item) => `${item.item_no || ''}${item.color || ''}`).join('、')}）。`
+        + '请先在工作台「货品上新」建好货品（或修正明细）后再确认入库');
     }
     // ⭐ 2026-10-07 晚：**先把结构化验收（实际数量 / 发生金额）落到「报货批次」那一行**，再逐条加库存。
     //    顺序与改动前一致（原来是在「到货验收」建行），只是落点换成了批次行；
@@ -1980,8 +1636,7 @@ class PurchaseWebhookService {
     for (const [key, value] of Object.entries(persistedApplied)) {
       if (!appliedByKey.has(key)) appliedByKey.set(key, value);
     }
-    // 落盘基线跟着最新草稿走：建档那一步往草稿里写过链接和 creation_state，
-    // 用旧对象整份覆盖会把它们冲掉（她确认之后就看不到链接了）。
+    // 落盘基线跟着最新草稿走：用旧对象整份覆盖会把别的步骤刚写进去的字段冲掉。
     let draftNow = { ...draft };
     const persistEntry = async (key, entry) => {
       inflightMap.set(key, entry);
