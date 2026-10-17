@@ -93,6 +93,13 @@ const { createMultiItemOrderService } = require('../../services/multiItemOrderSe
 //     （读它的那一位是既有 `views/scanPageRealm.js` 的 `resolveRealm` ✓ 不新造规则 ✗）。
 const { REALM_SCAN, realmEntryParams } = require('../../config/realmScan');
 const { FUNNEL } = require('../../config/funnel');
+const {
+  realmOfAction: realmOfActionOf,
+  purchaseAmountRequiredFor: purchaseAmountRequiredForOf,
+  purchaseAmountMissing: purchaseAmountMissingOf,
+  purchaseAmountInvalid: purchaseAmountInvalidOf,
+  markRealmUsed: markRealmUsedOf,
+} = require('./actions');
 const { setTraceFields } = require('../../utils/traceContext');
 const { roleOf } = require('../../config/trace');
 const { createLarkJsapiService } = require('../../services/larkJsapiService');
@@ -1085,29 +1092,12 @@ const createScanPageRouter = (options = {}) => {
    *    失败一律吞掉（记不住领域不该影响她这一单 ✓）。
    */
   /** 动作 → 领域（"她刚在哪个领域干过活"）——**一处映射**，别在各 handler 里各写一遍。 */
-  const realmOfAction = (action) => {
-    const a = String(action || '');
-    if (a === writeConfig.actions.submitOrder) return 'sales';
-    if (a === writeConfig.actions.submitReplenish) return 'replenish';
-    if (a === writeConfig.actions.submitPurchaseReturn) return 'purchase_return';
-    // ⭐⭐ 2026-10-14 晚 cut B（改前逐字 → 改后逐字 → 依据）：
-    //   改前逐字：`if (a === writeConfig.actions.acceptFinish || a === writeConfig.actions.acceptFinishRows) return 'accept';`
-    //   改后逐字：**这一行删掉**
-    //   依据：扫码页「完成验收」那两个动作的 handler 已在 cut A 退场（`POST /s/accept` 那条路
-    //     也拆了 ⇒ 它们**到不了这里**）；而 `accept` 又在 cut B 从 `REALMS` 退场 ⇒
-    //     留着它就是「记下一个**已不存在的领域 id**」
-    //     （`resolveRealm` 会把它回落成销售 ⇒ 语义上骗人 ✗）。
-    return '';
-  };
-
-  const markRealmUsed = (openId, realm) => {
-    if (!writeService || !openId) return;
-    const sessions = writeService.sessions;
-    if (!sessions || typeof sessions.setLastRealm !== 'function') return;
-    Promise.resolve(sessions.setLastRealm(openId, realm)).catch((error) => {
-      logWarn(config.events.failed, { reason: 'last_realm_write_failed', error: error.message });
-    });
-  };
+  // 动作分派第 1 刀：实现搬到 `./actions.js`（纯函数可单测）；这里只保留**薄包装**，
+  // 调用点一个字都没动。
+  const realmOfAction = (action) => realmOfActionOf(action, writeConfig);
+  const markRealmUsed = (openId, realm) => markRealmUsedOf({
+    writeService, openId, realm, event: config.events.failed, logWarn,
+  });
 
   const successReturnFields = (req, target, noticeNo = '') => {
     const cfg = config.successReturn || {};
@@ -1325,46 +1315,10 @@ const createScanPageRouter = (options = {}) => {
    *   **故意不同名**：档位键由 `config/scanWrite.js` 的三个 `readFlag` 决定（`replenish` / `return` / `accept`），
    *   所以退货那一处**逐字传 `'return'`** ✗ 不是 `'purchase_return'`（传错 = 拿错档位 ⇒ 判据会红 ✓）。
    */
-  const purchaseAmountRequiredFor = (realm) => {
-    if (writeConfig.purchaseAmount?.required === false) return false;
-    const tiers = writeConfig.purchaseAmount?.requiredByRealm;
-    if (tiers && tiers[realm] === false) return false;
-    return true;
-  };
-
-  /**
-   * 「整单金额**填了没有**」（补货 / 退货共用，只判空）——
-   * 空 ⇒ `true`（调用方立刻回 400，**一步都不往下走**）；非空 ⇒ `false`（照旧提交 ✓）。
-   * ⭐⭐ 2026-10-16：**加"当前链路"入参** ⇒ 由 `purchaseAmountRequiredFor(realm)` **按链路**决定要不要判
-   *   （补货那一档 = `false` ⇒ 直接放行 ✓；退货那一档 = `true` ⇒ 照旧判 ✓）。
-   * ⚠️ 关掉闸门 = 配置 `SCAN_PURCHASE_AMOUNT_REQUIRED`（**显式布尔**，`readFlag` ✓）
-   *   ＋ **按链路** `SCAN_PURCHASE_AMOUNT_REQUIRED_{REPLENISH,RETURN,ACCEPT}`（各一个显式布尔 ✓）。
-   */
-  const purchaseAmountMissing = (body, realm) => {
-    if (purchaseAmountRequiredFor(realm) === false) return false;
-    return String(body?.[writeConfig.fields.purchaseAmount] ?? '').trim() === '';
-  };
-
-  /**
-   * ⭐⭐ 2026-10-15（③ 写入）：整单金额**填了但不是数字** ⇒ 也当场拦住。
-   *
-   * 依据：她 2026-10-14 晚「退货整单金额（必填），与补货同一套配置」＋ **2026-10-15 裁决 ⓐ**
-   *   （列名 = 复用「发生金额」）⇒ 那个数要落进**数字列** `purchaseOrderBatch.actualAmount`。
-   *   ⇒ 放一个非数字过去就是「**页面填了、表里没有**」= 假成功 ✗（她最在意的一条）。
-   *
-   * ⚠️ 与"空"**分两道**（各有各的人话）：空 ⇒ `purchaseAmountMissingPage`（"还没填"）；
-   *   非空但认不出数字 ⇒ 本函数 → `purchaseAmountInvalidPage`（"要填数字"）。
-   * ⚠️ 判据是**收紧**，不是放宽 ✓；关掉整套闸门仍是 `SCAN_PURCHASE_AMOUNT_REQUIRED` ✓
-   *   ＋ **按链路** `SCAN_PURCHASE_AMOUNT_REQUIRED_RETURN`（那一档 = `false` ⇒ 这条也一起放行 ✓）。
-   * ⚠️ 服务层还有**同一条**数值判据（`purchaseOrderBatchService.writeOrderAmount` 的
-   *   `numericOrNull`）⇒ 就算有人绕过这条路由直调写服务，也**不会**写进坏值/空值 ✓（只会如实报失败）。
-   */
-  const purchaseAmountInvalid = (body, realm) => {
-    if (purchaseAmountRequiredFor(realm) === false) return false;
-    const raw = String(body?.[writeConfig.fields.purchaseAmount] ?? '').trim();
-    if (raw === '') return false; // 空的那条由上面那道闸门管（各有各的人话 ✓）
-    return !Number.isFinite(Number(raw));
-  };
+  // 整单金额三道闸门同样搬到 `./actions.js`（补货/退货共用；按链路配置在那边读）。
+  const purchaseAmountRequiredFor = (realm) => purchaseAmountRequiredForOf(realm, writeConfig);
+  const purchaseAmountMissing = (body, realm) => purchaseAmountMissingOf(body, realm, writeConfig);
+  const purchaseAmountInvalid = (body, realm) => purchaseAmountInvalidOf(body, realm, writeConfig);
 
   /** 「要填数字」那张人话页（与"还没填"同一形状：H1 + 怎么填 + 回上一页 + 埋点原因码）。 */
   const purchaseAmountInvalidPage = (req, res, requestId, realm) => {
@@ -3222,7 +3176,9 @@ return sendPaymentStep(res, req, {
         if (groups.length > 1) {
           return submitMultiItemOrder({
             req, res, requestId, chain: 'replenish', groups,
-            action: writeConfig.actions.submitReplenish,
+            // ⚠️ 原值 `actions.submitReplenish` 在配置里不存在（恒 undefined）⇒ realmOfAction 永远拿不到；
+            //    搬移时按真实动作名修正（`submitMultiItemOrder` 用它记"最近领域"）。
+            action: writeConfig.actions.replenish,
           });
         }
         // 🔴 **同一把 `submitKey` 原样透传**（幂等责任在写层：本文件不拼、不加后缀 ✗）
@@ -3243,7 +3199,7 @@ return sendPaymentStep(res, req, {
         // ⭐ 补货报单**已经收下**（后台接着写）⇒ 同样失效快照（她点名了「补货」也要；这一步不动库存，
         //    但"写完就失效"永远比"猜它动没动库存"安全）。
         invalidateInventorySnapshot(requestId, 'scan_replenish_submitted');
-        markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitReplenish));
+        markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.replenish));
         // ⭐⭐ 2026-10-16（她逐字：「用户提交之后**都是一个成功页**，说『**已提交成功，数据会更新**』」）
         //   ⇒ 成功页 = **统一那一句**（文案的家在 `config/scanPage.js` 的 `saleSuccess` ✓ 本文件不新造 ✗）。
         //   ⚠️ **批次号 / 明细数这一刻还没有**（后台那一跑才取号）⇒ 成功页**不许**承诺它们 ✗
@@ -3316,7 +3272,8 @@ return sendPaymentStep(res, req, {
         if (groups.length > 1) {
           return submitMultiItemOrder({
             req, res, requestId, chain: 'return', groups,
-            action: writeConfig.actions.submitPurchaseReturn,
+            // 同上：按真实动作名修正（原来恒 undefined）。
+            action: writeConfig.actions.purchaseReturn,
           });
         }
         // 🔴 **同一把 `submitKey` 原样透传**（幂等责任在写层：本文件不拼、不加后缀 ✗）
@@ -3340,7 +3297,7 @@ return sendPaymentStep(res, req, {
         });
         // ⭐ 退货**真的动了库存** ⇒ 立刻作废「实时库存」内存快照（她：库存必须准确）。
         invalidateInventorySnapshot(requestId, 'scan_purchase_return_submitted');
-        markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitPurchaseReturn));
+        markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.purchaseReturn));
         // ⭐⭐ 2026-10-16（她逐字：「都是一个成功页，说『已提交成功，数据会更新』」）：
         //   成功页 = **统一那一句**（文案的家在 `config/scanPage.js` ✓）。
         //   ⚠️ 批次号 / 明细数 / **超库存差额**这一刻都还没有（后台那一跑才知道）⇒ 页面**不许**承诺 ✗

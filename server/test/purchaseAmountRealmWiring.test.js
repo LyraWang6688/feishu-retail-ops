@@ -79,7 +79,11 @@ const helperBodyOf = (src) => {
 const stripLineComments = (src) => src.replace(/^\s*\/\/.*$/gm, '');
 
 /** 同一个路由文件、**剥掉整行注释**后的那份 —— 两个接线检测器都只看它 ✓。 */
-const ROUTE_CODE = stripLineComments(ROUTE_SRC);
+// ⭐ 2026-10-18 成对迁移（拆分第 1 刀）：金额闸门实现搬进 `routes/scanPage/actions.js`
+//   ⇒ "源码哨兵"看「路由 + actions」两处；判定语义一项没放宽（塞回/漏传仍红 ✓）。
+const ACTIONS_SRC = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'scanPage', 'actions.js'), 'utf8');
+const ACTIONS_CODE = stripLineComments(ACTIONS_SRC);
+const ROUTE_CODE = stripLineComments(ROUTE_SRC + '\n' + ACTIONS_SRC);
 
 /** 检测器 ①：闸门**真的按链路取档**吗？（缺 → 报红；有 `||` 兜底 → 报红 ✓） */
 const tierWiringViolations = (src) => {
@@ -144,7 +148,8 @@ test('AC-PAWIRE0 ⭐ 探针：两个检测器**真能红**（喂坏样本 ⇒ �
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-PAWIRE1 🔴 源码哨兵：闸门**按链路取档**（`requiredByRealm` · 一处实现 · 无 `||` 兜底）', () => {
-  assert.deepEqual(tierWiringViolations(ROUTE_CODE), [],
+  // 实现只在 actions.js 里 ⇒ 这一条只看 actions（路由里那行是薄包装，不重复算实现）
+  assert.deepEqual(tierWiringViolations(ACTIONS_CODE), [],
     '改前逐字（两个闸门各自）：`if (writeConfig.purchaseAmount?.required === false) return false;`\n'
     + '改后逐字：`if (purchaseAmountRequiredFor(realm) === false) return false;`\n'
     + '（`purchaseAmountRequiredFor` 里读 `requiredByRealm[realm]`，按链路取**显式布尔** ✓）\n'
