@@ -41,6 +41,7 @@
 | [observability-events.md](observability-events.md) | ⭐ **观测事件目录（自动生成）**：`server/src/config/events.js`（运行时校验的唯一真源）＋ 全仓日志事件名/次数/文件清单；新增或改名日志事件后跑 `cd server && pnpm run observability:events` |
 | [observability-daily.md](observability-daily.md) | **观测日报 + 日志轮转（第 2 刀）**：`scripts/observability-daily.mjs`（东八区按天汇总：分级/Top/未登记/错误/慢事件 → `docs/reports/observability-YYYY-MM-DD.{md,json}`）· `scripts/setup-pm2-logrotate.sh`（PM2 日志 10M/14 份/压缩/每天 0 点）· `scripts/setup-observability-cron.sh`（09:00 日报，幂等） |
 | [observability-alerts.md](observability-alerts.md) | **观测告警（第 3 刀）**：3 条规则（error 占比 / 关键链路失败 / 慢事件）· 15 分钟窗口 + 60 分钟静默 + 每窗口最多 3 条 · 发飞书群（默认 `PURCHASE_CHAT_ID`）· **默认关**（`OBSERVABILITY_ALERTS_ENABLED`）|
+| [scan-page-core-extraction-plan-2026-10-18.md](scan-page-core-extraction-plan-2026-10-18.md) | **扫码路由核心职责深拆方案（只读依赖清单）**：`index.js` 3263 行、四个主干分支 ≈1041 行的依赖/写库调用盘点 ＋ handler ctx 契约 ＋ P0/P1/P2 施工顺序与验收标准（**本文件不改生产代码**）|
 | [module-boundaries.md](module-boundaries.md) | 模块边界与职责划分 |
 | [idempotency-contract.md](idempotency-contract.md) | 采购与库存的远端幂等契约 |
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
