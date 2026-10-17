@@ -69,7 +69,6 @@ const { sellableSizeTexts, resolveRealm, DEFAULT_REALM, PURCHASE_RETURN_REALM } 
 // ⭐ 写操作之后**立刻作废**「实时库存」内存快照（她：库存必须准确，不是等 30 秒）。
 const { invalidateLiveInventorySnapshot } = require('../../services/liveInventorySnapshot');
 // ⭐⭐ 2026-10-16 task-62（货/钱分离）：开关（**显式布尔 · 缺省 false** ✓ 调用时读 ⇒ 改了当场认 ✓）
-const { resolveSaleMoneySplitConfig } = require('../../config/saleMoneySplit');
 const { requireWorkbenchAccess } = require('../workbench');
 // ⚠️ 会话读取/解码与回跳校验**复用 feishuWebAuth 里那一份**（`getSessionUser` =
 //    `requireWorkbenchAccess` 判 401 用的同一个函数），**不重写第二份**。
@@ -247,6 +246,69 @@ const createScanPageRouter = (options = {}) => {
       number: String(number || ''),
     });
   };
+  /**
+   * ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+   *   改前逐字：这段「被挡 ⇒ 渲染资金页（`status: 400`）＋ 把她刚填的钱原样带回」**只长在 `payment_pay` 那一支里** ✗
+   *   改后逐字：抽成本地 `async` 函数 `respondSettlementBlock(res, req, ctx)` ⇒ ⭐ **两处共用** ✓
+   *     （`payment_pay` 那一支 ＋ `submit_order` 里「货那一跑」之前的**预判** ✓ —— 预判下一轮接）
+   *   依据 = 写服务契约逐字「拦住、**一个字都不写**」＋ 业务负责人 2026-10-16 23:5x「**那我肯定能看到这个单号呀**」✓
+   *   🔴 **只搬不改**：文案 / 字段 / 中文 / `status: 400` 一个字不动 ✓
+   *     （唯一新增：`toCents` 那 1 行同式搬进来 —— 它原本声明在 `payment_pay` 支内，抽出来会跑出作用域 ✓）
+   */
+  const respondSettlementBlock = async (res, req, ctx) => {
+    const { settlement, effectiveLineAmounts, paidPayments, realm, body, fields, pendingLines,
+      effectivePaymentStatus, pendingPaidAmount } = ctx;
+    const toCents = (value) => Math.round(Number(value || 0) * 100);
+            const blockText = (() => {
+              const t = writeConfig.texts || {};
+              const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
+              // ⚠️ 用**解析后**那两个数（与上面 `settlement` / 与真正要落库的金额**同一份** ✓ 不两套算法）
+              const itemsCents = effectiveLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
+              const paymentsCents = paidPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
+              if (settlement.code === 'amount_mismatch' && t.amountMismatchBody) {
+                const diff = Math.abs(paymentsCents - itemsCents);
+                const side = itemsCents === 0
+                  ? fillWriteText(t.amountMismatchNoItems, { diff: money(diff) })
+                  : fillWriteText(
+                    paymentsCents > itemsCents ? t.amountMismatchOver : t.amountMismatchShort,
+                    { diff: money(diff) },
+                  );
+                return fillWriteText(t.amountMismatchBody, {
+                  items: money(itemsCents), payments: money(paymentsCents), side,
+                });
+              }
+              // 🔴🔴 2026-10-14 修（真 bug）：`settlement.code` 是 **snake_case**
+              //    （`full_without_money` / `partial_amount_missing` / `partial_amount_mismatch`），
+              //    而 `config/scanWrite.js` 的文案 key 是 **camelCase**（`fullWithoutMoneyBody` …）
+              //    ⇒ 原来直接拼 `${settlement.code}Body` **永远查不到** ⇒ 那三条 block 的人话
+              //    渲染成**空串**（页面只剩一个干巴巴的 400 + 满页表单）。
+              //    ⚠️ 这就是她 2026-10-14 真机"点了 6 次「提交整单付款」都只看到 400"的现场之一：
+              //      日志里当时**连原因都没有**（那条 `scan.write.settlement_blocked` 是后来才补的），
+              //      页面上也没有一句话 —— 两处都静默。
+              //    ⇒ 按 snake_case → camelCase 取真源文案（**不新编中文** ✓ 仍只用既有模板 ✓）。
+              const codeCamel = String(settlement.code || '')
+                .replace(/_([a-z])/g, (_, char) => char.toUpperCase());
+              return t[`${codeCamel}Body`] || t[settlement.code] || '';
+            })();
+            return sendPaymentStep(res, req, {
+              paymentMethods: await candidatePaymentMethods(req),
+              realm,
+              submitKey: body[fields.submitKey],
+              count: pendingLines.length,
+              notice: blockText,
+              // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓ 这就是旧流程那条"值还在"的要求 ✓）
+              // ⭐ 2026-10-16 A2a（接线）：档位改用**自动定出来的那一档**（`effectivePaymentStatus`）——
+              //   旧档位（请求体那个）**不再是判据**，这里也不该再把它带回去（带回去只会误导下一屏）。
+              paymentStatus: effectivePaymentStatus,
+              paidAmount: pendingPaidAmount,
+              // ⭐ 券那一刀：带回去的是**解析后**那一份（券行她本来就没填金额 ⇒ 只是把这一行的
+              //    **真实金额（平台结算款）**显示出来 ✓ 既不是替她改数、也不是藏起来 ✗）。
+              paymentRows: paidPayments,
+              // ⭐ 400 = "她能改"的那一类（与既有口径一致 ✓ 旧流程这条也是 400 ✓ 不放宽 ✗）
+              status: 400,
+            });
+  };
+
   const sendPaymentStep = (res, req, opts = {}) => {
     // ⭐ 她看到的这一页 = 这条日志记的（**在发页面之前**打 ⇒ 两件事不会分家 ✓）
     logRendered(req, {
@@ -270,6 +332,8 @@ const createScanPageRouter = (options = {}) => {
       salesEntryRecordId: String(opts.salesEntryRecordId || ''),
       // ⭐ 结算没过时那一句人话（原地重渲染资金页 ✓）
       notice: String(opts.notice || ''),
+      // ⭐ 2026-10-17 E：**总金额**（她逐字要的）——调用方给；拿不到就不渲染那一行（不编 ✓）
+      totalAmountText: String(opts.totalAmountText || ''),
     }));
   };
   // ⚠️ 写服务**只为 POST 与"本单还有几双"服务**；`GET` 的库存表一个字都不依赖它。
@@ -2202,9 +2266,19 @@ const createScanPageRouter = (options = {}) => {
           const pendingPayments = parsePaymentRows(body, fields).length
             ? parsePaymentRows(body, fields)
             : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
-          const pendingLineAmounts = asList(body[fields.lineAmount]).some((v) => String(v ?? '').trim())
-            ? asList(body[fields.lineAmount])
-            : (Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : []);
+          // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— ⭐ 2026-10-16 深夜 · 修「资金页那一按 500」✗：
+          //   改前逐字：`asList(body[lineAmount]) 有值 ? 表单那份 : 会话那份`（**表单优先** ✗）
+          //   改后逐字：**会话那份优先**（= ⭐ **货那一跑已经落下的那份金额** ✓），表单只作兜底 ✓
+          //   依据 = 业务负责人 2026-10-16 23:4x 当次口径（ⓐ「**修**」）：
+          //     「让**资金页那一步别自己重算金额** ⇒ **直接用货那一半已经写好的那份**」✓
+          //   🔴 为什么必须同源：`services/salesOrderService.js:238` 那条守卫会拿
+          //     「已记录的销售明细」与**本次推导的** expected **逐值比金额**（含「实收金额」）✗
+          //     ⇒ 表单那份（例 `['150','130']`）与货那半落的（例 `['280']`）一比就 `sale_partial_failed` ⇒ **500** ✗
+          const sessionLineAmounts = Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : [];
+          const bodyLineAmounts = asList(body[fields.lineAmount]);
+          const pendingLineAmounts = sessionLineAmounts.some((v) => String(v ?? '').trim())
+            ? sessionLineAmounts
+            : bodyLineAmounts;
           const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
           const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
           const pendingSize = String(pendingInfo.size || '').trim();
@@ -2313,53 +2387,9 @@ const createScanPageRouter = (options = {}) => {
             });
             // ⚠️ 文案：**只用既有那几条模板**（`config/scanWrite.js` 的 texts ✓ **不编中文** ✗）
             //   ⭐「全付两边不等」那条要带上**差额金额**（她一眼看到"少多少/多多少"✓ 实测 AC-E2E-16 ✓）
-            const blockText = (() => {
-              const t = writeConfig.texts || {};
-              const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
-              // ⚠️ 用**解析后**那两个数（与上面 `settlement` / 与真正要落库的金额**同一份** ✓ 不两套算法）
-              const itemsCents = effectiveLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
-              const paymentsCents = paidPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
-              if (settlement.code === 'amount_mismatch' && t.amountMismatchBody) {
-                const diff = Math.abs(paymentsCents - itemsCents);
-                const side = itemsCents === 0
-                  ? fillWriteText(t.amountMismatchNoItems, { diff: money(diff) })
-                  : fillWriteText(
-                    paymentsCents > itemsCents ? t.amountMismatchOver : t.amountMismatchShort,
-                    { diff: money(diff) },
-                  );
-                return fillWriteText(t.amountMismatchBody, {
-                  items: money(itemsCents), payments: money(paymentsCents), side,
-                });
-              }
-              // 🔴🔴 2026-10-14 修（真 bug）：`settlement.code` 是 **snake_case**
-              //    （`full_without_money` / `partial_amount_missing` / `partial_amount_mismatch`），
-              //    而 `config/scanWrite.js` 的文案 key 是 **camelCase**（`fullWithoutMoneyBody` …）
-              //    ⇒ 原来直接拼 `${settlement.code}Body` **永远查不到** ⇒ 那三条 block 的人话
-              //    渲染成**空串**（页面只剩一个干巴巴的 400 + 满页表单）。
-              //    ⚠️ 这就是她 2026-10-14 真机"点了 6 次「提交整单付款」都只看到 400"的现场之一：
-              //      日志里当时**连原因都没有**（那条 `scan.write.settlement_blocked` 是后来才补的），
-              //      页面上也没有一句话 —— 两处都静默。
-              //    ⇒ 按 snake_case → camelCase 取真源文案（**不新编中文** ✓ 仍只用既有模板 ✓）。
-              const codeCamel = String(settlement.code || '')
-                .replace(/_([a-z])/g, (_, char) => char.toUpperCase());
-              return t[`${codeCamel}Body`] || t[settlement.code] || '';
-            })();
-            return sendPaymentStep(res, req, {
-              paymentMethods: await candidatePaymentMethods(req),
-              realm,
-              submitKey: body[fields.submitKey],
-              count: pendingLines.length,
-              notice: blockText,
-              // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓ 这就是旧流程那条"值还在"的要求 ✓）
-              // ⭐ 2026-10-16 A2a（接线）：档位改用**自动定出来的那一档**（`effectivePaymentStatus`）——
-              //   旧档位（请求体那个）**不再是判据**，这里也不该再把它带回去（带回去只会误导下一屏）。
-              paymentStatus: effectivePaymentStatus,
-              paidAmount: pendingPaidAmount,
-              // ⭐ 券那一刀：带回去的是**解析后**那一份（券行她本来就没填金额 ⇒ 只是把这一行的
-              //    **真实金额（平台结算款）**显示出来 ✓ 既不是替她改数、也不是藏起来 ✗）。
-              paymentRows: paidPayments,
-              // ⭐ 400 = "她能改"的那一类（与既有口径一致 ✓ 旧流程这条也是 400 ✓ 不放宽 ✗）
-              status: 400,
+            return respondSettlementBlock(res, req, {
+              settlement, effectiveLineAmounts, paidPayments, realm, body, fields, pendingLines,
+              effectivePaymentStatus, pendingPaidAmount,
             });
           }
           const pendingView = pendingSize
@@ -2453,9 +2483,24 @@ const createScanPageRouter = (options = {}) => {
         if (createdResult) markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
         const payTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
-        const paidOrderNo = String(createdResult?.order_no || body.order_no || '').trim().slice(0, 40);
+        // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修「成功页看不到单号」✗：
+        //   改前逐字：`const paidOrderNo = String(createdResult?.order_no || body.order_no || '').trim().slice(0, 40);`
+        //   改后逐字：本行（多一层**会话回落** ✓）
+        //   依据 = 业务负责人 2026-10-16 23:5x 逐字（她裁「**该带**」）：
+        //     「我先点了，我再点完货品的时候，我就创建单号了。**那为什么我在成功页里面看不到呢？那我肯定能看到这个单号呀**」
+        //   🔴 为什么需要回落：④ 永远开 ⇒ **货那一跑（第 1 步）就把单号出了**（`sales.order_no.generated` ✓）
+        //     ⇒ 钱那一跑是**同一把 `submitKey` 的复用**（`scanWriteService` 里 `wasResume = true` ✗）
+        //     ⇒ 那一次 `createdResult.order_no` **可能是空** ✗ ⇒ 页面就变成 `—`（她看不到号 ✗ = 真 bug ✓）
+        //     ⇒ **回落到会话里那个号**（= 她第 1 步看到的那个 ✓）才是对的 ✓
+        const sessionOrderNo = String(paySession?.sale?.order_no || paySession?.order_no || '').trim();
+        const paidOrderNo = String(createdResult?.order_no || sessionOrderNo || body.order_no || '').trim().slice(0, 40);
         const paidCount = Number(String(createdResult?.detail_count ?? body.count ?? '').trim() || 0) || 0;
-        const paidReused = String(body.reused || '') === '1';
+        // ⭐ 2026-10-17（C·去跳过）：与 skip 那条**逐字同口径** ——
+        //   改前逐字：`const paidReused = String(body.reused || '') === '1';`（只看表单隐藏字段）
+        //   改后逐字：**也看建单返回的 `reused`**（同一把 submitKey 再点一次 ⇒ `submitSale` 返回 reused ✓）
+        //   依据 = 她 2026-10-17「去「跳过」」＋ 既有口径「这一单刚才已经交过了」（`submittedAgainTitle`）
+        //   ⚠️ 不删断言、不放宽：重复提交仍然**只写一次**、但页面**如实**说"已经交过了" ✓
+        const paidReused = String(body.reused || '') === '1' || createdResult?.reused === true;
         const paidDetails = [
           fillWriteText(writeConfig.texts.submittedOrderLine, { orderNo: paidOrderNo || '—' }),
           fillWriteText(writeConfig.texts.submittedDetailLine, { count: paidCount }),
@@ -2557,6 +2602,12 @@ const createScanPageRouter = (options = {}) => {
         //    🔴 **幂等不许拆** ✗ 绝不直调 `_confirm` ✓）
         const skipPending = skipMark === 'pending' || skipMark === 'created';
         let skipCreated = null;
+        // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修「成功页看不到单号」**第二处**✗：
+        //   改前逐字：跳过这条路上**没有**会话回落 ⇒ 只认 `skipCreated.order_no || body.order_no` ✗
+        //   改后逐字：本行 ＋ 下面 `skippedOrderNo` 那行都加**会话回落** ✓
+        //   依据 = 业务负责人 2026-10-16 23:5x 逐字：「我先点了…我就创建单号了…**那我肯定能看到这个单号呀**」✓
+        //   🔴 与 pay 路径同一处 bug 的第二份（取号逻辑被抄了两遍 ✗）⇒ 见 `test/scanPageOrderNoSource.test.js` 的"防第三处"哨兵 ✓
+        const skipSessionOrderNo = String(skipSession?.sale?.order_no || skipSession?.order_no || '').trim();
         // ⭐ 这一步的墙钟起点 + **打点载体**（服务端把各分段**写进这个对象** ✓ 与旧流程同一个形状 ✓）
         const skipStepStartedAt = Date.now();
         const skipStepTiming = {};
@@ -2665,7 +2716,7 @@ const createScanPageRouter = (options = {}) => {
             phase: writeConfig.timing.phase.request,
             ok: skipCreated.ok === true,
             code: skipCreated.code || '',
-            order_no: skipCreated.order_no || '',
+            order_no: skipCreated.order_no || skipSessionOrderNo || '',
             reused: skipCreated.reused === true,
             partial: skipCreated.code === 'sale_partial_failed',
             lines: Number(skipCreated.detail_count) || 0,
@@ -2680,7 +2731,7 @@ const createScanPageRouter = (options = {}) => {
           });
         }
         // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
-        const skippedOrderNo = String(skipCreated?.order_no || body.order_no || '').trim().slice(0, 40);
+        const skippedOrderNo = String(skipCreated?.order_no || skipSessionOrderNo || body.order_no || '').trim().slice(0, 40);
         const skippedCount = Number(String(skipCreated?.detail_count ?? body.count ?? '').trim() || 0) || 0;
         // ⭐ 她**再点一次**（同一把 `submitKey`）⇒ `submitSale` 返回 `reused` ✓ ⇒ 成功页要**如实**说
         //   「这一单刚才已经交过了」✓（不是失败 ✗ 也不是又写一遍 ✗）
@@ -2896,28 +2947,80 @@ return sendPaymentStep(res, req, {
 
         // ⭐ 资金页：还没建单 ⇒ `orderNo: ''`（**不编** ✗）· `count` 用草稿行数 ✓
         // ⭐⭐ 2026-10-16 task-62（**货 / 钱分离** · 设计文档 §5 改动 A）：
-        //   开关开着 ⇒ **就在这一刻建单** —— **只写「货」那一半**（主表总金额/赠品/交易类型 ＋ 明细 ＋ 销售状态 ✓
-        //   **不扣库存** ✓ **不记 `completed`** ✓ 收款明细 0 行 ✓ —— 那是冻结件 `deferFunds: true` 的语义 ✓）；
-        //   🔴 开关**关着** ⇒ 下面这段**一个字都不跑** ⇒ `orderNo` 仍是 `''` ⇒ **页面 HTML 逐字节不变** ✓。
+        //   **没有开关了** ⇒ **就在这一刻建单** —— **只写「货」那一半**（主表总金额/赠品/交易类型 ＋ 明细 ＋ 销售状态 ✓
+        //   **不扣库存** ✓ **不记 `completed`** ✓ 收款明细 0 行 ✓ —— 那是冻结件 `deferFunds: true` 的语义 ✓）。
         let goodsOrderNo = '';
-        if (resolveSaleMoneySplitConfig().enabled === true) {
-          const goods = await writeService.submitSale({
-            openId,
-            requestId,
-            submitKey: body[fields.submitKey],
-            payments: [],          // 🔴 货那一跑**不许带收款**（带了冻结件当场抛 ✓）
-            deferFunds: true,      // ⭐ 阶段二（#763）已就位 ✓ 本刀只**接线** ✗ 不改冻结件 ✓
-            lineAmounts,           // 与今天**同一个**取值口径 ✓
-          });
-          // 🔴 失败**如实**：绝不带着空单号继续去资金页当她"成功了" ✗
-          if (!goods || goods.ok !== true) return respondWriteFailure(res, goods, requestId);
-          goodsOrderNo = String(goods.order_no || '');
-        }
+        // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+        //   改前逐字：`if (resolveSaleMoneySplit` ＋ `Config().enabled === true) { … }`（开关关着 ⇒ 这段一个字都不跑）
+        //   改后逐字：**闸门删掉** ⇒ 这段**永远跑**（货品页建单 / 现货当场扣 / 钱待补 ✓）
+        //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**把新功能都上了，不需要开关。**」✓
+            const goods = await writeService.submitSale({
+              openId,
+              requestId,
+              submitKey: body[fields.submitKey],
+              payments: [],          // 🔴 货那一跑**不许带收款**（带了冻结件当场抛 ✓）
+              deferFunds: true,      // ⭐ 阶段二（#763）已就位 ✓ 本刀只**接线** ✗ 不改冻结件 ✓
+              lineAmounts,           // 与今天**同一个**取值口径 ✓
+              // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：④ 那刀把「货那一跑」从带 timing 的那段挪了出来 ⇒
+              //   改前逐字：这一发 `submitSale({…})` **没有** `timing`（而带 timing 的那次成了**死代码** ✗）
+              //   改后逐字：补回 `timing: saleTiming,`（`saleTiming` 声明在 `:2867` 活代码里，不重复声明 ✓）
+              //   依据 = 她的硬口径「每个关键流程节点都要有日志和可排查路径」＋ ④ 货/钱分离口径 ✓
+              timing: saleTiming,
+              // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修 `session_empty`（400）✗：
+              //   改前逐字：这段 `submitSale({…})` **没有** `pendingLine`（旧流程里它是靠下面那条【死代码】补的 ✗）
+              //   改后逐字：本段末尾补上 `pendingLine`（**逐字照抄** 下面 :2948 那份既有形状 ✓ 不新造 ✗）
+              //   依据 = 我逐层核到的事实：`scanWriteService.js:833` 拿行只有两条路（会话里已有行 ／ 传了 `pendingLine` 就当场 addLine ✗）
+              //     ＋ ⭐ ④ 取消开关后，带 `pendingLine` 那条路（原 :2951）被这条货那一跑的 `return` 顶成了**死代码** ✗
+              //     ⇒ 她「选尺码 ＋ 一次 POST 提交」这条流**行没被加进会话** ⇒ `:867 lines=[]` ⇒ `:868` 抛 `session_empty` ⇒ 400 ✗
+              //   依据（业务口径）= 她 2026-10-16 23:5x 逐字：「我先点了，我再点完货品的时候，我就创建单号了。**那为什么我在成功页里面看不到呢？那我肯定能看到这个单号呀**」✓
+              pendingLine: submitView?.found ? {
+                productRecordId: submitView.product_record_id,
+                number: submitView.number,
+                itemNo: submitView.item_no,
+                color: submitView.color,
+                size: body[fields.size],
+                amount: body[fields.amount],
+                gift: body[fields.gift],
+                // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
+                inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
+              } : null,
+            });
+            // 🔴 失败**如实**：绝不带着空单号继续去资金页当她"成功了" ✗
+            if (!goods || goods.ok !== true) return respondWriteFailure(res, goods, requestId);
+            goodsOrderNo = String(goods.order_no || '');
+            logInfo(writeConfig.events.saleTiming, {
+              request_id: requestId,
+              // 2026-10-15（⑨b-2）：她那次请求这一段（后台那一跑另打一条，同事件名 + `phase`）。
+              phase: writeConfig.timing.phase.request,
+              ok: goods.ok === true,
+              code: goods.code || '',
+              order_no: goods.order_no || '',
+              reused: goods.reused === true,
+              partial: goods.code === 'sale_partial_failed',
+              lines: lineAmounts.length,
+              submit_ms: Math.max(0, Date.now() - submitStartedAt),
+              queue_wait_ms: Number(saleTiming.queue_wait_ms) || 0,
+              lookup_ms: Number(saleTiming.lookup_ms) || 0,
+              prepare_ms: Number(saleTiming.prepare_ms) || 0,
+              master_ms: Number(saleTiming.master_ms) || 0,
+              status_ms: Number(saleTiming.status_ms) || 0,
+              detail_ms: Number(saleTiming.detail_ms) || 0,
+              stock_ms: Number(saleTiming.stock_ms) || 0,
+            });
         return sendPaymentStep(res, req, {
           paymentMethods: await candidatePaymentMethods(req),
           realm,
           submitKey: body[fields.submitKey],
           count: pendingDraftLines.length,
+          // ⭐ 2026-10-17 E（她逐字：「资金页要显示**总金额**」）：
+          //   总金额 = 本单各行成交金额之和（**同一份 `lineAmounts`**，不另算一份钱 ✗）。
+          //   拿不到（全空 / 非数字）⇒ 空串 ⇒ 页面不渲染那一行（不编 ✓）。
+          totalAmountText: (() => {
+            const cents = (Array.isArray(lineAmounts) ? lineAmounts : []).reduce(
+              (sum, value) => sum + Math.round(Number(String(value ?? '').trim() || 0) * 100), 0,
+            );
+            return cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '';
+          })(),
           // ⭐ 开着时如实给她单号；**关着 ⇒ 这个键根本不出现** ⇒ 页面逐字节不变 ✓
           ...(goodsOrderNo ? { orderNo: goodsOrderNo } : {}),
         });
@@ -2945,27 +3048,7 @@ return sendPaymentStep(res, req, {
         });
         // ⭐⭐ **一条**汇总（与 `scan.lookup.timing` 同一形状）：她按 `scan.sale.timing` grep
         //    就能看出"这一次提交卡在哪一段"，不必再靠猜。
-        logInfo(writeConfig.events.saleTiming, {
-          request_id: requestId,
-          // ⭐⭐ 2026-10-15（⑨b-2）：她那次请求这一段（后台那一跑另打一条，同事件名 + `phase`）。
-          phase: writeConfig.timing.phase.request,
-          ok: result.ok === true,
-          code: result.code || '',
-          order_no: result.order_no || '',
-          reused: result.reused === true,
-          partial: result.code === 'sale_partial_failed',
-          lines: lineAmounts.length,
-          // 提交这一步的墙钟（含排队等前面的那次提交 —— 她连点 14 次时这一段会明显变大）。
-          submit_ms: Math.max(0, Date.now() - submitStartedAt),
-          queue_wait_ms: Number(saleTiming.queue_wait_ms) || 0,
-          lookup_ms: Number(saleTiming.lookup_ms) || 0,
-          prepare_ms: Number(saleTiming.prepare_ms) || 0,
-          master_ms: Number(saleTiming.master_ms) || 0,
-          status_ms: Number(saleTiming.status_ms) || 0,
-          detail_ms: Number(saleTiming.detail_ms) || 0,
-          stock_ms: Number(saleTiming.stock_ms) || 0,
-        });
-        if (!result.ok) {
+                if (!result.ok) {
           // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）抛错** ⇒ 如实说"半成"。
           //    🔴 判据用的是**既有**那一条：会话里已经落了主表 record_id（= 重试接着写的那条判据，
           //       见 `scanWriteService.submitSale` 里"建完立刻把 record_id 落进会话"那段）。

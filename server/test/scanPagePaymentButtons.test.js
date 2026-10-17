@@ -22,6 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { SCAN_PAGE } = require('../src/config/scanPage');
 
 const rel = (p) => path.join(__dirname, '..', p);
 const read = (p) => fs.readFileSync(rel(p), 'utf8');
@@ -49,15 +50,66 @@ const stripComments = (text) => String(text)
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n');
 
-// ── AC-PB1：资金页**恰好两颗**（提交 / 跳过）·「补整单付款」不许出现 ──────────────
-test('AC-PB1 ⭐⭐ 资金页恰好两颗可提交按钮（提交 / 跳过），**不许**出现「补整单付款」', () => {
+// ── AC-PB1：资金页**只有一颗**提交（「跳过」整块删）＋「＋ 再加一种付款方式」──────────
+test('AC-PB1 ⭐⭐ 资金页只有一颗提交按钮；「跳过」整块删；加行钮是 type="button"', () => {
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）· 她逐字「**去「跳过」**」：
+  //   改前逐字：`assert.ok(block.includes('step.skipButton'), '次按钮 = \`step.skipButton\`（跳过…）✓');`
+  //   改后逐字：**`step.skipButton` 一处都不许有**（反向哨兵）＋ 新增「＋ 再加一种付款方式」
+  //     且它必须是 `type="button"`（**不在提交链上** ⇒ 加行不写库 ✓）
+  //   依据 = 业务负责人 2026-10-17 逐字：「**默认一行 ＋ ＋ 再加一种付款方式 ＋ 默认微信 ＋ 去「跳过」**」
   const block = moneyStepBlock(RENDERER);
   assert.ok(block.includes('step.payButton'), '主按钮 = `step.payButton`（提交整单付款）✓');
-  assert.ok(block.includes('step.skipButton'), '次按钮 = `step.skipButton`（跳过…）✓');
+  assert.equal(block.includes('step.skipButton'), false,
+    '🔴「跳过」不许回来（她 2026-10-17：去「跳过」✗）');
+  assert.ok(block.includes('data-payment-add'), '要有「＋ 再加一种付款方式」的钩子 ✓');
+  assert.ok(/type="button"[^>]{0,80}data-payment-add|data-payment-add[^>]{0,80}type="button"/.test(block),
+    '加行钮必须是 `type="button"`（提交链之外 ✗ 否则点一下就把整单交了 ✗）');
   assert.ok(!block.includes('fillPaymentButton'), '资金页**不许**再渲染 `fillPaymentButton` ✗（塞回 ⇒ 本判据红 ✓）');
-  // 能真红：把那一行按改前逐字塞回资金页那段 ⇒ 上一句必红 ✓
-  const putBack = `${block}<p><a class="btn btn--primary" href="/workbench">${'fillPaymentButton'}</a></p>`;
-  assert.ok(putBack.includes('fillPaymentButton'), '（塞回去后确实命中 ⇒ 判据会红 ✓）');
+
+  // ⭐ 渲染级：真把资金页画出来，确认上面那几条不是只写在源码里
+  const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
+  const html = renderSalePaymentStepPage({
+    write: {
+      texts: {}, fields: {},
+      paymentRows: [{ method: '微信', amount: '' }],
+      paymentMethods: ['微信', '现金'], defaultPaymentMethod: '微信',
+    },
+    orderNo: 'XSD-TEST-1', postAction: '/s/TEST', submitKey: 'k', count: 1,
+  });
+  assert.ok(html.includes('data-view="payment-pay"'), '提交表单要在 ✓');
+  assert.ok(html.includes('data-payment-add'), '渲染出来的页面上要有加行钮 ✓');
+  assert.ok(html.includes('data-view="payment-add-row"'), '加行脚本要在（点了真能加一行 ✓）');
+  // ⚠️ **结构性**断言（不按"页面里有没有那两个字"判 —— 历史 HTML 注释里也引用了它们 ✓）：
+  assert.equal((html.match(/<button type="submit"/g) || []).length, 1,
+    '🔴 资金页**只有一颗**提交按钮（`type="submit"` 在脚本里也出现，故按 `<button` 数 ✓）');
+  assert.equal(html.includes('value="payment_skip"'), false,
+    '🔴 那张 `payment_skip` 表单不许回来（反向哨兵 ✗）');
+  assert.equal(html.includes(`>${SCAN_PAGE.paymentStep.skipButton}<`), false,
+    '🔴「跳过」那颗按钮不许回来（她 2026-10-17 ✗）');
+
+  // 能真红：把改前那一行按原样塞回资金页那段 ⇒ 第一条必红 ✓
+  const putBack = `${block}${'<button>' + 'step.' + 'skipButton</button>'}`;
+  assert.ok(putBack.includes('step.skipButton'), '（塞回去后确实命中 ⇒ 判据会红 ✓）');
+});
+
+// ── AC-PB5：资金页**显示总金额**（她 2026-10-17 逐字要的）──────────────────
+test('AC-PB5 ⭐⭐ 资金页显示「总金额」（调用方给；拿不到就不渲染 —— 不编）', () => {
+  const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
+  const base = {
+    write: {
+      texts: {}, fields: {},
+      paymentRows: [{ method: '微信', amount: '' }],
+      paymentMethods: ['微信'], defaultPaymentMethod: '微信',
+    },
+    orderNo: 'XSD-TEST-1', postAction: '/s/TEST', submitKey: 'k', count: 1,
+  };
+  const withTotal = renderSalePaymentStepPage({ ...base, totalAmountText: '399.5' });
+  assert.ok(withTotal.includes('data-view="payment-step-total"'), '总金额那一行要在 ✓');
+  assert.ok(withTotal.includes('总金额 ￥399.5'), '文案 = 配置里那句（`totalLabel`）＋ 金额 ✓');
+  // 拿不到 ⇒ **不渲染那一行**（不编 ✗）
+  const withoutTotal = renderSalePaymentStepPage(base);
+  assert.equal(withoutTotal.includes('data-view="payment-step-total"'), false,
+    '拿不到总金额 ⇒ 不渲染（不编 ✗）');
 });
 
 // ── AC-PB2：成功页那颗**已整颗删掉**（成功页 = 零链接 ✗）─────────────────────────

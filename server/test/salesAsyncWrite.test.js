@@ -398,7 +398,15 @@ test('AC-AS10 ⭐ 两步走不冲突：① 点提交 ⇒ **零写入**；② 点
       }).toString(),
     });
     assert.equal(first.status, 200, '第一步照旧 200（只到资金页 ✓）');
-    assert.deepEqual(calls, [], '第一步：写服务**一次都没进**（零写入 ✓）');
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：assert.deepEqual(calls, [], '第一步：写服务**一次都没进**（零写入 ✓）');
+    //   改后逐字：assert.equal(calls.length, 1, '第一步：写服务**恰进 1 次**（④ 后：就是【货】那一跑 ✓）');
+    assert.equal(calls[0] && calls[0].deferFunds, true, '那一次必须是**货那一跑**（`deferFunds: true` ✓）');
+    assert.deepEqual(calls[0] && calls[0].payments, [], '货那一跑**不带收款**（`payments: []` ✓）');
+    //   依据 = ④ 口径（点提交就建【货】那一单）＋ 她 22:5x「把新功能都上了，不需要开关」✓
+    assert.equal(calls.length, 1, '第一步：写服务**恰进 1 次**（④ 后：就是【货】那一跑 ✓）');
+    assert.equal(calls[0] && calls[0].deferFunds, true, '那一次必须是**货那一跑**（`deferFunds: true` ✓）');
+    assert.deepEqual(calls[0] && calls[0].payments, [], '货那一跑**不带收款**（`payments: []` ✓）');
 
     // ② 第二步：点资金页按钮 ⇒ 单号先出 + 那一次写服务调用
     await sessions.saveSaleProgress(OPEN_ID, {
@@ -412,9 +420,14 @@ test('AC-AS10 ⭐ 两步走不冲突：① 点提交 ⇒ **零写入**；② 点
       body: payBody(),
     });
     assert.equal(second.status, 200, '第二步 ⇒ 200 ✓');
-    assert.equal(calls.length, 1, '第二步：写入口恰一次 ✓');
+    // 成对迁移：改前逐字 `assert.equal(calls.length, 1, '第二步：写入口恰一次 ✓');` ⇒ ④ 后两跑各一次（货＋钱）＝ 恰 2 次 ✓（依据 = ④ 货/钱分离口径）
+    assert.equal(calls.length, 2, '第二步：写入口恰 2 次（第一步货那一跑 ＋ 第二步钱那一跑 ✓）');
     assert.equal(calls[0].openId, OPEN_ID, '入参照旧（老形状 ✓）');
-    assert.ok((await second.text()).includes(`本单已创建成功（${ORDER_NO}）`), '第二步页面 = 那一句 ✓');
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：assert.ok((await second.text()).includes(`本单已创建成功（${ORDER_NO}）`), '第二步页面 = 那一句 ✓');
+    //   改后逐字：assert.ok((await second.text()).includes(ORDER_NO), '结果页上看得到单号（她 23:5x「我肯定能看到这个单号呀」✓）');
+    //   依据 = ④ 口径（点提交就建【货】那一单）＋ 她 22:5x「把新功能都上了，不需要开关」✓
+    assert.ok((await second.text()).includes(ORDER_NO), '结果页上看得到单号（她 23:5x「我肯定能看到这个单号呀」✓）');
   });
 });
 

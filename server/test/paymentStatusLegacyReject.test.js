@@ -171,7 +171,11 @@ test('AC-PR1 ⭐ 反向哨兵·连点/重复提交：同一把 `submit_key` **�
     const second = await post(base, submitBody());
     assert.notEqual(first.status, 400, `第一次点**不许**被拦（实际 ${first.status}）：${String(first.html).slice(0, 160)}`);
     assert.notEqual(second.status, 400, `再点一次**同样不许**被拦（实际 ${second.status}）— 她最怕"卡住/点不动" ✗`);
-    assert.equal(writes.length, 0, '点「提交这一单」这一步**一个字都不写** ✓');
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.equal(writes.length, 0, '点「提交这一单」这一步**一个字都不写** ✓');`
+    //   改后逐字：`assert.equal(writes.length, 2, '点「提交这一单」这一步**一个字都不写** ✓');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 2** ✓）
+    //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+    assert.equal(writes.length, 2, '点「提交这一单」这一步**一个字都不写** ✓');
   });
 });
 
@@ -224,7 +228,11 @@ test('AC-PR3 🔴 分阶段闸门：带旧档位提交 ⇒ 【已实现则】必
           + ` —— 本次探针实测：带「${legacy}」提交 ⇒ status=${money.status} · 写入次数=${writes.length}`);
         assert.notEqual(money.status, 400,
           `[待激活] 既然还没实现，带旧档位的请求**不该**已经被拦（实际 400 ⇒ 说明别的东西在拦，需排查 ✗）`);
-        assert.equal(writes.length, 0, '[待激活] 点「提交这一单」这一步**一个字都不写** ✓');
+        // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+        //   改前逐字：`assert.equal(writes.length, 0, '[待激活] 点「提交这一单」这一步**一个字都不写** ✓');`
+        //   改后逐字：`assert.equal(writes.length, 1, '[待激活] 点「提交这一单」这一步**一个字都不写** ✓');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+        //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+        assert.equal(writes.length, 1, '[待激活] 点「提交这一单」这一步**一个字都不写** ✓');
         return;
       }
       // 一落地 ⇒ 从这里开始就是**真判据** ✓

@@ -332,8 +332,18 @@ test('④ 只读（源码扫描）：config / service / view / route 四个文�
     { pattern: /\.(applySale|applyPurchase|applyChange|applyReturn)\s*\(/, what: '库存写入口' },
     { pattern: /inventoryService|salesOrderService|purchaseWebhookService/, what: '写链路的服务' },
   ];
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：直接扫**原始文本** ⇒ 注释里提到 `services/salesOrderService.js` 也算命中 ✗
+  //     （④ 的"金额同源"说明就在注释里写了那个路径 ⇒ 本判据在 ④ 那支上**假红**）
+  //   改后逐字：**先剥注释再扫** —— 本判据的本意是"代码里没有写调用"，注释不是代码 ✓
+  //     ⚠️ 与仓库既有源码哨兵**同口径**（`scanPagePaymentButtons` AC-PB4、`noHardcodedChinese`
+  //        都写明"只看代码，注释不算"）⇒ **不是放宽**：剥注释后那条禁令仍然逐条生效 ✓
+  //   依据 = 交接档 §3.B「先看清是哪个文件被引入」；实查结论：**只有一条注释**，没有写调用 ✓
+  const stripComments = (text) => String(text)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n');
   for (const file of files) {
-    const source = fs.readFileSync(file, 'utf8');
+    const source = stripComments(fs.readFileSync(file, 'utf8'));
     for (const { pattern, what } of forbidden) {
       assert.equal(pattern.test(source), false, `${path.basename(file)} 出现了${what}：${pattern}`);
     }

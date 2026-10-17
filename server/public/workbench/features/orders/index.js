@@ -830,7 +830,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   function renderList() {
     state.order = null;
     const host = $('[data-view="orders-host"]');
-    // 三份单子（补充信息单 ｜ 待交割单 ｜ 售后列表）—— 她的口径，见 config/orders.js 的 SALES_SECTIONS。
+    // 两段（待交割单 ｜ 售后列表）—— 她的口径，见 config/orders.js 的 SALES_SECTIONS。
     if (host) host.innerHTML = `${state.refreshing ? '<p class="orders-refreshing">刷新中…</p>' : ''}${!state.refreshing && state.refreshError ? '<p class="orders-refreshing orders-refreshing--error">刷新失败，先看的是上次的结果</p>' : ''}` + ordersSectionsHtml(state.orders, { openSections: state.openSections });
   }
 

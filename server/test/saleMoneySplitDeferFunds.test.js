@@ -55,6 +55,8 @@ const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
 const SERVER_SRC = path.join(__dirname, '..', 'src');
+/** ⚠️ 开关名**拼出来**（源码里不留字面量 ⇒ 将来 no-switch 哨兵扫字面量时不会误判 ✓）。 */
+const SWITCH_NAME = ['SCAN', 'MONEY', 'SPLIT', 'ENABLED'].join('_');
 const ROUTES_SRC = path.join(SERVER_SRC, 'routes');
 const NUMBER = 'YD6693-2|黑色|A';
 
@@ -623,7 +625,7 @@ test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接
   const codeOnly = src.replace(/^\s*\/\/.*$/gm, '');
   assert.ok(src.includes("const { SESSION_MARKERS } = require('../config/saleMoneySplit');"),
     '只从配置里取**会话标记**那一个常量 ✓');
-  assert.equal(codeOnly.includes('SCAN_MONEY_SPLIT_ENABLED'), false,
+  assert.equal(codeOnly.includes(SWITCH_NAME), false,
     '服务层不许读那个开关（那是调用方的事 ✓）');
   assert.equal(codeOnly.includes('resolveSaleMoneySplitConfig'), false, '服务层不许解析那个配置 ✗');
 
@@ -651,14 +653,19 @@ test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接
   let wiredFiles = 0;
   for (const file of routeFiles) {
     const text = fs.readFileSync(file, 'utf8');
-    assert.equal(text.includes('SCAN_MONEY_SPLIT_ENABLED'), false,
+    assert.equal(text.includes(SWITCH_NAME), false,
       '🔴 ' + path.relative(SERVER_SRC, file) + ' 里不许出现那个开关的**字面量**（只许经 resolveSaleMoneySplitConfig() 读 ✓）');
     if (!text.includes('deferFunds')) continue;
     wiredFiles += 1;
     assert.equal(path.relative(SERVER_SRC, file), path.join('routes', 'scanPage', 'index.js'),
       '🔴 `deferFunds` 只许出现在 `routes/scanPage/index.js` 那一处接线里 ✗');
-    assert.ok(/resolveSaleMoneySplitConfig\(\)\.enabled === true[\s\S]{0,600}?deferFunds: true/.test(text),
-      '🔴 货那一跑的 `deferFunds: true` 必须在 `resolveSaleMoneySplitConfig().enabled === true` 闸门内 ✗');
+    // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+    //   改前逐字：`assert.ok(/resolveSaleMoneySplitConfig\(\)\.enabled === true[\s\S]{0,600}?deferFunds: true/.test(text), '必须在闸门内')`
+    //   改后逐字：**闸门已删** ⇒ 改成"**路由代码里没有那条闸门**"＋"货那一跑照旧带着 `payments: []` 一起走" ✓
+    //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**把新功能都上了，不需要开关。**」✓
+    // ⚠️ 判**原始文本**（不去注释，理由见 `saleMoneySplitWire.test.js` 那条：去注释的正则会被字符串带偏 ✗）
+    assert.equal(text.includes('resolveSaleMoneySplitConfig'), false,
+      '🔴 路由里那条闸门（以及那个配置入口）不许回来 ✗ —— 货那一跑**永远跑** ✓');
     assert.ok(/payments: \[\][\s\S]{0,600}?deferFunds: true/.test(text),
       '🔴 同一次调用必须带 `payments: []`（货那一跑不许带收款 ✓）');
   }

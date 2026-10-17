@@ -266,11 +266,37 @@ const submitFeedbackAttrs = (writeLike = {}) => {
     + ` data-submitting-elapsed="${escapeHtml(texts.submitSubmittingElapsed || '')}"`;
 };
 
+/**
+ * ⭐⭐ 2026-10-17 C（业务负责人逐字：「**默认一行 ＋ ＋ 再加一种付款方式**」）：
+ *   点一下 ⇒ **克隆最后一行收款**并清空值（方式回到"不记"、金额清空）。
+ *   **纯前端**：不提交、不发请求、不写库 ✓（这一颗是 `<button type="button">`，不在提交链上 ✓）。
+ *   ⚠️ 只有页面真有 `data-payment-add` 时才注入（否则一个字节都不多 ✓）。
+ */
+const paymentAddRowScriptHtml = () => `<script data-view="payment-add-row">
+(function(){
+  var btns = document.querySelectorAll('[data-payment-add]');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].addEventListener('click', function(){
+      var rows = document.querySelectorAll('.form-row--pay');
+      if (!rows.length) return;
+      var last = rows[rows.length - 1];
+      var clone = last.cloneNode(true);
+      var selects = clone.querySelectorAll('select');
+      for (var s = 0; s < selects.length; s++) { selects[s].value = ''; }
+      var inputs = clone.querySelectorAll('input');
+      for (var n = 0; n < inputs.length; n++) { inputs[n].value = ''; }
+      last.parentNode.insertBefore(clone, last.nextSibling);
+    });
+  }
+})();
+</script>`;
+
 module.exports = {
   submitSubmittingText,
   submitSubmittingElapsedText,
   annotateScriptHtml,
   submitFeedbackScriptHtml,
   realmScanScriptTagHtml,
+  paymentAddRowScriptHtml,
   submitFeedbackAttrs,
 };

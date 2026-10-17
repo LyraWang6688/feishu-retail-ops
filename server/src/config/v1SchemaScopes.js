@@ -5,7 +5,16 @@ const V1_SCHEMA_SCOPES = {
   //    `v1:schema-check:all` 直接判红（TableIdNotFound 1254041）。
   //    售后 prepaid 通路随之下线（见 services/afterSalesService.assertPrepaidAvailable）；
   //    等她定了「已留存」的新落点，把新表加回这个列表即可。
-  sales: ['product', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord'],
+  // ⭐⭐ 2026-10-17（业务负责人指令）：「**把 2、3、17 加进 sales 闸门范围**」——
+  //   2 = 颜色管理（`color`）· 3 = 品类管理（`category`）· 17 = 付款明细（`paymentDetail`）。
+  //   为什么：这三张之前**不在任何 scope** ⇒ 表被删 / 漏配时 `v1:schema-check` **不会红**（运行时才炸）。
+  //   ⚠️ `paymentDetail` 的 `fields` 仍是空的 ⇒ 闸门**只验"这张表在不在"**，不验列（列她还没定）。
+  //   ⚠️ `color` / `category` 在 `product` 里是**关联字段** ⇒ 本闸门会去查它们**自己的字段名**；
+  //      `product.颜色/类别` 这两个字段的**存在性**仍由 `validateTable('product')` 钉着 ✓
+  // ⭐ 2026-10-17（同一条指令的追加）：「**团购券管理这个数据表也需要**」——
+  //   它原来刻意不进闸门（"可选项不拦部署"），现在**进 sales**；schema 里有 5 个字段映射
+  //   （券名称 / 售价 / 面值 / 平台结算款 / 销售状态）⇒ 闸门会**逐字段**验 ✓
+  sales: ['product', 'color', 'category', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord', 'paymentDetail', 'groupBuyVoucher'],
   purchase: [
     'product',
     'supplier',
@@ -15,9 +24,8 @@ const V1_SCHEMA_SCOPES = {
     //    留着它 = 部署闸门去问一张不存在的表、`v1:schema-check:all` 持续判红（就是本次要修的那件事）。
     'purchaseRequest',
     'purchaseOrderBatch',
-    // ⚠️ 2026-10-09 新表「付款明细」**刻意不在这里**：真表只有主字段「文本」、
-    //    一个业务列都还没有 ⇒ 现在纳入闸门只会把"她还在建表"变成部署红
-    //    （与 `groupBuyVoucher` 同一处置）。等她定了列再决定进不进这一档。
+    // ⚠️ 2026-10-09 新表「付款明细」曾**刻意不在这里**（真表只有主字段「文本」、无业务列）；
+    //    ⭐ 2026-10-17 她已指令把它纳入 **sales**（只验表存在、不验列）⇒ 见 sales 那段注释 ✓
     // ⚠️ `purchaseArrival`（「到货验收」）已从 schema 与这里**一并删除**（2026-10-07 晚）：
     //    业务负责人把那张表整个删了，到货落点搬到「报货批次」。
     //    留着它 = 部署闸门 `v1:schema-check:purchase` 去问一张不存在的表，直接判红。

@@ -116,6 +116,14 @@ const renderScanMessagePage = ({
   // ⭐⭐ 2026-10-16（task-52 收尾 · 成功页统一极简）：配置源（缺省 = `config/scanSuccessPage.js` ✓）
   //    判据可直接注入 `{ minimalEnabled: true, minimalText: '…' }` ⇒ 不必改 env ✓
   successPage = null,
+  // ⭐⭐ 2026-10-17 02:5x **成对迁移（补上缺失的消费者）· 改前逐字 → 改后逐字 → 依据**：
+  //   改前逐字：参数表里**没有 `order_no`** ✗ ⇒ 路由 payload 里的 `order_no`（`routes:2732` ✓）
+  //     被**静默丢掉** ⇒ 成功页上**看不到单号** ✗（她 23:5x 逐字：「**那我肯定能看到这个单号呀**」✓）
+  //   改后逐字：⭐ **收下它** ✓（`order_no` 就是 `routes:965` 那个 `payload` 的键 ✓ 原样传进来的 ✓）
+  //     ＋ ⭐ 在**极简覆盖之外**渲染一行**纯文案** ✓（否则会被 `minimalSuccessOverrides` 吃掉 ✗ —— 实测 ✓）
+  //   依据 = 她 2026-10-16 23:5x「**那我肯定能看到这个单号呀**」＋「**就一页、没有按钮没有链接、
+  //         也不自动跳（你得自己点返回），按照这个，保持现状**」✓（两句要**同时**满足 ✓）
+  order_no = '',
 }, config = SCAN_PAGE) => {
   // ⭐ **只在成功页**上套用；**开关关着 ⇒ minimal = {} ⇒ 下面每一处都逐字不变** ✓（零回归 ✓）
   const minimal = tone === 'success' ? minimalSuccessOverrides(successPage || SCAN_SUCCESS_PAGE) : {};
@@ -124,6 +132,20 @@ const renderScanMessagePage = ({
     returnPath, returnLabel, returnDelaySeconds, autoReturnUrl, extraActionsHtml,
     ...minimal,
   };
+  // ⭐⭐ 单号那一行（**极简覆盖之外** ✗ ⇒ 不会被吃掉 ✓）：
+  //   · ⭐ **号非空才出现** ✓（空 ⇒ 整行不出现 ✗ **不显示空括号** ✓）
+  //   · ⭐ **纯文案**（无 `<a>` / 无按钮 / 无跳转 ✓ —— 零链接零按钮零自动跳是她定的 ✓）
+  //   · ⭐ **文案走 config** ✗（模板里不写中文 ✓）—— ⭐ 取自 **`SCAN_SUCCESS_PAGE.orderNoText`** ✓
+  //     （⭐ **不读 `config.texts.…`** ✗：这文案属于**成功页**那份配置 ✓、与 `minimalSuccessOverrides` 同一个家 ✓
+  //       ⇒ ⭐ **不必动 `config/scanPage.js`** ✓ 依据 = 她 23:5x「那我肯定能看到这个单号呀」✓）
+  //   · ⭐ **键缺省为空 ⇒ 整行不出现** ✓（向后兼容 ✓ 且"没有号"时**逐字节不变** ✓ —— 判据 `AC-REG1` 锁着 ✓）
+  const orderNoNotice = String(order_no || '').trim();
+  const orderNoTemplate = String((successPage || SCAN_SUCCESS_PAGE).orderNoText || '').trim();
+  const orderNoHtml = tone === 'success' && orderNoNotice && orderNoTemplate
+    ? `<p class="foot" data-view="success-order-no">${escapeHtml(
+      orderNoTemplate.replace(/\{orderNo\}/g, orderNoNotice),
+    )}</p>`
+    : '';
   return renderDocument({
   title,
   config,
@@ -140,7 +162,7 @@ ${tone === 'success' ? '<p class="state-msg__mark" aria-hidden="true">✅</p>' :
 <h1${tone === 'success' ? ' class="state-msg__title--success"' : ''}>${escapeHtml(title)}</h1>
 <p>${escapeHtml(eff.body)}</p>
 ${eff.details.length ? `<ul class="result">${eff.details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
-${eff.number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(eff.number)}</span></p>` : ''}
+${eff.number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(eff.number)}</span></p>` : ''}${orderNoHtml}
 ${eff.retryHint ? `<p class="hint">${escapeHtml(eff.retryHint)}</p>` : ''}
 ${eff.backPath && eff.backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(eff.backPath)}">${escapeHtml(eff.backLabel)}${eff.backHint ? `<span>${escapeHtml(eff.backHint)}</span>` : ''}</a>` : ''}
 ${eff.returnPath && eff.returnLabel ? `<a class="btn" data-view="success-return" href="${escapeHtml(eff.returnPath)}">${escapeHtml(eff.returnLabel)}</a>` : ''}
@@ -182,6 +204,8 @@ const renderSalePaymentStepPage = ({
   // ⭐⭐ 2026-10-14（她：**点资金页按钮才建单**）：结算校验没过时**原地重渲染这一页**并把这句人话带回来 ✓
   //   （文案由**调用方**给 —— 用的是既有那几条文案真源 ✓ 这里只负责画 ✗ 不新造中文 ✓）
   notice = '',
+  // ⭐ 2026-10-17 E：**总金额**（调用方给；空串 ⇒ 这一行不渲染 —— 不编 ✓）
+  totalAmountText = '',
 } = {}) => {
   const step = { ...(config.paymentStep || {}) };
   const t = (write && write.texts) || {};
@@ -192,12 +216,20 @@ const renderSalePaymentStepPage = ({
   // ⭐ 2026-10-16 A2a：**三档那一块不再渲染**（`paymentStatusHtml` 已退场 ✓ 见上面那条注释）——
   //    资金页现在只剩：**收款行**（`paymentRowsHtml`）＋ 赠品 ✓；档位由金额自动定（路由那一步 ✓）。
   const rowsBlock = paymentRowsHtml(write);
+  // ⭐⭐ 2026-10-17 C（她逐字：「默认一行 ＋ ＋ 再加一种付款方式」）：
+  //   加行 = **纯前端**（`data-payment-add`，克隆最后一行并清空值）——不提交、不写库 ✓。
+  //   ⚠️ 文案走配置（`step.addRowButton`）；不写死中文 ✗。
+  // ⭐⭐ 2026-10-17 C（她逐字：「**去「跳过」**」）：原来第二张表单（skipAction / skipButton）
+  //   **整块删** ✗ —— 资金页现在只有一颗「提交整单付款」；不填金额直接提交 = 未付 ✓。
+  //   重复提交仍说「这一单刚才已经交过了」（pay 分支 `paidReused` 已对齐 skip 口径 ✓）。
+  //   反向哨兵：`test/scanPagePaymentButtons.test.js` AC-PB1。
+  const addRowButtonHtml = `<button type="button" class="btn" data-payment-add>${escapeHtml(step.addRowButton || '')}</button>`;
   const giftFieldHtml = `<div class="form-row"><label>${escapeHtml(t.giftLabel || '')}</label><input name="${escapeHtml(fields.gift || 'gift')}"></div>`;
   // ⭐⭐ 2026-10-13 结构重排（**行为不变**）：三件套（三档 / 收款行 / 赠品）先攒成一块，
   //    由 `payForm` 统一放进"提交整单付款"那张表单里（**在表单外就是"提交上去什么都没有"** ✗）。
   //    ⚠️ 还没配 `payAction` 时 ⇒ 退化成原来那个 `<div class="payment-step">`（逐字同形 ✓ 不吃亏 ✓）
   //    ⭐ 2026-10-16 A2a：三件套里的**「三档」那件已退场** ⇒ 现在只有**收款行 + 赠品** ✓
-  const paymentFieldsHtml = `${rowsBlock}${giftFieldHtml}`;
+  const paymentFieldsHtml = `${rowsBlock}${addRowButtonHtml}${giftFieldHtml}`;
   const payForm = (postAction && step.payAction)
     ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay">
 <input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.payAction)}">
@@ -217,6 +249,9 @@ ${paymentFieldsHtml}
     content: `<section class="card state-msg" data-view="payment-step">
 <h1>${escapeHtml(step.heading)}</h1>
 ${orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : ''}
+${String(totalAmountText || '').trim()
+    ? `<p class="foot" data-view="payment-step-total">${escapeHtml(fillText(step.totalLabel || '', { amount: String(totalAmountText).trim() }))}</p>`
+    : ''}
 <p class="hint">${escapeHtml(step.pendingNote || '')}</p>
 ${String(notice || '').trim()
     // 🔴 2026-10-16 P0：拦下的原因**必须醒目**（她真机"看着像坏了"✗）——从 `hint`（小字）
@@ -224,18 +259,6 @@ ${String(notice || '').trim()
     ? `<p class="hint" role="alert" data-emphasis="alert" data-view="payment-step-notice">${escapeHtml(String(notice).trim())}</p>`
     : ''}
 ${payForm}
-<!-- 🔴 2026-10-16（她逐字：「资金页上……那三处提示【全删】……全删就对了」）：
-     原来这里还有一句工作台提示（step.workbenchHint）——**整句删** ✗（键也一起删了 ✓）。 -->
-<!-- 🔴 2026-10-16（她逐字：「资金页实际上就应该有两个按钮」= 提交 / 跳过）⇒ **资金页不再渲染
-     那颗跳工作台的链接** ✗（她把它误读成第三种付款方式）——补收款去成功页那颗 ✓ -->
-${postAction ? `<form method="post" action="${escapeHtml(postAction)}">
-<input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.skipAction)}">
-${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'submit_key')}" value="${escapeHtml(submitKey)}">` : ''}
-<input type="hidden" name="order_no" value="${escapeHtml(orderNo)}">
-<input type="hidden" name="count" value="${escapeHtml(String(count))}">
-${reused ? '<input type="hidden" name="reused" value="1">' : ''}
-<button type="submit" class="btn"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.skipButton)}</button>
-</form>` : ''}
 </section>`,
   });
 };

@@ -23,7 +23,7 @@
 .order-group-head .muted { font-size: var(--font-size-xs); }
 .order-group .empty.compact { margin: 0; }
 
-/* ⭐ 三份单子（补充信息单 ｜ 待交割单 ｜ 售后列表）：一列到底（标题 + 卡片），
+/* ⭐ 两段（待交割单 ｜ 售后列表）：一列到底（标题 + 卡片），
    窄屏不横向滚动；「待交割单」里再按既有的三类细分展示。 */
 .orders-sections { display: grid; gap: var(--space-6); min-width: 0; }
 .order-section { display: grid; gap: var(--space-3); min-width: 0; }

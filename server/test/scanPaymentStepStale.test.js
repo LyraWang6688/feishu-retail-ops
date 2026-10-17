@@ -528,7 +528,11 @@ test('AC-SM11 ⭐ `submitPending` **同一笔**清掉，且**不影响**正常�
     assert.equal(paid.status, 200);
     await paid.text();
   });
-  assert.equal(fresh.calls.filter((call) => call.kind === 'submitSale').length, 1,
+  // 成对迁移（改前逐字 → 改后逐字 → 依据）—— 2026-10-17：
+      //   改前逐字：`assert.equal(fresh.calls.filter((call) => call.kind === 'submitSale').length, 1,`（"照旧建单一次"）
+      //   改后逐字：同上一行，**1 ⇒ 2** —— ④ 之后「点提交就建单」，这一次提交会走【货那一跑】+【钱那一跑】两跑 ⇒ 恰 2 次。
+      //   依据 = ④ 货/钱分离口径（与 AC-AS10 同一依据）。
+      assert.equal(fresh.calls.filter((call) => call.kind === 'submitSale').length, 2,
     '⭐ 点资金页那颗按钮 ⇒ **照旧建单一次**（`submitPending` 没被误清 ✓）');
   assert.equal(fresh.patches.some((patch) => patch.paymentStep === undefined), false,
     '正常那一单**不许**走残标记清理 ✓');

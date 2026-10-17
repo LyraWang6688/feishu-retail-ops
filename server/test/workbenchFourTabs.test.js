@@ -574,13 +574,17 @@ test('AC2c 领域骨架只接线：不发请求 / 不写库 / 不出现 data-sub
   assert.ok(checked > 30, `只核到 ${checked} 条相对 import，walk 大概坏了`);
 });
 
-test('AC2d 订单列表的三份单子：补充信息单 / 待交割单 / 售后列表（判据只用既有字段）', async () => {
+test('AC2d 订单列表的两段：待交割单 / 售后列表（判据只用既有字段）', async () => {
   const modules = loadFrontendModules();
   const [frontConfig, orders] = await Promise.all([modules.ordersConfig, modules.orders]);
 
+  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）· 她逐字：
+  //   「销售订单列表里**已经没有**所谓的"待补充信息"了，**只保留二次交割以及售后**」
+  //   改前逐字：三份 `[['supplement','补充信息单'],['pending','待交割单'],['afterSales','售后列表']]`
+  //   改后逐字：两段（缺信息的单并入**待交割**）—— **不是放宽**：覆盖仍然不重不漏 ✓
   assert.deepEqual(frontConfig.SALES_SECTIONS.map((section) => [section.key, section.label]), [
-    ['supplement', '补充信息单'], ['pending', '待交割单'], ['afterSales', '售后列表'],
-  ], '三份单子与顺序 = 业务负责人 2026-10-09 给的那一行');
+    ['pending', '待交割单'], ['afterSales', '售后列表'],
+  ], '两段与顺序 = 业务负责人 2026-10-17 口径');
 
   // ⭐ 2026-10-11（业务负责人 2026-10-09 的新判据）：**校验项只有两个**
   //    ① 货品信息（明细的 货号 / 颜色 / 尺码）② 资金信息（收款方式 + 至少一笔收款记录）。
@@ -600,15 +604,15 @@ test('AC2d 订单列表的三份单子：补充信息单 / 待交割单 / 售后
   assert.equal(orders.salesSectionOf({ ...base, fulfillment_status: '已交付', payment_status: '已收款' }), 'afterSales');
   // 两个校验项齐、但货 / 钱没结清 → 待交割单
   assert.equal(orders.salesSectionOf(base), 'pending');
-  // 缺**货品信息**（缺颜色 / 缺编号 / 缺尺码）→ 补充信息单
-  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], color: '' }] }), 'supplement');
-  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], product: '' }] }), 'supplement');
-  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], size: null }] }), 'supplement');
-  // 缺**资金信息**（一条收款记录都没有 / 只有没有收款方式的"未收款"）→ 补充信息单
-  assert.equal(orders.salesSectionOf({ ...base, payments: [] }), 'supplement');
+  // 缺**货品信息**（缺颜色 / 缺编号 / 缺尺码）→ **待交割单**（2026-10-17 起：并入待交割）
+  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], color: '' }] }), 'pending');
+  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], product: '' }] }), 'pending');
+  assert.equal(orders.salesSectionOf({ ...base, details: [{ ...base.details[0], size: null }] }), 'pending');
+  // 缺**资金信息**（一条收款记录都没有 / 只有没有收款方式的"未收款"）→ **待交割单**
+  assert.equal(orders.salesSectionOf({ ...base, payments: [] }), 'pending');
   assert.equal(orders.salesSectionOf({
     ...base, payments: [{ record_id: 'p2', amount: 139, status: '未收款', method: '' }],
-  }), 'supplement');
+  }), 'pending');
   // ⭐ 配品行（`requires_size === false`）**不算缺货品信息**：它的编号/颜色/尺码本来就是留空的
   const accessoryLine = {
     record_id: 'd_acc', requires_size: false, product: '', color: '', size: null,
@@ -620,13 +624,13 @@ test('AC2d 订单列表的三份单子：补充信息单 / 待交割单 / 售后
     ...base, details: [accessoryLine], fulfillment_status: '已交付', payment_status: '已收款',
   }), 'afterSales', '纯配品单钱货两清 ⇒ 售后列表');
 
-  // 三份单子**不重不漏**：一份一份渲染出来，条数加总 = 全部
+  // 两段**不重不漏**：一份一份渲染出来，条数加总 = 全部
   const list = [
     base, { ...base, record_id: 'o2', fulfillment_status: '已交付', payment_status: '已收款' },
     { ...base, record_id: 'o3', details: [{ ...base.details[0], color: '' }] },
   ];
   const html = orders.ordersSectionsHtml(list);
-  for (const key of ['supplement', 'pending', 'afterSales']) {
+  for (const key of ['pending', 'afterSales']) {
     assert.ok(html.includes(`data-sales-section="${key}"`), `缺 ${key} 这一段`);
   }
   // 每一段的条数（只看**段头**那一个 `N 单`；待交割单里面还有三类小标题，别数错）
@@ -634,15 +638,16 @@ test('AC2d 订单列表的三份单子：补充信息单 / 待交割单 / 售后
   //    `· N 单` 因此变成 `N 单`（**只改格式，条数的判据一个字没放宽**）。
   const counts = html.split('data-sales-section="').slice(1)
     .map((chunk) => Number((chunk.match(/(\d+) 单/) || [])[1]));
-  assert.deepEqual(counts, [1, 1, 1], '每一段各一单（不重不漏）');
-  // ⭐ 三份单子各带一个**彩色小标签**（她 2026-10-09：状态用彩色小标签）
-  assert.deepEqual(frontConfig.SALES_SECTIONS.map((section) => section.tag), ['待补充', '待交割', '已两清']);
-  for (const tag of ['待补充', '待交割', '已两清']) {
+  // ⭐ 2026-10-17：o3（缺颜色）与 base 都并入**待交割** ⇒ 2 单；o2 钱货两清 ⇒ 1 单
+  assert.deepEqual(counts, [2, 1], '两段条数（不重不漏：3 单全落在这两段里）');
+  // ⭐ 两段各带一个**彩色小标签**
+  assert.deepEqual(frontConfig.SALES_SECTIONS.map((section) => section.tag), ['待交割', '已两清']);
+  for (const tag of ['待交割', '已两清']) {
     assert.ok(new RegExp(`class="tag[^"]*"[^>]*>\\s*${tag}`).test(html), `段头上要有「${tag}」小标签`);
   }
   // 「待交割单」里保留既有的三类细分（她 2026-10-09 上半场定的那三类没丢）
   assert.ok(html.includes('data-sales-group="undelivered"') || html.includes('data-sales-group="unpaid"') || html.includes('data-sales-group="both"'));
-  assert.ok(!/<table/i.test(html), '三份单子也不用表格（移动端）');
+  assert.ok(!/<table/i.test(html), '两段也不用表格（移动端）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

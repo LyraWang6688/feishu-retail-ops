@@ -18,16 +18,13 @@
 // 🔴 开关纪律（本仓被这条坑过）：
 //   · **必须是显式布尔**（走 `config/envValue` 的 `readFlag`）——
 //     **不许**写 `process.env.X || 默认`：`||` 会把"清空变量"当"没配"⇒ **关不掉** ✗；
-//   · **缺省 = `false`（关）** ⇒ 关着时**与今天逐字一致**（硬红线：页面 HTML 逐字节、
+//   · ⚠️ **本件已无开关**（她 2026-10-16 22:5x：「不需要开关」）⇒ 下面那条缺省条款作废 ✓
+//     （硬红线不变：页面 HTML 逐字节、
 //     写入点/顺序/参数 `deepEqual` 一个都不许变）；
 //   · **取值时机**：`resolveSaleMoneySplitConfig()` 是**调用时**读 `process.env` 的
 //     （**不是模块加载时**）—— 本仓 2026-10-06 出过"模块级求值早于 `dotenv.config()`"
 //     的静默失效事故（见 AGENTS.md《改动 app.js 顶部的 require 顺序》那条）；
 //     调用时读没有这个坑，而且用例可以直接注入 `env` 验"换配置即换行为"。
-const { readFlag } = require('./envValue');
-
-const ENABLED_ENV_KEY = 'SCAN_MONEY_SPLIT_ENABLED';
-
 /**
  * 会话里用来记「货那一半已经落库」的标记取值（走 `scanSessionService` 的既有 `saveDraftLines`）。
  *
@@ -47,15 +44,15 @@ const SESSION_MARKERS = Object.freeze({
  * @param {object} [env] 环境变量（**可注入** ⇒ 用例能验"换配置即换行为"，不碰全局）
  * @returns {{ enabled: boolean, markers: {goodsCreated: string}, envKey: string }}
  */
-const resolveSaleMoneySplitConfig = (env = process.env) => ({
-  // ⚠️ 缺省 `false`：显式布尔（设成空串 / `false` / `0` ⇒ 关；认不出的值当场抛）。
-  enabled: readFlag(env, ENABLED_ENV_KEY, false),
+// ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+//   改前逐字：`enabled: readFlag(env, ENABLED_ENV_KEY, false)` ＋ `envKey: ENABLED_ENV_KEY`（开关）
+//   改后逐字：**都删掉** —— 货/钱分离**永远开**（她 2026-10-16 22:5x：「把新功能都上了，不需要开关」✓）
+//   依据 = 同一句逐字 ✓（`docs/no-switch-rule-2026-10-16.md`）
+const resolveSaleMoneySplitConfig = () => ({
   markers: SESSION_MARKERS,
-  envKey: ENABLED_ENV_KEY,
 });
 
 module.exports = {
-  ENABLED_ENV_KEY,
   SESSION_MARKERS,
   resolveSaleMoneySplitConfig,
 };

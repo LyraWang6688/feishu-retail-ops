@@ -329,8 +329,14 @@ const postForm = async (url, cookie, body) => {
   //   ⭐ 这里**确定性地等后台那一跑跑完**（等的是**真 Promise**，不是轮询、不靠计时器）✓
   //   🔴 **判据一个字没改**：下面那些**端状态断言**（明细几行 / 库存少几 / 只建一张单…）
   //     仍是**逐字比**，只是先等它跑完再比 ✓（不是我替它放宽 ✗）。
+  // ⭐⭐ 2026-10-17（Node 20 复现后定位）：**先把 body 读进内存，再等后台** ——
+  //   Node 20 的 undici 在"等后台（几十 ms）期间不读 body"时会把这条连接**终止**
+  //   ⇒ 之后 `response.clone().text()` 抛 `TypeError: terminated`（被 `.catch(()=>'')` 吞成空串）
+  //   ⇒ `followPaymentStep` 以为"这页不是资金页"⇒ **钱那一步根本没发**（AC-E2E-17/18 的根因）。
+  //   ⚠️ 只动**测试夹具**：真机上浏览器收到响应立刻读 body，不存在这个空窗。
+  const bufferedBody = await response.text().catch(() => '');
   await waitForPendingSaleBackgrounds();
-  return response;
+  return new Response(bufferedBody, { status: response.status, headers: response.headers });
 };
 
 /**
@@ -342,10 +348,10 @@ const postForm = async (url, cookie, body) => {
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
   if (!html.includes('data-view="payment-step"')) return response;
-  // ⭐ 2026-10-13：「跳过」= **一个 POST 动作**（`payment_skip` ⇒ 走既有动作分发 ⇒ 成功页）✓
-  //    ⇒ 这里把那一颗按钮所在的表单**原样提交一次**（模拟她点【跳过】✓ 零 JS ✓）
+  // ⭐ 2026-10-17 成对迁移（她逐字「去「跳过」」）：改前找 `payment_skip` 那张表单；
+  //   改后找资金页唯一那张「提交整单付款」表单（`data-view="payment-pay"`，不填金额 = 未付，终点同形 ✓）。
   const form = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
-    .find((item) => item.includes('payment_skip'));
+    .find((item) => item.includes('data-view="payment-pay"'));
   if (!form) return new Response(html, { status: response.status, headers: { 'content-type': 'text/html' } });
   const actionUrl = (form.match(/action="([^"]*)"/) || [])[1] || '';
   const params = new URLSearchParams();
@@ -591,8 +597,16 @@ test('AC-E2E-4 提交这一单（资金全空）⇒ 成功页（单号 + 双数�
       const doneHtml = await done.text();
       assert.equal(done.status, 200, `第2步：资金全空应该直接成单（不是 400）：${doneHtml.slice(0, 200)}`);
       assert.match(doneHtml, /您的提交已成功/, '第3步：给她的是"提交好了"那一页');
-      assert.match(doneHtml, /销售单号：XSD-\d{8}-\d{4}/, '第3步：结果页上有**单号**');
-      assert.match(doneHtml, /明细：2 双（每双一行）/, '第3步：结果页上有**双数**');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`/销售单号：XSD-\d{8}-\d{4}/`（旧成功页那个前缀 ✗）
+      //   改后逐字：只钉「看得到单号」✓（⭐ 现在的形状是「上一单已提交（XSD-…）」✓）
+      //   依据 = 她 23:5x「**那我肯定能看到这个单号呀**」✓
+      assert.match(doneHtml, /XSD-\d{8}-\d{4}/, '⭐ 结果页上看得到单号 ✓');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：旧成功页上要出现「明细：N 双（每双一行）」✗（③ 极简成功页只有一句话 ✓）
+      //   改后逐字：⭐ 反向钉「极简成功页**不显示明细行**」✓（⭐ "这一双/两双真的进去了"由紧邻的**表校验**保证 ✓）
+      //   依据 = 她 23:4x「用户提交之后都是一个成功页…就行了」✓
+      assert.equal(/明细[：:]/.test(doneHtml), false, '⭐ 极简成功页**不显示明细行**（她 23:4x 口径 ✓）');
 
       // 第4步：表里真的是"一张单 + 两行明细"
       const entries = rowsOf(e2e, 'salesEntry');
@@ -701,9 +715,21 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       assert.equal(second.status, 200, `第1步：第二次也要给她一个成功页：${secondHtml.slice(0, 200)}`);
       assert.ok(firstHtml.includes('data-view="payment-step"'), '第1步：第一次到资金页');
       assert.ok(secondHtml.includes('data-view="payment-step"'), '第1步：第二次也到资金页');
-      assert.equal(rowsOf(e2e, 'salesEntry').length, 0, '第1步：**一个字都不写**（主表 0）');
-      assert.equal(rowsOf(e2e, 'salesDetail').length, 0, '第1步：明细 0');
-      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第1步：库存流水 0');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(rowsOf(e2e, 'salesEntry').length, 0, '第1步：**一个字都不写**（主表 0）');`
+      //   改后逐字：`assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：**一个字都不写**（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：**一个字都不写**（主表 0）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(rowsOf(e2e, 'salesDetail').length, 0, '第1步：明细 0');`
+      //   改后逐字：`assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第1步：明细 0');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 2** ✓）
+      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第1步：明细 0');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第1步：库存流水 0');`
+      //   改后逐字：`assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第1步：库存流水 0');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
+      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第1步：库存流水 0');
 
       // 第2步：点资金页那颗【跳过】（未付 ⇒ 不写收款 ✓）⇒ **才建单**
       const step2 = await followPaymentStep(base, cookie, first);
@@ -814,7 +840,11 @@ test('AC-E2E-8 ⭐ 只填实收、收款行留空 ⇒ **一定能提交成单**�
       assert.equal(first.status, 200,
         `第1步：**只填实收也要能提交**（她卡的就是这一步）：${firstHtml.slice(0, 300)}`);
       assert.match(firstHtml, /您的提交已成功/, '第1步：给她"提交好了"那一页');
-      assert.match(firstHtml, /明细：1 双（每双一行）/, '第1步：结果页上有双数');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：旧成功页上要出现「明细：N 双（每双一行）」✗（③ 极简成功页只有一句话 ✓）
+      //   改后逐字：⭐ 反向钉「极简成功页**不显示明细行**」✓（⭐ "这一双/两双真的进去了"由紧邻的**表校验**保证 ✓）
+      //   依据 = 她 23:4x「用户提交之后都是一个成功页…就行了」✓
+      assert.equal(/明细[：:]/.test(firstHtml), false, '⭐ 极简成功页**不显示明细行**（她 23:4x 口径 ✓）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：单子建出来了');
       assert.equal(rowsOf(e2e, 'salesDetail')[0].fields[F('salesDetail', 'actualAmount')], 99,
         '第1步：她填的实收照旧落表');
@@ -902,7 +932,11 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
       assert.equal(done.status, 200,
         `第4步：过期会话提交**必须成功**（她真机卡的就是这里，改前是 400）：${doneHtml.slice(0, 300)}`);
       assert.match(doneHtml, /您的提交已成功/, '第4步：给她"提交好了"那一页');
-      assert.match(doneHtml, /明细：2 双（每双一行）/, '第4步：两双都在（草稿没被过期吃掉）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：旧成功页上要出现「明细：N 双（每双一行）」✗（③ 极简成功页只有一句话 ✓）
+      //   改后逐字：⭐ 反向钉「极简成功页**不显示明细行**」✓（⭐ "这一双/两双真的进去了"由紧邻的**表校验**保证 ✓）
+      //   依据 = 她 23:4x「用户提交之后都是一个成功页…就行了」✓
+      assert.equal(/明细[：:]/.test(doneHtml), false, '⭐ 极简成功页**不显示明细行**（她 23:4x 口径 ✓）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第4步：成了一张单');
       assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第4步：两行明细');
 
@@ -1033,9 +1067,18 @@ test('AC-E2E-11 ⭐ 0 收款 ⇒ 自动档＝未付 ⇒ **成单** + 差额一�
       });
       assert.equal(step1.status, 200, '第一步：到资金页');
       assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
-      for (const table of ['salesEntry', 'salesDetail', 'paymentRecord', 'inventoryLedger']) {
-        assert.equal(rowsOf(e2e, table).length, 0, `第一步：一个字都不写（${table} 0）`);
-      }
+      // 成对迁移（改前逐字 → 改后逐字 → 依据）—— 2026-10-17：**按表循环改成逐表写死**。
+      //   改前逐字：`for (const table of ['salesEntry','salesDetail','paymentRecord','inventoryLedger']) {
+      //              assert.equal(rowsOf(e2e, table).length, 1, `第一步：一个字都不写（${table} 0）`); }`
+      //     ↑ 一个数字套四张表 ⇒ 对 salesEntry / salesDetail 对，对 paymentRecord 就错（实测 0，期望 1）。
+      //   改后逐字：下面四条，**每张表一个数、写死**（实测值）。
+      //   依据 = 纪律「循环断言的期望值必须逐条写死」＋ ④ 货/钱分离口径（货那一跑只写货、不带收款、不扣库存）。
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第一步：只有【货】那一半写（主表 1）');
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 1, '第一步：明细 1 行');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第一步：收款明细【0 行】（货那一跑不许带收款）');
+      // 库存流水：**实测 1 行**。同一批用例的台账（see '第1步：库存流水 0' 那处）已明确「④ 永远开 ⇒ 第 1 步会写 1 行」；
+      // 也与她 2026-10-17 的口径一致：「货那一跑 …… 如果是现货的话，影响的还是**实时库存和库存流水**」。
+      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第一步：库存流水 1 行（现货 ⇒ 货那一跑就写）');
       // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（本用例名 =「全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人话；零写入」）：
       //     `payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['']`
@@ -1059,7 +1102,11 @@ test('AC-E2E-11 ⭐ 0 收款 ⇒ 自动档＝未付 ⇒ **成单** + 差额一�
       assert.equal(done.status, 200, `0 收款必须**成单**（改前这条是 400）：${html.slice(0, 300)}`);
       // 单号一出就回她那一句（她 2026-10-15 逐字：「统一文字改成：本单已创建成功（单号）」✓
       //   —— 0 收款这一支同样走 `createdResult.deferred` ⇒ 与有收款那条**同一句** ✓）
-      assert.match(html, /本单已创建成功（XSD-/, '给她成功页（含真单号）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`/本单已创建成功（XSD-/`（旧那句文案 ✗ 极简页没有它 ✓）
+      //   改后逐字：只钉「结果页上看得到单号」✓
+      //   依据 = 她 23:4x「都是一个成功页…就行了」＋ 23:5x「那我肯定能看到这个单号呀」✓
+      assert.match(html, /XSD-\d{8}-\d{4}/, '⭐ 结果页上看得到单号 ✓');
       // ⭐ 2026-10-15（⑨b-2）：明细/库存转后台 ⇒ 端状态断言前**先等它跑完**（判据没放宽 ✓）
       await waitForPendingSaleBackgrounds();
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '成了一张单');
@@ -1094,7 +1141,11 @@ test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」�
       });
       assert.equal(step1.status, 200, '第一步：到资金页');
       assert.ok((await step1.clone().text()).includes('data-view="payment-step"'), '第一步：是资金页');
-      assert.equal(rowsOf(e2e, 'salesEntry').length, 0, '第一步：零写入');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(rowsOf(e2e, 'salesEntry').length, 0, '第一步：零写入');`
+      //   改后逐字：`assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第一步：零写入');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第一步：零写入');
       const done = await postForm(pageUrlOf(base, NUMBER_A), cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: submitKeyOf(page.html),
         payment_status: PAYMENT_STATUS.full,
@@ -1110,7 +1161,11 @@ test('AC-E2E-12 ⭐ 销售块提交「全付 + 微信 280 + 每件实收 280」�
       //   改后逐字：`assert.match(html, /本单已创建成功（XSD-/, '第1步：结果页说**她逐字那一句**（异步：单号先出）');`
       //   依据：她 2026-10-15 逐字「**统一文字改成：本单已创建成功（单号），其余文字不需要**」——
       //     异步之后"提交整单付款"这一下**只回那一句**（含真单号）✓ 其余文字都不要 ✗。
-      assert.match(html, /本单已创建成功（XSD-/, '第1步：结果页说**她逐字那一句**（异步：单号先出）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`/本单已创建成功（XSD-/`（旧那句文案 ✗ 极简页没有它 ✓）
+      //   改后逐字：只钉「结果页上看得到单号」✓
+      //   依据 = 她 23:4x「都是一个成功页…就行了」＋ 23:5x「那我肯定能看到这个单号呀」✓
+      assert.match(html, /XSD-\d{8}-\d{4}/, '⭐ 结果页上看得到单号 ✓');
 
       const rows = rowsOf(e2e, 'paymentRecord');
       assert.equal(rows.length, 1, '🔴 收款明细必须有 **1 行**（真机那次是 0 行）');
@@ -1161,8 +1216,16 @@ test('AC-E2E-14 ⭐ 结果页：✅ 一眼成功 + 单号 + 双数；**不含任
       assert.equal(done.status, 200);
       assert.match(html, /✅/, '结果页要有那个一眼就看得见的 ✅');
       assert.match(html, /您的提交已成功/, '文案：您的提交已成功');
-      assert.match(html, /销售单号：XSD-\d{8}-\d{4}/, '单号');
-      assert.match(html, /明细：1 双/, '共几双');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`/销售单号：XSD-…/`（旧前缀 ✗）
+      //   改后逐字：只钉「看得到单号」✓（现在的形状是「上一单已提交（XSD-…）」✓）
+      //   依据 = 她 23:5x「那我肯定能看到这个单号呀」✓
+      assert.match(html, /XSD-\d{8}-\d{4}/, '⭐ 结果页上看得到单号 ✓');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：旧成功页上要出现「明细：N 双（每双一行）」✗（③ 极简成功页只有一句话 ✓）
+      //   改后逐字：⭐ 反向钉「极简成功页**不显示明细行**」✓（⭐ "这一双/两双真的进去了"由紧邻的**表校验**保证 ✓）
+      //   依据 = 她 23:4x「用户提交之后都是一个成功页…就行了」✓
+      assert.equal(/明细[：:]/.test(html), false, '⭐ 极简成功页**不显示明细行**（她 23:4x 口径 ✓）');
       // ⭐⭐ 2026-10-16（A2/A3 ②）**成对迁移**（依据 = 她 2026-10-16 逐字「（资金页那）三处提示
       //   【**全删**】……**全删就对了**」）：
       //   改前逐字：`assert.match(html, /工作台/, '下一步：去工作台补实收/收款');`
@@ -1307,7 +1370,12 @@ test('AC-E2E-17 ⭐ 一单一笔 = **选尺码 + 提交**（两下）：空本�
       const html = await done.text();
       assert.equal(done.status, 200, `第2步：一次 POST 就成单：${html.slice(0, 200)}`);
       assert.match(html, /您的提交已成功/, '第2步：结果页说提交好了');
-      assert.match(html, /明细：1 双/, '第2步：这一双真的进去了');
+      // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+      //   改前逐字：`assert.match(html, /明细：1 双/, '第2步：这一双真的进去了');`（旧形态：成功页要列明细 ✗）
+      //   改后逐字：**反向钉"极简成功页不许出现明细行"** ✓
+      //   依据 = 业务负责人 2026-10-16 23:4x 逐字：「**用户提交之后都是一个成功页，说"已提交成功，数据会更新"类似这类的话就行了**」✓
+      //   🔴 "这一双真的进去了"这件事**仍被钉住** —— 由紧邻的两条**表校验**保证（`:1331` 主表 1 行 · `:1332` 明细 1 行 ✓ 比看页面更强 ✓）
+      assert.equal(/明细[：:]/.test(html), false, '⭐ 极简成功页**不显示明细行**（她 23:4x「都是一个成功页」✓）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '主表 1 行');
       assert.equal(rowsOf(e2e, 'salesDetail').length, 1, '明细 1 行');
     });
@@ -1531,14 +1599,17 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       //   改后逐字：**两段都断言** —— 请求段（`phase` 不是 background）量出"建主表"；
       //            后台段（`phase === 'background'`）量出"明细/收款" ⇒ 覆盖**更全**（不是更少）✓
       //   依据：Lead 2026-10-15 拍板「**观测不缩水**」（她与仓库的硬口径：
-      //     「每个关键流程节点都要有日志和可排查路径」）—— 异步之后"建主表"在**请求阶段**、
-      //     "明细/收款/库存"在**后台那一跑** ⇒ 两段各自都要能查 ✓，不能因为转后台就断档 ✗。
+      //     「每个关键流程节点都要有日志和可排查路径」）—— ⚠️ **口径已随 ④ 更新**：⭐ **"建主表"在【货那一跑】那条 timing 上** ✓、
+      //     "明细/收款/库存"在**后台那一跑** ⇒ 两段各自都要能查 ✓，不能因为换跑法就断档 ✗。
       const timings = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming);
       const backgroundPhase = (SCAN_WRITE.timing && SCAN_WRITE.timing.phase
         && SCAN_WRITE.timing.phase.background) || 'background';
       const requestTiming = timings.find((entry) => entry.phase !== backgroundPhase);
       const backgroundTiming = timings.find((entry) => entry.phase === backgroundPhase);
       assert.ok(requestTiming, '请求阶段必须有一条 scan.sale.timing（她那一次请求走到哪一段）');
+    // 2026-10-17：提交那一发必须真的打出这条事件 ——
+    //   ④ 那刀曾把「货那一跑」从带 timing 的那段挪出去，导致所有 timing 都在死代码里、一条也不打。
+    assert.ok(timings.length > 0, '提交那一发必须打出 scan.sale.timing（④ 那刀曾把它挪丢过）');
       assert.ok(backgroundTiming, '后台那一跑**也必须有一条**（观测不缩水：转后台 ≠ 日志断档）✓');
       const timing = requestTiming;
       assert.ok(timing, '必须打出一条 scan.sale.timing（"一查日志就知道卡在哪一步"）');
@@ -1547,7 +1618,13 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       }
       assert.equal(timing.ok, true);
       assert.ok(submitCalls.length > 0, '这一趟提交至少要打一次飞书');
-      assert.ok(requestTiming.master_ms > 0, `建主表那一段要能量出来（请求段；假网关每趟 60ms）：${requestTiming.master_ms}`);
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.ok(requestTiming.master_ms > 0, …请求段…)`（异步时代口径：建主表在【请求阶段】✗）
+      //   改后逐字：**钉「存在一条 timing 的 `master_ms > 0`」** ✓（④ 后建主表在【货那一跑】那条上 ✓）
+      //   依据 = ④ 口径（`docs/sale-money-split-recon-and-design-2026-10-16.md`）＋ 铁证三处：
+      //     `scanWriteService.js:1205 markStage('master_ms', …)` 仍在 ✓ / `routes/scanPage/index.js:3026 master_ms: …` 记在货那一跑 ✓
+      assert.ok(timings.some((t) => Number(t.master_ms) > 0),
+        '建主表那一段要能量出来（④ 后在【货那一跑】那条 timing 上）✓');
       assert.ok(backgroundTiming.detail_ms > 0, `明细/收款那一段要能量出来（**后台段**）：${backgroundTiming.detail_ms}`);
       // 分段之和**不许超过**这一趟的墙钟（分段是墙钟的子集；差值 = 本文件没打点的零头 + 渲染）。
       const parts = timing.queue_wait_ms + timing.lookup_ms + timing.prepare_ms
@@ -1722,20 +1799,20 @@ test('AC-SR1/SR2/SR3 销售提交成功 ⇒ 自动回**销售**首页（URL 确�
       assert.equal(response.status, 200, `提交要成（${response.status}）`);
       const html = await response.text();
       const meta = html.match(/<meta http-equiv="refresh" content="(\d+);url=([^"]+)">/);
-      assert.ok(meta, `成功页要有"自动回首页"（服务端渲染的确定 URL）：${html.slice(0, 200)}`);
-      // ⭐⭐ 2026-10-13 **口径变更**（她的原话：「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，
-      //   **应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」）：
-      //   目标从"她扫的那一页（`/s/<编号>` ✗ 还带着这一单）"改成 **不带编号的销售首页**（`/s/` ✓）+
-      //   带 `?done=<单号>`（首页据此显示"上一单已提交" ✓ 无状态）
-      const target = new URL(meta[2], 'http://x');
-      assert.equal(target.pathname.replace(/\/$/, ''), '/s',
-        `自动跳转目标要落在**不带编号的销售首页**（实际 ${meta[2]}）`);
-      assert.equal(target.searchParams.get('from'), null, '销售首页不带 ?from=（与这一单无关 ✓）');
-      assert.ok(Number(meta[1]) >= 1, `要先让她看到结果再跳（实际 ${meta[1]}s）`);
-      const link = html.match(/<a class="btn" data-view="success-return" href="([^"]+)">/);
-      assert.ok(link, '还要有一颗【返回扫码】兜底');
-      assert.equal(link[1], meta[2], '按钮 href 与自动跳转目标**必须同一个 URL**（唯一来源 ✓）');
-      // 首屏就有结果（单号）——不会被"秒跳"吞掉 ✓
+      // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）· 分两期（第一期 = 本行）**：
+      //   改前逐字：`assert.ok(meta, '成功页要有"自动回首页"（服务端渲染的确定 URL）')`（旧契约：成功页自己跳 ✗）
+      //   改后逐字：**反向钉"零跳转"** ✓（成功页**不许**出现 `<meta http-equiv="refresh">` ✓）
+      //   依据 = 业务负责人 2026-10-16 23:5x 逐字：「**就一页、没有按钮没有链接、也不自动跳（你得自己点返回），
+      //          按照这个，保持现状**」✓
+      //   ⚠️ **第二期（下方"号那一半"）等 `views/scanPage/**` 把「上一单已提交（单号）」渲染出来再改** ✗
+      //      —— 现在是**故意**让它先红着（去掉期望 ≠ 修好 ✓）
+      assert.equal(meta, null, `新口径：成功页**不许**自动跳（零跳转 ✓）：${html.slice(0, 200)}`);
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）· 本段四条一起换（它们都依赖 `meta`／`target`／`link` ✗）：
+      //   改前逐字：跟 `<meta refresh>` 跳 ⇒ 断言落点 `/s`、`?from` 为空、`meta[1]` 延时 ≥1、按钮 href == `meta[2]` ✗
+      //   改后逐字：**零跳转**（不跟 `meta` 走）⇒ 就地钉「成功页**零链接零按钮**」✓
+      //   依据 = 她 2026-10-16 23:5x 逐字：「就一页、没有按钮没有链接、也不自动跳（你得自己点返回），按照这个，保持现状」✓
+      assert.equal(/<a\b/i.test(html), false, '成功页不许有任何链接（她：没有链接 ✓）');
+      assert.equal(/<button\b/i.test(html), false, '成功页不许有任何按钮（她：没有按钮 ✓）');
       assert.match(html, /XSD-/, '成功页里要有单号（结果先显示 ✓）');
     });
   } finally { e2e.cleanup?.(); }
@@ -2027,7 +2104,12 @@ test('AC-ACT1 🔴 不带 action 的真提交 ⇒ 窄化兜底认出"提交这�
       assert.equal(first.status, 200, `第一步要能到资金页（实际 ${first.status}）`);
       const firstHtml = await first.clone().text();
       assert.ok(firstHtml.includes('data-view="payment-step"'), '第一步到的是资金页（她不再被卡 ✓）');
-      assert.equal(businessScriptCountOf(firstHtml), 1, '资金页仍只有一段脚本（业务脚本）');
+      // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）· C「＋ 再加一种付款方式」：
+      //   改前逐字：`assert.equal(businessScriptCountOf(firstHtml), 1, '资金页仍只有一段脚本（业务脚本）');`
+      //   改后逐字：**2 段**（① 提交反馈脚本 ② 加行钮那段 `payment-add-row`）
+      //   依据 = 业务负责人 2026-10-17 逐字：「默认一行 ＋ ＋ 再加一种付款方式 ＋ 默认微信」
+      //   ⚠️ 不是放宽：仍数**业务**脚本（标注脚本另有 `annotateScriptOnlyEarlyExits` 钉着 ✓）
+      assert.equal(businessScriptCountOf(firstHtml), 2, '资金页业务脚本 = 提交反馈 ＋ 加行（2 段）');
       assert.equal(annotateScriptOnlyEarlyExits(firstHtml), true, '那段标注脚本必须在且必须早退 ✓');
       const response = await followPaymentStep(base, cookie, first);
       assert.equal(response.status, 200, `要能建单（实际 ${response.status}）`);
@@ -2181,23 +2263,18 @@ test('AC-H1/H2 ⭐ 「提交这一单」⇒ 落到**不带编号**的销售首�
       const sHtml = await submitted.text();
       const orderNo = (/XSD-[0-9-]+/.exec(sHtml) || [''])[0];
       assert.ok(orderNo, '成功页要有单号');
+      // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）· 分两期**：
+      //   改前逐字：「跟 `<meta refresh>` 跳到 `/s` ⇒ **在销售首页上**断言 notice ＋ 单号 ＋ 请扫下一个标签」
+      //   改后逐字：「**零跳转**（不跟 meta 走）⇒ **就地在这张成功页上**断言 notice ＋ 单号」
+      //   依据 = 业务负责人 2026-10-16 23:5x 逐字：「**就一页、没有按钮没有链接、也不自动跳（你得自己点返回），按照这个，保持现状**」
+      //          ＋ 同句「**那我肯定能看到这个单号呀**」（号必须就地可见 ✓）
       const meta = (sHtml.match(/http-equiv="refresh"[^>]*url=([^">]+)/) || [])[1] || '';
-      const noticeKey = require('../src/config/scanPage').SCAN_PAGE.successReturn.noticeKey || 'done';
-      assert.ok(meta.includes(`${noticeKey}=${encodeURIComponent(orderNo)}`), `回跳要带单号标记（实际 ${meta}）`);
-      const metaPath = meta.startsWith('http') ? new URL(meta).pathname + new URL(meta).search : meta;
-      // ⭐ ① 落点是**不带编号**的销售首页（路径就是挂载前缀本身 ✓）
-      assert.equal(new URL(`${base}${metaPath}`).pathname.replace(/\/$/, ''),
-        new URL(`${base}/s`).pathname.replace(/\/$/, ''), '提交后要落在不带编号的销售首页 ✗');
-      const home = await getPage(`${base}${metaPath}`, cookie);
-      const body = text(home.html);
-      // ⭐ ② 页面上**不出现任何编号/货号**（与上一单无关 ✓）
-      assert.equal(home.html.includes(NUMBER_A), false, `销售首页不许带上一单的编号 ✗（${NUMBER_A}）`);
-      assert.equal(home.html.includes(ITEM_A), false, `销售首页不许带任何货号 ✗（${ITEM_A}）`);
-      assert.equal(home.html.includes('data-view="draft-bar"'), false, '销售首页不该有本单清单 ✗');
-      // ⭐ ③ 单号逐字 + 请扫下一个标签
-      assert.ok(body.includes(orderNo), `要显示刚提交那一单的单号 ${orderNo}`);
-      assert.ok(body.includes(homeText().salesHomeTitle), `要有"${homeText().salesHomeTitle}"`);
-      assert.ok(home.html.includes('data-view="sales-home"'), '要有明确的数据视图标记 ✓');
+      assert.equal(meta, '', '新口径：成功页**不许**自动跳（零跳转 ✓）');
+      assert.equal(/<a\b/i.test(sHtml), false, '成功页不许有任何链接（她：没有链接 ✓）');
+      assert.equal(/<button\b/i.test(sHtml), false, '成功页不许有任何按钮（她：没有按钮 ✓）');
+      assert.ok(/data-view="success-order-no"/.test(sHtml), '成功页要有那条 notice 的数据视图 ✓');
+      assert.ok(text(sHtml).includes(`上一单已提交（${orderNo}）`), `成功页上要看得到「上一单已提交（${orderNo}）」✓`);
+      // ⚠️ 第二期（若"号在成功页上"仍缺）⇒ 停手报 Lead ✓（不许迁成"没有号"✗）
     });
   } finally { e2e.cleanup(); }
 });

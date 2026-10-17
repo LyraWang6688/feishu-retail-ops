@@ -596,8 +596,10 @@ const login = () => {
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
   if (!html.includes('data-view="payment-step"')) return response;
+  // ⭐ 2026-10-17 成对迁移（她逐字「去「跳过」」）：改前找 `payment_skip` 那张表单；
+  //   改后找资金页唯一那张「提交整单付款」表单（`data-view="payment-pay"`，不填金额 = 未付，终点同形 ✓）。
   const form = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
-    .find((item) => item.includes('payment_skip'));
+    .find((item) => item.includes('data-view="payment-pay"'));
   if (!form) return new Response(html, { status: response.status, headers: { 'content-type': 'text/html' } });
   const actionUrl = (form.match(/action="([^"]*)"/) || [])[1] || '';
   const params = new URLSearchParams();
@@ -790,7 +792,11 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       });
       assert.equal(moneyPage.status, 200);
       assert.ok((await moneyPage.clone().text()).includes('data-view="payment-step"'), '第一步到资金页');
-      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '第一步零写入');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h.gateway, 'salesEntry').length, 0, '第一步零写入');`
+      //   改后逐字：`assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '第一步零写入');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+      assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1, '第一步零写入');
       const submitted = await fetch(pageUrl, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
@@ -817,8 +823,10 @@ test('⑧ 路由：加入本单 → 回跳带上"本单几双"；提交整单 �
       //   依据：她 2026-10-15 逐字「**统一文字改成：本单已创建成功（单号），其余文字不需要**」——
       //     异步那一刻明细**还没写完** ⇒ 结果页**不可能**也不该报「明细：1 双」✗
       //     （明细那一半改由下面**端状态**断言覆盖 ✓ 覆盖没缩水）。
-      assert.match(doneHtml, /本单已创建成功（XSD-\d{8}-\d{4}）/, '结果页给她逐字那一句 + 真单号');
-      assert.equal(/您的提交已成功|明细：\d+ 双|接着扫下一款/.test(doneHtml), false,
+      // 成对迁移：改前逐字 `assert.match(doneHtml, /本单已创建成功（XSD-\d{8}-\d{4}）/, '结果页给她逐字那一句 + 真单号');` ⇒ 只钉"看得到单号"✓（依据 = 她 23:4x 一个成功页 ＋ 23:5x 看得到单号 ✓）
+      assert.match(doneHtml, /XSD-\d{8}-\d{4}/, '结果页给她逐字那一句 + 真单号');
+      // 成对迁移：改前逐字 `assert.equal(/您的提交已成功|明细：\d+ 双|接着扫下一款/.test(doneHtml), false,` ⇒ ⭐ 去掉「您的提交已成功」（⭐ 那是【她 23:4x 要的那句】✓ 不许禁）
+        assert.equal(/明细：\d+ 双|接着扫下一款/.test(doneHtml), false,
         '异步那一刻只给她那一句，其余文字都不要 ✗（她逐字）');
       assert.equal(entriesOf(h.gateway, 'salesEntry').length, 1);
       const methodField = V1_BITABLE_SCHEMA.tables.paymentRecord.fields.method;
@@ -981,11 +989,17 @@ test('⑨ 失败有人话：内部错误（字段名/错误码）**不回显**�
       }));
       assert.equal(response.status, 500);
       const html = await response.text();
-      // ⭐⭐ 2026-10-12（业务负责人口径）：这里抛的是【**主表已经建了、明细那一步没写成功**】——
-      //    按新口径给**如实**的"半成"页：单子记上了（带单号）+ 怎么出去（回扫码页再点一次）。
-      //    🔴 **绝不许**显示"提交已成功"（她会以为钱货都落了）；🔴 也**不许**把"一个字都没写"
-      //    当成事实（主表那条记录是真的落库了）。
-      assert.match(html, new RegExp(SCAN_WRITE.texts.partialFailedTitle));
+      // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）· 她裁决（甲）＋（1）：
+      //   这里抛的是【**主表已经建了、明细那一步没写成功**】——旧口径给她一张"半成"页
+      //   （`partialFailedTitle` = 单子记上了）。**新口径：失败一律说「任务创建失败」**（含这种）。
+      //   改前逐字：`assert.match(html, new RegExp(SCAN_WRITE.texts.partialFailedTitle));`
+      //   改后逐字：统一标题（`failedTitle`）＋ **半成那句不许再出现**（反向钉）
+      //   依据 = 她 2026-10-17 01:17 逐字：「**（甲）统一都显示「任务创建失败」—— 包括"单子已经建上了"那种**」
+      //     ＋ 01:19 逐字：「**（1）把通用那句改成「任务创建失败」⇒ 所有写失败页都变**」
+      //   🔴 仍钉住旧口径的两条不许回来：不说"提交已成功"、不说"一个字都没写"。
+      assert.match(html, new RegExp(SCAN_WRITE.texts.failedTitle));
+      assert.equal(html.includes('单子记上了'), false,
+        '旧「半成」文案不再用（她 2026-10-17 选「统一」✗）');
       assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false,
         '半成页上**不许**出现「您的提交已成功」');
       assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
@@ -1023,10 +1037,15 @@ test('⑨b 建单**本身**失败（主表都没建起来）⇒ 照旧报错页�
       // 建单失败 ⇒ 与改前**逐字一致**的报错页（`sale_write_failed` → 500 + 通用人话）。
       assert.equal(response.status, 500);
       const html = await response.text();
-      assert.match(html, /这一步没成功/);
+      // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.match(html, /这一步没成功/);`
+      //   改后逐字：本行（统一标题）＋ 旧文案不许回来
+      //   依据 = 她 2026-10-17 01:19 逐字：「**（1）把通用那句改成「任务创建失败」⇒ 所有写失败页都变**」
+      assert.match(html, /任务创建失败/);
+      assert.equal(html.includes('这一步没成功'), false, '旧通用标题不许回来 ✗');
       assert.match(html, /系统这边没处理成功/, '通用人话要在页面上');
       assert.equal(html.includes(SCAN_WRITE.texts.submittedTitle), false, '一个字都没写 ⇒ 不许说成功');
-      assert.equal(html.includes(SCAN_WRITE.texts.partialFailedTitle), false, '主表都没建 ⇒ 不是"半成"');
+      assert.equal(html.includes('单子记上了'), false, '主表都没建 ⇒ 不是"半成"');
       assert.equal(html.includes('未配置语义字段'), false, '内部细节不许回显');
     });
   } finally { h.cleanup(); }
@@ -1278,7 +1297,8 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
       assert.equal(submitted.status, 200);
       const doneHtml = await submitted.text();
       assert.match(doneHtml, /您的提交已成功/);
-      assert.match(doneHtml, /明细：2 双/);
+      // 成对迁移：改前逐字 `assert.match(doneHtml, /明细：2 双/);` ⇒ 反向钉"极简成功页不显示明细行"✓（"两双真的进去了"由紧邻表校验保证 ✓）
+      assert.equal(/明细[：:]/.test(doneHtml), false, '⭐ 极简成功页**不显示明细行**（她 23:4x 口径 ✓）');
       const entries = entriesOf(h.gateway, 'salesEntry');
       const details = entriesOf(h.gateway, 'salesDetail');
       assert.equal(entries.length, 1, '两次扫码只该有**一张**销售单');

@@ -1049,8 +1049,16 @@ test('AC-8a ⭐【少收】两边不等 ⇒ **合法**：成单 + 差额一条�
       assert.equal(moneyPage.status, 200, '第一步只到资金页（200）');
       const moneyHtml = await moneyPage.text();
       assert.ok(moneyHtml.includes('data-view="payment-step"'), '第一步到的是**资金页**');
-      assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步**一个字都不写**（主表 0）');
-      assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步**一个字都不写**（主表 0）');`
+      //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步**一个字都不写**（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+      assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步**一个字都不写**（主表 0）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');`
+      //   改后逐字：`assert.equal(entriesOf(h, 'salesDetail').length, 2, '第一步**一个字都不写**（明细 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 2** ✓）
+      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
+      assert.equal(entriesOf(h, 'salesDetail').length, 2, '第一步**一个字都不写**（明细 0）');
       assert.equal(entriesOf(h, 'paymentRecord').length, 0, '第一步**一个字都不写**（收款 0）');
       // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（这一段）：`payment_status: PAYMENT_STATUS.full, … payment_amount: '200'`
@@ -1129,8 +1137,16 @@ test('AC-8a2 🔴【收多了】收款 > 每件实收 ⇒ 400 + 原地重渲染 
       const notice = (failedHtml.match(/data-view="payment-step-notice">([\s\S]*?)<\/p>/) || [])[1] || '';
       assert.match(notice, /收款比每件实收多/, `人话要指出"收多了"：实际 = ${notice}`);
       // **一个字都没写库**
-      assert.equal(entriesOf(h, 'salesEntry').length, 0);
-      assert.equal(entriesOf(h, 'salesDetail').length, 0);
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 0);`
+      //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1);`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
+      assert.equal(entriesOf(h, 'salesEntry').length, 1);
+      // 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：assert.equal(entriesOf(h, 'salesDetail').length, 0);（⭐ 漏迁：同一段里上面那条已按新口径改成 1 ✗）
+      //   改后逐字：assert.equal(entriesOf(h, 'salesDetail').length, 2);（⭐ 两双 ⇒ 明细 2 行 ✓ 与上面那条同一口径 ✓）
+      //   依据 = ④ 口径「点提交就建【货】那一单」（与上面那条同一依据 ✓）＋ 她 22:5x「把新功能都上了，不需要开关」✓
+      assert.equal(entriesOf(h, 'salesDetail').length, 2);
       assert.equal(entriesOf(h, 'paymentRecord').length, 0);
     });
   } finally { h.cleanup(); }
@@ -1215,7 +1231,11 @@ test('AC-8d ⭐【部分付】走真路由：实付 200 + 差额 300 落在收�
         action: SCAN_WRITE.actions.submitOrder, submit_key: saleKey,
       });
       assert.equal(moneyPage.status, 200, await moneyPage.text());
-      assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步零写入（主表 0）');
+      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 0, '第一步零写入（主表 0）');`
+      //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步零写入（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+      //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+      assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步零写入（主表 0）');
       const done = await formPost(base, cookie, {
         action: SCAN_PAGE.paymentStep.payAction, submit_key: saleKey,
         // 迁移依据（同上）：这里要钉的是「部分付 ⇒ 差额进未收款」，档位改由金额自动定出来 ⇒ 不再传档位
@@ -1445,10 +1465,10 @@ return { salesInfoOf };`;
 const followPaymentStep = async (base, cookie, response) => {
   const html = await response.clone().text().catch(() => '');
   if (!html.includes('data-view="payment-step"')) return response;
-  // ⭐ 2026-10-13：「跳过」= **一个 POST 动作**（`payment_skip` ⇒ 走既有动作分发 ⇒ 成功页）✓
-  //    ⇒ 这里把那一颗按钮所在的表单**原样提交一次**（模拟她点【跳过】✓ 零 JS ✓）
+  // ⭐ 2026-10-17 成对迁移（她逐字「去「跳过」」）：改前找 `payment_skip` 那张表单；
+  //   改后找资金页唯一那张「提交整单付款」表单（`data-view="payment-pay"`，不填金额 = 未付，终点同形 ✓）。
   const form = (html.match(/<form[^>]*>[\s\S]*?<\/form>/g) || [])
-    .find((item) => item.includes('payment_skip'));
+    .find((item) => item.includes('data-view="payment-pay"'));
   if (!form) return new Response(html, { status: response.status, headers: { 'content-type': 'text/html' } });
   const actionUrl = (form.match(/action="([^"]*)"/) || [])[1] || '';
   const params = new URLSearchParams();

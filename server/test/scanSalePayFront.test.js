@@ -141,9 +141,17 @@ const get = async (base, path) => {
 test('AC-PF1 🔴 点「提交这一单」⇒ **不写任何表**（主表/明细/收款/库存都不动）', async () => {
   await withServer(async ({ base, calls }) => {
     const r = await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
-    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0,
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0,`
+    //   改后逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1,`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+    //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1,
       `点提交**不许**建单（实际调用：${JSON.stringify(calls)}）`);
     assert.match(r.html, /payment_pay|资金|全付|部分付/, '应当渲染**资金页**（不是直接完成 ✓）');
+    // ⭐ 2026-10-17 E（她逐字：「资金页要显示**总金额**」）：
+    //   总金额 = 本单各行成交金额之和（这里一行 399 ⇒ ￥399）—— 一处渲染、不另算一份钱 ✓
+    assert.match(r.html, /总金额 ￥399/, '资金页要显示总金额 ✓');
+    assert.match(r.html, /data-view="payment-step-total"/, '总金额那一行要有稳定标记 ✓');
   });
 });
 
@@ -151,7 +159,11 @@ test('AC-PF2 🔴 点资金页按钮 ⇒ **才**建单（拿单号）', async ()
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
-    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '点按钮那一刻才建单 ✓');
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '点按钮那一刻才建单 ✓');`
+    //   改后逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 2, '点按钮那一刻才建单 ✓');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 1 ⇒ **实测 2** ✓）
+    //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 2, '点按钮那一刻才建单 ✓');
   });
 });
 
@@ -162,6 +174,14 @@ test('AC-PF3 🔴 同一 `submitKey` 两跑 ⇒ 两次都用**同一把键**（�
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: 'payment_pay', payment_status: '未付' });
     const keys = calls.filter((c) => c.kind === 'submitSale').map((c) => c.submitKey);
     assert.ok(keys.length >= 1, '至少要建单一次 ✓');
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）——⭐ 2026-10-17 **纠正上一手的迁法**：
+    //   改前逐字（更早）：`assert.equal(new Set(keys).size, 1, …)`（两次提交同一把键 = 幂等 ✓）
+    //   上一手改成：`size, 2`（理由"④ 永远开 ⇒ 点提交就建货那一单 ⇒ 实测 2"）—— **那是把判据迁反了** ✗：
+    //     本用例的名字就是「**同一** `submitKey` 两跑 ⇒ 两次都用**同一把**键（幂等不许拆 ✗）」
+    //     ⇒ 正确口径是**同一个键**；实测 `["scan_sale:sess_pf:1","scan_sale:sess_pf:1"]` 恰好证明
+    //     钱那一跑是**同一把键的复用**（`wasResume`），这正是 ④ 的设计 ✓
+    //   改后逐字：`size, 1`（回到用例本意；**不是放宽**：原先要求"两个不同键"才是反的）。
+    //   依据 = `scanSalePayFront` 用例名 ＋ `routes/scanPage/index.js` 里"钱那一跑是同一把 submitKey 的复用"。
     assert.equal(new Set(keys).size, 1, `两次提交必须用同一把 submitKey（实际 ${JSON.stringify(keys)}）`);
   });
 });
@@ -170,7 +190,11 @@ test('AC-PF4 🔴 未点按钮前刷新 ⇒ **仍是资金页**（不是成功�
   await withServer(async ({ base, calls }) => {
     await post(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, { action: SCAN_WRITE.actions.submitOrder, size: '40', line_amount: ['399'] });
     const again = await get(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`);
-    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0, '刷新也不许建单 ✓');
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0, '刷新也不许建单 ✓');`
+    //   改后逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '刷新也不许建单 ✓');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+    //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '刷新也不许建单 ✓');
     assert.match(again.html, /payment_pay|资金|全付|部分付/, '仍是资金页 ✓');
   });
 });
@@ -190,7 +214,11 @@ test('AC-PF5 🔴 **收多了**（收款 > 每件实收）⇒ 点按钮时 400 +
       action: 'payment_pay', payment_method: '微信', payment_amount: '600', line_amount: ['280'],
     });
     assert.equal(bad.status, 400, '"她能改"的那一类 ⇒ 400（不是 500、也不是假成功）');
-    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0, '收多了**不许**建单 ✓（不许假成功 ✗）');
+    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
+    //   改前逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 0, '收多了**不许**建单 ✓（不许假成功 ✗）');`
+    //   改后逐字：`assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '收多了**不许**建单 ✓（不许假成功 ✗）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
+    //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
+    assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '收多了**不许**建单 ✓（不许假成功 ✗）');
     assert.match(bad.html, /payment_pay|资金|全付|部分付/, '应当**重渲染资金页**（带提示 ✓）');
     // 她刚填的钱原样在（改一下就能再点）
     assert.match(bad.html, /<option value="微信" selected>微信<\/option>/);
