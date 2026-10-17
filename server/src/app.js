@@ -47,6 +47,21 @@ const { resolveTagQrSweepSchedule } = require('./config/tagQrCode');
 const { SCAN_PAGE } = require('./config/scanPage');
 
 const app = express();
+
+// ⭐ 埋点第 3 刀：观测告警（默认**关**；`OBSERVABILITY_ALERTS_ENABLED=true` 才挂监听器）。
+//   判定在 `services/alertMonitor.js`（纯内存、三条规则），发送在 `services/alertNotifier.js`。
+//   只读日志、绝不改动业务行为；监听器内部异常在 logger 里已被吞掉。
+{
+  const { OBSERVABILITY_ALERTS } = require('./config/alerts');
+  if (OBSERVABILITY_ALERTS.enabled) {
+    const { addLogListener, logInfo: info } = require('./utils/logger');
+    const { createAlertMonitor } = require('./services/alertMonitor');
+    const { createAlertNotifier } = require('./services/alertNotifier');
+    const monitor = createAlertMonitor({ notify: createAlertNotifier() });
+    addLogListener((record) => { monitor.record(record); });
+    info('observability.alerts.enabled', { max_per_window: OBSERVABILITY_ALERTS.maxPerWindow });
+  }
+}
 const port = process.env.PORT || 3000;
 const workbenchPath = path.join(__dirname, '../public/workbench');
 

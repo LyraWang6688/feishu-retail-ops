@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **510** 个事件。按前缀分组：
+共 **514** 个事件。按前缀分组：
 
 ## accessory_sale_intake
 
@@ -54,9 +54,9 @@
 | `bitable.record.batch_update_failed` | 1 | src/services/v1BitableGateway.js |
 | `bitable.record.batch_updated` | 1 | src/services/v1BitableGateway.js |
 | `bitable.record.batch_write_mismatch` | 3 | src/services/v1BitableGateway.js |
-| `bitable.record.create_failed` | 1 | src/services/v1BitableGateway.js |
+| `bitable.record.create_failed` | 2 | src/config/alerts.js<br>src/services/v1BitableGateway.js |
 | `bitable.record.created` | 1 | src/services/v1BitableGateway.js |
-| `bitable.record.update_failed` | 1 | src/services/v1BitableGateway.js |
+| `bitable.record.update_failed` | 2 | src/config/alerts.js<br>src/services/v1BitableGateway.js |
 | `bitable.record.updated` | 1 | src/services/v1BitableGateway.js |
 
 ## cleanup
@@ -99,6 +99,7 @@
 | `inventory.adjustment.count.replayed` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.adjustment.season.applied` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.change.applied` | 3 | src/services/inventoryService.js |
+| `inventory.change.failed` | 1 | src/config/alerts.js |
 | `inventory.sample_candidates.failed` | 1 | src/services/inventoryService.js |
 | `inventory.sample.promoted` | 1 | src/services/inventoryService.js |
 | `inventory.state.transitioned` | 1 | src/services/inventoryService.js |
@@ -129,7 +130,7 @@
 | `label_print.job.claimed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.done` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.enqueued` | 1 | src/services/labelPrintQueueService.js |
-| `label_print.job.failed` | 1 | src/services/labelPrintQueueService.js |
+| `label_print.job.failed` | 2 | src/config/alerts.js<br>src/services/labelPrintQueueService.js |
 | `label_print.job.late_failure_ignored` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.pending_listed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.reprinted` | 1 | src/services/labelPrintQueueService.js |
@@ -205,6 +206,14 @@
 | `lark.sdk.error` | 1 | src/utils/larkLogger.js |
 | `lark.sdk.info` | 1 | src/utils/larkLogger.js |
 | `lark.sdk.warn` | 1 | src/utils/larkLogger.js |
+
+## observability
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `observability.alert.failed` | 1 | src/services/alertNotifier.js |
+| `observability.alert.sent` | 1 | src/services/alertNotifier.js |
+| `observability.alert.skipped` | 1 | src/services/alertNotifier.js |
 
 ## product
 
@@ -504,7 +513,7 @@
 | `scan.state.unexpected` | 1 | src/config/scanPage.js |
 | `scan.write.action_inferred` | 1 | src/routes/scanPage/index.js |
 | `scan.write.disabled` | 1 | src/config/scanWrite.js |
-| `scan.write.failed` | 1 | src/config/scanWrite.js |
+| `scan.write.failed` | 2 | src/config/alerts.js<br>src/config/scanWrite.js |
 | `scan.write.jump_gate_blocked` | 1 | src/routes/scanPage/index.js |
 | `scan.write.line_amount_required` | 1 | src/routes/scanPage/index.js |
 | `scan.write.payment_amount_required` | 1 | src/config/scanWrite.js |

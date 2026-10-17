@@ -4,6 +4,13 @@ const { isRegisteredEvent } = require('../config/events');
 // 未登记事件：默认**只打 `unregistered: true` 标记**（可用日志查询发现），不阻断业务；
 // `LOG_EVENT_STRICT=true` 时另打一条 `log.event.unregistered` warn（同名只打一次，避免刷屏）。
 const unregisteredWarned = new Set();
+// 观测监听器（告警等）：只读副本、**异常绝不影响业务日志**；返回取消订阅函数。
+const listeners = new Set();
+const addLogListener = (listener) => {
+  if (typeof listener !== 'function') return () => {};
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+};
 
 const redactValue = (value) => {
   if (value == null) return value;
@@ -41,6 +48,11 @@ const writeLog = (level, event, meta = {}) => {
     ...(unregistered ? { unregistered: true } : {}),
     ...sanitizeMeta(meta),
   };
+  if (listeners.size) {
+    for (const listener of listeners) {
+      try { listener({ ...payload }); } catch { /* 监听器失败不许影响业务日志 */ }
+    }
+  }
   const line = JSON.stringify(payload);
   if (level === 'error') {
     console.error(line);
@@ -67,6 +79,7 @@ module.exports = {
   logInfo,
   logWarn,
   logError,
+  addLogListener,
   redactValue,
   sanitizeMeta,
 };
