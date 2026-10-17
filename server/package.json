@@ -17,7 +17,9 @@
     "e2e:real": "node --test --test-concurrency=1 e2e/real-paths.mjs && FEISHU_TARGET_ENV=test node scripts/e2e-product-tag-qr.js",
     "env:selfcheck": "node scripts/env-selfcheck.mjs",
     "scan:repair-interrupted": "node scripts/scan-repair-interrupted.js",
-    "test:realbase": "node --test --test-concurrency=1 --test-force-exit test/realbase/*.test.js"
+    "test:realbase": "node --test --test-concurrency=1 --test-force-exit test/realbase/*.test.js",
+    "observability:events": "node scripts/observability-events.mjs",
+    "observability:events:check": "node scripts/observability-events.mjs --check"
   },
   "keywords": [
     "shoe-box",

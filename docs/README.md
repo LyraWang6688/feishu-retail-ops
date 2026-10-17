@@ -38,6 +38,7 @@
 | [pending-confirmations.md](pending-confirmations.md) | 🔔 待业务负责人确认（只放"需要你一句话"的事，别的一律不放） |
 | [docs/README.md](README.md) | 项目进展、已确认决策与后续路线 |
 | [feishu-v1-operations.md](feishu-v1-operations.md) | 飞书 V1 的运行与运维手册（部署、日志、排查） |
+| [observability-events.md](observability-events.md) | ⭐ **观测事件目录（自动生成）**：`server/src/config/events.js`（运行时校验的唯一真源）＋ 全仓日志事件名/次数/文件清单；新增或改名日志事件后跑 `cd server && pnpm run observability:events` |
 | [module-boundaries.md](module-boundaries.md) | 模块边界与职责划分 |
 | [idempotency-contract.md](idempotency-contract.md) | 采购与库存的远端幂等契约 |
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
