@@ -49,3 +49,16 @@ test('AC-PM4 ⭐ TTL 内只读一次上游；可关缓存', async () => {
   await off.list();
   assert.equal(calls2.n, 2, 'ttlMs=0 ⇒ 关缓存，每次都读');
 });
+
+test('AC-PM5 ⭐ 按「出现顺序」排序（1 最前）；没序号/非数字排最后且保持稳定', async () => {
+  const rows = [
+    { record_id: 'a', fields: { 收款方式: '工商银行', 出现顺序: 3 } },
+    { record_id: 'b', fields: { 收款方式: '微信扫码', 出现顺序: 1 } },
+    { record_id: 'c', fields: { 收款方式: '现金', 出现顺序: 2 } },
+    { record_id: 'd', fields: { 收款方式: '无序号' } },
+    { record_id: 'e', fields: { 收款方式: '非数字', 出现顺序: 'x' } },
+  ];
+  const service = createPaymentMethodsService({ listAll: async () => rows }, { ttlMs: 0 });
+  const out = await service.list();
+  assert.deepEqual(out.items, ['微信扫码', '现金', '工商银行', '无序号', '非数字'], '按出现顺序升序，无序号排最后且稳定');
+});

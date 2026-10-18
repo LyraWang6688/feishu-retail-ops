@@ -105,7 +105,9 @@ const paymentRowsHtml = (write) => {
     ? write.paymentRows
     : buildPaymentRows({
       count: write.paymentRowCount,
-      defaultMethod: write.defaultPaymentMethod,
+      // ⭐ 2026-10-18：表驱动 —— 配置默认方式若不在表里，第一行选表里第一项（不再出现"空 selected"）。
+      defaultMethod: (write.paymentMethods || []).includes(write.defaultPaymentMethod)
+        ? write.defaultPaymentMethod : (write.paymentMethods || [])[0],
     });
   return rows.map((row) => `<div class="form-row form-row--pay">
 <select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}"><option value="">${escapeHtml(t.paymentNoneOption)}</option>${optionsHtml(write.paymentMethods, row.method)}</select>
