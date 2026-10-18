@@ -36,6 +36,24 @@ const ROOTS = [
   { dir: path.join(SRC, 'views'), prefix: 'views/' },
 ];
 
+/**
+ * ⭐ 2026-10-18（task-5 · `inventoryService.js` 大文件拆分）**成对迁移**：
+ *   库存引擎按职责拆进 `src/services/inventory/*.js`，但这是**纯搬运** ——
+ *   为了「存量债只许减少、不许增加」的口径**一个字符都不变**，这里把 facade ＋ 子模块
+ *   按"拆分前那一份"**聚合扫描**，白名单键仍是拆分前那一档 `services/inventoryService.js`：
+ *   · 同一句文案搬到别的文件 ⇒ 不算"新增"（口径未放宽：**新写的**用户可见中文照样红）；
+ *   · 聚合后完全覆盖拆分前的文本 ⇒ 也不产生 stale。
+ *   ⚠️ 只给"按职责拆大文件"这种纯搬运用（见 `test/support/hardcodedChinese.js` 的 scanTree）。
+ */
+const INVENTORY_ENGINE_FILES = [
+  path.join(SRC, 'services', 'inventoryService.js'),
+  ...fs.readdirSync(path.join(SRC, 'services', 'inventory'))
+    .filter((name) => name.endsWith('.js'))
+    .sort()
+    .map((name) => path.join(SRC, 'services', 'inventory', name)),
+];
+const AGGREGATES = [{ key: 'services/inventoryService.js', files: INVENTORY_ENGINE_FILES }];
+
 /** 造一个临时"业务代码"目录，用来钉机制（不碰仓库真代码）。 */
 const tempTree = (files) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'no-hardcoded-cjk-'));
@@ -59,7 +77,7 @@ test('AC-1 白名单文件写明「存量债，只许减少、不许增加」', 
 });
 
 test('AC-2 ⭐ 只拦「新增」：代码里有、清单里没有 ⇒ 红；**清单不同步 ⇒ 不红**（2026-10-13 改造）', () => {
-  const verdict = evaluateGuard({ roots: ROOTS, whitelist });
+  const verdict = evaluateGuard({ roots: ROOTS, whitelist, aggregates: AGGREGATES });
   const detail = verdict.added.slice(0, 20).map((item) => `  ${item.file}:${item.line}  ${item.text}`).join('\n');
   assert.equal(verdict.added.length, 0, `发现 ${verdict.added.length} 处**新增**的硬编码中文（抽到 config 里去）：\n${detail}`);
   assert.equal(verdict.ok, true, '守卫必须绿（清单里已不在代码里的那些只是 info ⇒ 不红）');
@@ -210,7 +228,7 @@ test('AC-7 领域值 / 表选项照扫 ⇒ 会以"存量债"进白名单（可�
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-8 扫描规模合理（三个根目录都被扫到，且不是 0 文件）', () => {
-  const { added } = scanTree({ roots: ROOTS, whitelist: { files: {} } });
+  const { added } = scanTree({ roots: ROOTS, whitelist: { files: {} }, aggregates: AGGREGATES });
   assert.ok(added.length > 50, `应扫出大量存量（实际 ${added.length} 处）—— 说明真的扫到了三个目录`);
   const files = new Set(added.map((item) => item.file.split('/')[0]));
   for (const prefix of ['services', 'routes', 'views']) {

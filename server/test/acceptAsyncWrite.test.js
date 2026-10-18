@@ -626,7 +626,10 @@ test('AC-AA5-L2L3 ⭐⭐ 真链：串行 + 并发各点两次 ⇒ 库存只加�
     assert.equal(batchBResults[1].reason, 'already_posted',
       '🔴 L2 锁内再查拦住第二跑（`already_posted`）✓');
     // L3 证据：库存自己的幂等来源是**真实三元组**（批次身份 | 货品 | 尺码）—— 源码还在 ✓
-    const inventorySource = fs.readFileSync(path.join(SERVER_DIR, 'src', 'services', 'inventoryService.js'), 'utf8');
+    // ⚠️ 2026-10-18（task-5 · inventoryService.js 大文件拆分）**成对迁移**：
+    //    `purchaseIncreaseSourceId` 原样搬到 `src/services/inventory/keys.js`（函数体逐字节未改）
+    //    ⇒ 这里改读新模块，下面的正则**逐字不变**（判据没放宽）。
+    const inventorySource = fs.readFileSync(path.join(SERVER_DIR, 'src', 'services', 'inventory', 'keys.js'), 'utf8');
     assert.match(inventorySource, /purchase_increase:\$\{identity\}\|\$\{input\.productRecordId\}\|\$\{normalizeSize\(input\.size\)\}/,
       '🔴 L3：加库存的来源标识仍是"真实三元组"（本刀一行未改 ✓）');
     // 每一双的「库存操作键」唯一（同一把键被写两次 = 那条 P0 的形状 ✓）

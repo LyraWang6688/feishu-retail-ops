@@ -71,7 +71,7 @@
 | `idempotency.batch_create_failed` | 1 | src/infrastructure/idempotencyKey.js |
 | `idempotency.reconcile_read_failed` | 1 | src/infrastructure/idempotencyKey.js |
 | `idempotency.reconciled_after_unknown` | 1 | src/infrastructure/idempotencyKey.js |
-| `idempotency.reused` | 3 | src/infrastructure/idempotencyKey.js<br>src/services/inventoryService.js |
+| `idempotency.reused` | 3 | src/infrastructure/idempotencyKey.js<br>src/services/inventory/purchaseBatch.js |
 | `idempotency.unknown_outcome` | 1 | src/infrastructure/idempotencyKey.js |
 
 ## inventory
@@ -81,11 +81,11 @@
 | `inventory.adjustment.count.applied` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.adjustment.count.replayed` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.adjustment.season.applied` | 1 | src/services/inventoryAdjustmentService.js |
-| `inventory.change.applied` | 4 | src/services/inventoryService.js |
+| `inventory.change.applied` | 4 | src/services/inventory/executeOperation.js<br>src/services/inventory/purchaseBatch.js<br>src/services/inventory/purchaseReturnBatch.js<br>…等 4 个文件 |
 | `inventory.change.failed` | 1 | src/config/alerts.js |
-| `inventory.sample_candidates.failed` | 2 | src/services/inventoryService.js |
-| `inventory.sample.promoted` | 1 | src/services/inventoryService.js |
-| `inventory.state.transitioned` | 1 | src/services/inventoryService.js |
+| `inventory.sample_candidates.failed` | 2 | src/services/inventory/executeOperation.js<br>src/services/inventory/saleBatch.js |
+| `inventory.sample.promoted` | 1 | src/services/inventory/samplePromotion.js |
+| `inventory.state.transitioned` | 1 | src/services/inventory/stateTransition.js |
 
 ## label
 

@@ -300,7 +300,17 @@ test('A2 ⭐ 写操作立刻失效：**只作废对应那一张表**的快照（
 
 test('A2 失效点齐不齐（源码哨兵）：库存三处 + 货品写入口三处，一行都不许少', () => {
   const codeOf = (rel) => fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
-  const inventory = codeOf('src/services/inventoryService.js');
+  // ⚠️ 2026-10-18（task-5 · inventoryService.js 大文件拆分）**成对迁移**：
+  //    写路径按职责搬到 `src/services/inventory/*.js`（方法体逐字节未改）⇒ 这里改读
+  //    「库存引擎全部模块（facade ＋ 子模块）」的并集；下面的计数判据**等号对等号、不放宽**。
+  const INVENTORY_ENGINE_FILES = [
+    'src/services/inventoryService.js',
+    ...fs.readdirSync(path.join(SERVER_ROOT, 'src/services/inventory'))
+      .filter((name) => name.endsWith('.js'))
+      .sort()
+      .map((name) => `src/services/inventory/${name}`),
+  ];
+  const inventory = INVENTORY_ENGINE_FILES.map(codeOf).join('\n');
   // 三类写入路径各一行：**逐条三处**（executeOperation / transitionState / promoteToSample）
   // ＋ ⭐ 2026-10-13 新增的**批量口**（`applyPurchaseBatch`，验收提速 ①）
   // ＋ ⭐ 2026-10-16 新增的**退货批量口**（`applyPurchaseReturnBatch`，task-65 库存写入批量化）。
@@ -323,7 +333,7 @@ test('A2 失效点齐不齐（源码哨兵）：库存三处 + 货品写入口�
     "invalidateLiveInventorySnapshot('inventory_changed');",
   ]) {
     assert.equal(inventory.split(line).length - 1, 6,
-      'inventoryService 的六处（executeOperation / transitionState / promoteToSample'
+      '库存引擎（facade + inventory/*）的六处（executeOperation / transitionState / promoteToSample'
       + ' / applyPurchaseBatch / applyPurchaseReturnBatch / applySaleBatch）各要一行');
   }
   // 「货品信息」的写入口：新建货品 / 写标签二维码。
