@@ -42,7 +42,7 @@ test('AC-ON1 ⭐ **正向（走外层 ✓）**：路由形状的 payload 带号 
   assert.equal(html.includes('data-view="success-order-no"'), true,
     '⭐ 那一行必须在 ✓（她 23:5x「那我肯定能看到这个单号呀」）');
   assert.equal(html.includes(NUMBER), true, '⭐ 页面上必须**看得到这个号** ✓');
-  assert.equal(lineOf(html), `上一单已提交（${NUMBER}）`,
+  assert.equal(lineOf(html), `本单已提交（${NUMBER}）`,
     '⭐ 文案逐字 `上一单已提交（<单号>）` ✓（模板走 config ✓ `SCAN_SUCCESS_PAGE.orderNoText`）');
   assert.equal(html.includes('{orderNo}'), false, '⭐ 占位符必须被替换掉 ✗（不许把 `{orderNo}` 漏出去）');
 });

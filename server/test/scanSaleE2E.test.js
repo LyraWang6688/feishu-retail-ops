@@ -2286,7 +2286,7 @@ test('AC-H1/H2 ⭐ 「提交这一单」⇒ 落到**不带编号**的销售首�
       assert.equal(/<a\b/i.test(sHtml), false, '成功页不许有任何链接（她：没有链接 ✓）');
       assert.equal(/<button\b/i.test(sHtml), false, '成功页不许有任何按钮（她：没有按钮 ✓）');
       assert.ok(/data-view="success-order-no"/.test(sHtml), '成功页要有那条 notice 的数据视图 ✓');
-      assert.ok(text(sHtml).includes(`上一单已提交（${orderNo}）`), `成功页上要看得到「上一单已提交（${orderNo}）」✓`);
+      assert.ok(text(sHtml).includes(`本单已提交（${orderNo}）`), `成功页上要看得到「本单已提交（${orderNo}）」✓`);
       // ⚠️ 第二期（若"号在成功页上"仍缺）⇒ 停手报 Lead ✓（不许迁成"没有号"✗）
     });
   } finally { e2e.cleanup(); }
