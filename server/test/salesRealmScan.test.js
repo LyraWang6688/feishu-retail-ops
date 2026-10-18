@@ -562,7 +562,11 @@ test('AC-SR6b ⭐ 配置先行：领域→链**可配**，`sales` 那一格是**
   assert.equal(createRealmScanConfig({ SCAN_REALM_SCAN_CHAINS: 'sales:sales' }).realms.replenish, undefined,
     '没配的领域 ⇒ **不发**（不猜成别的链 ✗ 这条既有口径一个字没动 ✓）');
   // ③ 那条 303 的拼接只有**一处实现**（她定的"不写第二套" ✓）——源码哨兵
-  const routeSrc = fs.readFileSync(path.join(SERVER, 'src', 'routes', 'scanPage', 'index.js'), 'utf8');
+  // ⭐ 2026-10-18 成对迁移（深拆 P3a：加货/打印等小动作搬进 handlers/smallActions.js）：
+  //   改前逐字：只看 index.js；改后逐字：index ＋ smallActions（同一份职责/同一套实现）；
+  //   判据语义未变（一处实现 / 同一个函数 / 同一个 303 拼接 ✓）。
+  const routeSrc = fs.readFileSync(path.join(SERVER, 'src', 'routes', 'scanPage', 'index.js'), 'utf8')
+    + '\n' + fs.readFileSync(path.join(SERVER, 'src', 'routes', 'scanPage', 'handlers', 'smallActions.js'), 'utf8');
   assert.equal((routeSrc.match(/const addBackPath = \(page, realmId\) =>/g) || []).length, 1,
     '🔴 `addBackPath` 只许有**一处**定义（写第二套 ⇒ 红 ✓）');
   assert.match(routeSrc, /const addBackPathFor = \(realmId\) => addBackPath\(backPathOf\(realmId\), realmId\);/,

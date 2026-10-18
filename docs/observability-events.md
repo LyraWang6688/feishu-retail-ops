@@ -447,9 +447,9 @@
 | `scan.data.filtered_empty` | 1 | src/config/scanPage.js |
 | `scan.data.limit_exceeded` | 1 | src/config/scanPage.js |
 | `scan.entry.keep_draft_clear_failed` | 1 | src/routes/scanPage/index.js |
-| `scan.label_print.enqueued` | 1 | src/routes/scanPage/index.js |
-| `scan.label_print.failed` | 1 | src/routes/scanPage/index.js |
-| `scan.label_print.number_unresolved` | 1 | src/routes/scanPage/index.js |
+| `scan.label_print.enqueued` | 1 | src/routes/scanPage/handlers/smallActions.js |
+| `scan.label_print.failed` | 1 | src/routes/scanPage/handlers/smallActions.js |
+| `scan.label_print.number_unresolved` | 1 | src/routes/scanPage/handlers/smallActions.js |
 | `scan.label_print.ready_failed` | 1 | src/routes/scanPage/index.js |
 | `scan.lookup.timing` | 1 | src/config/scanPage.js |
 | `scan.multi_item.add` | 1 | src/config/multiItemOrder.js |
