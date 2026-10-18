@@ -100,3 +100,17 @@ module.exports = async function handleX(ctx) {
 - **风险**：闭包变量多（20+/分支）、POST 内共享的 `let` 状态（如草稿/金额中间值）需逐条确认能否显式化；
   某些 helper 与 `view`/`session` 强耦合，需通过 ctx 传值而不是重算。
 - **回退**：每刀都是独立 PR；若尺子/行为用例出现一字差异，按"回退该刀、保留前序"处理。
+
+## 7. 执行结果（2026-10-18 收尾）
+
+| 阶段 | PR | 搬出内容 | `index.js` |
+|---|---|---|---|
+| P0 | #820 | 补货 + 退货 → `handlers/purchase.js` | 3263 → 3080 |
+| P1 | #821 | 资金处理 `payment_pay` → `handlers/payment.js` | 3080 → 2696 |
+| P2 | #822 | 销售提交 `submit_order` → `handlers/salesSubmit.js` | 2696 → 2303 |
+| P3a | #823 | 打印/加货/配品/清空 → `handlers/smallActions.js` | 2303 → 2209 |
+| P3b | #824 | 响应/金额页 helpers → `responses.js` | 2209 → 2037 |
+| P3c | 本刀 | 写上下文/多货品/打印上下文 → `flowHelpers.js` | 2037 → **1760** |
+
+**验收**：目标 "≤ ~1800 行" 达成（1760）；双版本全量测试 + 页面逐字节尺子由 CI 与本地定向用例共同验证；
+源码哨兵按「改前逐字 → 改后逐字 → 依据」成对迁移；聚合器 `test/support/scanPageSource.js` 同步并入全部新模块。
