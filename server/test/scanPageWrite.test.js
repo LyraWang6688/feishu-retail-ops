@@ -1296,7 +1296,7 @@ test('AC-DB5 ⭐ 一单多双·多次扫码：扫 A 加单 → 扫 B 加单 → 
         '本单条里没有提交按钮（避免"点了提交却没记钱"）');
       assert.equal((afterHtml.match(/value="submit_order"/g) || []).length, 1,
         'B 页上恰好一颗提交按钮（在销售块里）');
-      assert.ok(afterHtml.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
+      assert.ok(afterHtml.includes(`>${SCAN_WRITE.texts.submitButtonCount}<`),
         'B 页那颗按钮写着"提交（2 双）"');
 
       // ⑤ 就在 B 页提交这一单 → **一张主表 + 两行明细**

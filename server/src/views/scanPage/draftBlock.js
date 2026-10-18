@@ -32,6 +32,12 @@ const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}
   const scanNextHtml = canScanNextWithFeishu(userAgent)
     ? ''
     : `<p class="hint">${escapeHtml(texts.scanNextHint)}</p>`;
+  // ⭐ 2026-10-18：按钮文案改为「提交」（不再带双数）⇒「本单：N 双」回到本单条上，
+  //   一单多货的"现在共几双"仍然可见（配置文案 `draftBarCount`，唯一真源）。
+  const lines = Array.isArray(write?.draft?.lines) ? write.draft.lines : [];
+  const countHtml = lines.length
+    ? `<p class="draft-bar__count">${escapeHtml(fillText(texts.draftBarCount, { count: lines.length }))}</p>`
+    : '';
   // 「刚加入本单」那一句：文案来自配置、只有数字来自会话（**没有回显注入面**）。
   const noticeHtml = write && write.notice
     ? `<p class="notice">${escapeHtml(write.notice)}</p>`
@@ -39,8 +45,9 @@ const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}
   // ⭐⭐ 2026-10-15：条里**一件东西都没有时**（飞书 + 没草稿 + 没反馈）⇒ **整条不渲染** ——
   //   她的目的就是"少占地方" ✓ 一张空白卡（只剩内边距）比不渲染更占地方 ✗。
   //   ⚠️ 非飞书**永远有那句人话** ⇒ 照旧渲染（AC-DB1 那些"没草稿也有这条"的判据都走这条路 ✓）。
-  if (!noticeHtml && !submitHtml && !scanNextHtml) return '';
+  if (!countHtml && !noticeHtml && !submitHtml && !scanNextHtml) return '';
   return `<section class="card draft-bar" data-view="draft-bar" aria-label="${escapeHtml(texts.draftBarLabel)}">
+${countHtml}
 ${noticeHtml}
 ${submitHtml}
 ${scanNextHtml}
