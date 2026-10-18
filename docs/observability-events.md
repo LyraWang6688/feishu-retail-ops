@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **506** 个事件。按前缀分组：
+共 **507** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -361,6 +361,7 @@
 | `sales.pending_deal_push.purchase_candidates_failed` | 1 | src/services/pendingPushCandidateService.js |
 | `sales.pending_deal_push.purchase_link.mapping_lookup_failed` | 1 | src/services/purchasePendingBatchService.js |
 | `sales.pending_deal_push.purchase_link.unmapped` | 1 | src/services/purchasePendingBatchService.js |
+| `sales.pending_deal_push.purchase_supplier_index_failed` | 1 | src/services/purchasePendingBatchService.js |
 | `sales.pending_deal_push.reminder.failed` | 1 | src/app.js |
 | `sales.pending_deal_push.reminder.skipped` | 1 | src/app.js |
 | `sales.pending_deal_push.reminder.started` | 1 | src/app.js |
