@@ -1,26 +1,26 @@
 {
   "_comment": "⭐⭐ **开关关着 ⇒ 四页 HTML 与今天逐字节相同**（AC-ST7）的**改前留档**。这 12 个 sha256 是**改口径之前**（origin/main e1657f1 + 512f991 诊断合并，2026-10-16 21:0x 上海）用**当时那份渲染器**跑出来的 `renderScanPage(...)` **整页 HTML**（只把唯一动态位 `page_build` 换成 «page_build»），**两个独立进程各跑一次、逐字相同**。🔴 本文件**只存哈希**（整页 35~52KB × 12 存不下）——可读的逐字快照在 `stockStateConsistency.golden.json`（那 4 块的 assert.equal 也归 AC-ST7 用）。刷新办法：见 `server/test/scanStockPolicyZeroRegression.test.js` 顶部注释。 ⭐ 2026-10-16 23:0x：删开关② ⇒ 全部迁移到「永远按实时库存口径」基线（改前逐字 → 改后逐字 → 依据 见 capturedFrom）。",
   "pageBuildToken": "«page_build»",
-  "capturedFrom": "origin/main e1657f1 (+ 512f991 诊断)；本夹具的 sha 于 2026-10-16 23:0x 成对迁移到「永远按实时库存口径」基线（依据 = 她 20:5x ＋ 22:5x）",
+  "capturedFrom": "origin/main e1657f1 (+ 512f991 诊断)；2026-10-18 成对迁移：按钮文案改「提交」+「本单：N 双」回本单条（业务负责人口径）",
   "viewModule": "server/test/fixtures/scanStockPolicyViews.js",
   "fullPageSha256": {
     "threeState": {
-      "inventory": "8148568ca7c70e0cb268e2f51206822cc47268ecbe7b72e9cbbe89880eeccab8",
-      "sales": "682fa96360457c7447d01ac31d3c87263e02d5fa10a4aff6023b3ee739405424",
-      "replenish": "cd38a144b95a8edef389284e944a58cdc9fcce25d46b2b32f2dce43c165f84e3",
-      "purchase_return": "d5e2d99fca46fee410533673d4a708aa8a30428bb35d1b236ffc573c0e9dc760"
+      "inventory": "45c0050928283f2ebf01107429c81baa7fb2a27ac1aeddfb314bb63d86485cd4",
+      "sales": "f4753269f7022f13a62501e7ee3c2632706ae05f70edcc1dca89cf85d8cf1c25",
+      "replenish": "4350ab28dd074e4dbc558da5615b5bf3a19411e5ed9a7626c3c619650223d5d8",
+      "purchase_return": "f7ebe30ffae306066902ab587395a25e24061067d3a95f8c0c36ee8152279211"
     },
     "fullSizesBlank": {
-      "inventory": "e01b42f1835a7dcd6ae8101fa92800b7df5b0fbfc12f66f5a2a73b756c88c38c",
-      "sales": "dc0e985b88bcd129855956b5d9da4d265149092331805e709e9cf4d3284fff6e",
-      "replenish": "d223661f07afcfe18b8115c584f29d0689bbbaf92652c708863634c357f5d9ef",
-      "purchase_return": "9541ee515306e50c7715a6b72f67814729e8a6731519f91069a3f44e0e65279e"
+      "inventory": "2a32509deb1a59b0b1a3163f115b35144a7de0d8be69bc736dd22e73e8bf0a13",
+      "sales": "936436658e7ed37666d6ba9c974af15b2bea3613e758a2338e0e1891beea440b",
+      "replenish": "0e4c77e3c2f4ef12fada6bc96f4bfb18f51bdb0d0d92b1f60cdb46d76785cded",
+      "purchase_return": "1eeb407a618c35d519ad4de17bb5b14649db65441c4bf4f506c0a860e70f9bcf"
     },
     "blankState": {
-      "inventory": "ea17c1b56f4e10c62e973178d44c79f784196adeeeaa8e24e475a38d3d2c24dd",
-      "sales": "a5774a15e238687122fe7b90902a5eaa0005235c588a40c93d46875fbfe49702",
-      "replenish": "6048ed1d67ac0985d49ffe5cb3d91cb7267e965c7ad500f47d5313e8570beb6d",
-      "purchase_return": "1d4f4eb50e656400911d24bd4b0daceecda810710dd1285f355fc049f17777db"
+      "inventory": "f6535befd52b9d2e7fe8699300b698da70bf3ea3fdd12fb66641ddc82d206900",
+      "sales": "cf0db3544923fdfe845345de4002efad474b47f3abcb0feac919dfec739734a3",
+      "replenish": "6fbd929333cbab6f507a56852ce0dc5cea47d2a0ca76728ea1b57812261efbf1",
+      "purchase_return": "d032877604e182f4ff1b1c7f3d6c829ceb2868f7a82c9eceb0b853da27792d13"
     }
   }
 }

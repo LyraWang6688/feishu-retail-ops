@@ -434,7 +434,8 @@ const annotateScriptOnlyEarlyExits = (html) => {
 //   顶部计数已删 ✓ ⇒ 「本单几双」改从 ⭐ 提交按钮上的双数读（只在销售页 ✓）
 //   🔴 判据强度不变 ✗ · ⚠️ 不用共享 class draft-bar__count 当判据 ✗
 const countOnButton = (html) => {
-  const m = String(html).match(/提交（(\d+) 双/);
+  // ⭐ 2026-10-18：按钮改为「提交」（不带双数）⇒ 本单几双从「本单：N 双」读。
+  const m = String(html).match(/本单：(\d+) 双/);
   return m ? Number(m[1]) : null;
 };
 
@@ -964,8 +965,8 @@ test('AC-E2E-9 🔴 会话过期后：页面照旧打得开 ⇒ 用页面上那�
         '第5步：草稿已清 ⇒ 本单条里**一行草稿都没有** ✓');
       assert.equal(draftBarOf(after.html).includes('value="submit_order"'), false,
         '第5步：本单条里没有提交按钮');
-      assert.ok(after.html.includes('提交（1 双）'),
-        '第5步：销售块那颗还在，文案回到"（1 双）"');
+      assert.ok(after.html.includes('>提交<'),
+        '第5步：销售块那颗还在，文案就是【提交】（不再带双数）');
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第5步：没有再建第二张单');
     });
   } finally { e2e.cleanup(); }
@@ -1203,8 +1204,9 @@ test('AC-E2E-13 ⭐ 提交按钮文案带双数：「提交（2 双）」', asyn
       await addLine(base, cookie, NUMBER_A, '40');
       await addLine(base, cookie, NUMBER_B, '41');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
-      assert.match(page.html, /提交（2 双）/,
-        '按钮上直接写几双（她一眼知道这一单里有几双）');
+      assert.match(page.html, />提交</,
+        '按钮文案就是【提交】（2026-10-18 业务负责人：不再显示几双）');
+      assert.equal(page.html.includes('提交（'), false, '按钮上不再带双数');
     });
   } finally { e2e.cleanup(); }
 });
@@ -1366,7 +1368,7 @@ test('AC-E2E-17 ⭐ 一单一笔 = **选尺码 + 提交**（两下）：空本�
     await withServer(e2e.app, async (base) => {
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
       // ① 空本单：页面上那颗提交按钮就在**尺码同一个表单**里，文案是「（1 双）」
-      assert.match(page.html, /提交（1 双）/, '空本单 ⇒ 主按钮就是"提交这一双"');
+      assert.match(page.html, />提交</, '空本单 ⇒ 主按钮也是【提交】（不再带双数）');
       const formStart = page.html.lastIndexOf('<form', page.html.indexOf('value="submit_order"'));
       const form = page.html.slice(formStart, page.html.indexOf('</form>', formStart));
       assert.ok(form.includes('name="size"'), '尺码 radio 与提交按钮在**同一个表单**里（零 JS 也能一起提交）');
@@ -2139,7 +2141,7 @@ test('AC-ACT2 ⭐ 两处计数**故意不同**（不是 bug）：本单条数 vs
       const cookie = sessionCookie('ou_act_2');
       const page = await getPage(pageUrlOf(base, NUMBER_A), cookie);
         assert.equal(page.html.includes('class="draft-bar__count"'), false, '空本单：顶部不再写"0 双"（她的话：只删那一个数 ✓）');
-      assert.match(page.html, /提交（1 双）/, '空本单：按钮写"这一双" ✓（既有 AC-E2E-17 钉的设计 ✓）');
+      assert.match(page.html, />提交</, '空本单：按钮写【提交】✓（2026-10-18 新文案）');
     });
   } finally { e2e.cleanup(); }
 });

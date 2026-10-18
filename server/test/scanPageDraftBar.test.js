@@ -164,7 +164,8 @@ const barOf = (html) => {
 //   顶部那个计数已删 ✓ ⇒ 「本单几双」改从 ⭐ 提交按钮上的双数读（「✅ 提交（N 双）」✓ 可见 ✓）
 //   🔴 判据强度不变 ✗ · ⚠️ 绝不用共享 class draft-bar__count 当判据 ✗（验收页/未报货页也在用 ⇒ 会假红）
 const countOnButton = (html) => {
-  const m = String(html).match(/提交（(\d+) 双/);
+  // ⭐ 2026-10-18：按钮文案改为「提交」（不再带双数）⇒ 本单几双改从本单条的「本单：N 双」读。
+  const m = String(html).match(/本单：(\d+) 双/);
   return m ? Number(m[1]) : null;
 };
 const salesPageHas = (bar) => String(bar).includes('本单：');
@@ -222,8 +223,8 @@ test('AC-DB2 【提交这一单】**有草稿才出现**（没有草稿时不渲
   assert.ok(page.includes(SCAN_WRITE.fields.lineAmount), '录入页那颗按钮带着「每件实收」');
   assert.ok(step2Of().includes(SCAN_WRITE.fields.paymentMethod), '第 2 步页带着收款方式字段');
   assert.ok(step2Of().includes(SCAN_WRITE.fields.paymentAmount), '第 2 步页也带着收款金额字段');
-  assert.ok(page.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
-    '销售块那颗就是【提交】（带双数）');
+  assert.ok(page.includes(`>${SCAN_WRITE.texts.submitButtonCount}<`),
+    '销售块那颗就是【提交】（不再带双数）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -460,7 +461,8 @@ test('AC-DB7 【加入本单】的 303 回跳**停在本单所在的领域**（�
     //    **改后**：库存页的本单条**没有**【提交这一单】——她 2026-10-11 定「只在销售页显示」。
     //    保留的部分：库存页顶部照旧读得到"本单：1 双"（N 是跨领域共用的），回跳那一条一个字没动。
     const inventoryHtml = await (await fetch(inventoryUrl, { headers: { cookie: sessionCookie() } })).text();
-    assert.equal(salesPageHas(barOf(inventoryHtml)), false, '库存页顶部不再显示计数（已按她的话删 ✓）');
+    // ⭐ 2026-10-18：按钮不再显示双数 ⇒「本单：N 双」重新显示在本单条上（库存页也读得到，跨领域共用）。
+    assert.equal(salesPageHas(barOf(inventoryHtml)), true, '库存页顶部显示「本单：N 双」（按钮已不带双数）');
     assert.equal(barOf(inventoryHtml).includes(SCAN_WRITE.texts.submitButton), false,
       '【提交这一单】只在销售页（2026-10-11 她的口径）⇒ 库存页的本单条上没有它');
 
@@ -524,8 +526,8 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
   const salesPage = pageFor('sales', write, FEISHU_MOBILE_UA);
   assert.equal((salesPage.match(new RegExp(`value="${SCAN_WRITE.actions.submitOrder}"`, 'g')) || []).length, 1,
     '销售页：有草稿 ⇒ 页面上一颗（且只有一颗）提交按钮，就在销售块那唯一的表单里');
-  assert.ok(salesPage.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')),
-    '销售页：那颗按钮写着几双（提交（2 双））');
+  assert.ok(salesPage.includes(`>${SCAN_WRITE.texts.submitButtonCount}<`),
+    '销售页：那颗按钮就是【提交】（不再写几双）');
   // ⚠️ 2026-10-15 **改写**（飞书端空本单 ⇒ 本单条整条不渲染了）：
   //   改前逐字：`assert.equal(barOf(pageFor('sales', WRITE([]), FEISHU_MOBILE_UA)).includes(SCAN_WRITE.actions.submitOrder), false, '销售页：本单条里没有提交动作（空本单时那颗在销售块里，写着"（1 双）"）');`
   //   改后逐字：下面两条 —— ① 飞书端**没有本单条**（更省地方 ✓）② 非飞书端那份条里**没有提交动作** ✓
@@ -551,7 +553,7 @@ test('AC-DB9 ⭐【提交这一单】只在「销售」页：其余三个领域�
     assert.equal(countOnButton(pageFor('sales', WRITE([1, 2]))), 2, `realm=${realm}：条的"几双"照旧要在（跨领域共用同一份本单）`);
     const realmBar = content.slice(content.indexOf('<nav class="realm-bar"'), content.indexOf('</nav>'));
     assert.ok(realmBar.includes(`>${SCAN_PAGE.realmBar.scanLabel}<`), `realm=${realm}：顶部第 5 格「扫一扫」要在 ✓`);
-    assert.equal(content.includes(SCAN_WRITE.texts.submitButtonCount.replace('{count}', '2')), false, `realm=${realm}：不该有【提交】那一颗`);
+    assert.equal(content.includes('提交（'), false, `realm=${realm}：不该有带双数的【提交】那一颗`);
     assert.equal(content.includes(SCAN_WRITE.actions.submitOrder), false, `realm=${realm}：连那个提交表单都不该有`);
     const barStart = content.indexOf('data-view="draft-bar"');
     if (barStart > -1) {

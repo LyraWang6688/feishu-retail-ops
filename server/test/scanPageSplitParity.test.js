@@ -41,12 +41,12 @@ const PRE_SPLIT_SHA256 = '62ffebee3f74d109c0405811ad92b890ff00fb5eca8820dc47d425
 //   改后逐字：「提交（{count} 双）」/「提交」⇒ 渲染字节随之变；
 //   依据 = 业务负责人 2026-10-18：「…改为提交」。尺子本身（逐字节 parity）继续有效 ✓
 //   依据 = 业务负责人 2026-10-16 22:0x「**存草稿的功能都删除吧…整个链路都删除**」✓
-//   ＋ 2026-10-18「改为提交」（`508287` 字节 / `17cad784…b146` = 改文案后**重算的真值** ✓）
+//   ＋ 2026-10-18「改为提交」（`508265` 字节 / `17cad784…b146` = 改文案后**重算的真值** ✓）
 //   ⚠️ 口径：**508,317 这个数字随草稿链退场而作废；尺子本身（逐字节 parity）继续有效** ✓
 //   （工具 `tools/task61-render-baseline.js` 与页面模型 **一个字未改** ✗；其余所有态**仍逐字节比对** ✓）
 /** 现场基线输出（`node tools/task61-render-baseline.js`）的**字节数**与 sha256。 */
-const BASELINE_BYTES = 508287;
-const BASELINE_SHA256 = '17cad784a404e1939dc51af4fe0cadc629a0d358ac61df21cd38f0170691b146';
+const BASELINE_BYTES = 508265;
+const BASELINE_SHA256 = 'b7892f32927fe3e5d0f38c3165368b6bde7bb4ff140b466e8ae67e473859bb04';
 
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
