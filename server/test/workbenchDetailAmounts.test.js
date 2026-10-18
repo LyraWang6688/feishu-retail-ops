@@ -70,9 +70,8 @@ const fakeGateway = ({ details = [], payments = [], posted = true } = {}) => {
       record_id: 'order_1',
       fields: {
         [ENTRY.orderNo]: 'XSD-20261011-0001',
-        // ⚠️ 「账做完了没有」这一道闸门读的是**「资金状态」**（`postedOf` ⇒ `funds`），
-        //    不是「销售状态」——见 `config/salesStatusDimensions.js:115-116`。
-        ...(posted ? { [ENTRY.funds]: '已写入', [ENTRY.sales]: '已写入' } : {}),
+        // ⭐ 2026-10-18：旧四列已删 ⇒ 闸门读「写入状态=成功」。
+        ...(posted ? { [ENTRY.writeStatus]: '成功' } : {}),
       },
     }],
     salesDetail: details,

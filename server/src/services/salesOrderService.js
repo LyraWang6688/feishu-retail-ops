@@ -92,9 +92,9 @@ class SalesOrderService {
     //    （见 `config/v1BitableSchema.salesEntry` 段）。下游 catch 里那次回填同样删掉：
     //    失败现在只落在**状态维度**（销售/资金状态）＋ `v1.sale.post_failed` /
     //    `v1.sale.sync_pending` 日志上。
-    await this.status.write(salesEntryRecordId, {
-      sales: WRITE.sales.none, funds: WRITE.funds.none,
-    }, correlation);
+    if (fundsDeferred) {
+      await this.status.writePending?.(salesEntryRecordId, correlation);
+    }
     // A previous attempt may have completed all detail/receipt writes before a read failed.
     // The persisted task is the source of that stage on the next card callback.
     let financialRecorded = input.knownFinancialComplete === true;
@@ -250,7 +250,7 @@ class SalesOrderService {
       //   主表已有非空、且与这次草稿算出来的**不同** ⇒ 判不一致、停止重试（草稿变了要能被识别）。
       const orderGift = mergeGiftTexts(expected.map((item) => item.gift));
       const existingGift = textValue(entry?.fields?.[entryFields.gift]).trim();
-      if (existingGift && existingGift !== orderGift) {
+      if (existingGift && existingGift !== orderGift && input.giftOverride !== true) {
         throw new Error('销售主表已记录的赠品与当前草稿不一致，已停止重试');
       }
       // ⚠️⚠️ 2026-10-12：这里**试过**"值没变就不写"（省掉那次空串 PATCH），**已回退**——
@@ -466,6 +466,8 @@ class SalesOrderService {
       // 「钱」这一维写完了。⚠️ 这正是 6 处闸门判据读的那一列：
       // 闸门认的是**两代字面量**（旧「已入账」/ 新「已写入」），见 config/salesStatusDimensions。
       await this.status.write(salesEntryRecordId, { funds: WRITE.funds.done }, correlation);
+      // ⭐ 2026-10-18：钱 + 明细都写成功 ⇒ 先写「成功」；后续进度/库存失败会覆盖成部分失败。
+      await this.status.writeFinal?.(salesEntryRecordId, WRITE.writeStatus.done, correlation);
       await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
       // ⭐⭐ 2026-10-12（提速）：**不再"写完再读一遍主表"** —— 单号在 `_confirm` 开头就已经读到
       //    （上面那次 `get('salesEntry')` 的 `entry`），而这一段里**没有任何一步会改单号**
@@ -492,15 +494,11 @@ class SalesOrderService {
       const salesStatus = detailPlan === 0 ? WRITE.sales.none
         : detailsPersisted === 0 ? WRITE.sales.failed
           : detailsPersisted >= detailPlan ? WRITE.sales.done : WRITE.sales.partial;
-      await this.status.write(salesEntryRecordId, {
-        sales: salesStatus,
-        // ⭐⭐ 2026-10-16（task-62）：**货钱分离那一跑，失败也不许写「资金状态」** ——
-        //   这一跑根本没试过写钱（`financialRecorded` 恒 false）⇒ 若照旧写 `写入失败`，
-        //   表里会留下"钱写失败了"这个**与事实相反**的结论（她最恨的"状态撒谎"✗）。
-        //   ⇒ 只写「销售」那一维；钱那一维**保持"未写入"**，由资金页那一跑去收口 ✓
-        //   ⚠️ 关着（`fundsDeferred !== true`）时这一行的形状与今天**逐字相同** ✗。
-        ...(fundsDeferred ? {} : { funds: financialRecorded ? WRITE.funds.done : WRITE.funds.failed }),
-      }, correlation);
+      // ⭐ 2026-10-18：旧四列已删 ⇒ 失败收口统一写「写入状态」。
+      //   已经落过钱/部分数据 ⇒ 部分失败；一个字都没成 ⇒ 失败。
+      await this.status.writeFinal?.(salesEntryRecordId,
+        financialRecorded || detailsPersisted > 0 ? WRITE.writeStatus.partial : WRITE.writeStatus.failed,
+        correlation);
       // ⚠️ 2026-10-09：这里原来会把失败的**人话**回填进「失败原因」列（她照着改就能重试）。
       //    那一列被业务负责人从生产表删掉了 ⇒ **写入点随列一起删**（见
       //    `config/v1BitableSchema.salesEntry` 段）。失败的可见落点现在是：

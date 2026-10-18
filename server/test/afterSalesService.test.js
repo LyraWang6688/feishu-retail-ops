@@ -61,7 +61,7 @@ const seed = () => ({
   ],
   salesEntry: [{
     record_id: 'order_old',
-    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 销售状态: '已写入', 资金状态: '已写入' },
+    fields: { 销售单号: ORDER_NO, 原话: '卖一双 A100 41 码', 销售状态: '已写入', 写入状态: '成功' },
   }],
   salesDetail: [
     {
@@ -307,10 +307,8 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
   // 「未配置语义字段」——所以这里不需要、也无法再断言那两个旧列名）。
   // 售后主表只在她点过卡片「确认」之后才会被创建 → 「确认状态」= 已确认；
   // 明细 / 钱 / 库存随后都成功了 → 另外三维都是终态。
-  assert.equal(masters[0].fields['确认状态'], '已确认');
-  assert.equal(masters[0].fields['销售状态'], '已写入');
-  assert.equal(masters[0].fields['资金状态'], '已写入');
-  assert.equal(masters[0].fields['库存状态'], '已写入');
+  // ⭐ 2026-10-18：四维合并为「写入状态」；售后全部写成功 ⇒ 成功。
+  assert.equal(masters[0].fields['写入状态'], '成功');
   assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
 
   // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 实收金额=正数

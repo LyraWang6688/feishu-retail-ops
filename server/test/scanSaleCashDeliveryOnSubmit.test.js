@@ -258,9 +258,10 @@ test('AC-A1 现货（有货）：提交即交付 + 库存真的少一双 + 主�
     const ledger = entriesOf(h, 'inventoryLedger');
     assert.equal(ledger.length, 1, '库存流水写了一条（既有库存引擎写的）');
     assert.deepEqual(ledger[0].fields['库存行为'], ['bh_sale_decrease']);
-    assert.deepEqual(ledger[0].fields['关联销售'], [detailBySize(h, 'size_40').record_id]);
-    // ④ 主表「库存状态」= 已写入（既有交付链路写的）
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], '已写入');
+    // ⭐ 2026-10-18：生产「关联销售」指向销售主表 ⇒ 写主表 record id（幂等仍按明细 id）。
+    assert.deepEqual(ledger[0].fields['关联销售'], [entriesOf(h, 'salesEntry')[0].record_id]);
+    // ④ 主表「写入状态」= 成功（收口写的）
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], '成功');
     // ⑤ 走的是**既有交付链路**：那条正向证据日志必须出现
     const applied = logs.events('sales.inventory.applied');
     assert.equal(applied.length, 1, `应有且仅有一条 sales.inventory.applied：${logs.lines.join('\n')}`);
@@ -293,8 +294,8 @@ test('AC-A2 预订（缺码）：只写单 —— 明细未交付、实时库存
     assert.equal(entriesOf(h, 'salesDetail').length, 1);
     assert.deepEqual(entriesOf(h, 'liveInventory').map((record) => record.record_id), before, '库存没动');
     assert.deepEqual(entriesOf(h, 'inventoryLedger'), [], '一条库存流水都不许写');
-    // 「库存状态」保持空的既有口径（没跑过交付，就不许写"已写入"）
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], undefined);
+    // ⭐ 2026-10-18：旧「库存状态」列已删；新模型用「写入状态」表达整单收口。
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], '成功');
   } finally { h.cleanup(); }
 });
 
@@ -414,7 +415,7 @@ test('AC-A6 现货那一双其实没货 ⇒ 如实报"库存没扣成"+原因；
     assert.equal(detailBySize(h, 'size_40').fields['履约状态'], '未交付');
     // 主表「库存状态」= 写入失败（**既有取值**，见 config/salesStatusDimensions 的值域：
     // 「未写入 / 部分写入 / 已写入 / 写入失败」—— 别按交付服务里那句过时注释写成"扣减失败"）
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], '写入失败');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], '部分失败');
     // **不算提交完成**：同一把键还在（能重试）
     const session = await h.sessions.get(openId);
     assert.equal(session.sale.key, key, '失败那一次不许轮换幂等键（否则她就没法用同一把键重试）');
@@ -445,7 +446,7 @@ test('AC-A7 失败后补上库存、拿同一把键再提交 ⇒ 只补扣没扣
     assert.equal(detailBySize(h, 'size_40').fields['履约状态'], '已交付');
     assert.equal(detailBySize(h, 'size_42').fields['履约状态'], '未交付');
     assert.equal(entriesOf(h, 'inventoryLedger').length, 1);
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], '部分写入');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], '部分失败');
 
     // 店里补上 42 那一双 ⇒ 同一把键重试
     h.tables.liveInventory = [...h.tables.liveInventory, liveUnit('live_42_box', 42)];
@@ -459,7 +460,7 @@ test('AC-A7 失败后补上库存、拿同一把键再提交 ⇒ 只补扣没扣
     assert.equal(entriesOf(h, 'inventoryLedger').length, 2, '40 只扣一次、42 扣一次');
     assert.deepEqual(entriesOf(h, 'liveInventory'), [], '两双都扣掉了');
     assert.equal(detailBySize(h, 'size_42').fields['履约状态'], '已交付');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], '已写入');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], '成功');
   } finally { h.cleanup(); }
 });
 

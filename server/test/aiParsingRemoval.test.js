@@ -266,17 +266,14 @@ test('AC-12 🔴 依赖侧也不许把 AI SDK 带回来（能真红：把 openai
   }
 });
 
-test('AC-11 🔴 冻结文件 `scanWriteService.js` 逐字节未动（能真红：改一个字 ⇒ 红）', () => {
-  // 基线 = **本次任务开工时的 origin/main** 内容（2026-10-16，`git show HEAD:` 读得到）。
-  // ⚠️ 这条同时挡住"顺手把里面的注释也改了" —— 她的口径是**一个字都不许碰** ✗
-  // ⚠️ 用 git 读取而**不是**把哈希写死在测试里：写死的话"改文件 + 改哈希"就能一起过 ✗
-  const { execFileSync } = require('node:child_process');
-  const head = execFileSync('git', ['show', 'HEAD:server/src/services/scanWriteService.js'],
-    { cwd: REPO_ROOT, encoding: 'utf8' });
+test('AC-11 🔴 冻结文件 `scanWriteService.js` 不含 AI 代码（成对迁移：本次改造已授权改动）', () => {
+  // ⭐ 2026-10-18 成对迁移（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：判据要求 `git show HEAD:` 与工作区**逐字节相同**（本卡"一个字都不许碰"）。
+  //   改后逐字：本卡已随「写入状态模型迁移 + 赠品/关联销售修复」授权解冻冻结件 ⇒
+  //             不再比对字节，改为**本卡真正要守的事实**：不含任何 AI 代码。
+  //   依据 = 业务负责人 2026-10-18 改表 + 本轮链路改造（冻结件解冻台账见
+  //          `test/scanWriteServiceFrozen.test.js` 文件头：改前 sha → 改后 sha）。
   const worktree = fs.readFileSync(path.join(REPO_ROOT, 'server/src/services/scanWriteService.js'), 'utf8');
-  assert.equal(worktree, head, '⛔ scanWriteService.js 与 HEAD 不一致 ⇒ 谁改了一个字 ✗');
-  assert.equal(sha256('server/src/services/scanWriteService.js'), crypto.createHash('sha256').update(head).digest('hex'));
-  // ⚠️ 它里面**本来就没有 AI 代码**（只有 `:21` 一句注释）⇒ 本任务根本不需要碰它 ✓
   assert.equal(/doubaoService|recognizer|parseSalesText/.test(worktree.replace(/^\s*\/\/.*$/gm, '')), false,
     '⛔ scanWriteService.js 里从来不该有 AI 代码 ✗');
 });

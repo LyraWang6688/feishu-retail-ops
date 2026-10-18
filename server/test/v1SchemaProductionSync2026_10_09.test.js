@@ -144,7 +144,7 @@ test('B1(2026-10-09) 销售主表 5 列已随真表删除：映射一个都不�
       `${key} 的物理列已被她 2026-10-09 删掉 ⇒ 映射必须一起删（留映射 = 那一列永远空）`);
   }
   // 建单链路还在写这几列 —— 少一个映射就是「未配置语义字段」当场炸。
-  for (const key of ['orderNo', 'sender', 'userAction']) {
+  for (const key of ['orderNo', 'sender', 'writeStatus']) {
     assert.ok(fields[key], `${key} 仍必须映射（建销售主表时还在写它）`);
   }
 });

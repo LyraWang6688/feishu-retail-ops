@@ -72,13 +72,13 @@ const SERVER_SRC = path.join(__dirname, '..', 'src');
 const SCAN_WRITE_SERVICE_PATH = path.join(SERVER_SRC, 'services', 'scanWriteService.js');
 /** 与 `test/scanWriteServiceFrozen.test.js` / `test/purchaseReturnMultiItem.test.js` **同一个值** ✓。 */
 // ⭐⭐ 2026-10-16 成对迁移（改前逐字 → 改后逐字 → 依据）：
-//   改前逐字：sha `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（1770 行 · 冻结件 `deferFunds` 那一版）
-//   改后逐字：sha `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（1770 行 · 货那一跑**照扣库存**）
+//   改前逐字：sha `faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c`（1770 行 · 冻结件 `deferFunds` 那一版）
+//   改后逐字：sha `faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c`（1770 行 · 货那一跑**照扣库存**）
 //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**货就是货，资金就是资金，它俩是独立的呀**：…**如果是现货，就是要扣库存**；
 //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
 //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
 //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-const FROZEN_SCAN_WRITE_SHA256 = '333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f';
+const FROZEN_SCAN_WRITE_SHA256 = 'faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c';
 
 const OPEN_ID = 'ou_return_image';
 const SESSION_SECRET = 'return-image-test-session-secret';

@@ -149,7 +149,7 @@ const baseSeed = ({ tradeTypeCode, fulfillmentStatus, owed, paidReceived = 0 }) 
     sizeManagement: [{ record_id: 'size_40', fields: { 尺码: 40 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1', 货号: 'P1' } }],
     salesEntry: [{ record_id: ENTRY_ID, fields: {
-      资金状态: '已写入', 销售单号: 'XSD-1',
+      写入状态: '成功', 销售单号: 'XSD-1',
       交易类型: [tradeTypeCode === 'SALE_PREPAID' ? 'behavior_prepaid' : 'behavior_cash'],
     } }],
     salesDetail: [{ record_id: 'd_1', fields: {

@@ -83,11 +83,11 @@ test('闸门 1 交付/扣库存（salesDeliveryService）：只读「资金状�
     progress: { sync: async () => ({ fulfillmentStatus: '未交付' }) },
   }).deliver({ salesEntryRecordId: 'o1', detailRecordIds: ['d1'] });
 
-  assert.equal(await blockedByGate(delivery({ 资金状态: '已入账' })), false);
-  assert.equal(await blockedByGate(delivery({ 资金状态: '已写入' })), false);
-  assert.equal(await blockedByGate(delivery({ 资金状态: '未写入' })), true);
-  assert.equal(await blockedByGate(delivery({ 资金状态: '写入失败' })), true);
-  assert.equal(await blockedByGate(delivery({ 资金状态: '  ' })), true);
+  assert.equal(await blockedByGate(delivery({ 写入状态: '成功' })), false);
+  assert.equal(await blockedByGate(delivery({ 写入状态: '成功' })), false);
+  assert.equal(await blockedByGate(delivery({ 写入状态: '未完成' })), true);
+  assert.equal(await blockedByGate(delivery({ 写入状态: '失败' })), true);
+  assert.equal(await blockedByGate(delivery({ 写入状态: '  ' })), true);
   assert.equal(await blockedByGate(delivery({})), true);
 });
 
@@ -105,10 +105,10 @@ test('闸门 2 订单列表（salesFollowupService.listOrders）：只读「资�
     return new SalesFollowupService({ gateway, store: storeStub() }).listOrders();
   };
 
-  assert.equal((await listOrders({ 资金状态: '已入账' })).orders.length, 1);
-  assert.equal((await listOrders({ 资金状态: '已写入' })).orders.length, 1);
-  assert.equal((await listOrders({ 资金状态: '未写入' })).orders.length, 0);
-  assert.equal((await listOrders({ 资金状态: '写入失败' })).orders.length, 0);
+  assert.equal((await listOrders({ 写入状态: '成功' })).orders.length, 1);
+  assert.equal((await listOrders({ 写入状态: '成功' })).orders.length, 1);
+  assert.equal((await listOrders({ 写入状态: '未完成' })).orders.length, 0);
+  assert.equal((await listOrders({ 写入状态: '失败' })).orders.length, 0);
   assert.equal((await listOrders({})).orders.length, 0);
 });
 
@@ -124,10 +124,10 @@ test('闸门 3 补记收款（salesFollowupService.addPayment）：只读「资�
     amount: 'x', method: '微信', operatorOpenId: 'ou_1',
   });
 
-  assert.equal(await blockedByGate(addPayment({ 资金状态: '已入账' })), false);
-  assert.equal(await blockedByGate(addPayment({ 资金状态: '已写入' })), false);
-  assert.equal(await blockedByGate(addPayment({ 资金状态: '未写入' })), true);
-  assert.equal(await blockedByGate(addPayment({ 资金状态: '写入失败' })), true);
+  assert.equal(await blockedByGate(addPayment({ 写入状态: '成功' })), false);
+  assert.equal(await blockedByGate(addPayment({ 写入状态: '成功' })), false);
+  assert.equal(await blockedByGate(addPayment({ 写入状态: '未完成' })), true);
+  assert.equal(await blockedByGate(addPayment({ 写入状态: '失败' })), true);
   assert.equal(await blockedByGate(addPayment({})), true);
 });
 
@@ -140,12 +140,12 @@ test('闸门 4 成交（secondDeliveryService.confirm）：只读「资金状态
   }).confirm({ salesEntryRecordId: 'o1', method: '微信' });
 
   // 放行后：没有待收款也没有未交付明细 → 直接回 alreadyCompleted，不再写任何东西。
-  const legacy = await confirm({ 资金状态: '已入账' });
+  const legacy = await confirm({ 写入状态: '成功' });
   assert.equal(legacy.alreadyCompleted, true);
-  const fundsWritten = await confirm({ 资金状态: '已写入' });
+  const fundsWritten = await confirm({ 写入状态: '成功' });
   assert.equal(fundsWritten.alreadyCompleted, true);
-  assert.equal(await blockedByGate(confirm({ 资金状态: '未写入' })), true);
-  assert.equal(await blockedByGate(confirm({ 资金状态: '写入失败' })), true);
+  assert.equal(await blockedByGate(confirm({ 写入状态: '未完成' })), true);
+  assert.equal(await blockedByGate(confirm({ 写入状态: '失败' })), true);
   assert.equal(await blockedByGate(confirm({})), true);
 });
 
@@ -170,10 +170,10 @@ test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：�
       .listPendingDeliveries({ now: new Date(DAY) });
   };
 
-  assert.equal((await candidates({ 资金状态: '已入账' })).length, 1);
-  assert.equal((await candidates({ 资金状态: '已写入' })).length, 1);
-  assert.equal((await candidates({ 资金状态: '未写入' })).length, 0);
-  assert.equal((await candidates({ 资金状态: '写入失败' })).length, 0);
+  assert.equal((await candidates({ 写入状态: '成功' })).length, 1);
+  assert.equal((await candidates({ 写入状态: '成功' })).length, 1);
+  assert.equal((await candidates({ 写入状态: '未完成' })).length, 0);
+  assert.equal((await candidates({ 写入状态: '失败' })).length, 0);
   assert.equal((await candidates({})).length, 0);
 });
 
@@ -191,9 +191,9 @@ test('闸门 6 今日销售（v1WorkbenchService.getTodaySales）：只读「资
     return (await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' })).rows;
   };
 
-  assert.equal((await todayRows({ 资金状态: '已入账' })).length, 1);
-  assert.equal((await todayRows({ 资金状态: '已写入' })).length, 1);
-  assert.equal((await todayRows({ 资金状态: '未写入' })).length, 0);
-  assert.equal((await todayRows({ 资金状态: '写入失败' })).length, 0);
+  assert.equal((await todayRows({ 写入状态: '成功' })).length, 1);
+  assert.equal((await todayRows({ 写入状态: '成功' })).length, 1);
+  assert.equal((await todayRows({ 写入状态: '未完成' })).length, 0);
+  assert.equal((await todayRows({ 写入状态: '失败' })).length, 0);
   assert.equal((await todayRows({})).length, 0);
 });

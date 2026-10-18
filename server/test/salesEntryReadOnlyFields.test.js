@@ -65,7 +65,9 @@ test('AC-RO2 🔴 只读清单里**有**它，且标注 type 19 / Lookup / 不�
 
 test('AC-RO3 🔴 源码级：写侧**不认识**它（任何写入路径的字段集都不含 Lookup 类键 ✓）', () => {
   const writer = readSrc('src', 'services', 'salesStatusWriter.js');
-  assert.match(writer, /salesEntry\.fields/, '写白名单的来源必须仍是 `salesEntry.fields`（本判据的前提 ✓）');
+  // ⭐ 2026-10-18 成对迁移：旧四列已删除，writer 现在只写单一「写入状态」；
+  //   前提改为"写侧只认 writeStatus / STATUS_KEYS"，仍然不许读 readOnlyFields。
+  assert.match(writer, /writeStatus|WRITE_STATUS_FIELD/, '写侧只认「写入状态」✓');
   assert.equal(/readOnlyFields/.test(writer), false,
     '🔴 写侧**不许**读 `readOnlyFields`（只读清单不是写白名单 ✓）');
   assert.equal(writer.includes(READ_ONLY_NAME), false,

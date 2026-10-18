@@ -47,7 +47,7 @@ const ORDER_ID = 'order_1';
 /** 内存假网关：语义键 → 真实列名走真 schema（写错语义键当场抛）。 */
 const fakeGateway = () => {
   const records = new Map([
-    ['salesEntry', [{ record_id: ORDER_ID, fields: { [ENTRY.orderNo]: ORDER_NO, [ENTRY.userAction]: '未确认' } }]],
+    ['salesEntry', [{ record_id: ORDER_ID, fields: { [ENTRY.orderNo]: ORDER_NO, [ENTRY.writeStatus]: '未完成' } }]],
     ['sizeManagement', [41, 42].map((size) => ({ record_id: `size_${size}`, fields: { [V1_BITABLE_SCHEMA.tables.sizeManagement.fields.size]: size } }))],
     ['behavior', [
       { record_id: 'behavior_cash', fields: { [V1_BITABLE_SCHEMA.tables.behavior.fields.code]: 'SALE_CASH' } },
@@ -329,8 +329,8 @@ test('AC-REG 其余字段一字未变：主表 / 明细 / 收款行的字段**�
   //     ⇒ 这一单（1 行、实收 240）写到的「总金额」= 240，**多出来的这一列是她的口径**，不是漂移。
   //   ⚠️ 本用例**没有放宽**：仍是 `deepEqual` 全等（少一列 / 多一列都红）。
   assert.deepEqual(Object.keys(entry.fields).sort(),
-    [ENTRY.orderNo, ENTRY.tradeType, ENTRY.userAction, ENTRY.gift, ENTRY.sales, ENTRY.funds, ENTRY.totalAmount].sort(),
-    '主表这次写到的列：销售单号(原有) / 交易类型(新) / 确认状态 / 赠品 / 销售状态 / 资金状态 / 总金额(她 2026-10-16 新增) —— 没有多出来的列');
+    [ENTRY.orderNo, ENTRY.tradeType, ENTRY.gift, ENTRY.totalAmount, ENTRY.writeStatus].sort(),
+    '主表这次写到的列：销售单号 / 交易类型 / 赠品 / 总金额 / 写入状态 —— 没有多出来的列');
   assert.equal(cell(entry, ENTRY.totalAmount), 240, '「总金额」= 各行实收之和（这一单只有一行 240）');
   assert.deepEqual(Object.keys(detailsOf(h)[0].fields).sort(),
     [DETAIL.salesEntry, DETAIL.product, DETAIL.size, DETAIL.actualAmount, DETAIL.fulfillmentStatus, DETAIL.tradeType, DETAIL.detailId].sort(),

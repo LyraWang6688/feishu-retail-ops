@@ -136,7 +136,8 @@ const createSaleWriteBackgroundService = ({ submitSale, saleAsync = {}, config =
   const markSaleWriteFailed = async ({ salesEntryRecordId, correlation, requestId }) => {
     if (!salesEntryRecordId) return;
     try {
-      await status().write(salesEntryRecordId, { sales: WRITE.sales.failed }, correlation);
+      // ⭐ 2026-10-18：旧「销售状态」列已删除 ⇒ 后台失败收口为「部分失败」（主表/部分数据通常已落）。
+      await status().writeFinal(salesEntryRecordId, WRITE.writeStatus.partial, correlation);
     } catch (error) {
       logWarn(config.events.failed, {
         request_id: requestId, reason: 'sale_background_mark_failed',
