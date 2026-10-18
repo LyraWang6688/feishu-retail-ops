@@ -44,7 +44,7 @@ const makeRecords = () => ([
   },
   {
     record_id: 'rec_pending_2',
-    fields: { [F.arrivalStatus]: '未到货', [F.batchNo]: '', [F.supplier]: '', [F.createdAt]: '', [F.quantity]: '' },
+    fields: { [F.arrivalStatus]: '未到货', [F.batchNo]: '', [F.createdAt]: '', [F.quantity]: '' },
   },
   {
     record_id: 'rec_done',
@@ -52,14 +52,23 @@ const makeRecords = () => ([
   },
 ]);
 
-const makeFake = (records = makeRecords()) => {
+const DETAIL = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
+/** 采购明细：供应商在明细的自动字段上（主表那一列已删）。 */
+const makeDetails = () => ([
+  { record_id: 'detail_1', fields: { [DETAIL.batchNo]: ['rec_pending_1'], [DETAIL.supplier]: '金猴' } },
+]);
+
+const makeFake = (records = makeRecords(), details = makeDetails()) => {
   const calls = [];
   return {
     calls,
     reads: () => calls.filter((call) => call.kind === 'listAll' || call.kind === 'listByFilter'),
     gateway: {
       table: (key) => V1_BITABLE_SCHEMA.tables[key],
-      listAll: async (key, options) => { calls.push({ kind: 'listAll', key, options }); return records; },
+      listAll: async (key, options) => {
+        calls.push({ kind: 'listAll', key, options });
+        return key === 'purchaseRequest' ? details : records;
+      },
       listByFilter: async (key, filter, options) => {
         calls.push({ kind: 'listByFilter', key, filter, options });
         // 假飞书：**真的按过滤条件筛**（否则"过滤下推"这条 AC 就是假绿）。
@@ -86,7 +95,8 @@ test('AC-P1 冷读 = 1 次调用（带过滤 + 只要需要的列；不用 listA
   const fake = makeFake();
   const { service } = makeService(fake);
   const batches = await service.listPendingBatches();
-  assert.equal(fake.reads().length, 1, `冷读必须只打一次飞书（实际 ${fake.reads().length} 次）`);
+  // ⭐ 2026-10-18：供应商改从「采购明细」自动字段来 ⇒ 冷读 = 批次 + 明细 两次。
+  assert.equal(fake.reads().length, 2, `冷读 = 批次 + 供应商索引两次（实际 ${fake.reads().length} 次）`);
   const call = fake.reads()[0];
   assert.equal(call.kind, 'listByFilter', '必须**带过滤**读（把「未到货」下推到飞书）');
   assert.match(String(call.filter), /CurrentValue\.\[.+\]="未到货"/, `过滤公式要钉在「未到货」上：${call.filter}`);
@@ -94,6 +104,7 @@ test('AC-P1 冷读 = 1 次调用（带过滤 + 只要需要的列；不用 listA
     '必须**只要需要的列**（field_names），别把整表所有列都拉回来');
   assert.deepEqual(batches.map((row) => row.recordId), ['rec_pending_1'],
     '内容：只有「未到货」且有批次号的那条');
+  assert.deepEqual(batches[0].suppliers, ['金猴'], '供应商来自采购明细的自动字段');
 });
 
 test('AC-P2 TTL 内重复读 ⇒ **零飞书调用**（热读），内容与首次逐字相同', async () => {
@@ -111,10 +122,10 @@ test('AC-P3 TTL 过期 ⇒ 再读 1 次（缓存不许变成"永久缓存"）', 
   const fake = makeFake();
   const { service, clock } = makeService(fake, { ttlMs: 30000 });
   await service.listPendingBatches();
-  assert.equal(fake.reads().length, 1);
+  assert.equal(fake.reads().length, 2);
   clock.now += 30001;
   await service.listPendingBatches();
-  assert.equal(fake.reads().length, 2, 'TTL 过了必须重新读一次飞书');
+  assert.equal(fake.reads().length, 4, 'TTL 过了必须重新读一次（批次 + 明细各一次）');
 });
 
 test('AC-P4 invalidate() ⇒ 下一次**立刻真读**且反映新数据（验收成功后失效的口径）', async () => {
@@ -131,13 +142,14 @@ test('AC-P4 invalidate() ⇒ 下一次**立刻真读**且反映新数据（验�
   };
   service.invalidate();
   const after = await service.listPendingBatches();
-  assert.equal(fake.reads().length, before + 1, '失效之后必须真读一次');
+  assert.equal(fake.reads().length, before + 2, '失效之后必须真读一次（批次 + 明细）');
   assert.deepEqual(after.map((row) => row.recordId), [], '刚验完那一批**立刻**从列表里消失');
 });
 
 test('AC-P5 内容与「整表读 + 本地过滤」的改前口径**逐条相同**', async () => {
   const records = makeRecords();
-  const fake = makeFake(records);
+  const details = makeDetails();
+  const fake = makeFake(records, details);
   const { service } = makeService(fake);
   const got = await service.listPendingBatches();
   // 改前口径：整表读 + 本地 filter(status === pending) + map（本用例把它原样复刻一遍当对照）
@@ -146,7 +158,7 @@ test('AC-P5 内容与「整表读 + 本地过滤」的改前口径**逐条相同
     .map((record) => ({
       batchNo: String(record.fields?.[F.batchNo] ?? '').trim(),
       recordId: record.record_id,
-      suppliers: String(record.fields?.[F.supplier] ?? '').split(/[,，、;；]/).map((x) => x.trim()).filter(Boolean),
+      suppliers: String(details.find((d) => (d.fields?.[DETAIL.batchNo] || []).includes(record.record_id))?.fields?.[DETAIL.supplier] ?? '').split(/[,，、;；]/).map((x) => x.trim()).filter(Boolean),
       reportedAt: record.fields?.[F.createdAt] ?? '',
       quantity: String(record.fields?.[F.quantity] ?? '').trim(),
     }))

@@ -277,6 +277,7 @@ const EVENTS = Object.freeze([
   'sales.pending_deal_push.purchase_candidates_failed',
   'sales.pending_deal_push.purchase_link.mapping_lookup_failed',
   'sales.pending_deal_push.purchase_link.unmapped',
+  'sales.pending_deal_push.purchase_supplier_index_failed',
   'sales.pending_deal_push.reminder.failed',
   'sales.pending_deal_push.reminder.skipped',
   'sales.pending_deal_push.reminder.started',
