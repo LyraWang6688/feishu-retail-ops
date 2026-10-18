@@ -588,7 +588,7 @@ test('AC-SR7 🔴 `services/scanWriteService.js` 逐字节未改（本卡余量 
     //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
     //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
     //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-    'b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734',
+    'f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7',
     '🔴 冻结件必须与钉死的指纹逐字节相同（本卡**一个字都没动** ✓ 见 `test/scanWriteServiceFrozen.test.js` ✓）');
   assert.equal(raw.includes('realmScan'), false, '冻结件不该认识"领域内扫一扫" ✓');
   // ⚠️ 渲染层那一块（销售）**也不许**在冻结件里出现（本卡没有理由碰它 ✓）

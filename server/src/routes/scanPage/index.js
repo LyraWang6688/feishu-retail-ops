@@ -99,6 +99,16 @@ const { handlePaymentPay: handlePaymentPayOf } = require('./handlers/payment');
 const { handleSubmitOrder: handleSubmitOrderOf } = require('./handlers/salesSubmit');
 const { handlePrintLabel: handlePrintLabelOf, handleAddLine: handleAddLineOf, handleClearDraft: handleClearDraftOf } = require('./handlers/smallActions');
 const { createMultiItemPending: createMultiItemPendingOf, createPurchaseScheduler: createPurchaseSchedulerOf } = require('./sessionFlow');
+// ⭐⭐ 2026-10-18（task-2「扫码会话按页面/设备隔离」）：**per-page token**（cookie）与会话键合成。
+//   · cookie 由中间件种/复用；POST 同源自动携带 ⇒ **一个表单字段都不用加**；
+//   · 会话键 = openId + token，通过**既有** `sessionKey` 机制透传给写服务（不另造存储）；
+//   · 没有 token（旧页面 / 浏览器拒收）⇒ 所有包装函数**原样返回** ⇒ 回落既有的 openId 共享路径。
+//   为什么单独一个文件：`sessionFlow.js` 的导出列表被 `scanPageSessionFlow.test.js` 逐字钉着（不放宽）。
+// ⭐⭐ 2026-10-18（task-2）：per-page token 与会话键（实现见 `./pageToken`；本文件只接线）
+const {
+  createPageTokenMiddleware, pageSessionKey, pageSessionKeyOfRequest,
+  createLegacySessionProbe, createFirstVisitKeyAdopter, withPageSession,
+} = require('./pageToken');
 const {
   realmOfAction: realmOfActionOf,
   purchaseAmountRequiredFor: purchaseAmountRequiredForOf,
@@ -606,12 +616,20 @@ const createScanPageRouter = (options = {}) => {
    *      ⇒ **可查**；幂等键**不轮换** ⇒ 她再点一次 = 同一把键**重试** ✓）。
    *   ③ **`submitKey` 原样透传** ✗ —— 幂等责任在写层（本文件一个字不拼、不加后缀 ✓）。
    */
+  // 首访那把旧键的采纳（补货 / 退货第一次带 token 提交时用；实现见 `./pageToken`）
+  const adoptFirstVisitSubmitKey = createFirstVisitKeyAdopter({ getSessions: () => writeService?.sessions });
+
   const purchaseBackground = options.purchaseBackground || createPurchaseWriteBackgroundService({
     // 🔴 `runRest` = **既有写入口**（不新开写库路径 ✗）：补货 / 退货各自的写服务方法。
     //    ⚠️ **实参形状与改前那次 `await writeService.…(…)` 逐字同形**（键名一个不改 ✗）——
     //      判据 `test/multiItemOrderRoute.test.js` 的 **RT2-static** 逐字钉着这张参数清单
     //      （task-46「N=1 与老路径逐字等价」的护栏 ✓ 本刀**不放宽它** ✗）。
-    runRest: async ({ chain, requestId, submitKey, restInput = {} }) => {
+    runRest: async ({ chain, requestId, submitKey, restInput = {}, context = {} }) => {
+      // ⭐⭐ 2026-10-18（task-2）：会话键从 `context` 来（旧页面没有这个键 ⇒ '' ⇒ 写服务回落 openId ✓）。
+      const sessionKey = String(context.sessionKey || '').trim();
+      await adoptFirstVisitSubmitKey({
+        chain, openId: restInput.openId, sessionKey, submitKey,
+      });
       if (!writeService) {
         return { ok: false, code: 'write_disabled', message: writeConfig.texts.writeDisabledBody };
       }
@@ -623,6 +641,8 @@ const createScanPageRouter = (options = {}) => {
           productRecordId: restInput.productRecordId,
           number: restInput.number,
           entries: restInput.entries,
+          // ⚠️ 只在有 token 时出现这个键：旧页面的入参形状**逐字不变**（RT2-static 也钉着这一点 ✓）
+          ...(sessionKey ? { sessionKey } : {}),
         });
       }
       if (chain === 'purchase_return') {
@@ -634,12 +654,16 @@ const createScanPageRouter = (options = {}) => {
           number: restInput.number,
           orderAmount: restInput.orderAmount,
           entries: restInput.entries,
+          // ⚠️ 同上：旧页面不带这个键（入参形状逐字不变 ✓）
+          ...(sessionKey ? { sessionKey } : {}),
         });
       }
       return { ok: false, code: 'unknown_chain', message: String(chain || '') };
     },
     markFailed: async ({ chain, context = {}, result, error }) => {
-      const openId = String(context.openId || '');
+      // ⭐⭐ 2026-10-18（task-2）：有 per-page token 时失败要落到**这一页自己的**会话；
+      //   旧页面（没有 sessionKey）⇒ 仍是 openId，逐字不变 ✓
+      const openId = String(context.sessionKey || context.openId || '');
       const message = String(result?.message || error?.message || '').trim();
       try {
         const sessions = writeService && writeService.sessions;
@@ -742,6 +766,18 @@ const createScanPageRouter = (options = {}) => {
   });
 
   router.use(requireWorkbenchAccess);
+  // ⭐⭐ 2026-10-18（task-2）：per-page token —— GET 首次访问 Set-Cookie；POST 自动携带；
+  //   POST 没有 cookie（旧页面）⇒ `req.scanPageToken = ''` ⇒ 回落既有 openId 共享路径（不报错）。
+  router.use(createPageTokenMiddleware({
+    // ⭐ 过渡期保护：她手上那份"本单 N 双"还在 openId 会话里、而这一发 GET 还没 cookie
+    //   ⇒ **先不换身份**（实现在 `./pageToken`；本文件只接线）。
+    hasLegacySession: createLegacySessionProbe({
+      getSessions: () => writeService?.sessions,
+      openIdOf: (request) => String(
+        request.workbenchUser?.open_id || getSessionUser(request)?.open_id || '',
+      ),
+    }),
+  }));
   /**
    * ⭐⭐ **`GET /s/:number?from=<领域>`** —— 手机扫开的那一页。
    *
@@ -939,6 +975,8 @@ const createScanPageRouter = (options = {}) => {
     if (openId) setTraceFields({ role: roleOf(openId) });
     return openId;
   };
+  /** ⭐ 2026-10-18（task-2）：**这一页的会话键** = openId + per-page token（没有 ⇒ 原样 openId = 改前逐字）。 */
+  const sessionIdOf = (req, openId = openIdOf(req)) => pageSessionKeyOfRequest(req, openId);
 
   /**
    * 表单的 POST 目标（= 处理完回跳到哪一页）。
@@ -1189,7 +1227,7 @@ const createScanPageRouter = (options = {}) => {
     //   ⚠️ 只认会话标记（**不认任何查询串** ✗）⇒ 别人/别的情况下拿不到这一页 ✓
     if (String(req.query?.data || '') !== '1'
       && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
-      const pendingSession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
+      const pendingSession = await writeService?.sessions?.get?.(sessionIdOf(req)).catch(() => null);
       // ⚠️ task-60：`const` → **`let`** —— 她选的 ② 要在下面把这条标记**清成"没有"**
       //    （`pendingMark = ''`）⇒ 那条既有接管**不再命中**（它的那一行**逐字未动** ✓）。
       let pendingMark = pendingSession?.sale?.paymentStep || pendingSession?.paymentStep;
@@ -1237,7 +1275,7 @@ const createScanPageRouter = (options = {}) => {
           // ⚠️ `undefined` = "这个键不在"（`services/scanSessionService.js` 默认 `sale` 的形状 ✓
           //    既有表示、**不新造状态值** ✗）—— 与下面那条残标记清理**同一种清法** ✓。
           await Promise.resolve(writeService.saveDraftLines?.(
-            openIdOf(req), { paymentStep: undefined, submitPending: undefined },
+            sessionIdOf(req), { paymentStep: undefined, submitPending: undefined },
           ));
           reset = true;
         } catch (error) {
@@ -1296,7 +1334,7 @@ const createScanPageRouter = (options = {}) => {
               // ⭐ 2026-10-16 A2a ③：候选收款方式 = 读表那一份（读不到 ⇒ 退回配置 + warn ✓ 见工厂里那份注释）
               paymentMethods: await candidatePaymentMethods(req),
               realm,
-              submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), pendingSession, 'sale') || '',
+              submitKey: writeService?.sessions?.submitKeyFor?.(sessionIdOf(req), pendingSession, 'sale') || '',
               count: pendingLines.length,
               // ⭐⭐ task-58：**哪一条判据把她顶到了资金页** —— 就是上面那个三选一。
               //   （她真机再出现这个现象时，grep `scan.page.rendered` 一眼看出是哪种形状 ✓）
@@ -1320,7 +1358,7 @@ const createScanPageRouter = (options = {}) => {
           //         —— 否则第 2 单刚提交那一下也会命中这条残标记分支 ⇒ 把她**点按钮要写的那一双**抹掉 ⇒ 建不了单 ✗。
           const hadSubmitPending = Boolean(pendingSession?.sale?.submitPending);
           const clearing = writeService.saveDraftLines?.(
-            openIdOf(req), { paymentStep: undefined, submitPending: undefined },
+            sessionIdOf(req), { paymentStep: undefined, submitPending: undefined },
           );
           await Promise.resolve(clearing).catch((error) => {
             logWarn('scan.payment_step.stale_clear_failed', {
@@ -1382,13 +1420,13 @@ const createScanPageRouter = (options = {}) => {
       // ⚠️ 缺省领域用 `resolveRealm('')` 算（**不要**引一个新常量 —— 漏导入时这里会静默失效 ✗，
       //    我踩过：`DEFAULT_REALM` 没导入 ⇒ `undefined === 'sales'` 恒假 ⇒ 记忆永远不生效）。
       if (!explicitRealm && realm === resolveRealm('')) {
-        const remembered = await writeService?.sessions?.get?.(openIdOf(req))
+        const remembered = await writeService?.sessions?.get?.(sessionIdOf(req))
           .then((session) => String(session?.last_realm || '').trim())
           .catch(() => '');
         if (remembered) { realm = resolveRealm(remembered); realmSource = 'remembered'; }
       }
       // ⭐ 2026-10-17（假配置接线）：扫完回来的这一发、且这一处登记 keepDraft=false ⇒ 先清旧草稿
-      if (realmScanTriggered(req, realm)) await clearDraftForScanIfNeeded(openIdOf(req), realm);
+      if (realmScanTriggered(req, realm)) await clearDraftForScanIfNeeded(sessionIdOf(req), realm);
       const write = await buildWriteContext(req, view, realm);
       // ⚠️ 验收模式那一块**只用到文案 / 字段名 / 动作名**（它们都在配置里）——
       //    所以即使扫码写入口整个关着（`write` 为 null），验收模式照旧可用：
@@ -1419,7 +1457,7 @@ const createScanPageRouter = (options = {}) => {
       const multiItemChain = realm === 'replenish' ? 'replenish'
         : (realm === PURCHASE_RETURN_REALM ? 'return' : '');
       if (multiItemChain && writeService?.sessions) {
-        const pending = await readMultiItemPending(openIdOf(req), multiItemChain).catch(() => ({ items: [] }));
+        const pending = await readMultiItemPending(sessionIdOf(req), multiItemChain).catch(() => ({ items: [] }));
         if (pending.items.length) view.multi_items = pending.items;
       }
       // ⭐ 2026-10-11：把 UA 交给渲染层 —— 它只用来决定本单条上【继续扫下一个】
@@ -1525,6 +1563,14 @@ const createScanPageRouter = (options = {}) => {
     const openId = openIdOf(req);
     // 「回跳到哪一块」= 这一页的领域（认不出来一律回落缺省；两个入口同一条口径）。
     const realm = resolveRealm(req.query?.from);
+    // ⭐ 2026-10-18（task-2）请求级包装（**不改 handler 源码**）：注入 sessionKey / context / 领域记忆。
+    const pageToken = req?.scanPageTokenFromCookie === true ? String(req?.scanPageToken || '').trim() : '';
+    const sessionId = pageSessionKey(openId, pageToken);
+    const scopedWriteService = withPageSession(writeService, pageToken);
+    const schedulePurchaseWriteForPage = (args) => (pageToken
+      ? schedulePurchaseWrite({ ...args, context: { ...(args.context || {}), sessionKey: sessionId } })
+      : schedulePurchaseWrite(args));
+    const markRealmUsedForPage = (who, realmId) => markRealmUsed(pageSessionKey(who, pageToken), realmId);
 
     // ══════════════════════════════════════════════════════════════════════════
     // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）
@@ -1574,11 +1620,11 @@ const createScanPageRouter = (options = {}) => {
       const keyOfItem = (item) => String(
         (item && (item.product_record_id || item.productRecordId || item.number || item.item_no)) || '',
       ).trim();
-      const pending = await readMultiItemPending(openId, draftChain);
+      const pending = await readMultiItemPending(sessionId, draftChain);
       if (isMultiItemRemove) {
         const removed = String(body[wireRemoveField] || '').trim();
         const left = pending.items.filter((item) => keyOfItem(item) !== removed);
-        await writeMultiItemPending(openId, draftChain, { orderKey: pending.orderKey, items: left });
+        await writeMultiItemPending(sessionId, draftChain, { orderKey: pending.orderKey, items: left });
         return res.redirect(303, backPath());
       }
       // ── 加货：本次表单的尺码/数量（**与提交那条路同一个解析器、同一份校验** ✓ 不手抄 if-else ✗）
@@ -1601,7 +1647,7 @@ const createScanPageRouter = (options = {}) => {
       const at = pending.items.findIndex((item) => keyOfItem(item) === keyOfItem(added));
       const items = pending.items.slice();
       if (at >= 0) items[at] = added; else items.push(added);
-      await writeMultiItemPending(openId, draftChain, { orderKey: pending.orderKey, items });
+      await writeMultiItemPending(sessionId, draftChain, { orderKey: pending.orderKey, items });
       // ⭐⭐ 2026-10-16（task-61 · ①「补充日志和埋点」）：**加货那一刻**的那一条
       //   —— 她当时问的是「扫了 B 但页面上没看到 A」：是**没存进去**、还是**存了没读出来** ✗✓
       //   ⇒ 这一条说"存进去了几件、存的是哪一件"；渲染那一条（`scan.multi_item.render`）说"读出来几件"。
@@ -1632,7 +1678,7 @@ const createScanPageRouter = (options = {}) => {
     //    刷新不会重复提交），状态由 GET 重新渲染。
       if (action === actions.printLabel) {
         return handlePrintLabelOf({
-          req, res, requestId, body, fields, realm, action, openId, writeConfig, service, writeService, sendHuman, notFoundPage, isRecordBase, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, resolveLabelPrintQueue, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
+          req, res, requestId, body, fields, realm, action, openId, writeConfig, service, writeService: scopedWriteService, sendHuman, notFoundPage, isRecordBase, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, resolveLabelPrintQueue, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
         });
       }
       
@@ -1650,7 +1696,7 @@ const createScanPageRouter = (options = {}) => {
       // ── 加入本单 ────────────────────────────────────────────────────────────
       if (action === actions.addLine) {
         return handleAddLineOf({
-          req, res, requestId, body, fields, realm, action, openId, writeConfig, service, writeService, addBackPath, notFoundPage, respondWriteFailure, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
+          req, res, requestId, body, fields, realm, action, openId, writeConfig, service, writeService: scopedWriteService, addBackPath, notFoundPage, respondWriteFailure, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
         });
       }
       
@@ -1658,7 +1704,7 @@ const createScanPageRouter = (options = {}) => {
       // ── 清空本单 ────────────────────────────────────────────────────────────
       if (action === actions.clearDraft) {
         return handleClearDraftOf({
-          req, res, requestId, body, fields, realm, action, openId, writeService, backTargetFor, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
+          req, res, requestId, body, fields, realm, action, openId, writeService: scopedWriteService, backTargetFor, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
         });
       }
       
@@ -1669,21 +1715,21 @@ const createScanPageRouter = (options = {}) => {
       //                ③ 幂等沿既有 `requestId`（**不自造** ✓）
       if (action === (config.paymentStep?.payAction || 'payment_pay')) {
         return handlePaymentPayOf({
-          SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService, options, successReturnFields, lookupInputOf,
+          SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService: scopedWriteService, options, successReturnFields, lookupInputOf,
         });
       }
 
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
         return handleSubmitOrderOf({
-          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, successReturnFields, writeConfig, writeService,
+          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, successReturnFields, writeConfig, writeService: scopedWriteService,
         });
       }
 
       // ── 补货报单 ────────────────────────────────────────────────────────────
       if (action === actions.replenish) {
         return handleReplenishOf({
-          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, parseReplenishEntries, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite, sendSuccess, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, successReturnFields,
+          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed: markRealmUsedForPage, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, parseReplenishEntries, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite: schedulePurchaseWriteForPage, sendSuccess, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, successReturnFields,
         });
       }
 
@@ -1692,7 +1738,7 @@ const createScanPageRouter = (options = {}) => {
       //    写库（批次行 + 退货明细 + 扣库存 + 出退货单图）全在既有构件里。
       if (action === actions.purchaseReturn) {
         return handlePurchaseReturnOf({
-          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite, sendSuccess, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, successReturnFields, parseReturnEntries,
+          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed: markRealmUsedForPage, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite: schedulePurchaseWriteForPage, sendSuccess, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, successReturnFields, parseReturnEntries,
         });
       }
 
@@ -1739,7 +1785,7 @@ const createScanPageRouter = (options = {}) => {
   const {
     submitMultiItemOrder, buildWriteContext, loadPendingBatches, sendSuccess, invalidateInventorySnapshot, clearDraftForScanIfNeeded, buildPrintContext,
   } = require('./flowHelpers').createFlowHelpers({
-    DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, renderMinimalPage, renderSuccess, resolveLabelPrintQueue, respondWriteFailure, router, scanTargetOf, sendHtml, setDraftOrderAmount, successReturnFields, writeConfig, writeService,
+    DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf: sessionIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, renderMinimalPage, renderSuccess, resolveLabelPrintQueue, respondWriteFailure, router, scanTargetOf, sendHtml, setDraftOrderAmount, successReturnFields, writeConfig, writeService,
   });
 
   return router;

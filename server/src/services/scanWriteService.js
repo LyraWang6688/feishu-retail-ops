@@ -1379,21 +1379,27 @@ const createScanWriteService = (options = {}) => {
     return [String(productRecordId || '').trim(), String(number || '').trim(), lines].join('|');
   };
 
-  const submitReplenish = async ({ openId, submitKey, productRecordId = '', number = '', entries = [], requestId = '' }) => queue.run(`sale:${openId}`, async () => {
+  const submitReplenish = async ({ openId, submitKey, productRecordId = '', number = '', entries = [], requestId = '', sessionKey = '' }) => {
+    // ⭐⭐ 2026-10-18（task-2 会话按页面/设备隔离）：**可选**的会话键（与 addSaleLine / submitSale 同一个机制）。
+    //   · 不传 ⇒ 会话键 = openId ⇒ **改前行为逐字不变** ✓；
+    //   · 传了（扫码页 per-page token 那条路）⇒ 会话按它分；`openId` 仍然只当**操作人**（写进草稿里的
+    //     `operator_open_id` / 日志里的 `open_id`）。
+    const sessionId = sessionKeyOf(openId, sessionKey);
+    return queue.run(`sale:${sessionId}`, async () => {
     if (!config.replenish.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
-    let current = await sessions.get(openId);
+    let current = await sessions.get(sessionId);
     // ⚠️ **扫开就直接补货**是完全正常的用法（她从没点过「加入本单」）⇒ 会话还没建。
     //    这时页面上的补货键就是第 1 轮那把（`submitKeyFor` 纯函数算出来的），建出来即对上。
-    if (!current) current = await sessions.ensure(openId);
+    if (!current) current = await sessions.ensure(sessionId);
     // 🔴 2026-10-12：与销售那条链同样的坑 —— 过期不该是死路 ⇒ **续上**（草稿/键都保留）
     if (current.expired) {
       logInfo(config.events.sessionExpired, {
         session_id: current.session_id, open_id: String(openId || ''), reason: 'revived_on_replenish',
         request_id: requestId,
       });
-      current = await sessions.revive(openId, { submitKey: String(submitKey || '').trim(), flow: 'replenish' });
+      current = await sessions.revive(sessionId, { submitKey: String(submitKey || '').trim(), flow: 'replenish' });
     }
     const replenish = current.replenish || {};
     let key = String(submitKey || '').trim();
@@ -1524,7 +1530,7 @@ const createScanWriteService = (options = {}) => {
         batch_record_id: result?.batch_record_id || '',
         request_count: (result?.request_ids || []).length,
       };
-      await sessions.completeReplenish(openId, { key, result: summary, fingerprint });
+      await sessions.completeReplenish(sessionId, { key, result: summary, fingerprint });
       logInfo(config.events.replenishSubmitted, {
         session_id: current.session_id, submit_key: key, task_id: taskId, ...summary,
         request_id: requestId,
@@ -1532,10 +1538,11 @@ const createScanWriteService = (options = {}) => {
       return { ok: true, reused: false, ...summary };
     } catch (error) {
       const message = userMessageFor(error);
-      await sessions.markReplenishFailed(openId, String(error.message || error)).catch(() => undefined);
+      await sessions.markReplenishFailed(sessionId, String(error.message || error)).catch(() => undefined);
       return fail({ code: 'replenish_write_failed', message, requestId, error });
     }
-  });
+    });
+  };
 
   // ── 采购退货：勾尺码 + 数量 → 采购退货（**与补货同形**；写库/扣库存/出图都在既有构件里）──
   /**
@@ -1551,13 +1558,17 @@ const createScanWriteService = (options = {}) => {
    */
   const submitPurchaseReturn = async ({
     openId, submitKey, productRecordId = '', number = '', entries = [], requestId = '', orderAmount = '',
-  }) => queue.run(`sale:${openId}`, async () => {
+    // ⭐⭐ 2026-10-18（task-2）：可选会话键（机制与 submitReplenish 逐字同源 ✓ 不传 ⇒ 改前行为不变 ✓）
+    sessionKey = '',
+  }) => {
+    const sessionId = sessionKeyOf(openId, sessionKey);
+    return queue.run(`sale:${sessionId}`, async () => {
     if (!config.purchaseReturn.enabled) {
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
-    let current = await sessions.get(openId);
+    let current = await sessions.get(sessionId);
     // 扫开就直接退货也是正常用法（她从没点过「加入本单」）⇒ 会话还没建。
-    if (!current) current = await sessions.ensure(openId);
+    if (!current) current = await sessions.ensure(sessionId);
     if (current.expired) {
       return fail({ code: 'session_expired', message: texts.sessionExpiredBody, requestId });
     }
@@ -1682,10 +1693,10 @@ const createScanWriteService = (options = {}) => {
         const declared = (summary.shortfalls || [])
           .reduce((sum, item) => sum + Number(item.declared || 0), 0);
         const message = fillText(texts.returnStockEmptyBody, { declared });
-        await sessions.markPurchaseReturnFailed(openId, message).catch(() => undefined);
+        await sessions.markPurchaseReturnFailed(sessionId, message).catch(() => undefined);
         return fail({ code: 'return_stock_empty', message, requestId });
       }
-      await sessions.completePurchaseReturn(openId, { key, result: summary });
+      await sessions.completePurchaseReturn(sessionId, { key, result: summary });
       logInfo(config.events.returnSubmitted, {
         session_id: current.session_id, submit_key: key, task_id: taskId, ...summary,
         request_id: requestId,
@@ -1693,10 +1704,11 @@ const createScanWriteService = (options = {}) => {
       return { ok: true, reused: false, ...summary };
     } catch (error) {
       const message = userMessageFor(error);
-      await sessions.markPurchaseReturnFailed(openId, String(error.message || error)).catch(() => undefined);
+      await sessions.markPurchaseReturnFailed(sessionId, String(error.message || error)).catch(() => undefined);
       return fail({ code: 'return_write_failed', message, requestId, error });
     }
-  });
+    });
+  };
 
   return {
     sessions,

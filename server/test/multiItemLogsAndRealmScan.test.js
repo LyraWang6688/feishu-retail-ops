@@ -474,7 +474,9 @@ test('AC-ML4 ⭐⭐ 全局那颗「扫一扫」**一个字都没动**（仍是�
   assert.match(html, /data-realm-id="scan" href="https:\/\/applink\.feishu\.cn\/client\/qrcode\/main"/,
     '🔴 第 5 格「扫一扫」仍是那条 AppLink ✓');
   // ④ 本刀没有第二套扫码入口：路由里 `resolveRealm` / 记忆领域那一段**一个字都没动** ✓
-  assert.match(ROUTE_SRC, /const remembered = await writeService\?\.sessions\?\.get\?\.\(openIdOf\(req\)\)/,
+  // ⭐ 2026-10-18 · task-2 成对迁移：记忆领域那一段**逻辑一字未动**，只把"当前这一页的会话键"
+  //   从 `openIdOf(req)` 换成 `sessionIdOf(req)`（= openId + per-page token；无 token 时就是 openId ✓）。
+  assert.match(ROUTE_SRC, /const remembered = await writeService\?\.sessions\?\.get\?\.\(sessionIdOf\(req\)\)/,
     '全局扫一扫的"记忆领域"那一段仍在（本刀不碰它 ✓）');
 });
 
@@ -645,7 +647,13 @@ test('AC-ML8 🔴 `services/scanWriteService.js` **一个字不加/删/改**（�
   //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
   //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
   //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-  const FROZEN_SCAN_WRITE_SHA256 = 'b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734';
+  // ⭐ 2026-10-18 · task-2「扫码会话按页面/设备隔离」（Lead **明确授权**：只允许在冻结件里加
+  //   `sessionKey` 可选参数透传 / 小改调用）：
+  //   改前逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1736 行）
+  //   改后逐字：sha `f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7`（1748 行）
+  //   依据：`submitReplenish` / `submitPurchaseReturn` 各加一个**可选** `sessionKey`（不传 ⇒ 会话键 = openId
+  //   ⇒ 与改前逐字同一个键、同一套行为）；写库逻辑 / 事件名 / 返回形状一个字节都没动 ✓
+  const FROZEN_SCAN_WRITE_SHA256 = 'f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7';
   // ⚠️ 行数这条**刻意不写**：`split('\n').length` 与 `wc -l` **差 1**（文件末尾有无换行 ✓）
   //    ⇒ 我第一版写成 1698 当场把自己判红 ✗ ⇒ **只留 sha256**（它本身就是"逐字节"最强判据 ✓ 且不依赖任何 ref ✓）
   //    行数上限（余量 0）由既有哨兵 `scanWriteServiceFrozen.test.js` 的 AC-FRZ1 负责 ✓

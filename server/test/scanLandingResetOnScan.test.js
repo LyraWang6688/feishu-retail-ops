@@ -416,6 +416,11 @@ test('AC-LR2c ✅ **不清过头**：非销售领域 / `?data=1` / **裸扫** �
  *    `// 🔴 **残标记**（0 行 + 没单号 + 已 submitted）…` 起到 `had_submit_pending: hadSubmitPending,` 那笔 `});`）。
  *    这份字符串是从**当前源码**里逐字节抽出来的 ⇒ 谁改这个分支一个字就红 ✓。
  */
+// ⭐ 2026-10-18 · task-2 成对迁移（**只动这一行**，其余逐字不变）：
+//   改前逐字：`            openIdOf(req), { paymentStep: undefined, submitPending: undefined },`
+//   改后逐字：`            sessionIdOf(req), { paymentStep: undefined, submitPending: undefined },`
+//   依据：会话键 = openId + per-page token（没有 token 时 `sessionIdOf` **就是** openId ⇒ 老页面逐字同键）；
+//     这一发清的必须是**这一页自己的**会话（清别人的 = 把她另一台设备的标记抹掉 ✗）。日志里的 `open_id` 仍是本人 ✓。
 const STALE_BRANCH_FROZEN = [
   "          // 🔴 **残标记**（0 行 + 没单号 + 已 `submitted`）⇒ **不给资金页**，并把标记清成\"**没走到资金这一步**\"",
   "          //   的**既有表示** = 这个键**不在**（`services/scanSessionService.js` 的默认 `sale` 里就**没有**",
@@ -432,7 +437,7 @@ const STALE_BRANCH_FROZEN = [
   "          //         —— 否则第 2 单刚提交那一下也会命中这条残标记分支 ⇒ 把她**点按钮要写的那一双**抹掉 ⇒ 建不了单 ✗。",
   "          const hadSubmitPending = Boolean(pendingSession?.sale?.submitPending);",
   "          const clearing = writeService.saveDraftLines?.(",
-  "            openIdOf(req), { paymentStep: undefined, submitPending: undefined },",
+  "            sessionIdOf(req), { paymentStep: undefined, submitPending: undefined },",
   "          );",
   "          await Promise.resolve(clearing).catch((error) => {",
   "            logWarn('scan.payment_step.stale_clear_failed', {",

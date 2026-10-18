@@ -64,7 +64,13 @@ const { resolveSupplierSplitConfig, BATCH_NO_POLICIES, SPLIT_STAGE, SUPPLIER_SPL
 //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
 //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
 //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-const FROZEN_SHA256 = 'b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734';
+  // ⭐ 2026-10-18 · task-2「扫码会话按页面/设备隔离」（Lead **明确授权**：只允许在冻结件里加
+  //   `sessionKey` 可选参数透传 / 小改调用）：
+  //   改前逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1736 行）
+  //   改后逐字：sha `f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7`（1748 行）
+  //   依据：`submitReplenish` / `submitPurchaseReturn` 各加一个**可选** `sessionKey`（不传 ⇒ 会话键 = openId
+  //   ⇒ 与改前逐字同一个键、同一套行为）；写库逻辑 / 事件名 / 返回形状一个字节都没动 ✓
+const FROZEN_SHA256 = 'f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7';
 
 const SPLIT_SERVICE_PATH = path.join(__dirname, '..', 'src', 'services', 'supplierSplitService.js');
 const SPLIT_SERVICE_SRC = fs.readFileSync(SPLIT_SERVICE_PATH, 'utf8');
