@@ -10,7 +10,7 @@ const { withSalesReadRetry } = require('./salesReadRetry');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { postedOf, isPosted, SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
-const { logError, logInfo } = require('../utils/logger');
+const { logError, logInfo, logWarn } = require('../utils/logger');
 const { mergeCorrelation } = require('../utils/correlationFields');
 
 class SalesDeliveryService {
@@ -90,6 +90,18 @@ class SalesDeliveryService {
     }
     const results = [];
     const failures = [];
+    // ⭐ 2026-10-18（提速 · 第 4 步）：**库存扣减一次性批量**（`InventoryService.applySaleBatch`）。
+    //   改前逐字：每一条明细一次 `inventory.applySale` ⇒ 每条要敲一次整表读 ＋ `create`（流水）
+    //     ＋ 一次 `get`（删之前确认）＋ 一次 `delete`（扣那一双）⇒ N 条 = 4N 次以上飞书请求。
+    //   改后：整批 1 次整表读 ＋ 1 次 `createBatch`（流水）＋ 1 次 `getBatch` ＋ 1 次 `deleteBatch`。
+    //   🔴 **逐条的部分失败语义一个字不动**：
+    //     · 前置校验（跳过配品 / 重复交付 / 尺码解不出 / 货品关联不唯一）仍**逐行**判定；
+    //     · 库存那一段的逐行失败（库存不足…）由批量口**按行**返回（`{ ok: false, error }`）；
+    //     · 最后仍按**明细原顺序**汇总进 `results` / `failures` ⇒ `stockStatus` /
+    //       `sampleReplacements` / `sales.inventory.applied` 的判据与日志字段全部不变。
+    //   ⚠️ 库存服务**没有**批量口（既有单测里的替身就是 `{ applySale }`）⇒ 逐条，行为不变。
+    const decisions = new Array(detailRecordIds.length).fill(null);
+    const pendingLines = [];
     for (const [index, id] of detailRecordIds.entries()) {
       const detail = byId.get(id);
       const quantity = 1;
@@ -108,29 +120,71 @@ class SalesDeliveryService {
         const link = itemLinkOfDetail(detail.fields, fields);
         const kind = link ? SELLABLE_KINDS[link.kindKey] : null;
         if (kind && !kind.tracksInventory) {
-          results.push({ detailRecordId: id, skipped: true, reason: 'not_tracked_kind' });
+          decisions[index] = { kind: 'skipped' };
           continue;
         }
         if (status === '已交付') {
-          const inventoryResult = await this.inventory.getSaleResult?.(id);
-          results.push({ detailRecordId: id, duplicate: true, inventoryResult });
+          decisions[index] = { kind: 'duplicate', inventoryResult: await this.inventory.getSaleResult?.(id) };
           continue;
         }
         size = (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[fields.size])).size;
         if (productIds.length !== 1) throw new Error(`销售明细 ${id} 必须关联一个货品`);
-        const inventoryResult = await this.inventory.applySale({
-          salesDetailRecordId: id, salesEntryRecordId, productRecordId: productIds[0],
-          size, quantity, occurredAt: Number(occurredAt || Date.now()),
-        }, { correlation });
+        const line = { index, lineNumber: index + 1, detailRecordId: id, productRecordId: productIds[0],
+          size, quantity, salesEntryRecordId, occurredAt: Number(occurredAt || Date.now()) };
+        decisions[index] = { kind: 'pending', line };
+        pendingLines.push(line);
+      } catch (error) {
+        decisions[index] = { kind: 'failed',
+          entry: { detailRecordId: id, lineNumber: index + 1, productRecordId: productIds[0] || '',
+            size, quantity, error: error.message } };
+      }
+    }
+    // 库存扣减：一次批量（没有批量口 / 批量写失败 ⇒ 逐条回落，见 `_applySalesInventory`）。
+    const outcomes = await this._applySalesInventory(pendingLines, correlation);
+    const outcomeByDetail = new Map(pendingLines.map((line, position) => [line.detailRecordId, outcomes[position]]));
+    const recordFailure = (entry) => {
+      failures.push(entry);
+      logError('sales.delivery.line.failed', { sales_entry_record_id: salesEntryRecordId,
+        detail_record_id: entry.detailRecordId, line_number: entry.lineNumber,
+        product_record_id: entry.productRecordId, size: entry.size, quantity: entry.quantity,
+        error: entry.error, ...correlation });
+    };
+    // 按**明细原顺序**汇总 ⇒ results / failures 的次序与改动前逐条路径一致。
+    for (const [index, id] of detailRecordIds.entries()) {
+      const detail = byId.get(id);
+      const decision = decisions[index];
+      if (decision.kind === 'skipped') {
+        results.push({ detailRecordId: id, skipped: true, reason: 'not_tracked_kind' });
+        continue;
+      }
+      if (decision.kind === 'duplicate') {
+        results.push({ detailRecordId: id, duplicate: true, inventoryResult: decision.inventoryResult });
+        continue;
+      }
+      if (decision.kind === 'failed') {
+        recordFailure(decision.entry);
+        continue;
+      }
+      const { line } = decision;
+      const outcome = outcomeByDetail.get(line.detailRecordId);
+      if (!outcome || !outcome.ok) {
+        // 库存那一段这一条没成（库存不足 / 内容与首次提交不一致 / 批量写失败后逐条也没救回来…）：
+        // 如实记进 failures（**带上 reason**），其余明细照旧 —— 部分失败语义不变。
+        // ⚠️ 兜底那一句用**英文键**：这是"库存服务没按约定返回 ok/error"的内部错误（正常不可达），
+        //    不引入新的硬编码中文（`test/noHardcodedChinese`）。
+        recordFailure({ detailRecordId: id, lineNumber: line.lineNumber,
+          productRecordId: line.productRecordId, size: line.size, quantity: line.quantity,
+          error: String(outcome?.error?.message || outcome?.error || 'inventory_deduction_failed') });
+        continue;
+      }
+      try {
         await this.gateway.update('salesDetail', id, { fulfillmentStatus: '已交付' }, { correlation });
         detail.fields[fields.fulfillmentStatus] = '已交付';
-        results.push({ detailRecordId: id, inventoryResult });
+        results.push({ detailRecordId: id, inventoryResult: outcome.result });
       } catch (error) {
-        failures.push({ detailRecordId: id, lineNumber: index + 1,
-          productRecordId: productIds[0] || '', size, quantity, error: error.message });
-        logError('sales.delivery.line.failed', { sales_entry_record_id: salesEntryRecordId,
-          detail_record_id: id, line_number: index + 1, product_record_id: productIds[0],
-          size, quantity, error: error.message, ...correlation });
+        recordFailure({ detailRecordId: id, lineNumber: line.lineNumber,
+          productRecordId: line.productRecordId, size: line.size, quantity: line.quantity,
+          error: error.message });
       }
     }
     // 「库存状态」：扣减这一步的结果（**逐条**看，不是看"整单成功/失败"）。
@@ -193,6 +247,61 @@ class SalesDeliveryService {
       ...correlation });
     return { salesEntryRecordId, results, failures, deliveredQuantity: deliveredTotal,
       totalQuantity: total, fulfillmentStatus: progress.fulfillmentStatus, sampleReplacements };
+  }
+
+  /**
+   * ⭐ 2026-10-18（提速 · 第 4 步）：把"这几条明细的库存扣减"交给库存引擎的**批量口**。
+   *
+   * 为什么单独抽一个方法：`_deliver` 里那段已经够长，而"批量 / 回落"这条分叉只该有一个实现。
+   * 回落口径与 `purchaseWebhookService`（验收）／`purchaseReturnService`（退货）**同一手法**：
+   *   · 库存服务**没有** `applySaleBatch`（既有单测里的替身就是 `{ applySale }`）⇒ **逐条**，
+   *     与改动前**逐字节同形**（顺序、入参、失败粒度都相同）；
+   *   · 批量口**抛**（批量写整批失败，例：`createBatch` / `deleteBatch` 抛）⇒ **退回逐条**：
+   *     那几次已经落了本地 journal（`prepared` / `ledger_created`）⇒ 逐条那次按**同一把键续跑**，
+   *     **不重复扣**；某一条真的不行就只让那一条失败 —— 部分失败语义因此不打折、
+   *     也不静默（每条失败都带着库存引擎自己那句 reason 返回）。
+   *
+   * ⚠️ 返回**与入参同序**：`[{ ok: true, result } | { ok: false, error }]`。
+   * @param {Array<{detailRecordId:string, salesEntryRecordId:string, productRecordId:string,
+   *   size:number, quantity:number, occurredAt:number}>} lines
+   * @returns {Promise<Array<{ok:boolean, result?:object, error?:Error}>>}
+   */
+  async _applySalesInventory(lines, correlation) {
+    if (!Array.isArray(lines) || !lines.length) return [];
+    const payloads = lines.map((line) => ({
+      salesDetailRecordId: line.detailRecordId,
+      salesEntryRecordId: line.salesEntryRecordId,
+      productRecordId: line.productRecordId,
+      size: line.size,
+      quantity: line.quantity,
+      occurredAt: line.occurredAt,
+    }));
+    const perLine = async () => {
+      const outcomes = [];
+      for (const payload of payloads) {
+        try {
+          outcomes.push({ ok: true, result: await this.inventory.applySale(payload, { correlation }) });
+        } catch (error) {
+          outcomes.push({ ok: false, error });
+        }
+      }
+      return outcomes;
+    };
+    // 没有批量口（替身 / 未接线）或没有逐条口（不该发生）⇒ 逐条，行为与改动前逐字相同。
+    if (typeof this.inventory.applySaleBatch !== 'function'
+      || typeof this.inventory.applySale !== 'function') return perLine();
+    try {
+      return await this.inventory.applySaleBatch(payloads, { correlation });
+    } catch (error) {
+      // ⚠️ 如实记一条：整批没能一次写完 ⇒ 退回逐条（不是"重试"，是"换回改动前那条路"）。
+      logWarn('sales.delivery.inventory_batch_fallback', {
+        sales_entry_record_id: correlation?.sales_entry_record_id,
+        detail_count: payloads.length,
+        error: error?.message || String(error),
+        ...correlation,
+      });
+      return perLine();
+    }
   }
 }
 

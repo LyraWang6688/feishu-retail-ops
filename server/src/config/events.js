@@ -238,6 +238,7 @@ const EVENTS = Object.freeze([
   'push.transient_retry.waiting',
   'sales.confirm_deal.short_stock',
   'sales.delivery.completed',
+  'sales.delivery.inventory_batch_fallback',
   'sales.delivery.line.failed',
   'sales.detail_id.skipped',
   'sales.entry.total_amount.skipped',
