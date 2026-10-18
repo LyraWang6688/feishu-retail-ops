@@ -1414,17 +1414,13 @@ const createScanPageRouter = (options = {}) => {
           number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
         });
       }
-      // ⭐⭐ 2026-10-12（她拍板）：「扫 16 ⇒ 补货 ⇒ 提交 ⇒ 继续扫 ⇒ **自动还是补货**」——
-      //   **裸扫**（标签码不带 `?from=`）时用**她最近用过**的那个领域；从来没记过 ⇒ 仍是缺省（销售 ✓）。
-      //   ⚠️ 显式 `?from=` 永远优先 ✓；⚠️ 上面"正开着验收 ⇒ 裸扫进验收"的接管**优先于**这条 ✓。
-      // ⚠️ 缺省领域用 `resolveRealm('')` 算（**不要**引一个新常量 —— 漏导入时这里会静默失效 ✗，
-      //    我踩过：`DEFAULT_REALM` 没导入 ⇒ `undefined === 'sales'` 恒假 ⇒ 记忆永远不生效）。
-      if (!explicitRealm && realm === resolveRealm('')) {
-        const remembered = await writeService?.sessions?.get?.(sessionIdOf(req))
-          .then((session) => String(session?.last_realm || '').trim())
-          .catch(() => '');
-        if (remembered) { realm = resolveRealm(remembered); realmSource = 'remembered'; }
-      }
+      // ⭐⭐ 2026-10-18 修正（业务负责人：「全局和领域内的扫一扫逻辑不一样」）：
+      //   五处扫一扫登记表（config/scanEntries.js）已经把两种入口分开：
+      //     · 领域条【扫一扫】= standalone / AppLink，**不带历史数据**（keepDraft=false）
+      //     · 领域内【再加一单】= JSAPI，扫完回跳 URL **显式带 `?from=<领域>&scan=1`**
+      //   ⇒ 裸扫（无 `from=`）就是**全局入口**，必须固定落缺省领域（销售），
+      //     不能再按 `last_realm` 记忆回补货 —— 那样全局入口会被上一笔补货"带偏"。
+      //   ⚠️ 领域内回跳仍由 `?from=` 显式表达（不改）；`realmSource` 保持 default。
       // ⭐ 2026-10-17（假配置接线）：扫完回来的这一发、且这一处登记 keepDraft=false ⇒ 先清旧草稿
       if (realmScanTriggered(req, realm)) await clearDraftForScanIfNeeded(sessionIdOf(req), realm);
       const write = await buildWriteContext(req, view, realm);

@@ -474,10 +474,12 @@ test('AC-ML4 ⭐⭐ 全局那颗「扫一扫」**一个字都没动**（仍是�
   assert.match(html, /data-realm-id="scan" href="https:\/\/applink\.feishu\.cn\/client\/qrcode\/main"/,
     '🔴 第 5 格「扫一扫」仍是那条 AppLink ✓');
   // ④ 本刀没有第二套扫码入口：路由里 `resolveRealm` / 记忆领域那一段**一个字都没动** ✓
-  // ⭐ 2026-10-18 · task-2 成对迁移：记忆领域那一段**逻辑一字未动**，只把"当前这一页的会话键"
-  //   从 `openIdOf(req)` 换成 `sessionIdOf(req)`（= openId + per-page token；无 token 时就是 openId ✓）。
-  assert.match(ROUTE_SRC, /const remembered = await writeService\?\.sessions\?\.get\?\.\(sessionIdOf\(req\)\)/,
-    '全局扫一扫的"记忆领域"那一段仍在（本刀不碰它 ✓）');
+  // ⭐ 2026-10-18 修正：全局扫一扫 = standalone / **不带历史数据**（config/scanEntries.js 的登记）。
+  //   领域内“再加一单”扫完回跳会**显式**带 `?from=<领域>&scan=1` ⇒ 裸扫不再需要用 last_realm 猜领域。
+  //   旧“记忆领域”回落会把全局入口带偏（上一笔补货 ⇒ 全局扫也进补货）⇒ 已删除。
+  assert.doesNotMatch(ROUTE_SRC, /const remembered = await writeService\?\.sessions\?\.get\?\./,
+    '全局扫一扫不再读 last_realm 猜领域（裸扫固定缺省=销售 ✓）');
+  assert.match(ROUTE_SRC, /裸扫（无 `from=`）就是\*\*全局入口\*\*/, '源码写明全局入口固定缺省领域');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

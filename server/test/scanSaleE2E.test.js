@@ -1829,13 +1829,13 @@ test('AC-SR1/SR2/SR3 销售提交成功 ⇒ 自动回**销售**首页（URL 确�
 //   口径：**裸扫**（标签码不带 `?from=`）时用她**最近用过**的领域；显式 `?from=` 永远优先；
 //        从没记过 ⇒ 仍是缺省**销售**（既有口径不回归 ✓）；**只在写成功时记**（看一眼不算 ✓）。
 //
-//   AC-RF1 记得住：记过「补货」⇒ 裸扫落在**补货**
+//   AC-RF1 全局：记过「补货」⇒ 裸扫（无 from）仍落**缺省销售**（全局扫一扫不带历史 ✓）
 //   AC-RF2 显式优先：`?from=sales` 覆盖记忆 ⇒ 落**销售**
 //   AC-RF3 没记忆 ⇒ 仍落**销售**（既有缺省 ✓）
 //   AC-RF4 只写成功才记：真提交一次销售 ⇒ 会话 `last_realm = sales`（并且成功页照旧回销售首页 ✓ AC-SR）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RF1 记过「补货」⇒ **裸扫**（不带 ?from=）落在补货领域', async () => {
+test('AC-RF1 记过「补货」⇒ **裸扫**（不带 ?from=）仍落缺省销售（全局扫一扫不带历史 ✓）', async () => {
   login();
   const e2e = createE2E();
   try {
@@ -1848,9 +1848,14 @@ test('AC-RF1 记过「补货」⇒ **裸扫**（不带 ?from=）落在补货领�
       // ② ⚠️ 必须是**真·裸扫**：`pageUrlOf` 永远带 `?from=sales` ⇒ 那条不算裸扫 ✗
       //    （我第一版就是这么写错的：显式 from 优先 ⇒ 当然落回销售 ⇒ 假红）
       const { html } = await getPage(`${base}/s/${encodeURIComponent(NUMBER_A)}`, cookie);
-      assert.ok(html.includes('realm-block--replenish'),
-        '她上次在补货里干过活 ⇒ 裸扫要**自动还是补货**（她的原话 ✓）');
-      assert.equal(html.includes('realm-block--sales'), false, '不该落回销售');
+      // ⭐ 2026-10-18 修正：全局扫一扫 = standalone，不带历史；领域内“再加一单”是显式
+      //   `?from=<领域>&scan=1` 回跳 ⇒ 裸扫不能再按 last_realm 猜领域。
+      assert.ok(html.includes('realm-block--sales'),
+        '全局扫一扫固定缺省销售（即使上次在补货里干过活 ✓）');
+      assert.equal(html.includes('realm-block--replenish'), false, '不该被 last_realm 带偏');
+      // 领域内回跳仍以显式 from 为准（与 AC-RF2 同口径，反向确认）
+      const explicit = await getPage(`${base}/s/${encodeURIComponent(NUMBER_A)}?from=replenish`, cookie);
+      assert.ok(explicit.html.includes('realm-block--replenish'), '显式 from=replenish 仍回补货 ✓');
     });
   } finally { e2e.cleanup(); }
 });
