@@ -229,9 +229,8 @@ pnpm run dev
 > `docs/archive/sales-daily-report-retirement.md`。
 >（**共用件没跟着删**：`utils/shanghaiDailyScheduler` 仍被「待处理单推送」用着。）
 >
-> `PURCHASE_ARRIVAL_INTAKE_ENABLED` 是唯一的例外：**模块刻意保留、但已无读取点**
->（`src/config/purchaseArrivalIntake.js`）。将来恢复「对话到货」时它是一个现成的、
-> 语义明确的开关（已钉住"空字符串不等于关闭"那个坑）；现在改它不会有任何效果。
+> `PURCHASE_ARRIVAL_INTAKE_ENABLED` 及 `src/config/purchaseArrivalIntake.js` 已于 2026-10-18
+> 按业务负责人「前端没有就删」的口径删除（删除时已无任何读取点；要恢复「对话到货」需重新实现，不是翻开关）。
 
 **网页工作台身份认证（Workbench Auth）**
 
