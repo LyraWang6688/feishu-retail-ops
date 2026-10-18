@@ -408,7 +408,8 @@ test('AC-1 销售页只有两层：每件填「实收金额」；资金区**没�
   // ⑦ 零 JS 的底线不许破（2026-10-09 白屏事故之后的既有约束）
   // ⭐ 2026-10-12：销售页只允许那一段提交反馈脚本
   // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `scriptCountOf` 上面那段注释）
-  assert.equal(scriptCountOf(html), 1, '销售页只该有那一段提交反馈脚本（业务脚本）');
+  // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：业务脚本 1 → 2（多的是提交进度脚本，不再白屏）。
+  assert.equal(scriptCountOf(html), 2, '销售页业务脚本 = 提交反馈 ＋ 提交进度（2 段）');
   assert.equal(annotateScriptOnlyEarlyExits(html), true, '那段标注脚本必须在且必须早退 ✓');
   assert.equal(/on(click|load|submit)\s*=/i.test(html), false, '不许有内联事件');
 });
@@ -1039,11 +1040,8 @@ test('AC-8a ⭐【少收】两边不等 ⇒ **合法**：成单 + 差额一条�
       //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步**一个字都不写**（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
       //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
       assert.equal(entriesOf(h, 'salesEntry').length, 1, '第一步**一个字都不写**（主表 0）');
-      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
-      //   改前逐字：`assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');`
-      //   改后逐字：`assert.equal(entriesOf(h, 'salesDetail').length, 2, '第一步**一个字都不写**（明细 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 2** ✓）
-      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
-      assert.equal(entriesOf(h, 'salesDetail').length, 2, '第一步**一个字都不写**（明细 0）');
+      // ⚠️ 成对迁移（第 4 步提速）：改前"货那一跑"在货品页写明细（2 行）；改后**只建主表** ⇒ 0 行。
+      assert.equal(entriesOf(h, 'salesDetail').length, 0, '第一步**一个字都不写**（明细 0）');
       assert.equal(entriesOf(h, 'paymentRecord').length, 0, '第一步**一个字都不写**（收款 0）');
       // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（这一段）：`payment_status: PAYMENT_STATUS.full, … payment_amount: '200'`
@@ -1127,11 +1125,8 @@ test('AC-8a2 🔴【收多了】收款 > 每件实收 ⇒ 400 + 原地重渲染 
       //   改后逐字：`assert.equal(entriesOf(h, 'salesEntry').length, 1);`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
       //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
       assert.equal(entriesOf(h, 'salesEntry').length, 1);
-      // 成对迁移（改前逐字 → 改后逐字 → 依据）：
-      //   改前逐字：assert.equal(entriesOf(h, 'salesDetail').length, 0);（⭐ 漏迁：同一段里上面那条已按新口径改成 1 ✗）
-      //   改后逐字：assert.equal(entriesOf(h, 'salesDetail').length, 2);（⭐ 两双 ⇒ 明细 2 行 ✓ 与上面那条同一口径 ✓）
-      //   依据 = ④ 口径「点提交就建【货】那一单」（与上面那条同一依据 ✓）＋ 她 22:5x「把新功能都上了，不需要开关」✓
-      assert.equal(entriesOf(h, 'salesDetail').length, 2);
+      // 成对迁移（第 4 步提速）：改前 2 行（货品页就写）；改后 0（只建主表 ⇒ 这才真是"零写入"）。
+      assert.equal(entriesOf(h, 'salesDetail').length, 0);
       assert.equal(entriesOf(h, 'paymentRecord').length, 0);
     });
   } finally { h.cleanup(); }

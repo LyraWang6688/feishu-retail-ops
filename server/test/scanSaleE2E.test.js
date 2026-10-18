@@ -469,7 +469,11 @@ test('AC-E2E-1 扫第一个码 ⇒ /s/{编号}?from=sales 是销售页：尺码�
       // 第7步：页面**零前端脚本**（手机白屏事故之后定的底线）
       // ⭐ 2026-10-12：销售页有提交按钮 ⇒ 只允许那一段反馈脚本
       // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `scriptCountOf` 上面那段注释）
-      assert.equal(businessScriptCountOf(page.html), 1, '第7步：整页只该有那一段提交反馈脚本（业务脚本）');
+      // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：业务脚本 1 → 2（多的是 `submit-progress`：提交不再白屏）；
+      //   依据 = 第 4 步目标 #4 ＋ 她 2026-10-12「我们是能够进行动态交互的」✓
+      assert.equal(businessScriptCountOf(page.html), 2, '第7步：提交反馈 ＋ 提交进度（2 段业务脚本）');
+      assert.ok(page.html.includes('<script data-view="submit-progress">'),
+        '第7步：提交进度脚本必须在（点提交先弹全屏遮罩，不许白屏 ✓）');
       assert.ok(page.html.includes('<script data-view="submit-feedback">'));
       assert.equal(annotateScriptOnlyEarlyExits(page.html), true, '那段标注脚本必须在且必须早退 ✓');
     });
@@ -730,16 +734,12 @@ test('AC-E2E-6 幂等：同一提交键连点两次（含并发）⇒ 只建一�
       //   改后逐字：`assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：**一个字都不写**（主表 0）');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
       //   依据 = 业务负责人 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 她刚确认「**能接受**」✓
       assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第1步：**一个字都不写**（主表 0）');
-      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
-      //   改前逐字：`assert.equal(rowsOf(e2e, 'salesDetail').length, 0, '第1步：明细 0');`
-      //   改后逐字：`assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第1步：明细 0');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 2** ✓）
-      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
-      assert.equal(rowsOf(e2e, 'salesDetail').length, 2, '第1步：明细 0');
-      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
-      //   改前逐字：`assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第1步：库存流水 0');`
-      //   改后逐字：`assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第1步：库存流水 0');`（④ 永远开 ⇒ 点提交就建【货】那一单 ⇒ 期望 0 ⇒ **实测 1** ✓）
-      //   依据 = 她 2026-10-16 22:5x「把新功能都上了，不需要开关」＋ 23:4x「修」✓
-      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第1步：库存流水 0');
+      // ⚠️ 成对迁移（第 4 步提速）：改前"货那一跑"在货品页就写了 明细 2 / 流水 1；
+      //   改后**全 0**（只建主表）—— 判据更强：多了一条"收款 0"；
+      //   依据 = 第 4 步目标（87s → ~15s）＋ 线上耗时分解（后台货跑 86s 与资金页共用串行队列）。
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 0, '第1步：明细 0（只在资金页那一屏写）');
+      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第1步：库存流水 0（只在资金页那一屏扣）');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第1步：收款 0（只在资金页那一屏写）');
 
       // 第2步：点资金页那颗【提交整单付款】（未填金额 = 未付 ⇒ 不写收款 ✓）⇒ **才建单**
       const step2 = await followPaymentStep(base, cookie, first);
@@ -1084,12 +1084,11 @@ test('AC-E2E-11 ⭐ 0 收款 ⇒ 自动档＝未付 ⇒ **成单** + 差额一�
       //     ↑ 一个数字套四张表 ⇒ 对 salesEntry / salesDetail 对，对 paymentRecord 就错（实测 0，期望 1）。
       //   改后逐字：下面四条，**每张表一个数、写死**（实测值）。
       //   依据 = 纪律「循环断言的期望值必须逐条写死」＋ ④ 货/钱分离口径（货那一跑只写货、不带收款、不扣库存）。
-      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第一步：只有【货】那一半写（主表 1）');
-      assert.equal(rowsOf(e2e, 'salesDetail').length, 1, '第一步：明细 1 行');
-      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第一步：收款明细【0 行】（货那一跑不许带收款）');
-      // 库存流水：**实测 1 行**。同一批用例的台账（see '第1步：库存流水 0' 那处）已明确「④ 永远开 ⇒ 第 1 步会写 1 行」；
-      // 也与她 2026-10-17 的口径一致：「货那一跑 …… 如果是现货的话，影响的还是**实时库存和库存流水**」。
-      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 1, '第一步：库存流水 1 行（现货 ⇒ 货那一跑就写）');
+      // ⚠️ 成对迁移（第 4 步提速）：改前明细 1 / 流水 1；改后**只有主表 1 条**（明细/收款/流水全 0）。
+      assert.equal(rowsOf(e2e, 'salesEntry').length, 1, '第一步：只有主表 1 条（货品页只建单）');
+      assert.equal(rowsOf(e2e, 'salesDetail').length, 0, '第一步：明细 0 行（资金页那一屏才写）');
+      assert.equal(rowsOf(e2e, 'paymentRecord').length, 0, '第一步：收款明细 0 行（资金页那一屏才写）');
+      assert.equal(rowsOf(e2e, 'inventoryLedger').length, 0, '第一步：库存流水 0 行（资金页那一屏才扣）');
       // ⭐⭐ 2026-10-16 A2a **用例迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（本用例名 =「全付 + 收款 0 笔 + 每件实收也全空 ⇒ 400 + 人话；零写入」）：
       //     `payment_status: PAYMENT_STATUS.full, payment_method: '', payment_amount: '', line_amount: ['']`
@@ -1613,34 +1612,28 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       //   依据：Lead 2026-10-15 拍板「**观测不缩水**」（她与仓库的硬口径：
       //     「每个关键流程节点都要有日志和可排查路径」）—— ⚠️ **口径已随 ④ 更新**：⭐ **"建主表"在【货那一跑】那条 timing 上** ✓、
       //     "明细/收款/库存"在**后台那一跑** ⇒ 两段各自都要能查 ✓，不能因为换跑法就断档 ✗。
+      // ⭐⭐ 2026-10-18 成对迁移（第 4 步提速 · 改前逐字 → 改后逐字 → 依据）：
+      //   改前：请求段（货品页建主表）＋ **后台段**（明细/收款/库存转后台，86s）；
+      //   改后：**没有后台那跑** ⇒ 两屏各一条 request：货品页 `master_only` / 资金页 `one_shot`（含 `finalize_ms`）。
+      //   依据 = 第 4 步目标（87s → ~15s）＋ `docs/issue-scan-sale-gift-ledger-latency-2026-10-18.md` §5。
       const timings = entries.filter((entry) => entry.event === SCAN_WRITE.events.saleTiming);
-      const backgroundPhase = (SCAN_WRITE.timing && SCAN_WRITE.timing.phase
-        && SCAN_WRITE.timing.phase.background) || 'background';
-      const requestTiming = timings.find((entry) => entry.phase !== backgroundPhase);
-      const backgroundTiming = timings.find((entry) => entry.phase === backgroundPhase);
-      assert.ok(requestTiming, '请求阶段必须有一条 scan.sale.timing（她那一次请求走到哪一段）');
-    // 2026-10-17：提交那一发必须真的打出这条事件 ——
-    //   ④ 那刀曾把「货那一跑」从带 timing 的那段挪出去，导致所有 timing 都在死代码里、一条也不打。
-    assert.ok(timings.length > 0, '提交那一发必须打出 scan.sale.timing（④ 那刀曾把它挪丢过）');
-      assert.ok(backgroundTiming, '后台那一跑**也必须有一条**（观测不缩水：转后台 ≠ 日志断档）✓');
-      const timing = requestTiming;
-      assert.ok(timing, '必须打出一条 scan.sale.timing（"一查日志就知道卡在哪一步"）');
-      for (const key of TIMING_KEYS) {
-        assert.equal(typeof timing[key], 'number', `timing 里要有数字 ${key}`);
+      const goodsTiming = timings.find((entry) => entry.master_only === true);
+      const moneyTiming = timings.find((entry) => entry.one_shot === true);
+      assert.ok(goodsTiming, '货品页那一屏必须有一条 scan.sale.timing（`master_only: true`：只建主表 ✓）');
+      assert.ok(moneyTiming, '资金页那一屏必须有一条 scan.sale.timing（`one_shot: true`：一次跑完 ✓）');
+      for (const [label, phaseTiming] of [['货品页', goodsTiming], ['资金页', moneyTiming]]) {
+        for (const key of TIMING_KEYS) assert.equal(typeof phaseTiming[key], 'number', `${label}：${key}`);
+        assert.equal(phaseTiming.ok, true, `${label} 那一屏要成功`);
       }
-      assert.equal(timing.ok, true);
-      assert.ok(submitCalls.length > 0, '这一趟提交至少要打一次飞书');
-      // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
-      //   改前逐字：`assert.ok(requestTiming.master_ms > 0, …请求段…)`（异步时代口径：建主表在【请求阶段】✗）
-      //   改后逐字：**钉「存在一条 timing 的 `master_ms > 0`」** ✓（④ 后建主表在【货那一跑】那条上 ✓）
-      //   依据 = ④ 口径（`docs/sale-money-split-recon-and-design-2026-10-16.md`）＋ 铁证三处：
-      //     `scanWriteService.js:1205 markStage('master_ms', …)` 仍在 ✓ / `routes/scanPage/index.js:3026 master_ms: …` 记在货那一跑 ✓
-      assert.ok(timings.some((t) => Number(t.master_ms) > 0),
-        '建主表那一段要能量出来（④ 后在【货那一跑】那条 timing 上）✓');
-      assert.ok(backgroundTiming.detail_ms > 0, `明细/收款那一段要能量出来（**后台段**）：${backgroundTiming.detail_ms}`);
+      assert.ok(goodsTiming.master_ms > 0, `建主表那一段（货品页）：${goodsTiming.master_ms}`);
+      assert.ok(moneyTiming.detail_ms > 0 && moneyTiming.stock_ms > 0 && moneyTiming.finalize_ms > 0,
+        `明细/库存/收口三段（资金页）：${moneyTiming.detail_ms}/${moneyTiming.stock_ms}/${moneyTiming.finalize_ms}`);
+      const timing = moneyTiming;
       // 分段之和**不许超过**这一趟的墙钟（分段是墙钟的子集；差值 = 本文件没打点的零头 + 渲染）。
+      // ⭐ 2026-10-18（第 4 步）：收口那一段也计入（`finalize_ms`）。
       const parts = timing.queue_wait_ms + timing.lookup_ms + timing.prepare_ms
-        + timing.master_ms + timing.status_ms + timing.detail_ms + timing.stock_ms;
+        + timing.master_ms + timing.status_ms + timing.detail_ms + timing.stock_ms
+        + Number(timing.finalize_ms || 0);
       assert.ok(parts <= timing.submit_ms + 80,
         `分段之和(${parts}ms) 不该超过 submit_ms(${timing.submit_ms}ms) + 打点零头`);
       assert.ok(timing.submit_ms <= wallMs + 80, 'submit_ms 是墙钟的一部分');
@@ -1648,8 +1641,8 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       const rows = [
         ['lookup(取商品)', timing.lookup_ms], ['queue_wait(排队)', timing.queue_wait_ms],
         ['prepare(会话+校验)', timing.prepare_ms], ['master(建主表)', timing.master_ms],
-        ['status(确认状态)', timing.status_ms], ['detail(明细/收款)', timing.detail_ms],
-        ['stock(交付/扣库存)', timing.stock_ms],
+        ['status(确认状态)', timing.status_ms], ['detail(明细/收款批量)', timing.detail_ms],
+        ['stock(库存批量)', timing.stock_ms], ['finalize(一次收口)', Number(timing.finalize_ms || 0)],
       ];
       // eslint-disable-next-line no-console
       const byTable = {};
@@ -1665,7 +1658,8 @@ test('AC-E2E-16 ⭐ 提交链路**逐步耗时**：一条 `scan.sale.timing` 带
       process.stdout.write('\n  ── 谁打的（按文件归因）──\n'
         + Object.entries(byCaller).sort((a, b) => b[1] - a[1])
           .map(([key, count]) => `  ${key}: ${count}次`).join('\n') + '\n');
-      process.stdout.write(`\n【逐步耗时】submit_ms=${timing.submit_ms}ms wall=${wallMs}ms 飞书调用=${submitCalls.length}次 峰值并发=${gateway.maxConcurrent()}\n`
+      process.stdout.write(`\n【逐步耗时·货品页(只建主表)】submit_ms=${goodsTiming.submit_ms}ms master_ms=${goodsTiming.master_ms}ms\n`);
+      process.stdout.write(`【逐步耗时·资金页(一次跑完)】submit_ms=${moneyTiming.submit_ms}ms wall=${wallMs}ms 飞书调用=${submitCalls.length}次 峰值并发=${gateway.maxConcurrent()}\n`
         + rows.map(([label, ms]) => `  ${label}: ${ms}ms`).join('\n')
         + '\n  ── 每一趟飞书调用按表统计 ──\n'
         + Object.entries(byTable).sort((a, b) => b[1] - a[1])
@@ -2122,7 +2116,8 @@ test('AC-ACT1 🔴 不带 action 的真提交 ⇒ 窄化兜底认出"提交这�
       //   改后逐字：**2 段**（① 提交反馈脚本 ② 加行钮那段 `payment-add-row`）
       //   依据 = 业务负责人 2026-10-17 逐字：「默认一行 ＋ ＋ 再加一种付款方式 ＋ 默认微信」
       //   ⚠️ 不是放宽：仍数**业务**脚本（标注脚本另有 `annotateScriptOnlyEarlyExits` 钉着 ✓）
-      assert.equal(businessScriptCountOf(firstHtml), 2, '资金页业务脚本 = 提交反馈 ＋ 加行（2 段）');
+      // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：资金页业务脚本 2 → 3（多的是 `submit-progress`）。
+      assert.equal(businessScriptCountOf(firstHtml), 3, '资金页业务脚本 = 提交反馈 ＋ 加行 ＋ 提交进度（3 段）');
       assert.equal(annotateScriptOnlyEarlyExits(firstHtml), true, '那段标注脚本必须在且必须早退 ✓');
       const response = await followPaymentStep(base, cookie, first);
       assert.equal(response.status, 200, `要能建单（实际 ${response.status}）`);

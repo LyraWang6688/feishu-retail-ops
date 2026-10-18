@@ -398,15 +398,14 @@ test('AC-AS10 ⭐ 两步走不冲突：① 点提交 ⇒ **零写入**；② 点
       }).toString(),
     });
     assert.equal(first.status, 200, '第一步照旧 200（只到资金页 ✓）');
-    // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
-    //   改前逐字：assert.deepEqual(calls, [], '第一步：写服务**一次都没进**（零写入 ✓）');
-    //   改后逐字：assert.equal(calls.length, 1, '第一步：写服务**恰进 1 次**（④ 后：就是【货】那一跑 ✓）');
-    assert.equal(calls[0] && calls[0].deferFunds, true, '那一次必须是**货那一跑**（`deferFunds: true` ✓）');
-    assert.deepEqual(calls[0] && calls[0].payments, [], '货那一跑**不带收款**（`payments: []` ✓）');
-    //   依据 = ④ 口径（点提交就建【货】那一单）＋ 她 22:5x「把新功能都上了，不需要开关」✓
-    assert.equal(calls.length, 1, '第一步：写服务**恰进 1 次**（④ 后：就是【货】那一跑 ✓）');
-    assert.equal(calls[0] && calls[0].deferFunds, true, '那一次必须是**货那一跑**（`deferFunds: true` ✓）');
-    assert.deepEqual(calls[0] && calls[0].payments, [], '货那一跑**不带收款**（`payments: []` ✓）');
+    // ⚠️ **成对迁移（第 4 步提速 · 改前逐字 → 改后逐字 → 依据）**：
+    //   改前逐字：`assert.equal(calls[0] && calls[0].deferFunds, true, '那一次必须是**货那一跑**（`deferFunds: true` ✓）');`
+    //   改后逐字：`assert.equal(calls[0] && calls[0].masterOnly, true, '…（`masterOnly: true` ✓）');`
+    //     —— 货品页那一屏只建主表 + 单号（明细/收款/库存全留给资金页那一屏）。
+    //   依据 = 第 4 步目标（87s → ~15s）＋ `docs/issue-scan-sale-gift-ledger-latency-2026-10-18.md` §5。
+    assert.equal(calls.length, 1, '第一步：写服务**恰进 1 次**（第 4 步后：就是"只建主表"那一跑 ✓）');
+    assert.equal(calls[0] && calls[0].masterOnly, true, '那一次必须是**只建主表**（`masterOnly: true` ✓）');
+    assert.deepEqual(calls[0] && calls[0].payments, [], '只建主表那一跑**不带收款**（`payments: []` ✓）');
 
     // ② 第二步：点资金页按钮 ⇒ 单号先出 + 那一次写服务调用
     await sessions.saveSaleProgress(OPEN_ID, {
@@ -421,7 +420,9 @@ test('AC-AS10 ⭐ 两步走不冲突：① 点提交 ⇒ **零写入**；② 点
     });
     assert.equal(second.status, 200, '第二步 ⇒ 200 ✓');
     // 成对迁移：改前逐字 `assert.equal(calls.length, 1, '第二步：写入口恰一次 ✓');` ⇒ ④ 后两跑各一次（货＋钱）＝ 恰 2 次 ✓（依据 = ④ 货/钱分离口径）
-    assert.equal(calls.length, 2, '第二步：写入口恰 2 次（第一步货那一跑 ＋ 第二步钱那一跑 ✓）');
+    // ⚠️ 2026-10-18（第 4 步）：第二次是 **`oneShot: true`**（明细/收款批量 + 库存批量 + 一次收口）。
+    assert.equal(calls.length, 2, '第二步：写入口恰 2 次（第一步只建主表 ＋ 第二步一次跑完 ✓）');
+    assert.equal(calls[1] && calls[1].oneShot, true, '第二步那次必须是**一次跑完**（`oneShot: true` ✓）');
     assert.equal(calls[0].openId, OPEN_ID, '入参照旧（老形状 ✓）');
     // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：
     //   改前逐字：assert.ok((await second.text()).includes(`本单已创建成功（${ORDER_NO}）`), '第二步页面 = 那一句 ✓');

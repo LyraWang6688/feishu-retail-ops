@@ -472,10 +472,13 @@ test('源码哨兵：扫码写服务只调既有 SalesDeliveryService.deliver，
   const stripComments = (source) => source
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  const source = stripComments(fs.readFileSync(path.join(SERVER_SRC, 'services', 'scanWriteService.js'), 'utf8'));
+  // ⚠️ 2026-10-18 成对迁移（第 4 步提速 · 文件大小门禁）：交付那一段**原样搬进**
+  //   `services/sales/deliveryStep.js`（纯搬家，判据不变：只许调既有 deliver、不许出现第二套扣减）。
+  const source = stripComments(fs.readFileSync(path.join(SERVER_SRC, 'services', 'scanWriteService.js'), 'utf8'))
+    + '\n' + stripComments(fs.readFileSync(path.join(SERVER_SRC, 'services', 'sales', 'deliveryStep.js'), 'utf8'));
   assert.match(source, /SalesDeliveryService/, '交付必须复用既有 SalesDeliveryService');
   assert.match(source, /\.deliver\s*\(/, '交付必须走既有的 deliver 那一条');
   for (const pattern of [/new\s+InventoryService/, /\.applySale\s*\(/, /inventoryLedger/, /liveInventory/]) {
-    assert.equal(pattern.test(source), false, `scanWriteService.js 出现了第二套扣减：${pattern}`);
+    assert.equal(pattern.test(source), false, `交付链路出现了第二套扣减：${pattern}`);
   }
 });

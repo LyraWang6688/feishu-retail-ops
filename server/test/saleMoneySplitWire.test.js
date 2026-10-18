@@ -31,13 +31,16 @@ const ENV_EXAMPLE = path.join(SERVER, '..', '.env.example');
 const routesSrc = () => fs.readFileSync(ROUTES, 'utf8') + '\n' + fs.readFileSync(HANDLER, 'utf8');
 
 /**
- * 取出"接线那一段" —— ⚠️ **成对迁移**：改前锚在闸门那行（`…enabled === true`）✗ 闸门删掉后不能再用它
- * ⇒ 改后锚在**货那一跑自己的参数**上（`deferFunds: true`）＋ 前后各取几行 ✓
+ * 取出"接线那一段" —— ⚠️ **成对迁移（第三版）**：
+ *   第一版：锚在闸门那行（`…enabled === true`）✗ 闸门删掉后不能再用它；
+ *   第二版：锚在**货那一跑自己的参数**上（`deferFunds: true`）；
+ *   第三版（2026-10-18 第 4 步提速）：货品页改成 **`masterOnly: true`**（只建主表 + 单号）
+ *     ⇒ 锚在它上面 ✓（`deferFunds` 那条路**没有生产调用方**了 —— 服务层保留给既有单测）。
  */
 const wireBlock = () => {
   const lines = routesSrc().split('\n');
-  const at = lines.findIndex((l) => l.includes('deferFunds: true'));
-  assert.ok(at >= 0, '接线那一段不见了 ✗（`deferFunds: true`）');
+  const at = lines.findIndex((l) => l.includes('masterOnly: true'));
+  assert.ok(at >= 0, '接线那一段不见了 ✗（`masterOnly: true`）');
   return lines.slice(Math.max(0, at - 3), at + 26).join('\n');
 };
 
@@ -59,12 +62,18 @@ test('AC-MSW1 ⭐⭐ 反向哨兵：**没有开关了**（货/钱分离永远开
   //   🔴 为什么不去注释：那个正则会被文件里字符串中的 `/*` / `//` 带偏（实测：会把真代码当注释吞掉 ✗）
   assert.equal(routesSrc().includes('resolveSaleMoneySplitConfig'), false,
     '🔴 路由里那条闸门（以及那个配置入口）不许回来 ✗');
-  assert.ok(/deferFunds:\s*true/.test(wireBlock()), '货那一跑照旧要走（永远跑 ✓）');
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`assert.ok(/deferFunds:\s*true/.test(wireBlock()), '货那一跑照旧要走（永远跑 ✓）');`
+  //   改后逐字：`masterOnly: true` —— 第 4 步起货品页**只建主表**（明细/收款/库存全在资金页那一屏）。
+  //   依据 = 第 4 步提速目标（87s → ~15s）＋ `docs/issue-scan-sale-gift-ledger-latency-2026-10-18.md` §5。
+  assert.ok(/masterOnly:\s*true/.test(wireBlock()), '货品页那一跑照旧要走（永远跑 ✓）');
 });
 
-test('AC-MSW2 ⭐ 货那一跑的参数口径：`payments: []` ＋ `deferFunds: true` ＋ `lineAmounts`（不带钱那半的键）', () => {
+test('AC-MSW2 ⭐ 货品页那一跑的参数口径：`payments: []` ＋ `masterOnly: true` ＋ `lineAmounts`（不带钱那半的键）', () => {
   const block = wireBlock();
-  assert.ok(/deferFunds:\s*true/.test(block), '货那一跑必须显式 `deferFunds: true` ✗');
+  // ⚠️ 成对迁移：`deferFunds: true`（货那一跑）⇒ `masterOnly: true`（只建主表那一跑）——
+  //    依据 = 第 4 步提速：货品页**不写明细/收款/流水**，只建主表 + 单号。
+  assert.ok(/masterOnly:\s*true/.test(block), '货品页那一跑必须显式 `masterOnly: true` ✗');
   assert.ok(/payments:\s*\[\]/.test(block), '货那一跑必须 `payments: []`（**不许带收款** ✗）');
   assert.ok(/lineAmounts,/.test(block), '货那一跑必须带 `lineAmounts`（与今天同一取值口径 ✓）');
   assert.equal(/paymentStatus\s*:/.test(block), false, '货那一跑**不许**带 `paymentStatus` ✗（那是钱那半的键 ✓）');

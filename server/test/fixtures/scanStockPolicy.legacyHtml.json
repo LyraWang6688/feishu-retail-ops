@@ -1,24 +1,24 @@
 {
-  "_comment": "⭐⭐ **开关关着 ⇒ 四页 HTML 与今天逐字节相同**（AC-ST7）的**改前留档**。这 12 个 sha256 是**改口径之前**（origin/main e1657f1 + 512f991 诊断合并，2026-10-16 21:0x 上海）用**当时那份渲染器**跑出来的 `renderScanPage(...)` **整页 HTML**（只把唯一动态位 `page_build` 换成 «page_build»），**两个独立进程各跑一次、逐字相同**。🔴 本文件**只存哈希**（整页 35~52KB × 12 存不下）——可读的逐字快照在 `stockStateConsistency.golden.json`（那 4 块的 assert.equal 也归 AC-ST7 用）。刷新办法：见 `server/test/scanStockPolicyZeroRegression.test.js` 顶部注释。 ⭐ 2026-10-16 23:0x：删开关② ⇒ 全部迁移到「永远按实时库存口径」基线（改前逐字 → 改后逐字 → 依据 见 capturedFrom）。",
+  "_comment": "⭐⭐ **开关关着 ⇒ 四页 HTML 与今天逐字节相同**（AC-ST7）的**改前留档**。这 12 个 sha256 是**改口径之前**（origin/main e1657f1 + 512f991 诊断合并，2026-10-16 21:0x 上海）用**当时那份渲染器**跑出来的 `renderScanPage(...)` **整页 HTML**（只把唯一动态位 `page_build` 换成 «page_build»），**两个独立进程各跑一次、逐字相同**。🔴 本文件**只存哈希**（整页 35~52KB × 12 存不下）——可读的逐字快照在 `stockStateConsistency.golden.json`（那 4 块的 assert.equal 也归 AC-ST7 用）。刷新办法：见 `server/test/scanStockPolicyZeroRegression.test.js` 顶部注释。 ⭐ 2026-10-18 第 4 步提速（提交进度遮罩）：12 个哈希**重算并成对迁移**（改前逐字 → 改后逐字 → 依据 见 capturedFrom）✓ ⭐ 2026-10-16 23:0x：删开关② ⇒ 全部迁移到「永远按实时库存口径」基线（改前逐字 → 改后逐字 → 依据 见 capturedFrom）。",
   "pageBuildToken": "«page_build»",
-  "capturedFrom": "origin/main e1657f1 (+ 512f991 诊断)；2026-10-18 成对迁移：按钮文案改「提交」+「本单：N 双」回本单条（业务负责人口径）",
+  "capturedFrom": "origin/main e1657f1 (+ 512f991 诊断)；2026-10-18 成对迁移①：按钮文案改「提交」+「本单：N 双」回本单条（业务负责人口径）；2026-10-18 成对迁移②（第 4 步提速）：货品页提交加 `data-progress-submit=\"1\"` ＋ 提交进度脚本/样式（业务负责人：提交不要白屏）—— 12 个哈希随 `node tools/task61-render-baseline.js` 一起重算 ✓",
   "viewModule": "server/test/fixtures/scanStockPolicyViews.js",
   "fullPageSha256": {
     "threeState": {
       "inventory": "45c0050928283f2ebf01107429c81baa7fb2a27ac1aeddfb314bb63d86485cd4",
-      "sales": "f4753269f7022f13a62501e7ee3c2632706ae05f70edcc1dca89cf85d8cf1c25",
+      "sales": "dda4f5871501546eaf27ea0920d59e42b7ede0a4fda8cb99c0f87bb2bc3a0f7f",
       "replenish": "4350ab28dd074e4dbc558da5615b5bf3a19411e5ed9a7626c3c619650223d5d8",
       "purchase_return": "f7ebe30ffae306066902ab587395a25e24061067d3a95f8c0c36ee8152279211"
     },
     "fullSizesBlank": {
       "inventory": "2a32509deb1a59b0b1a3163f115b35144a7de0d8be69bc736dd22e73e8bf0a13",
-      "sales": "936436658e7ed37666d6ba9c974af15b2bea3613e758a2338e0e1891beea440b",
+      "sales": "e9b2a0486337b9b9231ac93fd0081065589e5d062d5cb7120a8eb8b8ce8b94be",
       "replenish": "0e4c77e3c2f4ef12fada6bc96f4bfb18f51bdb0d0d92b1f60cdb46d76785cded",
       "purchase_return": "1eeb407a618c35d519ad4de17bb5b14649db65441c4bf4f506c0a860e70f9bcf"
     },
     "blankState": {
       "inventory": "f6535befd52b9d2e7fe8699300b698da70bf3ea3fdd12fb66641ddc82d206900",
-      "sales": "cf0db3544923fdfe845345de4002efad474b47f3abcb0feac919dfec739734a3",
+      "sales": "29769dd7540aad6ff1c73d0e6d28f310f9ec8973da2fc295f42c0c5dbbdf40fa",
       "replenish": "6fbd929333cbab6f507a56852ce0dc5cea47d2a0ca76728ea1b57812261efbf1",
       "purchase_return": "d032877604e182f4ff1b1c7f3d6c829ceb2868f7a82c9eceb0b853da27792d13"
     }

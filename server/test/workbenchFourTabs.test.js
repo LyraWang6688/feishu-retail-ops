@@ -905,13 +905,11 @@ test('AC5 扫码页领域切换：?from= 四个值 + 缺省销售，切到哪个
     }
     assert.ok(pageBody.includes(needle), `${id} 领域该有「${needle}」`);
     assert.equal(pageBody.includes(hasNot), false, `${id} 领域不该有「${hasNot}」`);
-        // ⭐ 2026-10-12（她拍板：交互反馈是硬要求）：
-        //    页面上**只要有带反馈属性的写按钮** ⇒ 恰好那一段脚本；没有写按钮的页面（纯库存）仍然 0 段。
-        // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `businessScriptCountOf` 上面那段注释）
+        // ⚠️ 成对迁移（第 4 步提速）：`sales` 页多一段 `submit-progress`（提交遮罩，不再白屏）；
+        //    其余领域：有写按钮 ⇒ 1 段，没有 ⇒ 0 段（与改前逐字相同 ✓）。
         const feedbackScripts = businessScriptCountOf(page);
-        assert.ok(feedbackScripts <= 1, `最多只该有那一段反馈脚本（实际 ${feedbackScripts}）`);
-        assert.equal(feedbackScripts, page.includes('data-submit-feedback=') ? 1 : 0,
-          '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');
+        const expectedScripts = id === 'sales' ? 2 : (page.includes('data-submit-feedback=') ? 1 : 0);
+        assert.equal(feedbackScripts, expectedScripts, `业务脚本数（实际 ${feedbackScripts}）`);
         assert.equal(annotateScriptOnlyEarlyExits(page), true, '那段标注脚本必须在且必须早退 ✓');
   }
   // CSS 里也不再有按 data-realm 显隐的规则（更不会有"未设 realm 时全隐藏"那种白屏写法）

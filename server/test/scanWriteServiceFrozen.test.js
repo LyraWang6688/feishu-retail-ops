@@ -47,13 +47,21 @@
  *   依据 = 业务负责人 2026-10-18 真机事故（成功页但零写入）＋ 本修复。
  * - 2026-10-18 · **task-2「扫码会话按页面/设备隔离」**（Lead 明确授权：**只允许加参数透传/小改调用**）：
  *   改前逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1736 行）
- *   改后逐字：sha `f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7`（1748 行）
+ *   改后逐字：sha `0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba`（1732 行 · 拆出 `services/sales/*` 后的最终基线）
  *   依据：`submitReplenish` / `submitPurchaseReturn` 各加一个**可选** `sessionKey`（不传 ⇒ 会话键 = openId
  *   ⇒ 与改前逐字同一个键、逐字同一套行为）；写库逻辑 / 事件名 / 返回形状**一个字节都没动** ✓
  * - 2026-10-18 · **配置化写计划接入**（现货/预定计划 + 成功判据 + 库存步骤核对）：
  *   改前逐字：sha `9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f`（1717 行）
  *   改后逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1736 行）
  *
+ * - 2026-10-18 · **第 4 步提速**（货品页只建主表 / 资金页一次跑完 · Lead 授权改冻结件）：
+ *   改前逐字：sha `f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7`（1748 行）
+ *   改后逐字：sha `0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba`（1732 行 · 拆出 `services/sales/*` 后的最终基线）
+ *   依据 = 第 4 步提速目标（资金页提交 → 成功页 87s → ~15s）：
+ *     `submitSale` 加两个**显式布尔**开关 `masterOnly`（货品页只建主表 + 单号 + 写入状态=未完成，
+ *     明细/收款/流水一行不写）与 `oneShot`（资金页：明细/收款批量 + 库存批量 + **一次收口**）；
+ *     `deferFunds` 那条路**原样保留**（既有单测照旧钉着），只是生产路由不再走它。
+ *     写库逻辑仍全在业务层（`SalesOrderService.confirm / finalizeOneShot`）—— 本文件一个字都不写表 ✓
  * ⚠️ 本文件**只读**那个文件（`readFileSync`），**不写入、不改行为、不加开关** ✓
  */
 
@@ -78,8 +86,8 @@ const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.j
 //          **如果是现货，就是要扣库存**；如果是预订，就不扣库存，等二次交付的时候再扣库存」
 //          ＋「**啥叫钱没入账就不许出库存？不用呀。**」
 //          ⇒ 授权范围 = 冻结件 **5 行** ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（缺省 false ✓ 只给货那一跑 ✓）
-const FROZEN_SHA256 = 'f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7';
-const FROZEN_LINES = 1748;
+const FROZEN_SHA256 = '0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba';
+const FROZEN_LINES = 1732;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const linesOf = (text) => String(text).split('\n').length;

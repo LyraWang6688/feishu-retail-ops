@@ -426,9 +426,9 @@ test('AC2b 尺码区一行 4 个：3 个码排一行、5 个码排 4+1；**不�
   assert.equal(chipsOf(fiveGroup), 5, '5 个码全在同一组里（四列 ⇒ 4+1 两行）');
   assert.equal(fiveGroup.includes('size-chip__meta'), false, '5 个码时也不显示数量');
   // ── ⑧ 改版不许引入前端脚本（这一页的底线）────────────────────────────────────
-  // ⭐ 2026-10-12：销售页有【提交这一单】⇒ 只允许那一段反馈脚本
-  // ⭐ 2026-10-16 成对迁移（逐字对照见本文件顶部那段注释）：数**业务**脚本 ＋ 标注脚本必须早退 ✓
-  assert.equal(businessScriptCountOf(htmlFor('sales')), 1, '销售页只该有那一段提交反馈脚本（业务脚本）');
+  // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：销售页业务脚本 1 → 2（多的是提交进度遮罩 `submit-progress`）；
+  //   标注脚本仍必须早退 ✓（依据 = 第 4 步目标 #4：提交改 fetch + 全屏进度遮罩，避免白屏）。
+  assert.equal(businessScriptCountOf(htmlFor('sales')), 2, '销售页业务脚本 = 提交反馈 ＋ 提交进度（2 段）');
   assert.equal(annotateScriptOnlyEarlyExits(htmlFor('sales')), true, '那段标注脚本必须在且必须早退 ✓');
 });
 

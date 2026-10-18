@@ -332,14 +332,12 @@ test('AC-W1 服务端按 `?from` 只渲染那一块：另外三块连 HTML 都�
 test('AC-W2 页面里没有**业务**前端脚本：不依赖任何前端执行（飞书 webview 也不怕）', () => {
   for (const realm of ALL_REALMS) {
     const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, realm);
-        // ⭐ 2026-10-12（她拍板：交互反馈是硬要求）：
-        //    页面上**只要有带反馈属性的写按钮** ⇒ 恰好那一段脚本；没有写按钮的页面（纯库存）仍然 0 段。
-        // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 AC-W2 上面那段注释）：这里数的是**业务脚本**，
-        //    另有一段**有名字**的标注脚本（`data-view="annotate"`）—— 它只在 `?annotate=1` 时做事。
+        // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：`sales` 页多一段 `submit-progress`
+        //    （提交进度遮罩：点提交不再白屏）；其余领域：有写按钮 ⇒ 1 段，没有 ⇒ 0 段（逐字同改前）。
+        //    标注脚本（`data-view="annotate"`）仍另计、仍必须早退 ✓。
         const feedbackScripts = businessScriptCountOf(html);
-        assert.ok(feedbackScripts <= 1, `最多只该有那一段反馈脚本（实际 ${feedbackScripts}）`);
-        assert.equal(feedbackScripts, html.includes('data-submit-feedback=') ? 1 : 0,
-          '有写按钮 ⇒ 1 段；没有 ⇒ 0 段');
+        const expectedScripts = realm === 'sales' ? 2 : (html.includes('data-submit-feedback=') ? 1 : 0);
+        assert.equal(feedbackScripts, expectedScripts, `业务脚本数（实际 ${feedbackScripts}）`);
         // ⭐ 新增的那一条（**不放宽**）：那一段标注脚本必须在，且**必须开头早退**（不带参数时零痕迹 ✓）
         assert.equal(html.includes(ANNOTATE_MARK), true, '标注脚本要在（带 ?annotate=1 时才做事 ✓）');
         assert.equal(annotateScriptOnlyEarlyExits(html), true,

@@ -8,7 +8,11 @@ const { SalesProgressService, cents } = require('./salesProgressService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { sellableKindOf } = require('../config/sellableKinds');
 // ⭐ 2026-10-18：明细初始履约状态来自写计划（现货/预定同一处配置）
-const { initialFulfillmentStatusFor } = require('../config/salesWritePlan');
+//   ＋ ⭐⭐ 2026-10-18（第 4 步提速）：**每张表这次真正写哪些字段**也来自同一份配置
+//     （`TABLE_FIELDS`）—— 一次收口那一下（总金额 + 赠品 + 写入状态）按它取键，不散写。
+const { initialFulfillmentStatusFor, TABLE_FIELDS } = require('../config/salesWritePlan');
+// ⭐ 2026-10-18（第 4 步提速）：一次收口的实现搬到 `services/sales/oneShotWrite.js`（本文件净增受限）
+const { finalizeSalesEntryOnce } = require('./sales/oneShotWrite');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 // ⭐ 赠品的落点/归一（业务负责人 2026-10-08：落点从「销售明细」搬到「销售主表」）。
 //   分隔符与占位文案都在那份 config 里；这里只负责按它的规则算与写。
@@ -77,6 +81,19 @@ class SalesOrderService {
         throw new Error('「货钱分离」的货那一跑不许带收款：钱那一半由资金页那一跑写');
       }
     }
+    // ⭐⭐ 2026-10-18（第 4 步提速）：**资金页一次跑完** —— 显式布尔（`=== true`）：
+    //   · `oneShot`      = 这一跑要写「明细 + 收款」，但**不在本函数收口**：
+    //                      总金额 / 赠品 / 写入状态留给调用方在**库存 + 履约成功之后**
+    //                      用 `finalizeOneShot` **一次**写完（省掉主表上那 N 次 PATCH）；
+    //   · `freshOneShot` = **第一次**（这一单还没有明细 / 收款 / 赠品）⇒ 允许省掉两次整表读
+    //                      （主表那条 + 销售明细那条）。**重试绝不许带它** —— 由调用方按会话标记
+    //                      决定（`config/salesWritePlan.SESSION_FLAGS.childrenStarted`）。
+    //   ⚠️ 不传 / 传 false ⇒ 下面每一个字节与改前逐字一致。
+    const oneShot = input.oneShot === true;
+    const freshOneShot = oneShot && input.freshOneShot === true;
+    if (oneShot && fundsDeferred) {
+      throw new Error('「一次跑完」与「货/钱分离」不能同时开：前者自己写钱');
+    }
     // ⭐ 关联键（2026-10-07 业务负责人拍板「日志改下吧！」）：
     //   这一整段（写主表状态 → 写销售明细 → 写收款明细 → 落表日志）以前**一个键都没有**，
     //   按 task_id grep 只能看到卡片那半，看不到明细 / 收款。
@@ -116,13 +133,22 @@ class SalesOrderService {
       //      （既有行为：主表写哪条，明细就写哪条 —— 单类型单走的就是这一条，逐字不变）。
       // 主表没解析出交易类型时（AI 没认出来）留空——空着比写错方向好。
       const entryFields = this.gateway.table('salesEntry').fields;
-      const entry = await withSalesReadRetry(
+      // ⭐⭐ 2026-10-18（第 4 步提速 · 省一次整表读）：**第一次的一次跑**里，主表刚由货品页建出来
+      //   —— 单号在会话/调用方手里（`input.orderNo`），赠品必然是空的（货品页一个字都没写它）。
+      //   ⇒ 这一条 `get('salesEntry')` 可以**不读**（线上一读 ≈ 2–3 秒）。
+      //   🔴 **只许第一次**（`freshOneShot`）：重试必须读回来做"已有赠品 / 已有明细"的比对，
+      //     否则会把上一跑写过的赠品/明细当成不存在 ⇒ 覆盖或重复写 ✗。
+      const suppliedOrderNo = String(input.orderNo || '').trim();
+      const skipEntryRead = freshOneShot && suppliedOrderNo !== '';
+      const entry = skipEntryRead ? null : await withSalesReadRetry(
         () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_trade_type',
       );
       const tradeTypeRecordId = ''; // 主表已删「交易类型」列；明细只认自己那一行的编码
       // 单号就在这条**已经读到的**主表记录上 ⇒ 零额外请求地补进关联键。
       // 读不到（AI 还没生成 / 老单）就不写这个键，不是写一个空串。
-      correlation = mergeCorrelation(correlation, { order_no: textValue(entry?.fields?.[entryFields.orderNo]) });
+      correlation = mergeCorrelation(correlation, {
+        order_no: suppliedOrderNo || textValue(entry?.fields?.[entryFields.orderNo]),
+      });
       // 编码 → 「行为管理」记录 id 的**一次解析、逐行复用**（同一编码不重复读表）。
       const tradeTypeByCode = new Map();
       const tradeTypeRecordIdForItem = async (code) => {
@@ -207,8 +233,15 @@ class SalesOrderService {
         throw new Error('已保存的销售明细数量超过当前草稿，已停止重试');
       }
       const table = this.gateway.table('salesDetail').fields;
-      const existing = (await withSalesReadRetry(() => this.gateway.listAll('salesDetail'), 'sale_detail_list')).filter((record) =>
-        linkedRecordIds(record.fields?.[table.salesEntry]).includes(salesEntryRecordId));
+      // ⭐⭐ 2026-10-18（第 4 步提速 · 省一次整表读）：**第一次的一次跑**里这一单肯定还没有明细
+      //   （货品页只建主表；调用方用会话标记 `children_started` 保证"重试绝不带 freshOneShot"）。
+      //   ⇒ 不读 `listAll('salesDetail')`（线上整表读 ≈ 3–4 秒）；`existing` 就是空数组，
+      //     下面的"认领已有行"天然全部落空 ⇒ 批量建新行（行为与"读了发现为空"逐字同形）。
+      const noKnownDetails = !(input.knownRecordIds?.details || []).some(Boolean);
+      const skipExistingRead = freshOneShot && noKnownDetails;
+      const existing = skipExistingRead ? [] : (await withSalesReadRetry(
+        () => this.gateway.listAll('salesDetail'), 'sale_detail_list',
+      )).filter((record) => linkedRecordIds(record.fields?.[table.salesEntry]).includes(salesEntryRecordId));
       for (const id of input.knownRecordIds?.details || []) {
         if (!id || existing.some((record) => record.record_id === id)) continue;
         existing.push(await withSalesReadRetry(
@@ -291,26 +324,33 @@ class SalesOrderService {
       //   改后逐字：挪到**这里**（本段），下面那一处改成 `const amountsKnown = orderAmountsKnown;`
       //     —— 依据：同一个判断被两处用（总金额 / 差额），**只许有一个来源** ✓。
       const orderAmountsKnown = expected.every((item) => item.amountKnown);
-      await this.gateway.update('salesEntry', salesEntryRecordId, {
-        gift: orderGift,
-        ...(orderAmountsKnown ? { totalAmount: totalCents / 100 } : {}),
-      }, { correlation });
-      if (orderAmountsKnown) {
-        logInfo('sales.entry.total_amount.written', {
-          sales_entry_record_id: salesEntryRecordId, total_amount: totalCents / 100, ...correlation,
-        });
-      } else {
-        // 如实记一条（**不是**静默跳过）：有行没填实收金额 ⇒ 算不出累计 ⇒ 这一格留空。
-        logWarn('sales.entry.total_amount.skipped', {
-          sales_entry_record_id: salesEntryRecordId, reason: 'line_amount_missing', ...correlation,
-        });
+      // ⭐⭐ 2026-10-18（第 4 步提速）：`oneShot` 这一跑**不在这儿写主表** ——
+      //   总金额 / 赠品 / 写入状态由调用方在"库存批量扣成功 + 履约=已交付"之后
+      //   用 `finalizeOneShot` **一次**写完（主表从 3~4 次 PATCH 收成 1 次）。
+      //   ⚠️ 两处日志（written / skipped）也跟着挪到收口那一下，不再在这儿各打一条。
+      if (!oneShot) {
+        await this.gateway.update('salesEntry', salesEntryRecordId, {
+          gift: orderGift,
+          ...(orderAmountsKnown ? { totalAmount: totalCents / 100 } : {}),
+        }, { correlation });
+        if (orderAmountsKnown) {
+          logInfo('sales.entry.total_amount.written', {
+            sales_entry_record_id: salesEntryRecordId, total_amount: totalCents / 100, ...correlation,
+          });
+        } else {
+          // 如实记一条（**不是**静默跳过）：有行没填实收金额 ⇒ 算不出累计 ⇒ 这一格留空。
+          logWarn('sales.entry.total_amount.skipped', {
+            sales_entry_record_id: salesEntryRecordId, reason: 'line_amount_missing', ...correlation,
+          });
+        }
       }
       detailPlan = rows.length;
       // ⭐ 2026-10-12：**销售明细ID** = `{销售单号}-{两位序号}`（业务负责人定的格式）。
       //    序号的来源 = **这一单已有的行**（`existing` 上面刚读过，零额外请求）⇒
       //    **按创建顺序往下排、绝不重排已有行**（后补的行接着排；那张单是售后单时，
       //    它的明细行关联的是**原主表** ⇒ 排号也接着原单来，不会从 -01 重来）。
-      const saleOrderNo = textValue(entry?.fields?.[entryFields.orderNo]).trim();
+      const saleOrderNo = (skipEntryRead
+        ? suppliedOrderNo : textValue(entry?.fields?.[entryFields.orderNo])).trim();
       const detailIdState = createState(existing, table.detailId);
       if (!saleOrderNo) {
         logWarn('sales.detail_id.skipped', {
@@ -366,7 +406,8 @@ class SalesOrderService {
       // 🔴 2026-10-18：主表「交易类型」列已删 ⇒ 不再写主表；交易类型保留在每条销售明细上。
       // 「货」这一维写完了（收款还没开始）：先落「已写入」，这样后面收款失败时
       // 她也能从表里一眼看出"明细是好的、坏在钱那一列"。
-      await this.status.write(salesEntryRecordId, { sales: WRITE.sales.done }, correlation);
+      // ⭐ 2026-10-18（第 4 步提速）：`oneShot` 不写 —— 写入状态留到**收口那一次**（连同总金额 / 赠品）。
+      if (!oneShot) await this.status.write(salesEntryRecordId, { sales: WRITE.sales.done }, correlation);
       const detailRecordIds = rows.map((row) => row.recordId);
       // ⭐⭐ 2026-10-16（task-62 · 货/钱分离）：**「货」那一半到此为止** —— 见函数入口那段注释。
       //   🔴 这里**一个字都不写钱**，三个"为什么"（都是判据，不是偏好）：
@@ -460,29 +501,59 @@ class SalesOrderService {
         correlation,
       });
       financialRecorded = true;
-      // 「钱」这一维写完了。⚠️ 这正是 6 处闸门判据读的那一列：
-      // 闸门认的是**两代字面量**（旧「已入账」/ 新「已写入」），见 config/salesStatusDimensions。
-      await this.status.write(salesEntryRecordId, { funds: WRITE.funds.done }, correlation);
-      // ⭐ 2026-10-18：钱 + 明细都写成功 ⇒ 先写「成功」；后续进度/库存失败会覆盖成部分失败。
-      await this.status.writeFinal?.(salesEntryRecordId, WRITE.writeStatus.done, correlation);
-      await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
+      // ⭐⭐ 2026-10-18（第 4 步提速）：`oneShot` 这一跑**不在这儿收口** ——
+      //   写入状态 / 进度都留给"库存批量扣 + 履约=已交付"之后那**一次** `finalizeOneShot`：
+      //   · 不写 `status.write(funds done)`：旧四列已删 ⇒ 它也是同一个「写入状态」列，
+      //     在这儿写一次、5 行后再写一次 = 白打两次 PATCH（线上各 ≈ 2–3 秒）；
+      //   · 不调 `progress.sync`：它**只算不写**，却要整表读明细 + 收款（≈ 4–8 秒），
+      //     而这一跑的下游（成功页 / 收口）一个字都用不到它的返回值。
+      //   ⚠️ 两处日志（written / skipped）也跟着挪到收口那一下，不再在这儿各打一条。
+      if (!oneShot) {
+        // 「钱」这一维写完了。⚠️ 这正是 6 处闸门判据读的那一列：
+        // 闸门认的是**两代字面量**（旧「已入账」/ 新「已写入」），见 config/salesStatusDimensions。
+        await this.status.write(salesEntryRecordId, { funds: WRITE.funds.done }, correlation);
+        // ⭐ 2026-10-18：钱 + 明细都写成功 ⇒ 先写「成功」；后续进度/库存失败会覆盖成部分失败。
+        await this.status.writeFinal?.(salesEntryRecordId, WRITE.writeStatus.done, correlation);
+        await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
+      }
       // ⭐⭐ 2026-10-12（提速）：**不再"写完再读一遍主表"** —— 单号在 `_confirm` 开头就已经读到
       //    （上面那次 `get('salesEntry')` 的 `entry`），而这一段里**没有任何一步会改单号**
       //    （只写状态维度 / 赠品 / 交易类型 / 明细 / 收款）。
       //    ⇒ 直接用它，少打一次 `get:salesEntry`；`sourceNo`（给她的单号）的取值口径**逐字不变**
       //      （读不到照旧回落到 `salesEntryRecordId`）。
-      const sourceNo = textValue(entry?.fields?.[entryFields.orderNo]) || salesEntryRecordId;
+      //    ⭐ 2026-10-18（第 4 步）：`freshOneShot` 那一跑没读主表 ⇒ 单号用调用方给的（同一个号 ✓）。
+      const sourceNo = suppliedOrderNo
+        || textValue(entry?.fields?.[entryFields.orderNo]) || salesEntryRecordId;
       // ⚠️ 这条日志只回答【落表这一步】做了什么，**不是**"整单扣没扣库存"。
       //    2026-10-07 的真实误判：有人把 `inventory_applied: false` 读成了"整单没扣库存"，
       //    其实库存在**交付那一步**（SalesDeliveryService）才扣，而且那单已经扣了。
       //    ⇒ 字段名一律带**范围**（`inventory_applied_by_this_step`），并写明**下一步做什么**
       //      （`inventory_planned` / `inventory_step`）。库存真扣完时的**正向证据**是
       //      `sales.inventory.applied`（见 salesDeliveryService），不要拿这条当日志判据。
-      logInfo('v1.sale.posted', { sales_entry_record_id: salesEntryRecordId, detail_count: detailRecordIds.length,
-        payment_count: paymentRecordIds.length, step: 'posting', inventory_applied_by_this_step: false,
-        inventory_planned: true, inventory_step: 'after_delivery', ...correlation });
+      //    ⭐ 2026-10-18（第 4 步）：`oneShot` 的"落表完成"要到收口那一次才算 ⇒ 这里不打，
+      //       由 `finalizeOneShot` 用同一个事件名（`v1.sale.posted`）＋ `step: 'one_shot_finalize'` 打。
+      if (!oneShot) {
+        logInfo('v1.sale.posted', { sales_entry_record_id: salesEntryRecordId, detail_count: detailRecordIds.length,
+          payment_count: paymentRecordIds.length, step: 'posting', inventory_applied_by_this_step: false,
+          inventory_planned: true, inventory_step: 'after_delivery', ...correlation });
+      }
       // 返回值里的 inventoryApplied 与上面那条日志**逐字同义**：本步不动库存。
-      return { sourceNo, detailRecordIds, paymentRecordIds, inventoryApplied: false };
+      return {
+        sourceNo,
+        detailRecordIds,
+        paymentRecordIds,
+        inventoryApplied: false,
+        // ⭐ 2026-10-18（第 4 步）：一次跑**如实**回传"收口还没做"的三样事实 ——
+        //   调用方必须拿它们（而不是再读一次表）去写那一次收口。
+        ...(oneShot ? {
+          oneShot: true,
+          totalCents,
+          orderAmountsKnown,
+          giftText: orderGift,
+          // 收口该写的那几个语义键（来自写计划配置；调用方按它取字段，不散写）。
+          finalizeFields: TABLE_FIELDS.salesEntry.final,
+        } : {}),
+      };
     } catch (error) {
       error.saleRecordsWritten = financialRecorded;
       // 失败时把两个维度写到**它能被看懂的那一档**：
@@ -508,6 +579,17 @@ class SalesOrderService {
       });
       throw error;
     }
+  }
+
+  /**
+   * ⭐⭐ 2026-10-18（第 4 步提速）：**一次收口** —— 总金额 ＋ 赠品 ＋ 写入状态**同一次 update**。
+   * 实现在 `services/sales/oneShotWrite.js`（Lead 的文件大小门禁：老文件净增 ≤100 行）；
+   * 这里只保留**唯一入口**（调用方仍只认识 `SalesOrderService.finalizeOneShot` ✓）。
+   *
+   * 🔴 **不吞错**：这是"成功判据"本身 —— 写不上就抛，调用方（扫码写服务）会如实回失败页。
+   */
+  async finalizeOneShot(input = {}, options = {}) {
+    return finalizeSalesEntryOnce(this.gateway, input, options);
   }
 }
 

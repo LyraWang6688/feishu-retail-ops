@@ -175,45 +175,51 @@ return sendPaymentStep(res, req, {
                 // ⚠️ 2026-10-16 P0：这一段 `saveDraftLines({ paymentStep:'pending', … })` **已上移到闸门之前** —— **这里不许再写第二份** ✗
 
         // ⭐ 资金页：还没建单 ⇒ `orderNo: ''`（**不编** ✗）· `count` 用草稿行数 ✓
-        // ⭐⭐ 2026-10-16 task-62（**货 / 钱分离** · 设计文档 §5 改动 A）：
-        //   **没有开关了** ⇒ **就在这一刻建单** —— **只写「货」那一半**（主表总金额/赠品/交易类型 ＋ 明细 ＋ 销售状态 ✓
-        //   **不扣库存** ✓ **不记 `completed`** ✓ 收款明细 0 行 ✓ —— 那是冻结件 `deferFunds: true` 的语义 ✓）。
-        let goodsOrderNo = '';
+        // ⭐⭐⭐ 2026-10-18（第 4 步提速 · 货品页那一屏）：**只建销售主表 + 单号**。
+        //
+        // 业务口径（本刀）：**货品页只建单，明细/收款/库存流水全留给资金页那一下** ——
+        //   · 这一屏只写主表（「写入状态=未完成」由建单函数 `salesEntryService` 写）；
+        //   · 页面成功跳资金页（带着她刚填的金额与那一双）；
+        //   · 资金页提交时才一次写明细/收款/库存/收口。
+        //
         // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
-        //   改前逐字：`if (resolveSaleMoneySplit` ＋ `Config().enabled === true) { … }`（开关关着 ⇒ 这段一个字都不跑）
-        //   改后逐字：**闸门删掉** ⇒ 这段**永远跑**（货品页建单 / 现货当场扣 / 钱待补 ✓）
-        //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**把新功能都上了，不需要开关。**」✓
-            const goods = await writeService.submitSale({
-              openId,
-              requestId,
-              submitKey: body[fields.submitKey],
-              payments: [],          // 🔴 货那一跑**不许带收款**（带了冻结件当场抛 ✓）
-              deferFunds: true,      // ⭐ 阶段二（#763）已就位 ✓ 本刀只**接线** ✗ 不改冻结件 ✓
-              lineAmounts,           // 与今天**同一个**取值口径 ✓
-              // ⚠️ 成对迁移（改前逐字 → 改后逐字 → 依据）：④ 那刀把「货那一跑」从带 timing 的那段挪了出来 ⇒
-              //   改前逐字：这一发 `submitSale({…})` **没有** `timing`（而带 timing 的那次成了**死代码** ✗）
-              //   改后逐字：补回 `timing: saleTiming,`（`saleTiming` 声明在 `:2867` 活代码里，不重复声明 ✓）
-              //   依据 = 她的硬口径「每个关键流程节点都要有日志和可排查路径」＋ ④ 货/钱分离口径 ✓
-              timing: saleTiming,
-              // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修 `session_empty`（400）✗：
-              //   改前逐字：这段 `submitSale({…})` **没有** `pendingLine`（旧流程里它是靠下面那条【死代码】补的 ✗）
-              //   改后逐字：本段末尾补上 `pendingLine`（**逐字照抄** 下面 :2948 那份既有形状 ✓ 不新造 ✗）
-              //   依据 = 我逐层核到的事实：`scanWriteService.js:833` 拿行只有两条路（会话里已有行 ／ 传了 `pendingLine` 就当场 addLine ✗）
-              //     ＋ ⭐ ④ 取消开关后，带 `pendingLine` 那条路（原 :2951）被这条货那一跑的 `return` 顶成了**死代码** ✗
-              //     ⇒ 她「选尺码 ＋ 一次 POST 提交」这条流**行没被加进会话** ⇒ `:867 lines=[]` ⇒ `:868` 抛 `session_empty` ⇒ 400 ✗
-              //   依据（业务口径）= 她 2026-10-16 23:5x 逐字：「我先点了，我再点完货品的时候，我就创建单号了。**那为什么我在成功页里面看不到呢？那我肯定能看到这个单号呀**」✓
-              pendingLine: submitView?.found ? {
-                productRecordId: submitView.product_record_id,
-                number: submitView.number,
-                itemNo: submitView.item_no,
-                color: submitView.color,
-                size: body[fields.size],
-                amount: body[fields.amount],
-                gift: body[fields.gift],
-                // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
-                inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
-              } : null,
-            });
+        //   改前逐字：`deferFunds: true`（"货那一跑"：主表 + 明细 + 现货当场扣库存 + 销售状态；
+        //     `payments: []`；后台异步那一跑）—— 线上实测这一跑 86s（明细 21.9s + 库存 64.5s），
+        //     而她这时还在资金页等着 ⇒ 资金页那一发要排它的队（queue_wait 40.6s）⇒ 87s 白屏。
+        //   改后逐字：`masterOnly: true` —— 只建主表 + 单号（一次 create ＋ 单号 alloc），
+        //     明细/收款/流水一行都不写，也不转后台。
+        //   依据 = 第 4 步目标（87s → ~15s）＋ `docs/issue-scan-sale-gift-ledger-latency-2026-10-18.md`
+        //     §5 的耗时分解（后台货跑与资金页那一跑共用同一把串行队列，必须等它跑完）。
+        let goodsOrderNo = '';
+        const goods = await writeService.submitSale({
+          openId,
+          requestId,
+          submitKey: body[fields.submitKey],
+          // 🔴 只建主表那一跑**不许带收款**（带了写服务当场抛 —— 收款只属于资金页那一屏）
+          payments: [],
+          masterOnly: true,
+          // `lineAmounts` 照旧带上：写服务会把它落回**本地会话草稿行**（资金页那一跑要用）。
+          lineAmounts,
+          timing: saleTiming,
+          // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修 `session_empty`（400）✗：
+          //   改前逐字：这段 `submitSale({…})` **没有** `pendingLine`（旧流程里它是靠下面那条【死代码】补的 ✗）
+          //   改后逐字：本段末尾补上 `pendingLine`（**逐字照抄** 下面 :2948 那份既有形状 ✓ 不新造 ✗）
+          //   依据 = 我逐层核到的事实：`scanWriteService.js:833` 拿行只有两条路（会话里已有行 ／ 传了 `pendingLine` 就当场 addLine ✗）
+          //     ＋ ⭐ ④ 取消开关后，带 `pendingLine` 那条路（原 :2951）被这条货那一跑的 `return` 顶成了**死代码** ✗
+          //     ⇒ 她「选尺码 ＋ 一次 POST 提交」这条流**行没被加进会话** ⇒ `:867 lines=[]` ⇒ `:868` 抛 `session_empty` ⇒ 400 ✗
+          //   依据（业务口径）= 她 2026-10-16 23:5x 逐字：「我先点了，我再点完货品的时候，我就创建单号了。**那为什么我在成功页里面看不到呢？那我肯定能看到这个单号呀**」✓
+          pendingLine: submitView?.found ? {
+            productRecordId: submitView.product_record_id,
+            number: submitView.number,
+            itemNo: submitView.item_no,
+            color: submitView.color,
+            size: body[fields.size],
+            amount: body[fields.amount],
+            gift: body[fields.gift],
+            // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
+            inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
+          } : null,
+        });
             // 🔴 失败**如实**：绝不带着空单号继续去资金页当她"成功了" ✗
             if (!goods || goods.ok !== true) return respondWriteFailure(res, goods, requestId);
             goodsOrderNo = String(goods.order_no || '');
@@ -227,6 +233,8 @@ return sendPaymentStep(res, req, {
               reused: goods.reused === true,
               partial: goods.code === 'sale_partial_failed',
               lines: lineAmounts.length,
+              // ⭐ 2026-10-18（第 4 步）：这一屏**只建主表**（如实标出来，日志一眼分得清）
+              master_only: goods.master_only === true,
               submit_ms: Math.max(0, Date.now() - submitStartedAt),
               queue_wait_ms: Number(saleTiming.queue_wait_ms) || 0,
               lookup_ms: Number(saleTiming.lookup_ms) || 0,
@@ -235,6 +243,7 @@ return sendPaymentStep(res, req, {
               status_ms: Number(saleTiming.status_ms) || 0,
               detail_ms: Number(saleTiming.detail_ms) || 0,
               stock_ms: Number(saleTiming.stock_ms) || 0,
+              finalize_ms: Number(saleTiming.finalize_ms) || 0,
             });
         return sendPaymentStep(res, req, {
           paymentMethods: await candidatePaymentMethods(req),
@@ -250,8 +259,9 @@ return sendPaymentStep(res, req, {
             );
             return cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '';
           })(),
-          // ⭐ 开着时如实给她单号；**关着 ⇒ 这个键根本不出现** ⇒ 页面逐字节不变 ✓
-          ...(goodsOrderNo ? { orderNo: goodsOrderNo } : {}),
+          // ⭐⭐ 2026-10-18（第 4 步 · 资金页精简）：**不再把单号带到资金页** ——
+          //   她这一屏只要「总金额 + 收款行 + 赠品」（单号留在成功页/会话里，页面不再显示）✓
+          //   （`orderNo` 不传 ⇒ `sendPaymentStep` 那一段 `orderNo ? …` 天然不渲染 ✓ 文案/字段一个没改）
         });
         // eslint-disable-next-line no-unreachable
         const result = await writeService.submitSale({

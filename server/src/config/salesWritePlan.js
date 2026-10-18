@@ -101,6 +101,36 @@ const plansForItems = (items = []) => items.map((item) => planForTradeType(item?
 
 const plansOfOrder = (items = []) => plansForItems(items).filter(Boolean);
 
+/**
+ * ⭐⭐ 2026-10-18（第 4 步提速）：**每一步落在哪一屏** —— 唯一真源。
+ *
+ * 她说过的流程只有两屏（货品页 → 资金页 → 成功页），而这个文件是"写什么"的真源
+ * ⇒ 把「哪一屏写哪几步」也放这里，service 里就**不再散落 `if (是不是资金页)`**：
+ *   · 货品页：**只写 main**（销售主表 + 单号 + 写入状态=未完成）—— 明细 / 收款 / 流水一行都不写；
+ *   · 资金页：children（明细 + 收款，**批量**）→ inventory（**批量**扣）→ fulfillment（履约=已交付）
+ *     → finalize（**一次**写 总金额 + 赠品 + 写入状态）。
+ * ⚠️ 顺序就是数组顺序（资金页那几步**不许**前挪：收口必须在库存/履约之后）。
+ */
+const PAGE_STEPS = Object.freeze({
+  goods: Object.freeze(['main']),
+  money: Object.freeze(['children', 'inventory', 'fulfillment', 'finalize']),
+});
+
+/** 这一屏要跑哪几步（认不出的屏名 ⇒ 空数组，调用方按"什么都不做"处理，不猜）。 */
+const stepsForPage = (page) => PAGE_STEPS[String(page || '').trim()] || Object.freeze([]);
+
+/**
+ * ⭐⭐ 2026-10-18（第 4 步提速）：**会话标记**（本地草稿里的进度位，不写业务表）。
+ *   · `masterOnly`     —— 货品页只把主表建好了（明细/收款/流水都还没写）；
+ *   · `childrenStarted` —— 资金页那一跑**已经开始**写明细/收款（**写之前**就置上
+ *     ⇒ 重试时不许再假设"这一单还没有明细"，必须走"读已有 + 认领"的安全路径）。
+ * ⚠️ 取值只在这里（配置先行）；service 只读常量，不写死字符串。
+ */
+const SESSION_FLAGS = Object.freeze({
+  masterOnly: 'master_only',
+  childrenStarted: 'children_started',
+});
+
 /** 这一单是否需要动库存（任一现货行 ⇒ 需要）。 */
 const requiresInventory = (items = []) => plansOfOrder(items).some((plan) => plan.writesInventory);
 
@@ -122,6 +152,9 @@ const deliversOnSubmitFor = (code) => planForTradeType(code)?.deliverOnSubmit ==
 module.exports = {
   TABLE_FIELDS,
   SALES_WRITE_PLANS: PLANS,
+  PAGE_STEPS,
+  SESSION_FLAGS,
+  stepsForPage,
   planForTradeType,
   planForStock,
   plansForItems,
