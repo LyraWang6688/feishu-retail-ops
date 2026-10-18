@@ -92,7 +92,7 @@ test('AC-NS4 ⭐ 现货/预订分组**照旧**（仍按可售状态分组、仍�
   assert.match(code, /const sizeRowsOf = \(view\) => \(Array\.isArray\(view\?\.rows\)/, '尺码行仍只吃 `view.rows`（实时库存 ✓ 不再读采购明细 ✓）');
 });
 
-test('AC-NS5 ⭐ `purchaseSizeReader.js` **文件保留**（不删 ✗）＋ 顶部注明"当前无生产引用"', () => {
-  const file = fs.readFileSync(path.join(SERVER, 'src/services/purchaseSizeReader.js'), 'utf8');
-  assert.ok(file.includes('当前无生产引用'), '文件顶部要注明现状 ✓（她的决定：接线删、文件留 ✓）');
+test('AC-NS5 ⭐ `purchaseSizeReader.js` 已删除（2026-10-18 业务负责人确认「前端没有就删」）', () => {
+  assert.equal(fs.existsSync(path.join(SERVER, 'src/services/purchaseSizeReader.js')), false,
+    '无生产引用的 reader 文件应已删除 ✓');
 });

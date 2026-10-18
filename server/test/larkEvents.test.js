@@ -7,10 +7,6 @@ const { createLarkEventHandlers } = require('../src/routes/larkEvents');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const {
-  isPurchaseArrivalIntakeEnabled,
-  PURCHASE_ARRIVAL_INTAKE_ENV_KEY,
-} = require('../src/config/purchaseArrivalIntake');
 
 // 分派前 handler 要先认出"这是我们自己的 Base"，所以先给一个测试用 app token。
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
@@ -183,9 +179,8 @@ test('① 私聊链路已移除：非文字消息只回那一句「请到群里�
 // 而且那张表本身**已被业务负责人整个删除**（2026-10-07 晚）——到货落点搬到「报货批次」。
 //
 // 所以路由层现在的状态是：
-//   1) 判定函数本身仍然保留单测（config/purchaseArrivalIntake.js 这个开关模块
-//      **刻意留着**，将来恢复「对话到货」时是现成的显式开关，且它钉住了
-//      "空字符串不等于关闭"那个坑）；
+//   1) 开关模块 `config/purchaseArrivalIntake.js` 已于 2026-10-18 按业务负责人
+//      「前端没有就删」的口径**删除**（它当时已无任何读取点）；
 //   2) **schema 里不再有 `purchaseArrival`** ⇒ 路由里也没有它的任何分派/排查分支；
 //   3) 就算飞书还推来一条**旧表 id** 的事件（订阅没来得及删），也必须
 //      "什么都不做、也不报错"（下面两条用例钉住这一点）；
@@ -243,33 +238,6 @@ const captureLogs = async (run) => {
   }
   return lines;
 };
-
-test('开关判定：只有显式 false（忽略大小写与首尾空格）才算关闭', () => {
-  const key = PURCHASE_ARRIVAL_INTAKE_ENV_KEY;
-  const disabled = ['false', 'FALSE', 'False', ' false ', '\tfalse\n', '  FaLsE  '];
-  disabled.forEach((value) => {
-    assert.equal(
-      isPurchaseArrivalIntakeEnabled({ [key]: value }),
-      false,
-      `${JSON.stringify(value)} 应判定为关闭`,
-    );
-  });
-});
-
-test('开关判定：未配置、空字符串、true、1 以及写错的值一律视为开启', () => {
-  const key = PURCHASE_ARRIVAL_INTAKE_ENV_KEY;
-  // ⚠️ '' 必须在"开启"这一侧：清空环境变量不等于关闭，这是不能用 `||` 兜底的原因。
-  const enabled = [undefined, null, '', '   ', 'true', 'TRUE', '1', '0', 'yes', 'no', 'flase'];
-  enabled.forEach((value) => {
-    assert.equal(
-      isPurchaseArrivalIntakeEnabled({ [key]: value }),
-      true,
-      `${JSON.stringify(value)} 应判定为开启`,
-    );
-  });
-  assert.equal(isPurchaseArrivalIntakeEnabled({}), true, '键不存在时应判定为开启');
-  assert.equal(isPurchaseArrivalIntakeEnabled(), true, '默认参数 process.env 未配置时应判定为开启');
-});
 
 test('链路已退场：旧「到货验收」表 id 的事件不再被分派，也不报错（schema 里已没有那张表）', async () => {
   // 2026-10-07 晚：业务负责人把那张表**整个删掉了** ⇒ schema 里不再有 `purchaseArrival`，

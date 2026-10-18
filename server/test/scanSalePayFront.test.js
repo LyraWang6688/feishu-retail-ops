@@ -68,7 +68,7 @@ const withServer = async (run) => {
   app.use(express.urlencoded({ extended: true }));
   const router = createScanPageRouter({
     service: { lookup: async () => view() }, gateway: {}, config: SCAN_PAGE,
-    writeService: spyWriteService(calls), purchaseSizeReader: { listSizes: async () => [] },
+    writeService: spyWriteService(calls),
     followup: { addPayment: async () => ({ ok: true }) },
   });
   app.use(SCAN_PAGE.route.basePath, router);

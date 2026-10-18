@@ -219,7 +219,7 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
    *   已经按口径换成【平台结算款】了 ⇒ 若不扣，差额会算成 `货品 − 结算款` ✗（她例：300 − 47.40
    *   = **252.60** ✗；口径是 **200** ✓）。
    *
-   * 算式与**群聊先例逐字同形**（`services/groupBuyVoucherPolicy.js:83`）：
+   * 算式与**群聊先例逐字同形**（群聊先例服务 `groupBuyVoucherPolicy.js` 已于 2026-10-18 删除，口径保留在本注释）：
    *   `netCents = cashCents + settlementCents` ≡ `成交额 − 面值 + 结算款` ≡ `成交额 − (面值 − 结算款)` ✓
    *   ⇒ 「货品那一侧」= 成交额 − (面值 − 结算款) = 店里**实际拿到的净额**（客户补的 + 平台结算的）。
    *
