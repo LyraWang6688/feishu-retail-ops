@@ -42,6 +42,7 @@
 | [observability-daily.md](observability-daily.md) | **观测日报 + 日志轮转（第 2 刀）**：`scripts/observability-daily.mjs`（东八区按天汇总：分级/Top/未登记/错误/慢事件 → `docs/reports/observability-YYYY-MM-DD.{md,json}`）· `scripts/setup-pm2-logrotate.sh`（PM2 日志 10M/14 份/压缩/每天 0 点）· `scripts/setup-observability-cron.sh`（09:00 日报，幂等） |
 | [observability-alerts.md](observability-alerts.md) | **观测告警（第 3 刀）**：3 条规则（error 占比 / 关键链路失败 / 慢事件）· 15 分钟窗口 + 60 分钟静默 + 每窗口最多 3 条 · 发飞书群（默认 `PURCHASE_CHAT_ID`）· **默认关**（`OBSERVABILITY_ALERTS_ENABLED`）|
 | [scan-page-core-extraction-plan-2026-10-18.md](scan-page-core-extraction-plan-2026-10-18.md) | **扫码路由核心职责深拆方案（只读依赖清单）**：`index.js` 3263 行、四个主干分支 ≈1041 行的依赖/写库调用盘点 ＋ handler ctx 契约 ＋ P0/P1/P2 施工顺序与验收标准（**本文件不改生产代码**）|
+| [issue-scan-sale-gift-ledger-latency-2026-10-18.md](issue-scan-sale-gift-ledger-latency-2026-10-18.md) | **扫码销售链路问题说明（待评审）**：线上真实操作下两个字段缺失（主表赠品 / 库存流水关联销售）＋ 页面切换耗时 9.6s / 86.4s / 87.2s 的分段数据 ＋ 根因与候选优化方案，供外部 AI / 代码评审使用 |
 | [module-boundaries.md](module-boundaries.md) | 模块边界与职责划分 |
 | [idempotency-contract.md](idempotency-contract.md) | 采购与库存的远端幂等契约 |
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
@@ -255,6 +256,7 @@
 | [todo-delete-original-sales-status-write.md](todo-delete-original-sales-status-write.md) | 🔴 待删：「售后回写原单销售状态」那套代码 |
 | [todo-followup-supplement-multiturn.md](todo-followup-supplement-multiturn.md) | 待办：追问后的"补充"要接着上一轮（多轮接续）—— Lead 已批准最小改法（2026-10-07 晚） |
 | [todo-inventory-query-page-logic.md](todo-inventory-query-page-logic.md) | 「库存查询」页面逻辑审查（2026-10-08） |
+| [ai-bitable-page-review-2026-10-18.md](ai-bitable-page-review-2026-10-18.md) | ⭐⭐ **AI 多维表格页面：校验与改法**（Lead 定位 · 怎么扒源码〔Referer〕· DSL 结构 · 固定校验动作 · 两条修改路径） |
 | [todo-purchase-inbound-removal.md](todo-purchase-inbound-removal.md) | 口径补记（业务负责人 2026-10-07 深夜，逐字） |
 | [todo-purchase-return-unified-parsing.md](todo-purchase-return-unified-parsing.md) | 待办：采购退货解析并入"采购（报货）"那条路线（业务负责人 2026-10-07 定，等前件落地后排） |
 | [todo-push-card-table-layout.md](todo-push-card-table-layout.md) | 待办：9 点推送卡片改成「三列表格布局 + 每组一行标题 + 跳转按钮」（业务负责人 2026-10-08 拍板） |
