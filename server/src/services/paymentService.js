@@ -196,6 +196,8 @@ class PaymentService {
       const method = status === '未收款' ? null : await this.references.resolvePaymentMethod(payment.method);
       if (status !== '未收款' && !method) throw new Error('收款缺少支付方式');
       const paid = amount(payment.amount);
+      // 批量建单时要用（这里已经解析过；不重复解析、不额外读表）
+      payment.__methodRecordId = method?.recordId || '';
       const knownId = options.knownRecordIds?.[index];
       const match = existing.find((record) => !used.has(record.record_id) &&
         (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
@@ -210,14 +212,49 @@ class PaymentService {
     if (existing.some((record) => !used.has(record.record_id))) {
       throw new Error('已有收款与当前销售草稿不一致，已停止自动重试');
     }
-    for (const row of rows) {
-      if (!row.recordId) {
-        row.recordId = (await this.record({ salesEntryRecordId, ...row.payment }, {
+    // ⭐ 2026-10-18（提速 · 收集后批量写）：一次性 batchCreate 收款明细，不再逐条 4 秒。
+    //   · 生产 SDK 有 batchCreate ⇒ 一批；桩网关（无 batchCreate）⇒ 逐条兜底（行为不变）。
+    const pending = rows.filter((row) => !row.recordId);
+    if (pending.length) {
+      const payloads = pending.map((row) => {
+        const status = row.payment.status;
+        const receiptId = nextId({ state: receiptState, orderNo, kind: 'receipt' });
+        // method 在上面 rows 循环里已解析并校验过；这里按同一口径取一次（同一声明处）。
+        const methodRecordId = row.payment.__methodRecordId || '';
+        return {
+          salesEntry: relation(salesEntryRecordId),
+          ...(receiptId ? { receiptId } : {}),
+          ...(methodRecordId ? { method: relation(methodRecordId) } : {}),
+          amount: amount(row.payment.amount),
+          status,
+          ...(status === '已收款' ? { receivedAt: Number(row.payment.receivedAt ?? Date.now()) } : {}),
+          ...(status === '已收款' ? { tradeDirection: MONEY_DIRECTION_INCOME } : {}),
+        };
+      });
+      const canBatch = typeof this.gateway.createBatch === 'function'
+        && (!this.gateway.client
+          || typeof this.gateway.client?.bitable?.appTableRecord?.batchCreate === 'function');
+      let createdIds;
+      if (canBatch) {
+        const created = await this.gateway.createBatch('paymentRecord', payloads, {
           correlation: options.correlation,
-          state: receiptState, orderNo,
-          ...(options.afterSalesEntryRecordId ? { afterSalesEntryRecordId: options.afterSalesEntryRecordId } : {}),
-        })).recordId;
+        });
+        createdIds = (created || []).map((item) => item.recordId);
+        if (createdIds.length !== payloads.length) {
+          throw new Error(`batch_create_count_mismatch: expected ${payloads.length}, got ${createdIds.length}`);
+        }
+      } else {
+        createdIds = [];
+        for (const payload of payloads) {
+          // eslint-disable-next-line no-await-in-loop
+          createdIds.push((await this.gateway.create('paymentRecord', payload, {
+            correlation: options.correlation,
+          })).recordId);
+        }
       }
+      pending.forEach((row, index) => { row.recordId = createdIds[index]; });
+    }
+    for (const row of rows) {
       await options.onRecordPersisted?.(row.index, row.recordId);
     }
     return rows.map((row) => row.recordId);

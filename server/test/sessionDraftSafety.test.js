@@ -36,7 +36,9 @@ test('并发 addLine（同账号、不经 queue）：两次加货都要在，后
       h.sessions.addLine('ou_concurrent', line(40)),
     ]);
     const got = await h.sessions.get('ou_concurrent');
-    assert.deepEqual((got.sale.lines || []).map((item) => item.size), [38, 39, 40],
+    // 并发下先 B 后 C 的顺序不保证；判据是"三双都在"，不是顺序。
+    const sizes = (got.sale.lines || []).map((item) => item.size).sort((a, b) => a - b);
+    assert.deepEqual(sizes, [38, 39, 40],
       '并发加货后三双都要在（B/C 都不许被覆盖）');
   } finally { h.cleanup(); }
 });
