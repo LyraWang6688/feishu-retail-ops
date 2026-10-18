@@ -7,7 +7,7 @@ require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径
  *
  * 结论（先核后写）：**这条修已经在 main 上（`38d80eb`）** ——
  *   · `services/scanPageService.js:1163-1166`：销售/库存那条链的 `scope = normalScopeOf(parsed.categoryCode)`
- *     （`normalScopeOf:771-780` = 配置的 `normal`：A 38–45 · B 36–41 ⇒ **零飞书读** ✓ special 不参与缺码 ✓）
+ *     （`normalScopeOf:771-780` = 配置的 `normal`：A 38–44 · B 36–40 ⇒ **零飞书读** ✓ special 不参与缺码 ✓）
  *   · `loadSizeScope`（= `sizesForCategory`，`from/to` = **enterable** 女 34–43 / 男 38–48）**留给验收页** ✓
  *   · `renderSizes = buckets.keys() ∪ scope.sizes` ⇒ **有货的特殊码照旧出现在现货** ✓（它在 `buckets` 里）
  *   · 缺码 = `scopeSet(=normal).has(size) && rowTotal === 0` ⇒ **没货的特殊码根本不进 renderSizes** ✓
@@ -34,9 +34,9 @@ test('AC-SW-1 ⭐⭐ 越界哨兵：`sizesForCategory` 必须**继续**是"可�
 test('AC-SW-2 ⭐⭐ 展示侧的**缺货基准**读的是配置的 `enterable`（可录范围 A 38–48 · B 34–43）', () => {
   const ranges = SCAN_PAGE.sizeSegments.ranges;
   assert.deepEqual(ranges.A.normal, [38, 44], '男普通码 38–44');
-  assert.deepEqual(ranges.B.normal, [36, 41], '女普通码 36–41');
+  assert.deepEqual(ranges.B.normal, [36, 40], '女普通码 36–40');
   assert.deepEqual(ranges.A.special, [45, 46, 47, 48], '男特殊码 45–48（**只在有货时才显示** ✓）');
-  assert.deepEqual(ranges.B.special, [34, 35, 42, 43], '女特殊码 34/35/42/43（同上 ✓）');
+  assert.deepEqual(ranges.B.special, [34, 35, 41, 42, 43], '女特殊码 34/35/41/42/43（同上 ✓）');
   // ⭐⭐ 2026-10-14 **改指向**（她最终口径：缺货基准 = **可录范围** —— 依据
   //   docs/special-size-fold-and-enterable-base-2026-10-14.md 她的原话：「都是按照它的**可录范围**来，
   //   只不过把缺码或者预订里包含**特殊码的归集到一个折叠的区域**」）

@@ -25,12 +25,12 @@ test('AC-NS1 ⭐⭐ 扫码页这条链**不再读采购明细 / 不再有特殊�
   }
 });
 
-test('AC-NS2 ⭐ 缺码只按**默认范围**判：A 38–44 · B **36–41**（逐档参数化 ✓）', () => {
+test('AC-NS2 ⭐ 缺码只按**默认范围**判：A 38–44 · B **36–40**（逐档参数化 ✓）', () => {
   // eslint-disable-next-line global-require
   const { SCAN_PAGE } = require('../src/config/scanPage');
   const ranges = SCAN_PAGE.sizeSegments.ranges;
   assert.deepEqual(ranges.A.default, [38, 44], 'A（男）默认段 38–45 ✓');
-  assert.deepEqual(ranges.B.default, [36, 41], 'B（女）默认段 **36–41**（她 2026-10-14 晚明确 ✓）');
+  assert.deepEqual(ranges.B.default, [36, 40], 'B（女）默认段 **36–41**（她 2026-10-14 晚明确 ✓）');
 });
 
 test('AC-NS3 ⭐⭐ 其他码：**库存里有的就显示**（不算特殊码 ✗）；没有的不显示、也不计缺码', () => {

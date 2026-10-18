@@ -190,6 +190,6 @@ test('AC-MF8 ⭐ 哨兵：可录范围本体 + 销售页（#515）**一字不动
   assert.deepEqual(sizesForCategory('B', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '验收页口径不动 ✓');
   assert.deepEqual(enterableScopeOf('B', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '可录范围不动 ✓');
   const groups = saleSizeGroups(femaleView());
-  assert.deepEqual(groups.folded.map((item) => Number(item.size_text)), [34, 35, 42, 43], '销售页折叠组（#515）不动 ✓');
+  assert.deepEqual(groups.folded.map((item) => Number(item.size_text)), [34, 35, 42, 43, 41], '销售页折叠组（#515）随 41 入特殊码；顺序按视图行 ✓');
   assert.deepEqual(groups.inStock.map((item) => item.size_text), ['36'], '有货的 36 仍在现货 ✓');
 });
