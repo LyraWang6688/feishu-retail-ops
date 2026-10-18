@@ -91,7 +91,8 @@ test('明细批量写：一次 batchCreate 建完整单（不再逐行 4 秒）'
     ],
     payments: [{ method: '微信', amount: 300 }],
   });
-  assert.deepEqual(gateway.batches, [['salesDetail', 3]], '三条明细必须一次 batch 写完');
+  assert.deepEqual(gateway.batches[0], ['salesDetail', 3], '三条明细必须一次 batch 写完');
+  assert.ok(gateway.batches.some(([table]) => table === 'paymentRecord'), '收款明细也必须走批量（不逐条 4 秒）');
   assert.equal(gateway.records.get('salesDetail').length, 3);
 });
 
