@@ -124,9 +124,9 @@ const DEFAULT_ORDERS_CACHE_MS = 30000;
 /**
  * 「订单列表」页面**真正用到的列**（语义键，**一处定义**）——
  * 依据是逐条核过 `services/salesFollowupService.js` 与它调用的三个纯函数：
- *   · `salesEntry`    ：`orderNo`（单号）+ `funds`（「资金状态」，`postedOf` 判"已入账"）；
+ *   · `salesEntry`    ：`orderNo`（单号）+ `writeStatus`（「写入状态」，`postedOf` 判"已入账"）；
  *   · `salesDetail`   ：`salesEntry`（关联销售单）· `size` · `fulfillmentStatus` · `actualAmount`
- *                       · `product` / `accessory`（两种可售品的关联列，取值 = `config/sellableKinds`
+ *                       · `product`（关联货品；配品列已随生产表删除）
  *                       的 `detailLinkField`）；
  *   · `paymentRecord` ：`salesEntry` · `amount` · `status` · `method` · `receivedAt`；
  *   · `paymentMethod` ：`name`； · `product`：`number` · `color`； · `accessory`：`name`。
@@ -135,8 +135,8 @@ const DEFAULT_ORDERS_CACHE_MS = 30000;
  * ⚠️ 只写**语义键**，飞书列名由 schema（`gateway.table(key).fields`）解析。
  */
 const ORDER_FIELD_KEYS = Object.freeze({
-  salesEntry: Object.freeze(['orderNo', 'funds']),
-  salesDetail: Object.freeze(['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product', 'accessory']),
+  salesEntry: Object.freeze(['orderNo', 'writeStatus']),
+  salesDetail: Object.freeze(['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product']),
   paymentRecord: Object.freeze(['salesEntry', 'amount', 'status', 'method', 'receivedAt']),
   paymentMethod: Object.freeze(['name']),
   product: Object.freeze(['number', 'color']),
