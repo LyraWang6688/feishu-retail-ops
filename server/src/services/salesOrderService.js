@@ -317,27 +317,50 @@ class SalesOrderService {
           sales_entry_record_id: salesEntryRecordId, reason: 'order_no_missing', ...correlation,
         });
       }
-      for (const row of rows) {
-        if (!row.recordId) {
-          const detailId = saleOrderNo
-            ? nextId({ state: detailIdState, orderNo: saleOrderNo, kind: 'detail' }) : '';
-          const created = await this.gateway.create('salesDetail', {
-            salesEntry: relation(salesEntryRecordId),
-            ...(detailId ? { detailId } : {}),
-            // 鞋写「编号」，配品写「配品」——字段由可售品配置声明。
-            [row.item.linkField]: relation(row.item.linkRecordId),
-            ...(row.item.sizeRecordId ? { size: relation(row.item.sizeRecordId) } : {}),
-            // 🔴 明细**不带**赠品（那一列 2026-10-08 已被她整列删除；带了会抛「未配置语义字段」）。
-            //    赠品写在上面那段：销售主表那一行，一单一条。
-            // ⭐ 2026-10-11（方案甲）：实收**没填就不带这一列**（那一格留空，不写 0）。
-            ...(row.item.amountKnown ? { actualAmount: row.item.actualAmount } : {}),
-            fulfillmentStatus: row.item.fulfillmentStatus,
-            // ⭐ 这一行**自己的**「行为管理」记录（单选）；解析不到时退回主表那条。
-            ...(row.item.tradeTypeRecordId ? { tradeType: relation(row.item.tradeTypeRecordId) } : {}),
-          }, { correlation });
-          row.recordId = created.recordId;
+      // ⭐ 2026-10-18（提速 · 收集后批量写）：**明细一次性 batchCreate**，不再逐行 4 秒一次。
+      //   · 有 `gateway.createBatch`（生产网关）⇒ 一批；没有（部分单测替身）⇒ 逐条兜底；
+      //   · 返回与入参同序 ⇒ 按位置回填 recordId；`onRecordPersisted` 仍逐行回调（协议不变）。
+      const detailPayloadOf = (row) => {
+        const detailId = saleOrderNo
+          ? nextId({ state: detailIdState, orderNo: saleOrderNo, kind: 'detail' }) : '';
+        return {
+          salesEntry: relation(salesEntryRecordId),
+          ...(detailId ? { detailId } : {}),
+          [row.item.linkField]: relation(row.item.linkRecordId),
+          ...(row.item.sizeRecordId ? { size: relation(row.item.sizeRecordId) } : {}),
+          ...(row.item.amountKnown ? { actualAmount: row.item.actualAmount } : {}),
+          fulfillmentStatus: row.item.fulfillmentStatus,
+          ...(row.item.tradeTypeRecordId ? { tradeType: relation(row.item.tradeTypeRecordId) } : {}),
+        };
+      };
+      const pendingRows = rows.filter((row) => !row.recordId);
+      detailsPersisted += rows.length - pendingRows.length;
+      if (pendingRows.length) {
+        const payloads = pendingRows.map(detailPayloadOf);
+        let createdIds;
+        // 只有"真的能批量"才批量：生产 V1BitableGateway 的 SDK client 有 batchCreate；
+        // 单测里用真网关 + 桩 client 的（没有 batchCreate）⇒ 逐条兜底，行为保持原样。
+        const canBatch = typeof this.gateway.createBatch === 'function'
+          && (!this.gateway.client
+            || typeof this.gateway.client?.bitable?.appTableRecord?.batchCreate === 'function');
+        if (canBatch) {
+          const created = await this.gateway.createBatch('salesDetail', payloads, { correlation });
+          createdIds = (created || []).map((item) => item.recordId);
+          if (createdIds.length !== payloads.length) {
+            throw new Error(`batch_create_count_mismatch: expected ${payloads.length}, got ${createdIds.length}`);
+          }
+          detailsPersisted += createdIds.length;
+        } else {
+          createdIds = [];
+          for (const payload of payloads) {
+            // eslint-disable-next-line no-await-in-loop
+            createdIds.push((await this.gateway.create('salesDetail', payload, { correlation })).recordId);
+            detailsPersisted += 1;
+          }
         }
-        detailsPersisted += 1;
+        pendingRows.forEach((row, index) => { row.recordId = createdIds[index]; });
+      }
+      for (const row of rows) {
         await input.onRecordPersisted?.('details', row.index, row.recordId);
       }
       // 🔴 2026-10-18：主表「交易类型」列已删 ⇒ 不再写主表；交易类型保留在每条销售明细上。
