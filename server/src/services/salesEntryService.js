@@ -73,9 +73,9 @@ const createSalesEntryWithOrderNo = async ({ gateway } = {}, task = {}) => {
         //    ⚠️ `task.original_text`（**本地**任务里她那句话）照旧留着：解析要读它、
         //      缺项文案要读它；只是**不再落业务表**。
         sender: person(task.sender_open_id),
-        // 建单 = 还没轮到她做任何动作 → 「确认状态」= 未确认。
-        // ⚠️ 旧「确认状态（旧）」那一列已被她 2026-10-06 整列删除，四个维度是唯一入口。
-        userAction: WRITE.userAction.pending,
+        // ⭐ 2026-10-18：建单 = 流程还没走完（还没到资金页提交/批量写入）⇒「写入状态=未完成」。
+        //   成功/部分失败/失败由最终收口写（scanWriteService / afterSalesService）。
+        writeStatus: WRITE.writeStatus.pending,
         orderNo,
       });
     },

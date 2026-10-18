@@ -102,7 +102,7 @@ const gatewayFor = (seed = {}) => {
 const storeStub = () => ({ get: async () => null, create: async () => {}, update: async () => {} });
 
 const staleOrderSeed = () => ({
-  salesEntry: [{ record_id: 'o1', fields: { 资金状态: '已写入', 销售单号: 'XSD-STALE-1' } }],
+  salesEntry: [{ record_id: 'o1', fields: { 写入状态: '成功', 销售单号: 'XSD-STALE-1' } }],
   salesDetail: [{ record_id: 'd1', fields: {
     销售单号: ['o1'], 编号: ['p1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 100,
     销售日: STALE_SOLD_AT,
@@ -140,7 +140,7 @@ test('回归锁（行为）：2026-10-01 的老单点「成交」那一刻**照�
   const service = new SecondDeliveryService({
     gateway: gatewayFor({
       salesEntry: [{ record_id: 'o1', fields: {
-        资金状态: '已写入', 销售单号: 'XSD-STALE-1', 录单日: STALE_SOLD_AT,
+        写入状态: '成功', 销售单号: 'XSD-STALE-1', 录单日: STALE_SOLD_AT,
       } }],
     }),
     store: storeStub(),

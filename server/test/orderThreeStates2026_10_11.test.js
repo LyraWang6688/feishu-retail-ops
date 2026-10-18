@@ -279,7 +279,7 @@ const listOrdersGateway = (records, { accessoryTableId = 'tbl_acc_order_states' 
 
 test('AC-C6 listOrders 明细带 kind/requires_size/color/accessory；配品行对「待交付」的贡献 = 0', async () => {
   const records = {
-    salesEntry: [{ record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-ACC' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { 写入状态: '成功', 销售单号: 'XSD-ACC' } }],
     salesDetail: [
       // 鞋：未交付（待交付 +1）
       { record_id: 'detail_shoe', fields: {
@@ -324,7 +324,7 @@ test('AC-C6 listOrders 明细带 kind/requires_size/color/accessory；配品行�
 
 test('AC-C6b 「其他配品」表没配置 ⇒ 订单列表照常出得来（配品行只是没有名称）', async () => {
   const records = {
-    salesEntry: [{ record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-NOACC' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { 写入状态: '成功', 销售单号: 'XSD-NOACC' } }],
     salesDetail: [{ record_id: 'detail_acc', fields: {
       销售单号: ['order_1'], 配品: ['acc_oil'], 履约状态: '已交付', 实收金额: 15,
     } }],

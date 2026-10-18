@@ -303,7 +303,7 @@ test('AC-MSD1 ⭐ 关着（不传 / 显式 `false`）⇒ 写库流水与 `confir
       );
       // 今天的样子：收款 1 条（她全付）+ 资金状态已写入 + 库存已扣 + completed 有这一把键
       assert.equal(entriesOf(h, 'paymentRecord').length, 1, '关着时钱照写（一条收款）');
-      assert.equal(entriesOf(h, 'salesEntry')[0].fields['资金状态'], WRITE.funds.done);
+      assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], WRITE.writeStatus.done);
       assert.deepEqual(entriesOf(h, 'liveInventory'), [], '关着时现货照扣库存');
       const sale = await sessionSale(h, openId);
       assert.equal((sale.completed || []).length, 1, '关着时照记 completed（连点靠它吸收）');
@@ -359,14 +359,14 @@ test('AC-MSD2 ⭐ 货那一跑：主表（总金额）＋ 明细（逐件实收�
     const entries = entriesOf(h, 'salesEntry');
     assert.equal(entries.length, 1, '货那一跑就建单（一张销售主表）');
     assert.equal(entries[0].fields['总金额'], 300, '总金额 = 200 + 100（既有 totalCents ÷ 100 ✓）');
-    assert.equal(entries[0].fields['资金状态'], WRITE.funds.none, '资金状态停在「未写入」（= 她说的"待补充"）');
-    assert.equal(entries[0].fields['销售状态'], WRITE.sales.done, '货写完了 ⇒ 销售状态照旧「已写入」');
+    assert.equal(entries[0].fields['写入状态'], WRITE.writeStatus.pending, '新模型：货那一跑后写入状态仍「未完成」（钱还没写）');
+    // 货写完的证据不靠状态列：总金额 + 明细已落（下面已断言）。
     // ⭐⭐ 2026-10-16 口径改（她 22:0x：「**如果是现货，就是要扣库存**」）· **成对迁移**：
     //    改前逐字：`assert.equal(entries[0].fields['库存状态'], undefined, '库存那一维这一跑根本没碰（见 AC-MSD3）');`
     //    改后逐字：现货 ⇒ 货那一跑**就交付**了 ⇒ 主表「库存状态」= `WRITE.stock.done` ✓
     //    依据 = 她 22:0x 逐字「**啥叫钱没入账就不许出库存？不用呀。**」＋「现货就是要扣库存」✓（强度不降：仍逐字钉这一列 ✓）
-    assert.equal(entries[0].fields['库存状态'], WRITE.stock.done,
-      '现货 ⇒ 货那一跑**当场交付** ⇒ 库存状态已写 ✓（新口径 · 见 AC-MSD3 ✓）');
+    assert.equal(entries[0].fields['写入状态'], WRITE.writeStatus.pending,
+      '新模型：货那一跑后写入状态仍「未完成」（成功由最终收口写）');
 
     // ② 明细两条：逐件实收照写（"金额在货品页定死"）
     const details = entriesOf(h, 'salesDetail');
@@ -433,7 +433,8 @@ test('AC-MSD3 🔴【新口径】现货 ⇒ 货那一跑**当场扣库存**（�
     // ③ 明细「履约状态」= 已交付 · 主表「库存状态」已写
     // ⭐ 成对迁移：老口径钉「未交付」✓ ⇒ 新口径（现货当场交付）钉「**已交付**」✓（依据 = 她 22:0x ✓）
     assert.equal(entriesOf(h, 'salesDetail')[0].fields['履约状态'], '已交付', '现货 ⇒ 已交付 ✓');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], WRITE.stock.done, '库存状态已写 ✓');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], WRITE.writeStatus.pending,
+      '新模型：货那一跑后写入状态仍「未完成」');
     // ④ 日志：有"扣成功"，没有"扣失败"
     assert.equal(logs.events('scan.sale.stock_failed').length, 0, '不许有"库存没扣成"日志 ✓');
     // ⑤ 对照：**资金页那一跑**（不带 deferFunds）⇒ 只写钱，**库存不再动**（幂等 ✓ 不许扣第二次 ✗）
@@ -469,7 +470,8 @@ test('AC-MSD3b ⭐【新口径·预订】预订 ⇒ 货那一跑**不扣**（等
     });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(h.deliveryCalls.length, 0, '⭐ 预订 ⇒ 货那一跑**不交付**（她："这是未交付" ✓）');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], undefined, '预订 ⇒ 库存状态不写 ✓');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], WRITE.writeStatus.pending,
+      '预订：货那一跑后写入状态仍「未完成」');
     assert.equal(entriesOf(h, 'inventoryLedger').length, 0, '预订 ⇒ 零库存流水 ✓');
   } finally { h.cleanup(); }
 });
@@ -490,7 +492,7 @@ test('AC-MSD4 🔴 异步（默认开）：后台那一跑**也**是 deferFunds 
     assert.equal(entriesOf(h, 'salesDetail').length, 1, '后台那一跑把明细写了 ✓');
     assert.equal(entriesOf(h, 'paymentRecord').length, 0,
       '🔴 后台那一跑也必须 deferFunds —— 否则它会按"未付 ⇒ 差额"写一条【未收款】＝把钱写了 ✗');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['资金状态'], WRITE.funds.none);
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], WRITE.writeStatus.pending);
     // ③ 进业务层的那一次（= 后台那一跑）也带 fundsDeferred（前后台同一条口径）
     //    ⚠️ 只**一次**：第一次那一跑在建完主表就回了（异步）⇒ 它根本没走到 `confirm` ✓
     assert.equal(h.confirmInputs.length, 1, '异步时只有后台那一跑进业务层');
@@ -543,7 +545,7 @@ test('AC-MSD5 🔴 货那一跑不记 `completed`（改记 `goods_created`）：
     assert.equal(money.order_no, orderNo, '同一个销售单号 ✓');
     assert.equal(entriesOf(h, 'salesEntry').length, 1, '全程只有一张单 ✓');
     assert.equal(entriesOf(h, 'paymentRecord').length, 1, '钱这一跑写了（她全付 ⇒ 一条收款）');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['资金状态'], WRITE.funds.done, '资金状态由钱那一跑收口 ✓');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], WRITE.writeStatus.done, '钱那一跑收口后写入状态=成功 ✓');
     assert.deepEqual(entriesOf(h, 'liveInventory'), [], '库存也是钱那一跑之后才扣 ✓');
     assert.equal((await sessionSale(h, openId)).completed.length, 1, '钱那一跑才记 completed ✓');
   } finally { h.cleanup(); }

@@ -402,7 +402,7 @@ class AfterSalesService {
     try {
       stock = await this.applyStock(request, spec, plan);
     } catch (error) {
-      await this.status.write(master.recordId, { stock: WRITE.stock.failed });
+      await this.status.writeFinal(master.recordId, WRITE.writeStatus.partial);
       throw error;
     }
     // ⭐ 「售后次数」+1 —— 放在**所有业务写入之后、收口之前**：
@@ -410,9 +410,7 @@ class AfterSalesService {
     //    幂等靠本地记录里的 { before, after }（见 countAfterSales）。
     const afterSalesCount = await this.countAfterSales(request, original, progress);
     // 走到这里 = 主表 / 明细 / 钱 / 库存四件事都落完了 → 三个维度一起收口。
-    await this.status.write(master.recordId, {
-      sales: WRITE.sales.done, funds: WRITE.funds.done, stock: WRITE.stock.done,
-    });
+    await this.status.writeFinal(master.recordId, WRITE.writeStatus.done);
     // ⭐ 到这里就结束了：除**「售后次数」**外，**原「销售主表」一字不动**（业务负责人 2026-10-06 定过；
     //    「售后次数」是 2026-10-08 她明确要的那一个例外：「根据售后行为去叠加这个数量」）。
     //    "退过没退过"记在原「销售明细」的「履约状态」和新建的退货单上；
@@ -585,9 +583,9 @@ class AfterSalesService {
       // ⚠️ 不写「未确认」：这张卡已经点过了，写「未确认」会让它永远停在"等她确认"上。
       // 「销售状态 / 资金状态」此刻一个字都还没写（明细 / 退款在后面几步）→ 未写入。
       // ⚠️ 旧「确认状态（旧）」那一列已被她整列删除（值不可恢复），四个维度是唯一入口。
-      userAction: WRITE.userAction.confirmed,
-      sales: WRITE.sales.none,
-      funds: WRITE.funds.none,
+      // ⭐ 2026-10-18：旧三状态列已删除 ⇒ 售后主表建单只写「写入状态=未完成」；
+      //   售后流程全部写完后写「成功」（见本文件收口处）。
+      writeStatus: WRITE.writeStatus.pending,
       tradeType: relation(behavior.recordId),
       ...(request.operatorOpenId ? { sender: person(request.operatorOpenId) } : {}),
     });

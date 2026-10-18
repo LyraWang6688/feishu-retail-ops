@@ -181,20 +181,12 @@ test('AC-SPD5 钱的语义一字不动：收款行 / 主表四个状态维度的
     lineAmount: 199,
     payments: [{ amount: 199, method: '微信', operatorOpenId: 'ou_spd' }],
   });
-  // 「销售状态」「资金状态」写到的**目标值**（值域在 config/salesStatusDimensions）。
+  // ⭐ 2026-10-18：四维合并成「写入状态」——只写一条「成功」。
   const statusPatches = gateway.patches().filter((write) => (
-    Object.prototype.hasOwnProperty.call(write.fields, F('salesEntry', 'sales'))
-    || Object.prototype.hasOwnProperty.call(write.fields, F('salesEntry', 'funds'))));
-  const seen = statusPatches.map((write) => ({
-    sales: write.fields[F('salesEntry', 'sales')], funds: write.fields[F('salesEntry', 'funds')],
-  }));
-  // ① 入口先落「未写入 / 未写入」（让"到哪一步了"在表里看得见，**不许被合并掉**）；
-  // ② 明细写完 ⇒ 销售状态 = 已写入；③ 收款写完 ⇒ 资金状态 = 已写入。
-  assert.deepEqual(seen, [
-    { sales: WRITE.sales.none, funds: WRITE.funds.none },
-    { sales: WRITE.sales.done, funds: undefined },
-    { sales: undefined, funds: WRITE.funds.done },
-  ], `四个状态维度的目标值与"先落未写入、再逐维落已写入"的顺序都不许变（实际 ${JSON.stringify(seen)}）`);
+    Object.prototype.hasOwnProperty.call(write.fields, F('salesEntry', 'writeStatus'))));
+  const seen = statusPatches.map((write) => write.fields[F('salesEntry', 'writeStatus')]);
+  assert.deepEqual(seen, [WRITE.writeStatus.done],
+    `状态写入只允许一条「成功」（实际 ${JSON.stringify(seen)}）`);
   // 钱的写入条数没变：`_confirm` 把收款交给既有 `PaymentService.recordInitialBatch`（本用例是替身），
   // 这里钉的是"**这次改动没有去碰收款那一段**"——主表上没有任何一条列被她这次填的钱改写。
   assert.equal(gateway.patches().some((write) => Object.prototype.hasOwnProperty.call(

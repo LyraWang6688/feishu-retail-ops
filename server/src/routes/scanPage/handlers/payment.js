@@ -195,6 +195,8 @@ async function handlePaymentPay(ctx) {
           const pendingView = pendingSize
             ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
           // eslint-disable-next-line no-await-in-loop
+          // ⭐ 2026-10-18：资金页上的「赠品」也要落主表（之前被丢弃）。
+          const payGift = String(body[fields.gift] || '').trim();
           createdResult = await writeService.submitSale({
             openId: openIdOf(req),
             requestId,
@@ -221,6 +223,8 @@ async function handlePaymentPay(ctx) {
             //     一行都没有 ⇒ 沿用原来那个值（空 ⇒ 不写；未付/全付两支本来就**不看它** ✓）
             //   依据 = 同一个口径：「本次已收」**就是收款行合计**（与上面 `resolveSettlement` 的 `paidCents` 一致 ✓）
             paidAmount: effectivePaidAmount,
+            // 资金页赠品（非空时覆盖本单赠品；空则保留销售页填的那份）
+            ...(payGift ? { orderGift: payGift } : {}),
             timing: payStepTiming,
             pendingLine: pendingView?.found ? {
               productRecordId: pendingView.product_record_id,

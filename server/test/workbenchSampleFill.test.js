@@ -63,7 +63,7 @@ const seedTables = (overrides = {}) => ({
   salesEntry: [{
     record_id: ORDER_ID,
     // ⚠️ 「账做完了没有」= **资金状态**（`postedOf` 读的是 funds），不是销售状态
-    fields: { 销售单号: 'XSD-20261011-0001', 销售状态: '已写入', 资金状态: '已写入', 履约状态: '已交付' },
+    fields: { 销售单号: 'XSD-20261011-0001', 销售状态: '已写入', 写入状态: '成功', 履约状态: '已交付' },
   }],
   salesDetail: [{
     record_id: DETAIL_ID,

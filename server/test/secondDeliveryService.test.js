@@ -106,7 +106,7 @@ test('现货待收单点「成交」：只补收款，库存与明细履约状�
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     // 现货：第一次录单时明细就已经是「已交付」（库存那时候扣过了），收款是一条全额未收款。
     salesEntry: [{ record_id: 'order_unpaid', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
       销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260,
@@ -159,7 +159,7 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     salesEntry: [{ record_id: 'order_prepaid', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-P-1', 交易类型: ['behavior_prepaid'],
+      '写入状态': '成功', 销售单号: 'XSD-P-1', 交易类型: ['behavior_prepaid'],
     } }],
     // 预定：货还没到 / 没拿走（未交付），钱是定金 + 余款两条，余款那条是未收款。
     salesDetail: [{ record_id: 'detail_p1', fields: {
@@ -199,7 +199,8 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
   // ③ 库存：正好扣一次（就是 deliver 里那一次 applySale），并带走这次补收的收款记录。
   assert.equal(inventory.applySaleCalls.length, 1);
   assert.deepEqual(inventory.applySaleCalls[0], {
-    salesDetailRecordId: 'detail_p1', productRecordId: 'product_1', size: 38, quantity: 1,
+    salesDetailRecordId: 'detail_p1', salesEntryRecordId: 'order_prepaid',
+    productRecordId: 'product_1', size: 38, quantity: 1,
     occurredAt: inventory.applySaleCalls[0].occurredAt,
   });
   assert.equal(result.delivery.deliveredQuantity, 1);
@@ -216,7 +217,7 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     salesEntry: [{ record_id: 'order_unpaid', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
       销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260,
@@ -247,7 +248,7 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
 test('未收款那条不写交易方向；变成已收款的那一刻才写「收入」', async () => {
   const gateway = fakeGateway({
     paymentMethod: METHOD_ROWS,
-    salesEntry: [{ record_id: 'order_1', fields: { '资金状态': '已写入' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { '写入状态': '成功' } }],
   });
   const payments = new PaymentService({ gateway });
 
@@ -270,7 +271,7 @@ test('未收款那条不写交易方向；变成已收款的那一刻才写「�
 
 test('待平台结算结清时补写「收入」（到账那一刻才算收款事实）', async () => {
   const gateway = fakeGateway({
-    salesEntry: [{ record_id: 'order_1', fields: { '资金状态': '已写入' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { '写入状态': '成功' } }],
     paymentRecord: [{ record_id: 'receipt_1', fields: {
       关联销售单: ['order_1'], 收款金额: 100, 收款状态: '待平台结算',
     } }],
@@ -367,27 +368,27 @@ const reminderSeed = () => ({
   salesEntry: [
     // 要推的：**现货待收**（货已交付、钱没收清）—— 新口径下这类单必须进候选。
     { record_id: 'order_cash_pending', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-2', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-U-2', 交易类型: ['behavior_cash'],
       录单日: inWindow('2026-10-19T10:00:00+08:00'),
     } },
     // 要推的：预定、已入账、7 天内、货没交 + 钱没收清（录单更早，应排在前面）。
     { record_id: 'order_prepaid_pending', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-P-2', 交易类型: ['behavior_prepaid'],
+      '写入状态': '成功', 销售单号: 'XSD-P-2', 交易类型: ['behavior_prepaid'],
       录单日: inWindow('2026-10-18T10:00:00+08:00'),
     } },
     // 不推：现货、钱货两清（已完成履约）。
     { record_id: 'order_cash', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-C-2', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-C-2', 交易类型: ['behavior_cash'],
       录单日: inWindow('2026-10-20T10:00:00+08:00'),
     } },
     // 不推：钱货都齐了（已完成履约）。
     { record_id: 'order_cash_done', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-3', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-U-3', 交易类型: ['behavior_cash'],
       录单日: inWindow('2026-10-20T10:00:00+08:00'),
     } },
     // 不推：7 天以外的单。
     { record_id: 'order_cash_old', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-U-9', 交易类型: ['behavior_cash'], 录单日: OUT_OF_WINDOW,
+      '写入状态': '成功', 销售单号: 'XSD-U-9', 交易类型: ['behavior_cash'], 录单日: OUT_OF_WINDOW,
     } },
   ],
   salesDetail: [
@@ -551,11 +552,11 @@ test('⭐⭐ 数据起点：注入 10-14 与 10-15 两单 ⇒ **只有 10-15 被
   const seed = { ...reminderSeed() };
   seed.salesEntry = [
     { record_id: 'order_before', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-B4', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-B4', 交易类型: ['behavior_cash'],
       录单日: Date.parse('2026-10-14T10:00:00+08:00'),
     } },
     { record_id: 'order_since', fields: {
-      '资金状态': '已写入', 销售单号: 'XSD-SINCE', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-SINCE', 交易类型: ['behavior_cash'],
       录单日: Date.parse('2026-10-15T10:00:00+08:00'),
     } },
   ];

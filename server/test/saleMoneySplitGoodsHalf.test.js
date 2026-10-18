@@ -77,8 +77,8 @@ const F = (table, key) => V1_BITABLE_SCHEMA.tables[table].fields[key];
 const TOTAL = F('salesEntry', 'totalAmount');
 const GIFT = F('salesEntry', 'gift');
 const ORDER_NO = F('salesEntry', 'orderNo');
-const SALES_STATUS = F('salesEntry', 'sales');
-const FUNDS_STATUS = F('salesEntry', 'funds');
+const SALES_STATUS = F('salesEntry', 'writeStatus');
+const FUNDS_STATUS = F('salesEntry', 'writeStatus');
 const DETAIL_AMOUNT = F('salesDetail', 'actualAmount');
 const PAY_AMOUNT = F('paymentRecord', 'amount');
 const PAY_STATUS = F('paymentRecord', 'status');
@@ -273,8 +273,8 @@ test('AC-MSG2 🔴 关着（不传 / 显式 false）⇒ 表状态与写库流水
     { amount: 100, status: '已收款', method: undefined },
     { amount: 200, status: '未收款', method: undefined },
   ], '少付 ⇒ 自动补一条【未收款】（差额 = 累计 300 − 已收 100 = 200）—— 既有口径，一个字不许变');
-  // ④ 「资金状态」照旧被收口成「已写入」。
-  assert.equal(absent.fundsCell(), '已写入', '关着时资金状态照旧由这一跑收口');
+  // ④ 新模型：confirm 不再写状态列（「写入状态」由扫码收口写）。
+  assert.equal(absent.fundsCell(), '成功', 'confirm 写完钱后写「写入状态=成功」（库存失败会再覆盖成部分失败）');
   // ⑤ 返回值形状照旧（不许多出只有分离那一跑才有的键）。
   assert.deepEqual(Object.keys(absentRun.result).sort(),
     ['detailRecordIds', 'inventoryApplied', 'paymentRecordIds', 'sourceNo'].sort(),
@@ -298,13 +298,13 @@ test('AC-MSG3 ⭐ `fundsDeferred: true` ⇒ 主表总金额 + 明细照写；**�
   assert.equal(gateway.masterFields()[TOTAL], 300, '主表「总金额」= 各行实收之和（她：「金额就是定了的」）');
   assert.deepEqual(gateway.detailAmounts(), [200, 100], '销售明细逐件实收照写');
   assert.equal(gateway.tables.salesDetail.length, 2);
-  assert.equal(gateway.masterFields()[SALES_STATUS], '已写入', '「销售状态」照旧由这一跑收口');
+  assert.equal(gateway.masterFields()[SALES_STATUS], '未完成', '货那一跑后「写入状态=未完成」（钱还没写）');
   // ② 🔴 钱那一半：**0 行**（连那条【未收款】也不写）。
   assert.deepEqual(gateway.tables.paymentRecord, [], '收款明细必须 **0 行**（钱那一半还没发生）');
   assert.equal(gateway.lastPayments, undefined, '收款写入层**一次都不许被叫**（叫了就是"钱也能在这儿写"）');
   // ③ 🔴 资金状态：**只出现过「未写入」**（那一次"入账中"的状态写入），绝不被置成已写入/写入失败。
-  assert.deepEqual(gateway.fundsWrites(), ['未写入'], '资金状态只许出现「未写入」');
-  assert.equal(gateway.fundsCell(), '未写入', '进资金页那一刻：这一单在钱那一维就是"还没写"');
+  assert.deepEqual(gateway.fundsWrites(), ['未完成'], '货那一跑写「未完成」');
+  assert.equal(gateway.fundsCell(), '未完成', '钱那一半还没发生');
   // ④ 如实回传（调用方不许猜）：`paymentRecordIds: []` + `fundsDeferred: true`。
   assert.deepEqual(result.paymentRecordIds, []);
   assert.equal(result.fundsDeferred, true);
@@ -346,8 +346,8 @@ test('AC-MSG4 ⭐ 货那一跑 ⇒ 钱那一跑（同一个 record_id / 单号�
     { amount: 200, status: '未收款', method: undefined },
   ]);
   assert.equal(money.result.paymentRecordIds.length, 2);
-  // ⑤ 「资金状态」由**钱那一跑**收口成「已写入」。
-  assert.equal(gateway.fundsCell(), '已写入');
+  // ⑤ 钱那一跑写完 ⇒ 「写入状态=成功」。
+  assert.equal(gateway.fundsCell(), '成功');
   // ⑥ 两次跑的是**同一张主表**（单号相同 ⇒ 货/钱绑在一块的那把钥匙没变）。
   assert.equal(money.result.sourceNo, goods.result.sourceNo);
   assert.equal(gateway.tables.salesEntry.length, 1, '从头到尾只有一张销售主表');
@@ -427,11 +427,11 @@ test('AC-MSG7 🔴 货那一跑中途失败 ⇒ 只写「销售」那一维，�
     /假的写入失败/,
   );
 
-  assert.deepEqual(gateway.fundsWrites(), ['未写入'],
-    '🔴 钱压根没试过写 ⇒ 不许在表里留下"资金状态 = 写入失败"这个与事实相反的结论');
-  assert.equal(gateway.fundsCell(), '未写入');
+  assert.deepEqual(gateway.fundsWrites(), ['未完成', '部分失败'],
+    '先未完成、半截失败 ⇒ 部分失败（部分明细已落）');
+  assert.equal(gateway.fundsCell(), '部分失败');
   // 「销售」那一维如实报（第 1 行成了、第 2 行没成 ⇒ 部分写入；她照着重试即可）。
-  assert.equal(gateway.masterFields()[SALES_STATUS], '部分写入', '销售那一维如实报（她据此重试）');
+  assert.equal(gateway.masterFields()[SALES_STATUS], '部分失败', '半截失败 ⇒ 部分失败');
   assert.equal(gateway.tables.salesDetail.length, 1, '第 1 行真的落库了（半截单 —— 重试接着写）');
 });
 
@@ -454,8 +454,9 @@ test('AC-MSG8 源码哨兵：显式布尔 · 那条【未收款】构造逐字�
   assert.ok(deferredReturn > -1 && owedIndex > -1 && deferredReturn < owedIndex,
     '分离的 `return` 必须在"写钱"那一段**之前**（先写钱再 return = 前功尽弃）');
   // ④ 失败那一支：分离时**不写**资金维（`...(fundsDeferred ? {} : { funds: ... })`）。
-  assert.ok(code.includes('...(fundsDeferred ? {} : { funds: financialRecorded ? WRITE.funds.done : WRITE.funds.failed }),'),
-    '失败那一支必须显式跳过资金维（否则表里会出现"资金写入失败"这个假结论）');
+  // ⭐ 2026-10-18 成对迁移：旧四列已删 ⇒ 失败收口写「写入状态」；已落部分数据 = 部分失败。
+  assert.ok(code.includes('WRITE.writeStatus.partial') && code.includes('WRITE.writeStatus.failed'),
+    '失败收口必须按是否落过数据区分 部分失败 / 失败');
   // ⑤ 全仓只有**一处**写那条【未收款】构造（两处各写会漂移）。
   const files = [];
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).forEach((entry) => {

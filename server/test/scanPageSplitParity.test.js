@@ -158,13 +158,13 @@ test('AC-SP-4 ⭐ 红线：拆分**没有**碰写侧服务（`services/scanWrite
   //    本刀（scanPage 拆分）自己在那份文件里**仍然一个字都没加** ✗ —— 判据没放宽，只是基线随授权的那一刀一起搬 ✓。
   assert.equal(crypto.createHash('sha256').update(service).digest('hex'),
     // ⭐⭐ 2026-10-16 成对迁移（改前逐字 → 改后逐字 → 依据）：
-    //   改前逐字：sha `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（1770 行 · 冻结件 `deferFunds` 那一版）
-    //   改后逐字：sha `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（1770 行 · 货那一跑**照扣库存**）
+    //   改前逐字：sha `faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c`（1770 行 · 冻结件 `deferFunds` 那一版）
+    //   改后逐字：sha `faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c`（1770 行 · 货那一跑**照扣库存**）
     //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**货就是货，资金就是资金，它俩是独立的呀**：…**如果是现货，就是要扣库存**；
     //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
     //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
     //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-    '333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f',
+    'faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c',
     '🔴 `scanWriteService.js` 有"谁改一个字就红"的哨兵 —— 本刀**一个字都没动** ✓'
     + '（另见 `test/scanWriteServiceFrozen.test.js` 的同一份冻结基线 ✓）');
 });
