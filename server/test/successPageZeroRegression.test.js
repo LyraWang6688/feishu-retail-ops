@@ -47,9 +47,9 @@ const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 //     ⇒ ⭐ **逐字节基线跟着走** ✓（纪律：⭐ **只有"她看到的样子"变了才动基线** ✓）
 //   🔴 **这不是放松判据** ✗：sha **与** 字节数**两个都还在钉** ✓，只是值随她看到的样子更新 ✓；
 //      本判据**没有**删断言、没有换弱形式 ✓（旧值留在这里便于追溯"是哪一刀让它变的" ✓）。
-const MINIMAL_SHA256 = '10b943e329bee1ddaa445be1359086fdc83fa662c4afa7e20893019c082b948c';
+const MINIMAL_SHA256 = '8916413ab7be82449cc676d8210533e829ede139625ebe34da8bf881b8a3f3f0';
 /** ⭐ 同一个字节流的**长度**（sha 红了时能一眼看出是不是"多了几个字节"）✓。 */
-const MINIMAL_BYTES = 107618;
+const MINIMAL_BYTES = 107615;
 
 /** 三条链（销售 / 补货 / 退货）渲染结果按**固定顺序**拼成一份字节流（判据 / 证据共用同一算法 ✓）。 */
 const chainsBytes = (pages) => [pages.sale, pages.replenish, pages.purchaseReturn].join('');

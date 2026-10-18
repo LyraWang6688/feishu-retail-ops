@@ -108,7 +108,7 @@ test('AC-PB5 ⭐⭐ 资金页显示「总金额」（调用方给；拿不到就
   };
   const withTotal = renderSalePaymentStepPage({ ...base, totalAmountText: '399.5' });
   assert.ok(withTotal.includes('data-view="payment-step-total"'), '总金额那一行要在 ✓');
-  assert.ok(withTotal.includes('>总金额</h1>'), '标题 = 总金额 ✓');
+  assert.ok(/<h1>总金额/.test(withTotal), '标题 = 总金额（金额与标题同一行）✓');
   assert.ok(withTotal.includes('￥399.5'), '金额那一行只显示金额 ✓');
   // 拿不到 ⇒ **不渲染那一行**（不编 ✗）
   const withoutTotal = renderSalePaymentStepPage(base);
