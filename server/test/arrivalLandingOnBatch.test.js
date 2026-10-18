@@ -120,13 +120,13 @@ const batchFields = (records) =>
 const baseRecords = () => ({
   purchaseOrderBatch: [{
     record_id: BATCH_RECORD_ID,
-    // ⭐ 2026-10-09：9 点推送的供应商**改读这一列**（SingletonLink 单元格自带被关联记录的主字段文本）。
-    fields: { 报货批次号: BATCH_NO, 到货状态: '未到货', 供应商: '供应商A' },
+    // ⭐ 2026-10-18：主表「供应商」列已删 ⇒ 供应商改在采购明细的自动字段上。
+    fields: { 报货批次号: BATCH_NO, 到货状态: '未到货' },
   }],
   product: [{ record_id: PRODUCT_1, fields: { 货号: 'XHB8095', 颜色: '黑' } }],
   purchaseRequest: [
-    { record_id: 'req_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2 } },
-    { record_id: 'req_39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(39), 数量: 2 } },
+    { record_id: 'req_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2, 供应商: '供应商A' } },
+    { record_id: 'req_39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(39), 数量: 2, 供应商: '供应商A' } },
   ],
 });
 
@@ -391,12 +391,13 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
 test('⑥ 9 点推送候选：到货确认之后这一批**不再**进「未到货」候选；退货批次从来不在候选里', async () => {
   const gateway = makeGateway({
     purchaseOrderBatch: [
-      // ⭐ 2026-10-09：供应商**就在批次行上**（她新加的那一列）——不再从别的表取。
-      { record_id: 'b_pending', fields: { 报货批次号: 'BH-PENDING', 到货状态: '未到货', 供应商: '供应商A' } },
+      // ⭐ 2026-10-18：供应商在采购明细的自动字段上（主表那一列已删）。
+      { record_id: 'b_pending', fields: { 报货批次号: 'BH-PENDING', 到货状态: '未到货' } },
       { record_id: 'b_arrived', fields: { 报货批次号: 'BH-ARRIVED', 到货状态: '已到货' } },
       // 退货批次：只写 批次号 + 幂等键（不写「到货状态」）——她说「退货，不用写」。
       { record_id: 'b_return', fields: { 报货批次号: 'BH-RETURN', 幂等键: 'purchase_batch:BH-RETURN' } },
     ],
+    purchaseRequest: [{ record_id: 'pr_pending', fields: { 报货批次号: ['b_pending'], 供应商: '供应商A' } }],
   });
   const service = new PurchasePendingBatchService({ gateway });
 

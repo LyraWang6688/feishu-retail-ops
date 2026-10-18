@@ -1,4 +1,4 @@
-const { textValue } = require('./v1BitableGateway');
+const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 const { buildSalesThreadLink } = require('../config/salesThreadLink');
 const { resolvePurchaseArrivalStatusConfig } = require('../config/purchaseArrivalStatus');
 // ⭐ 2026-10-13（验收提速 ②）：过滤公式**复用唯一那一份实现**（不自己拼第二份），
@@ -100,6 +100,8 @@ class PurchasePendingBatchService {
     const nowMs = this.now();
     if (this.cache && this.cache.expiresAt > nowMs) return this.cache.value;
     const records = await this.readPendingRecords(table);
+    // ⭐ 2026-10-18：供应商已从采购主表移到「采购明细」的自动字段（公式）⇒ 按批次记录 id 建一次索引。
+    const supplierIndex = await this.loadSupplierIndexByBatch();
     const pending = (records || []).filter((record) => {
       const value = textValue(record?.fields?.[statusField]).trim();
       return value === this.pendingStatus;
@@ -113,8 +115,8 @@ class PurchasePendingBatchService {
       return {
         batchNo,
         recordId: record?.record_id || '',
-        // ⭐ 供应商就地取（同一行、同一份已读数据）——**不**再为它多读一张表。
-        suppliers: this.supplierLabelsOf(record, table),
+        // ⭐ 供应商来自「采购明细」的自动字段（按批次关联汇总；主表那一列已删）。
+        suppliers: supplierIndex.get(record?.record_id || '') || [],
         // 报货日（原值；格式化与"读不到怎么办"在渲染层）。
         reportedAt: record?.fields?.[table?.fields?.createdAt] ?? '',
         // 录入数量（表里的文本 / 数字都取成文本；读不到是空串）。
@@ -133,7 +135,7 @@ class PurchasePendingBatchService {
    */
   async readPendingRecords(table) {
     const filter = equalsFormula(table?.fields?.arrivalStatus, this.pendingStatus);
-    const fieldNames = ['arrivalStatus', 'batchNo', 'supplier', 'createdAt', 'quantity']
+    const fieldNames = ['arrivalStatus', 'batchNo', 'createdAt', 'quantity']
       .map((key) => table?.fields?.[key])
       .filter(Boolean);
     if (filter && typeof this.gateway.listByFilter === 'function') {
@@ -148,6 +150,41 @@ class PurchasePendingBatchService {
       }
     }
     return this.gateway.listAll('purchaseOrderBatch', { fieldNames });
+  }
+
+  /**
+   * ⭐ 2026-10-18：供应商索引（**采购明细**的自动字段 `供应商`，公式 type=20）。
+   *   一次整表读（与推送同频），按「报货批次号」关联到**采购主表 record id**，
+   *   同一批次多个供应商去重、保序。读失败**不丢批次**：返回空索引，供应商行空着。
+   */
+  async loadSupplierIndexByBatch() {
+    const detail = this.gateway.table('purchaseRequest');
+    const batchField = detail?.fields?.batchNo;
+    const supplierField = detail?.fields?.supplier;
+    if (!batchField || !supplierField) return new Map();
+    let rows = [];
+    try {
+      rows = await this.gateway.listAll('purchaseRequest', {
+        fieldNames: [batchField, supplierField],
+      }) || [];
+    } catch (error) {
+      logWarn('sales.pending_deal_push.purchase_supplier_index_failed', {
+        error: error.message, hint: '这一次供应商行空着；批次照推',
+      });
+      return new Map();
+    }
+    const index = new Map();
+    for (const row of rows) {
+      const labels = String(textValue(row?.fields?.[supplierField]) || '')
+        .split(/[,，、;；]/).map((item) => item.trim()).filter(Boolean);
+      if (!labels.length) continue;
+      for (const batchId of linkedRecordIds(row?.fields?.[batchField])) {
+        const list = index.get(batchId) || [];
+        for (const label of labels) if (!list.includes(label)) list.push(label);
+        index.set(batchId, list);
+      }
+    }
+    return index;
   }
 
   // ⛔ `loadSupplierIndex`（整表读「信息填写」、按批次号建索引）**已删除（2026-10-09）**：

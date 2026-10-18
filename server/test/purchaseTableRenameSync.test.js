@@ -79,9 +79,9 @@ test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列�
   assert.equal(batch.behavior, '发生行为', '建主表行要写这一列 ⇒ 必须映射（真表列名 = 发生行为）');
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'behavior'), true);
 
-  // ⭐ 2026-10-09：9 点推送【采购】区要显示的供应商**改读「报货批次.供应商」这一列**
-  //   （她新加的那一列就是为这件事加的）—— 只读投影，代码不写。
-  assert.equal(batch.supplier, '供应商');
+  // ⭐ 2026-10-18：主表「供应商」列已删，供应商改为「采购明细」的自动字段（只读投影，代码不写）。
+  assert.equal(batch.supplier, undefined);
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.supplier, '供应商');
   // ⛔ 同日：「验收原话」「确认状态」两列在真表上也没有了 ⇒ 映射一起删除。
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'acceptanceText'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'confirmStatus'), false);

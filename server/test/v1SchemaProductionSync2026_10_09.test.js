@@ -96,9 +96,12 @@ test('A(2026-10-09) 新表「付款明细」登记进 schema：只登记表，�
   assert.equal(V1_SCHEMA_SCOPES.all.includes('paymentDetail'), true, '`all` 是并集 ⇒ 必须为 true');
 });
 
-test('A(2026-10-09) 「报货批次」新增列「供应商」：建只读映射，全仓没有任何写入点', () => {
+test('A(2026-10-09/2026-10-18) 供应商从主表搬到「采购明细」自动字段：只读映射，全仓没有写入点', () => {
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
-  assert.equal(batch.supplier, '供应商', '真表新增的「供应商」（SingleLink → 供应商管理）必须映射');
+  const detail = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
+  // 🔴 2026-10-18：主表列已删 ⇒ 映射删；供应商改为「采购明细」的自动字段（公式/Lookup）。
+  assert.equal(batch.supplier, undefined, '采购主表已删「供应商」列 ⇒ 不许留映射');
+  assert.equal(detail.supplier, '供应商', '「采购明细.供应商」自动字段必须映射（只读）');
 
   // 只读列 ⇒ 全仓不许有「往『报货批次』写 supplier」的点。
   // 判据收窄到 `gateway.create/update('purchaseOrderBatch', { … })` 的入参里出现 `supplier:`，
@@ -106,12 +109,12 @@ test('A(2026-10-09) 「报货批次」新增列「供应商」：建只读映射
   const offenders = [];
   for (const file of walk(path.join(SERVER_ROOT, 'src')).filter((f) => f.endsWith('.js'))) {
     const codeOnly = stripComments(fs.readFileSync(file, 'utf8'));
-    const calls = codeOnly.matchAll(/gateway\.(?:create|update)\(\s*'purchaseOrderBatch'[\s\S]{0,800}?\)/g);
+    const calls = codeOnly.matchAll(/gateway\.(?:create|update)\(\s*'(?:purchaseOrderBatch|purchaseRequest)'[\s\S]{0,800}?\)/g);
     for (const call of calls) {
       if (/\bsupplier\s*:/.test(call[0])) offenders.push(path.relative(SERVER_ROOT, file));
     }
   }
-  assert.deepEqual(offenders, [], `「报货批次.供应商」只读，不许有写入点：${offenders.join('、')}`);
+  assert.deepEqual(offenders, [], `供应商是自动字段（只读），不许有写入点：${offenders.join('、')}`);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
