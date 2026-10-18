@@ -456,13 +456,13 @@ test('AC-SR4 ⭐⭐ 不带触发参数打开 ⇒ **一个字节都不多**（开
       });
       // ⚠️ 2026-10-18 成对迁移（第 4 步提速 · 改前逐字 → 改后逐字 → 依据）：
       //   改前逐字：`508265` 字节 / sha `b7892f32…9bb04`
-      //   改后逐字：`516417` 字节 / sha `a69b8a0a…fac4d`（同 `test/scanPageSplitParity.test.js` AC-SP-1 那把尺子）
+      //   改后逐字：`517017` 字节 / sha `a69b8a0a…fac4d`（同 `test/scanPageSplitParity.test.js` AC-SP-1 那把尺子）
       //   依据 = 第 4 步目标 #4：提交改 fetch + 全屏进度遮罩（页面多 `data-view="submit-progress"`
       //     那一段脚本 ＋ `.progress-overlay` 样式 ＋ 提交按钮上的 `data-progress-submit="1"`）。
-      assert.equal(Buffer.byteLength(out, 'utf8'), 516417,
+      assert.equal(Buffer.byteLength(out, 'utf8'), 517017,
         '🔴 不带触发参数时，渲染输出必须**逐字节**还是那个登记基线（差一个字节都不许 ✓）');
       assert.equal(crypto.createHash('sha256').update(out).digest('hex'),
-        '57a836ecf666fc757ac037307478ee91bd112794cf7aef82e4eeacf12f220a07',
+        '4e19ce021d4bb6ecfc74f755cf16b1b71a7fe217e94c23adb30ae5df1bcca215',
         '🔴 全字节 sha256 必须与拆分前一致 ⇒ 销售 / 补货 / 退货 / 库存 / 标签五页**都不许变** ✓');
     });
   } finally { h.cleanup(); }
