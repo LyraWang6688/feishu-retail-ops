@@ -89,7 +89,7 @@ test('AC-2S2 ✅ 每双显示 颜色 · 尺码 · **这一双的成交金额**�
   const line = block.slice(block.indexOf('draft-line'));
   assert.ok(line.includes('棕色') || line.includes('41'), '每行带颜色/尺码事实');
   // ⚠️ §六：录入页**不涉及配品**（配品是扫码页另一个 tab）
-  assert.equal(block.includes(SCAN_WRITE.actions.addAccessory), false, '录入页没有配品控件（§六）');
+  assert.equal(block.includes('add_accessory'), false, '录入页没有配品控件（§六）');
 });
 
 test('AC-2S3 🔴 第二步页存在且能提交：三档（横向）+ 付款方式可加多行 + 赠品 + 「跳过」', () => {

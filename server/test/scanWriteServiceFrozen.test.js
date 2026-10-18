@@ -31,15 +31,15 @@
  * - 2026-10-16 · **task-62「货 / 钱分离」· 阶段二**（`submitSale` 加 `deferFunds` 那一条路）：
  *   改前逐字：sha `199551e14c97db74d69b674838eac1f0980ab7e6123f10ada5adee497ed735ca`（1699 行）
  //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
- *   ⇒ 改后逐字：sha `faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c`（1770 行）
+ *   ⇒ 改后逐字：sha `b4a5cce3a8d346ff59e5cc450e496622f128f978b954af79ec7310a360137fc3`（1770 行）
  *   依据 = 业务负责人 2026-10-16 明确「允许改冻结文件」（一次性、只为本卡）。
  * - 2026-10-18 · **销售「写入状态」模型迁移 + 关联销售/赠品修复**（业务负责人本次授权改表/改链路）：
  *   改前逐字：sha `333ae53b9b89abcecfa82c61aad0eefd8266630d3524e5a25d9f6afb994ff92f`（split 1771 行）
- *   改后逐字：sha `faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c`（split 1782 行）
+ *   改后逐字：sha `b4a5cce3a8d346ff59e5cc450e496622f128f978b954af79ec7310a360137fc3`（split 1782 行）
  *   依据 = 业务负责人 2026-10-18 改表（四状态列 → 单一「写入状态」）+ 本轮修复（赠品落主表、关联销售写主表 id）。
  * - 2026-10-18 收尾（同一次授权内的最终基线，含赠品接线）：
  *   改前逐字：sha `1a0a1f43ae31a4fc1a9f6b5d67083fa0e7cc14e222d10ce39b3ba0ee270b2ac8`（1782 行）
- *   改后逐字：sha `faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c`（1792 行）
+ *   改后逐字：sha `b4a5cce3a8d346ff59e5cc450e496622f128f978b954af79ec7310a360137fc3`（1714 行）
  *   依据 = 同一业务口径（资金页赠品落主表 + 收口状态）。
  *
  * ⚠️ 本文件**只读**那个文件（`readFileSync`），**不写入、不改行为、不加开关** ✓
@@ -61,13 +61,13 @@ const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.j
 //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
 // ⭐⭐ 2026-10-16 成对迁移（**第 2 次解冻** · 改前逐字 → 改后逐字 → 依据）：
 //   改前逐字：sha `49772bdaffc82411b427f5f5b26a9d74ca937e317fb4fbdebfd33492b7fd2c12`（`split('\n').length` = **1770** · 冻结件 `deferFunds`「货那一跑不扣库存」那一版）
-//   改后逐字：sha `faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c`（**1771** 行 · 货那一跑**照扣库存**：`deliverStockLines` 形参/转发 ＋ `:1318` 三元）
+//   改后逐字：sha `b4a5cce3a8d346ff59e5cc450e496622f128f978b954af79ec7310a360137fc3`（**1771** 行 · 货那一跑**照扣库存**：`deliverStockLines` 形参/转发 ＋ `:1318` 三元）
 //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**货就是货，资金就是资金，它俩是独立的呀**：
 //          **如果是现货，就是要扣库存**；如果是预订，就不扣库存，等二次交付的时候再扣库存」
 //          ＋「**啥叫钱没入账就不许出库存？不用呀。**」
 //          ⇒ 授权范围 = 冻结件 **5 行** ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（缺省 false ✓ 只给货那一跑 ✓）
-const FROZEN_SHA256 = 'faab23a0d08ae1592299720d5fca30351bdac0b346b1d05c9c092da670e0bf9c';
-const FROZEN_LINES = 1792;
+const FROZEN_SHA256 = 'b4a5cce3a8d346ff59e5cc450e496622f128f978b954af79ec7310a360137fc3';
+const FROZEN_LINES = 1714;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const linesOf = (text) => String(text).split('\n').length;

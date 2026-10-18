@@ -132,12 +132,6 @@ const createFlowHelpers = ({
       //   依据 = 她 2026-10-14 逐字「**付款方式用交易方式管理，可选择**」
       const paymentMethods = await candidatePaymentMethods(req);
       const lines = session?.sale?.lines || [];
-      // ⭐ 2026-10-11（B）：配品下拉的候选（「其他配品」的名称）——**只在销售那一块要**
-      //   （表单只在 `from=sales` 渲染），别的领域一次表都不读（她的"一次扫码 0~1 次飞书调用"）。
-      //   ⚠️ 读不到配品表**不影响卖鞋**：`listAccessories` 自己吞掉错误并记 warn，给空清单。
-      const accessories = realm === 'sales' && typeof writeService.listAccessories === 'function'
-        ? await writeService.listAccessories().catch(() => [])
-        : [];
       return {
         enabled: true,
         saleEnabled: writeConfig.sale.enabled !== false,
@@ -154,8 +148,6 @@ const createFlowHelpers = ({
         postAction: postActionFor(backTargetFor(req, view.number), realm),
         sizes,
         draft: { lines },
-        // ⭐ 配品行要的东西（没有配品时渲染层不画那个表单）。
-        accessories: accessories.map((item) => ({ record_id: item.record_id, name: item.name })),
         saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
         replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
         // ⭐ 退货那把键（第三条链；与销售 / 补货**互不覆盖** —— 会话语义见 scanSessionService）

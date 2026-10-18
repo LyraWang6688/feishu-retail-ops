@@ -354,40 +354,6 @@ const createScanWriteService = (options = {}) => {
     return /^[1-9]\d*$/.test(text) ? Number(text) : null;
   };
 
-  /** 「其他配品.名称」——本单里要能看出加的是哪一件（只用于展示 / 会话）。 */
-  const accessoryName = (record) => textValue(record?.fields?.[fieldOf('accessory', 'name')]).trim();
-
-  /**
-   * 「其他配品」清单（**只读 + 可缓存**）——用于页面上那个配品下拉。
-   *
-   * ⚠️ 复用**共享处理层**的 `salesEntryService.listAccessories`（它已经在做这件事：
-   *    名称 / 种类、过滤掉没名字的）—— 与 `createSalesEntryWithOrderNo` 同一个来源。
-   *    ⚠️ 2026-10-11（清群聊入口 C0）：原先借的是 `LarkMvpService.prototype.listAccessories`
-   *       （`.prototype.call`）—— 那会把扫码页绑在群聊入口那个类上；现在改 require 共享件。
-   *    延迟 require，避免把不必要的依赖树拖进扫码页。
-   * ⚠️ 缓存只影响"下拉里能选到哪几件"（`SCAN_SALE_ACCESSORY_CACHE_TTL_MS`，默认 30 秒），
-   *    **不影响任何写库判据** —— 提交时以她选中的**记录 id** 为准（存不存在当场查）。
-   * ⚠️ 读不到配品表**不该把整页拖垮**（她还能正常卖鞋）：记一条 warn、给空清单，**不缓存失败**。
-   */
-  let accessoryCache = { at: 0, value: null };
-  const listAccessories = async () => {
-    if (typeof options.listAccessories === 'function') return options.listAccessories();
-    const ttl = Number(config.sale.accessoryCacheTtlMs) || 0;
-    if (ttl > 0 && accessoryCache.value && now() - accessoryCache.at < ttl) return accessoryCache.value;
-    try {
-      // eslint-disable-next-line global-require
-      const { listAccessories: readAccessories } = require('./salesEntryService');
-      const value = await readAccessories({ gateway });
-      accessoryCache = { at: now(), value };
-      return value;
-    } catch (error) {
-      logWarn(config.events.failed, {
-        reason: 'accessory_list_failed', error: String(error.message || error),
-      });
-      return [];
-    }
-  };
-
   /**
    * ⭐⭐ **收款方式清单**（「收款方式管理」表 = **唯一真源**）。
    *
@@ -476,7 +442,7 @@ const createScanWriteService = (options = {}) => {
    */
   const addSaleLine = async ({
     openId, kind = '', productRecordId = '', number = '', itemNo = '', color = '',
-    size, amount = '', gift = '', accessoryRecordId = '', inStock, requestId = '',
+    size, amount = '', gift = '', inStock, requestId = '',
     // ⭐ 2026-10-15：**可选** —— 不传 ⇒ 会话按 openId 分（既有链路逐字不变 ✓）
     sessionKey = '',
   }) => {
@@ -493,53 +459,11 @@ const createScanWriteService = (options = {}) => {
     }
     const parsedAmount = positiveAmount(amount);
     if (!parsedAmount.ok) {
-      const error = new Error(sellableKind.requiresSize ? texts.amountInvalidBody : texts.accessoryAmountInvalidBody);
+      const error = new Error(texts.amountInvalidBody);
       error.scanUserMessage = error.message;
       return fail({ code: 'amount_invalid', message: userMessageFor(error), requestId, error });
     }
     const giftText = String(gift ?? '').trim().slice(0, config.sale.giftMaxLength);
-
-    // ── 配品这一行（B）：没有尺码、没有货号，实收金额单列（编号/尺码留空由业务层保证）──
-    if (!sellableKind.requiresSize) {
-      const accessoryId = String(accessoryRecordId || '').trim();
-      if (!accessoryId) {
-        const error = new Error(texts.accessoryMissingBody);
-        error.scanUserMessage = texts.accessoryMissingBody;
-        return fail({ code: 'accessory_missing', message: userMessageFor(error), requestId, error });
-      }
-      const record = await gateway.get('accessory', accessoryId).catch(() => null);
-      if (!record) {
-        const error = new Error(texts.accessoryUnknownBody);
-        error.scanUserMessage = texts.accessoryUnknownBody;
-        return fail({ code: 'accessory_unknown', message: userMessageFor(error), requestId, error });
-      }
-      const added = await queue.run(`sale:${sessionId}`, () => sessions.addLine(sessionId, {
-        kind: kindKey,
-        accessory_record_id: accessoryId,
-        // 本单里要能看出是哪一件（**只落本地会话**；业务表那边由既有业务层按关联写）。
-        accessory_name: accessoryName(record),
-        // 金额留空就是 null（提交时按「其他配品.单价」兜底，与鞋那一行同一条口径）。
-        amount: parsedAmount.value,
-        gift: giftText,
-        added_at: new Date(now()).toISOString(),
-      }));
-      if (!added.ok) {
-        return fail({
-          code: added.code,
-          message: fillText(texts.tooManyLinesBody, { max: added.limit }),
-          requestId,
-          extra: { result: { limit: added.limit } },
-        });
-      }
-      logInfo(config.events.lineAdded, {
-        session_id: added.session.session_id,
-        kind: kindKey,
-        accessory_record_id: accessoryId,
-        count: added.count,
-        request_id: requestId,
-      });
-      return { ok: true, count: added.count, limit: config.session.maxLines, session: added.session };
-    }
 
     // ── 鞋（既有那一段，逐字不动）────────────────────────────────────────────
     const parsedSize = positiveInteger(size);
@@ -1763,8 +1687,6 @@ const createScanWriteService = (options = {}) => {
     // ⭐ 采购退货（与补货同形；业务负责人 2026-10-11 定的「和"报货"逻辑一样，也走扫码」）
     submitPurchaseReturn,
     purchaseReturn,
-    // ⭐ 页面上的配品下拉要的清单（只读；复用共享件 `salesEntryService.listAccessories` + 短缓存）。
-    listAccessories,
     // 收款方式下拉的来源（表 = 唯一真源；读不到会抛，调用方要给人话）
     listPaymentMethods,
     // 给用例 / 排查用：这次提交的幂等键是怎么算出来的（与 purchaseWebhookService 的

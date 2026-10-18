@@ -68,7 +68,6 @@ const ACTIONS = Object.freeze({
   // ⭐ 2026-10-11（B）：把**一件配品**加进"本单"（同样只写本地会话）。
   //    与「加入本单」分成两个动作（表单不同：配品没有尺码、金额单列），
   //    但落进本单之后是**同一种东西** —— 一行销售明细（`kind` 不同而已）。
-  addAccessory: readString(process.env, 'SCAN_WRITE_ACTION_ADD_ACCESSORY', 'add_accessory'),
   // 销售：提交整单（**这是唯一的写库时机** —— 她说"点【提交】才写"）
   submitOrder: readString(process.env, 'SCAN_WRITE_ACTION_SUBMIT', 'submit_order'),
   // 销售：清空本单（还没提交时撤掉加错的那些）
@@ -82,14 +81,10 @@ const ACTIONS = Object.freeze({
   // ⭐⭐ 2026-10-11（方案A）：「**扫码验收**」两个动作 —— 扫一码加进本次验收 / 完成验收并入库。
   //    它们挂在**扫码页**上（她的口径：「不管是扫码页还是工作台，都是在移动端完成的」；
   //    **旧贴纸**（2026-10-12 之前的 `/s/{编号}`）扫开是编号版；**新贴纸**扫开是 `/r/{记录ID}`
-  acceptAdd: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_ADD', 'accept_add'),
-  acceptFinish: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH', 'accept_finish'),
   // ⭐⭐ 2026-10-12：**带清单的完成**（她改完数量 + 自定义行 + 发生金额，一次提交 = 一次写库）。
   //    ⚠️ 与 `acceptFinish`（只带金额的老路）**并存**：老页面 / 既有用例一个字都没动。
-  acceptFinishRows: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_FINISH_ROWS', 'accept_finish_rows'),
   // ⭐⭐ 2026-10-12（她选的方案 A）：「系统把 40、41 列出来（标注"未报货"）⇒ 你**点一下就加到货**」
   //    点一下 = 一个 POST（带当前清单）⇒ 服务端记账 ⇒ 302 回清单；再点一下 = 取消。
-  acceptToggleSize: readString(process.env, 'SCAN_WRITE_ACTION_ACCEPT_TOGGLE_SIZE', 'accept_toggle_size'),
   // ⭐⭐ 2026-10-11（业务负责人：「**扫码页应该是有货品的吧？你不是有六个领域吗？**」）：
   //    「货品」领域那颗【**打印这一款**】—— **不写任何业务表**（只是把一条打印任务排进队列），
   //    所以它**不受"扫码写入口关着"影响**（见 `routes/scanPage.js`：那一支排在
@@ -198,7 +193,6 @@ const FIELDS = Object.freeze({
   gift: 'gift',
   // ⭐ 配品那一行的「其他配品」记录 id（下拉里选中的名称对应的记录）。
   //    ⚠️ 与 `size` 二选一：配品行没有尺码、鞋行没有配品（见 `config/sellableKinds`）。
-  accessory: 'accessory_record_id',
   // ⭐⭐ 2026-10-11：**总单层**的两个字段。
   //    ① 每件实收（提交表单里按本单顺序**逐行一个输入框**，同名重复 ⇒ body 里是有序数组，
   //       下标与本单的明细行**一一对应**）；
@@ -234,7 +228,6 @@ const FIELDS = Object.freeze({
   acceptCustomSize: 'accept_custom_size',
   acceptCustomQuantity: 'accept_custom_quantity',
   // ⭐⭐ 2026-10-12（方案 A）："未报货尺码"那几个可点元素带的是**哪个尺码**（可重复 ⇒ 按行序解析）。
-  acceptToggleSize: 'accept_toggle_size',
 });
 
 /**
@@ -554,7 +547,6 @@ const TEXTS = Object.freeze({
   draftHeading: '本单已加 {count} 双',
   draftItem: '{itemNo} · {size} 码',
   // 配品行在本单里的那一行（没有尺码、没有货号 —— 只有名称）。
-  draftAccessoryItem: '配品 · {name}',
   sizeLabel: '尺码',
   sizePlaceholder: '选尺码',
   amountLabel: '实收金额',
@@ -595,7 +587,6 @@ const TEXTS = Object.freeze({
   //    取舍已写在交付报告里）：它也有「实收金额」，留空同样兜底读「其他配品.单价」。
   accessoryAmountLabel: '配品实收金额（可不填）',
   accessoryAmountPlaceholder: '留空按配品单价',
-  accessoryAddedBanner: '已加入本单（{count} 项）',
   submitButton: '提交',
   // ⭐ 2026-10-12（她的意见：一单一笔居多）——按钮上直接写**几双**，一眼就知道这一单里有几双。
   //    ⚠️ 主按钮那颗就是"选好尺码直接提交"（一单一笔 = 选尺码 + 提交，**两下**）；
@@ -608,7 +599,6 @@ const TEXTS = Object.freeze({
   // ⚠️ 提交表单里那个「每件实收」输入框是**每行一个**的（同名 `line_amount` 重复出现），
   //    下面这两个是它的 aria-label / placeholder（手机读屏与占位，不是说明书）。
   lineAmountLabel: '这一双实收',
-  accessoryLineAmountLabel: '这一件实收',
   lineAmountPlaceholder: '实收',
   // ⭐⭐ 2026-10-11（最终口径）：**「付款情况」（整单）** 三档控件 —— 组名 + 三个选项 + 实付输入。
   paymentStatusLabel: '付款情况',
@@ -861,6 +851,7 @@ const TEXTS = Object.freeze({
   // ⭐ 那句「可能放太久了」在她真机上**误导**（页面只渲染了 41 秒 ✗）⇒ 缺/空 action 单独一句更准的。
   unknownActionMissingBody: '这一页没带上要做什么：请刷新这一页再操作。',
 });
+
 
 /**
  * 结构化日志事件名。

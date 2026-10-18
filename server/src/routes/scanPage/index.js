@@ -97,7 +97,7 @@ const { FUNNEL } = require('../../config/funnel');
 const { handleReplenish: handleReplenishOf, handlePurchaseReturn: handlePurchaseReturnOf } = require('./handlers/purchase');
 const { handlePaymentPay: handlePaymentPayOf } = require('./handlers/payment');
 const { handleSubmitOrder: handleSubmitOrderOf } = require('./handlers/salesSubmit');
-const { handlePrintLabel: handlePrintLabelOf, handleAddLine: handleAddLineOf, handleAddAccessory: handleAddAccessoryOf, handleClearDraft: handleClearDraftOf } = require('./handlers/smallActions');
+const { handlePrintLabel: handlePrintLabelOf, handleAddLine: handleAddLineOf, handleClearDraft: handleClearDraftOf } = require('./handlers/smallActions');
 const { createMultiItemPending: createMultiItemPendingOf, createPurchaseScheduler: createPurchaseSchedulerOf } = require('./sessionFlow');
 const {
   realmOfAction: realmOfActionOf,
@@ -1651,14 +1651,6 @@ const createScanPageRouter = (options = {}) => {
       if (action === actions.addLine) {
         return handleAddLineOf({
           req, res, requestId, body, fields, realm, action, openId, writeConfig, service, writeService, addBackPath, notFoundPage, respondWriteFailure, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
-        });
-      }
-      
-
-      // ── ⭐ 2026-10-11（B）：把一件配品加进本单（与「加入本单」同一形状：只写本地会话）──
-      if (action === actions.addAccessory) {
-        return handleAddAccessoryOf({
-          req, res, requestId, body, fields, realm, action, openId, service, writeService, notFoundPage, respondWriteFailure, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
         });
       }
       
