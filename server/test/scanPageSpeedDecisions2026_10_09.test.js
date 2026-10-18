@@ -145,9 +145,9 @@ test('A1 尺码段在**配置**里（A 男 38–48 · B 女 34–43 —— 不�
   // 2026-10-14 改指向（她拍板：**普通码 normal** 判缺码/定预订；**特殊码 special** 有就显示）：
   //   改前逐字：{ label:'男', from:38, to:48, enterable:[38,48], default:[38,45], special:[46,47,48] }
   assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A, { label: '男', from: 38, to: 48, enterable: [38, 48], normal: [38, 44], default: [38, 44], special: [45, 46, 47, 48] });
-  // 女：普通码 **36–41**（她 2026-10-14 晚定 ✓）· 特殊码 **34/35/42/43**（她当日最后一条 ✓）
+  // 女：普通码 **36–40**（她 2026-10-14 晚定 ✓）· 特殊码 **34/35/41/42/43**（她当日最后一条 ✓）
   //   改前逐字：{ label:'女', from:34, to:43, enterable:[34,43], default:[36,42], special:[34,43] }
-  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], normal: [36, 41], default: [36, 41], special: [34, 35, 42, 43] });
+  assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B, { label: '女', from: 34, to: 43, enterable: [34, 43], normal: [36, 40], default: [36, 40], special: [34, 35, 41, 42, 43] });
   // 一致性保险的旋钮也在配置里（开关 + 间隔），不是写死的定时器。
   assert.equal(typeof SCAN_PAGE.sizeSegments.consistencyCheck.enabled, 'boolean');
   assert.ok(SCAN_PAGE.sizeSegments.consistencyCheck.ttlMs >= 0);

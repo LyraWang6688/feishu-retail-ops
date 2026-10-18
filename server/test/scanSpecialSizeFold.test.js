@@ -67,14 +67,14 @@ test('AC-SF2 ⭐ 有货（含特殊码）⇒ **现货区正常展开**，不算�
 });
 
 test('AC-SF3 ⭐ 缺货的**普通码** ⇒ 预订区正常显示（不折叠 ✗）', () => {
-  const view = viewOf({ number: 'JX505|咖色|B', stocked: [36], missing: [37, 38, 39, 40, 41] });
+  const view = viewOf({ number: 'JX505|咖色|B', stocked: [36], missing: [37, 38, 39, 40] });
   const groups = realm.saleSizeGroups(view);
   const prepaid = groups.prepaid.map((item) => item.size_text);
-  for (const size of ['37', '38', '39', '40', '41']) {
+  for (const size of ['37', '38', '39', '40']) {
     assert.ok(prepaid.includes(size), `缺货的普通码 ${size} 要留在预订区（不折叠 ✓）`);
   }
   // ⭐ 特殊码 = 女 34/35/42/43 ⇒ 这四条必须**不在**预订区（它们在折叠块里 ✓）
-  for (const size of ['34', '35', '42', '43']) {
+  for (const size of ['34', '35', '41', '42', '43']) {
     assert.equal(prepaid.includes(size), false, `缺货的特殊码 ${size} 不许留在预订区 ✗（要进折叠块）`);
   }
 });
