@@ -129,8 +129,10 @@ test('AC-P4 🔴 读口只读 ✓ · **写口只许有一个调用方**、且**�
   };
   walk('services');
   walk('routes');
-  assert.deepEqual(callers, ['services/accessorySaleIntakeService.js'],
-    '`updateByTableId` 的调用方**只许**是入口 service ✓（别人调 ⇒ 红）');
+  // ⭐ 2026-10-18：配品 intake 服务已随配品表单工作流接管而删除 ⇒ 现在**零调用方**；
+  //   写口保留但无人调用，塞回调用方即红。
+  assert.deepEqual(callers, [],
+    '`updateByTableId` 现在**不许有调用方**（配品链路已退场 ⇒ 别人调 ⇒ 红）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

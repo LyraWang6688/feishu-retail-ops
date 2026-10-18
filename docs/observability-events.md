@@ -3,24 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **519** 个事件。按前缀分组：
-
-## accessory_sale_intake
-
-| 事件 | 次数 | 文件 |
-| --- | --- | --- |
-| `accessory_sale_intake.build_failed` | 1 | src/routes/larkEvents.js |
-| `accessory_sale_intake.config_invalid` | 1 | src/routes/larkEvents.js |
-| `accessory_sale_intake.disabled` | 1 | src/services/accessorySaleIntakeService.js |
-| `accessory_sale_intake.dispatch_failed` | 1 | src/routes/larkEvents.js |
-| `accessory_sale_intake.fallback_read` | 1 | src/services/accessorySaleIntakeService.js |
-| `accessory_sale_intake.name_fallback_hit` | 1 | src/services/accessorySaleIntakeService.js |
-| `accessory_sale_intake.not_wired` | 2 | src/routes/larkEvents.js<br>src/services/accessorySaleIntakeService.js |
-| `accessory_sale_intake.operator_fallback_failed` | 1 | src/services/accessorySaleIntakeService.js |
-| `accessory_sale_intake.operator_fallback_read` | 1 | src/services/accessorySaleIntakeService.js |
-| `accessory_sale_intake.rejected` | 3 | src/services/accessorySaleIntakeService.js |
-| `accessory_sale_intake.writeback.failed` | 1 | src/services/accessorySaleIntakeService.js |
-| `accessory_sale_intake.writeback.refused` | 1 | src/services/accessorySaleIntakeService.js |
+共 **506** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -424,7 +407,6 @@
 | `sales.thread_progress.payment_recorded` | 1 | src/services/salesThreadProgressService.js |
 | `sales.thread_progress.reply_failed` | 1 | src/services/salesThreadProgressService.js |
 | `sales.thread_progress.text_trigger_disabled` | 1 | src/services/salesThreadProgressService.js |
-| `sales.trade_type.resolved` | 1 | src/services/salesOrderService.js |
 
 ## scan
 

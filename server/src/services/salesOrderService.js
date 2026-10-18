@@ -117,7 +117,7 @@ class SalesOrderService {
       const entry = await withSalesReadRetry(
         () => this.gateway.get('salesEntry', salesEntryRecordId), 'sale_entry_trade_type',
       );
-      const tradeTypeRecordId = linkedRecordIds(entry?.fields?.[entryFields.tradeType])[0] || '';
+      const tradeTypeRecordId = ''; // 主表已删「交易类型」列；明细只认自己那一行的编码
       // 单号就在这条**已经读到的**主表记录上 ⇒ 零额外请求地补进关联键。
       // 读不到（AI 还没生成 / 老单）就不写这个键，不是写一个空串。
       correlation = mergeCorrelation(correlation, { order_no: textValue(entry?.fields?.[entryFields.orderNo]) });
@@ -161,7 +161,7 @@ class SalesOrderService {
         if (positiveInteger(item.quantity, '销售数量') !== 1) {
           throw new Error(kind.requiresSize
             ? '一条销售明细只能记录一双鞋；请逐双说明实收金额'
-            : '一条销售明细只能记录一件配品');
+            : '一条销售明细只能记录一件货品');
         }
         const row = {
           kind: kind.key,
@@ -177,10 +177,9 @@ class SalesOrderService {
           tradeTypeRecordId: await tradeTypeRecordIdForItem(item.tradeTypeCode),
         };
         if (!kind.requiresSize) {
-          const accessoryRecordId = String(item.accessoryRecordId || '').trim();
-          if (!accessoryRecordId) throw new Error('配品明细缺少配品记录，请先在「其他配品」里确认这一件');
-          expected.push({ ...row, linkRecordId: accessoryRecordId, size: null, sizeRecordId: '' });
-          continue;
+          // 🔴 2026-10-18：配品不再走销售写链路（生产「销售明细.配品」列已删；
+          //   配品改由工作台表单 + 多维表格工作流处理）。
+          throw new Error('配品已改为飞书表单录入，不再通过销售提交写入');
         }
         const product = await this.references.resolveProduct({ ...item, matchMode: 'sales' });
         const size = positiveInteger(item.size, '尺码');
@@ -337,36 +336,7 @@ class SalesOrderService {
         detailsPersisted += 1;
         await input.onRecordPersisted?.('details', row.index, row.recordId);
       }
-      // ⭐ 2026-10-12：主表「交易类型」= 这一单**明细的交易类型**（她：「看实时库存里有没有」）。
-      //    🔴 这一列是**多选**关联（只读核过生产真表：`type=18 / ui_type=SingleLink`，
-      //       但 `property = {"multiple":true,"table_id":"tblbTvUT4AFsCK4K"}` ⇒ **允许多选**）——
-      //       所以**混合单写多个值**（她：「我们之前是可以多选的，所以混合单它可以多选」）。
-      //    · 去重（多行都是现货 ⇒ 只写一个现货记录）；
-      //    · 顺序 = **明细里首次出现的顺序**（她看表时与明细顺序一致，不用记"现货一定在前"）；
-      //    · 写入形状走既有 `relation()`：它**本来就认数组**（多选关联 = 记录 id 数组）。
-      //    幂等：已有值且与本次**同一集合** ⇒ 不重复写；不一致 ⇒ 判草稿变了、停止重试（与赠品同一套）。
-      const tradeTypeIds = [...new Set(expected
-        .map((item) => String(item.tradeTypeRecordId || '').trim())
-        .filter(Boolean))];
-      if (tradeTypeIds.length) {
-        const existingTradeType = linkedRecordIds(entry?.fields?.[entryFields.tradeType]);
-        const sameSet = existingTradeType.length === tradeTypeIds.length
-          && existingTradeType.every((id) => tradeTypeIds.includes(id));
-        if (existingTradeType.length && !sameSet) {
-          throw new Error('销售主表已记录的交易类型与当前草稿不一致，已停止重试');
-        }
-        if (!existingTradeType.length) {
-          await this.gateway.update('salesEntry', salesEntryRecordId,
-            { tradeType: relation(tradeTypeIds) }, { correlation });
-          logInfo('sales.trade_type.resolved', {
-            sales_entry_record_id: salesEntryRecordId,
-            order_no: textValue(entry?.fields?.[entryFields.orderNo]),
-            trade_type_count: tradeTypeIds.length,
-            multiple: tradeTypeIds.length > 1,
-            ...correlation,
-          });
-        }
-      }
+      // 🔴 2026-10-18：主表「交易类型」列已删 ⇒ 不再写主表；交易类型保留在每条销售明细上。
       // 「货」这一维写完了（收款还没开始）：先落「已写入」，这样后面收款失败时
       // 她也能从表里一眼看出"明细是好的、坏在钱那一列"。
       await this.status.write(salesEntryRecordId, { sales: WRITE.sales.done }, correlation);

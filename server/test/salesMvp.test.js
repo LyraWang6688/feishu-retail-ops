@@ -104,61 +104,6 @@ test('each pair has its own detail even when product and size are identical', as
     row.fields['履约状态'] === '未交付'));
 });
 
-// ─── 配品：只记「卖了什么、收了多少」，不写尺码、不碰库存 ───
-
-test('an accessory line rides along with a shoe in one order without a size or stock movement', async () => {
-  const gateway = fake();
-  const service = new SalesOrderService({ gateway, references });
-  const input = { salesEntryRecordId: 'order_1', items: [
-    { itemNo: 'A100', size: 38, quantity: 1, actualAmount: 200 },
-    { kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 39 },
-  ], payments: [{ method: '微信', amount: 239 }] };
-
-  await service.confirm(input);
-  await service.confirm(input); // 重试不应重复写入
-
-  const details = gateway.records.get('salesDetail');
-  assert.equal(details.length, 2);
-  // 鞋行：关联货品 + 关联尺码 + 未交付（要跟踪交付）
-  assert.deepEqual(details[0].fields['编号'], ['product_A100']);
-  assert.deepEqual(details[0].fields['尺码'], ['size_38']);
-  assert.equal(details[0].fields['履约状态'], '未交付');
-  assert.equal(details[0].fields['配品'], undefined);
-  // 配品行：关联配品、没有尺码、当场结清（已交付）
-  assert.deepEqual(details[1].fields['配品'], ['acc_belt']);
-  assert.equal(details[1].fields['尺码'], undefined);
-  assert.equal(details[1].fields['编号'], undefined);
-  assert.equal(details[1].fields['履约状态'], '已交付');
-  assert.equal(details[1].fields['实收金额'], 39);
-  // 配品不产生任何库存动作
-  assert.equal(gateway.records.get('inventoryLedger'), undefined);
-  assert.equal(gateway.records.get('liveInventory'), undefined);
-});
-
-test('a standalone accessory sale creates one detail and one receipt', async () => {
-  const gateway = fake();
-  const service = new SalesOrderService({ gateway, references });
-  await service.confirm({ salesEntryRecordId: 'order_1',
-    items: [{ kind: 'accessory', accessoryRecordId: 'acc_oil', quantity: 1, actualAmount: 10 }],
-    payments: [{ method: '微信', amount: 10 }] });
-
-  assert.equal(gateway.records.get('salesDetail').length, 1);
-  assert.deepEqual(gateway.records.get('salesDetail')[0].fields['配品'], ['acc_oil']);
-  assert.equal(gateway.records.get('paymentRecord').length, 1);
-  assert.equal(gateway.records.get('liveInventory'), undefined);
-});
-
-test('an accessory line without a resolved accessory record stops before writing', async () => {
-  const gateway = fake();
-  const service = new SalesOrderService({ gateway, references });
-  await assert.rejects(service.confirm({ salesEntryRecordId: 'order_1',
-    items: [{ kind: 'accessory', quantity: 1, actualAmount: 39 }],
-    payments: [{ method: '微信', amount: 39 }] }), /配品明细缺少配品记录/);
-
-  assert.equal(gateway.records.get('salesDetail'), undefined);
-  assert.equal(gateway.records.get('paymentRecord'), undefined);
-});
-
 test('an unlisted sellable kind is refused instead of silently treated as a shoe', async () => {
   const gateway = fake();
   const service = new SalesOrderService({ gateway, references });
@@ -336,7 +281,7 @@ test('她说了"收了 100"、没说欠：成交即实收（差额 0），不补
   //    改后逐字：这一单 `每件实收合计 (100) − 已收 (100) = 0` ⇒ **没有差额** ⇒ 一条未收款都不挂 ✓
   //    （差额 > 0 的单会**自动**挂 —— 见 `test/owedAutoOnShortfall.test.js` 的 AC-OWED-1。）
   const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
-    items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 100 }],
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }],
     payments: [{ method: '微信', amount: 100 }] });
 
   const receipts = gateway.records.get('paymentRecord');
@@ -347,8 +292,8 @@ test('她说了"收了 100"、没说欠：成交即实收（差额 0），不补
     { detailRecordIds: posted.detailRecordIds, paymentRecordIds: posted.paymentRecordIds });
   assert.equal(progress.paymentStatus, '已收款');
   assert.equal(progress.pendingAmount, 0);
-  // 成交 = 实收 且 交付完成（配品当场已交付）→ 已完成
-  assert.equal(progress.orderStatus, '已完成');
+  // 全付但这一双还没交付 ⇒ 订单停在「已确认」（配品链路已退场，改用鞋行验证收货语义）
+  assert.equal(progress.orderStatus, '已确认');
   // ⚠️ 「订单状态」那一列已被业务负责人整列删除；salesProgressService 从 2026-10-06 起
   //    只算不写。所以这里断言的是**新维度写对了**（progress.orderStatus 只是算出来的 JS 字段）。
   const entry = await gateway.get('salesEntry', 'order_1');
@@ -359,7 +304,7 @@ test('她明说"还欠 19"：补一条未收款 19，订单停在已确认', asy
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
   const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
-    items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 119 }],
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 119 }],
     payments: [{ method: '微信', amount: 100 }], owed: 19 });
 
   const receipts = gateway.records.get('paymentRecord');
@@ -377,7 +322,7 @@ test('她说的欠款和「成交 − 已收」对不上时拦下来，不静默
   const gateway = fake();
   const sales = new SalesOrderService({ gateway, references });
   await assert.rejects(sales.confirm({ salesEntryRecordId: 'order_1',
-    items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 100 }],
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }],
     payments: [{ method: '微信', amount: 100 }], owed: 19 }), /欠款与「实收金额−已收金额」不一致/);
   // 拦下来了就不该写任何收款记录
   assert.equal(gateway.records.get('paymentRecord'), undefined);

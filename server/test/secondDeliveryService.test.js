@@ -287,13 +287,13 @@ test('待平台结算结清时补写「收入」（到账那一刻才算收款�
 // 五、销售明细「交易类型」：和销售主表写同一条行为关联
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('入账时销售明细的「交易类型」抄的是销售主表同一条行为关联', async () => {
+test('入账时销售明细的「交易类型」来自明细自己的那一行（主表已无该列）', async () => {
   const gateway = fakeGateway({
     behavior: BEHAVIOR_ROWS,
     paymentMethod: METHOD_ROWS,
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     salesEntry: [{ record_id: 'order_1', fields: {
-      '确认状态': '未确认', 销售单号: 'XSD-1', 交易类型: ['behavior_cash'],
+      销售单号: 'XSD-1', 写入状态: '未完成',
     } }],
   });
   const service = new SalesOrderService({
@@ -301,18 +301,19 @@ test('入账时销售明细的「交易类型」抄的是销售主表同一条�
     references: {
       resolveProduct: async (item) => ({ recordId: `product_${item.itemNo}` }),
       resolvePaymentMethod: async () => ({ recordId: 'method_1' }),
+      resolveSalesTradeType: async () => ({ recordId: 'behavior_cash' }),
     },
   });
 
   const result = await service.confirm({
     salesEntryRecordId: 'order_1',
-    items: [{ itemNo: '8088-26', size: 38, quantity: 1, actualAmount: 230 }],
+    items: [{ itemNo: '8088-26', size: 38, quantity: 1, actualAmount: 230, tradeTypeCode: 'SALE_CASH' }],
     payments: [{ amount: 230, method: '微信' }],
   });
 
   const detail = gateway.records.get('salesDetail').find((row) => row.record_id === result.detailRecordIds[0]);
-  assert.deepEqual(detail.fields['交易类型'], ['behavior_cash'], '明细和主表必须是同一条行为记录');
-  assert.equal(detail.fields['交易类型'][0], gateway.records.get('salesEntry')[0].fields['交易类型'][0]);
+  assert.deepEqual(detail.fields['交易类型'], ['behavior_cash'], '明细的交易类型来自明细自己那一行');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['交易类型'], undefined, '主表已删该列 ⇒ 不再写');
   // 顺带确认正常收款也带上了方向（同一次入账里的两件事）。
   assert.equal(gateway.records.get('paymentRecord')[0].fields['交易方向'], '收入');
 });
@@ -392,11 +393,11 @@ const reminderSeed = () => ({
     } },
   ],
   salesDetail: [
-    { record_id: 'd_c1', fields: { 销售单号: ['order_cash_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
-    { record_id: 'd_p2', fields: { 销售单号: ['order_prepaid_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 400 } },
-    { record_id: 'd_c2', fields: { 销售单号: ['order_cash'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
-    { record_id: 'd_c3', fields: { 销售单号: ['order_cash_done'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
-    { record_id: 'd_c9', fields: { 销售单号: ['order_cash_old'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
+    { record_id: 'd_c1', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
+    { record_id: 'd_p2', fields: { 销售单号: ['order_prepaid_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 400, 交易类型: ['behavior_prepaid'] } },
+    { record_id: 'd_c2', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
+    { record_id: 'd_c3', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash_done'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
+    { record_id: 'd_c9', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash_old'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
   ],
   paymentRecord: [
     { record_id: 'r_c1', fields: { 关联销售单: ['order_cash_pending'], 收款金额: 260, 收款状态: '未收款' } },

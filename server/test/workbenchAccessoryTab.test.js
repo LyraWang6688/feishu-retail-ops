@@ -221,25 +221,16 @@ test('AC-D2 🔴 全仓 0 处**活引用**：features/accessory · workbenchAcce
 // AC-D3 判据迁移收口（新链路上必须还钉着）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-D3 ⭐⭐ 判据迁移收口：`AC-MIG1..AC-MIG4` 仍在**新链路**的用例里（不许跟着死文件消失 ✗）', () => {
-  const intake = fs.readFileSync(path.join(__dirname, 'accessorySaleIntake.test.js'), 'utf8');
-  for (const ac of ['AC-MIG1', 'AC-MIG2', 'AC-MIG3', 'AC-MIG4', 'AC-MIG5']) {
-    assert.ok(intake.includes(ac), `${ac} 必须还在（它是原工作台那条判据的新家 ✓）`);
-  }
-  // 逐条对得上"迁移自哪一条"
-  for (const from of ['AC-AC3', 'AC-AC4', 'AC-A2', 'AC-A4b']) {
-    assert.ok(intake.includes(from), `迁移说明里要点名原判据（${from}）✓`);
-  }
-  // ⭐ 真判据的四根钉子（内容级，不是只有名字）
-  assert.ok(intake.includes('inStock, true'), 'AC-MIG1：配品默认现货 ✓');
-  assert.ok(intake.includes('paymentStatus'), 'AC-MIG1：付款状态 ✓');
-  assert.ok(intake.includes('paidAmount'), 'AC-MIG1：已收金额 ✓');
-  assert.ok(intake.includes('tracksInventory'), 'AC-MIG3：配品不跟踪库存 ✓');
-  assert.ok(intake.includes('paymentMethodMissing') || intake.includes('收款方式'),
-    'AC-MIG4：收款方式为空的口径 ✓');
-  assert.ok(intake.includes('AC-MIG5'), 'AC-MIG5：成单后作废订单缓存 ✓');
-  const intakeService = fs.readFileSync(path.join(SERVER_ROOT, 'src/services/accessorySaleIntakeService.js'), 'utf8');
-  assert.ok(intakeService.includes('ordersCache?.invalidate?.()'), 'AC-MIG5 的承载点：服务里真的作废 ✓');
+test('AC-D3 ⭐⭐ 配品表单工作流接管后：intake 代码已删除（不留半条死链）', () => {
+  // ⭐ 2026-10-18（业务负责人：「配品表单的工作流已接管，所以相关代码可以删除」）：
+  //   旧链路（表单变更事件 → accessorySaleIntakeService 写销售）整段退场。
+  assert.equal(fs.existsSync(path.join(SERVER_ROOT, 'src/services/accessorySaleIntakeService.js')), false,
+    'accessorySaleIntakeService.js 必须已删');
+  assert.equal(fs.existsSync(path.join(SERVER_ROOT, 'src/config/accessorySaleIntake.js')), false,
+    'config/accessorySaleIntake.js 必须已删');
+  const events = fs.readFileSync(path.join(SERVER_ROOT, 'src/routes/larkEvents.js'), 'utf8');
+  assert.equal(/require\('\.\.\/services\/accessorySaleIntakeService'\)|resolveAccessorySaleIntake\(/.test(events), false,
+    '事件路由里不许再挂配品 intake 支路（注释可留历史，调用不行）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

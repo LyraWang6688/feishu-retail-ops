@@ -5,18 +5,6 @@
 
 /** 全仓日志事件名的唯一真源（由 scripts/observability-events.mjs 生成）。 */
 const EVENTS = Object.freeze([
-  'accessory_sale_intake.build_failed',
-  'accessory_sale_intake.config_invalid',
-  'accessory_sale_intake.disabled',
-  'accessory_sale_intake.dispatch_failed',
-  'accessory_sale_intake.fallback_read',
-  'accessory_sale_intake.name_fallback_hit',
-  'accessory_sale_intake.not_wired',
-  'accessory_sale_intake.operator_fallback_failed',
-  'accessory_sale_intake.operator_fallback_read',
-  'accessory_sale_intake.rejected',
-  'accessory_sale_intake.writeback.failed',
-  'accessory_sale_intake.writeback.refused',
   'after_sales.cash.method',
   'after_sales.count.applied',
   'after_sales.executed',
@@ -335,7 +323,6 @@ const EVENTS = Object.freeze([
   'sales.thread_progress.payment_recorded',
   'sales.thread_progress.reply_failed',
   'sales.thread_progress.text_trigger_disabled',
-  'sales.trade_type.resolved',
   'scan.accept.duplicate',
   'scan.accept.failed',
   'scan.accept.finished',
