@@ -7,6 +7,8 @@ const { PaymentService } = require('./paymentService');
 const { SalesProgressService, cents } = require('./salesProgressService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { sellableKindOf } = require('../config/sellableKinds');
+// ⭐ 2026-10-18：明细初始履约状态来自写计划（现货/预定同一处配置）
+const { initialFulfillmentStatusFor } = require('../config/salesWritePlan');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 // ⭐ 赠品的落点/归一（业务负责人 2026-10-08：落点从「销售明细」搬到「销售主表」）。
 //   分隔符与占位文案都在那份 config 里；这里只负责按它的规则算与写。
@@ -172,7 +174,9 @@ class SalesOrderService {
           //   ⚠️ 它**不再写进明细**（那一列已被她删掉），只在下面合并成**主表那一列**。
           gift: giftTextOfItem(item),
           // 配品当场结清、不跟踪交付，直接写成已交付，不会进待交付列表也不会扣库存。
-          fulfillmentStatus: kind.requiresFulfillment ? '未交付' : '已交付',
+          fulfillmentStatus: kind.requiresFulfillment
+            ? initialFulfillmentStatusFor(item.tradeTypeCode)
+            : '已交付',
           // **这一行自己的**交易类型关联（单选）。
           tradeTypeRecordId: await tradeTypeRecordIdForItem(item.tradeTypeCode),
         };

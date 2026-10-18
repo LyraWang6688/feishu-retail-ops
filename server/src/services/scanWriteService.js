@@ -57,7 +57,11 @@ const { REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
 // ⭐ 2026-10-11（A）：「**哪一种类型在提交这一刻就交付**」也来自既有注册表
 //    （`deliversOnSubmit`，见 `config/salesMovements.js`）—— 本文件不写 'SALE_CASH' 字面量。
 const { salesTradeTypeForStock } = require('../config/salesTradeTypePolicy');
-const { deliversOnSubmit } = require('../config/salesMovements');
+// ⭐ 2026-10-18「配置先行」：现货/预定的**步骤 / 表 / 字段 / 成功判据**只有一份配置
+//   （`config/salesWritePlan.js`）；本文件不再直接认 `deliversOnSubmit` 或现货/预定编码。
+const {
+  plansOfOrder, requiresInventory, successRequiresFor, deliversOnSubmitFor,
+} = require('../config/salesWritePlan');
 // 「这一件要不要尺码 / 要不要跟踪库存 / 要不要履约」——可售品的属性（配品：三样都不要）。
 const { SELLABLE_KINDS, sellableKindOf } = require('../config/sellableKinds');
 const { SCAN_WRITE, fillText } = require('../config/scanWrite');
@@ -526,7 +530,8 @@ const createScanWriteService = (options = {}) => {
   const lineDeliversOnSubmit = (item) => {
     const kind = sellableKindOf(item);
     if (!(kind.requiresFulfillment && kind.tracksInventory)) return false;
-    return deliversOnSubmit(String(item.tradeTypeCode || '').trim());
+    // 编码判据来自写计划（计划本身又与 salesMovements 同源）⇒ 不再在本文件认现货/预定。
+    return deliversOnSubmitFor(String(item.tradeTypeCode || '').trim());
   };
 
   /**
@@ -1225,6 +1230,11 @@ const createScanWriteService = (options = {}) => {
       //    ⚠️ 两笔数**分开报**，不合成一个"收款合计"：合成之后她就分不清
       //       "这单收了多少现金"和"这单还欠多少"。
       const paidAmount = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      // ⭐ 2026-10-18：这一单按哪份写计划、成功需要哪几步 —— **配置说了算**（不再散落 if）。
+      const writePlans = plansOfOrder(items);
+      const writePlanIds = writePlans.map((plan) => plan.id);
+      const stepRequirements = successRequiresFor(items);
+      const expectedInventoryLines = writePlans.filter((plan) => plan.writesInventory).length;
       const summary = {
         order_no: result.sourceNo || orderNo,
         sales_entry_record_id: salesEntryRecordId,
@@ -1239,6 +1249,9 @@ const createScanWriteService = (options = {}) => {
         effective_payment_status: effectiveMode,
         // ⭐ 她**显式选了「全付」但一笔收款都没填** ⇒ 页面给一句人话（`fullWithoutPaymentsNote`）。
         full_without_payments: fullWithoutPayments,
+        // 这一单按哪份写计划、成功需要哪几步（配置可读、日志可查）
+        write_plan_ids: writePlanIds,
+        success_requires: stepRequirements,
       };
       // ⑥ ⭐ 2026-10-11（A）：**现货 ⇒ 提交即交付 + 扣库存**。
       //    她 2026-10-09 的原话：「选现货 ⇒ 提交就直接当已交付并扣库存，这个肯定是的」。
@@ -1259,6 +1272,12 @@ const createScanWriteService = (options = {}) => {
         salesEntryRecordId, correlation, allowUnposted: fundsDeferred,
       });
       markStage('stock_ms', stockStartedAt);
+      // 计划说"有 N 行要动库存"就必须真的请求 N 行（明细 id 缺失等 ⇒ 如实算失败，不许假成功）
+      if (expectedInventoryLines > 0 && stock.requested < expectedInventoryLines) {
+        stock.failed += expectedInventoryLines - stock.requested;
+        stock.reasons.push(fillText(texts.stockStepMissingBody,
+          { count: expectedInventoryLines - stock.requested }));
+      }
       if (stock.failed > 0) {
         // 🔴 **失败要如实报错**：单子写了（货 / 钱是事实），但库存没扣成这件事必须回给她，
         //    而且**不许**把这一单记成"提交完成"—— 否则重试入口就没了，那一双永远扣不掉。

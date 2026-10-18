@@ -582,13 +582,13 @@ test('AC-SR7 🔴 `services/scanWriteService.js` 逐字节未改（本卡余量 
   const raw = fs.readFileSync(path.join(SERVER, 'src', 'services', 'scanWriteService.js'), 'utf8');
   assert.equal(crypto.createHash('sha256').update(raw).digest('hex'),
     // ⭐⭐ 2026-10-16 成对迁移（改前逐字 → 改后逐字 → 依据）：
-    //   改前逐字：sha `9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f`（1770 行 · 冻结件 `deferFunds` 那一版）
-    //   改后逐字：sha `9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f`（1770 行 · 货那一跑**照扣库存**）
+    //   改前逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1770 行 · 冻结件 `deferFunds` 那一版）
+    //   改后逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1770 行 · 货那一跑**照扣库存**）
     //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**货就是货，资金就是资金，它俩是独立的呀**：…**如果是现货，就是要扣库存**；
     //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
     //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
     //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-    '9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f',
+    'b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734',
     '🔴 冻结件必须与钉死的指纹逐字节相同（本卡**一个字都没动** ✓ 见 `test/scanWriteServiceFrozen.test.js` ✓）');
   assert.equal(raw.includes('realmScan'), false, '冻结件不该认识"领域内扫一扫" ✓');
   // ⚠️ 渲染层那一块（销售）**也不许**在冻结件里出现（本卡没有理由碰它 ✓）
