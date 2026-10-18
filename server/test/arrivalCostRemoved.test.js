@@ -58,10 +58,16 @@ test('到货「成本 + 建档」两段死代码已彻底删除（塞回即红�
 });
 
 test('加库存 / 验收仍然活着（删建档不许误伤）', () => {
+  // ⭐ 2026-10-18 成对迁移（task-6 文件大小门禁）：`confirmArrivalLocked` / `writeArrivalAcceptance`
+  //   的方法体原样搬进 `services/purchase/arrival.js`（facade 只留同名薄委托）。
+  //   改前逐字：三条断言都读 `src/services/purchaseWebhookService.js`。
+  //   改后逐字：`async confirmArrival(` 仍在 facade 读；加库存 / writeAcceptance 两处读
+  //            **代码搬过去的那个文件** —— 断言文本**逐字未动**。
   const webhook = read('src/services/purchaseWebhookService.js');
+  const arrivalSource = read('src/services/purchase/arrival.js');
   assert.match(webhook, /async confirmArrival\(/, '⛔ 到货确认必须还在');
-  assert.match(webhook, /inventory\.applyPurchase\(/, '⛔ 加库存调用必须还在');
-  assert.match(webhook, /writeAcceptance/, '⛔ 写「报货批次」必须还在');
+  assert.match(arrivalSource, /inventory\.applyPurchase\(/, '⛔ 加库存调用必须还在');
+  assert.match(arrivalSource, /writeAcceptance/, '⛔ 写「报货批次」必须还在');
 });
 
 test('「货品.成本」schema 映射保留（列还在，只是代码不写）', () => {

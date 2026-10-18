@@ -469,8 +469,11 @@ test('AC-IV1 ⭐ 退货扣库存：逐尺码整表读＋逐双 get/delete ⇒ �
 
 test('AC-IV1b ⭐ 验收（加库存）走的**不是同一段**：它已是 applyPurchaseBatch ⇒ 0 次 get/delete', async () => {
   // ① 只读核：验收那条链在 main 上就接的是**批量口**（`purchaseWebhookService.confirmArrival`）。
+  //   ⭐ 2026-10-18 成对迁移（task-6 文件大小门禁）：`confirmArrivalLocked` 的方法体原样搬进
+  //     `services/purchase/arrival.js`（facade 只留同名薄委托）⇒ 改前逐字读 `purchaseWebhookService.js`，
+  //     改后逐字读**代码搬过去的那个文件**；**断言文本与正则逐字未动**（不是放宽）。
   const webhookSrc = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'services', 'purchaseWebhookService.js'), 'utf8',
+    path.join(__dirname, '..', 'src', 'services', 'purchase', 'arrival.js'), 'utf8',
   );
   assert.match(webhookSrc, /inventory\.applyPurchaseBatch\(/, '验收那条链必须仍在调批量口');
   // 而退货那条链走的是**另一条**（批量口是 `applyPurchaseReturnBatch`，不是验收那个）——

@@ -309,10 +309,16 @@ test('B5 「到货验收」表的读写点全清：全仓不再引用这个表�
 test('B6 ⭐ 同名不同物**不许被误删**：采购申请 PNG 出图器 `this.images.render` 还在', () => {
   // `purchaseWebhookService.this.images` 是「明细 → PNG」的出图渲染器，
   // 名字里带 images，但**跟「到货验收.图片」那个附件列毫无关系**。清读写点时极易误删。
+  // ⭐ 2026-10-18 成对迁移（task-6 文件大小门禁：方法体原样搬进 `services/purchase/documentImages.js`）：
+  //   改前逐字：`const source = fs.readFileSync(... 'src/services/purchaseWebhookService.js')`
+  //             ＋ `assert.match(source, /await this\.images\.render\(/)`。
+  //   改后逐字：默认实现仍在 facade（constructor），**调用点**改读它搬过去的那个文件；
+  //             两条断言**逐字未动**（不是放宽 —— 删掉任一处仍然红）。
   const source = fs.readFileSync(path.join(SERVER_ROOT, 'src/services/purchaseWebhookService.js'), 'utf8');
+  const imageSource = fs.readFileSync(path.join(SERVER_ROOT, 'src/services/purchase/documentImages.js'), 'utf8');
   assert.match(source, /this\.images = options\.images \|\| \{ render: renderPurchaseRequestPng \}/,
     '出图渲染器的默认实现必须还在');
-  assert.match(source, /await this\.images\.render\(/, '出图的调用点必须还在');
+  assert.match(imageSource, /await this\.images\.render\(/, '出图的调用点必须还在');
 });
 
 test('B7 ⭐ 工作台采购页（= 现在的「采购 → 验收」子页）：到货面板用**当下的列**，被删的列 / 文案不许回来', () => {
