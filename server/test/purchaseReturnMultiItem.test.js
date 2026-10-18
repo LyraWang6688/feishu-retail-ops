@@ -90,13 +90,13 @@ const SERVER_SRC = path.join(__dirname, '..', 'src');
  *    ⚠️ 许可**不能复用**：下一次改它必须重新拿裁决（见冻结哨兵的「解冻台账」✓）。
  */
 // ⭐⭐ 2026-10-16 成对迁移（改前逐字 → 改后逐字 → 依据）：
-//   改前逐字：sha `b4a5cce3a8d346ff59e5cc450e496622f128f978b954af79ec7310a360137fc3`（1770 行 · 冻结件 `deferFunds` 那一版）
-//   改后逐字：sha `b4a5cce3a8d346ff59e5cc450e496622f128f978b954af79ec7310a360137fc3`（1770 行 · 货那一跑**照扣库存**）
+//   改前逐字：sha `9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f`（1770 行 · 冻结件 `deferFunds` 那一版）
+//   改后逐字：sha `9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f`（1770 行 · 货那一跑**照扣库存**）
 //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**货就是货，资金就是资金，它俩是独立的呀**：…**如果是现货，就是要扣库存**；
 //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
 //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
 //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-const FROZEN_SCAN_WRITE_SHA256 = 'b4a5cce3a8d346ff59e5cc450e496622f128f978b954af79ec7310a360137fc3';
+const FROZEN_SCAN_WRITE_SHA256 = '9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f';
 
 const NUMBER_A = 'KA|黑色|A';
 const NUMBER_B = 'KB|黑色|A';

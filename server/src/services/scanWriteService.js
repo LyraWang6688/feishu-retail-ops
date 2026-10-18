@@ -1487,7 +1487,10 @@ const createScanWriteService = (options = {}) => {
       };
       // task id 由**这一次提交的幂等键**推出来 ⇒ 重放同一个键 = 同一个 task
       // ⇒ 采购申请 / 报货批次在主键上命中既有记录（`createOnceByKey`），只写一次。
-      const taskId = `${config.replenish.taskIdPrefix}_${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      // ⭐ 2026-10-18：task id 加**会话代次** —— 远端「采购批次」的幂等键由 task id 推出；
+      //   只带「会话 id + 轮次」会跨天撞历史键（成功页但零新写入）。同一会话内重试代次不变 ⇒ 仍幂等。
+      const generation = String(current?.generation || '').trim() || 'legacy';
+      const taskId = `${config.replenish.taskIdPrefix}_${key.replace(/[^a-zA-Z0-9_-]/g, '_')}_${generation}`;
       const existingTask = await purchaseStore.get(taskId).catch(() => null);
       const task = existingTask || await purchaseStore.create({
         task_id: taskId, kind: 'scan_replenish', status: 'posting', draft,

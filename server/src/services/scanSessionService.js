@@ -45,6 +45,10 @@ const createScanSessionService = (options = {}) => {
   });
 
   const keyFor = (prefix, sessionId, sequence) => `${prefix}:${sessionId}:${sequence}`;
+  // ⭐ 2026-10-18：**会话代次** —— 会话 id 是 open_id 的固定哈希，轮次在会话过期后会从 1 重来；
+  //   若幂等键只由「会话 id + 轮次」组成，跨天重开就会和历史键**撞车**（采购批次被当成重放 ⇒
+  //   成功页但零新写入）。代次让每次"新开一份会话"拥有唯一身份；同一会话内重试仍复用同一代次。
+  const newGeneration = () => crypto.randomBytes(8).toString('hex');
 
   const isExpired = (session) => {
     if (!session) return true;
@@ -59,6 +63,8 @@ const createScanSessionService = (options = {}) => {
     return {
       [sessionConfig.idField]: sessionId,
       session_id: sessionId,
+      // 代次：只用于把"跨会话的幂等键"隔开（不进页面键格式，不影响既有测试/埋点）
+      generation: newGeneration(),
       open_id: String(openId || ''),
       status: sessionConfig.statuses.draft,
       expires_at: new Date(now() + sessionConfig.ttlMs).toISOString(),
@@ -113,7 +119,15 @@ const createScanSessionService = (options = {}) => {
    */
   const ensure = async (openId) => {
     const current = await store.get(idOf(openId));
-    if (current && !isExpired(current)) return { ...current, expired: false };
+    if (current && !isExpired(current)) {
+      // ⭐ 2026-10-18：老会话没有代次 ⇒ 补一个并落盘（否则补货 task id 会继续复用历史键）。
+      if (!current.generation) {
+        const generation = newGeneration();
+        const migrated = await store.update(idOf(openId), { generation });
+        return { ...migrated, expired: false };
+      }
+      return { ...current, expired: false };
+    }
     if (current) {
       logInfo(config.events.sessionExpired, {
         session_id: current[sessionConfig.idField],
@@ -178,6 +192,9 @@ const createScanSessionService = (options = {}) => {
     const raw = await store.get(idOf(openId));
     // 没有记录（真的一无所有）⇒ 走原来的"新建一份"
     if (!raw) return ensure(openId);
+    // ⭐ 2026-10-18：**续期 = 新的一轮提交窗口** ⇒ 轮换代次（跨天/过期后绝不复用历史幂等键）。
+    //   同一窗口内的重试不会再走 revive（会话已续期、未过期）⇒ 代次保持 ⇒ 仍幂等。
+    raw.generation = newGeneration();
     // 只有属于这一条链的键才采纳（别把销售的键塞进补货那一块）
     const prefix = FLOW_KEY_PREFIX[flow] || FLOW_KEY_PREFIX.sale;
     const adopted = String(submitKey || '').trim();
@@ -188,6 +205,8 @@ const createScanSessionService = (options = {}) => {
     const parsedSeq = Number(String(keepKey || '').split(':').pop());
     const next = await store.update(raw[sessionConfig.idField], touch({
       status: sessionConfig.statuses.draft,
+      // 代次必须一起落盘（store.update 只合并 patch，不会自动带上 raw 里新加的字段）
+      generation: raw.generation,
       [blockName]: {
         ...block,
         key: keepKey,
