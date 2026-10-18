@@ -101,28 +101,6 @@ async function handleAddLine(ctx) {
         return res.redirect(303, addBackPath(addedBackPage, realm));
 }
 
-async function handleAddAccessory(ctx) {
-  const { req, res, requestId, body, fields, realm, action, openId, service, writeService, notFoundPage, respondWriteFailure, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM } = ctx;
-        const view = await service.lookup({ ...lookupInputOf(req), requestId });
-        if (!view.found) {
-          return notFoundPage(res, requestId, {
-            number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
-          });
-        }
-        const result = await writeService.addSaleLine({
-          openId,
-          requestId,
-          // ⚠️ `kind` **由路由按动作给**，不取表单里的值（手改表单也换不了可售品类型）。
-          kind: 'accessory',
-          accessoryRecordId: body[fields.accessory],
-          amount: body[fields.amount],
-          gift: body[fields.gift],
-        });
-        if (!result.ok) return respondWriteFailure(res, result, requestId);
-        // 与「加入本单」同一条回跳（Post-Redirect-Get）：刷新不会重复提交、本单看得见。
-        return res.redirect(303, `${postActionFor(backTargetFor(req, view.number), realm)}${realm === DEFAULT_REALM ? '?' : '&'}added=1`);
-}
-
 async function handleClearDraft(ctx) {
   const { req, res, requestId, body, fields, realm, action, openId, writeService, backTargetFor, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM } = ctx;
         await writeService.clearDraft({ openId, requestId });
@@ -131,4 +109,4 @@ async function handleClearDraft(ctx) {
         ));
 }
 
-module.exports = { handlePrintLabel, handleAddLine, handleAddAccessory, handleClearDraft };
+module.exports = { handlePrintLabel, handleAddLine, handleClearDraft };

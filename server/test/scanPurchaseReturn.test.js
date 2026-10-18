@@ -358,7 +358,7 @@ test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形�
       //    去向：退货链路的行为断言在本文件 **AC-R2…R10**（直接调 `submitPurchaseReturn`，6 条均绿）✓
       // 2026-10-14 re-pointed: purchase_return is the RETURNS form again (add-ons moved to `accessory`)
       assert.ok(returnHtml.includes('data-view="purchase-return"'), 'this page is the returns form');
-      assert.equal(returnHtml.includes(SCAN_WRITE.fields.accessory), false, 'the add-on select is NOT on the returns page (its own realm now)');
+      assert.equal(returnHtml.includes('accessory_record_id'), false, 'the add-on select is NOT on the returns page (its own realm now)');
       const rendererSrc = rendererSource();
       assert.ok(rendererSrc.includes('returnFormHtml'), '退货表单的**能力保留**（returnFormHtml 仍在）✓');
       assert.equal(returnHtml.includes('退货说明'), false);

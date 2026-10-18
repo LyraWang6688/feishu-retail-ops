@@ -93,30 +93,7 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
 </section>`);
   }
 
-  if (id === 'accessory') {
-    // ⭐⭐ 2026-10-14（业务负责人：「配品的单独销售」· 见 `docs/scan-page-tabs-2026-10-14.md` 任务 B）：
-    //   本页 = 配品单独销售：**选「其他配品」的名称 ＋ 成交金额**（都是现货 ✓）
-    //   🔴 **不扣库存** —— 依据 `docs/sales-total-and-accessory-render-2026-10-07.md:75` C5 逐字：
-    //      「**配品不写尺码、不产生库存动作**」✓ ⇒ 落销售主表 + 销售明细 + 收款明细 ✓（走既有能力 ✓）
-    //   ⚠️ 现状：提交用**既有** `actions.addAccessory`（把配品加进本单 ✓ 能力一直都在 ✓）；
-    //      ⭐「**一步到位**（不经资金页 / 数量可填 / 付款情况=全付）」需要**路由 + 动作配置**各加一处，
-    //      而那两处**当前归 Lead**（他在做"异步建单"那件 ✗）⇒ **等他收完再接** ✓（不并行改同一文件 ✗）
-    const accessories = Array.isArray(write?.accessories) ? write.accessories : [];
-    const t = write?.texts || {};
-    const fields = write?.fields || {};
-    const usable = Boolean(write && write.enabled !== false && accessories.length);
-    const body = usable
-      ? `<h2 class="stock__heading">${escapeHtml(t.accessoryLabel || '')}</h2>
-<form method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-view="accessory-sell">
-${hiddenField(fields.action, write.actions.addAccessory)}
-${hiddenField(fields.submitKey, write.saleKey)}
-<div class="form-row"><label>${escapeHtml(t.accessoryLabel || '')}</label><select name="${escapeHtml(fields.accessory)}"><option value="">${escapeHtml(t.accessoryPlaceholder || '')}</option>${accessories.map((item) => `<option value="${escapeHtml(item.record_id)}">${escapeHtml(item.name)}</option>`).join('')}</select></div>
-<div class="form-row"><label>${escapeHtml(t.accessoryAmountLabel || '')}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.accessoryAmountPlaceholder || '')}"></div>
-<button type="submit" class="btn"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton || '')}</button>
-</form>`
-      : '';
-    return wrap(body || realmEmptyHtml('accessory', config));
-  }
+
 
   // sales（缺省）
   if (!write || write.enabled === false || write.saleEnabled === false) {
