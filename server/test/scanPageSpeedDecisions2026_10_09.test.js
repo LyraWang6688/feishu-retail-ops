@@ -312,12 +312,19 @@ test('A2 失效点齐不齐（源码哨兵）：库存三处 + 货品写入口�
   //    · **依据**：新增了一条**写路径** `applyPurchaseReturnBatch`（退货扣库存的批量口），
   //      它同样在写成功后当场作废快照 ⇒ 计数必须 +1。
   //    ⚠️ 这是**等号对等号**的迁移（不是 `>=`、不是删断言）：纪律一字未变，只是把"新写路径"数进去。
+  // ⚠️ 2026-10-18 **再成对迁移一次**（task-3 · 第 4 步「销售出库批量扣减」）：
+  //    · **改前逐字**：`assert.equal(inventory.split(line).length - 1, 5, '…五处…')`
+  //    · **改后逐字**：`assert.equal(inventory.split(line).length - 1, 6, '…六处…')`
+  //    · **依据**：新增了一条**写路径** `applySaleBatch`（销售扣库存的批量口），
+  //      它同样在实时库存真的删掉之后当场作废快照 ⇒ 计数必须 +1。
+  //    ⚠️ 同一条纪律：**等号对等号**（不是 `>=`、不是删断言）—— "写了实时库存就必须当场作废快照"
+  //      对新的写路径**同样有效**，所以新写路径必须一行不少地被数进来。
   for (const line of [
     "invalidateLiveInventorySnapshot('inventory_changed');",
   ]) {
-    assert.equal(inventory.split(line).length - 1, 5,
-      'inventoryService 的五处（executeOperation / transitionState / promoteToSample'
-      + ' / applyPurchaseBatch / applyPurchaseReturnBatch）各要一行');
+    assert.equal(inventory.split(line).length - 1, 6,
+      'inventoryService 的六处（executeOperation / transitionState / promoteToSample'
+      + ' / applyPurchaseBatch / applyPurchaseReturnBatch / applySaleBatch）各要一行');
   }
   // 「货品信息」的写入口：新建货品 / 写标签二维码。
   // ⭐ 2026-10-17 迁移：**写成本**那条已随"到货单价格识别退场"整条删除（`task.recognized` 无生产写入点），

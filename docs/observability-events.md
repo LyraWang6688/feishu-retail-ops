@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **507** 个事件。按前缀分组：
+共 **508** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -81,9 +81,9 @@
 | `inventory.adjustment.count.applied` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.adjustment.count.replayed` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.adjustment.season.applied` | 1 | src/services/inventoryAdjustmentService.js |
-| `inventory.change.applied` | 3 | src/services/inventoryService.js |
+| `inventory.change.applied` | 4 | src/services/inventoryService.js |
 | `inventory.change.failed` | 1 | src/config/alerts.js |
-| `inventory.sample_candidates.failed` | 1 | src/services/inventoryService.js |
+| `inventory.sample_candidates.failed` | 2 | src/services/inventoryService.js |
 | `inventory.sample.promoted` | 1 | src/services/inventoryService.js |
 | `inventory.state.transitioned` | 1 | src/services/inventoryService.js |
 
@@ -322,6 +322,7 @@
 | --- | --- | --- |
 | `sales.confirm_deal.short_stock` | 2 | src/services/salesThreadProgressService.js |
 | `sales.delivery.completed` | 1 | src/services/salesDeliveryService.js |
+| `sales.delivery.inventory_batch_fallback` | 1 | src/services/salesDeliveryService.js |
 | `sales.delivery.line.failed` | 1 | src/services/salesDeliveryService.js |
 | `sales.detail_id.skipped` | 1 | src/services/salesOrderService.js |
 | `sales.entry.total_amount.skipped` | 1 | src/services/salesOrderService.js |
