@@ -28,7 +28,7 @@ test('AC-SP2 ⭐ 那次读**不再可能发生**（没有任何调用点 ⇒ 省
     const code = stripped(file);
     assert.equal(/purchaseSizeReader|present_special_sizes/.test(code), false, `${file} 里不许再有那次读/那个字段 ✓`);
   }
-  // 文件本身**保留**（她 2026-10-14：接线删、文件留 ✓）
-  const reader = fs.readFileSync(path.join(SERVER, 'src/services/purchaseSizeReader.js'), 'utf8');
-  assert.ok(reader.includes('当前无生产引用'), 'reader 文件保留 + 顶部注明现状 ✓');
+  // ⭐ 2026-10-18：业务负责人确认「前端没有就删」⇒ 这个无生产引用的 reader 文件已删除。
+  assert.equal(fs.existsSync(path.join(SERVER, 'src/services/purchaseSizeReader.js')), false,
+    'purchaseSizeReader.js 应已删除（无生产引用）');
 });

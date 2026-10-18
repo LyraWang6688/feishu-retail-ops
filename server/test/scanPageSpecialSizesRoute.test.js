@@ -30,7 +30,7 @@ test('AC-SPR2 ⭐ 路由仍走既有 lookup；缺码只按默认段（A 38–45 
   const { SCAN_PAGE } = require('../src/config/scanPage');
   assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.A.default, [38, 45], 'A 38–45 ✓');
   assert.deepEqual(SCAN_PAGE.sizeSegments.ranges.B.default, [36, 41], 'B 36–41（她 2026-10-14 明确 ✓）');
-  // 文件保留（她批的：接线删、文件留 ✓）
-  const reader = fs.readFileSync(path.join(SERVER, 'src/services/purchaseSizeReader.js'), 'utf8');
-  assert.ok(reader.includes('当前无生产引用'), 'reader 顶部注明"当前无生产引用" ✓');
+  // ⭐ 2026-10-18：业务负责人确认删除该无引用文件（不再"文件留"）。
+  assert.equal(fs.existsSync(path.join(SERVER, 'src/services/purchaseSizeReader.js')), false,
+    'purchaseSizeReader.js 应已删除');
 });

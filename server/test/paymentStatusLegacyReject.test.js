@@ -122,7 +122,7 @@ const makeHarness = () => {
   app.use(express.urlencoded({ extended: true }));
   app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
     service: { lookup: async () => view() }, gateway: {}, config: SCAN_PAGE,
-    writeService, purchaseSizeReader: { listSizes: async () => [] },
+    writeService,
     followup: { addPayment: async () => ({ ok: true }) },
   }));
   return { app, writes };
