@@ -826,8 +826,11 @@ test('AC-IV5 ⭐ 单件（1 尺码 1 双）不退化：总 HTTP **等量或更�
 
 test('AC-IV6 源码哨兵：批量口与 applyPurchaseBatch 同形（runForStocks/整表读/createBatch/getBatch/deleteBatch）', () => {
   const src = path.join(__dirname, '..', 'src');
-  const inventory = fs.readFileSync(path.join(src, 'services', 'inventoryService.js'), 'utf8');
-  const batchBody = inventory.slice(inventory.indexOf('async applyPurchaseReturnBatch('));
+  // ⚠️ 2026-10-18（task-5 · inventoryService.js 大文件拆分）**成对迁移**：
+  //    `applyPurchaseReturnBatch` 原样搬到 `src/services/inventory/purchaseReturnBatch.js`
+  //    （方法体逐字节未改，仍用 `this.`）⇒ 这里改读新模块；下面所有断言**逐字不变**。
+  const inventory = fs.readFileSync(path.join(src, 'services', 'inventory', 'purchaseReturnBatch.js'), 'utf8');
+  const batchBody = inventory.slice(inventory.indexOf('async function applyPurchaseReturnBatch('));
   assert.ok(batchBody.length > 0, '`applyPurchaseReturnBatch` 必须存在');
   const end = batchBody.indexOf('\n  async ', 10);
   const body = end > 0 ? batchBody.slice(0, end) : batchBody;

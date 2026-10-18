@@ -778,9 +778,12 @@ test('AC-SB5 ⭐ 单件（1 行 1 双）不退化：总 HTTP **等量或更好**
 
 test('AC-SB6 源码哨兵：applySaleBatch 与 applyPurchaseReturnBatch 同形；交付那一段只经批量口', () => {
   const src = path.join(__dirname, '..', 'src');
-  const inventory = fs.readFileSync(path.join(src, 'services', 'inventoryService.js'), 'utf8');
-  assert.ok(inventory.includes('async applySaleBatch('), '`applySaleBatch` 必须存在');
-  const batchStart = inventory.indexOf('async applySaleBatch(');
+  // ⚠️ 2026-10-18（task-5 · inventoryService.js 大文件拆分）**成对迁移**：
+  //    `applySaleBatch` 原样搬到 `src/services/inventory/saleBatch.js`（方法体逐字节未改，仍用 `this.`）
+  //    ⇒ 这里改读新模块；下面所有断言**逐字不变**（只把"class 方法签名"识别成同名的 function 声明）。
+  const inventory = fs.readFileSync(path.join(src, 'services', 'inventory', 'saleBatch.js'), 'utf8');
+  assert.ok(inventory.includes('async function applySaleBatch('), '`applySaleBatch` 必须存在');
+  const batchStart = inventory.indexOf('async function applySaleBatch(');
   const nextMethod = inventory.indexOf('\n  async ', batchStart + 10);
   const body = nextMethod > 0 ? inventory.slice(batchStart, nextMethod) : inventory.slice(batchStart);
   assert.match(body, /this\.runForStocks\(/, '必须与其它批量口一样按 stock_key 占住串行队列');

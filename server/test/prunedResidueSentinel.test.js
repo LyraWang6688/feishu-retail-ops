@@ -80,7 +80,13 @@ test('哨兵-3 ⭐ 反方向：`PURCHASE_GROUP_NOTICE_*` 一族没被误杀（�
 test('哨兵-4 `V1ReferenceResolver.findLiveInventory` 已删、能力由 InventoryService 承载（能真红：塞回那个方法 ⇒ 红）', () => {
   const resolver = read('server/src/services/v1ReferenceResolver.js');
   assert.equal(/async findLiveInventory\s*\(/.test(resolver), false, '⛔ 旧实现（方法级零调用方 + 按数字读尺码）不许回来 ✗');
-  const inventory = read('server/src/services/inventoryService.js');
+  // ⚠️ 2026-10-18（task-5 · inventoryService.js 大文件拆分）**成对迁移**：两个方法原样搬到
+  //    `src/services/inventory/liveStock.js`（方法体逐字节未改，仍以原型方法挂回 InventoryService）
+  //    ⇒ 这里读 facade ＋ 新模块；下面两条正则**逐字不变**（判据没放宽）。
+  const inventory = [
+    read('server/src/services/inventoryService.js'),
+    read('server/src/services/inventory/liveStock.js'),
+  ].join('\n');
   assert.match(inventory, /findLiveInventory\s*\(/, '⭐ 承载者 `InventoryService.findLiveInventory` 必须在 ✓');
   assert.match(inventory, /findLiveInventoryIn\s*\(/, '⭐ 它的内部实现也必须在 ✓');
 });

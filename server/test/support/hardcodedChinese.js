@@ -192,6 +192,13 @@ function listSources(dir) {
  * 扫一批根目录，与白名单比对。
  * `roots`：`[{ dir, prefix }]`（prefix = 白名单里的键前缀，如 `services/`）。
  * `whitelist.files`：`{ "services/x.js": ["中文串", …] }`。
+ * ⭐ `aggregates`（可选）：把**按职责拆开的一批文件**当成"拆分前那一份源码"参与比对
+ *   （形如 `[{ key: 'services/inventoryService.js', files: [绝对路径, …] }]`）。
+ *   · 命中 `files` 的**绝对路径**不再按单文件扫（否则拆分后的每个模块都会被当成"新文件"）；
+ *   · 聚合源码 = 各文件按给定顺序 `join('\n')`，扫描结果记在 `key` 下 —— 白名单键仍是
+ *     拆分前那一档 ⇒ **存量债口径一个字符都不变**（纯搬运不产生新增/不产生 stale）。
+ *   ⚠️ 只给"大文件按职责拆分"这种**纯搬运**用；`buildWhitelist` 不支持 aggregates
+ *     （重新生成清单时按单文件登记会把同一句重复写多次）。
  */
 
 /**
@@ -202,8 +209,8 @@ function listSources(dir) {
  *     （2026-10-13 一天拦了三次 ✗）⇒ 每次都要手工重生成清单 ⇒ 总有人忘 ⇒ CI 红。
  *   ⇒ 改后「清单不同步」这件事**不再阻塞任何 PR** ✓
  */
-function evaluateGuard({ roots, whitelist }) {
-  const { added, stale } = scanTree({ roots, whitelist });
+function evaluateGuard({ roots, whitelist, aggregates = [] }) {
+  const { added, stale } = scanTree({ roots, whitelist, aggregates });
   const preview = stale.slice(0, 20).map((item) => `  ${item.file}  ${item.text}`).join('\n');
   return {
     ok: added.length === 0,
@@ -234,20 +241,28 @@ function buildWhitelist({ roots, comment }) {
   return { ...(comment ? { _comment: comment } : {}), counts: { files: Object.keys(sorted).length, texts }, files: sorted };
 }
 
-function scanTree({ roots, whitelist = {} }) {
+function scanTree({ roots, whitelist = {}, aggregates = [] }) {
   const known = whitelist.files || {};
   const added = [];
   const seen = new Map();
+  const scanOne = (key, source) => {
+    const texts = scanSource(key, source);
+    const allowed = new Set(known[key] || []);
+    seen.set(key, new Set(texts.map((item) => item.text)));
+    for (const item of texts) {
+      if (!allowed.has(item.text)) added.push({ file: key, text: item.text, line: item.line });
+    }
+  };
+  // 聚合（拆分出来的文件）：按绝对路径排除单文件扫描，把整组按顺序拼成"拆分前那一份"再扫。
+  const aggregatedPaths = new Set(aggregates.flatMap((aggregate) => aggregate.files));
   for (const { dir, prefix } of roots) {
     for (const file of listSources(dir)) {
-      const key = `${prefix}${path.relative(dir, file).split(path.sep).join('/')}`;
-      const texts = scanSource(key, fs.readFileSync(file, 'utf8'));
-      const allowed = new Set(known[key] || []);
-      seen.set(key, new Set(texts.map((item) => item.text)));
-      for (const item of texts) {
-        if (!allowed.has(item.text)) added.push({ file: key, text: item.text, line: item.line });
-      }
+      if (aggregatedPaths.has(file)) continue;
+      scanOne(`${prefix}${path.relative(dir, file).split(path.sep).join('/')}`, fs.readFileSync(file, 'utf8'));
     }
+  }
+  for (const aggregate of aggregates) {
+    scanOne(aggregate.key, aggregate.files.map((file) => fs.readFileSync(file, 'utf8')).join('\n'));
   }
   const stale = [];
   for (const [file, texts] of Object.entries(known)) {
