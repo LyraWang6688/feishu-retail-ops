@@ -17,7 +17,6 @@
     "server/src/services/larkMvpService.js": 1535,
     "server/src/services/pendingDealPushService.js": 1230,
     "server/src/services/purchaseArrivalConversationService.js": 1144,
-    "server/src/services/purchaseWebhookService.js": 1850,
     "server/src/services/scanPageService.js": 1394,
     "server/src/services/scanWriteService.js": 1731,
     "server/src/services/secondDeliveryService.js": 839,

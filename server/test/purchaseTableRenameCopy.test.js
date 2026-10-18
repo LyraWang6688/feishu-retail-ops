@@ -195,7 +195,14 @@ test('AC-R3 新叫法逐字：给她看的用「采购单」/「采购明细」�
   assert.ok(arrival.includes('没找到采购单 ${wanted} 的采购明细'), '报错用「采购单 X 的采购明细」');
   assert.equal(arrival.includes('没找到报货批次'), false);
   // ③ 到货入库：找不到那一批时的报错（业务口径）
-  const webhook = readSrc('services/purchaseWebhookService.js');
+  //   ⭐ 2026-10-18 成对迁移（task-6 文件大小门禁）：`writeArrivalAcceptance` / `nextBatchNo` /
+  //     `writeSupplierImageAttachment` 的方法体原样搬进 `services/purchase/{arrival,postingPlan,documentImages}.js`
+  //     ⇒ 改前逐字只读 `purchaseWebhookService.js`，改后逐字把**代码搬过去的三个文件**一并读；
+  //     **每一条断言文本与正则逐字未动**（不是放宽 —— 少一处仍然红）。
+  const webhook = readSrc('services/purchaseWebhookService.js')
+    + readSrc('services/purchase/arrival.js')
+    + readSrc('services/purchase/postingPlan.js')
+    + readSrc('services/purchase/documentImages.js');
   assert.ok(webhook.includes('这一批在采购单里找不到'), '群/工作台会念到的报错用「采购单」');
   assert.equal(/「报货批次」里找不到/.test(webhook), false);
   // ④ 日志 label 与 schema 语义键一致 ⇒ 「采购主表」

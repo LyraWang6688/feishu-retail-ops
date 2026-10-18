@@ -1,8 +1,8 @@
 {
   "_comment": "⭐ 这是**存量债**（业务负责人 2026-10-12 点头）：业务代码里**既有的**硬编码用户可见中文。**只许减少、不许增加** —— 新增一句就会让 test/noHardcodedChinese.test.js 变红；把这里的一句抽到 config 之后，**请顺手删掉这一条**。键的口径：**按「文件 → 中文串」**（不用行号：行号一动就假红）。口径细节见 test/support/hardcodedChinese.js 头部（注释/日志/内部错误消息**完全不扫**；领域值/表选项照扫进白名单）。",
   "counts": {
-    "files": 45,
-    "texts": 276
+    "files": 47,
+    "texts": 275
   },
   "files": {
     "routes/feishuWebAuth.js": [
@@ -184,6 +184,13 @@
       "收入",
       "未收款"
     ],
+    "services/purchase/arrival.js": [
+      "样品",
+      "门盒"
+    ],
+    "services/purchase/documentImages.js": [
+      "采购单"
+    ],
     "services/purchaseArrivalConversationService.js": [
       "'} ${} 码",
       "实际 0 双的行：不入库、不写库存流水（业务负责人 2026-10-07 口径）",
@@ -210,12 +217,8 @@
     ],
     "services/purchaseWebhookService.js": [
       "${} 码",
-      "样品",
       "采购主表",
-      "采购单",
-      "采购申请 ${}",
-      "门盒",
-      "齐备"
+      "采购申请 ${}"
     ],
     "services/salesDeliveryService.js": [
       "已交付",

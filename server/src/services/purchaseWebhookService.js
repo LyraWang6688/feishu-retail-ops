@@ -1,28 +1,22 @@
 // ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
 const { purchaseMessage, purchaseToast, arrivalToast, inventoryToast, returnNotice } = require('../config/purchaseWebhookTexts');
-const crypto = require('node:crypto');
-const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 // ⚠️ 2026-10-07 深夜：`config/purchaseBehaviors`（采购环节的 `PURCHASE_IN`）**随入库行一起退场**——
 //    它的唯一消费者就是"入库行的「采购行为」"那一列，而「采购入库」表已被业务负责人整表删除。
 //    ⇒ 别再把它 require 回来，也别拿 `inventoryService` 的 `STOCK_PURCHASE_INCREASE` 顶替：
 //      那是**库存环节**的另一条行为记录，用错了等于把流水挂到另一条行为上。
-// ⭐ 2026-10-08：飞书错误的真实 code / msg / log_id / method_id —— **唯一**取用口
-// （本文件下面那个 `larkErrorText` 就是它的薄壳，形状不变）。
-const { larkErrorText: larkErrorTextOf } = require('../utils/larkError');
 // ⛔ `doubaoService`（文字解析：销售录单 ＋ 采购「数量说明」）**已从这里删除（2026-10-09）**：
 //   采购那一半（`parsePurchaseReportText`）随「信息填写」入口一起退场；
 //   销售录单在 `services/larkMvpService.js` 那一侧用它，与本文件无关。
 // 采购申请确认卡片（purchaseRequestConfirmationCard）**已于 2026-10-08 删除**：
 // 报单链路 2026-10-07 起就是免确认（`publishPurchaseRequest` 直接调 `confirmPurchaseRequest`），
 // 那张卡没有任何发送方、动作也认领不了 —— 业务负责人逐条批准后连卡片、动作常量、
-// `handleCardAction` 一起删干净（历史注释见文件下半部分 `updatePurchaseActionCard` 之后）。
+// `handleCardAction` 一起删干净（历史注释见 `purchase/messaging.js` 的 `updatePurchaseActionCard`）。
 const { purchaseStatusCard } = require('../utils/larkCards');
 // MOVEMENT_PURCHASE_DECREASE 是 #83 采购退货扣库存用的流水类型（退货独占链，见 processSupplierReturn）。
 // STOCK_MOVEMENTS 是「库存行为注册表」：退货核对"能退几双"时要数的可退状态
@@ -39,25 +33,13 @@ const { InventoryService } = require('./inventoryService');
 //   ⚠️ 「采购行为」分流（`classifyReportBehavior`）**仍在**，但已经不在本文件里用
 //   —— 它现在的调用方是 `services/purchaseQueryService`（按「报货信息.采购行为」分流）。
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const { renderPurchaseRequestPng, RETURN_TITLE } = require('./purchaseRequestImageService');
+const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey, createOnceByKeys } = require('../infrastructure/idempotencyKey');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
-const { logError, logInfo, logWarn } = require('../utils/logger');
-const { withTimeout, withTimeoutProxy } = require('../utils/withTimeout');
+const { logInfo } = require('../utils/logger');
+const { withTimeoutProxy } = require('../utils/withTimeout');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
-// 采购单改成发到**群**（业务负责人：「不用再看经办人了」）。
-// 群 id 从配置读，**没有默认值**（见 config/groupPurchase 里的说明）。
-const { resolvePurchaseChatId } = require('../config/groupPurchase');
-// 采购群那条「@经办人 + 供应商名 + 这批 N 双，图可以直接转给供应商。」的**文案**。
-// 2026-10-07 业务负责人逐字：「不用（说）几条，只给出多少双就可以了」⇒ 文案进配置、
-// 逻辑里不写死中文（「N 条」与「共」都已从模板里删掉）。背景见该配置文件头。
-const {
-  resolvePurchaseGroupNoticeConfig,
-  supplierLabel,
-  renderPurchaseGroupNoticeText,
-  renderPurchaseGroupNoticeMention,
-} = require('../config/purchaseGroupNoticeText');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 // 「报货批次号」的生成器（前缀/日期/位数/时区在 config/purchaseBatchNo）。
 // 2026-10-07 业务负责人：报货批次号不再手填，改由后端代码生成。
@@ -65,57 +47,28 @@ const { PurchaseBatchNoGenerator } = require('./purchaseBatchNoGenerator');
 // 「报货批次」那一行的读写（到货状态 / 单据附件 / 按批次号定位）。
 // 抽成独立 service：本类只管"报货 → 出单"，批次行怎么维护不属于它（模块化）。
 const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
-// ⭐ 2026-10-13（验收提速 ②）：这一批到货了 ⇒ 立刻失效「待验收批次」列表的短缓存。
-const { invalidatePendingBatchesCache } = require('./purchasePendingBatchService');
-// 「这批发到群里的是采购申请单还是采购退货单」的批次类型标记（到货核对靠它区分话题）。
-const { ARRIVAL_BATCH_KINDS } = require('../config/arrivalConversation');
-// 「这条写入属于哪一笔采购业务」—— 关联键的唯一取用口（**白名单**，非白名单键与空值
-// 一律不进日志）。与销售链路同一套：只把调用方**已经知道**的键带下去，不查表、不推导。
-const { mergeCorrelation, correlationFields } = require('../utils/correlationFields');
 // ⭐ 2026-10-12 采购明细ID（`{报货批次号}-{两位序号}`）—— 分配器只有一处实现。
 const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
-// ⭐ 2026-10-09：扫码页「货品信息」内存快照（单价真源）的**跨模块失效** ——
-//   本文件是"新建货品"与"写成本"两个写入口之一（另一个是 `tagQrCodeService` 写标签二维码）。
-//   传 `{ tableKey: 'product' }` 只作废货品那一份（写货品不影响库存，别让库存快照白重拉）。
-const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
 // ⭐⭐ 2026-10-16（业务负责人拍板 **ⓐ**：「同一个报货批次号下**按供应商拆分/分组**」）——
 //   分组口径 / 每组幂等键 / "没标注供应商"的桶只在 `config/supplierSplit.js` ＋
 //   `services/supplierSplitService.js` 一处（本文件**不抄第二份** ✗）。
 //   ⚠️ 它**不认识飞书**（不 require gateway / schema）、**不写表** ⇒ 本类照旧是**唯一**写库的地方。
 const { resolveSupplierSplitConfig } = require('../config/supplierSplit');
-const {
-  splitBySupplier, groupItemsBySupplier: groupItemsBySupplierOf, documentFileNameOf,
-} = require('./supplierSplitService');
+// ⭐⭐ 2026-10-18（task-6 · 文件大小门禁）：报货 → 出单 → 出图 → 发群 → 到货 的**方法体**
+//   原样搬进 `services/purchase/**`；本文件只保留 **facade + 编排 + 兼容导出**。
+//   各小模块是"服务对象的 mixin"：facade 保留**同名薄委托**，方法名/签名/`this` 语义逐字不变，
+//   模块内部也照旧 `this.xxx(...)`（⇒ 既有用例对 service 打桩依然生效）。
+const messaging = require('./purchase/messaging');
+const supplierGroups = require('./purchase/supplierGroups');
+const documentImages = require('./purchase/documentImages');
+const postingPlan = require('./purchase/postingPlan');
+const arrival = require('./purchase/arrival');
+const { purchaseCorrelation } = require('./purchase/correlation');
+// 「附件单元格 → file_token 列表」的**唯一实现**搬到了 `purchaseOrderBatchService`
+//（2026-10-07 附件回填改到「报货批次.单据」，两边都要用同一套解析；
+//  这里只是转发导出，保持既有 `module.exports` 形状不变，避免第二份实现慢慢漂移）。
+const { attachmentTokens } = require('./purchaseOrderBatchService');
 
-/** 「单据」里那张图的**缺省**文件名后缀（退货那条链会传自己的后缀 ✓ 值没变）。 */
-const DEFAULT_DOCUMENT_FILE_SUFFIX = '采购单';
-
-/**
- * 采购侧的关联键包（只进日志，**不改任何业务判断、不进任何业务 input**）。
- *
- * 与销售链路的 `options.correlation` 是同一个范式：显式传参、不用 AsyncLocalStorage
- * （库存引擎有跨请求重放，从上下文读会指向错的那一笔）。
- *
- * 三个键各自"从哪来"（**拿不到就不传**，`mergeCorrelation` 会把空值 / 非白名单键丢掉，
- * 所以不会写成 `"batch_no":""`）：
- *   · `task_id`                    —— 本地采购任务（扫码补货 = `scan_replenish_…`；
- *                                     到货核对 = `arrival_reconcile_…`，那是另一套 task，如实照传）
- *   · `batch_no`                   —— 采购批次号（代码生成的 `CGD-YYYYMMDD-NNNN`；旧数据可能是手填的 `202610071` 或旧的 `BH-…`）
- *   · `purchase_batch_record_id`   —— ⭐ **「报货批次」那条记录**（2026-10-07 晚替换掉了原来的
- *                                      `purchase_arrival_record_id`：到货落点从已删除的
- *                                      「到货验收」表搬到「报货批次」，那条旧记录 id 已无来源）
- *
- * ⛔ 原先还有第四个 `purchase_report_record_id`（「信息填写」那条报单记录）——
- *    **2026-10-09 已删**：那张表被业务负责人整个删掉、报单入口退场 ⇒ 这个键**已无来源**；
- *    按「删写入点 ＋ 删白名单键」处理（`utils/correlationFields.js` 里那一行也一并删掉），
- *    否则日志里会永远缺一个"本该有值"的键，反而误导排查。
- */
-const purchaseCorrelation = ({ taskId, batchNo, batchRecordId } = {}) =>
-  mergeCorrelation({
-    task_id: taskId,
-    batch_no: batchNo,
-    purchase_batch_record_id: batchRecordId,
-  });
 
 // 🔴 2026-10-08（业务负责人逐条批准）：**采购卡片动作整体退场**。
 //   · 2026-10-05 先删了「采购到货」拍照识别链路的 `confirm_purchase_arrival` / `cancel_purchase_arrival`；
@@ -131,22 +84,6 @@ const purchaseCorrelation = ({ taskId, batchNo, batchRecordId } = {}) =>
 // （`idFor` 那个 hash 小工具已随报单入口删除：它只被 `purchaseTaskId` /
 //  `acceptMany` 的包 id 用过，两个调用方都随「信息填写」退场。）
 
-/**
- * 「回复某条消息」时要不要**进话题**：`options.inThread === true` → `reply_in_thread: true`。
- *
- * 为什么需要这个字段（业务负责人 2026-10-07 真机测试后提的）：
- *   · 飞书里**回复 ≠ 话题**：不带 `reply_in_thread` 的回复只是**引用回复**，
- *     在普通群里就表现为**又一条并列消息** —— 她看到的就是"图一条、@文字一条，两条消息"；
- *   · 带 `reply_in_thread: true` 才是**话题**：主群里我们那条回复会**创建**话题，
- *     响应里回带 `thread_id`（`PurchaseBatchLocator` 正是拿它写「话题 ↔ 批次」映射的）。
- * ⚠️ **只在真的在回复某条消息时才有意义**（调用方只在 `replyToMessageId` 非空时传它）：
- *    顶层 `create` 没有"回复谁"这回事，带上这个字段没有意义。
- * ⚠️ 字段名与用法与 `larkMvpService.replyMessage(..., { inThread: true })` **完全一致**
- *    （`@larksuiteoapi/node-sdk` 的 `im.message.reply` 本来就带 `reply_in_thread`）——
- *    **不新引 SDK、也不换调用方式**。
- * ⚠️ 默认 `false` ⇒ 不传时出站 payload 与改动前**逐字节相同**（单测钉住了这一条）。
- */
-const replyThreadFields = (options = {}) => (options?.inThread === true ? { reply_in_thread: true } : {});
 
 // （`PURCHASE_RETURN_BATCH_KIND` 那个批次类型标记已随采购退货入口删除：
 //  它只被退货归批的恢复逻辑读过。）
@@ -154,41 +91,8 @@ const replyThreadFields = (options = {}) => (options?.inThread === true ? { repl
 // （原先这里有个 number() 小工具，只被 confirmArrivalLocked 里那段"算到货状态"的
 //  回写用；那段按业务负责人口径删掉后它就没有调用方了，随之删除，不留死代码。）
 
-// 「附件单元格 → file_token 列表」的**唯一实现**搬到了 `purchaseOrderBatchService`
-//（2026-10-07 附件回填改到「报货批次.单据」，两边都要用同一套解析；
-//  这里只是转发导出，保持既有 `module.exports` 形状不变，避免第二份实现慢慢漂移）。
-const { attachmentTokens } = require('./purchaseOrderBatchService');
-
-const aggregateArrivalItems = (items) => {
-  const byKey = new Map();
-  for (const item of items) {
-    const size = Number(item.size);
-    const quantity = Number(item.quantity);
-    // ⚠️ 新品在建档之前还没有 product_record_id（建档排在确认之后/新流程的编排里），
-    // 所以这一步身份要退回「货号+颜色」——**不能**退回空串：
-    // 两个不同新品都会落到空 key 上，被错当成同一条明细合并（尺码一样时数量翻倍，
-    // 入库会跟着错）。老货品仍然用 product_record_id 聚合，行为不变。
-    const identity = item.product_record_id || `pending:${textValue(item.item_no)}|${textValue(item.color)}`;
-    if (identity === 'pending:|' || !Number.isInteger(size) || size <= 0 ||
-      !Number.isInteger(quantity) || quantity <= 0) throw new Error('到货明细的货品、尺码或数量无效');
-    const key = `${identity}|${size}`;
-    if (byKey.has(key)) byKey.get(key).quantity += quantity;
-    else byKey.set(key, { ...item, size, quantity });
-  }
-  return [...byKey.values()];
-};
-
 // （原先这里有个 sleep()，只被已删除的「识别失败态重试写入」用到，随那段一起删掉。）
 
-/**
- * 飞书 SDK 抛错时 message 往往只有 "Request failed with status code 400"，
- * 真正有用的错误码和原因在 response.data 里（例如缺权限的 99991672）。
- * 出图/发图的失败只会写日志，所以日志必须带上这两个字段，否则线上排查只能靠猜。
- *
- * ⚠️ 2026-10-08：实现**收敛到 `utils/larkError`**（同一个形状只留一处实现）；
- *    这里的 `larkErrorText` 仍然是 `msg (Code: code)`，调用点与文案一个字不变。
- */
-const larkErrorText = (error) => larkErrorTextOf(error);
 
 // ── 已删除：拍照识别那一套 ────────────────────────────────────────────────
 // 2026-10-05 业务负责人删掉了「采购到货」表的「类型」「识别状态」「识别失败原因」三个字段，
@@ -336,6 +240,77 @@ class PurchaseWebhookService {
     this.supplierSplit = options.supplierSplit || resolveSupplierSplitConfig();
   }
 
+  // ── 实现已搬进 `services/purchase/**`（2026-10-18，task-6 文件大小门禁）──────────────
+  // 保留**同名薄委托**：方法名 / 签名 / `this` 语义逐字不变 —— 既有调用方、用例
+  // 以及模块内部的 `this.xxx(...)` 都不用改；方法体在对应小模块里**原样**保留，行为零变化。
+  resolvePurchaseGroupTarget(options = {}) {
+    return messaging.resolvePurchaseGroupTarget.call(this, options);
+  }
+
+  mentionOperatorText(operatorOpenId, content, config) {
+    return messaging.mentionOperatorText.call(this, operatorOpenId, content, config);
+  }
+
+  async sendPurchaseGroupNotice(content, options = {}) {
+    return messaging.sendPurchaseGroupNotice.call(this, content, options);
+  }
+
+  async sendImage(openId, imageBuffer, receiveIdType = 'open_id', options = {}) {
+    return messaging.sendImage.call(this, openId, imageBuffer, receiveIdType, options);
+  }
+
+  async sendText(openId, content, receiveIdType = 'open_id', options = {}) {
+    return messaging.sendText.call(this, openId, content, receiveIdType, options);
+  }
+
+  groupItemsBySupplier(items) {
+    return supplierGroups.groupItemsBySupplier.call(this, items);
+  }
+
+  supplierReportGroups(task, posting = {}) {
+    return supplierGroups.supplierReportGroups.call(this, task, posting);
+  }
+
+  async resolveSupplierName(supplierRecordId) {
+    return supplierGroups.resolveSupplierName.call(this, supplierRecordId);
+  }
+
+  async deliverSupplierImages(taskId, task, posting = {}, options = {}) {
+    return documentImages.deliverSupplierImages.call(this, taskId, task, posting, options);
+  }
+
+  async deliverSupplierImagesInner(taskId, task, posting = {}, options = {}) {
+    return documentImages.deliverSupplierImagesInner.call(this, taskId, task, posting, options);
+  }
+
+  async writeSupplierImageAttachment(options) {
+    return documentImages.writeSupplierImageAttachment.call(this, options);
+  }
+
+  async resolvePurchaseInboundState(productRecordId) {
+    return arrival.resolvePurchaseInboundState.call(this, productRecordId);
+  }
+
+  async updatePurchaseActionCard(task, event, card) {
+    return messaging.updatePurchaseActionCard.call(this, task, event, card);
+  }
+
+  async ensurePostingPlan(taskId, task, options = {}) {
+    return postingPlan.ensurePostingPlan.call(this, taskId, task, options);
+  }
+
+  async confirmArrivalLocked(taskId, task, operatorOpenId, options = {}) {
+    return arrival.confirmArrivalLocked.call(this, taskId, task, operatorOpenId, options);
+  }
+
+  async writeArrivalAcceptance(options) {
+    return arrival.writeArrivalAcceptance.call(this, options);
+  }
+
+  async nextBatchNo() {
+    return postingPlan.nextBatchNo.call(this);
+  }
+
   // ⛔⛔ 2026-10-09：**「信息填写」报单/退货入口整条链路已从这里删除**。
   //
   // 事实：业务负责人把「信息填写」表（`purchaseReport`，`tblo0ffzFt7vyQw2`）
@@ -367,7 +342,6 @@ class PurchaseWebhookService {
   //    连同 `purchaseQuantityPolicy` / `doubaoService.parsePurchaseReportText` 一起取回。
 
 
-
   // ⚠️ 2026-10-07：**解析只有一条路**（业务负责人的口径，逐字：「不分报货还是退货，
   // 都是按照同样的逻辑：如果数量说明不写，数量就默认为一双」）——报货与退货都调
   // `parseReportQuantities`（尺码多选逐个展开 + 数量说明，说明不写 ⇒ 每个勾选尺码 1 双）。
@@ -375,61 +349,6 @@ class PurchaseWebhookService {
   // **不再决定怎么解析**。原来的 `parseReportReturnQuantities`（"读「数量」列、无尺码"）
   // 与承接分流的壳 `parseReportItems` 都已随本次口径删除。
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  /**
-   * 采购单要发到哪儿。**配置先行，没有默认值**。
-   *
-   * 返回 `{ chatId, sandbox, reason }`：
-   *   · 配了 `PURCHASE_CHAT_ID` → 发那个群；
-   *   · 没配 → sandbox=true，调用方**大声跳过并记日志**，绝不回落到私聊
-   *     （业务负责人明确说「不用再看经办人了」，偷偷发私聊会让人以为已经升级到群）。
-   *
-   * 沙箱是测试用的显式通道（构造时注入 chatId，不读环境变量）：
-   * 用 `process.env` 直接判的话，一个进程里并发跑的用例会互相污染。
-   */
-  resolvePurchaseGroupTarget(options = {}) {
-    if (options.sandboxChatId) return { chatId: options.sandboxChatId, sandbox: true, reason: 'sandbox' };
-    const chatId = resolvePurchaseChatId();
-    if (!chatId) return { chatId: '', sandbox: false, reason: 'chat_id_unconfigured' };
-    return { chatId, sandbox: false, reason: 'configured' };
-  }
-
-  /**
-   * 采购单发到群里时，@那个记录的**经办人** —— 业务负责人明确改的。
-   *
-   * 为什么不再 @所有人：她要的是"经办人知道这批单子发了"，@所有人是群骚扰；
-   * 经办人目前都在这个采购群里，所以直接在群里 @他（不再单独发私聊）。
-   *
-   * ⚠️ 拿不到经办人 open_id 时**不加 @**（只发正文）：宁可少一个提醒，也不能 @错人，
-   *    更不能退回 @所有人。调用方会同时记一条 warn 日志，便于排查"为什么没 @到"。
-   *
-   * ⚠️ 2026-10-07：那段飞书 @ 标记**也进了配置**（`config/purchaseGroupNoticeText` 的
-   *    `mention`，占位符 `{openId}`）—— 这里不再有写死的 `<at …>`。
-   */
-  mentionOperatorText(operatorOpenId, content, config = resolvePurchaseGroupNoticeConfig()) {
-    // 拿不到 open_id → 空 @ 前缀（`renderPurchaseGroupNoticeMention` 返回空串）。
-    return `${renderPurchaseGroupNoticeMention(operatorOpenId, config)}${String(content || '')}`;
-  }
 
   // 🔴 2026-10-07「私聊链路移除」：`sendCard(openId, card)` **整段删除**。
   //    它是「把确认卡片发给经办人私聊」的那条路，**全仓没有调用方**
@@ -459,54 +378,6 @@ class PurchaseWebhookService {
   // 它唯一的调用点就是采购退货的差额提示，那条现在改走 `sendPurchaseGroupNotice`
   // （业务负责人：「一律在话题群里，以后私聊路线就没有了」）。
   // 留着它就是留一条没人用的主动私聊出口，下次读代码的人很容易再挂上去。
-
-  /**
-   * 在**采购群**（PURCHASE_CHAT_ID，和出图同一个群）说一句纯文本。
-   *
-   * 业务负责人 2026-10-06 的口径：「"说明和勾选对不上"时要不要在群里给个提示」→
-   * 「可以给提示」。所以这是**运营可见的反馈**，不再让她"提交了没反应、只能查日志"。
-   *
-   * 与 sendText 是刻意分开的语义：
-   *   · sendText —— 主链动作，发不出去就算这次处理失败；
-   *   · sendPurchaseGroupNotice —— 发给采购群的事后通知，**失败不抛错**（只记日志、返回 false）：
-   *     它出现在"这条报货没进图" / "退货数量对不上"之后，绝不能因为一句提示发不出去
-   *     就把整批判成失败。
-   *
-   * 群 id 走 config/groupPurchase（未配置就大声跳过、不回落私聊，与出图同一条口径）。
-   * `options.sandboxChatId`（构造入参）是测试用的显式通道：不读环境变量，避免并发用例互相污染。
-   *
-   * ⭐ `options.replyToMessageId`：传了就**回复那条消息**而不发顶层消息 ——
-   *    采购退货的差额提示用它挂到**这一批退货单（图）的那个话题**下，
-   *    而不是在群里另开一个话题（业务负责人：「一律在话题群里」）。不传 = 照旧发顶层。
-   * ⚠️ 2026-10-07：回复时**同时带 `inThread: true`**（飞书 `reply_in_thread`）。
-   *    只"回复某条消息"在飞书里是**引用回复**，不建话题 —— 那正是她看到"两条消息"的原因。
-   */
-  async sendPurchaseGroupNotice(content, options = {}) {
-    // 关联键（task_id / batch_no / 记录 id）：只进日志。不传 = 日志形状**逐字不变**。
-    const correlation = correlationFields(options.correlation);
-    const target = this.resolvePurchaseGroupTarget({ sandboxChatId: this.sandboxChatId });
-    if (!target.chatId) {
-      logWarn('purchase.group_notice.skipped', {
-        reason: 'purchase_chat_id_unconfigured', env: 'PURCHASE_CHAT_ID', content, ...correlation,
-      });
-      return false;
-    }
-    const replyToMessageId = String(options?.replyToMessageId || '').trim();
-    try {
-      await this.sendText(target.chatId, content, 'chat_id', {
-        replyToMessageId: replyToMessageId || undefined,
-        // 有回复对象 = 挂在那一批的话题下 → 必须进话题，否则又是一条并列的引用回复。
-        inThread: Boolean(replyToMessageId),
-      });
-      logInfo('purchase.group_notice.sent', {
-        chat_id: target.chatId, reply_to_message_id: replyToMessageId, ...correlation,
-      });
-      return true;
-    } catch (error) {
-      logWarn('purchase.group_notice.failed', { chat_id: target.chatId, error: error.message, ...correlation });
-      return false;
-    }
-  }
 
 
   recordOperator(record, fieldName) {
@@ -562,544 +433,6 @@ class PurchaseWebhookService {
     });
   }
 
-  /**
-   * 发送图片消息（飞书图片消息要先用 im.image 上传拿 image_key）。
-   *
-   * ⚠️ 上传图片用的是应用身份权限 im:resource:upload（或 im:resource）。
-   * 没开通时这里会以 99991672 失败，日志里带上错误码，便于线上直接定位到权限问题。
-   *
-   * `receiveIdType` 默认为 open_id（私聊那条路今天仍在用：到货异常告知）；采购单发到群时
-   * 由调用方传 `chat_id`（参数名必须跟着 receive_id 的实际类型走，不能写死 open_id）。
-   *
-   * 返回 `{ imageKey, messageId, threadId }`：采购单发到群之后要把 message_id / thread_id
-   * 记进映射，供「话题里的消息 / 引用那条消息 → 是哪一批」反查（见 PurchaseBatchLocator）。
-   * `threadId` 只有话题群（或飞书已经给这条消息开了话题）才有值，普通群是空串——
-   * 那种情况由定位器在她第一次回复时补记，不影响定位。
-   *
-   * `options.replyToMessageId`：传了就**回复那条消息**（`im.message.reply`）而不是
-   * 发一条顶层消息——采购单发到群时用它把第 2 条起的消息都挂到第 1 条的话题下
-   * （业务负责人 2026-10-06 拍板，见 deliverSupplierImagesInner）。
-   *
-   * ⚠️ 2026-10-07 新增 `options.inThread`（**只在有 `replyToMessageId` 时有意义**）：
-   * 带上它 → `im.message.reply` 的 `data.reply_in_thread = true` → 飞书把这条回复
-   * **放进话题**（主群里我们这条回复会**创建**那个话题，响应里回带 `thread_id`）。
-   * 🔴 不带它时，"回复某条消息"在飞书里只是**引用回复**、**不建话题** ——
-   * 那正是业务负责人看到的"图一条、文字一条，两条并列消息"。
-   * ⚠️ 与 `larkMvpService.replyMessage(..., { inThread: true })` 是**同一个字段、同一种用法**
-   * （`@larksuiteoapi/node-sdk` 的 `im.message.reply` 本来就带 `reply_in_thread`），
-   * **不新引 SDK、也不换调用方式**。默认 `false` ⇒ 不传时 payload 与改动前**逐字节相同**。
-   */
-  async sendImage(openId, imageBuffer, receiveIdType = 'open_id', options = {}) {
-    if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送图片');
-    let upload;
-    try {
-      upload = await this.client.im.image.create({
-        data: { image_type: 'message', image: imageBuffer },
-      });
-    } catch (error) {
-      throw new Error(`上传采购申请图片失败：${larkErrorText(error)}`);
-    }
-    // SDK 会剥掉外层信封、把 image_key 放在顶层；保留 .data.image_key 兜底，
-    // 免得将来换了 http 实现之后这里静默拿不到 key。
-    const imageKey = upload?.image_key || upload?.data?.image_key;
-    if (!imageKey) throw new Error('采购申请图片上传成功但未返回 image_key');
-    const content = JSON.stringify({ image_key: imageKey });
-    const response = options.replyToMessageId
-      ? await this.client.im.message.reply({
-        path: { message_id: String(options.replyToMessageId) },
-        data: { msg_type: 'image', content, ...replyThreadFields(options) },
-      })
-      : await this.client.im.message.create({
-        params: { receive_id_type: receiveIdType },
-        data: { receive_id: openId, msg_type: 'image', content },
-      });
-    if (response.code !== 0) throw new Error(`发送采购申请图片失败: ${response.msg} (Code: ${response.code})`);
-    return {
-      imageKey,
-      messageId: response.data?.message_id || '',
-      threadId: response.data?.thread_id || '',
-    };
-  }
-
-  /**
-   * 发一条纯文字。返回 `{ messageId, threadId }`。
-   *
-   * ⚠️ 返回值从"messageId 字符串"改成对象，是为了把 `thread_id` 一起带出来记映射
-   * （话题里后续消息只带 thread_id，不带 parent_id）。本类里只有采购单发到群那一个
-   * 调用点，已同步改成解构 `{ messageId, threadId }`。
-   *
-   * `options.replyToMessageId`：传了就**回复那条消息**而不是发顶层消息——采购单发到群时
-   * 用它把「文字 @」挂到第 1 条图的话题下（业务负责人 2026-10-06 拍板）。
-   * ⚠️ 一律回复**第 1 条**（不是回复上一条）：飞书的话题 = 一条消息 + 回复它的消息，
-   * 回复话题里任何一条都算同一个话题；固定回复第 1 条，归属最稳、也最好解释。
-   *
-   * ⚠️ 2026-10-07 新增 `options.inThread`：见 `replyThreadFields` 的注释 ——
-   * **只"回复"不建话题**（飞书那是引用回复），要"图与文字落在同一个话题"就必须带它。
-   * 不传时 payload 与改动前**逐字节相同**。
-   */
-  async sendText(openId, content, receiveIdType = 'open_id', options = {}) {
-    if (!openId) throw new Error('采购记录缺少经办人 open_id，无法发送说明');
-    const text = JSON.stringify({ text: content });
-    const response = options.replyToMessageId
-      ? await this.client.im.message.reply({
-        path: { message_id: String(options.replyToMessageId) },
-        data: { msg_type: 'text', content: text, ...replyThreadFields(options) },
-      })
-      : await this.client.im.message.create({
-        params: { receive_id_type: receiveIdType },
-        data: { receive_id: openId, msg_type: 'text', content: text },
-      });
-    if (response.code !== 0) throw new Error(`发送采购申请说明失败: ${response.msg} (Code: ${response.code})`);
-    return {
-      messageId: response.data?.message_id || '',
-      threadId: response.data?.thread_id || '',
-    };
-  }
-
-  // 同一个供应商的明细合成一张图。没有供应商的明细（历史草稿）归到一组，
-  // 宁可出一张"未标注供应商"的图，也不能拆成一人一张。
-  //
-  // ⭐⭐ 2026-10-16（供应商拆分 · 她选的 ⓐ）：**分桶口径搬进 `services/supplierSplitService.js`**
-  //   —— 出图 / 分组键 / 判据现在是**同一个纯函数**（`groupItemsBySupplierOf`）✓。
-  //   行为**一个字没变**（同一趟遍历、同样"第一次出现的顺序"、同样把空供应商归一组 ✓）；
-  //   这里保留方法名，是因为它已经是被调用方与用例认识的口子（换名只会制造无谓的 diff ✗）。
-  groupItemsBySupplier(items) {
-    return groupItemsBySupplierOf(items, this.supplierSplit);
-  }
-
-  /**
-   * ⭐⭐ 2026-10-16（供应商拆分 · 业务负责人拍板 **ⓐ**）：**这一次要出的报货单 = 按供应商分的几组**。
-   *
-   * 组的**顺序与键**优先取「计划冻结」里那一份（= **生成报货单那一步**算好的 ✓，
-   * `ensurePostingPlan` → `plan.supplier_groups`）；拿不到（老计划 / 冻结计划没有那两个字段）
-   * 就按**同一条口径**现算（同一个纯函数 ✓ 不会漂）。
-   *
-   * 🔴 **批次号仍然是同一个**（她选的 ⓐ）⇒ 这里**只分组、不换号**：
-   *   所有组共用 `posting.batch_no`，出图那一步把每组的图都挂到**同一行**的「单据」上 ✓。
-   * 🔴 **不做"哪一组不在计划里就丢掉"** 这种事 ✗：草稿里有的供应商**必须都出图**
-   *   （丢一组 = 那一家的货没人去报，是最坏的一种静默失败）。
-   *
-   * @returns {Array<{key:string, supplierRecordId:string, items:Array, indexes:Array<number>,
-   *                  groupKey:string, documentKey:string, planned:boolean}>}
-   */
-  supplierReportGroups(task, posting = {}) {
-    const draft = task?.draft || {};
-    const items = Array.isArray(draft.items) ? draft.items : [];
-    const batchNo = posting.batch_no || draft.batch_no || '';
-    const plan = task?.posting_plan || {};
-    const batchKey = String(posting.batch_key || plan.batch_key || '');
-    const planned = Array.isArray(posting.supplier_groups) && posting.supplier_groups.length
-      ? posting.supplier_groups
-      : (Array.isArray(plan.supplier_groups) ? plan.supplier_groups : []);
-    const byKey = new Map((planned || []).map((group) => [String(group?.supplier_key || ''), group]));
-    return this.groupItemsBySupplier(items).map((group) => {
-      const match = byKey.get(String(group.key || '')) || null;
-      // 计划里有 ⇒ **逐字用它那把键**（那是"这一组"的身份）；没有 ⇒ 按同一条模板现算 ✓
-      const computed = splitBySupplier({
-        items: group.items,
-        batchNo,
-        batchKey,
-        config: this.supplierSplit,
-      }).groups[0] || { group_key: '', document_key: '' };
-      return {
-        key: group.key,
-        supplierRecordId: group.supplierRecordId,
-        items: group.items,
-        indexes: group.indexes,
-        groupKey: String(match?.group_key || computed.group_key || ''),
-        documentKey: String(match?.document_key || computed.document_key || ''),
-        planned: Boolean(match),
-      };
-    });
-  }
-
-  async resolveSupplierName(supplierRecordId) {
-    if (!supplierRecordId) return '';
-    const table = this.gateway.table('supplier');
-    const record = await this.gateway.get('supplier', supplierRecordId).catch(() => null);
-    return textValue(record?.fields?.[table.fields.name]).trim();
-  }
-
-  /**
-   * 采购申请写完之后：按供应商出图 → 发给报单人 → 写回「采购申请单」附件。
-   *
-   * ⚠️ 顺序是有意为之：**先发图，再写回附件**。
-   * 她已经拿到图才能转发给供应商，附件只是留档；写回失败绝不能让她收不到图。
-   * 因此附件写入的异常只记警告，绝不向上抛。
-   *
-   * 这个方法也绝不向上抛异常：调用它的时候采购事实已经落地，
-   * 抛出去会让 process() 把任务判成 failed、把报单记录标成「解析失败」，
-   * 她会以为这批货没报上，而实际上已经报上了。
-   */
-  async deliverSupplierImages(taskId, task, posting = {}, options = {}) {
-    try {
-      return await this.deliverSupplierImagesInner(taskId, task, posting, options);
-    } catch (error) {
-      // 兜底：调用方是"采购事实已经写完"的收尾流程，这里漏出去的异常会把任务判成 failed。
-      logError('purchase.request.image.delivery_failed', { task_id: taskId, error: error.message });
-      return { sent: [], failed: [{ supplier: '', error: error.message }], thread_root_message_id: '' };
-    }
-  }
-
-  // options.title / options.fileNameSuffix：采购退货单与采购申请单共用这一整条
-  // 「按供应商出图 → 发到群 → 写回附件」的流程，只有标题和文件名不同（口径就是"格式一样"）。
-  async deliverSupplierImagesInner(taskId, task, posting = {}, options = {}) {
-    const draft = task?.draft || {};
-    const items = draft.items || [];
-    if (!items.length) return { sent: [], failed: [], thread_root_message_id: '' };
-    // 这一层已经知道的关联键：task_id ＋ 批次号（只进日志）。
-    // ⚠️ 报单记录 id **刻意不给**：批次草稿里它是**多条**（report_record_ids），
-    //    挑一条当代表就是编 —— 每条记录自己那几次写入会各自带自己的 id。
-    const batchNo = posting.batch_no || draft.batch_no || '';
-    const correlation = purchaseCorrelation({ taskId, batchNo });
-    // ⚠️ 采购单**只发群**（业务负责人：「不用再看经办人了」）。
-    // operator_open_id 仍然留着——它是「这条记录是谁报的」，用于到货异常告知、
-    // 以及权限判断，不再决定采购单发到哪儿。
-    const operatorOpenId = draft.operator_open_id;
-    // 构造入参里的 sandboxChatId 是**整条链路共用的测试群**（出图与提示发同一个群）：
-    // 没配它、也没在读环境变量时（生产），这里等价于原来的 resolvePurchaseGroupTarget(options)。
-    const target = this.resolvePurchaseGroupTarget({
-      ...options,
-      sandboxChatId: options.sandboxChatId || this.sandboxChatId,
-    });
-    if (!target.chatId) {
-      // **大声跳过**：不静默、不回落到私聊。这条日志就是排查入口——
-      // 线上看到它 = 环境变量 PURCHASE_CHAT_ID 没配，采购单已经写成但图没发出去。
-      logWarn('purchase.request.image.skipped', {
-        task_id: taskId,
-        reason: 'purchase_chat_id_unconfigured',
-        env: 'PURCHASE_CHAT_ID',
-        operator_open_id: operatorOpenId,
-        hint: '未配置采购群，采购申请已生成但图与说明未发送；配好后可按 task 补发',
-      });
-      return { sent: [], failed: [], skipped: 'chat_id_unconfigured', thread_root_message_id: '' };
-    }
-    const sent = [];
-    const failed = [];
-    // ⭐⭐ 2026-10-16（供应商拆分 · 她选的 ⓐ）：**某一组之前已经出过报货单** ⇒ 这一次跳过它
-    //   （AC-SS4「同一组重复生成 ⇒ 只出一次」）。判据是**已经落库的那张图**
-    //   （「单据」附件列里的文件名 = 这一组的报货单身份 ✓）——**不引新状态、不查第二张表** ✓。
-    //   ⚠️ 顺序上它是**先发图、后写附件**（下面的既有顺序）：所以"附件里有这张图"就等价于
-    //      "这一张已经发出去过了" ✓（图没发成功的那一组**不写附件** ⇒ 重试照旧会补发 ✓）。
-    const alreadyReported = [];
-    // 「这一组的报货单叫什么文件名」的**唯一一处解析** —— 下面的前置判据与
-    // `writeSupplierImageAttachment` 必须**同一个名字**，否则"已经出过"永远判不出来 ✗。
-    // ⚠️ 语义与改前逐字一致：**只有 `undefined` 才用缺省**（显式传空串 ⇒ 名字里就是空的 ✓ 不放宽）。
-    const fileNameSuffix = options.fileNameSuffix === undefined
-      ? DEFAULT_DOCUMENT_FILE_SUFFIX : options.fileNameSuffix;
-    // 发到群里的每条消息的 message_id / thread_id：记进本地映射，
-    // 供「话题里的消息 / 引用那条消息 → 是哪一批」反查。
-    const groupMessages = [];
-    // 这一批在群里发的**第 1 条消息**（图）的 message_id = 话题根。
-    // 它之后的每条消息都回复它（见下），于是整批只占一个话题。
-    let threadRootMessageId = '';
-    if (!operatorOpenId) {
-      // 经办人没解析出来（报单记录没填/字段映射缺失）：照发正文，只是不 @ 人。
-      // 记 warn 是为了排查"为什么这批单子没 @到经办人"，绝不退回 @所有人。
-      logWarn('purchase.request.image.operator_missing', {
-        task_id: taskId, chat_id: target.chatId, hint: '未解析出经办人 open_id，这条群消息不会 @任何人',
-      });
-    }
-    // 群里那条话术的**文案**（含 @ 标记 / 供应商占位 / 双数占位 / 未标注供应商的兜底写法）
-    // 全在 `config/purchaseGroupNoticeText`：**调用时才解析**（不在模块加载时求值）。
-    const noticeConfig = resolvePurchaseGroupNoticeConfig();
-    // ⭐ 分组 = `supplierReportGroups`（**同一个批次号下的几组** ✓ 她选的 ⓐ）——
-    //   组键 / 单据键优先取**生成报货单那一步冻结好的计划**（见 `ensurePostingPlan`）。
-    const reportGroups = this.supplierReportGroups(task, posting);
-    if (reportGroups.length > 1) {
-      logInfo(this.supplierSplit.events.grouped, {
-        task_id: taskId, batch_no: batchNo, batch_count: 1, group_count: reportGroups.length,
-        supplier_keys: reportGroups.map((group) => group.key),
-        group_keys: reportGroups.map((group) => group.groupKey),
-        policy: this.supplierSplit.batchNoPolicy,
-      });
-    }
-    for (const group of reportGroups) {
-      const supplierName = await this.resolveSupplierName(group.supplierRecordId).catch(() => '');
-      // 供应商名取不到 → 用配置里的兜底写法（默认「未标注供应商」），**绝不编**。
-      const label = supplierLabel(supplierName, noticeConfig);
-      // ⭐⭐ 这一组**已经出过报货单** ⇒ 跳过（连图都不渲染 ✓ AC-SS4）。
-      //   ⚠️ 判据只认**已经落库的事实**（「单据」里那张同名图）；拿不到批次身份 / 查询失败
-      //     ⇒ **当它没出过**（宁可多发一次，也绝不静默少发一家 ✗ —— 少发才是真事故）。
-      const fileName = documentFileNameOf(label, fileNameSuffix);
-      if (batchNo && typeof this.orderBatches?.findDocument === 'function') {
-        const known = await this.orderBatches.findDocument(batchNo, fileName).catch(() => null);
-        if (known?.exists) {
-          logInfo(this.supplierSplit.events.groupAlreadyReported, {
-            task_id: taskId, batch_no: batchNo, supplier: label,
-            group_key: group.groupKey, document_key: group.documentKey,
-            file_name: fileName, batch_record_id: known.recordId || '',
-            detail_count: group.items.length,
-          });
-          alreadyReported.push(label);
-          continue;
-        }
-      }
-      // ⚠️ 双数口径**一个字没动**：还是这一组明细的 `quantity` 求和。
-      //    2026-10-07 只改文案（删掉「N 条」）——`group.items.length`（条数）**不再要了**，
-      //    连那个变量一起删（留着没人读的 `rowCount` 只会让下一个人以为文案里还有条数）。
-      const totalPairs = group.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-      let png;
-      try {
-        png = await this.images.render({
-          supplierName,
-          batchNo: posting.batch_no || draft.batch_no || '',
-          items: group.items,
-          // 不传就是采购申请单（渲染器里的默认标题），退货传「邯美皮鞋采购退货单」。
-          title: options.title,
-        });
-        // ⚠️ 一条开话题、后面的回复它（业务负责人 2026-10-06 拍板）：
-        // 以前图一条、文字一条都是**顶层消息**，飞书里顶层消息各成一个话题，
-        // 一次提交就变成 4 条消息 / 4 个话题（生产实测）。
-        // 现在：**第 1 条（图）照常顶层发** → 后面每条（文字 @、多供应商时的第 2 张图…）
-        // 都 `im.message.reply` 回复**第 1 条**，于是它们都挂在那一个话题下。
-        // ⚠️ 固定回复第 1 条，不是回复上一条：飞书的话题 = 一条消息 + 回复它的消息，
-        // 回复话题内任何一条都算同一个话题；固定成根消息归属最稳，也最好排查。
-        //
-        // 🔴 2026-10-07 关键修复（业务负责人真机测试后）：「@了经办人，但不是在同一个话题下
-        // 回复的，而是发了两条消息」。根因：**飞书里"回复"≠"话题"** —— 只 `im.message.reply`
-        // 是**引用回复**，要**再带 `reply_in_thread: true`** 才进话题（主群里我们这条回复
-        // 会**创建**话题，响应才回带 `thread_id`）。
-        // ⇒ 这一批里**凡是回复第 1 条图的消息**（第 2 张图、@文字）都带 `inThread: true`。
-        // ⚠️ **第 1 条图仍然是顶层 `create`**：群里没有"她的那条消息"可以回复（这条链路是
-        // 多维表格记录变更触发的），所以话题的根**只能是这张图** —— 我们自己的第一条消息。
-        const imageResult = await this.sendImage(target.chatId, png, 'chat_id', {
-          replyToMessageId: threadRootMessageId,
-          inThread: Boolean(threadRootMessageId),
-        });
-        // 第 1 条消息就是这一批的话题根：它之后的每一条都回到它身上。
-        if (!threadRootMessageId && imageResult.messageId) threadRootMessageId = imageResult.messageId;
-        if (!threadRootMessageId) {
-          // 拿不到第 1 条的 message_id 就没法回复它 → 后面的消息只能退回顶层发
-          //（话题归属保证不了）。真出现这条日志说明飞书响应里没有 message_id，
-          // 属于异常；但**不能因此不发**她那条 @，所以只记一条 warn。
-          logWarn('purchase.request.image.thread_root_missing', {
-            task_id: taskId, chat_id: target.chatId, supplier: label,
-            hint: '发送图片的响应里没有 message_id，后续消息将退回顶层发送（话题归属无法保证）',
-          });
-        }
-        // 图单独一条、文字带 @经办人 单独一条：飞书图片消息没有正文，
-        // @ 只能挂在文字那条上（业务负责人明确要 @经办人，不再是 @所有人）。
-        // ⚠️ `inThread`：这条必须**进话题**（回复第 1 条图 + `reply_in_thread`）——
-        //    她要的就是"图与文字在同一个话题里"，而飞书单靠"回复"只会得到一条引用回复。
-        // ⚠️ 第 1 条图没有 `threadRootMessageId`（它就是根）→ 那种情况 `textInThread` 自然是
-        //    `false`：顶层 `create` 本来也没有"回复谁 / 进哪个话题"这回事。
-        const textInThread = Boolean(threadRootMessageId);
-        // ⚠️ 2026-10-07（业务负责人逐字：「不用说几条，只给出多少双就可以了」）：
-        //    文案从配置渲染 —— `{supplier} 这批 {pairs} 双，图可以直接转给供应商。`
-        //    **没有「N 条」、也没有「共」**；`{pairs}` = 上面那个 `totalPairs`（口径未动）。
-        const textResult = await this.sendText(
-          target.chatId,
-          this.mentionOperatorText(
-            operatorOpenId,
-            renderPurchaseGroupNoticeText({ label, pairs: totalPairs }, noticeConfig),
-            noticeConfig,
-          ),
-          'chat_id',
-          { replyToMessageId: threadRootMessageId, inThread: textInThread },
-        );
-        groupMessages.push(
-          { messageId: imageResult.messageId, threadId: imageResult.threadId },
-          { messageId: textResult.messageId, threadId: textResult.threadId },
-        );
-        // 业务负责人要据此测试：发出去那一刻就把「哪个群 / 哪一批 / 哪条消息 / 哪个话题」记全。
-        logInfo('purchase.request.image.group_sent', {
-          task_id: taskId, chat_id: target.chatId,
-          batch_no: posting.batch_no || draft.batch_no || '', supplier: label,
-          operator_open_id: operatorOpenId || '',
-          thread_root_message_id: threadRootMessageId,
-          image_message_id: imageResult.messageId, image_thread_id: imageResult.threadId,
-          text_message_id: textResult.messageId, text_thread_id: textResult.threadId,
-          text_is_reply: Boolean(threadRootMessageId && textResult.messageId),
-          // ⭐ 2026-10-07：她要能一眼看出"这次是不是真的进了话题"——把发出去时用的
-          // `reply_in_thread` 一起记下来（排查"怎么还是两条消息"时，第一眼就看这个字段）。
-          text_reply_in_thread: textInThread,
-        });
-      } catch (error) {
-        failed.push({ supplier: label, error: error.message });
-        logError('purchase.request.image.send_failed', {
-          task_id: taskId, supplier: label, chat_id: target.chatId, error: error.message,
-        });
-        // 图没发出去就不写附件：保持"先发图、再写回"的顺序，留下人工补发的余地。
-        continue;
-      }
-      try {
-        const written = await this.writeSupplierImageAttachment({
-          taskId, supplierName: label, png,
-          // ⭐ 2026-10-07：附件改回填**「报货批次」的「单据」**（业务负责人：
-          // 「把这些信息挪到我们的'报货批次'里面」）—— 原来写的「采购申请单」那一列
-          // 已被她**从生产表删掉**，再往那儿写只会 FieldNameNotFound。
-          batchNo: posting.batch_no || draft.batch_no || '',
-          // ⚠️ 传**上面已经解析好的那一份**（前置判据与它是同一个名字 ✓）—— 别再各解析一次 ✗
-          fileNameSuffix,
-          // 附件写回也是写库：带上这一层的关联键（task_id ＋ batch_no）。
-          correlation,
-        });
-        if (written?.written) {
-          logInfo('purchase.request.image.attachment_written', { task_id: taskId, ...written, ...correlation });
-        }
-      } catch (error) {
-        // 只告警：她已经有图了。
-        logWarn('purchase.request.image.attachment_write_failed', { task_id: taskId, supplier: label, error: error.message });
-      }
-      sent.push(label);
-    }
-
-    // 「这条消息 / 这条话题 ↔ 是哪一批」的映射：**发完就记**，失败只告警。
-    // 记不上只影响 C 的定位（她会被告知"认不出"），绝不能让采购单已经发出去之后
-    // 再把任务判成失败。
-    for (const { messageId, threadId } of groupMessages.filter((item) => item.messageId)) {
-      try {
-        await this.batchLocator.rememberGroupMessage({
-          batchNo,
-          messageId,
-          threadId,
-          chatId: target.chatId,
-          suppliers: sent,
-          requestIds: posting.request_ids || [],
-          detailCount: items.length,
-          // 采购申请单 / 采购退货单共用这一条"出图 → 发群 → 记映射"的路，
-          // 所以映射里必须带上类型：话题里的到货核对只认采购申请单那一类。
-          kind: options.kind || ARRIVAL_BATCH_KINDS.PURCHASE_REQUEST,
-        });
-      } catch (error) {
-        logWarn('purchase.request.image.batch_mapping_failed', {
-          task_id: taskId, message_id: messageId, chat_id: target.chatId,
-          batch_no: batchNo, error: error.message,
-        });
-      }
-    }
-
-    // `thread_root_message_id`：这一批在群里发的**第 1 条消息**（图）= 话题根。
-    // 把它交回给调用方，退货的差额提示才能**回复它**、落在同一个话题里
-    //（业务负责人：「一律在话题群里，以后私聊路线就没有了」）。
-    const summary = {
-      sent, failed, chat_id: target.chatId, thread_root_message_id: threadRootMessageId,
-      // ⭐ 2026-10-16（供应商拆分 · AC-SS4）：这一次**因为已经出过而跳过**的那几组。
-      //   与 `sent` 分开报 ⇒ 日志里一眼看得出"是重复生成、不是又出了几张" ✓（不混为一谈 ✗）。
-      already_reported: alreadyReported,
-      // 这一次一共分了几组（她选的 ⓐ：**批次号仍然只有一个** ✓ `batch_count` 恒为 1）。
-      group_count: reportGroups.length,
-      batch_count: 1,
-    };
-    if (failed.length) {
-      // 图没发出去（例如机器人缺 im:resource 图片上传权限）时把失败留在任务里：
-      // 采购事实已经写成、任务已是 posted，重收 webhook 会被当成重复投递跳过，
-      // 所以必须留下这条记录，运维才知道哪一批图欠着、补完权限按 task 补发。
-      await this.store.update(taskId, { image_delivery: { ...summary, at: new Date().toISOString() } })
-        .catch((error) => logWarn('purchase.request.image.delivery_persist_failed', { task_id: taskId, error: error.message }));
-    }
-    return summary;
-  }
-
-  /**
-   * 把某个供应商的采购申请图（或采购退货单图）写进**「报货批次」的「单据」**。
-   *
-   * ⭐ 2026-10-07 业务负责人改的地方（逐字）：
-   *   「你之前**下载完附件之后，不是要回填到那个供应商那边吗？现在不用往那边填写信息了，
-   *     你需要把这些信息挪到我们的'报货批次'里面**」
-   * ⇒ 目标从「报货信息（表名沿革：原「具体信息」/「单据信息」）.采购申请单」改成「**报货批次.单据**」。
-   *   原来那一列她已**从生产表删掉**，再往那儿写只会 `FieldNameNotFound`。
-   *
-   * 规则（**沿用改动前的语义**，只是换了落点）：
-   * - 按「报货批次号」定位那一行批次记录；
-   * - **重复执行（重跑批次）不得写出第二条** → 同名的图已经在「单据」里就跳过，连上传都不做；
-   * - 一批多供应商时**已有附件原样带上**再追加新的那张（不冲掉别人的图）。
-   *
-   * ⚠️ 本方法**抛错**由调用方 catch（"写回失败不阻塞主流程"这条既有行为不变）——
-   *    她已经有图了，写不回附件只是"欠一次转发"，绝不是把已经发出去的采购单判成失败。
-   */
-  async writeSupplierImageAttachment({
-    taskId, supplierName, png, batchNo = '', fileNameSuffix = DEFAULT_DOCUMENT_FILE_SUFFIX, correlation = {},
-  }) {
-    if (!String(batchNo || '').trim()) {
-      logWarn('purchase.request.image.no_batch_no', { task_id: taskId, supplier: supplierName });
-      return { written: false, reason: 'no_batch_no' };
-    }
-    if (typeof this.gateway.uploadAttachment !== 'function') {
-      throw new Error('gateway 不支持附件上传（uploadAttachment）');
-    }
-    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'purchase-request-image-'));
-    try {
-      // ⭐ 2026-10-16：文件名拼法**搬进** `services/supplierSplitService.js` 的
-      //   `documentFileNameOf`（**唯一一处** ✓）—— 因为"这一组是不是已经出过了"的前置判据
-      //   （`deliverSupplierImagesInner`）必须与这里**逐字同名**，两处各写一份必然会漂 ✗。
-      //   取值规则与改前**逐字一致**（不安全字符去掉；去完为空 ⇒ `supplier` 兜底 ✓）。
-      const fileName = documentFileNameOf(supplierName, fileNameSuffix);
-      // ⚠️ **上传之前**先判"这张图是不是已经在这一批的「单据」里了"：
-      //    既有的语义是「重复执行**连上传都不做**」（重跑批次不该白传一次素材）。
-      const existing = await this.orderBatches.findDocument(batchNo, fileName);
-      if (!existing.found) {
-        // 这一批在「报货批次」里**没有行**。2026-10-07 晚起**报货与退货都会建行**
-        // （退货那一行由 ensureReturnBatchRecord 在出图之前建），所以走到这里只剩两种
-        // 真实可能：① 那一行的创建**失败**（建行那一步只 warn、不阻塞）；
-        // ② 没有批次号的旧数据 / 入口没写回号（writeSupplierImageAttachment 的
-        //    `no_batch_no` 已经先记了一条）。两种情况都**不白传一次素材**，
-        // 只记这条 warn —— 图已经发到群里了。
-        logWarn('purchase.batch.document.no_record', {
-          task_id: taskId, batch_no: batchNo, file_name: fileName,
-          hint: '这一批在「采购主表」里没有行（建行失败 / 没有批次号）→ 单据图暂时没有落点',
-        });
-        return {
-          written: false, reason: 'no_batch_record', batch_no: batchNo, file_name: fileName,
-        };
-      }
-      if (existing.exists) {
-        // 既有日志语义保持不变（原本叫 `attachment_exists`）：重复执行时的"已经有了"。
-        logInfo('purchase.request.image.attachment_exists', {
-          task_id: taskId, record_id: existing.recordId, batch_no: batchNo, file_name: fileName,
-        });
-        return {
-          written: false, skipped: true, record_id: existing.recordId, batch_no: batchNo, file_name: fileName,
-        };
-      }
-      const filePath = path.join(tempDir, fileName);
-      await fs.promises.writeFile(filePath, png);
-      const fileToken = await this.gateway.uploadAttachment(filePath);
-      const written = await this.orderBatches.writeDocument({
-        batchNo, fileToken, fileName, correlation,
-      });
-      if (written?.skipped) {
-        logInfo('purchase.request.image.attachment_exists', {
-          task_id: taskId, record_id: written.record_id, batch_no: batchNo, file_name: fileName,
-        });
-      }
-      return { ...written, supplier: supplierName };
-    } finally {
-      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  }
-
-  /**
-   * 决定采购入库的库存状态：
-   * - 如果该编号（货号）下完全没有样品库存（不管哪个尺码），则先作为样品入库
-   * - 如果该编号下已有任意尺码的样品库存，则作为门盒入库
-   * 这和销售相反（销售先卖门盒，再卖样品）
-   */
-  async resolvePurchaseInboundState(productRecordId) {
-    try {
-      // 查询该编号下所有尺码的样品库存记录（不指定尺码）
-      const allLiveRecords = await this.gateway.listAll('liveInventory');
-      const table = this.gateway.table('liveInventory');
-      const sampleRecords = allLiveRecords.filter((record) => {
-        // 使用 linkedRecordIds 处理关联字段，兼容飞书API返回的多种格式
-        const productIds = linkedRecordIds(record.fields?.[table.fields.product]);
-        // 单选字段可能返回字符串或数组，统一处理
-        const stateValue = record.fields?.[table.fields.state];
-        const state = Array.isArray(stateValue) ? stateValue[0] : stateValue;
-        return productIds.includes(productRecordId) && String(state) === '样品';
-      });
-      return sampleRecords.length === 0 ? '样品' : '门盒';
-    } catch (error) {
-      logWarn('purchase.inbound.state_check.failed', { product_record_id: productRecordId, error: error.message });
-      return '门盒'; // 查询失败时默认入门盒
-    }
-  }
-
-
-
-
-
 
   // ── 采购退货的归批（业务负责人 2026-10-06 的最终口径：「到齐 ＋ 重试 3 次」）──
   //
@@ -1112,16 +445,6 @@ class PurchaseWebhookService {
   //
   // ⚠️ 思路复用报货那套，状态**刻意不共用**（两套 Map、两把锁、两份配置）：
   // 改一边不会动到另一边（AGENTS.md 的「解耦」）。
-
-
-
-
-
-
-
-
-
-
 
 
   // ── 已删除：processArrival（拍照识别的唯一入口）────────────────────────────
@@ -1145,30 +468,6 @@ class PurchaseWebhookService {
   //    「采购申请」关联挂回去；入库行没有了，它就没有任何调用方（不留孤儿）。
 
 
-  /**
-   * 更新采购消息卡片（类似销售的 updateSalesActionCard）
-   */
-  async updatePurchaseActionCard(task, event, card) {
-    const messageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id;
-    if (!messageId) {
-      console.warn('lark.purchase.card.update.skipped', { task_id: task.task_id, reason: 'missing_message_id' });
-      return false;
-    }
-    try {
-      const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
-      if (!patch) return false;
-      const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
-        path: { message_id: messageId },
-        data: { content: JSON.stringify(card) },
-      });
-      if (response.code !== 0) throw new Error(response.msg + ' (Code: ' + response.code + ')');
-      return true;
-    } catch (error) {
-      console.warn('lark.purchase.card.update.failed', { task_id: task.task_id, error: error.message });
-      return false;
-    }
-  }
-
   // ── 已删除（2026-10-08，业务负责人逐条批准）：`handleCardAction` / `handleCardActionLocked` ──
   //
   // 它们只服务「报货确认卡」的两个动作（`confirm_purchase_request` / `cancel_purchase_request`）：
@@ -1180,102 +479,6 @@ class PurchaseWebhookService {
   //    `purchaseStatusCard`（处理中 / 已生成 / 未完成三张状态卡）。
   // ⚠️ 串行保证**没丢**：`confirmArrival` 自己就 `confirmationQueue.run(...)`（见它的注释）。
 
-
-  /**
-   * 生成并持久化 Posting Plan。
-   *
-   * 这个计划有两个作用，缺一不可：
-   * 1. 幂等键的唯一来源——重试时必须复用同一批键，每次重新生成等于没有幂等；
-   * 2. 崩溃后的恢复清单——知道「应该写几条、写到哪一条」。
-   *
-   * 所以它必须在任何远端写入之前落盘；落盘失败就不能开始写。
-   *
-   * ⭐⭐ 2026-10-16（供应商拆分 · 业务负责人拍板 **ⓐ**）：**「按供应商分组」也在这里冻结** ✓
-   *   —— 它在**任何远端写入之前**（建批次行 / 建明细 / 出图都在它之后）⇒ 正合她的口径
-   *   「生成报货单那一下就要分好组」（生成完再拆就晚了 ✗）。落进 `plan.supplier_groups`：
-   *     · **批次号仍然只有一个**（`batch_count` 恒为 1 ✓ 她选的 ⓐ —— 不是"每个供应商一个新号"✗）；
-   *     · 每组带 `group_key`（组级幂等键）与 `document_key`（这一组那张报货单的幂等键），
-   *       且**跟着计划一起落盘** ⇒ 重试时逐字复用（重试换键等于没有幂等 ✗）。
-   *
-   * options.supplierGroups：调用方（多货品引擎）**在调写入口之前**已经算好的那一份分组
-   *   —— 优先用它；两边算出来的**供应商组不一致**时**当场 warn**（不静默挑一个 ✗），
-   *   并按**草稿（= 真正要写的事实）**这一份继续（写谁就以谁为准）。
-   */
-  async ensurePostingPlan(taskId, task, options = {}) {
-    if (task.posting_plan?.version === 1) return task.posting_plan;
-    const draft = task.draft || {};
-    const items = draft.items || [];
-    if (!items.length) throw new Error('采购申请草稿没有任何明细，无法生成采购计划');
-    const plan = {
-      version: 1,
-      batch_key: `purchase_batch:${taskId}`,
-      // 批次号也只生成一次：重试时重新取号会变成一个已存在批次的新号。
-      batch_no: draft.batch_no || (await this.nextBatchNo()),
-      items: items.map((item, index) => ({
-        // item_key 是「计划里第几条」的稳定标识，随计划一起持久化，
-        // 因此重试时不会因为数组顺序变化而换键。
-        item_key: `${taskId}:${index}`,
-        request_key: `purchase_request:${taskId}:${index}`,
-        // ⛔ `report_record_id`（「信息填写」那条报单记录）**已删除（2026-10-09）**：
-        //    报单入口退场 ⇒ 这个字段没有任何读方，留着只会在日志/排查里误导。
-        product_record_id: item.product_record_id,
-        // ⭐ 2026-10-16（供应商拆分）：**每条明细自己的供应商也要冻结进计划** ——
-        //   分组就是按它分的（明细没带才退回批次级那一个；两个都没有 ⇒ 落"没标注"桶 ✓）。
-        //   ⚠️ 只管**分组/出图**，**不写表**：「采购明细.供应商」是公式列 /「采购主表.供应商」
-        //      是她在表上维护的（代码只读不写 ✗）——分组落在"每组一张报货单"上 ✓。
-        supplier_record_id: String(item.supplier_record_id || draft.supplier_record_id || ''),
-        // 历史草稿可能带 `size: null`（采购退货那条链路，已退场）：这里保留 null，
-        // 写入时**不写「尺码」字段**。不能写 Number(null)=0（0 会被尺码解析判成非法）。
-        size: item.size === null || item.size === undefined ? null : Number(item.size),
-        quantity: Number(item.quantity),
-        // 行为按明细走（明细没带才退回批次级的那一个）。「报货信息.采购行为」是关联
-        // 「行为管理」，出图/查询都要用它。
-        behavior_record_id: item.behavior_record_id || draft.behavior_record_id || '',
-      })),
-    };
-    // ⭐⭐ 供应商拆分：**同一个批次号下**按供应商分组（她选的 ⓐ）—— 组顺序 = 明细里第一次出现的顺序。
-    const split = splitBySupplier({
-      items: plan.items,
-      batchNo: plan.batch_no,
-      batchKey: plan.batch_key,
-      taskId,
-      config: this.supplierSplit,
-    });
-    // 计划里只留**组的身份与键**（不塞一份明细副本进本地任务文件 —— 明细已经在 `plan.items` 里 ✓）。
-    plan.supplier_groups = split.groups.map((group) => ({
-      supplier_record_id: group.supplier_record_id,
-      supplier_key: group.supplier_key,
-      group_key: group.group_key,
-      document_key: group.document_key,
-      indexes: group.indexes,
-      detail_count: group.detail_count,
-      pair_count: group.pair_count,
-    }));
-    // 调用方（引擎）也算过一遍 ⇒ **交叉核对**：不一致就是真 bug（比如两边读的明细不是同一份），
-    // 如实吵一条，谁也别静默挑一个 ✗。写出去的那一份**以草稿为准**（写谁就以谁为准 ✓）。
-    const supplied = Array.isArray(options.supplierGroups) ? options.supplierGroups : [];
-    if (supplied.length) {
-      const suppliedKeys = supplied.map((group) => String(group?.supplier_key || '')).join('|');
-      if (suppliedKeys !== split.summary.supplier_keys.join('|')) {
-        logWarn(this.supplierSplit.events.mismatch, {
-          task_id: taskId, batch_no: plan.batch_no,
-          supplied_supplier_keys: suppliedKeys,
-          draft_supplier_keys: split.summary.supplier_keys.join('|'),
-          note: '调用方在调写入口之前算的那一组 与 写入口按草稿算的这一组 对不上，按草稿写',
-        });
-      }
-    }
-    // 单供应商（今天绝大多数情况）**不打**这条 —— 免得日常日志被刷屏（她只关心"混了供应商"那种）✓
-    if (split.groupCount > 1) {
-      logInfo(this.supplierSplit.events.grouped, {
-        task_id: taskId, batch_no: plan.batch_no, batch_count: split.batchCount,
-        group_count: split.groupCount, supplier_keys: split.summary.supplier_keys,
-        group_keys: split.summary.group_keys, policy: split.policy, stage: split.stage,
-      });
-    }
-    const updated = await this.store.update(taskId, { posting_plan: plan, posting_stage: 'posting_plan_created' });
-    return updated.posting_plan;
-  }
 
   /**
    * 确认生成采购申请（支持批量和单条）。
@@ -1572,279 +775,7 @@ class PurchaseWebhookService {
       () => this.confirmArrivalLocked(taskId, task, operatorOpenId, options));
   }
 
-  /** 真正的入库实现：只由 confirmArrival 串行调用，不要直接调（会丢掉串行保证）。 */
-  async confirmArrivalLocked(taskId, task, operatorOpenId, options = {}) {
-    // ⚠️ 2026-10-07 晚：这句话原先写「到货验收已入库」，但那**张表已被业务负责人删除** ——
-    //    改成按现在的落点说（批次行），她看到的就是"这一批已经入过库了"。
-    if (task.status === 'posted') return { toast: { type: 'info', content: arrivalToast.m1 } };
-    // 用**最新**草稿（其它步骤可能刚更新过它）。
-    const latest = (await this.store.get(taskId)) || task;
-    const draft = latest.draft || task.draft;
-    // 关联键（只进日志）：到货核对任务自己的 task_id（`arrival_reconcile_…`，
-    // **是另一套 task，如实照传真名**）＋ 批次号 ＋ **「报货批次」记录 id**。
-    // ⚠️ 这条链路**拿不到**「信息填写」报单记录 id（到货任务里只存 request_ids）
-    //    —— 拿不到就不传，不编。
-    // ⚠️ 2026-10-07 晚：原来的 `purchase_arrival_record_id`（「到货验收」那条记录）
-    //    随表一起没了来源 ⇒ 换成 `purchase_batch_record_id`（到货信息现在的落点）。
-    const batchRecordId = String(draft.batch_record_id || '').trim();
-    const batchNo = String(draft.batch_no || '').trim();
-    const correlation = purchaseCorrelation({
-      taskId, batchNo, batchRecordId,
-    });
-    const arrival = { ...draft, actual: draft.actual || [] };
-    const unresolved = arrival.actual.filter((item) => !item.product_record_id);
-    if (unresolved.length > 0) {
-      // 走到这里说明明细对不上货品（数据异常；代码已不再自动建档）。
-      // 宁可停下来告诉她，也不能把这几条静默丢掉、只入一部分库。
-      throw new Error(`有 ${unresolved.length} 条到货明细没有对应货品（${unresolved
-        .map((item) => `${item.item_no || ''}${item.color || ''}`).join('、')}）。`
-        + '请先在工作台「货品上新」建好货品（或修正明细）后再确认入库');
-    }
-    // ⭐ 2026-10-07 晚：**先把结构化验收（实际数量 / 发生金额）落到「报货批次」那一行**，再逐条加库存。
-    //    顺序与改动前一致（原来是在「到货验收」建行），只是落点换成了批次行；
-    //    失败就**当场停下来**（一个字都不写库存）—— 到货信息没有落点，等于她这次确认没被记下来。
-    // ⭐⭐ 2026-10-08：「实际数量」「发生金额」**搭同一次 update 一起写**（业务负责人批准的口径），
-    //    两者都在草稿上、由到货核对那一步算好/校验好（本方法只"照草稿写，不重算"）：
-    //      · `draft.actual_quantity` = 代码算出的实际到货数合计（与库存口径一致）；
-    //      · `draft.actual_amount`   = 她在卡片表单里填的整批金额（提交时已校验必填/数字/非负）。
-    await this.writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation });
-    //    放在这里（而不是只在扫码页那一层）是因为**任何**确认路径都经过这个方法
-    //    （扫码验收 / 工作台 / 群话题核对）—— 否则她会看到"刚验收完还在列表里"。
-    //    ⚠️ 纯内存失效，不写任何表；失败也不许影响入库（所以吞掉异常只记 warn）。
-    try {
-      invalidatePendingBatchesCache();
-    } catch (error) {
-      logWarn('scan.accept.pending_cache.invalidate_failed', { task_id: taskId, error: error.message });
-    }
-    // ⭐ 2026-10-07 深夜：这里原本是"查「采购行为」→ `listAll('purchaseInbound')` 回查已写过的
-    //    入库行 → 逐条 `create('purchaseInbound')`"，**整段随那张表一起删除**（她整表删了它）。
-    //    现在这个循环只做一件事：把**实际数**逐条交给库存（`inventory.applyPurchase`），
-    //    并把"这一条加过了"落进本地草稿 —— 那张表一个字段都不再有写入点。
-    if (!this.inflightInventory.has(taskId)) this.inflightInventory.set(taskId, new Map());
-    const inflightMap = this.inflightInventory.get(taskId);
-    // 进度落盘的键改叫 `inventory_applied`（不再有"入库行"这回事）。
-    // ⚠️ **同时读旧的 `inbound_created`**：改动前那一版把 `{recordId, inventoryApplied}` 写在这个键里，
-    //    部署那一刻正卡在半路的任务（状态 posting）不会因为改名而把已经加过的库存**再加一遍**。
-    const normalizeEntry = (value) => (typeof value === 'string' ? { inventoryApplied: false } : (value || {}));
-    const persistedApplied = {};
-    const legacyApplied = { ...(draft.inbound_created || {}), ...(draft.inventory_applied || {}) };
-    for (const [key, value] of Object.entries(legacyApplied)) {
-      persistedApplied[key] = normalizeEntry(value);
-    }
-    const appliedByKey = new Map();
-    for (const [key, value] of inflightMap) appliedByKey.set(key, value);
-    for (const [key, value] of Object.entries(persistedApplied)) {
-      if (!appliedByKey.has(key)) appliedByKey.set(key, value);
-    }
-    // 落盘基线跟着最新草稿走：用旧对象整份覆盖会把别的步骤刚写进去的字段冲掉。
-    let draftNow = { ...draft };
-    const persistEntry = async (key, entry) => {
-      inflightMap.set(key, entry);
-      persistedApplied[key] = entry;
-      try {
-        draftNow = { ...draftNow, inventory_applied: persistedApplied };
-        const updated = await this.store.update(taskId, { draft: draftNow });
-        draftNow = updated?.draft || draftNow;
-      } catch (error) {
-        logWarn('purchase.arrival.inventory_applied.persist_failed', { task_id: taskId, key, error: error.message });
-      }
-    };
-    // 她点确认的这批里，哪些（货品+尺码）真的动过库存 —— 落进任务终态，也是日志里的正向证据。
-    const inventoryAppliedKeys = [];
-    // 来源标识（= 库存那一层的本地幂等键）= **真实三元组**：批次身份 | 货品 | 尺码。
-    // ⚠️ 三样都是真值（批次记录 id / 批次号 / 到货核对任务 id ＋ 货品 record_id ＋ 尺码），
-    //    **一个都不是编的**。
-    // ⭐ 2026-10-08：`purchaseBatchRecordId` 现在有**两个去处** —— ① 参与上面这个本地三元组；
-    //    ② 作为**远端关联值**写进「库存流水.关联采购」（该列已被她改成指向「报货批次」）。
-    //    两者互不替代：拿不到批次 record id 时①会退回批次号/任务 id，而②**整列不写**。
-    const batchIdentity = {
-      purchaseBatchRecordId: batchRecordId,
-      purchaseBatchNo: batchNo,
-      arrivalTaskId: taskId,
-    };
-    // ⭐⭐ 2026-10-13（验收提速 ①）：这一段从"**逐条**读状态 + 逐条 `applyPurchase`"改成
-    //   "**先把这一批算清**（状态每款只算一次）⇒ `applyPurchaseBatch` **一批一次写**"。
-    //   真账：逐条 5 码 = **31 次**飞书（≈119.5 秒，占整批 83%）⇒ 批量后 = **1 次整表读 + 2 次批量写**。
-    //   🔴 **语义一行不改**：
-    //     · 幂等仍由 `appliedByKey`（本地草稿 `inventory_applied`）+ InventoryService 那两把键负责；
-    //     · 顺序仍是"「报货批次」先写实（上面的 `writeArrivalAcceptance`）⇒ 再加库存"；
-    //     · 库存串行队列改由 `applyPurchaseBatch` 内部的 `runForStocks` 按 `stock_key` 占住
-    //       （跨任务同 key 不会被绕过，语义与逐条路径一致）。
-    //   ⚠️ 注入的库存端口只有 `applyPurchase`（既有用例的替身）时**回落逐条** —— 真实用的
-    //      `InventoryService` 一定有批量口；回落的唯一目的就是不让既有替身用例失真。
-    const inboundEntries = [];
-    for (const item of aggregateArrivalItems(arrival.actual || [])) {
-      const key = `${item.product_record_id}|${item.size}`;
-      const existing = appliedByKey.get(key);
-      if (existing?.inventoryApplied) {
-        inventoryAppliedKeys.push(key);
-        continue;
-      }
-      if (!this.enablePurchaseInventory) {
-        // 库存写入被显式关掉时（`enablePurchaseInventory: false`）：一个字都不写，只记进度。
-        await persistEntry(key, { ...(existing || {}), inventoryApplied: false });
-        continue;
-      }
-      inboundEntries.push({ item, key });
-    }
-    if (inboundEntries.length) {
-      // 决定入库状态：没有样品则入样品库，有样品则入门盒库（口径与改动前逐字一致）。
-      // ⚠️ 原来这条整表读在循环里**每条一次**（5 码 = 5 次）；同一款只算一次。
-      // ⚠️ 口径与逐条路径**逐字一致**：`resolvePurchaseInboundState` = "这一款已有「样品」行 ⇒ 门盒，
-      //    否则 ⇒ 样品"。逐条路径是**边写边判** ⇒ 同一款的第一双入样品之后，**后面几双看到那条样品行
-      //    就都入门盒**。批量把写入挪到了后面 ⇒ 必须**本地推演**出同一串状态，否则同一款的第 2 双会被
-      //    错判成样品（既有用例「每个货号第一双先入样品」抓到的就是这个）。
-      //    ⇒ 每款仍只读一次（原来每码一次），第 2 双起按"已经有一双样品"推。
-      const sampleSeenOf = new Map();
-      const stateOfEntry = new Map();
-      for (const entry of inboundEntries) {
-        const productRecordId = entry.item.product_record_id;
-        if (!sampleSeenOf.has(productRecordId)) {
-          // eslint-disable-next-line no-await-in-loop
-          const first = await this.resolvePurchaseInboundState(productRecordId);
-          sampleSeenOf.set(productRecordId, first === '门盒');
-        }
-        const state = sampleSeenOf.get(productRecordId) ? '门盒' : '样品';
-        stateOfEntry.set(entry, state);
-        // 这一双落库之后，这一款就有「样品」行了 ⇒ 后面的都走门盒（与逐条路径的读写顺序等价）。
-        sampleSeenOf.set(productRecordId, true);
-      }
-      const inboundPayload = inboundEntries.map((entry) => ({
-        ...batchIdentity,
-        productRecordId: entry.item.product_record_id,
-        size: entry.item.size,
-        quantity: entry.item.quantity,
-        // ⚠️ 2026-10-06：不再传 occurredAt（只进本地任务记录、无人读）；
-        // 时间交给飞书自动的「创建时间」。
-        state: stateOfEntry.get(entry),
-      }));
-      if (typeof this.inventory.applyPurchaseBatch === 'function') {
-        // ⭐ 批量路径：**整批一次写**（失败粒度 A）⇒ 这一批写成功后，才逐条落进度。
-        await this.inventory.applyPurchaseBatch(inboundPayload, {
-          correlation,
-          // ⭐ 验收那一段自造的 timing（`finish()` 传下来）⇒ 由库存层填 `inventory_ms`。
-          ...(options.timing ? { timing: options.timing } : {}),
-        });
-        for (const entry of inboundEntries) {
-          // eslint-disable-next-line no-await-in-loop
-          await persistEntry(entry.key, { ...(appliedByKey.get(entry.key) || {}), inventoryApplied: true });
-          inventoryAppliedKeys.push(entry.key);
-        }
-      } else {
-        // ⚠️ 回落路径（注入的替身只有 `applyPurchase`）：**每条写成功后立刻落进度** ——
-        //    与改动前逐字一致（第 2 条失败时，第 1 条"已加过"必须已经落盘，重试才不重复加）。
-        for (const [index, payload] of inboundPayload.entries()) {
-          // eslint-disable-next-line no-await-in-loop
-          await this.inventory.applyPurchase(payload, { correlation });
-          const entry = inboundEntries[index];
-          // eslint-disable-next-line no-await-in-loop
-          await persistEntry(entry.key, { ...(appliedByKey.get(entry.key) || {}), inventoryApplied: true });
-          inventoryAppliedKeys.push(entry.key);
-        }
-      }
-    }
-    // ⚠️ 2026-10-06：这里原先有一段**回写「报货信息」（采购申请表）**的代码——
-    //   for (const request of arrival.requests) { … gateway.update('purchaseRequest', request.record_id,
-    //     { arrivalStatus: status }) }   // 未到货 / 部分到货 / 全部到货 / 超额到货
-    // 业务负责人当天的口径是：「**既然它就是采购申请，那个表就不要动**」
-    //「我们要做的就是**基于采购申请表，再加上用户说的差异来进行实际入库**」。
-    // 所以她删掉了这段回写：**采购申请表一个字都不改**（到货差异只体现在
-    //「库存流水」/「实时库存」上）。
-    // 这条口径由 `server/test/arrivalConversation.test.js` 的断言钉住：入库全过程
-    // 对 `purchaseRequest` 表**零写入**（不是"看起来没写"，而是拿记录型 gateway 断言）。
-    //
-    // ⚠️ 也刻意**不再**把差异算成「超额到货 / 部分到货」这种状态：新口径下
-    // 那个状态无处可写，算出来只会变成一个没人用的中间变量。
-    //
-    // 到这为止，一次到货确认只写两张表：**「报货批次」那一行**（实际数量 / 发生金额）
-    // ＋ **「库存流水」「实时库存」**（由 InventoryService 写）。
-    //
-    // ⭐ 2026-10-07 晚：这一步原来是
-    //   `gateway.update('purchaseArrival', arrival.arrival_record_id, { confirmStatus: '已确认' })`
-    //   ——那张表已被她删除。现在写的是**「报货批次」那一行**的「确认状态」，
-    //   取值来自 `config/purchaseAcceptance.js`（不写死中文字面量；该列现在是单选，
-    //   取值由部署闸门的单选取值契约盯住）。
-    // ⛔ 2026-10-09：这里原有「入库之后把这一批的『确认状态』改成『已确认』」那一段
-    //   （`orderBatches.markConfirmed`）——**整段删除**：那一列在真表上已经没有了
-    //   （业务负责人 2026-10-09 的只读核对：报货批次 12 列里没有「确认状态」）。
-    //   ⚠️ 「到货状态 = 已到货」不在这里写（由对话链路的 `notifyBatchArrived` 负责），
-    //      所以这一段的删除**没有**影响"这一批到货了没有"这个事实。
-    // ⚠️ 终态里**不再有** `inbound_record_ids`（入库明细行不存在了）；改记"加过库存的（货品+尺码）"。
-    await this.store.update(taskId, {
-      status: 'posted', inventory_applied_keys: inventoryAppliedKeys,
-    });
-    this.inflightInventory.delete(taskId);
-    logInfo('purchase.arrival.posted', {
-      task_id: taskId, batch_record_id: batchRecordId, batch_no: batchNo,
-      // 正向证据：这次确认到底给几条（货品+尺码）加了库存，以及**没有**写任何入库明细行。
-      inventory_applied_count: inventoryAppliedKeys.length,
-      inbound_rows_written: 0,
-      inventory_applied: this.enablePurchaseInventory, ...correlation,
-    });
-    return { toast: { type: 'success', content: this.enablePurchaseInventory ? inventoryToast.m1 : inventoryToast.m2 } };
-  }
 
-  /**
-   * ⭐ **结构化验收结果**→「报货批次」那一行（2026-10-07 晚的到货落点）。
-   *
-   * ⭐⭐ 2026-10-08：**同一次 update** 里写「实际数量」「发生金额」两列（业务负责人批准）——
-   *   值来自草稿（`draft.actual_quantity` / `draft.actual_amount`），本方法**不重算**：
-   *   算/校验是到货核对那一步的职责（`PurchaseArrivalConversationService.confirmLocked`）。
-   *   ⚠️ 拿不到（`undefined`）时**那一列不写**（不写空值）—— 由 `writeAcceptance` 判，
-   *      这样既有的"孤儿草稿"路径行为逐字不变。
-   *   ⛔ **2026-10-09**：原先还写「到货文字说明（该列已从真表退场）」——那一列在真表上已经没有了，**写入点删除**
-   *      （`draft.acceptance_text` 仍留在本地草稿里，它是解析实际到货情况的输入）。
-   *
-   * 三条边界（都在测试里钉住）：
-   *   · **没有批次身份**（`batchNo` 与 `batchRecordId` 都空）→ 只记 warn、**不阻塞**：
-   *     这是"孤儿调用"（历史草稿 / 手工种的测试任务）的形状，入库能力本身不该被它挡住。
-   *   · 有批次身份但**批次行找不到** → **抛错**：她这次确认的到货信息没有落点，
-   *     宁可当场告诉她，也不入库了却没有记录。
-   *   · **绝对不写**「到货日」「验收人」：它们在真表上是飞书自动字段
-   *     （更新时间 / 创建人），写了会被自动覆盖或直接报错。
-   */
-  async writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation }) {
-    if (!batchNo && !batchRecordId) {
-      logWarn('purchase.arrival.acceptance.skipped', {
-        task_id: taskId, reason: 'no_batch_identity',
-        hint: '草稿上没有批次号也没有批次记录 id（孤儿调用）→ 不写到货信息，也不阻塞入库',
-      });
-      return { updated: false, reason: 'no_batch_identity' };
-    }
-    const result = await this.orderBatches.writeAcceptance({
-      batchNo,
-      batchRecordId,
-      // ⭐⭐ 2026-10-08：草稿上那两个值原样传下去（`undefined` = 这一列不写）。
-      actualQuantity: draft?.actual_quantity,
-      actualAmount: draft?.actual_amount,
-      correlation,
-    });
-    if (!result.updated) {
-      throw new Error(`这一批在采购单里找不到（${batchNo || batchRecordId}），到货信息没地方落，先不入库`);
-    }
-    return result;
-  }
-
-  /**
-   * **兜底**的取号（业务负责人 2026-10-07 把格式改成 `CGD-YYYYMMDD-NNNN`）。
-   *
-   * ⚠️ 正常路径**不走这里**：号在**入口**就按包生成并写回「信息填写」了
-   *（见 ensureReportBatchNo）—— 所以归批、出图、写「报货批次」用的都是同一个号。
-   * 这个方法只在"入口没写成"时兜底（入口读不到那条记录、没权限等），
-   * 由 `ensurePostingPlan` 调用，**只生成、不写回**。
-   *
-   * ⚠️ 生成的号会落进「报货批次」的「报货批次号」，而生成器的计数**同时数**两张表
-   *   （见 `PurchaseBatchNoGenerator` 文件头 ②），所以兜底路径占掉的号也不会被别人重发。
-   * ⚠️ 走串行队列 + 生成器内部的"本进程已发集合"：即便是兜底，也不会连发两个同号。
-   */
-  async nextBatchNo() {
-    const table = this.gateway.table('purchaseOrderBatch');
-    if (!table.tableId) throw new Error('未配置「采购主表」的表 ID：FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID');
-    return this.batchNoGenerator.runExclusive(async () => {
-      const generated = await this.batchNoGenerator.next({ source: 'fallback' });
-      return generated.batchNo;
-    });
-  }
 }
 
 module.exports = { PurchaseWebhookService, attachmentTokens, buildPurchaseReturnNotice };
