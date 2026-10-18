@@ -325,8 +325,8 @@
 | `sales.delivery.inventory_batch_fallback` | 1 | src/services/salesDeliveryService.js |
 | `sales.delivery.line.failed` | 1 | src/services/salesDeliveryService.js |
 | `sales.detail_id.skipped` | 1 | src/services/salesOrderService.js |
-| `sales.entry.total_amount.skipped` | 1 | src/services/salesOrderService.js |
-| `sales.entry.total_amount.written` | 1 | src/services/salesOrderService.js |
+| `sales.entry.total_amount.skipped` | 2 | src/services/sales/oneShotWrite.js<br>src/services/salesOrderService.js |
+| `sales.entry.total_amount.written` | 2 | src/services/sales/oneShotWrite.js<br>src/services/salesOrderService.js |
 | `sales.group.sale.located` | 2 | src/services/salesGroupThreadLocator.js |
 | `sales.group.sale.unresolved` | 1 | src/services/salesGroupThreadLocator.js |
 | `sales.group.thread.bind_failed` | 1 | src/services/salesGroupThreadLocator.js |
@@ -546,7 +546,7 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `v1.sale.goods_posted` | 1 | src/services/salesOrderService.js |
-| `v1.sale.posted` | 1 | src/services/salesOrderService.js |
+| `v1.sale.posted` | 2 | src/services/sales/oneShotWrite.js<br>src/services/salesOrderService.js |
 
 ## voucher_settlement
 

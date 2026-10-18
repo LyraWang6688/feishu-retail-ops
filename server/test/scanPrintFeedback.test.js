@@ -300,10 +300,11 @@ test('AC-PF6 ⭐ 销售【提交这一单】也有即时反馈：置灰 + 「正
     assert.ok(html.includes(`data-submitting-elapsed="${SCAN_WRITE.texts.submitSubmittingElapsed}"`),
       '还要有"已 N 秒"的模板（{seconds} 占位）');
     assert.ok(String(SCAN_WRITE.texts.submitSubmittingElapsed).includes('{seconds}'));
-    // 页面里那段脚本照旧只有一段（⭐ 2026-10-16 成对迁移：数**业务**脚本 ＋ 标注脚本必须早退 ✓）
-    assert.equal(businessScriptCountOf(html), 1);
-    assert.equal(/<script(?! data-view="(annotate|submit-feedback)")/i.test(html), false,
-      '没有第三段别的脚本');
+    // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：提交反馈 ＋ 提交进度（`submit-progress`）= 2 段业务脚本；
+    //   此外只有标注脚本（`annotate`）⇒ 没有别的脚本 ✓（依据 = 第 4 步目标 #4：提交不再白屏）。
+    assert.equal(businessScriptCountOf(html), 2);
+    assert.equal(/<script(?! data-view="(annotate|submit-feedback|submit-progress)")/i.test(html), false,
+      '没有第三类别的脚本');
     assert.equal(annotateScriptOnlyEarlyExits(html), true, '那段标注脚本必须早退（不带参数时零痕迹 ✓）');
   });
 });
@@ -365,10 +366,12 @@ test('AC-PF7 ⭐ 逐按钮：**每一个写操作按钮**点下去都会置灰 +
   }, realm, {});
   for (const realm of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory', 'product']) {
     const html = pageWith(realm);
-    // ⭐ 2026-10-16 成对迁移（逐字对照见本文件顶部那段注释）：这里数**业务**脚本
+    // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：**有这个钩子才多那一段** ——
+    //   反馈脚本（有写按钮就有）＋ 提交进度脚本（`submit-progress`：点提交不再白屏）。
     const count = businessScriptCountOf(html);
-    const hasWrite = html.includes('data-submit-feedback=');
-    assert.equal(count, hasWrite ? 1 : 0, `${realm}：有写按钮 ⇒ 1 段，否则 0 段（实际 ${count}）`);
+    const expected = (html.includes('data-submit-feedback=') ? 1 : 0)
+      + (html.includes('data-view="submit-progress"') ? 1 : 0);
+    assert.equal(count, expected, `${realm}：业务脚本数（实际 ${count}）`);
     assert.equal(annotateScriptOnlyEarlyExits(html), true, `${realm}：标注脚本必须早退 ✓`);
     // 命中区 ≥44px：按钮沿用既有 `.btn`（`min-height: var(--control-height)`）
     assert.ok(/min-height: var\(--control-height\)/.test(html), '按钮高度仍走既有令牌');

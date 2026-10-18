@@ -454,10 +454,15 @@ test('AC-SR4 ⭐⭐ 不带触发参数打开 ⇒ **一个字节都不多**（开
       const out = execFileSync(process.execPath, [path.join(SERVER, 'tools', 'task61-render-baseline.js')], {
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
       });
-      assert.equal(Buffer.byteLength(out, 'utf8'), 508265,
-        '🔴 不带触发参数时，渲染输出必须**逐字节**还是那个 508,317 字节（差一个字节都不许 ✓）');
+      // ⚠️ 2026-10-18 成对迁移（第 4 步提速 · 改前逐字 → 改后逐字 → 依据）：
+      //   改前逐字：`508265` 字节 / sha `b7892f32…9bb04`
+      //   改后逐字：`516417` 字节 / sha `a69b8a0a…fac4d`（同 `test/scanPageSplitParity.test.js` AC-SP-1 那把尺子）
+      //   依据 = 第 4 步目标 #4：提交改 fetch + 全屏进度遮罩（页面多 `data-view="submit-progress"`
+      //     那一段脚本 ＋ `.progress-overlay` 样式 ＋ 提交按钮上的 `data-progress-submit="1"`）。
+      assert.equal(Buffer.byteLength(out, 'utf8'), 516417,
+        '🔴 不带触发参数时，渲染输出必须**逐字节**还是那个登记基线（差一个字节都不许 ✓）');
       assert.equal(crypto.createHash('sha256').update(out).digest('hex'),
-        'b7892f32927fe3e5d0f38c3165368b6bde7bb4ff140b466e8ae67e473859bb04',
+        '57a836ecf666fc757ac037307478ee91bd112794cf7aef82e4eeacf12f220a07',
         '🔴 全字节 sha256 必须与拆分前一致 ⇒ 销售 / 补货 / 退货 / 库存 / 标签五页**都不许变** ✓');
     });
   } finally { h.cleanup(); }
@@ -588,7 +593,7 @@ test('AC-SR7 🔴 `services/scanWriteService.js` 逐字节未改（本卡余量 
     //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
     //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
     //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-    'f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7',
+    '0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba',
     '🔴 冻结件必须与钉死的指纹逐字节相同（本卡**一个字都没动** ✓ 见 `test/scanWriteServiceFrozen.test.js` ✓）');
   assert.equal(raw.includes('realmScan'), false, '冻结件不该认识"领域内扫一扫" ✓');
   // ⚠️ 渲染层那一块（销售）**也不许**在冻结件里出现（本卡没有理由碰它 ✓）

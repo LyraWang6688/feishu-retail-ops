@@ -192,7 +192,14 @@ async function handlePaymentPay(ctx) {
               effectivePaymentStatus, pendingPaidAmount,
             });
           }
-          const pendingView = pendingSize
+          // ⭐⭐ 2026-10-18（第 4 步提速 · 资金页那一屏）：**跳过这一次"取货品"** ——
+          //   改前逐字：无论本单有没有行，都先 `service.lookup(...)` 取一次货品（线上 ≈ 2–5 秒），
+          //     只为了在"会话里一行都没有"时补一条 `pendingLine`。
+          //   改后逐字：**只有本单真的没有行**才取（其余情况 `pendingView` 是 null ⇒ 同一个 `pendingLine: null`）。
+          //   依据 = 第 4 步目标（资金页提交 → 成功页 87s → ~15s）；
+          //     🔴 判据没放宽：`pendingLine` 只在本单为空时才被写服务使用（`scanWriteService` 里那条既有闸门）。
+          const pendingHasLines = pendingLines.length > 0;
+          const pendingView = (pendingSize && !pendingHasLines)
             ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
           // eslint-disable-next-line no-await-in-loop
           // ⭐ 2026-10-18：资金页上的「赠品」也要落主表（之前被丢弃）。
@@ -202,6 +209,14 @@ async function handlePaymentPay(ctx) {
             requestId,
             // 🔴 **同一把 `submitKey`**（幂等不许拆 ✗）：连点两次 / 重试都走这一个键 ✓
             submitKey: body[fields.submitKey],
+            // ⭐⭐⭐ 2026-10-18（第 4 步提速 · 资金页那一屏 = **一次跑完**）：
+            //   明细 / 收款走**批量口** → 库存走 `applySaleBatch` 批量扣 → 履约=已交付
+            //   → **一次收口**写 总金额 + 赠品 + 写入状态（`SalesOrderService.finalizeOneShot`）。
+            //   成功判据 = 批量写返回 + 收口那一次 `update`（**不再额外读表校验** ✗）。
+            //   改前逐字：这一发没有这个键 ⇒ 走"货/钱分离"的第二跑（同一把键续写，明细/收款逐条、
+            //     收口分 3~4 次 PATCH、还再走一遍交付检查）—— 线上实测这一段 30.4s + 16.2s。
+            //   依据 = 第 4 步目标（87s → ~15s）＋ `docs/issue-scan-sale-gift-ledger-latency-2026-10-18.md` §5。
+            oneShot: true,
             // ⭐⭐ 券那一刀（2026-10-16）：交给写层的是**解析后**那一份 ——
             //   · `paidPayments`：券行的金额 = 【平台结算款】（收款明细那一笔的事实 ✓）
             //   · `effectiveLineAmounts`：货品那一侧已扣掉券的 (面值 − 结算款) ⇒ 差额按【面值】算 ✓
@@ -270,6 +285,8 @@ async function handlePaymentPay(ctx) {
             reused: createdResult.reused === true,
             partial: createdResult.code === 'sale_partial_failed',
             lines: Number(createdResult.detail_count) || 0,
+            // ⭐ 2026-10-18（第 4 步）：这一屏是**一次跑完**（明细/收款批量 + 库存批量 + 一次收口）
+            one_shot: createdResult.one_shot === true,
             // ⚠️ 这一步的墙钟（含排队等前面的写 —— 她连点 14 次时这一段会明显变大 ✓）
             submit_ms: Math.max(0, Date.now() - payStepStartedAt),
             queue_wait_ms: Number(payStepTiming.queue_wait_ms) || 0,
@@ -279,6 +296,8 @@ async function handlePaymentPay(ctx) {
             status_ms: Number(payStepTiming.status_ms) || 0,
             detail_ms: Number(payStepTiming.detail_ms) || 0,
             stock_ms: Number(payStepTiming.stock_ms) || 0,
+            // ⭐ 2026-10-18（第 4 步）：一次收口那一下的耗时（成功/部分失败都有）
+            finalize_ms: Number(payStepTiming.finalize_ms) || 0,
           });
         }
         // ⭐ 建单成功 ⇒ 记下"她刚在销售里干过活" ✓（下次**裸扫**默认还回销售 ✓）

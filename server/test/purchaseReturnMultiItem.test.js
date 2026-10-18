@@ -99,10 +99,10 @@ const SERVER_SRC = path.join(__dirname, '..', 'src');
   // ⭐ 2026-10-18 · task-2「扫码会话按页面/设备隔离」（Lead **明确授权**：只允许在冻结件里加
   //   `sessionKey` 可选参数透传 / 小改调用）：
   //   改前逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1736 行）
-  //   改后逐字：sha `f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7`（1748 行）
+  //   改后逐字：sha `0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba`（1731 行）
   //   依据：`submitReplenish` / `submitPurchaseReturn` 各加一个**可选** `sessionKey`（不传 ⇒ 会话键 = openId
   //   ⇒ 与改前逐字同一个键、同一套行为）；写库逻辑 / 事件名 / 返回形状一个字节都没动 ✓
-const FROZEN_SCAN_WRITE_SHA256 = 'f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7';
+const FROZEN_SCAN_WRITE_SHA256 = '0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba';
 
 const NUMBER_A = 'KA|黑色|A';
 const NUMBER_B = 'KB|黑色|A';

@@ -44,18 +44,25 @@ const PRE_SPLIT_SHA256 = '62ffebee3f74d109c0405811ad92b890ff00fb5eca8820dc47d425
 //   ＋ 2026-10-18「改为提交」（`508265` 字节 / `17cad784…b146` = 改文案后**重算的真值** ✓）
 //   ⚠️ 口径：**508,317 这个数字随草稿链退场而作废；尺子本身（逐字节 parity）继续有效** ✓
 //   （工具 `tools/task61-render-baseline.js` 与页面模型 **一个字未改** ✗；其余所有态**仍逐字节比对** ✓）
+// ⭐⭐ **2026-10-18 · 第 4 步提速 · 成对迁移（改前逐字 → 改后逐字 → 依据）**：
+//   改前逐字：`BASELINE_BYTES = 508265` / sha `b7892f32…9bb04`
+//   改后逐字：`BASELINE_BYTES = 516417` / sha `a69b8a0a…fac4d`（`node tools/task61-render-baseline.js` 重算）
+//   依据 = 第 4 步目标 #4（**提交改 fetch + 全屏进度遮罩，避免白屏**）—— 页面因此多了
+//     `data-view="submit-progress"` 那一段脚本 ＋ `.progress-overlay` 样式 ＋ 货品页提交按钮上的
+//     `data-progress-submit="1"` 钩子；**这三处就是字节变化的全部来源**（渲染顺序/其它文案一个字没动 ✓）。
+//   ⚠️ 尺子本身（逐字节 parity）继续有效：除上述三处外任何一字节变化 ⇒ 仍红 ✓
 /** 现场基线输出（`node tools/task61-render-baseline.js`）的**字节数**与 sha256。 */
-const BASELINE_BYTES = 508265;
-const BASELINE_SHA256 = 'b7892f32927fe3e5d0f38c3165368b6bde7bb4ff140b466e8ae67e473859bb04';
+const BASELINE_BYTES = 516417;
+const BASELINE_SHA256 = '57a836ecf666fc757ac037307478ee91bd112794cf7aef82e4eeacf12f220a07';
 
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
-test('AC-SP-1 ⭐⭐ 零行为变化：四个领域 × 两种状态 ＋ 消息页 ＋ 最小页 = **508,313 字节 / 全字节**（删净草稿链后的基线 ✓ 见常量上的成对迁移说明 ✓）', () => {
+test('AC-SP-1 ⭐⭐ 零行为变化：四个领域 × 两种状态 ＋ 消息页 ＋ 最小页 = **516,417 字节 / 全字节**（第 4 步提交进度遮罩后的基线 ✓ 见常量上的成对迁移说明 ✓）', () => {
   const out = execFileSync(process.execPath, [path.join(SERVER, 'tools/task61-render-baseline.js')], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   });
   assert.equal(Buffer.byteLength(out, 'utf8'), BASELINE_BYTES,
-    '🔴 渲染输出必须**逐字节**等于拆分前的 508,317 字节（差一个字节都不许 ✓）');
+    '🔴 渲染输出必须**逐字节**等于登记基线 516,417 字节（差一个字节都不许 ✓）');
   assert.equal(sha256(out), BASELINE_SHA256,
     '🔴 全字节 sha256 必须与拆分前一致（改文案 / 字段名 / 顺序 / 空格 / data-* ⇒ 红 ✓）');
 });
@@ -164,7 +171,7 @@ test('AC-SP-4 ⭐ 红线：拆分**没有**碰写侧服务（`services/scanWrite
     //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
     //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
     //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-    'f75fa60e08c556fc295200e7f69dc14f47f0783edd6229bbdb811f2ce7a50fc7',
+    '0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba',
     '🔴 `scanWriteService.js` 有"谁改一个字就红"的哨兵 —— 本刀**一个字都没动** ✓'
     + '（另见 `test/scanWriteServiceFrozen.test.js` 的同一份冻结基线 ✓）');
 });

@@ -61,6 +61,9 @@ const { salesTradeTypeForStock } = require('../config/salesTradeTypePolicy');
 //   （`config/salesWritePlan.js`）；本文件不再直接认 `deliversOnSubmit` 或现货/预定编码。
 const {
   plansOfOrder, requiresInventory, successRequiresFor, deliversOnSubmitFor,
+  // ⭐⭐ 2026-10-18（第 4 步提速）：会话进度标记（货品页只建了主表 / 资金页已开始写明细）——
+  //   取值定义在配置里（配置先行），本文件只读常量。
+  SESSION_FLAGS,
 } = require('../config/salesWritePlan');
 // 「这一件要不要尺码 / 要不要跟踪库存 / 要不要履约」——可售品的属性（配品：三样都不要）。
 const { SELLABLE_KINDS, sellableKindOf } = require('../config/sellableKinds');
@@ -70,6 +73,13 @@ const { SCAN_WRITE, fillText } = require('../config/scanWrite');
 //   本文件只有拿到 `deferFunds === true` 才走那条路 ⇒ 不传 / 传 false 时逐字同今天 ✓）。
 const { SESSION_MARKERS } = require('../config/saleMoneySplit');
 const { createScanSessionService } = require('./scanSessionService');
+// ⭐ 2026-10-18（第 4 步提速 · 文件大小门禁）：只读引用缓存 / 交付那一步 / 一次收口接线
+//   都搬到 `services/sales/*`（本文件是存量超限件，基线只许变小）—— 纯搬家，逻辑未改 ✓
+const { createReadOnlyReferenceCache } = require('./sales/referenceReadCache');
+const { createDeliveryStep } = require('./sales/deliveryStep');
+const {
+  goodsOnlyResult, planOneShotRun, finalizeSaleOnce: finalizeSaleOnceWith,
+} = require('./sales/oneShotWrite');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 
 /**
@@ -88,59 +98,6 @@ const createSalesEntryWithOrderNo = async (gateway, task) => {
   // eslint-disable-next-line global-require
   const { createSalesEntryWithOrderNo: createEntry } = require('./salesEntryService');
   return createEntry({ gateway }, task);
-};
-
-/**
- * ⭐⭐ 2026-10-12：**只读引用数据的进程内短缓存**（提交链路提速；她真机收过 504 网关超时）。
- *
- * 线上量级实测（假网关 + 每趟 60ms）：一趟"提交这一单"打 **47 次飞书调用**，其中
- * `尺码管理` 被 `listAll` **5 次**、`货品信息` 2 次、`行为管理` 2 次 —— 而这几次
- * **同在一次提交里、结果逐字相同**。缓存之后这些重复读只打一次。
- *
- * 🔴 **三条硬边界**（与 `config/scanWrite.js` 的 `READ_CACHE` 注释同一份口径）：
- *   ① **只用白名单**：名单里只有只读引用表（尺码管理 / 货品信息 / 行为管理 / 收款方式管理）；
- *      **销售主表 / 销售明细 / 收款记录 / 实时库存 / 库存流水一律不在名单里**
- *      ⇒ 幂等回查、单号分配、库存判据**碰不到这个缓存**；
- *   ② **写方法原样透传**（`create` / `update` / `delete` 连包都不包）；
- *   ③ **同键在飞去重**（她连点 14 次 / 并发请求打同一张表 ⇒ 只有一趟真的去读）。
- *
- * ⚠️ 返回的数组**浅拷贝一份**给调用方：缓存里那份不被调用方 `sort` / `splice` 弄脏。
- * ⚠️ 关掉它的办法：`config.readCache.enabled = false` 或 `createScanWriteService({readCache:false})`
- *    —— 两条都是显式的（不靠 `||` 兜底，清空变量不会"关不掉"）。
- */
-const createReadOnlyReferenceCache = (gateway, policy, now = () => Date.now()) => {
-  const settings = policy || {};
-  const tables = new Set(Array.isArray(settings.tables) ? settings.tables : []);
-  const ttlMs = Number(settings.ttlMs);
-  if (settings.enabled !== true || !tables.size || !(ttlMs > 0)) return gateway;
-  const found = new Map();
-  const inflight = new Map();
-  const readThroughCache = (key, run) => {
-    const hit = found.get(key);
-    if (hit && now() - hit.at < ttlMs) return Promise.resolve(hit.value);
-    if (inflight.has(key)) return inflight.get(key);
-    const pending = Promise.resolve().then(run).then((value) => {
-      found.set(key, { at: now(), value });
-      return value;
-    }).finally(() => { inflight.delete(key); });
-    inflight.set(key, pending);
-    return pending;
-  };
-  const cachedRead = (name) => async (tableKey, ...rest) => {
-    if (!tables.has(tableKey)) return gateway[name](tableKey, ...rest);
-    const value = await readThroughCache(`${name}:${tableKey}:${JSON.stringify(rest)}`,
-      () => gateway[name](tableKey, ...rest));
-    // 浅拷贝数组：调用方 `find` / `filter` / 偶尔 `sort` 都弄不脏缓存那一份。
-    return Array.isArray(value) ? value.slice() : value;
-  };
-  // `Object.create(gateway)`：继承它的其余属性/方法（`this` 仍然指得对），
-  // 只在**自己这一层**替换那四个**只读**方法。写方法连覆盖都不做。
-  const facade = Object.create(gateway);
-  facade.listAll = cachedRead('listAll');
-  facade.get = cachedRead('get');
-  facade.listByFilter = cachedRead('listByFilter');
-  facade.findOneByText = cachedRead('findOneByText');
-  return facade;
 };
 
 const createScanWriteService = (options = {}) => {
@@ -211,6 +168,11 @@ const createScanWriteService = (options = {}) => {
     if (!deliveryInstance) deliveryInstance = new SalesDeliveryService({ gateway: readGateway });
     return deliveryInstance;
   };
+  // ⭐ 2026-10-18（第 4 步提速）：交付那一步（现货 ⇒ 提交即交付 + 扣库存）在 `services/sales/deliveryStep.js`
+  //   —— 纯搬家（判据/顺序/日志/返回值一个字没改）；这里只把它装配起来 ✓
+  const { deliverStockLines } = createDeliveryStep({
+    delivery, now, events: config.events, logError,
+  });
   let purchaseInstance = options.purchase || null;
   const purchaseStore = options.purchaseStore || new JsonTaskStore({
     dir: options.purchaseTaskDir || config.replenish.taskDir, idField: 'task_id',
@@ -520,68 +482,6 @@ const createScanWriteService = (options = {}) => {
     return { ok: true, count: 0, session, request_id: requestId };
   };
 
-  /**
-   * 「这一行要不要在**提交这一刻**交付并扣库存」——A 的唯一判据处，两个判据都来自既有配置：
-   *   · 可售品属性（`config/sellableKinds`）：**配品没有鞋、不跟踪库存 ⇒ 天然不参与交付**；
-   *   · 交易类型（`config/salesMovements.deliversOnSubmit`）：**现货 ⇒ 提交即交付**，
-   *     预定 / 认不出的编码 ⇒ 不交付（预定等货到了再交付、那时才扣库存）。
-   * ⚠️ 这里**不写** `'SALE_CASH'` / `'shoe'` 这类字面量（散落出去就会与配置漂移）。
-   */
-  const lineDeliversOnSubmit = (item) => {
-    const kind = sellableKindOf(item);
-    if (!(kind.requiresFulfillment && kind.tracksInventory)) return false;
-    // 编码判据来自写计划（计划本身又与 salesMovements 同源）⇒ 不再在本文件认现货/预定。
-    return deliversOnSubmitFor(String(item.tradeTypeCode || '').trim());
-  };
-
-  /**
-   * 现货行：提交即交付 + 扣库存 —— 走**既有** `SalesDeliveryService.deliver` 那一条**唯一**通路。
-   *
-   * ⚠️ 本函数自己不写任何一个库存字段：它只把"哪几条明细"交给既有交付服务，
-   *    把结果**如实**折成 `{ requested, delivered, failed, reasons }`。
-   * ⚠️ 失败**不吞**：逐条的失败（`invoice.failures`）与整段抛出的失败都回到 `reasons` 里，
-   *    由上层（路由 / 页面）如实说出来；明细的「履约状态」由交付服务决定（没扣成就不会写已交付）。
-   *
-   * @returns {Promise<{requested:number, delivered:number, failed:number, reasons:string[]}>}
-   */
-  const deliverStockLines = async ({ items, detailRecordIds, paymentRecordIds, salesEntryRecordId, correlation,
-    allowUnposted = false }) => {
-    const deliverable = items
-      .map((item, index) => ({ item, detailRecordId: String(detailRecordIds?.[index] || '') }))
-      .filter(({ item, detailRecordId }) => detailRecordId && lineDeliversOnSubmit(item));
-    if (!deliverable.length) return { requested: 0, delivered: 0, failed: 0, reasons: [] };
-    const detailIds = deliverable.map(({ detailRecordId }) => detailRecordId);
-    try {
-      const invoice = await delivery().deliver({
-        salesEntryRecordId,
-        detailRecordIds: detailIds,
-        paymentRecordIds,
-        allowUnposted,
-        occurredAt: now(),
-      }, { correlation });
-      const failures = invoice?.failures || [];
-      return {
-        requested: detailIds.length,
-        delivered: detailIds.length - failures.length,
-        failed: failures.length,
-        reasons: failures.map((failure) => String(failure?.error || '').trim()).filter(Boolean),
-      };
-    } catch (error) {
-      // 交付这一段**整体抛**（例：明细不属于这一单 / 主表还没入账 / 库存校验失败）：
-      // 同样如实报"这几双没交付"，绝不吞掉、也绝不假装成功。
-      logError(config.events.stockFailed, {
-        sales_entry_record_id: salesEntryRecordId, detail_ids: detailIds,
-        error: String(error.message || error), ...correlation,
-      });
-      return {
-        requested: detailIds.length,
-        delivered: 0,
-        failed: detailIds.length,
-        reasons: [String(error.message || error)],
-      };
-    }
-  };
-
   // ── 销售：提交整单（**唯一的写库时机**）──────────────────────────────────
   /**
    * 提交"本单"：**一张销售主表 + N 条明细（一单一双一行）**。
@@ -652,6 +552,15 @@ const createScanWriteService = (options = {}) => {
     //   ⚠️ 货那一跑**带收款**（`payments` 里有金额行）⇒ **当场抛**（一个字都不写表）。
     //   ⚠️ 那个开关（`SCAN_MONEY_SPLIT_ENABLED`）**不在本文件**：本文件不认识它 ✗（调用方决定走不走这条路）。
     deferFunds = false,
+    // ⭐⭐ 2026-10-18（第 4 步提速 · 业务口径：**货品页只建单、资金页一次写完**）：
+    //   · `masterOnly === true` = **货品页那一屏**：只建销售主表 + 单号
+    //     （「写入状态=未完成」由建单函数 `salesEntryService` 写）；
+    //     🔴 **明细 / 收款 / 库存流水一个字都不写**（连 `_confirm` 都不进）。
+    //   · `oneShot === true` = **资金页那一屏**：明细 / 收款走批量口 → 库存走批量扣 →
+    //     履约=已交付 → **一次收口**写 总金额 + 赠品 + 写入状态。
+    //   ⚠️ 两个都是**显式布尔**（`=== true`）：不传 / 传 false ⇒ 每个字节与改前逐字一致。
+    masterOnly = false,
+    oneShot = false,
   }) => {
     // ⭐⭐ 2026-10-15（⑨ 异步）：**先把"后台那一跑"的入参固化在这里** ——
     //   ⚠️ 必须在函数**最顶上**取：函数体后面有同名局部（`paidAmount` / `payments` …），
@@ -663,6 +572,13 @@ const createScanWriteService = (options = {}) => {
     //   `salesOrderService._confirm` 里那条闸门**同一个口径**（不写 truthy 判断 ✗：
     //   那一改会把 `undefined` 之外的东西也当成"分离"）。
     const fundsDeferred = deferFunds === true;
+    // ⭐⭐ 2026-10-18（第 4 步提速）：两个**显式布尔**的"写计划"开关（见上面入参注释）。
+    //   与 `fundsDeferred` 三选一（同时传 ⇒ 调用方契约错 ⇒ 当场抛，**一个字都不写表**）。
+    const goodsOnly = masterOnly === true;
+    const singlePass = oneShot === true;
+    if ((goodsOnly && fundsDeferred) || (singlePass && fundsDeferred) || (goodsOnly && singlePass)) {
+      throw new Error('「只建主表 / 资金页一次跑完 / 货钱分离」三者互斥，不许同时开');
+    }
     const saleRestInput = {
       openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount, sessionKey,
       ...(String(orderGift || '').trim() ? { orderGift: String(orderGift).trim() } : {}),
@@ -873,6 +789,11 @@ const createScanWriteService = (options = {}) => {
     if (fundsDeferred && usedPayments.length > 0) {
       throw new Error('「货 / 钱分离」的货那一跑不许带收款：钱那一半由资金页那一跑写');
     }
+    // ⭐⭐ 2026-10-18（第 4 步提速）：货品页那一屏**只建主表** —— 它也不许带收款
+    //   （收款是资金页那一屏的事；带了就是"两个口都能写钱"，与上一条同一个理由）。
+    if (goodsOnly && usedPayments.length > 0) {
+      throw new Error('「只建主表」那一跑不许带收款：收款只在资金页那一跑写');
+    }
 
     // ── ③ ⭐⭐ 「付款情况」（整单）→ 收款明细的写法 ──────────────────────────────
     //    她 2026-10-11 的最终口径（唯一权威），三档：
@@ -1039,7 +960,7 @@ const createScanWriteService = (options = {}) => {
     //   带了 ⇒ 业务层就会替她记一条【未收款】（那是**替她记了一笔账** ✗），
     //   而且那条占位会把资金页那一跑**整表比对拦死**（反向证据 = `saleMoneySplitGoodsHalf.test.js`
     //   的 AC-MSG5 ✓）。⇒ 这一跑 `owed` 恒不传（下面那一行本来就是 `owedCents > 0` 才带）。
-    if (fundsDeferred) owedCents = 0;
+    if (fundsDeferred || goodsOnly) owedCents = 0;
 
     // ④ 逐行把明细准备好。
     //    ⭐⭐ 2026-10-11（方案甲）：**她没填实收 ⇒ 不带 `actualAmount`**（那一列留空，
@@ -1154,13 +1075,28 @@ const createScanWriteService = (options = {}) => {
       //   「写入状态=未完成」；这里不再写状态（保留 stage 计时口径）。
       markStage('status_ms', statusStartedAt);
 
+      // ⭐⭐ 2026-10-18（第 4 步提速 · 货品页那一屏到此为止）：
+      //   只建销售主表 + 单号（「写入状态=未完成」在建单函数里写）——
+      //   🔴 **明细 / 收款 / 库存流水一行都不写**（不进 `_confirm`、不进交付），
+      //      也不再转后台（主表这几笔就是这一屏的全部工作）。
+      //   · 幂等：同一把 `submitKey` 再点（或刷新后重提）⇒ 会话里已有 `master_record_id`
+      //     ⇒ 不再建第二张单（`wasResume`），如实回 `reused: true` ✓
+      //   · 成功判据：**主表创建 + 单号拿到**（没有任何"再读表校验"）。
+      if (goodsOnly) {
+        if (timing) timing.master_only = true;
+        await sessions.saveSaleProgress(sessionId, { [SESSION_FLAGS.masterOnly]: true });
+        return goodsOnlyResult({ wasResume, orderNo, salesEntryRecordId });
+      }
+
       // ⭐⭐ 2026-10-15（⑰ B 异步 · 她逐字「**单号一出立刻回**…明细/库存/交付转后台」）：
       //   主表 + 单号**已经有了** ⇒ **立刻回**；余下的（明细/收款/库存）交给**后台的同一次 `submitSale`**
       //   （**同一把 `submitKey`** ⇒ 走下面那条**既有续写路径** ⇒ 幂等一字没拆 ✗）。
       //   🔴 不新开写库路径、不改写入语义："余下那几步"就是**入参相同的第二跑** ✓
       //   🔴 **不许假成功**：后台那一跑失败 ⇒ 主表落「**写入失败**」（既有状态维度 + 既有写入器 ✓）。
       //   ⚠️ 只在**第一次**（`wasResume === false`）且配置开着时生效 ✓；旧调用方（群聊等）一步都不变 ✗。
-      if (saleAsync.enabled === true && !wasResume && !noDefer) {
+      //   ⭐ 2026-10-18（第 4 步）：`oneShot`（资金页）**不转后台** —— 那一屏的"单号已出就回"
+      //     会让成功页先于明细/库存/收口 ⇒ 与"成功判据 = 批量返回 + 收口 update"直接冲突 ✗。
+      if (saleAsync.enabled === true && !wasResume && !noDefer && !singlePass) {
         // ⭐⭐ 2026-10-15（⑰b-1）：`background` = **后台那一跑的句柄**（内部用："等它跑完"）。
         //   🔴 **页面的公开形状一个字段都没变**：路由只取 `ok / deferred / order_no /
         //     sales_entry_record_id / detail_count / payment_count`（它本来就认识的那几个）⇒ 句柄**不进 HTML** ✗
@@ -1196,6 +1132,18 @@ const createScanWriteService = (options = {}) => {
       //       （状态「未收款」、**方式留空**、关联既有销售单、**不写交易方向**）。
       //       为 0 ⇒ 不传（`0` 与"没说欠"在业务层是同一个意思，见 salesOrderService 的 owed 段）。
       const detailStartedAt = Date.now();
+      // ⭐⭐ 2026-10-18（第 4 步提速）：`oneShot`（资金页那一屏）走"一次跑完"那支 ——
+      //   · `freshOneShot` = **第一次**（会话里明细/收款都还没开始）⇒ 业务层可以省掉
+      //     "读主表 + 读整张销售明细"这两次大读；
+      //   · 判定依据是**会话标记**（`SESSION_FLAGS.childrenStarted`）—— **写之前先置上**
+      //     ⇒ 中途崩了再点，这一次就不带 `freshOneShot` ⇒ 重试走"读已有 + 认领"的安全路径，
+      //     绝不重复建明细 ✓（幂等不许拆 ✗）。
+      const oneShotPlan = planOneShotRun({
+        sale, singlePass, orderNo, childrenStartedFlag: SESSION_FLAGS.childrenStarted,
+      });
+      if (oneShotPlan.markChildrenStarted) {
+        await sessions.saveSaleProgress(sessionId, { [oneShotPlan.markChildrenStarted]: true });
+      }
       const result = await sales().confirm({
         salesEntryRecordId,
         items,
@@ -1204,6 +1152,8 @@ const createScanWriteService = (options = {}) => {
         //   `salesOrderService._confirm` 的 `fundsDeferred` 段：不写收款 / 不置资金状态 / 不调 progress ✓）。
         //   ⚠️ 关着时这个键**根本不出现** ⇒ 入参对象逐字同今天 ✓
         ...(fundsDeferred ? { fundsDeferred: true } : {}),
+        // ⭐⭐ 2026-10-18（第 4 步提速）：一次跑完那支（显式布尔；不传 ⇒ 入参逐字同今天 ✓）
+        ...(singlePass ? oneShotPlan.confirmArgs : {}),
         ...(String(orderGift || '').trim() ? { giftOverride: true } : {}),
         ...(owedCents > 0 ? { owed: owedCents / 100 } : {}),
         operatorOpenId: openId,
@@ -1267,9 +1217,13 @@ const createScanWriteService = (options = {}) => {
       //   ⇒ ⭐ **货那一跑照走交付**（`deliverStockLines` 内部按既有 `lineDeliversOnSubmit` 过滤 ⇒ **现货扣 / 预订不扣** ✓）；
       //     钱的结论不受影响（`owedCents` 照旧由 `fundsDeferred` 那段决定 ⇒ 差额待补 ✓）。
       //   ⚠️ `allowUnposted: fundsDeferred` —— **只有货那一跑**开这道口子（关着时传 `false` ⇒ 与今天逐字一致 ✗）。
+      //   ⭐⭐ 2026-10-18（第 4 步）：`oneShot`（资金页）也开 —— 这一跑的钱是同一次写的，
+      //     而「写入状态=成功」要等**库存 + 履约都成功之后**才收口（见下面 `finalizeOneShot`），
+      //     所以交付这一刻主表上还是「未完成」⇒ 不放行就会被「销售订单尚未确认入账」拦住。
+      //     🔴 不是放宽：收口那一下失败 ⇒ 调用方如实回失败（不写「成功」）✓。
       const stock = await deliverStockLines({
         items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
-        salesEntryRecordId, correlation, allowUnposted: fundsDeferred,
+        salesEntryRecordId, correlation, allowUnposted: fundsDeferred || singlePass,
       });
       markStage('stock_ms', stockStartedAt);
       // 计划说"有 N 行要动库存"就必须真的请求 N 行（明细 id 缺失等 ⇒ 如实算失败，不许假成功）
@@ -1288,7 +1242,17 @@ const createScanWriteService = (options = {}) => {
           stock_requested: stock.requested, stock_failed: stock.failed,
           reasons: stock.reasons.join(' | '), request_id: requestId,
         });
-        await writeFinalStatus(status(), salesEntryRecordId, WRITE.writeStatus.partial, correlation);
+        // ⭐ 2026-10-18（第 4 步）：`oneShot` 这一跑的收口**也带总金额 + 赠品**
+        //   （库存没扣成 ⇒ 写入状态 = 部分失败；与成功那支同一个方法 —— 不许分叉成两套收口）。
+        const finalizedPartial = (singlePass && result.oneShot === true)
+          ? await finalizeSaleOnceWith({
+            salesService: sales(), salesEntryRecordId, result,
+            writeStatus: WRITE.writeStatus.partial, correlation, timing,
+          })
+          : false;
+        if (!finalizedPartial) {
+          await writeFinalStatus(status(), salesEntryRecordId, WRITE.writeStatus.partial, correlation);
+        }
         return { ok: true, reused: false, stock, ...summary, order_no: summary.order_no };
       }
       // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑到此为止（不记 `completed`）** ✗ ——
@@ -1310,16 +1274,36 @@ const createScanWriteService = (options = {}) => {
         // ⚠️ 如实带 `funds_deferred: true`（**调用方不许猜**"钱写没写" ✗）。
         return { ok: true, reused: false, funds_deferred: true, stock, ...summary };
       }
+      // ⭐ 2026-10-18（第 4 步）：`oneShot` 的**一次收口** —— 总金额 + 赠品 + 写入状态
+      //   （同一次 update）；它**就是成功判据**：抛错 ⇒ 走下面 catch ⇒ 如实回失败（不假成功 ✗）。
+      //   🔴 顺序：**先收口、后记 `completed`** —— 反过来（先 completeSale）的话收口一失败，
+      //      她再点就会被"这一单刚才已经交过了"接走 ⇒ 表里却写着失败 ⇒ 撒谎 ✗。
+      const finalizedOneShot = (singlePass && result.oneShot === true)
+        ? await finalizeSaleOnceWith({
+          salesService: sales(), salesEntryRecordId, result,
+          writeStatus: WRITE.writeStatus.done, correlation, timing,
+        })
+        : false;
       await sessions.completeSale(sessionId, { key, result: summary });
       // ⭐ 2026-10-18：最终收口写「写入状态=成功」（三个关联字段 + 前端字段都写成功才走到这里）；
       //   失败/部分失败在 catch / 库存失败分支写。状态写失败不影响业务（writer 只记 warning）。
-      await writeFinalStatus(status(), salesEntryRecordId, WRITE.writeStatus.done, correlation);
+      if (!finalizedOneShot) {
+        await writeFinalStatus(status(), salesEntryRecordId, WRITE.writeStatus.done, correlation);
+      }
       logInfo(config.events.saleSubmitted, {
         session_id: current.session_id, submit_key: key, ...summary,
         funds_recorded: paymentCount > 0,
+        // ⭐ 2026-10-18（第 4 步）：一次跑完那支的如实标记 + 收口耗时（PR/真机排查用）。
+        ...(finalizedOneShot ? {
+          one_shot: true,
+          finalize_ms: Number(timing?.finalize_ms) || 0,
+        } : {}),
         stock_requested: stock.requested, stock_delivered: stock.delivered, request_id: requestId,
       });
-      return { ok: true, reused: false, stock, ...summary };
+      return {
+        ok: true, reused: false, stock, ...summary,
+        ...(finalizedOneShot ? { one_shot: true } : {}),
+      };
     } catch (error) {
       const message = userMessageFor(error);
       await sessions.markSaleFailed(sessionId, String(error.message || error)).catch(() => undefined);

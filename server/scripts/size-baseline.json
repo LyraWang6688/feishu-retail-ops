@@ -19,7 +19,7 @@
     "server/src/services/purchaseArrivalConversationService.js": 1144,
     "server/src/services/purchaseWebhookService.js": 1850,
     "server/src/services/scanPageService.js": 1394,
-    "server/src/services/scanWriteService.js": 1747,
+    "server/src/services/scanWriteService.js": 1731,
     "server/src/services/secondDeliveryService.js": 839,
     "server/src/services/tagQrCodeService.js": 986,
     "server/src/utils/larkCards.js": 838,
@@ -27,8 +27,8 @@
     "server/test/labelPrintCanvas.test.js": 1270,
     "server/test/labelPrintProducts.test.js": 1251,
     "server/test/scanPageWrite.test.js": 1583,
-    "server/test/scanSaleE2E.test.js": 2443,
-    "server/test/scanSaleTwoLayerMoney.test.js": 1845,
-    "server/test/workbenchFourTabs.test.js": 1251
+    "server/test/scanSaleE2E.test.js": 2438,
+    "server/test/scanSaleTwoLayerMoney.test.js": 1840,
+    "server/test/workbenchFourTabs.test.js": 1249
   }
 }

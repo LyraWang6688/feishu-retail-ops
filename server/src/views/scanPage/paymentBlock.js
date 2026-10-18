@@ -241,7 +241,12 @@ ${multiItemTitleHtml}${draftLinesHtml(write)}
 ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
 <!-- ⭐⭐ 2026-10-13（金额两步走）：整单那一组（档位 / 收款行 / 备注）**整块挪到第 2 步页**
      ⇒ 录入页只留：每双 颜色 · 尺码 · 这一双的金额 ✓（那一组的字段名与标签字面量一个都不许留，否则 AC-2S1/AC-1 会打红） -->
-<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
+<!-- ⭐⭐ 2026-10-18（第 4 步提速）：录入页提交**只剩建主表**，但仍是同步请求 ⇒ 加一个
+     data-progress-submit="1" 钩子：views/scanPage/layout.js 的提交进度脚本据它拦下这一次，
+     先弹全屏遮罩再 fetch，响应回来 document.write 整页（成功页 / 资金页 / 400 提示页都照原样）。
+     ⚠️ 只加**这一个属性**（按钮 name/value/文案一个字未动 ✓）；老环境没有 JS 照样走原生提交。
+     ⚠️ 【加入本单】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
+<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
 <button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>
 </form>
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">

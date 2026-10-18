@@ -50,10 +50,16 @@ test('AC-MS-G1 ⭐⭐ `allowUnposted: true` 全仓**恰好一处**（只在货�
 });
 
 test('AC-MS-G2 ⭐ 两处的缺省都是**显式布尔 false**（禁 `||` 兜底 ✗）', () => {
-  assert.ok(/allowUnposted = false/.test(FROZEN), '冻结件 `deliverStockLines` 的形参缺省必须是 `false` ✓');
+  // ⚠️ 2026-10-18 成对迁移（第 4 步提速 · 文件大小门禁）：`deliverStockLines` 整段**原样搬到**
+  //   `src/services/sales/deliveryStep.js`（纯搬家）⇒ 缺省/转发这两条改读新模块；
+  //   冻结件里只剩"调用点"（`allowUnposted: fundsDeferred || singlePass`）。
+  const read = require('node:fs').readFileSync;
+  const path = require('node:path');
+  const DELIVERY_STEP = read(path.join(__dirname, '..', 'src', 'services', 'sales', 'deliveryStep.js'), 'utf8');
+  assert.ok(/allowUnposted = false/.test(DELIVERY_STEP), '`deliverStockLines` 的形参缺省必须是 `false` ✓');
   assert.ok(/allowUnposted = false/.test(DELIVERY), '交付服务 `_deliver` 的形参缺省必须是 `false` ✓');
-  assert.equal(/allowUnposted\s*\|\|/.test(FROZEN + DELIVERY), false, '🔴 不许 `allowUnposted || …` 那种兜底 ✗');
-  assert.ok(/allowUnposted,/.test(FROZEN), '冻结件必须把形参**转发**给 `delivery().deliver({…})` ✓');
+  assert.equal(/allowUnposted\s*\|\|/.test(DELIVERY_STEP + DELIVERY), false, '🔴 不许 `allowUnposted || …` 那种兜底 ✗');
+  assert.ok(/allowUnposted,/.test(DELIVERY_STEP), '必须把形参**转发**给 `delivery().deliver({…})` ✓');
   assert.ok(/if \(!allowUnposted && !isPosted/.test(DELIVERY),
     '交付服务的守门必须是 `!allowUnposted && !isPosted(…)`（**只对货那一跑开门** ✓）');
 });

@@ -382,9 +382,12 @@ test('AC-PT3 ⭐⭐ 提交互不影响：A 提交只清 A 的草稿 / 只轮换 
       // ① A 提交：真实 submitSale（假业务层）⇒ 只消费 A 的草稿
       const submittedA = await postForm(base, a.cookie, paidForm(submitA, 40));
       assert.equal(submittedA.status, 200, `A 提交应走资金页 200（实际 ${submittedA.status}）`);
-      assert.equal(h.calls.sales.length, 1, 'A 提交（货那一跑）⇒ 业务层只被调 1 次');
+      // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：货品页**只建主表**（不调业务层）⇒ 0 次；
+      //   业务层在资金页那一跑（一次跑完）才被调 ⇒ 计在下面那一步（依据 = 第 4 步：明细/收款全留给资金页）。
+      assert.equal(h.calls.sales.length, 0, 'A 提交（只建主表）⇒ 业务层尚未被调 ✓');
       const completedA = await followPaymentStep(base, a.cookie, submittedA);
       assert.equal(completedA.status, 200, `A 资金页点付款应 200（实际 ${completedA.status}）`);
+      assert.equal(h.calls.sales.length, 1, 'A 资金页提交 ⇒ 业务层被调 1 次（一次跑完）✓');
       const afterA = await h.sessions.get(keyA);
       assert.equal(afterA.sale.status, SCAN_WRITE.session.statuses.submitted);
       assert.deepEqual(afterA.sale.lines, [], 'A 提交成功 ⇒ A 的草稿清空');
@@ -399,10 +402,11 @@ test('AC-PT3 ⭐⭐ 提交互不影响：A 提交只清 A 的草稿 / 只轮换 
       // ② B 提交：它自己那份照常成单（互不影响是双向的）
       const submittedB = await postForm(base, b.cookie, paidForm(submitB, 41));
       assert.equal(submittedB.status, 200);
-      assert.equal(h.calls.sales.length, 3, 'B 提交（货那一跑）⇒ 业务层第 3 次（B 自己那一单）');
+      assert.equal(h.calls.sales.length, 1, 'B 提交（只建主表）⇒ 业务层仍 1 次（B 的那次在资金页）');
       const completedB = await followPaymentStep(base, b.cookie, submittedB);
       assert.equal(completedB.status, 200, `B 资金页点付款应 200（实际 ${completedB.status}）`);
-      // 一笔单在业务层会被"货那一跑 + 钱那一跑"各调一次 confirm（同一张主表）⇒ 按**主表 id** 数单
+      // 第 4 步起：一笔单在业务层只调一次 confirm（资金页一次跑完）⇒ 按**主表 id** 数单仍成立
+      assert.equal(h.calls.sales.length, 2, 'B 资金页提交 ⇒ 业务层第 2 次（B 自己那一单）');
       const orderIds = new Set(h.calls.sales.map((call) => call.salesEntryRecordId));
       assert.equal(orderIds.size, 2, 'A/B 各自成单 ⇒ **两张**主表（不是同一张被合账 ✗）');
       const afterB = await h.sessions.get(keyB);
@@ -412,7 +416,7 @@ test('AC-PT3 ⭐⭐ 提交互不影响：A 提交只清 A 的草稿 / 只轮换 
       // ③ 同一 token 同一把键再点一次 ⇒ 既有幂等：**reused**、不再写第二遍
       const replay = await postForm(base, a.cookie, paidForm(submitA, 40));
       assert.equal(replay.status, 200, '重放仍回资金页/成功那一页（不 500）');
-      assert.equal(h.calls.sales.length, 4, '重放**不许**再写一遍业务层');
+      assert.equal(h.calls.sales.length, 2, '重放**不许**再写一遍业务层（复用既有幂等 ✓）');
       const replaySession = await h.sessions.get(keyA);
       assert.equal(replaySession.sale.completed.length, 1, '重放不新增 completed（同一把键只写一次）');
       assert.equal(replaySession.sale.completed[0].key, submitA);

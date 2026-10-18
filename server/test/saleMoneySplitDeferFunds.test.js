@@ -585,7 +585,7 @@ test('AC-MSD6 🔴 货那一跑**带收款** ⇒ 当场抛（调用方契约错�
 // AC-MSD7 🔴 源码哨兵
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接线**（`routes/**` 里没有 `deferFunds`）', () => {
+test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 路由已改走第 4 步（masterOnly / oneShot，不再有 deferFunds）', () => {
   const src = fs.readFileSync(path.join(SERVER_SRC, 'services', 'scanWriteService.js'), 'utf8');
 
   // ① 接缝那几行**逐字**在（改一个字 ⇒ 红 ⇒ 人就得回来看这一条与冻结哨兵）
@@ -600,18 +600,31 @@ test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接
     '🔴 后台那一跑必须带上 deferFunds（AC-MSD4 的源码那一半 ✓）');
   assert.ok(src.includes("'「货 / 钱分离」的货那一跑不许带收款：钱那一半由资金页那一跑写'"),
     '带收款那条闸门必须**当场抛**（且文案逐字 ✓）');
-  assert.ok(src.includes('if (fundsDeferred) owedCents = 0;'),
-    '货那一跑不许把"钱的结论"带下去 ✓');
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`assert.ok(src.includes('if (fundsDeferred) owedCents = 0;'), '货那一跑不许把"钱的结论"带下去 ✓');`
+  //   改后逐字：`if (fundsDeferred || goodsOnly) owedCents = 0;` —— 货品页那一屏（`masterOnly`，
+  //     只建主表）同样"一个钱的结论都不许带下去"（它连 `_confirm` 都不进，但这条零化仍保留作判据 ✓）。
+  //   依据 = 第 4 步提速：货品页只建主表 / 明细·收款全留给资金页那一屏。
+  assert.ok(src.includes('if (fundsDeferred || goodsOnly) owedCents = 0;'),
+    '货那一跑（以及只建主表那一跑）不许把"钱的结论"带下去 ✓');
   // ⭐⭐ 2026-10-16 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
   //   改前逐字：`assert.ok(src.includes(`        ? { requested: 0, delivered: 0, failed: 0, reasons: [] }`), '库存那一跑：货那一跑如实报 requested 0（AC-MSD3 ✓）');`
   //   改后逐字：① 货那一跑**照走交付**（`allowUnposted: fundsDeferred` ✓）② 那个"不请求交付"的三元**不许回来** ✗
   //             ③ `requested: 0` 只剩**预订/无可交付**那条 early-return（`if (!deliverable.length)` ✓）
   //   依据 = 她 22:0x 逐字「**如果是现货，就是要扣库存**；如果是预订，就不扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」✓
-  assert.ok(src.includes('allowUnposted: fundsDeferred'),
-    '⭐ 货那一跑照走交付（AC-MSD3 新口径 ✓）');
+  // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`assert.ok(src.includes('allowUnposted: fundsDeferred'), …)`
+  //   改后逐字：`allowUnposted: fundsDeferred || singlePass` —— 资金页那一屏（`oneShot`）也要开：
+  //     它把「写入状态=成功」留到库存 + 履约都成功之后才收口 ⇒ 交付这一刻主表仍是「未完成」✓。
+  //   依据 = 第 4 步提速（一次收口必须是**最后**那一下）。
+  assert.ok(src.includes('allowUnposted: fundsDeferred || singlePass'),
+    '⭐ 货那一跑 / 资金页一次跑完照走交付（AC-MSD3 新口径 ✓）');
   assert.equal(/fundsDeferred\s*\n?\s*\?\s*\{ requested: 0/.test(src), false,
     '🔴 "货那一跑不请求交付"那个三元**不许回来** ✗（那=老口径 ✗）');
-  assert.ok(src.includes('if (!deliverable.length) return { requested: 0, delivered: 0, failed: 0, reasons: [] };'),
+  // ⚠️ 成对迁移（第 4 步提速 · 文件大小门禁）：交付那一段**原样搬进** `services/sales/deliveryStep.js`
+  //   ⇒ 这条 early-return 改到新模块里查（判据本身不变：`requested: 0` 只许剩"无可交付"那一条）。
+  const deliveryStepSrc = fs.readFileSync(path.join(SERVER_SRC, 'services', 'sales', 'deliveryStep.js'), 'utf8');
+  assert.ok(deliveryStepSrc.includes('if (!deliverable.length) return { requested: 0, delivered: 0, failed: 0, reasons: [] };'),
     '`requested: 0` 只该剩**无可交付**（预订）那条 early-return ✓');
   assert.ok(src.includes('[SESSION_MARKERS.goodsCreated]: true'),
     '货那一跑记**新标记**（不是 completed ✓）');
@@ -631,8 +644,15 @@ test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接
     '服务层不许读那个开关（那是调用方的事 ✓）');
   assert.equal(codeOnly.includes('resolveSaleMoneySplitConfig'), false, '服务层不许解析那个配置 ✗');
 
-  // ④ 🔴 **本卡没接线**：`routes/**` 里没有 `deferFunds` / 开关 ——
-  //    这一条是"写作用域"的哨兵（下一刀接线时必须**显式**改这一条，不许悄悄接 ✓）。
+  // ④ ⭐⭐ 2026-10-18 **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 路由接线形状：
+  //   改前逐字：路由里**恰好一处** `deferFunds: true`（同一次调用带 `payments: []`），
+  //     且 `resolveSaleMoneySplitConfig` 那条闸门**不许**回来。
+  //   改后逐字：第 4 步提速把生产接线换成两处 ——
+  //     · 货品页 `masterOnly: true`（只建主表 + 单号；`payments: []` 仍然一起走 ✓）；
+  //     · 资金页 `oneShot: true`（明细/收款批量 + 库存批量 + 一次收口）。
+  //     ⇒ 路由代码里 `deferFunds` **一处都不许有**（服务层那条路保留给既有单测，但**没有生产调用方**了 ✓）。
+  //   依据 = 第 4 步目标（87s → ~15s）＋ `docs/issue-scan-sale-gift-ledger-latency-2026-10-18.md` §5。
+  //   ⚠️ **强度不降反升**：从"只许一处、形状要对"→"**必须正好是新的两处**（货品页 / 资金页各一处，形状要对）"。
   const routeFiles = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -643,41 +663,31 @@ test('AC-MSD7 🔴 源码哨兵：接缝逐字 · 显式布尔 · 本卡**没接
   };
   walk(ROUTES_SRC);
   assert.ok(routeFiles.length > 0, 'routes 目录必须扫得到文件（否则这条哨兵是空跑 ✗）');
-  // ⭐⭐ 2026-10-16 task-62 **接线卡** · **成对迁移**（改前逐字 → 改后逐字 → 依据）：
-  //   改前逐字：`assert.equal(text.includes('deferFunds'), false, '…里不许出现 deferFunds（本卡只做服务层那一条路 ✓）');`
-  //   改后逐字：**只许恰好一处接线** —— 在 `src/routes/scanPage/index.js` 里，
-  //             且 `deferFunds: true` 必须在 `resolveSaleMoneySplitConfig().enabled === true` 这道闸门内、
-  //             同一次调用还必须带 `payments: []`（货那一跑不许带收款 ✓）。
-  //   依据 = ⭐ 本哨兵**原文自己写着**「下一刀接线时必须**显式**改这一条，不许悄悄接 ✓」
-  //          ＋ Lead 2026-10-16 派活（她追问「销售钱货分开那个做完了？」⇒ 本卡就是接线 ✓）。
-  //   ⚠️ **强度不降反升**：从"一个都不许有" → "**只许那一处、且形状必须对**"✓（更细的那几条在
-  //      `test/saleMoneySplitWire.test.js` 的 AC-MSW1/MSW2 ✓）。
-  let wiredFiles = 0;
+  const routeCode = new Map();
+  let wiredGoods = 0;
+  let wiredMoney = 0;
   for (const file of routeFiles) {
     const text = fs.readFileSync(file, 'utf8');
+    // ⚠️ 按**代码**（剥掉整行注释）判：注释里那几段"改前逐字"的留痕不算接线 ✓
+    const code = text.replace(/^\s*\/\/.*$/gm, '');
+    routeCode.set(path.relative(SERVER_SRC, file), code);
     assert.equal(text.includes(SWITCH_NAME), false,
       '🔴 ' + path.relative(SERVER_SRC, file) + ' 里不许出现那个开关的**字面量**（只许经 resolveSaleMoneySplitConfig() 读 ✓）');
-    if (!text.includes('deferFunds')) continue;
-    wiredFiles += 1;
-    // ⭐ 2026-10-18 成对迁移（深拆 P2：`submit_order` 分支体搬进 `routes/scanPage/handlers/salesSubmit.js`）：
-    //   改前逐字：路径必须**恰好**是 `routes/scanPage/index.js`。
-    //   改后逐字：允许两处之一 —— 老位置 index.js 或新 handler 文件；**仍恰好一处**（强度未降 ✓）。
-    const rel = path.relative(SERVER_SRC, file);
-    assert.ok(
-      [path.join('routes', 'scanPage', 'index.js'), path.join('routes', 'scanPage', 'handlers', 'salesSubmit.js')].includes(rel),
-      '🔴 `deferFunds` 只许出现在 index.js 或 handlers/salesSubmit.js 那一处接线里 ✗（实际 ' + rel + '）',
-    );
-    // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
-    //   改前逐字：`assert.ok(/resolveSaleMoneySplitConfig\(\)\.enabled === true[\s\S]{0,600}?deferFunds: true/.test(text), '必须在闸门内')`
-    //   改后逐字：**闸门已删** ⇒ 改成"**路由代码里没有那条闸门**"＋"货那一跑照旧带着 `payments: []` 一起走" ✓
-    //   依据 = 业务负责人 2026-10-16 22:5x 逐字：「**把新功能都上了，不需要开关。**」✓
-    // ⚠️ 判**原始文本**（不去注释，理由见 `saleMoneySplitWire.test.js` 那条：去注释的正则会被字符串带偏 ✗）
-    assert.equal(text.includes('resolveSaleMoneySplitConfig'), false,
+    assert.equal(code.includes('resolveSaleMoneySplitConfig'), false,
       '🔴 路由里那条闸门（以及那个配置入口）不许回来 ✗ —— 货那一跑**永远跑** ✓');
-    assert.ok(/payments: \[\][\s\S]{0,600}?deferFunds: true/.test(text),
-      '🔴 同一次调用必须带 `payments: []`（货那一跑不许带收款 ✓）');
+    assert.equal(/deferFunds\s*:/.test(code), false,
+      '🔴 路由里不许再出现 `deferFunds:`（第 4 步起没有生产调用方了 ✗）');
+    if (/masterOnly:\s*true/.test(code)) wiredGoods += 1;
+    if (/oneShot:\s*true/.test(code)) wiredMoney += 1;
   }
-  assert.equal(wiredFiles, 1, `🔴 本卡就是"接线"那一刀 ⇒ 必须**恰好一处**接线（实得 ${wiredFiles} 处 ✗）`);
+  assert.equal(wiredGoods, 1, `🔴 货品页那一处接线必须**恰好一处**（masterOnly: true，实得 ${wiredGoods} ✗）`);
+  assert.equal(wiredMoney, 1, `🔴 资金页那一处接线必须**恰好一处**（oneShot: true，实得 ${wiredMoney} ✗）`);
+  const goodsWire = routeCode.get(path.join('routes', 'scanPage', 'handlers', 'salesSubmit.js')) || '';
+  assert.ok(/payments: \[\][\s\S]{0,400}?masterOnly: true/.test(goodsWire),
+    '🔴 货品页同一次调用必须带 `payments: []`（只建主表那一跑不许带收款 ✓）');
+  const moneyWire = routeCode.get(path.join('routes', 'scanPage', 'handlers', 'payment.js')) || '';
+  assert.ok(/oneShot: true/.test(moneyWire),
+    '🔴 资金页那一处必须显式 `oneShot: true`（一次跑完 ✓）');
 
   // ⑤ 冻结哨兵的成对迁移也在（改前 sha → 改后 sha → 依据；只在那一份里查，避免重复造判据）
   const frozen = fs.readFileSync(path.join(__dirname, 'scanWriteServiceFrozen.test.js'), 'utf8');
