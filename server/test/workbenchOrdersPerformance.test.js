@@ -38,7 +38,7 @@ const readSrc = (relative) => fs.readFileSync(path.join(SERVER, relative), 'utf8
 
 /** 夹具：一单三件明细 + 一笔收款（与既有 `salesFollowupService.test.js` 同一套语义）。 */
 const fixture = () => ({
-  salesEntry: [{ record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-001' } }],
+  salesEntry: [{ record_id: 'order_1', fields: { 写入状态: '成功', 销售单号: 'XSD-001' } }],
   salesDetail: [
     { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 } },
     { record_id: 'detail_2', fields: { 销售单号: ['order_1'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '未交付', 实收金额: 59 } },

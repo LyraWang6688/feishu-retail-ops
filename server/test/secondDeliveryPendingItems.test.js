@@ -60,7 +60,7 @@ const seed = ({ details, entry = {}, payments = [], products = [], accessories =
   }],
   salesEntry: [{
     record_id: 'o1',
-    fields: { 销售单号: 'XSD-1', 交易类型: ['b_cash'], 录单日: SOLD_AT, 资金状态: '已写入', ...entry },
+    fields: { 销售单号: 'XSD-1', 交易类型: ['b_cash'], 录单日: SOLD_AT, 写入状态: '成功', ...entry },
   }],
   salesDetail: details,
   paymentRecord: payments.length ? payments : [
@@ -283,7 +283,7 @@ test('⭐ 候选 = 尚未完成履约：**现货待收**（已交付 + 钱没结
   // 没入账的 → 不算候选。
   const unposted = await run(seed({
     details: [shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }])],
-    entry: { 资金状态: '未写入' },
+    entry: { 写入状态: '未完成' },
   }), { query: { includeItems: true } });
   assert.deepEqual(unposted, []);
 });

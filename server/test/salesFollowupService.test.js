@@ -5,7 +5,7 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 test('workbench groups pending payment and delivery by one sales order', async () => {
   const records = {
-    salesEntry: [{ record_id: 'order_1', fields: { '资金状态': '已写入', 销售单号: 'XSD-001' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { '写入状态': '成功', 销售单号: 'XSD-001' } }],
     // 尺码已改为关联「尺码管理」：夹具用关联 ID，并让假网关能查到尺码表。
     salesDetail: [
       { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 } },
@@ -39,7 +39,7 @@ test('workbench groups pending payment and delivery by one sales order', async (
 //    是另一处（曾经也缺）的口径 —— 已在 2026-10-08 的小修里堵上，见下面的用例。
 test('⭐ 原单的收款被售后退货改成「已退款」后，跟进查询仍然出得来（不再是未知收款状态）', async () => {
   const records = {
-    salesEntry: [{ record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-001' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { 写入状态: '成功', 销售单号: 'XSD-001' } }],
     salesDetail: [
       { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 } },
     ],
@@ -65,7 +65,7 @@ test('⭐ 原单的收款被售后退货改成「已退款」后，跟进查询�
 //   在履约这一维按"已结清"算 ⇒ 不再计待交付（不是靠下面的兜底把它吞掉）。
 test('⭐ 含「已换货」明细的订单不再让整页查询失败（明细行仍如实显示已换货）', async () => {
   const records = {
-    salesEntry: [{ record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-HH' } }],
+    salesEntry: [{ record_id: 'order_1', fields: { 写入状态: '成功', 销售单号: 'XSD-HH' } }],
     salesDetail: [
       // 原明细行：售后把它改成了「已换货」（config/afterSales 的 originalFulfillmentStatus）
       { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已换货', 实收金额: 220 } },
@@ -94,8 +94,8 @@ test('⭐ 含「已换货」明细的订单不再让整页查询失败（明细�
 test('⭐ 单条订单数据不自洽时：跳过该单 + 记 warn（含单号与原因），其余订单照常返回', async () => {
   const records = {
     salesEntry: [
-      { record_id: 'order_bad', fields: { 资金状态: '已写入', 销售单号: 'XSD-BAD' } },
-      { record_id: 'order_ok', fields: { 资金状态: '已写入', 销售单号: 'XSD-OK' } },
+      { record_id: 'order_bad', fields: { 写入状态: '成功', 销售单号: 'XSD-BAD' } },
+      { record_id: 'order_ok', fields: { 写入状态: '成功', 销售单号: 'XSD-OK' } },
     ],
     salesDetail: [
       // 预期之外的履约状态（既不是 未交付/已交付，也不是三种售后取值）

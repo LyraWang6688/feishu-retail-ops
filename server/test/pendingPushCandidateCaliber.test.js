@@ -93,7 +93,7 @@ const captureLogs = () => {
 // （见 config/salesStatusDimensions）——夹具按真表那一列填。
 const entry = (recordId, extra = {}) => ({
   record_id: recordId,
-  fields: { 销售单号: `XSD-${recordId}`, 资金状态: '已写入', ...extra },
+  fields: { 销售单号: `XSD-${recordId}`, 写入状态: '成功', ...extra },
 });
 // 「交易类型」= **关联「行为管理」**（格里是行为记录 id；`null` = 这一格没值）。
 // ⚠️ 2026-10-14：默认销售日也跟着整体后移 14 天（改前逐字 `atShanghai('2026-10-06')`）。
@@ -697,7 +697,7 @@ test('⑥ 售后件（已退货 / 已换货 / 已赔货）整单不进两块候�
 
 test('⑥ 未入账的销售单不进候选（没写明细，推了也没有货号）', async () => {
   const { sales, cash } = await listCandidates({
-    salesEntry: [entry('o1', { 资金状态: '未写入' })],
+    salesEntry: [entry('o1', { 写入状态: '未完成' })],
     salesDetail: [detail('d1', 'o1', 'prod_a', { status: '未交付' })],
     paymentRecord: [payment('p1', 'o1', { status: '未收款', amount: 100 })],
     product: PRODUCTS,

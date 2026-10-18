@@ -336,8 +336,8 @@ test('① 连续扫三双加入本单 → 提交后是**一张销售单 + 三条
       //    现在**她没填 ⇒ 那一列不写**（表里干净、不出现假数字）——见 AC-2b/AC-15。
       assert.equal('实收金额' in detail.fields, false, '没填 ⇒ 那一列留空（不写 0、也不拿单价顶）');
     }
-    // 「确认状态」= 已确认（她在页面上点了【提交】——提交就是确认）
-    assert.equal(entries[0].fields['确认状态'], '已确认');
+    // ⭐ 2026-10-18：旧「确认状态」列已删；这一单（未付/无收款）收口为「写入状态=成功」。
+    assert.equal(entries[0].fields['写入状态'], '成功');
     // 🔴 2026-10-09：主表「原话」那一列已被业务负责人删除 ⇒ 扫码建单**不再写**它
     //（映射 + 写入点一起删，见 `config/v1BitableSchema.salesEntry` 段）。
     // ⚠️ 扫码侧那个「扫码建单（N 双）：…」模板（`config/scanWrite.js` 的
@@ -398,7 +398,7 @@ test('③ 实收金额留空 +【未付】→ 成单、那一列留空、差额 
     assert.equal(result.payment_count, 0, '差额 0 ⇒ 一条收款明细都不写');
 
     const entry = entriesOf(h.gateway, 'salesEntry')[0];
-    assert.equal(entry.fields['销售状态'], '已写入', '货写上了');
+    assert.equal(entry.fields['写入状态'], '成功', '货写上了（收口成功）');
     assert.equal(entriesOf(h.gateway, 'paymentRecord').length, 0, '钱一分没填 ⇒ 一条收款明细都没有');
     assert.equal('实收金额' in entriesOf(h.gateway, 'salesDetail')[0].fields, false,
       '没填 ⇒ 那一列留空（不写 0、也不拿单价顶）');

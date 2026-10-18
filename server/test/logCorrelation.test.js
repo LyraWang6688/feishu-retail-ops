@@ -321,8 +321,8 @@ test('端到端：确认入账 → 交付，写库的每一条日志都带同一
   // 这五条以前**一个键都没有**（正是"一条销售被劈成两半"里看不见的那半）。
   // `always` = 每一行都必须有的；`existing` = 这一条日志改动前就有的字段，一个都不许少。
   const expectations = [
-    ['sales.status.written', { dimensions: ['sales', 'funds'] },
-      { sales_entry_record_id: 'rec_sale', dimensions: ['sales', 'funds'] }],
+    ['sales.status.written', { dimensions: ['writeStatus'] },
+      { sales_entry_record_id: 'rec_sale', dimensions: ['writeStatus'] }],
     ['v1.sale.posted', {}, { sales_entry_record_id: 'rec_sale', detail_count: 1, payment_count: 1,
       step: 'posting', inventory_applied_by_this_step: false }],
     ['sales.inventory.applied', {}, { sales_entry_record_id: 'rec_sale', stock_status: '已写入' }],
@@ -547,7 +547,7 @@ test('成交链路：收款明细的写入日志带 sales_entry_record_id ＋ or
     关联销售单: ['rec_sale'], 收款金额: 220, 收款状态: '未收款',
   } }]);
   // 「成交」要求订单已入账（读「资金状态」）。
-  world.records.get('salesEntry')[0].fields.资金状态 = '已写入';
+  world.records.get('salesEntry')[0].fields.写入状态 = '成功';
 
   const service = new SecondDeliveryService({
     gateway: world.gateway, payments: undefined,

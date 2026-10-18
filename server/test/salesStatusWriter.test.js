@@ -1,7 +1,7 @@
-// 四个状态维度的写入口（services/salesStatusWriter）。
+// 「写入状态」的唯一写入口（services/salesStatusWriter，2026-10-18 新模型）。
 //
-// 两条硬边界，各一条测试：
-//   ① 只写白名单里的四个语义键（写错键名当场被挡，不会写到"另一个同名字段"上）；
+// 硬边界：
+//   ① 只写「写入状态」，且值必须在值域内；旧维度键一律忽略；
 //   ② **状态写失败绝不影响业务写入**（不抛、只记 warning、返回 false）。
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,54 +20,57 @@ const makeGateway = (options = {}) => {
   return { gateway, updates };
 };
 
-test('写语义键：四个维度一次写下去，走 gateway.update（字段名由 schema 提供）', async () => {
+test('写「写入状态」：值原样落到 salesEntry', async () => {
   const { gateway, updates } = makeGateway();
   const writer = new SalesStatusWriter({ gateway });
-  const ok = await writer.write('rec_1', {
-    userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已写入',
-  });
-  assert.equal(ok, true);
+  assert.equal(await writer.write('rec_1', { writeStatus: '成功' }), true);
   assert.deepEqual(updates, [{
-    tableKey: 'salesEntry',
-    recordId: 'rec_1',
-    values: { userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已写入' },
+    tableKey: 'salesEntry', recordId: 'rec_1', values: { writeStatus: '成功' },
   }]);
 });
 
-test('不认识的键被丢掉：不会把值写到别的字段上去', async () => {
+test('旧维度键一律忽略（那四列已被业务负责人删除）', async () => {
   const { gateway, updates } = makeGateway();
   const writer = new SalesStatusWriter({ gateway });
-  await writer.write('rec_1', {
-    userAction: '已确认',
-    // 不在白名单里的键一律丢掉：这件事必须**由数据结构保证**，而不是靠每个调用点记得别写。
-    // （旧字段 confirmStatus / orderStatus 连映射都从 schema 删了，谁也写不出去。）
-    founds: '已写入',
-    '乱写的键': 'x',
-  });
-  assert.deepEqual(updates[0].values, { userAction: '已确认' });
+  assert.equal(await writer.write('rec_1', {
+    userAction: '已确认', sales: '已写入', funds: '已写入', stock: '已写入',
+  }), false);
+  assert.equal(updates.length, 0);
 });
 
-test('空值 = 这一次不写这一维（不是"清空"）：不覆盖读那一侧要退回的旧字段', async () => {
+test('值不在值域内 → 拒绝写入，一次请求都不发', async () => {
   const { gateway, updates } = makeGateway();
   const writer = new SalesStatusWriter({ gateway });
-  await writer.write('rec_1', { userAction: '已确认', funds: '', sales: null, stock: undefined });
-  assert.deepEqual(updates[0].values, { userAction: '已确认' });
+  assert.equal(await writer.write('rec_1', { writeStatus: '已写入' }), false);
+  assert.equal(await writer.write('rec_1', { writeStatus: '' }), false);
+  assert.equal(updates.length, 0);
 });
 
-test('没有任何可写内容 / 没有 record_id → 直接返回 false，一次请求都不发', async () => {
+test('writePending / writeFinal 便捷方法：未完成 / 成功 / 部分失败 / 失败', async () => {
   const { gateway, updates } = makeGateway();
   const writer = new SalesStatusWriter({ gateway });
+  assert.equal(await writer.writePending('rec_1'), true);
+  assert.equal(await writer.writeFinal('rec_1', '成功'), true);
+  assert.equal(await writer.writeFinal('rec_1', '部分失败'), true);
+  assert.equal(await writer.writeFinal('rec_1', '失败'), true);
+  assert.equal(await writer.writeFinal('rec_1', '未完成'), false);
+  assert.deepEqual(updates.map((u) => u.values.writeStatus), ['未完成', '成功', '部分失败', '失败']);
+});
+
+test('没有 record_id / 没有值 → 返回 false，不发请求', async () => {
+  const { gateway, updates } = makeGateway();
+  const writer = new SalesStatusWriter({ gateway });
+  assert.equal(await writer.write('', { writeStatus: '成功' }), false);
+  assert.equal(await writer.write(undefined, { writeStatus: '成功' }), false);
   assert.equal(await writer.write('rec_1', {}), false);
-  assert.equal(await writer.write('', { userAction: '已确认' }), false);
-  assert.equal(await writer.write(undefined, { userAction: '已确认' }), false);
   assert.equal(updates.length, 0);
 });
 
 test('🔴 写失败只记警告、不抛（记进度绝不能带崩记账/扣库存）', async () => {
   const { gateway } = makeGateway({ fail: true });
   const writer = new SalesStatusWriter({ gateway });
-  await assert.doesNotReject(() => writer.write('rec_1', { funds: '已写入' }));
-  assert.equal(await writer.write('rec_1', { funds: '已写入' }), false);
+  await assert.doesNotReject(() => writer.write('rec_1', { writeStatus: '成功' }));
+  assert.equal(await writer.write('rec_1', { writeStatus: '成功' }), false);
 });
 
 test('没有 gateway 直接报错（配错了要当场知道，而不是静默什么都写不出去）', () => {

@@ -21,7 +21,7 @@ const sale = (id, iso, amount) => ({
 });
 const FIXTURE = {
   salesDetail: [sale('d1', '2026-09-01', 100), sale('d2', '2026-09-05', 200), sale('d3', '2026-09-10', 300)],
-  salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-001', 资金状态: '已写入' } }],
+  salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-001', 写入状态: '成功' } }],
   product: [{ record_id: 'p1', fields: { 编号: 'XHB8095|全黑|A', 货号: 'XHB8095', 颜色: '全黑' } }],
 };
 

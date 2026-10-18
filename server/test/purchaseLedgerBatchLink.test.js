@@ -222,8 +222,11 @@ test('③-补 来源注册表：**只有**采购增加的来源被补了这一�
   assert.deepEqual(STOCK_MOVEMENTS[PURCHASE_INCREASE].ledgerLink, {
     field: 'purchaseBatch', inputKey: 'purchaseBatchRecordId', operationKey: 'purchase_batch_record_id',
   });
+  // ⭐ 2026-10-18：销售减少也需要"补关联"——生产「关联销售」指向销售主表。
+  assert.deepEqual(STOCK_MOVEMENTS[SALE_DECREASE].ledgerLink, {
+    field: 'salesDetail', inputKey: 'salesEntryRecordId', operationKey: 'sales_entry_record_id',
+  });
   const unchanged = {
-    STOCK_SALE_DECREASE: 'salesDetail',
     SALE_RETURN: 'salesDetail',
     SALE_COMPENSATION: 'salesDetail',
     SALE_CASH: 'salesDetail',

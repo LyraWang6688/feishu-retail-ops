@@ -43,8 +43,8 @@ const { ORDER_SUPPORT_FIELD_KEYS } = require('../src/config/workbenchOrders');
 /** 两张单、四条明细、**四条都挂着"待补样品"待办**（= 4 次 N+1，改前就是 4 次串行整表读）。 */
 const pendingFixture = () => ({
   salesEntry: [
-    { record_id: 'order_1', fields: { 资金状态: '已写入', 销售单号: 'XSD-001' } },
-    { record_id: 'order_2', fields: { 资金状态: '已写入', 销售单号: 'XSD-002' } },
+    { record_id: 'order_1', fields: { 写入状态: '成功', 销售单号: 'XSD-001' } },
+    { record_id: 'order_2', fields: { 写入状态: '成功', 销售单号: 'XSD-002' } },
   ],
   salesDetail: [
     { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 } },

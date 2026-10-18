@@ -13,7 +13,7 @@ const { itemLinkOfDetail } = require('./salesDetailItemFacts');
 const {
   postedOf, isPosted,
   // ⭐⭐ 2026-10-15（⑰b-1 UI）：那三个维度的**只读取用器**（与工作台其他地方同一份 ✓ 不另写判据 ✗）
-  salesStatusOf, stockStatusOf, SALES_STATUS_FIELDS,
+  salesStatusOf, stockStatusOf, fundsStatusOf,
 } = require('../config/salesStatusDimensions');
 // ⭐ 「这一单写完了没」的**唯一判据**（已合并：`services/v1WorkbenchService.js` 导出 ✓）
 //   ⚠️ 页面不自己判 ✗；本文件也**不另发明**一套 ✗
@@ -40,9 +40,8 @@ const {
 const writeFlagsOf = (order, fields) => {
   const salesStatus = salesStatusOf(order, fields);
   const stockStatus = stockStatusOf(order, fields);
-  // 「资金状态」没有现成的取用器（上面那两个有）⇒ 按**同一份字段映射**取（`SALES_STATUS_FIELDS.funds` 是内置名 ✓）
-  const fundsName = fields?.['funds'] || SALES_STATUS_FIELDS.funds;
-  const fundsStatus = textValue(order?.fields?.[fundsName]);
+  // ⭐ 2026-10-18：旧「资金状态」列已删除 ⇒ 用 fundsStatusOf（从「写入状态」映射旧词义）。
+  const fundsStatus = fundsStatusOf(order, fields);
   return {
     salesStatus, stockStatus, fundsStatus: String(fundsStatus || '').trim(),
     write_incomplete: isOrderIncomplete({ salesStatus, stockStatus, fundsStatus: String(fundsStatus || '').trim() }),

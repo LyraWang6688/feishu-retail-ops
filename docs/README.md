@@ -256,6 +256,7 @@
 | [todo-delete-original-sales-status-write.md](todo-delete-original-sales-status-write.md) | 🔴 待删：「售后回写原单销售状态」那套代码 |
 | [todo-followup-supplement-multiturn.md](todo-followup-supplement-multiturn.md) | 待办：追问后的"补充"要接着上一轮（多轮接续）—— Lead 已批准最小改法（2026-10-07 晚） |
 | [todo-inventory-query-page-logic.md](todo-inventory-query-page-logic.md) | 「库存查询」页面逻辑审查（2026-10-08） |
+| [ai-bitable-page-review-2026-10-18.md](ai-bitable-page-review-2026-10-18.md) | ⭐⭐ **AI 多维表格页面：校验与改法**（Lead 定位 · 怎么扒源码〔Referer〕· DSL 结构 · 固定校验动作 · 两条修改路径） |
 | [todo-purchase-inbound-removal.md](todo-purchase-inbound-removal.md) | 口径补记（业务负责人 2026-10-07 深夜，逐字） |
 | [todo-purchase-return-unified-parsing.md](todo-purchase-return-unified-parsing.md) | 待办：采购退货解析并入"采购（报货）"那条路线（业务负责人 2026-10-07 定，等前件落地后排） |
 | [todo-push-card-table-layout.md](todo-push-card-table-layout.md) | 待办：9 点推送卡片改成「三列表格布局 + 每组一行标题 + 跳转按钮」（业务负责人 2026-10-08 拍板） |

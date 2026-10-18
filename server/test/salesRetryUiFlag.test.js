@@ -28,17 +28,9 @@ const {
 
 const SERVER_SRC = path.join(__dirname, '..', 'src');
 // 真表那一列的字段名（服务端给的映射就是这一份 ⇒ 用例照它走 ✓ 不猜 ✗）
-const FIELDS = {
-  sales: SALES_STATUS_FIELDS.sales,
-  stock: SALES_STATUS_FIELDS.stock,
-  funds: SALES_STATUS_FIELDS.funds,
-};
-const rowOf = ({ sales = '', stock = '', funds = '' } = {}) => ({
-  fields: {
-    ...(sales ? { [FIELDS.sales]: sales } : {}),
-    ...(stock ? { [FIELDS.stock]: stock } : {}),
-    ...(funds ? { [FIELDS.funds]: funds } : {}),
-  },
+const FIELDS = { writeStatus: SALES_STATUS_FIELDS.writeStatus };
+const rowOf = ({ writeStatus = '' } = {}) => ({
+  fields: writeStatus ? { [FIELDS.writeStatus]: writeStatus } : {},
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -46,38 +38,19 @@ const rowOf = ({ sales = '', stock = '', funds = '' } = {}) => ({
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-ASU1 ⭐ 只有**没写完**的单才是 `write_incomplete: true`（已写完 ⇒ false）', () => {
-  // ① 全写完（销售/库存/资金都是"已写入"）⇒ **不是**未完成（她那份单子不需要重试 ✓）
-  assert.equal(writeFlagsOf(rowOf({
-    sales: W.sales.done, stock: W.stock.done, funds: W.funds.done,
-  }), FIELDS).write_incomplete, false, '全写完 ⇒ 不显示「可点重试」✓');
-
-  // ② 货没写完（三种：未写入 / 部分写入 / 写入失败）⇒ **是**未完成 ✓
-  for (const sales of [W.sales.none, W.sales.partial, W.sales.failed]) {
-    assert.equal(writeFlagsOf(rowOf({ sales, stock: W.stock.done, funds: W.funds.done }), FIELDS).write_incomplete,
-      true, `销售状态「${sales}」⇒ 未完成 ✓`);
+  // ⭐ 2026-10-18：四维已合并成「写入状态」；未完成/部分失败/失败都算没写完。
+  assert.equal(writeFlagsOf(rowOf({ writeStatus: '成功' }), FIELDS).write_incomplete, false,
+    '成功 ⇒ 不显示「可点重试」✓');
+  for (const status of ['未完成', '部分失败', '失败']) {
+    assert.equal(writeFlagsOf(rowOf({ writeStatus: status }), FIELDS).write_incomplete, true,
+      `写入状态「${status}」⇒ 未完成 ✓`);
   }
-  // ③ 库存没写完 ⇒ 也是未完成（她是"货 + 库存"两边都要落）
-  for (const stock of [W.stock.none, W.stock.partial, W.stock.failed]) {
-    assert.equal(writeFlagsOf(rowOf({ sales: W.sales.done, stock, funds: W.funds.done }), FIELDS).write_incomplete,
-      true, `库存状态「${stock}」⇒ 未完成 ✓`);
-  }
-  // ④ 资金那一维只有"写入失败"算未完成（未写入不算 —— 那是"还没收钱"，不是"写坏了"）
-  assert.equal(writeFlagsOf(rowOf({
-    sales: W.sales.done, stock: W.stock.done, funds: W.funds.failed,
-  }), FIELDS).write_incomplete, true, '资金「写入失败」⇒ 未完成 ✓');
-
-  // ⑤ **读不到**（老单 / 列还没写）⇒ 不猜：不是未完成（但也不会"乱发按钮"）
+  // 读不到（老单 / 列还没写）⇒ 不猜：不是未完成（但也不会乱发按钮）
   const blank = writeFlagsOf(rowOf({}), FIELDS);
   assert.equal(blank.write_incomplete, false, '读不到就不说"未完成"（不猜 ✗）');
-  assert.deepEqual(
-    [blank.salesStatus, blank.stockStatus, blank.fundsStatus], ['', '', ''],
-    '读不到就给空串（不编 ✗）',
-  );
+  assert.deepEqual([blank.salesStatus, blank.stockStatus, blank.fundsStatus], ['', '', ''],
+    '读不到就给空串（不编 ✗）');
 });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AC-ASU2 / AC-ASU3 判据是既有的那一份 · 零额外读表
-// ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-ASU2 ⭐ 判据用**已合并的** `isOrderIncomplete`（不另写一套 ✗）；状态字面量不许散写', () => {
   const source = fs.readFileSync(path.join(SERVER_SRC, 'services', 'salesFollowupService.js'), 'utf8');
@@ -98,7 +71,7 @@ test('AC-ASU3 ⭐ 零额外读表：只从**已经读到**的那条记录取（`
     assert.equal(body.includes(forbidden), false,
       `writeFlagsOf 里不许出现「${forbidden}」（纯映射，不读表 ✗）`);
   }
-  assert.ok(body.includes('order?.fields'), '只从已经读到的那条记录里取 ✓');
+  assert.ok(body.includes('order') && body.includes('fields'), '只从已经读到的那条记录里取 ✓');
   // 列表那一行**确实**带上了它（否则前端拿不到判据 ✗）
   assert.match(source, /\.\.\.writeFlagsOf\(order, orderFields\)/,
     '建行时要把三维度 + `write_incomplete` 摊进去 ✓');

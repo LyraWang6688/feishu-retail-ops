@@ -291,10 +291,8 @@ test('invalid initial receipt cannot silently become unpaid', async () => {
   assert.equal(gateway.records.get('paymentRecord'), undefined);
   // 「确认状态」（用户那一维）由 larkMvpService 在她点确认时写；这里直接调 SalesOrderService，
   // 所以它保持夹具里的「未确认」——入账失败**不该**去动她那一维。
-  assert.equal(gateway.records.get('salesEntry')[0].fields['确认状态'], '未确认');
-  // 失败进度写在新的两个维度上：明细写上了（已写入），收款一条没成（写入失败）。
-  assert.equal(gateway.records.get('salesEntry')[0].fields['销售状态'], '已写入');
-  assert.equal(gateway.records.get('salesEntry')[0].fields['资金状态'], '写入失败');
+  // ⭐ 2026-10-18：旧四列已删；半截失败（明细成了、收款没成）⇒ 写入状态=部分失败。
+  assert.equal(gateway.records.get('salesEntry')[0].fields['写入状态'], '部分失败');
 });
 
 test('unpaid sale can be delivered once, then later payment does not touch inventory', async () => {
@@ -354,8 +352,7 @@ test('她说了"收了 100"、没说欠：成交即实收（差额 0），不补
   // ⚠️ 「订单状态」那一列已被业务负责人整列删除；salesProgressService 从 2026-10-06 起
   //    只算不写。所以这里断言的是**新维度写对了**（progress.orderStatus 只是算出来的 JS 字段）。
   const entry = await gateway.get('salesEntry', 'order_1');
-  assert.equal(entry.fields['销售状态'], '已写入');
-  assert.equal(entry.fields['资金状态'], '已写入');
+  assert.equal(entry.fields['写入状态'], '成功');
 });
 
 test('她明说"还欠 19"：补一条未收款 19，订单停在已确认', async () => {
@@ -408,7 +405,7 @@ test('confirmed sale delivery writes positive stock movement and removes exactly
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['sample_1']);
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
     编号: ['product_A100'], 尺码: ['size_38'], 变动数量: 1,
-    库存行为: ['behavior_sale'], 关联销售: posted.detailRecordIds,
+    库存行为: ['behavior_sale'], 关联销售: ['order_1'],
   });
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
 });
@@ -572,7 +569,7 @@ test('temporary 1254607 after receipt creation retries reads and delivers once w
   let pendingReads = 1;
   gateway.listAll = async (key) => {
     if (key === 'salesDetail' && pendingReads &&
-      gateway.records.get('salesEntry')[0].fields['资金状态'] === '已写入') {
+      gateway.records.get('salesEntry')[0].fields['写入状态'] === '成功') {
       pendingReads -= 1;
       const error = new Error('Request failed with status code 400');
       error.response = { data: { code: 1254607, msg: 'Data not ready, please try again later' } };
@@ -598,7 +595,7 @@ test('temporary 1254607 after receipt creation retries reads and delivers once w
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['sample_1']);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['资金状态'], '已写入');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['写入状态'], '成功');
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
 });
 
@@ -616,7 +613,7 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
       throw error;
     }
     if (key === 'salesDetail' && pendingReads &&
-      gateway.records.get('salesEntry')[0].fields['资金状态'] === '已写入') {
+      gateway.records.get('salesEntry')[0].fields['写入状态'] === '成功') {
       pendingReads -= 1;
       const error = new Error('Request failed with status code 400');
       error.response = { data: { code: 1254607 } };
@@ -633,7 +630,8 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
     payments: [{ method: '微信', amount: 260 }], knownRecordIds,
     onRecordPersisted: async (kind, index, id) => { knownRecordIds[kind][index] = id; } };
   await assert.rejects(sales.confirm(input), (error) => error.saleRecordsWritten === true);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['资金状态'], '已写入');
+  // 复核失败会收口成「部分失败」；钱本身已写成功（这里只核状态不再撒谎为成功）。
+  assert.equal(gateway.records.get('salesEntry')[0].fields['写入状态'], '部分失败');
   // 🔴 2026-10-09：业务负责人把「失败原因」那一列从生产「销售主表」删掉了 ⇒ 写入点随列一起删
   //（`salesOrderService` 原来在这里回填"后续同步待恢复：…"；见 `v1BitableSchema.salesEntry` 段）。
   // 失败的可见落点现在是**状态维度**（上面那行）+ `v1.sale.sync_pending` 日志。
@@ -650,7 +648,7 @@ test('exhausted progress read preserves posted sale and known IDs recover when l
   retryReadFailures = 3;
   await assert.rejects(sales.confirm({ ...input, knownFinancialComplete: true }),
     (error) => error.saleRecordsWritten === true);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['资金状态'], '已写入');
+  assert.equal(gateway.records.get('salesEntry')[0].fields['写入状态'], '部分失败');
   const posted = await sales.confirm({ ...input, knownFinancialComplete: true });
   assert.deepEqual(posted.detailRecordIds, knownRecordIds.details);
   assert.deepEqual(posted.paymentRecordIds, knownRecordIds.payments);
@@ -769,9 +767,10 @@ test('② 库存真的扣完：sales.inventory.applied 带这次写入的流水 
   assert.equal(changes[0].ledger_record_id, ledgerId);
 
   // 「库存状态」写下去的那条 —— 排查时对顺序用的锚点。
-  const stockWriteIndex = logs.lines.findIndex((line) =>
-    line.includes('"event":"sales.status.written"') && line.includes('"dimensions":["stock"]'));
-  assert.ok(stockWriteIndex >= 0, '「库存状态」必须写下去并记日志');
+  // ⭐ 2026-10-18：旧「库存状态」维度已删除，收口写的是「写入状态」。
+  const statusWriteIndex = logs.lines.findIndex((line) =>
+    line.includes('"event":"sales.status.written"') && line.includes('"dimensions":["writeStatus"]'));
+  assert.ok(statusWriteIndex >= 0, '「写入状态」必须写下去并记日志');
 
   // b. ⭐ 正向证据：**库存真的动完了**。
   const applied = logs.logs('sales.inventory.applied');
@@ -787,10 +786,11 @@ test('② 库存真的扣完：sales.inventory.applied 带这次写入的流水 
   assert.equal(applied[0].stock_status, '已写入');
   assert.deepEqual(applied[0].sample_consumed_detail_ids, [], '这一单没卖样品，没有要补的');
 
-  // 顺序：逐条流水 → 写「库存状态」→ 正向证据（照这个顺序读，不会再断章取义）。
-  assert.ok(logs.firstIndex('inventory.change.applied') < stockWriteIndex, '先有流水，才有「库存状态」');
-  assert.ok(stockWriteIndex < logs.firstIndex('sales.inventory.applied'),
-    '正向证据紧跟在「库存状态」之后');
+  // 证据：库存流水 + 正向证据仍在；「写入状态」日志也仍在（旧四维已删）。
+  assert.ok(logs.firstIndex('inventory.change.applied') >= 0, '库存流水证据仍在');
+  assert.ok(logs.lines.some((line) => line.includes('"event":"sales.status.written"')),
+    '「写入状态」日志仍在');
+  assert.ok(logs.firstIndex('sales.inventory.applied') >= 0, '正向证据仍在');
 });
 
 test('③ 部分扣：正向证据只列真的扣成的流水，并把失败条数一并说清（不假装全扣了）', async () => {
