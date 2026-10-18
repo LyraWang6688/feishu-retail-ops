@@ -547,8 +547,8 @@ const SIZE_SEGMENTS = Object.freeze({
   // ⭐⭐ 2026-10-13（业务负责人逐字确认 · 见 docs/size-range-special-sizes-2026-10-13.md）
   //   每个类别**显式三段**，一处定义（渲染层与缺码判断**都读它** ✗ 不许各写一份）：
   //   · enterable = **可录范围**（女 34–43 / 男 38–48）—— 都能录 ✓
-  //   · default   = **默认展示 + 缺码判断**（女 35–42 / 男 38–45）✓
-  //   · special   = **特殊码**（女 34,43 / 男 46,47,48）——
+  //   · default   = **默认展示 + 缺码判断**（女 35–42 / 男 38–44）✓
+  //   · special   = **特殊码**（女 34,43 / 男 45–48）——
   //                 ⚠️ **只在「采购明细」里出现过才展示**（不看实时库存 ✗），
   //                 没出现 ⇒ 不显示、**也不算缺码** ✓（不天天提示她"缺 43 / 缺 48"）
   //   ⚠️ from/to **保留作兼容**（= enterable 的两端）：
@@ -560,9 +560,10 @@ const SIZE_SEGMENTS = Object.freeze({
       enterable: Object.freeze([38, 48]),
       // ⭐ 2026-10-14 她的命名：`normal`（普通码）= ①库存缺码判据 ②销售页预订范围 ✓
       //   `default` 保留为**兼容别名**（同一个数组 ✓ 一份真源 ✗ 不是第二份）
-      normal: Object.freeze([38, 45]),
-      default: Object.freeze([38, 45]),
-      special: Object.freeze([46, 47, 48]),
+      normal: Object.freeze([38, 44]),
+      default: Object.freeze([38, 44]),
+      // ⭐ 2026-10-18 业务负责人：「男鞋的特殊码改为 45-48」⇒ 45 从普通码移到特殊码。
+      special: Object.freeze([45, 46, 47, 48]),
     }),
     B: Object.freeze({
       label: '女', from: 34, to: 43,
