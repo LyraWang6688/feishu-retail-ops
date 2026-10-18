@@ -95,7 +95,11 @@ const submitProgressScriptHtml = () => `<script data-view="submit-progress">
     show((submitter && submitter.getAttribute('data-submit-feedback')) || '');
     var body = new FormData(form);
     if (submitter && submitter.name) body.append(submitter.name, submitter.value || '');
-    fetch(form.action || window.location.href, {
+    // ⚠️ Do NOT read the clobbered action property: two submit buttons are named
+    //    "action" (native name=value), so it becomes a RadioNodeList and the POST goes
+    //    to /r/[object RadioNodeList] (unknown_action). Read the attribute instead.
+    var action = form.getAttribute('action') || window.location.href;
+    fetch(action, {
       method: 'POST', body: body, credentials: 'same-origin'
     }).then(deliver).catch(function () {
       hide();
