@@ -157,7 +157,7 @@ const fakeLarkJsapi = () => {
       return {
         ok: true,
         appId: 'cli_fake',
-        timestamp: 1717133000000,
+        timestamp: 1736133000000,
         nonceStr: 'nonce',
         signature: 'sig',
         url,
@@ -639,13 +639,13 @@ test('AC-ML8 🔴 `services/scanWriteService.js` **一个字不加/删/改**（�
   //      —— 判据没放宽，只是基线随授权的那一刀一起搬 ✓。
   const cryptoFrozen = require('node:crypto');
   // ⭐⭐ 2026-10-16 成对迁移（改前逐字 → 改后逐字 → 依据）：
-  //   改前逐字：sha `9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f`（1770 行 · 冻结件 `deferFunds` 那一版）
-  //   改后逐字：sha `9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f`（1770 行 · 货那一跑**照扣库存**）
+  //   改前逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1770 行 · 冻结件 `deferFunds` 那一版）
+  //   改后逐字：sha `b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734`（1770 行 · 货那一跑**照扣库存**）
   //   依据 = 业务负责人 2026-10-16 22:0x 逐字：「**货就是货，资金就是资金，它俩是独立的呀**：…**如果是现货，就是要扣库存**；
   //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
   //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
   //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-  const FROZEN_SCAN_WRITE_SHA256 = '9259ea9a610b5111015e3ef4d2d4bb851bcdd146497d679a214e1266baee145f';
+  const FROZEN_SCAN_WRITE_SHA256 = 'b82af5887b33ebe53d41eca20dab36abdde7c2b7bf08e4a8fd8ba3486d23f734';
   // ⚠️ 行数这条**刻意不写**：`split('\n').length` 与 `wc -l` **差 1**（文件末尾有无换行 ✓）
   //    ⇒ 我第一版写成 1698 当场把自己判红 ✗ ⇒ **只留 sha256**（它本身就是"逐字节"最强判据 ✓ 且不依赖任何 ref ✓）
   //    行数上限（余量 0）由既有哨兵 `scanWriteServiceFrozen.test.js` 的 AC-FRZ1 负责 ✓
