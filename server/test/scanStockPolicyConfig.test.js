@@ -105,17 +105,17 @@ test('AC-STP2 ⭐⭐ 尺码范围指向 `config/scanPage.js`（同一对象 ⇒ 
   // 可录范围 = enterable 两端展开（她 2026-10-14 的最终口径：男 38–48 / 女 34–43）
   assert.deepEqual(enterableSizesOf('A'), Array.from({ length: 11 }, (_, i) => 38 + i), '男可录 = 38…48');
   assert.deepEqual(enterableSizesOf('B'), Array.from({ length: 10 }, (_, i) => 34 + i), '女可录 = 34…43');
-  // 普通码 = normal 两端展开（**以配置为准** —— 配置里现在是 男 38–45 / 女 36–41）
-  assert.deepEqual(normalSizesOf('A'), Array.from({ length: 8 }, (_, i) => 38 + i), '男普通码 = 38…45');
+  // 普通码 = normal 两端展开（**以配置为准** —— 配置里现在是 男 38–44 / 女 36–41）
+  assert.deepEqual(normalSizesOf('A'), Array.from({ length: 7 }, (_, i) => 38 + i), '男普通码 = 38…44');
   assert.deepEqual(normalSizesOf('B'), Array.from({ length: 6 }, (_, i) => 36 + i), '女普通码 = 36…41');
   // 特殊码 = **离散清单**（不是区间！女 = 34/35/42/43 ⇒ 不许 expandRange ✗）
-  assert.deepEqual(specialSizesOf('A'), [46, 47, 48], '男特殊码 = 46/47/48');
+  assert.deepEqual(specialSizesOf('A'), [45, 46, 47, 48], '男特殊码 = 45–48');
   assert.deepEqual(specialSizesOf('B'), [34, 35, 42, 43], '女特殊码 = 34/35/42/43（**离散** ⇒ 不许当区间 ✗）');
   assert.deepEqual(specialSizesOf('C'), [], '认不出类别 ⇒ 空（一条都不折 ✓）');
 
   // 新文件里**不许**再抄一份尺码数字（除注释外的代码里不许出现那些区间字面量）
   const code = stripComments(readSrc('config/scanStockPolicy.js'));
-  for (const literal of ['[38, 45]', '[36, 41]', '[46, 47, 48]', '[34, 35, 42, 43]', '[38, 48]', '[34, 43]']) {
+  for (const literal of ['[38, 44]', '[36, 41]', '[45, 46, 47, 48]', '[34, 35, 42, 43]', '[38, 48]', '[34, 43]']) {
     assert.equal(code.includes(literal), false, `新配置的**代码**里不许抄尺码字面量 ${literal}（那是第二份 ✗）`);
   }
 });

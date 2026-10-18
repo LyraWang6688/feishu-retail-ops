@@ -1,7 +1,7 @@
 {
   "_comment": "⭐⭐ **开关关着 ⇒ 四页 HTML 与今天逐字节相同**（AC-ST7）的**改前留档**。这 12 个 sha256 是**改口径之前**（origin/main e1657f1 + 512f991 诊断合并，2026-10-16 21:0x 上海）用**当时那份渲染器**跑出来的 `renderScanPage(...)` **整页 HTML**（只把唯一动态位 `page_build` 换成 «page_build»），**两个独立进程各跑一次、逐字相同**。🔴 本文件**只存哈希**（整页 35~52KB × 12 存不下）——可读的逐字快照在 `stockStateConsistency.golden.json`（那 4 块的 assert.equal 也归 AC-ST7 用）。刷新办法：见 `server/test/scanStockPolicyZeroRegression.test.js` 顶部注释。 ⭐ 2026-10-18 第 4 步提速（提交进度遮罩）：12 个哈希**重算并成对迁移**（改前逐字 → 改后逐字 → 依据 见 capturedFrom）✓ ⭐ 2026-10-16 23:0x：删开关② ⇒ 全部迁移到「永远按实时库存口径」基线（改前逐字 → 改后逐字 → 依据 见 capturedFrom）。",
   "pageBuildToken": "«page_build»",
-  "capturedFrom": "origin/main e1657f1 (+ 512f991 诊断)；2026-10-18 成对迁移①：按钮文案改「提交」+「本单：N 双」回本单条（业务负责人口径）；2026-10-18 成对迁移②（第 4 步提速）：货品页提交加 `data-progress-submit=\"1\"` ＋ 提交进度脚本/样式（业务负责人：提交不要白屏）—— 12 个哈希随 `node tools/task61-render-baseline.js` 一起重算 ✓",
+  "capturedFrom": "origin/main 30e90e0e；2026-10-18 男鞋特殊码改 45–48（普通码 38–44）后成对迁移",
   "viewModule": "server/test/fixtures/scanStockPolicyViews.js",
   "fullPageSha256": {
     "threeState": {
@@ -11,9 +11,9 @@
       "purchase_return": "f7ebe30ffae306066902ab587395a25e24061067d3a95f8c0c36ee8152279211"
     },
     "fullSizesBlank": {
-      "inventory": "2a32509deb1a59b0b1a3163f115b35144a7de0d8be69bc736dd22e73e8bf0a13",
-      "sales": "e9b2a0486337b9b9231ac93fd0081065589e5d062d5cb7120a8eb8b8ce8b94be",
-      "replenish": "0e4c77e3c2f4ef12fada6bc96f4bfb18f51bdb0d0d92b1f60cdb46d76785cded",
+      "inventory": "2e0c62bc957a13f7af8a6198cc107038c71d8108f04e2a88309ad7fa8eeef693",
+      "sales": "fe240ede111bc969f8bf31d8d4772941544770189fc732bf5e37b7ebb3b512cb",
+      "replenish": "fa1156221ba7f7870915e3f2ed5c29b79b6405c0253eac8dae6aeb4c657a9c1d",
       "purchase_return": "1eeb407a618c35d519ad4de17bb5b14649db65441c4bf4f506c0a860e70f9bcf"
     },
     "blankState": {

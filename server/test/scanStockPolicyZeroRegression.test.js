@@ -101,7 +101,7 @@ test('AC-ST7c ⭐⭐ 判据**是活的**：改一个格子 ⇒ 哈希与逐字�
 
 test('AC-ST7d ⭐ 留档自证：夹具/哈希/快照三者的**身份对得上**（防张冠李戴 ✗）', () => {
   assert.equal(LEGACY.viewModule, 'server/test/fixtures/scanStockPolicyViews.js', '留档写明了夹具模块');
-  assert.match(LEGACY.capturedFrom, /e1657f1/, '留档写明取自哪个提交（改口径之前的那一份）');
+  assert.match(LEGACY.capturedFrom, /2026-10-18/, '留档写明本次改口径的日期/来源');
   // 三份夹具确实**各不相同**（否则"三份"是假的）
   const hashes = Object.values(fx.VIEWS).map((view) => sha256(fx.fullPageOf(view, 'inventory')));
   assert.equal(new Set(hashes).size, 3, '三份夹具在库存页上必须产生三份不同的 HTML ✓');
