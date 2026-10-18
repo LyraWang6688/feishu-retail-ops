@@ -223,50 +223,78 @@ const createScanSessionService = (options = {}) => {
     return { ...next, expired: false };
   };
 
-  /** 把当前这一双加进"本单"（**只动本地会话**，业务表一个字都不写）。 */
+  /**
+   * 把当前这一双加进"本单"（**只动本地会话**，业务表一个字都不写）。
+   *
+   * 🔴 2026-10-18（数据安全）：**读改写必须在 store 的同一把锁里完成** ——
+   *   之前是"先 ensure 读一份、再 store.update 整份 lines"，两个并发加货会各自带着
+   *   旧数组回写 ⇒ 后写覆盖先写（B 丢）。现在把"基于最新记录合成"放进 update 的 mutator。
+   * 🔴 过期会话：**续上保草稿**（revive），不再 ensure 建一份空的把 [A,C] 换成 []。
+   */
   const addLine = async (openId, line) => {
-    const session = await ensure(openId);
-    const sale = session.sale || {};
-    // 上一单已经提交过 ⇒ 这一双属于**新的一单**：把销售那一半复位（键已经在提交时轮换过）。
-    const lines = sale.status === sessionConfig.statuses.submitted ? [] : [...(sale.lines || [])];
-    if (lines.length >= sessionConfig.maxLines) {
+    let current = await store.get(idOf(openId));
+    if (!current) current = await ensure(openId);
+    else if (isExpired(current)) current = await revive(openId);
+    const sessionId = current[sessionConfig.idField];
+    let count = 0;
+    let tooMany = false;
+    let session = current;
+    await store.update(sessionId, (latest) => {
+      const sale = (latest || {}).sale || {};
+      // 上一单已经提交过 ⇒ 这一双属于**新的一单**：把销售那一半复位（键已经在提交时轮换过）。
+      const lines = sale.status === sessionConfig.statuses.submitted ? [] : [...(sale.lines || [])];
+      if (lines.length >= sessionConfig.maxLines) {
+        tooMany = true;
+        return {};
+      }
+      lines.push(line);
+      count = lines.length;
+      return touch({
+        sale: {
+          ...sale,
+          status: sessionConfig.statuses.draft,
+          lines,
+          master_record_id: '',
+          order_no: '',
+          detail_ids: [],
+          payment_ids: [],
+          last_error: '',
+        },
+        status: sessionConfig.statuses.draft,
+      });
+    });
+    session = await store.get(sessionId);
+    if (tooMany) {
       return { ok: false, code: 'too_many_lines', limit: sessionConfig.maxLines, session };
     }
-    lines.push(line);
-    const next = await store.update(session[sessionConfig.idField], touch({
-      sale: {
-        ...sale,
-        status: sessionConfig.statuses.draft,
-        lines,
-        master_record_id: '',
-        order_no: '',
-        detail_ids: [],
-        payment_ids: [],
-        last_error: '',
-      },
-      status: sessionConfig.statuses.draft,
-    }));
-    return { ok: true, session: next, line, count: lines.length };
+    return { ok: true, session, line, count };
   };
 
-  /** 清空本单（她加错了一双时的退路；**只动本地会话**）。 */
+  /** 清空本单（她加错了一双时的退路；**只动本地会话**）。
+   *  🔴 同样在 store 锁内读改写（并发清空/加货都不会把旧数组写回去）。 */
   const clearSale = async (openId) => {
-    const session = await ensure(openId);
-    const sale = session.sale || {};
-    const next = await store.update(session[sessionConfig.idField], touch({
-      sale: {
-        ...sale,
+    let current = await store.get(idOf(openId));
+    if (!current) current = await ensure(openId);
+    else if (isExpired(current)) current = await revive(openId);
+    const sessionId = current[sessionConfig.idField];
+    await store.update(sessionId, (latest) => {
+      const sale = (latest || {}).sale || {};
+      return touch({
+        sale: {
+          ...sale,
+          status: sessionConfig.statuses.draft,
+          lines: [],
+          master_record_id: '',
+          order_no: '',
+          detail_ids: [],
+          payment_ids: [],
+          last_error: '',
+        },
         status: sessionConfig.statuses.draft,
-        lines: [],
-        master_record_id: '',
-        order_no: '',
-        detail_ids: [],
-        payment_ids: [],
-        last_error: '',
-      },
-    }));
-    logInfo(config.events.draftCleared, { session_id: session[sessionConfig.idField] });
-    return next;
+      });
+    });
+    const next = await store.get(sessionId);
+    return { ok: true, count: 0, session: next };
   };
 
   /**
