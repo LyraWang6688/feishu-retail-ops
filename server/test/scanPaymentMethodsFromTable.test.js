@@ -102,7 +102,7 @@ const configuredFallback = () => [...new Set([
 // AC-A2A-3a / 3c 读得到表 ⇒ 表里那几条都点得到（且 TTL 缓存）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A2A-3a ⭐ 候选收款方式 = 读「收款方式管理」表：表里那几条都点得到（默认微信仍排第一）', async () => {
+test('AC-A2A-3a ⭐ 候选收款方式 = 读「收款方式管理」表：表里那几条都点得到（默认取表里第一项）', async () => {
   const calls = [];
   const gateway = tableGateway(['支付宝', '抖音代金券（89.9）'], calls);
   await withServer(gateway, async (base) => {
@@ -111,9 +111,12 @@ test('AC-A2A-3a ⭐ 候选收款方式 = 读「收款方式管理」表：表里
     for (const name of ['支付宝', '抖音代金券（89.9）']) {
       assert.ok(html.includes(`<option value="${name}"`), `表里的「${name}」必须可选（她点名要过团购券）`);
     }
-    // ⭐ 默认方式（配置）照旧**排在第一位**并选中 —— 她 2026-10-08：「默认微信」
-    assert.ok(html.includes('<option value="微信" selected>微信</option>'),
-      '第一行默认选中「微信」（与改前同一口径 ✓ 排在第一位）');
+    // ⭐ 2026-10-18：表是唯一真源。表里没有「微信」（已改名「微信扫码」）⇒ 不再硬塞微信；
+    //   默认 = 表里第一项（此 fixture = 支付宝），且下拉里**不许**出现表里没有的选项。
+    assert.ok(html.includes('<option value="支付宝" selected>支付宝</option>'),
+      '第一行默认选中表里第一项（表里没有微信 ⇒ 不再硬编码微信）');
+    assert.equal(html.includes('<option value="微信"'), false,
+      '表里没有「微信」⇒ 不许凭空插入');
     assert.equal(calls.filter((key) => key === 'paymentMethod').length, 1, '这一趟**恰好读一次**收款方式表');
   });
 });
