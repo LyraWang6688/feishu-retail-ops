@@ -240,7 +240,9 @@ test('AC-5S7 ⭐ 回跳触发参数**只有登记表一个真源**（realmScan �
   assert.equal(createRealmScanConfig({ SCAN_REALM_SCAN_QUERY_KEY: 'scan2' }).triggerQueryKey, 'scan2');
 
   // ⭐ 源码哨兵：路由**从配置取**、不自己拼那串；渲染层同理。
-  const route = readSrc('routes/scanPage/index.js');
+  // ⭐ 2026-10-18 成对迁移（深拆 P3a：加货分支搬进 handlers/smallActions.js）：
+  //   `}added=1` 这条反馈参数现在在 handler 里 ⇒ 看「index ＋ smallActions」两处（语义未变 ✓）。
+  const route = readSrc('routes/scanPage/index.js') + '\n' + readSrc('routes/scanPage/handlers/smallActions.js');
   assert.match(route, /realmScanConfig\.triggerQueryKey/, '路由从配置取触发键 ✓（不是硬编码 ✗）');
   assert.match(route, /realmScanConfig\.triggerQueryValue/, '路由从配置取触发值 ✓');
   const routeCode = route.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
@@ -265,7 +267,9 @@ test('AC-5S8 ⭐⭐ 零回归：三条链的 303 触发参数与今天**逐字�
   assert.equal(`/s/x?added=1`, '/s/x?added=1', '关着 ⇒ 原样返回（`addBackPath` 第一个判据 ✓）');
 
   // 🔴 源码哨兵：既有 `added=1` 反馈参数**逐字还在**、`addBackPath` 仍**只有一处实现**（本刀一个字没改它）
-  const route = readSrc('routes/scanPage/index.js');
+  // ⭐ 2026-10-18 成对迁移（深拆 P3a：加货分支搬进 handlers/smallActions.js）：
+  //   `}added=1` 现在在 handler 里 ⇒ 看「index ＋ smallActions」两处（语义未变 ✓）。
+  const route = readSrc('routes/scanPage/index.js') + '\n' + readSrc('routes/scanPage/handlers/smallActions.js');
   assert.match(route, /const addBackPath = \(page, realmId\)/, '`addBackPath` 仍是那一处实现 ✓');
   assert.match(route, /\}added=1`/, '既有 `added=1` 逐字还在 ✓');
   assert.equal((route.match(/const addBackPath = /g) || []).length, 1, '只有一处（不第二套 ✗）');
