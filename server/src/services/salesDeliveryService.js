@@ -119,7 +119,7 @@ class SalesDeliveryService {
         size = (await this.getSizeReferences().resolveLinkedCell(detail.fields?.[fields.size])).size;
         if (productIds.length !== 1) throw new Error(`销售明细 ${id} 必须关联一个货品`);
         const inventoryResult = await this.inventory.applySale({
-          salesDetailRecordId: id, productRecordId: productIds[0],
+          salesDetailRecordId: id, salesEntryRecordId, productRecordId: productIds[0],
           size, quantity, occurredAt: Number(occurredAt || Date.now()),
         }, { correlation });
         await this.gateway.update('salesDetail', id, { fulfillmentStatus: '已交付' }, { correlation });

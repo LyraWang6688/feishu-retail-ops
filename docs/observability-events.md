@@ -411,7 +411,7 @@
 | `sales.second_delivery.reminder.skipped` | 1 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.reminder.started` | 1 | src/utils/secondDeliveryReminder.js |
 | `sales.second_delivery.reminder.tick_failed` | 1 | src/utils/secondDeliveryReminder.js |
-| `sales.status.write_failed` | 1 | src/services/salesStatusWriter.js |
+| `sales.status.write_failed` | 2 | src/services/salesStatusWriter.js |
 | `sales.status.written` | 1 | src/services/salesStatusWriter.js |
 | `sales.thread_progress.complete_asking_method` | 1 | src/services/salesThreadProgressService.js |
 | `sales.thread_progress.completed` | 1 | src/services/salesThreadProgressService.js |

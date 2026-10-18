@@ -71,8 +71,8 @@ const NUMBER = 'YD6693-2|黑色|A';
 const F = (table, key) => V1_BITABLE_SCHEMA.tables[table].fields[key];
 const TOTAL = F('salesEntry', 'totalAmount');
 const ORDER_NO = F('salesEntry', 'orderNo');
-const FUNDS = F('salesEntry', 'funds');
-const STOCK = F('salesEntry', 'stock');
+const FUNDS = F('salesEntry', 'writeStatus');
+const STOCK = F('salesEntry', 'writeStatus');
 const DETAIL_AMOUNT = F('salesDetail', 'actualAmount');
 const DETAIL_FULFILLMENT = F('salesDetail', 'fulfillmentStatus');
 const PAY_AMOUNT = F('paymentRecord', 'amount');
@@ -296,14 +296,14 @@ test('AC-MS-M3 ⭐⭐ 库存扣了 / 没扣 ⇒【未收款】金额＋差额**�
     assert.deepEqual(cash.stockState.liveInventory, [], '甲：那一双门盒**真的扣掉了**');
     assert.equal(cash.stockState.ledger, 1, '甲：库存流水 +1');
     assert.equal(cash.stockState.fulfillment, '已交付', '甲：履约状态 = 已交付');
-    assert.equal(cash.stockState.stockColumn, WRITE.stock.done, '甲：主表「库存状态」已写');
+    assert.equal(cash.stockState.stockColumn, WRITE.writeStatus.pending, '甲：货那一跑后「写入状态」仍 未完成');
     for (const [label, world] of [['乙（预订·另一尺码）', prepaid], ['乙′（预订·同尺码）', prepaidSameLine]]) {
       assert.equal(world.stockState.deliveryCalls, 0, `${label}：预订 ⇒ 货那一跑**不交付**`);
       assert.equal(world.stockState.goodsDelivered, 0, `${label}：货那一跑如实报"一双都没交付"`);
       assert.deepEqual(world.stockState.liveInventory, ['live_40_box'], `${label}：门盒**还在**（库存没扣 ✓）`);
       assert.equal(world.stockState.ledger, 0, `${label}：零库存流水`);
       assert.equal(world.stockState.fulfillment, '未交付', `${label}：履约状态 = 未交付`);
-      assert.equal(world.stockState.stockColumn, undefined, `${label}：主表「库存状态」没写`);
+      assert.equal(world.stockState.stockColumn, WRITE.writeStatus.pending, `${label}：货那一跑后写入状态仍 未完成`);
     }
 
     // ② 🔴 本判据的正题：**钱那一维三次逐字一致**（含那条【未收款】的金额 = 差额）。
@@ -318,7 +318,7 @@ test('AC-MS-M3 ⭐⭐ 库存扣了 / 没扣 ⇒【未收款】金额＋差额**�
     for (const [label, world] of [['甲', cash], ['乙', prepaid], ['乙′', prepaidSameLine]]) {
       assert.equal(world.moneyState.owedAmount, 200, `${label}：差额如实报 200`);
       assert.equal(world.moneyState.totalAmount, 300, `${label}：货品累计金额 300（三种情形同值）`);
-      assert.equal(world.moneyState.fundsStatus, WRITE.funds.done, `${label}：「资金状态」由钱那一跑收口`);
+      assert.equal(world.moneyState.fundsStatus, WRITE.writeStatus.done, `${label}：「写入状态」由钱那一跑收口为成功`);
       assert.equal(world.moneyState.masterCount, 1, `${label}：钱那一跑**不许再建一张主表**`);
     }
 

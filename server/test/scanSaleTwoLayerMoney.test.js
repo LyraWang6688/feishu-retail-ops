@@ -729,8 +729,7 @@ test('AC-6 ⭐【未付】什么都不填 ⇒ 成单 + **一条【未收款】�
     assert.equal(paidRows(h).length, 0, '一笔已收款都没有');
     assert.equal(ok.owed_amount, 0, '差额如实回给页面（0）');
     // 单子本身照旧：销售状态 / 资金状态都是既有业务层写的
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['销售状态'], '已写入');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['资金状态'], '已写入');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], '成功');
   } finally { h.cleanup(); }
 });
 
@@ -1354,7 +1353,7 @@ test('AC-10a 【全付】通过后：现货行仍然提交即交付 + 扣库存 
     const bySize = new Map(details.map((row) => [row.fields['尺码'][0], row.fields['履约状态']]));
     assert.equal(bySize.get('size_40'), '已交付', '现货 ⇒ 提交即交付');
     assert.equal(bySize.get('size_41'), '未交付', '预订 ⇒ 不交付');
-    assert.equal(entriesOf(h, 'salesEntry')[0].fields['库存状态'], '已写入');
+    assert.equal(entriesOf(h, 'salesEntry')[0].fields['写入状态'], '成功');
   } finally { h.cleanup(); }
 });
 

@@ -1,30 +1,16 @@
-// 「销售主表」四个状态维度的字段映射与取值规则（配置先行）。
+// 「销售主表」写入状态字段的映射与取值规则（配置先行）。
 //
-// 背景（业务负责人 2026-10-06）：她在生产「销售主表」新建了四个字段：
-//   · 「确认状态」← **用户**在消息卡片上的操作
-//   · 「销售状态」← **货**（= 销售明细）
-//   · 「资金状态」← **钱**（= 收款明细）⚠️ 它是**文本字段**（type=1），不是单选
-//   · 「库存状态」← **库存流水 ＋ 实时库存**
+// ⭐ 2026-10-18（业务负责人改表，逐字口径）：
+//   · 生产「销售主表」已删除四个状态列：确认状态 / 销售状态 / 资金状态 / 库存状态；
+//   · 统一改成**一个**「写入状态」（单选：成功 / 失败 / 部分失败 / 未完成）；
+//   · 成功与否 = 三个双向关联字段（销售明细 / 收款明细 / 库存流水）都有数据
+//     ＋ 前端收集的字段（总金额 / 赠品 / 每件实收 / 收款行…）全部落表；
+//   · 历史订单**不回填**：读取方对空值兼容（视为"未写入"，不当作成功）。
 //
-// 🔴 同一天她又把**两个旧字段整列删掉**：「确认状态（旧）」与「订单状态」。
-//    飞书删字段 = **连值一起删、不可恢复** ⇒ 那两列里的历史值（含 76 条「已入账」）
-//    **已经没了**；老单在这四个维度上**为空**。
-//    ⇒ 本模块因此**只读新字段**：那两列在真表里已不存在，任何 legacy 回退
-//      都只会读到 `undefined`，留着就是自欺（还会让 schema 闸门报「缺少 V1 字段」）。
-//
-// ⭐ 这一层**只做取值，不做任何业务判断**：
-//    「是不是账做完了」这个判据由调用点用 `isPosted(postedOf(...))` 表达
-//    （判据本体也在本文件里：POSTED_VALUES）。
-//
-// ⭐ 值域（SALES_STATUS_VALUE_DOMAINS）已由业务负责人 2026-10-06 **最终拍板**（逐字）。
-//    代码要**写**的值在 SALES_STATUS_WRITE_VALUES（同一文件，配置驱动）。
-//
-// ⚠️ 本模块必须保持**纯函数、零依赖**（config 层不引 service，避免把飞书 SDK
-//    拖进任何读配置的地方）。所以下面 textOf 是 v1BitableGateway.textValue 的同义实现，
-//    由 salesStatusDimensions.test.js 钉住两者等价。
+// ⚠️ 本模块必须保持**纯函数、零依赖**（config 层不引 service）。
+// ⚠️ 旧维度名（userAction / sales / funds / stock）**只为兼容读取方保留**：
+//    它们现在都取同一个「写入状态」并映射成旧词义，**不再有对应的写入列**。
 
-// 与 services/v1BitableGateway 的 textValue 同义：单选/文本取字符串，多选拼接。
-// ⚠️ 刻意**不 trim**：调用点原来的比较（多数没有 trim）要逐字保持等价。
 const textOf = (value) => {
   if (value == null) return '';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
@@ -33,42 +19,39 @@ const textOf = (value) => {
   return '';
 };
 
-// 四个状态字段的真实名字。**改字段名只改这里**。
+// 新字段名（唯一真源）。
+const WRITE_STATUS_FIELD = '写入状态';
+
+// 「写入状态」的值域（生产表选项，业务负责人维护）。
+const WRITE_STATUS_VALUES = Object.freeze(['成功', '失败', '部分失败', '未完成']);
+
+// 兼容旧读取方：四个旧语义键都指向同一个新字段。
 const SALES_STATUS_FIELDS = Object.freeze({
-  userAction: '确认状态',
-  sales: '销售状态',
-  funds: '资金状态',
-  stock: '库存状态',
+  writeStatus: WRITE_STATUS_FIELD,
+  userAction: WRITE_STATUS_FIELD,
+  sales: WRITE_STATUS_FIELD,
+  funds: WRITE_STATUS_FIELD,
+  stock: WRITE_STATUS_FIELD,
 });
 
-// 值域 —— **业务负责人 2026-10-06 最终拍板，逐字**（「按上面每列各自的说法」）。
-// ⚠️ 这四组是**口径**，不是建议：改它们等于改产品定义，必须她点头。
-//   · 确认状态 ← **用户**（卡片操作）
-//   · 销售状态 / 资金状态 ← 代码写入的进度
-//   · 库存状态 ← 库存流水 ＋ 实时库存
-// （表里的**选项**由她自己加：测试表随便写，生产表等她加完再写。）
+// 旧维度值域（保留导出给读取方/用例做兼容；不再写入）。
 const SALES_STATUS_VALUE_DOMAINS = Object.freeze({
+  writeStatus: WRITE_STATUS_VALUES,
   userAction: Object.freeze(['未确认', '已确认', '已取消', '待修改']),
   sales: Object.freeze(['未写入', '部分写入', '已写入', '写入失败']),
   funds: Object.freeze(['未写入', '已写入', '写入失败']),
   stock: Object.freeze(['未写入', '部分写入', '已写入', '写入失败']),
 });
 
-// ⭐⭐「账做完了没有」= 这两个字面量都算做完。
-//   · 「已写入」= 代码写在**「资金状态」**里的值（SALES_STATUS_WRITE_VALUES.funds.done）；
-//   · 「已入账」= 她嘴里的老说法。⚠️ 那 76 条历史值原本在「确认状态（旧）」里，
-//     而那一列已被她删除、**值随之丢失**；保留这个字面量只是为了：
-//     万一有人在「资金状态」里手工填了「已入账」，闸门不能因此静默关掉。
-// 🔴 只认「已写入」的话，她手工填的「已入账」会让闸门关 → 重演 2026-10-06 那次「闸门静默全关」。
-// ⚠️ 6 处闸门**一律**写 `isPosted(postedOf(...))`，**不许再各自散落字面量**。
-// ⚠️ 这里 trim：单元格里多一个空格是同一个事实，不能因此把闸门关掉
-//    （这正是那次事故的失败形状：判据读不到"它认识的那个字符串"就静默关闸）。
-const POSTED_VALUES = Object.freeze(['已入账', '已写入']);
-const isPosted = (value) => POSTED_VALUES.includes(textOf(value).trim());
-
-// 代码**写**的值（配置驱动 —— 不许把这些字符串散落到各个 service 里）。
-// 每一组都必须落在上面同一维度的值域内（salesStatusDimensions.test.js 钉住这条）。
+// 代码要写的值。
 const SALES_STATUS_WRITE_VALUES = Object.freeze({
+  writeStatus: Object.freeze({
+    pending: '未完成',
+    done: '成功',
+    partial: '部分失败',
+    failed: '失败',
+  }),
+  // 旧值保留（仅供兼容/测试引用的常量；业务表里已没有这些列可写）。
   userAction: Object.freeze({
     pending: '未确认', confirmed: '已确认', cancelled: '已取消', toModify: '待修改',
   }),
@@ -83,60 +66,70 @@ const SALES_STATUS_WRITE_VALUES = Object.freeze({
   }),
 });
 
-// 「空」= 取不到、空串、或只有空白。
+// 「账做完了没有」= 写入状态为「成功」。
+// 旧字面量（已写入 / 已入账）只为历史读取兼容保留（历史记录不会再有这些列，但保留判据不会误伤）。
+const POSTED_VALUES = Object.freeze(['成功', '已写入', '已入账']);
+const isPosted = (value) => POSTED_VALUES.includes(textOf(value).trim());
+
 const isBlank = (value) => textOf(value).trim() === '';
 
-// 在调用方给的「语义键 → 字段名」映射里找字段名（通常是
-// gateway.table('salesEntry').fields）；找不到就用本文件里的字段名。
 const pickFieldName = (table, key, fallback = '') => {
   const name = table?.[key];
   return typeof name === 'string' && name ? name : fallback;
 };
 
-// 取值：读**这一个**维度（字段名优先用调用方给的映射，其次用本文件的默认名），
-// 取不到或只有空白 → 空串。
-// ⚠️ 返回的是**原始值**（不做任何判据），调用点自己比。
 const readStatus = (entry, table, key, fallback) => {
   const name = pickFieldName(table, key, fallback);
   const value = textOf(entry?.fields?.[name]);
   return isBlank(value) ? '' : value;
 };
 
-/**
- * 「账入完了没有」的取值来源：**只读「资金状态」**。
- *
- * ⚠️ 刻意**返回取值本身、不返回布尔**：判据（`isPosted(...)`）留在调用点，
- *    将来换了判据也只改调用点。
- *
- * @param {object} entry 销售主表记录（飞书记录对象，取值走 entry.fields）
- * @param {object} [table] 可选：语义键 → 字段名 的映射（gateway.table('salesEntry').fields）
- * @returns {string} 「资金状态」的值；空着则空串
- */
-const postedOf = (entry, table) =>
-  readStatus(entry, table, 'funds', SALES_STATUS_FIELDS.funds);
+/** 「写入状态」原值：成功 / 失败 / 部分失败 / 未完成（空 = 历史/未写）。 */
+const writeStatusOf = (entry, table) =>
+  readStatus(entry, table, 'writeStatus', WRITE_STATUS_FIELD);
 
-/** 「用户在消息卡片上的操作」：只读「确认状态」。 */
-const userActionOf = (entry, table) =>
-  readStatus(entry, table, 'userAction', SALES_STATUS_FIELDS.userAction);
+/** 「账入完了没有」的取值来源（= 写入状态；空 = 未写/历史单，不猜）。 */
+const postedOf = (entry, table) => writeStatusOf(entry, table);
 
-/** 「货」的状态：只读「销售状态」。 */
-const salesStatusOf = (entry, table) =>
-  readStatus(entry, table, 'sales', SALES_STATUS_FIELDS.sales);
+const mapWriteStatusToLegacy = (status) => {
+  switch (textOf(status).trim()) {
+    case SALES_STATUS_WRITE_VALUES.writeStatus.done: return SALES_STATUS_WRITE_VALUES.sales.done;
+    case SALES_STATUS_WRITE_VALUES.writeStatus.partial: return SALES_STATUS_WRITE_VALUES.sales.partial;
+    case SALES_STATUS_WRITE_VALUES.writeStatus.failed: return SALES_STATUS_WRITE_VALUES.sales.failed;
+    case SALES_STATUS_WRITE_VALUES.writeStatus.pending: return SALES_STATUS_WRITE_VALUES.sales.none;
+    default: return '';
+  }
+};
 
-/** 「库存」的状态：只读「库存状态」。 */
-const stockStatusOf = (entry, table) =>
-  readStatus(entry, table, 'stock', SALES_STATUS_FIELDS.stock);
+/** 旧词义映射：确认状态（未完成 → 未确认；其余有值 → 已确认）。 */
+const userActionOf = (entry, table) => {
+  const status = writeStatusOf(entry, table);
+  if (!status) return '';
+  return status === SALES_STATUS_WRITE_VALUES.writeStatus.pending ? '未确认' : '已确认';
+};
+
+/** 旧词义映射：销售状态（成功/部分失败/失败/未完成 → 已写入/部分写入/写入失败/未写入）。 */
+const salesStatusOf = (entry, table) => mapWriteStatusToLegacy(writeStatusOf(entry, table));
+
+/** 旧词义映射：库存状态。 */
+const stockStatusOf = (entry, table) => mapWriteStatusToLegacy(writeStatusOf(entry, table));
+
+/** 旧词义映射：资金状态（与 postedOf 同源）。 */
+const fundsStatusOf = (entry, table) => mapWriteStatusToLegacy(writeStatusOf(entry, table));
 
 module.exports = {
+  WRITE_STATUS_FIELD,
+  WRITE_STATUS_VALUES,
   SALES_STATUS_FIELDS,
   SALES_STATUS_VALUE_DOMAINS,
   SALES_STATUS_WRITE_VALUES,
   POSTED_VALUES,
   isPosted,
   postedOf,
+  writeStatusOf,
   userActionOf,
   salesStatusOf,
   stockStatusOf,
-  // 测试钉住「与 gateway.textValue 等价」用
+  fundsStatusOf,
   textOf,
 };

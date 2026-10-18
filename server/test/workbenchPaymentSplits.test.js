@@ -61,7 +61,7 @@ const DETAIL_ID = 'd1';
 const seed = ({ actualAmount = 500, pendingAmount = null, pending = true, payments = [] } = {}) => ({
   salesEntry: [{
     record_id: ORDER,
-    fields: { [ENTRY.orderNo]: 'XSD-20261012-0001', [ENTRY.funds]: '已写入', [ENTRY.sales]: '已写入' },
+    fields: { [ENTRY.orderNo]: 'XSD-20261012-0001', [ENTRY.writeStatus]: '成功' },
   }],
   salesDetail: [{
     record_id: DETAIL_ID,

@@ -72,7 +72,7 @@ const seedOrder = (orderId, fulfillmentStatus, { entryExtra = {} } = {}) => ({
   product: [{ record_id: 'prod_1', fields: { 编号: 'JC002' } }],
   salesEntry: [{
     record_id: orderId,
-    fields: { 资金状态: '已写入', 销售单号: `XSD-${orderId}`, 交易类型: ['behavior_prepaid'], ...entryExtra },
+    fields: { 写入状态: '成功', 销售单号: `XSD-${orderId}`, 交易类型: ['behavior_prepaid'], ...entryExtra },
   }],
   salesDetail: [{
     record_id: `${orderId}_d1`,

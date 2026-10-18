@@ -177,6 +177,12 @@ const createScanWriteService = (options = {}) => {
     if (!statusInstance) statusInstance = new SalesStatusWriter({ gateway: readGateway });
     return statusInstance;
   };
+  // 收口写「写入状态」：兼容注入的假 writer（测试里有的只实现 write）。
+  const writeFinalStatus = (writer, id, value, correlation) => (
+    typeof writer?.writeFinal === 'function'
+      ? writer.writeFinal(id, value, correlation)
+      : writer.write(id, { writeStatus: value }, correlation)
+  );
 
   // ⭐⭐ 2026-10-15（⑤ 模块化 · 外部评审建议 · 业务负责人定的「重中之重」）：
   //   **后台那一半**（`scheduleSaleRest` 调度 + `markSaleWriteFailed` 失败标记
@@ -699,6 +705,8 @@ const createScanWriteService = (options = {}) => {
   const submitSale = async ({
     openId, submitKey, payments: paymentRows = [], lineAmounts = [],
     paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null, timing = null,
+    // ⭐ 2026-10-18：资金页赠品（非空 ⇒ 覆盖本单每一行的 gift；mergeGiftTexts 会去重成一条）
+    orderGift = '',
     // ⭐⭐ 2026-10-15（⑰ 异步）：`noDefer` = "这一跑就是**后台那一跑**"（不再往后丢 ✗）
     noDefer = false,
     // ⭐⭐ 2026-10-15（task-19 ② · Lead 批准）：**可选**的会话键 ——
@@ -728,6 +736,7 @@ const createScanWriteService = (options = {}) => {
     const fundsDeferred = deferFunds === true;
     const saleRestInput = {
       openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount, sessionKey,
+      ...(String(orderGift || '').trim() ? { orderGift: String(orderGift).trim() } : {}),
       // ⭐⭐ 2026-10-16（task-62）：**后台那一跑必须带着同一个 `deferFunds`** ✗ ——
       //   否则"货那一跑"转了后台之后，后台那一跑会把**钱**也写了（一条【未收款】＝钱那一半的结论）
       //   ⇒ 判据 AC-MSD4 真红（去掉这一行 ⇒ 红 ✓）。
@@ -865,6 +874,10 @@ const createScanWriteService = (options = {}) => {
       });
     }
     const lines = sale.lines || [];
+    // ⭐ 2026-10-18：资金页赠品覆盖（整单一条；没有就保留销售页那行自己的 gift）
+    if (String(orderGift || '').trim()) {
+      for (const line of lines) line.gift = String(orderGift).trim();
+    }
     if (!lines.length) {
       return fail({ code: 'session_empty', message: texts.sessionEmptyBody, requestId });
     }
@@ -1208,9 +1221,8 @@ const createScanWriteService = (options = {}) => {
       //（走四个状态维度的**唯一写入口** SalesStatusWriter；值来自 config/salesStatusDimensions）。
       // ⚠️ 只有第一次建单时才补这一下（重试时不必重复写）。
       const statusStartedAt = Date.now();
-      if (!sale.master_record_id) {
-        await status().write(salesEntryRecordId, { userAction: WRITE.userAction.confirmed }, correlation);
-      }
+      // ⭐ 2026-10-18：旧「确认状态」列已被业务负责人删除 ⇒ 建单时由 salesEntryService 写
+      //   「写入状态=未完成」；这里不再写状态（保留 stage 计时口径）。
       markStage('status_ms', statusStartedAt);
 
       // ⭐⭐ 2026-10-15（⑰ B 异步 · 她逐字「**单号一出立刻回**…明细/库存/交付转后台」）：
@@ -1263,6 +1275,7 @@ const createScanWriteService = (options = {}) => {
         //   `salesOrderService._confirm` 的 `fundsDeferred` 段：不写收款 / 不置资金状态 / 不调 progress ✓）。
         //   ⚠️ 关着时这个键**根本不出现** ⇒ 入参对象逐字同今天 ✓
         ...(fundsDeferred ? { fundsDeferred: true } : {}),
+        ...(String(orderGift || '').trim() ? { giftOverride: true } : {}),
         ...(owedCents > 0 ? { owed: owedCents / 100 } : {}),
         operatorOpenId: openId,
         knownRecordIds: {
@@ -1332,6 +1345,7 @@ const createScanWriteService = (options = {}) => {
           stock_requested: stock.requested, stock_failed: stock.failed,
           reasons: stock.reasons.join(' | '), request_id: requestId,
         });
+        await writeFinalStatus(status(), salesEntryRecordId, WRITE.writeStatus.partial, correlation);
         return { ok: true, reused: false, stock, ...summary, order_no: summary.order_no };
       }
       // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑到此为止（不记 `completed`）** ✗ ——
@@ -1354,6 +1368,9 @@ const createScanWriteService = (options = {}) => {
         return { ok: true, reused: false, funds_deferred: true, stock, ...summary };
       }
       await sessions.completeSale(sessionId, { key, result: summary });
+      // ⭐ 2026-10-18：最终收口写「写入状态=成功」（三个关联字段 + 前端字段都写成功才走到这里）；
+      //   失败/部分失败在 catch / 库存失败分支写。状态写失败不影响业务（writer 只记 warning）。
+      await writeFinalStatus(status(), salesEntryRecordId, WRITE.writeStatus.done, correlation);
       logInfo(config.events.saleSubmitted, {
         session_id: current.session_id, submit_key: key, ...summary,
         funds_recorded: paymentCount > 0,
@@ -1369,6 +1386,10 @@ const createScanWriteService = (options = {}) => {
       //       与"重试接着同一张单写"用的是同一个字段，**没有新判据**。
       //    🔴 主表都没建起来（`createEntry` 抛错）⇒ 照旧 `sale_write_failed`（= 一个字都没写）。
       if (salesEntryRecordId) {
+        // ⚠️ catch 里读不到 try 内声明的 `correlation` ⇒ 这里用局部关联键（形状同 try 内那份）。
+        await writeFinalStatus(status(), salesEntryRecordId, error.saleRecordsWritten
+          ? WRITE.writeStatus.partial : WRITE.writeStatus.failed,
+        { task_id: key, sales_entry_record_id: salesEntryRecordId, order_no: orderNo });
         logWarn(config.events.partialFailed, {
           session_id: current.session_id, submit_key: key,
           sales_entry_record_id: salesEntryRecordId, order_no: orderNo,

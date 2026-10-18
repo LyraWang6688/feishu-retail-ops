@@ -145,9 +145,18 @@ const STOCK_MOVEMENTS = Object.freeze({
   [MOVEMENT_SALE_DECREASE]: {
     direction: '减少',
     // 库存流水回指来源明细的字段（由 v1BitableSchema 映射成中文列名）。
+    // ⚠️ 2026-10-18（业务负责人改表）：生产「库存流水.关联销售」指向**销售主表** ⇒
+    //   来源列仍叫 salesDetail（幂等回查/local operation 用明细 id），但远端写入值用
+    //   `ledgerLink`（销售主表 record id）覆盖它 —— 见下面 ledgerLink。
     ledgerSource: 'salesDetail',
     // 按顺序消耗这些状态的实时库存；null 表示不消耗既有记录。
     consumes: ['门盒', '样品'],
+    // ⭐ 2026-10-18：远端「关联销售」= 销售主表 id（只写不查）；本地幂等仍用明细 id。
+    ledgerLink: {
+      field: 'salesDetail',
+      inputKey: 'salesEntryRecordId',
+      operationKey: 'sales_entry_record_id',
+    },
     // 扣到样品时要不要触发补样品提醒。
     triggerSampleReplacement: true,
   },

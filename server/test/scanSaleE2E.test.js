@@ -675,17 +675,18 @@ test('AC-E2E-5 ⭐ 现货行已交付 + 库存真的少 1（流水 1 条）；�
       // 第5步：库存流水 1 条，且只关联**现货**那一行
       const ledger = rowsOf(e2e, 'inventoryLedger');
       assert.equal(ledger.length, 1, '第5步：库存流水只多 1 条（预订行不许写流水）');
-      assert.deepEqual(ledger[0].fields[F('inventoryLedger', 'salesDetail')], [cash.record_id],
-        '第5步：那一条流水关联的是现货那一行');
+      // ⭐ 2026-10-18：生产「关联销售」指向销售主表 ⇒ 写主表 record id
+      assert.deepEqual(ledger[0].fields[F('inventoryLedger', 'salesDetail')], [rowsOf(e2e, 'salesEntry')[0].record_id],
+        '第5步：那一条流水关联的是销售主表');
       // ⚠️ 既有口径：**数量恒为正数，方向写在「库存行为」那一列**（销售减少 = 减少 1 双）
       assert.equal(Number(ledger[0].fields[F('inventoryLedger', 'quantityChange')]), 1,
         '第5步：变动数量 = 1（正数；"减少"由「库存行为」表达）');
       assert.deepEqual(ledger[0].fields[F('inventoryLedger', 'behavior')], ['bh_sale_decrease'],
         '第5步：库存行为 = 既有那条「销售减少」（方向 减少）');
 
-      // 第6步：主表「库存状态」由既有交付链路收口
-      assert.equal(rowsOf(e2e, 'salesEntry')[0].fields[F('salesEntry', 'stock')], '已写入',
-        '第6步：主表库存状态 = 已写入');
+      // 第6步：主表「写入状态」由收口链路写成功
+      assert.equal(rowsOf(e2e, 'salesEntry')[0].fields[F('salesEntry', 'writeStatus')], '成功',
+        '第6步：主表写入状态 = 成功');
     });
   } finally { e2e.cleanup(); }
 });

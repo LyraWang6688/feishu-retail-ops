@@ -290,12 +290,12 @@ test('AC-AS4a 🔴 后台写失败 ⇒ 主表**如实落「写入失败」**（�
     // ② 后台那一跑真的失败了
     await sleep(150);
     assert.equal(h.calls.confirm.length, 1, '后台试过一次 ✓');
-    // ③ 🔴 主表那一列**如实落「写入失败」**（既有状态维度的值 + 既有写入器 ✓）
-    const failed = h.calls.status.filter((call) => call.dims && call.dims.sales === '写入失败');
-    assert.equal(failed.length, 1, `要落一条「写入失败」（实际：${JSON.stringify(h.calls.status)}）`);
+    // ③ 🔴 主表那一列**如实落「写入状态=失败」**（新模型：单字段收口 ✓）
+    const failed = h.calls.status.filter((call) => call.dims && call.dims.writeStatus === '失败');
+    assert.equal(failed.length, 1, `要落一条「失败」（实际：${JSON.stringify(h.calls.status)}）`);
     assert.equal(failed[0].id, 'entry_1', '落的是**这一单**那条主表记录 ✓');
-    // ④ 其余维度**不许**被顺手写坏（只写 sales 这一维 ✓）
-    assert.deepEqual(Object.keys(failed[0].dims), ['sales'], '只写「销售」这一维 ✓');
+    // ④ 只写「写入状态」这一个键
+    assert.deepEqual(Object.keys(failed[0].dims), ['writeStatus'], '只写「写入状态」✓');
   } finally { h.cleanup(); }
 });
 
