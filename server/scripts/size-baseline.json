@@ -1,0 +1,34 @@
+{
+  "$comment": "存量超限文件白名单。只允许变小：文件变大或新文件超限 ⇒ CI 红。用 `node scripts/check-file-size.mjs --update-baseline` 生成/下调，禁止手改上调。",
+  "limits": {
+    "source": 800,
+    "test": 1200
+  },
+  "maxNetIncrease": 100,
+  "updatedAt": "2026-10-18",
+  "files": {
+    "server/src/config/scanPage.js": 992,
+    "server/src/config/scanWrite.js": 1059,
+    "server/src/routes/scanPage/index.js": 1798,
+    "server/src/services/afterSalesService.js": 1264,
+    "server/src/services/inventoryService.js": 2280,
+    "server/src/services/labelPrintArtifactService.js": 1436,
+    "server/src/services/labelPrintService.js": 1331,
+    "server/src/services/larkMvpService.js": 1535,
+    "server/src/services/pendingDealPushService.js": 1230,
+    "server/src/services/purchaseArrivalConversationService.js": 1144,
+    "server/src/services/purchaseWebhookService.js": 1850,
+    "server/src/services/scanPageService.js": 1394,
+    "server/src/services/scanWriteService.js": 1747,
+    "server/src/services/secondDeliveryService.js": 839,
+    "server/src/services/tagQrCodeService.js": 986,
+    "server/src/utils/larkCards.js": 838,
+    "server/test/afterSalesService.test.js": 1392,
+    "server/test/labelPrintCanvas.test.js": 1270,
+    "server/test/labelPrintProducts.test.js": 1251,
+    "server/test/scanPageWrite.test.js": 1583,
+    "server/test/scanSaleE2E.test.js": 2443,
+    "server/test/scanSaleTwoLayerMoney.test.js": 1845,
+    "server/test/workbenchFourTabs.test.js": 1251
+  }
+}

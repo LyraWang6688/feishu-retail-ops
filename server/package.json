@@ -14,6 +14,8 @@
     "v1:schema-check:inventory": "node scripts/validate_v1_schema.js inventory",
     "v1:schema-check:all": "node scripts/validate_v1_schema.js all",
     "test": "node --require ./test/support/table-id-env.js --test --test-concurrency=1 test/*.test.js",
+    "size:check": "node scripts/check-file-size.mjs",
+    "size:baseline": "node scripts/check-file-size.mjs --update-baseline",
     "e2e:real": "node --test --test-concurrency=1 e2e/real-paths.mjs && FEISHU_TARGET_ENV=test node scripts/e2e-product-tag-qr.js",
     "env:selfcheck": "node scripts/env-selfcheck.mjs",
     "scan:repair-interrupted": "node scripts/scan-repair-interrupted.js",

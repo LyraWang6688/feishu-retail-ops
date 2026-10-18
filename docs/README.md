@@ -44,6 +44,7 @@
 | [scan-page-core-extraction-plan-2026-10-18.md](scan-page-core-extraction-plan-2026-10-18.md) | **扫码路由核心职责深拆方案（只读依赖清单）**：`index.js` 3263 行、四个主干分支 ≈1041 行的依赖/写库调用盘点 ＋ handler ctx 契约 ＋ P0/P1/P2 施工顺序与验收标准（**本文件不改生产代码**）|
 | [issue-scan-sale-gift-ledger-latency-2026-10-18.md](issue-scan-sale-gift-ledger-latency-2026-10-18.md) | **扫码销售链路问题说明（待评审）**：线上真实操作下两个字段缺失（主表赠品 / 库存流水关联销售）＋ 页面切换耗时 9.6s / 86.4s / 87.2s 的分段数据 ＋ 根因与候选优化方案，供外部 AI / 代码评审使用 |
 | [module-boundaries.md](module-boundaries.md) | 模块边界与职责划分 |
+| [engineering-layering-and-file-size-2026-10-18.md](engineering-layering-and-file-size-2026-10-18.md) | ⭐ **工程分层与文件大小门禁（2026-10-18 起生效）**：入口只做 plan/steps · 规则进 `config/` · 写入进小模块 · 大 service 只做 facade · 每 PR 顺手拆 ≤200 行 · 文件上限（源码 800 / 测试 1200）＋ `size-baseline.json` 棘轮（只降不升）＋ 净增 >100 行红 · CI `file-size` job · PR 模板两条必答 |
 | [idempotency-contract.md](idempotency-contract.md) | 采购与库存的远端幂等契约 |
 | [inventory-size-reference-contract.md](inventory-size-reference-contract.md) | 库存与尺码关联字段契约 |
 | [purchase-amount-and-label-plan-2026-10-16.md](archive/purchase-amount-and-label-plan-2026-10-16.md) | 补货不问金额 ＋ 「实收金额（可不填）」文案对齐 —— 只读盘点与改动计划（2026-10-16） |
