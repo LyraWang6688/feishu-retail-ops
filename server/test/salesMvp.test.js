@@ -21,8 +21,9 @@ const fake = () => {
     ['sizeManagement', sizes],
   ]);
   let seq = 0;
+  const batches = [];
   const gateway = {
-    records, table: (key) => V1_BITABLE_SCHEMA.tables[key], validateTables: async () => [],
+    records, batches, table: (key) => V1_BITABLE_SCHEMA.tables[key], validateTables: async () => [],
     listAll: async (key) => records.get(key) || [],
     get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
     create: async (key, values) => {
@@ -36,6 +37,13 @@ const fake = () => {
       if (!records.has(key)) records.set(key, []);
       records.get(key).push({ record_id: recordId, fields });
       return { recordId };
+    },
+    // ⭐ 2026-10-18：生产网关有 batchCreate；这里按同序逐条落库并记下"用了批量"。
+    createBatch: async (key, rows) => {
+      batches.push([key, rows.length]);
+      const created = [];
+      for (const values of rows) created.push(await gateway.create(key, values));
+      return created;
     },
     update: async (key, id, values) => {
       const record = await gateway.get(key, id);
@@ -69,6 +77,22 @@ test('first sale creates one master, multiple details and one receipt; retry cre
     [['size_38'], ['size_39']]);
   assert.equal(gateway.records.get('paymentRecord').length, 1);
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
+});
+
+test('明细批量写：一次 batchCreate 建完整单（不再逐行 4 秒）', async () => {
+  const gateway = fake();
+  const service = new SalesOrderService({ gateway, references });
+  await service.confirm({
+    salesEntryRecordId: 'order_1',
+    items: [
+      { itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 },
+      { itemNo: 'A100', size: 39, quantity: 1, actualAmount: 100 },
+      { itemNo: 'B200', size: 40, quantity: 1, actualAmount: 100 },
+    ],
+    payments: [{ method: '微信', amount: 300 }],
+  });
+  assert.deepEqual(gateway.batches, [['salesDetail', 3]], '三条明细必须一次 batch 写完');
+  assert.equal(gateway.records.get('salesDetail').length, 3);
 });
 
 test('mixed payment creates two receipts for the same order and retry is idempotent', async () => {
