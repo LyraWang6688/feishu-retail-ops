@@ -174,8 +174,8 @@ test('AC4b TTL=0 ⇒ 每次都是真读（行为与优化前一致）', async ()
 
 test('AC5a 字段清单（语义键）逐字 = 页面真正用到的列，多一个都没有', () => {
   assert.deepEqual(ORDER_FIELD_KEYS, {
-    salesEntry: ['orderNo', 'funds'],
-    salesDetail: ['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product', 'accessory'],
+    salesEntry: ['orderNo', 'writeStatus'],
+    salesDetail: ['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product'],
     paymentRecord: ['salesEntry', 'amount', 'status', 'method', 'receivedAt'],
     paymentMethod: ['name'],
     product: ['number', 'color'],
