@@ -309,7 +309,6 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
   // 明细 / 钱 / 库存随后都成功了 → 另外三维都是终态。
   // ⭐ 2026-10-18：四维合并为「写入状态」；售后全部写成功 ⇒ 成功。
   assert.equal(masters[0].fields['写入状态'], '成功');
-  assert.deepEqual(masters[0].fields['交易类型'], ['behavior_return']);
 
   // 2) 新「销售明细」：交易类型=行为 · 销售单号=原主表 · 实收金额=正数
   const details = detailRows(gateway);
@@ -456,7 +455,6 @@ test('售后**不写**原单：退货执行完，原主表**只多一个「售�
   // 退货事实记在别处（这正是现在唯一的行为）：原明细履约状态 + 新建的退货单
   assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
   assert.equal(masterRows(gateway).length, 1, '新建了一条退货单（交易类型 = 销售退货）');
-  assert.deepEqual(masterRows(gateway)[0].fields['交易类型'], ['behavior_return']);
 });
 
 test('售后**不写**原单：换货也不动原主表（逐字段未变）', async () => {
@@ -1186,24 +1184,6 @@ test('退回的鞋：门盒 / 样品两种状态都按她说的落库', async ()
     assert.equal(live.length, 1);
     assert.equal(live[0].fields['所属状态'], restockState);
   }
-});
-
-test('原明细是配品：只记明细行，不写库存流水 / 实时库存（与销售链路一致）', async () => {
-  const { gateway, inventory, service } = build();
-  await service.execute(request({
-    originalSalesDetailRecordIds: ['detail_old_2'],
-    diffAmount: -30,
-    settlement: 'cash',
-  }));
-  const details = detailRows(gateway);
-  assert.equal(details.length, 1);
-  assert.deepEqual(details[0].fields['配品'], ['accessory_belt']);
-  assert.equal(details[0].fields['尺码'], undefined);
-  assert.equal(details[0].fields['实收金额'], 30);
-  assert.equal(rowsOf(gateway, 'inventoryLedger').length, 0);
-  assert.equal(liveRows(gateway).length, 0);
-  assert.equal(inventory.calls.length, 0);
-  assert.equal(rowsOf(gateway, 'salesDetail')[1].fields['履约状态'], '已退货');
 });
 
 // ⭐ 幂等的关键用例：她默认口径下"改原收款状态"这一步中途失败 → 重试**不重复冲抵**、

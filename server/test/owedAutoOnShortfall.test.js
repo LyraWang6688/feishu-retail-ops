@@ -165,7 +165,7 @@ test('AC-OWED-4 她明说"还欠 19"且与差额一致 ⇒ 照旧一条 19（旧
   const sales = new SalesOrderService({ gateway, references });
   await sales.confirm({
     salesEntryRecordId: 'order_1',
-    items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 119 }],
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 119 }],
     payments: [{ method: '微信', amount: 100 }], owed: 19,
   });
 
@@ -178,7 +178,7 @@ test('AC-OWED-4b 🔴 她说的欠款与差额**对不上** ⇒ 仍然拦住、�
   const sales = new SalesOrderService({ gateway, references });
   await assert.rejects(sales.confirm({
     salesEntryRecordId: 'order_1',
-    items: [{ kind: 'accessory', accessoryRecordId: 'acc_belt', quantity: 1, actualAmount: 100 }],
+    items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }],
     payments: [{ method: '微信', amount: 100 }], owed: 19,
   }), /欠款与「实收金额−已收金额」不一致/);
   assert.equal(gateway.records.get('paymentRecord'), undefined, '拦住了就不该写任何收款记录');

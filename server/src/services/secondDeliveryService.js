@@ -471,12 +471,17 @@ class SecondDeliveryService {
     let missingSizeCount = 0;
     for (const entry of entries) {
       if (!isPosted(postedOf(entry, entryFields))) continue;
-      const tradeTypeIds = linkedRecordIds(entry.fields?.[entryFields.tradeType]);
+      const orderDetails = allDetails.filter((record) =>
+        linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(entry.record_id));
+      // ⭐ 2026-10-18：生产「销售主表.交易类型」列已删 ⇒ 交易类型改从**明细行**取
+      //   （主表若有旧值仍兼容读；空则逐行找第一个认得出的）。
+      const tradeTypeIds = [
+        ...linkedRecordIds(entry.fields?.[entryFields.tradeType]),
+        ...orderDetails.flatMap((record) => linkedRecordIds(record.fields?.[detailFields.tradeType])),
+      ];
       // ⚠️ 取**第一个认得出来的**关联记录只为了显示名称；一个都不认得也继续往下走
       //    （判据是履约进展，不是这个关联）。
       const tradeTypeRecordId = tradeTypeIds.find((id) => behaviorsById.has(id)) || '';
-      const orderDetails = allDetails.filter((record) =>
-        linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(entry.record_id));
       const orderPayments = allPayments.filter((record) =>
         linkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(entry.record_id));
       // 「这一单是哪天的」：明细「销售日」优先，退回主表「录单日」——和查单链路

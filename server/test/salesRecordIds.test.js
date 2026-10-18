@@ -235,56 +235,6 @@ test('AC-ID4 幂等重放不重复占号：建单重放 + 同一 request_id 重�
 // AC-TT1/2/3 主表「交易类型」
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-TT1 主表「交易类型」：全现货 ⇒ 写现货（取明细那一件的行为记录）', async () => {
-  const h = build();
-  await confirm(h, {
-    items: [
-      { itemNo: 'A100', size: 41, quantity: 1, actualAmount: 100, tradeTypeCode: 'SALE_CASH' },
-      { itemNo: 'B200', size: 42, quantity: 1, actualAmount: 100, tradeTypeCode: 'SALE_CASH' },
-    ],
-    payments: [],
-  });
-  const entry = await h.gateway.get('salesEntry', ORDER_ID);
-  assert.deepEqual(cell(entry, ENTRY.tradeType), ['behavior_cash'], '主表交易类型 = 现货');
-});
-
-test('AC-TT2 主表「交易类型」：全预订 ⇒ 写预订', async () => {
-  const h = build();
-  await confirm(h, {
-    items: [{ itemNo: 'A100', size: 41, quantity: 1, actualAmount: 100, tradeTypeCode: 'SALE_PREPAID' }],
-    payments: [],
-  });
-  const entry = await h.gateway.get('salesEntry', ORDER_ID);
-  assert.deepEqual(cell(entry, ENTRY.tradeType), ['behavior_prepaid'], '主表交易类型 = 预订');
-});
-
-test('AC-TT3 ⭐ 混合单 ⇒ **两个值都写**（这一列是多选关联：`property.multiple=true`）', async () => {
-  const h = build();
-  await confirm(h, {
-    items: [
-      { itemNo: 'A100', size: 41, quantity: 1, actualAmount: 100, tradeTypeCode: 'SALE_CASH' },
-      { itemNo: 'B200', size: 42, quantity: 1, actualAmount: 100, tradeTypeCode: 'SALE_PREPAID' },
-    ],
-    payments: [],
-  });
-  const entry = await h.gateway.get('salesEntry', ORDER_ID);
-  assert.deepEqual(cell(entry, ENTRY.tradeType), ['behavior_cash', 'behavior_prepaid'],
-    '混合单 = 现货 + 预订**两个值**（顺序 = 明细里首次出现的顺序）');
-});
-
-test('AC-TT4 去重：多行都是现货 ⇒ 只写一个现货记录（不重复写两个相同值）', async () => {
-  const h = build();
-  await confirm(h, {
-    items: [
-      { itemNo: 'A100', size: 41, quantity: 1, actualAmount: 100, tradeTypeCode: 'SALE_CASH' },
-      { itemNo: 'B200', size: 42, quantity: 1, actualAmount: 100, tradeTypeCode: 'SALE_CASH' },
-    ],
-    payments: [],
-  });
-  const entry = await h.gateway.get('salesEntry', ORDER_ID);
-  assert.deepEqual(cell(entry, ENTRY.tradeType), ['behavior_cash'], '两行同现货 ⇒ 只有一个值');
-});
-
 test('AC-ID5 ⭐ 未付单：【未收款】占位行**占 01**，之后每笔真实收款接着 02、03…', async () => {
   const h = build();
   // 「卖了 140，一分钱还没收」⇒ 这一单只有那条【未收款】占位行
@@ -329,8 +279,8 @@ test('AC-REG 其余字段一字未变：主表 / 明细 / 收款行的字段**�
   //     ⇒ 这一单（1 行、实收 240）写到的「总金额」= 240，**多出来的这一列是她的口径**，不是漂移。
   //   ⚠️ 本用例**没有放宽**：仍是 `deepEqual` 全等（少一列 / 多一列都红）。
   assert.deepEqual(Object.keys(entry.fields).sort(),
-    [ENTRY.orderNo, ENTRY.tradeType, ENTRY.gift, ENTRY.totalAmount, ENTRY.writeStatus].sort(),
-    '主表这次写到的列：销售单号 / 交易类型 / 赠品 / 总金额 / 写入状态 —— 没有多出来的列');
+    [ENTRY.orderNo, ENTRY.gift, ENTRY.totalAmount, ENTRY.writeStatus].sort(),
+    '主表这次写到的列：销售单号 / 赠品 / 总金额 / 写入状态 —— 没有多出来的列');
   assert.equal(cell(entry, ENTRY.totalAmount), 240, '「总金额」= 各行实收之和（这一单只有一行 240）');
   assert.deepEqual(Object.keys(detailsOf(h)[0].fields).sort(),
     [DETAIL.salesEntry, DETAIL.product, DETAIL.size, DETAIL.actualAmount, DETAIL.fulfillmentStatus, DETAIL.tradeType, DETAIL.detailId].sort(),

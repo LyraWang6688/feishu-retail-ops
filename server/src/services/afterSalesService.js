@@ -586,7 +586,6 @@ class AfterSalesService {
       // ⭐ 2026-10-18：旧三状态列已删除 ⇒ 售后主表建单只写「写入状态=未完成」；
       //   售后流程全部写完后写「成功」（见本文件收口处）。
       writeStatus: WRITE.writeStatus.pending,
-      tradeType: relation(behavior.recordId),
       ...(request.operatorOpenId ? { sender: person(request.operatorOpenId) } : {}),
     });
     // 写一条就落一次盘：中途挂掉时重试能认出"主表已经写过了"。
@@ -605,7 +604,6 @@ class AfterSalesService {
     //   「原话不一致」而必抛。**随映射一起删**（这是功能依赖，不是顺手清理）。
     //   剩下的两条判据（单号 / 交易类型）都在，足以认出"这条主表是不是这次请求写的"。
     else if (cellText(record.fields?.[fields.orderNo]) !== request.originalSalesOrderNo) mismatch = '销售单号不一致';
-    else if (!linkedRecordIds(record.fields?.[fields.tradeType]).includes(tradeTypeRecordId)) mismatch = '交易类型不一致';
     if (mismatch) {
       throw new Error(`已记录的售后主表 ${recordId} 与当前请求不一致（${mismatch}），请人工核对，不能自动重试`);
     }

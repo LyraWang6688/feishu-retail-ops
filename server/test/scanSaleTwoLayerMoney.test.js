@@ -257,9 +257,6 @@ const addShoe = (h, openId, overrides = {}) => h.write.addSaleLine({
   openId, requestId: 'req_add', productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2',
   color: '黑色', size: 40, inStock: true, ...overrides,
 });
-const addAccessory = (h, openId, overrides = {}) => h.write.addSaleLine({
-  openId, requestId: 'req_add', kind: 'accessory', accessoryRecordId: 'acc_oil', ...overrides,
-});
 const methodField = () => V1_BITABLE_SCHEMA.tables.paymentRecord.fields.method;
 const statusField = () => V1_BITABLE_SCHEMA.tables.paymentRecord.fields.status;
 const MONEY = SCAN_WRITE.sale.moneyPrefix;
@@ -438,23 +435,20 @@ test('AC-1b 收款行的预置规则（配置先行）：预置 1 行、第一�
 // AC-2 每件实收金额 → 销售明细.「实收金额」（留空 ⇒ 读单价；取不到 ⇒ 人话拦住）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-2a 每件实收 = 销售明细「实收金额」的落点：**填了就写她填的那个数**（鞋 / 配品同规则）', async () => {
+test('AC-2a 每件实收 = 销售明细「实收金额」的落点：**填了就写她填的那个数**', async () => {
   const h = createHarness();
   try {
     const openId = 'ou_two_layer_amount';
     await addShoe(h, openId, { size: 40, amount: 350 });       // 她填了实收 → 350（不是单价 399）
-    await addAccessory(h, openId, { amount: 12 });             // 配品填了实收 → 12（不是单价 15）
+    await addShoe(h, openId, { size: 41, amount: 12 });        // 第二双逐件实收 → 12
     const ok = await h.write.submitSale({
       openId, submitKey: await currentKey(h, openId),
       payments: [{ method: '微信', amount: 362 }],             // 350 + 12 = 362
     });
     assert.equal(ok.ok, true, JSON.stringify(ok));
-    const accessoryField = V1_BITABLE_SCHEMA.tables.salesDetail.fields.accessory;
     const details = entriesOf(h, 'salesDetail');
-    const shoe = details.find((row) => !row.fields[accessoryField]);
-    const accessory = details.find((row) => row.fields[accessoryField]);
-    assert.equal(shoe.fields['实收金额'], 350, '她填的实收就是「销售明细.实收金额」');
-    assert.equal(accessory.fields['实收金额'], 12, '配品行同一条规则（与鞋一致）');
+    assert.deepEqual(details.map((row) => row.fields['实收金额']).sort((a, b) => a - b), [12, 350],
+      '她填的实收就是「销售明细.实收金额」（逐件各写各的）');
   } finally { h.cleanup(); }
 });
 
@@ -471,14 +465,6 @@ test('AC-2b ⭐ 方案甲：**没填 ⇒ 那一列留空**（不再读「单价�
     assert.equal('实收金额' in shoe.fields, false, '她没填 ⇒ **这一列不写**（既不拿单价顶、也不写 0）');
     assert.equal(entriesOf(h, 'paymentRecord').length, 0, '一笔收款都不写');
 
-    // 配品：这一件也没有单价
-    const openId2 = 'ou_two_layer_nomoney_acc';
-    await addAccessory(h, openId2, { accessoryRecordId: 'acc_insole', amount: '' });
-    const ok2 = await h.write.submitSale({ openId: openId2, submitKey: await currentKey(h, openId2) });
-    assert.equal(ok2.ok, true, JSON.stringify(ok2));
-    const accessoryField = V1_BITABLE_SCHEMA.tables.salesDetail.fields.accessory;
-    const acc = entriesOf(h, 'salesDetail').find((row) => row.fields[accessoryField]);
-    assert.equal('实收金额' in acc.fields, false, '配品行同规则：没填 ⇒ 那一列留空');
   } finally { h.cleanup(); }
 });
 

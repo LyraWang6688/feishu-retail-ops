@@ -232,7 +232,6 @@ test('AC-10 ⭐⭐ 反方向：扫码链路 / 共享落库层 / 9 点推送 / �
     'server/src/services/scanWriteService.js',
     'server/src/services/v1PostingService.js',
     'server/src/services/v1BitableGateway.js',
-    'server/src/services/accessorySaleIntakeService.js',
     'server/src/config/salesMovements.js',
     'server/src/config/salesTradeTypePolicy.js',
     'server/src/services/pendingDealPushService.js',

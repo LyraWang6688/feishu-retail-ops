@@ -91,7 +91,9 @@ test('AC-LOG4 ⭐ 关联键沿用既有 `tap_id`（**不新造 `client_tap_id`**
     //    ⚠️ 只扫**代码侧**（`src` / `public`）：`test/logCorrelation.test.js` 里**故意**把它当
     //       "混进来必须被拒"的噪声喂进去 ✓（那是判据，不是用法）
     .execSync('git ls-files server/src server/public', { cwd: ROOT, encoding: 'utf8' })
-    .split('\n').filter(Boolean);
+    .split('\n').filter(Boolean)
+    // 工作区里已删除、但 index 还没更新的文件跳过（提交后自然消失）
+    .filter((f) => fs.existsSync(path.join(ROOT, f)));
   const offenders = files.filter((f) => /client_tap_id\s*[:=]/.test(fs.readFileSync(path.join(ROOT, f), 'utf8')));
   assert.deepEqual(offenders, [], '⛔ 不许真的用第二个名字（理由写在 correlationFields.js 里）✗');
 });
