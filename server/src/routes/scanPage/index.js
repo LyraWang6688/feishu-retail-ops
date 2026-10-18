@@ -175,6 +175,15 @@ const createScanPageRouter = (options = {}) => {
   // ⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」回扫码页）——
   //    单独一个注入点，用例可以钉"成功页长什么样"而不用碰别的页。
   const renderSuccess = options.render?.success || renderSaleSuccessPage;
+  // 深拆 P3b：响应/人话页面 helpers 搬进 ./responses.js（显式注入依赖；函数体逐字）
+  const responses = require('./responses').createResponses({
+    config, writeConfig, service, renderMessage, renderMinimalPage, sendHtml,
+    logError, logWarn, isDataNotReady, DEFAULT_REALM, ENTRY_RULE_TEXTS, markTapCode,
+    resolveRealm, scanTargetOf: (r) => scanTargetOf(r),
+    backTargetFor: (r, f) => backTargetFor(r, f),
+    postActionFor: (t, r) => postActionFor(t, r),
+  });
+  const { sendHuman, badNumberPage, notFoundPage, respondFailure, unknownActionFailure, purchaseAmountMissingPage, purchaseAmountInvalidPage, purchaseEntryInvalidPage, respondWriteFailure } = responses;
   /**
    * ⭐⭐ 2026-10-16 A2a ③：**候选收款方式 = 读「收款方式管理」那张表**（只读 + TTL 缓存那一份 service）。
    *
@@ -980,27 +989,7 @@ const createScanPageRouter = (options = {}) => {
    * 业务负责人 2026-10-09 真机反馈「手机扫码一片空白」之后定的口径：
    * **页面上无论如何都要有看得见的东西** —— 宁可给她一句"暂时打不开"，也不给一张白纸。
    */
-  const sendHuman = (res, status, payload) => {
-    try {
-      return sendHtml(res, status, renderMessage(payload, config));
-    } catch (error) {
-      logError(config.events.failed, {
-        request_id: payload?.requestId, reason: 'message_render_failed', error: error.message,
-      });
-      return sendHtml(res, status, renderMinimalPage({
-        title: payload?.title || config.texts.errorTitle,
-        body: payload?.body || config.texts.errorBody,
-        requestId: payload?.requestId,
-      }));
-    }
-  };
 
-  const badNumberPage = (res, status, requestId, number = '') => sendHuman(res, status, {
-    title: config.texts.badNumberTitle,
-    body: config.texts.badNumberBody,
-    number,
-    requestId,
-  });
 
   /**
    * ⭐⭐ **提交成功页**（`POST submit_order` 写成功之后直接渲染它，不回原页）。
@@ -1070,53 +1059,7 @@ const createScanPageRouter = (options = {}) => {
    *   · 编号缺段、**匹配到多款** ⇒ 说清"没法确定是哪一双"（**不猜**）。
    * 后两种都给【再扫一次】的回跳（= 这一页的地址，重新扫标签即可）。
    */
-  const notFoundPage = (res, requestId, { number = '', fallback = null, realm = DEFAULT_REALM, target = null } = {}) => sendHuman(res, 404, {
-    title: config.texts.notFoundTitle,
-    body: config.texts.notFoundBody,
-    number,
-    requestId,
-    retryHint: fallback?.tried
-      ? (fallback.ambiguous ? config.texts.notFoundAmbiguousHint : config.texts.notFoundFallbackMissHint)
-      : '',
-    // ⭐ 只有"确实按兜底找过、还是没找到"时才给【再扫一次】那条回跳；
-    //   `/r` 底下回跳要带**记录 ID**（不是编号）。
-    backPath: fallback?.tried ? postActionFor(target || { mode: 'number', value: number }, realm) : '',
-    backLabel: fallback?.tried ? config.texts.notFoundBackLabel : '',
-  });
 
-  const respondFailure = (res, error, requestId, timing = null) => {
-    // ⭐⭐ 2026-10-12：**第三条出口**也要留痕 —— 她真机那次 400"周围一条日志都没有" ✗，
-    //   所以**任何**没预料到的失败都带一份"这次提交带了哪些字段名 / action 是什么形态"（**只字段名** ✗）。
-    //   ⚠️ 与 `unknownActionFailure` 同一套字段（便于一起 grep）✓
-    logWarn(writeConfig.events.unknownWriteAction, {
-      request_id: requestId,
-      where: 'respondFailure',
-      error: String(error?.message || error || '').slice(0, 200),
-      method: 'n/a',
-    });
-    // ⭐ 失败也要看得出卡在哪一步（她：「一查日志就知道卡在哪一步」）——
-    //    在发页面之前把已经量到的那几段打出去（`total_ms` 由 service 写、`render_ms` 为 0）。
-    service.logTiming?.(timing, { requestId, found: false });
-    if (error?.scanLimitExceeded) {
-      // service 已经记过 limitExceeded；这里只负责给她一张人话页面（**不显示半张库存表**）。
-      return sendHuman(res, 503, {
-        title: config.texts.limitTitle, body: config.texts.limitBody, requestId,
-      });
-    }
-    if (isDataNotReady(error)) {
-      res.set('Retry-After', '5');
-      return sendHuman(res, 503, {
-        title: config.texts.busyTitle, body: config.texts.busyBody, requestId,
-      });
-    }
-    logError(config.events.failed, { request_id: requestId, error: error.message });
-    return sendHuman(res, 500, {
-      title: config.texts.errorTitle,
-      body: config.texts.errorBody,
-      requestId,
-      retryHint: config.texts.retryHint,
-    });
-  };
 
   /**
    * 写入口失败 → **在页面上**说清楚（业务负责人：失败要人话，不许静默、不许只写日志）。
@@ -1131,32 +1074,6 @@ const createScanPageRouter = (options = {}) => {
    *   · `unrecognized` —— 带了个我们认不出的值
    * ⚠️ 只打**字段名**（`body_keys`），**不打值** ✗；`action` 是**我们的动作名**（不是她的数据）⇒ 截断后打出 ✓。
    */
-  const unknownActionFailure = (req, res, requestId, actionRaw) => {
-    const body = req.body || {};
-    const raw = body[writeConfig.fields.action];
-    const kind = raw === undefined ? 'missing' : (String(raw).trim() === '' ? 'blank' : 'unrecognized');
-    logWarn(writeConfig.events.unknownWriteAction, {
-      request_id: requestId,
-      path: String(req.originalUrl || req.path || '').split('?')[0],
-      method: req.method,
-      action_kind: kind,
-      action_received: String(actionRaw ?? '').slice(0, 64),
-      body_keys: Object.keys(body),
-      content_type: String(req.headers['content-type'] || ''),
-      realm: resolveRealm(req.query?.from),
-      // ⭐ 2026-10-12：她点的是**哪一版页面**渲染出来的（缺失 ⇒ 旧页面 / 手改表单）
-      page_build: String(body[config.pageBuildField || 'page_build'] || '').trim() || 'missing',
-      page_build_stale: Boolean(String(body[config.pageBuildField || 'page_build'] || '').trim())
-        && String(body[config.pageBuildField || 'page_build'] || '').trim() !== String(config.pageBuild || ''),
-      target: String(scanTargetOf(req).value || '').slice(0, 120),
-    });
-    return respondWriteFailure(res, {
-      code: 'unknown_action',
-      message: kind === 'unrecognized'
-        ? writeConfig.texts.unknownActionBody
-        : writeConfig.texts.unknownActionMissingBody,
-    }, requestId);
-  };
 
   /**
    * ⭐⭐ 2026-10-14 晚（业务负责人**逐字**）：「**退货整单金额（必填），与补货同一套配置**」
@@ -1179,27 +1096,6 @@ const createScanPageRouter = (options = {}) => {
    *   依据：她 2026-10-14 晚「退货整单金额（必填），与补货同一套配置」＋ 2026-10-15 裁决 ⓐ
    *     ＋ 那一列是**数字列**（`v1BitableSchema` 的 `purchaseOrderBatch.actualAmount`）。
    */
-  const purchaseAmountMissingPage = (req, res, requestId, realm) => {
-    logWarn(writeConfig.events.purchaseAmountRequired, {
-      request_id: requestId,
-      realm,
-      reason: 'amount_empty',
-      target: String(scanTargetOf(req).value || '').slice(0, 120),
-    });
-    // ⭐ 埋点 P0 ②：这次点击的结果原因码（`ui.tap.result` 用它 ⇒ 一眼看出"她填漏了"）
-    markTapCode(res, 'purchase_amount_required');
-    return sendHuman(res, 400, {
-      title: writeConfig.texts.purchaseAmountMissingTitle,
-      body: writeConfig.texts.purchaseAmountMissingBody,
-      requestId,
-      retryHint: writeConfig.texts.failedRetryHint,
-      // 回"她刚才那一块"（编号 + 同一个领域）—— 不然她只能靠浏览器的返回键。
-      backPath: postActionFor(
-        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
-      ),
-      backLabel: writeConfig.texts.purchaseAmountBackLabel,
-    });
-  };
 
   /**
    * ⭐⭐ 2026-10-16（A2/A3 接线 · 业务负责人**逐字**）：**当前这条链路**要不要「整单金额」。
@@ -1231,25 +1127,6 @@ const createScanPageRouter = (options = {}) => {
   const purchaseAmountInvalid = (body, realm) => purchaseAmountInvalidOf(body, realm, writeConfig);
 
   /** 「要填数字」那张人话页（与"还没填"同一形状：H1 + 怎么填 + 回上一页 + 埋点原因码）。 */
-  const purchaseAmountInvalidPage = (req, res, requestId, realm) => {
-    logWarn(writeConfig.events.purchaseAmountRequired, {
-      request_id: requestId,
-      realm,
-      reason: 'amount_invalid',
-      target: String(scanTargetOf(req).value || '').slice(0, 120),
-    });
-    markTapCode(res, 'purchase_amount_invalid');
-    return sendHuman(res, 400, {
-      title: writeConfig.texts.purchaseAmountInvalidTitle,
-      body: writeConfig.texts.purchaseAmountInvalidBody,
-      requestId,
-      retryHint: writeConfig.texts.failedRetryHint,
-      backPath: postActionFor(
-        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
-      ),
-      backLabel: writeConfig.texts.purchaseAmountBackLabel,
-    });
-  };
 
   /**
    * ⭐⭐ 2026-10-16（口子收尾 · 业务负责人**逐字**口径）：
@@ -1267,56 +1144,7 @@ const createScanPageRouter = (options = {}) => {
    *   · 日志走 `writeConfig.events.entryInvalid`（**与写失败 `failed` 分开**：原因不同、修法不同 ✓）。
    * ⚠️ 这张页面**不写任何业务表**（`sendHuman` 只把 HTML 发出去 ✓）⇒「零写入」是**结构性**的 ✓。
    */
-  const purchaseEntryInvalidPage = (req, res, requestId, realm, violation) => {
-    logWarn(writeConfig.events.entryInvalid, {
-      request_id: requestId,
-      realm,
-      reason: String(violation?.code || 'entry_invalid'),
-      target: String(scanTargetOf(req).value || '').slice(0, 120),
-    });
-    markTapCode(res, String(violation?.code || 'entry_invalid'));
-    return sendHuman(res, 400, {
-      title: ENTRY_RULE_TEXTS.entryInvalidTitle,
-      // 🔴 **写层那一句原样**（同一句人话 ✓）：`sizeUnknownBody` /
-      //    `quantityInvalidBody{max}` / `replenishNoneBody` / `returnNoneBody`。
-      body: String(violation?.message || writeConfig.texts.internalFailedBody),
-      requestId,
-      retryHint: writeConfig.texts.failedRetryHint,
-      backPath: postActionFor(
-        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
-      ),
-      backLabel: writeConfig.texts.purchaseAmountBackLabel,
-    });
-  };
 
-  const respondWriteFailure = (res, result, requestId) => {
-    // 2026-10-14 (real gap): a write failure used to log NOTHING. Only-add, existing event name.
-    logError(writeConfig.events.failed, {
-      request_id: requestId, reason: 'write_failed', code: String(result?.code || ''),
-      where: 'respondWriteFailure',
-    });
-    // 500 = 系统那边没处理成（写库失败）；400 = 她填错了 / 数据不满足业务（一个字节都没写）。
-    // ⭐ `sale_partial_failed` 也归 500：单子记上了、后面某步没写完 —— 不是她填错。
-    const status = ['sale_write_failed', 'sale_partial_failed', 'replenish_write_failed', 'return_write_failed'].includes(result.code)
-      ? 500 : 400;
-    // ⭐ 2026-10-12：**钱算不对那几类**（差额 / 付款情况 / 实付多少 / 全付零元…）⇒
-    //    把那句**人话差额**放到**最上面那一行（H1）**：她第一眼看到的就是"差在哪、差多少"，
-    //    而不是一句泛泛的「没提交成功」。
-    const moneyCodes = ['amount_mismatch', 'payment_amount_invalid', 'payment_status_invalid',
-      'payment_amount_missing', 'partial_amount_missing', 'full_without_money'];
-    const human = String(result.error?.scanUserMessage || result.message || '').trim();
-    const moneyFailure = Boolean(human) && moneyCodes.includes(result.code);
-    // ⭐ 埋点 P0 ②：把**业务原因码**留给结果事件（`ui.tap.result.code`）——
-    //   与 ③ 那条「失败日志带人话原因码」同一个口径（`scan.write.settlement_blocked` 那类）。
-    markTapCode(res, result.code || `http_${status}`);
-    return sendHuman(res, status, {
-      title: moneyFailure ? human : writeConfig.texts.failedTitle,
-      body: moneyFailure ? writeConfig.texts.failedTitle
-        : (result.message || writeConfig.texts.internalFailedBody),
-      requestId,
-      retryHint: writeConfig.texts.failedRetryHint,
-    });
-  };
 
   /**
    * ⭐ 写成功之后**立刻作废**「实时库存」内存快照（她的硬要求：**库存准确**，
