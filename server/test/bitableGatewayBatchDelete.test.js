@@ -49,22 +49,12 @@ const schema = {
  * 并清 require 缓存再 require（否则抓到的是旧引用）。
  */
 const withCapturedLogs = async (run) => {
-  const logger = require('../src/utils/logger');
-  const originals = { logInfo: logger.logInfo, logWarn: logger.logWarn, logError: logger.logError };
   const logs = [];
-  const capture = (level) => (event, payload) => { logs.push({ level, event, payload }); };
-  logger.logInfo = capture('info');
-  logger.logWarn = capture('warn');
-  logger.logError = capture('error');
-  const modulePath = require.resolve('../src/services/v1BitableGateway');
-  delete require.cache[modulePath];
+  const stop = require('../src/utils/logger').addLogListener(({ level, event, ...payload }) => {
+    logs.push({ level, event, payload });
+  });
   const { V1BitableGateway: Fresh } = require('../src/services/v1BitableGateway');
-  try {
-    return await run(Fresh, logs);
-  } finally {
-    Object.assign(logger, originals);
-    delete require.cache[modulePath];
-  }
+  try { return await run(Fresh, logs); } finally { stop(); }
 };
 
 /**

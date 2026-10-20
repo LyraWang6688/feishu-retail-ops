@@ -35,6 +35,7 @@ const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1ReferenceResolver } = require('./v1ReferenceResolver');
 const { SalesOrderService } = require('./salesOrderService');
+const { mergeCorrelation } = require('../utils/correlationFields');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 // ⭐ 2026-10-11（A）：现货 ⇒ **提交即交付 + 扣库存**，走的就是这一条**既有交付链路**
 //   （`SalesDeliveryService.deliver`：写「履约状态」+ 扣「实时库存」+ 写「库存流水」+ 写「库存状态」）。
@@ -93,11 +94,11 @@ const { logError, logInfo, logWarn } = require('../utils/logger');
  *   ⚠️ **不再经 `LarkMvpService`**：那个类的构造函数会连带构造采购 / 售后 / 样品 /
  *      本地任务存储等一整套**群聊入口**的东西，扫码页一个字都不需要。
  */
-const createSalesEntryWithOrderNo = async (gateway, task) => {
+const createSalesEntryWithOrderNo = async (gateway, task, options = {}) => {
   // 延迟 require：与原来同一个理由（把扫码页模块加载路径上的依赖树压到最小）。
   // eslint-disable-next-line global-require
   const { createSalesEntryWithOrderNo: createEntry } = require('./salesEntryService');
-  return createEntry({ gateway }, task);
+  return createEntry({ gateway }, task, options);
 };
 
 const createScanWriteService = (options = {}) => {
@@ -154,7 +155,7 @@ const createScanWriteService = (options = {}) => {
   //      这两个名字在本文件里**照旧可用**（下面解构出来）⇒ 调用点与用例**一个字都没改** ✓
   const { scheduleSaleRest, markSaleWriteFailed } = createSaleWriteBackgroundService({
     // ⚠️ **延迟**引用：`submitSale` 在本函数**下面**才定义 ⇒ 传 lambda（真正调用发生在请求期 ✓）
-    submitSale: (input) => submitSale(input),
+    submitSale: (input, options) => submitSale(input, options),
     saleAsync,
     config,
     status,
@@ -561,7 +562,7 @@ const createScanWriteService = (options = {}) => {
     //   ⚠️ 两个都是**显式布尔**（`=== true`）：不传 / 传 false ⇒ 每个字节与改前逐字一致。
     masterOnly = false,
     oneShot = false,
-  }) => {
+  }, logOptions = {}) => {
     // ⭐⭐ 2026-10-15（⑨ 异步）：**先把"后台那一跑"的入参固化在这里** ——
     //   ⚠️ 必须在函数**最顶上**取：函数体后面有同名局部（`paidAmount` / `payments` …），
     //     在 try 里引用它们会撞 **TDZ**（`Cannot access 'paidAmount' before initialization` ✗
@@ -1050,14 +1051,13 @@ const createScanWriteService = (options = {}) => {
       const masterStartedAt = Date.now();
       if (!salesEntryRecordId) {
         const created = await createEntry(gateway, {
-          // 主表「原话」那一列：扫码来的单也留一句人话（模板在 config）。
           original_text: fillText(config.sale.originalTextTemplate, {
             count: items.length,
             products: lines.map((line) => line.item_no || line.number).filter(Boolean).join('、'),
           }),
           sender_open_id: openId,
           task_id: key,
-        });
+        }, { correlation: mergeCorrelation(logOptions.correlation, { task_id: key }) });
         salesEntryRecordId = String(created?.recordId || '').trim();
         if (!salesEntryRecordId) throw new Error('创建销售主表后没有拿到 record_id');
         orderNo = await salesEntryOrderNo(salesEntryRecordId, created);
@@ -1066,7 +1066,7 @@ const createScanWriteService = (options = {}) => {
         });
       }
       markStage('master_ms', masterStartedAt);
-      const correlation = { task_id: key, sales_entry_record_id: salesEntryRecordId, order_no: orderNo };
+      const correlation = mergeCorrelation(logOptions.correlation, { task_id: key, sales_entry_record_id: salesEntryRecordId, order_no: orderNo });
       // 「点【提交】才写」= 她**在页面上确认过**了 ⇒ 「确认状态」记「已确认」
       //（走四个状态维度的**唯一写入口** SalesStatusWriter；值来自 config/salesStatusDimensions）。
       // ⚠️ 只有第一次建单时才补这一下（重试时不必重复写）。

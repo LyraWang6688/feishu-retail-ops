@@ -6,6 +6,7 @@ const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { larkLogger } = require('../utils/larkLogger');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { correlationFields } = require('../utils/correlationFields');
+const { createBatchWriteTelemetry } = require('../utils/batchWriteTelemetry');
 
 /** 飞书 `records/batch_get` 官方上限：一次最多 **500** 条（超了必须分片）。 */
 // 批量读写**每次的条数**：500。依据（curl 官方文档核过，2026-10-12）：
@@ -203,10 +204,12 @@ class V1BitableGateway {
     if (!list.length) return [];
     const table = this.tableWithId(tableKey);
     const correlation = correlationFields(options.correlation);
+    const telemetry = createBatchWriteTelemetry({ tableKey, tableId: table.tableId, operation: 'create',
+      total: list.length, chunkSize: BATCH_GET_CHUNK_SIZE, correlation });
     const created = [];
     for (let offset = 0; offset < list.length; offset += BATCH_GET_CHUNK_SIZE) {
       const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
-      const startedAt = Date.now();
+      const attempt = telemetry.start(offset, chunk.length);
       try {
         const response = await this.client.bitable.appTableRecord.batchCreate({
           path: { app_token: this.schema.appToken, table_id: table.tableId },
@@ -228,31 +231,19 @@ class V1BitableGateway {
             returned: records.length,
             missing: Math.max(0, chunk.length - records.length),
             chunk_offset: offset,
-            ...correlation,
+            ...attempt.context,
           });
           // 内部错误（正常不可达）：用**英文键**表述 ⇒ 不引入新的硬编码中文
-          throw new Error(`batch_create_count_mismatch: expected ${chunk.length}, got ${records.length}`);
+          const mismatch = new Error(`batch_create_count_mismatch: expected ${chunk.length}, got ${records.length}`);
+          mismatch.bitableReturnedCount = records.length;
+          throw mismatch;
         }
         created.push(...records.map((record) => ({
           recordId: record?.record_id || '', record,
         })));
-        logInfo('bitable.record.batch_created', {
-          table_key: tableKey,
-          table_id: table.tableId,
-          count: records.length,
-          chunk_offset: offset,
-          duration_ms: Date.now() - startedAt,
-          ...correlation,
-        });
+        attempt.success(records.length);
       } catch (error) {
-        logError('bitable.record.batch_create_failed', {
-          table_key: tableKey,
-          table_id: table.tableId,
-          count: chunk.length,
-          chunk_offset: offset,
-          error: error?.message || String(error),
-          ...correlation,
-        });
+        attempt.failure(error);
         throw error;
       }
     }
@@ -269,10 +260,12 @@ class V1BitableGateway {
     if (!list.length) return [];
     const table = this.tableWithId(tableKey);
     const correlation = correlationFields(options.correlation);
+    const telemetry = createBatchWriteTelemetry({ tableKey, tableId: table.tableId, operation: 'update',
+      total: list.length, chunkSize: BATCH_GET_CHUNK_SIZE, correlation });
     const updated = [];
     for (let offset = 0; offset < list.length; offset += BATCH_GET_CHUNK_SIZE) {
       const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
-      const startedAt = Date.now();
+      const attempt = telemetry.start(offset, chunk.length);
       try {
         const response = await this.client.bitable.appTableRecord.batchUpdate({
           path: { app_token: this.schema.appToken, table_id: table.tableId },
@@ -296,30 +289,18 @@ class V1BitableGateway {
             returned: records.length,
             missing: Math.max(0, chunk.length - records.length),
             chunk_offset: offset,
-            ...correlation,
+            ...attempt.context,
           });
-          throw new Error(`batch_update_count_mismatch: expected ${chunk.length}, got ${records.length}`);
+          const mismatch = new Error(`batch_update_count_mismatch: expected ${chunk.length}, got ${records.length}`);
+          mismatch.bitableReturnedCount = records.length;
+          throw mismatch;
         }
         updated.push(...records.map((record) => ({
           recordId: record?.record_id || '', record,
         })));
-        logInfo('bitable.record.batch_updated', {
-          table_key: tableKey,
-          table_id: table.tableId,
-          count: records.length,
-          chunk_offset: offset,
-          duration_ms: Date.now() - startedAt,
-          ...correlation,
-        });
+        attempt.success(records.length);
       } catch (error) {
-        logError('bitable.record.batch_update_failed', {
-          table_key: tableKey,
-          table_id: table.tableId,
-          count: chunk.length,
-          chunk_offset: offset,
-          error: error?.message || String(error),
-          ...correlation,
-        });
+        attempt.failure(error);
         throw error;
       }
     }
@@ -520,10 +501,12 @@ class V1BitableGateway {
     if (!list.length) return [];
     const table = this.tableWithId(tableKey);
     const correlation = correlationFields(options.correlation);
+    const telemetry = createBatchWriteTelemetry({ tableKey, tableId: table.tableId, operation: 'delete',
+      total: list.length, chunkSize: BATCH_GET_CHUNK_SIZE, correlation });
     const deleted = [];
     for (let offset = 0; offset < list.length; offset += BATCH_GET_CHUNK_SIZE) {
       const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
-      const startedAt = Date.now();
+      const attempt = telemetry.start(offset, chunk.length);
       try {
         const response = await this.client.bitable.appTableRecord.batchDelete({
           path: { app_token: this.schema.appToken, table_id: table.tableId },
@@ -547,7 +530,7 @@ class V1BitableGateway {
             missing: Math.max(0, chunk.length - records.length),
             not_deleted: notDeleted.length,
             chunk_offset: offset,
-            ...correlation,
+            ...attempt.context,
           });
           // 内部错误（正常不可达）：用**英文键**表述 ⇒ 不引入新的硬编码中文
           const mismatch = new Error(`batch_delete_count_mismatch: expected ${chunk.length}, got ${records.length}`
@@ -557,6 +540,7 @@ class V1BitableGateway {
           //    没有它，续跑（逐双）会把"已经删掉的那几条"当成"不存在"当场抛、要人工核对。
           //    ⚠️ 只认**明说 `deleted: true`** 的：宁可少记（续跑会停下要人工核对），
           //       也绝不把"可能没删"记成"已删"（那会静默少扣库存）。
+          mismatch.bitableReturnedCount = records.length;
           mismatch.bitablePartialDelete = true;
           mismatch.bitableDeletedRecordIds = chunk.filter(
             (recordId) => byId.get(recordId)?.deleted === true,
@@ -564,23 +548,9 @@ class V1BitableGateway {
           throw mismatch;
         }
         deleted.push(...chunk.map((recordId) => ({ recordId, deleted: true })));
-        logInfo('bitable.record.batch_deleted', {
-          table_key: tableKey,
-          table_id: table.tableId,
-          count: chunk.length,
-          chunk_offset: offset,
-          duration_ms: Date.now() - startedAt,
-          ...correlation,
-        });
+        attempt.success(chunk.length);
       } catch (error) {
-        logError('bitable.record.batch_delete_failed', {
-          table_key: tableKey,
-          table_id: table.tableId,
-          count: chunk.length,
-          chunk_offset: offset,
-          error: error?.message || String(error),
-          ...correlation,
-        });
+        attempt.failure(error);
         throw error;
       }
     }
@@ -721,6 +691,7 @@ class V1BitableGateway {
       // 异常没有该标记，一律按可能已经写入处理。
       error.bitableRejected = true;
       error.bitableCode = response?.code;
+      error.larkData = { code: response?.code, msg: response?.msg, log_id: response?.log_id, method_id: response?.method_id };
       throw error;
     }
   }

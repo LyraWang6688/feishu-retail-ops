@@ -95,6 +95,7 @@ const handleUiTap = ({ req, res, scope = 'scan', realm = '' }) => {
     const funnelFields = {
       request_id: req?.requestId,
       scope,
+      view_source: 'client_beacon',
       page,
       ...(step ? { step } : {}),
       ...(realm ? { realm } : {}),
