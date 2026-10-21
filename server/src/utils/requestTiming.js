@@ -3,6 +3,7 @@
 /** 请求耗时中间件：只对 `config/timing.js` 登记的 5 条链路打一条 `perf.request.completed`。 */
 const { REQUEST_TIMING, resolveTimingChain } = require('../config/timing');
 const { logInfo } = require('./logger');
+const { tapIdFromRequest } = require('./correlationFields');
 
 const requestTiming = () => (req, res, next) => {
   if (!REQUEST_TIMING.enabled) return next();
@@ -13,6 +14,8 @@ const requestTiming = () => (req, res, next) => {
     const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6);
     logInfo('perf.request.completed', {
       chain,
+      request_id: req.requestId,
+      ...tapIdFromRequest(req),
       method: req.method,
       status: res.statusCode,
       duration_ms: durationMs,

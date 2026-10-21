@@ -242,17 +242,18 @@ ${paymentFieldsHtml}
 <button type="submit" class="btn btn--primary" data-tap-target="${escapeHtml(step.payAction || '')}"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.payButton || '')}</button>
 </form>`
     : `<div class="payment-step">${paymentFieldsHtml}</div>`;
+  // ⭐ 2026-10-19 业务负责人：标题和金额**同一行**（「总金额 ￥99」）；资金页**不显示销售单号**
+  //   （单号只在成功页显示；提交时仍由隐藏字段 order_no 带过去）。
+  const amountText = String(totalAmountText || '').trim();
+  const amountHtml = amountText
+    ? ` <span class="payment-step__total" data-view="payment-step-total">${escapeHtml(fillText(step.totalLabel || '', { amount: amountText }))}</span>`
+    : '';
   return renderDocument({
     title: step.heading,
     config,
     // ⭐ `data-view="payment-step"` = 第 2 步页的**稳定标记**（测试顺着它决定"要不要再走一步"✓）
     content: `<section class="card state-msg" data-view="payment-step">
-<h1>${escapeHtml(step.heading)}</h1>
-${orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : ''}
-${String(totalAmountText || '').trim()
-    ? `<p class="foot" data-view="payment-step-total">${escapeHtml(fillText(step.totalLabel || '', { amount: String(totalAmountText).trim() }))}</p>`
-    : ''}
-<p class="hint">${escapeHtml(step.amountRequiredNote || '')}</p>
+<h1>${escapeHtml(step.heading)}${amountHtml}</h1>
 ${String(notice || '').trim()
     // 🔴 2026-10-16 P0：拦下的原因**必须醒目**（她真机"看着像坏了"✗）——从 `hint`（小字）
     //   提到 `form-alert`（红色告警级 ✓）；`data-view` 钩子**保留**（既有判据还在用 ✓）

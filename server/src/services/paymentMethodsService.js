@@ -14,6 +14,14 @@
  */
 
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+
+/** ⭐ 2026-10-18：候选排序 —— 配置默认方式**只在表里真实存在时**排第一；否则用表里第一项。 */
+const orderWithPreferred = (items = [], preferred = '') => {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  return preferred && list.includes(preferred)
+    ? [preferred, ...list.filter((item) => item !== preferred)]
+    : list;
+};
 const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 
 /**
@@ -34,6 +42,17 @@ const createPaymentMethodsService = (gateway, options = {}) => {
   const voucherFieldName = options.voucherFieldName
     || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.voucher
     || '';
+  // ⭐ 2026-10-18：「出现顺序」（数字，1 最前）——表里没配/非数字 ⇒ 排最后（保持稳定）。
+  const orderFieldName = options.orderFieldName
+    || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.order
+    || '';
+  const orderOf = (row) => {
+    if (!orderFieldName) return Number.POSITIVE_INFINITY;
+    const raw = textValue(row?.fields?.[orderFieldName]).trim();
+    if (!raw) return Number.POSITIVE_INFINITY;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+  };
   const ttlMs = options.ttlMs === undefined ? 5 * 60 * 1000 : Number(options.ttlMs);
   const now = options.now || (() => Date.now());
   let cache = null;
@@ -50,7 +69,10 @@ const createPaymentMethodsService = (gateway, options = {}) => {
       const items = [];
       const detailed = [];
       const seen = new Set();
-      for (const row of rows || []) {
+      // ⭐ 先按「出现顺序」排（同序/无序号保持表内原顺序 ⇒ 稳定排序）。
+      const ordered = (rows || []).map((row, index) => ({ row, index, order: orderOf(row) }))
+        .sort((a, b) => (a.order - b.order) || (a.index - b.index));
+      for (const { row } of ordered) {
         const value = textValue(row?.fields?.[fieldName]).trim();
         if (!value || seen.has(value)) continue;
         seen.add(value);
@@ -106,4 +128,4 @@ const createPaymentMethodsService = (gateway, options = {}) => {
   };
 };
 
-module.exports = { createPaymentMethodsService };
+module.exports = { createPaymentMethodsService, orderWithPreferred };

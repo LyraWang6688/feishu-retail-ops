@@ -48,7 +48,7 @@ const { createScanWriteService } = require('../../services/scanWriteService');
 const { createPurchaseWriteBackgroundService } = require('../../services/purchaseWriteBackgroundService');
 // ⭐⭐ 2026-10-16 A2a ③：**候选收款方式改读表**（她 2026-10-14 逐字：「**付款方式用交易方式管理，
 //    可选择**」）—— 只读 + TTL 缓存的那份 service（`services/paymentMethodsService.js`）。
-const { createPaymentMethodsService } = require('../../services/paymentMethodsService');
+const { createPaymentMethodsService, orderWithPreferred } = require('../../services/paymentMethodsService');
 const { createVoucherPaymentService } = require('../../services/voucherPaymentService');
 const { SalesFollowupService } = require('../../services/salesFollowupService');
 const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../../views/scanPageRenderer');
@@ -229,7 +229,8 @@ const createScanPageRouter = (options = {}) => {
       ok: false, items: [], reason: 'payment_methods_unreadable', error: error?.message || 'unknown',
     }));
     if (listed?.ok === true && Array.isArray(listed.items) && listed.items.length) {
-      return [...new Set([writeConfig.sale.defaultPaymentMethod, ...listed.items].filter(Boolean))];
+      // ⭐ 2026-10-18：表是唯一真源；配置默认方式只在表里存在时排第一（详见 orderWithPreferred）。
+      return [...new Set(orderWithPreferred(listed.items, writeConfig.sale.defaultPaymentMethod))];
     }
     logWarn('scan.sale.payment_methods_unreadable', {
       request_id: req?.requestId,

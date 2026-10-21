@@ -52,7 +52,7 @@ const SCAN_SUCCESS_PAGE = Object.freeze({
   //   ＋ ⭐ 它属于**成功页这份配置**（与 `minimalSuccessOverrides` 同一个家 ✓）
   //     ⇒ ⭐ **不必动 `config/scanPage.js`** ✓（她 22:5x「不需要开关」✓ 那句是另一件事 ✓）
   //   ⚠️ 号为空 ⇒ 渲染层**整行不输出** ✓ ⇒ **逐字节不变** ✓（`AC-REG1` 锁着这件事 ✓）
-  orderNoText: '上一单已提交（{orderNo}）',
+  orderNoText: '本单已提交（{orderNo}）',
 });
 
 /**
