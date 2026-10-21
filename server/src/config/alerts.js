@@ -11,6 +11,13 @@ const { readFlag, readInt, readList, readString } = require('./envValue');
 
 const DEFAULT_CRITICAL_EVENTS = [
   'bitable.record.create_failed',
+  'bitable.record.batch_create_failed',
+  'bitable.record.batch_update_failed',
+  'bitable.record.batch_delete_failed',
+  'bitable.record.batch_write_mismatch',
+  'scan.sale.background_failed',
+  'scan.purchase.background_failed',
+  'scan.purchase.background_mark_failed',
   'bitable.record.update_failed',
   'inventory.change.failed',
   'scan.write.failed',
@@ -25,13 +32,19 @@ const OBSERVABILITY_ALERTS = Object.freeze({
   slowMs: readInt(process.env, 'OBSERVABILITY_ALERTS_SLOW_MS', 10000, { min: 1, max: 600000 }),
   // 慢事件只对**业务链路**（perf.request.completed）报警：`http.request.completed` 是全局请求日志，
   // 与它同一请求会重复报（实测 2026-10-18 03:29 同一次 18259ms 报了两条 ✗），且含长连接/静态资源。
-  slowEvents: readList(process.env, 'OBSERVABILITY_ALERTS_SLOW_EVENTS', ['perf.request.completed']),
+  slowEvents: readList(process.env, 'OBSERVABILITY_ALERTS_SLOW_EVENTS') ?? ['perf.request.completed',
+    'bitable.record.batch_created', 'bitable.record.batch_updated', 'bitable.record.batch_deleted',
+    'scan.sale.timing', 'scan.purchase.background.timing'],
   errorRate: Object.freeze({
     thresholdPct: readInt(process.env, 'OBSERVABILITY_ALERTS_ERROR_RATE_PCT', 5, { min: 1, max: 100 }),
     minErrors: readInt(process.env, 'OBSERVABILITY_ALERTS_MIN_ERRORS', 3, { min: 1, max: 1000 }),
     minTotal: readInt(process.env, 'OBSERVABILITY_ALERTS_MIN_TOTAL', 20, { min: 1, max: 100000 }),
   }),
-  criticalEvents: readList(process.env, 'OBSERVABILITY_ALERT_CRITICAL_EVENTS', DEFAULT_CRITICAL_EVENTS),
+  warningCriticalEvents: readList(process.env, 'OBSERVABILITY_ALERT_CRITICAL_WARN_EVENTS') ?? [
+    'bitable.record.batch_write_mismatch', 'scan.sale.background_failed',
+    'scan.purchase.background_failed', 'scan.purchase.background_mark_failed',
+  ],
+  criticalEvents: readList(process.env, 'OBSERVABILITY_ALERT_CRITICAL_EVENTS') ?? DEFAULT_CRITICAL_EVENTS,
   // ⭐ 私发：优先发给这个 open_id（业务负责人 2026-10-17 指定「私发给我的邯美皮鞋账号」）。
   //   ⚠️ 这是**只发不收**的出站消息，**不恢复私聊录入入口**（那条链路仍按 2026-10-07 口径删除）。
   openId: readString(process.env, 'OBSERVABILITY_ALERTS_OPEN_ID', ''),

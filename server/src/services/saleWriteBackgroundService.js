@@ -72,6 +72,7 @@ const createSaleWriteBackgroundService = ({ submitSale, saleAsync = {}, config =
     const timing = {};
     const logTiming = (result, durationMs) => {
       logInfo(config.events.saleTiming, {
+        ...correlation,
         request_id: requestId,
         phase: config.timing?.phase?.background || 'background',
         ok: result?.ok === true,
@@ -96,7 +97,7 @@ const createSaleWriteBackgroundService = ({ submitSale, saleAsync = {}, config =
     //   ⚠️ 它**不是页面字段** ✗：路由渲染只取它本来就认识的那几个（`paidPayload` 里那一批），
     //     所以句柄**不会**进 HTML（有用例钉住 ✓）。
     return trackSaleBackground(Promise.resolve()
-      .then(() => submitSale({ ...restInput, noDefer: true, requestId, timing }))
+      .then(() => submitSale({ ...restInput, noDefer: true, requestId, timing }, { correlation }))
       .then(async (result) => {
         const durationMs = Date.now() - startedAt;
         if (result?.ok) {
