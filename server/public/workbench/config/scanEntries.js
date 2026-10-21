@@ -37,6 +37,15 @@ export const SCAN_PLACES = freeze([
     keepDraft: false,
   }),
   freeze({
+    id: 'workbench-scan',
+    label: '工作台 · 扫一扫',
+    realm: null,
+    mechanism: MECHANISMS.applink,
+    mode: MODES.standalone,
+    returnsToRealm: false,
+    keepDraft: false,
+  }),
+  freeze({
     id: 'sales-add',
     label: '销售 · 再加一单',
     realm: 'sales',
