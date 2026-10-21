@@ -10,6 +10,7 @@
  */
 const { readFlag, readInt } = require('./envValue');
 const { SCAN_WRITE } = require('./scanWrite');
+const { SCAN_PAGE } = require('./scanPage');
 
 const ACTION_CHAINS = Object.freeze({
   [SCAN_WRITE.actions.replenish]: 'scan.replenish',
@@ -20,6 +21,8 @@ const REQUEST_TIMING = Object.freeze({
   enabled: readFlag(process.env, 'REQUEST_TIMING_ENABLED', true),
   slowMs: readInt(process.env, 'REQUEST_TIMING_SLOW_MS', 1500, { min: 0, max: 600000 }),
   chains: Object.freeze([
+    Object.freeze({ name: 'scan.sale.submit', method: 'POST', scanPath: true, action: SCAN_WRITE.actions.submitOrder }),
+    Object.freeze({ name: 'scan.sale.payment', method: 'POST', scanPath: true, action: SCAN_PAGE.paymentStep.payAction }),
     Object.freeze({ name: 'orders.list', method: 'GET', path: '/api/workbench/sales/orders' }),
     Object.freeze({ name: 'inventory.adjust', method: 'POST', prefix: '/api/workbench/inventory/adjustments' }),
     Object.freeze({ name: 'label.print.enqueue', method: 'POST', path: '/api/workbench/label-print/jobs' }),

@@ -1,4 +1,5 @@
 'use strict';
+const { tapIdFromRequest } = require('../../../utils/correlationFields');
 
 /**
  * 扫码路由核心深拆 P2：销售提交（`submit_order`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -219,7 +220,7 @@ return sendPaymentStep(res, req, {
             // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
             inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
           } : null,
-        });
+        }, { correlation: tapIdFromRequest(req) });
             // 🔴 失败**如实**：绝不带着空单号继续去资金页当她"成功了" ✗
             if (!goods || goods.ok !== true) return respondWriteFailure(res, goods, requestId);
             goodsOrderNo = String(goods.order_no || '');
@@ -284,7 +285,7 @@ return sendPaymentStep(res, req, {
             // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
             inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
           } : null,
-        });
+        }, { correlation: tapIdFromRequest(req) });
         // ⭐⭐ **一条**汇总（与 `scan.lookup.timing` 同一形状）：她按 `scan.sale.timing` grep
         //    就能看出"这一次提交卡在哪一段"，不必再靠猜。
                 if (!result.ok) {

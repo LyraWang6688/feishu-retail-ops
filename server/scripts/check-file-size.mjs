@@ -4,8 +4,10 @@
  *
  * 规则（业务负责人 2026-10-18 批准）：
  *   1) 源码 `server/src/**\/*.js` 单文件 ≤ 800 行；测试 `server/test/**\/*.js` 单文件 ≤ 1200 行；
- *   2) `size-baseline.json` 是「存量超限文件」白名单：登记当前行数，**只允许变小**
- *      （文件比基线大 ⇒ 红；新增文件超限 ⇒ 红）；
+ *   2) `size-baseline.json` 是「存量超限文件」白名单：登记当前行数；
+ *      **只有「当前 > 基线」才红**（防膨胀）；**文件变小但没降基线 ⇒ 只警告，不失败**
+ *      （方案 C，2026-10-20 业务负责人拍板：棘轮是为了防膨胀，不惩罚瘦身）；
+ *      新增文件超限 ⇒ 红；
  *   3) 既有文件（base 里存在）净增 > `maxNetIncrease`（默认 100）行 ⇒ 红；
  *   4) 新增文件不受「净增」约束（新文件只受 1) 的硬上限约束 —— 鼓励拆成小模块，
  *      而不是逼人把新模块塞进老文件。
@@ -17,7 +19,7 @@
  * 用法（在 `server/` 目录下）：
  *   node scripts/check-file-size.mjs                 # 门禁
  *   node scripts/check-file-size.mjs --base HEAD~1   # 指定比较基线
- *   node scripts/check-file-size.mjs --update-baseline   # 生成 / 下调基线（只许变小）
+ *   node scripts/check-file-size.mjs --update-baseline   # 生成 / 下调基线（只许变小；变小不更新也只警告）
  *
  * 退出码：0 = 绿；1 = 红（超限 / 基线变大 / 净增超阈值 / 配置错误）。
  */
@@ -71,6 +73,8 @@ if (wantsHelp) {
       '  node scripts/check-file-size.mjs                      检查（0 绿 / 1 红）',
       '  node scripts/check-file-size.mjs --base <ref>         指定「净增」比较基线',
       '  node scripts/check-file-size.mjs --update-baseline    生成或下调 size-baseline.json（只许变小）',
+      '',
+      '规则 C：文件比基线**大** ⇒ 失败；文件比基线**小**但没降基线 ⇒ 只警告，不失败。',
       '  node scripts/check-file-size.mjs --no-net-check       跳过「净增 > N 行」检查',
       '',
       '环境变量：SIZE_BASE_REF（等价 --base）',
@@ -246,7 +250,7 @@ for (const file of scanned) {
       });
     } else if (file.lines < baselineLines) {
       warnings.push(
-        `${file.rel} 已缩小 ${baselineLines - file.lines} 行（${baselineLines} → ${file.lines}）：请跑 \`node scripts/check-file-size.mjs --update-baseline\` 把基线降下来（棘轮）`,
+        `${file.rel} 已缩小 ${baselineLines - file.lines} 行（${baselineLines} → ${file.lines}）：建议跑 --update-baseline 降基线（只提示，不算失败）`,
       );
     }
     if (file.lines <= limit) {

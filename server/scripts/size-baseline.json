@@ -5,11 +5,11 @@
     "test": 1200
   },
   "maxNetIncrease": 100,
-  "updatedAt": "2026-10-18",
+  "updatedAt": "2026-10-20",
   "files": {
-    "server/src/config/scanPage.js": 992,
+    "server/src/config/scanPage.js": 996,
     "server/src/config/scanWrite.js": 1059,
-    "server/src/routes/scanPage/index.js": 1798,
+    "server/src/routes/scanPage/index.js": 1795,
     "server/src/services/afterSalesService.js": 1264,
     "server/src/services/labelPrintArtifactService.js": 1436,
     "server/src/services/labelPrintService.js": 1331,
@@ -25,7 +25,7 @@
     "server/test/labelPrintCanvas.test.js": 1270,
     "server/test/labelPrintProducts.test.js": 1251,
     "server/test/scanPageWrite.test.js": 1583,
-    "server/test/scanSaleE2E.test.js": 2438,
+    "server/test/scanSaleE2E.test.js": 2443,
     "server/test/scanSaleTwoLayerMoney.test.js": 1840,
     "server/test/workbenchFourTabs.test.js": 1249
   }

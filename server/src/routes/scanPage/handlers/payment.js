@@ -1,4 +1,5 @@
 'use strict';
+const { tapIdFromRequest } = require('../../../utils/correlationFields');
 
 /**
  * 扫码路由核心深拆 P1：资金处理（`payment_pay`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -251,7 +252,7 @@ async function handlePaymentPay(ctx) {
               gift: String(pendingInfo.gift || ''),
               inStock: sellableSizeTexts(pendingView).has(pendingSize),
             } : null,
-          });
+          }, { correlation: tapIdFromRequest(req) });
           if (!createdResult?.ok) {
             // ⭐ 校验类失败（金额/收款不齐那些 code ✓）⇒ **原地重渲染资金页**：人话挂上去、改一下再点 ✓
             if ((writeConfig.sale.formFailureCodes || []).includes(createdResult?.code)) {

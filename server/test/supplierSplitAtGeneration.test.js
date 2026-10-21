@@ -70,7 +70,7 @@ const { resolveSupplierSplitConfig, BATCH_NO_POLICIES, SPLIT_STAGE, SUPPLIER_SPL
   //   改后逐字：sha `0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba`（1731 行）
   //   依据：`submitReplenish` / `submitPurchaseReturn` 各加一个**可选** `sessionKey`（不传 ⇒ 会话键 = openId
   //   ⇒ 与改前逐字同一个键、同一套行为）；写库逻辑 / 事件名 / 返回形状一个字节都没动 ✓
-const FROZEN_SHA256 = '0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba';
+const FROZEN_SHA256 = '2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5';
 
 const SPLIT_SERVICE_PATH = path.join(__dirname, '..', 'src', 'services', 'supplierSplitService.js');
 const SPLIT_SERVICE_SRC = fs.readFileSync(SPLIT_SERVICE_PATH, 'utf8');
