@@ -69,14 +69,14 @@ const createPurchaseWriteBackgroundService = ({ runRest, markFailed, purchaseAsy
         // ⚠️ 后台那一跑**也要打 timing**（观测不缩水 ✓：转后台 ≠ 日志断档 ✗）
         if (events.restTiming) {
           logInfo(events.restTiming, {
-            request_id: requestId, chain, phase, ok: result?.ok === true, duration_ms: durationMs,
+            request_id: requestId, submit_key: submitKey, chain, phase, ok: result?.ok === true, duration_ms: durationMs,
             reused: result?.reused === true, timeout_ms: timeoutMs,
           });
         }
         if (result?.ok !== true) {
           // 🔴 **失败如实**：不抛给她（她早拿到成功页了）⇒ 但必须留痕 + 落"可重试"✓
           logWarn(events.restFailed || 'purchase.write.background.failed', {
-            request_id: requestId, chain, duration_ms: durationMs,
+            request_id: requestId, submit_key: submitKey, chain, duration_ms: durationMs,
             error: result?.message || 'unknown', hint: '后台写入没成功 ⇒ 状态可查、可点重试',
           });
           if (typeof markFailed === 'function') await markFailed({ chain, submitKey, context, result });
@@ -85,13 +85,13 @@ const createPurchaseWriteBackgroundService = ({ runRest, markFailed, purchaseAsy
       } catch (error) {
         const durationMs = Date.now() - startedAt;
         logWarn(events.restFailed || 'purchase.write.background.failed', {
-          request_id: requestId, chain, duration_ms: durationMs, error: error?.message,
+          request_id: requestId, submit_key: submitKey, chain, duration_ms: durationMs, error: error?.message,
           hint: '后台写入抛错 ⇒ 状态可查、可点重试（绝不假装成功）',
         });
         if (typeof markFailed === 'function') {
           try { await markFailed({ chain, submitKey, context, error }); } catch (markError) {
             logWarn(events.markFailedError || 'purchase.write.background.mark_failed_error', {
-              request_id: requestId, chain, error: markError?.message,
+              request_id: requestId, submit_key: submitKey, chain, error: markError?.message,
             });
           }
         }
@@ -117,13 +117,13 @@ const createPurchaseWriteBackgroundService = ({ runRest, markFailed, purchaseAsy
         const durationMs = Date.now() - startedAt;
         if (events.restTiming) {
           logInfo(events.restTiming, {
-            request_id: requestId, chain, phase, ok: result?.ok === true, duration_ms: durationMs,
+            request_id: requestId, submit_key: submitKey, chain, phase, ok: result?.ok === true, duration_ms: durationMs,
             reused: result?.reused === true, timeout_ms: timeoutMs,
           });
         }
         if (result?.ok !== true) {
           logWarn(events.restFailed || 'purchase.write.background.failed', {
-            request_id: requestId, chain, duration_ms: durationMs,
+            request_id: requestId, submit_key: submitKey, chain, duration_ms: durationMs,
             error: result?.message || 'unknown', hint: '后台写入没成功 ⇒ 状态可查、可点重试',
           });
           if (typeof markFailedFn === 'function') await markFailedFn({ chain, submitKey, context, result });
@@ -132,13 +132,13 @@ const createPurchaseWriteBackgroundService = ({ runRest, markFailed, purchaseAsy
       } catch (error) {
         const durationMs = Date.now() - startedAt;
         logWarn(events.restFailed || 'purchase.write.background.failed', {
-          request_id: requestId, chain, duration_ms: durationMs, error: error?.message,
+          request_id: requestId, submit_key: submitKey, chain, duration_ms: durationMs, error: error?.message,
           hint: '后台写入抛错 ⇒ 状态可查、可点重试（绝不假装成功）',
         });
         if (typeof markFailedFn === 'function') {
           try { await markFailedFn({ chain, submitKey, context, error }); } catch (markError) {
             logWarn(events.markFailedError || 'purchase.write.background.mark_failed_error', {
-              request_id: requestId, chain, error: markError?.message,
+              request_id: requestId, submit_key: submitKey, chain, error: markError?.message,
             });
           }
         }

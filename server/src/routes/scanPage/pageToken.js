@@ -226,10 +226,10 @@ const withPageSession = (writeService, pageToken) => {
   }
   for (const name of PAGE_SESSION_INPUT_METHODS) {
     if (typeof writeService[name] !== 'function') continue;
-    scoped[name] = (input = {}) => writeService[name]({
+    scoped[name] = (input = {}, ...options) => writeService[name]({
       ...(input || {}),
       sessionKey: pageSessionKey(input?.openId, pageToken),
-    });
+    }, ...options);
   }
   if (typeof writeService.saveDraftLines === 'function') {
     scoped.saveDraftLines = (openId, patch) => writeService.saveDraftLines(

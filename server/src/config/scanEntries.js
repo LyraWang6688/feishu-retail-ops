@@ -36,7 +36,7 @@ const MECHANISMS = Object.freeze({ jsapi: 'jsapi', applink: 'applink' });
 const MODES = Object.freeze({ standalone: 'standalone', withinRealm: 'withinRealm' });
 
 /**
- * 五处登记表（顺序 = 她数的顺序 ①②③④⑤）。
+ * 六处登记表（①标签打印 ②扫码页领域条 ③工作台扫一扫 ④销售再加 ⑤补货再加 ⑥退货再加）。
  * ⚠️ 每一行都**必须**写明 `mechanism` / `mode` / `returnsToRealm` / `keepDraft` 四个键
  *   —— 少了任何一个，`test/scanFivePlaces.test.js` 会红（"新入口忘了登记参数"）。
  */
@@ -53,6 +53,15 @@ const PLACES = Object.freeze([
   Object.freeze({
     id: 'realm-bar',
     label: '领域条（全局扫一扫）',
+    realm: null,
+    mechanism: MECHANISMS.applink,
+    mode: MODES.standalone,
+    returnsToRealm: false,
+    keepDraft: false,
+  }),
+  Object.freeze({
+    id: 'workbench-scan',
+    label: '工作台 · 扫一扫',
     realm: null,
     mechanism: MECHANISMS.applink,
     mode: MODES.standalone,

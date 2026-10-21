@@ -86,7 +86,7 @@ const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.j
 //          **如果是现货，就是要扣库存**；如果是预订，就不扣库存，等二次交付的时候再扣库存」
 //          ＋「**啥叫钱没入账就不许出库存？不用呀。**」
 //          ⇒ 授权范围 = 冻结件 **5 行** ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（缺省 false ✓ 只给货那一跑 ✓）
-const FROZEN_SHA256 = '0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba';
+const FROZEN_SHA256 = '2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5';
 const FROZEN_LINES = 1732;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');

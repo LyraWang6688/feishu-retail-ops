@@ -96,7 +96,7 @@ test('AC-R3 🔴 源码哨兵：旧文件只 **re-export** · 新文件**不反�
     assert.equal(/\.\s*_confirm\s*\(/.test(src), false, `${label}里不许直调 \`_confirm\` ✗`);
   }
   // ⑤ 幂等那一半必须**仍是同一把键**：新件里那行 `noDefer: true` + `restInput` **逐字还在**
-  assert.ok(newSrc.includes('submitSale({ ...restInput, noDefer: true, requestId, timing })'),
+  assert.ok(newSrc.includes('submitSale({ ...restInput, noDefer: true, requestId, timing }, { correlation })'),
     '后台那一跑仍然是"同一把 key 的第二次 submitSale" ✓（幂等一字没拆 ✗）');
 });
 

@@ -22,6 +22,7 @@ const { withSalesReadRetry } = require('./salesReadRetry');
 const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { logInfo, logWarn } = require('../utils/logger');
+const { mergeCorrelation } = require('../utils/correlationFields');
 
 /**
  * 「销售主表 · 销售单号」这一列的现有取值（只读；读不到映射时返回空列表）。
@@ -56,13 +57,14 @@ const listSalesOrderNos = async ({ gateway } = {}) => {
  * @param {{task_id?: string, sender_open_id?: string}} task
  * @returns {Promise<{recordId: string}|null>}
  */
-const createSalesEntryWithOrderNo = async ({ gateway } = {}, task = {}) => {
+const createSalesEntryWithOrderNo = async ({ gateway } = {}, task = {}, options = {}) => {
+  const correlation = mergeCorrelation(options.correlation, { task_id: task.task_id });
   let created = null;
   const allocation = await allocateSalesOrderNo({
     readExistingNos: () => listSalesOrderNos({ gateway }),
     writeOrderNo: async (orderNo) => {
       if (created) {
-        await gateway.update('salesEntry', created.recordId, { orderNo });
+        await gateway.update('salesEntry', created.recordId, { orderNo }, { correlation });
         return;
       }
       created = await gateway.create('salesEntry', {
@@ -77,12 +79,13 @@ const createSalesEntryWithOrderNo = async ({ gateway } = {}, task = {}) => {
         //   成功/部分失败/失败由最终收口写（scanWriteService / afterSalesService）。
         writeStatus: WRITE.writeStatus.pending,
         orderNo,
-      });
+      }, { correlation });
     },
     onCollision: ({ attempt, order_no: orderNo }) =>
-      logWarn('sales.order_no.collision', { task_id: task.task_id, attempt, order_no: orderNo }),
+      logWarn('sales.order_no.collision', { ...correlation, task_id: task.task_id, attempt, order_no: orderNo }),
   });
   logInfo('sales.order_no.generated', {
+    ...correlation,
     task_id: task.task_id,
     sales_entry_record_id: created?.recordId,
     order_no: allocation.orderNo,

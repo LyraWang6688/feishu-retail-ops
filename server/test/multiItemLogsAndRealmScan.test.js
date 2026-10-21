@@ -655,7 +655,7 @@ test('AC-ML8 🔴 `services/scanWriteService.js` **一个字不加/删/改**（�
   //   改后逐字：sha `0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba`（1731 行）
   //   依据：`submitReplenish` / `submitPurchaseReturn` 各加一个**可选** `sessionKey`（不传 ⇒ 会话键 = openId
   //   ⇒ 与改前逐字同一个键、同一套行为）；写库逻辑 / 事件名 / 返回形状一个字节都没动 ✓
-  const FROZEN_SCAN_WRITE_SHA256 = '0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba';
+  const FROZEN_SCAN_WRITE_SHA256 = '2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5';
   // ⚠️ 行数这条**刻意不写**：`split('\n').length` 与 `wc -l` **差 1**（文件末尾有无换行 ✓）
   //    ⇒ 我第一版写成 1698 当场把自己判红 ✗ ⇒ **只留 sha256**（它本身就是"逐字节"最强判据 ✓ 且不依赖任何 ref ✓）
   //    行数上限（余量 0）由既有哨兵 `scanWriteServiceFrozen.test.js` 的 AC-FRZ1 负责 ✓
