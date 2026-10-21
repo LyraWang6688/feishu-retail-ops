@@ -18,7 +18,7 @@
 | --- | --- | --- |
 | `allowlist.conf` | **白名单公共基础片段**：ACME 校验放行 + 兜底 `location / { return 444; }`（不写访问日志） | `/etc/nginx/snippets/allowlist.conf` |
 | `allowlist-api.conf` | `api.bamamei.online` 白名单（本项目 Express 应用，→ 127.0.0.1:5000） | `/etc/nginx/snippets/allowlist-api.conf` |
-| `allowlist-workbench.conf` | `workbench.bamamei.online` 白名单（同一个 Express 应用） | `/etc/nginx/snippets/allowlist-workbench.conf` |
+| `allowlist-hm.conf` | `hm.bamamei.online` 白名单（同一个 Express 应用） | `/etc/nginx/snippets/allowlist-hm.conf` |
 | `allowlist-meeting.conf` | `meeting.bamamei.online` 白名单（**不是本项目**，Next.js 容器 → 127.0.0.1:3011） | `/etc/nginx/snippets/allowlist-meeting.conf` |
 | `proxy-meeting.conf` | meeting 站点的上游转发参数（被 `allowlist-meeting.conf` 里每条 location 复用） | `/etc/nginx/snippets/proxy-meeting.conf` |
 | `block-scanners.conf` | **历史留档，已不再被任何 server 块 include**：2026-10-05 那一版黑名单 | 仅存档 |
@@ -59,7 +59,7 @@
 
 ### 三个站点的白名单差异
 
-| | `api.bamamei.online` | `workbench.bamamei.online` | `meeting.bamamei.online` |
+| | `api.bamamei.online` | `hm.bamamei.online` | `meeting.bamamei.online` |
 | --- | --- | --- | --- |
 | 上游 | 127.0.0.1:5000（本项目） | 127.0.0.1:5000（本项目） | 127.0.0.1:3011（Next.js 容器） |
 | `/` | 应用首页（工作台 HTML 回落） | → 应用内 `/workbench/` | Next 307 → `/feishu-config` |
@@ -84,7 +84,7 @@
 
 - `/etc/nginx/sites-available/box2bitable`（api 的 443 + 80 两个 server 块）
 - `/etc/nginx/sites-available/meeting.bamamei.online`（meeting 的 443 + 80 两个 server 块）
-- `/etc/nginx/sites-enabled/workbench.conf`（`:80 default_server` + workbench 443 + workbench 80）
+- `/etc/nginx/sites-enabled/hm.conf`（`:80 default_server` + workbench 443 + workbench 80）
 
 每个 443 块最终就是「`include` 白名单片段 + `server_name` + 证书四行」。
 
@@ -118,7 +118,7 @@ sudo tar czf /etc/nginx/backups/nginx-conf.$(date +%Y%m%d-%H%M%S).tar.gz \
 # 2 放片段（5 个）
 sudo cp server/ops/nginx/allowlist.conf           /etc/nginx/snippets/
 sudo cp server/ops/nginx/allowlist-api.conf       /etc/nginx/snippets/
-sudo cp server/ops/nginx/allowlist-workbench.conf /etc/nginx/snippets/
+sudo cp server/ops/nginx/allowlist-hm.conf /etc/nginx/snippets/
 sudo cp server/ops/nginx/allowlist-meeting.conf   /etc/nginx/snippets/
 sudo cp server/ops/nginx/proxy-meeting.conf       /etc/nginx/snippets/
 
@@ -127,7 +127,7 @@ sudo cp server/ops/nginx/proxy-meeting.conf       /etc/nginx/snippets/
 #   并删掉原来手写的 location / 转发块（见上面「三个 server 文件改成了什么样」）：
 #     /etc/nginx/sites-available/box2bitable            → allowlist-api.conf
 #     /etc/nginx/sites-available/meeting.bamamei.online → allowlist-meeting.conf
-#     /etc/nginx/sites-enabled/workbench.conf           → allowlist-workbench.conf
+#     /etc/nginx/sites-enabled/hm.conf           → allowlist-hm.conf
 #                                                        + default_server 用 allowlist.conf
 
 # 4 校验（必须先校验；不通过就回滚，绝不 reload）
@@ -150,8 +150,8 @@ sudo nginx -t && sudo systemctl reload nginx
 # 真实入口必须照常
 curl -sS https://api.bamamei.online/health                       # → JSON
 curl -sS https://api.bamamei.online/api/lark/events/health       # → JSON（飞书回调健康检查）
-curl -sS -o /dev/null -w '%{http_code}\n' https://workbench.bamamei.online/            # → 200
-curl -sS -o /dev/null -w '%{http_code}\n' https://workbench.bamamei.online/workbench/main.js  # → 200（静态资源，404 就是白屏）
+curl -sS -o /dev/null -w '%{http_code}\n' https://hm.bamamei.online/            # → 200
+curl -sS -o /dev/null -w '%{http_code}\n' https://hm.bamamei.online/workbench/main.js  # → 200（静态资源，404 就是白屏）
 
 # meeting 保持改造前行为
 curl -sS -o /dev/null -w '%{http_code}\n' https://meeting.bamamei.online/               # → 307
