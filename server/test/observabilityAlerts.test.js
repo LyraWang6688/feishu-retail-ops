@@ -62,6 +62,30 @@ test('规则① error_rate：占比 + 最小样本，命中一条；silent 内�
   assert.equal(sent.length, 2, '超过 silent 窗口后、且窗口样本重新达标时可以再发');
 });
 
+test('瞬时飞书错误（1254607 Data not ready）不计入 error 占比（2026-10-22 假告警修复）', async () => {
+  const sent = [];
+  let t = 0;
+  const monitor = createAlertMonitor({
+    config: baseConfig(), now: () => t, notify: async (a) => sent.push(a),
+  });
+  // 5 条瞬时 SDK 错误 + 5 条 info：若按 error 算 = 50% ⇒ 会误报；降级后 error=0 ⇒ 不报
+  for (let i = 0; i < 5; i += 1) {
+    t += 1000;
+    monitor.record({
+      level: 'error', event: 'lark.sdk.error',
+      detail: [[{ code: 1254607, msg: 'Data not ready, please try again later' }]],
+    });
+    monitor.record({ level: 'info', event: 'ok.event' });
+  }
+  await flush();
+  assert.equal(sent.length, 0, '瞬时错误不能触发 error_rate');
+  // 真业务错误仍要报
+  for (let i = 0; i < 3; i += 1) { t += 1000; monitor.record({ level: 'error', event: 'bitable.record.create_failed' }); }
+  await flush();
+  assert.equal(sent.length, 1, '真正的业务 error 仍触发');
+  assert.equal(sent[0].rule, 'error_rate');
+});
+
 test('规则② critical：只认"关键链路事件 + error 级别"', async () => {
   const sent = [];
   let t = 0;

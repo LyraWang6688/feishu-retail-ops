@@ -60,11 +60,17 @@ const createAlertMonitor = ({
   };
 
   /** 记录一条日志；返回本次触发的告警（测试用；生产忽略返回值）。 */
+  // ⭐ 2026-10-22：飞书「Data not ready (1254607)」是瞬时错误，调用方会重试；
+  //   但它每次都会打一条 `lark.sdk.error`（level=error）⇒ 会被 error_rate 当成业务错误，
+  //   在早 9 点推送/多表并发读时形成假告警。这里把**这一类瞬时 SDK 错误降级为 warn**，
+  //   不进 error 占比；真正的业务 error（写失败 / 关键链路）不受影响。
+  const isTransientLarkSdkError = (payload) => String(payload.event || '') === 'lark.sdk.error'
+    && /1254607|data not ready|数据未准备好/i.test(JSON.stringify(payload.detail ?? payload.error ?? payload.message ?? ''));
   const record = (payload = {}) => {
     if (!config.enabled) return [];
     const at = now();
     const event = String(payload.event || '');
-    const level = String(payload.level || 'info');
+    const level = isTransientLarkSdkError(payload) ? 'warn' : String(payload.level || 'info');
     const duration = Number(payload.duration_ms ?? payload.submit_ms);
     events.push({ at, level, event, duration_ms: Number.isFinite(duration) ? duration : null });
     prune(at);
