@@ -18,6 +18,7 @@ const createRenderContext = ({ config, postActionFor }) => {
     if (!FUNNEL.enabled) return;
     const fields = {
       request_id: req?.requestId,
+      view_source: 'server_render',
       page: String(page || 'scan'),
       ...(step ? { step: String(step) } : {}),
       ...(realm ? { realm: String(realm) } : {}),

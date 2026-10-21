@@ -6,7 +6,7 @@
    no form values). Server logs ui.page.view / ui.step.enter via handleUiTap. */
 (function (global) {
   'use strict';
-  var DEFAULT_PATH = '/ui-tap';
+  var DEFAULT_PATH = '/api/workbench/ui-tap';
   // Never throws, never blocks: a failed report must not affect the page.
   function view(page, options) {
     var o = options || {};

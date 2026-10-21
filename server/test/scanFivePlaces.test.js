@@ -75,11 +75,11 @@ test('AC-5S1 ⭐ 直接调 `tt.scanCode` 的**只有 A / C 两处**（谁再手�
   ], `"点按钮⇒弹二维码"只许有这两处实现，实际：\n${hits.join('\n')}`);
 });
 
-test('AC-5S1b ⭐ 登记表把五处都登记齐了（新入口忘了登记参数 ⇒ 红）', () => {
-  assert.equal(SCAN_PLACES.length, 5, '她数的是五处（①标签打印 ②领域条 ③销售 ④补货 ⑤退货）');
+test('AC-5S1b ⭐ 登记表把六处都登记齐了（新入口忘了登记参数 ⇒ 红）', () => {
+  assert.equal(SCAN_PLACES.length, 6, '六处（①标签打印 ②扫码页领域条 ③工作台扫一扫 ④销售 ⑤补货 ⑥退货）');
   assert.deepEqual(SCAN_PLACES.map((place) => place.id), [
-    'label-print', 'realm-bar', 'sales-add', 'replenish-add', 'purchase-return-add',
-  ], '顺序 = 她数的顺序 ①②③④⑤');
+    'label-print', 'realm-bar', 'workbench-scan', 'sales-add', 'replenish-add', 'purchase-return-add',
+  ], '顺序 = 她从入口数下来的顺序');
   for (const place of SCAN_PLACES) {
     for (const key of ['mechanism', 'mode', 'returnsToRealm', 'keepDraft']) {
       assert.ok(Object.prototype.hasOwnProperty.call(place, key), `${place.id} 少登记了 ${key} ✗`);

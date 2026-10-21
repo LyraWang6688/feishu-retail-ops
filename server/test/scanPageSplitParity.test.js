@@ -171,7 +171,7 @@ test('AC-SP-4 ⭐ 红线：拆分**没有**碰写侧服务（`services/scanWrite
     //          如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
     //          ⇒ 冻结件只动批准的 5 行（`deliverStockLines` 形参/转发 ＋ `:1318` 三元 ＋ 两处注释）✓
     //          ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（**只给货那一跑开门** ✗）✓
-    '0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba',
+    '2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5',
     '🔴 `scanWriteService.js` 有"谁改一个字就红"的哨兵 —— 本刀**一个字都没动** ✓'
     + '（另见 `test/scanWriteServiceFrozen.test.js` 的同一份冻结基线 ✓）');
 });

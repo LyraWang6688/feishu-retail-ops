@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **508** 个事件。按前缀分组：
+共 **511** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -29,14 +29,15 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
-| `bitable.record.batch_create_failed` | 1 | src/services/v1BitableGateway.js |
-| `bitable.record.batch_created` | 1 | src/services/v1BitableGateway.js |
-| `bitable.record.batch_delete_failed` | 1 | src/services/v1BitableGateway.js |
-| `bitable.record.batch_deleted` | 1 | src/services/v1BitableGateway.js |
+| `bitable.record.batch_create_failed` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
+| `bitable.record.batch_created` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
+| `bitable.record.batch_delete_failed` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
+| `bitable.record.batch_deleted` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
 | `bitable.record.batch_read` | 1 | src/services/v1BitableGateway.js |
-| `bitable.record.batch_update_failed` | 1 | src/services/v1BitableGateway.js |
-| `bitable.record.batch_updated` | 1 | src/services/v1BitableGateway.js |
-| `bitable.record.batch_write_mismatch` | 3 | src/services/v1BitableGateway.js |
+| `bitable.record.batch_started` | 1 | src/utils/batchWriteTelemetry.js |
+| `bitable.record.batch_update_failed` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
+| `bitable.record.batch_updated` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
+| `bitable.record.batch_write_mismatch` | 5 | src/config/alerts.js<br>src/services/v1BitableGateway.js |
 | `bitable.record.create_failed` | 2 | src/config/alerts.js<br>src/services/v1BitableGateway.js |
 | `bitable.record.created` | 1 | src/services/v1BitableGateway.js |
 | `bitable.record.update_failed` | 2 | src/config/alerts.js<br>src/services/v1BitableGateway.js |
@@ -465,9 +466,9 @@
 | `scan.purchase_return.stock_applied` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.submitted` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.submitting` | 1 | src/config/scanWrite.js |
-| `scan.purchase.background_failed` | 1 | src/config/scanWrite.js |
-| `scan.purchase.background_mark_failed` | 1 | src/config/scanWrite.js |
-| `scan.purchase.background.timing` | 1 | src/config/scanWrite.js |
+| `scan.purchase.background_failed` | 3 | src/config/alerts.js<br>src/config/scanWrite.js |
+| `scan.purchase.background_mark_failed` | 3 | src/config/alerts.js<br>src/config/scanWrite.js |
+| `scan.purchase.background.timing` | 2 | src/config/alerts.js<br>src/config/scanWrite.js |
 | `scan.purchase.regenerated` | 1 | src/config/scanWrite.js |
 | `scan.purchase.reused` | 1 | src/config/scanWrite.js |
 | `scan.purchase.submitted` | 1 | src/config/scanWrite.js |
@@ -477,19 +478,21 @@
 | `scan.realm_scan.signature_ok` | 1 | src/routes/scanPage/index.js |
 | `scan.sale.amount_mismatch` | 1 | src/config/scanWrite.js |
 | `scan.sale.background_done` | 1 | src/config/scanWrite.js |
-| `scan.sale.background_failed` | 1 | src/config/scanWrite.js |
+| `scan.sale.background_failed` | 3 | src/config/alerts.js<br>src/config/scanWrite.js |
 | `scan.sale.background_queued` | 1 | src/config/scanWrite.js |
 | `scan.sale.draft_cleared` | 1 | src/config/scanWrite.js |
 | `scan.sale.interrupted_cleared` | 1 | src/config/scanWrite.js |
 | `scan.sale.interrupted_detected` | 2 | src/config/scanWrite.js<br>src/services/scanSessionService.js |
 | `scan.sale.line_added` | 1 | src/config/scanWrite.js |
 | `scan.sale.partial_failed` | 1 | src/config/scanWrite.js |
+| `scan.sale.payment` | 1 | src/config/timing.js |
 | `scan.sale.payment_methods_unreadable` | 2 | src/config/voucherPayment.js<br>src/routes/scanPage/index.js |
 | `scan.sale.reused` | 1 | src/config/scanWrite.js |
 | `scan.sale.stock_failed` | 1 | src/config/scanWrite.js |
+| `scan.sale.submit` | 1 | src/config/timing.js |
 | `scan.sale.submitted` | 1 | src/config/scanWrite.js |
 | `scan.sale.submitting` | 1 | src/config/scanWrite.js |
-| `scan.sale.timing` | 1 | src/config/scanWrite.js |
+| `scan.sale.timing` | 2 | src/config/alerts.js<br>src/config/scanWrite.js |
 | `scan.sales_home.opened` | 1 | src/config/scanPage.js |
 | `scan.session.expired` | 1 | src/config/scanWrite.js |
 | `scan.session.started` | 1 | src/config/scanWrite.js |
