@@ -480,7 +480,7 @@
 | `scan.sale.async.done` | 1 | src/services/salesAsyncWorker.js |
 | `scan.sale.async.enqueue_failed` | 3 | src/config/alerts.js<br>src/routes/scanPage/handlers/payment.js |
 | `scan.sale.async.enqueued` | 1 | src/routes/scanPage/handlers/payment.js |
-| `scan.sale.async.failed` | 3 | src/config/alerts.js<br>src/services/salesAsyncWorker.js |
+| `scan.sale.async.failed` | 4 | src/config/alerts.js<br>src/services/salesAsyncWorker.js |
 | `scan.sale.async.invalid_payload` | 1 | src/routes/scanPage/handlers/payment.js |
 | `scan.sale.async.start_failed` | 3 | src/config/alerts.js<br>src/services/salesAsyncRuntime.js |
 | `scan.sale.background_done` | 1 | src/config/scanWrite.js |
