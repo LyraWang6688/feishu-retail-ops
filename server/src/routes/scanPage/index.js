@@ -232,14 +232,18 @@ const createScanPageRouter = (options = {}) => {
       // ⭐ 2026-10-18：表是唯一真源；配置默认方式只在表里存在时排第一（详见 orderWithPreferred）。
       return [...new Set(orderWithPreferred(listed.items, writeConfig.sale.defaultPaymentMethod))];
     }
+    // ⭐ 2026-10-26：不再退回配置里的「微信/现金/支付宝/银行卡」——
+    //   那份 fallback 与表里的真实值不一致（表里是「微信扫码 / 微信转账…」），
+    //   页面能选、写库又按表校验 ⇒ 必然失败（线上 XSD-20261026-0007）。
+    //   服务端只认表 / 最后一次成功快照；从未读成功过 ⇒ 宁可不给选项，也不给假选项。
     logWarn('scan.sale.payment_methods_unreadable', {
       request_id: req?.requestId,
       reason: String(listed?.reason || 'payment_methods_empty'),
       error: listed?.error ? String(listed.error) : undefined,
-      message: '收款方式表读不到 / 退回配置里的方式',
+      message: '收款方式表读不到，且没有历史快照；不提供假选项',
       fallback,
     });
-    return fallback;
+    return [];
   };
   /**
    * ⭐⭐ 2026-10-14（业务负责人口径：**点「提交这一单」只到资金页、点资金页按钮才建单**）：
@@ -252,9 +256,9 @@ const createScanPageRouter = (options = {}) => {
     texts: writeConfig.texts, fields: writeConfig.fields, actions: writeConfig.actions,
     // ⭐⭐ 2026-10-16 A2a ③：候选清单**由调用方传进来**（= 上面读表那一份 ✓ 一份真源 ✗ 不在这儿再拼一份）——
     //   拿不到（用例直接调这一页 / 还没接线的老路径）⇒ 退回配置里的方式（与改前同一个退路 ✓）。
-    paymentMethods: Array.isArray(opts.paymentMethods) && opts.paymentMethods.length
-      ? opts.paymentMethods
-      : writeConfig.sale.paymentMethods,
+    // ⭐ 2026-10-26：不再回落到配置里的旧方式（与表/写库校验不一致 ⇒ 会写出 400）。
+    //   调用方拿不到候选 ⇒ 就是空清单；宁可不给选项，也不给假选项。
+    paymentMethods: Array.isArray(opts.paymentMethods) ? opts.paymentMethods : [],
     defaultPaymentMethod: writeConfig.sale.defaultPaymentMethod,
     paymentRowCount: writeConfig.sale.paymentRowCount,
     // ⭐ 她刚填的那一档 / 实付多少 / 收款行 ⇒ **原样带回**（她不用重打 ✓ 她明确要过这条 ✓）

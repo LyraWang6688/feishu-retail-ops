@@ -1,4 +1,5 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { getConfigRows } = require('./configTableCache');
 
 const normalizeSize = (value) => {
   const raw = typeof value === 'string' ? value.trim() : value;
@@ -57,7 +58,12 @@ class SizeReferenceService {
         const field = this.gateway.table('sizeManagement').fields.size;
         const byNumber = new Map();
         const byRecordId = new Map();
-        for (const record of await this.gateway.listAll('sizeManagement')) {
+        // 统一配置快照：读失败保留 lastGood（避免尺码缓存空 ⇒ size=null）。
+        const records = await getConfigRows({
+          gateway: this.gateway, tableKey: 'sizeManagement',
+          ttlMs: this.cacheTtlMs, now: this.now,
+        });
+        for (const record of records) {
           const size = normalizeSize(textValue(record.fields?.[field]));
           if (!record.record_id) throw new Error(`尺码管理 ${size} 码缺少 record_id`);
           if (byNumber.has(size)) throw new Error(`尺码管理中 ${size} 码存在重复记录`);

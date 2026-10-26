@@ -504,10 +504,12 @@ test('AC-RB1b ⭐ 「冻结退货计划」整表读实时库存只 1 次、尺�
     const http = httpByTable(h);
     assert.equal((http.liveInventory || {}).list, 1,
       '实时库存整表读**只 1 次**（`:82` 本来就在循环外 ⇒ 这一段不是瓶颈）');
-    assert.equal((http.sizeManagement || {}).list, 1,
-      '尺码解析整表读**只 1 次**（循环里走 30 秒内存缓存 ⇒ 不发请求）');
+    // ⭐ 2026-10-26 成对迁移（统一配置快照）：尺码快照在更早的 schema/服务初始化时已加载，
+    //   这一段 **0 次**额外读尺码表（比原来的 1 次更少，不是放宽）；整段只剩实时库存 1 次 HTTP。
+    assert.equal((http.sizeManagement || { list: 0 }).list, 0,
+      '尺码解析整表读 **0 次**（走进程内配置快照）');
     assert.ok(!(http.sizeManagement || {}).create && !(http.sizeManagement || {}).update, '尺码表只读');
-    assert.equal(h.client.calls.length, 2, '整段计划只剩 2 次 HTTP（两张表的整表读）');
+    assert.equal(h.client.calls.length, 1, '整段计划只剩 1 次 HTTP（实时库存整表读）');
   } finally { h.cleanup(); }
 });
 

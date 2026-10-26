@@ -135,7 +135,7 @@ test('AC-A2A-3c ⭐ TTL 缓存：连着渲染两次只读一次表（这一页�
 // AC-A2A-3b 读不到 ⇒ 大声 warn + 退回配置（**不许静默 ✗ 不许留白 ✗**）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A2A-3b 🔴 表读不到 ⇒ **大声 warn**（"收款方式表读不到 / 退回配置"）+ **退回配置里的方式**（不留白）', async () => {
+test('AC-A2A-3b 🔴 表读不到 ⇒ 大声 warn，且**不再给配置假选项**（2026-10-26 成对迁移）', async () => {
   const warns = [];
   const original = console.warn;
   console.warn = (line) => { warns.push(String(line)); };
@@ -144,18 +144,17 @@ test('AC-A2A-3b 🔴 表读不到 ⇒ **大声 warn**（"收款方式表读不�
     await withServer(gateway, async (base) => {
       const html = await getMoneyPage(base);
       assert.ok(html.includes('data-view="payment-step"'), '读不到表**不许破她的页面**（照旧出资金页 ✓）');
-      // 🔴 **不许留白**：配置里那几条一条不少（否则她"点不出来"，收款这一步走不下去 ✗）
+      // 🔴 改后逐字：不再渲染配置里的「微信/现金/支付宝/银行卡」——
+      //    页面显示的值必须与写库校验用同一份表快照；没有快照就不给假选项。
       for (const name of configuredFallback()) {
-        assert.ok(html.includes(`<option value="${name}"`), `读不到表也必须退回配置里的「${name}」`);
+        assert.ok(!html.includes(`<option value="${name}"`), `读不到表不许给假选项「${name}」`);
       }
-      assert.ok(html.includes('<option value="微信" selected>微信</option>'), '默认方式照旧选中');
-      // 🔴 **不许静默**：必须有一条可 grep、写清"表读不到 / 退回配置"的 warn
       const entries = warns.map((line) => JSON.parse(line));
       const entry = entries.find((item) => item.event === 'scan.sale.payment_methods_unreadable');
       assert.ok(entry, `读不到表必须**大声**warn（实际 warns=${JSON.stringify(warns)}）`);
       assert.equal(entry.reason, 'payment_methods_unreadable');
-      assert.match(String(entry.message || ''), /收款方式表读不到.*退回配置/, '文案要写清"表读不到 / 退回配置"');
-      assert.deepEqual(entry.fallback, configuredFallback(), '日志要如实带上"退回了哪几条"');
+      assert.match(String(entry.message || ''), /不提供假选项/);
+      assert.deepEqual(entry.fallback, configuredFallback(), '日志仍如实带上"原本的配置退路"便于排查');
     });
   } finally { console.warn = original; }
 });
@@ -164,14 +163,16 @@ test('AC-A2A-3b 🔴 表读不到 ⇒ **大声 warn**（"收款方式表读不�
 // AC-A2A-3d 表在、但**读出来是空的** ⇒ 同样大声 warn + 退回配置
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A2A-3d 🔴 表读出来是**空的** ⇒ 也按"读不到"处理（warn + 退回配置，绝不给一张空下拉）', async () => {
+test('AC-A2A-3d 🔴 表读出来是**空的** ⇒ 大声 warn，且不再给配置假选项（2026-10-26 成对迁移）', async () => {
   const warns = [];
   const original = console.warn;
   console.warn = (line) => { warns.push(String(line)); };
   try {
     await withServer(tableGateway([]), async (base) => {
       const html = await getMoneyPage(base);
-      assert.ok(html.includes('<option value="微信" selected>微信</option>'), '空表也必须退回配置（不留白）');
+      for (const name of configuredFallback()) {
+        assert.ok(!html.includes(`<option value="${name}"`), `空表不许给假选项「${name}」`);
+      }
       const entry = warns.map((line) => JSON.parse(line))
         .find((item) => item.event === 'scan.sale.payment_methods_unreadable');
       assert.ok(entry, '空表同样要大声 warn（不许静默 ✓）');

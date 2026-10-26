@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const lark = require('@larksuiteoapi/node-sdk');
 const { LarkMvpService } = require('../services/larkMvpService');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { invalidateConfigTable } = require('../services/configTableCache');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { larkLogger } = require('../utils/larkLogger');
 const { LarkEventHeartbeat } = require('../infrastructure/larkEventHeartbeat');
@@ -121,6 +122,16 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => ({
     if (fileToken !== ownAppToken) return {};
     // 走到这里 = 我们自己的表的记录变更，算「真正带业务内容的事件」。
     recordBusinessHeartbeat(heartbeat);
+    // ⭐ 2026-10-26：配置表记录变更 ⇒ 作废对应快照；下一次读取重读（读失败仍用 lastGood）。
+    //   只按 table_id 分派，表名/字段名不写死；未命中的表（业务数据表）完全不受影响。
+    const configTableKeys = ['paymentMethod', 'sizeManagement', 'behavior', 'accessory', 'supplier', 'groupBuyVoucher'];
+    for (const key of configTableKeys) {
+      const id = V1_BITABLE_SCHEMA.tables?.[key]?.tableId;
+      if (id && id === tableId) {
+        invalidateConfigTable(key);
+        break;
+      }
+    }
 
     // ⚠️ 2026-10-05：业务负责人把「采购到货」表的识别字段（类型/识别状态/识别失败原因）删了，
     // 并决定「拍照 → 识别 → 入库」这条链路整体退场（改成纯对话驱动）。
