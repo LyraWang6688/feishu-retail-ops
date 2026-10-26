@@ -258,6 +258,10 @@ const SESSION = Object.freeze({
   // ⚠️ 过期**不再是死路**：提交时会**续上**这一份会话（草稿 / 已落盘的主表 id 都保留），
   //    只有「加入本单 / 清空本单」这类"要开一笔新操作"才按 TTL 语义新开一单。
   ttlMs: readInt(process.env, 'SCAN_SESSION_TTL_MS', 12 * 60 * 60 * 1000, { min: 60_000, max: 7 * 24 * 60 * 60 * 1000 }),
+  // ⭐ 2026-10-26：跨天/多天未提交的草稿不能在下次扫码时被原样带出来（会串单）。
+  //   超过这个时长、且没有写库进度（master/detail/payment/children_started）⇒ 丢弃旧草稿行。
+  //   有写库进度时仍保留，避免"提交写了一半"重来造成重复建单。
+  staleDraftMs: readInt(process.env, 'SCAN_SESSION_STALE_DRAFT_MS', 24 * 60 * 60 * 1000, { min: 60_000, max: 30 * 24 * 60 * 60 * 1000 }),
   // 一单最多累积多少双（防误操作 / 防脚本刷）。
   maxLines: readInt(process.env, 'SCAN_SALE_MAX_LINES', 50, { min: 1, max: 500 }),
   statuses: Object.freeze({ draft: 'draft', submitted: 'submitted' }),
