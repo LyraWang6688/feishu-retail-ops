@@ -48,7 +48,10 @@ class SalesDeliveryService {
     // ⭐⭐ 2026-10-16（业务负责人 22:0x 逐字：「**啥叫钱没入账就不许出库存？不用呀。**」）：
     //    **只给"货那一跑（货品页建单）"开这道口子** ✓ —— 显式布尔 · **缺省 false** ✓
     //    ⇒ 其它调用方（资金页 / 工作台 / 二次交付）**行为一字不变** ✗。
-    allowUnposted = false } = {},
+    allowUnposted = false,
+    // ⭐ 2026-10-26（慢请求定位）：`oneShot` 资金页那一跑**不再补算全表进度**；
+    //   成功判据是批量写返回 + 收口 update（既有一致性口径），不需要再 listAll 明细/收款。
+    skipProgress = false } = {},
     options = {}) {
     if (!salesEntryRecordId) throw new Error('交付缺少销售主表 record_id');
     if (!Array.isArray(detailRecordIds) || !detailRecordIds.length) throw new Error('请选择交付的销售明细');
@@ -240,7 +243,13 @@ class SalesDeliveryService {
     const deliveredTotal = details.filter((detail) =>
       textValue(detail.fields?.[fields.fulfillmentStatus]) === '已交付').length;
     const total = details.length;
-    const progress = await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
+    // ⭐ 2026-10-26：一次跑（oneShot）**跳过全表进度重算** —— 原来 `progress.sync` 会 listAll
+    //   销售明细 + 收款（生产实测这一段 ≈ 85s，飞书慢时更久），而成功页/收口根本不用它的结果。
+    //   其它调用方不传 ⇒ 行为逐字不变。
+    // ⚠️ 跳过时**不编履约状态**（空串）：调用方（oneShot）不看它；需要它的旧路径不传 skipProgress。
+    const progress = skipProgress
+      ? { fulfillmentStatus: '' }
+      : await this.progress.sync(salesEntryRecordId, { detailRecordIds, paymentRecordIds });
     logInfo('sales.delivery.completed', { sales_entry_record_id: salesEntryRecordId,
       detail_count: results.length, failed_count: failures.length,
       delivered_quantity: deliveredTotal, fulfillment_status: progress.fulfillmentStatus,

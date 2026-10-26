@@ -62,6 +62,13 @@ class V1BitableGateway {
       this.client = new lark.Client({ appId, appSecret, logger: larkLogger });
     }
     this.fieldCache = new Map();
+    // ⭐ 2026-10-26（慢请求定位）：`validateTable` 原来**每次都 refresh 字段**（一次 submit 会调
+    //   5~10 次 field.list，飞书慢时单次 5~15s ⇒ 几十秒白等）。字段结构在运行期不会变；
+    //   改成短 TTL + single-flight 缓存，部署闸门/重启后的第一次校验仍然是真的。
+    this.validationCache = new Map();
+    this.validationTtlMs = Number.isFinite(Number(options.validationTtlMs))
+      ? Number(options.validationTtlMs) : 5 * 60 * 1000;
+    this.now = typeof options.now === 'function' ? options.now : () => Date.now();
   }
 
   table(tableKey) {
@@ -112,13 +119,25 @@ class V1BitableGateway {
 
   async validateTable(tableKey) {
     const table = this.table(tableKey);
-    const actual = await this.listFields(tableKey, { refresh: true });
-    const actualNames = new Set(actual.map((field) => field.field_name));
-    const missing = Object.values(table.fields).filter((name) => !actualNames.has(name));
-    if (missing.length) {
-      throw new Error(`“${table.tableName}”缺少 V1 字段: ${missing.join('、')}`);
+    const at = this.now();
+    const cached = this.validationCache.get(tableKey);
+    if (cached && Number(this.validationTtlMs) > 0 && at - cached.at < Number(this.validationTtlMs)) {
+      return cached.promise;
     }
-    return { tableKey, tableId: table.tableId, fieldCount: actual.length };
+    const promise = (async () => {
+      const actual = await this.listFields(tableKey, { refresh: true });
+      const actualNames = new Set(actual.map((field) => field.field_name));
+      const missing = Object.values(table.fields).filter((name) => !actualNames.has(name));
+      if (missing.length) {
+        throw new Error(`“${table.tableName}”缺少 V1 字段: ${missing.join('、')}`);
+      }
+      return { tableKey, tableId: table.tableId, fieldCount: actual.length };
+    })();
+    this.validationCache.set(tableKey, { at, promise });
+    promise.catch(() => {
+      if (this.validationCache.get(tableKey)?.promise === promise) this.validationCache.delete(tableKey);
+    });
+    return promise;
   }
 
   async validateTables(tableKeys) {
