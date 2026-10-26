@@ -32,6 +32,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const { V1BitableGateway, textValue, linkedRecordIds } = require('../src/services/v1BitableGateway');
 const { encodeSession, COOKIE_NAME } = require('../src/routes/feishuWebAuth');
+const { createSalesJobStore } = require('../src/services/salesJobStore');
 
 const PORT = Number(process.env.E2E_PORT || 5052);
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -178,7 +179,8 @@ const scenario = async (browser, gateway, ctx) => {
     await page.locator(`input[name="size"][value="${SIZE_PREORDER}"]`).check({ force: true });
     await page.locator('input[name="amount"]').first().fill('200');
     await submitGoods(page);
-    await pay(page, [{ method: '微信扫码', amount: 300 }, { method: '现金', amount: 100 }]);
+    // 只付 300 / 400 ⇒ 必须自动产生一条【未收款】100，同时覆盖多货按钮 + 多支付 + 未收款
+    await pay(page, [{ method: '微信扫码', amount: 300 }]);
     await page.waitForURL(/\/workbench\//, { timeout: 30000 });
     const toast = await page.locator('[data-view="workbench-toast"]').textContent();
     const orderNo = parseOrderNo(toast);
@@ -186,7 +188,11 @@ const scenario = async (browser, gateway, ctx) => {
     if (result.details.length !== 2) throw new Error(`多货明细数不对：${result.details.length}`);
     const total = Number(textValue(result.entry.fields[gateway.table('salesEntry').fields.totalAmount]));
     if (total !== 400) throw new Error(`总额不对：${total}`);
-    console.log(`✔ 2 一现货一预定·多支付 ${orderNo}`);
+    const payField = gateway.table('paymentRecord').fields;
+    const statuses = result.payments.map((row) => String(textValue(row.fields[payField.status])));
+    const owed = result.payments.filter((row) => statuses.includes('未收款') && Number(textValue(row.fields[payField.amount])) === 100);
+    if (!owed.length) throw new Error(`没有 100【未收款】：${JSON.stringify(statuses)}`);
+    console.log(`✔ 2 多货按钮 + 一现货一预定 + 多支付 + 未收款 ${orderNo}`);
   } finally {
     await gateway.delete('liveInventory', seed2.recordId).catch(() => {});
   }
@@ -220,10 +226,63 @@ const scenario = async (browser, gateway, ctx) => {
   await context.close();
 };
 
+const stopServer = async (server) => {
+  server.kill('SIGTERM');
+  await Promise.race([once(server, 'exit'), sleep(5000)]).catch(() => {});
+};
+
+const jobPayload = ({ orderNo, method }) => ({
+  open_id: OPEN_ID,
+  order_no: orderNo,
+  gift: '',
+  lines: [{
+    product_record_id: 'rec28ecnOWl8m1', size: 37, trade_type: 'SALE_PREPAID',
+    actual_amount: 200, number: '66133-15|咖色|B', item_no: '66133-15', color: '咖色',
+  }],
+  payments: [{ method, amount: 200 }],
+  derived: { total_amount: 200, paid_amount: 200, owed_amount: 0, payment_status: '已收齐' },
+});
+
+const runJobE2E = async ({ gateway }) => {
+  const dir = path.resolve(__dirname, '../data/sales_jobs');
+  const store = createSalesJobStore({ dir });
+  const stamp = Date.now().toString().slice(-6);
+  const successOrder = `XSD-20991231-${stamp}`;
+  const failOrder = `XSD-20991231-${String(Number(stamp) + 1).padStart(6, '0')}`;
+  await store.store.create({
+    job_id: `e2e_restart_${stamp}`, submit_key: `e2e_restart_${stamp}`,
+    status: 'queued', payload: jobPayload({ orderNo: successOrder, method: '微信扫码' }),
+    attempts: 0, last_error: '', main_record_id: '', order_no: successOrder,
+  });
+  await store.store.create({
+    job_id: `e2e_fail_${stamp}`, submit_key: `e2e_fail_${stamp}`,
+    status: 'queued', payload: jobPayload({ orderNo: failOrder, method: '不存在的收款方式' }),
+    attempts: 0, last_error: '', main_record_id: '', order_no: failOrder,
+  });
+  // 关键：服务是在 job 已存在之后才启动 ⇒ 验证重启续跑
+  let server2 = await startServer();
+  try {
+    const done = await waitFor(async () => {
+      const row = await store.get(`e2e_restart_${stamp}`);
+      return row?.status === 'succeeded' ? row : null;
+    }, { timeoutMs: 180000, label: '重启续跑 job succeeded' });
+    const failed = await waitFor(async () => {
+      const row = await store.get(`e2e_fail_${stamp}`);
+      return row?.status === 'failed' ? row : null;
+    }, { timeoutMs: 180000, label: '失败 job failed' });
+    if (!done.order_no || !failed.last_error) throw new Error('重启/失败 job 结果字段不完整');
+    console.log(`✔ 4 重启续跑 ${done.order_no}`);
+    console.log(`✔ 5 失败状态 ${failed.order_no}：${failed.last_error}`);
+  } finally {
+    await stopServer(server2);
+    server2 = null;
+  }
+};
+
 (async () => {
   if (!OPEN_ID) throw new Error('缺少 E2E_OPEN_ID（测试操作人的飞书 open_id）');
   const gateway = new V1BitableGateway();
-  const server = await startServer();
+  let server = await startServer();
   const browser = await chromium.launch({
     executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     headless: true,
@@ -231,11 +290,14 @@ const scenario = async (browser, gateway, ctx) => {
   try {
     const ctx = await build(gateway);
     await scenario(browser, gateway, ctx);
-    console.log('✅ 销售异步浏览器 E2E 通过');
+    await browser.close().catch(() => {});
+    await stopServer(server);
+    server = null;
+    await runJobE2E({ gateway });
+    console.log('✅ 销售异步浏览器 + 重启/失败 E2E 通过');
   } finally {
     await browser.close().catch(() => {});
-    server.kill('SIGTERM');
-    await Promise.race([once(server, 'exit'), sleep(5000)]).catch(() => {});
+    if (server) await stopServer(server);
   }
 })().catch((error) => {
   console.error('❌ E2E 失败：', error);
