@@ -41,7 +41,7 @@ async function handlePaymentPay(ctx) {
             : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
           // ⭐⭐ 2026-10-27：异步销售唯一链路（显式开关）。
           //   资金页只在「校验 + 冻结 payload + 入队」后返回；真正的飞书写入由 worker 完成。
-          if (salesAsync && writeConfig.sale.asyncFullEnabled === true) {
+          if (salesAsync) {
             const orderNo = String(paySession?.sale?.order_no || '').trim();
             if (!orderNo) {
               return sendHuman(res, 400, {

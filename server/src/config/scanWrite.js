@@ -362,7 +362,6 @@ const SALE = Object.freeze({
   giftMaxLength: readInt(process.env, 'SCAN_SALE_GIFT_MAX_LENGTH', 100, { min: 1, max: 500 }),
   // ⭐⭐ 2026-10-27（异步销售）：资金页提交只做「校验 + 冻结 payload + 入队」，
   //    由 worker 写飞书；默认关（先验证），上线时显式开。
-  asyncFullEnabled: readFlag(process.env, 'SCAN_SALE_FULL_ASYNC_ENABLED', false),
   // ⭐ 2026-10-11（B）：「其他配品」清单的**进程内缓存**（毫秒；0 = 每次都读）。
   //    为什么要有它：她**连着扫码**，每一页都要画那个配品下拉 —— 一次扫码不该多打一次飞书。
   //    30 秒足够短：她在飞书里新加一件配品，最迟半分钟后刷新这一页就能选到。

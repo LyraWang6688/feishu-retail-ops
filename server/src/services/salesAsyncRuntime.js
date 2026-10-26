@@ -9,7 +9,7 @@ const { createSalesAsyncWorker } = require('./salesAsyncWorker');
  */
 const createSalesAsyncRuntime = ({ gateway, writeService, config, options = {}, logError } = {}) => {
   const orderNoCache = options.salesOrderNoCache || createSalesOrderNoCache({ gateway });
-  if (!writeService || config?.sale?.asyncFullEnabled !== true) {
+  if (!writeService) {
     return { orderNoCache, worker: null };
   }
   const worker = options.salesAsync || createSalesAsyncWorker({ gateway, writeService });

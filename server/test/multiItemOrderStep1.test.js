@@ -461,7 +461,7 @@ test('AC-MI9 ⭐⭐ §13 的"既有判据承载"**一条没动**（本步只新�
 
   // ③ §13 那些判据的承载（既有测试文件 / 既有实现）**都还在**且**没被本步改动** —— 抽查锚点：
   const carriers = [
-    ['test/scanPageWrite.test.js', ['AC-RK1', 'AC-RK2', 'AC-RK3']],
+    ['test/legacy-sync/scanPageWrite.test.js', ['AC-RK1', 'AC-RK2', 'AC-RK3']],
     ['test/scanPurchaseReturn.test.js', ['AC-R5', 'AC-R5b', 'AC-R6', 'AC-R7', 'AC-R8', 'AC-R9', 'AC-R10']],
     ['test/scanPurchaseAmountWrite.test.js', ['AC-PAW1', 'AC-PAW3', 'AC-PAW4', 'AC-PAW5', 'AC-PAW6']],
     ['test/scanPurchaseAmountRequired.test.js', ['AC-PA1']],

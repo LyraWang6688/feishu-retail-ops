@@ -101,7 +101,7 @@ const COVERAGE = Object.freeze([
 ]);
 
 test('AC-VR-COVER 🔴 覆盖证明：上面 5 条规则**各有**真判据（覆盖者改名/删掉 ⇒ 红 ✓）', () => {
-  const routeTests = fs.readFileSync(path.join(__dirname, 'voucherPaymentRoute.test.js'), 'utf8');
+  const routeTests = fs.readFileSync(path.join(__dirname, 'legacy-sync', 'voucherPaymentRoute.test.js'), 'utf8');
   // ⚠️ 三种引号都匹配（`voucherPaymentRoute` 里有反引号模板写法的用例名 ✓）
   const ids = new Set([...routeTests.matchAll(/test\(['"`](AC-VP\w+)/g)].map((match) => match[1]));
   assert.ok(ids.size >= 10, `路由级真判据应当有 10+ 条（实得 ${ids.size}）✓`);
