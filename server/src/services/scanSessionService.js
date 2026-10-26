@@ -201,14 +201,35 @@ const createScanSessionService = (options = {}) => {
     const adoptable = adopted.startsWith(`${prefix}:`);
     const blockName = flow === 'replenish' ? 'replenish' : (flow === 'purchase_return' ? 'purchaseReturn' : 'sale');
     const block = raw[blockName] || {};
-    const keepKey = adoptable ? adopted : block.key;
+    // ⭐ 2026-10-26 串单修复：过期很久的**纯草稿**（没有任何写库进度）不允许被续命带出；
+    //   否则上次（甚至 8 天前）没提交的那双会在下一次扫码时被当成"本单"提交。
+    //   有 master_record_id / detail_ids / payment_ids / children_started 的保存，避免重复建单。
+    const draftAgeMs = now() - asTime(raw.updated_at);
+    const hasWriteProgress = Boolean(String(block.master_record_id || '').trim())
+      || (Array.isArray(block.detail_ids) && block.detail_ids.length > 0)
+      || (Array.isArray(block.payment_ids) && block.payment_ids.length > 0)
+      || block.children_started === true;
+    const staleDraftDropped = !hasWriteProgress
+      && draftAgeMs > Number(sessionConfig.staleDraftMs || 0)
+      && (Array.isArray(block.lines) ? block.lines.length : 0) > 0;
+    const keepKey = staleDraftDropped
+      ? `${prefix}:${raw[sessionConfig.idField]}:${Number(block.seq || 1) + 1}`
+      : (adoptable ? adopted : block.key);
     const parsedSeq = Number(String(keepKey || '').split(':').pop());
+    if (staleDraftDropped) {
+      logInfo('scan.session.stale_draft_dropped', {
+        session_id: raw[sessionConfig.idField], open_id: String(openId || ''),
+        flow, dropped_lines: block.lines.length, draft_age_ms: draftAgeMs,
+      });
+    }
     const next = await store.update(raw[sessionConfig.idField], touch({
       status: sessionConfig.statuses.draft,
       // 代次必须一起落盘（store.update 只合并 patch，不会自动带上 raw 里新加的字段）
       generation: raw.generation,
       [blockName]: {
         ...block,
+        // ⭐ 丢弃旧草稿行；key 也顺延一轮，避免和历史幂等键撞车
+        ...(staleDraftDropped ? { lines: [], master_record_id: '', detail_ids: [], payment_ids: [], children_started: false } : {}),
         key: keepKey,
         seq: Number.isInteger(parsedSeq) && parsedSeq > 0 ? parsedSeq : (block.seq || 1),
       },

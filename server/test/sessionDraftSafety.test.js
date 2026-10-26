@@ -21,7 +21,9 @@ const line = (size) => ({ kind: 'shoe', size, product_record_id: 'p', number: 'N
 
 const make = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-safety-'));
-  let clock = Date.parse('2026-10-18T10:00:00+08:00');
+  // ⚠️ 用真实当前时间作起点：`store` 的 updated_at 由 wall clock 生成，
+  //   用固定过去时间会让「草稿年龄」算成负数（测试夹具问题，不是生产逻辑）。
+  let clock = Date.now();
   const sessions = createScanSessionService({ config: SCAN_WRITE, dir, now: () => clock });
   return { sessions, advance: (ms) => { clock += ms; }, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 };
@@ -54,6 +56,18 @@ test('过期后 addLine：保留原草稿 [A,C]，再加 B ⇒ [A,C,B]（不是�
     const got = await h.sessions.get('ou_expired');
     assert.deepEqual((got.sale.lines || []).map((item) => item.size), [38, 40, 39],
       '过期只续期，不许把未提交草稿换成空会话');
+  } finally { h.cleanup(); }
+});
+
+test('过期很久的纯草稿不串单：丢弃旧行，只保留新扫的这双', async () => {
+  const h = make();
+  try {
+    await h.sessions.addLine('ou_stale', line(41)); // 8 天前留下的旧草稿（模拟用户 66321/43 之前那单）
+    h.advance(SCAN_WRITE.session.ttlMs + SCAN_WRITE.session.staleDraftMs + 1000);
+    await h.sessions.addLine('ou_stale', line(43));
+    const got = await h.sessions.get('ou_stale');
+    assert.deepEqual((got.sale.lines || []).map((item) => item.size), [43],
+      '旧草稿（41）必须被丢弃；新扫的 43 不能被旧行冒充');
   } finally { h.cleanup(); }
 });
 

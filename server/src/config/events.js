@@ -406,6 +406,7 @@ const EVENTS = Object.freeze([
   'scan.sale.timing',
   'scan.sales_home.opened',
   'scan.session.expired',
+  'scan.session.stale_draft_dropped',
   'scan.session.started',
   'scan.size_consistency.mismatch',
   'scan.size.unresolved',
