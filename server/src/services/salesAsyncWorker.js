@@ -101,17 +101,31 @@ const createSalesAsyncWorker = ({
         });
         const ok = result?.ok === true && !(Number(result?.stock?.failed || 0) > 0);
         const status = ok ? STATUS.succeeded : (result?.ok === true ? STATUS.partialFailed : STATUS.failed);
+        const lastError = ok ? '' : String(result?.message || result?.error || result?.code || '');
         await jobStore.update(jobId, {
           status,
           order_no: result?.order_no || payload.order_no,
-          last_error: ok ? '' : String(result?.message || result?.error || result?.code || ''),
+          last_error: lastError,
         });
-        logger.logInfo('scan.sale.async.done', {
-          job_id: jobId, order_no: result?.order_no || payload.order_no, status,
-          duration_ms: Math.max(0, Date.now() - startedAt),
-          line_count: (payload.lines || []).length,
-          payment_count: (payload.payments || []).length,
-        });
+        if (!ok) {
+          // 关键：submitSale 返回 ok:false（部分失败/失败）时也必须打 error 事件，
+          // 否则只打 info done ⇒ 预警规则看不到（2026-10-27 实测 0097 就是这样静默）。
+          logger.logError('scan.sale.async.failed', {
+            job_id: jobId,
+            order_no: result?.order_no || payload.order_no,
+            status,
+            error: lastError,
+            line_count: (payload.lines || []).length,
+            payment_count: (payload.payments || []).length,
+          });
+        } else {
+          logger.logInfo('scan.sale.async.done', {
+            job_id: jobId, order_no: result?.order_no || payload.order_no, status,
+            duration_ms: Math.max(0, Date.now() - startedAt),
+            line_count: (payload.lines || []).length,
+            payment_count: (payload.payments || []).length,
+          });
+        }
         return await jobStore.get(jobId);
       } catch (error) {
         await jobStore.update(jobId, {
