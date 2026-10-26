@@ -124,13 +124,10 @@ const createFlowHelpers = ({
         .filter((row) => !row.unknown_size)
         .map((row) => ({ size_text: row.size_text, missing: Boolean(row.missing) }));
       const defaultPaymentMethod = writeConfig.sale.defaultPaymentMethod;
-      // ⭐⭐ 2026-10-16 A2a ③（改前逐字 → 改后逐字 → 依据）：
-      //   改前逐字：`const paymentMethods = [...new Set([defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || [])].filter(Boolean))];`
-      //     —— 候选**只从配置拼**（表里真实那几条看不到 ✗）
-      //   改后逐字：`const paymentMethods = await candidatePaymentMethods(req);`
-      //     —— **读「收款方式管理」表**（只读 + TTL 缓存 ✓）；读不到 ⇒ 大声 warn + **退回配置**（见上面那份注释）
-      //   依据 = 她 2026-10-14 逐字「**付款方式用交易方式管理，可选择**」
-      const paymentMethods = await candidatePaymentMethods(req);
+      // ⭐ 2026-10-26（按页拆分读取）：货品页/库存页/补货页/退货页**都不需要收款方式**；
+      //   以前这里无条件读「收款方式管理」（冷缓存时一次飞书读，实测让扫码页 post_lookup ≈5.4s）。
+      //   ⇒ 这里不再读；资金页由 `step2WriteOf` 的调用方显式传入候选（那才是它唯一的使用者）。
+      const paymentMethods = [];
       const lines = session?.sale?.lines || [];
       return {
         enabled: true,
