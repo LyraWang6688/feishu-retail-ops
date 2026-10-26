@@ -353,17 +353,7 @@ const SALE = Object.freeze({
   originalTextTemplate: readString(
     process.env, 'SCAN_SALE_ORIGINAL_TEXT', '扫码建单（{count} 双）：{products}',
   ),
-  // ⚠️ 「解析状态」**刻意不在这里配**：扫码建单没有 AI 解析这一步，而主表记录由
-  //    共享处理层的 `services/salesEntryService.createSalesEntryWithOrderNo`
-  //    （全仓唯一创建销售主表的地方，2026-10-11 从 larkMvpService 剥出）创建，
-  //    它把这一列写成「解析中」—— 这里不为了好看再补一次写库
-  //    （那正是"扫码侧另写一套写库逻辑"）。取舍与建议写在本次任务的报告里。
-  // 赠品文本上限（主表「赠品」是文本列，写太长没意义、也容易被截断）。
   giftMaxLength: readInt(process.env, 'SCAN_SALE_GIFT_MAX_LENGTH', 100, { min: 1, max: 500 }),
-  // ⭐⭐ 2026-10-27（异步销售）：资金页提交只做「校验 + 冻结 payload + 入队」，
-  //    由 worker 写飞书；默认关（先验证），上线时显式开。
-  // ⭐ 2026-10-11（B）：「其他配品」清单的**进程内缓存**（毫秒；0 = 每次都读）。
-  //    为什么要有它：她**连着扫码**，每一页都要画那个配品下拉 —— 一次扫码不该多打一次飞书。
   //    30 秒足够短：她在飞书里新加一件配品，最迟半分钟后刷新这一页就能选到。
   accessoryCacheTtlMs: readInt(process.env, 'SCAN_SALE_ACCESSORY_CACHE_TTL_MS', 30_000,
     { min: 0, max: 10 * 60 * 1000 }),

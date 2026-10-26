@@ -396,10 +396,6 @@ const createScanPageRouter = (options = {}) => {
   const salesRuntime = createSalesAsyncRuntime({ gateway, writeService, config: writeConfig, options, logError }); const salesAsync = salesRuntime.worker;
   // ══════════════════════════════════════════════════════════════════════════
   // ⭐⭐ 「一单多货品」**路由半**（task-59）
-  //   · 本文件**只做**：解析隐藏字段 → 首件合并 → 交给引擎（`openDraft/addItem/submitDraft`）；
-  //   · **落库 / 校验 / 幂等 / `orderKey` 轮换全在引擎里** ✓（路由**不碰**写库、不认识表字段 ✗）；
-  //   · 🔴 **N ≤ 1 一个字节都不走这里**（两处调用点都是 `groups.length > 1` 才进 ✓）。
-  //   ⚠️ 配置**在 router 构建时读一次**（`resolveMultiItemOrderConfig()` 每次调用都重新读 env ✓）——
   //     与渲染半那份（模块级 `MULTI_ITEM_ORDER`）**同一个 env 源**，两边不会漂 ✓。
   // ══════════════════════════════════════════════════════════════════════════
   const multiItemOrderConfig = resolveMultiItemOrderConfig();

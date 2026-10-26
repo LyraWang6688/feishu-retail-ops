@@ -143,20 +143,14 @@ const TEXTS = Object.freeze({
   footerNumberLabel: '编号',
 
   // ⭐⭐⭐ 2026-10-16（task-53 · P0 **第二刀**）：「跳转资金页」前置判定拦住时的那句人话。
-  //   业务负责人逐字：「算了，这样吧，**实收金额的输入框用户必须填写**，只有用户填了**尺码和金额**，
-  //     才可以点击提交跳转到资金页，**不用做那个为空去单价的功能了**」
-  //   ⇒ 缺尺码或实收金额 ⇒ 400 停在货品页 + 这一句 + 零写入 ✓
   //   🔴 措辞里**不许**出现「成交金额」「交易方式」两个**旧列名**（有既有判据钉着：
   //     `test/scanSaleTwoLayerMoney.test.js:300` 的页面哨兵 ＋ `:1369` 对
   //     `routes/scanPage.js` 的**字符串字面量**扫描 —— #659 就栽在这 ✗）⇒ 只用她这一刀的原话。
   //   ⚠️ 文案的家在 `src/config/**`（用户可见中文只许在这里 ✓ `test/noHardcodedChinese.test.js` 的扫描根
-  //     只有 `services/routes/views`）⇒ 路由里**一个字都不写** ✗，只引这个键 ✓
   jumpGateNoticeTitle: '请先填尺码和实收金额',
 
-  // ⭐ 2026-10-13（她："开新单子系统挂一个 86900" ✗）：提交后回跳页顶部那条指引（配置先行 ✓）
   justSubmittedPrefix: '✅ 上一单已提交',
   justSubmitted: '✅ 上一单已提交（{orderNo}）· 请扫下一个标签',
-  // ⭐ 2026-10-13：**销售领域入口页**（不带编号 ✓ = 她说的"销售首页"）的文案
   salesHomeTitle: '请扫下一个标签',
   salesHomeHint: '用飞书「扫一扫」扫下一个标签；也可以在手输框里填编号。',
   salesHomeJustSubmitted: '✅ 上一单已提交（{orderNo}）',
@@ -167,14 +161,11 @@ const TEXTS = Object.freeze({
   salesHomeReturnPath: '/workbench',
   salesHomeManualLabel: '编号（货号|颜色|尺码）',
   salesHomeManualSubmit: '打开这一款',
-  // 降级与截断都**写在页面上**，不只在日志里（她看不到日志）。
   degradedSizesNote: '暂时读不到该类别在「尺码管理」里的全部尺码，本页只显示有库存的尺码。',
   unknownStateNote: '有 {count} 双的「所属状态」不在预期取值里，已按原值另列。',
   unknownSizeNote: '有 {count} 双读不出尺码，单独列在最后一行。',
   truncatedSizesNote: '该类别尺码过多，缺码判定只看前 {count} 个。',
-  // ⭐⭐ 2026-10-12：**编号兜底**（(c)）命中时的轻提示 —— 一句话，不写说明书。
   numberFallbackHint: '二维码里的编号少了类别，建议重打标签（已按货号 + 颜色找到这一款）。',
-  // ⭐⭐ 2026-10-12：兜底**也没找到**时的两句人话（0 条 / 多条）+ 下一步（回扫码页 / 再扫一次）。
   notFoundFallbackMissHint: '这个编号少了类别，按货号 + 颜色也没找到这一款 —— 请核对标签上的货号 / 颜色，或重打标签。',
   notFoundAmbiguousHint: '这个编号少了类别，按货号 + 颜色匹配到多款，没法确定是哪一双 —— 请核对标签，或重打标签。',
   notFoundBackLabel: '再扫一次',
