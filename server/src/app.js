@@ -24,6 +24,7 @@ dotenv.config({ path: path.join(__dirname, '../../.env'), quiet: true });
 
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
 const crypto = require('node:crypto');
 const { logError, logInfo } = require('./utils/logger');
 const { uploadDir } = require('./utils/upload');
@@ -78,6 +79,10 @@ if (process.env.ENABLE_CORS === 'true') {
 // 都会明显变大，所以给到 2mb（足够宽松，同时仍是一个明确的上限）。
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+// ⭐ 2026-10-26：兼容 multipart/form-data（线上扫码页提交进度脚本用 fetch+FormData 时会发这种）。
+//   以前只挂了 urlencoded/json ⇒ multipart 的 body 解析为空 ⇒ 页面报「这一页没带上要做什么」。
+//   扫码表单没有文件；multer 只解析文本字段并合并进 req.body，不改其它 Content-Type 的行为。
+app.use(multer().none());
 // ⭐ 埋点第 4 刀：5 条链路请求耗时（只对 config/timing.js 登记的路径打点，其余零多余日志）
 app.use(require('./utils/requestTiming').requestTiming());
 app.use((req, res, next) => {
