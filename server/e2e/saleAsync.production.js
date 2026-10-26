@@ -70,11 +70,10 @@ const waitToastAndOrder = async (page) => {
     {
       name: COOKIE_NAME,
       value: encodeSession({ open_id: OPEN_ID, name: '王颖' }),
-      domain: '127.0.0.1',
-      path: '/',
+      url: BASE,
     },
     // ⭐ 必须固定一个页面 token：否则新浏览器上下文会落回旧会话，可能复用上一单的 submit_key
-    { name: 'scan_page_id', value: `e2e_${Date.now()}`, domain: '127.0.0.1', path: '/' },
+    { name: 'scan_page_id', value: `e2e_${Date.now()}`, url: BASE },
   ]);
   const page = await context.newPage();
   const url = `${BASE}/s/${encodeURIComponent(ITEM)}?from=sales`;
