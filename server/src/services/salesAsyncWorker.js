@@ -29,6 +29,10 @@ const createSalesAsyncWorker = ({
   if (!gateway || !writeService) throw new Error('SalesAsyncWorker requires gateway + writeService');
   const sessionService = sessions || writeService.sessions;
   const running = new Map();
+  // ⭐ 2026-10-27：全局 FIFO 队列。异步提交会连续入队，不能多个 job 同时打飞书。
+  const pendingQueue = [];
+  const queuedJobs = new Set();
+  let pumping = false;
 
   const ensureMain = async (job) => {
     if (job.main_record_id) return job.main_record_id;
@@ -144,6 +148,34 @@ const createSalesAsyncWorker = ({
     try { return await promise; } finally { running.delete(jobId); }
   };
 
+  const pump = async () => {
+    if (pumping) return;
+    pumping = true;
+    try {
+      while (pendingQueue.length) {
+        const jobId = pendingQueue.shift();
+        queuedJobs.delete(jobId);
+        await process(jobId).catch((error) => {
+          logger.logError('scan.sale.async.queue_failed', {
+            job_id: jobId, error: String(error?.message || error),
+          });
+        });
+      }
+    } finally {
+      pumping = false;
+      if (pendingQueue.length) setImmediate(() => { pump().catch(() => undefined); });
+    }
+  };
+
+  const schedule = (jobId) => {
+    const id = String(jobId || '').trim();
+    if (!id || queuedJobs.has(id) || running.has(id)) return;
+    queuedJobs.add(id);
+    pendingQueue.push(id);
+    logger.logInfo('scan.sale.async.queued', { job_id: id, queue_size: pendingQueue.length });
+    setImmediate(() => { pump().catch(() => undefined); });
+  };
+
   const enqueue = async ({ submitKey, payload }) => {
     const built = buildSalePayload({
       openId: payload.open_id, orderNo: payload.order_no, gift: payload.gift,
@@ -151,7 +183,7 @@ const createSalesAsyncWorker = ({
     });
     if (!built.ok) return { ok: false, errors: built.errors };
     const { job, created } = await jobStore.createIfAbsent(submitKey, built.payload);
-    if (created) setImmediate(() => { process(job.job_id).catch(() => undefined); });
+    if (created) schedule(job.job_id);
     return { ok: true, job, created };
   };
 
@@ -159,7 +191,7 @@ const createSalesAsyncWorker = ({
     const pending = await jobStore.store.list();
     for (const job of pending) {
       if (job.status === STATUS.queued || job.status === STATUS.running) {
-        setImmediate(() => { process(job.job_id).catch(() => undefined); });
+        schedule(job.job_id);
       }
     }
   };

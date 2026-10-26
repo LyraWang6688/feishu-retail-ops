@@ -7,6 +7,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSalesAsyncWorker } = require('../src/services/salesAsyncWorker');
 const { createSalesJobStore, STATUS } = require('../src/services/salesJobStore');
+const waitFor = async (fn, { timeoutMs = 2000, intervalMs = 10 } = {}) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) { if (await fn()) return true; await new Promise((r) => setTimeout(r, intervalMs)); }
+  throw new Error('waitFor timeout');
+};
 
 const make = ({ fail = false } = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sale-async-'));
@@ -102,5 +107,31 @@ test('新 worker 启动后能续跑同一个 queued job，不重复写', async (
     const done = await h.jobStore.get('sale_job_restart_1');
     assert.equal(done.status, STATUS.succeeded);
     assert.equal(h.calls.submit, 1);
+  } finally { h.cleanup(); }
+});
+
+test('worker 全局队列：连续入队 3 个 job，同时只跑 1 个，按 FIFO 完成', async () => {
+  const h = make();
+  try {
+    let active = 0;
+    let maxActive = 0;
+    const order = [];
+    h.writeService.submitSale = async (input) => {
+      active += 1; maxActive = Math.max(maxActive, active);
+      order.push(input.openId);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      active -= 1;
+      return { ok: true, order_no: 'XSD-20261026-0001', stock: { failed: 0 } };
+    };
+    const jobs = [];
+    for (const key of ['scan_sale:s:q1', 'scan_sale:s:q2', 'scan_sale:s:q3']) {
+      jobs.push((await h.worker.enqueue({ submitKey: key, payload: payload() })).job);
+    }
+    await waitFor(async () => {
+      const rows = await Promise.all(jobs.map((job) => h.jobStore.get(job.job_id)));
+      return rows.every((row) => row.status === STATUS.succeeded);
+    }, { timeoutMs: 5000 });
+    assert.equal(maxActive, 1, '同一时间只能有一个 worker 任务写飞书');
+    assert.equal(order.length, 3);
   } finally { h.cleanup(); }
 });

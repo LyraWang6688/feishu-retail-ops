@@ -393,6 +393,8 @@ const EVENTS = Object.freeze([
   'scan.sale.async.enqueued',
   'scan.sale.async.failed',
   'scan.sale.async.invalid_payload',
+  'scan.sale.async.queue_failed',
+  'scan.sale.async.queued',
   'scan.sale.async.start_failed',
   'scan.sale.background_done',
   'scan.sale.background_failed',

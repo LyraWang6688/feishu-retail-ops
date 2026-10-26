@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **519** 个事件。按前缀分组：
+共 **521** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -482,6 +482,8 @@
 | `scan.sale.async.enqueued` | 1 | src/routes/scanPage/handlers/payment.js |
 | `scan.sale.async.failed` | 4 | src/config/alerts.js<br>src/services/salesAsyncWorker.js |
 | `scan.sale.async.invalid_payload` | 1 | src/routes/scanPage/handlers/payment.js |
+| `scan.sale.async.queue_failed` | 1 | src/services/salesAsyncWorker.js |
+| `scan.sale.async.queued` | 1 | src/services/salesAsyncWorker.js |
 | `scan.sale.async.start_failed` | 3 | src/config/alerts.js<br>src/services/salesAsyncRuntime.js |
 | `scan.sale.background_done` | 1 | src/config/scanWrite.js |
 | `scan.sale.background_failed` | 3 | src/config/alerts.js<br>src/config/scanWrite.js |
