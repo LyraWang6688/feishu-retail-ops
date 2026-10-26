@@ -241,3 +241,22 @@ th { color: var(--text-secondary); background: var(--surface-sunken); font-weigh
   .form-field.grow { flex: 1; max-width: 540px; }
   .standalone-nav a { padding: var(--space-2) var(--space-3); }
 }
+
+/* 2026-10-27：异步销售提交后回工作台的那条 toast（颜色/圆角/阴影全部走 tokens） */
+.workbench-toast {
+  position: fixed;
+  left: 50%;
+  top: var(--space-5);
+  transform: translateX(-50%);
+  z-index: 9999;
+  max-width: calc(100vw - var(--space-8));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--success);
+  border-radius: var(--radius-md);
+  background: var(--success-soft);
+  color: var(--success);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-bold);
+  text-align: center;
+}

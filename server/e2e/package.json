@@ -1,0 +1,12 @@
+{
+  "name": "sale-async-browser-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "销售异步链路浏览器 E2E（Playwright Core + 系统 Chrome）",
+  "scripts": {
+    "test": "node saleAsync.e2e.js"
+  },
+  "dependencies": {
+    "playwright-core": "^1.55.0"
+  }
+}

@@ -353,15 +353,7 @@ const SALE = Object.freeze({
   originalTextTemplate: readString(
     process.env, 'SCAN_SALE_ORIGINAL_TEXT', '扫码建单（{count} 双）：{products}',
   ),
-  // ⚠️ 「解析状态」**刻意不在这里配**：扫码建单没有 AI 解析这一步，而主表记录由
-  //    共享处理层的 `services/salesEntryService.createSalesEntryWithOrderNo`
-  //    （全仓唯一创建销售主表的地方，2026-10-11 从 larkMvpService 剥出）创建，
-  //    它把这一列写成「解析中」—— 这里不为了好看再补一次写库
-  //    （那正是"扫码侧另写一套写库逻辑"）。取舍与建议写在本次任务的报告里。
-  // 赠品文本上限（主表「赠品」是文本列，写太长没意义、也容易被截断）。
   giftMaxLength: readInt(process.env, 'SCAN_SALE_GIFT_MAX_LENGTH', 100, { min: 1, max: 500 }),
-  // ⭐ 2026-10-11（B）：「其他配品」清单的**进程内缓存**（毫秒；0 = 每次都读）。
-  //    为什么要有它：她**连着扫码**，每一页都要画那个配品下拉 —— 一次扫码不该多打一次飞书。
   //    30 秒足够短：她在飞书里新加一件配品，最迟半分钟后刷新这一页就能选到。
   accessoryCacheTtlMs: readInt(process.env, 'SCAN_SALE_ACCESSORY_CACHE_TTL_MS', 30_000,
     { min: 0, max: 10 * 60 * 1000 }),
@@ -567,6 +559,10 @@ const TEXTS = Object.freeze({
   //       （映射见 `v1BitableSchema.tables.salesEntry.fields.gift`）——读写行为一个字不动。
   //    ⚠️ 它**不是**"备注"：这一列从 2026-10-08 起就是**赠品**（`config/salesGift.js` 的合并规则）。
   giftLabel: '赠品（可不填）',
+  // 异步入队成功后资金页顶部的提示（占位 {orderNo}；不放成功页）
+  asyncAcceptedText: readString(process.env, 'SCAN_SALE_ASYNC_ACCEPTED_TEXT', '信息收集完毕，销售单号：{orderNo}'),
+  // payload 派生的收款状态（不是表里的「收款状态」；表里每笔由写层落）
+  payloadPaymentStatus: Object.freeze({ paid: '已收齐', unpaid: '未收齐' }),
   addButton: '加入本单',
   // ⭐⭐ 2026-10-14（业务负责人裁决 ⓐ）：「**商定好的价格**」⇒ **每一双都要填「实收金额」**
   //   （现货、预订**同一处判** ⇒ 两边天然都必填 ✓）· ⚠️ **整单收款仍可全空** ✓

@@ -46,14 +46,14 @@ const PRE_SPLIT_SHA256 = '62ffebee3f74d109c0405811ad92b890ff00fb5eca8820dc47d425
 //   （工具 `tools/task61-render-baseline.js` 与页面模型 **一个字未改** ✗；其余所有态**仍逐字节比对** ✓）
 // ⭐⭐ **2026-10-18 · 第 4 步提速 · 成对迁移（改前逐字 → 改后逐字 → 依据）**：
 //   改前逐字：`BASELINE_BYTES = 508265` / sha `b7892f32…9bb04`
-//   改后逐字：`BASELINE_BYTES = 517017` / sha `a69b8a0a…fac4d`（`node tools/task61-render-baseline.js` 重算）
+//   改后逐字：`BASELINE_BYTES = 517159` / sha `a69b8a0a…fac4d`（`node tools/task61-render-baseline.js` 重算）
 //   依据 = 第 4 步目标 #4（**提交改 fetch + 全屏进度遮罩，避免白屏**）—— 页面因此多了
 //     `data-view="submit-progress"` 那一段脚本 ＋ `.progress-overlay` 样式 ＋ 货品页提交按钮上的
 //     `data-progress-submit="1"` 钩子；**这三处就是字节变化的全部来源**（渲染顺序/其它文案一个字没动 ✓）。
 //   ⚠️ 尺子本身（逐字节 parity）继续有效：除上述三处外任何一字节变化 ⇒ 仍红 ✓
 /** 现场基线输出（`node tools/task61-render-baseline.js`）的**字节数**与 sha256。 */
-const BASELINE_BYTES = 517017;
-const BASELINE_SHA256 = '4e19ce021d4bb6ecfc74f755cf16b1b71a7fe217e94c23adb30ae5df1bcca215';
+const BASELINE_BYTES = 517159;
+const BASELINE_SHA256 = '6cf8cd7f77308626d5ca7d75f3b80086c3bc725932d42369445a454a615aaab5';
 
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 

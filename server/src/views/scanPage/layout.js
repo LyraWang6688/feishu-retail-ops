@@ -22,7 +22,7 @@ ${head}
 ${content}
 </main>
 ${requestId ? `<p class="foot">${escapeHtml(config.texts.requestIdLabel)} <span class="mono">${escapeHtml(requestId)}</span></p>` : ''}
-${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}${content.includes('data-payment-add') ? `\n${paymentAddRowScriptHtml()}` : ''}${hasProgressSubmit(content) ? `\n${submitProgressScriptHtml()}` : ''}
+${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}${content.includes('data-payment-add') ? `\n${paymentAddRowScriptHtml()}` : ''}${hasProgressSubmit(content) ? `\n${submitProgressScriptHtml(config.texts.submitFailureText)}` : ''}
 ${annotateScriptHtml()}
 </body>
 </html>

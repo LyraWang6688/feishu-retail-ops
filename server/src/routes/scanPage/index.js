@@ -40,6 +40,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../../services/v1BitableGateway');
 const { sizesForCategory, parseNumberSegments, createScanPageService } = require('../../services/scanPageService');
 const { createScanWriteService } = require('../../services/scanWriteService');
+const { createSalesAsyncRuntime } = require('../../services/salesAsyncRuntime');
 // ⭐⭐ 2026-10-16（task-52 · ②-⑭ · 业务负责人**逐字**）：
 //   「**补货、退货还有验收，它都是异步的**……都是一句『**已提交成功，数据会更新**』」
 //   ⇒ 补货 / 退货改成 **先回成功页（200）⇒ 「后台那一跑」写库**。
@@ -170,8 +171,7 @@ const createScanPageRouter = (options = {}) => {
   const { logFunnelPage, logRendered, successReturnFields } = renderContext;
   const writeConfig = options.writeConfig === undefined ? SCAN_WRITE : options.writeConfig;
   const gateway = options.gateway || new V1BitableGateway();
-  // ⚠️ 只读那一半的 service：`options.service` 供用例注入一个假的（既有用例就是这么做的，
-  //    注入之后**连内存快照都不会建** —— 见 `services/scanPageService.js` 的注释）。
+  // ⚠️ 只读那一半的 service：`options.service` 供用例注入一个假的（既有用例就是这么做的，注入后不建内存快照）。
   const service = options.service || createScanPageService(gateway, {
     config,
     snapshot: options.snapshot,
@@ -393,13 +393,9 @@ const createScanPageRouter = (options = {}) => {
       }),
     }))
     : null;
-
+  const salesRuntime = createSalesAsyncRuntime({ gateway, writeService, config: writeConfig, options, logError }); const salesAsync = salesRuntime.worker;
   // ══════════════════════════════════════════════════════════════════════════
   // ⭐⭐ 「一单多货品」**路由半**（task-59）
-  //   · 本文件**只做**：解析隐藏字段 → 首件合并 → 交给引擎（`openDraft/addItem/submitDraft`）；
-  //   · **落库 / 校验 / 幂等 / `orderKey` 轮换全在引擎里** ✓（路由**不碰**写库、不认识表字段 ✗）；
-  //   · 🔴 **N ≤ 1 一个字节都不走这里**（两处调用点都是 `groups.length > 1` 才进 ✓）。
-  //   ⚠️ 配置**在 router 构建时读一次**（`resolveMultiItemOrderConfig()` 每次调用都重新读 env ✓）——
   //     与渲染半那份（模块级 `MULTI_ITEM_ORDER`）**同一个 env 源**，两边不会漂 ✓。
   // ══════════════════════════════════════════════════════════════════════════
   const multiItemOrderConfig = resolveMultiItemOrderConfig();
@@ -1716,14 +1712,14 @@ const createScanPageRouter = (options = {}) => {
       //                ③ 幂等沿既有 `requestId`（**不自造** ✓）
       if (action === (config.paymentStep?.payAction || 'payment_pay')) {
         return handlePaymentPayOf({
-          SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService: scopedWriteService, options, successReturnFields, lookupInputOf,
+          SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService: scopedWriteService, options, successReturnFields, lookupInputOf, salesAsync,
         });
       }
 
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
         return handleSubmitOrderOf({
-          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, successReturnFields, writeConfig, writeService: scopedWriteService,
+          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, successReturnFields, writeConfig, writeService: scopedWriteService, nextOrderNo: () => salesRuntime.orderNoCache.next(),
         });
       }
 

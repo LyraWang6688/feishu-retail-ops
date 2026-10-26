@@ -295,8 +295,11 @@ const PAYMENT_STEP_STYLE = `.pay-status__options { display: grid; grid-template-
 .payment-step { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }`;
 
 
+const SCAN_TOAST_STYLE = `.scan-toast { position: fixed; left: 50%; top: var(--space-5); transform: translateX(-50%); z-index: 9999; max-width: calc(100vw - var(--space-8)); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--success-soft); color: var(--success); border: 1px solid var(--success); box-shadow: var(--shadow-pop); font-size: var(--font-size-md); font-weight: var(--weight-bold); }`;
+
 module.exports = {
   STYLE,
+  SCAN_TOAST_STYLE,
   readThemeTokens,
   canScanNextWithFeishu,
   SKELETON_STYLE,

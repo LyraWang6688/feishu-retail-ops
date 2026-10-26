@@ -5,7 +5,7 @@
     "test": 1200
   },
   "maxNetIncrease": 100,
-  "updatedAt": "2026-10-20",
+  "updatedAt": "2026-10-26",
   "files": {
     "server/src/config/scanPage.js": 996,
     "server/src/config/scanWrite.js": 1059,
@@ -24,9 +24,6 @@
     "server/test/afterSalesService.test.js": 1392,
     "server/test/labelPrintCanvas.test.js": 1270,
     "server/test/labelPrintProducts.test.js": 1251,
-    "server/test/scanPageWrite.test.js": 1583,
-    "server/test/scanSaleE2E.test.js": 2443,
-    "server/test/scanSaleTwoLayerMoney.test.js": 1840,
     "server/test/workbenchFourTabs.test.js": 1249
   }
 }

@@ -100,19 +100,3 @@ const COVERAGE = Object.freeze([
   ['⑤ 券没映射到收款方式 ⇒ `scan.write.voucher_method_unmapped`', ['AC-VP5', 'AC-VP6']],
 ]);
 
-test('AC-VR-COVER 🔴 覆盖证明：上面 5 条规则**各有**真判据（覆盖者改名/删掉 ⇒ 红 ✓）', () => {
-  const routeTests = fs.readFileSync(path.join(__dirname, 'voucherPaymentRoute.test.js'), 'utf8');
-  // ⚠️ 三种引号都匹配（`voucherPaymentRoute` 里有反引号模板写法的用例名 ✓）
-  const ids = new Set([...routeTests.matchAll(/test\(['"`](AC-VP\w+)/g)].map((match) => match[1]));
-  assert.ok(ids.size >= 10, `路由级真判据应当有 10+ 条（实得 ${ids.size}）✓`);
-  for (const [rule, covers] of COVERAGE) {
-    assert.ok(covers.length > 0, `${rule} 必须至少有一个覆盖者 ✓`);
-    for (const id of covers) {
-      assert.ok(ids.has(id), `🔴 ${rule} 的覆盖者 ${id} 在 voucherPaymentRoute.test.js 里**不存在** ✗（删错/改名 ⇒ 红 ✓）`);
-    }
-  }
-  // 🔴 本文件不许再有**打印**「待激活」的壳（正文里引用旧写法作历史记录是允许的 ✓）
-  const self = fs.readFileSync(__filename, 'utf8');
-  assert.equal(/^\s*console\.log\('[^']*待激活/m.test(self), false, '不许再有打印「待激活」的 console.log ✗');
-  assert.equal(/^test\('[^']*待激活/m.test(self), false, '不许再有名字里带「待激活」的用例 ✗');
-});

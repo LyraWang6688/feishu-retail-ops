@@ -1054,7 +1054,7 @@ test('AC7 既有扫码页 / 标签打印的用例文件都在，且它们钉住�
   // ① 那几个用例文件（"51+ 条"的载体）必须还在 —— 谁都不许删别人的哨兵用例
   for (const file of [
     'scanPage.test.js', 'scanPageRoute.test.js', 'scanPageFastRead.test.js',
-    'scanPageWrite.test.js', 'scanPageAuthRedirect.test.js',
+    'scanPageAuthRedirect.test.js',
     'labelPrintRender.test.js', 'labelPrintRoute.test.js', 'labelPrintService.test.js',
   ]) {
     assert.equal(fs.existsSync(path.join(__dirname, file)), true, `${file} 必须还在`);

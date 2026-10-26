@@ -1,5 +1,5 @@
 const { multiItemBlockHtml, multiItemPayloadJson, MULTI_ITEM_ITEM_KEYS, MULTI_ITEM_ENTRY_KEYS } = require('./multiItemBlock');
-const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, SKELETON_STYLE, STYLE } = require('./styles');
+const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, SKELETON_STYLE, STYLE, SCAN_TOAST_STYLE } = require('./styles');
 const { buildPaymentRows, paymentRowsHtml } = require('./paymentBlock');
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
 // ⭐⭐ 2026-10-16（task-52 收尾）：**成功页统一极简**的配置真源（开关 ＋ 那一句 ✓ 见 config/scanSuccessPage.js）
@@ -32,15 +32,20 @@ const { realmBlockHtml, realmEmptyHtml } = require('./realmBlock');
 const renderSalesHome = ({ config = SCAN_PAGE, orderNo = '', basePath = '' } = {}) => {
   const texts = config.texts || {};
   const prefix = String(basePath || '');
-  const notice = String(orderNo || '').trim()
-    ? `<p class="notice notice--ok" data-view="sales-home-submitted">`
-      + `${escapeHtml(fillText(texts.salesHomeJustSubmitted || '', { orderNo: String(orderNo).trim() }))}</p>`
+  const submittedNo = String(orderNo || '').trim();
+  const toastMs = Number(config.salesHomeToastMs) || 5000;
+  const returnPath = String(config.salesHomeReturnPath || '').trim();
+  const toast = submittedNo
+    ? `<style>${SCAN_TOAST_STYLE}</style><div class="scan-toast" role="status" aria-live="polite" data-view="sales-home-toast">`
+      + `${escapeHtml(fillText(texts.salesHomeToast || texts.salesHomeJustSubmitted || '', { orderNo: submittedNo }))}</div>`
+      + `<script data-view="sales-home-toast-hide">setTimeout(function(){var el=document.querySelector('[data-view="sales-home-toast"]');if(el)el.style.display='none';`
+      + `${returnPath ? `window.location.replace(${JSON.stringify(returnPath)});` : ''}},${toastMs});</script>`
     : '';
   return renderDocument({
     title: texts.salesHomeTitle || texts.pageTitle,
     config,
     content: `<main class="page" data-view="sales-home">
-${notice}
+${toast}
 <h1 class="title">${escapeHtml(texts.salesHomeTitle || '')}</h1>
 <p class="notice">${escapeHtml(texts.salesHomeHint || '')}</p>
 <form method="get" action="${escapeHtml(prefix)}/" class="write-form" data-view="sales-home-manual">
