@@ -20,6 +20,27 @@ test('V1 gateway maps semantic keys to current Chinese field names', () => {
   assert.throws(() => gateway.fields('sample', { missing: 'x' }), /未配置语义字段/);
 });
 
+test('V1 gateway schema validation caches within TTL + single-flight（2026-10-26 慢请求）', async () => {
+  let calls = 0;
+  let clock = 1000;
+  const client = {
+    bitable: {
+      appTableField: {
+        list: async () => {
+          calls += 1;
+          return { code: 0, data: { items: [{ field_name: '名称' }, { field_name: '数量' }], has_more: false } };
+        },
+      },
+    },
+  };
+  const gateway = new V1BitableGateway({ schema, client, validationTtlMs: 5000, now: () => clock });
+  await Promise.all([gateway.validateTable('sample'), gateway.validateTable('sample')]);
+  assert.equal(calls, 1, 'TTL 内并发也只打一次 field.list');
+  clock += 5001;
+  await gateway.validateTable('sample');
+  assert.equal(calls, 2, 'TTL 过期后重新校验');
+});
+
 test('V1 gateway schema validation reports renamed or missing fields', async () => {
   const client = {
     bitable: {
