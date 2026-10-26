@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **512** 个事件。按前缀分组：
+共 **519** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -477,6 +477,12 @@
 | `scan.realm_scan.signature_failed` | 1 | src/routes/scanPage/index.js |
 | `scan.realm_scan.signature_ok` | 1 | src/routes/scanPage/index.js |
 | `scan.sale.amount_mismatch` | 1 | src/config/scanWrite.js |
+| `scan.sale.async.done` | 1 | src/services/salesAsyncWorker.js |
+| `scan.sale.async.enqueue_failed` | 1 | src/routes/scanPage/handlers/payment.js |
+| `scan.sale.async.enqueued` | 1 | src/routes/scanPage/handlers/payment.js |
+| `scan.sale.async.failed` | 1 | src/services/salesAsyncWorker.js |
+| `scan.sale.async.invalid_payload` | 1 | src/routes/scanPage/handlers/payment.js |
+| `scan.sale.async.start_failed` | 1 | src/services/salesAsyncRuntime.js |
 | `scan.sale.background_done` | 1 | src/config/scanWrite.js |
 | `scan.sale.background_failed` | 3 | src/config/alerts.js<br>src/config/scanWrite.js |
 | `scan.sale.background_queued` | 1 | src/config/scanWrite.js |
@@ -484,6 +490,7 @@
 | `scan.sale.interrupted_cleared` | 1 | src/config/scanWrite.js |
 | `scan.sale.interrupted_detected` | 2 | src/config/scanWrite.js<br>src/services/scanSessionService.js |
 | `scan.sale.line_added` | 1 | src/config/scanWrite.js |
+| `scan.sale.order_no.allocate_failed` | 1 | src/routes/scanPage/handlers/salesSubmit.js |
 | `scan.sale.partial_failed` | 1 | src/config/scanWrite.js |
 | `scan.sale.payment` | 1 | src/config/timing.js |
 | `scan.sale.payment_methods_unreadable` | 2 | src/config/voucherPayment.js<br>src/routes/scanPage/index.js |

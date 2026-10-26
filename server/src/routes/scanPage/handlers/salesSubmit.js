@@ -1,5 +1,6 @@
 'use strict';
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
+const { salesTradeTypeForStock } = require('../../../config/salesTradeTypePolicy');
 
 /**
  * 扫码路由核心深拆 P2：销售提交（`submit_order`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -7,7 +8,7 @@ const { tapIdFromRequest } = require('../../../utils/correlationFields');
  */
 
 async function handleSubmitOrder(ctx) {
-  const { asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, successReturnFields, writeConfig, writeService } = ctx;
+  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, successReturnFields, writeConfig, writeService } = ctx;
         // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
         //    + ②**「付款情况」三档**（整单：全付（默认）/ 部分付 / 未付）
         //    + ③多笔收款（同名重复 ⇒ 两个数组按下标对齐）+ 「部分付」的实付多少。
@@ -191,7 +192,12 @@ return sendPaymentStep(res, req, {
         //     明细/收款/流水一行都不写，也不转后台。
         //   依据 = 第 4 步目标（87s → ~15s）＋ `docs/issue-scan-sale-gift-ledger-latency-2026-10-18.md`
         //     §5 的耗时分解（后台货跑与资金页那一跑共用同一把串行队列，必须等它跑完）。
+        // ⭐⭐ 2026-10-27（异步销售）：货品页**不再建主表、不再取号读整表**。
+        //   只做三件事：把当前这一双放进会话草稿、必要时从本地缓存分配一个单号、回资金页。
+        //   真正的飞书写入由资金页提交后的 worker 完成。
         let goodsOrderNo = '';
+        // 兼容：异步开关关着 ⇒ 保留改前的同步“只建主表”路径（测试/回退用）。
+        if (writeConfig.sale.asyncFullEnabled !== true) {
         const goods = await writeService.submitSale({
           openId,
           requestId,
@@ -257,6 +263,102 @@ return sendPaymentStep(res, req, {
           totalAmountText: (() => {
             const cents = (Array.isArray(lineAmounts) ? lineAmounts : []).reduce(
               (sum, value) => sum + Math.round(Number(String(value ?? '').trim() || 0) * 100), 0,
+            );
+            return cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '';
+          })(),
+          // ⭐⭐ 2026-10-18（第 4 步 · 资金页精简）：**不再把单号带到资金页** ——
+          //   她这一屏只要「总金额 + 收款行 + 赠品」（单号留在成功页/会话里，页面不再显示）✓
+          //   （`orderNo` 不传 ⇒ `sendPaymentStep` 那一段 `orderNo ? …` 天然不渲染 ✓ 文案/字段一个没改）
+        });
+        }
+
+        let finalLines = Array.isArray(pendingDraftLines) ? pendingDraftLines.slice() : [];
+        const currentSize = String(body[fields.size] ?? '').trim();
+        const currentAmount = String(body[fields.amount] ?? '').trim();
+        const currentProductId = String(submitView?.product_record_id || '').trim();
+        const alreadyInDraft = currentProductId && currentSize && finalLines.some((line) => (
+          String(line?.product_record_id || '') === currentProductId
+          && String(line?.size || '') === currentSize
+        ));
+        if (!alreadyInDraft && submitView?.found && currentSize) {
+          const inStock = sellableSizeTexts(submitView).has(currentSize);
+          const added = await writeService.sessions.addLine(openId, {
+            kind: 'shoe',
+            number: String(submitView.number || '').trim(),
+            item_no: String(submitView.item_no || '').trim(),
+            color: String(submitView.color || '').trim(),
+            product_record_id: currentProductId,
+            size: Number(currentSize),
+            trade_type_code: salesTradeTypeForStock({ inStock }),
+            amount: currentAmount,
+            gift: String(body[fields.gift] ?? '').trim(),
+            added_at: new Date().toISOString(),
+          });
+          if (!added?.ok) {
+            return sendHuman(res, 400, {
+              title: writeConfig.texts.failedTitle,
+              body: writeConfig.texts.failedBody || '',
+              requestId,
+            });
+          }
+          finalLines = added.session?.sale?.lines || finalLines;
+        }
+        const sessionNow = await writeService.sessions.get(openId).catch(() => null);
+        goodsOrderNo = String(sessionNow?.sale?.order_no || '').trim();
+        if (!goodsOrderNo) {
+          if (typeof nextOrderNo !== 'function') {
+            return sendHuman(res, 500, {
+              title: writeConfig.texts.failedTitle,
+              body: writeConfig.texts.failedBody || '',
+              requestId,
+            });
+          }
+          try {
+            const allocated = await nextOrderNo();
+            goodsOrderNo = String(allocated?.orderNo || '').trim();
+            await writeService.sessions.saveSaleProgress(openId, { order_no: goodsOrderNo });
+          } catch (error) {
+            logError('scan.sale.order_no.allocate_failed', { request_id: requestId, error: String(error.message || error) });
+            return sendHuman(res, 500, {
+              title: writeConfig.texts.failedTitle,
+              body: writeConfig.texts.failedBody || '',
+              requestId,
+            });
+          }
+        }
+        const submitDoneAt = Date.now();
+        logInfo(writeConfig.events.saleTiming, {
+          request_id: requestId,
+          phase: writeConfig.timing.phase.request,
+          ok: true,
+          code: '',
+          order_no: goodsOrderNo,
+          reused: false,
+          partial: false,
+          lines: lineAmounts.length,
+          master_only: false,
+          local_order_no: true,
+          submit_ms: Math.max(0, submitDoneAt - submitStartedAt),
+          queue_wait_ms: 0,
+          lookup_ms: Number(saleTiming.lookup_ms) || 0,
+          prepare_ms: Number(saleTiming.prepare_ms) || 0,
+          master_ms: 0,
+          status_ms: 0,
+          detail_ms: 0,
+          stock_ms: 0,
+          finalize_ms: 0,
+        });
+        return sendPaymentStep(res, req, {
+          paymentMethods: await candidatePaymentMethods(req),
+          realm,
+          submitKey: body[fields.submitKey],
+          count: finalLines.length,
+          // ⭐ 2026-10-17 E（她逐字：「资金页要显示**总金额**」）：
+          //   总金额 = 本单各行成交金额之和（**加完当前这一双之后的 finalLines**，不另算一份钱 ✗）。
+          //   拿不到（全空 / 非数字）⇒ 空串 ⇒ 页面不渲染那一行（不编 ✓）。
+          totalAmountText: (() => {
+            const cents = (Array.isArray(finalLines) ? finalLines : []).reduce(
+              (sum, line) => sum + Math.round(Number(String(line?.amount ?? '').trim() || 0) * 100), 0,
             );
             return cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '';
           })(),

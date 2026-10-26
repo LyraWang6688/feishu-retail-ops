@@ -32,7 +32,8 @@ const SUBMIT_PROGRESS_STYLE = `
 const hasProgressSubmit = (content) => String(content).includes('data-progress-submit="1"')
   || String(content).includes('data-view="payment-pay"');
 
-const submitProgressScriptHtml = () => `<script data-view="submit-progress">
+const submitProgressScriptHtml = (failureText = '') => `<script data-view="submit-progress">
+var SUBMIT_FAILURE_TEXT = ${JSON.stringify(String(failureText || ''))};
 (function () {
   if (window.__scanSubmitProgress) return;
   window.__scanSubmitProgress = true;
@@ -102,9 +103,9 @@ const submitProgressScriptHtml = () => `<script data-view="submit-progress">
     fetch(action, {
       method: 'POST', body: body, credentials: 'same-origin'
     }).then(deliver).catch(function () {
+      // 2026-10-27: do NOT resubmit automatically; avoid two POSTs from one click.
       hide();
-      try { HTMLFormElement.prototype.submit.call(form); }
-      catch (error) { window.location.reload(); }
+      show(SUBMIT_FAILURE_TEXT);
     });
   }, true);
 })();

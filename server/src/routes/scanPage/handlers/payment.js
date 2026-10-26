@@ -1,5 +1,6 @@
 'use strict';
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
+const { buildSalePayload } = require('../../../services/salesPayload');
 
 /**
  * 扫码路由核心深拆 P1：资金处理（`payment_pay`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -7,7 +8,7 @@ const { tapIdFromRequest } = require('../../../utils/correlationFields');
  */
 
 async function handlePaymentPay(ctx) {
-  const { SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService, options, successReturnFields, lookupInputOf } = ctx;
+  const { SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService, options, successReturnFields, lookupInputOf, salesAsync } = ctx;
         // ⭐⭐ 2026-10-14（业务负责人口径，逐字）：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」
         //   ⇒ **建单就发生在这一刻** ✓（点「提交这一单」时只到资金页、一个字都没写 ✓）
         //   · 会话里记着 `paymentStep:'pending'` ⇒ 说明她刚点过「提交这一单」、还没建单 ✓ ⇒ **现在建** ✓
@@ -38,6 +39,74 @@ async function handlePaymentPay(ctx) {
           const pendingPayments = formPayments.length
             ? formPayments
             : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
+          // ⭐⭐ 2026-10-27：异步销售唯一链路（显式开关）。
+          //   资金页只在「校验 + 冻结 payload + 入队」后返回；真正的飞书写入由 worker 完成。
+          if (salesAsync && writeConfig.sale.asyncFullEnabled === true) {
+            const orderNo = String(paySession?.sale?.order_no || '').trim();
+            if (!orderNo) {
+              return sendHuman(res, 400, {
+                title: writeConfig.texts.failedTitle,
+                body: writeConfig.texts.failedBody || '',
+                requestId,
+              });
+            }
+            const payloadLines = pendingLines.map((line) => ({
+              productRecordId: line.product_record_id,
+              size: line.size,
+              tradeTypeCode: line.trade_type_code,
+              actualAmount: line.amount,
+              number: line.number,
+              itemNo: line.item_no,
+              color: line.color,
+              kind: line.kind,
+              gift: line.gift,
+            }));
+            const built = buildSalePayload({
+              openId: openIdOf(req), orderNo, gift: body[fields.gift],
+              lines: payloadLines, payments: pendingPayments,
+            });
+            if (!built.ok) {
+              logWarn('scan.sale.async.invalid_payload', { request_id: requestId, errors: built.errors });
+              return sendHuman(res, 400, {
+                title: writeConfig.texts.failedTitle,
+                body: writeConfig.texts.failedBody || '',
+                requestId,
+              });
+            }
+            const enqueued = await salesAsync.enqueue({
+              submitKey: String(body[fields.submitKey] || ''),
+              payload: built.payload,
+            });
+            if (!enqueued.ok) {
+              logError('scan.sale.async.enqueue_failed', { request_id: requestId, errors: enqueued.errors });
+              return sendHuman(res, 500, {
+                title: writeConfig.texts.failedTitle,
+                body: writeConfig.texts.failedBody || '',
+                requestId,
+              });
+            }
+            // ⭐ 2026-10-27：入队后必须**轮换本单的 submit_key**（completeSale 会 lines/order_no 归零、
+            //   并把 key 的 seq +1）—— 只 clearDraft 不轮换 ⇒ 下一单拿到同一把 key ⇒ job_id 撞车。
+            await writeService.sessions.completeSale(openIdOf(req), {
+              key: String(body[fields.submitKey] || ''),
+              result: { job_id: enqueued.job?.job_id, order_no: orderNo },
+            });
+            logInfo('scan.sale.async.enqueued', {
+              request_id: requestId,
+              job_id: enqueued.job?.job_id,
+              order_no: orderNo,
+              line_count: pendingLines.length,
+              payment_count: pendingPayments.length,
+              reused: enqueued.created === false,
+            });
+            return sendPaymentStep(res, req, {
+              paymentMethods: await candidatePaymentMethods(req),
+              realm,
+              submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), false, 'sale') || '',
+              count: 0,
+              notice: fillWriteText(writeConfig.texts.asyncAcceptedText, { orderNo }),
+            });
+          }
           // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— ⭐ 2026-10-16 深夜 · 修「资金页那一按 500」✗：
           //   改前逐字：`asList(body[lineAmount]) 有值 ? 表单那份 : 会话那份`（**表单优先** ✗）
           //   改后逐字：**会话那份优先**（= ⭐ **货那一跑已经落下的那份金额** ✓），表单只作兜底 ✓

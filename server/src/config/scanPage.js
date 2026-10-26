@@ -126,6 +126,8 @@ const TEXTS = Object.freeze({
   // ⚠️ 2026-10-11：缺省领域改回**销售** ⇒ 这一页不再只叫"库存页"，标题改成与领域无关的
   //    （浏览器的标签页标题；她手机上是飞书 webview 的标题）。
   pageTitle: '{itemNo} · 扫码',
+  // 2026-10-27：提交进度遮罩 fetch 失败时给人看的一句话（不自动重发，避免一次点击两次 POST）
+  submitFailureText: '提交失败，请刷新后重试',
   priceLabel: '单价',
   identitySeparator: ' · ',
   stockHeading: '库存（共 {total} 双）',
