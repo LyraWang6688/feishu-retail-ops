@@ -23,6 +23,7 @@ const orderWithPreferred = (items = [], preferred = '') => {
     : list;
 };
 const { textValue, linkedRecordIds } = require('./v1BitableGateway');
+const { getConfigRows } = require('./configTableCache');
 
 /**
  * @param {{ listAll: Function }} gateway
@@ -53,7 +54,8 @@ const createPaymentMethodsService = (gateway, options = {}) => {
     const n = Number(raw);
     return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
   };
-  const ttlMs = options.ttlMs === undefined ? 5 * 60 * 1000 : Number(options.ttlMs);
+  // ⭐ 2026-10-26：配置表变动少 ⇒ 默认 30 分钟；读失败保留 lastGood（configTableCache）。
+  const ttlMs = options.ttlMs === undefined ? 30 * 60 * 1000 : Number(options.ttlMs);
   const now = options.now || (() => Date.now());
   let cache = null;
 
@@ -65,7 +67,8 @@ const createPaymentMethodsService = (gateway, options = {}) => {
   const load = async (stamp, cached) => {
     if (cached) return { ok: true, cached: true };
     try {
-      const rows = await gateway.listAll(tableKey);
+      // 统一配置快照：TTL 内复用；过期重读；读失败返回 lastGood（不退回配置假选项）。
+      const rows = await getConfigRows({ gateway, tableKey, ttlMs, now });
       const items = [];
       const detailed = [];
       const seen = new Set();

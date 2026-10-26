@@ -224,7 +224,10 @@ test('AC-PF5 🔴 **收多了**（收款 > 每件实收）⇒ 点按钮时 400 +
     assert.equal(calls.filter((c) => c.kind === 'submitSale').length, 1, '收多了**不许**建单 ✓（不许假成功 ✗）');
     assert.match(bad.html, /payment_pay|资金|全付|部分付/, '应当**重渲染资金页**（带提示 ✓）');
     // 她刚填的钱原样在（改一下就能再点）
-    assert.match(bad.html, /<option value="微信" selected>微信<\/option>/);
+    // ⭐ 2026-10-26 成对迁移：不再退回配置里的假「微信」；页面只认表/最后一次成功快照。
+    //   重渲染仍要保留金额与资金页（下面逐条钉住）。
+    assert.doesNotMatch(bad.html, /<option value="微信" selected>微信<\/option>/,
+      '不允许再渲染与表不一致的配置假选项「微信」');
     assert.match(bad.html, /name="payment_amount"[^>]*value="600"/);
     // 人话要指出是"收多了"（她一眼看到该改哪儿）
     const notice = (bad.html.match(/data-view="payment-step-notice">([\s\S]*?)<\/p>/) || [])[1] || '';

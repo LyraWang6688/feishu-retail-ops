@@ -1,4 +1,5 @@
 const { textValue } = require('./v1BitableGateway');
+const { getConfigRows } = require('./configTableCache');
 const { isSalesTradeType } = require('../config/salesMovements');
 
 const normalizeText = (value) =>
@@ -222,7 +223,8 @@ class V1ReferenceResolver {
   async resolvePaymentMethod(name) {
     if (!name) return null;
     const table = this.gateway.table('paymentMethod');
-    const records = await this.gateway.listAll('paymentMethod');
+    // 与页面/资金页共用同一份配置快照（读失败保留 lastGood；不再每次 listAll）。
+    const records = await getConfigRows({ gateway: this.gateway, tableKey: 'paymentMethod' });
     const wanted = normalizeText(name);
     const matches = records.filter(
       (record) => normalizeText(textValue(record.fields?.[table.fields.name])) === wanted

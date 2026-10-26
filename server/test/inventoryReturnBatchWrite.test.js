@@ -515,8 +515,11 @@ test('AC-IV1b ⭐ 验收（加库存）走的**不是同一段**：它已是 app
     assert.equal(a.batchGetLive, 0, '验收（增加方向）没有要"删之前先确认"的记录 ⇒ 不需要 batchGet');
     // ⚠️ 排除 schema 校验那一批 `appTableField.list`（一次性、与库存写入段无关）。
     const calls = h.client.calls.filter((call) => call.api !== 'fieldList');
-    assert.equal(calls.length, 5,
-      '验收那一段 = 5 次 HTTP：读行为表 1 ＋ 读实时库存 1 ＋ 读尺码表 1 ＋ createBatch 2（流水 / 实时库存）');
+    // ⭐ 2026-10-26 成对迁移（统一配置快照）：
+    //   改前逐字：5 次（读行为 1 + 读实时库存 1 + 读尺码 1 + createBatch 2）；
+    //   改后逐字：4 次（尺码管理走进程内配置快照 ⇒ 本段零额外读表；次数减少不是放宽）。
+    assert.equal(calls.length, 4,
+      '验收那一段 = 4 次 HTTP：读行为表 1 ＋ 读实时库存 1 ＋ createBatch 2（尺码走配置快照）');
     console.log(`[AC-IV1b] 验收（加库存，3 码）| 改前=改后 那一段HTTP=${calls.length} {${pretty(a)}}`
       + ' | 它 2026-10-13 已经是批量口，本卡零改动');
   } finally { h.cleanup(); }
