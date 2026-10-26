@@ -30,7 +30,7 @@ const make = ({ fail = false } = {}) => {
   };
   const jobStore = createSalesJobStore({ dir });
   const worker = createSalesAsyncWorker({ gateway, writeService, jobStore, logger: { logInfo() {}, logWarn() {}, logError() {} } });
-  return { dir, worker, jobStore, calls, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  return { dir, worker, jobStore, calls, writeService, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 };
 
 const payload = (over = {}) => ({
@@ -67,17 +67,40 @@ test('worker 写失败 ⇒ 状态 failed，并保留错误', async () => {
   } finally { h.cleanup(); }
 });
 
-test('worker 重启后能继续 queued job，不重复写', async () => {
+test('新 worker 启动后能续跑同一个 queued job，不重复写', async () => {
   const h = make();
   try {
-    const a = await h.worker.enqueue({ submitKey: 'scan_sale:s:3', payload: payload() });
-    // 模拟进程重启：同一个 job store 新 worker
-    const worker2 = createSalesAsyncWorker({ gateway: { table: () => ({ fields: { orderNo: '销售单号' } }), listByFilter: async () => [], create: async () => ({ recordId: 'main_1' }) }, writeService: { sessions: h.worker ? undefined : null }, jobStore: h.jobStore, logger: { logInfo() {}, logWarn() {}, logError() {} } });
-    assert.ok(worker2);
-    const done = await h.worker.process(a.job.job_id);
-    const again = await h.worker.process(a.job.job_id);
+    // 直接写一条 queued job（模拟进程在入队后、worker 启动前退出）
+    await h.jobStore.store.create({
+      job_id: 'sale_job_restart_1',
+      submit_key: 'scan_sale:s:3',
+      status: STATUS.queued,
+      payload: payload(),
+      attempts: 0,
+      last_error: '',
+      main_record_id: '',
+      order_no: 'XSD-20261026-0001',
+    });
+    // 新进程：同一个 job store，新 worker
+    const gateway2 = {
+      table: () => ({ fields: { orderNo: '销售单号' } }),
+      listByFilter: async () => [],
+      create: async () => ({ recordId: 'main_1' }),
+    };
+    const worker2 = createSalesAsyncWorker({
+      gateway: gateway2,
+      writeService: h.writeService,
+      jobStore: h.jobStore,
+      logger: { logInfo() {}, logWarn() {}, logError() {} },
+    });
+    await worker2.start();
+    for (let i = 0; i < 50; i += 1) {
+      const current = await h.jobStore.get('sale_job_restart_1');
+      if (current.status === STATUS.succeeded) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const done = await h.jobStore.get('sale_job_restart_1');
     assert.equal(done.status, STATUS.succeeded);
-    assert.equal(again.status, STATUS.succeeded);
-    assert.equal(h.calls.submit <= 1, true);
+    assert.equal(h.calls.submit, 1);
   } finally { h.cleanup(); }
 });

@@ -131,7 +131,9 @@ test('slow batch, sale timing and background warn failures are observable with d
     assert.equal(monitor().record({ event, duration_ms: OBSERVABILITY_ALERTS.slowMs + 1 })[0].rule, 'slow');
   }
   assert.equal(monitor().record({ event: 'scan.sale.timing', submit_ms: OBSERVABILITY_ALERTS.slowMs + 1 })[0].rule, 'slow');
-  for (const event of ['scan.sale.background_failed', 'scan.purchase.background_failed']) {
+  for (const event of ['scan.sale.background_failed', 'scan.sale.async.failed',
+    'scan.sale.async.enqueue_failed', 'scan.sale.async.start_failed',
+    'scan.sale.order_no.allocate_failed', 'scan.purchase.background_failed']) {
     assert.equal(monitor().record({ event, level: 'warn' })[0].rule, 'critical');
   }
 });

@@ -160,6 +160,11 @@ const TEXTS = Object.freeze({
   salesHomeTitle: '请扫下一个标签',
   salesHomeHint: '用飞书「扫一扫」扫下一个标签；也可以在手输框里填编号。',
   salesHomeJustSubmitted: '✅ 上一单已提交（{orderNo}）',
+  // 异步销售：资金页提交后回销售首页，用浮动 toast 告知（不是成功页）
+  salesHomeToast: '信息收集完毕，销售单号：{orderNo}',
+  // 资金页提交后：toast 停留后自动回工作台（她 2026-10-27 的口径）
+  salesHomeToastMs: 5000,
+  salesHomeReturnPath: '/workbench',
   salesHomeManualLabel: '编号（货号|颜色|尺码）',
   salesHomeManualSubmit: '打开这一款',
   // 降级与截断都**写在页面上**，不只在日志里（她看不到日志）。
@@ -906,6 +911,8 @@ const SCAN_PAGE = Object.freeze({
   //   补货列表版式 —— 列数**走配置**（以后改 2/4 只改这里 ✓ 显式数字 ✓ 不许 `|| 兜底` ✗）
   purchaseSizes: PURCHASE_SIZES,
   texts: TEXTS,
+  salesHomeToastMs: 5000,
+  salesHomeReturnPath: '/workbench',
   price: PRICE,
   fieldNamesPendingSchema: FIELD_NAMES_PENDING_SCHEMA,
   limits: LIMITS,

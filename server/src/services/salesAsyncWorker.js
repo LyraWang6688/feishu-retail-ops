@@ -82,6 +82,7 @@ const createSalesAsyncWorker = ({
       const job = await jobStore.get(jobId);
       if (!job) return null;
       if (job.status === STATUS.succeeded || job.status === STATUS.partialFailed || job.status === STATUS.failed) return job;
+      const startedAt = Date.now();
       await jobStore.update(jobId, { status: STATUS.running, attempts: Number(job.attempts || 0) + 1 });
       try {
         const mainRecordId = await ensureMain(job);
@@ -107,6 +108,9 @@ const createSalesAsyncWorker = ({
         });
         logger.logInfo('scan.sale.async.done', {
           job_id: jobId, order_no: result?.order_no || payload.order_no, status,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          line_count: (payload.lines || []).length,
+          payment_count: (payload.payments || []).length,
         });
         return await jobStore.get(jobId);
       } catch (error) {
@@ -114,7 +118,11 @@ const createSalesAsyncWorker = ({
           status: STATUS.failed,
           last_error: String(error?.message || error),
         }).catch(() => undefined);
-        logger.logError('scan.sale.async.failed', { job_id: jobId, error: String(error?.message || error) });
+        logger.logError('scan.sale.async.failed', {
+          job_id: jobId,
+          order_no: job.payload?.order_no || job.order_no || '',
+          error: String(error?.message || error),
+        });
         return jobStore.get(jobId);
       }
     })();

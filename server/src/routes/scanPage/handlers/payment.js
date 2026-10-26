@@ -99,13 +99,14 @@ async function handlePaymentPay(ctx) {
               payment_count: pendingPayments.length,
               reused: enqueued.created === false,
             });
-            return sendPaymentStep(res, req, {
-              paymentMethods: await candidatePaymentMethods(req),
-              realm,
-              submitKey: writeService?.sessions?.submitKeyFor?.(openIdOf(req), false, 'sale') || '',
-              count: 0,
-              notice: fillWriteText(writeConfig.texts.asyncAcceptedText, { orderNo }),
+            // 2026-10-27：**直接回工作台 + 工作台 toast**（中间不出现扫码页）。
+            //   域名保持当前 hm；toast 文案由服务端给，前端只负责显示 5 秒。
+            const toastText = fillWriteText(writeConfig.texts.asyncAcceptedText, { orderNo });
+            const query = new URLSearchParams({
+              [String(config.successReturn?.noticeKey || 'done')]: orderNo,
+              toast: toastText,
             });
+            return res.redirect(303, `/workbench/?${query.toString()}`);
           }
           // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— ⭐ 2026-10-16 深夜 · 修「资金页那一按 500」✗：
           //   改前逐字：`asList(body[lineAmount]) 有值 ? 表单那份 : 会话那份`（**表单优先** ✗）

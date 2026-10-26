@@ -47,7 +47,7 @@ const createAlertMonitor = ({
     lastSentAt.set(key, at);
     windowSent += 1;
     const context = { ...correlationFields(payload) };
-    for (const field of ['trace_id', 'request_id', 'batch_id', 'table_key', 'batch_index', 'outcome', 'error_code', 'log_id', 'confirmed_count', 'total_count']) {
+    for (const field of ['trace_id', 'request_id', 'batch_id', 'table_key', 'batch_index', 'outcome', 'error_code', 'log_id', 'confirmed_count', 'total_count', 'job_id', 'step', 'line_count', 'payment_count']) {
       if (payload[field] !== undefined && payload[field] !== '') context[field] = String(payload[field]).slice(0, 200);
     }
     const details = Object.entries(context).map(([k, v]) => `${k}=${v}`).join(' ');
