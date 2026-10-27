@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **521** 个事件。按前缀分组：
+共 **547** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -107,6 +107,8 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `label_print.canvas.fitting_equals_no_rotation` | 1 | src/services/labelPrintQueueRuntime.js |
+| `label_print.canvas.portrait_prerequisite` | 1 | src/services/labelPrintQueueRuntime.js |
 | `label_print.cleanup.done` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.cleanup.failed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.device.ack.failed` | 1 | src/routes/labelPrintDevice.js |
@@ -126,6 +128,7 @@
 | `label_print.job.pending_listed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.reprinted` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.reused` | 2 | src/services/labelPrintQueueService.js |
+| `label_print.queue.ready` | 1 | src/services/labelPrintQueueRuntime.js |
 | `label_print.scan.report` | 1 | src/routes/workbench.js |
 | `label_print.stream.backlog_failed` | 1 | src/routes/labelPrintDevice.js |
 | `label_print.stream.connected` | 1 | src/routes/labelPrintDevice.js |
@@ -197,6 +200,13 @@
 | `lark.sdk.error` | 1 | src/utils/larkLogger.js |
 | `lark.sdk.info` | 1 | src/utils/larkLogger.js |
 | `lark.sdk.warn` | 1 | src/utils/larkLogger.js |
+
+## log
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `log.event.unregistered.cache_hit` | 1 | src/utils/logger.js |
+| `log.event.unregistered.cache_miss` | 1 | src/utils/logger.js |
 
 ## observability
 
@@ -281,7 +291,11 @@
 | `purchase.batch.acceptance.no_record` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.acceptance.nothing_to_write` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.acceptance.written` | 1 | src/services/purchaseOrderBatchService.js |
+| `purchase.batch.arrival_status.arrived.cache_hit` | 1 | src/services/purchaseOrderBatchService.js |
+| `purchase.batch.arrival_status.arrived.cache_miss` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.arrival_status.no_record` | 1 | src/services/purchaseOrderBatchService.js |
+| `purchase.batch.arrival_status.pending.cache_hit` | 1 | src/services/purchaseOrderBatchService.js |
+| `purchase.batch.arrival_status.pending.cache_miss` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.document.exists` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.document.no_record` | 2 | src/services/purchase/documentImages.js<br>src/services/purchaseOrderBatchService.js |
 | `purchase.batch.order_amount.no_record` | 1 | src/services/purchaseOrderBatchService.js |
@@ -591,7 +605,19 @@
 | `workbench.auth.failed` | 1 | src/routes/feishuWebAuth.js |
 | `workbench.auth.provider_error` | 1 | src/routes/feishuWebAuth.js |
 | `workbench.auth.success` | 1 | src/routes/feishuWebAuth.js |
+| `workbench.inventory.categories_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.categories_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.products_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.products_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.query_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.query_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.stock_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.stock_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
 | `workbench.label_print.scan.rejected` | 1 | src/routes/labelPrintQueue.js |
+| `workbench.labels.cache_hit` | 1 | src/services/labelPrintService.js |
+| `workbench.labels.cache_miss` | 1 | src/services/labelPrintService.js |
+| `workbench.labels.failed.cache_hit` | 1 | src/routes/workbench.js |
+| `workbench.labels.failed.cache_miss` | 1 | src/routes/workbench.js |
 | `workbench.labels.listed` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.missing_price` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.missing_qr_record_id` | 1 | src/services/labelPrintService.js |
@@ -608,6 +634,10 @@
 | `workbench.lark.jsapi_signature.ok` | 1 | src/routes/workbench.js |
 | `workbench.orders.after_sales.completed` | 1 | src/services/workbenchOrderActionService.js |
 | `workbench.orders.second_delivery.completed` | 1 | src/services/workbenchOrderActionService.js |
+| `workbench.products.numbers.cache_hit` | 1 | src/services/labelPrintService.js |
+| `workbench.products.numbers.cache_miss` | 1 | src/services/labelPrintService.js |
+| `workbench.products.numbers.failed.cache_hit` | 1 | src/routes/workbench.js |
+| `workbench.products.numbers.failed.cache_miss` | 1 | src/routes/workbench.js |
 | `workbench.products.numbers.filtered` | 2 | src/services/labelPrintService.js |
 | `workbench.products.numbers.listed` | 1 | src/services/labelPrintService.js |
 | `workbench.products.numbers.server_filter_off` | 1 | src/services/labelPrintService.js |
@@ -619,6 +649,7 @@
 | `workbench.purchase.arrivals.failed` | 1 | src/routes/purchaseQuery.js |
 | `workbench.purchase.requests.failed` | 1 | src/routes/purchaseQuery.js |
 | `workbench.query.retry` | 1 | src/services/v1WorkbenchService.js |
+| `workbench.sales.after_sales.candidates.failed` | 1 | src/routes/workbench.js |
 | `workbench.sales.delivery.failed` | 1 | src/routes/workbench.js |
 | `workbench.sales.detail_amount.failed` | 1 | src/routes/workbench.js |
 | `workbench.sales.orders.failed` | 1 | src/routes/workbench.js |
