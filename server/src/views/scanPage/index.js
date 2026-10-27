@@ -76,10 +76,8 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   //   改后逐字：**这一处不渲染任何东西**（恒为空串 ✓；`${draftNotice}` 那个占位随之失效但**不改变页面输出** ✓）
   //   依据 = 她 2026-10-16 22:0x 上面那句 ✓（整条存草稿链退场 ⇒ 提示条也退场 ✓）
   const draftNotice = '';
-  // ⭐⭐ 2026-10-12（编号兜底）：编号缺段（典型 = 缺「类别」）但按（货号 + 颜色）**唯一命中**时，
-  //    页面上出**一条轻提示**（一句话，不写说明书）——她才知道"这个标签该重打了"。
-  const fallbackHint = view.number_fallback
-    ? `<p class="notice">${escapeHtml(config.texts.numberFallbackHint)}</p>` : '';
+  // 编号兜底已删除：不再渲染“重打标签”提示。
+  const fallbackHint = '';
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,

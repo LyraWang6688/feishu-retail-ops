@@ -753,7 +753,7 @@ const createScanPageRouter = (options = {}) => {
       });
     }
         if (getSessionUser(req)) return next();
-    // 「刚才那一页」= 原 path + 原 query（本 router 挂在 `SCAN_PAGE.route.basePath` 上，
+    // 「刚才那一页」= 原 path + 原 query（本 router 挂在 `SCAN_PAGE.route.recordBasePath` 上，
     // `req.originalUrl` 已经含挂载点）。再过一次回跳白名单：只放行扫码页自己，
     // 别的（`//host`、协议、绝对 URL、`/s/../api/...`）一律回落工作台首页。
     const target = resolveScanNext(

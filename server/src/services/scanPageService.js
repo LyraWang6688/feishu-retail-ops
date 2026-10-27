@@ -1249,7 +1249,6 @@ const createScanPageService = (rawGateway, options = {}) => {
     const view = {
       found: true,
       // ⭐ 兜底命中 ⇒ 用**表里那条的真实编号**（下游（加入本单 / 提交）拿到的才是对的编号），
-      //    并带上 `number_fallback` 让页面上出那条轻提示。
       number,
       item_no: productText('itemNo') || parsed.itemNo,
       color: productText('color') || parsed.color,

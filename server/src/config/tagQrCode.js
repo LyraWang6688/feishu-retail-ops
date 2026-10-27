@@ -31,7 +31,7 @@ const { readFlag, readInt, readString } = require('./envValue');
  *
  * 可用占位符：`{number}` = 该记录「编号」字段的值（形如 `YD6693-2|黑色|A`）。
  * ⚠️ **只编码替换进去的值，不编码模板**（否则 `/` 会被编成 `%2F`，扫出来不是同一个地址）。
- * 实现见 `services/tagQrCodeService.js` 的 `buildScanUrl`。
+ * 实现见 `services/tagQrCodeService.js` 的 记录 ID 二维码构造器。
  *
  * 例：编号 `YD6693-2|黑色|A` ⇒
  *     `https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA`

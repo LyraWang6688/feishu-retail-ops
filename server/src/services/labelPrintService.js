@@ -39,7 +39,7 @@
  *
  * ⚠️ **二维码内容是单一真源**：模板来自 `config/tagQrCode.js` 的 `SCAN_URL.recordIdTemplate`
  *    （`https://hm.bamamei.online/s/{编号}`），替换用 `services/tagQrCodeService.js` 导出的
- *    `buildScanUrl`（只编码值、不编码模板）。本文件**不抄第二份 URL 模板** —— 旧的那条
+ *    记录 ID 二维码构造器（只编码值、不编码模板）。本文件**不抄第二份 URL 模板** —— 旧的那条
  *    `https://workbench.bamamei.online/scan?no=…` 已随本次改造删除。
  *
  * ⚠️ **排版不进这里**（那是页面的事）：service 只回答"印什么"（数值 / 文案 / SVG 字符串 /

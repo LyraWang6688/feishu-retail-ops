@@ -49,7 +49,7 @@ const { readFlag, readInt, readList, readString } = require('./envValue');
 const { SCAN_PAGE } = require('./scanPage');
 
 /**
- * 路由：写入口挂在**同一个扫码 router**上（`app.js` 用 `SCAN_PAGE.route.basePath` 挂载）。
+ * 路由：写入口挂在**同一个扫码 router**上（`app.js` 用 `SCAN_PAGE.route.recordBasePath` 挂载）。
  * ⚠️ 不新开一段路径、也不挂到 `/api/*` 下：扫码的人是**手机浏览器直接打开**的，
  *    没有 `x-api-key`，挂到 `/api/*` 必被那条中间件挡掉（与第一版只读页同一条理由）。
  */
