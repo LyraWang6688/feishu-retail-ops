@@ -88,9 +88,7 @@ export const scanCardsPageHtml = (page = {}) => `
 export function createScanCardsModule(page = {}) {
   let scanNow = null;
   const texts = {
-    scanning: '正在打开飞书的「扫一扫」…',
     noSdk: '这台设备调不起飞书扫一扫：请在飞书里打开工作台再试一次。',
-    cancelled: '取消了扫码。',
     failed: '扫码没有成功，请再试一次。',
     timeout: '飞书扫一扫没响应（超时了）：请退出这一页重进再试一次。',
     empty: '没有扫到内容，请对着货品二维码再扫一次。',
@@ -116,7 +114,6 @@ export function createScanCardsModule(page = {}) {
       const scan = async (realm) => {
         if (busy) return;
         busy = true;
-        show(texts.scanning);
         try {
           const signature = await api.get(`${SCAN_SIGNATURE_PATH}?url=${encodeURIComponent(window.location.href.split('#')[0])}`);
           await withTimeout(loadSdk(signature?.jssdkUrl || ''), DEFAULT_TIMEOUT_MS, 'jssdk_timeout');
@@ -141,7 +138,7 @@ export function createScanCardsModule(page = {}) {
           const code = String(error?.message || '');
           if (code === 'jssdk_missing' || code === 'jssdk_load_failed' || code === 'scan_unsupported') show(texts.noSdk, 6000);
           else if (code === 'scan_timeout' || code === 'jssdk_timeout' || code === 'config_timeout' || code === 'ready_timeout') show(texts.timeout, 6000);
-          else if (/cancel/i.test(String(error?.errMsg || ''))) show(texts.cancelled, 2200);
+          else if (/cancel/i.test(String(error?.errMsg || ''))) { /* 用户取消：不提示，直接回到页面 */ }
           else show(texts.failed, 4000);
         } finally {
           busy = false;
