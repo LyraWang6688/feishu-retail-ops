@@ -142,6 +142,10 @@ summary::marker { color: var(--text-muted); }
 .entry-card .arrow { margin-top: auto; padding-top: var(--space-2); color: var(--primary); font-weight: var(--weight-bold); }
 .disabled-card { cursor: default; opacity: .75; }
 
+/* 领域/扫码入口卡：图标 + 文字同一行、整体居中 */
+.domain-cards .entry-card { flex-direction: row; align-items: center; justify-content: center; text-align: center; gap: var(--space-2); }
+.domain-cards .entry-card .entry-card-body { text-align: center; }
+
 /* ── 列表 / 指标 / 标签 ───────────────────────────────────────────────────── */
 .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-4) 0; }
 .metric { min-width: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-soft); }
