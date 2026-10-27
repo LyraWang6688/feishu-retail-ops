@@ -334,15 +334,12 @@ export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
  * 销售订单列表的**入口卡片**：交割单 / 售后单 / 草稿单。
  * 点击卡片后才进入对应内容（交割单=现有订单，其余=待建设）。
  */
-export function ordersSectionCardsHtml(orders = [], { counts = true } = {}) {
+export function ordersSectionCardsHtml(orders = []) {
   const listAll = Array.isArray(orders) ? orders : [];
   return `<div class="orders-section-cards" data-view="orders-section-cards">${SALES_SECTIONS.map((section) => {
-    const count = listAll.filter((order) => salesSectionOf(order) === section.key).length;
     return `<button class="entry-card orders-section-card" type="button" data-orders-section="${escapeHtml(section.key)}">
       <span class="icon">${escapeHtml(section.icon || '')}</span>
       <h3>${escapeHtml(section.label)}</h3>
-      <p>${escapeHtml(section.desc || '')}</p>
-      <span class="orders-section-meta"><span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span>${counts ? `<span class="muted">${count} 单</span>` : '<span class="muted">点开查看</span>'}</span>
     </button>`;
   }).join('')}</div>`;
 }
