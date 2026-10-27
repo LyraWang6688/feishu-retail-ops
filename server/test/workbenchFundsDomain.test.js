@@ -14,6 +14,14 @@ test('资金是独立一级领域，排在货品之后', () => {
   assert.deepEqual(order, ['sales', 'inventory', 'purchase', 'product', 'funds']);
 });
 
+test('每个一级 tab 都在 modules 表里注册了对应模块', () => {
+  const main = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  for (const module of ['sales', 'inventory', 'purchase', 'product', 'funds']) {
+    assert.match(main, new RegExp(`\\['${module}', (createDomainModule|createPlaceholderModule)\\('${module}'\\)\\]`), `一级 tab ${module} 没有模块注册`);
+  }
+  assert.doesNotMatch(main, /\['finance',/, '旧 finance 占位应被 funds 取代');
+});
+
 test('资金领域有独立占位页，不复用其他领域页面', () => {
   const block = domains.slice(domains.indexOf("id: 'funds'"), domains.indexOf("// ── ④ 货品"));
   assert.match(block, /id: 'funds-overview'/);
