@@ -330,6 +330,15 @@ export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
     </div>`;
 }
 
+function reportOrdersRendered(section, count) {
+  try {
+    const reporter = typeof window !== 'undefined' ? window.dshUiTap : null;
+    if (reporter && typeof reporter.diagnostic === 'function') {
+      reporter.diagnostic('action', { action: 'orders_section_rendered', result: 'ok', realm: 'sales', durationMs: count }, { path: '/api/workbench/ui-tap', page: 'workbench' });
+    }
+  } catch { /* never block rendering */ }
+}
+
 /**
  * 销售订单列表的**入口卡片**：交割单 / 售后单 / 草稿单。
  * 点击卡片后才进入对应内容（交割单=现有订单，其余=待建设）。
@@ -337,7 +346,7 @@ export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
 export function ordersSectionCardsHtml(orders = []) {
   const listAll = Array.isArray(orders) ? orders : [];
   return `<div class="orders-section-cards" data-view="orders-section-cards">${SALES_SECTIONS.map((section) => {
-    return `<button class="entry-card orders-section-card" type="button" data-orders-section="${escapeHtml(section.key)}">
+    return `<button class="entry-card orders-section-card" type="button" data-orders-section="${escapeHtml(section.key)}" data-tap-target="orders-section:${escapeHtml(section.key)}">
       <span class="entry-card-icon">${escapeHtml(section.icon || '')}</span>
       <span class="entry-card-body"><strong>${escapeHtml(section.label)}</strong></span>
     </button>`;
@@ -844,7 +853,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }
     const section = SALES_SECTIONS.find((item) => item.key === state.activeSection);
     if (!state.ordersLoaded) {
-      host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
+      reportOrdersRendered(state.activeSection, list.length);
+    host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
         <p class="section-loading" data-view="orders-waiting">正在读取订单…</p>`;
       return;
     }

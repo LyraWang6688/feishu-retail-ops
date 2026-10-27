@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **518** 个事件。按前缀分组：
+共 **521** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -51,6 +51,12 @@
 | `cleanup.ttl.failed` | 1 | src/utils/uploadCleanup.js |
 | `cleanup.ttl.started` | 1 | src/utils/uploadCleanup.js |
 | `cleanup.unlink_failed` | 1 | src/utils/uploadCleanup.js |
+
+## client
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `client.resource.failed` | 1 | src/utils/uiTapReport.js |
 
 ## hm
 
@@ -436,6 +442,7 @@
 | `scan.label_print.failed` | 1 | src/routes/scanPage/handlers/smallActions.js |
 | `scan.label_print.number_unresolved` | 1 | src/routes/scanPage/handlers/smallActions.js |
 | `scan.label_print.ready_failed` | 1 | src/routes/scanPage/flowHelpers.js |
+| `scan.launch` | 1 | src/utils/uiTapReport.js |
 | `scan.lookup.timing` | 1 | src/config/scanPage.js |
 | `scan.multi_item.add` | 1 | src/config/multiItemOrder.js |
 | `scan.multi_item.render` | 1 | src/config/multiItemOrder.js |
@@ -546,6 +553,7 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `ui.action` | 1 | src/utils/uiTapReport.js |
 | `ui.page.view` | 1 | src/config/funnel.js |
 | `ui.step.enter` | 1 | src/config/funnel.js |
 | `ui.tap.repeated` | 1 | src/config/uiTap.js |

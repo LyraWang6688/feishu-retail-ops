@@ -105,6 +105,70 @@ const handleUiTap = ({ req, res, scope = 'scan', realm = '' }) => {
     if (step) logInfo(FUNNEL.events.stepEnter, funnelFields);
     return res.status(204).end();
   }
+  // 关键动作（客户端 beacon）：订单卡进入后渲染、采购扫一扫取消返回
+  if (String(req?.query?.kind || '') === 'action') {
+    if (!UI_TAP.enabled) return res.status(204).end();
+    const action = clip(req?.query?.action, 48);
+    const allowed = ['orders_section_rendered', 'procurement_scan_returned'];
+    if (!allowed.includes(action)) return res.status(400).type('text').send('invalid action');
+    logInfo('ui.action', {
+      request_id: req?.requestId,
+      scope,
+      page: clip(req?.query?.page, UI_TAP.maxPageLength) || 'workbench',
+      action,
+      result: clip(req?.query?.result, 24) || 'ok',
+      realm: clip(req?.query?.realm, 32) || null,
+      duration_ms: Math.max(0, Number(req?.query?.duration_ms) || 0),
+      path: String(req?.originalUrl || '').split('?')[0],
+    });
+    return res.status(204).end();
+  }
+
+  // 扫一扫生命周期（客户端 beacon）：realm + result + duration_ms
+  if (String(req?.query?.kind || '') === 'scan_launch') {
+    if (!UI_TAP.enabled) return res.status(204).end();
+    const realm = clip(req?.query?.realm, 32);
+    const result = clip(req?.query?.result, 24);
+    const allowedRealms = ['sales', 'inventory', 'replenish', 'purchase_return'];
+    const allowedResults = ['opened', 'scanned', 'cancelled', 'timeout', 'unsupported', 'failed'];
+    if (!allowedRealms.includes(realm) || !allowedResults.includes(result)) {
+      return res.status(400).type('text').send('invalid scan launch');
+    }
+    const durationMs = Math.max(0, Number(req?.query?.duration_ms) || 0);
+    logInfo('scan.launch', {
+      request_id: req?.requestId,
+      scope,
+      page: clip(req?.query?.page, UI_TAP.maxPageLength) || 'workbench',
+      realm,
+      result,
+      duration_ms: durationMs,
+      path: String(req?.originalUrl || '').split('?')[0],
+    });
+    return res.status(204).end();
+  }
+
+  // 页面/资源/JS 加载失败（客户端 beacon）
+  if (String(req?.query?.kind || '') === 'client_error') {
+    if (!UI_TAP.enabled) return res.status(204).end();
+    const eventType = clip(req?.query?.event_type, 24);
+    const allowedTypes = ['resource', 'js', 'unhandledrejection'];
+    if (!allowedTypes.includes(eventType)) return res.status(400).type('text').send('invalid client error');
+    const rawUrl = String(req?.query?.url || '');
+    let safeUrl = rawUrl;
+    try { const parsed = new URL(rawUrl, 'https://local.invalid'); safeUrl = parsed.origin + parsed.pathname; } catch { safeUrl = rawUrl.split('?')[0]; }
+    logInfo('client.resource.failed', {
+      request_id: req?.requestId,
+      scope,
+      page: clip(req?.query?.page, UI_TAP.maxPageLength) || 'workbench',
+      event_type: eventType,
+      url: clip(safeUrl, 300),
+      status: Number(req?.query?.status) || null,
+      error: clip(req?.query?.error, 200),
+      path: String(req?.originalUrl || '').split('?')[0],
+    });
+    return res.status(204).end();
+  }
+
   if (!UI_TAP.enabled) return res.status(204).end();
   const target = clip(req?.query?.[fields.target], UI_TAP.maxTargetLength);
   if (!target) return res.status(400).type('text').send('missing target');

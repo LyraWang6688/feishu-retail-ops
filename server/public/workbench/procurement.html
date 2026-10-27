@@ -380,7 +380,19 @@
     document.body.append(scanHost);
     const scanModule = createScanCardsModule({ scanRealm: 'replenish' });
     scanModule.mount(scanHost);
-    document.getElementById('scanBtn').addEventListener('click', () => scanModule.scanNow());
+    document.getElementById('scanBtn').addEventListener('click', async () => {
+      const startedAt = Date.now();
+      await scanModule.scanNow();
+      // 扫一扫取消/失败返回后仍在这一页：记录“回到了原面板”，用于移动端回归。
+      try {
+        const reporter = window.dshUiTap;
+        if (reporter && typeof reporter.diagnostic === 'function') {
+          reporter.diagnostic('action', {
+            action: 'procurement_scan_returned', result: 'ok', durationMs: Date.now() - startedAt,
+          }, { path: '/api/workbench/ui-tap', page: 'workbench' });
+        }
+      } catch { /* telemetry never blocks page */ }
+    });
   </script>
 </body>
 </html>

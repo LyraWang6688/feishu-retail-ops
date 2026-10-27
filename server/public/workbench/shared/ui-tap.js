@@ -87,6 +87,47 @@
     return tapId;
   }
 
+
+  function buildDiagnosticUrl(kind, data, options) {
+    var o = options || {};
+    var d = data || {};
+    var url = (o.base || '') + (o.path || DEFAULT_PATH)
+      + '?kind=' + encodeURIComponent(kind || '')
+      + '&page=' + encodeURIComponent(o.page || d.page || '');
+    if (d.action) url += '&action=' + encodeURIComponent(String(d.action));
+    if (d.realm) url += '&realm=' + encodeURIComponent(String(d.realm));
+    if (d.result) url += '&result=' + encodeURIComponent(String(d.result));
+    if (typeof d.durationMs === 'number' && d.durationMs >= 0) url += '&duration_ms=' + Math.round(d.durationMs);
+    if (d.eventType) url += '&event_type=' + encodeURIComponent(String(d.eventType));
+    if (d.url) url += '&url=' + encodeURIComponent(String(d.url).slice(0, 300));
+    if (typeof d.status === 'number') url += '&status=' + Math.round(d.status);
+    if (d.error) url += '&error=' + encodeURIComponent(String(d.error).slice(0, 200));
+    return url;
+  }
+
+  // Scan launch / client load failures. Facts only: no form values, no PII.
+  function diagnostic(kind, data, options) {
+    try { return send(buildDiagnosticUrl(kind, data, options)); } catch (error) { return false; }
+  }
+
+  function bindDiagnostics(options) {
+    var o = options || {};
+    if (!o.path || !global.addEventListener || global.__dshDiagBound) return;
+    global.__dshDiagBound = true;
+    global.addEventListener('error', function (event) {
+      var target = event && event.target;
+      if (target && target !== global && target.tagName && /^(SCRIPT|LINK)$/.test(target.tagName)) {
+        diagnostic('client_error', { eventType: 'resource', url: target.src || target.href || '', error: 'load_failed' }, o);
+        return;
+      }
+      diagnostic('client_error', { eventType: 'js', url: event && event.filename || '', error: (event && event.message) || 'js_error' }, o);
+    }, true);
+    global.addEventListener('unhandledrejection', function (event) {
+      var reason = event && event.reason;
+      diagnostic('client_error', { eventType: 'unhandledrejection', error: (reason && (reason.message || reason)) || 'unhandledrejection' }, o);
+    });
+  }
+
   function targetOf(node) {
     var current = node;
     while (current && current !== document) {
@@ -102,6 +143,7 @@
   // NOTE: this never cancels the browser's default action -- a tap must always keep working.
   function bind(options) {
     var o = options || {};
+    bindDiagnostics(o);
     document.addEventListener('click', function (event) {
       if (event.defaultPrevented || event.button !== 0) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -120,6 +162,8 @@
     buildUrl: buildUrl,
     stampForm: stampForm,
     bind: bind,
+    diagnostic: diagnostic,
+    buildDiagnosticUrl: buildDiagnosticUrl,
     currentTapId: function () { return currentId; },
     // The field name this reporter stamps (read by core/api-client.js -- one source: here).
     formField: DEFAULT_FORM_FIELD,

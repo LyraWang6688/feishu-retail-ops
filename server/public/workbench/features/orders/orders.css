@@ -196,5 +196,6 @@
 
 /* 销售订单入口：与供应「录单」共用同一套 .entry-card 视觉 */
 .orders-section-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
-.orders-section-card { width: 100%; text-align: left; cursor: pointer; font: inherit; }
+.orders-section-card { width: 100%; flex-direction: row; align-items: center; justify-content: center; gap: var(--space-2); text-align: center; cursor: pointer; font: inherit; }
+.orders-section-card .entry-card-body { text-align: center; }
 .orders-section-meta { display: flex; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: var(--space-2); }
