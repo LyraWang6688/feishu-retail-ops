@@ -169,7 +169,7 @@ const appFor = ({ queue, writeService, realmWrite = true } = {}) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => ({ ...VIEW }) },
     writeService: writeService === undefined ? false : writeService,
     arrivalService: false,
@@ -193,11 +193,11 @@ const withServer = async (app, run) => {
   }
 };
 
-const getProduct = (base, query = '?from=product') => fetch(`${base}/s/${ENCODED}${query}`, {
+const getProduct = (base, query = '?from=product') => fetch(`${base}/r/${ENCODED}${query}`, {
   headers: { cookie: sessionCookie() },
 });
 
-const postPrint = (base, body = {}) => fetch(`${base}/s/${ENCODED}?from=product`, {
+const postPrint = (base, body = {}) => fetch(`${base}/r/${ENCODED}?from=product`, {
   method: 'POST',
   headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },
   body: new URLSearchParams({ action: SCAN_WRITE.actions.printLabel, ...body }).toString(),
@@ -227,7 +227,7 @@ test('AC-S1【打印这一款】= 原生表单 POST（隐藏 action），且 AC-
     const html = await response.text();
     const block = productBlock(html);
 
-    assert.ok(block.includes(`<form class="label-print-form" method="post" action="/s/${ENCODED}?from=product">`),
+    assert.ok(block.includes(`<form class="label-print-form" method="post" action="/r/${ENCODED}?from=product">`),
       '必须是 POST 到本领域的原生表单');
     assert.ok(block.includes(`name="${SCAN_WRITE.fields.action}" value="${SCAN_WRITE.actions.printLabel}"`),
       '隐藏字段名与动作值都来自配置（渲染层不写死）');
@@ -312,11 +312,11 @@ test('AC-S4 POST print_label ⇒ 把 URL 里那个编号排进队列 + 303 回�
     const response = await postPrint(base);
     assert.equal(response.status, 303);
     // ⚠️ 2026-10-11 改断言（**"提交后 303 回本领域"这个本意没变**）：
-    //   改前：location === '/s/<enc>?from=product&printed=1'
-    //   改后：location === '/s/<enc>?from=product&printed=1&job=job-1'
+    //   改前：location === '/r/<enc>?from=product&printed=1'
+    //   改后：location === '/r/<enc>?from=product&printed=1&job=job-1'
     //   理由：横幅要显示"**本次 N 张**"，N 必须从**那一条任务**上读
     //        （凭页面猜数字就是在编数据）⇒ 回跳时把 job id 带上。
-    assert.equal(response.headers.get('location'), `/s/${ENCODED}?from=product&printed=1&job=job-1`);
+    assert.equal(response.headers.get('location'), `/r/${ENCODED}?from=product&printed=1&job=job-1`);
     assert.equal(queue.calls.enqueue.length, 1);
     assert.equal(queue.calls.enqueue[0].number, NUMBER);
     assert.equal(queue.calls.enqueue[0].source, 'scan');
@@ -389,7 +389,7 @@ test('AC-S6 ⭐ 打印不受"扫码写入口关着"影响（它不写任何业�
   const queue = fakeQueue({ online: true });
   await withServer(appFor({ queue, writeService: false }), async (base) => {
     // 销售那一块（写入口）此时是"人话卡"
-    const sales = await (await fetch(`${base}/s/${ENCODED}?from=sales`, { headers: { cookie: sessionCookie() } })).text();
+    const sales = await (await fetch(`${base}/r/${ENCODED}?from=sales`, { headers: { cookie: sessionCookie() } })).text();
     assert.equal(sales.includes(SCAN_WRITE.actions.submitOrder), false, '写入口关着 ⇒ 销售表单不出现');
 
     // 但【打印这一款】照常可用（它在 503 那道闸门之前）。
@@ -463,7 +463,7 @@ test('AC-S10 别的领域一次都不碰打印队列（接了打印不许拖慢�
   await withServer(appFor({ queue }), async (base) => {
     for (const realm of ['sales', 'replenish', 'purchase_return', 'inventory']) {
       // eslint-disable-next-line no-await-in-loop
-      const response = await fetch(`${base}/s/${ENCODED}?from=${realm}`, { headers: { cookie: sessionCookie() } });
+      const response = await fetch(`${base}/r/${ENCODED}?from=${realm}`, { headers: { cookie: sessionCookie() } });
       assert.equal(response.status, 200);
     }
     assert.equal(queue.calls.status, 0, '这些领域不许读打印状态');
@@ -477,7 +477,7 @@ test('AC-S1 别的领域里不出现【打印这一款】的表单（只在「�
     // ⚠️ 断言的是**表单元素**（样式 `.label-print-form` 本来就在整页 STYLE 里，那不是内容）。
     for (const realm of ['sales', 'inventory', 'replenish', 'purchase_return']) {
       // eslint-disable-next-line no-await-in-loop
-      const html = await (await fetch(`${base}/s/${ENCODED}?from=${realm}`, { headers: { cookie: sessionCookie() } })).text();
+      const html = await (await fetch(`${base}/r/${ENCODED}?from=${realm}`, { headers: { cookie: sessionCookie() } })).text();
       assert.equal(html.includes('<form class="label-print-form"'), false, `${realm} 领域不该有打印表单`);
     }
     const product = await (await getProduct(base)).text();
@@ -495,7 +495,7 @@ test('AC-S13 ⭐⭐ 连点去重：POST 命中去重 ⇒ 303 带 `dup=1`，页�
   await withServer(appFor({ queue }), async (base) => {
     const response = await postPrint(base);
     assert.equal(response.status, 303);
-    assert.equal(response.headers.get('location'), `/s/${ENCODED}?from=product&dup=1&job=job-1`,
+    assert.equal(response.headers.get('location'), `/r/${ENCODED}?from=product&dup=1&job=job-1`,
       '命中去重 ⇒ 回跳带 dup=1（页面据此说清"没有重复提交"）');
 
     const block = productBlock(await (await getProduct(base, '?from=product&dup=1&job=job-1')).text());

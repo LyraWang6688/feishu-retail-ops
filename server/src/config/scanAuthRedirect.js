@@ -50,8 +50,8 @@ const RETURN_PATH = Object.freeze({
   //    （标题「请扫下一个标签」✗ 她截图那一页）⇒ "扫了码却没进到那一款" ✗
   //    ⇒ 白名单**加第二类**：扫码页的**记录 ID 路径**（取自 `SCAN_PAGE.route.recordBasePath`，
   //      不写死 `/r` ✓ 不抄第二份 ✓）· 判据仍是**归一化后**的 pathname（`/r/../api/…` 照样被挡 ✓）
-  allowedPrefixes: Object.freeze([`${SCAN_PAGE.route.basePath}/`, `${SCAN_PAGE.route.recordBasePath}/`]),
-  allowedExactPaths: Object.freeze([SCAN_PAGE.route.basePath, SCAN_PAGE.route.recordBasePath]),
+  allowedPrefixes: Object.freeze([`${SCAN_PAGE.route.recordBasePath}/`]),
+  allowedExactPaths: Object.freeze([SCAN_PAGE.route.recordBasePath]),
 });
 
 /** 未登录时 302 的登录入口（`app.js` 挂在 `/api/auth/feishu`，**在 `API_KEY` 之前**，手机能直接打开）。 */

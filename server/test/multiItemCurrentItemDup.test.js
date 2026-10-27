@@ -53,7 +53,7 @@ const A = Object.freeze({
 const DRAFT_A = Object.freeze({ ...A, entries: [{ size: '40', quantity: 2 }] });
 
 const writeContext = () => ({
-  postAction: '/s/K1', texts: {},
+  postAction: '/r/K1', texts: {},
   multiItem: { addAction: WIRE.addAction, addValue: WIRE.addValue, removeField: WIRE.removeField },
 });
 

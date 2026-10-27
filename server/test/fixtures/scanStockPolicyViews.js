@@ -109,7 +109,7 @@ const WRITE = {
   enabled: true,
   sizes: [],
   draft: { lines: [] },
-  postAction: '/s/8516',
+  postAction: '/r/8516',
   saleKey: 'scan_sale:scan_session_0123456789abcdef:1',
   replenishKey: 'scan_replenish:scan_session_0123456789abcdef:1',
   returnKey: 'scan_return:scan_session_0123456789abcdef:1',

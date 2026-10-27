@@ -6,11 +6,11 @@
  * （`{"success":false,"error":"请先通过飞书身份登录工作台","auth_required":true}`）。
  *
  * 本文件钉住五件事：
- *   ① 未登录 `GET /s/:编号` → **302**，Location = `/api/auth/feishu/start?next=<编码后的原 path + 原 query>`；
+ *   ① 未登录 `GET /r/:编号` → **302**，Location = `/api/auth/feishu/start?next=<编码后的原 path + 原 query>`；
  *   ② 登录回跳：`/start?next=...` 存下的 state，callback 成功后 **302 到 next**（真跑一遍 OAuth 回调，
  *      飞书那三个接口用桩顶掉 —— 测的是**仓库里那份路由代码**，不是手拼结果）；
  *   ③ **防开放重定向**：非法 next（`//evil.com` / `https://evil.com` / `/a//b` / `/\evil.com`
- *      / `/s/../api/...` …）一律**回落到工作台首页**；白名单只放行扫码页自己（`/s/...`）；
+ *      / `/r/../api/...` …）一律**回落到工作台首页**；白名单只放行扫码页自己（`/r/...`）；
  *   ④ 未带 next 时**与改动前逐字一致**（回工作台首页；`return_to` 既有语义不变，工作台前端照旧）；
  *   ⑤ **共享闸门的语义不变**：工作台接口未登录仍是 **401 JSON**；认证没启用仍是 503；
  *      白名单外仍是 403。
@@ -35,7 +35,7 @@ const { SCAN_AUTH_REDIRECT } = require('../src/config/scanAuthRedirect');
 const SESSION_SECRET = 'scan_redirect_test_session_secret';
 const NUMBER = 'YD6693-2|黑色|A';
 const ENCODED = encodeURIComponent(NUMBER);
-const PAGE = `/s/${ENCODED}`;
+const PAGE = `/r/${ENCODED}`;
 const START = SCAN_AUTH_REDIRECT.login.startPath;
 const NEXT_PARAM = SCAN_AUTH_REDIRECT.returnPath.paramName;
 const HOME = SCAN_AUTH_REDIRECT.returnPath.defaultPath;
@@ -83,7 +83,7 @@ const withServer = async (app, run) => {
 const scanApp = () => {
   const calls = [];
   const app = express();
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async (input) => { calls.push(input); return view(); } },
   }));
   app.use('/api/auth/feishu', createFeishuWebAuthRouter());
@@ -139,7 +139,7 @@ const assertLocationWithTicket = (location, target, label) => {
   assert.ok(String(url.searchParams.get('t') || '').length > 0, `${label}：票据不许为空`);
 };
 
-test('① 未登录 GET /s/:编号 → 302 去登录，Location 带 next（原 path + 原 query，编码正确）', async () => {
+test('① 未登录 GET /r/:编号 → 302 去登录，Location 带 next（原 path + 原 query，编码正确）', async () => {
   login();
   const app = scanApp();
   await withServer(app, async (base) => {
@@ -153,12 +153,12 @@ test('① 未登录 GET /s/:编号 → 302 去登录，Location 带 next（原 p
     assert.equal(raw.includes('&'), false, 'next 必须整体 encodeURIComponent');
     assert.equal(decodeURIComponent(raw), `${PAGE}?from=tag&x=1`, 'next = 原 path + 原 query');
 
-    // `/s/`（没有编号）也是"扫码页"：一样先去登录，回来再看那张"链接不对"的人话页
-    const bare = await fetch(`${base}${SCAN_PAGE.route.basePath}/`, { redirect: 'manual' });
+    // `/r/`（没有编号）也是"扫码页"：一样先去登录，回来再看那张"链接不对"的人话页
+    const bare = await fetch(`${base}${SCAN_PAGE.route.recordBasePath}/`, { redirect: 'manual' });
     assert.equal(bare.status, 302);
     assert.equal(
       decodeURIComponent(bare.headers.get('location').slice(`${START}?${NEXT_PARAM}=`.length)),
-      `${SCAN_PAGE.route.basePath}/`,
+      `${SCAN_PAGE.route.recordBasePath}/`,
     );
   });
   assert.deepEqual(app.calls, [], '还没登录，一次数据都不该查');
@@ -205,7 +205,7 @@ test('④ 防开放重定向：非法 / 白名单外的 next 一律回落工作�
   const illegal = [
     '//evil.com', '///evil.com', 'https://evil.com', 'http:evil.com',
     '/\\evil.com', '\\\\evil.com', 'javascript:alert(1)', 'data:text/html,x',
-    '/a//b', '/s/../api/workbench/inventory', '/s/%2e%2e/api/workbench/inventory',
+    '/a//b', '/r/../api/workbench/inventory', '/r/%2e%2e/api/workbench/inventory',
     '/%2F%2Fevil.com', '/workbench/index.html?tab=sales', '', '   ',
   ];
   await withFeishuStub(async () => {

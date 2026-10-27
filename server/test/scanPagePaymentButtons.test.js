@@ -74,7 +74,7 @@ test('AC-PB1 ⭐⭐ 资金页只有一颗提交按钮；「跳过」整块删；
       paymentRows: [{ method: '微信', amount: '' }],
       paymentMethods: ['微信', '现金'], defaultPaymentMethod: '微信',
     },
-    orderNo: 'XSD-TEST-1', postAction: '/s/TEST', submitKey: 'k', count: 1,
+    orderNo: 'XSD-TEST-1', postAction: '/r/TEST', submitKey: 'k', count: 1,
   });
   assert.ok(html.includes('data-view="payment-pay"'), '提交表单要在 ✓');
   assert.ok(html.includes('data-payment-add'), '渲染出来的页面上要有加行钮 ✓');
@@ -104,7 +104,7 @@ test('AC-PB5 ⭐⭐ 资金页显示「总金额」（调用方给；拿不到就
       paymentRows: [{ method: '微信', amount: '' }],
       paymentMethods: ['微信'], defaultPaymentMethod: '微信',
     },
-    orderNo: 'XSD-TEST-1', postAction: '/s/TEST', submitKey: 'k', count: 1,
+    orderNo: 'XSD-TEST-1', postAction: '/r/TEST', submitKey: 'k', count: 1,
   };
   const withTotal = renderSalePaymentStepPage({ ...base, totalAmountText: '399.5' });
   assert.ok(withTotal.includes('data-view="payment-step-total"'), '总金额那一行要在 ✓');

@@ -187,7 +187,7 @@ const formApp = ({ writeService, engine, background }) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use((req, _res, next) => { req.requestId = req.requestId || crypto.randomUUID(); next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => view() },
     gateway: {},
     writeService,
@@ -202,7 +202,7 @@ const formApp = ({ writeService, engine, background }) => {
   return app;
 };
 
-const postForm = (base, body) => fetch(`${base}${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`, {
+const postForm = (base, body) => fetch(`${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(NUMBER)}`, {
   method: 'POST',
   redirect: 'manual',
   headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },

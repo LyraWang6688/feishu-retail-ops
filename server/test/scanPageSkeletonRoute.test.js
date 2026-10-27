@@ -3,7 +3,7 @@
 /**
  * ⭐ 2026-10-13 骨架屏**上线开关**的验收标准（方案 A：默认关 ⇒ 默认路径一字不变 ✓）。
  *
- * 为什么要开关：`/s/<编号>` 原来是**同步整页**，一批既有 AC 直接断言那一页的 HTML ⇒
+ * 为什么要开关：`/r/<recordId>` 原来是**同步整页**，一批既有 AC 直接断言那一页的 HTML ⇒
  * 一旦默认改成"先回骨架 + 前端填充"，它们全红 ✗。所以：
  *   · **默认关**（`SCAN_PAGE_SKELETON_ENABLED` 缺省 false）⇒ 与改动前**逐字相同** ✓（不假绿）
  *   · **打开** ⇒ 首屏立刻回骨架（不读表）+ 同一段脚本 `fetch('?data=1')` 拿数据
@@ -26,6 +26,8 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const NUMBER = 'YD6693-2|黑色|A';
+const RECORD_ID = 'prod_1';
+const PRODUCT = { record_id: RECORD_ID, fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: 'A', 品类: { text: '休闲鞋' }, 单价: 399 } };
 const cookieOf = () => {
   const payload = Buffer.from(JSON.stringify({
     open_id: 'ou_skel', name: '测试', exp: Date.now() + 3600 * 1000,
@@ -35,6 +37,7 @@ const cookieOf = () => {
 };
 const fakeGateway = () => ({
   table: (key) => require('../src/config/v1BitableSchema').V1_BITABLE_SCHEMA.tables[key],
+  get: async (key, id) => (key === 'product' && id === RECORD_ID ? PRODUCT : null),
   listAll: async () => [], listByFilter: async () => [],
   create: async () => { throw new Error('扫码页不许写'); },
   update: async () => { throw new Error('扫码页不许写'); },
@@ -45,7 +48,7 @@ const configWith = (enabled) => ({ ...SCAN_PAGE, skeleton: { enabled } });
 const withServer = async (config, run) => {
   const app = express();
   app.use((req, res, next) => { req.requestId = 'req_skel'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({ gateway: fakeGateway(), config, startSnapshot: false }));
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({ gateway: fakeGateway(), config, startSnapshot: false }));
   const server = await new Promise((resolve) => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); });
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
   server.keepAliveTimeout = 1;
@@ -55,9 +58,9 @@ const withServer = async (config, run) => {
 const get = async (base, pathname) => (await fetch(`${base}${pathname}`, { headers: { cookie: cookieOf() } })).text();
 
 
-test('AC-R1 开关**关** ⇒ `/s/<编号>` 还是整页（不带任何骨架痕迹）', async () => {
+test('AC-R1 开关**关** ⇒ `/r/<recordId>` 还是整页（不带任何骨架痕迹）', async () => {
   await withServer(configWith(false), async (base) => {
-    const html = await get(base, `/s/${encodeURIComponent(NUMBER)}`);
+    const html = await get(base, `/r/${RECORD_ID}`);
     assert.equal(html.includes('scan-skeleton'), false, '关着就不该出现骨架');
     // 2026-10-14 改指向（她：骨架改成居中卡片「数据加载中」）：**开关关**时仍是整页 ⇒
     //   页面里不许出现骨架那句主文案（能力不变 ✓ 不是放宽 ✗）。
@@ -69,7 +72,7 @@ test('AC-R1 开关**关** ⇒ `/s/<编号>` 还是整页（不带任何骨架痕
 
 test('AC-R2 开关**开** ⇒ 首屏就是骨架（居中卡片 + 数据加载中、**不含**数据卡片）', async () => {
   await withServer(configWith(true), async (base) => {
-    const html = await get(base, `/s/${encodeURIComponent(NUMBER)}`);
+    const html = await get(base, `/r/${RECORD_ID}`);
     assert.match(html, /data-view="scan-skeleton"/, '首屏是骨架');
     // ⚠️ 2026-10-14 改指向（她：「显示：数据加载中」✓）—— 改前逐字：`assert.match(html, /数据加载中/)`
   assert.match(html, /数据加载中/, '要有那句主文案（不许空白 ✗）');
@@ -82,13 +85,13 @@ test('AC-R2 开关**开** ⇒ 首屏就是骨架（居中卡片 + 数据加载�
 
 test('AC-R3 `?data=1` ⇒ 落到原有的整页渲染（走同一个 lookup ✓ 数据等价）', async () => {
   await withServer(configWith(true), async (base) => {
-    const viaData = await get(base, `/s/${encodeURIComponent(NUMBER)}?data=1`);
+    const viaData = await get(base, `/r/${RECORD_ID}?data=1`);
     assert.match(viaData, /^<!doctype html>/, '拿回来的是整页 HTML（骨架那段脚本会整页替换）');
     assert.equal(viaData.includes('data-view="scan-skeleton"'), false, '数据那一趟不该再是骨架');
     // 关掉开关那一版要**另起一个 app**（配置冻结 ⇒ 不能在同一个 app 里改）
     const off = await new Promise((resolve, reject) => {
       withServer(configWith(false), async (baseOff) => {
-        try { resolve(await get(baseOff, `/s/${encodeURIComponent(NUMBER)}`)); } catch (error) { reject(error); }
+        try { resolve(await get(baseOff, `/r/${RECORD_ID}`)); } catch (error) { reject(error); }
       }).catch(reject);
     });
     // 数据等价（逐字比较时把请求号这类易变片段抹掉）

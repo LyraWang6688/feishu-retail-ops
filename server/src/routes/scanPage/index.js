@@ -353,7 +353,7 @@ const createScanPageRouter = (options = {}) => {
       trigger: String(opts.renderedTrigger || 'payment_step'),
       number: String(scanTargetOf(req)?.value || ''),
     });
-    const target = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
+    const target = backTargetFor(req, decodeURIComponent(String(req.params.recordId || '')));
     // ⚠️ 默认 200 ✓；⭐ 结算没过那一次要 **400**（"她能改"的那一类 ⇒ 与既有口径一致 ✓ 旧行为也是 400 ✓）
     const status = Number(opts.status) === 400 ? 400 : 200;
     return sendHtml(res, status, renderSalePaymentStepPage({
@@ -757,7 +757,7 @@ const createScanPageRouter = (options = {}) => {
     // `req.originalUrl` 已经含挂载点）。再过一次回跳白名单：只放行扫码页自己，
     // 别的（`//host`、协议、绝对 URL、`/s/../api/...`）一律回落工作台首页。
     const target = resolveScanNext(
-      String(req.originalUrl || `${config.route.basePath}${req.url || ''}`),
+      String(req.originalUrl || `${config.route.recordBasePath}${req.url || ''}`),
     );
     logInfo(SCAN_AUTH_REDIRECT.events.loginRedirect, {
       request_id: req.requestId,
@@ -995,30 +995,16 @@ const createScanPageRouter = (options = {}) => {
   //    · `/s/:number`   ⇒ `{ mode: 'number',   value: 编号 }`
   //    · `/r/:recordId` ⇒ `{ mode: 'recordId', value: 记录 ID }`
   //    🔴 **不许**在别处再拼一套路径（`postActionFor` 是唯一出口）—— 两边各写一份必然漂。
-  const isRecordBase = (req) => String(req.baseUrl || '') === String(config.route.recordBasePath || '');
+  const isRecordBase = () => true;
   const scanTargetOf = (req) => {
-    const raw = req.params?.recordId !== undefined ? req.params.recordId : req.params?.number;
-    const value = decodeURIComponent(String(raw ?? ''));
-    return { mode: isRecordBase(req) ? 'recordId' : 'number', value };
+    const value = decodeURIComponent(String(req.params?.recordId ?? ''));
+    return { mode: 'recordId', value };
   };
-  /**
-   * ⭐⭐ 回跳时用哪个值：`/r` 底下用**记录 ID**（URL 上那个），
-   * `/s` 底下**沿用调用方原来那个值**（`view.number` / URL 里的编号）—— **逐字不变**。
-   */
-  const backTargetFor = (req, fallbackValue) => (isRecordBase(req)
-    ? scanTargetOf(req)
-    : { mode: 'number', value: fallbackValue });
+  /** 回跳沿用 URL 上的记录 ID。 */
+  const backTargetFor = (req) => scanTargetOf(req);
 
-  /** 这一页的"取商品"入参（`scanPageService.lookup` 的两条路共用同一份出参约定）。 */
-  const lookupInputOf = (req) => {
-    const target = scanTargetOf(req);
-    if (target.mode === 'recordId') {
-      // 「拿到 recordId 但那条货品读不到」时的**回退**：URL 上若还带着编号就按编号再试一次。
-      const fallbackNumber = String(req.query?.[config.route.recordNumberQuery] ?? '').trim();
-      return { recordId: target.value, number: fallbackNumber || undefined };
-    }
-    return { number: target.value };
-  };
+  /** 这一页的"取商品"入参：只按记录 ID。 */
+  const lookupInputOf = (req) => ({ recordId: scanTargetOf(req).value });
 
   /**
    * 表单的 POST 目标（= 处理完回跳到哪一页）。
@@ -1034,12 +1020,8 @@ const createScanPageRouter = (options = {}) => {
    *      **或**一个字符串（= 按编号，既有调用点逐字不变）。挂载点决定拼 `/s` 还是 `/r`。
    */
   const postActionFor = (target, realm = DEFAULT_REALM) => {
-    const resolved = target && typeof target === 'object'
-      ? target
-      : { mode: 'number', value: target };
-    const basePath = resolved.mode === 'recordId'
-      ? String(config.route.recordBasePath || '')
-      : config.route.basePath;
+    const resolved = target && typeof target === 'object' ? target : { value: target };
+    const basePath = String(config.route.recordBasePath || '');
     const path = `${basePath}/${encodeURIComponent(String(resolved.value || ''))}`;
     return realm && realm !== DEFAULT_REALM ? `${path}?from=${encodeURIComponent(realm)}` : path;
   };
@@ -1098,7 +1080,7 @@ const createScanPageRouter = (options = {}) => {
   //    · `/r/:recordId` ⇒ `req.params.recordId` = 记录 ID（**新二维码走这条**）
   //    ⚠️ 用**路径数组**把同一个 handler 挂到两个模式上 —— **不复制一份处理逻辑**；
   //      "这一页在取哪一样东西"由挂载点判定（`scanTargetOf`），其余一行都不分叉。
-  const ROUTE_PATTERNS = [config.route.path, config.route.recordPath].filter(Boolean);
+  const ROUTE_PATTERNS = [config.route.recordPath].filter(Boolean);
   /**
    * ⭐⭐ 2026-10-13（她问"我点了几次"）：**前端点击埋点** `ui.tap`。
    * ⭐⭐ 2026-10-14 晚（埋点 P0 ②④⑤）：处理体**上移到 `utils/uiTapReport.js`** ——
@@ -1218,7 +1200,7 @@ const createScanPageRouter = (options = {}) => {
       logRendered(req, {
         page: 'skeleton',
         trigger: 'skeleton_first_entry',
-        number: String(lookupInputOf(req).number || lookupInputOf(req).recordId || ''),
+        number: String(lookupInputOf(req).recordId || ''),
       });
       return sendHtml(res, 200, renderScanSkeleton(lookupInputOf(req), config));
     }
@@ -1400,7 +1382,7 @@ const createScanPageRouter = (options = {}) => {
           logRendered(req, {
             page: 'bad_number',
             trigger: 'lookup_bad_number',
-            number: String(lookupInputOf(req).number || lookupInputOf(req).recordId || ''),
+            number: String(view.number || lookupInputOf(req).recordId || ''),
           });
           return badNumberPage(res, 400, requestId);
         }
@@ -1509,7 +1491,7 @@ const createScanPageRouter = (options = {}) => {
       logRendered(req, {
         page: 'failed',
         trigger: 'render_failed',
-        number: String(lookupInputOf(req).number || lookupInputOf(req).recordId || ''),
+        number: String(lookupInputOf(req).recordId || ''),
       });
       return respondFailure(res, error, requestId, timing);
     }
@@ -1585,7 +1567,7 @@ const createScanPageRouter = (options = {}) => {
     if (isMultiItemAdd || isMultiItemRemove) {
       // ⚠️ 回跳口径与页面上的表单 `action` **同一处**（`:` 下面别的分支用的也是它 ✓ 不另拼一份 ✗）
       const backPathOf = (realmId) => postActionFor(
-        backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realmId,
+        backTargetFor(req, decodeURIComponent(String(req.params.recordId || ''))), realmId,
       );
       // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：**加货成功之后**，这一发回跳带上触发参数
       //   ⇒ 回来的那一页（**同一个领域** ✓）才去调飞书扫一扫 ⇒ 扫到的那件带 `?from=<领域>` 落回来 ✓。

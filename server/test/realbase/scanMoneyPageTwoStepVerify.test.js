@@ -181,7 +181,7 @@ const withServer = async (run) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   const router = createScanPageRouter({ startSnapshot: false }); // 生产同款接线（真 gateway + 真写服务）
-  app.use(SCAN_PAGE.route.basePath, router);
+  app.use(SCAN_PAGE.route.recordBasePath, router);
   app.use(SCAN_PAGE.route.recordBasePath, router);
   const server = await new Promise((resolve) => { const i = app.listen(0, '127.0.0.1', () => resolve(i)); });
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
@@ -224,7 +224,7 @@ const prepare = async () => {
 test(`V1/V2/V5 · 点提交=只建【货】那一单 ⇒ 点资金页按钮才写【钱】（+ 读回「关联销售」指向哪张表）`, { skip: SKIP || false }, async () => {
   const { gateway, operator, cookie, pick } = await prepare();
   SAY('操作人 =', operator, '· 候选 =', JSON.stringify(pick));
-  const urlPath = `${SCAN_PAGE.route.basePath}/${encodeURIComponent(pick.number)}`;
+  const urlPath = `${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(pick.number)}`;
   await withServer(async (base) => {
     const before = await counts(gateway);
     SAY('① 点提交前四表 =', JSON.stringify(before));
@@ -319,7 +319,7 @@ test(`V1/V2/V5 · 点提交=只建【货】那一单 ⇒ 点资金页按钮才�
 
 test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { skip: SKIP || false }, async () => {
   const { gateway, cookie, pick } = await prepare();
-  const urlPath = `${SCAN_PAGE.route.basePath}/${encodeURIComponent(pick.number)}`;
+  const urlPath = `${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(pick.number)}`;
   await withServer(async (base) => {
     const before = await counts(gateway);
     await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size, [SCAN_WRITE.fields.lineAmount]: LINE_AMOUNT });
@@ -363,7 +363,7 @@ test(`V3 · 同一把 submitKey 连点两次（含并发）⇒ 只写一次`, { 
 
 test(`V4 · 资金页金额不填 ⇒ 400 + 人话 + 钱零写入（金额必填口径）`, { skip: SKIP || false }, async () => {
   const { gateway, cookie, pick } = await prepare();
-  const urlPath = `${SCAN_PAGE.route.basePath}/${encodeURIComponent(pick.number)}`;
+  const urlPath = `${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(pick.number)}`;
   await withServer(async (base) => {
     await postPage(base, urlPath, cookie, { action: SCAN_WRITE.actions.submitOrder, [SCAN_WRITE.fields.size]: pick.size, [SCAN_WRITE.fields.lineAmount]: LINE_AMOUNT });
     await waitForPendingSaleBackgrounds();

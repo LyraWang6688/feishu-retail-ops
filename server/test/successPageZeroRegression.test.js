@@ -92,8 +92,8 @@ test('AC-REG3 ⭐⭐ 探针：**没有任何开关**也照样极简（老那几�
   // 一页"塞满了老 affordance"的成功页入参（回跳链接 / 返回 / 自动跳转 / 追加动作块）
   const payload = {
     title: 'T', body: 'B', tone: 'success', number: 'N', details: ['D'], retryHint: 'H',
-    backPath: '/s/a', backLabel: '再录一单', returnPath: '/s/b', returnLabel: '返回扫码',
-    autoReturnUrl: '/s/c', returnDelaySeconds: 2, extraActionsHtml: '<button>追加</button>',
+    backPath: '/r/a', backLabel: '再录一单', returnPath: '/r/b', returnLabel: '返回扫码',
+    autoReturnUrl: '/r/c', returnDelaySeconds: 2, extraActionsHtml: '<button>追加</button>',
   };
   // 🔴 **不传任何 `successPage`**（= 没有开关、没有注入）⇒ 必须已经极简 ✓
   const defaultHtml = renderScanMessagePage(payload, SCAN_PAGE);

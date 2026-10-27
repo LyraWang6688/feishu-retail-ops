@@ -164,7 +164,7 @@ const makeApp = ({ writeService, backgroundCalls = [] }) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use((req, _res, next) => { req.requestId = req.requestId || crypto.randomUUID(); next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async (input) => viewOf(String((input && (input.number || input.recordId)) || '')) },
     gateway: {},
     writeService,
@@ -182,7 +182,7 @@ const makeApp = ({ writeService, backgroundCalls = [] }) => {
 
 const getPage = async (base, { from = 'replenish', number = NUMBER } = {}) => {
   const response = await fetch(
-    `${base}${SCAN_PAGE.route.basePath}/${encodeURIComponent(number)}?from=${from}`,
+    `${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(number)}?from=${from}`,
     { headers: { cookie: sessionCookie() }, signal: AbortSignal.timeout(15_000) },
   );
   assert.equal(response.status, 200, `?from=${from} 那一页要能打开 ✓`);
@@ -190,7 +190,7 @@ const getPage = async (base, { from = 'replenish', number = NUMBER } = {}) => {
 };
 
 const postForm = (base, body, { from = 'replenish', number = NUMBER } = {}) => fetch(
-  `${base}${SCAN_PAGE.route.basePath}/${encodeURIComponent(number)}?from=${from}`,
+  `${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(number)}?from=${from}`,
   {
     method: 'POST', redirect: 'manual',
     headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },

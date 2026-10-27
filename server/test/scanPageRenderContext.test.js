@@ -23,7 +23,7 @@ test('logRendered：scan.page.rendered + 漏斗（goods→entry）', () => {
   const logs = capture(() => {
     const { logRendered } = createRenderContext({
       config: { events: { rendered: 'scan.page.rendered' } },
-      postActionFor: () => '/s/',
+      postActionFor: () => '/r/',
     });
     logRendered({ requestId: 'r1', query: { from: 'sales' } }, { page: 'goods', trigger: 'realm:sales', number: 'N1' });
   });
@@ -42,14 +42,14 @@ test('successReturnFields：开关关 ⇒ {}；开启 ⇒ 回跳 + 单号 + 兜�
   const calls = [];
   const { successReturnFields } = createRenderContext({
     config: { successReturn: { enabled: false } },
-    postActionFor: () => '/s/',
+    postActionFor: () => '/r/',
   });
   assert.deepEqual(successReturnFields({ baseUrl: '/s' }, '#x'), {});
 
   const cfg = {
     successReturn: { enabled: true, homePath: '/', homeRealm: 'sales', noticeKey: 'done', label: '回首页', delaySeconds: 2 },
   };
-  const ctx = createRenderContext({ config: cfg, postActionFor: (target, realm) => { calls.push([target, realm]); return `/s/${target}?from=${realm}`; } });
+  const ctx = createRenderContext({ config: cfg, postActionFor: (target, realm) => { calls.push([target, realm]); return `/r/${target}?from=${realm}`; } });
   const fields = ctx.successReturnFields({ baseUrl: '/s' }, 'rec1', 'XSD-1');
   assert.equal(fields.returnLabel, '回首页');
   assert.equal(fields.returnDelaySeconds, 2);

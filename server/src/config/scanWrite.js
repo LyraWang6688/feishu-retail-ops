@@ -54,8 +54,7 @@ const { SCAN_PAGE } = require('./scanPage');
  *    没有 `x-api-key`，挂到 `/api/*` 必被那条中间件挡掉（与第一版只读页同一条理由）。
  */
 const ROUTE = Object.freeze({
-  basePath: SCAN_PAGE.route.basePath, // '/s'
-  path: SCAN_PAGE.route.path,         // '/:number'
+  basePath: SCAN_PAGE.route.recordBasePath
 });
 
 /**

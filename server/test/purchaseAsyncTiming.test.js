@@ -111,7 +111,7 @@ const createGatedWriteService = () => {
 const appWith = (write) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => view() },
     gateway: {},
     writeService: write,
@@ -124,7 +124,7 @@ const postForm = async (url, cookie, body) => fetch(url, {
   body: new URLSearchParams(body).toString(),
   redirect: 'manual',
 });
-const pageUrl = (base, realm) => `${base}/s/${encodeURIComponent(NUMBER)}?from=${realm}`;
+const pageUrl = (base, realm) => `${base}/r/${encodeURIComponent(NUMBER)}?from=${realm}`;
 
 /** 她**填好了**的两条合法请求（尺码/数量/金额齐 —— 否则会（正确地）被当场拦 ✓）。 */
 const legalCases = () => ([

@@ -4,15 +4,15 @@ const { rendererSource } = require('./support/rendererSource');
 /**
  * ⭐⭐ 2026-10-13 **真病根**（nginx 日志逐字）：
  *   21:32:03 `GET /r/rec28dZKS5qr58` => **200** ✓（票据那一刀成功 ⇒ 她确实进了那一款）
- *   21:32:04 `GET /s/?data=1`          => 200   ← ⭐ **页面自己把首页数据拉回来覆盖了自己** ✗
+ *   21:32:04 `GET /r/?data=1`          => 200   ← ⭐ **页面自己把首页数据拉回来覆盖了自己** ✗
  *   ⇒ 她最终看到「请扫下一个标签」（首页）✗
  *
- * 病根：骨架里那段取数脚本**把 `/s/` 写死了**（`fetch('/s/' + number + '?data=1')`）——
- *   在 `/r/<记录ID>` 上 `number` 是空的 ⇒ 请求变成 `/s/?data=1`（不带编号 = 首页）✗
+ * 病根：骨架里那段取数脚本**把 `/r/` 写死了**（`fetch('/r/' + number + '?data=1')`）——
+ *   在 `/r/<记录ID>` 上 `number` 是空的 ⇒ 请求变成 `/r/?data=1`（不带编号 = 首页）✗
  * 修法：取**当前页面自己的路径**（`window.location.pathname + '?data=1'`）✓
  *   · `/r/<记录ID>` ⇒ `/r/<记录ID>?data=1` ✓（这一款自己的数据 ✓）
- *   · `/s/<编号>`   ⇒ `/s/<编号>?data=1` ✓（原样 ✓）
- *   · 不带编号的首页 `/s/` ⇒ `/s/?data=1` ✓（**那条仍保留** ✓ 回归 ✓）
+ *   · `/r/<编号>`   ⇒ `/r/<编号>?data=1` ✓（原样 ✓）
+ *   · 不带编号的首页 `/r/` ⇒ `/r/?data=1` ✓（**那条仍保留** ✓ 回归 ✓）
  *   ⚠️ `?data=1` 走的仍是**同一个** `service.lookup`（**没有第二条取数路径** ✗）
  */
 const test = require('node:test');
@@ -29,7 +29,7 @@ const { renderScanSkeleton, renderScanPage } = require('../src/views/scanPageRen
 const RENDERER_SRC = rendererSource();
 const RECORD_ID = 'rec28dZKS5qr58';
 
-test('AC-RD1 ⭐ 骨架的取数请求 = **当前页面自己的路径**（不再写死 /s/）', () => {
+test('AC-RD1 ⭐ 骨架的取数请求 = **当前页面自己的路径**（不再写死 /r/）', () => {
   const html = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
   // ⚠️ 2026-10-14 改写（她的真机：取数把 from 丢了 ⇒ 六格点了看着都没反应 ✗）—— 改前逐字：
   //     `assert.ok(html.includes("window.location.pathname + '?data=1'"), ...)`
@@ -38,27 +38,27 @@ test('AC-RD1 ⭐ 骨架的取数请求 = **当前页面自己的路径**（不�
     `骨架必须按当前路径取数，并保留当前 query（实际片段：${html.slice(html.indexOf('fetch('), html.indexOf('fetch(') + 110)}）`);
   assert.ok(html.includes('window.location.search'), '要读当前 query（from= 不许丢 ✓）');
   assert.ok(html.includes("dataQuery.push('data=1')"), '仍强制 data=1 ✓');
-  assert.equal(html.includes("'/s/' + encodeURIComponent"), false,
-    '🔴 不许再写死 /s/（写死 ⇒ /r/ 页面会去拉首页数据 ✗）');
+  assert.equal(html.includes("'/r/' + encodeURIComponent"), false,
+    '🔴 不许再写死 /r/（写死 ⇒ /r/ 页面会去拉首页数据 ✗）');
 });
 
-test('AC-RD2 ⭐ `/r/<记录ID>` 上取到的是**这一款**的数据（不是 /s/?data=1）', () => {
-  // 骨架在 `/r/<记录ID>` 上服务时：`data-number` 为空 ⇒ 旧实现拼出 `/s/?data=1` ✗
+test('AC-RD2 ⭐ `/r/<记录ID>` 上取到的是**这一款**的数据（不是 /r/?data=1）', () => {
+  // 骨架在 `/r/<记录ID>` 上服务时：`data-number` 为空 ⇒ 旧实现拼出 `/r/?data=1` ✗
   const html = renderScanSkeleton({ number: '' }, SCAN_PAGE);
-  assert.equal(html.includes("'/s/' + encodeURIComponent('' ) + '?data=1'"), false, '不许拼出 /s/?data=1 ✗');
-  assert.equal(/fetch\('\/s\/\?data=1'/.test(html), false, '🔴 页面上不许出现写死的 `/s/?data=1` ✗');
+  assert.equal(html.includes("'/r/' + encodeURIComponent('' ) + '?data=1'"), false, '不许拼出 /r/?data=1 ✗');
+  assert.equal(/fetch\('\/s\/\?data=1'/.test(html), false, '🔴 页面上不许出现写死的 `/r/?data=1` ✗');
   assert.ok(html.includes('window.location.pathname'), '必须按当前路径取（`/r/<记录ID>` ⇒ 自己 ✓）');
 });
 
-test('AC-RD3 回归：不带编号的首页 `/s/` 那条**仍然照旧**（`/s/?data=1` ✓）', () => {
-  // `location.pathname` 在首页就是 `/s/`（或 `/s`）⇒ 拼出来还是 `/s/?data=1` ✓ 语义没变 ✓
+test('AC-RD3 回归：不带编号的首页 `/r/` 那条**仍然照旧**（`/r/?data=1` ✓）', () => {
+  // `location.pathname` 在首页就是 `/r/`（或 `/s`）⇒ 拼出来还是 `/r/?data=1` ✓ 语义没变 ✓
   const html = renderScanSkeleton({ number: '' }, SCAN_PAGE);
   // ⚠️ 2026-10-14 改写（同上）：首页场景仍是同一条相对路径 ✓，只是把当前 query 也带上 ✓
   assert.ok(html.includes("window.location.pathname + '?' + dataQuery.join('&')"),
-    '首页场景走同一条相对路径 ⇒ `/s/?data=1`（`search` 为空 ⇒ 只多一个 data=1 ✓）');
+    '首页场景走同一条相对路径 ⇒ `/r/?data=1`（`search` 为空 ⇒ 只多一个 data=1 ✓）');
 });
 
-test('AC-RD4 回归：`/s/<编号>` 页面照旧（骨架 + 整页都能渲染，且取数仍是同一处）', () => {
+test('AC-RD4 回归：`/r/<编号>` 页面照旧（骨架 + 整页都能渲染，且取数仍是同一处）', () => {
   const skeleton = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
   assert.ok(skeleton.includes('scan-skeleton'), '骨架页结构不变 ✓');
   const page = renderScanPage({
@@ -70,9 +70,9 @@ test('AC-RD4 回归：`/s/<编号>` 页面照旧（骨架 + 整页都能渲染�
   assert.ok(page.includes('MK31-1'), '整页照旧渲染那一款 ✓');
 });
 
-test('AC-RD5 只此一处取数（源码哨兵）：渲染层里没有第二处写死 `/s/` 的取数点', () => {
+test('AC-RD5 只此一处取数（源码哨兵）：渲染层里没有第二处写死 `/r/` 的取数点', () => {
   const hardcoded = [...RENDERER_SRC.matchAll(/fetch\('\/s\//g)].length;
-  assert.equal(hardcoded, 0, `渲染层里写死 /s/ 的 fetch 必须为 0（实际 ${hardcoded}）`);
+  assert.equal(hardcoded, 0, `渲染层里写死 /r/ 的 fetch 必须为 0（实际 ${hardcoded}）`);
   // ⚠️ 2026-10-14 改写：写法从 `+ '?data=1'` 变成 `+ '?' + dataQuery.join('&')`（保留 query ✓）
   assert.equal((RENDERER_SRC.match(/window\.location\.pathname \+ '\?' \+ dataQuery\.join\('&'\)/g) || []).length, 1,
     '这条取数写法只许有**一处**（唯一来源 ✓）');

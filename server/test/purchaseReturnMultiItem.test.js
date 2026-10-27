@@ -392,7 +392,7 @@ const view = (overrides = {}) => ({
 const formApp = (harness, lookup = async () => view()) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup },
     gateway: harness.gateway,
     writeService: harness.write,
@@ -418,7 +418,7 @@ const postReturn = async (base, {
     ...form,
   });
   if (multiItems) body.set(MULTI_ITEM_ORDER.field, multiItemsJson(multiItems));
-  return fetch(`${base}/s/${encodeURIComponent(number)}?from=purchase_return`, {
+  return fetch(`${base}/r/${encodeURIComponent(number)}?from=purchase_return`, {
     method: 'POST',
     headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),

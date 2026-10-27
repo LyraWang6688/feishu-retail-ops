@@ -282,7 +282,7 @@ const createHarness = (options = {}) => {
   };
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: options.lookup || (async () => view()) },
     gateway,
     writeConfig,
@@ -355,7 +355,7 @@ const submitKeyOf = (html) => {
   return matched ? matched[1] : '';
 };
 const getReturnPage = async (base, number = NUMBER_A) => {
-  const response = await fetch(`${base}/s/${encodeURIComponent(number)}?from=purchase_return`, {
+  const response = await fetch(`${base}/r/${encodeURIComponent(number)}?from=purchase_return`, {
     headers: { cookie: sessionCookie() },
   });
   return { status: response.status, html: await response.text() };
@@ -377,7 +377,7 @@ const postReturn = async (base, {
     ...form,
   });
   if (multiItems) body.set(MULTI_ITEM_ORDER.field, multiItemsJson(multiItems));
-  return fetch(`${base}/s/${encodeURIComponent(number)}?from=purchase_return`, {
+  return fetch(`${base}/r/${encodeURIComponent(number)}?from=purchase_return`, {
     method: 'POST',
     headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),

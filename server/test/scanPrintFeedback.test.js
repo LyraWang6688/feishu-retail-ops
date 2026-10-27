@@ -162,7 +162,7 @@ const withServer = async (app, run) => {
 const appFor = (queue) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => ({ ...VIEW }) },
     writeService: false,
     arrivalService: false,
@@ -223,7 +223,7 @@ test('AC-PF3 点下去立刻置灰：提交按钮带反馈属性；整页**只�
   login();
   const queue = fakeQueue();
   await withServer(appFor(queue), async (base) => {
-    const html = await (await fetch(`${base}/s/${ENCODED}?from=product`, {
+    const html = await (await fetch(`${base}/r/${ENCODED}?from=product`, {
       headers: { cookie: sessionCookie() },
     })).text();
     const block = productBlock(html);
@@ -245,7 +245,7 @@ test('AC-PF3 点下去立刻置灰：提交按钮带反馈属性；整页**只�
     }
     // ③ 每个领域都只有这一段（**同一段**：它只挂在带反馈属性的按钮上，其余表单不受影响）
     for (const realm of ['sales', 'replenish', 'purchase_return', 'accept', 'inventory']) {
-      const other = await (await fetch(`${base}/s/${ENCODED}?from=${realm}`, {
+      const other = await (await fetch(`${base}/r/${ENCODED}?from=${realm}`, {
         headers: { cookie: sessionCookie() },
       })).text();
       // 只有"有提交按钮"的页面才有那一段（销售提交 / 打印这一款）；其余领域仍然**零业务脚本**
@@ -273,7 +273,7 @@ test('AC-PF6 ⭐ 销售【提交这一单】也有即时反馈：置灰 + 「正
   };
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => ({ ...VIEW }) },
     writeService,
     arrivalService: false,
@@ -282,7 +282,7 @@ test('AC-PF6 ⭐ 销售【提交这一单】也有即时反馈：置灰 + 「正
     writeConfig: SCAN_WRITE,
   }));
   await withServer(app, async (base) => {
-    const html = await (await fetch(`${base}/s/${ENCODED}?from=sales`, {
+    const html = await (await fetch(`${base}/r/${ENCODED}?from=sales`, {
       headers: { cookie: sessionCookie() },
     })).text();
     // 提交按钮带两句文案：立刻那句 + 带 {seconds} 的计时模板
@@ -309,7 +309,7 @@ test('AC-PF4 收到响应后横幅给「已下发到电脑 · 队列第 N 位」
   const queue = fakeQueue({ calls, position: 3 });
   await withServer(appFor(queue), async (base) => {
     // ① POST 打印 ⇒ 303 回本领域（带 printed=1 与 job id）
-    const posted = await fetch(`${base}/s/${ENCODED}?from=product`, {
+    const posted = await fetch(`${base}/r/${ENCODED}?from=product`, {
       method: 'POST',
       headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ action: SCAN_WRITE.actions.printLabel }).toString(),
@@ -331,7 +331,7 @@ test('AC-PF7 ⭐ 逐按钮：**每一个写操作按钮**点下去都会置灰 +
   // 渲染层里"会发起写操作的提交按钮"必须**统一**走 `submitFeedbackAttrs`（一处定义）
   const submitButtons = renderer.match(/<button[^>]*type="submit"[^>]*>/g) || [];
   assert.ok(submitButtons.length >= 8, `提交按钮总得有几个（实际 ${submitButtons.length}）`);
-  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/r/accept` 这条路要彻底拆掉」）：
   //   改前逐字：`assert.equal(navButtons.length, 1, '手输批次号那个 GET 导航按钮要在（且只有它豁免）')`
   //   改后：那颗「手输批次号 → 进入验收」的按钮**随验收页退场** ⇒ 现在**一个豁免都没有** ✓
   //    ⇒ 判据反而**更严**：渲染层里每一个 `type="submit"` 都必须有即时反馈 ✓（没放宽 ✗）
@@ -348,7 +348,7 @@ test('AC-PF7 ⭐ 逐按钮：**每一个写操作按钮**点下去都会置灰 +
   // 六个领域的页面：有写按钮 ⇒ 恰好 1 段脚本（逐领域静态核）
   const pageWith = (realm) => renderScanPage({ ...VIEW }, SCAN_PAGE, {
     enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-    postAction: `/s/${ENCODED}`, sizes: [{ size_text: '36', missing: false }],
+    postAction: `/r/${ENCODED}`, sizes: [{ size_text: '36', missing: false }],
     draft: { lines: [{ product_number: 'XHB8095', size: 36, quantity: 1, sale_unit_price: 399 }] },
     saleKey: 'k', replenishKey: 'k2', returnKey: 'k3', paymentMethods: ['微信'],
     defaultPaymentMethod: '微信', saleEnabled: true, replenishEnabled: true, returnEnabled: true,
@@ -379,12 +379,12 @@ test('AC-PF5 回归：提交成功那条（本次 N 张）与 dup=1 那条（+�
   login();
   const queue = fakeQueue();
   await withServer(appFor(queue), async (base) => {
-    const submitted = await (await fetch(`${base}/s/${ENCODED}?from=product&printed=1&job=job-1`, {
+    const submitted = await (await fetch(`${base}/r/${ENCODED}?from=product&printed=1&job=job-1`, {
       headers: { cookie: sessionCookie() },
     })).text();
     assert.ok(submitted.includes(TEXTS.submittedBanner.replace('{count}', '1')), '成功横幅逐字在');
     assert.ok(submitted.includes(TEXTS.submittedNoRepeat), '"已提交，不用重复点"在');
-    const dup = await (await fetch(`${base}/s/${ENCODED}?from=product&dup=1&job=job-1`, {
+    const dup = await (await fetch(`${base}/r/${ENCODED}?from=product&dup=1&job=job-1`, {
       headers: { cookie: sessionCookie() },
     })).text();
     assert.ok(dup.includes(TEXTS.duplicatedBanner.replace('{count}', '1')), '去重横幅逐字在');
@@ -393,7 +393,7 @@ test('AC-PF5 回归：提交成功那条（本次 N 张）与 dup=1 那条（+�
     // 纯渲染层的位次断言（真 service 的队列位次由 AC-PF4 覆盖）
     const rendered = renderScanPage({ ...VIEW }, SCAN_PAGE, null, 'product', {
       print: {
-        enabled: true, texts: TEXTS, submitted: true, postAction: '/s/x?from=product',
+        enabled: true, texts: TEXTS, submitted: true, postAction: '/r/x?from=product',
         actionField: SCAN_WRITE.fields.action, actionValue: SCAN_WRITE.actions.printLabel,
         queue_position: 2, count_queued: 1, banner_job: { total_labels: 1 }, job: null,
       },

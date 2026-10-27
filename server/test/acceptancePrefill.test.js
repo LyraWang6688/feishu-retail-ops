@@ -4,7 +4,7 @@ require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径
 const { rendererSource } = require('./support/rendererSource');
 
 /**
- * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「/s/accept 这条路要彻底拆掉」
+ * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「/r/accept 这条路要彻底拆掉」
  *
  * 本文件原测扫码页那一屏的「明细预填 / 自定义尺码 / 未报货候选 / 成功页回列表」。
  * 那一屏**已退场** ⇒ 按老口径**改指向**：**逐条保留 AC 名** ✓

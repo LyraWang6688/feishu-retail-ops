@@ -44,7 +44,7 @@ test('workbench initial page beacon uses mounted endpoint and emits client page 
 });
 
 test('sales goods and funds requests enter timing monitor on both QR paths', () => {
-  for (const base of ['/r/rec_a', '/s/product']) {
+  for (const base of ['/r/rec_a', '/r/product']) {
     assert.equal(resolveTimingChain({ method: 'POST', path: base, body: { action: SCAN_WRITE.actions.submitOrder } }), 'scan.sale.submit');
     assert.equal(resolveTimingChain({ method: 'POST', path: base, body: { action: SCAN_PAGE.paymentStep.payAction } }), 'scan.sale.payment');
   }

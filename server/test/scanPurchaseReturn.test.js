@@ -20,7 +20,7 @@ const { rendererSource } = require('./support/rendererSource');
  * 扫码页「采购领域 ·【退货】」的验收用例（业务负责人 2026-10-11 定：**和"报货"逻辑一样，也走扫码**）。
  *
  * 她的口径（逐字）：
- *   「在扫码页的**采购领域**（`/s/{编号}?from=purchase`）加【**退货**】：扫标签码 → 列这一款各尺码
+ *   「在扫码页的**采购领域**（`/r/{编号}?from=purchase`）加【**退货**】：扫标签码 → 列这一款各尺码
  *   ⚠️ 2026-10-11 晚（业务负责人批准六领域）：原「采购」领域已拆成 **补货 / 退货** 两个领域
  *     ⇒ 本文件里的路由 URL 从 `?from=purchase` 改成 **`?from=purchase_return`**（页面上的退货表单
  *     一字未变；已退役的 `?from=purchase` 现在会回落销售）。
@@ -317,7 +317,7 @@ const view = (overrides = {}) => ({
 const formApp = (harness, lookup = async () => view()) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup },
     gateway: harness.gateway,
     writeService: harness.write,
@@ -344,7 +344,7 @@ test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形�
     assert.ok(SCAN_WRITE.session.returnKeyPrefix.startsWith('scan_return'));
 
     await withServer(formApp(h), async (base) => {
-      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}`;
+      const pageUrl = `${base}/r/${encodeURIComponent(NUMBER)}`;
       const cookie = { cookie: sessionCookie() };
       // ① 退货领域（`?from=purchase_return`）：只有退货那半 —— 勾尺码 + 每码一个数量输入
       //    ⚠️ 2026-10-11 晚（六领域）口径：原「采购」领域已拆成 补货 / 退货 两块
@@ -515,7 +515,7 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
 
     // 页面人话：说清退了几双、少了几双
     await withServer(formApp(h), async (base) => {
-      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`;
+      const pageUrl = `${base}/r/${encodeURIComponent(NUMBER)}?from=purchase_return`;
       const html = await (await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } })).text();
       // ⚠️ 2026-10-13：页面已换成配品页 ⇒ **不再从页面抠 submit_key**（抠不到会 TypeError）
       void html;
@@ -720,7 +720,7 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
       return originalCreate(key, values);
     };
     await withServer(formApp(h), async (base) => {
-      const pageUrl = `${base}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`;
+      const pageUrl = `${base}/r/${encodeURIComponent(NUMBER)}?from=purchase_return`;
       const html = await (await fetch(pageUrl, { headers: { cookie: sessionCookie(openId) } })).text();
       // ⚠️ 2026-10-13：页面已换成配品页 ⇒ **不再从页面抠 submit_key**（抠不到会 TypeError）
       void html;

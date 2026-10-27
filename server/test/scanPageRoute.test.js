@@ -1,5 +1,5 @@
 /**
- * `GET /s/:number`（扫码页）的**路由与准入**用例。
+ * `GET /r/:number`（扫码页）的**路由与准入**用例。
  *
  * 钉住四件事：
  *   ① **挂载点**：真 `app.js` 里就有 `/s` 这一条 —— 不是只在测试里拼出来的；
@@ -30,7 +30,7 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const SESSION_SECRET = 'scan_page_test_session_secret';
 const NUMBER = 'YD6693-2|黑色|A';
-const ENCODED = encodeURIComponent(NUMBER);
+const ENCODED = 'prod_1';
 
 const login = () => {
   process.env.LARK_WEB_AUTH_ENABLED = 'true';
@@ -82,7 +82,7 @@ const view = (overrides = {}) => ({
 const appFor = (lookup) => {
   const calls = [];
   const app = express();
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async (input) => { calls.push(input); return lookup(input); } },
   }));
   app.calls = calls;
@@ -95,7 +95,7 @@ test('页面：200 出库存表（含缺码高亮、0 用「—」、单价与�
   await withServer(app, async (base) => {
     // ⚠️ 2026-10-09（手机白屏之后）起：**服务端按 `?from` 只渲染那一块**，
     //    库存表属于 `from=inventory` 那一块（缺省是销售）—— 想看库存必须点名这个领域。
-    const response = await fetch(`${base}/s/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /text\/html/);
     assert.match(String(response.headers.get('cache-control')), /no-store/);
@@ -110,13 +110,13 @@ test('页面：200 出库存表（含缺码高亮、0 用「—」、单价与�
     assert.match(html, /<td class="zero">—<\/td>/); // 0 → 「—」
   });
   // 编号**解码后**才交给 service（Express 解一次，service 再解一次也不怕）
-  assert.equal(app.calls[0].number, NUMBER);
+  assert.equal(app.calls[0].recordId, 'prod_1');
 });
 
 test('没找到这个编号 → 404 + 一张说清楚的页面（不白屏、不 500）', async () => {
   login();
   await withServer(appFor(async () => ({ found: false, number: 'NOPE|黑色|A', reason: 'unknown' })), async (base) => {
-    const response = await fetch(`${base}/s/NOPE%7C%E9%BB%91%E8%89%B2%7CA`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/NOPE%7C%E9%BB%91%E8%89%B2%7CA`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 404);
     const html = await response.text();
     assert.match(html, /没找到这个编号/);
@@ -133,23 +133,23 @@ test('编号读不出来（只有空格 / 解码失败）→ 400 + 人话页；�
     //  如果我再操作的话，**应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」）：
     //  `/s`（**不带编号**）现在 = **销售领域入口页**（她的"销售首页" ✓ 200 ✓），
     //  不再是"缺编号 ⇒ 400 这个链接不对" ✗。**认不出的编号**（空白 / 解不开）仍然 400 ✓。
-    const home = await fetch(`${base}/s/`, { headers: { cookie: sessionCookie() } });
+    const home = await fetch(`${base}/r/`, { headers: { cookie: sessionCookie() } });
     assert.equal(home.status, 200, '不带编号的 /s 现在是销售首页 ✓');
     const homeHtml = await home.text();
     assert.match(homeHtml, /data-view="sales-home"/);
     assert.equal(homeHtml.includes('data-view="draft-bar"'), false, '销售首页不带本单清单 ✗');
-    for (const path of ['/s/%20']) {
+    for (const path of ['/r/%20']) {
       const response = await fetch(`${base}${path}`, { headers: { cookie: sessionCookie() } });
       assert.equal(response.status, 400, path);
       assert.match(await response.text(), /这个链接不对/);
     }
     // `%zz` 在**进入 handler 之前**就被 Express 拒了（Failed to decode param）——
     // 由 router 级错误中间件接住，回的还是我们那张页
-    const malformed = await fetch(`${base}/s/%zz`, { headers: { cookie: sessionCookie() } });
+    const malformed = await fetch(`${base}/r/%zz`, { headers: { cookie: sessionCookie() } });
     assert.equal(malformed.status, 400);
     assert.match(await malformed.text(), /这个链接不对/);
     // `50%OFF`：Express 解不开、handler 里也解不开 → 照样一张人话页
-    const literal = await fetch(`${base}/s/50%OFF`, { headers: { cookie: sessionCookie() } });
+    const literal = await fetch(`${base}/r/50%OFF`, { headers: { cookie: sessionCookie() } });
     assert.equal(literal.status, 400);
     assert.match(await literal.text(), /这个链接不对/);
   });
@@ -158,7 +158,7 @@ test('编号读不出来（只有空格 / 解码失败）→ 400 + 人话页；�
 test('远端出错 → 500 不回显内部细节；飞书没准备好 → 503 + Retry-After', async () => {
   login();
   await withServer(appFor(async () => { throw new Error('App token 不合法（内部细节）'); }), async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 500);
     const html = await response.text();
     assert.match(html, /暂时打不开，请稍后再试/);
@@ -166,7 +166,7 @@ test('远端出错 → 500 不回显内部细节；飞书没准备好 → 503 + 
   });
 
   await withServer(appFor(async () => { throw new Error('飞书 1254607 data not ready'); }), async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 503);
     assert.equal(response.headers.get('retry-after'), '5');
     assert.match(await response.text(), /库存数据正在准备中/);
@@ -174,7 +174,7 @@ test('远端出错 → 500 不回显内部细节；飞书没准备好 → 503 + 
 
   const limit = Object.assign(new Error('超过本页本次可读上限'), { scanLimitExceeded: true });
   await withServer(appFor(async () => { throw limit; }), async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 503);
     assert.match(await response.text(), /这次读的库存太多了/);
   });
@@ -185,7 +185,7 @@ test('准入（与工作台同一道闸门）：未启用认证 503、未登录 
 
   process.env.LARK_WEB_AUTH_ENABLED = 'false';
   await withServer(app, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 503, '认证没启用时必须拒绝，即使带着会话 cookie');
   });
 
@@ -195,7 +195,7 @@ test('准入（与工作台同一道闸门）：未启用认证 503、未登录 
     //    （`next` = 刚才那一页，登录完自动回来）。共享闸门 `requireWorkbenchAccess`
     //    的语义没动，只是这一种情况在扫码页被提前接住了；工作台那一侧仍是 401 JSON
     //    （见下面最后一段与 `scanPageAuthRedirect.test.js`）。
-    const response = await fetch(`${base}/s/${ENCODED}`, { redirect: 'manual' });
+    const response = await fetch(`${base}/r/${ENCODED}`, { redirect: 'manual' });
     assert.equal(response.status, 302, '没登录时必须去登录');
     assert.match(response.headers.get('location'), /^\/api\/auth\/feishu\/start\?next=/, '目标是登录入口');
   });
@@ -203,12 +203,12 @@ test('准入（与工作台同一道闸门）：未启用认证 503、未登录 
   process.env.WORKBENCH_ALLOWED_OPEN_IDS = 'ou_allowed';
   try {
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie('ou_other') } });
+      const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie('ou_other') } });
       assert.equal(response.status, 403);
     });
     // 白名单内的人照常打开（换一个会正常返回的 service）
     await withServer(appFor(async () => view()), async (base) => {
-      const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie('ou_allowed') } });
+      const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie('ou_allowed') } });
       assert.equal(response.status, 200, '白名单内的人照常打开');
     });
   } finally {
@@ -230,7 +230,7 @@ const INVENTORY = [
   { record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '门盒', 库存键: `${NUMBER}|40`, 品类: '休闲鞋', 更新时间: Date.UTC(2026, 9, 8, 12, 30) } },
 ];
 
-test('真 app.js：`/s/:number` 确实挂上了、不要 API_KEY、走同一道工作台闸门，且一次写调用都没有', async () => {
+test('真 app.js：`/r/:number` 确实挂上了、不要 API_KEY、走同一道工作台闸门，且一次写调用都没有', async () => {
   login();
   const gateway = require('../src/services/v1BitableGateway');
   const writes = [];
@@ -256,7 +256,7 @@ test('真 app.js：`/s/:number` 确实挂上了、不要 API_KEY、走同一道�
     app = require('../src/app'); // 真的入口：所有挂载都在里面
     await withServer(app, async (base) => {
       // 库存表 = `from=inventory` 那一块（缺省是销售；服务端只渲染当前这一块）
-      const response = await fetch(`${base}/s/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
+      const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
       assert.equal(response.status, 200);
       assert.match(response.headers.get('content-type'), /text\/html/);
       const html = await response.text();
@@ -267,7 +267,7 @@ test('真 app.js：`/s/:number` 确实挂上了、不要 API_KEY、走同一道�
 
       // 闸门还在：不带会话时**扫码页** 302 去登录（"扫码即用"）；
       // 工作台那一侧仍是 401 JSON（下面两行，逐字不变）
-      const anonymous = await fetch(`${base}/s/${ENCODED}`, { redirect: 'manual' });
+      const anonymous = await fetch(`${base}/r/${ENCODED}`, { redirect: 'manual' });
       assert.equal(anonymous.status, 302);
       assert.match(anonymous.headers.get('location'), /^\/api\/auth\/feishu\/start\?next=/);
 
@@ -281,6 +281,6 @@ test('真 app.js：`/s/:number` 确实挂上了、不要 API_KEY、走同一道�
   }
   assert.deepEqual(writes, [], '扫码页整条链路一次写调用都没有');
   // 挂载点在 config 里（app.js 用的是同一个常量，不许各写一份）
-  assert.equal(SCAN_PAGE.route.basePath, '/s');
+  assert.equal(SCAN_PAGE.route.recordBasePath, '/r');
   assert.equal(V1_BITABLE_SCHEMA.tables.liveInventory.fields.state, '所属状态');
 });

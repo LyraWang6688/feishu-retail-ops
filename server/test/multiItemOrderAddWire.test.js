@@ -126,7 +126,7 @@ const makeApp = ({ writeService, backgroundCalls = [] }) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use((req, _res, next) => { req.requestId = req.requestId || crypto.randomUUID(); next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     // 按 URL 里扫到的那一款给视图（她第二件是**另一款** ✓）
     service: { lookup: async (input) => viewOf(String((input && (input.number || input.recordId)) || '')) },
     gateway: {},
@@ -145,7 +145,7 @@ const makeApp = ({ writeService, backgroundCalls = [] }) => {
 };
 
 const postForm = (base, body, { query = 'from=replenish', number = NUMBER } = {}) => fetch(
-  `${base}${SCAN_PAGE.route.basePath}/${encodeURIComponent(number)}?${query}`,
+  `${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(number)}?${query}`,
   {
     method: 'POST', redirect: 'manual',
     headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },
@@ -157,7 +157,7 @@ const postForm = (base, body, { query = 'from=replenish', number = NUMBER } = {}
 
 const getPage = async (base, { query = 'from=replenish', number = NUMBER } = {}) => {
   const response = await fetch(
-    `${base}${SCAN_PAGE.route.basePath}/${encodeURIComponent(number)}?${query}`,
+    `${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(number)}?${query}`,
     { headers: { cookie: sessionCookie() }, signal: AbortSignal.timeout(15_000) },
   );
   assert.equal(response.status, 200, '那一页要能打开 ✓');
@@ -387,7 +387,7 @@ test('AC-MI-E 🔴 开关**显式关**（`SCAN_MULTI_ITEM_ADD_WIRE=false`）⇒ 
   //   ⚠️ **三条断言一个字未改** ✓（入口仍是链接 / 没有删除按钮 ✓）。
   process.env.SCAN_MULTI_ITEM_ADD_WIRE = 'false';
   try {
-    app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+    app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
       // 按 URL 里扫到的那一款给视图（她第二件是**另一款** ✓）
       service: { lookup: async (input) => viewOf(String((input && (input.number || input.recordId)) || '')) }, gateway: {}, writeService,
       // ⚠️ **不注入** wire ⇒ 走配置那一位（本用例把它**显式配成关** ✓）
@@ -424,7 +424,7 @@ test('AC-MI-F 🔴 `SCAN_MULTI_ITEM_ADD_WIRE=true` ⇒ 页面出按钮、POST �
   app.use((req, _res, next) => { req.requestId = req.requestId || crypto.randomUUID(); next(); });
   process.env.SCAN_MULTI_ITEM_ADD_WIRE = 'true';
   try {
-    app.use(SCAN_PAGE.route.basePath, createRouterWithEnvWire({
+    app.use(SCAN_PAGE.route.recordBasePath, createRouterWithEnvWire({
       service: {
         lookup: async (input) => viewOf(String((input && (input.number || input.recordId)) || '')),
       },

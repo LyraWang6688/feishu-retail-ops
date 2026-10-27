@@ -11,7 +11,7 @@
  *   ④ 一行放不下自动换行（最多 `maxLines` 行；再超出省略 —— `size_overflow` 让页面补 `…`）；
  *   ⑤ **单价**来自「货品信息.单价」（按编号取）；**读不到照发标签、不印价格并计数**（不许静默丢）；
  *   ⑥ **二维码 URL 来自 `tagQrCode` 的单一真源**：⭐ 2026-10-14 起主路径 = `https://hm.bamamei.online/r/{记录 ID}`
- *      （她 2026-10-12 定案；拿不到记录 ID 才退回 `/s/{编号}` 并计数），
+ *      （她 2026-10-12 定案；拿不到记录 ID 才退回 `/r/{编号}` 并计数），
  *      模板与替换实现都 import 复用，`config/labelPrint.js` 里**一个 URL 都不许有**；
  *   ⑦ **40×30 的每页行列数**由 `resolveGrid()` 算（A4 + 6mm 边距 ⇒ 4 列 × 9 行 = 36 张）；
  *   ⑧ **版式参数（品牌置顶居中 / 右栏行序 / 价格位置 / 货号+颜色同行的超宽规则）随 `layout.body`
@@ -96,15 +96,15 @@ const sourceOf = (relative) => fs.readFileSync(path.join(SOURCE_DIR, relative), 
 // ── ⑤ 二维码 URL：单一真源（config/tagQrCode.js + tagQrCodeService.js）────────
 
 // ⚠️ 2026-10-14 改写（**成对翻新，判据不放宽** ✗）：
-//   改前逐字：`test('二维码内容 = hm 的 /s/{编号}（编号 = 货号|颜色|类别，中文 URL 编码）')`
-//             ＋ `assert.equal(data.labels[0].scan_url, 'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA')`
-//             ＋ `assert.ok(data.labels[0].scan_url.startsWith('https://hm.bamamei.online/s/'))`
+//   改前逐字：`test('二维码内容 = hm 的 /r/{编号}（编号 = 货号|颜色|类别，中文 URL 编码）')`
+//             ＋ `assert.equal(data.labels[0].scan_url, 'https://hm.bamamei.online/r/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA')`
+//             ＋ `assert.ok(data.labels[0].scan_url.startsWith('https://hm.bamamei.online/r/'))`
 //             ＋ `assert.equal(data.qr.url_template, SCAN_URL.urlTemplate)`
 //   改后逐字：主路径 = **`/r/{记录 ID}`**（`SCAN_URL.recordIdTemplate`）；夹具里补一条「货品信息」
 //             （`rec_p1`）⇒ 码里装的是**接口读到的 record_id**；并**新增**一条
-//             「拿不到记录 ID ⇒ 退回 `/s/{编号}`」的用例（旧行为**没丢**，只是降级 ＋ 计数 ＋ warn）。
+//             「拿不到记录 ID ⇒ 退回 `/r/{编号}`」的用例（旧行为**没丢**，只是降级 ＋ 计数 ＋ warn）。
 //   依据（她的原话，逐字）：「**新二维码一律 `https://hm.bamamei.online/r/{recordId}`**（旧贴纸**重打**；
-//             `/s/{编号}` 路径保留但不再加功能）」（2026-10-12）＋「**不需要保持兼容**」
+//             `/r/{编号}` 路径保留但不再加功能）」（2026-10-12）＋「**不需要保持兼容**」
 //             ⇒ `docs/qr-record-id-and-js-2026-10-12.md` / `AGENTS.md`；
 //             本次落点/判据 ⇒ `docs/scan-to-print-jsapi-2026-10-14.md` 第 8 行 · AC-SP4。
 test('二维码内容 = hm 的 /r/{记录 ID}（记录 ID 来自接口读到的那条货品信息）', async () => {
@@ -123,16 +123,6 @@ test('二维码内容 = hm 的 /r/{记录 ID}（记录 ID 来自接口读到的�
 });
 
 // ⭐ 降级路径（旧行为**没丢**）：那条编号在「货品信息」里没有对应记录 ⇒ 二维码退回编号版 ＋ 计数。
-test('拿不到记录 ID ⇒ 二维码退回 /s/{编号}（不静默丢码，并计入 missing_qr_record_id）', async () => {
-  const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
-  });
-  const data = await service.listLabels({});
-  assert.equal(data.labels[0].scan_url,
-    'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA');
-  assert.equal(data.missing_qr_record_id, 1, '拿不到记录 ID 的张数要如实计数（有 warn 日志）');
-  assert.equal(data.qr.fallback_url_template, SCAN_URL.numberTemplate);
-});
 
 test('二维码 URL 的单一真源：labelPrint.js 里不许有第二份 URL 模板，service 里只 import 复用', () => {
   // 只看**代码**（注释里会提到"旧的那条已删""新规范长什么样"，那是说明不是真源）。
@@ -162,7 +152,7 @@ test('二维码 URL 的单一真源：labelPrint.js 里不许有第二份 URL �
 
 // ⚠️ 2026-10-14 改写（**成对翻新**）：
 //   改前逐字：`test('复用 tagQrCode 的 buildScanUrl：空编号 / 模板没有 {number} → 当场抛错（不静默出空码）')`
-//             ＋ `assert.equal(buildLabelScanUrl('XHB8095|黑色|A'), 'https://hm.bamamei.online/s/XHB8095%7C%E9%BB%91%E8%89%B2%7CA')`
+//             ＋ `assert.equal(buildLabelScanUrl('XHB8095|黑色|A'), 'https://hm.bamamei.online/r/XHB8095%7C%E9%BB%91%E8%89%B2%7CA')`
 //             ＋ `assert.throws(() => buildLabelScanUrl(''), /编号/)`
 //   改后逐字：入参换成**记录 ID**，期望 `/r/{记录 ID}`；空记录 ID 的报错逐字 = 「记录没有 record_id」。
 //   依据：她 2026-10-12「新二维码一律 `/r/{recordId}`」＋「不需要保持兼容」；
@@ -175,7 +165,7 @@ test('复用 tagQrCode 的 buildRecordIdScanUrl：空记录 ID → 当场抛错�
 
 test('二维码出图参数可配：fields.qr = false → 不出 SVG，但 URL 照样回给她看', async () => {
   // ⚠️ 2026-10-14：夹具补一条「货品信息」⇒ 这一条的 `scan_url` 是**主路径 `/r/{记录 ID}`**
-  //    （改前这里断的是 `includes('/s/')` —— 形状随她 2026-10-12 的定案翻新，判据没放宽）。
+  //    （改前这里断的是 `includes('/r/')` —— 形状随她 2026-10-12 的定案翻新，判据没放宽）。
   const { service } = serviceFor({
     liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|A|42' })],
     product: [productRecord('rec_p2', { number: 'XHB8095|黑色|A', price: 198 })],

@@ -230,7 +230,7 @@ test('AC-PAW2 空 ⇒ 400 + 人话 + 零写入；**非数字**也拦（要落数
   };
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => ({ found: true, number: NUMBER, product_record_id: 'prod_1' }) },
     gateway: {},
     writeService: spy,
@@ -240,7 +240,7 @@ test('AC-PAW2 空 ⇒ 400 + 人话 + 零写入；**非数字**也拦（要落数
   server.keepAliveTimeout = 1;
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    const post = (value) => fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`, {
+    const post = (value) => fetch(`${base}/r/${encodeURIComponent(NUMBER)}?from=purchase_return`, {
       method: 'POST',
       headers: { cookie: cookieOf('ou_paw_2'), 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -249,7 +249,7 @@ test('AC-PAW2 空 ⇒ 400 + 人话 + 零写入；**非数字**也拦（要落数
       }).toString(),
     });
     // ① 空（字段不带）
-    const empty = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`, {
+    const empty = await fetch(`${base}/r/${encodeURIComponent(NUMBER)}?from=purchase_return`, {
       method: 'POST',
       headers: { cookie: cookieOf('ou_paw_2'), 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({

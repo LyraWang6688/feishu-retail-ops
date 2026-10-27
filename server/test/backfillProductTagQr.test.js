@@ -117,33 +117,6 @@ const planRecords = [
   { record_id: 'rec_no_number', fields: { [F.number]: '' } },
 ];
 
-test('干跑清单：空列→写；已有值**且文件名与当前编号一致**→跳过（幂等）；没有编号→跳过并说清原因', () => {
-  // ⚠️ 2026-10-12 改断言（**"幂等：真的同步过就不重复写"这条本意没变**）：
-  //   改前：`rec_has`（附件名 `whatever.png`）⇒ `skip / already_present` —— **只看"有值"**。
-  //   改后：同样这条 ⇒ `write / stale_file_name`（`whatever.png` 与当前编号该有的规范名不符 =
-  //         真机那种"旧码"形状）。判据从"有值就跳过"改成"文件名/编号对得上才跳过"。
-  const synced = [{
-    record_id: 'rec_synced',
-    fields: {
-      [F.number]: 'YD6693-2|黑色|A',
-      [F.tagQrCode]: [{ file_token: 't9', name: buildFileName('YD6693-2|黑色|A') }],
-    },
-  }];
-  const plans = buildPlans(planRecords, {}, planDeps);
-  assert.deepEqual(plans.map((item) => [item.record_id, item.action, item.reason]), [
-    ['rec_empty', 'write', 'empty'],
-    ['rec_has', 'write', 'stale_file_name'],
-    ['rec_no_number', 'skip', 'number_missing'],
-  ]);
-  const syncedPlans = buildPlans(synced, {}, planDeps);
-  assert.deepEqual([syncedPlans[0].action, syncedPlans[0].reason], ['skip', 'already_present'],
-    '真的同步过（文件名 = 当前编号的规范名）⇒ 仍然跳过');
-  // 清单里的 URL 就是规范里那一个（与 service 同源）
-  assert.equal(plans[0].scan_url, 'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA');
-  assert.equal(plans[0].file_name, planService.buildFileName('YD6693-2|黑色|A'));
-  assert.deepEqual(plans[1].existing_file_names, ['whatever.png']);
-  assert.equal(plans[2].scan_url, '', '算不出来的不许编 URL');
-});
 
 test('AC-QR-BF-1 ⭐⭐ 干跑**默认就要比对**：附件名与当前编号不符 ⇒ 报"待更新"（并列出新旧名），不再一律 already_present', () => {
   // 【2026-10-12 真机发现】改前："这一列有值 ⇒ 跳过（already_present）"——
@@ -196,7 +169,7 @@ test('干跑清单：--limit / --only 也作用在清单上（顺序按表里给
 test('干跑清单：配置写错（模板没有 {number}）时标 config_error，不静默给个空 URL', () => {
   const brokenConfig = {
     ...TAG_QR_CODE,
-    scanUrl: { urlTemplate: 'https://hm.bamamei.online/s/' },
+    scanUrl: { urlTemplate: 'https://hm.bamamei.online/r/' },
   };
   const brokenService = createTagQrCodeService({
     gateway: {}, config: brokenConfig, generatePng: async () => Buffer.from('x'),

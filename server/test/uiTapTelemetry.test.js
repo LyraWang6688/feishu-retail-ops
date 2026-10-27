@@ -113,7 +113,7 @@ const withServer = async (app, run) => {
 const scanApp = () => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => ({ found: false, number: NUMBER }) },
     gateway: {},
     writeService: { sessions: {}, submitOrder: async () => ({ ok: true }) },
@@ -213,7 +213,7 @@ test('AC-UT2b ④ 端点：第二次点同一个 target ⇒ 回执头 `x-ui-tap-
   logged.length = 0;
   const first = fakeRes();
   handleUiTap({
-    req: { requestId: 'r1', originalUrl: '/s/x/ui-tap', query: { [fields.target]: 'realm:replenish', [fields.page]: 'scan', [fields.tapId]: 'tap-a' } },
+    req: { requestId: 'r1', originalUrl: '/r/x/ui-tap', query: { [fields.target]: 'realm:replenish', [fields.page]: 'scan', [fields.tapId]: 'tap-a' } },
     res: first,
     scope: 'scan',
     realm: 'replenish',
@@ -227,7 +227,7 @@ test('AC-UT2b ④ 端点：第二次点同一个 target ⇒ 回执头 `x-ui-tap-
   logged.length = 0;
   const second = fakeRes();
   handleUiTap({
-    req: { requestId: 'r2', originalUrl: '/s/x/ui-tap', query: { [fields.target]: 'realm:replenish', [fields.page]: 'scan', [fields.tapId]: 'tap-b', [fields.sinceMs]: '200' } },
+    req: { requestId: 'r2', originalUrl: '/r/x/ui-tap', query: { [fields.target]: 'realm:replenish', [fields.page]: 'scan', [fields.tapId]: 'tap-b', [fields.sinceMs]: '200' } },
     res: second,
     scope: 'scan',
     realm: 'replenish',
@@ -241,7 +241,7 @@ test('AC-UT2b ④ 端点：第二次点同一个 target ⇒ 回执头 `x-ui-tap-
   // ③ 缺 target ⇒ 400（与改前逐字一致；不静默吞 ✓）
   logged.length = 0;
   const missing = fakeRes();
-  handleUiTap({ req: { requestId: 'r3', originalUrl: '/s/x/ui-tap', query: {} }, res: missing, scope: 'scan' });
+  handleUiTap({ req: { requestId: 'r3', originalUrl: '/r/x/ui-tap', query: {} }, res: missing, scope: 'scan' });
   assert.equal(missing.statusCode, 400);
   assert.equal(missing.body, 'missing target');
   assert.equal(logged.length, 0, '没 target ⇒ 不记任何埋点');
@@ -261,12 +261,12 @@ test('AC-UT3 ② 原因码（纯函数）：有具体业务码就用它；没有
   assert.equal(resultCodeOf({}), UI_TAP.resultCodes.failed, '连状态都没有 ⇒ 只敢说 failed ✗ 不编 ok');
   // 载荷形状：**只有我们的标识与结果**，没有表单值 / 金额
   const payload = tapResultFields({
-    req: { requestId: 'r9', originalUrl: '/s/x?from=sales', body: { action: 'submit_order' } },
+    req: { requestId: 'r9', originalUrl: '/r/x?from=sales', body: { action: 'submit_order' } },
     scope: 'scan', tapId: 'tap-9', status: 400, code: 'purchase_amount_required', durationMs: 1234,
   });
   assert.deepEqual(payload, {
     request_id: 'r9', scope: 'scan', tap_id: 'tap-9', status: 400,
-    code: 'purchase_amount_required', duration_ms: 1234, action: 'submit_order', path: '/s/x',
+    code: 'purchase_amount_required', duration_ms: 1234, action: 'submit_order', path: '/r/x',
   }, '② 的载荷逐字：tap_id + 状态 + 原因码 + 耗时（**没有**表单值 ✗）');
   assert.equal(typeof tapResultFields({ req: {}, tapId: 't', status: 200, durationMs: -5 }).duration_ms, 'number');
   assert.equal(tapResultFields({ req: {}, tapId: 't', status: 200, durationMs: -5 }).duration_ms, 0, '耗时不为负');
@@ -280,7 +280,7 @@ test('AC-UT3b ② 中间件：带 `tap_id` 的写请求 ⇒ 恰记一条 ui.tap.
   res.locals = { uiTapCode: 'purchase_amount_required' };
   let nexted = false;
   uiTapResultMiddleware('scan')({
-    requestId: 'req-1', originalUrl: '/s/x?from=purchase_return', body: { tap_id: 'tap-77', action: 'return_purchase' },
+    requestId: 'req-1', originalUrl: '/r/x?from=purchase_return', body: { tap_id: 'tap-77', action: 'return_purchase' },
   }, res, () => { nexted = true; });
   assert.equal(nexted, true, '中间件必须放行（埋点不许挡业务 ✓）');
   assert.equal(logsOf(UI_TAP.events.result).length, 0, '还没响应完 ⇒ 不记（响应 finish 才记 ✓）');
@@ -297,14 +297,14 @@ test('AC-UT3b ② 中间件：带 `tap_id` 的写请求 ⇒ 恰记一条 ui.tap.
   const res2 = new EventEmitter();
   res2.statusCode = 200;
   res2.locals = {};
-  uiTapResultMiddleware('scan')({ requestId: 'req-2', originalUrl: '/s/x', body: {} }, res2, () => {});
+  uiTapResultMiddleware('scan')({ requestId: 'req-2', originalUrl: '/r/x', body: {} }, res2, () => {});
   res2.emit('finish');
   assert.equal(logsOf(UI_TAP.events.result).length, 0, '没有 tap_id ⇒ 不记（也零开销 ✓）');
 
   // ③ 真 HTTP：一个**不写表**的失败提交（未知动作 ⇒ 400）也要带上结果事件
   logged.length = 0;
   await withServer(scanApp(), async (base) => {
-    const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
+    const response = await fetch(`${base}/r/${encodeURIComponent(NUMBER)}`, {
       method: 'POST',
       headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ action: 'definitely_not_an_action', tap_id: 'tap-http-1' }).toString(),
@@ -411,7 +411,7 @@ test('AC-UT4c ⑤ **同一份实现**：两个路由都 require 同一个 util�
   const writeLike = {
     enabled: true, saleEnabled: false, replenishEnabled: true, returnEnabled: true,
     texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-    postAction: `/s/${encodeURIComponent(NUMBER)}?from=replenish`,
+    postAction: `/r/${encodeURIComponent(NUMBER)}?from=replenish`,
     replenishKey: 'scan_replenish:key:1', returnKey: 'scan_return:key:1',
     sizes: [{ size_text: '41', missing: true, checked: true }],
     draft: { lines: [] }, accessories: [], paymentRows: [], notice: '', errorText: '',
@@ -470,21 +470,21 @@ test('AC-UT5b 共享客户端**只报事实**：URL 里只有 target / tap_id / 
   assert.equal(reporter.targetAttr, 'data-tap-target', '属性名与扫码页一致 ✓');
 
   // ① 第一次点：没有 since_ms（客户端只报"我没记过上一次"）
-  const firstId = reporter.track('realm:replenish', { path: '/s/ui-tap', page: 'scan' });
+  const firstId = reporter.track('realm:replenish', { path: '/r/ui-tap', page: 'scan' });
   assert.ok(firstId, '要给这次点击一个 tap_id ✓');
   assert.equal(reporter.currentTapId(), firstId, 'api-client 读的就是它（写请求带回去 ✓）');
   const first = sent[0];
-  assert.ok(first.startsWith('/s/ui-tap?'), `路径来自调用方（配置）：${first}`);
+  assert.ok(first.startsWith('/r/ui-tap?'), `路径来自调用方（配置）：${first}`);
   assert.match(first, /target=realm%3Areplenish/);
   assert.match(first, new RegExp(`${UI_TAP.fields.tapId}=${firstId}`));
   assert.match(first, /page=scan/);
   assert.equal(/since_ms/.test(first), false, '第一次点 ⇒ **不许**编一个 since_ms ✗');
 
   // ② 同一个 target 再点一次 ⇒ 带上"距上一次多少毫秒"这个**事实**（算不算重复由服务端判 ✓）
-  reporter.track('realm:replenish', { path: '/s/ui-tap', page: 'scan' });
+  reporter.track('realm:replenish', { path: '/r/ui-tap', page: 'scan' });
   assert.match(sent[1], /since_ms=\d+/, '第二次点要报间隔事实 ✓');
   // ③ 换了 target ⇒ 又是"第一次"（不许把别的格子的时间算进来 ✗）
-  reporter.track('realm:inventory', { path: '/s/ui-tap', page: 'scan' });
+  reporter.track('realm:inventory', { path: '/r/ui-tap', page: 'scan' });
   assert.equal(/since_ms/.test(sent[2]), false, '换 target ⇒ 从零开始 ✓');
 
   // ④ **只报事实**：URL 的 query **只有**这四个键（绝无表单值 ✗）

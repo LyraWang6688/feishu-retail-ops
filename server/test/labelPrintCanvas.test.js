@@ -163,7 +163,7 @@ test('AC-C3 构图的关系是从**同一份配置**来的：没有"竖版专属
 
 test('AC-C4 ⭐ 二维码仍 **15mm、正方形、可识别**（真二维码；B 那档是 73.5% ⇒ 88px，属已知取舍）', async () => {
   const QRCode = require('qrcode');
-  const qrSvg = await QRCode.toString('https://hm.bamamei.online/s/XHB8095%7C%E6%A3%95%E8%89%B2%7CA',
+  const qrSvg = await QRCode.toString('https://hm.bamamei.online/r/XHB8095%7C%E6%A3%95%E8%89%B2%7CA',
     { type: 'svg', errorCorrectionLevel: 'M', margin: 0 });
   for (const [config, expectedPx] of [[{ canvas: 'portrait' }, 120], [{ rotate: 90 }, 88]]) {
     const png = await render(config, { fields: { qr: true }, patch: { qr_svg: qrSvg } });

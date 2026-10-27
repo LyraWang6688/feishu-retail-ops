@@ -3,7 +3,7 @@
  *
  * 依据（**都在文件里**）：`docs/scan-to-print-jsapi-2026-10-14.md`（AC-SP1…AC-SP10）
  *   ＋ 她 2026-10-12 逐字：「**新二维码一律 `https://hm.bamamei.online/r/{recordId}`**（旧贴纸**重打**；
- *   `/s/{编号}` 路径保留但不再加功能）」/「**不需要保持兼容**」（`docs/qr-record-id-and-js-2026-10-12.md`）。
+ *   `/r/{编号}` 路径保留但不再加功能）」/「**不需要保持兼容**」（`docs/qr-record-id-and-js-2026-10-12.md`）。
  *
  * ─────────────────────────────────────────────────────────────────────────
  *   AC-SP1 ⭐ 有**签名接口** `GET /api/workbench/lark/jsapi-signature`：返回
@@ -12,7 +12,7 @@
  *   AC-SP2 ⭐ 签名**算得对**（服务端自校验一致）＋ **走既有工作台鉴权闸门**（未登录 401）；
  *   AC-SP3 ⭐ **ticket 缓存**：TTL 内多次调用只向飞书取一次（在 `larkJsapiSign.test.js` 钉细节）；
  *   AC-SP4 ⭐ 扫到的字符串 ⇒ **解析出记录 ID**（`/r/{id}` ✓）；**不是这个形状 ⇒ 人话拒绝** ✓
- *           （旧 `/s/` 码要**可操作**：告诉她这是什么、该怎么办 —— 不是干巴巴"格式不对"）；
+ *           （旧 `/r/` 码要**可操作**：告诉她这是什么、该怎么办 —— 不是干巴巴"格式不对"）；
  *   AC-SP5 ⭐ 按记录 ID ⇒ **只排这一张**（队列任务的标签数 = 1；同一把 `submit_key` 连点
  *           ⇒ **不重复建任务**）；
  *   AC-SP6 ⭐ **不新开打印接口** ✗：走的是既有 `POST /api/workbench/label-print/jobs`
@@ -187,7 +187,7 @@ test('AC-SP4 ⭐ 扫到 `/r/{记录 ID}` ⇒ 解析出记录 ID；别的形状 �
   assert.deepEqual(ok, { ok: true, mode: 'recordId', value: 'recABC123' }, '出码与解析是一对反函数 ✓');
   assert.equal(SCAN_URL.recordIdTemplate, 'https://hm.bamamei.online/r/{recordId}', '形状唯一真源仍在 config ✓');
 
-  // ⭐ 旧贴纸（`/s/{编号}`）：**认得出这是什么** ⇒ 人话必须告诉她"重打新标签"（不是"格式不对"）。
+  // ⭐ 旧贴纸（`/r/{编号}`）：**认得出这是什么** ⇒ 人话必须告诉她"重打新标签"（不是"格式不对"）。
   const legacy = parseLabelScanUrl('https://hm.bamamei.online/s/XHB8095%7C%E9%BB%91%E8%89%B2%7CA');
   assert.equal(legacy.ok, false);
   assert.equal(legacy.reason, 'legacy_sticker');

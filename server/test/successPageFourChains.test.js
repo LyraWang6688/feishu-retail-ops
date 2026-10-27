@@ -97,7 +97,7 @@ const writeStub = () => ({
 const appWith = (write) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => view() },
     gateway: {},
     writeService: write,
@@ -110,7 +110,7 @@ const postForm = async (url, cookie, body) => fetch(url, {
   body: new URLSearchParams(body).toString(),
   redirect: 'manual',
 });
-const pageUrl = (base, realm) => `${base}/s/${encodePath(NUMBER)}?from=${realm}`;
+const pageUrl = (base, realm) => `${base}/r/${encodePath(NUMBER)}?from=${realm}`;
 
 /**
  * ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：
@@ -241,8 +241,8 @@ test('AC-SP2 ⭐ 配置驱动：换成另一份文案 ⇒ 页面跟着变（渲�
   const { saleSuccessPayload } = require('./support/scanSuccessPage');
   const html = renderScanMessagePage({
     title: '标题-注入', body: '正文-不要', tone: 'success',
-    backPath: '/s/x', backLabel: '返回扫码', returnPath: '/s/y', returnLabel: '返回扫码',
-    autoReturnUrl: '/s/z', returnDelaySeconds: 2, retryHint: '提示-不要', details: ['行-不要'], number: 'NUM-不要',
+    backPath: '/r/x', backLabel: '返回扫码', returnPath: '/r/y', returnLabel: '返回扫码',
+    autoReturnUrl: '/r/z', returnDelaySeconds: 2, retryHint: '提示-不要', details: ['行-不要'], number: 'NUM-不要',
     successPage: { minimalEnabled: true, minimalText: '正文-注入' },
   }, SCAN_PAGE);
   assert.ok(html.includes('正文-注入'),

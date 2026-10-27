@@ -23,12 +23,12 @@ test('5 条链路都登记了（且能按 method/path/action 解析）', () => {
     [{ method: 'POST', path: '/api/workbench/inventory/adjustments/apply' }, 'inventory.adjust'],
     [{ method: 'POST', path: '/api/workbench/label-print/jobs' }, 'label.print.enqueue'],
     [{ method: 'POST', path: '/api/workbench/purchase/arrivals/accept' }, 'purchase.arrival.accept'],
-    [{ method: 'POST', path: '/s/rec123', body: { action: SCAN_WRITE.actions.replenish } }, 'scan.replenish'],
+    [{ method: 'POST', path: '/r/rec123', body: { action: SCAN_WRITE.actions.replenish } }, 'scan.replenish'],
     [{ method: 'POST', path: '/r/rec123', body: { action: SCAN_WRITE.actions.purchaseReturn } }, 'scan.purchase_return'],
   ];
   for (const [input, expected] of cases) assert.equal(resolveTimingChain(input), expected, JSON.stringify(input));
   assert.equal(resolveTimingChain({ method: 'GET', path: '/health' }), null, '未登记路径不打点');
-  assert.equal(resolveTimingChain({ method: 'POST', path: '/s/rec123', body: { action: 'other' } }), null);
+  assert.equal(resolveTimingChain({ method: 'POST', path: '/r/rec123', body: { action: 'other' } }), null);
 });
 
 test('中间件：登记链路打 perf.request.completed（含 duration/slow）', () => {

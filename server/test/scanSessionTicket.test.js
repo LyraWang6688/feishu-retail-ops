@@ -35,7 +35,7 @@ const withServer = async (run) => {
     service: { lookup: async () => view() }, gateway: {}, writeService: false,
     followup: { addPayment: async () => ({ ok: true }) },
   });
-  app.use(SCAN_PAGE.route.basePath, router);
+  app.use(SCAN_PAGE.route.recordBasePath, router);
   app.use(SCAN_PAGE.route.recordBasePath, router);   // 与 app.js 同形 ✓
   const server = await new Promise((resolve) => { const i = app.listen(0, '127.0.0.1', () => resolve(i)); });
   // 2026-10-15 task-17：测试服务器不保持 keep-alive（根因与实测见 test/stabilityRepro.cjs）
@@ -94,7 +94,7 @@ test('AC-TK4 ⭐ 篡改/伪造/乱码票 ⇒ 一律拒绝（回落登录）', as
 test('AC-TK5 ⭐ 绑定 path：换 path 用同一票 ⇒ 拒绝', async () => {
   await withServer(async (base) => {
     const t = ticketFor(recordPath());
-    const other = `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}`;
+    const other = `${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(NUMBER)}`;
     const r = await get(base, `${other}?t=${encodeURIComponent(t)}`);
     assert.equal(r.status, 302, '换 path ⇒ 必须拒（不是 200 ✗）');
     assert.match(String(r.headers.get('location')), LOGIN);
@@ -120,12 +120,12 @@ test('AC-TK6 ⭐ 端到端：无 cookie、只带票 ⇒ 兑换 ⇒ **两连请�
   });
 });
 
-test('AC-TK7 回归：`/s/<编号>` 的 next 逐字不变 · 工作台目标不挂票', async () => {
+test('AC-TK7 回归：`/r/<编号>` 的 next 逐字不变 · 工作台目标不挂票', async () => {
   await withServer(async (base) => {
-    const r = await get(base, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}?from=sales`);
+    const r = await get(base, `${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(NUMBER)}?from=sales`);
     assert.equal(r.status, 302);
     const next = new URL(String(r.headers.get('location')), base).searchParams.get('next');
-    assert.equal(next, `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}?from=sales`);
+    assert.equal(next, `${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(NUMBER)}?from=sales`);
   });
   const { resolveScanNext } = require('../src/routes/feishuWebAuth');
   assert.notEqual(resolveScanNext('/workbench/index.html?tab=sales'), '/workbench/index.html?tab=sales',

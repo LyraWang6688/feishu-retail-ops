@@ -5,12 +5,12 @@
  *
  * 她真机 + 服务器实测（逐字）：
  *   · `GET /r/rec28dN0WfM3KH`（未登录）⇒ 302 `Location: /api/auth/feishu/start?next=%2F`   ✗ **丢了路径**
- *   · `GET /s/MK31-1|咖色|B`（未登录）⇒ 302 `...?next=%2Fs%2F…`                          ✓ 保留路径
+ *   · `GET /r/MK31-1|咖色|B`（未登录）⇒ 302 `...?next=%2Fs%2F…`                          ✓ 保留路径
  *   ⇒ 登录回来落**扫码页首页**（标题「请扫下一个标签」= 她截图那一页 ✓）
  *   ⇒ **"扫了货品标签 ⇒ 却没进到那一款"** 的真因 ✓
  *
  * 修法：登录跳转的白名单**加第二类**——扫码页的**记录 ID 路径**（`SCAN_PAGE.route.recordBasePath` ✓），
- *   与 `/s/` 那条**同一形状**、复用既有 `resolveScanNext`（**不抄第二份** ✗）。
+ *   与 `/r/` 那条**同一形状**、复用既有 `resolveScanNext`（**不抄第二份** ✗）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -51,7 +51,7 @@ const buildApp = () => {
     gateway: {}, writeService: false, followup: { addPayment: async () => ({ ok: true }) },
   });
   // ⚠️ 与 `app.js` **逐字同形**：同一个 router 实例挂在**两个**挂载点（`/s` 与 `/r` ✓）
-  app.use(SCAN_PAGE.route.basePath, router);
+  app.use(SCAN_PAGE.route.recordBasePath, router);
   app.use(SCAN_PAGE.route.recordBasePath, router);
   return app;
 };
@@ -99,13 +99,13 @@ test('AC-RN2 ⭐ `GET /r/<记录ID>?from=sales`（未登录）⇒ `next` **含�
   });
 });
 
-test('AC-RN3 回归：`GET /s/<编号>`（未登录）⇒ `next` 仍为**原样**（别改坏既有那条）', async () => {
+test('AC-RN3 回归：`GET /r/<编号>`（未登录）⇒ `next` 仍为**原样**（别改坏既有那条）', async () => {
   login_();
   await withServer(buildApp(), async (base) => {
-    const response = await fetch(`${base}${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}?from=sales`, { redirect: 'manual' });
+    const response = await fetch(`${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(NUMBER)}?from=sales`, { redirect: 'manual' });
     assert.equal(response.status, 302);
-    const expect = `${SCAN_PAGE.route.basePath}/${encodeURIComponent(NUMBER)}?from=sales`;
-    assert.equal(nextOf(response.headers.get('location') || ''), expect, '/s/ 那条**逐字不变** ✓');
+    const expect = `${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(NUMBER)}?from=sales`;
+    assert.equal(nextOf(response.headers.get('location') || ''), expect, '/r/ 那条**逐字不变** ✓');
   });
 });
 

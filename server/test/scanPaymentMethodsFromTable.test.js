@@ -45,7 +45,7 @@ const withServer = async (gateway, run) => {
   const app = express();
   app.use((req, res, next) => { req.requestId = 'req_pm'; next(); });
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     gateway,
     config: SCAN_PAGE,
     startSnapshot: false,
@@ -69,9 +69,9 @@ const withServer = async (gateway, run) => {
 // ⭐⭐ 2026-10-16（task-60）**成对迁移**（本仓纪律：**不许删 / 不许 skip / 不许放宽** ⇒ 逐条写清）——
 //   依据 = **业务负责人当日亲口选的方案 ②**（逐字）：
 //     「**② 还是重扫同一个货品就从头开始（清掉那条未完成 ✓）**」
-//   · **改前逐字**：`${base}/s/${encodeURIComponent(NUMBER)}?from=sales`
+//   · **改前逐字**：`${base}/r/${encodeURIComponent(NUMBER)}?from=sales`
 //     （`?from=sales` ＋ 会话 `paymentStep:'pending'` ⇒ 命中"刷新仍给资金页"那条接管 ⇒ 资金页 ✓）
-//   · **改后逐字**：`${base}/s/${encodeURIComponent(NUMBER)}`（**裸 URL**，不带 `?from=`）
+//   · **改后逐字**：`${base}/r/${encodeURIComponent(NUMBER)}`（**裸 URL**，不带 `?from=`）
 //   · **依据**：她 2026-10-16 选 ② ⇒ **点「销售」那一发（`?from=sales`）**按 ② **先清掉那条未完成标记**
 //     ⇒ 从**货品页**开始（正面判据在 `test/scanLandingResetOnScan.test.js` 的 **AC-LR1** ✓）。
 //     ⚠️ 而**资金页自己那张表单的 POST 目标就是裸 URL**（`postActionFor(target, 'sales')`；
@@ -82,7 +82,7 @@ const withServer = async (gateway, run) => {
 //     本文件主题是"**候选收款方式读表**"，与"从哪个 URL 进来"无关 ✓
 //     （改前靠 `?from=sales` 进来，只是因为当时那条接管也认 `?from=sales`；那条 URL 现在按她选的 ② 另有含义 ✓）。
 const getMoneyPage = async (base) => (await fetch(
-  `${base}/s/${encodeURIComponent(NUMBER)}`, { headers: { cookie: COOKIE } },
+  `${base}/r/${encodeURIComponent(NUMBER)}`, { headers: { cookie: COOKIE } },
 )).text();
 
 /** 假的「收款方式管理」表（只回答这一个 tableKey ✓ 别的读一律空表）。 */

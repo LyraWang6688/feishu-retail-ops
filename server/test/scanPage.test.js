@@ -373,5 +373,5 @@ test('文案与格式：金额整数不补零、占位符替换不留空段、�
   assert.equal(fillText('库存（共 {total} 双）', { total: 3 }), '库存（共 3 双）');
   // UTC 12:30 → 上海 20:30
   assert.equal(shanghaiDateTimeText(Date.UTC(2026, 9, 8, 12, 30)), '2026-10-08 20:30');
-  assert.equal(SCAN_PAGE.route.basePath, '/s');
+  assert.equal(SCAN_PAGE.route.recordBasePath, '/r');
 });

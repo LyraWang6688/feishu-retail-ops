@@ -50,7 +50,7 @@ test('AC1 ⭐⭐ 五种 location.search 下，最终 URL **都含 `data=1`**（�
     { search: '', pathname: '/r/rec28ecwwTJv8s', label: '**空 query**（死循环的根因场景 ✗）' },
     { search: '?from=inventory', pathname: '/r/rec28ecwwTJv8s', label: '只带领域' },
     { search: '?from=sales&data=1', pathname: '/r/rec28ecwwTJv8s', label: '已带 data=1（不许变成两个 ✗）' },
-    { search: '?data=1', pathname: '/s/66133-17', label: '首页那条老路径' },
+    { search: '?data=1', pathname: '/r/66133-17', label: '首页那条老路径' },
     { search: '?from=purchase_return&foo=bar', pathname: '/r/recX', label: '多参数' },
   ];
   for (const c of cases) {
@@ -79,10 +79,10 @@ test('AC3 ⭐⭐ 反向哨兵：喂"只拼 search、没有兜底 data=1"的写�
   assert.equal(runUrlBuilder(BUILDER, { search: '', pathname: '/r/rec1' }), '/r/rec1?data=1', '真实现不会漏 ✓');
 });
 
-test('AC4 ⭐ `/r/<记录ID>` 与 `/s/<编号>` 都按**自己的 pathname** 取数（不写死 /s/ ✓ 回归）', () => {
+test('AC4 ⭐ `/r/<记录ID>` 与 `/r/<编号>` 都按**自己的 pathname** 取数（不写死 /r/ ✓ 回归）', () => {
   assert.equal(runUrlBuilder(BUILDER, { search: '', pathname: '/r/rec1' }).startsWith('/r/rec1?'), true);
-  assert.equal(runUrlBuilder(BUILDER, { search: '', pathname: '/s/66133-17' }).startsWith('/s/66133-17?'), true);
-  assert.equal(SKELETON.includes("'/s/' + encodeURIComponent"), false, '不许写死 /s/ ✗');
+  assert.equal(runUrlBuilder(BUILDER, { search: '', pathname: '/r/66133-17' }).startsWith('/r/66133-17?'), true);
+  assert.equal(SKELETON.includes("'/r/' + encodeURIComponent"), false, '不许写死 /r/ ✗');
 });
 
 test('AC5 骨架里只有**一处**取数点（唯一来源 ✓）', () => {

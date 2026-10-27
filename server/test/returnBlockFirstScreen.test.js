@@ -57,7 +57,7 @@ const herView = () => ({
 const blockOf = async () => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => herView() }, gateway: {},
     writeService: {
       sessions: { get: async () => null, submitKeyFor: () => 'rf', saveSaleProgress: async () => ({ ok: true }) },
@@ -69,7 +69,7 @@ const blockOf = async () => {
   server.keepAliveTimeout = 1;
   try {
     const response = await fetch(
-      `http://127.0.0.1:${server.address().port}/s/${encodeURIComponent(NUMBER)}?from=purchase_return`,
+      `http://127.0.0.1:${server.address().port}/r/${encodeURIComponent(NUMBER)}?from=purchase_return`,
       { headers: { cookie: COOKIE } },
     );
     assert.equal(response.status, 200, '退货那一页要能打开 ✓');

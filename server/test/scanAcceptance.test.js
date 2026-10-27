@@ -18,9 +18,9 @@ const { rendererSource } = require('./support/rendererSource');
  * ─────────────────────────────────────────────────────────────────────────
  * 验收标准（**先写后做**；下面每条 test 的名字 = 这条 AC）
  *
- *  AC-A1 工作台「采购 → 验收到货」每张未到货批次卡上多一条【扫码验收】入口（`/s/accept?batch=`），
+ *  AC-A1 工作台「采购 → 验收到货」每张未到货批次卡上多一条【扫码验收】入口（`/r/accept?batch=`），
  *        ⚠️ **既有「验收到货」表单 / 接口 / 载荷一个字不改**（那是另一条既有链路）。
- *  AC-A2 `GET /s/accept?batch=X` 开一次**验收会话**；落地页出现本单条
+ *  AC-A2 `GET /r/accept?batch=X` 开一次**验收会话**；落地页出现本单条
  *        （已验收 0 双 / 应到 M 双）+【继续扫下一个】+【完成验收】+「发生金额」输入。
  *  AC-A3 扫一个码 ⇒ 该编号的**各尺码**列出来 ⇒ 选尺码 + 填数量（默认 1、可改）⇒ 加入本次验收
  *        ⇒ **只写本地会话**（业务表零写入）；N/M 实时更新。
@@ -197,7 +197,7 @@ const view = (overrides = {}) => ({
 const scanApp = (harness, lookup = async () => view()) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup },
     gateway: harness.gateway,
     writeService: false,
@@ -211,7 +211,7 @@ const scanApp = (harness, lookup = async () => view()) => {
 // AC-A1 工作台入口（加法：既有全额验收链路一个字不改）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 /s/accept）；既有验收链路一字不改', () => {
+test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 /r/accept）；既有验收链路一字不改', () => {
   const config = fs.readFileSync(path.join(WORKBENCH, 'config/orders.js'), 'utf8');
   const orders = fs.readFileSync(path.join(WORKBENCH, 'features/orders/index.js'), 'utf8');
   // ⭐⭐ 2026-10-14 **改指向**（口径 (a) · 依据：业务负责人逐字
@@ -219,9 +219,9 @@ test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 
   //   `docs/acceptance-into-workbench-2026-10-14.md` §二/§三）：
   //   改前逐字：`assert.match(orders, /data-action="scan-arrival"/);`
   //             `assert.match(orders, /ARRIVAL_SCAN\.pagePath/);`
-  //   改后：工作台**不再从 /s/accept 进**（那颗入口退场 ✗）——
-  //   但 ⚠️ **「扫码」那一步物理上仍在扫码页**（标签二维码印的就是 /s/{编号} ✓ 不换标签绕不开）
-  //     ⇒ `/s/accept` 那条路 **保留、仍能用，不许删** ✓（配置常量与路由都还在）
+  //   改后：工作台**不再从 /r/accept 进**（那颗入口退场 ✗）——
+  //   但 ⚠️ **「扫码」那一步物理上仍在扫码页**（标签二维码印的就是 /r/{编号} ✓ 不换标签绕不开）
+  //     ⇒ `/r/accept` 那条路 **保留、仍能用，不许删** ✓（配置常量与路由都还在）
   assert.equal(/data-action="scan-arrival"/.test(orders), false, '工作台不该再有"扫码验收"那颗跳转入口 ✗');
   assert.equal(/ARRIVAL_SCAN\.pagePath/.test(orders), false, '也不该再用它当入口 ✗');
   assert.match(config, /ARRIVAL_SCAN/);      // ⭐ 常量**保留**（别的调用方/老链接仍可能用 ✓）
@@ -256,8 +256,8 @@ test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 
 // AC-A2 开验收会话 + 落地页（本单条 / 继续扫下一个 / 完成验收 / 发生金额）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A2 🔴 GET /s/accept?batch=X ⇒ **验收落地页已退场**（200 回落销售；不再开验收会话）', async () => {
-  // ⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）
+test('AC-A2 🔴 GET /r/accept?batch=X ⇒ **验收落地页已退场**（200 回落销售；不再开验收会话）', async () => {
+  // ⭐ 2026-10-14 晚 **改指向**（依据：她「`/r/accept` 这条路要彻底拆掉」）
   //   改前逐字：`assert.match(html, /继续扫下一个/)` + `/完成验收/` + `/发生金额/` +
   //              `const session = await h.arrival.get(openId); assert.equal(session.batch_no, BATCH);`
   //   改后：这一页**不再是验收页**（那几个标记一个都不许有 ✗）＋ **不再建验收会话** ✓
@@ -266,7 +266,7 @@ test('AC-A2 🔴 GET /s/accept?batch=X ⇒ **验收落地页已退场**（200 �
   try {
     const openId = 'ou_accept_route';
     await withServer(scanApp(h), async (base) => {
-      const response = await fetch(`${base}/s/accept?batch=${encodeURIComponent(BATCH)}`, {
+      const response = await fetch(`${base}/r/accept?batch=${encodeURIComponent(BATCH)}`, {
         headers: { cookie: sessionCookie(openId), 'user-agent': 'Mozilla/5.0 (iPhone) Lark/7.0' },
       });
       assert.equal(response.status, 200, '旧链接仍可打开（回落销售 ⇒ 不 4xx/5xx ✓）');
@@ -288,7 +288,7 @@ test('AC-A3 🔴 扫一个码 ⇒ **不再记进验收会话**（那套写入入
   try {
     const openId = 'ou_accept_scan_off';
     await withServer(scanApp(h), async (base) => {
-      const response = await fetch(`${base}/s/${encodeURIComponent(NUMBER)}`, {
+      const response = await fetch(`${base}/r/${encodeURIComponent(NUMBER)}`, {
         method: 'POST',
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ action: SCAN_WRITE.actions.acceptAdd, accept_size: '40', accept_quantity: '1' }).toString(),

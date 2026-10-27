@@ -88,7 +88,7 @@ const herView = (extra = {}) => ({
 const fetchRealm = async (from, { wire: wireOn = false, ...extra } = {}) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => herView(extra) }, gateway: {},
     writeService: {
       sessions: { get: async () => null, submitKeyFor: () => 'mifh', saveSaleProgress: async () => ({ ok: true }) },
@@ -102,7 +102,7 @@ const fetchRealm = async (from, { wire: wireOn = false, ...extra } = {}) => {
   server.keepAliveTimeout = 1;
   try {
     const response = await fetch(
-      `http://127.0.0.1:${server.address().port}/s/${encodeURIComponent(NUMBER)}?from=${from}`,
+      `http://127.0.0.1:${server.address().port}/r/${encodeURIComponent(NUMBER)}?from=${from}`,
       { headers: { cookie: COOKIE } },
     );
     assert.equal(response.status, 200, `?from=${from} 那一页要能打开 ✓`);
@@ -217,9 +217,9 @@ test('AC-MI-F4 ⭐ 每行一颗删除按钮：`name` 走接线 · `value` = 该�
 test('AC-MI-F5 🔴 零 JS 哨兵**未动**：本刀不加任何 `<script>`（接线开/关都一样）', () => {
   // ① 纯函数两版都不许有脚本（扫码页既有哨兵 `AC-W2` / `AC-6R5` ✓ 一个字节不放宽）
   const on = renderer.multiItemBlockHtml(
-    { postAction: '/s/x', multiItem: WIRE }, { number: 'K1', multi_items: [...ALREADY] },
+    { postAction: '/r/x', multiItem: WIRE }, { number: 'K1', multi_items: [...ALREADY] },
   );
-  const off = renderer.multiItemBlockHtml({ postAction: '/s/x' }, { number: 'K1' });
+  const off = renderer.multiItemBlockHtml({ postAction: '/r/x' }, { number: 'K1' });
   assert.doesNotMatch(on, /<script/i, '🔴 接线那一版里也不许有 `<script>` ✓');
   assert.doesNotMatch(off, /<script/i, '🔴 缺省那一版里同样不许有 `<script>` ✓');
   // ② ⚠️ **零 JS 哨兵的准确口径**（既有 `AC-W2` / `AC-6R5` 钉的是**那一块**）：
@@ -250,18 +250,18 @@ test('AC-MI-F5b ⭐ 接线关 ⇒ 与今天**逐字一致**：入口仍是链接
 
 test('AC-MI-F6 ⭐ 探针：缺 `addAction` ⇒ 退回链接；缺 `removeField` ⇒ 没有删除按钮 ✓', () => {
   const onlyRemove = renderer.multiItemBlockHtml(
-    { postAction: '/s/x', multiItem: { removeField: 'r' } }, { number: 'K1' },
+    { postAction: '/r/x', multiItem: { removeField: 'r' } }, { number: 'K1' },
   );
   assert.match(onlyRemove, /data-multi-add[^>]*href="/,
     '探针：缺 `addAction` ⇒ **退回链接** ✓（说明 F1 考的正是那个位）');
   const onlyAdd = renderer.multiItemBlockHtml(
-    { postAction: '/s/x', multiItem: { addAction: 'a', addValue: 'v' } }, { number: 'K1' },
+    { postAction: '/r/x', multiItem: { addAction: 'a', addValue: 'v' } }, { number: 'K1' },
   );
   assert.equal(onlyAdd.includes('data-multi-remove'), false,
     '探针：缺 `removeField` ⇒ 没有删除按钮 ✓（说明 F4 考的正是那个位）');
   // 接线缺 `addValue` ⇒ 也不变成 POST（宁可不渲染那颗按钮，也不发一个认不出的动作 ✗）
   const noValue = renderer.multiItemBlockHtml(
-    { postAction: '/s/x', multiItem: { addAction: 'a' } }, { number: 'K1' },
+    { postAction: '/r/x', multiItem: { addAction: 'a' } }, { number: 'K1' },
   );
   assert.match(noValue, /data-multi-add[^>]*href="/, '探针：缺 `addValue` ⇒ 退回链接 ✓');
 });

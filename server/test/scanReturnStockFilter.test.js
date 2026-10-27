@@ -83,7 +83,7 @@ const appFor = (lookup = async () => view()) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use((req, res, next) => { req.requestId = 'req_return_stock'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup }, gateway: {}, writeService: fakeWriteService(), startSnapshot: false,
   }));
   return app;
@@ -100,7 +100,7 @@ const withServer = async (app, run) => {
 const getReturnBlock = async (lookup) => {
   let block;
   await withServer(appFor(lookup), async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}?from=purchase_return`, { headers: { cookie: COOKIE } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=purchase_return`, { headers: { cookie: COOKIE } });
     assert.equal(response.status, 200, '退货那一页要能打开 ✓');
     const html = await response.text();
     const start = html.indexOf('realm-block--purchase_return');
@@ -189,7 +189,7 @@ test('AC-RT11 🔴 库存**取不到** ⇒ **仍然列出** + 标注"取不到"�
   const { renderScanPage } = require('../src/views/scanPageRenderer');
   const fallbackWrite = {
     enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-    postAction: '/s/x?from=purchase_return', returnKey: 'scan_return:k:1',
+    postAction: '/r/x?from=purchase_return', returnKey: 'scan_return:k:1',
     sizes: [{ size_text: '40', missing: false }, { size_text: '42', missing: false }],
   };
   const html = renderScanPage(view({ rows: [] }), SCAN_PAGE, fallbackWrite, 'purchase_return', {});
@@ -208,7 +208,7 @@ test('AC-RT11 🔴 库存**取不到** ⇒ **仍然列出** + 标注"取不到"�
   // ② 尺码这一读**根本没回来**（连尺码都没有）⇒ 也要有**人话**（不是空白 ✗）
   let emptyBlock;
   await withServer(appFor(async () => view({ rows: [], total: 0, missing_count: 0 })), async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}?from=purchase_return`, { headers: { cookie: COOKIE } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=purchase_return`, { headers: { cookie: COOKIE } });
     const text = await response.text();
     const at = text.indexOf('realm-block--purchase_return');
     emptyBlock = text.slice(at, text.indexOf('</section>', at) + 10);

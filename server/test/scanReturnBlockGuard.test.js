@@ -8,7 +8,7 @@ const { rendererSource } = require('./support/rendererSource');
  * ## 只读复现（本文件把结论钉成判据 ✓）
  * 用**项目代码**查她那一款（测试 Base，只读）：`found=true · rows=11 · withStock=5 · missing=6`
  * —— 与 Lead 手上的生产日志（`total:5 · sizes:11 · missing:6`）**完全一致** ✓
- * ⇒ 真路由 `GET /s/<编号>?from=purchase_return` 渲染出来**退货块 11 行** ✓
+ * ⇒ 真路由 `GET /r/<编号>?from=purchase_return` 渲染出来**退货块 11 行** ✓
  * ⇒ **不是"有数据不画"** ✗。
  *
  * ## 根因（能画出"一句人话 + 一颗按钮"的只有一条路）
@@ -96,7 +96,7 @@ const appFor = (lookup = async () => view()) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use((req, res, next) => { req.requestId = 'req_return_guard'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup }, gateway: {}, startSnapshot: false,
     writeService: {
       sessions: { get: async () => null, submitKeyFor: () => 'scan_return:k:1', saveSaleProgress: async () => ({}) },
@@ -117,7 +117,7 @@ const withServer = async (app, run) => {
 const getReturnBlock = async (lookup) => {
   let block;
   await withServer(appFor(lookup), async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}?from=purchase_return`, { headers: { cookie: COOKIE } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=purchase_return`, { headers: { cookie: COOKIE } });
     assert.equal(response.status, 200);
     const html = await response.text();
     const at = html.indexOf('realm-block--purchase_return');
@@ -132,7 +132,7 @@ const sizeRowsOf = (block) => [...block.matchAll(/<div class="size-row">([\s\S]*
 /** 一个"看起来正常"的写上下文（直接渲染渲染器时用 ✓ 与 route 里 buildWriteContext 的形状一致）。 */
 const writeContext = (sizes) => ({
   enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-  postAction: '/s/x?from=purchase_return', returnKey: 'scan_return:k:1', sizes,
+  postAction: '/r/x?from=purchase_return', returnKey: 'scan_return:k:1', sizes,
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

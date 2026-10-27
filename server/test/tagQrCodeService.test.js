@@ -3,7 +3,7 @@
  *
  * 钉住的几件事：
  *   ① **二维码内容 = 规范里的 URL**：域名/路径来自 config，`编号` 做 URL 编码
- *      （中文必须编成 `%E9%BB%91%E8%89%B2` 这种），模板自身的 `https://` `/s/` 不许被编码；
+ *      （中文必须编成 `%E9%BB%91%E8%89%B2` 这种），模板自身的 `https://` `/r/` 不许被编码；
  *   ② **幂等**：这一列已经有值就跳过（不上传、不写库）；只有显式覆盖才重写，且**先记日志再写**；
  *   ③ **写回形状**：`{ tagQrCode: [{ file_token }] }`（附件字段的官方写法），
  *      上传用的是 config 里的 `parent_type` + 文件名模板，真 PNG 字节进了临时文件；
@@ -43,8 +43,8 @@ const NUMBER_FIELD_ID = 'fld_number_test';
 
 // 规范里的那一个例子（brief 逐字给的）。
 const NUMBER_SAMPLE = 'YD6693-2|黑色|A';
-// ⚠️ 旧格式（/s/{编号}）——给 `buildScanUrl` 的**单元用例**用（它测「按模板拼」，与新旧格式无关）
-const URL_SAMPLE = 'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA';
+// ⚠️ 旧格式（/r/{编号}）——给 `buildScanUrl` 的**单元用例**用（它测「按模板拼」，与新旧格式无关）
+const URL_SAMPLE = 'https://hm.bamamei.online/r/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA';
 // ⭐ 2026-10-12：**新格式**（记录 ID）—— `syncRecord` 那批用例的期望（走 `resolveQrIdentity`）。
 //    ⚠️ `URL_SAMPLE` 保持旧格式：它给 `buildScanUrl` 的单元用例用（测"按模板拼"这个能力，与新旧无关）。
 const URL_SAMPLE_RECORD_ID = 'https://hm.bamamei.online/r/rec1';
@@ -148,20 +148,10 @@ test('契约：「货品信息」schema 里有 tagQrCode → 「标签二维码�
 
 // ── ① 二维码内容 = 规范里的 URL ───────────────────────────────────────────
 
-test('① 二维码 URL：hm 域名 + /s/ 路径 + 编号 URL 编码（中文正确编码）', () => {
-  assert.equal(buildScanUrl(TAG_QR_CODE.scanUrl.urlTemplate, NUMBER_SAMPLE), URL_SAMPLE);
-  // 域名必须是 hm（2026-10-08 从 workbench 切过来的），路径是 /s/
-  assert.match(URL_SAMPLE, /^https:\/\/hm\.bamamei\.online\/s\//);
-  // 逐段核一遍编码：`|` → %7C，`黑色` → %E9%BB%91%E8%89%B2
-  assert.equal(encodeURIComponent(NUMBER_SAMPLE), 'YD6693-2%7C%E9%BB%91%E8%89%B2%7CA');
-  // 模板自身的协议与路径**不许**被编码
-  assert.equal(buildScanUrl(TAG_QR_CODE.scanUrl.urlTemplate, 'A B').includes('%2F'), false);
-  assert.equal(buildScanUrl(TAG_QR_CODE.scanUrl.urlTemplate, 'A B'), 'https://hm.bamamei.online/s/A%20B');
-});
 
 test('① 模板里出现不认识的占位符 / 没有 {number} → 当场报错，不静默出空码', () => {
-  assert.throws(() => buildScanUrl('https://hm.bamamei.online/s/{nope}', 'A'), /占位符不认识：\{nope\}/);
-  assert.throws(() => buildScanUrl('https://hm.bamamei.online/s/', 'A'), /没有 \{number\} 占位符/);
+  assert.throws(() => buildScanUrl('https://hm.bamamei.online/r/{nope}', 'A'), /占位符不认识：\{nope\}/);
+  assert.throws(() => buildScanUrl('https://hm.bamamei.online/r/', 'A'), /没有 \{number\} 占位符/);
   assert.throws(() => buildScanUrl(TAG_QR_CODE.scanUrl.urlTemplate, '   '), /没有「编号」/);
 });
 

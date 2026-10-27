@@ -92,7 +92,7 @@ const herView = (extra = {}) => ({
 const fetchRealm = async (from, extra = {}) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => herView(extra) }, gateway: {},
     writeService: {
       sessions: { get: async () => null, submitKeyFor: () => 'rt', saveSaleProgress: async () => ({ ok: true }) },
@@ -104,7 +104,7 @@ const fetchRealm = async (from, extra = {}) => {
   server.keepAliveTimeout = 1;
   try {
     const response = await fetch(
-      `http://127.0.0.1:${server.address().port}/s/${encodeURIComponent(NUMBER)}?from=${from}`,
+      `http://127.0.0.1:${server.address().port}/r/${encodeURIComponent(NUMBER)}?from=${from}`,
       { headers: { cookie: COOKIE } },
     );
     assert.equal(response.status, 200, `?from=${from} 那一页要能打开 ✓`);
@@ -271,23 +271,23 @@ test('AC-RT7 ⭐ 探针：三处"塞回"与"删过头"都**必须**被检出（�
     oldButton: (html) => html.includes(OLD_BUTTON),
   };
   const cleanReturn = renderer.multiItemBlockHtml(
-    { postAction: '/s/K1', texts: {} }, { number: 'K1' }, 'return');
+    { postAction: '/r/K1', texts: {} }, { number: 'K1' }, 'return');
   assert.equal(offenders.hint(cleanReturn), false, '干净的退货块 ⇒ 说明不误报 ✓');
   assert.equal(offenders.title(cleanReturn), false, '干净的退货块 ⇒ 标题不误报 ✓');
   assert.equal(offenders.empty(cleanReturn), false, '干净的退货块 ⇒ 空态不误报 ✓');
   assert.equal(offenders.listMissing(cleanReturn), true, '⚠️ 空的时候列表本就该不在（这条只对"有内容"那一次有意义 ✓）');
   assert.equal(offenders.oldButton(`<button>${OLD_BUTTON}</button>`), true, '旧按钮名 ⇒ **必须**报红 ✓');
   // 把三处塞回**补货那一版**（= 老实现）⇒ 三个检测器同时报红 ✓
-  const oldShape = renderer.multiItemBlockHtml({ postAction: '/s/K1', texts: {} }, { number: 'K1' });
+  const oldShape = renderer.multiItemBlockHtml({ postAction: '/r/K1', texts: {} }, { number: 'K1' });
   assert.equal(offenders.hint(oldShape), true, '塞回说明 ⇒ **必须**报红 ✓');
   assert.equal(offenders.title(oldShape), true, '塞回标题 ⇒ **必须**报红 ✓');
   assert.equal(offenders.empty(oldShape), true, '塞回空态 ⇒ **必须**报红 ✓');
   // "删过头"（连列表一起删）⇒ listMissing 报红 ✓
   assert.equal(offenders.listMissing(
-    renderer.multiItemBlockHtml({ postAction: '/s/K1', texts: {} }, { number: 'K1' }, 'return')), true,
+    renderer.multiItemBlockHtml({ postAction: '/r/K1', texts: {} }, { number: 'K1' }, 'return')), true,
   '空的时候列表不在（预期）—— 有内容那一次的检测在 AC-RT4 ✓');
   assert.equal(offenders.listMissing(
-    renderer.multiItemBlockHtml({ postAction: '/s/K1', texts: {} },
+    renderer.multiItemBlockHtml({ postAction: '/r/K1', texts: {} },
       { number: 'K1', multi_items: [{ number: 'HL1', entries: [{ size: '41', quantity: 1 }] }] }, 'return')), false,
   '⭐ 有内容 ⇒ 列表必须在 ⇒ "删过头"会被这条抓住 ✓');
 });

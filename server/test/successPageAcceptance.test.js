@@ -84,6 +84,6 @@ test('AC-SP1c 🔴 **分阶段闸门**：配置里一出现统一文案（②/�
 
 test('AC-SP1d ⭐ **探针**：塞回一个链接 ⇒ 检测器**必须报红**（证明上面那半不是空跑 ✓）', () => {
   assert.deepEqual(offendersOf('<p>✅ 已提交成功，数据会更新</p>'), [], '极简版 ⇒ 干净 ✓');
-  assert.notDeepEqual(offendersOf('<p>ok</p><a href="/s/NEW">继续录下一单</a>'), [], '塞回链接 ⇒ **必须**报红 ✓');
+  assert.notDeepEqual(offendersOf('<p>ok</p><a href="/r/NEW">继续录下一单</a>'), [], '塞回链接 ⇒ **必须**报红 ✓');
   assert.notDeepEqual(offendersOf('<form method="post"><button>补整单付款</button></form>'), [], '塞回按钮 ⇒ **必须**报红 ✓');
 });

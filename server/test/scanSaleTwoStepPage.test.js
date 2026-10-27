@@ -51,7 +51,7 @@ const VIEW = {
 /** 录入页（第 1 步）的写上下文：本单里有 1 双。 */
 const WRITE = {
   enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-  postAction: '/s/YD6693-2%7C%E6%A3%95%E8%89%B2%7CA?from=sales', saleKey: 'k',
+  postAction: '/r/YD6693-2%7C%E6%A3%95%E8%89%B2%7CA?from=sales', saleKey: 'k',
   draft: { lines: [{ product_number: 'YD6693-2', size: 41, quantity: 1, sale_unit_price: 399 }] },
   paymentMethods: ['微信'], defaultPaymentMethod: '微信', saleEnabled: true,
 };

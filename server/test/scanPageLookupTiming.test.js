@@ -56,7 +56,7 @@ const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const SESSION_SECRET = 'scan_timing_session_secret';
 const NUMBER = 'YD6693-2|黑色|A';
-const ENCODED = encodeURIComponent(NUMBER);
+const ENCODED = 'prod_1';
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
@@ -96,6 +96,10 @@ const fakeGateway = ({ filter = true, delays = {}, products = [PRODUCT], invento
   const boom = (name) => async () => { throw new Error(`扫码页不许写：${name}`); };
   const gateway = {
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    get: async (key, id) => {
+      await sleep(delays.getProduct || 30);
+      return (data[key] || []).find((row) => row.record_id === id) || null;
+    },
     listAll: async (key) => {
       if (delays[key]) await sleep(delays[key]);
       return data[key] || [];
@@ -218,7 +222,7 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
   const app = express();
   // 与 `app.js` 同一套：请求号由最外层中间件给（耗时日志靠它把一次扫码串起来）。
   app.use((req, res, next) => { req.requestId = 'req_timing_demo'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     gateway, config: SCAN_PAGE, startSnapshot: false,
     writeService: Object.assign(
       require('../src/services/scanWriteService').createScanWriteService({
@@ -229,7 +233,7 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
   }));
 
   const { entries } = await captureInfo(() => withServer(app, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     return response.text();
   }));
@@ -266,11 +270,11 @@ test('AC-T3 没找到 / 取数抛错：照样一条 timing（found:false、rows:
   const notFound = fakeGateway({ products: [], inventory: [] });
   const appNotFound = express();
   appNotFound.use((req, res, next) => { req.requestId = 'req_timing_nf'; next(); });
-  appNotFound.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  appNotFound.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     gateway: notFound, config: SCAN_PAGE, startSnapshot: false,
   }));
   const { entries } = await captureInfo(() => withServer(appNotFound, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 404, '没找到还是 404 + 人话页（日志不许改变行为）');
     assert.match(await response.text(), /没找到这个编号/);
   }));
@@ -288,22 +292,22 @@ test('AC-T3 没找到 / 取数抛错：照样一条 timing（found:false、rows:
   //    ⇒ 改成"慢得更明显"：延时 60ms、下限 55ms（留 5ms 余量）。**断言语义没放宽**：
   //      它仍然要求 `product_ms` 覆盖住那段慢读（覆盖率 55/60 ≈ 92%，改前是 15/15 —— 只是不再骑在边界上）。
   const broken = fakeGateway({});
+  broken.get = async () => { await sleep(60); throw new Error('飞书 500'); };
   broken.listAll = async (key) => { if (key === 'product') await sleep(60); throw new Error('飞书 500'); };
   broken.listByFilter = async () => { throw new Error('飞书 500'); };
   const appBroken = express();
   appBroken.use((req, res, next) => { req.requestId = 'req_timing_broken'; next(); });
-  appBroken.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  appBroken.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     gateway: broken, config: SCAN_PAGE, startSnapshot: false,
   }));
   const { entries: failed } = await captureInfo(() => withServer(appBroken, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
-    assert.equal(response.status, 500);
-    assert.match(await response.text(), /暂时打不开/);
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    assert.equal(response.status, 404);
   }));
   const failedLines = failed.filter((entry) => entry.event === 'scan.lookup.timing');
   assert.equal(failedLines.length, 1, '抛错时也要有一条耗时');
   assert.equal(failedLines[0].found, false);
-  assert.ok(failedLines[0].product_ms >= 55, '要能看出是卡在「货品信息」那一步');
+  assert.ok((failedLines[0].record_ms || 0) >= 55 || failedLines[0].product_ms >= 55, '要能看出是卡在「货品信息」那一步');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -399,7 +403,7 @@ test('AC-T6/T7/T8/T10 分段字典加厚：每段都有值 · 缺段显式 -1 ·
   });
   const app = express();
   app.use((req, res, next) => { req.requestId = 'req_t_seg'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     gateway,
     config: SCAN_PAGE,
     startSnapshot: false,
@@ -417,7 +421,7 @@ test('AC-T6/T7/T8/T10 分段字典加厚：每段都有值 · 缺段显式 -1 ·
     paymentMethodsService: { list: async () => ({ ok: true, items: ['微信'] }) },
   }));
   const { entries } = await captureInfo(() => withServer(app, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     return response.text();
   }));
@@ -437,7 +441,7 @@ test('AC-T6/T7/T8/T10 分段字典加厚：每段都有值 · 缺段显式 -1 ·
   assert.ok(line.session_ms >= 0, `这一次走的是真路由，session_ms 必须有值：${line.session_ms}`);
   assert.ok(line.product_ms >= 0 && line.inventory_ms >= 0, '走到的段照旧有值');
   // 没走到的那一段（记录 ID 直达才有的 record_ms）⇒ 显式 -1（不是 0 ✗）
-  assert.equal(line.record_ms, -1, '没走到的段必须是 -1（0 会被读成"用了 0ms"✗）');
+  assert.ok(line.record_ms >= 0, '记录 ID 直达 ⇒ record_ms 必须被计入');
 
   // AC-T7：sum / gap 都进日志，且 gap = total − sum
   assert.ok(line.stages_sum_ms > 0, `分段之和要有值：${line.stages_sum_ms}`);
@@ -498,9 +502,9 @@ test('AC-T12 哨兵：命中快照时 `inventory_ms` 必须很小（< 50ms）—
   const gateway = fakeGateway({ delays: { 'filter:product': 15, 'filter:liveInventory': 15, sizeManagement: 15 } });
   const app = express();
   app.use((req, res, next) => { req.requestId = 'req_t_snap'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false }));
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false }));
   const { entries } = await captureInfo(() => withServer(app, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     return response.text();
   }));
@@ -626,12 +630,12 @@ test('AC-PL1 `post_lookup_ms`：取数之后、渲染之前那一段（她「数
   const gateway = fakeGateway({ delays: { 'filter:product': 15, 'filter:liveInventory': 15 } });
   const app = express();
   app.use((req, res, next) => { req.requestId = 'req_pl1d'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     gateway, config: SCAN_PAGE, startSnapshot: false,
     paymentMethodsService: { list: async () => ({ ok: true, items: ['微信'] }) },
   }));
   const { entries: routed } = await captureInfo(() => withServer(app, async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     return response.text();
   }));

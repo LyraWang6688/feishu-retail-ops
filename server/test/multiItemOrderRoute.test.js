@@ -114,7 +114,7 @@ test('RT5b 🔴 **零 JS 哨兵**：路由与多货品块里都**不许**有 `<s
   assert.equal(/<script/i.test(ROUTE_SRC), false, '路由源码里不许有 `<script>` ✗');
   // 把多货品块**真渲一次**（渲染器已导出它 ✓）⇒ 渲出来的 HTML 也不许有脚本 ✓
   const html = multiItemBlockHtml(
-    { postAction: '/s/K1', texts: {} },
+    { postAction: '/r/K1', texts: {} },
     { product_record_id: 'rec_x', number: 'K1|黑色|A', item_no: 'K1', color: '黑色', supplier_record_id: 'sup_x' },
   );
   assert.ok(html.length > 0, '多货品块应当渲得出来（`enabled=true` ✓ 字段名有值 ✓）');

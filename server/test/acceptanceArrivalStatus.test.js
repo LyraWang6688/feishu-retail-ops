@@ -11,7 +11,7 @@ const { rendererSource } = require('./support/rendererSource');
  * ─────────────────────────────────────────────────────────────────────────
  * 验收标准（**测试名 = AC**）
  *
- *  AC-AP1 进验收（`GET /s/accept?batch=…`）⇒ **明细逐字预填**（35×1 · 36×1 · 37×1 ⇒ 每个尺码一个
+ *  AC-AP1 进验收（`GET /r/accept?batch=…`）⇒ **明细逐字预填**（35×1 · 36×1 · 37×1 ⇒ 每个尺码一个
  *         数量输入框，`value` = **报货数量**）+ 发生金额输入框 + 确认完成验收（表单字段名来自配置）。
  *  AC-AP2 **改数量**（37 改成 2）⇒ 完成后写进去的 `scanLines` / 「实际数量」= **改后各行之和**。
  *  AC-AP3 **改成 0** ⇒ 那一行**不算到货**（不进 `scanLines`、不加库存）。
@@ -149,7 +149,7 @@ const createHarness = ({ rows = SIZES.map((size) => ({ size, quantity: 1 })), al
   });
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => VIEW },
     gateway: { table: () => ({ fields: {} }), listAll: async () => [], get: async () => null },
     // ⚠️ 逐码页的 POST 走的是"写入口"那道闸门 ⇒ 没它一律 503（与线上同一道闸门）。
@@ -217,11 +217,11 @@ const post = (base, target, body, openId = 'ou_accept_ar') => {
 
 
 /**
- * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「**`/s/accept` 这条路要彻底拆掉**」
+ * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「**`/r/accept` 这条路要彻底拆掉**」
  *
  * ⚠️ **本文件原来是"扫码页那条完成验收（`acceptFinishRows`）的验收标准"** ——
- *    那条能力**随验收页一起退场** ✓ ⇒ 这里**整体改指向**（改前逐字：`GET /s/accept` ⇒ 200 验收页 +
- *    `POST /s/accept {action: acceptFinishRows}` ⇒ 写回批次行「已到货」＋金额必填/成功页/幂等 10 条 ✗）
+ *    那条能力**随验收页一起退场** ✓ ⇒ 这里**整体改指向**（改前逐字：`GET /r/accept` ⇒ 200 验收页 +
+ *    `POST /r/accept {action: acceptFinishRows}` ⇒ 写回批次行「已到货」＋金额必填/成功页/幂等 10 条 ✗）
  *    ⇒ 改后断言：**这条路已退场**（302 回首页）＋ **一个字都不许写** ✓
  *    ＋ **仍然成立、照旧不许动**的：工作台「确认到货」（`POST /api/workbench/purchase/arrivals/confirm`）
  *      与加库存 `InventoryService.applyPurchase` ✓（另有用例罩着 ✓）
@@ -229,13 +229,13 @@ const post = (base, target, body, openId = 'ou_accept_ar') => {
 const SRC_DIR = path.join(__dirname, '../src');
 const readSrc = (rel) => fs.readFileSync(path.join(SRC_DIR, rel), 'utf8');
 
-test('AC-AR1 🔴 旧 `GET /s/accept` ⇒ **302 回首页**（不再是验收页；别再挂住/500）', async () => {
+test('AC-AR1 🔴 旧 `GET /r/accept` ⇒ **302 回首页**（不再是验收页；别再挂住/500）', async () => {
   login();
   const h = createHarness();
   await withServer(h.app, async (base) => {
-    // ⚠️ 产品形状本来就对（Lead 判定 ✓）：`/s/accept` 落进 `/:number` ⇒ 把 `accept` 当编号查不到 ⇒ 人话页 ✓
+    // ⚠️ 产品形状本来就对（Lead 判定 ✓）：`/r/accept` 落进 `/:number` ⇒ 把 `accept` 当编号查不到 ⇒ 人话页 ✓
     //    ⇒ 这里只断言"**不再是验收那一屏**"（不要求特定状态码 ✓ 不挂住就够了 ✓）
-    const res = await get(base, `/s/accept?batch=${encodeURIComponent(BATCH)}`);
+    const res = await get(base, `/r/accept?batch=${encodeURIComponent(BATCH)}`);
     const body = String(res.html || '');
     assert.equal(/data-view="acceptance"/.test(body), false, '不许再渲染验收那一屏 ✗');
     assert.equal(/完成验收/.test(body), false, '「完成验收」那颗按钮跟着退场 ✗');
@@ -243,14 +243,14 @@ test('AC-AR1 🔴 旧 `GET /s/accept` ⇒ **302 回首页**（不再是验收页
 });
 
 test('AC-AR2 🔴 扫码页那条"完成验收"的写入入口已退场（**源码哨兵** —— 不发那个请求 ✗）', () => {
-  // ⚠️ 为什么用源码哨兵而不是真发 `POST /s/accept`：
-  //   那条路摘掉后，`POST /s/accept` 会落进 **`POST /:number`**（把 `accept` 当编号）⇒ 走**普通扫码提交那条路** ⇒
+  // ⚠️ 为什么用源码哨兵而不是真发 `POST /r/accept`：
+  //   那条路摘掉后，`POST /r/accept` 会落进 **`POST /:number`**（把 `accept` 当编号）⇒ 走**普通扫码提交那条路** ⇒
   //   本套测试**没有 stub** 那条路用的服务 ⇒ 它会去建真件 / 调真 SDK ⇒ **挂住 ≈301 秒** ✗（已实测）
   //   ⇒ 那正是"退场"的正确形状（产品行为对 ✓ Lead 判定 ✓）⇒ 测试里**不要再打这条旧路** ✓
-  //   改前逐字：`await post(base, '/s/accept', { [F.action]: A.acceptFinishRows, … })` ⇒ 断言写「已到货」✗
+  //   改前逐字：`await post(base, '/r/accept', { [F.action]: A.acceptFinishRows, … })` ⇒ 断言写「已到货」✗
   //   改后：**源码哨兵**（那条分支与人话入口都没有了 ✓）＋ 仍成立的能力在工作台那条路上验 ✓
   const routes = readSrc('routes/scanPage.js');
-  // ⭐⭐ 2026-10-14 晚 cut B **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」＋ Lead 的 cut B 清单）：
+  // ⭐⭐ 2026-10-14 晚 cut B **改指向**（依据：她「`/r/accept` 这条路要彻底拆掉」＋ Lead 的 cut B 清单）：
   //   改前逐字：`// ⚠️ writeConfig.actions.acceptFinishRows 这个名字还出现在 realmOfAction 的**映射表**里`
   //   改后逐字：**那句话不再成立** —— `realmOfAction` 里那一行已经删掉（`accept` 也退出了 `REALMS`）
   //   依据：cut A 已把「完成验收」的 handler 摘掉（下面两条断言就是钉它没了的 ✓）、cut B 收掉领域本身

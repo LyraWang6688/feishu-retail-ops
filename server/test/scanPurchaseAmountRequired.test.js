@@ -137,7 +137,7 @@ const createWriteSpy = () => {
 const appWith = (write) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => view() },
     gateway: {},
     writeService: write,
@@ -145,7 +145,7 @@ const appWith = (write) => {
   return app;
 };
 
-const pageUrl = (base, realm) => `${base}/s/${encodeURIComponent(NUMBER)}?from=${realm}`;
+const pageUrl = (base, realm) => `${base}/r/${encodeURIComponent(NUMBER)}?from=${realm}`;
 
 /** 提一次那个动作（`amount` = `null` ⇒ **整个字段都不带**，模拟"她一个字没填"）。 */
 const postAction = async (base, realm, action, amount, openId = 'ou_purchase_amount') => {

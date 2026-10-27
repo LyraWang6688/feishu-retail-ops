@@ -200,7 +200,7 @@ test('AC-5b2 给真文件**只加一行注释** ⇒ 报出来的集合**一个�
 });
 
 test('AC-5c ⭐ 模板串里的 `//` 不是注释（别把 URL 里的斜杠当注释起点）', () => {
-  const source = "const url = `${base}/s/${id}`;\nconst tip = `看这里：https://x.cn/a`;\n// 真注释：不影响\n";
+  const source = "const url = `${base}/r/${id}`;\nconst tip = `看这里：https://x.cn/a`;\n// 真注释：不影响\n";
   const texts = scanSource('views/demoRenderer.js', source).map((item) => item.text);
   assert.deepEqual(texts, ['看这里：https://x.cn/a'], `只该报那一句文案（实际 ${JSON.stringify(texts)}）`);
 });

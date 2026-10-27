@@ -4,9 +4,9 @@ require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径
 const { rendererSource } = require('./support/rendererSource');
 
 /**
- * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「**`/s/accept` 这条路要彻底拆掉**」
+ * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「**`/r/accept` 这条路要彻底拆掉**」
  *
- * ⚠️ 本文件原来测的是**扫码页那一屏**的幂等（`GET/POST /s/accept`）。
+ * ⚠️ 本文件原来测的是**扫码页那一屏**的幂等（`GET/POST /r/accept`）。
  *    那一屏**已退场** ⇒ 本文件**按老口径改指向**：逐条保留 AC 名 ✓
  *    断言改成"**入口没了** ＋ **能力仍在**（服务级 / 工作台那条路）" ✓ **不放宽** ✗
  *
@@ -62,7 +62,7 @@ test('AC-ID4 回归：一次验收 ⇒ 每行各 +1、状态一次（不多不�
   // ⚠️ **改指向（切片收紧，判据没放宽 ✗）**：改前从 `purchase/arrivals/accept` 一路切到**文件尾** ⇒
   //   把后面别的 handler（例如交付那条）里的 `applyPurchase` 也算进来 ⇒ 误伤 ✗
   //   ⇒ 改后只切**这一个 handler 自己的那一段**（到下一个 `router.post(` 为止）✓
-  //   依据：她 2026-10-14 晚「`/s/accept` 这条路要彻底拆掉」（能力搬进工作台 ✓ 但路由层仍不许直连库存 ✓）
+  //   依据：她 2026-10-14 晚「`/r/accept` 这条路要彻底拆掉」（能力搬进工作台 ✓ 但路由层仍不许直连库存 ✓）
   const acceptAt = WORKBENCH_ROUTES.indexOf('purchase/arrivals/accept');
   const nextRoute = WORKBENCH_ROUTES.indexOf('router.post(', acceptAt + 10);
   // ⚠️ **再剥一层注释**（改指向，判据没放宽 ✗）：注释里出现 `applyPurchase` 是"指路"✓，不是"直连库存"✗

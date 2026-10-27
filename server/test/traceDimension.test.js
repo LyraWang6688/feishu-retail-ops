@@ -27,7 +27,7 @@ const capture = async (run) => {
 };
 
 test('entry 枚举：只认入口名，不回显 URL', () => {
-  assert.equal(entryOfPath('/s/ABC'), 'scan');
+  assert.equal(entryOfPath('/r/ABC'), 'scan');
   assert.equal(entryOfPath('/r/rec1'), 'scan');
   assert.equal(entryOfPath('/api/workbench/sales/orders'), 'workbench');
   assert.equal(entryOfPath('/api/lark/events'), 'lark');
@@ -48,7 +48,7 @@ test('role：owner 按白名单判，空 open_id 不编', () => {
 });
 
 test('中间件：trace_id 进响应头；日志带 trace_id/entry；身份后可补 role', async () => {
-  const req = { get: (name) => (name === 'x-trace-id' ? 'trace-123' : ''), requestId: 'req-1', path: '/s/ABC' };
+  const req = { get: (name) => (name === 'x-trace-id' ? 'trace-123' : ''), requestId: 'req-1', path: '/r/ABC' };
   const res = { headers: {}, set(name, value) { this.headers[name] = value; } };
   let nextCalled = false;
   const logs = [];

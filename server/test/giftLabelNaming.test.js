@@ -59,7 +59,7 @@ const VIEW = {
 };
 const WRITE = {
   enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-  postAction: '/s/x', sizes: [{ size_text: '40', missing: false }], draft: { lines: [] },
+  postAction: '/r/x', sizes: [{ size_text: '40', missing: false }], draft: { lines: [] },
   saleEnabled: true, replenishEnabled: true, returnEnabled: true,
   saleKey: 'scan_sale:test:1', replenishKey: 'scan_replenish:test:1', returnKey: 'scan_return:test:1',
   paymentMethods: ['微信'], defaultPaymentMethod: '微信', notice: '', acceptDefaultQuantity: 1,

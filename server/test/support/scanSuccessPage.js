@@ -19,7 +19,7 @@ const NUMBER = 'YD6693-2|黑色|A';
 /** 判据用的销售单号（路由那条路会给真号；这里是**已经拿到手**的那个 ✓ 不编格式 ✗）。 */
 const ORDER_NO = 'XSD-20261016-0001';
 
-/** `/s/<编号>` 这一段（与路由 `scanTargetOf` 同口径：编号原样 encode ✓）。 */
+/** `/r/<编号>` 这一段（与路由 `scanTargetOf` 同口径：编号原样 encode ✓）。 */
 const encodePath = (number) => encodeURIComponent(String(number));
 
 /** `config/scanWrite.js` 的 `{name}` 占位替换（与 `fillWriteText` 逐字同形 ✓）。 */
@@ -36,7 +36,7 @@ const fill = (template, values = {}, missing = '') => String(template ?? '')
  */
 const successReturnFields = (SCAN_PAGE, noticeNo = '') => {
   const cfg = SCAN_PAGE.successReturn || {};
-  const base = `/s/${encodePath(NUMBER)}?from=${cfg.homeRealm || 'sales'}`;
+  const base = `/r/${encodePath(NUMBER)}?from=${cfg.homeRealm || 'sales'}`;
   const homePath = String(noticeNo || '').trim()
     ? `${base}&${encodeURIComponent(cfg.noticeKey || 'done')}=${encodeURIComponent(String(noticeNo).trim())}`
     : base;
@@ -62,7 +62,7 @@ const saleSuccessPayload = (SCAN_PAGE, SCAN_WRITE) => {
     details: [fill(t.submittedOrderLine, { orderNo: ORDER_NO }), fill(t.submittedDetailLine, { count: 2 })],
     retryHint: t.submittedNextHint,
     requestId: 'req-success-sale',
-    backPath: `/s/${encodePath(NUMBER)}?from=sales`,
+    backPath: `/r/${encodePath(NUMBER)}?from=sales`,
     backLabel: t.submittedRecordAnother,
     backHint: t.submittedRecordAnotherHint,
   };

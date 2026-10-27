@@ -100,13 +100,13 @@ const createWriteSpy = () => {
 const appWith = (write) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => view() }, gateway: {}, writeService: write,
   }));
   return app;
 };
 
-const pageUrl = (base, realm) => `${base}/s/${encodeURIComponent(NUMBER)}?from=${realm}`;
+const pageUrl = (base, realm) => `${base}/r/${encodeURIComponent(NUMBER)}?from=${realm}`;
 
 /** 提一次（`amount === null` ⇒ **整个字段都不带** = "她一个字没填" ✓） */
 const postAction = async (base, realm, action, amount) => {

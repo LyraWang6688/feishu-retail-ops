@@ -40,6 +40,6 @@ test('AC-SC3 ⭐⭐ 回归：取数脚本**一个字没丢**，且最终 URL 必
   assert.match(HTML, /var dataSearch = window\.location\.search \|\| '';/, '仍读当前 query（from 不许丢 ✓）');
   assert.match(HTML, /dataQuery\.push\('data=1'\)/, '仍强制 data=1（死循环的闸 ✓）');
   assert.match(HTML, /fetch\(window\.location\.pathname \+ '\?' \+ dataQuery\.join\('&'\)/, '取数那一行没动 ✓');
-  assert.equal(HTML.includes("'/s/' + encodeURIComponent"), false, '不许写死 /s/ ✓');
+  assert.equal(HTML.includes("'/r/' + encodeURIComponent"), false, '不许写死 /r/ ✓');
   assert.equal((HTML.match(/<script/g) || []).length, 1, '整页仍只有一段脚本 ✓');
 });

@@ -4,7 +4,7 @@ require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径
 const { rendererSource } = require('./support/rendererSource');
 
 /**
- * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「/s/accept 这条路要彻底拆掉」
+ * ⭐⭐ 2026-10-14 晚（业务负责人逐字）：「/r/accept 这条路要彻底拆掉」
  *
  * 本文件原测「无 batch 的自助落地页（列未到货批次 / 手输批次号 / 进验收模式）」那一屏。
  * 那一屏**已退场** ⇒ 按老口径**改指向**：**逐条保留 AC 名** ✓
@@ -41,7 +41,7 @@ const ABILITY_KEPT = () => {
 
 test('AC-AS1 自助落地页（列未到货批次）⇒ 改钉「入口没了 ＋ 能力仍在工作台那条路」', () => {
   SCREEN_GONE();
-  assert.equal(RENDERER.includes('/s/accept?batch='), false, '那条进验收的链接已退场');
+  assert.equal(RENDERER.includes('/r/accept?batch='), false, '那条进验收的链接已退场');
   ABILITY_KEPT();
 });
 test('AC-AS2 一个未到货都没有 ⇒ 人话 + 手输兜底 ⇒ 随屏退场（服务侧人话仍在）', () => {

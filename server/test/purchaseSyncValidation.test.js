@@ -109,7 +109,7 @@ const createWriteSpy = ({ delayMs = 25 } = {}) => {
 const appWith = (write) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => view() },
     gateway: {},
     writeService: write,
@@ -117,7 +117,7 @@ const appWith = (write) => {
   return app;
 };
 
-const pageUrl = (base, realm) => `${base}/s/${encodeURIComponent(NUMBER)}?from=${realm}`;
+const pageUrl = (base, realm) => `${base}/r/${encodeURIComponent(NUMBER)}?from=${realm}`;
 
 const postForm = (url, cookie, body) => fetch(url, {
   method: 'POST',

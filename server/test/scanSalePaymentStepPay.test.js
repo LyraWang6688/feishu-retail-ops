@@ -86,7 +86,7 @@ const withServer = async (app, run) => {
   }
 };
 
-const post = (base, cookie, body) => fetch(`${base}/s/${encodeURIComponent('YD6693-2|黑色|A')}?from=sales`, {
+const post = (base, cookie, body) => fetch(`${base}/r/${encodeURIComponent('YD6693-2|黑色|A')}?from=sales`, {
   method: 'POST',
   redirect: 'manual',
   headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
@@ -107,7 +107,7 @@ const formFieldsOf = (html, marker) => {
 const buildApp = (followup) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup: async () => view() },
     // 付款这条路**只用钱路替身**（不读表、不碰草稿）⇒ 网关/写服务给最小形状即可 ✓
     gateway: {},

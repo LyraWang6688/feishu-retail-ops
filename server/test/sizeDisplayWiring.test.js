@@ -69,7 +69,7 @@ test('AC-SW-4 ⭐ 验收页口径未被牵连（`loadSizeScope` 仍在，且只�
   const code = fs.readFileSync(path.join(__dirname, '../src/services/scanPageService.js'), 'utf8');
   assert.match(code, /const loadSizeScope = async \(\{ categoryCode \}\) => sizesForCategory\(categoryCode, config\)/,
     '`loadSizeScope`（可录范围）保留 ✓');
-  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/s/accept` 这条路要彻底拆掉」）：
+  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/r/accept` 这条路要彻底拆掉」）：
   //   改前逐字：`assert.match(acceptance, /sizesForCategory\(categoryCode, config\)/, '验收页仍在用 …')`
   //   改后：验收那一屏退场 ⇒ 扫码页路由里**不再有**这个调用点 ✓；
   //        而**「可录范围」本体与它的一致性核对照旧**（`sizesForCategory` / `loadSizeScope` 都在 ✓ 没删 ✗）

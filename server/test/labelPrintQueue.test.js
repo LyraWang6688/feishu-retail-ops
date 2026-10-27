@@ -1085,7 +1085,7 @@ test('AC18 ⭐ 方向②：内容方向按配置旋转（**不是设了角度却
 test('AC18 ⭐⭐ 方向③：二维码旋转后**不变形、仍可识别**（真二维码 → 像素必须还是正方形）', async () => {
   const sharp = require('sharp');
   const QRCode = require('qrcode');
-  const url = 'https://hm.bamamei.online/s/XHB8095%7C%E6%A3%95%E8%89%B2%7CA';
+  const url = 'https://hm.bamamei.online/r/XHB8095%7C%E6%A3%95%E8%89%B2%7CA';
   // 出**真的**二维码（真模块），再只印二维码（其它字段全关）⇒ 墨迹包围盒 = 二维码本身。
   const qrSvg = await QRCode.toString(url, { type: 'svg', errorCorrectionLevel: 'M', margin: 0 });
   const qrOnly = label({ qr_svg: qrSvg });

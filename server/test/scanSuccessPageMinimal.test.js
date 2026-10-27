@@ -36,9 +36,9 @@ const CHAINS = [
     chain: '销售',
     params: {
       tone: 'success', title: '本单已提交成功', body: '本单已提交成功（销售）', number: 'XSD-20261016-001',
-      details: ['2 双', '合计 1,960 元'], backPath: '/s/XSD-20261016-001', backLabel: '返回扫码页',
-      returnPath: '/s/XSD-20261016-001', returnLabel: '返回扫码页', returnDelaySeconds: 3,
-      autoReturnUrl: '/s/XSD-20261016-001', extraActionsHtml: '<a href="/workbench">去工作台补收款</a>',
+      details: ['2 双', '合计 1,960 元'], backPath: '/r/XSD-20261016-001', backLabel: '返回扫码页',
+      returnPath: '/r/XSD-20261016-001', returnLabel: '返回扫码页', returnDelaySeconds: 3,
+      autoReturnUrl: '/r/XSD-20261016-001', extraActionsHtml: '<a href="/workbench">去工作台补收款</a>',
     },
   },
   {

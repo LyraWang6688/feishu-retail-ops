@@ -115,7 +115,7 @@ const appFor = (write, lookup = async () => view()) => {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use((req, res, next) => { req.requestId = 'req_return_sizes'; next(); });
-  app.use(SCAN_PAGE.route.basePath, createScanPageRouter({
+  app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({
     service: { lookup }, gateway: {}, writeService: write, startSnapshot: false,
   }));
   return app;
@@ -130,7 +130,7 @@ const withServer = async (app, run) => {
 };
 
 const getReturnBlock = async (base, query = '?from=purchase_return') => {
-  const response = await fetch(`${base}/s/${ENCODED}${query}`, { headers: { cookie: COOKIE } });
+  const response = await fetch(`${base}/r/${ENCODED}${query}`, { headers: { cookie: COOKIE } });
   const html = await response.text();
   const start = html.indexOf('realm-block--purchase_return');
   assert.notEqual(start, -1, '退货那一块必须在页面上');
@@ -212,7 +212,7 @@ test('AC-RT2 ⭐ 勾 2 个尺码 + 填数量 ⇒ 提交后 `entries` **恰好那
     body.append(SCAN_WRITE.fields.returnSizes, '42');
     body.append(`${SCAN_WRITE.fields.returnQuantityPrefix}40`, '2');
     body.append(`${SCAN_WRITE.fields.returnQuantityPrefix}42`, '1');
-    const response = await fetch(`${base}/s/${ENCODED}?from=purchase_return`, {
+    const response = await fetch(`${base}/r/${ENCODED}?from=purchase_return`, {
       method: 'POST',
       redirect: 'manual',
       headers: { cookie: COOKIE, 'content-type': 'application/x-www-form-urlencoded' },
@@ -464,7 +464,7 @@ test('AC-RT5 尺码取不到 / 库存取不到 ⇒ **如实提示**（那句人�
   const { renderScanPage } = require('../src/views/scanPageRenderer');
   const fallbackWrite = {
     enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-    postAction: '/s/x?from=purchase_return', returnKey: 'scan_return:k:1',
+    postAction: '/r/x?from=purchase_return', returnKey: 'scan_return:k:1',
     sizes: [{ size_text: '40', missing: false }, { size_text: '41', missing: true }],
   };
   const html = renderScanPage(view({ rows: [] }), SCAN_PAGE, fallbackWrite, 'purchase_return', {});
@@ -521,7 +521,7 @@ test('AC-RT7b ⭐ 库存**取不到**的行：**不许拿 0 当库存**拦住她
   const { renderScanPage } = require('../src/views/scanPageRenderer');
   const fallbackWrite = {
     enabled: true, texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-    postAction: '/s/x?from=purchase_return', returnKey: 'scan_return:k:1',
+    postAction: '/r/x?from=purchase_return', returnKey: 'scan_return:k:1',
     sizes: [{ size_text: '40', missing: false }, { size_text: '42', missing: false }],
   };
   const html = renderScanPage(view({ rows: [] }), SCAN_PAGE, fallbackWrite, 'purchase_return', {});
@@ -538,7 +538,7 @@ test('AC-RT6 补货那一块**逐字不变**（`value="1"` 照旧、没有数量
   const write = fakeWriteService();
   let replenishBlock;
   await withServer(appFor(write), async (base) => {
-    const response = await fetch(`${base}/s/${ENCODED}?from=replenish`, { headers: { cookie: COOKIE } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=replenish`, { headers: { cookie: COOKIE } });
     const html = await response.text();
     const start = html.indexOf('realm-block--replenish');
     replenishBlock = html.slice(start, html.indexOf('</section>', start) + 10);

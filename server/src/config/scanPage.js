@@ -31,8 +31,6 @@ const { SCAN_ENTRIES } = require('./scanEntries');
  */
 const ROUTE = Object.freeze({
   // `app.js` 用 basePath 挂载，router 里用 path（两边不许各写一份）。
-  basePath: '/s',
-  path: '/:number',
   // ⭐ 2026-10-12：**验收落地页**的路径模板（**唯一来源**）—— 路由用它拼跳转与表单目标，
   //    渲染层用它给「未到货批次」那几条链接（两边各写一份必然漂）。
   //    `{batchNo}` 会被 URL 编码后填进去；手输兜底那个 GET 表单用 `acceptPath`。
@@ -47,8 +45,6 @@ const ROUTE = Object.freeze({
   //    各建一个实例就会有两套写服务 / 两条按人串行队列 ⇒ **幂等可靠性直接破**。
   recordBasePath: '/r',
   recordPath: '/:recordId',
-  // 「拿到 recordId 但那条货品读不到」时的**回退**：URL 上若还带着编号（`?number=`）就按编号再试。
-  recordNumberQuery: 'number',
 });
 
 /**
