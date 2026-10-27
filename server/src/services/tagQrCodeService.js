@@ -67,31 +67,6 @@ const SCAN_URL_PLACEHOLDER = 'number';
  * ⚠️ 模板里出现不认识的占位符、或**一个 `{number}` 都没有** ⇒ **当场抛错**。
  *   配置写错时不许静默生成一堆指向同一个地址的空码 —— 那种错最难发现。
  */
-const buildScanUrl = (template, number, config = TAG_QR_CODE) => {
-  const source = String(template ?? '');
-  const values = { [SCAN_URL_PLACEHOLDER]: number };
-  let replacedNumber = false;
-  const encoded = source.replace(/\{(\w+)\}/g, (match, key) => {
-    if (!Object.prototype.hasOwnProperty.call(values, key)) {
-      throw new Error(
-        `二维码 URL 模板里的占位符不认识：{${key}}（可用：{${SCAN_URL_PLACEHOLDER}}）`,
-      );
-    }
-    replacedNumber = true;
-    const value = values[key];
-    return value === undefined || value === null ? '' : encodeURIComponent(String(value));
-  });
-  // 模板里**一个 `{number}` 都没有** ⇒ 每条记录都会生成同一个地址（"静默出空码"），当场拦住。
-  if (!replacedNumber) {
-    throw new Error(`二维码 URL 模板里没有 {${SCAN_URL_PLACEHOLDER}} 占位符：${source || '(空)'}`);
-  }
-  // 空编号生成出来的码扫开是 `/r/`，同样拦住。
-  if (!String(number ?? '').trim()) {
-    throw new Error('记录没有「编号」值，无法生成标签二维码');
-  }
-  return encoded;
-};
-
 /**
  * ⭐⭐ 2026-10-12：**新格式**（记录 ID）的 URL 构造 —— 与旧格式**各自独立**、各有各的守卫。
  * 为什么独立：编号版有"空编号 ⇒ 拦住"的语义；记录 ID 版同形（空 id ⇒ 拦住），
@@ -950,7 +925,6 @@ module.exports = {
   //   （`services/accessorySaleIntakeService`）要**复用同一份**读法（Lead 明确要求"复用既有 ✓ 不抄 ✗"）。
   //   ⚠️ 它一个字都没改（原样导出）✓
   findFieldValue,
-  buildScanUrl,
   buildRecordIdScanUrl,
   buildFileName,
   numberFromFileName,

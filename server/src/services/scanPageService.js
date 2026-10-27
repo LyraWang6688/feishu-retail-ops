@@ -483,7 +483,6 @@ const createScanPageService = (rawGateway, options = {}) => {
       // ⭐ 这次库存是哪种读法：`snapshot` / `filtered` / `whole_table`（空 = 没走到）
       inventory_source: timing.inventory_source || '',
       whole_table_fallback: timing.whole_table_fallback === true,
-      number_fallback: timing.number_fallback === true,
       record_id: timing.record_id === true,
       record_id_hit: timing.record_id_hit === true,
       rows: Number(timing.rows) || 0,

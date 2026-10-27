@@ -7,7 +7,7 @@
  * 本文件**不抄那份模板**，只用 `config/scanPage.js` 里的挂载点与路径段。
  *
  * 挂载与准入（**先读代码再动**的结果）：
- *   · `app.js` 把本 router 挂在 **`SCAN_PAGE.route.basePath`（`/s`）** 上，
+ *   · `app.js` 把本 router 挂在 **`SCAN_PAGE.route.recordBasePath`（`/r`）** 上，
  *     **不在 `/api/*` 之下** —— 那一段被 `API_KEY`（`x-api-key`）保护，
  *     而扫码的人是**手机浏览器直接打开**的页面，没有那个头，挂过去必被挡；
  *   · 准入用的是**工作台那一道**闸门（`routes/workbench.js` 里的 `requireWorkbenchAccess`，

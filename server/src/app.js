@@ -130,7 +130,7 @@ app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
 app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')));
 
 // 扫码页（标签二维码里的 `https://hm.bamamei.online/s/{编号}`）：标签二维码指向的就是这一条
-//（挂载点 `SCAN_PAGE.route.basePath` = `/s`，路径段在 router 里）。
+//（挂载点 `SCAN_PAGE.route.recordBasePath` = `/r`，路径段在 router 里）。
 // ⚠️ 刻意**不挂在 `/api/*` 下面**：那一段由下面的 `API_KEY`（`x-api-key` 头）保护，
 //    而扫码的人是手机浏览器**直接打开页面**的，没有那个头 ⇒ 挂过去必被挡。
 // ⚠️ 准入用的是**工作台同一道飞书身份闸门**（`routes/workbench.js` 导出的

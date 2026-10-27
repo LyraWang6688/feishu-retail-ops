@@ -230,6 +230,14 @@ const INVENTORY = [
   { record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '门盒', 库存键: `${NUMBER}|40`, 品类: '休闲鞋', 更新时间: Date.UTC(2026, 9, 8, 12, 30) } },
 ];
 
+test('旧 /s/{编号} 已删除：生产入口只保留 /r/{recordId}', async () => {
+  login();
+  await withServer(appFor(async () => view()), async (base) => {
+    const response = await fetch(`${base}/s/${encodeURIComponent('YD6693-2|黑色|A')}`, { headers: { cookie: sessionCookie() } });
+    assert.equal(response.status, 404, '旧 /s 必须 404');
+  });
+});
+
 test('真 app.js：`/r/:number` 确实挂上了、不要 API_KEY、走同一道工作台闸门，且一次写调用都没有', async () => {
   login();
   const gateway = require('../src/services/v1BitableGateway');

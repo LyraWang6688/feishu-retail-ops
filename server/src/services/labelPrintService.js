@@ -60,7 +60,7 @@ const QRCode = require('qrcode');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_PRINT, resolveGrid } = require('../config/labelPrint');
 const { SCAN_URL } = require('../config/tagQrCode');
-const { buildScanUrl, buildRecordIdScanUrl } = require('./tagQrCodeService');
+const { buildRecordIdScanUrl } = require('./tagQrCodeService');
 const { textValue } = require('./v1BitableGateway');
 const { parseStockKey } = require('./liveInventoryIndex');
 // ⭐⭐ task-15：飞书 `filter` 公式的拼装**只有那一处实现**（`bitableFilterFormula.js`）——
