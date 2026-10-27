@@ -280,6 +280,8 @@ test('真 app.js：`/r/:number` 确实挂上了、不要 API_KEY、走同一道�
       assert.match(anonymous.headers.get('location'), /^\/api\/auth\/feishu\/start\?next=/);
 
       // 扫码页与工作台共用同一个闸门函数：工作台自己的接口照旧（回归）
+      const legacy = await fetch(`${base}/s/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+      assert.equal(legacy.status, 404, '真 app.js 不再挂 /s');
       const workbench = await fetch(`${base}/api/workbench/inventory`);
       assert.equal(workbench.status, 401);
       assert.equal((await workbench.json()).auth_required, true);

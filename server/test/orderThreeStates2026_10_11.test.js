@@ -209,6 +209,7 @@ test('AC-C3 待交割 = 两项齐但没两清；售后单 = 钱货两清（至�
   const html = m.ordersSectionsHtml(list);
   for (const key of ['pending', 'afterSales', 'draft']) {
     assert.ok(html.includes(`data-sales-section="${key}"`), `缺 ${key} 这一段`);
+    assert.ok(html.includes(`data-tap-target="orders-section:${key}"`), `缺 ${key} 段埋点`);
   }
   const counts = html.split('data-sales-section="').slice(1)
     .map((chunk) => Number((chunk.match(/(\d+) 单/) || [])[1]));

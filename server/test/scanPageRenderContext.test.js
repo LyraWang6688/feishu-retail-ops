@@ -31,10 +31,12 @@ test('logRendered：scan.page.rendered + 漏斗（goods→entry）', () => {
   assert.ok(rendered);
   assert.equal(rendered.page, 'goods');
   assert.equal(rendered.number, 'N1');
+  assert.equal(rendered.qr_format, 'record_id');
   assert.deepEqual(rendered.query_keys, ['from']);
   const view = logs.find((l) => l.event === 'ui.page.view');
   assert.equal(view.step, 'entry');
   assert.equal(view.realm, 'sales');
+  assert.equal(view.qr_format, 'record_id');
   assert.ok(logs.find((l) => l.event === 'ui.step.enter' && l.step === 'entry'));
 });
 

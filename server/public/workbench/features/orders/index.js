@@ -322,7 +322,7 @@ export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
           <span class="muted">${list.length} 单</span>
         </div>`;
     return `
-      <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
+      <section class="order-section" data-sales-section="${escapeHtml(section.key)}" data-tap-target="orders-section:${escapeHtml(section.key)}">
         ${head}
         ${body}
       </section>`;
