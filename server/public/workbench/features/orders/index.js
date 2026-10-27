@@ -800,12 +800,10 @@ export function createOrdersModule({ mode = 'both' } = {}) {
           <div data-view="purchase-host"><p class="section-loading">${state.subTab === 'purchase' ? '正在读取采购申请…' : '打开后读取采购申请…'}</p></div>
         </div>`;
     state.container.innerHTML = `
-      <section class="panel">
-        ${subTabs}
-        ${mode === 'purchase' ? '' : salesPanel}
-        ${mode === 'sales' ? '' : purchasePanel}
-        <p class="operation-result" data-view="action-result" role="status"></p>
-      </section>`;
+      ${subTabs}
+      ${mode === 'purchase' ? '' : salesPanel}
+      ${mode === 'sales' ? '' : purchasePanel}
+      <p class="operation-result" data-view="action-result" role="status"></p>`;
   }
 
   /** 子 tab 的**选中态**（只重画那两个按钮，不动一级 tab）。 */
