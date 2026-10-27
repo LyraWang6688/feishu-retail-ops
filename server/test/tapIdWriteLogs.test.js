@@ -1,4 +1,5 @@
 'use strict';
+const readWorkbenchRoutes = require('./support/workbenchRouteSource');
 
 /**
  * ⭐⭐ 2026-10-15（task-48 b 的最后一跳 · Lead 放行）
@@ -47,13 +48,13 @@ const appFor = ({ followup = {}, gateway = {} } = {}) => {
 };
 
 test('AC-TAP1 ⭐ 补收款 / 交付两个入口**各自**把 `tap_id` 传下去（能真红：少接一处 ⇒ 红）', () => {
-  const route = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/routes/workbench.js'), 'utf8');
+  const route = readWorkbenchRoutes();
   // ⭐ 两个入口各一条：**少接一处就红**（Lead 点名要的 ✓）
   assert.match(route, /followup\.addPayment\(\{[\s\S]{0,400}?correlation: tapIdFromRequest\(req\)/,
     '补收款入口要带 tap_id ✓');
   assert.match(route, /followup\.delivery\.deliver\(\{[\s\S]{0,400}?\}, \{[\s\S]{0,200}?correlation: tapIdFromRequest\(req\)/,
     '交付入口要带 tap_id ✓');
-  assert.match(route, /const \{ tapIdFromRequest \} = require\('\.\.\/utils\/correlationFields'\)/, '取用口从既有 utils 引 ✓');
+  assert.match(route, /const \{ tapIdFromRequest \} = require\('(?:\.\.\/)+utils\/correlationFields'\)/, '取用口从既有 utils 引 ✓');
   // 中间那一层（确实断在中途的转发人）也不许把 key 丢掉 ✓
   const followup = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/salesFollowupService.js'), 'utf8');
   assert.match(followup, /this\.payments\.record\(input, \{ correlation: input\.correlation \}\)/,

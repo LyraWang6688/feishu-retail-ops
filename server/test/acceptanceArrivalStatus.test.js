@@ -28,6 +28,7 @@ const { rendererSource } = require('./support/rendererSource');
  * ─────────────────────────────────────────────────────────────────────────
  */
 const test = require('node:test');
+const readWorkbenchRoutes = require('./support/workbenchRouteSource');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -259,14 +260,14 @@ test('AC-AR2 🔴 扫码页那条"完成验收"的写入入口已退场（**源�
   assert.equal(/acceptanceLandingPath/.test(routes), false, '验收落地页的跳转路径也必须已退场 ✗');
   assert.equal(/handleAcceptFinishRows/.test(routes), false, '它的 handler 也必须已退场 ✗');
   assert.equal(/renderAcceptancePage/.test(rendererSource()), false, '验收页渲染函数已退场 ✓');
-  const workbench = readSrc('routes/workbench.js');
+  const workbench = readWorkbenchRoutes();
   assert.match(workbench, /router\.post\('\/purchase\/arrivals\/confirm'/, '仍成立：工作台"确认到货"照旧 ✓');
 });
 
 test('AC-AR3 🔴 那条"到货状态/金额/幂等"的验收标准已随验收页退场（能力仍在工作台那条路上）', async () => {
   // ⭐ 仍成立的部分（**照旧不许动** ✓）：工作台「确认到货」接口 + 加库存通路都在 ✓
   const SRC = path.join(__dirname, '../src');
-  const routes = fs.readFileSync(path.join(SRC, 'routes/workbench.js'), 'utf8');
+  const routes = readWorkbenchRoutes();
   assert.match(routes, /router\.post\('\/purchase\/arrivals\/confirm'/, '工作台"确认到货"仍在 ✓');
   const inventory = fs.readFileSync(path.join(SRC, 'services/inventoryService.js'), 'utf8');
   assert.match(inventory, /applyPurchase/, '加库存仍走 `InventoryService.applyPurchase` ✓');
