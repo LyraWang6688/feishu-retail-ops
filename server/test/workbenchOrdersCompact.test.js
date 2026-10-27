@@ -190,8 +190,6 @@ test('AC6 两段分类逐字不变（交割单 / 售后单），本次只动排�
     ['afterSales', '售后单', '待建设'],
     ['draft', '草稿单', '待建设'],
   ], '三段分类逐字不变');
-  assert.deepEqual(config.SALES_GROUPS.map((group) => group.label),
-    ['钱货两清', '有二次 · 货未交付', '有二次 · 资金未收', '有二次 · 两者都有']);
   // 判据（页面侧）也没动：三份单子的归属仍由 salesSectionOf 决定
   assert.equal(typeof orders.salesSectionOf, 'function');
   assert.equal(orders.salesSectionOf(ORDER), 'pending', '缺收款信息前这一单仍是「交割单」');

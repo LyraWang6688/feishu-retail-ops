@@ -8,7 +8,7 @@ const fillText = (template, values = {}) => String(template ?? '')
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS, DEFAULT_COLLECTION_METHOD, COLLECTION_METHODS,
   REFUND_METHOD_PLACEHOLDER, RESTOCK_STATES, AFTER_SALES_ACTIONS, SETTLEMENTS,
-  ORDERS_SUB_TABS, SALES_GROUPS, SALES_SECTIONS, DELIVERED_FULFILLMENT, PAID_PAYMENT_STATUS,
+  ORDERS_SUB_TABS, SALES_SECTIONS,
   ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
 import { ARRIVAL_FULL_API, ARRIVAL_FULL_FIELDS, ARRIVAL_FULL_TEXTS } from '../../config/orders.js';
@@ -226,30 +226,8 @@ export function salesCategoryOf(order) {
   return 'both';
 }
 
-/** 四类分组（空的那类也留着 —— 页面要显式告诉她这一类现在没有单）。 */
-export function groupSalesOrders(orders = []) {
-  return SALES_GROUPS.map((group) => ({
-    ...group,
-    orders: (orders || []).filter((order) => salesCategoryOf(order) === group.key),
-  }));
-}
-
-/** 销售子 tab 的看板：四类分组 + 每类下面照旧是一张单一张卡（操作入口一个字没变）。 */
-export function ordersBoardHtml(orders = [], groupKeys = SALES_GROUPS.map((group) => group.key)) {
-  if (!(orders || []).length) return `<p class="empty" data-view="orders-empty">${escapeHtml(P.empty)}</p>`;
-  const groups = groupSalesOrders(orders).filter((group) => groupKeys.includes(group.key));
-  return `<div class="orders-board" data-view="orders-board">${groups.map((group) => `
-      <section class="order-group" data-sales-group="${escapeHtml(group.key)}">
-        <div class="order-group-head">
-          <h3>${escapeHtml(group.label)}</h3>
-          <span class="muted">${group.orders.length} 单</span>
-        </div>
-        ${group.orders.length
-    ? ordersListHtml(group.orders)
-    : `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`}
-      </section>`).join('')}
-    </div>`;
-}
+// 2026-10-28（业务负责人）：删除「钱货两清」分组与售后单=已两清的列表。
+// 订单列表的交割单直接平铺；售后单改为扫一扫流程（不再靠订单状态筛选）。
 
 // ── ⭐⭐ 2026-10-09（她定的最终结构）+ 2026-10-11（判据按她的新口径重写）────────────
 //
@@ -292,11 +270,10 @@ export function salesSectionOf(order) {
   //    ⚠️ 其余判据**一个字都没动**（货品信息 / 资金信息 / 两清那三段照旧）。
   if (order?.sample_pending) return SALES_SECTIONS[0].key;
   const info = salesInfoOf(order);
-  // ⚠️ 履约 / 收款状态读不出来（空）时不敢说"两清"：`salesCategoryOf` 会把它归到
-  //    「有二次」那一侧 —— 但那种单**往往连资金信息都还没有**（收款明细为空），
-  //    所以它会先落到"待补充"，与她的口径一致。
   if (info.goodsMissing || info.fundsMissing) return SALES_SECTIONS[0].key;
-  return salesCategoryOf(order) === 'settled' ? 'afterSales' : 'pending';
+  // 2026-10-28：售后单不再由「钱货两清」判定，订单列表里一律归交割单；
+  // 售后单是独立的扫一扫流程。
+  return 'pending';
 }
 
 /**
@@ -312,9 +289,9 @@ export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
     if (section.key === 'pending') {
       body = !list.length
         ? `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`
-        : ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key));
+        : ordersListHtml(list);
     } else {
-      body = `<p class="empty compact" data-view="section-placeholder">待建设</p>`;
+      body = `<p class="empty compact" data-view="section-placeholder">${section.key === 'afterSales' ? '售后单请扫货品二维码进入' : '待建设'}</p>`;
     }
     const head = `
         <div class="order-group-head">
@@ -842,6 +819,27 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     return Promise.resolve();
   }
 
+  /** 售后单不是列表：点卡片直接扫货品码，再进入售后候选页。 */
+  async function scanAfterSales() {
+    try {
+      const scanned = await scanCodeRaw('after_sales');
+      const raw = String(scanned || '').trim();
+      let recordId = '';
+      try {
+        const url = new URL(raw, window.location.origin);
+        const match = url.pathname.match(/^\/r\/([^/]+)/);
+        if (match) recordId = decodeURIComponent(match[1]);
+      } catch { /* raw id below */ }
+      if (!recordId && /^[A-Za-z0-9_-]+$/.test(raw)) recordId = raw;
+      if (!recordId) return renderResult('没有扫到货品记录 ID，请重新扫码', true);
+      window.location.href = `/workbench/after-sales.html?productRecordId=${encodeURIComponent(recordId)}`;
+      return undefined;
+    } catch (error) {
+      if (/cancel/i.test(String(error?.errMsg || error?.message || ''))) return undefined;
+      return renderResult('扫一扫没有成功，请再试一次。', true);
+    }
+  }
+
   function renderList() {
     state.order = null;
     const host = $('[data-view="orders-host"]');
@@ -860,8 +858,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }
     const list = state.orders.filter((order) => salesSectionOf(order) === state.activeSection);
     const body = state.activeSection === 'pending'
-      ? (list.length ? ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key)) : `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`)
-      : `<p class="empty compact" data-view="section-placeholder">待建设</p>`;
+      ? (list.length ? ordersListHtml(list) : `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`)
+      : `<p class="empty compact" data-view="section-placeholder">${state.activeSection === 'afterSales' ? '售后单请扫货品二维码进入' : '待建设'}</p>`;
     host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
       <section class="order-section" data-sales-section="${escapeHtml(section?.key || '')}"><div class="order-group-head"><h3>${escapeHtml(section?.label || '')}<span class="tag tag-${escapeHtml(section?.tone || 'info')}">${escapeHtml(section?.tag || '')}</span></h3><span class="muted">${list.length} 单</span></div>${body}</section>`;
   }
@@ -1369,6 +1367,10 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       }
       const sectionCard = event.target.closest('[data-orders-section]');
       if (sectionCard) {
+        if (sectionCard.dataset.ordersSection === 'afterSales') {
+          void scanAfterSales();
+          return;
+        }
         state.activeSection = sectionCard.dataset.ordersSection;
         renderList();
         if (!state.ordersLoaded && !state.ordersLoading) loadOrders();
@@ -1430,6 +1432,26 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     });
   }
 
+  /** 从售后候选页选单 + 动作回来：直接打开这张单的售后表单，并预选动作。 */
+  async function openAfterSalesDeepLink() {
+    const params = new URLSearchParams(window.location.search);
+    const orderId = String(params.get('after_sales_order') || '').trim();
+    if (!orderId) return;
+    state.activeSection = 'afterSales';
+    renderList();
+    if (!state.ordersLoaded) await loadOrders();
+    const order = state.orders.find((item) => item.record_id === orderId);
+    if (!order) return renderResult('没有找到这张销售单', true);
+    openOrder(order);
+    const action = String(params.get('after_sales_action') || '');
+    const select = field('after-sales-action');
+    if (select && action) {
+      select.value = action;
+      toggleAfterSalesBlocks();
+    }
+    return undefined;
+  }
+
   return {
     mount(container) {
       state.container = container;
@@ -1437,7 +1459,10 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       bind();
       // 单领域模式只读自己那一边（采购 tab 不发销售订单请求，销售 tab 不发采购申请请求）。
       if (mode === 'purchase') loadPurchaseOrders();
-      else renderList();
+      else {
+        renderList();
+        void openAfterSalesDeepLink();
+      }
     },
   };
 }

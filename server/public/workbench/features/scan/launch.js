@@ -48,6 +48,31 @@ const withRealm = (url, realm) => {
   }
 };
 
+/**
+ * 只做「签名 → 加载 h5sdk → 扫一次」，返回扫到的原始字符串。
+ * 售后扫一扫也要用同一条链路，避免复制一份签名/相机代码。
+ */
+export async function scanCodeRaw(realm, options = {}) {
+  const signature = await api.get(`${SCAN_SIGNATURE_PATH}?url=${encodeURIComponent(window.location.href.split('#')[0])}`);
+  await withTimeout(loadSdk(signature?.jssdkUrl || ''), DEFAULT_TIMEOUT_MS, 'jssdk_timeout');
+  if (!window.h5sdk || typeof window.h5sdk.config !== 'function') throw new Error('jssdk_missing');
+  await withTimeout(window.h5sdk.config({
+    appId: signature.appId,
+    timestamp: signature.timestamp,
+    nonceStr: signature.nonceStr,
+    signature: signature.signature,
+    jsApiList: Array.isArray(signature.jsApiList) && signature.jsApiList.length
+      ? signature.jsApiList : ['scanCode'],
+  }), DEFAULT_TIMEOUT_MS, 'config_timeout');
+  await withTimeout(new Promise((resolve) => window.h5sdk.ready(resolve)), DEFAULT_TIMEOUT_MS, 'ready_timeout');
+  if (!window.tt || typeof window.tt.scanCode !== 'function') throw new Error('scan_unsupported');
+  options.onOpened?.();
+  const result = await withTimeout(new Promise((resolve, reject) => {
+    return window.tt.scanCode({ scanType: ['qrCode'], success: resolve, fail: reject });
+  }), SCAN_TIMEOUT_MS, 'scan_timeout');
+  return result?.result;
+}
+
 /** 扫到的内容 → 落点；认不出就返回空串（不猜）。 */
 export const scanTargetUrl = (scanned, realm, origin = window.location.origin) => {
   const raw = String(scanned || '').trim();
@@ -127,24 +152,8 @@ export function createScanCardsModule(page = {}) {
         busy = true;
         const startedAt = Date.now();
         try {
-          const signature = await api.get(`${SCAN_SIGNATURE_PATH}?url=${encodeURIComponent(window.location.href.split('#')[0])}`);
-          await withTimeout(loadSdk(signature?.jssdkUrl || ''), DEFAULT_TIMEOUT_MS, 'jssdk_timeout');
-          if (!window.h5sdk || typeof window.h5sdk.config !== 'function') throw new Error('jssdk_missing');
-          await withTimeout(window.h5sdk.config({
-            appId: signature.appId,
-            timestamp: signature.timestamp,
-            nonceStr: signature.nonceStr,
-            signature: signature.signature,
-            jsApiList: Array.isArray(signature.jsApiList) && signature.jsApiList.length
-              ? signature.jsApiList : ['scanCode'],
-          }), DEFAULT_TIMEOUT_MS, 'config_timeout');
-          await withTimeout(new Promise((resolve) => window.h5sdk.ready(resolve)), DEFAULT_TIMEOUT_MS, 'ready_timeout');
-          if (!window.tt || typeof window.tt.scanCode !== 'function') throw new Error('scan_unsupported');
-          reportLaunch(realm, 'opened', startedAt);
-          const result = await withTimeout(new Promise((resolve, reject) => {
-            return window.tt.scanCode({ scanType: ['qrCode'], success: resolve, fail: reject });
-          }), SCAN_TIMEOUT_MS, 'scan_timeout');
-          const target = scanTargetUrl(result?.result, realm);
+          const scanned = await scanCodeRaw(realm, { onOpened: () => reportLaunch(realm, 'opened', startedAt) });
+          const target = scanTargetUrl(scanned, realm);
           if (!target) { reportLaunch(realm, 'failed', startedAt); show(texts.empty, 4000); return; }
           reportLaunch(realm, 'scanned', startedAt);
           window.location.href = target;
