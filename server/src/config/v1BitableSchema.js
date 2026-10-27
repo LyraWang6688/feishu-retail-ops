@@ -281,6 +281,10 @@ const V1_BITABLE_SCHEMA = {
         salesEntry: '销售单号',
         fulfillmentStatus: '履约状态',
         actualAmount: '实收金额',
+        // ⭐ 2026-10-28：业务负责人在「销售明细」新增的公式列「库存数量」。
+        //   只读，用于采购页「补货」筛选：库存数量 = 0 的尺码才进入补货。
+        //   ⚠️ 公式列不写，只读；名字必须与生产真表逐字一致（schema 闸门盯住）。
+        stockQuantity: '库存数量',
         // Formula field (unit list price), never written by the backend.
         listUnitPrice: '销售单价',
         // 「交易类型」（单选关联「行为管理」，2026-10-05 新增）是给退换货链路预留的：
