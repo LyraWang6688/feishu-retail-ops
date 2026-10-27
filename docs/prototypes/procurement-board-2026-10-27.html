@@ -94,7 +94,7 @@
   <div class="tabs" role="tablist" aria-label="采购类型">
     <button class="tab active" type="button" data-tab="replenish" role="tab">补货<small>近 3 天销售</small></button>
     <button class="tab" type="button" data-tab="new" role="tab">上新<small>近 1 天新增货品</small></button>
-    <button class="tab scan-tab" type="button" id="scanBtn" role="button">扫一扫<small>补货扫码</small></button>
+    <button class="tab scan-tab" type="button" id="scanBtn" role="button" data-tap-target="scan:replenish">扫一扫<small>补货扫码</small></button>
   </div>
 
   <div data-panel="replenish">
@@ -370,6 +370,8 @@
   });
   refresh();
 </script>
+  <script src="/workbench/shared/ui-tap.js"></script>
+  <script>if (window.dshUiTap) window.dshUiTap.bind({ path: '/api/workbench/ui-tap', page: 'workbench' });</script>
   <script type="module">
     import { createScanCardsModule } from '/workbench/features/scan/launch.js';
     const scanHost = document.createElement('div');

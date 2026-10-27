@@ -24,7 +24,7 @@ const sectionById = (id) => {
 export function domainSubTabsHtml(domain, active = domain.pages[0].id) {
   return domain.pages.filter((page) => page.hidden !== true).map((page) => `
         <button class="sub-tab${page.id === active ? ' active' : ''}" type="button"
-          data-domain-page="${escapeHtml(page.id)}" aria-selected="${page.id === active}">${escapeHtml(page.label)}</button>`).join('');
+          data-domain-page="${escapeHtml(page.id)}" data-tap-target="${escapeHtml(page.scanRealm ? 'scan:' + page.scanRealm : 'domain:' + domain.id + ':' + page.id)}" aria-selected="${page.id === active}">${escapeHtml(page.label)}</button>`).join('');
 }
 
 /**

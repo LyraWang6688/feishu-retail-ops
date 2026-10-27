@@ -71,12 +71,12 @@ const cardsHtml = (cards = []) => cards.map((card) => {
     return `<div class="entry-card disabled-card" aria-disabled="true" data-scan-disabled="true">${body}</div>`;
   }
   if (card.jumpTo) {
-    return `<button class="entry-card card-button" type="button" data-jump="${escapeHtml(card.jumpTo)}">${body}</button>`;
+    return `<button class="entry-card card-button" type="button" data-jump="${escapeHtml(card.jumpTo)}" data-tap-target="${escapeHtml('jump:' + card.jumpTo)}">${body}</button>`;
   }
   if (card.scanRealm) {
-    return `<button class="entry-card card-button" type="button" data-scan-realm="${escapeHtml(card.scanRealm)}">${body}</button>`;
+    return `<button class="entry-card card-button" type="button" data-scan-realm="${escapeHtml(card.scanRealm)}" data-tap-target="${escapeHtml('scan:' + card.scanRealm)}">${body}</button>`;
   }
-  return `<a class="entry-card" href="${escapeHtml(card.href || '')}" rel="noopener">${body}</a>`;
+  return `<a class="entry-card" href="${escapeHtml(card.href || '')}" rel="noopener" data-tap-target="${escapeHtml('link:' + (card.title || ''))}">${body}</a>`;
 }).join('\n');
 
 export const scanCardsPageHtml = (page = {}) => `

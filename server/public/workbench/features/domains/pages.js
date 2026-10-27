@@ -52,10 +52,11 @@ const cardBody = (card, arrow) => `
  * ⚠️ 2026-10-16：`arrow` 缺省 = **不画那一行**（不再有默认动作文案，见 `cardBody` 上方）。
  */
 export function cardsHtml(cards = []) {
+  const targetOf = (card) => card.tapTarget || (card.scanRealm ? `scan:${card.scanRealm}` : card.jumpTo ? `jump:${card.jumpTo}` : `link:${card.title || ''}`);
   return cards.map((card) => (card.jumpTo
-    ? `<button class="entry-card card-button" type="button" data-jump="${escapeHtml(card.jumpTo)}">${cardBody(card, card.arrow)}
+    ? `<button class="entry-card card-button" type="button" data-jump="${escapeHtml(card.jumpTo)}" data-tap-target="${escapeHtml(targetOf(card))}">${cardBody(card, card.arrow)}
       </button>`
-    : `<a class="entry-card" href="${escapeHtml(card.href || '')}" rel="noopener">${cardBody(card, card.arrow)}
+    : `<a class="entry-card" href="${escapeHtml(card.href || '')}" rel="noopener" data-tap-target="${escapeHtml(targetOf(card))}">${cardBody(card, card.arrow)}
       </a>`)).join('\n');
 }
 

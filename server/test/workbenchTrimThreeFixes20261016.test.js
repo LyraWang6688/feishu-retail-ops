@@ -256,7 +256,7 @@ test('AC-TR3 ③ 核实：卡片本体自己是 <a href>（整张可点）⇒ �
   //    卡体（icon / 标题 / 箭头）都在这个 `<a>` 里面 ⇒ **点卡片任意一处就是跳转** ✓
   const linksHtml = pages.cardsHtml(labels.links);
   for (const href of ['/workbench/label-print.html?scan=1', '/workbench/label-print.html']) {
-    assert.ok(linksHtml.includes(`<a class="entry-card" href="${href}" rel="noopener">`),
+    assert.ok(linksHtml.includes(`class="entry-card" href="${href}" rel="noopener"`),
       `⭐ 卡片本体就是那个链接（整张可点）：${href}`);
   }
   assert.equal((linksHtml.match(/<a class="entry-card"/g) || []).length, 2, '两颗入口都是 <a>（不是靠箭头跳）');
