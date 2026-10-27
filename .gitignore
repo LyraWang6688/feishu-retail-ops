@@ -65,3 +65,6 @@ PROJECT.md
 print-helper/state.json
 print-helper/downloads/
 .env.bak-*
+
+# Local DSH profile/preview config (not project code)
+.dsh/
