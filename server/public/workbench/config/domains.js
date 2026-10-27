@@ -59,8 +59,6 @@
 // ⚠️ 2026-10-11（业务负责人批准）：采购的「报货 / 退货」两个子页**已隐藏**（那两个动作现在都在
 //   扫码页各自的领域里）⇒ 本文件**不 import 任何采购飞书表单 URL**（它们写的「信息填写」表
 //   已被业务负责人整表删除 ⇒ 是死链）。本文件里只留货品上新那一个表单外链。
-//   ⚠️ `config/links.js` 里的 `PURCHASE_REQUEST_FORM_URL` / `PURCHASE_RETURN_FORM_URL` /
-//      `PURCHASE_FORMS` **一个都没删**（删 or 留由业务负责人定；隐藏的老「采购管理」页面里
 //      已经没有任何地方再引用它们了）。
 import { SUPPLIER_DIRECTORY_URL, PRODUCT_NEW_FORM_URL, ACCESSORY_SALE_FORM_URL } from './links.js';
 

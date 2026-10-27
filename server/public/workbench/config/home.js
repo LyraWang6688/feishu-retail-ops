@@ -6,10 +6,10 @@
  *    · 🧮「**库存手工调整**」—— **一个字节不动**（哨兵，测试逐字钉住）；
  *    · 🏷️「**鞋盒标签打印**」—— 同样一个字不动。
  *   ⚠️ **不是"藏起来"**：那条入口从 `COMMON_ENTRIES` 里**真删**；
- *      随之变成**孤儿**的 `PURCHASE_REQUEST_FORM_URL` 那条 import（指向 `config/links.js`）
+ *      随之变成**孤儿**的 `旧采购报货表单常量` 那条 import（指向 `config/links.js`）
  *      **一并清掉**（首页已经没有任何外链入口了）。
- *   ⚠️ **功能 / 链接一个都没丢**：`config/links.js` 的 `PURCHASE_REQUEST_FORM_URL` /
- *      `PURCHASE_RETURN_FORM_URL` / `PURCHASE_FORMS` 都还在 —— 现在由**「采购」领域那两张卡 / 验收**
+ *   ⚠️ **功能 / 链接一个都没丢**：`config/links.js` 的 `旧采购报货表单常量` /
+ *      `旧采购退货表单常量` / `旧采购表单列表` 都还在 —— 现在由**「采购」领域那两张卡 / 验收**
  *      用着（见 `config/domains.js`），**首页不再引用它们**。
  *      ⚠️ 2026-10-15：老「采购管理」页 `features/purchase/**` 已整目录删除（她：「是死代码，给删除了吧」）——
  *      这两个 URL 常量**照旧保留** ✓

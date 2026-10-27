@@ -23,13 +23,6 @@
  */
 export const SCAN_APPLINK = 'https://applink.feishu.cn/client/qrcode/main';
 
-export const PURCHASE_REQUEST_FORM_URL =
-  'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnn4f9ZJzpm7JbT2rCH247xc';
-
-// 采购退货表单（表单名 2026-10-06 为「采购退货」）。
-export const PURCHASE_RETURN_FORM_URL =
-  'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnjsqt4D5URseSSXgecYlqGd';
-
 /**
  * 「货品上新」飞书表单 —— ⭐ **2026-10-09 起是「货品」tab 的第①个子页面**。
  *
@@ -38,8 +31,8 @@ export const PURCHASE_RETURN_FORM_URL =
  * 消费方只 `import`（不再各写一份字面量）。
  * ⚠️ **2026-10-15**（业务负责人逐字：「采购页的老文件是死代码，给删除了吧」）：
  *    那个老页 `features/purchase/**` **已整目录删除** ⇒ 本文件里提到它的地方只剩这段历史。
- *    ⚠️ **URL 常量照旧保留**（`PURCHASE_REQUEST_FORM_URL` / `PURCHASE_RETURN_FORM_URL` /
- *    `PURCHASE_FORMS`）—— 删 or 留不由这次清理决定 ✓
+ *    ⚠️ **URL 常量照旧保留**（`旧采购报货表单常量` / `旧采购退货表单常量` /
+ *    `旧采购表单列表`）—— 删 or 留不由这次清理决定 ✓
  */
 // ⭐ 2026-10-14（业务负责人逐字）：「在工作台的**采购**页面加一个子 tab 是**供应商名录**，
 //   我会给一个链接，也是**点击了之后直接跳转**」⇒ 她给的那条网址（**只此一处** ✓ 别处不复制字面量 ✗）
@@ -70,30 +63,14 @@ export const ACCESSORY_SALE_FORM_URL =
  *     那一页 `purchase-return.html` 已于 2026-10-09 按她的口令删掉；
  *     连它所在的 `features/purchase/**` 也于 **2026-10-15 整目录删除**（她：「是死代码，给删除了吧」）✓
  *   `config/home.js` —— 首页【常用功能】那**一张**「报货与退货」卡的 `href`
- *   （只 `import` 本文件的 `PURCHASE_REQUEST_FORM_URL`，**不复制 URL**）。
+ *   （只 `import` 本文件的 `旧采购报货表单常量`，**不复制 URL**）。
  *   ⚠️ 2026-10-08（业务负责人逐字，**ⓐ**）：「ⓐ（另一种）：**采购卡继续点一次直达报货表单**，
  *      只删退货那张卡……现在就是按照原来一样，**采购和退货用的是一个表单**」——
  *      ⇒ 首页那**一张**卡**直连报货飞书表单**（不再指回内页 `purchase-return.html`）。
- *      ⚠️ **`PURCHASE_RETURN_FORM_URL` 一个字节都不删**：它仍被「采购」tab 的「退货」卡用着。
+ *      ⚠️ **`旧采购退货表单常量` 一个字节都不删**：它仍被「采购」tab 的「退货」卡用着。
  *      留档：`docs/workbench-report-return-direct-form-2026-10-08.md`。
  * 加 / 减表单只改这张表。
  */
-export const PURCHASE_FORMS = [
-  {
-    id: 'purchase-request',
-    icon: '🛒',
-    title: '报货',
-    desc: '供应商报货——填完直接生成报货单',
-    url: PURCHASE_REQUEST_FORM_URL,
-  },
-  {
-    id: 'purchase-return',
-    icon: '↩️',
-    title: '退货',
-    desc: '把货退给供应商，填完直接生成退货单',
-    url: PURCHASE_RETURN_FORM_URL,
-  },
-];
 
 /**
  * 【信息查询】两个板块的网页 URL —— **飞书多维表格里的页面**（不是我们自建的页面）。
@@ -111,7 +88,7 @@ export const PURCHASE_FORMS = [
  *    卡面 arrow 文案 = **「链接待配置」** ⇒ **不产生空 `href`、点了不跳空链接、不报错**。
  *    给了 URL 就**只改下面那一行**（配置先行），页面一行都不用动。
  *
- * 写法与 `PURCHASE_REQUEST_FORM_URL` 同一套（`*_URL` 常量；`config/query.js` 只 import、不复制）。
+ * 写法与 `旧采购报货表单常量` 同一套（`*_URL` 常量；`config/query.js` 只 import、不复制）。
  */
 // ⭐ 2026-10-08 业务负责人**改口定稿**（逐字）：
 //   「另外我们的URL就是用的这两个，**严禁你换成别的**：
