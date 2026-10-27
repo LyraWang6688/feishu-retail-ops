@@ -108,7 +108,7 @@ const { createMultiItemPending: createMultiItemPendingOf, createPurchaseSchedule
 // ⭐⭐ 2026-10-18（task-2）：per-page token 与会话键（实现见 `./pageToken`；本文件只接线）
 const {
   createPageTokenMiddleware, pageSessionKey, pageSessionKeyOfRequest,
-  createLegacySessionProbe, createFirstVisitKeyAdopter, withPageSession,
+  createLegacySessionProbe, createFirstVisitKeyAdopter, withPageSession, mountedPathOf,
 } = require('./pageToken');
 const {
   realmOfAction: realmOfActionOf,
@@ -450,9 +450,11 @@ const createScanPageRouter = (options = {}) => {
    * 🔴 只给**参数**、不给结果：`realmQueryKey`（`from` ✓ 与 `resolveRealm` 同一个键）、
    *   `recordBasePath`（扫到 id 时拼路径 ✓ 同一个真源）、`origin`（拼同源地址 ✓）＋ 文案与超时。
    */
+  // ⭐ 2026-10-27：签名/上报路径要带当前挂载前缀（`/s` / `/r`），否则会 404。
   const realmScanPageConfig = (req, realm) => {
     if (!realmScanTriggered(req, realm)) return null;
     const origin = `${req.protocol}://${req.get('host') || ''}`;
+    const signaturePath = mountedPathOf(req, realmScanConfig.signaturePath);
     return {
       realm,
       origin,
@@ -467,11 +469,11 @@ const createScanPageRouter = (options = {}) => {
       maxScannedLength: realmScanConfig.maxScannedLength,
       scanNow: true,
       texts: realmScanConfig.texts,
-      signaturePath: realmScanConfig.signaturePath,
+      signaturePath,
       sdkTimeoutMs: realmScanConfig.sdkTimeoutMs,
       scanTimeoutMs: realmScanConfig.scanTimeoutMs,
       // 只读上报也挂在本 router 下（复用同一道身份闸门 ✓ 不新开一个入口 ✗）
-      reportPath: realmScanConfig.signaturePath.replace(/[^/]+$/, 'scan-report'),
+      reportPath: signaturePath.replace(/[^/]+$/, 'scan-report'),
     };
   };
   /**

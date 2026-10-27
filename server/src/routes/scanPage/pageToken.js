@@ -282,6 +282,14 @@ const createLegacySessionProbe = ({ getSessions, openIdOf }) => async (req) => {
  * （只动本地会话的 `key` 字段 —— 与写层 `revive` 采纳 `submitKey` 同一个做法 ✓ 不碰业务表 ✓）。
  * ⚠️ 其它情况（会话已存在 / 键不是旧路径第 1 轮 / 没有 token）⇒ **一个字都不动**。
  */
+/** 把 router 内配置的绝对路径补上当前挂载前缀（`/s` / `/r`）——签名/上报端点都在同一个 router 下。 */
+const mountedPathOf = (req, configuredPath) => {
+  const base = String(req?.baseUrl || '').replace(/\/+$/, '');
+  const path = String(configuredPath || '').trim();
+  if (!path) return '';
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+};
+
 const createFirstVisitKeyAdopter = ({ getSessions }) => async ({ chain, openId, sessionKey, submitKey }) => {
   const sessions = typeof getSessions === 'function' ? getSessions() : null;
   if (!sessionKey || !submitKey || !sessions || typeof sessions.get !== 'function') return;
@@ -313,6 +321,7 @@ module.exports = {
   pageSessionKeyOfRequest,
   createLegacySessionProbe,
   createFirstVisitKeyAdopter,
+  mountedPathOf,
   createSessionScopedSessions,
   withPageSession,
 };

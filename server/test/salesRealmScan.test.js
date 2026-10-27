@@ -300,7 +300,10 @@ test('AC-SR2 ⭐ 带 `?scan=1` 打开销售页 ⇒ 配置块 + 脚本 + `data-sc
       assert.ok(response.html.includes('data-view="realm-scan-notice"'),
         '⭐ 人话的落点必须在页面上（`AC-SR5` 靠它 ✓ 不留死按钮 ✗）');
       // 领域键 / 端点 / 超时全在配置里（换值不用改代码 ✓）
-      assert.equal(block.config.signaturePath, cfg.signaturePath, '签名端点走配置 ✓');
+      assert.equal(block.config.signaturePath, `${SCAN_PAGE.route.basePath}${cfg.signaturePath}`,
+        '签名端点走配置，且带当前扫码页挂载前缀（否则 /lark/jsapi-signature 会 404）✓');
+      assert.equal(block.config.reportPath, `${SCAN_PAGE.route.basePath}${cfg.signaturePath.replace(/[^/]+$/, 'scan-report')}`,
+        '上报端点同样要带挂载前缀 ✓');
       assert.equal(block.config.sdkTimeoutMs, cfg.sdkTimeoutMs, '超时走配置 ✓（每一处都不许无限等 ✗）');
     });
   } finally { h.cleanup(); }
