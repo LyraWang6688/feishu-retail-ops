@@ -101,7 +101,16 @@ export function createScanCardsModule(page = {}) {
       if (!container) return;
       container.innerHTML = scanCardsPageHtml(page);
       const notice = container.querySelector('[data-view="scan-launch-notice"]');
-      const show = (text) => { if (notice) notice.textContent = String(text || ''); };
+      let noticeTimer = null;
+      // 扫描中的状态保持；取消/失败/超时只短暂提示，避免一行提示长期占着页面。
+      const show = (text, autoHideMs = 0) => {
+        if (!notice) return;
+        if (noticeTimer) clearTimeout(noticeTimer);
+        notice.textContent = String(text || '');
+        if (autoHideMs > 0) {
+          noticeTimer = setTimeout(() => { notice.textContent = ''; noticeTimer = null; }, autoHideMs);
+        }
+      };
       let busy = false;
 
       const scan = async (realm) => {
@@ -126,14 +135,14 @@ export function createScanCardsModule(page = {}) {
             return window.tt.scanCode({ scanType: ['qrCode'], success: resolve, fail: reject });
           }), SCAN_TIMEOUT_MS, 'scan_timeout');
           const target = scanTargetUrl(result?.result, realm);
-          if (!target) { show(texts.empty); return; }
+          if (!target) { show(texts.empty, 4000); return; }
           window.location.href = target;
         } catch (error) {
           const code = String(error?.message || '');
-          if (code === 'jssdk_missing' || code === 'jssdk_load_failed' || code === 'scan_unsupported') show(texts.noSdk);
-          else if (code === 'scan_timeout' || code === 'jssdk_timeout' || code === 'config_timeout' || code === 'ready_timeout') show(texts.timeout);
-          else if (/cancel/i.test(String(error?.errMsg || ''))) show(texts.cancelled);
-          else show(texts.failed);
+          if (code === 'jssdk_missing' || code === 'jssdk_load_failed' || code === 'scan_unsupported') show(texts.noSdk, 6000);
+          else if (code === 'scan_timeout' || code === 'jssdk_timeout' || code === 'config_timeout' || code === 'ready_timeout') show(texts.timeout, 6000);
+          else if (/cancel/i.test(String(error?.errMsg || ''))) show(texts.cancelled, 2200);
+          else show(texts.failed, 4000);
         } finally {
           busy = false;
         }
