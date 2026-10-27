@@ -334,7 +334,7 @@ export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
  * 销售订单列表的**入口卡片**：交割单 / 售后单 / 草稿单。
  * 点击卡片后才进入对应内容（交割单=现有订单，其余=待建设）。
  */
-export function ordersSectionCardsHtml(orders = []) {
+export function ordersSectionCardsHtml(orders = [], { counts = true } = {}) {
   const listAll = Array.isArray(orders) ? orders : [];
   return `<div class="orders-section-cards" data-view="orders-section-cards">${SALES_SECTIONS.map((section) => {
     const count = listAll.filter((order) => salesSectionOf(order) === section.key).length;
@@ -342,7 +342,7 @@ export function ordersSectionCardsHtml(orders = []) {
       <span class="icon">${escapeHtml(section.icon || '')}</span>
       <h3>${escapeHtml(section.label)}</h3>
       <p>${escapeHtml(section.desc || '')}</p>
-      <span class="orders-section-meta"><span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span><span class="muted">${count} 单</span></span>
+      <span class="orders-section-meta"><span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span>${counts ? `<span class="muted">${count} 单</span>` : '<span class="muted">点开查看</span>'}</span>
     </button>`;
   }).join('')}</div>`;
 }
@@ -762,6 +762,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     methods: [],
     order: null,
     activeSection: null,
+    ordersLoaded: false,
+    ordersLoading: false,
     // ⭐ 2026-10-09：订单列表内部的子 tab（销售 / 采购）—— 选中态自己实现。
     //    单领域模式（销售 tab / 采购 tab）下没有这一排按钮，直接从 mode 定住。
     subTab: mode === 'purchase' ? 'purchase' : ORDERS_SUB_TABS[0].value,
@@ -840,10 +842,15 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     if (!host) return;
     const notices = `${state.refreshing ? '<p class="orders-refreshing">刷新中…</p>' : ''}${!state.refreshing && state.refreshError ? '<p class="orders-refreshing orders-refreshing--error">刷新失败，先看的是上次的结果</p>' : ''}`;
     if (!state.activeSection) {
-      host.innerHTML = notices + ordersSectionCardsHtml(state.orders);
+      host.innerHTML = notices + ordersSectionCardsHtml(state.orders, { counts: state.ordersLoaded });
       return;
     }
     const section = SALES_SECTIONS.find((item) => item.key === state.activeSection);
+    if (!state.ordersLoaded) {
+      host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
+        <p class="section-loading" data-view="orders-waiting">正在读取订单…</p>`;
+      return;
+    }
     const list = state.orders.filter((order) => salesSectionOf(order) === state.activeSection);
     const body = state.activeSection === 'pending'
       ? (list.length ? ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key)) : `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`)
@@ -904,11 +911,15 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   const ordersLoader = createFirstPaintLoader({ storage: safeStorage(), load: fetchOrders });
 
   async function loadOrders({ freshOnly = false } = {}) {
+    if (state.ordersLoading) return;
+    state.ordersLoading = true;
     const host = $('[data-view="orders-host"]');
     const hasOrders = (state.orders || []).length > 0;
     const stopTicker = host && !state.order && !hasOrders ? startWaitingTicker(host) : () => {};
     const apply = (rows) => {
       state.orders = rows;
+      state.ordersLoaded = true;
+      state.ordersLoading = false;
       if (state.order) {
         const refreshed = state.orders.find((item) => item.record_id === state.order.record_id);
         if (refreshed) openOrder(refreshed);
@@ -934,6 +945,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       writeCachedOrders(safeStorage(), state.orders);
     } catch (error) {
       state.refreshing = false;
+      state.ordersLoading = false;
       state.refreshError = describeError(error);
       if ((state.orders || []).length) renderList();
       else if (host) host.innerHTML = '<p class="empty">订单读取失败</p>';
@@ -1352,6 +1364,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       if (sectionCard) {
         state.activeSection = sectionCard.dataset.ordersSection;
         renderList();
+        if (!state.ordersLoaded && !state.ordersLoading) loadOrders();
         return;
       }
       if (event.target.closest('[data-orders-section-back]')) {
@@ -1417,7 +1430,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       bind();
       // 单领域模式只读自己那一边（采购 tab 不发销售订单请求，销售 tab 不发采购申请请求）。
       if (mode === 'purchase') loadPurchaseOrders();
-      else loadOrders();
+      else renderList();
     },
   };
 }
