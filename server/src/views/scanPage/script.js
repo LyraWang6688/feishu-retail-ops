@@ -76,9 +76,23 @@ ${UI_TAP_SHARED_SOURCE}
   var forms = document.querySelectorAll('form');
   for (var i = 0; i < forms.length; i += 1) {
     forms[i].addEventListener('submit', function (event) {
-      var button = event.target.querySelector('button[type="submit"]');
-      if (!button || button.disabled) return;
+      // ⭐ 2026-10-27：表单可能有**多颗 submit**（补货/退货的「再加一个货品」＋主提交）。
+      //   只认 event.submitter，不能永远拿第一颗；否则点「再加一个货品」时会被当成主提交，
+      //   而且下面 disable 会把这一颗的 name/value 从表单数据里抹掉 ⇒ 服务端只看到 action=replenish/return。
       var form = event.target;
+      var submitter = event.submitter || form.querySelector('button[type="submit"]');
+      var button = submitter;
+      if (!button || button.disabled) return;
+      // 先固定提交者身份，再 disable；否则 disabled 的按钮不会进表单数据。
+      var submitterName = String(button.name || '');
+      var submitterValue = String(button.value || '');
+      if (submitterName) {
+        var kept = document.createElement('input');
+        kept.type = 'hidden';
+        kept.name = submitterName;
+        kept.value = submitterValue;
+        form.appendChild(kept);
+      }
       // 2026-10-12: her words -- "tapping seems to do nothing, so I keep tapping".
       //    The button label must never become empty: with no attribute configured, fall back to the button's own text.
       var label = button.getAttribute('data-submit-feedback') || form.getAttribute('data-submit-feedback') || button.textContent;
