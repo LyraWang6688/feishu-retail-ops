@@ -411,6 +411,27 @@ const createWorkbenchRouter = (options = {}) => {
   // 库存 / 标签打印：各自子 router（2026-10-28 拆分；鉴权与 no-store 仍由父 router 统一加）。
   router.use(createWorkbenchInventoryRoutes(options));
   router.use(createWorkbenchLabelRoutes(options));
+  // 订单动作（售后 / 二次交付）与售后扫一扫候选：2026-10-28 第一阶段拆分时误删，现恢复。
+  router.use(createWorkbenchOrderActionsRouter({
+    gateway: options.gateway || followup.gateway,
+    service: options.orderActions,
+    ordersCache,
+  }));
+  router.get('/sales/after-sales/candidates', async (req, res) => {
+    try {
+      const result = await followup.listAfterSalesCandidates({
+        productRecordId: req.query.productRecordId || req.query.product_record_id,
+        days: req.query.days,
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.sales.after_sales.candidates.failed', {
+        request_id: req.requestId, error: error.message,
+      });
+      return res.status(error?.statusCode === 400 ? 400 : 502)
+        .json({ success: false, error: error.message || 'after-sales candidates failed' });
+    }
+  });
 
   router.get('/sales/orders', async (req, res) => {
     try { return res.json({ success: true, ...await followup.listOrders() }); }
