@@ -26,7 +26,7 @@ export function entryTarget(template, rawNumber) {
 }
 
 /**
- * 卡片体（与 `features/common` / `features/query` 的卡长得一样，复用 base.css 的类）。
+ * 卡片体（与 `features/query` 的卡长得一样，复用 base.css 的类）。
  *
  * ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
  *    卡片**只留标题 + 动作** —— 那句副标题（`desc`，例「供应商报货（飞书表单）—— 填完直接生成报货单」）

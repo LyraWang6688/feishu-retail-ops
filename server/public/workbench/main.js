@@ -44,7 +44,7 @@ function bindTapTelemetry() {
 //      （采购 → 报货 / 退货两张表单卡 · 库存 → 手工调整 · 货品 → 标签打印）。
 //      ⚠️ 2026-10-09 下半场：业务负责人点头把承载它的那四个老页面**整个删掉**
 //      （`common.html` / `others.html` / `purchase.html` / `purchase-return.html`，
-//      口径：「代码从仓库里删，不是隐藏」）⇒ `features/common` + `config/home.js`
+//      口径：「代码从仓库里删，不是隐藏」）⇒ （已删除的旧首页模块）
 //      **当前没有任何页面挂载**（`standalone.js` 的注册已摘），只是先留着没删。
 // ⚠️ HIDDEN（入口隐去、**代码保留**）：finance / douyin / platform ——
 //    它们仍在下面这个 modules 表里（占位模块），但**当前没有任何页面列出它们**

@@ -76,7 +76,7 @@ export function buildDirectJumpUrl(href, options = {}) {
 }
 
 /**
- * 一张卡的卡体（与 `features/common/index.js` 的卡长得一样，复用 `styles/base.css` 的类）。
+ * 一张卡的卡体（与 `features/query/index.js` 的卡长得一样，复用 `styles/base.css` 的类）。
  *
  * ⭐ 2026-10-10（业务负责人真机反馈「下面的这些文字解释就不用了」）：**只留标题** ——
  *    那句副标题（`desc`）已从 `config/query.js` 整字段退场，这里也不再拼 `<p>`。

@@ -89,7 +89,7 @@ const label = (patch = {}) => ({
   brand_text: '邯美皮鞋',
   record_ids: ['r1'],
   record_count: 1,
-  scan_url: 'https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA',
+  scan_url: 'https://hm.bamamei.online/r/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA',
   qr_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 33"><path d="M0 0h33v33H0z"/></svg>',
   footer_text: 'YD6693-2|黑色|A',
   ...patch,
@@ -494,11 +494,6 @@ test('页面接线：label-print.html 存在、注册进 standalone.js、首页�
   const standalone = read('standalone.js');
   assert.match(standalone, /'label-print': \(\) => createLabelPrintModule\(\)/,
     'standalone.js 的独立页注册表里必须有 label-print（不是新开一套启动逻辑）');
-
-  const home = read('config/home.js');
-  assert.match(home, /href: '\/workbench\/label-print\.html'/);
-  assert.match(home, /title: '鞋盒标签打印'/);
-  assert.match(home, /desc: '.*40×30mm.*'/, '首页卡片的说明要跟着新标签纸走（不许还写 50×30mm）');
 
   const page = read('features/labels/index.js');
   assert.equal((page.match(/api\.get\(/g) || []).length, 1,
