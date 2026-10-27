@@ -73,9 +73,11 @@ async function handlePaymentPay(ctx) {
                 requestId,
               });
             }
+            const tapId = String(tapIdFromRequest(req).tap_id || '');
             const enqueued = await salesAsync.enqueue({
               submitKey: String(body[fields.submitKey] || ''),
               payload: built.payload,
+              tapId,
             });
             if (!enqueued.ok) {
               logError('scan.sale.async.enqueue_failed', { request_id: requestId, errors: enqueued.errors });
@@ -94,6 +96,7 @@ async function handlePaymentPay(ctx) {
             logInfo('scan.sale.async.enqueued', {
               request_id: requestId,
               job_id: enqueued.job?.job_id,
+              tap_id: tapId || undefined,
               order_no: orderNo,
               line_count: pendingLines.length,
               payment_count: pendingPayments.length,
