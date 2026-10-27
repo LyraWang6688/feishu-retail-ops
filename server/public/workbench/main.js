@@ -46,7 +46,7 @@ function bindTapTelemetry() {
 //      （`common.html` / `others.html` / `purchase.html` / `purchase-return.html`，
 //      口径：「代码从仓库里删，不是隐藏」）⇒ （已删除的旧首页模块）
 //      **当前没有任何页面挂载**（`standalone.js` 的注册已摘），只是先留着没删。
-// ⚠️ HIDDEN（入口隐去、**代码保留**）：finance / douyin / platform ——
+// ⚠️ HIDDEN（入口隐去、**代码保留**）：douyin / platform ——
 //    它们仍在下面这个 modules 表里（占位模块），但**当前没有任何页面列出它们**
 //    （原先列它们的「其它 / 历史功能」页已删）。要恢复某个入口：在 `config/tabs.js` 的
 //    `MAIN_TABS` 里加回一条即可，逻辑不用改。
@@ -56,12 +56,9 @@ const modules = new Map([
   ['inventory', createDomainModule('inventory')],
   ['purchase', createDomainModule('purchase')],
   ['product', createDomainModule('product')],
-  // ── 以下三个是隐去的入口（保留代码；在「其它 / 历史功能」里如实列出）──────
-  ['finance', createPlaceholderModule({
-    title: '资金管理',
-    description: '统一展示实际到账、顾客待收款、平台待结算和供应商应付款。',
-    planned: ['收支流水', '应收应付', '资金报表与对账'],
-  })],
+  // 资金是独立领域（2026-10-28）：先占位，后续在 config/domains.js 里独立加页面。
+  ['funds', createDomainModule('funds')],
+  // ── 以下两个是隐去的入口（保留代码）─────────────────────────────────────
   ['douyin', createPlaceholderModule({
     title: '抖音运营',
     description: '管理第三方券种、核销记录、平台结算和对账差异。',
