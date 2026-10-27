@@ -44,7 +44,7 @@ const { createTagQrCodeService } = require('./services/tagQrCodeService');
 const { V1BitableGateway } = require('./services/v1BitableGateway');
 const { resolveTagQrSweepSchedule } = require('./config/tagQrCode');
 // 扫码页的挂载点（`/s`）与它的配置：**与二维码里的 URL 同源**
-// （`config/tagQrCode.js` 的 `scanUrl.urlTemplate` = `https://hm.bamamei.online/s/{编号}`）。
+// （`config/tagQrCode.js` 的 `scanUrl.recordIdTemplate` = `https://hm.bamamei.online/s/{编号}`）。
 const { SCAN_PAGE } = require('./config/scanPage');
 
 const app = express();

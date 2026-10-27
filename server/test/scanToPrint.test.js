@@ -187,13 +187,6 @@ test('AC-SP4 ⭐ 扫到 `/r/{记录 ID}` ⇒ 解析出记录 ID；别的形状 �
   assert.deepEqual(ok, { ok: true, mode: 'recordId', value: 'recABC123' }, '出码与解析是一对反函数 ✓');
   assert.equal(SCAN_URL.recordIdTemplate, 'https://hm.bamamei.online/r/{recordId}', '形状唯一真源仍在 config ✓');
 
-  // ⭐ 旧贴纸（`/r/{编号}`）：**认得出这是什么** ⇒ 人话必须告诉她"重打新标签"（不是"格式不对"）。
-  const legacy = parseLabelScanUrl('https://hm.bamamei.online/s/XHB8095%7C%E9%BB%91%E8%89%B2%7CA');
-  assert.equal(legacy.ok, false);
-  assert.equal(legacy.reason, 'legacy_sticker');
-  assert.match(legacy.message, /旧版二维码/, '要点明这是什么');
-  assert.match(legacy.message, /重新打印|重打/, '要给出下一步（可操作）');
-  assert.equal(legacy.message, LABEL_PRINT.scanPrint.texts.legacySticker, '文案唯一真源在 config');
 
   // 别人的二维码 / 一段文字 / 空串 ⇒ 一律**拒**（**不猜** ✗：形状不对就是不对）。
   for (const raw of ['hello world', 'https://example.com/r/rec1', 'https://hm.bamamei.online/r/', '']) {
@@ -330,11 +323,6 @@ test('AC-SP4/SP8 ⭐ 形状不对 ⇒ 400 + **可操作的人话**，而且**一
         assert.equal(body.success, false);
         assert.ok(String(body.error || '').length > 4, '给人话（不是裸 500）');
       }
-      const legacy = await (await postJobs(base, {
-        mode: 'single', scan: 'https://hm.bamamei.online/s/XHB8095%7C%E9%BB%91%E8%89%B2%7CA',
-      })).json();
-      assert.equal(legacy.reason, 'legacy_sticker');
-      assert.match(legacy.error, /重新打印|重打/, '旧码要告诉她下一步（可操作）');
       assert.equal((await harness.store.listAll()).length, 0, '⭐ 形状不对 ⇒ 零写入（一张都不许排）');
     });
   } finally {

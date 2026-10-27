@@ -52,7 +52,7 @@ const { canScanNextWithFeishu } = require('../views/scanPageRenderer');
 const { createLarkJsapiService } = require('../services/larkJsapiService');
 
 // ⚠️ 准入闸门只有这一份实现：语义与文案**逐字不变**（2026-10-08 的《工作台准入口径》沿用它）。
-// 扫码页（`GET /s/:number`）require 的也是它 —— 不新开鉴权、也不抄第二份判断。
+// 扫码页（`GET /r/:recordId`）require 的也是它 —— 不新开鉴权、也不抄第二份判断。
 const requireWorkbenchAccess = (req, res, next) => {
   if (!feishuAuthEnabled()) return res.status(503).json({ success: false, error: '飞书身份认证尚未启用' });
   const user = getSessionUser(req);

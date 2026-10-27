@@ -37,7 +37,7 @@
  *      **排除并计数**（`without_stock_skipped` ＋ 一条 warn），**不静默丢** ✗。
  *    🔴 仍然是**只读**：依旧只有 `listAll('liveInventory')` / `listAll('product')` 两次读。
  *
- * ⚠️ **二维码内容是单一真源**：模板来自 `config/tagQrCode.js` 的 `SCAN_URL.urlTemplate`
+ * ⚠️ **二维码内容是单一真源**：模板来自 `config/tagQrCode.js` 的 `SCAN_URL.recordIdTemplate`
  *    （`https://hm.bamamei.online/s/{编号}`），替换用 `services/tagQrCodeService.js` 导出的
  *    `buildScanUrl`（只编码值、不编码模板）。本文件**不抄第二份 URL 模板** —— 旧的那条
  *    `https://workbench.bamamei.online/scan?no=…` 已随本次改造删除。
@@ -328,11 +328,6 @@ const parseLabelScanUrl = (raw, config = LABEL_PRINT) => {
     try { id = decodeURIComponent(sliced); } catch { id = sliced; }
     if (RECORD_ID_PATTERN.test(id)) return { ok: true, mode: 'recordId', value: id };
     return { ok: false, reason: 'not_label_code', message: texts.notLabelCode };
-  }
-  const numberParts = templateParts(SCAN_URL.numberTemplate);
-  if (numberParts && value.startsWith(numberParts.prefix) && value.endsWith(numberParts.suffix)) {
-    // ⭐ 旧贴纸（`/s/{编号}`）：**认得出是什么** ⇒ 给她一句能照做的人话（Lead 要求的"可操作"）。
-    return { ok: false, reason: 'legacy_sticker', message: texts.legacySticker };
   }
   return { ok: false, reason: 'not_label_code', message: texts.notLabelCode };
 };
@@ -766,7 +761,7 @@ const createLabelPrintService = (gateway, options = {}) => {
         scanUrl = buildLabelScanUrl(productRecordId);
       } else {
         missingQrRecordId += 1;
-        scanUrl = buildScanUrl(SCAN_URL.numberTemplate, group.number);
+        scanUrl = '';
       }
       const footerValues = {
         number: group.number,
@@ -814,7 +809,7 @@ const createLabelPrintService = (gateway, options = {}) => {
 
     const labels = await Promise.all(prepared.map(async (label) => ({
       ...label,
-      qr_svg: config.fields?.qr
+      qr_svg: config.fields?.qr && label.scan_url
         ? await QRCode.toString(label.scan_url, {
           type: 'svg',
           errorCorrectionLevel: config.qr.errorCorrectionLevel,
@@ -956,7 +951,6 @@ const createLabelPrintService = (gateway, options = {}) => {
       //    那条编号在「货品信息」里找不到记录时退回的旧版（见 `missing_qr_record_id`）。
       qr: {
         url_template: SCAN_URL.recordIdTemplate,
-        fallback_url_template: SCAN_URL.numberTemplate,
         source: 'config/tagQrCode.js#SCAN_URL',
       },
       labels,

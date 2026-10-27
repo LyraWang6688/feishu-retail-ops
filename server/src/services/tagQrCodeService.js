@@ -62,7 +62,7 @@ const SCAN_URL_PLACEHOLDER = 'number';
 /**
  * 把模板里的 `{number}` 换成**已 URL 编码**的编号。
  *
- * ⚠️ **只编码值、不编码模板**：模板里的 `https://`、`/s/` 必须原样保留
+ * ⚠️ **只编码值、不编码模板**：模板里的 `https://`、`/r/` 必须原样保留
  *   （整体 encodeURIComponent 会把 `://` 也编掉，扫出来打不开）。
  * ⚠️ 模板里出现不认识的占位符、或**一个 `{number}` 都没有** ⇒ **当场抛错**。
  *   配置写错时不许静默生成一堆指向同一个地址的空码 —— 那种错最难发现。
@@ -85,7 +85,7 @@ const buildScanUrl = (template, number, config = TAG_QR_CODE) => {
   if (!replacedNumber) {
     throw new Error(`二维码 URL 模板里没有 {${SCAN_URL_PLACEHOLDER}} 占位符：${source || '(空)'}`);
   }
-  // 空编号生成出来的码扫开是 `/s/`，同样拦住。
+  // 空编号生成出来的码扫开是 `/r/`，同样拦住。
   if (!String(number ?? '').trim()) {
     throw new Error('记录没有「编号」值，无法生成标签二维码');
   }
@@ -372,27 +372,11 @@ const createTagQrCodeService = ({
    * ⭐⭐ 2026-10-12：决定二维码里装哪一串「标识」——**新格式用 record_id（永不变），缺了才回退编号**。
    * @returns {{url,identity,value,fallback,upgrade,previousNumber,previousIdentity}}
    */
-  const resolveQrIdentity = ({ recordId, number, existingUrl = '' }) => {
-    const hasRecordId = Boolean(String(recordId ?? '').trim());
-    const url = hasRecordId
-      ? buildRecordIdScanUrl(recordId, config)
-      : buildScanUrl(config.scanUrl.numberTemplate, number, config);
-    // 旧格式（/s/ = 编号）与文件名里那串编号 ⇒ 这次是"升级"
-    const existing = String(existingUrl ?? '');
-    const existingIsNumber = existing.includes(config.scanUrl.numberTemplate.split('{')[0]);
-    return {
-      url,
-      identity: hasRecordId ? 'record_id' : 'number',
-      value: hasRecordId ? String(recordId).trim() : number,
-      fallback: !hasRecordId,
-      upgrade: hasRecordId && Boolean(existing) && existingIsNumber && existing !== url,
-      // 旧格式 ⇒ 把那串编号**从 URL 里反解回来**（事件里要的是编号本身，不是 URL）
-      previousNumber: existingIsNumber
-        ? decodeURIComponent(existing.slice(existing.indexOf('/s/') + 3))
-        : '',
-      previousIdentity: existingIsNumber ? 'number' : (existing ? 'record_id' : ''),
-    };
-  };
+  const resolveQrIdentity = ({ recordId }) => {
+    const id = String(recordId ?? '').trim();
+    if (!id) return { url: '', identity: 'missing', value: '', fallback: true, upgrade: false, previousNumber: '', previousIdentity: '' };
+    return { url: buildRecordIdScanUrl(id, config), identity: 'record_id', value: id, fallback: false, upgrade: false, previousNumber: '', previousIdentity: '' };
+  };;
 
   /**
    * ⭐⭐ AC-X（2026-10-12）：她新加的「记录 ID」**公式字段**与**接口读到的 record_id** 做交叉校验。
@@ -535,13 +519,7 @@ const createTagQrCodeService = ({
    *      判不了但比完**一致** ⇒ `number_unchanged`；脚本/新增那一路的幂等跳过 ⇒ `already_present`。
    */
   /** 从现存附件名反解出**旧格式**（/s/数号）的 URL；反解不出（已是新格式）⇒ 空串。 */
-  const legacyScanUrlOf = (existing, cfg) => {
-    const name = Array.isArray(existing) ? existing[0]?.name : null;
-    const middle = numberFromFileName(name, cfg);
-    if (!middle) return '';
-    const legacy = String(cfg?.scanUrl?.numberTemplate || '');
-    return legacy ? legacy.split('{number}').join(middle) : '';
-  };
+  const legacyScanUrlOf = () => '';
 
   const syncRecord = async (recordId, { reason = 'manual', numberChanged } = {}) => {
     if (!config.enabled) {
@@ -579,10 +557,9 @@ const createTagQrCodeService = ({
     //    · 现存附件还是旧格式 ⇒ 这次就是**升级**（是在**修复已经印错的码**，不是兼容）
     const existingUrl = legacyScanUrlOf(existing, config);
     const identity = resolveQrIdentity({ recordId, number, existingUrl });
-    if (identity.fallback) {
-      logWarn('product.tag_qr.record_id_missing', {
-        record_id: recordId, reason, number, fallback_identity: 'number',
-      });
+    if (!identity.url) {
+      logWarn('product.tag_qr.record_id_missing', { record_id: recordId, reason, number });
+      return { record_id: recordId, status: 'skipped', reason: 'record_id_missing' };
     }
     if (identity.upgrade) {
       logInfo('product.tag_qr.upgraded_to_record_id', {
@@ -593,7 +570,7 @@ const createTagQrCodeService = ({
       });
     }
     const scanUrl = identity.url;
-    const fileName = buildFileName(identity.value, config);
+    const fileName = buildFileName(number, config);
 
     // 「现存附件的文件名 ≠ 当前编号应有的文件名」= **事实上的编号变了**（只读一次就判得出，
     // 不依赖事件带没带前后值）。这一档才是 `numberChanged === null` 时的**唯一**判据。
@@ -950,7 +927,6 @@ const createTagQrCodeService = ({
   };
 
   return {
-    buildScanUrl: (number) => buildScanUrl(config.scanUrl.urlTemplate, number, config),
     buildFileName: (number) => buildFileName(number, config),
     resolveNumberChange,
     resolveNumberChangeDetail,

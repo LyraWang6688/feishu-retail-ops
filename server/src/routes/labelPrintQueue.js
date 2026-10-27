@@ -7,7 +7,7 @@
  *   `已打印` / `失败 + 原因`）；③ 补打（`POST /jobs/:jobId/reprint`）。
  *
  * 🔴 **不新开鉴权**：`requireWorkbenchAccess` 是从 `routes/workbench.js` **import 复用**的那一个
- *    （与扫码页 `GET /s/:number` 同一条闸门：认证没启用 503 / 未登录 401 / 白名单外 403）。
+ *    （与扫码页 `GET /r/:recordId` 同一条闸门：认证没启用 503 / 未登录 401 / 白名单外 403）。
  *    本文件**一个字都没有改** `routes/workbench.js` 的闸门 —— 只 import 它已经导出的那个函数。
  * 🔴 **不新开打印接口**：扫码打印走的仍是**这一条** `POST /jobs`（解析在服务端做，
  *    `parseLabelScanUrl` 与 `buildLabelScanUrl` 是一对反函数）。

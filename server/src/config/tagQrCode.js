@@ -6,13 +6,13 @@
  *
  * 业务负责人 2026-10-08 定的能力（逐字口径）：
  *   · 「货品信息」表上新建了一列 **`标签二维码`（字段类型 = 附件）**；
- *   · 二维码内容规范（**2026-10-12 起**）：`https://hm.bamamei.online/r/{记录ID}`（`记录ID` = 接口读到的 `record_id`；旧 `/s/{编号}` **只作兼容**，见本文件 `numberTemplate`）
+ *   · 二维码内容规范（**2026-10-12 起**）：`https://hm.bamamei.online/r/{记录ID}`（`记录ID` = 接口读到的 `record_id`；旧 `/s/{编号}` **只作兼容**，见本文件 `recordIdTemplate`）
  *     其中 `编号` = 该记录「编号」字段的值（形如 `YD6693-2|黑色|A`），**做 URL 编码**；
  *   · **存量 561 条**要批量补这一列（脚本 `scripts/backfill-product-tag-qr.js`）；
  *   · 以后**货品上新**（表单提交 → 表记录变更事件）后**自动**生成并写回。
  *
  * ⚠️ 域名是 **`hm.bamamei.online`**（2026-10-08 已从 workbench 切到 hm；证书已配、可用）。
- *    换域名 = 只改下面 `SCAN_URL.urlTemplate` 这一行。
+ *    换域名 = 只改下面 `SCAN_URL.recordIdTemplate` 这一行。
  *
  * ⚠️ 与 `config/labelPrint.js` 的 `QR` **不是同一件事**，刻意不合并：
  *    · 那一处是**鞋盒标签打印页**的二维码（指向工作台将来 `/scan` 选鞋的页面，
@@ -42,10 +42,6 @@ const SCAN_URL = Object.freeze({
   //    `record_id` 是飞书**永不变**的身份证。
   //    新 = /r/{recordId}；旧 = /s/{number}（**旧标签继续兼容**，靠扫码线兜底 + 逐步重打）。
   recordIdTemplate: 'https://hm.bamamei.online/r/{recordId}',
-  numberTemplate: 'https://hm.bamamei.online/s/{number}',
-  // ⚠️ `urlTemplate` = **旧格式别名**（历史调用点与既有覆盖都还指着它，保持逐字不变）。
-  //    新生成一律走 `recordIdTemplate`（见 `resolveQrIdentity`）。
-  urlTemplate: 'https://hm.bamamei.online/s/{number}',
 });
 
 /**

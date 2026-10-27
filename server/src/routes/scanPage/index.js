@@ -1,9 +1,9 @@
 /**
- * 扫码页路由：**`GET /s/:number`**（`number` = 「编号」= `货号|颜色|类别`，URL 编码过的）
- * ＋ **`POST /s/:number`**（页面上那两个**写入口**：销售建单 / 补货报单）。
+ * 扫码页路由：**`GET /r/:recordId`**（`number` = 「编号」= `货号|颜色|类别`，URL 编码过的）
+ * ＋ **`POST /r/:recordId`**（页面上那两个**写入口**：销售建单 / 补货报单）。
  *
  * 这一页就是标签二维码指向的那个地址 —— 二维码内容的唯一真源是
- * `config/tagQrCode.js` 的 `scanUrl.urlTemplate`（`https://hm.bamamei.online/s/{编号}`），
+ * `config/tagQrCode.js` 的 `scanUrl.recordIdTemplate`（`https://hm.bamamei.online/s/{编号}`），
  * 本文件**不抄那份模板**，只用 `config/scanPage.js` 里的挂载点与路径段。
  *
  * 挂载与准入（**先读代码再动**的结果）：
@@ -33,7 +33,7 @@
  *   （未启用 503 JSON / 未登录 401 JSON / 白名单外 403 JSON）—— 工作台的 fetch 接口
  *   与既有哨兵用例都钉着它。这里只在**扫码页这一个 router** 上把"未登录"那一种情况
  *   提前接住换成 302，另外两种原样交给下面那道共享闸门。
- *   ⚠️ 作用域是**整个扫码 router**（`/s/` 与 `/s/:number` 都算"扫码页"）：
+ *   ⚠️ 作用域是**整个扫码 router**（`/r/` 与 `/r/:recordId` 都算"扫码页"）：
  *   没登录的人先登录再看页面，页面本身（200/400/404/503）对已登录的人**逐字不变**。
  */
 const express = require('express');
@@ -780,7 +780,7 @@ const createScanPageRouter = (options = {}) => {
     }),
   }));
   /**
-   * ⭐⭐ **`GET /s/:number?from=<领域>`** —— 手机扫开的那一页。
+   * ⭐⭐ **`GET /r/:recordId?from=<领域>`** —— 手机扫开的那一页。
    *
    * 2026-10-09 真机（飞书 webview 白屏）之后这一条重做过：
    *   · **服务端按 `from` 只渲染那一块**（不再靠 `<head>` 内联脚本 + CSS 显隐）；
@@ -789,14 +789,14 @@ const createScanPageRouter = (options = {}) => {
    *   · 任何异常（取数 / 渲染）都落到 `respondFailure` → **人话页**（还有 `renderMinimalPage` 兜底）。
    */
   // ⭐⭐ 2026-10-12：**两条路共用这两个处理函数**（同一个 router 实例挂在 `/s` 与 `/r` 上）：
-  //    · `/s/:number`   ⇒ `req.params.number`   = 编号
+  //    · `/r/:recordId`   ⇒ `req.params.number`   = 编号
   //    · `/r/:recordId` ⇒ `req.params.recordId` = 记录 ID（**新二维码走这条**）
   //    ⚠️ 用**路径数组**把同一个 handler 挂到两个模式上 —— **不复制一份处理逻辑**；
   //      "这一页在取哪一样东西"由挂载点判定（`scanTargetOf`），其余一行都不分叉。
 
   // ⭐⭐ 2026-10-11（方案A）：**扫码验收**（工作台点【验收】→ 在这一页连续扫 → 完成验收）。
   //    ⚠️ 依赖**延迟构造**（在 `services/scanArrivalService.js` 里就地构造：
-  //      `GET /s/{编号}` 那一步只用来读会话 —— **零飞书调用**，扫码页"一次扫码 0 次飞书调用"
+  //      `GET /r/{编号}` 那一步只用来读会话 —— **零飞书调用**，扫码页"一次扫码 0 次飞书调用"
   //      那条硬要求不能被这个功能破坏；真正要开批次 / 入库时它才构造采购查询与到货核对）。
   //    ⚠️ 本文件因此**只认识 `scanArrivalService` 一个名字**（不 require 任何写链路的 service）——
   //      既有的"路由层不出现写链路服务"哨兵照旧绿。
@@ -992,7 +992,7 @@ const createScanPageRouter = (options = {}) => {
    */
   // ⭐⭐ 2026-10-12（治根）：**两条路共用同一个 router 实例**（`app.js` 把同一实例挂在 `/s` 与 `/r`）。
   //    ⇒ 「这一页在取哪一样东西」**只有一个判据**：挂载点（`req.baseUrl`）。
-  //    · `/s/:number`   ⇒ `{ mode: 'number',   value: 编号 }`
+  //    · `/r/:recordId`   ⇒ `{ mode: 'number',   value: 编号 }`
   //    · `/r/:recordId` ⇒ `{ mode: 'recordId', value: 记录 ID }`
   //    🔴 **不许**在别处再拼一套路径（`postActionFor` 是唯一出口）—— 两边各写一份必然漂。
   const isRecordBase = () => true;
@@ -1067,7 +1067,7 @@ const createScanPageRouter = (options = {}) => {
   });
 
   /**
-   * ⭐⭐ **`GET /s/:number?from=<领域>`** —— 手机扫开的那一页。
+   * ⭐⭐ **`GET /r/:recordId?from=<领域>`** —— 手机扫开的那一页。
    *
    * 2026-10-09 真机（飞书 webview 白屏）之后这一条重做过：
    *   · **服务端按 `from` 只渲染那一块**（不再靠 `<head>` 内联脚本 + CSS 显隐）；
@@ -1076,7 +1076,7 @@ const createScanPageRouter = (options = {}) => {
    *   · 任何异常（取数 / 渲染）都落到 `respondFailure` → **人话页**（还有 `renderMinimalPage` 兜底）。
    */
   // ⭐⭐ 2026-10-12：**两条路共用这两个处理函数**（同一个 router 实例挂在 `/s` 与 `/r` 上）：
-  //    · `/s/:number`   ⇒ `req.params.number`   = 编号
+  //    · `/r/:recordId`   ⇒ `req.params.number`   = 编号
   //    · `/r/:recordId` ⇒ `req.params.recordId` = 记录 ID（**新二维码走这条**）
   //    ⚠️ 用**路径数组**把同一个 handler 挂到两个模式上 —— **不复制一份处理逻辑**；
   //      "这一页在取哪一样东西"由挂载点判定（`scanTargetOf`），其余一行都不分叉。

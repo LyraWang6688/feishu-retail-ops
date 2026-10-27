@@ -64,7 +64,7 @@ Tab 页的顺序从左往右是：**销售、库存、采购和货品**」）：
 
 ### 扫码页的领域切换（一个二维码，四个领域）
 
-`GET /s/:number` **一个字没改**（路由与 `config/scanPage.js` 都不动），顶部多了一排**领域切换**：
+`GET /r/:recordId` **一个字没改**（路由与 `config/scanPage.js` 都不动），顶部多了一排**领域切换**：
 `?from=sales|inventory|purchase|product`（**缺省 = 销售**）。四个领域的操作块**全都渲染进 HTML**，
 由 CSS 按 `<html data-realm="…">` 只显示当前领域；那一行属性由页面 `<head>` 里一小段内联脚本
 在 body 解析前从 `location.search` 读出来（实现与取舍见 `src/views/scanPageRealm.js`）。

@@ -42,7 +42,7 @@
  *    真正用到的那个二维码库（`qrcode`）是**纯 JS**，不出图、只出 SVG 文本。
  *
  * ⚠️ **二维码 URL 的单一真源不在本文件**（刻意不放）：按 **编号** 出码的规范与实现已经
- *    在 `config/tagQrCode.js`（`SCAN_URL.urlTemplate`）与 `services/tagQrCodeService.js`
+ *    在 `config/tagQrCode.js`（`SCAN_URL.recordIdTemplate`）与 `services/tagQrCodeService.js`
  *    （`buildScanUrl`）里了 —— 本链路**import 复用**它们（旧的那条
  *    `https://workbench.bamamei.online/scan?no=…` 模板**已删除**，不许再抄第二份）。
  */
@@ -276,10 +276,10 @@ const PRICE = Object.freeze({
 
 /**
  * 二维码的**出图参数**（内容 = 一个能扫的 URL）。
- * ⚠️ **URL 模板不在这里**：唯一真源是 `config/tagQrCode.js` 的 `SCAN_URL.urlTemplate`
+ * ⚠️ **URL 模板不在这里**：唯一真源是 `config/tagQrCode.js` 的 `SCAN_URL.recordIdTemplate`
  *    （**2026-10-12 起**：`https://hm.bamamei.online/r/{记录ID}`；旧 `/s/{编号}` 只作兼容），由 `services/tagQrCodeService.js`
  *    的 `buildScanUrl` 替换（**只编码值、不编码模板**）。
- *    本文件**刻意不放 urlTemplate** —— 抄第二份的下场是"两条链路各指一个域名"。
+ *    本文件**刻意不放二维码 URL 模板** —— 抄第二份的下场是"两条链路各指一个域名"。
  */
 const QR = Object.freeze({
   // 纠错等级：贴鞋盒会磨、会蹭，M（15%）是"能扫 + 不至于太密"的常规选择，可调到 Q/H。
