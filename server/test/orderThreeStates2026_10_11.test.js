@@ -140,7 +140,7 @@ test('AC-C2 待补充：缺货品信息（编号 / 颜色 / 尺码缺一）或�
   //   ⚠️ 2026-10-17：原断言是 `notEqual(…, 'supplement')`；两段之后 `pending` 已含"缺信息"，
   //      故改成**正向**证明（两个校验项齐 ⇒ 钱货两清时确实落到售后单）✓ 不是放宽
   assert.equal(m.salesSectionOf({ ...ORDER, fulfillment_status: '已交付', payment_status: '已收款' }),
-    'afterSales', '两个校验项都齐 ⇒ 售后单（不再被缺信息拦住）');
+    'settled', '已两清且无售后 ⇒ 离开交割单、不进售后单');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -193,7 +193,7 @@ test('AC-C3 待交割 = 两项齐但没两清；售后单 = 钱货两清（至�
     payments: [{ record_id: 'r1', amount: 10, status: '已收款', method: '现金' }],
   }), 'pending');
   // 钱货两清 ⇒ 售后单
-  assert.equal(m.salesSectionOf({ ...ORDER, fulfillment_status: '已交付', payment_status: '已收款' }), 'afterSales');
+  assert.equal(m.salesSectionOf({ ...ORDER, fulfillment_status: '已交付', payment_status: '已收款' }), 'settled');
   // ⚠️ 口径注释（2026-10-11 判据重写）：**履约 / 收款状态不是校验项** ——
   //    两个校验项齐了，就算状态读不出来，也只是"不敢说两清"⇒ 归**待交割**，
   //    不再像旧判据那样判成"待补充"（她的原话只把货品信息 / 资金信息算校验项）。
@@ -214,7 +214,7 @@ test('AC-C3 待交割 = 两项齐但没两清；售后单 = 钱货两清（至�
   const counts = html.split('data-sales-section="').slice(1)
     .map((chunk) => Number((chunk.match(/(\d+) 单/) || [])[1]));
   // ⭐ 2026-10-17：两段后 o3（缺颜色）与 ORDER 都并入待交割 ⇒ [2, 1]
-  assert.deepEqual(counts, [2, 1, 0], '三段条数（不重不漏：3 单全落在交割/售后段里，草稿段为空）');
+  assert.deepEqual(counts, [2, 0, 0], '三段条数（已两清 1 单离开交割单；3 段只显示待交割/售后/草稿）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -234,7 +234,7 @@ test('AC-C4 配品行（requires_size=false）不算"缺货品信息"：纯配�
   const onlyAccessory = { ...ORDER, details: [accessoryLine] };
   assert.equal(m.salesSectionOf(onlyAccessory), 'pending', '纯配品单 + 一笔收款 ⇒ 待交割（不是待补充）');
   assert.equal(m.salesSectionOf({ ...onlyAccessory, fulfillment_status: '已交付', payment_status: '已收款' }),
-    'afterSales', '纯配品单钱货两清 ⇒ 售后单');
+    'settled', '纯配品单已两清 ⇒ 离开交割单');
   // 混单：鞋那一行缺颜色 ⇒ 仍然待补充（配品行无辜，但鞋那一行是真的缺）
   assert.equal(m.salesSectionOf({
     ...ORDER, details: [accessoryLine, { ...ORDER.details[0], color: '' }],

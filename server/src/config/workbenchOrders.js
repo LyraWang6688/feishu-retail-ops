@@ -135,7 +135,7 @@ const DEFAULT_ORDERS_CACHE_MS = 30000;
  * ⚠️ 只写**语义键**，飞书列名由 schema（`gateway.table(key).fields`）解析。
  */
 const ORDER_FIELD_KEYS = Object.freeze({
-  salesEntry: Object.freeze(['orderNo', 'writeStatus']),
+  salesEntry: Object.freeze(['orderNo', 'writeStatus', 'recordedAt']),
   salesDetail: Object.freeze(['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product']),
   paymentRecord: Object.freeze(['salesEntry', 'amount', 'status', 'method', 'receivedAt']),
   paymentMethod: Object.freeze(['name']),

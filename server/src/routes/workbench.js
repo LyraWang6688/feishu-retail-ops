@@ -434,6 +434,24 @@ const createWorkbenchRouter = (options = {}) => {
     // ⭐ 同**一个**缓存实例：售后 / 二次交付写成功之后也作废它。
     ordersCache,
   }));
+  // ⭐ 2026-10-28：售后扫一扫候选（只读）——扫货品二维码后查近 7 天销售单。
+  //   鉴权沿用本文件上方既有的 requireWorkbenchAccess，不新开闸门。
+  router.get('/sales/after-sales/candidates', async (req, res) => {
+    try {
+      const result = await followup.listAfterSalesCandidates({
+        productRecordId: req.query.productRecordId || req.query.product_record_id,
+        days: req.query.days,
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.sales.after_sales.candidates.failed', {
+        request_id: req.requestId, error: error.message,
+      });
+      return res.status(error?.statusCode === 400 ? 400 : 502)
+        .json({ success: false, error: error.message || 'after-sales candidates failed' });
+    }
+  });
+
   // 货品选择器 / 库存数量 / 品类清单 —— 都只读，供「库存手工调整」两个子页用。
   router.get('/inventory/products', controller.queryInventoryProducts);
   router.get('/inventory/stock', controller.queryInventoryStock);

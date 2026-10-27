@@ -119,6 +119,52 @@ class SalesFollowupService {
     return result;
   }
 
+  /**
+   * 售后扫一扫：按货品 record_id 找近 N 天的销售单（只读）。
+   * 判据只用既有字段：销售主表「录单日」+ 销售明细的货品关联。
+   */
+  async listAfterSalesCandidates({ productRecordId, days = 7 } = {}) {
+    const productId = String(productRecordId || '').trim();
+    if (!productId) {
+      const error = new Error('缺少货品 record_id');
+      error.statusCode = 400;
+      throw error;
+    }
+    const windowDays = Math.min(30, Math.max(1, Number(days) || 7));
+    const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    const atOf = (value) => {
+      if (typeof value === 'number') return value;
+      const parsed = Date.parse(String(value || ''));
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const list = await this.listOrders();
+    const candidates = (list.orders || [])
+      .filter((order) => {
+        const at = atOf(order.recorded_at);
+        if (!at || at < cutoff) return false;
+        return (order.details || []).some((line) => line.product_record_id === productId);
+      })
+      .slice(0, 50)
+      .map((order) => ({
+        record_id: order.record_id,
+        order_no: order.order_no,
+        recorded_at: order.recorded_at,
+        fulfillment_status: order.fulfillment_status,
+        payment_status: order.payment_status,
+        matched_details: (order.details || [])
+          .filter((line) => line.product_record_id === productId)
+          .map((line) => ({
+            record_id: line.record_id,
+            product: line.product,
+            color: line.color,
+            size: line.size,
+            actual_amount: line.actual_amount,
+            fulfillment_status: line.fulfillment_status,
+          })),
+      }));
+    return { productRecordId: productId, days: windowDays, candidates };
+  }
+
   /** 任何一笔写库之后由路由层调它（下一次读一定是真读）。 */
   invalidateOrders() {
     this.ordersCache.invalidate();
@@ -342,6 +388,8 @@ class SalesFollowupService {
             return {
               record_id: order.record_id,
               order_no: orderNo,
+              // ⭐ 2026-10-28：售后扫一扫按「近 7 天」筛候选，需要销售主表的自动录单时间。
+              recorded_at: order.fields?.[orderFields.recordedAt] ?? null,
               // ⭐⭐ 2026-10-15（⑰b-1 UI）：三个维度 + 「写完了没」的判据（上面那个纯函数 ✓）
               //   ⚠️ 它只读**已经读到的** `order.fields` ⇒ 零额外请求 ✓
               ...writeFlagsOf(order, orderFields),
