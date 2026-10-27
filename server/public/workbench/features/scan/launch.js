@@ -64,6 +64,17 @@ export const scanTargetUrl = (scanned, realm, origin = window.location.origin) =
   return `/r/${encodeURIComponent(raw)}?from=${encodeURIComponent(realm)}`;
 };
 
+/** 扫一扫生命周期埋点（不阻塞、不抛）。 */
+const reportLaunch = (realm, result, startedAt) => {
+  try {
+    const reporter = typeof window !== 'undefined' ? window.dshUiTap : null;
+    const durationMs = Math.max(0, Date.now() - Number(startedAt || Date.now()));
+    if (reporter && typeof reporter.diagnostic === 'function') {
+      reporter.diagnostic('scan_launch', { realm, result, durationMs }, { path: '/api/workbench/ui-tap', page: 'workbench' });
+    }
+  } catch { /* telemetry must never block scanning */ }
+};
+
 const cardsHtml = (cards = []) => cards.map((card) => {
   const body = `<span class="entry-card-icon">${escapeHtml(card.icon || '')}</span>
       <span class="entry-card-body"><strong>${escapeHtml(card.title || '')}</strong></span>`;
@@ -114,6 +125,7 @@ export function createScanCardsModule(page = {}) {
       const scan = async (realm) => {
         if (busy) return;
         busy = true;
+        const startedAt = Date.now();
         try {
           const signature = await api.get(`${SCAN_SIGNATURE_PATH}?url=${encodeURIComponent(window.location.href.split('#')[0])}`);
           await withTimeout(loadSdk(signature?.jssdkUrl || ''), DEFAULT_TIMEOUT_MS, 'jssdk_timeout');
@@ -127,25 +139,27 @@ export function createScanCardsModule(page = {}) {
               ? signature.jsApiList : ['scanCode'],
           }), DEFAULT_TIMEOUT_MS, 'config_timeout');
           await withTimeout(new Promise((resolve) => window.h5sdk.ready(resolve)), DEFAULT_TIMEOUT_MS, 'ready_timeout');
+          if (!window.tt || typeof window.tt.scanCode !== 'function') throw new Error('scan_unsupported');
+          reportLaunch(realm, 'opened', startedAt);
           const result = await withTimeout(new Promise((resolve, reject) => {
-            if (!window.tt || typeof window.tt.scanCode !== 'function') return reject(new Error('scan_unsupported'));
             return window.tt.scanCode({ scanType: ['qrCode'], success: resolve, fail: reject });
           }), SCAN_TIMEOUT_MS, 'scan_timeout');
           const target = scanTargetUrl(result?.result, realm);
-          if (!target) { show(texts.empty, 4000); return; }
+          if (!target) { reportLaunch(realm, 'failed', startedAt); show(texts.empty, 4000); return; }
+          reportLaunch(realm, 'scanned', startedAt);
           window.location.href = target;
         } catch (error) {
           const code = String(error?.message || '');
-          if (code === 'jssdk_missing' || code === 'jssdk_load_failed' || code === 'scan_unsupported') show(texts.noSdk, 6000);
-          else if (code === 'scan_timeout' || code === 'jssdk_timeout' || code === 'config_timeout' || code === 'ready_timeout') show(texts.timeout, 6000);
-          else if (/cancel/i.test(String(error?.errMsg || ''))) { /* 用户取消：不提示，直接回到页面 */ }
-          else show(texts.failed, 4000);
+          if (code === 'jssdk_missing' || code === 'jssdk_load_failed' || code === 'scan_unsupported') { reportLaunch(realm, 'unsupported', startedAt); show(texts.noSdk, 6000); }
+          else if (code === 'scan_timeout' || code === 'jssdk_timeout' || code === 'config_timeout' || code === 'ready_timeout') { reportLaunch(realm, 'timeout', startedAt); show(texts.timeout, 6000); }
+          else if (/cancel/i.test(String(error?.errMsg || ''))) { reportLaunch(realm, 'cancelled', startedAt); /* 用户取消：不提示 */ }
+          else { reportLaunch(realm, 'failed', startedAt); show(texts.failed, 4000); }
         } finally {
           busy = false;
         }
       };
 
-      scanNow = () => { if (page.scanRealm) void scan(page.scanRealm); };
+      scanNow = () => (page.scanRealm ? scan(page.scanRealm) : undefined);
       container.querySelectorAll('[data-scan-realm]').forEach((button) => {
         button.addEventListener('click', () => { void scan(button.dataset.scanRealm); });
       });
