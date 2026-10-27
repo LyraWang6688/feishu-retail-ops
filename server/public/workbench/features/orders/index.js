@@ -339,9 +339,9 @@ export function ordersSectionCardsHtml(orders = []) {
   return `<div class="orders-section-cards" data-view="orders-section-cards">${SALES_SECTIONS.map((section) => {
     const count = listAll.filter((order) => salesSectionOf(order) === section.key).length;
     return `<button class="entry-card orders-section-card" type="button" data-orders-section="${escapeHtml(section.key)}">
-      <span class="entry-icon">${escapeHtml(section.icon || '')}</span>
-      <span class="entry-title">${escapeHtml(section.label)}</span>
-      <span class="entry-desc">${escapeHtml(section.desc || '')}</span>
+      <span class="icon">${escapeHtml(section.icon || '')}</span>
+      <h3>${escapeHtml(section.label)}</h3>
+      <p>${escapeHtml(section.desc || '')}</p>
       <span class="orders-section-meta"><span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span><span class="muted">${count} 单</span></span>
     </button>`;
   }).join('')}</div>`;
