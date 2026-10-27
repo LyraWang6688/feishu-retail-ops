@@ -76,8 +76,6 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   //   改后逐字：**这一处不渲染任何东西**（恒为空串 ✓；`${draftNotice}` 那个占位随之失效但**不改变页面输出** ✓）
   //   依据 = 她 2026-10-16 22:0x 上面那句 ✓（整条存草稿链退场 ⇒ 提示条也退场 ✓）
   const draftNotice = '';
-  // 编号兜底已删除：不再渲染“重打标签”提示。
-  const fallbackHint = '';
   return renderDocument({
     title: fillText(config.texts.pageTitle, { itemNo: view.item_no || view.number, number: view.number }),
     config,
@@ -86,7 +84,6 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
     content: `${bar}
 ${draftNotice}
 ${identityHtml(view, config)}
-${fallbackHint}
 ${block}
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`
   + `${view.updated_at_text ? ` · ${escapeHtml(config.texts.updatedAtLabel)} ${escapeHtml(view.updated_at_text)}` : ''}</p>`,
