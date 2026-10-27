@@ -526,10 +526,12 @@ test('接线：走的是既有工作台鉴权与既有导航（没有新开鉴�
   assert.ok(!html.includes('purchase-return.html'), '不许再留『采购和退货』那条死链（页面已删）');
 
   const routes = fs.readFileSync(path.join(__dirname, '../src/routes/workbench.js'), 'utf8');
+  const labelRoutes = fs.readFileSync(path.join(__dirname, '../src/routes/workbench/labels.js'), 'utf8');
   assert.equal(routes.match(/const requireWorkbenchAccess/g).length, 1,
     '鉴权中间件只能有既有那一个（不许为标签接口再写一套）');
-  assert.ok(routes.indexOf("router.get('/labels'") > routes.indexOf('router.use(requireWorkbenchAccess)'),
-    '/labels 必须挂在既有身份闸门之后');
-  assert.ok(!/库存键|所属状态/.test(routes),
+  assert.ok(routes.indexOf('router.use(requireWorkbenchAccess)') > -1,
+    '父 router 必须保留既有身份闸门');
+  assert.ok(labelRoutes.indexOf("router.get('/labels'") > -1, '/labels 在 labels 子路由里');
+  assert.ok(!/库存键|所属状态/.test(labelRoutes),
     '路由里不许写死飞书字段名（字段映射的唯一来源是 config / service）');
 });

@@ -1,5 +1,4 @@
 const express = require('express');
-const controller = require('../controllers/workbenchController');
 // 准入闸门（未启用认证 503 / 未登录 401 / 白名单外 403）：**工作台与扫码页共用这一份**。
 // 它留在本文件里（没有搬去 middleware/）—— 既有哨兵用例
 // （`test/workbenchTwoTabsAndQueryEntries.test.js` 的 AC9/AC10）钉着这里必须看得见
@@ -14,8 +13,9 @@ const { sharedWorkbenchOrdersCache } = require('../services/workbenchOrdersCache
 const { readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createPurchaseQueryRouter } = require('./purchaseQuery');
-const { createInventoryAdjustmentRouter } = require('./workbenchInventoryAdjustment');
 const { createWorkbenchOrderActionsRouter } = require('./workbenchOrderActions');
+const { createWorkbenchLabelRoutes } = require('./workbench/labels');
+const { createWorkbenchInventoryRoutes } = require('./workbench/inventory');
 const { WorkbenchPurchaseArrivalService } = require('../services/workbenchPurchaseArrivalService');
 const { createPurchaseQueryService } = require('../services/purchaseQueryService');
 const { PurchaseWebhookService } = require('../services/purchaseWebhookService');
@@ -24,7 +24,6 @@ const { PurchaseWebhookService } = require('../services/purchaseWebhookService')
 //    ⇒ 本文件**不抄第二份规则、也不新写一句中文** ✗。
 const { PurchaseArrivalConversationService, parseActualAmount } = require('../services/purchaseArrivalConversationService');
 const { pageMessages } = require('../config/purchaseArrivalTexts');
-const { createLabelPrintService } = require('../services/labelPrintService');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { tapIdFromRequest } = require('../utils/correlationFields');
@@ -409,139 +408,10 @@ const createWorkbenchRouter = (options = {}) => {
     }
   });
   router.use('/purchase', createPurchaseQueryRouter({ gateway: options.gateway || new V1BitableGateway() }));
-  // 人工库存调整（盘点调整 / 换季调整）：真写「实时库存」+「库存流水」，
-  // 所以放在身份闸门之后挂载（见 workbenchInventoryAdjustment.js 的说明）。
-  router.use('/inventory/adjustments', createInventoryAdjustmentRouter(options.inventoryAdjustment || {}));
-  // ⚠️ 2026-10-08：自建的「销售查询」接口已删（`GET /sales/query` 与老的 `GET /sales/today`）。
-  //    业务负责人的口径（逐字）：「现有的**我们自己搭的**销售查询/库存查询页面与接口（`/api/workbench/*`），
-  //    **顺手删掉**」—— 查询改走**飞书多维表格的网页外链**（前端「信息查询」两张卡，见
-  //    `public/workbench/config/query.js`），所以这一维**不再自建接口**。
-  // ⚠️ **`GET /inventory` 不是"库存查询"的孤儿**：下面这四条只读接口是
-  //    【库存手工调整】（信息录入的入口，`features/inventory/adjustment.js`）在用的
-  //    （换季调整要按品类列鞋、盘点要按尺码看三种状态的数量）⇒ **必须保留**。
-  // ⚠️ 下面的 `/sales/orders` + `/sales/payments` + `/sales/deliveries` 是**写入类**
-  //    （补记收款 / 交付并扣库存），不属于"查询"，本次**保留**（见 `docs/module-boundaries.md`）。
-  // ⭐ 2026-10-09（业务负责人：「我们建一个**订单列表**吧……工作台要对移动端友好……
-  //    如果它在移动端进行**补收款、售后，以及二次交付**，这些都是可以的」）：
-  //    订单列表的另外两个动作挂在这里 —— 售后（退 / 换 / 赔）与二次交付（收尾款 + 交付）。
-  //    ⚠️ 它们**复用既有的 `requireWorkbenchAccess`**（下面那条 `router.use`，不新开鉴权），
-  //       并且**一次写库都不做**：全部交 `services/workbenchOrderActionService.js` →
-  //       既有 `AfterSalesService.execute` / `SecondDeliveryService.confirm`。
-  //    补收款 / 交付两条沿用既有路由（上面 `followup` 那个实例），一个字没改。
-  router.use(createWorkbenchOrderActionsRouter({
-    gateway: options.gateway || followup.gateway,
-    service: options.orderActions,
-    // ⭐ 同**一个**缓存实例：售后 / 二次交付写成功之后也作废它。
-    ordersCache,
-  }));
-  // ⭐ 2026-10-28：售后扫一扫候选（只读）——扫货品二维码后查近 7 天销售单。
-  //   鉴权沿用本文件上方既有的 requireWorkbenchAccess，不新开闸门。
-  router.get('/sales/after-sales/candidates', async (req, res) => {
-    try {
-      const result = await followup.listAfterSalesCandidates({
-        productRecordId: req.query.productRecordId || req.query.product_record_id,
-        days: req.query.days,
-      });
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      logError('workbench.sales.after_sales.candidates.failed', {
-        request_id: req.requestId, error: error.message,
-      });
-      return res.status(error?.statusCode === 400 ? 400 : 502)
-        .json({ success: false, error: error.message || 'after-sales candidates failed' });
-    }
-  });
+  // 库存 / 标签打印：各自子 router（2026-10-28 拆分；鉴权与 no-store 仍由父 router 统一加）。
+  router.use(createWorkbenchInventoryRoutes(options));
+  router.use(createWorkbenchLabelRoutes(options));
 
-  // 货品选择器 / 库存数量 / 品类清单 —— 都只读，供「库存手工调整」两个子页用。
-  router.get('/inventory/products', controller.queryInventoryProducts);
-  router.get('/inventory/stock', controller.queryInventoryStock);
-  router.get('/inventory/categories', controller.queryInventoryCategories);
-  router.get('/inventory', controller.queryInventory);
-  // 鞋盒标签打印（业务负责人 2026-10-08 批准的第一个功能）—— **只读**：
-  // 从「实时库存」（一双一条）取数，返回"每张标签要印什么"（含内联 SVG 二维码）+
-  // 排版参数（50×30mm / A4 / 字号 / 字段开关，全部来自 `config/labelPrint.js`）。
-  // ⚠️ 这里**不新开鉴权**：它挂在同一个 router 上，沿用上面那条 `requireWorkbenchAccess`
-  //    （未启用认证 503 / 未登录 401 / 白名单外 403），与其它工作台接口一字不差。
-  // ⚠️ 失败口径复用控制器那一份（400 / 503 / 500），不另写一套。
-  const labelPrint = options.labelPrint || createLabelPrintService(options.gateway || new V1BitableGateway());
-  router.get('/labels', async (req, res) => {
-    try {
-      const result = await labelPrint.listLabels({
-        keyword: req.query.keyword,
-        state: req.query.state,
-        category: req.query.category,
-        size: req.query.size,
-        recentDays: req.query.recentDays,
-        sort: req.query.sort,
-      });
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      return controller.respondQueryFailure(res, error, {
-        requestId: req.requestId, event: 'workbench.labels.failed', fallback: '标签数据读取失败',
-      });
-    }
-  });
-  /**
-   * ⭐⭐ 2026-10-15：**批量打印要"一次给一批新货打码"** ⇒ 先要一份能挑的**编号清单**。
-   *
-   * 依据（**都在文件里**）：业务负责人 2026-10-15 逐字「编号对呀，我们的编号**只要它在货品信息里
-   * 就行了**，不一定非要在库存里面有啊」＋ 批量打印的用途 =「一次给一批新货打码（新店开业 / 换季上架）」
-   * ⇒ `docs/`（本任务的验收标准 AC-N5）。
-   *
-   * `GET /api/workbench/products/numbers?keyword=<str>&limit=<1..500，默认 200>`
-   *   · 契约（**冻结**，前端并行按它写）：
-   *     `{ success:true, total, truncated, numbers:[{ number, itemNo, color, category, hasStock, recordId }] }`
-   *   · `keyword` 按 编号 / 货号 / 颜色 / 类别 模糊（大小写不敏感）；空 = 全部；
-   *   · `hasStock` = 该编号在「实时库存」里**有没有行**（前端提示"还没入库"）；
-   *   · 排序 = 按编号 `localeCompare('zh-CN')` 升序；`limit` 超出上限**如实**回 `truncated:true`。
-   * 🔴 **只读诊断/查询**（**不写任何业务表、不改任何状态** ✗）：取数全在
-   *    `services/labelPrintService.js#listProductNumbers`（两次 `listAll` + 日志）。
-   * ⭐⭐ 2026-10-15（task-10）：那两次全表读**带短 TTL 缓存**（线上只读实测单次 ≈ 11.4 秒）——
-   *    口径在 `config/labelPrint.js#PRODUCT_NUMBERS`（`cacheTtlMs` 默认 60000、**0 = 关掉**；
-   *    `limitDefault/limitMax` 默认 200/500）；命中 / 未命中都有日志
-   *    （`workbench.products.numbers.cache_hit` / `.cache_miss`），真机一眼看出"到底读没读表"。
-   *    ⚠️ 这个缓存**只服务本端点**；`listLabels`（批量那一页）**这次不动**。
-   * 🔴 **不新开鉴权**：它就挂在本文件既有那道 `requireWorkbenchAccess` 之后（未启用认证 503 /
-   *    未登录 401 / 白名单外 403 —— 与其它工作台接口**同一个函数**）。
-   * ⚠️ 失败口径**复用**控制器那一份（`respondQueryFailure`：她填错的 400 原样回显 /
-   *    飞书数据没准备好的 503 / 其余 500 不回显内部细节），**不另写一套**。
-   */
-  router.get('/products/numbers', async (req, res) => {
-    try {
-      const result = await labelPrint.listProductNumbers({
-        keyword: req.query.keyword,
-        limit: req.query.limit,
-      });
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      return controller.respondQueryFailure(res, error, {
-        requestId: req.requestId, event: 'workbench.products.numbers.failed', fallback: '标签数据读取失败',
-      });
-    }
-  });
-  /**
-   * ⭐⭐ 2026-10-15：**扫码打印的客户端诊断上报**（她真机反馈「扫码打印好像没调用成功」之后加的）。
-   *   为什么需要：飞书 JSSDK 在手机里"装死"（`h5sdk.ready` 不回调）时**只有客户端知道原因** ——
-   *   页面上只有一行小字、服务端**一条日志都没有** ✗ ⇒ 她一说"没成功"，我们只能猜。
-   *   ⇒ 客户端把 `phase`（signature/config/scan/done）+ 原因码 + `errMsg` + 页面 URL 报上来，这里**记一条** ✓。
-   *   🔴 **它不写任何业务表、不改任何状态**（只有一条 `logInfo` ✓）；
-   *     挂在**既有** `requireWorkbenchAccess` 之后 ⇒ **不新开鉴权** ✓。
-   */
-  router.post('/labels/scan-report', (req, res) => {
-    const body = req.body || {};
-    logInfo('label_print.scan.report', {
-      request_id: req.requestId,
-      ok: body.ok === true,
-      phase: String(body.phase || '').slice(0, 32),
-      reason: String(body.reason || '').slice(0, 64),
-      err_msg: String(body.err_msg || '').slice(0, 200),
-      // ⭐⭐ 2026-10-15：**飞书回的原始内容**（它 `config` 失败时常常既不回 `errMsg` 也不回 `message`
-      //   ⇒ 只报"失败"我们查不下去 ✗）—— 原样带上，一眼看出飞书自己怎么说 ✓
-      raw: String(body.raw || '').slice(0, 300),
-      url: String(body.url || '').slice(0, 300),
-    });
-    return res.json({ success: true });
-  });
   router.get('/sales/orders', async (req, res) => {
     try { return res.json({ success: true, ...await followup.listOrders() }); }
     catch (error) {

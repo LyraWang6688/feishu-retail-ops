@@ -417,6 +417,9 @@ const LABEL_LIST = Object.freeze({
   cacheTtlMs: 60000,
 });
 
+/** 标签列表 / 编号清单查询失败时给页面的人话（不放进 TEXTS，避免改变版面镜像形状）。 */
+const QUERY_FAILED_FALLBACK = '标签数据读取失败';
+
 /** 用户可见文案（服务端要拼进标签里的那些）。 */
 const TEXTS = Object.freeze({
   // 颜色/品类/尺码这类值取不到时的占位（**不留空**，否则标签上看着像漏印了）。
@@ -530,6 +533,7 @@ module.exports = {
   SORT_MODES,
   LIMITS,
   TEXTS,
+  QUERY_FAILED_FALLBACK,
   // ⭐⭐ 2026-10-15（task-10）：这两组也单独导出（用例/排查脚本可以直接 import 拿默认值）。
   PRODUCT_NUMBERS,
   PRODUCT_CREATED_TIME,

@@ -646,11 +646,12 @@ test('AC-SP11 ⭐⭐ `ready` 不回调（真机那种"装死"）⇒ **超时 + �
 
 test('AC-SP12 ⭐⭐ 诊断上报是**只读**的：端点只 `logInfo`、不写业务表；且挂在**既有**鉴权之后', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/workbench.js'), 'utf8');
-  const at = src.indexOf("router.post('/labels/scan-report'");
-  assert.ok(at > -1, '诊断端点要在（`POST /labels/scan-report`）');
-  const guardAt = src.indexOf('router.use(requireWorkbenchAccess)');
-  assert.ok(guardAt > -1 && guardAt < at, '必须挂在**既有**身份闸门之后 ⇒ **不新开鉴权** ✓');
-  const block = src.slice(at, at + 900);
+  const labelSrc = fs.readFileSync(path.join(__dirname, '../src/routes/workbench/labels.js'), 'utf8');
+  const at = labelSrc.indexOf("router.post('/labels/scan-report'");
+  assert.ok(at > -1, '诊断端点要在 labels 子路由里（`POST /labels/scan-report`）');
+  assert.ok(src.indexOf('router.use(requireWorkbenchAccess)') > -1,
+    '父 router 必须保留既有身份闸门');
+  const block = labelSrc.slice(at, at + 900);
   assert.match(block, /logInfo\('label_print\.scan\.report'/, '只记一条日志 ✓');
   assert.equal(/\.create\(|\.update\(|gateway\./.test(block), false,
     '🔴 不许写任何业务表（它是**只读诊断** ✓）');
