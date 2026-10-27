@@ -26,7 +26,7 @@ test('新 IA：销售/库存/供应录单入口存在，供应录单有三张卡
   assert.ok(domains.includes("id: 'sales-entry'") && domains.includes("label: '录单'"), '销售缺录单');
   assert.ok(domains.includes("scanRealm: 'sales'"), '销售鞋类必须接领域扫码');
   assert.ok(domains.includes("scanRealm: 'inventory'"), '库存单点查询必须接领域扫码');
-  assert.ok(domains.includes("scanRealm: 'replenish'"), '供应补货必须接领域扫码');
+  assert.ok(domains.includes("title: '采购'") && domains.includes("href: '/workbench/procurement.html'"), '供应采购必须打开采购页');
   assert.ok(domains.includes("scanRealm: 'purchase_return'"), '供应退货必须接领域扫码');
   assert.ok(domains.includes("jumpTo: 'purchase-acceptance'"), '验收卡必须复用既有验收页');
   assert.ok(domains.includes('id: \'purchase-acceptance\''), '验收页必须存在');

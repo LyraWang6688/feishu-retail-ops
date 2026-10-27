@@ -64,13 +64,6 @@
   <script src="/workbench/shared/ui-tap.js"></script>
   <script src="/workbench/shared/funnel.js"></script>
   <script>if (window.dshFunnel) { dshFunnel.view("workbench", { step: "home" }); }</script>
-  <!-- ⭐⭐ 2026-10-16 业务负责人亲口点的「页面标注模式」（扫码页 + 工作台都做 ✓）。
-       🔴 **只在 URL 带 `?annotate=1` 时才做任何事**：脚本**开头就判、判完立刻早退**
-          ⇒ 不带参数时零 DOM / 零监听 / 不改任何表单（真实用户看不到 ✓）。
-       ⚠️ 与扫码页**同一份实现**（唯一真源 = `shared/annotate.js`，扫码页把它内联进那一段）；
-          两处**绝不各抄一份**，有判据钉着（`test/pageAnnotate.test.js`）。
-       ⚠️ `defer` ⇒ 不阻塞首屏、也不早于解析到 body（它要往 body 挂浮层）。 -->
-  <script src="/workbench/shared/annotate.js" defer></script>
   <script src="/workbench/shared/toast.js" defer></script>
   <script type="module" src="/workbench/main.js"></script>
 </body>

@@ -88,14 +88,6 @@ const TEXTS = LABEL_PRINT_QUEUE.texts;
  *     那个文件**不在本任务写作用域内**（另有主）。
  *   ⚠️ **没放宽**：段数上限照旧 ＋ 新增"它不许做事（不带参数就 return）"的判据 ✓
  */
-const ANNOTATE_MARK = '<script data-view="annotate">';
-const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
-const annotateScriptOnlyEarlyExits = (html) => {
-  const at = html.indexOf(ANNOTATE_MARK);
-  if (at < 0) return false;
-  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
-  return body.includes('location.search') && body.includes('if (!enabled()) return');
-};
 
 const login = () => {
   process.env.LARK_WEB_AUTH_ENABLED = 'true';
@@ -246,7 +238,7 @@ test('AC-S1【打印这一款】= 原生表单 POST（隐藏 action），且 AC-
 
     // ⭐ 2026-10-12：**只有一段**脚本（页面级一次，只做"置灰 + 换文案 + 计时"）
     // ⭐ 2026-10-16 成对迁移（逐字对照见本文件顶部那段注释）：数**业务**脚本 ＋ 标注脚本必须早退 ✓
-    const scripts = html.match(/<script(?! data-view="annotate")[\s>]/gi) || [];
+    const scripts = html.match(/<script[\s>]/gi) || [];
     assert.equal(scripts.length, 1, `整页只该有 1 段**业务**脚本（实际 ${scripts.length} 段）`);
     assert.ok(html.includes('<script data-view="submit-feedback">'), '就是提交反馈那一段');
     const script = html.slice(html.indexOf('<script data-view="submit-feedback">'),
@@ -255,9 +247,6 @@ test('AC-S1【打印这一款】= 原生表单 POST（隐藏 action），且 AC-
     for (const forbidden of ['fetch(', 'XMLHttpRequest', 'location.href']) {
       assert.equal(script.includes(forbidden), false, `这一段不许干别的：${forbidden}`);
     }
-    assert.equal(html.slice(html.indexOf('</head>'), html.indexOf(ANNOTATE_MARK)).includes('location.search'), false,
-      '正文不许读 location.search（标注脚本那一段是唯一豁免 ✓）');
-    assert.equal(annotateScriptOnlyEarlyExits(html), true, '那段标注脚本必须在且必须早退 ✓');
   });
 });
 
@@ -453,8 +442,7 @@ test('AC-S8 打不出来 ⇒ 人话页：她这一款没库存（400）原因原
     //    与 `scanPageRealmServerSide.test.js` 里那条既有断言同一口径。
     // ⭐ 2026-10-16 成对迁移（逐字对照见本文件顶部那段注释）：正文零**业务**脚本 ＋ 标注脚本必须早退 ✓
     const messageBody = html.slice(html.indexOf('</head>'));
-    assert.equal(businessScriptCountOf(messageBody), 0, '结果页正文也零**业务**脚本');
-    assert.equal(annotateScriptOnlyEarlyExits(html), true, '标注脚本照旧在且必须早退 ✓');
+    assert.equal((messageBody.match(/<script[\s>]/gi) || []).length, 0, '结果页正文也零**业务**脚本');
   });
 
   await withServer(appFor({ queue: fakeQueue({ enqueueError: new Error('打印文件生成失败：sharp 崩了') }) }), async (base) => {

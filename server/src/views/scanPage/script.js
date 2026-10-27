@@ -62,14 +62,6 @@ const UI_TAP_SHARED_SOURCE = fs.readFileSync(
  *   ⇒ 那两条哨兵按"**改前逐字 → 改后逐字 → 依据 = 她 2026-10-12 逐字**"成对迁移为
  *     「**不带 `?annotate=1` 时那一页仍然是零业务脚本；那一段标注脚本必须开头早退**」✓
  */
-const ANNOTATE_SOURCE = fs.readFileSync(
-  path.join(__dirname, '..', '..', '..', 'public', 'workbench', 'shared', 'annotate.js'), 'utf8',
-);
-
-/** 标注脚本（**只在 `?annotate=1` 时才会做任何事** —— 见上面注释与 `shared/annotate.js` 的文件头）。 */
-const annotateScriptHtml = () => `<script data-view="annotate">
-${ANNOTATE_SOURCE}</script>`;
-
 const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
 ${UI_TAP_SHARED_SOURCE}
 (function () {
@@ -307,7 +299,6 @@ const paymentAddRowScriptHtml = () => `<script data-view="payment-add-row">
 module.exports = {
   submitSubmittingText,
   submitSubmittingElapsedText,
-  annotateScriptHtml,
   submitFeedbackScriptHtml,
   realmScanScriptTagHtml,
   paymentAddRowScriptHtml,

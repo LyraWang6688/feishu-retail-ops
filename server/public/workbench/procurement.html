@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>补货 · 近3天销售</title>
+<style>
+  :root{
+    --primary:#185abd;--primary-hover:#154ea8;--primary-soft:#eef4ff;
+    --text:#172033;--text-secondary:#6b7280;--text-muted:#8b93a1;
+    --border:#e5e8ee;--border-light:#eef1f5;--background:#f5f6f8;--surface:#fff;
+    --surface-soft:#f8f9fb;--success:#157f4a;--success-soft:#e4f5ec;
+    --warning:#a15c00;--warning-soft:#fdf2e0;--info:#0b6bcb;--info-soft:#e8f2fe;
+    --radius-md:12px;--radius-lg:16px;--radius-pill:999px;--control-height:44px;
+    --shadow-card:0 1px 2px rgba(23,32,51,.04),0 2px 8px rgba(23,32,51,.05);
+    --shadow-pop:0 8px 24px rgba(23,32,51,.12);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--background);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
+  body{padding-bottom:128px}
+  .page{max-width:480px;margin:0 auto;padding:16px 16px 24px}
+  .top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .title{font-size:22px;font-weight:600;margin:0;line-height:1.25}
+  .sub{margin:4px 0 0;color:var(--text-secondary);font-size:13px}
+    .tabs{display:flex;gap:8px;margin:0 0 12px;background:var(--surface);padding:5px;border-radius:var(--radius-lg);box-shadow:var(--shadow-card)}
+  .tab{flex:1;border:0;background:transparent;border-radius:var(--radius-md);padding:8px 10px;cursor:pointer;color:var(--text-secondary);font:500 14px/1.3 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;text-align:center}
+  .tab small{display:block;font-size:11px;font-weight:400;margin-top:2px;color:var(--text-muted)}
+  .tab.active{background:var(--primary-soft);color:var(--primary)}
+  .tab.active small{color:var(--primary)}
+  .scan-tab{flex:0 0 auto;min-width:88px;border:0;background:transparent;color:var(--text-secondary);box-shadow:none}
+  .scan-tab small{color:var(--text-muted)}
+  .summary{background:var(--surface);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow-card);margin-bottom:12px}
+  .summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .stat{padding:8px 0;text-align:center;border-radius:var(--radius-md);background:var(--surface-soft)}
+  .stat b{display:block;font-size:24px;line-height:1.2}
+  .stat span{display:block;color:var(--text-secondary);font-size:12px;margin-top:2px}
+  .range{display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);color:var(--text-secondary);font-size:13px}
+  .range strong{color:var(--text);font-weight:500}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px;margin:12px 2px}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:1px}
+  .dot-pre{background:var(--warning)}.dot-spot{background:var(--info)}
+  .group{background:var(--surface);border-radius:var(--radius-lg);box-shadow:var(--shadow-card);margin-bottom:12px;overflow:hidden;display:flex;flex-wrap:wrap;gap:8px;padding:0 12px 12px}
+  .group-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 4px 4px;width:100%}
+  .group-name{font-size:17px;font-weight:600;margin:0}
+  .group-name small{display:block;font-size:12px;color:var(--text-secondary);font-weight:400;margin-top:2px}
+   .group-total{font-size:12px;color:var(--text-secondary);text-align:right;white-space:nowrap;min-width:56px}
+  .group-total b{font-size:18px;color:var(--text);margin:0 2px}
+  .special-fold{border-top:1px solid var(--border-light);padding:10px 16px}
+  .special-fold summary{cursor:pointer;font-size:13px;color:var(--text-secondary);outline:0}
+  .special-fold .new-grid{padding:10px 0 0}
+  .special-fold .new-row{padding:8px 10px}
+  .new-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 16px}
+  .new-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid var(--border-light);border-radius:10px;background:var(--surface-soft)}
+  .size-row{display:flex;flex-direction:column;align-items:stretch;gap:6px;width:calc(50% - 4px);padding:10px;border:1px solid var(--border-light);border-radius:10px;background:var(--surface-soft)}
+    .size{font-size:20px;font-weight:600}.size small{display:block;font-size:11px;color:var(--text-muted);font-weight:400}
+  .sale{display:flex;flex-direction:row;flex-wrap:wrap;gap:4px;font-size:13px;color:var(--text-secondary)}
+  .sale b{color:var(--text);font-weight:500}
+  .tag{display:inline-flex;align-items:center;border-radius:var(--radius-pill);padding:1px 7px;font-size:11px;line-height:18px;margin-left:4px}
+  .tag-pre{background:var(--warning-soft);color:var(--warning)}
+  .tag-spot{background:var(--info-soft);color:var(--info)}
+  .pick{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
+  .pick-stack{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+  .pick label{flex:0 0 auto}
+  .pick label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);white-space:nowrap}
+  input[type=checkbox]{width:20px;height:20px;accent-color:var(--primary)}
+  .stepper{display:flex;align-items:center;border:1px solid var(--border);border-radius:var(--radius-pill);height:36px;background:var(--surface);overflow:hidden}
+  .stepper button{width:30px;height:34px;border:0;background:transparent;color:var(--primary);font-size:20px;line-height:1;cursor:pointer}
+  .stepper input{width:32px;border:0;text-align:center;font-size:14px;color:var(--text);background:transparent;padding:0}
+  .stepper input:focus{outline:0}
+  .pre-note{font-size:11px;color:var(--warning);text-align:right;margin-top:2px}
+  .spot-note{font-size:11px;color:var(--text-muted);text-align:right;margin-top:2px}
+  .bottom{position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.96);backdrop-filter:blur(12px);border-top:1px solid var(--border);box-shadow:0 -4px 16px rgba(23,32,51,.06);z-index:10}
+  .bottom-inner{max-width:480px;margin:0 auto;padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px}
+  .picked{flex:1;font-size:13px;color:var(--text-secondary)}
+  .picked b{display:block;font-size:20px;color:var(--text);line-height:1.2}
+  .picked small{display:block;font-size:11px;color:var(--text-muted);margin-top:1px}
+  .bottom-actions{display:flex;gap:8px;flex:0 0 auto}
+  .submit{min-height:48px;border:0;border-radius:var(--radius-pill);padding:0 18px;background:var(--primary);color:#fff;font-size:15px;font-weight:600;box-shadow:var(--shadow-pop)}
+  .submit.secondary{background:var(--surface);color:var(--primary);border:1px solid var(--primary);box-shadow:none}
+  .submit:active{background:var(--primary-hover)}
+  .empty{background:var(--surface);border-radius:var(--radius-lg);padding:32px 16px;text-align:center;color:var(--text-secondary);box-shadow:var(--shadow-card)}
+  .fake-toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);background:rgba(23,32,51,.92);color:#fff;border-radius:var(--radius-pill);padding:10px 16px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:20;white-space:nowrap}
+  .fake-toast.show{opacity:1}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="top">
+    <div>
+      <h1 class="title">采购</h1>
+    </div>
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="采购类型">
+    <button class="tab active" type="button" data-tab="replenish" role="tab">补货<small>近 3 天销售</small></button>
+    <button class="tab" type="button" data-tab="new" role="tab">上新<small>近 1 天新增货品</small></button>
+    <button class="tab scan-tab" type="button" id="scanBtn" role="button">扫一扫<small>补货扫码</small></button>
+  </div>
+
+  <div data-panel="replenish">
+  <section class="summary" aria-label="近3天销售汇总">
+    <div class="summary-grid">
+      <div class="stat"><b>4</b><span>现货已售</span></div>
+      <div class="stat"><b>6</b><span>预订待补</span></div>
+      <div class="stat"><b>3</b><span>涉及货品</span></div>
+    </div>
+    <div class="range"><span>统计范围</span><strong>10月25日 – 10月27日</strong></div>
+  </section>
+
+  <div class="legend">
+    <span><i class="dot-pre"></i>预订：必补，默认已选</span>
+    <span><i class="dot-spot"></i>现货：按需自行选择</span>
+  </div>
+
+  <section class="group" data-group>
+    <div class="group-head">
+      <h2 class="group-name">86822 · 黑色</h2>
+      <div class="group-total" data-group-total>需补<b>3</b>双</div>
+    </div>
+    <div class="size-row">
+      <div class="size">39</div>
+      <div class="sale"><span><span class="tag tag-spot">现货</span> <b>2</b> 双</span><span><span class="tag tag-pre">预订</span> <b>1</b> 双</span></div>
+      <div><div class="pick"><label><input type="checkbox" class="pre" checked data-qty="1" disabled></label><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" inputmode="numeric" value="1" aria-label="39码补货数量"><button type="button" data-step="1">+</button></div></div></div>
+    </div>
+    <div class="size-row">
+      <div class="size">41</div>
+      <div class="sale"><span><span class="tag tag-pre">预订</span> <b>2</b> 双</span></div>
+      <div><div class="pick"><label><input type="checkbox" class="pre" checked data-qty="2" disabled></label><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" inputmode="numeric" value="2" aria-label="41码补货数量"><button type="button" data-step="1">+</button></div></div></div>
+    </div>
+
+  </section>
+
+  <section class="group" data-group>
+    <div class="group-head">
+      <h2 class="group-name">92608 · 黑色</h2>
+      <div class="group-total" data-group-total>需补<b>3</b>双</div>
+    </div>
+
+    <div class="size-row">
+      <div class="size">43</div>
+      <div class="sale"><span><span class="tag tag-pre">预订</span> <b>2</b> 双</span></div>
+      <div><div class="pick"><label><input type="checkbox" class="pre" checked data-qty="2" disabled></label><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" inputmode="numeric" value="2" aria-label="43码补货数量"><button type="button" data-step="1">+</button></div></div></div>
+    </div>
+  </section>
+
+  <section class="group" data-group>
+    <div class="group-head">
+      <h2 class="group-name">66133-15 · 咖色</h2>
+      <div class="group-total" data-group-total>需补<b>2</b>双</div>
+    </div>
+    <div class="size-row">
+      <div class="size">37</div>
+      <div class="sale"><span><span class="tag tag-pre">预订</span> <b>1</b> 双</span></div>
+      <div><div class="pick"><label><input type="checkbox" class="pre" checked data-qty="1" disabled></label><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" inputmode="numeric" value="1" aria-label="37码补货数量"><button type="button" data-step="1">+</button></div></div></div>
+    </div>
+    <div class="size-row">
+      <div class="size">40</div>
+      <div class="sale"><span><span class="tag tag-spot">现货</span> <b>2</b> 双</span></div>
+      <div><div class="pick"><label><input type="checkbox" class="spot" data-qty="1"></label><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" inputmode="numeric" value="1" aria-label="40码补货数量"><button type="button" data-step="1">+</button></div></div></div>
+    </div>
+  </section>
+  </div>
+
+  <div data-panel="new" hidden>
+    <section class="summary" aria-label="近1天新增货品汇总">
+      <div class="summary-grid">
+        <div class="stat"><b>2</b><span>新增货品</span></div>
+        <div class="stat"><b>2</b><span>新增颜色</span></div>
+        <div class="stat"><b>12</b><span>普通码待采购</span></div>
+      </div>
+      <div class="range"><span>统计范围</span><strong>今日 00:00 – 现在</strong></div>
+    </section>
+
+    <div class="legend">
+      <span><i class="dot-spot"></i>普通码：默认采购 1 双</span>
+      <span><i class="dot-pre"></i>特殊码：默认 0，自动折叠</span>
+    </div>
+
+    <section class="group">
+      <div class="group-head">
+        <h2 class="group-name">LY001 · 黑色<small>今日 09:15 新增 · 供应商 A</small></h2>
+        <div class="group-total">普通码 <b>7</b> 双</div>
+      </div>
+      <div class="new-grid">
+        <div class="new-row">
+          <div class="size">38</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">39</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">40</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">41</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">42</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">43</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">44</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+      </div>
+      <details class="special-fold">
+        <summary>特殊码 · 4 个（默认 0 双，点开选择）</summary>
+        <div class="new-grid">
+        <div class="new-row">
+          <div class="size">45</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">46</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">47</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">48</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="group">
+      <div class="group-head">
+        <h2 class="group-name">LY002 · 米白<small>今日 10:02 新增 · 供应商 B</small></h2>
+        <div class="group-total">普通码 <b>5</b> 双</div>
+      </div>
+      <div class="new-grid">
+        <div class="new-row">
+          <div class="size">36</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">37</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">38</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">39</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">40</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="1"><button type="button" data-step="1">+</button></div></div>
+        </div>
+      </div>
+      <details class="special-fold">
+        <summary>特殊码 · 5 个（默认 0 双，点开选择）</summary>
+        <div class="new-grid">
+        <div class="new-row">
+          <div class="size">34</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">35</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">41</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">42</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        <div class="new-row">
+          <div class="size">43</div>
+          <div class="pick"><div class="stepper"><button type="button" data-step="-1">−</button><input class="qty" value="0"><button type="button" data-step="1">+</button></div></div>
+        </div>
+        </div>
+      </details>
+    </section>
+  </div>
+</main>
+
+<div class="bottom">
+  <div class="bottom-inner">
+    <div class="picked"><span id="pickedLabel">已选采购</span><b id="pickedTotal">0 双</b><small id="pickedBreakdown">补货 0 · 上新 0</small></div>
+    <div class="bottom-actions">
+      <button class="submit" id="directBtn" type="button">提交</button>
+    </div>
+  </div>
+</div>
+<div class="fake-toast" id="toast">这里会调起飞书扫一扫</div>
+
+<script>
+  const rows = Array.from(document.querySelectorAll('.size-row'));
+  const newRows = Array.from(document.querySelectorAll('.new-row'));
+  const totalEl = document.getElementById('pickedTotal');
+  const labelEl = document.getElementById('pickedLabel');
+  const breakdownEl = document.getElementById('pickedBreakdown');
+  function rowQty(row) {
+    if (row.classList.contains('new-row')) {
+      return Math.max(0, parseInt(row.querySelector('.qty')?.value, 10) || 0);
+    }
+    return Array.from(row.querySelectorAll('input[type=checkbox]')).reduce((sum, box) => {
+      if (!box.checked) return sum;
+      const qty = box.closest('.pick')?.querySelector('.qty') || row.querySelector('.qty');
+      return sum + Math.max(0, parseInt(qty?.value, 10) || 0);
+    }, 0);
+  }
+  function refresh() {
+    const replenishTotal = rows.reduce((sum, row) => sum + rowQty(row), 0);
+    const newTotal = newRows.reduce((sum, row) => sum + rowQty(row), 0);
+    const total = replenishTotal + newTotal;
+    labelEl.textContent = '已选采购';
+    totalEl.textContent = `${total} 双`;
+    if (breakdownEl) breakdownEl.textContent = `补货 ${replenishTotal} · 上新 ${newTotal}`;
+    document.querySelectorAll('[data-group]').forEach((group) => {
+      const sum = Array.from(group.querySelectorAll('.size-row')).reduce((n, row) => n + rowQty(row), 0);
+      const target = group.querySelector('[data-group-total] b');
+      if (target) target.textContent = String(sum);
+    });
+    document.querySelectorAll('input[type=checkbox]').forEach((box) => {
+      const qty = box.closest('.pick')?.querySelector('.qty');
+      if (box.checked && qty && Number(qty.value) === 0) {
+        qty.value = String(Number(box.dataset.qty) || 1);
+      }
+    });
+  }
+  document.addEventListener('change', (event) => {
+    if (event.target.matches('input[type=checkbox]')) refresh();
+  });
+  document.addEventListener('input', (event) => {
+    if (event.target.matches('.new-row .qty')) refresh();
+  });
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-step]');
+    if (!button) return;
+    const pick = button.closest('.pick');
+    const row = button.closest('.new-row, .size-row');
+    const qty = pick ? pick.querySelector('.qty') : row.querySelector('.qty');
+    const box = pick ? pick.querySelector('input[type=checkbox]') : row.querySelector('input[type=checkbox]');
+    const next = Math.max(0, (parseInt(qty.value, 10) || 0) + Number(button.dataset.step));
+    qty.value = String(next);
+    if (next > 0 && box) box.checked = true;
+    refresh();
+  });
+  const toast = document.getElementById('toast');
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1800);
+  }
+  document.getElementById('directBtn').addEventListener('click', () => showToast('提交这张采购单'));
+  document.getElementById('scanBtn').addEventListener('click', () => {
+    showToast('这里会调起飞书扫一扫，进入之前的补货扫码链路');
+  });
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === tab));
+      document.querySelectorAll('[data-panel]').forEach((panel) => { panel.hidden = panel.dataset.panel !== tab.dataset.tab; });
+      refresh();
+    });
+  });
+  refresh();
+</script>
+</body>
+</html>

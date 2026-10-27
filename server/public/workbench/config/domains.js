@@ -136,7 +136,7 @@ export const DOMAIN_TABS = [
         label: '录单',
         kind: 'scan-cards',
         cards: [
-          { icon: '📦', title: '补货', scanRealm: 'replenish' },
+          { icon: '📦', title: '采购', href: '/workbench/procurement.html' },
           { icon: '↩️', title: '退货', scanRealm: 'purchase_return' },
           { icon: '✅', title: '验收', jumpTo: 'purchase-acceptance' },
         ],

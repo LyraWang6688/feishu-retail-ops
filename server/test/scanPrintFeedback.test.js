@@ -59,7 +59,7 @@ const TEXTS = LABEL_PRINT_QUEUE.texts;
  *     `const scripts = html.match(/<script[\s>]/gi) || [];`
  *     `assert.equal(scripts.length, 1, \`整页只该有 1 段脚本（实际 ${scripts.length} 段）\`);`
  *   改后逐字：
- *     `const scripts = html.match(/<script(?! data-view="annotate")[\s>]/gi) || [];`
+ *     `const scripts = html.match(/<script[\s>]/gi) || [];`
  *     `assert.equal(scripts.length, 1, \`整页只该有 1 段**业务**脚本（实际 ${scripts.length} 段）\`);`
  *     ＋ `assert.equal(html.includes(ANNOTATE_MARK), true, …)` ＋ 早退那一条。
  *
@@ -68,14 +68,7 @@ const TEXTS = LABEL_PRINT_QUEUE.texts;
  *     那个文件**不在本任务写作用域内**（另有主）。
  *   ⚠️ **没放宽**：原来数"全部脚本 = 1"，现在数"业务脚本 = 1" ＋ "多出来的那一段必须早退" ✓
  */
-const ANNOTATE_MARK = '<script data-view="annotate">';
-const businessScriptCountOf = (html) => (html.match(/<script(?! data-view="annotate")[\s>]/gi) || []).length;
-const annotateScriptOnlyEarlyExits = (html) => {
-  const at = html.indexOf(ANNOTATE_MARK);
-  if (at < 0) return false;
-  const body = html.slice(at, html.indexOf('</scr' + 'ipt>', at));
-  return body.includes('location.search') && body.includes('if (!enabled()) return');
-};
+const businessScriptCountOf = (html) => (html.match(/<script[\s>]/gi) || []).length;
 
 const label = (patch = {}) => ({
   key: NUMBER, number: NUMBER, item_no: 'XHB8095', color: '棕色', category: '休闲鞋', category_code: 'A',
@@ -239,11 +232,9 @@ test('AC-PF3 点下去立刻置灰：提交按钮带反馈属性；整页**只�
       `打印按钮要带 data-submit-feedback=${TEXTS.printSubmitting}`);
     // ② 整页只有这一段**业务**脚本（**页面级一次**），它只做"置灰 + 换文案 + 计时"
     //    （⭐ 2026-10-16 成对迁移：另有一段标注脚本，逐字对照见本文件顶部那段注释）
-    const scripts = html.match(/<script(?! data-view="annotate")[\s>]/gi) || [];
+    const scripts = html.match(/<script[\s>]/gi) || [];
     assert.equal(scripts.length, 1, `整页只该有 1 段**业务**脚本（实际 ${scripts.length} 段）`);
     assert.ok(html.includes('<script data-view="submit-feedback">'), '就是提交反馈那一段');
-    assert.equal(html.includes(ANNOTATE_MARK), true, '标注脚本照旧在（`?annotate=1` 时才做事 ✓）');
-    assert.equal(annotateScriptOnlyEarlyExits(html), true, '它必须早退（不带参数时页面逐字不变 ✓）');
     const script = html.slice(html.indexOf('<script data-view="submit-feedback">'),
       html.indexOf('</script>', html.indexOf('<script data-view="submit-feedback">')));
     assert.ok(script.includes('button.disabled = true'), '它做"置灰"');
@@ -302,10 +293,9 @@ test('AC-PF6 ⭐ 销售【提交这一单】也有即时反馈：置灰 + 「正
     assert.ok(String(SCAN_WRITE.texts.submitSubmittingElapsed).includes('{seconds}'));
     // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：提交反馈 ＋ 提交进度（`submit-progress`）= 2 段业务脚本；
     //   此外只有标注脚本（`annotate`）⇒ 没有别的脚本 ✓（依据 = 第 4 步目标 #4：提交不再白屏）。
-    assert.equal(businessScriptCountOf(html), 2);
+    assert.equal((html.match(/<script[\s>]/gi) || []).length, 2);
     assert.equal(/<script(?! data-view="(annotate|submit-feedback|submit-progress)")/i.test(html), false,
       '没有第三类别的脚本');
-    assert.equal(annotateScriptOnlyEarlyExits(html), true, '那段标注脚本必须早退（不带参数时零痕迹 ✓）');
   });
 });
 
@@ -368,11 +358,10 @@ test('AC-PF7 ⭐ 逐按钮：**每一个写操作按钮**点下去都会置灰 +
     const html = pageWith(realm);
     // ⚠️ 2026-10-18 成对迁移（第 4 步提速）：**有这个钩子才多那一段** ——
     //   反馈脚本（有写按钮就有）＋ 提交进度脚本（`submit-progress`：点提交不再白屏）。
-    const count = businessScriptCountOf(html);
+    const count = (html.match(/<script[\s>]/gi) || []).length;
     const expected = (html.includes('data-submit-feedback=') ? 1 : 0)
       + (html.includes('data-view="submit-progress"') ? 1 : 0);
     assert.equal(count, expected, `${realm}：业务脚本数（实际 ${count}）`);
-    assert.equal(annotateScriptOnlyEarlyExits(html), true, `${realm}：标注脚本必须早退 ✓`);
     // 命中区 ≥44px：按钮沿用既有 `.btn`（`min-height: var(--control-height)`）
     assert.ok(/min-height: var\(--control-height\)/.test(html), '按钮高度仍走既有令牌');
     // 不许出现说明书文字
