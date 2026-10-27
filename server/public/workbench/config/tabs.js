@@ -20,9 +20,11 @@
  */
 export const MAIN_TABS = [
   // ⭐⭐ 2026-10-27（业务负责人）：扫一扫按领域拆开，不再有全局扫一扫；
-  //   一级 tab 固定四个：销售 · 库存 · 供应（原采购）· 货品。
+  //   一级 tab：销售 · 库存 · 供应（原采购）· 货品；资金作为独立领域接入。
   { module: 'sales', label: '销售' },
   { module: 'inventory', label: '库存' },
   { module: 'purchase', label: '供应' },
   { module: 'product', label: '货品' },
+  // ⭐ 2026-10-28（业务负责人定稿的新架构）：资金是独立领域，先占位，后续独立加功能。
+  { module: 'funds', label: '资金' },
 ];
