@@ -256,14 +256,14 @@ test('AC-PS1b 前端三态只多一个输入：既有分类逐条不变（同一
     payments: [{ method: '微信' }],
   };
   // 既有判据逐条不变（都不带 sample_pending）
-  assert.equal(module.salesSectionOf(base), 'pending', '2026-10-28 起不再按钱货两清分栏');
+  assert.equal(module.salesSectionOf(base), 'settled', '已两清 ⇒ 离开交割单');
   assert.equal(module.salesSectionOf({ ...base, fulfillment_status: '未交付' }), 'pending');
   assert.equal(module.salesSectionOf({ ...base, payments: [] }), 'pending');
   assert.equal(module.salesSectionOf({ ...base, details: [] }), 'pending');
   // ⭐ 新增：有待补样品 ⇒ 进「待补充」（**先判它**）
   assert.equal(module.salesSectionOf({ ...base, sample_pending: true }), 'pending',
     '卖了样品没指定门盒 ⇒ 待补充（其余判据不动）');
-  assert.equal(module.salesSectionOf({ ...base, sample_pending: false }), 'pending');
+  assert.equal(module.salesSectionOf({ ...base, sample_pending: false }), 'settled');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

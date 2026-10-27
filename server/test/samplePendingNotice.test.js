@@ -211,7 +211,7 @@ test('AC-PN4 通知的计数口径 ≡ 工作台订单列表的判据（同一�
   //   ⇒ `supplement`（缺信息 / 待补样品）在前端**并入 `pending`**；其余同名对得上 ✓
   const front = await loadFrontendOrders();
   for (const fixture of fixtures) {
-    const expected = fixture.section === 'supplement' || fixture.section === 'afterSales' ? 'pending' : fixture.section;
+    const expected = fixture.section === 'supplement' ? 'pending' : (fixture.section === 'afterSales' ? 'settled' : fixture.section);
     assert.equal(front.salesSectionOf(fixture.order), expected, `前端：${fixture.name}`);
   }
 });
@@ -268,10 +268,11 @@ test('AC-PN5 `total` = 待补充 + 待交割（恒等式）；文案里的数字
   //    通知仍三段，所以这里比的是"待补充 + 待交割 = 前端的待交割"）
   const front = await loadFrontendOrders();
   const sections = orders.map((order) => front.salesSectionOf(order));
-  // 2026-10-28：订单列表不再按钱货两清筛选；前端交割单 = 全部 76 单。
-  // 通知仍是「待办」口径（只数待补充 + 待交割），两者不再做人数相等比较。
-  assert.equal(sections.filter((section) => section === 'pending').length, orders.length,
-    '前端「待交割」= 全部销售单（不再按钱货两清剔除）');
+  // 2026-10-28：已两清且无售后 ⇒ 离开交割单，也不进售后单。
+  assert.equal(sections.filter((section) => section === 'pending').length, counts.supplement + counts.pending,
+    '前端「待交割」= 通知的「待补充 + 待交割」');
+  assert.equal(sections.filter((section) => section === 'settled').length, counts.afterSales,
+    '已两清单离开交割单（通知仍单独计数）');
   assert.equal(sections.filter((section) => section === 'afterSales').length, 0,
     '前端不再有「售后单=已两清」列表');
   assert.equal(sections.filter((section) => section === 'supplement').length, 0,

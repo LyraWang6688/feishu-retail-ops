@@ -261,8 +261,9 @@ export function salesInfoOf(order = {}) {
 /**
  * 一张单属于哪一份单子（**纯函数**，配置里的三段顺序就是判定的优先级）：
  *   · `supplement` —— **缺任一校验项**（货品信息 / 资金信息）；
- *   · `afterSales` —— **钱货两清**（`salesCategoryOf` 判成 `settled`）；
- *   · `pending`    —— 其余（两个校验项齐了，但货没给完 / 钱没付完）。
+ *   · `pending`    —— 还没一次性钱货两清（待收款 / 待交付 / 部分）；
+ *   · `settled`    —— 已经钱货两清，且没有售后动作；**不进入工作台三列表**（从销售查询看）；
+ *   · `afterSales` —— 2026-10-28 起不再由订单状态分类；售后单是独立的扫一扫流程。
  */
 export function salesSectionOf(order) {
   // ⭐⭐ 2026-10-11：「**卖了样品、没指定门盒**」也是一类**待补充**（服务端只读事实
@@ -271,8 +272,9 @@ export function salesSectionOf(order) {
   if (order?.sample_pending) return SALES_SECTIONS[0].key;
   const info = salesInfoOf(order);
   if (info.goodsMissing || info.fundsMissing) return SALES_SECTIONS[0].key;
-  // 2026-10-28：售后单不再由「钱货两清」判定，订单列表里一律归交割单；
-  // 售后单是独立的扫一扫流程。
+  // 2026-10-28：交割单 = 还没一次性钱货两清的单（待收款 / 待交付 / 部分）；
+  // 已经两清且没有售后的单**不留在交割单**（也不再进售后单）——它从销售查询看。
+  if (order?.fulfillment_status === '已交付' && order?.payment_status === '已收款') return 'settled';
   return 'pending';
 }
 

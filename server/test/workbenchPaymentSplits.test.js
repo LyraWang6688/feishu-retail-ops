@@ -321,7 +321,7 @@ test('AC-PS7 既有三态不受影响：分笔中 = 待交割；收满 = 售后�
     { method: '微信', amount: 200, status: '已收款' },
     { method: '现金', amount: 300, status: '已收款' },
   ]);
-  assert.equal(front.salesSectionOf({ ...done, payment_status: '已收款' }), 'pending', '2026-10-28 起不再按钱货两清进售后列表');
+  assert.equal(front.salesSectionOf({ ...done, payment_status: '已收款' }), 'settled', '已两清 ⇒ 离开交割单');
 
   // ④ 真跑一遍：分笔 200 + 300 之后，读侧现算出来的收款状态就是"已收款"（与③同一档）
   const { service } = build({ actualAmount: 500, pendingAmount: 500 });
