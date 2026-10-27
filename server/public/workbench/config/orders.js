@@ -116,9 +116,9 @@ export const SALES_GROUPS = [
  * ⭐ 每段一个**彩色小标签**（`tag` + `tone`）：**待交割 / 已两清**。
  */
 export const SALES_SECTIONS = [
-  { key: 'pending', label: '交割单', tag: '待交割', tone: 'info' },
-  { key: 'afterSales', label: '售后单', tag: '待建设', tone: 'info' },
-  { key: 'draft', label: '草稿单', tag: '待建设', tone: 'info' },
+  { key: 'pending', label: '交割单', tag: '待交割', tone: 'info', icon: '🧾', desc: '待交割订单与操作' },
+  { key: 'afterSales', label: '售后单', tag: '待建设', tone: 'info', icon: '🛠️', desc: '售后处理' },
+  { key: 'draft', label: '草稿单', tag: '待建设', tone: 'info', icon: '📝', desc: '未提交草稿' },
 ];
 
 /**
