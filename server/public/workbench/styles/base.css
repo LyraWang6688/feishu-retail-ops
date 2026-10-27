@@ -12,11 +12,7 @@
  *
  * 写法的三条规矩：
  *   ① **默认样式 = 手机**：单列卡片、按钮 / 输入框 ≥ `--control-height`(44px)、不横向滚动。
- *      桌面（≥761px）才用 `@media (min-width: 600px) {
-  .domain-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
-}
-
-@media (min-width: 761px)` 铺成多列 —— 反过来写会漏掉手机。
+ *      桌面（≥761px）才用 `@media (min-width: 761px)` 铺成多列 —— 反过来写会漏掉手机。
  *   ② **颜色 / 间距 / 圆角 / 字号 / 阴影一律 `var(--…)`**，值只在 `styles/tokens.css`（主题唯一真源）。
  *   ③ 长文本一律 `overflow-wrap: anywhere`（单号 / 货号 / 链接不许把页面撑出横向滚动条）。
  */
