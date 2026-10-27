@@ -295,13 +295,11 @@ test('③ 没找到这个编号 / 空编号：`found:false`，不抛、不 500',
   const scan = createScanPageService(gateway, { config: SCAN_PAGE });
 
   const unknown = await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_8' });
-  // ⭐⭐ 2026-10-12：形状**只加了一个字段**（`fallback`）—— 编号缺段时按（货号 + 颜色）找过、
-  //    没找到这件事要回给路由（它据此给"人话 + 再扫一次"）。`found` / `number` / `reason` 逐字不变。
+  // 编号兜底已删除；找不到时只回 found / number / reason。
   assert.deepEqual(unknown, {
     found: false,
     number: 'NOPE|黑色|A',
     reason: 'unknown',
-    fallback: { tried: true, ambiguous: false, candidates: 0, item_no: 'NOPE', color: '黑色' },
   });
 
   const empty = await scan.lookup({ number: '   ', requestId: 'req_9' });

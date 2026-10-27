@@ -1,0 +1,32 @@
+[
+  {
+    "id": "anno_1793097575469_02a0d1",
+    "file": "replenish-board-2026-10-27.html",
+    "selector": "main.page:nth-of-type(1) > section.group:nth-of-type(4) > div.size-row:nth-of-type(3) > div.sale:nth-of-type(2) > span:nth-of-type(1)",
+    "text": "现货已售 2 双 现货",
+    "comment": "如果一双鞋既有现货又有预定怎么办呢？",
+    "url": "blob:dsh-app://app/ecace171-f479-4f6e-954d-1a9050f203db",
+    "createdAt": "2026-10-27T10:39:35.469Z",
+    "submittedAt": "2026-10-27T10:43:35.063Z"
+  },
+  {
+    "id": "anno_1793097609801_adb7d0",
+    "file": "replenish-board-2026-10-27.html",
+    "selector": "#submitBtn",
+    "text": "扫一扫补货",
+    "comment": "如果不需要扫一扫，想要直接提交怎么办？",
+    "url": "blob:dsh-app://app/ecace171-f479-4f6e-954d-1a9050f203db",
+    "createdAt": "2026-10-27T10:40:09.801Z",
+    "submittedAt": "2026-10-27T10:43:35.063Z"
+  },
+  {
+    "id": "anno_1793097763267_96a106",
+    "file": "replenish-board-2026-10-27.html",
+    "selector": "main.page:nth-of-type(1) > section.group:nth-of-type(2) > div.size-row:nth-of-type(2)",
+    "text": "39 码 现货已售 2 双 现货 预订 1 双 预订 当前库存 0 必补 − + 选补 − +",
+    "comment": "是的，需要分现货和预定，但是补货数量还是用一个就可以了",
+    "url": "blob:dsh-app://app/cf5d4419-1511-456d-bf01-65078cdc3871",
+    "createdAt": "2026-10-27T10:42:43.267Z",
+    "submittedAt": "2026-10-27T10:43:35.063Z"
+  }
+]

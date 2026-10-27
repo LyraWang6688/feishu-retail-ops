@@ -75,9 +75,6 @@ const NUMBER = Object.freeze({
   //      · 🔴 **不整表读**（按「货号」过滤读一次；过滤读不可用时才走既有整表回退，
   //        与 `readProductsByNumber` 同一套兜底，不是"新加一次整表读"）；
   //      · 命中时给**一条轻提示**（不写说明书，见 texts.numberFallbackHint）。
-  fallbackMatch: Object.freeze({
-    enabled: true,
-  }),
 });
 
 /**
@@ -161,7 +158,6 @@ const TEXTS = Object.freeze({
   unknownStateNote: '有 {count} 双的「所属状态」不在预期取值里，已按原值另列。',
   unknownSizeNote: '有 {count} 双读不出尺码，单独列在最后一行。',
   truncatedSizesNote: '该类别尺码过多，缺码判定只看前 {count} 个。',
-  numberFallbackHint: '二维码里的编号少了类别，建议重打标签（已按货号 + 颜色找到这一款）。',
   notFoundFallbackMissHint: '这个编号少了类别，按货号 + 颜色也没找到这一款 —— 请核对标签上的货号 / 颜色，或重打标签。',
   notFoundAmbiguousHint: '这个编号少了类别，按货号 + 颜色匹配到多款，没法确定是哪一双 —— 请核对标签，或重打标签。',
   notFoundBackLabel: '再扫一次',
@@ -640,11 +636,8 @@ const EVENTS = Object.freeze({
   recordMissing: 'scan.page.record_missing',
   recordLookupFailed: 'scan.page.record_lookup_failed',
   // ⭐⭐ 2026-10-12：编号兜底匹配（唯一命中 / 多命中 / 读失败）各一条。
-  numberFallback: 'scan.page.number_fallback',
   // ⭐⭐ 2026-10-12：`/r/{recordId}` 取商品那一段（记录 id 直查）失败 —— **回退按编号**，不 500。
   recordFallback: 'scan.page.record_fallback',
-  numberFallbackAmbiguous: 'scan.page.number_fallback_ambiguous',
-  numberFallbackFailed: 'scan.page.number_fallback_failed',
   badNumber: 'scan.page.bad_number',
   sizesDegraded: 'scan.sizes.scope_unavailable',
   unknownState: 'scan.state.unexpected',

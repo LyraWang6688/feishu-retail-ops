@@ -422,7 +422,6 @@ test('③ 「没找到」不进缓存（新品刚建档就该立刻扫得到）'
     found: false,
     number: 'NOPE|黑色|A',
     reason: 'unknown',
-    fallback: { tried: true, ambiguous: false, candidates: 0, item_no: 'NOPE', color: '黑色' },
   });
   const callsAfterFirst = gateway.calls.length;
   await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_u2' });

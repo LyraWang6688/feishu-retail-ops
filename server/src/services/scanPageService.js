@@ -673,61 +673,7 @@ const createScanPageService = (rawGateway, options = {}) => {
    *    让路由能给一句"人话 + 下一步"，而不是原始错误页）。
    * 🔴 **读表失败也返回 `null`**（兜底这一段**绝不许把页面打红**）。
    */
-  const resolveByItemNoAndColor = async ({ parsed, requestId }) => {
-    const itemNo = String(parsed?.itemNo || '').trim();
-    const color = String(parsed?.color || '').trim();
-    if (!itemNo) return null;
-    let records = [];
-    try {
-      ({ records } = await readProductsByItemNo({ itemNo, requestId }));
-    } catch (error) {
-      // 🔴 兜底失败 ⇒ 照旧"找不到"（页面上仍有一句人话），**绝不让它变成 500**。
-      logWarn(config.events.numberFallbackFailed, {
-        request_id: requestId, item_no: itemNo, error: error.message,
-      });
-      return { product: null, tried: true, ambiguous: false, item_no: itemNo, color, matched_number: '' };
-    }
-    const matches = matchByItemNoAndColor(records, { itemNo, color });
-    if (matches.length === 1) {
-      const product = matches[0];
-      const numberField = fieldName(schema, 'product', 'number');
-      return {
-        product,
-        tried: true,
-        ambiguous: false,
-        item_no: itemNo,
-        color,
-        matched_number: numberField ? textValue(product?.fields?.[numberField]).trim() : '',
-        candidates: 1,
-      };
-    }
-    if (matches.length > 1) {
-      // 多命中 ⇒ **不猜**（静默进错款比找不到更坏），只记一条可 grep 的 warn。
-      logWarn(config.events.numberFallbackAmbiguous, {
-        request_id: requestId, item_no: itemNo, color, candidates: matches.length,
-      });
-    }
-    return { product: null, tried: true, ambiguous: matches.length > 1, item_no: itemNo, color, candidates: matches.length };
-  };
 
-  /**
-   * 「实时库存」：**按条件只读这一款的行**（提速的主要手段 —— 提速前这里是整表读，真机 5~9 秒）。
-   *
-   * filter = `OR(「编号」关联 = 这一款的编号文本, 「库存键」.contains(「编号|」))`：
-   *   · 两条**同源**于内存判据 `belongsToNumber`（① 关联命中；② 关联为空时按公式前缀兜底）；
-   *   · ⚠️ **缺一不可**：只按关联读会漏掉"关联单元格被清空、但公式还在"的数据残缺行
-   *     （既有用例 `② 关联单元格为空时用「库存键」前缀认行` 钉着它）。
-   *     关联列按**显示文本**筛（GET 的 filter 只支持这么筛，实测可用）；
-   *   · 过滤读回来**仍然过一遍 `belongsToNumber`**（OR 前缀那条是**超集**：
-   *     关联存在但指错的行也会被前缀命中）⇒ 最终行集与提速前**逐字一致**。
-   *
-   * ⚠️ 拼公式用的是**表里那条货品的编号**（`tableNumber`，调用方从刚读到的货品上抄），
-   *    **不是** URL 里那串：URL 可能是大小写不一致的手输值，而 filter 区分大小写 ——
-   *    用 URL 那串去筛会**一条都读不到**（页面会显示"一双都没有"，是最坏的那种错）。
-   *    内存判据仍然用 URL 那串（与提速前一致）。
-   *
-   * @returns {Promise<{rows:Array, fallback:string}>} `fallback` 非空 = 走了整表回退。
-   */
   const readInventoryRows = async ({ productId, tableNumber, number, stockKeyField, requestId }) => {
     const linkField = fieldName(schema, 'liveInventory', 'product');
     const conditions = [
@@ -992,7 +938,6 @@ const createScanPageService = (rawGateway, options = {}) => {
       timing.size_ms = 0;
       timing.whole_table_fallback = false;
       // ⭐ 2026-10-12：这一趟有没有走**编号兜底匹配**（缺类别那种标签）。
-      timing.number_fallback = false;
       // ⭐⭐ 2026-10-12：这一趟是不是**按记录 ID 直达**（新二维码那条路）。
       timing.record_id = Boolean(recordId);
       timing.record_id_hit = false;
@@ -1139,29 +1084,6 @@ const createScanPageService = (rawGateway, options = {}) => {
     }
     // ⭐⭐ 2026-10-12：**编号兜底匹配**（追加在"精确匹配没找到"之后；上面那条路径**逐字不动**）。
     //    她真机那次：二维码里编号 = `MK31-1|咖色|`（缺「类别」）⇒ 查不到 ⇒ 400 原始错误页。
-    let numberFallback = null;
-    // 🔴 **只在精确匹配没找到时**才走兜底（`!product`）—— 正常编号一次都不多查。
-    if (!product && config.number.fallbackMatch?.enabled !== false) {
-      const itemFallbackStartedAt = startStage();
-      numberFallback = await resolveByItemNoAndColor({ parsed, requestId });
-      if (timing) timing.item_fallback_ms = elapsed(itemFallbackStartedAt);
-      if (numberFallback?.product) {
-        product = numberFallback.product;
-        // ⭐ 用**表里那条货品的真实段**补齐缺的那一段（典型 = 类别）—— 后面的"缺码判定"
-        //    才会按**真实类别**去筛尺码，而不是降级成"只显示有货的尺码"。
-        //    ⚠️ 只补**URL 里空着**的那一段，绝不覆盖她扫到的那两段。
-        if (!parsed.categoryCode) parsed.categoryCode = textValue(readField(schema, 'product', product, 'category')).trim();
-        if (!parsed.color) parsed.color = textValue(readField(schema, 'product', product, 'color')).trim();
-        if (!parsed.itemNo) parsed.itemNo = textValue(readField(schema, 'product', product, 'itemNo')).trim();
-        if (timing) timing.number_fallback = true;
-        logInfo(config.events.numberFallback, {
-          request_id: requestId,
-          // `number` = **她扫到的那串**（缺段）；`matched_number` = 表里那条的真实编号。
-          number, matched_number: numberFallback.matched_number,
-          item_no: numberFallback.item_no, color: numberFallback.color,
-        });
-      }
-    }
     if (!product) {
       logInfo(config.events.notFound, { request_id: requestId, number });
       // ⭐ 兜底**也**没命中（0 条 / 多条 / 读失败）时，把"试过了"这件事带回去 ——
@@ -1170,9 +1092,6 @@ const createScanPageService = (rawGateway, options = {}) => {
         found: false,
         number,
         reason: 'unknown',
-        fallback: numberFallback
-          ? { tried: true, ambiguous: numberFallback.ambiguous === true, candidates: numberFallback.candidates || 0, item_no: numberFallback.item_no, color: numberFallback.color }
-          : null,
       };
     }
 
@@ -1331,10 +1250,7 @@ const createScanPageService = (rawGateway, options = {}) => {
       found: true,
       // ⭐ 兜底命中 ⇒ 用**表里那条的真实编号**（下游（加入本单 / 提交）拿到的才是对的编号），
       //    并带上 `number_fallback` 让页面上出那条轻提示。
-      number: numberFallback?.matched_number || number,
-      number_fallback: numberFallback?.product
-        ? { scanned_number: number, matched_number: numberFallback.matched_number || number }
-        : null,
+      number,
       item_no: productText('itemNo') || parsed.itemNo,
       color: productText('color') || parsed.color,
       category_code: productText('category') || parsed.categoryCode,

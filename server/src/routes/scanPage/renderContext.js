@@ -19,6 +19,7 @@ const createRenderContext = ({ config, postActionFor }) => {
     const fields = {
       request_id: req?.requestId,
       view_source: 'server_render',
+      qr_format: 'record_id',
       page: String(page || 'scan'),
       ...(step ? { step: String(step) } : {}),
       ...(realm ? { realm: String(realm) } : {}),
@@ -34,6 +35,7 @@ const createRenderContext = ({ config, postActionFor }) => {
       page: String(page || ''),
       trigger: String(trigger || ''),
       query_keys: Object.keys(req?.query || {}).sort(),
+      qr_format: 'record_id',
       number: String(number || ''),
     });
     const stepOfPage = { goods: 'entry', pay: 'payment', success: 'success', skeleton: 'entry', bad_number: 'error', not_found: 'error' };
