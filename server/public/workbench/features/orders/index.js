@@ -853,8 +853,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }
     const section = SALES_SECTIONS.find((item) => item.key === state.activeSection);
     if (!state.ordersLoaded) {
-      reportOrdersRendered(state.activeSection, list.length);
-    host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
+      host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
         <p class="section-loading" data-view="orders-waiting">正在读取订单…</p>`;
       return;
     }
@@ -864,6 +863,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       : `<p class="empty compact" data-view="section-placeholder">${state.activeSection === 'afterSales' ? '售后单请扫货品二维码进入' : '待建设'}</p>`;
     host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
       <section class="order-section" data-sales-section="${escapeHtml(section?.key || '')}"><div class="order-group-head"><h3>${escapeHtml(section?.label || '')}<span class="tag tag-${escapeHtml(section?.tone || 'info')}">${escapeHtml(section?.tag || '')}</span></h3><span class="muted">${list.length} 单</span></div>${body}</section>`;
+    reportOrdersRendered(state.activeSection, list.length);
   }
 
   function renderPurchaseList() {
