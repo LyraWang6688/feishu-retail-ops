@@ -525,7 +525,7 @@ test('AC-PS-E2E 端到端：交付卖掉一双样品 ⇒ 自动记待办 ⇒ 工
 
 test('AC-PS7 既有哨兵不动：群补样品链路与三态判据的既有断言文件都还在、且没被改弱', () => {
   for (const file of ['sampleReplacementRecovery.test.js', 'orderThreeStates2026_10_11.test.js',
-    'workbenchOrders.test.js']) {
+    'workbenchDomainScanMigration.test.js']) {
     assert.equal(fs.existsSync(path.join(__dirname, file)), true, `${file} 必须还在`);
   }
   const threeStates = fs.readFileSync(path.join(__dirname, 'orderThreeStates2026_10_11.test.js'), 'utf8');

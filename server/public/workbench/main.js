@@ -1,7 +1,6 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { mainTabsHtml, MAIN_TABS } from './core/tabs.js';
-import { SCAN_APPLINK } from './config/links.js';
 import { TAP_TELEMETRY } from './config/telemetry.js';
 import { createDomainModule } from './features/domains/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
@@ -53,7 +52,6 @@ function bindTapTelemetry() {
 //    `MAIN_TABS` 里加回一条即可，逻辑不用改。
 const modules = new Map([
   // ── 一级 tab 的来源（顺序 = `config/tabs.js` 的 MAIN_TABS；第一条 = 她 2026-10-13 定的「扫一扫」）──
-  ['scan', createDomainModule('scan')],
   ['sales', createDomainModule('sales')],
   ['inventory', createDomainModule('inventory')],
   ['purchase', createDomainModule('purchase')],
@@ -90,38 +88,12 @@ let initialModule = 'sales';
 // ⭐⭐ 2026-10-13 晚（她第三次催）：**首屏就把那一格渲染成 `<a href=AppLink>`** ✓
 //    ⇒ 不再依赖 `/scan-entry` 的返回时机（她那条"点了没反应/落到别的页"的两个怀疑点都消除 ✓）
 //    ⚠️ PC 上飞书 AppLink 不支持 ⇒ 等接口回来说 canScan=false 时，**把那一格藏起来**（不给死格子 ✗）
-let scanAppLink = SCAN_APPLINK;
-let scanEntryReady = false; // 入口信息取回来过（不论能不能扫）
+// 扫一扫按领域拆开后，不再有全局扫一扫；首屏固定从销售进入。
 function renderMainTabs() {
   const nav = document.getElementById('main-tabs');
-  nav.innerHTML = mainTabsHtml(MAIN_TABS, { hrefs: scanAppLink ? { scan: scanAppLink } : {} });
-  // PC（飞书 AppLink 不支持 PC ✓）⇒ **把「扫一扫」那一格藏起来**：
-  //   她在 PC 上点它没有意义 ⇒ **不给"点了没反应"的死格子** ✗（她 2026-10-13 AC：「不可点、不给死按钮」）
-  //   ⚠️ 面板也是空的（她：「面板里……不用留」✓）⇒ 更不能让它成为默认落在的那一格 ✗
-  if (scanEntryReady && !scanAppLink) {
-    const cell = nav.querySelector('[data-module="scan"]');
-    if (cell) { cell.classList.add('hidden'); cell.setAttribute('aria-hidden', 'true'); }
-  }
-  // 默认打开那一格 = **第一格既不是链接、也没被藏起来的**（手机上 = 扫一扫 ✓；PC 上 = 销售 ✓）
-  const firstUsable = [...nav.querySelectorAll('.main-tab:not([href])')].find((tab) => !tab.classList.contains('hidden'));
-  initialModule = firstUsable?.dataset.module || 'sales';
-}
-
-/** 取一次「扫一扫」入口信息（只读；失败 ⇒ 那一格仍是按钮 ⇒ 进面板给人话 + 手输，不白屏 ✓） */
-async function loadScanEntry() {
-  try {
-    const response = await fetch('/api/workbench/scan-entry');
-    const payload = await response.json();
-    scanEntryReady = true;
-    if (payload?.success === true && payload.canScan === true && payload.appLink) {
-      scanAppLink = payload.appLink;
-    }
-    // ⭐ 不论能不能扫都要重渲染：能扫 ⇒ 那一格变链接 ✓；不能扫（PC）⇒ 那一格**藏起来** ✓
-    renderMainTabs();
-    bindMainTabClicks();
-  } catch {
-    // 取不到 ⇒ 什么都不做 ✓
-  }
+  nav.innerHTML = mainTabsHtml(MAIN_TABS);
+  const first = nav.querySelector('.main-tab:not(.hidden)');
+  initialModule = first?.dataset.module || 'sales';
 }
 
 /** 只给"不是链接"的格子绑面板切换（链接格交给浏览器 ✓ 不要拦它的默认行为 ✗） */
@@ -172,8 +144,6 @@ async function start() {
   //    绑在这里之后，鉴权失败时页面仍然是可交互的（各模块自己会提示取不到数据）。
   renderMainTabs();
   bindMainTabClicks();
-  // ⚠️ **不 await**：它只决定"那一格是链接还是按钮"，不阻塞鉴权与首屏 ✓
-  void loadScanEntry();
   try {
     const ready = await requireFeishuAuth({
       statusElement: document.getElementById('auth-status'),

@@ -5,7 +5,7 @@
     "test": 1200
   },
   "maxNetIncrease": 100,
-  "updatedAt": "2026-10-26",
+  "updatedAt": "2026-10-27",
   "files": {
     "server/src/config/scanPage.js": 996,
     "server/src/config/scanWrite.js": 1059,
@@ -23,7 +23,6 @@
     "server/src/utils/larkCards.js": 838,
     "server/test/afterSalesService.test.js": 1392,
     "server/test/labelPrintCanvas.test.js": 1270,
-    "server/test/labelPrintProducts.test.js": 1251,
-    "server/test/workbenchFourTabs.test.js": 1249
+    "server/test/labelPrintProducts.test.js": 1251
   }
 }

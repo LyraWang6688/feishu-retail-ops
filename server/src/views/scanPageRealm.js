@@ -114,7 +114,7 @@ const REALMS = Object.freeze([
 const REALM_TABS = Object.freeze(REALMS.filter((realm) => realm.id !== 'product'));
 
 /** 缺省领域 = **销售**（她 2026-10-11：「默认打开是销售页」；2026-10-09 曾一度是库存）。 */
-const DEFAULT_REALM = 'sales';
+const DEFAULT_REALM = 'inventory';
 
 /** 补货 / 退货 两个领域的 id（渲染层与路由**不写字符串字面量**）。 */
 // ⭐⭐ 2026-10-14 晚 cut B（改前逐字 → 改后逐字 → 依据）：

@@ -88,8 +88,6 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
     content: `${bar}
 ${draftNotice}
 ${identityHtml(view, config)}
-${realmBarHtml(safeRealm, page?.userAgent)}
-${noScriptHtml()}
 ${fallbackHint}
 ${block}
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`

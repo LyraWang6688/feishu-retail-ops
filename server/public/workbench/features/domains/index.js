@@ -3,7 +3,7 @@ import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { createInventoryAdjustmentModule } from '../inventory/adjustment.js';
 import { createOrdersModule } from '../orders/index.js';
-import { createScanModule } from '../scan/index.js';
+import { createScanCardsModule } from '../scan/launch.js';
 // ⭐⭐ 2026-10-15（业务负责人逐字：「是否可以就让用户选择呢？然后它的选项是来自于货品信息里面的编号」）：
 //    「选择编号打印」那一格的**编号选择器**（选项来自只读端点，见 `features/labels/number-picker.js`）。
 //    ⚠️ 取数 / DOM 全在那个模块里：**领域骨架自己仍然一次网络调用都没有**（有哨兵钉着）。
@@ -36,7 +36,7 @@ import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
 
 export function createDomainModule(domainId) {
   const domain = domainById(domainId);
-  const state = { container: null, active: domain.pages[0].id, mounted: new Set() };
+  const state = { container: null, active: domain.pages[0].id, mounted: new Set(), scanModules: new Map() };
 
   const hostOf = (pageId) => state.container?.querySelector(`[data-domain-host="${pageId}"]`);
 
@@ -61,7 +61,11 @@ export function createDomainModule(domainId) {
     //    `mode: 'purchase'`），点一下子 tab 换一屏；**不是**在报货那一页下面展开
     //    （她真机反馈：「不应该是一点完之后在同一个 tab 页里下面出现」）。
     // ⭐「扫一扫」是一屏独立页面（kind: 'scan'）—— 复用既有机制，不动别的 kind ✓
-    if (page.kind === 'scan') return void createScanModule().mount(host);
+    if (page.kind === 'scan-cards' || page.kind === 'scan-direct') {
+      const module = createScanCardsModule(page);
+      if (page.kind === 'scan-direct') state.scanModules.set(page.id, module);
+      return void module.mount(host);
+    }
     if (page.kind === 'orders') return void createOrdersModule({ mode: page.mode }).mount(host);
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
     // ⭐ 2026-10-15（她：「配品就是走表单了」）：`kind:'accessory'` 那条分派**整段删除** ——
@@ -104,7 +108,12 @@ export function createDomainModule(domainId) {
           //    （目标 URL 全部来自配置；空 href 不产生目标 ⇒ 回落到切页 + 不可点卡片，没有死链）。
           const action = resolveTabClick(page);
           if (action.jump) return void window.location.assign(action.jump);
-          return activate(action.activate);
+          activate(action.activate);
+          // 单点查询：只有用户真点了这个子 tab 才调飞书扫一扫（进库存不自动扫）
+          if (page.kind === 'scan-direct' && page.scanRealm) {
+            state.scanModules.get(page.id)?.scanNow();
+          }
+          return undefined;
         }
         // 「跳到本 tab 里的另一个子页」（由 `data-jump` 卡片触发的老路，机制保留）
         const jump = event.target.closest('[data-jump]');

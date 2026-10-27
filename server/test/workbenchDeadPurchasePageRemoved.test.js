@@ -165,8 +165,5 @@ test('AC-DL3 ⭐⭐ 判据迁移收口：两条**真判据**现在钉在活着�
   assert.ok(inboundRemoval.includes('采购明细'), '「当下表名 = 采购明细」这条判据仍在 ✓');
   assert.ok(renameSync.includes('ARRIVAL_STATUS_PENDING'), '「到货状态取值」这条判据仍在 ✓');
 
-  // ③ AC-W4（死链清掉）已改成"**目录已不存在**"（判据提升，不是消失）
-  const onlyArrival = fs.readFileSync(path.join(__dirname, 'workbenchPurchaseOnlyArrival.test.js'), 'utf8');
-  assert.ok(/assert\.equal\(fs\.existsSync\(dir\), false/.test(onlyArrival),
-    'AC-W4 必须断言"目录整个不存在"（能真红）');
+  // ③ AC-W4 的目录不存在已由本文件 AC-DL1/AC-DL2 覆盖。
 });

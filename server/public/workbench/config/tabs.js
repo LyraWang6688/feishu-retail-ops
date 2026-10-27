@@ -19,11 +19,10 @@
  * 顺序 = 渲染顺序 = **默认打开的 tab 是第一条**（= **销售**，她念的第一个）。
  */
 export const MAIN_TABS = [
-  // ⭐⭐ 2026-10-13 她裁定（逐字）：「把『**扫一扫**』功能搬到工作台，作为和**销售、采购、库存同级**
-  //    的一个 tab，并且要**放在最前面**」⇒ 插入第一条，**其余 4 个一个字都不动** ✗
-  { module: 'scan', label: '扫一扫' },
+  // ⭐⭐ 2026-10-27（业务负责人）：扫一扫按领域拆开，不再有全局扫一扫；
+  //   一级 tab 固定四个：销售 · 库存 · 供应（原采购）· 货品。
   { module: 'sales', label: '销售' },
   { module: 'inventory', label: '库存' },
-  { module: 'purchase', label: '采购' },
+  { module: 'purchase', label: '供应' },
   { module: 'product', label: '货品' },
 ];

@@ -450,7 +450,6 @@ const createScanPageRouter = (options = {}) => {
    * 🔴 只给**参数**、不给结果：`realmQueryKey`（`from` ✓ 与 `resolveRealm` 同一个键）、
    *   `recordBasePath`（扫到 id 时拼路径 ✓ 同一个真源）、`origin`（拼同源地址 ✓）＋ 文案与超时。
    */
-  // ⭐ 2026-10-27：签名/上报路径要带当前挂载前缀（`/s` / `/r`），否则会 404。
   const realmScanPageConfig = (req, realm) => {
     if (!realmScanTriggered(req, realm)) return null;
     const origin = `${req.protocol}://${req.get('host') || ''}`;
@@ -520,13 +519,12 @@ const createScanPageRouter = (options = {}) => {
     if (!realmScanActive(realmId)) return page;
     const key = String(realmScanConfig.triggerQueryKey || '');
     if (!key) return page;
-    // ⭐ 2026-10-17：`returnsToRealm=false` ⇒ 303 回跳**不带** `from=<领域>`（默认 true ⇒ 逐字节不变）
     const entry = realmEntryParams(realmId, realmScanConfig);
-    const target = entry.returnsToRealm === false
+    const target0 = entry.returnsToRealm === false
       ? withoutRealmQuery(page, realmScanConfig.realmQueryKey || 'from')
       : page;
-    return `${target}${target.includes('?') ? '&' : '?'}${encodeURIComponent(key)}=`
-      + encodeURIComponent(String(realmScanConfig.triggerQueryValue || ''));
+    const target = /(?:[?&])added=/.test(target0) ? target0 : `${target0}${target0.includes('?') ? '&' : '?'}added=1`;
+    return `${target}${target.includes('?') ? '&' : '?'}${encodeURIComponent(key)}=${encodeURIComponent(String(realmScanConfig.triggerQueryValue || ''))}`;
   };
   // 用例可以注入一个假引擎（`options.multiItemOrder`）—— 与 `options.writeService` 同一种注入法 ✓
   let multiItemOrderEngine = options.multiItemOrder || null;
