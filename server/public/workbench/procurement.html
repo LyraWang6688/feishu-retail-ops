@@ -361,9 +361,10 @@
   }
   document.getElementById('directBtn').addEventListener('click', () => showToast('提交这张采购单'));
 
-  document.querySelectorAll('.tab').forEach((tab) => {
+  // 只给真正带 data-tab 的面板 tab 绑切换；扫一扫按钮也是 .tab，但不应参与面板切换。
+  document.querySelectorAll('.tab[data-tab]').forEach((tab) => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === tab));
+      document.querySelectorAll('.tab[data-tab]').forEach((item) => item.classList.toggle('active', item === tab));
       document.querySelectorAll('[data-panel]').forEach((panel) => { panel.hidden = panel.dataset.panel !== tab.dataset.tab; });
       refresh();
     });
