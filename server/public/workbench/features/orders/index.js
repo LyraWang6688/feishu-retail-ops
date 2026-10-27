@@ -330,6 +330,22 @@ export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
     </div>`;
 }
 
+/**
+ * 销售订单列表的**入口卡片**：交割单 / 售后单 / 草稿单。
+ * 点击卡片后才进入对应内容（交割单=现有订单，其余=待建设）。
+ */
+export function ordersSectionCardsHtml(orders = []) {
+  const listAll = Array.isArray(orders) ? orders : [];
+  return `<div class="orders-section-cards" data-view="orders-section-cards">${SALES_SECTIONS.map((section) => {
+    const count = listAll.filter((order) => salesSectionOf(order) === section.key).length;
+    return `<button class="entry-card orders-section-card" type="button" data-orders-section="${escapeHtml(section.key)}">
+      <span class="entry-title">${escapeHtml(section.label)}</span>
+      <span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span>
+      <span class="muted">${count} 单</span>
+    </button>`;
+  }).join('')}</div>`;
+}
+
 // ── ⭐ 2026-10-09：采购子 tab（按采购订单 = 一张采购申请/报货批次一行）──────────────
 //
 // 字段口径与既有「采购管理 · 报货信息情况」面板**一致**
@@ -744,6 +760,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     orders: [],
     methods: [],
     order: null,
+    activeSection: null,
     // ⭐ 2026-10-09：订单列表内部的子 tab（销售 / 采购）—— 选中态自己实现。
     //    单领域模式（销售 tab / 采购 tab）下没有这一排按钮，直接从 mode 定住。
     subTab: mode === 'purchase' ? 'purchase' : ORDERS_SUB_TABS[0].value,
@@ -821,8 +838,19 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   function renderList() {
     state.order = null;
     const host = $('[data-view="orders-host"]');
-    // 两段（待交割单 ｜ 售后列表）—— 她的口径，见 config/orders.js 的 SALES_SECTIONS。
-    if (host) host.innerHTML = `${state.refreshing ? '<p class="orders-refreshing">刷新中…</p>' : ''}${!state.refreshing && state.refreshError ? '<p class="orders-refreshing orders-refreshing--error">刷新失败，先看的是上次的结果</p>' : ''}` + ordersSectionsHtml(state.orders, { openSections: state.openSections });
+    if (!host) return;
+    const notices = `${state.refreshing ? '<p class="orders-refreshing">刷新中…</p>' : ''}${!state.refreshing && state.refreshError ? '<p class="orders-refreshing orders-refreshing--error">刷新失败，先看的是上次的结果</p>' : ''}`;
+    if (!state.activeSection) {
+      host.innerHTML = notices + ordersSectionCardsHtml(state.orders);
+      return;
+    }
+    const section = SALES_SECTIONS.find((item) => item.key === state.activeSection);
+    const list = state.orders.filter((order) => salesSectionOf(order) === state.activeSection);
+    const body = state.activeSection === 'pending'
+      ? (list.length ? ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key)) : `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`)
+      : `<p class="empty compact" data-view="section-placeholder">待建设</p>`;
+    host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
+      <section class="order-section" data-sales-section="${escapeHtml(section?.key || '')}"><div class="order-group-head"><h3>${escapeHtml(section?.label || '')}<span class="tag tag-${escapeHtml(section?.tone || 'info')}">${escapeHtml(section?.tag || '')}</span></h3><span class="muted">${list.length} 单</span></div>${body}</section>`;
   }
 
   function renderPurchaseList() {
@@ -1319,6 +1347,17 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         state.newProduct = { recordId: picker.dataset.product, label: picker.dataset.label || '' };
         state.container.querySelectorAll('[data-product]').forEach((item) => item.classList.toggle('active', item === picker));
         renderResult(`已选：${state.newProduct.label}`);
+        return;
+      }
+      const sectionCard = event.target.closest('[data-orders-section]');
+      if (sectionCard) {
+        state.activeSection = sectionCard.dataset.ordersSection;
+        renderList();
+        return;
+      }
+      if (event.target.closest('[data-orders-section-back]')) {
+        state.activeSection = null;
+        renderList();
         return;
       }
       const trigger = event.target.closest('[data-action]');
