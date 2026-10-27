@@ -1,4 +1,5 @@
 'use strict';
+const readWorkbenchRoutes = require('./support/workbenchRouteSource');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 
@@ -209,7 +210,7 @@ test('AC-AA1 ⭐⭐ 先回成功页（统一那一句）—— 后台那一跑�
     assert.equal(finishCount(arrival), 1, '跑完仍然只一次 ✓');
     // 统一那一句的**唯一真源**：配置里指向 `SCAN_PAGE.saleSuccess`，路由里不新造字面量 ✗
     assert.equal(arrivalTab.texts.submitted, UNIFIED, '配置里的成功页 = 同一个真源 ✓');
-    const route = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'workbench.js'), 'utf8');
+    const route = readWorkbenchRoutes();
     // ⚠️ 先剥注释再判（注释里当然会引用她原话，那是给人看的 ✓ 不算"抄一份文案" ✗）
     const routeCode = route
       .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -342,7 +343,7 @@ test('AC-AA3 🔴 后台失败（返回 ok:false / 抛异常）⇒ warn 留痕 �
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-AA4 🔴 源码哨兵：校验在排后台之前 · 成功响应在排后台之后 · handler 里不许出现 await finish', () => {
-  const raw = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'workbench.js'), 'utf8');
+  const raw = readWorkbenchRoutes();
   // ① handler 那一段（从 `router.post(arrivalTab.api.accept` 到挂载下一个 router 为止）
   const start = raw.indexOf('router.post(arrivalTab.api.accept');
   const end = raw.indexOf("router.use('/purchase', createPurchaseQueryRouter", start);
@@ -363,7 +364,7 @@ test('AC-AA4 🔴 源码哨兵：校验在排后台之前 · 成功响应在排�
   assert.ok(atStart > 0 && atSchedule > atStart, '校验（start/addScan/金额）都在排后台**之前** ✓');
   assert.ok(atSuccess > atSchedule, '成功响应在排后台**之后** ✓');
   // ④ 复用**既有**共用件（不另造第二个后台件 ✗）
-  assert.ok(raw.includes("require('../services/purchaseWriteBackgroundService')"),
+  assert.ok(/require\('(?:\.\.\/)+services\/purchaseWriteBackgroundService'\)/.test(raw),
     '🔴 必须 require 既有共用件 `createPurchaseWriteBackgroundService`（#664 ✓）');
   assert.ok(raw.includes('createPurchaseWriteBackgroundService('), '并且真的用它建后台那一跑 ✓');
   const bgFiles = fs.readdirSync(path.join(SERVER_DIR, 'src', 'services'))

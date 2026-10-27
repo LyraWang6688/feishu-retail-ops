@@ -1,4 +1,5 @@
 'use strict';
+const readWorkbenchRoutes = require('./support/workbenchRouteSource');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
@@ -23,7 +24,7 @@ const ROUTES = read('../src/routes/scanPage.js');
 const RENDERER = rendererSource();
 const CONFIG = read('../src/config/scanPage.js');
 const ARRIVAL = read('../src/services/scanArrivalService.js');
-const WB_ROUTES = read('../src/routes/workbench.js');
+const WB_ROUTES = readWorkbenchRoutes();
 
 const GONE = [
   [ROUTES, "router.get('/accept'", '扫码页 GET /accept'],

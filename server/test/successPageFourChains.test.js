@@ -1,4 +1,5 @@
 'use strict';
+const readWorkbenchRoutes = require('./support/workbenchRouteSource');
 
 /**
  * ⭐⭐ **四条链成功页「统一极简」的【真路由】判据 ＋ 整页零回归**（2026-10-16 · **加固层**）。
@@ -210,7 +211,7 @@ test('AC-SP1c ⭐⭐ 四条链成功页**同一句话**：三条扫码链路 HTM
   );
   assert.match(frontEnd, /node\.textContent = text \|\| '';/,
     '工作台那一屏用 `textContent` 写结果 ⇒ 成功回执是纯文本（零 `<a>`/`<button>` ✓）');
-  const routeSrc = fs.readFileSync(path.join(SERVER_DIR, 'src', 'routes', 'workbench.js'), 'utf8');
+  const routeSrc = readWorkbenchRoutes();
   assert.ok(routeSrc.includes('message: arrivalTab.texts.submitted'),
     '验收回执正文走**配置**（不新造字面量 ✓）');
   assert.deepEqual(offendersOf(UNIFIED), [], '回执正文本身不含任何 HTML（纯文本 ✓）');

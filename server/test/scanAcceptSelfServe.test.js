@@ -1,4 +1,5 @@
 'use strict';
+const readWorkbenchRoutes = require('./support/workbenchRouteSource');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
@@ -21,7 +22,7 @@ const ROUTES = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js')
 const RENDERER = rendererSource();
 const CONFIG = fs.readFileSync(path.join(__dirname, '../src/config/scanPage.js'), 'utf8');
 const ARRIVAL = fs.readFileSync(path.join(__dirname, '../src/services/scanArrivalService.js'), 'utf8');
-const WB_ROUTES = fs.readFileSync(path.join(__dirname, '../src/routes/workbench.js'), 'utf8');
+const WB_ROUTES = readWorkbenchRoutes();
 
 const SCREEN_GONE = () => {
   assert.equal(RENDERER.includes('renderAcceptanceSelfServe'), false, '无 batch 的自助落地页渲染函数已退场');

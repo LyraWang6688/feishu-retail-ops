@@ -1,4 +1,5 @@
 'use strict';
+const readWorkbenchRoutes = require('./support/workbenchRouteSource');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
@@ -28,7 +29,7 @@ const path = require('node:path');
 
 const ROUTES = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
 const RENDERER = rendererSource();
-const WORKBENCH_ROUTES = fs.readFileSync(path.join(__dirname, '../src/routes/workbench.js'), 'utf8');
+const WORKBENCH_ROUTES = readWorkbenchRoutes();
 const ARRIVAL = fs.readFileSync(path.join(__dirname, '../src/services/scanArrivalService.js'), 'utf8');
 
 test('AC-ID1 ⭐ 幂等键**由服务自己给**（表单塞的键不算数）＋ 同键两跑只执行一次', () => {
