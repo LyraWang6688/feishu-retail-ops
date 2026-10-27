@@ -34,6 +34,12 @@ const createSalesAsyncWorker = ({
   const queuedJobs = new Set();
   let pumping = false;
 
+  /** 同一 job 的日志关联键：job_id 一定在，原始点击 tap_id 有就带上。 */
+  const correlationOf = (job) => ({
+    task_id: job.job_id,
+    ...(job.tap_id ? { tap_id: job.tap_id } : {}),
+  });
+
   const ensureMain = async (job) => {
     if (job.main_record_id) return job.main_record_id;
     const orderNo = String(job.payload?.order_no || job.order_no || '').trim();
@@ -49,7 +55,7 @@ const createSalesAsyncWorker = ({
       orderNo,
       sender: person(job.payload.open_id),
       writeStatus: SALES_STATUS_WRITE_VALUES.writeStatus.pending,
-    }, { correlation: { task_id: job.job_id } });
+    }, { correlation: correlationOf(job) });
     const id = String(created?.recordId || created?.record_id || '').trim();
     if (!id) throw new Error('销售主表创建后没有 record_id');
     await jobStore.update(job.job_id, { main_record_id: id });
@@ -102,7 +108,7 @@ const createSalesAsyncWorker = ({
           paidAmount: String(payload.derived?.paid_amount ?? ''),
           orderGift: payload.gift || '',
           oneShot: true,
-        });
+        }, { correlation: correlationOf(job) });
         const ok = result?.ok === true && !(Number(result?.stock?.failed || 0) > 0);
         const status = ok ? STATUS.succeeded : (result?.ok === true ? STATUS.partialFailed : STATUS.failed);
         const lastError = ok ? '' : String(result?.message || result?.error || result?.code || '');
@@ -116,6 +122,7 @@ const createSalesAsyncWorker = ({
           // 否则只打 info done ⇒ 预警规则看不到（2026-10-27 实测 0097 就是这样静默）。
           logger.logError('scan.sale.async.failed', {
             job_id: jobId,
+            tap_id: job.tap_id || undefined,
             order_no: result?.order_no || payload.order_no,
             status,
             error: lastError,
@@ -124,7 +131,8 @@ const createSalesAsyncWorker = ({
           });
         } else {
           logger.logInfo('scan.sale.async.done', {
-            job_id: jobId, order_no: result?.order_no || payload.order_no, status,
+            job_id: jobId, tap_id: job.tap_id || undefined,
+            order_no: result?.order_no || payload.order_no, status,
             duration_ms: Math.max(0, Date.now() - startedAt),
             line_count: (payload.lines || []).length,
             payment_count: (payload.payments || []).length,
@@ -138,6 +146,7 @@ const createSalesAsyncWorker = ({
         }).catch(() => undefined);
         logger.logError('scan.sale.async.failed', {
           job_id: jobId,
+          tap_id: job.tap_id || undefined,
           order_no: job.payload?.order_no || job.order_no || '',
           error: String(error?.message || error),
         });
@@ -176,13 +185,13 @@ const createSalesAsyncWorker = ({
     setImmediate(() => { pump().catch(() => undefined); });
   };
 
-  const enqueue = async ({ submitKey, payload }) => {
+  const enqueue = async ({ submitKey, payload, tapId = '' }) => {
     const built = buildSalePayload({
       openId: payload.open_id, orderNo: payload.order_no, gift: payload.gift,
       lines: payload.lines, payments: payload.payments,
     });
     if (!built.ok) return { ok: false, errors: built.errors };
-    const { job, created } = await jobStore.createIfAbsent(submitKey, built.payload);
+    const { job, created } = await jobStore.createIfAbsent(submitKey, built.payload, { tapId });
     if (created) schedule(job.job_id);
     return { ok: true, job, created };
   };

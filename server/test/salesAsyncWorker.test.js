@@ -15,11 +15,11 @@ const waitFor = async (fn, { timeoutMs = 2000, intervalMs = 10 } = {}) => {
 
 const make = ({ fail = false } = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sale-async-'));
-  const calls = { create: 0, submit: 0, lines: [] };
+  const calls = { create: 0, submit: 0, lines: [], createOptions: null, submitOptions: null };
   const gateway = {
     table: () => ({ fields: { orderNo: '销售单号' } }),
     listByFilter: async () => [],
-    create: async () => { calls.create += 1; return { recordId: 'main_1' }; },
+    create: async (_table, _fields, options) => { calls.create += 1; calls.createOptions = options; return { recordId: 'main_1' }; },
   };
   const sessions = {
     addLine: async (openId, line) => { calls.lines.push({ openId, ...line }); return { ok: true, session: { sale: { lines: calls.lines } } }; },
@@ -27,8 +27,9 @@ const make = ({ fail = false } = {}) => {
   };
   const writeService = {
     sessions,
-    submitSale: async (input) => {
+    submitSale: async (input, options) => {
       calls.submit += 1;
+      calls.submitOptions = options;
       if (fail) throw new Error('boom');
       return { ok: true, order_no: input.openId ? 'XSD-20261026-0001' : '', stock: { failed: 0 } };
     },
@@ -59,6 +60,33 @@ test('同一 submit_key 只建一个 job；worker 写成功后状态 succeeded',
     assert.equal(h.calls.submit, 1);
     assert.equal(h.calls.lines.length, 1);
     assert.equal(h.calls.lines[0].trade_type_code, 'SALE_CASH');
+  } finally { h.cleanup(); }
+});
+
+test('异步任务保存 tap_id，建主表 / submitSale 都带 correlation', async () => {
+  const h = make();
+  try {
+    const a = await h.worker.enqueue({ submitKey: 'scan_sale:s:tap', payload: payload(), tapId: 'tap-e2e-1' });
+    assert.equal(a.job.tap_id, 'tap-e2e-1');
+    await h.worker.process(a.job.job_id);
+    assert.deepEqual(h.calls.submitOptions.correlation, { task_id: a.job.job_id, tap_id: 'tap-e2e-1' });
+    assert.deepEqual(h.calls.createOptions.correlation, { task_id: a.job.job_id, tap_id: 'tap-e2e-1' });
+  } finally { h.cleanup(); }
+});
+
+test('升级前旧 job 没 tap_id：入队同键时补元数据，不覆盖 payload', async () => {
+  const h = make();
+  try {
+    const legacyId = h.jobStore.jobIdOf('scan_sale:s:legacy');
+    await h.jobStore.store.create({
+      job_id: legacyId, submit_key: 'scan_sale:s:legacy', status: STATUS.queued,
+      payload: payload(), attempts: 0, last_error: '', main_record_id: '', order_no: 'XSD-20261026-0001',
+    });
+    const out = await h.worker.enqueue({ submitKey: 'scan_sale:s:legacy', payload: payload({ order_no: 'IGNORED' }), tapId: 'tap-legacy' });
+    assert.equal(out.created, false);
+    assert.equal(out.job.job_id, legacyId);
+    assert.equal(out.job.tap_id, 'tap-legacy');
+    assert.equal(out.job.payload.order_no, 'XSD-20261026-0001');
   } finally { h.cleanup(); }
 });
 
