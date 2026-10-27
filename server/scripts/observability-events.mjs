@@ -20,8 +20,11 @@ export const DOC_FILE = path.resolve(SERVER_ROOT, '..', 'docs/observability-even
 
 const EVENT_RE = /\blog(?:Info|Warn|Error)\(\s*['"]([a-z0-9][a-z0-9._-]*)['"]/g;
 
+// 只把真正的块注释当注释：`/*` 后必须是空白、`*` 或 `!`。
+// 日志文案/字符串里的 `/*）` 不能开启注释，否则会把后面的事件整段吞掉。
+const BLOCK_COMMENT_RE = /\/\*(?=\s|\*|!)[\s\S]*?\*\//g;
 const stripComments = (text) => text
-  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(BLOCK_COMMENT_RE, '')
   .split('\n')
   .map((line) => line.replace(/\/\/.*$/, ''))
   .join('\n');
@@ -39,6 +42,15 @@ const walk = (dir, out = []) => {
 const prefixes = new Map();
 const suffixes = new Set();
 const PREFIX_RE = /eventPrefix\s*[:=]\s*'([a-z0-9][a-z0-9._-]*)'/g;
+/** 缓存工厂的 `event: '前缀'`（日志里是 `${event}.cache_hit/.cache_miss`）。 */
+const EVENT_OPTION_RE = /\bevent:\s*'([a-z0-9][a-z0-9._-]*)'/g;
+const CACHE_EVENT_SUFFIXES = new Set(['cache_hit', 'cache_miss']);
+const cachePrefixes = new Map();
+const addCachePrefix = (prefix, add) => {
+  const entry = cachePrefixes.get(prefix) || new Set();
+  entry.add(add);
+  cachePrefixes.set(prefix, entry);
+};
 const SUFFIX_RE = /\$\{eventPrefix\}\.([a-z][a-z0-9_]*)/g;
 /** 配置里的 `a.b.c` 事件名（只扫 config/ 目录）。 */
 const CONFIG_EVENT_RE = /'([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_-]*){2,})'/g;
@@ -70,6 +82,8 @@ export function scanEvents(root = SERVER_ROOT) {
     //    （这是运行时校验里 "unregistered" 的常见来源；能静态展开的就展开进目录。）
     PREFIX_RE.lastIndex = 0;
     while ((match = PREFIX_RE.exec(text))) addPrefix(match[1], add);
+    EVENT_OPTION_RE.lastIndex = 0;
+    while ((match = EVENT_OPTION_RE.exec(text))) addCachePrefix(match[1], add);
     SUFFIX_RE.lastIndex = 0;
     while ((match = SUFFIX_RE.exec(text))) suffixes.add(match[1]);
 
@@ -84,6 +98,12 @@ export function scanEvents(root = SERVER_ROOT) {
   // 前缀 × 后缀展开（如 `product.tag_qr.sweep` × `.started` / `.tick_failed`）
   for (const [prefix, adders] of prefixes) {
     for (const suffix of suffixes) {
+      const event = `${prefix}.${suffix}`;
+      for (const add of adders) add(event);
+    }
+  }
+  for (const [prefix, adders] of cachePrefixes) {
+    for (const suffix of CACHE_EVENT_SUFFIXES) {
       const event = `${prefix}.${suffix}`;
       for (const add of adders) add(event);
     }
