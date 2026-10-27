@@ -296,9 +296,7 @@ export function salesSectionOf(order) {
   //    「有二次」那一侧 —— 但那种单**往往连资金信息都还没有**（收款明细为空），
   //    所以它会先落到"待补充"，与她的口径一致。
   if (info.goodsMissing || info.fundsMissing) return SALES_SECTIONS[0].key;
-  return salesCategoryOf(order) === 'settled'
-    ? SALES_SECTIONS[SALES_SECTIONS.length - 1].key
-    : 'pending';
+  return salesCategoryOf(order) === 'settled' ? 'afterSales' : 'pending';
 }
 
 /**
@@ -307,29 +305,22 @@ export function salesSectionOf(order) {
  *    —— 她 2026-10-09 上半场定的那三类**一条信息都没丢**，只是收在"待交割单"这一段里。
  */
 export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
-  if (!(orders || []).length) return `<p class="empty" data-view="orders-empty">${escapeHtml(P.empty)}</p>`;
+  const listAll = Array.isArray(orders) ? orders : [];
   return `<div class="orders-sections" data-view="orders-sections">${SALES_SECTIONS.map((section) => {
-    const list = orders.filter((order) => salesSectionOf(order) === section.key);
-    const body = !list.length
-      ? `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`
-      : (section.key === 'pending'
-        ? ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key))
-        : ordersListHtml(list));
+    const list = listAll.filter((order) => salesSectionOf(order) === section.key);
+    let body;
+    if (section.key === 'pending') {
+      body = !list.length
+        ? `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`
+        : ordersBoardHtml(list, SALES_GROUPS.filter((group) => group.key !== 'settled').map((group) => group.key));
+    } else {
+      body = `<p class="empty compact" data-view="section-placeholder">待建设</p>`;
+    }
     const head = `
         <div class="order-group-head">
           <h3>${escapeHtml(section.label)}<span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span></h3>
           <span class="muted">${list.length} 单</span>
         </div>`;
-    // ⭐ 2026-10-12【乙】：**「售后列表」默认折叠**（售后单一多，待补充/待交割就被挤出屏外）。
-    //    ⚠️ 只折这一段；折叠状态记在 `state.openSections`（她手动展开后，重画**不会**被刷掉）。
-    if (section.key === 'afterSales') {
-      const open = openSections.includes(section.key);
-      return `
-      <details class="order-section order-section-collapsible" data-view="after-sales-section" data-sales-section="${escapeHtml(section.key)}"${open ? ' open' : ''}>
-        <summary>${head}</summary>
-        ${body}
-      </details>`;
-    }
     return `
       <section class="order-section" data-sales-section="${escapeHtml(section.key)}">
         ${head}

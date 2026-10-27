@@ -137,8 +137,8 @@ test('AC4 列表卡片化（一单一张卡，无表格）· 金额 / 数量大�
   }
   assert.match(ALL_CSS, /\.tag\s*\{[^}]*border-radius:\s*var\(--radius-pill\)/s, '标签是小圆角胶囊');
   // ⭐ 2026-10-17 成对迁移：她逐字「只保留二次交割以及售后」⇒「待补充」那个标签随「补充信息单」退场
-  assert.match(read('config/orders.js'), /tag: '待交割'/, '待交割单 = 待交割标签');
-  assert.match(read('config/orders.js'), /tag: '已两清'/, '售后列表 = 已两清标签');
+  assert.match(read('config/orders.js'), /tag: '待交割'/, '交割单 = 待交割标签');
+  assert.match(read('config/orders.js'), /tag: '待建设'/, '售后单/草稿单 = 待建设标签');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

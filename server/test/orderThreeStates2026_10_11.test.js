@@ -5,7 +5,7 @@
  *   · **校验项只有两个**：① **货品信息**（货号 / 颜色 / 尺码）② **资金信息**
  *     （**收款方式** + **至少一笔收款记录**）；**备注 / 配品 / 赠品都不是校验项**；
  *   · **待补充** = 缺任一校验项；**待交割** = 两项齐（**至少一笔收款**即可）但**货没给完 或 钱没付完**；
- *     **售后列表** = **钱货两清**（交付完 + **钱收齐**）；
+ *     **售后单** = **钱货两清**（交付完 + **钱收齐**）；
  *   · ⚠️ **不新造状态 / 枚举**：判据只用既有字段（`fulfillment_status` / `payment_status` /
  *     收款明细笔数与方式 / 明细的编号·颜色·尺码是否齐）；
  *   · ⚠️ **配品行不参与"货品信息 / 待交付"计算**（B 的同一条纪律）。
@@ -19,9 +19,9 @@
  *  AC-C2 **待补充** = 缺货品信息（缺编号 / 缺颜色 / 缺尺码）**或**缺资金信息
  *        （一条收款明细都没有 / 收款明细没有收款方式）。
  *  AC-C3 **待交割** = 两个校验项齐（**至少一笔收款即可**）但没两清；
- *        **售后列表** = `fulfillment_status` = 已交付 且 `payment_status` = 已收款。
+ *        **售后单** = `fulfillment_status` = 已交付 且 `payment_status` = 已收款。
  *  AC-C4 **配品行不参与货品信息**：`requires_size === false` 的明细（编号/颜色/尺码天然为空）
- *        不算"缺货品信息"；**纯配品单**照样能进待交割 / 售后列表。
+ *        不算"缺货品信息"；**纯配品单**照样能进待交割 / 售后单。
  *  AC-C5 **备注 / 配品 / 赠品都不是校验项**：有它们不改变归属，没有它们也不判"待补充"。
  *  AC-C6 **服务端把判据要的字段给到页面**：`listOrders()` 的明细带
  *        `kind` / `requires_size` / `color` / `accessory`（配品名称）；
@@ -106,8 +106,8 @@ test('AC-C1 三态判据用到的**既有字段**在一处点名（不新造任�
   assert.equal(front.ORDER_STATE_FIELDS.lineKind, 'requires_size',
     '「这一行要不要货品信息」由可售品属性说了算（配品行 = false）');
   // 三份单子的 key / 标签一个都没变（她 2026-10-09 定的那三个）
-  assert.deepEqual(front.SALES_SECTIONS.map((section) => section.key), ['pending', 'afterSales']);
-  assert.deepEqual(front.SALES_SECTIONS.map((section) => section.tag), ['待交割', '已两清']);
+  assert.deepEqual(front.SALES_SECTIONS.map((section) => section.key), ['pending', 'afterSales', 'draft']);
+  assert.deepEqual(front.SALES_SECTIONS.map((section) => section.tag), ['待交割', '待建设', '待建设']);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -136,11 +136,11 @@ test('AC-C2 待补充：缺货品信息（编号 / 颜色 / 尺码缺一）或�
     ...ORDER, payments: [{ record_id: 'p1', amount: 100, status: '未收款', method: '' }],
   }), 'pending', '只有一条"未收款"（没有收款方式）⇒ 资金信息还没齐');
 
-  // ③ 两个校验项都齐 ⇒ **能进售后列表**（不再因"缺信息"被拦）
+  // ③ 两个校验项都齐 ⇒ **能进售后单**（不再因"缺信息"被拦）
   //   ⚠️ 2026-10-17：原断言是 `notEqual(…, 'supplement')`；两段之后 `pending` 已含"缺信息"，
-  //      故改成**正向**证明（两个校验项齐 ⇒ 钱货两清时确实落到售后列表）✓ 不是放宽
+  //      故改成**正向**证明（两个校验项齐 ⇒ 钱货两清时确实落到售后单）✓ 不是放宽
   assert.equal(m.salesSectionOf({ ...ORDER, fulfillment_status: '已交付', payment_status: '已收款' }),
-    'afterSales', '两个校验项都齐 ⇒ 售后列表（不再被缺信息拦住）');
+    'afterSales', '两个校验项都齐 ⇒ 售后单（不再被缺信息拦住）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -176,10 +176,10 @@ test('AC-C2b 「待补样品」也是一种待补充：先判它；其余判据�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-C3 待交割 / 售后列表（至少一笔收款 → 待交割；收齐 → 售后列表）
+// AC-C3 待交割 / 售后单（至少一笔收款 → 待交割；收齐 → 售后单）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-C3 待交割 = 两项齐但没两清；售后列表 = 钱货两清（至少一笔 ⇒ 待交割，收齐 ⇒ 售后列表）', async () => {
+test('AC-C3 待交割 = 两项齐但没两清；售后单 = 钱货两清（至少一笔 ⇒ 待交割，收齐 ⇒ 售后单）', async () => {
   const { orders } = loadFrontendModules();
   const m = await orders;
 
@@ -192,7 +192,7 @@ test('AC-C3 待交割 = 两项齐但没两清；售后列表 = 钱货两清（�
     ...ORDER, fulfillment_status: '未交付', payment_status: '部分收款',
     payments: [{ record_id: 'r1', amount: 10, status: '已收款', method: '现金' }],
   }), 'pending');
-  // 钱货两清 ⇒ 售后列表
+  // 钱货两清 ⇒ 售后单
   assert.equal(m.salesSectionOf({ ...ORDER, fulfillment_status: '已交付', payment_status: '已收款' }), 'afterSales');
   // ⚠️ 口径注释（2026-10-11 判据重写）：**履约 / 收款状态不是校验项** ——
   //    两个校验项齐了，就算状态读不出来，也只是"不敢说两清"⇒ 归**待交割**，
@@ -207,20 +207,20 @@ test('AC-C3 待交割 = 两项齐但没两清；售后列表 = 钱货两清（�
     { ...ORDER, record_id: 'o3', details: [{ ...ORDER.details[0], color: '' }] },
   ];
   const html = m.ordersSectionsHtml(list);
-  for (const key of ['pending', 'afterSales']) {
+  for (const key of ['pending', 'afterSales', 'draft']) {
     assert.ok(html.includes(`data-sales-section="${key}"`), `缺 ${key} 这一段`);
   }
   const counts = html.split('data-sales-section="').slice(1)
     .map((chunk) => Number((chunk.match(/(\d+) 单/) || [])[1]));
   // ⭐ 2026-10-17：两段后 o3（缺颜色）与 ORDER 都并入待交割 ⇒ [2, 1]
-  assert.deepEqual(counts, [2, 1], '两段条数（不重不漏：3 单全落在这两段里）');
+  assert.deepEqual(counts, [2, 1, 0], '三段条数（不重不漏：3 单全落在交割/售后段里，草稿段为空）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-C4 配品行不参与「货品信息」
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-C4 配品行（requires_size=false）不算"缺货品信息"：纯配品单也能进待交割 / 售后列表', async () => {
+test('AC-C4 配品行（requires_size=false）不算"缺货品信息"：纯配品单也能进待交割 / 售后单', async () => {
   const { orders } = loadFrontendModules();
   const m = await orders;
   const accessoryLine = {
@@ -233,7 +233,7 @@ test('AC-C4 配品行（requires_size=false）不算"缺货品信息"：纯配�
   const onlyAccessory = { ...ORDER, details: [accessoryLine] };
   assert.equal(m.salesSectionOf(onlyAccessory), 'pending', '纯配品单 + 一笔收款 ⇒ 待交割（不是待补充）');
   assert.equal(m.salesSectionOf({ ...onlyAccessory, fulfillment_status: '已交付', payment_status: '已收款' }),
-    'afterSales', '纯配品单钱货两清 ⇒ 售后列表');
+    'afterSales', '纯配品单钱货两清 ⇒ 售后单');
   // 混单：鞋那一行缺颜色 ⇒ 仍然待补充（配品行无辜，但鞋那一行是真的缺）
   assert.equal(m.salesSectionOf({
     ...ORDER, details: [accessoryLine, { ...ORDER.details[0], color: '' }],

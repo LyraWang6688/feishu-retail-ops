@@ -86,11 +86,6 @@ test('① 已到货批次 `purchase-arrived`：**默认收起**（避免一屏�
   assert.equal(/\sopen(\s|>)/.test(tags[0]), false, '它**就该收起** ⇒ 加 open ⇒ 红 ✓');
 });
 
-test('① 售后区 after-sales-section：**条件**展开（open 变量决定 ✗ 不许写死）', () => {
-  const tags = tagsOf(RAW_ORDERS, 'data-view="after-sales-section"');
-  assert.equal(tags.length, 1, '恰一处 ✓');
-  assert.match(tags[0], /\$\{open \? ' open' : ''\}/, '有售后待办才展开 ⇒ 改成固定值 ⇒ 红 ✓');
-});
 
 test('② 七个操作表单（`action-form`）：⭐ **一条合并哨兵** —— 这类**一律不得带 `open`** ✓', () => {
   const tags = tagsOf(RAW_ORDERS, 'class="action-form"');

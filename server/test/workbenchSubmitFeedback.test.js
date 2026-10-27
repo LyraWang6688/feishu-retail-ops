@@ -280,8 +280,9 @@ test('AC9 两段分类与 10 条写接口一个字不变（本次只加"点了�
   const config = read('config/orders.js');
   // ⭐ 2026-10-17 成对迁移：她逐字「只保留二次交割以及售后」⇒ 「补充信息单」退场（缺信息的单并入待交割）
   assert.equal(config.includes("{ key: 'supplement'"), false, '🔴「补充信息单」那段不许回来 ✗');
-  assert.match(config, /key: 'pending', label: '待交割单', tag: '待交割'/);
-  assert.match(config, /key: 'afterSales', label: '售后列表', tag: '已两清'/);
+  assert.match(config, /key: 'pending', label: '交割单', tag: '待交割'/);
+  assert.match(config, /key: 'afterSales', label: '售后单', tag: '待建设'/);
+  assert.match(config, /key: 'draft', label: '草稿单', tag: '待建设'/);
   for (const endpoint of [
     "'/api/workbench/sales/orders'", "'/api/workbench/sales/payments'", "'/api/workbench/sales/deliveries'",
     "'/api/workbench/sales/detail-amounts'", "'/api/workbench/sales/sample-fill'",
