@@ -45,13 +45,13 @@ const submittedTargets = () => {
 const CHAINS = Object.freeze({
   'ORDERS_API.payments': {
     fe: 'features/orders/index.js', feKey: 'ORDERS_API.payments',
-    route: 'src/routes/workbench.js', routeKey: /router\.post\('\/sales\/payments'[\s\S]{0,600}?req\.body\?\.method/,
+    route: 'src/routes/workbench/sales.js', routeKey: /router\.post\('\/sales\/payments'[\s\S]{0,600}?req\.body\?\.method/,
     service: 'src/services/paymentService.js', serviceKey: /async record\(input = \{\}, options = \{\}\)/,
     landing: [['paymentRecord', 'amount'], ['paymentRecord', 'method'], ['paymentRecord', 'receivedAt']],
   },
   'ORDERS_API.deliveries': {
     fe: 'features/orders/index.js', feKey: 'ORDERS_API.deliveries',
-    route: 'src/routes/workbench.js', routeKey: /router\.post\('\/sales\/deliveries'[\s\S]{0,600}?req\.body\?\.detailRecordIds/,
+    route: 'src/routes/workbench/sales.js', routeKey: /router\.post\('\/sales\/deliveries'[\s\S]{0,600}?req\.body\?\.detailRecordIds/,
     service: 'src/services/salesDeliveryService.js', serviceKey: /deliver\(/,
     landing: [['salesDetail', 'fulfillmentStatus'], ['liveInventory', 'stockKey']],
   },
@@ -61,7 +61,7 @@ const CHAINS = Object.freeze({
     //    `src/routes/workbench.js:252` 的 `router.post(arrivalTab.api.accept, …)`，
     //    而 `arrivalTab.api.accept` = `config/workbenchArrival.js` 的 '/purchase/arrivals/accept' ✓
     //    ⚠️ 这条是我 grep 了三轮才核到的（先以为是别的 router / catch-all ✗）⇒ 断言必须认"变量路径"这种形状 ✓
-    route: 'src/routes/workbench.js', routeKey: /router\.post\(arrivalTab\.api\.accept/,
+    route: 'src/routes/workbench/purchase.js', routeKey: /router\.post\(arrivalTab\.api\.accept/,
     config: 'src/config/workbenchArrival.js', configKey: /accept: '\/purchase\/arrivals\/accept'/,
     service: 'src/services/workbenchPurchaseArrivalService.js', serviceKey: /async confirmArrival\(\{ batchNo, actualAmount/,
     landing: [['purchaseOrderBatch', 'actualAmount'], ['purchaseOrderBatch', 'arrivalStatus'], ['liveInventory', 'stockKey']],

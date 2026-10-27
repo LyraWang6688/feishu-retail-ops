@@ -91,7 +91,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
-
 // 这个路由/控制器在模块级会 `new V1BitableGateway()`（构造时读飞书凭证）。
 // 给一对**假凭证**只为让模块能加载：本文件**不打飞书**（与 labelPrintRoute.test.js 同一做法）。
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_test_app';
@@ -635,12 +634,13 @@ test('AC-N5 失败口径复用控制器那一份：她填错 400 原样回显 / 
 
 test('AC-N5 源码哨兵：新端点挂在闸门之后，且**不新开鉴权 / 不新造读取口**', () => {
   const routes = sourceOf('routes/workbench.js');
-  const routeAt = routes.indexOf("router.get('/products/numbers'");
+  const labelRoutes = sourceOf('routes/workbench/labels.js');
+  const routeAt = labelRoutes.indexOf("router.get('/products/numbers'");
   const gateAt = routes.indexOf('router.use(requireWorkbenchAccess)');
-  assert.ok(routeAt > 0, '`/products/numbers` 必须在路由文件里');
-  assert.ok(gateAt > 0 && routeAt > gateAt, '⭐ 必须挂在**既有** `requireWorkbenchAccess` 之后');
-  assert.match(routes, /labelPrint\.listProductNumbers\(/, '取数走 labelPrintService（不在这里另写一份）');
-  const endpoint = routes.slice(routeAt, routes.indexOf('router.post(', routeAt));
+  assert.ok(routeAt > 0, '`/products/numbers` 必须在 labels 子路由里');
+  assert.ok(gateAt > 0, '父 router 必须保留既有 requireWorkbenchAccess');
+  assert.match(labelRoutes, /labelPrint\.listProductNumbers\(/, '取数走 labelPrintService（不在这里另写一份）');
+  const endpoint = labelRoutes.slice(routeAt, labelRoutes.indexOf('router.post(', routeAt));
   for (const forbidden of ['.create(', '.update(', '.delete(']) {
     assert.ok(!endpoint.includes(forbidden), `只读端点里不许出现 ${forbidden}`);
   }

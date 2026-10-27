@@ -1,4 +1,5 @@
 'use strict';
+const readWorkbenchRoutes = require('./support/workbenchRouteSource');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
@@ -116,7 +117,7 @@ test('AC-AW7 ⭐ 既有断言：没有"工作台点验收会跳扫码页"的哨�
 });
 
 test('AC-AW8/9 回归：`confirmArrival` 语义与入库路径**一字不动**', () => {
-  const route = read('src/routes/workbench.js');
+  const route = readWorkbenchRoutes();
   assert.match(route, /router\.post\('\/purchase\/arrivals\/confirm'/, '确认到货接口仍在 ✓');
   // ⭐⭐ 2026-10-16（她逐字「到货说明必须得删……数据表里已经没有验收原话了」）
   //   · 改前逐字：`/confirmArrival\(\{[\s\S]{0,200}?batchNo[\s\S]{0,200}?actualAmount[\s\S]{0,200}?acceptanceText/`（含"验收原话"）
