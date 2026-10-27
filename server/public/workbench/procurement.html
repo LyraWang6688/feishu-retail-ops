@@ -360,9 +360,7 @@
     setTimeout(() => toast.classList.remove('show'), 1800);
   }
   document.getElementById('directBtn').addEventListener('click', () => showToast('提交这张采购单'));
-  document.getElementById('scanBtn').addEventListener('click', () => {
-    showToast('这里会调起飞书扫一扫，进入之前的补货扫码链路');
-  });
+
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === tab));
@@ -372,5 +370,14 @@
   });
   refresh();
 </script>
+  <script type="module">
+    import { createScanCardsModule } from '/workbench/features/scan/launch.js';
+    const scanHost = document.createElement('div');
+    scanHost.hidden = true;
+    document.body.append(scanHost);
+    const scanModule = createScanCardsModule({ scanRealm: 'replenish' });
+    scanModule.mount(scanHost);
+    document.getElementById('scanBtn').addEventListener('click', () => scanModule.scanNow());
+  </script>
 </body>
 </html>
