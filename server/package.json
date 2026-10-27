@@ -21,7 +21,8 @@
     "scan:repair-interrupted": "node scripts/scan-repair-interrupted.js",
     "test:realbase": "node --test --test-concurrency=1 --test-force-exit test/realbase/*.test.js",
     "observability:events": "node scripts/observability-events.mjs",
-    "observability:events:check": "node scripts/observability-events.mjs --check"
+    "observability:events:check": "node scripts/observability-events.mjs --check",
+    "test:e2e": "playwright test"
   },
   "keywords": [
     "shoe-box",
@@ -46,6 +47,7 @@
     "sharp": "^0.35.5"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "nodemon": "^3.0.1"
   }
 }

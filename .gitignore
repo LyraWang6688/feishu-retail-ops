@@ -68,3 +68,6 @@ print-helper/downloads/
 
 # Local DSH profile/preview config (not project code)
 .dsh/
+server/test-results/
+server/playwright-report/
+server/.playwright/
