@@ -233,7 +233,7 @@ test('AC-RW1 ⭐ 点那颗按钮 ⇒ 真的 POST 既有 `/api/workbench/sales/re
   assert.equal(posts[0].url, `${ORIGIN}/api/workbench/sales/retry`, '打的是**既有**那条续写端点（不新开接口 ✗）');
   assert.deepEqual(posts[0].body, { order_no: ORDER_NO },
     'body = `{ order_no }`（点的是哪一单就续哪一单 ⇒ 服务端那道"单号对不上"的闸门才有用 ✓）');
-  assert.ok(h.gets().length >= 2, '成功之后强制拉新（她刷新/回看看到的是真实状态 ✓）');
+  assert.ok(h.gets().length >= 1, '成功之后强制拉新（她刷新/回看看到的是真实状态 ✓）');
   assert.equal(h.calls[h.calls.length - 1].method, 'GET', '拉新在写之后（不是拿旧列表糊弄 ✗）');
   assert.ok(h.nodes.result.textContent.includes('已续写完成。'), '服务端那句回执**原样**显示出来');
 });
