@@ -4,6 +4,13 @@
  *   POST /api/workbench/sales/after-sales      售后：退 / 换 / 赔
  *   POST /api/workbench/sales/second-delivery  二次交付（收尾款 + 交付）
  *
+ * ⭐ 2026-10-29：另加一条**只读**入口给「售后扫一扫落地页」——
+ *   GET  /api/workbench/sales/after-sales/scan-candidates
+ *   为什么放这里：落地页要摆「销售日 + 销售主表总金额」，而既有候选接口
+ *   （`salesFollowupService.listAfterSalesCandidates`，订单列表那条读路径）**没有读这两列**；
+ *   那个 service 属于另一条任务的作用域（本分支不改它）。
+ *   ⇒ 这一条走**独立的只读取数**（`services/afterSalesScanService.js`）：不写库、不改任何既有接口。
+ *
  * ⚠️ 另两条写入口**本来就在** `routes/workbench.js` 里，本次一个字没动：
  *   · `POST /api/workbench/sales/payments`    补收款
  *   · `POST /api/workbench/sales/deliveries`  交付
@@ -16,6 +23,7 @@
  */
 const express = require('express');
 const { WorkbenchOrderActionService } = require('../services/workbenchOrderActionService');
+const { AfterSalesScanService } = require('../services/afterSalesScanService');
 const { tapIdFromRequest } = require('../utils/correlationFields');
 const { logError } = require('../utils/logger');
 
@@ -65,6 +73,35 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
       { correlation: tapIdFromRequest(req) },
     ),
   ));
+
+  // ⭐⭐⭐ 2026-10-29：售后**扫一扫落地页**的只读候选（不写库、不作废缓存 —— 它什么都没改）。
+  //   入参：`productRecordId`（二维码里的货品记录 id）+ `days`（默认 7，配置里封顶）。
+  //   出错口径与上面两条写入口一致：她那边的问题（缺参数 / 货品不存在）→ 400，读库失败 → 502；
+  //   **两种都把原因原样回页面**（页面上看得见原因，不许静默）。
+  //   ⚠️ 事件名复用既有的 `workbench.sales.after_sales.candidates.failed`（同一件事：售后候选读失败），
+  //      不新造事件（新事件要进 `config/events.js`，那是另一条任务的作用域）。
+  let scanService = options.scanService || null;
+  const resolveScanService = () => {
+    if (!scanService) scanService = new AfterSalesScanService({ gateway: options.gateway });
+    return scanService;
+  };
+  router.get('/sales/after-sales/scan-candidates', async (req, res) => {
+    try {
+      const result = await resolveScanService().listCandidates({
+        productRecordId: req.query?.productRecordId || req.query?.product_record_id,
+        days: req.query?.days,
+      });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.sales.after_sales.candidates.failed', {
+        request_id: req.requestId,
+        product_record_id: req.query?.productRecordId || req.query?.product_record_id || '',
+        error: error.message,
+      });
+      return res.status(error?.statusCode === 400 ? 400 : 502)
+        .json({ success: false, error: error.message });
+    }
+  });
 
   return router;
 };

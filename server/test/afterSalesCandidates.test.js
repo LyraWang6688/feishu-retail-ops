@@ -46,3 +46,27 @@ test('售后页面与接口存在，且三步流程文案在配置里', () => {
   const service = fs.readFileSync(path.join(__dirname, '../src/services/salesFollowupService.js'), 'utf8');
   assert.match(service, /listAfterSalesCandidates/);
 });
+
+/**
+ * ⭐ 2026-10-29：售后**扫一扫落地页**的判据（业务负责人当天定的页面口径）。
+ *
+ *   ① 三个动作的**水平顺序**逐字是「换货 → 退货 → 赔货」（顺序换了要红）；
+ *   ② 页面读的是**扫一扫落地页自己的只读接口**（`scan-candidates`），
+ *      不是订单列表那条候选接口 —— 因为落地页要摆「销售日 + 销售主表总金额」；
+ *   ③ 页面**不写库**：这一版没有 POST（按钮处理逻辑还没接，谁偷偷接上要红）；
+ *   ④ 数据来源在页面里写清楚（她问过"数据来自哪里"）。
+ */
+test('AC-LP1 ⭐ 落地页：动作顺序「换货 · 退货 · 赔货」，读 scan-candidates，且这一版不写库', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  const actions = config.slice(config.indexOf('export const AFTER_SALES_ACTIONS'));
+  const order = ['exchange', 'return', 'compensation'].map((value) => actions.indexOf(`value: '${value}'`));
+  for (const index of order) assert.ok(index >= 0, '三个动作都要在配置里');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, '水平顺序必须是 换货 → 退货 → 赔货');
+
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  assert.match(page, /scanCandidatesApi/, '落地页读 scan-candidates（销售日 + 总金额那条只读接口）');
+  assert.match(page, /AFTER_SALES_PAGE\.totalLabel|AFTER_SALES_PAGE\.sizeLabel/, '销售日 / 尺码 / 总金额 的字段名从配置取');
+  assert.doesNotMatch(page, /api\.post\(/, '这一版只做页面：不许有写请求（按钮处理逻辑还没接）');
+});
+

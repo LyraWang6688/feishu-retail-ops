@@ -1,18 +1,50 @@
-/** 售后扫一扫页面的配置（只放文案/路径/动作，不放业务规则）。 */
+/**
+ * 售后**扫一扫落地页**的配置（只放文案 / 路径 / 动作，不放业务判断）。
+ *
+ * 页面口径（业务负责人 2026-10-29，逐字）：
+ *   「用户扫码后会出现一个售后页面 …… 基于二维码里的信息（里面应该包含货品颜色），
+ *     去查找 7 天内满足条件的销售情况，呈现出具体的**销售日、尺码，以及销售主表里的总金额**，
+ *     并给到用户几个备选项。用户点击选择后，下面会有 **3 个按钮**，
+ *     水平顺序依次是：1 **换货** 2 **退货** 3 **赔货**」
+ *
+ * ⚠️ 这一版只做**页面**（选销售 + 选动作）；点按钮之后各自的处理逻辑**还没接**
+ *    （她：等页面确认没问题再谈触发逻辑）⇒ 按钮只给出"待接入"的如实提示，不做任何写库。
+ * ⚠️ 动作枚举的 `value` 必须与后端 `server/src/config/afterSales.js` 的动作枚举逐字一致
+ *    （`return` / `exchange` / `compensation`）—— 接写入时直接用，不在这里另造一套。
+ */
+
 export const AFTER_SALES_PAGE = {
   title: '售后单',
-  candidatesApi: '/api/workbench/sales/after-sales/candidates',
+  back: '← 返回工作台',
+  // 只读候选接口（后端 `server/src/routes/workbenchOrderActions.js` 的 scan-candidates）
+  scanCandidatesApi: '/api/workbench/sales/after-sales/scan-candidates',
   days: 7,
-  loading: '正在查找近 7 天的销售单…',
-  empty: '近 7 天没有包含这款货品的销售单。',
-  failed: '销售单查找失败，请返回重试。',
-  chooseOrder: '选择要售后的销售单',
-  chooseAction: '选择售后动作',
-  back: '← 返回',
+  loading: '正在查找近 7 天的销售记录…',
+  productLoading: '正在读取货品…',
+  productMissing: '没有扫到货品记录，请重新扫码。',
+  failed: '销售记录读取失败，请返回重试。',
+  empty: '近 7 天没有这款货品的销售记录。',
+  chooseHint: '请选择要售后的那一笔销售',
+  actionHint: '选择处理方式',
+  // 字段名（页面上一律从这取，不在渲染代码里写死）
+  dateLabel: '销售日',
+  sizeLabel: '尺码',
+  totalLabel: '总金额',
+  orderLabel: '销售单号',
+  amountEmpty: '—',
+  sizeEmpty: '—',
+  // 「已经售后过几条」的提示（后端把排除了多少条如实回给页面）
+  excludedHint: (count) => `另有 ${count} 条已经售后过，未列出。`,
+  // 按钮点击后的如实提示（**逻辑还没接**，不假装做成了）
+  actionPending: (label) => `${label}：处理流程还没有接上，当前只做到这里。`,
 };
 
+/**
+ * 售后动作 —— 顺序就是她定的**水平顺序**：换货 · 退货 · 赔货。
+ * `hint` 是按钮下面那行小字（点按钮之前先让人看懂各是什么）。
+ */
 export const AFTER_SALES_ACTIONS = [
-  { value: 'return', label: '退货' },
-  { value: 'exchange', label: '换货' },
-  { value: 'compensation', label: '赔货' },
+  { value: 'exchange', label: '换货', hint: '换一双给她' },
+  { value: 'return', label: '退货', hint: '这双退回来' },
+  { value: 'compensation', label: '赔货', hint: '赔一双给她' },
 ];

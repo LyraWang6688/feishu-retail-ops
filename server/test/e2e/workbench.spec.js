@@ -15,19 +15,26 @@ const mockApi = async (page, { orders = [] } = {}) => {
     if (path === '/api/workbench/sales/orders') {
       return route.fulfill(json({ success: true, methods: [], orders }));
     }
-    if (path === '/api/workbench/sales/after-sales/candidates') {
+    if (path === '/api/workbench/sales/after-sales/scan-candidates') {
+      // 2026-10-29：售后扫一扫落地页的只读候选（销售日 / 尺码 / 该单总金额）
       return route.fulfill(json({
         success: true,
-        productRecordId: 'p1',
+        product: { record_id: 'p1', item_no: 'YD1', color: '黑' },
         days: 7,
+        cutoff: Date.now() - 7 * 86400000,
         candidates: [{
-          record_id: 'o1',
+          sales_entry_record_id: 'o1',
           order_no: 'XSD-E2E-001',
-          recorded_at: Date.now(),
+          sales_detail_record_id: 'd1',
+          sales_date: Date.now(),
+          sales_date_source: 'sold_at',
+          size: 40,
+          size_record_id: 's40',
+          total_amount: 300,
+          actual_amount: 100,
           fulfillment_status: '已交付',
-          payment_status: '已收款',
-          matched_details: [{ record_id: 'd1', product: 'YD1', color: '黑', size: 40, actual_amount: 100 }],
         }],
+        excluded: { alreadyAfterSales: 0, notPosted: 0, outOfWindow: 0 },
       }));
     }
     if (path === '/api/workbench/ui-tap') return route.fulfill({ status: 204, body: '' });
@@ -75,14 +82,22 @@ test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) 
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
-test('售后候选页：选单后出现退货 / 换货 / 赔货', async ({ page }) => {
+// ⭐ 2026-10-29（业务负责人当天定的页面口径）：扫一扫落地页 = 货品（颜色）→ 近 7 天销售
+//   （销售日 / 尺码 / 该单总金额）→ 选一条 → 三个动作按钮，水平顺序 **换货 · 退货 · 赔货**。
+//   ⚠️ 按钮之后的处理逻辑**还没接**（她：等页面确认再谈）⇒ 点击只显示"待接入"提示、**不跳走**；
+//   这条断言故意钉住"现在不许偷偷接上"（接上时要按新口径改这条用例）。
+test('售后扫一扫落地页：候选 → 三个动作按钮（换货 · 退货 · 赔货）', async ({ page }) => {
   await page.goto('/workbench/after-sales.html?productRecordId=p1');
+  await expect(page.getByText('YD1 · 黑')).toBeVisible();
   await expect(page.getByText('XSD-E2E-001')).toBeVisible();
+  await expect(page.getByText('¥300')).toBeVisible();
   await page.getByRole('button', { name: /XSD-E2E-001/ }).click();
-  await expect(page.getByRole('button', { name: '退货' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '换货' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '赔货' })).toBeVisible();
-  await page.getByRole('button', { name: '退货' }).click();
-  await expect(page).toHaveURL(/after_sales_order=o1/);
-  await expect(page).toHaveURL(/after_sales_action=return/);
+  const buttons = page.locator('.action-button');
+  await expect(buttons).toHaveCount(3);
+  await expect(buttons.nth(0)).toContainText('换货');
+  await expect(buttons.nth(1)).toContainText('退货');
+  await expect(buttons.nth(2)).toContainText('赔货');
+  await buttons.nth(1).click();
+  await expect(page.getByText(/退货：处理流程还没有接上/)).toBeVisible();
+  await expect(page).toHaveURL(/after-sales\.html/);
 });
