@@ -27,7 +27,7 @@ const baseRecords = () => ({
     record_id: 'detail_1',
     fields: {
       销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_41'],
-      履约状态: '未交付', 实收金额: 100, 销售日: '2026-10-18T10:00:00+08:00',
+      履约状态: '未交付', 库存数量: 1, 实收金额: 100, 销售日: '2026-10-18T10:00:00+08:00',
     },
   }],
   paymentRecord: [
@@ -59,12 +59,14 @@ test('AC-DR1 真实只读：销售明细 + 收款明细 → 页面订单形状�
     color: order.details[0].color,
     size: order.details[0].size,
     fulfillment_status: order.details[0].fulfillment_status,
+    stock_quantity: order.details[0].stock_quantity,
   }, {
     product: 'XHB8095', // 货品信息.货号（不是 编号 公式）
     product_record_id: 'product_1',
     color: '黑色',
     size: 41,
     fulfillment_status: '未交付',
+    stock_quantity: 1,
   });
   assert.deepEqual(order.payments.map((payment) => [payment.status, payment.amount, payment.method]), [
     ['已收款', 40, '微信扫码'],

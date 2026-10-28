@@ -11,6 +11,8 @@
  */
 /** 业务负责人 2026-10-29：待付 = 同一销售单号下「收款状态 = 未收款」的金额合计。 */
 const UNPAID_PAYMENT_STATUS = '未收款';
+/** 页面只读「销售明细.库存数量」公式列（v1 schema 暂无语义键，页面配置里单独登记）。 */
+const SALES_DETAIL_STOCK_FIELD = '库存数量';
 
 const DELIVERY_PAYMENT = Object.freeze({
   paidStatus: '已收款',
@@ -34,7 +36,7 @@ const DELIVERY_PAYMENT = Object.freeze({
 
 const TABLE_FIELD_KEYS = Object.freeze({
   salesEntry: Object.freeze(['orderNo', 'recordedAt', 'totalAmount']),
-  salesDetail: Object.freeze(['salesEntry', 'product', 'size', 'fulfillmentStatus']),
+  salesDetail: Object.freeze(['salesEntry', 'product', 'size', 'fulfillmentStatus', 'stockQuantity']),
   paymentRecord: Object.freeze(['salesEntry', 'method', 'amount', 'status']),
   product: Object.freeze(['itemNo', 'color']),
   color: Object.freeze(['name']),
@@ -42,4 +44,4 @@ const TABLE_FIELD_KEYS = Object.freeze({
   paymentMethod: Object.freeze(['name']),
 });
 
-module.exports = { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, DELIVERY_PAYMENT };
+module.exports = { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, DELIVERY_PAYMENT, SALES_DETAIL_STOCK_FIELD };

@@ -36,7 +36,7 @@ export const SALES_DELIVERY_CONFIG = Object.freeze({
  */
 export const SALES_DELIVERY_TABS = Object.freeze([
   Object.freeze({
-    key: 'goods', label: '货未清', match: 'goodsOnly', empty: '现在没有「只有货未清」的单',
+    key: 'goods', label: '货未清', match: 'goodsOnly', regionGrouping: true, empty: '现在没有「只有货未清」的单',
   }),
   Object.freeze({
     key: 'money', label: '钱未清', match: 'moneyOnly', empty: '现在没有「只有钱未清」的单',
@@ -45,6 +45,11 @@ export const SALES_DELIVERY_TABS = Object.freeze([
     key: 'both', label: '钱货都未清', match: 'both', empty: '现在没有「钱货都未清」的单',
   }),
 ]);
+export const SALES_DELIVERY_REGIONS = Object.freeze([
+  Object.freeze({ key: 'available', label: '可交付' }),
+  Object.freeze({ key: 'unavailable', label: '不可交付' }),
+]);
+
 export const SALES_DELIVERY_DEFAULT_TAB = 'goods';
 
 /** 状态取值（与既有表 / 既有读模型逐字一致；**不新造状态**）。 */
@@ -77,6 +82,7 @@ export const SALES_DELIVERY_FIELDS = Object.freeze({
     color: 'color',
     size: 'size',
     fulfillmentStatus: 'fulfillment_status',
+    stockQuantity: 'stock_quantity',
     actualAmount: 'actual_amount',
   }),
   payment: Object.freeze({
@@ -91,6 +97,7 @@ export const SALES_DELIVERY_FIELDS = Object.freeze({
 export const SALES_DELIVERY_TEXTS = Object.freeze({
   tabsLabel: '交割单分类',
   soldAtMissing: '销售日未填',
+  stockShort: '库存不足',
   productFilterLabel: '货号',
   allProducts: '全部货号',
   filterEmpty: '没有该货号的记录',

@@ -15,7 +15,7 @@
  * 🔴 只读：本文件没有任何写入方法，也不新增写库路径。
  */
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS } = require('../config/salesDeliveryPage');
+const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = require('../config/salesDeliveryPage');
 const { createPaymentMethodsService, orderWithPreferred } = require('./paymentMethodsService');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
@@ -119,6 +119,11 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
           color: product?.colorId ? (colorNameById.get(product.colorId) || '') : '',
           size: sizeText === '' ? null : (Number.isFinite(Number(sizeText)) ? Number(sizeText) : sizeText),
           fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '',
+          stock_quantity: (() => {
+            const stockField = detailFields.stockQuantity || SALES_DETAIL_STOCK_FIELD;
+            const raw = textValue(detail.fields?.[stockField]).trim();
+            return raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw);
+          })(),
         };
       });
       const paymentRows = group.rawPayments.map((payment) => ({

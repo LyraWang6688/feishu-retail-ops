@@ -33,6 +33,7 @@ export const normalizeDetail = (line = {}, fields = {}) => ({
   color: textOf(line[fields.color]).trim(),
   size: textOf(line[fields.size]).trim(),
   fulfillmentStatus: textOf(line[fields.fulfillmentStatus]).trim(),
+  stockQuantity: numberOrNull(line[fields.stockQuantity]),
   actualAmount: numberOrNull(line[fields.actualAmount]),
 });
 

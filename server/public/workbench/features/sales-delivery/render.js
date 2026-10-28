@@ -27,9 +27,13 @@ const amountsHtml = (item, T) => (item.hasAmounts
 /** 产品行：一行一条明细；未交付行行尾一个「交付」（不带表单）。 */
 const productRowHtml = (item, line, T, statuses) => {
   const canDeliver = item.kind !== 'money' && line.fulfillmentStatus === statuses.undelivered;
+  const hasStock = Number(line.stockQuantity) > 0;
+  const action = canDeliver
+    ? (hasStock ? deliveryButtonHtml(line, T) : `<span class="sd-stock-short">${escapeHtml(T.stockShort)}</span>`)
+    : '';
   return `<div class="sd-product-row" data-sd-detail="${escapeHtml(line.recordId || '')}">
       <span class="sd-item-main">${escapeHtml(detailTextOfLine(line, T))}</span>
-      ${canDeliver ? deliveryButtonHtml(line, T) : ''}
+      ${action}
     </div>`;
 };
 
@@ -96,19 +100,28 @@ export const statusHtml = (state, activeTab, T) => {
       <button class="btn btn-primary" type="button" data-sd-action="retry">${escapeHtml(T.retry)}</button>
     </div>`;
   }
-  if (!state.groups.length) return `<p class="sd-status" data-sd-status="empty">${escapeHtml(activeTab?.empty || T.empty)}</p>`;
+  if (!state.groups.length && !(Array.isArray(state.regions) && state.regions.length)) return `<p class="sd-status" data-sd-status="empty">${escapeHtml(activeTab?.empty || T.empty)}</p>`;
   return '';
 };
 
 /** 按销售日分组后的列表（每组一个日期小标题 + 卡片）。 */
+const dayGroupsHtml = (groups, T, statuses) => groups.map((group) => `
+  <section class="sd-day-group" data-sd-day="${escapeHtml(group.key)}">
+    <h2 class="sd-day-title">${escapeHtml(group.label)}</h2>
+    <div class="sd-list">${group.items.map((item) => itemCardHtml(item, T, statuses)).join('')}</div>
+  </section>`).join('');
+
 export const panelHtml = (state, activeTab, T, statuses) => {
   const status = statusHtml(state, activeTab, T);
   if (status) return status;
-  return state.groups.map((group) => `
-    <section class="sd-day-group" data-sd-day="${escapeHtml(group.key)}">
-      <h2 class="sd-day-title">${escapeHtml(group.label)}</h2>
-      <div class="sd-list">${group.items.map((item) => itemCardHtml(item, T, statuses)).join('')}</div>
-    </section>`).join('');
+  if (Array.isArray(state.regions) && state.regions.length) {
+    return state.regions.map((region) => `
+      <section class="sd-region" data-sd-region="${escapeHtml(region.key)}">
+        <h2 class="sd-region-title">${escapeHtml(region.label)}</h2>
+        ${dayGroupsHtml(region.groups, T, statuses)}
+      </section>`).join('');
+  }
+  return dayGroupsHtml(state.groups, T, statuses);
 };
 
 /** 整页正文（三个子 tab + 货号筛选 + 按销售日分组的列表）。 */

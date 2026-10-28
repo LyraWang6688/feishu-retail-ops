@@ -20,26 +20,18 @@ import {
   SALES_DELIVERY_STATUSES, SALES_DELIVERY_TABS, SALES_DELIVERY_TEXTS,
 } from '../../config/sales-delivery.js';
 import { fetchDeliveryData } from './data.js';
-import { buildDeliveryGroups, filterItemsByProduct } from './filter.js';
+import { buildDeliveryGroups } from './filter.js';
 import { buildTabItems } from './items.js';
-import { groupItemsBySoldDate } from './group.js';
-import { sortDeliveryGroups } from './sort.js';
 import { openPaymentModal, closePaymentModal, validatePaymentAmount } from './payment-modal.js';
 import { showToast, requestId, waitJob } from './ui-feedback.js';
 import { renderPage } from './render.js';
+import { viewState } from './view-state.js';
 
 const CONFIG = SALES_DELIVERY_CONFIG;
 const FIELDS = SALES_DELIVERY_FIELDS;
 const STATUSES = SALES_DELIVERY_STATUSES;
 const TABS = SALES_DELIVERY_TABS;
 const T = SALES_DELIVERY_TEXTS;
-
-/** 当前 tab：货号筛选 → 固定销售日远→近排序 → 按销售日分组。 */
-const viewState = (state) => {
-  const filtered = filterItemsByProduct(state.itemsByTab[state.activeTab] || [], state.productFilter);
-  const sorted = sortDeliveryGroups(filtered, CONFIG.sortDirection);
-  return { ...state, groups: groupItemsBySoldDate(sorted, T.soldAtMissing) };
-};
 
 export function mountSalesDeliveryPage(container) {
   const state = {

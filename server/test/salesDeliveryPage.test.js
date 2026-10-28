@@ -45,37 +45,37 @@ const loadPureModules = async () => {
 
 /** 页面纯函数链的测试夹具（接口同形数据；不依赖样例文件）。 */
 const FIXTURE_ORDERS = [
-  { order_no: 'XSD-20261020-0001', record_id: 'o-goods-1', recorded_at: '2026-10-20T10:00:00+08:00', paid_amount: 398, pending_amount: 0, receivable_amount: 398, pending_delivery_quantity: 1,
+  { order_no: 'XSD-20261020-0001', record_id: 'o-goods-1', stock_quantity: 0, recorded_at: '2026-10-20T10:00:00+08:00', paid_amount: 398, pending_amount: 0, receivable_amount: 398, pending_delivery_quantity: 1,
     details: [
-      { record_id: 'd-g1', product: 'XHB8095', color: '黑色', size: '41', fulfillment_status: '未交付', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 },
-      { record_id: 'd-g2', product: 'XHB8095', color: '黑色', size: '42', fulfillment_status: '已交付', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 },
-    ], payments: [{ record_id: 'p-g1', method: '微信扫码', amount: 398, status: '已收款' }] },
-  { order_no: 'XSD-20261019-0003', record_id: 'o-goods-2', recorded_at: '2026-10-19T10:00:00+08:00', paid_amount: 259, pending_amount: 0, receivable_amount: 259, pending_delivery_quantity: 1,
-    details: [{ record_id: 'd-g3', product: 'QPL-8957', color: '咖色', size: '37', fulfillment_status: '未交付', sold_at: '2026-10-19T10:00:00+08:00', actual_amount: 259 }],
-    payments: [{ record_id: 'p-g2', method: '支付宝', amount: 259, status: '已收款' }] },
-  { order_no: 'XSD-20261018-0002', record_id: 'o-money-1', recorded_at: '2026-10-18T10:00:00+08:00', paid_amount: 0, pending_amount: 99, receivable_amount: 99,
-    details: [{ record_id: 'd-m1', product: '9A196B-0', color: '黑色', size: '41', fulfillment_status: '已交付', sold_at: '2026-10-18T10:00:00+08:00', actual_amount: 99 }],
-    payments: [{ record_id: 'p-m1', method: '', amount: 99, status: '未收款' }] },
-  { order_no: 'XSD-20261017-0005', record_id: 'o-money-2', recorded_at: '2026-10-17T10:00:00+08:00', paid_amount: 100, pending_amount: 100, receivable_amount: 200,
-    details: [{ record_id: 'd-m2', product: '66133-15', color: '咖色', size: '37', fulfillment_status: '已交付', sold_at: '2026-10-17T10:00:00+08:00', actual_amount: 200 }],
-    payments: [{ record_id: 'p-m2', method: '现金', amount: 100, status: '已收款' }, { record_id: 'p-m3', method: '', amount: 100, status: '未收款' }] },
-  { order_no: 'XSD-20261016-0001', record_id: 'o-both-1', recorded_at: '2026-10-16T10:00:00+08:00', paid_amount: 0, pending_amount: 199, receivable_amount: 199, pending_delivery_quantity: 1,
-    details: [{ record_id: 'd-b1', product: 'XHB8095', color: '白色', size: '40', fulfillment_status: '未交付', sold_at: '2026-10-16T10:00:00+08:00', actual_amount: 199 }],
-    payments: [{ record_id: 'p-b1', method: '', amount: 199, status: '未收款' }] },
-  { order_no: 'XSD-20261015-0002', record_id: 'o-both-2', recorded_at: '2026-10-15T10:00:00+08:00', paid_amount: 259, pending_amount: 259, receivable_amount: 518, pending_delivery_quantity: 1,
+      { record_id: 'd-g1', stock_quantity: 1, product: 'XHB8095', color: '黑色', size: '41', fulfillment_status: '未交付', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 },
+      { record_id: 'd-g2', stock_quantity: 0, product: 'XHB8095', color: '黑色', size: '42', fulfillment_status: '已交付', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 },
+    ], payments: [{ record_id: 'p-g1', stock_quantity: 0, method: '微信扫码', amount: 398, status: '已收款' }] },
+  { order_no: 'XSD-20261019-0003', record_id: 'o-goods-2', stock_quantity: 0, recorded_at: '2026-10-19T10:00:00+08:00', paid_amount: 259, pending_amount: 0, receivable_amount: 259, pending_delivery_quantity: 1,
+    details: [{ record_id: 'd-g3', stock_quantity: 0, product: 'QPL-8957', color: '咖色', size: '37', fulfillment_status: '未交付', sold_at: '2026-10-19T10:00:00+08:00', actual_amount: 259 }],
+    payments: [{ record_id: 'p-g2', stock_quantity: 0, method: '支付宝', amount: 259, status: '已收款' }] },
+  { order_no: 'XSD-20261018-0002', record_id: 'o-money-1', stock_quantity: 0, recorded_at: '2026-10-18T10:00:00+08:00', paid_amount: 0, pending_amount: 99, receivable_amount: 99,
+    details: [{ record_id: 'd-m1', stock_quantity: 0, product: '9A196B-0', color: '黑色', size: '41', fulfillment_status: '已交付', sold_at: '2026-10-18T10:00:00+08:00', actual_amount: 99 }],
+    payments: [{ record_id: 'p-m1', stock_quantity: 0, method: '', amount: 99, status: '未收款' }] },
+  { order_no: 'XSD-20261017-0005', record_id: 'o-money-2', stock_quantity: 0, recorded_at: '2026-10-17T10:00:00+08:00', paid_amount: 100, pending_amount: 100, receivable_amount: 200,
+    details: [{ record_id: 'd-m2', stock_quantity: 0, product: '66133-15', color: '咖色', size: '37', fulfillment_status: '已交付', sold_at: '2026-10-17T10:00:00+08:00', actual_amount: 200 }],
+    payments: [{ record_id: 'p-m2', stock_quantity: 0, method: '现金', amount: 100, status: '已收款' }, { record_id: 'p-m3', method: '', amount: 100, status: '未收款' }] },
+  { order_no: 'XSD-20261016-0001', record_id: 'o-both-1', stock_quantity: 0, recorded_at: '2026-10-16T10:00:00+08:00', paid_amount: 0, pending_amount: 199, receivable_amount: 199, pending_delivery_quantity: 1,
+    details: [{ record_id: 'd-b1', stock_quantity: 0, product: 'XHB8095', color: '白色', size: '40', fulfillment_status: '未交付', sold_at: '2026-10-16T10:00:00+08:00', actual_amount: 199 }],
+    payments: [{ record_id: 'p-b1', stock_quantity: 0, method: '', amount: 199, status: '未收款' }] },
+  { order_no: 'XSD-20261015-0002', record_id: 'o-both-2', stock_quantity: 0, recorded_at: '2026-10-15T10:00:00+08:00', paid_amount: 259, pending_amount: 259, receivable_amount: 518, pending_delivery_quantity: 1,
     details: [
-      { record_id: 'd-b2', product: 'QPL-8957', color: '黑色', size: '42', fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
-      { record_id: 'd-b3', product: 'QPL-8957', color: '黑色', size: '43', fulfillment_status: '已交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
-    ], payments: [{ record_id: 'p-b2', method: '微信扫码', amount: 259, status: '已收款' }, { record_id: 'p-b3', method: '', amount: 259, status: '未收款' }] },
-  { order_no: 'XSD-20261014-0006', record_id: 'o-settled', recorded_at: '2026-10-14T10:00:00+08:00', paid_amount: 199, pending_amount: 0, receivable_amount: 199,
-    details: [{ record_id: 'd-s1', product: 'XHB8095', color: '黑色', size: '39', fulfillment_status: '已交付', sold_at: '2026-10-14T10:00:00+08:00', actual_amount: 199 }],
-    payments: [{ record_id: 'p-s1', method: '微信扫码', amount: 199, status: '已收款' }] },
-  { order_no: 'XSD-20261013-0001', record_id: 'o-platform', recorded_at: '2026-10-13T10:00:00+08:00', paid_amount: 0, pending_amount: 99, receivable_amount: 99,
-    details: [{ record_id: 'd-p1', product: '9A196B-0', color: '白色', size: '40', fulfillment_status: '已交付', sold_at: '2026-10-13T10:00:00+08:00', actual_amount: 99 }],
-    payments: [{ record_id: 'p-pl1', method: '微信扫码', amount: 99, status: '待平台结算' }] },
-  { order_no: 'XSD-UNKNOWN-DATE', record_id: 'o-nodate', recorded_at: null, paid_amount: 199, pending_amount: 0, receivable_amount: 199, pending_delivery_quantity: 1,
-    details: [{ record_id: 'd-n1', product: 'XHB8095', color: '黑色', size: '38', fulfillment_status: '未交付', sold_at: null, actual_amount: 199 }],
-    payments: [{ record_id: 'p-n1', method: '微信扫码', amount: 199, status: '已收款' }] },
+      { record_id: 'd-b2', stock_quantity: 1, product: 'QPL-8957', color: '黑色', size: '42', fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
+      { record_id: 'd-b3', stock_quantity: 1, product: 'QPL-8957', color: '黑色', size: '43', fulfillment_status: '已交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
+    ], payments: [{ record_id: 'p-b2', stock_quantity: 0, method: '微信扫码', amount: 259, status: '已收款' }, { record_id: 'p-b3', method: '', amount: 259, status: '未收款' }] },
+  { order_no: 'XSD-20261014-0006', record_id: 'o-settled', stock_quantity: 0, recorded_at: '2026-10-14T10:00:00+08:00', paid_amount: 199, pending_amount: 0, receivable_amount: 199,
+    details: [{ record_id: 'd-s1', stock_quantity: 0, product: 'XHB8095', color: '黑色', size: '39', fulfillment_status: '已交付', sold_at: '2026-10-14T10:00:00+08:00', actual_amount: 199 }],
+    payments: [{ record_id: 'p-s1', stock_quantity: 0, method: '微信扫码', amount: 199, status: '已收款' }] },
+  { order_no: 'XSD-20261013-0001', record_id: 'o-platform', stock_quantity: 0, recorded_at: '2026-10-13T10:00:00+08:00', paid_amount: 0, pending_amount: 99, receivable_amount: 99,
+    details: [{ record_id: 'd-p1', stock_quantity: 0, product: '9A196B-0', color: '白色', size: '40', fulfillment_status: '已交付', sold_at: '2026-10-13T10:00:00+08:00', actual_amount: 99 }],
+    payments: [{ record_id: 'p-pl1', stock_quantity: 0, method: '微信扫码', amount: 99, status: '待平台结算' }] },
+  { order_no: 'XSD-UNKNOWN-DATE', record_id: 'o-nodate', stock_quantity: 0, recorded_at: null, paid_amount: 199, pending_amount: 0, receivable_amount: 199, pending_delivery_quantity: 1,
+    details: [{ record_id: 'd-n1', stock_quantity: 1, product: 'XHB8095', color: '黑色', size: '38', fulfillment_status: '未交付', sold_at: null, actual_amount: 199 }],
+    payments: [{ record_id: 'p-n1', stock_quantity: 0, method: '微信扫码', amount: 199, status: '已收款' }] },
 ];
 
 /** 用页面同一份配置归一化夹具数据，再按页面同一套判据构建三 tab 事项。 */
@@ -113,10 +113,10 @@ test('AC-SD-M1 format：金额 / 明细文本 / 短日期 / 分组日期 key', a
 test('AC-SD-M2 data 归一化：字段映射 + 日期取销售主表录单日（不看明细销售日）', async () => {
   const { data, config } = await loadPureModules();
   const order = data.normalizeOrder({
-    order_no: 'XSD-1', record_id: 'o1', recorded_at: Date.parse('2026-10-19T10:00:00+08:00'),
+    order_no: 'XSD-1', record_id: 'o1', stock_quantity: 0, recorded_at: Date.parse('2026-10-19T10:00:00+08:00'),
     paid_amount: 40, pending_amount: 60, receivable_amount: 100, pending_delivery_quantity: 1,
-    details: [{ record_id: 'd1', product: 'YD1', color: '黑', size: '40', fulfillment_status: '未交付', sold_at: Date.parse('2026-10-25T10:00:00+08:00'), actual_amount: 100 }],
-    payments: [{ record_id: 'p1', method: '微信', amount: 40, status: '已收款' }],
+    details: [{ record_id: 'd1', stock_quantity: 1, product: 'YD1', color: '黑', size: '40', fulfillment_status: '未交付', sold_at: Date.parse('2026-10-25T10:00:00+08:00'), actual_amount: 100 }],
+    payments: [{ record_id: 'p1', stock_quantity: 0, method: '微信', amount: 40, status: '已收款' }],
   }, config.SALES_DELIVERY_FIELDS);
   assert.equal(order.orderNo, 'XSD-1');
   assert.equal(order.details[0].fulfillmentStatus, '未交付');
@@ -124,8 +124,8 @@ test('AC-SD-M2 data 归一化：字段映射 + 日期取销售主表录单日（
   assert.equal(order.soldAt, Date.parse('2026-10-19T10:00:00+08:00'));
   assert.equal(order.soldAtSource, 'sales_entry_recorded_at');
   const missing = data.normalizeOrder({
-    order_no: 'XSD-2', record_id: 'o2', recorded_at: null,
-    details: [{ record_id: 'd2', product: 'YD1', color: '黑', size: '40', fulfillment_status: '未交付', sold_at: Date.parse('2026-10-20T10:00:00+08:00'), actual_amount: 100 }],
+    order_no: 'XSD-2', record_id: 'o2', stock_quantity: 0, recorded_at: null,
+    details: [{ record_id: 'd2', stock_quantity: 1, product: 'YD1', color: '黑', size: '40', fulfillment_status: '未交付', sold_at: Date.parse('2026-10-20T10:00:00+08:00'), actual_amount: 100 }],
     payments: [],
   }, config.SALES_DELIVERY_FIELDS);
   assert.equal(missing.soldAt, null);
@@ -166,9 +166,9 @@ test('AC-SD-M4 归类互斥：订单只进一个 tab；钱货都未清只在第�
 test('AC-SD-M4b 售后状态（已换货/已退货/已赔货）不算“货没交清”，已两清不展示', async () => {
   const { data, filter } = await loadPureModules();
   const orders = data.normalizeOrders([
-    { order_no: 'XSD-AS-1', record_id: 'o-as1', details: [{ record_id: 'd-as1', product: 'XHB8095', color: '黑色', size: '41', fulfillment_status: '已换货', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 }], payments: [{ record_id: 'p-as1', method: '微信扫码', amount: 199, status: '已收款' }] },
-    { order_no: 'XSD-AS-2', record_id: 'o-as2', details: [{ record_id: 'd-as2', product: 'XHB8095', color: '黑色', size: '41', fulfillment_status: '已退货', sold_at: '2026-10-21T10:00:00+08:00', actual_amount: 199 }], payments: [{ record_id: 'p-as2', method: '微信扫码', amount: 199, status: '已收款' }] },
-    { order_no: 'XSD-AS-3', record_id: 'o-as3', details: [{ record_id: 'd-as3', product: 'XHB8095', color: '黑色', size: '41', fulfillment_status: '已赔货', sold_at: '2026-10-22T10:00:00+08:00', actual_amount: 199 }], payments: [{ record_id: 'p-as3', method: '微信扫码', amount: 199, status: '已收款' }] },
+    { order_no: 'XSD-AS-1', record_id: 'o-as1', stock_quantity: 0, details: [{ record_id: 'd-as1', product: 'XHB8095', color: '黑色', size: '41', fulfillment_status: '已换货', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 }], payments: [{ record_id: 'p-as1', method: '微信扫码', amount: 199, status: '已收款' }] },
+    { order_no: 'XSD-AS-2', record_id: 'o-as2', stock_quantity: 0, details: [{ record_id: 'd-as2', product: 'XHB8095', color: '黑色', size: '41', fulfillment_status: '已退货', sold_at: '2026-10-21T10:00:00+08:00', actual_amount: 199 }], payments: [{ record_id: 'p-as2', method: '微信扫码', amount: 199, status: '已收款' }] },
+    { order_no: 'XSD-AS-3', record_id: 'o-as3', stock_quantity: 0, details: [{ record_id: 'd-as3', product: 'XHB8095', color: '黑色', size: '41', fulfillment_status: '已赔货', sold_at: '2026-10-22T10:00:00+08:00', actual_amount: 199 }], payments: [{ record_id: 'p-as3', method: '微信扫码', amount: 199, status: '已收款' }] },
   ]);
   const groups = filter.buildDeliveryGroups(orders, { delivered: '已交付', undelivered: '未交付' });
   assert.deepEqual(groups, [], '售后状态按已结清算；已两清不展示');
@@ -219,21 +219,21 @@ test('AC-SD-M9 一单一卡：同一销售单号两双未交付只出一张卡�
   const { data, filter, items, config } = await loadPureModules();
   const orders = data.normalizeOrders([
     {
-      order_no: 'XSD-CARD-1', record_id: 'o-card-1', recorded_at: '2026-10-20T10:00:00+08:00',
+      order_no: 'XSD-CARD-1', record_id: 'o-card-1', stock_quantity: 0, recorded_at: '2026-10-20T10:00:00+08:00',
       details: [
-        { record_id: 'd-c1', product: 'XHB8095', color: '黑色', size: 41, fulfillment_status: '未交付', actual_amount: 199 },
-        { record_id: 'd-c2', product: 'XHB8095', color: '黑色', size: 42, fulfillment_status: '未交付', actual_amount: 199 },
+        { record_id: 'd-c1', stock_quantity: 1, product: 'XHB8095', color: '黑色', size: 41, fulfillment_status: '未交付', actual_amount: 199 },
+        { record_id: 'd-c2', stock_quantity: 1, product: 'XHB8095', color: '黑色', size: 42, fulfillment_status: '未交付', actual_amount: 199 },
       ],
       // 钱已清：货未清 tab 一卡两行。
-      payments: [{ record_id: 'p-c1', method: '微信扫码', amount: 398, status: '已收款' }],
+      payments: [{ record_id: 'p-c1', stock_quantity: 0, method: '微信扫码', amount: 398, status: '已收款' }],
     },
     {
-      order_no: 'XSD-CARD-2', record_id: 'o-card-2', recorded_at: '2026-10-21T10:00:00+08:00',
+      order_no: 'XSD-CARD-2', record_id: 'o-card-2', stock_quantity: 0, recorded_at: '2026-10-21T10:00:00+08:00',
       details: [
-        { record_id: 'd-c3', product: 'QPL-8957', color: '咖色', size: 42, fulfillment_status: '未交付', actual_amount: 259 },
-        { record_id: 'd-c4', product: 'QPL-8957', color: '咖色', size: 43, fulfillment_status: '未交付', actual_amount: 259 },
+        { record_id: 'd-c3', stock_quantity: 1, product: 'QPL-8957', color: '咖色', size: 42, fulfillment_status: '未交付', actual_amount: 259 },
+        { record_id: 'd-c4', stock_quantity: 1, product: 'QPL-8957', color: '咖色', size: 43, fulfillment_status: '未交付', actual_amount: 259 },
       ],
-      payments: [{ record_id: 'p-c2', method: '现金', amount: 259, status: '未收款' }],
+      payments: [{ record_id: 'p-c2', stock_quantity: 0, method: '现金', amount: 259, status: '未收款' }],
     },
   ], config.SALES_DELIVERY_FIELDS);
   const itemsByTab = items.buildTabItems(filter.buildDeliveryGroups(orders, config.SALES_DELIVERY_STATUSES), config.SALES_DELIVERY_STATUSES, config.SALES_DELIVERY_TABS);
@@ -241,6 +241,23 @@ test('AC-SD-M9 一单一卡：同一销售单号两双未交付只出一张卡�
   assert.equal(itemsByTab.goods[0].details.length, 2, '卡里两行未交付明细');
   assert.equal(itemsByTab.both.length, 1, '钱货都未清：一单只一张卡');
   assert.equal(itemsByTab.both[0].details.length, 2, 'both 卡里两行未交付明细');
+});
+
+test('AC-SD-M10 货未清按库存分区域：有库存/无库存拆成两张卡，可交付/不可交付', async () => {
+  const { data, filter, items, config } = await loadPureModules();
+  const orders = data.normalizeOrders([{
+    order_no: 'XSD-STOCK-1', record_id: 'o-stock-1', recorded_at: '2026-10-20T10:00:00+08:00',
+    details: [
+      { record_id: 'd-s1', product: 'XHB8095', color: '黑色', size: 41, stock_quantity: 1, fulfillment_status: '未交付', actual_amount: 199 },
+      { record_id: 'd-s2', product: 'XHB8095', color: '黑色', size: 42, stock_quantity: 0, fulfillment_status: '未交付', actual_amount: 199 },
+    ],
+    payments: [{ record_id: 'p-s1', method: '微信扫码', amount: 398, status: '已收款' }],
+  }], config.SALES_DELIVERY_FIELDS);
+  const itemsByTab = items.buildTabItems(filter.buildDeliveryGroups(orders, config.SALES_DELIVERY_STATUSES), config.SALES_DELIVERY_STATUSES, config.SALES_DELIVERY_TABS);
+  assert.equal(itemsByTab.goods.length, 2, '同一单两行按库存拆成两张卡');
+  assert.deepEqual(itemsByTab.goods.map((item) => item.region).sort(), ['available', 'unavailable']);
+  assert.deepEqual(itemsByTab.goods.find((item) => item.region === 'available').details.map((line) => line.size), ['41']);
+  assert.deepEqual(itemsByTab.goods.find((item) => item.region === 'unavailable').details.map((line) => line.size), ['42']);
 });
 
 test('AC-SD-P1 配置：三 tab key/label/顺序/默认/空态；固定远→近排序；货号筛选文案', async () => {

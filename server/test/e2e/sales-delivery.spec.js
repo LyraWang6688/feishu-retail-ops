@@ -20,60 +20,60 @@ const DELIVERY_FIXTURE = {
   methods: ['微信扫码', '现金', '支付宝', '银行转账'],
   orders: [
     {
-      order_no: 'XSD-20261020-0001', sales_entry_record_id: 'se-1', recorded_at: '2026-10-20T10:00:00+08:00', payable_amount: 398, pending_amount: 0, pending_delivery_quantity: 1,
+      order_no: 'XSD-20261020-0001', sales_entry_record_id: 'se-1', stock_quantity: 0, recorded_at: '2026-10-20T10:00:00+08:00', payable_amount: 398, pending_amount: 0, pending_delivery_quantity: 1,
       details: [
-        { record_id: 'd-g1', product: 'XHB8095', color: '黑色', size: 41, fulfillment_status: '未交付', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 },
-        { record_id: 'd-g2', product: 'XHB8095', color: '黑色', size: 42, fulfillment_status: '已交付', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 },
+        { record_id: 'd-g1', stock_quantity: 1, product: 'XHB8095', color: '黑色', size: 41, fulfillment_status: '未交付', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 },
+        { record_id: 'd-g2', stock_quantity: 0, product: 'XHB8095', color: '黑色', size: 42, fulfillment_status: '已交付', sold_at: '2026-10-20T10:00:00+08:00', actual_amount: 199 },
       ],
-      payments: [{ record_id: 'p-g1', method: '微信扫码', amount: 398, status: '已收款' }],
+      payments: [{ record_id: 'p-g1', stock_quantity: 0, method: '微信扫码', amount: 398, status: '已收款' }],
     },
     {
-      order_no: 'XSD-20261019-0003', sales_entry_record_id: 'se-2', recorded_at: '2026-10-19T10:00:00+08:00', payable_amount: 259, pending_amount: 0,
-      details: [{ record_id: 'd-g3', product: 'QPL-8957', color: '咖色', size: 37, fulfillment_status: '未交付', sold_at: '2026-10-19T10:00:00+08:00', actual_amount: 259 }],
-      payments: [{ record_id: 'p-g2', method: '支付宝', amount: 259, status: '已收款' }],
+      order_no: 'XSD-20261019-0003', sales_entry_record_id: 'se-2', stock_quantity: 0, recorded_at: '2026-10-19T10:00:00+08:00', payable_amount: 259, pending_amount: 0,
+      details: [{ record_id: 'd-g3', stock_quantity: 0, product: 'QPL-8957', color: '咖色', size: 37, fulfillment_status: '未交付', sold_at: '2026-10-19T10:00:00+08:00', actual_amount: 259 }],
+      payments: [{ record_id: 'p-g2', stock_quantity: 0, method: '支付宝', amount: 259, status: '已收款' }],
     },
     {
-      order_no: 'XSD-20261018-0002', sales_entry_record_id: 'se-3', recorded_at: '2026-10-18T10:00:00+08:00', payable_amount: null, pending_amount: 99,
-      details: [{ record_id: 'd-m1', product: '9A196B-0', color: '黑色', size: 41, fulfillment_status: '已交付', sold_at: '2026-10-18T10:00:00+08:00', actual_amount: 99 }],
-      payments: [{ record_id: 'p-m1', method: '', amount: 99, status: '未收款' }],
+      order_no: 'XSD-20261018-0002', sales_entry_record_id: 'se-3', stock_quantity: 0, recorded_at: '2026-10-18T10:00:00+08:00', payable_amount: null, pending_amount: 99,
+      details: [{ record_id: 'd-m1', stock_quantity: 0, product: '9A196B-0', color: '黑色', size: 41, fulfillment_status: '已交付', sold_at: '2026-10-18T10:00:00+08:00', actual_amount: 99 }],
+      payments: [{ record_id: 'p-m1', stock_quantity: 0, method: '', amount: 99, status: '未收款' }],
     },
     {
-      order_no: 'XSD-20261017-0005', sales_entry_record_id: 'se-4', recorded_at: '2026-10-17T10:00:00+08:00', payable_amount: 200, pending_amount: 100,
-      details: [{ record_id: 'd-m2', product: '66133-15', color: '咖色', size: 37, fulfillment_status: '已交付', sold_at: '2026-10-17T10:00:00+08:00', actual_amount: 200 }],
-      payments: [{ record_id: 'p-m2', method: '现金', amount: 100, status: '已收款' }, { record_id: 'p-m3', method: '', amount: 100, status: '未收款' }],
+      order_no: 'XSD-20261017-0005', sales_entry_record_id: 'se-4', stock_quantity: 0, recorded_at: '2026-10-17T10:00:00+08:00', payable_amount: 200, pending_amount: 100,
+      details: [{ record_id: 'd-m2', stock_quantity: 0, product: '66133-15', color: '咖色', size: 37, fulfillment_status: '已交付', sold_at: '2026-10-17T10:00:00+08:00', actual_amount: 200 }],
+      payments: [{ record_id: 'p-m2', stock_quantity: 0, method: '现金', amount: 100, status: '已收款' }, { record_id: 'p-m3', method: '', amount: 100, status: '未收款' }],
     },
     {
-      order_no: 'XSD-20261016-0001', sales_entry_record_id: 'se-5', recorded_at: '2026-10-16T10:00:00+08:00', payable_amount: 199, pending_amount: 199, pending_delivery_quantity: 1,
-      details: [{ record_id: 'd-b1', product: 'XHB8095', color: '白色', size: 40, fulfillment_status: '未交付', sold_at: '2026-10-16T10:00:00+08:00', actual_amount: 199 }],
-      payments: [{ record_id: 'p-b1', method: '', amount: 199, status: '未收款' }],
+      order_no: 'XSD-20261016-0001', sales_entry_record_id: 'se-5', stock_quantity: 0, recorded_at: '2026-10-16T10:00:00+08:00', payable_amount: 199, pending_amount: 199, pending_delivery_quantity: 1,
+      details: [{ record_id: 'd-b1', stock_quantity: 0, product: 'XHB8095', color: '白色', size: 40, fulfillment_status: '未交付', sold_at: '2026-10-16T10:00:00+08:00', actual_amount: 199 }],
+      payments: [{ record_id: 'p-b1', stock_quantity: 0, method: '', amount: 199, status: '未收款' }],
     },
     {
-      order_no: 'XSD-20261015-0002', sales_entry_record_id: 'se-6', recorded_at: '2026-10-15T10:00:00+08:00', payable_amount: 518, pending_amount: 259, pending_delivery_quantity: 1,
+      order_no: 'XSD-20261015-0002', sales_entry_record_id: 'se-6', stock_quantity: 0, recorded_at: '2026-10-15T10:00:00+08:00', payable_amount: 518, pending_amount: 259, pending_delivery_quantity: 1,
       details: [
-        { record_id: 'd-b2', product: 'QPL-8957', color: '黑色', size: 42, fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
-        { record_id: 'd-b3', product: 'QPL-8957', color: '黑色', size: 43, fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
+        { record_id: 'd-b2', stock_quantity: 1, product: 'QPL-8957', color: '黑色', size: 42, fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
+        { record_id: 'd-b3', stock_quantity: 1, product: 'QPL-8957', color: '黑色', size: 43, fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
       ],
-      payments: [{ record_id: 'p-b2', method: '微信扫码', amount: 259, status: '已收款' }, { record_id: 'p-b3', method: '', amount: 259, status: '未收款' }],
+      payments: [{ record_id: 'p-b2', stock_quantity: 0, method: '微信扫码', amount: 259, status: '已收款' }, { record_id: 'p-b3', method: '', amount: 259, status: '未收款' }],
     },
     {
-      order_no: 'XSD-AFTER-SALES', sales_entry_record_id: 'se-7', recorded_at: '2026-10-21T10:00:00+08:00', payable_amount: 199, pending_amount: 0,
-      details: [{ record_id: 'd-as', product: 'XHB8095', color: '黑色', size: 41, fulfillment_status: '已换货', sold_at: '2026-10-21T10:00:00+08:00', actual_amount: 199 }],
-      payments: [{ record_id: 'p-as', method: '微信扫码', amount: 199, status: '已收款' }],
+      order_no: 'XSD-AFTER-SALES', sales_entry_record_id: 'se-7', stock_quantity: 0, recorded_at: '2026-10-21T10:00:00+08:00', payable_amount: 199, pending_amount: 0,
+      details: [{ record_id: 'd-as', stock_quantity: 0, product: 'XHB8095', color: '黑色', size: 41, fulfillment_status: '已换货', sold_at: '2026-10-21T10:00:00+08:00', actual_amount: 199 }],
+      payments: [{ record_id: 'p-as', stock_quantity: 0, method: '微信扫码', amount: 199, status: '已收款' }],
     },
     {
-      order_no: 'XSD-20261014-0006', sales_entry_record_id: 'se-8', recorded_at: '2026-10-14T10:00:00+08:00', payable_amount: 199, pending_amount: 0,
-      details: [{ record_id: 'd-s1', product: 'XHB8095', color: '黑色', size: 39, fulfillment_status: '已交付', sold_at: '2026-10-14T10:00:00+08:00', actual_amount: 199 }],
-      payments: [{ record_id: 'p-s1', method: '微信扫码', amount: 199, status: '已收款' }],
+      order_no: 'XSD-20261014-0006', sales_entry_record_id: 'se-8', stock_quantity: 0, recorded_at: '2026-10-14T10:00:00+08:00', payable_amount: 199, pending_amount: 0,
+      details: [{ record_id: 'd-s1', stock_quantity: 0, product: 'XHB8095', color: '黑色', size: 39, fulfillment_status: '已交付', sold_at: '2026-10-14T10:00:00+08:00', actual_amount: 199 }],
+      payments: [{ record_id: 'p-s1', stock_quantity: 0, method: '微信扫码', amount: 199, status: '已收款' }],
     },
     {
-      order_no: 'XSD-20261013-0001', sales_entry_record_id: 'se-9', recorded_at: '2026-10-13T10:00:00+08:00', payable_amount: 99, pending_amount: 99,
-      details: [{ record_id: 'd-p1', product: '9A196B-0', color: '白色', size: 40, fulfillment_status: '已交付', sold_at: '2026-10-13T10:00:00+08:00', actual_amount: 99 }],
-      payments: [{ record_id: 'p-pl1', method: '微信扫码', amount: 99, status: '待平台结算' }],
+      order_no: 'XSD-20261013-0001', sales_entry_record_id: 'se-9', stock_quantity: 0, recorded_at: '2026-10-13T10:00:00+08:00', payable_amount: 99, pending_amount: 99,
+      details: [{ record_id: 'd-p1', stock_quantity: 0, product: '9A196B-0', color: '白色', size: 40, fulfillment_status: '已交付', sold_at: '2026-10-13T10:00:00+08:00', actual_amount: 99 }],
+      payments: [{ record_id: 'p-pl1', stock_quantity: 0, method: '微信扫码', amount: 99, status: '待平台结算' }],
     },
     {
-      order_no: 'XSD-UNKNOWN-DATE', sales_entry_record_id: 'se-10', recorded_at: null, payable_amount: 199, pending_amount: 0, pending_delivery_quantity: 1,
-      details: [{ record_id: 'd-n1', product: 'XHB8095', color: '黑色', size: 38, fulfillment_status: '未交付', sold_at: null, actual_amount: 199 }],
-      payments: [{ record_id: 'p-n1', method: '微信扫码', amount: 199, status: '已收款' }],
+      order_no: 'XSD-UNKNOWN-DATE', sales_entry_record_id: 'se-10', stock_quantity: 0, recorded_at: null, payable_amount: 199, pending_amount: 0, pending_delivery_quantity: 1,
+      details: [{ record_id: 'd-n1', stock_quantity: 1, product: 'XHB8095', color: '黑色', size: 38, fulfillment_status: '未交付', sold_at: null, actual_amount: 199 }],
+      payments: [{ record_id: 'p-n1', stock_quantity: 0, method: '微信扫码', amount: 199, status: '已收款' }],
     },
   ],
 };
@@ -173,11 +173,14 @@ test('AC-TAB1 三 tab + 数量；默认货未清；无标题/返回/排序控件
   await expect(page.getByRole('heading', { name: '交割单' })).toHaveCount(0);
   await expect(page.getByText('← 返回工作台')).toHaveCount(0);
 
-  // 按销售日分组：日期只在分组头；卡片行内不重复日期。
+  // 货未清先按库存分两个区域；区域内部再按录单日分组。
+  await expect(page.locator('[data-sd-region]')).toHaveCount(2);
+  await expect(page.locator('[data-sd-region="available"] .sd-region-title')).toHaveText('可交付');
+  await expect(page.locator('[data-sd-region="unavailable"] .sd-region-title')).toHaveText('不可交付');
   await expect(page.locator('[data-sd-day]')).toHaveCount(3);
-  await expect(page.locator('.sd-day-title').nth(0)).toHaveText('10-19');
-  await expect(page.locator('.sd-day-title').nth(1)).toHaveText('10-20');
-  await expect(page.locator('.sd-day-title').nth(2)).toHaveText('销售日未填');
+  await expect(page.locator('.sd-day-title').nth(0)).toHaveText('10-20');
+  await expect(page.locator('.sd-day-title').nth(1)).toHaveText('销售日未填');
+  await expect(page.locator('.sd-day-title').nth(2)).toHaveText('10-19');
   await expect(page.locator('[data-sd-item]')).toHaveCount(3);
   await expect(page.locator('[data-sd-order="XSD-AFTER-SALES"]')).toHaveCount(0);
   await expect(page.locator('[data-sd-item]').first()).not.toContainText('XSD-');
@@ -200,8 +203,8 @@ test('AC-TAB2 归类互斥：钱货都未清只在第三个 tab；三个 tab 无
 
 test('AC-CARD1 一张卡=一个销售单号：多行产品 + 行尾交付；金额只在钱相关 tab', async ({ page }) => {
   await openPage(page);
-  const goods = page.locator('[data-sd-item]').first();
-  await expect(goods).toContainText('QPL-8957 · 咖色 · 37 码');
+  const goods = page.locator('[data-sd-region="available"] [data-sd-item]').first();
+  await expect(goods).toContainText('XHB8095 · 黑色 · 41 码');
   await expect(goods).not.toContainText('XSD-');
   await expect(goods).not.toContainText('10-19');
   await expect(goods).not.toContainText('已付');
@@ -217,6 +220,11 @@ test('AC-CARD1 一张卡=一个销售单号：多行产品 + 行尾交付；金�
   await expect(multiGoods.locator('.sd-product-row')).toHaveCount(1);
   await expect(multiGoods).toContainText('XHB8095 · 黑色 · 41 码');
   await expect(multiGoods).not.toContainText('42 码');
+  // 库存为 0 的货未清单只进不可交付区域，且行尾显示库存不足、没有交付按钮。
+  const unavailable = page.locator('[data-sd-region="unavailable"] [data-sd-order="XSD-20261019-0003"]');
+  await expect(unavailable).toContainText('QPL-8957 · 咖色 · 37 码');
+  await expect(unavailable).toContainText('库存不足');
+  await expect(unavailable.locator('[data-sd-deliver]')).toHaveCount(0);
 
   await page.locator('[data-sd-tab="money"]').click();
   const money = page.locator('[data-sd-item]').first();
@@ -264,7 +272,7 @@ test('AC-DELIVER 行尾交付：点谁交谁、toast「该产品已交付」、�
 test('AC-GROUP 销售日分组顺序远→近；货号筛选默认全部、可筛单一货号', async ({ page }) => {
   await openPage(page);
   const dayLabels = await page.locator('.sd-day-title').allTextContents();
-  expect(dayLabels).toEqual(['10-19', '10-20', '销售日未填']);
+  expect(dayLabels).toEqual(['10-20', '销售日未填', '10-19']);
 
   const filter = page.locator('[data-sd-field="product"]');
   const options = await filter.locator('option').allTextContents();
