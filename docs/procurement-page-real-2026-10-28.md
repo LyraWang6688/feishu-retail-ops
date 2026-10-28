@@ -361,6 +361,30 @@ git diff --check → 干净
 
 ---
 
+## 7.1 真测试 Base 集成验证之后的两处修复（2026-10-28 晚 · PR #904 内）
+
+真测试 Base 集成验证（只读 + 真提交）发现并修复了两个问题（详细证据见工作区报告
+`.local/wt-procurement/reports/procurement-testbase-verification-2026-10-28.md`，不入库）：
+
+1. **Bug-1（P0 · 假成功）**：`multiItemOrderService.submitDraft` 给写入件的是**扁平 payload**，
+   而既有 `publishPurchaseRequest(taskId, task)` 要的是**本地任务记录**（`task.draft`）⇒
+   后台 `Cannot read properties of undefined (reading 'is_batch')`，HTTP 却已回「已提交成功」。
+   - 修复：新增 `services/procurementPurchaseWriters.js`（引擎 payload → 本地 task → 既有发布），
+     `procurementPageSubmitService` 默认注入；**不碰冻结件 `scanWriteService.js`**、不新开写库路径。
+   - 判据：`test/procurementPurchaseWriters.test.js`（假 publisher 硬断言 `task.draft.is_batch`；
+     旧形状反向探针必须抛；旧形状接 submit ⇒ 后台失败落 `failed`）。
+2. **Bug-2（P1 · 展示/载荷）**：`getBatch`（batch_get）的单元格形状与列表接口不同
+   （公式 `{type,value:[{text}]}`、关联 `{link_record_ids}` 无显示文本）⇒ 补货卡片颜色为空、
+   payload `product_number = "[object Object]"`。
+   - 修复：新增 `services/procurementProductEnricher.js`（batch 形状归一化 + 颜色按关联 ID 读
+     `getBatch('color')` 解析显示名），读模型与提交服务共用；`procurementPageData.textOf` 解包 batch 形状。
+   - 判据：`test/procurementProductEnricher.test.js` + `procurementPageSubmit.test.js`（payload 出现
+     `[object Object]` 或颜色为空即红）。
+
+测试 Base 复验（修复后默认代码，无垫片）：采购主表 +1（`CGD-20261028-0002`）、采购明细 +4（尺码/数量/货品关联
+全对，含 1 条**今日新增货品**）、同 submitKey 二次 `reused:true` 且 +0/+0、后台无 `write_failed`；
+测试记录保留。为补「上新有数据」路径在**测试 Base** 新建 2 条今日货品（`TB1326081/TB1326082`）。
+
 ## 8. 逐条对照（2026-10-28 实际结果）
 
 | AC | 判据（测试文件 / 命令） | 结果 |

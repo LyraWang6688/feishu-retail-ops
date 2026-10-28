@@ -15,6 +15,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMovements');
+const { createProductEnricher } = require('./procurementProductEnricher');
 const { logInfo, logWarn } = require('../utils/logger');
 const {
   textOf, linkedIdsOf, buildReplenishView,
@@ -36,6 +37,7 @@ const createProcurementPageService = (options = {}) => {
   if (!gateway) throw new Error('procurementPageService 需要 gateway');
 
   const salesFields = () => (schema.tables?.salesDetail?.fields) || {};
+  const enricher = options.enricher || createProductEnricher({ gateway, schema, logger });
   const productFields = () => (schema.tables?.product?.fields) || {};
 
   // ── 行为表索引（记录ID → 行为编码）—— 唯一用途：把「销售明细.交易类型」的关联解析成现货/预订 ──
@@ -64,13 +66,6 @@ const createProcurementPageService = (options = {}) => {
     return isSalesTradeType(byLabel) ? byLabel : '';
   };
 
-  const productMapOf = async (ids) => {
-    const unique = [...new Set((ids || []).filter(Boolean))];
-    if (!unique.length) return new Map();
-    const records = await gateway.getBatch('product', unique);
-    return new Map((records || []).map((record) => [String(record.record_id), record]));
-  };
-
   const loadReplenish = async ({ requestId = '' } = {}) => {
     const startedAt = Date.now();
     const fields = salesFields();
@@ -79,8 +74,9 @@ const createProcurementPageService = (options = {}) => {
     });
     const records = await gateway.listByFilter('salesDetail', filter);
     const productIds = (records || []).flatMap((record) => linkedIdsOf(record?.fields?.[fields.product]));
-    // 补货卡片要用「货号 / 颜色」，提交要用供应商 —— 都从「货品信息」按记录 ID 批量取（一次批量读）
-    const products = await productMapOf(productIds);
+    // 补货卡片要用「货号 / 颜色」—— 从「货品信息」按记录 ID 批量反查并**归一化**
+    // （getBatch 的形状与列表接口不同：颜色是关联列无显示文本 ⇒ 由 enricher 解析颜色名）
+    const products = await enricher.enrich(productIds);
     const behaviorIndex = await loadBehaviorIndex();
     const view = buildReplenishView({
       records, products, fields, productFields: productFields(), config, now: now(),

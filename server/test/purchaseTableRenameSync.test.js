@@ -266,6 +266,7 @@ test('A4 schema 同步「创建时间」→「报货日」；两个自动时间�
       //         （写入点判据仍是本注释上一条：create/update 入参里不许出现该语义键）。
       'src/services/procurementPageData.js',
       'src/services/procurementPageNewProductsData.js',
+      'src/services/procurementProductEnricher.js',
       'src/services/procurementPageService.js',
       'public/workbench/features/procurement/render.js',
     ];

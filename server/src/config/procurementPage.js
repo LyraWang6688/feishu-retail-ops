@@ -82,6 +82,8 @@ const buildProcurementPageConfig = (env = process.env) => {
       orderKeyPrefix: readString(env, 'PROCUREMENT_ORDER_KEY_PREFIX', 'procurement_page'),
       ordersField: MULTI_ITEM_ORDER.session.ordersField,
       chain: readString(env, 'PROCUREMENT_CHAIN', 'replenish'),
+      // 本地采购任务记录的 kind（与单货品 `submitReplenish` 那条路**逐字一致**；只用于排查/兼容）
+      taskKind: readString(env, 'PROCUREMENT_TASK_KIND', 'scan_replenish'),
     }),
     // 交易类型角色（编码本身以 salesMovements 为准；服务层会 isSalesTradeType 再校验）
     behavior: Object.freeze({ spot: 'SALE_CASH', prepaid: 'SALE_PREPAID' }),
@@ -109,6 +111,7 @@ const buildProcurementPageConfig = (env = process.env) => {
       tradeTypeUnknown: readString(env, 'PROCUREMENT_EVENT_TRADE_TYPE_UNKNOWN', 'procurement.page.trade_type_unknown'),
       submitAccepted: readString(env, 'PROCUREMENT_EVENT_SUBMIT_ACCEPTED', 'procurement.page.submit_accepted'),
       submitRejected: readString(env, 'PROCUREMENT_EVENT_SUBMIT_REJECTED', 'procurement.page.submit_rejected'),
+      writeTaskReady: readString(env, 'PROCUREMENT_EVENT_WRITE_TASK_READY', 'procurement.page.write_task_ready'),
     }),
     // 用户可见文案（服务端只出「人话错误 / 成功那一句」；页面标题类文案在前端 config）
     texts: Object.freeze({

@@ -43,8 +43,15 @@ const tradeCode = (cell) => {
   const ids = String(JSON.stringify(cell)).match(/SALE_\w+/g) || [];
   return ids[0] || '';
 };
-const view = (records, products = [product()]) => buildReplenishView({
-  records, products: new Map(products.map((one) => [one.record_id, one])), fields: F, config, now: NOW,
+// 补货视图的 products 入参是**已归一化**的 DTO（getBatch 形状由 procurementProductEnricher 归一化）
+const productDto = ({ id = 'recA', number = '86822', itemNo = '86822', color = '黑色', supplier = 'recS' } = {}) => ({
+  productRecordId: id, number, itemNo, color, supplierRecordId: supplier,
+});
+const dtoMap = (products) => new Map(products.map((one) => (one.productRecordId
+  ? [one.productRecordId, one]
+  : [one.record_id, productDto({ id: one.record_id, itemNo: one.fields?.[F.itemNo], number: one.fields?.[F.number], color: one.fields?.[F.color] })])));
+const view = (records, products = [productDto()]) => buildReplenishView({
+  records, products: dtoMap(products), fields: F, config, now: NOW,
   tradeTypeCodeOf: tradeCode,
 });
 
@@ -103,7 +110,7 @@ test('AC-P4 关联记录里认不出编码、显示文本是「现货/预订」�
     { record_id: 'x1', fields: { [F.product]: link('recA'), [F.size]: 39, [F.soldAt]: SH('2026-10-27T12:00:00'), [F.stockQuantity]: 0, [F.tradeType]: [{ text: '预订' }] } },
   ];
   const result = buildReplenishView({
-    records, products: new Map([['recA', product()]]), fields: F, config, now: NOW,
+    records, products: new Map([['recA', productDto()]]), fields: F, config, now: NOW,
     tradeTypeCodeOf: (cell) => {
       const text = JSON.stringify(cell);
       return text.includes('预订') ? 'SALE_PREPAID' : '';

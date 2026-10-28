@@ -40,12 +40,23 @@ const replenishWindow = (now, config) => {
   };
 };
 
-/** 文本单元格 → 纯文本（关联列 / 公式列 / 单选列都收敛成字符串）。 */
+/**
+ * 文本单元格 → 纯文本（关联列 / 公式列 / 单选列都收敛成字符串）。
+ * ⚠️ 2026-10-28（真测试 Base 验证 · Bug-2）：`getBatch`（batch_get）的形状是
+ *   `{ type, value: [{ text }] }`（**没有顶层 text**），与列表接口不同 ⇒ 这里必须解包，
+ *   否则会得到 `[object Object]`（例：`product_number`）。关联列 `{ link_record_ids }` 没有显示文本，
+ *   显示名由 `procurementProductEnricher` 按 link id 再批量读（颜色管理）解析。
+ */
 const textOf = (value) => {
   if (value == null) return '';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (Array.isArray(value)) return value.map(textOf).filter(Boolean).join(',');
-  if (typeof value === 'object') return String(value.text ?? value.name ?? value.value ?? '');
+  if (typeof value === 'object') {
+    if (value.text != null) return String(value.text);
+    if (value.name != null) return String(value.name);
+    if (Array.isArray(value.value)) return value.value.map(textOf).filter(Boolean).join(',');
+    if (value.value != null) return textOf(value.value);
+  }
   return '';
 };
 
@@ -115,15 +126,16 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
     group.sizes.set(row.size, entry);
     groupsByKey.set(row.productRecordId, group);
   }
+  // products 的 value 是**已归一化**的 DTO（`procurementProductEnricher` 的产物）——
+  // 不在本纯函数里直接读飞书 batch 形状（那样会把 `[object Object]` 带进页面/载荷）。
   const productOf = (recordId) => {
-    const raw = products instanceof Map ? products.get(recordId) : null;
-    const fieldsOf = raw?.fields || {};
+    const dto = products instanceof Map ? (products.get(recordId) || {}) : {};
     return {
       productRecordId: recordId,
-      number: textOf(fieldsOf[productFields.number]),
-      itemNo: textOf(fieldsOf[productFields.itemNo]),
-      color: textOf(fieldsOf[productFields.color]),
-      supplierRecordId: linkedIdsOf(fieldsOf[productFields.supplier])[0] || '',
+      number: textOf(dto.number),
+      itemNo: textOf(dto.itemNo),
+      color: textOf(dto.color),
+      supplierRecordId: dto.supplierRecordId || '',
     };
   };
   const groups = [...groupsByKey.values()].map((group) => {

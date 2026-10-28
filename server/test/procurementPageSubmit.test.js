@@ -84,6 +84,11 @@ test('AC-P13/P14 成功：种子草稿 + 只排一次后台；后台跑 = 一次
   assert.equal(draft.status, 'draft');
   assert.equal(draft.submit_key, SUBMIT_KEY);
   assert.equal(draft.items[0].supplier_record_id, 'recSupplier', '供应商由服务端按记录ID权威反查');
+  // Bug-2 回归：batch 形状归一化后，payload 不许出现 `[object Object]`、颜色必须解析出来
+  assert.equal(draft.items[0].number, 'no_recA');
+  assert.equal(draft.items[0].item_no, 'item_recA');
+  assert.equal(draft.items[0].color, '黑色');
+  assert.equal(/\[object Object\]/.test(JSON.stringify(draft.items)), false);
   assert.equal(env.scheduled.length, 1);
   assert.equal(env.scheduled[0].chain, 'replenish');
   assert.equal(env.scheduled[0].submitKey, SUBMIT_KEY);

@@ -10,19 +10,27 @@ const { createProcurementPageSubmitService } = require('../../src/services/procu
 
 const config = buildProcurementPageConfig({});
 const PF = V1_BITABLE_SCHEMA.tables.product.fields;
+const CF = V1_BITABLE_SCHEMA.tables.color.fields;
 const NOW = Date.parse('2026-10-28T09:00:00+08:00');
 const SUBMIT_KEY = 'procurement_test_key_0001';
 
+// 形状必须与 `getBatch`（batch_get）一致（Bug-2：公式 `{type,value}` / 关联 `{link_record_ids}`）——
+// 这样用例才钉得住「payload 里不出 `[object Object]`、颜色不为空」。
 const productRecord = (id) => ({
   record_id: id,
   fields: {
-    [PF.number]: `no_${id}`, [PF.itemNo]: `item_${id}`, [PF.color]: '黑色',
-    [PF.supplier]: [{ record_ids: ['recSupplier'], text: '供应商A' }],
+    [PF.number]: { type: 1, value: [{ text: `no_${id}` }] },
+    [PF.itemNo]: [{ text: `item_${id}`, type: 'text' }],
+    [PF.color]: { link_record_ids: ['recColorBlack'] },
+    [PF.supplier]: { link_record_ids: ['recSupplier'] },
   },
+});
+const colorRecord = (id = 'recColorBlack', name = '黑色') => ({
+  record_id: id, fields: { [CF.name]: [{ text: name, type: 'text' }] },
 });
 
 // 内存版 sessions store（与 JsonTaskStore 同形状：get / update / ensure）
-const makeEnv = ({ products, behavior, purchase } = {}) => {
+const makeEnv = ({ products, behavior, purchase, writers: customWriters } = {}) => {
   const data = new Map();
   const store = {
     async get(id) { return data.get(id) || null; },
@@ -45,7 +53,7 @@ const makeEnv = ({ products, behavior, purchase } = {}) => {
   };
   const purchaseCalls = [];
   const behaviorCalls = [];
-  const writers = {
+  const writers = customWriters || {
     purchase: async (taskId, payload, opts) => {
       purchaseCalls.push({ taskId, payload, opts });
       if (purchase) await purchase(taskId, payload);
@@ -62,6 +70,7 @@ const makeEnv = ({ products, behavior, purchase } = {}) => {
   };
   const gateway = {
     async getBatch(tableKey, ids) {
+      if (tableKey === 'color') return (ids || []).map(() => colorRecord());
       assert.equal(tableKey, 'product');
       const list = products || ids.map(productRecord);
       return (ids || []).map((id) => list.find((one) => one.record_id === id)).filter(Boolean);
@@ -70,6 +79,7 @@ const makeEnv = ({ products, behavior, purchase } = {}) => {
   const service = createProcurementPageSubmitService({
     gateway,
     writeService: { sessions, multiItemWriters: () => writers },
+    writers,
     background,
     config,
     now: () => NOW,

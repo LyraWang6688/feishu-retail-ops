@@ -140,6 +140,7 @@ const EVENTS = Object.freeze([
   'procurement.page.submit_accepted',
   'procurement.page.submit_rejected',
   'procurement.page.trade_type_unknown',
+  'procurement.page.write_task_ready',
   'product.tag_qr.assemble_incomplete',
   'product.tag_qr.batch_failed',
   'product.tag_qr.change_criteria',

@@ -28,8 +28,9 @@ const { createPurchaseWriteBackgroundService } = require('./purchaseWriteBackgro
 const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { createProcurementPurchaseWriters } = require('./procurementPurchaseWriters');
+const { createProductEnricher } = require('./procurementProductEnricher');
 const { logInfo, logWarn } = require('../utils/logger');
-const { textOf, linkedIdsOf } = require('./procurementPageData');
 
 const reject = (code, message) => ({ ok: false, code, message });
 
@@ -49,8 +50,12 @@ const createProcurementPageSubmitService = (options = {}) => {
   const sessions = writeService.sessions;
   const chainConfig = orderConfig.chains[config.draft.chain];
   if (!chainConfig) throw new Error(`未声明的采购链：${config.draft.chain}`);
+  // 🔴 写入件**形状适配层**（Bug-1 修复）：引擎传扁平 payload，既有写入件要 task.draft。
+  //    适配层只建/更新本地 task + 转调既有 `publishPurchaseRequest`，不新开写库路径。
+  const writers = options.writers || createProcurementPurchaseWriters({ gateway, writeService, config });
+  const enricher = options.enricher || createProductEnricher({ gateway, schema, logger });
   const engine = options.engine || createMultiItemOrderService({
-    sessions, config: orderConfig, writers: writeService.multiItemWriters(),
+    sessions, config: orderConfig, writers,
   });
 
   const submitKeyOf = (raw) => {
@@ -59,27 +64,25 @@ const createProcurementPageSubmitService = (options = {}) => {
     return /^[A-Za-z0-9:_-]+$/.test(text) ? text : '';
   };
 
-  const productFields = () => (schema.tables?.product?.fields) || {};
-
-  /** 页面 items → 引擎草稿 items（货品字段由服务端按 record_id 权威反查）。 */
+  /**
+   * 页面 items → 引擎草稿 items（货品字段由服务端按 record_id 权威反查）。
+   * 🔴 反查结果走 `procurementProductEnricher` 归一化（Bug-2）：`getBatch` 的形状与列表接口不同，
+   *    直接读会把 `[object Object]` 写进 payload、把颜色读成空串。
+   */
   const buildItems = async (items) => {
     const wanted = items.map((item) => String(item?.productRecordId ?? item?.product_record_id ?? '').trim());
-    const unique = [...new Set(wanted.filter(Boolean))];
-    const records = await gateway.getBatch('product', unique);
-    const byId = new Map((records || []).map((record) => [String(record.record_id), record]));
-    const fields = productFields();
+    const byId = await enricher.enrich(wanted);
     const built = [];
     for (let index = 0; index < items.length; index += 1) {
       const productRecordId = wanted[index];
       const product = byId.get(productRecordId);
       if (!product) return { ok: false, missing: productRecordId };
-      const fieldsOf = product.fields || {};
       built.push({
         product_record_id: productRecordId,
-        number: textOf(fieldsOf[fields.number]),
-        item_no: textOf(fieldsOf[fields.itemNo]),
-        color: textOf(fieldsOf[fields.color]),
-        supplier_record_id: linkedIdsOf(fieldsOf[fields.supplier])[0] || '',
+        number: product.number,
+        item_no: product.itemNo,
+        color: product.color,
+        supplier_record_id: product.supplierRecordId,
         entries: (Array.isArray(items[index]?.entries) ? items[index].entries : []).map((entry) => ({
           size: entry?.size, quantity: entry?.quantity,
         })),
@@ -144,7 +147,7 @@ const createProcurementPageSubmitService = (options = {}) => {
     // ② 采购行为必须当场解析出来（解析不到就**不假装成功**：返回人话 + 零写入）
     let behavior = {};
     try {
-      behavior = await writeService.multiItemWriters().behavior(chainConfig.id);
+      behavior = await writers.behavior(chainConfig.id);
     } catch (error) {
       warn(config.events.submitRejected, {
         request_id: requestId, submit_key: submitKey, code: 'behavior_missing', error: String(error?.message || error),
