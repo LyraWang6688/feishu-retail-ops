@@ -55,7 +55,7 @@
 .pr-size-row-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-2); min-width: 0; }
 .pr-size { font-size: var(--font-size-xl); font-weight: var(--weight-bold); line-height: var(--line-height-tight); }
 .pr-sale { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--text-secondary); }
-.pr-size-row .pr-pick { justify-content: flex-end; }
+.pr-size-row .pr-pick { justify-content: center; } /* 业务负责人 2026-10-29 批注：加减圆框在卡片里**居中** */
 .pr-sale b { font-weight: var(--weight-medium); color: var(--text); }
 .pr-tag { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); line-height: 18px; }
 .pr-tag-spot { background: var(--info-soft); color: var(--info); }
