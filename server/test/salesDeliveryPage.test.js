@@ -346,3 +346,13 @@ test('AC-SD-P4 工作台入口：「交割单」卡片跳独立页，供应验�
   assert.match(orders, /mode !== 'purchase'/);
   assert.match(orders, /sectionCard\.dataset\.ordersSection === 'pending'[\s\S]{0,200}window\.location\.href = SALES_DELIVERY_PAGE/);
 });
+
+test('AC-SD-JOBTIMEOUT 前台轮询超时：120s 且超时只提示「仍在写入」，不误报失败', () => {
+  const config = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/workbench/config/sales-delivery.js'), 'utf8');
+  const feedback = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/workbench/features/sales-delivery/ui-feedback.js'), 'utf8');
+  const index = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/workbench/features/sales-delivery/index.js'), 'utf8');
+  assert.match(config, /timeoutMs:\s*120000/, 'job 轮询超时必须 ≥ 120s（真实飞书写库可能 >30s）');
+  assert.match(config, /stillWriting:/, '必须有「仍在写入」文案');
+  assert.match(feedback, /onTimeout/, '超时不能只走 onFailure');
+  assert.match(index, /onTimeout:.*T\.stillWriting/, '超时要提示仍在写入');
+});
