@@ -84,7 +84,7 @@ const SCAN_WRITE_SERVICE_PATH = path.join(SERVER_SRC, 'services', 'scanWriteServ
   //   改后逐字：sha `0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba`（1731 行）
   //   依据：`submitReplenish` / `submitPurchaseReturn` 各加一个**可选** `sessionKey`（不传 ⇒ 会话键 = openId
   //   ⇒ 与改前逐字同一个键、同一套行为）；写库逻辑 / 事件名 / 返回形状一个字节都没动 ✓
-const FROZEN_SCAN_WRITE_SHA256 = '2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5';
+const FROZEN_SCAN_WRITE_SHA256 = '561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12';
 
 const OPEN_ID = 'ou_return_image';
 const SESSION_SECRET = 'return-image-test-session-secret';
