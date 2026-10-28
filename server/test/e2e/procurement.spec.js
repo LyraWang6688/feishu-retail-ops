@@ -49,12 +49,15 @@ test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切�
   expect(calls.writes).toHaveLength(0);
 });
 
-test('AC-P18/P22 默认选中：预订默认已选且数量=预订数；只有现货默认 0；卡片只看货号·颜色', async ({ page }) => {
+test('AC-P18/P22 默认选中：预订默认已选且数量=预订数（不显示勾选框）；只有现货默认 0 且可勾选', async ({ page }) => {
   await mockApi(page);
   await page.reload();
   await openPage(page);
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1', { timeout: 5000 });
-  await expect(page.locator('[data-pr-check][data-record="recProdA"][data-size="39"]')).toBeChecked();
+  // 2026-10-29 业务负责人批注：预订（必补）行**不出现对勾/勾选框**；只有现货行才有勾选框
+  await expect(page.locator('[data-pr-check][data-record="recProdA"][data-size="39"]')).toHaveCount(0);
+  await expect(page.locator('[data-pr-check][data-record="recProdA"][data-size="41"]')).toHaveCount(0);
+  await expect(page.locator('[data-pr-check]')).toHaveCount(1, { timeout: 5000 });
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('0');
   await expect(page.locator('[data-pr-check][data-record="recProdA"][data-size="42"]')).not.toBeChecked();
   // 顶部统计（补货 3 项）+ 统计范围

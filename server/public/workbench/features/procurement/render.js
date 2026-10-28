@@ -51,7 +51,7 @@ const legendHtml = (tab, config) => {
   return `<div class="pr-legend">${items}</div>`;
 };
 
-const stepperHtml = ({ recordId, size, quantity, config, suffix }) => `<div class="pr-pick">
+const stepperHtml = ({ recordId, size, quantity, config, suffix }) => `<div class="pr-pick${suffix ? '' : ' pr-pick-no-check'}">
     ${suffix || ''}
     <div class="pr-stepper">
       <button type="button" data-pr-step="-1" data-record="${escapeHtml(recordId)}" data-size="${escapeHtml(size)}">−</button>
@@ -80,7 +80,10 @@ const saleTagsHtml = (row, config) => {
 
 const replenishRowHtml = (group, row, draft, store, config) => {
   const quantity = store.quantityOf(draft, group.productRecordId, row.size);
-  const checkbox = `<label><input type="checkbox" data-pr-check data-record="${escapeHtml(group.productRecordId)}"
+  // 业务负责人 2026-10-29 批注：**预订行是必补、默认已选** ⇒ 不显示勾选框（那个"对勾"是多余的）；
+  // 只有「只有现货」的尺码才需要勾选（现货按需自行选择）。
+  const prepaidOnlyOrMixed = Number(row.prepaidSold) > 0;
+  const checkbox = prepaidOnlyOrMixed ? '' : `<label><input type="checkbox" data-pr-check data-record="${escapeHtml(group.productRecordId)}"
     data-size="${escapeHtml(row.size)}"${quantity > 0 ? ' checked' : ''}></label>`;
   return `<div class="pr-size-row">
     <div class="pr-size">${escapeHtml(row.size)}</div>

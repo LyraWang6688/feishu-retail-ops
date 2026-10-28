@@ -66,6 +66,7 @@
 
 /* 勾选 + 数量步进器 */
 .pr-pick { display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); min-width: 0; }
+.pr-pick-no-check { justify-content: flex-end; }
 .pr-pick label { display: flex; align-items: center; }
 .pr-pick input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--primary); }
 .pr-stepper { display: flex; align-items: center; height: 46px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); overflow: hidden; }
