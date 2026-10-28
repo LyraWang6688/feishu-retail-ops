@@ -8,13 +8,16 @@ const { logError, logInfo, logWarn } = require('../utils/logger');
 const { correlationFields } = require('../utils/correlationFields');
 const { createBatchWriteTelemetry } = require('../utils/batchWriteTelemetry');
 
-/** 飞书 `records/batch_get` 官方上限：一次最多 **500** 条（超了必须分片）。 */
+/** 飞书 `records/batch_get` 实测 record_ids 上限 **100**（超了必须分片）；写接口仍按 500 分片。 */
 // 批量读写**每次的条数**：500。依据（curl 官方文档核过，2026-10-12）：
 //   · batch_create：「单次调用最多新增 1,000 条记录」（错误码 1254104 RecordAddOnceExceedLimit）；
 //   · 接口频率限制 **50 次/秒**；
 //   ⇒ 官方上限 1000，我们取 **500**：与既有 `getBatch` 同一把尺子、且给"内容变更较大"的
 //     1254002（Fail）留出余量（官方排查建议就是"单次减少数据量"）。
 const BATCH_GET_CHUNK_SIZE = 500;
+// ⭐ 2026-10-29：飞书 records/batch_get 的 record_ids 实测上限 100（160 个会 400 field validation failed）；
+//    只给 getBatch 用，不动 createBatch / updateBatch / deleteBatch 的 500 分片。
+const BATCH_GET_IDS_LIMIT = 100;
 
 const compact = (value) => {
   const result = {};
@@ -213,7 +216,7 @@ class V1BitableGateway {
    *
    * 语义与单条 `create` **逐条一致**（这是硬要求，别在这里"顺手优化"）：
    *   · **空数组 ⇒ 零请求**（返 `[]`，一次飞书都不打）；
-   *   · 分片 ≤ `BATCH_GET_CHUNK_SIZE`（500，与 `getBatch` 同一把尺子）；
+   *   · 分片 ≤ `BATCH_GET_CHUNK_SIZE`（500，写接口口径）；
    *   · 任何一片失败 ⇒ **抛错**（不静默、不返回半截结果）；
    *   · 返回与入参**同序**的 `[{ recordId, record }]`（调用方按位置对账）；
    *   · `options.correlation` **不透明**透传（只进日志，不进 payload）。
@@ -368,7 +371,7 @@ class V1BitableGateway {
 
   /**
    * ⭐⭐ 2026-10-12「**销售提交提速（第二刀）**」：按 **已知 record id** 批量读
-   * （飞书 `POST /records/batch_get`）。
+   * （飞书 `POST /records/batch_get`；record_ids 实测上限 100，按 100 分片）。
    *
    * 为什么需要它：本网关原来只有**单条** `get` ⇒「已知 id ⇒ 精确读」= 1 次主表读 + N 次 `get`，
    * 比"1 次整表读"**调用更多** ⇒ 有了批量才有意义（业务负责人 2026-10-12 授权新增）。
@@ -452,8 +455,8 @@ class V1BitableGateway {
     if (!wanted.length) return [];
     const correlation = correlationFields(options.correlation);
     const records = [];
-    for (let offset = 0; offset < wanted.length; offset += BATCH_GET_CHUNK_SIZE) {
-      const chunk = wanted.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
+    for (let offset = 0; offset < wanted.length; offset += BATCH_GET_IDS_LIMIT) {
+      const chunk = wanted.slice(offset, offset + BATCH_GET_IDS_LIMIT);
       const startedAt = Date.now();
       const response = await this.client.bitable.appTableRecord.batchGet({
         path: { app_token: this.schema.appToken, table_id: table.tableId },
@@ -501,7 +504,7 @@ class V1BitableGateway {
    *
    * 语义与单条 `delete` **逐条一致**（这是硬要求，别在这里"顺手优化"）：
    *   · **空数组 / 全空串 ⇒ 零请求**（返 `[]`，一次飞书都不打）；
-   *   · 分片 ≤ `BATCH_GET_CHUNK_SIZE`（500，与 `createBatch` / `getBatch` 同一把尺子）；
+   *   · 分片 ≤ `BATCH_GET_CHUNK_SIZE`（500，写接口口径）；
    *   · 🔴 **只有请求的每一条都被如实回报 `deleted !== false` 才算这一片成功**；
    *     条数对不上 / 少回 / 明说 `deleted: false` ⇒ **先记 requested/returned/missing 三个数，再抛**
    *     —— **绝不把"部分成功"当全成功**，也**绝不把"全成功"当失败**（成功了就正常返回）；
