@@ -1,0 +1,90 @@
+/*
+ * 采购页（供应 → 录单 → 采购）样式 —— 视觉目标 = docs/prototypes/procurement-board-2026-10-27.html。
+ * 🔴 只用 styles/tokens.css 的设计令牌：**不写 hex/rgb、不写内联 style**（新页面硬约束）。
+ * 🔴 手机优先：单列卡片、点击区 ≥ --control-height、不横向滚动；底部提交条留安全区。
+ */
+
+.pr-page {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--space-4);
+  padding-bottom: calc(128px + env(safe-area-inset-bottom));
+}
+.pr-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+.pr-title { margin: 0; font-size: var(--font-size-2xl); font-weight: var(--weight-bold); line-height: var(--line-height-tight); }
+.pr-auth { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--text-secondary); }
+.pr-logout { min-height: var(--control-height); }
+
+/* 三个 tab（扫一扫本轮禁用：视觉保留、不可点） */
+.pr-tabs { display: flex; gap: var(--space-2); margin: 0 0 var(--space-3); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.pr-tab { flex: 1; min-height: var(--control-height); border: 0; border-radius: var(--radius-md); padding: var(--space-2); background: transparent; color: var(--text-secondary); font-weight: var(--weight-medium); font-size: var(--font-size-sm); text-align: center; cursor: pointer; }
+.pr-tab small { display: block; margin-top: 2px; font-size: var(--font-size-xs); font-weight: var(--weight-normal); color: var(--text-muted); }
+.pr-tab.active { background: var(--primary-soft); color: var(--primary); }
+.pr-tab.active small { color: var(--primary); }
+.pr-tab-disabled { flex: 0 0 auto; min-width: 88px; cursor: not-allowed; opacity: 0.6; }
+
+/* 顶部统计卡 */
+.pr-summary { margin-bottom: var(--space-3); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.pr-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.pr-stat { padding: var(--space-2) 0; text-align: center; border-radius: var(--radius-md); background: var(--surface-soft); }
+.pr-stat b { display: block; font-size: var(--font-size-amount); line-height: var(--line-height-tight); }
+.pr-stat span { display: block; margin-top: 2px; font-size: var(--font-size-xs); color: var(--text-secondary); }
+.pr-range { display: flex; align-items: center; justify-content: space-between; margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-light); font-size: var(--font-size-sm); color: var(--text-secondary); }
+.pr-range strong { color: var(--text); font-weight: var(--weight-medium); }
+
+/* 图例 */
+.pr-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0 var(--space-1) var(--space-3); font-size: var(--font-size-xs); color: var(--text-secondary); }
+.pr-dot { display: inline-block; width: 8px; height: 8px; margin-right: var(--space-1); border-radius: var(--radius-pill); vertical-align: 1px; }
+.pr-dot-prepaid { background: var(--warning); }
+.pr-dot-spot { background: var(--info); }
+
+/* 分组卡 */
+.pr-group { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); padding: 0 var(--space-3) var(--space-3); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
+.pr-group-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-1) var(--space-1); }
+.pr-group-name { margin: 0; font-size: var(--font-size-lg); font-weight: var(--weight-bold); overflow-wrap: anywhere; }
+.pr-group-name small { display: block; margin-top: 2px; font-size: var(--font-size-xs); font-weight: var(--weight-normal); color: var(--text-secondary); }
+.pr-group-total { min-width: 56px; text-align: right; white-space: nowrap; font-size: var(--font-size-xs); color: var(--text-secondary); }
+.pr-group-total b { margin: 0 2px; font-size: var(--font-size-lg); color: var(--text); }
+
+/* 补货尺码行（每行一个数量框） */
+.pr-size-row { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); width: calc(50% - var(--space-1)); padding: var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.pr-size { font-size: var(--font-size-xl); font-weight: var(--weight-bold); }
+.pr-sale { display: flex; flex-wrap: wrap; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--text-secondary); }
+.pr-sale b { font-weight: var(--weight-medium); color: var(--text); }
+.pr-tag { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); line-height: 18px; }
+.pr-tag-spot { background: var(--info-soft); color: var(--info); }
+.pr-tag-pre { background: var(--warning-soft); color: var(--warning); }
+
+/* 上新尺码格 */
+.pr-new-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); padding: var(--space-2) var(--space-4) var(--space-3); width: 100%; }
+.pr-new-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
+.pr-special { width: 100%; padding: 0 var(--space-4) var(--space-3); border-top: 1px solid var(--border-light); }
+.pr-special summary { display: flex; align-items: center; min-height: var(--control-height); font-size: var(--font-size-sm); color: var(--text-secondary); cursor: pointer; }
+
+/* 勾选 + 数量步进器 */
+.pr-pick { display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); min-width: 0; }
+.pr-pick label { display: flex; align-items: center; }
+.pr-pick input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--primary); }
+.pr-stepper { display: flex; align-items: center; height: 46px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); overflow: hidden; }
+.pr-stepper button { width: 44px; height: 44px; border: 0; background: transparent; color: var(--primary); font-size: var(--font-size-xl); line-height: 1; cursor: pointer; }
+.pr-stepper input { width: 40px; min-height: 44px; padding: 0; border: 0; background: transparent; text-align: center; font-size: var(--font-size-md); color: var(--text); }
+
+/* 空态 / 错误态 / 提示 */
+.pr-empty { padding: var(--space-8) var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); text-align: center; color: var(--text-secondary); }
+.pr-hint { width: 100%; margin: 0; padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); color: var(--warning-text); }
+.pr-toast { position: fixed; left: 50%; bottom: 110px; z-index: 20; max-width: 88vw; padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill); background: var(--text); color: var(--surface); font-size: var(--font-size-sm); white-space: nowrap; opacity: 0; pointer-events: none; transform: translateX(-50%); transition: opacity 0.2s; }
+.pr-toast.show { opacity: 1; }
+
+/* 底部固定提交条 */
+.pr-bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; border-top: 1px solid var(--border); background: var(--surface); box-shadow: 0 -4px 16px var(--border-light); }
+.pr-bottom-inner { display: flex; align-items: center; gap: var(--space-3); max-width: var(--page-max); margin: 0 auto; padding: var(--space-2) var(--space-4) calc(var(--space-2) + env(safe-area-inset-bottom)); }
+.pr-picked { flex: 1; min-width: 0; font-size: var(--font-size-sm); color: var(--text-secondary); }
+.pr-picked b { display: block; font-size: var(--font-size-xl); line-height: var(--line-height-tight); color: var(--text); }
+.pr-picked small { display: block; margin-top: 1px; font-size: var(--font-size-xs); color: var(--text-muted); }
+.pr-submit { flex: 0 0 auto; min-height: 48px; padding: 0 var(--space-5); border: 0; border-radius: var(--radius-pill); background: var(--primary); color: var(--surface); font-size: var(--font-size-md); font-weight: var(--weight-bold); box-shadow: var(--shadow-pop); cursor: pointer; }
+.pr-submit:active { background: var(--primary-hover); }
+.pr-submit:disabled { opacity: 0.65; cursor: wait; }
+
+@media (min-width: 761px) {
+  .pr-size-row { width: calc(33.333% - var(--space-2)); }
+}

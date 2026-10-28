@@ -59,6 +59,13 @@ test('客户端接线：扫一扫生命周期与资源错误都有上报点', ()
   }
   const orders = fs.readFileSync(path.join(__dirname, '../public/workbench/features/orders/index.js'), 'utf8');
   assert.match(orders, /orders_section_rendered/);
-  const procurement = fs.readFileSync(path.join(__dirname, '../public/workbench/procurement.html'), 'utf8');
-  assert.match(procurement, /procurement_scan_returned/);
+  // ⭐ 2026-10-28（采购页进入生产）：扫一扫本轮只占位/禁用（业务负责人口径）——
+  //    页面不再调扫码，但**服务端 action 白名单保留**（下一轮接扫一扫时不用再改服务端）；
+  //    页面侧改为钉住"禁用占位"这一事实（避免"看起来能扫、点了没反应"）。
+  const procurementHtml = fs.readFileSync(path.join(__dirname, '../public/workbench/procurement.html'), 'utf8');
+  assert.equal(/procurement_scan_returned|scanCodeRaw/.test(procurementHtml), false, '本轮采购页不接扫码');
+  const procurementRender = fs.readFileSync(path.join(__dirname, '../public/workbench/features/procurement/render.js'), 'utf8');
+  assert.match(procurementRender, /data-pr-scan-disabled/, '扫一扫 tab 必须是禁用/占位');
+  const uiTapReport = fs.readFileSync(path.join(__dirname, '../src/utils/uiTapReport.js'), 'utf8');
+  assert.match(uiTapReport, /procurement_scan_returned/, '服务端仍允许该 action（下一轮用）');
 });
