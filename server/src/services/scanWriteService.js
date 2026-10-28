@@ -74,6 +74,9 @@ const { SCAN_WRITE, fillText } = require('../config/scanWrite');
 //   本文件只有拿到 `deferFunds === true` 才走那条路 ⇒ 不传 / 传 false 时逐字同今天 ✓）。
 const { SESSION_MARKERS } = require('../config/saleMoneySplit');
 const { createScanSessionService } = require('./scanSessionService');
+// ⭐ 2026-10-29：收款方式统一走 configTableCache（事件失效 + TTL + lastGood），
+//   不再保留本文件自己的短 TTL 缓存。
+const { getConfigRows } = require('./configTableCache');
 // ⭐ 2026-10-18（第 4 步提速 · 文件大小门禁）：只读引用缓存 / 交付那一步 / 一次收口接线
 //   都搬到 `services/sales/*`（本文件是存量超限件，基线只许变小）—— 纯搬家，逻辑未改 ✓
 const { createReadOnlyReferenceCache } = require('./sales/referenceReadCache');
@@ -331,24 +334,17 @@ const createScanWriteService = (options = {}) => {
    *   **不再**来自环境变量清单（`SCAN_SALE_PAYMENT_METHODS` 只留给单测注入 ✓）。
    * 🔴 与 `listAccessories` 的**唯一不同**：读不到 ⇒ **抛**（不吞 ✗）——
    *   她的口径是"**不许静默回落**"：宁可不渲染这一页，也不给她一个**少了几项**的下拉。
-   * 形状照抄 `listAccessories`：`options.listPaymentMethods` 可注入（单测）· 短 TTL 缓存 · 记 warn ✓
+   * 形状照抄 `listAccessories`：`options.listPaymentMethods` 可注入（单测）· 统一 configTableCache · 记 warn ✓
    */
-  let paymentMethodCache = { at: 0, value: null };
   const listPaymentMethods = async () => {
     if (typeof options.listPaymentMethods === 'function') return options.listPaymentMethods();
-    // 复用页面级短 TTL（与配品下拉同一只旋钮，默认 30 秒）：只影响"下拉里有哪几项"
-    const ttl = Number(config.sale.accessoryCacheTtlMs) || 0;
-    if (ttl > 0 && paymentMethodCache.value && now() - paymentMethodCache.at < ttl) {
-      return paymentMethodCache.value;
-    }
     try {
-      const records = await gateway.listAll('paymentMethod');
+      // 与资金页候选共用同一份快照：飞书 record_changed 会 invalidate，下一次读取重读。
+      const records = await getConfigRows({ gateway, tableKey: 'paymentMethod' });
       const field = fieldOf('paymentMethod', 'name');
-      const value = [...new Set((records || [])
+      return [...new Set((records || [])
         .map((record) => textValue(record?.fields?.[field]).trim())
         .filter(Boolean))];
-      paymentMethodCache = { at: now(), value };
-      return value;
     } catch (error) {
       logWarn(config.events.failed, {
         reason: 'payment_method_list_failed', error: String(error.message || error),

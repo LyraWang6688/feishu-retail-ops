@@ -62,6 +62,12 @@
  *     明细/收款/流水一行不写）与 `oneShot`（资金页：明细/收款批量 + 库存批量 + **一次收口**）；
  *     `deferFunds` 那条路**原样保留**（既有单测照旧钉着），只是生产路由不再走它。
  *     写库逻辑仍全在业务层（`SalesOrderService.confirm / finalizeOneShot`）—— 本文件一个字都不写表 ✓
+ * - 2026-10-29 · **收款方式配置统一化**（业务负责人授权清理重复缓存）：
+ *   改前逐字：sha `2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5`（1732 行）
+ *   改后逐字：sha `561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12`（1728 行）
+ *   依据 = 业务负责人 2026-10-29「好的，可以做」：删除本文件自己的 30 秒 `paymentMethodCache`，
+ *     `listPaymentMethods` 改走 `configTableCache`（飞书 record_changed 失效 + TTL + lastGood），
+ *     避免旧缓存绕过收款方式配置更新。
  * ⚠️ 本文件**只读**那个文件（`readFileSync`），**不写入、不改行为、不加开关** ✓
  */
 
@@ -86,8 +92,8 @@ const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.j
 //          **如果是现货，就是要扣库存**；如果是预订，就不扣库存，等二次交付的时候再扣库存」
 //          ＋「**啥叫钱没入账就不许出库存？不用呀。**」
 //          ⇒ 授权范围 = 冻结件 **5 行** ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（缺省 false ✓ 只给货那一跑 ✓）
-const FROZEN_SHA256 = '2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5';
-const FROZEN_LINES = 1732;
+const FROZEN_SHA256 = '561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12';
+const FROZEN_LINES = 1728;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const linesOf = (text) => String(text).split('\n').length;
