@@ -89,6 +89,15 @@ test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) 
 test('售后扫一扫落地页：候选（一行：销售日/尺码/总金额）→ 三个动作按钮', async ({ page }) => {
   await page.goto('/workbench/after-sales.html?productRecordId=p1');
   await expect(page.getByText('YD1 · 黑')).toBeVisible();
+  // ⭐ 2026-10-29 HTML 批注：提示语逐字改成「请选择要售后单」，且居中加粗大字号。
+  const hint = page.getByText('请选择要售后单');
+  await expect(hint).toBeVisible();
+  const hintStyle = await hint.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { align: style.textAlign, weight: style.fontWeight, size: style.fontSize };
+  });
+  expect(hintStyle.align).toBe('center');
+  expect(Number(hintStyle.weight)).toBeGreaterThanOrEqual(600);
 
   const candidates = page.locator('.candidate-card');
   await expect(candidates).toHaveCount(1);

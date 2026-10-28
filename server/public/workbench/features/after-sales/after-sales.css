@@ -12,10 +12,13 @@
  * ⚠️ 2026-10-29（业务负责人 HTML 批注）：原来这里还有一个「← 返回 售后单」页头，
  *    她批注「不需要」⇒ 页头整块删掉（HTML / 处理逻辑 / 这里的样式一起删），
  *    页面从货品这一行开始。 */
+/* ⭐ 2026-10-29（HTML 批注）：货品信息**居中 + 加粗、突出一下**（原来是小号次要色）。 */
 .after-sales-product {
-  margin: var(--space-1) 0 var(--space-4);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  margin: var(--space-2) 0 var(--space-2);
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-bold);
+  text-align: center;
   overflow-wrap: anywhere;
 }
 
@@ -32,10 +35,13 @@
   color: var(--error-text);
   background: var(--error-surface);
 }
+/* ⭐ 2026-10-29（HTML 批注）：这句提示（「请选择要售后单」）**居中 + 加粗 + 字号要大**。 */
 .candidate-hint {
-  margin: 0 0 var(--space-2);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  margin: var(--space-4) 0 var(--space-3);
+  color: var(--text);
+  font-size: var(--font-size-xl);
+  font-weight: var(--weight-bold);
+  text-align: center;
 }
 
 /* ── 候选（一笔销售一行）：销售日 ｜ 尺码 ｜ 总金额，**从左到右一行** ────────
