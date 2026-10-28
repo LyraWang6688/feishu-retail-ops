@@ -360,6 +360,8 @@ items: [{ product_record_id, size, quantity }, ...]
 ### 5.1 共同硬门槛
 
 ```text
+最终验收：实际 Google Chrome 端到端（Playwright channel: 'chrome' + 真实 Express 服务）
+         Playwright 自带 Chromium / static-server 只能当前置回归，不得冒充最终验收
 pnpm test                     0 fail
 pnpm run size:check           绿
 pnpm run observability:events:check  涉及事件时绿
@@ -397,6 +399,7 @@ git diff --check              干净
 ### 5.4 Lead 验收方式
 
 - 独立跑全量测试，不只看 AI 报告；
+- **最终验收必须用实际 Google Chrome**（本机 `/Applications/Google Chrome.app`，Playwright `channel: 'chrome'`，可 headed）点完整入口流程；Chromium 结果不能代替；
 - `git diff` 审文件边界，检查越界/大文件/内联色值；
 - 浏览器 + 移动端截图核对；
 - 对照页面数据/字段清单检查字段来源；
@@ -521,4 +524,5 @@ server/public/workbench/styles/**
 - 2026-10-28：扫一扫本轮先不考虑，最后处理；本轮只做补货 + 上新。
 - 2026-10-28：页面数据表确认包含页面计算/UI 状态（来源写「页面计算」）；字段清单只记 Base 字段/写入 payload。
 - 2026-10-28：确认扫一扫后置；上新顶部只留新增货品、不展示货品状态；库存数量从销售明细看；记录ID口径已补。
+- 2026-10-28：最终验收要求实际 Google Chrome 端到端（channel=chrome + 真实 Express），Chromium/static-server 只作前置。
 - 待补：业务负责人对 2.6 六个问题的确认；销售页改稿反馈；采购页静态文件最终路径。
