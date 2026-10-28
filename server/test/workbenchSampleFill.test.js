@@ -345,14 +345,17 @@ test('AC-PS3 提交 ⇒ 门盒→样品、总量不变、流水带「关联销�
 // AC-PS4 跨入口幂等（本轮最硬的一条）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PS4 跨入口幂等：工作台补过之后，群卡片那条路不会重复挪第二双', async () => {
+test('AC-PS4 跨入口幂等：工作台补过之后，`applyPreChosen` 那条路不会重复挪第二双', async () => {
   const h = createHarness();
   try {
     await seedPendingTask(h);
     await h.followup.fillSample({ detailRecordId: DETAIL_ID, size: SIZE_WITH_BOX, operatorOpenId: 'ou_1' });
     assert.equal(ledgerOf(h).length, 1);
 
-    // 群那条路（确认卡片上已经选好门盒的那一支）：同一个 detail ⇒ **同一个 operationId** ⇒ 回放
+    // 另一条路（`applyPreChosen`：确认卡片上"已经选好门盒"的那一支所用的同一个实现）：
+    // 同一个 detail ⇒ **同一个 operationId** ⇒ 回放。
+    // ⚠️ 2026-10-28：卡片按钮回调（`handleCardAction`）已随「没有旧卡片」删除 ⇒
+    //   下面那段"再点一次卡片按钮"的断言退场；`applyPreChosen` 本身仍在（同一份幂等实现）。
     const replacement = new SampleReplacementService({
       gateway: h.gateway, inventory: h.inventory,
       store: h.sampleStore,
@@ -364,13 +367,10 @@ test('AC-PS4 跨入口幂等：工作台补过之后，群卡片那条路不会�
     assert.equal(handled.has(DETAIL_ID), true);
     assert.equal(ledgerOf(h).length, 1, '不重复写流水');
     assert.deepEqual(stateOf(h, SIZE_WITH_BOX), ['样品'], '不重复挪第二双（门盒里已经没有了）');
-
-    // 群卡片动作那条路：任务已 completed ⇒ 走终态分支，不再挪
-    const response = await replacement.handleCardAction(
-      { action: 'choose_sample_replacement', draft_id: `sample_${crypto.createHash('sha256').update(DETAIL_ID).digest('hex').slice(0, 20)}`, size: SIZE_WITH_BOX },
-      {}, 'ou_seller',
-    );
-    assert.match(String(response?.toast?.content || response?.card?.elements?.[0]?.content || ''), /./, '有明确回执');
+    // 再调一次也仍然是一条流水（同 operationId ⇒ 幂等回放）
+    await replacement.applyPreChosen([
+      { salesDetailRecordId: DETAIL_ID, productRecordId: PRODUCT_ID, size: SIZE_WITH_BOX },
+    ]);
     assert.equal(ledgerOf(h).length, 1, '仍然只有一条流水');
     assert.deepEqual(stateOf(h, SIZE_WITH_BOX), ['样品']);
   } finally { h.cleanup(); }

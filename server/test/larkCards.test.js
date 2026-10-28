@@ -1,12 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  // ⚠️ 2026-10-12（3b + 售后卡片退场）：原来 import 的销售确认卡片、售后确认卡片都已退场；
-  //    它们名下还活着的口径（逐件金额 / 按钮裁剪）都迁到**仍在跑**的销售状态卡片上 ✓
-  salesStatusCard,
+  // ⚠️ 2026-10-28（群卡片残留清理）：销售终态卡（`salesStatusCard`）与通用收窄工具
+  //    （`keepOnlyCardButton`）随卡片动作链路一起删除。
+  //    现在本文件只钉**仍在生产使用**的 3 张卡里的 2 张（采购状态卡 / 样品补选卡）。
   purchaseStatusCard,
   sampleReplacementCard,
-  keepOnlyCardButton,
 } = require('../src/utils/larkCards');
 
 // 这一组测试锁的是「移动端实测确认过的排版」，不是实现细节：
@@ -45,15 +44,6 @@ const assertButtonRowsAreEqualWeight = (card) => {
     }
   }
 };
-
-const saleDraft = (overrides = {}) => ({
-  items: [{ item_no: '66356', size: 42, quantity: 1, actual_amount: 99 }],
-  agreed_total: 99,
-  payments: [{ method: '微信', amount: 99 }],
-  trade_type: '现货',
-  delivery_status: '已交付',
-  ...overrides,
-});
 
 const sampleSizes = (sizes) => sizes.map((size) =>
   ({ size, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 }));
@@ -128,36 +118,12 @@ test('样品补选卡片：候选尺码超过 3 个也折成多个 column_set', 
 
 
 
-test('多件时必须逐件显示金额（原销售确认卡片退场 ⇒ 改用仍在跑的销售状态卡片钉同一条口径）', () => {
-  // ⚠️ 2026-10-12（3b）：口径本身仍有效（她要逐件核对，不显示就会记错账）；
-  //    `itemLines` 是**共用渲染器**，仍在跑的销售状态卡片（`larkMvpService` 的已成交出口）就走它
-  //    ⇒ 换这个入口钉，覆盖面不减（与采购那条"卡片删了就换仍活的入口"同一套做法）。
-  const card = salesStatusCard(saleDraft({
-    items: [
-      { item_no: '66356', size: 42, quantity: 1, actual_amount: 99 },
-      { item_no: '66357', size: 40, quantity: 1, actual_amount: 128 },
-    ],
-    agreed_total: 227,
-  }), '已成交', '已经写好了');
-  const content = card.elements[0].content;
-  assert.match(content, /1\. 66356 42码 × 1 ￥99/);
-  assert.match(content, /2\. 66357 40码 × 1 ￥128/);
-});
-
-// —— 重试卡片：只收窄"含目标按钮"的那一组 ——
-
-test('只留目标按钮：其余按钮组整组收窄（入口一路换到仍在跑的销售状态卡片上，通用行为不变）', () => {
-  // ⚠️ 2026-10-12：`keepOnlyCardButton` 是**通用行为**（只留目标按钮、其余原样）——
-  //    它先是搭在销售确认卡片的"颜色候选组"上、后来搭在售后确认卡片上，这两张卡都已退场；
-  //    ⇒ 现在搭在**仍在跑**的销售状态卡片的「确认成交」按钮上。**能力一次都没退场** ✓
-  const card = salesStatusCard({ items: [] }, '已入账', '已经写好了', 'blue',
-    { confirmDeal: { salesEntryRecordId: 'rec_1', draftId: 'd' } });
-  const actionsBefore = columnSetButtons(card).map((button) => button.value.action);
-  assert.ok(actionsBefore.length >= 1, `这张卡本来就带按钮：${actionsBefore.join(',')}`);
-  keepOnlyCardButton(card, actionsBefore[0]);
-  assert.deepEqual(columnSetButtons(card).map((button) => button.value.action), [actionsBefore[0]],
-    '只留目标按钮，其余按钮组整组收窄掉');
-});
+// ⛔ 2026-10-28：这里原先有两条测试 ——
+//   ① 「多件时必须逐件显示金额」（入口是销售终态卡 `salesStatusCard` 的 `itemLines`）；
+//   ② 「只留目标按钮」（`keepOnlyCardButton` 的通用行为）。
+//   它们的**载体**（销售终态卡 + 卡片按钮回调）已随「没有旧卡片」整体删除 ⇒ 一并退场。
+//   ⚠️ 这两条盯的都不是业务口径，而是已退场卡片的排版/收窄行为；业务口径（逐件核对金额）
+//     仍然由工作台的订单列表承载（`test/workbench*.test.js`）。**不是放宽**。
 
 // —— 采购明细的渲染规则：尺码网格每行 6 个 + 货号 → 颜色 → 尺码 三层分组 + 🆕 ——
 //
@@ -330,26 +296,34 @@ test('明细卡片：新品按货号级标一次（多行/多颜色不重复）�
 /** ⭐ 2026-10-15：`larkMvpService` 里是否还提到处理中卡（import / 调用都算）——摘干净了就该是 false ✓ */
 const salesProcessingCardWiring = (source) => /salesProcessingCard/.test(source);
 
-test('AC-退场哨兵 · 销售确认卡 + 售后 5 张卡 + 处理中卡都已退场（导出里没有它们；导出数 21 → 13）', () => {
-  // ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
-  //   改前逐字：`…（导出里没有它们；导出数 21 → 14）` ＋ `assert.equal(Object.keys(cards).length, 14, '导出数 = 14（… → 14 再删 saleLookupCard）')`
-  //   改后逐字：`…（导出里没有它们；导出数 21 → 13）` ＋ `assert.equal(Object.keys(cards).length, 13, '… → 13 再删处理中卡（salesProcessingCard）')`
-  //   依据：`salesProcessingCard` 已随 2026-10-15 的死代码清理删除（`src/` 生产侧 0 调用 ⇒ 它不是"还在用"）
-  //     ⇒ 导出少一个；**并且**下面把它加进"**真的没了**"的名单（判据是**加强**，不是放宽 ✓）
+test('AC-退场哨兵 · 只剩 3 张仍在生产使用的卡（导出数 = 3；其余全退场）', () => {
+  // ⭐ 2026-10-28（群卡片残留清理）**成对改指向**：
+  //   改前逐字：导出数 13（21 → 20 删销售确认卡 → 15 再删售后 5 张 → 14 再删 saleLookupCard → 13 再删处理中卡），
+  //            并断言 `salesStatusCard` 必须还在（它当时还有活调用方）。
+  //   改后逐字：导出数 **3** —— `salesStatusCard` 的唯一调用方（卡片上的「确认成交」）
+  //            随 `handleCardAction` 删除 ⇒ 它也退场；同一轮还删掉了
+  //            `keepOnlyCardButton` / `secondDeliveryCard` / `settleSecondDeliveryOrder` /
+  //            `SECOND_DELIVERY_ACTION` / `purchaseArrivalReconcileCard` /
+  //            `sampleReplacementStatusCard` / `sampleReplacementProcessingCard` /
+  //            `confirmDealElements` / `productInfoGapsElements` 等（全仓 0 调用）。
+  //   依据：业务负责人「现在没有群聊入口，也没有旧卡片」＋「9 点群推送不再需要」。
   const cards = require('../src/utils/larkCards');
-  assert.equal('salesConfirmationCard' in cards, false, '它必须已经从导出里消失');
-  assert.equal(Object.keys(cards).length, 13, '导出数 = 13（21 → 20 删销售确认卡 → 15 再删售后 5 张 → 14 再删 saleLookupCard → 13 再删处理中卡）');
-  // ⚠️ 2026-10-12（售后卡片链路退场）：原来这里断言"6 个都在" —— 售后那 5 个已随链路退场
-  //    ⇒ 现在只断言**唯一还活着的那个**在；并逐个证明那 5 个**真的没了**（能力不是靠"忘了"活着）。
-  assert.equal(typeof cards.salesStatusCard, 'function', '销售状态卡片有活调用方 ⇒ 必须在');
-  // ⭐ 2026-10-15 追加：处理中卡（`salesProcessingCard`）也**真的没了**（不是靠"忘了"活着）✓
-  for (const gone of ['afterSalesConfirmationCard', 'afterSalesResultCard', 'afterSalesRetryCard',
-    'afterSalesStatusCard', 'afterSalesSettlementLabel', 'salesProcessingCard']) {
-    assert.equal(gone in cards, false, `${gone} 已随售后卡片链路退场 ⇒ 不该还在导出里`);
+  assert.deepEqual(Object.keys(cards).sort(),
+    ['purchaseArrivalReconcileStatusCard', 'purchaseStatusCard', 'sampleReplacementCard'],
+    '导出数 = 3：只留仍在生产使用的那三张（采购状态卡 / 到货验收终态卡 / 样品补选卡）');
+  for (const gone of [
+    'salesConfirmationCard', 'afterSalesConfirmationCard', 'afterSalesResultCard',
+    'afterSalesRetryCard', 'afterSalesStatusCard', 'afterSalesSettlementLabel',
+    'salesProcessingCard', 'salesStatusCard', 'keepOnlyCardButton',
+    'secondDeliveryCard', 'settleSecondDeliveryOrder', 'SECOND_DELIVERY_ACTION',
+    'purchaseArrivalReconcileCard', 'sampleReplacementStatusCard',
+    'sampleReplacementProcessingCard', 'confirmDealElements', 'productInfoGapsElements',
+  ]) {
+    assert.equal(gone in cards, false, `${gone} 已随群卡片链路退场 ⇒ 不该还在导出里`);
   }
-  const wiring = require('node:fs').readFileSync(require('node:path')
-    .join(__dirname, '..', 'src', 'services', 'larkMvpService.js'), 'utf8');
-  assert.equal(/salesConfirmationCard\s*[,}]/.test(wiring), false, '那行死 import 里的名字必须摘掉');
-  // ⭐ 2026-10-15：那两处**没用的 import** 也必须真的摘掉（`larkMvpService` 里不再出现这个名字）✓
-  assert.equal(salesProcessingCardWiring(wiring), false, '`salesProcessingCard` 的 import/调用必须摘干净');
+  const src = require('node:fs').readFileSync(require('node:path')
+    .join(__dirname, '..', 'src', 'utils', 'larkCards.js'), 'utf8');
+  // 反向钉"不许复活"：切卡片的那两个入口一个都不许回来。
+  assert.equal(/^\s*const salesStatusCard\s*=/m.test(src), false, '销售终态卡不许复活');
+  assert.equal(/^\s*const secondDeliveryCard\s*=/m.test(src), false, '每日成交提醒卡不许复活');
 });

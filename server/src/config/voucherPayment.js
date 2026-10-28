@@ -29,9 +29,12 @@ const { readFlag, readString } = require('./envValue');
 // 「待平台结算」是**收款明细里的取值**（表里的事实，不是文案）——真源在 `config/salesCardFacts`，
 // 这里**只引用**，不另抄一个中文字面量（换取值时只改那一处）。
 const { PENDING_SETTLEMENT_STATUS } = require('./salesCardFacts');
-// 券目录「在售」的口径与 9 点推送【团购券待结算】那一块**同一份**（真源 `config/voucherSettlement`）：
-//   连**环境变量名**都用它那一个 ⇒ 一处换个值，两块一起变 ✓（**不新造第二个旋钮** ✗）。
-const { DEFAULT_ON_SALE_STATUS, VOUCHER_ON_SALE_STATUS_ENV_KEY } = require('./voucherSettlement');
+// 券目录「在售」的口径。
+// ⭐ 2026-10-28：它原来与「9 点推送【团购券待结算】」共用一份真源（`config/voucherSettlement`）——
+//   那条推送已整体删除，**取值与环境变量名原样搬到这里**（`VOUCHER_SETTLE_ON_SALE_STATUS`
+//   线上已经在用 ⇒ 不改名，配好的值继续生效）。
+const VOUCHER_ON_SALE_STATUS_ENV_KEY = 'VOUCHER_SETTLE_ON_SALE_STATUS';
+const DEFAULT_ON_SALE_STATUS = '在售';
 
 // ── 语义键（**只读** `config/v1BitableSchema`，不复制字段名）────────────────────
 const PAYMENT_METHOD_TABLE_KEY = 'paymentMethod';

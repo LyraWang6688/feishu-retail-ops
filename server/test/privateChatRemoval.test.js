@@ -384,9 +384,12 @@ test('④ 三个 service 里再没有"发到某个 open_id"的代码（ⓐ：一
   const stripComments = (source) => source
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  // ⭐ 2026-10-28：原来这份名单里两行都是 `salesThreadProgressService.js`（它在"群话题进展识别"
+  //   那条链路里也有缺省出口）。那个 service 已随群入口/卡片一起**整体删除** ⇒
+  //   现在真正需要盯的是这两个**仍活着**的 service。
   const serviceFiles = [
-    'src/services/salesThreadProgressService.js',
-    'src/services/salesThreadProgressService.js',
+    'src/services/larkMvpService.js',
+    'src/services/sampleReplacementService.js',
   ];
   const patterns = [
     [/sendCard\(\s*task\??\.?\s*sender_open_id/, 'sendCard(sender_open_id)'],
@@ -411,14 +414,14 @@ test('④ 三个 service 里再没有"发到某个 open_id"的代码（ⓐ：一
   }
 });
 
-test('④ 路由不再注册机器人菜单事件（application.bot.menu_v6），但消息入口还在', () => {
+test('④ 路由不再注册机器人菜单事件（application.bot.menu_v6）；卡片回调也已退场，但消息入口还在', () => {
   const handlers = createLarkEventHandlers({
-    handleCardAction: async () => ({}),
     sendText: async () => undefined,
   });
   assert.equal(handlers['application.bot.menu_v6'], undefined);
   assert.equal(typeof handlers['im.message.receive_v1'], 'function');
-  assert.equal(typeof handlers['card.action.trigger'], 'function');
+  // ⭐ 2026-10-28：`card.action.trigger` 也随「没有旧卡片」删除（业务负责人现行口径）。
+  assert.equal('card.action.trigger' in handlers, false, '卡片回调不许再注册');
 });
 
 test('④ SampleReplacementService 里**没有** open_id 发送器（sendCard / sendText 已整体删除）', () => {

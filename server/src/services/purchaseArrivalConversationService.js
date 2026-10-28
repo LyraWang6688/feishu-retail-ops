@@ -6,10 +6,9 @@ const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const {
   purchaseArrivalReconcileStatusCard,
 } = require('../utils/larkCards');
-const {
-  ARRIVAL_CONVERSATION_ACTIONS,
-  resolveArrivalConversationConfig,
-} = require('../config/arrivalConversation');
+const { resolveArrivalConversationConfig } = require('../config/arrivalConversation');
+// ⛔ 2026-10-28：`ARRIVAL_CONVERSATION_ACTIONS`（卡片上的「是」）随**卡片按钮回调**一起摘掉 ——
+//   到货验收的现行入口是**工作台发起 + 扫码录入**（`confirmBatchArrival`，本文件保留）。
 const { logError, logInfo, logWarn } = require('../utils/logger');
 
 // 会话任务 id 只跟「哪一批」有关，不含时间：同一批单子（含她后来另开一个话题）
@@ -214,22 +213,11 @@ class PurchaseArrivalConversationService {
     }
   }
 
-  /**
-   * 卡片动作入口。**只认「是」这一个动作名**，其余一律返回 null（交给别的链路）。
-   *
-   * @returns {Promise<{toast?: object}|null>}
-   */
-  async handleCardAction(value, event = {}, operatorOpenId = '') {
-    const action = value?.action;
-    // ⚠️⚠️ 2026-10-12（清群聊入口 C1）：这里原先还认 `REJECT`（卡片上的「否」）。
-    //    那个动作只由**群话题那条对话链路**发出来的卡片提供，而那条入口已整体删除
-    //    （业务的到货验收改由**工作台发起 + 扫码录入**，见 `confirmBatchArrival`）。
-    //    ⇒ 那个分支（以及它调用的「不入库」实现）一起退场；**只留 `CONFIRM`（「是」）**。
-    if (action !== ARRIVAL_CONVERSATION_ACTIONS.CONFIRM) return null;
-    const taskId = String(value?.draft_id || '').trim();
-    if (!taskId) throw new Error('到货核对卡片缺少任务 ID');
-    return this.queue.run(taskId, () => this.confirmLocked(taskId, operatorOpenId, event));
-  }
+  // ⛔ 2026-10-28：`handleCardAction`（群话题到货核对卡片上的「是」）**整体删除** ——
+  //   业务负责人现行口径：「现在没有群聊入口，也没有旧卡片」；到货验收改由
+  //   **工作台发起 + 扫码录入**（`confirmBatchArrival` → `confirmLocked`，两条都在本文件保留）。
+  //   ⚠️ 恢复卡片那条路 = 重新实现（卡片渲染 + 动作分派），不是翻一个开关。
+
   async confirmLocked(taskId, operatorOpenId, event = {}, options = {}) {
     const { replies } = this.config;
     const task = await this.store.get(taskId);

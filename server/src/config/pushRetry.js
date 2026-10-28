@@ -1,9 +1,17 @@
-// 「两条每日推送的**可靠性旋钮**」——失败重试的间隔与上限、瞬时错误的小退避、
+// 「推送 / 写链路的**可靠性旋钮**」——瞬时错误的小退避、按天重试的间隔与上限、
 // 失败告警的开关与文案，全在这一处（配置先行）。
 //
-// 服务的两条链路（两条各有各的"按天认领"记录）：
-//   · `services/pendingDealPushService.js` —— 每天 9 点的**待处理单推送**；
-//   · `services/secondDeliveryService.js`  —— 每天 9 点的**二次交付提醒卡**。
+// ⭐ 2026-10-28（现状）：这个文件最初是为**两条每日群推送**写的 ——
+//   · `services/pendingDealPushService.js`（9 点待处理单推送）；
+//   · `services/secondDeliveryService.js` 的每日成交提醒卡。
+//   两条推送都已按业务负责人的口径**整体删除**（「9 点群推送不再需要」）。
+//   ⇒ 现在**生产上真正在用的**只有**瞬时层**（`transient` / `isTransientLarkError` /
+//     `withTransientRetry`）：`secondDeliveryService.confirm` 的读表小退避、
+//     `config/orderReadRetry` 与 `services/salesFollowupService` 的重读判据。
+//   ⚠️ 按天层（`daily`）与告警层（`alert`）的纯件**刻意保留**在文件里（有单测）：
+//     它们是"失败要可见 / 成功一次即停"这两条口径的唯一实现，将来再做定时任务直接复用，
+//     不要另写第二份。**当前没有 service 调用它们**。
+//
 // 2026-10-08 真机伤口（两条链路都在 09:0x 掉过，`Request failed with status code 400`）：
 //   · 当天失败即落 `failed`、当天不再重试 ⇒ **一整天不发**；
 //   · 且只写日志、**没有任何人知道**；
@@ -45,7 +53,7 @@ const PUSH_RETRY_ALERT_ENABLED_ENV_KEY = 'PUSH_RETRY_ALERT_ENABLED';
 const PUSH_RETRY_ALERT_CHAT_ID_ENV_KEY = 'PUSH_RETRY_ALERT_CHAT_ID';
 const PUSH_RETRY_ALERT_TEMPLATE_ENV_KEY = 'PUSH_RETRY_ALERT_TEMPLATE';
 // 两条推送各自的名字（`{push}` 占位符的值）——"哪条推送失败了"必须说清楚。
-const PENDING_DEAL_PUSH_ALERT_NAME_ENV_KEY = 'PENDING_DEAL_PUSH_ALERT_NAME';
+// ⚠️ `PENDING_DEAL_PUSH_ALERT_NAME` 已随那条推送删除（2026-10-28），不再有读取点。
 const SECOND_DELIVERY_ALERT_NAME_ENV_KEY = 'SECOND_DELIVERY_ALERT_NAME';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -63,14 +71,16 @@ const DEFAULT_TRANSIENT_LARK_CODES = Object.freeze(['1254607']);
 // 按天层默认：**每 10 分钟一次、最多重试 6 次**（= 一天最多 7 次尝试，首次失败后约 1 小时内）。
 // ⚠️ 这一条**改了 2026-10-08 上午那版**（5 分钟 / 15 分钟各一次 = 只有 2 次重试）：
 //    P0 的口径是"直到当天成功一次，上限 6 次"——2 次（都在 20 分钟内）挡不住那次
-//    "09:05 失败 ⇒ 一整天不发"。老节奏仍可用 `PENDING_DEAL_PUSH_RETRY_DELAYS_MS` 显式写回。
+//    "09:05 失败 ⇒ 一整天不发"。
+//    ⭐ 2026-10-28：原来这里写"老节奏可用 `PENDING_DEAL_PUSH_RETRY_DELAYS_MS` 写回"——
+//    那个环境变量随 9 点推送一起删除，**不再有读取点**；要换节奏用下面的
+//    `PUSH_DAILY_RETRY_INTERVAL_MS` / `PUSH_DAILY_RETRY_MAX_RETRIES`（当前无 service 调用）。
 const DEFAULT_DAILY_RETRY_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_DAILY_RETRY_MAX_RETRIES = 6;
 
 // 告警默认模板：**哪条推送 · 哪天 · 什么原因 · 今天不会再试**（业务负责人要的四样）。
 const DEFAULT_ALERT_TEMPLATE = '⚠️【{push}】{day} 推送失败，今天不会再自动重试。'
   + '原因：{reason}（已试 {attempt}/{maxAttempts} 次）';
-const DEFAULT_PENDING_DEAL_PUSH_ALERT_NAME = '9 点待处理单推送';
 const DEFAULT_SECOND_DELIVERY_ALERT_NAME = '二次交付每日提醒';
 
 // 告警模板认得的占位符（写错名字**启动时**就抛错——不认识的占位符会被渲染成空串，
@@ -186,9 +196,9 @@ const resolvePushAlertConfig = (env = process.env) => ({
   template: assertAlertTemplate(
     readString(env, PUSH_RETRY_ALERT_TEMPLATE_ENV_KEY, DEFAULT_ALERT_TEMPLATE),
   ),
+  // ⚠️ 2026-10-28：原来的 `names.pendingDealPush`（9 点待处理单推送）随那条推送一起删除 ——
+  //   它的默认值/环境变量（`PENDING_DEAL_PUSH_ALERT_NAME`）在线上已无读取点。
   names: {
-    pendingDealPush: readString(env, PENDING_DEAL_PUSH_ALERT_NAME_ENV_KEY,
-      DEFAULT_PENDING_DEAL_PUSH_ALERT_NAME),
     secondDelivery: readString(env, SECOND_DELIVERY_ALERT_NAME_ENV_KEY,
       DEFAULT_SECOND_DELIVERY_ALERT_NAME),
   },
@@ -376,7 +386,6 @@ module.exports = {
   PUSH_RETRY_ALERT_ENABLED_ENV_KEY,
   PUSH_RETRY_ALERT_CHAT_ID_ENV_KEY,
   PUSH_RETRY_ALERT_TEMPLATE_ENV_KEY,
-  PENDING_DEAL_PUSH_ALERT_NAME_ENV_KEY,
   SECOND_DELIVERY_ALERT_NAME_ENV_KEY,
   DEFAULT_TRANSIENT_MAX_RETRIES,
   DEFAULT_TRANSIENT_BASE_DELAY_MS,
@@ -386,7 +395,6 @@ module.exports = {
   DEFAULT_DAILY_RETRY_INTERVAL_MS,
   DEFAULT_DAILY_RETRY_MAX_RETRIES,
   DEFAULT_ALERT_TEMPLATE,
-  DEFAULT_PENDING_DEAL_PUSH_ALERT_NAME,
   DEFAULT_SECOND_DELIVERY_ALERT_NAME,
   ALERT_TEMPLATE_PLACEHOLDERS,
   RETRYABLE_HTTP_STATUSES,

@@ -224,9 +224,10 @@ const seedConfirmedTask = async (store, overrides = {}) => {
 test('⑧ 点「是」入库成功之后 → 「报货批次」那一行的到货状态改成「已到货」', async () => {
   const harness = makeArrivalHarness();
   const taskId = await seedConfirmedTask(harness.store);
-  await harness.service.handleCardAction(
-    { action: 'confirm_arrival_reconcile', draft_id: taskId }, {}, 'ou_1',
-  );
+  // ⭐ 2026-10-28：入口从「卡片上的『是』」换成 `confirmLocked` ——
+  //   卡片回调（`handleCardAction`）已随「没有旧卡片」删除；`confirmLocked` 是**同一条共享实现**，
+  //   现役入口（工作台验收 / 扫码验收 → `confirmBatchArrival`）走的也是它 ⇒ 判据一字未动。
+  await harness.service.confirmLocked(taskId, 'ou_1');
   assert.equal(harness.invocations.length, 1, '确认成功之后必须叫一次"这一批到货了"');
   assert.equal(harness.invocations[0].batchNo, BATCH_NO, '交给它的是这一批的批次号');
   // 真的写进了「报货批次」那一行（不是"看起来写了"）
@@ -241,9 +242,10 @@ test('⑧ 退货批次 / 认不出是哪一批：不写任何到货状态（不�
   // 任务上没有批次号（理论上的旧数据）→ 直接跳过，不写任何表
   const taskId = await seedConfirmedTask(harness.store, { batch_no: '' });
   const before = harness.gateway.writes.length;
-  await harness.service.handleCardAction(
-    { action: 'confirm_arrival_reconcile', draft_id: taskId }, {}, 'ou_1',
-  );
+  // ⭐ 2026-10-28：入口从「卡片上的『是』」换成 `confirmLocked` ——
+  //   卡片回调（`handleCardAction`）已随「没有旧卡片」删除；`confirmLocked` 是**同一条共享实现**，
+  //   现役入口（工作台验收 / 扫码验收 → `confirmBatchArrival`）走的也是它 ⇒ 判据一字未动。
+  await harness.service.confirmLocked(taskId, 'ou_1');
   assert.equal(harness.invocations.length, 0, '没有批次号 → 一次都不叫（不猜是哪一批）');
   assert.equal(harness.gateway.writes.filter((item) => item.tableKey === 'purchaseOrderBatch').length, 0);
   assert.ok(harness.gateway.writes.length >= before);
@@ -254,24 +256,17 @@ test('⑧ 写「已到货」失败**不阻塞**：入库已经成功，任务照
     markBatchArrived: async () => { throw new Error('模拟：写批次行失败'); },
   });
   const taskId = await seedConfirmedTask(harness.store);
-  const result = await harness.service.handleCardAction(
-    { action: 'confirm_arrival_reconcile', draft_id: taskId }, {}, 'ou_1',
-  );
+  const result = await harness.service.confirmLocked(taskId, 'ou_1');
   const task = await harness.store.get(taskId);
   assert.equal(task.status, 'posted', '入库事实已经落地；批次状态写不回去不能把这一单判失败');
   assert.ok(result !== undefined);
 });
 
-test('⑧ 点「否」（不入库）→ 到货状态不动，仍然是「未到货」', async () => {
-  const harness = makeArrivalHarness();
-  const taskId = await seedConfirmedTask(harness.store);
-  await harness.service.handleCardAction(
-    { action: 'reject_arrival_reconcile', draft_id: taskId }, {}, 'ou_1',
-  );
-  assert.equal(harness.invocations.length, 0);
-  const batch = await harness.gateway.get('purchaseOrderBatch', BATCH_RECORD_ID);
-  assert.equal(batch.fields['到货状态'], '未到货');
-});
+// ⛔ 2026-10-28：原「⑧ 点『否』（不入库）→ 到货状态不动」那条用例已退场 ——
+//   「否」这个动作在 2026-10-12 清群聊入口时就已删除（当时它只剩"未知动作"这一种结果）；
+//   现在连卡片回调本身也没有了（业务负责人：「现在没有群聊入口，也没有旧卡片」）。
+//   ⚠️ 真正的判据没有丢：「不入库就一个字都不写」由 `confirmLocked` 各失败分支的死断言钉着
+//     （下面几条用例 + `arrivalLandingOnBatch.test.js`）。
 
 test('⑧ 按批次号定位那一行：找不到就只 warn，不抛（写不进去不阻塞）', async () => {
   const gateway = makeGateway({ purchaseOrderBatch: [] });
