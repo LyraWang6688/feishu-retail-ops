@@ -401,7 +401,7 @@ test('AC-EX7 过期 + 本单是空的 ⇒ 人话是"本单还没有明细"，不
     const result = await h.write.submitSale({ openId, submitKey: key, paymentStatus: PAYMENT_STATUS.unpaid });
     assert.equal(result.ok, false, '没有明细当然成不了单');
     assert.equal(result.code, 'session_empty',
-      '⚠️ 要指得出"能做的事"：本单还没有明细 ⇒ 先加入本单；**不许**再回"过期，请刷新这一页"'
+      '⚠️ 要指得出"能做的事"：本单还没有明细 ⇒ 先点加货按钮；**不许**再回"过期，请刷新这一页"'
       + '（她照那个做了三遍都没用 —— 那正是这次要修的坑）');
     assert.equal(entriesOf(h, 'salesEntry').length, 0);
   } finally { h.cleanup(); }

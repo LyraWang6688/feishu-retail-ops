@@ -1,8 +1,8 @@
-// 「两条每日推送共用的重试 / 告警策略」的直盯用例（`config/pushRetry`）。
+// 「重试 / 告警策略」的直盯用例（`config/pushRetry`）。
 //
-// 为什么单独一个文件：这份策略**两条链路共用**（9 点待处理单推送 + 二次交付每日提醒），
-// 判据与状态机只有这一处实现；两条链路各自的行为用例分别在
-// `pendingDealPushRetry.test.js` / `secondDeliveryRetry.test.js`。
+// ⭐ 2026-10-28：原来这里写的是"两条每日推送共用"（9 点待处理单推送 + 二次交付每日提醒）——
+//   两条推送都已整体删除（业务负责人：「9 点群推送不再需要」）。
+//   现在**生产在用的只有瞬时层**；按天层与告警层的纯件保留（有单测），将来做定时任务直接复用。
 // 本文件盯的是最容易静默坏掉的三件：
 //   ① **哪些错误算瞬时**（1254607 / 5xx / 429 / 网络中断 ⇒ 重试；权限 / 参数 / 缺配置 ⇒ 绝不重试）；
 //   ② 退避表与间隔上限**可配**（指数、封顶、`0` = 不重试、总跨度不许超过一天）；
@@ -15,7 +15,7 @@ const {
   isTransientLarkError, larkCodeOf, transientRetryDelays, withTransientRetry, resolveDailyAttempt,
   shouldSendFailureAlert, formatPushAlertText, pushFailureReason,
   DEFAULT_TRANSIENT_MAX_RETRIES, DEFAULT_DAILY_RETRY_INTERVAL_MS, DEFAULT_DAILY_RETRY_MAX_RETRIES,
-  DEFAULT_ALERT_TEMPLATE, DEFAULT_PENDING_DEAL_PUSH_ALERT_NAME, DEFAULT_SECOND_DELIVERY_ALERT_NAME,
+  DEFAULT_ALERT_TEMPLATE, DEFAULT_SECOND_DELIVERY_ALERT_NAME,
 } = require('../src/config/pushRetry');
 
 const withResponse = (status, data) => Object.assign(new Error(`Request failed with status code ${status}`), {
@@ -164,7 +164,6 @@ test('按天策略：默认每 10 分钟 × 6；总跨度不许超过一天；�
   assert.equal(alert.enabled, true, '默认开 —— "不静默"是这次的 P0 目标');
   assert.equal(alert.chatId, '', '空串 = 用该条推送自己的群');
   assert.equal(alert.template, DEFAULT_ALERT_TEMPLATE);
-  assert.equal(alert.names.pendingDealPush, DEFAULT_PENDING_DEAL_PUSH_ALERT_NAME);
   assert.equal(alert.names.secondDelivery, DEFAULT_SECOND_DELIVERY_ALERT_NAME);
   assert.equal(resolvePushAlertConfig({ PUSH_RETRY_ALERT_ENABLED: '' }).enabled, false, '显式布尔：空串 = 关');
   assert.throws(() => resolvePushAlertConfig({ PUSH_RETRY_ALERT_ENABLED: 'on maybe' }), /显式布尔/);

@@ -489,7 +489,12 @@ const SUCCESS_RETURN = Object.freeze({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⭐⭐ 2026-10-13 纯函数（**无 IO**）—— 判据单一来源，谁接 scanPageRealm.js 都能直接调
-//   ⚠️ 缺码判据**只算 default**：special（女 34/43 · 男 46/47/48）**不参与** ✓
+//   🔴 2026-10-28 口径收口：**只保留 `expandRange`**。
+//      旧的 `missingSizes` / `displaySizes`（缺码只算 default、special 不参与、
+//      “采购明细出现过才展示”）已**整段删除** —— 它们只被旧测试引用、运行时已无调用，
+//      留着会与现行口径（缺码 = **可录范围** − 有货；缺货特殊码折叠）混淆 ✗。
+//      ⚠️ 现行唯一真源：`SIZE_SEGMENTS.ranges` 的 `enterable` / `normal` / `special` 三段；
+//        缺码与展示由 `services/scanPageService.js` + `views/scanPageRealm.js` 直接读它。
 // ─────────────────────────────────────────────────────────────────────────────
 const expandRange = (segment) => {
   const [a, b] = Array.isArray(segment) ? segment : [segment?.from, segment?.to];
@@ -497,27 +502,6 @@ const expandRange = (segment) => {
   const to = Number(b);
   if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return [];
   return Array.from({ length: to - from + 1 }, (_, i) => from + i);
-};
-
-/** 缺码判断 = **default − 已有**（special 不参与 ✓）。返回缺的那些码（升序）。 */
-const missingSizes = (category, existingSizes = []) => {
-  const range = SIZE_SEGMENTS.ranges[category] || SIZE_SEGMENTS.ranges[
-    Object.keys(SIZE_SEGMENTS.ranges).find((k) => SIZE_SEGMENTS.ranges[k].label === category) || ''
-  ];
-  if (!range) return [];
-  const have = new Set((existingSizes || []).map((s) => Number(s)));
-  return expandRange(range.default).filter((size) => !have.has(size));
-};
-
-/** 展示清单 = **default ∪ 采购明细里出现过的 special**（没出现过 ⇒ 不展示 ✓）。 */
-const displaySizes = (category, presentSpecialSizes = []) => {
-  const range = SIZE_SEGMENTS.ranges[category];
-  if (!range) return { base: [], extra: [] };
-  const present = new Set((presentSpecialSizes || []).map((s) => Number(s)));
-  return {
-    base: expandRange(range.default),
-    extra: Array.from(range.special).filter((size) => present.has(size)),
-  };
 };
 
 // ⭐ 2026-10-14：特殊码折叠块（**显式布尔** —— 不许 `|| 兜底`：那样"清空变量"会关不掉 ✗）
@@ -557,18 +541,14 @@ const SIZE_SEGMENTS = Object.freeze({
     B: Object.freeze({
       label: '女', from: 34, to: 43,
       enterable: Object.freeze([34, 43]),
-      // ⭐ 2026-10-14 她**两次**改口径，以**最后一次**为准（逐字）：
-      //   「男鞋的范围就是 38-45，女鞋就是 36-41 …… 如果这些没有就是缺码，
-      //    以及在销售页的预定逻辑，就是让这个范围**扣减已有的库存**，
-      //    其余的特殊码，如果有就显示，没有不会做缺码显示」
-      //   ⇒ 默认段 = 缺码判据 = 销售页「预订」的候选（预订 = 段内 − 有货）。
-      //   ⇒ 特殊码**不参与缺码**（有就显示 ✓ 没有不显示、也不算缺 ✓）。
-      //   ⇒ 见 docs/scan-size-scope-ruling-2026-10-14.md（改前：36-42 / 更早 35-42）
-      // ⭐ 2026-10-14 她的最终口径：「女鞋就是 **36-41**」⇒ normal = 缺码判据 + 预订范围 ✓
-      // ⭐ 2026-10-18 业务负责人：「女鞋把特殊码加上 41」⇒ normal 收为 36–40，41 移入特殊码。
+      // ⭐⭐ 现行口径（2026-10-18 起，唯一真源）：
+      //   普通码 normal = **36–40**；特殊码 special = **34/35/41/42/43**；
+      //   可录范围 enterable = 34–43（缺货基准 = 可录范围 − 有货；缺货特殊码归折叠块）。
+      //   `default` 保留为 normal 的兼容别名（同一个数组 ✓ 不是第二份）。
+      //   ⚠️ 2026-10-14 的「女 36–41」已被 2026-10-18「41 移入特殊码」取代，
+      //      旧文档/注释里仍可能看到 36–41 —— 以本文件为准 ✗。
       normal: Object.freeze([36, 40]),
       default: Object.freeze([36, 40]),
-      // ⭐ 2026-10-14 她逐字：女码特殊码 = 34 · 35 · 42 · 43；2026-10-18 再加 **41**。
       special: Object.freeze([34, 35, 41, 42, 43]),
     }),
   }),
@@ -963,8 +943,6 @@ const MULTI_ITEM_RENDER_TEXTS = Object.freeze({
 module.exports = {
   SIZE_SEGMENTS,
   expandRange,
-  missingSizes,
-  displaySizes,
   SCAN_PAGE,
   MULTI_ITEM_RENDER_TEXTS,
   ROUTE,

@@ -3,18 +3,17 @@
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 
 /**
- * ⭐⭐ 2026-10-14：**"展示尺码读 normal、特殊码只在有货时出现"这条接线**的**回归哨兵**。
+ * ⭐⭐ 2026-10-14（2026-10-28 口径收口后修订）：**展示尺码接线**的回归哨兵。
  *
- * 结论（先核后写）：**这条修已经在 main 上（`38d80eb`）** ——
- *   · `services/scanPageService.js:1163-1166`：销售/库存那条链的 `scope = normalScopeOf(parsed.categoryCode)`
- *     （`normalScopeOf:771-780` = 配置的 `normal`：A 38–44 · B 36–40 ⇒ **零飞书读** ✓ special 不参与缺码 ✓）
- *   · `loadSizeScope`（= `sizesForCategory`，`from/to` = **enterable** 女 34–43 / 男 38–48）**留给验收页** ✓
- *   · `renderSizes = buckets.keys() ∪ scope.sizes` ⇒ **有货的特殊码照旧出现在现货** ✓（它在 `buckets` 里）
- *   · 缺码 = `scopeSet(=normal).has(size) && rowTotal === 0` ⇒ **没货的特殊码根本不进 renderSizes** ✓
- *     ⇒ 不显示、不算缺码、不进预订 ✓（她："特殊码不要天天提示缺 43/48" ✓）
+ * 现行口径（唯一真源 `config/scanPage.js`）：
+ *   · 展示/缺货基准 = **可录范围 enterable**（女 34–43 / 男 38–48）；
+ *   · 有货的尺码（含特殊码）照旧出现在现货区；缺货特殊码归「特殊码」折叠块；
+ *   · `renderSizes = buckets.keys() ∪ scope.sizes`；缺码 = 在可录范围内 && 三状态都没货。
  *
- * ⚠️ 我第一版把这条修**落到了共用的 `sizesForCategory`** ⇒ 全量两遍各 1 红（`AC-AP10`：验收页候选少了 46/47/48 ✗）
- * ⇒ 因此本文件的第一条 AC 就是**"不许越界"的哨兵**：`sizesForCategory` 必须**继续**返回可录范围（验收页口径）✓
+ * 🔴 2026-10-28：旧的 `normalScopeOf` / `loadSizeScope` 已删除（前者是旧缺码基准，
+ *    后者是无调用的包装）；不要按本文件旧版本的注释去源码里找它们 ✗。
+ * ⚠️ 本文件第一条 AC 仍钉住：`sizesForCategory` 必须继续返回**可录范围**
+ *    （它是验收/一致性核对共用的能力，不许收窄成 normal ✗）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -65,14 +64,11 @@ test('AC-SW-3 ⭐⭐ 有货的特殊码**照旧出现**（靠 `buckets` 带进�
     '缺货 ∩ 特殊码 ⇒ 归到 `folded`（折叠块 ✓）');
 });
 
-test('AC-SW-4 ⭐ 验收页口径未被牵连（`loadSizeScope` 仍在，且只给验收用）', () => {
+test('AC-SW-4 ⭐ 旧 helper 已删；`sizesForCategory`（可录范围本体）仍在', () => {
   const code = fs.readFileSync(path.join(__dirname, '../src/services/scanPageService.js'), 'utf8');
-  assert.match(code, /const loadSizeScope = async \(\{ categoryCode \}\) => sizesForCategory\(categoryCode, config\)/,
-    '`loadSizeScope`（可录范围）保留 ✓');
-  // ⭐⭐ 2026-10-14 晚 **改指向**（依据：她「`/r/accept` 这条路要彻底拆掉」）：
-  //   改前逐字：`assert.match(acceptance, /sizesForCategory\(categoryCode, config\)/, '验收页仍在用 …')`
-  //   改后：验收那一屏退场 ⇒ 扫码页路由里**不再有**这个调用点 ✓；
-  //        而**「可录范围」本体与它的一致性核对照旧**（`sizesForCategory` / `loadSizeScope` 都在 ✓ 没删 ✗）
+  // 2026-10-28 口径收口：这两个旧 helper 不再存在（防止被重新引回、与现行口径并存）
+  assert.equal(/const normalScopeOf =/.test(code), false, '`normalScopeOf` 已删除 ✗');
+  assert.equal(/const loadSizeScope =/.test(code), false, '`loadSizeScope` 已删除 ✗');
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage.js'), 'utf8');
   assert.equal(/sizesForCategory\(categoryCode, config\)/.test(route), false,
     '扫码页路由里不再有验收页那个调用点（它随验收退场 ✓）');

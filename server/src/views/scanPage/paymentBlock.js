@@ -59,7 +59,7 @@ const draftLinesHtml = (write) => {
  *   · 校验失败**原地重渲染**（`rows` = 她刚填的那几行）⇒ 原样带回来，行数补齐到 `count`
  *     —— ⚠️ 补齐的那几行**不注入默认方式**（她明明没选，替她选上就等于替她记账）。
  */
-const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
+const buildPaymentRows = ({ count, defaultMethod, defaultAmount, rows } = {}) => {
   const given = Array.isArray(rows) ? rows : [];
   const total = Math.max(1, Number(count) || 1, given.length);
   return Array.from({ length: total }, (_, index) => {
@@ -70,7 +70,10 @@ const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
         amount: row.amount === undefined || row.amount === null ? '' : String(row.amount),
       };
     }
-    return { method: given.length ? '' : (index === 0 ? String(defaultMethod || '') : ''), amount: '' };
+    return {
+      method: given.length ? '' : (index === 0 ? String(defaultMethod || '') : ''),
+      amount: index === 0 ? String(defaultAmount ?? '') : '',
+    };
   });
 };
 
@@ -98,24 +101,24 @@ const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
  *    填了金额的行才算一笔，没填的行不用"（服务端同一个判据）。
  * ⚠️ 校验失败**原地重渲染**时，`write.paymentRows` 是**她刚填的那几行**（值原样回填）。
  */
-const paymentRowsHtml = (write) => {
+const paymentRowsHtml = (write, opts = {}) => {
   const t = write.texts;
   const fields = write.fields;
   const rows = Array.isArray(write.paymentRows)
     ? write.paymentRows
     : buildPaymentRows({
       count: write.paymentRowCount,
-      // ⭐ 2026-10-18：表驱动 —— 配置默认方式若不在表里，第一行选表里第一项（不再出现"空 selected"）。
-      defaultMethod: (write.paymentMethods || []).includes(write.defaultPaymentMethod)
-        ? write.defaultPaymentMethod : (write.paymentMethods || [])[0],
+      // ⭐ 2026-10-29：表驱动 —— 默认方式 = 表里第一项，不再回退到写死的「微信」。
+      defaultMethod: (write.paymentMethods || [])[0] || '',
+      defaultAmount: opts.defaultAmount,
     });
   return rows.map((row) => `<div class="form-row form-row--pay">
-<select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}"><option value="">${escapeHtml(t.paymentNoneOption)}</option>${optionsHtml(write.paymentMethods, row.method)}</select>
+<select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}">${optionsHtml(write.paymentMethods, row.method || (write.paymentMethods || [])[0])}</select>
 <input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" required min="0" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
 </div>`).join('\n');
 };
 
-/** 销售表单：**每件层**（加入本单 / 加配品）+ **总单层**（每件实收 + 付款情况 + 收款行 + 提交）。
+/** 销售表单：**每件层**（加货 / 加配品）+ **总单层**（每件实收 + 付款情况 + 收款行 + 提交）。
  *
  * ⭐ 2026-10-10：卡片的说明标题（`saleHeading`，「销售（可以连着扫，最后一起提交）」）
  *   与「资金不是必填…」那句说明（`fundsPendingNote`）**都删掉** —— 子 tab 上已经写着「销售」，
@@ -141,7 +144,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     ? `<p class="form-alert">${escapeHtml(write.errorText)}</p>`
     : '';
   // 🔴🔴 2026-10-12（真机丢钱之后**合并**的）：原来这里是**两个 form** ——
-  //    上面那个（尺码 + 加入本单）和下面那个（每件实收 + 付款情况 + 收款行 + 提交）。
+  //    上面那个（尺码 + 加货）和下面那个（每件实收 + 付款情况 + 收款行 + 提交）。
   //    本单条还有**第三颗**不带钱的提交按钮 ⇒ 她在销售块填的钱被别的按钮吃掉 ⇒ `payment_count: 0`。
   //    ⇒ 现在**整页只有一个 form**：尺码 / 每件实收 / 付款情况 / 收款行 **都在里面**，
   //      两个按钮各自带 `action` 值（HTML 原生：提交按钮的 name=value 会进 POST）——
@@ -178,12 +181,12 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //   判据 AC-SM-A 从 `data-multi-add` 那一处切到下一个 `>` 再核 `type="submit"` / `name` / `value`
   //   ⇒ 钩子必须出现在同一个元素**靠前**的位置（这不是风格问题，是判据切片的定义 ✓）。
   //
-  // 🔴 **本单为空 ⇒ 这一屏逐字回到今天**（`t.addAnotherButton || t.addButton` ＋ **没有**任何新 DOM ✗）
+  // 🔴 **本单为空 ⇒ 这一屏逐字回到今天**（`t.addAnotherButton` ＋ **没有**任何新 DOM ✗）
   //   —— 这是"N=1 逐字不变"落在**页面**上的那一半（既有的领域渲染判据 AC-W1 / AC2 / AC5 / AC7
-  //   都在空单下断言那一颗按钮的文字「加入本单」⇒ 本设计**一处都不动它们** ✓ 不需要成对迁移 ✓）。
+  //   都在空单下断言那一颗按钮的文字「➕ 还要加一双」⇒ 本设计**一处都不动它们** ✓ 不需要成对迁移 ✓）。
   // ⭐ **本单已有货品 ⇒ 换那颗入口**（同一颗按钮、**同一个 `action=add_line`** ✓ 只是文案与钩子换成
   //   「＋ 再加一个货品」＋`data-multi-add`）—— **不新增第二颗同义按钮**（两颗一模一样的按钮更糟 ✗）。
-  //   ⚠️「加入本单」⇒「＋ 再加一个货品」是**有意的语义递进**：第一件叫"加入本单"，
+  //   ⚠️「➕ 还要加一双」⇒「＋ 再加一个货品」是**有意的语义递进**：第一件叫"还要加一双"，
   //     已经在建多货品单了才叫"再加一个货品" ✓（依据 = 她 2026-10-16「要：销售也接上」）。
   // ══════════════════════════════════════════════════════════════════════════
   const multiItemAdd = MULTI_ITEM_ORDER.enabled === true && lines.length > 0;
@@ -191,7 +194,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     ? `<h3 class="multi-item__title">${escapeHtml(MULTI_ITEM_RENDER_TEXTS.title)}</h3>\n`
     : '';
   const addLineLabel = multiItemAdd
-    ? MULTI_ITEM_RENDER_TEXTS.addButton : (t.addAnotherButton || t.addButton);
+    ? MULTI_ITEM_RENDER_TEXTS.addButton : t.addAnotherButton;
   // ══════════════════════════════════════════════════════════════════════════
   // ⭐⭐ 2026-10-16 21:1x（本卡 ·「**销售也弹扫码框**」）——「加货成功、303 回来这一发接着扫」
   //   的**销售那一份**（业务负责人当天 21:1x 弹窗拍板「**要，销售也弹扫码框**」✓）。
@@ -237,7 +240,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
 ${sizeInput}
-<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
+<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
 ${alert}
 ${multiItemTitleHtml}${draftLinesHtml(write)}
 ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
@@ -247,7 +250,7 @@ ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
      data-progress-submit="1" 钩子：views/scanPage/layout.js 的提交进度脚本据它拦下这一次，
      先弹全屏遮罩再 fetch，响应回来 document.write 整页（成功页 / 资金页 / 400 提示页都照原样）。
      ⚠️ 只加**这一个属性**（按钮 name/value/文案一个字未动 ✓）；老环境没有 JS 照样走原生提交。
-     ⚠️ 【加入本单】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
+     ⚠️ 【➕ 还要加一双】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
 <button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>
 </form>
@@ -284,7 +287,7 @@ const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 </legend>
 <div class="size-chips">${items.length
     ? items.map((item) => `<label class="size-chip">
-<input type="radio" name="size" value="${escapeHtml(item.size_text)}">
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
 <span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
 </label>`).join('\n')
     : `<span class="hint">${escapeHtml(empty)}</span>`}</div>
@@ -313,7 +316,7 @@ ${inner}
 
 /** 销售页那一块（#515）：折叠块里是**能选的尺码卡**（与外面同规则：`name="size"` 的 radio ✓） */
 const specialFoldHtml = (items) => specialFoldShellHtml(items, `<div class="size-chips">${items.map((item) => `<label class="size-chip">
-<input type="radio" name="size" value="${escapeHtml(item.size_text)}">
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
 <span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
 </label>`).join('\n')}</div>`);
 

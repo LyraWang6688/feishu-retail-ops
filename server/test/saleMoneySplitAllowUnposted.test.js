@@ -25,8 +25,12 @@ const read = (...p) => fs.readFileSync(path.join(SERVER, ...p), 'utf8');
 
 const FROZEN = read('src', 'services', 'scanWriteService.js');
 const DELIVERY = read('src', 'services', 'salesDeliveryService.js');
-/** 另外 3 个调用点（**它们一个字都不许改** ✗）。 */
-const OTHER_CALLERS = ['src/routes/workbench.js', 'src/services/secondDeliveryService.js', 'src/services/salesThreadProgressService.js'];
+/**
+ * 另外两个调用点（**它们一个字都不许改** ✗）。
+ * ⭐ 2026-10-28：原来是三处，`salesThreadProgressService.js`（群话题进展推进）已随
+ * 群入口 / 卡片一起整体删除 ⇒ 从名单里去掉（它不是"改了"，是**不存在了**）。
+ */
+const OTHER_CALLERS = ['src/routes/workbench.js', 'src/services/secondDeliveryService.js'];
 
 test('AC-MS-G1 ⭐⭐ `allowUnposted: true` 全仓**恰好一处**（只在货那一跑 ✓ 别的调用方一个都没有 ✗）', () => {
   const routable = [

@@ -211,22 +211,29 @@ test('AC-7 ⭐⭐ 反方向：采购发布链路 / 表变更入口仍在（能�
   assert.match(events, /bitable_record_changed/, '⛔ 表变更事件入口本身必须还在 ✗');
 });
 
-test('AC-8 ⭐⭐ 反方向：卡片动作骨架（含未知动作兜底人话）仍在（能真红：删掉 unknownCardAction ⇒ 红）', () => {
+// ⭐ 2026-10-28（口径更新，不是放宽）：业务负责人确认「现在没有群聊入口，也没有旧卡片」
+//   ＋「9 点群推送不再需要」⇒ 卡片动作骨架、未知动作兜底、「确认成交」按钮、
+//   群话题进展识别服务**都已按她的口径删除**。下面这三条 AC 因此**翻成反方向**
+//   （「塞回即红」）：它们钉的是"这些已退场的东西不许复活"，覆盖强度没有降低。
+test('AC-8 ⭐⭐ 反方向：卡片动作骨架已退场（能真红：把 handleCardAction 塞回 ⇒ 红）', () => {
   const lark = read('server/src/services/larkMvpService.js');
-  assert.match(lark, /handleCardAction\s*\(/, '⛔ 卡片动作骨架必须还在 ✗');
-  assert.equal(exists('server/src/config/unknownCardAction.js'), true, '⛔ 未知动作兜底人话必须还在 ✗');
-  const unknown = read('server/src/config/unknownCardAction.js');
-  assert.match(unknown, /UNKNOWN_CARD_ACTION_TOAST/, '⛔ 兜底文案常量必须还在 ✗');
-  // 「确认成交」卡的按钮动作（她 2026-10-07 拍板的甲）
-  assert.match(lark, /completeDealFromCard|confirm_deal/, '⛔ 确认成交那条卡动作必须还在 ✗');
+  // ⚠️ 只认**方法定义/调用**（行首），历史注释里提到方法名不算复活。
+  assert.equal(/^\s*(async\s+)?handleCardAction\s*\(/m.test(lark), false, '⛔ 卡片动作入口不许复活 ✗');
+  assert.equal(exists('server/src/config/unknownCardAction.js'), false, '⛔ 未知动作兜底配置不许复活 ✗');
+  const events = read('server/src/routes/larkEvents.js');
+  // ⚠️ 只认**事件注册**那个形状（`'card.action.trigger': handler`），历史注释不算。
+  assert.equal(/'card\.action\.trigger'\s*:/.test(events), false, '⛔ 卡片回调事件不许注册 ✗');
+  // 「确认成交」那条卡动作（她 2026-10-07 拍板的甲）也随卡片一起退场
+  assert.equal(/completeDealFromCard\s*\(|SALES_CONFIRM_DEAL_ACTIONS/.test(lark), false,
+    '⛔ 确认成交卡动作不许复活 ✗');
 });
 
-test('AC-9 ⭐⭐ 反方向：`salesThreadProgressService.completeDealFromCard` 仍在（能真红：删掉它 ⇒ 红）', () => {
-  const source = read('server/src/services/salesThreadProgressService.js');
-  assert.match(source, /completeDealFromCard\s*\(/, '⛔ 确认成交（卡片按钮那条可达链路）必须还在 ✗');
+test('AC-9 ⭐⭐ 反方向：`salesThreadProgressService` 已整体删除（能真红：把文件塞回 ⇒ 红）', () => {
+  assert.equal(exists('server/src/services/salesThreadProgressService.js'), false,
+    '⛔ 群话题进展识别服务不许复活 ✗');
 });
 
-test('AC-10 ⭐⭐ 反方向：扫码链路 / 共享落库层 / 9 点推送 / 配品销售仍在（能真红：删掉任一个 ⇒ 红）', () => {
+test('AC-10 ⭐⭐ 反方向：扫码链路 / 共享落库层 / 配品销售仍在（能真红：删掉任一个 ⇒ 红）', () => {
   const mustExist = [
     'server/src/services/scanArrivalService.js',
     'server/src/services/scanWriteService.js',
@@ -234,9 +241,12 @@ test('AC-10 ⭐⭐ 反方向：扫码链路 / 共享落库层 / 9 点推送 / �
     'server/src/services/v1BitableGateway.js',
     'server/src/config/salesMovements.js',
     'server/src/config/salesTradeTypePolicy.js',
-    'server/src/services/pendingDealPushService.js',
   ];
   for (const rel of mustExist) assert.equal(exists(rel), true, `⛔ 保留清单里的 ${rel} 被误删了 ✗`);
+  // ⭐ 2026-10-28：`pendingDealPushService.js`（9 点群推送）**已按业务负责人的口径删除** ——
+  //   改前逐字它在保留清单里；现在反过来钉"不许复活"（能真红）。
+  assert.equal(exists('server/src/services/pendingDealPushService.js'), false,
+    '⛔ 9 点群推送服务不许复活 ✗');
   // ⭐ 2026-10-17 迁移（业务负责人：「到货单已经不用了」＋「货品建档唯一路径 = 工作台货品上新表单」）：
   //   改前逐字：断言到货链路仍挂着「建档 + 成本」（`ensureArrivalProducts` 必须还在）。
   //   改后逐字：两者**已按 A 方案整条删除** ⇒ 这里反过来钉"不许复活"（塞回即红）。

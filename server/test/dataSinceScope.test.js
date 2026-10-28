@@ -46,8 +46,9 @@ test('回归锁（源码）：她当下正在做的那一单那几条路**零引
     'src/services/scanWriteService.js',
     // 交付 + 扣库存（**工作台单笔交付**与**扫码交付**共用这一条）
     'src/services/salesDeliveryService.js',
-    // 群 / 话题里"这一单"的进度推进（她点名的那一单）
-    'src/services/salesThreadProgressService.js',
+    // ⚠️ 2026-10-28：`salesThreadProgressService.js`（群话题进展推进）已随群入口/卡片整体删除
+    //   ⇒ 它不在"零引用"名单里了（文件都不存在）。判据的本意不变：下面这些**还在跑**的路
+    //   一个都不许引用数据起点判据。
     // 补记收款 / 「确认到账」那一刻的写库
     'src/services/paymentService.js',
     // 工作台**单笔**操作的入口

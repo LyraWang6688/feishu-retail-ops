@@ -12,46 +12,6 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 const APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN;
 
-test('authenticated card payload without a top-level token reaches the card service', async () => {
-  let received;
-  // ⚠️ 这个桩**刻意不提供 `sendText`**：卡片动作路径已经不认识"私聊收件人"这个出口了
-  //（见下面 ① 的两条调用计数用例）。哪天有人把那条私聊文字加回来，这里会直接炸。
-  const service = {
-    handleCardAction: async (event) => {
-      received = event;
-      return {};
-    },
-  };
-  const handlers = createLarkEventHandlers(service);
-  const event = {
-    operator: { operator_id: { open_id: 'ou_test' } },
-    action: { value: { action: 'modify_sale', draft_id: 'rec_test' } },
-  };
-
-  const response = handlers['card.action.trigger'](event);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.deepEqual(response, { toast: { type: 'info', content: '已收到，正在处理' } });
-  assert.equal(received, event);
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ① 🔴 卡片动作**不再额外发一条私聊文字**（业务负责人 2026-10-06）
-//
-// 她的原话：「**卡片点按钮后那条多余的私聊文字，需要删。**」
-//          「**我们的消息卡片会变化啊！**」
-// ⇒ 「点按钮后必须回一个响应」由两件事承担，两个都必须还在：
-//      · 同步响应 —— handler 的返回值（`{ toast: { type: 'info', … } }`）；
-//      · 业务结果 —— `handleCardAction` 内部对**那张卡片本身**的更新。
-//    所以要删的**只是那条 `sendText(operator_open_id, toast)`**，不是整个响应。
-//
-// ⭐ 这两件事必须用**真实调用计数**证明，不能只断言"没调某个方法" ——
-//    "整条链路根本没跑"同样会让那种断言通过。所以下面用**真的 LarkMvpService**
-//    跑一条**真的卡片动作**，数两个出口：
-//      · `im.message.patch`  = 卡片更新（`updateInteractiveCard`）→ 必须 **1 次**
-//      · `im.message.create` = 主动发消息（落到私聊）              → 必须 **0 次**
-// ─────────────────────────────────────────────────────────────────────────────
-
 /** 会数两个出口的假飞书客户端：patch=改卡片，create=主动发消息（私聊）。 */
 const createCountingClient = () => {
   const patched = [];
@@ -82,62 +42,31 @@ const createCountingClient = () => {
   return { client, patched, created };
 };
 
-/** 用**真的 LarkMvpService**（不是桩）：只有真链路才能给出真实的调用计数。 */
+// ⚠️ 2026-10-28：`createRealService` 仍然保留 —— 下面「私聊链路已移除」那条用例用它跑**真链路**
+//   （卡片回调那三条用例已删除，但"私聊只回那一句 notice、不建任务"这条判据还在）。
 const createRealService = (client) => new LarkMvpService({
   client,
   gateway: { table: () => ({ fields: {} }), listAll: async () => [], validateTables: async () => [] },
   posting: {},
-      store: new JsonTaskStore({
+  store: new JsonTaskStore({
     dir: fs.mkdtempSync(path.join(os.tmpdir(), 'lark-card-toast-')), idField: 'task_id',
   }),
   botOpenId: 'ou_test_bot',
 });
 
-test('① 点按钮 → 卡片更新 1 次 ＋ 主动私聊发送 0 次（真实调用计数）', async () => {
-  const { client, patched, created } = createCountingClient();
-  const service = createRealService(client);
-  const taskId = 'sample_card_task_1';
-  // 一条**已完成**的补样品任务：点它的按钮会走「卡片更新」那条真实分支
-  // （`publishCard` → `updateInteractiveCard` → `im.message.patch`）。
-  await service.store.create({
-    task_id: taskId,
-    type: 'sample_replacement',
-    status: 'completed',
-    sender_open_id: 'ou_operator',
-    product_number: 'TEST-1',
-    result: { size: 40 },
-  });
+// ⛔ 2026-10-28：这里原先有三条**卡片动作**用例（卡片回调把 payload 交给 `handleCardAction`、
+//   点按钮后"卡片更新 1 次 / 主动私聊 0 次"的真实计数、动作失败也不发私聊）。
+//   业务负责人确认「现在没有群聊入口，也没有旧卡片」⇒ 卡片回调事件
+//   （`card.action.trigger`）与 `LarkMvpService.handleCardAction` **整体删除** ⇒ 三条一起退场。
+//   ⚠️ 下面这条反向哨兵钉住"不许复活"（判据不是放宽：改成"没了才算过"）。
 
-  const handlers = createLarkEventHandlers(service);
-  const response = handlers['card.action.trigger']({
-    operator: { operator_id: { open_id: 'ou_operator' } },
-    action: { value: { action: 'choose_sample_replacement', draft_id: taskId, size: 40 } },
-    context: { open_message_id: 'om_card_1' },
-  });
-  await new Promise((resolve) => setTimeout(resolve, 30));
-
-  assert.equal(patched.length, 1, '卡片必须仍然被更新（updateInteractiveCard → im.message.patch 恰好 1 次）');
-  assert.equal(patched[0]?.path?.message_id, 'om_card_1');
-  assert.equal(created.length, 0, '不应再有任何主动发送（im.message.create / reply）到私聊');
-  // 「点按钮后必须回一个响应」这条飞书要求不能被误伤：同步响应原样保留。
-  assert.deepEqual(response, { toast: { type: 'info', content: '已收到，正在处理' } });
-});
-
-test('① 卡片动作失败 → 同样不发私聊（也不再抛出去）', async () => {
-  const created = [];
-  const handlers = createLarkEventHandlers({
-    handleCardAction: async () => { throw new Error('卡片更新失败'); },
-    sendText: async (...args) => { created.push(args); },
-  });
-  const response = handlers['card.action.trigger']({
-    operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'confirm_sale_pending', draft_id: 'sale_1' } },
-  });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  assert.deepEqual(created, [], '失败分支也不许再用私聊文字兜底');
-  assert.deepEqual(response, { toast: { type: 'info', content: '已收到，正在处理' } },
-    '同步响应照旧 —— 她点按钮不会觉得"点不动"');
+test('卡片回调事件已退场：`card.action.trigger` 不再被注册（塞回即红）', () => {
+  const handlers = createLarkEventHandlers({});
+  assert.equal('card.action.trigger' in handlers, false, '卡片回调不许再注册');
+  // 另外两个入口必须还在：消息守卫 ＋ 多维表格记录变更。
+  assert.equal(typeof handlers['im.message.receive_v1'], 'function', '消息事件入口必须在（守卫在 service 里）');
+  assert.equal(typeof handlers['drive.file.bitable_record_changed_v1'], 'function',
+    '表变更事件入口必须在（货品信息 → 标签二维码仍在用）');
 });
 
 test('① 私聊链路已移除：非文字消息只回那一句「请到群里说」（不建任务、不跑链路）', async () => {

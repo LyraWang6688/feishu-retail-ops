@@ -25,12 +25,12 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'sfm_se
 
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
-const { saleSizeGroups, purchaseSizeLines } = require('../src/views/scanPageRealm');
+const { saleSizeGroups, purchaseSizeLines, purchaseSizeGroups } = require('../src/views/scanPageRealm');
 
 const RENDERER_SRC = rendererSource();
 const REALM_SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRealm.js'), 'utf8');
 
-/** 女鞋（B）一款：36 有货；34/35/42/43 是缺货的特殊码；37..41 是缺货的普通码。 */
+/** 女鞋（B）一款：36 有货；34/35/41/42/43 是缺货的特殊码；37–40 是缺货的普通码。 */
 const femaleView = () => ({
   found: true,
   number: 'JX505|咖色|B',
@@ -93,7 +93,7 @@ test('AC-MF2 ⭐ 库存页：缺货的特殊码出现在**折叠块**里（默�
   const fold = html.slice(foldStart, html.indexOf('</details>', foldStart));
   assert.ok(fold.includes('<summary'), '折叠块用原生 `<summary>` ✓');
   assert.equal(/<details[^>]*\sopen/.test(fold.slice(0, 200)), false, '**默认收起**（不带 open ✓）');
-  for (const size of ['34', '35', '42', '43']) {
+  for (const size of ['34', '35', '41', '42', '43']) {
     assert.ok(fold.includes(`>${size} 码<`) || fold.includes(`>${size}<`), `缺货的特殊码 ${size} 要在折叠块里`);
   }
   // ⭐ 折叠块**不许**塞进库存表本体（`stockTableHtml` 那块是 `AC1` 逐字哨兵罩着的）
@@ -106,14 +106,18 @@ test('AC-MF2 ⭐ 库存页：缺货的特殊码出现在**折叠块**里（默�
 
 test('AC-MF3 ⭐ 补货页：缺货的特殊码进折叠块；缺货的普通码照旧在列表里（语义不变）', () => {
   const html = pageOf('replenish');
-  const lines = purchaseSizeLines(femaleView()).map((item) => item.size_text);
-  for (const size of ['37', '38', '39', '40', '41']) {
+  // 展示清单 = `purchaseSizeGroups().lines`（已把缺货特殊码移出主列表）；
+  // `purchaseSizeLines()` 是原始全量行，不能拿来断言"普通码" ✗。
+  const groups = purchaseSizeGroups(femaleView());
+  const lines = groups.lines.map((item) => item.size_text);
+  for (const size of ['37', '38', '39', '40']) {
     assert.ok(lines.includes(size), `缺货的普通码 ${size} 照旧在补货清单里 ✓`);
   }
+  assert.equal(lines.includes('41'), false, '41 是特殊码 ⇒ 不许留在补货主列表 ✗（它进折叠块）');
   const foldStart = html.indexOf('data-special-fold');
   assert.ok(foldStart > -1, '补货页也要有「特殊码」折叠块 ✓');
   const fold = html.slice(foldStart, html.indexOf('</details>', foldStart));
-  for (const size of ['34', '35', '42', '43']) {
+  for (const size of ['34', '35', '41', '42', '43']) {
     assert.ok(fold.includes(size), `缺货的特殊码 ${size} 要在补货折叠块里`);
   }
 });
@@ -121,13 +125,14 @@ test('AC-MF3 ⭐ 补货页：缺货的特殊码进折叠块；缺货的普通码
 test('AC-MF4 ⭐ 折叠块仍按**男女各自一块**（女鞋块里不许出现男鞋的特殊码）', () => {
   const male = { ...femaleView(), number: 'MK31|黑|A', rows: [
     { size_text: '40', cells: [{ key: '门盒', count: 1 }], total: 1, missing: false },
-    ...[46, 47, 48].map((size) => ({ size_text: String(size), cells: [{ key: '门盒', count: 0 }], total: 0, missing: true })),
+    ...[45, 46, 47, 48].map((size) => ({ size_text: String(size), cells: [{ key: '门盒', count: 0 }], total: 0, missing: true })),
   ] };
   const femaleFold = pageOf('replenish').slice(pageOf('replenish').indexOf('data-special-fold'));
   assert.equal(femaleFold.includes('>46<') || femaleFold.includes('>46 码<'), false, '女鞋页不许出现男鞋特殊码 46 ✗');
   const maleHtml = pageOf('replenish', male);
   const maleFold = maleHtml.slice(maleHtml.indexOf('data-special-fold'));
-  assert.ok(maleFold.includes('46') && maleFold.includes('47') && maleFold.includes('48'), '男鞋页折叠块 = 46/47/48');
+  assert.ok(maleFold.includes('45') && maleFold.includes('46') && maleFold.includes('47') && maleFold.includes('48'),
+    '男鞋页折叠块 = 45/46/47/48');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

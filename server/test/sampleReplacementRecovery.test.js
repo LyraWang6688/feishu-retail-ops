@@ -12,7 +12,7 @@ const groupChannelTask = {
   message_id: 'om_her_sale', sender_open_id: 'ou_seller', sales_entry_record_id: 'entry_1',
 };
 
-test('sample reminder remains refreshable when candidate lookup fails after stock deduction', async () => {
+test('sample reminder is still sent (with a retry hint) when candidate lookup fails after stock deduction', async () => {
   const taskStore = new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sample-recovery-')),
     idField: 'task_id' });
   let lookups = 0;
@@ -42,12 +42,9 @@ test('sample reminder remains refreshable when candidate lookup fails after stoc
   const taskId = sentCards[0].elements.at(-1).actions[0].value.draft_id;
   assert.equal((await taskStore.get(taskId)).status, 'pending');
   assert.equal((await taskStore.get(taskId)).notice_sent, true);
-
-  const response = await service.handleCardAction({ action: 'refresh_sample_replacement', draft_id: taskId },
-    {}, 'operator_1');
-  assert.equal(response.toast.content, '可选尺码已刷新');
-  assert.match(updatedCards.at(-1).elements[0].content, /40码：门盒 1/);
-  assert.equal(lookups, 2);
+  // ⛔ 2026-10-28：这一段原先还点卡片上的「刷新可选尺码」（`handleCardAction`）。
+  //   卡片按钮回调已随「没有旧卡片」整体删除 ⇒ 那半条用例退场；
+  //   **提醒本身**（卡片内容、渠道任务、notice_sent）的判据一字未动。
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,13 +79,13 @@ test('② 卡片更新失败的兜底走**任务感知**出口：注入 sendCard
     sendCardToTask: async (task, card) => { taskAware.push({ task, card }); return 'om_task_aware'; },
   });
 
-  const response = await service.handleCardAction(
-    { action: 'choose_sample_replacement', draft_id: 'sample_port_1', size: 40 },
-    { context: { open_message_id: 'om_card_1' } },
-    'ou_seller',
+  // ⭐ 2026-10-28：入口从「点卡片按钮」换成**直接调 publishCard**（它就是这个兜底的实现）——
+  //   卡片回调已删除；这条判据的本意（"卡片改不动 ⇒ 兜底补发必须走任务感知端口"）一字未变。
+  const published = await service.publishCard(
+    await taskStore.get('sample_port_1'), {}, { header: {} }, { stage: 'test' },
   );
 
-  assert.equal(response.toast.content, '该样品已补选');
+  assert.equal(published, true);
   assert.equal(taskAware.length, 1, '兜底必须走任务感知端口');
   assert.equal(taskAware[0].task.task_id, 'sample_port_1', '端口拿到的必须是**任务**，不是裸 open_id');
   assert.equal((await taskStore.get('sample_port_1')).card_message_id, 'om_task_aware');
@@ -108,12 +105,6 @@ test('② 没注入端口（没有群上下文）→ **一条消息都不发**�
     await taskStore.get('sample_port_2'), {}, { header: {} }, { stage: 'test' },
   );
   assert.equal(published, false, '没发出去就不许报成功');
-
-  await service.handleCardAction(
-    { action: 'choose_sample_replacement', draft_id: 'sample_port_2', size: 40 },
-    { context: { open_message_id: 'om_card_2' } },
-    'ou_seller',
-  );
 
   // ⚠️ 旧行为是"悄悄发给 task.sender_open_id"；现在没有那条路了 —— 什么都不发。
   assert.equal((await taskStore.get('sample_port_2')).card_message_id, undefined,

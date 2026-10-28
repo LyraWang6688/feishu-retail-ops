@@ -140,14 +140,14 @@ const enterableSizesOf = (categoryCode, policy = SCAN_STOCK_POLICY) => (
   expandRange(sizeRangeOf(categoryCode, policy)?.enterable)
 );
 
-/** **普通码**（`normal`）—— 有货无货都展示 ＋ 缺码判据；男 38–45 / 女 36–41（**以配置为准** ✓）。 */
+/** **普通码**（`normal`）—— 有货无货都展示 ＋ 缺码分类；男 38–44 / 女 36–40（**以配置为准** ✓）。 */
 const normalSizesOf = (categoryCode, policy = SCAN_STOCK_POLICY) => (
   expandRange(sizeRangeOf(categoryCode, policy)?.normal)
 );
 
 /**
- * **特殊码**（`special`）—— 无货折叠。
- * ⚠️ 它是**离散码清单**（女 = `[34,35,42,43]`），**不是区间** ⇒ **不许用 `expandRange`** ✗
+ * **特殊码**（`special`）—— 缺货时折叠。
+ * ⚠️ 它是**离散码清单**（女 = `[34,35,41,42,43]`），**不是区间** ⇒ **不许用 `expandRange`** ✗
  *    （`expandRange([34,35,…)` 会把第 3 个元素当垃圾、把 34~35 当成一个区间 ⇒ 静默错 ✓）。
  */
 const specialSizesOf = (categoryCode, policy = SCAN_STOCK_POLICY) => {

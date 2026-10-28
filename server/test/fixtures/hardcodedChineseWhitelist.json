@@ -339,7 +339,7 @@
       "请稍后再试。"
     ],
     "views/scanPage/paymentBlock.js": [
-      "<label class=\"size-chip\"> <input type=\"radio\" name=\"size\" value=\"${}\"> <span class=\"size-chip__size\">${} 码</span> </label>",
+      "<label class=\"size-chip\"> <input type=\"radio\" name=\"size\" value=\"${}\" required> <span class=\"size-chip__size\">${} 码</span> </label>",
       "<li class=\"size-fold__item\" data-folded-size=\"${}\"> <span class=\"size-fold__size\">${} 码</span> <span class=\"size-fold__times\">\\u00d7</span> <span class=\"size-fold__count\">${}))}</span> </li>"
     ],
     "views/scanPage/productBlock.js": [
