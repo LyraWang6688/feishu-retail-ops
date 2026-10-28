@@ -28,7 +28,11 @@ export const waitJob = async (api, jobId, { onSuccess, onFailure, intervalMs = 8
     try {
       const job = await api.get(`/api/workbench/sales/delivery/jobs/${encodeURIComponent(jobId)}`);
       if (job.status === 'succeeded') { onSuccess?.(job); return; }
-      if (job.status === 'failed') { onFailure?.(job.error || ''); return; }
+      if (job.status === 'partial_failed' || job.status === 'failed') {
+        const reason = job.failures?.[0]?.error || job.failures?.[0]?.message || job.error || '';
+        onFailure?.(reason, job);
+        return;
+      }
     } catch (error) {
       onFailure?.(error?.message || '');
       return;

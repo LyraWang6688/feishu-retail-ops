@@ -78,7 +78,7 @@ const DELIVERY_FIXTURE = {
   ],
 };
 
-const mockDeliveryApi = async (page) => {
+const mockDeliveryApi = async (page, options = {}) => {
   const state = JSON.parse(JSON.stringify(DELIVERY_FIXTURE));
   await page.route('**/api/workbench/**', async (route) => {
     const url = new URL(route.request().url());
@@ -87,6 +87,9 @@ const mockDeliveryApi = async (page) => {
       return route.fulfill(json(state));
     }
     if (url.pathname.startsWith('/api/workbench/sales/delivery/jobs/') && method === 'GET') {
+      if (options.jobFailures?.length) {
+        return route.fulfill(json({ success: true, status: options.jobStatus || 'partial_failed', error: options.jobFailures[0]?.error || '', failures: options.jobFailures }));
+      }
       return route.fulfill(json({ success: true, status: 'succeeded' }));
     }
     if (url.pathname === '/api/workbench/sales/delivery/deliveries' && method === 'POST') {
@@ -145,8 +148,8 @@ const mockWorkbenchApis = async (page) => {
   });
 };
 
-const openPage = async (page) => {
-  await mockDeliveryApi(page);
+const openPage = async (page, options = {}) => {
+  await mockDeliveryApi(page, options);
   await page.goto(PAGE);
   await expect(page.locator('[data-sd-tab]')).toHaveCount(3);
   await expect(page.locator('[data-sd-item]').first()).toBeVisible();
@@ -262,6 +265,16 @@ test('AC-DELIVER 行尾交付：点谁交谁、toast「该产品已交付」、�
   await expect(page.locator('[data-sd-tab="both"]')).toContainText('1 双');
   await page.locator('[data-sd-tab="money"]').click();
   await expect(page.locator('[data-sd-order="XSD-20261015-0002"]')).toBeVisible();
+});
+
+test('AC-JOBFAIL 交付 job 部分失败：前端 toast 显示真实失败原因', async ({ page }) => {
+  await openPage(page, {
+    jobStatus: 'partial_failed',
+    jobFailures: [{ detailRecordId: 'd-g1', error: '库存不足' }],
+  });
+  await page.locator('[data-sd-order="XSD-20261020-0001"] [data-sd-deliver]').click();
+  await expect(page.locator('.workbench-toast')).toContainText('已提交成功');
+  await expect(page.locator('.workbench-toast')).toContainText('库存不足');
 });
 
 test('AC-GROUP 销售日分组顺序远→近；货号筛选默认全部、可筛单一货号', async ({ page }) => {

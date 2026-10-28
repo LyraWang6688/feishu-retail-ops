@@ -99,7 +99,10 @@ const createWorkbenchSalesDeliveryRoutes = ({ options = {}, followup, ordersCach
       if (!/^delivery_job_[0-9a-f]{24}$/i.test(jobId)) return res.status(400).json({ success: false, error: 'job_id invalid' });
       const job = await getAsync().get(jobId);
       if (!job) return res.status(404).json({ success: false, error: 'job not found' });
-      return res.json({ success: true, jobId: job.job_id, status: job.status, error: job.last_error || '' });
+      return res.json({
+        success: true, jobId: job.job_id, status: job.status,
+        error: job.last_error || '', failures: Array.isArray(job.failures) ? job.failures : [],
+      });
     } catch (error) {
       return res.status(500).json({ success: false, error: error.message });
     }

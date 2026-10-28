@@ -12,7 +12,7 @@ const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 
-const STATUS = Object.freeze({ queued: 'queued', running: 'running', succeeded: 'succeeded', failed: 'failed' });
+const STATUS = Object.freeze({ queued: 'queued', running: 'running', succeeded: 'succeeded', partialFailed: 'partial_failed', failed: 'failed' });
 const jobIdOf = (type, requestId) => `delivery_job_${crypto.createHash('sha256').update(`${type}:${requestId}`).digest('hex').slice(0, 24)}`;
 
 const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger = { logInfo, logWarn, logError } } = {}) => {
@@ -32,14 +32,26 @@ const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger 
     running.add(jobId);
     const promise = (async () => {
       const job = await store.get(jobId);
-      if (!job || job.status === STATUS.succeeded || job.status === STATUS.failed) return job;
+      if (!job || [STATUS.succeeded, STATUS.partialFailed, STATUS.failed].includes(job.status)) return job;
       await store.update(jobId, { status: STATUS.running, attempts: Number(job.attempts || 0) + 1 });
       try {
         const payload = job.payload || {};
         const result = job.type === 'delivery'
           ? await deliver(payload, { task_id: jobId })
           : await pay(payload, { task_id: jobId });
-        await store.update(jobId, { status: STATUS.succeeded, result: result || {}, last_error: '' });
+        const failures = Array.isArray(result?.failures) ? result.failures : [];
+        const succeeded = failures.length === 0;
+        const partial = failures.length > 0 && Array.isArray(result?.results) && result.results.length > 0;
+        const status = succeeded ? STATUS.succeeded : (partial ? STATUS.partialFailed : STATUS.failed);
+        const lastError = failures.length ? String(failures[0]?.error || failures[0]?.message || 'write_failed') : '';
+        await store.update(jobId, {
+          status, result: result || {}, failures, last_error: lastError,
+        });
+        if (failures.length) {
+          logger.logError(job.type === 'payment' ? 'workbench.sales.payment.failed' : 'workbench.sales.delivery.failed', {
+            job_id: jobId, reason: 'async_job_failed_lines', failed_count: failures.length, error: lastError,
+          });
+        }
       } catch (error) {
         await store.update(jobId, { status: STATUS.failed, last_error: String(error?.message || error) });
         logger.logError(job.type === 'payment' ? 'workbench.sales.payment.failed' : 'workbench.sales.delivery.failed', {

@@ -56,6 +56,41 @@ test('AC-DA2 同一 request_id 幂等：返回同一个 job，不重复执行', 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('AC-DA4 交付部分失败：job 落 partial_failed + failures 明细，不再假 succeeded', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
+  const service = createSalesDeliveryAsyncService({
+    dir,
+    deliver: async () => ({
+      results: [{ detailRecordId: 'd-ok' }],
+      failures: [{ detailRecordId: 'd-bad', error: '库存不足' }],
+    }),
+    pay: async () => {},
+  });
+  const { job } = await service.enqueue({ type: 'delivery', requestId: uuid(5), payload: {} });
+  await waitFor(async () => (await service.get(job.job_id))?.status === 'partial_failed');
+  const partial = await service.get(job.job_id);
+  assert.equal(partial.status, 'partial_failed');
+  assert.equal(partial.last_error, '库存不足');
+  assert.equal(partial.failures.length, 1);
+  assert.equal(partial.failures[0].detailRecordId, 'd-bad');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('AC-DA5 交付全部失败：job 落 failed + 失败明细', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
+  const service = createSalesDeliveryAsyncService({
+    dir,
+    deliver: async () => ({ results: [], failures: [{ detailRecordId: 'd-bad', error: '库存不足' }] }),
+    pay: async () => {},
+  });
+  const { job } = await service.enqueue({ type: 'delivery', requestId: uuid(6), payload: {} });
+  await waitFor(async () => (await service.get(job.job_id))?.status === 'failed');
+  const failed = await service.get(job.job_id);
+  assert.equal(failed.last_error, '库存不足');
+  assert.equal(failed.failures[0].error, '库存不足');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('AC-DA3 写失败：job 落 failed + last_error；不吞', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
   const service = createSalesDeliveryAsyncService({
