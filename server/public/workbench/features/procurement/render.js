@@ -111,10 +111,10 @@ export const replenishGroupHtml = (group, draft, store, config) => `<section cla
 
 const newRowHtml = (group, size, draft, store, config) => {
   const quantity = store.quantityOf(draft, group.productRecordId, size);
-  // 业务负责人 2026-10-29：上新尺码格**统一成补货那种卡片样式** ——
-  // 上下两栏（第一行尺码 / 第二行加减圆框居中），一行两个。
-  return `<div class="pr-size-row">
-    <div class="pr-size-row-head"><div class="pr-size">${escapeHtml(size)}</div></div>
+  // 业务负责人 2026-10-29 二次批注：上新卡里**尺码和加减框在同一行**（不需要像补货那样上下两栏，
+  // 因为上新没有"现货/预订数量"信息要展示）；仍保持**一行两个尺码**。
+  return `<div class="pr-size-row pr-size-row-inline">
+    <div class="pr-size">${escapeHtml(size)}</div>
     ${stepperHtml({ recordId: group.productRecordId, size, quantity, config })}
   </div>`;
 };
