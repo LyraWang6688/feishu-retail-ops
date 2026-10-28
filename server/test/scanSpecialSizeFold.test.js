@@ -83,11 +83,11 @@ test('AC-SF3 ⭐ 缺货的**普通码** ⇒ 预订区正常显示（不折叠 �
 
 test('AC-SF4 ⭐ 缺货的**特殊码** ⇒ 收进折叠块（`folded`），且**按男女各自一块**', () => {
   const female = viewOf({ number: 'JX505|咖色|B', stocked: [36], missing: [34, 35, 41, 42, 43] });
-  const male = viewOf({ number: 'MK31|黑|A', stocked: [40], missing: [46, 47, 48] });
+  const male = viewOf({ number: 'MK31|黑|A', stocked: [40], missing: [45, 46, 47, 48] });
   assert.deepEqual((realm.saleSizeGroups(female).folded || []).map((item) => Number(item.size_text)), [34, 35, 41, 42, 43],
     '女鞋折叠块 = 女鞋的特殊码（缺货的，含 41）');
-  assert.deepEqual((realm.saleSizeGroups(male).folded || []).map((item) => Number(item.size_text)), [46, 47, 48],
-    '男鞋折叠块 = 男鞋的特殊码（缺货的）');
+  assert.deepEqual((realm.saleSizeGroups(male).folded || []).map((item) => Number(item.size_text)), [45, 46, 47, 48],
+    '男鞋折叠块 = 男鞋的特殊码（缺货的，含 45）');
   // ⭐ 同页不混：女鞋那一块里不许出现男鞋的码 ✓
   const femaleFolded = (realm.saleSizeGroups(female).folded || []).map((item) => item.size_text);
   assert.equal(femaleFolded.some((size) => ['46', '47', '48'].includes(size)), false, '女鞋块里不许混男鞋的特殊码 ✗');
