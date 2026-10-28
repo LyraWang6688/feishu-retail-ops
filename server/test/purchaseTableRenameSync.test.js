@@ -259,6 +259,16 @@ test('A4 schema 同步「创建时间」→「报货日」；两个自动时间�
       //      （`fields?.[payment.createdAt]`），入参里没有 `createdAt:`（写入点判据见本注释上一条）。
       'src/config/voucherSettlement.js',
       'src/services/voucherSettlementService.js',
+      // ⭐ 2026-10-28 加（采购页进入生产）：这三处**只读**「货品信息.上架日期」
+      //   （schema 语义键 = `product.createdAt`，2026-10-28 由 Lead 加的**只读**映射）。
+      //   用途：① 上新 tab 的"今天新增"筛选公式；② 卡片小字「今日 HH:mm 新增」的派生；
+      //         ③ 渲染层拿这个 epoch 算 HH:mm。**入参里没有 `createdAt:`**，一个字节都不写这一列
+      //         （写入点判据仍是本注释上一条：create/update 入参里不许出现该语义键）。
+      'src/services/procurementPageData.js',
+      'src/services/procurementPageNewProductsData.js',
+      'src/services/procurementProductEnricher.js',
+      'src/services/procurementPageService.js',
+      'public/workbench/features/procurement/render.js',
     ];
     if (/\bcreatedAt\b/.test(codeOnly)
       && !CREATED_AT_READONLY_FILES.includes(rel.replaceAll('\\', '/'))) {

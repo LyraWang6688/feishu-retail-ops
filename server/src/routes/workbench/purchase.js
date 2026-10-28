@@ -17,6 +17,14 @@ const arrivalTab = require('../../config/workbenchArrival');
 const { createScanArrivalService } = require('../../services/scanArrivalService');
 const { createPurchaseWriteBackgroundService } = require('../../services/purchaseWriteBackgroundService');
 const { logError, logWarn } = require('../../utils/logger');
+// ⭐ 2026-10-28（采购页进入生产）：采购页的**只读读模型 + 提交**端点。
+//   🔴 挂在本文件（= 既有 workbench 父 router 已挂载的子路由）⇒ **不改共享文件 `routes/workbench.js`**，
+//     也自动带上父 router 的准入闸门 / no-store / ui-tap 结果事件（不新开鉴权）。
+//   🔴 提交走既有 `multiItemOrderService` → `publishPurchaseRequest`（不新建写库路径）。
+const { PROCUREMENT_PAGE } = require('../../config/procurementPage');
+const { createProcurementPageService } = require('../../services/procurementPageService');
+const { createProcurementPageSubmitService } = require('../../services/procurementPageSubmitService');
+const { createScanWriteService } = require('../../services/scanWriteService');
 
 const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   const router = express.Router();
@@ -258,6 +266,77 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       logError('workbench.purchase.arrival_accept.failed', { request_id: req.requestId, batch_no: batchNo, error: error.message });
       const status = error?.statusCode === 400 ? 400 : error?.statusCode === 503 ? 503 : 502;
       return res.status(status).json({ success: false, error: error.message });
+    }
+  });
+  // ── 采购页（供应 → 录单 → 采购）：补货 / 上新 两个 tab 的真实数据 + 统一提交 ────────────
+  //   业务口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`）：
+  //   · 补货：只查「销售明细」一张表（库存数量 = 0；销售日 = 今天 00:00 往前 3 个自然日）；
+  //   · 上新：货品信息 上架日期 = 今天；顶部统计只有「新增货品」；
+  //   · 扫一扫：本轮只占位（无接口）；提交复用既有采购链路（不新建草稿表/写库路径）。
+  //   ⚠️ 依赖**延迟构建**：只想注入一个桩的用例不必先配好飞书凭证。
+  let procurementPage = options.procurementPage || null;
+  const resolveProcurementPage = () => {
+    if (!procurementPage) {
+      procurementPage = createProcurementPageService({
+        gateway: options.gateway || new V1BitableGateway(),
+        config: PROCUREMENT_PAGE,
+      });
+    }
+    return procurementPage;
+  };
+  let procurementSubmit = options.procurementSubmit || null;
+  const resolveProcurementSubmit = () => {
+    if (!procurementSubmit) {
+      const procurementGateway = options.gateway || new V1BitableGateway();
+      procurementSubmit = createProcurementPageSubmitService({
+        gateway: procurementGateway,
+        config: PROCUREMENT_PAGE,
+        writeService: options.scanWrite || createScanWriteService({
+          gateway: procurementGateway, config: SCAN_WRITE,
+        }),
+      });
+    }
+    return procurementSubmit;
+  };
+  const procurementTexts = PROCUREMENT_PAGE.texts;
+  router.get(PROCUREMENT_PAGE.endpoints.replenish, async (req, res) => {
+    try {
+      const result = await resolveProcurementPage().loadReplenish({ requestId: req.requestId });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.procurement.replenish.failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: procurementTexts.loadFailed });
+    }
+  });
+  router.get(PROCUREMENT_PAGE.endpoints.newProducts, async (req, res) => {
+    try {
+      const result = await resolveProcurementPage().loadNewProducts({ requestId: req.requestId });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.procurement.new_products.failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: procurementTexts.loadFailed });
+    }
+  });
+  router.post(PROCUREMENT_PAGE.endpoints.submit, async (req, res) => {
+    try {
+      // 🔴 同步校验全在 `procurementPageSubmitService.submit` 里（校验不通过 ⇒ 人话 + **零写入**）；
+      //    通过之后才排「后台那一跑」，HTTP 先回统一那一句（「已提交成功，数据会更新」）。
+      const result = await resolveProcurementSubmit().submit({
+        openId: req.workbenchUser?.open_id,
+        submitKey: req.body?.submitKey,
+        items: req.body?.items,
+        requestId: req.requestId,
+      });
+      if (!result.ok) {
+        const status = result.code === 'behavior_missing' ? 502 : 400;
+        return res.status(status).json({ success: false, code: result.code, error: result.message });
+      }
+      return res.json({
+        success: true, accepted: true, reused: result.reused === true, message: result.message,
+      });
+    } catch (error) {
+      logError('workbench.procurement.submit.failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: procurementTexts.submitFailed });
     }
   });
   router.use('/purchase', createPurchaseQueryRouter({ gateway: options.gateway || new V1BitableGateway() }));

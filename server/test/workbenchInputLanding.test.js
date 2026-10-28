@@ -68,6 +68,20 @@ const CHAINS = Object.freeze({
   },
 
 
+  // ⭐ 2026-10-28（采购页进入生产）：采购页提交 = **多货品**那条既有链路。
+  //    前端目标在 `config.endpoints.submit`（配置先行 ⇒ 源码里是变量路径，不是字面量）
+  //    ④ 落点只读核过：`publishPurchaseRequest` 写「报货批次」(batchNo / 供应商 / 发生行为)
+  //    ＋「采购明细」(数量 / 幂等键 / 采购明细ID) —— 列都在 schema 里真实存在。
+  'config.endpoints.submit': {
+    fe: 'features/procurement/api.js', feKey: 'api.post(config.endpoints.submit',
+    route: 'src/routes/workbench/purchase.js', routeKey: /router\.post\(PROCUREMENT_PAGE\.endpoints\.submit/,
+    service: 'src/services/procurementPageSubmitService.js', serviceKey: /engine\.submitDraft\(/,
+    landing: [
+      ['purchaseOrderBatch', 'batchNo'], ['purchaseOrderBatch', 'behavior'],
+      ['purchaseRequest', 'quantity'], ['purchaseRequest', 'idempotencyKey'],
+      ['purchaseRequest', 'detailId'], ['purchaseRequest', 'supplier'],
+    ],
+  },
   'ORDERS_API.afterSales': {
     fe: 'features/orders/index.js', feKey: 'ORDERS_API.afterSales',
     route: 'src/routes/workbenchOrderActions.js', routeKey: /router\.post\('\/sales\/after-sales'/,

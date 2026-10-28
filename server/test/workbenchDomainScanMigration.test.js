@@ -29,7 +29,11 @@ test('新 IA：销售/库存/供应录单入口存在，供应录单有三张卡
   assert.ok(domains.includes("title: '采购'") && domains.includes("href: '/workbench/procurement.html'"), '供应采购必须打开采购页');
   assert.match(read('public/workbench/features/domains/nav.js'), /data-tap-target=/, '领域子 tab 必须带点击埋点');
   assert.match(read('public/workbench/features/scan/launch.js'), /data-tap-target=/, '领域扫码卡片必须带点击埋点');
-  assert.match(read('public/workbench/procurement.html'), /data-tap-target="scan:replenish"/, '采购扫一扫必须带补货领域埋点');
+  // ⭐ 2026-10-28（采购页进入生产）：扫一扫本轮只占位/禁用（业务负责人口径），
+  //    但**补货领域的埋点属性必须原样保留**（下一轮接扫一扫时不用再改埋点）——
+  //    该属性已随页面模块化搬到渲染层（procurement.html 现在是薄壳）。
+  assert.match(read('public/workbench/features/procurement/render.js'), /data-tap-target="\$\{escapeHtml\(tab\.tapTarget\)\}"/, '采购扫一扫必须带补货领域埋点');
+  assert.match(read('public/workbench/features/procurement/render.js'), /data-pr-scan-disabled/, '采购扫一扫本轮必须是占位/禁用');
   assert.ok(domains.includes("scanRealm: 'purchase_return'"), '供应退货必须接领域扫码');
   assert.ok(domains.includes("jumpTo: 'purchase-acceptance'"), '验收卡必须复用既有验收页');
   assert.ok(domains.includes('id: \'purchase-acceptance\''), '验收页必须存在');
