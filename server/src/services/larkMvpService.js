@@ -10,7 +10,7 @@ const { larkLogger } = require('../utils/larkLogger');
 //    依据=业务负责人 2026-10-16 逐字「**连代码一起删**」；她在**扫码 / 表单 / 前端 UI** 之外
 //    的录入方式「**其余录入方式不支持**」。详见 `docs/ai-parsing-removal-2026-10-16.md`。
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
+// ⛔ 2026-10-28：`KeyedSerialQueue` 随 `this.cardActionQueue`（卡片动作串行队列）一起摘掉。
 const { updateInteractiveCard } = require('../infrastructure/interactiveCardFeedback');
 const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
@@ -71,20 +71,14 @@ const { AfterSalesService } = require('./afterSalesService');
 //       ⇒ 这三行 import 从那天起就是**孤儿**，随这次删除一起清掉。
 //    依据=业务负责人 2026-10-16 逐字：「**都停掉，与 AI 分析有关的都停掉**……**其余录入方式不支持**」
 //    ＋「**连代码一起删**」。详见 `docs/ai-parsing-removal-2026-10-16.md`。
-// ⭐ 未知 / 已退场卡片动作的兜底人话（2026-10-12，业务负责人明确要的）：文案可配。
-const { UNKNOWN_CARD_ACTION_TOAST } = require('../config/unknownCardAction');
-const { salesStatusCard, keepOnlyCardButton, SECOND_DELIVERY_ACTION } = require('../utils/larkCards');
-// ⭐【确认成交】按钮（2026-10-07 业务负责人拍板的**甲**：做在「已入账」终态卡上，不新发消息）：
-//   动作名 ＋ "要不要画这个按钮"的判据 ＋ 用户可见文案，全在那一份配置里（配置先行）。
-const {
-  SALES_CONFIRM_DEAL_ACTIONS,
-  CONFIRM_DEAL_TASK_STATUS,
-  needsConfirmDeal,
-  resolveSalesConfirmDealConfig,
-  fill: fillConfirmDeal,
-} = require('../config/salesConfirmDeal');
-// 「点确认后那一次立即更新」那张卡片的可见文案 / 颜色（业务负责人 2026-10-07 拍板的 ⓐ）；
-// 调用时才解析（不在模块加载时求值，避免 dotenv 加载顺序事故）。
+// ⛔ 2026-10-28：原来这里还有四组 import —— 它们只服务**交互卡片动作**那条链路：
+//   · `config/unknownCardAction`（未知动作的兜底人话）
+//   · `utils/larkCards` 的 `salesStatusCard` / `keepOnlyCardButton` / `SECOND_DELIVERY_ACTION`
+//   · `config/salesConfirmDeal`（【确认成交】按钮的动作名 / 判据 / 文案）
+//   · `config/salesProgressIntake` 的 `PROGRESS_KINDS`
+//   业务负责人现行口径：「现在没有群聊入口，也没有旧卡片」⇒ 卡片动作入口
+//   （`handleCardAction` 及下面那一串卡片专用方法）**整体删除**，这些 import 一并摘掉。
+//   ⚠️ 恢复卡片链路 = 重新实现（不是翻开关）。
 const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
 const { resolveAckReaction } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
@@ -93,19 +87,18 @@ const { extractBatchNos } = require('./purchaseBatchNo');
 const { SalesGroupThreadLocator } = require('./salesGroupThreadLocator');
 // 「消息深链存哪儿」的唯一落点（本地映射 + 销售主表「消息链接」列，见服务的注释）。
 const { SalesMessageLinkService } = require('./salesMessageLinkService');
-// 「这条群消息归销售还是采购」的分派（独立 service；本类只做接线）。
-// 「话题里的二次处理识别」（②：预定 / 现货待收的进展同步；独立 service，本类只做接线）。
-const { SalesThreadProgressService } = require('./salesThreadProgressService');
-const { PROGRESS_KINDS } = require('../config/salesProgressIntake');
+// 「话题里的二次处理识别」（②：预定 / 现货待收的进展同步）——⚠️ 2026-10-28：
+//   独立 service（`services/salesThreadProgressService.js`）与它的配置
+//   （`config/salesProgressIntake.js`）**整文件删除**：它只服务群话题那条入口，
+//   而群聊入口 2026-10-12 就退场了（`acceptMessage` 收到即静默拒绝）。
+//   卡片上那个「成交」按钮（唯一还剩的调用方 `handleConfirmDealAction`）也在本次删除。
 // 「采购到货：群话题对话式核对」的编排（独立 service；本类只做接线）。
 const { PurchaseArrivalConversationService } = require('./purchaseArrivalConversationService');
-// 到货核对卡片上的两个动作名（与卡片渲染共用同一份常量，见 utils/larkCards）。
-const { ARRIVAL_CONVERSATION_ACTIONS } = require('../config/arrivalConversation');
-// ⭐ 2026-10-08：【团购券待结算】那一行右栏「确认到账」按钮的动作名。
-//   ⚠️ **不写死字符串**：卡片渲染（`config/voucherSettlement.action`）与这里的判据
-//      取的是**同一份配置**（配置先行）—— 改动作名只改 env / 那一份文件，两处不会走歪。
-const { resolveVoucherSettlementConfig } = require('../config/voucherSettlement');
-const { PendingDealPushService } = require('./pendingDealPushService');
+// ⛔ 2026-10-28：`config/arrivalConversation` 的 `ARRIVAL_CONVERSATION_ACTIONS`（到货核对卡片上的
+//   「是」）随卡片动作入口一起摘掉；到货验收的现行入口是**工作台发起 + 扫码录入**
+//   （`PurchaseArrivalConversationService.confirmBatchArrival`）。
+// ⛔ 2026-10-28：`config/voucherSettlement` 的「确认到账」动作名随 9 点推送删除 ——
+//   那条推送（【团购券待结算】区块）与它的「确认到账」按钮一起退场。
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { skipNoGroupContext } = require('../utils/privateChatSend');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -180,37 +173,21 @@ const aggregateRecognizedItems = (items) => {
 //    `services/v1WorkbenchService` 里（工作台「今日销售」用它），要看今日销售去那儿。
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ⚠️⚠️ 已不可达的方法（2026-10-12 起）—— **归 C5 统一评估，请勿手快删掉**
+// 🧹 2026-10-28（本轮清理）：本类的两个**旧入口**都已退场 ——
+//   · `handleCardAction`（飞书交互卡片的按钮回调）—— 2026-10-28 整体删除：
+//     群销售确认卡 / 成交提醒卡 / 到货核对卡 / 团购券「确认到账」卡都随各自链路退场，
+//     线上已经没有任何会带按钮的卡片（业务负责人：「现在没有群聊入口，也没有旧卡片」）。
+//   · `acceptMessage` 里的**群聊分支**—— 2026-10-12 起就是「收到即静默拒绝」的守卫，
+//     **本轮保留**（`reason: 'group_chat_removed'`，不建任务、不进 AI、不读表、不写表、不回话）。
 //
-// 【依据】可达性分析（脚本，2026-10-12）：以**现行入口**求可达集 ——
-//   `routes/larkEvents.js`（`acceptMessage` / `handleCardAction` / 表变更）·
-//   `routes/scanPage.js` · `routes/workbench*.js` · `routes/purchaseQuery.js` ·
-//   `routes/feishuWebAuth.js` · `app.js`（定时任务）—— 从本类的两个入口方法
-//   `acceptMessage` 与 `handleCardAction` 出发做方法级可达性，下列方法**不在可达集内**：
-//     · `acceptSalesText`            —— 群销售入站（入口已于 #331 关闭）
-//     · `processSalesTask`（443 行）  —— 销售原话解析 → 出卡 → 入账
-//     · `handleSalesOrLegacyCardAction`（402 行）—— 销售草稿卡片的动作分派
-//     · `handleTaskFailure` / `enqueueForSender` / `ensureIntakeSchema` / `acknowledgeMessage`
-//     · `createSalesEntryWithOrderNo` / `listSalesOrderNos` / `listAccessories`
-//       （⭐ C0 剥出的三处**转发薄方法**：扫码侧早已改走 `services/salesEntryService`，
-//         这里只剩转发，且只被上面这些不可达方法调用）
+// 连带删除的卡片专用方法（本次一并退场，别再加回来）：
+//   `unknownCardAction` / `handleSecondDeliveryAction` / `confirmDealOptionFor` /
+//   `handleConfirmDealAction` / `confirmDealSummary` / `confirmDealUndeliveredCount` /
+//   `settleConfirmDealCard`。
 //
-// 【为什么不删】删这 10 个方法会**同时带走 122 条测试**（实测：删完 1871 → 1749 pass / 122 fail）——
-//   那些用例**不是"群入口用例"，而是销售管线 / 共享层的回归网**：
-//   解析 · 交易类型（现货/预定）· 颜色候选 · 配品匹配 · 金额口径 · 销售卡片状态机。
-//   ⚠️ **扫码入口与工作台同样依赖这一层**（`salesOrderService` / `v1PostingService` /
-//   `salesDeliveryService` / `PaymentService`）⇒ 删掉 = **净损失覆盖**，换来的只是"代码好看"。
-//   ⇒ 结论（Lead 2026-10-12 拍）：**只标注、不删**；它不影响行为、不影响安全、
-//     也不影响她（群消息在 `acceptMessage` 就已回绝，零远端调用）。
-//
-// 【将来真要删】= 先决定那 122 条用例的去向（**建议把共享层断言"迁到扫码入口"而不是删**），
-//   再动这里；**不要**只删一半（`acceptSalesText` 与 `processSalesTask` 互为调用方，
-//   删一半会留半死链）。
-//
-// 【顺带标注·半遗留】`this.salesMessageLinks` / `this.salesGroupThreads` 两个字段：
-//   只被上面已不可达的 `bindGroupSaleThread`（其唯一调用方在 `handleSalesOrLegacyCardAction` 里）
-//   与 `handleSalesOrLegacyCardAction` 使用 ⇒ **随上面那批一起处理**；
-//   ⚠️ 但 `salesGroupThreadLocator` **模块本体必须留**（9 点推送的「查看原话」深链在用）。
+// ⚠️ 仍然保留的**出站**能力（工作台 / 补样品提醒在用，与群入口无关）：
+//   `sendTaskText` / `sendTaskCard` / `replyTaskCard` 与 `bindGroupSaleThread`
+//   （没有群上下文的任务照旧只记一条 `lark.private_chat.send_skipped`、返 `null`）。
 // ═══════════════════════════════════════════════════════════════════════════
 
 class LarkMvpService {
@@ -278,7 +255,7 @@ class LarkMvpService {
     this.salesStatus = options.salesStatus || new SalesStatusWriter({ gateway: this.gateway });
     this.intakeSchemaValidation = new Map();
     this.senderQueues = new Map();
-    this.cardActionQueue = new KeyedSerialQueue();
+    // ⛔ 2026-10-28：`this.cardActionQueue`（卡片动作的串行队列）随 `handleCardAction` 一起删除。
     // ── 群聊（采购链路搬进群）────────────────────────────────────────────────
     // 「群消息 → 是哪一批采购单」的定位器。它自带本地任务存储
     // （data/purchase_group_messages），**不共用销售任务存储**：两件事的记录混在
@@ -308,15 +285,8 @@ class LarkMvpService {
     //    与 `this.mainChatRequireMention`（`config/groupAdmission` 的显式布尔开关）。
     //    群入口已退场 ⇒ 两样一起删除，`config/groupAdmission.js` 随之整文件删除
     //    （它没有任何其它读取点），`LARK_BOT_OPEN_ID` 这个环境变量也不再有读取点。
-    // ⭐ 2026-10-08：【团购券待结算】卡片的「确认到账」按钮点了之后走哪儿。
-    //   ⚠️ **惰性自建**（不在构造时建）：它会去建网关 / 读配置，而本类的既有用例构造时
-    //      不注入网关（构造时建会要凭证 → 那些用例会红）。只有真点到那个按钮才建。
-    //   注入优先（`options.pendingDealPush`）：单测给替身时**一次远端调用都不会发**。
-    this._pendingDealPush = options.pendingDealPush || null;
-    // 那个按钮的**动作名**（配置先行）：渲染与服务端分派读的是同一份取值的来源。
-    // ⚠️ 这里只解析**一次**（解析要读环境变量；每次卡片回调都解析一遍没有意义）。
-    this.voucherSettlementSettings = options.voucherSettlementSettings
-      || resolveVoucherSettlementConfig();
+    // ⛔ 2026-10-28：`this._pendingDealPush` / `this.voucherSettlementSettings` 已删除 ——
+    //   它们只服务 9 点推送【团购券待结算】卡片的「确认到账」按钮（推送已整体退场）。
     // ── 到货核对（D）：「群话题对话式核对」──────────────────────────────────
     // 它只干一件事：把话题里的自然对话变成一次核对会话 + 一个触发点。
     // ⚠️ 会话任务与入库能力**共用采购那套存储与队列**（PurchaseWebhookService 的
@@ -385,30 +355,12 @@ class LarkMvpService {
     // ⚠️⚠️ 2026-10-12（清群聊入口 C3）：这里原先 new 的**群销售入站**分派 service
     //    （这条群消息归销售还是采购、是哪一笔销售）**整块删除** ——
     //    它唯一的消费者是群入口（已退场）⇒ services/salesGroupFlowService.js 整文件删除。
-    // ── 群话题里的「二次处理识别」（②）──────────────────────────────────────
-    // 已定位到某笔销售之后，先问它"这句话是那笔的进展同步，还是新的销售原话"。
-    // 它是**独立 service**：判据（词表/正则/文案）在 config/salesProgressIntake，
-    // 收钱/交货复用 PaymentService / SalesDeliveryService，本类只做接线。
-    // ⚠️ 回复走 `sendTaskText`（群里回那条话题、私聊原样发私聊），
-    //    与销售卡片走同一条渠道感知的出口，不另开一条发送路径。
-    this.threadProgress = options.threadProgress || new SalesThreadProgressService({
-      gateway: this.gateway,
-      references: this.references,
-      // 交付复用**本类那一个** SalesDeliveryService：全仓唯一的销售扣库存入口，
-      // 与"第二次交付（点成交）"共用同一个串行队列，两个入口不会各扣一次库存。
-      delivery: this.delivery,
-      // ⭐ 整单完成（她说「已完毕 / 成交」）复用**本类那一个** SecondDeliveryService：
-      //    点卡片「成交」按钮与她说这句话是同一件事，成交只有这一处实现。
-      secondDelivery: this.secondDelivery,
-      config: options.threadProgressConfig,
-      now: options.now,
-      store: this.store,
-      // ⭐ "同一话题短时间内只回一次提示"的**本地**节流记录（2026-10-08）。
-      //    与 `salesGroupThreadStore` 同一个模式：可注入（测试用临时目录）、
-      //    缺省走 `data/sales_progress_notices/`。**不写业务表**。
-      noticeStore: options.salesProgressNoticeStore,
-      sendTextToTask: (task, message) => this.sendTaskText(task, message),
-    });
+    // ⛔ 2026-10-28：`this.threadProgress`（`SalesThreadProgressService` —— 群话题里的
+    //   「二次处理识别」：她说「已完毕 / 成交」/「收到钱了」时同步进展）**整块删除**。
+    //   它唯一的入口是群话题消息，而群聊入口 2026-10-12 已退场（`acceptMessage` 收到即静默拒绝）；
+    //   卡片上「成交」按钮那条路（`handleConfirmDealAction` → `completeDealFromCard`）也在本次删除。
+    //   ⚠️ 成交的**唯一实现**（`SecondDeliveryService.confirm`）没动，工作台的
+    //     「二次交付（收尾款 + 交付）」照旧调它（`routes/workbenchOrderActions.js`）。
   }
   async sendText(openId, message) {
     const response = await this.client.im.message.create({
@@ -1178,353 +1130,15 @@ class LarkMvpService {
     });
     return index;
   }
-  get pendingDealPush() {
-    if (!this._pendingDealPush) {
-      this._pendingDealPush = new PendingDealPushService({
-        gateway: this.gateway,
-        client: this.client,
-      });
-    }
-    return this._pendingDealPush;
-  }
-
-  async handleCardAction(event, context = {}) {
-    const value = event?.action?.value || event?.event?.action?.value || {};
-    const draftId = value.draft_id;
-    const action = value.action;
-    const operatorOpenId =
-      event?.operator?.operator_id?.open_id || event?.operator?.open_id || event?.event?.operator?.operator_id?.open_id;
-    if (['choose_sample_replacement', 'refresh_sample_replacement'].includes(action)) {
-      return this.sampleReplacements.handleCardAction(value, event, operatorOpenId, context);
-    }
-    // ⚠️ 2026-10-12（清群聊入口 C1）：这里原先还分派两个**群聊专属**的到货核对动作 ——
-    //    · `submit_arrival_reconcile`（卡片表单提交）；
-    //    · `reject_arrival_reconcile`（卡片上的「否」）。
-    //    两者都只由**群话题那条对话链路**发出来的卡片提供，入口已整体删除
-    //    ⇒ 两条分派与 `form_value` 的读取一起退场（她的到货验收改由**工作台发起 + 扫码录入**）。
-    //    只留「是」：`confirm_arrival_reconcile` → `handleCardAction`（共享 confirm 链路）。
-    // 「采购到货核对」卡片的「是」。
-    // ⚠️ 位置有意放在这里（下面那句 `if (!draftId) throw` 之前）：
-    //   这张卡片也带 draft_id（= 到货核对任务 id，不是销售草稿），落到下面那套销售逻辑里
-    //   一定会报「卡片缺少草稿 ID」或更糟——把别人的草稿当成自己的。
-    //   动作名与卡片渲染共用 config 里的同一份常量。
-    if (action === ARRIVAL_CONVERSATION_ACTIONS.CONFIRM) {
-      return this.arrivalConversation.handleCardAction(value, event, operatorOpenId);
-    }
-    // ⚠️ 2026-10-08：「报货确认卡」（`confirm_purchase_request` / `cancel_purchase_request`）
-    //    已按业务负责人逐条批准**整张删除**（报单链路 2026-10-07 起就是免确认，那张卡没有任何发送方）。
-    //    采购那侧因此**不再有**任何卡片动作可认领 —— 这里原先那句
-    //    `purchaseWebhooks.handleCardAction(...)` 的分派随之删除（`PurchaseWebhookService.handleCardAction`
-    //    也已删掉）。线上还躺着的老采购确认卡片点下去 = **一个未知动作**，会照下面的兜底
-    //    落到销售草稿分派（找不到那份草稿 → 明确报错），**不会再写任何采购事实**。
-    // 「第二次交付」的「成交」按钮：收尾的是**已入账、尚未完成履约**的单。
-    // ⚠️ 位置有意放在这里——采购那条分派（今天已删）之后、下面那句 `if (!draftId) throw` 之前：
-    //    这条链路绑的是销售主表 record_id，根本没有草稿，也没有草稿状态机，
-    //    落在下面那套逻辑里一定抛「卡片缺少草稿 ID」。
-    // 动作名用 larkCards 里那一个常量，卡片和分派不会各写一份而慢慢写歪。
-    if (action === SECOND_DELIVERY_ACTION) {
-      return this.handleSecondDeliveryAction(value, operatorOpenId, event);
-    }
-    // ⭐【确认成交】—— 「已入账」终态卡上的那一个按钮（业务负责人 2026-10-07 拍板的**甲**）。
-    // ⚠️ 位置与上面那条同源：也放在 `if (!draftId) throw` **之前**（它不依赖草稿状态机），
-    //    并且与销售草稿**共用同一个串行队列**（同一张卡连点两次会被排成一前一后，
-    //    真正的幂等由"任务状态 ＋ 底层两个写操作的状态判据"三道一起兜）。
-    if (action === SALES_CONFIRM_DEAL_ACTIONS.CONFIRM) {
-      return this.cardActionQueue.run(draftId || String(value?.sales_entry_record_id || ''), () =>
-        this.handleConfirmDealAction(value, operatorOpenId, event, context));
-    }
-    // ⭐⭐ 2026-10-08（第二步）：9 点推送【团购券待结算】那一行右栏的「**确认到账**」。
-    // ⚠️ **位置有意放在这里**（下面那句 `if (!draftId) throw` **之前**）：
-    //    这条链路绑的是**收款明细**（按结算日重新查那一批），**不是销售草稿** ——
-    //    那张卡片上根本没有 `draft_id`，落到下面那套草稿状态机里必然抛「卡片缺少草稿 ID」。
-    // ⚠️ 与销售草稿**共用同一个串行队列**：同一张卡连点两次会被排成一前一后，
-    //    真正的幂等由 `VoucherSettlementService`（按结算日重新查 + `PaymentService`
-    //    写之前回查状态）兜住 —— 连点两次只写一次。
-    // ⚠️ 队列键用**结算日**（不是草稿 id）：这一批就是"这个结算日那几笔"。
-    if (action === this.voucherSettlementSettings.action) {
-      const dayField = this.voucherSettlementSettings.settleDayField || 'settle_day';
-      const settleDay = String(value?.[dayField] ?? '').trim();
-      if (!settleDay) {
-        // 老卡片 / 手拼的 value：**明确回绝**，不去猜是哪一天（猜错就是写错账）。
-        // ⚠️ 与 `PendingDealPushService.confirmVoucherSettlement` 的同一道闸门**刻意各有一份**：
-        //    这一层挡住"根本不该进服务的请求"，那一层保证"谁来调都不会写错那批账"。
-        return { toast: {
-          type: 'warning',
-          content: this.voucherSettlementSettings.messages?.missingDay || '',
-        } };
-      }
-      return this.cardActionQueue.run(`voucher_settlement:${settleDay}`, () =>
-        this.pendingDealPush.confirmVoucherSettlement(value, event, context, operatorOpenId));
-    }
-    // ⚠️⚠️ 2026-10-12（清群聊入口 C4）：**未知 / 已退场动作的兜底人话**。
-    //    业务负责人明确要的：线上还躺着老卡片（群话题里的销售确认卡、到货核对卡…），
-    //    那些按钮指向的动作名有的已整条删除 ⇒ 点下去必须
-    //      · **回一句人话**（不报错、不静默）、**一个字都不写**。
-    //    ⚠️ 位置：在 `if (!draftId) throw` **之前** —— 老卡片可能连 draft_id 都没有
-    //      （例如刚被删掉的到货核对「否」、采购确认卡），
-    //      落到下面那句 throw 就变成"点击报错"，正是她投诉过的"点了没反应"的另一种样子。
-    if (!draftId) return this.unknownCardAction(action);
-    // 🔴 2026-10-12（售后卡片链路退场）：原来这里是**售后卡片动作**的分派
-    //    （确认 / 取消 / 选回库状态 → 那个已退场的售后卡片编排服务）。
-    //    业务负责人拍板「售后已经搬到工作台了」＋生产日志实测 5 天 0 次 ⇒ **整条链路删除**：
-    //    落到下面的**未知动作兜底** ⇒ 群里再点老卡片**回一句人话、零写入**（不报错、不静默）✓
-    // 🔴🔴 2026-10-12（清群聊入口·第三轮）：**带 `draft_id` 的未知动作也走兜底人话**。
-    //    原先这一行是 `...handleSalesOrLegacyCardAction(event, context)` —— 销售草稿卡片的分派。
-    //    群入口退场后**它已整体删除** ⇒ 带 draft_id 的未知/已退场动作会当场 TypeError → 500，
-    //    ⇒ 不认识的 ⇒ 回一句人话、零写入、不报错（与 `unknownCardAction` 同一份口径）。
-    return this.unknownCardAction(action);
-  }
-
-  /**
-   * ⭐⭐ 未知卡片动作的**兜底人话**（业务负责人 2026-10-12 明确要的）。
-   *
-   * 为什么要它：群聊入口退场之后，**线上还躺着老卡片**（群话题里的销售确认卡、到货核对卡…）。
-   * 那些按钮指向的动作名，有的已经整条链路删除、有的从来就不属于本服务。
-   * 点下去的正确表现是：
-   *   · **回一句人话**（告诉她这张卡已经用不了了）；
-   *   · **不报错**（不许把"不认识这个动作"变成异常 / 5xx）；
-   *   · **不静默**（点了什么都不发生 = 她以为"卡住了"，真机 2026-10-07 投诉过两次）。
-   *
-   * 🔴 它**只回话，什么都不写**：不读表、不写表、不建任务、不进 AI。
-   * 🔴 也**不抛** —— 调用方（`routes/larkEvents.js`）把它当"已处理"看待，
-   *    同步 toast 照旧返回，所以她那边是"点了有反应"。
-   *
-   * @param {string} action 卡片带上来的动作名（可能为空）
-   * @returns {{toast: {type: string, content: string}}}
-   */
-  unknownCardAction(action = '') {
-    const name = String(action || '').trim();
-    logInfo('lark.card.unknown_action', { action: name });
-    return { toast: { type: 'info', content: UNKNOWN_CARD_ACTION_TOAST } };
-  }
-
-  /**
-   * 「成交」：已入账、尚未完成履约的单收尾（补收款 + 交付）。
-   *
-   * 这里只做三件事：把按钮带上来的「销售单号 + 收款方式」转给编排服务，
-   * 把"点的是哪条群消息、哪天的卡"一起带下去（成交成功后要把那张卡的这一单变灰，
-   * 见 SecondDeliveryService.markCardSettled），以及把结果说成她能看懂的一句话。
-   * 写账、扣库存全在 SecondDeliveryService 里，本类不碰——那两件事都必须只有一处实现。
-   */
-  async handleSecondDeliveryAction(value, operatorOpenId, event = {}) {
-    const result = await this.secondDelivery.confirm({
-      salesEntryRecordId: value?.sales_entry_record_id,
-      // 收款方式由按钮带上来的，缺了会让补收款明确报错，不在这里兜一个默认值。
-      method: value?.method,
-      operatorOpenId,
-      // 卡片回调事件里的消息 id = 被点的那张卡；reminder_day 是发卡时写进按钮取值的。
-      cardMessageId: event?.context?.open_message_id || event?.open_message_id || '',
-      reminderDay: value?.reminder_day || '',
-    }, {
-      // 关联键：这条链路上没有本地任务（点的是每日提醒卡），能给的业务键就是这张销售单。
-      correlation: { sales_entry_record_id: value?.sales_entry_record_id },
-    });
-    if (result.alreadyCompleted) {
-      return { toast: { type: 'info', content: '这一单已经成交，无需重复处理' } };
-    }
-    const parts = [];
-    if (result.collectedAmount > 0) parts.push(`补收款 ￥${result.collectedAmount}`);
-    const deliveredCount = Number(result.delivery?.deliveredQuantity || 0);
-    if (result.delivery && deliveredCount > 0) parts.push(`交付 ${deliveredCount} 双`);
-    const failedCount = result.delivery?.failures?.length || 0;
-    if (failedCount) {
-      // 钱已经收下、货只交了一部分：如实说清，并指到工作台去处理，不能报成功。
-      return { toast: { type: 'warning', content:
-        `已成交：${parts.join('，')}；还有 ${failedCount} 双交付未完成，请到工作台待交付列表核对` } };
-    }
-    return { toast: { type: 'success', content: `已成交：${parts.join('，') || '无待处理项'}` } };
-  }
-
-  /**
-   * ⭐「这张已入账终态卡要不要带【确认成交】按钮」——**一个判据、几处渲染点共用**。
-   *
-   * 判据本体在 `config/salesConfirmDeal` 的 `needsConfirmDeal`（预定未交付 / 现货有欠款）；
-   * 这里只做两件事：把 `draft` ＋"上一次交付失败"喂给它，并把**为什么有 / 没有**记进日志
-   * （排查"她那单为什么没有这个按钮"时看这一条，不用去猜）。
-   *
-   * 终态卡有**四个**出口（入账完成 / 她重复点确认 / 部分交付 / 交付失败），四处都调它 ——
-   * 同一个状态必须给出同一张卡，不能一个出口有按钮、另一个没有。
-   */
-  confirmDealOptionFor(task, { deliveryFailures = [] } = {}) {
-    const decision = needsConfirmDeal({ draft: task?.draft, deliveryFailures });
-    logInfo('lark.sales.confirm_deal.card', {
-      task_id: task?.task_id,
-      sales_entry_record_id: task?.sales_entry_record_id,
-      with_button: decision.needed,
-      reason: decision.reason,
-      delivery_failure_count: deliveryFailures.length,
-    });
-    if (!decision.needed) return null;
-    return { salesEntryRecordId: task.sales_entry_record_id, draftId: task.task_id };
-  }
-
-  /**
-   * 【确认成交】：**不新发消息**，就在她手里那张「已入账」终态卡上按一下。
-   *
-   * 这里只做接线：① 幂等短路；② 把点击转给 `SalesThreadProgressService.completeDealFromCard`
-   * （= 与她说「已完毕 / 成交」**同一条** complete 逻辑，写账 / 扣库存都不在本类）；
-   * ③ 把结果如实说成一句话，并在真正成交时把**被点的那张卡**改成「已成交」。
-   *
-   * 幂等三道（任务状态 + 底层两个写操作自己的状态判据 + 上面的串行队列）：
-   *   · 第一道在这里 —— 任务上已记 `confirm_deal_settled` ⇒ **一个字节都不写**、也不再 patch；
-   *   · 后两道在 `SecondDeliveryService` / `PaymentService` / `SalesDeliveryService` 里
-   *     （未收款才收、未交付才交），本地记录丢了也重复不了（有回归用例钉住）。
-   */
-  async handleConfirmDealAction(value, operatorOpenId, event = {}, context = {}) {
-    const salesEntryRecordId = String(value?.sales_entry_record_id || '').trim();
-    const draftId = String(value?.draft_id || '').trim();
-    const config = resolveSalesConfirmDealConfig();
-    const task = draftId ? await this.store.get(draftId) : null;
-    if (task?.confirm_deal_status === CONFIRM_DEAL_TASK_STATUS.SETTLED) {
-      // ⭐⭐ bug 2：**早退之前先补一次卡面**（自愈）。
-      //
-      // 与下面 `:2096-2098` 的注释本来是一句话的两半 ——「能走到 settled 分支说明上次 patch 失败了，
-      // 这是那张卡唯一一次自愈的机会」。但改动前这里**先 return、再也没试过 patch**：
-      // 第一次点击时 patch 掉了（卡片被撤回 / 权限 / 网络），任务状态却已经写成 settled，
-      // 之后再点一律走这个早退 ⇒ **那张卡永远停在"还能点"的样子上**，两处注释自相矛盾。
-      //
-      // ⚠️ 只补**卡面**：`settleConfirmDealCard` 走的是 `updateInteractiveCard`（只调
-      //    `im.message.patch`），不碰 `gateway`、也不 `store.update` —— 所以
-      //    **业务表一个字节都不写、本地任务记录也不再改**（`confirm_deal_at` 保持首次点击的值），
-      //    幂等一点没丢。卡片改不动仍然只记一条 warn，绝不影响这次回话。
-      const cardPatched = await this.settleConfirmDealCard(task, event, config, context);
-      logInfo('lark.sales.confirm_deal.already_settled', {
-        task_id: draftId, sales_entry_record_id: salesEntryRecordId,
-        card_repatched: cardPatched,
-      });
-      return { toast: { type: 'info', content: config.alreadyToast } };
-    }
-    if (!salesEntryRecordId) {
-      return { toast: { type: 'warning',
-        content: fillConfirmDeal(config.failedToast, { reason: '卡片里没有销售单号' }) } };
-    }
-    // 收款「操作人」记**真正点按钮的那个人**；回话仍回到原来那条销售话题
-    // （`sendTextToTask` 只认 `task.chat_type === 'group'` ＋ `task.message_id`）。
-    // 本地任务读不到（记录过期）时也照样把业务做完 —— 只是回不了话、卡片也改不了。
-    const clickTask = task
-      ? { ...task, sender_open_id: operatorOpenId || task.sender_open_id }
-      : { task_id: '', sales_entry_record_id: salesEntryRecordId,
-        sender_open_id: operatorOpenId || '', chat_type: 'group' };
-    try {
-      const outcome = await this.threadProgress.completeDealFromCard({ task: clickTask });
-      const settled = !outcome.asked;
-      const status = settled ? CONFIRM_DEAL_TASK_STATUS.SETTLED
-        : outcome.reason === 'short_stock' ? CONFIRM_DEAL_TASK_STATUS.SHORT_STOCK
-          : CONFIRM_DEAL_TASK_STATUS.ASKING;
-      if (task) {
-        await this.store.update(draftId, {
-          confirm_deal_status: status,
-          confirm_deal_reason: outcome.reason || '',
-          confirm_deal_at: Date.now(),
-        });
-      }
-      logInfo('lark.sales.confirm_deal.handled', {
-        task_id: draftId, sales_entry_record_id: salesEntryRecordId,
-        status, reason: outcome.reason || '', operator_open_id: operatorOpenId || '',
-      });
-      if (settled) {
-        // 成交了才把卡片改成「已成交」；只成了一半 / 货没到时**绝不能变灰**（她还要再点）。
-        // ⚠️ `already_completed`（底层的钱货本来就齐了）也算"成交状态" ⇒ 同样改成已成交：
-        //   正常路径上第一次点击就改了，能走到这里说明上次 patch 失败了 ——
-        //   这是那张卡**唯一一次自愈的机会**（与 `SecondDeliveryService.markCardSettled` 同一条理由）。
-        // ⭐ 交付**只成了一半**时（部分交付 = 既有语义），卡面那句说明要把"仍未交付 N 双"
-        //   写上（问题 4：以前这个信息只出现在线程回话/toast 里，绿色卡面上一个字都没有）。
-        if (task) {
-          await this.settleConfirmDealCard(task, event, config, context,
-            { undeliveredCount: this.confirmDealUndeliveredCount(outcome) });
-        }
-        const alreadyDone = outcome.reason === 'already_completed';
-        return { toast: {
-          type: alreadyDone ? 'info' : 'success',
-          content: alreadyDone ? config.alreadyToast
-            : fillConfirmDeal(config.successToast,
-              { summary: this.confirmDealSummary(outcome, config) }),
-        } };
-      }
-      return {
-        toast: {
-          type: outcome.reason === 'short_stock' ? 'warning' : 'info',
-          content: outcome.reason === 'short_stock' ? config.shortStock : config.askingToast,
-        },
-      };
-    } catch (error) {
-      // 不许静默失败：如实回一句 + 记一条，任务状态也记成失败（`AGENTS.md` 第 16 条①）。
-      if (task) {
-        await this.store.update(draftId, {
-          confirm_deal_status: CONFIRM_DEAL_TASK_STATUS.FAILED,
-          confirm_deal_reason: error.message,
-          confirm_deal_at: Date.now(),
-        }).catch(() => undefined);
-      }
-      logWarn('lark.sales.confirm_deal.failed', {
-        task_id: draftId, sales_entry_record_id: salesEntryRecordId, error: error.message,
-      });
-      return { toast: { type: 'warning',
-        content: fillConfirmDeal(config.failedToast, { reason: error.message }) } };
-    }
-  }
-
-  /** 成交那一句 toast 里的"做了什么"（补收款 / 交付），与既有点卡片「成交」同口径。 */
-  confirmDealSummary(outcome = {}, config = resolveSalesConfirmDealConfig()) {
-    const parts = [];
-    const collected = Number(outcome.result?.collectedAmount || 0);
-    if (collected > 0) parts.push(`补收款 ￥${collected}`);
-    const delivered = Number(outcome.result?.delivery?.deliveredQuantity || 0)
-      || Number(outcome.deliveredBefore?.count || 0);
-    if (delivered > 0) parts.push(`交付 ${delivered} 双`);
-    return parts.join('，') || config.nothingText;
-  }
-
-  /**
-   * 成交时**还有几双没交出去**（= 交付那一段的失败条数）。
-   *
-   * 只从**这次成交的结果**里读，不额外读表：
-   *   · 一条都没交成（货还没到）→ 走到这里之前就已经被短库存拦下（`reason: 'short_stock'`），
-   *     **根本不会渲染"已成交"卡片**；
-   *   · 部分交付（A 双交出去、B 双没货）→ 这里给出没交成的那几条；
-   *   · 钱货本来就齐（`already_completed`）/ 完全交付 → 0。
-   * ⚠️ 拿不到就报 0（**不猜**）：卡面宁可少一句，也不许编一个"未交付 N 双"。
-   */
-  confirmDealUndeliveredCount(outcome = {}) {
-    return Number(outcome.result?.delivery?.failures?.length || 0);
-  }
-
-  /**
-   * 把**被点的那张终态卡**改成「已成交」：同一个位置把按钮换成一行说明，卡片其余内容
-   * （明细 / 补货品信息 / 单号）原样保留 —— 走的是既有那条 patch 出口
-   * （`updateInteractiveCard`：优先用回调带回来的消息 id = **她点的那张卡**）。
-   *
-   * ⚠️ 这里**重新渲染**而不是"拿旧卡来改"：那张卡的输入（`task.draft`）就在本地任务上，
-   *    重新渲染得到的内容与原来逐字一致（除了按钮换成说明）—— 不必为此再存一份卡片 JSON。
-   *    卡片改不动（撤回 / 权限）**永远不影响成交结果**：成交这时已经写完了。
-   *
-   * `options.undeliveredCount`（可缺省，默认 0）= 这一单**还有几双没交出去**：
-   * 有值时在说明后面追一句配置文案（`SALES_CONFIRM_DEAL_SETTLED_UNDELIVERED`）。
-   * ⚠️ 缺省 = 逐字不变（既不传也没变的那几条出口一个字节都不动）。
-   */
-  async settleConfirmDealCard(task, event, config = resolveSalesConfirmDealConfig(), context = {},
-    options = {}) {
-    if (!task?.draft) {
-      logWarn('lark.sales.confirm_deal.card.skipped', {
-        task_id: task?.task_id, reason: 'missing_draft',
-      });
-      return false;
-    }
-    const undeliveredCount = Number(options.undeliveredCount || 0);
-    const settledNote = fillConfirmDeal(config.settledMessage,
-      { orderNo: task.posting_result?.sourceNo || config.orderNoFallback });
-    const card = salesStatusCard(task.draft, config.settledTitle,
-      // ⭐ 仍有未交付时把"仍未交付 N 双"写进那句说明（问题 4）；没有时**一个字都不多加**。
-      undeliveredCount > 0
-        ? `${settledNote}${fillConfirmDeal(config.settledUndelivered, { count: undeliveredCount })}`
-        : settledNote,
-      'green',
-      { productInfoGaps: true,
-        confirmDeal: { salesEntryRecordId: task.sales_entry_record_id, draftId: task.task_id,
-          settledAt: Date.now(), config } });
-    return this.updateSalesActionCard(task, event, card,
-      { stage: 'confirm_deal_settled', interactionId: context?.interactionId });
-  }
+  // ⛔ 2026-10-28：本方法之后原先还有一整段**卡片动作**实现，本轮整体删除 ——
+  //   · `get pendingDealPush()` + `handleCardAction()`（含 9 点推送【团购券待结算】「确认到账」、
+  //     到货核对「是」、「成交」、「确认成交」、补样品选择这几条分派）
+  //   · `unknownCardAction()`（未知动作兜底人话，随卡片入口一起无载体）
+  //   · `handleSecondDeliveryAction()` / `confirmDealOptionFor()` / `handleConfirmDealAction()`
+  //     / `confirmDealSummary()` / `confirmDealUndeliveredCount()` / `settleConfirmDealCard()`
+  //   ⚠️ 依据：业务负责人确认「现在没有群聊入口，也没有旧卡片」「9 点群推送不再需要」；
+  //     `routes/larkEvents.js` 的 `card.action.trigger` 也已删除 ⇒ 这些方法没有任何入口。
+  //   ⚠️ 恢复 = **重新实现**（卡片渲染器与动作分派都要重建），不是翻一个开关。
 }
 
 module.exports = {

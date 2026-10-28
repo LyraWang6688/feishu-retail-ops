@@ -74,11 +74,13 @@ const capturePatch = () => {
 //   改后逐字：`assert.equal(PATCHABLE_CARD_SCENARIOS.length, 8, '清单是 8 张在用卡…')`
 //   依据：`salesProcessingCard`（处理中卡）已随死代码清理退场 ⇒ 它不再"会被 patch"；
 //     本清单**本意不变**（每一张**在用**的、会被 patch 的卡，builder 直出都带 `update_multi`）✓
-test('8 张会被 patch 的卡片：builder 直出（"更新前"那份）的 config 就是共享卡片', () => {
+test('3 张会被 patch 的卡片：builder 直出（"更新前"那份）的 config 就是共享卡片', () => {
   // ⚠️ 2026-10-12（3b + 售后卡片退场）：14 → 13（销售确认卡退场）→ 9（售后那 4 张整条退场）
-  //    ⚠️ 2026-10-15（清理死代码）：9 → **8**（处理中卡退场）。
-  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 8,
-    '清单是 8 张**在用**卡（都是一句话就能说清"为什么它要被 patch"的现行卡片）');
+  //    ⚠️ 2026-10-15（清理死代码）：9 → 8（处理中卡退场）。
+  //    ⭐ 2026-10-28（群卡片残留清理）：8 → **3**（销售终态卡 / 每日成交提醒卡 /
+  //      补样品按钮回执两张 / 群话题到货核对卡全部退场）。
+  assert.equal(PATCHABLE_CARD_SCENARIOS.length, 3,
+    '清单是 3 张**在用**卡（都是一句话就能说清"为什么它要被 patch"的现行卡片）');
   for (const { name, build } of PATCHABLE_CARD_SCENARIOS) {
     assert.deepEqual(build(larkCards).config, PATCHABLE_CONFIG,
       `${name} 必须显式声明 update_multi:true，否则它的更新只有操作用户自己看得见`);
@@ -89,7 +91,7 @@ test('8 张会被 patch 的卡片：builder 直出（"更新前"那份）的 con
 // ⚠️ 2026-10-12：「刻意不 patch 的 2 张卡」那条用例**随群查单链路退场**（那 2 张就是 `saleLookupCard` ✓）。
 //    其余卡片的 patch 护栏（下面那条）**逐字不动** ✗ —— 那是别的轮的护栏 ✓
 test('卡片可见内容零变化：header / elements 与改动前（origin/main）逐字相同', () => {
-  // ⚠️ 群查单那 2 张卡退场后，'刻意不 patch' 那份清单已归零 ⇒ 这里只剩可 patch 的 9 张 ✓
+  // ⚠️ 群查单那 2 张卡退场后，'刻意不 patch' 那份清单已归零 ⇒ 这里只剩可 patch 的那几张 ✓
   const scenarios = [...PATCHABLE_CARD_SCENARIOS];
   assert.equal(Object.keys(VISIBLE_GOLDEN).length, scenarios.length, 'golden 与场景清单必须一一对应');
   for (const { name, build } of scenarios) {
@@ -125,15 +127,14 @@ test('patch 出口 ①：采购到货核对接的 `updateCard` 走 updateInterac
 
 test('patch 出口 ②：updateInteractiveCard（她点确认后第一次更新那张卡）payload 里带 update_multi', async () => {
   const { client, payloads } = capturePatch();
-  // ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
-  //   改前逐字：`const card = larkCards.salesProcessingCard({ items: ITEMS }, { title: '⏳ 处理中，正在写入', … })`
-  //   改后逐字：`const card = larkCards.salesStatusCard({ items: ITEMS }, '销售订单已入账', '已经写好了', 'green', { productInfoGaps: false })`
+  // ⭐ 2026-10-28（群卡片残留清理）**再次成对改指向**：
+  //   改前逐字：`const card = larkCards.salesStatusCard({ items: ITEMS }, '销售订单已入账', '已经写好了', 'green', { productInfoGaps: false })`
+  //   改后逐字：`const card = larkCards.purchaseStatusCard({ items: ITEMS }, '采购申请处理中', '已经写好了', 'blue')`
   //   依据：这条判据的本意 =「**`updateInteractiveCard` 这个出口发出去的 payload 必须带 `update_multi`**」
-  //     —— 与"是哪张卡"无关 ⇒ 处理中卡退场后，用**仍在用的活卡**（`salesStatusCard`）钉**同一件事** ✓
+  //     —— 与"是哪张卡"无关 ⇒ 销售终态卡退场后，用**仍在用的活卡**（采购状态卡）钉**同一件事** ✓
   //   ⚠️ 历史留痕（那条真事故）：当时线上出事的**正是** `salesProcessingCard`（stage=processing）；
   //     卡没了，但"**patch 出口必须带 update_multi**"这条判据照旧、且现在钉在活卡上 ✓
-  const card = larkCards.salesStatusCard({ items: ITEMS }, '销售订单已入账', '已经写好了', 'green',
-    { productInfoGaps: false });
+  const card = larkCards.purchaseStatusCard({ items: ITEMS }, '采购申请处理中', '已经写好了', 'blue');
 
   const updated = await updateInteractiveCard({
     client, task: { task_id: 'sale_x', card_message_id: 'om_sale' }, event: {}, card,
@@ -145,7 +146,7 @@ test('patch 出口 ②：updateInteractiveCard（她点确认后第一次更新�
   const sent = JSON.parse(payloads[0].data.content);
   assert.deepEqual(sent.config, PATCHABLE_CONFIG);
   // 顺手确认发出去的确实是**我们要的那张卡**（不是别的卡串了）——换成活卡的标题 ✓
-  assert.equal(sent.header.title.content, '销售订单已入账');
+  assert.equal(sent.header.title.content, '采购申请处理中');
 });
 
 test('patch 出口 ③：PurchaseWebhookService.updatePurchaseActionCard 打到飞书的 payload 里带 update_multi', async () => {
@@ -162,30 +163,11 @@ test('patch 出口 ③：PurchaseWebhookService.updatePurchaseActionCard 打到�
   assert.deepEqual(JSON.parse(payloads[0].data.content).config, PATCHABLE_CONFIG);
 });
 
-// ── ③ 第二次交付：patch 打的是"深拷贝变换后"那份（最易漏）────────────────────
-test('secondDeliveryCard 经 settleSecondDeliveryOrder 变换后仍带 update_multi（含真实 payload）', async () => {
-  const issued = larkCards.secondDeliveryCard({
-    orders: [{ orderNo: 'XSD-001', salesEntryRecordId: 'rec_1', tradeTypeLabel: '已付',
-      quantity: 2, pendingAmount: 99, pendingDeliveryQuantity: 1 }],
-    methods: ['微信', '现金'], dayKey: '2026-10-07',
-  });
-  // 变换内部走 `JSON.parse(JSON.stringify(card))` 深拷贝重建 —— 字段必须被带过去。
-  const settled = larkCards.settleSecondDeliveryOrder(issued, { salesEntryRecordId: 'rec_1' });
-  assert.ok(settled, '这一单在卡里，应当能换成"已成交"');
-  assert.notEqual(settled, issued, '是重建的一份，不是原对象');
-  assert.deepEqual(settled.config, PATCHABLE_CONFIG);
-  // 变换**只动 elements**（把那一单的按钮换成灰字）：header 逐字不变。
-  assert.deepEqual(settled.header, issued.header);
-
-  // 再走一次真实出口（`secondDeliveryService.markCardSettled` 用的就是它）。
-  const { client, payloads } = capturePatch();
-  const updated = await updateInteractiveCard({
-    client, task: { task_id: 'day_2026-10-07', card_message_id: 'om_day' }, card: settled,
-    stage: 'second_delivery_settled', eventPrefix: 'sales.second_delivery.card.update',
-  });
-  assert.equal(updated, true);
-  assert.deepEqual(JSON.parse(payloads[0].data.content).config, PATCHABLE_CONFIG);
-});
+// ── ③ 第二次交付的提醒卡：**已随 9 点群推送整体退场** ─────────────────────────
+// ⛔ 2026-10-28：这里原先那条「`secondDeliveryCard` 经 `settleSecondDeliveryOrder` 深拷贝变换后
+//   仍带 update_multi」的用例，载体（每日成交提醒卡 + 把那一单改成已成交）已删除
+//   （业务负责人：「9 点群推送不再需要」「现在没有群聊入口，也没有旧卡片」）。
+//   ⚠️ "patch 出口必须带 update_multi"这条判据**没有少**：它由上面 ①/② 与下面那条现场复现钉着。
 
 // ── 现场复现：她点一次「确认」，两次真实 patch payload 都带该字段 ───────────────
 // 这条不是"再测一遍 builder"，而是走**她那条真实链路**：

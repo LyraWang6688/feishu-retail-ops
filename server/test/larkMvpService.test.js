@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { LarkMvpService, aggregateRecognizedItems, looksLikeSalesText } = require('../src/services/larkMvpService');
+const { LarkMvpService, aggregateRecognizedItems } = require('../src/services/larkMvpService');
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
 const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
@@ -13,7 +13,6 @@ const { PurchaseWebhookService } = require('../src/services/purchaseWebhookServi
 //   **都带**（她当天先"两边都放"、又纠正"只放2"、再改口"中间态也要"，原话见
 //   test/productInfoGapsCardPlacement.test.js）；下面这几条断言一直用终态卡渲染器钉，
 //   与处理中卡那一段不冲突，所以**一个字没改**）。
-const { salesStatusCard } = require('../src/utils/larkCards');
 
 // 拼接「货品信息」的记录链接要读 Base token。测试里给一个占位值；
 // 已配置时不覆盖（CI 或本地 .env 里可能已经有真值）。
@@ -149,7 +148,7 @@ test('recognized purchase items with same SKU and size are aggregated', () => {
   );
 });
 
-test('selling a sample sends a per-order size choice card and only its recipient can promote a door-box pair', async () => {
+test('selling a sample sends a per-order size choice card (提醒本身仍活着；卡片按钮回调已退场)', async () => {
   const store = makeStore();
   const cards = [];
   const promoted = [];
@@ -178,64 +177,17 @@ test('selling a sample sends a per-order size choice card and only its recipient
   assert.match(JSON.stringify(cards[0]), /A100黑/);
   assert.match(JSON.stringify(cards[0]), /40码：门盒 1/);
   assert.ok(!JSON.stringify(cards[0]).includes('选 41 码'));
-  const choose = (openId) => ({ action: { value: { action: 'choose_sample_replacement',
-    // 候选尺码按钮已从 action 换成 column_set（移动端实测，见 larkCards.buttonColumns），
-    // 所以按钮要从 column 里取。
-    draft_id: cards[0].elements[1].columns[0].elements[0].value.draft_id, size: 40 } },
-    operator: { operator_id: { open_id: openId } } });
-  await assert.rejects(service.handleCardAction(choose('ou_other')), /只能由收到提醒的用户/);
-  const result = await service.handleCardAction(choose('ou_seller'));
-  assert.equal(result.toast.type, 'success');
-  assert.equal(promoted.length, 1);
-  assert.equal((await service.handleCardAction(choose('ou_seller'))).toast.type, 'info');
-  assert.equal(promoted.length, 1);
+  // ⛔ 2026-10-28：这一段原先还接着点卡片按钮（`handleCardAction` → 只有收件人能补、重复点幂等）。
+  //   卡片按钮回调已随「没有旧卡片」整体删除 ⇒ 那几条断言一起退场。
+  //   ⚠️ 本用例**保留**的部分是"补样品提醒本身"（`notifySampleReplacements`）——
+  //     它仍然活着（工作台补样品链路会调它），判据一个字没放宽。
+  assert.equal(promoted.length, 0, '提醒阶段一个写库动作都不该发生（她还没选门盒）');
 });
 
-test('concurrent sample choices promote only one size and end with a feedback card', async () => {
-  const store = makeStore();
-  const cards = [];
-  const promoted = [];
-  await store.create({ task_id: 'sample_race', type: 'sample_replacement', status: 'pending',
-    sender_open_id: 'ou_1', product_record_id: 'product_1', product_number: 'A100黑',
-    sales_detail_record_id: 'detail_1', card_message_id: 'om_card' });
-  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, store,
-    purchaseWebhooks: {}, delivery: { inventory: {
-      sampleReplacementCandidates: async () => [{ size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 }],
-      promoteToSample: async ({ size }) => {
-        promoted.push(size);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        return { size, liveRecordId: 'door_40' };
-      },
-    } } });
-  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
-  const choose = (size) => ({ operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'choose_sample_replacement', draft_id: 'sample_race', size } } });
-  const results = await Promise.all([service.handleCardAction(choose(40)), service.handleCardAction(choose(41))]);
-  assert.deepEqual(promoted, [40]);
-  assert.equal(results[0].toast.type, 'success');
-  assert.match(results[1].toast.content, /已补选/);
-  assert.match(cards.at(-1).header.title.content, /已补选/);
-});
-
-test('sample refresh failure replaces processing view with a retryable card', async () => {
-  const store = makeStore();
-  const cards = [];
-  await store.create({ task_id: 'sample_refresh_error', type: 'sample_replacement', status: 'pending',
-    sender_open_id: 'ou_1', product_record_id: 'product_1', product_number: 'A100黑',
-    sales_detail_record_id: 'detail_1', card_message_id: 'om_card' });
-  const service = new LarkMvpService({ client: {}, gateway: {}, references: {}, store,
-    purchaseWebhooks: {}, delivery: { inventory: {
-      sampleReplacementCandidates: async () => { throw new Error('查询库存失败'); },
-    } } });
-  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
-  const result = await service.handleCardAction({ operator: { operator_id: { open_id: 'ou_1' } },
-    action: { value: { action: 'refresh_sample_replacement', draft_id: 'sample_refresh_error' } } });
-  assert.equal(result.toast.type, 'warning');
-  assert.match(cards[0].header.title.content, /处理中/);
-  assert.match(JSON.stringify(cards[1]), /刷新尺码失败/);
-  // 「刷新可选尺码」是单个按钮，不会有换行问题，保持 action 元素（只有多按钮才改成 column_set）。
-  assert.ok(cards[1].elements.some((element) => element.tag === 'action'));
-});
+// ⛔ 2026-10-28：这里原先还有两条**卡片按钮**用例 ——
+//   ①「并发选两个尺码只补一双、终态卡回执」②「刷新尺码失败换一张可重试卡」。
+//   它们的入口（`LarkMvpService.handleCardAction` → `SampleReplacementService.handleCardAction`）
+//   随「没有旧卡片」整体删除 ⇒ 一起退场（补样品**提醒**的用例在上面保留）。
 
 // 销售入口按「实时库存」匹配：一条实时库存记录 = 一双鞋。
 // 「库存键」是飞书侧公式（货号|颜色|类别|尺码），「所属状态」是门盒/样品/仓库；
@@ -597,8 +549,17 @@ test('⭐⭐ 源码哨兵：群入口那条链路的符号**一个都不许回�
     assert.equal(fs.existsSync(path.join(__dirname, removedFile)), false,
       `${removedFile} 应已删除（群入口专属件）`);
   }
-  // ✅ 死保项：9 点推送三块与两个卡片回调不许被牵连
-  assert.match(source, /handleSecondDeliveryAction/, '二次交付成交必须还在');
-  assert.match(source, /confirmVoucherSettlement/, '团购券「确认到账」必须还在');
+  // ⭐ 2026-10-28：原来这里是两条「死保项」（`handleSecondDeliveryAction` / `confirmVoucherSettlement`
+  //   必须还在）。业务负责人确认「9 点群推送不再需要」「现在没有群聊入口，也没有旧卡片」
+  //   ⇒ 两个卡片回调都已删除 ⇒ **翻成反方向**（塞回即红），判据没有放宽。
+  assert.equal(/^ {2}(async )?handleSecondDeliveryAction\(/m.test(source), false,
+    '二次交付的卡片回调不许复活');
+  assert.equal(/confirmVoucherSettlement\s*\(/.test(source), false,
+    '团购券「确认到账」不许复活（9 点推送已退场）');
+  // ✅ 真正的死保项：工作台那条「二次交付」的实现在 service 里，一行没动。
+  const secondDelivery = fs.readFileSync(
+    path.join(__dirname, '../src/services/secondDeliveryService.js'), 'utf8',
+  );
+  assert.match(secondDelivery, /async _confirm\(/, '二次交付（补收款 + 交付）本体必须还在（工作台在用）');
 });
 

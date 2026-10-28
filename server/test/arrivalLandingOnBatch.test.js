@@ -254,14 +254,17 @@ test('③ ⭐ 到货确认**不再写任何入库明细行**（那张表已被�
 
 test('④-1 重复点「是」（飞书重投）：批次行 / 库存 都不重复写', async () => {
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
-  const { taskId } = await arriveAndConfirm(harness);
+  await arriveAndConfirm(harness);
 
   const batchesAfterFirst = writesTo(harness.gateway, 'purchaseOrderBatch').length;
 
-  await harness.service.handleCardAction(
-    { action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId },
-    { context: { open_message_id: 'om_card_1' } }, 'ou_1',
-  );
+  // ⭐ 2026-10-28：重投的入口从「再点一次卡片『是』」换成**现役入口** `confirmBatchArrival`
+  //   （工作台重复提交 / 扫码重复验收就是它）—— 卡片回调已随「没有旧卡片」删除；
+  //   两条入口最终都走 `confirmLocked`，所以"已 posted ⇒ 一个字都不再写"这条判据一字未动。
+  const replay = await harness.service.confirmBatchArrival({
+    batch: topicBatch(), actualAmount: AMOUNT, operatorOpenId: 'ou_1',
+  });
+  assert.equal(replay.ok, true, '重投 ⇒ 如实回"已经入过库"，不报错');
 
   assert.equal(writesTo(harness.gateway, 'purchaseOrderBatch').length, batchesAfterFirst, '批次行不再写');
   assert.equal(harness.inventory.calls.length, 2, '库存不再加');

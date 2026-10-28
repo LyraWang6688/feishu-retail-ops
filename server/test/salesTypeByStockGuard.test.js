@@ -17,10 +17,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const larkCards = require('../src/utils/larkCards');
-const { PendingDealPushService } = require('../src/services/pendingDealPushService');
-const { resolvePendingDealPushConfig } = require('../src/config/pendingDealPush');
+const { PATCHABLE_CARD_SCENARIOS } = require('../test-support/cardScenarios');
 const { resolveSalesColorChoiceConfig } = require('../src/config/salesColorChoice');
-const { resolveSecondDeliveryCardConfig } = require('../src/config/secondDeliveryCard');
 const { SALES_CARD_FACTS_DEFAULTS } = require('../src/config/salesCardFacts');
 const { SALES_MOVEMENTS, SALES_TRADE_TYPE_CODES, tradeTypeCodeFromLabel } = require('../src/config/salesMovements');
 
@@ -29,72 +27,34 @@ const FORBIDDEN_IN_TEXT = ['未付', '预付'];
 
 const ITEMS = [{ item_no: 'A100', size: 38, quantity: 1, actual_amount: 99, trade_type_code: 'SALE_CASH' }];
 
-// ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
-//   改前逐字：`'① 卡片渲染 0 命中「未付 / 预付」：处理中卡 / 终态卡 / 成交提醒卡（原确认卡已退场，红线口径照旧）'`
-//   改后逐字：`'① 卡片渲染 0 命中「未付 / 预付」：终态卡 / 成交提醒卡（原确认卡与处理中卡已退场，红线口径照旧）'`
-//   依据：这条是**她定的红线**（卡面上不许出现「未付 / 预付」那种词）⇒ 判据本意 = "**在用的每一张卡**都 0 命中"
-//     ⇒ 处理中卡退场后，**终态卡 + 成交提醒卡**（＋ 到货核对卡）照旧逐张断言 ✓（判据没放宽 ✗）
-test('① 卡片渲染 0 命中「未付 / 预付」：终态卡 / 成交提醒卡（原确认卡与处理中卡已退场，红线口径照旧）', () => {
-  const cards = [
-    larkCards.salesStatusCard({ items: ITEMS }, '销售订单已入账', '销售单号：XSD-1。', 'green'),
-    larkCards.secondDeliveryCard({
-      orders: [{ orderNo: 'XSD-1', salesEntryRecordId: 'rec_1', tradeTypeLabel: '现货',
-        quantity: 1, pendingAmount: 99, pendingDeliveryQuantity: 0 }],
-      methods: ['微信'], dayKey: '2026-10-07',
-    }),
-  ];
-  for (const [index, card] of cards.entries()) {
-    const text = JSON.stringify(card);
+// ⭐ 2026-10-28（群卡片残留清理）**成对改指向**：
+//   改前逐字：这段逐张断言 `salesStatusCard` + `secondDeliveryCard`（"+ 到货核对卡"）。
+//   改后逐字：两**张卡都已随「没有旧卡片 / 9 点推送不再需要」删除** ⇒ 改成扫**全部仍在生产使用**
+//     的卡片（`test-support/cardScenarios.js` 的 `PATCHABLE_CARD_SCENARIOS`，现为 3 张：
+//     样品补选卡 / 到货验收终态卡 / 采购状态卡）。
+//   判据本意不变：**在用的每一张卡**都 0 命中「未付 / 预付」。卡多了会自动进这个循环。
+test('① 卡片渲染 0 命中「未付 / 预付」：仍在用的每一张卡（红线口径照旧）', () => {
+  assert.ok(PATCHABLE_CARD_SCENARIOS.length >= 3, '至少要有 3 张在用卡参与扫描');
+  for (const { name, build } of PATCHABLE_CARD_SCENARIOS) {
+    const text = JSON.stringify(build(larkCards));
     for (const word of FORBIDDEN_IN_TEXT) {
-      assert.ok(!text.includes(word), `第 ${index + 1} 张卡片里出现了「${word}」：${text}`);
+      assert.ok(!text.includes(word), `${name} 里出现了「${word}」：${text}`);
     }
   }
-  // ⚠️ 2026-10-12（3b）：原来这里还有一条正例 —— 「三段（类型 / 履约 / 收款）说清了」，
-  //    它钉的是**已退场那张确认卡片**的 `salesCardFactElements`（那三段只有它一个调用方
-  //    ⇒ 没有活的卡片需要它）⇒ 正例随卡片一起退场。**红线那一半（0 命中「未付 / 预付」）照旧**：
-  //    仍在跑的处理中卡 / 终态卡 / 成交提醒卡都在上面那个循环里逐张扫过。
 });
 
-test('① 待处理单推送渲染 0 命中「未付 / 预付」（分区标题就是【预定】/【现货待收】）', () => {
-  const settings = { ...resolvePendingDealPushConfig({}), enabled: true };
-  const service = new PendingDealPushService({
-    settings,
-    secondDelivery: { client: {}, listPendingDeliveries: async () => [] },
-    locator: {}, resolver: {}, client: {}, chatId: 'oc_x', store: {}, pin: {},
-  });
-  // ⚠️ 2026-10-08（第一步）：入口是**行**（`{ sections, rows }`），判据由取数那一处给。
-  const rows = [
-    { rowId: 'd1', salesEntryRecordId: 'a', criterion: 'undelivered', facts: [], pendingAmount: 128, url: '' },
-    { rowId: 'p1', salesEntryRecordId: 'b', criterion: 'delivered_unpaid', facts: [], pendingAmount: 228, url: '' },
-  ];
-  const text = service.buildText({
-    dayKey: '2026-10-07',
-    missingLinkCount: 0,
-    sections: service.buildSections(rows),
-    rows,
-  });
-  for (const word of FORBIDDEN_IN_TEXT) {
-    assert.ok(!text.includes(word), `推送文案里出现了「${word}」：\n${text}`);
-  }
-  assert.match(text, /【预定】1 笔/);
-  assert.match(text, /【现货待收】1 笔/);
-});
+// ⛔ 2026-10-28：原「① 待处理单推送渲染 0 命中『未付 / 预付』」那条已退场 ——
+//   9 点群推送（`PendingDealPushService.buildText` / `buildSections`）整体删除
+//   （业务负责人：「9 点群推送不再需要」）。**红线本身没有放宽**：
+//   ① 逐张扫在用的卡片、② 扫在用的配置默认值、③ 扫 `src/` 字面量 —— 三条照旧。
 
-// 🔴 2026-10-16（「与 AI 分析有关的都停掉」）：**删掉一条**（判据迁移，逐字留痕）——
-//   · 删前逐字：`test('① 「销售信息还缺…」追问渲染 0 命中「未付 / 预付」（含"哪一件付了定金"那句）', …)`
-//   · 为什么删：它断言的**渲染结果**由 `config/salesMissingInfoText.renderSalesMissingInfo` 产出，
-//     而那正是**"销售文字录单缺项追问"那一层文案**（AI 解析输出 `missing_fields` → 翻人话）；
-//     该配置随 AI 解析整体删除 ⇒ 这条判据**没有可断言的对象**了 ✗
-//   · 依据=业务负责人 2026-10-16 逐字：「**都停掉，与 AI 分析有关的都停掉**」＋「**连代码一起删**」
-//   · ⭐ 它的**红线本意**（用户可见文案里不许出现「未付 / 预付」）**没有被放宽**：
-//     ① ② ③ 三条照旧逐条断言**在用的**卡片 / 推送 / 配置 / 源码字面量 ✓
-//   · ⚠️ 同一条判据的**残留哨兵**已迁到 `test/aiParsingRemoval.test.js` AC-2（塞回即红）✓
-test('② 配置默认值 0 命中：三段文案 / 颜色候选 / 待处理单推送 / 成交提醒卡（追问文案那份配置 2026-10-16 已随 AI 解析删除）', () => {
+test('② 配置默认值 0 命中：三段文案 / 颜色候选（待处理单推送与成交提醒卡的配置已随推送删除）', () => {
+  // ⭐ 2026-10-28：原来还扫 `resolvePendingDealPushConfig` / `resolveSecondDeliveryCardConfig`
+  //   —— 那两份配置已随 9 点群推送整体删除，没有可扫的对象了。
+  //   ⚠️ 这不是放宽：**仍存在**的每一份用户可见文案配置照旧逐份扫（下面是全部剩余项）。
   const blobs = [
     JSON.stringify(SALES_CARD_FACTS_DEFAULTS),
     JSON.stringify(resolveSalesColorChoiceConfig({})),
-    JSON.stringify(resolvePendingDealPushConfig({})),
-    JSON.stringify(resolveSecondDeliveryCardConfig({})),
   ];
   for (const [index, blob] of blobs.entries()) {
     for (const word of FORBIDDEN_IN_TEXT) {
