@@ -120,9 +120,11 @@ const newRowHtml = (group, size, draft, store, config) => {
 };
 
 export const newGroupHtml = (group, draft, store, config) => {
-  const subtitle = fill(config.card.newSubtitle, {
+  const supplier = String(group.supplierName || '').trim();
+  // 供应商为空 ⇒ 用无「·」的模板（否则卡片小字会多一个孤零零的「·」）
+  const subtitle = fill(supplier ? config.card.newSubtitle : config.card.newSubtitleNoSupplier, {
     time: formatClock(group.createdAt, config.timezoneOffsetMinutes),
-    supplier: group.supplierName || '',
+    supplier,
   });
   const head = `<div class="pr-group-head">
     <h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}<small>${escapeHtml(subtitle)}</small></h2>
@@ -160,11 +162,9 @@ export const shellHtml = (config) => {
     }
     return `<button ${attrs.join(' ')}>${escapeHtml(tab.label)}<small>${escapeHtml(tab.hint)}</small></button>`;
   }).join('');
-  return `<header class="pr-top">
-    <h1 class="pr-title">${escapeHtml(config.title)}</h1>
-    <div class="pr-auth"><span id="auth-status"></span><button id="logout" class="btn pr-logout hidden" type="button">${escapeHtml(config.texts.logout)}</button></div>
-  </header>
-  <div class="pr-tabs" role="tablist" aria-label="${escapeHtml(config.title)}">${tabs}</div>
+  // 业务负责人 2026-10-29（对照交割单页）：**移动端页面不放登录态** —— 顶部直接是三个 tab，
+  // 省出宽度/高度（登录/退出由外层飞书容器处理，页面内不需要重复展示）。
+  return `<div class="pr-tabs" role="tablist" aria-label="${escapeHtml(config.title)}">${tabs}</div>
   <div class="pr-panel" data-pr-panel="replenish"></div>
   <div class="pr-panel hidden" data-pr-panel="new"></div>
   <div class="pr-bottom"><div class="pr-bottom-inner">

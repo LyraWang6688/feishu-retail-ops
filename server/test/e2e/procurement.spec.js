@@ -13,7 +13,8 @@ import { STORAGE_KEY, mockApi } from './fixtures/procurementMock.js';
 const SHOTS = path.resolve(process.cwd(), '../docs/procurement-page-real-shots');
 
 const openPage = async (page) => {
-  await expect(page.getByRole('heading', { name: '采购' })).toBeVisible();
+  // 顶部已按工作台改成 .header > .auth（登录状态 + 退出登录），页面内不再有「采购」大标题
+  await expect(page.locator('.pr-tabs[role="tablist"]')).toBeVisible();
   await expect(page.getByText('86822 · 黑色')).toBeVisible();
 };
 const tab = (page, name) => page.getByRole('tab', { name });

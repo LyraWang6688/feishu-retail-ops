@@ -82,6 +82,12 @@ test('AC-P9/P21 扫一扫本轮占位：tab 视觉保留但禁用；页面不 im
   assert.match(read('src/utils/uiTapReport.js'), /procurement_scan_returned/);
 });
 
+test('AC-P18f 上新副标题：供应商为空时不出现孤立的「·」', () => {
+  const configSource = read(`${PUBLIC}/config/procurement.js`);
+  assert.match(configSource, /newSubtitleNoSupplier: '今日 \{time\} 新增'/);
+  assert.match(read(`${PUBLIC}/features/procurement/render.js`), /supplier \? config\.card\.newSubtitle : config\.card\.newSubtitleNoSupplier/);
+});
+
 test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉已消失的已选行', async () => {
   const configSource = read(`${PUBLIC}/config/procurement.js`);
   assert.match(configSource, /replenish: '\{from\} 00:00 – 现在'/);
