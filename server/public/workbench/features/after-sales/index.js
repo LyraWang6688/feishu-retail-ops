@@ -115,11 +115,9 @@ export function mountAfterSalesPage(container, options = {}) {
     body.insertAdjacentHTML('beforeend', actionsHtml());
   };
 
+  // ⚠️ 2026-10-29（业务负责人 HTML 批注）：页头「← 返回 售后单」整块删掉了
+  //   ⇒ 这里不再有返回按钮的处理（页面里没有那个元素，留着就是死代码）。
   container.addEventListener('click', (event) => {
-    if (event.target.closest('[data-back]')) {
-      window.location.href = '/workbench/';
-      return;
-    }
     const candidate = event.target.closest('[data-detail]');
     if (candidate) {
       selectedDetailId = candidate.dataset.detail || '';

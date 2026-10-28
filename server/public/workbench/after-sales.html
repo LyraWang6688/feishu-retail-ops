@@ -11,11 +11,9 @@
 </head>
 <body data-view="after-sales">
   <!-- 售后扫一扫落地页：二维码（货品记录 id）→ 近 7 天销售记录 → 换货 / 退货 / 赔货。 -->
+  <!-- ⭐ 2026-10-29（业务负责人 HTML 批注）：「← 返回 售后单」这个页头**不需要** ⇒ 整块删掉，
+       页面直接从货品（货号 · 颜色）开始。 -->
   <main class="shell after-sales-page" id="after-sales-app">
-    <header class="after-sales-head">
-      <button class="btn-back" type="button" data-back="1">← 返回</button>
-      <h1>售后单</h1>
-    </header>
     <p class="after-sales-product" data-view="after-sales-product">正在读取货品…</p>
     <p class="after-sales-status" data-view="after-sales-status" role="status"></p>
     <section data-view="after-sales-body"></section>

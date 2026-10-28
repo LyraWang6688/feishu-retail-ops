@@ -8,29 +8,12 @@
   margin: 0 auto;
 }
 
-/* ── 页头：返回 + 标题 + 货品（货号 · 颜色）────────────────────────────── */
-.after-sales-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-3) 0 var(--space-1);
-}
-.after-sales-head h1 {
-  margin: 0;
-  font-size: var(--font-size-xl);
-}
-.after-sales-head .btn-back {
-  flex: none;
-  min-height: var(--control-height);
-  padding: 0 var(--space-2) 0 0;
-  border: 0;
-  background: transparent;
-  color: var(--primary);
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-}
+/* ── 货品（货号 · 颜色）───────────────────────────────────────────────────
+ * ⚠️ 2026-10-29（业务负责人 HTML 批注）：原来这里还有一个「← 返回 售后单」页头，
+ *    她批注「不需要」⇒ 页头整块删掉（HTML / 处理逻辑 / 这里的样式一起删），
+ *    页面从货品这一行开始。 */
 .after-sales-product {
-  margin: 0 0 var(--space-4);
+  margin: var(--space-1) 0 var(--space-4);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   overflow-wrap: anywhere;
