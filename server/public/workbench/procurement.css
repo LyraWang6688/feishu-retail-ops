@@ -61,9 +61,9 @@
 .pr-tag-spot { background: var(--info-soft); color: var(--info); }
 .pr-tag-pre { background: var(--warning-soft); color: var(--warning); }
 
-/* 上新尺码格 */
-.pr-new-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); padding: var(--space-2) var(--space-4) var(--space-3); width: 100%; }
-.pr-new-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
+/* 上新尺码格：与补货**同一套卡片样式**（一行两个 · 上下两栏 · 加减圆框居中） */
+.pr-new-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); width: 100%; }
+.pr-new-grid .pr-size-row { width: 100%; }
 .pr-special { width: 100%; padding: 0 var(--space-4) var(--space-3); border-top: 1px solid var(--border-light); }
 .pr-special summary { display: flex; align-items: center; min-height: var(--control-height); font-size: var(--font-size-sm); color: var(--text-secondary); cursor: pointer; }
 

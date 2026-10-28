@@ -101,8 +101,10 @@ export const replenishGroupHtml = (group, draft, store, config) => `<section cla
 
 const newRowHtml = (group, size, draft, store, config) => {
   const quantity = store.quantityOf(draft, group.productRecordId, size);
-  return `<div class="pr-new-row">
-    <div class="pr-size">${escapeHtml(size)}</div>
+  // 业务负责人 2026-10-29：上新尺码格**统一成补货那种卡片样式** ——
+  // 上下两栏（第一行尺码 / 第二行加减圆框居中），一行两个。
+  return `<div class="pr-size-row">
+    <div class="pr-size-row-head"><div class="pr-size">${escapeHtml(size)}</div></div>
     ${stepperHtml({ recordId: group.productRecordId, size, quantity, config })}
   </div>`;
 };
