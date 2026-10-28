@@ -5,9 +5,9 @@
  *
  * 她 2026-10-14 逐字：「**付款方式用交易方式管理，可选择**」⇒ 资金页那一列候选 =
  * 「收款方式管理」表里**真实那几条**（只读 ✓ + TTL 缓存 ✓）—— 她点名要过「抖音团购券」。
- * 🔴 **读不到表** ⇒ **大声 `logWarn` + 退回配置里的方式**：
+ * 🔴 **读不到表** ⇒ **大声 `logWarn`**，**不再给配置假选项**（2026-10-26 起）：
  *    · **不许静默**（静默 ⇒ 表坏了没人知道 ✗）；
- *    · **不许留白**（这一页是**展示** —— 候选为空 ⇒ 她"点不出来"，收款这一步就走不下去 ✗）。
+ *    · **不许给假选项**（页面能选、写库按表校验 ⇒ 必然失败 ✗）。
  *
  * ⚠️ 本文件**只钉这一件事**（页面其余行为在既有用例里 ✓ 不重复）。
  * ⚠️ 与 `listAccessories` 的口径**刻意不同**（配品读不到给空清单 ✗）—— 见路由里那份注释。
@@ -94,9 +94,7 @@ const tableGateway = (methods, calls = []) => ({
   },
 });
 
-const configuredFallback = () => [...new Set([
-  SCAN_WRITE.sale.defaultPaymentMethod, ...(SCAN_WRITE.sale.paymentMethods || []),
-].filter(Boolean))];
+const configuredFallback = () => [SCAN_WRITE.sale.defaultPaymentMethod].filter(Boolean);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-A2A-3a / 3c 读得到表 ⇒ 表里那几条都点得到（且 TTL 缓存）

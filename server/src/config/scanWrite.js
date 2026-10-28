@@ -280,11 +280,10 @@ const SALE = Object.freeze({
   // ⚠️ 2026-10-11 起它只落在**第一笔**收款行上（第二行起默认"不记这笔"）——
   //    否则每一行都预选微信 ⇒ 每一行都像"已经被用了"。
   defaultPaymentMethod: readString(process.env, 'SCAN_SALE_DEFAULT_PAYMENT_METHOD', '微信'),
-  // 表单上给她的收款方式选项（配置先行；取值必须能在「收款方式管理」里找到，
-  // 否则写收款明细时会大声报"收款方式管理中找不到：X"）。
-  // ⚠️ 默认选中项 = `defaultPaymentMethod`（只落在**第一行**收款上）。
-  paymentMethods: readList(process.env, 'SCAN_SALE_PAYMENT_METHODS')
-    || ['微信', '现金', '支付宝', '银行卡'],
+  // 🔴 2026-10-28：**不再保留默认支付方式数组**（原 `['微信','现金','支付宝','银行卡']`）。
+  //   实际候选只来自「收款方式管理」表（`services/paymentMethodsService.js`，TTL 缓存 +
+  //   表变更事件 `invalidateConfigTable('paymentMethod')`）；读不到表时**宁可不给选项**，
+  //   也不给与表不一致的假选项（线上已因此撞过“找不到：微信”）。
   // ⭐⭐ 2026-10-11：**总单层可以记几笔收款**（页面预置几行；没填金额的行 = 不用）。
   //    ⚠️ 这一页是**零 JS** 的原生表单（2026-10-09 白屏事故之后定的、有用例钉着），
   //      所以"可增删行"落地成"预置 N 行、填几行算几行"。

@@ -228,7 +228,7 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
       require('../src/services/scanWriteService').createScanWriteService({
         gateway, config: require('../src/config/scanWrite').SCAN_WRITE,
       }),
-      { listPaymentMethods: async () => require('../src/config/scanWrite').SCAN_WRITE.sale.paymentMethods },
+      { listPaymentMethods: async () => ['微信'] },
     ),
   }));
 

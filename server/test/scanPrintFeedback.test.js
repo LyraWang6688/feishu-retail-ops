@@ -259,7 +259,7 @@ test('AC-PF6 ⭐ 销售【提交这一单】也有即时反馈：置灰 + 「正
   login();
   // 这一条要**真的渲染出销售那块**（带钱的提交表单）⇒ 需要一个最小的写入口上下文
   const writeService = {
-    listPaymentMethods: async () => require('../src/config/scanWrite').SCAN_WRITE.sale.paymentMethods,
+    listPaymentMethods: async () => ['微信'],
     sessions: {
       get: async () => ({
         session_id: 'scan_session_0123456789abcdef', expired: false,

@@ -197,15 +197,15 @@ const createScanPageRouter = (options = {}) => {
   /**
    * ⭐⭐ 2026-10-16 A2a ③：**候选收款方式 = 读「收款方式管理」那张表**（只读 + TTL 缓存那一份 service）。
    *
-   *   她 2026-10-14 逐字：「**付款方式用交易方式管理，可选择**」⇒ 页面上的候选不再只吃
-   *   `config/scanWrite.js` 里那几个名字，而是**表里真实的那几条**（她点名要过「抖音团购券」）。
-   *   🔴 **读不到表**（或读出来是空的）⇒ **大声 `logWarn` + 退回配置里的方式**：
+   *   她 2026-10-14 逐字：「**付款方式用交易方式管理，可选择**」⇒ 页面上的候选 =
+   *   **「收款方式管理」表里真实的那几条**（只读 + TTL 缓存 ✓，她点名要过「抖音团购券」）。
+   *   🔴 **读不到表**（或读出来是空的）⇒ **大声 `logWarn`**，**不给配置假选项**：
    *      · **不许静默**（静默 ⇒ 表坏了没人知道 ✗）；
-   *      · **不许留白**（这一页是**展示** —— 候选为空 ⇒ 她"点不出来"，收款这一步就走不下去 ✗）。
+   *      · **不许给假选项**（页面能选、写库又按表校验 ⇒ 必然失败，线上已撞过 ✗）。
    *   ⚠️ 与 `listAccessories`（`:181`）**口径不同**：配品读不到给**空清单**（少一个下拉项不挡卖鞋 ✓），
-   *      收款方式读不到**必须退回配置**（挡的是"她能不能记账"✗）—— 这里刻意**不照抄**那一条。
-   *   ⚠️ 默认方式照旧**排在第一位**（`defaultPaymentMethod`，她 2026-10-08：「默认微信」）——
-   *      表里没有它时也保留：与改前那句 `[...new Set([default, ...config])]` 同口径 ✓。
+   *      收款方式读不到也宁可不给选项（与改前“退回配置”不同，2026-10-26 成对迁移 ✓）。
+   *   ⚠️ 默认方式 `defaultPaymentMethod` 只在**表里存在**时排第一（`orderWithPreferred`）；
+   *      表里没有它 ⇒ 用表里第一项，**不再硬塞**。
    */
   const paymentMethodsService = options.paymentMethodsService
     || createPaymentMethodsService(gateway, options.paymentMethodsServiceOptions);
@@ -220,11 +220,9 @@ const createScanPageRouter = (options = {}) => {
       paymentMethods: paymentMethodsService,
       config: options.voucherPaymentConfig,
     });
-  const configuredPaymentMethods = () => [...new Set([
-    writeConfig.sale.defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || []),
-  ].filter(Boolean))];
+  const configuredFallback = () => [writeConfig.sale.defaultPaymentMethod].filter(Boolean);
   const candidatePaymentMethods = async (req) => {
-    const fallback = configuredPaymentMethods();
+    const fallback = configuredFallback();
     const listed = await paymentMethodsService.list().catch((error) => ({
       ok: false, items: [], reason: 'payment_methods_unreadable', error: error?.message || 'unknown',
     }));
