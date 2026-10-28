@@ -59,6 +59,9 @@ export const PROCUREMENT_UI = Object.freeze({
       Object.freeze({ key: 'productCount', label: '新增货品', unit: '' }),
     ]),
   }),
+  summary: Object.freeze({
+    singleStatInline: true, // 只有 1 个统计项（上新）⇒ 统计 + 统计范围 + 刷新**排在一行**
+  }),
   range: Object.freeze({
     // 业务负责人 2026-10-29 口径：补货窗口 = 今天 00:00 - 3 天 ~ **现在**（含今天已发生）
     replenish: '{from} 00:00 – 现在',
