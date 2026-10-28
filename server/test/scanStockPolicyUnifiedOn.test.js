@@ -136,7 +136,7 @@ const MIXED_A_VIEW = {
   product_record_id: 'prod_8516',
 };
 
-/** ⭐ **女款（B）**：特殊码 = 34/35/42/43（离散）· 普通码 = 36…41。 */
+/** ⭐ **女款（B）**：特殊码 = 34/35/41/42/43（离散）· 普通码 = 36–40。 */
 const MIXED_B_VIEW = {
   found: true, number: 'MK31-1|咖色|B', item_no: 'MK31-1', color: '咖色',
   category_name: '休闲鞋', category_code: 'B', price_text: '¥299',
@@ -278,7 +278,7 @@ test('AC-ST6 ⭐⭐ 她的 44 码（只有「未标状态」= 1）⇒ 四页都�
 // AC-ST8 ⭐⭐ 展示规则：普通码有货无货都展示 · 特殊码无货时折叠
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ST8 ⭐⭐ 普通码（A 38–45 / B 36–41）**有货无货都展示** · 特殊码**无货折叠**', () => {
+test('AC-ST8 ⭐⭐ 普通码（A 38–44 / B 36–40）**有货无货都展示** · 特殊码**无货折叠**', () => {
   const { normalSizesOf, specialSizesOf } = require('../src/config/scanStockPolicy');
   const cases = [
     { view: MIXED_A_VIEW, code: 'A', stocked: ['40', '42', '43', '44', '46'] },
