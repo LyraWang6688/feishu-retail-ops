@@ -237,7 +237,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
 ${sizeInput}
-<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
+<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
 ${alert}
 ${multiItemTitleHtml}${draftLinesHtml(write)}
 ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
@@ -284,7 +284,7 @@ const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 </legend>
 <div class="size-chips">${items.length
     ? items.map((item) => `<label class="size-chip">
-<input type="radio" name="size" value="${escapeHtml(item.size_text)}">
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
 <span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
 </label>`).join('\n')
     : `<span class="hint">${escapeHtml(empty)}</span>`}</div>
@@ -313,7 +313,7 @@ ${inner}
 
 /** 销售页那一块（#515）：折叠块里是**能选的尺码卡**（与外面同规则：`name="size"` 的 radio ✓） */
 const specialFoldHtml = (items) => specialFoldShellHtml(items, `<div class="size-chips">${items.map((item) => `<label class="size-chip">
-<input type="radio" name="size" value="${escapeHtml(item.size_text)}">
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
 <span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
 </label>`).join('\n')}</div>`);
 
