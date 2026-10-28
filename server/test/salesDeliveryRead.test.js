@@ -110,3 +110,21 @@ test('AC-DR3 只读：不调用任何写入方法', async () => {
   await createSalesDeliveryReadService({ gateway }).listDeliveryData();
   assert.deepEqual(writes, []);
 });
+
+test('AC-DR4 配置表（货品/颜色/尺码）走 configTableCache；业务表仍每次读', async () => {
+  const calls = {};
+  const records = baseRecords();
+  const gateway = {
+    listAll: async (key) => { calls[key] = (calls[key] || 0) + 1; return records[key] || []; },
+    table,
+  };
+  const service = createSalesDeliveryReadService({ gateway });
+  await service.listDeliveryData();
+  await service.listDeliveryData();
+  assert.equal(calls.product, 1, '货品信息第二次命中配置快照');
+  assert.equal(calls.color, 1, '颜色管理第二次命中配置快照');
+  assert.equal(calls.sizeManagement, 1, '尺码管理第二次命中配置快照');
+  assert.equal(calls.salesEntry, 2, '销售主表是业务数据，每次读');
+  assert.equal(calls.salesDetail, 2, '销售明细是业务数据，每次读');
+  assert.equal(calls.paymentRecord, 2, '收款明细是业务数据，每次读');
+});

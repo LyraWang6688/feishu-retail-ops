@@ -15,7 +15,8 @@
  * 🔴 只读：本文件没有任何写入方法，也不新增写库路径。
  */
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = require('../config/salesDeliveryPage');
+const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD, CONFIG_TABLE_TTL_MS } = require('../config/salesDeliveryPage');
+const { getConfigRows } = require('./configTableCache');
 const { createPaymentMethodsService, orderWithPreferred } = require('./paymentMethodsService');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
@@ -54,15 +55,21 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     return names.length ? { fieldNames: names } : {};
   };
 
+  /** 配置表走统一快照（TTL + 飞书 change 事件失效 + lastGood）；业务数据仍每次读。 */
+  const configRows = (tableKey) => getConfigRows({
+    gateway, tableKey, ttlMs: CONFIG_TABLE_TTL_MS,
+    loader: () => listAllWithRetry(tableKey, fieldOptions(tableKey)),
+  });
+
   const listDeliveryData = async () => {
     const methodsService = paymentMethods || createPaymentMethodsService(gateway);
     const [orders, details, payments, products, colors, sizes, methodList] = await Promise.all([
       listAllWithRetry('salesEntry', fieldOptions('salesEntry')),
       listAllWithRetry('salesDetail', fieldOptions('salesDetail')),
       listAllWithRetry('paymentRecord', fieldOptions('paymentRecord')),
-      listAllWithRetry('product', fieldOptions('product')),
-      listAllWithRetry('color', fieldOptions('color')),
-      listAllWithRetry('sizeManagement', fieldOptions('sizeManagement')),
+      configRows('product'),
+      configRows('color'),
+      configRows('sizeManagement'),
       methodsService.listWithVouchers(),
     ]);
 

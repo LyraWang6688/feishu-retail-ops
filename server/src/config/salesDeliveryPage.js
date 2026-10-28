@@ -13,6 +13,8 @@
 const UNPAID_PAYMENT_STATUS = '未收款';
 /** 页面只读「销售明细.库存数量」公式列（v1 schema 暂无语义键，页面配置里单独登记）。 */
 const SALES_DETAIL_STOCK_FIELD = '库存数量';
+/** 货品/颜色/尺码变化少 ⇒ 配置表快照 5 分钟（事件变更会立即失效）。 */
+const CONFIG_TABLE_TTL_MS = 5 * 60 * 1000;
 
 const DELIVERY_PAYMENT = Object.freeze({
   paidStatus: '已收款',
@@ -44,4 +46,4 @@ const TABLE_FIELD_KEYS = Object.freeze({
   paymentMethod: Object.freeze(['name']),
 });
 
-module.exports = { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, DELIVERY_PAYMENT, SALES_DETAIL_STOCK_FIELD };
+module.exports = { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, DELIVERY_PAYMENT, SALES_DETAIL_STOCK_FIELD, CONFIG_TABLE_TTL_MS };
