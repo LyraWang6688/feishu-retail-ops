@@ -34,7 +34,7 @@ const step2Of = () => {
   return renderStep2({
     write: {
       texts: SW.texts, fields: SW.fields, actions: SW.actions,
-      paymentMethods: SW.sale.paymentMethods,
+      paymentMethods: [],
       defaultPaymentMethod: SW.sale.defaultPaymentMethod,
       paymentRowCount: SW.sale.paymentRowCount,
       paymentStatus: SW.sale.paymentStatus.default,

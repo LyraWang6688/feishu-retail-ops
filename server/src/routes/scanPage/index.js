@@ -220,9 +220,8 @@ const createScanPageRouter = (options = {}) => {
       paymentMethods: paymentMethodsService,
       config: options.voucherPaymentConfig,
     });
-  const configuredPaymentMethods = () => [...new Set([
-    writeConfig.sale.defaultPaymentMethod, ...(writeConfig.sale.paymentMethods || []),
-  ].filter(Boolean))];
+  // 仅用于「表读不到」日志里的诊断信息；页面候选只认表。
+  const configuredPaymentMethods = () => [writeConfig.sale.defaultPaymentMethod].filter(Boolean);
   const candidatePaymentMethods = async (req) => {
     const fallback = configuredPaymentMethods();
     const listed = await paymentMethodsService.list().catch((error) => ({
