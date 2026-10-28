@@ -256,7 +256,7 @@ test('① 关联单元格为空（数据残缺）时：按条件读的「库存�
   const gateway = fakeGateway({ fixtures: { ...FIXTURES, liveInventory: orphans } });
   const view = await service(gateway).lookup({ number: NUMBER, requestId: 'req_orphan' });
   assert.equal(view.total, 1, '既有用例「关联为空时用库存键前缀认行」的行为一个字都不许变');
-  // ⚠️ 行的清单现在按**普通码段**补全（38–45），所以 40 那一行不一定是第一行。
+  // ⚠️ 行的清单现在按**可录范围**补全（A 38–48），所以 40 那一行不一定是第一行。
   const row40 = view.rows.find((row) => row.size_text === '40');
   assert.ok(row40, '40 码那一行必须在（按库存键前缀认回来的）');
   assert.equal(row40.total, 1);

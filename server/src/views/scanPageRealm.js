@@ -225,23 +225,22 @@ const sizeGroupOf = (categoryCode) => {
 const sellableCountOf = (row, columns = []) => countInStockOf(row, columns);
 
 /**
- * ⭐⭐ 2026-10-13「特殊尺码」（业务负责人逐字确认 · docs/size-range-special-sizes-2026-10-13.md）：
- *   **特殊码（女 34/43 · 男 46/47/48）只在「采购明细」里出现过才展示** ——
- *   没出现过 ⇒ **不显示、也不算缺码** ✓（不天天提示她"缺 43 / 缺 48"）。
+ * ⭐⭐ 2026-10-28 口径收口（现行）：
+ *   · **特殊码** = 配置 `SIZE_SEGMENTS.ranges[code].special`
+ *     （女 34/35/41/42/43 · 男 45/46/47/48，离散清单）；
+ *   · 判断**必须按类别**（编号第 3 段 `A`/`B`）—— `43` 对女是特殊码、对男是普通码，
+ *     用并集会把男装 43 误伤掉；
+ *   · 缺货的特殊码 ⇒ 收进「特殊码」折叠块；有货的特殊码照旧在现货区。
  *
- * 判据来源：`view.present_special_sizes`（由路由用 services/purchaseSizeReader.listSizes() 填 ✓）。
- *   ⚠️ **它缺失 / 为空 ⇒ 特殊码一个都不显示** —— 这**就是**"读表失败 ⇒ 只给 default"的降级语义 ✓
- *      （⇒ 即便路由那 3 行还没接上，本处行为 = 安全降级，**不会静默多显示码** ✓）
- *   ⚠️ 用**并集**判断"是不是特殊码"：`A.special=[46,47,48]` 与 `B.special=[34,43]` **互不相交**
- *      ⇒ 无需先知道这一行属于哪个类别（少一次推导、少一处出错可能 ✓）。
- *   ⚠️ 常规码（女 35–42 / 男 38–45）**一个都不许误伤** ✗ —— 见回归哨兵 AC。
+ * ⚠️ 旧注释里的“采购明细里出现过才展示 / `present_special_sizes` / `purchaseSizeReader`”
+ *    已于 2026-10-14 整条退场，**不要再按旧注释理解** ✗。
  */
 /** 这一款的类别码（编号第 3 段）——「编号|颜色|类别」。认不出 ⇒ 空串。 */
 const categoryCodeOf = (view) => String(view?.number ?? '').split('|')[2] || '';
 
 /**
  * ⚠️⚠️ **必须按类别判**，不能用并集 ✗ ——
- *   `43` 对**女**是特殊码（B.special），对**男**却是**常规码**（A.default = 38–45 含 43）
+ *   `43` 对**女**是特殊码（B.special），对**男**却是**普通码**（A.normal = 38–44 含 43）
  *   ⇒ 并集会把男装的 43 **误伤掉**（真机回归哨兵抓到过 ✓）。
  *   认不出类别 ⇒ **一个都不过滤**（宁可多显示，也不把能录的码藏掉 ✓）。
  */
@@ -251,10 +250,9 @@ const categoryCodeOf = (view) => String(view?.number ?? '').split('|')[2] || '';
  * ⭐⭐ 2026-10-14 她拍板：「**我们把采购明细给删除了，我们把特殊码给去掉吧**」＋
  *   「**其他码如果有，就写，没有不做缺码范围**」⇒ 本函数**不再有任何特殊码过滤** ✗：
  *   · `view.rows` 本来就来**实时库存**（内存快照 ✓ `scanPageService.readInventoryRows`）
- *     ⇒ **库存里有 ⇒ 就显示** ✓；**没有 ⇒ 就不显示、也不计缺码** ✓（**零新增读** ✓）
- *   · 于是"特殊码只在采购明细出现过才显示"这套接线（`present_special_sizes` /
- *     `services/purchaseSizeReader`）在**扫码页这条链上整块删除** ✓（不留孤儿 ✓）
- *   ⚠️ 缺码判据**不变**：仍是「默认范围（A 38–45 / B 36–42）− 已有」✓（special 从不参与缺码 ✓）
+ *     ⇒ **库存里有 ⇒ 就显示** ✓；没有 ⇒ 不显示、不计缺码 ✓（**零新增读** ✓）
+ *   · 特殊码的“折叠”只发生在**展示分组**（`saleSizeGroups` / `purchaseSizeGroups`），
+ *     不改变缺码基准（基准 = 可录范围，含特殊码）。
  */
 const sizeRowsOf = (view) => (Array.isArray(view?.rows) ? view.rows : [])
   .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim());

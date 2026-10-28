@@ -30,7 +30,7 @@ const { saleSizeGroups, purchaseSizeLines } = require('../src/views/scanPageReal
 const RENDERER_SRC = rendererSource();
 const REALM_SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRealm.js'), 'utf8');
 
-/** 女鞋（B）一款：36 有货；34/35/42/43 是缺货的特殊码；37..41 是缺货的普通码。 */
+/** 女鞋（B）一款：36 有货；34/35/41/42/43 是缺货的特殊码；37–40 是缺货的普通码。 */
 const femaleView = () => ({
   found: true,
   number: 'JX505|咖色|B',

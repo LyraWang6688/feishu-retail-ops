@@ -2,17 +2,19 @@
 const { rendererSource } = require('./support/rendererSource');
 
 /**
- * ⭐⭐ 2026-10-14「特殊码折叠」的验收标准（**先写先红**）。
+ * ⭐⭐「特殊码折叠」的验收标准。
  *
- * 口径真源：`docs/special-size-fold-and-enterable-base-2026-10-14.md`（她的 5 条原话逐字）
+ * 口径真源：`config/scanPage.js` 的 `SIZE_SEGMENTS`（2026-10-28 现行）
+ *   · 可录范围：女 34–43 / 男 38–48
+ *   · 普通码：女 36–40 / 男 38–44
+ *   · 特殊码：女 34/35/41/42/43 / 男 45/46/47/48
  *   ① 有货（含特殊码）⇒ **全部正常展开**（现货区）
- *   ② 缺货 = ⭐ **可录范围 − 有货**（女 34–43 / 男 38–48）
- *      · 缺货的**普通码** ⇒ 预订区正常显示（与今天一致）
- *      · ⭐ 缺货的**特殊码** ⇒ 收进「特殊码」折叠块（**默认收起 ⇒ 不可见 + 不占布局高度**）
- *        · 原生 `<details><summary>`（零 JS）· `<summary>` ≥44px · **按男女各一块**
+ *   ② 缺货 = ⭐ **可录范围 − 有货**
+ *      · 缺货的**普通码** ⇒ 预订区正常显示
+ *      · ⭐ 缺货的**特殊码** ⇒ 收进「特殊码」折叠块（默认收起）
  *
- * ⚠️ 本文件现在**故意是红的**（现状：`scope = normalScopeOf(...)` ⇒ 缺货基准是普通码，
- *    没货的特殊码**既不显示也不算缺** ✗；也没有折叠块 ✗）
+ * ⚠️ 2026-10-28：旧的 `normalScopeOf` / `loadSizeScope` 已删除；本文件旧版本里
+ *    “故意是红的 / scope=normalScopeOf” 是历史记录，**不代表现状** ✗。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -73,17 +75,17 @@ test('AC-SF3 ⭐ 缺货的**普通码** ⇒ 预订区正常显示（不折叠 �
   for (const size of ['37', '38', '39', '40']) {
     assert.ok(prepaid.includes(size), `缺货的普通码 ${size} 要留在预订区（不折叠 ✓）`);
   }
-  // ⭐ 特殊码 = 女 34/35/42/43 ⇒ 这四条必须**不在**预订区（它们在折叠块里 ✓）
+  // ⭐ 特殊码 = 女 34/35/41/42/43 ⇒ 这五条必须**不在**预订区（它们在折叠块里 ✓）
   for (const size of ['34', '35', '41', '42', '43']) {
     assert.equal(prepaid.includes(size), false, `缺货的特殊码 ${size} 不许留在预订区 ✗（要进折叠块）`);
   }
 });
 
 test('AC-SF4 ⭐ 缺货的**特殊码** ⇒ 收进折叠块（`folded`），且**按男女各自一块**', () => {
-  const female = viewOf({ number: 'JX505|咖色|B', stocked: [36], missing: [34, 35, 42, 43] });
+  const female = viewOf({ number: 'JX505|咖色|B', stocked: [36], missing: [34, 35, 41, 42, 43] });
   const male = viewOf({ number: 'MK31|黑|A', stocked: [40], missing: [46, 47, 48] });
-  assert.deepEqual((realm.saleSizeGroups(female).folded || []).map((item) => Number(item.size_text)), [34, 35, 42, 43],
-    '女鞋折叠块 = 女鞋的特殊码（缺货的）');
+  assert.deepEqual((realm.saleSizeGroups(female).folded || []).map((item) => Number(item.size_text)), [34, 35, 41, 42, 43],
+    '女鞋折叠块 = 女鞋的特殊码（缺货的，含 41）');
   assert.deepEqual((realm.saleSizeGroups(male).folded || []).map((item) => Number(item.size_text)), [46, 47, 48],
     '男鞋折叠块 = 男鞋的特殊码（缺货的）');
   // ⭐ 同页不混：女鞋那一块里不许出现男鞋的码 ✓
@@ -118,8 +120,8 @@ test('AC-SF6 ⭐ 回归：可录范围本体（验收页在用）**一字不动*
   assert.deepEqual(sizesForCategory('A', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
     '验收页候选仍按可录范围（含 46/47/48 ✓ AC-AP10）');
   assert.deepEqual(sizesForCategory('B', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43]);
-  assert.match(SERVICE_SRC, /const loadSizeScope = async \(\{ categoryCode \}\) => sizesForCategory\(categoryCode, config\)/,
-    '`loadSizeScope`（可录范围）保留 ✓');
+  // 2026-10-28 口径收口：无调用的旧包装 `loadSizeScope` 已删除；可录范围本体是 `sizesForCategory` ✓
+  assert.equal(/const loadSizeScope =/.test(SERVICE_SRC), false, '`loadSizeScope` 已删除 ✗');
   // 落点哨兵：折叠块**不许**进库存块（`stockTableHtml` 逐字不变 ⇒ AC1）
   assert.equal(/stockTableHtml[\s\S]{0,800}size-fold/.test(RENDERER_SRC), false,
     '折叠块不许放进库存块（`AC1` 哨兵）✗');

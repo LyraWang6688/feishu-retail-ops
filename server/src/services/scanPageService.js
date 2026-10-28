@@ -96,7 +96,7 @@ const positiveInteger = (value) => {
  *
  * 取值**只来自配置**（`SCAN_PAGE.sizeSegments.ranges`：类别代码 → `{from,to}`），**零读表**；
  * 降级口径与既有缺码判定**逐字一致**（类别为空 / 配置里没这个类别 / 段配坏 ⇒ `degraded`）。
- * ⚠️ 单一来源：`loadSizeScope`（扫码页缺码）与验收页"未报货尺码"候选都调它。
+ * ⚠️ 单一来源：`enterableScopeOf`（现行缺码基准）与验收页"未报货尺码"候选都读同一份配置。
  */
 const sizesForCategory = (categoryCode, config = SCAN_PAGE) => {
   const ranges = config.sizeSegments?.ranges || {};
@@ -117,8 +117,10 @@ const sizesForCategory = (categoryCode, config = SCAN_PAGE) => {
  * ⭐⭐ 2026-10-14（她的最终口径）：**可录范围**（女 34–43 / 男 38–48）= 一切"缺货/预订"的判定基准 ✓
  *   · **只读配置**（`ranges[code].enterable`）⇒ **零飞书读** ✓
  *   · ⚠️ 定义在**模块作用域**（与 `sizesForCategory` 并排）⇒ 工厂内直接用、也能导出给用例 ✓
- *     （`normalScopeOf` 当年放在工厂里 ⇒ 导不出去；别照它放 ✗）
- *   · 🔴 `sizesForCategory` / `loadSizeScope` **一字不动**（验收页仍按可录范围取候选 ✓）
+ *   · 🔴 2026-10-28 口径收口：旧的 `normalScopeOf` / `loadSizeScope` **已删除**
+ *     （前者是 2026-10-14 之前的缺码基准，后者是未被调用的包装）；
+ *     现在缺码基准只有这一处 `enterableScopeOf`，不要按旧注释去 `normal` 段找缺码 ✗。
+ *   · `sizesForCategory` **保留**（可录范围本体；验收/一致性核对仍用它）✓
  */
 const enterableScopeOf = (categoryCode, config = SCAN_PAGE) => {
   const range = config.sizeSegments?.ranges?.[String(categoryCode || '').trim().toUpperCase()];
@@ -758,37 +760,6 @@ const createScanPageService = (rawGateway, options = {}) => {
   };
 
   /**
-   * 缺码判定用的尺码清单：**配置里的尺码段**（A 男 38–48 / B 女 34–43）。
-   *
-   * ⭐⭐ 2026-10-09（业务负责人定）：这一段原来每次扫码都要整表读「尺码管理」算类别清单
-   *   （一次飞书往返 1.5~2.5 秒）⇒ 改成**读配置**（`config.sizeSegments.ranges`）。
-   *   ⚠️ 这不是"把会变的东西写死"：段本身是**配置**（换一个值不用改代码），
-   *      而且有**一致性保险**——`maybeCheckSizeConsistency` 定期拿配置与「尺码管理」比对，
-   *      不一致就 logWarn（例如表里加了 49 码）。
-   *
-   * 降级口径**一个字没变**（拿不到就不做缺码提示，只显示有货的尺码）：
-   *   · 类别为空（编号里没有第 3 段）→ `number_without_category`；
-   *   · 配置里没有这个类别 → `no_sizes_for_category`。
-   */
-  /**
-   * ⭐ 2026-10-14：**普通码（normal）**展开成尺码清单 —— 零飞书读 ✓（她的最终配置设计 ✓）
-   *   A（男）= 38–45 · B（女）= **36–41** ✓；special 不在此列（不参与缺码 ✓）
-   *   认不出类别 / 段配坏 ⇒ `degraded`（沿用既有降级：只显示有货尺码 ✓ 一字不变 ✗）
-   */
-  const normalScopeOf = (categoryCode) => {
-    const range = config.sizeSegments?.ranges?.[String(categoryCode || '').trim().toUpperCase()];
-    const segment = range?.normal || range?.default;
-    if (!Array.isArray(segment) || segment.length !== 2) {
-      return { sizes: [], degraded: true, reason: 'unknown_category' };
-    }
-    const sizes = [];
-    for (let size = Number(segment[0]); size <= Number(segment[1]); size += 1) sizes.push(size);
-    return { sizes, degraded: false, reason: '', source: 'config' };
-  };
-
-  const loadSizeScope = async ({ categoryCode }) => sizesForCategory(categoryCode, config);
-
-  /**
    * ⭐ **一致性保险**（业务负责人 2026-10-09）：定期拿**配置里的尺码段**与
    * 「尺码管理」表比对，不一致就 `logWarn(scan.size_consistency.mismatch)`。
    *
@@ -1154,14 +1125,10 @@ const createScanPageService = (rawGateway, options = {}) => {
     let scope;
     try {
       // ⭐ 2026-10-09：缺码判定**读配置段**（不再每次读「尺码管理」）。
-      // ⚠️ 2026-10-14：**这次读先保留**（我试过换成"只按配置默认段"，但撞坏 4 条既有 spec ✗
-      //   ⇒ 按 Lead 的规则"若口径真的变了 ⇒ 停手报我"⇒ 已回退 ✓；要不要动它由 Lead 定 ✓）
-      // ⭐⭐ 2026-10-14（她逐字：「你在代码里做完配置，就不用读尺码管理和采购明细了」）：
-      //   范围**只按配置的 normal**（A 38–45 · B 36–41 ✓ 零飞书读 ✓）
-      //   ⇒ 缺码 = normal − 有货 ✓（special 不参与缺码 ✗）；`loadSizeScope` 本体留给验收页 ✓
       // ⭐⭐ 2026-10-14（她的最终口径）：缺货基准 = **可录范围**（女 34–43 / 男 38–48）
       //    ⇒ 缺货 = 可录范围 − 有货（含特殊码 ✓）；缺货的**特殊码**由展示层收进折叠块 ✓
-      //    （改前：`normalScopeOf` = 只算普通码 ⇒ 没货的特殊码既不显示也不算缺 ✗）
+      //    ⚠️ 2026-10-28 口径收口：旧的 `normalScopeOf`（只算 36–40）已删除，
+      //      不要再按旧注释理解成"缺码只算普通码" ✗。
       scope = enterableScopeOf(parsed.categoryCode);
       // ⭐ 缺码这一段是**读配置**还是**降级**（`scan.lookup.timing` 里就靠它看"有没有回退"）。
       if (timing) timing.size_source = scope.degraded ? `degraded:${scope.reason}` : 'config';
@@ -1171,7 +1138,7 @@ const createScanPageService = (rawGateway, options = {}) => {
         // ⭐ 2026-10-14（她：扫完码进的是**销售页**，销售页只要「货品 + 实时库存」）：
         //    **请求期不再做这次一致性核对** —— 它会在 TTL 到点那一趟多读一次「尺码管理」整表
         //    （冷读 3~6 秒 ✗）＝她遇到的"偶尔特别慢"。函数本体保留，供独立自检脚本调用（不占她的请求 ✓）。
-        //    影响面：少一次护栏核对 + 一条 warn；缺码判据仍只走**配置**（`loadSizeScope` ✓ 一字不改）。
+        //    影响面：少一次护栏核对 + 一条 warn；缺码判据仍只走**配置**（`enterableScopeOf` ✓ 一字不改）。
         //        await maybeCheckSizeConsistency({ requestId });   // ← 2026-10-14 移出请求期
     } finally {
       if (timing) timing.size_ms = elapsed(sizeStartedAt);
@@ -1297,7 +1264,7 @@ module.exports = {
   warmLiveInventorySnapshot,
   createScanPageService,
   // ⭐⭐ 2026-10-12：**"这个类别该有哪些尺码"的唯一来源**（纯配置，零读表）——
-  //    `loadSizeScope`（缺码判定）与验收页的"未报货尺码"候选**共用这一份**，不另发明一套。
+  //    `enterableScopeOf`（现行缺码基准）与验收页的"未报货尺码"候选**共用这一份**，不另发明一套。
   sizesForCategory,
   enterableScopeOf,
   decodeScanNumber,
