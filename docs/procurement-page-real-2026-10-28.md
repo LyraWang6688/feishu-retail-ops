@@ -309,10 +309,10 @@ git diff --check → 干净
 | 供应商管理 | 供应商名称 | supplier.name | false | 上新 | 卡片小字显示 |
 | 采购主表 | 报货批次号 | purchaseOrderBatch.batchNo | true（既有链路生成） | 提交 | `PurchaseBatchNoGenerator` 生成，页面不填 |
 | 采购主表 | 发生行为 | purchaseOrderBatch.behavior | true（既有链路解析） | 提交 | 行为管理 `PURCHASE_ORDER`，既有 `resolveBehavior` |
-| 采购主表 | 供应商 | purchaseOrderBatch.supplier | true（既有 supplierSplit 分组） | 提交 | 来自货品信息.供应商 |
 | 采购明细 | 数量 | purchaseRequest.quantity | true | 提交 | 采购数量 |
 | 采购明细 | 幂等键 | purchaseRequest.idempotencyKey | true（既有链路生成） | 提交 | `purchase_request:{taskId}:{productKey}:{size}` |
-| 采购明细 | 采购明细ID | purchaseRequest.detailId | true（既有链路生成） | 提交 | `{批次号}-{两位序号}` |
+| 采购明细 | 采购明细ID | purchaseRequest.detailId | false（服务端生成） | 提交 | `{批次号}-{两位序号}`，页面不填 |
+| 采购明细 | 供应商 | purchaseRequest.supplier（公式） | false（只读公式） | 提交 | 生产真表是「采购明细」自动公式，由货品信息.供应商带出；**采购主表没有供应商列**，页面/服务端不写 |
 
 > ⚠️ 边界（Lead 2026-10-28 确认）：**页面计算 / UI 状态只进「页面数据」，不要塞进「字段清单」**；
 > 本表只记 Base 字段 / 写入 payload 字段。
