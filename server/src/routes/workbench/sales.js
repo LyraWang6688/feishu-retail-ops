@@ -8,6 +8,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../../services/v1BitableGateway');
 const { createWorkbenchOrderActionsRouter } = require('../workbenchOrderActions');
 const { createSalesDeliveryReadService } = require('../../services/salesDeliveryReadService');
+const { createPaymentMethodsService } = require('../../services/paymentMethodsService');
 const { createSalesDeliveryPaymentService } = require('../../services/salesDeliveryPaymentService');
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { SCAN_WRITE } = require('../../config/scanWrite');
@@ -18,7 +19,8 @@ const { tapIdFromRequest } = require('../../utils/correlationFields');
 const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}) => {
   const router = express.Router();
   // 「销售 → 交割单」页的真实只读数据服务（只看销售明细 + 收款明细；不写库）。
-  const deliveryRead = createSalesDeliveryReadService({ gateway: options.gateway || followup.gateway });
+  const paymentMethods = options.paymentMethodsService || createPaymentMethodsService(options.gateway || followup.gateway);
+  const deliveryRead = createSalesDeliveryReadService({ gateway: options.gateway || followup.gateway, paymentMethods });
   // 懒建：单测里只读路由不一定带 payments/store；点付款时才需要这两个依赖。
   let deliveryPay = null;
   const getDeliveryPay = () => {

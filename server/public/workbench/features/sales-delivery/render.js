@@ -56,8 +56,7 @@ const paymentModalHtml = (state, T) => `
     </label>
     <label class="sd-field">${escapeHtml(T.forms.paymentMethod)}
       <select data-sd-modal-method>
-        <option value="" disabled selected>${escapeHtml(T.forms.paymentMethod)}</option>
-        ${(state.methods || []).map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join('')}
+        ${(state.methods || []).map((method, index) => `<option value="${escapeHtml(method)}"${index === 0 ? ' selected' : ''}>${escapeHtml(method)}</option>`).join('')}
       </select>
     </label>
     <div class="sd-modal-actions">

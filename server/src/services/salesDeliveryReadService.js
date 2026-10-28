@@ -16,10 +16,12 @@
  */
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS } = require('../config/salesDeliveryPage');
+const { createPaymentMethodsService, orderWithPreferred } = require('./paymentMethodsService');
+const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 const { logWarn } = require('../utils/logger');
 
-const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {}) => {
+const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetry, sleep } = {}) => {
   if (!gateway) throw new Error('SalesDeliveryReadService requires gateway');
   const retry = orderReadRetry || resolveOrderReadRetryConfig();
   const wait = sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
@@ -53,14 +55,15 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
   };
 
   const listDeliveryData = async () => {
-    const [orders, details, payments, products, colors, sizes, methods] = await Promise.all([
+    const methodsService = paymentMethods || createPaymentMethodsService(gateway);
+    const [orders, details, payments, products, colors, sizes, methodList] = await Promise.all([
       listAllWithRetry('salesEntry', fieldOptions('salesEntry')),
       listAllWithRetry('salesDetail', fieldOptions('salesDetail')),
       listAllWithRetry('paymentRecord', fieldOptions('paymentRecord')),
       listAllWithRetry('product', fieldOptions('product')),
       listAllWithRetry('color', fieldOptions('color')),
       listAllWithRetry('sizeManagement', fieldOptions('sizeManagement')),
-      listAllWithRetry('paymentMethod', fieldOptions('paymentMethod')),
+      methodsService.listWithVouchers(),
     ]);
 
     const orderFields = gateway.table('salesEntry').fields;
@@ -69,7 +72,6 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
     const productFields = gateway.table('product').fields;
     const colorFields = gateway.table('color').fields;
     const sizeFields = gateway.table('sizeManagement').fields;
-    const methodFields = gateway.table('paymentMethod').fields;
 
     const orderNoById = new Map(orders
       .map((order) => [order.record_id, textValue(order.fields?.[orderFields.orderNo]).trim()])
@@ -79,7 +81,8 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
     const totalAmountById = new Map(orders.map((order) => [order.record_id, order.fields?.[orderFields.totalAmount] ?? null]));
     const colorNameById = new Map(colors.map((item) => [item.record_id, textValue(item.fields?.[colorFields.name]).trim()]));
     const sizeValueById = new Map(sizes.map((item) => [item.record_id, textValue(item.fields?.[sizeFields.size]).trim()]));
-    const methodNameById = new Map(methods.map((item) => [item.record_id, textValue(item.fields?.[methodFields.name]).trim()]));
+    const methodRows = methodList?.ok ? methodList.items : [];
+    const methodNameById = new Map(methodRows.map((item) => [item.recordId, item.name]));
     const productById = new Map(products.map((item) => [item.record_id, {
       productNo: textValue(item.fields?.[productFields.itemNo]).trim(),
       colorId: linkedRecordIds(item.fields?.[productFields.color])[0] || '',
@@ -140,7 +143,7 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
     }
 
     return {
-      methods: [...new Set(methodNameById.values())].filter(Boolean),
+      methods: orderWithPreferred(methodRows.map((item) => item.name), SCAN_WRITE.sale.defaultPaymentMethod),
       orders: result,
     };
   };
