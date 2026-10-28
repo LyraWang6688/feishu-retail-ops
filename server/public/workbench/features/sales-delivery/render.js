@@ -52,8 +52,9 @@ const paymentModalHtml = (state, T) => `
   <div class="sd-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="sd-modal-title">
     <h2 class="sd-modal-title" id="sd-modal-title">${escapeHtml(T.forms.paymentModalTitle)}</h2>
     <label class="sd-field">${escapeHtml(T.forms.paymentAmount)}
-      <input data-sd-modal-amount type="text" inputmode="decimal" value="">
+      <input data-sd-modal-amount type="text" inputmode="decimal" value="" aria-describedby="sd-modal-error">
     </label>
+    <p class="sd-modal-error" id="sd-modal-error" data-sd-modal-error hidden></p>
     <label class="sd-field">${escapeHtml(T.forms.paymentMethod)}
       <select data-sd-modal-method>
         ${(state.methods || []).map((method, index) => `<option value="${escapeHtml(method)}"${index === 0 ? ' selected' : ''}>${escapeHtml(method)}</option>`).join('')}

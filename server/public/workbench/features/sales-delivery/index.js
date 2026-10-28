@@ -24,7 +24,7 @@ import { buildDeliveryGroups, filterItemsByProduct } from './filter.js';
 import { buildTabItems } from './items.js';
 import { groupItemsBySoldDate } from './group.js';
 import { sortDeliveryGroups } from './sort.js';
-import { openPaymentModal, closePaymentModal } from './payment-modal.js';
+import { openPaymentModal, closePaymentModal, validatePaymentAmount } from './payment-modal.js';
 import { showToast, requestId } from './ui-feedback.js';
 import { renderPage } from './render.js';
 
@@ -155,12 +155,13 @@ export function mountSalesDeliveryPage(container) {
     if (event.target.closest('[data-sd-modal-close]')) {
       closePaymentModal(container);
       paymentCard = null;
-      paymentCard = null;
       return;
     }
     const confirm = event.target.closest('[data-sd-modal-confirm]');
     if (confirm) {
       const modal = confirm.closest('[data-sd-modal]');
+      const amountInput = modal?.querySelector('[data-sd-modal-amount]');
+      if (!validatePaymentAmount(amountInput, paymentCard, T)) return;
       void postPayment(paymentCard,
         modal?.querySelector('[data-sd-modal-amount]')?.value,
         modal?.querySelector('[data-sd-modal-method]')?.value,
@@ -170,7 +171,7 @@ export function mountSalesDeliveryPage(container) {
     const toggle = event.target.closest('[data-sd-toggle="payment"]');
     if (toggle) {
       paymentCard = toggle.closest('[data-sd-entry]');
-      openPaymentModal(container, paymentCard);
+      openPaymentModal(container, paymentCard, T);
       return;
     }
     const tab = event.target.closest('[data-sd-tab]');
@@ -180,6 +181,9 @@ export function mountSalesDeliveryPage(container) {
       state.productFilter = '';
       render();
     }
+  });
+  container.addEventListener('input', (event) => {
+    if (event.target.matches('[data-sd-modal-amount]')) validatePaymentAmount(event.target, paymentCard, T);
   });
   container.addEventListener('change', (event) => {
     if (event.target.matches('[data-sd-field="product"]')) {

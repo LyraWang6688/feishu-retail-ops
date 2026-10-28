@@ -284,7 +284,14 @@ test('AC-FORM 付款弹窗：金额/方式在居中弹窗里；提交真实 POST
   await expect(modal.locator('[data-sd-modal-amount]')).toHaveValue('¥100.00');
   const options = await modal.locator('[data-sd-modal-method] option').allTextContents();
   expect(options).toEqual(expect.arrayContaining(['微信扫码', '现金', '支付宝', '银行转账']));
+  // 业务负责人 2026-10-29：金额超过待付 → 前端直接拦（确认按钮不可用），不提交到后端。
+  await modal.locator('[data-sd-modal-amount]').fill('101');
+  await expect(modal.locator('[data-sd-modal-error]')).toBeVisible();
+  await expect(modal.locator('[data-sd-modal-error]')).toContainText('不能超过待付');
+  await expect(modal.locator('[data-sd-modal-confirm]')).toBeDisabled();
   await modal.locator('[data-sd-modal-amount]').fill('100');
+  await expect(modal.locator('[data-sd-modal-error]')).toBeHidden();
+  await expect(modal.locator('[data-sd-modal-confirm]')).toBeEnabled();
   await modal.locator('[data-sd-modal-method]').selectOption('现金');
   await modal.locator('[data-sd-modal-confirm]').click();
   await expect(page.locator('.workbench-toast')).toContainText('付款成功');
