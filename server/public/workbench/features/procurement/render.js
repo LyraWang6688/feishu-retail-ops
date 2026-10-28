@@ -85,9 +85,13 @@ const replenishRowHtml = (group, row, draft, store, config) => {
   const prepaidOnlyOrMixed = Number(row.prepaidSold) > 0;
   const checkbox = prepaidOnlyOrMixed ? '' : `<label><input type="checkbox" data-pr-check data-record="${escapeHtml(group.productRecordId)}"
     data-size="${escapeHtml(row.size)}"${quantity > 0 ? ' checked' : ''}></label>`;
+  // 业务负责人 2026-10-29 批注：每个尺码卡改成**上下两栏** ——
+  //   第一行：尺码 + 现货/预订对应数量信息；第二行：加减数量圆框（窄屏不再挤成一小撮）。
   return `<div class="pr-size-row">
-    <div class="pr-size">${escapeHtml(row.size)}</div>
-    ${saleTagsHtml(row, config)}
+    <div class="pr-size-row-head">
+      <div class="pr-size">${escapeHtml(row.size)}</div>
+      ${saleTagsHtml(row, config)}
+    </div>
     ${stepperHtml({ recordId: group.productRecordId, size: row.size, quantity, config, suffix: checkbox })}
   </div>`;
 };
