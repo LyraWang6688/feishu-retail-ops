@@ -187,9 +187,9 @@ test('AC-R1 源码哨兵：`src/**` ＋ `public/workbench/**` 的字符串字面
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-R3 新叫法逐字：给她看的用「采购单」/「采购明细」，日志 label 用「采购主表」', () => {
-  // ① 9 点推送的采购区标题（她每早在群里看到的那一行）
-  assert.ok(readSrc('config/pendingDealPush.js').includes("purchaseAreaTitle: '【采购】未到货的采购单：{count} 批'"),
-    '采购区标题要用「采购单」');
+  // ① ⛔ 2026-10-28：原来这里断言 9 点推送的采购区标题（`config/pendingDealPush.js`）——
+  //   那条推送已整体删除（业务负责人：「9 点群推送不再需要」）⇒ 没有可断言的标题了。
+  //   下面②③④ 那几处**仍在她眼前**的文案照旧逐字钉住（判据没有放宽）。
   // ② 工作台验收：找不到那一批时的报错
   const arrival = readSrc('services/workbenchPurchaseArrivalService.js');
   assert.ok(arrival.includes('没找到采购单 ${wanted} 的采购明细'), '报错用「采购单 X 的采购明细」');

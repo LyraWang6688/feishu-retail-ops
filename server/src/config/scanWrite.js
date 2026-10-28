@@ -65,7 +65,7 @@ const ACTIONS = Object.freeze({
   // 销售：把当前这一双加进"本单"（**只写本地会话**，一个字都不落业务表）
   addLine: readString(process.env, 'SCAN_WRITE_ACTION_ADD', 'add_line'),
   // ⭐ 2026-10-11（B）：把**一件配品**加进"本单"（同样只写本地会话）。
-  //    与「加入本单」分成两个动作（表单不同：配品没有尺码、金额单列），
+  //    与「➕ 还要加一双」分成两个动作（表单不同：配品没有尺码、金额单列），
   //    但落进本单之后是**同一种东西** —— 一行销售明细（`kind` 不同而已）。
   // 销售：提交整单（**这是唯一的写库时机** —— 她说"点【提交】才写"）
   submitOrder: readString(process.env, 'SCAN_WRITE_ACTION_SUBMIT', 'submit_order'),
@@ -255,7 +255,7 @@ const SESSION = Object.freeze({
   // 🔴 2026-10-12 真机改：**默认 12 小时**（改前 6 小时）—— 她实测「会挂 8 小时」，
   //    6 小时就过期了；而当时过期后**每一次提交都 400**（见 `scanWriteService` 的 `revive` 那条注释）。
   // ⚠️ 过期**不再是死路**：提交时会**续上**这一份会话（草稿 / 已落盘的主表 id 都保留），
-  //    只有「加入本单 / 清空本单」这类"要开一笔新操作"才按 TTL 语义新开一单。
+  //    只有「加货 / 清空本单」这类"要开一笔新操作"才按 TTL 语义新开一单。
   ttlMs: readInt(process.env, 'SCAN_SESSION_TTL_MS', 12 * 60 * 60 * 1000, { min: 60_000, max: 7 * 24 * 60 * 60 * 1000 }),
   // ⭐ 2026-10-26：跨天/多天未提交的草稿不能在下次扫码时被原样带出来（会串单）。
   //   超过这个时长、且没有写库进度（master/detail/payment/children_started）⇒ 丢弃旧草稿行。
@@ -562,7 +562,6 @@ const TEXTS = Object.freeze({
   asyncAcceptedText: readString(process.env, 'SCAN_SALE_ASYNC_ACCEPTED_TEXT', '信息收集完毕，销售单号：{orderNo}'),
   // payload 派生的收款状态（不是表里的「收款状态」；表里每笔由写层落）
   payloadPaymentStatus: Object.freeze({ paid: '已收齐', unpaid: '未收齐' }),
-  addButton: '加入本单',
   // ⭐⭐ 2026-10-14（业务负责人裁决 ⓐ）：「**商定好的价格**」⇒ **每一双都要填「实收金额」**
   //   （现货、预订**同一处判** ⇒ 两边天然都必填 ✓）· ⚠️ **整单收款仍可全空** ✓
   //   ⇒ 「先记成待补充的信息单、之后去工作台补收款」这条老路**保留** ✓（她 2026-10-14 早先的话）
@@ -827,7 +826,7 @@ const TEXTS = Object.freeze({
   tooManyLinesBody: '一张单最多加 {max} 双，请先提交这一单再继续扫。',
   writeDisabledTitle: '这个功能现在关着',
   writeDisabledBody: '扫码下单 / 补货报单暂时没有开启，请联系运营。',
-  sessionEmptyBody: '本单还没有明细：先选尺码点「加入本单」，再点「提交这一单」。',
+  sessionEmptyBody: '本单还没有明细：先选尺码点「➕ 还要加一双」，再点「提交」。',
   sessionExpiredBody: '这一页放太久了：请点【清空本单】重新开始这一单。',
   sizeMissingBody: '请先选一个尺码。',
   sizeUnknownBody: '这个尺码不在「尺码管理」里，请刷新这一页重新选。',

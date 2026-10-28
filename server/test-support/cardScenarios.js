@@ -39,37 +39,22 @@ const ARRIVAL_ROWS = [
 // 会被 `im.v1.message.patch` 更新的 14 张卡（13 个 builder；afterSalesRetryCard 继承
 // afterSalesConfirmationCard 的 config）。理由与调用方见 docs/card-update-multi-2026-10-07.md 第四节。
 const PATCHABLE_CARD_SCENARIOS = [
-  // ⚠️ 2026-10-12（清群聊入口 3b）：原来这里还有一张「请确认销售订单」的卡片场景，
-  //    它随销售草稿卡片一起退场（导出已删）⇒ 场景清单 **14 → 13**。
-  { name: 'salesStatusCard',
-    build: (c) => c.salesStatusCard({ items: ITEMS }, '销售订单已入账', '销售单号：XSD-001。', 'green') },
-  // ⭐⭐ 2026-10-15（清理死代码）**成对改指向**：
-  //   改前逐字：`{ name: 'salesProcessingCard', build: (c) => c.salesProcessingCard({ items: ITEMS }, {…}) },`
-  //   改后逐字：**删掉这一项**（9 → 8）
-  //   依据：那张卡已随死代码清理退场（她 2026-10-15 拍板「清掉吧」）⇒ 它不再"会被 patch"；
-  //     本清单的**本意不变**：「**每一张会被 patch 的在用卡** builder 直出都带 `update_multi`」
-  //     ⇒ 剩下的 8 张**逐张照旧**断言 ✓（判据没放宽 ✗；少的是**已不存在的那张卡**）
+  // ⭐ 2026-10-28（群卡片残留清理）：清单从 8 → **3**。
+  //   删掉的是**只剩卡片动作/群推送才用**、且本轮已删除的 builder：
+  //     `salesStatusCard`（销售终态卡）、`secondDeliveryCard`（每日成交提醒卡）、
+  //     `sampleReplacementStatusCard` / `sampleReplacementProcessingCard`（补样品按钮回执）、
+  //     `purchaseArrivalReconcileCard`（群话题到货核对卡）。
+  //   依据：业务负责人「现在没有群聊入口，也没有旧卡片」＋「9 点群推送不再需要」。
+  //   清单的**本意不变**：「**每一张会被 patch 的在用卡** builder 直出都带 `update_multi`」。
   { name: 'sampleReplacementCard',
     build: (c) => c.sampleReplacementCard('task_sample', { productNumber: 'A100',
       remainingSizes: [{ size: 38, doorBoxCount: 1, sampleCount: 0, warehouseCount: 2 }] }) },
-  { name: 'sampleReplacementStatusCard',
-    build: (c) => c.sampleReplacementStatusCard('A100', '38码已从门盒转为样品。') },
-  { name: 'sampleReplacementProcessingCard',
-    build: (c) => c.sampleReplacementProcessingCard('A100', '正在处理。') },
-  { name: 'purchaseArrivalReconcileCard',
-    build: (c) => c.purchaseArrivalReconcileCard({ taskId: 'task_arrival', batchNo: 'BH-20261007-0001',
-      rows: ARRIVAL_ROWS, differences: [],
-      copy: { title: '本次到货核对完毕，确认入库吗？', confirmLabel: '是', rejectLabel: '否', hint: '核对后再点。' } }) },
   { name: 'purchaseArrivalReconcileStatusCard',
     build: (c) => c.purchaseArrivalReconcileStatusCard({ batchNo: 'BH-20261007-0001',
       message: '已入库 2 双。', template: 'green' }) },
   { name: 'purchaseStatusCard',
     build: (c) => c.purchaseStatusCard({ items: ITEMS }, '采购申请处理中',
       '已收到确认，正在生成采购申请；请勿重复点击。', 'blue') },
-  { name: 'secondDeliveryCard',
-    build: (c) => c.secondDeliveryCard({ orders: [{ orderNo: 'XSD-001', salesEntryRecordId: 'rec_1',
-      tradeTypeLabel: '已付', quantity: 2, pendingAmount: 99, pendingDeliveryQuantity: 1 }],
-      methods: ['微信', '现金'], dayKey: '2026-10-07' }) },
 ];
 
 // 刻意**不动**的卡片（只发不 patch）：它们**不该**出现 `update_multi`。

@@ -29,12 +29,14 @@ const crypto = require('node:crypto');
 const { logError, logInfo } = require('./utils/logger');
 const { uploadDir } = require('./utils/upload');
 const { startUploadCleanup } = require('./utils/uploadCleanup');
-const { SecondDeliveryService } = require('./services/secondDeliveryService');
-const { startSecondDeliveryReminder } = require('./utils/secondDeliveryReminder');
-const { PendingDealPushService } = require('./services/pendingDealPushService');
-const { resolvePendingDealPushConfig } = require('./config/pendingDealPush');
-const { resolveSamplePendingNoticeConfig } = require('./config/samplePendingNotice');
-const { createSamplePendingNoticeService } = require('./services/samplePendingNoticeService');
+// ⭐ 2026-10-28：原来这里还 import 两条**群推送**的调度件 ——
+//   · `SecondDeliveryService` + `startSecondDeliveryReminder`（「第二次交付」每日 9 点成交提醒卡片）
+//   · `PendingDealPushService` + `resolvePendingDealPushConfig`（每天 9 点待处理单推送）
+//   业务负责人的现行口径：「**9 点群推送不再需要**」＋「现在没有群聊入口，也没有旧卡片」⇒
+//   两条定时推送**整体删除**（服务、配置、卡片渲染器一起删；这里不再起任何群推送定时器）。
+//   ⭐ 2026-10-28 追加：业务负责人选择「只删『待办还有 N 条』，采购/退货/告警群发保留」⇒
+//   `samplePendingNotice` 也已删除；仍在跑的定时任务只剩标签二维码兜底巡检。
+//   采购申请/退货图片仍走 `PurchaseWebhookService`/`purchaseReturnImageWiring`，不受影响。
 const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
 // ⭐ 2026-10-12：标签二维码「兜底巡检」的每日调度。
 //   ⚠️ 之前 `sweepStaleTagQrCodes` **全仓没有调用方**（写了、有单测、从没在线上跑过）——
@@ -193,44 +195,8 @@ if (require.main === module) {
   if (Number.isFinite(ttlMs) && ttlMs > 0 && Number.isFinite(intervalMs) && intervalMs > 0) {
     startUploadCleanup({ dir: uploadDir, ttlMs, intervalMs });
   }
-  // 「第二次交付」的每日 9 点（北京时间）成交提醒：把**尚未完成履约**的单推成群卡片。
-  // 没有 cron 依赖——setInterval 轮询 + 按天认领（见 utils/secondDeliveryReminder 与服务里
-  // sendDailyReminder 的注释）。只在真正启动服务时拉起，被 require 进测试不会起定时器。
-  const secondDelivery = new SecondDeliveryService();
-  startSecondDeliveryReminder({ run: ({ now }) => secondDelivery.sendDailyReminder({ now }) });
-  // 「维度 1」：每天 9 点（北京时间）把最近 7 天**还没收齐**的销售单（预定 / 现货待收）推到群里
-  // （每笔一行：单号 + 待收金额 + 深链）。**显式开关**，默认关：
-  // 没配群 id 或开关关着时，连定时器都不起（配置在这里读一次，写错就在启动时吵）。
-  const pendingDealPush = resolvePendingDealPushConfig();
-  if (pendingDealPush.enabled) {
-    const pendingDealPushService = new PendingDealPushService({ settings: pendingDealPush });
-    startShanghaiDailyScheduler({
-      run: ({ now }) => pendingDealPushService.sendDailyPush({ now }),
-      eventPrefix: 'sales.pending_deal_push.reminder',
-      hour: pendingDealPush.hour,
-      intervalMs: pendingDealPush.intervalMs,
-    });
-  } else {
-    logInfo('sales.pending_deal_push.disabled', { env: 'PENDING_DEAL_PUSH_ENABLED' });
-  }
-  // ⭐⭐ 2026-10-11（业务负责人 20:30 确认）：「**待办还有 N 条**」——**完全单独的一条消息**，
-  //    一天 5 次（9/12/15/18/21，**时点可配**）**发采购群**（`PURCHASE_CHAT_ID`）。
-  //    ⚠️ 与上面那条 9 点推送**刻意分开**：收件群不同（那条是 `PENDING_DEAL_PUSH_CHAT_ID`、
-  //      这条是采购群）、时间表也不同 ⇒ 合成一条只会在改一边时把另一边带跑。
-  //    ⚠️ 这个调度器**过了整点之后每个 tick 都会调 `run`** ⇒ service 自己按
-  //      「上海日 + 整点」去重（`services/samplePendingNoticeService.js`）。
-  const samplePendingNotice = resolveSamplePendingNoticeConfig();
-  if (samplePendingNotice.enabled) {
-    const samplePendingNoticeService = createSamplePendingNoticeService({ settings: samplePendingNotice });
-    startShanghaiDailyScheduler({
-      run: ({ now }) => samplePendingNoticeService.send({ now }),
-      eventPrefix: 'workbench.sample_pending_notice',
-      hours: samplePendingNotice.hours,
-      intervalMs: samplePendingNotice.intervalMs,
-    });
-  } else {
-    logInfo('workbench.sample_pending_notice.disabled', { env: 'SAMPLE_PENDING_NOTICE_ENABLED' });
-  }
+  // ⛔ 2026-10-28：`samplePendingNotice`（待办还有 N 条 → 采购群）已按业务负责人口径删除。
+  //   保留的群发只有采购申请/退货图片与告警，不在这里调度。
   // ── 货品信息「标签二维码」的兜底巡检（每天一次，自愈）────────────────────────
   //    · 事件路径只管"改这一下"；这条网**不看事件、只认当前事实**：
   //      全表扫「附件名/编号 ≠ 当前编号」的，重生成（`sweepStaleTagQrCodes`）；

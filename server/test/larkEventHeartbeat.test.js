@@ -179,22 +179,26 @@ test('心跳文件不存在 / 坏 JSON 都当作"没有数据"，不抛错', () 
 // ── 事件入口：记心跳 ────────────────────────────────────────────────────────
 
 test('业务事件处理器会记一次业务心跳；没注入心跳时静默跳过（不影响既有行为）', async () => {
+  // ⭐ 2026-10-28：原来这里用 `card.action.trigger` 触发业务心跳 —— 卡片回调已删除
+  //   ⇒ 改用**另一个业务入口**：群消息（`im.message.receive_v1`，守卫在 service 里、
+  //   事件本身仍会到达并记心跳）。判据（"业务事件记一次 business 心跳"）一字未动。
   const calls = [];
   const heartbeat = { recordEvent: (options) => { calls.push(options || {}); } };
   const service = {
-    handleCardAction: async () => ({}),
-    sendText: async () => undefined,
+    acceptMessage: async () => ({ accepted: false, reason: 'group_chat_removed' }),
+  };
+  const messageEvent = {
+    sender: { sender_id: { open_id: 'ou_1' } },
+    message: { message_id: 'om_1', chat_id: 'oc_1', chat_type: 'group', message_type: 'text' },
   };
   const handlers = createLarkEventHandlers(service, { heartbeat });
-  handlers['card.action.trigger']({ operator: { operator_id: { open_id: 'ou_1' } }, action: { value: { action: 'x' } } });
+  handlers['im.message.receive_v1'](messageEvent);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(calls, [{ business: true }]);
 
   // 不注入心跳：老调用方式必须照常工作（回归）。
   const plain = createLarkEventHandlers(service);
-  assert.doesNotThrow(() =>
-    plain['card.action.trigger']({ operator: { operator_id: { open_id: 'ou_1' } }, action: { value: { action: 'x' } } }),
-  );
+  assert.doesNotThrow(() => plain['im.message.receive_v1'](messageEvent));
   await new Promise((resolve) => setImmediate(resolve));
 });
 
