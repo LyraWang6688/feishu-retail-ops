@@ -24,7 +24,7 @@ const lineCount = (relative) => read(relative).split('\n').length;
 /** 纯函数层 + 样例 + 配置拷进同一临时目录（模块间 `./x.js` 相对 import 原样可用）。 */
 const loadPureModules = async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sales-delivery-pure-'));
-  for (const name of ['format.js', 'data.js', 'filter.js', 'items.js', 'group.js', 'sort.js']) {
+  for (const name of ['format.js', 'data.js', 'filter.js', 'items.js', 'group.js', 'sort.js', 'sku-lock.js']) {
     fs.copyFileSync(path.join(MODULE_DIR, name), path.join(dir, name));
   }
   fs.copyFileSync(path.join(WB, 'config', 'sales-delivery.js'), path.join(dir, 'sales-delivery-config.mjs'));
@@ -36,6 +36,7 @@ const loadPureModules = async () => {
       items: await import(pathToFileURL(path.join(dir, 'items.js')).href),
       group: await import(pathToFileURL(path.join(dir, 'group.js')).href),
       sort: await import(pathToFileURL(path.join(dir, 'sort.js')).href),
+      skuLock: await import(pathToFileURL(path.join(dir, 'sku-lock.js')).href),
       config: await import(pathToFileURL(path.join(dir, 'sales-delivery-config.mjs')).href),
     };
   } finally {
@@ -256,6 +257,24 @@ test('AC-SD-M10 库存数量只控制行按钮，不再把货未清拆区域/拆
   const itemsByTab = items.buildTabItems(filter.buildDeliveryGroups(orders, config.SALES_DELIVERY_STATUSES), config.SALES_DELIVERY_STATUSES, config.SALES_DELIVERY_TABS);
   assert.equal(itemsByTab.goods.length, 1, '同一单仍是一张卡；库存只影响行按钮');
   assert.deepEqual(itemsByTab.goods[0].details.map((line) => [line.size, line.stockQuantity]), [['41', 1], ['42', 0]]);
+});
+
+test('AC-SD-M11 SKU = 货号+颜色+尺码；同 SKU 在途锁只锁相同 SKU', async () => {
+  const { skuLock } = await loadPureModules();
+  const sku = skuLock.skuOfLine({ product: '66133-15', color: '咖色', size: '37' });
+  assert.equal(sku, '66133-15|咖色|37');
+  const buttons = [
+    { dataset: { sdSku: sku }, disabled: false },
+    { dataset: { sdSku: '66133-15|咖色|38' }, disabled: false },
+  ];
+  const lock = skuLock.createSkuLock(() => ({ querySelectorAll: () => buttons }));
+  lock.add(sku);
+  lock.apply();
+  assert.equal(buttons[0].disabled, true, '同 SKU 锁住');
+  assert.equal(buttons[1].disabled, false, '不同 SKU 不影响');
+  lock.delete(sku);
+  lock.apply();
+  assert.equal(buttons[0].disabled, false, 'job 结束解锁');
 });
 
 test('AC-SD-P1 配置：三 tab key/label/顺序/默认/空态；固定远→近排序；货号筛选文案', async () => {

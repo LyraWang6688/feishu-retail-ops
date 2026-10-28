@@ -51,7 +51,7 @@ const DELIVERY_FIXTURE = {
       order_no: 'XSD-20261015-0002', sales_entry_record_id: 'se-6', stock_quantity: 0, recorded_at: '2026-10-15T10:00:00+08:00', payable_amount: 518, pending_amount: 259, pending_delivery_quantity: 1,
       details: [
         { record_id: 'd-b2', stock_quantity: 1, product: 'QPL-8957', color: '黑色', size: 42, fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
-        { record_id: 'd-b3', stock_quantity: 1, product: 'QPL-8957', color: '黑色', size: 43, fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
+        { record_id: 'd-b3', stock_quantity: 1, product: 'QPL-8957', color: '黑色', size: 42, fulfillment_status: '未交付', sold_at: '2026-10-15T10:00:00+08:00', actual_amount: 259 },
       ],
       payments: [{ record_id: 'p-b2', stock_quantity: 0, method: '微信扫码', amount: 259, status: '已收款' }, { record_id: 'p-b3', method: '', amount: 259, status: '未收款' }],
     },
@@ -242,7 +242,7 @@ test('AC-CARD1 一张卡=一个销售单号：多行产品 + 行尾交付；金�
   await expect(both.locator('[data-sd-deliver]')).toHaveCount(2);
   await expect(both.locator('[data-sd-toggle="payment"]')).toHaveCount(1);
   await expect(both).toContainText('QPL-8957 · 黑色 · 42 码');
-  await expect(both).toContainText('QPL-8957 · 黑色 · 43 码');
+  await expect(both).toContainText('QPL-8957 · 黑色 · 42 码');
 });
 
 test('AC-DELIVER 行尾交付：点谁交谁、toast「该产品已交付」、卡片随状态移动', async ({ page }) => {
@@ -251,6 +251,8 @@ test('AC-DELIVER 行尾交付：点谁交谁、toast「该产品已交付」、�
   const card = page.locator('[data-sd-order="XSD-20261015-0002"]');
   await expect(card.locator('[data-sd-deliver]')).toHaveCount(2);
   await card.locator('[data-sd-deliver]').first().click();
+  // 同 SKU（QPL-8957|黑色|42）还有一行未交付 ⇒ 在途锁把另一颗交付按钮也置灰。
+  await expect(card.locator('[data-sd-deliver]').nth(1)).toBeDisabled();
   await expect(page.locator('.workbench-toast')).toContainText('已提交成功');
   await expect(card.locator('.sd-product-row')).toHaveCount(1);
   await expect(card.locator('[data-sd-deliver]')).toHaveCount(1);

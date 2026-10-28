@@ -24,6 +24,7 @@ import { buildDeliveryGroups } from './filter.js';
 import { buildTabItems } from './items.js';
 import { openPaymentModal, closePaymentModal, validatePaymentAmount } from './payment-modal.js';
 import { showToast, requestId, waitJob } from './ui-feedback.js';
+import { createSkuLock } from './sku-lock.js';
 import { renderPage } from './render.js';
 import { viewState } from './view-state.js';
 
@@ -44,6 +45,7 @@ export function mountSalesDeliveryPage(container) {
     error: '',
   };
   let host = null;
+  const skuLock = createSkuLock(() => host);
 
   document.title = CONFIG.pageTitle;
 
@@ -56,6 +58,7 @@ export function mountSalesDeliveryPage(container) {
     const products = [...new Set((state.itemsByTab[state.activeTab] || [])
       .flatMap((item) => (item.details || []).map((line) => line.product).filter(Boolean)))].sort();
     host.innerHTML = renderPage({ ...view, counts, products }, CONFIG, T, STATUSES, TABS);
+    skuLock.apply();
   }
 
   /** 打开 / 刷新页面时拉一次；不做定时刷新。 */
@@ -88,24 +91,27 @@ export function mountSalesDeliveryPage(container) {
   /** 预览交付：本轮只改前端状态 + toast；真正写库存/销售明细待接写库接口。 */
   const busy = new Set();
 
-  async function postDelivery(salesEntryRecordId, detailRecordId, button) {
+  async function postDelivery(salesEntryRecordId, detailRecordId, sku, button) {
     const key = `delivery:${detailRecordId}`;
-    if (!salesEntryRecordId || !detailRecordId || busy.has(key)) return;
+    if (!salesEntryRecordId || !detailRecordId || busy.has(key) || skuLock.has(sku)) return;
     busy.add(key);
+    skuLock.add(sku);
     button.disabled = true;
+    skuLock.apply();
     try {
       const queued = await api.post('/api/workbench/sales/delivery/deliveries', {
         salesEntryRecordId, detailRecordIds: [detailRecordId], requestId: requestId(),
       });
       showToast(T.submittedToast);
       await waitJob(api, queued.jobId, {
-        onSuccess: async () => { await load(); busy.delete(key); button.disabled = false; },
-        onFailure: (message) => { showToast(message || T.loadFailed); busy.delete(key); button.disabled = false; },
+        onSuccess: async () => { skuLock.delete(sku); busy.delete(key); await load(); },
+        onFailure: async (message) => { skuLock.delete(sku); busy.delete(key); showToast(message || T.loadFailed); await load(); },
       });
     } catch (error) {
       showToast(describeError(error));
+      skuLock.delete(sku);
       busy.delete(key);
-      button.disabled = false;
+      skuLock.apply();
     }
   }
 
@@ -145,7 +151,7 @@ export function mountSalesDeliveryPage(container) {
     const deliver = event.target.closest('[data-sd-deliver]');
     if (deliver) {
       const card = deliver.closest('[data-sd-entry]');
-      void postDelivery(card?.dataset.sdEntry || '', String(deliver.dataset.sdDeliver || ''), deliver);
+      void postDelivery(card?.dataset.sdEntry || '', String(deliver.dataset.sdDeliver || ''), String(deliver.dataset.sdSku || ''), deliver);
       return;
     }
     if (event.target.closest('[data-sd-modal-close]')) {

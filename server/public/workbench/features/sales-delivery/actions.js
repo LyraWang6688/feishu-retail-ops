@@ -6,7 +6,7 @@
 import { escapeHtml } from '../../core/formatters.js';
 
 /** 每行未交付明细自己的「交付」按钮（不带尺码下拉/数量输入；点谁只交谁）。 */
-export const deliveryButtonHtml = (line, T) => `<button class="sd-action-btn" type="button" data-sd-deliver="${escapeHtml(line.recordId || '')}">${escapeHtml(T.buttons.delivery)}</button>`;
+export const deliveryButtonHtml = (line, T, sku = '') => `<button class="sd-action-btn" type="button" data-sd-deliver="${escapeHtml(line.recordId || '')}" data-sd-sku="${escapeHtml(sku)}">${escapeHtml(T.buttons.delivery)}</button>`;
 
 /** 付款入口（一张卡一个；点开居中弹窗，提交在弹窗里）。 */
 export const paymentButtonHtml = (item, T) => `<button class="sd-action-btn" type="button" data-sd-toggle="payment">${escapeHtml(T.buttons.payment)}</button>`;

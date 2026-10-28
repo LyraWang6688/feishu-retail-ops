@@ -13,6 +13,7 @@
 import { escapeHtml } from '../../core/formatters.js';
 import { detailTextOf, formatMoneyCompact } from './format.js';
 import { deliveryButtonHtml, paymentButtonHtml } from './actions.js';
+import { skuOfLine } from './sku-lock.js';
 
 const detailTextOfLine = (line, T) => detailTextOf(line) || T.forms.placeholderDash;
 
@@ -29,7 +30,7 @@ const productRowHtml = (item, line, T, statuses) => {
   const canDeliver = item.kind !== 'money' && line.fulfillmentStatus === statuses.undelivered;
   const hasStock = Number(line.stockQuantity) > 0;
   const action = canDeliver
-    ? (hasStock ? deliveryButtonHtml(line, T) : `<span class="sd-stock-short">${escapeHtml(T.stockShort)}</span>`)
+    ? (hasStock ? deliveryButtonHtml(line, T, skuOfLine(line)) : `<span class="sd-stock-short">${escapeHtml(T.stockShort)}</span>`)
     : '';
   return `<div class="sd-product-row" data-sd-detail="${escapeHtml(line.recordId || '')}">
       <span class="sd-item-main">${escapeHtml(detailTextOfLine(line, T))}</span>
