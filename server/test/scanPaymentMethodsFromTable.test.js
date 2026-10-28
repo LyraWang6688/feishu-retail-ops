@@ -94,9 +94,7 @@ const tableGateway = (methods, calls = []) => ({
   },
 });
 
-const configuredFallback = () => [...new Set([
-  SCAN_WRITE.sale.defaultPaymentMethod, ...(SCAN_WRITE.sale.paymentMethods || []),
-].filter(Boolean))];
+const configuredFallback = () => [SCAN_WRITE.sale.defaultPaymentMethod].filter(Boolean);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-A2A-3a / 3c 读得到表 ⇒ 表里那几条都点得到（且 TTL 缓存）
