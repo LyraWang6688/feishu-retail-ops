@@ -110,7 +110,9 @@ export const SALES_DELIVERY_TEXTS = Object.freeze({
   deliveryToast: '该产品已交付',
   paymentToast: '付款成功',
   forms: Object.freeze({
-    paymentTitle: '付款（v1 预览）',
+    paymentTitle: '付款',
+    paymentModalTitle: '确认收款',
+    paymentCancel: '取消',
     paymentAmount: '付款金额',
     paymentMethod: '付款方式',
     paymentMethodEmpty: '暂无收款方式（先到「收款方式管理」维护）',

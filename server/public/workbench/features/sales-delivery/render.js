@@ -12,7 +12,7 @@
 
 import { escapeHtml } from '../../core/formatters.js';
 import { detailTextOf, formatMoneyCompact } from './format.js';
-import { deliveryButtonHtml, paymentParts } from './actions.js';
+import { deliveryButtonHtml, paymentButtonHtml } from './actions.js';
 
 const detailTextOfLine = (line, T) => detailTextOf(line) || T.forms.placeholderDash;
 
@@ -39,15 +39,33 @@ const productRowsHtml = (item, T, statuses) => {
 };
 
 /** 一张卡 = 一个销售单号：多行产品 +（钱相关）已付/待付 + 付款入口。 */
-const itemCardHtml = (item, state, T, statuses) => {
-  const payment = item.hasAmounts ? paymentParts(item, state.methods, T) : null;
-  return `
-  <article class="sd-card" data-sd-item data-sd-kind="${escapeHtml(item.kind)}" data-sd-order="${escapeHtml(item.orderNo)}" data-sd-entry="${escapeHtml(item.salesEntryRecordId || '')}">
+const itemCardHtml = (item, T, statuses) => `
+  <article class="sd-card" data-sd-item data-sd-kind="${escapeHtml(item.kind)}" data-sd-order="${escapeHtml(item.orderNo)}" data-sd-entry="${escapeHtml(item.salesEntryRecordId || '')}" data-sd-pending="${escapeHtml(item.pendingAmount ?? '')}">
     ${productRowsHtml(item, T, statuses)}
-    ${item.hasAmounts ? `<div class="sd-row-footer">${amountsHtml(item, T)}<div class="sd-actions">${payment.button}</div></div>` : ''}
-    ${payment ? payment.form : ''}
+    ${item.hasAmounts ? `<div class="sd-row-footer">${amountsHtml(item, T)}<div class="sd-actions">${paymentButtonHtml(item, T)}</div></div>` : ''}
   </article>`;
-};
+
+/** 付款确认弹窗（居中；金额/方式在这里收集；提交由 index.js 负责）。 */
+const paymentModalHtml = (state, T) => `
+<div class="sd-modal" data-sd-modal hidden>
+  <div class="sd-modal-backdrop" data-sd-modal-close></div>
+  <div class="sd-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="sd-modal-title">
+    <h2 class="sd-modal-title" id="sd-modal-title">${escapeHtml(T.forms.paymentModalTitle)}</h2>
+    <label class="sd-field">${escapeHtml(T.forms.paymentAmount)}
+      <input data-sd-modal-amount type="text" inputmode="decimal" value="">
+    </label>
+    <label class="sd-field">${escapeHtml(T.forms.paymentMethod)}
+      <select data-sd-modal-method>
+        <option value="" disabled selected>${escapeHtml(T.forms.paymentMethod)}</option>
+        ${(state.methods || []).map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join('')}
+      </select>
+    </label>
+    <div class="sd-modal-actions">
+      <button class="btn" type="button" data-sd-modal-close>${escapeHtml(T.forms.paymentCancel)}</button>
+      <button class="btn btn-primary" type="button" data-sd-modal-confirm>${escapeHtml(T.forms.paymentSubmit)}</button>
+    </div>
+  </div>
+</div>`;
 
 /** 三个子 tab（数量在 `<small>` 里；形态对齐采购页的分段 tab）。 */
 export const tabsHtml = (state, tabs, T) => `
@@ -89,7 +107,7 @@ export const panelHtml = (state, activeTab, T, statuses) => {
   return state.groups.map((group) => `
     <section class="sd-day-group" data-sd-day="${escapeHtml(group.key)}">
       <h2 class="sd-day-title">${escapeHtml(group.label)}</h2>
-      <div class="sd-list">${group.items.map((item) => itemCardHtml(item, state, T, statuses)).join('')}</div>
+      <div class="sd-list">${group.items.map((item) => itemCardHtml(item, T, statuses)).join('')}</div>
     </section>`).join('');
 };
 
@@ -99,5 +117,6 @@ export const renderPage = (state, config, T, statuses, tabs) => {
   return `
   ${tabsHtml(state, tabs, T)}
   ${filterHtml(state, T)}
-  ${panelHtml(state, activeTab, T, statuses)}`;
+  ${panelHtml(state, activeTab, T, statuses)}
+  ${paymentModalHtml(state, T)}`;
 };

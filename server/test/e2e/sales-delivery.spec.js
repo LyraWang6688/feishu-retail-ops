@@ -265,7 +265,7 @@ test('AC-GROUP 销售日分组顺序远→近；货号筛选默认全部、可�
   await expect(page.locator('[data-sd-item]')).toHaveCount(3);
 });
 
-test('AC-FORM 付款表单：金额/方式只在表单里；提交真实 POST 并 toast 付款成功', async ({ page }) => {
+test('AC-FORM 付款弹窗：金额/方式在居中弹窗里；提交真实 POST 并 toast 付款成功', async ({ page }) => {
   const apiRequests = [];
   const writes = [];
   page.on('request', (request) => {
@@ -277,21 +277,20 @@ test('AC-FORM 付款表单：金额/方式只在表单里；提交真实 POST �
   await openPage(page);
   await page.locator('[data-sd-tab="money"]').click();
   const money = page.locator('[data-sd-item]').first();
-  await expect(money.locator('[data-sd-form="payment"]')).toHaveCount(1);
-  await expect(money.locator('[data-sd-form="payment"]')).toHaveClass(/hidden/);
+  const modal = page.locator('[data-sd-modal]');
+  await expect(modal).toBeHidden();
   await money.locator('[data-sd-toggle="payment"]').click();
-  await expect(money.locator('[data-sd-form="payment"]')).not.toHaveClass(/hidden/);
-  await expect(money.locator('[data-sd-field="amount"]')).toHaveValue('¥100.00');
-  const options = await money.locator('[data-sd-field="method"] option').allTextContents();
+  await expect(modal).toBeVisible();
+  await expect(modal.locator('[data-sd-modal-amount]')).toHaveValue('¥100.00');
+  const options = await modal.locator('[data-sd-modal-method] option').allTextContents();
   expect(options).toEqual(expect.arrayContaining(['微信扫码', '现金', '支付宝', '银行转账']));
-  await money.locator('[data-sd-field="amount"]').fill('100');
-  await money.locator('[data-sd-field="method"]').selectOption('现金');
-  await money.locator('[data-sd-preview-form="payment"] button[type="submit"]').click();
+  await modal.locator('[data-sd-modal-amount]').fill('100');
+  await modal.locator('[data-sd-modal-method]').selectOption('现金');
+  await modal.locator('[data-sd-modal-confirm]').click();
   await expect(page.locator('.workbench-toast')).toContainText('付款成功');
   await page.waitForTimeout(200);
   expect(apiRequests).toContain('POST /api/workbench/sales/delivery/payments');
   expect(writes).toEqual(['POST']);
-  // 付清后这张卡应从「钱未清」消失。
   await expect(page.locator('[data-sd-order="XSD-20261017-0005"]')).toHaveCount(0);
 });
 

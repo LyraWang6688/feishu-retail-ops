@@ -24,6 +24,8 @@ import { buildDeliveryGroups, filterItemsByProduct } from './filter.js';
 import { buildTabItems } from './items.js';
 import { groupItemsBySoldDate } from './group.js';
 import { sortDeliveryGroups } from './sort.js';
+import { openPaymentModal, closePaymentModal } from './payment-modal.js';
+import { showToast, requestId } from './ui-feedback.js';
 import { renderPage } from './render.js';
 
 const CONFIG = SALES_DELIVERY_CONFIG;
@@ -92,28 +94,7 @@ export function mountSalesDeliveryPage(container) {
   host = container.querySelector('[data-sd-host]');
 
   /** 预览交付：本轮只改前端状态 + toast；真正写库存/销售明细待接写库接口。 */
-  function showToast(text) {
-    let toast = document.querySelector('.workbench-toast');
-    if (!toast) {
-      toast = document.createElement('div');
-      toast.className = 'workbench-toast';
-      toast.setAttribute('role', 'status');
-      document.body.appendChild(toast);
-    }
-    toast.textContent = text;
-    clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => { toast.remove(); }, 3000);
-  }
-
   const busy = new Set();
-
-  function requestId() {
-    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-      const rand = Math.floor(Math.random() * 16);
-      return (char === 'x' ? rand : ((rand & 0x3) | 0x8)).toString(16);
-    });
-  }
 
   async function postDelivery(salesEntryRecordId, detailRecordId, button) {
     const key = `delivery:${detailRecordId}`;
@@ -134,26 +115,29 @@ export function mountSalesDeliveryPage(container) {
     }
   }
 
-  async function postPayment(form) {
-    const card = form.closest('[data-sd-entry]');
+  let paymentCard = null;
+
+  async function postPayment(card, amountText, method, confirmButton) {
     const key = `payment:${card?.dataset.sdEntry || ''}`;
     if (!card || busy.has(key)) return;
-    const amountInput = form.querySelector('[data-sd-field="amount"]');
-    const methodSelect = form.querySelector('[data-sd-field="method"]');
     busy.add(key);
+    confirmButton.disabled = true;
     try {
       await api.post('/api/workbench/sales/delivery/payments', {
         salesEntryRecordId: card.dataset.sdEntry,
-        amount: String(amountInput?.value || '').replace(/[^\d.]/g, ''),
-        method: methodSelect?.value || '',
+        amount: String(amountText || '').replace(/[^\d.]/g, ''),
+        method,
         requestId: requestId(),
       });
+      closePaymentModal(container);
+      paymentCard = null;
       showToast(T.paymentToast);
       await load();
     } catch (error) {
       showToast(describeError(error));
     } finally {
       busy.delete(key);
+      confirmButton.disabled = false;
     }
   }
 
@@ -168,10 +152,25 @@ export function mountSalesDeliveryPage(container) {
       void postDelivery(card?.dataset.sdEntry || '', String(deliver.dataset.sdDeliver || ''), deliver);
       return;
     }
-    const toggle = event.target.closest('[data-sd-toggle]');
+    if (event.target.closest('[data-sd-modal-close]')) {
+      closePaymentModal(container);
+      paymentCard = null;
+      paymentCard = null;
+      return;
+    }
+    const confirm = event.target.closest('[data-sd-modal-confirm]');
+    if (confirm) {
+      const modal = confirm.closest('[data-sd-modal]');
+      void postPayment(paymentCard,
+        modal?.querySelector('[data-sd-modal-amount]')?.value,
+        modal?.querySelector('[data-sd-modal-method]')?.value,
+        confirm);
+      return;
+    }
+    const toggle = event.target.closest('[data-sd-toggle="payment"]');
     if (toggle) {
-      const slot = toggle.closest('.sd-card')?.querySelector(`[data-sd-form="${toggle.dataset.sdToggle}"]`);
-      slot?.classList.toggle('hidden');
+      paymentCard = toggle.closest('[data-sd-entry]');
+      openPaymentModal(container, paymentCard);
       return;
     }
     const tab = event.target.closest('[data-sd-tab]');
@@ -188,12 +187,5 @@ export function mountSalesDeliveryPage(container) {
       render();
     }
   });
-  container.addEventListener('submit', (event) => {
-    const form = event.target.closest('[data-sd-preview-form]');
-    if (!form) return;
-    event.preventDefault();
-    void postPayment(form);
-  });
-
   void load();
 }
