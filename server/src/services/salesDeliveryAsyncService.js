@@ -25,6 +25,11 @@ const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger 
   const running = new Set();
   let pumping = false;
 
+  const queueMeta = () => ({ queue_depth: pendingQueue.length, queued_count: queued.size, running_count: running.size });
+  const jobMeta = (job) => ({
+    job_id: job.job_id, type: job.type, request_id: job.request_id, attempt: Number(job.attempts || 0) + 1,
+  });
+
   const get = (jobId) => store.get(jobId);
 
   const process = async (jobId) => {
@@ -33,7 +38,13 @@ const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger 
     const promise = (async () => {
       const job = await store.get(jobId);
       if (!job || [STATUS.succeeded, STATUS.partialFailed, STATUS.failed].includes(job.status)) return job;
-      await store.update(jobId, { status: STATUS.running, attempts: Number(job.attempts || 0) + 1 });
+      const startedAt = Date.now();
+      const queueWaitMs = Math.max(0, startedAt - Date.parse(job.created_at || job.updated_at || startedAt));
+      const attempt = Number(job.attempts || 0) + 1;
+      await store.update(jobId, { status: STATUS.running, attempts: attempt, started_at: new Date(startedAt).toISOString() });
+      logger.logInfo('workbench.sales.delivery.job_started', {
+        ...jobMeta({ ...job, attempts: attempt - 1 }), queue_wait_ms: queueWaitMs, ...queueMeta(),
+      });
       try {
         const payload = job.payload || {};
         const result = job.type === 'delivery'
@@ -46,6 +57,18 @@ const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger 
         const lastError = failures.length ? String(failures[0]?.error || failures[0]?.message || 'write_failed') : '';
         await store.update(jobId, {
           status, result: result || {}, failures, last_error: lastError,
+          finished_at: new Date().toISOString(),
+        });
+        const deliveredCount = Number(result?.deliveredQuantity ?? (Array.isArray(result?.results) ? result.results.length : 0));
+        logger.logInfo('workbench.sales.delivery.job_finished', {
+          ...jobMeta({ ...job, attempts: attempt - 1 }),
+          status,
+          duration_ms: Date.now() - startedAt,
+          queue_wait_ms: queueWaitMs,
+          delivered_count: Number.isFinite(deliveredCount) ? deliveredCount : null,
+          failed_count: failures.length,
+          failure_codes: [...new Set(failures.map((item) => String(item?.error || item?.message || 'write_failed').slice(0, 120)))],
+          ...queueMeta(),
         });
         if (failures.length) {
           logger.logError(job.type === 'payment' ? 'workbench.sales.payment.failed' : 'workbench.sales.delivery.failed', {
@@ -53,7 +76,19 @@ const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger 
           });
         }
       } catch (error) {
-        await store.update(jobId, { status: STATUS.failed, last_error: String(error?.message || error) });
+        await store.update(jobId, {
+          status: STATUS.failed, last_error: String(error?.message || error), finished_at: new Date().toISOString(),
+        });
+        logger.logInfo('workbench.sales.delivery.job_finished', {
+          ...jobMeta({ ...job, attempts: attempt - 1 }),
+          status: STATUS.failed,
+          duration_ms: Date.now() - startedAt,
+          queue_wait_ms: queueWaitMs,
+          delivered_count: 0,
+          failed_count: 1,
+          failure_codes: [String(error?.message || error).slice(0, 120)],
+          ...queueMeta(),
+        });
         logger.logError(job.type === 'payment' ? 'workbench.sales.payment.failed' : 'workbench.sales.delivery.failed', {
           job_id: jobId, reason: 'async_job', error: String(error?.message || error),
         });
@@ -94,6 +129,7 @@ const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger 
     const existing = await store.get(jobId);
     if (existing) return { job: existing, created: false };
     const job = await store.create({ job_id: jobId, type, request_id: key, status: STATUS.queued, payload, attempts: 0, last_error: '' });
+    logger.logInfo('workbench.sales.delivery.job_enqueued', { job_id: jobId, type, request_id: key, ...queueMeta() });
     schedule(jobId);
     return { job, created: true };
   };

@@ -179,3 +179,33 @@ test('AC-P23 无横向滚动 + 点击区 ≥44px（390 / 604 两个 project 都�
   await page.screenshot({ path: newShot, fullPage: true });
   await testInfo.attach(`采购页·上新 ${testInfo.project.name}`, { path: newShot, contentType: 'image/png' });
 });
+
+test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两个来源都在 payload', async ({ page }) => {
+  const calls = await mockApi(page);
+  await page.reload();
+  await openPage(page);
+
+  // 补货选一个码
+  await qtyOf(page, 'recProdA', 39).fill('2');
+  await page.waitForTimeout(100);
+
+  // 切到上新，选一个普通码
+  await tab(page, /上新/).click();
+  await expect(page.getByText('LY001 · 黑色')).toBeVisible();
+  await qtyOf(page, 'recNewA', 38).fill('2');
+  await page.waitForTimeout(100);
+
+  const draft = await draftInStorage(page);
+  expect(draft.products.recProdA).toBeTruthy();
+  expect(draft.products.recNewA).toBeTruthy();
+
+  await page.getByRole('button', { name: '提交' }).click();
+  await expect(page.getByText('已提交成功，数据会更新')).toBeVisible();
+  expect(calls.submit).toHaveLength(1);
+  const payload = calls.submit[0];
+  expect(payload.items.map((item) => item.productRecordId).sort()).toEqual(['recNewA', 'recNewB', 'recProdA', 'recProdB']);
+  expect(payload.items.find((item) => item.productRecordId === 'recNewA').entries)
+    .toContainEqual({ size: 38, quantity: 2 });
+  // 提交成功清空整张草稿（两个来源都清）
+  expect((await draftInStorage(page)).products).toEqual({});
+});

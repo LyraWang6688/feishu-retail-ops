@@ -106,6 +106,7 @@ export function mountSalesDeliveryPage(container) {
       await waitJob(api, queued.jobId, {
         onSuccess: async () => { skuLock.delete(sku); busy.delete(key); await load(); },
         onFailure: async (message) => { skuLock.delete(sku); busy.delete(key); showToast(message || T.loadFailed); await load(); },
+        onTimeout: () => showToast(T.stillWriting), intervalMs: CONFIG.jobPoll.intervalMs, timeoutMs: CONFIG.jobPoll.timeoutMs,
       });
     } catch (error) {
       showToast(describeError(error));
@@ -135,6 +136,7 @@ export function mountSalesDeliveryPage(container) {
       await waitJob(api, queued.jobId, {
         onSuccess: async () => { await load(); busy.delete(key); },
         onFailure: (message) => { showToast(message || T.loadFailed); busy.delete(key); },
+        onTimeout: () => showToast(T.stillWriting), intervalMs: CONFIG.jobPoll.intervalMs, timeoutMs: CONFIG.jobPoll.timeoutMs,
       });
     } catch (error) {
       showToast(describeError(error));
