@@ -85,7 +85,8 @@ test('AC-P9/P21 扫一扫本轮占位：tab 视觉保留但禁用；页面不 im
 test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉已消失的已选行', async () => {
   const configSource = read(`${PUBLIC}/config/procurement.js`);
   assert.match(configSource, /replenish: '\{from\} 00:00 – 现在'/);
-  assert.match(configSource, /autoMs: 60000/);
+  assert.match(configSource, /autoMs: 0/, '默认不自动刷新（业务负责人：打开时更新一次就够）');
+  assert.match(configSource, /visibilityRefreshMs: 0/);
   const refresh = read(`${PUBLIC}/features/procurement/refresh.js`);
   assert.match(refresh, /data-pr-refresh/);
   assert.match(refresh, /pruneSource/);

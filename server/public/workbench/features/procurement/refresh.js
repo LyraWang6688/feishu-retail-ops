@@ -36,7 +36,11 @@ export const createRefresher = ({
     }
   };
 
-  /** 启动自动刷新（`config.refresh.autoMs = 0` ⇒ 关掉；只刷新当前可见 tab）。 */
+  /**
+   * 启动自动刷新 —— **默认全部关闭**（业务负责人 2026-10-29：「实时」= 打开时更新一次，别太频繁）。
+   * `config.refresh.autoMs = 0` 且 `visibilityRefreshMs = 0` ⇒ 不挂任何定时器/监听；
+   * 只想手动刷 ⇒ 点统计卡右侧「刷新」。
+   */
   const startAuto = () => {
     if (config.refresh.autoMs > 0) {
       setInterval(() => {
@@ -45,11 +49,13 @@ export const createRefresher = ({
         refresh();
       }, config.refresh.autoMs);
     }
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'visible') return;
-      const last = state.loadedAt[state.tab] || 0;
-      if (Date.now() - last >= config.refresh.visibilityRefreshMs) refresh();
-    });
+    if (config.refresh.visibilityRefreshMs > 0) {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        const last = state.loadedAt[state.tab] || 0;
+        if (Date.now() - last >= config.refresh.visibilityRefreshMs) refresh();
+      });
+    }
   };
 
   return { refresh, startAuto };

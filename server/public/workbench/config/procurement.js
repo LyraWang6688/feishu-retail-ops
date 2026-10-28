@@ -65,10 +65,12 @@ export const PROCUREMENT_UI = Object.freeze({
     newProducts: '今日 00:00 – 现在',
     dayTemplate: '{month}月{day}日',
   }),
-  // 数据刷新：打开/切 tab 都是实时查询；页面停留期间按这个间隔自动刷新 + 手动刷新按钮
+  // 数据刷新（业务负责人 2026-10-29）：「实时」= **打开页面时更新一次**；不要自动轮询。
+  // 页面停留期间不自动刷（需要最新数据就点统计卡右侧「刷新」按钮）。
   refresh: Object.freeze({
-    autoMs: 60000,          // 0 = 关掉自动刷新
-    visibilityRefreshMs: 15000, // 页面重新可见且距上次刷新超过这么久 ⇒ 刷一次
+    autoMs: 0,                 // 0 = 关掉自动刷新（默认关）
+    visibilityRefreshMs: 0,    // 0 = 切回页面也不自动刷（默认关）
+    manual: true,              // 保留手动「刷新」按钮
   }),
   legends: Object.freeze({
     replenish: Object.freeze([
