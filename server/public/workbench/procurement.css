@@ -17,11 +17,11 @@
 
 /* 三个 tab（扫一扫本轮禁用：视觉保留、不可点） */
 .pr-tabs { display: flex; gap: var(--space-2); margin: 0 0 var(--space-3); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
-.pr-tab { flex: 1; min-height: var(--control-height); border: 0; border-radius: var(--radius-md); padding: var(--space-2); background: transparent; color: var(--text-secondary); font-weight: var(--weight-medium); font-size: var(--font-size-sm); text-align: center; cursor: pointer; }
+.pr-tab { flex: 1 1 0; min-width: 0; min-height: var(--control-height); border: 0; border-radius: var(--radius-md); padding: var(--space-2); background: transparent; color: var(--text-secondary); font-weight: var(--weight-medium); font-size: var(--font-size-sm); text-align: center; cursor: pointer; }
 .pr-tab small { display: block; margin-top: 2px; font-size: var(--font-size-xs); font-weight: var(--weight-normal); color: var(--text-muted); }
 .pr-tab.active { background: var(--primary-soft); color: var(--primary); }
 .pr-tab.active small { color: var(--primary); }
-.pr-tab-disabled { flex: 0 0 auto; min-width: 88px; cursor: not-allowed; opacity: 0.6; }
+.pr-tab-disabled { cursor: not-allowed; opacity: 0.6; }
 
 /* 顶部统计卡 */
 .pr-summary { margin-bottom: var(--space-3); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }

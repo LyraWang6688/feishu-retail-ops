@@ -143,6 +143,15 @@ test('AC-P22 提交失败：给人话 + 草稿保留（刷新还在）', async (
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1', { timeout: 5000 });
 });
 
+test('AC-P23b 三个子 tab 三等分（业务负责人 2026-10-29 批注）', async ({ page }) => {
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  const widths = await page.locator('.pr-tabs .pr-tab').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+  expect(widths).toHaveLength(3);
+  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
+});
+
 test('AC-P23 无横向滚动 + 点击区 ≥44px（390 / 604 两个 project 都跑）', async ({ page }, testInfo) => {
   await mockApi(page);
   await page.reload();
