@@ -51,12 +51,11 @@
 
 /* 补货尺码行（每行一个数量框） */
 /* 补货尺码卡：**上下两栏** —— 第一行「尺码 + 现货/预订数量」，第二行「加减数量圆框」（业务负责人 2026-10-29 批注） */
-.pr-size-row { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface-soft); }
-.pr-size-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.pr-size-row { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); width: calc(50% - var(--space-1)); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface-soft); }
+.pr-size-row-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-2); min-width: 0; }
 .pr-size { font-size: var(--font-size-xl); font-weight: var(--weight-bold); line-height: var(--line-height-tight); }
 .pr-sale { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--text-secondary); }
-.pr-size-row .pr-pick { justify-content: space-between; }
-.pr-size-row .pr-pick-no-check { justify-content: flex-end; }
+.pr-size-row .pr-pick { justify-content: flex-end; }
 .pr-sale b { font-weight: var(--weight-medium); color: var(--text); }
 .pr-tag { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); line-height: 18px; }
 .pr-tag-spot { background: var(--info-soft); color: var(--info); }

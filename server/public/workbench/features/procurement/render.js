@@ -51,8 +51,7 @@ const legendHtml = (tab, config) => {
   return `<div class="pr-legend">${items}</div>`;
 };
 
-const stepperHtml = ({ recordId, size, quantity, config, suffix }) => `<div class="pr-pick${suffix ? '' : ' pr-pick-no-check'}">
-    ${suffix || ''}
+const stepperHtml = ({ recordId, size, quantity, config }) => `<div class="pr-pick">
     <div class="pr-stepper">
       <button type="button" data-pr-step="-1" data-record="${escapeHtml(recordId)}" data-size="${escapeHtml(size)}">−</button>
       <input class="pr-qty" inputmode="numeric" pattern="[0-9]*" data-pr-qty data-record="${escapeHtml(recordId)}"
@@ -80,19 +79,15 @@ const saleTagsHtml = (row, config) => {
 
 const replenishRowHtml = (group, row, draft, store, config) => {
   const quantity = store.quantityOf(draft, group.productRecordId, row.size);
-  // 业务负责人 2026-10-29 批注：**预订行是必补、默认已选** ⇒ 不显示勾选框（那个"对勾"是多余的）；
-  // 只有「只有现货」的尺码才需要勾选（现货按需自行选择）。
-  const prepaidOnlyOrMixed = Number(row.prepaidSold) > 0;
-  const checkbox = prepaidOnlyOrMixed ? '' : `<label><input type="checkbox" data-pr-check data-record="${escapeHtml(group.productRecordId)}"
-    data-size="${escapeHtml(row.size)}"${quantity > 0 ? ' checked' : ''}></label>`;
-  // 业务负责人 2026-10-29 批注：每个尺码卡改成**上下两栏** ——
-  //   第一行：尺码 + 现货/预订对应数量信息；第二行：加减数量圆框（窄屏不再挤成一小撮）。
+  // 业务负责人 2026-10-29 两次批注：
+  //   ① 预订（必补）行不要"对勾"；② 现货行也**不要方框** —— 补货数量由数量框决定（0=不选，>0=选中）。
+  // 每个尺码卡仍然**上下两栏**：第一行 尺码 + 现货/预订数量；第二行 加减数量圆框。
   return `<div class="pr-size-row">
     <div class="pr-size-row-head">
       <div class="pr-size">${escapeHtml(row.size)}</div>
       ${saleTagsHtml(row, config)}
     </div>
-    ${stepperHtml({ recordId: group.productRecordId, size: row.size, quantity, config, suffix: checkbox })}
+    ${stepperHtml({ recordId: group.productRecordId, size: row.size, quantity, config })}
   </div>`;
 };
 

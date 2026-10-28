@@ -12,7 +12,7 @@ import { requireFeishuAuth, showLoginButton } from '../../core/auth.js';
 import { describeError } from '../../core/ui.js';
 import { PROCUREMENT_UI as config } from '../../config/procurement.js';
 import { createApi } from './api.js';
-import { createDraftStore, clampQuantity, defaultNewQuantity, defaultReplenishQuantity } from './store.js';
+import { createDraftStore, clampQuantity } from './store.js';
 import { shellHtml, errorHtml, emptyHtml } from './render.js';
 import { createReplenishPanel } from './replenish.js';
 import { createNewProductsPanel } from './newProducts.js';
@@ -68,18 +68,14 @@ export function mountProcurementPage(host) {
     return { productRecordId: recordId, source: state.tab };
   };
 
-  const rowDefaults = (recordId, size) => {
+  /** 现货行"首次选中"的数量 = 现货已售数（业务口径：现货按需选择、勾选后数量=现货数；现在没有勾选框，用第一次 + 代替）。 */
+  const spotSoldOf = (recordId, size) => {
     for (const group of state.bodies.replenish?.groups || []) {
       if (group.productRecordId !== recordId) continue;
       const row = (group.sizes || []).find((one) => Number(one.size) === Number(size));
-      if (row) return defaultReplenishQuantity(row) || Number(row.spotSold) || 1;
+      if (row) return Number(row.spotSold) || 0;
     }
-    for (const group of state.bodies.new?.groups || []) {
-      if (group.productRecordId !== recordId) continue;
-      const kind = (group.sizes?.special || []).includes(Number(size)) ? 'special' : 'normal';
-      return defaultNewQuantity(kind, config.defaults);
-    }
-    return 1;
+    return 0;
   };
 
   const syncRow = (recordId, size) => {
@@ -87,11 +83,6 @@ export function mountProcurementPage(host) {
     host.querySelectorAll('[data-pr-qty]').forEach((input) => {
       if (input.dataset.record === recordId && Number(input.dataset.size) === Number(size)) {
         input.value = String(quantity);
-      }
-    });
-    host.querySelectorAll('[data-pr-check]').forEach((box) => {
-      if (box.dataset.record === recordId && Number(box.dataset.size) === Number(size)) {
-        box.checked = quantity > 0;
       }
     });
   };
@@ -143,8 +134,11 @@ export function mountProcurementPage(host) {
     const step = event.target.closest('[data-pr-step]');
     if (step) {
       const { record, size } = step.dataset;
-      const next = store.quantityOf(draft, record, Number(size)) + Number(step.dataset.prStep);
-      applyQuantity(record, Number(size), next);
+      const delta = Number(step.dataset.prStep);
+      const current = store.quantityOf(draft, record, Number(size));
+      // 没有勾选框：从 0 往上加 = "选中" —— 现货行按业务口径先给「现货已售数」，其它行给 1
+      const spot = current === 0 && delta > 0 ? spotSoldOf(record, Number(size)) : 0;
+      applyQuantity(record, Number(size), spot > 0 ? spot : current + delta);
       return;
     }
     if (event.target.closest('[data-pr-retry]')) { await load(state.tab, true); return; }
@@ -153,14 +147,6 @@ export function mountProcurementPage(host) {
       const result = await submitCtl.submit(host, draft);
       if (result.ok) { setDraft(store.ensure()); paint(state.tab); refreshNumbers(); }
     }
-  });
-
-  host.addEventListener('change', (event) => {
-    const box = event.target.closest('[data-pr-check]');
-    if (!box) return;
-    const { record, size } = box.dataset;
-    const quantity = box.checked ? rowDefaults(record, Number(size)) : 0;
-    applyQuantity(record, Number(size), quantity);
   });
 
   host.addEventListener('input', (event) => {

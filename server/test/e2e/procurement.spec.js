@@ -54,12 +54,10 @@ test('AC-P18/P22 默认选中：预订默认已选且数量=预订数（不显�
   await page.reload();
   await openPage(page);
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1', { timeout: 5000 });
-  // 2026-10-29 业务负责人批注：预订（必补）行**不出现对勾/勾选框**；只有现货行才有勾选框
-  await expect(page.locator('[data-pr-check][data-record="recProdA"][data-size="39"]')).toHaveCount(0);
-  await expect(page.locator('[data-pr-check][data-record="recProdA"][data-size="41"]')).toHaveCount(0);
-  await expect(page.locator('[data-pr-check]')).toHaveCount(1, { timeout: 5000 });
+  // 2026-10-29 业务负责人两次批注：**所有尺码行都不要勾选框**（预订/现货都不要方框）；
+  // 是否选中由数量框决定（0 = 不选），现货行第一次点「+」按「现货已售数」选中。
+  await expect(page.locator('[data-pr-check]')).toHaveCount(0, { timeout: 5000 });
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('0');
-  await expect(page.locator('[data-pr-check][data-record="recProdA"][data-size="42"]')).not.toBeChecked();
   // 顶部统计（补货 3 项）+ 统计范围
   await expect(page.getByText('预订待补')).toBeVisible();
   await expect(page.getByText('涉及货品')).toBeVisible();
@@ -68,9 +66,11 @@ test('AC-P18/P22 默认选中：预订默认已选且数量=预订数（不显�
   // 记录 ID 只在 data-* 内部主键里，页面上不出现
   const bodyText = await page.locator('#procurement-app').innerText();
   expect(bodyText.includes('recProdA')).toBe(false);
-  // 勾选只有现货的尺码 ⇒ 数量变 3（现货数）
-  await page.locator('[data-pr-check][data-record="recProdA"][data-size="42"]').check();
+  // 没有勾选框：现货行第一次点「+」⇒ 数量 = 现货已售数（fixture 42 码现货 3）；再「−」= 2
+  await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="42"]').click();
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('3');
+  await page.locator('[data-pr-step="-1"][data-record="recProdA"][data-size="42"]').click();
+  await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('2');
 });
 
 test('AC-P19b 手动「刷新」= 实时重新拉一次；已选数量保留；成功后提示已更新', async ({ page }) => {
