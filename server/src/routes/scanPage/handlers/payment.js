@@ -39,6 +39,21 @@ async function handlePaymentPay(ctx) {
           const pendingPayments = formPayments.length
             ? formPayments
             : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
+          // ⭐ 2026-10-28：**每件实收**必须在异步分支之前取好。
+          //   货品页把金额存进 `submitPending.lineAmounts`，而 `sale.lines[].amount` 可能是空串
+          //   ⇒ 异步 payload 若直接读 `line.amount`，资金页会报 `line_amount_missing`（真机 E2E 抓到）。
+          const sessionLineAmounts = Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : [];
+          const bodyLineAmounts = asList(body[fields.lineAmount]);
+          const pendingLineAmounts = sessionLineAmounts.some((v) => String(v ?? '').trim())
+            ? sessionLineAmounts
+            : bodyLineAmounts;
+          // ⭐ 一行金额：会话里她填的那份优先；空串/缺失才退回明细行自带的值。
+          const lineAmountAt = (line, index) => {
+            const fromSession = pendingLineAmounts[index];
+            return (fromSession !== undefined && String(fromSession).trim() !== '')
+              ? fromSession
+              : line.amount;
+          };
           // ⭐⭐ 2026-10-27：异步销售唯一链路（显式开关）。
           //   资金页只在「校验 + 冻结 payload + 入队」后返回；真正的飞书写入由 worker 完成。
           if (salesAsync) {
@@ -50,11 +65,11 @@ async function handlePaymentPay(ctx) {
                 requestId,
               });
             }
-            const payloadLines = pendingLines.map((line) => ({
+            const payloadLines = pendingLines.map((line, index) => ({
               productRecordId: line.product_record_id,
               size: line.size,
               tradeTypeCode: line.trade_type_code,
-              actualAmount: line.amount,
+              actualAmount: lineAmountAt(line, index),
               number: line.number,
               itemNo: line.item_no,
               color: line.color,
@@ -119,11 +134,8 @@ async function handlePaymentPay(ctx) {
           //   🔴 为什么必须同源：`services/salesOrderService.js:238` 那条守卫会拿
           //     「已记录的销售明细」与**本次推导的** expected **逐值比金额**（含「实收金额」）✗
           //     ⇒ 表单那份（例 `['150','130']`）与货那半落的（例 `['280']`）一比就 `sale_partial_failed` ⇒ **500** ✗
-          const sessionLineAmounts = Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : [];
-          const bodyLineAmounts = asList(body[fields.lineAmount]);
-          const pendingLineAmounts = sessionLineAmounts.some((v) => String(v ?? '').trim())
-            ? sessionLineAmounts
-            : bodyLineAmounts;
+          //   ⚠️ 2026-10-28：`sessionLineAmounts` / `bodyLineAmounts` / `pendingLineAmounts`
+          //      已上移到异步分支之前（异步 payload 也要用同一份金额）✓
           const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
           const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
           const pendingSize = String(pendingInfo.size || '').trim();
