@@ -12,6 +12,26 @@
 /** 业务负责人 2026-10-29：待付 = 同一销售单号下「收款状态 = 未收款」的金额合计。 */
 const UNPAID_PAYMENT_STATUS = '未收款';
 
+const DELIVERY_PAYMENT = Object.freeze({
+  paidStatus: '已收款',
+  platformPendingStatus: '待平台结算',
+  errors: Object.freeze({
+    badRequestId: '付款请求缺少有效 request_id',
+    missingOrder: '付款缺少销售主表 record_id',
+    badAmount: '收款金额必须是大于 0 的两位小数',
+    missingMethod: '付款缺少收款方式',
+    methodNotFound: '收款方式不存在',
+    orderNotFound: '销售订单不存在',
+    orderNotPosted: '销售订单尚未确认入账',
+    noPending: '没有待收款记录',
+    multiplePending: '存在多条待收款记录，请先人工核对',
+    badPendingAmount: '待收款金额无效',
+    overPending: (amount) => `本次付款超过待付金额 ￥${amount}`,
+    requestMismatch: 'request_id 对应的付款内容不一致',
+    retryPending: '这次付款结果待核对，请勿重新提交',
+  }),
+});
+
 const TABLE_FIELD_KEYS = Object.freeze({
   salesEntry: Object.freeze(['orderNo', 'recordedAt', 'totalAmount']),
   salesDetail: Object.freeze(['salesEntry', 'product', 'size', 'fulfillmentStatus']),
@@ -22,4 +42,4 @@ const TABLE_FIELD_KEYS = Object.freeze({
   paymentMethod: Object.freeze(['name']),
 });
 
-module.exports = { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS };
+module.exports = { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, DELIVERY_PAYMENT };

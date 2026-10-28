@@ -563,7 +563,7 @@
 | `workbench.sales.orders.failed` | 2 | src/routes/workbench/sales.js |
 | `workbench.sales.orders.order_skipped` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.orders.read_retry` | 2 | src/services/salesDeliveryReadService.js<br>src/services/salesFollowupService.js |
-| `workbench.sales.payment.failed` | 1 | src/routes/workbench/sales.js |
+| `workbench.sales.payment.failed` | 3 | src/routes/workbench/sales.js<br>src/services/salesDeliveryPaymentService.js |
 | `workbench.sales.retry.done` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.retry.error` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.retry.failed` | 1 | src/routes/workbench/sales.js |

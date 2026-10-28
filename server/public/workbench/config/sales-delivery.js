@@ -60,6 +60,7 @@ export const SALES_DELIVERY_STATUSES = Object.freeze({
 
 /** 读模型字段映射（归一化用；原型阶段输入是样例数据，字段名与只读接口同形）。 */
 export const SALES_DELIVERY_FIELDS = Object.freeze({
+  salesEntryRecordId: 'sales_entry_record_id',
   orderNo: 'order_no',
   recordId: 'record_id',
   recordedAt: 'recorded_at',
@@ -107,14 +108,13 @@ export const SALES_DELIVERY_TEXTS = Object.freeze({
   noMethod: '未选收款方式',
   buttons: Object.freeze({ delivery: '交付', payment: '付款' }),
   deliveryToast: '该产品已交付',
+  paymentToast: '付款成功',
   forms: Object.freeze({
     paymentTitle: '付款（v1 预览）',
     paymentAmount: '付款金额',
     paymentMethod: '付款方式',
     paymentMethodEmpty: '暂无收款方式（先到「收款方式管理」维护）',
-    previewOnly: 'v1 预览：这里只填表单，暂不提交写库',
-    previewSubmit: '预览（不提交）',
-    previewFilled: '表单已填好：v1 预览不提交写库（等业务负责人改稿定稿后再接动作）',
+    paymentSubmit: '确认收款',
     placeholderDash: '—',
   }),
   amountsLine: '{payableLabel}{payableAmount} · {pendingLabel}{pendingAmount}',

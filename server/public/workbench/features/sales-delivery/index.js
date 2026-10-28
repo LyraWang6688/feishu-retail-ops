@@ -24,7 +24,6 @@ import { buildDeliveryGroups, filterItemsByProduct } from './filter.js';
 import { buildTabItems } from './items.js';
 import { groupItemsBySoldDate } from './group.js';
 import { sortDeliveryGroups } from './sort.js';
-import { markPreviewFilled } from './actions.js';
 import { renderPage } from './render.js';
 
 const CONFIG = SALES_DELIVERY_CONFIG;
@@ -106,15 +105,55 @@ export function mountSalesDeliveryPage(container) {
     showToast.timer = setTimeout(() => { toast.remove(); }, 3000);
   }
 
-  function markDelivered(detailRecordId) {
-    for (const order of state.orders) {
-      const line = (order.details || []).find((detail) => detail.recordId === detailRecordId);
-      if (!line || line.fulfillmentStatus !== STATUSES.undelivered) continue;
-      line.fulfillmentStatus = STATUSES.delivered;
-      state.itemsByTab = buildTabItems(buildDeliveryGroups(state.orders, STATUSES), STATUSES, TABS);
-      render();
+  const busy = new Set();
+
+  function requestId() {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+      const rand = Math.floor(Math.random() * 16);
+      return (char === 'x' ? rand : ((rand & 0x3) | 0x8)).toString(16);
+    });
+  }
+
+  async function postDelivery(salesEntryRecordId, detailRecordId, button) {
+    const key = `delivery:${detailRecordId}`;
+    if (!salesEntryRecordId || !detailRecordId || busy.has(key)) return;
+    busy.add(key);
+    button.disabled = true;
+    try {
+      await api.post('/api/workbench/sales/deliveries', {
+        salesEntryRecordId, detailRecordIds: [detailRecordId],
+      });
       showToast(T.deliveryToast);
-      return;
+      await load();
+    } catch (error) {
+      showToast(describeError(error));
+    } finally {
+      busy.delete(key);
+      button.disabled = false;
+    }
+  }
+
+  async function postPayment(form) {
+    const card = form.closest('[data-sd-entry]');
+    const key = `payment:${card?.dataset.sdEntry || ''}`;
+    if (!card || busy.has(key)) return;
+    const amountInput = form.querySelector('[data-sd-field="amount"]');
+    const methodSelect = form.querySelector('[data-sd-field="method"]');
+    busy.add(key);
+    try {
+      await api.post('/api/workbench/sales/delivery/payments', {
+        salesEntryRecordId: card.dataset.sdEntry,
+        amount: String(amountInput?.value || '').replace(/[^\d.]/g, ''),
+        method: methodSelect?.value || '',
+        requestId: requestId(),
+      });
+      showToast(T.paymentToast);
+      await load();
+    } catch (error) {
+      showToast(describeError(error));
+    } finally {
+      busy.delete(key);
     }
   }
 
@@ -125,7 +164,8 @@ export function mountSalesDeliveryPage(container) {
     }
     const deliver = event.target.closest('[data-sd-deliver]');
     if (deliver) {
-      markDelivered(String(deliver.dataset.sdDeliver || ''));
+      const card = deliver.closest('[data-sd-entry]');
+      void postDelivery(card?.dataset.sdEntry || '', String(deliver.dataset.sdDeliver || ''), deliver);
       return;
     }
     const toggle = event.target.closest('[data-sd-toggle]');
@@ -152,7 +192,7 @@ export function mountSalesDeliveryPage(container) {
     const form = event.target.closest('[data-sd-preview-form]');
     if (!form) return;
     event.preventDefault();
-    markPreviewFilled(form, T);
+    void postPayment(form);
   });
 
   void load();

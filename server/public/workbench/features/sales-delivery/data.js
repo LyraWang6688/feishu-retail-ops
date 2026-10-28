@@ -51,6 +51,7 @@ export const normalizeOrder = (order = {}, fields = {}) => {
   const soldAt = soldAtOf(order[fields.recordedAt]);
   return {
     recordId: textOf(order[fields.recordId]).trim(),
+    salesEntryRecordId: textOf(order[fields.salesEntryRecordId]).trim(),
     orderNo: textOf(order[fields.orderNo]).trim(),
     recordedAt: order[fields.recordedAt] ?? null,
     soldAt: soldAt.at,

@@ -31,13 +31,6 @@ export const paymentParts = (item, methods = [], T) => ({
     ? `<select data-sd-field="method">${optionsHtml(methods, T.forms.paymentMethod)}</select>`
     : `<span class="muted">${escapeHtml(T.forms.paymentMethodEmpty)}</span>`}
         </label>
-        <p class="sd-preview-note">${escapeHtml(T.forms.previewOnly)}</p>
-        <button class="btn btn-primary" type="submit">${escapeHtml(T.forms.previewSubmit)}</button>
+        <button class="btn btn-primary" type="submit">${escapeHtml(T.forms.paymentSubmit)}</button>
       </form></div>`,
 });
-
-/** 预览提交：只改提示文案（**不发任何写请求**）。 */
-export const markPreviewFilled = (form, T) => {
-  const note = form?.querySelector?.('.sd-preview-note');
-  if (note) note.textContent = T.forms.previewFilled;
-};

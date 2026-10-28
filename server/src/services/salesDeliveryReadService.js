@@ -10,7 +10,7 @@
  * 货品信息 / 颜色管理 / 尺码管理 / 收款方式管理只用于显示（货号/颜色/尺码/收款方式）。
  *
  * 返回形状兼容 `features/sales-delivery` 的纯函数：
- *   `{ methods, orders: [{ order_no, recorded_at, payable_amount, pending_amount, details, payments }] }`
+ *   `{ methods, orders: [{ sales_entry_record_id, order_no, recorded_at, payable_amount, pending_amount, details, payments }] }`
  *
  * 🔴 只读：本文件没有任何写入方法，也不新增写库路径。
  */
@@ -89,7 +89,7 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
     const groups = new Map();
     const groupOf = (orderId) => {
       const orderNo = orderNoById.get(orderId) || orderId;
-      if (!groups.has(orderNo)) groups.set(orderNo, { orderNo, recordedAt: recordedAtById.get(orderId) ?? null, totalAmount: totalAmountById.get(orderId) ?? null, rawDetails: [], rawPayments: [] });
+      if (!groups.has(orderNo)) groups.set(orderNo, { salesEntryRecordId: orderId, orderNo, recordedAt: recordedAtById.get(orderId) ?? null, totalAmount: totalAmountById.get(orderId) ?? null, rawDetails: [], rawPayments: [] });
       return groups.get(orderNo);
     };
     for (const detail of details) {
@@ -129,6 +129,7 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
         .filter((payment) => payment.status === UNPAID_PAYMENT_STATUS)
         .reduce((total, payment) => total + payment.amount, 0);
       result.push({
+        sales_entry_record_id: group.salesEntryRecordId,
         order_no: group.orderNo,
         recorded_at: group.recordedAt,
         details: detailRows,

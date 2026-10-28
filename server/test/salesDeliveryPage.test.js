@@ -286,10 +286,13 @@ test('AC-SD-P2 模块化：文件都在、每个 ≤200 行；HTML 薄壳；无�
   assert.doesNotMatch(render, /sd-sort|formatShortDate\(line|sd-item-date/, '排序控件与卡内日期已删除（日期只在分组头）');
 });
 
-test('AC-SD-P3 只读边界：只允许 GET 只读接口、零写请求；CSS 只用 tokens（无 hex/rgb/inline）', () => {
+test('AC-SD-P3 写边界：只允许交付/付款两个 POST；CSS 只用 tokens（无 hex/rgb/inline）', () => {
+  const allowedPosts = new Set(["'/api/workbench/sales/deliveries'", "'/api/workbench/sales/delivery/payments'"]);
   for (const file of ['index.js', 'data.js', 'filter.js', 'items.js', 'group.js', 'sort.js', 'render.js', 'actions.js', 'format.js']) {
     const source = read(`features/sales-delivery/${file}`);
-    assert.doesNotMatch(source, /api\.(post|put|patch|delete)|sample-data|sampleBanner/, `${file}：只许只读接口，不许写/样例数据`);
+    const posts = [...source.matchAll(/api\.post\(\s*([^,\n]+)/g)].map((match) => match[1].trim());
+    assert.ok(posts.every((target) => allowedPosts.has(target)), `${file}：只许交付/付款两个写接口`);
+    assert.doesNotMatch(source, /sample-data|sampleBanner/, `${file}：不许样例数据`);
     assert.doesNotMatch(source, /'已交付'|'未收款'|'待平台结算'|'货未清'|'钱未清'|'钱货都未清'/, `${file} 不许写死状态 / tab 文案`);
     assert.doesNotMatch(source, /style=/, `${file} 不许写内联 style`);
   }

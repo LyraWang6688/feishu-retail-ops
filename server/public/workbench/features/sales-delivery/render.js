@@ -42,7 +42,7 @@ const productRowsHtml = (item, T, statuses) => {
 const itemCardHtml = (item, state, T, statuses) => {
   const payment = item.hasAmounts ? paymentParts(item, state.methods, T) : null;
   return `
-  <article class="sd-card" data-sd-item data-sd-kind="${escapeHtml(item.kind)}" data-sd-order="${escapeHtml(item.orderNo)}">
+  <article class="sd-card" data-sd-item data-sd-kind="${escapeHtml(item.kind)}" data-sd-order="${escapeHtml(item.orderNo)}" data-sd-entry="${escapeHtml(item.salesEntryRecordId || '')}">
     ${productRowsHtml(item, T, statuses)}
     ${item.hasAmounts ? `<div class="sd-row-footer">${amountsHtml(item, T)}<div class="sd-actions">${payment.button}</div></div>` : ''}
     ${payment ? payment.form : ''}

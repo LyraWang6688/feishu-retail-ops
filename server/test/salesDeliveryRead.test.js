@@ -50,6 +50,7 @@ test('AC-DR1 真实只读：销售明细 + 收款明细 → 页面订单形状�
   assert.equal(data.orders.length, 1);
   const [order] = data.orders;
   assert.equal(order.order_no, 'XSD-1');
+  assert.equal(order.sales_entry_record_id, 'order_1');
   assert.equal(order.recorded_at, '2026-10-19T09:00:00+08:00');
   assert.equal(order.details.length, 1);
   assert.deepEqual({
