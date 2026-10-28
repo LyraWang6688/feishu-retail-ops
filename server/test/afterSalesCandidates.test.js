@@ -95,13 +95,14 @@ test('AC-LP2 ⭐ 候选卡：一行三值、无销售单号、同字号（批注
  *   下面那句提示**逐字改成「请选择要售后单」**，并且**居中 + 加粗 + 字号要大**。
  *   判据反向钉住：文案改回旧句 / 去掉居中或加粗 ⇒ 红。
  */
-test('AC-LP3 ⭐ 货品行居中加粗；提示语逐字「请选择要售后单」且居中加粗大字号', () => {
+test('AC-LP3 ⭐ 货品行居中加粗；提示语逐字「请选择售后单」且居中加粗大字号', () => {
   const root = path.join(__dirname, '../public/workbench');
   const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
   const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
 
-  assert.match(config, /chooseHint:\s*'请选择要售后单'/, '提示语必须逐字是「请选择要售后单」（她 2026-10-29 批注）');
-  assert.doesNotMatch(config, /chooseHint:\s*'请选择要售后的那一笔销售'/, '旧提示语不许再当配置值');
+  assert.match(config, /chooseHint:\s*'请选择售后单'/, '提示语必须逐字是「请选择售后单」（她 2026-10-29 批注：「去掉要」）');
+  assert.doesNotMatch(config, /chooseHint:\s*'请选择要售后单'/, '「要」字不许回来（她批注「去掉要」）');
+  assert.doesNotMatch(config, /chooseHint:\s*'请选择要售后的那一笔销售'/, '更早的旧提示语不许回来');
 
   // 货品行：居中 + 加粗（突出）
   assert.match(css, /\.after-sales-product\s*\{[^}]*text-align:\s*center/, '货品信息要居中');
