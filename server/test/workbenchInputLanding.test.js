@@ -75,15 +75,15 @@ const CHAINS = Object.freeze({
     // 售后那条链的写入点（只读核过）：销售主表·售后次数 / 销售明细（新建/改交付）
     landing: [['salesEntry', 'afterSalesCount'], ['salesDetail', 'fulfillmentStatus'], ['paymentRecord', 'amount']],
   },
-  "'/api/workbench/sales/deliveries'": {
-    fe: 'features/sales-delivery/index.js', feKey: "'/api/workbench/sales/deliveries'",
-    route: 'src/routes/workbench/sales.js', routeKey: /router\.post\('\/sales\/deliveries'[\s\S]{0,600}?req\.body\?\.detailRecordIds/,
+  "'/api/workbench/sales/delivery/deliveries'": {
+    fe: 'features/sales-delivery/index.js', feKey: "'/api/workbench/sales/delivery/deliveries'",
+    route: 'src/routes/workbenchSalesDelivery.js', routeKey: /router\.post\('\/sales\/delivery\/deliveries'[\s\S]{0,600}?req\.body\?\.detailRecordIds/,
     service: 'src/services/salesDeliveryService.js', serviceKey: /deliver\(/,
     landing: [['salesDetail', 'fulfillmentStatus'], ['liveInventory', 'stockKey']],
   },
   "'/api/workbench/sales/delivery/payments'": {
     fe: 'features/sales-delivery/index.js', feKey: "'/api/workbench/sales/delivery/payments'",
-    route: 'src/routes/workbench/sales.js', routeKey: /router\.post\('\/sales\/delivery\/payments'[\s\S]{0,600}?req\.body\?\.method/,
+    route: 'src/routes/workbenchSalesDelivery.js', routeKey: /router\.post\('\/sales\/delivery\/payments'[\s\S]{0,600}?req\.body\?\.method/,
     service: 'src/services/salesDeliveryPaymentService.js', serviceKey: /const pay = async/,
     landing: [['paymentRecord', 'amount'], ['paymentRecord', 'status'], ['paymentRecord', 'method'], ['paymentRecord', 'receivedAt'], ['paymentRecord', 'tradeDirection']],
   },

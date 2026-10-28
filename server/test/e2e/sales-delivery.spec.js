@@ -86,6 +86,19 @@ const mockDeliveryApi = async (page) => {
     if (url.pathname === '/api/workbench/sales/delivery' && method === 'GET') {
       return route.fulfill(json(state));
     }
+    if (url.pathname.startsWith('/api/workbench/sales/delivery/jobs/') && method === 'GET') {
+      return route.fulfill(json({ success: true, status: 'succeeded' }));
+    }
+    if (url.pathname === '/api/workbench/sales/delivery/deliveries' && method === 'POST') {
+      const body = route.request().postDataJSON();
+      const ids = new Set(body.detailRecordIds || []);
+      for (const order of state.orders) {
+        for (const detail of order.details || []) {
+          if (ids.has(detail.record_id)) detail.fulfillment_status = '已交付';
+        }
+      }
+      return route.fulfill(json({ success: true, jobId: 'delivery_job_aaaaaaaaaaaaaaaaaaaaaaaa' }));
+    }
     if (url.pathname === '/api/workbench/sales/deliveries' && method === 'POST') {
       const body = route.request().postDataJSON();
       const ids = new Set(body.detailRecordIds || []);
@@ -111,7 +124,7 @@ const mockDeliveryApi = async (page) => {
         }
         order.pending_amount = (order.payments || []).filter((payment) => payment.status === '未收款').reduce((sum, payment) => sum + payment.amount, 0);
       }
-      return route.fulfill(json({ success: true, pendingAmount: order?.pending_amount ?? 0 }));
+      return route.fulfill(json({ success: true, jobId: 'delivery_job_bbbbbbbbbbbbbbbbbbbbbbbb' }));
     }
     return route.fulfill(json({ success: true }));
   });
@@ -237,7 +250,7 @@ test('AC-DELIVER 行尾交付：点谁交谁、toast「该产品已交付」、�
   const card = page.locator('[data-sd-order="XSD-20261015-0002"]');
   await expect(card.locator('[data-sd-deliver]')).toHaveCount(2);
   await card.locator('[data-sd-deliver]').first().click();
-  await expect(page.locator('.workbench-toast')).toContainText('该产品已交付');
+  await expect(page.locator('.workbench-toast')).toContainText('已提交成功');
   await expect(card.locator('.sd-product-row')).toHaveCount(1);
   await expect(card.locator('[data-sd-deliver]')).toHaveCount(1);
   await expect(page.locator('[data-sd-tab="both"]')).toContainText('2 双');
@@ -294,7 +307,7 @@ test('AC-FORM 付款弹窗：金额/方式在居中弹窗里；提交真实 POST
   await expect(modal.locator('[data-sd-modal-confirm]')).toBeEnabled();
   await modal.locator('[data-sd-modal-method]').selectOption('现金');
   await modal.locator('[data-sd-modal-confirm]').click();
-  await expect(page.locator('.workbench-toast')).toContainText('付款成功');
+  await expect(page.locator('.workbench-toast')).toContainText('已提交成功');
   await page.waitForTimeout(200);
   expect(apiRequests).toContain('POST /api/workbench/sales/delivery/payments');
   expect(writes).toEqual(['POST']);

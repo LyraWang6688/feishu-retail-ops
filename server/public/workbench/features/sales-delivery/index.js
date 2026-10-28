@@ -25,7 +25,7 @@ import { buildTabItems } from './items.js';
 import { groupItemsBySoldDate } from './group.js';
 import { sortDeliveryGroups } from './sort.js';
 import { openPaymentModal, closePaymentModal, validatePaymentAmount } from './payment-modal.js';
-import { showToast, requestId } from './ui-feedback.js';
+import { showToast, requestId, waitJob } from './ui-feedback.js';
 import { renderPage } from './render.js';
 
 const CONFIG = SALES_DELIVERY_CONFIG;
@@ -102,14 +102,16 @@ export function mountSalesDeliveryPage(container) {
     busy.add(key);
     button.disabled = true;
     try {
-      await api.post('/api/workbench/sales/deliveries', {
-        salesEntryRecordId, detailRecordIds: [detailRecordId],
+      const queued = await api.post('/api/workbench/sales/delivery/deliveries', {
+        salesEntryRecordId, detailRecordIds: [detailRecordId], requestId: requestId(),
       });
-      showToast(T.deliveryToast);
-      await load();
+      showToast(T.submittedToast);
+      await waitJob(api, queued.jobId, {
+        onSuccess: async () => { await load(); busy.delete(key); button.disabled = false; },
+        onFailure: (message) => { showToast(message || T.loadFailed); busy.delete(key); button.disabled = false; },
+      });
     } catch (error) {
       showToast(describeError(error));
-    } finally {
       busy.delete(key);
       button.disabled = false;
     }
@@ -123,7 +125,7 @@ export function mountSalesDeliveryPage(container) {
     busy.add(key);
     confirmButton.disabled = true;
     try {
-      await api.post('/api/workbench/sales/delivery/payments', {
+      const queued = await api.post('/api/workbench/sales/delivery/payments', {
         salesEntryRecordId: card.dataset.sdEntry,
         amount: String(amountText || '').replace(/[^\d.]/g, ''),
         method,
@@ -131,11 +133,13 @@ export function mountSalesDeliveryPage(container) {
       });
       closePaymentModal(container);
       paymentCard = null;
-      showToast(T.paymentToast);
-      await load();
+      showToast(T.submittedToast);
+      await waitJob(api, queued.jobId, {
+        onSuccess: async () => { await load(); busy.delete(key); },
+        onFailure: (message) => { showToast(message || T.loadFailed); busy.delete(key); },
+      });
     } catch (error) {
       showToast(describeError(error));
-    } finally {
       busy.delete(key);
       confirmButton.disabled = false;
     }

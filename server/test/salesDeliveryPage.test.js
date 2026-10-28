@@ -287,7 +287,10 @@ test('AC-SD-P2 模块化：文件都在、每个 ≤200 行；HTML 薄壳；无�
 });
 
 test('AC-SD-P3 写边界：只允许交付/付款两个 POST；CSS 只用 tokens（无 hex/rgb/inline）', () => {
-  const allowedPosts = new Set(["'/api/workbench/sales/deliveries'", "'/api/workbench/sales/delivery/payments'"]);
+  const allowedPosts = new Set([
+    "'/api/workbench/sales/delivery/deliveries'",
+    "'/api/workbench/sales/delivery/payments'",
+  ]);
   for (const file of ['index.js', 'data.js', 'filter.js', 'items.js', 'group.js', 'sort.js', 'render.js', 'actions.js', 'format.js']) {
     const source = read(`features/sales-delivery/${file}`);
     const posts = [...source.matchAll(/api\.post\(\s*([^,\n]+)/g)].map((match) => match[1].trim());
