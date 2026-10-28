@@ -38,6 +38,9 @@ export const PROCUREMENT_UI = Object.freeze({
     submit: '提交',
     submitted: '已提交成功，数据会更新',
     submitFailed: '提交没成功，请稍后重试。',
+    refresh: '刷新',
+    refreshing: '刷新中…',
+    refreshed: '已更新到最新数据',
     scanDisabled: '扫一扫本轮暂未开放，先用补货 / 上新。',
     scanTabHint: '补货扫码',
     noSelection: '还没有选要采购的货品。',
@@ -57,9 +60,15 @@ export const PROCUREMENT_UI = Object.freeze({
     ]),
   }),
   range: Object.freeze({
-    replenish: '{from} – {to}',
+    // 业务负责人 2026-10-29 口径：补货窗口 = 今天 00:00 - 3 天 ~ **现在**（含今天已发生）
+    replenish: '{from} 00:00 – 现在',
     newProducts: '今日 00:00 – 现在',
     dayTemplate: '{month}月{day}日',
+  }),
+  // 数据刷新：打开/切 tab 都是实时查询；页面停留期间按这个间隔自动刷新 + 手动刷新按钮
+  refresh: Object.freeze({
+    autoMs: 60000,          // 0 = 关掉自动刷新
+    visibilityRefreshMs: 15000, // 页面重新可见且距上次刷新超过这么久 ⇒ 刷一次
   }),
   legends: Object.freeze({
     replenish: Object.freeze([

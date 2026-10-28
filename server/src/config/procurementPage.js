@@ -54,10 +54,12 @@ const buildProcurementPageConfig = (env = process.env) => {
       newProducts: '/procurement/new-products',
       submit: '/procurement/submit',
     }),
-    // 时间窗口：补货 = [今天 00:00 - days 天, 今天 00:00)（includeToday=false 时不含今天）
+    // 时间窗口（业务负责人 2026-10-29 口径）：
+    //   补货 = [今天 00:00 - days 天, **现在**]（含今天已发生的销售；例：10-29 00:57 ⇒ [10-26 00:00, 10-29 00:57]）
+    //   跨月/跨年由 epoch 日期运算自动进位（不手写月份边界）。
     window: Object.freeze({
       replenishDays: readInt(env, 'PROCUREMENT_REPLENISH_DAYS', 3, { min: 1, max: 31 }),
-      includeToday: readFlag(env, 'PROCUREMENT_REPLENISH_INCLUDE_TODAY', false),
+      includeToday: readFlag(env, 'PROCUREMENT_REPLENISH_INCLUDE_TODAY', true),
       offsetMinutes: readInt(env, 'PROCUREMENT_TZ_OFFSET_MINUTES', SHANGHAI_OFFSET_MINUTES, { min: -720, max: 840 }),
     }),
     // 默认值（可手改；改这里不用改渲染层）

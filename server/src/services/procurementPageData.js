@@ -30,14 +30,13 @@ const replenishWindow = (now, config) => {
   const days = config.window.replenishDays;
   const offset = config.window.offsetMinutes;
   const today = dayStart(now, offset);
+  // 业务负责人 2026-10-29 口径：开始 = **今天 00:00 - days 天**；结束 = **现在**
+  // （例：10-29 00:57 ⇒ 10-26 00:00 ~ 10-29 00:57；跨月/跨年由 epoch 自动进位）
+  const start = today - days * DAY_MS;
   if (config.window.includeToday) {
-    return {
-      start: today - (days - 1) * DAY_MS, end: Number(now), days, from: dayIso(today, offset), to: dayIso(now, offset),
-    };
+    return { start, end: Number(now), days, from: dayIso(start, offset), to: dayIso(now, offset) };
   }
-  return {
-    start: today - days * DAY_MS, end: today, days, from: dayIso(today - days * DAY_MS, offset), to: dayIso(today - 1, offset),
-  };
+  return { start, end: today, days, from: dayIso(start, offset), to: dayIso(today - 1, offset) };
 };
 
 /**

@@ -9,8 +9,8 @@ import { statsHtml, legendHtml, replenishGroupHtml, emptyHtml, totalTemplateHtml
 
 export const createReplenishPanel = (config) => {
   /** 拉数据 + 把「默认选中」并进草稿（只补不覆盖已改过的数量/勾选）。 */
-  const load = async ({ api, store, draft }) => {
-    const body = await api.loadReplenish();
+  const load = async ({ api, store, draft, force = false }) => {
+    const body = await api.loadReplenish({ force });
     return { body, draft: store.seedDefaults(draft, 'replenish', body.groups || []) };
   };
 

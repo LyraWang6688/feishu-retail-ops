@@ -11,8 +11,8 @@ const normalTotalOf = (group, draft, store) => (group.sizes?.normal || [])
   .reduce((sum, size) => sum + store.quantityOf(draft, group.productRecordId, size), 0);
 
 export const createNewProductsPanel = (config) => {
-  const load = async ({ api, store, draft }) => {
-    const body = await api.loadNewProducts();
+  const load = async ({ api, store, draft, force = false }) => {
+    const body = await api.loadNewProducts({ force });
     return { body, draft: store.seedDefaults(draft, 'new', body.groups || []) };
   };
 

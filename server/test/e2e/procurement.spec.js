@@ -60,13 +60,28 @@ test('AC-P18/P22 默认选中：预订默认已选且数量=预订数；只有�
   // 顶部统计（补货 3 项）+ 统计范围
   await expect(page.getByText('预订待补')).toBeVisible();
   await expect(page.getByText('涉及货品')).toBeVisible();
-  await expect(page.getByText('10月25日 – 10月27日')).toBeVisible();
+  // 业务负责人 2026-10-29 口径：结束时间 = 现在（不是"截止昨天"）
+  await expect(page.getByText('10月25日 00:00 – 现在')).toBeVisible();
   // 记录 ID 只在 data-* 内部主键里，页面上不出现
   const bodyText = await page.locator('#procurement-app').innerText();
   expect(bodyText.includes('recProdA')).toBe(false);
   // 勾选只有现货的尺码 ⇒ 数量变 3（现货数）
   await page.locator('[data-pr-check][data-record="recProdA"][data-size="42"]').check();
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('3');
+});
+
+test('AC-P19b 手动「刷新」= 实时重新拉一次；已选数量保留；成功后提示已更新', async ({ page }) => {
+  const calls = await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
+  await qtyOf(page, 'recProdA', 39).fill('4');
+  await page.waitForTimeout(100);
+  expect(calls.replenish).toBe(1);
+  await page.locator('[data-pr-refresh]').click();
+  await expect(page.getByText('已更新到最新数据')).toBeVisible();
+  await expect.poll(() => calls.replenish).toBe(2);
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('4', { timeout: 5000 });
 });
 
 test('AC-P19 切 tab / 刷新后草稿保留（同一用户同一浏览器）', async ({ page }) => {

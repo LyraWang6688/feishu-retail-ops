@@ -158,8 +158,22 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
     return save({ ...draft, products });
   };
 
+  /**
+   * 刷新数据后：只保留「这次数据里还在」的那些已选货品（source 匹配的才裁）。
+   * 例：某个货品补货已补齐/不再缺货 ⇒ 列表里没有了，草稿里也不该继续挂着它（防提交到看不见的行）。
+   */
+  const pruneSource = (draft, source, keepIds = []) => {
+    const keep = new Set((keepIds || []).map(String));
+    const products = { ...(draft.products || {}) };
+    let changed = false;
+    for (const [id, product] of Object.entries(products)) {
+      if (product.source === source && !keep.has(String(id))) { delete products[id]; changed = true; }
+    }
+    return changed ? save({ ...draft, products }) : draft;
+  };
+
   return {
-    storageKey, load, save, ensure, clear, rotateSubmitKey, setQuantity, seedDefaults,
+    storageKey, load, save, ensure, clear, rotateSubmitKey, setQuantity, seedDefaults, pruneSource,
     quantityOf: (draft, productRecordId, size) => Number(entriesOfProduct(draft, productRecordId)[size]) || 0,
     productOf: (draft, productRecordId) => draft.products?.[productRecordId] || null,
   };

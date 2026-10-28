@@ -31,6 +31,8 @@
 .pr-stat span { display: block; margin-top: 2px; font-size: var(--font-size-xs); color: var(--text-secondary); }
 .pr-range { display: flex; align-items: center; justify-content: space-between; margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-light); font-size: var(--font-size-sm); color: var(--text-secondary); }
 .pr-range strong { color: var(--text); font-weight: var(--weight-medium); }
+.pr-refresh { min-height: var(--control-height); margin-left: auto; padding: 0 var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-pill); background: var(--surface); color: var(--primary); font-size: var(--font-size-sm); cursor: pointer; }
+.pr-refresh:disabled { opacity: 0.6; cursor: wait; }
 
 /* 图例 */
 .pr-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0 var(--space-1) var(--space-3); font-size: var(--font-size-xs); color: var(--text-secondary); }

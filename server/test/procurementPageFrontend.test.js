@@ -82,6 +82,33 @@ test('AC-P9/P21 扫一扫本轮占位：tab 视觉保留但禁用；页面不 im
   assert.match(read('src/utils/uiTapReport.js'), /procurement_scan_returned/);
 });
 
+test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉已消失的已选行', async () => {
+  const configSource = read(`${PUBLIC}/config/procurement.js`);
+  assert.match(configSource, /replenish: '\{from\} 00:00 – 现在'/);
+  assert.match(configSource, /autoMs: 60000/);
+  const refresh = read(`${PUBLIC}/features/procurement/refresh.js`);
+  assert.match(refresh, /data-pr-refresh/);
+  assert.match(refresh, /pruneSource/);
+  assert.match(refresh, /visibilitychange/);
+  assert.ok(lines(`${PUBLIC}/features/procurement/refresh.js`) <= 200);
+  assert.match(read(`${PUBLIC}/features/procurement/render.js`), /data-pr-refresh/);
+
+  const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
+  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
+  const memory = new Map();
+  const storage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v), removeItem: (k) => memory.delete(k) };
+  const draftStore = store.createDraftStore({ openId: 'ou_refresh', config, storage, now: () => 1761600000000 });
+  let draft = draftStore.ensure();
+  draft = draftStore.seedDefaults(draft, 'replenish', [
+    { productRecordId: 'recKeep', itemNo: 'A1', color: '黑', sizes: [{ size: 39, prepaidSold: 1, spotSold: 0 }] },
+    { productRecordId: 'recGone', itemNo: 'A2', color: '黑', sizes: [{ size: 40, prepaidSold: 2, spotSold: 0 }] },
+  ]);
+  assert.equal(draftStore.quantityOf(draft, 'recGone', 40), 2);
+  const pruned = draftStore.pruneSource(draft, 'replenish', ['recKeep']);
+  assert.equal(draftStore.quantityOf(pruned, 'recKeep', 39), 1, '还在数据里的已选行保留');
+  assert.equal(pruned.products.recGone, undefined, '刷新后已消失的货品要从草稿剔除（防提交看不见的行）');
+});
+
 test('底部提交条 + 空/错态 + 统计范围都在渲染层（与视觉稿一致）', () => {
   const render = read(`${PUBLIC}/features/procurement/render.js`);
   for (const marker of ['data-pr-total', 'data-pr-breakdown', 'data-pr-submit', 'data-pr-toast', 'pr-summary-grid', 'pr-group', 'pr-stepper', 'data-pr-retry']) {

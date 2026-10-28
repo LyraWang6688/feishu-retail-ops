@@ -40,7 +40,8 @@ const statsHtml = (tab, body, config) => {
   const cells = defs.map((def) => `<div class="pr-stat"><b>${escapeHtml(body?.stats?.[def.key] ?? 0)}</b><span>${escapeHtml(def.label)}</span></div>`).join('');
   return `<section class="pr-summary" aria-label="${escapeHtml(config.title)}">
     <div class="pr-summary-grid">${cells}</div>
-    <div class="pr-range"><span>${escapeHtml(config.texts.rangeLabel)}</span><strong>${escapeHtml(rangeText(tab, body?.range, config))}</strong></div>
+    <div class="pr-range"><span>${escapeHtml(config.texts.rangeLabel)}</span><strong>${escapeHtml(rangeText(tab, body?.range, config))}</strong>
+      <button type="button" class="pr-refresh" data-pr-refresh>${escapeHtml(config.texts.refresh)}</button></div>
   </section>`;
 };
 

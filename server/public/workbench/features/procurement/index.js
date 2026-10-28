@@ -17,6 +17,7 @@ import { shellHtml, errorHtml, emptyHtml } from './render.js';
 import { createReplenishPanel } from './replenish.js';
 import { createNewProductsPanel } from './newProducts.js';
 import { createSubmitController } from './submit.js';
+import { createRefresher } from './refresh.js';
 
 const TABS = ['replenish', 'new'];
 
@@ -25,11 +26,10 @@ export function mountProcurementPage(host) {
   host.innerHTML = shellHtml(config);
   const remote = createApi(config);
   const panels = { replenish: createReplenishPanel(config), new: createNewProductsPanel(config) };
-  const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
-  const state = { tab: 'replenish', bodies: {}, errors: {} };
+  const state = { tab: 'replenish', bodies: {}, errors: {}, loadedAt: {} };
   let store = null;
   let draft = null;
-
+  const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
   const panelEl = (tab) => host.querySelector(`[data-pr-panel="${tab}"]`);
   const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft); };
 
@@ -50,6 +50,10 @@ export function mountProcurementPage(host) {
     }
     submitCtl.renderBottom(host, draft);
   };
+  const refresher = createRefresher({
+    host, config, panels, remote, getStore: () => store, getDraft: () => draft,
+    state, setDraft: (next) => setDraft(next), paint, refreshNumbers, submitCtl,
+  });
 
   const metaOf = (recordId) => {
     for (const tab of TABS) {
@@ -103,9 +107,11 @@ export function mountProcurementPage(host) {
     if (!force && state.bodies[tab]) { paint(tab); return; }
     paint(tab);
     try {
-      const result = await panels[tab].load({ api: remote, store, draft });
+      const result = await panels[tab].load({ api: remote, store, draft, force });
       state.bodies[tab] = result.body;
-      setDraft(result.draft);
+      state.loadedAt[tab] = Date.now();
+      // 刷新后：已不在数据里的「已选行」要清掉（防提交到页面上已看不到的货品）
+      setDraft(store.pruneSource(result.draft, tab, (result.body.groups || []).map((group) => group.productRecordId)));
       paint(tab);
       refreshNumbers();
     } catch (error) {
@@ -142,6 +148,7 @@ export function mountProcurementPage(host) {
       return;
     }
     if (event.target.closest('[data-pr-retry]')) { await load(state.tab, true); return; }
+    if (event.target.closest('[data-pr-refresh]')) { await refresher.refresh(); return; }
     if (event.target.closest('[data-pr-submit]')) {
       const result = await submitCtl.submit(host, draft);
       if (result.ok) { setDraft(store.ensure()); paint(state.tab); refreshNumbers(); }
@@ -184,6 +191,8 @@ export function mountProcurementPage(host) {
     setDraft(store.ensure());
     submitCtl.renderBottom(host, draft);
     await activate('replenish');
+    // 实时性：页面停留期间按配置间隔自动刷新 + 手动「刷新」按钮；重新可见时也补一次
+    refresher.startAuto();
   };
   void start();
   return { activate };

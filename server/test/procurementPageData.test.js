@@ -56,24 +56,41 @@ const view = (records, products = [productDto()]) => buildReplenishView({
 });
 
 // ── AC-P2 三天窗口（上海时区）─────────────────────────────────────────────
-test('AC-P2 补货窗口 = [今天 00:00 - 3 天, 今天 00:00)：上海时区边界', () => {
+test('AC-P2 补货窗口 = [今天 00:00 - 3 天, 现在]：上海时区边界（业务负责人 2026-10-29 口径）', () => {
   const range = replenishWindow(NOW, config);
-  assert.equal(range.start, SH('2026-10-25T00:00:00'));
-  assert.equal(range.end, SH('2026-10-28T00:00:00'));
+  assert.equal(range.start, SH('2026-10-25T00:00:00'), '开始 = 今天 00:00 往前 3 个自然日');
+  assert.equal(range.end, NOW, '结束 = 此刻（含今天已发生的销售）');
   assert.equal(range.from, '2026-10-25');
-  assert.equal(range.to, '2026-10-27');
-  assert.equal(dayIso(SH('2026-10-27T23:59:59'), 480), '2026-10-27');
+  assert.equal(range.to, '2026-10-28', '结束日期 = 今天');
 });
 
-test('AC-P2 边界：昨天 23:59:59 计入；今天 00:00:00 与 3 天前 23:59:59 不计入', () => {
+test('AC-P2 边界：3 天前 00:00 起 / 现在之内都计入；3 天前 23:59:59 与「未来」不计入', () => {
   const inWindow = view([salesRow({ soldAt: SH('2026-10-27T23:59:59') })]);
   assert.equal(inWindow.stats.prepaidPending + inWindow.stats.spotSold, 1);
-  const today = view([salesRow({ soldAt: SH('2026-10-28T00:00:00') })]);
-  assert.equal(today.stats.spotSold, 0);
+  const todayPartial = view([salesRow({ soldAt: SH('2026-10-28T08:59:59') })]);
+  assert.equal(todayPartial.stats.spotSold, 1, '今天 00:00 之后、现在之前的销售必须计入');
+  const nowEdge = view([salesRow({ soldAt: SH('2026-10-28T09:00:00') })]);
+  assert.equal(nowEdge.stats.spotSold, 0, '「现在」这一刻本身不计入（右开区间）');
   const tooOld = view([salesRow({ soldAt: SH('2026-10-24T23:59:59') })]);
   assert.equal(tooOld.stats.spotSold, 0);
   const firstInclusive = view([salesRow({ soldAt: SH('2026-10-25T00:00:00') })]);
   assert.equal(firstInclusive.stats.spotSold, 1);
+});
+
+test('AC-P2b 跨月 / 跨年 / 闰年：日期运算自动进位（不手写月份边界）', () => {
+  const cases = [
+    ['2026-11-02T09:00:00', '2026-10-30', '2026-11-02'], // 跨月：11-02 00:00 - 3 天 = 10-30
+    ['2026-12-01T00:30:00', '2026-11-28', '2026-12-01'], // 跨月：12-01 - 3 天 = 11-28
+    ['2027-01-02T09:00:00', '2026-12-30', '2027-01-02'], // 跨年：01-02 - 3 天 = 上年 12-30
+    ['2026-03-02T09:00:00', '2026-02-27', '2026-03-02'], // 平年 2 月
+    ['2028-03-02T09:00:00', '2028-02-28', '2028-03-02'], // 闰年 2 月（2-29 存在）
+    ['2026-01-01T00:10:00', '2025-12-29', '2026-01-01'], // 元旦跨年
+  ];
+  for (const [nowIso, from, to] of cases) {
+    const range = replenishWindow(SH(nowIso), config);
+    assert.equal(range.from, from, `${nowIso} 的开始日期`);
+    assert.equal(range.to, to, `${nowIso} 的结束日期`);
+  }
 });
 
 // ── AC-P3 库存 = 0 过滤 ───────────────────────────────────────────────────
