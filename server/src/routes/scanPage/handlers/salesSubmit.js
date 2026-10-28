@@ -102,7 +102,7 @@ return sendPaymentStep(res, req, {
         const saleTiming = {};
         // ⭐ 2026-10-12：整页只有**一个表单** ⇒ 提交这一下**天然带着**她在尺码区选中的那一双。
         //    本单为空时 ⇒ 「选尺码 + 提交」两下就是一张单（一单一笔的默认路径）；
-        //    本单已有几双 ⇒ 这一项**忽略**（多笔必须显式点【➕ 还要加一双】），
+        //    本单已有几双 ⇒ 这一项**忽略**（多笔必须显式点【再加一双】），
         //    判据在写服务里（`pendingLine` 只在本单为空时生效）。
         const submitLookupStartedAt = Date.now();
         const submitView = String(body[fields.size] ?? '').trim()

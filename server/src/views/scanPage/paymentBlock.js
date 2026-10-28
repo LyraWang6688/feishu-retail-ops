@@ -150,7 +150,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //      两个按钮各自带 `action` 值（HTML 原生：提交按钮的 name=value 会进 POST）——
   //      **任何一颗按钮提交，钱字段都在**，结构上不可能再丢钱；而且零 JS。
   //    ⭐ 一单一笔 = 【选尺码】+【✅ 提交这一单（1 双）】**两下**；
-  //      要多笔就点【➕ 还要加一双】（本单计数 +1，主按钮文案跟着变）。
+  //      要多笔就点【再加一双】（本单计数 +1）。
   // ⚠️ 新文案缺省回落旧文案：渲染层**绝不因为少配一个 key 就把整块弄没了**
   //    （仓库里好几个用例自带最小 config —— 2026-10-12 实测：缺 `submitButtonCount`
   //      会让 `fillText(undefined)` 抛 ⇒ 整个销售块退化成一张空卡片）。
@@ -183,18 +183,17 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //
   // 🔴 **本单为空 ⇒ 这一屏逐字回到今天**（`t.addAnotherButton` ＋ **没有**任何新 DOM ✗）
   //   —— 这是"N=1 逐字不变"落在**页面**上的那一半（既有的领域渲染判据 AC-W1 / AC2 / AC5 / AC7
-  //   都在空单下断言那一颗按钮的文字「➕ 还要加一双」⇒ 本设计**一处都不动它们** ✓ 不需要成对迁移 ✓）。
+  //   都在空单下断言那一颗按钮的文字「再加一双」⇒ 本设计**一处都不动它们** ✓ 不需要成对迁移 ✓）。
   // ⭐ **本单已有货品 ⇒ 换那颗入口**（同一颗按钮、**同一个 `action=add_line`** ✓ 只是文案与钩子换成
   //   「＋ 再加一个货品」＋`data-multi-add`）—— **不新增第二颗同义按钮**（两颗一模一样的按钮更糟 ✗）。
-  //   ⚠️「➕ 还要加一双」⇒「＋ 再加一个货品」是**有意的语义递进**：第一件叫"还要加一双"，
-  //     已经在建多货品单了才叫"再加一个货品" ✓（依据 = 她 2026-10-16「要：销售也接上」）。
+  //   ⚠️ 2026-10-29：销售页按钮文案统一为「再加一双」，不再随本单是否已有货品变化。
   // ══════════════════════════════════════════════════════════════════════════
   const multiItemAdd = MULTI_ITEM_ORDER.enabled === true && lines.length > 0;
   const multiItemTitleHtml = multiItemAdd
     ? `<h3 class="multi-item__title">${escapeHtml(MULTI_ITEM_RENDER_TEXTS.title)}</h3>\n`
     : '';
-  const addLineLabel = multiItemAdd
-    ? MULTI_ITEM_RENDER_TEXTS.addButton : t.addAnotherButton;
+  // 2026-10-29：销售页只有一种加货文案，不随本单是否已有货品变化。
+  const addLineLabel = t.addAnotherButton;
   // ══════════════════════════════════════════════════════════════════════════
   // ⭐⭐ 2026-10-16 21:1x（本卡 ·「**销售也弹扫码框**」）——「加货成功、303 回来这一发接着扫」
   //   的**销售那一份**（业务负责人当天 21:1x 弹窗拍板「**要，销售也弹扫码框**」✓）。
@@ -250,7 +249,7 @@ ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
      data-progress-submit="1" 钩子：views/scanPage/layout.js 的提交进度脚本据它拦下这一次，
      先弹全屏遮罩再 fetch，响应回来 document.write 整页（成功页 / 资金页 / 400 提示页都照原样）。
      ⚠️ 只加**这一个属性**（按钮 name/value/文案一个字未动 ✓）；老环境没有 JS 照样走原生提交。
-     ⚠️ 【➕ 还要加一双】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
+     ⚠️ 【再加一双】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
 <button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>
 </form>

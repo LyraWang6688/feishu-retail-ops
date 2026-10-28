@@ -65,7 +65,7 @@ const ACTIONS = Object.freeze({
   // 销售：把当前这一双加进"本单"（**只写本地会话**，一个字都不落业务表）
   addLine: readString(process.env, 'SCAN_WRITE_ACTION_ADD', 'add_line'),
   // ⭐ 2026-10-11（B）：把**一件配品**加进"本单"（同样只写本地会话）。
-  //    与「➕ 还要加一双」分成两个动作（表单不同：配品没有尺码、金额单列），
+  //    与「再加一双」分成两个动作（表单不同：配品没有尺码、金额单列），
   //    但落进本单之后是**同一种东西** —— 一行销售明细（`kind` 不同而已）。
   // 销售：提交整单（**这是唯一的写库时机** —— 她说"点【提交】才写"）
   submitOrder: readString(process.env, 'SCAN_WRITE_ACTION_SUBMIT', 'submit_order'),
@@ -586,9 +586,9 @@ const TEXTS = Object.freeze({
   submitButton: '提交',
   // ⭐ 2026-10-12（她的意见：一单一笔居多）——按钮上直接写**几双**，一眼就知道这一单里有几双。
   //    ⚠️ 主按钮那颗就是"选好尺码直接提交"（一单一笔 = 选尺码 + 提交，**两下**）；
-  //       多笔要显式点【➕ 还要加一双】。
+  //       多笔要显式点【再加一双】。
   submitButtonCount: '提交',
-  addAnotherButton: '➕ 还要加一双',
+  addAnotherButton: '再加一双',
   // 每件实收**可以留空**（她："不然太费劲"）—— 就写一句事实，不写说明书。
   clearButton: '清空本单',
   // ── ⭐⭐ 总单层：每件实收（逐行）+ 多笔收款 ────────────────────────────────
@@ -821,7 +821,7 @@ const TEXTS = Object.freeze({
   tooManyLinesBody: '一张单最多加 {max} 双，请先提交这一单再继续扫。',
   writeDisabledTitle: '这个功能现在关着',
   writeDisabledBody: '扫码下单 / 补货报单暂时没有开启，请联系运营。',
-  sessionEmptyBody: '本单还没有明细：先选尺码点「➕ 还要加一双」，再点「提交」。',
+  sessionEmptyBody: '本单还没有明细：先选尺码点「再加一双」，再点「提交」。',
   sessionExpiredBody: '这一页放太久了：请点【清空本单】重新开始这一单。',
   sizeMissingBody: '请先选一个尺码。',
   sizeUnknownBody: '这个尺码不在「尺码管理」里，请刷新这一页重新选。',
