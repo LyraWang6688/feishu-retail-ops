@@ -21,6 +21,7 @@ const cardOf = ({ kind, group, details, hasAmounts = false }) => ({
   kind,
   // ⚠️ `orderNo` 只作内部排序 / 测试定位，**不渲染**（业务负责人：不显示销售单号）。
   orderNo: group.orderNo,
+  salesEntryRecordId: group.salesEntryRecordId || '',
   soldAt: group.soldAt,
   details,
   payableAmount: group.payableAmount,
@@ -40,10 +41,7 @@ export const buildTabItems = (groups = [], statuses = {}, tabs = []) => {
     if (!tab) continue;
     if (tab.match === 'goodsOnly') {
       out[tab.key].push(cardOf({
-        kind: 'goods',
-        group,
-        details: undeliveredDetailsOf(group, statuses),
-        hasAmounts: false,
+        kind: 'goods', group, details: undeliveredDetailsOf(group, statuses), hasAmounts: false,
       }));
       continue;
     }

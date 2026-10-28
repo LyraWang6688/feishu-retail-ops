@@ -20,25 +20,19 @@ import {
   SALES_DELIVERY_STATUSES, SALES_DELIVERY_TABS, SALES_DELIVERY_TEXTS,
 } from '../../config/sales-delivery.js';
 import { fetchDeliveryData } from './data.js';
-import { buildDeliveryGroups, filterItemsByProduct } from './filter.js';
+import { buildDeliveryGroups } from './filter.js';
 import { buildTabItems } from './items.js';
-import { groupItemsBySoldDate } from './group.js';
-import { sortDeliveryGroups } from './sort.js';
-import { markPreviewFilled } from './actions.js';
+import { openPaymentModal, closePaymentModal, validatePaymentAmount } from './payment-modal.js';
+import { showToast, requestId, waitJob } from './ui-feedback.js';
+import { createSkuLock } from './sku-lock.js';
 import { renderPage } from './render.js';
+import { viewState } from './view-state.js';
 
 const CONFIG = SALES_DELIVERY_CONFIG;
 const FIELDS = SALES_DELIVERY_FIELDS;
 const STATUSES = SALES_DELIVERY_STATUSES;
 const TABS = SALES_DELIVERY_TABS;
 const T = SALES_DELIVERY_TEXTS;
-
-/** 当前 tab：货号筛选 → 固定销售日远→近排序 → 按销售日分组。 */
-const viewState = (state) => {
-  const filtered = filterItemsByProduct(state.itemsByTab[state.activeTab] || [], state.productFilter);
-  const sorted = sortDeliveryGroups(filtered, CONFIG.sortDirection);
-  return { ...state, groups: groupItemsBySoldDate(sorted, T.soldAtMissing) };
-};
 
 export function mountSalesDeliveryPage(container) {
   const state = {
@@ -51,6 +45,7 @@ export function mountSalesDeliveryPage(container) {
     error: '',
   };
   let host = null;
+  const skuLock = createSkuLock(() => host);
 
   document.title = CONFIG.pageTitle;
 
@@ -63,6 +58,7 @@ export function mountSalesDeliveryPage(container) {
     const products = [...new Set((state.itemsByTab[state.activeTab] || [])
       .flatMap((item) => (item.details || []).map((line) => line.product).filter(Boolean)))].sort();
     host.innerHTML = renderPage({ ...view, counts, products }, CONFIG, T, STATUSES, TABS);
+    skuLock.apply();
   }
 
   /** 打开 / 刷新页面时拉一次；不做定时刷新。 */
@@ -93,28 +89,57 @@ export function mountSalesDeliveryPage(container) {
   host = container.querySelector('[data-sd-host]');
 
   /** 预览交付：本轮只改前端状态 + toast；真正写库存/销售明细待接写库接口。 */
-  function showToast(text) {
-    let toast = document.querySelector('.workbench-toast');
-    if (!toast) {
-      toast = document.createElement('div');
-      toast.className = 'workbench-toast';
-      toast.setAttribute('role', 'status');
-      document.body.appendChild(toast);
+  const busy = new Set();
+
+  async function postDelivery(salesEntryRecordId, detailRecordId, sku, button) {
+    const key = `delivery:${detailRecordId}`;
+    if (!salesEntryRecordId || !detailRecordId || busy.has(key) || skuLock.has(sku)) return;
+    busy.add(key);
+    skuLock.add(sku);
+    button.disabled = true;
+    skuLock.apply();
+    try {
+      const queued = await api.post('/api/workbench/sales/delivery/deliveries', {
+        salesEntryRecordId, detailRecordIds: [detailRecordId], requestId: requestId(),
+      });
+      showToast(T.submittedToast);
+      await waitJob(api, queued.jobId, {
+        onSuccess: async () => { skuLock.delete(sku); busy.delete(key); await load(); },
+        onFailure: async (message) => { skuLock.delete(sku); busy.delete(key); showToast(message || T.loadFailed); await load(); },
+      });
+    } catch (error) {
+      showToast(describeError(error));
+      skuLock.delete(sku);
+      busy.delete(key);
+      skuLock.apply();
     }
-    toast.textContent = text;
-    clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => { toast.remove(); }, 3000);
   }
 
-  function markDelivered(detailRecordId) {
-    for (const order of state.orders) {
-      const line = (order.details || []).find((detail) => detail.recordId === detailRecordId);
-      if (!line || line.fulfillmentStatus !== STATUSES.undelivered) continue;
-      line.fulfillmentStatus = STATUSES.delivered;
-      state.itemsByTab = buildTabItems(buildDeliveryGroups(state.orders, STATUSES), STATUSES, TABS);
-      render();
-      showToast(T.deliveryToast);
-      return;
+  let paymentCard = null;
+
+  async function postPayment(card, amountText, method, confirmButton) {
+    const key = `payment:${card?.dataset.sdEntry || ''}`;
+    if (!card || busy.has(key)) return;
+    busy.add(key);
+    confirmButton.disabled = true;
+    try {
+      const queued = await api.post('/api/workbench/sales/delivery/payments', {
+        salesEntryRecordId: card.dataset.sdEntry,
+        amount: String(amountText || '').replace(/[^\d.]/g, ''),
+        method,
+        requestId: requestId(),
+      });
+      closePaymentModal(container);
+      paymentCard = null;
+      showToast(T.submittedToast);
+      await waitJob(api, queued.jobId, {
+        onSuccess: async () => { await load(); busy.delete(key); },
+        onFailure: (message) => { showToast(message || T.loadFailed); busy.delete(key); },
+      });
+    } catch (error) {
+      showToast(describeError(error));
+      busy.delete(key);
+      confirmButton.disabled = false;
     }
   }
 
@@ -125,13 +150,30 @@ export function mountSalesDeliveryPage(container) {
     }
     const deliver = event.target.closest('[data-sd-deliver]');
     if (deliver) {
-      markDelivered(String(deliver.dataset.sdDeliver || ''));
+      const card = deliver.closest('[data-sd-entry]');
+      void postDelivery(card?.dataset.sdEntry || '', String(deliver.dataset.sdDeliver || ''), String(deliver.dataset.sdSku || ''), deliver);
       return;
     }
-    const toggle = event.target.closest('[data-sd-toggle]');
+    if (event.target.closest('[data-sd-modal-close]')) {
+      closePaymentModal(container);
+      paymentCard = null;
+      return;
+    }
+    const confirm = event.target.closest('[data-sd-modal-confirm]');
+    if (confirm) {
+      const modal = confirm.closest('[data-sd-modal]');
+      const amountInput = modal?.querySelector('[data-sd-modal-amount]');
+      if (!validatePaymentAmount(amountInput, paymentCard, T)) return;
+      void postPayment(paymentCard,
+        modal?.querySelector('[data-sd-modal-amount]')?.value,
+        modal?.querySelector('[data-sd-modal-method]')?.value,
+        confirm);
+      return;
+    }
+    const toggle = event.target.closest('[data-sd-toggle="payment"]');
     if (toggle) {
-      const slot = toggle.closest('.sd-card')?.querySelector(`[data-sd-form="${toggle.dataset.sdToggle}"]`);
-      slot?.classList.toggle('hidden');
+      paymentCard = toggle.closest('[data-sd-entry]');
+      openPaymentModal(container, paymentCard, T);
       return;
     }
     const tab = event.target.closest('[data-sd-tab]');
@@ -142,18 +184,14 @@ export function mountSalesDeliveryPage(container) {
       render();
     }
   });
+  container.addEventListener('input', (event) => {
+    if (event.target.matches('[data-sd-modal-amount]')) validatePaymentAmount(event.target, paymentCard, T);
+  });
   container.addEventListener('change', (event) => {
     if (event.target.matches('[data-sd-field="product"]')) {
       state.productFilter = String(event.target.value || '');
       render();
     }
   });
-  container.addEventListener('submit', (event) => {
-    const form = event.target.closest('[data-sd-preview-form]');
-    if (!form) return;
-    event.preventDefault();
-    markPreviewFilled(form, T);
-  });
-
   void load();
 }

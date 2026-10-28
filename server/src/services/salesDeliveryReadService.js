@@ -10,16 +10,18 @@
  * 货品信息 / 颜色管理 / 尺码管理 / 收款方式管理只用于显示（货号/颜色/尺码/收款方式）。
  *
  * 返回形状兼容 `features/sales-delivery` 的纯函数：
- *   `{ methods, orders: [{ order_no, recorded_at, payable_amount, pending_amount, details, payments }] }`
+ *   `{ methods, orders: [{ sales_entry_record_id, order_no, recorded_at, payable_amount, pending_amount, details, payments }] }`
  *
  * 🔴 只读：本文件没有任何写入方法，也不新增写库路径。
  */
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS } = require('../config/salesDeliveryPage');
+const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = require('../config/salesDeliveryPage');
+const { createPaymentMethodsService, orderWithPreferred } = require('./paymentMethodsService');
+const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
-const { logWarn } = require('../utils/logger');
+const { logInfo, logWarn } = require('../utils/logger');
 
-const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {}) => {
+const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetry, sleep } = {}) => {
   if (!gateway) throw new Error('SalesDeliveryReadService requires gateway');
   const retry = orderReadRetry || resolveOrderReadRetryConfig();
   const wait = sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
@@ -53,15 +55,56 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
   };
 
   const listDeliveryData = async () => {
-    const [orders, details, payments, products, colors, sizes, methods] = await Promise.all([
-      listAllWithRetry('salesEntry', fieldOptions('salesEntry')),
-      listAllWithRetry('salesDetail', fieldOptions('salesDetail')),
-      listAllWithRetry('paymentRecord', fieldOptions('paymentRecord')),
-      listAllWithRetry('product', fieldOptions('product')),
-      listAllWithRetry('color', fieldOptions('color')),
-      listAllWithRetry('sizeManagement', fieldOptions('sizeManagement')),
-      listAllWithRetry('paymentMethod', fieldOptions('paymentMethod')),
+    const startedAt = Date.now();
+    const timings = {};
+    const timed = async (key, run) => {
+      const start = Date.now();
+      const value = await run();
+      timings[`${key}_ms`] = Date.now() - start;
+      return value;
+    };
+    const methodsService = paymentMethods || createPaymentMethodsService(gateway);
+    const [orders, details, payments, methodList] = await Promise.all([
+      timed('sales_entry', () => listAllWithRetry('salesEntry', fieldOptions('salesEntry'))),
+      timed('sales_detail', () => listAllWithRetry('salesDetail', fieldOptions('salesDetail'))),
+      timed('payment_record', () => listAllWithRetry('paymentRecord', fieldOptions('paymentRecord'))),
+      timed('payment_method', () => methodsService.listWithVouchers()),
     ]);
+    const detailFieldsForRefs = gateway.table('salesDetail').fields;
+    const productFieldsForRefs = gateway.table('product').fields;
+    const idsOf = (records, fields, key) => [...new Set(records.flatMap((record) =>
+      linkedRecordIds(record.fields?.[fields[key]])))];
+    const productIds = idsOf(details, detailFieldsForRefs, 'product');
+    const sizeIds = idsOf(details, detailFieldsForRefs, 'size');
+    // 只批量取被销售明细引用到的记录（不再整表拉 561 条货品）。
+    const readReferenced = async (tableKey, ids) => {
+      if (!ids.length) return [];
+      if (typeof gateway.getBatch === 'function') {
+        // Feishu batch_get rejects too many record_ids at once (observed 160 -> 400).
+        const out = [];
+        for (let offset = 0; offset < ids.length; offset += 100) {
+          out.push(...await gateway.getBatch(tableKey, ids.slice(offset, offset + 100)));
+        }
+        return out;
+      }
+      const all = await listAllWithRetry(tableKey, fieldOptions(tableKey));
+      const wanted = new Set(ids);
+      return all.filter((row) => wanted.has(row.record_id));
+    };
+    const [products, sizes] = await Promise.all([
+      timed('product', () => readReferenced('product', productIds)),
+      timed('size', () => readReferenced('sizeManagement', sizeIds)),
+    ]);
+    const colorIds = [...new Set(products.flatMap((row) => linkedRecordIds(row.fields?.[productFieldsForRefs.color])))];
+    const colors = await timed('color', () => readReferenced('color', colorIds));
+    timings.total_ms = Date.now() - startedAt;
+    logInfo('workbench.sales.delivery.read_timing', {
+      ...timings,
+      detail_count: details.length,
+      product_count: products.length,
+      color_count: colors.length,
+      size_count: sizes.length,
+    });
 
     const orderFields = gateway.table('salesEntry').fields;
     const detailFields = gateway.table('salesDetail').fields;
@@ -69,7 +112,6 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
     const productFields = gateway.table('product').fields;
     const colorFields = gateway.table('color').fields;
     const sizeFields = gateway.table('sizeManagement').fields;
-    const methodFields = gateway.table('paymentMethod').fields;
 
     const orderNoById = new Map(orders
       .map((order) => [order.record_id, textValue(order.fields?.[orderFields.orderNo]).trim()])
@@ -79,7 +121,8 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
     const totalAmountById = new Map(orders.map((order) => [order.record_id, order.fields?.[orderFields.totalAmount] ?? null]));
     const colorNameById = new Map(colors.map((item) => [item.record_id, textValue(item.fields?.[colorFields.name]).trim()]));
     const sizeValueById = new Map(sizes.map((item) => [item.record_id, textValue(item.fields?.[sizeFields.size]).trim()]));
-    const methodNameById = new Map(methods.map((item) => [item.record_id, textValue(item.fields?.[methodFields.name]).trim()]));
+    const methodRows = methodList?.ok ? methodList.items : [];
+    const methodNameById = new Map(methodRows.map((item) => [item.recordId, item.name]));
     const productById = new Map(products.map((item) => [item.record_id, {
       productNo: textValue(item.fields?.[productFields.itemNo]).trim(),
       colorId: linkedRecordIds(item.fields?.[productFields.color])[0] || '',
@@ -89,7 +132,7 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
     const groups = new Map();
     const groupOf = (orderId) => {
       const orderNo = orderNoById.get(orderId) || orderId;
-      if (!groups.has(orderNo)) groups.set(orderNo, { orderNo, recordedAt: recordedAtById.get(orderId) ?? null, totalAmount: totalAmountById.get(orderId) ?? null, rawDetails: [], rawPayments: [] });
+      if (!groups.has(orderNo)) groups.set(orderNo, { salesEntryRecordId: orderId, orderNo, recordedAt: recordedAtById.get(orderId) ?? null, totalAmount: totalAmountById.get(orderId) ?? null, rawDetails: [], rawPayments: [] });
       return groups.get(orderNo);
     };
     for (const detail of details) {
@@ -116,6 +159,11 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
           color: product?.colorId ? (colorNameById.get(product.colorId) || '') : '',
           size: sizeText === '' ? null : (Number.isFinite(Number(sizeText)) ? Number(sizeText) : sizeText),
           fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '',
+          stock_quantity: (() => {
+            const stockField = detailFields.stockQuantity || SALES_DETAIL_STOCK_FIELD;
+            const raw = textValue(detail.fields?.[stockField]).trim();
+            return raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw);
+          })(),
         };
       });
       const paymentRows = group.rawPayments.map((payment) => ({
@@ -129,6 +177,7 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
         .filter((payment) => payment.status === UNPAID_PAYMENT_STATUS)
         .reduce((total, payment) => total + payment.amount, 0);
       result.push({
+        sales_entry_record_id: group.salesEntryRecordId,
         order_no: group.orderNo,
         recorded_at: group.recordedAt,
         details: detailRows,
@@ -139,7 +188,7 @@ const createSalesDeliveryReadService = ({ gateway, orderReadRetry, sleep } = {})
     }
 
     return {
-      methods: [...new Set(methodNameById.values())].filter(Boolean),
+      methods: orderWithPreferred(methodRows.map((item) => item.name), SCAN_WRITE.sale.defaultPaymentMethod),
       orders: result,
     };
   };

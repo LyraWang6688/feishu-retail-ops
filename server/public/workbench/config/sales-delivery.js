@@ -60,6 +60,7 @@ export const SALES_DELIVERY_STATUSES = Object.freeze({
 
 /** 读模型字段映射（归一化用；原型阶段输入是样例数据，字段名与只读接口同形）。 */
 export const SALES_DELIVERY_FIELDS = Object.freeze({
+  salesEntryRecordId: 'sales_entry_record_id',
   orderNo: 'order_no',
   recordId: 'record_id',
   recordedAt: 'recorded_at',
@@ -76,6 +77,7 @@ export const SALES_DELIVERY_FIELDS = Object.freeze({
     color: 'color',
     size: 'size',
     fulfillmentStatus: 'fulfillment_status',
+    stockQuantity: 'stock_quantity',
     actualAmount: 'actual_amount',
   }),
   payment: Object.freeze({
@@ -90,6 +92,7 @@ export const SALES_DELIVERY_FIELDS = Object.freeze({
 export const SALES_DELIVERY_TEXTS = Object.freeze({
   tabsLabel: '交割单分类',
   soldAtMissing: '销售日未填',
+  stockShort: '库存不足',
   productFilterLabel: '货号',
   allProducts: '全部货号',
   filterEmpty: '没有该货号的记录',
@@ -106,15 +109,19 @@ export const SALES_DELIVERY_TEXTS = Object.freeze({
   headers: Object.freeze({ payable: '应付', pending: '待付', pendingDelivery: '待交付' }),
   noMethod: '未选收款方式',
   buttons: Object.freeze({ delivery: '交付', payment: '付款' }),
+  submittedToast: '已提交成功',
   deliveryToast: '该产品已交付',
+  paymentToast: '付款成功',
   forms: Object.freeze({
-    paymentTitle: '付款（v1 预览）',
-    paymentAmount: '付款金额',
-    paymentMethod: '付款方式',
+    paymentTitle: '付款',
+    paymentModalTitle: '确认收款',
+    paymentCancel: '取消',
+    paymentAmount: '收款金额',
+    paymentMethod: '收款方式',
     paymentMethodEmpty: '暂无收款方式（先到「收款方式管理」维护）',
-    previewOnly: 'v1 预览：这里只填表单，暂不提交写库',
-    previewSubmit: '预览（不提交）',
-    previewFilled: '表单已填好：v1 预览不提交写库（等业务负责人改稿定稿后再接动作）',
+    paymentSubmit: '确认收款',
+    paymentAmountInvalid: '请输入大于 0 的收款金额（最多两位小数）',
+    paymentAmountTooLarge: '收款金额不能超过待付 ¥{amount}',
     placeholderDash: '—',
   }),
   amountsLine: '{payableLabel}{payableAmount} · {pendingLabel}{pendingAmount}',

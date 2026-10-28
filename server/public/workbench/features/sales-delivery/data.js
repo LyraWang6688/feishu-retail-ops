@@ -33,6 +33,7 @@ export const normalizeDetail = (line = {}, fields = {}) => ({
   color: textOf(line[fields.color]).trim(),
   size: textOf(line[fields.size]).trim(),
   fulfillmentStatus: textOf(line[fields.fulfillmentStatus]).trim(),
+  stockQuantity: numberOrNull(line[fields.stockQuantity]),
   actualAmount: numberOrNull(line[fields.actualAmount]),
 });
 
@@ -51,6 +52,7 @@ export const normalizeOrder = (order = {}, fields = {}) => {
   const soldAt = soldAtOf(order[fields.recordedAt]);
   return {
     recordId: textOf(order[fields.recordId]).trim(),
+    salesEntryRecordId: textOf(order[fields.salesEntryRecordId]).trim(),
     orderNo: textOf(order[fields.orderNo]).trim(),
     recordedAt: order[fields.recordedAt] ?? null,
     soldAt: soldAt.at,

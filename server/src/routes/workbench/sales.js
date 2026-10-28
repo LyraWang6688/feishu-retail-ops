@@ -7,7 +7,7 @@
 const express = require('express');
 const { V1BitableGateway } = require('../../services/v1BitableGateway');
 const { createWorkbenchOrderActionsRouter } = require('../workbenchOrderActions');
-const { createSalesDeliveryReadService } = require('../../services/salesDeliveryReadService');
+const { createWorkbenchSalesDeliveryRoutes } = require('../workbenchSalesDelivery');
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { SCAN_WRITE } = require('../../config/scanWrite');
 const { SampleReplacementService } = require('../../services/sampleReplacementService');
@@ -16,14 +16,13 @@ const { tapIdFromRequest } = require('../../utils/correlationFields');
 
 const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}) => {
   const router = express.Router();
-  // 「销售 → 交割单」页的真实只读数据服务（只看销售明细 + 收款明细；不写库）。
-  const deliveryRead = createSalesDeliveryReadService({ gateway: options.gateway || followup.gateway });
   // 订单动作（售后 / 二次交付）与售后扫一扫候选：2026-10-28 第一阶段拆分时误删，现恢复。
   router.use(createWorkbenchOrderActionsRouter({
     gateway: options.gateway || followup.gateway,
     service: options.orderActions,
     ordersCache,
   }));
+  router.use(createWorkbenchSalesDeliveryRoutes({ options, followup, ordersCache }));
   router.get('/sales/after-sales/candidates', async (req, res) => {
     try {
       const result = await followup.listAfterSalesCandidates({
@@ -48,19 +47,6 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
     }
   });
 
-  /**
-   * ⭐ 2026-10-29：「销售 → 交割单」页的真实只读数据（只看销售明细 + 收款明细）。
-   * 🔴 只读；不新增写入路径；鉴权沿用本文件既有的 requireWorkbenchAccess。
-   */
-  router.get('/sales/delivery', async (req, res) => {
-    try { return res.json({ success: true, ...await deliveryRead.listDeliveryData() }); }
-    catch (error) {
-      logError('workbench.sales.orders.failed', {
-        request_id: req.requestId, chain: 'delivery', error: error.message,
-      });
-      return res.status(502).json({ success: false, error: error.message });
-    }
-  });
   /**
    * ⭐⭐ 2026-10-11（业务负责人 20:30 确认）：**补样品**（工作台 → 销售 → 订单列表 →【待补充】）。
    *

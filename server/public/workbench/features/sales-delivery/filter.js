@@ -19,6 +19,7 @@ export const isMoneyNotClear = (order = {}, statuses = {}) => {
 
 const emptyGroup = (orderNo) => ({
   orderNo,
+  salesEntryRecordId: '',
   recordIds: [],
   details: [],
   payments: [],
@@ -35,6 +36,7 @@ export const buildDeliveryGroups = (orders = [], statuses = {}) => {
   for (const order of Array.isArray(orders) ? orders : []) {
     if (!order || !order.orderNo) continue;
     const group = byOrderNo.get(order.orderNo) || emptyGroup(order.orderNo);
+    if (!group.salesEntryRecordId) group.salesEntryRecordId = order.salesEntryRecordId || '';
     group.recordIds.push(order.recordId);
     group.details.push(...order.details);
     group.payments.push(...order.payments);

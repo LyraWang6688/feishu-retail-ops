@@ -435,6 +435,7 @@ const EVENTS = Object.freeze([
   'workbench.query.retry',
   'workbench.sales.after_sales.candidates.failed',
   'workbench.sales.delivery.failed',
+  'workbench.sales.delivery.read_timing',
   'workbench.sales.detail_amount.failed',
   'workbench.sales.orders.failed',
   'workbench.sales.orders.order_skipped',

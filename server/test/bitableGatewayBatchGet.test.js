@@ -87,21 +87,29 @@ test('AC-GB1 请求的 id 集合**逐字**（不许多、不许少、保持调�
   assert.deepEqual(client2.calls[0].ids, ['rec_a', 'rec_b'], '空值剔掉，剩下的原样');
 });
 
-test('AC-GB2 分片边界：500 条 = 1 次 · 501 条 = 2 次（500 + 1）', async () => {
-  const ids500 = Array.from({ length: 500 }, (_, i) => `rec_${i}`);
-  const client500 = fakeClient();
-  await gatewayFor(client500).getBatch(TABLE, ids500);
-  assert.equal(client500.calls.length, 1, '正好 500 ⇒ 一次请求');
-  assert.equal(client500.calls[0].ids.length, 500);
+test('AC-GB2 分片边界：100 条 = 1 次 · 101 条 = 2 次（100 + 1）· 160 条 = 2 次（100 + 60）', async () => {
+  const ids100 = Array.from({ length: 100 }, (_, i) => `rec_${i}`);
+  const client100 = fakeClient();
+  await gatewayFor(client100).getBatch(TABLE, ids100);
+  assert.equal(client100.calls.length, 1, '正好 100 ⇒ 一次请求');
+  assert.equal(client100.calls[0].ids.length, 100);
 
-  const ids501 = Array.from({ length: 501 }, (_, i) => `rec_${i}`);
-  const client501 = fakeClient();
-  const records = await gatewayFor(client501).getBatch(TABLE, ids501);
-  assert.equal(client501.calls.length, 2, '501 ⇒ 必须分两片');
-  assert.equal(client501.calls[0].ids.length, 500, '第一片 500');
-  assert.equal(client501.calls[1].ids.length, 1, '第二片 1');
-  assert.deepEqual(client501.calls[1].ids, ['rec_500'], '第二片是**剩下的**那一条');
-  assert.equal(records.length, 501, '两片结果合起来一条不少');
+  const ids101 = Array.from({ length: 101 }, (_, i) => `rec_${i}`);
+  const client101 = fakeClient();
+  const records101 = await gatewayFor(client101).getBatch(TABLE, ids101);
+  assert.equal(client101.calls.length, 2, '101 ⇒ 必须分两片');
+  assert.equal(client101.calls[0].ids.length, 100, '第一片 100');
+  assert.equal(client101.calls[1].ids.length, 1, '第二片 1');
+  assert.deepEqual(client101.calls[1].ids, ['rec_100'], '第二片是**剩下的**那一条');
+  assert.equal(records101.length, 101, '两片结果合起来一条不少');
+
+  const ids160 = Array.from({ length: 160 }, (_, i) => `rec_${i}`);
+  const client160 = fakeClient();
+  const records160 = await gatewayFor(client160).getBatch(TABLE, ids160);
+  assert.equal(client160.calls.length, 2, '160 ⇒ 两次（飞书实测上限 100）');
+  assert.equal(client160.calls[0].ids.length, 100, '第一片 100');
+  assert.equal(client160.calls[1].ids.length, 60, '第二片 60');
+  assert.equal(records160.length, 160);
 });
 
 test('AC-GB3 空 ids / 全空串 ⇒ **零请求**，返回 []', async () => {

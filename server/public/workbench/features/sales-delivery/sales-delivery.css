@@ -45,3 +45,15 @@
 .sd-field { display: grid; gap: var(--space-1); color: var(--text-secondary); font-size: var(--font-size-sm); }
 .sd-field input, .sd-field select { width: 100%; min-height: var(--control-height); }
 .sd-preview-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+
+/* 付款确认：居中弹窗（遮罩 + 对话框）。 */
+.sd-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: var(--space-4); }
+.sd-modal[hidden] { display: none; }
+.sd-modal-backdrop { position: absolute; inset: 0; background: var(--text); opacity: .45; }
+.sd-modal-dialog { position: relative; display: grid; gap: var(--space-3); width: min(100%, 420px); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); }
+.sd-modal-title { margin: 0; color: var(--text); font-size: var(--font-size-lg); font-weight: var(--weight-bold); }
+.sd-modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.sd-modal-actions .btn { min-width: 88px; min-height: var(--control-height); white-space: nowrap; }
+.sd-modal-error { margin: 0; color: var(--danger); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.sd-stock-short { flex: none; color: var(--danger); font-size: var(--font-size-xs); white-space: nowrap; }
+.sd-action-btn:disabled { opacity: .55; cursor: not-allowed; }

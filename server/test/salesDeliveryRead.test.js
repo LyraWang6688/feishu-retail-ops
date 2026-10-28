@@ -18,6 +18,7 @@ const table = (key) => V1_BITABLE_SCHEMA.tables[key];
 
 const fakeGateway = (records) => ({
   listAll: async (key) => records[key] || [],
+  getBatch: async (key, ids) => (records[key] || []).filter((row) => ids.includes(row.record_id)),
   table,
 });
 
@@ -27,7 +28,7 @@ const baseRecords = () => ({
     record_id: 'detail_1',
     fields: {
       销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_41'],
-      履约状态: '未交付', 实收金额: 100, 销售日: '2026-10-18T10:00:00+08:00',
+      履约状态: '未交付', 库存数量: 1, 实收金额: 100, 销售日: '2026-10-18T10:00:00+08:00',
     },
   }],
   paymentRecord: [
@@ -50,6 +51,7 @@ test('AC-DR1 真实只读：销售明细 + 收款明细 → 页面订单形状�
   assert.equal(data.orders.length, 1);
   const [order] = data.orders;
   assert.equal(order.order_no, 'XSD-1');
+  assert.equal(order.sales_entry_record_id, 'order_1');
   assert.equal(order.recorded_at, '2026-10-19T09:00:00+08:00');
   assert.equal(order.details.length, 1);
   assert.deepEqual({
@@ -58,12 +60,14 @@ test('AC-DR1 真实只读：销售明细 + 收款明细 → 页面订单形状�
     color: order.details[0].color,
     size: order.details[0].size,
     fulfillment_status: order.details[0].fulfillment_status,
+    stock_quantity: order.details[0].stock_quantity,
   }, {
     product: 'XHB8095', // 货品信息.货号（不是 编号 公式）
     product_record_id: 'product_1',
     color: '黑色',
     size: 41,
     fulfillment_status: '未交付',
+    stock_quantity: 1,
   });
   assert.deepEqual(order.payments.map((payment) => [payment.status, payment.amount, payment.method]), [
     ['已收款', 40, '微信扫码'],
@@ -106,4 +110,34 @@ test('AC-DR3 只读：不调用任何写入方法', async () => {
   };
   await createSalesDeliveryReadService({ gateway }).listDeliveryData();
   assert.deepEqual(writes, []);
+});
+
+test('AC-DR4 只批量取被引用记录：货品/颜色/尺码不再整表 listAll', async () => {
+  const calls = { listAll: {}, getBatch: {} };
+  const records = baseRecords();
+  const gateway = {
+    listAll: async (key) => { calls.listAll[key] = (calls.listAll[key] || 0) + 1; return records[key] || []; },
+    getBatch: async (key, ids) => {
+      calls.getBatch[key] = calls.getBatch[key] || { calls: 0, requested: 0 };
+      calls.getBatch[key].calls += 1;
+      calls.getBatch[key].requested += ids.length;
+      return (records[key] || []).filter((row) => ids.includes(row.record_id));
+    },
+    table,
+  };
+  const service = createSalesDeliveryReadService({ gateway });
+  await service.listDeliveryData();
+  await service.listDeliveryData();
+  assert.equal(calls.listAll.product, undefined, '货品信息整表 listAll 0 次');
+  assert.equal(calls.listAll.color, undefined, '颜色管理整表 listAll 0 次');
+  assert.equal(calls.listAll.sizeManagement, undefined, '尺码管理整表 listAll 0 次');
+  assert.equal(calls.getBatch.product.calls, 2, '两次读取各一次 batch_get');
+  assert.equal(calls.getBatch.product.requested, 2, '只请求被引用的 1 个货品 × 2 次');
+  assert.equal(calls.getBatch.color.calls, 2);
+  assert.equal(calls.getBatch.color.requested, 2);
+  assert.equal(calls.getBatch.sizeManagement.calls, 2);
+  assert.equal(calls.getBatch.sizeManagement.requested, 2);
+  assert.equal(calls.listAll.salesEntry, 2, '销售主表是业务数据，每次读');
+  assert.equal(calls.listAll.salesDetail, 2, '销售明细是业务数据，每次读');
+  assert.equal(calls.listAll.paymentRecord, 2, '收款明细是业务数据，每次读');
 });

@@ -12,6 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createPaymentMethodsService } = require('../src/services/paymentMethodsService');
+const { invalidateConfigTable } = require('../src/services/configTableCache');
 
 const gatewayOf = (values, calls = { n: 0 }) => ({
   listAll: async () => { calls.n += 1; return values.map((v, i) => ({ record_id: `pm${i}`, fields: { 收款方式: v } })); },
@@ -61,4 +62,21 @@ test('AC-PM5 ⭐ 按「出现顺序」排序（1 最前）；没序号/非数字
   const service = createPaymentMethodsService({ listAll: async () => rows }, { ttlMs: 0 });
   const out = await service.list();
   assert.deepEqual(out.items, ['微信扫码', '现金', '工商银行', '无序号', '非数字'], '按出现顺序升序，无序号排最后且稳定');
+});
+
+test('AC-PM6 ⭐ 配置表事件失效：invalidate 后下一次读立即拿新值（不再被外层 cache 挡住）', async () => {
+  const values = ['微信'];
+  const calls = { n: 0 };
+  const gateway = {
+    listAll: async () => { calls.n += 1; return values.map((value, index) => ({ record_id: `pm${index}`, fields: { 收款方式: value } })); },
+  };
+  const service = createPaymentMethodsService(gateway);
+  const first = await service.list();
+  assert.deepEqual(first.items, ['微信']);
+  values[0] = '现金';
+  await service.list();
+  assert.deepEqual((await service.list()).items, ['微信'], 'TTL 内仍是旧快照');
+  invalidateConfigTable('paymentMethod');
+  assert.deepEqual((await service.list()).items, ['现金'], '事件失效后立即重读');
+  assert.equal(calls.n, 2, '只多读一次');
 });

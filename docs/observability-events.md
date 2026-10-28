@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **449** 个事件。按前缀分组：
+共 **450** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -558,12 +558,13 @@
 | `workbench.purchase.requests.failed` | 1 | src/routes/purchaseQuery.js |
 | `workbench.query.retry` | 1 | src/services/v1WorkbenchService.js |
 | `workbench.sales.after_sales.candidates.failed` | 1 | src/routes/workbench/sales.js |
-| `workbench.sales.delivery.failed` | 1 | src/routes/workbench/sales.js |
+| `workbench.sales.delivery.failed` | 4 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryAsyncService.js |
+| `workbench.sales.delivery.read_timing` | 1 | src/services/salesDeliveryReadService.js |
 | `workbench.sales.detail_amount.failed` | 1 | src/routes/workbench/sales.js |
-| `workbench.sales.orders.failed` | 2 | src/routes/workbench/sales.js |
+| `workbench.sales.orders.failed` | 2 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js |
 | `workbench.sales.orders.order_skipped` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.orders.read_retry` | 2 | src/services/salesDeliveryReadService.js<br>src/services/salesFollowupService.js |
-| `workbench.sales.payment.failed` | 1 | src/routes/workbench/sales.js |
+| `workbench.sales.payment.failed` | 3 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryPaymentService.js |
 | `workbench.sales.retry.done` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.retry.error` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.retry.failed` | 1 | src/routes/workbench/sales.js |
@@ -573,7 +574,7 @@
 | `workbench.sales.sample_fill.failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.sample_fill.no_doorbox` | 1 | src/services/samplePendingService.js |
 | `workbench.sales.sample_fill.reused` | 1 | src/services/samplePendingService.js |
-| `workbench.sales.sample_notice.failed` | 1 | src/routes/workbench/sales.js |
+| `workbench.sales.sample_notice.failed` | 2 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js |
 | `workbench.sales.sample_pending.candidates_unreadable` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.sample_pending.live_snapshot_unreadable` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.sample_pending.tasks_unreadable` | 1 | src/services/salesFollowupService.js |
