@@ -8,7 +8,7 @@ const { buildSalePayload } = require('../../../services/salesPayload');
  */
 
 async function handlePaymentPay(ctx) {
-  const { SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService, options, successReturnFields, lookupInputOf, salesAsync } = ctx;
+  const { SalesFollowupService, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService, options, successReturnFields, lookupInputOf, salesAsync } = ctx;
         // ⭐⭐ 2026-10-14（业务负责人口径，逐字）：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」
         //   ⇒ **建单就发生在这一刻** ✓（点「提交这一单」时只到资金页、一个字都没写 ✓）
         //   · 会话里记着 `paymentStep:'pending'` ⇒ 说明她刚点过「提交这一单」、还没建单 ✓ ⇒ **现在建** ✓
@@ -31,6 +31,9 @@ async function handlePaymentPay(ctx) {
         if (payPending) {
           const pendingLines = Array.isArray(paySession?.sale?.lines) ? paySession.sale.lines : [];
           const pendingInfo = paySession?.sale?.submitPending || paySession?.submitPending || {};
+          // ⭐ 2026-10-29：逐件实收的唯一真源 = 草稿行自己的 amount。
+          //   货品页提交时已写回 sale.lines[].amount；资金页不再读第二份 submitPending.lineAmounts。
+          const pendingLineAmounts = pendingLines.map((line) => String(line?.amount ?? '').trim());
           // ⚠️ 与提交那一下**同一套**解析（`parsePaymentRows` / `asList` ✓ 不新造 ✗）
           //   ⭐ 资金页那张表单**不带**"每件实收"（`line_amount`）⇒ ⭐ **优先用她提交时就填好的那份** ✓
           //     （实测 `AC-E2E-8`："她填的实收照旧落表" 就是靠这一条 ✓ 拿不到就退回表单 ✓ 不编 ✗）
@@ -39,21 +42,6 @@ async function handlePaymentPay(ctx) {
           const pendingPayments = formPayments.length
             ? formPayments
             : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
-          // ⭐ 2026-10-28：**每件实收**必须在异步分支之前取好。
-          //   货品页把金额存进 `submitPending.lineAmounts`，而 `sale.lines[].amount` 可能是空串
-          //   ⇒ 异步 payload 若直接读 `line.amount`，资金页会报 `line_amount_missing`（真机 E2E 抓到）。
-          const sessionLineAmounts = Array.isArray(pendingInfo.lineAmounts) ? pendingInfo.lineAmounts : [];
-          const bodyLineAmounts = asList(body[fields.lineAmount]);
-          const pendingLineAmounts = sessionLineAmounts.some((v) => String(v ?? '').trim())
-            ? sessionLineAmounts
-            : bodyLineAmounts;
-          // ⭐ 一行金额：会话里她填的那份优先；空串/缺失才退回明细行自带的值。
-          const lineAmountAt = (line, index) => {
-            const fromSession = pendingLineAmounts[index];
-            return (fromSession !== undefined && String(fromSession).trim() !== '')
-              ? fromSession
-              : line.amount;
-          };
           // ⭐⭐ 2026-10-27：异步销售唯一链路（显式开关）。
           //   资金页只在「校验 + 冻结 payload + 入队」后返回；真正的飞书写入由 worker 完成。
           if (salesAsync) {
@@ -69,7 +57,7 @@ async function handlePaymentPay(ctx) {
               productRecordId: line.product_record_id,
               size: line.size,
               tradeTypeCode: line.trade_type_code,
-              actualAmount: lineAmountAt(line, index),
+              actualAmount: line.amount,
               number: line.number,
               itemNo: line.item_no,
               color: line.color,
@@ -134,8 +122,6 @@ async function handlePaymentPay(ctx) {
           //   🔴 为什么必须同源：`services/salesOrderService.js:238` 那条守卫会拿
           //     「已记录的销售明细」与**本次推导的** expected **逐值比金额**（含「实收金额」）✗
           //     ⇒ 表单那份（例 `['150','130']`）与货那半落的（例 `['280']`）一比就 `sale_partial_failed` ⇒ **500** ✗
-          //   ⚠️ 2026-10-28：`sessionLineAmounts` / `bodyLineAmounts` / `pendingLineAmounts`
-          //      已上移到异步分支之前（异步 payload 也要用同一份金额）✓
           const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
           const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
           const pendingSize = String(pendingInfo.size || '').trim();
