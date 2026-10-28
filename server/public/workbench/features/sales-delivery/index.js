@@ -1,0 +1,159 @@
+/**
+ * 「销售 → 订单列表 → 交割单」页（三子 tab）的门面：只做 mount / 状态 / 事件。
+ *
+ * 分层：
+ *   · `data.js`   —— 样例数据 + 归一化（**零网络请求**；字段映射在 config）
+ *   · `filter.js` —— 货没清 / 钱没清 / 并集 + 订单归类（纯函数）
+ *   · `items.js`  —— 归类后的订单 → 三个 tab 的**逐条事项**（纯函数）
+ *   · `sort.js`   —— 销售日旧→新 / 新→旧（纯函数）
+ *   · `render.js` —— 三个子 tab、逐条紧凑卡、空/加载/失败态
+ *   · `actions.js`—— 行尾交付按钮 / 付款预览表单 UI（**不提交写库**）
+ *   · `format.js` —— 文本 / 日期 / 金额格式化（纯函数）
+ *
+ * 🔴 本文件不写死文案 / tab 顺序 / 状态 / 字段名 —— 全部来自 `config/sales-delivery.js`。
+ */
+
+import { api } from '../../core/api-client.js';
+import { describeError } from '../../core/ui.js';
+import {
+  SALES_DELIVERY_CONFIG, SALES_DELIVERY_DEFAULT_TAB, SALES_DELIVERY_FIELDS,
+  SALES_DELIVERY_STATUSES, SALES_DELIVERY_TABS, SALES_DELIVERY_TEXTS,
+} from '../../config/sales-delivery.js';
+import { fetchDeliveryData } from './data.js';
+import { buildDeliveryGroups, filterItemsByProduct } from './filter.js';
+import { buildTabItems } from './items.js';
+import { groupItemsBySoldDate } from './group.js';
+import { sortDeliveryGroups } from './sort.js';
+import { markPreviewFilled } from './actions.js';
+import { renderPage } from './render.js';
+
+const CONFIG = SALES_DELIVERY_CONFIG;
+const FIELDS = SALES_DELIVERY_FIELDS;
+const STATUSES = SALES_DELIVERY_STATUSES;
+const TABS = SALES_DELIVERY_TABS;
+const T = SALES_DELIVERY_TEXTS;
+
+/** 当前 tab：货号筛选 → 固定销售日远→近排序 → 按销售日分组。 */
+const viewState = (state) => {
+  const filtered = filterItemsByProduct(state.itemsByTab[state.activeTab] || [], state.productFilter);
+  const sorted = sortDeliveryGroups(filtered, CONFIG.sortDirection);
+  return { ...state, groups: groupItemsBySoldDate(sorted, T.soldAtMissing) };
+};
+
+export function mountSalesDeliveryPage(container) {
+  const state = {
+    orders: [],
+    itemsByTab: {},
+    methods: [],
+    activeTab: SALES_DELIVERY_DEFAULT_TAB,
+    productFilter: '',
+    loading: false,
+    error: '',
+  };
+  let host = null;
+
+  document.title = CONFIG.pageTitle;
+
+  function render() {
+    if (!host) return;
+    const view = viewState(state);
+    // 业务负责人 2026-10-29 批注：tab 数字按**明细数（双）**统计，不是卡片数。
+    const counts = Object.fromEntries(TABS.map((tab) => [tab.key,
+      (state.itemsByTab[tab.key] || []).reduce((total, item) => total + (item.details || []).length, 0)]));
+    const products = [...new Set((state.itemsByTab[state.activeTab] || [])
+      .flatMap((item) => (item.details || []).map((line) => line.product).filter(Boolean)))].sort();
+    host.innerHTML = renderPage({ ...view, counts, products }, CONFIG, T, STATUSES, TABS);
+  }
+
+  /** 打开 / 刷新页面时拉一次；不做定时刷新。 */
+  async function load() {
+    if (state.loading) return;
+    state.loading = true;
+    state.error = '';
+    render();
+    try {
+      const data = await fetchDeliveryData(api, CONFIG, FIELDS);
+      state.methods = data.methods;
+      state.orders = data.orders;
+      state.itemsByTab = buildTabItems(
+        buildDeliveryGroups(data.orders, STATUSES),
+        STATUSES,
+        TABS,
+      );
+      state.error = '';
+    } catch (error) {
+      state.error = describeError(error);
+    } finally {
+      state.loading = false;
+      render();
+    }
+  }
+
+  container.innerHTML = '<main data-sd-host></main>';
+  host = container.querySelector('[data-sd-host]');
+
+  /** 预览交付：本轮只改前端状态 + toast；真正写库存/销售明细待接写库接口。 */
+  function showToast(text) {
+    let toast = document.querySelector('.workbench-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.className = 'workbench-toast';
+      toast.setAttribute('role', 'status');
+      document.body.appendChild(toast);
+    }
+    toast.textContent = text;
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => { toast.remove(); }, 3000);
+  }
+
+  function markDelivered(detailRecordId) {
+    for (const order of state.orders) {
+      const line = (order.details || []).find((detail) => detail.recordId === detailRecordId);
+      if (!line || line.fulfillmentStatus !== STATUSES.undelivered) continue;
+      line.fulfillmentStatus = STATUSES.delivered;
+      state.itemsByTab = buildTabItems(buildDeliveryGroups(state.orders, STATUSES), STATUSES, TABS);
+      render();
+      showToast(T.deliveryToast);
+      return;
+    }
+  }
+
+  container.addEventListener('click', (event) => {
+    if (event.target.closest('[data-sd-action="retry"]')) {
+      void load();
+      return;
+    }
+    const deliver = event.target.closest('[data-sd-deliver]');
+    if (deliver) {
+      markDelivered(String(deliver.dataset.sdDeliver || ''));
+      return;
+    }
+    const toggle = event.target.closest('[data-sd-toggle]');
+    if (toggle) {
+      const slot = toggle.closest('.sd-card')?.querySelector(`[data-sd-form="${toggle.dataset.sdToggle}"]`);
+      slot?.classList.toggle('hidden');
+      return;
+    }
+    const tab = event.target.closest('[data-sd-tab]');
+    if (tab && TABS.some((item) => item.key === tab.dataset.sdTab)) {
+      state.activeTab = tab.dataset.sdTab;
+      // 切 tab 时重置货号筛选（业务负责人 2026-10-29 定）。
+      state.productFilter = '';
+      render();
+    }
+  });
+  container.addEventListener('change', (event) => {
+    if (event.target.matches('[data-sd-field="product"]')) {
+      state.productFilter = String(event.target.value || '');
+      render();
+    }
+  });
+  container.addEventListener('submit', (event) => {
+    const form = event.target.closest('[data-sd-preview-form]');
+    if (!form) return;
+    event.preventDefault();
+    markPreviewFilled(form, T);
+  });
+
+  void load();
+}

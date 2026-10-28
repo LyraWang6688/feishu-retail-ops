@@ -52,9 +52,11 @@ test('五个领域 tab + 订单列表懒加载', async ({ page }) => {
   await expect(page.getByRole('button', { name: /草稿单/ })).toBeVisible();
   expect(orderRequests).toHaveLength(0);
 
+  // ⭐ 2026-10-28：「交割单」卡片跳**独立原型页**（三 tab + 样例数据，不请求订单接口）。
   await page.getByRole('button', { name: /交割单/ }).click();
-  await expect.poll(() => orderRequests.length).toBe(1);
-  await expect(page.getByText('这一类现在没有单')).toBeVisible();
+  await expect(page).toHaveURL(/\/workbench\/sales-delivery\.html/);
+  await expect(page.locator('[data-sd-tab]')).toHaveCount(3);
+  expect(orderRequests, '原型页不请求订单接口').toHaveLength(0);
 });
 
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {

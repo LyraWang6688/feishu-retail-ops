@@ -1,0 +1,47 @@
+/* 「销售 · 交割单」原型页样式（移动优先、紧凑单行卡 + 按销售日分组）。
+   ⚠️ 颜色 / 间距 / 圆角 / 字号一律来自 styles/tokens.css 的 var（本文件不写 hex/rgb）。
+   ⚠️ 卡片一行：货号 · 颜色 · 尺码（钱相关 tab 带已付/待付）+ 右侧按钮；
+      日期只在分组头出现；表单点开后才在卡片下方展开。 */
+
+/* 三个子 tab（形态对齐采购页的 segmented tabs：整行均分、选中浅主色、数量在下一行小字）。 */
+.sd-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-2); padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.sd-tab { display: flex; flex: 1 1 0; min-width: 0; min-height: var(--control-height); flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: var(--space-1); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); cursor: pointer; font-weight: var(--weight-medium); text-align: center; overflow-wrap: anywhere; }
+.sd-tab small { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--weight-normal); }
+.sd-tab.active { color: var(--primary); background: var(--primary-soft); }
+.sd-tab.active small { color: var(--primary); }
+
+/* 货号筛选（替代原来的排序控件；默认全部货号）。 */
+.sd-toolbar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.sd-filter { display: flex; flex: 1 1 auto; align-items: center; gap: var(--space-2); min-height: var(--control-height); color: var(--text-secondary); font-size: var(--font-size-sm); }
+.sd-filter select { flex: 1 1 auto; min-height: var(--control-height); }
+
+.sd-status { padding: var(--space-5) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text-secondary); text-align: center; overflow-wrap: anywhere; }
+.sd-status-error { color: var(--danger); }
+.sd-status .btn { margin-top: var(--space-2); }
+
+/* 按销售日分组：日期只在分组头出现。 */
+.sd-day-group { display: grid; gap: var(--space-1); margin-bottom: var(--space-3); }
+.sd-day-title { margin: 0; padding: 0 var(--space-1); color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: var(--weight-bold); }
+.sd-list { display: grid; gap: var(--space-1); min-width: 0; }
+
+/* 一张卡 = 一个销售单号：卡内按明细多行；未交付行行尾一个「交付」。 */
+.sd-card { display: grid; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
+.sd-product-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-2); border-bottom: 1px solid var(--border); }
+.sd-product-row:last-child { border-bottom: 0; }
+.sd-item-main { flex: 1 1 auto; min-width: 0; overflow: hidden; font-size: var(--font-size-md); font-weight: var(--weight-bold); text-overflow: ellipsis; white-space: nowrap; }
+
+/* 钱相关卡片的底部：已付/待付 + 付款入口（一张卡一个）。 */
+.sd-row-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2); border-top: 1px solid var(--border); }
+.sd-amounts { flex: 1 1 auto; margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+
+/* 按钮：紧凑，但命中区仍 ≥44px。 */
+.sd-actions { display: flex; flex: none; gap: var(--space-1); margin-left: auto; }
+.sd-action-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: var(--control-height); padding: 0 var(--space-1); border: 1px solid var(--primary); border-radius: var(--radius-sm); color: var(--surface); background: var(--primary); cursor: pointer; font-weight: var(--weight-bold); white-space: nowrap; }
+.sd-action-btn:hover { color: var(--surface); background: var(--primary-hover); }
+
+/* 点开后的付款表单（v1 只填不提交）：整宽出现在卡片底部。 */
+.sd-form-slot { padding: 0 var(--space-2) var(--space-2); }
+.sd-form { display: grid; gap: var(--space-2); }
+.sd-field { display: grid; gap: var(--space-1); color: var(--text-secondary); font-size: var(--font-size-sm); }
+.sd-field input, .sd-field select { width: 100%; min-height: var(--control-height); }
+.sd-preview-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
