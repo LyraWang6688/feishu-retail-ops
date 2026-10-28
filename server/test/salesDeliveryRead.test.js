@@ -18,6 +18,7 @@ const table = (key) => V1_BITABLE_SCHEMA.tables[key];
 
 const fakeGateway = (records) => ({
   listAll: async (key) => records[key] || [],
+  getBatch: async (key, ids) => (records[key] || []).filter((row) => ids.includes(row.record_id)),
   table,
 });
 
@@ -111,20 +112,32 @@ test('AC-DR3 只读：不调用任何写入方法', async () => {
   assert.deepEqual(writes, []);
 });
 
-test('AC-DR4 配置表（货品/颜色/尺码）走 configTableCache；业务表仍每次读', async () => {
-  const calls = {};
+test('AC-DR4 只批量取被引用记录：货品/颜色/尺码不再整表 listAll', async () => {
+  const calls = { listAll: {}, getBatch: {} };
   const records = baseRecords();
   const gateway = {
-    listAll: async (key) => { calls[key] = (calls[key] || 0) + 1; return records[key] || []; },
+    listAll: async (key) => { calls.listAll[key] = (calls.listAll[key] || 0) + 1; return records[key] || []; },
+    getBatch: async (key, ids) => {
+      calls.getBatch[key] = calls.getBatch[key] || { calls: 0, requested: 0 };
+      calls.getBatch[key].calls += 1;
+      calls.getBatch[key].requested += ids.length;
+      return (records[key] || []).filter((row) => ids.includes(row.record_id));
+    },
     table,
   };
   const service = createSalesDeliveryReadService({ gateway });
   await service.listDeliveryData();
   await service.listDeliveryData();
-  assert.equal(calls.product, 1, '货品信息第二次命中配置快照');
-  assert.equal(calls.color, 1, '颜色管理第二次命中配置快照');
-  assert.equal(calls.sizeManagement, 1, '尺码管理第二次命中配置快照');
-  assert.equal(calls.salesEntry, 2, '销售主表是业务数据，每次读');
-  assert.equal(calls.salesDetail, 2, '销售明细是业务数据，每次读');
-  assert.equal(calls.paymentRecord, 2, '收款明细是业务数据，每次读');
+  assert.equal(calls.listAll.product, undefined, '货品信息整表 listAll 0 次');
+  assert.equal(calls.listAll.color, undefined, '颜色管理整表 listAll 0 次');
+  assert.equal(calls.listAll.sizeManagement, undefined, '尺码管理整表 listAll 0 次');
+  assert.equal(calls.getBatch.product.calls, 2, '两次读取各一次 batch_get');
+  assert.equal(calls.getBatch.product.requested, 2, '只请求被引用的 1 个货品 × 2 次');
+  assert.equal(calls.getBatch.color.calls, 2);
+  assert.equal(calls.getBatch.color.requested, 2);
+  assert.equal(calls.getBatch.sizeManagement.calls, 2);
+  assert.equal(calls.getBatch.sizeManagement.requested, 2);
+  assert.equal(calls.listAll.salesEntry, 2, '销售主表是业务数据，每次读');
+  assert.equal(calls.listAll.salesDetail, 2, '销售明细是业务数据，每次读');
+  assert.equal(calls.listAll.paymentRecord, 2, '收款明细是业务数据，每次读');
 });

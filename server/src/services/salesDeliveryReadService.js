@@ -15,12 +15,11 @@
  * 🔴 只读：本文件没有任何写入方法，也不新增写库路径。
  */
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD, CONFIG_TABLE_TTL_MS } = require('../config/salesDeliveryPage');
-const { getConfigRows } = require('./configTableCache');
+const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = require('../config/salesDeliveryPage');
 const { createPaymentMethodsService, orderWithPreferred } = require('./paymentMethodsService');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
-const { logWarn } = require('../utils/logger');
+const { logInfo, logWarn } = require('../utils/logger');
 
 const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetry, sleep } = {}) => {
   if (!gateway) throw new Error('SalesDeliveryReadService requires gateway');
@@ -55,23 +54,50 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     return names.length ? { fieldNames: names } : {};
   };
 
-  /** 配置表走统一快照（TTL + 飞书 change 事件失效 + lastGood）；业务数据仍每次读。 */
-  const configRows = (tableKey) => getConfigRows({
-    gateway, tableKey, ttlMs: CONFIG_TABLE_TTL_MS,
-    loader: () => listAllWithRetry(tableKey, fieldOptions(tableKey)),
-  });
-
   const listDeliveryData = async () => {
+    const startedAt = Date.now();
+    const timings = {};
+    const timed = async (key, run) => {
+      const start = Date.now();
+      const value = await run();
+      timings[`${key}_ms`] = Date.now() - start;
+      return value;
+    };
     const methodsService = paymentMethods || createPaymentMethodsService(gateway);
-    const [orders, details, payments, products, colors, sizes, methodList] = await Promise.all([
-      listAllWithRetry('salesEntry', fieldOptions('salesEntry')),
-      listAllWithRetry('salesDetail', fieldOptions('salesDetail')),
-      listAllWithRetry('paymentRecord', fieldOptions('paymentRecord')),
-      configRows('product'),
-      configRows('color'),
-      configRows('sizeManagement'),
-      methodsService.listWithVouchers(),
+    const [orders, details, payments, methodList] = await Promise.all([
+      timed('sales_entry', () => listAllWithRetry('salesEntry', fieldOptions('salesEntry'))),
+      timed('sales_detail', () => listAllWithRetry('salesDetail', fieldOptions('salesDetail'))),
+      timed('payment_record', () => listAllWithRetry('paymentRecord', fieldOptions('paymentRecord'))),
+      timed('payment_method', () => methodsService.listWithVouchers()),
     ]);
+    const detailFieldsForRefs = gateway.table('salesDetail').fields;
+    const productFieldsForRefs = gateway.table('product').fields;
+    const idsOf = (records, fields, key) => [...new Set(records.flatMap((record) =>
+      linkedRecordIds(record.fields?.[fields[key]])))];
+    const productIds = idsOf(details, detailFieldsForRefs, 'product');
+    const sizeIds = idsOf(details, detailFieldsForRefs, 'size');
+    // 只批量取被销售明细引用到的记录（不再整表拉 561 条货品）。
+    const readReferenced = async (tableKey, ids) => {
+      if (!ids.length) return [];
+      if (typeof gateway.getBatch === 'function') return gateway.getBatch(tableKey, ids);
+      const all = await listAllWithRetry(tableKey, fieldOptions(tableKey));
+      const wanted = new Set(ids);
+      return all.filter((row) => wanted.has(row.record_id));
+    };
+    const [products, sizes] = await Promise.all([
+      timed('product', () => readReferenced('product', productIds)),
+      timed('size', () => readReferenced('sizeManagement', sizeIds)),
+    ]);
+    const colorIds = [...new Set(products.flatMap((row) => linkedRecordIds(row.fields?.[productFieldsForRefs.color])))];
+    const colors = await timed('color', () => readReferenced('color', colorIds));
+    timings.total_ms = Date.now() - startedAt;
+    logInfo('workbench.sales.delivery.read_timing', {
+      ...timings,
+      detail_count: details.length,
+      product_count: products.length,
+      color_count: colors.length,
+      size_count: sizes.length,
+    });
 
     const orderFields = gateway.table('salesEntry').fields;
     const detailFields = gateway.table('salesDetail').fields;
