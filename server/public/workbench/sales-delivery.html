@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="icon" href="data:,">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title></title>
+  <!-- 主题唯一真源 = styles/tokens.css（页面颜色 / 间距全部走 var）。 -->
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/base.css">
+  <link rel="stylesheet" href="features/sales-delivery/sales-delivery.css">
+</head>
+<body>
+  <!-- 独立预览页：业务负责人直接改稿用（v1 只读，不提交写库）。
+       ⚠️ 入口：工作台「销售 → 订单列表 → 交割单」卡片（features/orders/index.js 的最小改动）。
+       ⚠️ 本文件是**薄壳**：文案 / 标题 / 空态都在 config/sales-delivery.js + features/sales-delivery/。 -->
+  <main class="shell" id="sales-delivery-app"></main>
+  <script src="shared/ui-tap.js"></script>
+  <script type="module">
+    import { mountSalesDeliveryPage } from './features/sales-delivery/index.js';
+    mountSalesDeliveryPage(document.getElementById('sales-delivery-app'));
+  </script>
+</body>
+</html>

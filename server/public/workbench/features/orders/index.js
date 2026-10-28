@@ -8,7 +8,7 @@ const fillText = (template, values = {}) => String(template ?? '')
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS, DEFAULT_COLLECTION_METHOD, COLLECTION_METHODS,
   REFUND_METHOD_PLACEHOLDER, RESTOCK_STATES, AFTER_SALES_ACTIONS, SETTLEMENTS,
-  ORDERS_SUB_TABS, SALES_SECTIONS,
+  ORDERS_SUB_TABS, SALES_SECTIONS, SALES_DELIVERY_PAGE,
   ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
 import { ARRIVAL_FULL_API, ARRIVAL_FULL_FIELDS, ARRIVAL_FULL_TEXTS } from '../../config/orders.js';
@@ -1372,6 +1372,11 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       if (sectionCard) {
         if (sectionCard.dataset.ordersSection === 'afterSales') {
           void scanAfterSales();
+          return;
+        }
+        // ⭐ 2026-10-28：「交割单」卡片 → 独立预览页（v1 只读；供应验收 mode=purchase 不渲染这三张卡，行为不变）。
+        if (mode !== 'purchase' && sectionCard.dataset.ordersSection === 'pending') {
+          window.location.href = SALES_DELIVERY_PAGE;
           return;
         }
         state.activeSection = sectionCard.dataset.ordersSection;

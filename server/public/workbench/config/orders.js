@@ -155,6 +155,12 @@ export const ARRIVAL_SCAN = {
   buttonLabel: '扫码验收',
 };
 
+/**
+ * ⭐ 2026-10-28：「交割单」卡片的落点 —— 独立预览页（业务负责人直接改稿用）。
+ * ⚠️ URL 只在这里写一次；`features/orders/index.js` 读取它，不复制字面量。
+ */
+export const SALES_DELIVERY_PAGE = '/workbench/sales-delivery.html';
+
 /** 接口路径（**唯一来源**：渲染层不写死 URL）。 */
 export const ORDERS_API = {
   orders: '/api/workbench/sales/orders',

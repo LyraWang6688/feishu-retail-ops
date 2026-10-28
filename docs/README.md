@@ -65,6 +65,7 @@
 | [frontend-copy-ownership.md](frontend-copy-ownership.md) | 前端「静态文案 vs 动态交互」分工章程 —— 给另一个 AI 看的边界；同一文件同一时刻一个写入者 |
 | [workbench-query-contract.md](workbench-query-contract.md) | 工作台查询接口契约 |
 | [sales-line-plan.md](sales-line-plan.md) | 销售线的推进计划与判据 |
+| [sales-delivery-data-source-draft-2026-10-29.md](sales-delivery-data-source-draft-2026-10-29.md) | 销售「交割单」页的数据来源逐行草稿（2026-10-29）：只看销售明细 + 收款明细、按销售单号关联；生产 Base「页面数据」已按此写入 21 行待复核 |
 | [arrival-conversation-reconcile-2026-10-06.md](archive/arrival-conversation-reconcile-2026-10-06.md) | 采购到货「群话题对话式核对」：业务负责人 2026-10-06 当天口述的**权威口径**与验收标准（**已实现**）。⚠️ 其中「实际到货不会为 0 / 不为实际为 0 写规则」一条已被 2026-10-07 的口径**收窄**（见下一行） |
 | [arrival-zero-arrived-rule-2026-10-07.md](archive/arrival-zero-arrived-rule-2026-10-07.md) | ⭐ **口径（权威 · 2026-10-07）**：「某个尺码实际到 0 双」是**正常情况** —— 该行不入库、**不阻断整单**；「真对不上明细」仍走原路径。**已实现**，验收标准与逐条对照见 [reports/arrival-zero-actual-2026-10-07.md](reports/arrival-zero-actual-2026-10-07.md) |
 | [private-chat-removal-2026-10-07.md](archive/private-chat-removal-2026-10-07.md) | 🔴 **私聊链路已移除**（业务负责人 2026-10-07：「以后私聊这条链路我们就没有了」）：入口统一到【群聊 + 话题】；方式是她拍板的 **ⓐ：代码里一行私聊都不留、测试全部迁到群聊入口**（**没有开关**）。含**验收标准**（A 入口 / B 群聊回归 / C 发送出口 / D 历史用例迁移 / E 门禁）、逐条实现对照、以及"怎么恢复私聊"。配套拍板见 [private-chat-removal-decision-2026-10-07.md](private-chat-removal-decision-2026-10-07.md)；承接 2026-10-06 的切除盘清 [private-chat-excision-todo.md](private-chat-excision-todo.md) |
