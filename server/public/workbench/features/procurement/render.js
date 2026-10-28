@@ -39,7 +39,7 @@ const statsHtml = (tab, body, config) => {
   const defs = tab === 'replenish' ? config.stats.replenish : config.stats.newProducts;
   const refreshButton = `<button type="button" class="pr-refresh" data-pr-refresh>${escapeHtml(config.texts.refresh)}</button>`;
   // 业务负责人 2026-10-29 批注：只有 1 个统计项（上新）时 ⇒ 统计 + 范围文案 + 刷新**放在一行**（不再大块留白）
-  if (defs.length === 1 && config.summary.singleStatInline) {
+  if (defs.length === 1) {
     const def = defs[0];
     return `<section class="pr-summary pr-summary-inline" aria-label="${escapeHtml(config.title)}">
       <div class="pr-stat-inline"><b>${escapeHtml(body?.stats?.[def.key] ?? 0)}</b><span>${escapeHtml(def.label)}</span></div>
