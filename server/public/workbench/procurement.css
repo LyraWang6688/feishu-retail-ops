@@ -10,11 +10,6 @@
   padding: var(--space-4);
   padding-bottom: calc(128px + env(safe-area-inset-bottom));
 }
-.pr-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
-.pr-title { margin: 0; font-size: var(--font-size-2xl); font-weight: var(--weight-bold); line-height: var(--line-height-tight); }
-/* 顶部登录信息：与工作台入口页一致 —— 「已登录：X」和「退出登录」在**同一行**（业务负责人 2026-10-29 反馈） */
-.pr-auth { display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: var(--space-2); font-size: var(--font-size-xs); color: var(--text-secondary); white-space: nowrap; }
-.pr-logout { min-height: var(--control-height); }
 
 /* 三个 tab（扫一扫本轮禁用：视觉保留、不可点） */
 .pr-tabs { display: flex; gap: var(--space-2); margin: 0 0 var(--space-3); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }

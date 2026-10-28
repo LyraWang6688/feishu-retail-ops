@@ -7,8 +7,8 @@
  *     只有**提交成功**才清空（`submit.js`）；
  *   · 懒加载：首屏只请求补货一次；点上新才请求；失败给「重新加载」。
  */
-import { api } from '../../core/api-client.js';
-import { requireFeishuAuth, showLoginButton } from '../../core/auth.js';
+import { showLoginButton } from '../../core/auth.js';
+import { ensureProcurementAuth } from './auth.js';
 import { describeError } from '../../core/ui.js';
 import { PROCUREMENT_UI as config } from '../../config/procurement.js';
 import { createApi } from './api.js';
@@ -155,20 +155,17 @@ export function mountProcurementPage(host) {
   });
 
   const start = async () => {
-    let ready = false;
+    let user = null;
     try {
-      ready = await requireFeishuAuth({
-        statusElement: host.querySelector('#auth-status'),
-        logoutButton: host.querySelector('#logout'),
-      });
+      // 只取身份，不渲染登录 UI（页面顶部没有登录态，对照交割单页）
+      user = await ensureProcurementAuth();
     } catch (error) {
       panelEl('replenish').innerHTML = errorHtml(`${config.texts.authFailed}${describeError(error)}`, config);
       showLoginButton();
       return;
     }
-    if (!ready) return;
-    const me = await api.get('/api/auth/feishu/me').catch(() => null);
-    const openId = String(me?.user?.open_id || '');
+    if (!user) return;
+    const openId = String(user.open_id || '');
     if (!openId) {
       panelEl('replenish').innerHTML = errorHtml(config.texts.loadFailed, config);
       return;

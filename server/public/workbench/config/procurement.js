@@ -46,7 +46,6 @@ export const PROCUREMENT_UI = Object.freeze({
     noSelection: '还没有选要采购的货品。',
     rangeLabel: '统计范围',
     authFailed: '工作台启动失败：',
-    logout: '退出登录',
   }),
   // 顶部统计（补货 3 项；上新**只有**「新增货品」一项）
   stats: Object.freeze({
@@ -87,6 +86,7 @@ export const PROCUREMENT_UI = Object.freeze({
     titleTemplate: '{itemNo} · {color}',
     titleFallback: '{number} · {color}',
     newSubtitle: '今日 {time} 新增 · {supplier}',
+    newSubtitleNoSupplier: '今日 {time} 新增', // 供应商为空时不显示孤立的「·」（业务负责人 2026-10-29）
     replenishTotal: '需补{total}双',
     newNormalTotal: '普通码 {total} 双',
     specialSummary: '特殊码 · {count} 个（默认 0 双，点开选择）',
