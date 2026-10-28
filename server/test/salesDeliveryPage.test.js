@@ -243,7 +243,7 @@ test('AC-SD-M9 一单一卡：同一销售单号两双未交付只出一张卡�
   assert.equal(itemsByTab.both[0].details.length, 2, 'both 卡里两行未交付明细');
 });
 
-test('AC-SD-M10 货未清按库存分区域：有库存/无库存拆成两张卡，可交付/不可交付', async () => {
+test('AC-SD-M10 库存数量只控制行按钮，不再把货未清拆区域/拆卡', async () => {
   const { data, filter, items, config } = await loadPureModules();
   const orders = data.normalizeOrders([{
     order_no: 'XSD-STOCK-1', record_id: 'o-stock-1', recorded_at: '2026-10-20T10:00:00+08:00',
@@ -254,10 +254,8 @@ test('AC-SD-M10 货未清按库存分区域：有库存/无库存拆成两张卡
     payments: [{ record_id: 'p-s1', method: '微信扫码', amount: 398, status: '已收款' }],
   }], config.SALES_DELIVERY_FIELDS);
   const itemsByTab = items.buildTabItems(filter.buildDeliveryGroups(orders, config.SALES_DELIVERY_STATUSES), config.SALES_DELIVERY_STATUSES, config.SALES_DELIVERY_TABS);
-  assert.equal(itemsByTab.goods.length, 2, '同一单两行按库存拆成两张卡');
-  assert.deepEqual(itemsByTab.goods.map((item) => item.region).sort(), ['available', 'unavailable']);
-  assert.deepEqual(itemsByTab.goods.find((item) => item.region === 'available').details.map((line) => line.size), ['41']);
-  assert.deepEqual(itemsByTab.goods.find((item) => item.region === 'unavailable').details.map((line) => line.size), ['42']);
+  assert.equal(itemsByTab.goods.length, 1, '同一单仍是一张卡；库存只影响行按钮');
+  assert.deepEqual(itemsByTab.goods[0].details.map((line) => [line.size, line.stockQuantity]), [['41', 1], ['42', 0]]);
 });
 
 test('AC-SD-P1 配置：三 tab key/label/顺序/默认/空态；固定远→近排序；货号筛选文案', async () => {

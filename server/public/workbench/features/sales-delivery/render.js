@@ -100,7 +100,7 @@ export const statusHtml = (state, activeTab, T) => {
       <button class="btn btn-primary" type="button" data-sd-action="retry">${escapeHtml(T.retry)}</button>
     </div>`;
   }
-  if (!state.groups.length && !(Array.isArray(state.regions) && state.regions.length)) return `<p class="sd-status" data-sd-status="empty">${escapeHtml(activeTab?.empty || T.empty)}</p>`;
+  if (!state.groups.length) return `<p class="sd-status" data-sd-status="empty">${escapeHtml(activeTab?.empty || T.empty)}</p>`;
   return '';
 };
 
@@ -114,13 +114,6 @@ const dayGroupsHtml = (groups, T, statuses) => groups.map((group) => `
 export const panelHtml = (state, activeTab, T, statuses) => {
   const status = statusHtml(state, activeTab, T);
   if (status) return status;
-  if (Array.isArray(state.regions) && state.regions.length) {
-    return state.regions.map((region) => `
-      <section class="sd-region" data-sd-region="${escapeHtml(region.key)}">
-        <h2 class="sd-region-title">${escapeHtml(region.label)}</h2>
-        ${dayGroupsHtml(region.groups, T, statuses)}
-      </section>`).join('');
-  }
   return dayGroupsHtml(state.groups, T, statuses);
 };
 

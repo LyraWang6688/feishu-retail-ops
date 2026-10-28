@@ -55,8 +55,4 @@
 .sd-modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .sd-modal-actions .btn { min-width: 88px; min-height: var(--control-height); white-space: nowrap; }
 .sd-modal-error { margin: 0; color: var(--danger); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
-
-/* 货未清：库存 >0 / =0 两个区域；区域内部再按录单日分组。 */
-.sd-region { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); }
-.sd-region-title { margin: 0; padding: 0 var(--space-1); color: var(--text); font-size: var(--font-size-md); font-weight: var(--weight-bold); }
 .sd-stock-short { flex: none; color: var(--danger); font-size: var(--font-size-xs); white-space: nowrap; }

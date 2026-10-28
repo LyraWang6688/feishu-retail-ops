@@ -17,13 +17,12 @@ const undeliveredDetailsOf = (group, statuses) => (group.details || [])
   .filter((line) => line.fulfillmentStatus === statuses.undelivered);
 
 /** 一张卡（一个销售单号）。 */
-const cardOf = ({ kind, group, details, hasAmounts = false, region = '' }) => ({
+const cardOf = ({ kind, group, details, hasAmounts = false }) => ({
   kind,
   // ⚠️ `orderNo` 只作内部排序 / 测试定位，**不渲染**（业务负责人：不显示销售单号）。
   orderNo: group.orderNo,
   salesEntryRecordId: group.salesEntryRecordId || '',
   soldAt: group.soldAt,
-  region,
   details,
   payableAmount: group.payableAmount,
   pendingAmount: group.pendingAmount,
@@ -41,12 +40,9 @@ export const buildTabItems = (groups = [], statuses = {}, tabs = []) => {
     const tab = tabs.find((entry) => entry.key === tabKey);
     if (!tab) continue;
     if (tab.match === 'goodsOnly') {
-      const rows = undeliveredDetailsOf(group, statuses);
-      const available = rows.filter((line) => Number(line.stockQuantity) > 0);
-      const unavailable = rows.filter((line) => !(Number(line.stockQuantity) > 0));
-      if (available.length) out[tab.key].push(cardOf({ kind: 'goods', group, details: available, region: 'available' }));
-      if (unavailable.length) out[tab.key].push(cardOf({ kind: 'goods', group, details: unavailable, region: 'unavailable' }));
-      if (!rows.length) out[tab.key].push(cardOf({ kind: 'goods', group, details: [], region: 'unavailable' }));
+      out[tab.key].push(cardOf({
+        kind: 'goods', group, details: undeliveredDetailsOf(group, statuses), hasAmounts: false,
+      }));
       continue;
     }
     out[tab.key].push(cardOf({

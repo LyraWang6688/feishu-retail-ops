@@ -173,14 +173,10 @@ test('AC-TAB1 三 tab + 数量；默认货未清；无标题/返回/排序控件
   await expect(page.getByRole('heading', { name: '交割单' })).toHaveCount(0);
   await expect(page.getByText('← 返回工作台')).toHaveCount(0);
 
-  // 货未清先按库存分两个区域；区域内部再按录单日分组。
-  await expect(page.locator('[data-sd-region]')).toHaveCount(2);
-  await expect(page.locator('[data-sd-region="available"] .sd-region-title')).toHaveText('可交付');
-  await expect(page.locator('[data-sd-region="unavailable"] .sd-region-title')).toHaveText('不可交付');
   await expect(page.locator('[data-sd-day]')).toHaveCount(3);
-  await expect(page.locator('.sd-day-title').nth(0)).toHaveText('10-20');
-  await expect(page.locator('.sd-day-title').nth(1)).toHaveText('销售日未填');
-  await expect(page.locator('.sd-day-title').nth(2)).toHaveText('10-19');
+  await expect(page.locator('.sd-day-title').nth(0)).toHaveText('10-19');
+  await expect(page.locator('.sd-day-title').nth(1)).toHaveText('10-20');
+  await expect(page.locator('.sd-day-title').nth(2)).toHaveText('销售日未填');
   await expect(page.locator('[data-sd-item]')).toHaveCount(3);
   await expect(page.locator('[data-sd-order="XSD-AFTER-SALES"]')).toHaveCount(0);
   await expect(page.locator('[data-sd-item]').first()).not.toContainText('XSD-');
@@ -203,15 +199,16 @@ test('AC-TAB2 归类互斥：钱货都未清只在第三个 tab；三个 tab 无
 
 test('AC-CARD1 一张卡=一个销售单号：多行产品 + 行尾交付；金额只在钱相关 tab', async ({ page }) => {
   await openPage(page);
-  const goods = page.locator('[data-sd-region="available"] [data-sd-item]').first();
-  await expect(goods).toContainText('XHB8095 · 黑色 · 41 码');
+  const goods = page.locator('[data-sd-item]').first();
+  await expect(goods).toContainText('QPL-8957 · 咖色 · 37 码');
   await expect(goods).not.toContainText('XSD-');
   await expect(goods).not.toContainText('10-19');
   await expect(goods).not.toContainText('已付');
   await expect(goods).not.toContainText('待付');
   await expect(goods).not.toContainText('¥');
   await expect(goods.locator('.sd-product-row')).toHaveCount(1);
-  await expect(goods.locator('[data-sd-deliver]')).toHaveCount(1);
+  await expect(goods).toContainText('库存不足');
+  await expect(goods.locator('[data-sd-deliver]')).toHaveCount(0);
   await expect(goods.locator('[data-sd-toggle="payment"]')).toHaveCount(0);
 
   // 一单多明细但只有一条未交付 ⇒ 货未清这单只出 1 张卡 / 1 行。
@@ -220,11 +217,7 @@ test('AC-CARD1 一张卡=一个销售单号：多行产品 + 行尾交付；金�
   await expect(multiGoods.locator('.sd-product-row')).toHaveCount(1);
   await expect(multiGoods).toContainText('XHB8095 · 黑色 · 41 码');
   await expect(multiGoods).not.toContainText('42 码');
-  // 库存为 0 的货未清单只进不可交付区域，且行尾显示库存不足、没有交付按钮。
-  const unavailable = page.locator('[data-sd-region="unavailable"] [data-sd-order="XSD-20261019-0003"]');
-  await expect(unavailable).toContainText('QPL-8957 · 咖色 · 37 码');
-  await expect(unavailable).toContainText('库存不足');
-  await expect(unavailable.locator('[data-sd-deliver]')).toHaveCount(0);
+  await expect(multiGoods.locator('[data-sd-deliver]')).toHaveCount(1);
 
   await page.locator('[data-sd-tab="money"]').click();
   const money = page.locator('[data-sd-item]').first();
@@ -272,7 +265,7 @@ test('AC-DELIVER 行尾交付：点谁交谁、toast「该产品已交付」、�
 test('AC-GROUP 销售日分组顺序远→近；货号筛选默认全部、可筛单一货号', async ({ page }) => {
   await openPage(page);
   const dayLabels = await page.locator('.sd-day-title').allTextContents();
-  expect(dayLabels).toEqual(['10-20', '销售日未填', '10-19']);
+  expect(dayLabels).toEqual(['10-19', '10-20', '销售日未填']);
 
   const filter = page.locator('[data-sd-field="product"]');
   const options = await filter.locator('option').allTextContents();
