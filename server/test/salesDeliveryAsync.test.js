@@ -102,3 +102,37 @@ test('AC-DA3 写失败：job 落 failed + last_error；不吞', async () => {
   assert.equal(failed.last_error, '库存不足');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('AC-DA6 生命周期日志：enqueued / started / finished 可串起 job，且不记 payload', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
+  const logs = [];
+  const logger = {
+    logInfo: (event, meta) => logs.push({ level: 'info', event, meta }),
+    logWarn: (event, meta) => logs.push({ level: 'warn', event, meta }),
+    logError: (event, meta) => logs.push({ level: 'error', event, meta }),
+  };
+  const service = createSalesDeliveryAsyncService({
+    dir,
+    logger,
+    deliver: async () => ({ results: [{ detailRecordId: 'd1' }], failures: [], deliveredQuantity: 1 }),
+    pay: async () => ({}),
+  });
+  const { job } = await service.enqueue({ type: 'delivery', requestId: uuid(7), payload: { detailRecordIds: ['d1'] } });
+  await waitFor(async () => (await service.get(job.job_id))?.status === 'succeeded');
+
+  const lifecycle = logs.filter((item) => item.event.startsWith('workbench.sales.delivery.job_'));
+  assert.deepEqual(lifecycle.map((item) => item.event), [
+    'workbench.sales.delivery.job_enqueued',
+    'workbench.sales.delivery.job_started',
+    'workbench.sales.delivery.job_finished',
+  ]);
+  assert.equal(lifecycle[0].meta.job_id, job.job_id);
+  assert.equal(lifecycle[2].meta.job_id, job.job_id);
+  assert.equal(lifecycle[2].meta.status, 'succeeded');
+  assert.equal(lifecycle[2].meta.failed_count, 0);
+  assert.equal(lifecycle[2].meta.delivered_count, 1);
+  assert.equal(typeof lifecycle[2].meta.duration_ms, 'number');
+  assert.equal(typeof lifecycle[2].meta.queue_wait_ms, 'number');
+  assert.equal(lifecycle.some((item) => 'payload' in item.meta), false, '日志不能带完整 payload');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

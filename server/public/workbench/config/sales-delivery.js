@@ -24,6 +24,8 @@ export const SALES_DELIVERY_CONFIG = Object.freeze({
   }),
   /** 只在打开 / 刷新页面时拉一次；不做定时刷新。 */
   dataSource: 'api',
+  /** 异步 job 轮询：真实飞书写库可能 >30s，超时只提示「仍在写入」，不误报失败。 */
+  jobPoll: Object.freeze({ intervalMs: 800, timeoutMs: 120000 }),
 });
 
 /**
@@ -112,6 +114,7 @@ export const SALES_DELIVERY_TEXTS = Object.freeze({
   submittedToast: '已提交成功',
   deliveryToast: '该产品已交付',
   paymentToast: '付款成功',
+  stillWriting: '仍在写入，请稍后刷新',
   forms: Object.freeze({
     paymentTitle: '付款',
     paymentModalTitle: '确认收款',

@@ -21,7 +21,7 @@ export const requestId = () => {
 };
 
 /** 轮询异步 job：succeeded → onSuccess；failed → onFailure；超时按失败处理。 */
-export const waitJob = async (api, jobId, { onSuccess, onFailure, intervalMs = 800, timeoutMs = 30000 } = {}) => {
+export const waitJob = async (api, jobId, { onSuccess, onFailure, onTimeout, intervalMs = 800, timeoutMs = 30000 } = {}) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise((resolve) => { setTimeout(resolve, intervalMs); });
@@ -38,5 +38,6 @@ export const waitJob = async (api, jobId, { onSuccess, onFailure, intervalMs = 8
       return;
     }
   }
-  onFailure?.('timeout');
+  if (typeof onTimeout === 'function') onTimeout();
+  else onFailure?.('timeout');
 };
