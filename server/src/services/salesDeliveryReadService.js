@@ -79,7 +79,14 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     // 只批量取被销售明细引用到的记录（不再整表拉 561 条货品）。
     const readReferenced = async (tableKey, ids) => {
       if (!ids.length) return [];
-      if (typeof gateway.getBatch === 'function') return gateway.getBatch(tableKey, ids);
+      if (typeof gateway.getBatch === 'function') {
+        // Feishu batch_get rejects too many record_ids at once (observed 160 -> 400).
+        const out = [];
+        for (let offset = 0; offset < ids.length; offset += 100) {
+          out.push(...await gateway.getBatch(tableKey, ids.slice(offset, offset + 100)));
+        }
+        return out;
+      }
       const all = await listAllWithRetry(tableKey, fieldOptions(tableKey));
       const wanted = new Set(ids);
       return all.filter((row) => wanted.has(row.record_id));
