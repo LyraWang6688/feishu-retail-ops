@@ -71,10 +71,7 @@ await writeService.saveDraftLines?.(openId, {
             // ⭐⭐ 她在**销售页**填的"每件实收 / 收款行 / 付款情况 / 实付多少"也要一起存下来 ✓
             //   （资金页那张表单**不带**这些字段 ✗ ⇒ 不在这一步存 ⇒ 点按钮建单时它们就丢了 ✗
             //     实测：`AC-E2E-8` 的"她填的实收照旧落表"就是因为丢了这个 ✗）
-            // ⭐⭐ 2026-10-16 P0（**写点一处收口**）：存**取值后的那一份**（不是裸 body ✗）——
-            //   资金页两个读点（`:1281` pending / `:1561` skip）都回落到这里存的这份
-            //   ⇒ 存空 ⇒ 它们也空 ⇒ `items_cents=0` ⇒ 拦住 ✗（= 她那个现场）
-            lineAmounts,
+            // ⭐ 2026-10-29：逐件实收只存 `sale.lines[].amount`，不再在 submitPending 里存第二份。
             payments: parsePaymentRows(body, fields),
             paymentStatus: String(body[fields.paymentStatus] || '').trim(),
             paidAmount: String(body[fields.paidAmount] ?? ''),
@@ -227,6 +224,18 @@ return sendPaymentStep(res, req, {
             });
           }
           finalLines = added.session?.sale?.lines || finalLines;
+        }
+        // ⭐ 2026-10-29：把逐件实收写回草稿行本身 —— 唯一真源 = sale.lines[].amount。
+        //   `line_amount` 表单按已有行下标对应；当前这一双的金额在 addLine 时已经带上。
+        const explicitLineAmounts = bodyLineAmounts.length ? bodyLineAmounts : [];
+        const singleLineAmount = singleRowAmount && finalLines.length === 1 ? [singleRowAmount] : [];
+        const amountSource = explicitLineAmounts.length ? explicitLineAmounts : singleLineAmount;
+        if (amountSource.length) {
+          finalLines = finalLines.map((line, index) => {
+            const raw = String(amountSource[index] ?? '').trim();
+            return raw ? { ...line, amount: raw } : line;
+          });
+          await writeService.saveDraftLines?.(openId, { lines: finalLines });
         }
         const sessionNow = await writeService.sessions.get(openId).catch(() => null);
         goodsOrderNo = String(sessionNow?.sale?.order_no || '').trim();
