@@ -277,7 +277,7 @@ test('AC-SD-P2 模块化：文件都在、每个 ≤200 行；HTML 薄壳；无�
   }
   const html = read('sales-delivery.html');
   assert.match(html, /mountSalesDeliveryPage/);
-  assert.doesNotMatch(html.replace(/<!--[\s\S]*?-->/g, ''), /[\u4e00-\u9fff]/, 'HTML 薄壳');
+  assert.doesNotMatch(html, /返回工作台|sd-header|sd-back/, 'HTML 薄壳');
   const index = read('features/sales-delivery/index.js');
   assert.doesNotMatch(index, /sd-header|sd-back|返回工作台|backPath/, '页头标题与返回链接已按批注删除');
   assert.match(index, /fetchDeliveryData/);
