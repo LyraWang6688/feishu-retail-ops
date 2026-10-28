@@ -213,7 +213,7 @@ const renderSalePaymentStepPage = ({
   //    与工作台提示都删了 ✗）⇒ 原来"没有 successPath 就会给出一个点不动的链接"那个风险**没了** ✓。
   // ⭐ 2026-10-16 A2a：**三档那一块不再渲染**（`paymentStatusHtml` 已退场 ✓ 见上面那条注释）——
   //    资金页现在只剩：**收款行**（`paymentRowsHtml`）＋ 赠品 ✓；档位由金额自动定（路由那一步 ✓）。
-  const rowsBlock = paymentRowsHtml(write);
+  const rowsBlock = paymentRowsHtml(write, { defaultAmount: totalAmountText });
   // ⭐⭐ 2026-10-17 C（她逐字：「默认一行 ＋ ＋ 再加一种付款方式」）：
   //   加行 = **纯前端**（`data-payment-add`，克隆最后一行并清空值）——不提交、不写库 ✓。
   //   ⚠️ 文案走配置（`step.addRowButton`）；不写死中文 ✗。

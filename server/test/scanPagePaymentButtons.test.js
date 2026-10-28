@@ -180,3 +180,19 @@ test('AC-P0e ⭐⭐ 资金页那条拦截人话必须醒目（`form-alert` + `ro
   const degraded = tag.replace(' data-emphasis="alert"', '');
   assert.ok(!/data-emphasis="alert"/.test(degraded), '（去掉那个标记确实会让判据红 ✓）');
 });
+
+test('AC-PB6 ⭐ 资金页默认金额 = 总金额；不记这笔选项已删除', () => {
+  const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
+  const html = renderSalePaymentStepPage({
+    write: {
+      texts: { paymentLabel: '收款方式', paymentAmountPlaceholder: '', paymentAmountLabel: '' },
+      fields: { paymentMethod: 'payment_method', paymentAmount: 'payment_amount' },
+      paymentMethods: ['支付宝', '现金'],
+      paymentRowCount: 1,
+    },
+    totalAmountText: '360', count: 1, postAction: '/r/TEST', submitKey: 'k', orderNo: '',
+  });
+  assert.equal(html.includes('不记这笔'), false, '不记这笔选项必须删除');
+  assert.equal(html.includes('<option value="">'), false, '收款方式下拉不许有空值兜底');
+  assert.ok(html.includes('name="payment_amount"') && html.includes('value="360"'), '默认行金额 = 总金额');
+});

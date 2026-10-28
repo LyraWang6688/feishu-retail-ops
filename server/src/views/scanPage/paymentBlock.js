@@ -59,7 +59,7 @@ const draftLinesHtml = (write) => {
  *   · 校验失败**原地重渲染**（`rows` = 她刚填的那几行）⇒ 原样带回来，行数补齐到 `count`
  *     —— ⚠️ 补齐的那几行**不注入默认方式**（她明明没选，替她选上就等于替她记账）。
  */
-const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
+const buildPaymentRows = ({ count, defaultMethod, defaultAmount, rows } = {}) => {
   const given = Array.isArray(rows) ? rows : [];
   const total = Math.max(1, Number(count) || 1, given.length);
   return Array.from({ length: total }, (_, index) => {
@@ -70,7 +70,10 @@ const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
         amount: row.amount === undefined || row.amount === null ? '' : String(row.amount),
       };
     }
-    return { method: given.length ? '' : (index === 0 ? String(defaultMethod || '') : ''), amount: '' };
+    return {
+      method: given.length ? '' : (index === 0 ? String(defaultMethod || '') : ''),
+      amount: index === 0 ? String(defaultAmount ?? '') : '',
+    };
   });
 };
 
@@ -98,19 +101,19 @@ const buildPaymentRows = ({ count, defaultMethod, rows } = {}) => {
  *    填了金额的行才算一笔，没填的行不用"（服务端同一个判据）。
  * ⚠️ 校验失败**原地重渲染**时，`write.paymentRows` 是**她刚填的那几行**（值原样回填）。
  */
-const paymentRowsHtml = (write) => {
+const paymentRowsHtml = (write, opts = {}) => {
   const t = write.texts;
   const fields = write.fields;
   const rows = Array.isArray(write.paymentRows)
     ? write.paymentRows
     : buildPaymentRows({
       count: write.paymentRowCount,
-      // ⭐ 2026-10-18：表驱动 —— 配置默认方式若不在表里，第一行选表里第一项（不再出现"空 selected"）。
-      defaultMethod: (write.paymentMethods || []).includes(write.defaultPaymentMethod)
-        ? write.defaultPaymentMethod : (write.paymentMethods || [])[0],
+      // ⭐ 2026-10-29：表驱动 —— 默认方式 = 表里第一项，不再回退到写死的「微信」。
+      defaultMethod: (write.paymentMethods || [])[0] || '',
+      defaultAmount: opts.defaultAmount,
     });
   return rows.map((row) => `<div class="form-row form-row--pay">
-<select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}"><option value="">${escapeHtml(t.paymentNoneOption)}</option>${optionsHtml(write.paymentMethods, row.method)}</select>
+<select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}">${optionsHtml(write.paymentMethods, row.method || (write.paymentMethods || [])[0])}</select>
 <input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" required min="0" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
 </div>`).join('\n');
 };
