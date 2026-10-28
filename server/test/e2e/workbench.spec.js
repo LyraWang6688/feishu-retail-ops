@@ -86,12 +86,27 @@ test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) 
 //   （销售日 / 尺码 / 该单总金额）→ 选一条 → 三个动作按钮，水平顺序 **换货 · 退货 · 赔货**。
 //   ⚠️ 按钮之后的处理逻辑**还没接**（她：等页面确认再谈）⇒ 点击只显示"待接入"提示、**不跳走**；
 //   这条断言故意钉住"现在不许偷偷接上"（接上时要按新口径改这条用例）。
-test('售后扫一扫落地页：候选 → 三个动作按钮（换货 · 退货 · 赔货）', async ({ page }) => {
+test('售后扫一扫落地页：候选（一行：销售日/尺码/总金额）→ 三个动作按钮', async ({ page }) => {
   await page.goto('/workbench/after-sales.html?productRecordId=p1');
   await expect(page.getByText('YD1 · 黑')).toBeVisible();
-  await expect(page.getByText('XSD-E2E-001')).toBeVisible();
-  await expect(page.getByText('¥300')).toBeVisible();
-  await page.getByRole('button', { name: /XSD-E2E-001/ }).click();
+
+  const candidates = page.locator('.candidate-card');
+  await expect(candidates).toHaveCount(1);
+  const first = candidates.first();
+  // ⭐ 2026-10-29 HTML 批注：卡片**只有一行**「销售日 / 尺码 / 总金额」，**不显示销售单号**。
+  await expect(first).toContainText('40 码');
+  await expect(first).toContainText('¥300');
+  await expect(first).not.toContainText('XSD-E2E-001');
+  // 日期不突出 + 三样同字号：三个值的 computed font-size 必须相同，日期字重不是 bold。
+  const styles = await first.locator('.candidate-value').evaluateAll((nodes) => nodes.map((node) => {
+    const style = getComputedStyle(node);
+    return { size: style.fontSize, weight: style.fontWeight };
+  }));
+  expect(new Set(styles.map((item) => item.size)).size).toBe(1);
+  expect(styles[0].weight).not.toBe('600');
+  expect(styles[0].weight).not.toBe('700');
+
+  await first.click();
   const buttons = page.locator('.action-button');
   await expect(buttons).toHaveCount(3);
   await expect(buttons.nth(0)).toContainText('换货');

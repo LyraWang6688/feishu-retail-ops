@@ -35,26 +35,29 @@ const formatAmount = (value) => {
   return `¥${number.toLocaleString('zh-CN')}`;
 };
 
-/** 一行候选：左边「销售日 + 单号」，右边「尺码 / 总金额」两个小格。 */
-const candidateHtml = (item) => `
+/**
+ * 一行候选：**从左到右一行**摆「销售日 / 尺码 / 总金额」，三样**同字号**、日期**不突出**。
+ *
+ * ⭐ 2026-10-29（业务负责人 HTML 批注）：
+ *   「每张卡片你不需要提供销售单号信息，保持从左到右在一行显示日期、尺码、总金额就可以，
+ *    然后你的日期不用突出，颜色保持不变，然后字号保持一样大」
+ *   ⇒ 删掉「销售单号」那一行；日期不再是加粗大字；三样同字号（颜色保持：金额仍是主色）。
+ *   ⚠️ 三个值的**含义**不能丢：`aria-label` 里逐字带上「销售日 / 尺码 / 总金额」（读屏与自动化可读）。
+ */
+const candidateHtml = (item) => {
+  const date = formatDate(item.sales_date) || AFTER_SALES_PAGE.dateEmpty;
+  const size = item.size == null ? AFTER_SALES_PAGE.sizeEmpty : `${item.size} 码`;
+  const amount = formatAmount(item.total_amount);
+  return `
   <button class="entry-card candidate-card" type="button"
     data-detail="${escapeHtml(item.sales_detail_record_id)}"
-    data-order="${escapeHtml(item.sales_entry_record_id)}">
-    <span class="candidate-main">
-      <span class="candidate-date">${escapeHtml(formatDate(item.sales_date))}</span>
-      <span class="candidate-order">${escapeHtml(AFTER_SALES_PAGE.orderLabel)} ${escapeHtml(item.order_no || '')}</span>
-    </span>
-    <span class="candidate-figures">
-      <span class="candidate-figure">
-        <span class="candidate-figure-label">${escapeHtml(AFTER_SALES_PAGE.sizeLabel)}</span>
-        <strong>${escapeHtml(item.size == null ? AFTER_SALES_PAGE.sizeEmpty : `${item.size}`)}</strong>
-      </span>
-      <span class="candidate-figure">
-        <span class="candidate-figure-label">${escapeHtml(AFTER_SALES_PAGE.totalLabel)}</span>
-        <strong class="candidate-total">${escapeHtml(formatAmount(item.total_amount))}</strong>
-      </span>
-    </span>
+    data-order="${escapeHtml(item.sales_entry_record_id)}"
+    aria-label="${escapeHtml(AFTER_SALES_PAGE.dateLabel)} ${escapeHtml(date)} · ${escapeHtml(AFTER_SALES_PAGE.sizeLabel)} ${escapeHtml(size)} · ${escapeHtml(AFTER_SALES_PAGE.totalLabel)} ${escapeHtml(amount)}">
+    <span class="candidate-value">${escapeHtml(date)}</span>
+    <span class="candidate-value">${escapeHtml(size)}</span>
+    <span class="candidate-value candidate-total">${escapeHtml(amount)}</span>
   </button>`;
+};
 
 const actionsHtml = () => `
   <div class="after-sales-actions" data-view="after-sales-actions">

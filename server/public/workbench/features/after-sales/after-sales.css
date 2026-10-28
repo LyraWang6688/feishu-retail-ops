@@ -38,7 +38,12 @@
   font-size: var(--font-size-sm);
 }
 
-/* ── 候选（一笔销售一行）：销售日 + 单号 ｜ 尺码 ｜ 总金额 ─────────────── */
+/* ── 候选（一笔销售一行）：销售日 ｜ 尺码 ｜ 总金额，**从左到右一行** ────────
+ * ⭐ 2026-10-29（业务负责人 HTML 批注）：
+ *   「每张卡片你不需要提供销售单号信息，保持从左到右在一行显示日期、尺码、总金额就可以，
+ *    然后你的日期不用突出，颜色保持不变，然后字号保持一样大」
+ *   ⇒ 单号删掉；日期不再加粗/放大；三样**同字号**（颜色保持：金额仍是主色，其余正文色）。
+ * ⚠️ 颜色 / 字号 / 间距一律取 tokens，不写死。 */
 .candidate-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -54,46 +59,18 @@
   padding: var(--space-3) var(--space-4);
   text-align: left;
 }
-.candidate-main {
-  display: flex;
+/* 三个值同一字号、同一字重（日期不突出）。 */
+.candidate-value {
   min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-.candidate-date {
-  font-size: var(--font-size-lg);
-  font-weight: var(--weight-bold);
   color: var(--text);
-}
-.candidate-order {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-base);
+  font-weight: var(--weight-normal);
   overflow-wrap: anywhere;
 }
-.candidate-figures {
-  display: flex;
-  flex: none;
-  gap: var(--space-4);
-}
-.candidate-figure {
-  display: flex;
-  min-width: 52px;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-}
-.candidate-figure-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-.candidate-figure strong {
-  font-size: var(--font-size-base);
-  font-weight: var(--weight-bold);
-  color: var(--text);
-}
-.candidate-figure .candidate-total {
-  font-size: var(--font-size-lg);
+/* 金额保持主色（颜色不变）。 */
+.candidate-value.candidate-total {
   color: var(--primary);
+  font-weight: var(--weight-medium);
 }
 .candidate-card.active {
   border-color: var(--primary);

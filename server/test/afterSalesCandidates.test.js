@@ -70,3 +70,23 @@ test('AC-LP1 ⭐ 落地页：动作顺序「换货 · 退货 · 赔货」，读 
   assert.doesNotMatch(page, /api\.post\(/, '这一版只做页面：不许有写请求（按钮处理逻辑还没接）');
 });
 
+/**
+ * ⭐ 2026-10-29（HTML 批注）候选卡：**一行**「销售日 / 尺码 / 总金额」，
+ *   **不显示销售单号**、日期不突出、三样同字号（颜色不变）。
+ *   判据反向钉住：单号一旦被渲染回来 / `orderLabel` 配置一旦被加回来 ⇒ 红。
+ */
+test('AC-LP2 ⭐ 候选卡：一行三值、无销售单号、同字号（批注反向钉住）', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
+
+  assert.doesNotMatch(page, /order\.order_no|item\.order_no/, '候选卡不许再渲染销售单号（她：不需要提供销售单号信息）');
+  assert.doesNotMatch(config, /orderLabel\s*:/, '`orderLabel` 配置一起删掉（不留无用配置）');
+  assert.match(page, /class="candidate-value"/, '三个值共用 candidate-value（同一套字号 / 颜色口径）');
+  // 一行：卡片是 row，且三个值同一个字号 token（不出现 date 单独放大 / 加粗）。
+  assert.match(css, /\.candidate-card\s*\{[^}]*flex-direction:\s*row/, '候选卡必须是横向一行');
+  assert.match(css, /\.candidate-value\s*\{[^}]*font-size:\s*var\(--font-size-base\)/, '三个值同字号');
+  assert.doesNotMatch(css, /\.candidate-date/, '日期不再单独放大/加粗（样式类删掉）');
+});
+

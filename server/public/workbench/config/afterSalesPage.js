@@ -27,12 +27,14 @@ export const AFTER_SALES_PAGE = {
   chooseHint: '请选择要售后的那一笔销售',
   actionHint: '选择处理方式',
   // 字段名（页面上一律从这取，不在渲染代码里写死）
+  // ⭐ 2026-10-29（HTML 批注）：卡片上**不再显示销售单号** ⇒ `orderLabel` 一起删掉（不留无用配置）。
+  //   三个字段名现在只用在候选卡的 `aria-label`（读屏/自动化要能读出"这是销售日 / 尺码 / 总金额"）。
   dateLabel: '销售日',
   sizeLabel: '尺码',
   totalLabel: '总金额',
-  orderLabel: '销售单号',
   amountEmpty: '—',
   sizeEmpty: '—',
+  dateEmpty: '—',
   // 「已经售后过几条」的提示（后端把排除了多少条如实回给页面）
   excludedHint: (count) => `另有 ${count} 条已经售后过，未列出。`,
   // 按钮点击后的如实提示（**逻辑还没接**，不假装做成了）
