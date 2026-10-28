@@ -824,6 +824,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   /** 售后单不是列表：点卡片直接扫货品码，再进入售后候选页。 */
   async function scanAfterSales() {
     try {
+      const { scanCodeRaw } = await import('../scan/launch.js');
       const scanned = await scanCodeRaw('after_sales');
       const raw = String(scanned || '').trim();
       let recordId = '';
