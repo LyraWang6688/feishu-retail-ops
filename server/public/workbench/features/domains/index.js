@@ -1,4 +1,4 @@
-import { domainAllPages, domainById, domainPageById } from '../../config/domains.js';
+import { domainById } from '../../config/domains.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { createInventoryAdjustmentModule } from '../inventory/adjustment.js';
@@ -41,7 +41,7 @@ export function createDomainModule(domainId) {
   const hostOf = (pageId) => state.container?.querySelector(`[data-domain-host="${pageId}"]`);
 
   function activate(pageId) {
-    const page = domainPageById(domain, pageId);
+    const page = domain.pages.find((item) => item.id === pageId) || domain.pages[0];
     state.active = page.id;
     state.container.querySelectorAll('[data-domain-page]').forEach((tab) => {
       const on = tab.dataset.domainPage === page.id;
@@ -96,7 +96,7 @@ export function createDomainModule(domainId) {
       container.innerHTML = `
         <section class="panel">
           ${subTabsHtml}
-          ${domainAllPages(domain).map((page) => `<div class="sub-panel${page.id === state.active ? '' : ' hidden'}" data-domain-host="${escapeHtml(page.id)}"></div>`).join('\n          ')}
+          ${domain.pages.map((page) => `<div class="sub-panel${page.id === state.active ? '' : ' hidden'}" data-domain-host="${escapeHtml(page.id)}"></div>`).join('\n          ')}
         </section>`;
 
       container.addEventListener('click', (event) => {

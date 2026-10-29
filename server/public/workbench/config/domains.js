@@ -136,7 +136,7 @@ export const DOMAIN_TABS = [
         cards: [
           { icon: '📦', title: '采购', href: '/workbench/procurement.html' },
           { icon: '↩️', title: '退货', scanRealm: 'purchase_return' },
-          { icon: '✅', title: '验收', jumpTo: 'purchase-acceptance' },
+          { icon: '✅', title: '验收', href: '/workbench/purchase-acceptance.html' },
         ],
       },
       {
@@ -158,11 +158,6 @@ export const DOMAIN_TABS = [
           { icon: '📇', title: '供应商名录', href: SUPPLIER_DIRECTORY_URL },
         ],
       },
-    ],
-    // 验收页：**不是子 tab**，只作为「录单 → 验收」卡片的跳转目标。
-    // 不放进 `pages`（放进就会被渲染成顶部子 tab）；`targetPages` 只渲染页面宿主，不渲染 tab。
-    targetPages: [
-      { id: 'purchase-acceptance', label: '验收', kind: 'orders', mode: 'purchase' },
     ],
   },
 
@@ -276,14 +271,3 @@ export const domainById = (id) => {
   if (!domain) throw new Error(`config/domains.js 找不到领域：${id}`);
   return domain;
 };
-
-/** 所有可渲染页面 = 顶部子 tab 页面 + 只作为跳转目标的 targetPages（不渲染 tab）。 */
-export const domainAllPages = (domain) => [
-  ...domain.pages,
-  ...(Array.isArray(domain.targetPages) ? domain.targetPages : []),
-];
-
-/** 按页面 id 找页面（同时认 `pages` 和 `targetPages`）。 */
-export const domainPageById = (domain, pageId) => (
-  domainAllPages(domain).find((page) => page.id === pageId) || domain.pages[0]
-);

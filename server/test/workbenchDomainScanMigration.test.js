@@ -36,10 +36,11 @@ test('新 IA：销售/库存/供应录单入口存在，供应录单有三张卡
   assert.match(read('public/workbench/features/procurement/render.js'), /data-tap-target="\$\{escapeHtml\(tab\.tapTarget\)\}"/, '采购扫一扫必须带补货领域埋点');
   assert.match(read('public/workbench/features/procurement/render.js'), /data-pr-scan-disabled/, '采购扫一扫本轮必须是占位/禁用');
   assert.ok(domains.includes("scanRealm: 'purchase_return'"), '供应退货必须接领域扫码');
-  assert.ok(domains.includes("jumpTo: 'purchase-acceptance'"), '验收卡必须复用既有验收页');
-  assert.ok(domains.includes('id: \'purchase-acceptance\''), '验收页必须存在');
-  assert.equal(domains.includes('hidden: true'), false, '不再用 hidden 标记；验收页移到 targetPages');
-  assert.ok(domains.includes('targetPages: ['), '验收页必须放到 targetPages（只作跳转目标，不渲染 tab）');
+  assert.ok(domains.includes("href: '/workbench/purchase-acceptance.html'"), '验收卡必须跳独立验收页');
+  assert.equal(domains.includes('hidden: true'), false, '不再有 hidden 子页');
+  assert.equal(domains.includes('purchase-acceptance\', label'), false, '验收不再是领域子页配置');
+  const page = read('public/workbench/purchase-acceptance.html');
+  assert.ok(page.includes('createOrdersModule({ mode: \'purchase\' })'), '验收独立页必须复用既有订单模块');
   assert.equal(domains.includes("id: 'sales-accessory'"), false, '配品不再是独立子 tab');
 });
 
