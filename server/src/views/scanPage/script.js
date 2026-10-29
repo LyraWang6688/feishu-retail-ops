@@ -111,14 +111,15 @@ ${UI_TAP_SHARED_SOURCE}
           return;
         }
       }
-      // Return form: she taps the button with nothing checked, or with a quantity that is not a positive
-      //    integer. Field names / limits / all wording live on THIS form as data-* attributes
-      //    (no field-name concatenation and no user-visible text inside this script).
+      // Return form guard.
+      //   2026-10-29 (business-owner annotation on the return page: "what is this checkbox for?"):
+      //   the return form NO LONGER has checkboxes -- each row has ONE quantity input:
+      //   blank / 0 means "not returned", >=1 means "return this size". So the new page carries
+      //   no data-return-sizes-field; it only has data-return-qty-prefix (the script finds qty inputs by it).
+      //   Old cached pages (still rendering checkboxes) take the legacy branch below -- byte-for-byte unchanged.
       var returnSizesField = form.getAttribute('data-return-sizes-field') || '';
-      if (returnSizesField) {
-        var boxes = form.querySelectorAll('[name="' + returnSizesField + '"]');
-        var picked = [];
-        for (var b = 0; b < boxes.length; b += 1) { if (boxes[b].checked) picked.push(boxes[b]); }
+      var returnQtyPrefix = form.getAttribute('data-return-qty-prefix') || '';
+      if (returnSizesField || returnQtyPrefix) {
         var returnHintView = form.getAttribute('data-return-hint-view') || '';
         var showReturnHint = function (text, focusEl) {
           event.preventDefault();
@@ -126,39 +127,81 @@ ${UI_TAP_SHARED_SOURCE}
           if (hint) { hint.textContent = text; hint.removeAttribute('hidden'); }
           if (focusEl && focusEl.focus) focusEl.focus();
         };
-        if (!picked.length) {
-          showReturnHint(form.getAttribute('data-return-required-text') || '', null);
-          return;
-        }
         var maxSizes = parseInt(form.getAttribute('data-return-max-sizes') || '', 10);
-        if (maxSizes > 0 && picked.length > maxSizes) {
-          showReturnHint(form.getAttribute('data-return-limit-text') || '', null);
-          return;
-        }
         var maxQuantity = parseInt(form.getAttribute('data-return-max-quantity') || '', 10);
-        for (var p = 0; p < picked.length; p += 1) {
-          var quantityName = picked[p].getAttribute('data-qty-name') || '';
-          var quantityInput = quantityName ? form.querySelector('[name="' + quantityName + '"]') : null;
-          var raw = String((quantityInput && quantityInput.value) || '').replace(/^\s+|\s+$/g, '');
-          var isInteger = /^[0-9]+$/.test(raw);
-          var quantity = isInteger ? parseInt(raw, 10) : 0;
-          if (!isInteger || quantity < 1 || (maxQuantity > 0 && quantity > maxQuantity)) {
-            showReturnHint(form.getAttribute('data-return-quantity-text') || '', quantityInput);
+        if (returnSizesField) {
+          // legacy branch: checkbox + quantity (kept verbatim for cached pages / rollback)
+          var boxes = form.querySelectorAll('[name="' + returnSizesField + '"]');
+          var picked = [];
+          for (var b = 0; b < boxes.length; b += 1) { if (boxes[b].checked) picked.push(boxes[b]); }
+          if (!picked.length) {
+            showReturnHint(form.getAttribute('data-return-required-text') || '', null);
             return;
           }
-          // Her rule (2026-10-15): a return may not exceed the stock this size still has.
-          //    The row's cap is on the checkbox as data-stock; a row WITHOUT it means "stock unknown"
-          //    -- never treated as zero (that would block every size when the read failed).
-          var stockAttr = picked[p].getAttribute('data-stock');
-          if (stockAttr !== null && stockAttr !== '') {
-            var stockCap = parseInt(stockAttr, 10);
-            if (!isNaN(stockCap) && quantity > stockCap) {
-              var stockText = String(form.getAttribute('data-return-stock-text') || '')
-                .split('{size}').join(String(picked[p].value))
-                .split('{stock}').join(String(stockCap));
-              showReturnHint(stockText, quantityInput);
+          if (maxSizes > 0 && picked.length > maxSizes) {
+            showReturnHint(form.getAttribute('data-return-limit-text') || '', null);
+            return;
+          }
+          for (var p = 0; p < picked.length; p += 1) {
+            var quantityName = picked[p].getAttribute('data-qty-name') || '';
+            var quantityInput = quantityName ? form.querySelector('[name="' + quantityName + '"]') : null;
+            var raw = String((quantityInput && quantityInput.value) || '').replace(/^\s+|\s+$/g, '');
+            var isInteger = /^[0-9]+$/.test(raw);
+            var quantity = isInteger ? parseInt(raw, 10) : 0;
+            if (!isInteger || quantity < 1 || (maxQuantity > 0 && quantity > maxQuantity)) {
+              showReturnHint(form.getAttribute('data-return-quantity-text') || '', quantityInput);
               return;
             }
+            var stockAttr = picked[p].getAttribute('data-stock');
+            if (stockAttr !== null && stockAttr !== '') {
+              var stockCap = parseInt(stockAttr, 10);
+              if (!isNaN(stockCap) && quantity > stockCap) {
+                var stockText = String(form.getAttribute('data-return-stock-text') || '')
+                  .split('{size}').join(String(picked[p].value))
+                  .split('{stock}').join(String(stockCap));
+                showReturnHint(stockText, quantityInput);
+                return;
+              }
+            }
+          }
+        } else {
+          // new branch: quantity-only (blank / 0 = not returned)
+          var qtyInputs = form.querySelectorAll('[name^="' + returnQtyPrefix + '"]');
+          var qtyPicked = [];
+          for (var q = 0; q < qtyInputs.length; q += 1) {
+            var qtyRaw = String(qtyInputs[q].value || '').replace(/^\s+|\s+$/g, '');
+            if (qtyRaw === '') continue;                      // blank = not returned (not an error)
+            if (!/^[0-9]+$/.test(qtyRaw)) {                   // not an integer => block (user typo)
+              showReturnHint(form.getAttribute('data-return-quantity-text') || '', qtyInputs[q]);
+              return;
+            }
+            var qtyValue = parseInt(qtyRaw, 10);
+            if (qtyValue === 0) continue;                     // explicit 0 = not returned
+            if (maxQuantity > 0 && qtyValue > maxQuantity) {
+              showReturnHint(form.getAttribute('data-return-quantity-text') || '', qtyInputs[q]);
+              return;
+            }
+            var rowStockAttr = qtyInputs[q].getAttribute('data-stock');
+            if (rowStockAttr !== null && rowStockAttr !== '') {
+              var rowStockCap = parseInt(rowStockAttr, 10);
+              if (!isNaN(rowStockCap) && qtyValue > rowStockCap) {
+                var rowSize = qtyInputs[q].getAttribute('data-size') || '';
+                var rowStockText = String(form.getAttribute('data-return-stock-text') || '')
+                  .split('{size}').join(rowSize)
+                  .split('{stock}').join(String(rowStockCap));
+                showReturnHint(rowStockText, qtyInputs[q]);
+                return;
+              }
+            }
+            qtyPicked.push(qtyInputs[q]);
+          }
+          if (!qtyPicked.length) {
+            showReturnHint(form.getAttribute('data-return-required-text') || '', null);
+            return;
+          }
+          if (maxSizes > 0 && qtyPicked.length > maxSizes) {
+            showReturnHint(form.getAttribute('data-return-limit-text') || '', null);
+            return;
           }
         }
       }

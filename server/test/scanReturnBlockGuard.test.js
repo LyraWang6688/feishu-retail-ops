@@ -145,10 +145,12 @@ test('AC-RB1 ⭐⭐ 有库存的款 ⇒ **每个 `sellable > 0` 的尺码都在�
   const stocked = Object.keys(stocks).filter((size) => stocks[size] > 0);
   assert.equal(stocked.length, 5, '（复现数据：11 个码里 5 个有库存 —— 与生产日志一致 ✓）');
   for (const size of stocked) {
-    const row = rows.find((item) => item.includes(`value="${size}"`));
+    const row = rows.find((item) => item.includes(`data-size="${size}"`));
     assert.ok(row, `⭐ 有库存的 ${size} 码**必须**在清单里（能真红：少一个 ⇒ 红）`);
-    assert.ok(row.includes('type="checkbox"'), `${size} 码要能勾 ✓`);
+    // ⭐ 2026-10-29（业务负责人批注「这里的框是干啥用的呀？」）：勾选框退场 ⇒ 改钉"数量输入 + 上限"
+    assert.equal(row.includes('type="checkbox"'), false, `${size} 码**不再有勾选框** ✓`);
     assert.ok(row.includes('size-qty'), `${size} 码要能填数量 ✓`);
+    assert.ok(row.includes(`data-stock="${stocks[size]}"`), `${size} 码的数量输入带着库存上限 ✓`);
     assert.ok(row.includes(`data-view="return-stock"`), `${size} 码要显示库存数量 ✓`);
     assert.ok(row.includes(`>${stocks[size]}<`), `${size} 码的库存数量要是 ${stocks[size]} ✓`);
   }
@@ -162,7 +164,7 @@ test('AC-RB1b ⭐ 哨兵：**有数据时退货块不许退化成兜底卡**（�
   assert.equal(block.includes(SCAN_PAGE.texts.realmEmptyReturnBody), false,
     '⛔ 更不许说「这一款现在没有可退的尺码」✗（有库存还说这句 = 假话 ✓）');
   assert.ok(block.includes('data-view="purchase-return"'), '退货表单本身要在 ✓');
-  assert.ok(block.includes('data-return-sizes-field='), '表单契约在（`return_sizes` ✓）');
+  assert.ok(block.includes('data-return-qty-prefix='), '表单契约在（数量模式靠 `return_qty_` 前缀 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -258,10 +260,13 @@ test('AC-RB5 ⭐ 骨架的 `?data=1` 失败 ⇒ **人话 + 可重试**（不许�
 // AC-RB6 既有契约一条不放宽（后端字段名 / 表单属性逐字还在）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RB6 既有契约一条没放宽：`return_sizes` / `return_qty_<尺码>` / 上限与三句人话都在 ✓', async () => {
+test('AC-RB6 既有契约一条没放宽：`return_qty_<尺码>` / 上限与三句人话都在（勾选框已退场 ✓）', async () => {
   const block = await getReturnBlock(async () => view());
+  // ⭐ 2026-10-29 成对迁移：`name="return_sizes"`（勾选框字段）随勾选框一起退场；
+  //   判据**没丢** ⇒ 换成反向钉住"它不许回来" ✓（其余契约逐字还在 ✓）
+  assert.equal(block.includes(`name="${SCAN_WRITE.fields.returnSizes}"`), false,
+    '🔴 勾选框字段不许回来（塞回 ⇒ 红 ✓）');
   for (const needle of [
-    `name="${SCAN_WRITE.fields.returnSizes}"`,
     `${SCAN_WRITE.fields.returnQuantityPrefix}39`,
     'data-return-required-text=', 'data-return-quantity-text=', 'data-return-stock-text=',
     'data-return-max-quantity=', 'data-return-max-sizes=',
@@ -269,6 +274,6 @@ test('AC-RB6 既有契约一条没放宽：`return_sizes` / `return_qty_<尺码>
   ]) {
     assert.ok(block.includes(needle), `退货表单少了 ${needle} ✗`);
   }
-  // ⭐ 「退货数量 ≤ 该行库存」的上限仍在（#604 那条判据不放宽 ✓）
-  assert.match(block, /data-stock="1"[^>]*value="39"|value="39"[^>]*data-stock="1"/, '39 码上限 = 库存 1 ✓');
+  // ⭐ 「退货数量 ≤ 该行库存」的上限仍在（#604 那条判据不放宽 ✓；上限现在挂在数量输入上 ✓）
+  assert.match(block, /data-stock="1"[^>]*data-size="39"|data-size="39"[^>]*data-stock="1"/, '39 码上限 = 库存 1 ✓');
 });

@@ -133,8 +133,9 @@ const sellableSizesOf = (html, realm) => {
     return [...block.matchAll(/data-purchase-size="(\d+)"[\s\S]*?<\/li>/g)]
       .filter((m) => m[0].includes('>现货<')).map((m) => m[1]);
   }
-  // 退货：列出来 = 有数量可退（`<input … name="return_sizes" value="NN">`）
-  return [...block.matchAll(/name="return_sizes" value="(\d+)"/g)].map((m) => m[1]);
+  // 退货：列出来 = 有数量可退（⭐ 2026-10-29：改成"数量输入即选择" ⇒ 每行 `<input … data-size="NN">`；
+  //   勾选框已退场，但"列出来 = 有数量"这条口径**一个字没变** ✓）
+  return [...block.matchAll(/data-size="(\d+)"/g)].map((m) => m[1]);
 };
 
 /**
@@ -382,7 +383,13 @@ test('AC-ST2 44 码 1 双在「未标状态」⇒ 四个 tab 的显示逐字钉�
   // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：
   //   改前逐字：`assert.equal(/name="return_sizes"/.test(purchaseReturn), false, '退货页一行可勾的尺码都没有')`
   //   改后逐字：⭐ 44（未标状态 1 双）新口径**算可退** ⇒ 退货页**有**可勾尺码 ⇒ **断言反转**（实测 actual: true ✓ 强度不降 ✗）
-  assert.equal(/name="return_sizes"/.test(purchaseReturn), true, '⭐ 退货页有可勾尺码（44 现算可退 ✓ 实测 ✓）');
+  // ⭐ 2026-10-29（业务负责人退货页批注「这里的框是干啥用的呀？」）**成对迁移**：
+  //   改前逐字：`assert.equal(/name="return_sizes"/.test(purchaseReturn), true, '退货页有可勾尺码 …')`
+  //   改后逐字：退货改成"数量输入即选择" ⇒ 勾选框退场；判据换成"**44 那一行在清单里**"（强度不降 ✓）
+  //   依据 = 她 2026-10-29 的批注（同一件事：选哪些码由数量表达即可）。
+  assert.equal(/name="return_sizes"/.test(purchaseReturn), false,
+    '🔴 勾选框字段已退场（塞回 ⇒ 红 ✓）');
+  assert.equal(/data-size="44"/.test(purchaseReturn), true, '⭐ 退货页列出了 44（有数量可退 ✓ 实测 ✓）');
 
   // 复现自证：同一双鞋，两个 tab 两个结论
   assert.ok(inventory.includes('<td>1</td>'), '库存页确实数到了那 1 双');

@@ -194,7 +194,8 @@ test('AC-RT5b 🔴 她这次**没点**的几处一个字都不许动（尺码行
   assert.match(block, new RegExp(`<button type="submit"[^>]*data-multi-add[^>]*name="${MULTI_ITEM_ORDER.wire.addAction}"`),
     '「＋ 再加一个货品」那颗入口仍在（同表单的第二颗 submit · 字段名走 `config/multiItemOrder.js` ✓）');
   assert.match(block, /name="multi_items"/, '字段名 `multi_items` 原样透传 ✓');
-  assert.match(block, /name="return_sizes"/, '字段名原样 ✓');
+  // ⭐ 2026-10-29（退货改"数量输入即选择"）：勾选框字段随勾选框退场 ⇒ 契约改钉**数量前缀**（判据没丢 ✓）
+  assert.match(block, /data-return-qty-prefix="return_qty_"/, '字段名契约原样（数量前缀 ✓）');
   assert.match(block, /name="action" value="return_purchase"/, '动作名原样 ✓');
   assert.match(block, /data-view="purchase-return"/, '定位标记仍在（全仓 6+ 处用例拿它当锚 ✓）');
   // 🔴 写侧那句 `returnButton` **一个字不动**（红线 `config/scanWrite.js` ✗）——
