@@ -109,7 +109,7 @@ test('现货待收单点「成交」：只补收款，库存与明细履约状�
       销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260,
     } }],
     paymentRecord: [{ record_id: 'receipt_u1', fields: {
-      关联销售单: ['order_unpaid'], 收款金额: 260, 收款状态: '未收款',
+      关联销售单: ['order_unpaid'], 交易金额: 260, 钱款状态: '未收款',
     } }],
   });
   const inventory = fakeInventory();
@@ -123,10 +123,10 @@ test('现货待收单点「成交」：只补收款，库存与明细履约状�
 
   // ① 那条「未收款」→「已收款」：收款时间 = 点击时间，方向补「收入」。
   const receipt = gateway.records.get('paymentRecord')[0];
-  assert.equal(receipt.fields['收款状态'], '已收款');
-  assert.deepEqual(receipt.fields['收款方式'], ['method_1']);
+  assert.equal(receipt.fields['钱款状态'], '已收款');
+  assert.deepEqual(receipt.fields['交易方式'], ['method_1']);
   assert.equal(receipt.fields['交易方向'], '收入');
-  assert.ok(Number(receipt.fields['收款日']) >= before, '收款时间必须是点击那一刻');
+  assert.ok(Number(receipt.fields['收付日']) >= before, '收款时间必须是点击那一刻');
   assert.equal(result.collectedAmount, 260);
   assert.deepEqual(result.collectedPaymentIds, ['receipt_u1']);
 
@@ -164,10 +164,10 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
     } }],
     paymentRecord: [
       { record_id: 'receipt_p1', fields: {
-        关联销售单: ['order_prepaid'], 收款金额: 200, 收款状态: '已收款', 收款方式: ['method_1'],
+        关联销售单: ['order_prepaid'], 交易金额: 200, 钱款状态: '已收款', 交易方式: ['method_1'],
       } },
       { record_id: 'receipt_p2', fields: {
-        关联销售单: ['order_prepaid'], 收款金额: 200, 收款状态: '未收款',
+        关联销售单: ['order_prepaid'], 交易金额: 200, 钱款状态: '未收款',
       } },
     ],
   });
@@ -181,14 +181,14 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
 
   // ① 补收款：那条「未收款」→「已收款」+ 交易方向「收入」+ 收款时间。
   const pending = gateway.records.get('paymentRecord').find((row) => row.record_id === 'receipt_p2');
-  assert.equal(pending.fields['收款状态'], '已收款');
+  assert.equal(pending.fields['钱款状态'], '已收款');
   assert.equal(pending.fields['交易方向'], '收入');
-  assert.deepEqual(pending.fields['收款方式'], ['method_2']);
-  assert.ok(Number(pending.fields['收款日']) > 0);
+  assert.deepEqual(pending.fields['交易方式'], ['method_2']);
+  assert.ok(Number(pending.fields['收付日']) > 0);
   assert.equal(result.collectedAmount, 200);
   // 原来那条已收款（定金）不动，也不重复写方向。
   const deposit = gateway.records.get('paymentRecord').find((row) => row.record_id === 'receipt_p1');
-  assert.equal(deposit.fields['收款状态'], '已收款');
+  assert.equal(deposit.fields['钱款状态'], '已收款');
   assert.equal(deposit.fields['交易方向'], undefined);
 
   // ② 明细：未交付 → 已交付。
@@ -220,7 +220,7 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
       销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260,
     } }],
     paymentRecord: [{ record_id: 'receipt_u1', fields: {
-      关联销售单: ['order_unpaid'], 收款金额: 260, 收款状态: '未收款',
+      关联销售单: ['order_unpaid'], 交易金额: 260, 钱款状态: '未收款',
     } }],
   });
   const inventory = fakeInventory();
@@ -251,14 +251,14 @@ test('未收款那条不写交易方向；变成已收款的那一刻才写「�
 
   const pending = await payments.record({ salesEntryRecordId: 'order_1', amount: 100, status: '未收款' });
   const pendingFields = gateway.records.get('paymentRecord').find((row) => row.record_id === pending.recordId).fields;
-  assert.equal(pendingFields['收款状态'], '未收款');
+  assert.equal(pendingFields['钱款状态'], '未收款');
   assert.equal(pendingFields['交易方向'], undefined, '钱还没到账，方向必须留空');
 
   await payments.collectPendingReceipt(pending.recordId, {
     salesEntryRecordId: 'order_1', amount: 100, method: '微信', receivedAt: Date.now(),
   });
   assert.equal(pendingFields['交易方向'], '收入');
-  assert.equal(pendingFields['收款状态'], '已收款');
+  assert.equal(pendingFields['钱款状态'], '已收款');
 
   // 正常收款（一次写成的已收款）同样直接带方向。
   const paid = await payments.record({ salesEntryRecordId: 'order_1', amount: 50, method: '现金' });
@@ -270,13 +270,13 @@ test('待平台结算结清时补写「收入」（到账那一刻才算收款�
   const gateway = fakeGateway({
     salesEntry: [{ record_id: 'order_1', fields: { '写入状态': '成功' } }],
     paymentRecord: [{ record_id: 'receipt_1', fields: {
-      关联销售单: ['order_1'], 收款金额: 100, 收款状态: '待平台结算',
+      关联销售单: ['order_1'], 交易金额: 100, 钱款状态: '待平台结算',
     } }],
   });
   const payments = new PaymentService({ gateway });
   await payments.settlePlatformReceipt('receipt_1', Date.now());
   const fields = gateway.records.get('paymentRecord')[0].fields;
-  assert.equal(fields['收款状态'], '已收款');
+  assert.equal(fields['钱款状态'], '已收款');
   assert.equal(fields['交易方向'], '收入');
 });
 
@@ -397,12 +397,12 @@ const reminderSeed = () => ({
     { record_id: 'd_c9', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash_old'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
   ],
   paymentRecord: [
-    { record_id: 'r_c1', fields: { 关联销售单: ['order_cash_pending'], 收款金额: 260, 收款状态: '未收款' } },
-    { record_id: 'r_p2a', fields: { 关联销售单: ['order_prepaid_pending'], 收款金额: 200, 收款状态: '已收款' } },
-    { record_id: 'r_p2b', fields: { 关联销售单: ['order_prepaid_pending'], 收款金额: 200, 收款状态: '未收款' } },
-    { record_id: 'r_c2', fields: { 关联销售单: ['order_cash'], 收款金额: 100, 收款状态: '已收款' } },
-    { record_id: 'r_c3', fields: { 关联销售单: ['order_cash_done'], 收款金额: 100, 收款状态: '已收款' } },
-    { record_id: 'r_c9', fields: { 关联销售单: ['order_cash_old'], 收款金额: 100, 收款状态: '未收款' } },
+    { record_id: 'r_c1', fields: { 关联销售单: ['order_cash_pending'], 交易金额: 260, 钱款状态: '未收款' } },
+    { record_id: 'r_p2a', fields: { 关联销售单: ['order_prepaid_pending'], 交易金额: 200, 钱款状态: '已收款' } },
+    { record_id: 'r_p2b', fields: { 关联销售单: ['order_prepaid_pending'], 交易金额: 200, 钱款状态: '未收款' } },
+    { record_id: 'r_c2', fields: { 关联销售单: ['order_cash'], 交易金额: 100, 钱款状态: '已收款' } },
+    { record_id: 'r_c3', fields: { 关联销售单: ['order_cash_done'], 交易金额: 100, 钱款状态: '已收款' } },
+    { record_id: 'r_c9', fields: { 关联销售单: ['order_cash_old'], 交易金额: 100, 钱款状态: '未收款' } },
   ],
 });
 
@@ -445,8 +445,8 @@ test('⭐⭐ 数据起点：注入 10-14 与 10-15 两单 ⇒ **只有 10-15 被
     { record_id: 'd_since', fields: { 销售单号: ['order_since'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
   ];
   seed.paymentRecord = [
-    { record_id: 'r_before', fields: { 关联销售单: ['order_before'], 收款金额: 260, 收款状态: '未收款' } },
-    { record_id: 'r_since', fields: { 关联销售单: ['order_since'], 收款金额: 260, 收款状态: '未收款' } },
+    { record_id: 'r_before', fields: { 关联销售单: ['order_before'], 交易金额: 260, 钱款状态: '未收款' } },
+    { record_id: 'r_since', fields: { 关联销售单: ['order_since'], 交易金额: 260, 钱款状态: '未收款' } },
   ];
   const service = new SecondDeliveryService({ gateway: fakeGateway(seed) });
   const orders = await service.listPendingDeliveries({ now: DAY });
@@ -472,7 +472,7 @@ test('这一单是哪天的：明细「销售日」优先、主表「录单日�
 test('单条数据不自洽（收款超过成交额）时跳过它，其余单照旧进候选', async () => {
   const seed = reminderSeed();
   seed.paymentRecord.push({ record_id: 'r_bad', fields: {
-    关联销售单: ['order_cash_pending'], 收款金额: 9999, 收款状态: '已收款',
+    关联销售单: ['order_cash_pending'], 交易金额: 9999, 钱款状态: '已收款',
   } });
   const service = new SecondDeliveryService({ gateway: fakeGateway(seed) });
   const orders = await service.listPendingDeliveries({ now: NOW });

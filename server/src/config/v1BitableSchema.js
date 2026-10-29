@@ -299,28 +299,28 @@ const V1_BITABLE_SCHEMA = {
       },
     },
     paymentRecord: {
-      tableName: '收款明细',
+      // 2026-10-29 生产表改名：收款明细 → S交易明细（table_id 不变）；字段同步改名。
+      tableName: 'S交易明细',
       tableId: getEnv('FEISHU_V1_PAYMENT_RECORD_TABLE_ID'),
       fields: {
         salesEntry: '关联销售单',
-        // 产品负责人 2026-10-05 把这张表的「支付方式」改名为「收款方式」（字段本身不变，
+        // 2026-10-29 生产改名：原「收款方式」→「交易方式」（字段本身不变，
         // 仍是单选关联「收款方式管理」）。schema 没跟上就会用飞书里已不存在的字段名写入，
         // 收款记录静默失败——正是 deploy_build.sh 的 schema 闸门拦住的那次。
-        method: '收款方式',
+        method: '交易方式',
         // 「交易方向」（单选：收入 / 退回，2026-10-05 新增）同样为退换货链路预留：
         // 本次只建立映射、不实现逻辑，理由同上。
         tradeDirection: '交易方向',
-        amount: '收款金额',
-        status: '收款状态',
-        // ⭐ 2026-10-12 业务负责人定的：**收款明细ID** = `{销售单号}-收款-{两位序号}`。
+        amount: '交易金额',
+        status: '钱款状态',
+        // 2026-10-29 生产改名：原「收款明细ID」→「交易明细ID」。
         //    只读核过生产真表：这一列是 **type=1 Text**（不是自动编号）⇒ 由代码写。
         //    生成规则与"占位行也占号"的理由见 `services/salesRecordIds.js`。
-        receiptId: '收款明细ID',
-        // ⚠️ 2026-10-12 只读核过生产真表：「收款时间」这一列**已改名为「收款日」**，
-        //    且类型是 **type=5 DateTime（人工日期列）**——**不是**飞书自动字段。
+        receiptId: '交易明细ID',
+        // 2026-10-29 生产改名：原「收款日」→「收付日」；类型仍是 type=5 DateTime（人工日期列）。
         //    ⇒ 它仍然是**全仓唯一允许代码写的时间列**（AGENTS《时间字段》那条口径不变：
-        //      只有"她点确认那一刻"是程序知道的）。写入值仍是 epoch 毫秒，与改名前一致。
-        receivedAt: '收款日',
+        //      只有"她点确认那一刻"是程序知道的）。写入值仍是 epoch 毫秒。
+        receivedAt: '收付日',
         // ⭐ 2026-10-08：9 点推送【现货待收】那块的时间窗按**收款明细的创建时间**算
         //   （业务负责人的口径：「抖音团购券是从收款明细里的**创建时间**开始算」，
         //    同一条口径也适用于这块的 7 天窗；见 `config/pendingPushCandidates`）。
@@ -376,12 +376,12 @@ const V1_BITABLE_SCHEMA = {
     //   `confirmPurchaseRequest`）：它写的是**「报货批次」＋「报货信息」**两张表，
     //   全仓**没有**任何 `purchaseReport` 读写 —— 扫码补货报单与工作台都还在用它。
     //   ⚠️ 采购领域现在的三张表：报货批次（`purchaseOrderBatch`）· 报货信息
-    //   （`purchaseRequest`，采购申请/退货明细的落点，**保留**）· 付款明细（`paymentDetail`，占位）。
-    // ⭐⭐ 「付款明细」（业务负责人 2026-10-09 在生产 Base 新建的表，`tblWaafeodl2oILI`）。
+    //   （`purchaseRequest`，采购申请/退货明细的落点，**保留**）· P交易明细（`paymentDetail`，占位）。
+    // ⭐⭐ 「P交易明细」（原名「付款明细」，业务负责人 2026-10-09 在生产 Base 新建，`tblWaafeodl2oILI`）。
     //
     // 只读核对到的事实（服务器上走项目自己的只读接口 `appTable.list` / `appTableField.list`）：
     //   · 它现在**只有 1 列**，而且是主字段「文本」（`type=1`）—— **一个业务列都还没有**；
-    //   · 全仓（`server/src`）grep：`付款明细` / `paymentDetail` 零读写点、零业务链路引用。
+    //   · 全仓（`server/src`）grep：`P交易明细` / `paymentDetail` 零读写点、零业务链路引用。
     // ⇒ 本次**只登记这张表**（表名 + table_id），**不建任何字段映射、不接任何写入点**：
     //   列还没定，此刻编一个映射，只会让她下一次改列名时踩空（"写库抛未配置语义字段"那一类坑）。
     // ⭐ 2026-10-17（业务负责人指令）**已进 `V1_SCHEMA_SCOPES.sales`** ——
@@ -391,9 +391,11 @@ const V1_BITABLE_SCHEMA = {
     //   等她定了列 ⇒ ① 在这里补 `fields`；② 把新列接进对应链路（判断要不要写入点）。
     // ⚠️ table_id 仍走环境变量（`FEISHU_V1_PAYMENT_DETAIL_TABLE_ID`），默认值 = 生产真表的 id。
     paymentDetail: {
-      tableName: '付款明细',
+      // 2026-10-29 生产表改名：付款明细 → P交易明细（table_id 不变）。
+      tableName: 'P交易明细',
       tableId: getEnv('FEISHU_V1_PAYMENT_DETAIL_TABLE_ID'),
-      fields: {},
+      // 真表当前只有主字段「文本」；代码尚无读写点，登记出来供闸门核对。
+      fields: { text: '文本' },
     },
     // ⚠️ 表名沿革：「采购申请」→（2026-10-05）「单据信息」→（2026-10-07）「具体信息」
     //   →（同日深夜）**「报货信息」**（业务负责人当天的第三次改名，她只改名字、tableId 不变）。

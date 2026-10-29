@@ -94,10 +94,10 @@ const references = {
 
 /** 该单的收款行（形状：金额 / 状态 / 方式 / 收款日）—— 断言都用它，别写第二套读法。 */
 const receiptsOf = (gateway) => (gateway.records.get('paymentRecord') || []).map((row) => ({
-  amount: row.fields['收款金额'],
-  status: row.fields['收款状态'],
-  method: row.fields['收款方式'],
-  receivedAt: row.fields['收款日'],
+  amount: row.fields['交易金额'],
+  status: row.fields['钱款状态'],
+  method: row.fields['交易方式'],
+  receivedAt: row.fields['收付日'],
 }));
 
 // ── AC-OWED-1 少付 ⇒ 自动【未收款】差额 ─────────────────────────────────────

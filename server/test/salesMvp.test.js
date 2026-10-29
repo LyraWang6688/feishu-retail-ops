@@ -109,7 +109,7 @@ test('mixed payment creates two receipts for the same order and retry is idempot
   assert.equal(gateway.records.get('salesEntry')[0].fields['赠品'], '鞋垫一双');
   assert.equal(gateway.records.get('salesDetail')[0].fields['赠品'], undefined);
   assert.equal(gateway.records.get('paymentRecord').length, 2);
-  assert.deepEqual(gateway.records.get('paymentRecord').map((record) => record.fields['收款金额']), [150, 100]);
+  assert.deepEqual(gateway.records.get('paymentRecord').map((record) => record.fields['交易金额']), [150, 100]);
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
 });
 
@@ -157,12 +157,12 @@ test('deposit creates paid and unpaid receipts; follow-up 记一条新收款 + �
   assert.equal(detail.fields['履约状态'], '未交付');
   assert.equal(detail.fields['数量'], undefined);
   const receipts = gateway.records.get('paymentRecord');
-  assert.deepEqual(receipts.map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
+  assert.deepEqual(receipts.map((row) => [row.fields['交易金额'], row.fields['钱款状态']]),
     [[100, '已收款'], [140, '未收款']]);
-  assert.equal(receipts[1].fields['收款日'], undefined);
-  assert.equal(receipts[1].fields['收款方式'], undefined);
+  assert.equal(receipts[1].fields['收付日'], undefined);
+  assert.equal(receipts[1].fields['交易方式'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], undefined);
-  assert.equal((await gateway.get('salesEntry', 'order_1')).fields['收款状态'], undefined);
+  assert.equal((await gateway.get('salesEntry', 'order_1')).fields['钱款状态'], undefined);
   const pendingId = receipts[1].record_id;
   const payments = new PaymentService({ gateway, references });
   const followup = new SalesFollowupService({ gateway, payments,
@@ -180,12 +180,12 @@ test('deposit creates paid and unpaid receipts; follow-up 记一条新收款 + �
   assert.equal(gateway.records.get('paymentRecord').length, 3,
     '已收 100 + 新记的 140 + 那条占位行（金额已同步为 0）');
   const settled = await gateway.get('paymentRecord', pendingId);
-  assert.equal(settled.fields['收款状态'], '未收款', '占位行的**状态一个字没动**（不删、也不改状态）');
-  assert.equal(settled.fields['收款金额'], 0, '金额同步成 0（收满）');
+  assert.equal(settled.fields['钱款状态'], '未收款', '占位行的**状态一个字没动**（不删、也不改状态）');
+  assert.equal(settled.fields['交易金额'], 0, '金额同步成 0（收满）');
   const fresh = await gateway.get('paymentRecord', result.recordId);
-  assert.equal(fresh.fields['收款状态'], '已收款');
-  assert.equal(fresh.fields['收款金额'], 140);
-  assert.equal(fresh.fields['收款方式'][0], 'method_微信', '方式照她说（`resolvePaymentMethod` 解析出来的记录）');
+  assert.equal(fresh.fields['钱款状态'], '已收款');
+  assert.equal(fresh.fields['交易金额'], 140);
+  assert.equal(fresh.fields['交易方式'][0], 'method_微信', '方式照她说（`resolvePaymentMethod` 解析出来的记录）');
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
   const inventoryCalls = [];
   const delivery = new SalesDeliveryService({ gateway, inventory: {
@@ -204,13 +204,13 @@ test('platform voucher has no receipt time until verified settlement', async () 
   const cash = await payments.record({ salesEntryRecordId: 'order_1', method: '微信', amount: 169 });
   const voucher = await payments.record({ salesEntryRecordId: 'order_1', method: '抖音团购券',
     amount: 85.4, status: '待平台结算' });
-  assert.equal((await gateway.get('paymentRecord', cash.recordId)).fields['收款状态'], '已收款');
-  assert.ok((await gateway.get('paymentRecord', cash.recordId)).fields['收款日'] > 0);
-  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '待平台结算');
-  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款日'], undefined);
+  assert.equal((await gateway.get('paymentRecord', cash.recordId)).fields['钱款状态'], '已收款');
+  assert.ok((await gateway.get('paymentRecord', cash.recordId)).fields['收付日'] > 0);
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['钱款状态'], '待平台结算');
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收付日'], undefined);
   await payments.settlePlatformReceipt(voucher.recordId, 1234567890000);
-  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款状态'], '已收款');
-  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收款日'], 1234567890000);
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['钱款状态'], '已收款');
+  assert.equal((await gateway.get('paymentRecord', voucher.recordId)).fields['收付日'], 1234567890000);
 });
 
 test('sale records cash and pending voucher on one order without treating voucher as received', async () => {
@@ -222,9 +222,9 @@ test('sale records cash and pending voucher on one order without treating vouche
       { method: '抖音团购券', amount: 85.4, status: '待平台结算' }] });
   const receipts = gateway.records.get('paymentRecord');
   assert.equal(receipts.length, 2);
-  assert.equal(receipts[0].fields['收款日'] > 0, true);
-  assert.equal(receipts[1].fields['收款日'], undefined);
-  assert.equal(gateway.records.get('salesEntry')[0].fields['收款状态'], undefined);
+  assert.equal(receipts[0].fields['收付日'] > 0, true);
+  assert.equal(receipts[1].fields['收付日'], undefined);
+  assert.equal(gateway.records.get('salesEntry')[0].fields['钱款状态'], undefined);
   await sale.confirm({ salesEntryRecordId: 'order_1',
     items: [{ itemNo: '2A831-18', size: 44, quantity: 1, actualAmount: 254.4 }],
     payments: [{ method: '微信', amount: 169 },
@@ -241,8 +241,8 @@ test('voucher-only sale creates one pending receipt and no zero-value cash recei
   ], payments: [{ method: '抖音团购券', amount: 85.4, status: '待平台结算' }] });
   const payments = gateway.records.get('paymentRecord');
   assert.equal(payments.length, 1);
-  assert.equal(payments[0].fields['收款状态'], '待平台结算');
-  assert.equal(payments[0].fields['收款日'], undefined);
+  assert.equal(payments[0].fields['钱款状态'], '待平台结算');
+  assert.equal(payments[0].fields['收付日'], undefined);
   // ⭐ 2026-10-08：赠品在**销售主表**；明细行不带它（`posted.detailRecordIds[0]` 那一行）。
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['赠品'], '袜子两双');
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['赠品'], undefined);
@@ -274,7 +274,7 @@ test('unpaid sale can be delivered once, then later payment does not touch inven
   const posted = await sales.confirm({ salesEntryRecordId: 'order_1',
     items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 100 }], owed: 100 });
   assert.equal(gateway.records.get('paymentRecord').length, 1);
-  assert.equal(gateway.records.get('paymentRecord')[0].fields['收款状态'], '未收款');
+  assert.equal(gateway.records.get('paymentRecord')[0].fields['钱款状态'], '未收款');
   const calls = [];
   const delivery = new SalesDeliveryService({ gateway, inventory: { applySale: async (input) => { calls.push(input); return { quantity: 0 }; } } });
   const request = { salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds };
@@ -311,8 +311,8 @@ test('她说了"收了 100"、没说欠：成交即实收（差额 0），不补
 
   const receipts = gateway.records.get('paymentRecord');
   assert.equal(receipts.length, 1, '差额 0（成交=实收=100）⇒ 绝不能挂未收款');
-  assert.equal(receipts[0].fields['收款金额'], 100);
-  assert.equal(receipts[0].fields['收款状态'], '已收款');
+  assert.equal(receipts[0].fields['交易金额'], 100);
+  assert.equal(receipts[0].fields['钱款状态'], '已收款');
   const progress = await new SalesProgressService({ gateway }).forOrder('order_1',
     { detailRecordIds: posted.detailRecordIds, paymentRecordIds: posted.paymentRecordIds });
   assert.equal(progress.paymentStatus, '已收款');
@@ -333,9 +333,9 @@ test('她明说"还欠 19"：补一条未收款 19，订单停在已确认', asy
     payments: [{ method: '微信', amount: 100 }], owed: 19 });
 
   const receipts = gateway.records.get('paymentRecord');
-  assert.deepEqual(receipts.map((row) => [row.fields['收款金额'], row.fields['收款状态']]),
+  assert.deepEqual(receipts.map((row) => [row.fields['交易金额'], row.fields['钱款状态']]),
     [[100, '已收款'], [19, '未收款']]);
-  assert.equal(receipts[1].fields['收款日'], undefined);
+  assert.equal(receipts[1].fields['收付日'], undefined);
   const progress = await new SalesProgressService({ gateway }).forOrder('order_1',
     { detailRecordIds: posted.detailRecordIds, paymentRecordIds: posted.paymentRecordIds });
   assert.equal(progress.pendingAmount, 19);
@@ -474,14 +474,14 @@ test('newly created detail and receipt are resolved by record ID when list resul
     items: [{ itemNo: 'A100', size: 38, quantity: 1, actualAmount: 89 }],
     payments: [{ method: '微信', amount: 89 }] });
   const order = await gateway.get('salesEntry', 'order_1');
-  assert.equal(order.fields['收款状态'], undefined);
+  assert.equal(order.fields['钱款状态'], undefined);
   const delivery = new SalesDeliveryService({ gateway, inventory: {
     applySale: async () => ({ sampleConsumedQuantity: 0 }),
   } });
   await delivery.deliver({ salesEntryRecordId: 'order_1', detailRecordIds: posted.detailRecordIds,
     paymentRecordIds: posted.paymentRecordIds });
   assert.equal(order.fields['履约状态'], undefined);
-  assert.equal(order.fields['收款状态'], undefined);
+  assert.equal(order.fields['钱款状态'], undefined);
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['交付数量'], undefined);
   assert.equal((await gateway.get('salesDetail', posted.detailRecordIds[0])).fields['履约状态'], '已交付');
 });
@@ -504,7 +504,7 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
     detail.fields['编号'] = linked(`product_${input.items[index].itemNo}`);
   }
   receipt.fields['关联销售单'] = linked('order_1');
-  receipt.fields['收款方式'] = linked('method_微信');
+  receipt.fields['交易方式'] = linked('method_微信');
   // 上一次尝试在「资金状态」上留了失败标记（旧「确认状态（旧）」那一列已不存在）。
   (await gateway.get('salesEntry', 'order_1')).fields['资金状态'] = '写入失败';
 
