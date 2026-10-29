@@ -18,6 +18,14 @@
 // ⭐ 「销售日」**只认销售明细的「销售日」**：**没有兜底**（业务负责人 2026-10-29 逐字：
 //   「不用你做兜底，它就是来自于销售明细里面的销售日」）⇒ 没有销售日的行不进候选。
 
+/**
+ * ⭐⭐ 2026-10-29（业务负责人定的口径）：「**什么叫售后**：除了『未交付』状态之外，
+ *   其余所有的状态都要做售后」⇒ 候选 = **已交付（或其它非「未交付」）**的明细；
+ *   **「未交付」的不列**（货还没交到她手上，退回/换货/赔货都无从谈起）。
+ * ⚠️ 这是**读侧筛选**的口径；「未交付」这个字面值只在这里出现一次（配置先行）。
+ */
+const SCAN_UNDELIVERED_FULFILLMENT = '未交付';
+
 /** 默认 / 最长的查找窗口（**上海自然日**，含今天）。与既有候选接口（`afterSalesPage.days = 7`）同一口径。 */
 const SCAN_WINDOW_DAYS_DEFAULT = 7;
 const SCAN_WINDOW_DAYS_MAX = 30;
@@ -56,6 +64,7 @@ const resolveScanWindowDays = (raw) => {
 };
 
 module.exports = {
+  SCAN_UNDELIVERED_FULFILLMENT,
   SCAN_WINDOW_DAYS_DEFAULT,
   SCAN_WINDOW_DAYS_MAX,
   SCAN_FIELD_KEYS,

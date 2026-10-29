@@ -60,8 +60,10 @@ test('AC1/AC2 ⭐ 只回这款货品近 7 天已入账的销售明细，并带�
   assert.equal(out.product.item_no, 'XHB8095');
   assert.equal(out.product.color, '全黑');
   assert.equal(out.days, 7);
-  // d1/d2 是这一款货品、近 7 天、主表已入账的 → 候选；按尺码小→大
-  assert.deepEqual(out.candidates.map((item) => item.sales_detail_record_id), ['d1', 'd2']);
+  // d1 是这一款货品、近 7 天、主表已入账、且**已交付** → 候选。
+  // ⭐ 2026-10-29（她定的口径）：「售后 = 除『未交付』之外的状态」⇒ d2（未交付）**不列**。
+  assert.deepEqual(out.candidates.map((item) => item.sales_detail_record_id), ['d1']);
+  assert.ok(!out.candidates.some((item) => item.sales_detail_record_id === 'd2'), '未交付的明细不许出现');
   const first = out.candidates[0];
   assert.equal(first.order_no, 'XSD-1');
   assert.equal(first.size, 41);
@@ -71,14 +73,25 @@ test('AC1/AC2 ⭐ 只回这款货品近 7 天已入账的销售明细，并带�
   assert.equal(first.fulfillment_status, '已交付');
 });
 
+/**
+ * ⭐⭐ 2026-10-29（业务负责人定的口径）：「**什么叫售后**：除了『未交付』状态之外，
+ *   其余所有的状态都要做售后」⇒ 候选只列**已交付（非未交付）**的明细；未交付单独计数。
+ */
+test('AC1b ⭐⭐ 口径：未交付不列（售后 = 除「未交付」之外的状态）', async () => {
+  const out = await build().listCandidates({ productRecordId: 'p1' });
+  assert.ok(!out.candidates.some((item) => item.fulfillment_status === '未交付'), '未交付的明细不许出现在候选里');
+  assert.equal(out.excluded.notDelivered, 1, '未交付要单独计数（如实回页面，不静默）');
+});
+
 test('AC3 ⭐ 排除的三类都如实计数：已售后过 / 没入账 / 不在时间窗', async () => {
   const out = await build().listCandidates({ productRecordId: 'p1' });
-  // d5 已退货 ⇒ alreadyAfterSales；d3 主表写入失败 ⇒ notPosted；d4 40 天前 ⇒ outOfWindow
+  // d2 未交付 ⇒ notDelivered；d5 已退货 ⇒ alreadyAfterSales；d3 主表写入失败 ⇒ notPosted；
+  // d4 40 天前 ⇒ outOfWindow
   assert.deepEqual(out.excluded, {
-    alreadyAfterSales: 1, notPosted: 1, outOfWindow: 1, missingSalesDate: 0,
+    notDelivered: 1, alreadyAfterSales: 1, notPosted: 1, outOfWindow: 1, missingSalesDate: 0,
   });
   const ids = out.candidates.map((item) => item.sales_detail_record_id);
-  for (const excludedId of ['d3', 'd4', 'd5']) assert.ok(!ids.includes(excludedId), `${excludedId} 不该出现在候选里`);
+  for (const excludedId of ['d2', 'd3', 'd4', 'd5']) assert.ok(!ids.includes(excludedId), `${excludedId} 不该出现在候选里`);
 });
 
 test('AC4 ⭐⭐ 销售日**只认销售明细的「销售日」**：缺了就不列（绝不拿「录单日」兜底）', async () => {
@@ -163,7 +176,7 @@ test('AC5b 路由：缺参数 → 400（success:false + 人话）；读库失败
     assert.equal(ok.status, 200);
     const data = await ok.json();
     assert.equal(data.success, true);
-    assert.equal(data.candidates.length, 2);
+    assert.equal(data.candidates.length, 1, '未交付的那条不列 ⇒ 只剩 1 条');
   });
 
   const broken = { async listCandidates() { throw new Error('TableIdNotFound'); } };

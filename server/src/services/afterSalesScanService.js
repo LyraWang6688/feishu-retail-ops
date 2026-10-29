@@ -24,7 +24,7 @@
 
 const { isAfterSalesFulfillment } = require('../config/afterSales');
 const {
-  SCAN_FIELD_KEYS, SCAN_TEXTS, resolveScanWindowDays,
+  SCAN_FIELD_KEYS, SCAN_TEXTS, SCAN_UNDELIVERED_FULFILLMENT, resolveScanWindowDays,
 } = require('../config/afterSalesScan');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
@@ -100,7 +100,9 @@ class AfterSalesScanService {
     const entryById = new Map(entries.map((entry) => [entry.record_id, entry]));
 
     // 排除了多少条、为什么排除 —— 如实回给页面（页面据此说一句人话，不静默吞数据）。
-    const excluded = { alreadyAfterSales: 0, notPosted: 0, outOfWindow: 0, missingSalesDate: 0 };
+    const excluded = {
+      notDelivered: 0, alreadyAfterSales: 0, notPosted: 0, outOfWindow: 0, missingSalesDate: 0,
+    };
     const candidates = [];
     for (const detail of details) {
       const fields = detail.fields || {};
@@ -109,7 +111,14 @@ class AfterSalesScanService {
       const entry = entryById.get(linkedRecordIds(fields[detailFields.salesEntry])[0]);
       // 找不到主表 = 数据不完整（写入中途失败等）⇒ 不在落地页给候选（也不能拿来做售后）。
       if (!entry) { excluded.notPosted += 1; continue; }
-      if (isAfterSalesFulfillment(textValue(fields[detailFields.fulfillmentStatus]))) {
+      const fulfillmentStatus = asText(textValue(fields[detailFields.fulfillmentStatus]));
+      // ⭐ 「什么叫售后」= 除「未交付」之外的状态（她 2026-10-29）⇒ 未交付的不列。
+      if (fulfillmentStatus === SCAN_UNDELIVERED_FULFILLMENT) {
+        excluded.notDelivered += 1;
+        continue;
+      }
+      // 已经售后过的（已退货 / 已换货 / 已赔货）也不列（同一双不做第二次售后）。
+      if (isAfterSalesFulfillment(fulfillmentStatus)) {
         excluded.alreadyAfterSales += 1;
         continue;
       }
