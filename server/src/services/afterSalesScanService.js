@@ -24,11 +24,12 @@
 
 const { isAfterSalesFulfillment } = require('../config/afterSales');
 const {
-  SCAN_FIELD_KEYS, SCAN_TEXTS, SCAN_UNDELIVERED_FULFILLMENT, resolveScanWindowDays,
+  SCAN_CACHE, SCAN_FIELD_KEYS, SCAN_TEXTS, SCAN_UNDELIVERED_FULFILLMENT, resolveScanWindowDays,
 } = require('../config/afterSalesScan');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { withSalesReadRetry } = require('./salesReadRetry');
+const { createScanPageCache } = require('./scanPageCache');
 const { lookupWindowStart } = require('../utils/salesDateWindows');
 
 const asText = (value) => String(value ?? '').trim();
@@ -66,6 +67,12 @@ class AfterSalesScanService {
     if (!options.gateway) throw new Error('AfterSalesScanService requires gateway');
     this.gateway = options.gateway;
     this.now = options.now || (() => Date.now());
+    // ⭐ 读模型短 TTL 缓存：**复用扫码页那一份实现**（`scanPageCache`）。
+    //   测试可注入（用例验"命中不再读表" / "关掉就真读"）。
+    this.cache = options.cache || createScanPageCache({
+      ttlMs: SCAN_CACHE.enabled ? SCAN_CACHE.ttlMs : 0,
+      maxEntries: SCAN_CACHE.maxEntries,
+    });
   }
 
   readOptions(tableKey) {
@@ -81,14 +88,24 @@ class AfterSalesScanService {
     const productId = asText(productRecordId);
     if (!productId) throw badRequest(SCAN_TEXTS.missingProduct);
     const windowDays = resolveScanWindowDays(days);
+    // ⭐ 读模型缓存键：同一货品 + 同一窗口 ⇒ 同一份结果（短 TTL，见 config/afterSalesScan 的 SCAN_CACHE）。
+    const cacheKey = `${productId}|${windowDays}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached) return cached;
+    const result = await this.buildCandidates({ productId, windowDays });
+    // ⚠️ 只缓存**有候选**的结果（空结果不缓存：她刚卖的一双要能立刻看到）。
+    if (result.candidates.length) this.cache.set(cacheKey, result);
+    return result;
+  }
+
+  /** 真读一次（3 处读：货品 1 条 + 销售明细 + 主表按 id 批量）—— 缓存 miss 时才会进来。 */
+  async buildCandidates({ productId, windowDays }) {
     // ⭐ 「近 N 天」按**上海自然日**算：今天 + 往前 (N-1) 天（含今天共 N 天），不是滚动 24 小时。
     const now = this.now();
     const cutoff = lookupWindowStart({ now: new Date(now), days: windowDays });
 
-    const [product, entries, details] = await Promise.all([
+    const [product, details] = await Promise.all([
       withSalesReadRetry(() => this.gateway.get('product', productId), 'after_sales_scan_product'),
-      withSalesReadRetry(() => this.gateway.listAll('salesEntry', this.readOptions('salesEntry')),
-        'after_sales_scan_entries'),
       withSalesReadRetry(() => this.gateway.listAll('salesDetail', this.readOptions('salesDetail')),
         'after_sales_scan_details'),
     ]);
@@ -97,20 +114,28 @@ class AfterSalesScanService {
     const productFields = this.gateway.table('product').fields;
     const entryFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
-    const entryById = new Map(entries.map((entry) => [entry.record_id, entry]));
 
     // 排除了多少条、为什么排除 —— 如实回给页面（页面据此说一句人话，不静默吞数据）。
     const excluded = {
       notDelivered: 0, alreadyAfterSales: 0, notPosted: 0, outOfWindow: 0, missingSalesDate: 0,
     };
     const candidates = [];
+
+    // ⭐ 主表**不再整表读**：先扫明细、把"只靠明细就能判断的条件"先筛掉
+    //   （货品归属 / 未交付 / 已售后 / 销售日窗口），再把剩下那几单的 record_id 收集起来
+    //   按 id **批量取**（`getBatch`）—— 一张 660 行的表只取真正要看的那几行。
+    //   判据不变：主表那侧只剩「写入状态」一个条件（未入账不做售后）。
+    const pending = [];
     for (const detail of details) {
       const fields = detail.fields || {};
-      // 归属判据：这条明细卖的是不是扫到的那款货品（关联列里含它）。
       if (!linkedRecordIds(fields[detailFields.product]).includes(productId)) continue;
-      const entry = entryById.get(linkedRecordIds(fields[detailFields.salesEntry])[0]);
-      // 找不到主表 = 数据不完整（写入中途失败等）⇒ 不在落地页给候选（也不能拿来做售后）。
-      if (!entry) { excluded.notPosted += 1; continue; }
+      // 🔴 「销售日」**只认销售明细的 `销售日`**（业务负责人 2026-10-29：「不用你做兜底」）——
+      //   没有销售日的行**不进候选**（单独计数，如实回给页面），绝不拿「录单日」顶替。
+      //   ⚠️ 窗口判断放在「未交付 / 已售后」之前：这样后面两个计数是**近 N 天窗口内**的
+      //   （页面那句"另有 N 条已经售后过"说的是这 7 天里的事，不是开业以来）。
+      const salesDate = epochOf(fields[detailFields.soldAt]);
+      if (!salesDate) { excluded.missingSalesDate += 1; continue; }
+      if (salesDate < cutoff) { excluded.outOfWindow += 1; continue; }
       const fulfillmentStatus = asText(textValue(fields[detailFields.fulfillmentStatus]));
       // ⭐ 「什么叫售后」= 除「未交付」之外的状态（她 2026-10-29）⇒ 未交付的不列。
       if (fulfillmentStatus === SCAN_UNDELIVERED_FULFILLMENT) {
@@ -122,17 +147,30 @@ class AfterSalesScanService {
         excluded.alreadyAfterSales += 1;
         continue;
       }
-      // 🔴 「销售日」**只认销售明细的 `销售日`**（业务负责人 2026-10-29：「不用你做兜底」）——
-      //   没有销售日的行**不进候选**（单独计数，如实回给页面），绝不拿「录单日」顶替。
-      const salesDate = epochOf(fields[detailFields.soldAt]);
-      if (!salesDate) { excluded.missingSalesDate += 1; continue; }
-      if (salesDate < cutoff) { excluded.outOfWindow += 1; continue; }
+      const entryId = linkedRecordIds(fields[detailFields.salesEntry])[0];
+      if (!entryId) { excluded.notPosted += 1; continue; }
+      pending.push({ detail, fields, entryId, salesDate });
+    }
+    const entryIds = [...new Set(pending.map((item) => item.entryId))];
+    const entries = entryIds.length
+      ? await withSalesReadRetry(
+        () => this.gateway.getBatch('salesEntry', entryIds, this.readOptions('salesEntry')),
+        'after_sales_scan_entries',
+      )
+      : [];
+    const entryById = new Map(entries.map((entry) => [entry.record_id, entry]));
+
+    for (const item of pending) {
+      const { detail, fields, salesDate } = item;
+      const entry = entryById.get(item.entryId);
+      // 找不到主表 = 数据不完整（写入中途失败等）⇒ 不在落地页给候选（也不能拿来做售后）。
+      if (!entry) { excluded.notPosted += 1; continue; }
       if (!isPosted(postedOf(entry, entryFields))) { excluded.notPosted += 1; continue; }
       const sizeCell = fields[detailFields.size];
       const sizeNumber = Number(asText(textValue(sizeCell)));
       candidates.push({
         sales_entry_record_id: entry.record_id,
-        order_no: asText(entry.fields?.[entryFields.orderNo]) || entry.record_id,
+        order_no: asText(textValue(entry.fields?.[entryFields.orderNo])) || entry.record_id,
         sales_detail_record_id: detail.record_id,
         sales_date: salesDate,
         size: Number.isFinite(sizeNumber) && sizeNumber > 0 ? sizeNumber : null,

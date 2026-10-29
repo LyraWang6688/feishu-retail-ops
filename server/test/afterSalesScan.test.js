@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const { AfterSalesScanService } = require('../src/services/afterSalesScanService');
+const { createScanPageCache } = require('../src/services/scanPageCache');
 const { createWorkbenchOrderActionsRouter } = require('../src/routes/workbenchOrderActions');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -37,8 +38,10 @@ const fakeGateway = (overrides = {}) => {
     ],
     ...overrides,
   };
+  const calls = { get: [], listAll: [], getBatch: [] };
   return {
     records,
+    calls,
     table(key) {
       const table = {
         product: { fields: { number: '编号', itemNo: '货号', color: '颜色' } },
@@ -48,8 +51,19 @@ const fakeGateway = (overrides = {}) => {
       if (!table) throw new Error(`Unknown table: ${key}`);
       return table;
     },
-    async get(key, id) { return (records[key] || []).find((row) => row.record_id === id) || null; },
-    async listAll(key) { return records[key] || []; },
+    async get(key, id) {
+      calls.get.push(`${key}:${id}`);
+      return (records[key] || []).find((row) => row.record_id === id) || null;
+    },
+    async listAll(key) {
+      calls.listAll.push(key);
+      return records[key] || [];
+    },
+    // ⭐ 2026-10-29：主表改成**按 id 批量取**（不再整表读）。
+    async getBatch(key, ids = []) {
+      calls.getBatch.push(`${key}:${ids.length}`);
+      return (records[key] || []).filter((row) => ids.includes(row.record_id));
+    },
   };
 };
 
@@ -125,6 +139,79 @@ test('AC4b 天数参数：认不出的回默认 7，超上限按 30 封顶（不
   assert.equal((await service.listCandidates({ productRecordId: 'p1', days: 'abc' })).days, 7);
   assert.equal((await service.listCandidates({ productRecordId: 'p1', days: '-3' })).days, 7);
   assert.equal((await service.listCandidates({ productRecordId: 'p1', days: '999' })).days, 30);
+});
+
+/**
+ * ⭐⭐ 2026-10-29（业务负责人：「页面响应速度也能更快一些」／「跨月怎么实现」）：
+ *   · 读模型短 TTL 缓存（复用扫码页那一份 `createScanPageCache`）⇒ 同一货品 TTL 内再看一次**零读表**；
+ *   · **空结果不缓存**（她刚卖的一双要能立刻看到）；
+ *   · 跨月**不需要特殊逻辑**：窗口起点是按上海自然日算出来的时间戳（例：11-02 看近 7 天 ⇒ 起点 10-27 00:00），
+ *     `10-27 00:00` 那一笔算、`10-26 23:59` 不算。
+ */
+test('AC7 ⭐⭐ 缓存：同一货品 TTL 内第二次零读表；空结果不缓存；关掉缓存就真读', async () => {
+  const gateway = fakeGateway();
+  const cache = createScanPageCache({ ttlMs: 60_000, maxEntries: 10, now: () => NOW });
+  const service = new AfterSalesScanService({ gateway, now: () => NOW, cache });
+
+  await service.listCandidates({ productRecordId: 'p1' });
+  const first = JSON.parse(JSON.stringify(gateway.calls));
+  assert.equal(first.listAll.filter((key) => key === 'salesDetail').length, 1, '第一次：读 1 次销售明细');
+  assert.equal(first.getBatch.length, 1, '第一次：主表按 id 批量取 1 次');
+  assert.equal(first.get.length, 1, '第一次：货品 1 条');
+
+  const again = await service.listCandidates({ productRecordId: 'p1' });
+  const second = JSON.parse(JSON.stringify(gateway.calls));
+  assert.deepEqual(second, first, 'TTL 内第二次：一次飞书请求都不打（命中读模型缓存）');
+  assert.ok(again.candidates.length > 0);
+
+  // 空结果不缓存：换成一个**一条明细都没有**的货品（p3）⇒ 两次都要真读。
+  const emptyGateway = fakeGateway();
+  emptyGateway.records.product.push({ record_id: 'p3', fields: { 编号: 'NONE|白|A', 货号: 'NONE', 颜色: '白' } });
+  const emptyService = new AfterSalesScanService({
+    gateway: emptyGateway, now: () => NOW,
+    cache: createScanPageCache({ ttlMs: 60_000, maxEntries: 10, now: () => NOW }),
+  });
+  await emptyService.listCandidates({ productRecordId: 'p3' });
+  await emptyService.listCandidates({ productRecordId: 'p3' });
+  assert.equal(emptyGateway.calls.listAll.filter((key) => key === 'salesDetail').length, 2, '空结果不缓存 ⇒ 每次都真读');
+
+  // 关掉缓存（ttl=0）：两次都真读。
+  const noCacheGateway = fakeGateway();
+  const noCacheService = new AfterSalesScanService({
+    gateway: noCacheGateway, now: () => NOW,
+    cache: createScanPageCache({ ttlMs: 0, maxEntries: 10, now: () => NOW }),
+  });
+  await noCacheService.listCandidates({ productRecordId: 'p1' });
+  await noCacheService.listCandidates({ productRecordId: 'p1' });
+  assert.equal(noCacheGateway.calls.listAll.filter((key) => key === 'salesDetail').length, 2, '关掉缓存 ⇒ 每次都真读');
+});
+
+test('AC7b ⭐ 主表不再整表读：只按候选明细的主表 id 批量取（660 行的表只取需要的那几行）', async () => {
+  const gateway = fakeGateway();
+  const service = new AfterSalesScanService({
+    gateway, now: () => NOW, cache: createScanPageCache({ ttlMs: 0 }),
+  });
+  await service.listCandidates({ productRecordId: 'p1' });
+  assert.ok(!gateway.calls.listAll.includes('salesEntry'), '不许再 listAll 销售主表（整表读 660 行）');
+  // 先用明细就能判断的条件筛掉（未交付 / 已售后 / 超窗口），只剩 2 张主表要看
+  // （e1 = d1 那张、e2 = 写入失败那张）⇒ 只批量取这 2 条，而不是整张表。
+  assert.deepEqual(gateway.calls.getBatch, ['salesEntry:2']);
+});
+
+test('AC4d ⭐⭐ 跨月不需要特殊逻辑：窗口起点按上海自然日算（11-02 看近 7 天 ⇒ 10-27 00:00）', async () => {
+  const gateway = fakeGateway();
+  const detail = (id) => gateway.records.salesDetail.find((row) => row.record_id === id);
+  const now = Date.parse('2026-11-02T10:00:00+08:00');
+  const start = Date.parse('2026-10-27T00:00:00+08:00');
+  detail('d1').fields['销售日'] = start;          // 跨月边界：正好起点 ⇒ 算
+  detail('d2').fields['销售日'] = start - 1;      // 10-26 23:59 ⇒ 不算
+  const service = new AfterSalesScanService({
+    gateway, now: () => now, cache: createScanPageCache({ ttlMs: 0 }),
+  });
+  const out = await service.listCandidates({ productRecordId: 'p1' });
+  const ids = out.candidates.map((item) => item.sales_detail_record_id);
+  assert.ok(ids.includes('d1'), '10-27 00:00 的销售要算进「近 7 天」');
+  assert.ok(!ids.includes('d2'), '10-26 23:59 的销售不算「近 7 天」');
 });
 
 test('AC5 缺货品 id / 货品不存在 → 400 人话（页面直接显示原因）', async () => {

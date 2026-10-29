@@ -1,4 +1,4 @@
-// 售后**扫一扫落地页**的读侧配置（配置先行：时间窗 / 取哪些列 / 人话都在这里）。
+// 售后**扫一扫落地页**的读侧配置（配置先行：时间窗 / 取哪些列 / 缓存 / 人话都在这里）。
 //
 // 为什么单独成文件（而不是塞进 config/afterSales.js）：
 //   · `config/afterSales.js` 是**执行器**的契约（动作语义 / 幂等 / 落库）；
@@ -26,9 +26,32 @@
  */
 const SCAN_UNDELIVERED_FULFILLMENT = '未交付';
 
+const { readFlag, readInt } = require('./envValue');
+
 /** 默认 / 最长的查找窗口（**上海自然日**，含今天）。与既有候选接口（`afterSalesPage.days = 7`）同一口径。 */
 const SCAN_WINDOW_DAYS_DEFAULT = 7;
 const SCAN_WINDOW_DAYS_MAX = 30;
+
+/**
+ * ⭐⭐ 2026-10-29（业务负责人：「页面响应速度也能更快一些」）：
+ *   **读模型短 TTL 缓存**，复用**扫码页那一份**缓存实现（`services/scanPageCache.js`，
+ *   与扫码页同一套语义：短 TTL + 只缓存"有结果"的 + 容量上限 + LRU 近似）。
+ *
+ * 为什么缓存"整个候选结果"（而不是单张表）：
+ *   这一页一次要读 3 处（货品信息 1 条 + 销售明细 + 销售主表按 id 批量）——
+ *   缓存最终结果 ⇒ 同一个货品在 TTL 内再看一次，**一次飞书请求都不打**（扫码页"连续扫同一款"同理）。
+ *
+ * ⚠️ 只缓存**有候选**的结果（与扫码页"不缓存没找到"同一条理由）：
+ *   她刚卖出一双、马上就来做售后 ⇒ 空结果被缓存 30 秒就会让她看不到这一笔。
+ * 🔴 开关必须**显式布尔**（不写 `||` 兜底）：`AFTER_SALES_SCAN_CACHE_ENABLED=false` = 关掉。
+ *   `AFTER_SALES_SCAN_CACHE_MS` 是毫秒数（显式整数，0 = 关掉缓存；默认 30 秒 ——
+ *   与工作台订单列表缓存同一量级，且远短于"销售日/总金额"的变化周期）。
+ */
+const SCAN_CACHE = Object.freeze({
+  enabled: readFlag(process.env, 'AFTER_SALES_SCAN_CACHE_ENABLED', true),
+  ttlMs: readInt(process.env, 'AFTER_SALES_SCAN_CACHE_MS', 30000, { min: 0, max: 600000 }),
+  maxEntries: readInt(process.env, 'AFTER_SALES_SCAN_CACHE_MAX_ENTRIES', 50, { min: 1, max: 1000 }),
+});
 
 /**
  * 只读这两张表时**按需取列**（语义键 → 飞书列名由 schema 解析）。
@@ -65,6 +88,7 @@ const resolveScanWindowDays = (raw) => {
 
 module.exports = {
   SCAN_UNDELIVERED_FULFILLMENT,
+  SCAN_CACHE,
   SCAN_WINDOW_DAYS_DEFAULT,
   SCAN_WINDOW_DAYS_MAX,
   SCAN_FIELD_KEYS,
