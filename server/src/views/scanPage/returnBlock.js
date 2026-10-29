@@ -8,21 +8,40 @@ const { multiItemBlockHtml, purchaseAmountRowHtml } = require('./multiItemBlock'
 
 const sizeRowsHtml = ({
   sizes, name, quantityPrefix, quantityLabel, checkedOf, defaultQuantity = 1, stockOf = null,
+  // ⭐⭐ 2026-10-29（业务负责人对退货页的 HTML 批注：「这里的框是干啥用的呀？」）：
+  //   **退货那一块不再用勾选框** —— 每行只留一个「退货数量」输入：**不填 / 填 0 = 不退**，
+  //   填 1 以上 = 退这一码。这样"选哪些码"和"每个几双"是**同一个动作**，没有歧义。
+  //   ⚠️ **一键补货那一块仍然用勾选框**（`checkbox` 缺省 true ⇒ 它一个字没动 ✗）。
+  checkbox = true,
+  quantityPlaceholder = '',
+  // 尺码行显示什么（**两种模式共用**；模板里不写中文 ✓ 调用方从 config 传 ✓）
+  sizeLabelTemplate = '{size}',
 }) => sizes.map((item) => {
   const size = item.size_text;
   const quantityName = `${quantityPrefix}${size}`;
   const stock = stockOf ? stockOf(item) : null;
-  // ⭐ 2026-10-15 晚：这一行的**库存上限**挂在勾选框上（脚本据此拦"退货数量 > 当前库存" ✓）；
+  // ⭐ 2026-10-15 晚：这一行的**库存上限**（脚本据此拦"退货数量 > 当前库存" ✓）；
   //   **取不到库存 ⇒ 不带这个属性** ⇒ 脚本不拿 0 当库存拦她 ✗（她只会看到"取不到"那句人话 ✓）。
+  //   ⚠️ 2026-10-29：退货那一块上限挂到**数量输入框**上（勾选框已退场 ✓）；补货那一块仍挂在勾选框上。
   const stockCapAttr = stock && Number.isFinite(stock.cap)
     ? ` data-stock="${escapeHtml(String(stock.cap))}"` : '';
   // ⚠️ 新属性**放在 `name` 之前**、`checked` 仍**紧跟在 `value` 后面** ——
   //   既有断言钉着逐字 `name="sizes" value="41" checked`（不许为了加属性把它改红 ✗ 我第一版就踩了）。
   const dataQtyNameAttr = ` data-qty-name="${escapeHtml(quantityName)}"`;
+  // 尺码那一段文字只在这一处拼（两种模式共用；中文来自配置模板 ✓）
+  const sizeLabel = escapeHtml(String(sizeLabelTemplate).replace('{size}', String(size)));
+  const sizeBadge = checkbox
+    ? `<label class="size-check"><input type="checkbox"${stockCapAttr}${dataQtyNameAttr} name="${escapeHtml(name)}" value="${escapeHtml(size)}"${checkedOf(item) ? ' checked' : ''}> ${sizeLabel}</label>`
+    : `<span class="size-check size-check--plain">${sizeLabel}</span>`;
+  // 数量模式：上限/尺寸挂在**数量输入**上（脚本按 `data-stock` / `data-size` 拦 ✓）
+  const quantityAttrs = checkbox ? '' : `${stockCapAttr} data-size="${escapeHtml(String(size))}"`;
+  const placeholder = quantityPlaceholder
+    ? ` placeholder="${escapeHtml(quantityPlaceholder)}"`
+    : ` placeholder="${escapeHtml(quantityLabel)}"`;
   return `<div class="size-row">
-<label class="size-check"><input type="checkbox"${stockCapAttr}${dataQtyNameAttr} name="${escapeHtml(name)}" value="${escapeHtml(size)}"${checkedOf(item) ? ' checked' : ''}> ${escapeHtml(size)} 码</label>
+${sizeBadge}
 ${stock ? `<span class="hint" data-view="${escapeHtml(stock.view)}">${escapeHtml(stock.text)}</span>` : ''}
-<input class="size-qty" name="${escapeHtml(quantityName)}" value="${escapeHtml(String(defaultQuantity))}" inputmode="numeric" aria-label="${escapeHtml(`${size} ${quantityLabel}`)}" placeholder="${escapeHtml(quantityLabel)}">
+<input class="size-qty" name="${escapeHtml(quantityName)}" value="${escapeHtml(String(defaultQuantity))}"${quantityAttrs} inputmode="numeric" aria-label="${escapeHtml(`${size} ${quantityLabel}`)}"${placeholder}>
 </div>`;
 }).join('');
 
@@ -65,7 +84,12 @@ const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     quantityPrefix: fields.returnQuantityPrefix,
     quantityLabel: t.replenishQuantityLabel,
     checkedOf: () => false,
-    defaultQuantity: returnConfig.defaultQuantity,
+    // ⭐ 2026-10-29（她批注「这里的框是干啥用的呀？」）⇒ 退货**不要勾选框**：数量输入即选择。
+    //   默认**留空**（不是 1）：否则她一提交就把每个码都退 1 双（凭空多退 ✗）。
+    checkbox: false,
+    quantityPlaceholder: rf.quantityPlaceholder,
+    sizeLabelTemplate: SCAN_PAGE.texts.sizeLabel,
+    defaultQuantity: '',
     // ⚠️ 走到这里的行**一定是"有数量"的**（0 已被上面滤掉 ✓）⇒ 数量列直接就是那个数；
     //    `cap` = 她那条口径的判据（**退货数量 ≤ 当前库存** ✓ 原样保留）；
     //    取不到的行（`sellable` 不是数字）⇒ 如实说"取不到"、**不带上限** ✓
@@ -111,7 +135,6 @@ const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   return `<section class="card">
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form"
 data-view="purchase-return"
-data-return-sizes-field="${escapeHtml(fields.returnSizes)}"
 data-return-qty-prefix="${escapeHtml(fields.returnQuantityPrefix)}"
 data-return-max-sizes="${escapeHtml(String(returnConfig.maxSizes))}"
 data-return-max-quantity="${escapeHtml(String(returnConfig.maxQuantity))}"

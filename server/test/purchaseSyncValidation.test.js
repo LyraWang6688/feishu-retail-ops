@@ -170,9 +170,14 @@ const returnCases = () => ([
   },
   {
     why: '数量非法（认不出）',
+    // ⭐ 2026-10-29（退货改"数量输入即选择"）**成对迁移**：
+    //   改前逐字：`[`${F.returnQuantityPrefix}41`]: '0'`（0 那时被当"数量非法" ⇒ 400）
+    //   改后逐字：`'abc'`（**0 现在是"这一码不退"**，是合法选择 ✓；非整数照旧当场 400 ✓）
+    //   依据 = 业务负责人 2026-10-29 的批注（去掉勾选框、用数量表达"退不退"）⇒ 判据没放宽：
+    //     "认不出的数量 ⇒ 400 + 写层那句人话 + 零写入 + 不调度后台" 一个字没动 ✓
     body: {
       action: A.purchaseReturn, submit_key: 'k', [`${F.returnSizes}`]: '41',
-      [`${F.returnQuantityPrefix}41`]: '0', [F.purchaseAmount]: '800',
+      [`${F.returnQuantityPrefix}41`]: 'abc', [F.purchaseAmount]: '800',
     },
     code: ENTRY_RULE_CODES.quantityInvalid,
     said: '数量要填 1 ~ 99',

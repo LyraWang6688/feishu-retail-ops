@@ -145,22 +145,24 @@ const sizeRowsOf = (block) => [...block.matchAll(/<div class="size-row">([\s\S]*
 // AC-RT0 现状：勾选框 + 数量输入**本来就有**（别照 brief 的字面结论白改一遍）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RT0 退货块的**尺码勾选框 / 数量输入本来就有**（`return_sizes` / `return_qty_<尺码>`）', async () => {
+test('AC-RT0 退货块 = **数量输入即选择**（没有勾选框；`return_qty_<尺码>` 走既有配置 ✓）', async () => {
   const write = fakeWriteService();
   let block;
   await withServer(appFor(write), async (base) => { block = (await getReturnBlock(base)).block; });
-  assert.ok(block.includes(`name="${SCAN_WRITE.fields.returnSizes}"`), '勾选框字段名走既有配置 ✓');
-  // ⭐⭐ task-28（2026-10-15 她逐字：「退货严格按照实时库存里的数据来，**只展示有数量的尺码**」）
-  //   ⚠️ 逐字记录（改前 → 改后 → 依据）：
-  //     改前逐字：`for (const size of ['40', '41', '42']) {`（**41 码库存 0 也列**）
-  //     改后逐字：`for (const size of ['40', '42']) {`（只遍历**有数量**的码）＋ 下面那条"41 不列"的断言
-  //     依据：她 2026-10-15 逐字（同上）＋「（缺码）现在也退不了 …… 只展示有数量的尺码」
-  //     ⇒ **判据没丢**：字段名的判据仍在（只是对象 = 列出来的那些码），**额外多钉一条"0 不列"** ✓
+  // ⭐⭐ 2026-10-29（业务负责人批注「这里的框是干啥用的呀？」）**成对迁移**：
+  //   改前逐字：退货每行一个 `<input type="checkbox" name="return_sizes" value="41">` ＋ 一个数量输入
+  //   改后逐字：**没有勾选框**；每行只有一个数量输入（`return_qty_<尺码>`），不填 / 填 0 = 不退
+  //   依据 = 她 2026-10-29 的批注（同一件事：勾选框与数量输入重复，选哪些码由数量表达即可）
+  //   🔴 判据没消失：字段名 / 尺码清单 / 数量输入 / 上限与三句人话**都还在**（见 AC-RT1 / AC-RT4 / AC-RT7 / AC-RB6）
+  assert.equal(block.includes(`name="${SCAN_WRITE.fields.returnSizes}"`), false,
+    '🔴 退货块**不许**再有勾选框字段（塞回 ⇒ 红 ✓）');
   for (const size of ['40', '42']) {
-    assert.ok(block.includes(`value="${size}"`), `${size} 码要列出来 ✓`);
+    assert.ok(block.includes(`data-size="${size}"`), `${size} 码要列出来 ✓`);
     assert.ok(block.includes(`name="${SCAN_WRITE.fields.returnQuantityPrefix}${size}"`), `${size} 要有自己的数量输入 ✓`);
   }
-  assert.equal(block.includes('value="41"'), false, '⭐ 库存 0 的码（41）**不列**（能真红）✓');
+  assert.ok(block.includes(`data-return-qty-prefix="${SCAN_WRITE.fields.returnQuantityPrefix}"`),
+    '数量前缀仍是既有配置（脚本靠它认数量输入 ✓）');
+  assert.equal(block.includes('data-size="41"'), false, '⭐ 库存 0 的码（41）**不列**（能真红）✓');
   assert.ok(block.includes(`value="${SCAN_WRITE.actions.purchaseReturn}"`), '退货动作名走既有配置 ✓');
 });
 
@@ -168,33 +170,28 @@ test('AC-RT0 退货块的**尺码勾选框 / 数量输入本来就有**（`retur
 // AC-RT1 每行要有「尺码 + 当前库存数量」（她原话要的就是这个）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RT1 ⭐ 每个尺码一行：**尺码** + **当前库存数量**（0 用「—」；来自扫码已取到的 `sellable`）', async () => {
+test('AC-RT1 ⭐ 每个尺码一行：**尺码** + **当前库存数量** + **一个数量输入**（0 库存的码不列 ✓）', async () => {
   const write = fakeWriteService();
   let block;
   await withServer(appFor(write), async (base) => { block = (await getReturnBlock(base)).block; });
   const rows = sizeRowsOf(block);
-  // ⚠️ 逐字记录（改前 → 改后 → 依据）：
-  //   改前逐字：`assert.equal(rows.length, 3, '三个尺码三行 ✓');` ＋ `assert.match(rowFor('41'), /—/, ...)`
-  //   改后逐字：`assert.equal(rows.length, 2, '只列有数量的两个码 ✓');` ＋ 下面那条"41 不列"
-  //   依据：她 2026-10-15 逐字「**只展示有数量的尺码**」⇒ 0 库存的码**不进清单**（不是显示「—」✗）；
-  //     ⚠️ 判据没丢：每行"尺码 + 当前库存数量"这条照旧断言（只是对象少了一个 0 库存的码 ✓）。
   assert.equal(rows.length, 2, '只列**有数量**的两个码（40 / 42）✓');
-  assert.equal(block.includes('value="41"'), false, '⛔ 库存 0 的 41 码不进清单 ✓');
-  const rowFor = (size) => rows.find((row) => row.includes(`value="${size}"`));
+  assert.equal(block.includes('data-size="41"'), false, '⛔ 库存 0 的 41 码不进清单 ✓');
+  const rowFor = (size) => rows.find((row) => row.includes(`data-size="${size}"`));
   // 40 ⇒ 库存 3（门盒 2 + 样品 1）；42 ⇒ 1
   assert.match(rowFor('40'), /3/, '40 码要显示当前库存数量 3 ✓（能真红：删掉数量列 ⇒ 红）');
   assert.match(rowFor('42'), /1/, '42 码要显示 1 ✓');
-  // 数量列必须**只**是这个数（别把别的东西当数量）：钉住一个稳定的锚点
   assert.ok(block.includes('data-view="return-stock"'), '数量列有个稳定锚（测试/真机都对得上）✓');
-  // ⚠️ 这一行仍是"勾选 + 数量输入"，与补货**同形**（她是对照着看的 ✓）
-  assert.ok(rowFor('40').includes('type="checkbox"'), '还是勾选框 ✓');
-  assert.ok(rowFor('40').includes('size-qty'), '还是数量输入 ✓');
-  // ⭐ 数量默认值**走配置**（不是写死 1）：钉住"渲染层确实读了写侧那一份配置" ✓
-  //   （能真红：把 `defaultQuantity` 写回字面量 1 ⇒ 这条红）
+  // ⭐ 2026-10-29：没有勾选框；数量输入上带着**这一行的库存上限**（脚本据此拦"超过库存" ✓）
+  assert.equal(rowFor('40').includes('type="checkbox"'), false, '🔴 退货块不再有勾选框 ✓');
+  assert.ok(rowFor('40').includes('size-qty'), '数量输入在 ✓');
+  assert.ok(rowFor('40').includes('data-stock="3"'), '40 码的数量输入带着库存上限 3 ✓');
+  assert.ok(rowFor('42').includes('data-stock="1"'), '42 码带着上限 1 ✓');
+  // 数量默认值**留空**（不是 1）：否则她一提交就把每个码都退 1 双（凭空多退 ✗）
+  assert.match(rowFor('40'), /class="size-qty"[^>]*value=""/, '数量默认留空 = 这一码默认不退 ✓');
   const rendererSrc = rendererSource();
-  assert.match(rendererSrc, /defaultQuantity: returnConfig\.defaultQuantity/,
-    '⭐ 退货数量默认值来自 `SCAN_WRITE.purchaseReturn.defaultQuantity`（唯一真源 ✓）');
-  assert.equal(SCAN_WRITE.purchaseReturn.defaultQuantity, 1, '（当前配置值就是 1；换值不用改代码 ✓）');
+  assert.match(rendererSrc, /checkbox: false/, '渲染层：退货块显式关掉勾选框 ✓');
+  assert.match(rendererSrc, /quantityPlaceholder: rf\.quantityPlaceholder/, '占位文案走配置 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -274,6 +271,9 @@ const fakeElement = (attrs = {}, opts = {}) => {
     matchesSelector(selector) {
       const nameMatch = selector.match(/^\[name="(.*)"\]$/);
       if (nameMatch) return this.getAttribute('name') === nameMatch[1];
+      // ⭐ 2026-10-29：退货块改成"数量输入即选择" ⇒ 脚本用 [name^="<prefix>"] 找数量输入 ✓
+      const namePrefixMatch = selector.match(/^\[name\^="(.*)"\]$/);
+      if (namePrefixMatch) return String(this.getAttribute('name') || '').startsWith(namePrefixMatch[1]);
       const viewMatch = selector.match(/^\[data-view="(.*)"\]$/);
       if (viewMatch) return this.getAttribute('data-view') === viewMatch[1];
       const buttonMatch = selector.match(/^button\[type="(.*)"\]$/);
@@ -343,20 +343,10 @@ const runSubmitGuard = (html, form) => {
 };
 
 /** 照**页面真实属性**搭一个退货表单（属性值全部从渲染结果里抄 ⇒ 判据不是"另写一份"✓）。 */
-const returnFormFrom = (html, { checked = [], quantities = {} } = {}) => {
-  // ⚠️ **切片边界的迁移（2026-10-16 晚 · 与"退货块去折叠壳"同一刀）** —— AC-RT3 / AC-RT4 / AC-RT7 /
-  //    AC-RT7b 四条都经这个工具，所以边界只在这里改一次（**判据本身一个字没放宽** ✓）：
-  //   改前逐字：
-  //     const start = html.indexOf('data-view="purchase-return"');
-  //     const formTag = html.slice(html.indexOf('<form', start), html.indexOf('>', html.indexOf('<form', start)) + 1);
-  //   改后逐字：下面这五行
-  //   依据：业务负责人 **2026-10-16 真机截图 + 逐字**「那个**退货按钮为什么还有呢，不需要了**」
-  //     ⇒ 退货块的 `<details class="disclosure" data-view="purchase-return" open>` 与 `<summary …>` 两行**删掉**；
-  //       ⭐ 定位标记 `data-view="purchase-return"` **迁到 `<form>` 自己的属性行上**（标记不许删 ✗）
-  //   ⇒ 旧写法从锚**往后**找 `<form`：锚已在**本表单自己的属性行里** ⇒ 找不到本表单（返 -1）
-  //     ⇒ `formTag` 切出空串 ⇒ `data-return-sizes-field` 抄不到 ⇒ 四条判据在这里**假红** ✗
-  //   ⇒ 起点要在锚**之前**找回那个 `<form>`（`lastIndexOf` ✓）；两条 `assert.notEqual` 是**加严**：
-  //     锚被删 / 标记没挂在 `<form>` 上 ⇒ 当场红，**绝不让切片静默空跑**（空切片 = 假绿 ✗）
+const returnFormFrom = (html, { quantities = {} } = {}) => {
+  // ⭐⭐ 2026-10-29（业务负责人批注「这里的框是干啥用的呀？」）：退货块**不再有勾选框** ——
+  //   每行只有一个「退货数量」输入（不填 / 填 0 = 不退）⇒ 夹具按**页面上真实的 qty input** 搭，
+  //   不再搭 checkbox（`data-stock` / `data-size` 都从渲染结果里抄 ✓，不另写一份）。
   const start = html.indexOf('data-view="purchase-return"');
   assert.notEqual(start, -1, '退货表单的定位标记必须在（标记被删 ⇒ 这里就该红，别让切片静默空跑 ✗）');
   const formStart = html.lastIndexOf('<form', start);
@@ -367,20 +357,22 @@ const returnFormFrom = (html, { checked = [], quantities = {} } = {}) => {
   const form = fakeElement(attrs, { tagName: 'form' });
   // 页面里那个"人话槽"（`<p class="hint" data-view="return-form-hint" hidden>`）——照真实结构摆上 ✓
   form._children.push(fakeElement({ 'data-view': attrs['data-return-hint-view'] }, { tagName: 'p' }));
-  const sizesField = attrs['data-return-sizes-field'];
-  assert.ok(sizesField, '退货表单要带 `data-return-sizes-field`（脚本靠它认这块 ✓）');
   const qtyPrefix = attrs['data-return-qty-prefix'];
-  assert.ok(qtyPrefix, '退货表单要带 `data-return-qty-prefix` ✓');
-  for (const size of ['40', '41', '42']) {
-    // ⚠️ **逐字照页面上的那一行抄**（`data-qty-name` / `data-stock` 都从渲染结果里取 ✓）——
-    //   自己拼一份属性清单就会"测出一个页面上并不存在的行为"✗（我第一版就漏了 `data-stock` ⇒ 涨红过）。
-    const checkboxTag = (html.match(new RegExp(`<input type="checkbox"[^>]*name="${sizesField}"[^>]*value="${size}"[^>]*>`)) || [])[0] || '';
-    const checkboxAttrs = { name: sizesField, value: size };
-    for (const match of checkboxTag.matchAll(/(data-[a-z-]+)="([^"]*)"/g)) checkboxAttrs[match[1]] = match[2];
-    if (!checkboxAttrs['data-qty-name']) checkboxAttrs['data-qty-name'] = `${qtyPrefix}${size}`;
-    form._children.push(fakeElement(checkboxAttrs, { tagName: 'input', checked: checked.includes(size) }));
-    form._children.push(fakeElement({ name: `${qtyPrefix}${size}` }, {
-      tagName: 'input', value: quantities[size] === undefined ? String(SCAN_WRITE.purchaseReturn.defaultQuantity) : quantities[size],
+  assert.ok(qtyPrefix, '退货表单要带 `data-return-qty-prefix`（数量模式靠它认这块 ✓）');
+  const sizes = [];
+  for (const match of html.matchAll(new RegExp(`name="${qtyPrefix}([^"]+)"`, 'g'))) {
+    if (!sizes.includes(match[1])) sizes.push(match[1]);
+  }
+  assert.ok(sizes.length > 0, '页面上至少要有可退的尺码行 ✓');
+  for (const size of sizes) {
+    // ⚠️ **逐字照页面上的那一行抄**（`data-stock` / `data-size` 都从渲染结果里取 ✓）——
+    //   自己拼一份属性清单就会"测出一个页面上并不存在的行为"✗。
+    const tag = (html.match(new RegExp(`<input[^>]*name="${qtyPrefix}${size}"[^>]*>`)) || [])[0] || '';
+    const inputAttrs = { name: `${qtyPrefix}${size}` };
+    for (const match of tag.matchAll(/(data-[a-z-]+)="([^"]*)"/g)) inputAttrs[match[1]] = match[2];
+    form._children.push(fakeElement(inputAttrs, {
+      tagName: 'input',
+      value: quantities[size] === undefined ? '' : quantities[size],
     }));
   }
   form._children.push(fakeElement({ type: 'submit', 'data-submit-feedback': '正在提交…' }, { tagName: 'button' }));
@@ -396,7 +388,7 @@ test('AC-RT3 ⭐ 一个都不勾 ⇒ **前端就拦住**（`preventDefault` + �
   const write = fakeWriteService();
   let html;
   await withServer(appFor(write), async (base) => { html = (await getReturnBlock(base)).html; });
-  const result = runSubmitGuard(html, returnFormFrom(html, { checked: [] }));
+  const result = runSubmitGuard(html, returnFormFrom(html));
   assert.equal(result.prevented, true, '⭐ 一个都没勾 ⇒ 必须拦住（能真红：删掉那段判据 ⇒ 红）');
   assert.ok(result.hint, '要给她一句人话（不新增第二段脚本 ✓）');
   assert.equal(result.hint.textContent, SCAN_PAGE.returnForm.sizesRequiredText,
@@ -407,42 +399,43 @@ test('AC-RT3 ⭐ 一个都不勾 ⇒ **前端就拦住**（`preventDefault` + �
   assert.match(writeSrc, /return_empty/, '后端那道 `return_empty` 不许删（前端拦是"更早"、不是"替代"✓）');
 });
 
-test('AC-RT4 ⭐ 退货数量非法 ⇒ 前端拦住 + 人话；**合法 ⇒ 不拦**（不许修过头 ✗）', async () => {
-  // ⚠️ **切片边界迁移（2026-10-16 晚 · 与退货块去折叠壳同一刀）** —— 本用例的表单夹具走共享工具 `returnFormFrom`：
-  //   改前逐字：`html.indexOf('<form', start)`（从锚 `data-view="purchase-return"` **往后**找表单）
-  //   改后逐字：`html.lastIndexOf('<form', start)`（锚已迁到 `<form>` 自己的属性行上 ⇒ 起点要在锚**之前**找）
-  //   依据：业务负责人 **2026-10-16 真机截图 + 逐字**「那个**退货按钮为什么还有呢，不需要了**」
-  //     ⇒ `<details>` / `<summary>` 删掉、标记迁到 `<form>`；本用例的判据（非法拦 / 合法放 / 人话）一个字没放宽 ✓
+test('AC-RT4 ⭐ 退货数量非法 ⇒ 前端拦住 + 人话；**合法 / 空 / 0 ⇒ 不拦**（不许修过头 ✗）', async () => {
   const write = fakeWriteService();
   let html;
   await withServer(appFor(write), async (base) => { html = (await getReturnBlock(base)).html; });
   const max = SCAN_WRITE.purchaseReturn.maxQuantity;
-  const bad = ['', '0', '-1', '1.5', 'abc', String(max + 1)];
+  // ⭐ 2026-10-29（数量输入即选择）**成对迁移**：
+  //   改前逐字：`bad = ['', '0', '-1', '1.5', 'abc', String(max + 1)]`（空 / 0 都算非法 ⇒ 拦住）
+  //   改后逐字：`bad = ['-1', '1.5', 'abc', String(max + 1)]`（**空 / 0 = 不退**是合法选择，不拦 ✓）
+  //   依据 = 她 2026-10-29 的批注（退货改成"填数量"，0 就是"这一码不退"）⇒ 判据没放宽：
+  //     非整数 / 负数 / 超上限**照旧当场拦**；「一个都不退」由 AC-RT3 那条人话承载 ✓
+  const bad = ['-1', '1.5', 'abc', String(max + 1)];
   for (const raw of bad) {
-    const result = runSubmitGuard(html, returnFormFrom(html, { checked: ['40', '42'], quantities: { 40: raw, 42: '1' } }));
+    const result = runSubmitGuard(html, returnFormFrom(html, { quantities: { 40: raw, 42: '1' } }));
     assert.equal(result.prevented, true, `数量 "${raw}" 必须拦住 ✓`);
     assert.equal(result.hint.textContent, SCAN_PAGE.returnForm.quantityInvalidText, '人话来自配置 ✓');
   }
-  // 合法：1 / **这一行的库存上限**（40 码库存 3），都**不许**拦（否则她正常退货被挡 ✗）
-  //   ⚠️ 这里**故意不写 `String(max)`（99）** —— 她 2026-10-15 晚定了"不许超过当前库存"，
-  //      99 对 40 码（库存 3）**已经是非法的**了 ⇒ 拿它当"合法样例"就自相矛盾 ✗（我第一版就是这么错的）。
+  // 合法：1 / 这一行的库存上限（40 码库存 3），都**不许**拦（否则她正常退货被挡 ✗）
   for (const raw of ['1', '3']) {
-    const result = runSubmitGuard(html, returnFormFrom(html, { checked: ['40'], quantities: { 40: raw } }));
+    const result = runSubmitGuard(html, returnFormFrom(html, { quantities: { 40: raw } }));
     assert.equal(result.prevented, false, `数量 "${raw}"（≤ 库存 3）是合法的 ⇒ 不许拦 ✗`);
   }
-  assert.ok(max >= 1, `上限配置仍在（${max}）—— 它管的是"单次最多几双"那一条 ✓`);
-  // 勾太多（> maxSizes）也拦住
-  const many = Array.from({ length: SCAN_WRITE.purchaseReturn.maxSizes + 1 }, (_, index) => `S${index}`);
-  const form = returnFormFrom(html, { checked: [] });
-  const sizesField = form.getAttribute('data-return-sizes-field');
-  const qtyPrefix = form.getAttribute('data-return-qty-prefix');
-  for (const size of many) {
-    form._children.push(fakeElement({ name: sizesField, value: size, 'data-qty-name': `${qtyPrefix}${size}` }, { tagName: 'input', checked: true }));
-    form._children.push(fakeElement({ name: `${qtyPrefix}${size}` }, { tagName: 'input', value: '1' }));
+  // 空 / 0 = 这一码不退：**不拦**（只是"一条都没退"由 AC-RT3 管 ✓）
+  for (const raw of ['', '0']) {
+    const result = runSubmitGuard(html, returnFormFrom(html, { quantities: { 40: raw } }));
+    assert.equal(result.prevented, true, `数量 "${raw || '(空)'}" ⇒ 一条都没退 ⇒ 走"请先填数量"那条人话 ✓`);
+    assert.equal(result.hint.textContent, SCAN_PAGE.returnForm.sizesRequiredText, '人话是"请先填数量"（不是"数量非法"）✓');
   }
-  const tooMany = runSubmitGuard(html, form);
-  assert.equal(tooMany.prevented, true, `勾超过 ${SCAN_WRITE.purchaseReturn.maxSizes} 个码 ⇒ 拦住 ✓`);
+  // 填太多码（> maxSizes）也拦住
+  const tooManyForm = returnFormFrom(html);
+  const qtyPrefix = tooManyForm.getAttribute('data-return-qty-prefix');
+  for (let index = 0; index < SCAN_WRITE.purchaseReturn.maxSizes + 1; index += 1) {
+    tooManyForm._children.push(fakeElement({ name: `${qtyPrefix}S${index}`, 'data-size': String(index) }, { tagName: 'input', value: '1' }));
+  }
+  const tooMany = runSubmitGuard(html, tooManyForm);
+  assert.equal(tooMany.prevented, true, `填超过 ${SCAN_WRITE.purchaseReturn.maxSizes} 个码 ⇒ 拦住 ✓`);
   assert.equal(tooMany.hint.textContent, SCAN_PAGE.returnForm.sizesLimitText, '人话来自配置 ✓');
+  assert.ok(max >= 1, `上限配置仍在（${max}）—— 它管的是"单次最多几双"那一条 ✓`);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -470,7 +463,7 @@ test('AC-RT5 尺码取不到 / 库存取不到 ⇒ **如实提示**（那句人�
   const html = renderScanPage(view({ rows: [] }), SCAN_PAGE, fallbackWrite, 'purchase_return', {});
   const start = html.indexOf('realm-block--purchase_return');
   const block = html.slice(start, html.indexOf('</section>', start) + 10);
-  assert.equal(sizeRowsOf(block).length, 2, '尺码要列出来（她能勾）✓');
+  assert.equal(sizeRowsOf(block).length, 2, '尺码要列出来（她能填数量）✓');
   assert.ok(block.includes(SCAN_PAGE.returnForm.stockUnknown), '⭐ 库存取不到 ⇒ 如实说一句人话 ✓');
   assert.equal(/data-view="return-stock"[^>]*>\s*\d/.test(block), false,
     '⛔ **不许**拿假数字冒充库存（能真红：写死一个数 ⇒ 红）');
@@ -491,16 +484,16 @@ test('AC-RT7 ⭐⭐ 退货数量**不许超过当前库存**：库存 2 填 3 �
   await withServer(appFor(write), async (base) => { html = (await getReturnBlock(base)).html; });
   // 这一版的 `view()`：40 码有 3 双 · 41 码 0 双 · 42 码 1 双
   // ① 40 码库存 3、填 4 ⇒ 拦住，且**人话里带上尺码与库存**
-  const over = runSubmitGuard(html, returnFormFrom(html, { checked: ['40'], quantities: { 40: '4' } }));
+  const over = runSubmitGuard(html, returnFormFrom(html, { quantities: { 40: '4' } }));
   assert.equal(over.prevented, true, '超过库存 ⇒ 必须当场拦住（能真红）✓');
   assert.equal(over.hint.textContent, SCAN_PAGE.returnForm.stockLimitText
     .split('{size}').join('40').split('{stock}').join('3'),
   '人话要带"哪个码、库存几双"（配置模板 + 客户端填 ✓）');
   // ② 正好等于库存 ⇒ **放行**（不许修过头 ✗）
-  const equal = runSubmitGuard(html, returnFormFrom(html, { checked: ['40'], quantities: { 40: '3' } }));
+  const equal = runSubmitGuard(html, returnFormFrom(html, { quantities: { 40: '3' } }));
   assert.equal(equal.prevented, false, '等于库存是合法的 ⇒ 不许拦 ✗');
   // ③ 42 码库存 1、填 2 ⇒ 拦住（不同尺码各自算，别拿整款总数糊弄）
-  const otherSize = runSubmitGuard(html, returnFormFrom(html, { checked: ['42'], quantities: { 42: '2' } }));
+  const otherSize = runSubmitGuard(html, returnFormFrom(html, { quantities: { 42: '2' } }));
   assert.equal(otherSize.prevented, true, '按**这一行**的库存判 ✓');
   assert.equal(otherSize.hint.textContent, SCAN_PAGE.returnForm.stockLimitText
     .split('{size}').join('42').split('{stock}').join('1'), '人话里的尺码/库存要对应这一行 ✓');
@@ -509,7 +502,7 @@ test('AC-RT7 ⭐⭐ 退货数量**不许超过当前库存**：库存 2 填 3 �
   //   改后逐字：断言"41 码**根本不在清单里**"（`returnFormFrom` 拿不到它的勾选框 ⇒ 她勾不到 ✓）
   //   依据：她 2026-10-15 逐字「只展示有数量的尺码」⇒ 0 库存的码**不进清单**；
   //     判据没丢：那一条"0 库存不能退"现在由"**不列**"承载（更彻底 ✓），并且**不许被 0 库存的码勾选** ✓
-  assert.equal(html.includes('value="41"'), false, '⭐ 0 库存的码不列（她勾不到 ⇒ 也退不了 ✓）');
+  assert.equal(html.includes('data-size="41"'), false, '⭐ 0 库存的码不列（清单里没有它 ⇒ 也退不了 ✓）');
 });
 
 test('AC-RT7b ⭐ 库存**取不到**的行：**不许拿 0 当库存**拦住她（只显示"取不到"那句人话 ✓）', async () => {
@@ -525,7 +518,7 @@ test('AC-RT7b ⭐ 库存**取不到**的行：**不许拿 0 当库存**拦住她
     sizes: [{ size_text: '40', missing: false }, { size_text: '42', missing: false }],
   };
   const html = renderScanPage(view({ rows: [] }), SCAN_PAGE, fallbackWrite, 'purchase_return', {});
-  const result = runSubmitGuard(html, returnFormFrom(html, { checked: ['40'], quantities: { 40: '5' } }));
+  const result = runSubmitGuard(html, returnFormFrom(html, { quantities: { 40: '5' } }));
   assert.equal(result.prevented, false, '⛔ 库存取不到 ⇒ **不许**按 0 拦（否则她一律退不了 ✗）');
   assert.ok(html.includes(SCAN_PAGE.returnForm.stockUnknown), '但页面上要如实说"库存取不到"✓');
 });
