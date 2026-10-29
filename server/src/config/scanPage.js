@@ -719,6 +719,13 @@ const RETURN_FORM = Object.freeze({
   sizesLimitText: '一次填了太多尺码，请分批退',
   // 数量输入框的占位（只在数量模式用；空值 = 这一码不退 ✓）
   quantityPlaceholder: '不填 / 填 0 = 不退',
+  // ⭐⭐ 2026-10-29（业务负责人 HTML 批注：「这里如果我不填金额可以提交吗？前端有没有必填的拦截啊」）：
+  //   退货「整单金额」**前端就拦**（不再让她先跑一趟服务器再看 400 页）；人话走配置 ✓
+  //   ⚠️ 服务端那道闸门**照旧在**（`purchaseAmountMissing/Invalid` ⇒ 400 + 人话 + 零写入）——
+  //     前端只是"早一步 + 不让她白填别的东西"；判据在 `scanPurchaseAmountRequired` 的 AC-PA* ✓
+  amountRequiredText: '「整单金额」必填：请先填一个大于 0 的数字，再点退货',
+  // 那句人话挂在哪个 `data-view`（脚本按它找槽位；没有槽位就插一个在表单最上面 ✓）
+  amountHintView: 'return-amount-required',
   // ⭐⭐ 2026-10-15（task-28 · 她逐字）：「退货**严格按照实时库存里的数据来，只展示有数量的尺码**」
   //   ⇒ 整款都没有库存（全是 0）时的那句人话（**不许空白** ✗）；
   //   ⚠️ 与 `sizesUnknown`（**取不到**那把尺码）**是两件事** ✗ —— 别混。

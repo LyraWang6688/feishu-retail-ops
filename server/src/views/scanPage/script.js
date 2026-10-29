@@ -97,7 +97,9 @@ ${UI_TAP_SHARED_SOURCE}
         var amountValue = parseFloat(String(amountInput.value || '').replace(/[^0-9.]/g, ''));
         if (!(amountValue > 0)) {
           event.preventDefault();
-          var hintView = 'accept-amount-required';
+          // 2026-10-29: hint slot is configurable via data-amount-hint-view (return form uses its own
+          //   slot; forms without it keep the legacy accept-amount-required slot -- byte-for-byte same).
+          var hintView = form.getAttribute('data-amount-hint-view') || 'accept-amount-required';
           var hintText = form.getAttribute('data-amount-hint-text') || '';
           var hint = hintView ? form.querySelector('[data-view="' + hintView + '"]') : null;
           if (!hint && hintView) {

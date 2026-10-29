@@ -142,7 +142,10 @@ data-return-required-text="${escapeHtml(rf.sizesRequiredText)}"
 data-return-quantity-text="${escapeHtml(rf.quantityInvalidText)}"
 data-return-limit-text="${escapeHtml(rf.sizesLimitText)}"
 data-return-stock-text="${escapeHtml(rf.stockLimitText)}"
-data-return-hint-view="${escapeHtml(rf.hintView)}">
+data-return-hint-view="${escapeHtml(rf.hintView)}"
+data-amount-field="${escapeHtml(fields.purchaseAmount)}"
+data-amount-hint-view="${escapeHtml(rf.amountHintView)}"
+data-amount-hint-text="${escapeHtml(rf.amountRequiredText)}">
 ${hiddenField(fields.action, write.actions.purchaseReturn)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.returnKey)}
 ${sizesNotice}
