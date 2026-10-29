@@ -46,3 +46,95 @@ test('售后页面与接口存在，且三步流程文案在配置里', () => {
   const service = fs.readFileSync(path.join(__dirname, '../src/services/salesFollowupService.js'), 'utf8');
   assert.match(service, /listAfterSalesCandidates/);
 });
+
+/**
+ * ⭐ 2026-10-29：售后**扫一扫落地页**的判据（业务负责人当天定的页面口径）。
+ *
+ *   ① 三个动作的**水平顺序**逐字是「换货 → 退货 → 赔货」（顺序换了要红）；
+ *   ② 页面读的是**扫一扫落地页自己的只读接口**（`scan-candidates`），
+ *      不是订单列表那条候选接口 —— 因为落地页要摆「销售日 + 销售主表总金额」；
+ *   ③ 页面**不写库**：这一版没有 POST（按钮处理逻辑还没接，谁偷偷接上要红）；
+ *   ④ 数据来源在页面里写清楚（她问过"数据来自哪里"）。
+ */
+test('AC-LP1 ⭐ 落地页：动作顺序「换货 · 退货 · 赔货」，读 scan-candidates，且这一版不写库', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  const actions = config.slice(config.indexOf('export const AFTER_SALES_ACTIONS'));
+  const order = ['exchange', 'return', 'compensation'].map((value) => actions.indexOf(`value: '${value}'`));
+  for (const index of order) assert.ok(index >= 0, '三个动作都要在配置里');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, '水平顺序必须是 换货 → 退货 → 赔货');
+
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  assert.match(page, /scanCandidatesApi/, '落地页读 scan-candidates（销售日 + 总金额那条只读接口）');
+  assert.match(page, /AFTER_SALES_PAGE\.totalLabel|AFTER_SALES_PAGE\.sizeLabel/, '销售日 / 尺码 / 总金额 的字段名从配置取');
+  assert.doesNotMatch(page, /api\.post\(/, '这一版只做页面：不许有写请求（按钮处理逻辑还没接）');
+});
+
+/**
+ * ⭐ 2026-10-29（HTML 批注）候选卡：**一行**「销售日 / 尺码 / 总金额」，
+ *   **不显示销售单号**、日期不突出、三样同字号（颜色不变）。
+ *   判据反向钉住：单号一旦被渲染回来 / `orderLabel` 配置一旦被加回来 ⇒ 红。
+ */
+test('AC-LP2 ⭐ 候选卡：一行三值、无销售单号、同字号（批注反向钉住）', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
+
+  assert.doesNotMatch(page, /order\.order_no|item\.order_no/, '候选卡不许再渲染销售单号（她：不需要提供销售单号信息）');
+  assert.doesNotMatch(config, /orderLabel\s*:/, '`orderLabel` 配置一起删掉（不留无用配置）');
+  assert.match(page, /class="candidate-value"/, '三个值共用 candidate-value（同一套字号 / 颜色口径）');
+  // 一行：卡片是 row，且三个值同一个字号 token（不出现 date 单独放大 / 加粗）。
+  assert.match(css, /\.candidate-card\s*\{[^}]*flex-direction:\s*row/, '候选卡必须是横向一行');
+  assert.match(css, /\.candidate-value\s*\{[^}]*font-size:\s*var\(--font-size-base\)/, '三个值同字号');
+  assert.doesNotMatch(css, /\.candidate-date/, '日期不再单独放大/加粗（样式类删掉）');
+});
+
+/**
+ * ⭐ 2026-10-29（HTML 批注）：货品信息**居中 + 加粗突出**；
+ *   下面那句提示**逐字改成「请选择要售后单」**，并且**居中 + 加粗 + 字号要大**。
+ *   判据反向钉住：文案改回旧句 / 去掉居中或加粗 ⇒ 红。
+ */
+test('AC-LP3 ⭐ 货品行居中加粗；提示语逐字「请选择售后单」且居中加粗大字号', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
+
+  assert.match(config, /chooseHint:\s*'请选择售后单'/, '提示语必须逐字是「请选择售后单」（她 2026-10-29 批注：「去掉要」）');
+  assert.doesNotMatch(config, /chooseHint:\s*'请选择要售后单'/, '「要」字不许回来（她批注「去掉要」）');
+  assert.doesNotMatch(config, /chooseHint:\s*'请选择要售后的那一笔销售'/, '更早的旧提示语不许回来');
+
+  // 货品行：居中 + 加粗（突出）
+  assert.match(css, /\.after-sales-product\s*\{[^}]*text-align:\s*center/, '货品信息要居中');
+  assert.match(css, /\.after-sales-product\s*\{[^}]*font-weight:\s*var\(--weight-bold\)/, '货品信息要加粗');
+  // 提示语：居中 + 加粗 + 字号要大
+  assert.match(css, /\.candidate-hint\s*\{[^}]*text-align:\s*center/, '提示语要居中');
+  assert.match(css, /\.candidate-hint\s*\{[^}]*font-weight:\s*var\(--weight-bold\)/, '提示语要加粗');
+  assert.match(css, /\.candidate-hint\s*\{[^}]*font-size:\s*var\(--font-size-xl\)/, '提示语字号要大');
+});
+
+/**
+ * ⭐⭐ 2026-10-29（业务负责人定的交互）：
+ *   「用户选择哪条记录，就在那条卡片上把它变成三个按钮」＋
+ *   「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」。
+ *   判据反向钉住：退回"选中后另起一块按钮"、或按钮上又加解释小字 ⇒ 红。
+ */
+test('AC-LP4 ⭐⭐ 选中的那条卡片原地变成三个按钮（换货 · 退货 · 赔货，无解释文案）', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
+
+  // 选中 ⇒ 整张卡片换成"三个按钮"这一块（同一个 candidate-card 位置），而不是另起一块。
+  assert.match(page, /candidateActionsHtml/, '要有"卡片变成三个按钮"的那一块');
+  assert.match(page, /const candidateHtml = \(item, selected\) => \(\s*selected \? candidateActionsHtml\(\) : candidateCardHtml\(item\)/,
+    '选中时整条卡片换成三个按钮、未选中仍是卡片');
+  assert.match(page, /data-detail=|data-action="\$\{escapeHtml\(action\.value\)\}"/, '三按钮各自带动作');
+  // 不再有"另起一块常驻动作区 / 灰置闸门"的旧实现。
+  assert.doesNotMatch(page, /after-sales-actions|syncActionsState|action-button/, '旧的"常驻动作区"实现要删干净');
+  // 按钮上只有三个词，没有解释小字。
+  assert.doesNotMatch(config, /\bhint\s*:/, '动作配置里不许再有解释小字（她说"不用做解释"）');
+  assert.doesNotMatch(page, /action\.hint/, '按钮里不许再渲染解释小字');
+  assert.match(css, /\.candidate-card-actions\s*\{[^}]*display:\s*flex/, '三个按钮在卡片里横向排（flex）');
+})
+

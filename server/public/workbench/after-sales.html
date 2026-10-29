@@ -1,20 +1,23 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>售后单</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>售后单｜邯美数智经营工作台</title>
+  <!-- 主题真源：所有颜色 / 间距 / 圆角 / 字号都从这里来（页面 CSS 里一个色值都不写死）。 -->
+  <link rel="stylesheet" href="/workbench/styles/tokens.css">
   <link rel="stylesheet" href="/workbench/styles/base.css">
-  <style>
-    .after-sales-head{display:flex;align-items:center;gap:12px;margin:16px 0}
-    .order-candidate{width:100%;margin-bottom:10px;text-align:left;flex-direction:column;align-items:flex-start}
-    .order-candidate .entry-card-body{display:flex;flex-direction:column;gap:4px;text-align:left}
-    .order-candidate.active{outline:2px solid var(--primary,#185abd)}
-    .after-sales-actions{margin-top:16px}
-  </style>
+  <link rel="stylesheet" href="/workbench/features/after-sales/after-sales.css">
 </head>
-<body>
-  <main class="workbench-main"><div id="after-sales-app"></div></main>
+<body data-view="after-sales">
+  <!-- 售后扫一扫落地页：二维码（货品记录 id）→ 近 7 天销售记录 → 换货 / 退货 / 赔货。 -->
+  <!-- ⭐ 2026-10-29（业务负责人 HTML 批注）：「← 返回 售后单」这个页头**不需要** ⇒ 整块删掉，
+       页面直接从货品（货号 · 颜色）开始。 -->
+  <main class="shell after-sales-page" id="after-sales-app">
+    <p class="after-sales-product" data-view="after-sales-product">正在读取货品…</p>
+    <p class="after-sales-status" data-view="after-sales-status" role="status"></p>
+    <section data-view="after-sales-body"></section>
+  </main>
   <script type="module">
     import { mountAfterSalesPage } from '/workbench/features/after-sales/index.js';
     mountAfterSalesPage(document.getElementById('after-sales-app'));

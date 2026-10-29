@@ -573,7 +573,7 @@
 | `workbench.purchase.arrivals.failed` | 1 | src/routes/purchaseQuery.js |
 | `workbench.purchase.requests.failed` | 1 | src/routes/purchaseQuery.js |
 | `workbench.query.retry` | 1 | src/services/v1WorkbenchService.js |
-| `workbench.sales.after_sales.candidates.failed` | 1 | src/routes/workbench/sales.js |
+| `workbench.sales.after_sales.candidates.failed` | 2 | src/routes/workbench/sales.js<br>src/routes/workbenchOrderActions.js |
 | `workbench.sales.delivery.failed` | 4 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.job_enqueued` | 1 | src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.job_finished` | 2 | src/services/salesDeliveryAsyncService.js |
