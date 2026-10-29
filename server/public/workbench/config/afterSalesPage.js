@@ -18,6 +18,16 @@ export const AFTER_SALES_PAGE = {
   back: '← 返回工作台',
   // 只读候选接口（后端 `server/src/routes/workbenchOrderActions.js` 的 scan-candidates）
   scanCandidatesApi: '/api/workbench/sales/after-sales/scan-candidates',
+  // 换尺码：按销售扫码页口径取「现货 / 预定 / 特殊码」三组尺码的只读接口（本地预览由 preview 服务提供；
+  // 正式后端路由在接写库那一步一起加）。
+  stockSizesApi: '/api/workbench/sales/after-sales/stock-sizes',
+  sizeGroupInStock: '现货',
+  sizeGroupReserve: '预订',
+  sizeGroupSpecial: '特殊码',
+  sizesLoading: '正在读取尺码…',
+  sizesFailed: '尺码读取失败，请返回重试。',
+  areaTagInStock: '现货',
+  areaTagReserve: '预订',
   days: 7,
   loading: '正在查找近 7 天的销售记录…',
   productLoading: '正在读取货品…',
@@ -39,8 +49,44 @@ export const AFTER_SALES_PAGE = {
   amountEmpty: '—',
   sizeEmpty: '—',
   dateEmpty: '—',
-  // 按钮点击后的如实提示（**逻辑还没接**，不假装做成了）
-  actionPending: (label) => `${label}：处理流程还没有接上，当前只做到这里。`,
+  // ⭐ 2026-10-29 第二步（业务负责人：「先把页面做好」）：点按钮之后是**弹窗**（原型）。
+  //   ⚠️ 这一版只做前端原型：确认按钮只 toast，不发任何写请求（源码哨兵钉住"没有 api.post"）。
+  modalDemoHint: '原型演示：确认后只做提示，不会写库',
+  // 退货弹窗
+  returnTitle: '退货',
+  returnProductLabel: '这双鞋',
+  returnAmountLabel: '金额',
+  returnModeLabel: '钱怎么走',
+  returnRefund: '退款',
+  returnRetain: '留存',
+  returnMethodLabel: '退款方式',
+  // 换货弹窗
+  exchangeTitle: '换货',
+  exchangeModeLabel: '怎么换',
+  exchangeSameItem: '换尺码',
+  exchangeNewItem: '换款式',
+  exchangeSizeLabel: '新尺码',
+  exchangeNewItemHint: '扫一扫选新鞋（原型：点下面的按钮模拟扫到一双新鞋）',
+  exchangeScan: '扫一扫选新鞋',
+  exchangeNewItemLabel: '新鞋',
+  exchangeDiffLabel: '差价',
+  exchangeDiffNone: '没有差价',
+  exchangeDiffMethodLabel: '差价方式',
+  // 弹窗通用
+  select: '请选择',
+  cancel: '取消',
+  confirm: '确认',
+  // ⭐ 退货提交成功 / 换货提交成功 的两句话（业务负责人逐字）
+  toastReturnDone: '数据提交成功',
+  toastExchangeDone: '信息提交成功',
+  // 赔货：只占位（按钮灰置不可点）
+  compensationDisabled: '赔货暂未开放',
+  // 原型用的兜底：换尺码下拉（真实接接口后由库存尺码接口给）
+  demoSizes: [36, 37, 38, 39, 40, 41, 42, 43, 44],
+  // 原型用的兜底：退款方式 / 差价方式（真实运行读「支付方式管理」统一配置）
+  demoPaymentMethods: ['微信扫码', '微信转账', '现金', '支付宝', '工商银行'],
+  // 原型用的兜底：换款式模拟扫到的新鞋（真实运行走销售扫码货品页）
+  demoNewItem: { itemNo: 'XHB8096', color: '全黑', price: 190 },
 };
 
 /**
@@ -51,5 +97,6 @@ export const AFTER_SALES_PAGE = {
 export const AFTER_SALES_ACTIONS = [
   { value: 'exchange', label: '换货' },
   { value: 'return', label: '退货' },
-  { value: 'compensation', label: '赔货' },
+  // 赔货：只做展示占位 —— 灰置、不可点（业务负责人 2026-10-29：「先不开发任何功能」）。
+  { value: 'compensation', label: '赔货', disabled: true },
 ];

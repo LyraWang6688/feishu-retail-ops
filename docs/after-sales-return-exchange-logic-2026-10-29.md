@@ -131,7 +131,21 @@
 3. 换款式新鞋金额取「**货品信息.单价**」（换货固定 1 双），差价 = 新单价 − 原明细金额 ✓
 4. 换款式**跳转复用销售扫码的货品页**；提交后**只有 toast「信息提交成功」**（无成功页）✓
 
-## 6. 代码现状
+## 6. 配置化架构（业务负责人 2026-10-29 确认：不要大量 if-else）
+
+三层都走配置（数据驱动 + 通用解释器）：
+
+| 层 | 配置 | 解释器 | 说明 |
+|---|---|---|---|
+| 扫码流程 | `server/src/config/scanFlows.js` | `services/scanFlowService.js` | 一条 flow = 步骤序列 + `allowAddLine` + 提交 handler/endpoint/payload + 上下文；`sales` 描述现状、`afterSalesExchange` 为新流程（无资金页、不加一双、差价步骤 `when` 条件显示） |
+| 售后表单 | 动作配置（form DSL：字段/显隐条件/数据源） | 页面渲染器 | 字段显隐用 `visibleWhen` 条件，不写 if |
+| 售后写库 | 动作配置（writes DSL：明细/库存/钱/主表） | 执行器 | 按配置循环写，无"如果是退货就…" |
+
+**尺码分组不复制规则**：售后页声明使用共享视图模型（`scanPageService.lookup` + `saleSizeGroups`），
+接口 `GET /api/workbench/sales/after-sales/stock-sizes` 返回 `{现货, 预订, 特殊码}` 三组；
+销售扫码页改口径，售后页自动跟着变。
+
+## 7. 代码现状
 
 - 本文更新时：**代码未开始写**（此前试写的改动已全部回退），工作区仅有盘点类文档；
 - 待第 5 节 3 条确认后，按「退货 → 换货」顺序实现：

@@ -1,18 +1,19 @@
 /**
- * 售后**扫一扫落地页**（业务负责人 2026-10-29 定的页面口径）。
+ * 售后**扫一扫落地页** + 点动作后的**弹窗原型**（业务负责人 2026-10-29）。
  *
- * 用户路径：工作台「售后单」→ 飞书扫一扫 → 扫货品二维码 → 落到这一页。
- * 这一页只做三件事（**不写库**）：
- *   ① 用二维码里的货品记录 id 读「近 7 天、这款货品、还没售后过」的销售明细；
- *   ② 每条候选摆出她点名要的三个事实：**销售日 / 尺码 / 该单总金额**；
- *   ③ 选中一条之后，下面出三个按钮：**换货 · 退货 · 赔货**（她定的水平顺序）。
+ * 用户路径：工作台「售后单」→ 飞书扫一扫 → 扫货品二维码 → 落到这一页：
+ *   ① 读「近 7 天、这款货品、还没售后过」的销售明细；
+ *   ② 每条候选摆「销售日 / 尺码 / 总金额」；
+ *   ③ 选中一条 ⇒ 那条卡片原地变成三个按钮：**换货 · 退货 · 赔货**（赔货灰置不可点）；
+ *   ④ 点「退货 / 换货」⇒ 弹窗（居中，样式对齐交割单页付款弹窗）。
  *
- * ⚠️ 按钮之后的处理逻辑**还没接**（她：等页面确认没问题再谈）——
- *    点击只给一句如实提示，**不发任何写请求**（`actionPending` 文案在配置里）。
+ * ⚠️ 当前是**页面原型**（业务负责人：「先把页面做好」）：
+ *   确认只弹 toast（退货「数据提交成功」/ 换货「信息提交成功」），**不发任何写请求**；
+ *   源码哨兵钉住"本文件没有 api.post"。接异步写库是下一步。
  *
- * 数据来源（一个接口，只读）：
+ * 数据来源（只读）：
  *   GET `/api/workbench/sales/after-sales/scan-candidates?productRecordId=…&days=7`
- *   → `services/afterSalesScanService.js`（读「销售明细 / 销售主表 / 货品信息」三张表）。
+ *   → `services/afterSalesScanService.js`
  */
 
 import { api } from '../../core/api-client.js';
@@ -35,15 +36,7 @@ const formatAmount = (value) => {
   return `¥${number.toLocaleString('zh-CN')}`;
 };
 
-/**
- * 一条候选卡：**从左到右一行**摆「销售日 / 尺码 / 总金额」，三样**同字号**、日期**不突出**。
- *
- * ⭐ 2026-10-29（业务负责人 HTML 批注）：
- *   「每张卡片你不需要提供销售单号信息，保持从左到右在一行显示日期、尺码、总金额就可以，
- *    然后你的日期不用突出，颜色保持不变，然后字号保持一样大」
- *   ⇒ 删掉「销售单号」那一行；日期不再是加粗大字；三样同字号（颜色保持：金额仍是主色）。
- *   ⚠️ 三个值的**含义**不能丢：`aria-label` 里逐字带上「销售日 / 尺码 / 总金额」（读屏与自动化可读）。
- */
+/** 一条候选卡：**从左到右一行**摆「销售日 / 尺码 / 总金额」。 */
 const candidateCardHtml = (item) => {
   const date = formatDate(item.sales_date) || AFTER_SALES_PAGE.dateEmpty;
   const size = item.size == null ? AFTER_SALES_PAGE.sizeEmpty : `${item.size} 码`;
@@ -59,31 +52,36 @@ const candidateCardHtml = (item) => {
   </button>`;
 };
 
-/**
- * ⭐⭐ 2026-10-29（业务负责人定的交互）：「用户选择哪条记录，就在那条卡片上把它变成三个按钮」
- *   ⇒ 选中的那条**原地**变成一排三个按钮：换货 / 退货 / 赔货（**只有这三个词，不做解释**）。
- *   · 没选中的卡片仍是「销售日 / 尺码 / 总金额」那一行；
- *   · 换选另一条 ⇒ 上一条变回卡片，新的那条变成按钮；
- *   · 这一排按钮**不做解释文案**（她：「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」）。
- */
+/** 选中的那条卡片 ⇒ 原地变成三个按钮（换货 / 退货 / 赔货；赔货灰置不可点）。 */
 const candidateActionsHtml = () => `
   <div class="candidate-card candidate-card-actions" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.actionLabel)}">
     ${AFTER_SALES_ACTIONS.map((action) => `
-      <button class="candidate-action" type="button" data-action="${escapeHtml(action.value)}">${escapeHtml(action.label)}</button>`).join('')}
+      <button class="candidate-action" type="button" data-action="${escapeHtml(action.value)}"
+        ${action.disabled ? `disabled aria-disabled="true" title="${escapeHtml(AFTER_SALES_PAGE.compensationDisabled)}"` : ''}>${escapeHtml(action.label)}</button>`).join('')}
   </div>`;
 
-/** 一条候选（选中 ⇒ 变成三个按钮；没选中 ⇒ 还是那一行卡片）。 */
-const candidateHtml = (item, selected) => (
-  selected ? candidateActionsHtml() : candidateCardHtml(item)
-);
+const candidateHtml = (item, selected) => (selected ? candidateActionsHtml() : candidateCardHtml(item));
+
+/** 弹窗骨架（居中；确认只 toast —— 原型阶段不写库）。 */
+const modalHtml = () => `
+  <div class="as-modal" data-as-modal hidden>
+    <div class="as-modal-backdrop" data-as-modal-close></div>
+    <div class="as-modal-dialog" role="dialog" aria-modal="true" aria-label="售后操作">
+      <div class="as-modal-body" data-as-modal-body></div>
+      <p class="as-modal-error" data-as-modal-error hidden></p>
+    </div>
+  </div>
+  <p class="as-toast" data-as-toast hidden role="status"></p>`;
+
+/** 选项下拉（原型：退款方式 / 差价方式先用配置里的兜底清单；接接口后替换为统一配置）。 */
+const optionsHtml = (items, selected = '') => items
+  .map((item) => `<option value="${escapeHtml(item)}"${item === selected ? ' selected' : ''}>${escapeHtml(item)}</option>`)
+  .join('');
 
 /**
  * @param {HTMLElement} container 页面容器（`#after-sales-app`）
  * @param {{ productRecordId?: string, apiBase?: string }} [options]
- *   ⚠️ 这两个只给**本地预览**用（HTML 标注插件会把页面重新宿主，URL 参数会丢、请求也会打到插件域）：
- *   · `productRecordId`：预览时直接给货品记录 id（真实运行只从 URL 读）；
- *   · `apiBase`：预览时的接口源（真实运行留空 = 同源相对路径）。
- *   页面源码里**没有**"预览专用分支"——预览服务只是在吐 HTML 时替换了这一句调用。
+ *   ⚠️ 这两个只给**本地预览**用（HTML 标注插件会重新宿主，URL 参数/请求源会丢）。
  */
 export function mountAfterSalesPage(container, options = {}) {
   const params = new URLSearchParams(window.location.search);
@@ -97,6 +95,8 @@ export function mountAfterSalesPage(container, options = {}) {
   const body = container.querySelector('[data-view="after-sales-body"]');
   let selectedDetailId = '';
   let candidates = [];
+  /** 当前弹窗状态：退货 {action:'return', moneyMode, method} / 换货 {action:'exchange', kind, size, method, stock} */
+  let modal = null;
 
   const showStatus = (text, isError = false) => {
     status.textContent = text;
@@ -104,9 +104,22 @@ export function mountAfterSalesPage(container, options = {}) {
     status.classList.toggle('error', Boolean(isError));
   };
 
-  const showActionResult = (text) => {
-    const host = body.querySelector('[data-view="action-result"]');
-    if (host) host.textContent = text;
+  const selectedCandidate = () => candidates.find((item) => item.sales_detail_record_id === selectedDetailId) || null;
+  const modalNode = () => container.querySelector('[data-as-modal]');
+  const modalBody = () => container.querySelector('[data-as-modal-body]');
+  const modalError = (text) => {
+    const node = container.querySelector('[data-as-modal-error]');
+    if (!node) return;
+    node.textContent = text || '';
+    node.hidden = !text;
+  };
+  const toast = (text) => {
+    const node = container.querySelector('[data-as-toast]');
+    if (!node) return;
+    node.textContent = text;
+    node.hidden = false;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => { node.hidden = true; }, 2200);
   };
 
   const renderCandidates = () => {
@@ -115,14 +128,105 @@ export function mountAfterSalesPage(container, options = {}) {
          <div class="candidate-list" data-view="after-sales-candidates">${candidates
     .map((item) => candidateHtml(item, item.sales_detail_record_id === selectedDetailId))
     .join('')}</div>
-         <p class="action-result" data-view="action-result" role="status"></p>`
+         ${modalHtml()}`
       : '';
   };
 
-  // ⚠️ 2026-10-29（业务负责人 HTML 批注）：页头「← 返回 售后单」整块删掉了
-  //   ⇒ 这里不再有返回按钮的处理（页面里没有那个元素，留着就是死代码）。
+  /** 尺码卡（销售扫码页同一套：一行 4 个码、整块 ≥44px、选中高亮）。 */
+  const sizeChipsHtml = (items) => items.map((item) => Number(item.size ?? item)).filter((size) => Number.isFinite(size)).map((size) => `
+    <button class="as-size-chip${Number(modal.size) === Number(size) ? ' active' : ''}" type="button"
+      data-as-size-value="${escapeHtml(String(size))}">${escapeHtml(String(size))} 码</button>`).join('');
+
+  /** 换尺码：按销售扫码页口径摆三组（现货 / 预定 / 特殊码折叠）。 */
+  const sizeGroupsHtml = () => {
+    if (modal.stockError) return `<p class="as-modal-error">${escapeHtml(AFTER_SALES_PAGE.sizesFailed)}</p>`;
+    if (!modal.stock) return `<p class="as-hint">${escapeHtml(AFTER_SALES_PAGE.sizesLoading)}</p>`;
+    const { inStock = [], reserve = [], special = [] } = modal.stock;
+    return `
+      <fieldset class="as-size-group">
+        <legend class="as-size-legend"><span>${escapeHtml(AFTER_SALES_PAGE.sizeGroupInStock)}</span><span class="tag tag-info">${escapeHtml(AFTER_SALES_PAGE.areaTagInStock)}</span></legend>
+        <div class="as-size-chips">${inStock.length ? sizeChipsHtml(inStock) : `<span class="as-hint">—</span>`}</div>
+      </fieldset>
+      <fieldset class="as-size-group">
+        <legend class="as-size-legend"><span>${escapeHtml(AFTER_SALES_PAGE.sizeGroupReserve)}</span><span class="tag tag-warning">${escapeHtml(AFTER_SALES_PAGE.areaTagReserve)}</span></legend>
+        <div class="as-size-chips">${reserve.length ? sizeChipsHtml(reserve) : `<span class="as-hint">—</span>`}</div>
+      </fieldset>
+      ${special.length ? `
+      <details class="as-size-group as-size-fold">
+        <summary class="as-size-legend"><span>${escapeHtml(AFTER_SALES_PAGE.sizeGroupSpecial)}</span><span class="tag tag-warning">${escapeHtml(String(special.length))}</span></summary>
+        <div class="as-size-chips">${sizeChipsHtml(special)}</div>
+      </details>` : ''}`;
+  };
+
+  /** 读「这一款」的尺码分组（销售扫码页口径；只读接口）。 */
+  const loadStockSizes = async () => {
+    if (!modal || modal.action !== 'exchange' || modal.kind !== 'same') return;
+    if (modal.stock || modal.stockError) return;
+    try {
+      const data = await api.get(`${apiBase}${AFTER_SALES_PAGE.stockSizesApi}?${new URLSearchParams({ productRecordId })}`);
+      if (!modal) return;
+      modal.stock = data?.groups || {};
+    } catch {
+      if (!modal) return;
+      modal.stockError = true;
+    }
+    if (modal) renderModal();
+  };
+
+  /** 弹窗内容（按动作 / 子状态渲染）。 */
+  const renderModal = () => {
+    const node = modalNode();
+    if (!node || !modal) return;
+    const item = selectedCandidate() || {};
+    const host = modalBody();
+    const amount = Number(item.actual_amount);
+    if (modal.action === 'return') {
+      host.innerHTML = `
+        <div class="as-modal-line as-modal-field">
+          <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.returnModeLabel)}">
+            <button class="as-segment${modal.moneyMode === 'refund' ? ' active' : ''}" type="button" data-as-money-mode="refund">${escapeHtml(AFTER_SALES_PAGE.returnRefund)}</button>
+            <button class="as-segment${modal.moneyMode === 'retained' ? ' active' : ''}" type="button" data-as-money-mode="retained">${escapeHtml(AFTER_SALES_PAGE.returnRetain)}</button>
+          </div>
+        </div>
+        ${modal.moneyMode === 'refund' ? `
+        <div class="as-modal-line as-modal-field">
+          <span class="as-modal-label">${escapeHtml(AFTER_SALES_PAGE.returnMethodLabel)}</span>
+          <select class="as-modal-select" data-as-method>
+            <option value=""${modal.method ? '' : ' selected'}>${escapeHtml(AFTER_SALES_PAGE.select)}</option>
+            ${optionsHtml(AFTER_SALES_PAGE.demoPaymentMethods, modal.method)}
+          </select>
+        </div>` : ''}`;
+    } else {
+      host.innerHTML = `
+        <div class="as-modal-line as-modal-field">
+          <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.exchangeModeLabel)}">
+            <button class="as-segment${modal.kind === 'same' ? ' active' : ''}" type="button" data-as-exchange-kind="same">${escapeHtml(AFTER_SALES_PAGE.exchangeSameItem)}</button>
+            <button class="as-segment${modal.kind === 'new' ? ' active' : ''}" type="button" data-as-exchange-kind="new">${escapeHtml(AFTER_SALES_PAGE.exchangeNewItem)}</button>
+          </div>
+        </div>
+        ${modal.kind === 'same' ? sizeGroupsHtml() : ''}`;
+
+    }
+  };
+
+  const openModal = (action) => {
+    if (!selectedCandidate()) return;
+    modal = action === 'return'
+      ? { action: 'return', moneyMode: '', method: '' }
+      : { action: 'exchange', kind: '', size: '', method: '', scanned: false };
+    modalError('');
+    renderModal();
+    const node = modalNode();
+    if (node) node.hidden = false;
+  };
+
+  const closeModal = () => {
+    const node = modalNode();
+    if (node) node.hidden = true;
+    modal = null;
+  };
+
   container.addEventListener('click', (event) => {
-    // 选中某一条 ⇒ 重新画一遍列表：**选中那条原地变成三个按钮**（其余仍是卡片）。
     const candidate = event.target.closest('[data-detail]');
     if (candidate) {
       selectedDetailId = candidate.dataset.detail || '';
@@ -131,12 +235,72 @@ export function mountAfterSalesPage(container, options = {}) {
       return;
     }
     const action = event.target.closest('[data-action]');
-    if (!action || !selectedDetailId) return;
-    body.querySelectorAll('[data-action]').forEach((node) => {
-      node.classList.toggle('active', node === action);
-    });
-    const spec = AFTER_SALES_ACTIONS.find((item) => item.value === action.dataset.action);
-    showActionResult(AFTER_SALES_PAGE.actionPending(spec?.label || ''));
+    if (action) {
+      if (action.disabled) return; // 赔货：灰置占位，不弹窗、不处理
+      openModal(action.dataset.action);
+      return;
+    }
+    if (event.target.closest('[data-as-modal-close]')) { closeModal(); return; }
+    const mode = event.target.closest('[data-as-money-mode]');
+    if (mode && modal?.action === 'return') {
+      modal.moneyMode = mode.dataset.asMoneyMode;
+      renderModal();
+      return;
+    }
+    const kind = event.target.closest('[data-as-exchange-kind]');
+    if (kind && modal?.action === 'exchange') {
+      modal.kind = kind.dataset.asExchangeKind;
+      modal.size = '';
+      renderModal();
+      if (modal.kind === 'same') void loadStockSizes();
+      return;
+    }
+    const sizeChip = event.target.closest('[data-as-size-value]');
+    if (sizeChip && modal?.action === 'exchange' && modal.kind === 'same') {
+      modal.size = sizeChip.dataset.asSizeValue;
+      renderModal();
+      return;
+    }
+    if (event.target.closest('[data-as-scan]')) {
+      if (!modal) return;
+      modal.scanned = true;
+      renderModal();
+      return;
+    }
+    if (!event.target.closest('[data-as-modal-confirm]')) return;
+    if (!modal) return;
+    modalError('');
+    if (modal.action === 'return') {
+      if (!modal.moneyMode) { modalError(AFTER_SALES_PAGE.returnModeLabel); return; }
+      if (modal.moneyMode === 'refund') {
+        const select = container.querySelector('[data-as-method]');
+        if (select) modal.method = select.value;
+        if (!modal.method) { modalError(AFTER_SALES_PAGE.returnMethodLabel); return; }
+      }
+      closeModal();
+      toast(AFTER_SALES_PAGE.toastReturnDone);
+      return;
+    }
+    if (modal.kind !== 'same' && modal.kind !== 'new') {
+      modalError(AFTER_SALES_PAGE.exchangeModeLabel);
+      return;
+    }
+    if (modal.kind === 'same') {
+      const select = container.querySelector('[data-as-size]');
+      if (select) modal.size = select.value;
+      if (!modal.size) { modalError(AFTER_SALES_PAGE.exchangeSizeLabel); return; }
+    } else {
+      if (!modal.scanned) { modalError(AFTER_SALES_PAGE.exchangeScan); return; }
+      const newPrice = Number(AFTER_SALES_PAGE.demoNewItem.price);
+      const diff = newPrice - Number(selectedCandidate()?.actual_amount || 0);
+      if (Math.abs(diff) >= 0.005) {
+        const select = container.querySelector('[data-as-method]');
+        if (select) modal.method = select.value;
+        if (!modal.method) { modalError(AFTER_SALES_PAGE.exchangeDiffMethodLabel); return; }
+      }
+    }
+    closeModal();
+    toast(AFTER_SALES_PAGE.toastExchangeDone);
   });
 
   if (!productRecordId) {
