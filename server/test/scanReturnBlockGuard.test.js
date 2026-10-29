@@ -270,6 +270,8 @@ test('AC-RB6 既有契约一条没放宽：`return_qty_<尺码>` / 上限与三�
     `${SCAN_WRITE.fields.returnQuantityPrefix}39`,
     'data-return-required-text=', 'data-return-quantity-text=', 'data-return-stock-text=',
     'data-return-max-quantity=', 'data-return-max-sizes=',
+    // ⭐ 2026-10-29（批注：金额能不能不填就提交？前端有没有拦截）⇒ 表单必须带"金额必填"两个钩子 ✓
+    `data-amount-field="${SCAN_WRITE.fields.purchaseAmount}"`, 'data-amount-hint-text=',
     `value="${SCAN_WRITE.actions.purchaseReturn}"`,
   ]) {
     assert.ok(block.includes(needle), `退货表单少了 ${needle} ✗`);

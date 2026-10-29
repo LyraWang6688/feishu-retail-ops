@@ -335,15 +335,17 @@ const runSubmitGuard = (html, form) => {
     preventDefault() { prevented = true; this.defaultPrevented = true; },
   };
   submitHandler.handler(event);
+  const amountHintView = form.getAttribute('data-amount-hint-view') || 'accept-amount-required';
   return {
     prevented,
+    amountHint: form.querySelector('[data-view="' + amountHintView + '"]'),
     hint: form.querySelector('[data-view="return-form-hint"]'),
     submitButton: form.querySelector('button[type="submit"]'),
   };
 };
 
 /** 照**页面真实属性**搭一个退货表单（属性值全部从渲染结果里抄 ⇒ 判据不是"另写一份"✓）。 */
-const returnFormFrom = (html, { quantities = {} } = {}) => {
+const returnFormFrom = (html, { quantities = {}, amount } = {}) => {
   // ⭐⭐ 2026-10-29（业务负责人批注「这里的框是干啥用的呀？」）：退货块**不再有勾选框** ——
   //   每行只有一个「退货数量」输入（不填 / 填 0 = 不退）⇒ 夹具按**页面上真实的 qty input** 搭，
   //   不再搭 checkbox（`data-stock` / `data-size` 都从渲染结果里抄 ✓，不另写一份）。
@@ -374,6 +376,12 @@ const returnFormFrom = (html, { quantities = {} } = {}) => {
       tagName: 'input',
       value: quantities[size] === undefined ? '' : quantities[size],
     }));
+  }
+  // 「整单金额」那一格（2026-10-29：退货表单现在带 data-amount-field ⇒ 前端必填拦截）
+  if (amount !== undefined) {
+    const amountName = attrs['data-amount-field'];
+    assert.ok(amountName, '退货表单要带 data-amount-field（前端必填拦截靠它认金额输入 ✓）');
+    form._children.push(fakeElement({ name: amountName }, { tagName: 'input', value: amount }));
   }
   form._children.push(fakeElement({ type: 'submit', 'data-submit-feedback': '正在提交…' }, { tagName: 'button' }));
   return form;
@@ -436,6 +444,33 @@ test('AC-RT4 ⭐ 退货数量非法 ⇒ 前端拦住 + 人话；**合法 / 空 /
   assert.equal(tooMany.prevented, true, `填超过 ${SCAN_WRITE.purchaseReturn.maxSizes} 个码 ⇒ 拦住 ✓`);
   assert.equal(tooMany.hint.textContent, SCAN_PAGE.returnForm.sizesLimitText, '人话来自配置 ✓');
   assert.ok(max >= 1, `上限配置仍在（${max}）—— 它管的是"单次最多几双"那一条 ✓`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-AMT1 ⭐⭐ 退货「整单金额」**前端必填拦截**（2026-10-29 业务负责人 HTML 批注：
+//   「这里如果我不填金额可以提交吗？前端有没有必填的拦截啊」）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-AMT1 ⭐⭐ 整单金额：不填 / 0 / 非数字 ⇒ **前端当场拦住**（人话走配置）；填了才放行', async () => {
+  const write = fakeWriteService();
+  let html;
+  await withServer(appFor(write), async (base) => { html = (await getReturnBlock(base)).html; });
+  // ① 页面必须真的带上"金额必填"那两个钩子（删掉 ⇒ 本用例红；服务端那道闸门仍在 ⇒ 双保险 ✓）
+  assert.ok(html.includes(`data-amount-field="${SCAN_WRITE.fields.purchaseAmount}"`),
+    '退货表单要带 data-amount-field（脚本据此认金额输入 ✓）');
+  assert.ok(html.includes('data-amount-hint-text="'), '金额必填人话要挂在表单上（走配置 ✓）');
+  // ② 空 / 0 / 非数字 ⇒ **前端**拦住（不再让她先跑一趟服务器看 400 页）
+  for (const bad of ['', '0', 'abc']) {
+    const result = runSubmitGuard(html, returnFormFrom(html, { quantities: { 40: '1' }, amount: bad }));
+    assert.equal(result.prevented, true, `金额 "${bad || '(空)'}" ⇒ **前端必须当场拦住**（annotation 问的就是这个 ✓）`);
+    assert.equal(result.amountHint && result.amountHint.textContent, SCAN_PAGE.returnForm.amountRequiredText,
+      '拦住时给的人话来自配置 ✓（不是一句写死的提示 ✗）');
+  }
+  // ③ 填了（>0）⇒ 放行（不许修过头把正常提交挡了 ✗）
+  for (const good of ['1', '399.5']) {
+    const result = runSubmitGuard(html, returnFormFrom(html, { quantities: { 40: '1' }, amount: good }));
+    assert.equal(result.prevented, false, `金额 "${good}"（>0）⇒ 放行 ✓`);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
