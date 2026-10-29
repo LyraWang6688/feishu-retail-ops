@@ -68,6 +68,15 @@
  *   依据 = 业务负责人 2026-10-29「好的，可以做」：删除本文件自己的 30 秒 `paymentMethodCache`，
  *     `listPaymentMethods` 改走 `configTableCache`（飞书 record_changed 失效 + TTL + lastGood），
  *     避免旧缓存绕过收款方式配置更新。
+ * - 2026-10-29 · **修扫码页「一单多货」补货假成功（P0）**（业务负责人授权解冻）：
+ *   改前逐字：sha `561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12`（1728 行）
+ *   改后逐字：sha `efaf1b17aa1d082548892249883a1d8a9f1f7afe539f5f9f72a213063526a219`（1732 行）
+ *   依据 = 业务负责人 2026-10-29 逐字「**授权解冻 scanWriteService.js，修扫码页一单多货假成功**」：
+ *     `multiItemOrderService` 调写入件时传的是**扁平 payload**，而 `publishPurchaseRequest` 读 `task.draft`
+ *     ⇒ `Cannot read properties of undefined (reading 'is_batch')` ⇒ 页面成功但采购批次/明细零写入。
+ *     修法：`multiItemWriters().purchase` 先建/更新本地 task（`{task_id, kind:'scan_replenish', status:'posting', draft}`）
+ *     再调既有 `publishPurchaseRequest(taskId, task, { supplierGroups })`（与单货品 `submitReplenish` 逐字同形）。
+ *     边界：**只改 `purchase` 一个写入件**；`purchaseReturn` / 单货品补货路径 / 其他链路**一个字没动**。
  * ⚠️ 本文件**只读**那个文件（`readFileSync`），**不写入、不改行为、不加开关** ✓
  */
 
@@ -92,8 +101,8 @@ const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.j
 //          **如果是现货，就是要扣库存**；如果是预订，就不扣库存，等二次交付的时候再扣库存」
 //          ＋「**啥叫钱没入账就不许出库存？不用呀。**」
 //          ⇒ 授权范围 = 冻结件 **5 行** ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（缺省 false ✓ 只给货那一跑 ✓）
-const FROZEN_SHA256 = '561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12';
-const FROZEN_LINES = 1728;
+const FROZEN_SHA256 = 'efaf1b17aa1d082548892249883a1d8a9f1f7afe539f5f9f72a213063526a219';
+const FROZEN_LINES = 1732;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const linesOf = (text) => String(text).split('\n').length;

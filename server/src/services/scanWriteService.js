@@ -220,8 +220,12 @@ const createScanWriteService = (options = {}) => {
 
   let multiItemWritersInstance = null;
   const multiItemWriters = () => {
+    /* eslint-disable-next-line global-require */ const { publishMultiItemPurchase } = require('./scanMultiItemPurchaseWriter');
     multiItemWritersInstance = multiItemWritersInstance || Object.freeze({
-      purchase: (taskId, task) => purchase().publishPurchaseRequest(taskId, task),
+      // 2026-10-29 P0：扁平 payload 先包成 task（适配层 `scanMultiItemPurchaseWriter.js`）
+      purchase: (taskId, payload, options = {}) => publishMultiItemPurchase({
+        taskId, payload, options, purchaseStore, purchase,
+      }),
       purchaseReturn: (taskId, draft) => purchaseReturn().submit(taskId, draft),
       behavior: (chain) => references.resolveBehavior((chain === 'return' ? config.purchaseReturn : config.replenish).behaviorCode),
     });
