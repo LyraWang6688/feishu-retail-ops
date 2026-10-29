@@ -65,7 +65,8 @@
 | **销售主表总金额** | `total_amount` | 「销售主表」`totalAmount → 总金额` | 空的显示 `—`（**空与 0 是两件事**，不拿 0 顶） |
 | 次要信息：销售单号 | `order_no` | 「销售主表」`orderNo → 销售单号` | 同一单多条明细（不同尺码）时用来区分"哪一单" |
 | **候选筛选（唯一口径）** | `excluded.byFulfillment`（按状态原文计数） | 「销售明细」`fulfillmentStatus → 履约状态` | ⭐ 业务负责人 2026-10-29 最终口径：**排除「未交付 / 已退货 / 已赔货」** ⇒ 列表里是「**已交付**」和「**已换货**」的明细。三种字面值只在 `config/afterSalesScan.SCAN_EXCLUDED_FULFILLMENT` 出现一次（配置先行） |
-| 其它三种排除（不展示，但如实回给页面） | `excluded.notPosted` / `outOfWindow` / `missingSalesDate` | 主表 `writeStatus → 写入状态`；明细「销售日」 | 没入账（写入失败 / 未完成）不做售后；超出自然日窗口不进候选；**明细没有「销售日」也不进候选（不兜底）** |
+| 主表只认「写入状态 = 成功」 | `excluded.notPosted` | 销售主表 `writeStatus → 写入状态` | ⭐ 她 2026-10-29 确认：「只筛选**写入状态有值且为成功**的」⇒ 失败 / 部分失败 / 未完成 / **空值** 一律不列（空值常见于飞书表单直接录的单）。判据复用项目统一的 `isPosted`（`config/salesStatusDimensions`），不另写一套 |
+| 时间窗 / 销售日 | `excluded.outOfWindow` / `missingSalesDate` | 明细「销售日」 | 超出近 N 个上海自然日不进候选；**明细没有「销售日」也不进候选（不兜底）** |
 | 🔴 重复售后不在这页拦 | —— | 「销售明细」`履约状态` | 「同一双被退两次」这类错账由**执行器在写库前**拦（列表口径听她的，不在读侧替她排除）；这一版按钮还没接写库 |
 | 近 7 天窗口 | `days` / `cutoff` | —— | **上海自然日**：今天 + 往前 6 天（含今天共 7 天，例：今天 10-29 ⇒ 从 10-23 00:00 起算）；共用 `utils/salesDateWindows.lookupWindowStart`；前端 `days = 7`、后端封顶 30 天 |
 

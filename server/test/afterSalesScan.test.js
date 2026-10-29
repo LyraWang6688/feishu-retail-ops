@@ -107,6 +107,41 @@ test('AC1b ⭐⭐ 口径：未交付 / 已退货 / 已赔货 不列；已交付 
   assert.deepEqual(out.excluded.byFulfillment, { 未交付: 1, 已退货: 1, 已赔货: 1 }, '三种排除各自计数');
 });
 
+/**
+ * ⭐⭐ 2026-10-29（业务负责人确认）：「目前就只筛选**写入状态有值且为成功**的」
+ *   ⇒ 成功 之外的三种（失败 / 部分失败 / 未完成）以及**空值**一律不列。
+ *   判据复用项目**统一**的 `isPosted`（`config/salesStatusDimensions`），不另写一套。
+ */
+test('AC2b ⭐⭐ 只认「写入状态 = 成功」：失败 / 部分失败 / 未完成 / 空 一律不列', async () => {
+  const gateway = fakeGateway();
+  const add = (entryId, writeStatus, detailId) => {
+    gateway.records.salesEntry.push({
+      record_id: entryId,
+      fields: { 销售单号: entryId, 写入状态: writeStatus, 总金额: 100 },
+    });
+    gateway.records.salesDetail.push({
+      record_id: detailId,
+      fields: {
+        销售单号: [entryId], 编号: ['p1'], 尺码: [{ record_ids: ['s41'], text: '41' }],
+        销售日: NOW - DAY, 履约状态: '已交付', 实收金额: 100,
+      },
+    });
+  };
+  add('e4', '部分失败', 'd9');
+  add('e5', '未完成', 'd10');
+  add('e6', '', 'd11'); // 空值（例如飞书表单直接录、没人写这个状态）
+  const service = new AfterSalesScanService({
+    gateway, now: () => NOW, cache: createScanPageCache({ ttlMs: 0 }),
+  });
+  const out = await service.listCandidates({ productRecordId: 'p1' });
+  const ids = out.candidates.map((item) => item.sales_detail_record_id);
+  for (const excludedId of ['d9', 'd10', 'd11']) {
+    assert.ok(!ids.includes(excludedId), `${excludedId}（写入状态非"成功"）不该出现在候选里`);
+  }
+  assert.ok(ids.includes('d1'), '"成功"的那单要列出来');
+  assert.equal(out.excluded.notPosted, 4, '失败 / 部分失败 / 未完成 / 空 ⇒ 都算"没入账"（如实计数）');
+});
+
 test('AC3 ⭐ 排除的几类都如实计数：三种履约状态 / 没入账 / 不在时间窗', async () => {
   const out = await build().listCandidates({ productRecordId: 'p1' });
   // d2 未交付 / d5 已退货 / d8 已赔货 ⇒ byFulfillment 三种各 1；
