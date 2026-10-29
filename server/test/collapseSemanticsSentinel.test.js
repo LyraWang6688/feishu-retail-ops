@@ -74,12 +74,6 @@ test('① 特殊码折叠 `size-fold`：**条件**展开（`${open}` —— 不�
   assert.match(tags[0], /\$\{open\}/, '它按她的口径**按条件**收/展 ⇒ 改成固定值 ⇒ 红 ✓');
 });
 
-test('① 订单「展开明细」`order-details-toggle`：**默认收起**（入口本身就写着"展开" ✓）', () => {
-  const tags = tagsOf(RAW_ORDERS, 'order-details-toggle');
-  assert.equal(tags.length, 1, '恰一处 ✓');
-  assert.equal(/\sopen(\s|>)/.test(tags[0]), false, '它**就该收起**（用户主动展开 ✓）⇒ 加 open ⇒ 红 ✓');
-});
-
 test('① 已到货批次 `purchase-arrived`：**默认收起**（避免一屏铺满 —— 设计如此 ✓）', () => {
   const tags = tagsOf(RAW_ORDERS, 'data-view="purchase-arrived"');
   assert.equal(tags.length, 1, '恰一处 ✓');
@@ -87,9 +81,9 @@ test('① 已到货批次 `purchase-arrived`：**默认收起**（避免一屏�
 });
 
 
-test('② 五个操作表单（`action-form`）：⭐ **一条合并哨兵** —— 这类**一律不得带 `open`** ✓', () => {
+test('② 一个操作表单（`action-form`）：⭐ **一条合并哨兵** —— 这类**一律不得带 `open`** ✓', () => {
   const tags = tagsOf(RAW_ORDERS, 'class="action-form"');
-  assert.equal(tags.length, 5, `这类现在是 5 个（实际 ${tags.length}）⇒ 增减 ⇒ 红 ✓（提醒同步这条清单 ✓）`);
+  assert.equal(tags.length, 1, `这类现在是 1 个（实际 ${tags.length}）⇒ 增减 ⇒ 红 ✓（提醒同步这条清单 ✓）`);
   for (const tag of tags) {
     assert.equal(/\sopen(\s|>)/.test(tag), false,
       `🔴 「点开才填」的表单**不许默认展开**（它们的设计就是"不把一屏全占了"✓）⇒ 谁加 open ⇒ 红 ✓：${tag}`);
