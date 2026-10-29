@@ -45,6 +45,59 @@ const documentImages = {
 
   // options.title / options.fileNameSuffix：采购退货单与采购申请单共用这一整条
   // 「按供应商出图 → 发到群 → 写回附件」的流程，只有标题和文件名不同（口径就是"格式一样"）。
+  /**
+   * ⭐ 2026-10-29（业务负责人批准 **A 方案·安全并行**）：在**写表之前**并行把每一组的 PNG 渲染出来。
+   *
+   * 为什么不违反"先写表、再发群"：本方法**只渲染，不发送、不回填附件、不写任何表**
+   * （纯计算，数据全部来自已经冻结的 `posting_plan`：批次号 / 供应商分组 / 明细）。
+   * 渲染完成后把 `Map<group_key, png>` 交给 `deliverSupplierImages`；
+   * 那边仍按**既有顺序**执行「发群 → 回填附件」，并且保持"写表成功才发群"的既有语义 ✓。
+   *
+   * 失败**绝不抛**：渲染失败 ⇒ 返回 `null`，deliver 会按原路径现场再渲染一次（退化成今天的行为）。
+   *
+   * @returns {Promise<Map<string, Buffer|string>|null>} group_key → PNG
+   */
+  async prepareSupplierImages(taskId, task, plan = {}, options = {}) {
+    const draft = task?.draft || {};
+    const items = Array.isArray(plan?.items) ? plan.items : [];
+    const batchNo = String(plan?.batch_no || draft.batch_no || '');
+    if (!items.length) return null;
+    const startedAt = Date.now();
+    try {
+      const planned = Array.isArray(plan?.supplier_groups) ? plan.supplier_groups : [];
+      const groups = planned.length
+        ? planned.map((group) => ({
+          groupKey: String(group?.group_key || ''),
+          supplierRecordId: String(group?.supplier_record_id || ''),
+          items: (Array.isArray(group?.indexes) ? group.indexes : []).map((index) => items[index]).filter(Boolean),
+        })).filter((group) => group.items.length)
+        : this.supplierReportGroups(task, {
+          batch_no: batchNo,
+          batch_key: plan?.batch_key || '',
+          supplier_groups: [],
+        }).map((group) => ({ groupKey: group.groupKey, supplierRecordId: group.supplierRecordId, items: group.items }));
+      const prepared = new Map();
+      // 各组**并行**渲染（互不依赖）；单组时等价于原来的串行渲染。
+      await Promise.all(groups.map(async (group) => {
+        const supplierName = await this.resolveSupplierName(group.supplierRecordId).catch(() => '');
+        const png = await this.images.render({
+          supplierName,
+          batchNo,
+          items: group.items,
+          title: options.title,
+        });
+        prepared.set(group.groupKey, png);
+      }));
+      logInfo('purchase.request.image.prepared', {
+        task_id: taskId, batch_no: batchNo, group_count: prepared.size, generate_ms: Date.now() - startedAt,
+      });
+      return prepared;
+    } catch (error) {
+      logWarn('purchase.request.image.prepare_failed', { task_id: taskId, error: error.message });
+      return null;
+    }
+  },
+
   async deliverSupplierImagesInner(taskId, task, posting = {}, options = {}) {
     const draft = task?.draft || {};
     const items = draft.items || [];
@@ -143,7 +196,12 @@ const documentImages = {
       const totalPairs = group.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
       let png;
       try {
-        png = await this.images.render({
+        // ⭐ 2026-10-29（安全并行）：写表期间已经把这一组的 PNG 渲染好了 ⇒ 直接用（不再渲染一遍）；
+        //   没有（渲染失败 / 老调用方）⇒ 按原路径现场渲染（**逐字退化为今天的行为** ✓）。
+        const preparedPng = options.preparedImages instanceof Map
+          ? options.preparedImages.get(String(group.groupKey || ''))
+          : null;
+        png = preparedPng || await this.images.render({
           supplierName,
           batchNo: posting.batch_no || draft.batch_no || '',
           items: group.items,

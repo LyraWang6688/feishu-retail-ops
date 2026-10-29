@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **462** 个事件。按前缀分组：
+共 **464** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -323,6 +323,8 @@
 | `purchase.request.image.group_sent` | 1 | src/services/purchase/documentImages.js |
 | `purchase.request.image.no_batch_no` | 1 | src/services/purchase/documentImages.js |
 | `purchase.request.image.operator_missing` | 1 | src/services/purchase/documentImages.js |
+| `purchase.request.image.prepare_failed` | 2 | src/services/purchase/documentImages.js<br>src/services/purchase/preparedImages.js |
+| `purchase.request.image.prepared` | 1 | src/services/purchase/documentImages.js |
 | `purchase.request.image.send_failed` | 1 | src/services/purchase/documentImages.js |
 | `purchase.request.image.skipped` | 1 | src/services/purchase/documentImages.js |
 | `purchase.request.image.thread_root_missing` | 1 | src/services/purchase/documentImages.js |
