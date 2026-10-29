@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 /**
  * ⭐⭐ 退货「**出图发群**」接线（修一个线上真缺陷）的验收标准。
  *
@@ -384,6 +385,7 @@ const postReturn = async (base, {
   if (multiItems) body.set(MULTI_ITEM_ORDER.field, multiItemsJson(multiItems));
   return fetch(`${base}/r/${encodeURIComponent(number)}?from=purchase_return`, {
     method: 'POST',
+    redirect: 'manual',  // ⭐ 2026-10-29：提交成功 = 303 回工作台（不许被 fetch 自动跟随成 404）
     headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   });
@@ -397,7 +399,7 @@ const submitThroughRoute = async (harness, { base, number = NUMBER_A, form = {},
   // ⚠️ 键名逐字是 `submit_key`（`config/scanWrite.js` 的 `FIELDS.submitKey` ✓）：
   //    写成 `submitKey` ⇒ 路由读不到 ⇒ 写层判"这一页放太久了"（真踩过一次 ✗）。
   const response = await postReturn(base, { number, form: { ...form, submit_key: submitKey }, multiItems });
-  assert.equal(response.status, 200, '退货 ⇒ 先回统一成功页（她 2026-10-16 的口径 ✓）');
+  assertSubmitToast(response, '退货 ⇒ 先回统一 toast（2026-10-29 口径：没有成功页了）');
   await waitForPendingPurchaseBackgrounds();
   return submitKey;
 };

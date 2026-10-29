@@ -23,7 +23,7 @@ test('路由只做分派：两个分支体已搬走（塞回即红）', () => {
   assert.equal(index.includes('purchaseEntryViolation({ chain: \'replenish\''), false);
   const file = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'handlers', 'purchase.js'), 'utf8');
   for (const marker of ['parseReplenishEntries', 'parseReturnEntries', 'purchaseEntryViolation',
-    'schedulePurchaseWrite', 'submitMultiItemOrder', 'successReturnFields']) {
+    'schedulePurchaseWrite', 'submitMultiItemOrder', 'redirectWithSubmitToast']) {
     assert.ok(file.includes(marker), `handler 里必须能看到原分支用的 ${marker}`);
   }
   assert.match(file, /const \{ [^}]+ \} = ctx;/, 'handler 必须用显式 ctx（不再读路由闭包）');

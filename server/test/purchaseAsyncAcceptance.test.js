@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 
@@ -175,10 +176,8 @@ test('AC-ASY1 ⭐⭐ 补货 / 退货：先回成功页，等后台那一跑落�
       const res = await postForm(pageUrl(base, c.realm), sessionCookie(), {
         action: c.action, submit_key: 'scan_test:key:async', ...c.extra,
       });
-      // ① **先回她**：200 —— 不许把她挂在后台那一跑上 ✗
-      assert.equal(res.status, 200, `${c.chain}：合法提交 ⇒ 200（先回她 ✓）`);
-      const html = await res.text();
-      assert.ok(html.trim().length > 0, `${c.chain}：回她的那一页不是空的 ✓`);
+      // ① **先回她**：303 + 统一 toast（2026-10-29：「以后就没有成功页了」）—— 不许把她挂在后台那一跑上 ✗
+      assertSubmitToast(res, `${c.chain}：合法提交 ⇒ 先回她`);
       // ② ⭐ 等"在飞的后台那一跑"跑完（今天为空 ⇒ 立即返回；接线后 ⇒ 真等到 ✓）
       await waitForPendingPurchaseBackgrounds();
       // ③ **数据真落库**：写入口**进过**（不是"看起来成功其实没写" ✗）
@@ -197,18 +196,17 @@ test('AC-ASY1b ⭐⭐ 验收（第三条链路）：**要么**成功页＋真的
       action: c.action, submit_key: 'scan_test:key:async', ...c.extra,
     });
     await waitForPendingPurchaseBackgrounds();
-    const html = await res.text();
-    const looksSuccess = res.status === 200 && /提交|成功|已接收|已收到/.test(html);
-    if (looksSuccess) {
-      // ① 说成功 ⇒ 必须**真的写了**（今天同步写 / 接线后由登记簿等到 ✓）
+    // ⚠️ 2026-10-29：验收动作已随扫码验收页退场（`routes/scanPage/actions.js` 里那条注释）——
+    //   所以这里的期望是"**没有成功回执**（不是 303）且零写入"；判据没放宽：
+    //   **给回执就必须真写了**（假成功 ⇒ 红），**没给回执就一个字都不许写**（两边一致 ✓ 不骗她 ✓）。
+    const hasToast = res.status === 303;
+    if (hasToast) {
       assert.equal(write.calls.length, 1,
-        '验收：**给了成功页就必须真的写了** ✗（不许假成功 —— 她最恨的那条 ✓）');
+        '验收：**给了回执就必须真的写了** ✗（不许假成功 —— 她最恨的那条 ✓）');
       assert.equal(write.calls[0].flow, 'accept', '验收：进的是验收那条写入口 ✓');
     } else {
-      // ② 没写 ⇒ **不许**看起来像成功 ✗（拿不到验收上下文时如实说 ✓）；且**一个字都没写** ✓
-      assert.equal(write.calls.length, 0, '验收：没给成功页 ⇒ **零写入** ✓（两边一致 ✓ 不骗她 ✓）');
-      assert.ok(res.status !== 200 || /没|未|不能|请|缺/.test(html),
-        `验收：非成功情形必须如实说（状态 ${res.status}）✓`);
+      assert.equal(write.calls.length, 0, '验收：没给回执 ⇒ **零写入** ✓（两边一致 ✓ 不骗她 ✓）');
+      assert.notEqual(res.status, 200, '验收：非成功情形**不许**回 200 成功页（已退场 ✗）');
     }
   });
 });
@@ -276,7 +274,7 @@ test('AC-ASY2-补货 ⭐⭐ 补货不问金额：金额空 / 非数字**都不�
         [`${SCAN_WRITE.fields.replenishSizes}`]: '41', qty_41: '2',
         [SCAN_WRITE.fields.purchaseAmount]: amount,
       });
-      assert.equal(res.status, 200, `补货填「${amount || '(空)'}」⇒ 照旧成功页 ✓（她 2026-10-16：「补货不问金额」）`);
+      assertSubmitToast(res, `补货填「${amount || '(空)'}」⇒ 照样交出去 ✓（她 2026-10-16：「补货不问金额」）`);
       await waitForPendingPurchaseBackgrounds();
       assert.equal(write.calls.length, 1, '补货那条要**真的**走完写入口一次 ✓（不是被别的东西拦下 ✗）');
       assert.equal(write.calls[0].flow, 'replenish');

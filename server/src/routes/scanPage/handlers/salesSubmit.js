@@ -1,4 +1,6 @@
 'use strict';
+// ⭐⭐ 2026-10-29：提交成功 = 统一 toast 共用件（与销售/补货/退货/多货同一份实现）。
+const { redirectWithSubmitToast } = require('../../../utils/submitToast');
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
 const { salesTradeTypeForStock } = require('../../../config/salesTradeTypePolicy');
 
@@ -8,7 +10,7 @@ const { salesTradeTypeForStock } = require('../../../config/salesTradeTypePolicy
  */
 
 async function handleSubmitOrder(ctx) {
-  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, successReturnFields, writeConfig, writeService } = ctx;
+  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, service, writeConfig, writeService } = ctx;
         // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
         //    + ②**「付款情况」三档**（整单：全付（默认）/ 部分付 / 未付）
         //    + ③多笔收款（同名重复 ⇒ 两个数组按下标对齐）+ 「部分付」的实付多少。
@@ -397,18 +399,6 @@ return sendPaymentStep(res, req, {
             retryHint: texts.stockFailedRetryHint,
           });
         }
-        // ⚠️ 2026-10-10：原来钱没记时会补一句「这一单先记了货、还没记钱…」（`fundsPendingNote`）——
-        //    那是**解释既有口径**的说明句，按业务负责人的口径删掉；写完的事实（单号 / 双数）照旧。
-        // ⭐ 2026-10-11 晚：她**显式选了「全付」却一笔收款都没填** ⇒ 单子照**按未付**落
-        //    （不拦她 —— 她真机就是被"资金不齐"卡住的），但结果页给她一句**指向能做的事**的人话。
-        const submitHint = result.full_without_payments
-          ? texts.fullWithoutPaymentsNote : texts.submittedNextHint;
-        // ⭐⭐ 2026-10-12（业务负责人真机口径，逐字）：「点击提交之后**直接提示"您的提交已成功"**就行，
-        //    **页面跳转到提交成功页**……给一个**链接**让我能回到扫码页。」
-        //    ⇒ 从这里出去的是**成功页**（H1 逐字「您的提交已成功」+ 一颗【再录一单】回扫码页），
-        //      **不再**渲染回原页、也不 303。⚠️ 连点的那一次（`reused`）同样给这一页 ——
-        //      她**看到了成功**，才不会再狂点（真实事故：她点了 14 次）。
-        const submitTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
         // ⭐⭐ 2026-10-13「金额两步走」第 2 步（业务负责人：**可写可不写** ✓）：
         //    提交成功 ⇒ **先落「整单付款」页**（三档横向 + 收款多行 + 赠品，可填可不填）
         //    ⇒ 她点【提交整单付款】（不填金额 = 未付）⇒ 走 `payment_pay` 动作 ⇒ 成功页 ✓
@@ -430,27 +420,11 @@ return sendPaymentStep(res, req, {
             request_id: requestId, reason: 'payment_step_render_failed', error: error.message,
           });
         }
-        return sendSuccess(res, 200, {
-          // ⭐ 提交成功 ⇒ 自动回【销售】首页（+ 一颗【返回扫码】兜底，同一个 URL ✓）；「再录一单」照旧保留 ✓
-          // ⭐ 提交这一单 ⇒ 回跳带它的单号（ⓑ 顶部指引的数据来源 ✓）
-          ...successReturnFields(req, submitTarget, result.order_no || ''),
-          title: result.reused ? texts.submittedAgainTitle : texts.submittedTitle,
-          body: result.reused
-            ? fillWriteText(texts.submittedAgainBody, { orderNo: result.order_no || '—' })
-            : fillWriteText(texts.submittedBody, {
-              orderNo: result.order_no || '—', count: result.detail_count || 0,
-            }),
-          requestId,
-          details,
-          retryHint: submitHint,
-          // 「再录一单」= 回到**这一款**的扫码页（编号取自 URL；非缺省领域带上 `?from=`）。
-          // ⭐ `/r` 底下「再录一单」回到**记录 ID** 那一页（不是 `/s/<记录id>`）。
-          backPath: postActionFor(
-            backTargetFor(req, decodeURIComponent(String(req.params.number || ''))), realm,
-          ),
-          backLabel: texts.submittedRecordAnother,
-          backHint: texts.submittedRecordAnotherHint,
-        }, req);
+        // ⭐⭐ 2026-10-29（业务负责人：「数据提交成功，后台自动写入，统一都是这个」＋「以后就没有成功页了」）：
+        //   提交收下 ⇒ **303 回工作台 + 统一 toast**（共用件 `utils/submitToast.js`）。
+        //   ⚠️ 正常情况下提交直接走 `sendPaymentStep`（资金页）；这里只是**资金页渲染抛错**时的兜底 ——
+        //     兜底也必须是同一个回执，不许再退回一张"成功页" ✗。
+        return redirectWithSubmitToast(res, { orderNo: result.order_no || '' });
 }
 
 module.exports = { handleSubmitOrder };
