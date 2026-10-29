@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **464** 个事件。按前缀分组：
+共 **457** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -579,18 +579,11 @@
 | `workbench.sales.delivery.job_finished` | 2 | src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.job_started` | 1 | src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.read_timing` | 1 | src/services/salesDeliveryReadService.js |
-| `workbench.sales.detail_amount.failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.orders.failed` | 2 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js |
 | `workbench.sales.orders.order_skipped` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.orders.read_retry` | 2 | src/services/salesDeliveryReadService.js<br>src/services/salesFollowupService.js |
 | `workbench.sales.payment.failed` | 2 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryPaymentService.js |
-| `workbench.sales.retry.done` | 1 | src/routes/workbench/sales.js |
-| `workbench.sales.retry.error` | 1 | src/routes/workbench/sales.js |
-| `workbench.sales.retry.failed` | 1 | src/routes/workbench/sales.js |
-| `workbench.sales.retry.no_pending` | 1 | src/routes/workbench/sales.js |
-| `workbench.sales.retry.order_mismatch` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.sample_fill.applied` | 1 | src/services/samplePendingService.js |
-| `workbench.sales.sample_fill.failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.sample_fill.no_doorbox` | 1 | src/services/samplePendingService.js |
 | `workbench.sales.sample_fill.reused` | 1 | src/services/samplePendingService.js |
 | `workbench.sales.sample_notice.failed` | 1 | src/routes/workbenchSalesDelivery.js |

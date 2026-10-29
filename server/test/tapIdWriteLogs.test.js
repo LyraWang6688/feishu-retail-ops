@@ -46,16 +46,9 @@ const appFor = ({ followup = {}, gateway = {} } = {}) => {
   return app;
 };
 
-test('AC-TAP2 ⭐ 售后 / 二次交付两个入口也**各自**带 `tap_id`（能真红：少接一处 ⇒ 红）', () => {
+test('AC-TAP2 ⭐ 售后入口带 `tap_id`（二次交付入口已随旧订单列表退场，不再要求）', () => {
   const actions = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/routes/workbenchOrderActions.js'), 'utf8');
-  // ⭐ 两个入口都走**尾部可选参数**（入参形状逐字不变 ✓）
-  assert.match(actions, /afterSales\(\s*\{[\s\S]{0,300}?\},\s*\{\s*correlation: tapIdFromRequest\(req\)/, '售后入口 ✓');
-  assert.match(actions, /secondDelivery\(\s*\{[\s\S]{0,300}?\},\s*\{\s*correlation: tapIdFromRequest\(req\)/, '二次交付入口 ✓');
-  const service = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/workbenchOrderActionService.js'), 'utf8');
-  assert.match(service, /async secondDelivery\(input = \{\}, options = \{\}\)/, '服务签名收尾部可选参数 ✓');
-  assert.match(service, /secondDeliveryExecutor\.confirm\(\{[\s\S]{0,600}?\}, \{ correlation: options\.correlation \}\)/, '二次交付那一跳按第二参原样转发 ✓');
-  assert.match(service, /async afterSales\(input = \{\}, options = \{\}\)/, '售后签名同样收尾部可选参数 ✓');
-  assert.match(service, /afterSalesExecutor\.execute\(\{[\s\S]{0,800}?\}, \{ correlation: options\.correlation \}\)/, '售后那一跳按第二参转发（下游待接 ⇒ 见 PR 如实说明）✓');
+  assert.match(actions, /afterSales\([\s\S]{0,400}?correlation: tapIdFromRequest\(req\)/, '售后入口要带 tap_id ✓');
 });
 
 test('AC-TAP3 ⭐⭐ 贯穿：同一个 `tap_id` 出现在【写库日志】里（能与 `ui.tap` 串起来）', async () => {

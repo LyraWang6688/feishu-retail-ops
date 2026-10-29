@@ -2,7 +2,11 @@
  * 工作台【订单列表】的单条操作 —— 写入口（业务负责人 2026-10-09）。
  *
  *   POST /api/workbench/sales/after-sales      售后：退 / 换 / 赔
- *   POST /api/workbench/sales/second-delivery  二次交付（收尾款 + 交付）
+ *   GET  /api/workbench/sales/after-sales/scan-candidates   售后扫一扫落地页的只读候选
+ *
+ * 🔴 2026-10-29（旧订单列表前端退场）：`POST /sales/second-delivery` 已删（旧详情页的二次交付入口没了）；
+ *    **业务能力保留**：`WorkbenchOrderActionService.secondDelivery` / `SecondDeliveryService` 一行没动，
+ *    以后独立页要用时从服务层接。
  *
  * ⭐ 2026-10-29：另加一条**只读**入口给「售后扫一扫落地页」——
  *   GET  /api/workbench/sales/after-sales/scan-candidates
@@ -56,15 +60,6 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
     // ⭐ 2026-10-15（task-48 b）：关联键走**尾部可选参数**（既有约定 ✓）——
     //    ⚠️ **不塞进入参**：入参形状逐字不变 ⇒ 既有 AC6 那条 deepEqual 一行都不用改 ✓
     (req) => resolveService().afterSales(
-      { ...req.body, operatorOpenId: req.workbenchUser?.open_id },
-      { correlation: tapIdFromRequest(req) },
-    ),
-  ));
-
-  router.post('/sales/second-delivery', handle(
-    'workbench.orders.second_delivery.failed', '二次交付没做成',
-    // ⭐ 2026-10-15（task-48 b）：同上 —— 尾部可选参数，**不动入参形状** ✓
-    (req) => resolveService().secondDelivery(
       { ...req.body, operatorOpenId: req.workbenchUser?.open_id },
       { correlation: tapIdFromRequest(req) },
     ),

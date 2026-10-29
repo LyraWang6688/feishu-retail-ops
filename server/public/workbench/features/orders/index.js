@@ -1,32 +1,23 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml, money, statusClass } from '../../core/formatters.js';
-import { describeError, runWriteAction, setBusy, showPageError, SUBMIT_PENDING_TEXT } from '../../core/ui.js';
-
-/** 文案模板填充（`{name}` 占位符）—— 文案在 `config/orders.js` 里，代码只填值。 */
-const fillText = (template, values = {}) => String(template ?? '')
-  .replace(/\{(\w+)\}/g, (match, key) => (values[key] === undefined || values[key] === null ? match : String(values[key])));
+import { describeError, runWriteAction, showPageError } from '../../core/ui.js';
 import {
-  ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS, DEFAULT_COLLECTION_METHOD, COLLECTION_METHODS,
-  REFUND_METHOD_PLACEHOLDER, RESTOCK_STATES, AFTER_SALES_ACTIONS, SETTLEMENTS,
-  ORDERS_SUB_TABS, SALES_SECTIONS, SALES_DELIVERY_PAGE,
+  ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
+  SALES_SECTIONS, SALES_DELIVERY_PAGE,
   ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
 import { ARRIVAL_FULL_API, ARRIVAL_FULL_FIELDS, ARRIVAL_FULL_TEXTS } from '../../config/orders.js';
 
-// 工作台【订单列表】（业务负责人 2026-10-09）—— 一级 tab 的第三个。
+// 工作台【订单列表】—— 一级 tab 的第三个（**只剩三条路径**，业务负责人 2026-10-29 定稿）。
 //
-// ⭐ 这一页只干两件事：**看销售情况** + **在手机上操作这张单**。
-//    看：**销售单号 · 销售明细 · 收款情况**（一行一张单，一张卡）。
-//    操作：补收款 / 交付 / 售后（退 · 换 · 赔）/ 二次交付 —— **全部走既有业务处理层**，
-//    这一层只负责收表单、调接口、把结果或**原因**显示出来。
+// 现状（2026-10-29 清理后）：
+//   · **销售侧**：这一页只画**三张入口卡** —— 交割单（跳独立页）/ 售后单（飞书扫一扫→售后落地页）/
+//     草稿箱（占位）；**老订单列表 / 订单详情 / 售后折叠区 / 补收款 / 交付 / 二次交付 / 补实收 /
+//     补样品 已整体删除**（业务：前端不用保留老订单列表；后端业务服务层保留，供独立页复用）。
+//   · **采购侧**：保留既有「验收到货」页（`mode: 'purchase'`，hidden 页面，行为不变）。
 //
-// ⚠️ **移动端友好**是硬要求（她的原话：「工作台要对移动端友好」）：
-//    · 一列卡片、没有表格 ⇒ 不横向滚动（样式见 `orders.css`）；
-//    · 按钮 / 输入框 ≥44px 命中区（窄屏整行可点）；
-//    · 每个动作收在 `<details>` 里，点开才展开，不把一屏全占了。
-//
-// ⚠️ 这里的 render 函数是**纯函数**（配置可注入）—— 测试可以直接喂一份
-//    `listOrders()` 形状的数据，断言"三项字段都画出来了"。
+// ⚠️ 保留的东西**不许再删**（业务负责人点名）：三卡入口 · 扫一扫 · 首屏缓存 · 后端写入能力。
+// ⚠️ 移动端友好：按钮 ≥44px 命中区；不横向滚动（样式见 `orders.css`）。
 
 const P = ORDERS_PAGE;
 const T = ORDERS_TEXTS;
@@ -85,230 +76,10 @@ export const createFirstPaintLoader = ({ load, storage, write = writeCachedOrder
   },
 });
 
-export const collectionMethodsOf = (methods) => (Array.isArray(methods) && methods.length
-  ? methods.map((item) => String(item)).filter(Boolean)
-  : [...COLLECTION_METHODS]);
-
-/** 收款方式下拉：`selected` 缺省 = 配置里的默认值（**只在这一页**给默认）。 */
-export function methodOptionsHtml(methods, selected = DEFAULT_COLLECTION_METHOD,
-  { placeholder = '' } = {}) {
-  const list = collectionMethodsOf(methods);
-  const chosen = list.includes(selected) ? selected : list[0];
-  const head = placeholder ? `<option value="">${escapeHtml(placeholder)}</option>` : '';
-  return head + list.map((method) => `<option value="${escapeHtml(method)}"${method === chosen ? ' selected' : ''}>${escapeHtml(method)}</option>`).join('');
-}
-
 const amount = (value) => money(Number(value || 0));
 const sizeText = (size) => (size == null || size === '' ? '尺码待补' : `${escapeHtml(size)} 码`);
 
 /** 一张单的收款情况（她的第 3 项）。状态文案直接来自现有字段，不自己造词。 */
-const paymentBlock = (order) => {
-  const payments = order.payments || [];
-  const methods = payments.map((payment) => `${escapeHtml(payment.method || '')} ${amount(payment.amount)}`).join(' / ');
-  return `
-        <div class="order-money">
-          <div class="metric"><span>${escapeHtml(T.paid)}</span><strong>${amount(order.paid_amount)}</strong></div>
-          <div class="metric"><span>${escapeHtml(T.pending)}</span><strong>${amount(order.pending_amount)}</strong></div>
-        </div>
-        <p class="order-payment-line">
-          <span class="tag ${statusClass(order.payment_status)}">${escapeHtml(order.payment_status || '')}</span>
-          <span class="muted">${escapeHtml(T.receivable)} ${amount(order.receivable_amount)}</span>
-          <span class="muted">${payments.length ? `已记 ${payments.length} 笔：${methods}` : '还没有收款记录'}</span>
-        </p>`;
-};
-
-/** 一条销售明细（她的第 2 项）：哪些货 / 颜色 / 尺码 / 金额 / 履约状态。
- * ⭐ 2026-10-11（B/C）：**配品行**显示「其他配品」的**名称**，而且**不硬塞一个尺码**
- *   （它的 编号 / 颜色 / 尺码 本来就是留空的 —— 显示成"未填货号 / 尺码待补"会误导她）。
- *   ⚠️ 判据用服务端给的 `requires_size`（可售品属性），页面里**不写死 kind 名字**。
- * ⭐ 颜色也画出来（货品信息 = 货号 / 颜色 / 尺码；服务端已给，零额外请求）。
- */
-const lineHtml = (line) => {
-  const isAccessory = line?.requires_size === false;
-  const color = String(line?.color ?? '').trim();
-  const label = isAccessory ? (line.accessory || '配品') : (line.product || '未填货号');
-  const sizeCell = isAccessory
-    ? '<span class="line-size tag tag-info">配品</span>'
-    : `<span class="line-size">${sizeText(line.size)}</span>`;
-  return `
-          <li class="order-line">
-            <span class="line-product">${escapeHtml(label)}</span>
-            ${!isAccessory && color ? `<span class="line-color">${escapeHtml(color)}</span>` : ''}
-            ${sizeCell}
-            <span class="line-amount">${line.actual_amount == null ? '—' : amount(line.actual_amount)}</span>
-            <span class="tag ${statusClass(line.fulfillment_status)}">${escapeHtml(line.fulfillment_status || '')}</span>
-          </li>`;
-};
-
-/**
- * ⭐⭐ 2026-10-12（她：「一屏下来只能展示一个半订单……争取在一屏里呈现更多信息」）：
- * 一张卡的**第二行 = 折叠行**：金额 / 待交付都压在这一行里（她一眼看完），
- * 收款明细与销售明细**点开才展开**（信息一个都不删，只是不默认占屏）。
- * ⚠️ 这一行本身就是 ≥44px 的命中区（`summary` 在 `base.css` / `orders.css` 里都是 `--control-height`）。
- */
-const detailsBlock = (order) => {
-  const lines = order.details || [];
-  return `
-        <details class="order-details-toggle">
-          <summary>
-            <span class="order-summary-line">${escapeHtml(T.receivable)} ${amount(order.receivable_amount)} · ${escapeHtml(T.paid)} ${amount(order.paid_amount)} · ${escapeHtml(T.pending)} ${amount(order.pending_amount)} · 待交付 ${Number(order.pending_delivery_quantity || 0)}</span>
-            <span class="order-more">${escapeHtml(T.details)} ${lines.length} 项 ›</span>
-          </summary>
-          ${paymentBlock(order)}
-          <ul class="order-lines">${lines.map(lineHtml).join('') || '<li class="order-line muted">这张单没有明细</li>'}</ul>
-        </details>`;
-};
-
-/**
- * 订单**列表**：一行一张销售单 = 一张卡（销售单号 · 销售明细 · 收款情况）。
- * 纯函数：喂 `listOrders()` 的 `orders` 就能渲染（测试直接用）。
- */
-export function ordersListHtml(orders = []) {
-  if (!orders.length) return `<p class="empty" data-view="orders-empty">${escapeHtml(P.empty)}</p>`;
-  return `<div class="orders-list" data-view="orders">${orders.map((order) => {
-    // ⭐⭐ 2026-10-15（⑨b-1 UI · 她逐字）：「失败落「**写入失败**」、工作台显示「**未完成，可点重试**」」
-    //   ⇒ **只有没写完的单**才出那一句 + 那颗按钮（写完了的不该出现"可点重试" ✗）。
-    //   ⚠️ 判据来自**服务端**已经算好的 `write_incomplete`（`salesFollowupService` 用已合并的
-    //      `isOrderIncomplete` 算的 ✓）—— 页面**不自己判** ✗、也不另发明一套 ✗。
-    //   ⚠️ 文案一律从 `T`（= `ORDERS_TEXTS`）取：这一套「重试」文案**按读取口**归在那一处
-    //      （同一个对象里读，就不会再出现"配在 P、代码读 T ⇒ 读成 undefined"那个真 bug ✗）。
-    const incomplete = order.write_incomplete === true;
-    return `
-      <article class="order-card" data-order="${escapeHtml(order.record_id)}">
-        <div class="order-card-head">
-          <h3 class="order-no">${escapeHtml(order.order_no || order.record_id)}</h3>
-          <div class="order-tags">
-            <span class="tag ${statusClass(order.fulfillment_status)}">${escapeHtml(order.fulfillment_status || '')}</span>
-            ${incomplete ? `<span class="tag tag-warning" data-view="order-incomplete">${escapeHtml(T.incomplete)}</span>` : ''}
-          </div>
-          <button class="btn btn-ghost order-open" type="button" data-action="open-order" data-order="${escapeHtml(order.record_id)}">${escapeHtml(P.open)} ›</button>
-          ${incomplete ? `<button class="btn btn-primary order-retry" type="button" data-action="retry-write" data-order-no="${escapeHtml(order.order_no || '')}">${escapeHtml(T.retry)}</button>` : ''}
-        </div>
-        ${detailsBlock(order)}
-      </article>`;
-  }).join('')}
-    </div>`;
-}
-
-// ── ⭐ 2026-10-09：订单列表内部的**两个子 tab**（销售 / 采购）────────────────────────
-//
-// 她 15:07 逐字：「第三个 tab 是订单列表，分两个子 tab：1. 销售… 2. 采购…」
-//
-// ⚠️ **选中态与切换自己实现**（就在本模块里），**不动**一级 tab 的结构与前两个 tab：
-//    · 一级 tab 的唯一来源仍是 `config/tabs.js` 的 `MAIN_TABS`（本文件不认识 main-tab）；
-//    · 子 tab 用 `data-subtab` + 容器上的事件委托（innerHTML 重画之后不用重新绑定）。
-
-/** 子 tab 按钮（选中态）. 纯函数：喂一个 value 就能渲染（测试直接用）。 */
-export function subTabsHtml(active = ORDERS_SUB_TABS[0].value) {
-  return ORDERS_SUB_TABS.map((tab) => `
-        <button class="sub-tab${tab.value === active ? ' active' : ''}" type="button"
-          data-subtab="${escapeHtml(tab.value)}" aria-selected="${tab.value === active}">${escapeHtml(tab.label)}</button>`).join('');
-}
-
-/** 子 tab 的**纯状态机**：点一个按钮该切到哪一页（认不出的按钮 → 原样不动，不瞎切）。 */
-export function resolveSubTab(current, next) {
-  return ORDERS_SUB_TABS.some((tab) => tab.value === next) ? next : current;
-}
-
-/**
- * 销售子 tab：按**是否钱货两清**归类 —— 判据**只用既有字段与取值**：
- *   · 货结清 ⟺ 履约状态 = 「已交付」（`fulfillment_status`，服务端 `progressFromRecords` 算的）；
- *   · 钱结清 ⟺ 收款状态 = 「已收款」（`payment_status`）。
- * 「没有钱货两清的就是有二次的」→ 再按哪一边没结清分三类（她给的三个例子）。
- * ⚠️ 值取不到（履约 / 收款状态为空）时**不许硬说成两清**：归到"没结清"那一侧。
- */
-export function salesCategoryOf(order) {
-  const delivered = order?.fulfillment_status === DELIVERED_FULFILLMENT;
-  const paid = order?.payment_status === PAID_PAYMENT_STATUS;
-  if (delivered && paid) return 'settled';
-  if (!delivered && paid) return 'undelivered';
-  if (delivered && !paid) return 'unpaid';
-  return 'both';
-}
-
-// 2026-10-28（业务负责人）：删除「钱货两清」分组与售后单=已两清的列表。
-// 订单列表的交割单直接平铺；售后单改为扫一扫流程（不再靠订单状态筛选）。
-
-// ── ⭐⭐ 2026-10-09（她定的最终结构）+ 2026-10-11（判据按她的新口径重写）────────────
-//
-// 她逐字：「② **订单列表**（**补充信息单** ｜ **待交割单**（货没给 / 钱没付完）｜ **售后列表**（钱货两清的））」
-//        「**货品信息和资金信息是校验项，其余不是校验项**」
-//        「**至少一笔就算"信息全"**（它进待交割），**收齐才进"售后列表"**」
-// ⚠️ 判据只用**既有字段与取值**（点名表在 `config/orders.js` 的 `ORDER_STATE_FIELDS`），
-//    **不新增任何状态枚举**；分段互斥且覆盖全部单子。
-
-/**
- * 两个**校验项**齐不齐（纯函数；她 2026-10-09 的口径）：
- *   · ① **货品信息** = 明细的 `product`（编号）/ `color`（颜色）/ `size`（尺码）都有值。
- *     ⚠️ **配品行不参与**：`requires_size === false` 的那些行（编号 / 颜色 / 尺码**本来就是留空的**，
- *        那是她的口径，不是"缺信息"）先被排除掉；一条明细都没有 = 缺（还没卖东西）。
- *   · ② **资金信息** = **至少一笔收款记录**且那一笔**有收款方式**（`method`）。
- *     ⚠️ 只写了一条「未收款」（欠款）而没有真正的收款 = **还没齐**（它没有收款方式）。
- *   ⚠️ **备注 / 配品 / 赠品都不是校验项** —— 这里一个都不读。
- */
-export function salesInfoOf(order = {}) {
-  const lines = Array.isArray(order.details) ? order.details : [];
-  const goodsLines = lines.filter((line) => line?.requires_size !== false);
-  const goodsMissing = lines.length === 0 || goodsLines.some((line) =>
-    !String(line?.product ?? '').trim()
-    || !String(line?.color ?? '').trim()
-    || line?.size == null || String(line.size).trim() === '');
-  const payments = Array.isArray(order.payments) ? order.payments : [];
-  const fundsMissing = !payments.some((payment) => String(payment?.method ?? '').trim());
-  return { goodsMissing, fundsMissing };
-}
-
-/**
- * 一张单属于哪一份单子（**纯函数**，配置里的三段顺序就是判定的优先级）：
- *   · `supplement` —— **缺任一校验项**（货品信息 / 资金信息）；
- *   · `pending`    —— 还没一次性钱货两清（待收款 / 待交付 / 部分）；
- *   · `settled`    —— 已经钱货两清，且没有售后动作；**不进入工作台三列表**（从销售查询看）；
- *   · `afterSales` —— 2026-10-28 起不再由订单状态分类；售后单是独立的扫一扫流程。
- */
-export function salesSectionOf(order) {
-  // ⭐⭐ 2026-10-11：「**卖了样品、没指定门盒**」也是一类**待补充**（服务端只读事实
-  //    `order.sample_pending`，见 `salesFollowupService.listOrders`）—— **先判它**。
-  //    ⚠️ 其余判据**一个字都没动**（货品信息 / 资金信息 / 两清那三段照旧）。
-  if (order?.sample_pending) return SALES_SECTIONS[0].key;
-  const info = salesInfoOf(order);
-  if (info.goodsMissing || info.fundsMissing) return SALES_SECTIONS[0].key;
-  // 2026-10-28：交割单 = 还没一次性钱货两清的单（待收款 / 待交付 / 部分）；
-  // 已经两清且没有售后的单**不留在交割单**（也不再进售后单）——它从销售查询看。
-  if (order?.fulfillment_status === '已交付' && order?.payment_status === '已收款') return 'settled';
-  return 'pending';
-}
-
-/**
- * 三份单子（**顺序 = 配置顺序**）：每一段一个标题 + 条数，下面照旧是一张单一张卡。
- * ⚠️ 「待交割单」那一段**仍按既有的三类细分展示**（有二次 · 货未交付 / 资金未收 / 两者都有）
- *    —— 她 2026-10-09 上半场定的那三类**一条信息都没丢**，只是收在"待交割单"这一段里。
- */
-export function ordersSectionsHtml(orders = [], { openSections = [] } = {}) {
-  const listAll = Array.isArray(orders) ? orders : [];
-  return `<div class="orders-sections" data-view="orders-sections">${SALES_SECTIONS.map((section) => {
-    const list = listAll.filter((order) => salesSectionOf(order) === section.key);
-    let body;
-    if (section.key === 'pending') {
-      body = !list.length
-        ? `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`
-        : ordersListHtml(list);
-    } else {
-      body = `<p class="empty compact" data-view="section-placeholder">${section.key === 'afterSales' ? '售后单请扫货品二维码进入' : '待建设'}</p>`;
-    }
-    const head = `
-        <div class="order-group-head">
-          <h3>${escapeHtml(section.label)}<span class="tag tag-${escapeHtml(section.tone || 'info')}">${escapeHtml(section.tag || '')}</span></h3>
-          <span class="muted">${list.length} 单</span>
-        </div>`;
-    return `
-      <section class="order-section" data-sales-section="${escapeHtml(section.key)}" data-tap-target="orders-section:${escapeHtml(section.key)}">
-        ${head}
-        ${body}
-      </section>`;
-  }).join('')}
-    </div>`;
-}
-
 function reportOrdersRendered(section, count) {
   try {
     const reporter = typeof window !== 'undefined' ? window.dshUiTap : null;
@@ -318,10 +89,6 @@ function reportOrdersRendered(section, count) {
   } catch { /* never block rendering */ }
 }
 
-/**
- * 销售订单列表的**入口卡片**：交割单 / 售后单 / 草稿单。
- * 点击卡片后才进入对应内容（交割单=现有订单，其余=待建设）。
- */
 export function ordersSectionCardsHtml(orders = []) {
   const listAll = Array.isArray(orders) ? orders : [];
   return `<div class="orders-section-cards" data-view="orders-section-cards">${SALES_SECTIONS.map((section) => {
@@ -510,217 +277,21 @@ export function arrivalSubmitLines({ rows = [], actuals = {}, extra = [] } = {})
  * ⚠️ 字段名与扫码页**逐字一致**（「实收金额」）；输入框预填**现有的值**（有就显示，不用重打）；
  * ⚠️ **留空 = 这一件先不动**（服务端只写她真填了的那几件）——所以这里不写任何说明书句。
  */
-const detailAmountBlock = (order) => {
-  const lines = (order.details || []).filter((line) => line.actual_amount == null);
-  if (!lines.length) return '';
-  return `
-      <details class="action-form" data-action-block="detail-amount">
-        <summary>${escapeHtml(T.detailAmountTitle)}</summary>
-        <div class="action-body">
-          ${(order.details || []).map((line) => `
-          <label class="form-field">${escapeHtml(line.product || '')} · ${sizeText(line.size)}
-            <input data-field="detail-amount" data-detail="${escapeHtml(line.record_id)}" type="text"
-              inputmode="decimal" value="${escapeHtml(line.actual_amount == null ? '' : line.actual_amount)}"
-              aria-label="${escapeHtml(T.detailAmountLabel)}">
-          </label>`).join('')}
-          <button class="btn btn-primary" type="button" data-action="submit-detail-amount">${escapeHtml(T.detailAmountSubmit)}</button>
-        </div>
-      </details>`;
-};
-
-/**
- * ⭐⭐ 2026-10-11（业务负责人）：「**卖了样品、没指定把门盒变成谁的**」那条待办的操作块。
- *
- * 一条待办一行：`哪双鞋 · 哪个码 的样品卖掉了` + **选一个还有门盒的码** ⇒ 补上
- * （服务端：那一双 **门盒 → 样品**，**1 双**、库存总数不变；与群卡片共用同一个幂等键）。
- * ⚠️ 候选码与"还剩几双门盒"**都来自服务端**（`sample_pending_lines[].candidates`），
- *    页面不猜、也不自己设默认值之外的东西；一个候选都没有 ⇒ 只给一句人话，**不给假按钮**。
- */
-const sampleFillBlock = (order) => {
-  const lines = (order.sample_pending_lines || []).filter((line) => line?.detail_record_id);
-  if (!lines.length) return '';
-  const rows = lines.map((line) => {
-    const label = fillText(T.sampleFillLine, {
-      product: line.product_number || '这一双', size: line.size == null ? '—' : line.size,
-    });
-    if (!(line.candidates || []).length) {
-      return `<p class="muted" data-sample-line="${escapeHtml(line.detail_record_id)}">${escapeHtml(label)}</p>
-          <p class="muted">${escapeHtml(T.sampleFillNoCandidate)}</p>`;
-    }
-    return `<label class="form-field">${escapeHtml(label)}
-            <select data-field="sample-fill-size" data-detail="${escapeHtml(line.detail_record_id)}">
-              ${line.candidates.map((candidate) => `<option value="${escapeHtml(String(candidate.size))}">${escapeHtml(fillText(T.sampleFillOption, { size: candidate.size, count: candidate.doorBoxCount }))}</option>`).join('')}
-            </select>
-          </label>`;
-  }).join('');
-  const actionable = lines.some((line) => (line.candidates || []).length);
-  return `
-      <details class="action-form" data-action-block="sample-fill">
-        <summary>${escapeHtml(T.sampleFillTitle)}</summary>
-        <div class="action-body">
-          <span class="muted">${escapeHtml(T.sampleFillSizeLabel)}</span>
-          ${rows}
-          ${actionable ? `<button class="btn btn-primary" type="button" data-action="submit-sample-fill">${escapeHtml(T.sampleFillSubmit)}</button>` : ''}
-        </div>
-      </details>`;
-};
-
-const secondDeliveryBlock = (order, methods) => `
-      <details class="action-form" data-action-block="second-delivery">
-        <summary>${escapeHtml(T.secondDeliveryTitle)}</summary>
-        <div class="action-body">
-          <label class="form-field">${escapeHtml(T.secondDeliveryMethod)}
-            <select data-field="second-delivery-method">${methodOptionsHtml(methods)}</select>
-          </label>
-          <button class="btn btn-primary" type="button" data-action="submit-second-delivery">${escapeHtml(T.secondDeliverySubmit)}</button>
-        </div>
-      </details>`;
-
-/** 售后区（退 / 换 / 赔）：动作 + 要处理的明细 + 回库状态 + 换/赔的鞋 + 钱。 */
-const afterSalesBlock = (order, methods) => {
-  const lines = order.details || [];
-  return `
-      <details class="action-form" data-action-block="after-sales">
-        <summary>${escapeHtml(T.afterSalesTitle)}</summary>
-        <div class="action-body">
-          <label class="form-field">${escapeHtml(T.afterSalesAction)}
-            <select data-field="after-sales-action">
-              ${AFTER_SALES_ACTIONS.map((item, index) => `<option value="${escapeHtml(item.value)}"${index === 0 ? ' selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
-            </select>
-          </label>
-          <fieldset class="form-field check-fieldset">
-            <legend>${escapeHtml(T.afterSalesDetails)}</legend>
-            ${lines.map((line) => `
-              <label class="check-line">
-                <input type="checkbox" data-field="after-sales-detail" value="${escapeHtml(line.record_id)}">
-                <span>${escapeHtml(line.product || '')} · ${sizeText(line.size)} · ${line.actual_amount == null ? '—' : amount(line.actual_amount)} · ${escapeHtml(line.fulfillment_status || '')}</span>
-              </label>`).join('') || '<p class="muted">这张单没有可处理的明细</p>'}
-          </fieldset>
-          <div data-view="restock-block">
-            <label class="form-field">${escapeHtml(T.restockState)}
-              <select data-field="restock-state">${RESTOCK_STATES.map((state) => `<option>${escapeHtml(state)}</option>`).join('')}</select>
-            </label>
-          </div>
-          <div class="hidden" data-view="new-line-block">
-            <div class="mode-choice">
-              <label><input type="radio" name="new-line-mode" value="same" checked> ${escapeHtml(T.newLineSame)}</label>
-              <label><input type="radio" name="new-line-mode" value="other"> ${escapeHtml(T.newLineOther)}</label>
-            </div>
-            <div class="hidden" data-view="new-product-block">
-              <div class="toolbar compact-toolbar">
-                <label class="form-field grow">${escapeHtml(T.newProductKeyword)}
-                  <input data-field="new-product-keyword" placeholder="例如 XHB8095">
-                </label>
-                <button class="btn" type="button" data-action="search-product">${escapeHtml(T.newProductSearch)}</button>
-              </div>
-              <div data-view="new-product-rows"><p class="empty compact">${escapeHtml(T.newProductEmpty)}</p></div>
-            </div>
-            <label class="form-field">${escapeHtml(T.newLineSize)}
-              <input data-field="new-line-size" type="number" min="1" step="1" inputmode="numeric" placeholder="例如 42">
-            </label>
-            <label class="form-field">${escapeHtml(T.newLineAmount)}
-              <input data-field="new-line-amount" type="text" inputmode="decimal">
-            </label>
-          </div>
-          <label class="form-field">${escapeHtml(T.diffAmount)}
-            <input data-field="diff-amount" type="text" inputmode="decimal">
-          </label>
-          <label class="form-field">${escapeHtml(T.settlement)}
-            <select data-field="settlement">
-              <option value="">${escapeHtml(T.select)}</option>
-              ${SETTLEMENTS.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="form-field">${escapeHtml(T.refundMethod)}
-            <select data-field="refund-method">${methodOptionsHtml(methods, '', { placeholder: REFUND_METHOD_PLACEHOLDER })}</select>
-          </label>
-          <button class="btn btn-primary" type="button" data-action="submit-after-sales">${escapeHtml(T.afterSalesSubmit)}</button>
-        </div>
-      </details>`;
-};
-
-/**
- * 订单**详情**（点进一张单）：三项照旧看得到，下面四个动作各自收在 `<details>` 里。
- * 纯函数，`methods` = 后端返回的收款方式清单（可注入，便于测试）。
- */
-export function orderDetailHtml(order, { methods = [] } = {}) {
-  return `
-    <div class="order-detail" data-order="${escapeHtml(order.record_id)}">
-      <div class="order-detail-head">
-        <button class="btn btn-ghost" type="button" data-action="back">${escapeHtml(P.back)}</button>
-        <h3 class="order-no">${escapeHtml(order.order_no || order.record_id)}</h3>
-        <span class="tag ${statusClass(order.payment_status)}">${escapeHtml(order.payment_status || '')}</span>
-        <span class="tag ${statusClass(order.fulfillment_status)}">${escapeHtml(order.fulfillment_status || '')}</span>
-      </div>
-      <div class="summary">
-        <div class="metric"><span>${escapeHtml(T.paid)}</span><strong>${amount(order.paid_amount)}</strong></div>
-        <div class="metric"><span>${escapeHtml(T.pending)}</span><strong>${amount(order.pending_amount)}</strong></div>
-        <div class="metric"><span>${escapeHtml(T.receivable)}</span><strong>${amount(order.receivable_amount)}</strong></div>
-        <div class="metric"><span>${escapeHtml(T.pendingDelivery)}</span><strong>${escapeHtml(order.pending_delivery_quantity ?? 0)}</strong></div>
-      </div>
-      <section class="detail-block">
-        <h4>${escapeHtml(T.details)}</h4>
-        <ul class="order-lines">${(order.details || []).map(lineHtml).join('') || '<li class="order-line muted">这张单没有明细</li>'}</ul>
-      </section>
-      <section class="detail-block">
-        <h4>${escapeHtml(T.payments)}</h4>
-        ${(order.payments || []).length
-    ? `<ul class="order-lines">${(order.payments || []).map((payment) => `
-          <li class="order-line">
-            <span class="line-product">${escapeHtml(payment.method || '')}</span>
-            <span class="line-amount">${amount(payment.amount)}</span>
-            <span class="tag ${statusClass(payment.status)}">${escapeHtml(payment.status || '')}</span>
-          </li>`).join('')}</ul>`
-    : '<p class="muted">还没有收款记录</p>'}
-      </section>
-      <div class="order-actions">
-        ${detailAmountBlock(order)}
-        ${sampleFillBlock(order)}
-        ${secondDeliveryBlock(order, methods)}
-        ${afterSalesBlock(order, methods)}
-      </div>
-      <p class="operation-result" data-view="action-result" role="status"></p>
-    </div>`;
-};
-
-const actionSpecOf = (value) => AFTER_SALES_ACTIONS.find((item) => item.value === value) || AFTER_SALES_ACTIONS[0];
-
-const uuid = () => (typeof crypto !== 'undefined' && crypto.randomUUID
-  ? crypto.randomUUID()
-  : `${Date.now()}-${Math.random()}`);
-
-/**
- * 页面模块。**事件全部走容器上的委托** —— 每次重画 innerHTML 后不需要重新绑定，
- * 也就不会出现"重画一次、按钮点不动"的老毛病。
- *
- * ⭐ 2026-10-09：多了 `mode`（`'both' | 'sales' | 'purchase'`，由 `config/domains.js` 给）——
- *    同一个模块现在挂在**两个领域**里：销售 tab 只看销售、采购 tab 只看采购；
- *    `mode: 'both'`（缺省）保留原来"内部两个子 tab"的老行为（既有用例钉着）。
- */
 export function createOrdersModule({ mode = 'both' } = {}) {
-  const singleMode = mode === 'sales' || mode === 'purchase';
   const state = {
     // ⭐【首屏】先旧后新：只做一次 + 两个展示标记
     firstPaintDone: false,
     refreshing: false,
     refreshError: '',
-    // ⭐【乙】售后列表的折叠状态（她手动展开过 ⇒ 重画时照旧展开）
-    openSections: [],
     container: null,
+    // ⚠️ 2026-10-29：老订单列表/详情已删（销售订单列表只剩三条路径：交割单 / 售后单 / 草稿箱）。
+    //   这里保留 `orders` 只为**首屏缓存**（业务负责人要求保留"首屏缓存"）与草稿占位；不再渲染任何订单行。
     orders: [],
-    methods: [],
-    order: null,
     activeSection: null,
     ordersLoaded: false,
     ordersLoading: false,
-    // ⭐ 2026-10-09：订单列表内部的子 tab（销售 / 采购）—— 选中态自己实现。
-    //    单领域模式（销售 tab / 采购 tab）下没有这一排按钮，直接从 mode 定住。
-    subTab: mode === 'purchase' ? 'purchase' : ORDERS_SUB_TABS[0].value,
     purchaseRows: [],
-    // 幂等：一次提交生成一个 requestId，重试复用同一个（成功后清空）。
-    // 与「库存手工调整」页同一套做法（服务端就是这么认同一笔的）。
-    pendingRequest: null,
-    newProduct: null,
+    arrivalRowsByBatch: {},
   };
 
   const $ = (selector) => state.container.querySelector(selector);
@@ -738,51 +309,18 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   }
 
   function renderShell() {
-    // ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
-    //    一级领域页里**不再画大标题与描述行** —— 与子 tab 重复（订单列表在「销售」/「采购」
-    //    两个领域里都是子 tab）。这里只留**能点的**：内部子 tab（非单领域模式）+ 列表正文。
-    //    单领域模式（销售 tab / 采购 tab）**不画**内部那排子 tab —— 一级 tab 已经分好领域了，
-    //    再套一层"销售 / 采购"只会让她多点一下（移动端尤其烦）。默认模式一个字没变。
-    const subTabs = singleMode ? '' : `<div class="sub-tabs" data-view="orders-subtabs">${subTabsHtml(state.subTab)}</div>`;
-    const salesPanel = `<div class="sub-panel${state.subTab === 'sales' ? '' : ' hidden'}" data-view="sales-panel">
-          <div data-view="orders-host"><p class="section-loading">正在读取订单…</p></div>
+    // ⚠️ 2026-10-29：老列表/详情退场后，这一页**只画当前领域那一块**（销售 = 三卡入口；采购 = 验收）。
+    //    单领域模式（销售 tab / 采购 tab）本来就没有内部子 tab，这次把那段也一起删了。
+    const salesPanel = `<div class="sub-panel" data-view="sales-panel">
+          <div data-view="orders-host"><p class="section-loading">正在读取…</p></div>
         </div>`;
-    const purchasePanel = `<div class="sub-panel${state.subTab === 'purchase' ? '' : ' hidden'}" data-view="purchase-panel">
-          <div data-view="purchase-host"><p class="section-loading">${state.subTab === 'purchase' ? '正在读取采购申请…' : '打开后读取采购申请…'}</p></div>
+    const purchasePanel = `<div class="sub-panel" data-view="purchase-panel">
+          <div data-view="purchase-host"><p class="section-loading">正在读取采购申请…</p></div>
         </div>`;
     state.container.innerHTML = `
-      ${subTabs}
       ${mode === 'purchase' ? '' : salesPanel}
       ${mode === 'sales' ? '' : purchasePanel}
       <p class="operation-result" data-view="action-result" role="status"></p>`;
-  }
-
-  /** 子 tab 的**选中态**（只重画那两个按钮，不动一级 tab）。 */
-  function renderSubTabs() {
-    const host = $('[data-view="orders-subtabs"]');
-    if (host) host.innerHTML = subTabsHtml(state.subTab);
-  }
-
-  /**
-   * 切子 tab：**自己实现的选中态与切换**（认不出的按钮不动 —— `resolveSubTab`）。
-   * 采购那一边每次切过去都**重新读一次**（到货状态会随验收变化，缓存住反而会撒谎）。
-   */
-  function switchSubTab(next) {
-    const wanted = resolveSubTab(state.subTab, next);
-    if (wanted === state.subTab && next !== state.subTab) return; // 认不出的按钮：什么都不做
-    state.subTab = wanted;
-    // 切走 / 切回都把销售那半边退回**列表**（详情页里有它自己的结果落点，
-    // 留在 DOM 里会让 purchase 那边的人话显示在一张看不见的节点上）。
-    state.order = null;
-    renderSubTabs();
-    $('[data-view="sales-panel"]')?.classList.toggle('hidden', wanted !== 'sales');
-    $('[data-view="purchase-panel"]')?.classList.toggle('hidden', wanted !== 'purchase');
-    if (wanted === 'purchase') {
-      renderList();
-      return loadPurchaseOrders();
-    }
-    renderList();
-    return Promise.resolve();
   }
 
   /** 售后单不是列表：点卡片直接扫货品码，再进入售后候选页。 */
@@ -808,41 +346,24 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   }
 
   function renderList() {
-    state.order = null;
     const host = $('[data-view="orders-host"]');
     if (!host) return;
     const notices = `${state.refreshing ? '<p class="orders-refreshing">刷新中…</p>' : ''}${!state.refreshing && state.refreshError ? '<p class="orders-refreshing orders-refreshing--error">刷新失败，先看的是上次的结果</p>' : ''}`;
     if (!state.activeSection) {
-      host.innerHTML = notices + ordersSectionCardsHtml(state.orders, { counts: state.ordersLoaded });
+      host.innerHTML = notices + ordersSectionCardsHtml(state.orders);
+      reportOrdersRendered('cards', SALES_SECTIONS.length);
       return;
     }
-    const section = SALES_SECTIONS.find((item) => item.key === state.activeSection);
-    if (!state.ordersLoaded) {
-      host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
-        <p class="section-loading" data-view="orders-waiting">正在读取订单…</p>`;
-      return;
-    }
-    const list = state.orders.filter((order) => salesSectionOf(order) === state.activeSection);
-    const body = state.activeSection === 'pending'
-      ? (list.length ? ordersListHtml(list) : `<p class="empty compact">${escapeHtml(T.groupEmpty)}</p>`)
-      : `<p class="empty compact" data-view="section-placeholder">${state.activeSection === 'afterSales' ? '售后单请扫货品二维码进入' : '待建设'}</p>`;
+    // 只有「草稿箱」会进这里（交割单在本页直接跳独立页；售后单直接起扫一扫）⇒ 显示显式占位。
     host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
-      <section class="order-section" data-sales-section="${escapeHtml(section?.key || '')}"><div class="order-group-head"><h3>${escapeHtml(section?.label || '')}<span class="tag tag-${escapeHtml(section?.tone || 'info')}">${escapeHtml(section?.tag || '')}</span></h3><span class="muted">${list.length} 单</span></div>${body}</section>`;
-    reportOrdersRendered(state.activeSection, list.length);
+      <p class="empty compact" data-view="section-placeholder">待建设</p>`;
   }
 
   function renderPurchaseList() {
     $('[data-view="purchase-host"]').innerHTML = purchaseOrdersHtml(state.purchaseRows);
   }
 
-  function openOrder(order) {
-    state.order = order;
-    state.newProduct = null;
-    state.diffEdited = false;
-    $('[data-view="orders-host"]').innerHTML = orderDetailHtml(order, { methods: state.methods });
-    toggleAfterSalesBlocks();
-  }
-
+ 
   /**
    * ⭐⭐ 2026-10-12（她：「它**一直说正在读取订单**」）：等待时给一个**在动**的指示 ——
    * 「正在读取订单…（已 N 秒）」。纯前端计时，**不发任何请求**；读回来/失败都会停。
@@ -870,7 +391,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   /** 只负责"拉一次最新订单"（缓存读写都在首屏那一层做）。 */
   const fetchOrders = async () => {
     const data = await api.get(ORDERS_API.orders);
-    state.methods = data.methods || [];
     return data.orders || [];
   };
 
@@ -887,18 +407,12 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     state.ordersLoading = true;
     const host = $('[data-view="orders-host"]');
     const hasOrders = (state.orders || []).length > 0;
-    const stopTicker = host && !state.order && !hasOrders ? startWaitingTicker(host) : () => {};
+    const stopTicker = host && !hasOrders ? startWaitingTicker(host) : () => {};
     const apply = (rows) => {
       state.orders = rows;
       state.ordersLoaded = true;
       state.ordersLoading = false;
-      if (state.order) {
-        const refreshed = state.orders.find((item) => item.record_id === state.order.record_id);
-        if (refreshed) openOrder(refreshed);
-        else renderList();
-      } else {
-        renderList();
-      }
+      renderList();
     };
     try {
       if (!freshOnly && !state.firstPaintDone) {
@@ -925,13 +439,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     } finally {
       stopTicker();
     }
-  }
-
-  /** 动作成功后刷新这张单（列表数据是唯一事实来源，不在前端自己改数字）。 */
-  async function refreshAfterAction(keepResult) {
-    const text = keepResult;
-    await loadOrders({ freshOnly: true }); // ⭐ 写操作后强制拉新（绝不走旧缓存）
-    if (text) renderResult(text);
   }
 
   // ── ⭐ 2026-10-09：采购子 tab（读既有 /purchase/requests；验收走既有入库链路）────────
@@ -1066,233 +573,14 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }, '正在验收入库…');
   }
 
-  async function runAction(button, busyText, work) {
-    // ⭐⭐ 2026-10-12《前端交互反馈纪律》：点击**立刻**置灰 + 换文案 +「（已 N 秒）」；
-    //    同一颗按钮在跑的时候**再点直接忽略**（防连点重复提交）；失败/成功后都恢复。
-    return runWriteAction(button, async () => {
-      renderResult('');
-      try {
-        const message = await work();
-        await refreshAfterAction(message);
-        return true;
-      } catch (error) {
-        // 400 = 她填错了（服务端一个字节都没写）⇒ 换一个 requestId；
-        // 其余保留，重试时复用同一个，避免"其实已经写进去一次"被记成两次。
-        if (error.status === 400) state.pendingRequest = null;
-        renderResult(describeError(error), true);
-        return false;
-      }
-    }, busyText || SUBMIT_PENDING_TEXT);
-  }
+ 
 
-  // ── 逐件补「实收金额」────────────────────────────────────────────────────
-  async function submitDetailAmount(button) {
-    const order = state.order;
-    const inputs = [...state.container.querySelectorAll('[data-field="detail-amount"]')];
-    const amounts = inputs
-      .map((input) => ({ detailRecordId: input.dataset.detail, amount: input.value.trim() }))
-      .filter((item) => item.amount !== '');
-    if (!amounts.length) return renderResult('还没有填实收金额', true);
-    const invalid = amounts.find((item) => !/^\d+(\.\d{1,2})?$/.test(item.amount) || Number(item.amount) <= 0);
-    if (invalid) return renderResult('实收金额要填大于 0 的数字（最多两位小数）', true);
-    const requestId = state.pendingRequest || uuid();
-    state.pendingRequest = requestId;
-    await runAction(button, '正在保存实收金额…', async () => {
-      const result = await api.post(ORDERS_API.detailAmounts, {
-        salesEntryRecordId: order.record_id, amounts, requestId,
-      });
-      state.pendingRequest = null;
-      const saved = `已保存 ${(result.changed || []).length} 件的实收金额`;
-      return result.owed
-        ? `${saved}；还差 ${amount(result.owed.amount)}，待收款那条已经同步。`
-        : `${saved}。`;
-    });
-  }
 
-  // ── 补样品（卖了样品没指定门盒的那条待办）────────────────────────────────
-  async function submitSampleFill(button) {
-    const selects = [...state.container.querySelectorAll('[data-field="sample-fill-size"]')];
-    const wanted = selects
-      .map((select) => ({ detailRecordId: select.dataset.detail, size: select.value }))
-      .filter((item) => item.detailRecordId && item.size !== '');
-    if (!wanted.length) return renderResult(T.sampleFillNoCandidate, true);
-    const requestId = state.pendingRequest || uuid();
-    state.pendingRequest = requestId;
-    const lines = [];
-    await runAction(button, '正在补样品…', async () => {
-      for (const item of wanted) {
-        const result = await api.post(ORDERS_API.sampleFill, { ...item, requestId });
-        lines.push(result.message || fillText(T.sampleFillDone, { size: item.size }));
-      }
-      state.pendingRequest = null;
-      return lines.join('；');
-    });
-  }
 
-  // ── 二次交付 ─────────────────────────────────────────────────────────────
-  async function submitSecondDelivery(button) {
-    const order = state.order;
-    const method = valueOf('second-delivery-method');
-    await runAction(button, '正在收尾款并交付…', async () => {
-      const result = await api.post(ORDERS_API.secondDelivery, { salesEntryRecordId: order.record_id, method });
-      if (result.alreadyCompleted) return '这张单的钱和货都已经齐了，没有重复写。';
-      return `已收尾款 ${amount(result.collectedAmount)} 并交付。`;
-    });
-  }
 
-  // ── ⭐⭐ 2026-10-15（⑨b-1 UI）「未完成，可点重试」──────────────────────────
-  /**
-   * 续写那一单（**同一把 `submitKey`**，服务端 = 既有 `POST /sales/retry`）。
-   *
-   * 🔴 三条：
-   *   · **不新开写库** ✗ —— 服务端走的是既有 `submitSale`（幂等不拆 ✓ 绝不直调 `_confirm` ✓）；
-   *   · **失败如实显示** ✗ 不许假成功 —— `runAction` 的 catch 会把服务端那句人话原样摆出来
-   *     （400 = "没有待续的单 / 单号对不上"、500 = "没写成"）；
-   *   · 成功 ⇒ `runAction` 里的 `refreshAfterAction` **强制拉新**（`freshOnly`）⇒ 她那一眼看到的是
-   *     真实状态（服务端同时作废了订单缓存 ✓）。
-   */
-  async function submitRetryWrite(button) {
-    const orderNo = String(button?.dataset?.orderNo || '').trim();
-    await runAction(button, T.retrying, async () => {
-      const result = await api.post(ORDERS_API.retry, orderNo ? { order_no: orderNo } : {});
-      // ⭐ `reused:true` = 这一单刚才已经交过了（不是又写了一遍）⇒ 如实说"已经写完了"
-      if (result?.reused === true) return T.retryAlreadyDone;
-      return result?.message || T.retryDone;
-    });
-  }
-
-  // ── 售后 ─────────────────────────────────────────────────────────────────
-  function afterSalesInput() {
-    const action = valueOf('after-sales-action');
-    const spec = actionSpecOf(action);
-    const detailRecordIds = [...state.container.querySelectorAll('[data-field="after-sales-detail"]')]
-      .filter((input) => input.checked).map((input) => input.value);
-    const body = {
-      action,
-      salesEntryRecordId: state.order.record_id,
-      detailRecordIds,
-      requestId: state.pendingRequest || uuid(),
-    };
-    if (spec.needsRestock) body.restockState = valueOf('restock-state');
-    if (spec.needsNewLine) {
-      const mode = state.container.querySelector('input[name="new-line-mode"]:checked')?.value || 'same';
-      body.newLine = {
-        sameItem: mode === 'same',
-        size: valueOf('new-line-size'),
-        amount: valueOf('new-line-amount'),
-      };
-      if (mode === 'other' && state.newProduct) body.newLine.productRecordId = state.newProduct.recordId;
-    }
-    body.diffAmount = valueOf('diff-amount');
-    body.settlement = valueOf('settlement');
-    body.paymentMethod = valueOf('refund-method');
-    return body;
-  }
-
-  async function submitAfterSales(button) {
-    const body = afterSalesInput();
-    if (!body.detailRecordIds.length) return renderResult('请先勾选要处理的销售明细', true);
-    const spec = actionSpecOf(body.action);
-    if (spec.needsNewLine && !body.newLine.size) return renderResult('请填新鞋的尺码', true);
-    if (spec.needsNewLine && body.newLine.sameItem === false && !body.newLine.productRecordId) {
-      return renderResult('请先查找并选择另一双的货号', true);
-    }
-    state.pendingRequest = body.requestId;
-    await runAction(button, '正在提交售后…', async () => {
-      const result = await api.post(ORDERS_API.afterSales, body);
-      state.pendingRequest = null;
-      return `${result.label || spec.label}已经记好了（售后单 ${result.masterRecordId || ''}）。`;
-    });
-  }
-
-  // ── 换 / 赔的货品查找（复用既有只读货品选择器）─────────────────────────────
-  async function searchProduct() {
-    const rows = $('[data-view="new-product-rows"]');
-    const keyword = valueOf('new-product-keyword');
-    rows.innerHTML = '<p class="section-loading">正在查找货品…</p>';
-    try {
-      const data = await api.get(`${ORDERS_API.products}?${new URLSearchParams({ keyword })}`);
-      const list = data.rows || [];
-      rows.innerHTML = list.length
-        ? `<div class="picker-list" data-view="new-product-list">${list.map((row) => {
-          const label = [row.item_no, row.color].filter(Boolean).join(' ') || row.product_number || row.record_id;
-          return `<button class="picker-item" type="button" data-product="${escapeHtml(row.record_id)}" data-label="${escapeHtml(label)}"><strong>${escapeHtml(row.item_no || row.product_number || row.record_id)}</strong><span class="muted">${escapeHtml(row.product_number || '')}${row.color ? ` · ${escapeHtml(row.color)}` : ''}</span></button>`;
-        }).join('')}</div>`
-        : '<p class="empty compact">没有匹配的货品，换个货号试试。</p>';
-    } catch (error) {
-      rows.innerHTML = '<p class="empty compact">货品查找失败</p>';
-      renderResult(describeError(error), true);
-    }
-  }
-
-  /** 换 / 赔那块表单按动作 + 模式显隐（赔货不需要「退回的鞋回哪儿」）。 */
-  function toggleAfterSalesBlocks() {
-    const actionSelect = field('after-sales-action');
-    if (!actionSelect) return;
-    const spec = actionSpecOf(actionSelect.value);
-    $('[data-view="restock-block"]')?.classList.toggle('hidden', !spec.needsRestock);
-    $('[data-view="new-line-block"]')?.classList.toggle('hidden', !spec.needsNewLine);
-    const mode = state.container.querySelector('input[name="new-line-mode"]:checked')?.value || 'same';
-    $('[data-view="new-product-block"]')?.classList.toggle('hidden', mode !== 'other');
-    renderSettlementOptions(spec);
-  }
-
-  /**
-   * 「资金走向」下拉：候选只有既有配置里那两个，且按动作过滤
-   * （`prepaid`（钱留在我们这里）只有**退货**走得通 —— 换货 / 赔货选它，
-   *  既有执行器会当场把原因说出来，这里就别给她一个点不通的选项）。
-   */
-  function renderSettlementOptions(spec) {
-    const select = field('settlement');
-    if (!select) return;
-    const current = select.value;
-    const allowed = SETTLEMENTS.filter((item) => item.actions.includes(spec.value));
-    select.innerHTML = `<option value="">${escapeHtml(T.select)}</option>`
-      + allowed.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join('');
-    if (allowed.some((item) => item.value === current)) select.value = current;
-  }
-
-  /** 已经在售后区勾上的明细（退款金额的**建议值**从这张单自己的成交金额来）。 */
-  function checkedAfterSalesLines() {
-    const ids = [...state.container.querySelectorAll('[data-field="after-sales-detail"]')]
-      .filter((input) => input.checked).map((input) => input.value);
-    return (state.order?.details || []).filter((line) => ids.includes(line.record_id));
-  }
-
-  /**
-   * 退货时把「差价」预填成**负的原明细成交金额合计**（= 要退给她多少钱）。
-   * ⚠️ 这是**建议值、她自己可以改** —— 与群聊链路里那张卡片的口径一致
-   *   （`afterSalesFlowService.buildPlan`：退货建议差价 = -原明细成交金额）；
-   *   她手动改过之后就不再覆盖（`state.diffEdited`）。
-   */
-  function suggestDiffAmount() {
-    const input = field('diff-amount');
-    if (!input || state.diffEdited) return;
-    if (valueOf('after-sales-action') !== 'return') return;
-    const total = checkedAfterSalesLines()
-      .reduce((sum, line) => sum + Number(line.actual_amount || 0), 0);
-    input.value = total ? String(-Math.round(total * 100) / 100) : '';
-  }
 
   function bind() {
-    // ⚠️ `<details>` 的 `toggle` **不冒泡** ⇒ 必须用捕获阶段监听，否则收不到
-    state.container.addEventListener('toggle', (event) => {
-      const target = event.target;
-      if (!target || target.dataset?.view !== 'after-sales-section') return;
-      const key = 'afterSales';
-      state.openSections = target.open
-        ? [...new Set([...state.openSections, key])]
-        : state.openSections.filter((item) => item !== key);
-    }, true);
     state.container.addEventListener('click', (event) => {
-      // 货品选择器（换 / 赔那一块）：点中一行就记下来，再点一次换一双。
-      const picker = event.target.closest('[data-product]');
-      if (picker) {
-        state.newProduct = { recordId: picker.dataset.product, label: picker.dataset.label || '' };
-        state.container.querySelectorAll('[data-product]').forEach((item) => item.classList.toggle('active', item === picker));
-        renderResult(`已选：${state.newProduct.label}`);
-        return;
-      }
       const sectionCard = event.target.closest('[data-orders-section]');
       if (sectionCard) {
         if (sectionCard.dataset.ordersSection === 'afterSales') {
@@ -1315,27 +603,10 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         return;
       }
       const trigger = event.target.closest('[data-action]');
-      // ⭐ 2026-10-09：子 tab 的切换（自己实现）—— 放在 data-action 分派**之前**，
-      //    因为子 tab 是另一套标记（`data-subtab`），不该和业务动作混在一个分支里。
-      const subTab = event.target.closest('[data-subtab]');
-      if (subTab) return switchSubTab(subTab.dataset.subtab);
       if (!trigger) return;
       const action = trigger.dataset.action;
-      if (action === 'refresh') {
-        return state.subTab === 'purchase' ? loadPurchaseOrders() : loadOrders();
-      }
-      if (action === 'open-order') {
-        const order = state.orders.find((item) => item.record_id === trigger.dataset.order);
-        return order ? openOrder(order) : undefined;
-      }
-      // ⭐⭐ 2026-10-15（⑨b-1 UI）：「未完成，可点重试」那颗按钮 —— 调**既有**服务端路由续写
-      if (action === 'retry-write') return submitRetryWrite(trigger);
+      if (action === 'refresh') return loadPurchaseOrders();
       if (action === 'back') return renderList();
-      if (action === 'search-product') return searchProduct();
-      if (action === 'submit-detail-amount') return submitDetailAmount(trigger);
-      if (action === 'submit-sample-fill') return submitSampleFill(trigger);
-      if (action === 'submit-second-delivery') return submitSecondDelivery(trigger);
-      if (action === 'submit-after-sales') return submitAfterSales(trigger);
       // 「验收到货」：点一下把那张卡的验收表单展开（真正的写入在 submit-arrival）
       if (action === 'verify-arrival') {
         const form = state.container.querySelector(`[data-arrival-batch="${trigger.dataset.batch || ''}"]`);
@@ -1349,38 +620,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       const node = event.target;
       if (node?.matches?.('details[data-action-block="verify-arrival"]') && node.open) loadArrivalDetail(node);
     }, true);
-    state.container.addEventListener('change', (event) => {
-      const target = event.target;
-      if (target.matches('[data-field="after-sales-action"], input[name="new-line-mode"]')) {
-        toggleAfterSalesBlocks();
-        suggestDiffAmount();
-      }
-      if (target.matches('[data-field="after-sales-detail"]')) suggestDiffAmount();
-      if (target.matches('[data-field="diff-amount"]')) state.diffEdited = true;
-    });
-    state.container.addEventListener('input', (event) => {
-      if (event.target.matches('[data-field="diff-amount"]')) state.diffEdited = true;
-    });
-  }
-
-  /** 从售后候选页选单 + 动作回来：直接打开这张单的售后表单，并预选动作。 */
-  async function openAfterSalesDeepLink() {
-    const params = new URLSearchParams(window.location.search);
-    const orderId = String(params.get('after_sales_order') || '').trim();
-    if (!orderId) return;
-    state.activeSection = 'afterSales';
-    renderList();
-    if (!state.ordersLoaded) await loadOrders();
-    const order = state.orders.find((item) => item.record_id === orderId);
-    if (!order) return renderResult('没有找到这张销售单', true);
-    openOrder(order);
-    const action = String(params.get('after_sales_action') || '');
-    const select = field('after-sales-action');
-    if (select && action) {
-      select.value = action;
-      toggleAfterSalesBlocks();
-    }
-    return undefined;
   }
 
   return {
@@ -1390,10 +629,9 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       bind();
       // 单领域模式只读自己那一边（采购 tab 不发销售订单请求，销售 tab 不发采购申请请求）。
       if (mode === 'purchase') loadPurchaseOrders();
-      else {
-        renderList();
-        void openAfterSalesDeepLink();
-      }
+      // ⭐ 2026-10-29：入口**不拉订单**（三卡是静态入口；e2e AC-ENTRY 钉住"入口 0 个 /sales/orders 请求"）。
+      //    首屏缓存那三个纯函数仍 export（能力保留），将来若列表回来直接接。
+      else renderList();
     },
   };
 }

@@ -70,13 +70,6 @@ const CHAINS = Object.freeze({
       ['purchaseRequest', 'detailId'], ['purchaseRequest', 'supplier'],
     ],
   },
-  'ORDERS_API.afterSales': {
-    fe: 'features/orders/index.js', feKey: 'ORDERS_API.afterSales',
-    route: 'src/routes/workbenchOrderActions.js', routeKey: /router\.post\('\/sales\/after-sales'/,
-    service: 'src/services/afterSalesService.js', serviceKey: /this\.gateway\.create\('salesDetail'/,
-    // 售后那条链的写入点（只读核过）：销售主表·售后次数 / 销售明细（新建/改交付）
-    landing: [['salesEntry', 'afterSalesCount'], ['salesDetail', 'fulfillmentStatus'], ['paymentRecord', 'amount']],
-  },
   "'/api/workbench/sales/delivery/deliveries'": {
     fe: 'features/sales-delivery/index.js', feKey: "'/api/workbench/sales/delivery/deliveries'",
     route: 'src/routes/workbenchSalesDelivery.js', routeKey: /router\.post\('\/sales\/delivery\/deliveries'[\s\S]{0,600}?req\.body\?\.detailRecordIds/,
@@ -108,7 +101,6 @@ const CHAINS = Object.freeze({
  * 要加新输入 ⇒ 必须先在这里登记**并**去核落点，否则 AC-LANDING-1 红 ✓
  */
 const PENDING_LANDING = Object.freeze([
-  'ORDERS_API.detailAmounts', 'ORDERS_API.sampleFill', 'ORDERS_API.secondDelivery', 'ORDERS_API.retry',
   'SCAN_PRINT_ENDPOINTS.report', 'SCAN_PRINT_ENDPOINTS.jobs',
   "'/api/workbench/label-print/jobs'",
 ]);
