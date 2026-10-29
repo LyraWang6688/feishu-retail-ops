@@ -533,7 +533,7 @@ const createScanPageRouter = (options = {}) => {
   const multiItemOrder = () => {
     if (multiItemOrderEngine) return multiItemOrderEngine;
     if (!writeService || typeof writeService.multiItemWriters !== 'function') return null;
-    if (multiItemOrderConfig.enabled !== true) return null;
+    // 🔴 2026-10-29：**没有开关**了（她：「就应该支持一单多货，不应该有配置按钮」）⇒ 不再有这道门 ✓
     // 🔴 写入件**只经** `writeService.multiItemWriters()`（同一批既有写入件的引用相等 ✓）——
     //   本文件里**不出现任何写链路服务名**（既有源码哨兵 `RT5` 钉着，不放宽 ✗）。
     multiItemOrderEngine = createMultiItemOrderService({

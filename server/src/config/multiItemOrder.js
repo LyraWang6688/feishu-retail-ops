@@ -23,12 +23,12 @@ const { SCAN_WRITE } = require('./scanWrite');
 
 /** 共用块（与哪条链无关的那些）。 */
 const resolveShared = (env) => ({
-  // 🔴 **总开关**：她 2026-10-15 晚**改口径**了（逐字）：「**直接走新逻辑（一单多货品），不需要影子**」
-  //    ⇒ 默认 **`true`**（真实写入 ✓）——影子阶段取消 ✗（第 1 步那个"只算不写"不再需要）。
-  //    ⚠️ 改前逐字：`readFlag(env, 'SCAN_MULTI_ITEM_ENABLED', false)`（先影子跑）
-  //      改后逐字：下面这一行（默认 `true`）
-  //      依据：她那句（上）＋「好的，**按照（20 货品 / 50 行）**」⇒ 上限值不变 ✓。
-  enabled: readFlag(env, 'SCAN_MULTI_ITEM_ENABLED', true),
+  // 🔴🔴 **2026-10-29 成对迁移（改前逐字 → 改后逐字 → 依据）**：
+  //   改前逐字：`enabled: readFlag(env, 'SCAN_MULTI_ITEM_ENABLED', true),`（一个"总开关"）
+  //   改后逐字：**这一行删净** ✗ —— 一单多货**永远开**：没有开关、也没有"关着时的老分支/影子跑"。
+  //   依据＝业务负责人 2026-10-29 逐字：「**啥叫默认开启呀？就应该开启呀，就应该支持一单多货呀，
+  //     不应该有配置按钮呀！**」＋ 2026-10-16「**以后你不用有"开关"的这个思维……不需要开关**」
+  //     （`docs/no-switch-rule-2026-10-16.md`）⇒ 渲染 / 路由 / 引擎三处判据**同批删净**（一个提交 ✓）。
   // 每单上限（她确认 ✓ 是可配置项，不是写死 ✗）。与 `SESSION.maxLines`（销售本单上限）**同形**，
   // 但**各管各的**：一个是"本单几双"，一个是"一单多货品最多几行"。
   maxProducts: readInt(env, 'SCAN_MULTI_ITEM_MAX_PRODUCTS', 20, { min: 1, max: 200 }),
@@ -90,7 +90,6 @@ const resolveShared = (env) => ({
     stockUnknown: '{size} 码的库存现在取不到，先别退这一码。',
     amountRequired: '退货要填整单发生金额（一个数就够，不用按货品拆）。',
     chainUnknown: '认不出这一次要办的是哪一种单（补货 / 退货），先回上一步重进。',
-    shadowLogged: '影子模式：这一单只做了校验与算账，一个字都没写。',
   },
 });
 
@@ -195,7 +194,6 @@ const resolveChains = (env) => ({
 
 /** 事件名（日志口径；排查时按它们 grep ✓）。 */
 const resolveEvents = (env) => Object.freeze({
-  shadowSubmit: readString(env, 'SCAN_MULTI_ITEM_EVENT_SHADOW', 'multi_item_order.shadow_submit'),
   submitted: readString(env, 'SCAN_MULTI_ITEM_EVENT_SUBMITTED', 'multi_item_order.submitted'),
   reused: readString(env, 'SCAN_MULTI_ITEM_EVENT_REUSED', 'multi_item_order.reused'),
   rejected: readString(env, 'SCAN_MULTI_ITEM_EVENT_REJECTED', 'multi_item_order.rejected'),

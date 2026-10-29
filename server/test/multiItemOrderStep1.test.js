@@ -88,10 +88,10 @@ const makeWriters = () => {
   };
 };
 
-const build = ({ env = {}, enabled = false } = {}) => {
-  const config = resolveMultiItemOrderConfig({
-    SCAN_MULTI_ITEM_ENABLED: enabled ? 'true' : 'false', ...env,
-  });
+const build = ({ env = {} } = {}) => {
+  // ⭐ 2026-10-29：**没有开关了**（她：「啥叫默认开启呀？就应该开启呀，就应该支持一单多货呀，
+  //   不应该有配置按钮呀！」）⇒ 这里不再读 `SCAN_MULTI_ITEM_ENABLED`（那个键已删 ✓）
+  const config = resolveMultiItemOrderConfig({ ...env });
   const sessions = makeSessions();
   const logs = makeLogs();
   const writers = makeWriters();
@@ -121,28 +121,39 @@ const submit = (h, { chain = 'replenish', orderKey, submitKey, stockView = null,
   h.service.submitDraft({ openId: 'ou_me', chain, orderKey, submitKey, stockView, behavior: b });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-MI1 影子模式零写入
+// AC-MI1 没有开关 / 没有影子：提交 = 真写一次
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MI1 ⭐⭐ 影子模式（enabled=false）⇒ **零写入**：既有写入件一次都没被调 + 只记一条影子日志', async () => {
+/**
+ * ⭐⭐ 2026-10-29 **成对迁移（改前逐字 → 改后逐字 → 依据）**：
+ *   改前逐字：本用例测「影子模式（`enabled=false`）⇒ **零写入** + 一条 `shadow_submit` 日志」
+ *   改后逐字：本用例测「**没有开关** ⇒ 提交**永远真写一次**：配置上没有 `enabled` 键、
+ *     结果上没有 `shadow` 字段、既有写入件**恰好被调一次**」
+ *   依据＝业务负责人 2026-10-29 逐字：「**啥叫默认开启呀？就应该开启呀，就应该支持一单多货呀，
+ *     不应该有配置按钮呀！**」（＋ 2026-10-16「不需要开关」`docs/no-switch-rule-2026-10-16.md`）
+ *   🔴 判据**没消失、也没放宽**：从"关着 ⇒ 零写入"翻成"**没有关这个动作** ⇒ 永远真写"
+ *     （塞回一个 `enabled` 键 / 影子分支 ⇒ 本用例红 ✓）。
+ */
+test('AC-MI1 ⭐⭐ **没有开关 / 没有影子**：提交 = 既有写入件**恰好真写一次**（配置上无 `enabled`、结果上无 `shadow`）', async () => {
   const h = build();
-  assert.equal(h.config.enabled, false, '默认就是影子跑（她确认的清单 ✓）');
+  assert.equal('enabled' in h.config, false, '🔴 配置上**不许**再有 `enabled`（"默认开启"这种说法本身就是开关思维 ✗）');
+  assert.equal('shadowSubmit' in (h.config.events || {}), false, '🔴 影子日志事件名也随分支一起删净 ✓');
   const opened = await h.service.openDraft({ openId: 'ou_me', chain: 'replenish' });
   assert.equal(opened.ok, true);
   await h.service.addItem({
     openId: 'ou_me', chain: 'replenish', orderKey: opened.orderKey, item: item('K1', [{ size: '40', quantity: '2' }]),
   });
   const result = await submit(h, { orderKey: opened.orderKey, submitKey: opened.orderKey });
-  assert.equal(result.ok, true, '影子跑也要**成功返回**（她要看"这一单会提交什么"）✓');
-  assert.equal(result.shadow, true, '这一跑是影子 ✓');
-  // 🔴 零写入：两个既有写入件一次都没被调
-  assert.deepEqual(h.writers.calls, [], '🔴 影子模式**一个字节都不许写**（能真红：真去调写入件 ⇒ 红）');
-  // 影子日志带上了"会提交什么"
-  const shadow = h.logs.entries.find((entry) => entry.event === h.config.events.shadowSubmit);
-  assert.ok(shadow, '要留一条影子日志（排查时按它 grep ✓）');
-  assert.equal(shadow.detail.batch_count, 1);
-  assert.equal(shadow.detail.detail_count, 1);
-  assert.deepEqual(shadow.detail.detail_keys, [`purchase_request:${shadow.detail.task_id}:rec_K1:40`]);
+  assert.equal(result.ok, true, '提交成功 ✓');
+  assert.equal('shadow' in result, false, '🔴 结果里**不许**再有 `shadow` 字段（影子那套已删净 ✓）');
+  // 🔴 **真写一次**：既有写入件**恰好被调一次**（不是"只算不写"✗、也不是写两次 ✗）
+  assert.equal(h.writers.calls.length, 1, '🔴 提交 = 真写一次（能真红：又变成影子 ⇒ 0 次 ⇒ 红）');
+  assert.equal(h.writers.calls[0].writer, 'purchase', '调的是既有「采购申请」写入件 ✓');
+  assert.equal(h.writers.calls[0].payload.items.length, 1, '明细行进了落库载荷 ✓');
+  const draft = await h.service.readDraft({ openId: 'ou_me', chain: 'replenish', orderKey: opened.orderKey });
+  assert.equal(draft.ok, true);
+  assert.equal(draft.draft.status, h.config.session.submittedStatus, '草稿落终态 ✓');
+  assert.equal('shadow' in draft.draft, false, '草稿里也不再写 `shadow` 字段 ✓');
 });
 
 test('AC-MI1b 🔴 源码哨兵：新模块**不直连 gateway**（连它都不认识）、也不认识飞书字段映射', () => {
@@ -343,7 +354,7 @@ test('AC-MI5 ⭐⭐ `orderKey` 轮换 ⇒ **第 2 单不会被第 1 单吸收**�
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-MI6 🔴 并发提交同一 `orderKey` ⇒ **只落一次**（真写入件只被调一次）', async () => {
-  const h = build({ enabled: true }); // 打开开关 ⇒ 这一步真的会调既有写入件（假替身）
+  const h = build(); // 没有开关 ⇒ 这一步一定真的会调既有写入件（假替身）
   const opened = await h.service.openDraft({ openId: 'ou_me', chain: 'replenish' });
   await h.service.addItem({ openId: 'ou_me', chain: 'replenish', orderKey: opened.orderKey, item: item('K1', [{ size: '40', quantity: '1' }]) });
   const [a, b] = await Promise.all([
@@ -396,23 +407,23 @@ test('AC-MI7 🔴 超每单上限（默认 20 货品 / 50 行）⇒ **拒单 + �
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-MI8 ⭐⭐ 改配置即改行为 + **显式布尔**（空串 = 关掉；认不出的值当场抛；源码里没有 `||` 兜底）', async () => {
-  // ① 显式布尔三态
-  assert.equal(resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ENABLED: 'true' }).enabled, true);
-  assert.equal(resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ENABLED: '' }).enabled, false,
-    '**空串 = 关掉**（这就是"不许 `||` 兜底"要防的那个坑 ✓）');
-  // ⚠️ 2026-10-15 晚**成对翻新**（她逐字：「**直接走新逻辑（一单多货品），不需要影子**」）：
-  //   改前逐字：`assert.equal(resolveMultiItemOrderConfig({}).enabled, false, '没配 ⇒ 默认影子跑 ✓');`
-  //   改后逐字：下面这一行（默认 `true`）
-  //   依据：她那句 —— 影子阶段取消 ✗ ⇒ 真实写入成为默认；`''`（空串=关掉）那条**照旧**成立 ✓
-  assert.equal(resolveMultiItemOrderConfig({}).enabled, true, '没配 ⇒ **默认直接走新逻辑**（不再影子）✓');
+  // ① ⭐⭐ 2026-10-29 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：显式布尔三态（`enabled`：true / ''=关 / 没配=默认 true）
+  //   改后逐字：**开关整件退场** ⇒ 断言它**不存在**（塞回 ⇒ 红 ✓）；老 env 也不再被读 ✓
+  //   依据＝业务负责人 2026-10-29 逐字：「啥叫默认开启呀？就应该开启呀，就应该支持一单多货呀，
+  //     不应该有配置按钮呀！」（＋ 2026-10-16「不需要开关」）
+  for (const env of [{}, { SCAN_MULTI_ITEM_ENABLED: '' }, { SCAN_MULTI_ITEM_ENABLED: '也许' }]) {
+    assert.equal('enabled' in resolveMultiItemOrderConfig(env), false,
+      '⭐ `enabled` 不许回来（一单多货**永远开**）；老 env 不再影响任何行为 ✓');
+  }
   // ⭐⭐ 2026-10-16 22:5x **成对迁移**（改前逐字 → 改后逐字 → 依据）：
   //   改前逐字：`assert.equal(resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ASYNC_ENABLED: 'true' }).asyncEnabled, true, …)`
   //   改后逐字：**那个开关已经不在了** ✗ —— 断言这个键**不存在** ✓（谁把它加回来 ⇒ 红 ✓）
   //   依据 = 业务负责人 22:5x「**不需要开关**」✓（`docs/no-switch-rule-2026-10-16.md` ✓）
   assert.equal('asyncEnabled' in resolveMultiItemOrderConfig({}), false,
     '⭐ `asyncEnabled` 已经**退场** ✗（一单多货的"提交即回"是永远开 ✓ 不许留开关 ✗）');
-  assert.throws(() => resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ENABLED: '也许' }),
-    /显式布尔/, '认不出的值 ⇒ **当场抛**（绝不静默按 true/false 处理 ✓）');
+  // ⭐ 2026-10-29：这个 env **已经不读了** ⇒ 认不出的老值也不会抛（不是放宽：它不再有语义 ✓）
+  assert.equal('enabled' in resolveMultiItemOrderConfig({ SCAN_MULTI_ITEM_ENABLED: '也许' }), false);
 
   // ② 改配置即改行为：同一个草稿，上限 1 ⇒ 拦住；上限 20 ⇒ 放行
   const strict = build({ env: { SCAN_MULTI_ITEM_MAX_PRODUCTS: '1' } });
@@ -438,8 +449,10 @@ test('AC-MI8 ⭐⭐ 改配置即改行为 + **显式布尔**（空串 = 关掉�
     '🔴 不许 `readFlag(...) || 兜底`（那会让"清空变量想关掉"关不掉 ✗）');
   assert.equal(/process\.env\.\w+\s*\|\|/.test(configCode), false, '不许 `process.env.X || 兜底` ✗');
   const flags = configCode.match(/readFlag\(/g) || [];
-  // 三处：总开关 / 异步开关 / 退货"整单金额必填"（沿用既有键名 ✓）
-  assert.ok(flags.length >= 3, `布尔都必须走 readFlag（实际 ${flags.length} 处）✓`);
+  // ⭐ 2026-10-29 **成对迁移**：总开关（`SCAN_MULTI_ITEM_ENABLED`）已删 ⇒ 本文件现在只剩
+  //   **两处**显式布尔：加/删货线上入口、退货「整单金额必填」（都沿用既有键名 ✓）。
+  //   🔴 判据没放宽：**每一个布尔仍必须走 `readFlag`**（谁再写 `||` 兜底 / `process.env.X ||` ⇒ 上面两条红 ✓）。
+  assert.ok(flags.length >= 2, `布尔都必须走 readFlag（实际 ${flags.length} 处）✓`);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
