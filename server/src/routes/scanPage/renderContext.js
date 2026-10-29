@@ -4,15 +4,17 @@
  * 扫码页「渲染与上下文」（拆分第 2 刀，从 `routes/scanPage/index.js` 搬出，**只搬不改**）：
  *   · `logRendered`  —— 页面渲染日志（`scan.page.rendered`）
  *   · `logFunnelPage` —— 前端漏斗（`ui.page.view` / `ui.step.enter`）
- *   · `successReturnFields` —— 成功页/资金页共用的回跳字段
+ *   ⚠️ 2026-10-29：`successReturnFields`（成功页回跳字段）**随成功页一起退场** ——
+ *     提交通一改成「303 回工作台 + toast」（`utils/submitToast.js`），它已无调用方 ✓
  *
- * `config` 与 `postActionFor` 由调用方注入（路由里仍是同一份 config，行为/字节都不变）。
+ * `config` 由调用方注入（路由里仍是同一份 config，行为/字节都不变）。
+ * ⚠️ `postActionFor` 已不需要（它原来只服务成功页回跳）⇒ 本文件不再吃这个依赖 ✓
  */
 const { FUNNEL } = require('../../config/funnel');
-const { resolveRealm, DEFAULT_REALM } = require('../../views/scanPageRealm');
+const { resolveRealm } = require('../../views/scanPageRealm');
 const { logInfo } = require('../../utils/logger');
 
-const createRenderContext = ({ config, postActionFor }) => {
+const createRenderContext = ({ config }) => {
   /** 前端漏斗（服务端侧）：页面渲染成功即记；step 只取页面语义映射。 */
   const logFunnelPage = (req, { page, step, realm = '', number = '' } = {}) => {
     if (!FUNNEL.enabled) return;
@@ -47,27 +49,7 @@ const createRenderContext = ({ config, postActionFor }) => {
     });
   };
 
-  const successReturnFields = (req, target, noticeNo = '') => {
-    const cfg = config.successReturn || {};
-    if (cfg.enabled === false) return {};
-    const homeRealm = cfg.homeRealm || DEFAULT_REALM;
-    const landing = cfg.homePath && homeRealm === DEFAULT_REALM
-      ? `${req.baseUrl}${cfg.homePath}`.replace(/\/+$/, '') + '/'
-      : '';
-    const base = landing || postActionFor(target, homeRealm);
-    const noticeKey = cfg.noticeKey || 'done';
-    const homePath = String(noticeNo || '').trim()
-      ? `${base}${base.includes('?') ? '&' : '?'}${encodeURIComponent(noticeKey)}=${encodeURIComponent(String(noticeNo).trim())}`
-      : base;
-    return {
-      returnPath: homePath,
-      returnLabel: cfg.label || '',
-      returnDelaySeconds: Number(cfg.delaySeconds) || 0,
-      autoReturnUrl: homePath,
-    };
-  };
-
-  return { logFunnelPage, logRendered, successReturnFields };
+  return { logFunnelPage, logRendered };
 };
 
 module.exports = { createRenderContext };

@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 /**
  * ⭐⭐ task-64 —— **退货链路：「一单多货品」＋「生成退货单按供应商分组」**的验收标准。
  *
@@ -425,6 +426,7 @@ const postReturn = async (base, {
   if (multiItems) body.set(MULTI_ITEM_ORDER.field, multiItemsJson(multiItems));
   return fetch(`${base}/r/${encodeURIComponent(number)}?from=purchase_return`, {
     method: 'POST',
+    redirect: 'manual',  // ⭐ 2026-10-29：提交成功 = 303 回工作台（不许被 fetch 自动跟随成 404）
     headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   });
@@ -455,7 +457,7 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
           },
         ],
       });
-      assert.equal(response.status, 200, '一单多货的退货照样先回统一成功页 ✓');
+      assertSubmitToast(response, '一单多货的退货照样先回统一回执 ✓');
       // ⭐ 2026-10-18（一单多货改异步）：先回成功页 ⇒ **写库在后台** ⇒ 端状态断言前先等它跑完 ✓
       //   🔴 判据没放宽：批次/明细/分组仍是逐字比，只是先等后台（与销售那条同一手法 ✓）
       await waitForPendingPurchaseBackgrounds();
@@ -576,7 +578,7 @@ test('AC-RS2b 🔴 单货品退货（**真链路**：扫码页 POST）⇒ 递给
         form: { submitKey, return_sizes: '41', return_qty_41: '1' },
         // 没有 hidden 多货品载荷 ⇒ 走**今天那条**老路径（真正的"单货品退货"）
       });
-      assert.equal(response.status, 200);
+      assertSubmitToast(response, '单货品退货 ⇒ 统一回执');
       // ⚠️ 单货品那条路是**异步**的（她 2026-10-16：「补货、退货……都是异步的」）⇒ 等后台那一跑 ✓
       await waitForPendingPurchaseBackgrounds();
       assert.equal(h.renders.length, 1, '单货品 ⇒ 只出 1 张 ✓');

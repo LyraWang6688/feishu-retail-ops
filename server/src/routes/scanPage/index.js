@@ -52,7 +52,7 @@ const { createPurchaseWriteBackgroundService } = require('../../services/purchas
 const { createPaymentMethodsService, orderWithPreferred } = require('../../services/paymentMethodsService');
 const { createVoucherPaymentService } = require('../../services/voucherPaymentService');
 const { SalesFollowupService } = require('../../services/salesFollowupService');
-const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSaleSuccessPage, renderSalePaymentStepPage, buildPaymentRows } = require('../../views/scanPageRenderer');
+const { renderSalesHome, renderScanSkeleton, renderScanPage, renderScanMessagePage, renderMinimalPage, renderSalePaymentStepPage, buildPaymentRows } = require('../../views/scanPageRenderer');
 // ⭐⭐ 2026-10-16（退货「出图发群」接线 · 本卡）：**采购退货**那条链要的「出图 / 发群 / 回填附件」
 //   装配件 —— 它把真的那个出图 webhook 实例接到退货写入件的 `webhooks` 上
 //   （与补货 / 验收**同一条路**：同一个类、同一个 `deliverSupplierImages` ✓ 不发明新写法 ✗）。
@@ -163,12 +163,12 @@ const sendHtml = (res, status, html) => res.status(status)
 
 const createScanPageRouter = (options = {}) => {
   const config = options.config || SCAN_PAGE;
-  // 拆分第 2 刀：渲染日志/漏斗/回跳字段的实现搬到 `./renderContext.js`；这里只创建一次。
-  const renderContext = require('./renderContext').createRenderContext({
-    config,
-    postActionFor: (...args) => postActionFor(...args),
-  });
-  const { logFunnelPage, logRendered, successReturnFields } = renderContext;
+  // 拆分第 2 刀：渲染日志/漏斗的实现搬到 `./renderContext.js`；这里只创建一次。
+  // ⚠️ 2026-10-29：成功页回跳（`successReturnFields`）随成功页退场 ⇒ 不再注入 `postActionFor`。
+  const renderContext = require('./renderContext').createRenderContext({ config });
+  const { logFunnelPage, logRendered } = renderContext;
+  // ⭐⭐ 2026-10-29：提交成功回执 = 统一 toast（`done` 参数名/文案的家都在那一份配置里）。
+  const { SUBMIT_TOAST } = require('../../config/submitToast');
   const writeConfig = options.writeConfig === undefined ? SCAN_WRITE : options.writeConfig;
   const gateway = options.gateway || new V1BitableGateway();
   // ⚠️ 只读那一半的 service：`options.service` 供用例注入一个假的（既有用例就是这么做的，注入后不建内存快照）。
@@ -184,7 +184,6 @@ const createScanPageRouter = (options = {}) => {
   const renderMessage = options.render?.message || renderScanMessagePage;
   // ⭐ 2026-10-12：提交成功页（逐字「您的提交已成功」+「再录一单」回扫码页）——
   //    单独一个注入点，用例可以钉"成功页长什么样"而不用碰别的页。
-  const renderSuccess = options.render?.success || renderSaleSuccessPage;
   // 深拆 P3b：响应/人话页面 helpers 搬进 ./responses.js（显式注入依赖；函数体逐字）
   const responses = require('./responses').createResponses({
     config, writeConfig, service, renderMessage, renderMinimalPage, sendHtml,
@@ -1060,7 +1059,7 @@ const createScanPageRouter = (options = {}) => {
       logInfo(config.events.salesHomeOpened, { request_id: requestId, by: 'manual' });
       return res.redirect(302, `${req.baseUrl}/${encodeURIComponent(number)}`);
     }
-    const noticeKey = config.successReturn?.noticeKey || 'done';
+    const noticeKey = SUBMIT_TOAST.noticeKey || 'done';
     const orderNo = String(req.query?.[noticeKey] || '').trim().slice(0, 40);
     return sendHtml(res, 200, renderSalesHome({ config, orderNo, basePath: req.baseUrl }));
   });
@@ -1445,7 +1444,7 @@ const createScanPageRouter = (options = {}) => {
       const html = renderScan(view, config, writeForRender, realm, {
         userAgent: req.headers['user-agent'],
         // ⭐⭐ 2026-10-13：提交后回跳带过来的单号 ⇒ 顶部那条"上一单已提交"的指引（没有就不显示 ✓）
-        justSubmittedOrderNo: String(req.query?.[config.successReturn?.noticeKey || 'done'] || '').slice(0, 40),
+        justSubmittedOrderNo: String(req.query?.[SUBMIT_TOAST.noticeKey || 'done'] || '').slice(0, 40),
         // ⭐ 这一页挂在哪个前缀上（`/s` 或 `/r`）—— 自助块里的批次链接/手输表单必须**留在同一前缀**。
         basePath: req.baseUrl,
         print: printContext,
@@ -1693,21 +1692,21 @@ const createScanPageRouter = (options = {}) => {
       //                ③ 幂等沿既有 `requestId`（**不自造** ✓）
       if (action === (config.paymentStep?.payAction || 'payment_pay')) {
         return handlePaymentPayOf({
-          SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService: scopedWriteService, options, successReturnFields, lookupInputOf, salesAsync,
+          SalesFollowupService, asList, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, service, voucherPayments, writeConfig, writeService: scopedWriteService, options, lookupInputOf, salesAsync,
         });
       }
 
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
         return handleSubmitOrderOf({
-          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, successReturnFields, writeConfig, writeService: scopedWriteService, nextOrderNo: () => salesRuntime.orderNoCache.next(),
+          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, service, writeConfig, writeService: scopedWriteService, nextOrderNo: () => salesRuntime.orderNoCache.next(),
         });
       }
 
       // ── 补货报单 ────────────────────────────────────────────────────────────
       if (action === actions.replenish) {
         return handleReplenishOf({
-          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed: markRealmUsedForPage, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, parseReplenishEntries, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite: schedulePurchaseWriteForPage, sendSuccess, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, successReturnFields,
+          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed: markRealmUsedForPage, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, parseReplenishEntries, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite: schedulePurchaseWriteForPage, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure,
         });
       }
 
@@ -1716,7 +1715,7 @@ const createScanPageRouter = (options = {}) => {
       //    写库（批次行 + 退货明细 + 扣库存 + 出退货单图）全在既有构件里。
       if (action === actions.purchaseReturn) {
         return handlePurchaseReturnOf({
-          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed: markRealmUsedForPage, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite: schedulePurchaseWriteForPage, sendSuccess, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, successReturnFields, parseReturnEntries,
+          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed: markRealmUsedForPage, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite: schedulePurchaseWriteForPage, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, parseReturnEntries,
         });
       }
 
@@ -1761,9 +1760,9 @@ const createScanPageRouter = (options = {}) => {
 
   // 深拆 P3c：写上下文/多货品提交/打印上下文 helpers → ./flowHelpers.js（显式注入；函数体逐字）
   const {
-    submitMultiItemOrder, buildWriteContext, loadPendingBatches, sendSuccess, invalidateInventorySnapshot, clearDraftForScanIfNeeded, buildPrintContext,
+    submitMultiItemOrder, buildWriteContext, loadPendingBatches, invalidateInventorySnapshot, clearDraftForScanIfNeeded, buildPrintContext,
   } = require('./flowHelpers').createFlowHelpers({
-    DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf: sessionIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, renderMinimalPage, renderSuccess, resolveLabelPrintQueue, respondWriteFailure, router, scanTargetOf, sendHtml, setDraftOrderAmount, successReturnFields, writeConfig, writeService,
+    DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf: sessionIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, renderMinimalPage, resolveLabelPrintQueue, respondWriteFailure, router, scanTargetOf, sendHtml, setDraftOrderAmount, writeConfig, writeService,
   });
 
   return router;

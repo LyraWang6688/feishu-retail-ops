@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 
@@ -142,7 +143,7 @@ test('PAY1 ⭐ 填了付款 ⇒ 走**既有那条链** `addPayment` 一次，参
         [SCAN_WRITE.fields.paymentMethod]: '现金',
         [SCAN_WRITE.fields.paymentAmount]: '399',
       });
-      assert.equal(paid.status, 200);
+      assertSubmitToast(paid, '补记收款成功 ⇒ 统一回执');
       assert.equal(followup.calls.length, 1, '只调一次 addPayment');
       assert.equal(followup.calls[0].method, '现金', '方式逐字');
       assert.equal(String(followup.calls[0].amount), '399', '金额逐字');
@@ -162,18 +163,14 @@ test('PAY2 ⭐ 收款填 0（= 未付）⇒ **零写入** + 记成「待补充�
     const paid = await payAt(base, cookie, {
       [SCAN_WRITE.fields.paymentMethod]: '微信', [SCAN_WRITE.fields.paymentAmount]: '0',
     });
-    const paidHtml = await paid.text();
-    assert.equal(paid.status, 200, '不填**不是**失败 ✓');
+    assertSubmitToast(paid, '不填**不是**失败 ✓（照样回执）');
     assert.equal(followup.calls.length, 0, '不填 ⇒ **一个字都不写** ✓');
     // ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）——
     //   改前逐字：`assert.ok(paidHtml.includes(SCAN_PAGE.paymentStep.payPendingNote), '要给她「待补充」那句话');`
     //   改后逐字：下面这条（**反向**：那句提示**不许再出现**）
-    //   依据：业务负责人 2026-10-16 逐字「资金页上……**跳过也是成功页**……那三处提示【**全删**】……
-    //     **全删就对了**」⇒ `payPendingNote`（"跳过之后的提示"）**整句删** ✗
-    //     （不是放宽：原来钉"**必须出现那句提示**"，现在钉"**那句提示不许出现**"＋页面照旧是成功页 ✓）
-    assert.equal(/待补充|去工作台补收款/.test(paidHtml), false,
-      '「跳过之后的提示」**已删** ✗（她：「那三处提示【全删】」——塞回 ⇒ 本判据红 ✓）');
-    assert.equal(/没记上/.test(paidHtml), false, '待补充**不许**说成失败 ✗');
+    // ⚠️ 2026-10-29：成功页已退场 ⇒ 这里不再有"页面上有没有某句话"可判 ——
+    //   那句提示（`payPendingNote`）已随成功页整件退场（配置键还在 `paymentStep` 里，但**没有渲染点**）；
+    //   「不填 = 待补充 = 不是失败」仍由上面**回执 + 零写入**两条钉住 ✓（判据没放宽：还是"不许报失败" ✓）
   });
 });
 
@@ -204,8 +201,8 @@ test('PAY4 ⭐ 同一 `requestId` 重复提交 ⇒ 幂等沿既有机制（不�
     };
     const first = await payAt(base, cookie, body);
     const second = await payAt(base, cookie, body);
-    assert.equal(first.status, 200);
-    assert.equal(second.status, 200, '第二次也给她一个正常结果（不是报错 ✗）');
+    assertSubmitToast(first, '第一次回执');
+    assertSubmitToast(second, '第二次也给她一个正常结果（不是报错 ✗）');
     const ids = [...new Set(followup.calls.map((call) => String(call.requestId || '')))];
     assert.equal(ids.length, 1, `requestId 必须是同一个（幂等沿既有 ✓ 不许自造 ✗）实际 ${JSON.stringify(ids)}`);
     assert.equal(followup.calls.length, 2, '两次都真的走了同一条钱路');

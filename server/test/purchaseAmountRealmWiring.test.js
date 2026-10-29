@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 
@@ -243,6 +244,7 @@ const postAction = async (base, realm, action, amount) => {
   if (amount !== null) body[SCAN_WRITE.fields.purchaseAmount] = amount;
   return fetch(pageUrl(base, realm), {
     method: 'POST',
+    redirect: 'manual',  // ⭐ 2026-10-29：提交成功 = 303 回工作台（不许被 fetch 自动跟随成 404）
     headers: { cookie: sessionCookie(), 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(body).toString(),
   });
@@ -255,17 +257,14 @@ test('AC-PAWIRE3 🔴 补货不填金额 ⇒ **照样能提交**；同一轮里�
   const replenishWrite = createWriteSpy();
   await withServer(appWith(replenishWrite), async (base) => {
     const res = await postAction(base, 'replenish', SCAN_WRITE.actions.replenish, null);
-    const html = await res.text();
-    assert.equal(res.status, 200,
-      '改前逐字（现象）：补货不填金额 ⇒ **400 + 「整单金额还没填」**（与退货共用一道闸门 ✗）\n'
-      + '改后逐字：**200**（她 2026-10-16 逐字「补货不问金额」✓）\n'
-      + `（实际 HTTP ${res.status}）`);
+    // ⭐ 2026-10-29：回执 = 303 + 统一 toast（成功页退场）；"补货不问金额"那条判据不变 ✓
+    assertSubmitToast(res, '补货不填金额 ⇒ 照样交出去（她 2026-10-16「补货不问金额」✓）');
     assert.equal(replenishWrite.calls.length, 1, '补货那条要**真的**进写入口一次 ✓（不是被别的东西拦下）');
     assert.equal(replenishWrite.calls[0].flow, 'replenish');
     assert.equal('orderAmount' in replenishWrite.calls[0].args, false,
       '补货**仍然不写金额** ✓（她 2026-10-15 的裁决：补货不写、只有到货才写「发生金额」✓）');
-    assert.equal(html.includes(SCAN_WRITE.texts.purchaseAmountMissingTitle), false,
-      '补货这条路上**不许**再出现"还没填金额"那张页 ✗');
+    assert.equal(SCAN_WRITE.texts.purchaseAmountMissingTitle.length > 0, true,
+      '（保留那条人话配置：它仍用于退货那条同步闸门 ✓）');
   });
 
   // ② 退货：同一轮里**照旧拦住**（一个人字都没放宽 ✓）

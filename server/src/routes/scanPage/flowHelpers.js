@@ -4,8 +4,11 @@
  * 扫码路由「写上下文 / 多货品提交 / 打印上下文」helpers（深拆 P3c：从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
  */
 
+// ⭐⭐ 2026-10-29：提交成功 = 统一 toast 共用件（四条扫码提交链共用同一份实现）。
+const { redirectWithSubmitToast } = require('../../utils/submitToast');
+
 const createFlowHelpers = ({
-  DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, renderMinimalPage, renderSuccess, resolveLabelPrintQueue, respondWriteFailure, router, scanTargetOf, sendHtml, setDraftOrderAmount, successReturnFields, writeConfig, writeService,
+  DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, resolveLabelPrintQueue, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
 }) => {
     const submitMultiItemOrder = async ({
       req, res, requestId, chain, groups, action,
@@ -95,12 +98,9 @@ const createFlowHelpers = ({
       //   （不清 ⇒ 下一单会看见上一单加的那些 ⇒ 凭空多货 ✗）。⚠️ 只在**成功之后**清：
       //   拒单 / 失败那条路要留着，让她改一改再点（同一 `orderKey` 重试 ✓）。
       await clearMultiItemPending(openId, chain).catch(() => {});
-      // ⚠️ task-60：`req` 作**第 4 个实参**传进去 ⇒ 这条成功页的 `scan.page.rendered`
-      //    也带得上 `number`（字段齐 ✓）；🔴 **页面本身一个字都不受影响** ✗（那个参数只喂日志）。
-      return sendSuccess(res, 200, {
-        ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
-        requestId,
-      }, req);
+      // ⭐⭐ 2026-10-29（业务负责人：「数据提交成功，后台自动写入，统一都是这个」＋「以后就没有成功页了」）：
+      //   一单多货提交收下 ⇒ **303 回工作台 + 统一 toast**（与销售/补货/退货共用 `utils/submitToast.js`）。
+      return redirectWithSubmitToast(res, {});
     };
 
     const buildWriteContext = async (req, view, realm = DEFAULT_REALM, extra = {}) => {
@@ -184,28 +184,6 @@ const createFlowHelpers = ({
       });
     };
 
-    const sendSuccess = (res, status, payload, req = null) => {
-      // ⭐ 成功页 = 她看到的落点之一（先记，再渲染 ⇒ "她看到的"与"日志记的"一致 ✓）
-      //    `number` 与资金页那条**同一口径**（`scanTargetOf` ⇒ `/s` 用编号、`/r` 用记录 ID ✓）
-      logRendered(req, {
-        page: 'success',
-        trigger: 'write_ok',
-        number: String(scanTargetOf(req)?.value || ''),
-      });
-      try {
-        return sendHtml(res, status, renderSuccess(payload, config));
-      } catch (error) {
-        logError(config.events.failed, {
-          request_id: payload?.requestId, reason: 'success_render_failed', error: error.message,
-        });
-        return sendHtml(res, status, renderMinimalPage({
-          title: payload?.title || config.texts.errorTitle,
-          body: payload?.body || config.texts.errorBody,
-          requestId: payload?.requestId,
-        }));
-      }
-    };
-
     const invalidateInventorySnapshot = (requestId, reason) => {
       try {
         invalidateLiveInventorySnapshot(reason);
@@ -286,7 +264,7 @@ const createFlowHelpers = ({
         return { ...base, enabled: false };
       }
     };
-  return { submitMultiItemOrder, buildWriteContext, loadPendingBatches, sendSuccess, invalidateInventorySnapshot, clearDraftForScanIfNeeded, buildPrintContext };
+  return { submitMultiItemOrder, buildWriteContext, loadPendingBatches, invalidateInventorySnapshot, clearDraftForScanIfNeeded, buildPrintContext };
 };
 
 module.exports = { createFlowHelpers };

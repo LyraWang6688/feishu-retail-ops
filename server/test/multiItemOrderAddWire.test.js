@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 
 /**
  * multiItemOrderAddWire.test.js —— 「一单多货 · **加/删货那一半**」的 **HTTP 端到端**判据（task-59）。
@@ -317,7 +318,7 @@ test('AC-MI-B ⭐⭐ 两件一起提交 ⇒ 引擎 **1 次** · `groups.length =
     assert.deepEqual(payload[1].entries, [{ size: '41', quantity: 1 }], 'K2 带着自己那份 ✓');
     // ③ 提交：她当前这页（K1）填 41 码 3 双 ⇒ 首件 entries 由路由合并进来 ✓
     const posted = await postForm(base, submitBody({ items: payload, sizes: ['41'], quantity: '3' }));
-    assert.equal(posted.status, 200, `提交要成功（实得 ${posted.status}：${(await posted.text()).slice(0, 200)}）`);
+    assertSubmitToast(posted, '提交要成功');
     // ③ **假写入件被调 1 次**（一批明细 = 一次落库 ✓ 不是两次 ✗）
     const purchases = writeService.writes.filter((write) => write.fn === 'purchase');
     assert.equal(purchases.length, 1, `🔴 引擎那条路**只落一次**（实得 ${purchases.length} 次）`);
@@ -359,7 +360,7 @@ test('AC-MI-C ⭐⭐ N=1（没加过任何货品）⇒ 老路径原样被调 · 
   const backgroundCalls = [];
   await withServer(makeApp({ writeService, backgroundCalls }), async (base) => {
     const posted = await postForm(base, submitBody({ items: [K1], sizes: ['41'], quantity: '3' }));
-    assert.equal(posted.status, 200, 'N=1 照旧成功 ✓');
+    assertSubmitToast(posted, 'N=1 照旧成功 ✓');
     assert.equal(backgroundCalls.length, 1, '🔴 老路径**原样被调一次** ✓');
     assert.equal(backgroundCalls[0].restInput.productRecordId, 'rec_K1', '实参里的货品原样 ✓');
     assert.deepEqual(backgroundCalls[0].restInput.entries, [{ size: '41', quantity: '3' }],

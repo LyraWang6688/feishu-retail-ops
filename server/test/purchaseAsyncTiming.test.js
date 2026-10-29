@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 
 /**
  * ⭐⭐ **AC-ASY1（硬判据 · 补货 / 退货）**：**提交 ⇒ 响应在"写库"结束【之前】就回来**（异步的唯一硬判据）。
@@ -173,9 +174,8 @@ test('AC-ASY-T1/T2 ⭐⭐ 补货 / 退货：**写库卡住时**回执已经回�
       }
       assert.notEqual(raced, 'TIMEOUT',
         `${c.chain}：🔴 写库还没跑完，成功页就必须已经回来了（改回同步 ⇒ 本判据红 ✗）`);
-      assert.equal(raced.status, 200, `${c.chain}：合法提交 ⇒ 200（先回她 ✓）`);
-      const html = await raced.text();
-      assert.ok(html.includes(UNIFIED), `${c.chain}：回她的那一页 = 统一那句成功页 ✓`);
+      // ⭐ 2026-10-29：回执 = 303 + 统一 toast（成功页退场；"先回她"这条判据不变 ✓）
+      assertSubmitToast(raced, `${c.chain}：合法提交 ⇒ 先回她`);
       // ⭐ 探针（AC-ASY-T3）：这一刻写入口**已经进了**、但**绝不可能**已经结束（闸门还锁着 ✓）
       assert.equal(write.calls.length, 1, `${c.chain}：后台那一跑**已经排下去**了 ✓（不是"根本没调"✗）`);
       // 放行 ⇒ 数据最终真的落库（等登记簿里那一跑 ✓）

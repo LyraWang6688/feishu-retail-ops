@@ -1,6 +1,8 @@
 'use strict';
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
 const { buildSalePayload } = require('../../../services/salesPayload');
+// ⭐⭐ 2026-10-29：**提交成功 = 统一 toast 共用件**（文案/落点/参数全部走 `config/submitToast.js`）。
+const { redirectWithSubmitToast } = require('../../../utils/submitToast');
 
 /**
  * 扫码路由核心深拆 P1：资金处理（`payment_pay`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -8,7 +10,7 @@ const { buildSalePayload } = require('../../../services/salesPayload');
  */
 
 async function handlePaymentPay(ctx) {
-  const { SalesFollowupService, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, sendSuccess, service, voucherPayments, writeConfig, writeService, options, successReturnFields, lookupInputOf, salesAsync } = ctx;
+  const { SalesFollowupService, backTargetFor, body, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, openId, openIdOf, parsePaymentRows, realm, realmOfAction, req, requestId, res, respondSettlementBlock, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, service, voucherPayments, writeConfig, writeService, options, lookupInputOf, salesAsync } = ctx;
         // ⭐⭐ 2026-10-14（业务负责人口径，逐字）：「**确认状态是资金那页点击了按钮之后，才算是用户确认了**」
         //   ⇒ **建单就发生在这一刻** ✓（点「提交这一单」时只到资金页、一个字都没写 ✓）
         //   · 会话里记着 `paymentStep:'pending'` ⇒ 说明她刚点过「提交这一单」、还没建单 ✓ ⇒ **现在建** ✓
@@ -105,14 +107,9 @@ async function handlePaymentPay(ctx) {
               payment_count: pendingPayments.length,
               reused: enqueued.created === false,
             });
-            // 2026-10-27：**直接回工作台 + 工作台 toast**（中间不出现扫码页）。
-            //   域名保持当前 hm；toast 文案由服务端给，前端只负责显示 5 秒。
-            const toastText = fillWriteText(writeConfig.texts.asyncAcceptedText, { orderNo });
-            const query = new URLSearchParams({
-              [String(config.successReturn?.noticeKey || 'done')]: orderNo,
-              toast: toastText,
-            });
-            return res.redirect(303, `/workbench/?${query.toString()}`);
+            // ⭐⭐ 2026-10-27 起的"回工作台 + toast"；2026-10-29 起**收进共用件**（`utils/submitToast.js`）：
+            //   文案 / 落点 / 参数名全部走配置，四条提交链（销售 / 补货 / 退货 / 多货）共用同一份实现。
+            return redirectWithSubmitToast(res, { orderNo });
           }
           // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— ⭐ 2026-10-16 深夜 · 修「资金页那一按 500」✗：
           //   改前逐字：`asList(body[lineAmount]) 有值 ? 表单那份 : 会话那份`（**表单优先** ✗）
@@ -376,48 +373,12 @@ async function handlePaymentPay(ctx) {
         //   ⚠️ 旧流程在"点提交"那一段记 ✓ —— 新流程改成"**点按钮才建单**"⇒ 这一句也要跟着挪过来 ✗
         //      （实测 `AC-RF4`：写成功要记 `last_realm = sales` ✓ 不挪就丢了 ✓）
         if (createdResult) markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.submitOrder));
-        const payTarget = backTargetFor(req, decodeURIComponent(String(req.params.number || '')));
-        // ⭐ 单号/双数：**优先用刚建单的返回值** ✓（没建单时退回表单里的那两个 ✓ 一律**不编** ✗）
-        // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— 2026-10-16 深夜 · 修「成功页看不到单号」✗：
-        //   改前逐字：`const paidOrderNo = String(createdResult?.order_no || body.order_no || '').trim().slice(0, 40);`
-        //   改后逐字：本行（多一层**会话回落** ✓）
-        //   依据 = 业务负责人 2026-10-16 23:5x 逐字（她裁「**该带**」）：
-        //     「我先点了，我再点完货品的时候，我就创建单号了。**那为什么我在成功页里面看不到呢？那我肯定能看到这个单号呀**」
-        //   🔴 为什么需要回落：④ 永远开 ⇒ **货那一跑（第 1 步）就把单号出了**（`sales.order_no.generated` ✓）
-        //     ⇒ 钱那一跑是**同一把 `submitKey` 的复用**（`scanWriteService` 里 `wasResume = true` ✗）
-        //     ⇒ 那一次 `createdResult.order_no` **可能是空** ✗ ⇒ 页面就变成 `—`（她看不到号 ✗ = 真 bug ✓）
-        //     ⇒ **回落到会话里那个号**（= 她第 1 步看到的那个 ✓）才是对的 ✓
+        // ⭐ 单号：**优先用刚建单的返回值**（没建单时退回会话里那个 / 表单里的 ✓ 一律**不编** ✗）。
+        //   ⚠️ 2026-10-29 起它**只进 `done=` 参数**（排查/漏斗用）—— toast 文案统一是那一句，
+        //     **不再在回执上显示单号**（业务负责人：「数据提交成功，后台自动写入，统一都是这个」）。
+        //   🔴 仍然保留"会话回落"：异步那一跑（货品页）可能已经出号，钱那一跑是同键复用 ⇒ `createdResult.order_no` 可能是空 ✓
         const sessionOrderNo = String(paySession?.sale?.order_no || paySession?.order_no || '').trim();
         const paidOrderNo = String(createdResult?.order_no || sessionOrderNo || body.order_no || '').trim().slice(0, 40);
-        const paidCount = Number(String(createdResult?.detail_count ?? body.count ?? '').trim() || 0) || 0;
-        // ⭐ 2026-10-17（C·去跳过）：与 skip 那条**逐字同口径** ——
-        //   改前逐字：`const paidReused = String(body.reused || '') === '1';`（只看表单隐藏字段）
-        //   改后逐字：**也看建单返回的 `reused`**（同一把 submitKey 再点一次 ⇒ `submitSale` 返回 reused ✓）
-        //   依据 = 她 2026-10-17「去「跳过」」＋ 既有口径「这一单刚才已经交过了」（`submittedAgainTitle`）
-        //   ⚠️ 不删断言、不放宽：重复提交仍然**只写一次**、但页面**如实**说"已经交过了" ✓
-        const paidReused = String(body.reused || '') === '1' || createdResult?.reused === true;
-        const paidDetails = [
-          fillWriteText(writeConfig.texts.submittedOrderLine, { orderNo: paidOrderNo || '—' }),
-          fillWriteText(writeConfig.texts.submittedDetailLine, { count: paidCount }),
-        ];
-        // ⭐⭐ 2026-10-15（⑨ B 异步）：成功页 payload **仍然只有一个来源**
-        //   （成功页的自动回跳来源只在这一处调 `successReturnFields` —— `AC-SR4` 那条接线哨兵
-        //     **一个字没动** ✓；⚠️ 注释里也**不写那个调用形状**，免得被源码计数哨兵当第 6 处 ✗）
-        //   传了 `asyncSentence`（异步那一条）⇒ **只给她那一句**：
-        //   她逐字「**统一文字改成：本单已创建成功（单号），其余文字不需要**，**销售和配品都这样**」
-        //   ⇒ `title` = 那一句（含真单号 ✓）、`body` 空、`details` 空；其余照旧 ✓
-        const paidPayload = (retryHint, asyncSentence = '') => ({
-          ...successReturnFields(req, payTarget, paidOrderNo),
-          title: asyncSentence || (paidReused
-            ? writeConfig.texts.submittedAgainTitle : writeConfig.texts.submittedTitle),
-          body: asyncSentence ? '' : (paidReused
-            ? fillWriteText(writeConfig.texts.submittedAgainBody, { orderNo: paidOrderNo || '—' })
-            : fillWriteText(writeConfig.texts.submittedBody, { orderNo: paidOrderNo || '—', count: paidCount })),
-          order_no: paidOrderNo,
-          details: asyncSentence ? [] : paidDetails,
-          requestId,
-          retryHint,
-        });
         // 🔴 只认**填了金额**的行（PAY2 抓到的真 bug：空金额行也曾被当成「要记一笔」⇒ 会写出空账 ✗）
         // ⭐ 2026-10-18：金额必填之后 `0` = 未付（不写收款）⇒ 老流程同样只写 >0 的行 ✓
         const rowsToPay = parsePaymentRows(body, fields)
@@ -435,20 +396,13 @@ async function handlePaymentPay(ctx) {
           //   **不给**"明细/收款/进度"那些行 ✗（文案走配置 ✓ 不写死 ✗）。
           //   ⚠️ "再录一单 / 回扫码页"那些**能点的东西照旧** ✓（她说的"其余文字"指的是那句话之外的**描述性文字** ✗）。
           if (createdResult.deferred) {
-            const asyncSentence = fillWriteText(
-              writeConfig.sale.asyncWrite?.doneBodyTemplate || '',
-              { orderNo: paidOrderNo || '—' },
-            );
-            // ⚠️ 走**同一个** `paidPayload`（不另起一份 payload ✗）⇒ 成功页来源仍只有一处 ✓
-            return sendSuccess(res, 200, paidPayload('', asyncSentence), req);
+            return redirectWithSubmitToast(res, { orderNo: paidOrderNo });
           }
-          // ⭐ 成功页那句人话：与"提交成功"那条**逐字同形**（她 2026-10-12 定的那一句 ✓）
-          //   ⚠️ `paidPayload(retryHint)` 的参数就是**那句提示** ✓ 不是 note 文本 ✗
-          return sendSuccess(res, 200, paidPayload(writeConfig.texts.submittedNextHint), req);
+          return redirectWithSubmitToast(res, { orderNo: paidOrderNo });
         }
         // ⭐ 没填金额（或行数为 0）⇒ **待补充**：**一个字都不写**、成功页照给、**不报错** ✓
         if (!rowsToPay.length) {
-          return sendSuccess(res, 200, paidPayload(config.paymentStep?.payPendingNote), req);
+          return redirectWithSubmitToast(res, { orderNo: paidOrderNo });
         }
         try {
           // eslint-disable-next-line no-await-in-loop
@@ -480,8 +434,8 @@ async function handlePaymentPay(ctx) {
             retryHint: writeConfig.texts.submittedNextHint,
           });
         }
-        // ✅ 写成功 ⇒ 这**才**能说"已收" ✓
-        return sendSuccess(res, 200, paidPayload(config.paymentStep?.paidNote), req);
+        // ✅ 写成功 ⇒ 回工作台 + 统一 toast（钱是真写成功了的；"已收"那套文案不再在回执上出现）
+        return redirectWithSubmitToast(res, { orderNo: paidOrderNo });
 }
 
 module.exports = { handlePaymentPay };

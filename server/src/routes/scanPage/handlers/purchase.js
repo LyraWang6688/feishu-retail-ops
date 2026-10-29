@@ -1,4 +1,6 @@
 'use strict';
+// ⭐⭐ 2026-10-29：提交成功 = 统一 toast 共用件（与销售/多货同一份实现）。
+const { redirectWithSubmitToast } = require('../../../utils/submitToast');
 
 /**
  * 扫码路由核心深拆 P0：补货 / 退货两个提交分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -6,7 +8,7 @@
  */
 
 async function handleReplenish(ctx) {
-  const { action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, parseReplenishEntries, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite, sendSuccess, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, successReturnFields } = ctx;
+  const { action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, parseReplenishEntries, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure } = ctx;
         const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
           return notFoundPage(res, requestId, {
@@ -97,19 +99,16 @@ async function handleReplenish(ctx) {
         //    但"写完就失效"永远比"猜它动没动库存"安全）。
         invalidateInventorySnapshot(requestId, 'scan_replenish_submitted');
         markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.replenish));
-        // ⭐⭐ 2026-10-16（她逐字：「用户提交之后**都是一个成功页**，说『**已提交成功，数据会更新**』」）
-        //   ⇒ 成功页 = **统一那一句**（文案的家在 `config/scanPage.js` 的 `saleSuccess` ✓ 本文件不新造 ✗）。
-        //   ⚠️ **批次号 / 明细数这一刻还没有**（后台那一跑才取号）⇒ 成功页**不许**承诺它们 ✗
+        // ⭐⭐ 2026-10-29（业务负责人：「数据提交成功，后台自动写入，统一都是这个」＋「以后就没有成功页了」）：
+        //   提交收下 ⇒ **303 回工作台 + 统一 toast**（共用件 `utils/submitToast.js`；
+        //   文案唯一真源 = `config/submitToast.js`）。本文件不写中文、不拼 URL ✗。
+        //   ⚠️ 批次号 / 明细数这一刻还没有（后台那一跑才取号）⇒ 回执**不许**承诺它们 ✗
         //     （真失败仍有出口：后台件的 warn ＋ 会话 `last_error` ⇒ 可查、可重试 ✓）。
-        return sendSuccess(res, 200, {
-          // ⭐ 补货成功 ⇒ **同样自动回首页**（销售 ✓ 方案 A 三路一致）
-          ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
-          requestId,
-        }, req);
+        return redirectWithSubmitToast(res, {});
 }
 
 async function handlePurchaseReturn(ctx) {
-  const { action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite, sendSuccess, service, submitMultiItemOrder, writeConfig, parseReturnEntries, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, successReturnFields } = ctx;
+  const { action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite, service, submitMultiItemOrder, writeConfig, parseReturnEntries, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure } = ctx;
         const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
           return notFoundPage(res, requestId, {
@@ -193,15 +192,10 @@ async function handlePurchaseReturn(ctx) {
         // ⭐ 退货**真的动了库存** ⇒ 立刻作废「实时库存」内存快照（她：库存必须准确）。
         invalidateInventorySnapshot(requestId, 'scan_purchase_return_submitted');
         markRealmUsed(openIdOf(req), realmOfAction(writeConfig.actions.purchaseReturn));
-        // ⭐⭐ 2026-10-16（她逐字：「都是一个成功页，说『已提交成功，数据会更新』」）：
-        //   成功页 = **统一那一句**（文案的家在 `config/scanPage.js` ✓）。
-        //   ⚠️ 批次号 / 明细数 / **超库存差额**这一刻都还没有（后台那一跑才知道）⇒ 页面**不许**承诺 ✗
+        // ⭐⭐ 2026-10-29：同补货 —— 提交收下 ⇒ **303 回工作台 + 统一 toast**（共用件）。
+        //   ⚠️ 批次号 / 明细数 / **超库存差额**这一刻都还没有（后台那一跑才知道）⇒ 回执**不许**承诺 ✗
         //     —— 差额那件事仍在后台日志与会话 `last_error` 里（**已知取舍，见 PR 说明** ✓）。
-        return sendSuccess(res, 200, {
-          // ⭐ 退货成功 ⇒ **同样自动回首页**（销售 ✓ 方案 A 三路一致）
-          ...successReturnFields(req, backTargetFor(req, decodeURIComponent(String(req.params.number || '')))),
-          requestId,
-        }, req);
+        return redirectWithSubmitToast(res, {});
 }
 
 module.exports = { handleReplenish, handlePurchaseReturn };
