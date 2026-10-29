@@ -3,11 +3,12 @@
 // 边界：
 //   · 只回答一个问题：「扫到的这款货品，近 N 天有哪几笔销售、每笔的销售日 / 尺码 / 该单总金额」；
 //   · 不判断意图、不生成售后单、不碰库存 / 收款（那些是执行器的事，见 `afterSalesService`）；
-//   · 不做业务取舍：只按**她明确说过的**口径筛 ——「未交付」不列（她 2026-10-29）；
+//   · 筛选口径**只有一条**（她 2026-10-29 最终口径）：履约状态属于
+//     `config/afterSalesScan.SCAN_EXCLUDED_FULFILLMENT`（未交付 / 已退货 / 已赔货）的不列
+//     ⇒ 列表里会有**已交付**和**已换货**的明细；
 //     另外「没入账（写入失败 / 未完成）」「销售日缺失 / 超窗口」也不作为候选（读侧事实约束），
 //     并把**排除了多少条**如实回给页面（不让页面自己猜"为什么少了一条"）。
-//   🔴 **已退货 / 已换货 / 已赔货 不排除**（她 2026-10-29 明确：「其他状态我没有说呀」）——
-//      重复售后该由**执行器**在写库前拦（同一双不做第二次），不在这一页的筛选里替她做决定。
+//   🔴 重复售后（同一双退两次）**不在读侧拦**：由执行器在写库前拦（不在这一页替她做决定）。
 //   · ⭐ 「近 N 天」= **上海自然日**：今天 + 往前 (N-1) 天、含今天共 N 个自然日
 //     （共用 `utils/salesDateWindows.lookupWindowStart`，与项目其它"最近几天"同一口径；
 //      **不是**"此刻往前滚 N×24 小时"）。
@@ -25,7 +26,7 @@
 //   两边各读各的，互不影响（模块化；订单列表的按需取列清单不被这里放宽）。
 
 const {
-  SCAN_CACHE, SCAN_FIELD_KEYS, SCAN_TEXTS, SCAN_UNDELIVERED_FULFILLMENT, resolveScanWindowDays,
+  SCAN_CACHE, SCAN_EXCLUDED_FULFILLMENT, SCAN_FIELD_KEYS, SCAN_TEXTS, resolveScanWindowDays,
 } = require('../config/afterSalesScan');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
@@ -117,9 +118,11 @@ class AfterSalesScanService {
     const detailFields = this.gateway.table('salesDetail').fields;
 
     // 排除了多少条、为什么排除 —— 如实回给页面（页面据此说一句人话，不静默吞数据）。
+    // `byFulfillment` 按**履约状态原文**计数（口径在 config/afterSalesScan 一处，加一种状态自动计数）。
     const excluded = {
-      notDelivered: 0, notPosted: 0, outOfWindow: 0, missingSalesDate: 0,
+      byFulfillment: {}, notPosted: 0, outOfWindow: 0, missingSalesDate: 0,
     };
+    const excludedFulfillment = new Set(SCAN_EXCLUDED_FULFILLMENT);
     const candidates = [];
 
     // ⭐ 主表**不再整表读**：先扫明细、把"只靠明细就能判断的条件"先筛掉
@@ -138,9 +141,9 @@ class AfterSalesScanService {
       if (!salesDate) { excluded.missingSalesDate += 1; continue; }
       if (salesDate < cutoff) { excluded.outOfWindow += 1; continue; }
       const fulfillmentStatus = asText(textValue(fields[detailFields.fulfillmentStatus]));
-      // ⭐ 「什么叫售后」= 除「未交付」之外的状态（她 2026-10-29）⇒ 未交付的不列。
-      if (fulfillmentStatus === SCAN_UNDELIVERED_FULFILLMENT) {
-        excluded.notDelivered += 1;
+      // ⭐ 筛选口径（她 2026-10-29 最终版）：未交付 / 已退货 / 已赔货 不列；已交付 / 已换货 列。
+      if (excludedFulfillment.has(fulfillmentStatus)) {
+        excluded.byFulfillment[fulfillmentStatus] = (excluded.byFulfillment[fulfillmentStatus] || 0) + 1;
         continue;
       }
       const entryId = linkedRecordIds(fields[detailFields.salesEntry])[0];

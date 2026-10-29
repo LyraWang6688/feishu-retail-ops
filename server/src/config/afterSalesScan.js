@@ -19,12 +19,14 @@
 //   「不用你做兜底，它就是来自于销售明细里面的销售日」）⇒ 没有销售日的行不进候选。
 
 /**
- * ⭐⭐ 2026-10-29（业务负责人定的口径）：「**什么叫售后**：除了『未交付』状态之外，
- *   其余所有的状态都要做售后」⇒ 候选 = **已交付（或其它非「未交付」）**的明细；
- *   **「未交付」的不列**（货还没交到她手上，退回/换货/赔货都无从谈起）。
- * ⚠️ 这是**读侧筛选**的口径；「未交付」这个字面值只在这里出现一次（配置先行）。
+ * ⭐⭐ 2026-10-29（业务负责人最终定的筛选口径）：
+ *   候选列表 = **除下面这三种履约状态之外**的销售明细
+ *   ⇒ 列表里会有「**已交付**」和「**已换货**」的明细；
+ *   「**未交付**」（货没交到她手上）、「**已退货**」（已经退回来了）、「**已赔货**」（已经赔出去了）
+ *   这三种**不列**。
+ * ⚠️ 这是**读侧筛选**的唯一口径、字面值只在这里出现一次（配置先行：改口径只改这一行）。
  */
-const SCAN_UNDELIVERED_FULFILLMENT = '未交付';
+const SCAN_EXCLUDED_FULFILLMENT = Object.freeze(['未交付', '已退货', '已赔货']);
 
 const { readFlag, readInt } = require('./envValue');
 
@@ -87,7 +89,7 @@ const resolveScanWindowDays = (raw) => {
 };
 
 module.exports = {
-  SCAN_UNDELIVERED_FULFILLMENT,
+  SCAN_EXCLUDED_FULFILLMENT,
   SCAN_CACHE,
   SCAN_WINDOW_DAYS_DEFAULT,
   SCAN_WINDOW_DAYS_MAX,

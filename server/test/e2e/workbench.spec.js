@@ -45,7 +45,7 @@ const mockApi = async (page, { orders = [] } = {}) => {
           actual_amount: 200,
           fulfillment_status: '已交付',
         }],
-        excluded: { notDelivered: 0, notPosted: 0, outOfWindow: 0, missingSalesDate: 0 },
+        excluded: { byFulfillment: {}, notPosted: 0, outOfWindow: 0, missingSalesDate: 0 },
       }));
     }
     if (path === '/api/workbench/ui-tap') return route.fulfill({ status: 204, body: '' });
