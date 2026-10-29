@@ -61,6 +61,7 @@ const { resolveSupplierSplitConfig } = require('../config/supplierSplit');
 const messaging = require('./purchase/messaging');
 const supplierGroups = require('./purchase/supplierGroups');
 const documentImages = require('./purchase/documentImages');
+const { startPreparedImages } = require('./purchase/preparedImages');
 const postingPlan = require('./purchase/postingPlan');
 const arrival = require('./purchase/arrival');
 const { purchaseCorrelation } = require('./purchase/correlation');
@@ -273,6 +274,11 @@ class PurchaseWebhookService {
 
   async resolveSupplierName(supplierRecordId) {
     return supplierGroups.resolveSupplierName.call(this, supplierRecordId);
+  }
+
+  /** ⭐ 2026-10-29（A 方案·安全并行）：写表期间并行渲染各组 PNG（只渲染；失败返回 null 供 deliver 回退）。 */
+  async prepareSupplierImages(taskId, task, plan = {}, options = {}) {
+    return documentImages.prepareSupplierImages.call(this, taskId, task, plan, options);
   }
 
   async deliverSupplierImages(taskId, task, posting = {}, options = {}) {
@@ -495,6 +501,9 @@ class PurchaseWebhookService {
     // ⭐ 2026-10-16（供应商拆分）：把**调用方在调写入口之前算好的分组**交给"计划冻结"那一步
     //   （它会优先用它、并交叉核对；见 `ensurePostingPlan`）。缺省 ⇒ 按草稿自己算（老入口 ✓）。
     const plan = await this.ensurePostingPlan(taskId, task, { supplierGroups: options.supplierGroups });
+    // ⭐ 2026-10-29（A 方案·安全并行）：计划冻结后立刻并行渲染各组 PNG（与下面的写表同时进行）。
+    //   只渲染；发送/回填仍在写表成功之后 —— 编排与重放/失败口径见 `purchase/preparedImages.js`。
+    const preparedImagesPromise = startPreparedImages({ service: this, taskId, task, plan });
     // 关联键（只进日志）：task_id ＋ 批次号（plan 里已经冻结好了，重试不会换号）；
     // 每条写入再按需补上**它自己那条报单记录**的 id。
     const baseCorrelation = purchaseCorrelation({ taskId, batchNo: plan.batch_no });
@@ -714,7 +723,9 @@ class PurchaseWebhookService {
     // ⭐ 2026-10-16（供应商拆分）：把出图那一跑的**结果**带回去（发了几组 / 哪几组**已经出过**）——
     //   它现在是"生成报货单"这一步的可查产物（`image_delivery.group_count` / `already_reported` ✓），
     //   调用方与判据都能直接看，不必去翻日志（AC-SS4 就是靠它钉"同一组只出一次"）。
-    const imageDelivery = await this.deliverSupplierImages(taskId, task, posting);
+    // 写表已经成功 ⇒ 取回"并行渲染"的结果（通常早就好了）；渲染失败时为 null ⇒ deliver 现场渲染。
+    const preparedImages = await preparedImagesPromise;
+    const imageDelivery = await this.deliverSupplierImages(taskId, task, posting, { preparedImages });
     // 更新卡片为"已完成"状态（免确认路径没有卡片，跳过）
     if (!options.skipCardUpdate) {
       await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, purchaseMessage.m1, purchaseMessage.m2({ plan, requestIds }), 'green'));

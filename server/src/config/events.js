@@ -234,6 +234,8 @@ const EVENTS = Object.freeze([
   'purchase.request.image.group_sent',
   'purchase.request.image.no_batch_no',
   'purchase.request.image.operator_missing',
+  'purchase.request.image.prepare_failed',
+  'purchase.request.image.prepared',
   'purchase.request.image.send_failed',
   'purchase.request.image.skipped',
   'purchase.request.image.thread_root_missing',
