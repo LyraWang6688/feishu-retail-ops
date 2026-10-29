@@ -544,7 +544,7 @@ test('成交链路：收款明细的写入日志带 sales_entry_record_id ＋ or
     实收金额: 220, 履约状态: '已交付', 赠品: '',
   } }]);
   world.records.set('paymentRecord', [{ record_id: 'receipt_1', fields: {
-    关联销售单: ['rec_sale'], 收款金额: 220, 收款状态: '未收款',
+    关联销售单: ['rec_sale'], 交易金额: 220, 钱款状态: '未收款',
   } }]);
   // 「成交」要求订单已入账（读「资金状态」）。
   world.records.get('salesEntry')[0].fields.写入状态 = '成功';

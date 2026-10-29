@@ -289,5 +289,5 @@ test('AC-REG 其余字段一字未变：主表 / 明细 / 收款行的字段**�
     [PAYMENT.salesEntry, PAYMENT.method, PAYMENT.amount, PAYMENT.status, PAYMENT.receivedAt, PAYMENT.tradeDirection, PAYMENT.receiptId].sort(),
     '收款行：原有 6 列 + 新的「收款明细ID」');
   assert.equal(cell(paymentsOf(h)[0], PAYMENT.receivedAt) > 0, true, '「收款日」照旧是点击那一刻');
-  assert.deepEqual(cell(paymentsOf(h)[0], PAYMENT.tradeDirection), '收入', '交易方向照旧');
+  assert.deepEqual(cell(paymentsOf(h)[0], PAYMENT.tradeDirection), '收入', '收支方向照旧');
 });

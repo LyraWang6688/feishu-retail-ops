@@ -127,7 +127,7 @@ const runConfirm = async (gateway, {
           if (!gateway.tables.paymentRecord.some((item) => item.record_id === recordId)) {
             gateway.tables.paymentRecord.push({
               record_id: recordId,
-              fields: { 收款金额: row.amount, 收款状态: row.status || '已收款' },
+              fields: { 交易金额: row.amount, 钱款状态: row.status || '已收款' },
             });
           }
           return recordId;

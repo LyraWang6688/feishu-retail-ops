@@ -121,7 +121,7 @@ export const SALES_DELIVERY_TEXTS = Object.freeze({
     paymentCancel: '取消',
     paymentAmount: '收款金额',
     paymentMethod: '收款方式',
-    paymentMethodEmpty: '暂无收款方式（先到「收款方式管理」维护）',
+    paymentMethodEmpty: '暂无收款方式（先到「支付方式管理」维护）',
     paymentSubmit: '确认收款',
     paymentAmountInvalid: '请输入大于 0 的收款金额（最多两位小数）',
     paymentAmountTooLarge: '收款金额不能超过待付 ¥{amount}',

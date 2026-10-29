@@ -45,7 +45,7 @@ const tables = (overrides = {}) => ({
   },
   paymentRecord: {
     tableId: 'tbl_payment',
-    fields: { salesEntry: '关联销售单', amount: '收款金额', status: '收款状态' },
+    fields: { salesEntry: '关联销售单', amount: '交易金额', status: '钱款状态' },
   },
   sizeManagement: { tableId: 'tbl_size', fields: { size: '尺码' } },
   ...overrides,
@@ -64,7 +64,7 @@ const seed = ({ details, entry = {}, payments = [], products = [], accessories =
   }],
   salesDetail: details,
   paymentRecord: payments.length ? payments : [
-    { record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 100, 收款状态: '未收款' } },
+    { record_id: 'r1', fields: { 关联销售单: ['o1'], 交易金额: 100, 钱款状态: '未收款' } },
   ],
   product: products,
   accessory: accessories,
@@ -276,7 +276,7 @@ test('⭐ 候选 = 尚未完成履约：**现货待收**（已交付 + 钱没结
   // 已经收清的（收款状态=已收款）→ 不算候选（与口径一致：尚未成交才推）。
   const settled = await run(seed({
     details: [shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }])],
-    payments: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 收款金额: 228, 收款状态: '已收款' } }],
+    payments: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 交易金额: 228, 钱款状态: '已收款' } }],
   }), { query: { includeItems: true } });
   assert.deepEqual(settled, []);
 

@@ -3,11 +3,11 @@ const assert = require('node:assert/strict');
 const { progressFromRecords } = require('../src/services/salesProgressService');
 
 const detailFields = { actualAmount: '实收金额', fulfillmentStatus: '履约状态' };
-const paymentFields = { amount: '收款金额', status: '收款状态' };
+const paymentFields = { amount: '交易金额', status: '钱款状态' };
 const shoe = (amount, delivered = false) => ({ fields: {
   实收金额: amount, 履约状态: delivered ? '已交付' : '未交付',
 } });
-const receipt = (amount, status) => ({ fields: { 收款金额: amount, 收款状态: status } });
+const receipt = (amount, status) => ({ fields: { 交易金额: amount, 钱款状态: status } });
 
 test('platform voucher is not cash received or a customer balance', () => {
   const result = progressFromRecords([shoe(254.4, true)],

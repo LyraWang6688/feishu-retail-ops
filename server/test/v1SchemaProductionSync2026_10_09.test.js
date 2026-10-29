@@ -66,12 +66,12 @@ const objectLiteralAfter = (source, fromIndex) => {
 // ⭐⭐ 2026-10-09 收尾的**唯一**改动对象：这 5 个语义键（真表那 5 列已被她删掉）。
 const REMOVED_SALES_ENTRY_KEYS = ['originalText', 'parseStatus', 'parseSummary', 'failureReason', 'messageLink'];
 
-test('A(2026-10-09) 新表「付款明细」登记进 schema：只登记表，不编字段映射、不进闸门范围', () => {
+test('A(2026-10-09) 新表「P交易明细」登记进 schema：只登记表，不编字段映射、不进闸门范围', () => {
   const table = V1_BITABLE_SCHEMA.tables.paymentDetail;
-  assert.ok(table, '「付款明细」是她 2026-10-09 在生产 Base 新建的表，schema 必须登记');
+  assert.ok(table, '「P交易明细」是她 2026-10-09 在生产 Base 新建的表，schema 必须登记');
 
   // 表名 + table_id 都按**生产真表**的只读核对结果。
-  assert.equal(table.tableName, '付款明细');
+  assert.equal(table.tableName, 'P交易明细');
   // ⚠️ table_id 照旧走环境变量（本机 .env 指向测试 Base，不能写死成"生产 id 才对"）。
   assert.equal(
     table.tableId,
@@ -81,7 +81,7 @@ test('A(2026-10-09) 新表「付款明细」登记进 schema：只登记表，�
 
   // 🔴 真表现在**只有 1 列**，而且是主字段「文本」（type=1）—— 一个业务列都没有。
   //    ⇒ 一个字段映射都不许编（编了就是"凭空造逻辑"）。
-  assert.deepEqual(table.fields, {}, '真表还没有业务列 ⇒ fields 必须是空的');
+  assert.deepEqual(table.fields, { text: '文本' }, '真表当前只有主字段「文本」');
 
   // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
   //   改前逐字：`V1_SCHEMA_SCOPES.all.includes('paymentDetail') === false`（理由：列还没定 ⇒ 不进闸门）
@@ -91,7 +91,7 @@ test('A(2026-10-09) 新表「付款明细」登记进 schema：只登记表，�
   assert.equal(
     V1_SCHEMA_SCOPES.sales.includes('paymentDetail'),
     true,
-    '「付款明细」按她 2026-10-17 指令进 sales 闸门（只验表存在）',
+    '「P交易明细」按她 2026-10-17 指令进 sales 闸门（只验表存在）',
   );
   assert.equal(V1_SCHEMA_SCOPES.all.includes('paymentDetail'), true, '`all` 是并集 ⇒ 必须为 true');
 });

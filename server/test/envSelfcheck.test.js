@@ -190,7 +190,7 @@ test('可选项（闸门外的表 · 本机没配过）出问题 ⇒ 只提示�
     gateway: fakeGateway(),
     tables: [tableRow({
       key: 'paymentDetail', envVar: 'FEISHU_V1_PAYMENT_DETAIL_TABLE_ID',
-      tableId: 'tblProdDefault', expectedName: '付款明细', fieldNames: [],
+      tableId: 'tblProdDefault', expectedName: 'P交易明细', fieldNames: [],
     })],
     env: {}, inScopeKeys: [], appToken: 'base_token_fake',
   });

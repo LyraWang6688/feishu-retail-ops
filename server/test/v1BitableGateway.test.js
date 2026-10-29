@@ -85,22 +85,22 @@ test('sales schema matches the live three-table field snapshot', () => {
       '录单人', '待交付数量', '交付数量', '交易类型', '赠品',
       '售后次数', '总金额'],
     salesDetail: ['销售单价', '履约状态', '销售明细ID', '销售单号', '销售日', '尺码', '实收金额', '编号', '配品', '交易类型', '库存数量'],
-    // 「支付方式」已被产品负责人改名为「收款方式」，并新增了「交易方向」。
+    // 「支付方式」已被产品负责人改名为「收款方式」，并新增了「收支方向」。
     // ⭐ 2026-10-08：9 点推送【现货待收】按**收款明细的「交易类型」**筛
     //（她的口径：「未收款且**交易类型是现货**」）⇒ 映射加上这一列；
     // 同时那个 7 天窗口按**收款明细的创建时间**算 ⇒ 映射也加上「创建时间」
     //（飞书**自动**时间列，type=1001 —— 代码只读、一行都不写）。
     // ⭐ 2026-10-12：业务负责人定了「收款明细ID」= `{销售单号}-收款-{两位序号}`（写入点在
     //    `services/paymentService`）⇒ 映射与这份快照同步加上它。
-    paymentRecord: ['收款方式', '关联销售单', '收款金额', '收款日', '收款状态', '交易方向',
-      '交易类型', '创建时间', '收款明细ID'],
+    paymentRecord: ['支付方式', '关联销售单', '交易金额', '收付日', '钱款状态', '收支方向',
+      '交易类型', '创建时间', '交易明细ID'],
   };
   for (const [tableKey, actual] of Object.entries(fields)) {
     for (const name of Object.values(V1_BITABLE_SCHEMA.tables[tableKey].fields)) {
       assert.ok(actual.includes(name), `${tableKey} still maps deleted field ${name}`);
     }
   }
-  assert.equal(V1_BITABLE_SCHEMA.tables.paymentRecord.tableName, '收款明细');
+  assert.equal(V1_BITABLE_SCHEMA.tables.paymentRecord.tableName, 'S交易明细');
   // ⭐ 赠品的落点（2026-10-08）：**只在销售主表**；明细不再有 `gift` 映射。
   assert.equal(V1_BITABLE_SCHEMA.tables.salesEntry.fields.gift, '赠品');
   assert.equal(V1_BITABLE_SCHEMA.tables.salesDetail.fields.gift, undefined);

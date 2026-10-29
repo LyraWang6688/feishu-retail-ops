@@ -79,7 +79,7 @@ const seed = () => ({
   ],
   paymentRecord: [{
     record_id: 'pay_old_1',
-    fields: { 关联销售单: ['order_old'], 收款方式: ['method_wechat'], 收款金额: 280, 收款状态: '已收款' },
+    fields: { 关联销售单: ['order_old'], 支付方式: ['method_wechat'], 交易金额: 280, 钱款状态: '已收款' },
   }],
   liveInventory: [
     { record_id: 'live_A_41', fields: { 编号: ['product_A'], 尺码: ['size_41'], 所属状态: '门盒' } },
@@ -283,7 +283,7 @@ test('接线：不注入端口时默认就是真的 InventoryService；注入真
 //   「**收款明细表**：如果金额没变，就没有记录…」
 //
 // ⇒ 退货**不新建**收款记录：把**原销售单**下**原收款记录**的「收款状态」改掉。
-//   旧行为（新建一条「交易方向=退回」的收款行）保留在 `returnFundsMode = newReturnRow`，
+//   旧行为（新建一条「收支方向=退回」的收款行）保留在 `returnFundsMode = newReturnRow`，
 //   下面有专门的用例（配置翻回去即可回退）。
 // ═══════════════════════════════════════════════════════════════════════════
 test('退货（cash 退款）· 她的口径：原收款记录改成「已退款」（不新建记录），原主表只动「售后次数」', async () => {
@@ -333,9 +333,9 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
   //    金额/方向/收款方式/关联销售单**一个字节都不改**（她的口径只说"把收款改成已退款"）。
   assert.deepEqual(paymentRows(gateway), [], '退货不许新建收款记录');
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
-  assert.equal(originalPayment.fields['收款状态'], '已退款');
+  assert.equal(originalPayment.fields['钱款状态'], '已退款');
   assert.deepEqual(originalPayment.fields, {
-    关联销售单: ['order_old'], 收款方式: ['method_wechat'], 收款金额: 280, 收款状态: '已退款',
+    关联销售单: ['order_old'], 支付方式: ['method_wechat'], 交易金额: 280, 钱款状态: '已退款',
   });
   assert.equal(result.money.route, 'originalPaymentStatus');
   assert.equal(result.money.status, '已退款');
@@ -395,7 +395,7 @@ test('⭐ 退货「用户留存」（settlement=prepaid）· 她的口径：原�
   }));
 
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
-  assert.equal(originalPayment.fields['收款状态'], '已留存',
+  assert.equal(originalPayment.fields['钱款状态'], '已留存',
     '她的口径：用户留存 → 收款状态 = 已留存');
   assert.deepEqual(paymentRows(gateway), [], '不新建收款记录');
   assert.equal(result.money.route, 'originalPaymentStatus');
@@ -410,16 +410,16 @@ test('⭐ 退货收款旧行为保留：returnFundsMode=newReturnRow → 新建�
 
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1, '旧行为：新建一条收款记录');
-  assert.equal(payments[0].fields['交易方向'], '退回');
-  assert.equal(payments[0].fields['收款金额'], 250);
+  assert.equal(payments[0].fields['收支方向'], '退回');
+  assert.equal(payments[0].fields['交易金额'], 250);
   // ⚠️ 回退模式下状态用**旧口径**（已收款）——不然"翻开关回退"就不是真的回退。
-  assert.equal(payments[0].fields['收款状态'], '已收款');
+  assert.equal(payments[0].fields['钱款状态'], '已收款');
   assert.deepEqual(payments[0].fields['关联销售单'], [masterRows(gateway)[0].record_id]);
-  assert.deepEqual(payments[0].fields['收款方式'], ['method_wechat']);
+  assert.deepEqual(payments[0].fields['支付方式'], ['method_wechat']);
   assert.equal(result.money.route, 'cash');
   // 原收款行**不动**
   assert.equal(
-    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款状态'],
+    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['钱款状态'],
     '已收款',
   );
 });
@@ -530,7 +530,7 @@ test('⭐ 她说了「退我现金」（回退模式 newReturnRow）→ 新建�
 
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1);
-  assert.deepEqual(payments[0].fields['收款方式'], ['method_cash'],
+  assert.deepEqual(payments[0].fields['支付方式'], ['method_cash'],
     '写她说的现金，不是原单的微信');
   assert.equal(result.money.methodSource, 'spoken', '来源要说清是"她说的"');
   assert.equal(result.money.methodId, 'method_cash');
@@ -545,7 +545,7 @@ test('⭐ 退货（她的默认口径）：她说的收款方式**不写进任�
   // 不新建记录；原收款行的「收款方式」一个字节都不改（她的口径只说改状态）。
   assert.deepEqual(paymentRows(gateway), []);
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
-  assert.deepEqual(originalPayment.fields['收款方式'], ['method_wechat'],
+  assert.deepEqual(originalPayment.fields['支付方式'], ['method_wechat'],
     '原收款行的收款方式是历史事实，不许被这次售后再写一遍');
   // 但她说过什么必须留痕（结果 + 日志里都有），排查"钱到底怎么退的"能看到。
   assert.equal(result.money.declaredMethodId, 'method_cash');
@@ -558,7 +558,7 @@ test('⭐ 她没说收款方式（回退模式 newReturnRow）→ 沿用原单�
   const result = await service.execute(request({ paymentMethod: '', originalText: '把那双 A100 退了' }));
 
   const payments = paymentRows(gateway);
-  assert.deepEqual(payments[0].fields['收款方式'], ['method_wechat'], '她没说 → 沿用原单的微信');
+  assert.deepEqual(payments[0].fields['支付方式'], ['method_wechat'], '她没说 → 沿用原单的微信');
   assert.equal(result.money.methodSource, 'original');
   assert.equal(result.money.methodId, 'method_wechat');
 });
@@ -580,7 +580,7 @@ test('⭐ 她说的方式在「收款方式管理」里不存在 → 当场抛�
   const { gateway, service } = build();
   await assert.rejects(
     () => service.execute(request({ paymentMethod: '刷卡' })),
-    /收款方式管理中找不到：刷卡/,
+    /支付方式管理中找不到：刷卡/,
   );
   assert.deepEqual(paymentRows(gateway), [], '一个字节都不许写进收款明细');
 });
@@ -648,7 +648,7 @@ test('部分退货：同一原单先退明细 A、再退明细 B，两笔都成�
   //    第一笔退货就把它改成「已退款」了 ⇒ 第二笔没有可改的行（**已知局限**，见报告）。
   assert.equal(paymentRows(gateway).length, 0);
   assert.equal(
-    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款状态'],
+    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['钱款状态'],
     '已退款',
   );
   assert.equal(rowsOf(gateway, 'inventoryLedger').length, 2);
@@ -759,13 +759,13 @@ test('换货：旧鞋回库 + 新鞋出门盒，两条流水方向相反且数�
   // 钱：要收 50（收入）→ 新建一条收款记录，状态 = 已收款（她的口径：增加资金 → 已收款 · 收入）
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1);
-  assert.equal(payments[0].fields['交易方向'], '收入');
-  assert.equal(payments[0].fields['收款金额'], 50);
-  assert.equal(payments[0].fields['收款状态'], '已收款');
+  assert.equal(payments[0].fields['收支方向'], '收入');
+  assert.equal(payments[0].fields['交易金额'], 50);
+  assert.equal(payments[0].fields['钱款状态'], '已收款');
   assert.deepEqual(payments[0].fields['关联销售单'], [result.masterRecordId]);
   // 原收款行（pay_old_1）不动 —— 换货的差价走**新行**，不动原单的收款历史。
   assert.equal(
-    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款状态'],
+    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['钱款状态'],
     '已收款',
   );
 });
@@ -780,9 +780,9 @@ test('⭐ 换货「我们付差价」（退回）→ 新建的收款行状态 = 
 
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1);
-  assert.equal(payments[0].fields['交易方向'], '退回');
-  assert.equal(payments[0].fields['收款金额'], 50);
-  assert.equal(payments[0].fields['收款状态'], '已退款',
+  assert.equal(payments[0].fields['收支方向'], '退回');
+  assert.equal(payments[0].fields['交易金额'], 50);
+  assert.equal(payments[0].fields['钱款状态'], '已退款',
     '她的口径：「如果是我们付差价的话，方向就是退回，状态是已退款」');
   assert.equal(result.money.status, '已退款');
 });
@@ -954,7 +954,7 @@ test('⭐ 金额不变（差价 0 / null）→ 一笔收款记录都不写，原
     assert.equal(gateway.writes.create.paymentRecord, undefined);
     assert.equal(gateway.writes.update.paymentRecord, undefined, '连"改状态"也不做');
     assert.equal(
-      rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款状态'],
+      rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['钱款状态'],
       '已收款',
       '金额没变 → 收款状态原样不动',
     );
@@ -981,7 +981,7 @@ const addOriginalPayment = (gateway, { recordId, amount, status = '已收款', c
   gateway.records.get('paymentRecord').push({
     record_id: recordId,
     fields: {
-      关联销售单: ['order_old'], 收款方式: ['method_cash'], 收款金额: amount, 收款状态: status, 创建时间: createdAt,
+      关联销售单: ['order_old'], 支付方式: ['method_cash'], 交易金额: amount, 钱款状态: status, 创建时间: createdAt,
     },
   });
   return recordId;
@@ -991,15 +991,15 @@ test('⭐ 多笔收款：退款金额按「后进先出」只冲抵到最近那�
   const { gateway, service } = build();
   // 定金 100（早，pay_old_1 改成 100）+ 尾款 200（晚，pay_old_2）
   rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['创建时间'] = 1000;
-  rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款金额'] = 100;
+  rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['交易金额'] = 100;
   addOriginalPayment(gateway, { recordId: 'pay_old_2', amount: 200, createdAt: 2000 });
 
   // 退 150 ≤ 尾款 200 ⇒ 只动尾款那一笔
   const result = await service.execute(request({ diffAmount: -150 }));
 
   const byId = Object.fromEntries(rowsOf(gateway, 'paymentRecord').map((row) => [row.record_id, row.fields]));
-  assert.equal(byId.pay_old_2['收款状态'], '已退款', '最近一笔先被冲抵');
-  assert.equal(byId.pay_old_1['收款状态'], '已收款', '更早那一笔没被冲到，不许动');
+  assert.equal(byId.pay_old_2['钱款状态'], '已退款', '最近一笔先被冲抵');
+  assert.equal(byId.pay_old_1['钱款状态'], '已收款', '更早那一笔没被冲到，不许动');
   assert.deepEqual(result.money.recordIds, ['pay_old_2']);
   assert.equal(result.money.uncovered, 0);
 });
@@ -1007,14 +1007,14 @@ test('⭐ 多笔收款：退款金额按「后进先出」只冲抵到最近那�
 test('⭐ 多笔收款：退得比最近一笔多 → 继续往前冲抵（两笔都改成已退款）', async () => {
   const { gateway, service } = build();
   rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['创建时间'] = 1000;
-  rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款金额'] = 100;
+  rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['交易金额'] = 100;
   addOriginalPayment(gateway, { recordId: 'pay_old_2', amount: 200, createdAt: 2000 });
 
   const result = await service.execute(request({ diffAmount: -350 }));
 
   const byId = Object.fromEntries(rowsOf(gateway, 'paymentRecord').map((row) => [row.record_id, row.fields]));
-  assert.equal(byId.pay_old_2['收款状态'], '已退款');
-  assert.equal(byId.pay_old_1['收款状态'], '已退款');
+  assert.equal(byId.pay_old_2['钱款状态'], '已退款');
+  assert.equal(byId.pay_old_1['钱款状态'], '已退款');
   assert.deepEqual(result.money.recordIds, ['pay_old_2', 'pay_old_1']);
   assert.equal(result.money.uncovered, 50, '100 + 200 = 300 < 350：差 50 冲不完（只报数，不建行）');
   assert.equal(gateway.writes.create.paymentRecord, undefined, '冲不完也**不新建**收款记录（她的口径是"改收款"）');
@@ -1029,15 +1029,15 @@ test('⭐ 边界：「未收款」占位不在可改状态里（那笔钱没收�
   const result = await service.execute(request({ diffAmount: -150 }));
 
   const byId = Object.fromEntries(rowsOf(gateway, 'paymentRecord').map((row) => [row.record_id, row.fields]));
-  assert.equal(byId.pay_old_unpaid['收款状态'], '未收款', '未收款占位不许被改成已退款');
-  assert.equal(byId.pay_old_1['收款状态'], '已退款', '跳过占位后，钱从真收到的那一笔上退');
+  assert.equal(byId.pay_old_unpaid['钱款状态'], '未收款', '未收款占位不许被改成已退款');
+  assert.equal(byId.pay_old_1['钱款状态'], '已退款', '跳过占位后，钱从真收到的那一笔上退');
   assert.deepEqual(result.money.recordIds, ['pay_old_1']);
 });
 
 test('⭐ 边界：原单一条可改的收款行都没有 → 不报错、不建行，只记 warning（业务不停）', async () => {
   const { gateway, service } = build();
   // 原单那一条是「未收款」占位（钱还没收到）
-  rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款状态'] = '未收款';
+  rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['钱款状态'] = '未收款';
 
   const result = await service.execute(request({ diffAmount: -250 }));
 
@@ -1045,7 +1045,7 @@ test('⭐ 边界：原单一条可改的收款行都没有 → 不报错、不�
   assert.deepEqual(result.money.recordIds, []);
   assert.equal(result.money.uncovered, 250);
   assert.equal(
-    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款状态'],
+    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['钱款状态'],
     '未收款',
   );
   assert.equal(paymentRows(gateway).length, 0);
@@ -1208,7 +1208,7 @@ test('中途失败后重试：改原收款状态失败 → 目标行意图已落
   assert.equal(masterRows(gateway).length, 1);
   assert.equal(detailRows(gateway).length, 1);
   assert.equal(
-    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款状态'],
+    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['钱款状态'],
     '已收款',
   );
   assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
@@ -1223,7 +1223,7 @@ test('中途失败后重试：改原收款状态失败 → 目标行意图已落
   assert.equal(masterRows(gateway).length, 1);
   assert.equal(detailRows(gateway).length, 1);
   assert.equal(
-    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['收款状态'],
+    rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1').fields['钱款状态'],
     '已退款',
   );
   assert.equal(inventory.calls.length, 1);
@@ -1276,12 +1276,12 @@ test('⭐ 改状态前发现原收款行被人工改成了别的状态 → 大�
 
   // 人工把那一行改成了别的状态（既不是"改动前"的已收款，也不是目标的已退款）
   const payment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
-  payment.fields['收款状态'] = '未收款';
+  payment.fields['钱款状态'] = '未收款';
   await assert.rejects(
     () => service.execute(request()),
     /「收款状态」现在是「未收款」.*请人工核对/,
   );
-  assert.equal(payment.fields['收款状态'], '未收款', '停下时不许覆盖人工改过的值');
+  assert.equal(payment.fields['钱款状态'], '未收款', '停下时不许覆盖人工改过的值');
 });
 
 test('入参校验：动作 / newLines / restockState / 原单号 / 原明细归属', async () => {
@@ -1384,9 +1384,9 @@ test('AC-ID6 ⭐ 售后新建的收款行：号跨「原单 + 售后单」一起
 
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1, '回退模式：新建一条收款记录');
-  assert.equal(payments[0].fields['收款明细ID'], `${ORDER_NO}-收款-02`,
+  assert.equal(payments[0].fields['交易明细ID'], `${ORDER_NO}-收款-02`,
     '原单已有 1 条收款行 ⇒ 售后这条是第 2 笔（⚠️ 售后单与原单**共用同一个销售单号**，'
     + '号必须跨两张主表一起数，否则会与原单撞号）');
   assert.equal(rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1')
-    .fields['收款明细ID'], undefined, '存量那行**不回填**（不重排已有行）');
+    .fields['交易明细ID'], undefined, '存量那行**不回填**（不重排已有行）');
 });
