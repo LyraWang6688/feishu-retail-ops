@@ -3,7 +3,7 @@ import { escapeHtml, money, statusClass } from '../../core/formatters.js';
 import { describeError, runWriteAction, showPageError } from '../../core/ui.js';
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
-  SALES_SECTIONS, SALES_DELIVERY_PAGE,
+  SALES_SECTIONS, SALES_DELIVERY_PAGE, ORDERS_DRAFTS, ORDERS_DRAFT_API,
   ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
 import { ARRIVAL_FULL_API, ARRIVAL_FULL_FIELDS, ARRIVAL_FULL_TEXTS } from '../../config/orders.js';
@@ -97,6 +97,73 @@ export function ordersSectionCardsHtml(orders = []) {
       <span class="entry-card-body"><strong>${escapeHtml(section.label)}</strong></span>
     </button>`;
   }).join('')}</div>`;
+}
+
+// ── ⭐⭐ 2026-10-29（task-11）：**草稿箱**（销售 → 订单列表 → 草稿单）──────────
+//
+// 数据 = 扫码页「本单已加 N 双」那份**本地中间态**（服务端只读 `data/scan_sessions/`，零 Base 写）。
+// 这里只做**展示 + 两个动作**：
+//   · 继续编辑 ⇒ 浏览器**直接导航**到 `GET /api/workbench/sales/drafts/:id/resume`
+//     （服务端下发该草稿自己的页面 cookie + 302 回扫码页 ⇒ 同一份草稿，不新建 ✓）
+//   · 清空 ⇒ `POST /api/workbench/sales/drafts/clear`（服务端只清本地；写中的草稿会被拒 ✓）
+
+const D = ORDERS_DRAFTS;
+const DRAFT_TONE_CLASS = { warning: 'tag-warning', danger: 'tag-danger', success: 'tag-success', info: 'tag-info', muted: '' };
+
+const draftItemHtml = (item = {}) => {
+  const size = item.size ? `${escapeHtml(item.size)} 码` : escapeHtml(D.sizeMissing);
+  const head = [item.item_no, item.color].filter(Boolean).map((value) => escapeHtml(value)).join(' · ');
+  const amount = Number(item.amount || 0) ? `<span class="muted">${money(item.amount)}</span>` : '';
+  return `<li class="draft-item" data-draft-item><span class="line-product">${head || escapeHtml(item.kind_label || '')}</span>
+      <span class="line-size">${size}</span>${amount ? ` ${amount}` : ''}</li>`;
+};
+
+/** 一份草稿一张卡：状态 / 单号 / 货品 / 数量 / 金额 / 最后更新 + 两个按钮（不可用的动作**不出现**）。 */
+export function draftCardHtml(draft = {}, { clearing = false } = {}) {
+  if (!draft || typeof draft !== 'object') return '';
+  const items = Array.isArray(draft.items) ? draft.items : [];
+  const statusTag = `<span class="tag ${DRAFT_TONE_CLASS[draft.status_tone] || ''}">${escapeHtml(draft.status_label || '')}</span>`;
+  const orderNo = String(draft.order_no || '').trim();
+  const more = Number(draft.more_count || 0);
+  const hint = draft.status_code === 'in_flight' ? D.inFlightHint : (draft.status_code === 'expired' ? D.expiredHint : '');
+  return `<article class="order-card draft-card" data-view="draft-card" data-draft-id="${escapeHtml(draft.draft_id || '')}">
+      <div class="order-card-head">
+        <h3 class="order-no">${escapeHtml(orderNo || D.noOrderNo)}</h3>
+        <div class="order-tags">${statusTag}</div>
+      </div>
+      <ul class="order-lines" data-view="draft-items">${items.map(draftItemHtml).join('')}</ul>
+      <p class="order-note muted" data-view="draft-summary">
+        ${escapeHtml(D.itemCount.replace('{count}', String(draft.line_count || 0)))}
+        ${more ? ` · ${escapeHtml(D.itemMore.replace('{count}', String(more)))}` : ''}
+        · ${escapeHtml(D.totalAmount)} ${money(draft.total_amount)}
+        ${draft.updated_at_text ? ` · ${escapeHtml(D.updatedAt)} ${escapeHtml(draft.updated_at_text)}` : ''}
+      </p>
+      ${hint ? `<p class="hint" data-view="draft-hint">${escapeHtml(hint)}</p>` : ''}
+      <div class="order-card-actions">
+        ${draft.resumable ? `<button class="btn btn-primary" type="button" data-draft-resume="${escapeHtml(draft.draft_id || '')}">${escapeHtml(D.continueEdit)}</button>` : ''}
+        ${draft.clearable ? `<button class="btn btn-ghost" type="button" data-draft-clear="${escapeHtml(draft.draft_id || '')}"${clearing ? ' disabled' : ''}>${escapeHtml(clearing ? D.clearing : D.clear)}</button>` : ''}
+      </div>
+    </article>`;
+}
+
+/** 草稿箱这一屏的四种态：加载 / 读取失败 / 空 / 有草稿（**空态与"有损坏文件"要能区分** ✓）。 */
+export function draftsSectionHtml({
+  drafts = [], total = 0, corruptCount = 0, status = 'ready', error = '', clearingId = '',
+} = {}) {
+  if (status === 'loading') return `<p class="section-loading" data-view="drafts-loading">${escapeHtml(D.loading)}</p>`;
+  if (status === 'error') {
+    return `<p class="empty" data-view="drafts-error">${escapeHtml(error || D.failed)}</p>`;
+  }
+  const list = Array.isArray(drafts) ? drafts : [];
+  const corrupt = Number(corruptCount || 0) > 0
+    ? `<p class="hint" data-view="drafts-corrupt">${escapeHtml(D.corrupt.replace('{count}', String(corruptCount)))}</p>`
+    : '';
+  if (!list.length) {
+    return `${corrupt}<p class="empty" data-view="drafts-empty">${escapeHtml(D.empty)}</p>
+      <p class="hint" data-view="drafts-empty-hint">${escapeHtml(D.emptyHint)}</p>`;
+  }
+  const head = `<p class="muted" data-view="drafts-summary">${escapeHtml(D.total.replace('{count}', String(total || list.length)))}</p>`;
+  return `${corrupt}${head}<div class="drafts" data-view="drafts">${list.map((draft) => draftCardHtml(draft, { clearing: String(clearingId || '') === String(draft.draft_id || '') })).join('')}</div>`;
 }
 
 // ── ⭐ 2026-10-09：采购子 tab（按采购订单 = 一张采购申请/报货批次一行）──────────────
@@ -290,6 +357,14 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     activeSection: null,
     ordersLoaded: false,
     ordersLoading: false,
+    // ⭐ 2026-10-29（task-11）：草稿箱（本地扫码草稿）的读/清空态
+    drafts: [],
+    draftsLoaded: false,
+    draftsLoading: false,
+    draftsError: '',
+    draftsTotal: 0,
+    draftsCorrupt: 0,
+    clearingDraftId: '',
     purchaseRows: [],
     arrivalRowsByBatch: {},
   };
@@ -354,9 +429,17 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       reportOrdersRendered('cards', SALES_SECTIONS.length);
       return;
     }
-    // 只有「草稿箱」会进这里（交割单在本页直接跳独立页；售后单直接起扫一扫）⇒ 显示显式占位。
-    host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
-      <p class="empty compact" data-view="section-placeholder">待建设</p>`;
+    // 只有「草稿箱」会进这里（交割单跳独立页；售后单起扫一扫）⇒ 真列表 + 空/加载/错误态。
+    const draftStatus = state.draftsError ? 'error' : (state.draftsLoading || !state.draftsLoaded ? 'loading' : 'ready');
+    host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">${escapeHtml(D.back)}</button>
+      <section class="order-section" data-sales-section="draft" data-view="drafts-section">${draftsSectionHtml({
+        drafts: state.drafts,
+        total: state.draftsTotal,
+        corruptCount: state.draftsCorrupt,
+        status: draftStatus,
+        error: state.draftsError,
+        clearingId: state.clearingDraftId,
+      })}</section>`;
   }
 
   function renderPurchaseList() {
@@ -439,6 +522,57 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     } finally {
       stopTicker();
     }
+  }
+
+  // ── ⭐⭐ 2026-10-29（task-11）：草稿箱 ─────────────────────────────────────
+  /** 读"我的草稿箱"（后端只读本地 `data/scan_sessions/`；零 Base 写）。 */
+  async function loadDrafts() {
+    state.draftsLoading = true;
+    state.draftsError = '';
+    renderList();
+    try {
+      const data = await api.get(ORDERS_DRAFT_API.list);
+      state.drafts = Array.isArray(data.drafts) ? data.drafts : [];
+      state.draftsTotal = Number(data.total || state.drafts.length);
+      state.draftsCorrupt = Number(data.corrupt_count || 0);
+      state.draftsLoaded = true;
+    } catch (error) {
+      // 失败**不清空**上一次的结果（与订单列表同一条口径：先给她看得见的，再如实报失败）
+      state.draftsError = describeError(error) || D.failed;
+    } finally {
+      state.draftsLoading = false;
+      renderList();
+    }
+  }
+
+  /** 清空**一份**草稿（先确认；服务端只清本地，写中的会被拒 ⇒ 如实报原因）。 */
+  async function clearDraft(draftId) {
+    const id = String(draftId || '');
+    if (!id) return undefined;
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function'
+      && !window.confirm(D.clearConfirm)) return undefined;
+    state.clearingDraftId = id;
+    renderList();
+    try {
+      const result = await api.post(ORDERS_DRAFT_API.clear, { draftId: id });
+      await loadDrafts();
+      renderResult(result.message || D.clearDone);
+      return result;
+    } catch (error) {
+      renderList();
+      renderResult(describeError(error) || D.failed, true);
+      return undefined;
+    } finally {
+      state.clearingDraftId = '';
+    }
+  }
+
+  /** 「继续编辑」= **浏览器直接导航**（服务端下发该草稿自己的页面 cookie 再 302 回扫码页 ✓）。 */
+  function resumeDraft(draftId) {
+    const id = String(draftId || '');
+    if (!id) return undefined;
+    window.location.href = ORDERS_DRAFT_API.resume(id);
+    return undefined;
   }
 
   // ── ⭐ 2026-10-09：采购子 tab（读既有 /purchase/requests；验收走既有入库链路）────────
@@ -594,6 +728,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         }
         state.activeSection = sectionCard.dataset.ordersSection;
         renderList();
+        if (state.activeSection === 'draft') { void loadDrafts(); return; }
         if (!state.ordersLoaded && !state.ordersLoading) loadOrders();
         return;
       }
@@ -602,6 +737,11 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         renderList();
         return;
       }
+      // ⭐ 2026-10-29（task-11）：草稿箱的两个动作（继续编辑 = 导航；清空 = 只清本地）
+      const resumeButton = event.target.closest('[data-draft-resume]');
+      if (resumeButton) return resumeDraft(resumeButton.dataset.draftResume);
+      const clearButton = event.target.closest('[data-draft-clear]');
+      if (clearButton) return clearDraft(clearButton.dataset.draftClear);
       const trigger = event.target.closest('[data-action]');
       if (!trigger) return;
       const action = trigger.dataset.action;

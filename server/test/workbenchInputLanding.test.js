@@ -105,8 +105,18 @@ const PENDING_LANDING = Object.freeze([
   "'/api/workbench/label-print/jobs'",
 ]);
 
+/**
+ * ⭐ 2026-10-29（task-11）：**落点 = 本地中间态（没有 Base 表/列）** 的提交 —— 如实登记。
+ *   `ORDERS_DRAFT_API.clear`（工作台「销售 → 订单列表 → 草稿单 → 清空」）只清
+ *   `server/data/scan_sessions/` 里那份草稿（`sessions.clearSale`），
+ *   **不写任何业务表 / 飞书 Base** ✓ ⇒ 它没有"表 + 列"可填。
+ *   反向判据：`test/workbenchSalesDrafts.test.js` 的 AC-DR4 钉住"草稿箱路由零 bitable/gateway" ✓
+ */
+const LOCAL_LANDING = Object.freeze(['ORDERS_DRAFT_API.clear']);
+
 test('AC-LANDING-1 ⭐⭐ 每个提交键都得"说得出来落到哪张表哪一列"（新增输入 ⇒ 先登记 + 核落点 ⇒ 否则红 ✗）', () => {
-  const unknown = submittedTargets().filter((t) => !(t in CHAINS) && !PENDING_LANDING.includes(t));
+  const unknown = submittedTargets()
+    .filter((t) => !(t in CHAINS) && !PENDING_LANDING.includes(t) && !LOCAL_LANDING.includes(t));
   assert.deepEqual(unknown, [],
     `⛔ 这些提交键**没有登记落点** ⇒ 加新输入前必须写清"落到哪张表哪一列" ✗：${unknown.join(' / ')}`);
 });

@@ -28,7 +28,8 @@ export const ORDERS_PAGE = {
 export const SALES_SECTIONS = [
   { key: 'pending', label: '交割单', tag: '待交割', tone: 'info', icon: '🧾' },
   { key: 'afterSales', label: '售后单', tag: '待建设', tone: 'info', icon: '🛠️' },
-  { key: 'draft', label: '草稿单', tag: '待建设', tone: 'info', icon: '📝' },
+  // ⭐ 2026-10-29（task-11）：草稿箱**已真建**（本地扫码草稿的只读 / 清空 / 继续编辑）
+  { key: 'draft', label: '草稿单', tag: '本地草稿', tone: 'info', icon: '📝' },
 ];
 
 export const ARRIVAL_STATUS_PENDING = '未到货';
@@ -76,6 +77,46 @@ export const ARRIVAL_SCAN = {
  * ⚠️ URL 只在这里写一次；`features/orders/index.js` 读取它，不复制字面量。
  */
 export const SALES_DELIVERY_PAGE = '/workbench/sales-delivery.html';
+
+/**
+ * ⭐⭐ 2026-10-29（task-11）：**销售 → 订单列表 → 草稿箱**（本地扫码草稿）。
+ *
+ * 数据源 = 扫码页「本单已加 N 双」那一份**本地中间态**（`server/data/scan_sessions/`）：
+ *   · **只读 / 只清**它；**不写业务表 / 不写飞书 Base** ✗
+ *   · 按当前登录用户隔离；已提交成功的单不出现（服务端按 `sale.lines` 过滤 ✓）
+ *   · 页面上的文案全部在这里（渲染层不写死中文 ✓）
+ */
+export const ORDERS_DRAFTS = {
+  loading: '正在读取草稿…',
+  empty: '没有未提交的草稿',
+  emptyHint: '在扫码页上「加入本单」、还没点提交的那一单会出现在这里。',
+  failed: '草稿读取失败',
+  corrupt: '有 {count} 份本地草稿文件读不出来（不影响其它草稿，已跳过）',
+  total: '共 {count} 份',
+  orderNo: '销售单号',
+  noOrderNo: '还没生成单号',
+  itemCount: '共 {count} 双',
+  itemMore: '还有 {count} 条',
+  totalAmount: '总金额',
+  updatedAt: '最后更新',
+  continueEdit: '继续编辑',
+  clear: '清空',
+  clearing: '正在清空…',
+  clearConfirm: '清空这份草稿？本单里已加的东西会一起清掉，不会写业务表。',
+  clearDone: '已清空这份草稿（只清本地记录，没有动业务表）',
+  inFlightHint: '上次写到一半没写完：去订单那一单点重试，别在这里清。',
+  expiredHint: '已过期（超过 12 小时没动），只能清掉重扫。',
+  back: '← 返回订单列表',
+  sizeMissing: '尺码待补',
+};
+
+/** 草稿箱接口（**唯一来源**：渲染层不写死 URL）。 */
+export const ORDERS_DRAFT_API = {
+  list: '/api/workbench/sales/drafts',
+  clear: '/api/workbench/sales/drafts/clear',
+  // 浏览器**直接导航**（服务端下发该草稿自己的页面 cookie + 302 回扫码页）
+  resume: (draftId) => `/api/workbench/sales/drafts/${encodeURIComponent(String(draftId || ''))}/resume`,
+};
 
 /**
  * 接口路径（**唯一来源**：渲染层不写死 URL）。

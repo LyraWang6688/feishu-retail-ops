@@ -16,6 +16,10 @@
 const express = require('express');
 const { createWorkbenchOrderActionsRouter } = require('../workbenchOrderActions');
 const { createWorkbenchSalesDeliveryRoutes } = require('../workbenchSalesDelivery');
+// ⭐⭐ 2026-10-29（task-11）：销售 → 订单列表 → **草稿单** —— 读/清空/回扫码页都在这个 sub-router 里，
+//   数据源 = 扫码页**同一份**本地会话（`data/scan_sessions/`），**零业务表 / 零 Base 写** ✓。
+const { createWorkbenchSalesDraftsRouter } = require('../workbenchSalesDrafts');
+const { createScanSessionService } = require('../../services/scanSessionService');
 const { logError } = require('../../utils/logger');
 
 const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}) => {
@@ -43,6 +47,11 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
         .json({ success: false, error: error.message || 'after-sales candidates failed' });
     }
   });
+
+  // ⭐⭐ 2026-10-29（task-11）：**草稿箱**挂在同一道 `requireWorkbenchAccess` 之后（鉴权不新开）✓
+  //   复用扫码页那一份会话服务（只读本地 JSON；用例可注入 `options.scanSessions`）。
+  const scanSessions = options.scanSessions || createScanSessionService();
+  router.use(createWorkbenchSalesDraftsRouter({ sessions: scanSessions }));
 
   router.get('/sales/orders', async (req, res) => {
     try { return res.json({ success: true, ...await followup.listOrders() }); }
