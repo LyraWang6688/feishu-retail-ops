@@ -50,7 +50,14 @@ const SCAN_FLOWS = Object.freeze({
     label: '售后换款式',
     realm: 'sales',
     steps: Object.freeze([
-      Object.freeze({ type: STEP_TYPES.GOODS, allowAddLine: false }),
+      Object.freeze({
+        type: STEP_TYPES.GOODS,
+        allowAddLine: false,
+        // 售后换款式：新鞋金额按「货品信息.单价」算 ⇒ 录入页**不显示"这一双的金额"输入框**
+        hideAmountInput: true,
+        submitLabel: '提交换货',
+        banner: '售后换款式：选 1 双，提交后按差价处理',
+      }),
       Object.freeze({ type: STEP_TYPES.DIFF, when: whenDiffNonZero, optionsFrom: 'paymentMethodConfig' }),
       Object.freeze({
         type: STEP_TYPES.SUBMIT,
@@ -64,6 +71,12 @@ const SCAN_FLOWS = Object.freeze({
     ]),
     allowAddLine: false,
     entry: '/r/{number}?flow=afterSalesExchange',
+    // 本步（货品页 → 下一步差价/提交）还没接线时的人话（配置先行；渲染/路由不写中文）
+    texts: Object.freeze({
+      pendingTitle: '换货已选好这一双',
+      pendingBody: '下一步（算差价 / 提交售后）还没接上，这一版先到这里。',
+      backLabel: '返回售后页',
+    }),
     // 售后上下文：从售后页带进来（原单 / 原明细 / 原金额 / 请求标识）
     context: Object.freeze([
       'requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount',

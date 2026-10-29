@@ -173,6 +173,37 @@ export function mountAfterSalesPage(container, options = {}) {
     if (modal) renderModal();
   };
 
+  /** 换款式：扫新鞋 → 跳销售扫码页（flow=afterSalesExchange + 售后上下文）。 */
+  const startExchangeScan = async () => {
+    const candidate = selectedCandidate();
+    if (!candidate) return;
+    modalError('');
+    try {
+      const { scanCodeRaw } = await import('../scan/launch.js');
+      const raw = String(await scanCodeRaw('after_sales_exchange') || '').trim();
+      let recordId = '';
+      try {
+        const url = new URL(raw, window.location.origin);
+        const match = url.pathname.match(/^\/r\/([^/]+)/);
+        if (match) recordId = decodeURIComponent(match[1]);
+      } catch { /* raw id below */ }
+      if (!recordId && /^[A-Za-z0-9_-]+$/.test(raw)) recordId = raw;
+      if (!recordId) { modalError(AFTER_SALES_PAGE.exchangeScanFailed); return; }
+      const requestId = (globalThis.crypto?.randomUUID?.() || '').toString();
+      const query = new URLSearchParams({
+        flow: 'afterSalesExchange',
+        requestId,
+        salesEntryRecordId: String(candidate.sales_entry_record_id || ''),
+        detailRecordId: String(candidate.sales_detail_record_id || ''),
+        originalAmount: String(candidate.actual_amount ?? ''),
+      });
+      window.location.href = `/r/${encodeURIComponent(recordId)}?${query.toString()}`;
+    } catch (error) {
+      if (/cancel/i.test(String(error?.errMsg || error?.message || ''))) return;
+      modalError(AFTER_SALES_PAGE.exchangeScanFailed);
+    }
+  };
+
   /** 弹窗内容（按动作 / 子状态渲染）。 */
   const renderModal = () => {
     const node = modalNode();
@@ -249,6 +280,13 @@ export function mountAfterSalesPage(container, options = {}) {
     }
     const kind = event.target.closest('[data-as-exchange-kind]');
     if (kind && modal?.action === 'exchange') {
+      // ⭐ 2026-10-29（配置化流程）：换款式 = **跳销售扫码页**（flow=afterSalesExchange）——
+      //   先扫新鞋的货品码，再带售后上下文（原单 / 原明细 / 原金额 / requestId）过去；
+      //   那边的货品页按 flow 配置隐藏"加一双"和金额输入（页面不写 if）。
+      if (kind.dataset.asExchangeKind === 'new') {
+        void startExchangeScan();
+        return;
+      }
       modal.kind = kind.dataset.asExchangeKind;
       modal.size = '';
       renderModal();

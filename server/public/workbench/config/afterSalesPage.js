@@ -68,6 +68,7 @@ export const AFTER_SALES_PAGE = {
   exchangeSizeLabel: '新尺码',
   exchangeNewItemHint: '扫一扫选新鞋（原型：点下面的按钮模拟扫到一双新鞋）',
   exchangeScan: '扫一扫选新鞋',
+  exchangeScanFailed: '扫一扫没有成功，请再试一次。',
   exchangeNewItemLabel: '新鞋',
   exchangeDiffLabel: '差价',
   exchangeDiffNone: '没有差价',
