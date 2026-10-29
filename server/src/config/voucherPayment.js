@@ -77,7 +77,7 @@ const DEFAULT_VOUCHER_UNRESOLVED_TEXT = '这张团购券没在「团购券管理
 const VOUCHER_HINT_METHODS_UNREADABLE = '收款方式表读不到 ⇒ 认不出哪条是券；有金额空的行就拦住'
   + '（不静默当普通收款 / 不被整行丢掉）';
 const VOUCHER_HINT_CATALOG_UNREADABLE = '券目录读不到 ⇒ 认不出面值/结算款 ⇒ 拦住这一单（不静默拿收款金额顶替）';
-const VOUCHER_HINT_UNREACHABLE = '这些在售券没有任何收款方式关联 ⇒ 她在页面上点不到它（请到「收款方式管理」补关联）';
+const VOUCHER_HINT_UNREACHABLE = '这些在售券没有任何收款方式关联 ⇒ 她在页面上点不到它（请到「支付方式管理」补关联）';
 const VOUCHER_HINT_METHOD_UNMAPPED = '券方式在「团购券管理」里找不到对应那张券 ⇒ 拦住这一单（不静默当普通收款）';
 
 /**

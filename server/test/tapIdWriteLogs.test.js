@@ -59,7 +59,7 @@ test('AC-TAP3 ⭐⭐ 贯穿：同一个 `tap_id` 出现在【写库日志】里�
   const gateway = {
     // `PaymentService` 要按 schema 解析列名 ⇒ 给一个最小的 `table()` 替身 ✓
     table: (key) => ({ fields: { salesEntry: '销售单号', method: '收款方式', amount: '交易金额',
-      status: '钱款状态', receivedAt: '收付日', tradeDirection: '交易方向', receiptId: '交易明细ID' } , key }),
+      status: '钱款状态', receivedAt: '收付日', tradeDirection: '收支方向', receiptId: '交易明细ID' } , key }),
     // `PaymentService.record` 会先读一次销售主表（拿单号/状态）⇒ 给个最小替身 ✓
     get: async () => ({ record_id: 'rec_entry_1', fields: { 销售单号: 'XSD-20261016-0001' } }),
     listByFilter: async () => [],

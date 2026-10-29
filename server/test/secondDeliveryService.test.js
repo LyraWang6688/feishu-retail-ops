@@ -3,7 +3,7 @@
 // 这个文件盯的是**业务规则本身**，不是实现细节：
 //   · 现货待收单点「成交」只补收款，**一丁点库存都不许碰**（第一次交付时已经扣过了）；
 //   · 预定单点「成交」要补收款 + 明细转已交付 + 扣库存（复用 deliver，不自己写库存）；
-//   · 没到账的那条收款「交易方向」留空，变成已收款的那一刻才写「收入」；
+//   · 没到账的那条收款「收支方向」留空，变成已收款的那一刻才写「收入」；
 //   · 销售明细的「交易类型」和销售主表写同一条行为关联；
 //   · 同一笔不重复推的是「同一天」：跨天照发（业务负责人否掉了"按单只推一次"）；
 //   · 点完「成交」之后那张卡的这一单要变灰（按钮换成一行说明），失败/只成一半时不能灰。
@@ -124,8 +124,8 @@ test('现货待收单点「成交」：只补收款，库存与明细履约状�
   // ① 那条「未收款」→「已收款」：收款时间 = 点击时间，方向补「收入」。
   const receipt = gateway.records.get('paymentRecord')[0];
   assert.equal(receipt.fields['钱款状态'], '已收款');
-  assert.deepEqual(receipt.fields['交易方式'], ['method_1']);
-  assert.equal(receipt.fields['交易方向'], '收入');
+  assert.deepEqual(receipt.fields['支付方式'], ['method_1']);
+  assert.equal(receipt.fields['收支方向'], '收入');
   assert.ok(Number(receipt.fields['收付日']) >= before, '收款时间必须是点击那一刻');
   assert.equal(result.collectedAmount, 260);
   assert.deepEqual(result.collectedPaymentIds, ['receipt_u1']);
@@ -164,7 +164,7 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
     } }],
     paymentRecord: [
       { record_id: 'receipt_p1', fields: {
-        关联销售单: ['order_prepaid'], 交易金额: 200, 钱款状态: '已收款', 交易方式: ['method_1'],
+        关联销售单: ['order_prepaid'], 交易金额: 200, 钱款状态: '已收款', 支付方式: ['method_1'],
       } },
       { record_id: 'receipt_p2', fields: {
         关联销售单: ['order_prepaid'], 交易金额: 200, 钱款状态: '未收款',
@@ -179,17 +179,17 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
 
   const result = await service.confirm({ salesEntryRecordId: 'order_prepaid', method: '现金', operatorOpenId: 'ou_1' });
 
-  // ① 补收款：那条「未收款」→「已收款」+ 交易方向「收入」+ 收款时间。
+  // ① 补收款：那条「未收款」→「已收款」+ 收支方向「收入」+ 收款时间。
   const pending = gateway.records.get('paymentRecord').find((row) => row.record_id === 'receipt_p2');
   assert.equal(pending.fields['钱款状态'], '已收款');
-  assert.equal(pending.fields['交易方向'], '收入');
-  assert.deepEqual(pending.fields['交易方式'], ['method_2']);
+  assert.equal(pending.fields['收支方向'], '收入');
+  assert.deepEqual(pending.fields['支付方式'], ['method_2']);
   assert.ok(Number(pending.fields['收付日']) > 0);
   assert.equal(result.collectedAmount, 200);
   // 原来那条已收款（定金）不动，也不重复写方向。
   const deposit = gateway.records.get('paymentRecord').find((row) => row.record_id === 'receipt_p1');
   assert.equal(deposit.fields['钱款状态'], '已收款');
-  assert.equal(deposit.fields['交易方向'], undefined);
+  assert.equal(deposit.fields['收支方向'], undefined);
 
   // ② 明细：未交付 → 已交付。
   assert.equal(gateway.records.get('salesDetail')[0].fields['履约状态'], '已交付');
@@ -239,10 +239,10 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 四、收款明细「交易方向」：没到账留空，到账那一刻写「收入」
+// 四、收款明细「收支方向」：没到账留空，到账那一刻写「收入」
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('未收款那条不写交易方向；变成已收款的那一刻才写「收入」', async () => {
+test('未收款那条不写收支方向；变成已收款的那一刻才写「收入」', async () => {
   const gateway = fakeGateway({
     paymentMethod: METHOD_ROWS,
     salesEntry: [{ record_id: 'order_1', fields: { '写入状态': '成功' } }],
@@ -252,18 +252,18 @@ test('未收款那条不写交易方向；变成已收款的那一刻才写「�
   const pending = await payments.record({ salesEntryRecordId: 'order_1', amount: 100, status: '未收款' });
   const pendingFields = gateway.records.get('paymentRecord').find((row) => row.record_id === pending.recordId).fields;
   assert.equal(pendingFields['钱款状态'], '未收款');
-  assert.equal(pendingFields['交易方向'], undefined, '钱还没到账，方向必须留空');
+  assert.equal(pendingFields['收支方向'], undefined, '钱还没到账，方向必须留空');
 
   await payments.collectPendingReceipt(pending.recordId, {
     salesEntryRecordId: 'order_1', amount: 100, method: '微信', receivedAt: Date.now(),
   });
-  assert.equal(pendingFields['交易方向'], '收入');
+  assert.equal(pendingFields['收支方向'], '收入');
   assert.equal(pendingFields['钱款状态'], '已收款');
 
   // 正常收款（一次写成的已收款）同样直接带方向。
   const paid = await payments.record({ salesEntryRecordId: 'order_1', amount: 50, method: '现金' });
   const paidFields = gateway.records.get('paymentRecord').find((row) => row.record_id === paid.recordId).fields;
-  assert.equal(paidFields['交易方向'], '收入');
+  assert.equal(paidFields['收支方向'], '收入');
 });
 
 test('待平台结算结清时补写「收入」（到账那一刻才算收款事实）', async () => {
@@ -277,7 +277,7 @@ test('待平台结算结清时补写「收入」（到账那一刻才算收款�
   await payments.settlePlatformReceipt('receipt_1', Date.now());
   const fields = gateway.records.get('paymentRecord')[0].fields;
   assert.equal(fields['钱款状态'], '已收款');
-  assert.equal(fields['交易方向'], '收入');
+  assert.equal(fields['收支方向'], '收入');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,7 +312,7 @@ test('入账时销售明细的「交易类型」来自明细自己的那一行�
   assert.deepEqual(detail.fields['交易类型'], ['behavior_cash'], '明细的交易类型来自明细自己那一行');
   assert.equal(gateway.records.get('salesEntry')[0].fields['交易类型'], undefined, '主表已删该列 ⇒ 不再写');
   // 顺带确认正常收款也带上了方向（同一次入账里的两件事）。
-  assert.equal(gateway.records.get('paymentRecord')[0].fields['交易方向'], '收入');
+  assert.equal(gateway.records.get('paymentRecord')[0].fields['收支方向'], '收入');
 });
 
 test('主表没有交易类型时明细也不写这一列（不猜一个方向）', async () => {

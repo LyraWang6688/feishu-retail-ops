@@ -120,7 +120,8 @@ const V1_BITABLE_SCHEMA = {
       },
     },
     paymentMethod: {
-      tableName: '收款方式管理',
+      // 2026-10-29 生产改名：收款方式管理 → 支付方式管理（table_id 不变，字段名不变）。
+      tableName: '支付方式管理',
       tableId: getEnv('FEISHU_V1_PAYMENT_METHOD_TABLE_ID'),
       fields: {
         name: '收款方式',
@@ -304,13 +305,13 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PAYMENT_RECORD_TABLE_ID'),
       fields: {
         salesEntry: '关联销售单',
-        // 2026-10-29 生产改名：原「收款方式」→「交易方式」（字段本身不变，
-        // 仍是单选关联「收款方式管理」）。schema 没跟上就会用飞书里已不存在的字段名写入，
+        // 2026-10-29 生产改名：原「收款方式」→「支付方式」（字段本身不变，
+        // 仍是单选关联「支付方式管理」）。schema 没跟上就会用飞书里已不存在的字段名写入，
         // 收款记录静默失败——正是 deploy_build.sh 的 schema 闸门拦住的那次。
-        method: '交易方式',
-        // 「交易方向」（单选：收入 / 退回，2026-10-05 新增）同样为退换货链路预留：
+        method: '支付方式',
+        // 「收支方向」（单选：收入 / 退回，2026-10-05 新增；原「交易方向」）同样为退换货链路预留：
         // 本次只建立映射、不实现逻辑，理由同上。
-        tradeDirection: '交易方向',
+        tradeDirection: '收支方向',
         amount: '交易金额',
         status: '钱款状态',
         // 2026-10-29 生产改名：原「收款明细ID」→「交易明细ID」。

@@ -96,7 +96,7 @@ const references = {
 const receiptsOf = (gateway) => (gateway.records.get('paymentRecord') || []).map((row) => ({
   amount: row.fields['交易金额'],
   status: row.fields['钱款状态'],
-  method: row.fields['交易方式'],
+  method: row.fields['支付方式'],
   receivedAt: row.fields['收付日'],
 }));
 
@@ -115,11 +115,11 @@ test('AC-OWED-1 ⭐⭐ 少付（货品 300 / 只付 100）⇒ **自动**补一�
   assert.deepEqual(receiptsOf(gateway).map((row) => [row.amount, row.status]),
     [[100, '已收款'], [200, '未收款']],
     '货品 300、只付 100 ⇒ 系统自动写一条【未收款 200】');
-  // 那一条【未收款】的**形状**沿用既有业务层：方式留空、不写收款日、不写交易方向。
+  // 那一条【未收款】的**形状**沿用既有业务层：方式留空、不写收款日、不写收支方向。
   assert.equal(receiptsOf(gateway)[1].method, undefined, '【未收款】不填收款方式');
   assert.equal(receiptsOf(gateway)[1].receivedAt, undefined, '【未收款】不填收款日（钱还没到）');
-  assert.equal(gateway.records.get('paymentRecord')[1].fields['交易方向'], undefined,
-    '【未收款】不写交易方向（只有真收到钱的那条才有）');
+  assert.equal(gateway.records.get('paymentRecord')[1].fields['收支方向'], undefined,
+    '【未收款】不写收支方向（只有真收到钱的那条才有）');
 
   // 读侧跟着对：还欠 200、状态 = 部分收款。
   const progress = await new SalesProgressService({ gateway }).forOrder('order_1',

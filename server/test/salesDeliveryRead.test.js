@@ -32,8 +32,8 @@ const baseRecords = () => ({
     },
   }],
   paymentRecord: [
-    { record_id: 'pay_1', fields: { 关联销售单: ['order_1'], 交易方式: ['method_1'], 交易金额: 40, 钱款状态: '已收款' } },
-    { record_id: 'pay_2', fields: { 关联销售单: ['order_1'], 交易方式: ['method_2'], 交易金额: 60, 钱款状态: '未收款' } },
+    { record_id: 'pay_1', fields: { 关联销售单: ['order_1'], 支付方式: ['method_1'], 交易金额: 40, 钱款状态: '已收款' } },
+    { record_id: 'pay_2', fields: { 关联销售单: ['order_1'], 支付方式: ['method_2'], 交易金额: 60, 钱款状态: '未收款' } },
   ],
   product: [{ record_id: 'product_1', fields: { 货号: 'XHB8095', 颜色: ['color_1'] } }],
   color: [{ record_id: 'color_1', fields: { 颜色: '黑色' } }],
@@ -88,7 +88,7 @@ test('AC-DR2 同一销售单号（不同销售主表记录）合并成一组（�
     record_id: 'detail_2',
     fields: { 销售单号: ['order_2'], 编号: ['product_2'], 尺码: ['size_42'], 履约状态: '已交付', 实收金额: 200, 销售日: '2026-10-19T10:00:00+08:00' },
   });
-  records.paymentRecord.push({ record_id: 'pay_3', fields: { 关联销售单: ['order_2'], 交易方式: ['method_1'], 交易金额: 200, 钱款状态: '已收款' } });
+  records.paymentRecord.push({ record_id: 'pay_3', fields: { 关联销售单: ['order_2'], 支付方式: ['method_1'], 交易金额: 200, 钱款状态: '已收款' } });
   records.product.push({ record_id: 'product_2', fields: { 货号: 'QPL-8957', 颜色: ['color_2'] } });
   records.color.push({ record_id: 'color_2', fields: { 颜色: '咖色' } });
   records.sizeManagement.push({ record_id: 'size_42', fields: { 尺码: 42 } });

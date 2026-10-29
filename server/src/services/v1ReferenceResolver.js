@@ -229,7 +229,7 @@ class V1ReferenceResolver {
     const matches = records.filter(
       (record) => normalizeText(textValue(record.fields?.[table.fields.name])) === wanted
     );
-    if (matches.length === 0) throw new Error(`收款方式管理中找不到：${name}`);
+    if (matches.length === 0) throw new Error(`支付方式管理中找不到：${name}`);
     if (matches.length > 1) throw new Error(`收款方式配置重复：${name}`);
     return { recordId: matches[0].record_id, record: matches[0] };
   }

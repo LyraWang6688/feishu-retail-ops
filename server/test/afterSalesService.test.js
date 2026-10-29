@@ -79,7 +79,7 @@ const seed = () => ({
   ],
   paymentRecord: [{
     record_id: 'pay_old_1',
-    fields: { 关联销售单: ['order_old'], 交易方式: ['method_wechat'], 交易金额: 280, 钱款状态: '已收款' },
+    fields: { 关联销售单: ['order_old'], 支付方式: ['method_wechat'], 交易金额: 280, 钱款状态: '已收款' },
   }],
   liveInventory: [
     { record_id: 'live_A_41', fields: { 编号: ['product_A'], 尺码: ['size_41'], 所属状态: '门盒' } },
@@ -283,7 +283,7 @@ test('接线：不注入端口时默认就是真的 InventoryService；注入真
 //   「**收款明细表**：如果金额没变，就没有记录…」
 //
 // ⇒ 退货**不新建**收款记录：把**原销售单**下**原收款记录**的「收款状态」改掉。
-//   旧行为（新建一条「交易方向=退回」的收款行）保留在 `returnFundsMode = newReturnRow`，
+//   旧行为（新建一条「收支方向=退回」的收款行）保留在 `returnFundsMode = newReturnRow`，
 //   下面有专门的用例（配置翻回去即可回退）。
 // ═══════════════════════════════════════════════════════════════════════════
 test('退货（cash 退款）· 她的口径：原收款记录改成「已退款」（不新建记录），原主表只动「售后次数」', async () => {
@@ -335,7 +335,7 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
   assert.equal(originalPayment.fields['钱款状态'], '已退款');
   assert.deepEqual(originalPayment.fields, {
-    关联销售单: ['order_old'], 交易方式: ['method_wechat'], 交易金额: 280, 钱款状态: '已退款',
+    关联销售单: ['order_old'], 支付方式: ['method_wechat'], 交易金额: 280, 钱款状态: '已退款',
   });
   assert.equal(result.money.route, 'originalPaymentStatus');
   assert.equal(result.money.status, '已退款');
@@ -410,12 +410,12 @@ test('⭐ 退货收款旧行为保留：returnFundsMode=newReturnRow → 新建�
 
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1, '旧行为：新建一条收款记录');
-  assert.equal(payments[0].fields['交易方向'], '退回');
+  assert.equal(payments[0].fields['收支方向'], '退回');
   assert.equal(payments[0].fields['交易金额'], 250);
   // ⚠️ 回退模式下状态用**旧口径**（已收款）——不然"翻开关回退"就不是真的回退。
   assert.equal(payments[0].fields['钱款状态'], '已收款');
   assert.deepEqual(payments[0].fields['关联销售单'], [masterRows(gateway)[0].record_id]);
-  assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat']);
+  assert.deepEqual(payments[0].fields['支付方式'], ['method_wechat']);
   assert.equal(result.money.route, 'cash');
   // 原收款行**不动**
   assert.equal(
@@ -530,7 +530,7 @@ test('⭐ 她说了「退我现金」（回退模式 newReturnRow）→ 新建�
 
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1);
-  assert.deepEqual(payments[0].fields['交易方式'], ['method_cash'],
+  assert.deepEqual(payments[0].fields['支付方式'], ['method_cash'],
     '写她说的现金，不是原单的微信');
   assert.equal(result.money.methodSource, 'spoken', '来源要说清是"她说的"');
   assert.equal(result.money.methodId, 'method_cash');
@@ -545,7 +545,7 @@ test('⭐ 退货（她的默认口径）：她说的收款方式**不写进任�
   // 不新建记录；原收款行的「收款方式」一个字节都不改（她的口径只说改状态）。
   assert.deepEqual(paymentRows(gateway), []);
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
-  assert.deepEqual(originalPayment.fields['交易方式'], ['method_wechat'],
+  assert.deepEqual(originalPayment.fields['支付方式'], ['method_wechat'],
     '原收款行的收款方式是历史事实，不许被这次售后再写一遍');
   // 但她说过什么必须留痕（结果 + 日志里都有），排查"钱到底怎么退的"能看到。
   assert.equal(result.money.declaredMethodId, 'method_cash');
@@ -558,7 +558,7 @@ test('⭐ 她没说收款方式（回退模式 newReturnRow）→ 沿用原单�
   const result = await service.execute(request({ paymentMethod: '', originalText: '把那双 A100 退了' }));
 
   const payments = paymentRows(gateway);
-  assert.deepEqual(payments[0].fields['交易方式'], ['method_wechat'], '她没说 → 沿用原单的微信');
+  assert.deepEqual(payments[0].fields['支付方式'], ['method_wechat'], '她没说 → 沿用原单的微信');
   assert.equal(result.money.methodSource, 'original');
   assert.equal(result.money.methodId, 'method_wechat');
 });
@@ -580,7 +580,7 @@ test('⭐ 她说的方式在「收款方式管理」里不存在 → 当场抛�
   const { gateway, service } = build();
   await assert.rejects(
     () => service.execute(request({ paymentMethod: '刷卡' })),
-    /收款方式管理中找不到：刷卡/,
+    /支付方式管理中找不到：刷卡/,
   );
   assert.deepEqual(paymentRows(gateway), [], '一个字节都不许写进收款明细');
 });
@@ -759,7 +759,7 @@ test('换货：旧鞋回库 + 新鞋出门盒，两条流水方向相反且数�
   // 钱：要收 50（收入）→ 新建一条收款记录，状态 = 已收款（她的口径：增加资金 → 已收款 · 收入）
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1);
-  assert.equal(payments[0].fields['交易方向'], '收入');
+  assert.equal(payments[0].fields['收支方向'], '收入');
   assert.equal(payments[0].fields['交易金额'], 50);
   assert.equal(payments[0].fields['钱款状态'], '已收款');
   assert.deepEqual(payments[0].fields['关联销售单'], [result.masterRecordId]);
@@ -780,7 +780,7 @@ test('⭐ 换货「我们付差价」（退回）→ 新建的收款行状态 = 
 
   const payments = paymentRows(gateway);
   assert.equal(payments.length, 1);
-  assert.equal(payments[0].fields['交易方向'], '退回');
+  assert.equal(payments[0].fields['收支方向'], '退回');
   assert.equal(payments[0].fields['交易金额'], 50);
   assert.equal(payments[0].fields['钱款状态'], '已退款',
     '她的口径：「如果是我们付差价的话，方向就是退回，状态是已退款」');
@@ -981,7 +981,7 @@ const addOriginalPayment = (gateway, { recordId, amount, status = '已收款', c
   gateway.records.get('paymentRecord').push({
     record_id: recordId,
     fields: {
-      关联销售单: ['order_old'], 交易方式: ['method_cash'], 交易金额: amount, 钱款状态: status, 创建时间: createdAt,
+      关联销售单: ['order_old'], 支付方式: ['method_cash'], 交易金额: amount, 钱款状态: status, 创建时间: createdAt,
     },
   });
   return recordId;

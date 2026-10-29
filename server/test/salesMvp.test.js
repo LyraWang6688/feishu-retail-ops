@@ -160,7 +160,7 @@ test('deposit creates paid and unpaid receipts; follow-up 记一条新收款 + �
   assert.deepEqual(receipts.map((row) => [row.fields['交易金额'], row.fields['钱款状态']]),
     [[100, '已收款'], [140, '未收款']]);
   assert.equal(receipts[1].fields['收付日'], undefined);
-  assert.equal(receipts[1].fields['交易方式'], undefined);
+  assert.equal(receipts[1].fields['支付方式'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['履约状态'], undefined);
   assert.equal((await gateway.get('salesEntry', 'order_1')).fields['钱款状态'], undefined);
   const pendingId = receipts[1].record_id;
@@ -185,7 +185,7 @@ test('deposit creates paid and unpaid receipts; follow-up 记一条新收款 + �
   const fresh = await gateway.get('paymentRecord', result.recordId);
   assert.equal(fresh.fields['钱款状态'], '已收款');
   assert.equal(fresh.fields['交易金额'], 140);
-  assert.equal(fresh.fields['交易方式'][0], 'method_微信', '方式照她说（`resolvePaymentMethod` 解析出来的记录）');
+  assert.equal(fresh.fields['支付方式'][0], 'method_微信', '方式照她说（`resolvePaymentMethod` 解析出来的记录）');
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
   const inventoryCalls = [];
   const delivery = new SalesDeliveryService({ gateway, inventory: {
@@ -504,7 +504,7 @@ test('Feishu record_ids link shape reuses an existing order, receipt, and detail
     detail.fields['编号'] = linked(`product_${input.items[index].itemNo}`);
   }
   receipt.fields['关联销售单'] = linked('order_1');
-  receipt.fields['交易方式'] = linked('method_微信');
+  receipt.fields['支付方式'] = linked('method_微信');
   // 上一次尝试在「资金状态」上留了失败标记（旧「确认状态（旧）」那一列已不存在）。
   (await gateway.get('salesEntry', 'order_1')).fields['资金状态'] = '写入失败';
 
