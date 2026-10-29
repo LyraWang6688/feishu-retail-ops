@@ -43,18 +43,6 @@ const submittedTargets = () => {
 
 /** ⭐ 已核的四跳链（每条都真核过 ✓）；`landing` = [表语义键, 列语义键]，断言该列真的在 schema 里 ✓ */
 const CHAINS = Object.freeze({
-  'ORDERS_API.payments': {
-    fe: 'features/orders/index.js', feKey: 'ORDERS_API.payments',
-    route: 'src/routes/workbench/sales.js', routeKey: /router\.post\('\/sales\/payments'[\s\S]{0,600}?req\.body\?\.method/,
-    service: 'src/services/paymentService.js', serviceKey: /async record\(input = \{\}, options = \{\}\)/,
-    landing: [['paymentRecord', 'amount'], ['paymentRecord', 'method'], ['paymentRecord', 'receivedAt']],
-  },
-  'ORDERS_API.deliveries': {
-    fe: 'features/orders/index.js', feKey: 'ORDERS_API.deliveries',
-    route: 'src/routes/workbench/sales.js', routeKey: /router\.post\('\/sales\/deliveries'[\s\S]{0,600}?req\.body\?\.detailRecordIds/,
-    service: 'src/services/salesDeliveryService.js', serviceKey: /deliver\(/,
-    landing: [['salesDetail', 'fulfillmentStatus'], ['liveInventory', 'stockKey']],
-  },
   'ARRIVAL_FULL_API.accept': {
     fe: 'features/orders/index.js', feKey: 'ARRIVAL_FULL_API.accept',
     // ⭐ 2026-10-16：注册处是**变量路径**（不是字面量 ✗）——

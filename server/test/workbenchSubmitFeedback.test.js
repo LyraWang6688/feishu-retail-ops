@@ -176,8 +176,6 @@ test('AC5b 没有按钮（拿不到触发元素）时也要照常执行，不许
 
 /** 工作台**每一个会写表/发请求的按钮**（她点名的那几个 + 其余写操作入口）。 */
 const WRITE_ACTIONS = [
-  { file: 'features/orders/index.js', action: 'submit-payment', what: '补记收款' },
-  { file: 'features/orders/index.js', action: 'deliver', what: '交付并扣库存' },
   { file: 'features/orders/index.js', action: 'submit-after-sales', what: '售后（退货/换货/赔货）' },
   { file: 'features/orders/index.js', action: 'submit-second-delivery', what: '二次交付' },
   { file: 'features/orders/index.js', action: 'submit-detail-amount', what: '补实收金额' },
@@ -194,12 +192,10 @@ test('AC6a ⭐ 每一个写操作按钮都接了「提交守卫」（逐按钮�
   const adjustment = read('features/inventory/adjustment.js');
   const queue = read('features/labels/queue.js');
 
-  // ① orders 的六条：都走同一个 `runAction`（它内部就是守卫 —— 一处改、六条都受益）
+  // ① orders 剩余四条：都走同一个 `runAction`（它内部就是守卫）
   assert.match(orders, /async function runAction\([\s\S]{0,400}?runWriteAction\(/,
     'runAction 必须走守卫（它覆盖下面六条）');
   for (const [action, handler, what] of [
-    ['submit-payment', 'submitPayment', '补记收款'],
-    ['deliver', 'submitDelivery', '交付并扣库存'],
     ['submit-after-sales', 'submitAfterSales', '售后（退货/换货/赔货）'],
     ['submit-second-delivery', 'submitSecondDelivery', '二次交付'],
     ['submit-detail-amount', 'submitDetailAmount', '补实收金额'],
@@ -276,7 +272,7 @@ test('AC8 既有「正在读取订单…（已 N 秒）」不回归', () => {
 // AC9 写入语义一个字不变
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC9 两段分类与 10 条写接口一个字不变（本次只加"点了有反馈"）', async () => {
+test('AC9 两段分类与剩余写接口不变（本次只删旧交割单内嵌操作）', async () => {
   const config = read('config/orders.js');
   // ⭐ 2026-10-17 成对迁移：她逐字「只保留二次交割以及售后」⇒ 「补充信息单」退场（缺信息的单并入待交割）
   assert.equal(config.includes("{ key: 'supplement'"), false, '🔴「补充信息单」那段不许回来 ✗');
@@ -284,7 +280,7 @@ test('AC9 两段分类与 10 条写接口一个字不变（本次只加"点了�
   assert.match(config, /key: 'afterSales', label: '售后单', tag: '待建设'/);
   assert.match(config, /key: 'draft', label: '草稿单', tag: '待建设'/);
   for (const endpoint of [
-    "'/api/workbench/sales/orders'", "'/api/workbench/sales/payments'", "'/api/workbench/sales/deliveries'",
+    "'/api/workbench/sales/orders'",
     "'/api/workbench/sales/detail-amounts'", "'/api/workbench/sales/sample-fill'",
     "'/api/workbench/sales/after-sales'", "'/api/workbench/sales/second-delivery'",
     "'/api/workbench/purchase/arrivals/confirm'",

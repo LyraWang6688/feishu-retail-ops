@@ -11,10 +11,6 @@
  *   那个 service 属于另一条任务的作用域（本分支不改它）。
  *   ⇒ 这一条走**独立的只读取数**（`services/afterSalesScanService.js`）：不写库、不改任何既有接口。
  *
- * ⚠️ 另两条写入口**本来就在** `routes/workbench.js` 里，本次一个字没动：
- *   · `POST /api/workbench/sales/payments`    补收款
- *   · `POST /api/workbench/sales/deliveries`  交付
- *
  * 🔴 鉴权**不新开一套**：本路由挂在 `createWorkbenchRouter` 内部，于是自动带上
  *    **既有**的 `requireWorkbenchAccess`（未启用认证 503 / 未登录 401 / 白名单外 403）。
  * 🔴 失败口径与 `workbenchInventoryAdjustment.js` 同一套：她填错的（statusCode=400）→ 400，

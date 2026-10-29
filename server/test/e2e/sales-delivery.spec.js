@@ -102,16 +102,6 @@ const mockDeliveryApi = async (page, options = {}) => {
       }
       return route.fulfill(json({ success: true, jobId: 'delivery_job_aaaaaaaaaaaaaaaaaaaaaaaa' }));
     }
-    if (url.pathname === '/api/workbench/sales/deliveries' && method === 'POST') {
-      const body = route.request().postDataJSON();
-      const ids = new Set(body.detailRecordIds || []);
-      for (const order of state.orders) {
-        for (const detail of order.details || []) {
-          if (ids.has(detail.record_id)) detail.fulfillment_status = '已交付';
-        }
-      }
-      return route.fulfill(json({ success: true, delivered: ids.size }));
-    }
     if (url.pathname === '/api/workbench/sales/delivery/payments' && method === 'POST') {
       const body = route.request().postDataJSON();
       const order = state.orders.find((item) => item.sales_entry_record_id === body.salesEntryRecordId);

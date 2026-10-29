@@ -10,9 +10,7 @@ const { createWorkbenchOrderActionsRouter } = require('../workbenchOrderActions'
 const { createWorkbenchSalesDeliveryRoutes } = require('../workbenchSalesDelivery');
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { SCAN_WRITE } = require('../../config/scanWrite');
-const { SampleReplacementService } = require('../../services/sampleReplacementService');
 const { logError, logInfo, logWarn } = require('../../utils/logger');
-const { tapIdFromRequest } = require('../../utils/correlationFields');
 
 const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}) => {
   const router = express.Router();
@@ -80,24 +78,6 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
     }
   });
 
-  router.post('/sales/payments', async (req, res) => {
-    try {
-      const result = await followup.addPayment({
-        salesEntryRecordId: req.body?.salesEntryRecordId,
-        method: req.body?.method, amount: req.body?.amount,
-        requestId: req.body?.requestId, operatorOpenId: req.workbenchUser.open_id,
-        // ⭐ 2026-10-15（task-48 b）：把这次点击的 `tap_id` 带下去 ⇒ 写库日志与 `ui.tap` 同一个 id ✓
-        //    （取不到就是 `{}` ⇒ 字段压根不出现，**绝不编一个** ✗）
-        correlation: tapIdFromRequest(req),
-      });
-      // ⭐ 补收款成功 ⇒ 作废缓存（金额 / 状态都变了）。
-      ordersCache.invalidate();
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      logError('workbench.sales.payment.failed', { request_id: req.requestId, error: error.message });
-      return res.status(400).json({ success: false, error: error.message });
-    }
-  });
   // ⭐ 2026-10-15 收尾（只改注释）：这里原来挂着一整段说明**工作台自建配品两条路由**的 JSDoc
   //   （`GET /sales/accessories` 只读清单 / `POST /sales/accessory-sales` 自建成单）。
   //   那两条路由**已随她那句「配品就是走表单了～工作台自建写服务可以删除了」整段删除**（见下面那块注释 ✓）
@@ -220,30 +200,6 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
       return res.json({ success: true, ...result });
     } catch (error) {
       logError('workbench.sales.detail_amount.failed', { request_id: req.requestId, error: error.message });
-      return res.status(400).json({ success: false, error: error.message });
-    }
-  });
-  router.post('/sales/deliveries', async (req, res) => {
-    try {
-      const result = await followup.delivery.deliver({
-        salesEntryRecordId: req.body?.salesEntryRecordId,
-        detailRecordIds: req.body?.detailRecordIds,
-      }, {
-        // ⭐ 2026-10-15（task-48 b）：同上 —— 交付（含扣库存）那一半也带同一个 `tap_id` ✓
-        correlation: tapIdFromRequest(req),
-      });
-      // ⭐ 交付（含扣库存）成功 ⇒ 作废缓存。
-      ordersCache.invalidate();
-      if (result.sampleReplacements?.length) {
-        const notifier = options.sampleNotifier || new SampleReplacementService({
-          gateway: followup.gateway, inventory: followup.delivery.inventory,
-        });
-        await notifier.notifySampleReplacements(result, req.workbenchUser.open_id).catch((error) =>
-          logWarn('workbench.sales.sample_notice.failed', { request_id: req.requestId, error: error.message }));
-      }
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      logError('workbench.sales.delivery.failed', { request_id: req.requestId, error: error.message });
       return res.status(400).json({ success: false, error: error.message });
     }
   });

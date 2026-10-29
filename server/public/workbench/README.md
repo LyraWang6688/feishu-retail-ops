@@ -84,8 +84,8 @@ Tab 页的顺序从左往右是：**销售、库存、采购和货品**」）：
 - 前端模块：原销售查询模块与「实时库存」的查询模块**整体删除**。
 - 路由：`GET /api/workbench/sales/today`、`GET /api/workbench/sales/query` **整体删除**。
 - ⚠️ **没删的**（逐条核过引用）：`GET /api/workbench/inventory` 等四条库存只读接口 ——
-  「库存手工调整」页在用（换季调整按品类列鞋）；`/sales/orders`、`/sales/payments`、
-  `/sales/deliveries` 是**写入类**（补记收款 / 交付扣库存），不属于"查询"。
+  「库存手工调整」页在用（换季调整按品类列鞋）；`/sales/orders` 是**读取类**；补收款 / 交付已迁到
+  「销售 → 交割单」独立页（`/sales/delivery/*`），旧订单列表不再内嵌写入口。
   验收标准 / 逐条对照见 `docs/workbench-two-tabs-and-external-query-2026-10-08.md`。
 
 ## 目录边界
