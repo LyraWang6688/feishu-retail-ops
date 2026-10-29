@@ -57,8 +57,8 @@ export const AFTER_SALES_PAGE = {
   returnProductLabel: '这双鞋',
   returnAmountLabel: '金额',
   returnModeLabel: '钱怎么走',
-  returnRefund: '退款',
-  returnRetain: '留存',
+  returnRefund: '直接退款',
+  returnRetain: '货款留存',
   returnMethodLabel: '退款方式',
   // 换货弹窗
   exchangeTitle: '换货',
