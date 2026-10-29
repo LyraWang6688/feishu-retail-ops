@@ -26,7 +26,7 @@
  *  AC-PS5 **每笔方式可不同**（微信 200 + 现金 300 ⇒ 两条行、两个方式；系统不替她选）。
  *  AC-PS6 **无【未收款】的单仍能分笔**（回归：这条本来就支持）。
  *  AC-PS7 **既有「待补充 / 待交割 / 售后列表」三态不受影响**（读侧现算口径照旧）。
- *  AC-PS8 **页面上能连着分几笔**：补收款表单 = 金额（预填当前待收）+ 收款方式 + 提交，
+ *  AC-PS8 旧订单详情不再渲染补收款/交付表单（交割单改为独立页）。
  *         页面里**没有**"一次收清 / 暂不支持"这类话、也没有说明书腔。
  * ─────────────────────────────────────────────────────────────────────────
  */
@@ -334,28 +334,20 @@ test('AC-PS7 既有三态不受影响：分笔中 = 待交割；收满 = 售后�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-PS8 页面上能连着分几笔（无说明书腔）
+// AC-PS8 旧内嵌「补收款」UI 已退场（交割单改为独立页，不再在旧订单详情里收钱）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-PS8 页面：补收款表单 = 金额（预填当前待收）+ 方式 + 提交；没有"一次收清/暂不支持"这类话', async () => {
+test('AC-PS8 旧订单详情不再渲染补收款/交付表单', async () => {
   const front = await loadOrdersLogic();
   const html = front.orderDetailHtml({
     record_id: ORDER, order_no: 'XSD-20261012-0001',
     fulfillment_status: '已交付', payment_status: '部分收款',
-    paid_amount: 200, pending_amount: 300, receivable_amount: 500, pending_delivery_quantity: 0,
-    details: [{ record_id: DETAIL_ID, product: 'YD1', color: '黑色', size: 40, actual_amount: 500, fulfillment_status: '已交付' }],
+    paid_amount: 200, pending_amount: 300, receivable_amount: 500, pending_delivery_quantity: 1,
+    details: [{ record_id: DETAIL_ID, product: 'YD1', color: '黑色', size: 40, actual_amount: 500, fulfillment_status: '未交付' }],
     payments: [{ record_id: 'p1', method: '微信', amount: 200, status: '已收款' }],
   }, { methods: ['微信', '现金'] });
-
-  assert.ok(html.includes('data-action-block="payment"'), '补收款那一块在');
-  assert.match(html, /data-field="payment-amount"[^>]*value="300"/, '金额预填**当前待收**（她接着分下一笔）');
-  assert.ok(html.includes('data-field="payment-method"'), '方式由她选（每笔可不同）');
-  assert.ok(html.includes('data-action="submit-payment"'), '提交按钮');
-  // 页面里**不许**出现"一次收清"那类话（也不许有说明书腔）
-  for (const banned of ['一次收清', '暂不支持', '分笔', '说明', '注意', '请先']) {
-    assert.equal(html.includes(banned), false, `页面里出现了不该有的话：${banned}`);
-  }
-  // 源码里也没有（她 2026-10-10：「下面的这些文字解释就不用了」）
-  const source = readWorkbench('features/orders/index.js');
-  assert.equal(/一次收清|暂不支持/.test(source), false, '补收款这块的源码里不许留"一次收清"那类话');
+  assert.equal(html.includes('data-action-block="payment"'), false, '旧补收款表单已删除');
+  assert.equal(html.includes('data-action-block="delivery"'), false, '旧交付表单已删除');
+  assert.equal(html.includes('data-action="submit-payment"'), false);
+  assert.equal(html.includes('data-action="deliver"'), false);
 });

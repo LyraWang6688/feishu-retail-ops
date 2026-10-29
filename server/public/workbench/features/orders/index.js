@@ -500,40 +500,6 @@ export function arrivalSubmitLines({ rows = [], actuals = {}, extra = [] } = {})
   return { ok: true, reason: '', lines };
 }
 
-/** 交付区：**只列未交付的明细**（已交付的库存早扣了，不再给勾）。 */
-const deliveryBlock = (order) => {
-  const pending = (order.details || []).filter((line) => line.fulfillment_status !== '已交付');
-  const body = pending.length
-    ? `<div class="check-list">${pending.map((line) => `
-            <label class="check-line">
-              <input type="checkbox" data-field="delivery-detail" value="${escapeHtml(line.record_id)}" checked>
-              <span>${escapeHtml(line.product || '')} · ${sizeText(line.size)} · ${line.actual_amount == null ? '—' : amount(line.actual_amount)}</span>
-            </label>`).join('')}</div>
-          <button class="btn btn-primary" type="button" data-action="deliver">${escapeHtml(T.deliverySubmit)}</button>`
-    : `<p class="muted">${escapeHtml(T.deliveryEmpty)}</p>`;
-  return `
-      <details class="action-form" data-action-block="delivery">
-        <summary>${escapeHtml(T.deliveryTitle)}</summary>
-        <div class="action-body">
-          ${body}
-        </div>
-      </details>`;
-};
-
-const paymentFormBlock = (order, methods) => `
-      <details class="action-form" data-action-block="payment">
-        <summary>${escapeHtml(T.collectTitle)}</summary>
-        <div class="action-body">
-          <label class="form-field">${escapeHtml(T.collectAmount)}（还差 ${amount(order.pending_amount)}）
-            <input data-field="payment-amount" type="text" inputmode="decimal" value="${escapeHtml(order.pending_amount == null ? '' : order.pending_amount)}">
-          </label>
-          <label class="form-field">${escapeHtml(T.paymentMethod)}
-            <select data-field="payment-method">${methodOptionsHtml(methods)}</select>
-          </label>
-          <button class="btn btn-primary" type="button" data-action="submit-payment">${escapeHtml(T.collectSubmit)}</button>
-        </div>
-      </details>`;
-
 /**
  * ⭐⭐ 2026-10-11（方案甲之后的**补充入口**）：**逐件补「实收金额」**。
  *
@@ -710,8 +676,6 @@ export function orderDetailHtml(order, { methods = [] } = {}) {
       <div class="order-actions">
         ${detailAmountBlock(order)}
         ${sampleFillBlock(order)}
-        ${paymentFormBlock(order, methods)}
-        ${deliveryBlock(order)}
         ${secondDeliveryBlock(order, methods)}
         ${afterSalesBlock(order, methods)}
       </div>
@@ -1121,30 +1085,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }, busyText || SUBMIT_PENDING_TEXT);
   }
 
-  // ── 补收款 ────────────────────────────────────────────────────────────────
-  async function submitPayment(button) {
-    const order = state.order;
-    const raw = valueOf('payment-amount');
-    const method = valueOf('payment-method');
-    if (!/^\d+(\.\d{1,2})?$/.test(raw)) return renderResult('收款金额必须是不小于 0 的数字（最多两位小数）', true);
-    if (!method) return renderResult('请选择收款方式', true);
-    const requestId = state.pendingRequest || uuid();
-    state.pendingRequest = requestId;
-    await runAction(button, '正在记收款…', async () => {
-      const result = await api.post(ORDERS_API.payments, {
-        salesEntryRecordId: order.record_id, method, amount: Number(raw), requestId,
-      });
-      state.pendingRequest = null;
-      // ⭐ 2026-10-12（分笔补收款）：这句话里顺手把**还差多少**说出来 ——
-      //    她接着记下一笔时一眼知道还剩多少（`pendingAmount` 是服务端现算的；收满 ⇒ 0）。
-      //    ⚠️ 不加任何"怎么做"的说明句（她 2026-10-10 的硬要求）。
-      const left = Number(result?.pendingAmount);
-      return Number.isFinite(left) && left > 0
-        ? `已记一笔收款：${method} ${amount(raw)}；还差 ${amount(left)}。`
-        : `已记一笔收款：${method} ${amount(raw)}。`;
-    });
-  }
-
   // ── 逐件补「实收金额」────────────────────────────────────────────────────
   async function submitDetailAmount(button) {
     const order = state.order;
@@ -1186,21 +1126,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       }
       state.pendingRequest = null;
       return lines.join('；');
-    });
-  }
-
-  // ── 交付 ─────────────────────────────────────────────────────────────────
-  async function submitDelivery(button) {
-    const order = state.order;
-    const detailRecordIds = [...state.container.querySelectorAll('[data-field="delivery-detail"]')]
-      .filter((input) => input.checked).map((input) => input.value);
-    if (!detailRecordIds.length) return renderResult('请先勾选要交付的明细', true);
-    await runAction(button, '正在交付…', async () => {
-      const result = await api.post(ORDERS_API.deliveries, { salesEntryRecordId: order.record_id, detailRecordIds });
-      const failed = result.failures || [];
-      return failed.length
-        ? `交付完成 ${(result.results || []).length} 条，失败 ${failed.length} 条：${failed.map((item) => item.error).join('；')}`
-        : `已交付 ${detailRecordIds.length} 条明细。`;
     });
   }
 
@@ -1407,10 +1332,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       if (action === 'retry-write') return submitRetryWrite(trigger);
       if (action === 'back') return renderList();
       if (action === 'search-product') return searchProduct();
-      if (action === 'submit-payment') return submitPayment(trigger);
       if (action === 'submit-detail-amount') return submitDetailAmount(trigger);
       if (action === 'submit-sample-fill') return submitSampleFill(trigger);
-      if (action === 'deliver') return submitDelivery(trigger);
       if (action === 'submit-second-delivery') return submitSecondDelivery(trigger);
       if (action === 'submit-after-sales') return submitAfterSales(trigger);
       // 「验收到货」：点一下把那张卡的验收表单展开（真正的写入在 submit-arrival）

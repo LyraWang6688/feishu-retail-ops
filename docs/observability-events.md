@@ -574,7 +574,7 @@
 | `workbench.purchase.requests.failed` | 1 | src/routes/purchaseQuery.js |
 | `workbench.query.retry` | 1 | src/services/v1WorkbenchService.js |
 | `workbench.sales.after_sales.candidates.failed` | 2 | src/routes/workbench/sales.js<br>src/routes/workbenchOrderActions.js |
-| `workbench.sales.delivery.failed` | 4 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryAsyncService.js |
+| `workbench.sales.delivery.failed` | 3 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.job_enqueued` | 1 | src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.job_finished` | 2 | src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.job_started` | 1 | src/services/salesDeliveryAsyncService.js |
@@ -583,7 +583,7 @@
 | `workbench.sales.orders.failed` | 2 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js |
 | `workbench.sales.orders.order_skipped` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.orders.read_retry` | 2 | src/services/salesDeliveryReadService.js<br>src/services/salesFollowupService.js |
-| `workbench.sales.payment.failed` | 3 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryPaymentService.js |
+| `workbench.sales.payment.failed` | 2 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryPaymentService.js |
 | `workbench.sales.retry.done` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.retry.error` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.retry.failed` | 1 | src/routes/workbench/sales.js |
@@ -593,7 +593,7 @@
 | `workbench.sales.sample_fill.failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.sample_fill.no_doorbox` | 1 | src/services/samplePendingService.js |
 | `workbench.sales.sample_fill.reused` | 1 | src/services/samplePendingService.js |
-| `workbench.sales.sample_notice.failed` | 2 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js |
+| `workbench.sales.sample_notice.failed` | 1 | src/routes/workbenchSalesDelivery.js |
 | `workbench.sales.sample_pending.candidates_unreadable` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.sample_pending.live_snapshot_unreadable` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.sample_pending.tasks_unreadable` | 1 | src/services/salesFollowupService.js |

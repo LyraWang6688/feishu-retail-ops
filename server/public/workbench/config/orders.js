@@ -164,13 +164,11 @@ export const SALES_DELIVERY_PAGE = '/workbench/sales-delivery.html';
 /** 接口路径（**唯一来源**：渲染层不写死 URL）。 */
 export const ORDERS_API = {
   orders: '/api/workbench/sales/orders',
-  payments: '/api/workbench/sales/payments',
   // ⭐ 2026-10-11：逐件补「实收金额」（窄写入路径；服务端 = `SalesFollowupService.updateDetailAmounts`）
   detailAmounts: '/api/workbench/sales/detail-amounts',
   // ⭐⭐ 2026-10-11：**补样品**（卖了样品没指定门盒的那条待办；
   //    服务端 = `SalesFollowupService.fillSample` → `InventoryService.promoteToSample`，1 双）
   sampleFill: '/api/workbench/sales/sample-fill',
-  deliveries: '/api/workbench/sales/deliveries',
   afterSales: '/api/workbench/sales/after-sales',
   secondDelivery: '/api/workbench/sales/second-delivery',
   // 复用既有的**只读**货品选择器（「库存手工调整」页也在用同一个）
@@ -260,9 +258,6 @@ export const ORDERS_TEXTS = {
   pending: '还差',
   receivable: '应收',
   pendingDelivery: '待交付',
-  collectTitle: '补收款',
-  collectAmount: '收款金额',
-  collectSubmit: '提交收款',
   // ⭐⭐ 2026-10-11（方案甲之后的**补充入口**）：逐件补「实收金额」。
   //    字段名与扫码页**逐字一致**（「实收金额」）—— 两个入口填的是同一份字段。
   detailAmountTitle: '实收金额',
@@ -277,9 +272,6 @@ export const ORDERS_TEXTS = {
   sampleFillSubmit: '补样品',
   sampleFillNoCandidate: '这一款现在没有可用的门盒，补不了样品',
   sampleFillDone: '已补样品：{size} 码 门盒 → 样品（库存总数不变）',
-  deliveryTitle: '交付',
-  deliveryEmpty: '这张单没有待交付的明细了',
-  deliverySubmit: '提交交付',
   afterSalesTitle: '售后（退 / 换 / 赔）',
   afterSalesDetails: '要处理的销售明细',
   afterSalesAction: '动作',
@@ -299,7 +291,6 @@ export const ORDERS_TEXTS = {
   secondDeliveryTitle: '二次交付（收尾款 + 交付）',
   secondDeliveryMethod: '收款方式',
   secondDeliverySubmit: '收尾款并交付',
-  paymentMethod: '收款方式',
   select: '请选择',
   // ── ⭐ 2026-10-09 追加：采购验收 ──────────────────────────────────────────
   verifyArrival: '验收到货',

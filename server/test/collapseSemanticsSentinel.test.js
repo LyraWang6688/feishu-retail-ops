@@ -87,9 +87,9 @@ test('① 已到货批次 `purchase-arrived`：**默认收起**（避免一屏�
 });
 
 
-test('② 七个操作表单（`action-form`）：⭐ **一条合并哨兵** —— 这类**一律不得带 `open`** ✓', () => {
+test('② 五个操作表单（`action-form`）：⭐ **一条合并哨兵** —— 这类**一律不得带 `open`** ✓', () => {
   const tags = tagsOf(RAW_ORDERS, 'class="action-form"');
-  assert.equal(tags.length, 7, `这类现在是 7 个（实际 ${tags.length}）⇒ 增减 ⇒ 红 ✓（提醒同步这条清单 ✓）`);
+  assert.equal(tags.length, 5, `这类现在是 5 个（实际 ${tags.length}）⇒ 增减 ⇒ 红 ✓（提醒同步这条清单 ✓）`);
   for (const tag of tags) {
     assert.equal(/\sopen(\s|>)/.test(tag), false,
       `🔴 「点开才填」的表单**不许默认展开**（它们的设计就是"不把一屏全占了"✓）⇒ 谁加 open ⇒ 红 ✓：${tag}`);
