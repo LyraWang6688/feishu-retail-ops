@@ -22,7 +22,7 @@ const sectionById = (id) => {
 
 /** 子 tab 按钮（选中态；`data-domain-page` = 子页面 id）。 */
 export function domainSubTabsHtml(domain, active = domain.pages[0].id) {
-  return domain.pages.filter((page) => page.hidden !== true).map((page) => `
+  return domain.pages.map((page) => `
         <button class="sub-tab${page.id === active ? ' active' : ''}" type="button"
           data-domain-page="${escapeHtml(page.id)}" data-tap-target="${escapeHtml(page.scanRealm ? 'scan:' + page.scanRealm : 'domain:' + domain.id + ':' + page.id)}" aria-selected="${page.id === active}">${escapeHtml(page.label)}</button>`).join('');
 }
