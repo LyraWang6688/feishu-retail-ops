@@ -102,7 +102,12 @@ const SERVER_SRC = path.join(__dirname, '..', 'src');
   //   改后逐字：sha `0f52d5b1ec50bc3fcabae796ee34c3f7778dbbe4a8cd5be1545b52d72fdffaba`（1731 行）
   //   依据：`submitReplenish` / `submitPurchaseReturn` 各加一个**可选** `sessionKey`（不传 ⇒ 会话键 = openId
   //   ⇒ 与改前逐字同一个键、同一套行为）；写库逻辑 / 事件名 / 返回形状一个字节都没动 ✓
-const FROZEN_SCAN_WRITE_SHA256 = '561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12';
+  // ⭐ 2026-10-29 · 扫码页「一单多货」补货假成功 P0（业务负责人授权解冻 · 见冻结哨兵台账）：
+  //   改前逐字：sha `561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12`（1728 行）
+  //   改后逐字：sha `efaf1b17aa1d082548892249883a1d8a9f1f7afe539f5f9f72a213063526a219`（1732 行）
+  //   依据 = 业务负责人 2026-10-29「授权解冻 scanWriteService.js，修扫码页一单多货假成功」：
+  //     `multiItemWriters().purchase` 把扁平 payload 先建/更新本地 task 再 publish（本卡未动本文件的其他部分）。
+const FROZEN_SCAN_WRITE_SHA256 = 'efaf1b17aa1d082548892249883a1d8a9f1f7afe539f5f9f72a213063526a219';
 
 const NUMBER_A = 'KA|黑色|A';
 const NUMBER_B = 'KB|黑色|A';
