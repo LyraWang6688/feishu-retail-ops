@@ -12,12 +12,13 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 
-test('新 IA：一级 tab = 销售 · 库存 · 供应 · 货品，没有全局扫一扫', () => {
+test('新 IA：一级 tab = 销售 · 库存 · 供应 · 货品 · 资金，没有全局扫一扫', () => {
   const tabs = read('public/workbench/config/tabs.js');
-  for (const label of ["label: '销售'", "label: '库存'", "label: '供应'", "label: '货品'"]) {
+  for (const label of ["label: '销售'", "label: '库存'", "label: '供应'", "label: '货品'", "label: '资金'"]) {
     assert.ok(tabs.includes(label), `缺少一级 tab：${label}`);
   }
   assert.equal(tabs.includes("module: 'scan'"), false, '全局扫一扫一级 tab 必须退场');
+  assert.equal((tabs.match(/module: '/g) || []).length, 5, '一级 tab 只能有 5 个模块');
   assert.equal(tabs.includes("label: '采购'"), false, '采购已改名为供应');
 });
 
@@ -37,7 +38,8 @@ test('新 IA：销售/库存/供应录单入口存在，供应录单有三张卡
   assert.ok(domains.includes("scanRealm: 'purchase_return'"), '供应退货必须接领域扫码');
   assert.ok(domains.includes("jumpTo: 'purchase-acceptance'"), '验收卡必须复用既有验收页');
   assert.ok(domains.includes('id: \'purchase-acceptance\''), '验收页必须存在');
-  assert.ok(domains.includes('hidden: true'), '验收页不能出现在子 tab 条上');
+  assert.equal(domains.includes('hidden: true'), false, '不再用 hidden 标记；验收页移到 targetPages');
+  assert.ok(domains.includes('targetPages: ['), '验收页必须放到 targetPages（只作跳转目标，不渲染 tab）');
   assert.equal(domains.includes("id: 'sales-accessory'"), false, '配品不再是独立子 tab');
 });
 
