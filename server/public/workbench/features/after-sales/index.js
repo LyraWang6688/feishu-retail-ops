@@ -162,8 +162,7 @@ export function mountAfterSalesPage(container, options = {}) {
         renderCandidates();
         return;
       }
-      const excluded = Number(data?.excluded?.alreadyAfterSales) || 0;
-      showStatus(excluded > 0 ? AFTER_SALES_PAGE.excludedHint(excluded) : '');
+      showStatus('');
       renderCandidates();
     })
     .catch(() => {

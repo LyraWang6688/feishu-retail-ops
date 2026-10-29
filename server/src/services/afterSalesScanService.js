@@ -3,8 +3,11 @@
 // 边界：
 //   · 只回答一个问题：「扫到的这款货品，近 N 天有哪几笔销售、每笔的销售日 / 尺码 / 该单总金额」；
 //   · 不判断意图、不生成售后单、不碰库存 / 收款（那些是执行器的事，见 `afterSalesService`）；
-//   · 不做业务取舍：排除「已经售后过」「没入账（写入失败 / 未完成）」两类行，
+//   · 不做业务取舍：只按**她明确说过的**口径筛 ——「未交付」不列（她 2026-10-29）；
+//     另外「没入账（写入失败 / 未完成）」「销售日缺失 / 超窗口」也不作为候选（读侧事实约束），
 //     并把**排除了多少条**如实回给页面（不让页面自己猜"为什么少了一条"）。
+//   🔴 **已退货 / 已换货 / 已赔货 不排除**（她 2026-10-29 明确：「其他状态我没有说呀」）——
+//      重复售后该由**执行器**在写库前拦（同一双不做第二次），不在这一页的筛选里替她做决定。
 //   · ⭐ 「近 N 天」= **上海自然日**：今天 + 往前 (N-1) 天、含今天共 N 个自然日
 //     （共用 `utils/salesDateWindows.lookupWindowStart`，与项目其它"最近几天"同一口径；
 //      **不是**"此刻往前滚 N×24 小时"）。
@@ -13,7 +16,6 @@
 //
 // 判据来源（配置先行，本文件不写业务字面量）：
 //   · 时间窗 / 取哪些列 / 后端人话 → `config/afterSalesScan.js`；
-//   · 「售后过没有」→ `config/afterSales.js` 的 `isAfterSalesFulfillment`（唯一判据）；
 //   · 「入账了没有」→ `config/salesStatusDimensions.js` 的 `postedOf` / `isPosted`（唯一判据）；
 //   · 「扫到的是哪款货品」→ 销售明细的关联列（语义键来自 schema）。
 //
@@ -22,7 +24,6 @@
 //   而且它要的是「销售日 + 总金额」这两个订单列表**没读**的列。
 //   两边各读各的，互不影响（模块化；订单列表的按需取列清单不被这里放宽）。
 
-const { isAfterSalesFulfillment } = require('../config/afterSales');
 const {
   SCAN_CACHE, SCAN_FIELD_KEYS, SCAN_TEXTS, SCAN_UNDELIVERED_FULFILLMENT, resolveScanWindowDays,
 } = require('../config/afterSalesScan');
@@ -117,7 +118,7 @@ class AfterSalesScanService {
 
     // 排除了多少条、为什么排除 —— 如实回给页面（页面据此说一句人话，不静默吞数据）。
     const excluded = {
-      notDelivered: 0, alreadyAfterSales: 0, notPosted: 0, outOfWindow: 0, missingSalesDate: 0,
+      notDelivered: 0, notPosted: 0, outOfWindow: 0, missingSalesDate: 0,
     };
     const candidates = [];
 
@@ -140,11 +141,6 @@ class AfterSalesScanService {
       // ⭐ 「什么叫售后」= 除「未交付」之外的状态（她 2026-10-29）⇒ 未交付的不列。
       if (fulfillmentStatus === SCAN_UNDELIVERED_FULFILLMENT) {
         excluded.notDelivered += 1;
-        continue;
-      }
-      // 已经售后过的（已退货 / 已换货 / 已赔货）也不列（同一双不做第二次售后）。
-      if (isAfterSalesFulfillment(fulfillmentStatus)) {
-        excluded.alreadyAfterSales += 1;
         continue;
       }
       const entryId = linkedRecordIds(fields[detailFields.salesEntry])[0];

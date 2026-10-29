@@ -39,8 +39,6 @@ export const AFTER_SALES_PAGE = {
   amountEmpty: '—',
   sizeEmpty: '—',
   dateEmpty: '—',
-  // 「已经售后过几条」的提示（后端把排除了多少条如实回给页面）
-  excludedHint: (count) => `另有 ${count} 条已经售后过，未列出。`,
   // 按钮点击后的如实提示（**逻辑还没接**，不假装做成了）
   actionPending: (label) => `${label}：处理流程还没有接上，当前只做到这里。`,
 };
