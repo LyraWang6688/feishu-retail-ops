@@ -5,6 +5,11 @@
 //   · 不判断意图、不生成售后单、不碰库存 / 收款（那些是执行器的事，见 `afterSalesService`）；
 //   · 不做业务取舍：排除「已经售后过」「没入账（写入失败 / 未完成）」两类行，
 //     并把**排除了多少条**如实回给页面（不让页面自己猜"为什么少了一条"）。
+//   · ⭐ 「近 N 天」= **上海自然日**：今天 + 往前 (N-1) 天、含今天共 N 个自然日
+//     （共用 `utils/salesDateWindows.lookupWindowStart`，与项目其它"最近几天"同一口径；
+//      **不是**"此刻往前滚 N×24 小时"）。
+//   · 🔴 「销售日」**只认销售明细的 `销售日`**，**不做任何兜底**（业务负责人 2026-10-29 明确：
+//     「不用你做兜底，它就是来自于销售明细里面的销售日」）⇒ 没有销售日的行**不列**、单独计数。
 //
 // 判据来源（配置先行，本文件不写业务字面量）：
 //   · 时间窗 / 取哪些列 / 后端人话 → `config/afterSalesScan.js`；
@@ -24,8 +29,7 @@ const {
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { withSalesReadRetry } = require('./salesReadRetry');
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+const { lookupWindowStart } = require('../utils/salesDateWindows');
 
 const asText = (value) => String(value ?? '').trim();
 
@@ -77,7 +81,9 @@ class AfterSalesScanService {
     const productId = asText(productRecordId);
     if (!productId) throw badRequest(SCAN_TEXTS.missingProduct);
     const windowDays = resolveScanWindowDays(days);
-    const cutoff = this.now() - windowDays * DAY_MS;
+    // ⭐ 「近 N 天」按**上海自然日**算：今天 + 往前 (N-1) 天（含今天共 N 天），不是滚动 24 小时。
+    const now = this.now();
+    const cutoff = lookupWindowStart({ now: new Date(now), days: windowDays });
 
     const [product, entries, details] = await Promise.all([
       withSalesReadRetry(() => this.gateway.get('product', productId), 'after_sales_scan_product'),
@@ -94,7 +100,7 @@ class AfterSalesScanService {
     const entryById = new Map(entries.map((entry) => [entry.record_id, entry]));
 
     // 排除了多少条、为什么排除 —— 如实回给页面（页面据此说一句人话，不静默吞数据）。
-    const excluded = { alreadyAfterSales: 0, notPosted: 0, outOfWindow: 0 };
+    const excluded = { alreadyAfterSales: 0, notPosted: 0, outOfWindow: 0, missingSalesDate: 0 };
     const candidates = [];
     for (const detail of details) {
       const fields = detail.fields || {};
@@ -107,12 +113,11 @@ class AfterSalesScanService {
         excluded.alreadyAfterSales += 1;
         continue;
       }
-      const soldAt = epochOf(fields[detailFields.soldAt]);
-      const recordedAt = epochOf(entry.fields?.[entryFields.recordedAt]);
-      // 「销售日」优先取明细上的「销售日」；没有（历史数据）才退回主表「录单日」——
-      // 页面照实把来源带上（`sales_date_source`），不假装两者一样。
-      const salesDate = soldAt || recordedAt;
-      if (!salesDate || salesDate < cutoff) { excluded.outOfWindow += 1; continue; }
+      // 🔴 「销售日」**只认销售明细的 `销售日`**（业务负责人 2026-10-29：「不用你做兜底」）——
+      //   没有销售日的行**不进候选**（单独计数，如实回给页面），绝不拿「录单日」顶替。
+      const salesDate = epochOf(fields[detailFields.soldAt]);
+      if (!salesDate) { excluded.missingSalesDate += 1; continue; }
+      if (salesDate < cutoff) { excluded.outOfWindow += 1; continue; }
       if (!isPosted(postedOf(entry, entryFields))) { excluded.notPosted += 1; continue; }
       const sizeCell = fields[detailFields.size];
       const sizeNumber = Number(asText(textValue(sizeCell)));
@@ -121,7 +126,6 @@ class AfterSalesScanService {
         order_no: asText(entry.fields?.[entryFields.orderNo]) || entry.record_id,
         sales_detail_record_id: detail.record_id,
         sales_date: salesDate,
-        sales_date_source: soldAt ? 'sold_at' : 'recorded_at',
         size: Number.isFinite(sizeNumber) && sizeNumber > 0 ? sizeNumber : null,
         // 关联 record_id 一起带上：以后换货/赔货要按尺码写库时直接用，不用再反查一次。
         size_record_id: linkedRecordIds(sizeCell)[0] || '',

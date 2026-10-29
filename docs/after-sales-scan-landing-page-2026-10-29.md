@@ -29,6 +29,10 @@
 > ⭐ 2026-10-29（业务负责人 HTML 批注，候选卡）：**不显示销售单号**，一行里从左到右摆
 > 「销售日 / 尺码 / 总金额」；日期**不突出**（不加粗不放大）、三样**同字号**、颜色不变（金额仍是主色）。
 
+> ⭐⭐ 2026-10-29（业务负责人问「7 天怎么算」）：窗口按**上海自然日**算 ——
+> 今天 + 往前 6 天、**含今天共 7 个自然日**（例：今天 2026-10-29 ⇒ 从 2026-10-23 00:00 起算），
+> 不是"此刻往前滚 7×24 小时"；且**销售日只认销售明细的「销售日」**，**不做兜底**（缺了就不列）。
+
 > ⭐⭐ 2026-10-29（业务负责人定的交互）：「用户选择哪条记录，就在那条卡片上把它变成三个按钮」＋
 > 「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」
 > ⇒ 选中的那条**原地**变成一排三个按钮（换货 · 退货 · 赔货，**没有解释小字**）；
@@ -50,13 +54,13 @@
 | --- | --- | --- | --- |
 | 货品「货号 · 颜色」 | `product.item_no` / `product.color`（另带 `product.number`） | 「货品信息」`itemNo → 货号`、`color → 颜色`、`number → 编号` | 二维码里是**货品记录 id**（`/r/{recordId}`）；颜色从这条货品记录上读 |
 | 一条候选 = 一笔销售 | `candidates[]`（`sales_detail_record_id` / `sales_entry_record_id`） | 「销售明细」按 `product → 编号` 关联到扫到的货品 | 只列**这一款货品**的明细；一条销售明细一个备选项 |
-| **销售日** | `sales_date`（毫秒时间戳）+ `sales_date_source` | 「销售明细」`soldAt → 销售日`；没有时退回「销售主表」`recordedAt → 录单日` | 优先明细的「销售日」；来源如实标 `sold_at` / `recorded_at`（不假装两者一样） |
+| **销售日** | `sales_date`（毫秒时间戳） | 「销售明细」`soldAt → 销售日` | 🔴 **只认销售明细的「销售日」**；没有就不列（**不做兜底**，业务负责人 2026-10-29 明确） |
 | **尺码** | `size`（数字）+ `size_record_id` | 「销售明细」`size → 尺码`（单选关联「尺码管理」） | 关联单元格的显示文本转数字；拿不到就是空（页面显示 `—`） |
 | **销售主表总金额** | `total_amount` | 「销售主表」`totalAmount → 总金额` | 空的显示 `—`（**空与 0 是两件事**，不拿 0 顶） |
 | 次要信息：销售单号 | `order_no` | 「销售主表」`orderNo → 销售单号` | 同一单多条明细（不同尺码）时用来区分"哪一单" |
 | 「另有 N 条已经售后过」 | `excluded.alreadyAfterSales` | 「销售明细」`fulfillmentStatus → 履约状态` | 判据 = `config/afterSales.isAfterSalesFulfillment`（已退货 / 已换货 / 已赔货，**唯一判据**），这些不再当候选 |
-| 其它两种排除（不展示，但如实回给页面） | `excluded.notPosted` / `excluded.outOfWindow` | 主表 `writeStatus → 写入状态`；明细/主表日期 | 没入账（写入失败 / 未完成）不做售后；超出 7 天窗口不进候选 |
-| 近 7 天窗口 | `days` / `cutoff` | —— | 前端 `AFTER_SALES_PAGE.days = 7`；后端封顶 30 天（`config/afterSalesScan.js`） |
+| 其它三种排除（不展示，但如实回给页面） | `excluded.notPosted` / `outOfWindow` / `missingSalesDate` | 主表 `writeStatus → 写入状态`；明细「销售日」 | 没入账（写入失败 / 未完成）不做售后；超出自然日窗口不进候选；**明细没有「销售日」也不进候选（不兜底）** |
+| 近 7 天窗口 | `days` / `cutoff` | —— | **上海自然日**：今天 + 往前 6 天（含今天共 7 天，例：今天 10-29 ⇒ 从 10-23 00:00 起算）；共用 `utils/salesDateWindows.lookupWindowStart`；前端 `days = 7`、后端封顶 30 天 |
 
 **为什么新增一个只读接口、而不是复用订单列表那条候选接口**：
 既有 `GET /api/workbench/sales/after-sales/candidates`（`salesFollowupService.listAfterSalesCandidates`，订单列表读路径）

@@ -68,26 +68,42 @@ test('AC1/AC2 ⭐ 只回这款货品近 7 天已入账的销售明细，并带�
   assert.equal(first.size_record_id, 's41');
   assert.equal(first.total_amount, 300);
   assert.equal(first.sales_date, NOW - DAY);
-  assert.equal(first.sales_date_source, 'sold_at');
   assert.equal(first.fulfillment_status, '已交付');
 });
 
 test('AC3 ⭐ 排除的三类都如实计数：已售后过 / 没入账 / 不在时间窗', async () => {
   const out = await build().listCandidates({ productRecordId: 'p1' });
   // d5 已退货 ⇒ alreadyAfterSales；d3 主表写入失败 ⇒ notPosted；d4 40 天前 ⇒ outOfWindow
-  assert.deepEqual(out.excluded, { alreadyAfterSales: 1, notPosted: 1, outOfWindow: 1 });
+  assert.deepEqual(out.excluded, {
+    alreadyAfterSales: 1, notPosted: 1, outOfWindow: 1, missingSalesDate: 0,
+  });
   const ids = out.candidates.map((item) => item.sales_detail_record_id);
   for (const excludedId of ['d3', 'd4', 'd5']) assert.ok(!ids.includes(excludedId), `${excludedId} 不该出现在候选里`);
 });
 
-test('AC4 ⭐ 明细没有「销售日」时退回主表「录单日」，并如实标来源', async () => {
+test('AC4 ⭐⭐ 销售日**只认销售明细的「销售日」**：缺了就不列（绝不拿「录单日」兜底）', async () => {
   const gateway = fakeGateway();
   delete gateway.records.salesDetail.find((row) => row.record_id === 'd1').fields['销售日'];
   const service = new AfterSalesScanService({ gateway, now: () => NOW });
   const out = await service.listCandidates({ productRecordId: 'p1' });
-  const row = out.candidates.find((item) => item.sales_detail_record_id === 'd1');
-  assert.equal(row.sales_date, NOW - DAY);
-  assert.equal(row.sales_date_source, 'recorded_at');
+  assert.ok(!out.candidates.some((item) => item.sales_detail_record_id === 'd1'), '没有销售日的行不许出现在候选里');
+  assert.equal(out.excluded.missingSalesDate, 1, '缺销售日单独计数（不静默吞）');
+  // d1 的主表「录单日」是有的 —— 它**不许**被拿来当销售日（她：「不用你做兜底」）。
+  assert.ok(!out.candidates.some((item) => item.sales_date === NOW - DAY && item.sales_detail_record_id === 'd1'));
+});
+
+test('AC4c ⭐⭐ 「近 7 天」= 上海自然日（今天 + 往前 6 天，含今天共 7 天），不是滚动 24 小时', async () => {
+  const gateway = fakeGateway();
+  const detail = (id) => gateway.records.salesDetail.find((row) => row.record_id === id);
+  // NOW = 2026-10-29 10:00 (+08) ⇒ 窗口起点 = 2026-10-23 00:00 (+08)
+  const start = Date.parse('2026-10-23T00:00:00+08:00');
+  detail('d1').fields['销售日'] = start;            // 边界：正好在起点 ⇒ 算近 7 天
+  detail('d2').fields['销售日'] = start - 1;        // 起点前 1 毫秒（即 10-22 深夜）⇒ 不算
+  const service = new AfterSalesScanService({ gateway, now: () => NOW });
+  const out = await service.listCandidates({ productRecordId: 'p1' });
+  const ids = out.candidates.map((item) => item.sales_detail_record_id);
+  assert.ok(ids.includes('d1'), '2026-10-23 00:00 的销售要算进「近 7 天」');
+  assert.ok(!ids.includes('d2'), '2026-10-22 23:59 的销售不算「近 7 天」');
 });
 
 test('AC4b 天数参数：认不出的回默认 7，超上限按 30 封顶（不因参数打挂页面）', async () => {
