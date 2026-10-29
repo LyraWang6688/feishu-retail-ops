@@ -36,7 +36,7 @@ const formatAmount = (value) => {
 };
 
 /**
- * 一行候选：**从左到右一行**摆「销售日 / 尺码 / 总金额」，三样**同字号**、日期**不突出**。
+ * 一条候选卡：**从左到右一行**摆「销售日 / 尺码 / 总金额」，三样**同字号**、日期**不突出**。
  *
  * ⭐ 2026-10-29（业务负责人 HTML 批注）：
  *   「每张卡片你不需要提供销售单号信息，保持从左到右在一行显示日期、尺码、总金额就可以，
@@ -44,7 +44,7 @@ const formatAmount = (value) => {
  *   ⇒ 删掉「销售单号」那一行；日期不再是加粗大字；三样同字号（颜色保持：金额仍是主色）。
  *   ⚠️ 三个值的**含义**不能丢：`aria-label` 里逐字带上「销售日 / 尺码 / 总金额」（读屏与自动化可读）。
  */
-const candidateHtml = (item) => {
+const candidateCardHtml = (item) => {
   const date = formatDate(item.sales_date) || AFTER_SALES_PAGE.dateEmpty;
   const size = item.size == null ? AFTER_SALES_PAGE.sizeEmpty : `${item.size} 码`;
   const amount = formatAmount(item.total_amount);
@@ -59,18 +59,23 @@ const candidateHtml = (item) => {
   </button>`;
 };
 
-const actionsHtml = () => `
-  <div class="after-sales-actions" data-view="after-sales-actions">
-    <p class="action-hint">${escapeHtml(AFTER_SALES_PAGE.actionHint)}</p>
-    <div class="action-row">
-      ${AFTER_SALES_ACTIONS.map((action) => `
-        <button class="action-button" type="button" data-action="${escapeHtml(action.value)}">
-          <strong>${escapeHtml(action.label)}</strong>
-          <span>${escapeHtml(action.hint || '')}</span>
-        </button>`).join('')}
-    </div>
-    <p class="action-result" data-view="action-result" role="status"></p>
+/**
+ * ⭐⭐ 2026-10-29（业务负责人定的交互）：「用户选择哪条记录，就在那条卡片上把它变成三个按钮」
+ *   ⇒ 选中的那条**原地**变成一排三个按钮：换货 / 退货 / 赔货（**只有这三个词，不做解释**）。
+ *   · 没选中的卡片仍是「销售日 / 尺码 / 总金额」那一行；
+ *   · 换选另一条 ⇒ 上一条变回卡片，新的那条变成按钮；
+ *   · 这一排按钮**不做解释文案**（她：「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」）。
+ */
+const candidateActionsHtml = () => `
+  <div class="candidate-card candidate-card-actions" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.actionLabel)}">
+    ${AFTER_SALES_ACTIONS.map((action) => `
+      <button class="candidate-action" type="button" data-action="${escapeHtml(action.value)}">${escapeHtml(action.label)}</button>`).join('')}
   </div>`;
+
+/** 一条候选（选中 ⇒ 变成三个按钮；没选中 ⇒ 还是那一行卡片）。 */
+const candidateHtml = (item, selected) => (
+  selected ? candidateActionsHtml() : candidateCardHtml(item)
+);
 
 /**
  * @param {HTMLElement} container 页面容器（`#after-sales-app`）
@@ -107,29 +112,22 @@ export function mountAfterSalesPage(container, options = {}) {
   const renderCandidates = () => {
     body.innerHTML = candidates.length
       ? `<p class="candidate-hint">${escapeHtml(AFTER_SALES_PAGE.chooseHint)}</p>
-         <div class="candidate-list" data-view="after-sales-candidates">${candidates.map(candidateHtml).join('')}</div>`
+         <div class="candidate-list" data-view="after-sales-candidates">${candidates
+    .map((item) => candidateHtml(item, item.sales_detail_record_id === selectedDetailId))
+    .join('')}</div>
+         <p class="action-result" data-view="action-result" role="status"></p>`
       : '';
-    renderActions();
-  };
-
-  const renderActions = () => {
-    body.querySelector('[data-view="after-sales-actions"]')?.remove();
-    if (!selectedDetailId) return;
-    body.insertAdjacentHTML('beforeend', actionsHtml());
   };
 
   // ⚠️ 2026-10-29（业务负责人 HTML 批注）：页头「← 返回 售后单」整块删掉了
   //   ⇒ 这里不再有返回按钮的处理（页面里没有那个元素，留着就是死代码）。
   container.addEventListener('click', (event) => {
+    // 选中某一条 ⇒ 重新画一遍列表：**选中那条原地变成三个按钮**（其余仍是卡片）。
     const candidate = event.target.closest('[data-detail]');
     if (candidate) {
       selectedDetailId = candidate.dataset.detail || '';
-      body.querySelectorAll('[data-detail]').forEach((node) => {
-        node.classList.toggle('active', node === candidate);
-      });
-      renderActions();
-      showActionResult('');
       showStatus('');
+      renderCandidates();
       return;
     }
     const action = event.target.closest('[data-action]');

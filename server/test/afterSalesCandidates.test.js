@@ -113,3 +113,28 @@ test('AC-LP3 ⭐ 货品行居中加粗；提示语逐字「请选择售后单」
   assert.match(css, /\.candidate-hint\s*\{[^}]*font-size:\s*var\(--font-size-xl\)/, '提示语字号要大');
 });
 
+/**
+ * ⭐⭐ 2026-10-29（业务负责人定的交互）：
+ *   「用户选择哪条记录，就在那条卡片上把它变成三个按钮」＋
+ *   「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」。
+ *   判据反向钉住：退回"选中后另起一块按钮"、或按钮上又加解释小字 ⇒ 红。
+ */
+test('AC-LP4 ⭐⭐ 选中的那条卡片原地变成三个按钮（换货 · 退货 · 赔货，无解释文案）', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
+
+  // 选中 ⇒ 整张卡片换成"三个按钮"这一块（同一个 candidate-card 位置），而不是另起一块。
+  assert.match(page, /candidateActionsHtml/, '要有"卡片变成三个按钮"的那一块');
+  assert.match(page, /const candidateHtml = \(item, selected\) => \(\s*selected \? candidateActionsHtml\(\) : candidateCardHtml\(item\)/,
+    '选中时整条卡片换成三个按钮、未选中仍是卡片');
+  assert.match(page, /data-detail=|data-action="\$\{escapeHtml\(action\.value\)\}"/, '三按钮各自带动作');
+  // 不再有"另起一块常驻动作区 / 灰置闸门"的旧实现。
+  assert.doesNotMatch(page, /after-sales-actions|syncActionsState|action-button/, '旧的"常驻动作区"实现要删干净');
+  // 按钮上只有三个词，没有解释小字。
+  assert.doesNotMatch(config, /\bhint\s*:/, '动作配置里不许再有解释小字（她说"不用做解释"）');
+  assert.doesNotMatch(page, /action\.hint/, '按钮里不许再渲染解释小字');
+  assert.match(css, /\.candidate-card-actions\s*\{[^}]*display:\s*flex/, '三个按钮在卡片里横向排（flex）');
+})
+

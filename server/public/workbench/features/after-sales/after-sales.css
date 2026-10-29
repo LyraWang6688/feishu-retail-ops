@@ -83,52 +83,39 @@
   background: var(--primary-soft);
 }
 
-/* ── 选完销售 → 三个动作按钮（换货 · 退货 · 赔货 水平排列）──────────────── */
-.after-sales-actions {
-  margin-top: var(--space-5);
-}
-.action-hint {
-  margin: 0 0 var(--space-2);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-}
-.action-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-.action-button {
+/* ── 选中的那条卡片 → 原地变成三个按钮（换货 · 退货 · 赔货）────────────────
+ * ⭐ 2026-10-29（业务负责人定的交互）：「用户选择哪条记录，就在那条卡片上把它变成三个按钮」；
+ *   「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」⇒ 按钮里**只有三个词**，没有解释小字。 */
+.candidate-card-actions {
   display: flex;
-  min-height: 72px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: var(--space-2);
-  border: 1px solid var(--border);
+  align-items: stretch;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--primary);
   border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: var(--shadow-card);
-  color: var(--text);
-  cursor: pointer;
 }
-.action-button strong {
+.candidate-action {
+  flex: 1 1 0;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
   font-size: var(--font-size-base);
   font-weight: var(--weight-bold);
+  cursor: pointer;
 }
-.action-button span {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-.action-button:hover {
+.candidate-action:hover {
   border-color: var(--primary);
   background: var(--primary-soft);
 }
-.action-button.active {
+.candidate-action.active {
   border-color: var(--primary);
   background: var(--primary-soft);
-}
-.action-button.active strong {
   color: var(--primary);
 }
 .action-result {
@@ -136,4 +123,5 @@
   margin: var(--space-3) 0 0;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
+  text-align: center;
 }

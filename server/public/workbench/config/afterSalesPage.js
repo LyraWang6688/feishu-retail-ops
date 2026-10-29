@@ -27,7 +27,9 @@ export const AFTER_SALES_PAGE = {
   // ⭐ 2026-10-29（HTML 批注，逐字）：这句提示现在是「请选择售后单」
   //   （她先改成「请选择要售后单」，随后又批注「去掉要」⇒ 去掉那个「要」字）。
   chooseHint: '请选择售后单',
-  actionHint: '选择处理方式',
+  // ⭐ 2026-10-29（业务负责人定的交互）：选中哪条记录，就在**那条卡片上**变成三个按钮
+  //   （换货 / 退货 / 赔货，**只有这三个词、不做解释**）；这个只用于读屏 group 的 aria-label。
+  actionLabel: '售后处理方式',
   // 字段名（页面上一律从这取，不在渲染代码里写死）
   // ⭐ 2026-10-29（HTML 批注）：卡片上**不再显示销售单号** ⇒ `orderLabel` 一起删掉（不留无用配置）。
   //   三个字段名现在只用在候选卡的 `aria-label`（读屏/自动化要能读出"这是销售日 / 尺码 / 总金额"）。
@@ -45,10 +47,11 @@ export const AFTER_SALES_PAGE = {
 
 /**
  * 售后动作 —— 顺序就是她定的**水平顺序**：换货 · 退货 · 赔货。
- * `hint` 是按钮下面那行小字（点按钮之前先让人看懂各是什么）。
+ * ⭐ 2026-10-29：按钮上**只有这三个词**（她：「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」）
+ *   ⇒ 原先那行解释小字（hint）已删掉，不留在配置里。
  */
 export const AFTER_SALES_ACTIONS = [
-  { value: 'exchange', label: '换货', hint: '换一双给她' },
-  { value: 'return', label: '退货', hint: '这双退回来' },
-  { value: 'compensation', label: '赔货', hint: '赔一双给她' },
+  { value: 'exchange', label: '换货' },
+  { value: 'return', label: '退货' },
+  { value: 'compensation', label: '赔货' },
 ];
