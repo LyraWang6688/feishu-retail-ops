@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="icon" href="data:,">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>采购验收｜邯美数智经营工作台</title>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/base.css">
+  <link rel="stylesheet" href="features/orders/orders.css">
+</head>
+<body data-view="purchase-acceptance">
+  <!-- 采购验收独立页：供应 → 录单 → 验收卡片跳到这里（与交割单/售后单同形）。
+       本文件是薄壳：列表/验收入口/AI 逻辑都在既有 features/orders（mode=purchase）。 -->
+  <p class="page-error hidden" id="page-error" role="alert"></p>
+  <main class="shell" id="purchase-acceptance-app"></main>
+  <script src="shared/ui-tap.js"></script>
+  <script type="module">
+    import { createOrdersModule } from './features/orders/index.js';
+    createOrdersModule({ mode: 'purchase' }).mount(document.getElementById('purchase-acceptance-app'));
+  </script>
+</body>
+</html>

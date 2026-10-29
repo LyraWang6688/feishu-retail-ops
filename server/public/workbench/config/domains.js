@@ -136,15 +136,8 @@ export const DOMAIN_TABS = [
         cards: [
           { icon: '📦', title: '采购', href: '/workbench/procurement.html' },
           { icon: '↩️', title: '退货', scanRealm: 'purchase_return' },
-          { icon: '✅', title: '验收', jumpTo: 'purchase-acceptance' },
+          { icon: '✅', title: '验收', href: '/workbench/purchase-acceptance.html' },
         ],
-      },
-      {
-        id: 'purchase-acceptance',
-        label: '验收',
-        kind: 'orders',
-        mode: 'purchase',
-        hidden: true,
       },
       {
         id: 'purchase-orders',
