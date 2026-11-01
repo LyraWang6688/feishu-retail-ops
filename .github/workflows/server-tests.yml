@@ -20,7 +20,7 @@ jobs:
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: pnpm
@@ -55,7 +55,7 @@ jobs:
           # 需要与 base 提交做 git diff，才能判定「既有文件净增 > 100 行」。
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
