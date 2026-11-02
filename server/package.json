@@ -49,5 +49,10 @@
   "devDependencies": {
     "@playwright/test": "1.64.1",
     "nodemon": "^3.0.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "follow-redirects": "1.16.2"
+    }
   }
 }
