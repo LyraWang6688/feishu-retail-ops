@@ -117,32 +117,6 @@ test('AC-2S3 🔴 第二步页存在且能提交：三档（横向）+ 付款方
   assert.equal(/skip[\s\S]{0,80}(failed|error|失败)/i.test(CONFIG_SRC), false, '跳过**不是**失败路径');
 });
 
-test('AC-2S4 🔴 成功页统一极简：「本单提交成功」+ 单号 + **那一句**；三入口**全删** ✗（塞回 ⇒ 红 ✓）', () => {
-  const success = RENDERER_SRC.slice(RENDERER_SRC.indexOf('renderSaleSuccessPage'));
-  assert.ok(success.length > 0, '成功页渲染器存在');
-  // ① 主文案逐字 + 单号占位
-  assert.ok(CONFIG_SRC.includes('本单提交成功'), '主文案要含「本单提交成功」（逐字）');
-  assert.ok(/XSD-|order_no|orderNo/.test(CONFIG_SRC + success), '成功页要带单号');
-  // ② ⭐⭐ 2026-10-16 迁移（改前逐字 → 改后逐字 → 依据）——
-  //   改前逐字：
-  //     `for (const entry of ['继续录下一单', '去工作台', '补整单付款']) {`
-  //       `assert.ok(CONFIG_SRC.includes(entry) || success.includes(entry), `成功页缺入口「${entry}」`); }`
-  //   改后逐字：下面两条（**必含那一句** ＋ 三入口**一个都不许出现**）
-  //   依据：业务负责人 2026-10-16 逐字「那三处提示【全删】……**全删就对了**」＋
-  //     「成功页它**不需要做任何跳转**，也**不需要做任何链接**」⇒ 三条入口**全删** ✗
-  //     （不是放宽：原来钉"**必须有那三条**"，现在钉"**必须有那一句 ＋ 那三条一个都不许有**"✓）
-  // 🔴 同上：钉**配置的值**（`SCAN_PAGE.saleSuccess`），不靠"源码里出现过" ——
-  //    注释里写一遍不该让这条变绿（否则"那一句"改坏了本判据也不红 ✗）
-  assert.ok(JSON.stringify(SCAN_PAGE.saleSuccess).includes('已提交成功，数据会更新'),
-    '成功页要有**那一句**统一文案（销售 / 补货 / 退货 / 验收四条链路共用 · 钉的是配置的值 ✓）');
-  // ⚠️ 反向哨兵的扫描范围 = **它原来住的那两处**：`SCAN_PAGE.saleSuccess`（配置）＋
-  //    成功页渲染器那一段（**不扫整份 CONFIG_SRC** —— `paymentStep.pendingNote` 里"去工作台补收款即可"
-  //    是**另一句**（资金页那句），把它算进来会假红 ✗）
-  const configuredSuccess = JSON.stringify(SCAN_PAGE.saleSuccess);
-  assert.deepEqual(['继续录下一单', '去工作台看这一单', '去工作台补收款', '补整单付款']
-    .filter((entry) => configuredSuccess.includes(entry) || success.includes(entry)), [],
-  '🔴 三入口文案**全删** ✗（塞回任一条 ⇒ 本判据红 ✓）');
-  // ③ ⚠️「正在提交…」只是按钮态，不代表成功页
-  assert.equal(CONFIG_SRC.includes('正在提交，请不要重复点'), true, '按钮态仍在（防连点 ✓）');
-  assert.notEqual(CONFIG_SRC.includes('本单提交成功'), false, '但它不能替代成功页 ✗');
-});
+// ⚠️ 2026-10-29：原 AC-2S4（成功页统一极简）**随成功页整件退场** ——
+//   新判据在 `test/submitToast.test.js`（统一 toast ＋ 成功页不许回来）。
+

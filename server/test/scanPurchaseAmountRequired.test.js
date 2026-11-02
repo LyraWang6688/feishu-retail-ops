@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 const { rendererSource } = require('./support/rendererSource');
@@ -163,6 +164,7 @@ const postAction = async (base, realm, action, amount, openId = 'ou_purchase_amo
   if (amount !== null) body[SCAN_WRITE.fields.purchaseAmount] = amount;
   return fetch(pageUrl(base, realm), {
     method: 'POST',
+    redirect: 'manual',  // ⭐ 2026-10-29：提交成功 = 303 回工作台（不许被 fetch 自动跟随成 404）
     headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(body).toString(),
   });
@@ -295,7 +297,7 @@ test('AC-PA3b ⭐⭐ 补货不问金额：空金额 ⇒ **照样提交**（200 +
     const write = createWriteSpy();
     await withServer(appWith(write), async (base) => {
       const res = await postAction(base, 'replenish', SCAN_WRITE.actions.replenish, amount);
-      assert.equal(res.status, 200, `补货空金额（${why}）⇒ **200**（她 2026-10-16 逐字「补货不问金额」✓）`);
+      assertSubmitToast(res, `补货空金额（${why}）⇒ 照样交出去（她 2026-10-16 逐字「补货不问金额」✓）`);
       assert.equal(write.calls.length, 1, `补货（${why}）要**真的**进写入口一次 ✓（不是被别的东西拦下 ✗）`);
       assert.equal(write.calls[0].flow, 'replenish');
       assert.equal('orderAmount' in write.calls[0].args, false,
@@ -336,10 +338,7 @@ test('AC-PA4 整单金额非空 ⇒ 照旧提交（200）：退货**逐字带上
     const write = createWriteSpy();
     await withServer(appWith(write), async (base) => {
       const response = await postAction(base, realm, action, '399');
-      assert.equal(response.status, 200, `${realm}：非空 ⇒ 照旧提交`);
-      const html = await response.text();
-      assert.ok(html.includes(SCAN_PAGE.saleSuccess.message),
-        `${realm}：成功页 = 配置里那一句统一文案（异步：批次号要等后台 ✓）`);
+      assertSubmitToast(response, `${realm}：非空 ⇒ 照旧提交（异步：批次号要等后台 ✓）`);
       assert.equal(write.calls.length, 1, `${realm}：写入口恰被调用一次`);
       assert.equal(write.calls[0].flow, realm === 'replenish' ? 'replenish' : 'purchase_return');
       // ⚠️ **入参形状一个字没变**：金额**不在**传给写服务的那个对象里

@@ -2,8 +2,8 @@ const { multiItemBlockHtml, multiItemPayloadJson, MULTI_ITEM_ITEM_KEYS, MULTI_IT
 const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, SKELETON_STYLE, STYLE, SCAN_TOAST_STYLE } = require('./styles');
 const { buildPaymentRows, paymentRowsHtml } = require('./paymentBlock');
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
-// ⭐⭐ 2026-10-16（task-52 收尾）：**成功页统一极简**的配置真源（开关 ＋ 那一句 ✓ 见 config/scanSuccessPage.js）
-const { SCAN_SUCCESS_PAGE, minimalSuccessOverrides } = require('../../config/scanSuccessPage');
+// ⭐⭐ 2026-10-29：**成功页整件退场**（业务负责人：「以后就没有成功页了」）——
+//   提交通一改成「303 回工作台 + toast」（`utils/submitToast.js`）⇒ 这里不再有成功页专属配置。
 const { DEFAULT_REALM, resolveRealm } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { identityHtml, noScriptHtml, realmBarHtml, renderDocument } = require('./layout');
@@ -105,80 +105,28 @@ ${block}
  */
 const renderScanMessagePage = ({
   title, body, number = '', requestId = '', retryHint = '', details = [],
-  backPath = '', backLabel = '', backHint = '', tone = '',
-  // ⭐⭐ 2026-10-12（方案 A）：成功后**自动回首页**（`returnPath` = 服务端渲染的确定 URL ✓）
-  //    + 一颗【返回扫码】兜底（href 与自动跳转**同一个 URL** ⇒ 唯一来源 ✓）。
-  returnPath = '', returnLabel = '', returnDelaySeconds = 0, autoReturnUrl = '',
-  // ⭐ 2026-10-13（成功页三入口）：透明的"追加动作块"—— 不传 = 既有页面逐字不变 ✓
+  backPath = '', backLabel = '', backHint = '',
+  // ⚠️ 2026-10-29：成功页专属参数（`tone` / `successPage` / `order_no` / 自动回跳那几个）
+  //   随成功页**整件退场** ⇒ 本页现在**只画"人话结果页"**（错误 / 部分失败 / 事实说明）✓
   extraActionsHtml = '',
-  // ⭐⭐ 2026-10-16（task-52 收尾 · 成功页统一极简）：配置源（缺省 = `config/scanSuccessPage.js` ✓）
-  //    判据可直接注入 `{ minimalEnabled: true, minimalText: '…' }` ⇒ 不必改 env ✓
-  successPage = null,
-  // ⭐⭐ 2026-10-17 02:5x **成对迁移（补上缺失的消费者）· 改前逐字 → 改后逐字 → 依据**：
-  //   改前逐字：参数表里**没有 `order_no`** ✗ ⇒ 路由 payload 里的 `order_no`（`routes:2732` ✓）
-  //     被**静默丢掉** ⇒ 成功页上**看不到单号** ✗（她 23:5x 逐字：「**那我肯定能看到这个单号呀**」✓）
-  //   改后逐字：⭐ **收下它** ✓（`order_no` 就是 `routes:965` 那个 `payload` 的键 ✓ 原样传进来的 ✓）
-  //     ＋ ⭐ 在**极简覆盖之外**渲染一行**纯文案** ✓（否则会被 `minimalSuccessOverrides` 吃掉 ✗ —— 实测 ✓）
-  //   依据 = 她 2026-10-16 23:5x「**那我肯定能看到这个单号呀**」＋「**就一页、没有按钮没有链接、
-  //         也不自动跳（你得自己点返回），按照这个，保持现状**」✓（两句要**同时**满足 ✓）
-  order_no = '',
 }, config = SCAN_PAGE) => {
-  // ⭐ **只在成功页**上套用；**开关关着 ⇒ minimal = {} ⇒ 下面每一处都逐字不变** ✓（零回归 ✓）
-  const minimal = tone === 'success' ? minimalSuccessOverrides(successPage || SCAN_SUCCESS_PAGE) : {};
-  const eff = {
-    body, details, number, retryHint, backPath, backLabel, backHint,
-    returnPath, returnLabel, returnDelaySeconds, autoReturnUrl, extraActionsHtml,
-    ...minimal,
-  };
-  // ⭐⭐ 单号那一行（**极简覆盖之外** ✗ ⇒ 不会被吃掉 ✓）：
-  //   · ⭐ **号非空才出现** ✓（空 ⇒ 整行不出现 ✗ **不显示空括号** ✓）
-  //   · ⭐ **纯文案**（无 `<a>` / 无按钮 / 无跳转 ✓ —— 零链接零按钮零自动跳是她定的 ✓）
-  //   · ⭐ **文案走 config** ✗（模板里不写中文 ✓）—— ⭐ 取自 **`SCAN_SUCCESS_PAGE.orderNoText`** ✓
-  //     （⭐ **不读 `config.texts.…`** ✗：这文案属于**成功页**那份配置 ✓、与 `minimalSuccessOverrides` 同一个家 ✓
-  //       ⇒ ⭐ **不必动 `config/scanPage.js`** ✓ 依据 = 她 23:5x「那我肯定能看到这个单号呀」✓）
-  //   · ⭐ **键缺省为空 ⇒ 整行不出现** ✓（向后兼容 ✓ 且"没有号"时**逐字节不变** ✓ —— 判据 `AC-REG1` 锁着 ✓）
-  const orderNoNotice = String(order_no || '').trim();
-  const orderNoTemplate = String((successPage || SCAN_SUCCESS_PAGE).orderNoText || '').trim();
-  const orderNoHtml = tone === 'success' && orderNoNotice && orderNoTemplate
-    ? `<p class="foot" data-view="success-order-no">${escapeHtml(
-      orderNoTemplate.replace(/\{orderNo\}/g, orderNoNotice),
-    )}</p>`
-    : '';
   return renderDocument({
   title,
   config,
   requestId,
-  // ⚠️ 用 `<meta http-equiv="refresh">`（**不是 JS**）：老手机 / 禁脚本也能跳，且 URL 是**服务端写的** ✓
-  head: eff.autoReturnUrl && eff.returnDelaySeconds > 0
-    ? `<meta http-equiv="refresh" content="${Number(eff.returnDelaySeconds)};url=${escapeHtml(eff.autoReturnUrl)}">`
-    : '',
-  // ⚠️ **`<section class="card state-msg">` 这一串逐字不变**（连成功页也一样）：
-  //    有断言按这串取"她看得见的那张卡"，在 section 上多加属性/class 会把它们悄悄打红。
-  //    所以"成功"这个色调只挂在 **h1 的 class** 与那颗 ✅ 上。
   content: `<section class="card state-msg">
-${tone === 'success' ? '<p class="state-msg__mark" aria-hidden="true">✅</p>' : ''}
-<h1${tone === 'success' ? ' class="state-msg__title--success"' : ''}>${escapeHtml(title)}</h1>
-<p>${escapeHtml(eff.body)}</p>
-${eff.details.length ? `<ul class="result">${eff.details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
-${eff.number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(eff.number)}</span></p>` : ''}${orderNoHtml}
-${eff.retryHint ? `<p class="hint">${escapeHtml(eff.retryHint)}</p>` : ''}
-${eff.backPath && eff.backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(eff.backPath)}">${escapeHtml(eff.backLabel)}${eff.backHint ? `<span>${escapeHtml(eff.backHint)}</span>` : ''}</a>` : ''}
-${eff.returnPath && eff.returnLabel ? `<a class="btn" data-view="success-return" href="${escapeHtml(eff.returnPath)}">${escapeHtml(eff.returnLabel)}</a>` : ''}
-${eff.extraActionsHtml}
+<h1>${escapeHtml(title)}</h1>
+<p>${escapeHtml(body)}</p>
+${details.length ? `<ul class="result">${details.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
+${number ? `<p>${escapeHtml(config.texts.notFoundHint)}<span class="number mono">${escapeHtml(number)}</span></p>` : ''}
+${retryHint ? `<p class="hint">${escapeHtml(retryHint)}</p>` : ''}
+${backPath && backLabel ? `<a class="btn btn--primary back-link" href="${escapeHtml(backPath)}">${escapeHtml(backLabel)}${backHint ? `<span>${escapeHtml(backHint)}</span>` : ''}</a>` : ''}
+${extraActionsHtml}
 </section>`,
   });
 };
 
-/**
- * ⭐⭐ **提交成功页**（`POST submit_order` 写成功之后 POST 直接渲染的就是这一页；
- * 不 303、不回原页 —— 业务负责人的口径是"点完**直接**告诉我成功"）。
- *
- * 🔴 它**不是**新的书写方式，只是"消息页 + 成功色调 + 一颗回扫码页的链接"这一组约定的**一个名字**：
- *    `renderScanMessagePage({ tone: 'success', backPath, backLabel, ... })`。
- *    这样"成功页长什么样"只有一处定义，将来改版不用满仓库找。
- * 🔴 只在**真的写成功**时用：建单失败 ⇒ 照旧报错页；建单成功但后面某步没写完 ⇒
- *    `partialFailed*`（**不许**显示成功）。
- */
+// ⚠️ 2026-10-29：这里原来有一段「提交成功页」的说明 —— 成功页已整件退场（提交通一 = 303 + toast）。
 /**
  * ⭐⭐ 2026-10-13「金额两步走」第 2 步：**整单付款屏**（提交成功之后落到这里）。
  *
@@ -262,29 +210,6 @@ ${payForm}
   });
 };
 
-const renderSaleSuccessPage = (input = {}, config = SCAN_PAGE) => {
-  const success = { ...(config.saleSuccess || {}) };
-  const orderNo = String(input.order_no || input.orderNo || '').trim();
-  const number = String(input.number || '').trim();
-  // ⚠️ 单号按 `order_no` 原样显示（形如 `XSD-…`）；没有就不编一个 ✗。
-  const orderLine = orderNo ? `<p class="foot">${escapeHtml(orderNo)}</p>` : '';
-  return renderScanMessagePage({
-    ...input,
-    tone: 'success',
-    // 主文案「本单提交成功」+ **单号**（她的口径：成功页要能一眼看到单号）
-    title: input.title || success.title,
-    // ⭐⭐ 2026-10-16（她逐字：「用户提交之后**都是一个成功页**，说『**已提交成功，数据会更新**』
-    //   类似这类的话就行了……」）⇒ 四条链路**同一句**；文案的家在 `config/scanPage.js` ✓
-    //   ⚠️ 调用方另有正事要说时**以它为准**（例：异步那条已给她「本单已创建成功（单号）」✓
-    //      —— 那是她 2026-10-15 的逐字口径，本刀**不推翻** ✗）；没人给正文时 = **那一句** ✓
-    body: input.body || success.message,
-    details: [...(input.details || []), orderLine].filter(Boolean),
-    // 🔴 三入口（`continueButton` / `workbenchButton` / `fillPaymentButton`）**已全删** ✗ ——
-    //   她逐字：「成功页它**不需要做任何跳转**，也**不需要做任何链接**」⇒ 这里**一个 `<a>` 都不给** ✗
-    //   （路由自己给的「再录一单 / 回扫码页」那几个既有去向**不归这一刀管** ✓ 见 `successReturnFields`）
-    ...(number ? { number } : {}),
-  }, config);
-};
 
 /**
  * 🔴 **最后一道兜底页**（"绝不空白"的物理保证）。
@@ -442,7 +367,6 @@ module.exports = {
   renderSalesHome,
   renderScanMessagePage,
   renderMinimalPage,
-  renderSaleSuccessPage,
 };
 
 // ── ⚠️ 下面这些**不是本文件定义的**：原文件里它们就来自别处（fields / styles / …）⇒ 原样转出 ✓ ──
