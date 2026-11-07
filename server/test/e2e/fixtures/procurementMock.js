@@ -66,7 +66,7 @@ export const mockApi = async (page, options = {}) => {
     if (pathname === '/api/workbench/procurement/submit' && request.method() === 'POST') {
       calls.submit.push(JSON.parse(request.postData() || '{}'));
       if (options.submitFails) return route.fulfill(json({ success: false, error: '提交没成功，请稍后重试。' }, 500));
-      return route.fulfill(json({ success: true, accepted: true, message: '数据提交成功，后台自动写入' }));
+      return route.fulfill(json({ success: true, accepted: true, message: '数据提交成功，后台自动写入', redirect_url: `/workbench/?toast=${encodeURIComponent('数据提交成功，后台自动写入')}` }));
     }
     if (pathname === '/api/workbench/ui-tap') return route.fulfill({ status: 204, body: '' });
     return route.fulfill(json({ success: true }));

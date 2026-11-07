@@ -98,7 +98,11 @@ tab 切换保留当前会话已选数据；点「提交」才统一写入
   超过 20 货品 / 超过 50 行 / `submitKey` 缺失或非法 / 货品记录 ID 查不到。
 - **AC-P13 复用既有链路**：校验通过后只调 `multiItemOrderService.submitDraft`（其内部 `writers.purchase` → `PurchaseWebhookService.publishPurchaseRequest`）；
   **不新增第二条写库路径**（源码哨兵：本域不得直接 `gateway.create('purchaseOrderBatch'|'purchaseRequest')`）。
-- **AC-P14 异步成功口径**：HTTP 先回 `accepted:true` + 统一 toast 文案（`config/submitToast.js` 唯一真源，默认「数据提交成功，后台自动写入」）；后台 `scheduleCustomRest` 跑 `submitDraft`；
+- **AC-P14 异步成功口径**（2026-11-08 统一到工作台 shared toast）：HTTP 先回 `accepted:true` +
+  `redirect_url`（由共享 `submitToastUrl()` 构造，文案唯一真源 `config/submitToast.js`，默认「数据提交成功，后台自动写入」）；
+  前端清完草稿后 `location.assign(redirect_url)` → 工作台 `shared/toast.js` 顶部弹统一 toast；
+  **失败时页面不跳**（400/502 + 人话 + 草稿保留，采购页自己的错误 toast 只用于错误）；
+  后台 `scheduleCustomRest` 跑 `submitDraft`；
   后台失败记 warn + 落会话 `last_error`（不假装成功），`submitKey` 原样透传（幂等重试同一把键）。
 - **AC-P15 幂等 submitKey**：同一 `submitKey` 重复 POST ⇒ 第二次返回 `reused:true`，**不再排后台、不再写一次**；
   草稿已 `submitted` 时直接返回复用结果。
@@ -193,7 +197,7 @@ server/src/routes/workbench/purchase.js                         只加 4 个采�
  → engine.validateDraft（同一套配置上限）
  → 把草稿种子写进既有 scan_sessions store（key = procurement:<submitKey>）
  → scheduleCustomRest(run = engine.submitDraft({submitKey}))
- → 立刻返回 accepted（统一 toast 文案（`config/submitToast.js` 唯一真源，默认「数据提交成功，后台自动写入」））
+ → 立刻返回 accepted + redirect_url（统一 toast 的地址：`submitToastUrl()`；文案唯一真源 `config/submitToast.js`）
  → 后台：submitDraft → planSubmission → publishPurchaseRequest（既有采购批次 + 明细）
 ```
 
