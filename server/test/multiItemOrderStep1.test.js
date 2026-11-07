@@ -486,7 +486,8 @@ test('AC-MI9 ⭐⭐ §13 的"既有判据承载"**一条没动**（本步只新�
     }
   }
   // ④ 老的"单货品即时提交"那套**一个字没动**（本步不碰它 ✓ 第 ③ 步才收口）
-  const writeSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/scanWriteService.js'), 'utf8');
+  const writeSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/scanWriteService.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '..', 'src/services/scanWrite/purchase.js'), 'utf8');
   assert.ok(writeSrc.includes('replenishFingerprint'), '老的指纹那套**本步不动**（第 ③ 步才删 ✓）');
   assert.ok(writeSrc.includes('const submitReplenish ='), '老路径照旧在 ✓');
   assert.ok(writeSrc.includes('const submitPurchaseReturn ='), '老路径照旧在 ✓');

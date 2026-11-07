@@ -57,7 +57,8 @@ test('过期后新开 / 续期：代次必须轮换（跨天不再和历史键�
 });
 
 test('补货 task id 带代次（源码哨兵：塞回旧形状即红）', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'scanWriteService.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'scanWriteService.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'scanWrite', 'purchase.js'), 'utf8');
   assert.match(src, /const generation = String\(current\?\.generation/,
     'task id 必须读会话代次');
   assert.match(src, /`\$\{config\.replenish\.taskIdPrefix\}_\$\{key\.replace[^`]*\}_\$\{generation\}`/,
