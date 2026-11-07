@@ -98,6 +98,13 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     gateway: options.gateway || new V1BitableGateway(),
     config: (options.writeConfig || SCAN_WRITE).acceptance,
     store: options.arrivalStore,
+    // ⭐ 2026-10-29（F1/F2）：两条新判据的人话真源在 `config/workbenchArrival.js`
+    //   （服务自己的 `texts` 仍以 `SCAN_WRITE.texts` 为基底；这里只覆盖新增那两句 ✓）
+    texts: {
+      ...SCAN_WRITE.texts,
+      acceptDuplicateLinesBody: arrivalTab.texts.duplicateLines,
+      acceptSizeUnknownBody: arrivalTab.texts.sizeUnknown,
+    },
   });
   /**
    * ⭐⭐ 2026-10-16（task-56 · 业务负责人**弹窗选定 B**：「**工作台那半也接异步**」；她当天逐字
@@ -197,21 +204,31 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         const status = started?.reason === 'not_wired' ? 503 : 400;
         return res.status(status).json({ success: false, error: started?.message || arrivalTab.texts.detailFailed });
       }
-      // ② 逐行 `addScan`（**既有自定义路** ✓：认得出 productRecordId 才收；认不出**如实**回 400 ✗ 不静默丢）
+      // ② ⭐⭐ 2026-10-29（F1/F2 · Lead 批）：**整单替换**会话清单（不再是逐行 `addScan`）。
+      //    为什么（main 上的真 bug）：
+      //      · 逐行 `addScan` 只认"本批申请行里已有的 (款,尺码)"⇒ 页面上的**自定义尺码/自定义货号
+      //        必然 400**（`not_in_batch`）✗ —— 那是页面明明让她填、后端却永远不收；
+      //      · `addScan` 对"已经记过的行"返回 duplicate（数字不变）⇒ 她**改数量不生效 / 改 0 删不掉** ✗。
+      //    ⇒ 页面提交的是**整张清单**，就用 `setScans` 把它整张落进去 ✓（校验不通过 ⇒ 400 + 会话一个字不动）。
+      const submittedLines = [];
       for (const line of lines) {
         const productRecordId = String(line?.[arrivalTab.fields.productRecordId] || '').trim();
         const size = Number(line?.[arrivalTab.fields.size]);
+        // ⭐ 数量**允许 0**（= 这一行没到）——「整单替换」语义下 0 与"从清单里删掉"同义；
+        //   负数 / 小数 / 非数字才是非法（照旧 400）。
         const quantity = Number(line?.[arrivalTab.fields.quantity]);
         if (!productRecordId) {
-          // 自定义货号：既有 `addScan` 只吃 `productRecordId` ⇒ 认不出就**如实说**（不许静默丢 ✗）
+          // 自定义货号认不出：如实说（不许静默丢 ✗）
           return res.status(400).json({ success: false, error: arrivalTab.texts.itemNoUnresolved });
         }
-        if (!Number.isSafeInteger(size) || !Number.isSafeInteger(quantity) || size <= 0 || quantity <= 0) {
+        if (!Number.isSafeInteger(size) || !Number.isSafeInteger(quantity) || size <= 0 || quantity < 0) {
           return res.status(400).json({ success: false, error: arrivalTab.texts.sizeInvalid });
         }
-        // eslint-disable-next-line no-await-in-loop
-        const added = await arrivalService.addScan({ openId, productRecordId, size, quantity });
-        if (!added?.ok) return res.status(400).json({ success: false, error: added?.message || arrivalTab.texts.acceptFailed });
+        submittedLines.push({ product_record_id: productRecordId, size, quantity });
+      }
+      const replaced = await arrivalService.setScans({ openId, lines: submittedLines });
+      if (!replaced?.ok) {
+        return res.status(400).json({ success: false, error: replaced?.message || arrivalTab.texts.acceptFailed });
       }
       // ③ 同步闸门（🔴 **校验必须留在同步路径** ✗ —— 不许顺手挪进后台）：
       //    · `no_session` / `no_scan_lines`（空单）＝ **写层自己的判据与文案**（`scanArrivalService.finish`
