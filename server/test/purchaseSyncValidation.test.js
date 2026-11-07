@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 
@@ -248,11 +249,8 @@ test('AC-SV3 ⭐ 反例：**填对了** ⇒ 200 成功页（统一那一句）�
     const write = createWriteSpy();
     await withServer(appWith(write), async (base) => {
       const res = await postForm(pageUrl(base, kase.realm), sessionCookie(), kase.body);
-      // ① 先回她：200 ＋ 统一那一句（配置里的 `saleSuccess.message` ✓ 不新造 ✗）
-      assert.equal(res.status, 200, `${kase.chain}：填对了 ⇒ 200（先回她 ✓）`);
-      const html = await res.text();
-      assert.ok(html.includes(SCAN_PAGE.saleSuccess.message),
-        `${kase.chain}：成功页 = 配置里那一句统一文案 ✓`);
+      // ① 先回她：303 ＋ 统一 toast（2026-10-29 起没有成功页；文案 = `config/submitToast.js` ✓）
+      assertSubmitToast(res, `${kase.chain}：填对了 ⇒ 先回她`);
       // ② **后台被调度一次**（不是"看起来成功其实没排" ✗）——
       //    ⚠️ 这一刻**还没跑完**（写入口那 25ms 延迟）：它证明"真的排下去了" ✓
       //       （若被误拦 ⇒ 这里 `length === 0` ⇒ 红 ✓）

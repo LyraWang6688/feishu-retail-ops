@@ -17,7 +17,7 @@ test('路由只做分派：分支体已搬走（塞回即红）', () => {
   assert.match(index, /require\('\.\/handlers\/salesSubmit'\)/);
   assert.match(index, /return handleSubmitOrderOf\(\{/);
   const file = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'handlers', 'salesSubmit.js'), 'utf8');
-  for (const marker of ['buildWriteContext', 'sendPaymentStep', 'successReturnFields',
+  for (const marker of ['buildWriteContext', 'sendPaymentStep', 'redirectWithSubmitToast',
     'deferFunds: true', 'submitSale', 'payments: []']) {
     assert.ok(file.includes(marker), `salesSubmit handler 里必须能看到原分支用的 ${marker}`);
   }
