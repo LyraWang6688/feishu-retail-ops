@@ -445,7 +445,7 @@
 | `scan.sale.background_done` | 1 | src/config/scanWrite.js |
 | `scan.sale.background_failed` | 3 | src/config/alerts.js<br>src/config/scanWrite.js |
 | `scan.sale.background_queued` | 1 | src/config/scanWrite.js |
-| `scan.sale.draft_cleared` | 1 | src/config/scanWrite.js |
+| `scan.sale.draft_cleared` | 2 | src/config/scanWrite.js<br>src/services/scanDraftBoxService.js |
 | `scan.sale.interrupted_cleared` | 1 | src/config/scanWrite.js |
 | `scan.sale.interrupted_detected` | 2 | src/config/scanWrite.js<br>src/services/scanSessionService.js |
 | `scan.sale.line_added` | 1 | src/config/scanWrite.js |
@@ -579,7 +579,7 @@
 | `workbench.sales.delivery.job_finished` | 2 | src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.job_started` | 1 | src/services/salesDeliveryAsyncService.js |
 | `workbench.sales.delivery.read_timing` | 1 | src/services/salesDeliveryReadService.js |
-| `workbench.sales.orders.failed` | 2 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js |
+| `workbench.sales.orders.failed` | 3 | src/routes/workbench/sales.js<br>src/routes/workbenchSalesDelivery.js<br>src/routes/workbenchSalesDrafts.js |
 | `workbench.sales.orders.order_skipped` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.orders.read_retry` | 2 | src/services/salesDeliveryReadService.js<br>src/services/salesFollowupService.js |
 | `workbench.sales.payment.failed` | 2 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryPaymentService.js |
