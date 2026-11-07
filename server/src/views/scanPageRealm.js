@@ -167,7 +167,9 @@ const REALM_TEXTS = Object.freeze({
   labelSingleButton: '打开标签打印页 →',
   labelBatchButton: '批量打印（按条件挑货）→',
   // ── 销售（`from=sales`）：尺码**分两组** —— 有货 ⇒ 现货 / 其余 ⇒ 预订 ──────────
-  saleInStockHeading: '有货（样品 + 门盒）',
+  // ⭐ 2026-11-07（业务负责人截图口径）：销售页「有货」段只写「有货」——
+  //   去掉「（样品 + 门盒）」那串解释（分组口径不变：样品 + 门盒 ＞ 0 ⇒ 现货 ✓）。
+  saleInStockHeading: '有货',
   salePrepaidHeading: '现在没有（预订）',
   saleInStockTag: '现货',
   salePrepaidTag: '预订',
