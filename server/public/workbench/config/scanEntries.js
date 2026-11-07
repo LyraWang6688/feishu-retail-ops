@@ -4,7 +4,7 @@
  * ⚠️ **真源是服务端** `server/src/config/scanEntries.js`（业务负责人 2026-10-16 21:2x 逐字口径，
  *   见 `docs/scan-five-places-2026-10-16.md`）；本文件是它在浏览器里的**逐字镜像**：
  *   · 浏览器拿不到服务端 `require` 的 config ⇒ 本仓既有做法就是"**两端各一份 + 用例钉逐字相同**"
- *     （先例：`config/links.js` 的 `SCAN_APPLINK` 与 `config/scanPage.js` 的 `SCAN_NEXT.applink`
+ *     （先例：`config/scanPage.js` 的 `SCAN_NEXT.applink`
  *      有 `workbenchScanEntry.test.js` 钉着逐字相等 ✓）；
  *   · `test/scanFivePlaces.test.js` 的 **AC-5S3** 会把这两份**逐字对比**（改一边忘另一边 ⇒ 红 ✓）。
  *
