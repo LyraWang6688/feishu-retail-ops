@@ -299,12 +299,12 @@ const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 <legend class="size-group__legend">
 ${String(heading || '').trim() ? `<span class="size-group__title">${escapeHtml(heading)}</span>\n` : ''}<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
 </legend>
-<div class="size-chips">${items.length
-    ? items.map((item) => `<label class="size-chip">
+${items.length
+    ? `<div class="size-chips">${items.map((item) => `<label class="size-chip">
 <input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
 <span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
-</label>`).join('\n')
-    : `<span class="hint">${escapeHtml(empty)}</span>`}</div>
+</label>`).join('\n')}</div>`
+    : `<p class="hint">${escapeHtml(empty)}</p>`}
 </fieldset>`;
 
 /**
