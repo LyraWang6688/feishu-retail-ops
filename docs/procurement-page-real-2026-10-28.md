@@ -50,7 +50,7 @@ tab 切换保留当前会话已选数据；点「提交」才统一写入
 - **补货 + 上新同一张草稿**；切 tab / 刷新 / 关掉重开都保留；只有提交成功才清空；提交失败保留；
 - 同一 `product_record_id` + 尺码只留一行（重复来源数量相加，见 AC-P6）；
 - 提交前 0 写入业务表；点提交只发 1 次 POST；服务端同步校验（空单 / 尺码 / 数量 / 重复 / 20 货品 / 50 行）→ 通过后走既有链路；
-- 成功提示统一「已提交成功，数据会更新」（既有异步口径）；失败给人话、保留草稿；
+- 成功提示统一统一 toast 文案（`config/submitToast.js` 唯一真源，默认「数据提交成功，后台自动写入」）（既有异步口径）；失败给人话、保留草稿；
 - 客户端草稿持有稳定 `submitKey`（一次草稿一把，成功才换），服务端原样传给 `submitDraft` 做幂等重试；
 - 不新增服务端草稿表（草稿种子写进**既有** `data/scan_sessions/` 那个 store，与引擎同一容器）；
 - 不改退货 / 验收 / 标签打印 / 销售。
@@ -98,7 +98,11 @@ tab 切换保留当前会话已选数据；点「提交」才统一写入
   超过 20 货品 / 超过 50 行 / `submitKey` 缺失或非法 / 货品记录 ID 查不到。
 - **AC-P13 复用既有链路**：校验通过后只调 `multiItemOrderService.submitDraft`（其内部 `writers.purchase` → `PurchaseWebhookService.publishPurchaseRequest`）；
   **不新增第二条写库路径**（源码哨兵：本域不得直接 `gateway.create('purchaseOrderBatch'|'purchaseRequest')`）。
-- **AC-P14 异步成功口径**：HTTP 先回 `accepted:true` + 「已提交成功，数据会更新」；后台 `scheduleCustomRest` 跑 `submitDraft`；
+- **AC-P14 异步成功口径**（2026-11-08 统一到工作台 shared toast）：HTTP 先回 `accepted:true` +
+  `redirect_url`（由共享 `submitToastUrl()` 构造，文案唯一真源 `config/submitToast.js`，默认「数据提交成功，后台自动写入」）；
+  前端清完草稿后 `location.assign(redirect_url)` → 工作台 `shared/toast.js` 顶部弹统一 toast；
+  **失败时页面不跳**（400/502 + 人话 + 草稿保留，采购页自己的错误 toast 只用于错误）；
+  后台 `scheduleCustomRest` 跑 `submitDraft`；
   后台失败记 warn + 落会话 `last_error`（不假装成功），`submitKey` 原样透传（幂等重试同一把键）。
 - **AC-P15 幂等 submitKey**：同一 `submitKey` 重复 POST ⇒ 第二次返回 `reused:true`，**不再排后台、不再写一次**；
   草稿已 `submitted` 时直接返回复用结果。
@@ -193,7 +197,7 @@ server/src/routes/workbench/purchase.js                         只加 4 个采�
  → engine.validateDraft（同一套配置上限）
  → 把草稿种子写进既有 scan_sessions store（key = procurement:<submitKey>）
  → scheduleCustomRest(run = engine.submitDraft({submitKey}))
- → 立刻返回 accepted（「已提交成功，数据会更新」）
+ → 立刻返回 accepted + redirect_url（统一 toast 的地址：`submitToastUrl()`；文案唯一真源 `config/submitToast.js`）
  → 后台：submitDraft → planSubmission → publishPurchaseRequest（既有采购批次 + 明细）
 ```
 
@@ -300,7 +304,7 @@ git diff --check → 干净
 | 供应 | 补货/上新 | 页面计算 | 逐货品 + 尺码 + 采购数量 | 提交 payload items | 不展示（payload） |
 | 供应 | 补货/上新 | 货品信息 | 记录ID | payload 的 product_record_id | 不展示（payload） |
 | 供应 | 补货/上新 | 货品信息 | 供应商 | 批次供应商分组（既有 supplierSplit） | 不展示（payload） |
-| 供应 | 补货/上新 | 页面计算 | 提交按钮 / 成功提示 / 失败提示 | 「已提交成功，数据会更新」/ 人话错误 | 底部提交条 |
+| 供应 | 补货/上新 | 页面计算 | 提交按钮 / 成功提示 / 失败提示 | 统一 toast 文案（`config/submitToast.js` 唯一真源，默认「数据提交成功，后台自动写入」）/ 人话错误 | 底部提交条 |
 | 供应 | 补货/上新 | 页面计算 | 幂等键 submitKey | 一次草稿一把；草稿存 localStorage，键含 open_id | 不展示（payload） |
 
 ---
@@ -354,7 +358,7 @@ git diff --check → 干净
   点「提交」才统一写入；提交前零写库。
 - 数据：GET /api/workbench/procurement/replenish | new-products；提交 POST .../submit（扫一扫接口本轮不做）。
 - 提交复用既有链路：multiItemOrderService.submitDraft → publishPurchaseRequest（不新建草稿表/写库路径）；
-  后台用 purchaseWriteBackgroundService.scheduleCustomRest；HTTP 先回「已提交成功，数据会更新」。
+  后台用 purchaseWriteBackgroundService.scheduleCustomRest；HTTP 先回统一 toast 文案（`config/submitToast.js` 唯一真源，默认「数据提交成功，后台自动写入」）。
 - 遗留（非本轮）：扫一扫整块（扫码选尺码加入同一草稿、重复扫码口径）下一轮单独处理。
 ```
 

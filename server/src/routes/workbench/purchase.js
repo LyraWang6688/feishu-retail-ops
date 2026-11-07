@@ -22,6 +22,7 @@ const { logError, logWarn } = require('../../utils/logger');
 //     也自动带上父 router 的准入闸门 / no-store / ui-tap 结果事件（不新开鉴权）。
 //   🔴 提交走既有 `multiItemOrderService` → `publishPurchaseRequest`（不新建写库路径）。
 const { PROCUREMENT_PAGE } = require('../../config/procurementPage');
+const { submitToastUrl } = require('../../utils/submitToast');
 const { createProcurementPageService } = require('../../services/procurementPageService');
 const { createProcurementPageSubmitService } = require('../../services/procurementPageSubmitService');
 const { createScanWriteService } = require('../../services/scanWriteService');
@@ -352,8 +353,15 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         const status = result.code === 'behavior_missing' ? 502 : 400;
         return res.status(status).json({ success: false, code: result.code, error: result.message });
       }
+      // ⭐ 2026-11-08（A 方案）：成功回执统一成「回工作台 + shared/toast.js」——
+      //   地址由共享的 `submitToastUrl()` 构造（文案同 `config/submitToast.js` 唯一真源）；
+      //   前端清完草稿后 `location.assign(redirect_url)`，工作台顶部弹统一 toast。
       return res.json({
-        success: true, accepted: true, reused: result.reused === true, message: result.message,
+        success: true,
+        accepted: true,
+        reused: result.reused === true,
+        message: result.message,
+        redirect_url: submitToastUrl({}),
       });
     } catch (error) {
       logError('workbench.procurement.submit.failed', { request_id: req.requestId, error: error.message });

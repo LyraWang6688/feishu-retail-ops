@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const {
   config, makeEnv, itemsOf, productRecord, SUBMIT_KEY,
 } = require('./support/procurementSubmitEnv');
+const { SUBMIT_TOAST } = require('../src/config/submitToast');
 
 test('AC-P12 submitKey 非法 ⇒ 400 人话 + 零写入 + 零后台', async () => {
   const env = makeEnv();
@@ -74,12 +75,30 @@ test('AC-P12 货品记录 ID 查不到 ⇒ product_missing（人话）+ 零写�
   assert.equal(env.scheduled.length, 0);
 });
 
+test('2026-11-08 后台写成功后 ⇒ 回填「销售明细.采购明细」（taskId 与引擎一致）', async () => {
+  const env = makeEnv();
+  const result = await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA']) });
+  assert.equal(result.ok, true);
+  await env.scheduled[0].run();
+  assert.equal(env.backfillCalls.length, 1, '采购写成功后回填一次');
+  assert.equal(env.backfillCalls[0].taskId, `scan_replenish_${SUBMIT_KEY}`);
+});
+
+test('2026-11-08 后台写失败 ⇒ 不回填（采购事实没落地，不能假装已报货）', async () => {
+  const env = makeEnv({ purchase: async () => { throw new Error('publish failed'); } });
+  const result = await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA']) });
+  assert.equal(result.ok, true);
+  const backgroundResult = await env.scheduled[0].run();
+  assert.equal(backgroundResult.ok, false);
+  assert.equal(env.backfillCalls.length, 0, '后台失败 ⇒ 不回填');
+});
+
 test('AC-P13/P14 成功：种子草稿 + 只排一次后台；后台跑 = 一次既有 publishPurchaseRequest', async () => {
   const env = makeEnv();
   const result = await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA']) });
   assert.equal(result.ok, true);
   assert.equal(result.accepted, true);
-  assert.equal(result.message, config.texts.submitAccepted);
+  assert.equal(result.message, SUBMIT_TOAST.text);
   const draft = env.draftOf();
   assert.equal(draft.status, 'draft');
   assert.equal(draft.submit_key, SUBMIT_KEY);

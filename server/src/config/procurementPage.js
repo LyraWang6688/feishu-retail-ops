@@ -110,6 +110,8 @@ const buildProcurementPageConfig = (env = process.env) => {
     events: Object.freeze({
       replenishLoaded: readString(env, 'PROCUREMENT_EVENT_REPLENISH', 'procurement.page.replenish_loaded'),
       newProductsLoaded: readString(env, 'PROCUREMENT_EVENT_NEW_PRODUCTS', 'procurement.page.new_products_loaded'),
+      salesLinkBackfilled: readString(env, 'PROCUREMENT_EVENT_SALES_LINK_BACKFILLED', 'procurement.page.sales_link_backfilled'),
+      salesLinkBackfillFailed: readString(env, 'PROCUREMENT_EVENT_SALES_LINK_FAILED', 'procurement.page.sales_link_backfill_failed'),
       tradeTypeUnknown: readString(env, 'PROCUREMENT_EVENT_TRADE_TYPE_UNKNOWN', 'procurement.page.trade_type_unknown'),
       submitAccepted: readString(env, 'PROCUREMENT_EVENT_SUBMIT_ACCEPTED', 'procurement.page.submit_accepted'),
       submitRejected: readString(env, 'PROCUREMENT_EVENT_SUBMIT_REJECTED', 'procurement.page.submit_rejected'),
@@ -117,7 +119,6 @@ const buildProcurementPageConfig = (env = process.env) => {
     }),
     // 用户可见文案（服务端只出「人话错误 / 成功那一句」；页面标题类文案在前端 config）
     texts: Object.freeze({
-      submitAccepted: readString(env, 'PROCUREMENT_TEXT_SUBMITTED', '已提交成功，数据会更新'),
       submitFailed: readString(env, 'PROCUREMENT_TEXT_SUBMIT_FAILED', '提交没成功，请稍后重试。'),
       submitKeyInvalid: readString(env, 'PROCUREMENT_TEXT_SUBMIT_KEY', '这张采购单的提交标识不对，请刷新页面后重试。'),
       itemInvalid: readString(env, 'PROCUREMENT_TEXT_ITEM_INVALID', '有一件货品读不到，请刷新页面后重试。'),

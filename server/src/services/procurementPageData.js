@@ -93,6 +93,9 @@ const normalizeSalesRow = (record, fields) => {
     soldAtMs: soldAt,
     // 交易类型单元格原样带着（编码解析交给调用方注入的判据）
     tradeTypeCell: fieldsOf[fields.tradeType],
+    // ⭐ 2026-11-08：这条销售明细是否**已经被补货报过**（关联到采购明细记录）。
+    //   读侧据此排除（默认），避免 3 天窗口重叠导致重复报货。
+    purchaseDetailIds: linkedIdsOf(fieldsOf[fields.purchaseDetail]),
   };
 };
 
@@ -117,6 +120,9 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
     // 防御性再判一次（飞书 filter 已按库存=0 筛过；这里保证"公式返回非 0 / 空"绝不计入）
     if (row.stock !== 0) { skippedRows += 1; continue; }
     if (!(row.soldAt >= range.start && row.soldAt < range.end)) { skippedRows += 1; continue; }
+    // ⭐ 2026-11-08：**已报过货的销售明细不再出现在补货里**（业务负责人新增「销售明细.采购明细」单向关联）。
+    //   ⚠️ 业务负责人明确：**不要开关**，就是这个功能 ⇒ 无条件排除（不做配置退化）。
+    if (row.purchaseDetailIds.length > 0) { skippedRows += 1; continue; }
     const code = tradeTypeCodeOf(row.tradeTypeCell);
     if (code !== roles.spot && code !== roles.prepaid) { skippedRows += 1; continue; }
     const group = groupsByKey.get(row.productRecordId) || { key: row.productRecordId, sizes: new Map() };

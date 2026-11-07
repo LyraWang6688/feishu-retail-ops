@@ -17,6 +17,8 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 
 const { createWorkbenchPurchaseRoutes } = require('../src/routes/workbench/purchase');
 const { PROCUREMENT_PAGE } = require('../src/config/procurementPage');
+const { SUBMIT_TOAST } = require('../src/config/submitToast');
+const { submitToastUrl } = require('../src/utils/submitToast');
 
 const read = (relative) => fs.readFileSync(path.join(__dirname, '..', relative), 'utf8');
 
@@ -27,7 +29,7 @@ const makeApp = ({ page, submit } = {}) => {
     async loadNewProducts(input) { calls.page.push(['newProducts', input]); return { range: {}, stats: {}, groups: [] }; },
   };
   const fakeSubmit = {
-    async submit(input) { calls.submit.push(input); return { ok: true, reused: false, message: PROCUREMENT_PAGE.texts.submitAccepted }; },
+    async submit(input) { calls.submit.push(input); return { ok: true, reused: false, message: SUBMIT_TOAST.text }; },
   };
   const app = express();
   app.use(express.json());
@@ -112,7 +114,8 @@ test('AC-P10/P14 POST /procurement/submit：通过 ⇒ accepted + 统一文案�
     assert.equal(status, 200);
     assert.equal(body.success, true);
     assert.equal(body.accepted, true);
-    assert.equal(body.message, PROCUREMENT_PAGE.texts.submitAccepted);
+    assert.equal(body.message, SUBMIT_TOAST.text);
+    assert.equal(body.redirect_url, submitToastUrl({}), '成功回执要带共享的跳转地址（工作台 + 统一 toast）');
     assert.equal(calls.submit[0].openId, 'ou_test');
     assert.equal(calls.submit[0].submitKey, 'procurement_test_key_0001');
     assert.equal(calls.submit[0].requestId, 'req_test');

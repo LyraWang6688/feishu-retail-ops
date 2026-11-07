@@ -6,7 +6,7 @@
  *   · 上新：今天新增货品；卡片「货号 · 颜色」+「今日 HH:mm 新增 · 供应商」；普通码默认 1 / 特殊码默认 0 折叠；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
  *   · 扫一扫：**本轮只占位/禁用**（不扫码、不开会话、不提交）；
- *   · 提交：复用既有采购链路；成功统一「已提交成功，数据会更新」。
+ *   · 提交：复用既有采购链路；成功后端返回**统一异步 toast 文案**（`config/submitToast.js` 唯一真源）。
  *
  * ⚠️ 渲染层不写死中文 / 数字 / 端点；颜色一律走 `styles/tokens.css` 的 token（本页 CSS 不写 hex/rgb）。
  */
@@ -36,7 +36,6 @@ export const PROCUREMENT_UI = Object.freeze({
     categoryMissing: '这个货品的类别还没填（A 男鞋 / B 女鞋），先补类别再采购。',
     submitting: '提交中…',
     submit: '提交',
-    submitted: '已提交成功，数据会更新',
     submitFailed: '提交没成功，请稍后重试。',
     refresh: '刷新',
     refreshing: '刷新中…',

@@ -27,9 +27,11 @@ const { resolveMultiItemOrderConfig } = require('../config/multiItemOrder');
 const { createPurchaseWriteBackgroundService } = require('./purchaseWriteBackgroundService');
 const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { SCAN_WRITE } = require('../config/scanWrite');
+const { SUBMIT_TOAST } = require('../config/submitToast');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { createProcurementPurchaseWriters } = require('./procurementPurchaseWriters');
 const { createProductEnricher } = require('./procurementProductEnricher');
+const { createProcurementSalesLinkBackfill } = require('./procurementSalesLinkBackfill');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const reject = (code, message) => ({ ok: false, code, message });
@@ -57,6 +59,12 @@ const createProcurementPageSubmitService = (options = {}) => {
   const engine = options.engine || createMultiItemOrderService({
     sessions, config: orderConfig, writers,
   });
+  // ⭐ 2026-11-08：采购单写成功后，把「这次报过的销售明细」关联到本次生成的采购明细
+  //   （按「编号+尺码」匹配；读侧据此排除已报货行）。失败只记日志，不影响采购事实。
+  //   `options.salesLinkBackfill === false` = 用例/特殊情况显式关掉。
+  const salesLinkBackfill = options.salesLinkBackfill === false
+    ? null
+    : (options.salesLinkBackfill || createProcurementSalesLinkBackfill({ gateway, schema, config }));
 
   const submitKeyOf = (raw) => {
     const text = String(raw ?? '').trim();
@@ -114,7 +122,7 @@ const createProcurementPageSubmitService = (options = {}) => {
       info(config.events.submitAccepted, {
         request_id: requestId, open_id: String(openId || ''), submit_key: submitKey, reused: true,
       });
-      return { ok: true, accepted: true, reused: true, message: config.texts.submitAccepted };
+      return { ok: true, accepted: true, reused: true, message: SUBMIT_TOAST.text };
     }
 
     const built = await buildItems(items);
@@ -167,10 +175,18 @@ const createProcurementPageSubmitService = (options = {}) => {
       requestId,
       submitKey,
       context: { orderKey },
-      run: () => engine.submitDraft({
-        openId, chain: chainConfig.id, orderKey, submitKey, requestId,
-        behavior: { recordId: behavior.recordId || '', kind: chainConfig.behaviorCode || '' },
-      }),
+      run: async () => {
+        const result = await engine.submitDraft({
+          openId, chain: chainConfig.id, orderKey, submitKey, requestId,
+          behavior: { recordId: behavior.recordId || '', kind: chainConfig.behaviorCode || '' },
+        });
+        // 采购单写成功后回填「销售明细.采购明细」（只影响补货读侧；失败不影响采购事实）
+        if (result?.ok === true && salesLinkBackfill) {
+          const taskId = `${chainConfig.taskIdPrefix}_${engine.sanitizeKey(submitKey)}`;
+          await salesLinkBackfill.run({ taskId }).catch(() => undefined);
+        }
+        return result;
+      },
     });
     info(config.events.submitAccepted, {
       request_id: requestId,
@@ -180,7 +196,7 @@ const createProcurementPageSubmitService = (options = {}) => {
       lines: checked.normalized.lineCount,
       reused: false,
     });
-    return { ok: true, accepted: true, reused: false, message: config.texts.submitAccepted };
+    return { ok: true, accepted: true, reused: false, message: SUBMIT_TOAST.text };
   };
 
   return { submit, submitKeyOf };

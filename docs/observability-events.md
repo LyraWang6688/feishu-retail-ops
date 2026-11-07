@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **458** 个事件。按前缀分组：
+共 **460** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -216,6 +216,8 @@
 | --- | --- | --- |
 | `procurement.page.new_products_loaded` | 1 | src/config/procurementPage.js |
 | `procurement.page.replenish_loaded` | 1 | src/config/procurementPage.js |
+| `procurement.page.sales_link_backfill_failed` | 1 | src/config/procurementPage.js |
+| `procurement.page.sales_link_backfilled` | 1 | src/config/procurementPage.js |
 | `procurement.page.submit_accepted` | 1 | src/config/procurementPage.js |
 | `procurement.page.submit_rejected` | 1 | src/config/procurementPage.js |
 | `procurement.page.trade_type_unknown` | 1 | src/config/procurementPage.js |
