@@ -48,6 +48,18 @@ const mockApi = async (page, { orders = [] } = {}) => {
         excluded: { byFulfillment: {}, notPosted: 0, outOfWindow: 0, missingSalesDate: 0 },
       }));
     }
+    if (path === '/api/workbench/sales/after-sales/payment-methods') {
+      return route.fulfill(json({ success: true, items: ['现金', '微信扫码'] }));
+    }
+    if (path === '/api/workbench/sales/after-sales/submit' && route.request().method() === 'POST') {
+      // 表单 POST ⇒ 服务端入队后 303 回售后页并带统一 toast（e2e 里直接模拟那一跳）
+      const toast = encodeURIComponent('数据提交成功，后台自动写入');
+      return route.fulfill({
+        status: 303,
+        headers: { location: `/workbench/after-sales.html?productRecordId=p1&toast=${toast}&submitted=1` },
+        body: '',
+      });
+    }
     if (path === '/api/workbench/sales/after-sales/stock-sizes') {
       // 换尺码：与销售扫码页同一套视图模型（现货 / 预订 / 特殊码）
       return route.fulfill(json({
@@ -171,11 +183,16 @@ test('售后扫一扫落地页：选哪条卡片，那条卡片就变成三个�
   await expect(page.locator('[data-as-method]')).toHaveCount(0);
   await page.locator('[data-as-money-mode="refund"]').click();
   await expect(page.locator('[data-as-method]')).toHaveCount(1);
-  await page.locator('[data-as-money-mode="retained"]').click();
-  await expect(page.locator('[data-as-method]')).toHaveCount(0);
-  // 点遮罩（左上角，dialog 之外）关闭弹窗
-  await page.locator('[data-as-modal-close]').first().click({ position: { x: 8, y: 8 } });
-  await expect(page.locator('[data-as-modal]')).toBeHidden();
+  // 退款方式来自「支付方式管理」接口（不写死）
+  await expect(page.locator('[data-as-method] option')).toHaveText(['请选择', '现金', '微信扫码']);
+  await page.locator('[data-as-method]').selectOption('现金');
+  // 提交退货表单 ⇒ 303 回售后页 + 统一 toast「数据提交成功，后台自动写入」
+  await page.locator('[data-as-return-form] button[type="submit"]').click();
+  // toast 显示后前端会清掉 URL 上的 toast 参数（刷新不重复弹）⇒ 这里等 toast 本体 + submitted 标记
+  await expect(page.locator('.workbench-toast')).toContainText('数据提交成功，后台自动写入');
+  await expect(page).toHaveURL(/submitted=1/);
+  // 提交后页面已刷新（候选重新加载、无选中）⇒ 再选一条继续测换货
+  await page.locator('.candidate-card').first().click();
 
   // 点击「换货」→ 换尺码 ⇒ 尺码按销售扫码页口径分三组（现货 / 预订 / 特殊码折叠）
   await page.locator('.candidate-action').nth(0).click();

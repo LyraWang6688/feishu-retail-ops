@@ -77,6 +77,11 @@ class AfterSalesScanService {
     });
   }
 
+  /** 写库成功后作废读模型缓存（页面刷新候选时立刻看到最新状态）。 */
+  invalidateCache() {
+    try { this.cache.clear(); } catch { /* 缓存层坏掉不影响主流程 */ }
+  }
+
   readOptions(tableKey) {
     const fieldNames = fieldNamesOf(this.gateway, tableKey);
     return fieldNames ? { fieldNames } : {};
