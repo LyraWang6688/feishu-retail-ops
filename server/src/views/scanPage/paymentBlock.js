@@ -297,8 +297,7 @@ ${hiddenField(fields.submitKey, write.saleKey)}
 const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 <fieldset class="size-group" data-stock-group="${escapeHtml(id)}">
 <legend class="size-group__legend">
-<span class="size-group__title">${escapeHtml(heading)}</span>
-<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
+${String(heading || '').trim() ? `<span class="size-group__title">${escapeHtml(heading)}</span>\n` : ''}<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
 </legend>
 <div class="size-chips">${items.length
     ? items.map((item) => `<label class="size-chip">
