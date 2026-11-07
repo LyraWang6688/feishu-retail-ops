@@ -403,7 +403,8 @@ test('AC-RT3 ⭐ 一个都不勾 ⇒ **前端就拦住**（`preventDefault` + �
     '人话来自配置（`config/scanPage.js`）✓');
   assert.equal(result.submitButton.disabled, false, '被拦住时**不许**把按钮置灰（她改一下就能再点 ✓）');
   // ⚠️ 后端那道**仍在**（两层都有 ✓）：源码哨兵 —— 写服务里的 return_empty 一个字没动
-  const writeSrc = fs.readFileSync(path.join(__dirname, '../src/services/scanWriteService.js'), 'utf8');
+  const writeSrc = fs.readFileSync(path.join(__dirname, '../src/services/scanWriteService.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '../src/services/scanWrite/purchase.js'), 'utf8');
   assert.match(writeSrc, /return_empty/, '后端那道 `return_empty` 不许删（前端拦是"更早"、不是"替代"✓）');
 });
 
