@@ -110,6 +110,8 @@ class AfterSalesReturnService {
       const detailed = listed?.detailed || listed?.items || [];
       const hit = detailed.find((item) => item.name === paymentMethod && item.recordId);
       if (!hit) throw badRequest(this.texts.unknownPaymentMethod);
+      // ⭐ 「可用于退款」列（「支付方式管理」可选列）：没勾的方式不许拿来做直接退款。
+      if (hit.refundable === false) throw badRequest(this.texts.methodNotRefundable);
       method = hit;
     }
     return {
