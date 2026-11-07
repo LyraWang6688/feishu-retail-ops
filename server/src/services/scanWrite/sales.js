@@ -30,48 +30,17 @@ const createScanWriteSales = ({
   waitForPendingSaleBackgrounds,
 }) => {
   const submitSale = async ({
+    // 参数与金额/支付口径的逐字说明见 docs/scan-write-sales.md（为文件大小门禁搬出，未改逻辑）
     openId, submitKey, payments: paymentRows = [], lineAmounts = [],
     paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null, timing = null,
-    // ⭐ 2026-10-18：资金页赠品（非空 ⇒ 覆盖本单每一行的 gift；mergeGiftTexts 会去重成一条）
     orderGift = '',
-    // ⭐⭐ 2026-10-15（⑰ 异步）：`noDefer` = "这一跑就是**后台那一跑**"（不再往后丢 ✗）
     noDefer = false,
-    // ⭐⭐ 2026-10-15（task-19 ② · Lead 批准）：**可选**的会话键 ——
-    //   · 不传 ⇒ 会话按 `openId` 分 ⇒ **工作台 / 扫码两条既有链路一个字都不变** ✓；
-    //   · 传了 ⇒ 会话（草稿 / 幂等 completed / 进度）按它分，而 `openId` **只**当操作人写 User 字段 ✓
-    //     （「配品销售」那条入口：一行 = 一个会话 ⇒ 第 2 条记录不会被上一单的结果吸收 ✓）
     sessionKey = '',
-    // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」· 阶段二 · 冻结件成对迁移 · Lead 批准）：
-    //   `deferFunds === true` = **这一跑只写「货」那一半**（主表总金额/赠品/交易类型 ＋ 明细 ＋ 销售状态）：
-    //   🔴 **不写收款明细**（连那条【未收款】也不写）· **不置「资金状态」**（停在「未写入」）·
-    //       **不扣库存** · **不记 `completed`**（改记会话标记 `goods_created`）。
-    //   钱由**资金页那一跑**（同一个 `salesEntryRecordId`、同一把 `submitKey` ⇒ 走既有续写路径）收口 ✓。
-    //   ⚠️ **显式布尔**（下面 `deferFunds === true`）：不传 / 传 `false` ⇒ 每一个字节与今天逐字一致 ✗；
-    //   ⚠️ 货那一跑**带收款**（`payments` 里有金额行）⇒ **当场抛**（一个字都不写表）。
-    //   ⚠️ 那个开关（`SCAN_MONEY_SPLIT_ENABLED`）**不在本文件**：本文件不认识它 ✗（调用方决定走不走这条路）。
     deferFunds = false,
-    // ⭐⭐ 2026-10-18（第 4 步提速 · 业务口径：**货品页只建单、资金页一次写完**）：
-    //   · `masterOnly === true` = **货品页那一屏**：只建销售主表 + 单号
-    //     （「写入状态=未完成」由建单函数 `salesEntryService` 写）；
-    //     🔴 **明细 / 收款 / 库存流水一个字都不写**（连 `_confirm` 都不进）。
-    //   · `oneShot === true` = **资金页那一屏**：明细 / 收款走批量口 → 库存走批量扣 →
-    //     履约=已交付 → **一次收口**写 总金额 + 赠品 + 写入状态。
-    //   ⚠️ 两个都是**显式布尔**（`=== true`）：不传 / 传 false ⇒ 每个字节与改前逐字一致。
     masterOnly = false,
     oneShot = false,
   }, logOptions = {}) => {
-    // ⭐⭐ 2026-10-15（⑨ 异步）：**先把"后台那一跑"的入参固化在这里** ——
-    //   ⚠️ 必须在函数**最顶上**取：函数体后面有同名局部（`paidAmount` / `payments` …），
-    //     在 try 里引用它们会撞 **TDZ**（`Cannot access 'paidAmount' before initialization` ✗
-    //     —— 我在用例里真撞到过一次，所以固化点放在这里 ✓ 不在闸门那一行现取 ✗）。
-    //   🔴 入参形状与"她点按钮那一次"**逐字相同**（同一把 `submitKey` ⇒ 走既有续写路径 ✓）
-    //   ⚠️ `sessionKey` 也在里面：后台那一跑必须落回**同一个会话**（否则会另起一单 ✗）
-    // ⭐⭐ 2026-10-16（task-62）：**显式布尔**（`=== true`）—— 与业务层
-    //   `salesOrderService._confirm` 里那条闸门**同一个口径**（不写 truthy 判断 ✗：
-    //   那一改会把 `undefined` 之外的东西也当成"分离"）。
     const fundsDeferred = deferFunds === true;
-    // ⭐⭐ 2026-10-18（第 4 步提速）：两个**显式布尔**的"写计划"开关（见上面入参注释）。
-    //   与 `fundsDeferred` 三选一（同时传 ⇒ 调用方契约错 ⇒ 当场抛，**一个字都不写表**）。
     const goodsOnly = masterOnly === true;
     const singlePass = oneShot === true;
     if ((goodsOnly && fundsDeferred) || (singlePass && fundsDeferred) || (goodsOnly && singlePass)) {
@@ -80,17 +49,8 @@ const createScanWriteSales = ({
     const saleRestInput = {
       openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount, sessionKey,
       ...(String(orderGift || '').trim() ? { orderGift: String(orderGift).trim() } : {}),
-      // ⭐⭐ 2026-10-16（task-62）：**后台那一跑必须带着同一个 `deferFunds`** ✗ ——
-      //   否则"货那一跑"转了后台之后，后台那一跑会把**钱**也写了（一条【未收款】＝钱那一半的结论）
-      //   ⇒ 判据 AC-MSD4 真红（去掉这一行 ⇒ 红 ✓）。
-      //   ⚠️ 关着（不传 / `false`）时**这个键根本不出现** ⇒ 后台那一跑的入参逐字同今天 ✓
       ...(fundsDeferred ? { deferFunds: true } : {}),
     };
-    // ⭐⭐ 2026-10-12：**分阶段耗时**（业务负责人真机被卡住 / 收过 504 网关超时）——
-    //    `timing` 是一个**可选出参**（与 `scanPageService.lookup` 那条 `timing` 同一套约定）：
-    //    路由拿它去打**一条** `scan.sale.timing` 汇总日志，"卡在哪一步"一眼看得出。
-    //    🔴 它**只读时间**：不进 `input`、不影响任何判据与写入。
-    // ⚠️ 会话身份 = `sessionKeyOf(openId, sessionKey)`（不传 sessionKey ⇒ 就是 openId ⇒ 老路不变 ✓）
     const sessionId = sessionKeyOf(openId, sessionKey);
     const enqueuedAt = Date.now();
     return queue.run(`sale:${sessionId}`, async () => {
@@ -103,20 +63,10 @@ const createScanWriteSales = ({
       return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
     }
     let current = await sessions.get(sessionId);
-    // 会话还没建（她扫开就看、什么都没加过）：页面上那把键就是**第 1 轮**的键，
-    // 这里把会话建出来即可对上 —— 否则她第一次提交会被判成"页面过期"，莫名其妙。
     if (!current) current = await sessions.ensure(sessionId);
     const key = String(submitKey || '').trim();
     let sale = current.sale || {};
     let completed = sale.completed || [];
-    // 🔴🔴 2026-10-12 **真机 bug 修复**（她的现场：页面 200、一提交就 400，刷新三遍都没用）：
-    //    改前这里是 `if (current.expired) return fail('session_expired')` —— **过期就拒，从不续上**，
-    //    而页面渲染走 `sessions.get()`（只读）⇒ 页面照旧打得开 ⇒ **死循环**。
-    //    ⇒ 现在：**先认幂等**（下面 ①，已提交过的键照样把结果还给她，过期也一样），
-    //      过期则调 `sessions.revive()` **续上这一份会话**（草稿 / 已落盘的主表 record_id 全保留）
-    //      并**采纳她带来的那把键** —— 既不 400，也不丢东西、更不会重复建单。
-    //    ① 这一把键已经提交过 ⇒ **把上一次的结果还给她**（连点第二次走的就是这里）。
-    //    ⚠️ 这一步必须在"过期检查"**之前**：重放不是"新的一单"，与过不过期无关。
     const done = completed.find((item) => item.key === key);
     if (done) {
       logInfo(config.events.saleReused, {
@@ -134,7 +84,6 @@ const createScanWriteSales = ({
         paid_amount: done.paid_amount,
       };
     }
-    // ⭐ 过期 ⇒ **续上**（保留草稿与已落盘的主表 record_id），并把她的键采纳为这一轮的键
     if (current.expired) {
       logInfo(config.events.sessionExpired, {
         session_id: current.session_id, open_id: String(openId || ''), reason: 'revived_on_submit',
@@ -144,7 +93,6 @@ const createScanWriteSales = ({
       sale = current.sale || {};
       completed = sale.completed || [];
     }
-    // ② 键对不上：多半是"上一单提交成功后这一页还开着"⇒ 还给她上一单的结果，**不写第二遍**。
     if (sale.key !== key) {
       const last = completed[completed.length - 1];
       if (last) {
@@ -164,9 +112,6 @@ const createScanWriteSales = ({
           paid_amount: last.paid_amount,
         };
       }
-      // ⭐ 2026-10-12：**没有任何已提交记录、键却对不上** ⇒ 说明她手上那一页来自更早的一轮
-      //    （会话被轮换过 / 刚续上）。这时**采纳她带来的键**继续走，而不是回"过期、请刷新"
-      //    —— 那种死循环正是这次要修的（她照着刷了三遍都没用）。
       logInfo(config.events.saleReused, {
         session_id: current.session_id, submit_key: key, adopted: true,
         session_key: sale.key, request_id: requestId,
@@ -174,14 +119,6 @@ const createScanWriteSales = ({
       current = await sessions.revive(sessionId, { submitKey: key, flow: 'sale' });
       sale = current.sale || {};
     }
-    // ⭐⭐ 2026-10-12（她的意见：**一单一笔居多**）：「选尺码 + 提交」= **两下**就是一张单。
-    //    她在尺码区选中的那一双**跟着这次提交一起加进本单**（`pendingLine`）。
-    //    ⚠️ 三个约束，缺一不可：
-    //      ① **只在本单还是空的时候**生效 —— 多笔必须显式点【➕ 还要加一双】
-    //         （否则"选中的那一双"和"本单已有的几双"会算成什么，她和我都说不清）；
-    //      ② **放在幂等/键的分支之后** —— 重放（已经提交过的那把键）在上面就 return 了，
-    //         绝不会往**新一轮**的草稿里塞一行幽灵（本单条会显示多一双，那是真 bug）；
-    //      ③ 校验与加单走**同一个** `sessions.addLine`（只动本地会话、不碰业务表）。
     if (pendingLine && String(pendingLine.size || '').trim() && !(sale.lines || []).length) {
       const size = positiveInteger(pendingLine.size);
       if (size === null) {
@@ -217,7 +154,6 @@ const createScanWriteSales = ({
       });
     }
     const lines = sale.lines || [];
-    // ⭐ 2026-10-18：资金页赠品覆盖（整单一条；没有就保留销售页那行自己的 gift）
     if (String(orderGift || '').trim()) {
       for (const line of lines) line.gift = String(orderGift).trim();
     }
@@ -225,10 +161,6 @@ const createScanWriteSales = ({
       return fail({ code: 'session_empty', message: texts.sessionEmptyBody, requestId });
     }
 
-    // ── ① 每件实收（**总单层那一排输入框**；没带这一项就用会话里已经记下的值）────────
-    //    ⚠️ 这一项**先落回本地会话**（只动 `data/scan_sessions/` 那一份草稿，**不碰业务表**）：
-    //       · 差额页要把她刚填的数回显出来（不用重打）；
-    //       · "写了一半崩掉"的**重试**要接着同一份草稿写（与 `master_record_id` 同一个道理）。
     const postedLineAmounts = amountList(lineAmounts);
     const hasPostedLineAmounts = postedLineAmounts.length > 0;
     const resolvedLines = [];
