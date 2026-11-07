@@ -1,3 +1,4 @@
+const { assertSubmitToast } = require('./support/submitToastAssert');
 require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径读 routes/scanPage.js'重定向到聚合文本 ✓（断言不动 ✓）
 /**
  * task-59「一单多货品 · **路由半**」的**反向哨兵 + 运行时判据**（本文件只加，不改既有 13 条 ✗）。
@@ -245,8 +246,7 @@ test('AC-MIRW-1 ⭐⭐ 分组 = 2 ⇒ 引擎被调，且**首件**拿到了本�
 
   await withServer(formApp({ writeService, engine, background }), async (base) => {
     const response = await postForm(base, replenishBody({ items: [FIRST, SECOND] }));
-    assert.equal(response.status, 200, '成功页 200（引擎那一路 ✓）');
-    assert.match(await response.text(), /^<html>OK /, '成功页复用既有那一个出口 ✓');
+    assertSubmitToast(response, '引擎那一路的成功回执（统一 toast ✓）');
 
     assert.deepEqual(callsOf(engine, 'openDraft').length, 1, '引擎：开草稿 **1** 次 ✓');
     const added = callsOf(engine, 'addItem');
@@ -275,10 +275,10 @@ test('AC-MIRW-2 ⭐⭐ 单货品（没有 `multi_items` / 只有 1 组）⇒ 老
   await withServer(formApp({ writeService, engine, background }), async (base) => {
     // ① 页面上**根本没有**那个字段（开关关 / 她只扫一款就是今天这个样子 ✓）
     const withoutField = await postForm(base, replenishBody({ items: null }));
-    assert.equal(withoutField.status, 200);
+    assertSubmitToast(withoutField, '没有多货品字段 ⇒ 老路径回执');
     // ② 旧页面残留的那个字段**只有首件**（渲染半逐字就是这么渲的 ✓）
     const withOneGroup = await postForm(base, replenishBody({ items: [FIRST] }));
-    assert.equal(withOneGroup.status, 200);
+    assertSubmitToast(withOneGroup, '只有首件 ⇒ 老路径回执');
 
     assert.deepEqual(engine.calls, [], '🔴 `≤1` 组 ⇒ 引擎 **0 次**（分流写成 `>= 1` ⇒ 这里红 ✓）');
     assert.equal(background.calls.length, 2, '🔴 两次都走**老路径**（先排后台 ⇒ 她自己看到成功页 ✓）');
@@ -348,7 +348,7 @@ test('AC-MIRW-5 ⭐ 退货 · 分组 2：金额写进草稿 `order_amount`；空
   const engine = makeEngine({ sessions: writeService.sessions });
   await withServer(formApp({ writeService, engine, background: makeBackground() }), async (base) => {
     const response = await postForm(base, returnBody({ amount: '399' }));
-    assert.equal(response.status, 200);
+    assertSubmitToast(response, '退货多货 ⇒ 统一回执');
     assert.equal(callsOf(engine, 'submitDraft').length, 1, '引擎提交 1 次 ✓');
     const sessionId = writeService.idOf(OPEN_ID);
     const session = await writeService.sessions.store.get(sessionId);

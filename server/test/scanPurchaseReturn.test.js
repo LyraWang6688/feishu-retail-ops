@@ -1,3 +1,4 @@
+const { assertSubmitToast } = require('./support/submitToastAssert');
 const { rendererSource } = require('./support/rendererSource');
 /** ⚠️ 2026-10-12 旧断言改写（真机 bug：采购退货的「采购行为」原来写成了**库存**行为）：
  *  改前（逐字）：`assert.equal(SCAN_WRITE.purchaseReturn.behaviorCode, 'STOCK_PURCHASE_DECREASE');`
@@ -530,14 +531,14 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
       //        **非空 ⇒ 照旧能提交**，所以**判据一个字都没放宽** ✓。
       const response = await fetch(pageUrl, {
         method: 'POST',
+    redirect: 'manual',  // ⭐ 2026-10-29：提交成功 = 303 回工作台（不许被 fetch 自动跟随成 404）
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.purchaseReturn, submit_key: key, return_sizes: '42', return_qty_42: '1',
           purchase_amount: '399',
         }).toString(),
       });
-      assert.equal(response.status, 200);
-      const doneHtml = await response.text();
+      assertSubmitToast(response, '退货 ⇒ 先回统一回执（没有成功页了）');
       // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（成功页上给批次号 + 条数）：
       //     `assert.match(doneHtml, /采购退货已生成/);`
@@ -554,10 +555,8 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
       //   依据：业务负责人 2026-10-16 逐字「**补货、退货还有验收，它都是异步的**……
       //     用户提交之后**都是一个成功页**，说『**已提交成功，数据会更新**』」
       //     （＋ `purchaseAsyncAcceptance.test.js` 的 AC-ASY1：先回成功页 ⇒ 等后台 ⇒ 数据真落库 ✓）。
-      assert.ok(doneHtml.includes(SCAN_PAGE.saleSuccess.message),
-        '成功页 = 配置里那一句统一文案（异步：批次号要等后台那一跑 ✓）');
-      assert.equal(doneHtml.includes('采购退货已生成'), false,
-        '🔴 异步之后成功页**不许**再说"已生成"（批次号这一刻还不存在 ✗）');
+      // ⭐ 2026-10-29：回执不再是一张页（成功页退场）⇒ 批次号这一刻不出来那件事由
+      //   "等后台那一跑 ⇒ 表里真的有第二批"这条更强的判据保证（见下）✓
       await waitForPendingPurchaseBackgrounds();
       assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 2,
         '⭐ 等后台那一跑 ⇒ 第二批**真的**建出来（先回成功页 ≠ 没写 ✓）');
@@ -735,14 +734,14 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
       //        （"内部细节不回显"那两条断言逐字照旧 ✓）。
       const response = await fetch(pageUrl, {
         method: 'POST',
+    redirect: 'manual',  // 303 回执：不许 fetch 自动跟随
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           action: SCAN_WRITE.actions.purchaseReturn, submit_key: key, return_sizes: '41', return_qty_41: '1',
           purchase_amount: '399',
         }).toString(),
       });
-      assert.equal(response.status, 200, '异步：她**先拿到成功页**（写库丢给后台那一跑 ✓）');
-      const done = await response.text();
+      assertSubmitToast(response, '异步：她**先拿到统一回执**（写库丢给后台那一跑 ✓）');
       // ⭐⭐ 2026-10-16（task-52 · ②-⑭ 接线）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
       //   改前逐字（写库失败是**同步**的 ⇒ 页面 500 + 人话）：
       //     `assert.equal(response.status, 500, '写库失败 → 500 + 人话页（不是静默、也不是 200 假成功）');`
@@ -757,9 +756,7 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
       //   依据：业务负责人 2026-10-16 逐字「补货、退货还有验收，它都是异步的……都是一个成功页」
       //     ＋ `purchaseAsyncAcceptance.test.js` 的 **AC-ASY3**（后台失败 ⇒ `markFailed` ＋ `ok:false`，
       //     **绝不吞成成功** ✗）—— 判据**没有放宽**：失败仍必须可查、且不许写成功任何一条 ✗。
-      assert.ok(done.includes(SCAN_PAGE.saleSuccess.message), '成功页 = 那一句统一文案 ✓');
-      assert.equal(/FieldNameNotFound|record_id|数量 \(record_id/.test(done), false,
-        '内部细节**照样不回显**（不给到她眼前 ✗）');
+      // ⭐ 2026-10-29：回执上**一个内部细节都不可能出现**（成功页已退场 ⇒ 只有一句配置文案）✓
       await waitForPendingPurchaseBackgrounds();
       const session = await h.write.sessions.get(openId);
       const lastError = String(session?.purchaseReturn?.last_error || '');

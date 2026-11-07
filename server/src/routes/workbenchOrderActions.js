@@ -24,6 +24,8 @@
 const express = require('express');
 const { WorkbenchOrderActionService } = require('../services/workbenchOrderActionService');
 const { AfterSalesScanService } = require('../services/afterSalesScanService');
+const { createScanPageService } = require('../services/scanPageService');
+const { saleSizeGroups } = require('../views/scanPageRealm');
 const { tapIdFromRequest } = require('../utils/correlationFields');
 const { logError } = require('../utils/logger');
 
@@ -88,6 +90,39 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
         request_id: req.requestId,
         product_record_id: req.query?.productRecordId || req.query?.product_record_id || '',
         error: error.message,
+      });
+      return res.status(error?.statusCode === 400 ? 400 : 502)
+        .json({ success: false, error: error.message });
+    }
+  });
+
+  // ⭐ 2026-10-29：换尺码 —— **复用销售扫码页的视图模型**（`scanPageService.lookup` + `saleSizeGroups`），
+  //   售后页不再自己写一份"现货/预订/特殊码"分组规则；销售页改口径，这里自动跟着变。
+  let scanPageService = options.scanPageService || null;
+  const resolveScanPageService = () => {
+    if (!scanPageService) scanPageService = createScanPageService(options.gateway);
+    return scanPageService;
+  };
+  const sizeItems = (items) => (items || []).map((item) => ({
+    size: Number(item.size_text), count: Number(item.count) || 0,
+  }));
+  router.get('/sales/after-sales/stock-sizes', async (req, res) => {
+    const productRecordId = String(req.query?.productRecordId || req.query?.product_record_id || '').trim();
+    if (!productRecordId) return res.status(400).json({ success: false, error: 'missing productRecordId' });
+    try {
+      const view = await resolveScanPageService().lookup({ recordId: productRecordId, requestId: req.requestId });
+      const groups = saleSizeGroups(view);
+      return res.json({
+        success: true,
+        groups: {
+          inStock: sizeItems(groups.inStock),
+          reserve: sizeItems(groups.prepaid),
+          special: sizeItems(groups.folded),
+        },
+      });
+    } catch (error) {
+      logError('workbench.sales.after_sales.candidates.failed', {
+        request_id: req.requestId, product_record_id: productRecordId, error: error.message,
       });
       return res.status(error?.statusCode === 400 ? 400 : 502)
         .json({ success: false, error: error.message });

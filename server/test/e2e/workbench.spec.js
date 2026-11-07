@@ -48,6 +48,17 @@ const mockApi = async (page, { orders = [] } = {}) => {
         excluded: { byFulfillment: {}, notPosted: 0, outOfWindow: 0, missingSalesDate: 0 },
       }));
     }
+    if (path === '/api/workbench/sales/after-sales/stock-sizes') {
+      // 换尺码：与销售扫码页同一套视图模型（现货 / 预订 / 特殊码）
+      return route.fulfill(json({
+        success: true,
+        groups: {
+          inStock: [{ size: 40, count: 2 }],
+          reserve: [{ size: 41, count: 0 }, { size: 42, count: 0 }],
+          special: [{ size: 45, count: 0 }],
+        },
+      }));
+    }
     if (path === '/api/workbench/ui-tap') return route.fulfill({ status: 204, body: '' });
     return route.fulfill(json({ success: true }));
   });
@@ -55,14 +66,14 @@ const mockApi = async (page, { orders = [] } = {}) => {
 
 test.beforeEach(async ({ page }) => { await mockApi(page); });
 
-test('五个领域 tab + 订单列表懒加载', async ({ page }) => {
+test('六个领域 tab + 订单列表懒加载', async ({ page }) => {
   const orderRequests = [];
   page.on('request', (request) => {
     if (new URL(request.url()).pathname === '/api/workbench/sales/orders') orderRequests.push(request.url());
   });
   await page.goto('/workbench/');
   await expect(page.getByText('已登录：E2E')).toBeVisible();
-  await expect(page.locator('.main-tab')).toHaveText(['销售', '库存', '供应', '货品', '资金']);
+  await expect(page.locator('.main-tab')).toHaveText(['销售', '库存', '供应', '货品', '资金', '创作']);
 
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await expect(page.getByRole('button', { name: /交割单/ })).toBeVisible();
@@ -95,8 +106,8 @@ test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) 
 
 // ⭐ 2026-10-29（业务负责人当天定的页面口径）：扫一扫落地页 = 货品（颜色）→ 近 7 天销售
 //   （销售日 / 尺码 / 该单总金额）→ 选一条 → 三个动作按钮，水平顺序 **换货 · 退货 · 赔货**。
-//   ⚠️ 按钮之后的处理逻辑**还没接**（她：等页面确认再谈）⇒ 点击只显示"待接入"提示、**不跳走**；
-//   这条断言故意钉住"现在不许偷偷接上"（接上时要按新口径改这条用例）。
+//   ⭐ 2026-10-29 第二步：按钮之后是**弹窗原型**（退货=退款/留存；换货=换尺码/换款式；赔货灰置），
+//   确认只 toast、不写库（本用例钉住弹窗交互；接写库时再改断言）。
 test('售后扫一扫落地页：选哪条卡片，那条卡片就变成三个动作按钮', async ({ page }) => {
   await page.goto('/workbench/after-sales.html?productRecordId=p1');
   await expect(page.getByText('YD1 · 黑')).toBeVisible();
@@ -146,7 +157,27 @@ test('售后扫一扫落地页：选哪条卡片，那条卡片就变成三个�
   await expect(page.locator('.candidate-card-actions')).toHaveCount(1);
   await expect(page.locator('.candidate-action')).toHaveCount(3);
 
+  // 点击「退货」⇒ 弹窗（只剩 退款 / 留存；选退款才出现退款方式）
   await page.locator('.candidate-action').nth(1).click();
-  await expect(page.getByText(/退货：处理流程还没有接上/)).toBeVisible();
+  await expect(page.locator('[data-as-modal]:not([hidden])')).toBeVisible();
+  await expect(page.locator('[data-as-money-mode="refund"]')).toBeVisible();
+  await expect(page.locator('[data-as-method]')).toHaveCount(0);
+  await page.locator('[data-as-money-mode="refund"]').click();
+  await expect(page.locator('[data-as-method]')).toHaveCount(1);
+  await page.locator('[data-as-money-mode="retained"]').click();
+  await expect(page.locator('[data-as-method]')).toHaveCount(0);
+  // 点遮罩（左上角，dialog 之外）关闭弹窗
+  await page.locator('[data-as-modal-close]').first().click({ position: { x: 8, y: 8 } });
+  await expect(page.locator('[data-as-modal]')).toBeHidden();
+
+  // 点击「换货」→ 换尺码 ⇒ 尺码按销售扫码页口径分三组（现货 / 预订 / 特殊码折叠）
+  await page.locator('.candidate-action').nth(0).click();
+  await expect(page.locator('[data-as-modal]:not([hidden])')).toBeVisible();
+  await page.locator('[data-as-exchange-kind="same"]').click();
+  await expect(page.locator('.as-size-group')).toHaveCount(3); // 现货 + 预订 + 特殊码(折叠)
+  await expect(page.locator('.as-size-fold')).toHaveCount(1);
+  await expect(page.locator('[data-as-size-value="40"]')).toBeVisible();
+  await page.locator('[data-as-size-value="40"]').click();
+  await expect(page.locator('[data-as-size-value="40"]')).toHaveClass(/active/);
   await expect(page).toHaveURL(/after-sales\.html/);
 });
