@@ -1,0 +1,859 @@
+'use strict';
+
+/**
+ * scanWrite 的销售提交域（阶段 3 从 `scanWriteService.js` 搬出）。
+ *
+ * 只搬不改：submitSale 仍走既有业务层，不直接写任何业务表。
+ * 依赖由 `createScanWriteSales` 注入；配置级常量直接 require。
+ */
+const {
+  plansOfOrder, requiresInventory, successRequiresFor, deliversOnSubmitFor, SESSION_FLAGS,
+} = require('../../config/salesWritePlan');
+const { salesTradeTypeForStock } = require('../../config/salesTradeTypePolicy');
+const { SELLABLE_KINDS } = require('../../config/sellableKinds');
+const { REPORT_BEHAVIOR } = require('../purchaseBehaviorPolicy');
+const { SESSION_MARKERS } = require('../../config/saleMoneySplit');
+const { mergeCorrelation } = require('../../utils/correlationFields');
+const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../../config/salesStatusDimensions');
+const { fillText } = require('../../config/scanWrite');
+const {
+  goodsOnlyResult, planOneShotRun, finalizeSaleOnce: finalizeSaleOnceWith,
+} = require('../sales/oneShotWrite');
+const { logError, logInfo, logWarn } = require('../../utils/logger');
+
+const createScanWriteSales = ({
+  config, texts, gateway, readGateway, sessions, queue, now, saleAsync, references, createEntry,
+  sales, status, delivery, purchase, purchaseReturn, multiItemWriters,
+  writeFinalStatus, listPaymentMethods, productNumber, resolveProductRecord, salesEntryOrderNo, deliverStockLines,
+  fail, userMessageFor, positiveAmount, toCents, moneyText, amountMismatchMessage, amountList,
+  positiveInteger, sessionKeyOf, scheduleSaleRest, markSaleWriteFailed,
+  waitForPendingSaleBackgrounds,
+}) => {
+  const submitSale = async ({
+    openId, submitKey, payments: paymentRows = [], lineAmounts = [],
+    paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null, timing = null,
+    // ⭐ 2026-10-18：资金页赠品（非空 ⇒ 覆盖本单每一行的 gift；mergeGiftTexts 会去重成一条）
+    orderGift = '',
+    // ⭐⭐ 2026-10-15（⑰ 异步）：`noDefer` = "这一跑就是**后台那一跑**"（不再往后丢 ✗）
+    noDefer = false,
+    // ⭐⭐ 2026-10-15（task-19 ② · Lead 批准）：**可选**的会话键 ——
+    //   · 不传 ⇒ 会话按 `openId` 分 ⇒ **工作台 / 扫码两条既有链路一个字都不变** ✓；
+    //   · 传了 ⇒ 会话（草稿 / 幂等 completed / 进度）按它分，而 `openId` **只**当操作人写 User 字段 ✓
+    //     （「配品销售」那条入口：一行 = 一个会话 ⇒ 第 2 条记录不会被上一单的结果吸收 ✓）
+    sessionKey = '',
+    // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」· 阶段二 · 冻结件成对迁移 · Lead 批准）：
+    //   `deferFunds === true` = **这一跑只写「货」那一半**（主表总金额/赠品/交易类型 ＋ 明细 ＋ 销售状态）：
+    //   🔴 **不写收款明细**（连那条【未收款】也不写）· **不置「资金状态」**（停在「未写入」）·
+    //       **不扣库存** · **不记 `completed`**（改记会话标记 `goods_created`）。
+    //   钱由**资金页那一跑**（同一个 `salesEntryRecordId`、同一把 `submitKey` ⇒ 走既有续写路径）收口 ✓。
+    //   ⚠️ **显式布尔**（下面 `deferFunds === true`）：不传 / 传 `false` ⇒ 每一个字节与今天逐字一致 ✗；
+    //   ⚠️ 货那一跑**带收款**（`payments` 里有金额行）⇒ **当场抛**（一个字都不写表）。
+    //   ⚠️ 那个开关（`SCAN_MONEY_SPLIT_ENABLED`）**不在本文件**：本文件不认识它 ✗（调用方决定走不走这条路）。
+    deferFunds = false,
+    // ⭐⭐ 2026-10-18（第 4 步提速 · 业务口径：**货品页只建单、资金页一次写完**）：
+    //   · `masterOnly === true` = **货品页那一屏**：只建销售主表 + 单号
+    //     （「写入状态=未完成」由建单函数 `salesEntryService` 写）；
+    //     🔴 **明细 / 收款 / 库存流水一个字都不写**（连 `_confirm` 都不进）。
+    //   · `oneShot === true` = **资金页那一屏**：明细 / 收款走批量口 → 库存走批量扣 →
+    //     履约=已交付 → **一次收口**写 总金额 + 赠品 + 写入状态。
+    //   ⚠️ 两个都是**显式布尔**（`=== true`）：不传 / 传 false ⇒ 每个字节与改前逐字一致。
+    masterOnly = false,
+    oneShot = false,
+  }, logOptions = {}) => {
+    // ⭐⭐ 2026-10-15（⑨ 异步）：**先把"后台那一跑"的入参固化在这里** ——
+    //   ⚠️ 必须在函数**最顶上**取：函数体后面有同名局部（`paidAmount` / `payments` …），
+    //     在 try 里引用它们会撞 **TDZ**（`Cannot access 'paidAmount' before initialization` ✗
+    //     —— 我在用例里真撞到过一次，所以固化点放在这里 ✓ 不在闸门那一行现取 ✗）。
+    //   🔴 入参形状与"她点按钮那一次"**逐字相同**（同一把 `submitKey` ⇒ 走既有续写路径 ✓）
+    //   ⚠️ `sessionKey` 也在里面：后台那一跑必须落回**同一个会话**（否则会另起一单 ✗）
+    // ⭐⭐ 2026-10-16（task-62）：**显式布尔**（`=== true`）—— 与业务层
+    //   `salesOrderService._confirm` 里那条闸门**同一个口径**（不写 truthy 判断 ✗：
+    //   那一改会把 `undefined` 之外的东西也当成"分离"）。
+    const fundsDeferred = deferFunds === true;
+    // ⭐⭐ 2026-10-18（第 4 步提速）：两个**显式布尔**的"写计划"开关（见上面入参注释）。
+    //   与 `fundsDeferred` 三选一（同时传 ⇒ 调用方契约错 ⇒ 当场抛，**一个字都不写表**）。
+    const goodsOnly = masterOnly === true;
+    const singlePass = oneShot === true;
+    if ((goodsOnly && fundsDeferred) || (singlePass && fundsDeferred) || (goodsOnly && singlePass)) {
+      throw new Error('「只建主表 / 资金页一次跑完 / 货钱分离」三者互斥，不许同时开');
+    }
+    const saleRestInput = {
+      openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount, sessionKey,
+      ...(String(orderGift || '').trim() ? { orderGift: String(orderGift).trim() } : {}),
+      // ⭐⭐ 2026-10-16（task-62）：**后台那一跑必须带着同一个 `deferFunds`** ✗ ——
+      //   否则"货那一跑"转了后台之后，后台那一跑会把**钱**也写了（一条【未收款】＝钱那一半的结论）
+      //   ⇒ 判据 AC-MSD4 真红（去掉这一行 ⇒ 红 ✓）。
+      //   ⚠️ 关着（不传 / `false`）时**这个键根本不出现** ⇒ 后台那一跑的入参逐字同今天 ✓
+      ...(fundsDeferred ? { deferFunds: true } : {}),
+    };
+    // ⭐⭐ 2026-10-12：**分阶段耗时**（业务负责人真机被卡住 / 收过 504 网关超时）——
+    //    `timing` 是一个**可选出参**（与 `scanPageService.lookup` 那条 `timing` 同一套约定）：
+    //    路由拿它去打**一条** `scan.sale.timing` 汇总日志，"卡在哪一步"一眼看得出。
+    //    🔴 它**只读时间**：不进 `input`、不影响任何判据与写入。
+    // ⚠️ 会话身份 = `sessionKeyOf(openId, sessionKey)`（不传 sessionKey ⇒ 就是 openId ⇒ 老路不变 ✓）
+    const sessionId = sessionKeyOf(openId, sessionKey);
+    const enqueuedAt = Date.now();
+    return queue.run(`sale:${sessionId}`, async () => {
+    const startedAt = Date.now();
+    if (timing) timing.queue_wait_ms = Math.max(0, startedAt - enqueuedAt);
+    const markStage = (field, from) => {
+      if (timing) timing[field] = Math.max(0, Date.now() - from);
+    };
+    if (!config.sale.enabled) {
+      return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
+    }
+    let current = await sessions.get(sessionId);
+    // 会话还没建（她扫开就看、什么都没加过）：页面上那把键就是**第 1 轮**的键，
+    // 这里把会话建出来即可对上 —— 否则她第一次提交会被判成"页面过期"，莫名其妙。
+    if (!current) current = await sessions.ensure(sessionId);
+    const key = String(submitKey || '').trim();
+    let sale = current.sale || {};
+    let completed = sale.completed || [];
+    // 🔴🔴 2026-10-12 **真机 bug 修复**（她的现场：页面 200、一提交就 400，刷新三遍都没用）：
+    //    改前这里是 `if (current.expired) return fail('session_expired')` —— **过期就拒，从不续上**，
+    //    而页面渲染走 `sessions.get()`（只读）⇒ 页面照旧打得开 ⇒ **死循环**。
+    //    ⇒ 现在：**先认幂等**（下面 ①，已提交过的键照样把结果还给她，过期也一样），
+    //      过期则调 `sessions.revive()` **续上这一份会话**（草稿 / 已落盘的主表 record_id 全保留）
+    //      并**采纳她带来的那把键** —— 既不 400，也不丢东西、更不会重复建单。
+    //    ① 这一把键已经提交过 ⇒ **把上一次的结果还给她**（连点第二次走的就是这里）。
+    //    ⚠️ 这一步必须在"过期检查"**之前**：重放不是"新的一单"，与过不过期无关。
+    const done = completed.find((item) => item.key === key);
+    if (done) {
+      logInfo(config.events.saleReused, {
+        session_id: current.session_id, submit_key: key,
+        order_no: done.order_no, sales_entry_record_id: done.sales_entry_record_id,
+        request_id: requestId,
+      });
+      return {
+        ok: true,
+        reused: true,
+        order_no: done.order_no,
+        sales_entry_record_id: done.sales_entry_record_id,
+        detail_count: done.detail_count,
+        payment_count: done.payment_count,
+        paid_amount: done.paid_amount,
+      };
+    }
+    // ⭐ 过期 ⇒ **续上**（保留草稿与已落盘的主表 record_id），并把她的键采纳为这一轮的键
+    if (current.expired) {
+      logInfo(config.events.sessionExpired, {
+        session_id: current.session_id, open_id: String(openId || ''), reason: 'revived_on_submit',
+        request_id: requestId,
+      });
+      current = await sessions.revive(sessionId, { submitKey: key, flow: 'sale' });
+      sale = current.sale || {};
+      completed = sale.completed || [];
+    }
+    // ② 键对不上：多半是"上一单提交成功后这一页还开着"⇒ 还给她上一单的结果，**不写第二遍**。
+    if (sale.key !== key) {
+      const last = completed[completed.length - 1];
+      if (last) {
+        logInfo(config.events.saleReused, {
+          session_id: current.session_id, submit_key: key, stale: true,
+          order_no: last.order_no, sales_entry_record_id: last.sales_entry_record_id,
+          request_id: requestId,
+        });
+        return {
+          ok: true,
+          reused: true,
+          stale: true,
+          order_no: last.order_no,
+          sales_entry_record_id: last.sales_entry_record_id,
+          detail_count: last.detail_count,
+          payment_count: last.payment_count,
+          paid_amount: last.paid_amount,
+        };
+      }
+      // ⭐ 2026-10-12：**没有任何已提交记录、键却对不上** ⇒ 说明她手上那一页来自更早的一轮
+      //    （会话被轮换过 / 刚续上）。这时**采纳她带来的键**继续走，而不是回"过期、请刷新"
+      //    —— 那种死循环正是这次要修的（她照着刷了三遍都没用）。
+      logInfo(config.events.saleReused, {
+        session_id: current.session_id, submit_key: key, adopted: true,
+        session_key: sale.key, request_id: requestId,
+      });
+      current = await sessions.revive(sessionId, { submitKey: key, flow: 'sale' });
+      sale = current.sale || {};
+    }
+    // ⭐⭐ 2026-10-12（她的意见：**一单一笔居多**）：「选尺码 + 提交」= **两下**就是一张单。
+    //    她在尺码区选中的那一双**跟着这次提交一起加进本单**（`pendingLine`）。
+    //    ⚠️ 三个约束，缺一不可：
+    //      ① **只在本单还是空的时候**生效 —— 多笔必须显式点【➕ 还要加一双】
+    //         （否则"选中的那一双"和"本单已有的几双"会算成什么，她和我都说不清）；
+    //      ② **放在幂等/键的分支之后** —— 重放（已经提交过的那把键）在上面就 return 了，
+    //         绝不会往**新一轮**的草稿里塞一行幽灵（本单条会显示多一双，那是真 bug）；
+    //      ③ 校验与加单走**同一个** `sessions.addLine`（只动本地会话、不碰业务表）。
+    if (pendingLine && String(pendingLine.size || '').trim() && !(sale.lines || []).length) {
+      const size = positiveInteger(pendingLine.size);
+      if (size === null) {
+        const error = new Error(texts.sizeMissingBody);
+        error.scanUserMessage = texts.sizeMissingBody;
+        return fail({ code: 'size_missing', message: userMessageFor(error), requestId, error });
+      }
+      const added = await sessions.addLine(sessionId, {
+        kind: 'shoe',
+        number: String(pendingLine.number || '').trim(),
+        item_no: String(pendingLine.itemNo || '').trim(),
+        color: String(pendingLine.color || '').trim(),
+        product_record_id: String(pendingLine.productRecordId || '').trim(),
+        size,
+        trade_type_code: typeof pendingLine.inStock === 'boolean'
+          ? salesTradeTypeForStock({ inStock: pendingLine.inStock }) : '',
+        amount: pendingLine.amount === undefined || pendingLine.amount === null || pendingLine.amount === ''
+          ? null : Number(pendingLine.amount),
+        gift: String(pendingLine.gift || ''),
+        added_at: new Date(now()).toISOString(),
+      });
+      if (!added.ok) {
+        return fail({
+          code: added.code,
+          message: fillText(texts.tooManyLinesBody, { max: added.limit }),
+          requestId,
+          extra: { result: { limit: added.limit } },
+        });
+      }
+      sale.lines = added.session.sale.lines;
+      logInfo(config.events.lineAdded, {
+        request_id: requestId, size, count: added.count, via: 'submit_single_line',
+      });
+    }
+    const lines = sale.lines || [];
+    // ⭐ 2026-10-18：资金页赠品覆盖（整单一条；没有就保留销售页那行自己的 gift）
+    if (String(orderGift || '').trim()) {
+      for (const line of lines) line.gift = String(orderGift).trim();
+    }
+    if (!lines.length) {
+      return fail({ code: 'session_empty', message: texts.sessionEmptyBody, requestId });
+    }
+
+    // ── ① 每件实收（**总单层那一排输入框**；没带这一项就用会话里已经记下的值）────────
+    //    ⚠️ 这一项**先落回本地会话**（只动 `data/scan_sessions/` 那一份草稿，**不碰业务表**）：
+    //       · 差额页要把她刚填的数回显出来（不用重打）；
+    //       · "写了一半崩掉"的**重试**要接着同一份草稿写（与 `master_record_id` 同一个道理）。
+    const postedLineAmounts = amountList(lineAmounts);
+    const hasPostedLineAmounts = postedLineAmounts.length > 0;
+    const resolvedLines = [];
+    for (const [index, line] of lines.entries()) {
+      const raw = hasPostedLineAmounts && index < postedLineAmounts.length
+        ? postedLineAmounts[index]
+        : (line.amount === null || line.amount === undefined ? '' : String(line.amount));
+      const parsed = positiveAmount(raw);
+      if (!parsed.ok) {
+        const sellableKind = SELLABLE_KINDS[String(line.kind || '').trim() || 'shoe'];
+        const message = sellableKind && !sellableKind.requiresSize
+          ? texts.accessoryAmountInvalidBody : texts.amountInvalidBody;
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({ code: 'line_amount_invalid', message, requestId, error });
+      }
+      resolvedLines.push({ ...line, amount: parsed.value, explicit_amount: parsed.value !== null });
+    }
+    if (hasPostedLineAmounts) {
+      await sessions.saveSaleProgress(sessionId, { lines: resolvedLines });
+    }
+
+    // ── ①' ⭐⭐ 每件实收**不再兜底读「单价」**（业务负责人 2026-10-11 选"方案甲"）──────────
+    //    她没填 ⇒ **那一列就留空**（`salesOrderService` 里空值 = **不写这一列**），
+    //    表里因此**不会出现"按单价顶上去的假数字"** —— 她事后在工作台订单列表里逐件补真值。
+    //    🔴 **放宽只针对"缺省"**：她**填了**就必须 `> 0`（填 0 / 负数在 ① 那一步已经被拦）。
+    //    ⚠️ 曾经的实现（2026-10-11 上半场、已退场）：留空 ⇒ 读「货品信息.单价 / 其他配品.单价」顶上，
+    //       两边都读不到就人话拦住。那条路已删 —— 它正是"表里出现假数字"的来源。
+    //    ⇒ 本段现在**一个飞书请求都不打**（只读也没了）。
+
+    // ── ② 多笔收款（可增删行：**填了金额的行才算一笔**）────────────────────────────
+    const usedPayments = [];
+    for (const row of (Array.isArray(paymentRows) ? paymentRows : [])) {
+      const parsed = positiveAmount(row?.amount);
+      if (!parsed.ok) {
+        const error = new Error(texts.paymentAmountInvalidBody);
+        error.scanUserMessage = texts.paymentAmountInvalidBody;
+        return fail({ code: 'payment_amount_invalid', message: userMessageFor(error), requestId, error });
+      }
+      // 金额空 ⇒ 这一行不用（方式选了也不算）；**金额填了就必须有方式**。
+      if (parsed.value === null) continue;
+      const method = String(row?.method || '').trim();
+      if (!method) {
+        const error = new Error(texts.paymentRowIncompleteBody);
+        error.scanUserMessage = texts.paymentRowIncompleteBody;
+        return fail({ code: 'payment_row_incomplete', message: userMessageFor(error), requestId, error });
+      }
+      usedPayments.push({ amount: parsed.value, method, operatorOpenId: openId });
+    }
+
+    // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑不许带收款** ——
+    //   带了就是"两个口都能写钱"（迟早写出两遍账 ✗）⇒ **当场抛**（这是**调用方契约错**，
+    //   不是她的输入错 ⇒ 不给她一张人话失败页，而是让写错的那一方立刻炸掉）。
+    //   ⚠️ 与业务层那条闸门**同一条口径**（`salesOrderService._confirm` 的 `fundsDeferred` 段 ✓）；
+    //      这里先拦的用处：**连主表都不建**（一个字都不写表 ✓）—— 判据 AC-MSD6 真红 ✓。
+    if (fundsDeferred && usedPayments.length > 0) {
+      throw new Error('「货 / 钱分离」的货那一跑不许带收款：钱那一半由资金页那一跑写');
+    }
+    // ⭐⭐ 2026-10-18（第 4 步提速）：货品页那一屏**只建主表** —— 它也不许带收款
+    //   （收款是资金页那一屏的事；带了就是"两个口都能写钱"，与上一条同一个理由）。
+    if (goodsOnly && usedPayments.length > 0) {
+      throw new Error('「只建主表」那一跑不许带收款：收款只在资金页那一跑写');
+    }
+
+    // ── ③ ⭐⭐ 「付款情况」（整单）→ 收款明细的写法 ──────────────────────────────
+    //    她 2026-10-11 的最终口径（唯一权威），三档：
+    //      · **全付**（默认）：收款合计 **必须 ==** 每件实收合计；
+    //      · **部分付**：只写她填的那几条（状态 = 既有「已收款」）＋差额一条【未收款】；
+    //      · **未付（默认）**：只记货 —— **不写【未收款】**（见下面 2026-10-11 晚那段）。
+    //    ⚠️ 三档都**只跟"每件实收金额加起来"比**（`itemsCents`）—— 这里没有"应收/单价"这个判据。
+    //    ⚠️ 比大小用**分**（整数），不拿浮点数比：0.1 + 0.2 ≠ 0.3 那类误差会误报。
+    const itemsCents = resolvedLines.reduce((sum, line) => sum
+      + (line.amount === null || line.amount === undefined ? 0 : toCents(line.amount)), 0);
+    const paymentsCents = usedPayments.reduce((sum, payment) => sum + toCents(payment.amount), 0);
+    const statusValues = (config.sale.paymentStatus?.values) || [];
+    const statusDefault = config.sale.paymentStatus?.default || '';
+    // ⚠️ 逻辑里**只认语义键**（`mode.full` / `mode.partial` / `mode.unpaid`）——
+    //    取值本身是可配的中文（改一句话、换一个说法都不该动逻辑）。
+    const statusMode = config.sale.paymentStatus?.mode || {};
+    // 老页面 / 直接调服务时**没带**这一项 ⇒ 用配置的默认档（她定的「全付（默认）」）。
+    const statusRaw = String(paymentStatus ?? '').trim();
+    const payMode = statusRaw || statusDefault;
+    if (!statusValues.includes(payMode)) {
+      // 手改表单塞了第四种取值 ⇒ 人话拦住（**不静默当成某一档**：猜错档位会写错账）。
+      logWarn(config.events.failed, {
+        session_id: current.session_id, submit_key: key, reason: 'payment_status_invalid',
+        payment_status: statusRaw, request_id: requestId,
+      });
+      const error = new Error(texts.paymentStatusInvalidBody);
+      error.scanUserMessage = texts.paymentStatusInvalidBody;
+      return fail({
+        code: 'payment_status_invalid', message: texts.paymentStatusInvalidBody, requestId, error,
+      });
+    }
+    // 这一步之后要交给既有业务层的**收款那一半**：
+    //   · `payments` = 真收到钱的那几条（状态由业务层落成既有「已收款」）；
+    //   · `owed`     = 差额（> 0 时业务层按既有协议补一条【未收款】，**方式留空**）。
+    //     走 `owed` 而不是让扫码侧自己拼一条「未收款」：那一条的形状（状态取值 / 方式留空 /
+    //     不写「交易方向」）是既有业务层的口径，这里一个字段都不重复实现。
+    let payments = usedPayments;
+    let owedCents = 0;
+    // ⭐⭐ 2026-10-11（业务负责人）：「**建单门槛 = 只要「货品信息」齐（选了尺码）**」——
+    //    ⇒ 资金类（每件实收 / 收款行）**不构成"不能建单"的理由**。
+    // 🔴🔴 2026-10-11 **晚（她真机被卡住之后改的，唯一权威）**：
+    //    线上日志 `scan.sale.amount_mismatch payment_status="全付" items_cents=9900
+    //    payments_cents=0`，她「只有一笔单子，一直提交不了」。
+    //    ⇒ 两条改动（config 里默认档已改成**未付**，这里是逻辑那一半）：
+    //      ① **「全付」必须相等**这条校验，**只在她真的填了收款行时**才生效
+    //         （她选了全付却一笔收款都没填 ⇒ **不拦整单**，给一句人话提示，**按未付落库**）；
+    //      ② **「未付」不再自动写那条【未收款】** —— 只有她**明说欠多少**（部分付的差额）才写
+    //         （与既有原则一致：「她说欠才算欠」，见 `salesOrderService.js` 的 `owed` 注释）。
+    //    ⚠️ 两条都**不会写出错账**：没填收款 = 一条收款明细都不写；差额也从来不由我们猜。
+    const hasPaymentRows = usedPayments.length > 0;
+    // 🔴🔴 2026-10-12（真机丢钱之后加的兜底）：她**显式选了「全付」**，却
+    //    ① 一笔收款都没填 **且** ② 每件实收也全空 ⇒ 这一单**哪儿都没有钱**，与"全付"直接矛盾。
+    //    真机现场（`scan.sale.submitted payment_count: 0`）：页面写着全付、收款明细一行没有，
+    //    她自己都看出来"钱没进去"。⇒ 这里**拦住 + 人话**，绝不再静默落一张"零元全付单"。
+    //    ⚠️ 只拦这一种组合：全付 + 没收款但**实收有值** ⇒ 仍走既有口径（按未付落库 + 提示），
+    //       那是 2026-10-11 她点头过的行为，一个字不改。
+    const anyLineAmount = resolvedLines.some((line) => line.explicit_amount);
+    if (payMode === statusMode.full && !hasPaymentRows && !anyLineAmount) {
+      logWarn(config.events.failed, {
+        session_id: current.session_id, submit_key: key, reason: 'full_without_money',
+        detail_count: resolvedLines.length, payment_count: 0, request_id: requestId,
+      });
+      const error = new Error(texts.fullWithoutMoneyBody);
+      error.scanUserMessage = texts.fullWithoutMoneyBody;
+      return fail({
+        code: 'full_without_money', message: texts.fullWithoutMoneyBody, requestId, error,
+      });
+    }
+    // 「她显式选了全付、但一笔收款都没填」⇒ 按**未付**落库 + 页面给一句人话（不是失败）。
+    const fullWithoutPayments = payMode === statusMode.full && !hasPaymentRows;
+    const effectiveMode = fullWithoutPayments ? statusMode.unpaid : payMode;
+    if (effectiveMode === statusMode.full) {
+      // ── 全付：两边必须相等（走到这里说明**她填了收款行**）──────────────────────
+      if (itemsCents !== paymentsCents) {
+        const message = amountMismatchMessage({ itemsCents, paymentsCents, strict: true });
+        logWarn(config.events.amountMismatch, {
+          session_id: current.session_id, submit_key: key, payment_status: payMode,
+          items_cents: itemsCents, payments_cents: paymentsCents,
+          detail_count: resolvedLines.length, payment_count: payments.length, request_id: requestId,
+        });
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({ code: 'amount_mismatch', message, requestId, error, extra: { result: { amount: {
+          items: itemsCents, payments: paymentsCents, diff: paymentsCents - itemsCents,
+        } } } });
+      }
+    } else {
+      const partial = effectiveMode === statusMode.partial;
+      let paidCents = paymentsCents;
+      if (partial) {
+        // ── 部分付：资金区填的"实付多少"与收款行合计**必须一致**（都是"已经收到的钱"）──
+        const parsedPaid = positiveAmount(paidAmount);
+        if (!parsedPaid.ok) {
+          const error = new Error(texts.paymentAmountInvalidBody);
+          error.scanUserMessage = texts.paymentAmountInvalidBody;
+          return fail({ code: 'payment_amount_invalid', message: userMessageFor(error), requestId, error });
+        }
+        if (parsedPaid.value === null) {
+          const message = fillText(texts.partialAmountMissingBody, { payments: moneyText(paymentsCents / 100) });
+          logWarn(config.events.failed, {
+            session_id: current.session_id, submit_key: key, reason: 'partial_amount_missing',
+            payments_cents: paymentsCents, request_id: requestId,
+          });
+          const error = new Error(message);
+          error.scanUserMessage = message;
+          return fail({ code: 'partial_amount_missing', message, requestId, error });
+        }
+        paidCents = toCents(parsedPaid.value);
+        if (paidCents !== paymentsCents) {
+          const message = fillText(texts.partialAmountMismatchBody, {
+            paid: moneyText(paidCents / 100), payments: moneyText(paymentsCents / 100),
+          });
+          logWarn(config.events.amountMismatch, {
+            session_id: current.session_id, submit_key: key, payment_status: payMode,
+            items_cents: itemsCents, paid_cents: paidCents, payments_cents: paymentsCents,
+            request_id: requestId,
+          });
+          const error = new Error(message);
+          error.scanUserMessage = message;
+          return fail({ code: 'partial_amount_mismatch', message, requestId, error });
+        }
+      }
+      // 已收的钱**不许超过**每件实收合计（部分付填多了 / 未付却带了收款行）——
+      // 既有业务层也会拦（「本次收款超过本单实收金额」），这里先拦是为了给她**带差额的人话**，
+      // 而且**一个字都不写库**（拦在建主表之前）。
+      if (paidCents > itemsCents) {
+        const message = amountMismatchMessage({ itemsCents, paymentsCents: paidCents });
+        logWarn(config.events.amountMismatch, {
+          session_id: current.session_id, submit_key: key, payment_status: payMode,
+          items_cents: itemsCents, payments_cents: paidCents, request_id: requestId,
+        });
+        const error = new Error(message);
+        error.scanUserMessage = message;
+        return fail({ code: 'amount_mismatch', message, requestId, error, extra: { result: { amount: {
+          items: itemsCents, payments: paidCents, diff: paidCents - itemsCents,
+        } } } });
+      }
+      // ⭐ 差额 ⇒ 一条【未收款】——**只有「部分付」会写**（她明说"先付 X、还欠 Y"）。
+      //    🔴 2026-10-11 晚改写：**「未付」不再自动写那一条** —— 她真机就是被"资金不齐"卡住的，
+      //       而"她一个字都没提欠款"时替她生成一条【未收款】等于**替她记了一笔账**；
+      //       既有原则也是"**她说欠才算欠**"（`salesOrderService.js` 的 `owed` 注释）。
+      //       ⇒ 未付只记货：`payments` 本来就空、`owed = 0`；"还差多少钱"由读侧**现算**
+      //         （`salesProgressService`），不需要那条占位行。
+      //    ⚠️ 那一条**不由本文件拼**：只把差额（`owed`）交给既有业务层，它自己写
+      //       「收款金额」「关联销售单」与那个**既有的**收款状态取值 —— 连那个取值的中文
+      //       都不在本文件里（源码哨兵：扫码侧不许把状态取值写死，见 AC-7y）。
+      // ⭐⭐ 2026-10-14（业务负责人逐字 · 最新权威）：「**只要本次付的金额小于累计的，那么差额都是未收款，
+      //   包括本次付款为 0**」
+      //   ⚠️ 改前逐字（她 2026-10-11 的老口径）：**只有「部分付」才写那一条**【未收款】✗
+      //   ⇒ 改后逐字：**只看差额** ✗ 不看档位 —— `累计 − 已收` > 0 ⇒ 就交给既有业务层补一条 ✓
+      //     （0 收款 ⇒ 差额 = 累计 ⇒ **照写** ✓；与旧注释那句「她没说欠就不写」相反 ⇒ 以今晚为准 ✓）
+      //   🔴 仍**不由本文件拼**那一条（形状归既有业务层 ✓）；幂等仍由同一把 `submitKey` 兜 ✓
+      if (itemsCents - paidCents > 0) owedCents = itemsCents - paidCents;
+      // 🔴 2026-10-11 晚（默认档改成「未付」之后**必须跟着改的一处**）：
+      //    **不再把收款行丢掉**。改前 `payments = []` 是"她显式选了未付 ⇒ 资金区整个忽略"；
+      //    可现在**未付是默认档** ⇒ 她可能填了收款行却忘了把单选框从「未付」挑到「全付」——
+      //    那种情况下丢行 = **静默把真收到的钱记没了**（账少一笔、她事后对不上）。
+      //    ⇒ 「未付」这一档**只决定**要不要写那条【未收款】（= 不写，见上面），
+      //      她真填了的收款行**如实落**（如实记钱永远比替她判断更安全）。
+    }
+
+    // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑没有"钱"的结论** ✗ ——
+    //   上面 ③ 那段（差额 = 累计 − 已收）只属于**资金页那一跑**；这一跑不许把它带进 `confirm`：
+    //   带了 ⇒ 业务层就会替她记一条【未收款】（那是**替她记了一笔账** ✗），
+    //   而且那条占位会把资金页那一跑**整表比对拦死**（反向证据 = `saleMoneySplitGoodsHalf.test.js`
+    //   的 AC-MSG5 ✓）。⇒ 这一跑 `owed` 恒不传（下面那一行本来就是 `owedCents > 0` 才带）。
+    if (fundsDeferred || goodsOnly) owedCents = 0;
+
+    // ④ 逐行把明细准备好。
+    //    ⭐⭐ 2026-10-11（方案甲）：**她没填实收 ⇒ 不带 `actualAmount`**（那一列留空，
+    //       表里不会出现"按单价顶上去的假数字"）；填了 ⇒ 带着她填的数（> 0，已在 ① 校验）。
+    const items = [];
+    for (const line of resolvedLines) {
+      // 金额**只在她真填了的时候**才带上（`explicit_amount` 就是"她填了"；空 ⇒ 不带这个键）。
+      const amountField = line.amount === null || line.amount === undefined
+        ? {}
+        : { actualAmount: Math.round(Number(line.amount) * 100) / 100 };
+      // ⚠️ `SELLABLE_KINDS` 里的一行**没有 `key`**（`key` 是 `sellableKindOf` 补上去的）
+      //    —— 这里自己补上，别拿 `undefined` 当 kind 传给业务层（那会被当成"鞋"）。
+      const kindKey = String(line.kind || '').trim() || 'shoe';
+      const sellableKind = SELLABLE_KINDS[kindKey]
+        ? { key: kindKey, ...SELLABLE_KINDS[kindKey] }
+        : { key: 'shoe', ...SELLABLE_KINDS.shoe };
+      // ── 配品那一行（B）：`配品` 有值、**编号 / 尺码留空**、实收金额单列 ──────────
+      //    ⚠️ 它不参与交付 / 库存扣减（没有鞋）—— 交付那一步按可售品属性天然跳过（见 A 段）。
+      if (sellableKind && !sellableKind.requiresSize) {
+        const accessoryRecordId = String(line.accessory_record_id || '').trim();
+        if (!accessoryRecordId) {
+          const error = new Error(texts.accessoryMissingBody);
+          error.scanUserMessage = texts.accessoryMissingBody;
+          return fail({ code: 'line_accessory_missing', message: userMessageFor(error), requestId, error });
+        }
+        items.push({
+          kind: sellableKind.key,
+          // 既有业务层按可售品配置决定落哪个字段（「销售明细.配品」）——本文件不写字段名。
+          accessoryRecordId,
+          quantity: 1,
+          ...amountField,
+          giftDescription: String(line.gift || '').trim(),
+          // 配品没有货号 / 尺码 ⇒ 没有"现货 / 预订"这回事：**不写**交易类型（空着比写错好）。
+          tradeTypeCode: '',
+        });
+        continue;
+      }
+      const productRecordId = String(line.product_record_id || '').trim();
+      if (!productRecordId) {
+        const error = new Error(texts.sizeUnknownBody);
+        error.scanUserMessage = texts.sizeUnknownBody;
+        return fail({ code: 'line_product_missing', message: userMessageFor(error), requestId, error });
+      }
+      const size = positiveInteger(line.size);
+      if (size === null) {
+        const error = new Error(texts.sizeUnknownBody);
+        error.scanUserMessage = texts.sizeUnknownBody;
+        return fail({ code: 'line_size_missing', message: userMessageFor(error), requestId, error });
+      }
+      items.push({
+        kind: (sellableKind && sellableKind.key) || 'shoe',
+        productRecordId,
+        size,
+        quantity: 1,
+        ...amountField,
+        // ⭐ 赠品：一件明细的赠品文本 —— 落点是**销售主表**那一列（合并规则在
+        //    `config/salesGift` + `salesOrderService`，这里只把她的输入传下去）。
+        giftDescription: String(line.gift || '').trim(),
+        // ⭐ 这一行自己的交易类型（现货 / 预订，既有行为编码）。
+        //    既有业务层按它解析「行为管理」记录、写进「销售明细.交易类型」；
+        //    解析不到不阻塞入账（退回主表那条 / 留空），与它原来的口径一字不差。
+        tradeTypeCode: String(line.trade_type_code || '').trim(),
+      });
+    }
+
+    logInfo(config.events.saleSubmitting, {
+      session_id: current.session_id, submit_key: key, line_count: items.length,
+      payment_count: payments.length, payment_status: payMode, owed: owedCents / 100,
+      request_id: requestId,
+    });
+
+    // ⭐ 「准备」这一段：会话读取 / 续期 + 校验 + 每件实收与收款行的解析（**本文件自己**，
+    //    一次飞书都不打）；单独计一段，慢在会话文件还是慢在飞书一眼分得开。
+    markStage('prepare_ms', startedAt);
+
+    // ⚠️ 主表 record_id 与单号**提到 try 外面**声明：catch 里要按"主表落没落"分类失败
+    //    （见下面 `sale_partial_failed`）——**判据与重试协议同一条**，不是新发明的判据。
+    let salesEntryRecordId = String(sale.master_record_id || '').trim();
+    let orderNo = String(sale.order_no || '').trim();
+    // ⭐ 2026-10-15（⑰）：**这一次是不是续写**（主表已经在会话里）——
+    //   下面那道异步闸门**只在第一次**（主表刚建）生效；后台那一跑 / 她重试 ⇒ 走**既有续写路径** ✓。
+    const wasResume = Boolean(salesEntryRecordId);
+
+    try {
+      // ④ 主表记录：走既有函数（单号生成 + 撞号复查都在里面），**只在第一次建**。
+      //    建完立刻把 record_id 落进会话 —— 后面任何一步失败，重试都接着**同一张**单写。
+      const masterStartedAt = Date.now();
+      if (!salesEntryRecordId) {
+        const created = await createEntry(gateway, {
+          original_text: fillText(config.sale.originalTextTemplate, {
+            count: items.length,
+            products: lines.map((line) => line.item_no || line.number).filter(Boolean).join('、'),
+          }),
+          sender_open_id: openId,
+          task_id: key,
+        }, { correlation: mergeCorrelation(logOptions.correlation, { task_id: key }) });
+        salesEntryRecordId = String(created?.recordId || '').trim();
+        if (!salesEntryRecordId) throw new Error('创建销售主表后没有拿到 record_id');
+        orderNo = await salesEntryOrderNo(salesEntryRecordId, created);
+        await sessions.saveSaleProgress(sessionId, {
+          master_record_id: salesEntryRecordId, order_no: orderNo,
+        });
+      }
+      markStage('master_ms', masterStartedAt);
+      const correlation = mergeCorrelation(logOptions.correlation, { task_id: key, sales_entry_record_id: salesEntryRecordId, order_no: orderNo });
+      // 「点【提交】才写」= 她**在页面上确认过**了 ⇒ 「确认状态」记「已确认」
+      //（走四个状态维度的**唯一写入口** SalesStatusWriter；值来自 config/salesStatusDimensions）。
+      // ⚠️ 只有第一次建单时才补这一下（重试时不必重复写）。
+      const statusStartedAt = Date.now();
+      // ⭐ 2026-10-18：旧「确认状态」列已被业务负责人删除 ⇒ 建单时由 salesEntryService 写
+      //   「写入状态=未完成」；这里不再写状态（保留 stage 计时口径）。
+      markStage('status_ms', statusStartedAt);
+
+      // ⭐⭐ 2026-10-18（第 4 步提速 · 货品页那一屏到此为止）：
+      //   只建销售主表 + 单号（「写入状态=未完成」在建单函数里写）——
+      //   🔴 **明细 / 收款 / 库存流水一行都不写**（不进 `_confirm`、不进交付），
+      //      也不再转后台（主表这几笔就是这一屏的全部工作）。
+      //   · 幂等：同一把 `submitKey` 再点（或刷新后重提）⇒ 会话里已有 `master_record_id`
+      //     ⇒ 不再建第二张单（`wasResume`），如实回 `reused: true` ✓
+      //   · 成功判据：**主表创建 + 单号拿到**（没有任何"再读表校验"）。
+      if (goodsOnly) {
+        if (timing) timing.master_only = true;
+        await sessions.saveSaleProgress(sessionId, { [SESSION_FLAGS.masterOnly]: true });
+        return goodsOnlyResult({ wasResume, orderNo, salesEntryRecordId });
+      }
+
+      // ⭐⭐ 2026-10-15（⑰ B 异步 · 她逐字「**单号一出立刻回**…明细/库存/交付转后台」）：
+      //   主表 + 单号**已经有了** ⇒ **立刻回**；余下的（明细/收款/库存）交给**后台的同一次 `submitSale`**
+      //   （**同一把 `submitKey`** ⇒ 走下面那条**既有续写路径** ⇒ 幂等一字没拆 ✗）。
+      //   🔴 不新开写库路径、不改写入语义："余下那几步"就是**入参相同的第二跑** ✓
+      //   🔴 **不许假成功**：后台那一跑失败 ⇒ 主表落「**写入失败**」（既有状态维度 + 既有写入器 ✓）。
+      //   ⚠️ 只在**第一次**（`wasResume === false`）且配置开着时生效 ✓；旧调用方（群聊等）一步都不变 ✗。
+      //   ⭐ 2026-10-18（第 4 步）：`oneShot`（资金页）**不转后台** —— 那一屏的"单号已出就回"
+      //     会让成功页先于明细/库存/收口 ⇒ 与"成功判据 = 批量返回 + 收口 update"直接冲突 ✗。
+      if (saleAsync.enabled === true && !wasResume && !noDefer && !singlePass) {
+        // ⭐⭐ 2026-10-15（⑰b-1）：`background` = **后台那一跑的句柄**（内部用："等它跑完"）。
+        //   🔴 **页面的公开形状一个字段都没变**：路由只取 `ok / deferred / order_no /
+        //     sales_entry_record_id / detail_count / payment_count`（它本来就认识的那几个）⇒ 句柄**不进 HTML** ✗
+        //   🔴 **不放宽任何判据**：用例仍然是"端状态逐字比"，只是**先等后台**再读 ✓。
+        const background = scheduleSaleRest({
+          openId,
+          requestId,
+          salesEntryRecordId,
+          orderNo,
+          correlation,
+          restInput: saleRestInput,
+        });
+        logInfo(config.events.saleBackgroundQueued, {
+          session_id: current.session_id, submit_key: key,
+          sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
+          detail_count: items.length, request_id: requestId,
+        });
+        return {
+          ok: true, reused: false, deferred: true,
+          order_no: orderNo, sales_entry_record_id: salesEntryRecordId,
+          detail_count: items.length, payment_count: payments.length,
+          // ⭐ 2026-10-16（task-62）：货那一跑**如实标"钱还没写"**（**调用方不许猜** ✗）；
+          //   关着时这个键不出现 ⇒ 返回对象逐字同今天 ✓
+          ...(fundsDeferred ? { funds_deferred: true } : {}),
+          // ⚠️ 句柄（不是页面字段）—— 只给"等它跑完"的人（用例）✓
+          background,
+        };
+      }
+
+      // ⑤ 明细 / 收款 / 进度：**既有业务函数**（与群聊、工作台是同一条路）。
+      //    `knownRecordIds` + `onRecordPersisted` = 既有链路那套"写到一半崩了也能接着写"的协议。
+      //    ⭐ `owed`（元）= 上面算出来的差额 ⇒ 既有业务层**按既有协议**补那一条【未收款】
+      //       （状态「未收款」、**方式留空**、关联既有销售单、**不写交易方向**）。
+      //       为 0 ⇒ 不传（`0` 与"没说欠"在业务层是同一个意思，见 salesOrderService 的 owed 段）。
+      const detailStartedAt = Date.now();
+      // ⭐⭐ 2026-10-18（第 4 步提速）：`oneShot`（资金页那一屏）走"一次跑完"那支 ——
+      //   · `freshOneShot` = **第一次**（会话里明细/收款都还没开始）⇒ 业务层可以省掉
+      //     "读主表 + 读整张销售明细"这两次大读；
+      //   · 判定依据是**会话标记**（`SESSION_FLAGS.childrenStarted`）—— **写之前先置上**
+      //     ⇒ 中途崩了再点，这一次就不带 `freshOneShot` ⇒ 重试走"读已有 + 认领"的安全路径，
+      //     绝不重复建明细 ✓（幂等不许拆 ✗）。
+      const oneShotPlan = planOneShotRun({
+        sale, singlePass, orderNo, childrenStartedFlag: SESSION_FLAGS.childrenStarted,
+      });
+      if (oneShotPlan.markChildrenStarted) {
+        await sessions.saveSaleProgress(sessionId, { [oneShotPlan.markChildrenStarted]: true });
+      }
+      const result = await sales().confirm({
+        salesEntryRecordId,
+        items,
+        payments,
+        // ⭐⭐ 2026-10-16（task-62）：货那一跑 ⇒ 业务层**只写「货」那一半**（见
+        //   `salesOrderService._confirm` 的 `fundsDeferred` 段：不写收款 / 不置资金状态 / 不调 progress ✓）。
+        //   ⚠️ 关着时这个键**根本不出现** ⇒ 入参对象逐字同今天 ✓
+        ...(fundsDeferred ? { fundsDeferred: true } : {}),
+        // ⭐⭐ 2026-10-18（第 4 步提速）：一次跑完那支（显式布尔；不传 ⇒ 入参逐字同今天 ✓）
+        ...(singlePass ? oneShotPlan.confirmArgs : {}),
+        ...(String(orderGift || '').trim() ? { giftOverride: true } : {}),
+        ...(owedCents > 0 ? { owed: owedCents / 100 } : {}),
+        operatorOpenId: openId,
+        knownRecordIds: {
+          details: sale.detail_ids || [],
+          payments: sale.payment_ids || [],
+        },
+        onRecordPersisted: async (kind, index, recordId) => {
+          const fresh = await sessions.get(sessionId);
+          const key2 = kind === 'payments' ? 'payment_ids' : 'detail_ids';
+          const ids = [...((fresh?.sale?.[key2]) || [])];
+          ids[index] = recordId;
+          await sessions.saveSaleProgress(sessionId, { [key2]: ids });
+        },
+      }, { correlation });
+      markStage('detail_ms', detailStartedAt);
+      const detailCount = (result.detailRecordIds || []).length || items.length;
+      const paymentCount = (result.paymentRecordIds || []).length;
+      // ⭐ `paid_amount` = **真收到钱的那几条**（她填的收款行）之和；
+      //    `owed_amount` = 那一条【未收款】的差额 = `累计 − 本次已收`（**> 0 就有**）。
+      //    ⚠️ 改前逐字：「（**只有「部分付」才有**，2026-10-11 晚起）」——她 2026-10-14 覆盖了那句：
+      //       「只要本次付的金额小于累计的，那么差额都是未收款，**包括本次付款为 0**」
+      //       ⇒ 未付（本次付 0）也有差额、也补那一条 ⇒ `owed_amount` = 累计（不再是 0）。
+      //    ⚠️ 两笔数**分开报**，不合成一个"收款合计"：合成之后她就分不清
+      //       "这单收了多少现金"和"这单还欠多少"。
+      const paidAmount = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      // ⭐ 2026-10-18：这一单按哪份写计划、成功需要哪几步 —— **配置说了算**（不再散落 if）。
+      const writePlans = plansOfOrder(items);
+      const writePlanIds = writePlans.map((plan) => plan.id);
+      const stepRequirements = successRequiresFor(items);
+      const expectedInventoryLines = writePlans.filter((plan) => plan.writesInventory).length;
+      const summary = {
+        order_no: result.sourceNo || orderNo,
+        sales_entry_record_id: salesEntryRecordId,
+        detail_count: detailCount,
+        payment_count: paymentCount,
+        paid_amount: paidAmount,
+        owed_amount: owedCents / 100,
+        // ⚠️ 如实报**两件事**：她选的档（`payment_status`）+ 这一单**实际按哪一档落的**
+        //    （`effective_payment_status`）—— 她选了「全付」却没填收款时，两者不同，
+        //    页面据此给她那句人话。排查时也一眼看得出"她选了什么、我们怎么落的"。
+        payment_status: payMode,
+        effective_payment_status: effectiveMode,
+        // ⭐ 她**显式选了「全付」但一笔收款都没填** ⇒ 页面给一句人话（`fullWithoutPaymentsNote`）。
+        full_without_payments: fullWithoutPayments,
+        // 这一单按哪份写计划、成功需要哪几步（配置可读、日志可查）
+        write_plan_ids: writePlanIds,
+        success_requires: stepRequirements,
+      };
+      // ⑥ ⭐ 2026-10-11（A）：**现货 ⇒ 提交即交付 + 扣库存**。
+      //    她 2026-10-09 的原话：「选现货 ⇒ 提交就直接当已交付并扣库存，这个肯定是的」。
+      //    ⚠️ 交付**只走既有那一条**（`SalesDeliveryService.deliver`）—— 本文件不写一个库存字段。
+      //    ⚠️ 逐行判：现货行交付、预定行不交付（`deliversOnSubmit` 读的是既有注册表）；
+      //       配品行（没有鞋、不跟踪库存）**天然被排除**在交付之外（可售品属性说了算）。
+      //    ⚠️ 明细 id 与 `items` **一一对应**（既有 `confirm` 就是按这个顺序建行的，群聊链路
+      //       的 `deliverableItemIndexes` 也是同一个约定），所以这里按下标取。
+      const stockStartedAt = Date.now();
+      // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」· 业务负责人 22:0x **改口径** ✓）：
+      //   「**货就是货，资金就是资金，它俩是独立的呀**：货：看它是现货还是预订。**如果是现货，就是要扣库存**；
+      //     如果是预订，就不扣库存，等二次交付的时候再扣库存」＋「**啥叫钱没入账就不许出库存？不用呀。**」
+      //   ⇒ ⭐ **货那一跑照走交付**（`deliverStockLines` 内部按既有 `lineDeliversOnSubmit` 过滤 ⇒ **现货扣 / 预订不扣** ✓）；
+      //     钱的结论不受影响（`owedCents` 照旧由 `fundsDeferred` 那段决定 ⇒ 差额待补 ✓）。
+      //   ⚠️ `allowUnposted: fundsDeferred` —— **只有货那一跑**开这道口子（关着时传 `false` ⇒ 与今天逐字一致 ✗）。
+      //   ⭐⭐ 2026-10-18（第 4 步）：`oneShot`（资金页）也开 —— 这一跑的钱是同一次写的，
+      //     而「写入状态=成功」要等**库存 + 履约都成功之后**才收口（见下面 `finalizeOneShot`），
+      //     所以交付这一刻主表上还是「未完成」⇒ 不放行就会被「销售订单尚未确认入账」拦住。
+      //     🔴 不是放宽：收口那一下失败 ⇒ 调用方如实回失败（不写「成功」）✓。
+      const stock = await deliverStockLines({
+        items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
+        salesEntryRecordId, correlation, allowUnposted: fundsDeferred || singlePass,
+      });
+      markStage('stock_ms', stockStartedAt);
+      // 计划说"有 N 行要动库存"就必须真的请求 N 行（明细 id 缺失等 ⇒ 如实算失败，不许假成功）
+      if (expectedInventoryLines > 0 && stock.requested < expectedInventoryLines) {
+        stock.failed += expectedInventoryLines - stock.requested;
+        stock.reasons.push(fillText(texts.stockStepMissingBody,
+          { count: expectedInventoryLines - stock.requested }));
+      }
+      if (stock.failed > 0) {
+        // 🔴 **失败要如实报错**：单子写了（货 / 钱是事实），但库存没扣成这件事必须回给她，
+        //    而且**不许**把这一单记成"提交完成"—— 否则重试入口就没了，那一双永远扣不掉。
+        //    ⚠️ 这里的 ok 仍是 true（销售主表 / 明细 / 收款确实写成了）；"哪一半没成"
+        //       由 `stock` 如实表达，页面按 `stock.failed > 0` 渲染一张如实的结果页。
+        logError(config.events.stockFailed, {
+          session_id: current.session_id, submit_key: key, ...summary,
+          stock_requested: stock.requested, stock_failed: stock.failed,
+          reasons: stock.reasons.join(' | '), request_id: requestId,
+        });
+        // ⭐ 2026-10-18（第 4 步）：`oneShot` 这一跑的收口**也带总金额 + 赠品**
+        //   （库存没扣成 ⇒ 写入状态 = 部分失败；与成功那支同一个方法 —— 不许分叉成两套收口）。
+        const finalizedPartial = (singlePass && result.oneShot === true)
+          ? await finalizeSaleOnceWith({
+            salesService: sales(), salesEntryRecordId, result,
+            writeStatus: WRITE.writeStatus.partial, correlation, timing,
+          })
+          : false;
+        if (!finalizedPartial) {
+          await writeFinalStatus(status(), salesEntryRecordId, WRITE.writeStatus.partial, correlation);
+        }
+        return { ok: true, reused: false, stock, ...summary, order_no: summary.order_no };
+      }
+      // ⭐⭐ 2026-10-16（task-62「货 / 钱分离」）：**货那一跑到此为止（不记 `completed`）** ✗ ——
+      //   `completed` 是"**这一单的收款也写过了**"的留档（连点 / 重放靠它吸收）；
+      //   而资金页那一跑拿的是**同一把 `submitKey`** ⇒ 记了它会把资金页那一跑**当"重放"吸收**，
+      //   钱永远写不上（**静默丢账** ✗）。⇒ 改记一个**新标记**「货已经落库」
+      //   （与今天的 `pending` / `created` 三个状态分开，取值在 `config/saleMoneySplit.js` ✓）——
+      //   判据 AC-MSD5 真红 ✓。⚠️ 关着时这一段**一行都不跑**（下面那两行逐字同今天 ✓）。
+      //   ⭐ 2026-10-16 口径改（她 22:0x）：货那一跑**照扣库存**（现货 ✓）⇒ 这里的 `stock_*` 是**真的**交付结果 ✓。
+      if (fundsDeferred) {
+        await sessions.saveSaleProgress(sessionId, {
+          [SESSION_MARKERS.goodsCreated]: true,
+        });
+        logInfo(config.events.saleSubmitted, {
+          session_id: current.session_id, submit_key: key, ...summary,
+          funds_deferred: true, funds_recorded: false,
+          stock_requested: stock.requested, stock_delivered: stock.delivered, request_id: requestId,
+        });
+        // ⚠️ 如实带 `funds_deferred: true`（**调用方不许猜**"钱写没写" ✗）。
+        return { ok: true, reused: false, funds_deferred: true, stock, ...summary };
+      }
+      // ⭐ 2026-10-18（第 4 步）：`oneShot` 的**一次收口** —— 总金额 + 赠品 + 写入状态
+      //   （同一次 update）；它**就是成功判据**：抛错 ⇒ 走下面 catch ⇒ 如实回失败（不假成功 ✗）。
+      //   🔴 顺序：**先收口、后记 `completed`** —— 反过来（先 completeSale）的话收口一失败，
+      //      她再点就会被"这一单刚才已经交过了"接走 ⇒ 表里却写着失败 ⇒ 撒谎 ✗。
+      const finalizedOneShot = (singlePass && result.oneShot === true)
+        ? await finalizeSaleOnceWith({
+          salesService: sales(), salesEntryRecordId, result,
+          writeStatus: WRITE.writeStatus.done, correlation, timing,
+        })
+        : false;
+      await sessions.completeSale(sessionId, { key, result: summary });
+      // ⭐ 2026-10-18：最终收口写「写入状态=成功」（三个关联字段 + 前端字段都写成功才走到这里）；
+      //   失败/部分失败在 catch / 库存失败分支写。状态写失败不影响业务（writer 只记 warning）。
+      if (!finalizedOneShot) {
+        await writeFinalStatus(status(), salesEntryRecordId, WRITE.writeStatus.done, correlation);
+      }
+      logInfo(config.events.saleSubmitted, {
+        session_id: current.session_id, submit_key: key, ...summary,
+        funds_recorded: paymentCount > 0,
+        // ⭐ 2026-10-18（第 4 步）：一次跑完那支的如实标记 + 收口耗时（PR/真机排查用）。
+        ...(finalizedOneShot ? {
+          one_shot: true,
+          finalize_ms: Number(timing?.finalize_ms) || 0,
+        } : {}),
+        stock_requested: stock.requested, stock_delivered: stock.delivered, request_id: requestId,
+      });
+      return {
+        ok: true, reused: false, stock, ...summary,
+        ...(finalizedOneShot ? { one_shot: true } : {}),
+      };
+    } catch (error) {
+      const message = userMessageFor(error);
+      await sessions.markSaleFailed(sessionId, String(error.message || error)).catch(() => undefined);
+      // ⭐⭐ 2026-10-12：**建单成功、后面某一步（明细 / 收款 / 进度）抛错** ⇒ 分类成
+      //    `sale_partial_failed`，路由据此给她一张**如实**的"半成"页（**不许显示成功**）。
+      //    🔴 判据用的是**既有**那一条：会话 / 本次调用里**已经落了主表 record_id** ——
+      //       与"重试接着同一张单写"用的是同一个字段，**没有新判据**。
+      //    🔴 主表都没建起来（`createEntry` 抛错）⇒ 照旧 `sale_write_failed`（= 一个字都没写）。
+      if (salesEntryRecordId) {
+        // ⚠️ catch 里读不到 try 内声明的 `correlation` ⇒ 这里用局部关联键（形状同 try 内那份）。
+        await writeFinalStatus(status(), salesEntryRecordId, error.saleRecordsWritten
+          ? WRITE.writeStatus.partial : WRITE.writeStatus.failed,
+        { task_id: key, sales_entry_record_id: salesEntryRecordId, order_no: orderNo });
+        logWarn(config.events.partialFailed, {
+          session_id: current.session_id, submit_key: key,
+          sales_entry_record_id: salesEntryRecordId, order_no: orderNo,
+          // 哪一段抛的：`status_ms` / `detail_ms` / `stock_ms` 是**已经跑完**的那几段的耗时，
+          // 最后一段（没写 `markStage` 的那个）就是抛错的那一段 —— 排查时不必猜。
+          stages: timing ? {
+            prepare_ms: Number(timing.prepare_ms) || 0,
+            master_ms: Number(timing.master_ms) || 0,
+            status_ms: Number(timing.status_ms) || 0,
+            detail_ms: Number(timing.detail_ms) || 0,
+          } : undefined,
+          error: String(error.message || error), request_id: requestId,
+        });
+        return {
+          ok: false, code: 'sale_partial_failed', message, requestId, error,
+          order_no: orderNo, sales_entry_record_id: salesEntryRecordId,
+        };
+      }
+      return fail({ code: 'sale_write_failed', message, requestId, error });
+    }
+    });
+  };
+
+  // ── 补货报单：勾尺码 + 数量 → 采购申请 ────────────────────────────────────
+  /**
+   * 生成采购申请（走既有采购链路的免确认路径）。
+   *
+   * @param {object} input
+   * @param {Array<{size:number|string, quantity:number|string}>} input.entries 勾选的尺码与数量
+   */
+  /**
+   * ⭐⭐ 2026-10-12（她真机：连续提交两个货号 ⇒ 第二个被"重复"吸收 ✗）：
+   * **补货草稿的指纹**——"这一次要报的到底是什么"（货号 + 逐行尺码/数量）。
+   *
+   * 🔴 为什么需要它：幂等键是**按会话轮次**发的；她连着提交两个货号时，第二张页面
+   *   可能还带着**上一把键**。只看键就会把"换了货号的这一次"当成"上一单的重放"吸收掉 ✗。
+   * 口径（两件事分得清）：**同键 + 同指纹** ⇒ 吸收（连点保护 ✓）；**指纹变了 ⇒ 新的一次提交** ✓。
+   */
+
+  return { submitSale };
+};
+
+module.exports = { createScanWriteSales };

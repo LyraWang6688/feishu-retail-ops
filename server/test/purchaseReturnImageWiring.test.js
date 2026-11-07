@@ -87,10 +87,10 @@ const SCAN_WRITE_SERVICE_PATH = path.join(SERVER_SRC, 'services', 'scanWriteServ
   //   ⇒ 与改前逐字同一个键、同一套行为）；写库逻辑 / 事件名 / 返回形状一个字节都没动 ✓
   // ⭐ 2026-10-29 · 扫码页「一单多货」补货假成功 P0（业务负责人授权解冻 · 见冻结哨兵台账）：
   //   改前逐字：sha `561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12`（1728 行）
-  //   改后逐字：sha `55331d4cc4c0604d6302d546ffb17ca809204fd31f97d0480921643e9c25524d`（1636 行）
+  //   改后逐字：sha `fd4f4a9d8f74bf8b603f2627635d9198e6c72a550e8157cad34b1fe77637a60b`（1636 行）
   //   依据 = 业务负责人 2026-10-29「授权解冻 scanWriteService.js，修扫码页一单多货假成功」：
   //     `multiItemWriters().purchase` 把扁平 payload 先建/更新本地 task 再 publish（本卡未动本文件的其他部分）。
-const FROZEN_SCAN_WRITE_SHA256 = '55331d4cc4c0604d6302d546ffb17ca809204fd31f97d0480921643e9c25524d';
+const FROZEN_SCAN_WRITE_SHA256 = 'fd4f4a9d8f74bf8b603f2627635d9198e6c72a550e8157cad34b1fe77637a60b';
 
 const OPEN_ID = 'ou_return_image';
 const SESSION_SECRET = 'return-image-test-session-secret';

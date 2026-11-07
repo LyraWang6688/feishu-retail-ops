@@ -135,7 +135,8 @@ test('AC-ASR3 🔴 ①②③ 真判据：分档/必填**读真实配置与真实
   assert.equal(chains.replenish?.amountRequired, false, '补货：**不要求金额**（她：「补货不需要金额」✓）');
   assert.equal(chains.return?.amountRequired, true, '退货：**要求金额** ✓');
   // ② 尺码必填：真实写服务里有 `size_missing` 的**拦截路径**（不是自造物 ✓）
-  const writeService = fs.readFileSync(path.join(serverRoot, 'src', 'services', 'scanWriteService.js'), 'utf8');
+  const writeService = fs.readFileSync(path.join(serverRoot, 'src', 'services', 'scanWriteService.js'), 'utf8')
+    + fs.readFileSync(path.join(serverRoot, 'src', 'services', 'scanWrite', 'sales.js'), 'utf8');
   assert.match(writeService, /size_missing/, '真实写服务里必须有 `size_missing` 的拦截 ✓');
   // ③ 覆盖证明：**行为**覆盖者必须真的存在（改名/删掉 ⇒ 红 ✓）
   const COVERAGE = Object.freeze([
