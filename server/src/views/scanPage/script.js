@@ -147,7 +147,7 @@ ${UI_TAP_SHARED_SOURCE}
           for (var p = 0; p < picked.length; p += 1) {
             var quantityName = picked[p].getAttribute('data-qty-name') || '';
             var quantityInput = quantityName ? form.querySelector('[name="' + quantityName + '"]') : null;
-            var raw = String((quantityInput && quantityInput.value) || '').replace(/^\s+|\s+$/g, '');
+            var raw = String((quantityInput && quantityInput.value) || '').replace(/^\\s+|\\s+$/g, '');
             var isInteger = /^[0-9]+$/.test(raw);
             var quantity = isInteger ? parseInt(raw, 10) : 0;
             if (!isInteger || quantity < 1 || (maxQuantity > 0 && quantity > maxQuantity)) {
@@ -171,7 +171,7 @@ ${UI_TAP_SHARED_SOURCE}
           var qtyInputs = form.querySelectorAll('[name^="' + returnQtyPrefix + '"]');
           var qtyPicked = [];
           for (var q = 0; q < qtyInputs.length; q += 1) {
-            var qtyRaw = String(qtyInputs[q].value || '').replace(/^\s+|\s+$/g, '');
+            var qtyRaw = String(qtyInputs[q].value || '').replace(/^\\s+|\\s+$/g, '');
             if (qtyRaw === '') continue;                      // blank = not returned (not an error)
             if (!/^[0-9]+$/.test(qtyRaw)) {                   // not an integer => block (user typo)
               showReturnHint(form.getAttribute('data-return-quantity-text') || '', qtyInputs[q]);
