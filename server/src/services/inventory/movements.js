@@ -27,6 +27,9 @@ const BEHAVIOR_SAMPLE_PROMOTION = 'STOCK_DOORBOX_TO_SAMPLE';
 const MOVEMENT_SALE_RETURN = 'SALE_RETURN';
 const MOVEMENT_SALE_COMPENSATION = 'SALE_COMPENSATION';
 const MOVEMENT_SALE_CASH = 'SALE_CASH';
+// ⭐ 2026-10-29（业务负责人新口径）：售后「退货」的货流动作 = 「**销售增加**」——
+//    她在「行为管理」表新增的那条（编号 STOCK_SALE_INCREASE，方向=增加）。
+const MOVEMENT_SALE_INCREASE = String(process.env.AFTER_SALES_RETURN_BEHAVIOR_CODE || 'STOCK_SALE_INCREASE').trim();
 
 // ── 人工库存行为（业务负责人 2026-10-06 已在「行为管理」表建好 6 条）──────────
 // ⚠️ 这一步只做**注册**：把 6 个编码登记进 STOCK_MOVEMENTS，让
@@ -148,6 +151,13 @@ const STOCK_MOVEMENTS = Object.freeze({
   },
   // 退货：退回的鞋回库。consumes=null 表示「不消耗既有实时库存」，
   // 只在调用方指定的状态（门盒 / 样品）新增一行——退回的鞋在货上确实多了一双。
+  // 售后退货的新货流动作：销售增加（与旧 SALE_RETURN 同一套引擎语义，编码不同）。
+  [MOVEMENT_SALE_INCREASE]: {
+    direction: '增加',
+    ledgerSource: 'salesDetail',
+    consumes: null,
+    triggerSampleReplacement: false,
+  },
   [MOVEMENT_SALE_RETURN]: {
     direction: '增加',
     ledgerSource: 'salesDetail',
@@ -301,6 +311,7 @@ module.exports = {
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,
   MOVEMENT_SALE_CASH,
+  MOVEMENT_SALE_INCREASE,
   requireMovement,
   requireQuantityMovement,
   requireStateMovement,

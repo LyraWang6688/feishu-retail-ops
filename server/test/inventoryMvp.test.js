@@ -381,6 +381,7 @@ test('stock behavior lookup survives renaming the display name', async () => {
     behavior('behavior_purchase', 'STOCK_PURCHASE_INCREASE', '采购收货（已改名）', '增加'),
     // 售后三条行为同样要启用：validateStockBehaviors 会遍历整张注册表。
     behavior('behavior_return', 'SALE_RETURN', '销售退货（已改名）', '增加'),
+    behavior('behavior_sale_increase', 'STOCK_SALE_INCREASE', '销售增加', '增加'),
     behavior('behavior_compensation', 'SALE_COMPENSATION', '销售赔货（已改名）', '减少'),
     behavior('behavior_cash', 'SALE_CASH', '现货销售（已改名）', '减少'),
     // 采购退货（采购减少）同样是注册表里的一条：validateStockBehaviors 会遍历整张注册表。

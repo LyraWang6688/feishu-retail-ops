@@ -24,8 +24,17 @@
  */
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 
-// 「收款」这个中缀只在收款明细 ID 里出现（她口径逐字）。
-const KIND_MARK = Object.freeze({ detail: '', receipt: '收款' });
+// 交易明细（原「收款明细」）的中缀：收款 / 退款 / 留存
+// （业务负责人 2026-10-29：「改的是后面的收款和序号，也就是类型（收款、退款还是留存）以及序号」）。
+// ⚠️ 退款 / 留存 这两个中缀是**业务口径**（她 2026-10-29 定的类型名）⇒ 真源在
+//   `config/afterSalesDerived.money.kindMarkByMode`，这里只取用，不抄一份中文。
+const { AFTER_SALES_DERIVED } = require('../config/afterSalesDerived');
+const KIND_MARK = Object.freeze({
+  detail: '',
+  receipt: '收款',
+  refund: AFTER_SALES_DERIVED.money.kindMarkByMode.refund,
+  retained: AFTER_SALES_DERIVED.money.kindMarkByMode.retained,
+});
 
 const pad = (sequence) => String(sequence).padStart(2, '0');
 
@@ -68,13 +77,17 @@ const nextId = ({ state, orderNo, kind }) => {
   if (!state || typeof state !== 'object' || !Array.isArray(state.ids)) {
     throw new Error('nextId 需要 { rowCount, ids } 形状的排号状态');
   }
-  const prefix = `${order}-${KIND_MARK[kind] ? `${KIND_MARK[kind]}-` : ''}`;
+  const orderPrefix = `${order}-`;
   const used = new Set(state.ids.map((id) => String(id || '').trim()).filter(Boolean));
+  // ⭐ 2026-10-29（业务负责人口径）：收款 / 退款 / 留存**共用同一个递增序号** ——
+  //   「XSD-…-收款-01」之后是「XSD-…-退款-02」「XSD-…-留存-03」。
+  //   ⇒ 最大值要按**整张交易明细表**里这一单所有行来取（不按类型分别从 01 起）。
   let max = 0;
   for (const id of used) {
-    if (!id.startsWith(prefix)) continue;
-    const tail = id.slice(prefix.length);
-    if (/^\d{1,4}$/.test(tail)) max = Math.max(max, Number(tail));
+    if (!id.startsWith(orderPrefix)) continue;
+    const tail = id.slice(orderPrefix.length);
+    const match = /^(?:[^-]+-)?(\d{1,4})$/.exec(tail);
+    if (match) max = Math.max(max, Number(match[1]));
   }
   let sequence = Math.max(Number(state.rowCount) || 0, max) + 1;
   let id = formatId(order, kind, sequence);

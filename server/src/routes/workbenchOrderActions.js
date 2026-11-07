@@ -26,6 +26,11 @@ const { WorkbenchOrderActionService } = require('../services/workbenchOrderActio
 const { AfterSalesScanService } = require('../services/afterSalesScanService');
 const { createScanPageService } = require('../services/scanPageService');
 const { saleSizeGroups } = require('../views/scanPageRealm');
+const { AfterSalesReturnService } = require('../services/afterSalesReturnService');
+const { createAfterSalesAsyncService } = require('../services/afterSalesAsyncService');
+const { createPaymentMethodsService } = require('../services/paymentMethodsService');
+const { redirectWithSubmitToast } = require('../utils/submitToast');
+const { AFTER_SALES_DERIVED } = require('../config/afterSalesDerived');
 const { tapIdFromRequest } = require('../utils/correlationFields');
 const { logError } = require('../utils/logger');
 
@@ -127,6 +132,95 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
       return res.status(error?.statusCode === 400 ? 400 : 502)
         .json({ success: false, error: error.message });
     }
+  });
+
+  // ⭐⭐ 2026-11-08（业务负责人定稿）：售后「退货」写入 —— 表单 POST → 入队 → 303 统一 toast → 后台写库。
+  //   ⚠️ 旧同步写入口 `POST /sales/after-sales` 保留（灰度可回退），页面不再用它。
+  const landingPath = (productRecordId) => (productRecordId
+    ? `/workbench/after-sales.html?productRecordId=${encodeURIComponent(productRecordId)}`
+    : '/workbench/after-sales.html');
+  let paymentMethods = options.paymentMethodsService || null;
+  const resolvePaymentMethods = () => {
+    if (!paymentMethods) paymentMethods = createPaymentMethodsService(options.gateway);
+    return paymentMethods;
+  };
+  let returnService = options.afterSalesReturn || null;
+  const resolveReturnService = () => {
+    if (!returnService) returnService = new AfterSalesReturnService({ gateway: options.gateway });
+    return returnService;
+  };
+  let jobs = options.afterSalesJobs || null;
+  const resolveJobs = () => {
+    if (!jobs) {
+      jobs = createAfterSalesAsyncService({
+        dir: options.afterSalesJobsDir,
+        execute: (payload, execOptions) => resolveReturnService().execute(payload, execOptions),
+        onSettled: () => resolveScanService().invalidateCache(),
+      });
+      jobs.start().catch((error) => logError('workbench.orders.after_sales.failed', {
+        reason: 'job_start_failed', error: error.message,
+      }));
+    }
+    return jobs;
+  };
+
+  // 退款方式候选：**唯一数据源 = 「支付方式管理」**（走统一配置缓存；不写死选项）。
+  router.get('/sales/after-sales/payment-methods', async (req, res) => {
+    try {
+      const listed = await resolvePaymentMethods().list();
+      return res.json({ success: true, items: listed?.items || [] });
+    } catch (error) {
+      logError('workbench.sales.after_sales.candidates.failed', {
+        request_id: req.requestId, reason: 'payment_methods', error: error.message,
+      });
+      return res.status(502).json({ success: false, error: error.message });
+    }
+  });
+
+  // 提交退货：表单 POST（不是 XHR）→ 同步校验（她填错立刻回页面）→ 入队 → 303 统一 toast。
+  router.post('/sales/after-sales/submit', async (req, res) => {
+    const body = req.body || {};
+    const productRecordId = String(body.productRecordId || '').trim();
+    const backTo = landingPath(productRecordId);
+    const payload = {
+      action: 'return',
+      requestId: String(body.requestId || '').trim(),
+      salesEntryRecordId: String(body.salesEntryRecordId || '').trim(),
+      detailRecordId: String(body.detailRecordId || '').trim(),
+      moneyMode: String(body.moneyMode || '').trim(),
+      paymentMethod: String(body.paymentMethod || '').trim(),
+      productRecordId,
+    };
+    try {
+      const prepared = await resolveReturnService().prepare(payload);
+      await resolveJobs().enqueue({
+        type: 'return', requestId: prepared.requestId,
+        payload: { ...payload, salesEntryOrderNo: prepared.orderNo },
+        correlation: tapIdFromRequest(req),
+      });
+      return redirectWithSubmitToast(res, {
+        path: backTo, orderNo: prepared.orderNo, extra: { submitted: '1' },
+      });
+    } catch (error) {
+      logError('workbench.orders.after_sales.failed', {
+        request_id: req.requestId, reason: 'submit', error: error.message,
+      });
+      const message = error?.statusCode === 400 ? error.message : AFTER_SALES_DERIVED.texts.submitFailed;
+      return res.redirect(303, `${backTo}${backTo.includes('?') ? '&' : '?'}err=${encodeURIComponent(message)}`);
+    }
+  });
+
+  // 后台任务状态（只读；排查/幂等用，页面不依赖它）
+  router.get('/sales/after-sales/jobs/:jobId', async (req, res) => {
+    const job = await resolveJobs().get(String(req.params.jobId || '').trim()).catch(() => null);
+    if (!job) return res.status(404).json({ success: false, error: 'job not found' });
+    return res.json({
+      success: true,
+      job: {
+        jobId: job.job_id, status: job.status, attempts: Number(job.attempts || 0),
+        error: job.last_error || '', result: job.result || null,
+      },
+    });
   });
 
   return router;
