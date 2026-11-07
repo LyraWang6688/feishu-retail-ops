@@ -132,7 +132,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const t = write.texts;
   const fields = write.fields;
   const lines = write.draft?.lines || [];
-  const sizeInput = sizeGroupsHtml(view, write);
+  const sizeInput = sizeGroupsHtml(view);
   // ⭐ 2026-10-29：扫码页「流程配置」（`config/scanFlows.js`）—— 换款式等流程只声明差异：
   //   · 不显示"这一双的金额"输入（金额按货品单价算）；
   //   · 不出现"再加一双"（固定 1 双）；
@@ -299,12 +299,12 @@ const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 <legend class="size-group__legend">
 ${String(heading || '').trim() ? `<span class="size-group__title">${escapeHtml(heading)}</span>\n` : ''}<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
 </legend>
-<div class="size-chips">${items.length
-    ? items.map((item) => `<label class="size-chip">
+${items.length
+    ? `<div class="size-chips">${items.map((item) => `<label class="size-chip">
 <input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
 <span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
-</label>`).join('\n')
-    : `<span class="hint">${escapeHtml(empty)}</span>`}</div>
+</label>`).join('\n')}</div>`
+    : `<p class="hint">${escapeHtml(empty)}</p>`}
 </fieldset>`;
 
 /**
@@ -342,17 +342,20 @@ const specialFactsHtml = (items, v) => specialFoldShellHtml(items, `<ul class="s
 <span class="size-fold__count">${escapeHtml(fillText(v.saleCountTemplate, { count: item.sellable ?? 0 }))}</span>
 </li>`).join('')}</ul>`);
 
-const sizeGroupsHtml = (view, write) => {
+const sizeGroupsHtml = (view) => {
   const t = REALM_TEXTS;
   const groups = saleSizeGroups(view);
-  const fallback = (write.sizes || []).map((item) => ({ size_text: item.size_text, missing: Boolean(item.missing) }));
-  const inStock = groups.inStock.length || groups.prepaid.length
-    ? groups.inStock
-    : fallback.filter((item) => !item.missing).map((item) => ({ size_text: item.size_text, count: null }));
-  const prepaid = groups.inStock.length || groups.prepaid.length
-    ? groups.prepaid
-    : fallback.filter((item) => item.missing).map((item) => ({ size_text: item.size_text, count: 0 }));
-  if (!inStock.length && !prepaid.length) return `<span class="hint">${escapeHtml(t.saleSizeEmpty)}</span>`;
+  const { inStock = [], prepaid = [], folded = [] } = groups || {};
+  // ⭐⭐ 2026-11-08（业务负责人真机截图 · M2165|卡其|）：
+  //   **三堆全空 ⇔ 这份数据「算不出尺码」**（编号第 3 段缺类别 ⇒ number_without_category 降级；
+  //   且这一款在「实时库存」里一条记录都没有 ⇒ view.rows = []）—— **不是「没货」** ✗
+  //   ⇒ 只给一句「核对编号」的人话；不画两个空组，也不拿旧句「没有可选的尺码」误导成没货 ✗。
+  //   ⚠️ 2026-11-08 同刀删除旧的 `write.sizes` 回填：它与 `saleSizeGroups` **同一份 view.rows**
+  //     （`flowHelpers.js` 的 `sizes` = view.rows map），实测改变不了结果 ⇒ 冗余路径删净 ✓
+  //   ⚠️ 条件是「三堆」全空：只有特殊码缺货时 folded 非空 ⇒ 照常画两个组 + 折叠块（不吞 ✓）。
+  if (!inStock.length && !prepaid.length && !folded.length) {
+    return `<p class="hint" data-view="sale-sizes-unavailable">${escapeHtml(t.saleSizeUnavailable)}</p>`;
+  }
   // ⚠️ 2026-10-11 起**不再算每个码的数量文案**（`countText` 已退场）：卡上只有尺码本身，
   //    数量只在「库存」页看；两组的分法由 `saleSizeGroups` 决定，一个字没变。
   return sizeGroupHtml({
@@ -369,7 +372,7 @@ const sizeGroupsHtml = (view, write) => {
     tone: 'warning',
     items: prepaid,
     empty: t.saleSizeEmpty,
-  }) + specialFoldHtml(groups.folded || []);
+  }) + specialFoldHtml(folded);
 };
 
 /**
