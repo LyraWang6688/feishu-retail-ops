@@ -84,7 +84,8 @@ test('AC-BH5 解析不到该编码 ⇒ 抛人话（绝不写一条没有「采�
 test('AC-BH6 哨兵：扫码那条链路只从配置读采购行为码（不写死、也不再借库存编码）', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const service = fs.readFileSync(path.join(__dirname, '../src/services/scanWriteService.js'), 'utf8');
+  const service = fs.readFileSync(path.join(__dirname, '../src/services/scanWriteService.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '../src/services/scanWrite/createService.js'), 'utf8');
   assert.ok(service.includes('behaviorCode'), '补货/退货链路从配置读采购行为码');
   assert.equal(service.includes('STOCK_PURCHASE_INCREASE'), false,
     '业务侧不许出现库存编码（那是 inventoryService 的事）✗');
