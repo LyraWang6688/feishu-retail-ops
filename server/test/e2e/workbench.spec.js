@@ -66,14 +66,14 @@ const mockApi = async (page, { orders = [] } = {}) => {
 
 test.beforeEach(async ({ page }) => { await mockApi(page); });
 
-test('五个领域 tab + 订单列表懒加载', async ({ page }) => {
+test('六个领域 tab + 订单列表懒加载', async ({ page }) => {
   const orderRequests = [];
   page.on('request', (request) => {
     if (new URL(request.url()).pathname === '/api/workbench/sales/orders') orderRequests.push(request.url());
   });
   await page.goto('/workbench/');
   await expect(page.getByText('已登录：E2E')).toBeVisible();
-  await expect(page.locator('.main-tab')).toHaveText(['销售', '库存', '供应', '货品', '资金']);
+  await expect(page.locator('.main-tab')).toHaveText(['销售', '库存', '供应', '货品', '资金', '创作']);
 
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await expect(page.getByRole('button', { name: /交割单/ })).toBeVisible();
