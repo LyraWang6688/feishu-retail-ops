@@ -1,7 +1,8 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { mainTabsHtml, MAIN_TABS } from './core/tabs.js';
-import { TAP_TELEMETRY } from './config/telemetry.js';
+import { TAP_TELEMETRY, FLUENCY_TELEMETRY } from './config/telemetry.js';
+import { createFluencyTracker, installFluencyObservers } from './shared/ui-fluency.js';
 import { createDomainModule } from './features/domains/index.js';
 import { createPlaceholderModule } from './features/shared/placeholder.js';
 
@@ -17,6 +18,33 @@ import { createPlaceholderModule } from './features/shared/placeholder.js';
  *   🔴 埋点**绝不**影响她的操作：脚本没加载 / 报错 ⇒ 静默返回（`try` 包住）；
  *      也**绝不**取消浏览器默认行为（那一格是 AppLink，拦了就"点了没反应" ✗）。
  */
+// ⭐ 2026-11-08：前端流畅性观测接入（默认随工作台加载）。
+//   - 只记录白名单事实（骨架停留 / 卡片替换 / 页面 / 表单 / 前端错误），不碰表单值与 PII；
+//   - 通过既有 ui-tap 端点和 tap_id 关联，不新造事件名；
+//   - 页面级模块也可调用 window.dshFluency.* 补业务事实。
+let fluency = null;
+
+function initFluency() {
+  try {
+    const reporter = typeof window === 'undefined' ? null : window.dshUiTap;
+    if (!reporter || typeof reporter.track !== 'function') return null;
+    const tracker = createFluencyTracker({
+      slowMs: FLUENCY_TELEMETRY.slowMs,
+      page: TAP_TELEMETRY.page,
+      post: (payload) => reporter.track(payload.target, {
+        path: TAP_TELEMETRY.path,
+        page: TAP_TELEMETRY.page,
+        extra: payload,
+      }),
+    });
+    installFluencyObservers({ tracker });
+    window.dshFluency = tracker;
+    return tracker;
+  } catch {
+    return null;
+  }
+}
+
 function bindTapTelemetry() {
   try {
     const reporter = typeof window === 'undefined' ? null : window.dshUiTap;
@@ -25,6 +53,8 @@ function bindTapTelemetry() {
       path: TAP_TELEMETRY.path,
       page: TAP_TELEMETRY.page,
       formField: TAP_TELEMETRY.formField,
+      // fluency 已装 error/rejection observers ⇒ 不再重复绑一份
+      diagnostics: !fluency,
     });
   } catch {
     // 埋点失败从不影响她操作 ✓
@@ -120,6 +150,33 @@ function trackTap(target) {
   } catch { /* 埋点失败从不影响她操作 ✓ */ }
 }
 
+// 通用 DOM 观测：骨架出现/消失、表单展开、卡片数量变化。
+// 不绑定业务逻辑，只是把 ui-fluency 的 tracker 接到现有 DOM 上。
+function installPanelFluency(container, moduleId) {
+  if (!fluency || !container || container.dataset.fluencyBound === '1') return;
+  container.dataset.fluencyBound = '1';
+  let skeletonSeen = false;
+  let cardCount = container.querySelectorAll('.entry-card, .candidate-card, .sd-card, .pr-group, .label-filter-card').length;
+  const skeleton = () => container.querySelector('.section-loading, [data-view="orders-waiting"], [data-sd-status="loading"]');
+  const scan = () => {
+    const visible = Boolean(skeleton());
+    if (visible && !skeletonSeen) { skeletonSeen = true; fluency.skeletonShown(); }
+    if (!visible && skeletonSeen) { skeletonSeen = false; fluency.skeletonReplaced('dom'); }
+    const nextCount = container.querySelectorAll('.entry-card, .candidate-card, .sd-card, .pr-group, .label-filter-card').length;
+    if (nextCount !== cardCount) { cardCount = nextCount; fluency.cardSwapped(moduleId); }
+    container.querySelectorAll('form').forEach((form) => {
+      if (form.dataset.fluencySeen === '1') return;
+      form.dataset.fluencySeen = '1';
+      fluency.formRevealed(form.getAttribute('data-as-return-form') !== null ? 'after_sales_return'
+        : (form.getAttribute('data-entry-form') !== null ? 'entry_form' : 'form'));
+    });
+  };
+  try {
+    new MutationObserver(scan).observe(container, { childList: true, subtree: true });
+  } catch { /* observer 不可用不影响页面 */ }
+  scan();
+}
+
 function activateModule(moduleId) {
   showPageError('');
   document.querySelectorAll('.main-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.module === moduleId));
@@ -132,9 +189,13 @@ function activateModule(moduleId) {
   host.append(container);
   mounted.set(moduleId, container);
   module.mount(container);
+  fluency?.realmEntered(moduleId);
+  installPanelFluency(container, moduleId);
 }
 
 async function start() {
+  // ⭐ 2026-11-08：先装流畅性观测，再绑点击委托（避免重复绑 error 监听）。
+  fluency = initFluency();
   // ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤）：先绑埋点委托（与 tab 渲染同一条理由 —— 鉴权之前就可交互）。
   bindTapTelemetry();
   // ⚠️ 先把 tab 渲染出来、再把监听**绑上**（都放在鉴权之前）。原来监听绑在 `requireFeishuAuth`

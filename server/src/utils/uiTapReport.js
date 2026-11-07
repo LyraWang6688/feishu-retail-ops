@@ -58,6 +58,24 @@ const tapFields = ({ req, scope, target, page, tapId, sinceMs, realm }) => ({
   path: String(req?.originalUrl || '').split('?')[0],
 });
 
+/**
+ * `fluency:` 命名空间的附加事实（前端流畅性）。
+ * 只接收白名单键；`path` 改名为 `client_path`，不能覆盖服务端请求自己的 `path`。
+ * 全部截断，避免日志被超长串撑爆。
+ */
+const fluencyFieldsOf = (query = {}) => {
+  const out = {};
+  for (const key of ['ms', 'count', 'phase', 'level', 'realm', 'form', 'status']) {
+    const raw = query?.[key];
+    if (raw === undefined || raw === null || String(raw).trim() === '') continue;
+    const max = key === 'ms' || key === 'count' || key === 'status' ? 20 : 64;
+    out[key] = clip(raw, max);
+  }
+  const clientPath = clip(query?.path, 200);
+  if (clientPath) out.client_path = clientPath;
+  return out;
+};
+
 /** ② `ui.tap.result` 的日志载荷（**唯一一处** ⇒ 扫码页与工作台同形；纯函数 ⇒ 可真红）。 */
 const tapResultFields = ({ tapId, scope, status, code, durationMs, req }) => ({
   request_id: req?.requestId,
@@ -177,6 +195,8 @@ const handleUiTap = ({ req, res, scope = 'scan', realm = '' }) => {
   const sinceMs = req?.query?.[fields.sinceMs];
   // ⚠️ `realm` 只有扫码页有（`?from=`）；工作台不传 ⇒ 日志里就不出现这个键（不编 ✗）。
   const payload = tapFields({ req, scope, target, page, tapId, sinceMs, realm });
+  // 前端流畅性：target 用 `fluency:` 命名空间时，额外记录白名单事实。
+  if (String(target).startsWith('fluency:')) Object.assign(payload, fluencyFieldsOf(req?.query));
   logInfo(payload.event, payload);
   res.set(fields.eventHeader, payload.event);
   return res.status(204).end();
@@ -215,6 +235,7 @@ module.exports = {
   resultCodeOf,
   tapFields,
   tapResultFields,
+  fluencyFieldsOf,
   handleUiTap,
   uiTapResultMiddleware,
   markTapCode,
