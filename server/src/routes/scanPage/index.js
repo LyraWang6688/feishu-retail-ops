@@ -78,6 +78,7 @@ const {enabled: feishuAuthEnabled,
   buildLoginStartUrl,
   resolveScanNext, COOKIE_NAME, encodeSession } = require('../feishuWebAuth');
 const { SCAN_PAGE } = require('../../config/scanPage');
+const { renderFlowOf, handlePendingExchangeSubmit } = require('./exchangeFlow');
 const { SCAN_WRITE, fillText: fillWriteText } = require('../../config/scanWrite');
 // ⭐⭐ 2026-10-16（task-59「一单多货品」**路由半**）：设计见
 //   `docs/multi-item-order-design-2026-10-15.md` · 锚点见 `docs/multi-item-route-anchors-2026-10-16.md`。
@@ -1219,7 +1220,8 @@ const createScanPageRouter = (options = {}) => {
       //     · `from=sales`（她刷新销售页 ⇒ 仍给资金页 ✓ 不丢她刚填的 ✓）
       //     · 或**没带 `from`**（裸扫通常就是销售入口 ✓ 保持原有体验 ✓）
       //     · **其它领域**（库存/补货/退货/…）⇒ ⭐ **一律不接管**（照旧给那一块 ✓）
-      const salesContext = String(req.query?.from || '') === '' || String(req.query?.from) === 'sales';
+      const salesContext = renderFlowOf(req.query).flow.id === 'sales'
+        && (String(req.query?.from || '') === '' || String(req.query?.from) === 'sales');
       /**
        * ⭐⭐ 2026-10-16（task-60 · 她真机 05:34「扫货品码却出现资金页」＋ **她当日亲口选的方案 ②**）：
        *   我给的选项（逐字）：「① 接管前先核对"是不是这个货品" 还是 ② 重扫同一个货品就从头开始
@@ -1405,6 +1407,8 @@ const createScanPageRouter = (options = {}) => {
       // ⭐ 2026-10-17（假配置接线）：扫完回来的这一发、且这一处登记 keepDraft=false ⇒ 先清旧草稿
       if (realmScanTriggered(req, realm)) await clearDraftForScanIfNeeded(sessionIdOf(req), realm);
       const write = await buildWriteContext(req, view, realm);
+      // ⭐ 2026-10-29：扫码「流程」（配置驱动；换款式等差异都进配置，路由只接薄模块）
+      const { flow: scanFlow, flowContext } = renderFlowOf(req.query);
       // ⚠️ 验收模式那一块**只用到文案 / 字段名 / 动作名**（它们都在配置里）——
       //    所以即使扫码写入口整个关着（`write` 为 null），验收模式照旧可用：
       //    这里给它一个最小的上下文（不构造销售 / 补货那两条链的任何东西）。
@@ -1451,6 +1455,9 @@ const createScanPageRouter = (options = {}) => {
         // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：**只有"加货刚成功、303 回来这一发"才给**
         //   （`?scan=1` ✓）—— 其它任何时候都是 `null` ⇒ 页面上一个字都不多（`AC-ML5` ✓）。
         realmScan: realmScanPageConfig(req, realm),
+        // ⭐ 2026-10-29：流程配置（换款式：不加一双 / 不显示金额 / 提交文案 / 上下文隐藏字段）
+        flow: scanFlow,
+        flowContext,
         // ⭐⭐ 2026-10-16（task-61 · ① 日志）：渲染层把"**本单已加的货品**"那一笔**只读**登记在这里
         //   （渲染层是纯函数 ⇒ 它自己不打日志 ✗；**由本路由在渲染之后统一打** ✓ —— 与既有
         //   `logRendered` 同一处，且**失败也绝不会影响她的页面** ✗）。
@@ -1659,6 +1666,9 @@ const createScanPageRouter = (options = {}) => {
         });
       }
       
+
+    // ⭐ 2026-10-29：非销售 flow（售后换款式）的货品页提交到此为止（不跳资金页、零写入）
+    if (handlePendingExchangeSubmit({ req, res, requestId, action, actions, realm, sendHuman, markTapCode, postActionFor, backTargetFor })) return;
 
     if (!writeService) {
       // ⭐ 埋点 P0 ②：原因码（写入口关着 —— 与"她填错了"分开，修法完全不同）
