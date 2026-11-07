@@ -116,6 +116,8 @@ test('AC-P22 提交前 0 写请求；点提交只 1 次 POST 且 payload 正确�
   expect(draftBefore.submitKey).toBeTruthy();
 
   await page.getByRole('button', { name: '提交' }).click();
+  // ⭐ A 方案：成功后跳工作台（`?toast=`），由 `shared/toast.js` 弹统一 toast（不是采购页自己的容器）
+  await page.waitForURL(/\/workbench\/\?toast=/);
   await expect(page.getByText('数据提交成功，后台自动写入')).toBeVisible();
   expect(calls.submit).toHaveLength(1);
   const payload = calls.submit[0];
@@ -123,12 +125,11 @@ test('AC-P22 提交前 0 写请求；点提交只 1 次 POST 且 payload 正确�
   expect(payload.items.map((item) => item.productRecordId).sort()).toEqual(['recProdA', 'recProdB']);
   const lineA = payload.items.find((item) => item.productRecordId === 'recProdA');
   expect(lineA.entries).toEqual([{ size: 39, quantity: 1 }, { size: 41, quantity: 2 }]);
-  // 成功之后草稿清空、submitKey 换新（下一单不会被这一单吸收）
+  // 成功之后草稿清空、submitKey 换新（下一单不会被这一单吸收）——
+  // ⚠️ 要在**跳转后的工作台页**读 localStorage（再回采购页会按默认值重新种子，不能当作"没清"）
   const draftAfter = await draftInStorage(page);
   expect(draftAfter.products).toEqual({});
   expect(draftAfter.submitKey).not.toBe(draftBefore.submitKey);
-  // 再点提交：空草稿 ⇒ 不发第二次 POST
-  await page.getByRole('button', { name: '提交' }).click();
   expect(calls.submit).toHaveLength(1);
 });
 

@@ -59,7 +59,13 @@ export const createSubmitController = ({ config, api, getStore }) => {
       const store = getStore();
       store.clear();
       store.rotateSubmitKey(store.ensure());
-      // 文案唯一真源在服务端 `config/submitToast.js`（前端不再抄一份）；服务端总会回 message。
+      // ⭐ 2026-11-08（A 方案）：成功回执统一走「工作台 + shared/toast.js」——
+      //   服务端用 `submitToastUrl()` 返回 redirect_url；这里清完草稿就跳过去，由工作台顶部弹统一 toast。
+      if (response?.redirect_url) {
+        window.location.assign(response.redirect_url);
+        return { ok: true, cleared: true, redirected: true };
+      }
+      // 兜底（旧服务端没给 redirect_url）：留在本页用本地 toast 显示服务端文案
       if (response?.message) toast(root, response.message);
       return { ok: true, cleared: true };
     } catch (error) {
