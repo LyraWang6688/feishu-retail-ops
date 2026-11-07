@@ -125,3 +125,199 @@
   font-size: var(--font-size-sm);
   text-align: center;
 }
+
+/* ── 点动作后的弹窗（样式对齐交割单页付款弹窗，全部走 tokens）──────────────────
+ * ⭐ 2026-10-29（业务负责人：「先把页面做好」「保持和现有前端风格一致」）：
+ *   居中弹窗 + 半透明遮罩 + 白卡 + 底部两颗按钮；输入控件与 `base.css` 的
+ *   `.form-field` / `.btn` / `--control-height` 同一套尺寸与圆角。 */
+.as-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+.as-modal[hidden] { display: none; }
+.as-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--text);
+  opacity: .45;
+}
+.as-modal-dialog {
+  position: relative;
+  display: grid;
+  gap: var(--space-3);
+  width: min(100%, 420px);
+  max-height: calc(100dvh - var(--space-6));
+  overflow-y: auto;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.as-modal-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-bold);
+}
+.as-modal-body { display: grid; gap: var(--space-3); }
+.as-modal-line { display: grid; gap: var(--space-1); }
+.as-modal-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-bold);
+}
+.as-modal-value {
+  color: var(--text);
+  font-size: var(--font-size-base);
+  overflow-wrap: anywhere;
+}
+.as-modal-amount {
+  color: var(--primary);
+  font-size: var(--font-size-amount);
+  font-weight: var(--weight-bold);
+}
+.as-modal-field { margin: 0; }
+.as-modal-select {
+  min-height: var(--control-height);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-base);
+}
+/* 「退款 / 留存」这类两选一：沿用按钮的 44px 命中区 + 主色选中态。 */
+.as-segmented { display: flex; gap: var(--space-2); }
+.as-segment {
+  flex: 1 1 0;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-base);
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+}
+.as-segment:hover { border-color: var(--primary); background: var(--primary-soft); }
+.as-segment.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.as-scan-btn { width: 100%; border: 1px dashed var(--border); }
+.as-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.as-modal-actions .btn {
+  min-width: 88px;
+  min-height: var(--control-height);
+  white-space: nowrap;
+}
+.as-modal-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.as-modal-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+/* 操作成功 → 一句话（业务负责人：退货「数据提交成功」/ 换货「信息提交成功」）。 */
+.as-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+  z-index: 1001;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--text);
+  color: var(--surface);
+  font-size: var(--font-size-sm);
+  box-shadow: var(--shadow-pop);
+  white-space: nowrap;
+}
+.as-toast[hidden] { display: none; }
+/* 赔货：灰置不可点（只做展示占位）。 */
+.candidate-action:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+/* ── 换尺码：现货 / 预定 / 特殊码（销售扫码页同一套口径）──────────────────────
+ * ⭐ 2026-10-29（HTML 批注）：「这里应该还是按照销售扫码页面的逻辑，给出现货、预定还有特殊码区域」
+ *   版式沿用销售页：一行 4 个码、整块 ≥44px 命中区、特殊码用原生 <details> 折叠。 */
+.as-size-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.as-size-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-bold);
+}
+.as-size-legend .tag { margin-left: auto; }
+.as-size-chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.as-size-chip {
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-base);
+  font-weight: var(--weight-bold);
+  cursor: pointer;
+}
+.as-size-chip:hover { border-color: var(--primary); background: var(--primary-soft); }
+.as-size-chip.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+/* 特殊码：原生 <details> 折叠（默认收起），折叠头同样 ≥44px 命中区。 */
+.as-size-fold { margin-top: var(--space-2); }
+.as-size-fold > summary {
+  display: flex;
+  min-height: var(--control-height);
+  align-items: center;
+  padding: 0;
+  cursor: pointer;
+  list-style: none;
+}
+.as-size-fold > summary::-webkit-details-marker { display: none; }
+.as-size-fold > summary::after {
+  content: '▾';
+  margin-left: var(--space-1);
+  color: var(--text-secondary);
+}
+.as-size-fold[open] > summary::after { content: '▴'; }
+.as-size-fold > .as-size-chips { margin-top: var(--space-2); }
+.as-hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
