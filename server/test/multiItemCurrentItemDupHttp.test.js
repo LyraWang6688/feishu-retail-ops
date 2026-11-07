@@ -1,4 +1,5 @@
 'use strict';
+const { assertSubmitToast } = require('./support/submitToastAssert');
 
 /**
  * multiItemCurrentItemDupHttp.test.js —— **把「＋ 再加一个货品」那颗入口放出来**的判据
@@ -277,7 +278,7 @@ test('AC-MID-2 ⭐⭐ 【真 HTTP · 缺省开关】她填 41×1 ⇒ 提交后**
     const payload = payloadOf(html);
     // ③ 她这次填 **41 码 × 1** 并提交
     const posted = await postForm(base, submitBody({ items: payload, sizes: ['41'], quantity: '1' }));
-    assert.equal(posted.status, 200, `提交要成功（实得 ${posted.status}：${(await posted.text()).slice(0, 200)}）`);
+    assertSubmitToast(posted, '提交要成功');
     // ④ 🔴 **落进去的那一份必须是她填的 41×1** —— 这一条**先断**（走哪条路都在这里读得到 ✓）：
     //    老路径（她本来那一单）= `restInput.entries`；引擎那条路 = 落库明细里 `rec_K1` 那几行。
     //    ⚠️ 两边的形状各是各的（老路径是字符串数量 ✓ 引擎归一成数字 ✓）⇒ 各自归一化后比 ✓。
@@ -311,7 +312,7 @@ test('AC-MID-3 ⭐⭐ 探针：同一套 HTTP 流程、只把载荷换成**改�
     assert.equal(broken.filter((item) => item.product_record_id === 'rec_K1').length, 2,
       '探针：这就是**改前逐字**渲染器真实渲出来的那一份（同一件两次 ✓）');
     const posted = await postForm(base, submitBody({ items: broken, sizes: ['41'], quantity: '1' }));
-    assert.equal(posted.status, 200, '探针那一单也要能交出去（不然测的不是同一个形状 ✗）');
+    assertSubmitToast(posted, '探针那一单也要能交出去（不然测的不是同一个形状 ✗）');
     assert.equal(backgroundCalls.length, 0, '探针：两件 ⇒ 走引擎那条路（老路径 0 次 ✓）');
     assert.deepEqual(landedLinesOf(writeService), [{ size: '40', quantity: 2 }],
       '🔴 探针：落进去的是**草稿旧值 40 码 × 2** ⇒ 她这次填的 41×1 **静默没了** ✗✗'

@@ -133,6 +133,22 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const fields = write.fields;
   const lines = write.draft?.lines || [];
   const sizeInput = sizeGroupsHtml(view, write);
+  // ⭐ 2026-10-29：扫码页「流程配置」（`config/scanFlows.js`）—— 换款式等流程只声明差异：
+  //   · 不显示"这一双的金额"输入（金额按货品单价算）；
+  //   · 不出现"再加一双"（固定 1 双）；
+  //   · 提交按钮文案 / 顶部提示可由 flow 配置覆盖；
+  //   · flow.context 声明的上下文用隐藏字段原样带进 POST。
+  const flow = page?.flow || null;
+  const goodsStep = (flow?.steps || []).find((step) => step.type === 'goods') || null;
+  const hideAmountInput = goodsStep?.hideAmountInput === true;
+  const hideAddLine = flow?.allowAddLine === false;
+  const submitLabel = String(goodsStep?.submitLabel || '').trim();
+  const flowBanner = String(goodsStep?.banner || '').trim();
+  const flowContext = page?.flowContext || {};
+  const flowContextHtml = Object.entries(flowContext)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `<input type="hidden" name="ctx_${escapeHtml(key)}" value="${escapeHtml(String(value))}">`)
+    .join('');
   // 🔴🔴 2026-10-13（业务负责人：「我们先把**扫码页里的配品逻辑拿掉**，配品**改放在工作台里面**。
   //   也就是说，**扫码的时候就不用考虑配品信息了**」）—— 这一块（配品下拉 + 配品实收金额 + 那一颗
   //   【加入本单】）**已整块退场**，改到工作台去录（见 `docs/scan-sales-payment-flow-2026-10-13.md` 第六节）。
@@ -234,12 +250,12 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
       : ''),
     scanNow: page.realmScan?.scanNow === true,
   });
-  return `<section class="card">
+  return `<section class="card">${flowBanner ? `<p class="flow-banner">${escapeHtml(flowBanner)}</p>` : ''}
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
 ${sizeInput}
-<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"></div>
+${hideAmountInput ? '' : `<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"></div>`}
 ${alert}
 ${multiItemTitleHtml}${draftLinesHtml(write)}
 ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
@@ -250,8 +266,8 @@ ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
      先弹全屏遮罩再 fetch，响应回来 document.write 整页（成功页 / 资金页 / 400 提示页都照原样）。
      ⚠️ 只加**这一个属性**（按钮 name/value/文案一个字未动 ✓）；老环境没有 JS 照样走原生提交。
      ⚠️ 【再加一双】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
-<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(countLabel)}</button>
-<button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>
+${flowContextHtml}<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(submitLabel || countLabel)}</button>
+${hideAddLine ? '' : `<button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>`}
 </form>
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
 ${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}
@@ -281,8 +297,7 @@ ${hiddenField(fields.submitKey, write.saleKey)}
 const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 <fieldset class="size-group" data-stock-group="${escapeHtml(id)}">
 <legend class="size-group__legend">
-<span class="size-group__title">${escapeHtml(heading)}</span>
-<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
+${String(heading || '').trim() ? `<span class="size-group__title">${escapeHtml(heading)}</span>\n` : ''}<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
 </legend>
 <div class="size-chips">${items.length
     ? items.map((item) => `<label class="size-chip">
