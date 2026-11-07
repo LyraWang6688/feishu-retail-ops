@@ -85,6 +85,7 @@ const {
   goodsOnlyResult, planOneShotRun, finalizeSaleOnce: finalizeSaleOnceWith,
 } = require('./sales/oneShotWrite');
 const { logError, logInfo, logWarn } = require('../utils/logger');
+const { createScanWriteHelpers } = require('./scanWrite/helpers');
 
 /**
  * 「全仓唯一创建销售主表记录」的那个函数 —— **只 require 调用，不改它一个字**。
@@ -110,6 +111,10 @@ const createScanWriteService = (options = {}) => {
   const schema = options.schema || V1_BITABLE_SCHEMA;
   const config = options.config || SCAN_WRITE;
   const texts = config.texts;
+  const {
+    fieldOf, fail, userMessageFor, positiveAmount, toCents, moneyText,
+    amountMismatchMessage, amountList, positiveInteger, sessionKeyOf,
+  } = createScanWriteHelpers({ schema, config, logError });
   // ⭐⭐ 2026-10-15（⑰ 异步）：异步开关的取值口（默认 = 配置 `config.sale.asyncWrite`）——
   //   ⚠️ 可注入（`options.saleAsyncWrite`）**为的是用例**：同一个文件里要同时验"开着（异步）"
   //   与"关着（老路径逐字同形）"两种行为 ✓（配置对象是 frozen 的，改不了 ✗）。
@@ -231,103 +236,6 @@ const createScanWriteService = (options = {}) => {
     });
     return multiItemWritersInstance;
   };
-  const fieldOf = (tableKey, semanticKey) => schema?.tables?.[tableKey]?.fields?.[semanticKey] || '';
-
-  // ── 小工具 ────────────────────────────────────────────────────────────────
-  const fail = ({ code, message, requestId, error, extra = {} }) => {
-    const detail = error ? String(error.message || error) : '';
-    if (error) {
-      logError(config.events.failed, {
-        request_id: requestId, code, error: detail, ...(extra.log || {}),
-      });
-    }
-    return { ok: false, code, message, failure_reason: detail, ...extra.result };
-  };
-
-  /**
-   * 业务层抛出来的错误 → **给她看的人话**。
-   * · 我们的校验错误（`scanUserMessage`）直接用；
-   * · 业务层自己的中文业务话（例：「本次收款超过本单实收金额」「尺码管理中找不到 41 码」）
-   *   原样给她 —— 她照着改一下就能再提交；
-   * · 命中 `sale.unsafeErrorMarkers` 的**内部错误**（飞书错误码 / 表名字段名 / 配置缺失）
-   *   只给通用人话，原文只进日志（与第一版只读页"内部细节不回显"同一条规矩）。
-   */
-  const userMessageFor = (error) => {
-    const raw = String(error?.message || error || '').trim();
-    if (error?.scanUserMessage) return error.scanUserMessage;
-    if (!raw) return texts.internalFailedBody;
-    const unsafe = (config.sale.unsafeErrorMarkers || []).some((marker) => raw.includes(marker));
-    if (unsafe) return texts.internalFailedBody;
-    return fillText(texts.businessFailedBody, { reason: raw });
-  };
-
-  const positiveAmount = (raw) => {
-    const text = String(raw ?? '').trim().replace(/[¥￥,\s]/g, '');
-    if (!text) return { ok: true, value: null };
-    const decimals = Number.isInteger(config.sale.amountDecimals) ? config.sale.amountDecimals : 2;
-    const pattern = new RegExp(`^\\d+(\\.\\d{1,${decimals}})?$`);
-    if (!pattern.test(text)) return { ok: false };
-    const value = Number(text);
-    if (!Number.isFinite(value) || value <= 0) return { ok: false };
-    return { ok: true, value: Math.round(value * 100) / 100 };
-  };
-
-  /** 金额 → 分（整数运算，**不拿浮点数比大小**：0.1 + 0.2 那类误差会误报）。 */
-  const toCents = (value) => Math.round(Number(value || 0) * 100);
-
-  /**
-   * 分 → 她看的人话金额（整数不带小数点；带角分才给两位）。
-   * 前缀（`¥`）在 `config/scanWrite.sale.moneyPrefix` —— 逻辑里不写死。
-   */
-  const moneyText = (value) => {
-    const number = Number(value || 0);
-    const text = Number.isInteger(number) ? String(number) : number.toFixed(2);
-    return `${config.sale.moneyPrefix || ''}${text}`;
-  };
-
-  /**
-   * ⭐⭐ **核心校验的人话**（业务负责人 2026-10-11：「必须相等，所以系统需要校验！」）。
-   *
-   * 说清三件事：① 每件实收合计多少 ② 收款合计多少 ③ **哪边多了 / 少了、差多少** ——
-   * 她照着改一下就能再提交（不是"校验失败"四个字）。
-   */
-  /**
-   * 「全付」那一档的人话：**每件实收合计 ≠ 收款合计**。
-   *
-   * @param {object} input
-   * @param {number} input.itemsCents    每件实收合计（分）
-   * @param {number} input.paymentsCents 收款行合计（分）
-   * @param {boolean} [input.strict]     `true` = **全付档**（两边必须相等，包括"两边都是 0"）。
-   *   ⚠️ 只有全付档才传 `strict`：部分付 / 未付两档**允许差一条【未收款】**，
-   *      走各自的人话（部分付那句在 `partialAmountMismatchBody`）。
-   */
-  const amountMismatchMessage = ({ itemsCents, paymentsCents, strict = false }) => {
-    const diffCents = Math.abs(paymentsCents - itemsCents);
-    const side = itemsCents === 0 && !strict
-      ? fillText(texts.amountMismatchNoItems, { diff: moneyText(diffCents / 100) })
-      : fillText(
-        paymentsCents > itemsCents ? texts.amountMismatchOver : texts.amountMismatchShort,
-        { diff: moneyText(diffCents / 100) },
-      );
-    return fillText(texts.amountMismatchBody, {
-      items: moneyText(itemsCents / 100),
-      payments: moneyText(paymentsCents / 100),
-      side,
-    });
-  };
-
-  /** 一串原始金额（`line_amount` / `payment_amount` 同名重复 ⇒ 数组）→ 逐项原始字符串。 */
-  const amountList = (value) => {
-    if (Array.isArray(value)) return value.map((item) => (item === undefined || item === null ? '' : String(item)));
-    if (value === undefined || value === null) return [];
-    return [String(value)];
-  };
-
-  const positiveInteger = (raw) => {
-    const text = String(raw ?? '').trim();
-    return /^[1-9]\d*$/.test(text) ? Number(text) : null;
-  };
-
   /**
    * ⭐⭐ **收款方式清单**（「收款方式管理」表 = **唯一真源**）。
    *
@@ -391,9 +299,6 @@ const createScanWriteService = (options = {}) => {
    *   还给你"那条分支（**拿到上一条的单号、自己一个字都没写 = 假成功** ✗）；
    *   而那个会话键又**不能**当 open_id 写进 User 字段。⇒ 两个概念各走各的 ✓。
    */
-  const sessionKeyOf = (openId, sessionKey = '') =>
-    String(sessionKey || '').trim() || String(openId || '');
-
   // ── 销售：加入本单（**只写本地会话**）────────────────────────────────────
   /**
    * 加一双进"本单"。**业务表一个字都不写** —— 她说"点【提交】才写"。
