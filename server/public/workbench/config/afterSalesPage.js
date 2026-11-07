@@ -25,6 +25,8 @@ export const AFTER_SALES_PAGE = {
   submitApi: '/api/workbench/sales/after-sales/submit',
   // 退款方式候选（唯一数据源 =「支付方式管理」，走统一配置缓存）
   paymentMethodsApi: '/api/workbench/sales/after-sales/payment-methods',
+  // 只取「可用于退款」的方式（「支付方式管理」里那一列；列不存在时=全部）
+  refundMethodsQuery: 'use=refund',
   sizeGroupInStock: '现货',
   sizeGroupReserve: '预订',
   sizeGroupSpecial: '特殊码',

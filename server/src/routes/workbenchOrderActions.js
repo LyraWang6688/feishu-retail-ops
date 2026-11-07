@@ -167,8 +167,14 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
   // 退款方式候选：**唯一数据源 = 「支付方式管理」**（走统一配置缓存；不写死选项）。
   router.get('/sales/after-sales/payment-methods', async (req, res) => {
     try {
-      const listed = await resolvePaymentMethods().list();
-      return res.json({ success: true, items: listed?.items || [] });
+      // `?use=refund` ⇒ 只回「可用于退款」的方式（「支付方式管理」里勾了那列的）；
+      // 不传 ⇒ 全部（保持既有调用方/测试的形状不变）。
+      const useRefund = String(req.query?.use || '').trim() === 'refund';
+      const listed = useRefund
+        ? await resolvePaymentMethods().listRefundable()
+        : await resolvePaymentMethods().list();
+      const items = (listed?.items || []).map((item) => (typeof item === 'string' ? item : item.name));
+      return res.json({ success: true, items });
     } catch (error) {
       logError('workbench.sales.after_sales.candidates.failed', {
         request_id: req.requestId, reason: 'payment_methods', error: error.message,

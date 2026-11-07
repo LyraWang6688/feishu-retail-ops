@@ -180,7 +180,7 @@ export function mountAfterSalesPage(container, options = {}) {
   const loadPaymentMethods = async () => {
     if (paymentMethods || paymentMethodsError) return;
     try {
-      const data = await api.get(`${apiBase}${AFTER_SALES_PAGE.paymentMethodsApi}`);
+      const data = await api.get(`${apiBase}${AFTER_SALES_PAGE.paymentMethodsApi}?${AFTER_SALES_PAGE.refundMethodsQuery}`);
       paymentMethods = Array.isArray(data?.items) ? data.items : [];
     } catch {
       paymentMethodsError = true;

@@ -66,6 +66,7 @@ const AFTER_SALES_DERIVED = Object.freeze({
     invalidMoneyMode: '钱怎么走只能是 refund（直接退款）或 retained（货款留存）',
     needPaymentMethod: '直接退款时要选退款方式',
     unknownPaymentMethod: '支付方式管理里找不到这个方式',
+    methodNotRefundable: '这个支付方式不能用于退款（「支付方式管理」里没勾「可用于退款」）',
     entryNotFound: '找不到这张销售单',
     detailNotFound: '找不到这条销售明细',
     detailNotInEntry: '这条销售明细不属于这张销售单',

@@ -19,7 +19,10 @@ const buildApp = ({ returnService, methods } = {}) => {
     gateway: {},
     scanService: { listCandidates: async () => ({ candidates: [] }) },
     scanPageService: { lookup: async () => ({ rows: [], found: true }) },
-    paymentMethodsService: { list: async () => ({ ok: true, items: methods || [] }) },
+    paymentMethodsService: {
+      list: async () => ({ ok: true, items: methods || [] }),
+      listRefundable: async () => ({ ok: true, items: (methods || []).filter((m) => m !== '微信转账') }),
+    },
     afterSalesReturn: returnService || {
       prepare: async (payload) => ({ requestId: payload.requestId, orderNo: 'XSD-20261028-0005' }),
     },
@@ -91,6 +94,17 @@ test('AC-SUB2 她填错 ⇒ 303 回页面带 err= 人话，不入队（零写入
     assert.equal(url.searchParams.get('err'), '直接退款时要选退款方式');
     assert.equal(url.searchParams.get('toast'), null, '失败时不许弹成功 toast');
     assert.equal(calls.enqueue.length, 0);
+  } finally { server.close(); }
+});
+
+test('AC-SUB4 ?use=refund ⇒ 只回「可用于退款」的方式（未勾的不出现）', async () => {
+  const { app } = buildApp({ methods: ['现金', '微信转账', '微信扫码'] });
+  const { server, port } = await listen(app);
+  try {
+    const all = await (await fetch(`http://127.0.0.1:${port}/api/workbench/sales/after-sales/payment-methods`)).json();
+    assert.deepEqual(all.items, ['现金', '微信转账', '微信扫码'], '不带 use ⇒ 全部（形状不变）');
+    const refund = await (await fetch(`http://127.0.0.1:${port}/api/workbench/sales/after-sales/payment-methods?use=refund`)).json();
+    assert.deepEqual(refund.items, ['现金', '微信扫码'], '未勾「可用于退款」的方式不出现');
   } finally { server.close(); }
 });
 
