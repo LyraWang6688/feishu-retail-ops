@@ -37,6 +37,7 @@ const {
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,
   MOVEMENT_SALE_CASH,
+  MOVEMENT_SALE_INCREASE,
   requireMovement,
   requireQuantityMovement,
 } = require('./inventory/movements');
@@ -430,4 +431,5 @@ module.exports = {
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,
   MOVEMENT_SALE_CASH,
+  MOVEMENT_SALE_INCREASE,
 };

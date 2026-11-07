@@ -44,6 +44,7 @@ const gatewayFor = (overrides = {}) => {
       { record_id: 'purchase', fields: { 行为编码: 'STOCK_PURCHASE_INCREASE', 行为名称: '采购增加', 库存方向: '增加', 是否启用: true } },
       // 售后三条（与 inventoryService.STOCK_MOVEMENTS 的方向一致）：validateStockBehaviors 会全表核对。
       { record_id: 'return', fields: { 行为编码: 'SALE_RETURN', 行为名称: '销售退货', 库存方向: '增加', 是否启用: true } },
+      { record_id: 'sale_increase', fields: { 行为编码: 'STOCK_SALE_INCREASE', 行为名称: '销售增加', 库存方向: '增加', 是否启用: true } },
       { record_id: 'compensation', fields: { 行为编码: 'SALE_COMPENSATION', 行为名称: '销售赔货', 库存方向: '减少', 是否启用: true } },
       { record_id: 'cash', fields: { 行为编码: 'SALE_CASH', 行为名称: '现货销售', 库存方向: '减少', 是否启用: true } },
       // 采购退货（采购减少）：同上，注册表里每多一条声明，这个假 Base 就要有对应行为。

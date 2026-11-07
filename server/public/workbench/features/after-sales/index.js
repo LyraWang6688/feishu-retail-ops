@@ -95,8 +95,11 @@ export function mountAfterSalesPage(container, options = {}) {
   const body = container.querySelector('[data-view="after-sales-body"]');
   let selectedDetailId = '';
   let candidates = [];
-  /** 当前弹窗状态：退货 {action:'return', moneyMode, method} / 换货 {action:'exchange', kind, size, method, stock} */
+  /** 当前弹窗状态：退货 {action:'return', moneyMode, method, requestId} / 换货 {action:'exchange', kind, size, method, stock} */
   let modal = null;
+  /** 退款方式候选（「支付方式管理」统一配置；懒加载 + 失败标记） */
+  let paymentMethods = null;
+  let paymentMethodsError = false;
 
   const showStatus = (text, isError = false) => {
     status.textContent = text;
@@ -173,6 +176,18 @@ export function mountAfterSalesPage(container, options = {}) {
     if (modal) renderModal();
   };
 
+  /** 读退款方式候选（唯一数据源 =「支付方式管理」；走统一配置缓存）。 */
+  const loadPaymentMethods = async () => {
+    if (paymentMethods || paymentMethodsError) return;
+    try {
+      const data = await api.get(`${apiBase}${AFTER_SALES_PAGE.paymentMethodsApi}`);
+      paymentMethods = Array.isArray(data?.items) ? data.items : [];
+    } catch {
+      paymentMethodsError = true;
+    }
+    if (modal?.action === 'return') renderModal();
+  };
+
   /** 换款式：扫新鞋 → 跳销售扫码页（flow=afterSalesExchange + 售后上下文）。 */
   const startExchangeScan = async () => {
     const candidate = selectedCandidate();
@@ -212,21 +227,35 @@ export function mountAfterSalesPage(container, options = {}) {
     const host = modalBody();
     const amount = Number(item.actual_amount);
     if (modal.action === 'return') {
+      // ⭐ 2026-11-08：退货 = **原生表单 POST**（服务端同步校验 → 入队 → 303 统一 toast）——
+      //   金额只读、由服务端按销售明细金额写；页面不传金额。
+      const methodOptions = paymentMethodsError
+        ? `<option value="">${escapeHtml(AFTER_SALES_PAGE.paymentMethodsFailed)}</option>`
+        : optionsHtml(paymentMethods || [], modal.method);
       host.innerHTML = `
-        <div class="as-modal-line as-modal-field">
-          <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.returnModeLabel)}">
-            <button class="as-segment${modal.moneyMode === 'refund' ? ' active' : ''}" type="button" data-as-money-mode="refund">${escapeHtml(AFTER_SALES_PAGE.returnRefund)}</button>
-            <button class="as-segment${modal.moneyMode === 'retained' ? ' active' : ''}" type="button" data-as-money-mode="retained">${escapeHtml(AFTER_SALES_PAGE.returnRetain)}</button>
+        <form class="as-return-form" method="post" action="${escapeHtml(apiBase + AFTER_SALES_PAGE.submitApi)}" data-as-return-form>
+          <input type="hidden" name="requestId" value="${escapeHtml(modal.requestId || '')}">
+          <input type="hidden" name="salesEntryRecordId" value="${escapeHtml(item.sales_entry_record_id || '')}">
+          <input type="hidden" name="detailRecordId" value="${escapeHtml(item.sales_detail_record_id || '')}">
+          <input type="hidden" name="productRecordId" value="${escapeHtml(productRecordId)}">
+          <input type="hidden" name="moneyMode" value="${escapeHtml(modal.moneyMode || '')}">
+          <div class="as-modal-line as-modal-field">
+            <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.returnModeLabel)}">
+              <button class="as-segment${modal.moneyMode === 'refund' ? ' active' : ''}" type="button" data-as-money-mode="refund">${escapeHtml(AFTER_SALES_PAGE.returnRefund)}</button>
+              <button class="as-segment${modal.moneyMode === 'retained' ? ' active' : ''}" type="button" data-as-money-mode="retained">${escapeHtml(AFTER_SALES_PAGE.returnRetain)}</button>
+            </div>
           </div>
-        </div>
-        ${modal.moneyMode === 'refund' ? `
-        <div class="as-modal-line as-modal-field">
-          <span class="as-modal-label">${escapeHtml(AFTER_SALES_PAGE.returnMethodLabel)}</span>
-          <select class="as-modal-select" data-as-method>
-            <option value=""${modal.method ? '' : ' selected'}>${escapeHtml(AFTER_SALES_PAGE.select)}</option>
-            ${optionsHtml(AFTER_SALES_PAGE.demoPaymentMethods, modal.method)}
-          </select>
-        </div>` : ''}`;
+          ${modal.moneyMode === 'refund' ? `
+          <div class="as-modal-line as-modal-field">
+            <span class="as-modal-label">${escapeHtml(AFTER_SALES_PAGE.returnMethodLabel)}</span>
+            <select class="as-modal-select" name="paymentMethod" data-as-method>
+              <option value=""${modal.method ? '' : ' selected'}>${escapeHtml(AFTER_SALES_PAGE.select)}</option>
+              ${methodOptions}
+            </select>
+          </div>` : ''}
+          <button class="btn btn-primary as-submit" type="submit"${paymentMethodsError ? ' disabled' : ''}>${escapeHtml(AFTER_SALES_PAGE.confirm)}</button>
+        </form>`;
+      void loadPaymentMethods();
     } else {
       host.innerHTML = `
         <div class="as-modal-line as-modal-field">
@@ -243,12 +272,16 @@ export function mountAfterSalesPage(container, options = {}) {
   const openModal = (action) => {
     if (!selectedCandidate()) return;
     modal = action === 'return'
-      ? { action: 'return', moneyMode: '', method: '' }
+      ? {
+        action: 'return', moneyMode: '', method: '',
+        requestId: (globalThis.crypto?.randomUUID?.() || '').toString(),
+      }
       : { action: 'exchange', kind: '', size: '', method: '', scanned: false };
     modalError('');
     renderModal();
     const node = modalNode();
     if (node) node.hidden = false;
+    if (action === 'return') void loadPaymentMethods();
   };
 
   const closeModal = () => {
@@ -256,6 +289,29 @@ export function mountAfterSalesPage(container, options = {}) {
     if (node) node.hidden = true;
     modal = null;
   };
+
+  // 退货表单提交校验（浏览器原生提交；这里只补"退款必须选方式"那一道人话）
+  container.addEventListener('submit', (event) => {
+    const form = event.target.closest('[data-as-return-form]');
+    if (!form || !modal || modal.action !== 'return') return;
+    if (!modal.moneyMode) {
+      event.preventDefault();
+      modalError(AFTER_SALES_PAGE.returnModeLabel);
+      return;
+    }
+    const methodSelect = form.querySelector('[data-as-method]');
+    if (modal.moneyMode === 'refund' && methodSelect) {
+      modal.method = methodSelect.value;
+      if (!modal.method) {
+        event.preventDefault();
+        modalError(AFTER_SALES_PAGE.returnMethodLabel);
+        return;
+      }
+    }
+    // 防止连点重复提交：原生表单提交后页面会跳走，这里禁用按钮即可
+    const button = form.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+  });
 
   container.addEventListener('click', (event) => {
     const candidate = event.target.closest('[data-detail]');
@@ -275,6 +331,8 @@ export function mountAfterSalesPage(container, options = {}) {
     const mode = event.target.closest('[data-as-money-mode]');
     if (mode && modal?.action === 'return') {
       modal.moneyMode = mode.dataset.asMoneyMode;
+      const hidden = container.querySelector('[data-as-return-form] input[name="moneyMode"]');
+      if (hidden) hidden.value = modal.moneyMode;
       renderModal();
       return;
     }
@@ -305,20 +363,6 @@ export function mountAfterSalesPage(container, options = {}) {
       renderModal();
       return;
     }
-    if (!event.target.closest('[data-as-modal-confirm]')) return;
-    if (!modal) return;
-    modalError('');
-    if (modal.action === 'return') {
-      if (!modal.moneyMode) { modalError(AFTER_SALES_PAGE.returnModeLabel); return; }
-      if (modal.moneyMode === 'refund') {
-        const select = container.querySelector('[data-as-method]');
-        if (select) modal.method = select.value;
-        if (!modal.method) { modalError(AFTER_SALES_PAGE.returnMethodLabel); return; }
-      }
-      closeModal();
-      toast(AFTER_SALES_PAGE.toastReturnDone);
-      return;
-    }
     if (modal.kind !== 'same' && modal.kind !== 'new') {
       modalError(AFTER_SALES_PAGE.exchangeModeLabel);
       return;
@@ -347,13 +391,14 @@ export function mountAfterSalesPage(container, options = {}) {
     return;
   }
   if (productLine) productLine.textContent = AFTER_SALES_PAGE.productLoading;
-  showStatus(AFTER_SALES_PAGE.loading);
+  const errText = String(params.get('err') || '').trim();
+  showStatus(errText || AFTER_SALES_PAGE.loading, Boolean(errText));
 
   const query = new URLSearchParams({
     productRecordId,
     days: String(AFTER_SALES_PAGE.days),
   });
-  api.get(`${apiBase}${AFTER_SALES_PAGE.scanCandidatesApi}?${query}`)
+  const loadCandidates = () => api.get(`${apiBase}${AFTER_SALES_PAGE.scanCandidatesApi}?${query}`)
     .then((data) => {
       const product = data?.product || {};
       const productText = [product.item_no || product.number, product.color].filter(Boolean).join(' · ');
@@ -371,4 +416,9 @@ export function mountAfterSalesPage(container, options = {}) {
       if (productLine) productLine.textContent = '';
       showStatus(AFTER_SALES_PAGE.failed, true);
     });
+  loadCandidates();
+  // 刚提交过（服务端 303 带 submitted=1）⇒ 后台正在写，稍等一下再刷一次候选（退掉的卡片会消失）
+  if (String(params.get('submitted') || '') === '1') {
+    setTimeout(() => { void loadCandidates(); }, 1500);
+  }
 }
