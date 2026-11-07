@@ -125,13 +125,22 @@ const run = async () => {
     assert.equal(response.status(), 200, '销售扫码页必须能打开（否则本判据是空跑）');
     await page.waitForSelector('.size-group', { timeout: 15_000 });
 
-    // ① 「有货」段标题 = 只有「有货」，不含「样品 + 门盒」
-    const inStockHeading = (await page.locator('[data-stock-group="in_stock"] .size-group__title').first().textContent() || '').trim();
-    assert.equal(inStockHeading, '有货', `「有货」段标题必须只剩「有货」（实得「${inStockHeading}」）`);
-    // ② 整页不许再出现那串解释
+    // ① 2026-11-07 业务负责人 HTML 批注：销售两组**只保留标签**（现货 / 预订），标题整个去掉
+    const inStockTitles = await page.locator('[data-stock-group="in_stock"] .size-group__title').count();
+    const prepaidTitles = await page.locator('[data-stock-group="prepaid"] .size-group__title').count();
+    assert.equal(inStockTitles, 0, '现货组不许再有组标题（只留「现货」标签）');
+    assert.equal(prepaidTitles, 0, '预订组不许再有组标题（只留「预订」标签）');
+    const inStockTag = (await page.locator('[data-stock-group="in_stock"] .tag').first().textContent() || '').trim();
+    const prepaidTag = (await page.locator('[data-stock-group="prepaid"] .tag').first().textContent() || '').trim();
+    assert.equal(inStockTag, '现货', `现货组的标签必须是「现货」（实得「${inStockTag}」）`);
+    assert.equal(prepaidTag, '预订', `预订组的标签必须是「预订」（实得「${prepaidTag}」）`);
+    // ② 整页不许再出现旧解释
     const bodyText = await page.locator('body').innerText();
     assert.equal(bodyText.includes('样品 + 门盒'), false, '整页不许再出现「样品 + 门盒」');
     assert.equal(bodyText.includes('样品+门盒'), false);
+    // ⭐ 特殊码折叠那块**保留自己的标题**（批注只点名现货/预订两组）
+    const specialTitle = (await page.locator('details.size-fold .size-group__title').first().textContent() || '').trim();
+    assert.equal(specialTitle, '特殊码');
     // ③ 只删文字、不动分组：38 码仍在现货组；36/37/39/40 仍在预订组
     const inStockSizes = await page.locator('[data-stock-group="in_stock"] input[name="size"]').evaluateAll((nodes) => nodes.map((n) => n.value));
     const prepaidSizes = await page.locator('[data-stock-group="prepaid"] input[name="size"]').evaluateAll((nodes) => nodes.map((n) => n.value));
@@ -139,20 +148,23 @@ const run = async () => {
     for (const size of ['36', '37', '39', '40']) {
       assert.ok(prepaidSizes.includes(size), `预订组必须仍含 ${size} 码（实得 ${JSON.stringify(prepaidSizes)}）`);
     }
-    // ④ 「现在没有（预订）」那句没有动（本次只改「有货」那句）
-    const prepaidHeading = (await page.locator('[data-stock-group="prepaid"] .size-group__title').first().textContent() || '').trim();
-    assert.equal(prepaidHeading, '现在没有（预订）');
+    // ④ 特殊码标签数量不变（她截图那把 = 5）
+    const specialTag = (await page.locator('details.size-fold .tag').first().textContent() || '').trim();
+    assert.equal(specialTag, '5', `特殊码数量标签保持 5（实得「${specialTag}」）`);
 
     const shot = path.join(REPORT_DIR, 'sales-page.png');
     await page.screenshot({ path: shot, fullPage: false });
     const evidence = {
       at: new Date().toISOString(),
       url: page.url(),
-      in_stock_heading: inStockHeading,
+      in_stock_titles: inStockTitles,
+      in_stock_tag: inStockTag,
+      prepaid_tag: prepaidTag,
       contains_removed_text: bodyText.includes('样品 + 门盒'),
       in_stock_sizes: inStockSizes,
       prepaid_sizes_contains_36_37_39_40: ['36', '37', '39', '40'].every((size) => prepaidSizes.includes(size)),
-      prepaid_heading: prepaidHeading,
+      special_title: specialTitle,
+      special_tag: specialTag,
       screenshot: shot.replace(`${SERVER}/..`, ''),
     };
     fs.writeFileSync(path.join(REPORT_DIR, 'evidence.json'), JSON.stringify(evidence, null, 2));
