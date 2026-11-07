@@ -22,13 +22,6 @@ const respondQueryFailure = (res, error, { requestId, event, fallback }) => {
   return res.status(500).json({ success: false, error: fallback });
 };
 
-// ⚠️ 2026-10-08：`queryTodaySales`（`GET /sales/today`）与 `querySales`（`GET /sales/query`）
-// 已随**自建的销售查询**一起删除 —— 业务负责人的口径（逐字）：「现有的**我们自己搭的**
-// 销售查询/库存查询页面与接口（`/api/workbench/*`），**顺手删掉**」。
-// ⇒ 销售查询改走**飞书多维表格的网页外链**（前端「信息查询」的两张卡），这一维不再自建接口。
-// ⚠️ `v1WorkbenchService` 的 `getSalesReport` / `getTodaySales` **保留**（那个文件属
-// `server/src/services/**`，本次边界不碰），但**已没有任何生产调用方**。
-
 const queryInventory = async (req, res) => {
   try {
     return res.json({ success: true, ...await service.getLiveInventory({ keyword: req.query.keyword, size: req.query.size, requestId: req.requestId }) });
