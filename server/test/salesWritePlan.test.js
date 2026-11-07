@@ -75,6 +75,7 @@ test('源码哨兵：写链路按计划走，不再散写现货/预定分支', (
   // ⚠️ 2026-10-18 成对迁移（第 4 步提速 · 文件大小门禁）：交付判据那一段**原样搬进**
   //   `src/services/sales/deliveryStep.js` ⇒ 源码哨兵把那个文件也算进"写链路"一起扫（判据不变）。
   const scan = read('src/services/scanWriteService.js') + '\n'
+    + read('src/services/scanWrite/sales.js') + '\n'
     + read('src/services/sales/deliveryStep.js');
   const order = read('src/services/salesOrderService.js');
   assert.match(scan, /plansOfOrder\(items\)/, 'scanWriteService 必须从计划取"这一单怎么走"');

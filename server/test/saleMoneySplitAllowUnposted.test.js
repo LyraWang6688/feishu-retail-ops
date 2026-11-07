@@ -23,7 +23,9 @@ const path = require('node:path');
 const SERVER = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(SERVER, ...p), 'utf8');
 
-const FROZEN = read('src', 'services', 'scanWriteService.js');
+const SERVICE = read('src', 'services', 'scanWriteService.js');
+const SALES = read('src', 'services', 'scanWrite', 'sales.js');
+const FROZEN = SERVICE + '\n' + SALES;
 const DELIVERY = read('src', 'services', 'salesDeliveryService.js');
 /**
  * 另外两个调用点（**它们一个字都不许改** ✗）。
@@ -34,18 +36,19 @@ const OTHER_CALLERS = ['src/routes/workbench.js', 'src/services/secondDeliverySe
 
 test('AC-MS-G1 ⭐⭐ `allowUnposted: true` 全仓**恰好一处**（只在货那一跑 ✓ 别的调用方一个都没有 ✗）', () => {
   const routable = [
-    ['src/services/scanWriteService.js', FROZEN],
+    ['src/services/scanWriteService.js', SERVICE],
+    ['src/services/scanWrite/sales.js', SALES],
     ...OTHER_CALLERS.map((f) => [f, read(f)]),
   ];
   // ⭐ 口径：那"开门"动作**只许有一处**，且必须是 `allowUnposted: <跟着 fundsDeferred 走>` ✓
   //    ⚠️ 实现用的是 `allowUnposted: fundsDeferred`（**不是**恒 `true` ✗ —— 恒 true 会让"关着开关"也开门 ✗）
   const hits = routable.filter(([, text]) => /allowUnposted\s*:/.test(text));
-  assert.deepEqual(hits.map(([f]) => f), ['src/services/scanWriteService.js'],
+  assert.deepEqual(hits.map(([f]) => f), ['src/services/scanWrite/sales.js'],
     '⭐ "开门"那一处只许在冻结件里（别的调用方一个都不许有 ✗）');
   const all = routable.map(([, t]) => t).join('\n');
   assert.equal(/allowUnposted\s*:\s*true/.test(all), false,
     '🔴 全仓不许出现**恒 true** 的开门（那样关着开关也会开门 ⇒ 零回归没了 ✗）');
-  for (const [file, text] of routable.slice(1)) {
+  for (const [file, text] of OTHER_CALLERS.map((f) => [f, read(f)])) {
     assert.equal(text.includes('allowUnposted'), false, `🔴 ${file} 一个字都不许改（不许传 allowUnposted ✗）`);
   }
   // ⭐ 那**一处**必须写成"跟着 `fundsDeferred` 走"，不许恒 true ✗
