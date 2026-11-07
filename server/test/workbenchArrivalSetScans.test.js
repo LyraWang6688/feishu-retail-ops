@@ -422,6 +422,18 @@ test('AC-SS11 ⭐⭐ 路由失败不假成功：重复行 / 未知款 / 空清�
   } finally { h.cleanup(); }
 });
 
+test('AC-SS13 ⭐⭐ 明细接口装配回归：必须把 **gateway 本体**传给 `createPurchaseQueryService`（位置参数）', () => {
+  // 🔴 真机验证抓到的 main 存量 bug：路由曾写 `createPurchaseQueryService({ gateway })`
+  //   —— 而它的签名是 `(gateway, options)` ⇒ 真实环境把 `{gateway}` 当 gateway ⇒
+  //   `gateway.listAll is not a function` ⇒ 明细接口永远 400、验收页展开永远是"没读到" ✗。
+  //   （既有单测都注入 `options.purchaseQuery` 替身 ⇒ 一直假绿 ⇒ 本条反向钉住源码装配 ✓）
+  const routeSrc = fs.readFileSync(path.join(__dirname, '../src/routes/workbench/purchase.js'), 'utf8');
+  assert.equal(routeSrc.includes('createPurchaseQueryService({'), false,
+    '⛔ 不许再把 `{ gateway }` 对象当 gateway 传（真实环境会 listAll is not a function ✗）');
+  assert.ok(routeSrc.includes('createPurchaseQueryService(options.gateway || new V1BitableGateway())'),
+    '必须把 gateway 本体作为**第一个位置参数**传进去 ✓');
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-SS12 —— 自定义行能一路到 `finish`（会话 → scanLines → 既有 buildPlan）
 // ═══════════════════════════════════════════════════════════════════════════

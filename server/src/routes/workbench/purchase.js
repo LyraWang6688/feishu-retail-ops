@@ -91,8 +91,12 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
    */
   const purchaseQueryForArrival = () => {
     if (options.purchaseQuery) return options.purchaseQuery;
-    if (options.gateway) return createPurchaseQueryService({ gateway: options.gateway });
-    return createPurchaseQueryService({ gateway: new V1BitableGateway() });
+    // 🔴 2026-10-29 修（真机验证时抓到）：`createPurchaseQueryService(gateway, options)` 是**位置参数**
+    //   （`services/purchaseQueryService.js:53`）——这里曾误传 `{ gateway }` **对象** ⇒ 真实环境里
+    //   服务把那个对象当 gateway ⇒ `gateway.listAll is not a function` ⇒ `GET /purchase/arrivals/detail`
+    //   **永远 400** ⇒ 验收页展开明细永远是"这一批的采购明细没读到" ✗（单测都注入替身，一直没抓住）。
+    //   ⇒ 传 **gateway 本体**（与 `scanArrivalService.purchaseQueryOf` 同一个形状 ✓）。
+    return createPurchaseQueryService(options.gateway || new V1BitableGateway());
   };
   const arrivalService = options.arrival || createScanArrivalService({
     gateway: options.gateway || new V1BitableGateway(),
