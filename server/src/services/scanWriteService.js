@@ -86,6 +86,7 @@ const {
 } = require('./sales/oneShotWrite');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { createScanWriteHelpers } = require('./scanWrite/helpers');
+const { createScanWriteSession } = require('./scanWrite/session');
 
 /**
  * 「全仓唯一创建销售主表记录」的那个函数 —— **只 require 调用，不改它一个字**。
@@ -134,6 +135,12 @@ const createScanWriteService = (options = {}) => {
   const createEntry = options.createSalesEntry || createSalesEntryWithOrderNo;
   // 按录单人串行（同一部手机连点 / 重放会落在同一个 key 上）。
   const queue = options.queue || new KeyedSerialQueue();
+  const {
+    addSaleLine, clearDraft, saveDraftLines,
+  } = createScanWriteSession({
+    queue, sessions, config, fail, userMessageFor,
+    positiveAmount, positiveInteger, sessionKeyOf, logInfo, now,
+  });
 
   // 业务层实例**延迟构造**：扫码页第一版是只读的，绝大多数请求（看库存）不该因为
   // 构造销售 / 采购那一整套依赖而变慢。用到才建。
@@ -299,95 +306,6 @@ const createScanWriteService = (options = {}) => {
    *   还给你"那条分支（**拿到上一条的单号、自己一个字都没写 = 假成功** ✗）；
    *   而那个会话键又**不能**当 open_id 写进 User 字段。⇒ 两个概念各走各的 ✓。
    */
-  // ── 销售：加入本单（**只写本地会话**）────────────────────────────────────
-  /**
-   * 加一双进"本单"。**业务表一个字都不写** —— 她说"点【提交】才写"。
-   *
-   * ⭐ 2026-10-09：「选的是库存里面的 → 现货；不是 → 预订」——
-   *    调用方（路由）按**页面上那两个分组**给出 `inStock`（= 所选尺码在「样品 + 门盒」有没有货），
-   *    这里用**既有判据** `salesTradeTypeForStock` 推成**既有行为编码**
-   *    （`SALE_CASH` / `SALE_PREPAID`，取值在 `config/salesMovements.js`），
-   *    落在会话的这一行上；提交时逐行写进「销售明细.交易类型」（既有业务层本来就支持逐行类型）。
-   *    ⚠️ `inStock` 不是布尔（老页面 / 没传）时**留空**，不猜 —— 空着比写错方向好。
-   *
-   * @returns {Promise<{ok:boolean, code?:string, message?:string, count?:number, limit?:number}>}
-   */
-  const addSaleLine = async ({
-    openId, kind = '', productRecordId = '', number = '', itemNo = '', color = '',
-    size, amount = '', gift = '', inStock, requestId = '',
-    // ⭐ 2026-10-15：**可选** —— 不传 ⇒ 会话按 openId 分（既有链路逐字不变 ✓）
-    sessionKey = '',
-  }) => {
-    const sessionId = sessionKeyOf(openId, sessionKey);
-    if (!config.sale.enabled) {
-      return fail({ code: 'disabled', message: texts.writeDisabledBody, requestId });
-    }
-    // ⭐ 2026-10-11（B）：这一行是**鞋**还是**配品** —— 由调用方（路由按动作）给，
-    //    **不取表单里的值**（手改表单也换不了可售品类型）。默认「鞋」= 既有调用点逐字不变。
-    const kindKey = String(kind || '').trim() || 'shoe';
-    const sellableKind = SELLABLE_KINDS[kindKey];
-    if (!sellableKind) {
-      return fail({ code: 'unknown_kind', message: texts.internalFailedBody, requestId });
-    }
-    const parsedAmount = positiveAmount(amount);
-    if (!parsedAmount.ok) {
-      const error = new Error(texts.amountInvalidBody);
-      error.scanUserMessage = error.message;
-      return fail({ code: 'amount_invalid', message: userMessageFor(error), requestId, error });
-    }
-    const giftText = String(gift ?? '').trim().slice(0, config.sale.giftMaxLength);
-
-    // ── 鞋（既有那一段，逐字不动）────────────────────────────────────────────
-    const parsedSize = positiveInteger(size);
-    if (parsedSize === null) {
-      const error = new Error(texts.sizeMissingBody);
-      error.scanUserMessage = texts.sizeMissingBody;
-      return fail({ code: 'size_missing', message: userMessageFor(error), requestId, error });
-    }
-    // ⭐ 「现货 / 预订」：判据是**既有**的 `salesTradeTypeForStock`（有货 → 现货 / 没货 → 预订）。
-    const tradeTypeCode = typeof inStock === 'boolean' ? salesTradeTypeForStock({ inStock }) : '';
-    const added = await queue.run(`sale:${sessionId}`, () => sessions.addLine(sessionId, {
-      kind: kindKey,
-      number: String(number || '').trim(),
-      item_no: String(itemNo || '').trim(),
-      color: String(color || '').trim(),
-      product_record_id: String(productRecordId || '').trim(),
-      size: parsedSize,
-      // ⭐ 这一行自己的交易类型编码（提交时写进「销售明细.交易类型」；空串 = 还没定，不猜）。
-      trade_type_code: tradeTypeCode,
-      // 金额留空就是 null（提交时按「货品信息.单价」兜底）——**不在加单这一刻读表**，
-      // 这样连扫几次不会因为读价格而变慢。
-      amount: parsedAmount.value,
-      gift: giftText,
-      added_at: new Date(now()).toISOString(),
-    }));
-    if (!added.ok) {
-      return fail({
-        code: added.code,
-        message: fillText(texts.tooManyLinesBody, { max: added.limit }),
-        requestId,
-        extra: { result: { limit: added.limit } },
-      });
-    }
-    logInfo(config.events.lineAdded, {
-      session_id: added.session.session_id,
-      kind: kindKey,
-      number: String(number || ''),
-      product_record_id: String(productRecordId || ''),
-      size: parsedSize,
-      count: added.count,
-      request_id: requestId,
-    });
-    return { ok: true, count: added.count, limit: config.session.maxLines, session: added.session };
-  };
-
-  /** 清空本单（她加错了一双时的退路）。`sessionKey` 同 `addSaleLine`（可选，默认 = openId）。 */
-  const clearDraft = async ({ openId, sessionKey = '', requestId = '' }) => {
-    const sessionId = sessionKeyOf(openId, sessionKey);
-    const session = await queue.run(`sale:${sessionId}`, () => sessions.clearSale(sessionId));
-    return { ok: true, count: 0, session, request_id: requestId };
-  };
-
   // ── 销售：提交整单（**唯一的写库时机**）──────────────────────────────────
   /**
    * 提交"本单"：**一张销售主表 + N 条明细（一单一双一行）**。
@@ -1604,7 +1522,7 @@ const createScanWriteService = (options = {}) => {
     addSaleLine,
     clearDraft,
     // 2026-10-14 资金页前置：只加一个薄透传（内部仍是既有 saveSaleProgress ✓）
-    saveDraftLines: (openId, patch) => sessions.saveSaleProgress(openId, patch),
+    saveDraftLines,
     submitSale,
     submitReplenish,
     // ⭐ 采购退货（与补货同形；业务负责人 2026-10-11 定的「和"报货"逻辑一样，也走扫码」）

@@ -63,14 +63,14 @@
  *     `deferFunds` 那条路**原样保留**（既有单测照旧钉着），只是生产路由不再走它。
  *     写库逻辑仍全在业务层（`SalesOrderService.confirm / finalizeOneShot`）—— 本文件一个字都不写表 ✓
  * - 2026-10-29 · **收款方式配置统一化**（业务负责人授权清理重复缓存）：
- *   改前逐字：sha `2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5`（1637 行）
+ *   改前逐字：sha `2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5`（1555 行）
  *   改后逐字：sha `561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12`（1728 行）
  *   依据 = 业务负责人 2026-10-29「好的，可以做」：删除本文件自己的 30 秒 `paymentMethodCache`，
  *     `listPaymentMethods` 改走 `configTableCache`（飞书 record_changed 失效 + TTL + lastGood），
  *     避免旧缓存绕过收款方式配置更新。
  * - 2026-10-29 · **修扫码页「一单多货」补货假成功（P0）**（业务负责人授权解冻）：
  *   改前逐字：sha `561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12`（1728 行）
- *   改后逐字：sha `a8e3743364d8c96990d662adbf9df47b5376e06a38aa7f8f0f00dee395143c5c`（1637 行）
+ *   改后逐字：sha `55331d4cc4c0604d6302d546ffb17ca809204fd31f97d0480921643e9c25524d`（1555 行）
  *   依据 = 业务负责人 2026-10-29 逐字「**授权解冻 scanWriteService.js，修扫码页一单多货假成功**」：
  *     `multiItemOrderService` 调写入件时传的是**扁平 payload**，而 `publishPurchaseRequest` 读 `task.draft`
  *     ⇒ `Cannot read properties of undefined (reading 'is_batch')` ⇒ 页面成功但采购批次/明细零写入。
@@ -103,11 +103,16 @@ const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.j
 //          ⇒ 授权范围 = 冻结件 **5 行** ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（缺省 false ✓ 只给货那一跑 ✓）
 // - 2026-11-08 · **扫码页拆分 · 第 1 阶段 `scanWrite/helpers.js`**（业务负责人明确要求按 issue #952 方案拆分）：
 //   改前逐字：sha `efaf1b17aa1d082548892249883a1d8a9f1f7afe539f5f9f72a213063526a219`（1732 行）
-//   改后逐字：sha `a8e3743364d8c96990d662adbf9df47b5376e06a38aa7f8f0f00dee395143c5c`（1637 行）
+//   改后逐字：sha `55331d4cc4c0604d6302d546ffb17ca809204fd31f97d0480921643e9c25524d`（1555 行）
 //   依据 = 业务负责人 2026-11-08 要求按“先拆 scanWriteService，再拆 scanPage/index.js”的方案拆分；
 //     本刀只把纯工具/基础件搬到 `services/scanWrite/helpers.js`，对外 API、写库逻辑、事件名、返回形状均未改 ✓。
-const FROZEN_SHA256 = 'a8e3743364d8c96990d662adbf9df47b5376e06a38aa7f8f0f00dee395143c5c';
-const FROZEN_LINES = 1637;
+// - 2026-11-08 · **扫码页拆分 · 第 2 阶段 `scanWrite/session.js`**（业务负责人要求按 issue #952 方案拆分）：
+//   改前逐字：sha `a8e3743364d8c96990d662adbf9df47b5376e06a38aa7f8f0f00dee395143c5c`（1637 行）
+//   改后逐字：sha `55331d4cc4c0604d6302d546ffb17ca809204fd31f97d0480921643e9c25524d`（1555 行）
+//   依据 = 同一次拆分授权；本刀只把 addSaleLine / clearDraft / saveDraftLines 搬到 `services/scanWrite/session.js`，
+//     对外 API、写库逻辑、事件名、返回形状均未改 ✓。
+const FROZEN_SHA256 = '55331d4cc4c0604d6302d546ffb17ca809204fd31f97d0480921643e9c25524d';
+const FROZEN_LINES = 1555;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const linesOf = (text) => String(text).split('\n').length;
