@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const {
   config, makeEnv, itemsOf, productRecord, SUBMIT_KEY,
 } = require('./support/procurementSubmitEnv');
+const { SUBMIT_TOAST } = require('../src/config/submitToast');
 
 test('AC-P12 submitKey 非法 ⇒ 400 人话 + 零写入 + 零后台', async () => {
   const env = makeEnv();
@@ -97,7 +98,7 @@ test('AC-P13/P14 成功：种子草稿 + 只排一次后台；后台跑 = 一次
   const result = await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA']) });
   assert.equal(result.ok, true);
   assert.equal(result.accepted, true);
-  assert.equal(result.message, config.texts.submitAccepted);
+  assert.equal(result.message, SUBMIT_TOAST.text);
   const draft = env.draftOf();
   assert.equal(draft.status, 'draft');
   assert.equal(draft.submit_key, SUBMIT_KEY);

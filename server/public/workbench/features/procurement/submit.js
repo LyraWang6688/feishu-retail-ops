@@ -2,7 +2,7 @@
  * 底部提交条 + 提交动作：**点提交只发 1 次 POST**（提交中禁用；连点无效）。
  *
  * · 提交前 0 写请求（两个只读 GET 之外没有任何请求）；
- * · 成功：清空草稿（换一把新 submitKey）+ 统一提示「已提交成功，数据会更新」；
+ * · 成功：清空草稿（换一把新 submitKey）+ 显示**服务端返回的统一 toast 文案**（`config/submitToast.js` 唯一真源）；
  * · 失败：人话提示 + **草稿保留**（她刷新/重进还在）；
  * · 服务端幂等：同一个 `submitKey` 重复提交只写一次（页面这里再保证"只发一次"）。
  */
@@ -59,7 +59,8 @@ export const createSubmitController = ({ config, api, getStore }) => {
       const store = getStore();
       store.clear();
       store.rotateSubmitKey(store.ensure());
-      toast(root, response?.message || config.texts.submitted);
+      // 文案唯一真源在服务端 `config/submitToast.js`（前端不再抄一份）；服务端总会回 message。
+      if (response?.message) toast(root, response.message);
       return { ok: true, cleared: true };
     } catch (error) {
       toast(root, error?.message || config.texts.submitFailed);

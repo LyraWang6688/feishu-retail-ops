@@ -119,7 +119,6 @@ const buildProcurementPageConfig = (env = process.env) => {
     }),
     // 用户可见文案（服务端只出「人话错误 / 成功那一句」；页面标题类文案在前端 config）
     texts: Object.freeze({
-      submitAccepted: readString(env, 'PROCUREMENT_TEXT_SUBMITTED', '已提交成功，数据会更新'),
       submitFailed: readString(env, 'PROCUREMENT_TEXT_SUBMIT_FAILED', '提交没成功，请稍后重试。'),
       submitKeyInvalid: readString(env, 'PROCUREMENT_TEXT_SUBMIT_KEY', '这张采购单的提交标识不对，请刷新页面后重试。'),
       itemInvalid: readString(env, 'PROCUREMENT_TEXT_ITEM_INVALID', '有一件货品读不到，请刷新页面后重试。'),

@@ -27,6 +27,7 @@ const { resolveMultiItemOrderConfig } = require('../config/multiItemOrder');
 const { createPurchaseWriteBackgroundService } = require('./purchaseWriteBackgroundService');
 const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { SCAN_WRITE } = require('../config/scanWrite');
+const { SUBMIT_TOAST } = require('../config/submitToast');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { createProcurementPurchaseWriters } = require('./procurementPurchaseWriters');
 const { createProductEnricher } = require('./procurementProductEnricher');
@@ -121,7 +122,7 @@ const createProcurementPageSubmitService = (options = {}) => {
       info(config.events.submitAccepted, {
         request_id: requestId, open_id: String(openId || ''), submit_key: submitKey, reused: true,
       });
-      return { ok: true, accepted: true, reused: true, message: config.texts.submitAccepted };
+      return { ok: true, accepted: true, reused: true, message: SUBMIT_TOAST.text };
     }
 
     const built = await buildItems(items);
@@ -195,7 +196,7 @@ const createProcurementPageSubmitService = (options = {}) => {
       lines: checked.normalized.lineCount,
       reused: false,
     });
-    return { ok: true, accepted: true, reused: false, message: config.texts.submitAccepted };
+    return { ok: true, accepted: true, reused: false, message: SUBMIT_TOAST.text };
   };
 
   return { submit, submitKeyOf };

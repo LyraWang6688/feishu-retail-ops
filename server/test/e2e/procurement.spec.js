@@ -116,7 +116,7 @@ test('AC-P22 提交前 0 写请求；点提交只 1 次 POST 且 payload 正确�
   expect(draftBefore.submitKey).toBeTruthy();
 
   await page.getByRole('button', { name: '提交' }).click();
-  await expect(page.getByText('已提交成功，数据会更新')).toBeVisible();
+  await expect(page.getByText('数据提交成功，后台自动写入')).toBeVisible();
   expect(calls.submit).toHaveLength(1);
   const payload = calls.submit[0];
   expect(payload.submitKey).toBe(draftBefore.submitKey);
@@ -201,7 +201,7 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
   expect(draft.products.recNewA).toBeTruthy();
 
   await page.getByRole('button', { name: '提交' }).click();
-  await expect(page.getByText('已提交成功，数据会更新')).toBeVisible();
+  await expect(page.getByText('数据提交成功，后台自动写入')).toBeVisible();
   expect(calls.submit).toHaveLength(1);
   const payload = calls.submit[0];
   expect(payload.items.map((item) => item.productRecordId).sort()).toEqual(['recNewA', 'recNewB', 'recProdA', 'recProdB']);
