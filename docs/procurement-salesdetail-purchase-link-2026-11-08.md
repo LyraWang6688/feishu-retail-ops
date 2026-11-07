@@ -1,0 +1,64 @@
+# 补货「已报货」精确化：销售明细 → 采购明细 单向关联 · 2026-11-08
+
+> 业务负责人 2026-11-08：在生产「销售明细」新增**单向关联字段「采购明细」**（→「采购明细」表），
+> 用于标记「这条销售明细已经被补货报过」；并要求回填时**用编号 + 尺码匹配记录**（不绑销售单号、页面不用传 record_id）。
+
+## 1. 要解决的问题
+
+补货筛选 = `销售日 >= TODAY()-3` 且 `库存数量 = 0`，结束 = 现在。
+- 报货 ≠ 到货：提交采购单后库存数量不变（要到验收加库存才 > 0）⇒ 同一条销售明细在 3 天窗口内会**再次出现**；
+- 提交幂等只对同一 submitKey 有效 ⇒ 隔天再次提交 = 新采购单 ⇒ **可能重复报货**。
+
+## 2. 方案
+
+**读侧（补货页）**：`销售明细.采购明细` 非空 ⇒ 这条已报过 ⇒ **默认不再显示**。
+- 配置开关：`PROCUREMENT_EXCLUDE_REPORTED`（默认 `true`；`false` ⇒ 逐字退化为旧行为）。
+
+**写侧（采购提交成功后，异步后台）**：
+1. 采购单写成功（采购主表 + 采购明细已落）后，读本次批次的「采购明细」（按 `报货批次号`）；
+2. 按同一补货筛选（库存=0 + 近 N 天窗口）读「销售明细」，**只取未关联**的行；
+3. 对每条采购明细，按「**编号 + 尺码**」匹配销售明细，按**销售日旧→新**取，最多取该采购明细的「数量」条；
+4. 把销售明细的「采购明细」列写成 `relation(采购明细 record_id)`；
+5. **幂等**：先扣除"已经关联到该采购明细的行数"（重试/重放不会多链）；
+6. **失败只记日志**（`procurement.page.sales_link_backfill_failed`），绝不影响采购事实。
+
+## 3. 落点
+
+| 文件 | 改动 |
+| --- | --- |
+| `server/src/config/v1BitableSchema.js` | `salesDetail.purchaseDetail = '采购明细'`（新增映射；**共享文件，Lead review**；测试 Base 需同步该列） |
+| `server/src/config/procurementPage.js` | `linked.excludeReported` 开关 + 两个事件名（配置先行） |
+| `server/src/services/procurementPageData.js` | 读销售明细的该列；非空 ⇒ 不计入补货视图（默认） |
+| `server/src/services/procurementSalesLinkBackfill.js`（新） | 采购成功后按「编号+尺码」回填关联（幂等、失败不抛、最多 200 行/次） |
+| `server/src/services/procurementPageSubmitService.js` | 后台 `run` 在采购成功后调用回填（`engineTaskId = <taskIdPrefix>_<submitKey>`） |
+
+## 4. 判据
+
+- `test/procurementPageData.test.js`
+  - **AC-P2c** 已关联「采购明细」的销售明细默认**不再出现在补货**；混合场景只保留未关联行；
+  - **AC-P2d** `PROCUREMENT_EXCLUDE_REPORTED=false` ⇒ 逐字退化（已关联也显示）。
+- `test/procurementSalesLinkBackfill.test.js`
+  - **AC-SL1** 只链未关联行、按「编号+尺码」、旧→新、最多=采购明细数量；已关联行绝不被改写；
+  - **AC-SL2** 幂等：同一 task 重跑 ⇒ 0 条新链；
+  - **AC-SL3** 未关联行不够 ⇒ 链已有的 + warn（不抛）；
+  - **AC-SL4** 某条 update 失败 ⇒ 其余继续 + failed 计数（不抛）；
+  - **AC-SL5** 无批次号 ⇒ no-op；gateway 抛错 ⇒ `ok:false` 且不抛。
+- `test/procurementPageSubmit.test.js`
+  - 后台写成功后 ⇒ 回填一次（taskId 与引擎一致）；后台写失败 ⇒ **不回填**。
+
+## 5. 边界 / 未做
+
+- 页面协议**不变**（仍只传 product_record_id + 尺码 + 数量；不绑销售单号、不传销售明细 record_id）；
+- 回填失败（网络/限流）不会重试调度：下次打开补货时若这些行仍未关联，会**再次出现**（存在重复报风险）——后续可加"回填失败重试"；
+- 生产 Base **零写入**（回填只会在真实提交链路里发生；测试 Base 验证需先同步该字段列）；
+- 采购/退货/验收/销售其他链路未改；扫一扫仍排最低优先级。
+
+## 6. 测试 Base 真写验证（2026-11-08 03:55）
+
+- 测试 Base 已同步字段：「销售明细.采购明细」（`field_id=fldPG3vq3v`，type=18 SingleLink →「采购明细」，`multiple=true`）；
+- 用项目代码在测试 Base 造了 2 条销售明细 + 1 条采购主表 + 1 条采购明细，跑回填：
+  - 第一次 `run`：**linked=2、failed=0**；
+  - 第二次 `run`（同 taskId）：**linked=0**（幂等）；
+  - 回读两条销售明细：「采购明细」= 同一条采购明细记录 `reczz28WuW415l1m` ✓；
+- 批次 `CGD-20261108-1432`（采购主表 `reczz28WuVzzVAw3`）；测试 Base 数据按既有口径**保留不删**；
+- ⚠️ 合成测试数据时发现测试 Base 与生产结构不一致（测试 Base 的「尺码」是单向关联、「销售日」是自动创建时间、「库存数量」公式不同）⇒ 验证脚本用 `listAll + 客户端筛` 读候选销售行，**写入仍是真实 `gateway.update`**；生产读侧仍走 `config.filters.replenish`。

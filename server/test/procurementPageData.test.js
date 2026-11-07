@@ -23,13 +23,15 @@ const NOW = SH('2026-10-28T09:00:00');
 const F = Object.freeze({
   product: '编号', size: '尺码', soldAt: '销售日', stockQuantity: '库存数量', tradeType: '交易类型',
   number: '编号', itemNo: '货号', color: '颜色', category: '类别', supplier: '供应商', createdAt: '上架日期',
+  purchaseDetail: '采购明细', // 2026-11-08 生产新增：销售明细 → 采购明细 单向关联
 });
 const link = (...ids) => ids.map((id) => ({ record_ids: [id], text: id }));
-const salesRow = ({ product = 'recA', size = 39, soldAt = SH('2026-10-27T12:00:00'), stock = 0, trade = 'SALE_CASH', text = '' } = {}) => ({
+const salesRow = ({ product = 'recA', size = 39, soldAt = SH('2026-10-27T12:00:00'), stock = 0, trade = 'SALE_CASH', text = '', reported = [] } = {}) => ({
   record_id: `row_${Math.random().toString(36).slice(2, 8)}`,
   fields: {
     [F.product]: link(product), [F.size]: size, [F.soldAt]: soldAt, [F.stockQuantity]: stock,
     [F.tradeType]: link(trade), ...(text ? { [F.tradeType]: text } : {}),
+    ...(reported.length ? { [F.purchaseDetail]: link(...reported) } : {}),
   },
 });
 const product = ({ id = 'recA', number = '86822', itemNo = '86822', color = '黑色', category = 'A', supplier = 'recS', createdAt = NOW } = {}) => ({
@@ -53,6 +55,31 @@ const dtoMap = (products) => new Map(products.map((one) => (one.productRecordId
 const view = (records, products = [productDto()]) => buildReplenishView({
   records, products: dtoMap(products), fields: F, config, now: NOW,
   tradeTypeCodeOf: tradeCode,
+});
+
+// ── 2026-11-08：「已报货」的销售明细不再进补货（销售明细.采购明细 单向关联）──────
+test('AC-P2c 已关联「采购明细」的销售明细 ⇒ 默认**不再出现在补货**（避免 3 天窗口重复报货）', () => {
+  const reported = view([salesRow({ product: 'recA', size: 39, reported: ['recDetail1'] })]);
+  assert.equal(reported.stats.spotSold, 0);
+  assert.equal(reported.stats.prepaidPending, 0);
+  assert.equal(reported.groups.length, 0, '已报过的行必须被排除');
+  const mixed = view([
+    salesRow({ product: 'recA', size: 39 }),
+    salesRow({ product: 'recA', size: 40, reported: ['recDetail2'] }),
+    salesRow({ product: 'recA', size: 41, trade: 'SALE_PREPAID' }),
+  ]);
+  assert.equal(mixed.stats.spotSold, 1, '未报的现货仍计入');
+  assert.equal(mixed.stats.prepaidPending, 1, '未报的预订仍计入');
+  assert.deepEqual(mixed.groups[0].sizes.map((one) => one.size), [39, 41], '已报的 40 码不出现');
+});
+
+test('AC-P2d 关掉开关（PROCUREMENT_EXCLUDE_REPORTED=false）⇒ 逐字退化为旧行为（已报的也显示）', () => {
+  const legacy = buildProcurementPageConfig({ PROCUREMENT_EXCLUDE_REPORTED: 'false' });
+  const legacyView = buildReplenishView({
+    records: [salesRow({ product: 'recA', size: 39, reported: ['recDetail1'] })],
+    products: dtoMap([productDto()]), fields: F, config: legacy, now: NOW, tradeTypeCodeOf: tradeCode,
+  });
+  assert.equal(legacyView.stats.spotSold, 1, '旧行为：已报的现货仍计入');
 });
 
 // ── AC-P2 三天窗口（上海时区）─────────────────────────────────────────────

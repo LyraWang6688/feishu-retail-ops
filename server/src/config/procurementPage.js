@@ -92,6 +92,11 @@ const buildProcurementPageConfig = (env = process.env) => {
     // 尺码规则（复用 SIZE_SEGMENTS；类别缺失 ⇒ 不猜，见 texts.categoryMissing）
     sizes: resolveSizes(),
     // 筛选公式（列名由调用方按 schema 解析后填进来；这里只留公式骨架）
+    // 已报货（销售明细.采购明细 非空）处理（业务负责人 2026-11-08）：
+    //   excludeReported=true ⇒ 补货**不再显示**已报过的销售明细（默认；避免 3 天窗口内重复报货）
+    linked: Object.freeze({
+      excludeReported: readFlag(env, 'PROCUREMENT_EXCLUDE_REPORTED', true),
+    }),
     filters: Object.freeze({
       replenish: 'AND(CurrentValue.[{stockField}]=0,CurrentValue.[{dateField}]>=TODAY()-{days})',
       newProducts: 'CurrentValue.[{dateField}]>=TODAY()',
@@ -110,6 +115,8 @@ const buildProcurementPageConfig = (env = process.env) => {
     events: Object.freeze({
       replenishLoaded: readString(env, 'PROCUREMENT_EVENT_REPLENISH', 'procurement.page.replenish_loaded'),
       newProductsLoaded: readString(env, 'PROCUREMENT_EVENT_NEW_PRODUCTS', 'procurement.page.new_products_loaded'),
+      salesLinkBackfilled: readString(env, 'PROCUREMENT_EVENT_SALES_LINK_BACKFILLED', 'procurement.page.sales_link_backfilled'),
+      salesLinkBackfillFailed: readString(env, 'PROCUREMENT_EVENT_SALES_LINK_FAILED', 'procurement.page.sales_link_backfill_failed'),
       tradeTypeUnknown: readString(env, 'PROCUREMENT_EVENT_TRADE_TYPE_UNKNOWN', 'procurement.page.trade_type_unknown'),
       submitAccepted: readString(env, 'PROCUREMENT_EVENT_SUBMIT_ACCEPTED', 'procurement.page.submit_accepted'),
       submitRejected: readString(env, 'PROCUREMENT_EVENT_SUBMIT_REJECTED', 'procurement.page.submit_rejected'),

@@ -65,6 +65,9 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters } = {}) 
     },
   };
   const scheduled = [];
+  const backfillCalls = [];
+  // 回填替身（真正的回填逻辑在 `procurementSalesLinkBackfill` 自己的用例里钉）
+  const salesLinkBackfill = { run: async (args) => { backfillCalls.push(args); return { ok: true, linked: 0 }; } };
   const background = {
     scheduleCustomRest: (args) => { scheduled.push(args); return Promise.resolve({ ok: true }); },
   };
@@ -81,6 +84,7 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters } = {}) 
     writeService: { sessions, multiItemWriters: () => writers },
     writers,
     background,
+    salesLinkBackfill,
     config,
     now: () => NOW,
     logger: {},
@@ -89,7 +93,7 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters } = {}) 
   const draftOf = (key = SUBMIT_KEY) => (data.get(`session_${openId}`) || {})[config.draft.ordersField]?.[
     `${config.draft.orderKeyPrefix}:${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`
   ];
-  return { service, data, draftOf, scheduled, purchaseCalls, behaviorCalls, openId };
+  return { service, data, draftOf, scheduled, purchaseCalls, behaviorCalls, backfillCalls, openId };
 };
 const itemsOf = (ids = ['recA']) => ids.map((id) => ({
   productRecordId: id, entries: [{ size: 39, quantity: 1 }, { size: 40, quantity: 2 }],
