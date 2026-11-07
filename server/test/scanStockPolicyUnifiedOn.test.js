@@ -93,7 +93,9 @@ const inventoryFoldedSizes = (html) => {
 
 /** 退货页列出的尺码（= 允许退的）。 */
 const returnSizes = (html) => [
-  ...fx.blockOf(html, 'purchase_return').matchAll(/name="return_sizes" value="(\d+)"/g),
+  // ⭐ 2026-10-29（退货改"数量输入即选择"）：勾选框退场 ⇒ 从数量输入的 `data-size` 读；
+  //   "列出来 = 有数量可退"的语义没变 ✓
+  ...fx.blockOf(html, 'purchase_return').matchAll(/data-size="(\d+)"/g),
 ].map((m) => m[1]);
 
 const setOf = (list) => [...new Set(list.map(String))].sort((a, b) => Number(a) - Number(b));
@@ -261,7 +263,7 @@ test('AC-ST6 ⭐⭐ 她的 44 码（只有「未标状态」= 1）⇒ 四页都�
   // ③ 退货页：允许退 44（改前整款写"没有可退的库存" ✗）
   assert.deepEqual(setOf(returnSizes(returnHtml)), ['44'], '退货页列出 44（有数量 ⇒ 可退 ✓）');
   assert.equal(returnHtml.includes(`data-view="return-no-stock"`), false, '不再写"这一款现在没有可退的库存"');
-  assert.match(returnHtml, /data-stock="1"[^>]*name="return_sizes" value="44"/,
+  assert.match(returnHtml, /data-stock="1"[^>]*data-size="44"/,
     '44 那一行的库存上限 = 1（退货数量不许超过它 ✓）');
 
   // ④ 库存页：44 那一行只有「未标状态」= 1（她截图那一行**没变** —— 它本来就是对的 ✓）

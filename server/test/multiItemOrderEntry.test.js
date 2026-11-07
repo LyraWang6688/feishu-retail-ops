@@ -97,12 +97,13 @@ const flow = async (h, { chain = 'replenish', groups, stockView = null, amount =
 
 test('AC-ENT1 ⭐⭐ 一单加 **2 个货品** ⇒ **1 批次 + 2 组明细**（写入件只被调一次 ✓）', async () => {
   const h = build();
-  assert.equal(h.config.enabled, true, '她改口径了 ⇒ **默认就是真实写入**（不再影子）✓');
+  // ⭐ 2026-10-29：**没有开关了** ⇒ 断言"这个键不存在"（塞回 ⇒ 红 ✓）
+  assert.equal('enabled' in h.config, false, '一单多货**永远开**（她：「不应该有配置按钮」✓）');
   const { result } = await flow(h, {
     groups: [group('K1', [{ size: '40', quantity: '2' }]), group('K2', [{ size: '41', quantity: '1' }, { size: '42', quantity: '3' }])],
   });
   assert.equal(result.ok, true, '真实写入成功 ✓');
-  assert.equal(result.shadow, false, '**不是影子**（她要求直接走新逻辑 ✓）');
+  assert.equal('shadow' in result, false, '**没有影子/开关**（提交即真写 ✓）');
   assert.equal(h.writes.length, 1, '🔴 N 货品 ⇒ **只建 1 个批次**（写入件只被调一次 ✓）');
   const written = h.writes[0];
   assert.equal(written.writer, 'purchase', '补货落到既有「采购申请」写入件 ✓');

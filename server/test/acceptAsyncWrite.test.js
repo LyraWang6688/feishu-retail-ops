@@ -147,7 +147,7 @@ const sessionOf = (over = {}) => ({
 });
 
 /** 替身验收服务：**像真会话一样**带 `scans`（真会话由 `start` 建，从来都有 ✓）。 */
-const fakeArrival = ({ start, addScan, finish, session = sessionOf() } = {}) => {
+const fakeArrival = ({ start, addScan, setScans, finish, session = sessionOf() } = {}) => {
   const calls = [];
   const lastErrors = [];
   return {
@@ -155,6 +155,12 @@ const fakeArrival = ({ start, addScan, finish, session = sessionOf() } = {}) => 
     start: async (input) => {
       calls.push({ m: 'start', input });
       return start ? start(input) : { ok: true, session };
+    },
+    // ⭐ 2026-10-29（F1/F2 成对迁移）：工作台 accept 从"逐行 addScan"改成"一次 setScans 整单替换" ✓
+    //   改前逐字：路由每行调 addScan；改后逐字：路由只调一次 setScans({ openId, lines }) ✓
+    setScans: async (input) => {
+      calls.push({ m: 'setScans', input });
+      return setScans ? setScans(input) : { ok: true, session };
     },
     addScan: async (input) => {
       calls.push({ m: 'addScan', input });
@@ -255,9 +261,10 @@ test('AC-AA2 🔴 九种坏输入 ⇒ 当场拦（400/503 ＋ 人话 ＋ 零写�
       error: arrivalTab.texts.sizeInvalid,
     },
     {
-      why: '这一双不在本批（addScan 拒）',
+      // ⭐ 2026-10-29（F1/F2 成对迁移）：旧路由逐行 addScan ⇒ 现在是一次 setScans（校验点同一个 ✓）
+      why: '这一双不在本批（setScans 拒）',
       body: VALID_BODY,
-      arrival: fakeArrival({ addScan: () => ({ ok: false, message: notInBatch }) }),
+      arrival: fakeArrival({ setScans: () => ({ ok: false, message: notInBatch }) }),
       error: notInBatch,
     },
     {
@@ -559,7 +566,23 @@ test('AC-AA5-L1 ⭐ 幂等第一层（会话级键）：这把键用过了 ⇒ `
     // 先把会话开出来，并把"这把键已经用掉"直接落到会话上（= 真机里"上一跑刚写完、标记也落了"那一态 ✓）
     await chain.arrival.start({ openId: OPEN_ID, batchNo: chain.batchNo, operatorOpenId: OPEN_ID });
     const session = await chain.arrival.get(OPEN_ID);
-    const key = chain.arrival.submitKeyOf(session);
+    // ⚠️ 2026-10-29（F1/F2 成对迁移）：会话的"清单"现在由 `setScans` **整单替换**管理，
+    //   **清单没变 ⇒ 轮次不动**（连点两次同一份 = 同一把钥匙 ✓）。
+    //   改前逐字：只把 `posted_keys: [key(round 0)]` 写回即可（路由逐行 addScan 不改轮次）；
+    //   改后逐字：必须补成"**上一跑已经成功提交过同一份清单**"的真实形状 ⇒
+    //     `scans = 这次要提交的清单` + `submit_round = 1`，再把这把 `accept:<id>:1` 标记成已用 ✓
+    //   （否则 setScans 会先把清单落盘、把轮次 +1 ⇒ 算出一把**新**钥匙 —— 那不是本用例要证的场景 ✗）
+    const body = chain.bodyFor(chain.batchNo);
+    const submitted = body.lines.map((line) => ({
+      product_record_id: line.productRecordId, size: line.size, quantity: line.quantity,
+    }));
+    await chain.arrival.store.update(session.session_id, {
+      scans: submitted,
+      scanned: submitted.reduce((sum, line) => sum + line.quantity, 0),
+      submit_round: 1,
+    });
+    const prepared = await chain.arrival.get(OPEN_ID);
+    const key = chain.arrival.submitKeyOf(prepared);
     await chain.arrival.store.update(session.session_id, { posted_keys: [key] });
     const writesBefore = chain.writes.length;
     const res = await postJson(base, arrivalTab.api.accept, chain.bodyFor(chain.batchNo));

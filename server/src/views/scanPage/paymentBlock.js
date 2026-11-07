@@ -189,7 +189,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //   销售这张表单本来就是 POST 的表单 ⇒ **用它自己那颗既有 submit**（`action=add_line` ✓
   //   ⇒ 既有 `addSaleLine` ⇒ `session.sale.lines` ✓ **不新造写入口** ✗）。
   //
-  // ⚠️ 开关关（`MULTI_ITEM_ORDER.enabled === false`）⇒ **那一颗逐字回到今天**（`t.addAnotherButton`）✓
+  // ⚠️ 2026-10-29：**没有开关**了（她：「不应该有配置按钮」）⇒ 只要这一单有明细就给那颗入口 ✓
   //   ⇒ 既有页面判据（`scanSaleAccessoryAndRemark` 等）与"N=1 逐字不变"都靠这个闸门 ✓。
   // ⚠️「本单已加的货品」标题**只在真的加了才出现**（本单为空时那一屏**逐字不变** ✓）；
   //   列表本身沿用**既有** `draftLinesHtml`（每行一个 `line_amount` 输入框 ⇒ 她填的钱看得见、改得动 ✓）。
@@ -204,7 +204,8 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //   「＋ 再加一个货品」＋`data-multi-add`）—— **不新增第二颗同义按钮**（两颗一模一样的按钮更糟 ✗）。
   //   ⚠️ 2026-10-29：销售页按钮文案统一为「再加一双」，不再随本单是否已有货品变化。
   // ══════════════════════════════════════════════════════════════════════════
-  const multiItemAdd = MULTI_ITEM_ORDER.enabled === true && lines.length > 0;
+  // 🔴 2026-10-29：没有开关了 ⇒ 「再加一个货品」只要这一单有明细就给 ✓
+  const multiItemAdd = lines.length > 0;
   const multiItemTitleHtml = multiItemAdd
     ? `<h3 class="multi-item__title">${escapeHtml(MULTI_ITEM_RENDER_TEXTS.title)}</h3>\n`
     : '';

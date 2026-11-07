@@ -18,6 +18,8 @@
     <p class="after-sales-status" data-view="after-sales-status" role="status"></p>
     <section data-view="after-sales-body"></section>
   </main>
+  <!-- 统一回执 toast（服务端 303 把文案放 ?toast=；前端不写死中文） -->
+  <script src="/workbench/shared/toast.js"></script>
   <script type="module">
     import { mountAfterSalesPage } from '/workbench/features/after-sales/index.js';
     mountAfterSalesPage(document.getElementById('after-sales-app'));

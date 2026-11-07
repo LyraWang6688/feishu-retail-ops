@@ -29,7 +29,7 @@ const purchaseAmountRowHtml = (write) => {
  *
  * 她的口径（逐字）：「核心就是…**销售、补货、退货支持一单多货**」⇒ 补货/退货也要能**一单加多个货品** ✓。
  *   · 形状 = 设计 §4.3（`[{product_record_id, number, item_no, color, supplier_record_id, entries:[{size, quantity}]}]`）✓
- *   · 🔴 **N=1 与今天逐字不变**：开关 `MULTI_ITEM_ORDER.enabled === false` ⇒ 本函数返回 **空串** ⇒
+ *   · 🔴 **N=1 与今天逐字不变**（行为等价靠**调用方按分组数分流**，不是靠开关）：
  *     两个表单**一个字节都不变** ✓（既有断言原样绿 ✓）
  *   · 🔴 **不新开提交路径**：整块只是往**既有那个 `<form>`** 里加一个 hidden 字段 ＋ 一个按钮 ＋ 一段脚本；
  *     `action` / `submitKey` / 尺码字段 / 金额行 / 提交按钮**顺序与内容都不动** ✗
@@ -97,7 +97,7 @@ const multiItemPayloadJson = (items = []) => JSON.stringify(
  *     · 两块都：**有第二个货品时列表仍要出现** ✓（**正向**判据 —— 防"删过头" ✗）。
  */
 const multiItemBlockHtml = (write, view = {}, mode = '', page = {}) => {
-  if (!MULTI_ITEM_ORDER.enabled) return ''; // 🔴 开关关 ⇒ 空串 ⇒ 既有页面逐字不变 ✓
+  // 🔴 2026-10-29：**没有开关**了（她：「就应该支持一单多货，不应该有配置按钮」）⇒ 永远渲染 ✓
   const t = MULTI_ITEM_RENDER_TEXTS;
   const field = String(MULTI_ITEM_ORDER.field || '');
   if (!field) return ''; // 字段名空 ⇒ 宁可不渲染，也不发一个没人认的键 ✗
@@ -182,7 +182,7 @@ const multiItemBlockHtml = (write, view = {}, mode = '', page = {}) => {
   // ⭐⭐ 2026-10-16（task-61 · 「本单已加的货品」列表）。**列表 + 载荷**两处都从那同一份 `already` 来
   //   ⇒ 只报一次即可（列表上看得见的货品号 ✓ 与她眼睛看到的那一份逐字同源 ✓）。
   //   🔴 纯 additive：只在**真的渲染这个块**时才产生；一个判定都不动 ✗。
-  if (Array.isArray(page.logs) && MULTI_ITEM_ORDER.enabled) {
+  if (Array.isArray(page.logs)) {
     page.logs.push({
       event: (MULTI_ITEM_ORDER.logFields || {}).renderEvent || 'scan.multi_item.render',
       fields: MULTI_ITEM_ORDER.logFields || {},

@@ -144,7 +144,7 @@ const REALM_SCAN_SOURCE = `
     var origin = trimEnd(config.origin);
     var id = trimStart(raw);
     if (!mount || !origin || !id || id.indexOf('?') >= 0 || id.indexOf('#') >= 0
-      || /\s/.test(id)) return '';
+      || /\\s/.test(id)) return '';
     var landed = origin + mount + '/' + encodeURIComponent(id);
     return appendRealm ? withRealm(landed) : landed;
   };

@@ -379,8 +379,9 @@ const createMultiItemOrderService = (options = {}) => {
   const inFlight = new Map();
 
   /**
-   * 提交这一单（**本步 = 影子跑**：`config.enabled !== true` ⇒ **零写入** ✓）。
-   * @returns {Promise<{ok:boolean, shadow?:boolean, reused?:boolean, code?:string, message?:string,
+   * 提交这一单（**永远真写**：一单多货**没有开关、也没有影子阶段** —— 2026-10-29 一并删净 ✓）。
+   * 🔴 落库仍然**只调既有写入件**（`writers[chainConfig.writer]` ✓ 本模块不认识飞书 ✗）。
+   * @returns {Promise<{ok:boolean, reused?:boolean, code?:string, message?:string,
    *                    summary?:object, plan?:object}>}
    */
   const submitDraft = async ({
@@ -400,7 +401,7 @@ const createMultiItemOrderService = (options = {}) => {
           session_id: sessionIdOf(openId), chain: chainConfig.id, order_key: key, request_id: requestId,
         });
         return {
-          ok: true, reused: true, shadow: draft.shadow === true,
+          ok: true, reused: true,
           summary: {
             chain: chainConfig.id, order_key: key, batch_count: 1,
             detail_count: (draft.detail_ids || []).length,
@@ -426,16 +427,9 @@ const createMultiItemOrderService = (options = {}) => {
         draft: { ...draft, items: checked.normalized.items },
         chainConfig, submitKey: effectiveKey, behavior,
       });
-      const shadow = config.enabled !== true;
-      if (shadow) {
-        // ⭐⭐ **影子跑**：只把"这一单会提交什么"记进日志 —— **一个字节都不写业务表** ✗（§12 第 ① 步）
-        info(config.events.shadowSubmit, {
-          session_id: sessionIdOf(openId), chain: chainConfig.id, order_key: key,
-          task_id: plan.taskId, ...plan.summary, request_id: requestId,
-          note: texts.shadowLogged,
-        });
-      } else {
-        // 第二步（并存）才走到这儿：**只调既有写入件** ✓（本模块连 gateway 都不认识 ✗）
+      {
+        // **只调既有写入件** ✓（本模块连 gateway 都不认识 ✗）—— 没有影子/开关分支（2026-10-29 删净）。
+        // 这一段缩进与顺序**逐字保留**（只是去掉了外层的 `if (shadow) … else` 壳）✓。
         const writer = writers[chainConfig.writer];
         if (typeof writer !== 'function') {
           return reject('writer_missing', texts.chainUnknown);
@@ -464,16 +458,13 @@ const createMultiItemOrderService = (options = {}) => {
       const rotated = await writeDraft(openId, key, (current) => ({
         ...(current || draft),
         status: config.session.submittedStatus,
-        shadow,
         detail_ids: plan.details.map((detail) => detail.idempotency_key),
         updated_at: new Date(now()).toISOString(),
       }));
-      if (!shadow) {
-        info(config.events.submitted, {
-          session_id: sessionIdOf(openId), chain: chainConfig.id, order_key: key,
-          task_id: plan.taskId, ...plan.summary, request_id: requestId,
-        });
-      }
+      info(config.events.submitted, {
+        session_id: sessionIdOf(openId), chain: chainConfig.id, order_key: key,
+        task_id: plan.taskId, ...plan.summary, request_id: requestId,
+      });
       // 轮换：下一单从 `seq + 1` 开始（与"提交后换一把新键"同义 ✓ §4.2）
       await store.update(sessionIdOf(openId), (session) => {
         const seqs = { ...(session.orders_seq || {}) };
@@ -486,7 +477,7 @@ const createMultiItemOrderService = (options = {}) => {
         return null;
       });
       void rotated;
-      return { ok: true, shadow, reused: false, plan, summary: plan.summary };
+      return { ok: true, reused: false, plan, summary: plan.summary };
     })();
     inFlight.set(key, run);
     try {

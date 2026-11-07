@@ -147,10 +147,11 @@ test('AC-MI-F1 ⭐ 接线后：入口**不再是链接**，而是 submit 按钮�
 });
 
 test('AC-MI-F2 ⭐⭐ 那颗 submit 与她的尺码/数量在**同一张 `<form>` 里**（挪出去 ⇒ 红）', async () => {
-  // 补货那张：`sizes` + `qty_41`（她要填的）；退货那张：`return_sizes` + `return_qty_41` ✓
+  // 补货那张：`sizes` + `qty_41`（她要填的）；退货那张：**数量输入即选择**（2026-10-29 起勾选框退场）
+  //   ⇒ 判据不变的是"她填的那些与按钮在**同一张表单**里"（`return_qty_40` + 表单级 `data-return-qty-prefix` ✓）
   const cases = [
     ['replenish', ['name="sizes"', 'name="qty_41"', 'name="qty_40"']],
-    ['purchase_return', ['name="return_sizes"', 'name="return_qty_40"']],
+    ['purchase_return', ['data-return-qty-prefix="return_qty_"', 'name="return_qty_40"']],
   ];
   for (const [realm, needles] of cases) {
     const block = await fetchRealm(realm, { wire: true });
