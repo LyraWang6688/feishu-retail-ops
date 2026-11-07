@@ -169,8 +169,10 @@ const REALM_TEXTS = Object.freeze({
   // ── 销售（`from=sales`）：尺码**分两组** —— 有货 ⇒ 现货 / 其余 ⇒ 预订 ──────────
   // ⭐ 2026-11-07（业务负责人截图口径）：销售页「有货」段只写「有货」——
   //   去掉「（样品 + 门盒）」那串解释（分组口径不变：样品 + 门盒 ＞ 0 ⇒ 现货 ✓）。
-  saleInStockHeading: '有货',
-  salePrepaidHeading: '现在没有（预订）',
+  // ⭐ 2026-11-07（业务负责人 HTML 批注）：销售页两个尺码组**只保留标签**（现货 / 预订），
+  //   组标题整条去掉 ⇒ 这里留空串（渲染层见空就**不画那个 span**，订单/补货/库存的标题不受影响 ✓）。
+  saleInStockHeading: '',
+  salePrepaidHeading: '',
   saleInStockTag: '现货',
   salePrepaidTag: '预订',
   saleSizeEmpty: '这一款现在没有可选的尺码',
