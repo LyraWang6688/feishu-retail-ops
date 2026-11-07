@@ -14,26 +14,14 @@
 > ⚠️ **`GET /api/workbench/inventory` 保留** —— 它是「库存手工调整」页在用的**共用**只读接口
 > （换季调整按品类列鞋、盘点按尺码看三种状态的数量），**不是**孤儿。
 
-## 今日销售明细（⚠️ **HTTP 入口已删**，仅存 service）
+## 今日销售明细（已退场）
 
-> 🔴 **2026-10-08 起 `GET /api/workbench/sales/today` 这个 HTTP 入口已删除**（见上方说明）。
-> 下面记的是 `v1WorkbenchService.getSalesReport`（`getTodaySales` 是它的薄封装）的响应口径 ——
-> 方法本身**保留**（`server/src/services/**` 属本次改动的边界外），但**已无任何生产调用方**
-> （只剩单测），也**不再有任何页面在用**。销售查询现在走飞书多维表格网页外链。
-
-可选 `?date=YYYY-MM-DD`，不传时按北京时间的今天查询。只返回已确认的销售明细；日期优先取明细的“销售日”，缺失时取关联销售主表自动生成的“录单日”。两者都缺失的记录不计入当天。
-
-响应主要字段：
-
-- `date`：业务日期。
-- `summary.order_count`：去重后的销售单数。
-- `summary.detail_count`、`summary.quantity`：明细数、商品数量。当前一条销售明细代表一双鞋，两者数值相同。
-- `summary.receivable_amount`：当天明细“成交金额”合计；只要有一条明细缺少成交金额，就返回 `null`，页面显示“待录入”，不能显示 0 元。货品标价公式不作为真实成交额。
-- `summary.paid_amount`、`summary.payment_summary`：这些**当天销售单截至查询时已收款**的钱及支付方式分布；不包含「未收款」或「待平台结算」，也不是“当天收到的所有款”。
-- `summary.platform_pending_amount`：这些销售单尚待平台结算的券款，不计入已收金额。
-- `rows[]`：每条销售明细一行，包含 `record_id`、`sales_entry_record_id`、`sales_order_no`、`sold_at`、`product_number`、`item_no`、`color`、`size`、`quantity`、`gift`、`receivable_amount`、`list_amount`、`payment_method`。`receivable_amount` 对应真实成交金额；`list_amount` 由明细公式“销售单价”乘数量得到，仅供参考，不作为成交额。若公式还没有值，则返回 `null`。`payment_method` 是所属订单的收款方式展示，不是这条商品独立收款。
-
-不要把整单收款金额复制到每条商品行再相加。若将来需要“今日到账”，应新增以收款时间筛选 `paymentRecord` 的独立接口。
+> 🔴 **2026-11-08：自建销售查询读模型已删除**。
+> `GET /api/workbench/sales/today`、`GET /api/workbench/sales/query` 以及
+> `v1WorkbenchService.getSalesReport` / `getTodaySales` 均已退场；
+> 销售查询继续使用飞书多维表格网页外链，不再自建查询接口。
+>
+> 本文件原来的字段口径仅作为历史记录，不再有运行期实现。
 
 ## 实时库存
 
