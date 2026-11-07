@@ -118,32 +118,35 @@ const sizeRowsOf = (block) => [...block.matchAll(/<div class="size-row">([\s\S]*
 
 test('AC-RT8 ⭐ 某码库存 0（41 缺码）⇒ **它不出现在清单里**', async () => {
   const block = await getReturnBlock(async () => view());
-  assert.equal(block.includes('value="41"'), false, '⭐ 库存 0 的 41 码不进清单（能真红：改回显示 ⇒ 红）');
+  assert.equal(block.includes('data-size="41"'), false, '⭐ 库存 0 的 41 码不进清单（能真红：改回显示 ⇒ 红）');
   assert.equal(block.includes(`${SCAN_WRITE.fields.returnQuantityPrefix}41`), false,
     '它也不该有自己的数量输入 ✓');
   assert.equal(block.includes(`>41 码<`), false, '连"41 码"这个勾选项都不该出现 ✓');
   // 有数量的两个码照常在（别误伤 ✗）
-  assert.ok(block.includes('value="40"') && block.includes('value="42"'), '有数量的 40 / 42 照旧在 ✓');
+  assert.ok(block.includes('data-size="40"') && block.includes('data-size="42"'), '有数量的 40 / 42 照旧在 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-RT9 有库存的码照旧（#604 的三条判据都不放宽）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RT9 ⭐ 有库存的码照旧：勾选框 / 数量输入 / **数量列 = 库存数** / 上限仍是库存', async () => {
+test('AC-RT9 ⭐ 有库存的码照旧：**数量输入** / **数量列 = 库存数** / 上限仍是库存（勾选框已退场 ✓）', async () => {
   const block = await getReturnBlock(async () => view());
   const rows = sizeRowsOf(block);
   assert.equal(rows.length, 2, '只剩有数量的两行 ✓');
-  const rowFor = (size) => rows.find((row) => row.includes(`value="${size}"`));
-  assert.ok(rowFor('40').includes('type="checkbox"'), '还是勾选框 ✓');
-  assert.ok(rowFor('40').includes('size-qty'), '还是数量输入 ✓（#604 的形状不动 ✓）');
+  const rowFor = (size) => rows.find((row) => row.includes(`data-size="${size}"`));
+  // ⭐ 2026-10-29（业务负责人批注「这里的框是干啥用的呀？」）成对迁移：
+  //   改前逐字：`assert.ok(rowFor('40').includes('type="checkbox"'), '还是勾选框 ✓');`
+  //   改后逐字：**不许有勾选框**；数量输入仍在、上限仍在（判据没丢 ✓）
+  assert.equal(rowFor('40').includes('type="checkbox"'), false, '🔴 勾选框已退场（塞回 ⇒ 红 ✓）');
+  assert.ok(rowFor('40').includes('size-qty'), '数量输入仍在 ✓（#604 的形状不动 ✓）');
   // 数量列仍是"当前库存数量"（40 ⇒ 3）
   assert.ok(rowFor('40').includes('data-view="return-stock"'), '数量列那个稳定锚还在 ✓');
   assert.match(rowFor('40'), />3</, '40 码显示 3（门盒 2 + 样品 1）✓');
   // 上限 = **这一行的库存**（#604 的 RT7 判据不放宽：`data-stock` 还在、且等于库存 ✓）
-  assert.match(block, /data-stock="3"[^>]*value="40"|value="40"[^>]*data-stock="3"/,
+  assert.match(block, /data-stock="3"[^>]*data-size="40"|data-size="40"[^>]*data-stock="3"/,
     '⭐ 40 码的库存上限仍是 3（`data-stock` ✓ 既有关键判据没放宽 ✓）');
-  assert.match(block, /data-stock="1"[^>]*value="42"|value="42"[^>]*data-stock="1"/, '42 码上限 1 ✓');
+  assert.match(block, /data-stock="1"[^>]*data-size="42"|data-size="42"[^>]*data-stock="1"/, '42 码上限 1 ✓');
   // 三句人话 / 默认值走配置（#604 的另两条判据，一条没动 ✓）
   assert.ok(block.includes('data-return-required-text=') && block.includes('data-return-quantity-text=')
     && block.includes('data-return-stock-text='), '三条拦截人话仍在（走配置 ✓）');

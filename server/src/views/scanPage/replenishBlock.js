@@ -63,6 +63,8 @@ const replenishFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     name: fields.replenishSizes,
     quantityPrefix: fields.replenishQuantityPrefix,
     quantityLabel: t.replenishQuantityLabel,
+    // 尺码标签走配置（模板里不写中文 ✓）
+    sizeLabelTemplate: require('../../config/scanPage').SCAN_PAGE.texts.sizeLabel,
     // 补货：**缺码默认勾上**（她要补的就是缺的那些）
     checkedOf: (item) => Boolean(item.checked),
   });

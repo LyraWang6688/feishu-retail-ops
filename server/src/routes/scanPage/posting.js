@@ -33,6 +33,28 @@ const parseReplenishEntries = (body, fields, writeConfig) => {
  *   `purchaseEntryViolation`（与写层 `services/scanWriteService.js:1556-1585` 逐字同源 ✓）。
  */
 const parseReturnEntries = (body, fields, writeConfig) => {
+  // ⭐⭐ 2026-10-29（业务负责人对退货页的 HTML 批注：「这里的框是干啥用的呀？」）：
+  //   退货块**不再有勾选框** ⇒ 每行只有一个「退货数量」输入，**不填 / 填 0 = 不退**。
+  //   ⇒ 新版解析：**从 `return_qty_<size>` 这一批字段里认出要退的尺码与数量**（数量输入即选择 ✓）。
+  //   ⚠️ 这一层**只做形状转换**（与补货那条同一条口径）：尺码/数量**合不合法**
+  //      仍由 `purchaseEntryViolation`（唯一真源）当场判 ⇒ 非法值**原样往下传**（不许在这里静默吞 ✗）。
+  const prefix = String(fields.returnQuantityPrefix || '');
+  const qtyKeys = prefix
+    ? Object.keys(body || {}).filter((key) => key.startsWith(prefix) && key.length > prefix.length)
+    : [];
+  if (qtyKeys.length) {
+    const entries = [];
+    for (const key of qtyKeys) {
+      const raw = String(body[key] ?? '').trim();
+      if (raw === '') continue;                 // 空 = 这一码不退（不是错 ✓）
+      const numeric = Number(raw);
+      if (Number.isFinite(numeric) && numeric === 0) continue; // 填 0 = 这一码不退 ✓
+      entries.push({ size: key.slice(prefix.length), quantity: raw });
+    }
+    return entries;
+  }
+  // ⚠️ **老页面兜底**（缓存里的旧 HTML 仍带勾选框）：字段形状 `return_sizes` + `return_qty_<尺码>`。
+  //   行为与改动前**逐字一致**（回滚 / 缓存页都不炸 ✓）。
   const rawSizes = body[fields.returnSizes];
   const sizes = Array.isArray(rawSizes) ? rawSizes : (rawSizes === undefined || rawSizes === '' ? [] : [rawSizes]);
   return sizes.map((size) => ({

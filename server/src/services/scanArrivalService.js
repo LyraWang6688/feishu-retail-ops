@@ -25,6 +25,8 @@ const crypto = require('node:crypto');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { SCAN_WRITE, fillText } = require('../config/scanWrite');
 const { logInfo, logWarn } = require('../utils/logger');
+// ⭐ 2026-10-29（F1/F2）：验收会话"整单替换"（`setScans`）的实现拆到独立模块（文件体量棘轮 ✓）。
+const { createSetScans } = require('./scanArrival/setScans');
 
 /** 传进来的可以是对象，也可以是工厂（路由用工厂把重依赖推迟到真正要用的那一刻）。 */
 const resolve = (value) => (typeof value === 'function' ? value() : value);
@@ -119,6 +121,28 @@ const createScanArrivalService = (options = {}) => {
       ),
       markBatchArrived: (batchNo, arrivalOptions) => webhooks.orderBatches.markArrived(batchNo, arrivalOptions),
     });
+  };
+
+  /**
+   * ⭐⭐ 2026-10-29（F1/F2 · Lead 批）：**自定义尺码**要能当场验 ——
+   *   否则后台入库才发现"尺码不在「尺码管理」里" ⇒ 页面先回成功、后台写失败 = 假成功 ✗。
+   *   延迟取用：只有真的提交了"不在本批申请行里的自定义尺码"时才调用（普通提交零额外读表）。
+   *   · 用例可注入 `options.sizeReferences`（实例或 accessor）⇒ 不发真实请求 ✓
+   *   · 没接 gateway 时返回 null ⇒ 跳过这项校验（不误拦 ✓）
+   */
+  let sizeReferencesAccessInstance = null;
+  const sizeReferencesOf = () => {
+    if (sizeReferencesAccessInstance) return sizeReferencesAccessInstance;
+    const provided = options.sizeReferences;
+    if (provided) {
+      sizeReferencesAccessInstance = typeof provided === 'function' ? provided : () => provided;
+      return sizeReferencesAccessInstance;
+    }
+    if (!options.gateway) return null;
+    // eslint-disable-next-line global-require
+    const { createSizeReferenceAccess } = require('./sizeReferenceService');
+    sizeReferencesAccessInstance = createSizeReferenceAccess({ gateway: options.gateway });
+    return sizeReferencesAccessInstance;
   };
 
   /**
@@ -360,6 +384,14 @@ const createScanArrivalService = (options = {}) => {
     return { ok: true, session: updated, scanned, expected: Number(updated.expected || 0), rows: next };
   };
 
+  // ⭐⭐ 2026-10-29（F1/F2）：**整单替换**会话清单（自定义尺码 / 改数量 / 改 0 都生效）——
+  //   实现拆到 `scanArrival/setScans.js`（本文件只做装配；文件大小棘轮只允许变小 ✓）。
+  const setScans = createSetScans({
+    get, store, touch, texts, events, config, logInfo,
+    positiveInteger, nonNegativeInteger, resolve,
+    sizeReferencesOf,
+  });
+
   /**
    * 【完成验收】⇒ 入库 + 批次改「已到货」（**实际到货数量 = 已扫合计**）。
    *
@@ -534,6 +566,8 @@ const createScanArrivalService = (options = {}) => {
     submitKeyOf,
     // ⭐ 2026-10-12：把"改完的整张清单"落进会话（预填清单那一版的入口；不写业务表）
     setActualRows,
+    // ⭐⭐ 2026-10-29（F1/F2）：工作台【确认到货】用的**整单替换**入口（自定义行/改数量/改 0 都生效）
+    setScans,
   };
 };
 

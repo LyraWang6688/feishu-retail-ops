@@ -63,6 +63,14 @@ const fakeArrival = (overrides = {}) => {
   return {
     calls, session,
     start: async (input) => { calls.push({ m: 'start', input }); return overrides.start ? overrides.start(input) : { ok: true, session }; },
+    // ⭐ 2026-10-29（F1/F2 成对迁移）：路由【确认到货】从"逐行 addScan"改成"一次 setScans 整单替换"。
+    //   改前逐字：路由每行调 `addScan`；改后逐字：路由只调一次 `setScans({ openId, lines })` ✓
+    //   依据：自定义尺码/货号在旧路径**必然** 400、改数量/改 0 也不生效（见 `test/workbenchArrivalSetScans.test.js`）。
+    setScans: async (input) => {
+      calls.push({ m: 'setScans', input });
+      return overrides.setScans ? overrides.setScans(input) : { ok: true, session };
+    },
+    // ⚠️ 替身仍保留 addScan（别的用例/别的链路可能用）；但**工作台 accept 这条路已不再调它** ✗
     addScan: async (input) => { calls.push({ m: 'addScan', input }); return overrides.addScan ? overrides.addScan(input) : { ok: true }; },
     get: async () => session,
     submitKeyOf: (s) => `accept:${s?.session_id}:${Number(s?.submit_round || 0)}`,
@@ -133,7 +141,13 @@ test('AC-AW10b ⭐ 缺批次号 / 明细读不到 / 明细为空 ⇒ 人话 + �
   });
 });
 
-test('AC-AW11 ⭐⭐ 自定义尺码（手填尺码+数量）⇒ 走**既有** addScan ✓ 然后 finish ✓', async () => {
+test('AC-AW11 ⭐⭐ 自定义尺码（手填尺码+数量）⇒ 走**一次** setScans（整单替换）✓ 然后 finish ✓', async () => {
+  // ⚠️ **2026-10-29（F1/F2）成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.equal(add.length, 1)` / `deepEqual(add[0].input, { openId, productRecordId, size, quantity })`
+  //   改后逐字：`assert.equal(replaced.length, 1)` / `deepEqual(replaced[0].input, { openId, lines: [{ product_record_id, size, quantity }] })`
+  //   依据：旧路由逐行 `addScan` **根本不认**自定义行（不在本批申请行 ⇒ 必 400 ✗）；
+  //     改成 `setScans` 后"自定义尺码（款在本批）"才会真的被收下（F1 的修复点 ✓）。
+  //   判据没放宽：仍然钉"她填的尺码/数量原样到达写层一次"，只是入口从 addScan 换成 setScans ✓。
   const arrival = fakeArrival();
   await withServer(appFor({ arrival, purchaseQuery: fakeQuery(ROWS) }), async (base) => {
     const res = await postJson(base, arrivalTab.api.accept, {
@@ -142,9 +156,12 @@ test('AC-AW11 ⭐⭐ 自定义尺码（手填尺码+数量）⇒ 走**既有** a
     });
     assert.equal(res.status, 200);
     assert.equal(res.body.success, true);
-    const add = arrival.calls.filter((c) => c.m === 'addScan');
-    assert.equal(add.length, 1, '一行 ⇒ addScan 一次 ✓');
-    assert.deepEqual(add[0].input, { openId: 'ou_acc_full', productRecordId: 'p1', size: 42, quantity: 3 });
+    const replaced = arrival.calls.filter((c) => c.m === 'setScans');
+    assert.equal(replaced.length, 1, '一次提交 ⇒ setScans 一次（整单替换 ✓）');
+    assert.deepEqual(replaced[0].input, {
+      openId: 'ou_acc_full',
+      lines: [{ product_record_id: 'p1', size: 42, quantity: 3 }],
+    });
     assert.equal(arrival.calls.filter((c) => c.m === 'finish').length, 1, '完成验收只一次 ✓');
   });
 });

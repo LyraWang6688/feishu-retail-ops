@@ -12,7 +12,7 @@ const { rendererSource } = require('./support/rendererSource');
  *   —— 去掉任一处 ⇒ 红
  * - **AC-MIR2** 载荷 `multi_items` 是**合法 JSON 且形状 = 设计 §4.3**（六个键 + `entries:[{size,quantity}]`，数量是**数字**）
  *   —— 改一个键名 ⇒ 红
- * - **AC-MIR3** ⭐ **N=1 逐字不变**：开关关（`SCAN_MULTI_ITEM_ENABLED=false`）⇒ 那一块**返回空串** ⇒
+ * - **AC-MIR3** ⭐ **没有开关**（2026-10-29）：配置上无 `enabled` ⇒ 那一块**永远渲染** ⇒
  *   两个表单**一个字节都不变**（旧字段逐字还在、**没有**任何新 DOM）—— 删掉那个闸门 ⇒ 红
  * - **AC-MIR4** 既有渲染判据 **0 行放宽**（`scanPageWrite` / `scanReturnBlockGuard` 等原样绿；见 PR 证据）
  *
@@ -122,10 +122,15 @@ test('AC-MIR2 🔴 载荷是合法 JSON 且形状 = 设计 §4.3（改一个键�
     '键名清单**只此一份**（服务端纯函数与页面脚本共用 ✓）');
 });
 
-test('AC-MIR3 ⭐ N=1 逐字不变：开关关 ⇒ 那一块**空串**、两个表单一个字节不变', () => {
-  // ① 闸门在源码里（关 ⇒ 立刻返回空串，不做任何别的事）
-  assert.match(rendererSrcText, /if \(!MULTI_ITEM_ORDER\.enabled\) return '';/,
-    '必须有"开关关 ⇒ 返回空串"的闸门（这是 N=1 逐字不变的物理保证）');
+test('AC-MIR3 ⭐ N=1 逐字不变：**没有开关** ⇒ 那一块永远渲染、两个表单其余字节不变', () => {
+  // ① ⭐ 2026-10-29 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：`assert.match(rendererSrcText, /if \(!MULTI_ITEM_ORDER\.enabled\) return '';/, …)`
+  //   改后逐字：**那道门闸必须不在** ✗（她：「不应该有配置按钮」）＋ 配置上也没有 `enabled` 键
+  //   依据＝业务负责人 2026-10-29 逐字（同 AC-MI1）；🔴 判据反向钉住（塞回门闸/开关 ⇒ 红 ✓）
+  assert.equal(/if \(!MULTI_ITEM_ORDER\.enabled\) return '';/.test(rendererSrcText), false,
+    '🔴 渲染层**不许**再有"开关关 ⇒ 空串"那道门（开关已整件退场 ✗）');
+  assert.equal('enabled' in MULTI_ITEM_ORDER, false,
+    '🔴 配置上不许再有 `enabled`（一单多货永远开 ✓）');
   // ② 旧字段**逐字还在**、顺序不变（多货品块仍**插**在"金额行那一格"与提交按钮之间 ✓
   //    ⚠️ 那一格现在**按配置**渲染 —— 缺省 false ⇒ 页面上看不到金额行，但**位置留着** ✓
   //      ⇒ 她哪天打开那个开关，金额行仍回到原位（见下面那两条逐字断言 ✓））
@@ -161,11 +166,17 @@ test('AC-MIR3 ⭐ N=1 逐字不变：开关关 ⇒ 那一块**空串**、两个�
     '补货表单的顺序必须仍是 **`rows` → 金额行那一格 → 多货品块 → 提交按钮**（既有顺序不动 ✓）');
   assert.ok(rendererSrcText.includes("${rp.amountRow ? purchaseAmountRowHtml(write) : ''}"),
     '⭐ 中间那一格必须**按配置**决定画不画（缺省 false ⇒ 她截图上那个框不再出现 ✓）');
-  // ③ **真跑一个子进程**：开关关 ⇒ 那一块空串（不是靠读源码猜 ✓）
+  // ③ ⭐⭐ 2026-10-29 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
+  //   改前逐字：子进程 `SCAN_MULTI_ITEM_ENABLED=false` ⇒ `out.html === ''`（开关关 = 空串）
+  //   改后逐字：子进程里**没有开关** ⇒ 配置上没有 `enabled` 键、那一块**照常渲染**（非空）
+  //   依据＝业务负责人 2026-10-29 逐字：「啥叫默认开启呀？就应该开启呀，就应该支持一单多货呀，
+  //     不应该有配置按钮呀！」＋ 2026-10-16「不需要开关」（`docs/no-switch-rule-2026-10-16.md`）
+  //   🔴 判据**没消失、也没放宽**：从"关着 ⇒ 空串"翻成"**没有关这个动作** ⇒ 永远渲染"
+  //     （把 `enabled` 塞回配置 / 渲染层加回开关 ⇒ 本用例红 ✓）。
   const probe = spawnSync(process.execPath, ['-e', `
     const r = require(${JSON.stringify(rendererPath)});
     const html = r.multiItemBlockHtml({}, { product_record_id: 'recA', number: 'HL1' });
-    process.stdout.write(JSON.stringify({ html, enabled: require(${JSON.stringify(path.join(serverRoot, 'src', 'config', 'multiItemOrder.js'))}).MULTI_ITEM_ORDER.enabled }));
+    process.stdout.write(JSON.stringify({ html, hasEnabled: 'enabled' in require(${JSON.stringify(path.join(serverRoot, 'src', 'config', 'multiItemOrder.js'))}).MULTI_ITEM_ORDER }));
   `], {
     cwd: serverRoot,
     env: { ...process.env, SCAN_MULTI_ITEM_ENABLED: 'false' },
@@ -174,6 +185,6 @@ test('AC-MIR3 ⭐ N=1 逐字不变：开关关 ⇒ 那一块**空串**、两个�
   });
   assert.equal(probe.status, 0, `子进程应正常退出：${probe.stderr}`);
   const out = JSON.parse(probe.stdout);
-  assert.equal(out.enabled, false, '开关必须真的读到了 false（显式布尔 ✓）');
-  assert.equal(out.html, '', '🔴 开关关 ⇒ 那一块必须是空串 ⇒ 页面与今天逐字一致 ✓');
+  assert.equal(out.hasEnabled, false, '🔴 配置里不许再有 `enabled`（老 env 也已经不读了 ✓）');
+  assert.ok(String(out.html || '').length > 0, '🔴 没有开关 ⇒ 那一块**永远渲染**（不再有"空串"那条老路 ✓）');
 });
