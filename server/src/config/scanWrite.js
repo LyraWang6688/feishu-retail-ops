@@ -553,7 +553,9 @@ const TEXTS = Object.freeze({
   //    ⚠️ 改的**只有这一个显示串**：语义键仍是 `gift`、落点仍是**销售主表·「赠品」**那一列
   //       （映射见 `v1BitableSchema.tables.salesEntry.fields.gift`）——读写行为一个字不动。
   //    ⚠️ 它**不是**"备注"：这一列从 2026-10-08 起就是**赠品**（`config/salesGift.js` 的合并规则）。
-  giftLabel: '赠品（可不填）',
+  // ⭐ 2026-11-08（业务负责人）：标签去掉「（可不填）」⇒ 只写「赠品」。
+  //   ⚠️ 语义**一个字没变**：仍然可不填（空的就不写主表「赠品」列）、落点仍是销售主表·赠品。
+  giftLabel: '赠品',
   // 异步入队成功后资金页顶部的提示（占位 {orderNo}；不放成功页）
   asyncAcceptedText: readString(process.env, 'SCAN_SALE_ASYNC_ACCEPTED_TEXT', '信息收集完毕，销售单号：{orderNo}'),
   // payload 派生的收款状态（不是表里的「收款状态」；表里每笔由写层落）

@@ -11,10 +11,11 @@ const { rendererSource } = require('./support/rendererSource');
  * ─────────────────────────────────────────────────────────────────────────
  * 验收标准（**测试名 = AC**）
  *
- *  AC-GL1 销售页上这一列的**标签** = 「赠品（可不填）」；页面**不再出现**「备注（可不填）」。
+ *  AC-GL1 销售页上这一列的**标签** = 「赠品」（2026-11-08 起去掉「（可不填）」）；
+ *        页面**不再出现**「备注（可不填）」。
  *  AC-GL2 **映射与读写逐字不变**（回归）：语义键 = `gift`；表列名 = 「赠品」；表单字段名 = `gift`。
  *         （"真写进去"那一段由既有 E2E 钉着：`salesGiftOnEntry` ③ / `scanSaleAccessoryAndRemark` AC-B4）
- *  AC-GL3 源码哨兵：`giftLabel` 的值里**不许**出现「备注」。
+ *  AC-GL3 源码哨兵：`giftLabel` 的值里**不许**出现「备注」；也不许再带「（可不填）」。
  * ─────────────────────────────────────────────────────────────────────────
  */
 const test = require('node:test');
@@ -65,12 +66,14 @@ const WRITE = {
   paymentMethods: ['微信'], defaultPaymentMethod: '微信', notice: '', acceptDefaultQuantity: 1,
 };
 
-test('AC-GL1 销售页这一列的标签 = 「赠品（可不填）」；不再出现「备注（可不填）」', () => {
+test('AC-GL1 销售页这一列的标签 = 「赠品」（不再带「（可不填）」）；不再出现「备注」', () => {
   // 真渲染器 + 真配置：鞋表单与配品表单都在销售领域里 ⇒ 一次渲染覆盖两处 label。
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, 'sales', {});
   // ⭐ 2026-10-13 改指向：赠品那一行**整块挪到第 2 步页**（能力去哪：renderSalePaymentStepPage）
-  assert.ok(step2Of().includes('赠品（可不填）'), '第 2 步页的标签要写「赠品（可不填）」（她这次拍的）');
-  assert.equal(html.includes('赠品（可不填）'), false, '录入页（第 1 步）不再有它');
+  // ⭐ 2026-11-08（业务负责人）：只把标签改成「赠品」——去掉「（可不填）」
+  assert.ok(step2Of().includes('赠品'), '第 2 步页的标签要写「赠品」');
+  assert.equal(step2Of().includes('（可不填）'), false, '赠品标签**不许**再带「（可不填）」✗');
+  assert.equal(html.includes('赠品'), false, '录入页（第 1 步）仍然没有赠品那一行（它在第 2 步）');
   assert.equal(html.includes('备注（可不填）'), false, '页面上**不许**再出现「备注（可不填）」');
   // ⚠️ 2026-10-13 **改写**（能力退场，不是放宽断言）：改前渲染层有**两处**读 `t.giftLabel`
   //    （鞋表单 + **配品表单**）；她的口径是「扫码页里的**配品逻辑拿掉**」（配品改到工作台）
@@ -90,8 +93,9 @@ test('AC-GL2 映射与读写逐字不变：语义键 gift · 表列名「赠品�
   assert.ok(step2Of().includes(`name="${SCAN_WRITE.fields.gift}"`), '表单字段名不变（POST 的键还是 gift）');
 });
 
-test('AC-GL3 源码哨兵：`giftLabel` 的值里不许出现「备注」', () => {
+test('AC-GL3 源码哨兵：`giftLabel` 的值里不许出现「备注」，也不许带「（可不填）」', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/config/scanWrite.js'), 'utf8');
   assert.equal(/giftLabel:\s*'[^']*备注/.test(source), false, 'giftLabel 不许再叫「备注」');
-  assert.ok(/giftLabel:\s*'赠品（可不填）'/.test(source), 'giftLabel = 赠品（可不填）');
+  assert.ok(/giftLabel:\s*'赠品'/.test(source), "giftLabel = 赠品（去掉「（可不填）」✓）");
+  assert.equal(/giftLabel:\s*'[^']*可不填/.test(source), false, 'giftLabel 不许再带「（可不填）」✗');
 });
