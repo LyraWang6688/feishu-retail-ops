@@ -73,15 +73,6 @@ test('AC-P2c 已关联「采购明细」的销售明细 ⇒ 默认**不再出现
   assert.deepEqual(mixed.groups[0].sizes.map((one) => one.size), [39, 41], '已报的 40 码不出现');
 });
 
-test('AC-P2d 关掉开关（PROCUREMENT_EXCLUDE_REPORTED=false）⇒ 逐字退化为旧行为（已报的也显示）', () => {
-  const legacy = buildProcurementPageConfig({ PROCUREMENT_EXCLUDE_REPORTED: 'false' });
-  const legacyView = buildReplenishView({
-    records: [salesRow({ product: 'recA', size: 39, reported: ['recDetail1'] })],
-    products: dtoMap([productDto()]), fields: F, config: legacy, now: NOW, tradeTypeCodeOf: tradeCode,
-  });
-  assert.equal(legacyView.stats.spotSold, 1, '旧行为：已报的现货仍计入');
-});
-
 // ── AC-P2 三天窗口（上海时区）─────────────────────────────────────────────
 test('AC-P2 补货窗口 = [今天 00:00 - 3 天, 现在]：上海时区边界（业务负责人 2026-10-29 口径）', () => {
   const range = replenishWindow(NOW, config);

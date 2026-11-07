@@ -11,8 +11,7 @@
 
 ## 2. 方案
 
-**读侧（补货页）**：`销售明细.采购明细` 非空 ⇒ 这条已报过 ⇒ **默认不再显示**。
-- 配置开关：`PROCUREMENT_EXCLUDE_REPORTED`（默认 `true`；`false` ⇒ 逐字退化为旧行为）。
+**读侧（补货页）**：`销售明细.采购明细` 非空 ⇒ 这条已报过 ⇒ **不再显示**（业务负责人明确：不要开关，就是这个行为）。
 
 **写侧（采购提交成功后，异步后台）**：
 1. 采购单写成功（采购主表 + 采购明细已落）后，读本次批次的「采购明细」（按 `报货批次号`）；
@@ -27,7 +26,7 @@
 | 文件 | 改动 |
 | --- | --- |
 | `server/src/config/v1BitableSchema.js` | `salesDetail.purchaseDetail = '采购明细'`（新增映射；**共享文件，Lead review**；测试 Base 需同步该列） |
-| `server/src/config/procurementPage.js` | `linked.excludeReported` 开关 + 两个事件名（配置先行） |
+| `server/src/config/procurementPage.js` | 两个事件名（配置先行） |
 | `server/src/services/procurementPageData.js` | 读销售明细的该列；非空 ⇒ 不计入补货视图（默认） |
 | `server/src/services/procurementSalesLinkBackfill.js`（新） | 采购成功后按「编号+尺码」回填关联（幂等、失败不抛、最多 200 行/次） |
 | `server/src/services/procurementPageSubmitService.js` | 后台 `run` 在采购成功后调用回填（`engineTaskId = <taskIdPrefix>_<submitKey>`） |
@@ -35,8 +34,7 @@
 ## 4. 判据
 
 - `test/procurementPageData.test.js`
-  - **AC-P2c** 已关联「采购明细」的销售明细默认**不再出现在补货**；混合场景只保留未关联行；
-  - **AC-P2d** `PROCUREMENT_EXCLUDE_REPORTED=false` ⇒ 逐字退化（已关联也显示）。
+  - **AC-P2c** 已关联「采购明细」的销售明细**不再出现在补货**；混合场景只保留未关联行。
 - `test/procurementSalesLinkBackfill.test.js`
   - **AC-SL1** 只链未关联行、按「编号+尺码」、旧→新、最多=采购明细数量；已关联行绝不被改写；
   - **AC-SL2** 幂等：同一 task 重跑 ⇒ 0 条新链；
