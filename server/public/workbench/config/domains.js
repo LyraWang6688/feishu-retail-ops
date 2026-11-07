@@ -261,6 +261,12 @@ export const DOMAIN_TABS = [
           },
         ],
       },
+      {
+        id: 'product-info-config',
+        label: '信息配置',
+        // 2026-11-08 业务负责人：放在「标签打印」右边，先做占位页。
+        kind: 'placeholder',
+      },
     ],
   },
 

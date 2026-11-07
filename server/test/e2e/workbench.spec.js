@@ -107,6 +107,15 @@ test('创作 tab 能打开占位页，不报未知模块', async ({ page }) => {
   await expect(page.getByText(/未知工作台模块/)).toHaveCount(0);
 });
 
+test('货品 → 信息配置：标签打印右侧的占位子 tab', async ({ page }) => {
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '货品', exact: true }).click();
+  await expect(page.getByRole('button', { name: '标签打印', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '信息配置', exact: true }).click();
+  await expect(page.getByText('待建设')).toBeVisible();
+  await expect(page.locator('[data-placeholder="product-info-config"]')).toBeVisible();
+});
+
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
