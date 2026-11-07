@@ -176,6 +176,8 @@ const REALM_TEXTS = Object.freeze({
   saleInStockTag: '现货',
   salePrepaidTag: '预订',
   saleSizeEmpty: '这一款现在没有可选的尺码',
+  // ⭐ 2026-11-08：三堆全空（算不出尺码）时的兜底人话 —— 文案真源在 config（本文件只转发 ✓）
+  saleSizeUnavailable: SCAN_PAGE.texts.saleSizesUnavailable,
   saleCountTemplate: '{count} 双',
   // ── 采购（`from=purchase`）：各尺码（样品 + 门盒）数量 + 一键补货 ──────────────
   purchaseSizesHeading: '这一款各尺码现在有多少（样品 + 门盒）',
