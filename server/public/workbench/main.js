@@ -58,6 +58,8 @@ const modules = new Map([
   ['product', createDomainModule('product')],
   // 资金是独立领域（2026-10-28）：先占位，后续在 config/domains.js 里独立加页面。
   ['funds', createDomainModule('funds')],
+  // 创作（2026-11-07）：抖音创作入口，页面在 config/domains.js 的 creation 领域。
+  ['creation', createDomainModule('creation')],
   // ── 以下两个是隐去的入口（保留代码）─────────────────────────────────────
   ['douyin', createPlaceholderModule({
     title: '抖音运营',
