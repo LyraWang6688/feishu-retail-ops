@@ -20,6 +20,13 @@ test('新 IA：一级 tab = 销售 · 库存 · 供应 · 货品 · 资金 · �
   assert.equal(tabs.includes("module: 'scan'"), false, '全局扫一扫一级 tab 必须退场');
   assert.equal((tabs.match(/module: '/g) || []).length, 6, '一级 tab 只能有 6 个模块');
   assert.equal(tabs.includes("label: '采购'"), false, '采购已改名为供应');
+  // ⭐ 2026-11-07：每个一级 tab 必须在 main.js 的 modules 表里注册，否则点击会报
+  //   「未知工作台模块：<id>」。
+  const mainJs = read('public/workbench/main.js');
+  for (const moduleId of ['sales', 'inventory', 'purchase', 'product', 'funds', 'creation']) {
+    assert.ok(mainJs.includes(`['${moduleId}', createDomainModule('${moduleId}')]`),
+      `一级 tab ${moduleId} 未在 main.js 注册`);
+  }
 });
 
 test('新 IA：销售/库存/供应录单入口存在，供应录单有三张卡', () => {

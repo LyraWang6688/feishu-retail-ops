@@ -88,6 +88,13 @@ test('六个领域 tab + 订单列表懒加载', async ({ page }) => {
   expect(orderRequests, '原型页不请求订单接口').toHaveLength(0);
 });
 
+test('创作 tab 能打开占位页，不报未知模块', async ({ page }) => {
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '创作', exact: true }).click();
+  await expect(page.getByText('待建设')).toBeVisible();
+  await expect(page.getByText(/未知工作台模块/)).toHaveCount(0);
+});
+
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
