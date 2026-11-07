@@ -33,6 +33,15 @@
     if (typeof o.sinceMs === 'number' && o.sinceMs >= 0) {
       url += '&since_ms=' + Math.round(o.sinceMs);
     }
+    // Optional facts for the fluency namespace. The server still whitelists what it
+    // logs; callers must never put form values or PII in here.
+    var extra = o.extra || {};
+    Object.keys(extra).forEach(function (key) {
+      if (!key || key === 'target' || key === 'tap_id' || key === 'page' || key === 'since_ms') return;
+      var value = extra[key];
+      if (value === undefined || value === null || value === '') return;
+      url += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(String(value).slice(0, 160));
+    });
     return url;
   }
 
@@ -64,6 +73,7 @@
       target: target,
       tapId: tapId,
       sinceMs: typeof previous === 'number' ? (now - previous) : null,
+      extra: o.extra,
     }));
     return tapId;
   }
@@ -143,7 +153,8 @@
   // NOTE: this never cancels the browser's default action -- a tap must always keep working.
   function bind(options) {
     var o = options || {};
-    bindDiagnostics(o);
+    // Workbench fluency installs its own error observers; skip the duplicate here.
+    if (o.diagnostics !== false) bindDiagnostics(o);
     document.addEventListener('click', function (event) {
       if (event.defaultPrevented || event.button !== 0) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

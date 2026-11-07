@@ -30,12 +30,6 @@ export const TAP_TELEMETRY = Object.freeze({
  *   · `realm` / `form` / `error` —— 进了哪个 realm / 展开了哪个表单 / 前端 404 或 JS 报错（**统一入口** ✓）
  */
 export const FLUENCY_TELEMETRY = Object.freeze({
-  prefix: 'fluency:',
   // 超过这个毫秒数 ⇒ 打 `level:slow` 标（**只打标、不改事实** ⇒ 她照 `level:slow` 过滤就能挑出慢的 ✓）
   slowMs: 1000,
-  // 骨架元素与卡片元素的约定标记（与既有 `data-tap-target` 同一套写法 ✓）
-  skeletonAttr: 'data-skeleton',
-  cardAttr: 'data-card',
-  // `error` 事实只留这些键（与 `shared/ui-fluency.js` 的白名单**同一口径**；两边由用例钉住 ✓）
-  errorKeys: ['level', 'status', 'path'],
 });
