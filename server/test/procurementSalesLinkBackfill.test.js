@@ -23,14 +23,14 @@ const R = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
 const NOW = Date.parse('2026-11-08T03:45:00+08:00');
 const at = (iso) => Date.parse(`${iso}+08:00`);
 
-const salesRecord = ({ id, product, size, soldAt, linked = [] }) => ({
+const salesRecord = ({ id, product, size, soldAt, linked = [], trade = 'spot' }) => ({
   record_id: id,
   fields: {
     [S.product]: [{ text: product, type: 'text' }],
     [S.size]: size,
     [S.soldAt]: soldAt,
     [S.stockQuantity]: 0,
-    [S.tradeType]: [{ record_ids: ['recSpot'], text: '现货' }],
+    [S.tradeType]: [{ record_ids: [trade === 'prepaid' ? 'recPrepaid' : 'recSpot'], text: trade === 'prepaid' ? '预订' : '现货' }],
     [S.purchaseDetail]: linked.map((detailId) => ({ record_ids: [detailId] })),
   },
 });
@@ -63,6 +63,14 @@ const makeEnv = ({ sales, requestIds, items, failIds = [], task } = {}) => {
   const salesRows = sales.map((row) => JSON.parse(JSON.stringify(row)));
   const logs = { info: [], warn: [] };
   const gateway = {
+    async listAll(tableKey) {
+      if (tableKey !== 'behavior') throw new Error(`unexpected listAll ${tableKey}`);
+      const codeField = V1_BITABLE_SCHEMA.tables.behavior.fields.code;
+      return [
+        { record_id: 'recSpot', fields: { [codeField]: [{ text: 'SALE_CASH' }] } },
+        { record_id: 'recPrepaid', fields: { [codeField]: [{ text: 'SALE_PREPAID' }] } },
+      ];
+    },
     async getBatch(tableKey, ids) {
       assert.equal(tableKey, 'product');
       return productBatch(ids);
@@ -119,6 +127,25 @@ test('AC-SL1 按「编号+尺码」匹配：只链未关联行、旧→新、最
   assert.deepEqual(env.linkedIdsOf('r5'), [], '编号不同 ⇒ 不链');
   assert.deepEqual(env.linkedIdsOf('r6'), ['recOldDetail'], '已经关联过的行**绝不被改写**');
   assert.ok(env.logs.info.some((one) => one.event === config.events.salesLinkBackfilled));
+});
+
+test('AC-SL6 预订优先：数量不够时先链预订（同类型内旧→新），剩下的才是现货', async () => {
+  const env = makeEnv({
+    // 现货更旧（若只按日期会先链现货），但预订必须先链
+    sales: [
+      salesRecord({ id: 'sSpotOld', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-06T08:00:00'), trade: 'spot' }),
+      salesRecord({ id: 'sPreNew1', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-07T12:00:00'), trade: 'prepaid' }),
+      salesRecord({ id: 'sPreNew2', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-07T13:00:00'), trade: 'prepaid' }),
+    ],
+    requestIds: ['recDetailA'],
+    items: [{ product_record_id: 'recA1', size: 39, quantity: 2 }],
+  });
+  const result = await env.backfill.run({ taskId: 'task_link_prepaid_first' });
+  assert.equal(result.ok, true);
+  assert.equal(result.linked, 2);
+  assert.deepEqual(env.linkedIdsOf('sPreNew1'), ['recDetailA'], '预订（更早）先链');
+  assert.deepEqual(env.linkedIdsOf('sPreNew2'), ['recDetailA'], '预订（更晚）再链');
+  assert.deepEqual(env.linkedIdsOf('sSpotOld'), [], '数量只有 2 ⇒ 现货留着下次');
 });
 
 test('AC-SL2 幂等：同一 task 再跑一次 ⇒ 不再多链', async () => {

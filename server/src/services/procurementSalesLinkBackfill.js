@@ -28,6 +28,7 @@ const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { relation } = require('./v1ReferenceResolver');
 const { textOf, numberOf, linkedIdsOf } = require('./procurementPageData');
+const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMovements');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
@@ -78,19 +79,43 @@ const createProcurementSalesLinkBackfill = ({
       const products = productIds.length ? await gateway.getBatch('product', productIds) : [];
       const numberById = new Map((products || []).map((record) => [record.record_id, textOf(record.fields?.[productFields.number])]));
       const sales = await (typeof readSalesRows === 'function' ? readSalesRows() : defaultReadSales());
-      const rows = (sales || []).map((record) => ({
-        id: record.record_id,
-        product: textOf(record.fields?.[salesFields.product]),
-        size: String(numberOf(record.fields?.[salesFields.size]) ?? ''),
-        soldAt: numberOf(record.fields?.[salesFields.soldAt]) ?? 0,
-        linkedDetailIds: linkedIdsOf(record.fields?.[salesFields.purchaseDetail]),
-      })).filter((row) => row.id && row.product && row.size);
+      // 交易类型判据（与补货读模型同一份口径）：行为表 id → 编码; 认不出 ⇒ 丢弃（页面上本来就不会出现）
+      const behaviors = await gateway.listAll('behavior').catch(() => []);
+      const behaviorCodeById = new Map((behaviors || []).map((record) => [
+        record.record_id, textOf(record.fields?.[schema.tables?.behavior?.fields?.code]),
+      ]));
+      const tradeCodeOf = (cell) => {
+        for (const id of linkedIdsOf(cell)) {
+          const code = behaviorCodeById.get(id);
+          if (isSalesTradeType(code)) return code;
+        }
+        const byLabel = tradeTypeCodeFromLabel(textOf(cell));
+        return isSalesTradeType(byLabel) ? byLabel : '';
+      };
+      const rows = (sales || []).map((record) => {
+        const tradeCode = tradeCodeOf(record.fields?.[salesFields.tradeType]);
+        return {
+          id: record.record_id,
+          product: textOf(record.fields?.[salesFields.product]),
+          size: String(numberOf(record.fields?.[salesFields.size]) ?? ''),
+          soldAt: numberOf(record.fields?.[salesFields.soldAt]) ?? 0,
+          linkedDetailIds: linkedIdsOf(record.fields?.[salesFields.purchaseDetail]),
+          tradeCode,
+          prepaid: tradeCode === config.behavior?.prepaid,
+        };
+      }).filter((row) => row.id && row.product && row.size && row.tradeCode);
       // 已关联到某条采购明细的行数（幂等：重试不会把同一组链更多）
       const linkedByDetail = new Map();
       for (const row of rows) {
         for (const detailId of row.linkedDetailIds) linkedByDetail.set(detailId, (linkedByDetail.get(detailId) || 0) + 1);
       }
-      const pool = rows.filter((row) => row.linkedDetailIds.length === 0).sort((a, b) => a.soldAt - b.soldAt);
+      // 关联顺序：**预订优先**（预订必补／默认已选），同类型内按销售日旧→新。
+      //   理由：补货数量默认 = 预订数；先链预订，剩下的才是"没报的现货"（下次页面显示现货，默认 0），
+      //   不会出现"明明报了预订却还剩预订待补"的错觉。
+      const pool = rows.filter((row) => row.linkedDetailIds.length === 0).sort((a, b) => {
+        if (a.prepaid !== b.prepaid) return a.prepaid ? -1 : 1;
+        return a.soldAt - b.soldAt;
+      });
       const used = new Set();
       let linked = 0;
       const failed = [];
