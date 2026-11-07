@@ -1,4 +1,4 @@
-// 6 处闸门的验收：
+// 5 处闸门的验收（原闸门 6 的今日销售读模型已随自建销售查询退场）：
 //
 // ⭐ 判据 = `isPosted(postedOf(entry))`，而 `postedOf` **只读「资金状态」**
 //    （旧「确认状态（旧）」已被业务负责人 2026-10-06 整列删除——值一起没了，
@@ -18,7 +18,6 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
 const { SalesFollowupService } = require('../src/services/salesFollowupService');
 const { SecondDeliveryService } = require('../src/services/secondDeliveryService');
-const { createWorkbenchService } = require('../src/services/v1WorkbenchService');
 
 const applyFields = (tableKey, values) => Object.fromEntries(Object.entries(values || {})
   .filter(([, value]) => value !== undefined)
@@ -175,25 +174,4 @@ test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：�
   assert.equal((await candidates({ 写入状态: '未完成' })).length, 0);
   assert.equal((await candidates({ 写入状态: '失败' })).length, 0);
   assert.equal((await candidates({})).length, 0);
-});
-
-// ── 闸门 6：v1WorkbenchService.getTodaySales —— 今日销售 ──────────────────────
-test('闸门 6 今日销售（v1WorkbenchService.getTodaySales）：只读「资金状态」', async () => {
-  const day = Date.parse('2026-09-25T10:00:00+08:00');
-  const todayRows = async (entryFields) => {
-    const gateway = gatewayFor({
-      salesDetail: [{ record_id: 'd1', fields: {
-        销售单号: ['o1'], 编号: ['p1'], 数量: 1, 销售日: day, 实收金额: 100,
-      } }],
-      salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-1', ...entryFields } }],
-      product: [{ record_id: 'p1', fields: { 编号: 'P1' } }],
-    });
-    return (await createWorkbenchService(gateway).getTodaySales({ date: '2026-09-25' })).rows;
-  };
-
-  assert.equal((await todayRows({ 写入状态: '成功' })).length, 1);
-  assert.equal((await todayRows({ 写入状态: '成功' })).length, 1);
-  assert.equal((await todayRows({ 写入状态: '未完成' })).length, 0);
-  assert.equal((await todayRows({ 写入状态: '失败' })).length, 0);
-  assert.equal((await todayRows({})).length, 0);
 });
