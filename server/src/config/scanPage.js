@@ -227,6 +227,12 @@ const TEXTS = Object.freeze({
   draftBarLabel: '本单',
   // 状态：本单现在累积了几双（数字来自扫码会话，**跨编号共用**）。
   draftBarCount: '本单：{count} 双',
+  // ⭐ 2026-11-08（业务负责人截图口径）：销售页「一行尺码都没有」时的兜底人话 ——
+  //   真实成因 = **编号缺类别段（A/B）**（`scanPageService` 的 `number_without_category` 降级）
+  //   ＋ 这一款在「实时库存」里也没有记录 ⇒ 算不出任何尺码（**不是「没货」** ✗）。
+  //   ⚠️ 文案放在 config：`views/**` 里新增用户可见中文会被硬编码闸门记成「新存量债」✗
+  //     （用法见 `views/scanPageRealm.js` 的 REALM_TEXTS.saleSizeUnavailable ✓）。
+  saleSizesUnavailable: '这个编号缺类别（A/B），暂时算不出尺码，请核对编号',
   // 能点的：【继续扫下一个】（飞书客户端内 = AppLink 打开扫一扫，见下面的 `SCAN_NEXT`）；
   // **不是**飞书客户端（电脑浏览器 / 手机自带浏览器）时，这里只剩一句如实的状态 ——
   // 「这台设备没有扫码能力」，**绝不给一个点了没反应的按钮**。
