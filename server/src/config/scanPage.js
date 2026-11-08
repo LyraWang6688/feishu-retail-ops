@@ -557,14 +557,7 @@ const SIZE_SEGMENTS = Object.freeze({
  * 传 `tableKey: 'product'`）：后台定期整表拉一次 + **写操作立刻失效**；
  * 未就绪 / 过期 / 刷新失败 ⇒ **回退现有过滤读**（行为与提速前逐字一致）。
  */
-const PRODUCT_SNAPSHOT = Object.freeze({
-  enabled: readFlag(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_ENABLED', true),
-  refreshIntervalMs: readInt(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_REFRESH_MS', 60000, { min: 1000, max: 3600000 }),
-  maxAgeMs: readInt(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_MAX_AGE_MS', 300000, { min: 1000, max: 7200000 }),
-  // 整张「货品信息」的记录数上限（线上约 2 万行）：超了**不作快照**（回退过滤读 + warn）。
-  maxRecords: readInt(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_MAX_RECORDS', 50000, { min: 1, max: 1000000 }),
-  refreshOnInvalidate: readFlag(process.env, 'SCAN_PAGE_PRODUCT_SNAPSHOT_REFRESH_ON_INVALIDATE', true),
-});
+
 
 /**
  * 结构化日志事件名（**只读**链路：只有"看了 / 没找到 / 降级 / 出错"，没有任何写入事件）。
@@ -905,7 +898,6 @@ const SCAN_PAGE = Object.freeze({
   //     · **"还没提交、点【继续扫下一个】"不在此列** ⇒ 那种情况仍按她上次用的领域走 ✓（不冲突）。
   //   ⚠️ 唯一来源：她哪天要改回"回补货"，**只改这一处**（别散在两处 ✗）。
   // ⭐ 2026-10-13：验收成功页的落点映射（**函数声明** ⇒ 提升 ✓ 不会 TDZ）
-  productSnapshot: PRODUCT_SNAPSHOT,
   events: EVENTS,
   // ⭐ 2026-10-11：【继续扫下一个】的手段（飞书扫一扫 AppLink，见上面的长注释）。
   scanNext: SCAN_NEXT,
