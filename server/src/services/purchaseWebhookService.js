@@ -769,7 +769,7 @@ class PurchaseWebhookService {
    * 幂等（现在两层，缺一不可）：
    *    ① `draft.inventory_applied`（按 货品+尺码 逐个落盘）+ 进程内 `inflightInventory`；
    *    ② **库存自己那一层**：来源标识是**真实三元组**（批次身份 | 货品 | 尺码），
-   *       由 `inventoryService.purchaseIncreaseSourceId` 算 ⇒ 重放/崩溃恢复都命中**同一条**
+   *       由 `operationSourceIdOf` 按行为注册表算 ⇒ 重放/崩溃恢复都命中**同一条**
    *       本地库存任务（`server/data/inventory_operations` 是落盘的），不会重复加库存。
    *    ⚠️ 代价如实说：**不再有**"按远端关联列回查已写过的入库行"这一层（那张表已经不存在），
    *       所以本链路的恢复强度与**采购退货**相同（靠本地库存任务 + 落盘进度）。

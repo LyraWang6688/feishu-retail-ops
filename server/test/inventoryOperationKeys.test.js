@@ -23,9 +23,6 @@ const {
   operationItemKeyOf,
   operationKeySpecOf,
   validateOperationKeyConfigs,
-  purchaseIncreaseSourceId,
-  purchaseReturnSourceId,
-  samplePromotionId,
   SAMPLE_PROMOTION_OPERATION,
 } = require('../src/services/inventory/keys');
 const {
@@ -232,21 +229,7 @@ test('AC-K2 补样品通路：operationId 仍逐字等于历史 `operationId(\'s
       LEGACY.samplePromotionId(salesDetailRecordId),
       '补样品的操作键与改前不一致（改前缀会认不出历史本地任务 / 库存流水）',
     );
-    assert.equal(samplePromotionId(salesDetailRecordId), LEGACY.samplePromotionId(salesDetailRecordId),
-      'deprecated 的 samplePromotionId 必须仍与历史输出逐字一致');
   }
-});
-
-test('AC-K2 deprecated 旧函数内部只调统一入口（行为只有一套，不是两套实现）', () => {
-  const increaseInput = { purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1', size: 38 };
-  const returnInput = { purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1', size: 38 };
-  assert.equal(purchaseIncreaseSourceId(increaseInput),
-    operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], increaseInput));
-  assert.equal(purchaseReturnSourceId(returnInput),
-    operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE], returnInput));
-  // 与冻结的旧实现再对一次（防"两边一起改错"）
-  assert.equal(purchaseIncreaseSourceId(increaseInput), LEGACY.purchaseIncreaseSourceId(increaseInput));
-  assert.equal(purchaseReturnSourceId(returnInput), LEGACY.purchaseReturnSourceId(returnInput));
 });
 
 test('AC-K2 人工盘点调整两条行为（增 / 减）的来源形状必须一致（幂等回查先于差额判定）', () => {
@@ -428,7 +411,7 @@ test('AC-K5 写入件里不再有 per-behavior 的来源拼法（只有统一入
         `${segments.join('/')} 里还在自己拼来源标识（${pattern}）：新增行为只该改配置 + 行为表`);
     }
   }
-  // ② deprecated 的旧函数**不许被调用**（只在 keys.js 里定义、facade 里原样导出）
+  // ② 旧函数名都不许再出现在写入件里（已删除）
   for (const segments of writerFiles) {
     const source = readSource(...segments);
     for (const name of ['purchaseIncreaseSourceId', 'purchaseReturnSourceId', 'samplePromotionId']) {
@@ -447,20 +430,6 @@ test('AC-K5 写入件里不再有 per-behavior 的来源拼法（只有统一入
   const movementsSource = readSource('services', 'inventory', 'movements.js');
   assert.match(movementsSource, /sourcePrefix: 'purchase_increase'/);
   assert.match(movementsSource, /sourcePrefix: 'purchase_return'/);
-});
-
-test('AC-K5 deprecated 旧函数只从 keys.js 导出，src 里没有第二份实现', () => {
-  const keysSource = readSource('services', 'inventory', 'keys.js');
-  assert.match(keysSource, /@deprecated/);
-  const allSources = [
-    ['services', 'inventoryService.js'],
-    ['services', 'inventory', 'purchaseBatch.js'],
-    ['services', 'inventory', 'saleBatch.js'],
-    ['services', 'inventory', 'purchaseReturnBatch.js'],
-    ['services', 'inventory', 'samplePromotion.js'],
-  ].map((segments) => readSource(...segments)).join('\n');
-  // 写入件 import 都不 import 了（只有 deprecated 包装的内部实现调统一入口）
-  assert.equal(/require\('\.\/keys'\)[\s\S]{0,400}purchaseIncreaseSourceId/.test(allSources), false);
 });
 
 // ── AC-K6：历史撞键不再产生 ─────────────────────────────────────────────────────

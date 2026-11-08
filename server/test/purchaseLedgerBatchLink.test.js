@@ -26,7 +26,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  InventoryService, STOCK_MOVEMENTS, purchaseIncreaseSourceId,
+  InventoryService, STOCK_MOVEMENTS, operationSourceIdOf,
 } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
@@ -302,16 +302,16 @@ test('④-补2 重放时 state 仍取自**本地任务**（#253 那套一个字�
 
 test('④-补3 幂等键形状逐字不变（真实三元组：批次身份｜货品｜尺码）', () => {
   assert.equal(
-    purchaseIncreaseSourceId({ purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38 }),
+    operationSourceIdOf(STOCK_MOVEMENTS['STOCK_PURCHASE_INCREASE'], { purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38 }),
     `purchase_increase:${BATCH_RECORD_ID}|product_1|38`,
   );
   // 批次记录 id 拿不到时的兜底身份同样逐字不变。
   assert.equal(
-    purchaseIncreaseSourceId({ purchaseBatchNo: 'CGD-1', productRecordId: 'product_1', size: 38 }),
+    operationSourceIdOf(STOCK_MOVEMENTS['STOCK_PURCHASE_INCREASE'], { purchaseBatchNo: 'CGD-1', productRecordId: 'product_1', size: 38 }),
     'purchase_increase:CGD-1|product_1|38',
   );
   // 一个都拿不到 → 当场抛（绝不编一个 id）。
-  assert.throws(() => purchaseIncreaseSourceId({ productRecordId: 'product_1', size: 38 }),
+  assert.throws(() => operationSourceIdOf(STOCK_MOVEMENTS['STOCK_PURCHASE_INCREASE'], { productRecordId: 'product_1', size: 38 }),
     /缺少来源标识/);
 });
 

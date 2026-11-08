@@ -3,8 +3,8 @@
 > 2026-11-08 制定。对应 issue：[#961](https://github.com/LyraWang6688/feishu-retail-ops/issues/961)。
 >
 > 本文记录现状、方案与迁移约束。
-> ⭐ **2026-11-08 已落地**（第 1、2 步）：配置 + 统一入口 + golden 测试已进代码，
-> 旧函数保留为 deprecated 一个版本；实现状态与逐条对照见本文第 11 节。
+> ⭐ **2026-11-08 已落地**（第 1、2、3 步）：配置 + 统一入口 + golden 测试已进代码；
+> 三个旧函数已在确认无运行时调用后删除。实现状态与逐条对照见本文第 11 节。
 
 ## 1. 库存操作键是什么
 
@@ -269,8 +269,8 @@ validateOperationKeyConfigs(movements)          ← 部署闸门（validateStock
 
 - 派生规则：身份字段链（`sourceFields[0]` + `sourceFallbacks`）取第一个非空（trim 后）；
   其余字段必需（`size` 走 `normalizeSize`）；`separator` 连接；`sourcePrefix` 存在时 `<prefix>:<body>`。
-- **旧函数** `purchaseIncreaseSourceId` / `purchaseReturnSourceId` / `samplePromotionId` 保留为
-  **deprecated 一个版本**，内部**只调统一入口**（行为只有一套，两套行为被 `test/inventoryOperationKeys.test.js` 钉死）。
+- **旧函数** `purchaseIncreaseSourceId` / `purchaseReturnSourceId` / `samplePromotionId` 已删除；
+  行为只有统一入口一套（`test/inventoryOperationKeys.test.js` 仍用冻结的旧拼法做 golden 对照）。
 - 重放 / 续跑（`executeOperation` / `executeStateTransition` / `executeSamplePromotion`）**不重算** operationId，
   仍用本地任务记录里的 `operation_id`（事实优先：配置改过 kind 也不会造出第二把键）。
 
@@ -293,8 +293,7 @@ validateOperationKeyConfigs(movements)          ← 部署闸门（validateStock
 - `purchaseBatch.js` / `purchaseReturnBatch.js` / `saleBatch.js`：来源 / operationId / 每双 itemKey 走统一入口
 - `stateTransition.js`：来源 = 请求编号 + 目标身份（`fromState` 用解析后的值）
 - `samplePromotion.js`：走 `operations.sample_promotion`（kind='sample'）
-- `inventoryAdjustmentService.js`：`adjustmentSourceId` 变 deprecated 包装（内部只调统一入口）；
-  `adjustCount` / `adjustSeason` 改传 `requestId`，由库存引擎按配置派生
+- `inventoryAdjustmentService.js`：`adjustCount` / `adjustSeason` 改传 `requestId`，由库存引擎按配置派生
 
 ### 11.5 键字符串兼容（golden test）
 
@@ -312,6 +311,6 @@ validateOperationKeyConfigs(movements)          ← 部署闸门（validateStock
 
 ### 11.7 尚未做（后续卡片）
 
-- 第 3 步：确认无调用后删除三个 deprecated 函数（本卡**不删**，按 issue 保留一个版本）；
+- ~~第 3 步：删除三个 deprecated 函数~~（2026-11-08 已确认无运行时调用并删除）；
 - 第 4 步：只读巡检脚本（撞键组数 / 空操作键行数）——本卡不改历史数据、不重算历史键；
 - 生产 Base 仍只读；**未部署**（部署需业务负责人当次明确指令）。
