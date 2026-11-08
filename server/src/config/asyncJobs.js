@@ -20,13 +20,15 @@ const path = require('node:path');
 const { readFlag, readInt, readList, readString } = require('./envValue');
 const { resolvePurchaseChatId } = require('./groupPurchase');
 
-/** 覆盖范围（#948 第 1 节）：五条链路一个不多、一个不少。 */
+/** 覆盖范围（#948 第 1 节）：既有五条异步链路 + 工作台交割单交付/付款。 */
 const ASYNC_JOB_TYPES = Object.freeze({
   SALES: 'sales',
   AFTER_SALES: 'after_sales',
   PURCHASE_REPLENISH: 'purchase_replenish',
   PURCHASE_RETURN: 'purchase_return',
   PURCHASE_ACCEPTANCE: 'purchase_acceptance',
+  SALES_DELIVERY: 'sales_delivery',
+  SALES_PAYMENT: 'sales_payment',
 });
 
 /** 状态值域（#948 第 3.1 节）。`failed` 是唯一会触发群通知的终态（文档 6.1）。 */
@@ -51,6 +53,8 @@ const JOB_ID_PREFIX = Object.freeze({
   [ASYNC_JOB_TYPES.PURCHASE_REPLENISH]: 'purchase_replenish_job',
   [ASYNC_JOB_TYPES.PURCHASE_RETURN]: 'purchase_return_job',
   [ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE]: 'purchase_acceptance_job',
+  [ASYNC_JOB_TYPES.SALES_DELIVERY]: 'delivery_job',
+  [ASYNC_JOB_TYPES.SALES_PAYMENT]: 'payment_job',
 });
 
 /** 失败通知默认发哪个群：`ASYNC_JOB_ALERT_CHAT_ID` 优先，否则**复用既有** `PURCHASE_CHAT_ID`。 */
@@ -77,6 +81,8 @@ const DEFAULT_TEXTS = Object.freeze({
     [ASYNC_JOB_TYPES.PURCHASE_REPLENISH]: '采购补货',
     [ASYNC_JOB_TYPES.PURCHASE_RETURN]: '采购退货',
     [ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE]: '采购验收',
+    [ASYNC_JOB_TYPES.SALES_DELIVERY]: '交割单交付',
+    [ASYNC_JOB_TYPES.SALES_PAYMENT]: '交割单付款',
   }),
   unknownType: '未知任务',
   defaultStep: '后台写库',
@@ -90,6 +96,8 @@ const DEFAULT_TEXTS = Object.freeze({
     procurementPageReplenish: '采购页补货写库',
     purchaseAcceptance: '采购验收写库',
     purchaseBackgroundDefault: '采购后台写库',
+    salesDelivery: '交割单交付写库',
+    salesPayment: '交割单付款写库',
   }),
   // 排查提示（日志字段，不是群消息正文；同样不许散写在 service 里 ✗）
   hints: Object.freeze({

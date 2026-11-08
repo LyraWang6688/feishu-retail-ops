@@ -7,6 +7,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createSalesDeliveryAsyncService } = require('../src/services/salesDeliveryAsyncService');
+const { createAsyncJobService } = require('../src/services/asyncJobService');
+const { buildAsyncJobsConfig } = require('../src/config/asyncJobs');
+
+const jobsFor = (dir) => createAsyncJobService({
+  config: buildAsyncJobsConfig({ ASYNC_JOBS_DIR: dir, ASYNC_JOB_NOTIFY_ENABLED: 'false' }),
+  notifier: { notify: async () => ({ sent: false, reason: 'test' }) },
+  sleep: async () => {},
+});
 
 const waitFor = async (fn, timeoutMs = 2000) => {
   const deadline = Date.now() + timeoutMs;
@@ -25,6 +33,7 @@ test('AC-DA1 入队立即返回；FIFO 串行；成功后 job=succeeded', async 
   let running = 0;
   let maxRunning = 0;
   const service = createSalesDeliveryAsyncService({
+    jobs: jobsFor(dir),
     dir,
     deliver: async (payload) => { running += 1; maxRunning = Math.max(maxRunning, running); calls.push(['deliver', payload]); await new Promise((resolve) => { setTimeout(resolve, 10); }); running -= 1; },
     pay: async (payload) => { calls.push(['pay', payload]); },
@@ -44,6 +53,7 @@ test('AC-DA2 同一 request_id 幂等：返回同一个 job，不重复执行', 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
   let count = 0;
   const service = createSalesDeliveryAsyncService({
+    jobs: jobsFor(dir),
     dir, deliver: async () => { count += 1; }, pay: async () => {},
   });
   const key = uuid(3);
@@ -59,6 +69,7 @@ test('AC-DA2 同一 request_id 幂等：返回同一个 job，不重复执行', 
 test('AC-DA4 交付部分失败：job 落 partial_failed + failures 明细，不再假 succeeded', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
   const service = createSalesDeliveryAsyncService({
+    jobs: jobsFor(dir),
     dir,
     deliver: async () => ({
       results: [{ detailRecordId: 'd-ok' }],
@@ -71,14 +82,15 @@ test('AC-DA4 交付部分失败：job 落 partial_failed + failures 明细，不
   const partial = await service.get(job.job_id);
   assert.equal(partial.status, 'partial_failed');
   assert.equal(partial.last_error, '库存不足');
-  assert.equal(partial.failures.length, 1);
-  assert.equal(partial.failures[0].detailRecordId, 'd-bad');
+  assert.equal(partial.result.failures.length, 1);
+  assert.equal(partial.result.failures[0].detailRecordId, 'd-bad');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('AC-DA5 交付全部失败：job 落 failed + 失败明细', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
   const service = createSalesDeliveryAsyncService({
+    jobs: jobsFor(dir),
     dir,
     deliver: async () => ({ results: [], failures: [{ detailRecordId: 'd-bad', error: '库存不足' }] }),
     pay: async () => {},
@@ -87,13 +99,14 @@ test('AC-DA5 交付全部失败：job 落 failed + 失败明细', async () => {
   await waitFor(async () => (await service.get(job.job_id))?.status === 'failed');
   const failed = await service.get(job.job_id);
   assert.equal(failed.last_error, '库存不足');
-  assert.equal(failed.failures[0].error, '库存不足');
+  assert.equal(failed.result.failures[0].error, '库存不足');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('AC-DA3 写失败：job 落 failed + last_error；不吞', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
   const service = createSalesDeliveryAsyncService({
+    jobs: jobsFor(dir),
     dir, deliver: async () => { throw new Error('库存不足'); }, pay: async () => {},
   });
   const { job } = await service.enqueue({ type: 'delivery', requestId: uuid(4), payload: {} });
@@ -112,6 +125,7 @@ test('AC-DA6 生命周期日志：enqueued / started / finished 可串起 job，
     logError: (event, meta) => logs.push({ level: 'error', event, meta }),
   };
   const service = createSalesDeliveryAsyncService({
+    jobs: jobsFor(dir),
     dir,
     logger,
     deliver: async () => ({ results: [{ detailRecordId: 'd1' }], failures: [], deliveredQuantity: 1 }),
@@ -135,4 +149,26 @@ test('AC-DA6 生命周期日志：enqueued / started / finished 可串起 job，
   assert.equal(typeof lifecycle[2].meta.queue_wait_ms, 'number');
   assert.equal(lifecycle.some((item) => 'payload' in item.meta), false, '日志不能带完整 payload');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('AC-DA7 旧 sales_delivery_jobs 中 queued/running 会迁移到统一 job 存储', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-jobs-'));
+  const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-legacy-'));
+  const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
+  const legacy = new JsonTaskStore({ dir: legacyDir, idField: 'job_id' });
+  const legacyId = 'delivery_job_aaaaaaaaaaaaaaaaaaaaaaaa';
+  await legacy.create({
+    job_id: legacyId, type: 'delivery', status: 'queued', payload: { detailRecordIds: ['d1'] }, attempts: 0,
+  });
+  let called = 0;
+  const service = createSalesDeliveryAsyncService({
+    jobs: jobsFor(dir), dir, legacyDir,
+    deliver: async () => { called += 1; return { results: [{ detailRecordId: 'd1' }], failures: [] }; },
+    pay: async () => {},
+  });
+  await service.start();
+  await waitFor(async () => (await service.get(legacyId))?.status === 'succeeded');
+  assert.equal(called, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(legacyDir, { recursive: true, force: true });
 });

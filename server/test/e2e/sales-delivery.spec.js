@@ -86,11 +86,11 @@ const mockDeliveryApi = async (page, options = {}) => {
     if (url.pathname === '/api/workbench/sales/delivery' && method === 'GET') {
       return route.fulfill(json(state));
     }
-    if (url.pathname.startsWith('/api/workbench/sales/delivery/jobs/') && method === 'GET') {
-      if (options.jobFailures?.length) {
-        return route.fulfill(json({ success: true, status: options.jobStatus || 'partial_failed', error: options.jobFailures[0]?.error || '', failures: options.jobFailures }));
-      }
-      return route.fulfill(json({ success: true, status: 'succeeded' }));
+    if (url.pathname.startsWith('/api/workbench/async-jobs/') && method === 'GET') {
+      const job = options.jobFailures?.length
+        ? { status: options.jobStatus || 'partial_failed', last_error: options.jobFailures[0]?.error || '' }
+        : { status: 'succeeded', last_error: '' };
+      return route.fulfill(json({ success: true, job }));
     }
     if (url.pathname === '/api/workbench/sales/delivery/deliveries' && method === 'POST') {
       const body = route.request().postDataJSON();

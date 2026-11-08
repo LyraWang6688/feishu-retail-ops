@@ -5,7 +5,7 @@
 
 ## 1. 一句话
 
-五条"先回成功回执、后台写库"的链路（销售 / 售后退货 / 采购补货 / 采购退货 / 采购验收）
+七类"先回成功回执、后台写库"的链路（销售 / 售后退货 / 采购补货 / 采购退货 / 采购验收 / 工作台交割单交付 / 工作台交割单付款）
 现在都落到**同一套 job 模型 + 同一套重试分类 + 同一个失败通知出口**：
 最终失败只发「邯美皮鞋运营群」，**页面不显示任何失败提示**（#947 的"页面失败提示"由 #948 的"发运营群"取代）。
 
@@ -17,7 +17,7 @@
 | `server/src/services/asyncJobStore.js` | 统一 job 存储（`server/data/async_jobs/`，复用 `JsonTaskStore` 原子写 + 同 id 写互斥） |
 | `server/src/services/asyncJobNotifier.js` | 失败群通知（渲染 / 发送 / 去重 / `chat_missing` / `notify.failed`；上海时间） |
 | `server/src/services/asyncJobService.js` | 状态机 + **通用重试循环** + 通知编排 + 只读视图 + 启动补发 |
-| `server/src/services/asyncJobRuntime.js` | 进程级单例（五条链路与状态接口看**同一份**存储 / 去重状态） |
+| `server/src/services/asyncJobRuntime.js` | 进程级单例（七类链路与状态接口看**同一份**存储 / 去重状态） |
 | `server/src/services/asyncJobPurchaseRunner.js` | 采购三条链路 → 统一层的薄适配器（**先把写入口跑起来**，再并行落 job；统一层不可用 ⇒ 如实单次回落） |
 | `server/src/routes/workbench/asyncJobs.js` | `GET /api/workbench/async-jobs/:jobId`（只读 / 只能查自己的 / 不返回 payload） |
 
@@ -31,7 +31,7 @@
 **幂等**：`job_id` 由各链路**自己的幂等键**稳定派生（销售 `submitKey`、售后 `requestId`、采购 `submitKey`/`requestId`），
 重试只更新同一条 job；重试复用原 `submitKey` / `requestId` / 幂等键，不产生第二条业务记录。
 
-## 3. 五条链路接入点
+## 3. 七类链路接入点
 
 | 链路 | 入口 | 统一 job | 重试 | 最终失败通知 |
 |---|---|---|---|---|
@@ -40,6 +40,8 @@
 | 采购补货 #946 | 扫码页 `routes/scanPage/handlers/purchase.js` + `purchaseWriteBackgroundService` | `purchase_replenish_job_*` | 有（适配器统一循环） | ✔ |
 | 采购退货 | 扫码页同上（`purchase_return` 链） | `purchase_return_job_*` | 有 | ✔ |
 | 采购验收 #944 F3 | `routes/workbench/purchase.js`（确认到货） | `purchase_acceptance_job_*`；owner / 操作人 / 批次号都从路由带下来 | 有 | ✔ |
+| **交割单交付** | `routes/workbenchSalesDelivery.js` → `salesDeliveryAsyncService` | `delivery_job_*`；owner = 工作台登录人 | 有（业务异常不重试；瞬时写由飞书写调度器重试） | ✔（`failed`）；`partial_failed` 仍按原页面 toast |
+| **交割单付款** | 同上 | `payment_job_*`；owner = 工作台登录人 | 同上 | 同上 |
 
 采购三条链路共用既有 `purchaseWriteBackgroundService`（**不另造后台件**）；`jobRunner` 与 `jobMeta` 都是**注入**，
 不注入时逐字保持"单次"旧行为（既有用例不动）。
@@ -87,11 +89,20 @@
   - `test/asyncJobs.test.js`：状态流转 / 临时与永久错误 / 重试幂等（同一条 job）/ 通知去重 /
     发送失败可重试 / 群未配置 / 文案（上海时间、不发 payload）/ 只读视图 / store 边界；
   - `test/asyncJobStatusApi.test.js`：401 / 只查自己 / 404 / 400 / 不返回 payload / 挂闸门之后；
-  - `test/asyncJobChains.test.js`：五条链路真实服务接入（售后重试与通知、销售重试不重复加行、
+  - `test/asyncJobChains.test.js`：五条既有链路真实服务接入（交割单两条见 `salesDeliveryAsync.test.js`）（售后重试与通知、销售重试不重复加行、
     采购三条链路同一适配器、工作台验收路由 owner/批次/操作人 真接线）；
   - `test/procurementPageData.test.js` + `test/procurementPageService.test.js`：#950 计数拆分与告警口径。
 - 既有 `async/after-sales/采购` 测试全部保持绿（含 `purchaseAsyncTiming` 的"先回她"时序判据）。
 - 门禁：全量 `node --test`（见 PR 描述）/ `size:check` / `observability:events:check` / `playwright test`。
+
+## 8.1 交割单交付 / 付款接入（2026-11-08）
+
+- 类型配置：`ASYNC_JOB_TYPES.SALES_DELIVERY = 'sales_delivery'` / `SALES_PAYMENT = 'sales_payment'`；
+- 前缀：`delivery_job_*` / `payment_job_*`；
+- 交付/付款的业务提交仍走 `salesDeliveryAsyncService` 的页面级 FIFO；
+- job 状态、重试、失败通知改由本统一层管理；写请求再经飞书写调度器；
+- 页面仍保留交割单原有的失败 toast（此前业务负责人要求“失败原因要给她看到”），与运营群通知并存；
+- 启动时会把旧的 `server/data/sales_delivery_jobs` 中 queued/running 的 job 迁移到统一 job 存储（同一 job_id；已完成的不会重放）。
 
 ## 9. 边界 / 未做（如实）
 

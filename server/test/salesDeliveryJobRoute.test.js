@@ -9,6 +9,9 @@ const path = require('node:path');
 const http = require('node:http');
 const express = require('express');
 const { createWorkbenchSalesDeliveryRoutes } = require('../src/routes/workbenchSalesDelivery');
+const { createWorkbenchAsyncJobRoutes } = require('../src/routes/workbench/asyncJobs');
+const { createAsyncJobService } = require('../src/services/asyncJobService');
+const { buildAsyncJobsConfig } = require('../src/config/asyncJobs');
 
 const waitFor = async (fn) => {
   for (let i = 0; i < 100; i += 1) {
@@ -22,6 +25,11 @@ const waitFor = async (fn) => {
 test('AC-JOBROUTE 失败明细经 /jobs/:id 返回（不是只有 succeeded/failed 空壳）', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sd-job-route-'));
   const gateway = { table: () => ({ fields: {} }), listAll: async () => [] };
+  const jobs = createAsyncJobService({
+    config: buildAsyncJobsConfig({ ASYNC_JOBS_DIR: dir, ASYNC_JOB_NOTIFY_ENABLED: 'false' }),
+    notifier: { notify: async () => ({ sent: false, reason: 'test' }) },
+    sleep: async () => {},
+  });
   const followup = {
     gateway,
     delivery: { deliver: async () => ({ results: [{ detailRecordId: 'd-ok' }], failures: [{ detailRecordId: 'd-bad', error: '库存不足' }] }) },
@@ -31,9 +39,10 @@ test('AC-JOBROUTE 失败明细经 /jobs/:id 返回（不是只有 succeeded/fail
   app.use(express.json());
   app.use((req, res, next) => { req.workbenchUser = { open_id: 'u1' }; next(); });
   app.use(createWorkbenchSalesDeliveryRoutes({
-    options: { gateway, paymentMethodsService: { listWithVouchers: async () => ({ ok: true, items: [] }) }, salesDeliveryJobsDir: dir },
+    options: { gateway, paymentMethodsService: { listWithVouchers: async () => ({ ok: true, items: [] }) }, asyncJobs: jobs },
     followup,
   }));
+  app.use(createWorkbenchAsyncJobRoutes({ asyncJobs: jobs }));
   const server = http.createServer(app);
   server.keepAliveTimeout = 1;
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -45,12 +54,11 @@ test('AC-JOBROUTE 失败明细经 /jobs/:id 返回（不是只有 succeeded/fail
     }).then((res) => res.json());
     assert.equal(queued.success, true);
     const job = await waitFor(async () => {
-      const data = await fetch(`${base}/sales/delivery/jobs/${queued.jobId}`).then((res) => res.json());
-      return data.status === 'partial_failed' ? data : null;
+      const data = await fetch(`${base}/async-jobs/${queued.jobId}`).then((res) => res.json());
+      return data.job?.status === 'partial_failed' ? data.job : null;
     });
-    assert.equal(job.failures.length, 1);
-    assert.equal(job.failures[0].error, '库存不足');
-    assert.equal(job.error, '库存不足');
+    assert.equal(job.last_error, '库存不足');
+    assert.equal(job.status, 'partial_failed');
   } finally {
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });

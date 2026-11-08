@@ -210,8 +210,9 @@ const createAsyncJobService = ({
    * @param {string} input.jobId
    * @param {Function} input.run       `({attempt, job}) => Promise<结果>`
    * @param {Function} [input.classifyResult] 结果分类器（默认 `classifyResultOutcome`）
+   * @param {Function} [input.classifyError] 异常分类器（默认 `classifyThrownError`；链路可把业务异常标成不可重试）
    */
-  const run = async ({ jobId, run: runFn, classifyResult } = {}) => {
+  const run = async ({ jobId, run: runFn, classifyResult, classifyError } = {}) => {
     const job = await get(jobId);
     if (!job) return null;
     // ⚠️ 刻意**不**因"job 已是终态"而跳过执行：同一个 submitKey 重放（页面重提 / 崩溃后续跑）
@@ -239,13 +240,15 @@ const createAsyncJobService = ({
           return markPartialFailed({ jobId, error: message, result: rawResult, attempt });
         }
       } catch (error) {
-        const classified = classifyThrownError(error, config.retry);
+        const classified = typeof classifyError === 'function'
+          ? classifyError(error, config.retry)
+          : classifyThrownError(error, config.retry);
         outcome = { ok: false, retryable: classified.retryable, message: classified.message };
       }
       lastError = String(outcome?.message || outcome?.error || '').trim() || 'unknown error';
       const retryable = outcome?.retryable === true && attempt < maxAttempts;
       await recordAttemptFailure({ jobId, error: lastError, attempt, retryable });
-      if (!retryable) return fail({ jobId, error: lastError, attempt });
+      if (!retryable) return fail({ jobId, error: lastError, attempt, result: rawResult });
       const delay = retryDelayMs(attempt, config.retry);
       warn('async_job.retrying', {
         job_id: jobId, type: job.type, attempt, max_attempts: maxAttempts,

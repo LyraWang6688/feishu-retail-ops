@@ -462,6 +462,7 @@ const EVENTS = Object.freeze([
   'workbench.sales.delivery.job_enqueued',
   'workbench.sales.delivery.job_finished',
   'workbench.sales.delivery.job_started',
+  'workbench.sales.delivery.legacy_migration_failed',
   'workbench.sales.delivery.read_timing',
   'workbench.sales.orders.failed',
   'workbench.sales.orders.order_skipped',
