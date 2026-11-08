@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **461** 个事件。按前缀分组：
+共 **439** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -171,11 +171,6 @@
 | --- | --- | --- |
 | `lark.bitable.record_changed` | 1 | src/routes/larkEvents.js |
 | `lark.bitable.record_changed.base_unconfigured` | 1 | src/routes/larkEvents.js |
-| `lark.card.update.failed` | 1 | src/infrastructure/interactiveCardFeedback.js |
-| `lark.card.update.skipped` | 1 | src/infrastructure/interactiveCardFeedback.js |
-| `lark.card.update.started` | 1 | src/infrastructure/interactiveCardFeedback.js |
-| `lark.card.update.succeeded` | 1 | src/infrastructure/interactiveCardFeedback.js |
-| `lark.card.update.tick_failed` | 1 | src/infrastructure/interactiveCardFeedback.js |
 | `lark.event.challenge` | 1 | src/routes/larkEvents.js |
 | `lark.event.received` | 1 | src/routes/larkEvents.js |
 | `lark.group.message.disabled` | 1 | src/services/larkMvpService.js |
@@ -255,10 +250,7 @@
 | `product.tag_qr.sweep_failed` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.sweep.disabled` | 1 | src/app.js |
 | `product.tag_qr.sweep.done` | 1 | src/app.js |
-| `product.tag_qr.sweep.failed` | 1 | src/app.js |
-| `product.tag_qr.sweep.skipped` | 1 | src/app.js |
 | `product.tag_qr.sweep.started` | 1 | src/app.js |
-| `product.tag_qr.sweep.succeeded` | 1 | src/app.js |
 | `product.tag_qr.sweep.tick_failed` | 1 | src/app.js |
 | `product.tag_qr.sweep.too_soon` | 1 | src/app.js |
 | `product.tag_qr.upgraded_to_record_id` | 1 | src/services/tagQrCodeService.js |
@@ -276,18 +268,11 @@
 | `purchase.arrival.reconcile.amount_missing` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_arrival_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_arrival_skipped` | 1 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.card_supersede_failed` | 1 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.card_supersede_skipped` | 3 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.card_superseded` | 1 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.card_update_failed` | 2 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.card_update_failed_notice` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.confirm_duplicate` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.confirm_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.failure_notice` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.posted` | 1 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.reply_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.success_notice` | 2 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.task_read_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_already_posted` | 2 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_plan_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_rows_unavailable` | 1 | src/services/purchaseArrivalConversationService.js |
@@ -308,11 +293,6 @@
 | `purchase.batch.order_amount.not_a_number` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.order_amount.update_failed` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.order_amount.written` | 1 | src/services/purchaseOrderBatchService.js |
-| `purchase.card.update.failed` | 1 | src/services/larkMvpService.js |
-| `purchase.card.update.skipped` | 1 | src/services/larkMvpService.js |
-| `purchase.card.update.started` | 1 | src/services/larkMvpService.js |
-| `purchase.card.update.succeeded` | 1 | src/services/larkMvpService.js |
-| `purchase.card.update.tick_failed` | 1 | src/services/larkMvpService.js |
 | `purchase.group_notice.failed` | 1 | src/services/purchase/messaging.js |
 | `purchase.group_notice.sent` | 1 | src/services/purchase/messaging.js |
 | `purchase.group_notice.skipped` | 1 | src/services/purchase/messaging.js |
@@ -527,16 +507,14 @@
 | `voucher.settlement.chat_missing` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.disabled` | 1 | src/app.js |
 | `voucher.settlement.done` | 1 | src/services/voucherSettlementService.js |
-| `voucher.settlement.failed` | 1 | src/app.js |
 | `voucher.settlement.item_failed` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.item_settled` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.mismatch` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.notified` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.notify_failed` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.platform_query_failed` | 1 | src/services/voucherSettlementService.js |
-| `voucher.settlement.skipped` | 2 | src/app.js<br>src/services/voucherSettlementService.js |
+| `voucher.settlement.skipped` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.started` | 1 | src/app.js |
-| `voucher.settlement.succeeded` | 1 | src/app.js |
 | `voucher.settlement.tick` | 1 | src/app.js |
 | `voucher.settlement.tick_failed` | 1 | src/app.js |
 
