@@ -345,6 +345,7 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 | 范围 | 唯一入口 | 硬约束 |
 | --- | --- | --- |
 | 异步任务 | `config/asyncJobs.js` + `services/asyncJobService.js` | 不要自建 job 队列/状态；重试复用同一幂等键 |
+| 通知目标 / 事件 / 卡片 | `config/notifications.js` + `services/notificationService.js` + `services/notificationCard.js` | 只保留 private/group 两个固定目标；service 不许直接读 CHAT_ID/OPEN_ID 或手拼卡片 |
 | 飞书写入 | `services/v1BitableGateway.js` → `services/feishuWriteScheduler.js` | **所有写必须走 gateway**；调度器固定常开；读不进调度器 |
 | 库存操作键 | `services/inventory/movements.js` 的 `STOCK_MOVEMENTS[*].operationKey` | 不要自己拼 `operationId` / `operationItemKey`；缺字段抛错 |
 | 配置表缓存 | `config/configTables.js` + `services/configTableCache.js` | 新表先登记；TTL 由注册表给；读走 `getConfigRows`；lastGood 有过期告警 |
@@ -355,6 +356,52 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 完整盘点（含例外/未统一项）：
 
 `docs/reports/unified-infrastructure-and-config-2026-11-08.md`
+
+### 通知配置自检（每个 AI 改通知前必须过）
+
+唯一入口：
+
+```text
+server/src/config/notifications.js
+```
+
+必须满足：
+
+```text
+1. 目标只有 private（open_id）/ group（chat_id）
+2. 事件只在 NOTIFICATION_EVENTS 注册；service 不直接读 CHAT_ID/OPEN_ID
+3. 卡片只经 notificationService → notificationCard（Card JSON 2.0 + CardKit v1）
+4. 业务文案在各自 config，不在 service 写死
+5. 旧 im.v1.message.patch / 旧群话题卡片 / 旧目标 env 不再出现
+6. 新事件补测试，并跑全量 + e2e + file-size
+```
+
+快速自检：
+
+```bash
+grep -RIn "im\.v1\.message\.patch\|sendTaskCard\|sendTaskText\|PURCHASE_CHAT_ID\|VOUCHER_SETTLEMENT_CHAT_ID" server/src/services server/src/routes
+```
+
+### 统一回执自检（toast）
+
+唯一入口：
+
+```text
+config/submitToast.js + utils/submitToast.js
+```
+
+页面提交后必须走 `redirectWithSubmitToast` / 统一 toast，不许自己在页面里再写一套。
+
+2026-11-09 审计时仍未收口的：
+
+```text
+工作台「确认到货」：config/workbenchArrival.js 的「已提交成功，数据会更新」
+售后：config/afterSalesPage.js 的「信息提交成功」＋自建 2200ms toast
+交割单：features/sales-delivery/ui-feedback.js 自建 3000ms toast（PR #1023 在收敛）
+```
+
+改这些页面时优先对齐，不要继续复制新的 toast 文案。
+
 
 边界：
 
