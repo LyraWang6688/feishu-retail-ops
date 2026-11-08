@@ -11,7 +11,7 @@ function findLiveInventoryIn(records, productRecordId, sizeRecordId, state = 'é—
       (record) =>
         linkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId) &&
         linkedRecordIds(record.fields?.[table.fields.size]).includes(sizeRecordId) &&
-        textValue(record.fields?.[table.fields.state]) === state
+        (state === null || textValue(record.fields?.[table.fields.state]) === state)
     );
   }
 

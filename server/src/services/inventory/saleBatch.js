@@ -174,7 +174,7 @@ async function applySaleBatch(items = [], options = {}) {
           }
           // 消耗哪些状态由注册表声明（销售 = 门盒 → 样品），同一状态内按 record_id 升序
           // —— 与 `applyChange` 那两行逐字同形。
-          const states = movement.consumes || [item.state];
+          const states = movement.consumes === '*' ? [null] : (movement.consumes || [item.state]);
           const liveRecords = states.flatMap((candidateState) =>
             this.findLiveInventoryIn(allLive, item.input.productRecordId, sizeReference.recordId, candidateState)
               .filter((record) => !claimed.has(record.record_id))
@@ -272,10 +272,11 @@ async function applySaleBatch(items = [], options = {}) {
         // deleting; never report a deduction based only on its absence from a possibly stale list.
         const record = fetchedById.get(recordId);
         if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
-        const consumableStates = movement.consumes || [plan.operation.state];
+        const consumesAny = movement.consumes === '*';
+        const consumableStates = movement.consumes === '*' ? null : (movement.consumes || [plan.operation.state]);
         if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(plan.operation.product_record_id) ||
           !linkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
-          !consumableStates.includes(textValue(record.fields?.[stateField]))) {
+          (!consumesAny && !consumableStates.includes(textValue(record.fields?.[stateField])))) {
           throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
         }
       };
