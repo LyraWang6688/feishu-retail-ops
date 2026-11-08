@@ -112,10 +112,16 @@ const paymentRowsHtml = (write, opts = {}) => {
       defaultMethod: (write.paymentMethods || [])[0] || '',
       defaultAmount: opts.defaultAmount,
     });
-  return rows.map((row) => `<div class="form-row form-row--pay">
+  const voucherMethods = new Set((write.voucherMethods || []).map((name) => String(name || '').trim()));
+  return rows.map((row) => {
+    const isVoucher = voucherMethods.has(String(row.method || '').trim());
+    // 券行金额可空：后端会按券目录的【平台结算款】写入；普通收款行仍必填（服务端也会再校验）。
+    const required = isVoucher ? '' : ' required';
+    return `<div class="form-row form-row--pay">
 <select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}">${optionsHtml(write.paymentMethods, row.method || (write.paymentMethods || [])[0])}</select>
-<input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal" required min="0" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
-</div>`).join('\n');
+<input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal"${required} min="0" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
+</div>`;
+  }).join('\n');
 };
 
 /** 销售表单：**每件层**（加货 / 加配品）+ **总单层**（每件实收 + 付款情况 + 收款行 + 提交）。

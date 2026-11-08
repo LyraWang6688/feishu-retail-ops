@@ -44,6 +44,69 @@ async function handlePaymentPay(ctx) {
           const pendingPayments = formPayments.length
             ? formPayments
             : (Array.isArray(pendingInfo.payments) ? pendingInfo.payments : []);
+          // ⭐⭐ 2026-11-09：券解析必须在 **异步入队之前** 完成。
+          //   改前逐字：`if (salesAsync) { ... buildSalePayload({ payments: pendingPayments }) ... }`
+          //     这一段在 `voucherPayments.resolveRows()` 之前 return ⇒ 异步销售把券**当成普通收款**，
+          //     `payments` 里留下她填的面值（例 100），而不是【平台结算款】（例 85.4）✗
+          //   ⇒ 先解析券 / 校验金额 / 算好 `paidPayments` + `effectiveLineAmounts`，同步与异步共用同一份。
+          const voucher = voucherPayments.settings.enabled
+            ? await voucherPayments.resolveRows(pendingPayments).catch((error) => ({
+              ok: false, reason: 'voucher_resolve_failed', error: error?.message || 'unknown',
+            }))
+            : { ok: true, payments: pendingPayments, voucherRows: [], balanceDeltaCents: 0, faceValueCents: 0 };
+          if (voucher.ok !== true) {
+            logWarn('scan.write.voucher_blocked', {
+              request_id: requestId,
+              reason: String(voucher.reason || 'voucher_unresolved'),
+              unresolved: Array.isArray(voucher.unresolved) ? voucher.unresolved.map((row) => row.method) : [],
+            });
+            return sendPaymentStep(res, req, {
+              paymentMethods: await candidatePaymentMethods(req),
+              realm,
+              submitKey: body[fields.submitKey],
+              count: pendingLines.length,
+              notice: voucherPayments.settings.unresolvedText,
+              paymentRows: pendingPayments,
+              status: 400,
+            });
+          }
+          const voucherMethods = new Set((voucher.voucherRows || []).map((row) => String(row.method || '')));
+          const invalidAmountRow = pendingPayments.find((row) => {
+            if (voucherMethods.has(String(row.method || ''))) return false;
+            const raw = String(row.amount ?? '').trim();
+            if (!raw) return true;
+            const value = Number(raw);
+            return !Number.isFinite(value) || value < 0;
+          });
+          if (!pendingPayments.length || invalidAmountRow) {
+            logWarn(writeConfig.events.paymentAmountRequired, {
+              request_id: requestId,
+              rows: pendingPayments.length,
+              empty: Boolean(invalidAmountRow),
+            });
+            return sendPaymentStep(res, req, {
+              paymentMethods: await candidatePaymentMethods(req),
+              realm,
+              submitKey: body[fields.submitKey],
+              count: pendingLines.length,
+              notice: config.paymentStep?.amountRequiredNote || '',
+              paymentRows: pendingPayments,
+              status: 400,
+            });
+          }
+          const paidPayments = voucher.payments.filter((row) => Number(row.amount) > 0);
+          const effectiveLineAmounts = voucherPayments
+            .adjustLineAmounts(pendingLineAmounts, voucher.balanceDeltaCents).amounts;
+          if (voucher.voucherRows.length) {
+            logInfo('scan.write.voucher_resolved', {
+              request_id: requestId,
+              voucher_count: voucher.voucherRows.length,
+              voucher_methods: voucher.voucherRows.map((row) => row.method),
+              face_value_cents: voucher.faceValueCents,
+              balance_delta_cents: voucher.balanceDeltaCents,
+              voucher_names: voucher.voucherRows.map((row) => row.name),
+            });
+          }
           // ⭐⭐ 2026-10-27：异步销售唯一链路（显式开关）。
           //   资金页只在「校验 + 冻结 payload + 入队」后返回；真正的飞书写入由 worker 完成。
           if (salesAsync) {
@@ -59,7 +122,7 @@ async function handlePaymentPay(ctx) {
               productRecordId: line.product_record_id,
               size: line.size,
               tradeTypeCode: line.trade_type_code,
-              actualAmount: line.amount,
+              actualAmount: effectiveLineAmounts[index] ?? line.amount,
               number: line.number,
               itemNo: line.item_no,
               color: line.color,
@@ -68,7 +131,7 @@ async function handlePaymentPay(ctx) {
             }));
             const built = buildSalePayload({
               openId: openIdOf(req), orderNo, gift: body[fields.gift],
-              lines: payloadLines, payments: pendingPayments,
+              lines: payloadLines, payments: paidPayments,
             });
             if (!built.ok) {
               logWarn('scan.sale.async.invalid_payload', { request_id: requestId, errors: built.errors });
@@ -104,7 +167,7 @@ async function handlePaymentPay(ctx) {
               tap_id: tapId || undefined,
               order_no: orderNo,
               line_count: pendingLines.length,
-              payment_count: pendingPayments.length,
+              payment_count: paidPayments.length,
               reused: enqueued.created === false,
             });
             // ⭐⭐ 2026-10-27 起的"回工作台 + toast"；2026-10-29 起**收进共用件**（`utils/submitToast.js`）：
@@ -122,84 +185,6 @@ async function handlePaymentPay(ctx) {
           const pendingPaymentStatus = String(body[fields.paymentStatus] || pendingInfo.paymentStatus || '').trim();
           const pendingPaidAmount = body[fields.paidAmount] ?? pendingInfo.paidAmount ?? '';
           const pendingSize = String(pendingInfo.size || '').trim();
-          // ⭐⭐⭐ 2026-10-16（task-57 · 抖音团购券 · 业务负责人逐字）：
-          //   「**差额的计算按照面值来**，但是**收款明细里的收款金额按照平台结算款**来」
-          //   「是的，抖音团购券的是**待平台结算**」
-          //   ⇒ 一张券 = **两个数各归各位**（口径与算式见 `services/voucherPaymentService.js`）：
-          //      · 收款行交给写层的金额 = 【**平台结算款**】（收款明细那一笔的事实 ✓）
-          //      · 差额按【**面值**】算 ⇒ 把 (面值 − 结算款) 从**货品那一侧**扣掉
-          //        （差额的全仓唯一算法是 `累计 − 已收`，不扣就变成 `货品 − 结算款` ✗）
-          //   🔴 **认不出那张券 / 券目录读不到** ⇒ **大声 warn + 拦住这一单**（400 + 人话 + 零写入）——
-          //      **绝不静默把一条券当成普通收款记一笔** ✗（那会写一个错的金额进账，她事后对不上）
-          //   ⚠️ 一行券都没有 ⇒ 原样返回、**券目录一次都不读** ⇒ 既有链路逐字不变 ✓（`voucherRows` 空）
-          const voucher = voucherPayments.settings.enabled
-            ? await voucherPayments.resolveRows(pendingPayments).catch((error) => ({
-              ok: false, reason: 'voucher_resolve_failed', error: error?.message || 'unknown',
-            }))
-            : { ok: true, payments: pendingPayments, voucherRows: [], balanceDeltaCents: 0, faceValueCents: 0 };
-          if (voucher.ok !== true) {
-            logWarn('scan.write.voucher_blocked', {
-              request_id: requestId,
-              reason: String(voucher.reason || 'voucher_unresolved'),
-              unresolved: Array.isArray(voucher.unresolved) ? voucher.unresolved.map((row) => row.method) : [],
-            });
-            // ⚠️ 与既有那条"能改的 ⇒ 400 + 原样带回她填的"**同一形状**（`sendPaymentStep` ✓ 一份实现 ✗ 不另起）
-            //   ⚠️ 不传 `paymentStatus` / `paidAmount`：那一组控件（三档 + 实付多少）**已从资金页退场**
-            //      ⇒ 传旧值只会误导下一屏（与 A2a 那条注释同一个理由 ✓）
-            return sendPaymentStep(res, req, {
-              paymentMethods: await candidatePaymentMethods(req),
-              realm,
-              submitKey: body[fields.submitKey],
-              count: pendingLines.length,
-              notice: voucherPayments.settings.unresolvedText,
-              // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓）—— **不是**解析后的那一份（那会替她改数 ✗）
-              paymentRows: pendingPayments,
-              status: 400,
-            });
-          }
-          // ⭐⭐ 2026-10-18（业务负责人逐字）：「**资金页面也得填写了，必须填写**；但**不一定要等于
-          //   货品合计的总金额**，**0 也可以填**，必须得填写金额」
-          //   ⇒ **金额必填闸门**（同步拦、零写入）：非券行的金额必须是**非负数字**（`0` 合法）；
-          //   ⚠️ **券行豁免**：券的金额 = **平台结算款**（自动算）⇒ 券行不要求手填金额 ✓。
-          const voucherMethods = new Set((voucher.voucherRows || []).map((row) => String(row.method || '')));
-          const invalidAmountRow = pendingPayments.find((row) => {
-            if (voucherMethods.has(String(row.method || ''))) return false;
-            const raw = String(row.amount ?? '').trim();
-            if (!raw) return true;
-            const value = Number(raw);
-            return !Number.isFinite(value) || value < 0;
-          });
-          if (!pendingPayments.length || invalidAmountRow) {
-            logWarn(writeConfig.events.paymentAmountRequired, {
-              request_id: requestId,
-              rows: pendingPayments.length,
-              empty: Boolean(invalidAmountRow),
-            });
-            return sendPaymentStep(res, req, {
-              paymentMethods: await candidatePaymentMethods(req),
-              realm,
-              submitKey: body[fields.submitKey],
-              count: pendingLines.length,
-              notice: config.paymentStep?.amountRequiredNote || '',
-              // ⭐ 她刚填的那几行**原样带回**（不许替她改数 ✗）
-              paymentRows: pendingPayments,
-              status: 400,
-            });
-          }
-          // ⭐ 交给写层的收款行：**金额 0 的行滤掉**（`0` = 这一单没收到钱 ⇒ 未付/待补充，不写收款明细 ✓）
-          const paidPayments = voucher.payments.filter((row) => Number(row.amount) > 0);
-          const effectiveLineAmounts = voucherPayments
-            .adjustLineAmounts(pendingLineAmounts, voucher.balanceDeltaCents).amounts;
-          if (voucher.voucherRows.length) {
-            logInfo('scan.write.voucher_resolved', {
-              request_id: requestId,
-              voucher_count: voucher.voucherRows.length,
-              voucher_methods: voucher.voucherRows.map((row) => row.method),
-              face_value_cents: voucher.faceValueCents,
-              balance_delta_cents: voucher.balanceDeltaCents,
-              voucher_names: voucher.voucherRows.map((row) => row.name),
-            });
-          }
           // ⭐⭐ 2026-10-16 A2a（她：**页面去三档** ⇒ 档位**按金额自动定**）——
           //   改前逐字：档位 = `Object.keys(payStatusMap).find((key) => payStatusMap[key] === pendingPaymentStatus) || ''`
           //     （**从"请求体 / 已存档"反查** ✗）⇒ 页面去掉那三个单选框之后**必然查不到** ⇒ 被判 `unknown_mode` **拦住** ✓
