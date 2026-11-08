@@ -317,7 +317,6 @@ export function arrivalDetailHtml(rows = []) {
  *   · **没填**（清空）⇒ **不猜**（`ok:false` + 人话，页面上拦住 ✓）—— 「没填」与「填 0」是两件事 ✗；
  *   · 没碰过的行 ⇒ 用页面**预填值**（= 申请数量 ✓ 这与"按申请数补齐"不是一回事：
  *     预填是**页面给她看的默认**，她改了就按她的值，提交的永远是**她确认过的那个值** ✓）。
- *   · `extra` = 她自行补充的行（自定义尺码 / 自定义货号）—— 由调用方解析好 `productRecordId` ✓。
  */
 export function arrivalSubmitLines({ rows = [], actuals = {} } = {}) {
   const lines = [];

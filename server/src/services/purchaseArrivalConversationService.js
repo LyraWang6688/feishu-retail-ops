@@ -607,8 +607,7 @@ class PurchaseArrivalConversationService {
       //    · 按 (货品 record_id, 尺码) 精确匹配申请行（一批里可能同码不同款）；
       //    · 没扫到的行 = 0（调用方入库时摘掉）；
       //    · 命中多行 / 扫到本批没有的货 / 同一行被两条扫码行命中 ⇒ 拦住。
-      //    ⭐ 2026-11-09（业务负责人）：**自定义尺码/货号已退场** ⇒ 不在申请行里的扫码行
-      //      一律 `scan_not_in_batch`（不再允许"归到本批某一款"的自定义行）。
+      //    不在申请行里的扫码行 ⇒ 一律 `scan_not_in_batch`（不猜款 ✓）。
       const keyOf = (productRecordId, size) => `${productRecordId}|${Number(size)}`;
       const byKey = new Map();
       for (const row of rows) {
