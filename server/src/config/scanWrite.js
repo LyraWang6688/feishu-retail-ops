@@ -607,6 +607,8 @@ const TEXTS = Object.freeze({
   paymentLabel: '收款方式',
   paymentAmountLabel: '收款金额',
   paymentAmountPlaceholder: '金额',
+  // 券行下方提示：面值 / 平台结算款（资金页显示用；金额仍可留空）
+  voucherFaceHint: '面值 {face} · 平台结算 {settlement}',
   // 预置行里那个"空"选项（不填金额 = 这一行不用）。
   // ⭐ **核心校验的人话**（她 2026-10-11：「必须相等，所以系统需要校验！」）：
   //    说清①两边各是多少 ②哪边多了/少了、差多少 —— 她照着改一下就能再提交。

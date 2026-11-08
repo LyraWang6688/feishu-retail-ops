@@ -246,17 +246,32 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
     return { amounts: list, appliedCents: wanted - remain, unappliedCents: remain };
   };
 
-  /** 收款方式表里「团购券管理」关联非空的方式名（资金页用来豁免金额必填）。 */
-  const voucherMethodNames = async () => {
+  /** 收款方式表里「团购券管理」关联非空的方式（资金页用来豁免金额必填 + 显示面值/结算款）。 */
+  const voucherMethodDetails = async () => {
     const methods = await loadMethods();
     if (!methods.ok) return [];
+    const catalog = await loadCatalog();
+    if (!catalog.ok) return [];
+    const byRecordId = new Map(catalog.vouchers.map((voucher) => [voucher.recordId, voucher]));
     return methods.items
       .filter((item) => String(item?.voucherRecordId || '').trim())
-      .map((item) => String(item?.name || '').trim())
-      .filter(Boolean);
+      .map((item) => {
+        const voucher = byRecordId.get(String(item.voucherRecordId || '').trim());
+        return {
+          name: String(item.name || '').trim(),
+          faceValueCents: voucher ? voucher.faceValueCents : null,
+          settlementCents: voucher ? voucher.settlementCents : null,
+        };
+      })
+      .filter((item) => item.name && item.faceValueCents !== null && item.settlementCents !== null);
   };
 
-  return { resolveRows, adjustLineAmounts, loadCatalog, loadMethods, voucherMethodNames, settings };
+  const voucherMethodNames = async () => (await voucherMethodDetails()).map((item) => item.name);
+
+  return {
+    resolveRows, adjustLineAmounts, loadCatalog, loadMethods,
+    voucherMethodNames, voucherMethodDetails, settings,
+  };
 };
 
 module.exports = { createVoucherPaymentService, VOUCHER_METHOD_UNMAPPED_EVENT, VOUCHER_CATALOG_UNREADABLE_EVENT };

@@ -113,6 +113,7 @@ const createScanPageSetup = ({ options, deps }) => {
     paymentMethods: Array.isArray(opts.paymentMethods) ? opts.paymentMethods : [],
     // 券方式：金额可空（后端解析后按平台结算款写）；普通方式仍 required。
     voucherMethods: Array.isArray(opts.voucherMethods) ? opts.voucherMethods : [],
+    voucherDetails: Array.isArray(opts.voucherDetails) ? opts.voucherDetails : [],
     defaultPaymentMethod: writeConfig.sale.defaultPaymentMethod,
     paymentRowCount: writeConfig.sale.paymentRowCount,
     // ⭐ 她刚填的那一档 / 实付多少 / 收款行 ⇒ **原样带回**（她不用重打 ✓ 她明确要过这条 ✓）
@@ -211,9 +212,10 @@ const createScanPageSetup = ({ options, deps }) => {
     // ⚠️ 默认 200 ✓；⭐ 结算没过那一次要 **400**（"她能改"的那一类 ⇒ 与既有口径一致 ✓ 旧行为也是 400 ✓）
     const status = Number(opts.status) === 400 ? 400 : 200;
     // 资金页要知道哪些收款方式是券 ⇒ 券行金额不 required（后端仍按平台结算款覆盖）。
-    const voucherMethods = await voucherPayments.voucherMethodNames().catch(() => []);
+    const voucherDetails = await voucherPayments.voucherMethodDetails().catch(() => []);
+    const voucherMethods = voucherDetails.map((item) => item.name);
     return sendHtml(res, status, renderSalePaymentStepPage({
-      write: step2WriteOf({ ...opts, voucherMethods }),
+      write: step2WriteOf({ ...opts, voucherMethods, voucherDetails }),
       // ⚠️ **不编**：还没建单时它是空串 ✓（她在资金页阶段本来就没有单号 ✓）
       orderNo: String(opts.orderNo || ''),
       config,
