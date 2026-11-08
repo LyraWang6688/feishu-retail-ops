@@ -229,9 +229,23 @@ test('BD-8 🔴 只加能力：请求体是纯 id 列表；单条 delete 一字�
   await batchGateway.deleteBatch(TABLE, ['rec_a', 'rec_b']);
   assert.deepEqual(Object.keys(batchClient.calls[0].data), ['records']);
   assert.equal(typeof batchClient.calls[0].data.records[0], 'string', '数组元素是 id 字符串');
-  // ③ 源码哨兵：`deleteBatch` 用官方 `batchDelete`；单条 `delete` 那三行原样在
+  // ③ 源码哨兵：`deleteBatch` 用官方 `batchDelete`；单条 `delete` 仍然只打 `appTableRecord.delete`
+  // ⚠️ 2026-11-08（issue #879）**成对迁移 · 改前逐字 → 改后逐字 → 依据**：
+  //    改前（逐字）：
+  //      `async delete(tableKey, recordId) {`
+  //      `    const table = this.tableWithId(tableKey);`
+  //      `    const response = await this.client.bitable.appTableRecord.delete({`
+  //    改后（逐字）：
+  //      `async delete(tableKey, recordId, options = {}) {`   ← #879：补可选的 correlation（只进日志）
+  //      `    const table = …` / `    const response = await this.scheduledWrite(tableKey, 'delete', async () => {`
+  //      `      const result = await this.client.bitable.appTableRecord.delete({`
+  //    依据：本卡要求**所有写飞书共享全局调度器**（issue #879），单条 delete 也要入队；
+  //    判据没放宽 —— 仍是"单条 delete 只调 appTableRecord.delete、请求体只有 path.record_id"。
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'v1BitableGateway.js'), 'utf8');
   assert.match(source, /appTableRecord\.batchDelete\(\{/);
-  assert.match(source, /async delete\(tableKey, recordId\) \{\n    const table = this\.tableWithId\(tableKey\);\n    const response = await this\.client\.bitable\.appTableRecord\.delete\(\{/,
-    '单条 delete 必须原样（本卡只加能力，不改任何既有调用）');
+  assert.match(source, /async delete\(tableKey, recordId, options = \{\}\) \{/,
+    '单条 delete 仍是独立方法（`options` 只用于 correlation 日志，向后兼容）');
+  assert.match(source,
+    /scheduledWrite\(tableKey, 'delete', async \(\) => \{\n      const result = await this\.client\.bitable\.appTableRecord\.delete\(\{/,
+    '单条 delete 只调 appTableRecord.delete（现在经全局调度器，仍然只有这一个写口）');
 });
