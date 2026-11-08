@@ -15,7 +15,7 @@ test('handler 导出两个提交分支（补货/退货）', () => {
 
 test('路由只做分派：两个分支体已搬走（塞回即红）', () => {
   const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8')
-    + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'routes.js'), 'utf8');
+    + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'actionRoutes.js'), 'utf8');
   assert.match(index, /require\('\.\/handlers\/purchase'\)/);
   assert.match(index, /return handleReplenishOf\(\{/);
   assert.match(index, /return handlePurchaseReturnOf\(\{/);

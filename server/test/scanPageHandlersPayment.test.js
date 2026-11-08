@@ -14,7 +14,7 @@ test('handler 导出资金处理分支', () => {
 
 test('路由只做分派：分支体已搬走（塞回即红）', () => {
   const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8')
-    + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'routes.js'), 'utf8');
+    + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'actionRoutes.js'), 'utf8');
   assert.match(index, /require\('\.\/handlers\/payment'\)/);
   assert.match(index, /return handlePaymentPayOf\(\{/);
   const file = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'handlers', 'payment.js'), 'utf8');
