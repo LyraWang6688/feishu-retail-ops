@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **460** 个事件。按前缀分组：
+共 **465** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -17,6 +17,15 @@
 | `after_sales.return_funds.uncovered` | 1 | src/services/afterSalesService.js |
 | `after_sales.skipped.already_done` | 1 | src/services/afterSalesService.js |
 | `after_sales.stock.skipped` | 1 | src/services/afterSalesService.js |
+
+## async_job
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `async_job.disabled` | 1 | src/services/asyncJobRuntime.js |
+| `async_job.mirror.failed` | 1 | src/services/afterSalesAsyncService.js |
+| `async_job.start.done` | 1 | src/services/asyncJobRuntime.js |
+| `async_job.start.failed` | 2 | src/app.js<br>src/services/asyncJobRuntime.js |
 
 ## auth
 
@@ -437,7 +446,7 @@
 | `scan.realm_scan.signature_ok` | 1 | src/routes/scanPage/public.js |
 | `scan.sale.amount_mismatch` | 1 | src/config/scanWrite.js |
 | `scan.sale.async.done` | 1 | src/services/salesAsyncWorker.js |
-| `scan.sale.async.enqueue_failed` | 3 | src/config/alerts.js<br>src/routes/scanPage/handlers/payment.js |
+| `scan.sale.async.enqueue_failed` | 4 | src/config/alerts.js<br>src/routes/scanPage/handlers/payment.js<br>src/services/salesAsyncWorker.js |
 | `scan.sale.async.enqueued` | 1 | src/routes/scanPage/handlers/payment.js |
 | `scan.sale.async.failed` | 4 | src/config/alerts.js<br>src/services/salesAsyncWorker.js |
 | `scan.sale.async.invalid_payload` | 1 | src/routes/scanPage/handlers/payment.js |
@@ -525,6 +534,7 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `workbench.async_job.viewed` | 1 | src/routes/workbench/asyncJobs.js |
 | `workbench.auth.failed` | 1 | src/routes/feishuWebAuth.js |
 | `workbench.auth.provider_error` | 1 | src/routes/feishuWebAuth.js |
 | `workbench.auth.success` | 1 | src/routes/feishuWebAuth.js |

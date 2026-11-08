@@ -82,8 +82,15 @@ const createProcurementPageService = (options = {}) => {
       records, products, fields, productFields: productFields(), config, now: now(),
       tradeTypeCodeOf: (cell) => tradeTypeCodeOf(cell, behaviorIndex),
     });
-    if (view.skippedRows > 0) {
-      warn(config.events.tradeTypeUnknown, { request_id: requestId, skipped_rows: view.skippedRows });
+    // ⭐⭐ 2026-11-08（#950）：只有**真的认不出贸易类型**的行才记 `trade_type_unknown`。
+    //   「已报过货（采购明细已关联）」是正常业务事实 ⇒ 单独计数、**不触发**这条 warn（#946 误报修复）。
+    if (view.tradeTypeUnknownRows > 0) {
+      warn(config.events.tradeTypeUnknown, {
+        request_id: requestId,
+        skipped_rows: view.skippedRows,
+        trade_type_unknown_rows: view.tradeTypeUnknownRows,
+        already_reported_rows: view.alreadyReportedRows,
+      });
     }
     info(config.events.replenishLoaded, {
       request_id: requestId,
@@ -91,6 +98,9 @@ const createProcurementPageService = (options = {}) => {
       groups: view.stats.productCount,
       spot_sold: view.stats.spotSold,
       prepaid_pending: view.stats.prepaidPending,
+      // 只报事实：跳过多少、其中"已报过货"多少（排查"补货怎么少了"用）
+      skipped_rows: view.skippedRows,
+      already_reported_rows: view.alreadyReportedRows,
       duration_ms: Date.now() - startedAt,
     });
     return { ok: true, ...view };

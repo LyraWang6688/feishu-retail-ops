@@ -1,6 +1,7 @@
 'use strict';
 // ⭐⭐ 2026-10-29：提交成功 = 统一 toast 共用件（与销售/多货同一份实现）。
 const { redirectWithSubmitToast } = require('../../../utils/submitToast');
+const { ASYNC_JOBS } = require('../../../config/asyncJobs');
 
 /**
  * 扫码路由核心深拆 P0：补货 / 退货两个提交分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -87,6 +88,10 @@ async function handleReplenish(ctx) {
           requestId,
           submitKey: replenishSubmitKey,
           context: { openId, requestId, number: view.number },
+          // #948：统一任务记录 / 失败群通知要用的元数据（**不进**写库入参）
+          jobMeta: {
+            ownerOpenId: openId, orderNo: view.number, step: ASYNC_JOBS.texts.stepLabels.scanPurchaseReplenish,
+          },
           // ⚠️ 只给**写层要的那几个实参**（`requestId` / `submitKey` 由 `runRest` 原样带上 ✓）
           restInput: {
             openId,
@@ -180,6 +185,10 @@ async function handlePurchaseReturn(ctx) {
           requestId,
           submitKey: returnSubmitKey,
           context: { openId, requestId, number: view.number },
+          // #948：统一任务记录 / 失败群通知要用的元数据（**不进**写库入参）
+          jobMeta: {
+            ownerOpenId: openId, orderNo: view.number, step: ASYNC_JOBS.texts.stepLabels.scanPurchaseReturn,
+          },
           // ⚠️ 只给**写层要的那几个实参**（`requestId` / `submitKey` 由 `runRest` 原样带上 ✓）
           restInput: {
             openId,

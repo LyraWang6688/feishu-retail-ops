@@ -2,6 +2,7 @@
 
 const { createSalesOrderNoCache } = require('./salesOrderNoCache');
 const { createSalesAsyncWorker } = require('./salesAsyncWorker');
+const { getAsyncJobService } = require('./asyncJobRuntime');
 
 /**
  * 异步销售的运行时装配（单号缓存 + worker）。放在这里是为了让 `routes/scanPage/index.js`
@@ -12,7 +13,9 @@ const createSalesAsyncRuntime = ({ gateway, writeService, config, options = {}, 
   if (!writeService) {
     return { orderNoCache, worker: null };
   }
-  const worker = options.salesAsync || createSalesAsyncWorker({ gateway, writeService });
+  // #948：统一异步任务（重试 / 失败通知发运营群）。用例可 `options.asyncJobs` 注入或置 null。
+  const asyncJobs = options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService();
+  const worker = options.salesAsync || createSalesAsyncWorker({ gateway, writeService, asyncJobs });
   if (typeof worker.start === 'function') {
     setImmediate(() => { worker.start().catch((error) => logError('scan.sale.async.start_failed', { error: String(error?.message || error) })); });
   }
