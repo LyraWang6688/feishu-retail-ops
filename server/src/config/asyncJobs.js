@@ -182,7 +182,8 @@ const buildAsyncJobsConfig = (env = process.env) => {
     // 页面轮询（#947 原方案）已由"发运营群"取代；这里保留只读轮询参数给排查脚本/未来页面用。
     poll: Object.freeze({
       intervalMs: readInt(env, 'ASYNC_JOB_POLL_INTERVAL_MS', 2000, { min: 500, max: 60000 }),
-      maxMs: readInt(env, 'ASYNC_JOB_POLL_MAX_MS', 60000, { min: 5000, max: 600000 }),
+      // 交割单页真实飞书写库可能 >60s；该值与页面共用，超时只提示「仍在写入」。
+      maxMs: readInt(env, 'ASYNC_JOB_POLL_MAX_MS', 120000, { min: 5000, max: 600000 }),
     }),
     texts: Object.freeze({
       ...DEFAULT_TEXTS,

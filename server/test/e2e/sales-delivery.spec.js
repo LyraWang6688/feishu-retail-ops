@@ -17,6 +17,8 @@ const PAGE = '/workbench/sales-delivery.html';
 
 /** 真实接口形状的夹具（与 `/api/workbench/sales/delivery` 返回一致）。 */
 const DELIVERY_FIXTURE = {
+  job_poll: { interval_ms: 100, timeout_ms: 120000 },
+  submit_toast: { text: '数据提交成功，后台自动写入' },
   methods: ['微信扫码', '现金', '支付宝', '银行转账'],
   orders: [
     {
@@ -246,7 +248,7 @@ test('AC-DELIVER 行尾交付：点谁交谁、toast「该产品已交付」、�
   await card.locator('[data-sd-deliver]').first().click();
   // 同 SKU（QPL-8957|黑色|42）还有一行未交付 ⇒ 在途锁把另一颗交付按钮也置灰。
   await expect(card.locator('[data-sd-deliver]').nth(1)).toBeDisabled();
-  await expect(page.locator('.workbench-toast')).toContainText('已提交成功');
+  await expect(page.locator('.workbench-toast')).toContainText('数据提交成功，后台自动写入');
   await expect(card.locator('.sd-product-row')).toHaveCount(1);
   await expect(card.locator('[data-sd-deliver]')).toHaveCount(1);
   await expect(page.locator('[data-sd-tab="both"]')).toContainText('2 双');
@@ -263,7 +265,7 @@ test('AC-JOBFAIL 交付 job 部分失败：前端 toast 显示真实失败原因
     jobFailures: [{ detailRecordId: 'd-g1', error: '库存不足' }],
   });
   await page.locator('[data-sd-order="XSD-20261020-0001"] [data-sd-deliver]').click();
-  await expect(page.locator('.workbench-toast')).toContainText('已提交成功');
+  await expect(page.locator('.workbench-toast')).toContainText('数据提交成功，后台自动写入');
   await expect(page.locator('.workbench-toast')).toContainText('库存不足');
 });
 
@@ -313,7 +315,7 @@ test('AC-FORM 付款弹窗：金额/方式在居中弹窗里；提交真实 POST
   await expect(modal.locator('[data-sd-modal-confirm]')).toBeEnabled();
   await modal.locator('[data-sd-modal-method]').selectOption('现金');
   await modal.locator('[data-sd-modal-confirm]').click();
-  await expect(page.locator('.workbench-toast')).toContainText('已提交成功');
+  await expect(page.locator('.workbench-toast')).toContainText('数据提交成功，后台自动写入');
   await page.waitForTimeout(200);
   expect(apiRequests).toContain('POST /api/workbench/sales/delivery/payments');
   expect(writes).toEqual(['POST']);

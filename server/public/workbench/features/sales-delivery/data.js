@@ -78,5 +78,10 @@ export const fetchDeliveryData = async (apiClient, config, fields) => {
       ? data[fields.methods].map((item) => textOf(item).trim()).filter(Boolean)
       : [],
     orders: normalizeOrders(data?.orders, fields),
+    submitToastText: textOf(data?.submit_toast?.text).trim(),
+    jobPoll: {
+      intervalMs: numberOrNull(data?.job_poll?.interval_ms),
+      timeoutMs: numberOrNull(data?.job_poll?.timeout_ms),
+    },
   };
 };
