@@ -41,6 +41,7 @@
 | [handoff.md](archive/handoff.md) | 交接说明：当前状态、硬约束、幂等现状、待办、采购改造方案与下一步建议 |
 | [handoff-douyin-content-co-creation.md](handoff-douyin-content-co-creation.md) | **抖音共创交接**（2026-10-04 新增协作线）：家族生意背景、既有飞书资产索引、能力边界与第一步请求 |
 | [douyin-laike-openapi-research-2026-11-08.md](douyin-laike-openapi-research-2026-11-08.md) | ⭐⭐ **抖音来客 OpenAPI 接入调研（经营侧）**（2026-11-08 · 王颖本人要求沉淀；**同日她确认「以后你就负责和抖音相关的开发」⇒ 归属本仓库 agent**）：走官方**「自研商家（品牌商）」**路径接**生活服务 OpenAPI** 可行，成本在资质与审核 · 三条结论（豆包工作连接器是 **MCP host 侧内置插件、无对外 server URL ⇒ 搬不过来**；给外部程序开的是 `open.douyin.com` 生活服务 OpenAPI；开放平台 MCP 服务广场 `open.douyin.com/sse` **不含来客经营数据**）· 五步入驻流程与调用规则（`/oauth/client_token/` + `access-token` 头）· 拟开发形态（本机 MCP server，只读优先，凭据不入库不入对话）· **风险与未验证项**（压测/安全验收能否跳过、数据范围取决于解决方案）· **待业务负责人确认 3 条** · 与内容线 `handoff-douyin-content-co-creation.md`、团购券口径 `douyin-voucher-payment-rules-2026-10-16.md` 的关系 |
+| [douyin-laike-openapi-and-settlement-2026-11-08.md](douyin-laike-openapi-and-settlement-2026-11-08.md) | ⭐⭐ **抖音来客 OpenAPI 落地记录与团购券结算设计**（2026-11-08 · 业务负责人要求沉淀）：已用真实 token 调通六类接口（门店 / 验券 / 分账 / 账单 / 提现 / 订单）与真实数据样例 · 客户端已合并（#982）· 团购券结算设计（**14:00 + 按日期三方对平 + 一分不差才改**，#995 待合并）· 坑清单（`charset` 触发 10002、无效 JSON 当空数据、订单列表恒 0、时间 int / 日期字符串、凭证 env 位置）· 未完成与风险 |
 | [multi-item-route-anchors-2026-10-16.md](multi-item-route-anchors-2026-10-16.md) | 「一单多货品」**路由半**锚点刷新（task-46 · 只读准备） |
 | [open-risk-notes-2026-10-16.md](open-risk-notes-2026-10-16.md) | 两条"会咬人"的欠账（落档 · 不动冻结文件） |
 | [stage-gate-audit-2026-10-16.md](stage-gate-audit-2026-10-16.md) | 「分阶段判据（待激活）」体检 —— 谁是真分阶段、谁是**永远变不真的自足替身**（本刀整改 4 条 ✗） |
