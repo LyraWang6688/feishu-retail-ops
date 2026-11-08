@@ -240,7 +240,7 @@ const pageUrl = (base, realm) => `${base}/r/${encodeURIComponent(NUMBER)}?from=$
 /** 提一次（`amount === null` ⇒ **整个字段都不带** = "她一个字没填" ✓） */
 const postAction = async (base, realm, action, amount) => {
   const body = { action, submit_key: 'scan_test:key:wiring' };
-  if (realm === 'purchase_return') { body.return_sizes = '41'; body.return_qty_41 = '1'; } else { body.sizes = '41'; body.qty_41 = '1'; }
+  if (realm === 'purchase_return') { body.return_qty_41 = '1'; } else { body.sizes = '41'; body.qty_41 = '1'; }
   if (amount !== null) body[SCAN_WRITE.fields.purchaseAmount] = amount;
   return fetch(pageUrl(base, realm), {
     method: 'POST',

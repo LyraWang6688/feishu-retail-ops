@@ -203,3 +203,84 @@ test('AC-DY11 ⭐ 返回值里不含 token', async () => {
   assert.equal(out.ok, true);
   assert.ok(!JSON.stringify(out).includes('tok_secret_value'), 'token 不许出现在返回值里');
 });
+
+test('AC-DY15 ⭐ 账单详情按 bill_date 查（金额在 amount.goods）', async () => {
+  const { service, calls } = buildService({
+    handler: (url) => (url.includes('client_token')
+      ? okJson(tokenBody())
+      : okJson({ data: { ledger_records: [{ amount: { goods: 8540 } }], error_code: 0 } })),
+  });
+  const out = await service.settleBill({ accountId: '7365018427183990825', billDate: '2026-10-26' });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  const call = calls.find((item) => item.url.includes('settle/bill/composite_query'));
+  assert.ok(call, '必须请求账单详情');
+  assert.match(call.url, /account_id=7365018427183990825/);
+  assert.match(call.url, /bill_date=2026-10-26/);
+  assert.match(call.url, /cursor=0/);
+});
+
+test('AC-DY16 ⭐ 提现记录按日期区间查', async () => {
+  const { service, calls } = buildService({
+    handler: (url) => (url.includes('client_token')
+      ? okJson(tokenBody())
+      : okJson({ data: { bill_withdraw_records: [{ amount: 8540, settle_account: '中国农业银行 (5418)' }], error_code: 0 } })),
+  });
+  const out = await service.settleWithdraw({ accountId: 'a', startDate: '2026-10-31', endDate: '2026-10-31' });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  const call = calls.find((item) => item.url.includes('settle/withdraw/composite_query'));
+  assert.match(call.url, /start_date=2026-10-31/);
+  assert.match(call.url, /end_date=2026-10-31/);
+});
+
+test('AC-DY17 ⭐ 日期格式非法 ⇒ param_invalid，不发请求', async () => {
+  const { service, calls } = buildService({ handler: () => okJson({}) });
+  const bill = await service.settleBill({ accountId: 'a', billDate: '2026/10/26' });
+  assert.equal(bill.ok, false);
+  assert.equal(bill.reason, 'param_invalid');
+  const withdraw = await service.settleWithdraw({ accountId: 'a', startDate: '20261031', endDate: '2026-10-31' });
+  assert.equal(withdraw.ok, false);
+  assert.equal(withdraw.reason, 'param_invalid');
+  assert.equal(calls.length, 0);
+});
+
+test('AC-DY12 ⭐ HTTP 200 但正文不是 JSON ⇒ invalid_response（不再当成成功空数据）', async () => {
+  const { service } = buildService({
+    handler: (url) => (url.includes('client_token')
+      ? okJson(tokenBody())
+      : {
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError('Unexpected token < in JSON at position 0'); },
+        headers: { get: () => '' },
+      }),
+  });
+  const out = await service.verifyRecords({ accountId: 'a', startTime: 1, endTime: 2 });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'invalid_response');
+  assert.match(out.message, /无法解析/);
+});
+
+test('AC-DY13 ⭐ 成功响应缺 data 对象 ⇒ invalid_response（不返回 ok:true + 空数据）', async () => {
+  const { service } = buildService({
+    handler: (url) => (url.includes('client_token') ? okJson(tokenBody()) : okJson({ data: null })),
+  });
+  const out = await service.verifyRecords({ accountId: 'a', startTime: 1, endTime: 2 });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'invalid_response');
+});
+
+test('AC-DY14 ⭐ 正文坏但响应头有 logid ⇒ 仍带回排查用 logId', async () => {
+  const { service } = buildService({
+    handler: (url) => (url.includes('client_token')
+      ? okJson(tokenBody())
+      : {
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError('bad'); },
+        headers: { get: (name) => (name === 'x-tt-logid' ? 'LOG_BAD_BODY' : '') },
+      }),
+  });
+  const out = await service.verifyRecords({ accountId: 'a', startTime: 1, endTime: 2 });
+  assert.equal(out.ok, false);
+  assert.equal(out.logId, 'LOG_BAD_BODY');
+});

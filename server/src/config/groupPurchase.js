@@ -34,9 +34,6 @@ const readExplicit = (env, key) => {
   return String(raw).trim();
 };
 
-/** 采购单要发到哪个群。未配置返回空串（调用方据此跳过发送并记日志）。 */
-const resolvePurchaseChatId = (env = process.env) => readExplicit(env, PURCHASE_CHAT_ID_ENV_KEY);
-
 /** 机器人自己的 open_id。未配置返回空串（调用方据此不处理任何群消息）。 */
 const resolveBotOpenId = (env = process.env) => readExplicit(env, BOT_OPEN_ID_ENV_KEY);
 
@@ -82,7 +79,6 @@ module.exports = {
   DEFAULT_AMBIGUOUS_BATCH_REPLY,
   resolvePurchaseGroupReplies,
   DEFAULT_ACK_REACTION,
-  resolvePurchaseChatId,
   resolveBotOpenId,
   resolveAckReaction,
 };

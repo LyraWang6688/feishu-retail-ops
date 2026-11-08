@@ -1,0 +1,253 @@
+'use strict';
+
+/**
+ * 抖音团购券 · **平台结算到账**（业务负责人 2026-11-08 口径）。
+ *
+ * 判据（**按日期汇总，三个金额一分不差才改**）：
+ *   ① 我方：该「创建日」下所有「待平台结算」记录的「交易金额」合计；
+ *   ② 平台账单：`bill_date = 创建日` 的账单里 `amount.goods` 合计；
+ *   ③ 平台提现：`withdraw_time` 落在「结算日（创建日 + 5 天）」的提现 `amount` 合计；
+ *   ⇒ ①②③ **完全相等（精确到分）** 才把该批记录改成「已收款」+ 写「收付日」；
+ *     差 **1 分**都不改，只在运营群报差异（业务负责人 2026-11-08：「必须一分不差」）。
+ *
+ * 三条硬约束：
+ *   · **只碰「待平台结算」**：未收款 / 已收款一个字不动；
+ *   · **对不上不动数据**：宁可晚结，也不提前把没收到的钱记成已收；
+ *   · **单笔失败不中断**：其余照常结清，失败笔在群里点名、下次自动重试。
+ */
+
+const { logInfo, logWarn } = require('../utils/logger');
+const { createVoucherSettlementConfig } = require('../config/voucherSettlement');
+
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+/** 飞书字段值 → 纯文本（单选/文本可能是字符串，关联/多选可能是数组）。 */
+const textOf = (value) => {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    return value.map((item) => (item && typeof item === 'object' ? item.text ?? '' : item)).join('');
+  }
+  if (typeof value === 'object') return value.text ?? '';
+  return String(value);
+};
+
+/** epoch 毫秒 → 上海自然日 `YYYY-MM-DD`。 */
+const shanghaiDayOf = (epochMs) => {
+  const value = Number(epochMs);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  return new Date(value + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+};
+
+/** `YYYY-MM-DD` + N 天（纯日期运算，不经过本地时区）。 */
+const addDays = (dayKey, days) => {
+  const base = new Date(`${dayKey}T00:00:00.000Z`);
+  if (Number.isNaN(base.getTime())) return '';
+  base.setUTCDate(base.getUTCDate() + Number(days));
+  return base.toISOString().slice(0, 10);
+};
+
+/** 金额 → 分（整数）。取不到按 0（群里如实显示，不编）。 */
+const toCents = (value) => {
+  const raw = typeof value === 'number' ? String(value) : textOf(value).replace(/[^\d.-]/g, '');
+  const number = Number(raw);
+  return Number.isFinite(number) ? Math.round(number * 100) : 0;
+};
+
+const money = (cents) => (Number(cents || 0) / 100).toFixed(2);
+
+const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
+  Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
+));
+
+/** 账单里 `amount.goods` 合计（分）。 */
+const sumBillCents = (billData) => {
+  const records = Array.isArray(billData?.ledger_records) ? billData.ledger_records : [];
+  return records.reduce((sum, record) => sum + Number(record?.amount?.goods || 0), 0);
+};
+
+/** 提现记录 `amount` 合计（分）。 */
+const sumWithdrawCents = (withdrawData) => {
+  const records = Array.isArray(withdrawData?.bill_withdraw_records) ? withdrawData.bill_withdraw_records : [];
+  return records.reduce((sum, record) => sum + Number(record?.amount || 0), 0);
+};
+
+const createVoucherSettlementService = ({
+  gateway,
+  payments,
+  laike,
+  sendText,
+  config = createVoucherSettlementConfig(),
+  now = () => Date.now(),
+  logger = { logInfo, logWarn },
+} = {}) => {
+  if (!gateway) throw new Error('VoucherSettlementService requires gateway');
+  if (!payments || typeof payments.settlePlatformReceipt !== 'function') {
+    throw new Error('VoucherSettlementService requires payments.settlePlatformReceipt');
+  }
+  if (!laike || typeof laike.settleBill !== 'function' || typeof laike.settleWithdraw !== 'function') {
+    throw new Error('VoucherSettlementService requires laike.settleBill / laike.settleWithdraw');
+  }
+
+  /** 把「待平台结算」按创建日分组（纯函数，便于单测钉边界）。 */
+  const groupPending = (records, fields) => {
+    const groups = new Map();
+    records.forEach((record) => {
+      if (textOf(record.fields?.[fields.status]).trim() !== config.pendingStatus) return;
+      const day = shanghaiDayOf(record.fields?.[fields.createdAt]);
+      if (!day) return;
+      if (!groups.has(day)) groups.set(day, []);
+      groups.get(day).push(record);
+    });
+    return groups;
+  };
+
+  const renderMessage = ({ settledGroups, mismatches, failed }) => {
+    const texts = config.texts || {};
+    const lines = [String(texts.groupTitle || '')];
+    settledGroups.forEach((group) => {
+      lines.push(fill(texts.lineOf?.day, {
+        day: group.day,
+        settleDay: group.settleDay,
+        count: group.count,
+        amount: money(group.amountCents),
+        bill: money(group.billCents),
+        withdraw: money(group.withdrawCents),
+      }));
+    });
+    mismatches.forEach((item) => {
+      lines.push(fill(texts.lineOf?.mismatch, {
+        day: item.day,
+        settleDay: item.settleDay,
+        amount: money(item.amountCents),
+        bill: money(item.billCents),
+        withdraw: money(item.withdrawCents),
+      }));
+    });
+    if (failed.length) {
+      lines.push(fill(texts.lineOf?.failed, {
+        count: failed.length,
+        ids: failed.map((item) => item.receiptId || item.recordId).join('、'),
+      }));
+    }
+    if (settledGroups.length) lines.push(String(texts.lineOf?.footer || ''));
+    return lines.filter(Boolean).join('\n');
+  };
+
+  const notify = async (payload) => {
+    const chatId = String(config.chatId || '').trim();
+    if (!chatId) {
+      logger.logWarn('voucher.settlement.chat_missing', { env: 'NOTIFY_GROUP_CHAT_ID / PURCHASE_CHAT_ID' });
+      return { sent: false, reason: 'chat_missing' };
+    }
+    if (typeof sendText !== 'function') return { sent: false, reason: 'no_sender' };
+    const text = renderMessage(payload);
+    try {
+      await sendText(chatId, text);
+      logger.logInfo('voucher.settlement.notified', { chat_id: chatId, text_length: text.length });
+      return { sent: true, text };
+    } catch (error) {
+      logger.logWarn('voucher.settlement.notify_failed', { error: String(error?.message || error).slice(0, 200) });
+      return { sent: false, reason: 'send_failed' };
+    }
+  };
+
+  /**
+   * 跑一次（定时器每个 tick 都会调；**天然幂等**：结清过的记录不再是「待平台结算」）。
+   */
+  const run = async () => {
+    const startedAt = now();
+    if (!config.enabled) {
+      logger.logInfo('voucher.settlement.skipped', { reason: 'disabled' });
+      return { ok: true, skipped: 'disabled' };
+    }
+    if (!config.accountId) {
+      logger.logWarn('voucher.settlement.account_missing', { env: 'DOUYIN_LAIKE_ACCOUNT_ID' });
+      return { ok: false, reason: 'account_missing' };
+    }
+
+    const fields = gateway.table('paymentRecord').fields;
+    const records = await gateway.listAll('paymentRecord');
+    const todayKey = shanghaiDayOf(startedAt);
+    const groups = groupPending(records, fields);
+
+    const settledGroups = [];
+    const mismatches = [];
+    const failed = [];
+
+    for (const [day, groupRecords] of [...groups.entries()].sort()) {
+      const settleDay = addDays(day, config.settleDays);
+      if (!settleDay || settleDay > todayKey) continue; // 还没到结算日
+      const amountCents = groupRecords.reduce((sum, record) => sum + toCents(record.fields?.[fields.amount]), 0);
+
+      const bill = await laike.settleBill({ accountId: config.accountId, billDate: day });
+      const withdraw = await laike.settleWithdraw({ accountId: config.accountId, startDate: settleDay, endDate: settleDay });
+      if (!bill.ok || !withdraw.ok) {
+        mismatches.push({
+          day, settleDay, amountCents,
+          billCents: bill.ok ? sumBillCents(bill.data) : 0,
+          withdrawCents: withdraw.ok ? sumWithdrawCents(withdraw.data) : 0,
+          reason: 'platform_query_failed',
+        });
+        logger.logWarn('voucher.settlement.platform_query_failed', {
+          day,
+          bill_reason: bill.ok ? '' : bill.reason,
+          withdraw_reason: withdraw.ok ? '' : withdraw.reason,
+        });
+        continue;
+      }
+
+      const billCents = sumBillCents(bill.data);
+      const withdrawCents = sumWithdrawCents(withdraw.data);
+
+      // 🔴 业务负责人 2026-11-08：「必须一分不差，差 1 分也不改、只报差异」。
+      if (amountCents !== billCents || amountCents !== withdrawCents) {
+        mismatches.push({ day, settleDay, amountCents, billCents, withdrawCents, reason: 'amount_mismatch' });
+        logger.logWarn('voucher.settlement.mismatch', { day, settle_day: settleDay, amount_cents: amountCents, bill_cents: billCents, withdraw_cents: withdrawCents });
+        continue;
+      }
+
+      let count = 0;
+      for (const record of groupRecords) {
+        const recordId = record.record_id;
+        const receiptId = textOf(record.fields?.[fields.receiptId]);
+        try {
+          await payments.settlePlatformReceipt(recordId, startedAt, {
+            correlation: { payment_record_id: recordId, settle_day: settleDay },
+          });
+          count += 1;
+          logger.logInfo('voucher.settlement.item_settled', { payment_record_id: recordId, settle_day: settleDay, amount_cents: toCents(record.fields?.[fields.amount]) });
+        } catch (error) {
+          failed.push({ recordId, receiptId, settleDay });
+          logger.logWarn('voucher.settlement.item_failed', {
+            payment_record_id: recordId, settle_day: settleDay, error: String(error?.message || error).slice(0, 200),
+          });
+        }
+      }
+      if (count) settledGroups.push({ day, settleDay, count, amountCents, billCents, withdrawCents });
+    }
+
+    const summary = {
+      today: todayKey,
+      settledGroups: settledGroups.length,
+      settledCount: settledGroups.reduce((sum, group) => sum + group.count, 0),
+      mismatchCount: mismatches.length,
+      failedCount: failed.length,
+    };
+    logger.logInfo('voucher.settlement.done', summary);
+
+    const hasNews = settledGroups.length || mismatches.length || failed.length;
+    const notified = hasNews ? await notify({ settledGroups, mismatches, failed }) : { sent: false };
+    return { ok: true, ...summary, mismatches, notified: notified.sent === true };
+  };
+
+  return { run, groupPending, renderMessage, shanghaiDayOf, addDays, toCents };
+};
+
+module.exports = {
+  createVoucherSettlementService,
+  shanghaiDayOf,
+  addDays,
+  toCents,
+  sumBillCents,
+  sumWithdrawCents,
+};

@@ -154,7 +154,7 @@ test('AC-RT0 退货块 = **数量输入即选择**（没有勾选框；`return_q
   //   改后逐字：**没有勾选框**；每行只有一个数量输入（`return_qty_<尺码>`），不填 / 填 0 = 不退
   //   依据 = 她 2026-10-29 的批注（同一件事：勾选框与数量输入重复，选哪些码由数量表达即可）
   //   🔴 判据没消失：字段名 / 尺码清单 / 数量输入 / 上限与三句人话**都还在**（见 AC-RT1 / AC-RT4 / AC-RT7 / AC-RB6）
-  assert.equal(block.includes(`name="${SCAN_WRITE.fields.returnSizes}"`), false,
+  assert.equal(block.includes('name="return_sizes"'), false,
     '🔴 退货块**不许**再有勾选框字段（塞回 ⇒ 红 ✓）');
   for (const size of ['40', '42']) {
     assert.ok(block.includes(`data-size="${size}"`), `${size} 码要列出来 ✓`);
@@ -205,8 +205,6 @@ test('AC-RT2 ⭐ 勾 2 个尺码 + 填数量 ⇒ 提交后 `entries` **恰好那
     body.append('action', SCAN_WRITE.actions.purchaseReturn);
     body.append(SCAN_WRITE.fields.submitKey, 'scan_return:probe:1');
     body.append(SCAN_WRITE.fields.purchaseAmount, '798');   // 退货整单金额（必填，既有闸门 ✓）
-    body.append(SCAN_WRITE.fields.returnSizes, '40');
-    body.append(SCAN_WRITE.fields.returnSizes, '42');
     body.append(`${SCAN_WRITE.fields.returnQuantityPrefix}40`, '2');
     body.append(`${SCAN_WRITE.fields.returnQuantityPrefix}42`, '1');
     const response = await fetch(`${base}/r/${ENCODED}?from=purchase_return`, {
@@ -226,15 +224,48 @@ test('AC-RT2 ⭐ 勾 2 个尺码 + 填数量 ⇒ 提交后 `entries` **恰好那
   assert.equal(call.entries.some((entry) => entry.size === '41'), false, '没勾的码不许进 entries ✗');
 });
 
-test('AC-RT2b `parseReturnEntries`：勾了但没填数量 ⇒ 按配置的 `defaultQuantity`（既有语义没动）', () => {
+test('AC-RT2b 解析只认 `return_qty_<尺码>`：空/0 不提交；旧形状 `return_sizes` **不再兼容**', () => {
+  // ⚠️ **2026-11-08（业务负责人逐字：「不需要做兼容」）成对迁移**：
+  //   改前逐字：本用例钉"勾了但没填数量 ⇒ 按配置 defaultQuantity（兜底）"；
+  //   改后逐字：兜底已删 ⇒ 只认 `return_qty_<尺码>`：**空 / 0 = 不提交该码**；
+  //     只带旧 `return_sizes` 的请求 ⇒ entries = []（由写层空单校验 400，不再静默补齐数量）。
   const { parseReturnEntries } = require('../src/routes/scanPage');
-  const entries = parseReturnEntries(
-    { [SCAN_WRITE.fields.returnSizes]: ['40', '42'] }, SCAN_WRITE.fields, SCAN_WRITE,
-  );
-  assert.deepEqual(entries, [
-    { size: '40', quantity: SCAN_WRITE.purchaseReturn.defaultQuantity },
-    { size: '42', quantity: SCAN_WRITE.purchaseReturn.defaultQuantity },
-  ], '没填数量 ⇒ 既有兜底（配置值）✓ —— 这条**后端语义一个字没改** ✓');
+  const fields = SCAN_WRITE.fields;
+  assert.deepEqual(parseReturnEntries({
+    [`${fields.returnQuantityPrefix}40`]: '2',
+    [`${fields.returnQuantityPrefix}42`]: '',   // 空 = 不退
+    [`${fields.returnQuantityPrefix}44`]: '0',  // 0 = 不退
+  }, fields), [{ size: '40', quantity: '2' }], '只把"填了正数"的码收进来 ✓');
+  assert.deepEqual(parseReturnEntries({ return_sizes: ['40', '42'] }, fields), [],
+    '旧形状（只 return_sizes）⇒ 空清单（无兼容 ✓）');
+  assert.deepEqual(parseReturnEntries({ return_sizes: '41' }, fields), [],
+    '旧形状单值 ⇒ 同样空清单 ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-RT2c 旧页面形状 **不再兼容**（业务负责人 2026-11-08：「不需要做兼容」）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-RT2c ⭐ 只提交旧 `return_sizes`（没有数量字段）⇒ 400 空单 + 写服务 0 次（无兼容 ✓）', async () => {
+  const write = fakeWriteService();
+  await withServer(appFor(write), async (base) => {
+    const body = new URLSearchParams();
+    body.append('action', SCAN_WRITE.actions.purchaseReturn);
+    body.append(SCAN_WRITE.fields.submitKey, 'scan_return:probe:old-shape');
+    body.append(SCAN_WRITE.fields.purchaseAmount, '798');
+    body.append('return_sizes', '41');   // 旧页面形状：只有勾选框字段
+    const response = await fetch(`${base}/r/${ENCODED}?from=purchase_return`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { cookie: COOKIE, 'content-type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    assert.equal(response.status, 400, '旧形状不再被解析 ⇒ 空单 ⇒ 400（不是静默成功 ✗）');
+    const html = await response.text();
+    assert.ok(html.includes(SCAN_WRITE.texts.returnNoneBody), '人话 = 既有那句「至少要勾一个要退的尺码。」✓');
+  });
+  assert.equal(write.calls.filter((item) => item.kind === 'submitPurchaseReturn').length, 0,
+    '零写入（写服务一次都没进 ✓ 无兼容 · 不静默补数量 ✗）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

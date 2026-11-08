@@ -3,9 +3,6 @@ const { pageMessages, landingMessages, scanMessages } = require('../config/purch
 const crypto = require('node:crypto');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
-const {
-  purchaseArrivalReconcileStatusCard,
-} = require('../utils/larkCards');
 const { resolveArrivalConversationConfig } = require('../config/arrivalConversation');
 // ⛔ 2026-10-28：`ARRIVAL_CONVERSATION_ACTIONS`（卡片上的「是」）随**卡片按钮回调**一起摘掉 ——
 //   到货验收的现行入口是**工作台发起 + 扫码录入**（`confirmBatchArrival`，本文件保留）。
@@ -113,10 +110,6 @@ class PurchaseArrivalConversationService {
     sizeReferences,
     confirmArrival,
     markBatchArrived,
-    replyText,
-    replyCard,
-    updateCard,
-    getMessageMeta,
     config,
     now,
   } = {}) {
@@ -146,19 +139,6 @@ class PurchaseArrivalConversationService {
     // 群里的反馈一律**引用回复/回复卡片**（群聊没有"上一次对话"的概念）。
     // ⭐ ④ 两个端口都收第三个参数 `{ threadId }`：非空时由**飞书发送适配器**
     //    带 `reply_in_thread` 把这条反馈回到**那个话题**（本类不认识 reply_in_thread）。
-    this.replyText = replyText || (async () => '');
-    this.replyCard = replyCard || (async () => '');
-    this.updateCard = updateCard || (async () => false);
-    // ⭐⭐ 2026-10-07 晚（真机 23:37「日志说卡片已更新，她那边一张卡都没有」）：
-    //    **更新一张已经存在的消息之前，先读一眼它到底是什么** ——
-    //    `im.v1.message.get` 的 `msg_type` / `deleted` / `thread_id` / `updated`。
-    //    为什么非要有这一步：`im.v1.message.patch` 的**唯一成功判据是 `code === 0`**
-    //    （官方文档：该接口"仅支持更新卡片（消息类型为 `interactive`）"，
-    //     可它的错误码表里**没有**"目标不是卡片"这一条）⇒ 对一条文字 / 图片消息，
-    //    patch 完全可能回 `code 0` 却什么都没改，旧代码据此记成 `card_updated`。
-    //    ⚠️ 默认"读不到"（`not_wired`）= **不更新**：宁可不做，也不做一件看不见的事。
-    //    ⚠️ 它只是**证据与闸门**，**不参与任何业务判据**（读不到也绝不影响入库/发卡）。
-    this.getMessageMeta = getMessageMeta || (async () => ({ ok: false, reason: 'not_wired' }));
     // 配置从配置模块取；传进来的（测试/多租户）按**字段**覆盖，不会把没覆盖的项变成 undefined。
     const defaults = resolveArrivalConversationConfig();
     this.config = config
@@ -367,18 +347,7 @@ class PurchaseArrivalConversationService {
     // 发不出去只记日志，业务事实已经落地。
     // ⚠️ 2026-10-07：回话补 `threadId` —— 她是在**群话题**里操作的，回复必须落回那条话题
     //    （少了它就发到主群洪流里，她一样"看不到"）。
-    const cardMessageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id || '';
-    const cardPatched = await this.safeUpdateCard(
-      cardMessageId,
-      purchaseArrivalReconcileStatusCard({ batchNo: task.batch_no || '', message: summary, template: 'green' }),
-      // 下面紧接着就回这句结果（同一句话），所以这里不再叠一句"卡片没刷新成功"。
-      { task, taskId, replyOnFailure: false },
-    );
-    await this.safeReplyText(this.replyTarget(event, task), summary, this.threadOptions(task));
-    // ⭐ 正向证据：成功之后**卡片到底改没改成**也留痕（改不动时她那边的现象就是"点了没反应"）。
-    logInfo('purchase.arrival.reconcile.success_notice', {
-      task_id: taskId, card_message_id: cardMessageId, card_patched: cardPatched,
-    });
+    logInfo('purchase.arrival.reconcile.success_notice', { task_id: taskId });
     // ⭐ 正向证据：这些行**没有**入库（不是"看起来没写"，是把该写多少写进日志）。
     //    与 `purchase.arrival.reconcile.posted` 一起看，就能核清"0 双的行到底动没动库存"。
     if (zeroRows.length) {
@@ -796,326 +765,18 @@ class PurchaseArrivalConversationService {
     return '';
   }
 
-  replyTarget(event, task) {
-    return event?.context?.open_message_id || event?.open_message_id || task?.card_message_id || '';
-  }
-
-  /**
-   * 回复这条消息时要带的话题上下文。
-   *
-   * ⭐ 2026-10-07（她第二次说「卡片点击后没有任何反应」）：**卡片点击没有 `thread_id`**，
-   *    但对话任务上记着它是从哪个话题起的（`task.thread_id`，见 handleTopicMessageLocked）。
-   *    把它交给飞书发送适配器 → 带 `reply_in_thread` → 回复落回**她正在看的那个话题**。
-   *    任务上没有话题（主群 @ 进来的）→ 空对象，行为与改动前逐字相同。
-   */
-  threadOptions(task) {
-    const threadId = textValue(task?.thread_id);
-    return threadId ? { threadId } : {};
-  }
-
-  /**
-   * 🔴 **失败的可见反馈**（业务负责人 2026-10-07 连着两次：「卡片点击后也是没有任何反应」）。
-   *
-   * 以前失败的出口是「一行日志 + 一句不带 `threadId` 的回话 + 一个一闪而过的 toast」，
-   * 卡片**原样不动** ⇒ 她的结论就是"点了没反应"。现在两条腿一起走：
-   *   ① **把那张卡片 patch 成终态**（红色，标题 `card.failedTitle`）—— 就在她点的地方，跑不掉；
-   *   ② **回一句同样的话**（带 `threadId`，落回本话题）—— 卡片改不动时的兜底。
-   * 两者都失败也不隐藏：各记一条 `*_failed` 警告 + 下面这条 `failure_notice` 里如实写
-   * `card_patched` / `replied`，排查时能直接看出"她到底看没看到"。
-   *
-   * ⚠️ 这里**只负责"让她看见"**：错误原文原样带上（调用方用 `{error}` 插值），
-   *    **绝不**吞掉、**绝不**把失败说成成功；返回的 toast 仍是 `error`（除非调用方显式指定
-   *    为非错误的 `toastType`，例如"还没算出结果"）。
-   */
-  async visibleFailure({
-    tier, taskId, operator = '', event = {}, task = null, copy,
-    logEvent = '', error = null, toastType = 'error', template = 'red',
-  } = {}) {
-    // "还没算出结果"不是错误，只是要她再说一句：卡片用橙色，别把中性状态说成失败。
-    const headerTemplate = tier === 'not_confirmed_yet' ? 'orange' : template;
-    const messageId = this.replyTarget(event, task);
-    const cardPatched = await this.safeUpdateCard(messageId, purchaseArrivalReconcileStatusCard({
-      batchNo: task?.batch_no || '',
-      message: copy,
-      template: headerTemplate,
-      title: this.config.card.failedTitle,
-      // ⚠️ 下面紧接着就用**同一句**回话（失败本来就要回到话题里）⇒ 这里不再叠一句
-      //    "卡片没刷新成功"，免得她一次点击收到两句。
-    }), { task, taskId, replyOnFailure: false });
-    const replied = await this.safeReplyText(messageId, copy, this.threadOptions(task));
-    // ⭐ 正向证据：她"应该看到"的东西与"实际发出去"的东西都写下来。
-    //    ⚠️ 与调用方那条 error 级日志（如 `purchase.arrival.reconcile.confirm_failed`）**并存**，
-    //    不是替换 —— 错误原文仍然在 error 日志里。
+  async visibleFailure({ tier, taskId, operator = '', logEvent = '', error = null, toastType = 'error', copy } = {}) {
     logInfo('purchase.arrival.reconcile.failure_notice', {
-      tier,
-      task_id: taskId,
-      operator_open_id: operator || '',
-      card_message_id: messageId,
-      card_patched: cardPatched,
-      replied,
-      log_event: logEvent,
-      error: error ? error.message : '',
-      // 业务事实：失败**不写**入库、状态停在可重试的位置（由调用方保证）。
-      tables_written: 0,
+      tier, task_id: taskId, operator_open_id: operator || '', log_event: logEvent,
+      error: error ? error.message : '', tables_written: 0,
     });
     return { toast: { type: toastType, content: copy } };
   }
 
-  /**
-   * 「这一批已经入过库了」的可见终态（重复点「是」/ 已入库之后又点「否」）。
-   *
-   * 与 `visibleFailure` 的区别：这不是失败，卡片用**绿色**；也**不回文字**
-   *（她只是重复点了一次，不必再刷一条消息），只把卡片**幂等地**再改成终态 ——
-   * 上一次 patch 万一没成功，这一次点击就能看见。
-   */
-  async visibleAlreadyPosted({ tier, taskId, operator = '', event = {}, task = null } = {}) {
+  async visibleAlreadyPosted({ taskId } = {}) {
     const copy = this.config.replies.alreadyPosted;
-    const messageId = this.replyTarget(event, task);
-    const cardPatched = await this.safeUpdateCard(messageId, purchaseArrivalReconcileStatusCard({
-      batchNo: task?.batch_no || '',
-      message: copy,
-      template: 'green',
-    }), { task, taskId });
-    logInfo('purchase.arrival.reconcile.success_notice', {
-      tier, task_id: taskId, operator_open_id: operator || '',
-      card_message_id: messageId, card_patched: cardPatched, replied: false,
-    });
+    logInfo('purchase.arrival.reconcile.success_notice', { task_id: taskId });
     return { toast: { type: 'info', content: copy } };
-  }
-
-  /**
-   * 回一句话到那条消息。
-   * ⭐ ④ `options.threadId` 非空 = 这条消息在**话题**里 → 让飞书发送适配器带
-   * `reply_in_thread` 把它回到**同一个话题**（采购单/图是发群的，后续对话也必须回话题）。
-   * 不传 / 为空（主群 @ 进来）时与改动前逐字相同。
-   */
-  async safeReplyText(messageId, content, options = {}) {
-    if (!messageId || !content) return false;
-    try {
-      await this.replyText(messageId, content, options);
-      return true;
-    } catch (error) {
-      // 回不出去（缺权限、消息被撤回）绝不能把业务判失败：日志留痕，业务事实已经落地。
-      logWarn('purchase.arrival.reconcile.reply_failed', { message_id: messageId, error: error.message });
-      return false;
-    }
-  }
-
-  /**
-   * 读一眼**一条已经存在的消息**到底是什么（只读，`im.v1.message.get`）。
-   *
-   * 🔴 这个方法的唯一职责是回答"我能不能安全地 patch 它"：
-   *   `im.v1.message.patch` 官方文档写着"**仅支持更新卡片（消息类型为 `interactive`）**"，
-   *   可错误码表里**没有**"目标不是卡片"这一条（只有 230001 参数错 / 230011 已撤回 /
-   *   230031 超 14 天 / 230110 已删除 / 230027 无权限…）⇒ 对一条文字消息它可能回
-   *   `code 0` 却什么都没改。**判据必须落在"读一次事实"上，不能靠猜。**
-   *
-   * ⚠️ **本方法永不抛**：读不到（缺权限 / 网络 / 没接线）一律返 `{ ok: false, reason }`，
-   *    由调用方决定"拿不准就不动手"。
-   *
-   * @returns {Promise<{ok: boolean, reason?: string, error?: string,
-   *   msgType?: string, deleted?: boolean, updated?: boolean, threadId?: string}>}
-   */
-  async readMessageMeta(messageId) {
-    const id = String(messageId || '').trim();
-    if (!id) return { ok: false, reason: 'no_message_id' };
-    try {
-      const meta = await this.getMessageMeta(id);
-      if (!meta || meta.ok === false) {
-        return { ok: false, reason: (meta && meta.reason) || 'unavailable', error: (meta && meta.error) || '' };
-      }
-      return {
-        ok: true,
-        msgType: String(meta.msgType || ''),
-        deleted: Boolean(meta.deleted),
-        // ⚠️ `updated` 只作**证据**（刚 patch 完能不能立刻读到它变 true 没在真机验过），
-        //    不作任何业务判据 —— 见 `docs/arrival-card-visibility-2026-10-07.md` 第 10 节。
-        updated: meta.updated === true,
-        threadId: String(meta.threadId || ''),
-      };
-    } catch (error) {
-      return { ok: false, reason: 'call_failed', error: error.message };
-    }
-  }
-
-  /**
-   * ⭐ **刚发出去的那张卡片**的客观证据（只读一次 `im.v1.message.get`）。
-   *
-   * 要回答的就是她那句「话题里根本没有卡片」：日志里从此有
-   * `card_message_id`（发的是哪条）· `card_msg_type`（**读回来的事实**是不是 `interactive`）·
-   * `card_deleted`（有没有被撤回）· `card_thread_id` / `card_thread_match`
-   *（卡片落的话题 = 她这次说话的话题吗 —— 真机那次事故一眼就能看出来）。
-   *
-   * ⚠️ 读不到也**不判失败**：飞书已经回了 `message_id`（`code = 0`），卡片就是发出去了的；
-   *    这里只如实记 `card_msg_type_source: 'unavailable'` + 原因，**不猜**。
-   */
-  async cardEvidence(cardMessageId, threadId) {
-    const meta = await this.readMessageMeta(cardMessageId);
-    if (!meta.ok) {
-      return {
-        msgType: '', source: 'unavailable', reason: meta.reason,
-        deleted: null, threadId: '', threadMatch: null,
-      };
-    }
-    const wanted = String(threadId || '');
-    return {
-      msgType: meta.msgType,
-      source: 'message_get',
-      reason: '',
-      deleted: meta.deleted,
-      threadId: meta.threadId,
-      // `false` = 卡片落到了**别的话题**；`null` = 有一边没给到话题 id（判不了，不猜）。
-      threadMatch: wanted && meta.threadId ? meta.threadId === wanted : null,
-    };
-  }
-
-  /**
-   * 把**上一张核对卡片**尽力作废（按钮收掉、写明"用最新那张"）。
-   *
-   * ⭐⭐ 为什么必须先读一眼再动它（2026-10-07 真机事故的正面答案）：
-   *   改前是**无条件** patch `task.card_message_id` 指向的那条消息 —— 它可能
-   *   ① 是一条**文字/图片消息**（patch 回 `code 0` 却什么都没改，日志却记成 `card_updated`）；
-   *   ② 是**另一个话题**里那张卡（她那边照样什么都看不到）。
-   *   ⇒ 这里三道闸门：**先读一眼确认 `msg_type === 'interactive'` 且未被撤回** →
-   *     patch → **再读一眼校验**（`updated`）。读不到就**不动手**（宁可不做）。
-   *
-   * ⚠️ 它**永远不参与**"卡片发出去没有"这件事：新卡在这之前就已经发出去了
-   *   （见 `handleTopicMessageLocked` 的发卡那一段）⇒ 作废失败只是"话题里多留一张旧卡"，
-   *   记 `card_supersede_failed` 即可，**绝不影响**她这一轮的交付物。
-   *
-   * @returns {Promise<{attempted: boolean, result: 'ok'|'skipped'|'failed'|'none', reason?: string}>}
-   */
-  async retirePreviousCard(previousCardMessageId, { taskId = '', batchNo = '', newCardMessageId = '' } = {}) {
-    const id = String(previousCardMessageId || '').trim();
-    if (!id) return { attempted: false, result: 'none', reason: 'no_previous_card' };
-    if (id === String(newCardMessageId || '').trim()) {
-      return { attempted: false, result: 'none', reason: 'same_message' };
-    }
-    // ① 闸门：只在目标**确实是卡片**时才动手。
-    const meta = await this.readMessageMeta(id);
-    if (!meta.ok) {
-      logWarn('purchase.arrival.reconcile.card_supersede_skipped', {
-        task_id: taskId, card_message_id: id, reason: meta.reason, error: meta.error || '',
-        note: '读不到那条消息是什么（缺权限/网络）⇒ 拿不准就不动它；新卡已经发出去了',
-      });
-      return { attempted: false, result: 'skipped', reason: meta.reason };
-    }
-    if (meta.msgType !== 'interactive') {
-      // 🔴 **真机 2026-10-07 23:37 的根因就在这一行**：那条消息根本不是卡片，
-      //    旧代码却对它 patch、还记成 `card_updated` ⇒ 她那边自然什么都看不到。
-      //    现在：一个字都不改它，把**它真实的类型**写进日志（这就是排查要靠的那条证据）。
-      logWarn('purchase.arrival.reconcile.card_supersede_skipped', {
-        task_id: taskId, card_message_id: id, reason: 'target_not_interactive',
-        target_msg_type: meta.msgType, target_thread_id: meta.threadId || '',
-        note: '目标不是卡片（patch 对非卡片可能回 code 0 却什么都不改）⇒ 不 patch 它；新卡已经发出去了',
-      });
-      return { attempted: false, result: 'skipped', reason: 'target_not_interactive' };
-    }
-    if (meta.deleted) {
-      logWarn('purchase.arrival.reconcile.card_supersede_skipped', {
-        task_id: taskId, card_message_id: id, reason: 'target_deleted',
-        note: '那张卡已经被撤回 ⇒ 没什么可改的；新卡已经发出去了',
-      });
-      return { attempted: false, result: 'skipped', reason: 'target_deleted' };
-    }
-    // ② 动手：把它改成"已作废"的终态（按钮收掉、指向最新那张）。
-    // ⚠️ `replyOnFailure: false`：这里的失败**不该**往话题里插一句"卡片没刷新成功" ——
-    //    新卡已经发出去了、她看到的那张是好的；真正的失败证据是下面的 `card_supersede_failed`。
-    const updated = await this.safeUpdateCard(id, purchaseArrivalReconcileStatusCard({
-      batchNo,
-      message: this.config.card.supersededMessage,
-      template: 'grey',
-      title: this.config.card.supersededTitle,
-    }), { taskId, replyOnFailure: false });
-    if (!updated) {
-      logWarn('purchase.arrival.reconcile.card_supersede_failed', {
-        task_id: taskId, card_message_id: id, new_card_message_id: newCardMessageId,
-        note: '旧卡没改成终态：话题里可能同时留着两张可点的卡（两张指向同一个 taskId，点哪张都按最新计划入库）',
-      });
-      return { attempted: true, result: 'failed', reason: 'update_failed' };
-    }
-    // ③ 校验更新结果：再读一眼（只作证据，不作业务判据）。
-    const after = await this.readMessageMeta(id);
-    logInfo('purchase.arrival.reconcile.card_superseded', {
-      task_id: taskId, batch_no: batchNo,
-      card_message_id: id, new_card_message_id: newCardMessageId,
-      // `false` = 改是改了（`code 0`），但**读回来的 `updated` 不是 true**：
-      // 说明"改没改成"这件事靠 `code 0` 判不了 —— 正是这次要留下的证据。
-      update_verified: after.ok ? after.updated === true : false,
-      update_verify_reason: after.ok ? '' : after.reason,
-    });
-    return { attempted: true, result: 'ok', verified: after.ok ? after.updated === true : null };
-  }
-
-  /**
-   * 更新一张**已经存在的**卡片；**失败必须看得见**（业务负责人 2026-10-08 逐条批准）。
-   *
-   * 改前：失败只 `logWarn` + 返 `false` —— 她那边的现象就是"点了一点反应都没有"
-   *（卡片没动、也没有任何文字），日志里却只有一行 warn。
-   * 现在两条腿一起走：
-   *   ① **warn 留痕**（保留原有的 `card_update_failed`，把"适配器返回假值"与"抛错"都写上）；
-   *   ② **往那条话题回一句人话**（`replies.cardUpdateFailed`，可置空）——
-   *      文案说清"卡片没刷新成功，以这条话为准 / 重新说一句我重出卡"。
-   *      ⚠️ 这句回话**自己失败也不许抛**（`safeReplyText` 内部已吞并记 `reply_failed`），
-   *         这里**不再套第二层兜底**。
-   *
-   * @param {object} [options] `{ task, taskId, threadId, replyOnFailure }`
-   *   · `task` / `taskId`：拿 `task.thread_id` 把兜底那句回到**同一条话题**（拿不到就不带）；
-   *   · `replyOnFailure: false`：调用方**自己紧接着就会回话**（或回话会误导）⇒ 不叠这句。
-   */
-  async safeUpdateCard(messageId, card, options = {}) {
-    if (!messageId) return false;
-    let updated = false;
-    try {
-      updated = await this.updateCard(messageId, card);
-      // ⚠️ 适配器**不抛错但返回假值**也是"没改成"（例如 `client.im.v1.message.patch` 不存在），
-      //    一样要留痕 —— 否则排查时只看到"卡片没变"，不知道为什么。
-      if (!updated) {
-        logWarn('purchase.arrival.reconcile.card_update_failed', {
-          message_id: messageId, error: 'updateCard 返回了假值（卡片没改成功）',
-        });
-      }
-    } catch (error) {
-      logWarn('purchase.arrival.reconcile.card_update_failed', { message_id: messageId, error: error.message });
-      updated = false;
-    }
-    if (!updated) await this.notifyCardUpdateFailed(messageId, options);
-    return updated;
-  }
-
-  /**
-   * 卡片没刷新成功时，往那条话题回一句人话（**本身永不抛**）。
-   *
-   * ⚠️ 它是 `safeUpdateCard` 的兜底，**不反向调用 `safeUpdateCard`**（否则就是无限兜底）。
-   * ⚠️ 文案在 config（`replies.cardUpdateFailed`）；置空 = 只留 warn、不回话。
-   */
-  async notifyCardUpdateFailed(messageId, options = {}) {
-    const copy = options.replyOnFailure === false ? '' : this.config.replies.cardUpdateFailed;
-    if (!copy) return false;
-    const task = options.task || await this.loadTaskQuietly(options.taskId);
-    const thread = options.threadId ? { threadId: String(options.threadId) } : this.threadOptions(task);
-    const replied = await this.safeReplyText(messageId, copy, thread);
-    logWarn('purchase.arrival.reconcile.card_update_failed_notice', {
-      message_id: messageId,
-      task_id: options.taskId || task?.task_id || '',
-      replied,
-      note: '卡片没刷新的兜底回话（这句本身失败也只记日志，绝不抛）',
-    });
-    return replied;
-  }
-
-  /** 读一眼任务拿 `thread_id` 用；读不到（没接线 / 记录没了）返 null，**不抛**。 */
-  async loadTaskQuietly(taskId) {
-    const id = String(taskId || '').trim();
-    if (!id) return null;
-    try {
-      return await this.store.get(id);
-    } catch (error) {
-      logWarn('purchase.arrival.reconcile.task_read_failed', {
-        task_id: id, error: error.message, note: '只为拿 thread_id；读不到就不带话题',
-      });
-      return null;
-    }
   }
 }
 

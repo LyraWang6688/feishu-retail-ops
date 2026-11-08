@@ -46,7 +46,7 @@ test('AC4 ⭐⭐ 参数契约：config 的入参名 == 服务调用处传的键�
   assert.ok(sigs.size >= 2, 'config 里应有填参函数');
   // 服务：`<组>.m2({ plan, requestIds })`
   const calls = [...svcText.matchAll(/(\w+)\.(m\d+)\(\{\s*([^}]*)\}/g)];
-  assert.ok(calls.length >= 2, '服务里应有填参调用');
+  assert.ok(calls.length >= 1, '服务里应有填参调用');
   for (const [, , key, args] of calls) {
     const passed = args.split(',').map((x) => x.trim()).filter(Boolean).sort();
     assert.deepEqual(passed, sigs.get(key), `${key} 的入参名必须与 config 签名**完全一致**（多传/少传都是 bug：会 ReferenceError）`);

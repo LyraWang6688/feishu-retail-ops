@@ -429,7 +429,7 @@ test('AC-RI1 ⭐⭐ 扫码页退货 POST（真路由→真引擎→真写入件�
 
     // ② 真链路（扫码页那一页 GET 出来的 key ⇒ POST ⇒ 后台那一跑写完）
     await withServer(h.app, async (base) => {
-      await submitThroughRoute(h, { base, form: { return_sizes: '41', return_qty_41: '1' } });
+      await submitThroughRoute(h, { base, form: { return_qty_41: '1' } });
     });
     // ③ 出图 / 发群那一整条**真的跑过**（她 20:12 那次缺的正是这一步）
     assert.equal(h.renders.length, 1, '1 件退货 ⇒ 出图那一步被调了一次 ✓');
@@ -455,7 +455,7 @@ test('AC-RI2 单货品退货（1 件）⇒ 1 张图 ＋ 「单据」1 张 ＋ �
   const logs = captureLogs();
   try {
     await withServer(h.app, async (base) => {
-      await submitThroughRoute(h, { base, form: { return_sizes: '41', return_qty_41: '1' } });
+      await submitThroughRoute(h, { base, form: { return_qty_41: '1' } });
     });
     assert.equal(h.renders.length, 1);
     assert.equal(h.renders[0].supplierName, '甲供应商', '供应商由代码读「货品信息.供应商」✓');
@@ -483,7 +483,7 @@ test('AC-RI3a ⭐ 一单退货 2 个货品（2 家供应商）⇒ 按供应商**
     await withServer(h.app, async (base) => {
       await submitThroughRoute(h, {
         base,
-        form: { return_sizes: '41', return_qty_41: '1' },
+        form: { return_qty_41: '1' },
         multiItems: [
           // ⚠️ 扫码页真实给出的形状：`supplier_record_id` 是空的（供应商由**代码**从货品行读 ✓）
           { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', entries: [] },
@@ -571,7 +571,7 @@ test('AC-RI4 🔴 探针：关掉出图开关（= 装配那几行不接）⇒ **
   const logs = captureLogs();
   try {
     await withServer(h.app, async (base) => {
-      await submitThroughRoute(h, { base, form: { return_sizes: '41', return_qty_41: '1' } });
+      await submitThroughRoute(h, { base, form: { return_qty_41: '1' } });
     });
     // ⭐ 这就是**改前线上**的那一刻：账走了（批次行在）、图一张没发 ✗
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '账照走（这条链路本来就不受影响 ✓）');
