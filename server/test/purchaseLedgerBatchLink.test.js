@@ -206,8 +206,10 @@ test('③ 销售减少 / 采购退货的流水**不带**「关联采购」；销
   });
 
   const returnGateway = makeGateway({ [LIVE]: [liveUnit('door_9', 38, '仓库')] });
+  // ⚠️ 2026-11-08（issue #961）成对迁移：采购退货的来源身份改由行为注册表声明
+  //    （真实三元组：批次身份 ｜ 货品 ｜ 尺码），所以这里传批次身份而不是裸 `sourceRecordId`。
   await inventoryFor(returnGateway).applyChange({
-    kind: PURCHASE_DECREASE, sourceRecordId: 'purchase_return_1',
+    kind: PURCHASE_DECREASE, purchaseBatchRecordId: 'purchase_return_1',
     productRecordId: 'product_1', size: 38, quantity: 1, state: '仓库',
   });
   assert.deepEqual(returnGateway.records[LEDGER][0].fields, {

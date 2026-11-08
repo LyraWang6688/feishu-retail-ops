@@ -11,14 +11,14 @@ const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireMovement, MOVEMENT_PURCHASE_DECREASE, LIVE_STATES } = require('./movements');
 const {
-  operationId,
+  operationSourceIdOf,
+  operationIdOf,
   positiveInteger,
   stockKeyLabelFields,
   correlationPatch,
   stockKeyLabelOfOperation,
   movementLedgerLinkPatch,
   movementLedgerLinkValue,
-  purchaseReturnSourceId,
 } = require('./keys');
 
   /**
@@ -37,7 +37,7 @@ const {
    *   ＋ 1 次 `deleteBatch`（整批一次删完 · ≤500/片由网关分片）**。
    *
    * 🔴 **语义一行不改**（与逐条路径逐字对齐）：
-   *   · 幂等键 = `purchaseReturnSourceId(input)`（本地 task journal）⇒ **重跑零写**、
+   *   · 幂等键 = `operationSourceIdOf(movement, input)`（源自由注册表声明）⇒ **重跑零写**、
    *     崩溃后按同一把键续跑（`resumePending` → `executeOperation`，这条路一个字没动）；
    *   · "内容与首次提交不一致"闸门、「重复业务事实」语义、超库存报文、行为解析 /
    *     库存方向 / 「库存键」标签 全部**复用逐条路径那几个 helper**；
@@ -94,7 +94,8 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
     const prepared = [];
     for (const input of list) {
       if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
-      const sourceRecordId = purchaseReturnSourceId(input);
+      // ⭐ 2026-11-08（issue #961）：来源身份 / operationId 只由行为注册表声明的统一入口生成。
+      const sourceRecordId = operationSourceIdOf(movement, input);
       // 与 `applyPurchaseReturn` 同一条纪律：**先按来源回查本地任务**，重放时用它自己记下的 state
       // （否则重放会拿"重新算出来的 state"去比对，被"内容与首次提交不一致"当场拦下）。
       const existing = await this.findOperationBySource(sourceRecordId);
@@ -107,7 +108,7 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
         size,
         state,
         quantity: positiveInteger(input.quantity, '采购退货数量'),
-        operationId: operationId(MOVEMENT_PURCHASE_DECREASE, sourceRecordId),
+        operationId: operationIdOf(movement, input),
         stockKey: `${input.productRecordId}|${size}|${state}`,
       });
     }

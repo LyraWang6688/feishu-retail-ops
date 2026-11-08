@@ -11,7 +11,8 @@ const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireStateMovement, resolveTargetState } = require('./movements');
 const {
-  operationId,
+  operationSourceIdOf,
+  operationIdOf,
   positiveInteger,
   stockKeyLabelFields,
   correlationPatch,
@@ -34,7 +35,6 @@ const {
 
 async function transitionState(input = {}, options = {}) {
     if (!input.productRecordId) throw new Error('库存状态变更缺少商品 record_id');
-    if (!input.sourceRecordId) throw new Error('库存状态变更缺少来源标识（requestId）');
     const movement = requireStateMovement(input.kind);
     const transition = movement.stateTransition;
     const fromStates = [].concat(transition.from);
@@ -49,19 +49,24 @@ async function transitionState(input = {}, options = {}) {
         + `不能从「${fromState || '空'}」转出`);
     }
     if (fromState === toState) throw new Error(`库存动作「${input.kind}」的起点和终点都是「${toState}」，无需调整`);
+    // ⭐ 2026-11-08（issue #961）：来源身份 / operationId 只由行为注册表声明的统一入口生成。
+    //    状态变更的来源 = 「工作台请求编号 requestId + 目标身份（含起点状态）」——缺字段按配置抛错，
+    //    绝不编 id；`fromState` 用**解析后**的值（单一起点行为不需要调用方传）。
+    const sourceInput = { ...input, fromState };
+    const sourceRecordId = operationSourceIdOf(movement, sourceInput);
+    const id = operationIdOf(movement, sourceInput);
     const stockKey = `${input.productRecordId}|${size}|${fromState}`;
     const correlation = correlationFields(options.correlation);
     return this.runForStock(stockKey, async () => {
       await this.ensureSchema();
       const sizeReference = await this.sizeReferences.resolveByNumber(size);
       await this.resumePending(stockKey);
-      const id = operationId(input.kind, input.sourceRecordId);
       let operation = await this.store.get(id);
       if (operation) {
         if (operation.kind !== input.kind || operation.product_record_id !== input.productRecordId ||
           operation.size !== size || operation.from_state !== fromState ||
           operation.to_state !== toState || operation.quantity !== quantity) {
-          throw new Error(`来源 ${input.sourceRecordId} 的库存状态变更内容与首次提交不一致`);
+          throw new Error(`来源 ${sourceRecordId} 的库存状态变更内容与首次提交不一致`);
         }
       } else {
         // 行为表的「库存方向=不影响」+ 是否启用在这里校验（resolveStockBehavior）。
@@ -96,7 +101,7 @@ async function transitionState(input = {}, options = {}) {
           quantity,
           direction: behavior.direction,
           behavior_record_id: behavior.recordId,
-          source_record_id: input.sourceRecordId,
+          source_record_id: sourceRecordId,
           occurred_at: Number(input.occurredAt || Date.now()),
           // 同上：人工调整的操作人只落本地任务 + 日志（「库存流水」还没有「操作人」列）。
           operator_open_id: input.operatorOpenId || '',

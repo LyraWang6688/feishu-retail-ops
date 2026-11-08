@@ -12,15 +12,15 @@ const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireMovement, MOVEMENT_PURCHASE_INCREASE, LIVE_STATES } = require('./movements');
 const {
-  operationId,
+  operationSourceIdOf,
+  operationIdOf,
+  operationItemKeyOf,
   positiveInteger,
   stockKeyLabelFields,
   correlationPatch,
   stockKeyLabelOfOperation,
   movementLedgerLinkPatch,
   movementLedgerLinkValue,
-  operationItemKey,
-  purchaseIncreaseSourceId,
 } = require('./keys');
 
   /**
@@ -34,8 +34,9 @@ const {
    *   + `createBatch('inventoryLedger', rows)` + `createBatch('liveInventory', rows)`
    *
    * 🔴 **语义一行不改**（与逐条路径逐字对齐，AC 用"字段集逐字相同"钉住）：
-   *   · 幂等键 = `purchaseIncreaseSourceId(input)`（本地 task journal）+ 每双的「库存操作键」
-   *     （`operationItemKey(operationId, 序号)`）⇒ **重跑零写**、崩溃后按同一把键续跑；
+   *   · 幂等键 = `operationSourceIdOf(movement, input)`（本地 task journal，来源由注册表声明）
+   *     + 每双的「库存操作键」（`operationItemKeyOf(movement, input, 序号)`）
+   *     ⇒ **重跑零写**、崩溃后按同一把键续跑；
    *   · 行为解析 / 库存方向 / 「关联采购」关联值 / 「库存键」标签 **复用逐条路径那几个 helper**；
    *   · 串行队列：**按 `stock_key` 先过一遍**（`runForStocks`，跨任务同 key 不会被绕过）；
    *   · 失败粒度 = **整批一次写**（任一批量写失败 ⇒ 这一批一条都不写；重试按同一把键补齐）。
@@ -57,8 +58,8 @@ async function applyPurchaseBatch(items = [], options = {}) {
     const movement = requireMovement(MOVEMENT_PURCHASE_INCREASE);
     const prepared = list.map((input) => {
       if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
-      const sourceRecordId = purchaseIncreaseSourceId(input);
-      if (!sourceRecordId) throw new Error('库存变化缺少来源明细 record_id');
+      // ⭐ 2026-11-08（issue #961）：来源身份 / operationId 只由行为注册表声明的统一入口生成。
+      const sourceRecordId = operationSourceIdOf(movement, input);
       const size = normalizeSize(input.size);
       const state = String(input.state || '门盒');
       if (!LIVE_STATES.includes(state)) throw new Error('库存所属状态无效');
@@ -68,7 +69,7 @@ async function applyPurchaseBatch(items = [], options = {}) {
         size,
         state,
         quantity: positiveInteger(input.quantity, '采购入库数量'),
-        operationId: operationId(MOVEMENT_PURCHASE_INCREASE, sourceRecordId),
+        operationId: operationIdOf(movement, input),
         stockKey: `${input.productRecordId}|${size}|${state}`,
       };
     });
@@ -95,7 +96,7 @@ async function applyPurchaseBatch(items = [], options = {}) {
         const liveRecordIds = [];
         const toCreate = [];
         for (let sequence = 1; sequence <= item.quantity; sequence += 1) {
-          const itemKey = operationItemKey(item.operationId, sequence);
+          const itemKey = operationItemKeyOf(movement, item.input, sequence);
           const matches = itemKeyField
             ? allLive.filter((record) => textValue(record.fields?.[itemKeyField]).trim() === itemKey)
             : [];

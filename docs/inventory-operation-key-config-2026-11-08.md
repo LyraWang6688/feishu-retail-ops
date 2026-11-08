@@ -2,7 +2,9 @@
 
 > 2026-11-08 制定。对应 issue：[#961](https://github.com/LyraWang6688/feishu-retail-ops/issues/961)。
 >
-> 本文只记录现状、方案与迁移约束，不代表代码已配置化；当前实现仍是分散的 `sourceId` 函数。
+> 本文记录现状、方案与迁移约束。
+> ⭐ **2026-11-08 已落地**（第 1、2 步）：配置 + 统一入口 + golden 测试已进代码，
+> 旧函数保留为 deprecated 一个版本；实现状态与逐条对照见本文第 11 节。
 
 ## 1. 库存操作键是什么
 
@@ -229,3 +231,87 @@ purchase_return:<批次身份>|<货品>|<尺码>
 - `server/src/services/inventory/saleBatch.js`
 - `server/src/services/inventory/stateTransition.js`
 - issue #961
+
+## 11. 实现状态（2026-11-08）
+
+分支 `feat/inventory-operation-key-config`（issue #961）。**只做配置化 + 迁移，不部署、不写生产 Base、不改历史数据。**
+
+### 11.1 配置落在哪
+
+`server/src/services/inventory/movements.js` 的 `STOCK_MOVEMENTS[行为].operationKey`：
+
+```js
+operationKey: {
+  kind,             // operationId 前缀（历史键逐字兼容：多数 = 行为编码）
+  sourcePrefix,     // 可选：来源身份前缀（采购入库 purchase_increase / 采购退货 purchase_return）
+  sourceFields,     // 来源身份组成字段（第一个是"身份字段"，其余必需）
+  sourceFallbacks,  // 可选：身份字段拿不到时的回落顺序
+  separator,        // 多字段连接符
+  perItem,          // 是否每个（货品 + 尺码）独立一把键（true ⇒ 必须含 productRecordId + size）
+  missingMessage,   // 身份字段缺失时的明确错误（绝不编 id）
+  fieldMessages,    // 可选：必需组成字段缺失时的逐字段错误
+  operations,       // 可选：同一行为另一条通路的独立键声明（补样品通路 kind='sample'）
+}
+```
+
+⚠️ **文案不在 service 里**：来源缺失 / 配置校验的提示语在 `server/src/config/inventoryOperationKeys.js`
+（按项目约定「用户可见文案抽到 config」；`test/noHardcodedChinese.test.js` 会拦新增硬编码中文）。
+改文案**不影响任何键字符串**。
+
+### 11.2 统一入口（`server/src/services/inventory/keys.js`）
+
+```text
+operationSourceIdOf(movement, input[, operationPath])
+operationIdOf(movement, input[, operationPath])
+operationItemKeyOf(movement, input, sequence[, operationPath])
+validateOperationKeyConfigs(movements)          ← 部署闸门（validateStockBehaviors 的第一步）
+```
+
+- 派生规则：身份字段链（`sourceFields[0]` + `sourceFallbacks`）取第一个非空（trim 后）；
+  其余字段必需（`size` 走 `normalizeSize`）；`separator` 连接；`sourcePrefix` 存在时 `<prefix>:<body>`。
+- **旧函数** `purchaseIncreaseSourceId` / `purchaseReturnSourceId` / `samplePromotionId` 保留为
+  **deprecated 一个版本**，内部**只调统一入口**（行为只有一套，两套行为被 `test/inventoryOperationKeys.test.js` 钉死）。
+- 重放 / 续跑（`executeOperation` / `executeStateTransition` / `executeSamplePromotion`）**不重算** operationId，
+  仍用本地任务记录里的 `operation_id`（事实优先：配置改过 kind 也不会造出第二把键）。
+
+### 11.3 覆盖的行为（13 条 + 补样品通路）
+
+| 行为编码 | operationId kind | 来源身份 | perItem |
+|---|---|---|---|
+| `STOCK_SALE_DECREASE` | 同编码 | `salesDetailRecordId` | false |
+| `STOCK_PURCHASE_INCREASE` | 同编码 | `purchase_increase:批次身份｜货品｜尺码` | true |
+| `STOCK_PURCHASE_DECREASE` | 同编码 | `purchase_return:批次身份｜货品｜尺码` | true |
+| `STOCK_SALE_INCREASE` / `SALE_RETURN` / `SALE_COMPENSATION` / `SALE_CASH` | 同编码 | 调用方给的 `sourceRecordId`（售后链路 = 销售明细 record_id） | false |
+| `STOCK_MANUAL_INCREASE` / `STOCK_MANUAL_DECREASE` | 同编码 | `${requestId}:${货品}:${尺码}:${状态}` | false |
+| `STOCK_FREEZE` / `STOCK_RELEASE_TO_DOOR_BOX` / `STOCK_SAMPLE_TO_DOORBOX` | 同编码 | `${requestId}:${货品}:${尺码}:${起点状态}` | false |
+| `STOCK_DOORBOX_TO_SAMPLE`（状态通路） | 同编码 | `${requestId}:${货品}:${尺码}:${起点状态}` | false |
+| `STOCK_DOORBOX_TO_SAMPLE`（补样品通路 `operations.sample_promotion`） | **`sample`**（历史值，不许改） | `salesDetailRecordId` | false |
+
+### 11.4 迁移的调用方
+
+- `inventoryService.js`：`applySale` / `applyPurchase` / `applyPurchaseReturn` / **`applyChange`**（来源与 operationId 都由配置派生）
+- `purchaseBatch.js` / `purchaseReturnBatch.js` / `saleBatch.js`：来源 / operationId / 每双 itemKey 走统一入口
+- `stateTransition.js`：来源 = 请求编号 + 目标身份（`fromState` 用解析后的值）
+- `samplePromotion.js`：走 `operations.sample_promotion`（kind='sample'）
+- `inventoryAdjustmentService.js`：`adjustmentSourceId` 变 deprecated 包装（内部只调统一入口）；
+  `adjustCount` / `adjustSeason` 改传 `requestId`，由库存引擎按配置派生
+
+### 11.5 键字符串兼容（golden test）
+
+`server/test/inventoryOperationKeys.test.js` 里冻结了一份**改前参照实现**（独立照抄旧拼法，不调用新入口），
+对每个行为逐条断言 `sourceRecordId` / `operationId` / `operationItemKey(1..3)` 与改前**逐字一致**；
+另外钉住：缺字段按配置抛错、配置闸门能拦住漏声明、历史撞键（同款不同码共用键）不再产生。
+
+### 11.6 有意的小变化（如实标）
+
+- 单字段来源统一做 `trim()`（改前 `applySale` 不 trim、`saleBatch` trim）：真实 `record_id` 不含空白，历史键不受影响。
+- `applyChange` 的报错顺序：先拦"走错通路"（状态类不许进数量通路）再派生来源；未注册行为的报错因此提前，
+  文案不变。
+- 采购入库 / 采购退货的直接低层调用（`applyChange`）现在要传**业务身份字段**（`purchaseBatchRecordId` 等），
+  不再接受裸 `sourceRecordId` —— 这正是"来源由配置声明"的必然结果（相关测试已**成对迁移**）。
+
+### 11.7 尚未做（后续卡片）
+
+- 第 3 步：确认无调用后删除三个 deprecated 函数（本卡**不删**，按 issue 保留一个版本）；
+- 第 4 步：只读巡检脚本（撞键组数 / 空操作键行数）——本卡不改历史数据、不重算历史键；
+- 生产 Base 仍只读；**未部署**（部署需业务负责人当次明确指令）。

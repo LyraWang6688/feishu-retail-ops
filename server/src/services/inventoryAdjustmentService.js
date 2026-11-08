@@ -20,14 +20,15 @@
  *   两者分开，将来入口换（飞书卡片 / 别的工作台）时下面那层一行不用动。
  *
  * 幂等（她 2026-10-06 明确：幂等要能用界面侧的 requestId）：
- *   库存操作的幂等键是 `operationId(kind, sourceRecordId)`（见 inventoryService）。
- *   人工调整没有"明细单"，所以 sourceRecordId 由入口给：
- *     `sourceRecordId = ${requestId}:${productRecordId}:${size}:${state}`
+ *   ⭐ 2026-11-08（issue #961）：库存操作键改由**行为注册表声明**（`STOCK_MOVEMENTS[x].operationKey`），
+ *   本层不再自己拼来源格式。人工调整没有"明细单"，来源身份 = 「请求编号 + 目标身份」：
+ *     `operationSourceIdOf(STOCK_MOVEMENTS[手工调增], { requestId, productRecordId, size, state })`
  *   · `requestId` 由**界面在提交时生成一次**，**重试复用同一个**（前端 pendingRequestId）；
  *   · 后面三段是目标身份 —— 一次提交里每个目标各不相同，所以同一批里不会互相顶掉；
- *   · 同一目标重试 → sourceRecordId 不变 → 命中同一条本地任务 → 不会重复加/减。
+ *   · 同一目标重试 → 来源身份不变 → 命中同一条本地任务 → 不会重复加/减。
  */
 const { ADJUSTMENT_BEHAVIORS, LIVE_STATES, STOCK_MOVEMENTS } = require('./inventoryService');
+const { operationSourceIdOf } = require('./inventory/keys');
 const {
   INVENTORY_ADJUSTMENT_MAX_TARGETS,
   INVENTORY_ADJUSTMENT_BATCH_CONCURRENCY,
@@ -80,8 +81,11 @@ const requireInteger = (value, label) => {
 };
 
 // 一次提交里每个目标各自的幂等来源：requestId 由界面给，其余是目标身份。
+// ⚠️ 2026-11-08（issue #961）**deprecated**：来源拼法已收敛到行为注册表，这里只调统一入口
+//    （保留它是为了既有调用方 / 排查脚本；行为只有一套，确认无调用后即可删除）。
 const adjustmentSourceId = ({ requestId, productRecordId, size, state }) =>
-  `${requestId}:${productRecordId}:${size}:${state}`;
+  operationSourceIdOf(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE],
+    { requestId, productRecordId, size, state });
 
 const runWithConcurrency = async (items, limit, worker) => {
   const results = new Array(items.length);
@@ -114,8 +118,11 @@ class InventoryAdjustmentService {
     if (!Object.values(COUNT_MODES).includes(adjustMode)) {
       throw userError(`盘点方式只能是：${Object.values(COUNT_MODES).join(' / ')}`);
     }
-    const sourceRecordId = adjustmentSourceId({ requestId: source, productRecordId: product,
-      size: normalizedSize, state });
+    // ⚠️ 盘点调整的两个行为（调增 / 调减）在注册表里声明的是**同一个来源形状**
+    //    （requestId：货品：尺码：状态），而"走增还是减"要算完差额才知道 ⇒ 先用调增那条声明
+    //    算来源身份（配置校验用例钉住两条声明一致），幂等回查仍在算差额之前（重试语义不变）。
+    const sourceRecordId = operationSourceIdOf(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE],
+      { requestId: source, productRecordId: product, size: normalizedSize, state });
     // 幂等第一层：同一次提交重试 → 命中原来那条库存任务，直接回放结果。
     // 不能靠"重算差额"来判幂等：重试时账面已经变了，按实际盘点数算出来的差额会变成 0，
     // 反而报"不需要调整"（这正是这条回查要解决的问题）。
@@ -143,7 +150,8 @@ class InventoryAdjustmentService {
       size: normalizedSize,
       state,
       quantity,
-      sourceRecordId,
+      // 来源身份由 applyChange 按注册表声明自己算（同一份 requestId + 目标身份 ⇒ 同一个键）。
+      requestId: source,
       operatorOpenId,
     });
     logInfo('inventory.adjustment.count.applied', {
@@ -244,8 +252,8 @@ class InventoryAdjustmentService {
             fromState: target.state,
             toState: targetState,
             quantity: target.quantity,
-            sourceRecordId: adjustmentSourceId({ requestId: source, productRecordId: target.productRecordId,
-              size: target.size, state: target.state }),
+            // 来源身份由 transitionState 按注册表声明自己算（requestId + 目标身份）。
+            requestId: source,
             operatorOpenId,
           });
           return { ...target, ok: true, ...result };

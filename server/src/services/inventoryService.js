@@ -43,6 +43,10 @@ const {
 } = require('./inventory/movements');
 const {
   operationId,
+  operationSourceIdOf,
+  operationIdOf,
+  operationItemKeyOf,
+  validateOperationKeyConfigs,
   positiveInteger,
   stockKeyLabelFields,
   correlationPatch,
@@ -145,6 +149,10 @@ class InventoryService {
   }
 
   async validateStockBehaviors() {
+    // ⭐ 2026-11-08（issue #961）：先校验**静态配置**（不读远端）——
+    //    每个行为都必须声明操作键来源（`operationKey`），缺声明 / 声明不完整 ⇒ 部署闸门直接红，
+    //    而不是等到某一次写库才在运行时抛（"新增行为只改配置 + 行为表"的兜底判据）。
+    validateOperationKeyConfigs(STOCK_MOVEMENTS);
     for (const kind of Object.keys(STOCK_MOVEMENTS)) await this.resolveStockBehavior(kind);
   }
 
@@ -186,7 +194,6 @@ class InventoryService {
       // A sale always consumes door-box stock first, then a sample. Callers
       // must not bypass that policy by choosing a source state themselves.
       state: '门盒',
-      sourceRecordId: input.salesDetailRecordId,
       quantity: positiveInteger(input.quantity, '销售数量'),
     }, options);
   }
@@ -221,13 +228,14 @@ class InventoryService {
    *      没有才用调用方给的 / 默认值。这样"崩溃恢复重放"与"首次提交"走的是同一份 state。
    */
   async applyPurchase(input, options = {}) {
-    const sourceRecordId = purchaseIncreaseSourceId(input);
+    // 来源身份由行为注册表的 `operationKey` 声明（真实三元组），这里只调统一入口：
+    // 同一份输入在 applyChange 里会算出**逐字相同**的 sourceRecordId / operationId。
+    const sourceRecordId = operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], input);
     const existing = await this.findOperationBySource(sourceRecordId);
     return this.applyChange({
       ...input,
       kind: MOVEMENT_PURCHASE_INCREASE,
       state: existing?.state || input.state || '门盒',
-      sourceRecordId,
       quantity: positiveInteger(input.quantity, '采购入库数量'),
     }, options);
   }
@@ -248,28 +256,30 @@ class InventoryService {
    *    算成 `min(她说要退的, 现有)` —— 本方法不做业务判断、不夹取、不静默少扣。
    */
   async applyPurchaseReturn(input, options = {}) {
-    const sourceRecordId = purchaseReturnSourceId(input);
+    const sourceRecordId = operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE], input);
     const existing = await this.findOperationBySource(sourceRecordId);
     return this.applyChange({
       ...input,
       kind: MOVEMENT_PURCHASE_DECREASE,
       state: existing?.state || input.state || '门盒',
-      sourceRecordId,
       quantity: positiveInteger(input.quantity, '采购退货数量'),
     }, options);
   }
 
   async applyChange(input, options = {}) {
     if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
-    if (!input.sourceRecordId) throw new Error('库存变化缺少来源明细 record_id');
+    // 配置驱动的闸门：状态类行为（方向=不影响，含转冻结/转释放门盒/两个"转"）不许走数量通路。
+    // 放在来源派生与任何远端读写之前（报错顺序与原实现一致：先拦"走错通路"）。
+    const movement = requireQuantityMovement(input.kind);
+    // ⭐ 2026-11-08（issue #961）：来源身份**只由行为注册表声明**（`operationKey`）——
+    //    来源字段缺失按配置抛明确错误（**绝不编 id**）；写入件里不再有 per-behavior 的来源拼法。
+    const sourceRecordId = operationSourceIdOf(movement, input);
+    const id = operationIdOf(movement, input);
     const size = normalizeSize(input.size);
     const quantity = positiveInteger(input.quantity, '变动数量');
     const state = String(input.state || '门盒');
     if (!LIVE_STATES.includes(state)) throw new Error('库存所属状态无效');
     const stockKey = `${input.productRecordId}|${size}|${state}`;
-    // 配置驱动的闸门：状态类行为（方向=不影响，含转冻结/转释放门盒/两个"转"）不许走数量通路。
-    // 放在任何远端读写之前，且不改变上面几条入参校验的报错顺序。
-    requireQuantityMovement(input.kind);
     // 关联键：落进本地任务记录，**重放/续跑时用它自己的那一份**（不是当前请求的）——
     // 这正是为什么不走 AsyncLocalStorage：resumePending 会把上一笔单的操作放到这次请求里跑。
     const correlation = correlationFields(options.correlation);
@@ -277,23 +287,21 @@ class InventoryService {
       await this.ensureSchema();
       const sizeReference = await this.sizeReferences.resolveByNumber(size);
       await this.resumePending(stockKey);
-      const id = operationId(input.kind, input.sourceRecordId);
       let operation = await this.store.get(id);
       if (operation) {
         if ([2, 3].includes(operation.schema_version) && (
           operation.kind !== input.kind || operation.product_record_id !== input.productRecordId ||
           operation.size !== size || operation.state !== state || operation.quantity !== quantity
-        )) throw new Error(`来源明细 ${input.sourceRecordId} 的库存操作内容与首次提交不一致`);
+        )) throw new Error(`来源明细 ${sourceRecordId} 的库存操作内容与首次提交不一致`);
       } else {
-        const movement = requireMovement(input.kind);
         const behavior = await this.resolveStockBehavior(input.kind);
         // 没有来源字段的动作（例如采购退货）拿不到"远端已经写过这条流水"的证明，
         // 只能靠本地任务日志恢复；见 STOCK_MOVEMENTS 里那条注释。
         const existingLedger = movement.ledgerSource
-          ? await this.findLedger(movement.ledgerSource, input.sourceRecordId, behavior.recordId)
+          ? await this.findLedger(movement.ledgerSource, sourceRecordId, behavior.recordId)
           : null;
         if (existingLedger) {
-          throw new Error(`来源明细 ${input.sourceRecordId} 已有库存流水，但缺少可恢复任务，请人工核对实时库存`);
+          throw new Error(`来源明细 ${sourceRecordId} 已有库存流水，但缺少可恢复任务，请人工核对实时库存`);
         }
         const delta = behavior.direction === '减少' ? -quantity : quantity;
         const allLiveRecords = await this.gateway.listAll('liveInventory');
@@ -336,7 +344,7 @@ class InventoryService {
           quantity,
           direction: behavior.direction,
           behavior_record_id: behavior.recordId,
-          source_record_id: input.sourceRecordId,
+          source_record_id: sourceRecordId,
           // ⭐ 2026-10-08：`ledgerLink` 那列要写的**远端关联值**也要落进本地任务
           //    （采购加库存 = 报货批次那一行的 record id）—— 流水只创建一次，
           //    崩溃后 `resumePending` 补写的那一次必须有得写，否则重放的那条会静默丢关联。
@@ -414,11 +422,19 @@ for (const [name, method] of Object.entries({
 module.exports = {
   InventoryService,
   operationId,
+  // ⭐ 2026-11-08（issue #961）：操作键统一入口——测试 / 排查脚本用**同一个函数**算键，
+  // 而不是在别处再抄一份格式（抄了就会漂移）。
+  operationSourceIdOf,
+  operationIdOf,
+  operationItemKeyOf,
+  validateOperationKeyConfigs,
   // 采购加库存的**来源标识**（= 本地幂等键）：导出它，好让测试 / 排查脚本
   // 用**同一个函数**算出"这一条该是哪个键"，而不是在别处再抄一份格式（抄了就会漂移）。
+  // @deprecated 改用 `operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], input)`。
   purchaseIncreaseSourceId,
   // ⭐ 2026-10-11：采购退货的来源标识（= 本地幂等键）——同样导出，好让测试 / 排查脚本
   // 用**同一个函数**算键，而不是在别处再抄一份格式（抄了就会漂移）。
+  // @deprecated 改用 `operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE], input)`。
   purchaseReturnSourceId,
   STOCK_MOVEMENTS,
   ADJUSTMENT_BEHAVIORS,

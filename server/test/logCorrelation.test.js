@@ -479,9 +479,11 @@ test('inventory.state.transitioned：stock_key 与 stock_key_label 并列，且�
 
   const logs = captureLogs();
   try {
+    // ⚠️ 2026-11-08（issue #961）成对迁移：状态变更的来源身份改由行为注册表声明
+    //    （请求编号 + 目标身份），所以这里传 `requestId`，不再自己拼 `sourceRecordId`。
     await inventory.transitionState({
       kind: 'STOCK_FREEZE', productRecordId: 'product_rec', size: 40, fromState: '门盒',
-      quantity: 1, sourceRecordId: 'freeze_req_1',
+      quantity: 1, requestId: 'freeze_req_1',
     }, { correlation: CORRELATION });
   } finally {
     logs.restore();

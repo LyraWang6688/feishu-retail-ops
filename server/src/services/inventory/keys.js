@@ -3,9 +3,24 @@
 //    方法体一个字符未改（仍用 `this.`），由 facade 用 `Object.defineProperty`
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 「键」相关的纯工具（幂等键 / 库存键 / 关联列 / 操作键），不碰远端读写。
+// ⚠️ 2026-11-08（issue #961）：新增**操作键统一入口**（operationSourceIdOf / operationIdOf /
+//    operationItemKeyOf + 配置校验）；原来的库存键 / 关联键工具**逐字未改**。
 const crypto = require('node:crypto');
 const { textValue } = require('../v1BitableGateway');
 const { normalizeSize } = require('../sizeReferenceService');
+// 操作键的**来源身份拼法**声明在行为注册表里（`STOCK_MOVEMENTS[x].operationKey`）——
+// 本文件只实现「照配置生成键」的纯工具，不认具体行为、不碰远端。
+// 依赖方向：keys.js（工具）→ movements.js（纯配置，无 import）——不会成环。
+const {
+  STOCK_MOVEMENTS,
+  MOVEMENT_PURCHASE_INCREASE,
+  MOVEMENT_PURCHASE_DECREASE,
+  BEHAVIOR_SAMPLE_PROMOTION,
+} = require('./movements');
+// 用户可见 / 部署闸门可见的文案：家在这些 config 里（不写死在 service 层）。
+const { OPERATION_KEY_TEXT } = require('../../config/inventoryOperationKeys');
+// 配置校验（部署闸门用；纯函数，不读远端）在 `./operationKeyConfig.js`（与本文件的工具面分开）。
+const { validateOperationKeySpec, validateOperationKeyConfigs } = require('./operationKeyConfig');
 
 // ── 「库存键」的两种写法（业务负责人 2026-10-07 拍板：两种都给）──────────────────
 //   · `stock_key`       = `商品record_id|尺码|所属状态` —— **内部键**。库存任务的串行队列
@@ -69,56 +84,94 @@ const positiveInteger = (value, label) => {
 
 const operationId = (kind, sourceRecordId) =>
   `inventory_${kind}_${crypto.createHash('sha256').update(String(sourceRecordId)).digest('hex').slice(0, 20)}`;
-const samplePromotionId = (salesDetailRecordId) => operationId('sample', salesDetailRecordId);
 
-/**
- * 采购加库存的**来源标识**（＝ `operationId(kind, source)` 的本地幂等键）。
- *
- * ⚠️ 2026-10-07 深夜：业务负责人把「采购入库」表**整表删掉**了 ⇒ **没有入库行 id 了**。
- *    改用一个**真实三元组**：`采购批次身份 | 货品 record_id | 尺码`。
- *    · 为什么必须带「货品 + 尺码」：`operationId` 是"这一次加库存"的键，而**一个批次里
- *      每个（货品+尺码）各加一次**；只用批次 id 会让同一批第二个尺码撞上一个键，
- *      直接抛「库存操作内容与首次提交不一致」。
- *    · 为什么按可靠度取「批次记录 id → 批次号 → 到货核对任务 id」：前两个是业务身份
- *      （`draft.batch_record_id` / `batch_no`），第三个只在"孤儿调用"（历史草稿上两个都空）
- *      时兜底 —— 它同样是**真实** id（`arrival_reconcile_…`）。
- *    · 🔴 一个都拿不到时**当场抛错** —— **绝不编一个 id** 出来当幂等键。
- *    ⚠️ 它**只进本地任务记录与日志**（`ledgerLink` 那个远端关联值**另算**，
- *      见 `movementLedgerLinkPatch` / `movementLedgerLinkValue`）。
- */
-const purchaseIncreaseSourceId = (input) => {
-  const identity = String(
-    input.purchaseBatchRecordId || input.purchaseBatchNo || input.arrivalTaskId || '',
-  ).trim();
-  if (!identity) {
-    throw new Error('采购入库缺少来源标识（批次记录 id / 批次号 / 到货核对任务 id 至少要有一个）');
+// ── 操作键统一入口（2026-11-08 · issue #961）───────────────────────────────────
+// 三把键的唯一生成口。**行为注册表声明来源，写入件只调这里**：
+//   operationSourceIdOf(movement, input)            → 来源身份（本地幂等键的输入）
+//   operationIdOf(movement, input)                  → inventory_<kind>_<sha256(sourceId)>
+//   operationItemKeyOf(movement, input, sequence)   → <operationId>:<sequence>
+//
+// `movement.operationKey` 声明形状（见 `inventory/movements.js` 顶部的注释）：
+//   kind             operationId 前缀（历史键逐字兼容）
+//   sourcePrefix     可选：来源身份前缀（`<prefix>:<body>`）
+//   sourceFields     来源身份组成字段（第一个是"身份字段"，其余必需）
+//   sourceFallbacks  可选：身份字段拿不到时的回落顺序
+//   separator        多字段连接符
+//   perItem          是否每个（货品 + 尺码）独立一把键（声明 true ⇒ 必须含 productRecordId + size）
+//   missingMessage   身份字段缺失时的明确错误（**绝不编 id**）
+//   fieldMessages    可选：必需组成字段缺失时的逐字段错误
+//   operations       可选：同一行为的另一条通路的独立键声明（例：补样品通路 kind='sample'）
+//
+// ⚠️ 同一个行为的两条通路用不同 kind 是**历史事实**（`sample` vs 行为编码），由配置声明，
+//    不允许在写入件里各自拼一份 —— 那就是 issue 要消灭的"两套行为"。
+const SAMPLE_PROMOTION_OPERATION = 'sample_promotion';
+
+const operationKeySpecOf = (movement, operationPath) => {
+  const spec = movement && movement.operationKey;
+  if (!spec) {
+    throw new Error('库存动作缺少 operationKey 声明：新增库存行为必须先在行为注册表里声明幂等来源');
   }
-  if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
-  return `purchase_increase:${identity}|${input.productRecordId}|${normalizeSize(input.size)}`;
+  if (!operationPath) return spec;
+  const override = spec.operations && spec.operations[operationPath];
+  if (!override) {
+    throw new Error(`库存动作没有声明「${operationPath}」通路的操作键（operationKey.operations）`);
+  }
+  return override;
 };
 
-/**
- * ⭐ 2026-10-11：**采购退货**的来源标识（= 本地幂等键）。
- *
- * 与 `purchaseIncreaseSourceId` 同一个形状与同一条纪律：**真实三元组**
- * （批次身份 | 货品 record_id | 尺码），一个都拿不到就**当场抛**，绝不编一个 id。
- *
- * ⚠️ 为什么不能拿"退货明细行的 record_id"当来源：那条行**先写、库存后扣**，
- *    崩溃后重放要看的是"这一次退货的（货品+尺码）"是不是已经扣过 —— 用三元组最稳
- *    （与采购入库那条同源；「库存流水.关联采购」是**只写不查**的关联列，不参与幂等）。
- * ⚠️ 退货批次的身份优先用「报货批次」那一行的 record_id（最准、零额外请求），
- *    拿不到才回落到批次号。
- */
-const purchaseReturnSourceId = (input) => {
-  const identity = String(
-    input.purchaseBatchRecordId || input.purchaseBatchNo || input.returnTaskId || '',
-  ).trim();
-  if (!identity) {
-    throw new Error('采购退货缺少来源标识（批次记录 id / 批次号 / 退货任务 id 至少要有一个）');
-  }
-  if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
-  return `purchase_return:${identity}|${input.productRecordId}|${normalizeSize(input.size)}`;
+const sourceFieldMessage = (spec, field) => {
+  const configured = spec.fieldMessages && spec.fieldMessages[field];
+  if (configured) return configured;
+  return OPERATION_KEY_TEXT.sourceFieldMissing(field);
 };
+
+// 必需组成字段：`size` 一律走 normalizeSize（与旧来源拼法逐字一致）；其余按"非空"取值。
+const requiredSourceFieldValue = (spec, input, field) => {
+  const raw = input && input[field];
+  if (field === 'size') return String(normalizeSize(raw));
+  if (!raw) throw new Error(sourceFieldMessage(spec, field));
+  return String(raw);
+};
+
+const operationSourceIdOf = (movement, input, operationPath) => {
+  const spec = operationKeySpecOf(movement, operationPath);
+  const identityChain = [spec.sourceFields[0], ...(spec.sourceFallbacks || [])];
+  let identity = '';
+  for (const field of identityChain) {
+    const raw = input && input[field];
+    if (!raw) continue;
+    const text = String(raw).trim();
+    if (text) { identity = text; break; }
+  }
+  if (!identity) throw new Error(spec.missingMessage);
+  const parts = [identity];
+  for (const field of spec.sourceFields.slice(1)) {
+    parts.push(requiredSourceFieldValue(spec, input, field));
+  }
+  const body = parts.join(spec.separator || '');
+  return spec.sourcePrefix ? `${spec.sourcePrefix}:${body}` : body;
+};
+
+const operationIdOf = (movement, input, operationPath) =>
+  operationId(operationKeySpecOf(movement, operationPath).kind,
+    operationSourceIdOf(movement, input, operationPath));
+
+const operationItemKeyOf = (movement, input, sequence, operationPath) =>
+  operationItemKey(operationIdOf(movement, input, operationPath),
+    positiveInteger(sequence, OPERATION_KEY_TEXT.sequenceLabel));
+
+// ── 旧入口（**deprecated 一个版本**）：只为既有调用方 / 排查脚本保留，内部**只调统一入口**。
+//    行为只有一套（issue #961 验收：不能有两套行为）；确认无调用后即可删除。
+/** @deprecated 改用 `operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], input)`。 */
+const purchaseIncreaseSourceId = (input) =>
+  operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], input);
+/** @deprecated 改用 `operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE], input)`。 */
+const purchaseReturnSourceId = (input) =>
+  operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE], input);
+/** @deprecated 改用 `operationIdOf(STOCK_MOVEMENTS[BEHAVIOR_SAMPLE_PROMOTION], input, SAMPLE_PROMOTION_OPERATION)`。 */
+const samplePromotionId = (salesDetailRecordId) =>
+  operationIdOf(STOCK_MOVEMENTS[BEHAVIOR_SAMPLE_PROMOTION], { salesDetailRecordId }, SAMPLE_PROMOTION_OPERATION);
+
 
 // ── `ledgerLink`：**只写不查**的"库存流水 → 来源表"关联列（2026-10-08 加）─────────────
 // 与 `ledgerSource` 的分工见 STOCK_MOVEMENTS[采购增加] 的注释。两个 helper 只在
@@ -147,6 +200,15 @@ module.exports = {
   positiveNumber,
   positiveInteger,
   operationId,
+  // 操作键统一入口（issue #961）
+  SAMPLE_PROMOTION_OPERATION,
+  operationKeySpecOf,
+  operationSourceIdOf,
+  operationIdOf,
+  operationItemKeyOf,
+  validateOperationKeySpec,
+  validateOperationKeyConfigs,
+  // 旧入口：deprecated 一个版本，内部只调统一入口（行为只有一套）
   samplePromotionId,
   purchaseIncreaseSourceId,
   purchaseReturnSourceId,

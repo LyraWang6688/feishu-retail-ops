@@ -11,7 +11,8 @@ const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireMovement, MOVEMENT_SALE_DECREASE } = require('./movements');
 const {
-  operationId,
+  operationSourceIdOf,
+  operationIdOf,
   positiveInteger,
   stockKeyLabelFields,
   correlationPatch,
@@ -92,8 +93,8 @@ async function applySaleBatch(items = [], options = {}) {
     for (const [index, input] of list.entries()) {
       try {
         if (!input.productRecordId) throw new Error('库存变化缺少商品 record_id');
-        const sourceRecordId = String(input.salesDetailRecordId || '').trim();
-        if (!sourceRecordId) throw new Error('库存变化缺少来源明细 record_id');
+        // ⭐ 2026-11-08（issue #961）：来源身份 / operationId 只由行为注册表声明的统一入口生成。
+        const sourceRecordId = operationSourceIdOf(movement, input);
         const size = normalizeSize(input.size);
         const quantity = positiveInteger(input.quantity, '销售数量');
         // 与 `applySale` 逐字同一条纪律：销售**永远先门盒**，调用方不能自己选起点状态。
@@ -105,7 +106,7 @@ async function applySaleBatch(items = [], options = {}) {
           size,
           quantity,
           state,
-          operationId: operationId(MOVEMENT_SALE_DECREASE, sourceRecordId),
+          operationId: operationIdOf(movement, input),
           stockKey: `${input.productRecordId}|${size}|${state}`,
         });
       } catch (error) {

@@ -699,9 +699,21 @@ test('AC-R8 源码哨兵：scanWriteService 不直连写库、不 construct 库�
     '退货 service 自己不 update/delete 业务表（写入全部经既有件）');
 
   // 库存引擎里的退货入口：新薄方法，不改既有数量通路
+  // ⚠️ 2026-11-08（issue #961）**成对迁移 · 改前逐字 → 改后逐字 → 依据**：
+  //    改前判据 = `inventoryService.js` 里出现 `purchaseReturnSourceId`（来源拼法曾写死在写入件里）；
+  //    改后 = 来源拼法收敛到行为注册表（`operationKey`）由统一入口生成 ⇒ 判据改成
+  //    "退货入口走统一入口" + "注册表里仍是 purchase_return 真实三元组"（**没放宽**）。
   const inventory = fs.readFileSync(path.join(SERVER_SRC, 'services', 'inventoryService.js'), 'utf8');
   assert.match(inventory, /async applyPurchaseReturn\(/);
-  assert.match(inventory, /purchaseReturnSourceId/);
+  assert.match(inventory, /operationSourceIdOf/);
+  const returnMovement = fs.readFileSync(
+    path.join(SERVER_SRC, 'services', 'inventory', 'movements.js'), 'utf8',
+  );
+  assert.match(returnMovement, /sourcePrefix: 'purchase_return'/,
+    '采购退货的来源前缀（真实三元组）仍声明在行为注册表 ✓');
+  assert.match(returnMovement,
+    /sourceFields: Object\.freeze\(\['purchaseBatchRecordId', 'productRecordId', 'size'\]\)/,
+    '采购退货的来源身份仍是（批次身份｜货品｜尺码）三元组 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
