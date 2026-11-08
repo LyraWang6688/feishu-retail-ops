@@ -857,9 +857,23 @@ test('AC-IV6 源码哨兵：批量口与 applyPurchaseBatch 同形（runForStock
   assert.match(gateway, /appTableRecord\.batchDelete\(\{/, '必须调官方 batchDelete');
   const deleteBatchBody = gateway.slice(gateway.indexOf('async deleteBatch(tableKey'));
   assert.match(deleteBatchBody, /BATCH_GET_CHUNK_SIZE/, '分片必须与 createBatch / getBatch 同一把尺子（500）');
-  // 🔴 只加能力：单条 `delete` 一字没动（它的既有调用方行为逐字不变）
-  assert.match(gateway, /async delete\(tableKey, recordId\) \{\n    const table = this\.tableWithId\(tableKey\);\n    const response = await this\.client\.bitable\.appTableRecord\.delete\(\{/,
-    '单条 delete 必须原样保留（只加能力，不改既有调用）');
+  // 🔴 单条 `delete` 的行为形状不变：仍只调 `appTableRecord.delete`（请求体只有 path.record_id）
+  // ⚠️ 2026-11-08（issue #879）**成对迁移 · 改前逐字 → 改后逐字 → 依据**：
+  //    改前（逐字）：
+  //      `async delete(tableKey, recordId) {`
+  //      `    const table = this.tableWithId(tableKey);`
+  //      `    const response = await this.client.bitable.appTableRecord.delete({`
+  //    改后（逐字）：
+  //      `async delete(tableKey, recordId, options = {}) {`   ← #879：补可选 correlation（只进日志）
+  //      `    const table = …` / `    const response = await this.scheduledWrite(tableKey, 'delete', async () => {`
+  //      `      const result = await this.client.bitable.appTableRecord.delete({`
+  //    依据：issue #879「所有写飞书共享全局调度器」⇒ 单条 delete 也入队；
+  //    判据没放宽 —— 仍是"单条 delete 只有这一个写口、请求体只有 path.record_id"。
+  assert.match(gateway, /async delete\(tableKey, recordId, options = \{\}\) \{/,
+    '单条 delete 仍是独立方法（`options` 只用于 correlation 日志，向后兼容）');
+  assert.match(gateway,
+    /scheduledWrite\(tableKey, 'delete', async \(\) => \{\n      const result = await this\.client\.bitable\.appTableRecord\.delete\(\{/,
+    '单条 delete 只调 appTableRecord.delete（现在经全局调度器，仍只有这一个写口）');
   // 退货 service 走的是批量薄封装，且**保留**逐条回落（网关没有批量口时与改动前逐字节同形）
   const returnService = fs.readFileSync(path.join(src, 'services', 'purchaseReturnService.js'), 'utf8');
   assert.match(returnService, /applyPurchaseReturnBatch/, '退货链必须接上批量口');

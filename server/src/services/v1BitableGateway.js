@@ -7,6 +7,9 @@ const { larkLogger } = require('../utils/larkLogger');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { correlationFields } = require('../utils/correlationFields');
 const { createBatchWriteTelemetry } = require('../utils/batchWriteTelemetry');
+// ⭐ 2026-11-08（issue #879）：所有**写**飞书的请求共享同一个全局调度器
+//    （并发上限 / 同表串行 / 1254607 与瞬时 400 的统一退避重试）。读请求不进调度器。
+const { getFeishuWriteScheduler } = require('./feishuWriteScheduler');
 
 /** 飞书 `records/batch_get` 实测 record_ids 上限 **100**（超了必须分片）；写接口仍按 500 分片。 */
 // 批量读写**每次的条数**：500。依据（curl 官方文档核过，2026-10-12）：
@@ -72,6 +75,31 @@ class V1BitableGateway {
     this.validationTtlMs = Number.isFinite(Number(options.validationTtlMs))
       ? Number(options.validationTtlMs) : 5 * 60 * 1000;
     this.now = typeof options.now === 'function' ? options.now : () => Date.now();
+    // `options.writeScheduler`：用例注入（`null` = 显式关掉调度）；不传 = 进程级单例。
+    this.writeScheduler = Object.prototype.hasOwnProperty.call(options, 'writeScheduler')
+      ? options.writeScheduler
+      : getFeishuWriteScheduler();
+  }
+
+  /**
+   * ⭐ 2026-11-08（issue #879）：**写飞书的唯一通道** —— 所有写请求经全局调度器。
+   *
+   * · 分组：默认「表 + 操作类型」（同表串行、跨表有限并发）；`options.groupKey` 可显式覆盖。
+   * · 重试：只重试"确定没写进去"的瞬时错误（1254607 / 429 / 瞬时 400），重放**同一个闭包**
+   *   （payload 在调度外算好 ⇒ 每次重试逐字相同，不改任何业务键）。
+   * · 调度器为空（`FEISHU_WRITE_SCHEDULER_ENABLED=false` 或用例注入 `null`）⇒ **直接执行**，
+   *   行为与改动前逐字一致（回滚开关）。
+   */
+  async scheduledWrite(tableKey, operation, work, options = {}) {
+    const scheduler = this.writeScheduler;
+    if (!scheduler || typeof scheduler.run !== 'function') return work();
+    return scheduler.run({
+      tableKey,
+      operation,
+      work,
+      correlation: options.correlation,
+      groupKey: options.groupKey,
+    });
   }
 
   table(tableKey) {
@@ -180,11 +208,18 @@ class V1BitableGateway {
     const startedAt = Date.now();
     const correlation = correlationFields(options.correlation);
     try {
-      const response = await this.client.bitable.appTableRecord.create({
-        path: { app_token: this.schema.appToken, table_id: table.tableId },
-        data: { fields: compact(this.fields(tableKey, semanticValues)) },
-      });
-      this.assertSuccess(response, `新增“${table.tableName}”记录`);
+      // payload **在调度外算好** ⇒ 重试重放逐字相同的请求（不改任何业务键）。
+      const fields = compact(this.fields(tableKey, semanticValues));
+      // ⚠️ `assertSuccess` 必须在**调度闭包内**：飞书 code 1254607 / 瞬时 400 是"被拒、确定没写入"，
+      //    只有让调度器看到这个抛错才能按配置重试（永久错误照旧一次就抛）。
+      const response = await this.scheduledWrite(tableKey, 'create', async () => {
+        const result = await this.client.bitable.appTableRecord.create({
+          path: { app_token: this.schema.appToken, table_id: table.tableId },
+          data: { fields },
+        });
+        this.assertSuccess(result, `新增“${table.tableName}”记录`);
+        return result;
+      }, { correlation });
       const recordId = recordIdOf(response);
       if (!recordId) throw new Error(`新增“${table.tableName}”成功但未返回 record_id`);
       logInfo('bitable.record.created', {
@@ -233,12 +268,17 @@ class V1BitableGateway {
       const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
       const attempt = telemetry.start(offset, chunk.length);
       try {
-        const response = await this.client.bitable.appTableRecord.batchCreate({
-          path: { app_token: this.schema.appToken, table_id: table.tableId },
-          data: { records: chunk.map((values) => ({ fields: compact(this.fields(tableKey, values)) })) },
-        });
-        // ⚠️ 措辞与单条 create **逐字一致**（白名单里已有 `新增“{}”记录`，不新增硬编码中文）
-        this.assertSuccess(response, `新增“${table.tableName}”记录`);
+        // payload 在调度外算好 ⇒ 重试重放逐字相同的请求（不改任何业务键）。
+        const payload = { records: chunk.map((values) => ({ fields: compact(this.fields(tableKey, values)) })) };
+        const response = await this.scheduledWrite(tableKey, 'create', async () => {
+          const result = await this.client.bitable.appTableRecord.batchCreate({
+            path: { app_token: this.schema.appToken, table_id: table.tableId },
+            data: payload,
+          });
+          // ⚠️ 措辞与单条 create **逐字一致**（白名单里已有 `新增“{}”记录`，不新增硬编码中文）
+          this.assertSuccess(result, `新增“${table.tableName}”记录`);
+          return result;
+        }, { correlation });
         const records = response.data?.records || [];
         if (records.length !== chunk.length) {
           // ⭐ 先按 `getBatch` 的口径**如实记三个数**（requested / returned / missing），**再抛**：
@@ -289,17 +329,22 @@ class V1BitableGateway {
       const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
       const attempt = telemetry.start(offset, chunk.length);
       try {
-        const response = await this.client.bitable.appTableRecord.batchUpdate({
-          path: { app_token: this.schema.appToken, table_id: table.tableId },
-          data: {
-            records: chunk.map((patch) => ({
-              record_id: String(patch?.recordId || '').trim(),
-              fields: compact(this.fields(tableKey, patch?.values || {})),
-            })),
-          },
-        });
-        // ⚠️ 同上：复用白名单里已有的 `更新“{}”记录` 措辞
-        this.assertSuccess(response, `更新“${table.tableName}”记录`);
+        // payload 在调度外算好 ⇒ 重试重放逐字相同的请求（不改任何业务键）。
+        const payload = {
+          records: chunk.map((patch) => ({
+            record_id: String(patch?.recordId || '').trim(),
+            fields: compact(this.fields(tableKey, patch?.values || {})),
+          })),
+        };
+        const response = await this.scheduledWrite(tableKey, 'update', async () => {
+          const result = await this.client.bitable.appTableRecord.batchUpdate({
+            path: { app_token: this.schema.appToken, table_id: table.tableId },
+            data: payload,
+          });
+          // ⚠️ 同上：复用白名单里已有的 `更新“{}”记录` 措辞
+          this.assertSuccess(result, `更新“${table.tableName}”记录`);
+          return result;
+        }, { correlation });
         const records = response.data?.records || [];
         if (records.length !== chunk.length) {
           // ⭐ 同 createBatch：先记 requested / returned / missing 三个数，再抛
@@ -334,11 +379,16 @@ class V1BitableGateway {
     const startedAt = Date.now();
     const correlation = correlationFields(options.correlation);
     try {
-      const response = await this.client.bitable.appTableRecord.update({
-        path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
-        data: { fields: compact(this.fields(tableKey, semanticValues)) },
-      });
-      this.assertSuccess(response, `更新“${table.tableName}”记录`);
+      // payload 在调度外算好 ⇒ 重试重放逐字相同的请求（不改任何业务键）。
+      const fields = compact(this.fields(tableKey, semanticValues));
+      const response = await this.scheduledWrite(tableKey, 'update', async () => {
+        const result = await this.client.bitable.appTableRecord.update({
+          path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
+          data: { fields },
+        });
+        this.assertSuccess(result, `更新“${table.tableName}”记录`);
+        return result;
+      }, { correlation });
       logInfo('bitable.record.updated', {
         table_key: tableKey,
         table_id: table.tableId,
@@ -440,11 +490,15 @@ class V1BitableGateway {
     if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
       throw new Error('updateByTableId 需要 fields（空对象是白跑一次调用）');
     }
-    const response = await this.client.bitable.appTableRecord.update({
-      path: { app_token: this.schema.appToken, table_id: wantedTableId, record_id: wantedRecordId },
-      data: { fields },
-    });
-    this.assertSuccess(response, `按 table_id 回写记录（${reason || 'update_by_table_id'}）`);
+    // 按原始 table_id 回写同样经全局调度器（分组用 table_id；与 semantic tableKey 命名空间互不影响）。
+    const response = await this.scheduledWrite(wantedTableId, 'update', async () => {
+      const result = await this.client.bitable.appTableRecord.update({
+        path: { app_token: this.schema.appToken, table_id: wantedTableId, record_id: wantedRecordId },
+        data: { fields },
+      });
+      this.assertSuccess(result, `按 table_id 回写记录（${reason || 'update_by_table_id'}）`);
+      return result;
+    }, { correlation });
     return response.data?.record || null;
   }
 
@@ -482,12 +536,16 @@ class V1BitableGateway {
     return records;
   }
 
-  async delete(tableKey, recordId) {
+  async delete(tableKey, recordId, options = {}) {
     const table = this.tableWithId(tableKey);
-    const response = await this.client.bitable.appTableRecord.delete({
-      path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
-    });
-    this.assertSuccess(response, `删除“${table.tableName}”记录`);
+    const correlation = correlationFields(options.correlation);
+    const response = await this.scheduledWrite(tableKey, 'delete', async () => {
+      const result = await this.client.bitable.appTableRecord.delete({
+        path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
+      });
+      this.assertSuccess(result, `删除“${table.tableName}”记录`);
+      return result;
+    }, { correlation });
     return true;
   }
 
@@ -530,12 +588,17 @@ class V1BitableGateway {
       const chunk = list.slice(offset, offset + BATCH_GET_CHUNK_SIZE);
       const attempt = telemetry.start(offset, chunk.length);
       try {
-        const response = await this.client.bitable.appTableRecord.batchDelete({
-          path: { app_token: this.schema.appToken, table_id: table.tableId },
-          data: { records: chunk },
-        });
-        // ⚠️ 措辞与单条 delete **逐字一致**（白名单里已有 `删除“{}”记录`，不新增硬编码中文）
-        this.assertSuccess(response, `删除“${table.tableName}”记录`);
+        // payload 在调度外算好 ⇒ 重试重放逐字相同的请求（不改任何业务键）。
+        const payload = { records: chunk };
+        const response = await this.scheduledWrite(tableKey, 'delete', async () => {
+          const result = await this.client.bitable.appTableRecord.batchDelete({
+            path: { app_token: this.schema.appToken, table_id: table.tableId },
+            data: payload,
+          });
+          // ⚠️ 措辞与单条 delete **逐字一致**（白名单里已有 `删除“{}”记录`，不新增硬编码中文）
+          this.assertSuccess(result, `删除“${table.tableName}”记录`);
+          return result;
+        }, { correlation });
         const records = response.data?.records || [];
         const byId = new Map(records.map((record) => [record?.record_id, record]));
         // 官方口径是 `deleted` 布尔；只把**明说 false / 干脆没回**当成失败（不猜、不美化）。
