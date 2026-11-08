@@ -32,6 +32,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { getConfigRows } = require('./configTableCache');
 const { createScanPageCache } = require('./scanPageCache');
 const { createLiveInventorySnapshot } = require('./liveInventorySnapshot');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
@@ -225,7 +226,7 @@ const { equalsFormula, containsFormula, orFormula } = require('./bitableFilterFo
  *   快照实例是在**扫码服务被创建时**才建的 ⇒ **服务重启后到第一次扫码之间它是冷的** ✗。
  *   这里登记"本进程建过的**实时库存**快照"，供启动时**预热**（见 `warmLiveInventorySnapshot`）。
  *   🔴 **不新建实例**（新建 = 两份缓存 / 双份读表 / 互相作废 ✗）；TTL、写库即作废、
- *      `productSnapshot` 一律**不动** ✓（她逐字：「两个快照都留」✓）。
+ *      货品信息不再单独维护 productSnapshot（统一走 configTableCache）。
  */
 const liveInventorySnapshots = [];
 
@@ -360,29 +361,8 @@ const createScanPageService = (rawGateway, options = {}) => {
   if (snapshot) liveInventorySnapshots.push(snapshot);
   if (snapshot && options.startSnapshot === true) snapshot.start();
 
-  /**
-   * ⭐⭐ 「货品信息」**内存快照**（业务负责人 2026-10-09：单价以「货品信息」为唯一真源）。
-   *
-   * 机制与上面那个「实时库存」快照**完全同一套**（同一个工厂，只是 `tableKey: 'product'`）：
-   *   后台定期整表拉一次（默认 60 秒）+ **写操作立刻失效**；
-   *   未就绪 / 过期 / 刷新失败 ⇒ **回退现有过滤读**。
-   * ⚠️ 它不是"第二套逻辑"：命中时用的仍是**同一个 `findProduct`**（大小写兜底也在里面），
-   *    结果与"按编号过滤读"逐字一致。
-   */
-  const productSnapshot = options.productSnapshot === false
-    ? null
-    : (options.productSnapshot || createLiveInventorySnapshot({
-      gateway,
-      config: config.productSnapshot,
-      limits,
-      tableKey: 'product',
-      now: options.now,
-    }));
-  // ⭐⭐ 2026-10-14（她 02:47~02:48 的日志：`snapshot_hit:true` 但 **`product_snapshot_hit:false`** ✗
-  //   ⇒ 每次切换都要真读「货品信息」1.4~3.5 秒 ⇒ 她感觉"变慢了"）——
-  //   **两个快照都登记、都预热** ✓（她逐字「两个快照都留」✓）；⚠️ 只登记**已有实例**，绝不新建 ✗
-  if (productSnapshot) liveInventorySnapshots.push(productSnapshot);
-  if (productSnapshot && options.startSnapshot === true) productSnapshot.start();
+  // ⭐ 2026-11-09：货品信息不再单独维护 productSnapshot；读取统一走 configTableCache
+  //   （getConfigRows / record_changed 失效 / lastGood）。
 
   /** 时钟：与 TTL 缓存共用（用例可以注入一个假时钟，两个窗口一起被推进）。 */
   const clock = options.now || Date.now;
@@ -495,7 +475,8 @@ const createScanPageService = (rawGateway, options = {}) => {
 
 
   const readAllCapped = async (tableKey, cap, requestId) => {
-    const records = await gateway.listAll(tableKey);
+    // 配置表统一走 configTableCache（TTL / record_changed 失效 / lastGood）；非配置表回退 gateway.listAll。
+    const records = await getConfigRows({ gateway, tableKey });
     if (cap > 0 && records.length > cap) {
       logWarn(config.events.limitExceeded, {
         request_id: requestId, table_key: tableKey, records: records.length, limit: cap,
@@ -558,14 +539,6 @@ const createScanPageService = (rawGateway, options = {}) => {
     const lower = number.toLowerCase();
     return products.find((record) => textValue(record?.fields?.[numberField]).trim().toLowerCase() === lower) || null;
   };
-
-  /**
-   * ⭐⭐ 2026-10-14：按 **记录 ID** 在货品快照里找。
-   *   快照存的就是 `listAll('product')` 的**原始记录**（每条都带 `record_id` ✓）
-   *   ⇒ 命中 = **零额外飞书读**；没这一条 ⇒ 调用方照旧真读（不猜 ✗）。
-   */
-  const findProductByRecordId = (products, recordId) => (products || [])
-    .find((record) => String(record?.record_id || '') === String(recordId || '')) || null;
 
   /**
    * 一条「实时库存」属于不属于这个编号？
@@ -855,7 +828,10 @@ const createScanPageService = (rawGateway, options = {}) => {
   const readProductByRecordId = async ({ recordId, requestId, timing }) => {
     const startedAt = startStage();
     try {
-      return await gateway.get('product', recordId);
+      // 与按编号那条路共用 configTableCache：整表只在 TTL 内读一次；
+      // record_changed / TTL 失效后自然重读，不再维护第二套 productSnapshot。
+      const products = await getConfigRows({ gateway, tableKey: 'product' });
+      return (products || []).find((record) => record?.record_id === recordId) || null;
     } catch (error) {
       logWarn(config.events.recordLookupFailed, {
         request_id: requestId, product_record_id: recordId, error: error.message,
@@ -952,10 +928,7 @@ const createScanPageService = (rawGateway, options = {}) => {
       //    ⇒ `product_snapshot_hit` 永远 false + 每次真读货品表（1.5~3.6 秒）⇒ 切换卡 ✗
       //    快照里就是原始记录（含 `record_id`）⇒ 按 record_id 命中 = **零额外读** ✓
       //    未就绪 / 没这一条 ⇒ **照旧真读**（`readProductByRecordId`，行为逐字不变 ✓ 不许猜 ✗）
-      const indexedById = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
-      const snapshotProduct = indexedById.ready ? findProductByRecordId(indexedById.records, recordId) : null;
-      if (timing) timing.product_snapshot_hit = Boolean(snapshotProduct);
-      const found = snapshotProduct || await readProductByRecordId({ recordId, requestId, timing });
+      const found = await readProductByRecordId({ recordId, requestId, timing });
       const numberField = fieldName(schema, 'product', 'number');
       if (found) {
         product = found;
@@ -1010,27 +983,6 @@ const createScanPageService = (rawGateway, options = {}) => {
       const productStartedAt = startStage();
       // 这一段可能有 1~2 次真实飞书读（过滤读；没读到再整表读一次）⇒ 每次都在**调用点**计数 ✓
       try {
-        // ⭐⭐ 2026-10-09：**先查「货品信息」内存快照**（按编号索引）——命中就 **0 次飞书调用**。
-        //    单价仍以「货品信息」为唯一真源（她的口径），只是从内存里取。
-        //    未就绪 / 过期 / 没这一条 ⇒ 回退下面那条**既有的过滤读**（行为逐字不变）。
-        const indexed = productSnapshot ? productSnapshot.get() : { ready: false, reason: 'disabled' };
-          // ⭐⭐ 2026-10-14（她今晚第三次说"慢"：product_snapshot_hit 一直 false ⇒ 每次真读 1.2~8.5s ✗）
-          //   只加一行诊断、不动任何判断 ✗：把"货品快照为什么没命中"的 reason 打出来
-          //   （get() 只可能给 disabled / not_ready(上次 refresh 失败) / stale(TTL 过期) / limit_exceeded）
-          //   ⇒ 抓到哪一个就**有依据地**修哪一种，不盲改 TTL / 上限 ✗
-          //   用既有事件名 scan.snapshot.miss（不新造 ✗）；命中 / 没有快照时不打（不刷屏 ✓）
-          if (!indexed.ready && productSnapshot) {
-            logInfo(config.events.snapshotMiss, {
-              table_key: 'product',
-              reason: indexed.reason || '',
-              age_ms: Number.isFinite(indexed.ageMs) ? indexed.ageMs : -1,
-              request_id: requestId,
-            });
-          }
-        if (indexed.ready) {
-          product = findProduct(indexed.records, number);
-          if (timing) timing.product_snapshot_hit = Boolean(product);
-        }
         if (!product) {
               const filteredProduct = await readProductsByNumber({ number, requestId });
           product = filteredProduct.product;
