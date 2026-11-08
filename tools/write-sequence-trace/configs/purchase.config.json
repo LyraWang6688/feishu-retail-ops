@@ -55,26 +55,26 @@
       "table_id": "tblWaafeodl2oILI"
     }
   ],
-  "phases": [
-    {
-      "name": "① 采购下单",
-      "from": 0,
-      "to": 30
-    },
-    {
-      "name": "② 采购入库",
-      "from": 30,
-      "to": 90
-    },
-    {
-      "name": "③ 采购付款",
-      "from": 90,
-      "to": 120
-    }
-  ],
   "notes": [
     "⚠️ 采购链路的资金端尚未实测：当前生产 P交易明细字段很少、资金流水可能为空；启用前必须拿真实采购单只读验证，不能假设与销售同构。",
     "⚠️ 采购主表/明细的关联字段名需以当前生产 schema 为准；本配置为待验证草稿。",
     "表 ID 解析顺序：先读 table_id_env 指定的环境变量（跟随 .env 切换测试/生产 Base），取不到再回退 table_id 字面量（仅离线兜底）；脚本本身不写死任何 ID。"
+  ],
+  "stages": [
+    {
+      "key": "create",
+      "label": "① 采购下单",
+      "table": "purchaseOrder"
+    },
+    {
+      "key": "inbound",
+      "label": "② 采购入库",
+      "table": "inventoryLedger"
+    },
+    {
+      "key": "payment",
+      "label": "③ 采购付款",
+      "table": "paymentDetail"
+    }
   ]
 }

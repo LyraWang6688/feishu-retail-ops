@@ -114,6 +114,54 @@ def event_kind(field_change: dict) -> str:
     return 'field_change'
 
 
+def spec_field_names(spec: dict) -> list[str]:
+    """配置里的字段白名单：兼容字符串和 {name,label} 两种写法。"""
+    names = []
+    for field in spec.get('fields') or []:
+        if isinstance(field, str):
+            names.append(field)
+        elif isinstance(field, dict) and field.get('name'):
+            names.append(str(field['name']))
+    return names
+
+
+def event_matches(stage: dict, event: dict) -> bool:
+    """判断一个事件是不是某个阶段的起点。
+
+    支持 table（配置 key）/ field / kind / event 四种条件；未写的条件不限制。
+    """
+    if stage.get('table') and event.get('table_key') != stage['table']:
+        return False
+    if stage.get('field') and event.get('field') != stage['field']:
+        return False
+    if stage.get('kind') and event.get('kind') != stage['kind']:
+        return False
+    wanted_event = stage.get('event')
+    if wanted_event == 'record_add' and event.get('kind') != 'record_add':
+        return False
+    return True
+
+
+def build_phases(config: dict, events: list[dict]) -> list[dict]:
+    """按配置的 stages 找每个阶段的起点；终点 = 下一个阶段起点。"""
+    stages = config.get('stages') or []
+    starts = []
+    for stage in stages:
+        index = next((i for i, event in enumerate(events) if event_matches(stage, event)), None)
+        if index is not None:
+            starts.append((stage, index))
+    if not starts:
+        return [{'name': '写入过程', 'from': 0, 'to': events[-1]['elapsed']}]
+    phases = []
+    for pos, (stage, index) in enumerate(starts):
+        start = 0 if pos == 0 else events[index]['elapsed']
+        end = events[starts[pos + 1][1]]['elapsed'] if pos + 1 < len(starts) else events[-1]['elapsed']
+        if end < start:
+            end = events[-1]['elapsed']
+        phases.append({'name': stage.get('label') or stage.get('key') or '阶段', 'from': start, 'to': end})
+    return phases
+
+
 def collect_targets(config: dict, records: dict[str, list[dict]]) -> dict[str, list[dict]]:
     specs = config.get('tables', [])
     start_spec = next((spec for spec in specs if spec.get('role') == 'start'), None)
@@ -142,28 +190,36 @@ def collect_targets(config: dict, records: dict[str, list[dict]]) -> dict[str, l
 def build_raw(config: dict, selected: dict[str, list[dict]], base: str, work_dir: Path) -> dict:
     specs = config.get('tables', [])
     labels = {spec['key']: spec['label'] for spec in specs}
+    keys = {spec['key']: spec['key'] for spec in specs}
     idmap = {}
+    # 配置 fields 时按白名单采集；未配置则保留全部字段（向后兼容）。
+    configured = {spec['key']: spec_field_names(spec) for spec in specs}
     for spec in specs:
-        fields = [spec.get('display_field'), '销售单号', '销售明细ID', '采购单号', '库存键', '交易明细ID']
+        fields = configured.get(spec['key']) or []
+        fields += [spec.get('display_field'), '销售单号', '销售明细ID', '采购单号', '库存键', '交易明细ID']
         for row in selected.get(spec['key'], []):
             idmap[row.get('record_id')] = record_name(row, [f for f in fields if f])
     events = []
     for spec in specs:
+        allowed = set(configured.get(spec['key']) or [])
         for row in selected.get(spec['key'], []):
             for item in history(base, resolve_table_id(spec), row['record_id']):
                 changes = item.get('field_changes') or []
                 if not changes:
                     events.append({
-                        'ts': item['create_time'], 'rev': item['rev'], 'table': labels.get(spec['key'], spec['table']),
+                        'ts': item['create_time'], 'rev': item['rev'], 'table': labels.get(spec['key'], spec['table']), 'table_key': spec['key'],
                         'operator': item.get('operator', ''), 'kind': 'record_add', 'field': '新建记录',
                         'before': '', 'after': record_name(row, [spec.get('display_field') or '', '销售明细ID', '交易明细ID', '库存键', '销售单号']) or row['record_id'],
                     })
                     continue
                 for change in changes:
+                    field_name = change.get('field_name', '')
+                    if allowed and field_name not in allowed:
+                        continue
                     events.append({
-                        'ts': item['create_time'], 'rev': item['rev'], 'table': labels.get(spec['key'], spec['table']),
+                        'ts': item['create_time'], 'rev': item['rev'], 'table': labels.get(spec['key'], spec['table']), 'table_key': spec['key'],
                         'operator': item.get('operator', ''), 'kind': event_kind(change),
-                        'field': change.get('field_name', ''), 'before': fmt(change.get('before'), idmap),
+                        'field': field_name, 'before': fmt(change.get('before'), idmap),
                         'after': fmt(change.get('after'), idmap),
                     })
     events.sort(key=lambda event: (event['ts'], event['rev']))
@@ -175,17 +231,7 @@ def build_raw(config: dict, selected: dict[str, list[dict]], base: str, work_dir
         event['clock'] = dt.datetime.fromtimestamp(event['ts']).strftime('%H:%M:%S')
     last = events[-1]
     tables = [spec['label'] for spec in config.get('tables', [])]
-    phases = []
-    try:
-        inv = next(event for event in events if event['table'] == labels.get('inventoryLedger', '库存流水'))
-        pay = next(event for event in events if event['table'] == labels.get('paymentRecord', 'S交易明细'))
-        phases = [
-            {'name': '① 销售建单', 'from': 0, 'to': inv['elapsed']},
-            {'name': '② 库存出库', 'from': inv['elapsed'], 'to': pay['elapsed']},
-            {'name': '③ 资金收款', 'from': pay['elapsed'], 'to': last['elapsed']},
-        ]
-    except StopIteration:
-        phases = [{'name': '写入过程', 'from': 0, 'to': last['elapsed']}]
+    phases = build_phases(config, events)
     kind_count = {}
     for event in events:
         kind_count[event['kind']] = kind_count.get(event['kind'], 0) + 1
@@ -200,15 +246,19 @@ def build_raw(config: dict, selected: dict[str, list[dict]], base: str, work_dir
         'tables': tables, 'phases': phases, 'events': events, 'deletes': [],
     }
 
-
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description='按配置生成标准 events.json')
-    parser.add_argument('order', help='业务单号，如 XSD-20261018-0001')
+    parser.add_argument('order', nargs='?', help='业务单号，如 XSD-20261018-0001')
+    parser.add_argument('--order', dest='order_option', help='业务单号（与位置参数二选一）')
     parser.add_argument('--config', default='sales', help='sales|purchase 或配置文件路径')
     parser.add_argument('--base-token', default=os.environ.get('FEISHU_V1_BITABLE_APP_TOKEN', ''))
     parser.add_argument('--out', type=Path)
     parser.add_argument('--work-dir', type=Path, default=ROOT / 'output' / '.work')
     args = parser.parse_args(argv)
+    order = args.order or args.order_option
+    if not order:
+        print('error: 缺少业务单号（位置参数或 --order）', file=sys.stderr)
+        return 1
     if not args.base_token:
         print('error: 缺少 --base-token 或 FEISHU_V1_BITABLE_APP_TOKEN', file=sys.stderr)
         return 1
@@ -216,7 +266,7 @@ def main(argv=None) -> int:
     if not config_path.exists():
         config_path = ROOT / 'configs' / f'{args.config}.config.json'
     config = json.loads(config_path.read_text(encoding='utf-8'))
-    config['_order'] = args.order
+    config['_order'] = order
     try:
         print('TRACE_TABLES', {spec['label']: resolve_table_id(spec)
                                for spec in config.get('tables', [])}, file=sys.stderr)

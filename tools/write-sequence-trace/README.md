@@ -35,6 +35,38 @@ write-sequence-trace/
 └─ output/                    生成结果（不提交）
 ```
 
+## 销售环节配置（2026-11-09）
+
+销售链路不再把阶段写死在代码里。`configs/sales.config.json` 的 `stages` 决定阶段：
+
+```json
+"stages": [
+  { "key": "create",  "label": "① 销售建单", "table": "salesEntry" },
+  { "key": "stock",   "label": "② 库存出库", "table": "inventoryLedger" },
+  { "key": "payment", "label": "③ 资金收款", "table": "paymentRecord" }
+]
+```
+
+规则：
+
+```text
+每个阶段的起点 = 该阶段配置里 table / field / kind / event 第一个命中的事件
+阶段终点 = 下一个阶段的起点
+最后一个阶段终点 = 最后一个事件
+```
+
+于是换单号、换阶段名、加阶段都只改 config，不改 `fetch_trace.py`。
+
+### 字段白名单（可选）
+
+每张表可以加：
+
+```json
+"fields": ["销售单号", "销售状态", "资金状态", "总金额"]
+```
+
+有 `fields` 时只把这些字段的变化纳入事件流；不配置时保留全部字段（向后兼容）。
+
 ## 标准事件 schema
 
 ```json
@@ -86,9 +118,13 @@ write-sequence-trace/
 取数（需要本机已配置可用的 lark-cli 身份，且只读）：
 
 ```bash
-export FEISHU_V1_BITABLE_APP_TOKEN='<base_token>'
-python3 tools/write-sequence-trace/scripts/fetch_trace.py XSD-20261018-0001 --config sales
+set -a
+source .env
+set +a
+python3 tools/write-sequence-trace/scripts/fetch_trace.py <销售单号> --config sales
 ```
+
+⚠️ Python 脚本不会自己加载 `.env`；必须先 `source`（或手动 export）。`<销售单号>` 就是你要选的那一单，例如 `XSD-20261018-0001`。
 
 生成 HTML：
 
@@ -110,11 +146,19 @@ python3 tools/write-sequence-trace/scripts/extract_raw.py \
 
 - Base 令牌只从 `FEISHU_V1_BITABLE_APP_TOKEN` 读取，缺失即报错退出，脚本内无任何明文令牌。
 - 每张表在 config 里同时给了 `table_id_env`（对应根目录 `.env.example` 的 `FEISHU_V1_*_TABLE_ID`）与离线兜底用的字面 `table_id`。解析顺序：
-  1. 环境变量 `table_id_env` 有非空值 → 用它（本机 `.env` 指向测试 Base 时自动跟随测试表 ID）；
+  1. 环境变量 `table_id_env` 有非空值 → 用它（本机 `.env` 指向测试 Base 时，`source` 后自动跟随测试表 ID）；
   2. 否则回退 config 里的 `table_id` 字面量（仅离线兜底）；
   3. 两者都缺 → 直接报错，不会静默打到错误的表。
 - 取数开始前会在 stderr 打印一行 `TRACE_TABLES`，列出本次每张表实际解析到的 ID，便于核对当前连的是测试还是生产 Base。
 - 工具始终只读（仅 `record-list` / `record-history-list`，且固定 `--as user`），不含任何写库动作。
+
+## 选择不同单号
+
+```bash
+python3 tools/write-sequence-trace/scripts/fetch_trace.py XSD-20261109-0001 --config sales
+```
+
+同一套配置可以跑任意销售单；只有 `start.order_field=销售单号` 找不到时才报错，不会拿别的单号兜底。
 
 ## 本地测试
 
@@ -124,7 +168,7 @@ python3 tools/write-sequence-trace/scripts/extract_raw.py \
 python3 -m unittest discover -s tools/write-sequence-trace/scripts -p 'test_*.py'
 ```
 
-覆盖：HTML 渲染与 `</script>` 转义、旧 HTML 提取往返、表 ID 的环境变量优先 / 字面回退 / 皆缺报错。
+覆盖：HTML 渲染与 `</script>` 转义、旧 HTML 提取往返、表 ID 的环境变量优先 / 字面回退 / 皆缺报错、阶段配置边界。
 
 ## 数据获取边界（真实能力）
 

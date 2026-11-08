@@ -54,30 +54,25 @@
       "table_id": "tblTr5qgiZXPADLP"
     }
   ],
-  "phases": [
-    {
-      "name": "① 销售建单",
-      "from": 0,
-      "to": 28
-    },
-    {
-      "name": "② 库存出库",
-      "from": 58,
-      "to": 88
-    },
-    {
-      "name": "重试",
-      "from": 93,
-      "to": 107
-    },
-    {
-      "name": "③ 资金收款",
-      "from": 109,
-      "to": 115
-    }
-  ],
   "notes": [
     "实时库存一条记录=一双鞋；出库后整条删除，接口无法回溯，只能由快照差集推断。",
     "表 ID 解析顺序：先读 table_id_env 指定的环境变量（跟随 .env 切换测试/生产 Base），取不到再回退 table_id 字面量（仅离线兜底）；脚本本身不写死任何 ID。"
+  ],
+  "stages": [
+    {
+      "key": "create",
+      "label": "① 销售建单",
+      "table": "salesEntry"
+    },
+    {
+      "key": "stock",
+      "label": "② 库存出库",
+      "table": "inventoryLedger"
+    },
+    {
+      "key": "payment",
+      "label": "③ 资金收款",
+      "table": "paymentRecord"
+    }
   ]
 }

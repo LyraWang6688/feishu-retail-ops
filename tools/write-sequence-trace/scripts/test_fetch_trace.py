@@ -8,7 +8,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'scripts'))
 
-from fetch_trace import resolve_table_id  # noqa: E402
+from fetch_trace import build_phases, resolve_table_id  # noqa: E402
 
 
 class ResolveTableIdTest(unittest.TestCase):
@@ -48,3 +48,40 @@ class ResolveTableIdTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class BuildPhasesTest(unittest.TestCase):
+    def _events(self):
+        return [
+            {'table_key': 'salesEntry', 'kind': 'record_add', 'field': '新建记录', 'elapsed': 0},
+            {'table_key': 'salesEntry', 'kind': 'field_change', 'field': '销售状态', 'elapsed': 27},
+            {'table_key': 'inventoryLedger', 'kind': 'record_add', 'field': '新建记录', 'elapsed': 61},
+            {'table_key': 'paymentRecord', 'kind': 'record_add', 'field': '新建记录', 'elapsed': 112},
+            {'table_key': 'salesEntry', 'kind': 'field_change', 'field': '资金状态', 'elapsed': 115},
+        ]
+
+    def test_stages_use_configured_table_boundaries(self):
+        config = {'stages': [
+            {'label': '① 建单', 'table': 'salesEntry'},
+            {'label': '② 出库', 'table': 'inventoryLedger'},
+            {'label': '③ 收款', 'table': 'paymentRecord'},
+        ]}
+        self.assertEqual(build_phases(config, self._events()), [
+            {'name': '① 建单', 'from': 0, 'to': 61},
+            {'name': '② 出库', 'from': 61, 'to': 112},
+            {'name': '③ 收款', 'from': 112, 'to': 115},
+        ])
+
+    def test_stage_can_match_field_and_kind(self):
+        config = {'stages': [
+            {'label': '建单', 'table': 'salesEntry', 'kind': 'record_add'},
+            {'label': '重试', 'table': 'salesEntry', 'field': '销售状态', 'kind': 'field_change'},
+        ]}
+        phases = build_phases(config, self._events())
+        self.assertEqual([p['name'] for p in phases], ['建单', '重试'])
+
+    def test_no_matching_stage_falls_back(self):
+        config = {'stages': [{'label': '不存在', 'table': 'missing'}]}
+        self.assertEqual(build_phases(config, self._events()), [
+            {'name': '写入过程', 'from': 0, 'to': 115},
+        ])
