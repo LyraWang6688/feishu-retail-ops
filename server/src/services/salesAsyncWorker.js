@@ -48,8 +48,11 @@ const createSalesAsyncWorker = ({
     const orderNo = String(job.payload?.order_no || job.order_no || '').trim();
     if (!orderNo) throw new Error('job payload missing order_no');
     const field = V1_BITABLE_SCHEMA.tables.salesEntry.fields.orderNo;
-    const existing = await gateway.listByFilter('salesEntry', `CurrentValue.[${field}]="${orderNo}"`).catch(() => []);
-    if (existing && existing.length) {
+    // #891：查询失败 ≠ 没有主表。失败直接抛出，让统一 job 层按临时/永久错误处理；
+    // 只有“查询成功且为空”才允许创建（否则恢复窗口里会重复建销售主表）。
+    const existing = await gateway.listByFilter('salesEntry', `CurrentValue.[${field}]="${orderNo}"`);
+    if (!Array.isArray(existing)) throw new Error('salesEntry lookup returned non-array');
+    if (existing.length) {
       const found = existing[0].record_id;
       await jobStore.update(job.job_id, { main_record_id: found });
       return found;

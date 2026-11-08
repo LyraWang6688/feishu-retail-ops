@@ -36,7 +36,7 @@ const make = ({ fail = false } = {}) => {
   };
   const jobStore = createSalesJobStore({ dir });
   const worker = createSalesAsyncWorker({ gateway, writeService, jobStore, logger: { logInfo() {}, logWarn() {}, logError() {} } });
-  return { dir, worker, jobStore, calls, writeService, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  return { dir, worker, jobStore, gateway, calls, writeService, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 };
 
 const payload = (over = {}) => ({
@@ -161,5 +161,18 @@ test('worker 全局队列：连续入队 3 个 job，同时只跑 1 个，按 FI
     }, { timeoutMs: 5000 });
     assert.equal(maxActive, 1, '同一时间只能有一个 worker 任务写飞书');
     assert.equal(order.length, 3);
+  } finally { h.cleanup(); }
+});
+
+test('#891 主表查询失败 ⇒ 不得新建主表，job 记 failed（不把失败当“没有”）', async () => {
+  const h = make();
+  try {
+    h.gateway.listByFilter = async () => { throw new Error('listByFilter timeout'); };
+    const a = await h.worker.enqueue({ submitKey: 'scan_sale:query-fail:1', payload: payload() });
+    const done = await h.worker.process(a.job.job_id);
+    assert.equal(done.status, STATUS.failed);
+    assert.match(done.last_error, /listByFilter timeout/);
+    assert.equal(h.calls.create, 0, '查询失败不得调用 create');
+    assert.equal(h.calls.submit, 0, '不得继续提交');
   } finally { h.cleanup(); }
 });

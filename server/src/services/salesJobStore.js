@@ -25,15 +25,7 @@ const createSalesJobStore = ({ dir } = {}) => {
 
   const createIfAbsent = async (submitKey, payload, meta = {}) => {
     const jobId = jobIdOf(submitKey);
-    let existing = await store.get(jobId);
-    if (existing) {
-      // 旧 job 可能没有 tap_id（升级前入队）；补一次元数据，不动已经冻结的 payload。
-      if (!existing.tap_id && meta.tapId) {
-        existing = await store.update(jobId, { tap_id: String(meta.tapId).slice(0, 64) });
-      }
-      return { job: existing, created: false };
-    }
-    const job = await store.create({
+    const { created, record } = await store.createIfAbsent({
       job_id: jobId,
       submit_key: String(submitKey || ''),
       status: STATUS.queued,
@@ -44,7 +36,12 @@ const createSalesJobStore = ({ dir } = {}) => {
       main_record_id: '',
       order_no: String(payload?.order_no || ''),
     });
-    return { job, created: true };
+    let job = record;
+    if (!created && !job.tap_id && meta.tapId) {
+      // 旧 job 可能没有 tap_id（升级前入队）；补一次元数据，不动已经冻结的 payload。
+      job = await store.update(jobId, { tap_id: String(meta.tapId).slice(0, 64) });
+    }
+    return { job, created };
   };
 
   const get = (jobId) => store.get(jobId);
