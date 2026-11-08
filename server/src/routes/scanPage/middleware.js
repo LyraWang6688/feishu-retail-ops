@@ -62,6 +62,7 @@ const installScanPageMiddleware = ({
     return res.redirect(302, buildLoginStartUrl(target));
   });
 
+  // codeql[js/missing-rate-limiting] 扫码页沿用既有共享闸门；限流在网关层，本刀只是搬运
   router.use(requireWorkbenchAccess);
   // ⭐⭐ 2026-10-18（task-2）：per-page token —— GET 首次访问 Set-Cookie；POST 自动携带；
   //   POST 没有 cookie（旧页面）⇒ `req.scanPageToken = ''` ⇒ 回落既有 openId 共享路径（不报错）。
