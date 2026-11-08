@@ -77,7 +77,7 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
-| `douyin.laike.request.failed` | 3 | src/services/douyin/laikeClient.js |
+| `douyin.laike.request.failed` | 5 | src/services/douyin/laikeClient.js |
 | `douyin.laike.token.failed` | 1 | src/services/douyin/laikeClient.js |
 
 ## feishu
