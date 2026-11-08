@@ -8,6 +8,7 @@
  *   · TTL 来自 `config/configTables.js`（不再由调用方各自传）；
  *   · TTL 内直接返回；过期后重读；
  *   · 重读失败 ⇒ 返回最后一次成功快照 lastGood（并打 `config_table_cache.last_good_used` 告警）；
+ *   · **写库前校验**可传 `freshness: 'fresh'`：强制重读，失败**不回退 lastGood**（不能拿旧配置写库）；
  *   · 收到飞书 record_changed 事件时 `invalidate`，下一次读取重读。
  *
  * 快照 key = appToken + tableId + tableKey（同一 Base 的所有 gateway 实例共享）。
@@ -47,7 +48,7 @@ const warnLastGoodUsed = (entry, now, ttl) => {
   });
 };
 
-const loadEntry = async (entry, loader, now, ttl) => {
+const loadEntry = async (entry, loader, now, ttl, { allowLastGood = true } = {}) => {
   if (entry.loading) return entry.loading;
   entry.loading = (async () => {
     try {
@@ -60,7 +61,7 @@ const loadEntry = async (entry, loader, now, ttl) => {
       return entry.rows;
     } catch (error) {
       entry.lastError = error;
-      if (entry.lastGood) {
+      if (allowLastGood && entry.lastGood) {
         warnLastGoodUsed(entry, now, ttl);
         return entry.lastGood;
       }
@@ -73,10 +74,11 @@ const loadEntry = async (entry, loader, now, ttl) => {
 };
 
 /**
- * @param {{gateway: object, tableKey: string, loader?: Function}} options
+ * @param {{gateway: object, tableKey: string, loader?: Function, freshness?: 'cache'|'fresh'}} options
+ *   freshness='fresh' ⇒ 写库前强制重读；失败**不回退 lastGood**（避免旧配置写库）。
  * @returns {Promise<Array>} 行数组；从未成功读过且读失败 ⇒ 抛错
  */
-const getConfigRows = async ({ gateway, tableKey, loader, now = () => Date.now() } = {}) => {
+const getConfigRows = async ({ gateway, tableKey, loader, freshness = 'cache', now = () => Date.now() } = {}) => {
   if (!gateway || !tableKey) throw new Error('getConfigRows requires gateway + tableKey');
   const key = keyOf(gateway, tableKey);
   const ttl = configTableTtlMs(tableKey);
@@ -87,8 +89,13 @@ const getConfigRows = async ({ gateway, tableKey, loader, now = () => Date.now()
   } else {
     entry.gateway = gateway;
   }
-  if (entry.rows && ttl > 0 && now() - entry.at < ttl) return entry.rows;
-  return loadEntry(entry, loader, now, ttl);
+  const mustFresh = freshness === 'fresh';
+  if (!mustFresh && entry.rows && ttl > 0 && now() - entry.at < ttl) return entry.rows;
+  if (mustFresh && entry.loading) {
+    // 等当前加载结束，再强制读一次；不复用可能走了 lastGood 的在途结果。
+    await entry.loading.catch(() => {});
+  }
+  return loadEntry(entry, loader, now, ttl, { allowLastGood: !mustFresh });
 };
 
 /** 事件驱动：把某张表标记为过期；下一次读取会重读，失败则用 lastGood。 */
