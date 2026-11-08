@@ -496,6 +496,9 @@ missing: 0
 
 也就是：**主入口都已存在，但每个域都还有例外或未收口点**。
 
+> 2026-11-09 晚更新：本节的 target 覆盖、partial_failed、groupBuyVoucher / scanPage 缓存、
+> productSnapshot、交割单 toast 已由 #1026 / #1027 / #1023 / #1028 修复；下文逐项标注。
+
 ### 7.1 通知
 
 已实现：
@@ -512,10 +515,15 @@ asyncJobNotifier / alertNotifier 走统一服务
 
 ```text
 .env.example 没有 NOTIFY_PRIVATE_OPEN_ID / NOTIFY_GROUP_CHAT_ID
-显式 options.target 会绕过事件开关
 text 分支还有 3 处写死中文
 旧 alerts / pushRetry / heartbeat 目标配置仍有死读取
 NOTIFICATION_EVENTS[*].card 字段无消费者
+```
+
+已修复：
+
+```text
+#1027：显式 target 只覆盖收件人；enabled/reason 仍由 resolveNotification 决定
 ```
 
 ### 7.2 异步任务
@@ -531,9 +539,15 @@ failed 默认进群通知
 
 ```text
 .env.example 的 ASYNC_JOB_NOTIFY_STATUSES 留空 ⇒ 连 failed 也不发
-partial_failed 即使显式加进 statuses，run() 也不调 notifyIfNeeded
 notify 失败后没有后台重试（只有进程重启补发）
 部分链路没有统一 job / 没有恢复
+```
+
+已修复：
+
+```text
+#1026：run() 的 partial 分支在 markPartialFailed 后调用 notifyIfNeeded
+      是否发仍由 ASYNC_JOB_NOTIFY_STATUSES 决定；默认只有 failed 发
 ```
 
 ### 7.3 库存键
@@ -543,16 +557,21 @@ notify 失败后没有后台重试（只有进程重启补发）
 ```text
 13 条行为都有 operationKey
 三把键只有 keys.js 一个生成口
-销售出库已对齐「实时库存有记录就算有货」
+销售出库 / 采购退货已对齐「实时库存有记录就算有货」
 ```
 
 缺口：
 
 ```text
-采购退货仍只认门盒/样品/仓库，退货页却按 total 算
-「任意状态」只补了销售，没有抽象成通用规则
 getSaleResult 仍走旧 operationId
 部分状态清单仍有第二份硬编码
+```
+
+已修复：
+
+```text
+#1028：销售出库 / 采购退货 consumes='*'，完全不看所属状态；
+      findLiveInventoryIn / 单条 / 批量 / 账本 / 计划各路径统一按任意状态校验
 ```
 
 ### 7.4 配置表缓存
@@ -570,11 +589,19 @@ lastGood 告警
 缺口：
 
 ```text
-groupBuyVoucher 仍直接 listAll
-scanPageService 对 sizeManagement/product 仍直读
-product 还有第二套 60s 快照
 路由级 invalidate 没有测试
 默认 TTL 常量仍有重复
+labelPrint 仍叠加自己的 60s product 缓存
+部分定向读 / 批量读 / filter 读仍不进快照
+```
+
+已修复：
+
+```text
+#1027：voucherPaymentService → getConfigRows('groupBuyVoucher')
+      scanPageService readAllCapped → getConfigRows
+      按 record_id 读货品 → getConfigRows('product')
+      删除 productSnapshot（含 config / env / 测试）
 ```
 
 ### 7.5 写调度 / 回执 / 事件 / schema
@@ -619,11 +646,17 @@ utils/submitToast.js
 ```text
 工作台「确认到货」：仍用 config/workbenchArrival.js 的「已提交成功，数据会更新」
 售后：config/afterSalesPage.js 的「信息提交成功」＋页面自建 toast(2200ms)
-交割单：features/sales-delivery/ui-feedback.js 自建 toast(3000ms)
 旧成功页配置 config/scanPage.js 的 SALE_SUCCESS 仍存在
 ```
 
-PR #1023 正在处理「交割单提交 toast + 轮询参数」；**到货确认、售后 toast 仍待收口**。
+已修复：
+
+```text
+#1023：交割单提交 toast 走 config/submitToast.js
+      轮询参数走 config/asyncJobs.js，删除前端本地 jobPoll
+```
+
+仍待收口：到货确认、售后 toast。
 
 #### events
 
@@ -635,8 +668,8 @@ PR #1023 正在处理「交割单提交 toast + 轮询参数」；**到货确认
 ### 7.6 审计后的优先顺序
 
 ```text
-P0：ASYNC_JOB_NOTIFY_STATUSES 空值 / partial_failed 不发 / 通知 .env.example 缺变量
-P1：toast 收口（到货确认 / 售后 / 交割单）＋ 配置表缓存绕过
-P2：采购退货「任意状态」与库存页对齐
+P0：ASYNC_JOB_NOTIFY_STATUSES 空值 / 通知 .env.example 缺变量
+P1：toast 收口（到货确认 / 售后）
+P2：配置表缓存剩余例外（路由失效测试 / TTL 重复 / labelPrint 叠加缓存）
 P3：events 单段事件名、附件/IM 写调度边界
 ```
