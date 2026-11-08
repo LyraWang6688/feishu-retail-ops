@@ -29,9 +29,10 @@ const { execFileSync } = require('node:child_process');
 
 const SERVER_DIR = path.join(__dirname, '..');
 const OLD = path.join(SERVER_DIR, 'src', 'services', 'scanWriteService.js');
+const CREATE = path.join(SERVER_DIR, 'src', 'services', 'scanWrite', 'createService.js');
 const NEW = path.join(SERVER_DIR, 'src', 'services', 'saleWriteBackgroundService.js');
 
-const readOld = () => fs.readFileSync(OLD, 'utf8');
+const readOld = () => fs.readFileSync(OLD, 'utf8') + '\n' + fs.readFileSync(CREATE, 'utf8');
 const readNew = () => fs.readFileSync(NEW, 'utf8');
 const countLines = (file) => fs.readFileSync(file, 'utf8').split('\n').length;
 
@@ -77,7 +78,7 @@ test('AC-R1 ⭐ 剥离后旧文件**行数明显下降**，且那两处**实现*
   //     `masterOnly` / `oneShot` 两条**显式布尔**开关与收口调用，登记行数跟着显式登记 ✓
   //   2026-10-29 · 扫码页「一单多货」补货假成功 P0（业务负责人授权解冻 · 见冻结哨兵台账）：
   //     改前逐字：1732 → 改后逐字：1636（2026-11-08 扫码页拆分第 1 阶段：helpers 搬出，move-only）
-  assert.equal(oldLines, 412, `旧文件行数（${oldLines}）应等于登记值 412（2026-11-08 扫码页拆分第 1 阶段 helpers · 见冻结哨兵台账 ✓）`);
+  assert.equal(oldLines, 22, `旧文件 facade 行数（${oldLines}）应等于登记值 22（2026-11-08 阶段 5a facade · 实现见 createService.js）`);
   assert.ok(newLines > 100, `新文件应是"一件实事"（实际 ${newLines} 行）`);
 });
 

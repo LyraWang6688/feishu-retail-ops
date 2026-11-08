@@ -670,7 +670,8 @@ test('AC-R7 入口隔离：退货只写扫码自己的目录，`data/lark_mvp_ta
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-R8 源码哨兵：scanWriteService 不直连写库、不 construct 库存；库存只在 InventoryService', () => {
-  const raw = fs.readFileSync(path.join(SERVER_SRC, 'services', 'scanWriteService.js'), 'utf8');
+  const raw = fs.readFileSync(path.join(SERVER_SRC, 'services', 'scanWriteService.js'), 'utf8')
+    + fs.readFileSync(path.join(SERVER_SRC, 'services', 'scanWrite', 'createService.js'), 'utf8');
   // 注释里提到这些词是**对的**（那里写的正是"绝不碰它"）⇒ 先剥注释再看代码。
   const writeService = raw
     .replace(/\/\*[\s\S]*?\*\//g, '')

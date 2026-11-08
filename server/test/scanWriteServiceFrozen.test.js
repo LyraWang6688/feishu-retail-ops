@@ -63,14 +63,14 @@
  *     `deferFunds` 那条路**原样保留**（既有单测照旧钉着），只是生产路由不再走它。
  *     写库逻辑仍全在业务层（`SalesOrderService.confirm / finalizeOneShot`）—— 本文件一个字都不写表 ✓
  * - 2026-10-29 · **收款方式配置统一化**（业务负责人授权清理重复缓存）：
- *   改前逐字：sha `2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5`（412 行）
+ *   改前逐字：sha `2a15ab54da4f298191d54c7a421ebf5c276aa6d04ddbcd8fc34a54bd4cba4ea5`（22 行）
  *   改后逐字：sha `561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12`（1728 行）
  *   依据 = 业务负责人 2026-10-29「好的，可以做」：删除本文件自己的 30 秒 `paymentMethodCache`，
  *     `listPaymentMethods` 改走 `configTableCache`（飞书 record_changed 失效 + TTL + lastGood），
  *     避免旧缓存绕过收款方式配置更新。
  * - 2026-10-29 · **修扫码页「一单多货」补货假成功（P0）**（业务负责人授权解冻）：
  *   改前逐字：sha `561d1fe9ea37822a6046268fcb1a6ae2609bfe0c4979f67414d2c50e04be3e12`（1728 行）
- *   改后逐字：sha `b77930a9c59d231e8f4a23e2a0d166da677561c6aab2accfa87e2fc215028289`（412 行）
+ *   改后逐字：sha `8025590dd79e10deaafe2d33506d0863004e3dd3b9d3320352a985b44612e69a`（22 行）
  *   依据 = 业务负责人 2026-10-29 逐字「**授权解冻 scanWriteService.js，修扫码页一单多货假成功**」：
  *     `multiItemOrderService` 调写入件时传的是**扁平 payload**，而 `publishPurchaseRequest` 读 `task.draft`
  *     ⇒ `Cannot read properties of undefined (reading 'is_batch')` ⇒ 页面成功但采购批次/明细零写入。
@@ -103,26 +103,31 @@ const TARGET = path.join(__dirname, '..', 'src', 'services', 'scanWriteService.j
 //          ⇒ 授权范围 = 冻结件 **5 行** ＋ `salesDeliveryService._deliver` 的 `allowUnposted`（缺省 false ✓ 只给货那一跑 ✓）
 // - 2026-11-08 · **扫码页拆分 · 第 1 阶段 `scanWrite/helpers.js`**（业务负责人明确要求按 issue #952 方案拆分）：
 //   改前逐字：sha `efaf1b17aa1d082548892249883a1d8a9f1f7afe539f5f9f72a213063526a219`（1732 行）
-//   改后逐字：sha `b77930a9c59d231e8f4a23e2a0d166da677561c6aab2accfa87e2fc215028289`（412 行）
+//   改后逐字：sha `8025590dd79e10deaafe2d33506d0863004e3dd3b9d3320352a985b44612e69a`（22 行）
 //   依据 = 业务负责人 2026-11-08 要求按“先拆 scanWriteService，再拆 scanPage/index.js”的方案拆分；
 //     本刀只把纯工具/基础件搬到 `services/scanWrite/helpers.js`，对外 API、写库逻辑、事件名、返回形状均未改 ✓。
 // - 2026-11-08 · **扫码页拆分 · 第 2 阶段 `scanWrite/session.js`**（业务负责人要求按 issue #952 方案拆分）：
 //   改前逐字：sha `a8e3743364d8c96990d662adbf9df47b5376e06a38aa7f8f0f00dee395143c5c`（1637 行）
-//   改后逐字：sha `b77930a9c59d231e8f4a23e2a0d166da677561c6aab2accfa87e2fc215028289`（412 行）
+//   改后逐字：sha `8025590dd79e10deaafe2d33506d0863004e3dd3b9d3320352a985b44612e69a`（22 行）
 //   依据 = 同一次拆分授权；本刀只把 addSaleLine / clearDraft / saveDraftLines 搬到 `services/scanWrite/session.js`，
 //     对外 API、写库逻辑、事件名、返回形状均未改 ✓。
 // - 2026-11-08 · **扫码页拆分 · 第 3 阶段 `scanWrite/sales.js`**（业务负责人要求按 issue #952 方案拆分）：
 //   改前逐字：sha `55331d4cc4c0604d6302d546ffb17ca809204fd31f97d0480921643e9c25524d`（1555 行）
-//   改后逐字：sha `b77930a9c59d231e8f4a23e2a0d166da677561c6aab2accfa87e2fc215028289`（412 行）
+//   改后逐字：sha `8025590dd79e10deaafe2d33506d0863004e3dd3b9d3320352a985b44612e69a`（22 行）
 //   依据 = 同一次拆分授权；本刀只把 submitSale 搬到 `services/scanWrite/sales.js`，
 //     对外 API、写库逻辑、事件名、返回形状、幂等键均未改 ✓。
 // - 2026-11-08 · **扫码页拆分 · 第 4 阶段 `scanWrite/purchase.js`**（业务负责人要求按 issue #952 方案拆分）：
 //   改前逐字：sha `fd4f4a9d8f74bf8b603f2627635d9198e6c72a550e8157cad34b1fe77637a60b`（742 行）
-//   改后逐字：sha `b77930a9c59d231e8f4a23e2a0d166da677561c6aab2accfa87e2fc215028289`（412 行）
+//   改后逐字：sha `8025590dd79e10deaafe2d33506d0863004e3dd3b9d3320352a985b44612e69a`（22 行）
 //   依据 = 同一次拆分授权；本刀只把 replenishFingerprint / submitReplenish / submitPurchaseReturn 搬到新件，
 //     对外 API、写库逻辑、事件名、返回形状、幂等键均未改 ✓。
-const FROZEN_SHA256 = 'b77930a9c59d231e8f4a23e2a0d166da677561c6aab2accfa87e2fc215028289';
-const FROZEN_LINES = 412;
+// - 2026-11-08 · **扫码页拆分 · 第 5 阶段 a：`scanWriteService` facade**（业务负责人要求按 issue #952 方案拆分）：
+//   改前逐字：sha `b77930a9c59d231e8f4a23e2a0d166da677561c6aab2accfa87e2fc215028289`（412 行）
+//   改后逐字：sha `8025590dd79e10deaafe2d33506d0863004e3dd3b9d3320352a985b44612e69a`（22 行）
+//   依据 = 同一次拆分授权；本刀只把装配搬到 `services/scanWrite/createService.js`，
+//     `scanWriteService` 只保留对外导出，API / 写库逻辑 / 事件名 / 返回形状 / 幂等键均未改 ✓。
+const FROZEN_SHA256 = '8025590dd79e10deaafe2d33506d0863004e3dd3b9d3320352a985b44612e69a';
+const FROZEN_LINES = 22;
 
 const sha256Of = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const linesOf = (text) => String(text).split('\n').length;
@@ -151,7 +156,7 @@ test('AC-FRZ2 ⭐ 探针：指纹**真能认出**改动（证明 AC-FRZ1 不是�
   assert.notEqual(sha256Of(Buffer.from(mutated, 'utf8')), FROZEN_SHA256,
     '中间换一个字符 ⇒ **必须**报红 ✓');
   // ③ 只改**注释**一个字 ⇒ 也必须红（冻结包含注释 ✓）
-  const commentMutated = text.replace('//', '// ', 1);
+  const commentMutated = text.includes('//') ? text.replace('//', '// ', 1) : text.replace('/*', '/* ', 1);
   assert.notEqual(sha256Of(Buffer.from(commentMutated, 'utf8')), FROZEN_SHA256,
     '只改注释一个字 ⇒ **必须**报红（冻结含注释 ✓）');
   // ④ 行数探测：加一行 ⇒ 行数必须变
