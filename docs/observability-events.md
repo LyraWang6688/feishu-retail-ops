@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **478** 个事件。按前缀分组：
+共 **461** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -196,16 +196,6 @@
 | `lark.sales.product_missing.blocked` | 1 | src/config/salesProductRegistration.js |
 | `lark.sales.product_missing.guard_disabled` | 1 | src/config/salesProductRegistration.js |
 | `lark.sales.product_missing.undetermined` | 1 | src/config/salesProductRegistration.js |
-| `lark.sales.sample_candidates.failed` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_card.fallback.failed` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_card.fallback.sent` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_card.fallback.skipped` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_card.update.failed` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_card.update.skipped` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_card.update.started` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_card.update.succeeded` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_card.update.tick_failed` | 1 | src/services/sampleReplacementService.js |
-| `lark.sales.sample_notice.failed` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.sample_replacement.applied` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.trade_type.resolve_failed` | 1 | src/services/larkMvpService.js |
 | `lark.sdk.error` | 1 | src/utils/larkLogger.js |
@@ -365,14 +355,7 @@
 | `sales.detail_id.skipped` | 1 | src/services/salesOrderService.js |
 | `sales.entry.total_amount.skipped` | 2 | src/services/sales/oneShotWrite.js<br>src/services/salesOrderService.js |
 | `sales.entry.total_amount.written` | 2 | src/services/sales/oneShotWrite.js<br>src/services/salesOrderService.js |
-| `sales.group.sale.located` | 2 | src/services/salesGroupThreadLocator.js |
-| `sales.group.sale.unresolved` | 1 | src/services/salesGroupThreadLocator.js |
-| `sales.group.thread.bind_failed` | 1 | src/services/salesGroupThreadLocator.js |
-| `sales.group.thread.bound` | 1 | src/services/salesGroupThreadLocator.js |
-| `sales.group.thread.remember_failed` | 1 | src/services/larkMvpService.js |
-| `sales.group.thread.remembered` | 1 | src/services/salesGroupThreadLocator.js |
 | `sales.inventory.applied` | 1 | src/services/salesDeliveryService.js |
-| `sales.message_link.unavailable` | 1 | src/services/salesMessageLinkService.js |
 | `sales.order_no.collision` | 1 | src/services/salesEntryService.js |
 | `sales.order_no.generated` | 1 | src/services/salesEntryService.js |
 | `sales.pending_deal_push.purchase_link.mapping_lookup_failed` | 1 | src/services/purchasePendingBatchService.js |

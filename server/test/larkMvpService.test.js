@@ -6,7 +6,6 @@ const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService, aggregateRecognizedItems } = require('../src/services/larkMvpService');
 const { PurchaseBatchLocator } = require('../src/services/purchaseBatchLocator');
-const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 // 「缺口算出来了 → 会挂到点确认之后的卡片上」这个衔接点用真实渲染器证一下
 // （2026-10-07：段落从确认卡片挪到点确认之后的卡片 —— ⭐ 最终口径 = 处理中卡 ＋ 已入账终态卡
@@ -66,11 +65,8 @@ const makeService = (options = {}) => {
     purchaseBatchLocatorStore: options.purchaseBatchLocatorStore,
     // 销售那侧的「话题 ↔ 销售记录」映射同样指向临时目录：用例之间不共享映射，
     // 也不会往仓库的 server/data/sales_group_threads/ 里写东西。
-    salesGroupThreads: options.salesGroupThreads || new SalesGroupThreadLocator({
-      store: new JsonTaskStore({
-        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'group-sales-thread-')), idField: 'task_id',
-      }),
-    }), botOpenId: options.botOpenId === undefined ? TEST_BOT_OPEN_ID : options.botOpenId,
+
+    botOpenId: options.botOpenId === undefined ? TEST_BOT_OPEN_ID : options.botOpenId,
     // `undefined` → 走 config/groupAdmission 的默认（放宽）；显式 true/false → 钉死口径。
     mainChatRequireMention: options.mainChatRequireMention,
     groupPurchaseFlow: options.groupPurchaseFlow,
@@ -146,42 +142,6 @@ test('recognized purchase items with same SKU and size are aggregated', () => {
     ]),
     [{ item_no: 'A100', color: '黑', size: 38, quantity: 3 }]
   );
-});
-
-test('selling a sample sends a per-order size choice card (提醒本身仍活着；卡片按钮回调已退场)', async () => {
-  const store = makeStore();
-  const cards = [];
-  const promoted = [];
-  const delivery = { inventory: {
-    sampleReplacementCandidates: async () => [
-      { size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
-      { size: 41, doorBoxCount: 0, sampleCount: 0, warehouseCount: 1 },
-    ],
-    promoteToSample: async (input) => { promoted.push(input); return { liveRecordId: 'door_40' }; },
-  } };
-  const service = new LarkMvpService({ client: {}, store, gateway: { table: () => ({ fields: { number: '编号' } }),
-      get: async () => ({ fields: { 编号: 'A100黑' } }) }, references: {}, posting: {}, purchaseWebhooks: {}, delivery });
-  service.updateSalesActionCard = async (_task, _event, card) => { cards.push(card); return true; };
-  // ⚠️ 这条用例测的是**补样品提醒本身**（不是入口），所以渠道用"群销售那条任务"显式给出来，
-  //    发送出口打桩记账 —— 传输层（`reply_in_thread`）由 groupThreadReplyRouting /
-  //    salesGroupThread 那几份用例钉住。私聊链路已移除，没有群上下文 = 没有去处。
-  service.sendTaskCard = async (_task, card) => { cards.push(card); return 'om_sample_card'; };
-  const delivered = { sampleReplacements: [{ salesDetailRecordId: 'detail_1',
-    productRecordId: 'product_1', sampleConsumedQuantity: 1 }] };
-  const channelTask = { task_id: 'sale_group_sample', type: 'sale', chat_type: 'group',
-    chat_id: GROUP_CHAT_ID, message_id: 'om_her_sale', sender_open_id: 'ou_seller',
-    sales_entry_record_id: 'entry_1' };
-  await service.notifySampleReplacements(delivered, 'ou_seller', { channelTask });
-  await service.notifySampleReplacements(delivered, 'ou_seller', { channelTask });
-  assert.equal(cards.length, 1);
-  assert.match(JSON.stringify(cards[0]), /A100黑/);
-  assert.match(JSON.stringify(cards[0]), /40码：门盒 1/);
-  assert.ok(!JSON.stringify(cards[0]).includes('选 41 码'));
-  // ⛔ 2026-10-28：这一段原先还接着点卡片按钮（`handleCardAction` → 只有收件人能补、重复点幂等）。
-  //   卡片按钮回调已随「没有旧卡片」整体删除 ⇒ 那几条断言一起退场。
-  //   ⚠️ 本用例**保留**的部分是"补样品提醒本身"（`notifySampleReplacements`）——
-  //     它仍然活着（工作台补样品链路会调它），判据一个字没放宽。
-  assert.equal(promoted.length, 0, '提醒阶段一个写库动作都不该发生（她还没选门盒）');
 });
 
 // ⛔ 2026-10-28：这里原先还有两条**卡片按钮**用例 ——
