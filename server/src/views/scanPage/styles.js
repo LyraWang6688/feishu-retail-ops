@@ -212,23 +212,6 @@ summary { cursor: pointer; }
 .purchase-size { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--surface-soft); }
 .purchase-size__size { font-size: var(--font-size-lg); font-weight: 700; }
 .purchase-size__count { margin-left: auto; font-size: var(--font-size-amount); font-weight: 700; font-variant-numeric: tabular-nums; }
-/* ── ⭐ 2026-10-11「货品」：**打印到店里那台电脑**（表单 POST，零 JS）────────────
-   一颗主按钮（.btn 已是整行 + ≥44px 命中区）+ 一行状态徽标 + 最近一次任务那行。
-   ⚠️ 这里**没有脚本**：提交是原生表单，状态靠服务端重新渲染（她刷新 / 提交后就能看到）。
-   ⚠️ 本段在模板字符串里，注释里**不许出现反引号**（会提前结束字符串）。 */
-.label-print-form { margin: var(--space-2) 0 0; }
-/* ⭐ 提交后的**显眼横幅**（她上次就是因为"看不出点没点上"才连点几次）：整块底色 + 大一号的字。 */
-.label-print-banner { margin: var(--space-2) 0; padding: var(--space-3); border-radius: var(--radius-md); }
-.label-print-banner--ok { background: var(--success-soft); border-left: 4px solid var(--success); }
-.label-print-banner--dup { background: var(--warning-soft); border-left: 4px solid var(--warning); }
-.label-print-banner__title { margin: 0; font-size: var(--font-size-md); font-weight: 700; }
-.label-print-banner__note { margin: var(--space-1) 0 0; font-size: var(--font-size-base); }
-.label-print-banner .label-print-form { margin-top: var(--space-2); }
-.label-print-status { margin: var(--space-2) 0 0; }
-.label-print-badge { display: inline-block; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); font-size: var(--font-size-base); font-weight: 700; }
-.label-print-badge--online { color: var(--surface); background: var(--primary); }
-.label-print-badge--offline { color: var(--text-secondary); background: var(--border-light); }
-.label-print-job { margin: var(--space-1) 0 0; font-size: var(--font-size-base); color: var(--text-secondary); }
 /* ── 领域切换（一个二维码，**六个领域**）────────────────────────────────────
    ⭐⭐ 2026-10-11（业务负责人批准）：六个领域 = 销售 · 补货 · 退货 · 验收 · 库存 · 货品。
    ⚠️ 她要的是「**紧凑两行网格**」⇒ grid 三列 × 两行（6 格正好两行）、

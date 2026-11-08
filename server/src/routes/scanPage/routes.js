@@ -10,28 +10,28 @@ const { installScanPageErrorRoutes } = require('./errors');
 
 const installScanPageRoutes = ({ router, ctx }) => {
   const {
-    DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods,
+    DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods,
     clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo,
     logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf,
     postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, renderMinimalPage,
-    resolveLabelPrintQueue, respondWriteFailure, scanTargetOf, sendHtml, sessionIdOf, setDraftOrderAmount,
+    respondWriteFailure, scanTargetOf, sendHtml, sessionIdOf, setDraftOrderAmount,
     writeConfig, writeService,
   } = ctx;
 
   const {
     submitMultiItemOrder, buildWriteContext, loadPendingBatches, invalidateInventorySnapshot: invalidateFlowSnapshot,
-    clearDraftForScanIfNeeded, buildPrintContext,
+    clearDraftForScanIfNeeded,
   } = require('./flowHelpers').createFlowHelpers({
-    DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods,
+    DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods,
     clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo,
     logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire,
     openIdOf: sessionIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction,
-    realmScanConfig, renderMinimalPage, resolveLabelPrintQueue, respondWriteFailure, router,
+    realmScanConfig, renderMinimalPage, respondWriteFailure, router,
     scanTargetOf, sendHtml, setDraftOrderAmount, writeConfig, writeService,
   });
   const routeCtx = {
     ...ctx, submitMultiItemOrder, buildWriteContext, loadPendingBatches,
-    invalidateInventorySnapshot: invalidateFlowSnapshot, clearDraftForScanIfNeeded, buildPrintContext,
+    invalidateInventorySnapshot: invalidateFlowSnapshot, clearDraftForScanIfNeeded,
     ROUTE_PATTERNS: [config.route.recordPath].filter(Boolean),
   };
 

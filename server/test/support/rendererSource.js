@@ -27,7 +27,6 @@ const ORDER = [
   'layout.js',
   'draftBlock.js',
   'stockBlock.js',
-  'productBlock.js',
   'script.js',
   'paymentBlock.js',
   'multiItemBlock.js',

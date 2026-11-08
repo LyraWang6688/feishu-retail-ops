@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **426** 个事件。按前缀分组：
+共 **422** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -373,10 +373,6 @@
 | `scan.data.filtered_empty` | 1 | src/config/scanPage.js |
 | `scan.data.limit_exceeded` | 1 | src/config/scanPage.js |
 | `scan.entry.keep_draft_clear_failed` | 1 | src/routes/scanPage/flowHelpers.js |
-| `scan.label_print.enqueued` | 1 | src/routes/scanPage/handlers/smallActions.js |
-| `scan.label_print.failed` | 1 | src/routes/scanPage/handlers/smallActions.js |
-| `scan.label_print.number_unresolved` | 1 | src/routes/scanPage/handlers/smallActions.js |
-| `scan.label_print.ready_failed` | 1 | src/routes/scanPage/flowHelpers.js |
 | `scan.launch` | 1 | src/utils/uiTapReport.js |
 | `scan.lookup.timing` | 1 | src/config/scanPage.js |
 | `scan.multi_item.add` | 1 | src/config/multiItemOrder.js |

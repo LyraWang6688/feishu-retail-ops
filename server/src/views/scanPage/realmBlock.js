@@ -2,7 +2,6 @@ const { SCAN_PAGE } = require('../../config/scanPage');
 const { NEW_REALM, REALMS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, foldedSpecialRowsOf, sellableCountOf } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { stockTableHtml } = require('./stockBlock');
-const { labelBlockHtml } = require('./productBlock');
 const { submitFeedbackAttrs } = require('./script');
 const { hiddenField, saleFormHtml, specialFactsHtml } = require('./paymentBlock');
 const { replenishFormHtml } = require('./replenishBlock');
@@ -64,7 +63,6 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
       .filter((row) => !foldedSizes.has(String(row.size_text)));
     return wrap(stockTableHtml({ ...view, rows: tableRows }, config) + specialFactsHtml(foldedInventory, REALM_TEXTS));
   }
-  if (id === 'product') return wrap(labelBlockHtml(view, page?.print));
   if (id === REPLENISH_REALM) {
     // ⭐ 2026-10-11：**补货**从原「采购」领域里独立成一块（内容一个字没变）。
     const form = write && write.enabled !== false && write.replenishEnabled !== false

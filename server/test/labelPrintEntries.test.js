@@ -68,7 +68,15 @@ test('AC-E2 删掉的东西真的不在了（文件 / 端点 / 页面引用 / �
     '页面不再查标签列表 / 编号清单');
   assert.match(index, /mountScanOnlyPage\(/, '剩下的入口 = 扫码打印聚焦屏');
 
-  // 扫码页（server 渲染）也不许再链到那个已删除的空白页（死链）。
-  const productBlock = stripComments(readSrc('src/views/scanPage/productBlock.js'));
-  assert.equal(/label-print\.html/.test(productBlock), false, '扫码页那两条旧链接删掉（不留死链）');
+  // 🔴 2026-11-09（业务负责人：「隐藏的旧「标签」领域块，可以删除」）：
+  //   扫码页那个隐藏领域整块删除 ⇒ 渲染文件不存在、REALMS 里没有 `product`、
+  //   扫码页路由也不再接打印队列（没有「打印这一款」那条动作）。
+  assert.equal(fs.existsSync(path.join(__dirname, '../src/views/scanPage/productBlock.js')), false,
+    '扫码页「标签」领域渲染文件必须删除');
+  const realm = readSrc('src/views/scanPageRealm.js');
+  assert.equal(/id: 'product'/.test(realm), false, '扫码页领域列表里不许再有 product');
+  const actionRoutes = readSrc('src/routes/scanPage/actionRoutes.js');
+  assert.equal(/printLabel|handlePrintLabel/.test(actionRoutes), false, '扫码页不再有「打印这一款」动作');
+  const scanWrite = readSrc('src/config/scanWrite.js');
+  assert.equal(/printLabel/.test(scanWrite), false, '写动作配置里也不许再有 printLabel');
 });
