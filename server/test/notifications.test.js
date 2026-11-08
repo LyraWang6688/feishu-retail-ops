@@ -119,3 +119,53 @@ test('update：用 CardKit card.update 编辑同一张卡', async () => {
   assert.equal(payload.path.card_id, 'card_1');
   assert.equal(JSON.parse(payload.data.data).body.elements[1].content, '更新');
 });
+
+
+test('卡片可回复指定消息并进入话题（卡片格式）', async () => {
+  const client = fakeClient();
+  client.im.v1.message.reply = async (payload) => {
+    client.calls.push(['message.reply', payload]);
+    return { code: 0, data: { message_id: 'msg_reply' } };
+  };
+  const service = createNotificationService({
+    client,
+    resolve: () => ({ enabled: true, reason: 'ok', target: 'group', receiveIdType: 'chat_id', receiveId: 'oc_1' }),
+    logger: { logInfo: () => {}, logWarn: () => {} },
+  });
+  const result = await service.send('async_job_failed', { lines: ['x'] }, {
+    target: { receiveIdType: 'chat_id', receiveId: 'oc_1' },
+    replyToMessageId: 'om_root', inThread: true,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.messageId, 'msg_reply');
+  const reply = client.calls.find(([kind]) => kind === 'message.reply')[1];
+  assert.equal(reply.path.message_id, 'om_root');
+  assert.equal(reply.data.reply_in_thread, true);
+  assert.equal(reply.data.msg_type, 'interactive');
+  assert.equal(client.calls.some(([kind]) => kind === 'message.create'), false, '回复时不再另发顶层消息');
+});
+
+
+test('普通文本格式：purchase_request_created 发 text，并可回复进话题', async () => {
+  const client = fakeClient();
+  client.im.v1.message.reply = async (payload) => {
+    client.calls.push(['message.reply', payload]);
+    return { code: 0, data: { message_id: 'msg_text' } };
+  };
+  const service = createNotificationService({
+    client,
+    resolve: () => ({ enabled: true, reason: 'ok', target: 'group', receiveIdType: 'chat_id', receiveId: 'oc_1' }),
+    logger: { logInfo: () => {}, logWarn: () => {} },
+  });
+  const result = await service.send('purchase_request_created', { text: '<at id=ou_1></at> 三星 这批 2 双' }, {
+    target: { receiveIdType: 'chat_id', receiveId: 'oc_1' },
+    replyToMessageId: 'om_root', inThread: true,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.format, 'text');
+  const reply = client.calls.find(([kind]) => kind === 'message.reply')[1];
+  assert.equal(reply.data.msg_type, 'text');
+  assert.equal(reply.data.reply_in_thread, true);
+  assert.equal(JSON.parse(reply.data.content).text.includes('三星'), true);
+  assert.equal(client.calls.some(([kind]) => kind === 'message.create'), false);
+});

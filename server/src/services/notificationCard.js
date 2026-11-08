@@ -53,29 +53,32 @@ const createNotificationCard = async ({ client, card }) => {
   return cardId;
 };
 
-const sendCardMessage = async ({ client, target, cardId }) => {
+const sendCardMessage = async ({ client, target, cardId, replyToMessageId = '', inThread = false }) => {
   const api = client?.im?.v1?.message || client?.im?.message;
   if (!api?.create) throw new Error(NOTIFICATION_TEXTS.messageUnsupported);
-  const response = assertOk(await api.create({
-    params: { receive_id_type: target.receiveIdType },
-    data: {
-      receive_id: target.receiveId,
-      msg_type: 'interactive',
-      content: JSON.stringify({ type: 'card', data: { card_id: cardId } }),
-    },
-  }), NOTIFICATION_TEXTS.messageSendFailed);
+  const content = JSON.stringify({ type: 'card', data: { card_id: cardId } });
+  const replied = String(replyToMessageId || '').trim();
+  const response = assertOk(await (replied && api.reply
+    ? api.reply({
+      path: { message_id: replied },
+      data: { msg_type: 'interactive', content, ...(inThread === true ? { reply_in_thread: true } : {}) },
+    })
+    : api.create({
+      params: { receive_id_type: target.receiveIdType },
+      data: { receive_id: target.receiveId, msg_type: 'interactive', content },
+    })), NOTIFICATION_TEXTS.messageSendFailed);
   const messageId = String(response?.data?.message_id || '');
   if (!messageId) throw new Error(NOTIFICATION_TEXTS.messageMissingId);
   return messageId;
 };
 
 /** 发送一张通知卡片；返回 CardKit 的 card_id 与消息的 message_id。 */
-const sendNotificationCard = async ({ client, target, card }) => {
+const sendNotificationCard = async ({ client, target, card, replyToMessageId = '', inThread = false }) => {
   if (!target?.receiveId || !target?.receiveIdType) {
     throw new Error(NOTIFICATION_TEXTS.targetMissing);
   }
   const cardId = await createNotificationCard({ client, card });
-  const messageId = await sendCardMessage({ client, target, cardId });
+  const messageId = await sendCardMessage({ client, target, cardId, replyToMessageId, inThread });
   return { cardId, messageId };
 };
 

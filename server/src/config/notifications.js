@@ -39,24 +39,24 @@ const NOTIFICATION_TARGETS = Object.freeze({
  */
 const NOTIFICATION_EVENTS = Object.freeze({
   async_job_failed: Object.freeze({
-    target: 'group', enabled: true, card: 'async_job_failed', title: '【异步写入失败】',
+    target: 'group', enabled: true, format: 'card', card: 'async_job_failed', title: '【异步写入失败】',
   }),
   observability_alert: Object.freeze({
     target: 'private', enabled: false, masterEnv: 'OBSERVABILITY_ALERTS_ENABLED',
-    card: 'observability_alert', title: '【观测告警】',
+    format: 'card', card: 'observability_alert', title: '【观测告警】',
   }),
   lark_event_heartbeat: Object.freeze({
     target: 'private', enabled: false, masterEnv: 'LARK_EVENT_ALERT_ENABLED',
-    card: 'lark_event_heartbeat', title: '【飞书事件心跳】',
+    format: 'card', card: 'lark_event_heartbeat', title: '【飞书事件心跳】',
   }),
   purchase_request_created: Object.freeze({
-    target: 'group', enabled: true, card: 'purchase_request_created', title: '【采购申请】',
+    target: 'group', enabled: true, format: 'text', card: 'purchase_request_created', title: '【采购申请】',
   }),
   purchase_return_created: Object.freeze({
-    target: 'group', enabled: true, card: 'purchase_return_created', title: '【采购退货】',
+    target: 'group', enabled: true, format: 'text', card: 'purchase_return_created', title: '【采购退货】',
   }),
   voucher_settlement: Object.freeze({
-    target: 'group', enabled: true, card: 'voucher_settlement', title: '【团购券结算】',
+    target: 'group', enabled: true, format: 'card', card: 'voucher_settlement', title: '【团购券结算】',
   }),
 });
 
