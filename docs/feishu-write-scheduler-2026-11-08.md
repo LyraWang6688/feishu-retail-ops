@@ -36,7 +36,7 @@ services/feishuWriteScheduler.js（全局单例：分组串行 + 有限并发 + 
 - **只调度写**：`listAll / get / getBatch / listByFilter` 等读请求**不进**调度器（否则页面变慢）。
 - **不改业务规则**：不重写 `submitSale` / `InventoryService` 写表逻辑；每个 `work` 闭包就是原来那一行
   `client.bitable.appTableRecord.*` 调用（`assertSuccess` 移进闭包，让调度器能看见飞书的拒绝）。
-- **回滚开关**：`FEISHU_WRITE_SCHEDULER_ENABLED=false` ⇒ 网关拿到 `null`，所有写**逐字回到改动前**。
+- **始终开启**：没有环境变量开关；网关固定走全局调度器（测试可注入 `null` 关闭）。
 
 ## 3. 并发语义
 
@@ -86,7 +86,6 @@ services/feishuWriteScheduler.js（全局单例：分组串行 + 有限并发 + 
 | `feishu.write.applied` | info | `table_key` `operation` `group_key` `queue_wait_ms` `duration_ms` `attempts` `concurrency_limit` `active_count` `queue_depth` + 关联键 |
 | `feishu.write.retry` | warn | `attempt` `max_attempts` `reason`（feishu_code / http_status / transient_400）`code` `status` `delay_ms` + 关联键 |
 | `feishu.write.failed` | error | `attempts` `retryable` `reason` `code` `status` `queue_wait_ms` + 关联键 |
-| `feishu.write.scheduler.disabled` | info | `env`（`FEISHU_WRITE_SCHEDULER_ENABLED=false` 时打一条） |
 
 关联键由调用方经 `options.correlation` 传（白名单口径见 `utils/correlationFields`）；
 调度器**不透明**透传，不查表、不推导。
