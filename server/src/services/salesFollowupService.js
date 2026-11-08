@@ -250,10 +250,16 @@ class SalesFollowupService {
     const [orders, details, methods, payments, products, accessories] = await Promise.all([
       this.listAllWithRetry('salesEntry', fieldOptions('salesEntry')),
       this.listAllWithRetry('salesDetail', fieldOptions('salesDetail')),
+      // 🔴 2026-11-08（缓存被精简数据污染的真实事故）：这张表示**共享配置缓存**的源
+      //   （售后「可用于退款」、交割单券关联都读同一份快照）——
+      //   **不能再按需只取「名称」一列**塞进整表缓存：那样售后会把"列没读到"误判成
+      //   "没有这条限制"（refundable 被当成 true），券关联也变空。
+      //   ⇒ 配置表一律**整表读完整字段**（这张表只有个位数行，省不了多少）；
+      //     订单列表只需要名称时，在下面对 `methods` 做映射即可（不传 `fieldNames`）。
       getConfigRows({
         gateway: this.gateway,
         tableKey: 'paymentMethod',
-        loader: () => this.listAllWithRetry('paymentMethod', fieldOptions('paymentMethod')),
+        loader: () => this.listAllWithRetry('paymentMethod'),
       }),
       this.listAllWithRetry('paymentRecord', fieldOptions('paymentRecord')),
       this.listAllWithRetry('product', fieldOptions('product')),
