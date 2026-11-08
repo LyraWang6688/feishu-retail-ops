@@ -47,14 +47,12 @@
  *
  * 安全：
  *   · **只读**：除了"把心跳文件读出来"，不改任何业务数据、不打印任何 secret；
- *   · 只有超阈值且开关开启时，才用项目自己的飞书应用身份发**一条纯文本告警**。
+ *   · 只有超阈值且开关开启时，才用统一通知服务发**一条 Card 2.0 卡片告警**。
  *
  * 环境变量（全部可配，见 .env.example）：
  *   LARK_EVENT_STALE_MINUTES      超时阈值（分钟，默认 180）
  *   LARK_EVENT_ALERT_ENABLED      **显式布尔**，只有 true/1/yes/on 才发（默认关）
- *   LARK_EVENT_ALERT_TARGET       purchase_group（默认，用 PURCHASE_CHAT_ID）| owner
- *   LARK_EVENT_ALERT_OPEN_ID      target=owner 时的接收人 open_id
- *   LARK_EVENT_ALERT_MENTION_ALL  群里告警是否 @所有人（显式布尔，默认关）
+ *   NOTIFY_PRIVATE_OPEN_ID        私聊告警接收人 open_id（回落 OBSERVABILITY_ALERTS_OPEN_ID）
  *   LARK_EVENT_CALLBACK_URL       告警文案里的正确回调地址
  *   LARK_EVENT_HEARTBEAT_FILE     心跳文件覆盖路径
  */
@@ -115,18 +113,14 @@ const require = createRequire(import.meta.url);
 const {
   resolveStaleMinutes,
   isAlertEnabled,
-  resolveAlertTarget,
-  resolveAlertOpenId,
-  isMentionAllEnabled,
   resolveCallbackUrl,
   evaluateLarkEventHeartbeat,
   buildLarkEventStaleAlertText,
   shanghaiTimeLabel,
-  ALERT_TARGET_OWNER,
-  ALERT_TARGET_PURCHASE_GROUP,
 } = require('../src/config/larkEventHeartbeat');
 const { readHeartbeatFile, DEFAULT_HEARTBEAT_FILE } = require('../src/infrastructure/larkEventHeartbeat');
-const { resolvePurchaseChatId } = require('../src/config/groupPurchase');
+const { resolveNotification } = require('../src/config/notifications');
+const { createDefaultNotificationService } = require('../src/services/notificationService');
 
 const finish = (code, payload) => {
   if (flags.json === true) writeOut(JSON.stringify(payload, null, 2));
@@ -147,12 +141,14 @@ const alertEnabled = isAlertEnabled();
 const heartbeat = readHeartbeatFile(heartbeatFile);
 const evaluation = evaluateLarkEventHeartbeat(heartbeat, { staleMinutes, now: new Date() });
 
-const alertTarget = resolveAlertTarget();
+const notificationTarget = resolveNotification('lark_event_heartbeat');
 const base = {
   heartbeatFile,
   staleMinutes,
   alertEnabled,
-  alertTarget,
+  alertTarget: notificationTarget.target,
+  notificationEnabled: notificationTarget.enabled,
+  notificationReason: notificationTarget.reason,
   dryRun,
   lastEventAt: evaluation.lastEventAt,
   lastBusinessEventAt: evaluation.lastBusinessEventAt,
@@ -210,42 +206,17 @@ if (!alertEnabled) {
   finish(2, { ...base, outcome: 'stale_alert_disabled', alerted: false, alertText });
 }
 
-// ④ 发告警。目标：默认采购群（已有 PURCHASE_CHAT_ID，是现成的运维告警通道）；
-//    也可显式切到业务负责人私聊（LARK_EVENT_ALERT_TARGET=owner + LARK_EVENT_ALERT_OPEN_ID）。
-let receiveIdType;
-let receiveId;
-if (alertTarget === ALERT_TARGET_OWNER) {
-  receiveIdType = 'open_id';
-  receiveId = resolveAlertOpenId();
-  if (!receiveId) {
-    say('  ✗ 告警目标是 owner，但 LARK_EVENT_ALERT_OPEN_ID 未配置 ⇒ 无法发送。');
-    finish(1, { ...base, outcome: 'error_missing_open_id', alerted: false, alertText });
-  }
-} else {
-  receiveIdType = 'chat_id';
-  receiveId = resolvePurchaseChatId();
-  if (!receiveId) {
-    say('  ✗ 告警目标是采购群，但 PURCHASE_CHAT_ID 未配置 ⇒ 无法发送。');
-    finish(1, { ...base, outcome: 'error_missing_chat_id', alerted: false, alertText });
-  }
-}
-
-// @所有人只对群有意义（显式布尔，默认关）。
-const mentionAll = alertTarget === ALERT_TARGET_PURCHASE_GROUP && isMentionAllEnabled();
-const text = mentionAll ? `<at user_id="all">所有人</at>\n${alertText}` : alertText;
-
+// ④ 发告警：统一走 notificationService（Card JSON 2.0 / CardKit）。
+//    target = private（NOTIFY_PRIVATE_OPEN_ID，回落 OBSERVABILITY_ALERTS_OPEN_ID）。
+const service = createDefaultNotificationService();
 try {
-  const lark = require('@larksuiteoapi/node-sdk');
-  const { getLarkAgentCredentials } = require('../src/config/larkAgent');
-  const { appId, appSecret } = getLarkAgentCredentials();
-  const client = new lark.Client({ appId, appSecret });
-  const response = await client.im.message.create({
-    params: { receive_id_type: receiveIdType },
-    data: { receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text }) },
-  });
-  if (response.code !== 0) throw new Error(`发送飞书消息失败: ${response.msg} (Code: ${response.code})`);
-  say(`  ✓ 告警已发送（目标：${alertTarget}${mentionAll ? ' + @所有人' : ''}）。`);
-  finish(0, { ...base, outcome: 'alert_sent', alerted: true, mentionAll, alertText });
+  const result = await service.send('lark_event_heartbeat', { lines: alertText.split('\n') });
+  if (!result.ok) {
+    say(`  ✗ 告警发送失败：${result.reason || 'send_failed'}${result.error ? `（${result.error}）` : ''}`);
+    finish(1, { ...base, outcome: 'error_send_failed', alerted: false, reason: result.reason || 'send_failed', error: result.error || '', alertText });
+  }
+  say('  ✓ 告警已发送（统一通知卡片）。');
+  finish(0, { ...base, outcome: 'alert_sent', alerted: true, cardId: result.cardId, messageId: result.messageId, alertText });
 } catch (error) {
   say(`  ✗ 告警发送失败：${error.message}`);
   finish(1, { ...base, outcome: 'error_send_failed', alerted: false, error: error.message, alertText });
