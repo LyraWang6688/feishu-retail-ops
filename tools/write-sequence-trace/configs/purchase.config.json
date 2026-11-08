@@ -1,0 +1,69 @@
+{
+  "chain": "purchase",
+  "title": "一个采购单的跨表写入时序",
+  "base_token_env": "FEISHU_V1_BITABLE_APP_TOKEN",
+  "status": "draft",
+  "start": {
+    "table": "采购主表",
+    "order_field": "采购单号"
+  },
+  "tables": [
+    {
+      "key": "purchaseOrder",
+      "label": "采购主表",
+      "table": "采购主表",
+      "role": "start"
+    },
+    {
+      "key": "purchaseDetail",
+      "label": "采购明细",
+      "table": "采购明细",
+      "role": "linked",
+      "link_field": "采购单号",
+      "from": "purchaseOrder"
+    },
+    {
+      "key": "inventoryLedger",
+      "label": "库存流水",
+      "table": "库存流水",
+      "role": "linked",
+      "link_field": "关联采购",
+      "from": "purchaseDetail"
+    },
+    {
+      "key": "liveInventory",
+      "label": "实时库存",
+      "table": "实时库存",
+      "role": "snapshot"
+    },
+    {
+      "key": "paymentDetail",
+      "label": "P交易明细",
+      "table": "P交易明细",
+      "role": "linked",
+      "link_field": "关联采购单",
+      "from": "purchaseOrder"
+    }
+  ],
+  "phases": [
+    {
+      "name": "① 采购下单",
+      "from": 0,
+      "to": 30
+    },
+    {
+      "name": "② 采购入库",
+      "from": 30,
+      "to": 90
+    },
+    {
+      "name": "③ 采购付款",
+      "from": 90,
+      "to": 120
+    }
+  ],
+  "notes": [
+    "⚠️ 采购链路的资金端尚未实测：当前生产 P交易明细字段很少、资金流水可能为空；启用前必须拿真实采购单只读验证，不能假设与销售同构。",
+    "⚠️ 采购主表/明细的关联字段名需以当前生产 schema 为准；本配置为待验证草稿。"
+  ]
+}

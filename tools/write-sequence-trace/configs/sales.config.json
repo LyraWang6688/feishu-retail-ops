@@ -1,0 +1,73 @@
+{
+  "chain": "sales",
+  "title": "一个销售单的跨表写入时序",
+  "base_token_env": "FEISHU_V1_BITABLE_APP_TOKEN",
+  "start": {
+    "table": "销售主表",
+    "order_field": "销售单号"
+  },
+  "tables": [
+    {
+      "key": "salesEntry",
+      "label": "销售主表",
+      "table": "销售主表",
+      "role": "start"
+    },
+    {
+      "key": "salesDetail",
+      "label": "销售明细",
+      "table": "销售明细",
+      "role": "linked",
+      "link_field": "销售单号",
+      "from": "salesEntry"
+    },
+    {
+      "key": "inventoryLedger",
+      "label": "库存流水",
+      "table": "库存流水",
+      "role": "linked",
+      "link_field": "关联销售",
+      "from": "salesDetail"
+    },
+    {
+      "key": "paymentRecord",
+      "label": "S交易明细",
+      "table": "S交易明细",
+      "role": "linked",
+      "link_field": "关联销售单",
+      "from": "salesEntry"
+    },
+    {
+      "key": "liveInventory",
+      "label": "实时库存",
+      "table": "实时库存",
+      "role": "snapshot"
+    }
+  ],
+  "phases": [
+    {
+      "name": "① 销售建单",
+      "from": 0,
+      "to": 28
+    },
+    {
+      "name": "② 库存出库",
+      "from": 58,
+      "to": 88
+    },
+    {
+      "name": "重试",
+      "from": 93,
+      "to": 107
+    },
+    {
+      "name": "③ 资金收款",
+      "from": 109,
+      "to": 115
+    }
+  ],
+  "notes": [
+    "实时库存一条记录=一双鞋；出库后整条删除，接口无法回溯，只能由快照差集推断。",
+    "本配置的 table_id 是生产表 ID；换 Base 时以 config 为准，不写死在脚本里。"
+  ]
+}
