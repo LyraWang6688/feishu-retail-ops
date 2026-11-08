@@ -3,8 +3,7 @@
 /**
  * 异步任务**失败通知**（#948 第 6 节）：最终失败（重试耗尽）后发一条结构化文本到运营群。
  *
- * 群：`ASYNC_JOB_ALERT_CHAT_ID` 优先，否则**复用既有** `PURCHASE_CHAT_ID`
- *   （该群即「邯美皮鞋运营群」；见 `config/asyncJobs.js` 的 `resolveAsyncJobChatId`）。
+ * 目标：统一由 config/notifications.js 的 group 目标决定。
  *
  * 四条硬约束：
  *   ① **只发一次** —— 去重只认 `notified_at`（调用方在**发送成功**后才写它）。

@@ -8,7 +8,7 @@
  * （facade 里保留了同名薄委托方法），所以 `this.client` / `this.sandboxChatId` 等照旧可用。
  */
 const { larkErrorText: larkErrorTextOf } = require('../../utils/larkError');
-const { resolvePurchaseChatId } = require('../../config/groupPurchase');
+const { resolveNotification } = require('../../config/notifications');
 const {
   resolvePurchaseGroupNoticeConfig, renderPurchaseGroupNoticeMention,
 } = require('../../config/purchaseGroupNoticeText');
@@ -56,7 +56,9 @@ const messaging = {
    */
   resolvePurchaseGroupTarget(options = {}) {
     if (options.sandboxChatId) return { chatId: options.sandboxChatId, sandbox: true, reason: 'sandbox' };
-    const chatId = resolvePurchaseChatId();
+    // 目标统一由 config/notifications.js 的 group 目标决定（NOTIFY_GROUP_CHAT_ID，回落 PURCHASE_CHAT_ID）。
+    const target = resolveNotification('purchase_request_created');
+    const chatId = String(target.receiveId || '').trim();
     if (!chatId) return { chatId: '', sandbox: false, reason: 'chat_id_unconfigured' };
     return { chatId, sandbox: false, reason: 'configured' };
   },
@@ -105,7 +107,7 @@ const messaging = {
     const target = this.resolvePurchaseGroupTarget({ sandboxChatId: this.sandboxChatId });
     if (!target.chatId) {
       logWarn('purchase.group_notice.skipped', {
-        reason: 'purchase_chat_id_unconfigured', env: 'PURCHASE_CHAT_ID', content, ...correlation,
+        reason: 'purchase_chat_id_unconfigured', env: 'NOTIFY_GROUP_CHAT_ID / PURCHASE_CHAT_ID', content, ...correlation,
       });
       return false;
     }
@@ -220,29 +222,6 @@ const messaging = {
     };
   },
 
-  /**
-   * 更新采购消息卡片（类似销售的 updateSalesActionCard）
-   */
-  async updatePurchaseActionCard(task, event, card) {
-    const messageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id;
-    if (!messageId) {
-      console.warn('lark.purchase.card.update.skipped', { task_id: task.task_id, reason: 'missing_message_id' });
-      return false;
-    }
-    try {
-      const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
-      if (!patch) return false;
-      const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
-        path: { message_id: messageId },
-        data: { content: JSON.stringify(card) },
-      });
-      if (response.code !== 0) throw new Error(response.msg + ' (Code: ' + response.code + ')');
-      return true;
-    } catch (error) {
-      console.warn('lark.purchase.card.update.failed', { task_id: task.task_id, error: error.message });
-      return false;
-    }
-  },
 };
 
 module.exports = messaging;

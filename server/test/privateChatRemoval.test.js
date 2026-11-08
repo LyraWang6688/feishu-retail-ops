@@ -21,10 +21,8 @@ const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
-const { SalesGroupThreadLocator } = require('../src/services/salesGroupThreadLocator');
 const { createLarkEventHandlers } = require('../src/routes/larkEvents');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const larkCards = require('../src/utils/larkCards');
 
 const TEST_BOT_OPEN_ID = 'ou_test_bot_open_id';
 const TEST_SELLER = 'ou_seller';
@@ -124,7 +122,6 @@ const makeHarness = () => {
     secondDelivery: {},
     store: tempStore('private-chat-lark-'),
     botOpenId: TEST_BOT_OPEN_ID,
-    salesGroupThreads: new SalesGroupThreadLocator({ store: tempStore('private-chat-threads-') }),
     // 「话题 ↔ 销售」的本地映射 / 深链落点：本文件只关心"发到哪里"，换成记录型空实现。
     salesMessageLinks: { rememberFromSend: async () => null },
     // 采购那条路换成一个记录型桩：用它证明"这条消息没走采购"。
@@ -222,100 +219,6 @@ test('① 私聊的非文字 / 空文字 → 与文字**同一档**：一条日�
 // ② 没有群上下文的任务：**没有去处** → 不发 + 记 skip
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('② 没有群上下文的任务：sendTaskCard / sendTaskText **不发、返 null、记 skip**', async () => {
-  const { service, sent, replies } = makeHarness();
-  const noChannelTask = { task_id: 't_no_channel', type: 'sale', sender_open_id: TEST_SELLER };
-
-  const logs = await captureLogs(async () => {
-    assert.equal(await service.sendTaskCard(noChannelTask, { header: {} }), null);
-    assert.equal(await service.sendTaskText(noChannelTask, '回你一句'), null);
-  });
-
-  assert.deepEqual(replies, [], '没有去处 → 一个远端调用都不做');
-  assert.deepEqual(sent, [], '更没有主动私聊');
-  assert.match(logs, /lark\.private_chat\.send_skipped/);
-  assert.match(logs, /"kind":"card"/);
-  assert.match(logs, /"kind":"text"/);
-  assert.match(logs, /"reason":"no_group_context"/);
-});
-
-test('② 私聊触发的补样品提醒（没有群上下文）→ 不发，只记 skip；也不记 notice_sent', async () => {
-  const { service, sent, replies } = makeHarness();
-
-  const logs = await captureLogs(async () => {
-    await service.notifySampleReplacements(sampleDelivery('detail_p2p'), TEST_SELLER);
-  });
-
-  assert.deepEqual(sent, [], '不再静默发私聊（这是**有意的行为变化**）');
-  assert.deepEqual(replies, []);
-  assert.match(logs, /lark\.private_chat\.send_skipped/);
-
-  // 没发出去就不算发过 —— 将来有了渠道还能再发一次。
-  const tasks = await service.store.list();
-  assert.equal(tasks.length, 1, '补样品任务本身**照建**（它是业务状态，不依赖发不发得出去）');
-  assert.equal(tasks[0].notice_sent, undefined, '没发出去就不许记 notice_sent');
-  assert.equal(tasks[0].card_message_id, undefined);
-});
-
-test('② ⭐ 工作台触发那条路（`routes/workbench.js` 自己 new 的 service）同样不发，且注明 no_group_context', async () => {
-  // 工作台**不经过** `larkMvpService` 的适配器，走的是 SampleReplacementService 的**缺省出口** ——
-  // 这条缺省分支必须自己判一次，否则"私聊链路移除"会在这一条路上留个口子。
-  const { SampleReplacementService } = require('../src/services/sampleReplacementService');
-  const creates = [];
-  const workbenchNotifier = new SampleReplacementService({
-    gateway: {
-      table: () => ({ fields: { number: '编号' } }),
-      get: async () => ({ fields: { 编号: '8088-26棕' } }),
-    },
-    inventory: { sampleReplacementCandidates: async () => [] },
-    store: tempStore('private-chat-workbench-'),
-    client: {
-      im: {
-        message: {
-          create: async (args) => { creates.push(args); return { code: 0, data: { message_id: 'om_never' } }; },
-        },
-      },
-    },
-  });
-
-  const logs = await captureLogs(async () => {
-    await workbenchNotifier.notifySampleReplacements(sampleDelivery('detail_wb'), TEST_SELLER);
-  });
-
-  assert.deepEqual(creates, [], '工作台触发的补样品提醒一条消息都不发');
-  assert.match(logs, /lark\.private_chat\.send_skipped/);
-  assert.match(logs, /"reason":"no_group_context"/);
-  const tasks = await workbenchNotifier.store.list();
-  assert.equal(tasks.length, 1);
-  assert.equal(tasks[0].notice_sent, undefined);
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ③ 群销售 → 补样品提醒回到**那条销售话题**
-// ═══════════════════════════════════════════════════════════════════════════
-
-test('③ 群销售的补样品提醒 → 卡片回到**那条销售话题**（reply_in_thread），零主动私聊', async () => {
-  const { service, sent, replies, sampleCandidateCalls } = makeHarness();
-  const channelTask = {
-    task_id: 'sale_group_1', type: 'sale', chat_type: 'group', chat_id: GROUP_CHAT_ID,
-    group_thread_id: 'omt_sale_1', message_id: 'om_her_sale', sender_open_id: TEST_SELLER,
-    sales_entry_record_id: 'entry_1',
-  };
-
-  await service.notifySampleReplacements(sampleDelivery(), TEST_SELLER, { channelTask });
-
-  assert.deepEqual(sampleCandidateCalls, ['p_1']);
-  const card = replies.find((item) => item.data.msg_type === 'interactive');
-  assert.ok(card, '群销售那条必须把补选卡片发出去');
-  assert.equal(card.path.message_id, 'om_her_sale', '回到她那笔销售那条消息的话题');
-  assert.equal(card.data.reply_in_thread, true);
-  assert.deepEqual(sent, [], '群这条路一个主动私聊都不许有');
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ④ 私聊专属的东西**已经不在了**
-// ═══════════════════════════════════════════════════════════════════════════
-
 test('④ `PurchaseWebhookService.sendCard`（全仓无调用方）已删除', () => {
   assert.equal(PurchaseWebhookService.prototype.sendCard, undefined);
   // 同类里另外三个「发消息」的方法还在（名字各不相同，见类内注释）。
@@ -327,7 +230,6 @@ test('④ `PurchaseWebhookService.sendCard`（全仓无调用方）已删除', (
 test('④ 私聊专属的入口与卡片都已删除：sendTodaySales / handleBotMenu / todaySalesCard', () => {
   assert.equal(LarkMvpService.prototype.sendTodaySales, undefined);
   assert.equal(LarkMvpService.prototype.handleBotMenu, undefined);
-  assert.equal(larkCards.todaySalesCard, undefined);
 });
 
 test('④ `LarkMvpService.sendCard`（open_id 口径的卡片发送器，全仓无调用方）已删除；`sendText` 留给 notice', () => {
@@ -405,29 +307,6 @@ test('④ SampleReplacementService 里**没有** open_id 发送器（sendCard / 
 // ═══════════════════════════════════════════════════════════════════════════
 
 
-test('⑤ 群任务的两条出口 payload 不变：卡片/文字都回到那条消息的话题', async () => {
-  const { service, sent, replies } = makeHarness();
-  const groupTask = {
-    task_id: 'sale_group_2', type: 'sale', chat_type: 'group', chat_id: GROUP_CHAT_ID,
-    group_thread_id: 'omt_sale_1', message_id: 'om_her_sale', sender_open_id: TEST_SELLER,
-    sales_entry_record_id: 'entry_1',
-  };
-
-  await service.sendTaskCard(groupTask, { header: {} });
-  await service.sendTaskText(groupTask, '群里回一句');
-
-  assert.equal(replies.length, 2);
-  for (const item of replies) {
-    assert.equal(item.path.message_id, 'om_her_sale');
-    assert.equal(item.data.reply_in_thread, true);
-  }
-  assert.equal(replies[0].data.msg_type, 'interactive');
-  assert.equal(replies[1].data.msg_type, 'text');
-  assert.deepEqual(sent, [], '群这条路一条主动私聊都没有');
-});
-
-
-// ⭐ 那句话是**可关的**（她 2026-10-07：开关保留；关掉就纯静默）。
 test('① 那句话可关：NOTICE_ENABLED=false → 私聊一个字都不发（只留日志）', async () => {
   const { service, sent } = makeHarness();
   process.env.PRIVATE_CHAT_DISABLED_NOTICE_ENABLED = 'false';

@@ -11,8 +11,7 @@
 //    哪天有人往某个 service 里重新加"缺省发私聊"，只要那个出口不调这里，
 //    grep `lark.private_chat.send_skipped` 的覆盖就会露馅。
 //
-// ⚠️ 群任务那条路**不经过这里**：`chat_type === 'group'` 时由注入的渠道感知出口
-//    （`larkMvpService.sendTaskCard` / `sendTaskText`）回到那条话题（`reply_in_thread`）。
+// ⚠️ 群话题出站路径已随群入口清理退场；本文件只服务"私聊被拒 / 没有群上下文"的 skip 记录。
 //
 // 🔴 这里**没有开关**：要恢复私聊是**重新实现那条链路**，不是翻一个开关。
 const { logWarn } = require('./logger');
