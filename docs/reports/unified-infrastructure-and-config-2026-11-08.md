@@ -481,3 +481,162 @@ node scripts/observability-events.mjs --check
 ---
 
 边界：本文只做盘点；未部署、未改配置、未改业务代码。
+
+## 7. 2026-11-09 多 AI 统一配置审计
+
+5 个只读审计员分别检查：通知、异步任务、库存键、配置表缓存、写调度/回执/事件/schema。
+
+结论：
+
+```text
+complete: 0
+partial: 5
+missing: 0
+```
+
+也就是：**主入口都已存在，但每个域都还有例外或未收口点**。
+
+### 7.1 通知
+
+已实现：
+
+```text
+private/group 两个目标
+6 个事件注册
+CardKit 卡片底座
+asyncJobNotifier / alertNotifier 走统一服务
+旧 message.patch 清零
+```
+
+缺口：
+
+```text
+.env.example 没有 NOTIFY_PRIVATE_OPEN_ID / NOTIFY_GROUP_CHAT_ID
+显式 options.target 会绕过事件开关
+text 分支还有 3 处写死中文
+旧 alerts / pushRetry / heartbeat 目标配置仍有死读取
+NOTIFICATION_EVENTS[*].card 字段无消费者
+```
+
+### 7.2 异步任务
+
+已实现：
+
+```text
+统一状态机 / 重试 / 幂等键 / notified_at
+failed 默认进群通知
+```
+
+缺口：
+
+```text
+.env.example 的 ASYNC_JOB_NOTIFY_STATUSES 留空 ⇒ 连 failed 也不发
+partial_failed 即使显式加进 statuses，run() 也不调 notifyIfNeeded
+notify 失败后没有后台重试（只有进程重启补发）
+部分链路没有统一 job / 没有恢复
+```
+
+### 7.3 库存键
+
+已实现：
+
+```text
+13 条行为都有 operationKey
+三把键只有 keys.js 一个生成口
+销售出库已对齐「实时库存有记录就算有货」
+```
+
+缺口：
+
+```text
+采购退货仍只认门盒/样品/仓库，退货页却按 total 算
+「任意状态」只补了销售，没有抽象成通用规则
+getSaleResult 仍走旧 operationId
+部分状态清单仍有第二份硬编码
+```
+
+### 7.4 配置表缓存
+
+已实现：
+
+```text
+8 张表登记
+读走 getConfigRows
+TTL 单源
+record_changed 失效
+lastGood 告警
+```
+
+缺口：
+
+```text
+groupBuyVoucher 仍直接 listAll
+scanPageService 对 sizeManagement/product 仍直读
+product 还有第二套 60s 快照
+路由级 invalidate 没有测试
+默认 TTL 常量仍有重复
+```
+
+### 7.5 写调度 / 回执 / 事件 / schema
+
+已实现：
+
+```text
+bitable 写全部走 gateway → 调度器
+调度器固定常开
+events 自动生成
+schema 表 ID 全部来自 env
+```
+
+缺口：
+
+#### 附件上传
+
+```text
+uploadAttachment 直调 drive.media.uploadAll
+没有走 feishuWriteScheduler
+```
+
+#### IM 发送
+
+```text
+notificationService / larkMvpService / purchase messaging
+直接走 im.message.create / reply / image.create
+不走 bitable 调度器
+```
+
+#### 提交 toast
+
+统一入口是：
+
+```text
+config/submitToast.js
+utils/submitToast.js
+```
+
+但仍有页面没有走：
+
+```text
+工作台「确认到货」：仍用 config/workbenchArrival.js 的「已提交成功，数据会更新」
+售后：config/afterSalesPage.js 的「信息提交成功」＋页面自建 toast(2200ms)
+交割单：features/sales-delivery/ui-feedback.js 自建 toast(3000ms)
+旧成功页配置 config/scanPage.js 的 SALE_SUCCESS 仍存在
+```
+
+PR #1023 正在处理「交割单提交 toast + 轮询参数」；**到货确认、售后 toast 仍待收口**。
+
+#### events
+
+```text
+单段事件名（ui.tap / multi_item_order.*）不会进入自动目录
+运行时拼接的事件名无法静态生成
+```
+
+### 7.6 审计后的优先顺序
+
+```text
+P0：ASYNC_JOB_NOTIFY_STATUSES 空值 / partial_failed 不发 / 通知 .env.example 缺变量
+P1：toast 收口（到货确认 / 售后 / 交割单）＋ 配置表缓存绕过
+P2：采购退货「任意状态」与库存页对齐
+P3：events 单段事件名、附件/IM 写调度边界
+```
