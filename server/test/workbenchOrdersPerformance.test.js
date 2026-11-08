@@ -32,6 +32,7 @@ const { SalesFollowupService } = require('../src/services/salesFollowupService')
 const { createWorkbenchOrdersCache } = require('../src/services/workbenchOrdersCache');
 const { ORDER_FIELD_KEYS, DEFAULT_ORDERS_CACHE_MS, readWorkbenchOrdersConfig } = require('../src/config/workbenchOrders');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { resetConfigTableCache } = require('../src/services/configTableCache');
 
 const SERVER = path.join(__dirname, '..');
 const readSrc = (relative) => fs.readFileSync(path.join(SERVER, relative), 'utf8');
@@ -84,11 +85,14 @@ const ORDERS_TABLES = ['salesEntry', 'salesDetail', 'paymentMethod', 'paymentRec
 const ordersCalls = (calls) => calls.filter((call) => ORDERS_TABLES.includes(call.key));
 
 /** 真读那一遍的构造（TTL = 0 ⇒ 每次真读），用于"语义不变"的对照。 */
-const serviceWith = (gateway, options = {}) => new SalesFollowupService({
+const serviceWith = (gateway, options = {}) => {
+  resetConfigTableCache();
+  return new SalesFollowupService({
   gateway,
   ordersCache: createWorkbenchOrdersCache({ ttlMs: options.ttlMs ?? 0, now: options.now }),
-  ordersConfig: { ordersCacheMs: options.ttlMs ?? 0 },
-});
+    ordersConfig: { ordersCacheMs: options.ttlMs ?? 0 },
+  });
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC1 ~ AC3 缓存：命中 / 过期 / 写后失效
@@ -118,7 +122,7 @@ test('AC2 TTL 过期 ⇒ 重新读（拨表到 30 秒之后）', async () => {
   const afterFirst = fake.calls.length;
   clock += 30_001;
   await service.listOrders();
-  assert.equal(fake.calls.length, afterFirst + 5, '过期之后重新读 5 张表');
+  assert.equal(fake.calls.length, afterFirst + 4, '过期之后重新读 4 张表（支付方式仍在配置表缓存里）');
 });
 
 test('AC3 写库之后作废缓存 ⇒ 下一次读必须重新取（不许看到旧数据）', async () => {
@@ -133,7 +137,7 @@ test('AC3 写库之后作废缓存 ⇒ 下一次读必须重新取（不许看�
 
   service.invalidateOrders(); // 路由层写成功之后调的就是它
   await service.listOrders();
-  assert.equal(fake.calls.length, afterFirst + 5, '作废之后重新读 5 张表');
+  assert.equal(fake.calls.length, afterFirst + 4, '作废之后重新读 4 张表（支付方式仍在配置表缓存里）');
 
   // 缓存实例本身也要能被独立调用（路由层持有的是它）
   const cache = createWorkbenchOrdersCache({ ttlMs: 30000, now: () => clock });
@@ -165,7 +169,7 @@ test('AC4b TTL=0 ⇒ 每次都是真读（行为与优化前一致）', async ()
   await service.listOrders();
   const afterFirst = fake.calls.length;
   await service.listOrders();
-  assert.equal(fake.calls.length, afterFirst + 5, '关掉缓存之后每次都真读');
+  assert.equal(fake.calls.length, afterFirst + 4, '关掉订单缓存后，非配置表每次都真读（支付方式走配置表缓存）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

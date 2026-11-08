@@ -61,7 +61,7 @@ class SizeReferenceService {
         // 统一配置快照：读失败保留 lastGood（避免尺码缓存空 ⇒ size=null）。
         const records = await getConfigRows({
           gateway: this.gateway, tableKey: 'sizeManagement',
-          ttlMs: this.cacheTtlMs, now: this.now,
+          now: this.now,
         });
         for (const record of records) {
           const size = normalizeSize(textValue(record.fields?.[field]));
