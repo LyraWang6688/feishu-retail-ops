@@ -57,6 +57,7 @@
  *   · 「货品信息.编号 / 单价」（+ 品牌那列，仅当 `BRAND.from = 'table'`）—— 按编号补齐价格与品牌。
  */
 const QRCode = require('qrcode');
+const { getConfigRows } = require('./configTableCache');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_PRINT, resolveGrid } = require('../config/labelPrint');
 const { SCAN_URL } = require('../config/tagQrCode');
@@ -67,7 +68,6 @@ const { parseStockKey } = require('./liveInventoryIndex');
 //    这里只 import 复用（**值的安全字符检查也在它那里**），**不抄第二份** ✗。
 const { containsFormula, orFormula } = require('./bitableFilterFormula');
 const { logInfo, logWarn } = require('../utils/logger');
-
 // 她填错了（400，原样回显）vs 远端出错（其余，页面只说"查询失败"）——与
 // `inventoryAdjustmentService` 同一条约定，控制器按 statusCode 分流。
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -459,7 +459,7 @@ const createLabelPrintService = (gateway, options = {}) => {
    */
   const loadLabelListTables = async () => {
     const records = await gateway.listAll('liveInventory');
-    const productRecords = await gateway.listAll('product');
+    const productRecords = await getConfigRows({ gateway, tableKey: 'product' });
     return {
       value: { records, productRecords },
       meta: {
@@ -1010,7 +1010,7 @@ const createLabelPrintService = (gateway, options = {}) => {
     const inventoryFields = V1_BITABLE_SCHEMA.tables.liveInventory?.fields || {};
 
     // ── 读一：「货品信息」整张（这个端点的主数据）────────────────────────────
-    const products = await gateway.listAll('product');
+    const products = await getConfigRows({ gateway, tableKey: 'product' });
 
     // ── 读二：「实时库存」整张（只为回答"这个编号有没有入库过"；只用它的「库存键」）──
     const stockRecords = await gateway.listAll('liveInventory');

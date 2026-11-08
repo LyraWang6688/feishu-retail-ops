@@ -82,7 +82,7 @@ class V1ReferenceResolver {
       return { recordId: input.productRecordId, record };
     }
     const table = this.gateway.table('product');
-    const records = await this.gateway.listAll('product');
+    const records = await getConfigRows({ gateway: this.gateway, tableKey: 'product' });
     const wantedNumber = normalizeText(input.productNumber || input.number);
     const wantedItemNo = normalizeText(input.itemNo);
     const wantedColor = normalizeColor(input.color);

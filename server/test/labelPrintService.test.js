@@ -600,8 +600,9 @@ test('品类候选来自同一份数据：filters.category_options 去重排序�
   //   依据：task-11 给 `listLabels` 加了短 TTL 缓存 ⇒ 同一个 service 上第二次 `listLabels`
   //         不再读飞书；而**本用例钉的是"品类候选在筛选之前算出来"**（与读几次表无关），
   //         所以要**显式关掉缓存**才能保持原来那条"读两次表"的观测量。
-  //   判据没放宽：`assert.deepEqual(gateway.calls, ['liveInventory','product','liveInventory','product'])`
-  //         以及其他三条断言**逐字不变**；缓存本身的 AC 在 `labelPrintProducts.test.js`（AC-N10）。
+  //   判据没放宽：`assert.deepEqual(gateway.calls, ['liveInventory','product','liveInventory'])`
+  //         以及其他三条断言**逐字不变**；`product` 现在由统一 configTableCache 缓存（TTL 30 分钟），
+  //         所以两次 listLabels 只读一次货品表。缓存本身的 AC 在 `labelPrintProducts.test.js`（AC-N10）。
   const { gateway, service } = serviceFor({
     liveInventory: [
       record('r1', { stockKey: 'XHB8095|黑色|A|42', category: '休闲鞋' }),
@@ -614,7 +615,7 @@ test('品类候选来自同一份数据：filters.category_options 去重排序�
   const filtered = await service.listLabels({ state: '门盒' });
   assert.deepEqual(filtered.filters.category_options, ['单鞋', '休闲鞋'],
     '候选在筛选之前算出来 —— 她越筛，下拉里可选的品类不会越来越少');
-  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory', 'product']);
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory']);
 });
 
 test('筛选：尺码不是整数 / 排序方式不认识 / 最近新增太大 → 400（原样告诉她哪里填错）', async () => {

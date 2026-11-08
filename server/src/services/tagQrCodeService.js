@@ -47,6 +47,7 @@
  *   「文件名 ≠ 当前编号应有文件名 ⇒ 重生成」，供 cron / scheduler 调用（见 `config.sweep`）。
  */
 const fs = require('node:fs');
+const { getConfigRows } = require('./configTableCache');
 const path = require('node:path');
 const QRCode = require('qrcode');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
@@ -58,7 +59,6 @@ const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
 // ⭐ 2026-10-12：事件判"没变/判不了"时的**延迟复核**（真机根因：公式列延迟 ⇒ 没有人再复核）
 
 const SCAN_URL_PLACEHOLDER = 'number';
-
 /**
  * 把模板里的 `{number}` 换成**已 URL 编码**的编号。
  *
@@ -813,7 +813,7 @@ const createTagQrCodeService = ({
     // `dryRun` 缺省看 config；config 里也没有 `sweep.dryRun` 这个键时**按干跑**（最保守）。
     const isDryRun = dryRun === undefined ? sweepConfig.dryRun !== false : Boolean(dryRun);
 
-    const records = await gateway.listAll('product');
+    const records = await getConfigRows({ gateway, tableKey: 'product' });
     const candidates = [];
     let consistent = 0;
     let numberMissing = 0;
