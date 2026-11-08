@@ -6,14 +6,15 @@
  *
  * 业务负责人 2026-10-29 口径：
  *   · 用户点击后 toast「数据提交成功，后台自动写入」（见 `config/submitToast.js`，本队列不写文案）；
- *   · 「大不了 API 接口有问题，那么就重试呗」⇒ 临时失败自动重试 N 次
- *     （#948：次数/退避走统一配置 `ASYNC_JOB_*`；`config/afterSalesDerived.job` 是兼容入口）。
+ *   · 「大不了 API 接口有问题，那么就重试呗」⇒ 临时失败自动重试 N 次；
+ *     **次数 / 退避只读统一配置** `ASYNC_JOB_*`（`config/asyncJobs.js`）——
+ *     旧 `AFTER_SALES_JOB_*` 已退场（业务负责人 2026-11-08：改成统一配置，不需要兼容兜底）。
  */
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { AFTER_SALES_DERIVED } = require('../config/afterSalesDerived');
 const {
-  ASYNC_JOBS, ASYNC_JOB_TYPES, classifyThrownError,
+  ASYNC_JOBS, ASYNC_JOB_TYPES, classifyThrownError, retryDelayMs,
 } = require('../config/asyncJobs');
 const { jobIdFor } = require('./asyncJobStore');
 const { logInfo, logWarn, logError } = require('../utils/logger');
@@ -67,14 +68,10 @@ const createAfterSalesAsyncService = ({
   const queued = new Set();
   const running = new Set();
   let pumping = false;
-  const { retryAttempts, retryBaseMs } = AFTER_SALES_DERIVED.job;
-  /** 指数退避（配置化：base 取 afterSalesDerived.job ⇒ 与统一 env 同一份取值；封顶取统一配置）。 */
-  const delayForAttempt = (attempt) => {
-    const base = Number(retryBaseMs) || 0;
-    if (!base) return 0;
-    const delay = base * (2 ** Math.max(0, Number(attempt) - 1));
-    return Math.min(delay, Number(ASYNC_JOBS.retry.maxDelayMs) || delay);
-  };
+  // 重试次数 / 退避 = **统一配置唯一来源**（`ASYNC_JOB_MAX_ATTEMPTS` / `ASYNC_JOB_RETRY_BASE_MS`）；
+  // 旧 `AFTER_SALES_JOB_*`（`config/afterSalesDerived.job`）已删除，不再兜底。
+  const retryAttempts = ASYNC_JOBS.retry.maxAttempts;
+  const delayForAttempt = (attempt) => retryDelayMs(attempt, ASYNC_JOBS.retry);
 
   const queueMeta = () => ({ queue_depth: pending.length, queued_count: queued.size, running_count: running.size });
   const get = (jobId) => store.get(jobId);

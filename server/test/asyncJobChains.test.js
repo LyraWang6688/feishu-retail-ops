@@ -12,7 +12,6 @@
  */
 // ⚠️ 必须在 require 业务模块**之前**设：`config/asyncJobs` 在模块加载时读 env。
 process.env.ASYNC_JOB_RETRY_BASE_MS = '0';
-process.env.AFTER_SALES_JOB_RETRY_MS = '0';
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_async_job_chain_test';
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'async_job_chain_test_secret';
 
