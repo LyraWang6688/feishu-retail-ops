@@ -72,6 +72,8 @@ const EVENTS = Object.freeze([
   'label_print.device.reprint.failed',
   'label_print.device.status.failed',
   'label_print.device.token_missing',
+  'label_print.form.dispatch_failed',
+  'label_print.form.not_wired',
   'label_print.job.claimed',
   'label_print.job.done',
   'label_print.job.enqueued',

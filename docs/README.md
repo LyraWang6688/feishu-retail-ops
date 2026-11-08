@@ -128,6 +128,7 @@
 | [async-submit-copy-and-plan-2026-10-14.md](archive/async-submit-copy-and-plan-2026-10-14.md) | 异步提交 · 统一文案（2026-10-14 晚 · 业务负责人逐字） |
 | [douyin-voucher-payment-rules-2026-10-16.md](douyin-voucher-payment-rules-2026-10-16.md) | ⭐ **抖音团购券 · 资金页三条口径落地**（业务负责人 2026-10-16 逐字：「差额的计算**按照面值**来」「收款明细里的收款金额**按照平台结算款**来」「抖音团购券是**待平台结算**」）—— 面值算差额 / 平台结算款写那笔收款金额 / 状态写「待平台结算」。⚠️ **本条是补登记**：该文档由 #704 带入 main，但**漏进本索引** ⇒ `docsIndexCompleteness` 的 AC-DI1 在 main 上就是**红的**，这里顺带补上（一个字未改文档正文） |
 | [label-print-entries-2026-10-14.md](label-print-entries-2026-10-14.md) | 「货品 → 标签打印」的入口结构（2026-10-14 晚 · 业务负责人逐字） |
+| [label-print-form-chain-2026-11-09.md](label-print-form-chain-2026-11-09.md) | ⭐ **「批量打印」飞书表单 → 自动打印**（2026-11-09 业务负责人定）：表单写「标签打印」表 → 事件按 table_id 分派 → 每个货号各打各的（400 坏货号跳过）、同条记录汇总一条运营群通知、临时错误重试 3 次、电脑离线排队补打、「打印日」不写 |
 | [money-page-v2-spec-2026-10-14.md](archive/money-page-v2-spec-2026-10-14.md) | 资金页 v2 · 施工规格（2026-10-14 晚 · 业务负责人逐字） |
 | [multi-item-order-design-2026-10-15.md](multi-item-order-design-2026-10-15.md) | 「一单多货品」设计（单据草稿 + 批量提交 · 共用模块） |
 | [multi-item-sales-recon-2026-10-16.md](multi-item-sales-recon-2026-10-16.md) | ⭐ **「一单多货」接到【销售】领域**（task-59 · 只读核对 + 甲′ 取舍 + 判据落点）：🔴 **性质订正 = 销售今天就已经有自己的一单多件机制**（`add_line` → `addSaleLine` → `sale.lines` ⇒ 资金页 ⇒ 既有 `submitSale`），本刀只是**补上货品页那个入口 +「本单已加的货品」列表**（**不是**新建机制 ✗、**不是**"销售不支持多件" ✗）＋ 三条实现约束（`multiItemBlockHtml` 调用点被 AC-MIR1 钉成恰好 2 ⇒ 销售那块要落在 `saleFormHtml`；加货那颗必须是本表单 submit；`chains.sales` 需成对迁移 AC-RT7b）＋ 门控与判据落点（`test/multiItemOrderSalesChain.test.js`） |

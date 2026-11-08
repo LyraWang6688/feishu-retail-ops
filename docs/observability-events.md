@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **424** 个事件。按前缀分组：
+共 **426** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -150,6 +150,8 @@
 | `label_print.device.reprint.failed` | 1 | src/routes/labelPrintDevice.js |
 | `label_print.device.status.failed` | 1 | src/routes/labelPrintDevice.js |
 | `label_print.device.token_missing` | 2 | src/routes/labelPrintDevice.js<br>src/services/labelPrintQueueRuntime.js |
+| `label_print.form.dispatch_failed` | 1 | src/routes/larkEvents.js |
+| `label_print.form.not_wired` | 1 | src/routes/larkEvents.js |
 | `label_print.job.claimed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.done` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.enqueued` | 1 | src/services/labelPrintQueueService.js |

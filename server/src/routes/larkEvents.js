@@ -10,6 +10,7 @@ const { logError, logInfo, logWarn } = require('../utils/logger');
 const { larkLogger } = require('../utils/larkLogger');
 const { LarkEventHeartbeat } = require('../infrastructure/larkEventHeartbeat');
 const { evaluateLarkEventHeartbeat, resolveStaleMinutes } = require('../config/larkEventHeartbeat');
+const { createLabelPrintFormIntakeService } = require('../services/labelPrintFormIntakeService');
 
 // 事件入口的「最后一次收到事件」心跳（记录器见 infrastructure/larkEventHeartbeat）：
 // · 最外层 `recordEvent()`            —— 任何到达的请求（含飞书 URL 验证 challenge）；
@@ -32,7 +33,13 @@ const recordBusinessHeartbeat = (heartbeat) => {
  *   同时把其余配置（`accessorySaleIntake` / `accessorySaleIntakeConfig` / `accessorySaleScanWrite` /
  *   `gateway`）**原样透传**给下面那条支路（用例可注入计数替身 ✓）。
  */
-const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => ({
+const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
+  // ⭐ 2026-11-09：「批量打印」飞书表单新增记录 → 自动打印 这条链路（见 service 文件头）。
+  //   构造本身**无副作用**（gateway / 队列 / 通知都是第一次真用到时才建）⇒ 只 require app.js 的用例不受影响 ✓
+  const labelPrintFormIntake = options.labelPrintFormIntake
+    || service?.labelPrintFormIntake
+    || createLabelPrintFormIntakeService();
+  return {
   'im.message.receive_v1': (event) => {
     recordBusinessHeartbeat(heartbeat);
     logInfo('lark.event.received', {
@@ -160,11 +167,32 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => ({
       }
     }
 
+    // ⭐⭐ 2026-11-09（业务负责人）：「点「批量打印」进的是飞书表单链接，后续就只用这个了」——
+    //   「标签打印」表有**新增记录**（= 她在飞书表单提交了一次批量打印）⇒ 交给
+    //   `labelPrintFormIntake`：每个「打印货号」各打各的、失败/跳过汇总一条通知。
+    //   ⚠️ 按 **table_id 分派**（`schema.tables.labelPrintRequest.tableId`，**不写死表 ID**）；
+    //      只认新增动作（判定在 service 的 config 里）；异步（`setImmediate`）不阻塞事件响应。
+    const labelPrintRequestTableId = V1_BITABLE_SCHEMA.tables.labelPrintRequest?.tableId;
+    if (labelPrintRequestTableId && tableId === labelPrintRequestTableId) {
+      const intake = labelPrintFormIntake;
+      if (intake && typeof intake.handleTableChanges === 'function') {
+        setImmediate(() => {
+          intake.handleTableChanges(actionList).catch((error) => {
+            logError('label_print.form.dispatch_failed', { table_id: tableId, error: error.message });
+          });
+        });
+      } else {
+        // 没接线时给一条**明确的**排查线索，而不是静默什么都不做。
+        logWarn('label_print.form.not_wired', { table_id: tableId, action_count: actionList.length });
+      }
+    }
+
     // 🔴 2026-10-18：配品已改为「工作台 → 销售 → 配品」跳飞书表单 + 多维表格工作流处理，
     //   代码侧不再监听配品表变更、不再写销售主表/明细/收款（服务与配置已删除）。
     return {};
   },
-});
+  };
+};
 
 // 飞书事件回调的 envelope 形状：challenge（URL 验证）/ header（v2 事件）/ type（v1 事件）。
 // 只用来决定"要不要记心跳"，不参与任何业务判据。

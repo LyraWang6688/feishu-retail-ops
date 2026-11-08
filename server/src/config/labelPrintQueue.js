@@ -55,6 +55,8 @@ const STATUS_ORDER = Object.freeze(['queued', 'claimed', 'failed', 'done']);
 const SOURCES = Object.freeze({
   scan: 'scan',
   workbench: 'workbench',
+  // ⭐ 2026-11-09：飞书表单「批量打印」新增记录自动入队（监听链路）。
+  form: 'form',
 });
 
 const LABEL_PRINT_QUEUE = Object.freeze({
