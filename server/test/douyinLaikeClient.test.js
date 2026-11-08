@@ -203,3 +203,45 @@ test('AC-DY11 ⭐ 返回值里不含 token', async () => {
   assert.equal(out.ok, true);
   assert.ok(!JSON.stringify(out).includes('tok_secret_value'), 'token 不许出现在返回值里');
 });
+
+test('AC-DY12 ⭐ HTTP 200 但正文不是 JSON ⇒ invalid_response（不再当成成功空数据）', async () => {
+  const { service } = buildService({
+    handler: (url) => (url.includes('client_token')
+      ? okJson(tokenBody())
+      : {
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError('Unexpected token < in JSON at position 0'); },
+        headers: { get: () => '' },
+      }),
+  });
+  const out = await service.verifyRecords({ accountId: 'a', startTime: 1, endTime: 2 });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'invalid_response');
+  assert.match(out.message, /无法解析/);
+});
+
+test('AC-DY13 ⭐ 成功响应缺 data 对象 ⇒ invalid_response（不返回 ok:true + 空数据）', async () => {
+  const { service } = buildService({
+    handler: (url) => (url.includes('client_token') ? okJson(tokenBody()) : okJson({ data: null })),
+  });
+  const out = await service.verifyRecords({ accountId: 'a', startTime: 1, endTime: 2 });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'invalid_response');
+});
+
+test('AC-DY14 ⭐ 正文坏但响应头有 logid ⇒ 仍带回排查用 logId', async () => {
+  const { service } = buildService({
+    handler: (url) => (url.includes('client_token')
+      ? okJson(tokenBody())
+      : {
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError('bad'); },
+        headers: { get: (name) => (name === 'x-tt-logid' ? 'LOG_BAD_BODY' : '') },
+      }),
+  });
+  const out = await service.verifyRecords({ accountId: 'a', startTime: 1, endTime: 2 });
+  assert.equal(out.ok, false);
+  assert.equal(out.logId, 'LOG_BAD_BODY');
+});
