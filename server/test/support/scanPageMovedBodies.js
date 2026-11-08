@@ -48,9 +48,10 @@ const MOVED_BODIES = [
   { name: 'parseReplenishEntries', file: 'posting.js', baseline: '3d97bfa', sha: 'd313e5985645251ee3700ddddf11fed69b1d9746720fa6b9e5bd2669186e9e88' },
   // ⭐ 2026-10-29（业务负责人退货页 HTML 批注「这里的框是干啥用的呀？」）**有意变更**：
   //   退货改成“数量输入即选择”（不填 / 填 0 = 不退）⇒ `parseReturnEntries` 多了一条
-  //   “从 return_qty_ 前缀解析”的主路径（老页面 / 缓存页仍走原来的 return_sizes 兜底 ✓）。
+  //   “从 return_qty_ 前缀解析”的主路径；2026-11-08 业务负责人「不需要做兼容」后
+  //   老页面 return_sizes 兜底已**删除**（旧形状 ⇒ 空清单 ⇒ 写层 400）。
   //   sha 按**新实现**重算；⚠️ 其余 6 个仍对 `3d97bfa` **逐字**（本条是唯一有意变更的一条）。
-  { name: 'parseReturnEntries', file: 'posting.js', baseline: '3d97bfa→2026-10-29 intentional', sha: '1ee186b9590bfa89e3bd524d3f06b15c6662903219e095963c82f747e67b95a2' },
+  { name: 'parseReturnEntries', file: 'posting.js', baseline: '3d97bfa→2026-11-08 (no-compat)', sha: 'cda0c87c7361979d7ef7d459cf7808281f7fb3df99d2f08707113e8eb80eb912' },
   { name: 'parseMultiItemGroups', file: 'multiItem.js', baseline: '3d97bfa', sha: '1bae3e253e45e95a0f0d27bd33800498c6abc0afb3a38d77413eb65de5c97727' },
   { name: 'mergeFirstItemEntries', file: 'multiItem.js', baseline: '3d97bfa', sha: '26013fc6ec3c3f67c6c572fb514f5d51e3b4b474c54b460d104cbea1a68dbb56' },
   { name: 'asList', file: 'shared.js', baseline: '3d97bfa', sha: 'e7fdadfb1ce538a87175621e49f83571b60ada510eaa5aa55a0424ace09dda60' },

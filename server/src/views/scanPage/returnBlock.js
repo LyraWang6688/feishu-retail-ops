@@ -7,7 +7,7 @@ const { hiddenField, pageBuildField } = require('./paymentBlock');
 const { multiItemBlockHtml, purchaseAmountRowHtml } = require('./multiItemBlock');
 
 const sizeRowsHtml = ({
-  sizes, name, quantityPrefix, quantityLabel, checkedOf, defaultQuantity = 1, stockOf = null,
+  sizes, name = '', quantityPrefix, quantityLabel, checkedOf, defaultQuantity = 1, stockOf = null,
   // ⭐⭐ 2026-10-29（业务负责人对退货页的 HTML 批注：「这里的框是干啥用的呀？」）：
   //   **退货那一块不再用勾选框** —— 每行只留一个「退货数量」输入：**不填 / 填 0 = 不退**，
   //   填 1 以上 = 退这一码。这样"选哪些码"和"每个几双"是**同一个动作**，没有歧义。
@@ -80,7 +80,6 @@ const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const returnConfig = SCAN_WRITE.purchaseReturn;
   const rows = noReturnableStock ? '' : sizeRowsHtml({
     sizes,
-    name: fields.returnSizes,
     quantityPrefix: fields.returnQuantityPrefix,
     quantityLabel: t.replenishQuantityLabel,
     checkedOf: () => false,

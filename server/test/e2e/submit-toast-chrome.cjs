@@ -210,7 +210,7 @@ const run = async () => {
       {
         id: 'purchase-return', label: '采购退货', from: 'purchase_return',
         action: SCAN_WRITE.actions.purchaseReturn,
-        fields: { [SCAN_WRITE.fields.submitKey]: 'scan_return:e2e:1', [SCAN_WRITE.fields.returnSizes]: '41', return_qty_41: '1', [SCAN_WRITE.fields.purchaseAmount]: '399' },
+        fields: { [SCAN_WRITE.fields.submitKey]: 'scan_return:e2e:1', return_qty_41: '1', [SCAN_WRITE.fields.purchaseAmount]: '399' },
       },
       {
         id: 'multi-item', label: '采购多货', from: 'replenish',

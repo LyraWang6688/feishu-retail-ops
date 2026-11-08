@@ -164,7 +164,13 @@ const replenishCases = () => ([
 const returnCases = () => ([
   {
     why: '尺码空 / 认不出',
-    body: { action: A.purchaseReturn, submit_key: 'k', [`${F.returnSizes}`]: 'abc', [F.purchaseAmount]: '800' },
+    // ⭐ 2026-11-08（业务负责人「不需要做兼容」）**成对迁移**：
+    //   改前逐字：`[`${F.returnSizes}`]: 'abc'`（旧勾选框字段在**兜底分支**里被当尺码）
+    //   改后逐字：直接给一个新格式的"怪尺码"键（`return_qty_abc`）——兜底删掉后只能这样触发同一条校验 ✓
+    body: {
+      action: A.purchaseReturn, submit_key: 'k',
+      [`${F.returnQuantityPrefix}abc`]: '1', [F.purchaseAmount]: '800',
+    },
     code: ENTRY_RULE_CODES.sizeUnknown,
     said: TEXTS.sizeUnknownBody,
   },
@@ -176,7 +182,7 @@ const returnCases = () => ([
     //   依据 = 业务负责人 2026-10-29 的批注（去掉勾选框、用数量表达"退不退"）⇒ 判据没放宽：
     //     "认不出的数量 ⇒ 400 + 写层那句人话 + 零写入 + 不调度后台" 一个字没动 ✓
     body: {
-      action: A.purchaseReturn, submit_key: 'k', [`${F.returnSizes}`]: '41',
+      action: A.purchaseReturn, submit_key: 'k',
       [`${F.returnQuantityPrefix}41`]: 'abc', [F.purchaseAmount]: '800',
     },
     code: ENTRY_RULE_CODES.quantityInvalid,
@@ -245,7 +251,7 @@ test('AC-SV3 ⭐ 反例：**填对了** ⇒ 200 成功页（统一那一句）�
     {
       chain: 'purchase_return', realm: 'purchase_return',
       body: {
-        action: A.purchaseReturn, submit_key: 'k', [`${F.returnSizes}`]: '41',
+        action: A.purchaseReturn, submit_key: 'k',
         [`${F.returnQuantityPrefix}41`]: '1', [F.purchaseAmount]: '800',
       },
     },

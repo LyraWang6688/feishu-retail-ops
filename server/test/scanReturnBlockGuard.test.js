@@ -264,7 +264,7 @@ test('AC-RB6 既有契约一条没放宽：`return_qty_<尺码>` / 上限与三�
   const block = await getReturnBlock(async () => view());
   // ⭐ 2026-10-29 成对迁移：`name="return_sizes"`（勾选框字段）随勾选框一起退场；
   //   判据**没丢** ⇒ 换成反向钉住"它不许回来" ✓（其余契约逐字还在 ✓）
-  assert.equal(block.includes(`name="${SCAN_WRITE.fields.returnSizes}"`), false,
+  assert.equal(block.includes('name="return_sizes"'), false,
     '🔴 勾选框字段不许回来（塞回 ⇒ 红 ✓）');
   for (const needle of [
     `${SCAN_WRITE.fields.returnQuantityPrefix}39`,

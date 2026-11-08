@@ -336,7 +336,6 @@ test('AC-MIRW-5 ⭐ 退货 · 分组 2：金额写进草稿 `order_amount`；空
     const params = new URLSearchParams();
     params.append(SCAN_WRITE.fields.action, SCAN_WRITE.actions.purchaseReturn);
     params.append(SCAN_WRITE.fields.submitKey, 'scan_return:scan_session_mirw:1');
-    params.append(SCAN_WRITE.fields.returnSizes, '41');
     params.append(`${SCAN_WRITE.fields.returnQuantityPrefix}41`, '1');
     if (amount !== null) params.append(SCAN_WRITE.fields.purchaseAmount, amount);
     params.append('multi_items', multiItemPayloadJson([FIRST, SECOND]));
