@@ -239,7 +239,7 @@ class V1ReferenceResolver {
   async resolveSupplier(name) {
     if (!name) return null;
     const table = this.gateway.table('supplier');
-    const records = await this.gateway.listAll('supplier');
+    const records = await getConfigRows({ gateway: this.gateway, tableKey: 'supplier' });
     const wanted = normalizeText(name);
     const matches = records.filter(
       (record) => normalizeText(textValue(record.fields?.[table.fields.name])) === wanted
