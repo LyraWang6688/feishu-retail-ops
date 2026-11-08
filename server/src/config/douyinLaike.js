@@ -38,6 +38,7 @@ const TEXTS = Object.freeze({
   notConfigured: '抖音来客应用未配置：需要 DOUYIN_LAIKE_CLIENT_KEY / DOUYIN_LAIKE_CLIENT_SECRET',
   upstreamFailed: '抖音来客接口暂时不可用（网络/超时/5xx），稍后重试',
   tokenEmpty: '抖音来客返回了空 token',
+  invalidResponse: '抖音来客返回的内容无法解析（可能是网关错误页），请重试或凭 logid 排查',
   verifyAccountRequired: '验券历史必须给 accountId',
   verifyTimeInvalid: '验券历史的 startTime / endTime 必须是 int 秒级时间戳，且 startTime < endTime',
   settleCertificateRequired: '分账明细必须给 certificateIds（券 ID）',
