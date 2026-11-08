@@ -13,7 +13,8 @@ test('handler 导出销售提交分支', () => {
 });
 
 test('路由只做分派：分支体已搬走（塞回即红）', () => {
-  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8');
+  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'routes.js'), 'utf8');
   assert.match(index, /require\('\.\/handlers\/salesSubmit'\)/);
   assert.match(index, /return handleSubmitOrderOf\(\{/);
   const file = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'handlers', 'salesSubmit.js'), 'utf8');
