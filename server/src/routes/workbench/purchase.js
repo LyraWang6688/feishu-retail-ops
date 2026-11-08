@@ -114,7 +114,6 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     texts: {
       ...SCAN_WRITE.texts,
       acceptDuplicateLinesBody: arrivalTab.texts.duplicateLines,
-      acceptSizeUnknownBody: arrivalTab.texts.sizeUnknown,
     },
   });
   /**

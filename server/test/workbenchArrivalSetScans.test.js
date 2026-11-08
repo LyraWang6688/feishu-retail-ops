@@ -50,7 +50,6 @@ const rmDir = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true });
 const texts = {
   ...SCAN_WRITE.texts,
   acceptDuplicateLinesBody: arrivalTab.texts.duplicateLines,
-  acceptSizeUnknownBody: arrivalTab.texts.sizeUnknown,
 };
 
 /** 真实 `scanArrivalService` + 真实会话存储（只有读表/尺码/后续入库用替身）。 */

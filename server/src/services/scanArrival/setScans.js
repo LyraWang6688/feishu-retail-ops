@@ -23,7 +23,7 @@
  *   · 全部校验通过才落会话；任何一条不合法 ⇒ **会话一个字都不动** ✓。
  *
  * ⚠️ 拆成独立模块：`scanArrivalService.js` 是存量较大的文件（文件大小棘轮只允许变小 ✗）。
- *    本模块**不含业务表写入**：只碰会话存储 `store`（与 `addScan` / `setActualRows` 同一个 `scans`）。
+ *    本模块**不含业务表写入**：只碰会话存储 `store`（与 `addScan` 同一个 `scans`）。
  *
  * @param {object} deps
  * @param {Function} deps.get 读当前会话（过期/不存在返回 null）
