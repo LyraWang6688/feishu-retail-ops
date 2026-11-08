@@ -8,7 +8,7 @@
  * （facade 里保留了同名薄委托方法），所以 `this.client` / `this.sandboxChatId` 等照旧可用。
  */
 const { larkErrorText: larkErrorTextOf } = require('../../utils/larkError');
-const { resolvePurchaseChatId } = require('../../config/groupPurchase');
+const { resolveNotification } = require('../../config/notifications');
 const {
   resolvePurchaseGroupNoticeConfig, renderPurchaseGroupNoticeMention,
 } = require('../../config/purchaseGroupNoticeText');
@@ -56,7 +56,9 @@ const messaging = {
    */
   resolvePurchaseGroupTarget(options = {}) {
     if (options.sandboxChatId) return { chatId: options.sandboxChatId, sandbox: true, reason: 'sandbox' };
-    const chatId = resolvePurchaseChatId();
+    // 目标统一由 config/notifications.js 的 group 目标决定（NOTIFY_GROUP_CHAT_ID，回落 PURCHASE_CHAT_ID）。
+    const target = resolveNotification('purchase_request_created');
+    const chatId = String(target.receiveId || '').trim();
     if (!chatId) return { chatId: '', sandbox: false, reason: 'chat_id_unconfigured' };
     return { chatId, sandbox: false, reason: 'configured' };
   },
@@ -105,7 +107,7 @@ const messaging = {
     const target = this.resolvePurchaseGroupTarget({ sandboxChatId: this.sandboxChatId });
     if (!target.chatId) {
       logWarn('purchase.group_notice.skipped', {
-        reason: 'purchase_chat_id_unconfigured', env: 'PURCHASE_CHAT_ID', content, ...correlation,
+        reason: 'purchase_chat_id_unconfigured', env: 'NOTIFY_GROUP_CHAT_ID / PURCHASE_CHAT_ID', content, ...correlation,
       });
       return false;
     }

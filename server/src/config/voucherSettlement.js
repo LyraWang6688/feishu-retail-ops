@@ -17,7 +17,7 @@
  */
 
 const { readFlag, readInt, readString } = require('./envValue');
-const { resolvePurchaseChatId } = require('./groupPurchase');
+const { resolveNotification } = require('./notifications');
 
 const DEFAULT_SETTLE_DAYS = 5;
 const DEFAULT_HOUR = 14;
@@ -31,13 +31,12 @@ const TEXTS = Object.freeze({
     footer: '已改为「已收款」并写入收付日',
   },
   accountMissing: '团购券结算未执行：没配置 DOUYIN_LAIKE_ACCOUNT_ID（来客账号 ID）',
-  chatMissing: '团购券结算已执行，但没配置运营群（PURCHASE_CHAT_ID / VOUCHER_SETTLEMENT_CHAT_ID）⇒ 本次不通知',
+  chatMissing: '团购券结算已执行，但没配置运营群（NOTIFY_GROUP_CHAT_ID / PURCHASE_CHAT_ID）⇒ 本次不通知',
 });
 
-const resolveVoucherSettlementChatId = (env = process.env) => {
-  const explicit = readString(env, 'VOUCHER_SETTLEMENT_CHAT_ID', '').trim();
-  return explicit || resolvePurchaseChatId(env);
-};
+const resolveVoucherSettlementChatId = (env = process.env) => (
+  String(resolveNotification('voucher_settlement', env).receiveId || '').trim()
+);
 
 const createVoucherSettlementConfig = (env = process.env) => ({
   enabled: readFlag(env, 'VOUCHER_SETTLEMENT_ENABLED', true),
