@@ -191,7 +191,6 @@
    卡片沿用 .entry-card 视觉；这里只补间距/摘要/返回按钮。 */
 .purchase-supplier-card { width: 100%; margin: 0 0 var(--space-2); justify-content: flex-start; text-align: left; }
 .purchase-supplier-meta { display: block; color: var(--text-secondary); font-size: var(--font-size-sm); }
-.purchase-back { margin: 0 0 var(--space-2); }
 .purchase-supplier { margin: var(--space-3) 0 0; min-width: 0; }
 .purchase-supplier-head {
   margin: 0 0 var(--space-2);
@@ -199,6 +198,7 @@
   font-size: var(--font-size-md);
   font-weight: var(--weight-bold);
   overflow-wrap: anywhere;
+  text-align: center;
 }
 .purchase-date-group { margin: 0 0 var(--space-3); min-width: 0; }
 .purchase-date-head {

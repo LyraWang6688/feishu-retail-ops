@@ -21,12 +21,11 @@ export const ORDERS_PAGE = {
   arrivalEmpty: '当前没有未到货的批次，不用验收',
   // ⭐ 2026-11-09（业务负责人）：验收页按「供应商 → 采购日」分组、**不显示采购单号**
   supplierFallback: '未标注供应商',
-  purchaseDateLabel: '采购日 {date}',
-  purchaseDateUnknown: '日期未知',
   batchSummary: '{quantity} 双 · {products} 个货品',
   // 验收页第一层 = 供应商卡片（来自「供应商管理」）；第二层 = 该供应商的采购日（由远及近）
   supplierCardSummary: '{batches} 批 · {quantity} 双待验收',
-  backToSuppliers: '← 返回供应商',
+  // 日期分组标题：**只显示日期本身**（业务负责人 2026-11-09：不需要「采购日」三个字，但要有日期）
+  purchaseDateUnknown: '日期未知',
 };
 
 /**

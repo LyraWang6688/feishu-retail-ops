@@ -153,9 +153,7 @@ const batchSummaryOf = (batch) => {
 const purchaseBatchCardHtml = (batch) => `
       <article class="order-card" data-purchase-batch="${escapeHtml(batch.batch_no)}">
         <div class="order-card-head">
-          <div class="order-tags">
-            <span class="tag ${statusClass(arrivalStatusOf(batch))}">${escapeHtml(arrivalStatusOf(batch) || ARRIVAL_STATUS_PENDING)}</span>
-          </div>
+          <!-- ⭐ 2026-11-09（业务负责人批注）：此页出现的批次状态一致 ⇒ 不再显示状态标签 -->
           <span class="order-summary" data-view="arrival-batch-summary">${escapeHtml(batchSummaryOf(batch))}</span>
         </div>
         <!-- ⭐ 2026-11-09（业务负责人真机：「验收到货」出现两次）：只留**一个**入口 ——
@@ -257,13 +255,15 @@ export function purchaseOrdersHtml(rows = [], options = {}) {
     if (!b) return -1;
     return a < b ? -1 : a > b ? 1 : 0;
   });
+  // ⭐ 2026-11-09（业务负责人批注）：
+  //   · 不需要「← 返回供应商」按钮（重进验收即回第一层）；
+  //   · **不需要「采购日」三个字，但仍要显示日期、并按日期分组**（由远及近：早 → 晚）。
   const dateHtml = dates.map((date) => `
         <section class="purchase-date-group" data-view="purchase-date" data-purchase-date="${escapeHtml(date)}">
-          <h4 class="purchase-date-head">${escapeHtml(String(P.purchaseDateLabel).split('{date}').join(date || P.purchaseDateUnknown))}</h4>
+          <h4 class="purchase-date-head">${escapeHtml(date || P.purchaseDateUnknown)}</h4>
           ${byDate.get(date).map((batch) => purchaseBatchCardHtml(batch)).join('')}
         </section>`).join('');
   return `<div class="purchase-orders" data-view="purchase-orders">
-      <button class="btn purchase-back" type="button" data-action="back-suppliers">${escapeHtml(P.backToSuppliers)}</button>
       <section class="purchase-supplier" data-view="purchase-supplier" data-supplier-key="${escapeHtml(active.key)}">
         <h3 class="purchase-supplier-head">${escapeHtml(active.name)}</h3>${dateHtml}
       </section>
@@ -675,10 +675,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       const pickSupplier = event.target.closest('[data-action="pick-supplier"]');
       if (pickSupplier) {
         state.activeSupplierKey = pickSupplier.dataset.supplierKey || '';
-        return renderPurchaseList();
-      }
-      if (event.target.closest('[data-action="back-suppliers"]')) {
-        state.activeSupplierKey = '';
         return renderPurchaseList();
       }
       const trigger = event.target.closest('[data-action]');

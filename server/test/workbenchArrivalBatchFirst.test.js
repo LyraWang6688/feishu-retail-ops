@@ -107,20 +107,27 @@ test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采�
   assert.ok(second.includes('data-view="purchase-supplier"'), '第二层有供应商分组容器 ✓');
   assert.ok(second.includes('供应商甲'), '显示选中的供应商名 ✓');
   assert.equal(second.includes('供应商乙'), false, '第二层不显示别的供应商 ✓');
-  assert.ok(second.includes('采购日 2026-10-12'), '采购日标题来自「报货日」✓');
+  assert.equal(second.includes('采购日'), false, '⛔ 不出现「采购日」三个字（业务负责人批注）✓');
+  assert.ok(second.includes('>2026-10-12<'), '⭐ 仍要有日期（只显示日期本身）✓');
+  assert.equal(second.includes('返回供应商'), false, '⛔ 不需要「返回供应商」按钮（批注）✓');
+  assert.equal(second.includes('data-action="back-suppliers"'), false, '返回按钮元素不许回来 ✓');
+  assert.equal(second.includes('未到货'), false, '⛔ 此页都是未到货 ⇒ 不再显示「未到货」标签（批注）✓');
   assert.ok(second.includes('data-purchase-batch'), '第二层才有批次卡 ✓');
   assert.ok(second.includes('data-action-block="verify-arrival"'), '每批仍有验收入口 ✓');
   assert.ok(second.includes('data-view="arrival-batch-summary"'), '有一行摘要（多少双/几个货品）✓');
-  // ③ **由远及近**（早 → 晚）：给同一供应商补一条更早的批次
+  // ③ **由远及近**（早 → 晚）：给同一供应商补一条更早的批次（日期不再显示，但顺序仍要由远及近）
   const earlier = {
     ...BATCH_ROWS[2], record_id: 'r5', batch_no: 'CGD-WAIT-3',
     supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 11),
   };
   const ordered = orders.purchaseOrdersHtml([...BATCH_ROWS, earlier], { supplierKey: 's1' });
-  const earlyAt = ordered.indexOf('采购日 2026-10-11');
-  const lateAt = ordered.indexOf('采购日 2026-10-12');
-  assert.ok(earlyAt >= 0 && lateAt >= 0, '两天都要出现 ✓');
+  const earlyAt = ordered.indexOf('>2026-10-11<');
+  const lateAt = ordered.indexOf('>2026-10-12<');
+  assert.ok(earlyAt >= 0 && lateAt >= 0, '两个日期标题都要出现 ✓');
   assert.ok(earlyAt < lateAt, '⭐ 由远及近：10-11 在 10-12 上面（早→晚）✓');
+  // 供应商名居中（批注）
+  assert.ok(readWorkbench('features/orders/orders.css').includes('text-align: center'),
+    '供应商名居中样式在 ✓');
   // ④ **采购单号不许作为可见文字出现**（data 属性留给提交用，页面看不到）
   for (const batch of ['CGD-WAIT-1', 'CGD-WAIT-2', 'CGD-WAIT-3']) {
     assert.equal(second.includes(`>${batch}<`), false, `${batch} 不许作为可见文字 ✗`);
