@@ -1,100 +1,99 @@
 'use strict';
 
 /**
- * 交割单页异步写队列（交付 / 付款共用一条 FIFO，串行写飞书）。
+ * 交割单页异步写队列（交付 / 付款共用 FIFO）。
  *
- * 浏览器请求只做：校验 + 冻结 payload + 入队 + 返回 job_id；
- * worker 串行执行既有交付 / 付款服务；重启后重新排 queued/running。
- * 🔴 业务写表逻辑不在这里重写：只调用注入的 deliver/pay 函数。
+ * 业务写表逻辑不在这里重写：只调用注入的 deliver/pay。
+ * 状态 / 重试 / 失败通知 / job 存储统一走 `asyncJobService`（#948）；
+ * 这里的 FIFO 只负责**页面级串行**（先点先跑），全局写冲突由飞书写调度器兜底。
  */
-const crypto = require('node:crypto');
+const fs = require('node:fs');
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
+const { ASYNC_JOBS, ASYNC_JOB_TYPES, ASYNC_JOB_STATUS } = require('../config/asyncJobs');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 
-const STATUS = Object.freeze({ queued: 'queued', running: 'running', succeeded: 'succeeded', partialFailed: 'partial_failed', failed: 'failed' });
-const jobIdOf = (type, requestId) => `delivery_job_${crypto.createHash('sha256').update(`${type}:${requestId}`).digest('hex').slice(0, 24)}`;
+const STATUS = Object.freeze({
+  queued: ASYNC_JOB_STATUS.QUEUED,
+  running: ASYNC_JOB_STATUS.RUNNING,
+  succeeded: ASYNC_JOB_STATUS.SUCCEEDED,
+  partialFailed: ASYNC_JOB_STATUS.PARTIAL_FAILED,
+  failed: ASYNC_JOB_STATUS.FAILED,
+});
+const TYPE_OF = Object.freeze({
+  delivery: ASYNC_JOB_TYPES.SALES_DELIVERY,
+  payment: ASYNC_JOB_TYPES.SALES_PAYMENT,
+});
+const TERMINAL = new Set([STATUS.succeeded, STATUS.partialFailed, STATUS.failed]);
 
-const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger = { logInfo, logWarn, logError } } = {}) => {
+const firstFailure = (result) => {
+  const failures = Array.isArray(result?.failures) ? result.failures : [];
+  return failures.length ? String(failures[0]?.error || failures[0]?.message || 'write_failed') : '';
+};
+const classifyDelivery = (result) => {
+  const failures = Array.isArray(result?.failures) ? result.failures : [];
+  if (!failures.length) return { ok: true };
+  const partial = Array.isArray(result?.results) && result.results.length > 0;
+  return { ok: false, partial, retryable: false, message: firstFailure(result) };
+};
+const classifyPayment = () => ({ ok: true });
+const classifyError = (error) => ({ retryable: false, message: String(error?.message || error) });
+
+const createSalesDeliveryAsyncService = ({
+  deliver, pay, jobs, onSettled, legacyDir, logger = { logInfo, logWarn, logError },
+} = {}) => {
   if (typeof deliver !== 'function' || typeof pay !== 'function') throw new Error('SalesDeliveryAsyncService requires deliver/pay');
-  const store = new JsonTaskStore({
-    dir: dir || path.join(__dirname, '..', '..', 'data', 'sales_delivery_jobs'), idField: 'job_id',
-  });
+  if (!jobs) throw new Error('SalesDeliveryAsyncService requires jobs (asyncJobService)');
   const pendingQueue = [];
   const queued = new Set();
   const running = new Set();
   let pumping = false;
 
   const queueMeta = () => ({ queue_depth: pendingQueue.length, queued_count: queued.size, running_count: running.size });
-  const jobMeta = (job) => ({
-    job_id: job.job_id, type: job.type, request_id: job.request_id, attempt: Number(job.attempts || 0) + 1,
-  });
-
-  const get = (jobId) => store.get(jobId);
+  const get = (jobId) => jobs.get(jobId);
+  const stepOf = (type) => (type === TYPE_OF.delivery
+    ? ASYNC_JOBS.texts?.stepLabels?.salesDelivery
+    : ASYNC_JOBS.texts?.stepLabels?.salesPayment);
 
   const process = async (jobId) => {
     if (running.has(jobId)) return null;
     running.add(jobId);
+    const startedAt = Date.now();
     const promise = (async () => {
-      const job = await store.get(jobId);
-      if (!job || [STATUS.succeeded, STATUS.partialFailed, STATUS.failed].includes(job.status)) return job;
-      const startedAt = Date.now();
-      const queueWaitMs = Math.max(0, startedAt - Date.parse(job.created_at || job.updated_at || startedAt));
-      const attempt = Number(job.attempts || 0) + 1;
-      await store.update(jobId, { status: STATUS.running, attempts: attempt, started_at: new Date(startedAt).toISOString() });
+      const job = await jobs.get(jobId);
+      if (!job || TERMINAL.has(job.status)) return job;
+      const queueWaitMs = Math.max(0, Date.now() - Date.parse(job.created_at || job.updated_at || Date.now()));
       logger.logInfo('workbench.sales.delivery.job_started', {
-        ...jobMeta({ ...job, attempts: attempt - 1 }), queue_wait_ms: queueWaitMs, ...queueMeta(),
+        job_id: jobId, type: job.type, queue_wait_ms: queueWaitMs, ...queueMeta(),
       });
-      try {
-        const payload = job.payload || {};
-        const result = job.type === 'delivery'
-          ? await deliver(payload, { task_id: jobId })
-          : await pay(payload, { task_id: jobId });
-        const failures = Array.isArray(result?.failures) ? result.failures : [];
-        const succeeded = failures.length === 0;
-        const partial = failures.length > 0 && Array.isArray(result?.results) && result.results.length > 0;
-        const status = succeeded ? STATUS.succeeded : (partial ? STATUS.partialFailed : STATUS.failed);
-        const lastError = failures.length ? String(failures[0]?.error || failures[0]?.message || 'write_failed') : '';
-        await store.update(jobId, {
-          status, result: result || {}, failures, last_error: lastError,
-          finished_at: new Date().toISOString(),
-        });
-        const deliveredCount = Number(result?.deliveredQuantity ?? (Array.isArray(result?.results) ? result.results.length : 0));
-        logger.logInfo('workbench.sales.delivery.job_finished', {
-          ...jobMeta({ ...job, attempts: attempt - 1 }),
-          status,
-          duration_ms: Date.now() - startedAt,
-          queue_wait_ms: queueWaitMs,
-          delivered_count: Number.isFinite(deliveredCount) ? deliveredCount : null,
-          failed_count: failures.length,
-          failure_codes: [...new Set(failures.map((item) => String(item?.error || item?.message || 'write_failed').slice(0, 120)))],
-          ...queueMeta(),
-        });
-        if (failures.length) {
-          logger.logError(job.type === 'payment' ? 'workbench.sales.payment.failed' : 'workbench.sales.delivery.failed', {
-            job_id: jobId, reason: 'async_job_failed_lines', failed_count: failures.length, error: lastError,
-          });
-        }
-      } catch (error) {
-        await store.update(jobId, {
-          status: STATUS.failed, last_error: String(error?.message || error), finished_at: new Date().toISOString(),
-        });
-        logger.logInfo('workbench.sales.delivery.job_finished', {
-          ...jobMeta({ ...job, attempts: attempt - 1 }),
-          status: STATUS.failed,
-          duration_ms: Date.now() - startedAt,
-          queue_wait_ms: queueWaitMs,
-          delivered_count: 0,
-          failed_count: 1,
-          failure_codes: [String(error?.message || error).slice(0, 120)],
-          ...queueMeta(),
-        });
-        logger.logError(job.type === 'payment' ? 'workbench.sales.payment.failed' : 'workbench.sales.delivery.failed', {
-          job_id: jobId, reason: 'async_job', error: String(error?.message || error),
+      const result = await jobs.run({
+        jobId,
+        run: async () => {
+          const payload = job.payload || {};
+          return job.type === TYPE_OF.delivery
+            ? deliver(payload, { task_id: jobId })
+            : pay(payload, { task_id: jobId });
+        },
+        classifyResult: job.type === TYPE_OF.delivery ? classifyDelivery : classifyPayment,
+        classifyError,
+      });
+      logger.logInfo('workbench.sales.delivery.job_finished', {
+        job_id: jobId,
+        type: job.type,
+        status: result?.status || '',
+        duration_ms: Date.now() - startedAt,
+        queue_wait_ms: queueWaitMs,
+        delivered_count: Number(result?.result?.deliveredQuantity ?? (Array.isArray(result?.result?.results) ? result.result.results.length : 0)),
+        failed_count: Array.isArray(result?.result?.failures) ? result.result.failures.length : 0,
+        ...queueMeta(),
+      });
+      if (result?.status === STATUS.failed || result?.status === STATUS.partialFailed) {
+        logger.logError(job.type === TYPE_OF.payment ? 'workbench.sales.payment.failed' : 'workbench.sales.delivery.failed', {
+          job_id: jobId, reason: 'async_job', error: result?.last_error || '',
         });
       }
       if (onSettled) onSettled();
-      return store.get(jobId);
+      return result;
     })();
     try { return await promise; } finally { running.delete(jobId); }
   };
@@ -106,7 +105,10 @@ const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger 
       while (pendingQueue.length) {
         const id = pendingQueue.shift();
         queued.delete(id);
-        await process(id).catch((error) => logger.logError('workbench.sales.delivery.failed', { job_id: id, reason: 'queue_failed', error: String(error?.message || error) }));
+        await process(id).catch((error) => logger.logError(
+          'workbench.sales.delivery.failed',
+          { job_id: id, reason: 'queue_failed', error: String(error?.message || error) },
+        ));
       }
     } finally {
       pumping = false;
@@ -122,22 +124,53 @@ const createSalesDeliveryAsyncService = ({ deliver, pay, onSettled, dir, logger 
   };
 
   const enqueue = async ({ type, requestId, payload } = {}) => {
-    if (!['delivery', 'payment'].includes(type)) throw new Error('job type invalid');
+    const jobType = TYPE_OF[type];
+    if (!jobType) throw new Error('job type invalid');
     const key = String(requestId || '').trim();
     if (!/^[0-9a-f-]{36}$/i.test(key)) throw new Error('request_id invalid');
-    const jobId = jobIdOf(type, key);
-    const existing = await store.get(jobId);
-    if (existing) return { job: existing, created: false };
-    const job = await store.create({ job_id: jobId, type, request_id: key, status: STATUS.queued, payload, attempts: 0, last_error: '' });
-    logger.logInfo('workbench.sales.delivery.job_enqueued', { job_id: jobId, type, request_id: key, ...queueMeta() });
-    schedule(jobId);
-    return { job, created: true };
+    const jobId = jobs.jobIdFor(jobType, key);
+    const { job, created } = await jobs.enqueue({
+      jobId,
+      type: jobType,
+      payload,
+      ownerOpenId: payload?.operatorOpenId || '',
+      operatorName: payload?.operatorName || '',
+      meta: { step: stepOf(jobType) || '', request_id: key },
+    });
+    if (!job) throw new Error('async job enqueue failed');
+    if (!TERMINAL.has(job.status)) schedule(jobId);
+    logger.logInfo('workbench.sales.delivery.job_enqueued', { job_id: jobId, type: jobType, ...queueMeta() });
+    return { job, created };
+  };
+
+  const migrateLegacy = async () => {
+    if (legacyDir === false) return;
+    const dir = legacyDir || path.join(__dirname, '..', '..', 'data', 'sales_delivery_jobs');
+    if (!fs.existsSync(dir)) return;
+    try {
+      const legacy = new JsonTaskStore({ dir, idField: 'job_id' });
+      for (const job of await legacy.list()) {
+        const type = TYPE_OF[job.type];
+        if (!type || ![STATUS.queued, STATUS.running].includes(job.status)) continue;
+        await jobs.enqueue({
+          jobId: job.job_id,
+          type,
+          payload: job.payload || {},
+          ownerOpenId: job.payload?.operatorOpenId || '',
+          operatorName: job.payload?.operatorName || '',
+          meta: { step: stepOf(type) || '', request_id: job.request_id || '', legacy: true },
+        });
+      }
+    } catch (error) {
+      logger.logWarn('workbench.sales.delivery.legacy_migration_failed', { error: String(error?.message || error) });
+    }
   };
 
   const start = async () => {
-    const jobs = await store.list();
-    for (const job of jobs) {
-      if (job.status === STATUS.queued || job.status === STATUS.running) schedule(job.job_id);
+    await migrateLegacy();
+    const all = await jobs.store.list();
+    for (const job of all) {
+      if (Object.values(TYPE_OF).includes(job.type) && !TERMINAL.has(job.status)) schedule(job.job_id);
     }
   };
 

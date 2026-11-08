@@ -335,3 +335,11 @@ test('AC-J9 store：job_id 非法不落盘（get=null / create 抛错）；creat
   assert.equal(second.created, false);
   assert.deepEqual(second.job.payload, { a: 1 }, '已冻结的 payload 不许被覆盖');
 });
+
+test('AC-AJ-DELIVERY 交割单交付/付款纳入统一任务类型配置', () => {
+  const { ASYNC_JOBS } = require('../src/config/asyncJobs');
+  assert.equal(ASYNC_JOB_TYPES.SALES_DELIVERY, 'sales_delivery');
+  assert.equal(ASYNC_JOB_TYPES.SALES_PAYMENT, 'sales_payment');
+  assert.equal(ASYNC_JOBS.texts.typeLabels[ASYNC_JOB_TYPES.SALES_DELIVERY], '交割单交付');
+  assert.equal(ASYNC_JOBS.texts.typeLabels[ASYNC_JOB_TYPES.SALES_PAYMENT], '交割单付款');
+});

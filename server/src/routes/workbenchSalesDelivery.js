@@ -6,6 +6,7 @@ const { createSalesDeliveryReadService } = require('../services/salesDeliveryRea
 const { createPaymentMethodsService } = require('../services/paymentMethodsService');
 const { createSalesDeliveryPaymentService } = require('../services/salesDeliveryPaymentService');
 const { createSalesDeliveryAsyncService } = require('../services/salesDeliveryAsyncService');
+const { getAsyncJobService } = require('../services/asyncJobRuntime');
 const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
 
@@ -25,8 +26,11 @@ const createWorkbenchSalesDeliveryRoutes = ({ options = {}, followup, ordersCach
   };
   const getAsync = () => {
     if (!async) {
+      const jobs = options.asyncJobs || getAsyncJobService();
+      if (!jobs) throw new Error('async jobs disabled');
       async = createSalesDeliveryAsyncService({
-        dir: options.salesDeliveryJobsDir,
+        jobs,
+        legacyDir: options.salesDeliveryLegacyJobsDir,
         deliver: async (payload, correlation) => {
           const result = await followup.delivery.deliver({
             salesEntryRecordId: payload.salesEntryRecordId,
@@ -66,6 +70,7 @@ const createWorkbenchSalesDeliveryRoutes = ({ options = {}, followup, ordersCach
           salesEntryRecordId: req.body?.salesEntryRecordId,
           detailRecordIds: Array.isArray(req.body?.detailRecordIds) ? req.body.detailRecordIds : [],
           operatorOpenId: req.workbenchUser?.open_id || '',
+          operatorName: req.workbenchUser?.name || '',
         },
       });
       return res.status(202).json({ success: true, jobId: job.job_id, status: job.status });
@@ -84,27 +89,13 @@ const createWorkbenchSalesDeliveryRoutes = ({ options = {}, followup, ordersCach
           amount: req.body?.amount, method: req.body?.method,
           requestId: req.body?.requestId,
           operatorOpenId: req.workbenchUser?.open_id || '',
+          operatorName: req.workbenchUser?.name || '',
         },
       });
       return res.status(202).json({ success: true, jobId: job.job_id, status: job.status });
     } catch (error) {
       logError('workbench.sales.payment.failed', { request_id: req.requestId, chain: 'delivery_enqueue', error: error.message });
       return res.status(400).json({ success: false, error: error.message });
-    }
-  });
-
-  router.get('/sales/delivery/jobs/:jobId', async (req, res) => {
-    try {
-      const jobId = String(req.params.jobId || '');
-      if (!/^delivery_job_[0-9a-f]{24}$/i.test(jobId)) return res.status(400).json({ success: false, error: 'job_id invalid' });
-      const job = await getAsync().get(jobId);
-      if (!job) return res.status(404).json({ success: false, error: 'job not found' });
-      return res.json({
-        success: true, jobId: job.job_id, status: job.status,
-        error: job.last_error || '', failures: Array.isArray(job.failures) ? job.failures : [],
-      });
-    } catch (error) {
-      return res.status(500).json({ success: false, error: error.message });
     }
   });
 

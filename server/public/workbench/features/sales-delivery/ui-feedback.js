@@ -26,11 +26,11 @@ export const waitJob = async (api, jobId, { onSuccess, onFailure, onTimeout, int
   while (Date.now() < deadline) {
     await new Promise((resolve) => { setTimeout(resolve, intervalMs); });
     try {
-      const job = await api.get(`/api/workbench/sales/delivery/jobs/${encodeURIComponent(jobId)}`);
+      const payload = await api.get(`/api/workbench/async-jobs/${encodeURIComponent(jobId)}`);
+      const job = payload?.job || payload;
       if (job.status === 'succeeded') { onSuccess?.(job); return; }
       if (job.status === 'partial_failed' || job.status === 'failed') {
-        const reason = job.failures?.[0]?.error || job.failures?.[0]?.message || job.error || '';
-        onFailure?.(reason, job);
+        onFailure?.(job.last_error || job.error || '', job);
         return;
       }
     } catch (error) {
