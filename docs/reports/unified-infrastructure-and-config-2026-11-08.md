@@ -512,7 +512,6 @@ asyncJobNotifier / alertNotifier 走统一服务
 缺口：
 
 ```text
-旧 alerts / pushRetry / heartbeat 目标配置仍有死读取
 NOTIFICATION_EVENTS[*].card 字段无消费者
 ```
 

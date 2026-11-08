@@ -5,7 +5,7 @@
  *   · `OBSERVABILITY_ALERTS_ENABLED` 显式布尔，默认 `false` ⇒ 不挂监听器、不发任何消息；
  *   · 打开后由 `services/alertMonitor.js` 在内存窗口里判 3 条规则，命中即发飞书群；
  *   · 去重：同一条规则（同 key）`silentMinutes` 内只发一次，且每窗口最多 `maxPerWindow` 条。
- * 默认收件群 = `PURCHASE_CHAT_ID`（既有采购群）；可用 `OBSERVABILITY_ALERTS_CHAT_ID` 覆盖。
+ * 收发件人统一由 config/notifications.js 决定（observability_alert → private）。
  */
 const { readFlag, readInt, readList, readString } = require('./envValue');
 
@@ -55,7 +55,6 @@ const OBSERVABILITY_ALERTS = Object.freeze({
   // ⭐ 私发：优先发给这个 open_id（业务负责人 2026-10-17 指定「私发给我的邯美皮鞋账号」）。
   //   ⚠️ 这是**只发不收**的出站消息，**不恢复私聊录入入口**（那条链路仍按 2026-10-07 口径删除）。
   openId: readString(process.env, 'OBSERVABILITY_ALERTS_OPEN_ID', ''),
-  chatId: readString(process.env, 'OBSERVABILITY_ALERTS_CHAT_ID', ''),
   prefix: readString(process.env, 'OBSERVABILITY_ALERTS_PREFIX', '【观测告警】'),
   // 用户可见文案的唯一真源（service 里不许写中文；占位符 `{name}` 由 alertMonitor 填）
   texts: Object.freeze({

@@ -162,7 +162,6 @@ test('按天策略：默认每 10 分钟 × 6；总跨度不许超过一天；�
 
   const alert = resolvePushAlertConfig({});
   assert.equal(alert.enabled, true, '默认开 —— "不静默"是这次的 P0 目标');
-  assert.equal(alert.chatId, '', '空串 = 用该条推送自己的群');
   assert.equal(alert.template, DEFAULT_ALERT_TEMPLATE);
   assert.equal(alert.names.secondDelivery, DEFAULT_SECOND_DELIVERY_ALERT_NAME);
   assert.equal(resolvePushAlertConfig({ PUSH_RETRY_ALERT_ENABLED: '' }).enabled, false, '显式布尔：空串 = 关');

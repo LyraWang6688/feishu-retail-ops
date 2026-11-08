@@ -50,7 +50,6 @@ const PUSH_DAILY_RETRY_MAX_RETRIES_ENV_KEY = 'PUSH_DAILY_RETRY_MAX_RETRIES';
 
 // ── 失败告警（往群里回一句人话）──────────────────────────────────────────────
 const PUSH_RETRY_ALERT_ENABLED_ENV_KEY = 'PUSH_RETRY_ALERT_ENABLED';
-const PUSH_RETRY_ALERT_CHAT_ID_ENV_KEY = 'PUSH_RETRY_ALERT_CHAT_ID';
 const PUSH_RETRY_ALERT_TEMPLATE_ENV_KEY = 'PUSH_RETRY_ALERT_TEMPLATE';
 // 两条推送各自的名字（`{push}` 占位符的值）——"哪条推送失败了"必须说清楚。
 // ⚠️ `PENDING_DEAL_PUSH_ALERT_NAME` 已随那条推送删除（2026-10-28），不再有读取点。
@@ -191,8 +190,6 @@ const assertAlertTemplate = (template) => {
 const resolvePushAlertConfig = (env = process.env) => ({
   // 显式布尔：**默认开**（"不静默"是这次的 P0 目标本身）；空串 = 关。
   enabled: readFlag(env, PUSH_RETRY_ALERT_ENABLED_ENV_KEY, true),
-  // 空串 = **用该条推送自己的群**（两条链路各自知道自己发哪儿）；设了就往这里发。
-  chatId: readString(env, PUSH_RETRY_ALERT_CHAT_ID_ENV_KEY, ''),
   template: assertAlertTemplate(
     readString(env, PUSH_RETRY_ALERT_TEMPLATE_ENV_KEY, DEFAULT_ALERT_TEMPLATE),
   ),
@@ -384,7 +381,6 @@ module.exports = {
   PUSH_DAILY_RETRY_INTERVAL_MS_ENV_KEY,
   PUSH_DAILY_RETRY_MAX_RETRIES_ENV_KEY,
   PUSH_RETRY_ALERT_ENABLED_ENV_KEY,
-  PUSH_RETRY_ALERT_CHAT_ID_ENV_KEY,
   PUSH_RETRY_ALERT_TEMPLATE_ENV_KEY,
   SECOND_DELIVERY_ALERT_NAME_ENV_KEY,
   DEFAULT_TRANSIENT_MAX_RETRIES,

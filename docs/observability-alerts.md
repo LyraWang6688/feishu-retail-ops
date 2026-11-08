@@ -11,8 +11,9 @@
 | `slow` | 单条 `duration_ms` ≥ 阈值（默认 10000ms） | `slow:<event>` |
 
 - 窗口默认 15 分钟；同 key **60 分钟**内只发一次；每窗口最多 **3** 条（防刷屏）。
-- 收件人：`OBSERVABILITY_ALERTS_OPEN_ID`（**私发给业务负责人本人**，只发不收）优先；
-  没有才用 `OBSERVABILITY_ALERTS_CHAT_ID` / `PURCHASE_CHAT_ID`（群）；都没配 ⇒ 只记 `observability.alert.skipped`。
+- 收件人：统一走 `config/notifications.js` 的 `observability_alert` 事件（private / open_id）；
+  `NOTIFY_PRIVATE_OPEN_ID` 优先，未配置时回落 `OBSERVABILITY_ALERTS_OPEN_ID`。
+  没有目标 ⇒ 只记 `observability.alert.skipped`。
 - **默认关**（`OBSERVABILITY_ALERTS_ENABLED=false`）：不挂监听器、不发任何消息。
 
 ## 打开方式
@@ -29,8 +30,7 @@ OBSERVABILITY_ALERTS_ENABLED=true
 # OBSERVABILITY_ALERTS_MIN_ERRORS=3
 # OBSERVABILITY_ALERTS_MIN_TOTAL=20
 # OBSERVABILITY_ALERT_CRITICAL_EVENTS=bitable.record.create_failed,bitable.record.update_failed,inventory.change.failed,scan.write.failed,label_print.job.failed
-# OBSERVABILITY_ALERTS_OPEN_ID=ou_xxx   # 私发（优先）；只发不收，不恢复私聊录入
-# OBSERVABILITY_ALERTS_CHAT_ID=oc_xxx
+# NOTIFY_PRIVATE_OPEN_ID=ou_xxx       # 统一通知目标；未配时回落 OBSERVABILITY_ALERTS_OPEN_ID
 ```
 
 ## 实现边界（如实）
