@@ -8,7 +8,7 @@
  *
  * 三个边界（改这里之前先读一遍）：
  *   · **页面不显示失败提示** —— 失败只发「邯美皮鞋运营群」（复用 `PURCHASE_CHAT_ID`，
- *     可用 `ASYNC_JOB_ALERT_CHAT_ID` 覆盖）；本文件只管"发什么"，不管页面。
+ *     目标统一由 config/notifications.js 的 group 目标决定；本文件只管"发什么"，不管页面。
  *   · **临时错误才重试** —— 5xx / 超时 / 网络 / 限流；400 / 字段不存在 / 权限 / 参数 /
  *     业务拒绝**不重试**（分类见 `classifyThrownError` / `classifyResultOutcome`）。
  *   · **重试复用原幂等键** —— 本文件不生成业务键；各链路把自己的 `submitKey` / `requestId`
@@ -18,7 +18,6 @@
  */
 const path = require('node:path');
 const { readFlag, readInt, readList, readString } = require('./envValue');
-const { resolvePurchaseChatId } = require('./groupPurchase');
 
 /** 覆盖范围（#948 第 1 节）：既有五条异步链路 + 工作台交割单交付/付款。 */
 const ASYNC_JOB_TYPES = Object.freeze({
@@ -56,12 +55,6 @@ const JOB_ID_PREFIX = Object.freeze({
   [ASYNC_JOB_TYPES.SALES_DELIVERY]: 'delivery_job',
   [ASYNC_JOB_TYPES.SALES_PAYMENT]: 'payment_job',
 });
-
-/** 失败通知默认发哪个群：`ASYNC_JOB_ALERT_CHAT_ID` 优先，否则**复用既有** `PURCHASE_CHAT_ID`。 */
-const resolveAsyncJobChatId = (env = process.env) => {
-  const explicit = String(env?.ASYNC_JOB_ALERT_CHAT_ID ?? '').trim();
-  return explicit || resolvePurchaseChatId(env);
-};
 
 const DEFAULT_TEXTS = Object.freeze({
   groupTitle: '【异步写入失败】',
@@ -179,9 +172,6 @@ const buildAsyncJobsConfig = (env = process.env) => {
     }),
     notify: Object.freeze({
       enabled: readFlag(env, 'ASYNC_JOB_NOTIFY_ENABLED', true),
-      // ⚠️ 拿到的是**模块加载时**的值；notifier 发送时还会用 `resolveAsyncJobChatId()` 再取一次
-      //   （这样用例改 env / 注入 env 都能验证 chat_missing 分支）。
-      chatId: resolveAsyncJobChatId(env),
       // 只有 **failed** 触发群通知（partial_failed 是"部分写入成功"，文档 6.1 明确不在此列；
       // 需要时可用环境变量显式加进来，改配置不改代码）。
       statuses: Object.freeze(readList(env, 'ASYNC_JOB_NOTIFY_STATUSES')
@@ -192,7 +182,8 @@ const buildAsyncJobsConfig = (env = process.env) => {
     // 页面轮询（#947 原方案）已由"发运营群"取代；这里保留只读轮询参数给排查脚本/未来页面用。
     poll: Object.freeze({
       intervalMs: readInt(env, 'ASYNC_JOB_POLL_INTERVAL_MS', 2000, { min: 500, max: 60000 }),
-      maxMs: readInt(env, 'ASYNC_JOB_POLL_MAX_MS', 60000, { min: 5000, max: 600000 }),
+      // 交割单页真实飞书写库可能 >60s；该值与页面共用，超时只提示「仍在写入」。
+      maxMs: readInt(env, 'ASYNC_JOB_POLL_MAX_MS', 120000, { min: 5000, max: 600000 }),
     }),
     texts: Object.freeze({
       ...DEFAULT_TEXTS,
@@ -287,7 +278,6 @@ module.exports = {
   ASYNC_JOB_STATUS,
   TERMINAL_STATUSES,
   JOB_ID_PREFIX,
-  resolveAsyncJobChatId,
   ASYNC_JOBS,
   buildAsyncJobsConfig,
   classifyThrownError,

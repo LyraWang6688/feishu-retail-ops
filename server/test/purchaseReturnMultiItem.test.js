@@ -446,7 +446,7 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
     const submitKey = await returnKey(h);
     await withServer(formApp(h), async (base) => {
       const response = await postReturn(base, {
-        form: { submitKey, return_sizes: '41', return_qty_41: '1' },
+        form: { submitKey, return_qty_41: '1' },
         multiItems: [
           // ⚠️ 这是**扫码页真实给出的**形状：`supplier_record_id` 是空的（见 AC-RS3 的只读核查）
           {
@@ -575,7 +575,7 @@ test('AC-RS2b 🔴 单货品退货（**真链路**：扫码页 POST）⇒ 递给
     const submitKey = await returnKey(h);
     await withServer(formApp(h), async (base) => {
       const response = await postReturn(base, {
-        form: { submitKey, return_sizes: '41', return_qty_41: '1' },
+        form: { submitKey, return_qty_41: '1' },
         // 没有 hidden 多货品载荷 ⇒ 走**今天那条**老路径（真正的"单货品退货"）
       });
       assertSubmitToast(response, '单货品退货 ⇒ 统一回执');

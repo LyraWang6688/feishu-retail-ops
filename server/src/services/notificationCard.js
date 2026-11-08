@@ -3,7 +3,7 @@
 /**
  * 通知卡片底座（Card JSON 2.0 + CardKit v1）。
  *
- * 与旧的 `im.v1.message.patch` 卡片更新区分：
+ * 新通知只用 CardKit，不再使用旧消息 patch： 
  *   · 创建卡片实体：cardkit.v1.card.create → card_id
  *   · 发送：im.message.create，msg_type=interactive，content 引用 card_id
  *   · 编辑：cardkit.v1.card.update（Card JSON 2.0）

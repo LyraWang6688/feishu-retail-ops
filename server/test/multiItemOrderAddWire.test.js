@@ -190,11 +190,15 @@ const addBody = ({
   const params = new URLSearchParams();
   // ⭐ 那颗按钮的 name/value（= 接线给的那份配置 ✓ 不写死）
   params.append(WIRE.addAction, WIRE.addValue);
-  const sizesField = chain === 'replenish' ? SCAN_WRITE.fields.replenishSizes : SCAN_WRITE.fields.returnSizes;
   const qtyPrefix = chain === 'replenish'
     ? SCAN_WRITE.fields.replenishQuantityPrefix : SCAN_WRITE.fields.returnQuantityPrefix;
-  for (const size of sizes) params.append(sizesField, size);
-  params.append(`${qtyPrefix}${sizes[0]}`, quantity);
+  if (chain === 'replenish') {
+    for (const size of sizes) params.append(SCAN_WRITE.fields.replenishSizes, size);
+    params.append(`${qtyPrefix}${sizes[0]}`, quantity);
+  } else {
+    // ⭐ 2026-11-08（「不需要做兼容」）：退货没有勾选框字段 ⇒ 每码只提交数量（数量即选择 ✓）
+    for (const size of sizes) params.append(`${qtyPrefix}${size}`, quantity);
+  }
   // 页面渲出来的 hidden = `[首件, ...已加]`
   params.append('multi_items', multiItemPayloadJson([first, ...already]));
   return params;

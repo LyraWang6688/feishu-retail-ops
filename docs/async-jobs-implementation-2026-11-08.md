@@ -102,6 +102,8 @@
 - 交付/付款的业务提交仍走 `salesDeliveryAsyncService` 的页面级 FIFO；
 - job 状态、重试、失败通知改由本统一层管理；写请求再经飞书写调度器；
 - 页面仍保留交割单原有的失败 toast（此前业务负责人要求“失败原因要给她看到”），与运营群通知并存；
+- 提交受理 toast 文案读 `config/submitToast.js`（通过读接口返回 `submit_toast`，页面不再写死「已提交成功」）；
+- 页面轮询间隔/超时读 `config/asyncJobs.js` 的 `ASYNC_JOBS.poll`（通过读接口返回 `job_poll`，页面不再自建 `jobPoll`）；
 - 启动时会把旧的 `server/data/sales_delivery_jobs` 中 queued/running 的 job 迁移到统一 job 存储（同一 job_id；已完成的不会重放）。
 
 ## 9. 边界 / 未做（如实）

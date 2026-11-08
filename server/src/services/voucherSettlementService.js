@@ -136,7 +136,7 @@ const createVoucherSettlementService = ({
   const notify = async (payload) => {
     const chatId = String(config.chatId || '').trim();
     if (!chatId) {
-      logger.logWarn('voucher.settlement.chat_missing', { env: 'PURCHASE_CHAT_ID / VOUCHER_SETTLEMENT_CHAT_ID' });
+      logger.logWarn('voucher.settlement.chat_missing', { env: 'NOTIFY_GROUP_CHAT_ID / PURCHASE_CHAT_ID' });
       return { sent: false, reason: 'chat_missing' };
     }
     if (typeof sendText !== 'function') return { sent: false, reason: 'no_sender' };

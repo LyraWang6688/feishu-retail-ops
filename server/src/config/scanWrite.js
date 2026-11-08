@@ -210,7 +210,6 @@ const FIELDS = Object.freeze({
   replenishQuantityPrefix: 'qty_',
   // 退货：与补货**同形**，但字段名**各用各的** —— 两张表单在同一个页面（采购领域）上，
   //   `name` 分开之后，将来谁想加"两个表单同时提交"或做断言都不会互相串。
-  returnSizes: 'return_sizes',
   returnQuantityPrefix: 'return_qty_',
   // ⭐⭐ 2026-10-14 晚：**整单金额**（她：「**只写一个整单金额**（一次填一个总额，和补货一样～）」）
   //   —— 补货 / 退货**共用同一个 `name`**（唯一来源 = `PURCHASE_AMOUNT.field` ✓ 不抄两份 ✗）。

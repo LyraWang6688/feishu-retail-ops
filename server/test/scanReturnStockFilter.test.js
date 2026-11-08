@@ -171,7 +171,7 @@ test('AC-RT10 ⭐ 整款都没有库存 ⇒ **如实人话**（不是空白，�
   assert.ok(block.includes('data-view="return-no-stock"'), '⭐ 要有那句人话的锚（能真红）✓');
   assert.ok(block.includes(SCAN_PAGE.returnForm.noReturnableStock), '人话来自配置 ✓');
   assert.equal(sizeRowsOf(block).length, 0, '一个码都不列（库存全是 0 ✓）');
-  assert.equal(block.includes(`name="${SCAN_WRITE.fields.returnSizes}"`), false, '没有可勾的码 ⇒ 不渲染勾选框 ✓');
+  assert.equal(block.includes('name="return_sizes"'), false, '没有可勾的码 ⇒ 不渲染勾选框 ✓');
   // ⚠️ 别拿"隐藏 action 字段"当按钮（它在表单里照旧 ✓）—— 判据是**那颗按钮**在不在
   assert.equal(/<button[^>]*type="submit"/.test(block), false,
     '⭐ 也没有"提交"那一颗（点了也没东西可退 ⇒ 别给她死路 ✓）');

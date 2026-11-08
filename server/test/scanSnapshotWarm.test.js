@@ -69,16 +69,17 @@ test('AC-W3 缺省作用于「服务自己那个实例」· 没有实例时是�
     '缺省 = 登记表（生产路径不新建 ✓）');
 });
 
-test('AC-W4 ⭐ 两个快照都要预热（她：「两个快照都留」✓ 实测 `product_snapshot_hit:false` ✗）', async () => {
+test('AC-W4 只保留实时库存快照预热；货品信息统一走 configTableCache', async () => {
   const calls = [];
   const live = { refresh: async (o) => { calls.push(['live', o?.reason]); } };
-  const product = { refresh: async (o) => { calls.push(['product', o?.reason]); } };
-  const warmed = await warmLiveInventorySnapshot({ reason: 'warm', snapshots: [live, product] });
-  assert.equal(warmed, 2, '两个都要预热 ✓');
-  assert.deepEqual(calls, [['live', 'warm'], ['product', 'warm']], '各恰好一次、reason 都是 warm ✓');
-  // 源码哨兵：**两个**实例都要登记（货品那个不许漏 ✗）
+  const warmed = await warmLiveInventorySnapshot({ reason: 'warm', snapshots: [live] });
+  assert.equal(warmed, 1, '实时库存快照仍要预热 ✓');
+  assert.deepEqual(calls, [['live', 'warm']], '恰好一次、reason 都是 warm ✓');
+  // 源码哨兵：只允许一处快照登记；productSnapshot 已删除，不许回来 ✗
   const pushes = (SERVICE_SOURCE.match(/liveInventorySnapshots\.push\(/g) || []).length;
-  assert.equal(pushes, 2, `要有两处登记（实时库存 + 货品），实际 ${pushes} 处`);
+  assert.equal(pushes, 1, `只允许实时库存一处登记，实际 ${pushes} 处`);
+  assert.equal(SERVICE_SOURCE.includes('productSnapshot'), true, '只允许注释说明已删除');
+  assert.equal(SERVICE_SOURCE.includes('createLiveInventorySnapshot({\n      gateway,\n      config: config.productSnapshot'), false);
 });
 
 test('AC-W5 ⭐ 骨架只服务「首次进入」：判据在配置 + 路由真的用了它（六格切换不再出中间态）', () => {

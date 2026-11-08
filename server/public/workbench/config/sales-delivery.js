@@ -24,8 +24,6 @@ export const SALES_DELIVERY_CONFIG = Object.freeze({
   }),
   /** 只在打开 / 刷新页面时拉一次；不做定时刷新。 */
   dataSource: 'api',
-  /** 异步 job 轮询：真实飞书写库可能 >30s，超时只提示「仍在写入」，不误报失败。 */
-  jobPoll: Object.freeze({ intervalMs: 800, timeoutMs: 120000 }),
 });
 
 /**
@@ -111,7 +109,6 @@ export const SALES_DELIVERY_TEXTS = Object.freeze({
   headers: Object.freeze({ payable: '应付', pending: '待付', pendingDelivery: '待交付' }),
   noMethod: '未选收款方式',
   buttons: Object.freeze({ delivery: '交付', payment: '付款' }),
-  submittedToast: '已提交成功',
   deliveryToast: '该产品已交付',
   paymentToast: '付款成功',
   stillWriting: '仍在写入，请稍后刷新',

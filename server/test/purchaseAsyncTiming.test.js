@@ -145,7 +145,6 @@ const legalCases = () => ([
     action: SCAN_WRITE.actions.purchaseReturn,
     extra: {
       [`${SCAN_WRITE.fields.purchaseAmount}`]: '800',
-      [`${SCAN_WRITE.fields.returnSizes}`]: '41',
       [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1',
     },
   },

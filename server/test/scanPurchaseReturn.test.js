@@ -330,13 +330,14 @@ const formApp = (harness, lookup = async () => view()) => {
 // AC-R1 【退货】表单：与【一键补货】同形，全部来自配置
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-R1 【退货】领域里是退货表单：与【一键补货】同形（同一 POST 端点 / 勾尺码+填数量 / 自带幂等键）', async () => {
+test('AC-R1 【退货】领域里是退货表单：同一 POST 端点 / **填数量即选择**（无勾选框）/ 自带幂等键', async () => {
   login();
   const h = createHarness();
   try {
     // 判据在配置里（动作名 / 字段名 / 幂等键前缀 / 开关）
     assert.equal(SCAN_WRITE.actions.purchaseReturn, 'return_purchase');
-    assert.equal(SCAN_WRITE.fields.returnSizes, 'return_sizes');
+    // ⭐ 2026-11-08（业务负责人「不需要做兼容」）：旧勾选框字段常量已退场 ⇒ 断言它**不存在** ✓
+    assert.equal('returnSizes' in SCAN_WRITE.fields, false, '旧 return_sizes 字段常量不许回来（无兼容 ✓）');
     assert.equal(SCAN_WRITE.fields.returnQuantityPrefix, 'return_qty_');
     // ⭐ 2026-10-12 改（真机 bug）：采购环节的「退货」= `PURCHASE_RETURN`
     //    （原来是库存环节的「采购减少」`STOCK_PURCHASE_DECREASE` ✗ —— 库存那条链路一行没动 ✓）
@@ -534,7 +535,7 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
     redirect: 'manual',  // ⭐ 2026-10-29：提交成功 = 303 回工作台（不许被 fetch 自动跟随成 404）
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
-          action: SCAN_WRITE.actions.purchaseReturn, submit_key: key, return_sizes: '42', return_qty_42: '1',
+          action: SCAN_WRITE.actions.purchaseReturn, submit_key: key, return_qty_42: '1',
           purchase_amount: '399',
         }).toString(),
       });
@@ -750,7 +751,7 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
     redirect: 'manual',  // 303 回执：不许 fetch 自动跟随
         headers: { cookie: sessionCookie(openId), 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
-          action: SCAN_WRITE.actions.purchaseReturn, submit_key: key, return_sizes: '41', return_qty_41: '1',
+          action: SCAN_WRITE.actions.purchaseReturn, submit_key: key, return_qty_41: '1',
           purchase_amount: '399',
         }).toString(),
       });

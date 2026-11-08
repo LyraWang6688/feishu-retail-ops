@@ -107,6 +107,20 @@ test('send：目标缺失 / 关闭只记 skipped，不创建卡片', async () =>
   assert.equal(client.calls.length, 0);
 });
 
+test('target 覆盖只换收件人，不绕过事件开关', async () => {
+  const client = fakeClient();
+  const service = createNotificationService({
+    client,
+    resolve: () => ({ enabled: false, reason: 'disabled', target: 'group' }),
+    logger: { logInfo: () => {}, logWarn: () => {} },
+  });
+  const result = await service.send('voucher_settlement', { lines: ['x'] }, {
+    target: { receiveIdType: 'chat_id', receiveId: 'oc_override' },
+  });
+  assert.equal(result.ok, false, '事件关闭时 target 不能强行发');
+  assert.equal(client.calls.length, 0);
+});
+
 test('update：用 CardKit card.update 编辑同一张卡', async () => {
   const client = fakeClient();
   const service = createNotificationService({

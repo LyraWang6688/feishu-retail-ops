@@ -155,7 +155,7 @@ const postAction = async (base, realm, action, amount, openId = 'ou_purchase_amo
     submit_key: 'scan_test:key:1',
   };
   if (realm === 'purchase_return') {
-    body.return_sizes = '41';
+    body.return_qty_41 = '1';
     body.return_qty_41 = '1';
   } else {
     body.sizes = '41';

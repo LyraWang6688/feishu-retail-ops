@@ -218,7 +218,7 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
   login();
   // ⚠️ 2026-10-12：三段各 10ms、断言 `total_ms >= 30` —— 同样是"总和正好等于下限"的边界写法。
   //    抬到各 15ms、下限 40（留 5ms 余量），语义不变：三段读都算进了总时长。
-  const gateway = fakeGateway({ delays: { 'filter:product': 15, 'filter:liveInventory': 15, sizeManagement: 15 } });
+  const gateway = fakeGateway({ delays: { product: 15, 'filter:liveInventory': 15, sizeManagement: 15 } });
   const app = express();
   // 与 `app.js` 同一套：请求号由最外层中间件给（耗时日志靠它把一次扫码串起来）。
   app.use((req, res, next) => { req.requestId = 'req_timing_demo'; next(); });
@@ -499,7 +499,7 @@ test('AC-T11 哨兵：代理的时间源必须在 `new Proxy(` **之前**定义�
 });
 
 test('AC-T12 哨兵：命中快照时 `inventory_ms` 必须很小（< 50ms）——"快照真的被用上了"', async () => {
-  const gateway = fakeGateway({ delays: { 'filter:product': 15, 'filter:liveInventory': 15, sizeManagement: 15 } });
+  const gateway = fakeGateway({ delays: { product: 15, 'filter:liveInventory': 15, sizeManagement: 15 } });
   const app = express();
   app.use((req, res, next) => { req.requestId = 'req_t_snap'; next(); });
   app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false }));
