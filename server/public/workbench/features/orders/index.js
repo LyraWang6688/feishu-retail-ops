@@ -162,7 +162,7 @@ const purchaseBatchCardHtml = (batch) => `
              details 的 summary 本身就是那颗按钮（点它展开/收起验收表单）。
              蓝色按钮与 summary 同名的那一行**删掉**（重复且容易误点 ✗）。 -->
         <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(batch.batch_no)}">
-          <summary class="action-form__summary">${escapeHtml(T.verifyArrival)}</summary>
+          <summary class="btn btn-primary action-form__summary">${escapeHtml(T.verifyArrival)}</summary>
           <p class="order-note" data-view="arrival-detail-hint">${escapeHtml(ARRIVAL_FULL_TEXTS.detailOpenHint)}</p>
           <div class="action-body">
             <div data-view="arrival-detail" data-batch="${escapeHtml(batch.batch_no)}"></div>

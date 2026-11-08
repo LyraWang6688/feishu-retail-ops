@@ -112,11 +112,15 @@
 .action-form summary {
   display: flex;
   align-items: center;
+  justify-content: center;
   min-height: var(--control-height);
   cursor: pointer;
   font-weight: var(--weight-bold);
   overflow-wrap: anywhere;
+  list-style: none;
 }
+/* ⭐ 2026-11-09（业务负责人：「和全局保持一致，蓝色按钮」）：验收入口 = 全局 .btn-primary 观感 */
+.action-form__summary { width: 100%; text-align: center; }
 .action-body { display: grid; gap: var(--space-2); margin-top: var(--space-3); min-width: 0; }
 .action-body .btn,
 .action-body input,
