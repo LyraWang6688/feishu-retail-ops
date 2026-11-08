@@ -21,6 +21,20 @@
  *   很多既有判据的"读表次数"就是按这个形状钉的。塞上值会凭空多出读 → 一堆**假红**。
  *   需要它们的用例自己显式设（既有做法：`orderThreeStates` 等在假网关里覆盖 tableId）。
  */
+/**
+ * ⭐ 2026-11-08（#948）：统一异步任务的本地 job 存储目录 —— 测试进程里指到**临时目录**。
+ *
+ * 为什么：job 存储默认落 `server/data/async_jobs/`（gitignored）。测试若共用那一份，
+ *   上一次跑留下的 `succeeded` job 会让本次"同一个 submitKey"直接命中终态 ⇒ 写入口不再跑 ⇒ **跨次假红/假绿**。
+ *   ⭐ 每个测试进程一个 mkdtemp ⇒ 同进程内仍共享（状态接口/去重语义照测），跨进程互不影响。
+ */
+if (!process.env.ASYNC_JOBS_DIR) {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  process.env.ASYNC_JOBS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-async-jobs-'));
+}
+
 const TEST_TABLE_IDS = Object.freeze({
   FEISHU_V1_PRODUCT_TABLE_ID: 'tbl_test_product',
   FEISHU_V1_COLOR_TABLE_ID: 'tbl_test_color',

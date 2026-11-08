@@ -64,8 +64,16 @@ const createMultiItemPending = ({ writeService, multiItemOrderConfig }) => {
 
 /** 「后台那一跑」的排程（共用件登记在册；用例可以等它）。 */
 const createPurchaseScheduler = ({ purchaseBackground }) => ({
-  schedulePurchaseWrite: ({ chain, requestId, submitKey, context, restInput }) =>
-    purchaseBackground.schedulePurchaseRest({ chain, requestId, submitKey, context, restInput }),
+  schedulePurchaseWrite: ({ chain, requestId, submitKey, context, restInput, jobMeta }) =>
+    purchaseBackground.schedulePurchaseRest({
+      chain,
+      requestId,
+      submitKey,
+      context,
+      restInput,
+      // ⚠️ 旧调用方不带 `jobMeta` ⇒ 转发出去的参数形状**逐字不变**（既有 deepEqual 判据 ✓）
+      ...(jobMeta === undefined ? {} : { jobMeta }),
+    }),
 });
 
 module.exports = { createMultiItemPending, createPurchaseScheduler };

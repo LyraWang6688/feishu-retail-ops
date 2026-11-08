@@ -6,37 +6,75 @@
  *
  * 业务负责人 2026-10-29 口径：
  *   · 用户点击后 toast「数据提交成功，后台自动写入」（见 `config/submitToast.js`，本队列不写文案）；
- *   · 「大不了 API 接口有问题，那么就重试呗」⇒ 临时失败自动重试 N 次（配置在 afterSalesDerived.job）。
+ *   · 「大不了 API 接口有问题，那么就重试呗」⇒ 临时失败自动重试 N 次
+ *     （#948：次数/退避走统一配置 `ASYNC_JOB_*`；`config/afterSalesDerived.job` 是兼容入口）。
  */
-const crypto = require('node:crypto');
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { AFTER_SALES_DERIVED } = require('../config/afterSalesDerived');
+const {
+  ASYNC_JOBS, ASYNC_JOB_TYPES, classifyThrownError,
+} = require('../config/asyncJobs');
+const { jobIdFor } = require('./asyncJobStore');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 
 const STATUS = Object.freeze({
   queued: 'queued', running: 'running', succeeded: 'succeeded', failed: 'failed',
 });
-const jobIdOf = (type, requestId) => `after_sales_job_${crypto.createHash('sha256')
-  .update(`${type}:${requestId}`).digest('hex').slice(0, 24)}`;
+/**
+ * 售后 job id：**沿用既有形状**（`after_sales_job_<hash>`），并由统一层的 `jobIdFor` 派生 ⇒
+ * 链路自己的 job 与统一 job 是**同一个 id**（排查 / 状态接口按一个键串起来）。
+ */
+const jobIdOf = (type, requestId) => jobIdFor(ASYNC_JOB_TYPES.AFTER_SALES, `${type}:${requestId}`);
 
-const isRetryable = (error) => {
-  const status = Number(error?.statusCode || error?.status || 0);
-  if (status === 400) return false; // 她填错 ⇒ 不重试
-  return true; // 其余（飞书 5xx / 超时 / 限流）交给重试
-};
+/** 通知要用的"非敏感元数据"（拿不到就不写，**不编** —— 文档 6.3）。 */
+const unifiedMeta = ({ type, key, payload }) => ({
+  request_id: key,
+  action: String(type || ''),
+  order_no: String(payload?.salesEntryOrderNo || ''),
+  step: ASYNC_JOBS.texts.stepLabels.afterSales,
+});
 
-const createAfterSalesAsyncService = ({ execute, onSettled, dir, store: injectedStore, logger = { logInfo, logWarn, logError } } = {}) => {
+/**
+ * 临时错误才重试（#948 第 5 节）：分类器**只有一份**（`config/asyncJobs.classifyThrownError`）——
+ * 400 / 字段不存在 / 权限 / 参数 / 业务拒绝 ⇒ 不重试；5xx / 超时 / 网络 / 限流 ⇒ 重试。
+ */
+const isRetryable = (error) => classifyThrownError(error, ASYNC_JOBS.retry).retryable;
+
+const createAfterSalesAsyncService = ({
+  execute, onSettled, dir, store: injectedStore, asyncJobs = null,
+  logger = { logInfo, logWarn, logError },
+} = {}) => {
   if (typeof execute !== 'function') throw new Error('AfterSalesAsyncService requires execute');
   const store = injectedStore || new JsonTaskStore({
     dir: dir || AFTER_SALES_DERIVED.jobsDir || path.join(__dirname, '..', '..', 'data', 'after_sales_jobs'),
     idField: 'job_id',
   });
+  /**
+   * 统一 job 的**镜像调用**：失败只 warn，绝不打断售后链路（统一层是旁路，不是主链路）。
+   */
+  const mirror = async (work) => {
+    try {
+      return await work();
+    } catch (error) {
+      logger.logWarn('async_job.mirror.failed', {
+        reason: 'after_sales', error: String(error?.message || error).slice(0, 300),
+      });
+      return null;
+    }
+  };
   const pending = [];
   const queued = new Set();
   const running = new Set();
   let pumping = false;
   const { retryAttempts, retryBaseMs } = AFTER_SALES_DERIVED.job;
+  /** 指数退避（配置化：base 取 afterSalesDerived.job ⇒ 与统一 env 同一份取值；封顶取统一配置）。 */
+  const delayForAttempt = (attempt) => {
+    const base = Number(retryBaseMs) || 0;
+    if (!base) return 0;
+    const delay = base * (2 ** Math.max(0, Number(attempt) - 1));
+    return Math.min(delay, Number(ASYNC_JOBS.retry.maxDelayMs) || delay);
+  };
 
   const queueMeta = () => ({ queue_depth: pending.length, queued_count: queued.size, running_count: running.size });
   const get = (jobId) => store.get(jobId);
@@ -51,6 +89,8 @@ const createAfterSalesAsyncService = ({ execute, onSettled, dir, store: injected
       await store.update(jobId, {
         status: STATUS.running, attempts: attemptsStart, started_at: new Date().toISOString(),
       });
+      // #948：统一 job 镜像（同 id）—— 只读排查 / 状态接口 / 失败通知都认这一份
+      await mirror(() => asyncJobs?.begin(jobId, attemptsStart));
       for (let attempt = attemptsStart; attempt <= retryAttempts; attempt += 1) {
         try {
           const result = await execute(job.payload || {}, { jobId, correlation: job.correlation });
@@ -58,6 +98,7 @@ const createAfterSalesAsyncService = ({ execute, onSettled, dir, store: injected
             status: STATUS.succeeded, result: result || {}, last_error: '',
             attempts: attempt, finished_at: new Date().toISOString(),
           });
+          await mirror(() => asyncJobs?.succeed({ jobId, result: result || {}, attempt }));
           logger.logInfo('workbench.orders.after_sales.completed', {
             job_id: jobId, request_id: job.request_id, type: job.type, attempts: attempt, ...queueMeta(),
           });
@@ -76,14 +117,22 @@ const createAfterSalesAsyncService = ({ execute, onSettled, dir, store: injected
               job_id: jobId, request_id: job.request_id, type: job.type,
               attempts: attempt, reason: 'job_failed', error: message,
             });
+            await mirror(() => asyncJobs?.recordAttemptFailure({
+              jobId, error: message, attempt, retryable: false,
+            }));
+            // #948 第 6 节：**最终失败**才通知（同一 job 只发一次；发送失败不改任务状态）
+            await mirror(() => asyncJobs?.fail({ jobId, error: message, attempt }));
             if (onSettled) onSettled();
             return store.get(jobId);
           }
+          await mirror(() => asyncJobs?.recordAttemptFailure({
+            jobId, error: message, attempt, retryable: true,
+          }));
           logger.logWarn('workbench.orders.after_sales.failed', {
             job_id: jobId, request_id: job.request_id, type: job.type,
             attempts: attempt, reason: 'retrying', error: message,
           });
-          await new Promise((resolve) => setTimeout(resolve, retryBaseMs * attempt));
+          await new Promise((resolve) => setTimeout(resolve, delayForAttempt(attempt)));
         }
       }
       return store.get(jobId);
@@ -115,16 +164,29 @@ const createAfterSalesAsyncService = ({ execute, onSettled, dir, store: injected
     setImmediate(() => { pump().catch(() => undefined); });
   };
 
-  const enqueue = async ({ type = 'return', requestId, payload, correlation } = {}) => {
+  const enqueue = async ({
+    type = 'return', requestId, payload, correlation, ownerOpenId = '', operatorName = '',
+  } = {}) => {
     const key = String(requestId || '').trim();
     if (!/^[0-9a-f-]{36}$/i.test(key)) throw new Error('request_id invalid');
     const jobId = jobIdOf(type, key);
     const existing = await store.get(jobId);
-    if (existing) return { job: existing, created: false };
+    if (existing) {
+      // 统一 job 若因升级前入队而不存在 ⇒ 补建（幂等；不覆盖任何已冻结字段）
+      await mirror(() => asyncJobs?.enqueue({
+        jobId, type: ASYNC_JOB_TYPES.AFTER_SALES, payload, ownerOpenId, operatorName,
+        meta: unifiedMeta({ type, key, payload }),
+      }));
+      return { job: existing, created: false };
+    }
     const job = await store.create({
       job_id: jobId, type, request_id: key, status: STATUS.queued,
       payload, correlation: correlation || null, attempts: 0, last_error: '',
     });
+    await mirror(() => asyncJobs?.enqueue({
+      jobId, type: ASYNC_JOB_TYPES.AFTER_SALES, payload, ownerOpenId, operatorName,
+      meta: unifiedMeta({ type, key, payload }),
+    }));
     schedule(jobId);
     return { job, created: true };
   };

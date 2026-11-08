@@ -11,6 +11,9 @@ const { person } = require('./v1ReferenceResolver');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_STATUS_WRITE_VALUES } = require('../config/salesStatusDimensions');
 const { SCAN_WRITE } = require('../config/scanWrite');
+const {
+  ASYNC_JOBS, ASYNC_JOB_STATUS, ASYNC_JOB_TYPES, classifyResultOutcome,
+} = require('../config/asyncJobs');
 const { createSalesJobStore, STATUS } = require('./salesJobStore');
 const { buildSalePayload } = require('./salesPayload');
 const { logInfo, logWarn, logError } = require('../utils/logger');
@@ -23,7 +26,7 @@ const paymentStatusOf = (derived = {}) => {
 };
 
 const createSalesAsyncWorker = ({
-  gateway, sessions, writeService, jobStore = createSalesJobStore(),
+  gateway, sessions, writeService, jobStore = createSalesJobStore(), asyncJobs = null,
   logger = { logInfo, logWarn, logError },
 } = {}) => {
   if (!gateway || !writeService) throw new Error('SalesAsyncWorker requires gateway + writeService');
@@ -65,6 +68,11 @@ const createSalesAsyncWorker = ({
   const seedSession = async (job, mainRecordId) => {
     const openId = `job_${job.job_id}`;
     const payload = job.payload;
+    // ⭐ #948 重试幂等：上一次可能只加了一半的行 ⇒ **先清空再按冻结 payload 重加**
+    //   （同一组行，重跑不会叠加；`submitSale` 仍拿同一把 submitKey ⇒ 幂等那一层一字没拆）
+    if (typeof sessionService.clearSale === 'function') {
+      await sessionService.clearSale(openId).catch(() => undefined);
+    }
     for (const line of payload.lines) {
       await sessionService.addLine(openId, {
         kind: line.kind || 'shoe',
@@ -86,6 +94,64 @@ const createSalesAsyncWorker = ({
     return openId;
   };
 
+  /** 一次"真正写库"的尝试（主表 / 会话 / 明细收款库存）；异常**原样抛给重试层**分类。 */
+  const attemptSale = async (job) => {
+    const mainRecordId = await ensureMain(job);
+    const openId = await seedSession(job, mainRecordId);
+    const payload = job.payload || {};
+    const result = await writeService.submitSale({
+      openId,
+      requestId: job.job_id,
+      submitKey: `scan_sale:${openId}:1`,
+      payments: payload.payments || [],
+      lineAmounts: (payload.lines || []).map((line) => String(line.actual_amount)),
+      paymentStatus: paymentStatusOf(payload.derived),
+      paidAmount: String(payload.derived?.paid_amount ?? ''),
+      orderGift: payload.gift || '',
+      oneShot: true,
+    }, { correlation: correlationOf(job) });
+    const ok = result?.ok === true && !(Number(result?.stock?.failed || 0) > 0);
+    return {
+      ok,
+      status: ok ? STATUS.succeeded : (result?.ok === true ? STATUS.partialFailed : STATUS.failed),
+      message: ok ? '' : String(result?.message || result?.error || result?.code || ''),
+      orderNo: result?.order_no || payload.order_no || '',
+      result,
+    };
+  };
+
+  /** 把最终结果落回**链路自己的** store（工作台列表靠它判断"未完成可重试"）并打既有日志。 */
+  const settleSalesJob = async (jobId, job, outcome, startedAt) => {
+    const payload = job.payload || {};
+    const orderNo = outcome.orderNo || job.order_no || payload.order_no || '';
+    await jobStore.update(jobId, {
+      status: outcome.status,
+      order_no: orderNo,
+      last_error: outcome.message || '',
+    }).catch(() => undefined);
+    if (outcome.ok) {
+      logger.logInfo('scan.sale.async.done', {
+        job_id: jobId, tap_id: job.tap_id || undefined,
+        order_no: orderNo, status: outcome.status,
+        duration_ms: Math.max(0, Date.now() - startedAt),
+        line_count: (payload.lines || []).length,
+        payment_count: (payload.payments || []).length,
+      });
+      return;
+    }
+    // 关键：submitSale 返回 ok:false（部分失败/失败）时也必须打 error 事件，
+    // 否则只打 info done ⇒ 预警规则看不到（2026-10-27 实测 0097 就是这样静默）。
+    logger.logError('scan.sale.async.failed', {
+      job_id: jobId,
+      tap_id: job.tap_id || undefined,
+      order_no: orderNo,
+      status: outcome.status,
+      error: outcome.message || '',
+      line_count: (payload.lines || []).length,
+      payment_count: (payload.payments || []).length,
+    });
+  };
+
   const process = async (jobId) => {
     if (running.has(jobId)) return running.get(jobId);
     const promise = (async () => {
@@ -93,51 +159,60 @@ const createSalesAsyncWorker = ({
       if (!job) return null;
       if (job.status === STATUS.succeeded || job.status === STATUS.partialFailed || job.status === STATUS.failed) return job;
       const startedAt = Date.now();
+      // ⭐⭐ #948：注入了统一层 ⇒ **统一重试**（临时错误才重试，重试复用同一把 submitKey /
+      //    同一个 id 的 job）+ 最终失败发运营群；没注入 ⇒ 保持既有"只跑一次"。
+      if (asyncJobs) {
+        let lastOutcome = null;
+        let attempted = false;
+        const unified = await asyncJobs.run({
+          jobId,
+          run: async ({ attempt }) => {
+            attempted = true;
+            await jobStore.update(jobId, { status: STATUS.running, attempts: attempt });
+            lastOutcome = await attemptSale(job);
+            return lastOutcome;
+          },
+          classifyResult: (outcome) => {
+            if (!outcome || outcome.ok) return { ok: true };
+            const classified = classifyResultOutcome(outcome, ASYNC_JOBS.retry);
+            return { ...classified, partial: outcome.status === STATUS.partialFailed };
+          },
+        });
+        const finalJob = await jobStore.get(jobId);
+        let outcome = lastOutcome;
+        // 统一层**一次都没跑**（连 job 都读不到 = 存储异常）⇒ 如实回落单次，绝不把写库吞掉 ✗
+        if (!outcome && !attempted) {
+          try {
+            outcome = await attemptSale(job);
+          } catch (error) {
+            outcome = {
+              ok: false, status: STATUS.failed, message: String(error?.message || error),
+              orderNo: job.order_no || '', result: null,
+            };
+          }
+        }
+        // 跑过但抛了（永久错误）⇒ 用统一层落下的 last_error 如实收口（**不再重跑** ✗）
+        if (!outcome) {
+          outcome = {
+            ok: false, status: STATUS.failed,
+            message: String(finalJob?.last_error || ''),
+            orderNo: finalJob?.order_no || job.order_no || '',
+            result: null,
+          };
+        }
+        // 以统一层的终态为准（它才知道"最后这次是 partial 还是 failed"）
+        const status = unified?.status === ASYNC_JOB_STATUS.SUCCEEDED
+          ? STATUS.succeeded
+          : (unified?.status === ASYNC_JOB_STATUS.PARTIAL_FAILED ? STATUS.partialFailed : outcome.status);
+        const settled = { ...outcome, status, ok: status === STATUS.succeeded };
+        if (!settled.ok && !settled.message) settled.message = String(finalJob?.last_error || '');
+        await settleSalesJob(jobId, job, settled, startedAt);
+        return jobStore.get(jobId);
+      }
       await jobStore.update(jobId, { status: STATUS.running, attempts: Number(job.attempts || 0) + 1 });
       try {
-        const mainRecordId = await ensureMain(job);
-        const openId = await seedSession(job, mainRecordId);
-        const payload = job.payload;
-        const result = await writeService.submitSale({
-          openId,
-          requestId: jobId,
-          submitKey: `scan_sale:${openId}:1`,
-          payments: payload.payments || [],
-          lineAmounts: (payload.lines || []).map((line) => String(line.actual_amount)),
-          paymentStatus: paymentStatusOf(payload.derived),
-          paidAmount: String(payload.derived?.paid_amount ?? ''),
-          orderGift: payload.gift || '',
-          oneShot: true,
-        }, { correlation: correlationOf(job) });
-        const ok = result?.ok === true && !(Number(result?.stock?.failed || 0) > 0);
-        const status = ok ? STATUS.succeeded : (result?.ok === true ? STATUS.partialFailed : STATUS.failed);
-        const lastError = ok ? '' : String(result?.message || result?.error || result?.code || '');
-        await jobStore.update(jobId, {
-          status,
-          order_no: result?.order_no || payload.order_no,
-          last_error: lastError,
-        });
-        if (!ok) {
-          // 关键：submitSale 返回 ok:false（部分失败/失败）时也必须打 error 事件，
-          // 否则只打 info done ⇒ 预警规则看不到（2026-10-27 实测 0097 就是这样静默）。
-          logger.logError('scan.sale.async.failed', {
-            job_id: jobId,
-            tap_id: job.tap_id || undefined,
-            order_no: result?.order_no || payload.order_no,
-            status,
-            error: lastError,
-            line_count: (payload.lines || []).length,
-            payment_count: (payload.payments || []).length,
-          });
-        } else {
-          logger.logInfo('scan.sale.async.done', {
-            job_id: jobId, tap_id: job.tap_id || undefined,
-            order_no: result?.order_no || payload.order_no, status,
-            duration_ms: Math.max(0, Date.now() - startedAt),
-            line_count: (payload.lines || []).length,
-            payment_count: (payload.payments || []).length,
-          });
-        }
+        const outcome = await attemptSale(job);
+        await settleSalesJob(jobId, job, outcome, startedAt);
         return await jobStore.get(jobId);
       } catch (error) {
         await jobStore.update(jobId, {
@@ -185,13 +260,30 @@ const createSalesAsyncWorker = ({
     setImmediate(() => { pump().catch(() => undefined); });
   };
 
-  const enqueue = async ({ submitKey, payload, tapId = '' }) => {
+  const enqueue = async ({ submitKey, payload, tapId = '', operatorName = '' }) => {
     const built = buildSalePayload({
       openId: payload.open_id, orderNo: payload.order_no, gift: payload.gift,
       lines: payload.lines, payments: payload.payments,
     });
     if (!built.ok) return { ok: false, errors: built.errors };
     const { job, created } = await jobStore.createIfAbsent(submitKey, built.payload, { tapId });
+    // #948：统一任务（幂等：同一个 job_id；升级前入队的旧 job 也能在这里补上统一记录）
+    if (asyncJobs) {
+      await asyncJobs.enqueue({
+        jobId: job.job_id,
+        type: ASYNC_JOB_TYPES.SALES,
+        payload: {
+          order_no: built.payload.order_no,
+          line_count: (built.payload.lines || []).length,
+          payment_count: (built.payload.payments || []).length,
+        },
+        ownerOpenId: String(payload?.open_id || ''),
+        operatorName,
+        meta: { order_no: built.payload.order_no, step: ASYNC_JOBS.texts.stepLabels.sales },
+      }).catch((error) => logger.logWarn('scan.sale.async.enqueue_failed', {
+        job_id: job.job_id, error: String(error?.message || error),
+      }));
+    }
     if (created) schedule(job.job_id);
     return { ok: true, job, created };
   };

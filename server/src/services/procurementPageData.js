@@ -114,6 +114,12 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
   const roles = config.behavior;
   const groupsByKey = new Map();
   let skippedRows = 0;
+  // ⭐⭐ 2026-11-08（#950）：**跳过原因必须分开数** —— 以前是一个大 `skippedRows`，
+  //   于是"已经报过货（采购明细已关联）"的行也被算成"交易类型认不出" ⇒
+  //   `procurement.page.trade_type_unknown` 天天误报（#946 的遗留问题）。
+  //   现在：只有**真的认不出交易类型**的行才进 `tradeTypeUnknownRows`（那条 warn 只认它）。
+  let tradeTypeUnknownRows = 0;
+  let alreadyReportedRows = 0;
   for (const record of records || []) {
     const row = normalizeSalesRow(record, fields);
     if (!row) { skippedRows += 1; continue; }
@@ -122,9 +128,18 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
     if (!(row.soldAt >= range.start && row.soldAt < range.end)) { skippedRows += 1; continue; }
     // ⭐ 2026-11-08：**已报过货的销售明细不再出现在补货里**（业务负责人新增「销售明细.采购明细」单向关联）。
     //   ⚠️ 业务负责人明确：**不要开关**，就是这个功能 ⇒ 无条件排除（不做配置退化）。
-    if (row.purchaseDetailIds.length > 0) { skippedRows += 1; continue; }
+    //   ⚠️ 这是"已经报过货"这个**正常业务事实**，不是异常 ⇒ 单独计数（不打 trade_type_unknown）。
+    if (row.purchaseDetailIds.length > 0) {
+      skippedRows += 1;
+      alreadyReportedRows += 1;
+      continue;
+    }
     const code = tradeTypeCodeOf(row.tradeTypeCell);
-    if (code !== roles.spot && code !== roles.prepaid) { skippedRows += 1; continue; }
+    if (code !== roles.spot && code !== roles.prepaid) {
+      skippedRows += 1;
+      tradeTypeUnknownRows += 1;
+      continue;
+    }
     const group = groupsByKey.get(row.productRecordId) || { key: row.productRecordId, sizes: new Map() };
     const entry = group.sizes.get(row.size) || { size: row.size, spotSold: 0, prepaidSold: 0 };
     if (code === roles.spot) entry.spotSold += 1; else entry.prepaidSold += 1;
@@ -166,6 +181,9 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
     },
     groups,
     skippedRows,
+    // #950：跳过原因拆分（既有 `skippedRows` 保持总数，向后兼容）
+    tradeTypeUnknownRows,
+    alreadyReportedRows,
   };
 };
 

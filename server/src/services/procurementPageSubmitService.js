@@ -25,8 +25,12 @@
 const { createMultiItemOrderService } = require('./multiItemOrderService');
 const { resolveMultiItemOrderConfig } = require('../config/multiItemOrder');
 const { createPurchaseWriteBackgroundService } = require('./purchaseWriteBackgroundService');
+// #948：统一异步任务（重试 / 最终失败发运营群）
+const { createAsyncJobPurchaseRunner } = require('./asyncJobPurchaseRunner');
+const { getAsyncJobService } = require('./asyncJobRuntime');
 const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { SCAN_WRITE } = require('../config/scanWrite');
+const { ASYNC_JOBS } = require('../config/asyncJobs');
 const { SUBMIT_TOAST } = require('../config/submitToast');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { createProcurementPurchaseWriters } = require('./procurementPurchaseWriters');
@@ -46,7 +50,22 @@ const createProcurementPageSubmitService = (options = {}) => {
   const logger = options.logger || { logInfo, logWarn };
   const info = typeof logger.logInfo === 'function' ? logger.logInfo : () => {};
   const warn = typeof logger.logWarn === 'function' ? logger.logWarn : () => {};
-  const background = options.background || createPurchaseWriteBackgroundService({ config: SCAN_WRITE });
+  const background = options.background || createPurchaseWriteBackgroundService({
+    // 失败日志里的提示语也走**注入的配置**（本件不写中文 ✗）
+    config: {
+      ...SCAN_WRITE,
+      texts: {
+        ...(SCAN_WRITE.texts || {}),
+        backgroundFailedNotified: ASYNC_JOBS.texts.hints.backgroundFailedNotified,
+      },
+    },
+    // 统一异步任务：重试 + 失败通知；用例注入 `options.background` 时不建
+    jobRunner: options.jobRunner !== undefined
+      ? options.jobRunner
+      : createAsyncJobPurchaseRunner({
+        asyncJob: options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService(),
+      }),
+  });
   if (!writeService || !writeService.sessions) throw new Error('procurementPageSubmitService 需要 scanWriteService');
 
   const sessions = writeService.sessions;
@@ -175,6 +194,8 @@ const createProcurementPageSubmitService = (options = {}) => {
       requestId,
       submitKey,
       context: { orderKey },
+      // #948：统一任务记录 / 失败群通知要用的元数据（**不进**写库入参）
+      jobMeta: { ownerOpenId: openId, step: ASYNC_JOBS.texts.stepLabels.procurementPageReplenish },
       run: async () => {
         const result = await engine.submitDraft({
           openId, chain: chainConfig.id, orderKey, submitKey, requestId,
