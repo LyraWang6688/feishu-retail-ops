@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
+const { getConfigRows } = require('./configTableCache');
 // 🔴 2026-10-16：「与 AI 分析有关的都停掉」⇒ `require('./doubaoService')`（文字解析层）已删。
 //    它是本类**唯一**的模型接线（`this.recognizer`），而 recognizer 的两个去处
 //    （`purchaseWebhooks` / `arrivalConversation`）**都不再有人读它**。
@@ -106,7 +107,6 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { recordUrl } = require('../utils/feishuLinks');
-
 // 交付与否以草稿的交易类型为准：现货当场交付，预定（货还没到 / 还没拿走）不交付。
 // 只有旧数据才没有明确的交付状态（待确认或缺失），那时退回按钮语义——
 // 旧卡片上的「确认已交付 / 确认未交付」是用户显式做出的选择。
@@ -1089,7 +1089,7 @@ class LarkMvpService {
     const table = this.gateway.table?.('groupBuyVoucher');
     if (!table?.tableId) return [];
     try {
-      const records = await this.gateway.listAll('groupBuyVoucher');
+      const records = await getConfigRows({ gateway: this.gateway, tableKey: 'groupBuyVoucher' });
       return records
         .map((record) => ({
           record_id: record.record_id,

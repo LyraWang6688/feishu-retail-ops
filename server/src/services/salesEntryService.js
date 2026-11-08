@@ -17,6 +17,7 @@
  *    群聊入口与扫码入口**都**该走这里；不许在入口层另写一套建单 / 单号逻辑。
  */
 const { textValue } = require('./v1BitableGateway');
+const { getConfigRows } = require('./configTableCache');
 const { person } = require('./v1ReferenceResolver');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { allocateSalesOrderNo } = require('./salesOrderNo');
@@ -108,7 +109,7 @@ const listAccessories = async ({ gateway } = {}) => {
   const table = gateway.table?.('accessory');
   if (!table?.tableId) return [];
   try {
-    const records = await gateway.listAll('accessory');
+    const records = await getConfigRows({ gateway, tableKey: 'accessory' });
     return records
       .map((record) => ({
         record_id: record.record_id,
