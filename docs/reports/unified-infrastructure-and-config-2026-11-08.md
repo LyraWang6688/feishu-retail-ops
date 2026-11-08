@@ -46,7 +46,7 @@ created_at / started_at / finished_at / notified_at
 
 ```text
 默认只对 failed 发「邯美皮鞋运营群」
-partial_failed 只记日志/状态，默认不发群
+partial_failed 也是终态，直接发群
 页面不新增失败提示
 ```
 
@@ -68,7 +68,6 @@ partial_failed 只记日志/状态，默认不发群
 | `ASYNC_JOB_PERMANENT_RESULT_CODES` | 业务拒绝码 | 内置 |
 | `ASYNC_JOB_NOTIFY_ENABLED` | 失败通知开关 | `true` |
 | `ASYNC_JOB_ALERT_CHAT_ID` | 失败通知群，空则回落 `PURCHASE_CHAT_ID` | 空 |
-| `ASYNC_JOB_NOTIFY_STATUSES` | 哪些终态发群 | 默认 `failed` |
 | `ASYNC_JOB_NOTIFY_MAX_ERROR_LENGTH` | 群消息错误截断 | `200` |
 | `ASYNC_JOB_NOTIFY_DEDUPE_HOURS` | 通知去重窗口 | `168`（7 天） |
 | `ASYNC_JOB_ALERT_TITLE` | 群消息标题 | `【异步写入失败】` |
@@ -423,7 +422,7 @@ text → 普通文本；支持 replyToMessageId / reply_in_thread
 | --- | --- | --- | --- |
 | 异步 job 模型 | `config/asyncJobs.js` | 销售/售后/补货/退货/验收/交割单 | 无（#983 已接） |
 | 异步重试分类 | `config/asyncJobs.js` | 同上 | 无（#984 已统一） |
-| 失败通知 | `config/notifications.js` + `notificationService` | 6 个通知事件 | `partial_failed` 默认不发 |
+| 失败通知 | `config/notifications.js` + `notificationService` | 6 个通知事件 | `failed` / `partial_failed` 都发 |
 | 飞书写入并发 | `config/feishuWriteScheduler.js` | 所有 gateway 写 | 读请求 / 本地任务 |
 | 飞书写入瞬时重试 | 同上 | 所有 gateway 写 | 5xx/超时交 job 层 |
 | 库存操作键 | `STOCK_MOVEMENTS.operationKey` | 13 条行为 | 旧函数 deprecated 兼容 |
@@ -453,7 +452,6 @@ text → 普通文本；支持 replyToMessageId / reply_in_thread
 
 ```text
 F4
-  - partial_failed 默认不发群
   - “少退几双”仍可能没人看到
 
 回填
@@ -538,7 +536,6 @@ failed 默认进群通知
 缺口：
 
 ```text
-.env.example 的 ASYNC_JOB_NOTIFY_STATUSES 留空 ⇒ 连 failed 也不发
 notify 失败后没有后台重试（只有进程重启补发）
 部分链路没有统一 job / 没有恢复
 ```
@@ -546,8 +543,8 @@ notify 失败后没有后台重试（只有进程重启补发）
 已修复：
 
 ```text
-#1026：run() 的 partial 分支在 markPartialFailed 后调用 notifyIfNeeded
-      是否发仍由 ASYNC_JOB_NOTIFY_STATUSES 决定；默认只有 failed 发
+#1026 + 2026-11-09 收口：run() 的 partial 分支在 markPartialFailed 后调用 notifyIfNeeded
+      failed / partial_failed 都发，不再需要 ASYNC_JOB_NOTIFY_STATUSES
 ```
 
 ### 7.3 库存键
@@ -668,7 +665,7 @@ utils/submitToast.js
 ### 7.6 审计后的优先顺序
 
 ```text
-P0：ASYNC_JOB_NOTIFY_STATUSES 空值 / 通知 .env.example 缺变量
+P0：通知 .env.example 缺 NOTIFY_* 变量
 P1：toast 收口（到货确认 / 售后）
 P2：配置表缓存剩余例外（路由失效测试 / TTL 重复 / labelPrint 叠加缓存）
 P3：events 单段事件名、附件/IM 写调度边界

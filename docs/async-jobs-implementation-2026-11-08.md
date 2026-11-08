@@ -25,8 +25,8 @@
 `created_at` / `started_at` / `finished_at` · `notified_at`（去重）· `owner_open_id`（状态接口鉴权）·
 `operator_name` / `meta`（单号 / 批次 / 失败步骤）· `notify`（发送尝试次数与最后错误）。
 
-**状态**：`queued → running → succeeded / partial_failed / failed`。只有 `failed` 触发群通知（设计 6.1）；
-`partial_failed` 是终态但只记 `async_job.partial_failed`（需要时可用 `ASYNC_JOB_NOTIFY_STATUSES` 放进来）。
+**状态**：`queued → running → succeeded / partial_failed / failed`。`failed` 与 `partial_failed` 都触发群通知；
+`partial_failed` 仍是终态、不重试，但没有额外状态开关。
 
 **幂等**：`job_id` 由各链路**自己的幂等键**稳定派生（销售 `submitKey`、售后 `requestId`、采购 `submitKey`/`requestId`），
 重试只更新同一条 job；重试复用原 `submitKey` / `requestId` / 幂等键，不产生第二条业务记录。
@@ -35,12 +35,12 @@
 
 | 链路 | 入口 | 统一 job | 重试 | 最终失败通知 |
 |---|---|---|---|---|
-| 销售 | `services/salesAsyncWorker.js`（扫码页异步销售） | `sale_job_*`（与链路同一个 id）；owner = 扫码人 | 有：`asyncJobService.run`；重试前 `clearSale` + 按冻结 payload 重加行 ⇒ **不重复加行**；`submitSale` 仍拿同一把 `submitKey` | ✔（`failed`）；`partial_failed` 不发 |
+| 销售 | `services/salesAsyncWorker.js`（扫码页异步销售） | `sale_job_*`（与链路同一个 id）；owner = 扫码人 | 有：`asyncJobService.run`；重试前 `clearSale` + 按冻结 payload 重加行 ⇒ **不重复加行**；`submitSale` 仍拿同一把 `submitKey` | ✔（`failed` / `partial_failed`） |
 | 售后退货 #943/#947 | `services/afterSalesAsyncService.js` + `routes/workbenchOrderActions.js` | `after_sales_job_*`（同一 id）；owner = 工作台登录人 | 有（既有循环，分类器统一） | ✔（`#947` 的页面提示由它取代） |
 | 采购补货 #946 | 扫码页 `routes/scanPage/handlers/purchase.js` + `purchaseWriteBackgroundService` | `purchase_replenish_job_*` | 有（适配器统一循环） | ✔ |
 | 采购退货 | 扫码页同上（`purchase_return` 链） | `purchase_return_job_*` | 有 | ✔ |
 | 采购验收 #944 F3 | `routes/workbench/purchase.js`（确认到货） | `purchase_acceptance_job_*`；owner / 操作人 / 批次号都从路由带下来 | 有 | ✔ |
-| **交割单交付** | `routes/workbenchSalesDelivery.js` → `salesDeliveryAsyncService` | `delivery_job_*`；owner = 工作台登录人 | 有（业务异常不重试；瞬时写由飞书写调度器重试） | ✔（`failed`）；`partial_failed` 仍按原页面 toast |
+| **交割单交付** | `routes/workbenchSalesDelivery.js` → `salesDeliveryAsyncService` | `delivery_job_*`；owner = 工作台登录人 | 有（业务异常不重试；瞬时写由飞书写调度器重试） | ✔（`failed` / `partial_failed`） |
 | **交割单付款** | 同上 | `payment_job_*`；owner = 工作台登录人 | 同上 | 同上 |
 
 采购三条链路共用既有 `purchaseWriteBackgroundService`（**不另造后台件**）；`jobRunner` 与 `jobMeta` 都是**注入**，
@@ -110,8 +110,8 @@
 
 - **不部署**（等业务负责人明确指令）；**不合并**；生产 Base **零写入**；不新增/修改生产配置。
 - **页面不显示失败**：刻意不加失败 toast / 弹窗 / 轮询（#947 原方案被 #948 取代）。
-- **`partial_failed` 不发群**（设计 6.1 只认 `failed`）：销售"主表写了但库存/明细失败"只记 error 事件；
-  若业务要它也能进群，改 `ASYNC_JOB_NOTIFY_STATUSES` 即可（配置先行，不改代码）。
+- **`partial_failed` 也发群**（与 `failed` 同一张卡片）：销售"主表写了但库存/明细失败"会进运营群；
+  不再有 `ASYNC_JOB_NOTIFY_STATUSES` 开关。
 - **采购链路进程重启不自动续跑 job**：统一层把残留 `running` 如实记录（不猜）；
   她的重试路径仍是"再点一次（同一把 submitKey ⇒ 幂等）"。销售 / 售后保持既有重启续跑。
 - **销售重试的幂等前提**：重跑前 `clearSale` + 按冻结 payload 重加行（真实 `scanSessionService` 有这个方法；

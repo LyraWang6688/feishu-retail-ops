@@ -172,10 +172,7 @@ const buildAsyncJobsConfig = (env = process.env) => {
     }),
     notify: Object.freeze({
       enabled: readFlag(env, 'ASYNC_JOB_NOTIFY_ENABLED', true),
-      // 只有 **failed** 触发群通知（partial_failed 是"部分写入成功"，文档 6.1 明确不在此列；
-      // 需要时可用环境变量显式加进来，改配置不改代码）。
-      statuses: Object.freeze(readList(env, 'ASYNC_JOB_NOTIFY_STATUSES')
-        ?? [ASYNC_JOB_STATUS.FAILED]),
+      // failed / partial_failed 都是需要人看的终态，**都发群通知**（没有额外状态开关）。
       maxErrorLength: readInt(env, 'ASYNC_JOB_NOTIFY_MAX_ERROR_LENGTH', 200, { min: 20, max: 2000 }),
       dedupeHours: readInt(env, 'ASYNC_JOB_NOTIFY_DEDUPE_HOURS', 24 * 7, { min: 1, max: 24 * 90 }),
     }),

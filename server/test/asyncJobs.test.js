@@ -170,7 +170,7 @@ test('AC-J2c 链路返回 {ok:false, code} 的业务拒绝**不重试**；返回
   assert.equal(done.status, ASYNC_JOB_STATUS.SUCCEEDED);
 });
 
-test('AC-J2d partial_failed：分类为"部分失败" ⇒ 终态、不重试；默认 statuses 不含它 ⇒ 不发群（AC-J8）', async () => {
+test('AC-J2d partial_failed：分类为"部分失败" ⇒ 终态、不重试、发一次群通知', async () => {
   const h = makeService();
   const { jobId } = await enqueueJob(h);
   let calls = 0;
@@ -181,25 +181,11 @@ test('AC-J2d partial_failed：分类为"部分失败" ⇒ 终态、不重试；�
   });
   assert.equal(calls, 1, 'partial 不重试');
   assert.equal(done.status, ASYNC_JOB_STATUS.PARTIAL_FAILED);
-  assert.equal(h.sent.length, 0, '文档 6.1：通知只认 failed');
+  assert.equal(h.sent.length, 1, 'partial_failed 也要发群通知');
+  assert.equal(h.sent[0].event, 'async_job_failed');
   assert.ok(done.finished_at);
 });
 
-
-test('AC-J8b partial_failed：statuses 显式包含 partial_failed ⇒ 发一次群通知', async () => {
-  const h = makeService({ over: { ASYNC_JOB_NOTIFY_STATUSES: 'failed,partial_failed' } });
-  const { jobId } = await enqueueJob(h);
-  const done = await h.service.run({
-    jobId,
-    run: async () => ({ ok: false, partial: true, message: '部分写入失败' }),
-    classifyResult: (outcome) => ({ ok: false, retryable: false, partial: true, message: outcome.message }),
-  });
-  assert.equal(done.status, ASYNC_JOB_STATUS.PARTIAL_FAILED);
-  assert.equal(h.sent.length, 1, 'statuses 含 partial_failed 时发一次');
-  assert.equal(h.sent[0].event, 'async_job_failed');
-  const saved = await h.store.get(jobId);
-  assert.ok(saved.notified_at, '发送成功才写 notified_at');
-});
 
 test('AC-J2e 退避：base=800 ⇒ 等待 800 / 1600（配置化，不写死）', async () => {
   const h = makeService({ over: { ASYNC_JOB_RETRY_BASE_MS: '800' } });

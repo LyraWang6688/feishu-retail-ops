@@ -6,7 +6,7 @@
  * 每个用例都走**真实**的链路服务，只把"写库那一步"和"飞书发送"换成替身：
  *   AC-W1 售后：临时错误重试后成功（同一条 job）；永久错误不重试、最终失败**发一次**运营群
  *   AC-W2 销售：抛出 5xx 自动重试（**同一把 submitKey / 同一条 job**），重试**不重复加行**；
- *          永久错误只跑一次；partial_failed 不发群
+ *          永久错误只跑一次；partial_failed 也发群
  *   AC-W3 采购（补货/退货/验收共用件）：临时失败重试后成功（同一条 job、同一把幂等键）；
  *          业务拒绝不重试；最终失败发群（带批次号）
  */
@@ -238,7 +238,7 @@ test('AC-W2b 销售：永久错误（400）只跑一次 ⇒ failed + 发一次�
   assert.match(stack.sent[0].data.lines.join('\n'), /XSD-20261108-0003/);
 });
 
-test('AC-W2c 销售：partial_failed ⇒ 终态、不发群（通知只认 failed）', async () => {
+test('AC-W2c 销售：partial_failed ⇒ 终态、也发群', async () => {
   const stack = makeJobStack();
   const h = makeSalesWorker({
     stack,
@@ -249,7 +249,8 @@ test('AC-W2c 销售：partial_failed ⇒ 终态、不发群（通知只认 faile
   assert.equal((await h.jobStore.get(job.job_id)).status, 'partial_failed');
   const unified = await stack.service.get(job.job_id);
   assert.equal(unified.status, ASYNC_JOB_STATUS.PARTIAL_FAILED);
-  assert.equal(stack.sent.length, 0, 'partial_failed 不发群');
+  assert.equal(stack.sent.length, 1, 'partial_failed 也发群');
+  assert.equal(stack.sent[0].event, 'async_job_failed');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
