@@ -21,6 +21,7 @@
  */
 
 const { linkedRecordIds } = require('./v1BitableGateway');
+const { getConfigRows } = require('./configTableCache');
 const { logWarn } = require('../utils/logger');
 const {
   resolveVoucherPaymentConfig, VOUCHER_METHOD_UNMAPPED_EVENT, VOUCHER_CATALOG_UNREADABLE_EVENT,
@@ -59,7 +60,7 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
       return { ok: false, vouchers: [], reason: 'voucher_fields_unconfigured' };
     }
     try {
-      const records = await gateway.listAll(settings.voucherTableKey);
+      const records = await getConfigRows({ gateway, tableKey: settings.voucherTableKey });
       const vouchers = (records || []).map((record) => {
         const row = record?.fields || {};
         return {
