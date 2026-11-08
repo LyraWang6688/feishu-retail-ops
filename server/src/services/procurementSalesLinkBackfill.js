@@ -30,6 +30,7 @@ const { relation } = require('./v1ReferenceResolver');
 const { textOf, numberOf, linkedIdsOf } = require('./procurementPageData');
 const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMovements');
 const { logInfo, logWarn } = require('../utils/logger');
+const { getConfigRows } = require('./configTableCache');
 
 const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
   Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
@@ -80,7 +81,7 @@ const createProcurementSalesLinkBackfill = ({
       const numberById = new Map((products || []).map((record) => [record.record_id, textOf(record.fields?.[productFields.number])]));
       const sales = await (typeof readSalesRows === 'function' ? readSalesRows() : defaultReadSales());
       // 交易类型判据（与补货读模型同一份口径）：行为表 id → 编码; 认不出 ⇒ 丢弃（页面上本来就不会出现）
-      const behaviors = await gateway.listAll('behavior').catch(() => []);
+      const behaviors = await getConfigRows({ gateway, tableKey: 'behavior' }).catch(() => []);
       const behaviorCodeById = new Map((behaviors || []).map((record) => [
         record.record_id, textOf(record.fields?.[schema.tables?.behavior?.fields?.code]),
       ]));
