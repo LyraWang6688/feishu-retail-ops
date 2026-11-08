@@ -40,7 +40,7 @@ test('AC-AP1 明细逐字预填 ⇒ 改钉「工作台那条只读明细」＋ �
 });
 test('AC-AP2/AP3/AP6 改数量 / 改 0 / 实际数量 ⇒ 改钉「服务里的行处理」仍在', () => {
   assert.match(ARRIVAL, /addScan/, '按行加（自定义/改数量那条路）仍在服务里');
-  assert.match(ARRIVAL, /setActualRows/, '整张清单落会话的能力仍在');
+  assert.match(ARRIVAL, /setScans/, '整张清单落会话的能力仍在');
   assert.equal(RENDERER.includes('accept-row-qty'), false, '那一屏的行输入已退场');
 });
 test('AC-AP4 ⭐ 自定义尺码 ⇒ 完成验收时计入库存 ⇒ 改钉「工作台那条 + applyPurchase」', () => {

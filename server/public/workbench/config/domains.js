@@ -134,9 +134,10 @@ export const DOMAIN_TABS = [
         label: '录单',
         kind: 'scan-cards',
         cards: [
+          // ⭐ 2026-11-09（业务负责人）：录单卡片顺序 = 采购 → **验收** → **退货**
           { icon: '📦', title: '采购', href: '/workbench/procurement.html' },
-          { icon: '↩️', title: '退货', scanRealm: 'purchase_return' },
           { icon: '✅', title: '验收', href: '/workbench/purchase-acceptance.html' },
+          { icon: '↩️', title: '退货', scanRealm: 'purchase_return' },
         ],
       },
       {

@@ -50,7 +50,6 @@ const rmDir = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true });
 const texts = {
   ...SCAN_WRITE.texts,
   acceptDuplicateLinesBody: arrivalTab.texts.duplicateLines,
-  acceptSizeUnknownBody: arrivalTab.texts.sizeUnknown,
 };
 
 /** 真实 `scanArrivalService` + 真实会话存储（只有读表/尺码/后续入库用替身）。 */
@@ -141,22 +140,23 @@ const postAccept = async (base, body) => {
 // AC-SS1 / AC-SS2 —— 自定义尺码（款在本批）能收；整单替换语义
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-SS1 ⭐⭐ F1：本批的款 + **自定义尺码**（42，不在申请行里）⇒ setScans 收下（旧 addScan 必 400）', async () => {
+test('AC-SS1 ⭐⭐ 自定义尺码入口已退场（业务负责人 2026-11-09）：不在本批申请行 ⇒ 400 `not_in_batch` + 会话不动', async () => {
   const h = makeHarness();
   try {
     await startSession(h);
+    const before = await h.arrival.get(OPEN_ID);
     const result = await h.arrival.setScans({
       openId: OPEN_ID,
       lines: [
         { product_record_id: 'p1', size: 40, quantity: 2 },
-        { product_record_id: 'p1', size: 42, quantity: 1 }, // 自定义：没报过、但到了
+        { product_record_id: 'p1', size: 42, quantity: 1 }, // 自定义：没报过 ⇒ 不再收
       ],
     });
-    assert.equal(result.ok, true, '自定义尺码必须能收（F1 的核心 ✓）');
-    assert.equal(result.changed, true);
-    assert.deepEqual(scansOf(result.session), ['p1|40|2', 'p1|42|1'], '会话清单 = 她提交的整张清单 ✓');
-    assert.equal(Number(result.session.scanned), 3, '已验收合计 = 3 双');
-    assert.equal(Number(result.session.submit_round), 1, '第一次提交 ⇒ 轮次 1（新的幂等键 ✓）');
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'not_in_batch');
+    assert.equal(result.message, SCAN_WRITE.texts.acceptNotInBatchBody, '人话走配置 ✓');
+    const after = await h.arrival.get(OPEN_ID);
+    assert.deepEqual(scansOf(after), scansOf(before), '会话一个字不动（整张清单不许半落 ✗）');
   } finally { h.cleanup(); }
 });
 
@@ -289,18 +289,17 @@ test('AC-SS6 ⭐ 空清单 ⇒ 400 `no_scan_lines`，**不许清空旧会话**�
   } finally { h.cleanup(); }
 });
 
-test('AC-SS7 ⭐ 自定义尺码在「尺码管理」里不存在 ⇒ 400 `size_unknown`（不许留给后台写失败 = 假成功 ✗）', async () => {
+test('AC-SS7 ⭐ 不在本批的尺码（99）⇒ 一律 `not_in_batch`（不再有 size_unknown 这条自定义分支）', async () => {
   const h = makeHarness();
   try {
     await startSession(h);
     const before = await h.arrival.get(OPEN_ID);
-    // 99 在夹具里 `resolveByNumber` 返回 null（= 尺码管理里没有 99）
     const result = await h.arrival.setScans({
       openId: OPEN_ID, lines: [{ product_record_id: 'p1', size: 99, quantity: 1 }],
     });
     assert.equal(result.ok, false);
-    assert.equal(result.reason, 'size_unknown');
-    assert.equal(result.message, arrivalTab.texts.sizeUnknown, '人话走配置 ✓');
+    assert.equal(result.reason, 'not_in_batch');
+    assert.equal(result.message, SCAN_WRITE.texts.acceptNotInBatchBody, '人话走配置 ✓');
     const after = await h.arrival.get(OPEN_ID);
     assert.deepEqual(scansOf(after), scansOf(before), '会话一个字不动 ✓');
   } finally { h.cleanup(); }
@@ -333,27 +332,27 @@ test('AC-SS8 ⭐ 单次明细超上限 ⇒ 400 `too_many_scans`；数量超上�
 // AC-SS9..SS12 —— 路由层（真路由 + 真服务）：F1/F2 端到端；失败零写入、零后台
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-SS9 ⭐⭐ F1 路由：自定义尺码（42）⇒ **200 accepted** + 后台被调度一次 + 会话 = 整张清单', async () => {
+test('AC-SS9 ⭐⭐ 路由：提交含不在本批的尺码（42）⇒ 400 + **零后台 + 会话不动**（自定义已退场）', async () => {
   const h = makeHarness();
   const scheduled = [];
   try {
     await startSession(h);
+    const before = await h.arrival.get(OPEN_ID);
     await withServer(appFor({ arrival: h.arrival, purchaseQuery: h.purchaseQuery, scheduled }), async (base) => {
       const res = await postAccept(base, {
         batchNo: BATCH,
         actualAmount: 599,
         lines: [
           { productRecordId: 'p1', size: 40, quantity: 2 },
-          { productRecordId: 'p1', size: 42, quantity: 1 }, // 自定义（旧实现必 400 ✗）
+          { productRecordId: 'p1', size: 42, quantity: 1 },
         ],
       });
-      assert.equal(res.status, 200, `自定义尺码必须能提交（旧实现 400 ✗）：${JSON.stringify(res.body)}`);
-      assert.equal(res.body.success, true);
-      assert.equal(res.body.accepted, true);
+      assert.equal(res.status, 400, `不在本批 ⇒ 400：${JSON.stringify(res.body)}`);
+      assert.equal(res.body.success, false);
     });
-    assert.equal(scheduled.length, 1, '通过校验 ⇒ **排一次**后台那一跑 ✓');
+    assert.equal(scheduled.length, 0, '不通过校验 ⇒ 零后台 ✓');
     const session = await h.arrival.get(OPEN_ID);
-    assert.deepEqual(scansOf(session), ['p1|40|2', 'p1|42|1'], '会话 = 她提交的整张清单 ✓');
+    assert.deepEqual(scansOf(session), scansOf(before), '会话一个字不动 ✓');
   } finally { h.cleanup(); }
 });
 
@@ -484,10 +483,7 @@ test('AC-SS12 ⭐ 自定义尺码从会话一路传到 finish 的 scanLines（�
     assert.equal(started.ok, true);
     const set = await arrival.setScans({
       openId: OPEN_ID,
-      lines: [
-        { product_record_id: 'p1', size: 40, quantity: 2 },
-        { product_record_id: 'p1', size: 42, quantity: 1 },
-      ],
+      lines: [{ product_record_id: 'p1', size: 40, quantity: 2 }],
     });
     assert.equal(set.ok, true);
     const finished = await arrival.finish({
@@ -496,9 +492,9 @@ test('AC-SS12 ⭐ 自定义尺码从会话一路传到 finish 的 scanLines（�
     assert.equal(finished.ok, true, JSON.stringify(finished));
     assert.equal(captured.length, 1, 'finish 要调用既有 confirmBatchArrival 一次 ✓');
     assert.deepEqual(
-      captured[0].scanLines.map((line) => `${line.product_record_id}|${line.size}|${line.quantity}`).sort(),
-      ['p1|40|2', 'p1|42|1'],
-      '自定义尺码必须出现在 scanLines 里（到既有 buildPlan 的自定义分支 ✓）',
+      captured[0].scanLines.map((line) => `${line.product_record_id}|${line.size}|${line.quantity}`),
+      ['p1|40|2'],
+      'scanLines = 她提交的实际数量（不再有自定义行）✓',
     );
   } finally { rmDir(sessionDir); }
 });

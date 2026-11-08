@@ -74,10 +74,11 @@ test('① 特殊码折叠 `size-fold`：**条件**展开（`${open}` —— 不�
   assert.match(tags[0], /\$\{open\}/, '它按她的口径**按条件**收/展 ⇒ 改成固定值 ⇒ 红 ✓');
 });
 
-test('① 已到货批次 `purchase-arrived`：**默认收起**（避免一屏铺满 —— 设计如此 ✓）', () => {
+test('① 已到货折叠 `purchase-arrived`：**整段退场**（业务负责人 2026-11-09：只展示未到货）', () => {
+  // 改前：已到货批次折叠在下面（`data-view="purchase-arrived"`，默认收起）
+  // 改后：验收页只展示未到货 ⇒ 那段折叠**连模板一起删除**（塞回 ⇒ 这里红 ✓）
   const tags = tagsOf(RAW_ORDERS, 'data-view="purchase-arrived"');
-  assert.equal(tags.length, 1, '恰一处 ✓');
-  assert.equal(/\sopen(\s|>)/.test(tags[0]), false, '它**就该收起** ⇒ 加 open ⇒ 红 ✓');
+  assert.equal(tags.length, 0, '⛔ 不许再渲染已到货折叠（塞回即红 ✓）');
 });
 
 

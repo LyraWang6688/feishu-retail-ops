@@ -62,12 +62,14 @@ const createPurchaseQueryService = (gateway, options = {}) => {
   const cachedListAll = createTableReadCache({ ttlMs: tableTtlMs, now: options.now || (() => Date.now()) });
 
   const listPurchaseRequests = async (filters = {}) => {
-    const [requests, products, batches, behaviors] = await Promise.all([
+    const [requests, products, batches, behaviors, suppliers] = await Promise.all([
       cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest')),
       getConfigRows({ gateway, tableKey: 'product' }),
       cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch')),
       // ⚠️ 第 4 张（行为管理）也要缓存 ⇒ 否则"第二次快"不成立 ✗（4 张里漏 1 张 = 白等 ✗）
       getConfigRows({ gateway, tableKey: 'behavior' }),
+      // ⭐ 2026-11-09（验收页按供应商分组）：供应商名称取自「供应商管理」（configTableCache ✓）
+      getConfigRows({ gateway, tableKey: 'supplier' }),
       // 「报货信息」的「采购行为」是关联「行为管理」：采购申请与采购退货写在同一张表里，
       // 靠这一列分流。分流口径复用采购链路的同一份策略（purchaseBehaviorPolicy），
       // 不在查询里另写一套判断——两套判断迟早在"什么算退货"上分家。
@@ -75,6 +77,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
     const productMap = indexByRecordId(products);
     const batchMap = indexByRecordId(batches);
     const behaviorMap = indexByRecordId(behaviors);
+    const supplierMap = indexByRecordId(suppliers);
 
     const rows = await Promise.all(requests.map(async (record) => {
       const productIds = asLinks('purchaseRequest', record, 'product');
@@ -104,6 +107,18 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         // 批次行本来就已经解析出来了（`batch`），所以这是零额外请求的一次投影。
         arrival_status: batch ? asText('purchaseOrderBatch', batch, 'arrivalStatus') : '',
         supplier_record_id: supplierIds[0] || '',
+        // ⭐ 2026-11-09：验收页按「供应商 → 采购日」分组（不显示采购单号）——
+        //   · supplier_name：供应商管理.供应商名称（空 ⇒ 前端显示"未标注供应商"，不编 ✗）
+        //   · arrival_created_at：采购主表「报货日」（自动字段，epoch ms；空 ⇒ 前端显示"日期未知"）
+        // ⭐ 2026-11-09（验收明细按「货号 · 颜色」分组，与采购页卡片标题同口径）：
+        //   · 编号（语义键 `number`）= 「货号|颜色|类别」复合值（Base 里那一列就是这形状）；
+        //   · 采购页显示的是「货号 · 颜色」⇒ 这里另补两个**只读**字段给明细分组用。
+        product_item_no: product ? asText('product', product, 'itemNo') : '',
+        product_color: product ? asText('product', product, 'color') : '',
+        supplier_name: supplierIds[0]
+          ? asText('supplier', supplierMap.get(supplierIds[0]), 'name') : '',
+        arrival_created_at: batch
+          ? asNumber(batch?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.createdAt]) : null,
         // 'purchase_request' | 'purchase_return'（读不到行为记录时按现状=采购申请）
         report_behavior: classifyReportBehavior({
           name: behavior ? asText('behavior', behavior, 'name') : '',

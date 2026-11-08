@@ -14,6 +14,8 @@ const { PurchaseArrivalConversationService, parseActualAmount } = require('../..
 const { pageMessages } = require('../../config/purchaseArrivalTexts');
 const { SCAN_WRITE } = require('../../config/scanWrite');
 const arrivalTab = require('../../config/workbenchArrival');
+// ⭐ 2026-11-09：到货状态值域的真源（未到货 / 已到货，可配）—— 验收页只收「未到货」。
+const { resolvePurchaseArrivalStatusConfig } = require('../../config/purchaseArrivalStatus');
 const { createScanArrivalService } = require('../../services/scanArrivalService');
 const { createPurchaseWriteBackgroundService } = require('../../services/purchaseWriteBackgroundService');
 // #948：验收「后台那一跑」接**统一异步任务**（重试 / 最终失败发运营群）
@@ -112,7 +114,6 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     texts: {
       ...SCAN_WRITE.texts,
       acceptDuplicateLinesBody: arrivalTab.texts.duplicateLines,
-      acceptSizeUnknownBody: arrivalTab.texts.sizeUnknown,
     },
   });
   /**
@@ -191,7 +192,12 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       return res.json({
         success: true,
         rows: rows.map((row) => ({
-          item_no: row.item_no || row.product_item_no || '',
+          // ⭐ 2026-11-09（业务负责人：验收明细在**同一批次号内按编号分组**）：
+          //   采购页卡片标题是「货号 · 颜色」⇒ 明细也用同一口径分组显示：
+          //   `item_no` 优先取货号（`product_item_no`），`color` 取颜色，另回 `编号`（复合值）兜底。
+          item_no: row.product_item_no || row.item_no || '',
+          color: row.product_color || row.color || '',
+          number: row.product_number || '',
           size: row.size ?? '',
           quantity: row.quantity ?? 0,
           product_record_id: row.product_record_id || '',
@@ -214,6 +220,13 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       const batchRows = (await purchaseQueryForArrival().listPurchaseRequests({ batchNo })) || [];
       if (batchRows.some((row) => row.report_behavior === 'purchase_return')) {
         return res.status(400).json({ success: false, error: arrivalTab.texts.notRequestBatch });
+      }
+      // ⭐⭐ 2026-11-09（业务负责人真机：「只展示未到货，不需要显示已到货」）：
+      //   已到货批次**不许再验收** —— 前端不再渲染它，但后端也挡一道（防旧页面/双击/手工请求）：
+      //   400 + 人话 + **零写入 + 一次后台都不排**。
+      const arrivalStatuses = resolvePurchaseArrivalStatusConfig();
+      if (batchRows.some((row) => row.arrival_status === arrivalStatuses.arrived)) {
+        return res.status(400).json({ success: false, error: arrivalTab.texts.alreadyAccepted });
       }
       // ① 开会话（既有 `start` 读该批采购明细 ✓ 读不到 ⇒ 它自己的人话 `no_request_rows` ✓ 如实回 400 ✗）
       const started = await arrivalService.start({ openId, batchNo, operatorOpenId: openId });

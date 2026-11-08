@@ -16,8 +16,16 @@
 /** 面板文案（**只剩采购验收在用**；销售侧的旧列表/详情文案 2026-10-29 随旧前端一起删除）。 */
 export const ORDERS_PAGE = {
   purchaseEmpty: '还没有采购单记录',
-  // 「验收到货」独立子页里，**已到货的批次折叠**在下面 —— 折叠头就写这一句（后面跟条数）。
-  purchaseArrivedSummary: '已到货',
+  // ⭐ 2026-11-09（业务负责人真机）：验收页**只展示「未到货」批次**（已到货不再展示）
+  //   ⇒ 一个可验收的批次都没有时，用这句人话（不许大片空白 ✗）。
+  arrivalEmpty: '当前没有未到货的批次，不用验收',
+  // ⭐ 2026-11-09（业务负责人）：验收页按「供应商 → 采购日」分组、**不显示采购单号**
+  supplierFallback: '未标注供应商',
+  batchSummary: '{quantity} 双 · {products} 个货品',
+  // 验收页第一层 = 供应商卡片（来自「供应商管理」）；第二层 = 该供应商的采购日（由远及近）
+  supplierCardSummary: '{batches} 批 · {quantity} 双待验收',
+  // 日期分组标题：**只显示日期本身**（业务负责人 2026-11-09：不需要「采购日」三个字，但要有日期）
+  purchaseDateUnknown: '日期未知',
 };
 
 /**
@@ -44,7 +52,8 @@ export const ARRIVAL_CONFIRM = {
   // ⭐ 2026-10-16（她逐字：「数据表里已经没有到货文字说明（该列已从真表退场）了…你必须得删」）：
   //   原来是 `defaultAcceptanceText: '工作台 · 验收到货：…'`（写进「到货文字说明（该列已从真表退场）」的那个默认值）
   //   ⇒ **随那个输入框一起退场**（那一列在生产表里已经不存在 ⇒ 写了也没落点 ✗）
-  amountPlaceholder: '例如 12800',
+  // ⭐ 2026-11-09（业务负责人）：输入框里的示例改成「本次货款金额」
+  amountPlaceholder: '本次货款金额',
 };
 
 /**
@@ -108,7 +117,8 @@ export const ORDERS_TEXTS = {
   // ── 采购验收（工作台「验收」页在用）──────────────────────────────────────
   verifyArrival: '验收到货',
   arrivalVerifyTitle: '验收到货',
-  arrivalAmount: '实际金额',
+  // ⭐ 2026-11-09（业务负责人）：「实际金额」改叫「货款」
+  arrivalAmount: '货款',
   arrivalSubmit: '确认到货并入库',
 };
 
@@ -136,18 +146,17 @@ export const ARRIVAL_FULL_TEXTS = {
   //     没填 = 我们不猜 ⇒ 拦住 + `actualQuantityRequired` 那句人话 ✓。
   detailOpenHint: '点开看这一批的采购明细（可以改实际到货数量）',
   actualQuantityLabel: '实际到货数量',
-  declaredQuantityLabel: '申请',
+  // ⭐ 2026-11-09（业务负责人）：明细在**同一批次号内按编号分组**；
+  //   显示口径与采购页卡片标题一致 = 「货号 · 颜色」（颜色缺省只显示货号）。
+  detailGroupLabel: '{itemNo} · {color}',
+  detailGroupUnknown: '未编号',
+  // 货号卡片右上角合计（业务负责人 2026-11-09：保留合计双数；不带「申请/报货」字样）
+  detailGroupTotal: '{total} 双',
   zeroMeansNotArrived: '没到的填 0',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',
   // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）
   sizeInvalid: '尺码要填数字，数量要大于 0',
   noArrivalLines: '这一批没有可提交的实际到货数量，请先点开批次、把实际到货数量填上',
-  customSizeLabel: '自定义尺码',
-  customSizePlaceholder: '尺码',
-  customQuantityPlaceholder: '数量',
-  customItemNoLabel: '自定义货号',
-  customItemNoPlaceholder: '货号',
-  itemNoNotFound: '这个货号没找到，请核对后再填',
   submitting: '正在确认到货…',
   accepted: '已确认到货',
   // ⚠️ 2026-10-15（她追加口径）：明细**挂不上批次** ⇒ **不进这一屏**（见 `groupPurchaseOrders` ✓）——

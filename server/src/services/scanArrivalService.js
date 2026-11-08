@@ -124,28 +124,6 @@ const createScanArrivalService = (options = {}) => {
   };
 
   /**
-   * ⭐⭐ 2026-10-29（F1/F2 · Lead 批）：**自定义尺码**要能当场验 ——
-   *   否则后台入库才发现"尺码不在「尺码管理」里" ⇒ 页面先回成功、后台写失败 = 假成功 ✗。
-   *   延迟取用：只有真的提交了"不在本批申请行里的自定义尺码"时才调用（普通提交零额外读表）。
-   *   · 用例可注入 `options.sizeReferences`（实例或 accessor）⇒ 不发真实请求 ✓
-   *   · 没接 gateway 时返回 null ⇒ 跳过这项校验（不误拦 ✓）
-   */
-  let sizeReferencesAccessInstance = null;
-  const sizeReferencesOf = () => {
-    if (sizeReferencesAccessInstance) return sizeReferencesAccessInstance;
-    const provided = options.sizeReferences;
-    if (provided) {
-      sizeReferencesAccessInstance = typeof provided === 'function' ? provided : () => provided;
-      return sizeReferencesAccessInstance;
-    }
-    if (!options.gateway) return null;
-    // eslint-disable-next-line global-require
-    const { createSizeReferenceAccess } = require('./sizeReferenceService');
-    sizeReferencesAccessInstance = createSizeReferenceAccess({ gateway: options.gateway });
-    return sizeReferencesAccessInstance;
-  };
-
-  /**
    * ⭐⭐ P0 2026-10-12：「完成验收」的**幂等键**（服务端算，页面只负责带回来）。
    * `accept:<session_id>:<轮次>` —— 轮次在她每次改动清单时 +1 ⇒
    *   · 同一屏**连点两次** = 同一把钥匙 ⇒ 第二次**直接幂等返回**（零写入）✓
@@ -300,96 +278,11 @@ const createScanArrivalService = (options = {}) => {
     return { ok: true, duplicate: false, session: next, message: '' };
   };
 
-  /**
-   * ⭐⭐ 2026-10-12（业务负责人口述版）：「用户点验收的时候，**先默认带出我们采购申请里的尺码和数量**。
-   *   用户可以在**给定的区域里直接修改**，同时**也可以自定义**；**自定义的时候同样支持扫码**。」
-   *
-   * 把"她在给定区域里改完的**整张清单**"落进会话（**不写任何业务表**，与 `addScan` 共用同一份 `scans`）：
-   *   · **报货行**：按**下标**对应 `session.rows`（顺序 = 采购明细顺序）；
-   *     数量填 **0 / 空** ⇒ 那一行**不算到货**（从清单里去掉）—— 她「没到的改成 0」就是这一步；
-   *   · **自定义行**（手输 尺码 + 数量）：本批**只有一个款**时绑到它；**多个款 / 一条明细都没有**
-   *     ⇒ **拒**（`custom_ambiguous` / `custom_product_unknown`）⇒ 页面让她**扫标签**（码里带款）。
-   *     🔴 **不猜款**：猜错 = 库存加到别人头上，比"让她扫一下"坏得多。
-   *   · 同款同码重复 ⇒ **合并**（取最后填的那个数量）。
-   *
-   * ⚠️ 数量上限沿用既有 `config.maxQuantity`（与 `addScan` 同一个口径）。
-   */
-  const setActualRows = async ({ openId, quantities = [], customSize = [], customQuantity = [] } = {}) => {
-    const session = await get(openId);
-    if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
-    if (session.status !== 'open') {
-      return {
-        ok: false, reason: 'already_posted',
-        message: fillText(texts.acceptAgainBody, { batchNo: session.batch_no }),
-      };
-    }
-    const reported = Array.isArray(session.rows) ? session.rows : [];
-    const quantityInvalid = () => ({
-      ok: false, reason: 'quantity_invalid',
-      message: fillText(texts.acceptQuantityInvalidBody, { max: config.maxQuantity }),
-    });
-    const next = [];
-    for (const [index, row] of reported.entries()) {
-      const raw = String(quantities[index] ?? '').trim();
-      // ⚠️「改成 0」是**她要的那个动作**（"没到"）⇒ 这里必须收 `0`：
-      //   空 / 0 都算"没到"（不写、不加库存），只有非数字 / 超上限才拒。
-      const quantity = raw ? nonNegativeInteger(raw) : 0;
-      if (quantity === null || quantity > config.maxQuantity) return quantityInvalid();
-      if (quantity > 0) {
-        next.push({ product_record_id: row.product_record_id, size: row.size, quantity });
-      }
-    }
-    const products = [...new Set(reported.map((row) => row.product_record_id))];
-    const customSizes = Array.isArray(customSize) ? customSize : [customSize];
-    const customQuantities = Array.isArray(customQuantity) ? customQuantity : [customQuantity];
-    let customCount = 0;
-    const total = Math.max(customSizes.length, customQuantities.length);
-    for (let index = 0; index < total; index += 1) {
-      const sizeText = String(customSizes[index] ?? '').trim();
-      const qtyText = String(customQuantities[index] ?? '').trim();
-      if (!sizeText && !qtyText) continue;                       // 空行 = 没加
-      const size = positiveInteger(sizeText);
-      const quantity = positiveInteger(qtyText);
-      if (size === null || quantity === null || quantity > config.maxQuantity) return quantityInvalid();
-      // 🔴 自定义行**必须知道是哪一款**：单个款 ⇒ 绑它；否则**拒**（页面上让她扫码）。
-      if (products.length !== 1) {
-        logInfo(events.acceptFailed, {
-          session_id: session.session_id, batch_no: session.batch_no,
-          reason: products.length ? 'custom_ambiguous' : 'custom_product_unknown', size,
-        });
-        return { ok: false, reason: 'custom_product_unknown', message: texts.acceptCustomProductNeededBody };
-      }
-      const productRecordId = products[0];
-      const same = next.find((line) => line.product_record_id === productRecordId && line.size === size);
-      if (same) same.quantity = quantity;                        // 同款同码 ⇒ 合并
-      else next.push({ product_record_id: productRecordId, size, quantity });
-      customCount += 1;
-    }
-    if (next.length > config.maxScans) {
-      return { ok: false, reason: 'too_many_scans', message: texts.acceptTooManyScansBody };
-    }
-    const scanned = next.reduce((sum, line) => sum + line.quantity, 0);
-    const updated = await store.update(session.session_id, touch({
-      scans: next,
-      scanned,
-      // ⭐ 清单变了 ⇒ **新一轮**（新的幂等键）——她改完再提交是"新的一次" ✓
-      submit_round: Number(session.submit_round || 0) + 1,
-      last_error: '',
-    }));
-    logInfo(events.acceptRowsSet, {
-      session_id: updated.session_id, batch_no: updated.batch_no,
-      line_count: next.length, scanned, expected: Number(updated.expected || 0),
-      custom_count: customCount, request_rows: reported.length,
-    });
-    return { ok: true, session: updated, scanned, expected: Number(updated.expected || 0), rows: next };
-  };
-
   // ⭐⭐ 2026-10-29（F1/F2）：**整单替换**会话清单（自定义尺码 / 改数量 / 改 0 都生效）——
   //   实现拆到 `scanArrival/setScans.js`（本文件只做装配；文件大小棘轮只允许变小 ✓）。
   const setScans = createSetScans({
     get, store, touch, texts, events, config, logInfo,
     positiveInteger, nonNegativeInteger, resolve,
-    sizeReferencesOf,
   });
 
   /**
@@ -564,8 +457,6 @@ const createScanArrivalService = (options = {}) => {
     idOf, get, start, addScan, finish, summaryOf, pendingBatches, store,
     // ⭐ P0：页面把"完成验收"的幂等键画进表单，提交时带回来
     submitKeyOf,
-    // ⭐ 2026-10-12：把"改完的整张清单"落进会话（预填清单那一版的入口；不写业务表）
-    setActualRows,
     // ⭐⭐ 2026-10-29（F1/F2）：工作台【确认到货】用的**整单替换**入口（自定义行/改数量/改 0 都生效）
     setScans,
   };

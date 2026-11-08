@@ -76,36 +76,73 @@ function loadOrdersModule() {
   return import(pathToFileURL(path.join(dir, 'orders-index.mjs')).href);
 }
 
+// 采购日夹具：上海时区 2026-10-12 / 2026-10-11 的 0 点（epoch ms ⇒ 前端按上海自然日格式化）
+const SH_DAY = (y, m, d) => Date.UTC(y, m - 1, d - 1, 16);
 const BATCH_ROWS = [
-  { record_id: 'r1', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 40, quantity: 2, arrival_status: '未到货' },
-  { record_id: 'r2', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 41, quantity: 1, arrival_status: '未到货' },
-  { record_id: 'r3', batch_no: 'CGD-WAIT-2', product_number: 'X99', size: 43, quantity: 3, arrival_status: '未到货' },
-  { record_id: 'r4', batch_no: 'CGD-DONE-1', product_number: 'D1', size: 42, quantity: 1, arrival_status: '已到货' },
+  // 供应商甲 · 采购日 2026-10-12（两条明细 ⇒ 同一批）
+  { record_id: 'r1', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 40, quantity: 2, arrival_status: '未到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
+  { record_id: 'r2', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 41, quantity: 1, arrival_status: '未到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
+  // 供应商乙 · 采购日 2026-10-11
+  { record_id: 'r3', batch_no: 'CGD-WAIT-2', product_number: 'X99', size: 43, quantity: 3, arrival_status: '未到货', supplier_record_id: 's2', supplier_name: '供应商乙', arrival_created_at: SH_DAY(2026, 10, 11) },
+  // 已到货 ⇒ 验收页**不渲染**（连 data 属性都不该有）
+  { record_id: 'r4', batch_no: 'CGD-DONE-1', product_number: 'D1', size: 42, quantity: 1, arrival_status: '已到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-RC1 第一屏只有批次号（明细全部撤掉）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RC1 ⭐ 第一屏**只出现批次号**（页面里不出现明细行）', async () => {
+test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采购日**由远及近**；不显示采购单号', async () => {
   const orders = await loadOrdersModule();
-  const html = orders.purchaseOrdersHtml(BATCH_ROWS);
-  // ① 批次号都在
-  for (const batch of ['CGD-WAIT-1', 'CGD-WAIT-2', 'CGD-DONE-1']) {
-    assert.ok(html.includes(batch), `批次 ${batch} 要出现 ✓`);
+  // ① 第一层：只有供应商卡片（不渲染任何批次/日期/「已到货」）
+  const first = orders.purchaseOrdersHtml(BATCH_ROWS);
+  assert.ok(first.includes('data-action="pick-supplier"'), '第一层 = 可点的供应商卡片 ✓');
+  assert.ok(first.includes('供应商甲') && first.includes('供应商乙'), '两个供应商都要出现 ✓');
+  assert.equal(first.includes('data-purchase-batch'), false, '第一层不渲染批次卡 ✓');
+  assert.equal(first.includes('采购日'), false, '第一层不渲染采购日 ✓');
+  assert.equal(first.includes('已到货'), false, '⛔ 已到货一律不出现 ✓');
+  assert.equal(first.includes('CGD-DONE-1'), false, '⛔ 已到货批次不许出现 ✓');
+  // ② 第二层：选中供应商甲 ⇒ 只显示它自己的批次，按采购日（早→晚）分组
+  const second = orders.purchaseOrdersHtml(BATCH_ROWS, { supplierKey: 's1' });
+  assert.ok(second.includes('data-view="purchase-supplier"'), '第二层有供应商分组容器 ✓');
+  assert.ok(second.includes('供应商甲'), '显示选中的供应商名 ✓');
+  assert.equal(second.includes('供应商乙'), false, '第二层不显示别的供应商 ✓');
+  assert.equal(second.includes('采购日'), false, '⛔ 不出现「采购日」三个字（业务负责人批注）✓');
+  assert.ok(second.includes('>2026-10-12<'), '⭐ 仍要有日期（只显示日期本身）✓');
+  assert.equal(second.includes('返回供应商'), false, '⛔ 不需要「返回供应商」按钮（批注）✓');
+  assert.equal(second.includes('data-action="back-suppliers"'), false, '返回按钮元素不许回来 ✓');
+  assert.equal(second.includes('未到货'), false, '⛔ 此页都是未到货 ⇒ 不再显示「未到货」标签（批注）✓');
+  assert.ok(second.includes('data-purchase-batch'), '第二层才有批次卡 ✓');
+  assert.ok(second.includes('data-action-block="verify-arrival"'), '每批仍有验收入口 ✓');
+  assert.ok(second.includes('data-view="arrival-batch-summary"'), '有一行摘要（多少双/几个货品）✓');
+  // ③ **由远及近**（早 → 晚）：给同一供应商补一条更早的批次（日期不再显示，但顺序仍要由远及近）
+  const earlier = {
+    ...BATCH_ROWS[2], record_id: 'r5', batch_no: 'CGD-WAIT-3',
+    supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 11),
+  };
+  const ordered = orders.purchaseOrdersHtml([...BATCH_ROWS, earlier], { supplierKey: 's1' });
+  const earlyAt = ordered.indexOf('>2026-10-11<');
+  const lateAt = ordered.indexOf('>2026-10-12<');
+  assert.ok(earlyAt >= 0 && lateAt >= 0, '两个日期标题都要出现 ✓');
+  assert.ok(earlyAt < lateAt, '⭐ 由远及近：10-11 在 10-12 上面（早→晚）✓');
+  // 供应商名居中（批注）
+  const css = readWorkbench('features/orders/orders.css');
+  assert.ok(css.includes('text-align: center'), '供应商名居中样式在 ✓');
+  // ⭐ 2026-11-09 批注：展开后不再显示「验收到货」按钮和「点开看明细」提示
+  assert.ok(css.includes('.action-form[open] > summary'), '展开后隐藏入口按钮的样式在 ✓');
+  assert.ok(css.includes('.action-form[open] [data-view="arrival-detail-hint"]'), '展开后隐藏提示文字的样式在 ✓');
+  assert.ok(css.includes('.form-field.action-form__amount { display: flex'), '实际金额与输入框同一行 ✓');
+  assert.ok(readWorkbench('config/orders.js').includes("arrivalAmount: '货款'"), '金额字段文案 = 「货款」（业务负责人 2026-11-09）✓');
+  // ④ **采购单号不许作为可见文字出现**（data 属性留给提交用，页面看不到）
+  for (const batch of ['CGD-WAIT-1', 'CGD-WAIT-2', 'CGD-WAIT-3']) {
+    assert.equal(second.includes(`>${batch}<`), false, `${batch} 不许作为可见文字 ✗`);
+    assert.equal(ordered.includes(`>${batch}<`), false, `${batch} 不许作为可见文字 ✗`);
   }
-  // ② 到货状态仍在（既有口径：来自采购主表那一行 ✓）
-  assert.ok(html.includes('未到货') && html.includes('已到货'), '状态标签照旧 ✓');
-  // ③ 🔴 **明细一行都不许在第一屏**
-  assert.equal(/class="order-lines"/.test(html), false, '⭐ 第一屏不许铺明细（能真红：把列表加回来 ⇒ 红）');
-  assert.equal(html.includes('line-product'), false, '货号明细不许出现在第一屏 ✗');
-  assert.equal(html.includes('data-view="arrival-detail-row"'), false, '明细行要在"点开"之后才渲染 ✗');
-  // ④ 但每张卡的**验收入口**照旧（既有交互不减少 ✓）
-  assert.ok(html.includes('data-action="verify-arrival"'), '每张卡仍有验收入口 ✓');
-  // ⑤ "点开才看明细"那句话在（文案走配置 ✓）
-  const config = readWorkbench('config/orders.js');
-  assert.ok(html.includes('data-view="arrival-detail-hint"'), '要有"点开看明细"的提示 ✓');
-  assert.ok(config.includes('detailOpenHint'), '那句提示来自配置 ✓');
+  assert.equal(/class="order-no"/.test(second), false, '不许再有"批次号标题"那个元素 ✗');
+  // ⑤ 一个未到货批次都没有 ⇒ 空态人话（不是空白）
+  const onlyArrived = orders.purchaseOrdersHtml([BATCH_ROWS[3]]);
+  assert.ok(onlyArrived.includes('data-view="purchase-empty"'), '没有未到货批次 ⇒ 空态 ✓');
+  assert.ok(onlyArrived.includes('当前没有未到货的批次'), '空态人话走配置 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -132,7 +169,17 @@ test('AC-RC2 ⭐ 点批次 ⇒ 明细只属于**这一批**（且每行有可改
   assert.match(htmlA, /data-size="40"[^>]*value="2"/, '40 码默认 = 申请数 2 ✓');
   assert.match(htmlA, /data-size="41"[^>]*value="1"/, '41 码默认 = 申请数 1 ✓');
   // 申请数量也要给她看（她要看"申请 vs 实际"）
-  assert.ok(htmlA.includes('申请 2'), '申请数量要显示 ✓');
+  // ⭐ 2026-11-09（业务负责人）：「申请 / 报货」的字样和数量提示都不需要 ——
+  //   输入框默认值就是报货数量，尺码格只留尺码 + 输入。
+  assert.equal(htmlA.includes('申请'), false, '⛔ 不再出现「申请」✓');
+  assert.equal(htmlA.includes('报货'), false, '⛔ 不再出现「报货」✓');
+  assert.equal(htmlA.includes('pr-sale'), false, '⛔ 不再显示额外的数量提示 ✓');
+  assert.ok(htmlA.includes('3 双'), '货号卡片右上角保留合计双数（2+1=3 双）✓');
+  // ⭐ 2026-11-09（业务负责人「套用采购页模板」）：明细 = 采购页的卡片/尺码格/步进器
+  assert.ok(htmlA.includes('class="pr-group'), '明细组套用采购页 `.pr-group` 卡片 ✓');
+  assert.ok(htmlA.includes('class="pr-size-row"'), '尺码格套用 `.pr-size-row` ✓');
+  assert.ok(htmlA.includes('class="pr-stepper"'), '数量控件套用 `.pr-stepper` ✓');
+  assert.ok(htmlA.includes('data-action="arrival-step"'), '有 +/− 步进按钮 ✓');
   // 拉明细的接口与参数逐字（既有只读口，不新造 ✗）
   const src = stripComments(readWorkbench('features/orders/index.js'));
   assert.ok(src.includes('${ARRIVAL_FULL_API.detail}?${ARRIVAL_FULL_FIELDS.batchNo}='),
@@ -141,26 +188,47 @@ test('AC-RC2 ⭐ 点批次 ⇒ 明细只属于**这一批**（且每行有可改
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AC-RC2b ⭐ 同一批次内：明细**按编号分组**（编号只出现一次，尺码在组内）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-RC2b ⭐ 同一批次里按编号分组：一个编号一个组，组内按尺码给实际数量', async () => {
+  const orders = await loadOrdersModule();
+  const html = orders.arrivalDetailHtml([
+    { item_no: 'N05', color: '黑色', size: 41, quantity: 1, product_record_id: 'p1' },
+    { item_no: 'N05', color: '黑色', size: 40, quantity: 2, product_record_id: 'p1' },
+    { item_no: 'X99', color: '白色', size: 43, quantity: 3, product_record_id: 'p2' },
+  ]);
+  const groups = html.match(/data-view="arrival-line-group"/g) || [];
+  assert.equal(groups.length, 2, '两个编号 ⇒ 两个分组 ✓');
+  assert.ok(html.includes('data-item-no="N05"') && html.includes('data-item-no="X99"'), '编号挂在分组上 ✓');
+  // ⭐ 显示口径跟采购页卡片标题一致 =「货号 · 颜色」
+  assert.ok(html.includes('N05 · 黑色') && html.includes('X99 · 白色'), '分组标题 = 「货号 · 颜色」✓');
+  // 编号只出现一次（组标题）；每行不再重复编号
+  assert.equal((html.match(/>N05</g) || []).length, 0, '行内不重复编号 ✗');
+  // 组内尺码 / 实际数量输入都在（提交要用 data-*，不许丢）
+  assert.ok(html.includes('data-size="40"') && html.includes('data-size="41"') && html.includes('data-size="43"'));
+  assert.equal((html.match(/data-field="arrival-actual"/g) || []).length, 3, '每行一个实际数量输入 ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AC-RC3 / AC-RC4 提交的就是"她填的实际值"——绝不按申请数补齐
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RC3 ⭐ 改数量 + 补一条额外尺码 ⇒ 提交 body 恰好是"她填的实际值"', async () => {
+test('AC-RC3 ⭐ 改数量 ⇒ 提交 body 恰好是"她填的实际值"（不再有自定义补行）', async () => {
   const orders = await loadOrdersModule();
   const built = orders.arrivalSubmitLines({
     rows: [
       { product_record_id: 'p1', size: 40, quantity: 2 },
       { product_record_id: 'p1', size: 41, quantity: 1 },
     ],
-    // 她把 40 改成 2（原样）、41 改成 3（多到）—— 再补一条 42 码 1 双
+    // 她把 40 改成 2（原样）、41 改成 3（多到）
     actuals: { 'p1|40': '2', 'p1|41': '3' },
-    extra: [{ productRecordId: 'p1', size: 42, quantity: 1 }],
   });
   assert.equal(built.ok, true);
   assert.deepEqual(built.lines, [
     { productRecordId: 'p1', size: 40, quantity: 2 },
     { productRecordId: 'p1', size: 41, quantity: 3 },
-    { productRecordId: 'p1', size: 42, quantity: 1 },
-  ], '⭐ 提交的每条都是**她填的那个数** ✓（能真红）');
+  ], '⭐ 提交的每条都是**她填的那个数** ✓（不再接受自定义补行 ✗）');
 });
 
 test('AC-RC4 🔴 **实际 < 申请** ⇒ 提交实际值；**没有任何"按申请数补齐"的路径**', async () => {
@@ -200,7 +268,7 @@ test('AC-RC5 批次缺失 / detail 失败 / accept 失败 ⇒ 人话；**不许�
   assert.ok(orders.arrivalDetailHtml([]).includes('这一批没有可验收的采购明细'), '批次无明细 ⇒ 人话 ✓');
   const config = readWorkbench('config/orders.js');
   const serverConfig = fs.readFileSync(path.join(__dirname, '../src/config/workbenchArrival.js'), 'utf8');
-  for (const key of ['detailFailed', 'itemNoNotFound', 'sizeInvalid', 'accepted']) {
+  for (const key of ['detailFailed', 'sizeInvalid', 'accepted']) {
     assert.ok(config.includes(key), `前端配置里要有 ${key} 那句人话 ✓`);
   }
   // ⚠️ `batchMissing` / `acceptFailed` 的**真源在服务端那一份**（前端不重复抄一份 ✗）
@@ -234,7 +302,7 @@ test('AC-RC6 ⭐ 明细**挂不上批次** ⇒ **不出现在页面**；**批次
   assert.equal(html.includes('ORPHAN-2'), false, '⭐「（无批次号）」组也不进页面 ✓');
   assert.equal(html.includes('（无批次号）'), false, '连那个键都不该再出现在页面上 ✓');
   // 正常批次照旧都在（别误伤 ✗）
-  assert.ok(html.includes('CGD-WAIT-1') && html.includes('CGD-WAIT-2'), '有批次的照样显示 ✓');
+  assert.ok(html.includes('供应商甲') && html.includes('供应商乙'), '有批次的供应商照样显示（第一层卡片）✓');
   // 全都没有批次 ⇒ 空态人话（既有 `purchase-empty` 口径没动 ✓）
   assert.ok(orders.purchaseOrdersHtml([]).includes('purchase-empty'), '空列表 ⇒ 人话 ✓');
   // 源码哨兵：分组时**跳过**没有批次号的行（不是"留着 + 写说明" ✗）

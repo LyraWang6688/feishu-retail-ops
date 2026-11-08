@@ -223,8 +223,6 @@ const FIELDS = Object.freeze({
   acceptRowQty: 'accept_row_qty',
   // 清单表单把"哪一批"也带上（URL 上也有；这条是**手改 URL 也换不了批次**的保险）。
   acceptBatch: 'accept_batch',
-  acceptCustomSize: 'accept_custom_size',
-  acceptCustomQuantity: 'accept_custom_quantity',
   // ⭐⭐ 2026-10-12（方案 A）："未报货尺码"那几个可点元素带的是**哪个尺码**（可重复 ⇒ 按行序解析）。
 });
 
@@ -774,13 +772,7 @@ const TEXTS = Object.freeze({
   acceptEmptyDetailBody: '这一批没有明细：可以直接在下面手输尺码/数量，也可以扫标签加一款。',
   acceptRowsHint: '数量填实际到货的；没到的改成 0 就行。',
   acceptRowSizeLabel: '{size} 码',
-  acceptCustomTitle: '自定义加一行（没报但到了的）',
-  acceptCustomSizePlaceholder: '尺码',
-  acceptCustomQuantityPlaceholder: '数量',
-  acceptCustomAddLabel: '加上这一行',
   // 扫标签那条路（码里带着是哪一款）——本批有多个款 / 一条明细都没有时，**不猜款**，让她扫码。
-  acceptCustomScanLabel: '也可以扫标签加一款',
-  acceptCustomProductNeededBody: '这一批里有多个款（或一条明细都没有）：自定义请用**扫标签**加（标签里带着是哪一款）。',
   // ⭐⭐ 2026-10-12（方案 A）：「系统把 40、41 列出来（标注"未报货"）⇒ 你**点一下就加到货**」
   acceptUnreportedTitle: '没报货的尺码',
   acceptUnreportedBadge: '未报货',
