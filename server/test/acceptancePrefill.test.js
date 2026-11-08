@@ -10,7 +10,7 @@ const { rendererSource } = require('./support/rendererSource');
  * 本文件原测扫码页那一屏的「明细预填 / 自定义尺码 / 未报货候选 / 成功页回列表」。
  * 那一屏**已退场** ⇒ 按老口径**改指向**：**逐条保留 AC 名** ✓
  * 断言 = 「**入口没了** ＋ **能力仍在**（服务级 / 工作台那条路）」✓ 依据：她的原话（上）
- * 能力现在在哪：`scanArrivalService`（start / addScan / finish / setActualRows ✓）＋
+ * 能力现在在哪：`scanArrivalService`（start / addScan / finish / setScans ✓）＋
  *   工作台 `purchase/arrivals/detail` · `.../accept`（#534 ✓）· 逐条验收见
  *   `test/workbenchAcceptanceFull.test.js`（AC-AW10…AW17 ✓）
  */
