@@ -242,14 +242,16 @@ if (require.main === module) {
   const voucherSettlement = createVoucherSettlementConfig();
   if (voucherSettlement.enabled) {
     const voucherGateway = new V1BitableGateway();
+    const voucherNotifications = createNotificationService();
     const voucherSettlementService = createVoucherSettlementService({
       gateway: voucherGateway,
       payments: new PaymentService({ gateway: voucherGateway }),
       laike: createLaikeClient(),
-      // 复用统一通知服务发文本（与异步任务失败通知同一个机器人客户端；只传显式 target，不改全局配置）。
+      // 复用统一通知服务发 Card 2.0（与异步任务失败通知同一个机器人客户端；只传显式 target）。
       sendText: async (chatId, text) => {
-        const result = await createNotificationService().send('voucher.settlement', { text }, {
-          format: 'text',
+        const lines = String(text || '').split('\n');
+        const title = lines.shift() || voucherSettlement.texts.groupTitle;
+        const result = await voucherNotifications.send('voucher_settlement', { title, lines }, {
           target: { enabled: true, reason: 'ok', receiveId: chatId, receiveIdType: 'chat_id', target: `chat_id:${chatId}` },
         });
         if (!result.ok) throw new Error(`通知发送失败: ${result.reason || 'unknown'}`);
