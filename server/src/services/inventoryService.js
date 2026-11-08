@@ -23,6 +23,7 @@
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { textValue } = require('./v1BitableGateway');
+const { getConfigRows } = require('./configTableCache');
 const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService');
 const { OPERATION_ITEM_KEY_FIELD, validateIdempotencyKeyFields } = require('../infrastructure/idempotencyKey');
 const { correlationFields } = require('../utils/correlationFields');
@@ -111,7 +112,8 @@ class InventoryService {
     const movement = requireMovement(kind);
     const fields = this.gateway.table('behavior').fields;
     // 按「行为编码」匹配：编码是稳定标识，飞书里改中文名不影响代码。
-    const matches = (await this.gateway.listAll('behavior')).filter((record) =>
+    const behaviors = await getConfigRows({ gateway: this.gateway, tableKey: 'behavior', freshness: 'fresh' });
+    const matches = behaviors.filter((record) =>
       textValue(record.fields?.[fields.code]).trim() === kind);
     if (matches.length !== 1) {
       throw new Error(`行为管理中编码为「${kind}」的行为必须且只能有一条记录，请先在行为管理表补齐`);
@@ -130,7 +132,8 @@ class InventoryService {
 
   async resolveSamplePromotionBehavior() {
     const fields = this.gateway.table('behavior').fields;
-    const matches = (await this.gateway.listAll('behavior')).filter((record) =>
+    const behaviors = await getConfigRows({ gateway: this.gateway, tableKey: 'behavior', freshness: 'fresh' });
+    const matches = behaviors.filter((record) =>
       textValue(record.fields?.[fields.code]).trim() === BEHAVIOR_SAMPLE_PROMOTION);
     if (matches.length !== 1) {
       throw new Error(`行为管理中编码为「${BEHAVIOR_SAMPLE_PROMOTION}」的行为必须且只能有一条记录，请先在行为管理表补齐`);

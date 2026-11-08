@@ -97,3 +97,33 @@ test('过期重读失败 ⇒ lastGood 使用有告警（同表 5 分钟内只打
   assert.equal(warnings[0].table_key, 'paymentMethod');
   assert.ok(warnings[0].age_ms >= CONFIG_TABLES.paymentMethod.ttlMs);
 });
+
+
+test('freshness=fresh：写库前强制重读，失败不回落 lastGood', async () => {
+  resetConfigTableCache();
+  let calls = 0;
+  let clock = 1_000;
+  let fail = false;
+  const gateway = {
+    listAll: async () => {
+      calls += 1;
+      if (fail) throw new Error('behavior 读失败');
+      return [{ record_id: 'b1', fields: { code: 'STOCK_SALE_DECREASE' } }];
+    },
+  };
+  const opts = { gateway, tableKey: 'behavior', now: () => clock };
+  await getConfigRows(opts);
+  assert.equal(calls, 1);
+  // TTL 内普通读命缓存，不重读
+  await getConfigRows(opts);
+  assert.equal(calls, 1);
+  // fresh 即使 TTL 内也强制重读
+  await getConfigRows({ ...opts, freshness: 'fresh' });
+  assert.equal(calls, 2);
+  // fresh 失败必须抛错，不能拿 lastGood 去写库
+  fail = true;
+  await assert.rejects(() => getConfigRows({ ...opts, freshness: 'fresh' }), /读失败/);
+  // 普通读仍可回退 lastGood
+  const rows = await getConfigRows(opts);
+  assert.equal(rows[0].record_id, 'b1');
+});
