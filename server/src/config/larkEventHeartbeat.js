@@ -19,14 +19,6 @@ const DEFAULT_STALE_MINUTES = 180;
 // 默认开启会往生产群/负责人私聊发假告警。要挂定时，显式设成 true。
 const ALERT_ENABLED_ENV_KEY = 'LARK_EVENT_ALERT_ENABLED';
 
-// 告警发到哪：purchase_group（默认，用 PURCHASE_CHAT_ID）或 owner（用 LARK_EVENT_ALERT_OPEN_ID）。
-const ALERT_TARGET_ENV_KEY = 'LARK_EVENT_ALERT_TARGET';
-const ALERT_TARGET_PURCHASE_GROUP = 'purchase_group';
-const ALERT_TARGET_OWNER = 'owner';
-
-// 发给业务负责人私聊时要用的 open_id（形如 ou_xxx）。**没有默认值**：没配就不发私聊，只报错。
-const ALERT_OPEN_ID_ENV_KEY = 'LARK_EVENT_ALERT_OPEN_ID';
-
 // 群里告警要不要 @所有人（显式布尔，默认关）。
 const ALERT_MENTION_ALL_ENV_KEY = 'LARK_EVENT_ALERT_MENTION_ALL';
 
@@ -65,15 +57,6 @@ const resolveStaleMinutes = (env = process.env) =>
 
 /** 告警总开关（显式布尔，默认关）。 */
 const isAlertEnabled = (env = process.env) => readExplicitBoolean(env, ALERT_ENABLED_ENV_KEY);
-
-/** 告警发到哪。只有显式 owner 才走私聊，其余一律采购群。 */
-const resolveAlertTarget = (env = process.env) => {
-  const value = readExplicit(env, ALERT_TARGET_ENV_KEY).toLowerCase();
-  return value === ALERT_TARGET_OWNER ? ALERT_TARGET_OWNER : ALERT_TARGET_PURCHASE_GROUP;
-};
-
-/** 私聊告警的接收人 open_id。未配置返回空串（调用方据此报错，绝不猜一个收件人）。 */
-const resolveAlertOpenId = (env = process.env) => readExplicit(env, ALERT_OPEN_ID_ENV_KEY);
 
 /** 群里告警是否 @所有人（显式布尔，默认关）。 */
 const isMentionAllEnabled = (env = process.env) => readExplicitBoolean(env, ALERT_MENTION_ALL_ENV_KEY);
@@ -163,19 +146,13 @@ const buildLarkEventStaleAlertText = ({ minutesSinceLastEvent, lastEventAt, call
 module.exports = {
   STALE_MINUTES_ENV_KEY,
   ALERT_ENABLED_ENV_KEY,
-  ALERT_TARGET_ENV_KEY,
-  ALERT_OPEN_ID_ENV_KEY,
   ALERT_MENTION_ALL_ENV_KEY,
   CALLBACK_URL_ENV_KEY,
   HEARTBEAT_FILE_ENV_KEY,
   DEFAULT_STALE_MINUTES,
   DEFAULT_CALLBACK_URL,
-  ALERT_TARGET_PURCHASE_GROUP,
-  ALERT_TARGET_OWNER,
   resolveStaleMinutes,
   isAlertEnabled,
-  resolveAlertTarget,
-  resolveAlertOpenId,
   isMentionAllEnabled,
   resolveCallbackUrl,
   resolveHeartbeatFilePath,
