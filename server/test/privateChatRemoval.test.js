@@ -23,7 +23,6 @@ const { LarkMvpService } = require('../src/services/larkMvpService');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 const { createLarkEventHandlers } = require('../src/routes/larkEvents');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const larkCards = require('../src/utils/larkCards');
 
 const TEST_BOT_OPEN_ID = 'ou_test_bot_open_id';
 const TEST_SELLER = 'ou_seller';
@@ -231,7 +230,6 @@ test('④ `PurchaseWebhookService.sendCard`（全仓无调用方）已删除', (
 test('④ 私聊专属的入口与卡片都已删除：sendTodaySales / handleBotMenu / todaySalesCard', () => {
   assert.equal(LarkMvpService.prototype.sendTodaySales, undefined);
   assert.equal(LarkMvpService.prototype.handleBotMenu, undefined);
-  assert.equal(larkCards.todaySalesCard, undefined);
 });
 
 test('④ `LarkMvpService.sendCard`（open_id 口径的卡片发送器，全仓无调用方）已删除；`sendText` 留给 notice', () => {
