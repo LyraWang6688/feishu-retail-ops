@@ -71,12 +71,30 @@
 | 范围 | 唯一入口 |
 | --- | --- |
 | 异步任务状态 / 重试 / 失败通知 | `server/src/config/asyncJobs.js` + `services/asyncJobService.js` |
+| 通知目标 / 事件 / 卡片 | `server/src/config/notifications.js` + `services/notificationService.js` + `services/notificationCard.js` |
 | 飞书写入并发 / 瞬时重试 | `server/src/config/feishuWriteScheduler.js` + `services/feishuWriteScheduler.js`（固定常开） |
 | 库存操作键 | `server/src/services/inventory/movements.js` 的 `STOCK_MOVEMENTS[*].operationKey` |
 | 配置表缓存 / TTL / 失效 | `server/src/config/configTables.js` + `services/configTableCache.js` |
 | 提交成功 toast | `server/src/config/submitToast.js` + `utils/submitToast.js` |
 | 日志事件目录 | `server/src/config/events.js`（自动生成） |
 | 表 ID / 字段映射 | `server/src/config/v1BitableSchema.js` |
+
+通知配置的**唯一入口**是：
+
+```text
+server/src/config/notifications.js
+```
+
+只保留两个固定目标：
+
+```text
+private → open_id（NOTIFY_PRIVATE_OPEN_ID / 回落 OBSERVABILITY_ALERTS_OPEN_ID）
+group   → chat_id（NOTIFY_GROUP_CHAT_ID / 回落 PURCHASE_CHAT_ID）
+```
+
+事件、默认开关、group/private 归属、card/text 形式都在这一处；业务 service 不许自己读
+`CHAT_ID` / `OPEN_ID`，也不许自己拼卡片。细节见
+[统一基础设施与配置盘点](docs/reports/unified-infrastructure-and-config-2026-11-08.md) 的「3.9 统一通知配置」。
 
 完整盘点与例外：
 
