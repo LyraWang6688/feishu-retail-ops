@@ -355,8 +355,14 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       return;
     }
     // 只有「草稿箱」会进这里（交割单在本页直接跳独立页；售后单直接起扫一扫）⇒ 显示显式占位。
+    // ⭐ 2026-11-08（业务负责人：「草稿页需要和其他占位前端一致」）：
+    //   占位页**统一成同一张虚线卡 + 「待建设」小标签**（与 货品→信息配置 同一套
+    //   `.placeholder-card` / `.tag-info`，样式在 `features/domains/domains.css`，index.html 已加载 ✓）。
+    //   ⚠️ 这里**不新增 import**（本文件被十余个 harness 拷贝 + 显式改写 import，多一条相对 import 会一起挂）。
     host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
-      <p class="empty compact" data-view="section-placeholder">待建设</p>`;
+      <div class="placeholder-card" data-view="section-placeholder" data-placeholder="draft">
+        <span class="tag tag-info">待建设</span>
+      </div>`;
   }
 
   function renderPurchaseList() {
