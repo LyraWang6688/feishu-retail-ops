@@ -37,7 +37,7 @@ const { createPurchaseWriteBackgroundService, waitForPendingPurchaseBackgrounds 
 const tmpDir = (prefix = 'async-job-chain-') => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 
 /** 真统一层（临时目录 + 假发送器）；返回 `{ service, sent, logs }`。 */
-const makeJobStack = ({ notifyEnabled = 'true', sendText } = {}) => {
+const makeJobStack = ({ notifyEnabled = 'true', failNotify = false } = {}) => {
   const dir = tmpDir();
   const config = buildAsyncJobsConfig({
     ASYNC_JOBS_DIR: dir,
@@ -55,8 +55,13 @@ const makeJobStack = ({ notifyEnabled = 'true', sendText } = {}) => {
   const notifier = createAsyncJobNotifier({
     config,
     logger,
-    resolveChatId: () => 'oc_ops_group',
-    sendText: sendText || (async (chatId, text) => { sent.push({ chatId, text }); return { ok: true }; }),
+    notificationService: {
+      send: async (event, data) => {
+        if (failNotify) return { ok: false, reason: 'send_failed', error: 'network down' };
+        sent.push({ event, data });
+        return { ok: true, cardId: 'card_1', messageId: 'msg_1' };
+      },
+    },
   });
   const store = createAsyncJobStore({ dir });
   const service = createAsyncJobService({ config, store, notifier, logger, sleep: async () => undefined });
@@ -128,16 +133,17 @@ test('AC-W1b 售后：永久错误（400）不重试 ⇒ 最终失败**发一次
   await waitFor(() => stack.sent.length === 1);
   assert.equal(calls, 1, '永久错误不重试');
   assert.equal(stack.sent.length, 1, '最终失败发一次运营群');
-  assert.match(stack.sent[0].text, /售后退货/);
-  assert.match(stack.sent[0].text, /XSD-20261108-0002/);
-  assert.match(stack.sent[0].text, /操作人：王颖/);
-  assert.match(stack.sent[0].text, /不能退货/);
-  assert.equal(stack.sent[0].chatId, 'oc_ops_group');
+  const text = stack.sent[0].data.lines.join('\n');
+  assert.match(stack.sent[0].data.title, /异步写入失败/);
+  assert.match(text, /售后退货/);
+  assert.match(text, /XSD-20261108-0002/);
+  assert.match(text, /操作人：王颖/);
+  assert.match(text, /不能退货/);
 });
 
 test('AC-W1c 售后：通知发送失败 ⇒ 任务仍是 failed、notified_at 空、日志留痕（可后续重试）', async () => {
   // 真 notifier + "发送必失败"的 sender：验证通知失败**不改变业务任务状态**
-  const stack = makeJobStack({ sendText: async () => { throw new Error('network down'); } });
+  const stack = makeJobStack({ failNotify: true });
   const service = stack.service;
   const jobs = makeAfterSales({ stack, execute: async () => { throw new Error('飞书 500'); } });
   const requestId = crypto.randomUUID();
@@ -228,8 +234,8 @@ test('AC-W2b 销售：永久错误（400）只跑一次 ⇒ failed + 发一次�
   assert.equal(h.submits.length, 1, '永久错误不重试');
   assert.equal((await h.jobStore.get(job.job_id)).status, 'failed');
   assert.equal(stack.sent.length, 1, '最终失败发群');
-  assert.match(stack.sent[0].text, /销售提交/);
-  assert.match(stack.sent[0].text, /XSD-20261108-0003/);
+  assert.match(stack.sent[0].data.lines.join('\n'), /销售提交/);
+  assert.match(stack.sent[0].data.lines.join('\n'), /XSD-20261108-0003/);
 });
 
 test('AC-W2c 销售：partial_failed ⇒ 终态、不发群（通知只认 failed）', async () => {
@@ -303,9 +309,9 @@ test('AC-W3b 采购：业务拒绝不重试 ⇒ 只跑一次 + failed + 发群�
   assert.equal(jobs[0].type, ASYNC_JOB_TYPES.PURCHASE_RETURN);
   assert.equal(jobs[0].status, ASYNC_JOB_STATUS.FAILED);
   assert.equal(stack.sent.length, 1, '最终失败发一次群');
-  assert.match(stack.sent[0].text, /采购退货/);
-  assert.match(stack.sent[0].text, /CGD-20261108-1001/);
-  assert.match(stack.sent[0].text, /操作人：王颖/);
+  assert.match(stack.sent[0].data.lines.join('\n'), /采购退货/);
+  assert.match(stack.sent[0].data.lines.join('\n'), /CGD-20261108-1001/);
+  assert.match(stack.sent[0].data.lines.join('\n'), /操作人：王颖/);
 });
 
 test('AC-W3c 采购：补货链同样接入（三条链路同一个适配器/后台件）', async () => {
@@ -395,9 +401,9 @@ test('AC-W4 工作台验收路由：后台失败 ⇒ 统一 job(type=purchase_ac
     assert.equal(jobs[0].meta.order_no, '');
     assert.equal(jobs[0].status, ASYNC_JOB_STATUS.FAILED);
     assert.equal(stack.sent.length, 1, '后台失败 ⇒ 发一次运营群');
-    assert.match(stack.sent[0].text, /采购验收/);
-    assert.match(stack.sent[0].text, /CGD-20261108-1002/);
-    assert.match(stack.sent[0].text, /操作人：验收员/);
+    assert.match(stack.sent[0].data.lines.join('\n'), /采购验收/);
+    assert.match(stack.sent[0].data.lines.join('\n'), /CGD-20261108-1002/);
+    assert.match(stack.sent[0].data.lines.join('\n'), /操作人：验收员/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
