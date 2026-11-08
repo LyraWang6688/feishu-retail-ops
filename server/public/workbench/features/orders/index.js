@@ -162,7 +162,7 @@ const purchaseBatchCardHtml = (batch) => `
           <p class="order-note" data-view="arrival-detail-hint">${escapeHtml(ARRIVAL_FULL_TEXTS.detailOpenHint)}</p>
           <div class="action-body">
             <div data-view="arrival-detail" data-batch="${escapeHtml(batch.batch_no)}"></div>
-            <label class="form-field">${escapeHtml(T.arrivalAmount)}
+            <label class="form-field action-form__amount">${escapeHtml(T.arrivalAmount)}
               <input data-field="arrival-amount" type="text" inputmode="decimal" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
             </label>
             <button class="btn btn-primary" type="button" data-action="submit-arrival" data-batch="${escapeHtml(batch.batch_no)}">${escapeHtml(T.arrivalSubmit)}</button>
@@ -276,9 +276,9 @@ export function arrivalDetailHtml(rows = []) {
     return color ? String(ARRIVAL_FULL_TEXTS.detailGroupLabel).split('{itemNo}').join(itemNo).split('{color}').join(color) : itemNo;
   };
   // 套用采购页卡片模板：.pr-group / .pr-size-row / .pr-stepper（样式复用 procurement.css）。
-  const totalOf = (rows) => rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
   const groupHtml = [...groups.entries()].map(([key, group]) => {
-    const total = String(ARRIVAL_FULL_TEXTS.detailGroupTotal).split('{total}').join(String(totalOf(group.rows)));
+    const total = group.rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+    const totalText = String(ARRIVAL_FULL_TEXTS.detailGroupTotal || '').split('{total}').join(String(total));
     const rowsHtml = group.rows.map((row) => `
           <div class="pr-size-row" data-view="arrival-detail-row"
               data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
@@ -286,7 +286,6 @@ export function arrivalDetailHtml(rows = []) {
               data-declared="${escapeHtml(String(Number(row.quantity || 0)))}">
             <div class="pr-size-row-head">
               <div class="pr-size">${escapeHtml(String(row.size ?? ''))}</div>
-              <div class="pr-sale">${escapeHtml(ARRIVAL_FULL_TEXTS.declaredQuantityLabel)} <b>${escapeHtml(String(Number(row.quantity || 0)))}</b></div>
             </div>
             <div class="pr-pick pr-pick-no-check">
               <div class="pr-stepper">
@@ -305,7 +304,7 @@ export function arrivalDetailHtml(rows = []) {
         <section class="pr-group order-line-group" data-view="arrival-line-group" data-item-no="${escapeHtml(group.itemNo)}" data-color="${escapeHtml(group.color)}">
           <div class="pr-group-head">
             <h2 class="pr-group-name">${escapeHtml(headingOf(group))}</h2>
-            <div class="pr-group-total">${escapeHtml(total)}</div>
+            <div class="pr-group-total">${escapeHtml(totalText)}</div>
           </div>${rowsHtml}
         </section>`;
   }).join('');
@@ -564,7 +563,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     //    「到货说明」这个输入框 ⇒ 这里也不再有读值与必填（那条判据**随她这句一起退场** ✓）
     if (!batchNo) return renderResult('这一行没有报货批次号，不能验收到货', true);
     if (!/^\d+(\.\d+)?$/.test(rawAmount) || Number(rawAmount) <= 0) {
-      return renderResult('请先填这次的「实际金额」（大于 0 的数字），再点验收到货', true);
+      return renderResult('请先填这次的「货款」（大于 0 的数字），再点验收到货', true);
     }
     // ⭐ 同上：点一下立刻有反馈 + 防连点（校验放在守卫**之前** —— 没填完不该置灰）
     return runWriteAction(button, async () => {

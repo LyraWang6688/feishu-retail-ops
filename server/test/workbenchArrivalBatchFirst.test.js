@@ -131,6 +131,8 @@ test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采�
   // ⭐ 2026-11-09 批注：展开后不再显示「验收到货」按钮和「点开看明细」提示
   assert.ok(css.includes('.action-form[open] > summary'), '展开后隐藏入口按钮的样式在 ✓');
   assert.ok(css.includes('.action-form[open] [data-view="arrival-detail-hint"]'), '展开后隐藏提示文字的样式在 ✓');
+  assert.ok(css.includes('.form-field.action-form__amount { display: flex'), '实际金额与输入框同一行 ✓');
+  assert.ok(readWorkbench('config/orders.js').includes("arrivalAmount: '货款'"), '金额字段文案 = 「货款」（业务负责人 2026-11-09）✓');
   // ④ **采购单号不许作为可见文字出现**（data 属性留给提交用，页面看不到）
   for (const batch of ['CGD-WAIT-1', 'CGD-WAIT-2', 'CGD-WAIT-3']) {
     assert.equal(second.includes(`>${batch}<`), false, `${batch} 不许作为可见文字 ✗`);
@@ -167,7 +169,12 @@ test('AC-RC2 ⭐ 点批次 ⇒ 明细只属于**这一批**（且每行有可改
   assert.match(htmlA, /data-size="40"[^>]*value="2"/, '40 码默认 = 申请数 2 ✓');
   assert.match(htmlA, /data-size="41"[^>]*value="1"/, '41 码默认 = 申请数 1 ✓');
   // 申请数量也要给她看（她要看"申请 vs 实际"）
-  assert.ok(htmlA.includes('申请 <b>2</b>'), '申请数量要显示 ✓');
+  // ⭐ 2026-11-09（业务负责人）：「申请 / 报货」的字样和数量提示都不需要 ——
+  //   输入框默认值就是报货数量，尺码格只留尺码 + 输入。
+  assert.equal(htmlA.includes('申请'), false, '⛔ 不再出现「申请」✓');
+  assert.equal(htmlA.includes('报货'), false, '⛔ 不再出现「报货」✓');
+  assert.equal(htmlA.includes('pr-sale'), false, '⛔ 不再显示额外的数量提示 ✓');
+  assert.ok(htmlA.includes('3 双'), '货号卡片右上角保留合计双数（2+1=3 双）✓');
   // ⭐ 2026-11-09（业务负责人「套用采购页模板」）：明细 = 采购页的卡片/尺码格/步进器
   assert.ok(htmlA.includes('class="pr-group'), '明细组套用采购页 `.pr-group` 卡片 ✓');
   assert.ok(htmlA.includes('class="pr-size-row"'), '尺码格套用 `.pr-size-row` ✓');

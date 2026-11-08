@@ -116,7 +116,8 @@ export const ORDERS_TEXTS = {
   // ── 采购验收（工作台「验收」页在用）──────────────────────────────────────
   verifyArrival: '验收到货',
   arrivalVerifyTitle: '验收到货',
-  arrivalAmount: '实际金额',
+  // ⭐ 2026-11-09（业务负责人）：「实际金额」改叫「货款」
+  arrivalAmount: '货款',
   arrivalSubmit: '确认到货并入库',
 };
 
@@ -144,13 +145,12 @@ export const ARRIVAL_FULL_TEXTS = {
   //     没填 = 我们不猜 ⇒ 拦住 + `actualQuantityRequired` 那句人话 ✓。
   detailOpenHint: '点开看这一批的采购明细（可以改实际到货数量）',
   actualQuantityLabel: '实际到货数量',
-  declaredQuantityLabel: '申请',
   // ⭐ 2026-11-09（业务负责人）：明细在**同一批次号内按编号分组**；
   //   显示口径与采购页卡片标题一致 = 「货号 · 颜色」（颜色缺省只显示货号）。
   detailGroupLabel: '{itemNo} · {color}',
   detailGroupUnknown: '未编号',
-  // 组头右侧合计（套用采购页卡片的「需补 N 双」位置）
-  detailGroupTotal: '申请 {total} 双',
+  // 货号卡片右上角合计（业务负责人 2026-11-09：保留合计双数；不带「申请/报货」字样）
+  detailGroupTotal: '{total} 双',
   zeroMeansNotArrived: '没到的填 0',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',
   // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）
