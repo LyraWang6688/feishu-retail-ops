@@ -153,9 +153,9 @@ const postForm = async (url, cookie, body) => fetch(url, {
  *   改前逐字（两条 `extra`，**都没有 `sizes` / `return_sizes`**）：
  *     `{ chain: 'replenish', realm: 'replenish', action: SCAN_WRITE.actions.replenish, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '1200', qty_41: '2' } },`
  *     `{ chain: 'purchase_return', realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },`
- *   改后逐字（各加一个尺码勾选 —— `sizes: '41'` / `return_sizes: '41'`）：
+ *   改后逐字（各加一个尺码输入 —— `sizes: '41'` / `return_qty_41: '1'`；退货勾选框 2026-11-08 已退场 ✓）：
  *     `… extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '1200', [`${SCAN_WRITE.fields.replenishSizes}`]: '41', qty_41: '2' } },`
- *     `… extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnSizes}`]: '41', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },`
+ *     `… extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },`
  *   依据：业务负责人 2026-10-16 逐字「**异步只针对"写库"**；**校验必须当场同步拦**」
  *     ⇒ `sizes` 空 = "一句明细都没有" = **空单** ⇒ 当场 400（本来就不该是"合法请求"✗）。
  *   ⚠️ 这不是"放宽判据"：**AC-ASY1 / AC-ASY2-补货 的断言一行未动**（本条只是把
@@ -163,7 +163,7 @@ const postForm = async (url, cookie, body) => fetch(url, {
  */
 const legalCases = () => ([
   { chain: 'replenish', realm: 'replenish', action: SCAN_WRITE.actions.replenish, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '1200', [`${SCAN_WRITE.fields.replenishSizes}`]: '41', qty_41: '2' } },
-  { chain: 'purchase_return', realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnSizes}`]: '41', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },
+  { chain: 'purchase_return', realm: 'purchase_return', action: SCAN_WRITE.actions.purchaseReturn, extra: { [`${SCAN_WRITE.fields.purchaseAmount}`]: '800', [`${SCAN_WRITE.fields.returnQuantityPrefix}41`]: '1' } },
   { chain: 'accept', realm: 'accept', action: SCAN_WRITE.actions.acceptFinish, extra: { accept_41: '2' } },
 ]);
 
