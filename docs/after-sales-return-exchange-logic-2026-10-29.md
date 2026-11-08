@@ -175,6 +175,9 @@
 
 幂等：本地任务记录按 `requestId` 分片、每步落盘；重放直接返回上次结果（测试 Base 实测：重放零新增行）。
 
+重试：**次数 / 退避只读统一配置** `ASYNC_JOB_MAX_ATTEMPTS` / `ASYNC_JOB_RETRY_BASE_MS`
+（`config/asyncJobs.js`）；旧 `AFTER_SALES_JOB_*` 已按业务负责人 2026-11-08 口径**退场**（不做兼容兜底）。
+
 ### 8.3 配置 / 注册表 / ID
 
 - `config/afterSalesDerived.js`：动作枚举、可退状态、门盒、行为编码、退款/留存的状态与方向、主表落点、重试参数、人话；
