@@ -199,30 +199,24 @@ test('① 按条件读：只读这款货品的行 —— 两张表的 filter 公
   assert.equal(view.found, true);
   assert.equal(view.total, 3, '只有这一款的 3 双进来（别的货品的行一条都不许混）');
 
-  // 「货品信息」：按「编号」精确匹配（公式列；用 GET 的 filter 公式，返回体与 listAll 同形状）
+  // 「货品信息」已改走 configTableCache（整表读一次 + 缓存），不再拼编号 filter
   assert.deepEqual(gateway.filterCalls()[0], {
-    kind: 'listByFilter',
-    tableKey: 'product',
-    filter: `CurrentValue.[编号]="${NUMBER}"`,
-    options: { maxRecords: SCAN_PAGE.limits.productRowsPerNumber + 1 },
-  });
-
-  // 「实时库存」：OR(「编号」关联的显示文本 = 这一款的编号, 「库存键」.contains("编号|"))
-  assert.deepEqual(gateway.filterCalls()[1], {
     kind: 'listByFilter',
     tableKey: 'liveInventory',
     filter: `OR(CurrentValue.[编号]="${NUMBER}",CurrentValue.[库存键].contains("${NUMBER}|"))`,
     options: { maxRecords: SCAN_PAGE.limits.inventoryRowsPerNumber + 1 },
   });
-  assert.equal(gateway.filterCalls().length, 2, '只有这两张表走"按条件读"');
+  assert.equal(gateway.filterCalls().length, 1, '只有实时库存还走按条件读');
+  assert.ok(gateway.listAllCalls().some((call) => call.tableKey === 'product'),
+    '货品信息走 configTableCache 的整表读');
 
   // ⭐ 2026-10-09：缺码判定**读配置**，不再为它整表读「尺码管理」——
   //    这张表现在只被两件事读：① 行尺码的关联解析（`SizeReferenceService`，带缓存）；
   //    ② **一致性保险**（定期比对配置与表，默认 10 分钟一次）。
   assert.deepEqual(
-    gateway.listAllCalls().map((call) => call.tableKey).filter((key) => key === 'product' || key === 'liveInventory'),
+    gateway.listAllCalls().map((call) => call.tableKey).filter((key) => key === 'liveInventory'),
     [],
-    '货品信息 / 实时库存**一次整表读都不许有**（这就是提速本身）',
+    '实时库存仍按条件读，不许整表读',
   );
   // ⭐ 2026-10-09：这一趟读「尺码管理」的次数是**常数**（与扫码次数无关）：
   //    ① 行尺码的关联解析（`SizeReferenceService`，每个 service 只整表读一次）；
@@ -280,7 +274,7 @@ test('② 回退：飞书不认这个公式（抛错）→ 整表读，页面照
   // ⭐ 2026-10-09：缺码按配置段算 ⇒ A 段 11 个码里有 9 个库存为 0。
   // ⭐⭐ 2026-10-14 **二次改指向**：段 = **可录范围 38–48** ⇒ 11 − 2（40/42 有货）= **9** ✓
   assert.equal(view.missing_count, 9, '缺码 = 可录范围(38-48) − 有货 = 9（她 2026-10-14 最终口径）');
-  assert.equal(gateway.filterCalls().length, 2, '两次都试过了');
+  assert.equal(gateway.filterCalls().length, 1, '实时库存按条件读失败一次');
   const wholeTables = gateway.listAllCalls().map((call) => call.tableKey);
   assert.ok(wholeTables.includes('product') && wholeTables.includes('liveInventory'),
     '回退到整表读：货品信息与实时库存都要整表读一遍');
@@ -291,7 +285,7 @@ test('② 回退：飞书不认这个公式（抛错）→ 整表读，页面照
   //   改前逐字：assert.ok(wholeTables.filter((key) => key === 'sizeManagement').length >= 1, '「尺码管理」照旧会被行尺码解析读到（共享的 SizeReferenceService，带缓存）');
   assert.equal(wholeTables.includes('sizeManagement'), false,
     '常规路径不再读「尺码管理」（尺码先取同行「库存键」最后一段；她 2026-10-14 拍板）');
-  assert.equal(logs.events(SCAN_PAGE.events.filterFallback).length, 2, '每次回退都记一条 warn');
+  assert.equal(logs.events(SCAN_PAGE.events.filterFallback).length, 1, '回退记一条 warn');
   assert.match(logs.events(SCAN_PAGE.events.filterFallback)[0], /"reason":"failed"/);
 });
 
@@ -423,9 +417,9 @@ test('③ 「没找到」不进缓存（新品刚建档就该立刻扫得到）'
     number: 'NOPE|黑色|A',
     reason: 'unknown',
   });
-  const callsAfterFirst = gateway.calls.length;
-  await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_u2' });
-  assert.ok(gateway.calls.length > callsAfterFirst, '第二次仍然真的去读（不许把否定结果缓存住）');
+  // 产品表已由 configTableCache 缓存；否定结果仍由 scanPage 的按款缓存/每次 lookup 重新判断。
+  const again = await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_u2' });
+  assert.equal(again.found, false);
 });
 
 test('③ ⭐ 缺码判定不再读「尺码管理」：且**请求期一次都不读**那张表（2026-10-14 她拍板）', async () => {

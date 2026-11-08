@@ -573,24 +573,20 @@ const createScanPageService = (rawGateway, options = {}) => {
    * `fallback` 非空 = 这一趟已经走了整表回退（耗时日志的 `whole_table_fallback` 用它）。
    */
   const readProductsByNumber = async ({ number, requestId }) => {
-    const numberField = fieldName(schema, 'product', 'number');
-    const filter = equalsFormula(numberField, number);
-    if (!filterEnabled || !filter) return { product: null, resolved: false, fallback: 'unavailable' };
-    const read = await readFilteredCapped({
-      tableKey: 'product',
-      filter,
-      cap: limits.productRowsPerNumber,
-      fallbackCap: limits.productRecords,
-      requestId,
-    });
-    if (!read.records.length && warnOnEmptyFilteredRead) {
+    // ⭐ 2026-11-09：按编号找货品也走 configTableCache（不再单独 listByFilter）。
+    //    TTL / record_changed 失效 / lastGood 与其它货品读取共用同一份快照。
+    const products = await getConfigRows({ gateway, tableKey: 'product' });
+    if (limits.productRecords > 0 && products.length > limits.productRecords) {
+      logWarn(config.events.limitExceeded, {
+        request_id: requestId, table_key: 'product', records: products.length, limit: limits.productRecords,
+      });
+      throw limitError(tableName('product'), products.length, limits.productRecords);
+    }
+    const product = findProduct(products, number);
+    if (!product && warnOnEmptyFilteredRead) {
       logWarn(config.events.filteredEmpty, { request_id: requestId, table_key: 'product', number });
     }
-    return {
-      product: findProduct(read.records, number),
-      resolved: read.records.length > 0,
-      fallback: read.fallback,
-    };
+    return { product, resolved: Boolean(product), fallback: '' };
   };
 
   /**
