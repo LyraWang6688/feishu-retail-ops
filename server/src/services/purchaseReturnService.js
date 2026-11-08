@@ -83,7 +83,10 @@ const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 const { logInfo, logWarn } = require('../utils/logger');
 
 /** 退货要扣哪些状态 —— **不在这里写死**，从库存注册表读（现存 = 门盒 + 样品 + 仓库）。 */
-const purchaseReturnStates = () => STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE].consumes || [];
+const purchaseReturnStates = () => {
+  const consumes = STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE].consumes;
+  return consumes === '*' ? null : (consumes || []);
+};
 
 const sumOf = (items, key) => items.reduce((sum, item) => sum + Number(item[key] || 0), 0);
 
@@ -205,7 +208,7 @@ const createPurchaseReturnService = (options = {}) => {
       const available = (allLive || []).filter((record) => (
         linkedRecordIds(record?.fields?.[liveTable.fields.product]).includes(productRecordId)
         && linkedRecordIds(record?.fields?.[liveTable.fields.size]).includes(sizeRef.recordId)
-        && states.includes(textValue(record?.fields?.[liveTable.fields.state]))
+        && (states === null || states.includes(textValue(record?.fields?.[liveTable.fields.state])))
       )).length;
       const declared = Number(item.quantity);
       const taken = Math.min(declared, available);

@@ -308,7 +308,7 @@ class InventoryService {
         const delta = behavior.direction === '减少' ? -quantity : quantity;
         const allLiveRecords = await this.gateway.listAll('liveInventory');
         // 消耗哪些状态由注册表声明；增加方向不消耗既有记录，只看目标状态本身。
-        const states = movement.consumes || [state];
+        const states = movement.consumes === '*' ? [null] : (movement.consumes || [state]);
         const liveRecords = states.flatMap((candidateState) =>
           this.findLiveInventoryIn(allLiveRecords, input.productRecordId, sizeReference.recordId, candidateState)
             .sort((left, right) => String(left.record_id).localeCompare(String(right.record_id))));

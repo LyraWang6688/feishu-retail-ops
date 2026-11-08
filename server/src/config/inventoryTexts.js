@@ -4,7 +4,7 @@
  * 库存操作的用户可见文案（配置先行：服务层不写死中文）。
  */
 const stateLabel = (states = [], liveInventoryTableName = '实时库存') => (
-  Array.isArray(states) && states.includes('')
+  Array.isArray(states) && (states.includes('') || states.includes(null) || states.includes('*'))
     ? String(liveInventoryTableName || '实时库存')
     : `${states.join('和')}库存`
 );
