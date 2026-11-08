@@ -181,7 +181,6 @@ test('AC5a 字段清单（语义键）逐字 = 页面真正用到的列，多一
     salesEntry: ['orderNo', 'writeStatus', 'recordedAt'],
     salesDetail: ['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product'],
     paymentRecord: ['salesEntry', 'amount', 'status', 'method', 'receivedAt'],
-    paymentMethod: ['name'],
     product: ['number', 'color'],
     accessory: ['name'],
   }, '这张清单是"页面上真正用到的列"的唯一来源（加列必须有消费点）');
@@ -193,6 +192,13 @@ test('AC5b 每次 listAll 都按需取字段：fieldNames = 清单里的**飞书
   await service.listOrders();
 
   for (const call of ordersCalls(fake.calls)) {
+    // 🔴 2026-11-08：`paymentMethod` 是**共享配置表**（售后 refundable / 交割单券关联同源）——
+    //   必须**整表读完整字段**，不许只取「名称」列（否则精简快照进整表缓存 ⇒ 别的模块误判）。
+    if (call.key === 'paymentMethod') {
+      assert.equal(call.fieldNames, undefined,
+        '支付方式=共享配置表 ⇒ 整表读（不许带 fieldNames，避免缓存被精简数据污染）');
+      continue;
+    }
     const table = V1_BITABLE_SCHEMA.tables[call.key];
     const expected = ORDER_FIELD_KEYS[call.key].map((key) => table.fields[key]).filter(Boolean);
     assert.ok(Array.isArray(call.fieldNames), `${call.key} 必须带 fieldNames`);
