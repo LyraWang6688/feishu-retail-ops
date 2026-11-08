@@ -359,8 +359,9 @@ if (updateBaseline) {
 
 const sourceCount = scanned.filter((file) => file.type === 'source').length;
 const testCount = scanned.filter((file) => file.type === 'test').length;
+const frontendCount = scanned.filter((file) => file.type === 'frontend').length;
 console.log(
-  `[文件大小棘轮] 扫描 ${scanned.length} 个文件：源码 ${sourceCount}（上限 ${limits.source}）/ 测试 ${testCount}（上限 ${limits.test}）`,
+  `[文件大小棘轮] 扫描 ${scanned.length} 个文件：源码 ${sourceCount}（上限 ${limits.source}）/ 测试 ${testCount}（上限 ${limits.test}）/ 前端 ${frontendCount}（上限 ${limits.frontend}）`,
 );
 console.log(`[基线] ${Object.keys(baseline.files).length} 个存量超限文件在册（只允许变小）`);
 if (!skipNetCheck) {
