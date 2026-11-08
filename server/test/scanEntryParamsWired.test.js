@@ -55,7 +55,7 @@ test('改配置即改行为：returnsToRealm=false ⇒ 扫完地址里不带 fro
 });
 
 test('A 套 / 客户端都接线了（源码哨兵：塞回"只登记不读"⇒ 红）', () => {
-  const routes = read('routes/scanPage/index.js');
+  const routes = read('routes/scanPage/index.js') + '\n' + read('routes/scanPage/routes.js');
   assert.match(routes, /realmEntryParams\(/, '路由必须读登记参数（不再只看开关）');
   assert.match(routes, /entry\.returnsToRealm === false/, '303 回跳必须按 returnsToRealm 分支');
   assert.match(routes, /withoutRealmQuery\(/, 'returnsToRealm=false 时必须去掉 from=<领域>');
