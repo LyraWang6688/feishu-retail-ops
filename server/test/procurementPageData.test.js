@@ -73,6 +73,35 @@ test('AC-P2c 已关联「采购明细」的销售明细 ⇒ 默认**不再出现
   assert.deepEqual(mixed.groups[0].sizes.map((one) => one.size), [39, 41], '已报的 40 码不出现');
 });
 
+// ── 2026-11-08（#950）：跳过原因**必须分开数**（修 #946 的 `trade_type_unknown` 误报）──────
+test('AC-P2e 跳过原因拆分：已报过货 ≠ 交易类型认不出（tradeTypeUnknownRows / alreadyReportedRows）', () => {
+  // ① 只有"已报过货" ⇒ 属正常业务事实，**不算**交易类型认不出
+  const reportedOnly = view([
+    salesRow({ product: 'recA', size: 39, reported: ['recDetail1'] }),
+  ]);
+  assert.equal(reportedOnly.alreadyReportedRows, 1);
+  assert.equal(reportedOnly.tradeTypeUnknownRows, 0, '已报过货的行**不许**算进 tradeTypeUnknownRows');
+  assert.equal(reportedOnly.skippedRows, 1, '总数保持（向后兼容）');
+
+  // ② 只有"交易类型真认不出" ⇒ 才算 tradeTypeUnknownRows
+  const unknownOnly = view([
+    salesRow({ product: 'recA', size: 39, trade: 'SALE_RETURN' }),
+  ]);
+  assert.equal(unknownOnly.tradeTypeUnknownRows, 1);
+  assert.equal(unknownOnly.alreadyReportedRows, 0);
+
+  // ③ 混合：两个数各归各的，`skippedRows` 仍是总数
+  const mixed = view([
+    salesRow({ product: 'recA', size: 39, reported: ['recDetail1'] }),
+    salesRow({ product: 'recA', size: 40, trade: 'SALE_RETURN' }),
+    salesRow({ product: 'recA', size: 41, trade: 'SALE_CASH' }),
+  ]);
+  assert.equal(mixed.alreadyReportedRows, 1);
+  assert.equal(mixed.tradeTypeUnknownRows, 1);
+  assert.equal(mixed.skippedRows, 2);
+  assert.equal(mixed.stats.spotSold, 1, '正常行照旧计入');
+});
+
 // ── AC-P2 三天窗口（上海时区）─────────────────────────────────────────────
 test('AC-P2 补货窗口 = [今天 00:00 - 3 天, 现在]：上海时区边界（业务负责人 2026-10-29 口径）', () => {
   const range = replenishWindow(NOW, config);

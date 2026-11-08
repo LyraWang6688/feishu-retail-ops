@@ -16,6 +16,10 @@ const { SCAN_WRITE } = require('../../config/scanWrite');
 const arrivalTab = require('../../config/workbenchArrival');
 const { createScanArrivalService } = require('../../services/scanArrivalService');
 const { createPurchaseWriteBackgroundService } = require('../../services/purchaseWriteBackgroundService');
+// #948：验收「后台那一跑」接**统一异步任务**（重试 / 最终失败发运营群）
+const { createAsyncJobPurchaseRunner } = require('../../services/asyncJobPurchaseRunner');
+const { getAsyncJobService } = require('../../services/asyncJobRuntime');
+const { ASYNC_JOBS } = require('../../config/asyncJobs');
 const { logError, logWarn } = require('../../utils/logger');
 // ⭐ 2026-10-28（采购页进入生产）：采购页的**只读读模型 + 提交**端点。
 //   🔴 挂在本文件（= 既有 workbench 父 router 已挂载的子路由）⇒ **不改共享文件 `routes/workbench.js`**，
@@ -129,6 +133,12 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
    *    `SCAN_WRITE.purchaseAsync` ⇒ `config/scanWrite.js` **一个字不动** ✓）。
    */
   const acceptBackground = options.acceptBackground || createPurchaseWriteBackgroundService({
+    // #948：统一异步任务（重试 / 失败发运营群）；用例注入 `options.acceptBackground` 时不建
+    jobRunner: options.purchaseJobRunner !== undefined
+      ? options.purchaseJobRunner
+      : createAsyncJobPurchaseRunner({
+        asyncJob: options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService(),
+      }),
     // 🔴 `runRest` = **既有写入口**（`scanArrivalService.finish` ✓ 不新开写库路径 ✗）——
     //    实参形状与改前那一次 `await arrivalService.finish(...)` **逐字同形**（键名一个不改 ✗）。
     runRest: async ({ requestId, submitKey, restInput = {} }) => {
@@ -165,6 +175,8 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         restFailed: SCAN_WRITE.events.purchaseBackgroundFailed,
         markFailedError: SCAN_WRITE.events.purchaseBackgroundMarkFailed,
       },
+      // 失败日志里的提示语也走注入（后台件不写中文 ✗）
+      texts: { backgroundFailedNotified: ASYNC_JOBS.texts.hints.backgroundFailedNotified },
     },
   });
   router.get(arrivalTab.api.detail, async (req, res) => {
@@ -266,6 +278,13 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         requestId: req.requestId,
         submitKey,
         context: { openId, requestId: req.requestId, batchNo },
+        // #948：统一任务记录 / 失败群通知要用的元数据（**不进**写库入参）
+        jobMeta: {
+          ownerOpenId: openId,
+          operatorName: req.workbenchUser?.name || '',
+          batchNo,
+          step: ASYNC_JOBS.texts.stepLabels.purchaseAcceptance,
+        },
         restInput: {
           openId,
           // ⚠️ 金额**原样**透传（不改成 `amount.value`）—— 形状与改前那一次 `finish(...)` 逐字同形 ✓；

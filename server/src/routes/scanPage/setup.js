@@ -6,6 +6,11 @@ const createScanPageSetup = ({ options, deps }) => {
     COOKIE_NAME, DEFAULT_REALM, ENTRY_RULE_TEXTS, FUNNEL, LABEL_PRINT_QUEUE, PURCHASE_RETURN_REALM, REALM_SCAN, SCAN_AUTH_REDIRECT, SCAN_PAGE, SCAN_WRITE, SalesFollowupService, TICKET, V1BitableGateway, asList, buildLoginStartUrl, buildPaymentRows, createFirstVisitKeyAdopter, createLarkJsapiService, createLegacySessionProbe, createMultiItemOrderService, createMultiItemPendingOf, createPageContext, createPageTokenMiddleware, createPaymentMethodsService, createPurchaseSchedulerOf, createPurchaseWriteBackgroundService, createSalesAsyncRuntime, createScanPageRouter, createScanPageService, createScanWriteService, createVoucherPaymentService, encodeSession, express, feishuAuthEnabled, fillWriteText, getLabelPrintQueue, getSessionUser, handleAddLineOf, handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit, handlePrintLabelOf, handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, handleUiTap, installScanPageRoutes, invalidateLiveInventorySnapshot, isDataNotReady, logError, logInfo, logWarn, markRealmUsedOf, markTapCode, mergeFirstItemEntries, mountedPathOf, orderWithPreferred, pageSessionKey, pageSessionKeyOfRequest, parseMultiItemGroups, parseNumberSegments, parsePaymentRows, parseReplenishEntries, parseReturnEntries, pathWithoutTicket, purchaseAmountInvalidOf, purchaseAmountMissingOf, purchaseAmountRequiredForOf, purchaseEntryViolation, purchaseWriteDisabledError, realmEntryParams, realmOfActionOf, redeemSessionTicket, renderFlowOf, renderMinimalPage, renderSalePaymentStepPage, renderSalesHome, renderScanMessagePage, renderScanPage, renderScanSkeleton, requireWorkbenchAccess, resolveMultiItemOrderConfig, resolvePurchaseReturnImageOptions, resolveRealm, resolveScanNext, roleOf, sellableSizeTexts, sendHtml, setTraceFields, sizesForCategory, uiTapResultMiddleware, withPageSession,
   } = deps;
 
+  // #948：统一异步任务（重试 / 失败发运营群）—— 适配器与单例都在这里 require（不塞进 index.js 的巨型 deps 列表）
+  const { createAsyncJobPurchaseRunner } = require('../../services/asyncJobPurchaseRunner');
+  const { getAsyncJobService } = require('../../services/asyncJobRuntime');
+  const { ASYNC_JOBS } = require('../../config/asyncJobs');
+
   const config = options.config || SCAN_PAGE;
   const {
     openIdOf, sessionIdOf, isRecordBase, scanTargetOf, backTargetFor, lookupInputOf, postActionFor,
@@ -469,6 +474,12 @@ const createScanPageSetup = ({ options, deps }) => {
   const adoptFirstVisitSubmitKey = createFirstVisitKeyAdopter({ getSessions: () => writeService?.sessions });
 
   const purchaseBackground = options.purchaseBackground || createPurchaseWriteBackgroundService({
+    // #948：统一异步任务（重试 / 失败发运营群）走**注入**的适配器；用例注入 null ⇒ 逐字回落到单次
+    jobRunner: options.purchaseJobRunner !== undefined
+      ? options.purchaseJobRunner
+      : createAsyncJobPurchaseRunner({
+        asyncJob: options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService(),
+      }),
     // 🔴 `runRest` = **既有写入口**（不新开写库路径 ✗）：补货 / 退货各自的写服务方法。
     //    ⚠️ **实参形状与改前那次 `await writeService.…(…)` 逐字同形**（键名一个不改 ✗）——
     //      判据 `test/multiItemOrderRoute.test.js` 的 **RT2-static** 逐字钉着这张参数清单

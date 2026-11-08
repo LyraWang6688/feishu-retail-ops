@@ -26,7 +26,7 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const crypto = require('node:crypto');
-const { logError, logInfo } = require('./utils/logger');
+const { logError, logInfo, logWarn } = require('./utils/logger');
 const { uploadDir } = require('./utils/upload');
 const { startUploadCleanup } = require('./utils/uploadCleanup');
 // ⭐ 2026-10-28：原来这里还 import 两条**群推送**的调度件 ——
@@ -228,6 +228,14 @@ if (require.main === module) {
   } else {
     logInfo('product.tag_qr.sweep.disabled', { env: 'TAG_QR_SWEEP_ENABLED' });
   }
+
+  // ⭐ 2026-11-08（#948）：统一异步任务启动收尾 —— **补发**上一次进程里没发出去的失败通知
+  //   （落成 failed 但通知失败/进程退出的）。后台跑、不阻塞启动；异常只 warn（统一层不许把服务搞挂）。
+  //   ⚠️ 刻意 require 在 `if (require.main === module)` 内：单测加载 app.js 时**不触发**任何真发送。
+  setImmediate(() => {
+    require('./services/asyncJobRuntime').startAsyncJobService()
+      .catch((error) => logWarn('async_job.start.failed', { error: String(error?.message || error) }));
+  });
 
   // 只监听回环地址：公网一律走 Nginx。
   //

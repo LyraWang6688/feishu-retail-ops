@@ -28,6 +28,7 @@ const { createScanPageService } = require('../services/scanPageService');
 const { saleSizeGroups } = require('../views/scanPageRealm');
 const { AfterSalesReturnService } = require('../services/afterSalesReturnService');
 const { createAfterSalesAsyncService } = require('../services/afterSalesAsyncService');
+const { getAsyncJobService } = require('../services/asyncJobRuntime');
 const { createPaymentMethodsService } = require('../services/paymentMethodsService');
 const { redirectWithSubmitToast } = require('../utils/submitToast');
 const { AFTER_SALES_DERIVED } = require('../config/afterSalesDerived');
@@ -154,6 +155,8 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
     if (!jobs) {
       jobs = createAfterSalesAsyncService({
         dir: options.afterSalesJobsDir,
+        // #948：统一 job（状态 / 重试分类 / 失败通知发运营群）。用例注入 `options.asyncJobs`。
+        asyncJobs: options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService(),
         execute: (payload, execOptions) => resolveReturnService().execute(payload, execOptions),
         onSettled: () => resolveScanService().invalidateCache(),
       });
@@ -203,6 +206,9 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
         type: 'return', requestId: prepared.requestId,
         payload: { ...payload, salesEntryOrderNo: prepared.orderNo },
         correlation: tapIdFromRequest(req),
+        // #948：状态接口"只能查自己的任务"靠它；通知里的"操作人"也用它（拿不到名字就不写）
+        ownerOpenId: req.workbenchUser?.open_id || '',
+        operatorName: req.workbenchUser?.name || '',
       });
       return redirectWithSubmitToast(res, {
         path: backTo, orderNo: prepared.orderNo, extra: { submitted: '1' },
