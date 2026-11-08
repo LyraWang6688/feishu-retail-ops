@@ -4,6 +4,7 @@
  *
  * 规则（业务负责人 2026-10-18 批准）：
  *   1) 源码 `server/src/**\/*.js` 单文件 ≤ 800 行；测试 `server/test/**\/*.js` 单文件 ≤ 1200 行；
+ *      工作台前端 `server/public/workbench/**\/*.js` 同样 ≤ 800 行；
  *   2) `size-baseline.json` 是「存量超限文件」白名单：登记当前行数；
  *      **只有「当前 > 基线」才红**（防膨胀）；**文件变小但没降基线 ⇒ 只警告，不失败**
  *      （方案 C，2026-10-20 业务负责人拍板：棘轮是为了防膨胀，不惩罚瘦身）；
@@ -37,9 +38,10 @@ const BASELINE_PATH = path.join(SCRIPT_DIR, 'size-baseline.json');
 const SCAN_ROOTS = [
   { dir: 'server/src', type: 'source', label: '源码' },
   { dir: 'server/test', type: 'test', label: '测试' },
+  { dir: 'server/public/workbench', type: 'frontend', label: '前端' },
 ];
 
-const DEFAULT_LIMITS = { source: 800, test: 1200 };
+const DEFAULT_LIMITS = { source: 800, test: 1200, frontend: 800 };
 const DEFAULT_MAX_NET_INCREASE = 100;
 
 // ── 参数 ─────────────────────────────────────────────────────────────────────
@@ -76,6 +78,8 @@ if (wantsHelp) {
       '',
       '规则 C：文件比基线**大** ⇒ 失败；文件比基线**小**但没降基线 ⇒ 只警告，不失败。',
       '  node scripts/check-file-size.mjs --no-net-check       跳过「净增 > N 行」检查',
+      '',
+      '扫描范围：server/src（源码 800）· server/test（测试 1200）· server/public/workbench（前端 800）',
       '',
       '环境变量：SIZE_BASE_REF（等价 --base）',
     ].join('\n'),
@@ -154,6 +158,7 @@ const clampLimit = (configured, fallback) => (
 const limits = {
   source: clampLimit(baselineRawLimits().source, DEFAULT_LIMITS.source),
   test: clampLimit(baselineRawLimits().test, DEFAULT_LIMITS.test),
+  frontend: clampLimit(baselineRawLimits().frontend, DEFAULT_LIMITS.frontend),
 };
 
 /** 仅用于读取可选的 limits / maxNetIncrease（缺省用脚本内置值）。 */
@@ -164,6 +169,7 @@ function baselineRawLimits() {
     return {
       source: parsed?.limits?.source,
       test: parsed?.limits?.test,
+      frontend: parsed?.limits?.frontend,
     };
   } catch {
     return {};
@@ -210,7 +216,7 @@ const resolveGitBase = (requested) => {
 const readNetChanges = (ref) => {
   const result = spawnSync(
     'git',
-    ['diff', '--numstat', '--diff-filter=M', ref, '--', 'server/src', 'server/test'],
+    ['diff', '--numstat', '--diff-filter=M', ref, '--', 'server/src', 'server/test', 'server/public/workbench'],
     { cwd: REPO_ROOT, encoding: 'utf8' },
   );
   if (result.error || result.status !== 0) return null;

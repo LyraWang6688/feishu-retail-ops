@@ -53,6 +53,16 @@ test('方案 C：文件比基线大 ⇒ exit 1', () => {
   assert.match(out.stderr, /基线/);
 });
 
+test('前端工作台文件超限 ⇒ exit 1（2026-11-08 纳入门禁）', () => {
+  const repo = makeRepo({ lines: 1 });
+  const dir = path.join(repo.server, 'public', 'workbench', 'features');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'big.js'), '// line\n'.repeat(801));
+  const out = run(repo);
+  assert.equal(out.status, 1, `${out.stdout}\n${out.stderr}`);
+  assert.match(out.stderr, /新超限/);
+});
+
 test('方案 C：新文件超限 ⇒ exit 1', () => {
   const repo = makeRepo({ lines: 801 });
   const out = run(repo);
