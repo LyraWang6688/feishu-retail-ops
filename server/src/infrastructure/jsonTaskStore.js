@@ -72,6 +72,27 @@ class JsonTaskStore {
     });
   }
 
+  /**
+   * ⭐ 2026-11-08（issue #891）：**原子“不存在才创建”**。
+   *
+   * 查询 + 创建必须在**同一个 recordId 的写互斥**里完成；否则两个并发请求
+   * 都先 get 到 null、都 create，后写覆盖前写，且两边都以为自己创建成功。
+   *
+   * @returns {{created:boolean, record:object}}
+   */
+  async createIfAbsent(task) {
+    const recordId = task?.[this.idField];
+    if (!recordId) throw new Error(`Task is missing ${this.idField}`);
+    return this._serializeWrite(recordId, async () => {
+      const existing = await this.get(recordId);
+      if (existing) return { created: false, record: existing };
+      const now = new Date().toISOString();
+      const record = { ...task, created_at: task.created_at || now, updated_at: task.updated_at || now };
+      await writeFileAtomic(this._filePath(recordId), JSON.stringify(record, null, 2));
+      return { created: true, record };
+    });
+  }
+
   async get(recordId) {
     try {
       return JSON.parse(await fs.promises.readFile(this._filePath(recordId), 'utf8'));

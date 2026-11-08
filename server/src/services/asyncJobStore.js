@@ -56,9 +56,7 @@ const createAsyncJobStore = ({ dir } = {}) => {
   const createIfAbsent = async (job = {}) => {
     const jobId = String(job.job_id ?? '').trim();
     if (!JOB_ID_PATTERN.test(jobId)) throw new Error(`invalid async job id: ${job.job_id}`);
-    const existing = await store.get(jobId);
-    if (existing) return { job: existing, created: false };
-    const record = {
+    const { created, record } = await store.createIfAbsent({
       job_id: jobId,
       type: String(job.type || ''),
       status: String(job.status || ASYNC_JOB_STATUS.QUEUED),
@@ -71,9 +69,8 @@ const createAsyncJobStore = ({ dir } = {}) => {
       meta: job.meta && typeof job.meta === 'object' ? { ...job.meta } : {},
       notified_at: '',
       notify: { attempts: 0, last_error: '', reason: '' },
-    };
-    const created = await store.create(record);
-    return { job: created, created: true };
+    });
+    return { job: record, created };
   };
 
   const update = (jobId, patch) => {
