@@ -441,12 +441,12 @@ test('售后动作的库存语义：退货增加、赔货与现货减少且只�
   });
 });
 
-// 采购退货的库存语义同样是契约：方向错了会把退货变成入库；consumes 少了「仓库」/空状态
-// 就会让"仓库里的货退不掉"（业务负责人的口径是**不看所属状态**，三种状态全退）。
+// 采购退货的库存语义同样是契约：方向错了会把退货变成入库；
+// consumes 必须是 '*'（业务负责人的口径是**不看所属状态**，实时库存有记录就退）。
 // ledgerSource 为 null 也是有意为之——「库存流水」里没有能关联「单据信息」的字段。
-test('采购退货动作的库存语义：方向减少、状态无关（门盒+样品+仓库）、无来源关联字段', () => {
+test('采购退货动作的库存语义：方向减少、consumes=*（任何状态）、无来源关联字段', () => {
   assert.deepEqual(STOCK_MOVEMENTS.STOCK_PURCHASE_DECREASE, {
-    direction: '减少', ledgerSource: null, consumes: ['门盒', '样品', '仓库', ''], triggerSampleReplacement: false,
+    direction: '减少', ledgerSource: null, consumes: '*', triggerSampleReplacement: false,
     // ⚠️ 2026-11-08（issue #961）成对迁移：来源身份 = 真实三元组（批次身份 ｜ 货品 ｜ 尺码）。
     operationKey: {
       kind: 'STOCK_PURCHASE_DECREASE',

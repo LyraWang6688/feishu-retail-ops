@@ -139,7 +139,7 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
           results[index] = await this.executeOperation(journal);
           continue;
         }
-        const states = movement.consumes || [item.state];
+        const states = movement.consumes === '*' ? [null] : (movement.consumes || [item.state]);
         const liveRecords = states.flatMap((candidateState) =>
           this.findLiveInventoryIn(
             allLive, item.input.productRecordId, sizeReference.recordId, candidateState,
@@ -228,14 +228,15 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
           //    再**一次**删（≤500/片由网关分片）。
           const confirmed = [];
           for (const plan of plans) {
-            const consumableStates = movement.consumes || [plan.operation.state];
+            const consumesAny = movement.consumes === '*';
+            const consumableStates = movement.consumes === '*' ? null : (movement.consumes || [plan.operation.state]);
             for (const recordId of plan.operation.live_record_ids) {
               if (plan.removedIds.includes(recordId)) continue;
               const record = fetchedById.get(recordId);
               if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
               if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(plan.item.input.productRecordId) ||
                 !linkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
-                !consumableStates.includes(textValue(record.fields?.[stateField]))) {
+                (!consumesAny && !consumableStates.includes(textValue(record.fields?.[stateField])))) {
                 throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
               }
               confirmed.push({ plan, recordId });
@@ -281,14 +282,15 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
           // ⚠️ 老替身 / 夹具没有 `deleteBatch` ⇒ **只有删这一步**退回逐双：下面这段与改动前
           //    **逐字相同**（"确认一条 → 删一条 → 记一条"**交错**，连出错时已删到哪一条都一样）。
           for (const plan of plans) {
-            const consumableStates = movement.consumes || [plan.operation.state];
+            const consumesAny = movement.consumes === '*';
+            const consumableStates = movement.consumes === '*' ? null : (movement.consumes || [plan.operation.state]);
             for (const recordId of plan.operation.live_record_ids) {
               if (plan.removedIds.includes(recordId)) continue;
               const record = fetchedById.get(recordId);
               if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
               if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(plan.item.input.productRecordId) ||
                 !linkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
-                !consumableStates.includes(textValue(record.fields?.[stateField]))) {
+                (!consumesAny && !consumableStates.includes(textValue(record.fields?.[stateField])))) {
                 throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
               }
               await this.gateway.delete('liveInventory', recordId);
