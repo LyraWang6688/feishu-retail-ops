@@ -1,5 +1,5 @@
 // ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
-const { purchaseMessage, purchaseToast, arrivalToast, inventoryToast, returnNotice } = require('../config/purchaseWebhookTexts');
+const { purchaseToast, arrivalToast, inventoryToast, returnNotice } = require('../config/purchaseWebhookTexts');
 const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
@@ -17,7 +17,6 @@ const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 // 报单链路 2026-10-07 起就是免确认（`publishPurchaseRequest` 直接调 `confirmPurchaseRequest`），
 // 那张卡没有任何发送方、动作也认领不了 —— 业务负责人逐条批准后连卡片、动作常量、
 // `handleCardAction` 一起删干净（历史注释见 `purchase/messaging.js` 的 `updatePurchaseActionCard`）。
-const { purchaseStatusCard } = require('../utils/larkCards');
 // MOVEMENT_PURCHASE_DECREASE 是 #83 采购退货扣库存用的流水类型（退货独占链，见 processSupplierReturn）。
 // STOCK_MOVEMENTS 是「库存行为注册表」：退货核对"能退几双"时要数的可退状态
 //（= STOCK_PURCHASE_DECREASE 的 consumes：门盒 + 样品 + 仓库）**只从它读**，
@@ -297,10 +296,6 @@ class PurchaseWebhookService {
 
   async resolvePurchaseInboundState(productRecordId) {
     return arrival.resolvePurchaseInboundState.call(this, productRecordId);
-  }
-
-  async updatePurchaseActionCard(task, event, card) {
-    return messaging.updatePurchaseActionCard.call(this, task, event, card);
   }
 
   async ensurePostingPlan(taskId, task, options = {}) {
@@ -728,10 +723,6 @@ class PurchaseWebhookService {
     // 写表已经成功 ⇒ 取回"并行渲染"的结果（通常早就好了）；渲染失败时为 null ⇒ deliver 现场渲染。
     const preparedImages = await preparedImagesPromise;
     const imageDelivery = await this.deliverSupplierImages(taskId, task, posting, { preparedImages });
-    // 更新卡片为"已完成"状态（免确认路径没有卡片，跳过）
-    if (!options.skipCardUpdate) {
-      await this.updatePurchaseActionCard(task, event, purchaseStatusCard({ ...draft, batch_no: plan.batch_no }, purchaseMessage.m1, purchaseMessage.m2({ plan, requestIds }), 'green'));
-    }
     return {
       toast: { type: 'success', content: purchaseToast.m1({ plan, requestIds }) },
       ...posting,

@@ -220,29 +220,6 @@ const messaging = {
     };
   },
 
-  /**
-   * 更新采购消息卡片（类似销售的 updateSalesActionCard）
-   */
-  async updatePurchaseActionCard(task, event, card) {
-    const messageId = event?.context?.open_message_id || event?.open_message_id || task.card_message_id;
-    if (!messageId) {
-      console.warn('lark.purchase.card.update.skipped', { task_id: task.task_id, reason: 'missing_message_id' });
-      return false;
-    }
-    try {
-      const patch = this.client.im?.v1?.message?.patch || this.client.im?.message?.patch;
-      if (!patch) return false;
-      const response = await patch.call(this.client.im?.v1?.message || this.client.im.message, {
-        path: { message_id: messageId },
-        data: { content: JSON.stringify(card) },
-      });
-      if (response.code !== 0) throw new Error(response.msg + ' (Code: ' + response.code + ')');
-      return true;
-    } catch (error) {
-      console.warn('lark.purchase.card.update.failed', { task_id: task.task_id, error: error.message });
-      return false;
-    }
-  },
 };
 
 module.exports = messaging;
