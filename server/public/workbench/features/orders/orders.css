@@ -218,4 +218,8 @@
   font-weight: var(--weight-bold);
 }
 .action-form summary::-webkit-details-marker { display: none; }
+/* ⭐ 2026-11-09（业务负责人批注）：点开「验收到货」出明细之后 ——
+   入口按钮与「点开看这一批的采购明细…」提示都不再占地方（只留明细 + 金额 + 提交） */
+.action-form[open] > summary,
+.action-form[open] [data-view="arrival-detail-hint"] { display: none; }
 .action-form[open] > summary { margin-bottom: var(--space-2); }

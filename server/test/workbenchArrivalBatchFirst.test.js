@@ -126,8 +126,11 @@ test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采�
   assert.ok(earlyAt >= 0 && lateAt >= 0, '两个日期标题都要出现 ✓');
   assert.ok(earlyAt < lateAt, '⭐ 由远及近：10-11 在 10-12 上面（早→晚）✓');
   // 供应商名居中（批注）
-  assert.ok(readWorkbench('features/orders/orders.css').includes('text-align: center'),
-    '供应商名居中样式在 ✓');
+  const css = readWorkbench('features/orders/orders.css');
+  assert.ok(css.includes('text-align: center'), '供应商名居中样式在 ✓');
+  // ⭐ 2026-11-09 批注：展开后不再显示「验收到货」按钮和「点开看明细」提示
+  assert.ok(css.includes('.action-form[open] > summary'), '展开后隐藏入口按钮的样式在 ✓');
+  assert.ok(css.includes('.action-form[open] [data-view="arrival-detail-hint"]'), '展开后隐藏提示文字的样式在 ✓');
   // ④ **采购单号不许作为可见文字出现**（data 属性留给提交用，页面看不到）
   for (const batch of ['CGD-WAIT-1', 'CGD-WAIT-2', 'CGD-WAIT-3']) {
     assert.equal(second.includes(`>${batch}<`), false, `${batch} 不许作为可见文字 ✗`);
