@@ -262,8 +262,17 @@ class SalesFollowupService {
         loader: () => this.listAllWithRetry('paymentMethod'),
       }),
       this.listAllWithRetry('paymentRecord', fieldOptions('paymentRecord')),
-      this.listAllWithRetry('product', fieldOptions('product')),
-      accessoryConfigured ? this.listAllWithRetry('accessory', fieldOptions('accessory')) : Promise.resolve([]),
+      // 配置表：精简字段走**独立的字段集快照**（与完整字段分开，避免 #990 污染）。
+      getConfigRows({
+        gateway: this.gateway, tableKey: 'product',
+        fields: fieldOptions('product').fieldNames,
+        loader: () => this.listAllWithRetry('product', fieldOptions('product')),
+      }),
+      accessoryConfigured ? getConfigRows({
+        gateway: this.gateway, tableKey: 'accessory',
+        fields: fieldOptions('accessory').fieldNames,
+        loader: () => this.listAllWithRetry('accessory', fieldOptions('accessory')),
+      }) : Promise.resolve([]),
     ]);
     /**
      * ⭐⭐ 2026-10-16（性能 · 线上 27~42 秒的真凶）：**「实时库存」一次请求只整表读一次**。
