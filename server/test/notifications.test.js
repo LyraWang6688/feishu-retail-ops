@@ -33,6 +33,10 @@ test('resolveNotification：主 env / fallback / 缺失 / 关掉 / 未知事件'
   const privateTarget = resolveNotification('observability_alert', { ...env, NOTIFY_PRIVATE_OPEN_ID: 'ou_owner' });
   assert.equal(privateTarget.reason, 'disabled');
   assert.equal(privateTarget.target, 'private');
+  const masterOn = resolveNotification('observability_alert', {
+    ...env, NOTIFY_PRIVATE_OPEN_ID: 'ou_owner', OBSERVABILITY_ALERTS_ENABLED: 'true',
+  });
+  assert.equal(masterOn.reason, 'ok');
 
   const missing = resolveNotification('async_job_failed', { ...env, PURCHASE_CHAT_ID: '' });
   assert.equal(missing.reason, 'target_missing');
