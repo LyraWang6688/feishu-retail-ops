@@ -17,6 +17,7 @@ const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMovements');
 const { createProductEnricher } = require('./procurementProductEnricher');
 const { logInfo, logWarn } = require('../utils/logger');
+const { getConfigRows } = require('./configTableCache');
 const {
   textOf, linkedIdsOf, buildReplenishView,
 } = require('./procurementPageData');
@@ -41,18 +42,14 @@ const createProcurementPageService = (options = {}) => {
   const productFields = () => (schema.tables?.product?.fields) || {};
 
   // ── 行为表索引（记录ID → 行为编码）—— 唯一用途：把「销售明细.交易类型」的关联解析成现货/预订 ──
-  let behaviorCache = { at: 0, index: null };
   const loadBehaviorIndex = async () => {
-    const ttl = Number(config.caches?.behaviorMs) || 0;
-    if (behaviorCache.index && ttl > 0 && now() - behaviorCache.at < ttl) return behaviorCache.index;
     const fields = (schema.tables?.behavior?.fields) || {};
-    const records = await gateway.listAll('behavior');
+    const records = await getConfigRows({ gateway, tableKey: 'behavior' });
     const index = new Map();
     for (const record of records || []) {
       const code = textOf(record?.fields?.[fields.code]).trim();
       if (record?.record_id && code) index.set(String(record.record_id), code);
     }
-    behaviorCache = { at: now(), index };
     return index;
   };
 

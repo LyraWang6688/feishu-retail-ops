@@ -102,10 +102,6 @@ const buildProcurementPageConfig = (env = process.env) => {
       sizeAsc: true,
       newProductCreatedAtAsc: true,
     }),
-    // 只读缓存（行为表很小；默认 60 秒，0 = 每次重读）
-    caches: Object.freeze({
-      behaviorMs: readInt(env, 'PROCUREMENT_BEHAVIOR_CACHE_MS', 60000, { min: 0, max: 3600000 }),
-    }),
     // 日志事件名（只报事实：数量 / 耗时 / 结果，不报 PII）
     events: Object.freeze({
       replenishLoaded: readString(env, 'PROCUREMENT_EVENT_REPLENISH', 'procurement.page.replenish_loaded'),

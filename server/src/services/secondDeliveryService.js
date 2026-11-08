@@ -17,6 +17,7 @@ const { asDate, isWithinLookupWindow } = require('../utils/salesDateWindows');
 const { isOnOrAfterSince } = require('../config/dataSince');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { logInfo, logWarn } = require('../utils/logger');
+const { getConfigRows } = require('./configTableCache');
 const { mergeCorrelation } = require('../utils/correlationFields');
 // ⭐ 2026-10-08：「退过 / 换过 / 赔过 的明细不属于待处理」——判据（唯一一处）在售后配置里。
 const { isAfterSalesFulfillment } = require('../config/afterSales');
@@ -284,7 +285,10 @@ class SecondDeliveryService {
       this.read(() => this.gateway.listAll('salesEntry'), 'second_delivery.reminder.list_entries'),
       this.read(() => this.gateway.listAll('salesDetail'), 'second_delivery.reminder.list_details'),
       this.read(() => this.gateway.listAll('paymentRecord'), 'second_delivery.reminder.list_payments'),
-      this.read(() => this.gateway.listAll('behavior'), 'second_delivery.reminder.list_behaviors'),
+      getConfigRows({
+        gateway: this.gateway, tableKey: 'behavior',
+        loader: () => this.read(() => this.gateway.listAll('behavior'), 'second_delivery.reminder.list_behaviors'),
+      }),
     ]);
     const entryFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
