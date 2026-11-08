@@ -32,7 +32,6 @@
  * 边界：
  *   · 只调度**写**（create / update / delete 及其批量口）；读不进调度器（否则页面变慢）。
  *   · 本层不重写任何业务逻辑、不改 payload、不改返回值 —— 成功时原样返回 `work()` 的结果。
- *   · `FEISHU_WRITE_SCHEDULER_ENABLED=false` ⇒ 网关拿到 `null`，所有写**逐字回到改动前**（回滚开关）。
  */
 
 const {
@@ -214,17 +213,14 @@ const createFeishuWriteScheduler = ({
   return { run, stats, config };
 };
 
-// ── 进程级单例（网关默认用它；`FEISHU_WRITE_SCHEDULER_ENABLED=false` ⇒ null）────────────
+// ── 进程级单例（网关默认用它；**没有开关，始终开启**）────────────────────────────
 let instance = null;
 let initialized = false;
 
 const getFeishuWriteScheduler = () => {
   if (!initialized) {
     initialized = true;
-    instance = FEISHU_WRITE_SCHEDULER.enabled === true
-      ? createFeishuWriteScheduler({ config: FEISHU_WRITE_SCHEDULER })
-      : null;
-    if (!instance) logInfo('feishu.write.scheduler.disabled', { env: 'FEISHU_WRITE_SCHEDULER_ENABLED' });
+    instance = createFeishuWriteScheduler({ config: FEISHU_WRITE_SCHEDULER });
   }
   return instance;
 };

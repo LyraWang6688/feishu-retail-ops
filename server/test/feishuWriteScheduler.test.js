@@ -11,7 +11,7 @@
 //   AC-WS5 日志：`queue_wait_ms` / `concurrency_limit` / `attempts` / `active_count` +
 //          job/request 关联键（task_id / tap_id …）；
 //   AC-WS6 配置闸门：并发数 / 重试次数 / 退避 / 可重试错误码都能用环境变量覆盖，
-//          配错当场抛；`FEISHU_WRITE_SCHEDULER_ENABLED=false` ⇒ 单例为空（回滚开关）。
+//          配错当场抛；调度器始终开启（没有环境变量开关）。
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -58,7 +58,6 @@ const defer = () => {
 // ── AC-WS6：配置（环境变量覆盖 / 配错当场抛）──────────────────────────────────
 test('AC-WS6 配置：默认值 + 环境变量覆盖 + 配错当场抛', () => {
   const defaults = buildFeishuWriteSchedulerConfig({});
-  assert.equal(defaults.enabled, true);
   assert.equal(defaults.maxConcurrency, 3);
   assert.equal(defaults.groupByTable, true);
   assert.equal(defaults.groupByOperation, true);
@@ -67,7 +66,6 @@ test('AC-WS6 配置：默认值 + 环境变量覆盖 + 配错当场抛', () => {
   assert.deepEqual(defaults.retry.retryableHttpStatuses, [429]);
 
   const custom = buildFeishuWriteSchedulerConfig({
-    FEISHU_WRITE_SCHEDULER_ENABLED: 'false',
     FEISHU_WRITE_MAX_CONCURRENCY: '1',
     FEISHU_WRITE_GROUP_BY_TABLE: 'false',
     FEISHU_WRITE_GROUP_BY_OPERATION: 'false',
@@ -76,7 +74,6 @@ test('AC-WS6 配置：默认值 + 环境变量覆盖 + 配错当场抛', () => {
     FEISHU_WRITE_RETRY_MAX_DELAY_MS: '2000',
     FEISHU_WRITE_RETRY_LARK_CODES: '1254607, 1254291',
   });
-  assert.equal(custom.enabled, false);
   assert.equal(custom.maxConcurrency, 1);
   assert.equal(custom.groupByTable, false);
   assert.equal(custom.groupByOperation, false);
@@ -89,7 +86,6 @@ test('AC-WS6 配置：默认值 + 环境变量覆盖 + 配错当场抛', () => {
 
   assert.throws(() => buildFeishuWriteSchedulerConfig({ FEISHU_WRITE_MAX_CONCURRENCY: '0' }), /必须是 1~32 之间的整数/);
   assert.throws(() => buildFeishuWriteSchedulerConfig({ FEISHU_WRITE_MAX_CONCURRENCY: 'many' }), /必须是 1~32 之间的整数/);
-  assert.throws(() => buildFeishuWriteSchedulerConfig({ FEISHU_WRITE_SCHEDULER_ENABLED: 'maybe' }), /必须是显式布尔/);
   assert.throws(() => buildFeishuWriteSchedulerConfig({ FEISHU_WRITE_RETRY_MAX_ATTEMPTS: '99' }), /必须是 1~10 之间/);
 });
 
@@ -363,17 +359,11 @@ test('AC-WS5 queue_wait_ms = 从入队到真正开始执行（组内被前一个
   assert.ok(secondLog, `第二个任务的 queue_wait_ms 必须反映排队时间；实际日志：${JSON.stringify(applied)}`);
 });
 
-// ── AC-WS6：进程级单例的开关 ─────────────────────────────────────────────────
-test('AC-WS6 单例：默认按配置建；注入 null ⇒ 网关直写（回滚开关）', () => {
+// ── AC-WS6：进程级单例（始终开启） ──────────────────────────────────────────
+test('AC-WS6 单例：默认按配置建，没有环境变量开关', () => {
   resetFeishuWriteSchedulerForTests();
   const scheduler = getFeishuWriteScheduler();
   assert.ok(scheduler && typeof scheduler.run === 'function');
-
-  setFeishuWriteSchedulerForTests(null);
-  assert.equal(getFeishuWriteScheduler(), null, '关掉后网关拿到 null ⇒ 所有写逐字回到改动前');
-
-  resetFeishuWriteSchedulerForTests();
-  assert.ok(getFeishuWriteScheduler(), 'reset 后按配置重新建');
   resetFeishuWriteSchedulerForTests();
 });
 

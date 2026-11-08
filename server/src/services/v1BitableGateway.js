@@ -87,8 +87,7 @@ class V1BitableGateway {
    * · 分组：默认「表 + 操作类型」（同表串行、跨表有限并发）；`options.groupKey` 可显式覆盖。
    * · 重试：只重试"确定没写进去"的瞬时错误（1254607 / 429 / 瞬时 400），重放**同一个闭包**
    *   （payload 在调度外算好 ⇒ 每次重试逐字相同，不改任何业务键）。
-   * · 调度器为空（`FEISHU_WRITE_SCHEDULER_ENABLED=false` 或用例注入 `null`）⇒ **直接执行**，
-   *   行为与改动前逐字一致（回滚开关）。
+   * · 仅测试可注入 `null` 关闭调度；生产始终走全局调度器（没有环境变量开关）。
    */
   async scheduledWrite(tableKey, operation, work, options = {}) {
     const scheduler = this.writeScheduler;

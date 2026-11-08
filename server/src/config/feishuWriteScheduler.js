@@ -46,7 +46,6 @@ const buildFeishuWriteSchedulerConfig = (env = process.env) => {
   const retryMaxDelayMs = readInt(env, 'FEISHU_WRITE_RETRY_MAX_DELAY_MS', 8000, { min: 0, max: 600000 });
   const codes = readList(env, 'FEISHU_WRITE_RETRY_LARK_CODES');
   return Object.freeze({
-    enabled: readFlag(env, 'FEISHU_WRITE_SCHEDULER_ENABLED', true),
     // 不同组（表 + 操作类型）之间最多同时几个写入请求。默认 3：同表串行、跨表有限并发，
     // 既不把整条链路锁成一条（"不要全局锁死"），又给飞书留出并发余量。
     maxConcurrency: readInt(env, 'FEISHU_WRITE_MAX_CONCURRENCY', 3, { min: 1, max: 32 }),
