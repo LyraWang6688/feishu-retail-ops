@@ -37,6 +37,8 @@ const EVENTS = Object.freeze([
   'cleanup.ttl.started',
   'cleanup.unlink_failed',
   'client.resource.failed',
+  'douyin.laike.request.failed',
+  'douyin.laike.token.failed',
   'feishu.write.applied',
   'feishu.write.failed',
   'feishu.write.retry',
