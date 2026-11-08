@@ -162,6 +162,8 @@ const sendHtml = (res, status, html) => res.status(status)
   .set('X-Content-Type-Options', 'nosniff')
   .send(html);
 
+const { createPageContext } = require('./pageContext');
+
 const createScanPageRouter = (options = {}) => {
   const config = options.config || SCAN_PAGE;
   // 拆分第 2 刀：渲染日志/漏斗的实现搬到 `./renderContext.js`；这里只创建一次。
@@ -970,60 +972,11 @@ const createScanPageRouter = (options = {}) => {
    *    —— 详见 `services/liveInventorySnapshot.js` 的注释。
    */
 
-  const openIdOf = (req) => {
-    const openId = String(req.workbenchUser?.open_id || getSessionUser(req)?.open_id || '');
-    if (openId) setTraceFields({ role: roleOf(openId) });
-    return openId;
-  };
-  /** ⭐ 2026-10-18（task-2）：**这一页的会话键** = openId + per-page token（没有 ⇒ 原样 openId = 改前逐字）。 */
-  const sessionIdOf = (req, openId = openIdOf(req)) => pageSessionKeyOfRequest(req, openId);
-
-  /**
-   * 表单的 POST 目标（= 处理完回跳到哪一页）。
-   *
-   * ⭐ **必须带上领域**：不然她在【销售】那一块点「加入本单」，303 回来会落在
-   *   **缺省领域**、刚填的本单看不见了。
-   *   ⚠️ 缺省领域（2026-10-11 起 = **销售**）不带 `?from=`（URL 干净，且既有断言一字不变）；
-   *      另外三个领域一律带 `?from=<领域>` ⇒ **回跳停在本单所在的领域**。
-   *   ⚠️ 这个函数**同时被 `buildWriteContext`（拼表单 action）与 POST 的 303 两处用** ——
-   *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
-   *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
-   */
-  // ⭐⭐ 2026-10-12（治根）：**两条路共用同一个 router 实例**（`app.js` 把同一实例挂在 `/s` 与 `/r`）。
-  //    ⇒ 「这一页在取哪一样东西」**只有一个判据**：挂载点（`req.baseUrl`）。
-  //    · `/r/:recordId`   ⇒ `{ mode: 'number',   value: 编号 }`
-  //    · `/r/:recordId` ⇒ `{ mode: 'recordId', value: 记录 ID }`
-  //    🔴 **不许**在别处再拼一套路径（`postActionFor` 是唯一出口）—— 两边各写一份必然漂。
-  const isRecordBase = () => true;
-  const scanTargetOf = (req) => {
-    const value = decodeURIComponent(String(req.params?.recordId ?? ''));
-    return { mode: 'recordId', value };
-  };
-  /** 回跳沿用 URL 上的记录 ID。 */
-  const backTargetFor = (req) => scanTargetOf(req);
-
-  /** 这一页的"取商品"入参：只按记录 ID。 */
-  const lookupInputOf = (req) => ({ recordId: scanTargetOf(req).value });
-
-  /**
-   * 表单的 POST 目标（= 处理完回跳到哪一页）。
-   *
-   * ⭐ **必须带上领域**：不然她在【销售】那一块点「加入本单」，303 回来会落在
-   *   **缺省领域**、刚填的本单看不见了。
-   *   ⚠️ 缺省领域（2026-10-11 起 = **销售**）不带 `?from=`（URL 干净，且既有断言一字不变）；
-   *      另外三个领域一律带 `?from=<领域>` ⇒ **回跳停在本单所在的领域**。
-   *   ⚠️ 这个函数**同时被 `buildWriteContext`（拼表单 action）与 POST 的 303 两处用** ——
-   *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
-   *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
-   *   ⭐⭐ 2026-10-12：第一个入参**同时接受**一个目标对象（`{mode,value}`，见 `scanTargetOf`）
-   *      **或**一个字符串（= 按编号，既有调用点逐字不变）。挂载点决定拼 `/s` 还是 `/r`。
-   */
-  const postActionFor = (target, realm = DEFAULT_REALM) => {
-    const resolved = target && typeof target === 'object' ? target : { value: target };
-    const basePath = String(config.route.recordBasePath || '');
-    const path = `${basePath}/${encodeURIComponent(String(resolved.value || ''))}`;
-    return realm && realm !== DEFAULT_REALM ? `${path}?from=${encodeURIComponent(realm)}` : path;
-  };
+  const {
+    openIdOf, sessionIdOf, isRecordBase, scanTargetOf, backTargetFor, lookupInputOf, postActionFor,
+  } = createPageContext({
+    config, DEFAULT_REALM, getSessionUser, roleOf, setTraceFields, pageSessionKeyOfRequest,
+  });
 
   // ── ⭐⭐ 2026-10-11：扫码页「货品」领域 →【打印这一款】（送到店里那台电脑）────────
   /**
