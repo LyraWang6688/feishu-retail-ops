@@ -7,6 +7,7 @@ const { linkedRecordIds, textValue } = require('../v1BitableGateway');
 const { relation } = require('../v1ReferenceResolver');
 const { normalizeSize } = require('../sizeReferenceService');
 const { logInfo, logWarn } = require('../../utils/logger');
+const { stockShortage } = require('../../config/inventoryTexts');
 const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireMovement, MOVEMENT_SALE_DECREASE } = require('./movements');
@@ -181,7 +182,10 @@ async function applySaleBatch(items = [], options = {}) {
           const currentQuantity = liveRecords.length;
           if (currentQuantity < item.quantity) {
             // 与 `applyChange` **逐字同一句**（文案里的状态来自注册表，不写死）。
-            throw new Error(`${states.join('和')}库存不足：${item.input.productRecordId} ${item.size}码，需 ${item.quantity} 双，现有 ${currentQuantity} 双`);
+            throw new Error(stockShortage({
+              states, liveInventoryTableName: this.gateway.table('liveInventory').tableName,
+              productRecordId: item.input.productRecordId, size: item.size, quantity: item.quantity, currentQuantity,
+            }));
           }
           const selected = liveRecords.slice(0, item.quantity);
           for (const record of selected) claimed.add(record.record_id);

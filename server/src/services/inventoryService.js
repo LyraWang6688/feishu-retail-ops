@@ -72,6 +72,7 @@ const {
   candidatesFromLiveRecords,
   sampleReplacementCandidates,
 } = require('./inventory/liveStock');
+const { stockShortage } = require('../config/inventoryTexts');
 
 class InventoryService {
   constructor(options = {}) {
@@ -315,7 +316,10 @@ class InventoryService {
         if (delta < 0 && currentQuantity < quantity) {
           // 文案里的状态来自注册表（销售是"门盒和样品"，采购退货是"门盒、样品和仓库"），
           // 不再写死——写死的文案会在退货时告诉她"门盒和样品不足"，而仓库里其实有货。
-          throw new Error(`${states.join('和')}库存不足：${input.productRecordId} ${size}码，需 ${quantity} 双，现有 ${currentQuantity} 双`);
+          throw new Error(stockShortage({
+            states, liveInventoryTableName: this.gateway.table('liveInventory').tableName,
+            productRecordId: input.productRecordId, size, quantity, currentQuantity,
+          }));
         }
         const selected = delta < 0 ? liveRecords.slice(0, quantity) : [];
         const stateField = this.gateway.table('liveInventory').fields.state;
