@@ -125,6 +125,8 @@ test('AC-W1b 售后：永久错误（400）不重试 ⇒ 最终失败**发一次
   });
   const jobId = stack.service.jobIdFor(ASYNC_JOB_TYPES.AFTER_SALES, `return:${requestId}`);
   await waitFor(async () => (await stack.service.get(jobId))?.status === ASYNC_JOB_STATUS.FAILED);
+  // 状态先落 failed、通知随后才发；等通知完成再断言（避免 CI 负载下抢跑）
+  await waitFor(() => stack.sent.length === 1);
   assert.equal(calls, 1, '永久错误不重试');
   assert.equal(stack.sent.length, 1, '最终失败发一次运营群');
   assert.match(stack.sent[0].text, /售后退货/);
@@ -143,6 +145,8 @@ test('AC-W1c 售后：通知发送失败 ⇒ 任务仍是 failed、notified_at �
   await jobs.enqueue({ type: 'return', requestId, payload: {}, ownerOpenId: 'ou_me' });
   const jobId = service.jobIdFor(ASYNC_JOB_TYPES.AFTER_SALES, `return:${requestId}`);
   await waitFor(async () => (await service.get(jobId))?.status === ASYNC_JOB_STATUS.FAILED);
+  // 通知失败日志同样在 failed 之后异步落；等日志出现再断言
+  await waitFor(() => stack.logs.some((entry) => entry.event === 'async_job.notify.failed'));
   const job = await service.get(jobId);
   assert.equal(job.status, ASYNC_JOB_STATUS.FAILED);
   assert.equal(job.notified_at, '');
