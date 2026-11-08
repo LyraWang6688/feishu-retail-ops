@@ -68,7 +68,7 @@ test('schedulePurchaseWrite：原样透传（不拼幂等键）', async () => {
 });
 
 test('源码哨兵：实现搬走，路由只保留工厂（塞回 ⇒ 红）', () => {
-  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8');
+  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'setup.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'helpers.js'), 'utf8');
   assert.match(index, /createMultiItemPendingOf\(\{ writeService, multiItemOrderConfig \}\)/);
   assert.match(index, /createPurchaseSchedulerOf\(\{ purchaseBackground \}\)/);
   assert.equal(/const readMultiItemPending = async \(openId, chain\) => \{/.test(index), false);

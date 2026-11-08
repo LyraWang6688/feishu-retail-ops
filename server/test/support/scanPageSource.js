@@ -38,7 +38,7 @@ const SHELL = path.join(SERVER_DIR, 'src', 'routes', 'scanPage.js');
 const MARK = '// ===== 以下为原文逐字切片（聚合用；勿改 ✗）=====';
 
 /** ⭐ 聚合顺序（固定 ✓）：真身在前，其余按**关注点**顺序 ✓；不存在的文件跳过 ✓。 */
-const SOURCE_ORDER = ['index.js', 'routes.js', 'shared.js', 'payment.js', 'posting.js', 'multiItem.js', 'drafts.js'];
+const SOURCE_ORDER = ['index.js', 'setup.js', 'helpers.js', 'routes.js', 'shared.js', 'payment.js', 'posting.js', 'multiItem.js', 'drafts.js'];
 
 /** 切片里**定义**的名字（`const NAME = …` ✓ 不含 require 行 ✗ —— 那些是"取用"不是"定义" ✓）。 */
 const definedNamesOf = (slice) => {
@@ -136,6 +136,8 @@ const scanPageSource = () => {
     //   聚合文本会被**当模块编译**（编译路径 = 拆分前那一份 `src/routes/scanPage.js`）⇒ 深度要换回去 ✓
     .replace(/require\('\.\/pageToken'\)/g, "require('./scanPage/pageToken')")
     .replace(/require\('\.\/routes'\)/g, "require('./scanPage/routes')")
+    .replace(/require\('\.\/setup'\)/g, "require('./scanPage/setup')")
+    .replace(/require\('\.\/helpers'\)/g, "require('./scanPage/helpers')")
     .replace(/require\('\.\/pageContext'\)/g, "require('./scanPage/pageContext')")
     .replace(/require\('\.\/middleware'\)/g, "require('./scanPage/middleware')")
 

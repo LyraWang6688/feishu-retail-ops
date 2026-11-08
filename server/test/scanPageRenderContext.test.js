@@ -43,7 +43,7 @@ test('logRendered：scan.page.rendered + 漏斗（goods→entry）', () => {
 });
 
 test('源码哨兵：实现已搬走（塞回 index ⇒ 红），聚合路径可解析', () => {
-  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8');
+  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'setup.js'), 'utf8');
   assert.match(index, /createRenderContext/, 'index 必须用工厂');
   assert.equal(/const logRendered = \(req, \{ page, trigger/.test(index), false, '实现不许留在 index');
   assert.equal(/const successReturnFields = \(req, target, noticeNo = ''\) => \{/.test(index), false,
