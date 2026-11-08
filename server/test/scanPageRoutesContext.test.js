@@ -11,6 +11,8 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..', 'src', 'routes', 'scanPage');
 const read = (name) => fs.readFileSync(path.join(ROOT, name), 'utf8');
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const strip = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/\/\/[^\n]*/g, '')
@@ -29,7 +31,7 @@ test('routes.js 的 ctx 解构项必须全部被实际使用', () => {
   const source = read('routes.js');
   const m = /const installScanPageRoutes[\s\S]*?const \{\n[\s\S]*?\n  \} = ctx;/.exec(source);
   const rest = strip(source.slice(m.index + m[0].length));
-  const unused = destructured().filter((name) => !new RegExp(`\\b${name.replace(/[$]/g, '\\$')}\\b`).test(rest));
+  const unused = destructured().filter((name) => !new RegExp(`\\b${escapeRegExp(name)}\\b`).test(rest));
   assert.deepEqual(unused, [], `routes.js 里存在只解构不使用的依赖：${unused.join(', ')}`);
 });
 
