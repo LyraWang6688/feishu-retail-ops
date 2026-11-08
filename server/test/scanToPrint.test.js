@@ -409,8 +409,9 @@ const fakeScanOnlyContainer = () => {
     '[data-view="scan-print-notice"]': make(),
     '[data-view="scan-print-result"]': make(),
     '[data-view="scan-title"]': make(),
-    '[data-view="scan-subtitle"]': make(),
-    '[data-action="scan-batch-link"]': make(),
+    // ⭐ 2026-11-09：聚焦页**不再有**说明句 / 去批量打印链接那两个节点
+    //   （业务负责人截图口径：说明句与「要一次打很多张？去批量打印 →」整句删掉）。
+    //   ⇒ 这里**故意不提供**它们：`mount()` 若又去填这两个节点就会拿到 null ⇒ 用例红 ✓
   };
   const panel = { querySelector: (selector) => elements[selector] || null };
   return {
@@ -754,12 +755,20 @@ test('AC-SP16 ⭐⭐ 扫完 ⇒ **大字结果里有编号** + 按钮变「再�
     '扫完按钮变「再扫一张」⇒ 她可以连着扫下一张 ✓');
 });
 
-test('AC-SP17 纯函数：聚焦壳**只有扫码那一块**；结果文案**拿不到编号就不编**', async () => {
+test('AC-SP17 纯函数：聚焦壳**只有扫码那一块**（说明句 / 去批量链接已删）；结果文案**拿不到编号就不编**', async () => {
   const module = await loadScanPrintModule();
   const html = module.scanOnlyShellHtml();
   assert.ok(html.includes('data-action="scan-print"'), '有那颗按钮 ✓');
   assert.ok(html.includes('data-view="scan-print-result"'), '有结果那一行 ✓');
-  assert.ok(html.includes('href="?"'), '去批量打印 = 同一页但**不带 `?scan`**（原来那一页 ✓）');
+  assert.ok(html.includes('data-view="scan-title"'), '标题还在 ✓');
+  // ⭐⭐ 2026-11-09（业务负责人截图口径）：三处**删掉** —— 塞回即红 ✗
+  assert.equal(html.includes('scan-subtitle'), false,
+    '🔴 说明句（「对着鞋盒…这里不用选编号」）必须删掉（她要的是这一屏只剩扫码 ✗）');
+  assert.equal(html.includes('scan-batch-link'), false,
+    '🔴「要一次打很多张？去批量打印 →」必须删掉 ✗');
+  assert.equal(html.includes('href="?"'), false, '🔴 那条去批量打印的链接也不许留（同一件事）✗');
+  assert.equal(module.SCAN_PRINT_TEXTS.subtitle, undefined, '🔴 说明句的文案常量也不许留（留了就会再被接回去）✗');
+  assert.equal(module.SCAN_PRINT_TEXTS.batchLink, undefined, '🔴 批量链接的文案常量也不许留 ✗');
   assert.equal(/data-field=/.test(html), false, '聚焦壳里不许有筛选框 ✗');
   assert.equal(/label-sheet/.test(html), false, '聚焦壳里不许有预览纸张 ✗');
   // 结果文案（编号是主角；拿不到就不编 ✗）

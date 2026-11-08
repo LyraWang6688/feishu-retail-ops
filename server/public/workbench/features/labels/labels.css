@@ -79,16 +79,16 @@
    · ③ 保留 ≥44px 命中区（既有哨兵 `.scan-print-bar .btn` 仍然成立 ✓）。 */
 .scan-only .scan-print-bar .btn { width: 100%; min-height: 56px; font-size: 17px; }
 .scan-print-result { margin: 10px 0 0; font-size: 18px; font-weight: 600; color: var(--success); }
-.scan-only .data-caption { margin: 10px 0 0; }
-.scan-batch-link { color: var(--primary); text-decoration: none; }
 
-/* ⭐⭐ 2026-10-15（业务负责人逐字：「**可以，给隐藏掉吧**」）：`?scan=1`「只扫码」聚焦页上
-   **导航胶囊只留「返回完整工作台」**（那是"回家的路"，不许一起藏 ✗），其余两颗隐藏。
+/* ⭐ 2026-11-09（业务负责人截图口径）：`?scan=1`「只扫码」聚焦页上**整条导航胶囊都不显示**
+   —— 含原来那颗「返回完整工作台」（她逐字：「需要删除返回完整工作台按钮」）。
    ⚠️ 只在 `html[data-scan-only="1"]` 下生效 —— 那个属性**只有** `mountScanOnlyPage`（`?scan=1`）
       会标（见 `features/labels/scan-print.js` 的 `markScanOnlyPage`）⇒
       **不带 `?scan` 的批量打印页、以及别的独立页一个字都不改** ✓
-   ⚠️ 被隐藏的两颗在 HTML 里标了 `data-nav-scan-only-hide`（标记在 `label-print.html`）。 */
-html[data-scan-only="1"] .standalone-nav [data-nav-scan-only-hide] { display: none; }
+   ⚠️ HTML 里三颗胶囊**照旧都在**（批量页要用）；这一屏只是把整条 `<nav>` 藏掉 ⇒ 不删节点 ✓
+   ⚠️ 旧口径（2026-10-15）是「只留返回完整工作台、藏另外两颗」，2026-11-09 已作废 ✗
+      （塞回旧规则 ⇒ 扫码页又会露出那颗按钮，`test/scanOnlyNavHidden.test.js` 的 AC-D1 会红）。 */
+html[data-scan-only="1"] .standalone-nav { display: none; }
 
 /* ── 标签纸（屏幕预览 + 打印同一个 DOM）───────────────────────────────── */
 /* 手机上 A4 宽（210mm ≈ 794px）比屏幕宽 ⇒ 横向滚动看，不挤压排版。 */
