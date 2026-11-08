@@ -241,7 +241,11 @@ const createAsyncJobService = ({
         // （状态口径见文档 3.1 / 6.1：通知只认 failed）
         if (outcome?.partial === true) {
           const message = String(outcome.message || '').trim();
-          return markPartialFailed({ jobId, error: message, result: rawResult, attempt });
+          const partialJob = await markPartialFailed({ jobId, error: message, result: rawResult, attempt });
+          // ⭐ 2026-11-09：partial_failed 是终态；是否发通知由 notifier 的 statuses 配置决定。
+          //   （默认 statuses=['failed'] ⇒ 不发；显式加 partial_failed 才发。）
+          await notifyIfNeeded(jobId);
+          return partialJob;
         }
       } catch (error) {
         const classified = typeof classifyError === 'function'
