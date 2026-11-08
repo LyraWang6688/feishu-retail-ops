@@ -42,10 +42,12 @@ const NOTIFICATION_EVENTS = Object.freeze({
     target: 'group', enabled: true, card: 'async_job_failed', title: '【异步写入失败】',
   }),
   observability_alert: Object.freeze({
-    target: 'private', enabled: false, card: 'observability_alert', title: '【观测告警】',
+    target: 'private', enabled: false, masterEnv: 'OBSERVABILITY_ALERTS_ENABLED',
+    card: 'observability_alert', title: '【观测告警】',
   }),
   lark_event_heartbeat: Object.freeze({
-    target: 'private', enabled: false, card: 'lark_event_heartbeat', title: '【飞书事件心跳】',
+    target: 'private', enabled: false, masterEnv: 'LARK_EVENT_ALERT_ENABLED',
+    card: 'lark_event_heartbeat', title: '【飞书事件心跳】',
   }),
   purchase_request_created: Object.freeze({
     target: 'group', enabled: true, card: 'purchase_request_created', title: '【采购申请】',
@@ -107,7 +109,11 @@ const resolveNotification = (event, env = process.env) => {
     return { event, enabled: false, target: targetName || '', receiveIdType: '',
       receiveId: '', chatId: '', openId: '', sourceEnv: '', reason: 'unknown_target' };
   }
-  const enabled = readFlag(env, eventEnabledEnvKey(event), definition.enabled === true);
+  // 兼容既有总开关（观测告警 / 心跳）：总开关没开 ⇒ 事件默认关；显式 NOTIFY_<EVENT>_ENABLED 优先。
+  const defaultEnabled = definition.masterEnv
+    ? readFlag(env, definition.masterEnv, definition.enabled === true)
+    : definition.enabled === true;
+  const enabled = readFlag(env, eventEnabledEnvKey(event), defaultEnabled);
   const { receiveId, sourceEnv } = resolveReceiveId(target, env);
   const base = {
     event,

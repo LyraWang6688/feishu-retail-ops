@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **472** 个事件。按前缀分组：
+共 **469** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -225,14 +225,6 @@
 | --- | --- | --- |
 | `log.event.unregistered.cache_hit` | 1 | src/utils/logger.js |
 | `log.event.unregistered.cache_miss` | 1 | src/utils/logger.js |
-
-## observability
-
-| 事件 | 次数 | 文件 |
-| --- | --- | --- |
-| `observability.alert.failed` | 1 | src/services/alertNotifier.js |
-| `observability.alert.sent` | 1 | src/services/alertNotifier.js |
-| `observability.alert.skipped` | 1 | src/services/alertNotifier.js |
 
 ## perf
 
