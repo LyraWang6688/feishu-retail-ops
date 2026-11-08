@@ -110,6 +110,11 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         // ⭐ 2026-11-09：验收页按「供应商 → 采购日」分组（不显示采购单号）——
         //   · supplier_name：供应商管理.供应商名称（空 ⇒ 前端显示"未标注供应商"，不编 ✗）
         //   · arrival_created_at：采购主表「报货日」（自动字段，epoch ms；空 ⇒ 前端显示"日期未知"）
+        // ⭐ 2026-11-09（验收明细按「货号 · 颜色」分组，与采购页卡片标题同口径）：
+        //   · 编号（语义键 `number`）= 「货号|颜色|类别」复合值（Base 里那一列就是这形状）；
+        //   · 采购页显示的是「货号 · 颜色」⇒ 这里另补两个**只读**字段给明细分组用。
+        product_item_no: product ? asText('product', product, 'itemNo') : '',
+        product_color: product ? asText('product', product, 'color') : '',
         supplier_name: supplierIds[0]
           ? asText('supplier', supplierMap.get(supplierIds[0]), 'name') : '',
         arrival_created_at: batch

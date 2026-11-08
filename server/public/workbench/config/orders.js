@@ -145,6 +145,10 @@ export const ARRIVAL_FULL_TEXTS = {
   detailOpenHint: '点开看这一批的采购明细（可以改实际到货数量）',
   actualQuantityLabel: '实际到货数量',
   declaredQuantityLabel: '申请',
+  // ⭐ 2026-11-09（业务负责人）：明细在**同一批次号内按编号分组**；
+  //   显示口径与采购页卡片标题一致 = 「货号 · 颜色」（颜色缺省只显示货号）。
+  detailGroupLabel: '{itemNo} · {color}',
+  detailGroupUnknown: '未编号',
   zeroMeansNotArrived: '没到的填 0',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',
   // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）

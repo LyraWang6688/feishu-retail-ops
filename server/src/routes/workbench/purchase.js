@@ -193,7 +193,12 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       return res.json({
         success: true,
         rows: rows.map((row) => ({
-          item_no: row.item_no || row.product_item_no || '',
+          // ⭐ 2026-11-09（业务负责人：验收明细在**同一批次号内按编号分组**）：
+          //   采购页卡片标题是「货号 · 颜色」⇒ 明细也用同一口径分组显示：
+          //   `item_no` 优先取货号（`product_item_no`），`color` 取颜色，另回 `编号`（复合值）兜底。
+          item_no: row.product_item_no || row.item_no || '',
+          color: row.product_color || row.color || '',
+          number: row.product_number || '',
           size: row.size ?? '',
           quantity: row.quantity ?? 0,
           product_record_id: row.product_record_id || '',

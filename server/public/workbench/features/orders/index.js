@@ -283,21 +283,45 @@ export const arrivalLineKey = (row = {}) => `${String(row.product_record_id || '
 export function arrivalDetailHtml(rows = []) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return `<p data-view="arrival-detail-empty">${escapeHtml(ARRIVAL_FULL_TEXTS.detailEmpty)}</p>`;
-  return `<ul class="order-lines" data-view="arrival-detail-list">${list.map((row) => `
-          <li class="order-line" data-view="arrival-detail-row"
-              data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
-              data-size="${escapeHtml(String(row.size ?? ''))}"
-              data-declared="${escapeHtml(String(Number(row.quantity || 0)))}">
-            <span class="line-product">${escapeHtml(row.item_no || '')}</span>
-            <span class="line-size">${escapeHtml(sizeText(row.size))}</span>
-            <span class="line-amount">${escapeHtml(ARRIVAL_FULL_TEXTS.declaredQuantityLabel)} ${escapeHtml(String(Number(row.quantity || 0)))}</span>
-            <input class="line-actual" data-field="arrival-actual" type="text" inputmode="numeric"
-              data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
-              data-size="${escapeHtml(String(row.size ?? ''))}"
-              value="${escapeHtml(String(Number(row.quantity || 0)))}"
-              placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.zeroMeansNotArrived)}"
-              aria-label="${escapeHtml(ARRIVAL_FULL_TEXTS.actualQuantityLabel)}">
-          </li>`).join('')}</ul>`;
+  // ⭐⭐ 2026-11-09（业务负责人）：「在**统一批次号**里**按编号分组**」；
+  //   显示口径跟**采购页卡片标题**一致 = 「货号 · 颜色」（同一货号不同颜色是不同组）。
+  //   · 分组键优先用 `product_record_id`（真正的"这一款"）；缺它才退回 货号+颜色；
+  //   · 组内按尺码逐行给「实际到货数量」；组标题只出现一次 ✓。
+  const groups = new Map();
+  for (const row of list) {
+    const itemNo = String(row.item_no || '').trim();
+    const color = String(row.color || '').trim();
+    const key = String(row.product_record_id || '').trim() || `${itemNo}|${color}`;
+    if (!groups.has(key)) groups.set(key, { itemNo, color, number: String(row.number || '').trim(), rows: [] });
+    groups.get(key).rows.push(row);
+  }
+  const headingOf = ({ itemNo, color, number }) => {
+    if (itemNo) {
+      if (!color) return itemNo;
+      return String(ARRIVAL_FULL_TEXTS.detailGroupLabel)
+        .split('{itemNo}').join(itemNo).split('{color}').join(color);
+    }
+    return number || color || ARRIVAL_FULL_TEXTS.detailGroupUnknown;
+  };
+  const groupHtml = [...groups.entries()].map(([key, group]) => `
+        <section class="order-line-group" data-view="arrival-line-group" data-item-no="${escapeHtml(group.itemNo)}" data-color="${escapeHtml(group.color)}">
+          <h4 class="order-line-group__head">${escapeHtml(headingOf(group))}</h4>
+          <ul class="order-lines">${group.rows.map((row) => `
+            <li class="order-line" data-view="arrival-detail-row"
+                data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
+                data-size="${escapeHtml(String(row.size ?? ''))}"
+                data-declared="${escapeHtml(String(Number(row.quantity || 0)))}">
+              <span class="line-size">${escapeHtml(sizeText(row.size))}</span>
+              <span class="line-amount">${escapeHtml(ARRIVAL_FULL_TEXTS.declaredQuantityLabel)} ${escapeHtml(String(Number(row.quantity || 0)))}</span>
+              <input class="line-actual" data-field="arrival-actual" type="text" inputmode="numeric"
+                data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
+                data-size="${escapeHtml(String(row.size ?? ''))}"
+                value="${escapeHtml(String(Number(row.quantity || 0)))}"
+                placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.zeroMeansNotArrived)}"
+                aria-label="${escapeHtml(ARRIVAL_FULL_TEXTS.actualQuantityLabel)}">
+            </li>`).join('')}</ul>
+        </section>`).join('');
+  return `<div data-view="arrival-detail-list">${groupHtml}</div>`;
 }
 
 /**

@@ -208,5 +208,14 @@
   font-weight: var(--weight-bold);
 }
 .order-summary { color: var(--text-secondary); font-size: var(--font-size-sm); }
+/* ⭐ 2026-11-09：验收明细在**同一批次内按编号分组**（编号只出现一次） */
+.order-line-group { margin: 0 0 var(--space-3); min-width: 0; }
+.order-line-group:last-child { margin-bottom: 0; }
+.order-line-group__head {
+  margin: 0 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-bold);
+}
 .action-form summary::-webkit-details-marker { display: none; }
 .action-form[open] > summary { margin-bottom: var(--space-2); }

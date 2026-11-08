@@ -173,6 +173,29 @@ test('AC-RC2 ⭐ 点批次 ⇒ 明细只属于**这一批**（且每行有可改
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AC-RC2b ⭐ 同一批次内：明细**按编号分组**（编号只出现一次，尺码在组内）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-RC2b ⭐ 同一批次里按编号分组：一个编号一个组，组内按尺码给实际数量', async () => {
+  const orders = await loadOrdersModule();
+  const html = orders.arrivalDetailHtml([
+    { item_no: 'N05', color: '黑色', size: 41, quantity: 1, product_record_id: 'p1' },
+    { item_no: 'N05', color: '黑色', size: 40, quantity: 2, product_record_id: 'p1' },
+    { item_no: 'X99', color: '白色', size: 43, quantity: 3, product_record_id: 'p2' },
+  ]);
+  const groups = html.match(/data-view="arrival-line-group"/g) || [];
+  assert.equal(groups.length, 2, '两个编号 ⇒ 两个分组 ✓');
+  assert.ok(html.includes('data-item-no="N05"') && html.includes('data-item-no="X99"'), '编号挂在分组上 ✓');
+  // ⭐ 显示口径跟采购页卡片标题一致 =「货号 · 颜色」
+  assert.ok(html.includes('N05 · 黑色') && html.includes('X99 · 白色'), '分组标题 = 「货号 · 颜色」✓');
+  // 编号只出现一次（组标题）；每行不再重复编号
+  assert.equal((html.match(/>N05</g) || []).length, 0, '行内不重复编号 ✗');
+  // 组内尺码 / 实际数量输入都在（提交要用 data-*，不许丢）
+  assert.ok(html.includes('data-size="40"') && html.includes('data-size="41"') && html.includes('data-size="43"'));
+  assert.equal((html.match(/data-field="arrival-actual"/g) || []).length, 3, '每行一个实际数量输入 ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AC-RC3 / AC-RC4 提交的就是"她填的实际值"——绝不按申请数补齐
 // ═══════════════════════════════════════════════════════════════════════════
 
