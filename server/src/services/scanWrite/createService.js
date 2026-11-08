@@ -286,7 +286,7 @@ const createScanWriteService = (options = {}) => {
     if (!number) return null;
     const numberField = fieldOf('product', 'number');
     if (!numberField) return null;
-    const records = await gateway.listAll('product');
+    const records = await getConfigRows({ gateway, tableKey: 'product' });
     return records.find((record) => textValue(record?.fields?.[numberField]).trim() === String(number).trim()) || null;
   };
 

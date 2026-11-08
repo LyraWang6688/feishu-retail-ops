@@ -999,8 +999,8 @@ test('AC-N11 关掉 `labelList` 缓存（`cacheTtlMs: 0`）⇒ `listLabels` **�
   } finally {
     logs.restore();
   }
-  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory', 'product'],
-    '⭐ 0 = 关掉 ⇒ 每次都真读飞书（拿到的永远是最新的货）');
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory'],
+    '⭐ 0 = 关掉 labelList 缓存 ⇒ liveInventory 每次真读；product 由统一 configTableCache 负责');
   assert.equal(logs.events('workbench.labels.cache_hit').length, 0, '一次都没命中');
   assert.deepEqual(logs.events('workbench.labels.cache_miss').map((line) => JSON.parse(line).reason),
     ['disabled', 'disabled'], '未命中的原因如实写 disabled');
@@ -1022,8 +1022,8 @@ test('AC-N12 `listLabels` 缓存 TTL 过期 ⇒ 重读（能真红）', async ()
   } finally {
     logs.restore();
   }
-  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory', 'product'],
-    '⭐ 过期后必须重读（新到的货不能一直看不到）');
+  assert.deepEqual(gateway.calls, ['liveInventory', 'product', 'liveInventory'],
+    '⭐ labelList 过期后必须重读 liveInventory；product 由统一 configTableCache 负责');
   assert.equal(logs.events('workbench.labels.cache_hit').length, 1);
   assert.deepEqual(logs.events('workbench.labels.cache_miss').map((line) => JSON.parse(line).reason),
     ['empty', 'expired']);

@@ -122,7 +122,7 @@ test('AC2 TTL 过期 ⇒ 重新读（拨表到 30 秒之后）', async () => {
   const afterFirst = fake.calls.length;
   clock += 30_001;
   await service.listOrders();
-  assert.equal(fake.calls.length, afterFirst + 4, '过期之后重新读 4 张表（支付方式仍在配置表缓存里）');
+  assert.equal(fake.calls.length, afterFirst + 3, '过期之后重新读 3 张业务表（支付方式/货品/配品走配置表缓存）');
 });
 
 test('AC3 写库之后作废缓存 ⇒ 下一次读必须重新取（不许看到旧数据）', async () => {
@@ -137,7 +137,7 @@ test('AC3 写库之后作废缓存 ⇒ 下一次读必须重新取（不许看�
 
   service.invalidateOrders(); // 路由层写成功之后调的就是它
   await service.listOrders();
-  assert.equal(fake.calls.length, afterFirst + 4, '作废之后重新读 4 张表（支付方式仍在配置表缓存里）');
+  assert.equal(fake.calls.length, afterFirst + 3, '作废之后重新读 3 张业务表（支付方式/货品/配品走配置表缓存）');
 
   // 缓存实例本身也要能被独立调用（路由层持有的是它）
   const cache = createWorkbenchOrdersCache({ ttlMs: 30000, now: () => clock });
@@ -169,7 +169,7 @@ test('AC4b TTL=0 ⇒ 每次都是真读（行为与优化前一致）', async ()
   await service.listOrders();
   const afterFirst = fake.calls.length;
   await service.listOrders();
-  assert.equal(fake.calls.length, afterFirst + 4, '关掉订单缓存后，非配置表每次都真读（支付方式走配置表缓存）');
+  assert.equal(fake.calls.length, afterFirst + 3, '关掉订单缓存后，3 张业务表每次都真读（配置表走缓存）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -181,7 +181,6 @@ test('AC5a 字段清单（语义键）逐字 = 页面真正用到的列，多一
     salesEntry: ['orderNo', 'writeStatus', 'recordedAt'],
     salesDetail: ['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product'],
     paymentRecord: ['salesEntry', 'amount', 'status', 'method', 'receivedAt'],
-    paymentMethod: ['name'],
     product: ['number', 'color'],
     accessory: ['name'],
   }, '这张清单是"页面上真正用到的列"的唯一来源（加列必须有消费点）');
@@ -193,6 +192,13 @@ test('AC5b 每次 listAll 都按需取字段：fieldNames = 清单里的**飞书
   await service.listOrders();
 
   for (const call of ordersCalls(fake.calls)) {
+    // 🔴 2026-11-08：`paymentMethod` 是**共享配置表**（售后 refundable / 交割单券关联同源）——
+    //   必须**整表读完整字段**，不许只取「名称」列（否则精简快照进整表缓存 ⇒ 别的模块误判）。
+    if (call.key === 'paymentMethod') {
+      assert.equal(call.fieldNames, undefined,
+        '支付方式=共享配置表 ⇒ 整表读（不许带 fieldNames，避免缓存被精简数据污染）');
+      continue;
+    }
     const table = V1_BITABLE_SCHEMA.tables[call.key];
     const expected = ORDER_FIELD_KEYS[call.key].map((key) => table.fields[key]).filter(Boolean);
     assert.ok(Array.isArray(call.fieldNames), `${call.key} 必须带 fieldNames`);

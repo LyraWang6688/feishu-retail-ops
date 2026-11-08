@@ -129,7 +129,12 @@ const DEFAULT_ORDERS_CACHE_MS = 30000;
  *                       · `product`（关联货品；配品列已随生产表删除）
  *                       的 `detailLinkField`）；
  *   · `paymentRecord` ：`salesEntry` · `amount` · `status` · `method` · `receivedAt`；
- *   · `paymentMethod` ：`name`； · `product`：`number` · `color`； · `accessory`：`name`。
+ *   · `product`：`number` · `color`； · `accessory`：`name`。
+ *
+ * 🔴 **`paymentMethod` 刻意不在这张清单里**（2026-11-08 真实事故）：
+ *   它同时是**共享配置缓存**的源（售后「可用于退款」、交割单券关联都读同一份快照）——
+ *   按需只取「名称」一列会把**精简快照**写进整表缓存 ⇒ 其他模块把"没读到"当成"没限制"。
+ *   ⇒ 配置表一律**整表读完整字段**（个位数行，省不了多少）；页面上只用名称时自行取 `fields.name`。
  *
  * ⚠️ **多一个都不许**（验收标准③）：这张清单就是"页面上真正用到的列"——加列必须有消费点。
  * ⚠️ 只写**语义键**，飞书列名由 schema（`gateway.table(key).fields`）解析。
@@ -138,7 +143,6 @@ const ORDER_FIELD_KEYS = Object.freeze({
   salesEntry: Object.freeze(['orderNo', 'writeStatus', 'recordedAt']),
   salesDetail: Object.freeze(['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product']),
   paymentRecord: Object.freeze(['salesEntry', 'amount', 'status', 'method', 'receivedAt']),
-  paymentMethod: Object.freeze(['name']),
   product: Object.freeze(['number', 'color']),
   accessory: Object.freeze(['name']),
 });

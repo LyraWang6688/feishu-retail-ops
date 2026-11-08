@@ -18,6 +18,7 @@
 
 const { textOf, linkedIdsOf } = require('./procurementPageData');
 const { logWarn } = require('../utils/logger');
+const { getConfigRows } = require('./configTableCache');
 
 /** batch_get 形状 → 纯文本（兼容 `{type,value:[…]}` / `[{text}]` / 字符串 / 数字）。 */
 const batchTextOf = (value) => textOf(value);
@@ -38,7 +39,18 @@ const createProductEnricher = ({ gateway, schema, logger = { logWarn } } = {}) =
     const unique = [...new Set((colorIds || []).filter(Boolean))];
     if (!unique.length) return new Map();
     try {
-      const records = await gateway.getBatch('color', unique);
+      let records = [];
+      try {
+        const allColors = await getConfigRows({ gateway, tableKey: 'color' });
+        const byId = new Map((allColors || []).map((record) => [String(record.record_id), record]));
+        records = unique.map((id) => byId.get(String(id))).filter(Boolean);
+      } catch (error) {
+        // 配置快照不可用（测试替身/极端故障）时保留按 ID 的兼容读法。
+      }
+      // 兼容只有 getBatch 的旧替身；生产正常走统一配置快照。
+      if (!records.length && typeof gateway.getBatch === 'function') {
+        records = await gateway.getBatch('color', unique);
+      }
       const nameField = colorFields().name;
       return new Map((records || []).map((record) => [
         String(record.record_id), batchTextOf(record.fields?.[nameField]).trim(),
@@ -74,7 +86,17 @@ const createProductEnricher = ({ gateway, schema, logger = { logWarn } } = {}) =
   const enrich = async (recordIds = []) => {
     const ids = [...new Set((recordIds || []).filter(Boolean))];
     if (!ids.length) return new Map();
-    const records = await gateway.getBatch('product', ids);
+    let records = [];
+    try {
+      const allProducts = await getConfigRows({ gateway, tableKey: 'product' });
+      const byId = new Map((allProducts || []).map((record) => [String(record.record_id), record]));
+      records = ids.map((id) => byId.get(String(id))).filter(Boolean);
+    } catch (error) {
+      // 兼容只有 getBatch 的旧替身；生产正常走统一配置快照。
+    }
+    if (!records.length && typeof gateway.getBatch === 'function') {
+      records = await gateway.getBatch('product', ids);
+    }
     const colorIds = (records || []).flatMap((record) => linkedIdsOf(record?.fields?.[productFields().color]));
     const colorNames = await colorNamesOf(colorIds);
     return new Map((records || []).map((record) => [String(record.record_id), normalize(record, colorNames)]));

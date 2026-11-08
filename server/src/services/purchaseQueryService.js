@@ -2,6 +2,7 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { classifyReportBehavior, REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
+const { getConfigRows } = require('./configTableCache');
 
 const asText = (tableKey, record, semanticKey) => {
   const fieldName = V1_BITABLE_SCHEMA.tables[tableKey]?.fields?.[semanticKey];
@@ -63,10 +64,10 @@ const createPurchaseQueryService = (gateway, options = {}) => {
   const listPurchaseRequests = async (filters = {}) => {
     const [requests, products, batches, behaviors] = await Promise.all([
       cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest')),
-      cachedListAll('product', () => gateway.listAll('product')),
+      getConfigRows({ gateway, tableKey: 'product' }),
       cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch')),
       // ⚠️ 第 4 张（行为管理）也要缓存 ⇒ 否则"第二次快"不成立 ✗（4 张里漏 1 张 = 白等 ✗）
-      cachedListAll('behavior', () => gateway.listAll('behavior')),
+      getConfigRows({ gateway, tableKey: 'behavior' }),
       // 「报货信息」的「采购行为」是关联「行为管理」：采购申请与采购退货写在同一张表里，
       // 靠这一列分流。分流口径复用采购链路的同一份策略（purchaseBehaviorPolicy），
       // 不在查询里另写一套判断——两套判断迟早在"什么算退货"上分家。

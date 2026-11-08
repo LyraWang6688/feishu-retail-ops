@@ -23,6 +23,7 @@
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { textValue } = require('./v1BitableGateway');
+const { getConfigRows } = require('./configTableCache');
 const { SizeReferenceService, normalizeSize } = require('./sizeReferenceService');
 const { OPERATION_ITEM_KEY_FIELD, validateIdempotencyKeyFields } = require('../infrastructure/idempotencyKey');
 const { correlationFields } = require('../utils/correlationFields');
@@ -51,8 +52,6 @@ const {
   stockKeyLabelFields,
   correlationPatch,
   movementLedgerLinkPatch,
-  purchaseIncreaseSourceId,
-  purchaseReturnSourceId,
 } = require('./inventory/keys');
 const { applySaleBatch } = require('./inventory/saleBatch');
 const { applyPurchaseBatch } = require('./inventory/purchaseBatch');
@@ -113,7 +112,8 @@ class InventoryService {
     const movement = requireMovement(kind);
     const fields = this.gateway.table('behavior').fields;
     // 按「行为编码」匹配：编码是稳定标识，飞书里改中文名不影响代码。
-    const matches = (await this.gateway.listAll('behavior')).filter((record) =>
+    const behaviors = await getConfigRows({ gateway: this.gateway, tableKey: 'behavior', freshness: 'fresh' });
+    const matches = behaviors.filter((record) =>
       textValue(record.fields?.[fields.code]).trim() === kind);
     if (matches.length !== 1) {
       throw new Error(`行为管理中编码为「${kind}」的行为必须且只能有一条记录，请先在行为管理表补齐`);
@@ -132,7 +132,8 @@ class InventoryService {
 
   async resolveSamplePromotionBehavior() {
     const fields = this.gateway.table('behavior').fields;
-    const matches = (await this.gateway.listAll('behavior')).filter((record) =>
+    const behaviors = await getConfigRows({ gateway: this.gateway, tableKey: 'behavior', freshness: 'fresh' });
+    const matches = behaviors.filter((record) =>
       textValue(record.fields?.[fields.code]).trim() === BEHAVIOR_SAMPLE_PROMOTION);
     if (matches.length !== 1) {
       throw new Error(`行为管理中编码为「${BEHAVIOR_SAMPLE_PROMOTION}」的行为必须且只能有一条记录，请先在行为管理表补齐`);
@@ -213,7 +214,7 @@ class InventoryService {
    *   · `productRecordId` / `size` / `quantity` / `state`
    *
    * ⚠️ 2026-10-07 深夜：「采购入库」表被整表删除 ⇒ **不再有 `purchaseInboundRecordId`**。
-   *    来源标识改由 `purchaseIncreaseSourceId` 用**真实三元组**算（见它的注释）；
+   *    来源标识由行为注册表的 operationKey 统一生成（真实三元组）；
    *    它是**本地幂等键**，参与幂等/恢复的 `ledgerSource` 仍是 `null`。
    * ⭐ 2026-10-08 补刀：业务负责人把「库存流水.关联采购」改成了指向**「报货批次」**
    *    ⇒ 这条流水**多写一个**「关联采购」= `purchaseBatchRecordId`（走 `ledgerLink`，
@@ -246,7 +247,7 @@ class InventoryService {
    * 它就是 `applyChange` 的一层**薄封装**（和 `applyPurchase` 对入库那样）：
    *   · `kind` = `MOVEMENT_PURCHASE_DECREASE`（**库存行为编码不在这里写死**，
    *     由注册表 `STOCK_MOVEMENTS` 决定扣哪些状态 —— 现存口径 = 门盒 + 样品 + 仓库）；
-   *   · 来源标识 = 真实三元组（见 `purchaseReturnSourceId`）；
+   *   · 来源标识 = 真实三元组（行为注册表 operationKey）；
    *   · `state` 与 `applyPurchase` 同一条纪律：**先按来源回查本地任务**，重放时用它自己
    *     记下的那一份（否则重放会拿"重新算出来的 state"去比对，被 `applyChange`
    *     的"内容与首次提交不一致"当场拦下）。
@@ -428,14 +429,6 @@ module.exports = {
   operationIdOf,
   operationItemKeyOf,
   validateOperationKeyConfigs,
-  // 采购加库存的**来源标识**（= 本地幂等键）：导出它，好让测试 / 排查脚本
-  // 用**同一个函数**算出"这一条该是哪个键"，而不是在别处再抄一份格式（抄了就会漂移）。
-  // @deprecated 改用 `operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], input)`。
-  purchaseIncreaseSourceId,
-  // ⭐ 2026-10-11：采购退货的来源标识（= 本地幂等键）——同样导出，好让测试 / 排查脚本
-  // 用**同一个函数**算键，而不是在别处再抄一份格式（抄了就会漂移）。
-  // @deprecated 改用 `operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE], input)`。
-  purchaseReturnSourceId,
   STOCK_MOVEMENTS,
   ADJUSTMENT_BEHAVIORS,
   // 状态值域从这里导出，避免「实时库存」的状态清单在别处再抄一份（抄了就会漂移）。

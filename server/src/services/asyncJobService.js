@@ -186,7 +186,11 @@ const createAsyncJobService = ({
     if (!outcome) return { sent: false, reason: 'notify_error' };
     return safe('notify_record', async () => {
       if (outcome.sent) {
-        await jobStore.update(jobId, { notified_at: nowIso() });
+        await jobStore.update(jobId, {
+          notified_at: nowIso(),
+          ...(outcome.cardId ? { notification_card_id: outcome.cardId } : {}),
+          ...(outcome.messageId ? { notification_message_id: outcome.messageId } : {}),
+        });
         return outcome;
       }
       const previous = job.notify || emptyAttempts();

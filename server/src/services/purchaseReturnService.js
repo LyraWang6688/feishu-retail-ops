@@ -479,7 +479,7 @@ const createPurchaseReturnService = (options = {}) => {
       try {
         await webhooks.deliverSupplierImages(taskId, updated, {
           batch_no: plan.batch_no, batch_record_id: batchRecordId, request_ids: requestIds,
-        }, { title: config.imageTitle, fileNameSuffix: config.fileNameSuffix });
+        }, { title: config.imageTitle, fileNameSuffix: config.fileNameSuffix, notificationEvent: 'purchase_return_created' });
       } catch (error) {
         logWarn(events.returnImageFailed, {
           task_id: taskId, batch_no: plan.batch_no, error: error.message,

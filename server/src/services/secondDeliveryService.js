@@ -17,6 +17,7 @@ const { asDate, isWithinLookupWindow } = require('../utils/salesDateWindows');
 const { isOnOrAfterSince } = require('../config/dataSince');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { logInfo, logWarn } = require('../utils/logger');
+const { getConfigRows } = require('./configTableCache');
 const { mergeCorrelation } = require('../utils/correlationFields');
 // ⭐ 2026-10-08：「退过 / 换过 / 赔过 的明细不属于待处理」——判据（唯一一处）在售后配置里。
 const { isAfterSalesFulfillment } = require('../config/afterSales');
@@ -284,7 +285,10 @@ class SecondDeliveryService {
       this.read(() => this.gateway.listAll('salesEntry'), 'second_delivery.reminder.list_entries'),
       this.read(() => this.gateway.listAll('salesDetail'), 'second_delivery.reminder.list_details'),
       this.read(() => this.gateway.listAll('paymentRecord'), 'second_delivery.reminder.list_payments'),
-      this.read(() => this.gateway.listAll('behavior'), 'second_delivery.reminder.list_behaviors'),
+      getConfigRows({
+        gateway: this.gateway, tableKey: 'behavior',
+        loader: () => this.read(() => this.gateway.listAll('behavior'), 'second_delivery.reminder.list_behaviors'),
+      }),
     ]);
     const entryFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
@@ -438,7 +442,8 @@ class SecondDeliveryService {
     const index = {};
     const productTable = this.gateway.table?.('product');
     if (productTable?.tableId) {
-      const records = await this.read(() => this.gateway.listAll('product'), 'second_delivery.items.list_products');
+      const records = await getConfigRows({ gateway: this.gateway, tableKey: 'product',
+        loader: () => this.read(() => this.gateway.listAll('product'), 'second_delivery.items.list_products') });
       index.product = {
         labelField: productTable.fields?.itemNo,
         // ⭐ 2026-10-08 晚：9 点推送的行要「货号 **颜色** 尺码」⇒ 索引里也带上「颜色」这一列
@@ -450,9 +455,10 @@ class SecondDeliveryService {
     const accessoryTable = this.gateway.table?.('accessory');
     if (accessoryTable?.tableId) {
       try {
-        const records = await this.read(
-          () => this.gateway.listAll('accessory'), 'second_delivery.items.list_accessories',
-        );
+        const records = await getConfigRows({ gateway: this.gateway, tableKey: 'accessory',
+          loader: () => this.read(
+            () => this.gateway.listAll('accessory'), 'second_delivery.items.list_accessories',
+          ) });
         index.accessory = {
           labelField: accessoryTable.fields?.name,
           byId: new Map(records.map((record) => [record.record_id, record])),

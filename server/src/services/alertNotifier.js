@@ -1,49 +1,39 @@
 'use strict';
 
 /**
- * 观测告警的**发送器**（唯一依赖飞书的地方；与判定器解耦，测试注入假 sender 即可）。
- * 收件人优先级：
- *   ① `OBSERVABILITY_ALERTS_OPEN_ID`（**私发给业务负责人本人**；只发不收，不是恢复私聊入口）
- *   ② `OBSERVABILITY_ALERTS_CHAT_ID` / `PURCHASE_CHAT_ID`（发群）
- * 都没配 ⇒ 只打 warn（`observability.alert.skipped`），绝不乱发。
+ * 观测告警发送器：统一走 notificationService（CardKit v2 卡片）。
+ *
+ * 收件人由 config/notifications.js 的 private 目标决定：
+ *   NOTIFY_PRIVATE_OPEN_ID → OBSERVABILITY_ALERTS_OPEN_ID
+ * 总开关仍由 OBSERVABILITY_ALERTS_ENABLED 控制（事件注册表里的 masterEnv）。
  */
-const lark = require('@larksuiteoapi/node-sdk');
-const { larkLogger } = require('../utils/larkLogger');
-const { getLarkAgentCredentials } = require('../config/larkAgent');
-const { resolvePurchaseChatId } = require('../config/groupPurchase');
 const { OBSERVABILITY_ALERTS } = require('../config/alerts');
 const { logWarn, logInfo } = require('../utils/logger');
+const { createDefaultNotificationService } = require('./notificationService');
 
-const createAlertNotifier = ({ config = OBSERVABILITY_ALERTS, clientFactory } = {}) => {
-  let client;
-  const getClient = () => {
-    if (client) return client;
-    if (clientFactory) { client = clientFactory(); return client; }
-    const { appId, appSecret } = getLarkAgentCredentials();
-    client = new lark.Client({ appId, appSecret, logger: larkLogger });
-    return client;
-  };
+const createAlertNotifier = ({
+  config = OBSERVABILITY_ALERTS,
+  notificationService,
+  logger = { logWarn, logInfo },
+} = {}) => {
+  const service = notificationService || createDefaultNotificationService();
+  const warn = typeof logger.logWarn === 'function' ? logger.logWarn : () => {};
+  const info = typeof logger.logInfo === 'function' ? logger.logInfo : () => {};
   return async (alert) => {
-    const openId = String(config.openId || '').trim();
-    const chatId = openId ? '' : (String(config.chatId || '').trim() || resolvePurchaseChatId());
-    if (!openId && !chatId) {
-      logWarn('observability.alert.skipped', { rule: alert.rule, reason: 'no_receiver' });
-      return false;
-    }
-    const receiveIdType = openId ? 'open_id' : 'chat_id';
-    const receiveId = openId || chatId;
-    try {
-      const response = await getClient().im.message.create({
-        params: { receive_id_type: receiveIdType },
-        data: { receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text: alert.text }) },
+    const result = await service.send('observability_alert', {
+      lines: [String(alert?.text || '')],
+      title: config?.prefix ? undefined : undefined,
+    });
+    if (!result.ok) {
+      warn('observability.alert.skipped', {
+        rule: alert?.rule, reason: result.reason || 'send_failed',
       });
-      if (response.code !== 0) throw new Error(`code=${response.code} msg=${response.msg}`);
-      logInfo('observability.alert.sent', { rule: alert.rule, key: alert.key, receive_id_type: receiveIdType });
-      return true;
-    } catch (error) {
-      logWarn('observability.alert.failed', { rule: alert.rule, error: String(error.message || error).slice(0, 200) });
       return false;
     }
+    info('observability.alert.sent', {
+      rule: alert?.rule, target: result.target, card_id: result.cardId, message_id: result.messageId,
+    });
+    return true;
   };
 };
 

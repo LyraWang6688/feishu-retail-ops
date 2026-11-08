@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **472** 个事件。按前缀分组：
+共 **462** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -169,11 +169,6 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
-| `lark.after_sales.card.update.failed` | 1 | src/services/larkMvpService.js |
-| `lark.after_sales.card.update.skipped` | 1 | src/services/larkMvpService.js |
-| `lark.after_sales.card.update.started` | 1 | src/services/larkMvpService.js |
-| `lark.after_sales.card.update.succeeded` | 1 | src/services/larkMvpService.js |
-| `lark.after_sales.card.update.tick_failed` | 1 | src/services/larkMvpService.js |
 | `lark.bitable.record_changed` | 1 | src/routes/larkEvents.js |
 | `lark.bitable.record_changed.base_unconfigured` | 1 | src/routes/larkEvents.js |
 | `lark.card.update.failed` | 1 | src/infrastructure/interactiveCardFeedback.js |
@@ -191,8 +186,6 @@
 | `lark.private_chat.disabled` | 1 | src/services/larkMvpService.js |
 | `lark.private_chat.notice_failed` | 1 | src/services/larkMvpService.js |
 | `lark.sales.accessory.list_failed` | 1 | src/services/salesEntryService.js |
-| `lark.sales.card.fallback.failed` | 1 | src/services/larkMvpService.js |
-| `lark.sales.card.fallback.sent` | 1 | src/services/larkMvpService.js |
 | `lark.sales.detail.trade_type.resolve_failed` | 1 | src/services/salesOrderService.js |
 | `lark.sales.group_buy_vouchers.list_failed` | 1 | src/services/larkMvpService.js |
 | `lark.sales.live_inventory.loaded` | 1 | src/services/larkMvpService.js |
@@ -225,14 +218,6 @@
 | --- | --- | --- |
 | `log.event.unregistered.cache_hit` | 1 | src/utils/logger.js |
 | `log.event.unregistered.cache_miss` | 1 | src/utils/logger.js |
-
-## observability
-
-| 事件 | 次数 | 文件 |
-| --- | --- | --- |
-| `observability.alert.failed` | 1 | src/services/alertNotifier.js |
-| `observability.alert.sent` | 1 | src/services/alertNotifier.js |
-| `observability.alert.skipped` | 1 | src/services/alertNotifier.js |
 
 ## perf
 

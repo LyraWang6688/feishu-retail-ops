@@ -8,9 +8,11 @@
  *   · TTL 来自 `config/configTables.js`（不再由调用方各自传）；
  *   · TTL 内直接返回；过期后重读；
  *   · 重读失败 ⇒ 返回最后一次成功快照 lastGood（并打 `config_table_cache.last_good_used` 告警）；
+ *   · **写库前校验**可传 `freshness: 'fresh'`：强制重读，失败**不回退 lastGood**（不能拿旧配置写库）；
  *   · 收到飞书 record_changed 事件时 `invalidate`，下一次读取重读。
  *
- * 快照 key = appToken + tableId + tableKey（同一 Base 的所有 gateway 实例共享）。
+ * 快照 key = appToken + tableId + tableKey + 字段集（同一 Base / 同一字段集共享；
+ * 精简字段与完整字段分开缓存，避免 #990 的精简快照污染完整快照）。
  */
 const { configTableTtlMs, CONFIG_TABLE_KEYS } = require('../config/configTables');
 const { logWarn } = require('../utils/logger');
@@ -22,14 +24,17 @@ const entries = new Map();
 // 测试/替身没有 appToken ⇒ 按 gateway 实例隔离（避免不同用例串数据）。
 const fakeIds = new WeakMap();
 let fakeSeq = 0;
-const keyOf = (gateway, tableKey) => {
+const fieldsKeyOf = (fields) => (Array.isArray(fields) && fields.length
+  ? [...new Set(fields.map(String))].sort().join('|') : '');
+const keyOf = (gateway, tableKey, fieldsKey = '') => {
   let tableId = tableKey;
   let appToken = '';
   try { tableId = gateway?.table?.(tableKey)?.tableId || tableKey; } catch (error) { /* 测试缺 env：退回 tableKey */ }
   try { appToken = gateway?.schema?.appToken || gateway?.appToken || ''; } catch (error) { /* 同上 */ }
-  if (appToken) return `${appToken}:${tableId}:${tableKey}`;
+  const suffix = fieldsKey ? `:${fieldsKey}` : '';
+  if (appToken) return `${appToken}:${tableId}:${tableKey}${suffix}`;
   if (!fakeIds.has(gateway)) fakeIds.set(gateway, ++fakeSeq);
-  return `fake:${fakeIds.get(gateway)}:${tableKey}`;
+  return `fake:${fakeIds.get(gateway)}:${tableKey}${suffix}`;
 };
 
 /** 过期重读失败时用 lastGood，但必须留下可观测的告警（同一张表 5 分钟内只打一次）。 */
@@ -47,7 +52,7 @@ const warnLastGoodUsed = (entry, now, ttl) => {
   });
 };
 
-const loadEntry = async (entry, loader, now, ttl) => {
+const loadEntry = async (entry, loader, now, ttl, { allowLastGood = true } = {}) => {
   if (entry.loading) return entry.loading;
   entry.loading = (async () => {
     try {
@@ -60,7 +65,7 @@ const loadEntry = async (entry, loader, now, ttl) => {
       return entry.rows;
     } catch (error) {
       entry.lastError = error;
-      if (entry.lastGood) {
+      if (allowLastGood && entry.lastGood) {
         warnLastGoodUsed(entry, now, ttl);
         return entry.lastGood;
       }
@@ -73,22 +78,30 @@ const loadEntry = async (entry, loader, now, ttl) => {
 };
 
 /**
- * @param {{gateway: object, tableKey: string, loader?: Function}} options
+ * @param {{gateway: object, tableKey: string, loader?: Function, freshness?: 'cache'|'fresh', fields?: string[]}} options
+ *   freshness='fresh' ⇒ 写库前强制重读；失败**不回退 lastGood**（避免旧配置写库）。
+ *   fields ⇒ 精简字段读取与完整读取分开缓存（同一 key 不能混用，避免 #990 污染）。
  * @returns {Promise<Array>} 行数组；从未成功读过且读失败 ⇒ 抛错
  */
-const getConfigRows = async ({ gateway, tableKey, loader, now = () => Date.now() } = {}) => {
+const getConfigRows = async ({ gateway, tableKey, loader, freshness = 'cache', fields, now = () => Date.now() } = {}) => {
   if (!gateway || !tableKey) throw new Error('getConfigRows requires gateway + tableKey');
-  const key = keyOf(gateway, tableKey);
+  const fieldsKey = fieldsKeyOf(fields);
+  const key = keyOf(gateway, tableKey, fieldsKey);
   const ttl = configTableTtlMs(tableKey);
   let entry = entries.get(key);
   if (!entry) {
-    entry = { gateway, tableKey, rows: null, lastGood: null, at: 0, loading: null, lastError: null, lastWarnAt: 0 };
+    entry = { gateway, tableKey, fieldsKey, rows: null, lastGood: null, at: 0, loading: null, lastError: null, lastWarnAt: 0 };
     entries.set(key, entry);
   } else {
     entry.gateway = gateway;
   }
-  if (entry.rows && ttl > 0 && now() - entry.at < ttl) return entry.rows;
-  return loadEntry(entry, loader, now, ttl);
+  const mustFresh = freshness === 'fresh';
+  if (!mustFresh && entry.rows && ttl > 0 && now() - entry.at < ttl) return entry.rows;
+  if (mustFresh && entry.loading) {
+    // 等当前加载结束，再强制读一次；不复用可能走了 lastGood 的在途结果。
+    await entry.loading.catch(() => {});
+  }
+  return loadEntry(entry, loader, now, ttl, { allowLastGood: !mustFresh });
 };
 
 /** 事件驱动：把某张表标记为过期；下一次读取会重读，失败则用 lastGood。 */
@@ -96,7 +109,7 @@ const invalidateConfigTable = (tableKeyOrId) => {
   const wanted = String(tableKeyOrId || '');
   let count = 0;
   for (const entry of entries.values()) {
-    if (entry.tableKey === wanted || keyOf(entry.gateway, entry.tableKey).includes(`:${wanted}:`)) {
+    if (entry.tableKey === wanted || keyOf(entry.gateway, entry.tableKey, entry.fieldsKey).includes(`:${wanted}:`)) {
       entry.at = Number.NEGATIVE_INFINITY;
       entry.lastWarnAt = 0;
       count += 1;
@@ -106,9 +119,10 @@ const invalidateConfigTable = (tableKeyOrId) => {
 };
 
 /** 启动预热 / 测试用：强制重读。 */
-const warmConfigTable = async ({ gateway, tableKey, loader, now = () => Date.now() } = {}) => {
-  const key = keyOf(gateway, tableKey);
-  const entry = entries.get(key) || { gateway, tableKey, rows: null, lastGood: null, at: 0, loading: null, lastError: null, lastWarnAt: 0 };
+const warmConfigTable = async ({ gateway, tableKey, loader, fields, now = () => Date.now() } = {}) => {
+  const fieldsKey = fieldsKeyOf(fields);
+  const key = keyOf(gateway, tableKey, fieldsKey);
+  const entry = entries.get(key) || { gateway, tableKey, fieldsKey, rows: null, lastGood: null, at: 0, loading: null, lastError: null, lastWarnAt: 0 };
   entries.set(key, entry);
   entry.at = 0;
   return loadEntry(entry, loader, now, configTableTtlMs(tableKey));

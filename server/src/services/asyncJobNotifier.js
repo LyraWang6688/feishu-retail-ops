@@ -16,13 +16,9 @@
  * 默认发送器 = 项目现有机器人客户端（`@larksuiteoapi/node-sdk` 的 `im.message.create`），
  * 与 `services/alertNotifier.js` 同一个调用形状；**不新开机器人、不恢复群聊入口**。
  */
-const lark = require('@larksuiteoapi/node-sdk');
-const { larkLogger } = require('../utils/larkLogger');
-const { getLarkAgentCredentials } = require('../config/larkAgent');
-const { ASYNC_JOBS, resolveAsyncJobChatId } = require('../config/asyncJobs');
+const { ASYNC_JOBS } = require('../config/asyncJobs');
+const { createDefaultNotificationService } = require('./notificationService');
 
-// 默认发送器的报错原文：仍以**配置**为唯一真源（module-level 取一次；用例注入 config 时不建真客户端）。
-const SEND_FAILED_TEXT = ASYNC_JOBS.texts.sendFailed;
 const { logInfo, logWarn } = require('../utils/logger');
 
 const SHANGHAI_OFFSET_MINUTES = 480;
@@ -43,24 +39,6 @@ const truncate = (text, max) => {
   const value = String(text ?? '');
   const limit = Number(max) || 0;
   return limit > 0 && value.length > limit ? `${value.slice(0, Math.max(0, limit - 1))}…` : value;
-};
-
-const createDefaultSendText = () => {
-  let client;
-  const getClient = () => {
-    if (client) return client;
-    const { appId, appSecret } = getLarkAgentCredentials();
-    client = new lark.Client({ appId, appSecret, logger: larkLogger });
-    return client;
-  };
-  return async (chatId, text) => {
-    const response = await getClient().im.message.create({
-      params: { receive_id_type: 'chat_id' },
-      data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text }) },
-    });
-    if (response?.code !== 0) throw new Error(`${SEND_FAILED_TEXT}: ${response?.msg} (Code: ${response?.code})`);
-    return { messageId: response?.data?.message_id || '' };
-  };
 };
 
 /**
@@ -91,16 +69,16 @@ const renderAsyncJobFailureMessage = (job = {}, config = ASYNC_JOBS) => {
 /**
  * @param {object} deps
  * @param {object} [deps.config]   `ASYNC_JOBS` 形状的配置（用例注入假 env 配置）
- * @param {Function} [deps.sendText] `(chatId, text) => Promise`（用例注入假发送器）
+ * @param {object} [deps.notificationService] 统一通知服务（用例注入假卡片发送器）
  */
 const createAsyncJobNotifier = ({
   config = ASYNC_JOBS,
-  sendText,
-  resolveChatId = resolveAsyncJobChatId,
+  notificationService,
   logger = { logInfo, logWarn },
   now = () => new Date(),
 } = {}) => {
-  const sender = typeof sendText === 'function' ? sendText : createDefaultSendText();
+  // 唯一发送路径：统一 notificationService（CardKit v2 卡片）。
+  const cards = notificationService || createDefaultNotificationService();
   const info = typeof logger.logInfo === 'function' ? logger.logInfo : () => {};
   const warn = typeof logger.logWarn === 'function' ? logger.logWarn : () => {};
 
@@ -118,29 +96,40 @@ const createAsyncJobNotifier = ({
       warn('async_job.notify.disabled', { job_id: jobId, type });
       return { sent: false, reason: 'not_enabled' };
     }
-    // ③ 群：显式群优先，否则复用 PURCHASE_CHAT_ID；都没有 ⇒ **如实记 chat_missing**（不静默成功）
-    const chatId = String(resolveChatId() || '').trim();
-    if (!chatId) {
-      warn('async_job.notify.chat_missing', {
-        job_id: jobId, type,
-        env: 'ASYNC_JOB_ALERT_CHAT_ID / PURCHASE_CHAT_ID',
-        hint: config.texts?.hints?.chatMissing || '',
-      });
-      return { sent: false, reason: 'chat_missing' };
-    }
+    // ③ 目标解析 / 发送统一由 notificationService 负责（private/group 两个固定目标）。
     const text = renderAsyncJobFailureMessage(job, config);
     const startedAt = Date.now();
     try {
-      await sender(chatId, text);
+      const lines = String(text || '').split('\n');
+      const title = lines.shift() || config.texts?.groupTitle || '';
+      const sent = await cards.send('async_job_failed', { title, lines });
+      if (!sent.ok) {
+        const reason = sent.reason || 'send_failed';
+        if (reason === 'target_missing') {
+          warn('async_job.notify.chat_missing', {
+            job_id: jobId, type, reason,
+            env: 'NOTIFY_GROUP_CHAT_ID / PURCHASE_CHAT_ID',
+            hint: config.texts?.hints?.chatMissing || '',
+          });
+          return { sent: false, reason };
+        }
+        warn('async_job.notify.failed', {
+          job_id: jobId, type, reason,
+          error: String(sent.error || sent.reason || '').slice(0, 300),
+          duration_ms: Date.now() - startedAt,
+          hint: config.texts?.hints?.notifyRetry || '',
+        });
+        return { sent: false, reason, error: sent.error };
+      }
       info('async_job.notify.sent', {
-        job_id: jobId, type, chat_id: chatId, duration_ms: Date.now() - startedAt,
-        notified_at: now().toISOString(),
+        job_id: jobId, type, card_id: sent.cardId || '', message_id: sent.messageId || '',
+        duration_ms: Date.now() - startedAt, notified_at: now().toISOString(),
       });
-      return { sent: true, reason: 'sent', chatId };
+      return { sent: true, reason: 'sent', cardId: sent.cardId || '', messageId: sent.messageId || '' };
     } catch (error) {
       // 🔴 发送失败**不改业务任务状态**；只记日志、不写 notified_at ⇒ 允许后续重试
       warn('async_job.notify.failed', {
-        job_id: jobId, type, chat_id: chatId,
+        job_id: jobId, type,
         error: String(error?.message || error).slice(0, 300),
         duration_ms: Date.now() - startedAt,
         hint: config.texts?.hints?.notifyRetry || '',
@@ -149,7 +138,7 @@ const createAsyncJobNotifier = ({
     }
   };
 
-  return { notify, render: (job) => renderAsyncJobFailureMessage(job, config), resolveChatId };
+  return { notify, render: (job) => renderAsyncJobFailureMessage(job, config) };
 };
 
 module.exports = {

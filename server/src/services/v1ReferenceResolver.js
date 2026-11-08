@@ -82,7 +82,7 @@ class V1ReferenceResolver {
       return { recordId: input.productRecordId, record };
     }
     const table = this.gateway.table('product');
-    const records = await this.gateway.listAll('product');
+    const records = await getConfigRows({ gateway: this.gateway, tableKey: 'product' });
     const wantedNumber = normalizeText(input.productNumber || input.number);
     const wantedItemNo = normalizeText(input.itemNo);
     const wantedColor = normalizeColor(input.color);
@@ -196,7 +196,9 @@ class V1ReferenceResolver {
   }
 
   async resolveBehavior(code) {
-    const record = await this.gateway.findOneByText('behavior', 'code', code);
+    const table = this.gateway.table('behavior');
+    const records = await getConfigRows({ gateway: this.gateway, tableKey: 'behavior' });
+    const record = records.find((item) => textValue(item.fields?.[table.fields.code]) === code);
     if (!record) throw new Error(`行为管理中找不到已配置行为：${code}`);
     return { recordId: record.record_id, record };
   }
@@ -213,7 +215,7 @@ class V1ReferenceResolver {
       throw new Error(`未声明的销售交易类型：${code || '(空)'}`);
     }
     const table = this.gateway.table('behavior');
-    const records = await this.gateway.listAll('behavior');
+    const records = await getConfigRows({ gateway: this.gateway, tableKey: 'behavior' });
     const matches = records.filter((record) => textValue(record.fields?.[table.fields.code]) === code);
     if (!matches.length) throw new Error(`行为管理里找不到交易类型：${code}`);
     if (matches.length > 1) throw new Error(`行为管理里交易类型重复：${code}`);
@@ -237,7 +239,7 @@ class V1ReferenceResolver {
   async resolveSupplier(name) {
     if (!name) return null;
     const table = this.gateway.table('supplier');
-    const records = await this.gateway.listAll('supplier');
+    const records = await getConfigRows({ gateway: this.gateway, tableKey: 'supplier' });
     const wanted = normalizeText(name);
     const matches = records.filter(
       (record) => normalizeText(textValue(record.fields?.[table.fields.name])) === wanted

@@ -68,6 +68,8 @@ const createAsyncJobStore = ({ dir } = {}) => {
       operator_name: String(job.operator_name || ''),
       meta: job.meta && typeof job.meta === 'object' ? { ...job.meta } : {},
       notified_at: '',
+      notification_card_id: '',
+      notification_message_id: '',
       notify: { attempts: 0, last_error: '', reason: '' },
     });
     return { job: record, created };
