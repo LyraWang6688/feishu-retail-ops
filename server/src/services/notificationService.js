@@ -13,6 +13,14 @@ const {
   buildNotificationCard, sendNotificationCard, updateNotificationCard,
 } = require('./notificationCard');
 const { logInfo, logWarn } = require('../utils/logger');
+const lark = require('@larksuiteoapi/node-sdk');
+const { larkLogger } = require('../utils/larkLogger');
+const { getLarkAgentCredentials } = require('../config/larkAgent');
+
+const createDefaultClient = () => {
+  const { appId, appSecret } = getLarkAgentCredentials();
+  return new lark.Client({ appId, appSecret, logger: larkLogger });
+};
 
 const createNotificationService = ({
   client,
@@ -66,4 +74,6 @@ const createNotificationService = ({
   return { send, notify: send, update };
 };
 
-module.exports = { createNotificationService };
+const createDefaultNotificationService = () => createNotificationService({ client: createDefaultClient() });
+
+module.exports = { createNotificationService, createDefaultNotificationService, createDefaultClient };

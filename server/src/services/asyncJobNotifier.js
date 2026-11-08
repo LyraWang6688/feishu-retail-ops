@@ -20,6 +20,7 @@ const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { ASYNC_JOBS, resolveAsyncJobChatId } = require('../config/asyncJobs');
+const { createDefaultNotificationService } = require('./notificationService');
 
 // 默认发送器的报错原文：仍以**配置**为唯一真源（module-level 取一次；用例注入 config 时不建真客户端）。
 const SEND_FAILED_TEXT = ASYNC_JOBS.texts.sendFailed;
@@ -96,10 +97,14 @@ const renderAsyncJobFailureMessage = (job = {}, config = ASYNC_JOBS) => {
 const createAsyncJobNotifier = ({
   config = ASYNC_JOBS,
   sendText,
+  notificationService,
   resolveChatId = resolveAsyncJobChatId,
   logger = { logInfo, logWarn },
   now = () => new Date(),
 } = {}) => {
+  // 新路径：统一 notificationService（CardKit v2）；显式注入 sendText 的旧单测仍走兼容分支。
+  const cards = notificationService || (typeof sendText === 'function'
+    ? null : createDefaultNotificationService());
   const sender = typeof sendText === 'function' ? sendText : createDefaultSendText();
   const info = typeof logger.logInfo === 'function' ? logger.logInfo : () => {};
   const warn = typeof logger.logWarn === 'function' ? logger.logWarn : () => {};
@@ -120,7 +125,7 @@ const createAsyncJobNotifier = ({
     }
     // ③ 群：显式群优先，否则复用 PURCHASE_CHAT_ID；都没有 ⇒ **如实记 chat_missing**（不静默成功）
     const chatId = String(resolveChatId() || '').trim();
-    if (!chatId) {
+    if (!cards && !chatId) {
       warn('async_job.notify.chat_missing', {
         job_id: jobId, type,
         env: 'ASYNC_JOB_ALERT_CHAT_ID / PURCHASE_CHAT_ID',
@@ -131,6 +136,25 @@ const createAsyncJobNotifier = ({
     const text = renderAsyncJobFailureMessage(job, config);
     const startedAt = Date.now();
     try {
+      if (cards) {
+        const lines = String(text || '').split('\n');
+        const title = lines.shift() || config.texts?.groupTitle || '';
+        const sent = await cards.send('async_job_failed', { title, lines });
+        if (!sent.ok) {
+          warn('async_job.notify.failed', {
+            job_id: jobId, type, reason: sent.reason || 'send_failed',
+            error: String(sent.error || sent.reason || '').slice(0, 300),
+            duration_ms: Date.now() - startedAt,
+            hint: config.texts?.hints?.notifyRetry || '',
+          });
+          return { sent: false, reason: sent.reason || 'send_failed', error: sent.error };
+        }
+        info('async_job.notify.sent', {
+          job_id: jobId, type, chat_id: chatId, card_id: sent.cardId || '', message_id: sent.messageId || '',
+          duration_ms: Date.now() - startedAt, notified_at: now().toISOString(),
+        });
+        return { sent: true, reason: 'sent', chatId, cardId: sent.cardId || '', messageId: sent.messageId || '' };
+      }
       await sender(chatId, text);
       info('async_job.notify.sent', {
         job_id: jobId, type, chat_id: chatId, duration_ms: Date.now() - startedAt,
