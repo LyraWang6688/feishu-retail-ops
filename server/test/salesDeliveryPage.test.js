@@ -208,10 +208,12 @@ test('AC-SD-M7 排序纯函数：旧→新 / 新→旧，无销售日的排最�
 test('AC-SD-M8 fetchDeliveryData：调用只读接口并归一化 methods/orders', async () => {
   const { data, config } = await loadPureModules();
   const calls = [];
-  const fakeApi = { get: async (path) => { calls.push(path); return { methods: ['微信扫码', '现金'], orders: FIXTURE_ORDERS }; } };
+  const fakeApi = { get: async (path) => { calls.push(path); return { methods: ['微信扫码', '现金'], orders: FIXTURE_ORDERS, submit_toast: { text: '数据提交成功，后台自动写入' }, job_poll: { interval_ms: 2000, timeout_ms: 120000 } }; } };
   const out = await data.fetchDeliveryData(fakeApi, config.SALES_DELIVERY_CONFIG, config.SALES_DELIVERY_FIELDS);
   assert.deepEqual(calls, ['/api/workbench/sales/delivery']);
   assert.deepEqual(out.methods, ['微信扫码', '现金']);
+  assert.equal(out.submitToastText, '数据提交成功，后台自动写入');
+  assert.deepEqual(out.jobPoll, { intervalMs: 2000, timeoutMs: 120000 });
   assert.equal(out.orders.length, FIXTURE_ORDERS.length);
   assert.equal(out.orders[0].orderNo, 'XSD-20261020-0001');
 });
@@ -347,12 +349,13 @@ test('AC-SD-P4 工作台入口：「交割单」卡片跳独立页，供应验�
   assert.match(orders, /sectionCard\.dataset\.ordersSection === 'pending'[\s\S]{0,200}window\.location\.href = SALES_DELIVERY_PAGE/);
 });
 
-test('AC-SD-JOBTIMEOUT 前台轮询超时：120s 且超时只提示「仍在写入」，不误报失败', () => {
-  const config = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/workbench/config/sales-delivery.js'), 'utf8');
+test('AC-SD-JOBTIMEOUT 轮询统一读 asyncJobs 配置：120s 且超时只提示「仍在写入」', () => {
+  const asyncConfig = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/config/asyncJobs.js'), 'utf8');
+  const pageConfig = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/workbench/config/sales-delivery.js'), 'utf8');
   const feedback = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/workbench/features/sales-delivery/ui-feedback.js'), 'utf8');
   const index = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/workbench/features/sales-delivery/index.js'), 'utf8');
-  assert.match(config, /timeoutMs:\s*120000/, 'job 轮询超时必须 ≥ 120s（真实飞书写库可能 >30s）');
-  assert.match(config, /stillWriting:/, '必须有「仍在写入」文案');
+  assert.match(asyncConfig, /ASYNC_JOB_POLL_MAX_MS', 120000/, '统一轮询上限必须是 120s');
+  assert.doesNotMatch(pageConfig, /jobPoll/, '页面不再自建轮询参数');
   assert.match(feedback, /onTimeout/, '超时不能只走 onFailure');
   assert.match(index, /onTimeout:.*T\.stillWriting/, '超时要提示仍在写入');
 });
