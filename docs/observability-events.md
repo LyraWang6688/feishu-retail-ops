@@ -415,8 +415,8 @@
 | `scan.page.viewed` | 1 | src/config/scanPage.js |
 | `scan.payment_step.reset_failed` | 1 | src/config/scanPage.js |
 | `scan.payment_step.reset_on_scan` | 1 | src/config/scanPage.js |
-| `scan.payment_step.stale_clear_failed` | 1 | src/routes/scanPage/routes.js |
-| `scan.payment_step.stale_cleared` | 1 | src/routes/scanPage/routes.js |
+| `scan.payment_step.stale_clear_failed` | 1 | src/routes/scanPage/pages.js |
+| `scan.payment_step.stale_cleared` | 1 | src/routes/scanPage/pages.js |
 | `scan.purchase_return.batch_created` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.image_failed` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.plan_frozen` | 1 | src/config/scanWrite.js |
