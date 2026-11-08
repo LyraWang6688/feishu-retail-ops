@@ -78,10 +78,11 @@ export const SCAN_PRINT_TEXTS = Object.freeze({
   // ⭐⭐ 2026-10-15：**「只扫码」聚焦页**（`?scan=1` 那条入口）的文案 ——
   //   她真机反馈「整条链路不太友好」之后做的：原来这条入口复用的是**批量打印那一页**
   //   ⇒ 进页先跑一次 `/labels` 查询（真机实测 **23.6 秒**）⇒ 她**先看到批量页干等**、相机才弹 ✗
+  // ⭐ 2026-11-09（业务负责人截图口径）：聚焦页**只留 标题 + 大按钮 + 结果那一行** ——
+  //   说明句（「对着鞋盒…这里不用选编号」）与「要一次打很多张？去批量打印 →」**整句删掉** ✗
+  //   （删的是**文案与节点**，不是隐藏；塞回去 ⇒ `test/scanToPrint.test.js` 的 AC-SP17 当场红 ✓）
   title: PLACE_TEXTS.labelPrintTitle,
-  subtitle: '对着鞋盒标签上的二维码扫一下 —— 那一张就直接排进店里那台电脑的打印队列，这里不用选编号。',
   scanAgain: '📷 再扫一张',
-  batchLink: '要一次打很多张？去「批量打印」→',
   resultPrefix: '✅ 已提交打印：',
   reusedPrefix: '✅ 刚刚已经发过这一张：',
 });
@@ -132,20 +133,21 @@ export const scanPrintBarHtml = () => `
 
 /**
  * ⭐⭐ 2026-10-15：**「只扫码」聚焦页的壳**（`?scan=1` = 「货品 → 标签打印 → 扫码打印」那条入口）。
- *   🔴 它**只有这一块**：标题 + 一颗大按钮 + 结果那一行 + 一条去批量打印的链接 ——
+ *   🔴 它**只有这一块**：标题 + 一颗大按钮 + 结果那一行 ——
  *     **没有**筛选框 / 预览纸张 / 打印队列（那些是"批量打印"的事，进来会白跑一次 23.6 秒的查询 ✗）。
- *   ⚠️ 要批量打印走下面那条链接（落到**不带** `?scan` 的同一页 = 原来那一页，**一个字节没改** ✓）。
+ *   ⚠️ 2026-11-09（业务负责人截图口径）：**说明句与「去批量打印」那条链接都删掉** ✗ ——
+ *     这一屏只剩扫码本身（要批量打印从「货品 → 标签打印 → 批量打印」进，不靠这一页引路）。
+ *     🔴 **塞回即红**：`test/scanToPrint.test.js` 的 AC-SP17 钉着「没有 scan-subtitle / 没有
+ *       scan-batch-link / 没有 href="?"」三条。
  */
 export const scanOnlyShellHtml = () => `
     <section class="panel no-print scan-only">
       <div class="panel-header">
         <div>
           <h2 data-view="scan-title"></h2>
-          <p class="subtitle" data-view="scan-subtitle"></p>
         </div>
       </div>
       ${scanPrintBarHtml()}
-      <p class="data-caption"><a class="scan-batch-link" href="?" data-action="scan-batch-link"></a></p>
     </section>`;
 
 /**
@@ -366,14 +368,11 @@ export function createScanPrintAction(options = {}) {
     runWithFeedback,
     mount(container) {
       root = container;
-      // ⭐⭐ 2026-10-15：聚焦页（`?scan=1`）的标题 / 说明 / "去批量打印"链接文案都在这里填
-      //   （批量页上没有这三个节点 ⇒ 一句都不改 ✓）
+      // ⭐⭐ 2026-10-15：聚焦页（`?scan=1`）的标题文案在这里填（批量页上没有这个节点 ⇒ 一句都不改 ✓）。
+      // ⭐ 2026-11-09（业务负责人截图口径）：说明句 / "去批量打印"链接**已整条删掉** ——
+      //   这里不再有 `scan-subtitle` / `scan-batch-link` 两个填文案的点（节点也没了）。
       const title = view('scan-title');
       if (title) title.textContent = texts.title;
-      const subtitle = view('scan-subtitle');
-      if (subtitle) subtitle.textContent = texts.subtitle;
-      const batchLink = pick('scan-batch-link');
-      if (batchLink) batchLink.textContent = texts.batchLink;
       const button = pick('scan-print');
       if (button) {
         button.textContent = texts.button;
@@ -388,15 +387,16 @@ export function createScanPrintAction(options = {}) {
 }
 
 /**
- * ⭐⭐ 2026-10-15（业务负责人逐字：「**可以，给隐藏掉吧**」）：`?scan=1` **「只扫码」聚焦页**上，
- *   **导航胶囊只留「返回完整工作台」**（那是"回家的路"，不许一起藏 ✗），
- *   其余两颗（库存手工调整 / 鞋盒标签打印 —— 后者就是这一页自己）隐藏。
+ * ⭐⭐ 2026-11-09（业务负责人截图口径）：`?scan=1` **「只扫码」聚焦页**上，**整条导航胶囊都不显示**
+ *   —— 含原来那颗「返回完整工作台」（她逐字：「需要删除返回完整工作台按钮」）。
  *
  * ⚠️ **只在 `?scan=1` 这条入口上生效**：标记打在 `<html>` 上，隐藏规则在 `features/labels/labels.css`
- *   （`html[data-scan-only="1"] .standalone-nav [data-nav-scan-only-hide]`）——
+ *   （`html[data-scan-only="1"] .standalone-nav { display: none; }`）——
  *   **不带 `?scan` 的批量打印页一个字节都不改** ✓（这个属性只有本函数会标）。
- * ⚠️ 用**属性 + CSS**，不是逐个改 `style`、也不是删节点：一处规则管住所有被标记的胶囊，
- *   DOM 结构不动（既有判据照旧：导航条还在、`返回完整工作台` 逐字还在 ✓）。
+ * ⚠️ 用**属性 + CSS**，不是删节点：`label-print.html` 的三颗胶囊照旧在（批量页要用），
+ *   只是这一屏把它们整条藏掉 ⇒ 别的入口 / 别的独立页零影响 ✓。
+ * ⚠️ 历史沿革：2026-10-15 那版是「只留返回完整工作台、藏掉另外两颗」；2026-11-09 她连那颗也删 ✗
+ *   ⇒ 旧口径（"回家的路不许藏"）**已作废**，别再把那条规则加回来。
  */
 export const SCAN_ONLY_ATTR = 'data-scan-only';
 
@@ -414,8 +414,8 @@ export const markScanOnlyPage = (doc) => {
  *   `features/labels/index.js` 命中这条入口时**只调它一下就 return**。
  *   🔴 **一个字节的批量逻辑都不碰**：不查 `/labels`、不挂筛选 / 预览纸张 / 打印队列 ——
  *     真机实测原来那次批量查询要 **23.6 秒**（扫 1362 条货品记录），正是"进页先看到批量页干等"的根因 ✗。
- *   ⭐ 它只做四件事：标上"这一屏只扫码"（导航只留回家的路 ⇒ 她要的"隐藏掉" ✓）→ 渲染聚焦壳
- *     → 挂扫码块 → **进页自动弹一次相机** ✓
+ *   ⭐ 它只做四件事：标上"这一屏只扫码"（**整条导航都不显示** ⇒ 她要的"删除返回完整工作台" ✓）
+ *     → 渲染聚焦壳 → 挂扫码块 → **进页自动弹一次相机** ✓
  *   ⚠️ `autoOpen: false` 供用例关掉自动弹（真机那条路是默认开的）；`doc` 供用例注入假 document。
  */
 export const mountScanOnlyPage = (container, scanPrint, options = {}) => {
