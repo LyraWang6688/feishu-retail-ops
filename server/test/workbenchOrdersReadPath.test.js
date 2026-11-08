@@ -35,6 +35,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { SalesFollowupService } = require('../src/services/salesFollowupService');
+const { createPaymentMethodsService } = require('../src/services/paymentMethodsService');
+const { resetConfigTableCache } = require('../src/services/configTableCache');
 const { createWorkbenchOrdersCache } = require('../src/services/workbenchOrdersCache');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
@@ -288,5 +290,53 @@ test('AC-P6 快照读失败 ⇒ 退回逐条读（待办照旧看得见，候选
       '如实退回逐条读：快照 1 次（失败）+ 每条待办自己读 1 次');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-P7 **共享配置缓存不许被"精简读"污染**（2026-11-08 真实事故）
+//   · 订单列表曾按需只取「支付方式.名称」一列，却把结果塞进**整表共享缓存**；
+//   · 售后「可用于退款」/ 交割单「券关联」读的是同一份快照 ⇒
+//     refundable 被误判为 true（本该拦的退款方式放行）、voucherRecordId 变空。
+//   判据：订单列表那次读必须**整表（不带 fieldNames）**；读完后共享缓存里的退款限制/券关联仍正确。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-P7 订单列表整表读支付方式配置 ⇒ 售后 refundable / 券关联不被精简快照吞掉', async () => {
+  resetConfigTableCache();
+  const fixture = pendingFixture();
+  fixture.paymentMethod = [
+    { record_id: 'method_wechat', fields: { 收款方式: '微信', 可用于退款: true, 团购券管理: ['voucher_1'] } },
+    { record_id: 'method_icbc', fields: { 收款方式: '工商银行', 可用于退款: false } },
+  ];
+  const env = await buildService(fixture);
+  // 冒充真飞书 API：**传了 fieldNames 就只回那几列**（这正是缓存被污染的条件）
+  const rawListAll = env.fake.listAll.bind(env.fake);
+  env.fake.listAll = async (key, callOptions = {}) => {
+    const rows = await rawListAll(key, callOptions);
+    const names = callOptions.fieldNames;
+    if (!Array.isArray(names) || !names.length) return rows;
+    return rows.map((row) => ({
+      ...row,
+      fields: Object.fromEntries(names
+        .filter((name) => Object.prototype.hasOwnProperty.call(row.fields || {}, name))
+        .map((name) => [name, row.fields[name]])),
+    }));
+  };
+  try {
+    await env.service.listOrders();
+    const pmCall = env.fake.calls.filter((call) => call.key === 'paymentMethod').pop();
+    assert.equal(pmCall.fieldNames, undefined,
+      '支付方式必须整表读（共享配置缓存；不许只取名称列）');
+
+    const paymentMethods = createPaymentMethodsService(env.fake);
+    const refundable = await paymentMethods.listRefundable();
+    assert.deepEqual(refundable.items.map((item) => item.name), ['微信'],
+      '「可用于退款」限制不能被精简快照吞掉（工商银行必须仍被排除）');
+    const detailed = await paymentMethods.listWithVouchers();
+    assert.equal(detailed.items.find((item) => item.name === '微信').voucherRecordId, 'voucher_1',
+      '券关联不能被精简快照吞掉');
+  } finally {
+    env.cleanup();
+    resetConfigTableCache();
   }
 });
