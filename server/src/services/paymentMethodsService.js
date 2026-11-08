@@ -13,6 +13,7 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 const { getConfigRows } = require('./configTableCache');
 const { PAYMENT_METHODS } = require('../config/paymentMethods');
+const { CONFIG_TABLES } = require('../config/configTables');
 
 /** 配置默认方式**只在表里真实存在时**排第一；否则用表里第一项。 */
 const orderWithPreferred = (items = [], preferred = '') => {
@@ -28,7 +29,8 @@ const createPaymentMethodsService = (gateway, options = {}) => {
   const fieldName = options.fieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.name || '收款方式';
   const voucherFieldName = options.voucherFieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.voucher || '';
   const orderFieldName = options.orderFieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.order || '';
-  const ttlMs = options.ttlMs === undefined ? 30 * 60 * 1000 : Number(options.ttlMs);
+  // TTL 统一由 `config/configTables.js` 决定，调用方不再传。
+  const ttlMs = CONFIG_TABLES.paymentMethod.ttlMs;
   const now = options.now || (() => Date.now());
   // ⭐ 2026-11-08（业务负责人：售后能不能用哪些支付方式也做成配置）：
   //   「支付方式管理」可选加一列（默认名「可用于退款」，勾选框）——
@@ -72,7 +74,7 @@ const createPaymentMethodsService = (gateway, options = {}) => {
 
   const load = async () => {
     try {
-      const rows = await getConfigRows({ gateway, tableKey, ttlMs, now });
+      const rows = await getConfigRows({ gateway, tableKey, now });
       return { ok: true, ...rowsToItems(rows) };
     } catch (error) {
       return { ok: false, items: [], detailed: [], reason: 'payment_methods_unreadable', error: error?.message || 'unknown' };

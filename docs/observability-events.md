@@ -67,6 +67,12 @@
 | --- | --- | --- |
 | `client.resource.failed` | 1 | src/utils/uiTapReport.js |
 
+## config_table_cache
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `config_table_cache.last_good_used` | 1 | src/services/configTableCache.js |
+
 ## douyin
 
 | 事件 | 次数 | 文件 |

@@ -5,6 +5,7 @@ const lark = require('@larksuiteoapi/node-sdk');
 const { LarkMvpService } = require('../services/larkMvpService');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { invalidateConfigTable } = require('../services/configTableCache');
+const { CONFIG_TABLE_KEYS } = require('../config/configTables');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 const { larkLogger } = require('../utils/larkLogger');
 const { LarkEventHeartbeat } = require('../infrastructure/larkEventHeartbeat');
@@ -92,8 +93,7 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => ({
     recordBusinessHeartbeat(heartbeat);
     // ⭐ 2026-10-26：配置表记录变更 ⇒ 作废对应快照；下一次读取重读（读失败仍用 lastGood）。
     //   只按 table_id 分派，表名/字段名不写死；未命中的表（业务数据表）完全不受影响。
-    const configTableKeys = ['paymentMethod', 'sizeManagement', 'behavior', 'accessory', 'supplier', 'groupBuyVoucher', 'product', 'color'];
-    for (const key of configTableKeys) {
+    for (const key of CONFIG_TABLE_KEYS) {
       const id = V1_BITABLE_SCHEMA.tables?.[key]?.tableId;
       if (id && id === tableId) {
         invalidateConfigTable(key);

@@ -53,14 +53,8 @@ const AFTER_SALES_DERIVED = Object.freeze({
   }),
   // 异步任务存储目录（本地 JSON 任务记录；与交割单页同一套 JsonTaskStore）。
   jobsDir: process.env.AFTER_SALES_JOBS_DIR || '',
-  // ⭐ 2026-11-08（#948）：重试配置**向统一层收敛** —— 优先 `ASYNC_JOB_*`，旧 `AFTER_SALES_JOB_*`
-  //   仍生效（不破坏线上已有 env）；两边都没配 = 3 次 / 800ms（与统一层缺省一致）。
-  job: Object.freeze({
-    retryAttempts: Number(process.env.AFTER_SALES_JOB_MAX_ATTEMPTS
-      || process.env.ASYNC_JOB_MAX_ATTEMPTS || 3),
-    retryBaseMs: Number(process.env.AFTER_SALES_JOB_RETRY_MS
-      || process.env.ASYNC_JOB_RETRY_BASE_MS || 800),
-  }),
+  // ⚠️ 重试次数 / 退避**不在这里**：唯一来源 = `config/asyncJobs.js` 的 `ASYNC_JOB_*`
+  //   （业务负责人 2026-11-08：改成统一配置，**不需要**旧 `AFTER_SALES_JOB_*` 兼容兜底）。
   // 人话（配置先行；路由/服务不写死中文）
   texts: Object.freeze({
     needRequestId: '缺少请求标识（request_id）',

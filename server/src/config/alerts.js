@@ -26,6 +26,7 @@ const DEFAULT_CRITICAL_EVENTS = [
   'inventory.change.failed',
   'scan.write.failed',
   'label_print.job.failed',
+  'config_table_cache.last_good_used',
 ];
 
 const OBSERVABILITY_ALERTS = Object.freeze({
