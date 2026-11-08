@@ -21,6 +21,7 @@ const { isOrderIncomplete } = require('./v1WorkbenchService');
 const { ORDER_FIELD_KEYS, ORDER_SUPPORT_FIELD_KEYS, readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
 const { createWorkbenchOrdersCache } = require('./workbenchOrdersCache');
 const { logWarn } = require('../utils/logger');
+const { getConfigRows } = require('./configTableCache');
 // ⭐⭐ 2026-10-15（她逐字「**需要加上**」）：订单列表的"读表瞬时错误自动重试"——
 //   次数/退避走这份配置（配置先行 ✓）；**瞬时判据复用 `config/pushRetry` 那一份**（不抄第二份 ✗）。
 const {
@@ -249,7 +250,11 @@ class SalesFollowupService {
     const [orders, details, methods, payments, products, accessories] = await Promise.all([
       this.listAllWithRetry('salesEntry', fieldOptions('salesEntry')),
       this.listAllWithRetry('salesDetail', fieldOptions('salesDetail')),
-      this.listAllWithRetry('paymentMethod', fieldOptions('paymentMethod')),
+      getConfigRows({
+        gateway: this.gateway,
+        tableKey: 'paymentMethod',
+        loader: () => this.listAllWithRetry('paymentMethod', fieldOptions('paymentMethod')),
+      }),
       this.listAllWithRetry('paymentRecord', fieldOptions('paymentRecord')),
       this.listAllWithRetry('product', fieldOptions('product')),
       accessoryConfigured ? this.listAllWithRetry('accessory', fieldOptions('accessory')) : Promise.resolve([]),
