@@ -246,7 +246,17 @@ const createVoucherPaymentService = ({ gateway, paymentMethods, config, log } = 
     return { amounts: list, appliedCents: wanted - remain, unappliedCents: remain };
   };
 
-  return { resolveRows, adjustLineAmounts, loadCatalog, loadMethods, settings };
+  /** 收款方式表里「团购券管理」关联非空的方式名（资金页用来豁免金额必填）。 */
+  const voucherMethodNames = async () => {
+    const methods = await loadMethods();
+    if (!methods.ok) return [];
+    return methods.items
+      .filter((item) => String(item?.voucherRecordId || '').trim())
+      .map((item) => String(item?.name || '').trim())
+      .filter(Boolean);
+  };
+
+  return { resolveRows, adjustLineAmounts, loadCatalog, loadMethods, voucherMethodNames, settings };
 };
 
 module.exports = { createVoucherPaymentService, VOUCHER_METHOD_UNMAPPED_EVENT, VOUCHER_CATALOG_UNREADABLE_EVENT };

@@ -111,6 +111,8 @@ const createScanPageSetup = ({ options, deps }) => {
     // ⭐ 2026-10-26：不再回落到配置里的旧方式（与表/写库校验不一致 ⇒ 会写出 400）。
     //   调用方拿不到候选 ⇒ 就是空清单；宁可不给选项，也不给假选项。
     paymentMethods: Array.isArray(opts.paymentMethods) ? opts.paymentMethods : [],
+    // 券方式：金额可空（后端解析后按平台结算款写）；普通方式仍 required。
+    voucherMethods: Array.isArray(opts.voucherMethods) ? opts.voucherMethods : [],
     defaultPaymentMethod: writeConfig.sale.defaultPaymentMethod,
     paymentRowCount: writeConfig.sale.paymentRowCount,
     // ⭐ 她刚填的那一档 / 实付多少 / 收款行 ⇒ **原样带回**（她不用重打 ✓ 她明确要过这条 ✓）
@@ -198,7 +200,7 @@ const createScanPageSetup = ({ options, deps }) => {
             });
   };
 
-  const sendPaymentStep = (res, req, opts = {}) => {
+  const sendPaymentStep = async (res, req, opts = {}) => {
     // ⭐ 她看到的这一页 = 这条日志记的（**在发页面之前**打 ⇒ 两件事不会分家 ✓）
     logRendered(req, {
       page: 'pay',
@@ -208,8 +210,10 @@ const createScanPageSetup = ({ options, deps }) => {
     const target = backTargetFor(req, decodeURIComponent(String(req.params.recordId || '')));
     // ⚠️ 默认 200 ✓；⭐ 结算没过那一次要 **400**（"她能改"的那一类 ⇒ 与既有口径一致 ✓ 旧行为也是 400 ✓）
     const status = Number(opts.status) === 400 ? 400 : 200;
+    // 资金页要知道哪些收款方式是券 ⇒ 券行金额不 required（后端仍按平台结算款覆盖）。
+    const voucherMethods = await voucherPayments.voucherMethodNames().catch(() => []);
     return sendHtml(res, status, renderSalePaymentStepPage({
-      write: step2WriteOf(opts),
+      write: step2WriteOf({ ...opts, voucherMethods }),
       // ⚠️ **不编**：还没建单时它是空串 ✓（她在资金页阶段本来就没有单号 ✓）
       orderNo: String(opts.orderNo || ''),
       config,
