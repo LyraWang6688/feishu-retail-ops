@@ -95,6 +95,9 @@ async function executeOperation(operation) {
         // 第 N 双先按「库存操作键」回查远端，再决定是否创建：
         // 飞书创建成功但本地 journal 没写下去（崩溃 / 磁盘失败 / 响应丢失）时，
         // 直接重发 create 会把库存 +1 变成 +2，而 +2 在业务上是看不出来的。
+        // ⚠️ 2026-11-08（issue #961）：这里**故意不**用统一入口重算 operationId（`operationItemKeyOf`）——
+        //    重放 / 续跑必须**事实优先**：用本地任务记录里已经算好的 `operation_id`
+        //    （配置里可改的 `kind` 一旦变了，重算会造出第二把键、重复建库存）。
         const itemKey = operationItemKey(operation.operation_id, createdIds.length + 1);
         const created = await createOnceByKey({
           gateway: this.gateway,

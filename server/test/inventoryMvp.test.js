@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { InventoryService, operationId, purchaseIncreaseSourceId, STOCK_MOVEMENTS, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
+const { InventoryService, operationId, operationSourceIdOf, purchaseIncreaseSourceId, STOCK_MOVEMENTS, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 // 库存动作现在按「行为编码」匹配，编码是行为管理表里的稳定标识。
@@ -405,14 +405,28 @@ test('stock behavior lookup survives renaming the display name', async () => {
 // 售后三条声明是**契约**：方向错了、或赔货/换货出货去吃了样品，实时库存就会和账面对不上。
 // 用一条断言锁住，防止以后有人"顺手"改动方向或 consumes。
 test('售后动作的库存语义：退货增加、赔货与现货减少且只吃门盒', () => {
+  // ⚠️ 2026-11-08（issue #961）**成对迁移**：注册表新增了 `operationKey`（来源身份声明），
+  //    判据没放宽 —— 这里仍是对**整条行为声明**的逐字段 deepEqual，只是把新配置一并钉住。
   assert.deepEqual(STOCK_MOVEMENTS.SALE_RETURN, {
     direction: '增加', ledgerSource: 'salesDetail', consumes: null, triggerSampleReplacement: false,
+    operationKey: {
+      kind: 'SALE_RETURN', sourceFields: ['sourceRecordId'], perItem: false,
+      missingMessage: '库存变化缺少来源明细 record_id',
+    },
   });
   assert.deepEqual(STOCK_MOVEMENTS.SALE_COMPENSATION, {
     direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false,
+    operationKey: {
+      kind: 'SALE_COMPENSATION', sourceFields: ['sourceRecordId'], perItem: false,
+      missingMessage: '库存变化缺少来源明细 record_id',
+    },
   });
   assert.deepEqual(STOCK_MOVEMENTS.SALE_CASH, {
     direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false,
+    operationKey: {
+      kind: 'SALE_CASH', sourceFields: ['sourceRecordId'], perItem: false,
+      missingMessage: '库存变化缺少来源明细 record_id',
+    },
   });
 });
 
@@ -422,6 +436,17 @@ test('售后动作的库存语义：退货增加、赔货与现货减少且只�
 test('采购退货动作的库存语义：方向减少、状态无关（门盒+样品+仓库）、无来源关联字段', () => {
   assert.deepEqual(STOCK_MOVEMENTS.STOCK_PURCHASE_DECREASE, {
     direction: '减少', ledgerSource: null, consumes: ['门盒', '样品', '仓库'], triggerSampleReplacement: false,
+    // ⚠️ 2026-11-08（issue #961）成对迁移：来源身份 = 真实三元组（批次身份 ｜ 货品 ｜ 尺码）。
+    operationKey: {
+      kind: 'STOCK_PURCHASE_DECREASE',
+      sourcePrefix: 'purchase_return',
+      sourceFields: ['purchaseBatchRecordId', 'productRecordId', 'size'],
+      sourceFallbacks: ['purchaseBatchNo', 'returnTaskId'],
+      separator: '|',
+      perItem: true,
+      missingMessage: '采购退货缺少来源标识（批次记录 id / 批次号 / 退货任务 id 至少要有一个）',
+      fieldMessages: { productRecordId: '库存变化缺少商品 record_id' },
+    },
   });
 });
 
@@ -431,11 +456,24 @@ test('人工库存 6 条行为的注册表契约：两个数量类、四个状�
   // 数量类：方向和「手工调增=增加 / 手工调减=减少」一致；没有来源列（关联销售/关联采购都挂不上）。
   assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE], {
     direction: '增加', ledgerSource: null, consumes: null, triggerSampleReplacement: false,
+    // ⚠️ 2026-11-08（issue #961）成对迁移：人工调整的来源身份 = 请求编号 + 目标身份。
+    operationKey: {
+      kind: 'STOCK_MANUAL_INCREASE',
+      sourceFields: ['requestId', 'productRecordId', 'size', 'state'],
+      separator: ':', perItem: false,
+      missingMessage: '人工库存调整缺少来源标识（请求编号 requestId）',
+    },
   });
   assert.deepEqual(STOCK_MOVEMENTS[ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE], {
     // ⚠️ consumes 待业务负责人定（见 inventoryService 里的 MANUAL_DECREASE_CONSUMES）：
     //    现在是最保守的 null＝只消耗调用方明确指定的那一种状态。
     direction: '减少', ledgerSource: null, consumes: null, triggerSampleReplacement: false,
+    operationKey: {
+      kind: 'STOCK_MANUAL_DECREASE',
+      sourceFields: ['requestId', 'productRecordId', 'size', 'state'],
+      separator: ':', perItem: false,
+      missingMessage: '人工库存调整缺少来源标识（请求编号 requestId）',
+    },
   });
   // 状态类：方向=不影响，且**必须**带 stateTransition 目标。
   for (const code of [ADJUSTMENT_BEHAVIORS.FREEZE, ADJUSTMENT_BEHAVIORS.UNFREEZE,
@@ -590,8 +628,13 @@ test('C3 实时库存已创建但响应丢失：按库存操作键找回，不�
 });
 
 test('C4 远端出现两条相同库存操作键：停止入库并转人工核对', async () => {
-  // 键由 operation_id 决定：这里用同一个来源明细算出「这一双本该有的键」。
-  const operationKey = `${operationId('STOCK_PURCHASE_INCREASE', 'inbound_dup')}:1`;
+  // 键由 operation_id 决定：这里用同一个来源身份算出「这一双本该有的键」。
+  // ⚠️ 2026-11-08（issue #961）成对迁移：采购入库的来源身份由注册表声明（真实三元组），
+  //    所以这里按统一入口算，不再直接塞一个裸 sourceRecordId。
+  const sourceId = operationSourceIdOf(STOCK_MOVEMENTS.STOCK_PURCHASE_INCREASE, {
+    purchaseBatchRecordId: 'inbound_dup', productRecordId: 'product_1', size: 38,
+  });
+  const operationKey = `${operationId('STOCK_PURCHASE_INCREASE', sourceId)}:1`;
   const gateway = gatewayFor([
     { record_id: 'dup_a', fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: '仓库', 库存操作键: operationKey } },
     { record_id: 'dup_b', fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: '仓库', 库存操作键: operationKey } },
@@ -599,8 +642,8 @@ test('C4 远端出现两条相同库存操作键：停止入库并转人工核�
   const inventory = new InventoryService({ gateway, store: store() });
 
   await assert.rejects(
-    inventory.applyChange({ kind: 'STOCK_PURCHASE_INCREASE', productRecordId: 'product_1', size: 38,
-      quantity: 1, sourceRecordId: 'inbound_dup', state: '仓库' }),
+    inventory.applyChange({ kind: 'STOCK_PURCHASE_INCREASE', purchaseBatchRecordId: 'inbound_dup',
+      productRecordId: 'product_1', size: 38, quantity: 1, state: '仓库' }),
     /库存事实重复，请人工核对/,
   );
   assert.equal(gateway.records.get('liveInventory').length, 2, '重复事实存在时不得再写入新的实时库存');

@@ -5,6 +5,16 @@
 // 库存动作注册表（引擎语义层，配置先行）：行为编码 → 方向 / 消耗状态 / 状态流转 / 来源列。
 // 「行为管理」表负责业务侧（哪条启用、库存方向、资金方向），这里只声明引擎语义。
 
+// 操作键（issue #961）：声明形状与校验在 `./operationKeyConfig.js`，
+// 文案在 `config/inventoryOperationKeys.js`；这里只声明每个行为用哪一个来源。
+const {
+  MANUAL_COUNT_SOURCE,
+  MANUAL_STATE_SOURCE,
+  SALE_DETAIL_SOURCE,
+  GIVEN_SOURCE,
+} = require('./operationKeyConfig');
+const { SOURCE_MISSING, FIELD_MISSING } = require('../../config/inventoryOperationKeys');
+
 // 库存动作注册表。键 = 飞书「行为管理」表里的「行为编码」。
 //
 // 分工：行为表负责业务侧（哪条启用、库存方向、资金方向），这里只声明引擎语义。
@@ -105,6 +115,8 @@ const STOCK_MOVEMENTS = Object.freeze({
     },
     // 扣到样品时要不要触发补样品提醒。
     triggerSampleReplacement: true,
+    // 来源身份 = 这条销售明细的 record_id（旧 `applySale` 直接把它当 sourceRecordId）。
+    operationKey: Object.freeze({ kind: MOVEMENT_SALE_DECREASE, ...SALE_DETAIL_SOURCE }),
   },
   [MOVEMENT_PURCHASE_INCREASE]: {
     direction: '增加',
@@ -129,6 +141,20 @@ const STOCK_MOVEMENTS = Object.freeze({
     },
     consumes: null,
     triggerSampleReplacement: false,
+    // 来源身份 = **真实三元组**「批次身份 ｜ 货品 record_id ｜ 尺码」（`purchase_increase:` 前缀）。
+    // 历史事故：漏掉尺码 ⇒ 同款不同码共用同一把 `:1` 键、重放时触发「库存事实重复」。
+    // 回落顺序：批次记录 id → 批次号 → 到货核对任务 id（前两个是业务身份，第三个只在孤儿调用时兜底）。
+    // 一个都拿不到 ⇒ 当场抛，**绝不编一个 id** 出来当幂等键。
+    operationKey: Object.freeze({
+      kind: MOVEMENT_PURCHASE_INCREASE,
+      sourcePrefix: 'purchase_increase',
+      sourceFields: Object.freeze(['purchaseBatchRecordId', 'productRecordId', 'size']),
+      sourceFallbacks: Object.freeze(['purchaseBatchNo', 'arrivalTaskId']),
+      separator: '|',
+      perItem: true,
+      missingMessage: SOURCE_MISSING.purchaseIncrease,
+      fieldMessages: Object.freeze({ productRecordId: FIELD_MISSING.productRecordId }),
+    }),
   },
   // 采购退货：方向=减少，且**状态无关**——样品、门盒、仓库都要退（见上面的注释）。
   //
@@ -148,6 +174,20 @@ const STOCK_MOVEMENTS = Object.freeze({
     ledgerSource: null,
     consumes: ['门盒', '样品', '仓库'],
     triggerSampleReplacement: false,
+    // 与采购入库同一个形状的真实三元组（`purchase_return:` 前缀）：批次身份 ｜ 货品 ｜ 尺码。
+    // ⚠️ 不能拿"退货明细行的 record_id"当来源：那条行**先写、库存后扣**，崩溃后重放要看的是
+    //    "这一次退货的（货品+尺码）"是不是已经扣过 —— 三元组最稳（与采购入库同源）。
+    // 回落顺序：报货批次的 record_id（最准、零额外请求）→ 批次号 → 退货任务 id。
+    operationKey: Object.freeze({
+      kind: MOVEMENT_PURCHASE_DECREASE,
+      sourcePrefix: 'purchase_return',
+      sourceFields: Object.freeze(['purchaseBatchRecordId', 'productRecordId', 'size']),
+      sourceFallbacks: Object.freeze(['purchaseBatchNo', 'returnTaskId']),
+      separator: '|',
+      perItem: true,
+      missingMessage: SOURCE_MISSING.purchaseReturn,
+      fieldMessages: Object.freeze({ productRecordId: FIELD_MISSING.productRecordId }),
+    }),
   },
   // 退货：退回的鞋回库。consumes=null 表示「不消耗既有实时库存」，
   // 只在调用方指定的状态（门盒 / 样品）新增一行——退回的鞋在货上确实多了一双。
@@ -157,12 +197,15 @@ const STOCK_MOVEMENTS = Object.freeze({
     ledgerSource: 'salesDetail',
     consumes: null,
     triggerSampleReplacement: false,
+    // 售后链路把「销售明细 record_id（或退回后的复制明细行）」放在 `sourceRecordId` 上传进来。
+    operationKey: Object.freeze({ kind: MOVEMENT_SALE_INCREASE, ...GIVEN_SOURCE }),
   },
   [MOVEMENT_SALE_RETURN]: {
     direction: '增加',
     ledgerSource: 'salesDetail',
     consumes: null,
     triggerSampleReplacement: false,
+    operationKey: Object.freeze({ kind: MOVEMENT_SALE_RETURN, ...GIVEN_SOURCE }),
   },
   // 赔货 / 换货出货：新鞋从门盒减一行。
   // consumes 固定 ['门盒']（不是销售出库的 ['门盒','样品']）：赔出去、换出去的必须是
@@ -172,6 +215,7 @@ const STOCK_MOVEMENTS = Object.freeze({
     ledgerSource: 'salesDetail',
     consumes: ['门盒'],
     triggerSampleReplacement: false,
+    operationKey: Object.freeze({ kind: MOVEMENT_SALE_COMPENSATION, ...GIVEN_SOURCE }),
   },
   // 现货销售：换货时新鞋出库走它，方向=减少。它同时是「交易类型」和「库存行为」。
   [MOVEMENT_SALE_CASH]: {
@@ -179,6 +223,7 @@ const STOCK_MOVEMENTS = Object.freeze({
     ledgerSource: 'salesDetail',
     consumes: ['门盒'],
     triggerSampleReplacement: false,
+    operationKey: Object.freeze({ kind: MOVEMENT_SALE_CASH, ...GIVEN_SOURCE }),
   },
 
   // ── 以下 6 条＝人工库存行为的引擎语义声明（2026-10-06 注册，入口未做）──────
@@ -192,6 +237,7 @@ const STOCK_MOVEMENTS = Object.freeze({
     ledgerSource: null,
     consumes: null,
     triggerSampleReplacement: false,
+    operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE, ...MANUAL_COUNT_SOURCE }),
   },
   // 手工调减：数量类，减少 N 双 → 消耗既有「实时库存」＋ 一条 变动数量=N 的流水。
   // ⚠️ 消耗哪些状态**待她定**，值在 MANUAL_DECREASE_CONSUMES（见上面的 TODO）。
@@ -200,6 +246,7 @@ const STOCK_MOVEMENTS = Object.freeze({
     ledgerSource: null,
     consumes: MANUAL_DECREASE_CONSUMES,
     triggerSampleReplacement: false,
+    operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE, ...MANUAL_COUNT_SOURCE }),
   },
   // 四个「转」：方向=不影响，只改「实时库存」的「所属状态」，数量一条不变。
   // 目标状态用 stateTransition 表达，**不写死在逻辑里**（改口径只改上面的常量）。
@@ -209,6 +256,7 @@ const STOCK_MOVEMENTS = Object.freeze({
     consumes: null,
     triggerSampleReplacement: false,
     stateTransition: FREEZE_STATE_TRANSITION, // 门盒/样品 → 仓库（换季收起）
+    operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.FREEZE, ...MANUAL_STATE_SOURCE }),
   },
   [ADJUSTMENT_BEHAVIORS.UNFREEZE]: {
     direction: '不影响',
@@ -217,6 +265,7 @@ const STOCK_MOVEMENTS = Object.freeze({
     triggerSampleReplacement: false,
     // 仓库 → 门盒/样品；**回哪一个由入口选**（to: null + targets）。
     stateTransition: UNFREEZE_STATE_TRANSITION,
+    operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.UNFREEZE, ...MANUAL_STATE_SOURCE }),
   },
   [ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX]: {
     direction: '不影响',
@@ -225,6 +274,7 @@ const STOCK_MOVEMENTS = Object.freeze({
     triggerSampleReplacement: false,
     // 规则明确：样品 → 门盒。
     stateTransition: Object.freeze({ from: '样品', to: '门盒' }),
+    operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX, ...MANUAL_STATE_SOURCE }),
   },
   [ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE]: {
     direction: '不影响',
@@ -233,6 +283,22 @@ const STOCK_MOVEMENTS = Object.freeze({
     triggerSampleReplacement: false,
     // 规则明确：门盒 → 样品（补样品链路已在用同一编码，见 ADJUSTMENT_BEHAVIORS 注释）。
     stateTransition: Object.freeze({ from: '门盒', to: '样品' }),
+    // ⚠️ 同一个行为有**两条通路**，历史上用的是**两把不同的操作键**（都不许改）：
+    //   · 状态变更通路（`transitionState`）＝ 人工换季调整 → kind = 行为编码；
+    //   · 补样品通路（`promoteToSample`）→ kind = `'sample'`（`inventory_sample_<sha>`）。
+    // 第二条通路单独声明在 `operations.sample_promotion` 里（见 `inventory/keys.js` 入口）。
+    operationKey: Object.freeze({
+      kind: ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE,
+      ...MANUAL_STATE_SOURCE,
+      operations: Object.freeze({
+        sample_promotion: Object.freeze({
+          kind: 'sample',
+          sourceFields: Object.freeze(['salesDetailRecordId']),
+          perItem: false,
+          missingMessage: SOURCE_MISSING.samplePromotion,
+        }),
+      }),
+    }),
   },
 });
 

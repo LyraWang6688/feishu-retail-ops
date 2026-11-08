@@ -84,6 +84,8 @@ const { createScanArrivalService } = require('../src/services/scanArrivalService
 const { PurchaseArrivalConversationService } = require('../src/services/purchaseArrivalConversationService');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 const { InventoryService } = require('../src/services/inventoryService');
+const { STOCK_MOVEMENTS: INVENTORY_MOVEMENTS, MOVEMENT_PURCHASE_INCREASE } = require('../src/services/inventory/movements');
+const { operationSourceIdOf } = require('../src/services/inventory/keys');
 const { createPurchaseQueryService } = require('../src/services/purchaseQueryService');
 const { SizeReferenceService } = require('../src/services/sizeReferenceService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
@@ -649,13 +651,33 @@ test('AC-AA5-L2L3 ⭐⭐ 真链：串行 + 并发各点两次 ⇒ 库存只加�
     assert.equal(batchBResults[1].ok, true);
     assert.equal(batchBResults[1].reason, 'already_posted',
       '🔴 L2 锁内再查拦住第二跑（`already_posted`）✓');
-    // L3 证据：库存自己的幂等来源是**真实三元组**（批次身份 | 货品 | 尺码）—— 源码还在 ✓
-    // ⚠️ 2026-10-18（task-5 · inventoryService.js 大文件拆分）**成对迁移**：
-    //    `purchaseIncreaseSourceId` 原样搬到 `src/services/inventory/keys.js`（函数体逐字节未改）
-    //    ⇒ 这里改读新模块，下面的正则**逐字不变**（判据没放宽）。
-    const inventorySource = fs.readFileSync(path.join(SERVER_DIR, 'src', 'services', 'inventory', 'keys.js'), 'utf8');
-    assert.match(inventorySource, /purchase_increase:\$\{identity\}\|\$\{input\.productRecordId\}\|\$\{normalizeSize\(input\.size\)\}/,
-      '🔴 L3：加库存的来源标识仍是"真实三元组"（本刀一行未改 ✓）');
+    // L3 证据：库存自己的幂等来源是**真实三元组**（批次身份 | 货品 | 尺码）—— 判据仍在 ✓
+    // ⚠️ 2026-11-08（issue #961）**成对迁移 · 改前逐字 → 改后逐字 → 依据**：
+    //    改前判据 = `keys.js` 源码里出现字面量
+    //      `purchase_increase:${identity}|${input.productRecordId}|${normalizeSize(input.size)}`；
+    //    改后 = 来源拼法搬进行为注册表（`operationKey`），由统一入口生成**同一串**输出。
+    //    ⇒ 判据从"正则匹配源码"升级为"直接比对生成结果逐字"（**更强**，没有放宽）。
+    assert.equal(
+      operationSourceIdOf(INVENTORY_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], {
+        purchaseBatchRecordId: 'batch_L3', productRecordId: 'product_L3', size: 38,
+      }),
+      'purchase_increase:batch_L3|product_L3|38',
+      '🔴 L3：加库存的来源标识仍是"真实三元组"（批次身份｜货品｜尺码 ✓）',
+    );
+    // 批次记录 id 拿不到时的兜底同样逐字不变（批次号 → 同一个三元组形状）
+    assert.equal(
+      operationSourceIdOf(INVENTORY_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], {
+        purchaseBatchNo: 'CGD-L3', productRecordId: 'product_L3', size: 38,
+      }),
+      'purchase_increase:CGD-L3|product_L3|38',
+      '🔴 L3：批次号兜底仍是同一个三元组形状 ✓',
+    );
+    // 源码证据：拼法**已声明在注册表里**（不再是 keys.js 里的硬编码字符串）
+    const movementSource = fs.readFileSync(path.join(SERVER_DIR, 'src', 'services', 'inventory', 'movements.js'), 'utf8');
+    assert.match(movementSource, /sourcePrefix: 'purchase_increase'/,
+      '🔴 L3：来源前缀仍声明在行为注册表 ✓');
+    assert.match(movementSource, /sourceFields: Object\.freeze\(\['purchaseBatchRecordId', 'productRecordId', 'size'\]\)/,
+      '🔴 L3：来源身份仍是（批次身份｜货品｜尺码）三元组 ✓');
     // 每一双的「库存操作键」唯一（同一把键被写两次 = 那条 P0 的形状 ✓）
     const itemKeys = chain.data.liveInventory.map((record) => String(record.fields[F('liveInventory').operationItemKey]));
     assert.equal(new Set(itemKeys).size, itemKeys.length, '🔴 没有一条"同一双写了两行"（库存操作键唯一 ✓）');

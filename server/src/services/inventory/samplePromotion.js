@@ -9,9 +9,10 @@ const { normalizeSize } = require('../sizeReferenceService');
 const { logInfo } = require('../../utils/logger');
 const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
-const { SALE_LEDGER_SOURCE } = require('./movements');
+const { requireMovement, SALE_LEDGER_SOURCE, BEHAVIOR_SAMPLE_PROMOTION } = require('./movements');
 const {
-  samplePromotionId,
+  operationIdOf,
+  SAMPLE_PROMOTION_OPERATION,
   stockKeyLabelFields,
   correlationPatch,
   stockKeyLabelOfOperation,
@@ -20,6 +21,9 @@ const {
 async function promoteToSample(input = {}, options = {}) {
     const { salesDetailRecordId, productRecordId, size } = input;
     if (!salesDetailRecordId || !productRecordId) throw new Error('补样品缺少销售明细或货品');
+    // ⭐ 2026-11-08（issue #961）：补样品通路的操作键也由行为注册表声明
+    //    （`operationKey.operations.sample_promotion`，kind='sample'，与历史键逐字一致）。
+    const movement = requireMovement(BEHAVIOR_SAMPLE_PROMOTION);
     const normalizedSize = normalizeSize(size);
     const stockKey = `${productRecordId}|${normalizedSize}|门盒`;
     const correlation = correlationFields(options.correlation);
@@ -27,7 +31,7 @@ async function promoteToSample(input = {}, options = {}) {
       await this.ensureSchema();
       const sizeReference = await this.sizeReferences.resolveByNumber(normalizedSize);
       await this.resumePending(stockKey);
-      const id = samplePromotionId(salesDetailRecordId);
+      const id = operationIdOf(movement, { salesDetailRecordId }, SAMPLE_PROMOTION_OPERATION);
       let operation = await this.store.get(id);
       if (operation) {
         if (operation.product_record_id !== productRecordId || operation.size !== normalizedSize) {
