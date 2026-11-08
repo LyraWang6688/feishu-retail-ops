@@ -12,7 +12,9 @@
       "key": "purchaseOrder",
       "label": "采购主表",
       "table": "采购主表",
-      "role": "start"
+      "role": "start",
+      "table_id_env": "FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID",
+      "table_id": "tblwezby9wRea9qi"
     },
     {
       "key": "purchaseDetail",
@@ -20,7 +22,9 @@
       "table": "采购明细",
       "role": "linked",
       "link_field": "采购单号",
-      "from": "purchaseOrder"
+      "from": "purchaseOrder",
+      "table_id_env": "FEISHU_V1_PURCHASE_REQUEST_TABLE_ID",
+      "table_id": "tbli1ygPtss5CWCH"
     },
     {
       "key": "inventoryLedger",
@@ -28,13 +32,17 @@
       "table": "库存流水",
       "role": "linked",
       "link_field": "关联采购",
-      "from": "purchaseDetail"
+      "from": "purchaseDetail",
+      "table_id_env": "FEISHU_V1_INVENTORY_LEDGER_TABLE_ID",
+      "table_id": "tbl7Xo4OPmaN2NdP"
     },
     {
       "key": "liveInventory",
       "label": "实时库存",
       "table": "实时库存",
-      "role": "snapshot"
+      "role": "snapshot",
+      "table_id_env": "FEISHU_V1_LIVE_INVENTORY_TABLE_ID",
+      "table_id": "tblTr5qgiZXPADLP"
     },
     {
       "key": "paymentDetail",
@@ -42,7 +50,9 @@
       "table": "P交易明细",
       "role": "linked",
       "link_field": "关联采购单",
-      "from": "purchaseOrder"
+      "from": "purchaseOrder",
+      "table_id_env": "FEISHU_V1_PAYMENT_DETAIL_TABLE_ID",
+      "table_id": "tblWaafeodl2oILI"
     }
   ],
   "phases": [
@@ -64,6 +74,7 @@
   ],
   "notes": [
     "⚠️ 采购链路的资金端尚未实测：当前生产 P交易明细字段很少、资金流水可能为空；启用前必须拿真实采购单只读验证，不能假设与销售同构。",
-    "⚠️ 采购主表/明细的关联字段名需以当前生产 schema 为准；本配置为待验证草稿。"
+    "⚠️ 采购主表/明细的关联字段名需以当前生产 schema 为准；本配置为待验证草稿。",
+    "表 ID 解析顺序：先读 table_id_env 指定的环境变量（跟随 .env 切换测试/生产 Base），取不到再回退 table_id 字面量（仅离线兜底）；脚本本身不写死任何 ID。"
   ]
 }

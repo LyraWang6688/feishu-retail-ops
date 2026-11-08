@@ -24,6 +24,26 @@ def cli_json(args: list[str]) -> dict:
     return json.loads(result.stdout)
 
 
+def resolve_table_id(spec: dict) -> str:
+    """解析表 ID：优先 table_id_env 指向的环境变量，回退配置里的字面 table_id。
+
+    本机 .env 指向测试 Base 时自动跟随测试表 ID；环境变量为空才用字面量离线兜底，
+    两者都缺则报错，避免脚本写死生产 ID 在换 Base 后静默取错表。
+    """
+    env_name = spec.get('table_id_env')
+    if env_name:
+        env_value = os.environ.get(env_name, '').strip()
+        if env_value:
+            return env_value
+    literal = str(spec.get('table_id') or '').strip()
+    if literal:
+        return literal
+    label = spec.get('label') or spec.get('table') or '?'
+    raise RuntimeError(
+        f"表 {label} 无法解析表 ID：环境变量 {env_name or '（未配置 table_id_env）'} 为空，且未提供 table_id"
+    )
+
+
 def dump_records(base: str, table: str, work_dir: Path) -> list[dict]:
     work_dir.mkdir(parents=True, exist_ok=True)
     output = work_dir / f"{table}.ndjson"
@@ -95,14 +115,18 @@ def event_kind(field_change: dict) -> str:
 
 
 def collect_targets(config: dict, records: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    specs = config.get('tables', [])
+    start_spec = next((spec for spec in specs if spec.get('role') == 'start'), None)
+    if not start_spec:
+        raise RuntimeError('配置缺少 role=start 的起点表')
     start = config['start']
     start_rows = records[start['table']]
     start_row = next((row for row in start_rows if row.get(start['order_field']) == config['_order']), None)
     if not start_row:
         raise RuntimeError(f"未找到 {start['order_field']}={config['_order']}")
-    selected = {start['table']: [start_row]}
+    selected = {start_spec['key']: [start_row]}
     # 按配置顺序逐层扩展；link 字段在子表上，指向父表 record_id。
-    for spec in config.get('tables', []):
+    for spec in specs:
         if spec.get('role') != 'linked':
             continue
         parent = spec.get('from')
@@ -111,32 +135,33 @@ def collect_targets(config: dict, records: dict[str, list[dict]]) -> dict[str, l
         parent_ids = {row.get('record_id') for row in selected[parent]}
         rows = [row for row in records[spec['table']]
                 if parent_ids & set(links(row.get(spec.get('link_field', ''))))]
-        selected[spec['table']] = rows
+        selected[spec['key']] = rows
     return selected
 
 
 def build_raw(config: dict, selected: dict[str, list[dict]], base: str, work_dir: Path) -> dict:
-    labels = {spec['table']: spec['label'] for spec in config.get('tables', [])}
+    specs = config.get('tables', [])
+    labels = {spec['key']: spec['label'] for spec in specs}
     idmap = {}
-    for spec in config.get('tables', []):
-        fields = [spec.get('display_field'), '销售单号', '采购单号', '库存键', '交易明细ID']
-        for row in selected.get(spec['table'], []):
+    for spec in specs:
+        fields = [spec.get('display_field'), '销售单号', '销售明细ID', '采购单号', '库存键', '交易明细ID']
+        for row in selected.get(spec['key'], []):
             idmap[row.get('record_id')] = record_name(row, [f for f in fields if f])
     events = []
-    for spec in config.get('tables', []):
-        for row in selected.get(spec['table'], []):
-            for item in history(base, spec['table'], row['record_id']):
+    for spec in specs:
+        for row in selected.get(spec['key'], []):
+            for item in history(base, resolve_table_id(spec), row['record_id']):
                 changes = item.get('field_changes') or []
                 if not changes:
                     events.append({
-                        'ts': item['create_time'], 'rev': item['rev'], 'table': labels.get(spec['table'], spec['table']),
+                        'ts': item['create_time'], 'rev': item['rev'], 'table': labels.get(spec['key'], spec['table']),
                         'operator': item.get('operator', ''), 'kind': 'record_add', 'field': '新建记录',
-                        'before': '', 'after': record_name(row, [spec.get('display_field') or '']) or row['record_id'],
+                        'before': '', 'after': record_name(row, [spec.get('display_field') or '', '销售明细ID', '交易明细ID', '库存键', '销售单号']) or row['record_id'],
                     })
                     continue
                 for change in changes:
                     events.append({
-                        'ts': item['create_time'], 'rev': item['rev'], 'table': labels.get(spec['table'], spec['table']),
+                        'ts': item['create_time'], 'rev': item['rev'], 'table': labels.get(spec['key'], spec['table']),
                         'operator': item.get('operator', ''), 'kind': event_kind(change),
                         'field': change.get('field_name', ''), 'before': fmt(change.get('before'), idmap),
                         'after': fmt(change.get('after'), idmap),
@@ -193,9 +218,12 @@ def main(argv=None) -> int:
     config = json.loads(config_path.read_text(encoding='utf-8'))
     config['_order'] = args.order
     try:
-        records = {spec['table']: dump_records(args.base_token, spec['table'], args.work_dir)
+        print('TRACE_TABLES', {spec['label']: resolve_table_id(spec)
+                               for spec in config.get('tables', [])}, file=sys.stderr)
+        records = {spec['table']: dump_records(args.base_token, resolve_table_id(spec), args.work_dir)
                    for spec in config.get('tables', [])}
         selected = collect_targets(config, records)
+        print('TRACE_SELECTED', {k: len(v) for k, v in selected.items()}, file=sys.stderr)
         raw = build_raw(config, selected, args.base_token, args.work_dir)
         out = args.out or ROOT / 'output' / f'events-{args.order}.json'
         out.parent.mkdir(parents=True, exist_ok=True)

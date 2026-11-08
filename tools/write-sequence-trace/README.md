@@ -106,6 +106,26 @@ python3 tools/write-sequence-trace/scripts/extract_raw.py \
   --out /tmp/events.json
 ```
 
+## 环境变量与 Base 切换（不写死生产 ID）
+
+- Base 令牌只从 `FEISHU_V1_BITABLE_APP_TOKEN` 读取，缺失即报错退出，脚本内无任何明文令牌。
+- 每张表在 config 里同时给了 `table_id_env`（对应根目录 `.env.example` 的 `FEISHU_V1_*_TABLE_ID`）与离线兜底用的字面 `table_id`。解析顺序：
+  1. 环境变量 `table_id_env` 有非空值 → 用它（本机 `.env` 指向测试 Base 时自动跟随测试表 ID）；
+  2. 否则回退 config 里的 `table_id` 字面量（仅离线兜底）；
+  3. 两者都缺 → 直接报错，不会静默打到错误的表。
+- 取数开始前会在 stderr 打印一行 `TRACE_TABLES`，列出本次每张表实际解析到的 ID，便于核对当前连的是测试还是生产 Base。
+- 工具始终只读（仅 `record-list` / `record-history-list`，且固定 `--as user`），不含任何写库动作。
+
+## 本地测试
+
+纯离线，不连飞书、不需要凭证：
+
+```bash
+python3 -m unittest discover -s tools/write-sequence-trace/scripts -p 'test_*.py'
+```
+
+覆盖：HTML 渲染与 `</script>` 转义、旧 HTML 提取往返、表 ID 的环境变量优先 / 字面回退 / 皆缺报错。
+
 ## 数据获取边界（真实能力）
 
 `events.json` 可以由人工/Agent 通过飞书 `record-history-list` 逐条记录采集后归一化，脚本本身只负责渲染，不内置写库/取数副作用。
