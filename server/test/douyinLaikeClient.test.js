@@ -241,6 +241,8 @@ test('AC-DY17 ⭐ 日期格式非法 ⇒ param_invalid，不发请求', async ()
   assert.equal(withdraw.ok, false);
   assert.equal(withdraw.reason, 'param_invalid');
   assert.equal(calls.length, 0);
+});
+
 test('AC-DY12 ⭐ HTTP 200 但正文不是 JSON ⇒ invalid_response（不再当成成功空数据）', async () => {
   const { service } = buildService({
     handler: (url) => (url.includes('client_token')
