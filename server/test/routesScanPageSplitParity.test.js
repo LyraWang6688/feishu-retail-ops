@@ -61,9 +61,10 @@ test('AC-SP-R3 ⭐ 导出符号原样（7 个 · 一个不换）', () => {
   }
 });
 
-test('AC-SP-R4 ⭐ 路由注册顺序不变（public 先注册，再扫描页/动作/兜底）', () => {
+test('AC-SP-R4 ⭐ 路由注册顺序不变（public → GET 页面 → POST 动作 → 兜底）', () => {
   const routes = fs.readFileSync(path.join(__dirname, '..', 'src/routes/scanPage/routes.js'), 'utf8');
   const pub = fs.readFileSync(path.join(__dirname, '..', 'src/routes/scanPage/public.js'), 'utf8');
+  const pages = fs.readFileSync(path.join(__dirname, '..', 'src/routes/scanPage/pages.js'), 'utf8');
   const pubOrder = [
     "router.get('/',",
     "router.post(config.tapFeedback?.reportPath",
@@ -76,11 +77,12 @@ test('AC-SP-R4 ⭐ 路由注册顺序不变（public 先注册，再扫描页/�
     assert.ok(found > at, `public 注册顺序错了：${frag}`);
     at = found;
   }
-  const callAt = routes.indexOf('installScanPagePublicRoutes({ router, ctx })');
-  const getAt = routes.indexOf('router.get(ROUTE_PATTERNS');
+  assert.ok(pages.includes('router.get(ROUTE_PATTERNS'), 'GET 扫描页必须在 pages.js');
+  const publicCall = routes.indexOf('installScanPagePublicRoutes({ router, ctx: routeCtx })');
+  const pagesCall = routes.indexOf('installScanPageGetRoutes({ router, ctx: routeCtx })');
   const postAt = routes.indexOf("router.post(ROUTE_PATTERNS");
   const fallbackAt = routes.indexOf("router.post('/',");
-  assert.ok(callAt >= 0 && callAt < getAt && getAt < postAt && postAt < fallbackAt,
+  assert.ok(publicCall >= 0 && publicCall < pagesCall && pagesCall < postAt && postAt < fallbackAt,
     '注册顺序必须是 public → GET 扫描页 → POST 动作 → 兜底');
 });
 
