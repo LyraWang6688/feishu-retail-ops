@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **462** 个事件。按前缀分组：
+共 **478** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -535,6 +535,27 @@
 | --- | --- | --- |
 | `v1.sale.goods_posted` | 1 | src/services/salesOrderService.js |
 | `v1.sale.posted` | 2 | src/services/sales/oneShotWrite.js<br>src/services/salesOrderService.js |
+
+## voucher
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `voucher.settlement.account_missing` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.chat_missing` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.disabled` | 1 | src/app.js |
+| `voucher.settlement.done` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.failed` | 1 | src/app.js |
+| `voucher.settlement.item_failed` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.item_settled` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.mismatch` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.notified` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.notify_failed` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.platform_query_failed` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.skipped` | 2 | src/app.js<br>src/services/voucherSettlementService.js |
+| `voucher.settlement.started` | 1 | src/app.js |
+| `voucher.settlement.succeeded` | 1 | src/app.js |
+| `voucher.settlement.tick` | 1 | src/app.js |
+| `voucher.settlement.tick_failed` | 1 | src/app.js |
 
 ## workbench
 

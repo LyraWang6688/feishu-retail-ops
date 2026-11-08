@@ -30,6 +30,10 @@ const ENDPOINTS = Object.freeze({
   verifyRecords: '/goodlife/v1/fulfilment/certificate/verify_record/query/',
   // 分账明细（按 certificate_id 查）
   settleLedger: '/goodlife/v1/settle/ledger/query_record_by_cert/',
+  // 账单详情（按 bill_date 查；bill_date = 结算单生成日 / 核销日）
+  settleBill: '/goodlife/v1/settle/bill/composite_query/',
+  // 提现记录（按日期区间查；withdraw_time = 打款到结算账户的时间）
+  settleWithdraw: '/goodlife/v1/settle/withdraw/composite_query/',
   // ⛔ 写接口：跨订单验券（会真的核销），**登记位置、不调用**
   batchVerify: '/goodlife/v1/fulfilment/certificate/batch_verify/',
 });
@@ -42,6 +46,8 @@ const TEXTS = Object.freeze({
   verifyAccountRequired: '验券历史必须给 accountId',
   verifyTimeInvalid: '验券历史的 startTime / endTime 必须是 int 秒级时间戳，且 startTime < endTime',
   settleCertificateRequired: '分账明细必须给 certificateIds（券 ID）',
+  settleBillInvalid: '账单详情必须给 billDate（yyyy-MM-dd）',
+  settleWithdrawInvalid: '提现记录必须给 startDate / endDate（yyyy-MM-dd）',
   orderIdRequired: '订单详情必须给 orderId',
 });
 
