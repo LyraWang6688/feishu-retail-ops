@@ -47,17 +47,18 @@ const makeConfig = (over = {}) => buildAsyncJobsConfig({
   ...over,
 });
 
-const makeService = ({ over = {}, sendText, notificationService, resolveChatId = () => 'oc_alert_group', senderLog } = {}) => {
+const makeService = ({ over = {}, notificationService, senderLog } = {}) => {
   const config = makeConfig(over);
   const { logs, logger } = collectLogs();
   const sent = [];
-  const notifier = createAsyncJobNotifier({
-    config,
-    logger,
-    resolveChatId,
-    notificationService,
-    sendText: sendText || (async (chatId, text) => { sent.push({ chatId, text }); if (senderLog) senderLog.push({ chatId, text }); return { ok: true }; }),
-  });
+  const cards = notificationService || {
+    send: async (event, data) => {
+      sent.push({ event, ...data });
+      if (senderLog) senderLog.push({ event, ...data });
+      return { ok: true, cardId: 'card_1', messageId: 'msg_1' };
+    },
+  };
+  const notifier = createAsyncJobNotifier({ config, logger, notificationService: cards });
   const store = createAsyncJobStore({ dir: config.jobsDir });
   const sleeps = [];
   const service = createAsyncJobService({
@@ -223,10 +224,12 @@ test('AC-J4b 发送失败：记 async_job.notify.failed，**不写 notified_at**
   const sent = [];
   let failNext = true;
   const h = makeService({
-    sendText: async (chatId, text) => {
-      if (failNext) throw new Error('network down');
-      sent.push({ chatId, text });
-      return { ok: true };
+    notificationService: {
+      send: async (event, data) => {
+        if (failNext) return { ok: false, reason: 'send_failed', error: 'network down' };
+        sent.push({ event, ...data });
+        return { ok: true, cardId: 'card_1', messageId: 'msg_1' };
+      },
     },
   });
   const { jobId } = await enqueueJob(h);
@@ -246,14 +249,14 @@ test('AC-J4b 发送失败：记 async_job.notify.failed，**不写 notified_at**
 
 // ── AC-J5 群未配置 ────────────────────────────────────────────────────────
 test('AC-J5 群未配置 ⇒ 记 async_job.notify.chat_missing，**不静默成功**、不写 notified_at', async () => {
-  const h = makeService({ resolveChatId: () => '' });
+  const h = makeService({ notificationService: { send: async () => ({ ok: false, reason: 'target_missing' }) } });
   const { jobId } = await enqueueJob(h);
   const done = await h.service.run({ jobId, run: async () => { throw new Error('飞书 500'); } });
   assert.equal(h.sent.length, 0);
   assert.equal(done.notified_at, '');
   const missing = h.logs.find((entry) => entry.event === 'async_job.notify.chat_missing');
   assert.ok(missing, '必须记 chat_missing');
-  assert.match(String(missing.fields.env), /ASYNC_JOB_ALERT_CHAT_ID/);
+  assert.match(String(missing.fields.env), /NOTIFY_GROUP_CHAT_ID/);
 });
 
 test('AC-J5b 通知关闭（ASYNC_JOB_NOTIFY_ENABLED=false）⇒ 记 async_job.notify.disabled', async () => {
@@ -352,7 +355,6 @@ test('AC-J10 统一通知服务：发 async_job_failed 卡片并保存 card_id /
     notificationService: {
       send: async (event, data) => { calls.push({ event, data }); return { ok: true, cardId: 'card_1', messageId: 'msg_1' }; },
     },
-    resolveChatId: () => '',
   });
   const { jobId } = await enqueueJob(h);
   await h.service.run({ jobId, run: async () => { throw new Error('boom'); } });
