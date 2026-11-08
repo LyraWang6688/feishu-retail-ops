@@ -5,11 +5,10 @@
     "test": 1200
   },
   "maxNetIncrease": 100,
-  "updatedAt": "2026-10-27",
+  "updatedAt": "2026-11-08",
   "files": {
     "server/src/config/scanPage.js": 996,
     "server/src/config/scanWrite.js": 1059,
-    "server/src/routes/scanPage/index.js": 1795,
     "server/src/services/afterSalesService.js": 1264,
     "server/src/services/labelPrintArtifactService.js": 1436,
     "server/src/services/labelPrintService.js": 1331,
@@ -17,7 +16,6 @@
     "server/src/services/pendingDealPushService.js": 1230,
     "server/src/services/purchaseArrivalConversationService.js": 1144,
     "server/src/services/scanPageService.js": 1394,
-    "server/src/services/scanWriteService.js": 1731,
     "server/src/services/secondDeliveryService.js": 839,
     "server/src/services/tagQrCodeService.js": 986,
     "server/src/utils/larkCards.js": 838,
