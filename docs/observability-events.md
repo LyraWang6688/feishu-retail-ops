@@ -432,9 +432,9 @@
 | `scan.purchase.reused` | 1 | src/config/scanWrite.js |
 | `scan.purchase.submitted` | 1 | src/config/scanWrite.js |
 | `scan.purchase.submitting` | 1 | src/config/scanWrite.js |
-| `scan.realm_scan.report` | 1 | src/routes/scanPage/routes.js |
-| `scan.realm_scan.signature_failed` | 1 | src/routes/scanPage/routes.js |
-| `scan.realm_scan.signature_ok` | 1 | src/routes/scanPage/routes.js |
+| `scan.realm_scan.report` | 1 | src/routes/scanPage/public.js |
+| `scan.realm_scan.signature_failed` | 1 | src/routes/scanPage/public.js |
+| `scan.realm_scan.signature_ok` | 1 | src/routes/scanPage/public.js |
 | `scan.sale.amount_mismatch` | 1 | src/config/scanWrite.js |
 | `scan.sale.async.done` | 1 | src/services/salesAsyncWorker.js |
 | `scan.sale.async.enqueue_failed` | 3 | src/config/alerts.js<br>src/routes/scanPage/handlers/payment.js |
