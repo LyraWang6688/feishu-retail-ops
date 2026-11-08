@@ -42,7 +42,7 @@ export function mountSalesDeliveryPage(container) {
     activeTab: SALES_DELIVERY_DEFAULT_TAB,
     productFilter: '',
     loading: false,
-    error: '',
+    error: '', submitToastText: '', jobPoll: null,
   };
   let host = null;
   const skuLock = createSkuLock(() => host);
@@ -69,8 +69,7 @@ export function mountSalesDeliveryPage(container) {
     render();
     try {
       const data = await fetchDeliveryData(api, CONFIG, FIELDS);
-      state.methods = data.methods;
-      state.orders = data.orders;
+      Object.assign(state, { methods: data.methods, orders: data.orders, submitToastText: data.submitToastText || '', jobPoll: data.jobPoll });
       state.itemsByTab = buildTabItems(
         buildDeliveryGroups(data.orders, STATUSES),
         STATUSES,
@@ -102,11 +101,11 @@ export function mountSalesDeliveryPage(container) {
       const queued = await api.post('/api/workbench/sales/delivery/deliveries', {
         salesEntryRecordId, detailRecordIds: [detailRecordId], requestId: requestId(),
       });
-      showToast(T.submittedToast);
+      showToast(state.submitToastText);
       await waitJob(api, queued.jobId, {
         onSuccess: async () => { skuLock.delete(sku); busy.delete(key); await load(); },
         onFailure: async (message) => { skuLock.delete(sku); busy.delete(key); showToast(message || T.loadFailed); await load(); },
-        onTimeout: () => showToast(T.stillWriting), intervalMs: CONFIG.jobPoll.intervalMs, timeoutMs: CONFIG.jobPoll.timeoutMs,
+        onTimeout: () => showToast(T.stillWriting), intervalMs: state.jobPoll?.intervalMs, timeoutMs: state.jobPoll?.timeoutMs,
       });
     } catch (error) {
       showToast(describeError(error));
@@ -132,11 +131,11 @@ export function mountSalesDeliveryPage(container) {
       });
       closePaymentModal(container);
       paymentCard = null;
-      showToast(T.submittedToast);
+      showToast(state.submitToastText);
       await waitJob(api, queued.jobId, {
         onSuccess: async () => { await load(); busy.delete(key); },
         onFailure: (message) => { showToast(message || T.loadFailed); busy.delete(key); },
-        onTimeout: () => showToast(T.stillWriting), intervalMs: CONFIG.jobPoll.intervalMs, timeoutMs: CONFIG.jobPoll.timeoutMs,
+        onTimeout: () => showToast(T.stillWriting), intervalMs: state.jobPoll?.intervalMs, timeoutMs: state.jobPoll?.timeoutMs,
       });
     } catch (error) {
       showToast(describeError(error));
