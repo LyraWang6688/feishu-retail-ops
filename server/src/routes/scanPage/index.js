@@ -162,6 +162,9 @@ const sendHtml = (res, status, html) => res.status(status)
   .set('X-Content-Type-Options', 'nosniff')
   .send(html);
 
+const { createPageContext } = require('./pageContext');
+const { installScanPageMiddleware } = require('./middleware');
+
 const createScanPageRouter = (options = {}) => {
   const config = options.config || SCAN_PAGE;
   // 拆分第 2 刀：渲染日志/漏斗的实现搬到 `./renderContext.js`；这里只创建一次。
@@ -714,70 +717,13 @@ const createScanPageRouter = (options = {}) => {
    *     （**认不出的编号**仍走原来的 400 人话页 ✓ 那条没动 ✗）
    */
   const router = express.Router();
-  router.use((req, res, next) => {
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    next();
+  installScanPageMiddleware({
+    router, config, getWriteService: () => writeService, feishuAuthEnabled, getSessionUser,
+    buildLoginStartUrl, resolveScanNext, COOKIE_NAME, encodeSession,
+    SCAN_AUTH_REDIRECT, TICKET, redeemSessionTicket, pathWithoutTicket,
+    logInfo, logWarn, requireWorkbenchAccess, createPageTokenMiddleware, createLegacySessionProbe,
   });
 
-  /**
-   * 「扫码即用」：未登录 → **302** 去飞书登录（登录成功后自动回到刚才那一页）。
-   *
-   * 判定"未登录"用的是**共享闸门同一套能力**（`feishuWebAuth.enabled` + `getSessionUser`），
-   * 不是新写一份：`getSessionUser` 就是 `requireWorkbenchAccess` 判 401 时读会话的那个函数
-   * （读 `workbench_session` cookie → HMAC 验签 → 查过期）。
-   *
-   * 三种准入情况的分工（**共享闸门语义不变**）：
-   *   · 认证**没启用** → 这里 `next()`，由共享闸门回 **503 JSON**（一字不变）；
-   *   · **没登录**      → 这里回 **302**（本轮唯一的行为变化，只发生在扫码页）；
-   *   · **已登录但白名单外** → 这里 `next()`，由共享闸门回 **403 JSON**（一字不变）。
-   * ⚠️ 已登录且白名单内的人，下面的页面行为（200/400/404/503）**逐字不变**；
-   *    `POST`（写入口）走的是**同一道**闸门，语义也一字不变。
-   */
-  router.use((req, res, next) => {
-    if (!feishuAuthEnabled()) return next();
-    // 2026-10-13: try the one-time URL ticket first (WebView keeps no cookie).
-    //   ok -> set the session cookie here and 302 to the same path WITHOUT the ticket.
-    //   expired/used/forged/other-path -> fall through to a fresh login (never half-logged-in).
-    const ticketToken = TICKET.enabled ? req.query?.[TICKET.paramName] : '';
-    if (ticketToken) {
-      const targetPath = pathWithoutTicket(req.originalUrl || req.url || '');
-      const redeemed = redeemSessionTicket(String(ticketToken), { targetPath });
-      if (redeemed.ok) {
-        const sessionCookie = encodeSession({ open_id: redeemed.openId, name: redeemed.name });
-        res.setHeader('Set-Cookie', `${COOKIE_NAME}=${sessionCookie}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=None`);
-        return res.redirect(302, targetPath);
-      }
-      logWarn(SCAN_AUTH_REDIRECT.events.loginRedirect, {
-        reason: `ticket_${redeemed.reason}`,
-      });
-    }
-        if (getSessionUser(req)) return next();
-    // 「刚才那一页」= 原 path + 原 query（本 router 挂在 `SCAN_PAGE.route.recordBasePath` 上，
-    // `req.originalUrl` 已经含挂载点）。再过一次回跳白名单：只放行扫码页自己，
-    // 别的（`//host`、协议、绝对 URL、`/s/../api/...`）一律回落工作台首页。
-    const target = resolveScanNext(
-      String(req.originalUrl || `${config.route.recordBasePath}${req.url || ''}`),
-    );
-    logInfo(SCAN_AUTH_REDIRECT.events.loginRedirect, {
-      request_id: req.requestId,
-      next: String(target).slice(0, 200),
-    });
-    return res.redirect(302, buildLoginStartUrl(target));
-  });
-
-  router.use(requireWorkbenchAccess);
-  // ⭐⭐ 2026-10-18（task-2）：per-page token —— GET 首次访问 Set-Cookie；POST 自动携带；
-  //   POST 没有 cookie（旧页面）⇒ `req.scanPageToken = ''` ⇒ 回落既有 openId 共享路径（不报错）。
-  router.use(createPageTokenMiddleware({
-    // ⭐ 过渡期保护：她手上那份"本单 N 双"还在 openId 会话里、而这一发 GET 还没 cookie
-    //   ⇒ **先不换身份**（实现在 `./pageToken`；本文件只接线）。
-    hasLegacySession: createLegacySessionProbe({
-      getSessions: () => writeService?.sessions,
-      openIdOf: (request) => String(
-        request.workbenchUser?.open_id || getSessionUser(request)?.open_id || '',
-      ),
-    }),
-  }));
   /**
    * ⭐⭐ **`GET /r/:recordId?from=<领域>`** —— 手机扫开的那一页。
    *
@@ -970,60 +916,11 @@ const createScanPageRouter = (options = {}) => {
    *    —— 详见 `services/liveInventorySnapshot.js` 的注释。
    */
 
-  const openIdOf = (req) => {
-    const openId = String(req.workbenchUser?.open_id || getSessionUser(req)?.open_id || '');
-    if (openId) setTraceFields({ role: roleOf(openId) });
-    return openId;
-  };
-  /** ⭐ 2026-10-18（task-2）：**这一页的会话键** = openId + per-page token（没有 ⇒ 原样 openId = 改前逐字）。 */
-  const sessionIdOf = (req, openId = openIdOf(req)) => pageSessionKeyOfRequest(req, openId);
-
-  /**
-   * 表单的 POST 目标（= 处理完回跳到哪一页）。
-   *
-   * ⭐ **必须带上领域**：不然她在【销售】那一块点「加入本单」，303 回来会落在
-   *   **缺省领域**、刚填的本单看不见了。
-   *   ⚠️ 缺省领域（2026-10-11 起 = **销售**）不带 `?from=`（URL 干净，且既有断言一字不变）；
-   *      另外三个领域一律带 `?from=<领域>` ⇒ **回跳停在本单所在的领域**。
-   *   ⚠️ 这个函数**同时被 `buildWriteContext`（拼表单 action）与 POST 的 303 两处用** ——
-   *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
-   *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
-   */
-  // ⭐⭐ 2026-10-12（治根）：**两条路共用同一个 router 实例**（`app.js` 把同一实例挂在 `/s` 与 `/r`）。
-  //    ⇒ 「这一页在取哪一样东西」**只有一个判据**：挂载点（`req.baseUrl`）。
-  //    · `/r/:recordId`   ⇒ `{ mode: 'number',   value: 编号 }`
-  //    · `/r/:recordId` ⇒ `{ mode: 'recordId', value: 记录 ID }`
-  //    🔴 **不许**在别处再拼一套路径（`postActionFor` 是唯一出口）—— 两边各写一份必然漂。
-  const isRecordBase = () => true;
-  const scanTargetOf = (req) => {
-    const value = decodeURIComponent(String(req.params?.recordId ?? ''));
-    return { mode: 'recordId', value };
-  };
-  /** 回跳沿用 URL 上的记录 ID。 */
-  const backTargetFor = (req) => scanTargetOf(req);
-
-  /** 这一页的"取商品"入参：只按记录 ID。 */
-  const lookupInputOf = (req) => ({ recordId: scanTargetOf(req).value });
-
-  /**
-   * 表单的 POST 目标（= 处理完回跳到哪一页）。
-   *
-   * ⭐ **必须带上领域**：不然她在【销售】那一块点「加入本单」，303 回来会落在
-   *   **缺省领域**、刚填的本单看不见了。
-   *   ⚠️ 缺省领域（2026-10-11 起 = **销售**）不带 `?from=`（URL 干净，且既有断言一字不变）；
-   *      另外三个领域一律带 `?from=<领域>` ⇒ **回跳停在本单所在的领域**。
-   *   ⚠️ 这个函数**同时被 `buildWriteContext`（拼表单 action）与 POST 的 303 两处用** ——
-   *      表单 action 带上了 `?from=`，POST 里 `resolveRealm(req.query?.from)` 才读得到领域。
-   *      （2026-10-11 修的一处：表单 action 原来漏传 realm，导致回跳落到缺省领域。）
-   *   ⭐⭐ 2026-10-12：第一个入参**同时接受**一个目标对象（`{mode,value}`，见 `scanTargetOf`）
-   *      **或**一个字符串（= 按编号，既有调用点逐字不变）。挂载点决定拼 `/s` 还是 `/r`。
-   */
-  const postActionFor = (target, realm = DEFAULT_REALM) => {
-    const resolved = target && typeof target === 'object' ? target : { value: target };
-    const basePath = String(config.route.recordBasePath || '');
-    const path = `${basePath}/${encodeURIComponent(String(resolved.value || ''))}`;
-    return realm && realm !== DEFAULT_REALM ? `${path}?from=${encodeURIComponent(realm)}` : path;
-  };
+  const {
+    openIdOf, sessionIdOf, isRecordBase, scanTargetOf, backTargetFor, lookupInputOf, postActionFor,
+  } = createPageContext({
+    config, DEFAULT_REALM, getSessionUser, roleOf, setTraceFields, pageSessionKeyOfRequest,
+  });
 
   // ── ⭐⭐ 2026-10-11：扫码页「货品」领域 →【打印这一款】（送到店里那台电脑）────────
   /**

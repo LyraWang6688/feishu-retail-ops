@@ -135,6 +135,9 @@ const scanPageSource = () => {
     // ⭐ 2026-10-18（task-2 会话按页面/设备隔离）：per-page token 助手（拆出去的新子文件）——
     //   聚合文本会被**当模块编译**（编译路径 = 拆分前那一份 `src/routes/scanPage.js`）⇒ 深度要换回去 ✓
     .replace(/require\('\.\/pageToken'\)/g, "require('./scanPage/pageToken')")
+    .replace(/require\('\.\/pageContext'\)/g, "require('./scanPage/pageContext')")
+    .replace(/require\('\.\/middleware'\)/g, "require('./scanPage/middleware')")
+
     .replace(/require\('\.\/handlers\/purchase'\)/g, "require('./scanPage/handlers/purchase')")
     .replace(/require\('\.\/handlers\/payment'\)/g, "require('./scanPage/handlers/payment')")
     .replace(/require\('\.\/handlers\/salesSubmit'\)/g, "require('./scanPage/handlers/salesSubmit')")

@@ -98,5 +98,6 @@ test('接线哨兵：app 挂在 requestId 之后；扫码/工作台都补 role�
   assert.ok(app.indexOf('x-request-id') < app.indexOf('traceMiddleware'), 'trace 中间件必须在 requestId 之后');
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'utils', 'logger.js'), 'utf8'), /traceLogFields\(\)/);
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'workbench.js'), 'utf8'), /setTraceFields\(\{ role: roleOf/);
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8'), /setTraceFields\(\{ role: roleOf/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'pageContext.js'), 'utf8'), /setTraceFields\(\{ role: roleOf/);
 });
