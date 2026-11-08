@@ -132,10 +132,10 @@ test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) 
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
-// ⭐ 2026-11-08（业务负责人：「草稿页需要和其他占位前端一致」）：
+// ⭐ 2026-11-08（业务负责人：「草稿页需要和其他占位前端一致」＋ HTML 批注「返回按钮不需要，删除」）：
 //   草稿单那片占位页 = **和 货品→信息配置 同一套占位卡**（虚线卡 + 「待建设」小标签），
-//   不是一行裸文字。判据同时钉住"同款"（.placeholder-card + 虚线）与旧行为（返回按钮还在）。
-test('草稿单占位页 = 统一占位卡（虚线卡 + 待建设标签），返回按钮仍在', async ({ page }) => {
+//   且**不再有**「← 返回订单列表」那颗按钮。
+test('草稿单占位页 = 统一占位卡（虚线卡 + 待建设标签），且没有「返回订单列表」按钮', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await page.getByRole('button', { name: /草稿单/ }).click();
@@ -146,10 +146,7 @@ test('草稿单占位页 = 统一占位卡（虚线卡 + 待建设标签），�
   await expect(card.locator('.tag-info')).toHaveText('待建设');
   const border = await card.evaluate((node) => getComputedStyle(node).borderTopStyle);
   expect(border, '统一占位卡 = 虚线边框（与信息配置那张同款）').toBe('dashed');
-  await expect(page.getByRole('button', { name: /返回订单列表/ })).toBeVisible();
-  // 返回后回到三卡
-  await page.getByRole('button', { name: /返回订单列表/ }).click();
-  await expect(page.locator('.orders-section-card')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: /返回订单列表/ })).toHaveCount(0);
 });
 
 // ⭐ 2026-10-29（业务负责人当天定的页面口径）：扫一扫落地页 = 货品（颜色）→ 近 7 天销售

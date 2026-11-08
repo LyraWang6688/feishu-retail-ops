@@ -359,8 +359,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     //   占位页**统一成同一张虚线卡 + 「待建设」小标签**（与 货品→信息配置 同一套
     //   `.placeholder-card` / `.tag-info`，样式在 `features/domains/domains.css`，index.html 已加载 ✓）。
     //   ⚠️ 这里**不新增 import**（本文件被十余个 harness 拷贝 + 显式改写 import，多一条相对 import 会一起挂）。
-    host.innerHTML = `${notices}<button class="btn btn-ghost" type="button" data-orders-section-back="1">← 返回订单列表</button>
-      <div class="placeholder-card" data-view="section-placeholder" data-placeholder="draft">
+    // ⭐ 2026-11-08 业务负责人 HTML 批注：「← 返回订单列表」不需要 ⇒ 删掉（占位页只剩统一占位卡）。
+    host.innerHTML = `${notices}<div class="placeholder-card" data-view="section-placeholder" data-placeholder="draft">
         <span class="tag tag-info">待建设</span>
       </div>`;
   }
@@ -601,11 +601,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         state.activeSection = sectionCard.dataset.ordersSection;
         renderList();
         if (!state.ordersLoaded && !state.ordersLoading) loadOrders();
-        return;
-      }
-      if (event.target.closest('[data-orders-section-back]')) {
-        state.activeSection = null;
-        renderList();
         return;
       }
       const trigger = event.target.closest('[data-action]');
