@@ -411,7 +411,9 @@ test('AC-S7 队列坏了 ⇒ 一句"打印服务暂时不可用" + 保留两条�
     const block = productBlock(html);
     assert.ok(block.includes(TEXTS.unavailable), '如实说一句不可用');
     assert.equal(block.includes(TEXTS.printSingle), false, '不可用时不出那颗按钮');
-    assert.ok(block.includes('href="/workbench/label-print.html"'), '原来那两条链接照旧');
+    // 🔴 2026-11-09（业务负责人）：「选择编号打印」/旧批量页都已物理删除 ⇒ 这一块**不许**
+    //   再出现指向 `label-print.html` 的链接（那两条现在只会打开空白页 = 死链）。
+    assert.equal(block.includes('/workbench/label-print.html'), false, '旧的两条链接必须删掉（不指向空白页）');
     assert.ok(html.replace(/<[^>]*>/g, '').trim().length > 0, '去掉标签也必须有字（不空白）');
     assert.equal(html.includes('磁盘满了'), false, '内部错误细节不许回显');
   });

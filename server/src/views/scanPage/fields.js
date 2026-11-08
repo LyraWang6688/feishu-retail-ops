@@ -41,7 +41,7 @@ const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS, fillText } = require('../../config/s
 const { SCAN_WRITE } = require('../../config/scanWrite');
 // ⭐ 2026-10-16（**一单多货品 · 渲染半**）：提交载荷的**字段名**与开关走 `config/multiItemOrder.js` ✓
 const { MULTI_ITEM_ORDER } = require('../../config/multiItemOrder');
-const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, resolveRealm, labelPrintUrls, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('../scanPageRealm');
+const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, resolveRealm, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('../scanPageRealm');
 // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：那一段脚本与它要读的配置块（实现见 `scanRealmScan.js`）。
 const { realmScanConfigHtml, realmScanScriptSource } = require('../scanRealmScan');
 

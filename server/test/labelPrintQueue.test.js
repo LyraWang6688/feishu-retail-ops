@@ -10,7 +10,6 @@
  *   · AC2  手写的 PDF **结构正确**：xref 每个偏移都真的指回 `N 0 obj`、`/Count` 对得上、`%%EOF` 收尾
  *          （手写 PDF 最容易错的就是偏移 —— 这条不是"点一下"，是把文件当真 PDF 逐字节验）；
  *   · AC3  **防漂移**：产物里的行高与 `features/labels/labels.css` 一致；
- *          与 `features/labels/render.js` 的"货号+颜色"排版**逐字段一致**（两份实现不许走歪）；
  *   · AC4  入队 ⇒ `queued` + 产物**已落盘** + **订阅者被唤醒**（事件推送的落点）；
  *   · AC5  ⭐ **电脑离线 ⇒ 任务排队保留**，手机上 `status.online=false`；
  *   · AC6  ⭐⭐ **启动补拉**：电脑没开时入队的任务，小助手一起来 `listPending` **立刻**取回；
@@ -189,56 +188,6 @@ test('AC1 中文真的画出来了（品牌那行不是空白）—— 字体名
 });
 
 // ── AC3：防漂移 ────────────────────────────────────────────────────────────
-
-test('AC3 防漂移①：产物的行高与 `features/labels/labels.css` 逐条一致（改一处必须改两处）', () => {
-  const css = fs.readFileSync(path.join(WORKBENCH, 'features/labels/labels.css'), 'utf8');
-  const lineHeightOf = (selector) => {
-    const block = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(css);
-    assert.ok(block, `labels.css 里找不到 ${selector}`);
-    const match = /line-height:\s*([\d.]+)/.exec(block[1]);
-    assert.ok(match, `${selector} 没有 line-height`);
-    return Number(match[1]);
-  };
-  assert.equal(artifact.LINE_HEIGHTS.brand, lineHeightOf('.label-brand'));
-  assert.equal(artifact.LINE_HEIGHTS.itemNo, lineHeightOf('.label-item-no'));
-  assert.equal(artifact.LINE_HEIGHTS.color, lineHeightOf('.label-color'));
-  assert.equal(artifact.LINE_HEIGHTS.state, lineHeightOf('.label-state'));
-  assert.equal(artifact.LINE_HEIGHTS.sizes, lineHeightOf('.label-sizes'));
-  assert.equal(artifact.LINE_HEIGHTS.price, lineHeightOf('.label-price'));
-  assert.equal(artifact.LINE_HEIGHTS.footer, lineHeightOf('.label-footer'));
-});
-
-test('AC3 防漂移②：「货号 + 颜色」的排版与 `features/labels/render.js` 逐字段一致', async () => {
-  // 把 render.js 当模块跑起来（复制成 .mjs，只改 import 文件名 —— 与 labelPrintRender.test.js 同一套做法）。
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'label-print-drift-'));
-  fs.copyFileSync(path.join(WORKBENCH, 'core/formatters.js'), path.join(dir, 'formatters.mjs'));
-  fs.writeFileSync(path.join(dir, 'render.mjs'),
-    fs.readFileSync(path.join(WORKBENCH, 'features/labels/render.js'), 'utf8')
-      .split("from '../../core/formatters.js'").join("from './formatters.mjs'"), 'utf8');
-  const render = await import(pathToFileURL(path.join(dir, 'render.mjs')).href);
-
-  const cases = [
-    ['正常短货号', label()],
-    ['超长货号（要缩字号）', label({ item_no: 'XHB8095-LONG-NAME-9999' })],
-    ['超长到要截断', label({ item_no: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' })],
-    ['带品类（开关打开）', label({ category: '休闲鞋' })],
-    ['颜色很长', label({ color: '深棕褐色（限量版）' })],
-    ['取不到货号（占位）', label({ item_no: '' })],
-  ];
-  for (const [name, fixture] of cases) {
-    for (const fields of [{ ...LABEL_PRINT.fields }, { ...LABEL_PRINT.fields, category: true }]) {
-      const currentLayout = layout({ fields });
-      const mine = artifact.planItemNoColor(fixture, currentLayout);
-      const theirs = render.planItemNoColor(fixture, currentLayout);
-      for (const key of ['itemNoText', 'itemNoSizeMm', 'itemNoTruncated', 'colorText', 'colorTruncated', 'categoryIncluded', 'gapMm']) {
-        assert.deepEqual(mine[key], theirs[key], `${name} / ${key}`);
-      }
-      assert.ok(Math.abs(mine.estimatedWidthMm - theirs.estimatedWidthMm) < 1e-9, `${name} / estimatedWidthMm`);
-      assert.ok(Math.abs(mine.availableWidthMm - theirs.availableWidthMm) < 1e-9, `${name} / availableWidthMm`);
-    }
-  }
-  assert.ok(Math.abs(artifact.availableWidthMm(layout()) - 20.1) < 1e-9, '右栏可用宽度 = 20.1mm');
-});
 
 test('AC3 产物几何只认 config：品牌位置 / 右栏行序 / 字段开关一改，SVG 跟着变', () => {
   const base = artifact.labelSvg(label(), layout(), { dpi: 203 });
@@ -576,26 +525,9 @@ test('AC13 不静默①：编号没有库存 ⇒ 400 说清；mode 写错 ⇒ 40
   }
 });
 
-test('AC13 不静默②：一批超过上限 ⇒ 400 + 人话（绝不静默截断）', async () => {
+test('AC13 不静默③：产物渲染失败 ⇒ 502 且不留半条任务', async () => {
   const { store, cleanup } = tmpStore();
   try {
-    const many = Array.from({ length: 5 }, (unused, index) => label({ number: `n${index}`, key: `n${index}` }));
-    const service = serviceFor({ store, labels: many, config: { maxLabelsPerJob: 3 } });
-    await assert.rejects(() => service.enqueueBatch({ filters: {} }),
-      (error) => error.statusCode === 400 && /一次最多打 3 张/.test(error.message) && /匹配 5 张/.test(error.message));
-    assert.equal((await store.listAll()).length, 0, '被拒的请求不许留下半条任务');
-  } finally {
-    cleanup();
-  }
-});
-
-test('AC13 不静默③：条件下一张都没有 ⇒ 400；产物渲染失败 ⇒ 502 且不留半条任务', async () => {
-  const { store, cleanup } = tmpStore();
-  try {
-    const empty = serviceFor({ store, labels: [] });
-    await assert.rejects(() => empty.enqueueBatch({ filters: {} }),
-      (error) => error.statusCode === 400 && /一张标签都没有/.test(error.message));
-
     // 让"画产物"这一步真的失败（渲染器可注入）⇒ 必须 502，并且**不留半条任务、不留垃圾文件**。
     const broken = createLabelPrintQueueService({
       store,
@@ -793,34 +725,13 @@ test('AC16 只复用**没失败过**的任务：上一次失败了 ⇒ 重新提
   }
 });
 
-test('AC16 一批（batch）：同筛选连点 ⇒ 1 个任务；换筛选 / again ⇒ 各自新任务', async () => {
-  const { store, cleanup } = tmpStore();
-  try {
-    const labels = [label(), label({ number: 'n2', key: 'n2', item_no: 'n2' })];
-    const service = serviceFor({ store, labels });
-    const first = await service.enqueueBatch({ filters: { keyword: 'XHB8095', sort: 'shelf' } });
-    const same = await service.enqueueBatch({ filters: { sort: 'shelf', keyword: 'XHB8095' } });
-    assert.equal(same.job_id, first.job_id, '同一份筛选（哪怕字段顺序不同）必须是同一个键');
-    assert.equal(same.reused, true);
-    const again = await service.enqueueBatch({ filters: { keyword: 'XHB8095', sort: 'shelf' }, again: true });
-    assert.notEqual(again.job_id, first.job_id);
-    assert.equal((await store.listAll()).length, 2);
-  } finally {
-    cleanup();
-  }
-});
-
-test('AC16 `requestKeyOf`：内容指纹固定字段顺序、单款与批次互不串', () => {
+test('AC16 `requestKeyOf`：按编号 / 按记录 ID 各算各的键（互不串）', () => {
   const { requestKeyOf } = require('../src/services/labelPrintQueueService');
   assert.equal(requestKeyOf({ mode: 'single', number: 'A|B|C' }), 'single|A|B|C');
-  assert.equal(
-    requestKeyOf({ mode: 'batch', filters: { keyword: 'x', state: '门盒', size: '42', sort: 'recent' } }),
-    requestKeyOf({ mode: 'batch', filters: { sort: 'recent', size: '42', state: '门盒', keyword: 'x' } }),
-    '字段顺序不同 ⇒ 同一个键',
-  );
+  assert.equal(requestKeyOf({ mode: 'single', recordId: 'rec_x' }), 'single|record:rec_x');
   assert.notEqual(
-    requestKeyOf({ mode: 'batch', filters: { keyword: 'x' } }),
-    requestKeyOf({ mode: 'batch', filters: { keyword: 'y' } }),
+    requestKeyOf({ mode: 'single', number: 'A|B|C' }),
+    requestKeyOf({ mode: 'single', number: 'A|B|D' }),
   );
 });
 

@@ -164,8 +164,6 @@ const REALM_TEXTS = Object.freeze({
   //    `config/labelPrintQueue.js`）—— 一点就把这一款**送到店里那台电脑打**；
   //    这一条链接仍然是**去工作台标签打印页**（在那里改条件 / 用浏览器打印），
   //    两颗按钮写同一个动作用词会让她点错。⚠️ key 名保留（用例钉着它必须是非空文案）。
-  labelSingleButton: '打开标签打印页 →',
-  labelBatchButton: '批量打印（按条件挑货）→',
   // ── 销售（`from=sales`）：尺码**分两组** —— 有货 ⇒ 现货 / 其余 ⇒ 预订 ──────────
   // ⭐ 2026-11-07（业务负责人截图口径）：销售页「有货」段只写「有货」——
   //   去掉「（样品 + 门盒）」那串解释（分组口径不变：样品 + 门盒 ＞ 0 ⇒ 现货 ✓）。
@@ -359,26 +357,10 @@ const purchaseSizeGroups = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.reple
 };
 
 
-
-/** 「货品标签」的去处（工作台里那个**既有**标签打印页；本文件只拼 URL，不实现打印）。 */
-const LABEL_PRINT_PATH = '/workbench/label-print.html';
-
 /** `?from=` 的取值 → 领域 id（**认不出来的一律回落缺省**，不报错、不白屏）。 */
 const resolveRealm = (value) => {
   const raw = String(value ?? '').trim().toLowerCase();
   return REALMS.some((realm) => realm.id === raw) ? raw : DEFAULT_REALM;
-};
-
-/**
- * 这一款的标签打印链接：**单个** = 带上货号（标签打印页的 `keyword` 认货号，见 `labelPrintService`），
- * **批量** = 不带条件直接开那一页（她再按货号 / 状态 / 最近新增挑货）。
- */
-const labelPrintUrls = (view = {}) => {
-  const itemNo = String(view.item_no || String(view.number || '').split('|')[0] || '').trim();
-  return {
-    single: itemNo ? `${LABEL_PRINT_PATH}?keyword=${encodeURIComponent(itemNo)}` : LABEL_PRINT_PATH,
-    batch: LABEL_PRINT_PATH,
-  };
 };
 
 module.exports = {
@@ -390,10 +372,8 @@ module.exports = {
   NEW_REALM,
   REALM_EMPTY_TEXT_KEYS,
   REALM_TEXTS,
-  LABEL_PRINT_PATH,
   SIZE_GROUP_RANGES,
   resolveRealm,
-  labelPrintUrls,
   sizeGroupOf,
   sellableCountOf,
   saleSizeGroups,

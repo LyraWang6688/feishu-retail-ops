@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **439** 个事件。按前缀分组：
+共 **424** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -537,19 +537,12 @@
 | `workbench.label_print.scan.rejected` | 1 | src/routes/labelPrintQueue.js |
 | `workbench.labels.cache_hit` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.cache_miss` | 1 | src/services/labelPrintService.js |
-| `workbench.labels.failed.cache_hit` | 1 | src/routes/workbench/labels.js |
-| `workbench.labels.failed.cache_miss` | 1 | src/routes/workbench/labels.js |
 | `workbench.labels.listed` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.missing_price` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.missing_qr_record_id` | 1 | src/services/labelPrintService.js |
-| `workbench.labels.product_created_time_renamed` | 1 | src/services/labelPrintService.js |
-| `workbench.labels.product_created_time_resolved` | 1 | src/services/labelPrintService.js |
-| `workbench.labels.product_created_time_unresolved` | 2 | src/services/labelPrintService.js |
 | `workbench.labels.record_read_failed` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.record_resolved` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.skipped_records` | 1 | src/services/labelPrintService.js |
-| `workbench.labels.without_stock_missing_created_at` | 1 | src/services/labelPrintService.js |
-| `workbench.labels.without_stock_skipped` | 1 | src/services/labelPrintService.js |
 | `workbench.lark.jsapi_signature.error` | 1 | src/routes/workbench.js |
 | `workbench.lark.jsapi_signature.failed` | 1 | src/routes/workbench.js |
 | `workbench.lark.jsapi_signature.ok` | 1 | src/routes/workbench.js |
@@ -559,14 +552,6 @@
 | `workbench.procurement.new_products.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.replenish.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.submit.failed` | 1 | src/routes/workbench/purchase.js |
-| `workbench.products.numbers.cache_hit` | 1 | src/services/labelPrintService.js |
-| `workbench.products.numbers.cache_miss` | 1 | src/services/labelPrintService.js |
-| `workbench.products.numbers.failed.cache_hit` | 1 | src/routes/workbench/labels.js |
-| `workbench.products.numbers.failed.cache_miss` | 1 | src/routes/workbench/labels.js |
-| `workbench.products.numbers.filtered` | 2 | src/services/labelPrintService.js |
-| `workbench.products.numbers.listed` | 1 | src/services/labelPrintService.js |
-| `workbench.products.numbers.server_filter_off` | 1 | src/services/labelPrintService.js |
-| `workbench.products.numbers.stock_read_failed` | 1 | src/services/labelPrintService.js |
 | `workbench.purchase.arrival_accept.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.rejected` | 1 | src/services/workbenchPurchaseArrivalService.js |

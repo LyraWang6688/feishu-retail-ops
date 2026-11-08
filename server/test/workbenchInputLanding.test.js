@@ -136,10 +136,11 @@ test('AC-LANDING-3 ⭐ 范例：把"到货说明"那种形状塞回来 ⇒ **红
   assert.equal(missing('purchaseOrderBatch', 'actualAmount'), false, '而现在的落点（发生金额）是真列 ✓');
 });
 
-test('AC-LANDING-4 ⭐ 只读筛选**不许**出现在提交体里（防"筛选参数被误存进表" ✗）', () => {
+test('AC-LANDING-4 ⭐ 标签打印那一屏**只读**：没有任何输入控件、也没有 POST（防"参数被误存进表" ✗）', () => {
   const labels = read(`${FEATURE_DIR}/labels/index.js`);
-  for (const filter of ['keyword', 'category', 'state', 'size', 'sort', 'recent-days']) {
-    assert.ok(labels.includes(`data-field="${filter}"`), `筛选控件 ${filter} 仍在 ✓`);
-  }
-  assert.equal(/api\.post\(/.test(labels), false, '⛔ 标签打印那一屏**不许**有 POST（它全是只读查询 ✓）');
+  // 🔴 2026-11-09（业务负责人）：「选择编号打印」页也不要了 ⇒ 标签打印页只剩「扫码打印」聚焦屏，
+  //   页面上**没有任何输入控件**（旧的筛选卡 / 编号输入 / 编号选择器全部物理删除）。
+  assert.equal(/data-field="/.test(labels), false, '旧筛选/输入控件必须删干净（塞回任何一个都红）');
+  assert.equal(/<input/.test(labels), false, '页面不许再有自己的输入框（编号从 URL / 扫码来）');
+  assert.equal(/api\.post\(/.test(labels), false, '⛔ 标签打印那一屏**不许**有 POST');
 });

@@ -573,7 +573,7 @@ test('AC-SP9 ⭐ 命中区 ≥44px + 工作台那一页真的挂上了这一块�
   //   依据：`?scan=1` 改成挂「只扫码」聚焦页后，`index.js` 需要多引一个挂载器 ✓
   assert.match(page, /import \{[^}]*createScanPrintAction[^}]*\} from '\.\/scan-print\.js';/s,
     '扫码那一块必须从 `./scan-print.js` 引进来（不新开一套 ✓）');
-  assert.match(page, /scanPrintBarHtml\(\)/, '页面要真的把这一块画出来');
+  assert.match(page, /mountScanOnlyPage\(/, '`?scan=1` 进来要真的挂聚焦页（单品/批量壳已随入口删除）');
   assert.match(page, /wantsScanFromSearch\(/, '`?scan=1` 进来 ⇒ 自动弹一次扫一扫');
   // 入口那一格：从 AppLink 改成"落到标签打印页 + scan=1"（JSAPI 那条路的起点）。
   const domains = read('config/domains.js');

@@ -1,23 +1,21 @@
-const { REALM_TEXTS, labelPrintUrls } = require('../scanPageRealm');
+const { REALM_TEXTS } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 
 const labelBlockHtml = (view, print = null) => {
-  const urls = labelPrintUrls(view);
   const heading = `<h2 class="stock__heading">${escapeHtml(REALM_TEXTS.labelHeading)}</h2>`;
-  const batchLink = `<a class="btn" href="${escapeHtml(urls.batch)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelBatchButton)}</a>`;
-  const pageLink = `<a class="btn btn--ghost" href="${escapeHtml(urls.single)}" rel="noopener">${escapeHtml(REALM_TEXTS.labelSingleButton)}</a>`;
 
-  // `print` 没给（渲染层被单独调用 / 这条链路还没接上）⇒ **退回改动前那一块**：只有那两条链接。
+  // 🔴 2026-11-09（业务负责人）：「选择编号打印」与「批量打印（按条件挑货）」两个页面都已
+  //   物理删除 ⇒ 这一块的**两条链接**（`label-print.html?keyword=` / `label-print.html`）
+  //   也一并删掉：**绝不指向空白页**（点了什么都看不到 = 死链）。
+  //   ⚠️ 保留的是「打印这一款」那颗按钮（走打印队列；扫码页的主用途）。
   if (!print) {
     return `<section class="card">
 ${heading}
-${batchLink}
-${pageLink}
 </section>`;
   }
 
   const texts = print.texts || {};
-  // 打印服务不可用（队列坏了 / 明确关掉）⇒ 如实说一句 + 仍然让她能去标签打印页，**绝不留空白**。
+  // 打印服务不可用（队列坏了 / 明确关掉）⇒ 如实说一句，**绝不留空白**。
   if (print.enabled === false) {
     const notice = texts.unavailable
       ? `<p class="hint">${escapeHtml(texts.unavailable)}</p>`
@@ -25,8 +23,6 @@ ${pageLink}
     return `<section class="card">
 ${heading}
 ${notice}
-${batchLink}
-${pageLink}
 </section>`;
   }
 
@@ -87,8 +83,6 @@ ${banner}
 </form>
 <p class="label-print-status"><span class="label-print-badge ${badgeClass}">${escapeHtml(statusText || '')}</span></p>
 ${jobLine}
-${batchLink}
-${pageLink}
 </section>`;
 };
 

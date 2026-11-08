@@ -302,123 +302,28 @@ const FOOTER = Object.freeze({
 });
 
 /**
- * 筛选器可选项（服务端校验 + 页面渲染用）。
- * ⚠️ 后端的 service **不会**因为"所属状态不在这个清单里"就丢掉记录 ——
- *    她在生产表里新加一个状态时，标签照常打得出来（只影响下拉框选项）。
+ * 「所属状态」的展示顺序（旧批量筛选删除后，只剩**标签底部小字**（默认不印）拼
+ * 多状态时用得到；业务口径：门盒 → 样品 → 仓库）。
  */
-const FILTERS = Object.freeze({
-  stateOptions: Object.freeze(['门盒', '样品', '仓库']),
-  // 「最近新增」按天挑：0 = 不限。数值是下拉框的候选，上限见 LIMITS.maxRecentDays。
-  recentDayOptions: Object.freeze([0, 1, 3, 7, 30]),
-  defaultRecentDays: 0,
-  defaultSort: 'shelf',
-});
-
-/**
- * 排序方式（`sort` 查询参数的值域）。
- *   · `shelf`  —— 货架顺序：货号 → 颜色 → 类别，方便按堆数拣货；
- *   · `recent` —— 按「创建时间」倒序（最近新增的在前），挑"今天新到的先打"时用。
- */
-const SORT_MODES = Object.freeze({
-  shelf: '货架顺序（货号 → 颜色 → 类别）',
-  recent: '最近新增在前',
-});
+const STATE_ORDER = Object.freeze(['门盒', '样品', '仓库']);
 
 const LIMITS = Object.freeze({
   // 一次最多返回多少张标签（**一张 = 一个编号**）。匹配更多时**不静默截断**：
   // 响应里带 truncated + total_matched，页面明确提示"匹配 N 张，本轮最多 M 张，请缩小条件"。
   maxLabels: 300,
-  // 「最近 N 天」的上限（她手滑写 3650 天时不让它变成一个全表扫描的语义）。
-  maxRecentDays: 365,
 });
 
 /**
- * ⚠️ **只有这一个字段名放在这里，其余一律来自 `v1BitableSchema.liveInventory.fields`**。
- * 为什么破例：「实时库存.创建时间」是飞书**自动字段**（type 1001，只读核过测试 Base），
- * 「最近新增」筛选要用它；而字段映射的正规去处 `config/v1BitableSchema.js` 本轮
- * **正被另一个子代理改动（明确不许碰）** ⇒ 先放在这里，等那个文件解冻后**迁过去**
- * （迁的时候把这里删掉，service 改读 schema）。
- * ⚠️ 只**读**不写：时间字段不许代码写（业务负责人 2026-10-06：「改完只有收款是代码的事情」）。
- * ⚠️ 语义键名叫 `createdTime` 而**不是** `createdAt`：全仓有一条守门用例
- *    （`test/purchaseTableRenameSync.test.js`）把 `createdAt` 这个标识符当作
- *    **「报货批次.报货日（原创建时间）」那张表的自动时间列**，出现即判红。这里读的是
- *    **另一张表**的自动列、且只读，换个名字就不去蹭那条与采购链路无关的白名单。
- */
-const FIELD_NAMES_PENDING_SCHEMA = Object.freeze({
-  createdTime: '创建时间',
-});
-
-/**
- * ⭐⭐ 2026-10-15（task-10）：「**货品信息**的创建时间列」—— `recentDays`（最近新增）
- * 筛"**还没有入库的新货**"要用它。**这一项就是它的家**（原先只散在 service 里的兜底值）。
+ * `listLabels` 的短 TTL 缓存（**只服务后端链路**：扫码打印按记录 ID 出那一张 / 打印队列的单品 /
+ * 之后的表单监听链路）。
  *
- * 🔴 **只读核过真表**（`appTableField.list`，测试 Base 2026-10-15）：
- *   · 她那一列**叫「上架日期」**（**不是**「创建时间」），但**类型仍是 `1001 = CreatedTime`**
- *     （飞书自动字段）—— 她只是把它**改了名**；
- *   · 「更新日期」是 **`1002 = ModifiedTime`** ⇒ **不能**拿它当「最近新增」
- *     （会把"她刚改过的老货"当成新货 ✗）。
- * ⚠️ **改名闸门拦不住**（`v1:schema-check` 按 tableId 比对字段名 —— `AGENTS.md` 里那条）
- *   ⇒ 所以这里**名字 + 类型两条都留**（解析顺序见 `services/labelPrintService.js`）：
- *     ① `fieldName` 优先：这次读到的记录里**有这一列**就直接用（**零额外请求**；她再改名只改这一行）；
- *     ② 记录里**没有这一列** ⇒ 按 `fieldType`（1001）去字段表里找那一列（改多少次名都认），
- *        并**如实 warn**（`workbench.labels.product_created_time_renamed`：配置的名字跟真表对不上了）；
- *     ③ 两条都拿不到 ⇒ 那一条 `created_at = 0`：如实计数（`missing_created_at_without_stock`）＋ warn，
- *        **不猜** ✗。
- */
-const PRODUCT_CREATED_TIME = Object.freeze({
-  fieldName: '上架日期',
-  fieldType: 1001,
-});
-
-/**
- * ⭐⭐ 2026-10-15（task-10）：**只读清单端点** `GET /api/workbench/products/numbers` 的那几档旋钮。
- *
- * 为什么要有短 TTL 缓存：Lead 线上**只读实测** ——
- *   `listAll('product')` **561 行 / 5478 ms** ＋ `listAll('liveInventory')` **1362 行 / 5924 ms**
- *   ⇒ 冷启动走一次这个端点 **≈ 11.4 秒**（她的手机等不了）。
- * ⚠️ **只影响这个端点**：`listLabels`（批量 / 编号打印那一页）**这次不动** ——
- *    它那 11 秒是另一个更大的话题（另开任务）。
- * ⚠️ `cacheTtlMs = 0` **= 关掉缓存**（每次真读；数值口径，没有"空串等于关"那种坑）。
- * ⚠️ 缓存只存**与请求无关**的那部分（编号底表 + 计数）；`keyword` / `limit` 每个请求现算。
- */
-const PRODUCT_NUMBERS = Object.freeze({
-  // 缓存有效期（毫秒）。0 = 关掉缓存（每次真读飞书）。
-  cacheTtlMs: 60000,
-  // 一次默认回多少条编号（契约：默认 200）。
-  limitDefault: 200,
-  // limit 的上限（契约：1..500；超过 ⇒ 400 如实告诉她，**不静默截断**）。
-  limitMax: 500,
-  // ⭐⭐ task-15：**服务端模糊查询**（走飞书 `filter`，只回匹配的那几条）。
-  //   · `false` ⇒ 回退"整表读 + 内存过滤"那条老路（退路 / 开关；**显式布尔**，别写 `|| 默认`）；
-  //   · 依据：她逐字「用户输入一个编号，然后系统再给出与这个模糊编号相关的选项」；
-  //     原来整表 554 个编号 ≈ 13.9 秒 ✗ ⇒ 现在**空关键字一次都不读**、有字只读匹配的那几条 ✓。
-  serverFilter: true,
-  // 按关键字分槽的缓存**槽位上限**（同一个关键字重复搜 ⇒ 秒开；超了丢最旧的）。
-  maxCacheEntries: 50,
-  // 「实时库存」那次按条件读**最多看多少行**（防止一个宽关键字把库存整表拖回来）。
-  // ⚠️ 撞到这个上限时，没查到的编号一律回 `hasStock: null`（**未确认**）——**绝不猜成"没入库"** ✗。
-  stockScanMax: 500,
-});
-
-/**
- * ⭐⭐ 2026-10-15（task-11）：**`listLabels`**（`GET /api/workbench/labels` —— 「批量打印 / 选择编号打印」
- * 那一页**进页就自动查一次**）的短 TTL 缓存。
- *
- * 为什么（她原话，2026-10-15 真机）：「我扫完之后…等了一会儿才出现扫描框…整个链路我觉得不太友好」；
- * Lead 线上**只读实测**：`listAll('liveInventory')` 1362 行 5924ms ＋
- * `listAll('product')` 561 行 5478ms ⇒ **她每打开一次那一页都要等 ≈ 11 秒** ✗。
- *
- * ⚠️ `cacheTtlMs = 0` **= 关掉缓存**（每次真读）；默认 60000（她连着翻几次都是秒开）。
- * 🔴 缓存里**只有原始记录**：`keyword` / `state` / `category` / `size` / `recentDays` / `sort`
- *    与「最近新增」的时间判断**一律每请求现算** ✗（连筛选结果一起缓存会串数据）。
+ * 🔴 2026-11-09（业务负责人）：「选择编号打印」那个页面也不要了
+ *   ⇒ 旧的只读清单端点配置（`PRODUCT_NUMBERS`：limit / serverFilter / 关键字缓存槽 …）**整段删除** ✗。
  */
 const LABEL_LIST = Object.freeze({
   // 缓存有效期（毫秒）。0 = 关掉缓存（每次真读飞书）。
   cacheTtlMs: 60000,
 });
-
-/** 标签列表 / 编号清单查询失败时给页面的人话（不放进 TEXTS，避免改变版面镜像形状）。 */
-const QUERY_FAILED_FALLBACK = '标签数据读取失败';
 
 /** 用户可见文案（服务端要拼进标签里的那些）。 */
 const TEXTS = Object.freeze({
@@ -478,19 +383,12 @@ const LABEL_PRINT = Object.freeze({
   price: PRICE,
   qr: QR,
   footer: FOOTER,
-  filters: FILTERS,
-  sortModes: SORT_MODES,
+  stateOrder: STATE_ORDER,
   limits: LIMITS,
-  fieldNamesPendingSchema: FIELD_NAMES_PENDING_SCHEMA,
   texts: TEXTS,
   // ⭐ 「扫码打印」的文案（形状仍来自 config/tagQrCode.js，见上面 SCAN_PRINT 的注释）。
   scanPrint: SCAN_PRINT,
-  // ⭐⭐ 2026-10-15（task-10）：**配置先行补齐** —— 这两组原先散在 service 的兜底值里。
-  //    · `productNumbers` = 只读清单端点的缓存 TTL / limit 默认与上限（**换值不用改代码**）；
-  //    · `productCreatedTime` = 「货品信息」创建时间列的**名字 + 类型**两条口径（见上面的说明）。
-  productNumbers: PRODUCT_NUMBERS,
-  productCreatedTime: PRODUCT_CREATED_TIME,
-  // ⭐⭐ 2026-10-15（task-11）：`listLabels`（批量那一页）自己的短 TTL 缓存。
+  // ⭐⭐ 2026-10-15（task-11）：`listLabels` 的短 TTL 缓存（只服务后端链路）。
   labelList: LABEL_LIST,
 });
 
@@ -529,13 +427,7 @@ module.exports = {
   PRICE,
   QR,
   FOOTER,
-  FILTERS,
-  SORT_MODES,
   LIMITS,
   TEXTS,
-  QUERY_FAILED_FALLBACK,
-  // ⭐⭐ 2026-10-15（task-10）：这两组也单独导出（用例/排查脚本可以直接 import 拿默认值）。
-  PRODUCT_NUMBERS,
-  PRODUCT_CREATED_TIME,
   LABEL_LIST,
 };

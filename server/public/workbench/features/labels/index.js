@@ -1,305 +1,35 @@
 /**
- * 工作台「信息录入 → 鞋盒标签打印」页面 —— 业务负责人 2026-10-08 批准的第一个功能。
+ * 工作台「货品 → 标签打印」页面 —— 现在**只服务「扫码打印」这一个入口**：
+ *   「扫码打印」→ `/workbench/label-print.html?scan=1`：
+ *     进页只挂**扫码聚焦屏**（`scan-print.js`：JSAPI 扫一扫 ⇒ 扫到的那一张**直接排进打印队列**）。
  *
- * 她点哪里 / 怎么用：
- *   ① 选条件（货号 / 所属状态 / 品类 / 尺码 / 最近新增 / 排序）→「查询可打印的标签」；
- *   ② 下面就是 A4 预览（每张 40×30mm，**一个「编号」一张**：尺码那一项带各尺码的库存数量）；
- *   ③ 点「打印这些标签」→ 浏览器打印对话框 → 选 A4、缩放 100% → 打印 → 沿虚线剪开贴鞋盒。
+ * 🔴 2026-11-09（业务负责人）：
+ *   ① 旧「筛选 + 批量预览」那一屏、旧批量后端逻辑「完全删除」；批量打印改成**飞书表单**
+ *      （后端监听「标签打印」表新增记录自动打印，另一条链路）；
+ *   ② 「**选择编号打印**」也删了 —— 她的原话：「**选择编号打印**那个页面也不需要了，可以直接删除，
+ *      因为点击批量打印的时候，**只选择一个就可以了**」⇒ 它的入口 / 页面渲染 / 后端批量查询端点
+ *      （`GET /api/workbench/labels`、`GET /api/workbench/products/numbers`）**全部物理删除**；
+ *   ③ 不带 `?scan=1` 打开本页 ⇒ **什么都不渲染**（正常入口永远带参数）。
  *
- * ⚠️ 排版参数**全部来自服务端** `config/labelPrint.js`（随响应 `layout` 下来，
- *    落到 `@page` 与 CSS 变量上）—— 改标签纸尺寸 / 字号 / 印哪些字段只改服务端 config，
- *    这个文件与 `render.js` 都不用动（配置先行）。
- * ⚠️ 只读页面：整页**只有一次** `GET /api/workbench/labels`（一次写入都不发；
- *    「类别」下拉的候选也来自这次响应，不另查库存）。
+ * ⚠️ 页面文件仍是 `label-print.html`（`standalone.js` 的注册表不变）—— 只是里面不再有
+ *    单品打印的 A4 预览 / 浏览器打印 / 「打印到店里那台电脑」队列面板（那些随单品打印一起删了）。
+ * ⚠️ 「扫码打印」这条链路**一个字没改**：仍复用既有 `/api/label-print/*` 队列与
+ *    `labelForRecord`（后端标签生成保留，按记录 ID 出**恰好那一张**）。
  */
 import { api } from '../../core/api-client.js';
-import { escapeHtml } from '../../core/formatters.js';
-import { describeError, setBusy, showPageError } from '../../core/ui.js';
-import { FILTER_OPTIONS, TEXTS, batchPurposeHtml, pageStyleText, sheetHtml, sheetStyleVars, summaryHtml } from './render.js';
-// ⭐ 2026-10-11：「**打印到店里那台电脑**」= 扫码页那条**同一条队列**（服务器出 PDF、
-//    店里那台 Windows 电脑出纸）。与旁边那颗「打印这些标签」（浏览器打印）是两条路，
-//    但"印什么"共用同一份 service/config。
-import { createLabelQueuePanel, queueBarHtml, submittedText } from './queue.js';
-// ⭐⭐ 2026-10-14：「**扫码打印**」—— 扫到的那一张**直接排进既有队列**（她选了 ⓐ「扫完直接打印」）。
-//    飞书 JSAPI 扫一扫（`h5sdk.config` + `tt.scanCode`）+ 既有 `/jobs` 接口，见该文件头。
-import {
-  createScanPrintAction, mountScanOnlyPage, scanPrintBarHtml, wantsScanFromSearch,
-} from './scan-print.js';
-
-const $ = (container, selector) => container.querySelector(selector);
-
-/**
- * ⭐ 2026-10-09：「货品 → 标签打印 → **单个**」把编号 / 货号从 URL 带进来（`?keyword=`），
- *    于是只出这一款的标签；**不带参数时一个字都不变**（打开就把全部库存查一遍，最多配置里的张数）。
- * ⚠️ 只是**预填一个筛选框**，不新增任何请求 / 不绕过后端过滤（`keyword` 是既有筛选参数）。
- */
-const keywordFromUrl = () => {
-  if (typeof window === 'undefined' || !window.location) return '';
-  const params = new URLSearchParams(window.location.search);
-  return String(params.get('keyword') || params.get('number') || '').trim();
-};
-
-const stateLabel = (state) => FILTER_OPTIONS.stateLabels[state] || state;
-const recentLabel = (days) => FILTER_OPTIONS.recentDayLabels[days] || `最近 ${days} 天`;
-const sortLabel = (sort) => FILTER_OPTIONS.sortLabels[sort] || sort;
-
-/**
- * 页面外壳。⭐ 2026-10-15（业务负责人逐字）：
- *   「批量，我觉得**当前的页面不太美观**，**我不知道批量要做什么**」
- *   ⇒ ① 批量那一屏把**用途**写在页面上（`batchPurposeHtml()`，文案在 `render.js` 的 `TEXTS` 里）；
- *      ② 做清爽只动**分组与留白**（筛选收进一张卡、主按钮单独一行）——
- *         ⚠️ **数据流一个字节没动**：`data-field` / `data-action` / `data-view` 全部照旧，
- *           整页仍然只发**一次**只读请求（既有哨兵照旧成立 ✓）。
- * ⚠️ `?scan=1` 那条路在 `mount()` 开头就 return 去挂聚焦页了，**根本走不到这里**（扫码那一条一个字没改 ✓）。
- * @param {object} options `{ batch }` —— 批量那一屏（不带 `?keyword=`）才画那句用途。
- */
-function renderShell(container, options = {}) {
-  const batch = options.batch !== false;
-  container.innerHTML = `
-    <section class="panel no-print">
-      <div class="panel-header label-page-head">
-        <div>
-          <h2>${escapeHtml(TEXTS.title)}</h2>
-          <p class="subtitle">${escapeHtml(TEXTS.subtitle)}</p>
-        </div>
-      </div>
-      ${batch ? batchPurposeHtml() : ''}
-      <div class="label-filter-card">
-        <div class="toolbar compact-toolbar label-filters">
-          <label class="form-field grow">货号 / 颜色 / 类别
-            <input data-field="keyword" placeholder="例如 XHB8095；留空 = 不按关键字过滤">
-          </label>
-          <label class="form-field">所属状态
-            <select data-field="state">
-              ${FILTER_OPTIONS.states.map((state) => `<option value="${escapeHtml(state)}">${escapeHtml(stateLabel(state))}</option>`).join('')}
-            </select>
-          </label>
-          <label class="form-field">类别
-            <select data-field="category"><option value="">全部类别</option></select>
-          </label>
-        </div>
-        <div class="toolbar compact-toolbar label-filters">
-          <label class="form-field">尺码
-            <input data-field="size" type="number" min="1" step="1" inputmode="numeric" placeholder="例如 42">
-          </label>
-          <label class="form-field">最近新增
-            <select data-field="recent-days">
-              ${FILTER_OPTIONS.recentDays.map((days) => `<option value="${days}">${escapeHtml(recentLabel(days))}</option>`).join('')}
-            </select>
-          </label>
-          <label class="form-field grow">排序
-            <select data-field="sort">
-              ${FILTER_OPTIONS.sorts.map((sort) => `<option value="${escapeHtml(sort)}">${escapeHtml(sortLabel(sort))}</option>`).join('')}
-            </select>
-          </label>
-        </div>
-        <div class="label-filter-actions">
-          <button class="btn btn-primary" type="button" data-action="query">${escapeHtml(TEXTS.queryButton)}</button>
-        </div>
-      </div>
-      <div data-view="summary"><p class="label-summary">${escapeHtml(TEXTS.initial)}</p></div>
-      <div class="label-print-bar">
-        <button class="btn btn-primary" type="button" data-action="print" disabled>${escapeHtml(TEXTS.printButton)}</button>
-        <span class="muted">${escapeHtml(TEXTS.printHint)}</span>
-      </div>
-      ${queueBarHtml()}
-      ${scanPrintBarHtml()}
-      <p class="data-caption" data-view="scan-url"></p>
-    </section>
-    <section class="label-preview">
-      <div class="label-sheet-scroll">
-        <div id="label-sheet" class="label-sheet"></div>
-      </div>
-    </section>`;
-}
+import { createScanPrintAction, mountScanOnlyPage, wantsScanFromSearch } from './scan-print.js';
 
 export function createLabelPrintModule() {
-  const state = { container: null, layout: null };
-
-  const panel = () => $(state.container, '.panel');
-  const sheet = () => $(state.container, '#label-sheet');
-  const printButton = () => $(state.container, '[data-action="print"]');
-
-  /**
-   * ⭐ 「打印到店里那台电脑」这一块（打印队列）。
-   * ⚠️ **只在两种时机刷新**：进页面 / 查完标签后各一次，以及她点【刷新状态】——
-   *    **没有定时器**（她明令"不要每 2-3 秒轮询"；实时性在小助手那条长连接那一侧）。
-   */
-  const queuePanel = createLabelQueuePanel({
-    api,
-    onError: (error) => {
-      $(panel(), '[data-view="queue-jobs"]').textContent = describeError(error);
-      return null;
-    },
-  });
-
-  /**
-   * ⭐⭐ 2026-10-14「**扫码打印**」那一块（点一下 ⇒ 飞书扫一扫 ⇒ 直接排进既有队列）。
-   * ⚠️ 与上面的队列面板**共用同一个 api 与同一个既有 `/jobs` 接口**（不新开打印接口 ✗）。
-   */
+  /** ⭐ 扫码打印那一块（扫码 ⇒ 直接排进既有队列；与「扫码页」共用同一份实现）。 */
   const scanPrint = createScanPrintAction({ api });
-
-  /** 把服务端来的排版参数落到 `@page` 与 CSS 变量上（配置驱动，页面不写死 mm）。 */
-  function applyLayout(layout, labels) {
-    const styleId = 'label-print-page-style';
-    let style = document.getElementById(styleId);
-    if (!style) {
-      style = document.createElement('style');
-      style.id = styleId;
-      document.head.append(style);
-    }
-    style.textContent = pageStyleText(layout);
-    const target = sheet();
-    target.setAttribute('style', sheetStyleVars(layout));
-    target.innerHTML = sheetHtml(labels, layout);
-  }
-
-  /**
-   * 「类别」下拉的候选**不另发请求**：直接用这次响应里 `filters.category_options`
-   * （= 服务端从「实时库存」解析出来的类别去重，与筛选用的是同一个来源 ⇒ 选了一定有结果）。
-   */
-  function fillCategories(options) {
-    const select = $(panel(), '[data-field="category"]');
-    const selected = select.value;
-    const list = Array.isArray(options) ? options : [];
-    select.innerHTML = '<option value="">全部类别</option>'
-      + list.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('');
-    select.value = list.includes(selected) ? selected : '';
-  }
-
-  function currentFilters() {
-    const form = panel();
-    return {
-      keyword: $(form, '[data-field="keyword"]').value.trim(),
-      state: $(form, '[data-field="state"]').value,
-      category: $(form, '[data-field="category"]').value,
-      size: $(form, '[data-field="size"]').value.trim(),
-      recentDays: $(form, '[data-field="recent-days"]').value,
-      sort: $(form, '[data-field="sort"]').value,
-    };
-  }
-
-  async function query(button) {
-    const filters = currentFilters();
-    const params = new URLSearchParams();
-    if (filters.keyword) params.set('keyword', filters.keyword);
-    if (filters.state) params.set('state', filters.state);
-    if (filters.category) params.set('category', filters.category);
-    if (filters.size) params.set('size', filters.size);
-    if (filters.recentDays && filters.recentDays !== '0') params.set('recentDays', filters.recentDays);
-    if (filters.sort) params.set('sort', filters.sort);
-
-    showPageError('');
-    $(panel(), '[data-view="summary"]').innerHTML = `<p class="label-summary">${escapeHtml(TEXTS.loading)}</p>`;
-    setBusy(button, true, TEXTS.loading);
-    try {
-      const data = await api.get(`/api/workbench/labels?${params}`);
-      state.layout = data.layout;
-      applyLayout(data.layout, data.labels || []);
-      $(panel(), '[data-view="summary"]').innerHTML = summaryHtml(data);
-      $(panel(), '[data-view="scan-url"]').textContent = `${TEXTS.scanUrlCaption}${data.qr?.url_template || ''}`;
-      fillCategories(data.filters?.category_options);
-      const printable = (data.labels || []).length > 0;
-      printButton().disabled = !printable;
-      printButton().title = printable ? '' : TEXTS.printDisabled;
-      queuePanel.setEnabled(printable);
-      // ⭐ 每次查询成功换一把**新的幂等键**（= 新的一批结果 = 一次新的提交意图）：
-      //   同一批结果上连点几次 ⇒ 同一个 key ⇒ 服务端只建一个任务（防连点，她上次就是这么多打的）；
-      //   真想再打一份 ⇒ 走那颗【再打一份】（带 `again`，**绕过**去重窗口）。
-      queuePanel.setBatchKey(`${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
-    } catch (error) {
-      // 空结果不是错误（service 回 200 + 空 labels）；这里只有真失败才走到。
-      $(panel(), '[data-view="summary"]').innerHTML = `<p class="label-notice">${escapeHtml(describeError(error))}</p>`;
-      applyLayout(state.layout || fallbackLayout(), []);
-      printButton().disabled = true;
-      showPageError(describeError(error));
-    } finally {
-      setBusy(button, false);
-    }
-  }
-
-  // 还没成功查到 layout 就失败时，用一份"最小可用"的默认排版把预览区画出来
-  //（尺寸的真源头仍是服务端 `config/labelPrint.js`；这里只是别让预览区空着。
-  //  ⚠️ 这几个数字是**镜子**：改了服务端 config 的默认值，这里也要跟着改 —— 只影响
-  //  "第一次查询就失败"那一屏，成功一次之后一律用服务端下来的 layout）。
-  const fallbackLayout = () => ({
-    label: { widthMm: 40, heightMm: 30, paddingMm: 1.5, borderMm: 0.2 },
-    page: { name: 'A4', widthMm: 210, heightMm: 297, marginMm: { top: 6, right: 6, bottom: 6, left: 6 } },
-    grid: { columns: 4, rows: 9, perPage: 36, usableWidthMm: 198, gapXMm: 0, gapYMm: 0 },
-    typography: {
-      itemNoMm: 3.6, brandMm: 2.4, fieldMm: 2.8, sizeMm: 2.8, priceMm: 3.2, footerMm: 1.7, qrSizeMm: 15,
-    },
-    // ⭐ `maxLines` = **安全上限**（不是固定行数；行数按可用高度 + 实际字宽算）
-    //   ⚠️ 2026-10-12 从 2 改成 6 —— 与 `config/labelPrint.js` 的默认值**逐字一致**（防漂移用例在盯）
-    sizes: { perLine: 3, maxLines: 6, itemGapMm: 1, qtyFontRatio: 0.64, qtyBaselineShiftEm: 0.2, order: 'asc', compare: 'numeric' },
-    // 标签内部版式（品牌**顶部居中**、右栏行序、货号+颜色同行的超宽规则）—— 服务端 config 的镜子。
-    body: {
-      rows: ['brand', 'itemNoColor', 'price', 'state', 'sizes'],
-      brandRow: 'top',
-      brandAlign: 'center',
-      brandGapMm: 0.6,
-      qrGapMm: 1.5,
-      itemNoColor: {
-        gapMm: 1.2,
-        categorySeparator: ' · ',
-        preferColorOverCategory: true,
-        minItemNoMm: 2.4,
-        truncateMark: '…',
-        widthEm: {
-          narrow: 0.25, ascii: 0.66, wide: 0.72, cjk: 1,
-          narrowChars: [' '], wideChars: ['·', '-', '—', '/'],
-        },
-      },
-    },
-    fields: {
-      // ⚠️ `category: false` —— 2026-10-08 业务负责人明确"标签上不印品类"
-      //（她原话：「我只能放货号、颜色，然后单价，然后尺码。放品类了吗？没放品类啊」）。
-      // 这里是服务端 `config/labelPrint.js` 的镜子，改那边必须同步这一份（防漂移用例钉着）。
-      qr: true, brand: true, itemNo: true, color: true, category: false,
-      size: true, price: true, state: false, footer: false,
-    },
-    texts: { missingValue: '—', overflowMark: '…', stateSeparator: '/' },
-  });
 
   return {
     mount(container) {
-      state.container = container;
-      // ⭐⭐ 2026-10-15（她真机反馈「整条链路不太友好」之后）：**`?scan=1` = 「只扫码」的聚焦页**。
-      //   原来这条入口（「货品 → 标签打印 → 扫码打印」）复用的是**批量打印那一页** ⇒
-      //   进页先跑一次 `/labels` 查询（**真机实测 23.6 秒**、扫 1362 条货品记录）⇒
-      //   她**先看到批量页干等**、相机才轮得到弹；扫完又回到批量页、看不到"刚才打的是哪张" ✗
-      //   ⇒ 命中这条入口就**只挂聚焦页并立刻 return**：不查批量、不挂筛选 / 预览纸张 / 打印队列 ✓
-      //   ⚠️ 批量打印那条入口（**不带** `?scan`）走的还是下面那条老路 —— **一个字节没改** ✓
+      // 只有「扫码打印」带 `?scan=1` 进来；其余情况（收藏 / 旧链接 / 后退）不渲染任何内容。
       if (wantsScanFromSearch(typeof window === 'undefined' ? '' : window.location.search)) {
         mountScanOnlyPage(container, scanPrint);
         return;
       }
-      // ⭐ 2026-10-15：「单个」入口带进来的编号 / 货号（`?keyword=`）⇒ **单款那一屏**；
-      //   不带参数 = **批量打印那一屏**（她 2026-10-15 确认用途 = 一次给一批新货打码）。
-      //   ⇒ 只有批量那一屏画那句用途（单款那屏不写"批量"，免得文不对题）。
-      const preset = keywordFromUrl();
-      renderShell(container, { batch: !preset });
-      if (preset) $(panel(), '[data-field="keyword"]').value = preset;
-      $(panel(), '[data-action="query"]').addEventListener('click', (event) => query(event.currentTarget));
-      $(panel(), '[data-field="keyword"]').addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') $(panel(), '[data-action="query"]').click();
-      });
-      printButton().addEventListener('click', () => window.print());
-      // 打印队列那一块：挂上监听 + **拉一次状态**（此后只有她点【刷新状态】/ 提交后才再拉，
-      // ⚠️ 没有定时器 —— 实时性由店里那台电脑的长连接负责，这个页面只看快照）。
-      queuePanel.mount(panel(), () => currentFilters());
-      void queuePanel.refresh();
-      // ⭐⭐「扫码打印」：挂上按钮 + （`?scan=1` 进来的话）**进页面就自动弹一次扫一扫** ——
-      //    那一格在「货品 → 标签打印 → 扫码打印」是一个**链接**（她点一下就是一次用户手势），
-      //    落到这一页时直接弹相机；弹不起来 / 取消 ⇒ 按钮还在，她再点一次即可（**不留死按钮** ✗）。
-      scanPrint.mount(panel());
-      // ⚠️ 2026-10-15：原来这里还有一段"`?scan=1` 就自动弹一次"—— 现在那条入口在函数开头
-      //   **已经 return 去挂聚焦页**（自动弹也在那边做了）⇒ 这段**不可能再命中**，删掉死代码 ✓
-      //   （判据不是猜的：两处用的是同一个 `wantsScanFromSearch(window.location.search)` ✓）
-      applyLayout(fallbackLayout(), []);
-      // 打开页面就先查一次（不填条件 = 全部库存，最多 config 里的张数）：
-      // 免得她一进来看到一片空白、以为坏了。
-      query($(panel(), '[data-action="query"]'));
     },
   };
 }

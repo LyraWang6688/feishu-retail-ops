@@ -4,11 +4,6 @@ import { showPageError } from '../../core/ui.js';
 import { createInventoryAdjustmentModule } from '../inventory/adjustment.js';
 import { createOrdersModule } from '../orders/index.js';
 import { createScanCardsModule } from '../scan/launch.js';
-// ⭐⭐ 2026-10-15（业务负责人逐字：「是否可以就让用户选择呢？然后它的选项是来自于货品信息里面的编号」）：
-//    「选择编号打印」那一格的**编号选择器**（选项来自只读端点，见 `features/labels/number-picker.js`）。
-//    ⚠️ 取数 / DOM 全在那个模块里：**领域骨架自己仍然一次网络调用都没有**（有哨兵钉着）。
-import { createNumberPicker } from '../labels/number-picker.js';
-import { entryTarget } from './pages.js';
 import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
 
 /**
@@ -72,10 +67,6 @@ export function createDomainModule(domainId) {
     //   「配品」现在是一张**直跳页**（`kind:'links'` + `directJump:true`，见 `config/domains.js`），
     //   点一下直接打开飞书表单，**工作台不再有自建的配品面板** ✓
     host.innerHTML = domainPageHtml(page);
-    // ⭐⭐ 2026-10-15：「选择编号打印」那一格 = **可搜索的编号选择器**（配了 `numberPicker` 才有）。
-    //    ⚠️ 选中只是把编号填进上面那个输入框；**跳转仍走下面那个既有 submit**（落点一个字不改 ✓）。
-    //    ⚠️ 一次网络调用都不在这里：取数在 `number-picker.js` 里（`api.get` 只出现在那边）。
-    if (page.kind === 'entry' && page.numberPicker) void createNumberPicker().mount(host);
     return undefined;
   }
 
@@ -119,18 +110,6 @@ export function createDomainModule(domainId) {
         const jump = event.target.closest('[data-jump]');
         if (jump) return activate(jump.dataset.jump);
         return undefined;
-      });
-
-      // 「输入编号 → 打开既有页面」：目标 URL 由配置模板拼（不在这里写死路径）。
-      container.addEventListener('submit', (event) => {
-        const form = event.target.closest('[data-entry-form]');
-        if (!form) return;
-        event.preventDefault();
-        const raw = form.querySelector('input[name="number"]')?.value || '';
-        const target = entryTarget(form.dataset.targetTemplate, raw);
-        if (!target) return showPageError('先填编号，再点打开');
-        showPageError('');
-        return window.location.assign(target);
       });
 
       activate(state.active);

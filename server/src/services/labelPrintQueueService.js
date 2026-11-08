@@ -54,19 +54,6 @@ const normalizeRequest = (input = {}) => {
     if (!number) throw userError('缺少「编号」（货号|颜色|类别）');
     return { mode: 'single', number };
   }
-  if (mode === 'batch') {
-    return {
-      mode: 'batch',
-      filters: {
-        keyword: String(input.filters?.keyword ?? '').trim(),
-        state: String(input.filters?.state ?? '').trim(),
-        category: String(input.filters?.category ?? '').trim(),
-        size: String(input.filters?.size ?? '').trim(),
-        recentDays: String(input.filters?.recentDays ?? '').trim(),
-        sort: String(input.filters?.sort ?? '').trim(),
-      },
-    };
-  }
   throw userError('打印请求的 mode 只能是 single（按编号）或 batch（按条件）');
 };
 
@@ -87,11 +74,6 @@ const requestKeyOf = (request, rotate, canvas) => {
       ? `single|record:${request.recordId}${suffix}`
       : `single|${request.number}${suffix}`;
   }
-  const filters = request.filters || {};
-  const ordered = ['keyword', 'state', 'category', 'size', 'recentDays', 'sort']
-    .map((name) => `${name}=${String(filters[name] ?? '').trim()}`)
-    .join('&');
-  return `batch|${ordered}${suffix}`;
 };
 
 const createLabelPrintQueueService = (deps = {}) => {
@@ -283,7 +265,8 @@ const createLabelPrintQueueService = (deps = {}) => {
       }
       data = { ...data, labels: exact, total_matched: exact.length, total_returned: exact.length };
     } else {
-      data = await labelPrint.listLabels(request.filters);
+      // 旧的 `mode:'keyword'` / `mode:'batch'` 已随「选择编号打印」与旧批量一起删除。
+      throw systemError(`不认识的打印请求：${request.mode}`);
     }
 
     const labels = data.labels || [];
@@ -410,19 +393,6 @@ const createLabelPrintQueueService = (deps = {}) => {
     {
       actor: input.actor,
       source: input.source || SOURCES.scan,
-      submitKey: input.submitKey,
-      again: input.again,
-      rotate: input.rotate,
-      canvas: input.canvas,
-    },
-  );
-
-  /** 手机侧：按条件打一批（标签打印页那颗「打印到店里那台电脑」）。 */
-  const enqueueBatch = (input = {}) => enqueue(
-    { mode: 'batch', filters: input.filters },
-    {
-      actor: input.actor,
-      source: input.source || SOURCES.workbench,
       submitKey: input.submitKey,
       again: input.again,
       rotate: input.rotate,
@@ -754,7 +724,6 @@ const createLabelPrintQueueService = (deps = {}) => {
     queuePositionOf,
     enqueue,
     enqueueSingle,
-    enqueueBatch,
     getJob,
     listJobs,
     listPending,
