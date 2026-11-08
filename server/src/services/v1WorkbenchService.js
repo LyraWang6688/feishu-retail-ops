@@ -4,6 +4,7 @@ const {
 } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
+const { getConfigRows } = require('./configTableCache');
 const { LIVE_STATES } = require('./inventoryService');
 const {
   WORKBENCH_PRODUCT_SEARCH_LIMIT,
@@ -139,7 +140,8 @@ const createWorkbenchService = (gateway, options = {}) => {
 
   // 工作台「盘点调整 / 换季调整」要按 货号 找货品：返回 record_id 供库存接口用。
   const findProducts = async ({ keyword = '', limit = WORKBENCH_PRODUCT_SEARCH_LIMIT, requestId } = {}) => {
-    const products = await listAllWithRetry(gateway, 'product', requestId);
+    const products = await getConfigRows({ gateway, tableKey: 'product',
+      loader: () => listAllWithRetry(gateway, 'product', requestId) });
     const normalized = String(keyword).trim().toLowerCase();
     const rows = products.map((record) => ({
       record_id: record.record_id,
@@ -199,7 +201,8 @@ const createWorkbenchService = (gateway, options = {}) => {
   const getLiveInventory = async ({ keyword = '', size = '', requestId } = {}) => {
     const [inventory, products] = await Promise.all([
       listAllWithRetry(gateway, 'liveInventory', requestId),
-      listAllWithRetry(gateway, 'product', requestId),
+      getConfigRows({ gateway, tableKey: 'product',
+        loader: () => listAllWithRetry(gateway, 'product', requestId) }),
     ]);
     const productsById = indexByRecordId(products);
     const normalizedKeyword = String(keyword).trim().toLowerCase();

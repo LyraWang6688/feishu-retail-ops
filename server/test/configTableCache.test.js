@@ -127,3 +127,18 @@ test('freshness=fresh：写库前强制重读，失败不回落 lastGood', async
   const rows = await getConfigRows(opts);
   assert.equal(rows[0].record_id, 'b1');
 });
+
+
+test('不同字段集分开缓存：精简快照不污染完整快照（#990 回归）', async () => {
+  resetConfigTableCache();
+  let calls = 0;
+  const gateway = { listAll: async () => { calls += 1; return [{ record_id: 'p1', fields: { name: '完整' } }]; } };
+  const opts = { gateway, tableKey: 'product', now: () => 1_000 };
+  await getConfigRows({ ...opts, fields: ['名称'], loader: async () => [{ record_id: 'p1', fields: { 名称: '精简' } }] });
+  const full = await getConfigRows(opts);
+  assert.equal(full[0].fields.name, '完整');
+  assert.equal(calls, 1);
+  const slim = await getConfigRows({ ...opts, fields: ['名称'], loader: async () => { calls += 1; return []; } });
+  assert.equal(slim[0].fields['名称'], '精简', '字段集命中自己的快照，不读完整快照');
+  assert.equal(calls, 1);
+});

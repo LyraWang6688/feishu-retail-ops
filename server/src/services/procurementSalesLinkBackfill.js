@@ -77,7 +77,16 @@ const createProcurementSalesLinkBackfill = ({
       }
       // 编号只从「货品信息」反查（不信页面传值）；一次批量读，避免 N 次请求
       const productIds = [...new Set(planItems.map((one) => String(one?.product_record_id || '').trim()).filter(Boolean))];
-      const products = productIds.length ? await gateway.getBatch('product', productIds) : [];
+      let products = [];
+      if (productIds.length) {
+        try {
+          const allProducts = await getConfigRows({ gateway, tableKey: 'product' });
+          const byId = new Map((allProducts || []).map((record) => [String(record.record_id), record]));
+          products = productIds.map((id) => byId.get(String(id))).filter(Boolean);
+        } catch (error) {
+          products = typeof gateway.getBatch === 'function' ? await gateway.getBatch('product', productIds) : [];
+        }
+      }
       const numberById = new Map((products || []).map((record) => [record.record_id, textOf(record.fields?.[productFields.number])]));
       const sales = await (typeof readSalesRows === 'function' ? readSalesRows() : defaultReadSales());
       // 交易类型判据（与补货读模型同一份口径）：行为表 id → 编码; 认不出 ⇒ 丢弃（页面上本来就不会出现）
