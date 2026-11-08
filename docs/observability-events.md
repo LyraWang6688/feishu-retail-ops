@@ -454,7 +454,7 @@
 | `scan.sale.order_no.allocate_failed` | 3 | src/config/alerts.js<br>src/routes/scanPage/handlers/salesSubmit.js |
 | `scan.sale.partial_failed` | 1 | src/config/scanWrite.js |
 | `scan.sale.payment` | 1 | src/config/timing.js |
-| `scan.sale.payment_methods_unreadable` | 2 | src/config/voucherPayment.js<br>src/routes/scanPage/index.js |
+| `scan.sale.payment_methods_unreadable` | 2 | src/config/voucherPayment.js<br>src/routes/scanPage/setup.js |
 | `scan.sale.reused` | 1 | src/config/scanWrite.js |
 | `scan.sale.stock_failed` | 1 | src/config/scanWrite.js |
 | `scan.sale.submit` | 1 | src/config/timing.js |

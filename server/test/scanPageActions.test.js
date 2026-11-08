@@ -69,7 +69,7 @@ test('markRealmUsed：没有会话/没有 openId ⇒ 静默；成功调用；失
 });
 
 test('路由里只剩薄包装（源码哨兵：把实现塞回 index.js ⇒ 红）', () => {
-  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8');
+  const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'setup.js'), 'utf8') + '\n' + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'helpers.js'), 'utf8');
   assert.match(index, /require\('\.\/actions'\)/, 'index 必须引用 actions.js');
   assert.equal(/const realmOfAction = \(action\) => \{/.test(index), false, '实现不许留在 index.js');
   assert.match(index, /const realmOfAction = \(action\) => realmOfActionOf\(action, writeConfig\)/);
