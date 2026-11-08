@@ -96,8 +96,21 @@ const createLaikeClient = (options = {}) => {
       return fail('upstream_failed', config.texts.upstreamFailed);
     }
 
-    const payload = await response.json().catch(() => ({}));
+    // ⚠️ 解析失败**不能**当成空对象：否则"上游返回坏页（HTML 网关错误页）"会被
+    //    读成"查询成功但没有数据"（review 指出：`{}` ⇒ 无 error_code ⇒ 默认 0 ⇒ ok:true）。
+    //    这里单独回 `invalid_response`，并保留响应头 logid 供排查。
+    let payload = null;
+    let parseError = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      parseError = error;
+    }
     const logId = String(payload?.extra?.logid || response.headers?.get?.('x-tt-logid') || '').trim();
+    if (parseError || !payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      logWarn('douyin.laike.request.failed', { label, reason: 'invalid_response', status: response.status, log_id: logId });
+      return fail('invalid_response', config.texts.invalidResponse, { status: response.status, logId });
+    }
     if (!response.ok) {
       logWarn('douyin.laike.request.failed', { label, reason: 'http_error', status: response.status, log_id: logId });
       return fail('upstream_failed', config.texts.upstreamFailed, { status: response.status, logId });
@@ -111,7 +124,14 @@ const createLaikeClient = (options = {}) => {
       return fail(described.reason, described.message, { errorCode, logId });
     }
 
-    return { ok: true, data: payload?.data ?? {}, logId };
+    // 成功响应必须带 `data` 对象（抖音所有 goodlife 接口都是这个形状）；
+    // 没有 `data` 说明"响应对不上契约"，不能当成功空数据返回。
+    if (!payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) {
+      logWarn('douyin.laike.request.failed', { label, reason: 'invalid_response', status: response.status, log_id: logId });
+      return fail('invalid_response', config.texts.invalidResponse, { status: response.status, logId });
+    }
+
+    return { ok: true, data: payload.data, logId };
   };
 
   /** 应用级 token：TTL 内复用，绝不重复换；失败不缓存。 */
