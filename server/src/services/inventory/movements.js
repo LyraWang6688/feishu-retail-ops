@@ -108,7 +108,8 @@ const STOCK_MOVEMENTS = Object.freeze({
     // 按顺序消耗这些状态的实时库存；null 表示不消耗既有记录。
     // ⭐ 2026-11-09：销售出库与「实时库存」页面口径对齐 —— 只要实时库存里有记录（一双一行），
     //    就视为可卖；所属状态为空/仓库也算，不再只认门盒+样品。
-    consumes: ['门盒', '样品', '仓库', ''],
+    // '*' = 不看所属状态：实时库存里只要有这一双就算可卖/可退。
+    consumes: '*',
     // ⭐ 2026-10-18：远端「关联销售」= 销售主表 id（只写不查）；本地幂等仍用明细 id。
     ledgerLink: {
       field: 'salesDetail',
@@ -158,7 +159,7 @@ const STOCK_MOVEMENTS = Object.freeze({
       fieldMessages: Object.freeze({ productRecordId: FIELD_MISSING.productRecordId }),
     }),
   },
-  // 采购退货：方向=减少，且**状态无关**——样品、门盒、仓库都要退（见上面的注释）。
+  // 采购退货：方向=减少，且**状态无关**——实时库存里有记录就退（'*'）。
   //
   // ⚠️ ledgerSource 为 null：「库存流水」的两个来源字段是「关联销售」→销售明细、
   // 「关联采购」→采购入库（⚠️ 后者随「采购入库」表一起被删，见上一条），
@@ -174,7 +175,9 @@ const STOCK_MOVEMENTS = Object.freeze({
   [MOVEMENT_PURCHASE_DECREASE]: {
     direction: '减少',
     ledgerSource: null,
-    consumes: ['门盒', '样品', '仓库'],
+    // ⭐ 2026-11-09：与退货页「实时库存里所有记录」口径对齐，空状态也要退。
+    // '*' = 不看所属状态：实时库存里只要有这一双就算可卖/可退。
+    consumes: '*',
     triggerSampleReplacement: false,
     // 与采购入库同一个形状的真实三元组（`purchase_return:` 前缀）：批次身份 ｜ 货品 ｜ 尺码。
     // ⚠️ 不能拿"退货明细行的 record_id"当来源：那条行**先写、库存后扣**，崩溃后重放要看的是
