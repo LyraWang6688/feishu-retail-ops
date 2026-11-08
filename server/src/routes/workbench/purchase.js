@@ -236,8 +236,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       }
       // ② ⭐⭐ 2026-10-29（F1/F2 · Lead 批）：**整单替换**会话清单（不再是逐行 `addScan`）。
       //    为什么（main 上的真 bug）：
-      //      · 逐行 `addScan` 只认"本批申请行里已有的 (款,尺码)"⇒ 页面上的**自定义尺码/自定义货号
-      //        必然 400**（`not_in_batch`）✗ —— 那是页面明明让她填、后端却永远不收；
+      //      · 逐行 `addScan` 只认"本批申请行里已有的 (款,尺码)"；
       //      · `addScan` 对"已经记过的行"返回 duplicate（数字不变）⇒ 她**改数量不生效 / 改 0 删不掉** ✗。
       //    ⇒ 页面提交的是**整张清单**，就用 `setScans` 把它整张落进去 ✓（校验不通过 ⇒ 400 + 会话一个字不动）。
       const submittedLines = [];
@@ -248,7 +247,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         //   负数 / 小数 / 非数字才是非法（照旧 400）。
         const quantity = Number(line?.[arrivalTab.fields.quantity]);
         if (!productRecordId) {
-          // 自定义货号认不出：如实说（不许静默丢 ✗）
+          // 提交行没有货品 record_id：如实说（不许静默丢 ✗）
           return res.status(400).json({ success: false, error: arrivalTab.texts.itemNoUnresolved });
         }
         if (!Number.isSafeInteger(size) || !Number.isSafeInteger(quantity) || size <= 0 || quantity < 0) {
