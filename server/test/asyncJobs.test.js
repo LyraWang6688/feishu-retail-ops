@@ -47,7 +47,7 @@ const makeConfig = (over = {}) => buildAsyncJobsConfig({
   ...over,
 });
 
-const makeService = ({ over = {}, sendText, resolveChatId = () => 'oc_alert_group', senderLog } = {}) => {
+const makeService = ({ over = {}, sendText, notificationService, resolveChatId = () => 'oc_alert_group', senderLog } = {}) => {
   const config = makeConfig(over);
   const { logs, logger } = collectLogs();
   const sent = [];
@@ -55,6 +55,7 @@ const makeService = ({ over = {}, sendText, resolveChatId = () => 'oc_alert_grou
     config,
     logger,
     resolveChatId,
+    notificationService,
     sendText: sendText || (async (chatId, text) => { sent.push({ chatId, text }); if (senderLog) senderLog.push({ chatId, text }); return { ok: true }; }),
   });
   const store = createAsyncJobStore({ dir: config.jobsDir });
@@ -342,4 +343,24 @@ test('AC-AJ-DELIVERY 交割单交付/付款纳入统一任务类型配置', () =
   assert.equal(ASYNC_JOB_TYPES.SALES_PAYMENT, 'sales_payment');
   assert.equal(ASYNC_JOBS.texts.typeLabels[ASYNC_JOB_TYPES.SALES_DELIVERY], '交割单交付');
   assert.equal(ASYNC_JOBS.texts.typeLabels[ASYNC_JOB_TYPES.SALES_PAYMENT], '交割单付款');
+});
+
+
+test('AC-J10 统一通知服务：发 async_job_failed 卡片并保存 card_id / message_id', async () => {
+  const calls = [];
+  const h = makeService({
+    notificationService: {
+      send: async (event, data) => { calls.push({ event, data }); return { ok: true, cardId: 'card_1', messageId: 'msg_1' }; },
+    },
+    resolveChatId: () => '',
+  });
+  const { jobId } = await enqueueJob(h);
+  await h.service.run({ jobId, run: async () => { throw new Error('boom'); } });
+  const job = await h.store.get(jobId);
+  assert.equal(job.status, ASYNC_JOB_STATUS.FAILED);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].event, 'async_job_failed');
+  assert.equal(calls[0].data.title, '【异步写入失败】');
+  assert.equal(job.notification_card_id, 'card_1');
+  assert.equal(job.notification_message_id, 'msg_1');
 });
