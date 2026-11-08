@@ -512,8 +512,6 @@ asyncJobNotifier / alertNotifier 走统一服务
 缺口：
 
 ```text
-.env.example 没有 NOTIFY_PRIVATE_OPEN_ID / NOTIFY_GROUP_CHAT_ID
-text 分支还有 3 处写死中文
 旧 alerts / pushRetry / heartbeat 目标配置仍有死读取
 NOTIFICATION_EVENTS[*].card 字段无消费者
 ```
@@ -587,7 +585,6 @@ lastGood 告警
 
 ```text
 路由级 invalidate 没有测试
-默认 TTL 常量仍有重复
 labelPrint 仍叠加自己的 60s product 缓存
 部分定向读 / 批量读仍不进快照；按编号找货品已走 configTableCache
 ```
@@ -665,8 +662,8 @@ utils/submitToast.js
 ### 7.6 审计后的优先顺序
 
 ```text
-P0：通知 .env.example 缺 NOTIFY_* 变量
+P0：通知旧目标配置死读取 / text 分支已收口
 P1：toast 收口（到货确认 / 售后）
-P2：配置表缓存剩余例外（路由失效测试 / TTL 重复 / labelPrint 叠加缓存）
+P2：配置表缓存剩余例外（路由失效测试 / labelPrint 叠加缓存）
 P3：events 单段事件名、附件/IM 写调度边界
 ```

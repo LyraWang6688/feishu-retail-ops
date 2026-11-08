@@ -14,10 +14,10 @@
  * 快照 key = appToken + tableId + tableKey + 字段集（同一 Base / 同一字段集共享；
  * 精简字段与完整字段分开缓存，避免 #990 的精简快照污染完整快照）。
  */
-const { configTableTtlMs, CONFIG_TABLE_KEYS } = require('../config/configTables');
+const { configTableTtlMs, CONFIG_TABLE_KEYS, DEFAULT_CONFIG_TTL_MS } = require('../config/configTables');
 const { logWarn } = require('../utils/logger');
 
-const DEFAULT_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_TTL_MS = DEFAULT_CONFIG_TTL_MS;
 const STALE_WARN_INTERVAL_MS = 5 * 60 * 1000;
 const entries = new Map();
 // 真实 gateway 按 appToken 共享（生产同一 Base 多实例共享一份）；

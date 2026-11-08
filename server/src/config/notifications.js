@@ -69,6 +69,8 @@ const NOTIFICATION_TEXTS = Object.freeze({
   cardCreateFailed: '创建卡片实体',
   cardMissingId: '创建卡片实体未返回 card_id',
   messageUnsupported: '飞书客户端不支持发送消息',
+  textSendFailed: '发送文本失败',
+  textMissingId: '发送文本未返回 message_id',
   messageSendFailed: '发送通知卡片',
   messageMissingId: '发送通知卡片未返回 message_id',
   targetMissing: '通知目标缺少 receiveId / receiveIdType',
