@@ -14,16 +14,12 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 const {
   resolveStaleMinutes,
   isAlertEnabled,
-  resolveAlertTarget,
-  resolveAlertOpenId,
   isMentionAllEnabled,
   resolveCallbackUrl,
   evaluateLarkEventHeartbeat,
   buildLarkEventStaleAlertText,
   DEFAULT_STALE_MINUTES,
   DEFAULT_CALLBACK_URL,
-  ALERT_TARGET_OWNER,
-  ALERT_TARGET_PURCHASE_GROUP,
 } = require('../src/config/larkEventHeartbeat');
 const {
   LarkEventHeartbeat,
@@ -62,16 +58,6 @@ test('@所有人开关同样是显式布尔，默认关', () => {
   assert.equal(isMentionAllEnabled({}), false);
   assert.equal(isMentionAllEnabled({ LARK_EVENT_ALERT_MENTION_ALL: '' }), false);
   assert.equal(isMentionAllEnabled({ LARK_EVENT_ALERT_MENTION_ALL: 'true' }), true);
-});
-
-test('告警目标：默认采购群，只有显式 owner 才走私聊', () => {
-  assert.equal(resolveAlertTarget({}), ALERT_TARGET_PURCHASE_GROUP);
-  assert.equal(resolveAlertTarget({ LARK_EVENT_ALERT_TARGET: '' }), ALERT_TARGET_PURCHASE_GROUP);
-  assert.equal(resolveAlertTarget({ LARK_EVENT_ALERT_TARGET: 'purchase_group' }), ALERT_TARGET_PURCHASE_GROUP);
-  assert.equal(resolveAlertTarget({ LARK_EVENT_ALERT_TARGET: 'OWNER' }), ALERT_TARGET_OWNER);
-  assert.equal(resolveAlertTarget({ LARK_EVENT_ALERT_TARGET: '写错的值' }), ALERT_TARGET_PURCHASE_GROUP);
-  assert.equal(resolveAlertOpenId({}), '');
-  assert.equal(resolveAlertOpenId({ LARK_EVENT_ALERT_OPEN_ID: ' ou_x ' }), 'ou_x');
 });
 
 test('回调地址：默认是正确那个，可覆盖', () => {
