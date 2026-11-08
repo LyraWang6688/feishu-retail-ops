@@ -72,15 +72,15 @@ test('new sizes and rebuilt link IDs refresh on lookup misses without a restart'
   await assert.rejects(service.resolveLinkedCell(['size_38']), /不在尺码管理/);
 });
 
-test('deleted and recreated mappings are reloaded after bounded cache expiry', async () => {
+test('deleted and recreated mappings are reloaded after shared config TTL expiry', async () => {
   let clock = 0;
   const data = [...rows];
-  const service = new SizeReferenceService({ gateway: gatewayFor(data),
-    cacheTtlMs: 30_000, now: () => clock });
+  const service = new SizeReferenceService({ gateway: gatewayFor(data), now: () => clock });
   assert.deepEqual(await service.resolveByNumber(38), { recordId: 'size_38', size: 38 });
   data.splice(0, 1);
-  clock = 30_001;
+  clock = 30 * 60 * 1000 + 1;
   await assert.rejects(service.resolveByNumber(38), /找不到 38 码/);
   data.push({ record_id: 'rebuilt_38', fields: { 尺码: 38 } });
+  service.clearCache();
   assert.deepEqual(await service.resolveByNumber(38), { recordId: 'rebuilt_38', size: 38 });
 });

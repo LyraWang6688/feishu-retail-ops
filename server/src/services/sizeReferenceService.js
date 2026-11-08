@@ -1,5 +1,5 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
-const { getConfigRows } = require('./configTableCache');
+const { getConfigRows, invalidateConfigTable } = require('./configTableCache');
 
 const normalizeSize = (value) => {
   const raw = typeof value === 'string' ? value.trim() : value;
@@ -13,23 +13,15 @@ const normalizeSize = (value) => {
 };
 
 class SizeReferenceService {
-  constructor({ gateway, cacheTtlMs = 30_000, now = Date.now } = {}) {
+  constructor({ gateway, now = Date.now } = {}) {
     if (!gateway) throw new Error('SizeReferenceService requires gateway');
-    if (!Number.isFinite(cacheTtlMs) || cacheTtlMs < 0) throw new Error('尺码缓存时长无效');
     this.gateway = gateway;
-    this.cacheTtlMs = cacheTtlMs;
     this.now = now;
-    this.cache = null;
-    this.cacheExpiresAt = 0;
-    this.loadPromise = null;
-    this.cacheVersion = 0;
   }
 
   clearCache() {
-    this.cache = null;
-    this.cacheExpiresAt = 0;
-    this.loadPromise = null;
-    this.cacheVersion += 1;
+    // TTL / 快照只归 configTableCache 管；这里只作废它，不再维护第二份 cache。
+    invalidateConfigTable('sizeManagement');
   }
 
   async validateSchema(tableKeys = []) {
@@ -51,42 +43,24 @@ class SizeReferenceService {
   }
 
   async load({ refresh = false } = {}) {
-    if (!refresh && this.cache && this.now() < this.cacheExpiresAt) return this.cache;
-    if (!this.loadPromise) {
-      const version = this.cacheVersion;
-      const loading = (async () => {
-        const field = this.gateway.table('sizeManagement').fields.size;
-        const byNumber = new Map();
-        const byRecordId = new Map();
-        // 统一配置快照：读失败保留 lastGood（避免尺码缓存空 ⇒ size=null）。
-        const records = await getConfigRows({
-          gateway: this.gateway, tableKey: 'sizeManagement',
-          now: this.now,
-        });
-        for (const record of records) {
-          const size = normalizeSize(textValue(record.fields?.[field]));
-          if (!record.record_id) throw new Error(`尺码管理 ${size} 码缺少 record_id`);
-          if (byNumber.has(size)) throw new Error(`尺码管理中 ${size} 码存在重复记录`);
-          const entry = { recordId: record.record_id, size };
-          byNumber.set(size, entry);
-          byRecordId.set(record.record_id, entry);
-        }
-        return { byNumber, byRecordId };
-      })().then((snapshot) => {
-        if (version === this.cacheVersion) {
-          this.cache = snapshot;
-          this.cacheExpiresAt = this.now() + this.cacheTtlMs;
-        }
-        return snapshot;
-      });
-      this.loadPromise = loading;
-      try {
-        return await loading;
-      } finally {
-        if (this.loadPromise === loading) this.loadPromise = null;
-      }
+    if (refresh) invalidateConfigTable('sizeManagement');
+    const field = this.gateway.table('sizeManagement').fields.size;
+    const byNumber = new Map();
+    const byRecordId = new Map();
+    // 唯一快照归 configTableCache 管（TTL + 事件失效 + lastGood 告警）。
+    const records = await getConfigRows({
+      gateway: this.gateway, tableKey: 'sizeManagement',
+      now: this.now,
+    });
+    for (const record of records) {
+      const size = normalizeSize(textValue(record.fields?.[field]));
+      if (!record.record_id) throw new Error(`尺码管理 ${size} 码缺少 record_id`);
+      if (byNumber.has(size)) throw new Error(`尺码管理中 ${size} 码存在重复记录`);
+      const entry = { recordId: record.record_id, size };
+      byNumber.set(size, entry);
+      byRecordId.set(record.record_id, entry);
     }
-    return this.loadPromise;
+    return { byNumber, byRecordId };
   }
 
   async resolveByNumber(value) {
