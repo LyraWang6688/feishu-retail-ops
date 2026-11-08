@@ -11,7 +11,7 @@
  *      卡片发不出去；本 service 只负责"**看见它** + **从工作台补掉**"。
  *
  * 🔴 **动作必须走 `InventoryService.promoteToSample`**（**不是** `transitionState`）：
- *    · 幂等键 = `samplePromotionId(salesDetailRecordId)` = `operationId('sample', …)`
+ *    · 幂等键 = `operationIdOf(补样品行为, { salesDetailRecordId }, 'sample_promotion')`
  *      （`inventoryService.js:351`）⇒ 与**群卡片那条路共用同一个 operation** ⇒ **跨入口绝不重复挪**；
  *    · 流水**带「关联销售」**（`:920` / `:982`）、「变动数量」= 0（`:965`）；
  *    · **固定 1 双**（`:937` 只取 `liveRecords[0]`）—— 与群里那条同形（她确认"一次 1 双"）。

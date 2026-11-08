@@ -160,19 +160,6 @@ const operationItemKeyOf = (movement, input, sequence, operationPath) =>
   operationItemKey(operationIdOf(movement, input, operationPath),
     positiveInteger(sequence, OPERATION_KEY_TEXT.sequenceLabel));
 
-// ── 旧入口（**deprecated 一个版本**）：只为既有调用方 / 排查脚本保留，内部**只调统一入口**。
-//    行为只有一套（issue #961 验收：不能有两套行为）；确认无调用后即可删除。
-/** @deprecated 改用 `operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], input)`。 */
-const purchaseIncreaseSourceId = (input) =>
-  operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_INCREASE], input);
-/** @deprecated 改用 `operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE], input)`。 */
-const purchaseReturnSourceId = (input) =>
-  operationSourceIdOf(STOCK_MOVEMENTS[MOVEMENT_PURCHASE_DECREASE], input);
-/** @deprecated 改用 `operationIdOf(STOCK_MOVEMENTS[BEHAVIOR_SAMPLE_PROMOTION], input, SAMPLE_PROMOTION_OPERATION)`。 */
-const samplePromotionId = (salesDetailRecordId) =>
-  operationIdOf(STOCK_MOVEMENTS[BEHAVIOR_SAMPLE_PROMOTION], { salesDetailRecordId }, SAMPLE_PROMOTION_OPERATION);
-
-
 // ── `ledgerLink`：**只写不查**的"库存流水 → 来源表"关联列（2026-10-08 加）─────────────
 // 与 `ledgerSource` 的分工见 STOCK_MOVEMENTS[采购增加] 的注释。两个 helper 只在
 // `applyChange`（落本地任务）与 `executeOperation`（写流水）里各用一次，配置驱动、无 if 分支。
@@ -209,9 +196,6 @@ module.exports = {
   validateOperationKeySpec,
   validateOperationKeyConfigs,
   // 旧入口：deprecated 一个版本，内部只调统一入口（行为只有一套）
-  samplePromotionId,
-  purchaseIncreaseSourceId,
-  purchaseReturnSourceId,
   movementLedgerLinkPatch,
   movementLedgerLinkValue,
   operationItemKey,

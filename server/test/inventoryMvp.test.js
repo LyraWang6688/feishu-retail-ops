@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
-const { InventoryService, operationId, operationSourceIdOf, purchaseIncreaseSourceId, STOCK_MOVEMENTS, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
+const { InventoryService, operationId, operationSourceIdOf, STOCK_MOVEMENTS, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 // 库存动作现在按「行为编码」匹配，编码是行为管理表里的稳定标识。
@@ -236,8 +236,8 @@ const legacyPurchase = async ({ ledgerSize = ['size_38'], liveSize = ['size_38']
   } };
   const gateway = gatewayFor([live]);
   // ⚠️ 2026-10-07 深夜：来源标识改用**真实三元组**（批次身份｜货品｜尺码）。
-  //    用 `purchaseIncreaseSourceId` 自己算，别在测试里再抄一份格式。
-  const sourceId = purchaseIncreaseSourceId({
+  //    用统一入口自己算，别在测试里再抄一份格式。
+  const sourceId = operationSourceIdOf(STOCK_MOVEMENTS['STOCK_PURCHASE_INCREASE'], {
     purchaseBatchRecordId: 'batch_legacy', productRecordId: 'product_1', size: 38,
   });
   if (includeLedger) gateway.records.set('inventoryLedger', [{ record_id: 'legacy_ledger', fields: {
