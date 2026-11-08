@@ -71,3 +71,8 @@ print-helper/downloads/
 server/test-results/
 server/playwright-report/
 server/.playwright/
+
+# Generated reports / local evidence (not source; see docs/reports/README.md when present)
+docs/reports/large-files-*.md
+docs/reports/unified-infrastructure-and-config-*.md
+reports/
