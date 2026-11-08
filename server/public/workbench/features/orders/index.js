@@ -141,25 +141,28 @@ export const NO_BATCH_KEY = '（无批次号）';
 // 2026-10-15 task-27: first screen = batch no + arrival status only; the purchase detail rows
 //   are loaded after she opens the disclosure (see arrivalDetailHtml / loadArrivalDetail below).
 //   (Kept in ASCII on purpose: test/workbenchAcceptanceInPlace.test.js AC-AW5 scans this window.)
+const batchSummaryOf = (batch) => {
+  const rows = batch.rows || [];
+  const quantity = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+  const products = new Set(rows.map((row) => String(row.product_record_id || row.product_number || ''))).size;
+  return String(P.batchSummary || '')
+    .split('{quantity}').join(String(quantity))
+    .split('{products}').join(String(products));
+};
+
 const purchaseBatchCardHtml = (batch) => `
       <article class="order-card" data-purchase-batch="${escapeHtml(batch.batch_no)}">
         <div class="order-card-head">
-          <h3 class="order-no">${escapeHtml(batch.batch_no)}</h3>
           <div class="order-tags">
             <span class="tag ${statusClass(arrivalStatusOf(batch))}">${escapeHtml(arrivalStatusOf(batch) || ARRIVAL_STATUS_PENDING)}</span>
           </div>
+          <span class="order-summary" data-view="arrival-batch-summary">${escapeHtml(batchSummaryOf(batch))}</span>
         </div>
-        <div class="order-card-actions">
-          <!-- ⭐ 2026-10-14（业务负责人逐字：「**连它一起改造进工作台（变成工作台自己的页面）**」）：
-               这里原来还有一颗【扫码验收】= 一颗指向 /s/accept?batch=… 的链接（**跳到扫码页** ✗）
-               ⇒ **已退出工作台**：本屏的确认路径就是下面那张**工作台内**的【验收到货】表单 ✓
-               ⚠️ 「逐双扫码录入」那半**物理上仍在扫码页**（标签二维码印的就是 /s/{编号} ✓ 不换标签绕不开 ✗）
-                  ⇒ /s/accept 那条路**保留、仍能用**，只是**工作台不再从它进** ✓（不许删 ✗）
-                  ⇒ 依据：docs/acceptance-into-workbench-2026-10-14.md §二/§三 -->
-          <button class="btn btn-primary" type="button" data-action="verify-arrival" data-batch="${escapeHtml(batch.batch_no)}">${escapeHtml(T.verifyArrival)}</button>
-        </div>
+        <!-- ⭐ 2026-11-09（业务负责人真机：「验收到货」出现两次）：只留**一个**入口 ——
+             details 的 summary 本身就是那颗按钮（点它展开/收起验收表单）。
+             蓝色按钮与 summary 同名的那一行**删掉**（重复且容易误点 ✗）。 -->
         <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(batch.batch_no)}">
-          <summary>${escapeHtml(T.arrivalVerifyTitle)}</summary>
+          <summary class="action-form__summary">${escapeHtml(T.verifyArrival)}</summary>
           <p class="order-note" data-view="arrival-detail-hint">${escapeHtml(ARRIVAL_FULL_TEXTS.detailOpenHint)}</p>
           <div class="action-body">
             <div data-view="arrival-detail" data-batch="${escapeHtml(batch.batch_no)}"></div>
@@ -183,25 +186,87 @@ const purchaseBatchCardHtml = (batch) => `
       </article>`;
 
 /**
- * 采购子 tab 的列表：一张报货批次一张卡，每张卡上都有「验收到货」。
- *
- * ⭐ 2026-10-10（业务负责人真机反馈：「验收到货」要能一眼看到她该干的事）：
- *   · **未到货的批次排在前面**（还没验收的 = 她要动的）；
- *   · **已到货的折叠**在下面（`<details data-view="purchase-arrived">`，默认收起）——
- *     不占屏幕，但一个批次都没丢，点开还是那张卡 + 那颗【验收到货】（重复验收由后端幂等兜底）。
+ * 验收页（2026-11-09 业务负责人定的两层交互）：
+ *   第一层 = **供应商卡片**（供应商来自「供应商管理」配置表；只列有未到货批次的供应商）
+ *   第二层 = 点某个供应商卡片后，按**采购日由远及近**（早 → 晚）从上往下展示该供应商的批次；
+ *   每一批仍是一张卡（**不显示采购单号**）：状态 + 数量/货品摘要 + 一个「验收到货」（展开表单）。
+ *   已到货批次全程不渲染（后端也有闸门：已到货再提交 ⇒ 400 + 零写入）。
  */
-export function purchaseOrdersHtml(rows = []) {
-  const batches = groupPurchaseOrders(rows);
-  if (!batches.length) return `<p class="empty" data-view="purchase-empty">${escapeHtml(P.purchaseEmpty)}</p>`;
-  const pending = batches.filter((batch) => !isArrivedBatch(batch));
-  const arrived = batches.filter(isArrivedBatch);
-  const pendingHtml = pending.map(purchaseBatchCardHtml).join('');
-  const arrivedHtml = arrived.length ? `
-      <details class="purchase-arrived" data-view="purchase-arrived">
-        <summary class="purchase-arrived__summary">${escapeHtml(P.purchaseArrivedSummary)}（${escapeHtml(arrived.length)}）</summary>
-        ${arrived.map(purchaseBatchCardHtml).join('')}
-      </details>` : '';
-  return `<div class="purchase-orders" data-view="purchase-orders">${pendingHtml}${arrivedHtml}
+const supplierKeyOfRow = (row = {}) => {
+  const id = String(row.supplier_record_id || '').trim();
+  const name = String(row.supplier_name || '').trim() || P.supplierFallback;
+  return id || `name:${name}`;
+};
+
+const groupBatchesBySupplier = (batches = []) => {
+  const bySupplier = new Map();
+  for (const batch of batches) {
+    const first = (batch.rows || [])[0] || {};
+    const key = supplierKeyOfRow(first);
+    if (!bySupplier.has(key)) {
+      bySupplier.set(key, { key, name: String(first.supplier_name || '').trim() || P.supplierFallback, batches: [] });
+    }
+    bySupplier.get(key).batches.push(batch);
+  }
+  return bySupplier;
+};
+
+const supplierCardHtml = (supplier) => {
+  const batches = supplier.batches.length;
+  const quantity = supplier.batches.reduce((sum, batch) => sum
+    + (batch.rows || []).reduce((n, row) => n + Number(row.quantity || 0), 0), 0);
+  const summary = String(P.supplierCardSummary || '')
+    .split('{batches}').join(String(batches))
+    .split('{quantity}').join(String(quantity));
+  return `<button class="entry-card purchase-supplier-card" type="button" data-action="pick-supplier" data-supplier-key="${escapeHtml(supplier.key)}">
+      <span class="entry-card-body"><strong>${escapeHtml(supplier.name)}</strong><span class="purchase-supplier-meta">${escapeHtml(summary)}</span></span>
+    </button>`;
+};
+
+/** 采购日：来自采购主表「报货日」（自动字段 epoch ms）→ 上海时区 YYYY-MM-DD；取不到 ⇒ ''（显示"日期未知"）。 */
+const formatPurchaseDate = (value) => {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(ms));
+  } catch { return ''; }
+};
+
+export function purchaseOrdersHtml(rows = [], options = {}) {
+  const pending = groupPurchaseOrders(rows).filter((batch) => !isArrivedBatch(batch));
+  if (!pending.length) return `<p class="empty" data-view="purchase-empty">${escapeHtml(P.arrivalEmpty)}</p>`;
+  const bySupplier = groupBatchesBySupplier(pending);
+  const activeKey = String(options.supplierKey || '');
+  const active = activeKey ? bySupplier.get(activeKey) : null;
+  // 第一层：供应商卡片
+  if (!active) {
+    return `<div class="purchase-orders" data-view="purchase-orders">${[...bySupplier.values()].map((supplier) => supplierCardHtml(supplier)).join('')}</div>`;
+  }
+  // 第二层：该供应商的采购日（**由远及近**：早 → 晚；日期未知的排最后）
+  const byDate = new Map();
+  for (const batch of active.batches) {
+    const first = (batch.rows || [])[0] || {};
+    const date = formatPurchaseDate(first.arrival_created_at);
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date).push(batch);
+  }
+  const dates = [...byDate.keys()].sort((a, b) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  const dateHtml = dates.map((date) => `
+        <section class="purchase-date-group" data-view="purchase-date" data-purchase-date="${escapeHtml(date)}">
+          <h4 class="purchase-date-head">${escapeHtml(String(P.purchaseDateLabel).split('{date}').join(date || P.purchaseDateUnknown))}</h4>
+          ${byDate.get(date).map((batch) => purchaseBatchCardHtml(batch)).join('')}
+        </section>`).join('');
+  return `<div class="purchase-orders" data-view="purchase-orders">
+      <button class="btn purchase-back" type="button" data-action="back-suppliers">${escapeHtml(P.backToSuppliers)}</button>
+      <section class="purchase-supplier" data-view="purchase-supplier" data-supplier-key="${escapeHtml(active.key)}">
+        <h3 class="purchase-supplier-head">${escapeHtml(active.name)}</h3>${dateHtml}
+      </section>
     </div>`;
 }
 
@@ -292,6 +357,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     ordersLoading: false,
     purchaseRows: [],
     arrivalRowsByBatch: {},
+    // ⭐ 2026-11-09：验收页第二层的"当前选中的供应商"（空 = 显示供应商卡片层）
+    activeSupplierKey: '',
   };
 
   const $ = (selector) => state.container.querySelector(selector);
@@ -366,7 +433,9 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   }
 
   function renderPurchaseList() {
-    $('[data-view="purchase-host"]').innerHTML = purchaseOrdersHtml(state.purchaseRows);
+    $('[data-view="purchase-host"]').innerHTML = purchaseOrdersHtml(state.purchaseRows, {
+      supplierKey: state.activeSupplierKey,
+    });
   }
 
  
@@ -603,17 +672,20 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         if (!state.ordersLoaded && !state.ordersLoading) loadOrders();
         return;
       }
+      const pickSupplier = event.target.closest('[data-action="pick-supplier"]');
+      if (pickSupplier) {
+        state.activeSupplierKey = pickSupplier.dataset.supplierKey || '';
+        return renderPurchaseList();
+      }
+      if (event.target.closest('[data-action="back-suppliers"]')) {
+        state.activeSupplierKey = '';
+        return renderPurchaseList();
+      }
       const trigger = event.target.closest('[data-action]');
       if (!trigger) return;
       const action = trigger.dataset.action;
       if (action === 'refresh') return loadPurchaseOrders();
       if (action === 'back') return renderList();
-      // 「验收到货」：点一下把那张卡的验收表单展开（真正的写入在 submit-arrival）
-      if (action === 'verify-arrival') {
-        const form = state.container.querySelector(`[data-arrival-batch="${trigger.dataset.batch || ''}"]`);
-        if (form) form.open = true;
-        return undefined;
-      }
       if (action === 'submit-arrival') return submitArrival(trigger);
       return undefined;
     });

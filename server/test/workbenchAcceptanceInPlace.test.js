@@ -51,7 +51,7 @@ test('AC-AW1b ⭐ 那一屏**有**提交到既有 confirm 接口的表单（判�
   //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
   //   · 改后逐字：该项删除 ＋ 下面那条**反向**断言（塞回即红 ✓）
   //   · 依据 = 她 2026-10-16 逐字（同上）✓
-  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"', 'data-action="submit-arrival"']) {
+  for (const needle of ['data-action-block="verify-arrival"', 'data-field="arrival-amount"', 'data-action="submit-arrival"']) {
     assert.ok(FEATURE.includes(needle), `卡上缺 ${needle}（工作台内的确认路径 ✓）`);
   }
   assert.equal(FEATURE.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');

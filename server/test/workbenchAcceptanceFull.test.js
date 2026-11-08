@@ -141,6 +141,22 @@ test('AC-AW10b ⭐ 缺批次号 / 明细读不到 / 明细为空 ⇒ 人话 + �
   });
 });
 
+test('AC-AW-ALREADY ⭐⭐ 已到货批次再提交验收 ⇒ 400 + 人话 + 零写入（前端已不渲染它，后端也挡）', async () => {
+  const arrival = fakeArrival();
+  const q = fakeQuery([{
+    record_id: 'r1', batch_no: 'BH-1', product_record_id: 'p1', item_no: 'A1', size: 40,
+    quantity: 1, arrival_status: '已到货', report_behavior: 'purchase_request',
+  }]);
+  await withServer(appFor({ arrival, purchaseQuery: q }), async (base) => {
+    const res = await postJson(base, arrivalTab.api.accept, {
+      batchNo: 'BH-1', actualAmount: '100', lines: [{ productRecordId: 'p1', size: 40, quantity: 1 }],
+    });
+    assert.equal(res.status, 400, '已到货 ⇒ 400（不许再验收 ✗）');
+    assert.ok(String(res.body.error || '').includes(arrivalTab.texts.alreadyAccepted), '人话走配置 ✓');
+  });
+  assert.equal(arrival.calls.length, 0, '零会话 / 零写入 / 零后台（start 一次都没调 ✓）');
+});
+
 test('AC-AW11 ⭐⭐ 自定义尺码（手填尺码+数量）⇒ 走**一次** setScans（整单替换）✓ 然后 finish ✓', async () => {
   // ⚠️ **2026-10-29（F1/F2）成对迁移**（改前逐字 → 改后逐字 → 依据）：
   //   改前逐字：`assert.equal(add.length, 1)` / `deepEqual(add[0].input, { openId, productRecordId, size, quantity })`

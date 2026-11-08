@@ -16,8 +16,17 @@
 /** 面板文案（**只剩采购验收在用**；销售侧的旧列表/详情文案 2026-10-29 随旧前端一起删除）。 */
 export const ORDERS_PAGE = {
   purchaseEmpty: '还没有采购单记录',
-  // 「验收到货」独立子页里，**已到货的批次折叠**在下面 —— 折叠头就写这一句（后面跟条数）。
-  purchaseArrivedSummary: '已到货',
+  // ⭐ 2026-11-09（业务负责人真机）：验收页**只展示「未到货」批次**（已到货不再展示）
+  //   ⇒ 一个可验收的批次都没有时，用这句人话（不许大片空白 ✗）。
+  arrivalEmpty: '当前没有未到货的批次，不用验收',
+  // ⭐ 2026-11-09（业务负责人）：验收页按「供应商 → 采购日」分组、**不显示采购单号**
+  supplierFallback: '未标注供应商',
+  purchaseDateLabel: '采购日 {date}',
+  purchaseDateUnknown: '日期未知',
+  batchSummary: '{quantity} 双 · {products} 个货品',
+  // 验收页第一层 = 供应商卡片（来自「供应商管理」）；第二层 = 该供应商的采购日（由远及近）
+  supplierCardSummary: '{batches} 批 · {quantity} 双待验收',
+  backToSuppliers: '← 返回供应商',
 };
 
 /**

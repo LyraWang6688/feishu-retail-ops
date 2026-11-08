@@ -155,24 +155,6 @@
 .picker-item.active { border-color: var(--primary); background: var(--primary-soft); box-shadow: var(--shadow-card); }
 .picker-item span { color: var(--text-secondary); font-size: var(--font-size-xs); }
 
-/* ⭐ 2026-10-10（采购 → 验收到货）：**未到货的批次排前面、已到货的折叠在下面**。
-   折叠头 = 一个 ≥44px 的实心条（手机上点得准），展开后还是原来那张批次卡。 */
-.purchase-arrived { margin: var(--space-3) 0 0; min-width: 0; }
-.purchase-arrived__summary {
-  display: flex;
-  align-items: center;
-  min-height: var(--control-height);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-soft);
-  color: var(--text-secondary);
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  overflow-wrap: anywhere;
-}
-.purchase-arrived[open] > .purchase-arrived__summary { margin-bottom: var(--space-3); }
-
 @media (max-width: 760px) {
   /* 窄屏：一列到底（单列卡片）—— 列表、收款情况、动作区都只占一行宽，不横向滚动。 */
   .orders-list,
@@ -199,3 +181,28 @@
 .orders-section-card { width: 100%; flex-direction: row; align-items: center; justify-content: center; gap: var(--space-2); text-align: center; cursor: pointer; font: inherit; }
 .orders-section-card .entry-card-body { text-align: center; }
 .orders-section-meta { display: flex; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: var(--space-2); }
+
+
+/* ⭐ 2026-11-09（验收页两层交互）：第一层=供应商卡片；第二层=采购日（由远及近）+ 批次卡。
+   卡片沿用 .entry-card 视觉；这里只补间距/摘要/返回按钮。 */
+.purchase-supplier-card { width: 100%; margin: 0 0 var(--space-2); justify-content: flex-start; text-align: left; }
+.purchase-supplier-meta { display: block; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.purchase-back { margin: 0 0 var(--space-2); }
+.purchase-supplier { margin: var(--space-3) 0 0; min-width: 0; }
+.purchase-supplier-head {
+  margin: 0 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+.purchase-date-group { margin: 0 0 var(--space-3); min-width: 0; }
+.purchase-date-head {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-bold);
+}
+.order-summary { color: var(--text-secondary); font-size: var(--font-size-sm); }
+.action-form summary::-webkit-details-marker { display: none; }
+.action-form[open] > summary { margin-bottom: var(--space-2); }

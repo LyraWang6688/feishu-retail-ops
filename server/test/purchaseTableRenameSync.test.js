@@ -269,6 +269,10 @@ test('A4 schema 同步「创建时间」→「报货日」；两个自动时间�
       'src/services/procurementProductEnricher.js',
       'src/services/procurementPageService.js',
       'public/workbench/features/procurement/render.js',
+      // ⭐ 2026-11-09（验收页按供应商→采购日分组）：`purchaseQueryService.listPurchaseRequests`
+      //   **只读**「采购主表.报货日」（schema 语义键 `createdAt`，自动字段）→ 投影成
+      //   `arrival_created_at` 给前端做「采购日」分组。**入参里没有 `createdAt:`**（不写这一列）✓
+      'src/services/purchaseQueryService.js',
     ];
     if (/\bcreatedAt\b/.test(codeOnly)
       && !CREATED_AT_READONLY_FILES.includes(rel.replaceAll('\\', '/'))) {
@@ -368,7 +372,7 @@ test('B7 ⭐ 工作台采购页（= 现在的「采购 → 验收」子页）：
   //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
   //   · 改后逐字：该项删除 ＋ 下面那条**反向**断言（塞回即红 ✓）
   //   · 依据 = 她 2026-10-16 逐字（同上）✓
-  for (const needle of ['data-action="verify-arrival"', 'data-field="arrival-amount"']) {
+  for (const needle of ['data-action-block="verify-arrival"', 'data-field="arrival-amount"']) {
     assert.ok(page.includes(needle), `验收面板少了 ${needle}`);
   }
   assert.equal(page.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');

@@ -237,7 +237,7 @@ test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 
   //      `POST /purchase/arrivals/confirm` 端点/服务与 `ORDERS_API.arrivalConfirm` 常量**保留** ✓
   //      （下面那条 `assert.match(config, /arrivalConfirm: .../)` 照旧 ✓）。
   for (const needle of [
-    'data-action="verify-arrival"', 'data-action="submit-arrival"',
+    'data-action-block="verify-arrival"', 'data-action="submit-arrival"',
   // ⭐⭐ 2026-10-16（她逐字：「**「到货说明」，到货说明必须得删**。因为目前我们的**数据表里面已经没有
   //   验收原话了**，这个是**之前我们的群聊链路**，跟这个**已经没有关系了**。**你必须得删**」）
   //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`

@@ -76,36 +76,61 @@ function loadOrdersModule() {
   return import(pathToFileURL(path.join(dir, 'orders-index.mjs')).href);
 }
 
+// 采购日夹具：上海时区 2026-10-12 / 2026-10-11 的 0 点（epoch ms ⇒ 前端按上海自然日格式化）
+const SH_DAY = (y, m, d) => Date.UTC(y, m - 1, d - 1, 16);
 const BATCH_ROWS = [
-  { record_id: 'r1', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 40, quantity: 2, arrival_status: '未到货' },
-  { record_id: 'r2', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 41, quantity: 1, arrival_status: '未到货' },
-  { record_id: 'r3', batch_no: 'CGD-WAIT-2', product_number: 'X99', size: 43, quantity: 3, arrival_status: '未到货' },
-  { record_id: 'r4', batch_no: 'CGD-DONE-1', product_number: 'D1', size: 42, quantity: 1, arrival_status: '已到货' },
+  // 供应商甲 · 采购日 2026-10-12（两条明细 ⇒ 同一批）
+  { record_id: 'r1', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 40, quantity: 2, arrival_status: '未到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
+  { record_id: 'r2', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 41, quantity: 1, arrival_status: '未到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
+  // 供应商乙 · 采购日 2026-10-11
+  { record_id: 'r3', batch_no: 'CGD-WAIT-2', product_number: 'X99', size: 43, quantity: 3, arrival_status: '未到货', supplier_record_id: 's2', supplier_name: '供应商乙', arrival_created_at: SH_DAY(2026, 10, 11) },
+  // 已到货 ⇒ 验收页**不渲染**（连 data 属性都不该有）
+  { record_id: 'r4', batch_no: 'CGD-DONE-1', product_number: 'D1', size: 42, quantity: 1, arrival_status: '已到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-RC1 第一屏只有批次号（明细全部撤掉）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RC1 ⭐ 第一屏**只出现批次号**（页面里不出现明细行）', async () => {
+test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采购日**由远及近**；不显示采购单号', async () => {
   const orders = await loadOrdersModule();
-  const html = orders.purchaseOrdersHtml(BATCH_ROWS);
-  // ① 批次号都在
-  for (const batch of ['CGD-WAIT-1', 'CGD-WAIT-2', 'CGD-DONE-1']) {
-    assert.ok(html.includes(batch), `批次 ${batch} 要出现 ✓`);
+  // ① 第一层：只有供应商卡片（不渲染任何批次/日期/「已到货」）
+  const first = orders.purchaseOrdersHtml(BATCH_ROWS);
+  assert.ok(first.includes('data-action="pick-supplier"'), '第一层 = 可点的供应商卡片 ✓');
+  assert.ok(first.includes('供应商甲') && first.includes('供应商乙'), '两个供应商都要出现 ✓');
+  assert.equal(first.includes('data-purchase-batch'), false, '第一层不渲染批次卡 ✓');
+  assert.equal(first.includes('采购日'), false, '第一层不渲染采购日 ✓');
+  assert.equal(first.includes('已到货'), false, '⛔ 已到货一律不出现 ✓');
+  assert.equal(first.includes('CGD-DONE-1'), false, '⛔ 已到货批次不许出现 ✓');
+  // ② 第二层：选中供应商甲 ⇒ 只显示它自己的批次，按采购日（早→晚）分组
+  const second = orders.purchaseOrdersHtml(BATCH_ROWS, { supplierKey: 's1' });
+  assert.ok(second.includes('data-view="purchase-supplier"'), '第二层有供应商分组容器 ✓');
+  assert.ok(second.includes('供应商甲'), '显示选中的供应商名 ✓');
+  assert.equal(second.includes('供应商乙'), false, '第二层不显示别的供应商 ✓');
+  assert.ok(second.includes('采购日 2026-10-12'), '采购日标题来自「报货日」✓');
+  assert.ok(second.includes('data-purchase-batch'), '第二层才有批次卡 ✓');
+  assert.ok(second.includes('data-action-block="verify-arrival"'), '每批仍有验收入口 ✓');
+  assert.ok(second.includes('data-view="arrival-batch-summary"'), '有一行摘要（多少双/几个货品）✓');
+  // ③ **由远及近**（早 → 晚）：给同一供应商补一条更早的批次
+  const earlier = {
+    ...BATCH_ROWS[2], record_id: 'r5', batch_no: 'CGD-WAIT-3',
+    supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 11),
+  };
+  const ordered = orders.purchaseOrdersHtml([...BATCH_ROWS, earlier], { supplierKey: 's1' });
+  const earlyAt = ordered.indexOf('采购日 2026-10-11');
+  const lateAt = ordered.indexOf('采购日 2026-10-12');
+  assert.ok(earlyAt >= 0 && lateAt >= 0, '两天都要出现 ✓');
+  assert.ok(earlyAt < lateAt, '⭐ 由远及近：10-11 在 10-12 上面（早→晚）✓');
+  // ④ **采购单号不许作为可见文字出现**（data 属性留给提交用，页面看不到）
+  for (const batch of ['CGD-WAIT-1', 'CGD-WAIT-2', 'CGD-WAIT-3']) {
+    assert.equal(second.includes(`>${batch}<`), false, `${batch} 不许作为可见文字 ✗`);
+    assert.equal(ordered.includes(`>${batch}<`), false, `${batch} 不许作为可见文字 ✗`);
   }
-  // ② 到货状态仍在（既有口径：来自采购主表那一行 ✓）
-  assert.ok(html.includes('未到货') && html.includes('已到货'), '状态标签照旧 ✓');
-  // ③ 🔴 **明细一行都不许在第一屏**
-  assert.equal(/class="order-lines"/.test(html), false, '⭐ 第一屏不许铺明细（能真红：把列表加回来 ⇒ 红）');
-  assert.equal(html.includes('line-product'), false, '货号明细不许出现在第一屏 ✗');
-  assert.equal(html.includes('data-view="arrival-detail-row"'), false, '明细行要在"点开"之后才渲染 ✗');
-  // ④ 但每张卡的**验收入口**照旧（既有交互不减少 ✓）
-  assert.ok(html.includes('data-action="verify-arrival"'), '每张卡仍有验收入口 ✓');
-  // ⑤ "点开才看明细"那句话在（文案走配置 ✓）
-  const config = readWorkbench('config/orders.js');
-  assert.ok(html.includes('data-view="arrival-detail-hint"'), '要有"点开看明细"的提示 ✓');
-  assert.ok(config.includes('detailOpenHint'), '那句提示来自配置 ✓');
+  assert.equal(/class="order-no"/.test(second), false, '不许再有"批次号标题"那个元素 ✗');
+  // ⑤ 一个未到货批次都没有 ⇒ 空态人话（不是空白）
+  const onlyArrived = orders.purchaseOrdersHtml([BATCH_ROWS[3]]);
+  assert.ok(onlyArrived.includes('data-view="purchase-empty"'), '没有未到货批次 ⇒ 空态 ✓');
+  assert.ok(onlyArrived.includes('当前没有未到货的批次'), '空态人话走配置 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -234,7 +259,7 @@ test('AC-RC6 ⭐ 明细**挂不上批次** ⇒ **不出现在页面**；**批次
   assert.equal(html.includes('ORPHAN-2'), false, '⭐「（无批次号）」组也不进页面 ✓');
   assert.equal(html.includes('（无批次号）'), false, '连那个键都不该再出现在页面上 ✓');
   // 正常批次照旧都在（别误伤 ✗）
-  assert.ok(html.includes('CGD-WAIT-1') && html.includes('CGD-WAIT-2'), '有批次的照样显示 ✓');
+  assert.ok(html.includes('供应商甲') && html.includes('供应商乙'), '有批次的供应商照样显示（第一层卡片）✓');
   // 全都没有批次 ⇒ 空态人话（既有 `purchase-empty` 口径没动 ✓）
   assert.ok(orders.purchaseOrdersHtml([]).includes('purchase-empty'), '空列表 ⇒ 人话 ✓');
   // 源码哨兵：分组时**跳过**没有批次号的行（不是"留着 + 写说明" ✗）
