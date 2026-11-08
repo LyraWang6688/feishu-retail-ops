@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PAGE_TITLE}}</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%231c2430'/%3E%3Cpath d='M7 17V7m0 10h10M10 13.5l2.2-4 2.4 2.6L17 8.5' stroke='%2334d399' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#f4f6f9; --panel:#fff; --ink:#1c2430; --ink2:#5b6675; --ink3:#8a94a3;
+  --line:#e2e7ee; --line2:#eef1f5;
+  --c-add:#4f46e5;   /* 记录新建 */
+  --c-set:#059669;   /* 字段新增 */
+  --c-chg:#2563eb;   /* 字段变更 */
+  --c-clr:#d97706;   /* 字段清空 */
+  --c-del:#6b7280;   /* 记录删除（快照推断，不可回溯） */
+  --play:#0f172a;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 22px 60px}
+/* 头部 */
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px}
+.head h1{font-size:21px;font-weight:700;letter-spacing:.2px}
+.head .sub{color:var(--ink2);margin-top:5px;font-size:13px}
+.head .sub b{color:var(--ink);font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:12.5px;color:var(--ink2)}
+.chip b{display:block;font-size:16px;color:var(--ink);font-family:var(--mono);font-weight:650;line-height:1.25}
+.chip span{font-size:11.5px;color:var(--ink3)}
+/* 控制台 */
+.console{position:sticky;top:0;z-index:30;background:rgba(244,246,249,.94);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:16px}
+.ctrl-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.btn{display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 16px;border:1px solid var(--play);background:var(--play);color:#fff;border-radius:9px;font-size:13.5px;font-family:var(--sans);cursor:pointer;min-width:44px}
+.btn.ghost{background:#fff;color:var(--ink);border-color:var(--line)}
+.btn svg{width:15px;height:15px;fill:currentColor}
+.speeds{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.speeds button{border:0;background:#fff;color:var(--ink2);padding:0 13px;height:38px;font-family:var(--mono);font-size:12.5px;cursor:pointer;border-left:1px solid var(--line)}
+.speeds button:first-child{border-left:0}
+.speeds button.on{background:var(--play);color:#fff}
+.clock{font-family:var(--mono);font-size:15px;font-weight:650;margin-left:auto}
+.clock small{color:var(--ink3);font-weight:400;margin-left:8px;font-size:12px}
+input[type=range]{flex:1;min-width:180px;height:4px;-webkit-appearance:none;appearance:none;background:var(--line);border-radius:4px;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--play);border:2px solid #fff;box-shadow:0 0 0 1px var(--play)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;font-size:12.5px;color:var(--ink2)}
+.legend label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+.dot.add{background:var(--c-add)}.dot.set{background:var(--c-set)}.dot.chg{background:var(--c-chg)}.dot.clr{background:var(--c-clr)}.dot.del{background:var(--c-del)}
+.legend .dash{width:16px;height:0;border-top:2px dashed var(--c-del);display:inline-block}
+.legend .cnt{font-family:var(--mono);color:var(--ink3);font-size:11.5px}
+/* 泳道板 */
+.board{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.board-scroll{overflow-x:auto}
+.board-inner{min-width:940px;padding:18px 20px 8px}
+.ruler{position:relative;height:22px;margin-left:120px;border-bottom:1px solid var(--line)}
+.ruler .tick{position:absolute;top:0;font-family:var(--mono);font-size:10.5px;color:var(--ink3);transform:translateX(-50%)}
+.ruler .tick::after{content:"";position:absolute;left:50%;top:15px;width:1px;height:5px;background:var(--line)}
+.lane{display:flex;align-items:stretch;border-top:1px solid var(--line2)}
+.lane:first-of-type{border-top:0}
+.lane-label{width:120px;flex:0 0 120px;display:flex;flex-direction:column;justify-content:center;padding:10px 12px;cursor:pointer;border-right:1px solid var(--line)}
+.lane-label b{font-size:13.5px}
+.lane-label small{color:var(--ink3);font-size:11px;font-family:var(--mono);margin-top:2px}
+.lane.off .lane-label{opacity:.4}
+.lane-track{position:relative;flex:1;height:118px}
+.lane.off .lane-track{opacity:.18}
+.phase{position:absolute;top:0;bottom:0;border-right:1px dashed var(--line);display:flex;justify-content:center;padding-top:5px}
+.phase span{font-size:10.5px;color:var(--ink3);letter-spacing:1px;white-space:nowrap}
+.evt{position:absolute;top:50%;width:148px;padding:8px 9px;border-radius:9px;background:#fff;border:1px solid var(--line);border-left-width:3px;
+  cursor:pointer;opacity:0;transform:translate(-50%,-46%) scale(.92);transition:opacity .28s ease,transform .28s ease,box-shadow .2s;z-index:5}
+.evt.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.evt.flash{box-shadow:0 0 0 3px rgba(15,23,42,.14)}
+.evt.add{border-left-color:var(--c-add)}.evt.set{border-left-color:var(--c-set)}.evt.chg{border-left-color:var(--c-chg)}.evt.clr{border-left-color:var(--c-clr)}
+.evt.del{border:1px dashed var(--c-del);border-left:3px solid var(--c-del);background:#fafbfc}
+.evt.del .f,.evt.del .v{color:var(--c-del)}
+.evt.del .v{font-weight:600}
+.evt .t{font-family:var(--mono);font-size:10.5px;color:var(--ink3);display:flex;justify-content:space-between;gap:6px}
+.evt .f{font-size:12.5px;font-weight:650;margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.evt .v{font-size:11.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.evt.add .v{color:var(--c-add);font-weight:600}
+.tag{font-size:9.5px;padding:1px 5px;border-radius:4px;font-weight:650}
+.tag.add{background:#eef0ff;color:var(--c-add)}.tag.set{background:#e6f6f0;color:var(--c-set)}.tag.chg{background:#e8f0fe;color:var(--c-chg)}.tag.clr{background:#fdf1e2;color:var(--c-clr)}.tag.del{background:#f1f3f5;color:var(--c-del)}
+.badge-infer{font-size:10px;color:var(--c-del);border:1px dashed var(--c-del);border-radius:4px;padding:0 5px;font-weight:650;white-space:nowrap}
+.playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--play);z-index:20;opacity:0;transition:opacity .2s}
+.playhead.on{opacity:1}
+.playhead::before{content:"";position:absolute;top:0;left:-4px;width:10px;height:10px;border-radius:50%;background:var(--play)}
+/* 明细时间轴 */
+h2{font-size:15px;margin:26px 0 12px;font-weight:700}
+.tl{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 16px}
+.row{display:grid;grid-template-columns:92px 22px 1fr;gap:10px;padding:11px 0;border-top:1px solid var(--line2);align-items:start;opacity:0;transform:translateY(6px);transition:opacity .3s,transform .3s}
+.row:first-child{border-top:0}
+.row.show{opacity:1;transform:none}
+.row.flash .card{box-shadow:0 0 0 2px rgba(15,23,42,.18)}
+.row .rt{font-family:var(--mono);font-size:11.5px;color:var(--ink2);padding-top:2px}
+.row .rt em{display:block;font-style:normal;color:var(--ink3);font-size:10.5px}
+.row .axis{position:relative;justify-self:center;width:12px;height:100%;min-height:34px}
+.row .axis::before{content:"";position:absolute;left:50%;top:0;bottom:-11px;width:2px;background:var(--line2);transform:translateX(-50%)}
+.row:last-child .axis::before{display:none}
+.row .pnode{position:relative;z-index:2;width:12px;height:12px;border-radius:50%;margin-top:3px;border:2px solid #fff;box-shadow:0 0 0 1px var(--line)}
+.pnode.add{background:var(--c-add)}.pnode.set{background:var(--c-set)}.pnode.chg{background:var(--c-chg)}.pnode.clr{background:var(--c-clr)}
+.pnode.del{background:#fff;box-shadow:0 0 0 2px var(--c-del)}
+.card.del-card{border-style:dashed;background:#fafbfc}
+.infer-note{margin-top:6px;font-size:11.5px;color:var(--c-del);background:#f1f3f5;border-radius:6px;padding:4px 8px}
+.card{border:1px solid var(--line);border-radius:9px;padding:9px 12px;background:#fff}
+.card .top{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:4px}
+.card .tbl{font-size:12px;font-weight:700}
+.card .who{margin-left:auto;font-size:11px;color:var(--ink3);font-family:var(--mono)}
+.card .field{font-size:13px;font-weight:650}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:5px;font-size:12.5px}
+.flow .b{color:var(--ink3);background:var(--line2);padding:2px 8px;border-radius:6px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.flow .a{color:var(--ink);background:#eef4ff;padding:2px 8px;border-radius:6px;font-weight:600;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.flow .arrow{color:var(--ink3)}
+.note{margin-top:18px;font-size:12px;color:var(--ink2);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.note b{color:var(--ink)}
+.note ul{margin:8px 0 0 18px}.note li{margin:4px 0}
+@media(max-width:680px){
+  .wrap{padding:16px 12px 40px}
+  .clock{margin-left:0;width:100%}
+  .row{grid-template-columns:1fr;gap:4px}
+  .row .axis{display:none}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>{{PAGE_HEADING}}</h1>
+      <div class="sub">单据 <b id="h-order"></b> · <span id="h-date"></span> · <span id="h-window"></span> · 写入步骤来自多维表格「记录历史」秒级版本，删除动作为出库前后快照比对推断</div>
+    </div>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <div class="console">
+    <div class="ctrl-row">
+      <button class="btn" id="playbtn" onclick="togglePlay()"></button>
+      <button class="btn ghost" onclick="reset()"><svg viewBox="0 0 24 24"><path d="M12 5V2L7 7l5 5V8a6 6 0 1 1-6 6H4a8 8 0 1 0 8-9z"/></svg>复位</button>
+      <div class="speeds" id="speeds"></div>
+      <input type="range" id="seek" min="0" max="115" step="0.5" value="0" oninput="onSeek(this.value)">
+      <div class="clock"><span id="cur-clock">--:--:--</span><small id="cur-sec">+0s</small></div>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="board"><div class="board-scroll"><div class="board-inner">
+    <div class="ruler" id="ruler"></div>
+    <div id="lanes"></div>
+  </div></div></div>
+
+  <h2>字段级变更与删除明细（按时间排序）</h2>
+  <div class="tl" id="detail"></div>
+
+  <div class="note">
+    <b>怎么读这张图</b>
+    <ul>
+      <li><b>记录新建</b>＝这张数据表在该时刻新增了一条记录；<b>字段新增</b>＝该字段从空首次写入值；<b>字段变更</b>＝字段从一个值改写成另一个值；<b>字段清空</b>＝字段值被删除置空（本单未发生）；<b style="color:var(--c-del)">记录删除·不可回溯</b>＝该数据表的一条记录被整条删除，用灰色虚线节点表示，不属于记录历史接口可回放的事件，而是由出库前后快照比对推断。</li>
+      <li>操作人「来财」为前端自动化机器人，17 个可回放步骤均由其按「销售建单 → 库存出库 → 资金收款」编排写入；96 秒处销售状态「已写入→未写入→已写入」是一次系统重试。</li>
+      <li><b>本单的实时库存删除：</b>实时库存表「一条记录＝一双实物」，没有数量字段。现货出库后，库存键 <b>92608|黑色|A|39</b> 的那条记录被业务系统整条删除——当前全表该货号仅剩 43 码，且找不到任何 10-18 当天更新过的记录（若只是改状态，记录会保留并带当天更新时间），据此排除"改状态"、确认为整条删除。该记录已不存在、无 ID 可查，记录历史接口拿不回删除明细，故在出库时点（约 13:59，精确秒不可考）以灰色虚线标注，<b>不计入上方 17 个可回放步骤</b>。要稳定捕获这类删除，需用定时巡检比对记录集合。公式 / 双向关联的系统自动回写与人工主动写入在数据底层均可区分。</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+const RAW = {{RAW_JSON}};
+const KIND={record_add:["add","记录新建"],field_add:["set","字段新增"],field_change:["chg","字段变更"],field_clear:["clr","字段清空"],record_del:["del","记录删除"]};
+const TOTAL=RAW.meta.total_sec, evs=RAW.events, dels=RAW.deletes||[];
+evs.forEach((e,i)=>e._uid='h'+i);
+dels.forEach((e,i)=>e._uid='d'+i);
+const all=evs.concat(dels).sort((a,b)=>a.elapsed-b.elapsed||(a.rev||0)-(b.rev||0));
+const hidden=new Set();
+let cur=0,playing=false,speed=1,last=null,raf=null;
+
+// 头部
+document.getElementById('h-order').textContent=RAW.meta.order;
+document.getElementById('h-date').textContent=RAW.meta.date;
+document.getElementById('h-window').textContent=RAW.meta.start+' – '+RAW.meta.end;
+const chipData=[['总时长',TOTAL+'s'],['数据表',RAW.meta.table_count+' 张'],['写入事件',RAW.meta.event_count+' 步'],['操作人',RAW.meta.operators.join('、')]];
+document.getElementById('chips').innerHTML=chipData.map(c=>`<div class="chip"><b>${c[1]}</b><span>${c[0]}</span></div>`).join('');
+
+// 图例
+const legendOrder=['record_add','field_add','field_change','field_clear'];
+document.getElementById('legend').innerHTML=legendOrder.map(k=>{
+  const[cls,label]=KIND[k],n=RAW.meta.kind_count[k]||0;
+  return `<label><span class="dot ${cls}"></span>${label}<span class="cnt">${n}</span></label>`;
+}).join('')
++ `<label><span class="dash"></span>记录删除·不可回溯<span class="cnt">${dels.length}</span></label>`
++ RAW.tables.map(t=>`<label onclick="toggleLane('${t}')" id="lg-${t}"><span class="dot" style="background:#8a94a3"></span>${t}</label>`).join('');
+
+// 速度
+const speeds=[0.5,1,2,4];
+document.getElementById('speeds').innerHTML=speeds.map(s=>`<button class="${s===1?'on':''}" onclick="setSpeed(${s},this)">${s}×</button>`).join('');
+
+// 刻度
+const ruler=document.getElementById('ruler');
+for(let s=0;s<=TOTAL;s+=10){const d=document.createElement('div');d.className='tick';d.style.left=(s/TOTAL*100)+'%';d.textContent=s+'s';ruler.appendChild(d);}
+
+// 泳道（同表同秒事件做纵向堆叠）
+const lanes=document.getElementById('lanes');
+RAW.tables.forEach(t=>{
+  const list=all.filter(e=>e.table===t).sort((a,b)=>a.elapsed-b.elapsed||(a.rev||0)-(b.rev||0));
+  list.forEach(e=>{ // 堆叠层
+    const near=list.filter(o=>o!==e&&Math.abs(o.elapsed-e.elapsed)<6);
+    e._stack=near.indexOf(e)%2===1?1:0;
+  });
+  const lane=document.createElement('div');lane.className='lane';lane.id='lane-'+t;
+  let phases=RAW.phases.map(p=>`<div class="phase" style="left:${p.from/TOTAL*100}%;width:${(p.to-p.from)/TOTAL*100}%"><span>${p.name}</span></div>`).join('');
+  let cards=list.map(e=>{
+    const[cls]=KIND[e.kind];
+    const left=(e.elapsed/TOTAL*100);
+    const top=e._stack? 'calc(50% + 26px)':'calc(50% - 30px)';
+    const val=e.kind==='record_add'||e.kind==='record_del'? e.after : (e.before? e.before+' → '+e.after : '（空）→ '+e.after);
+    const tline=e.inferred? `<span>${e.clock}</span><span>出库时</span>` : `<span>${e.clock}</span><span>+${e.elapsed}s</span>`;
+    return `<div class="evt ${cls}" id="evt-${e._uid}" style="left:${left}%;top:${top}" onclick="jumpTo(${e.elapsed},'row-${e._uid}')">
+      <div class="t">${tline}</div>
+      <div class="f"><span class="tag ${cls}">${KIND[e.kind][1]}</span>${e.inferred?' <span class="badge-infer">不可回溯</span>':''}</div>
+      <div class="f">${e.field}</div>
+      <div class="v">${val}</div></div>`;
+  }).join('');
+  lane.innerHTML=`<div class="lane-label" onclick="toggleLane('${t}')"><b>${t}</b><small>${list.length} 个事件</small></div>
+    <div class="lane-track">${phases}<div class="playhead" id="ph-${t}"></div>${cards}</div>`;
+  lanes.appendChild(lane);
+});
+
+// 明细列表
+const detail=document.getElementById('detail');
+detail.innerHTML=all.map(e=>{
+  const[cls,label]=KIND[e.kind];
+  if(e.inferred){
+    return `<div class="row" id="row-${e._uid}">
+      <div class="rt">${e.clock}<em>快照比对推断</em></div>
+      <div class="axis"><div class="pnode ${cls}"></div></div>
+      <div class="card del-card">
+        <div class="top"><span class="tag ${cls}">${label}</span><span class="tbl">${e.table}</span><span class="badge-infer">不可回溯</span><span class="who">${e.operator}</span></div>
+        <div class="field">${e.field}：库存键 ${e.after}（一双实物）</div>
+        <div class="infer-note">${e.timeNote}</div>
+      </div></div>`;
+  }
+  const before=e.before? `<span class="b">${e.before}</span><span class="arrow">→</span>`:'<span class="arrow">（空）→</span>';
+  return `<div class="row" id="row-${e._uid}">
+    <div class="rt">${e.clock}<em>+${e.elapsed}s · rev${e.rev}</em></div>
+    <div class="axis"><div class="pnode ${cls}"></div></div>
+    <div class="card">
+      <div class="top"><span class="tag ${cls}">${label}</span><span class="tbl">${e.table}</span><span class="who">${e.operator}</span></div>
+      <div class="field">${e.field}${e.kind==='record_add'?'：'+e.after:''}</div>
+      ${e.kind==='record_add'?'':`<div class="flow">${before}<span class="a">${e.after}</span></div>`}
+    </div></div>`;
+}).join('');
+
+const playSVG='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+const pauseSVG='<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>';
+const playbtn=document.getElementById('playbtn'),seek=document.getElementById('seek');
+
+function render(){
+  all.forEach(e=>{
+    const show=e.elapsed<=cur && !hidden.has(e.table);
+    document.getElementById('evt-'+e._uid)?.classList.toggle('show',show);
+    document.getElementById('row-'+e._uid)?.classList.toggle('show',e.elapsed<=cur);
+  });
+  const pct=cur/TOTAL*100;
+  RAW.tables.forEach(t=>{const ph=document.getElementById('ph-'+t);ph.style.left=pct+'%';ph.classList.toggle('on',cur>0);});
+  seek.value=cur;
+  const base=evs[0].ts+Math.round(cur);
+  document.getElementById('cur-clock').textContent=new Date(base*1000).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  document.getElementById('cur-sec').textContent='+'+Math.round(cur)+'s';
+  playbtn.innerHTML=(playing?pauseSVG:playSVG)+(playing?'暂停':'播放');
+}
+function tick(ts){
+  if(!playing)return;
+  if(last==null)last=ts;
+  cur+=((ts-last)/1000)*speed; last=ts;
+  if(cur>=TOTAL){cur=TOTAL;playing=false;render();return;}
+  render();raf=requestAnimationFrame(tick);
+}
+function togglePlay(){
+  if(cur>=TOTAL)cur=0;
+  playing=!playing;last=null;
+  if(playing)raf=requestAnimationFrame(tick);render();
+}
+function reset(){playing=false;cur=0;last=null;render();}
+function setSpeed(s,el){speed=s;[...el.parentNode.children].forEach(b=>b.classList.remove('on'));el.classList.add('on');}
+function onSeek(v){playing=false;cur=parseFloat(v);render();}
+function jumpTo(sec,rowId){onSeek(sec);const d=document.getElementById(rowId);
+  d?.scrollIntoView({behavior:'smooth',block:'center'});
+  d?.classList.add('flash');setTimeout(()=>d?.classList.remove('flash'),1200);}
+function toggleLane(t){
+  hidden.has(t)?hidden.delete(t):hidden.add(t);
+  document.getElementById('lane-'+t)?.classList.toggle('off',hidden.has(t));render();
+}
+render();
+</script>
+</body>
+</html>
