@@ -312,7 +312,7 @@ test('🔴 群里发【文字】：记本地映射，销售主表一个字段都
 
 test('🔴 群里发【卡片】：同样**不再写**销售主表（「消息链接」列已被她删除）', async () => {
   const { service, updates, locator, task } = wiredService();
-  await service.replyTaskCard(task, { header: {} });
+  await service.sendTaskCard(task, { header: {} });
   assert.deepEqual(updates, [], '售后/结果卡片这条出口也不再碰业务表');
   const record = await locator.findByMessageId('om_her_message');
   assert.equal(record.app_link, APP_LINK, '链接只落本地映射');
