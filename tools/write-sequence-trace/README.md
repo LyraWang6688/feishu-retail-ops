@@ -7,7 +7,10 @@
 - 标准事件 schema + 纯渲染模板；
 - 销售/采购两份链路配置（采购为待验证草稿）；
 - `build_html.py`：标准 `events.json` → 单文件 HTML；
-- `extract_raw.py`：旧版单文件 HTML → 标准 `events.json`。
+- `extract_raw.py`：旧版单文件 HTML → 标准 `events.json`；
+- `fetch_trace.py`：按配置从飞书取数 → 标准 `events.json`；
+- `merge_history_json.py`：旧版手动合并历史 JSON 的兜底脚本；
+- `docs/bitable-cross-table-write-sequence.md`：豆包沉淀的跨表追踪经验。
 
 ## 目录
 
@@ -20,7 +23,12 @@ write-sequence-trace/
 │  └─ trace.html.tmpl         纯渲染器（只认标准 schema）
 ├─ scripts/
 │  ├─ build_html.py           events.json → HTML
-│  └─ extract_raw.py          旧 HTML → events.json
+│  ├─ extract_raw.py          旧 HTML → events.json
+│  ├─ fetch_trace.py          飞书取数 → events.json
+│  └─ merge_history_json.py   旧版手动合并历史 JSON（兜底）
+├─ docs/
+│  └─ bitable-cross-table-write-sequence.md  跨表追踪经验
+
 ├─ examples/
 │  ├─ sales-XSD-20261018-0001.html   现有真实样例
 │  └─ events-XSD-20261018-0001.json  样例的标准数据
@@ -75,6 +83,13 @@ write-sequence-trace/
 
 ## 使用
 
+取数（需要本机已配置可用的 lark-cli 身份，且只读）：
+
+```bash
+export FEISHU_V1_BITABLE_APP_TOKEN='<base_token>'
+python3 tools/write-sequence-trace/scripts/fetch_trace.py XSD-20261018-0001 --config sales
+```
+
 生成 HTML：
 
 ```bash
@@ -111,7 +126,7 @@ python3 tools/write-sequence-trace/scripts/extract_raw.py \
 
 ## 下一步
 
-1. 加 `fetch_trace.py`：按 config 从起点单号顺关联记录，逐条拉 history，输出标准 `events.json`；
+1. 用真实测试 Base 跑通 `fetch_trace.py`（本机 lark-cli 身份可用时）；
 2. 采购单真实跑通后补 `purchase.config.json`；
 3. 删除推断机制化：快照库 + 差集 + 证据等级；
 4. 可选：定时巡检。
