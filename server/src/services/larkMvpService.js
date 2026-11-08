@@ -182,9 +182,7 @@ const aggregateRecognizedItems = (items) => {
 //   `handleConfirmDealAction` / `confirmDealSummary` / `confirmDealUndeliveredCount` /
 //   `settleConfirmDealCard`。
 //
-// ⚠️ 仍然保留的**出站**能力（工作台 / 补样品提醒在用，与群入口无关）：
-//   `sendTaskText` / `sendTaskCard` 与 `bindGroupSaleThread`
-//   （没有群上下文的任务照旧只记一条 `lark.private_chat.send_skipped`、返 `null`）。
+// ⚠️ 群话题出站卡片/文字已随群入口清理删除；工作台写库路径仍保留。
 // ═══════════════════════════════════════════════════════════════════════════
 
 class LarkMvpService {
@@ -338,13 +336,8 @@ class LarkMvpService {
   }
 
   /**
-   * 「补样品提醒」的转发口（把渠道上下文原样透传给 `SampleReplacementService`）。
-   *
-   * `options.channelTask` = **触发这次交付的那条销售任务**（群销售时才有）。
-   * 本类**不理解**它，只当"这是哪个任务"转交；`SampleReplacementService` 把它交给
-   * 任务感知出口（`sendCardToTask`）→ 回到本类的 `sendTaskCard` → 回复进那条话题。
-   * 工作台触发时没有这条任务 → 不传 → 补样品提醒**没有群上下文 = 没有去处**，
-   * 出口只记一条 `lark.private_chat.send_skipped`（**没有开关**：私聊链路已整体移除）。
+   * 「补样品提醒」的转发口：只创建本地待办，不再发群/私聊消息。
+   * 工作台订单列表读这条待办；补样品写库走 `applyPreChosen`。
    */
   async notifySampleReplacements(deliveryResult, operatorOpenId, options = {}) {
     return this.sampleReplacements.notifySampleReplacements(deliveryResult, operatorOpenId, options);

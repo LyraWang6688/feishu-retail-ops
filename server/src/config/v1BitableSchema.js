@@ -247,7 +247,6 @@ const V1_BITABLE_SCHEMA = {
         //      解析状态 + 解析结果摘要 + 失败原因（那一次 update 现在只剩「交易类型」）
         //    · `salesOrderService._confirm`：失败原因（收尾清空 / 失败回填，共 2 处）
         //    · `afterSalesService.ensureMaster` 新主表：原话 + 解析状态
-        //    · `salesMessageLinkService.writeToSalesEntry`：消息链接（整个方法随列一起删）
         //    ⚠️ 只删写入、留映射 → 那一列永远空着（闸门不报错，**静默**）；
         //       只删映射、留写入 → 写库时抛「未配置语义字段」/ `FieldNameNotFound`。
         //
