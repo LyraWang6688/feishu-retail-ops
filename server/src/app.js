@@ -45,6 +45,12 @@ const { createTagQrSweepRunner } = require('./utils/tagQrSweepScheduler');
 const { createTagQrCodeService } = require('./services/tagQrCodeService');
 const { V1BitableGateway } = require('./services/v1BitableGateway');
 const { resolveTagQrSweepSchedule } = require('./config/tagQrCode');
+// ⭐ 2026-11-08：抖音团购券「待平台结算 → 已收款」——按日期对平（14:00 上海）。
+const { createVoucherSettlementConfig } = require('./config/voucherSettlement');
+const { createVoucherSettlementService } = require('./services/voucherSettlementService');
+const { PaymentService } = require('./services/paymentService');
+const { createNotificationService } = require('./services/notificationService');
+const { createLaikeClient } = require('./services/douyin');
 // 扫码页的挂载点（`/s`）与它的配置：**与二维码里的 URL 同源**
 // （`config/tagQrCode.js` 的 `scanUrl.recordIdTemplate` = `https://hm.bamamei.online/s/{编号}`）。
 const { SCAN_PAGE } = require('./config/scanPage');
@@ -227,6 +233,43 @@ if (require.main === module) {
     });
   } else {
     logInfo('product.tag_qr.sweep.disabled', { env: 'TAG_QR_SWEEP_ENABLED' });
+  }
+
+  // ── 抖音团购券「待平台结算 → 已收款」（业务负责人 2026-11-08 口径）────────────
+  //    · 按日期汇总：我方「创建日」待结算合计 === 平台账单（bill_date=创建日, amount.goods）
+  //      === 平台提现（withdraw_time 在「创建日+5」那天）——**一分不差**才改；
+  //    · 差 1 分也不改，只在运营群报差异；跑的时间 14:00（`VOUCHER_SETTLEMENT_HOUR`）。
+  const voucherSettlement = createVoucherSettlementConfig();
+  if (voucherSettlement.enabled) {
+    const voucherGateway = new V1BitableGateway();
+    const voucherSettlementService = createVoucherSettlementService({
+      gateway: voucherGateway,
+      payments: new PaymentService({ gateway: voucherGateway }),
+      laike: createLaikeClient(),
+      // 复用统一通知服务发文本（与异步任务失败通知同一个机器人客户端；只传显式 target，不改全局配置）。
+      sendText: async (chatId, text) => {
+        const result = await createNotificationService().send('voucher.settlement', { text }, {
+          format: 'text',
+          target: { enabled: true, reason: 'ok', receiveId: chatId, receiveIdType: 'chat_id', target: `chat_id:${chatId}` },
+        });
+        if (!result.ok) throw new Error(`通知发送失败: ${result.reason || 'unknown'}`);
+      },
+      config: voucherSettlement,
+    });
+    startShanghaiDailyScheduler({
+      run: async () => {
+        const summary = await voucherSettlementService.run();
+        if (!summary.settledCount && !summary.mismatchCount && !summary.failedCount) return;
+        logInfo('voucher.settlement.tick', {
+          today: summary.today, settled: summary.settledCount, mismatch: summary.mismatchCount,
+        });
+      },
+      eventPrefix: 'voucher.settlement',
+      hour: voucherSettlement.hour,
+      intervalMs: voucherSettlement.intervalMs,
+    });
+  } else {
+    logInfo('voucher.settlement.disabled', { env: 'VOUCHER_SETTLEMENT_ENABLED' });
   }
 
   // ⭐ 2026-11-08（#948）：统一异步任务启动收尾 —— **补发**上一次进程里没发出去的失败通知

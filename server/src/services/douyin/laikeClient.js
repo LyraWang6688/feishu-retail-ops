@@ -49,6 +49,7 @@ const buildQuery = (query = {}) => {
 };
 
 const isEpochSeconds = (value) => Number.isInteger(value) && value > 0;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const createLaikeClient = (options = {}) => {
   const env = options.env || process.env;
@@ -211,6 +212,45 @@ const createLaikeClient = (options = {}) => {
     });
   };
 
+  /**
+   * 账单详情：按 `bill_date`（yyyy-MM-dd，结算单生成日/核销日）查。
+   * 返回的每条 `ledger_records` 带 `ledger_id / sku_id / verify_id / settlement_time`，
+   * `amount.goods` = 平台结算款（分）。
+   */
+  const settleBill = async ({ accountId, billDate, cursor = 0, size = 100 } = {}) => {
+    if (!isNonEmptyString(accountId)) return fail('param_missing', config.texts.verifyAccountRequired);
+    if (!DATE_RE.test(String(billDate || ''))) return fail('param_invalid', config.texts.settleBillInvalid);
+    const authorized = await token();
+    if (!authorized.ok) return authorized;
+    return request({
+      method: 'GET',
+      path: config.endpoints.settleBill,
+      query: { account_id: accountId, bill_date: billDate, cursor, size },
+      token: authorized.token,
+      label: 'settle_bill',
+    });
+  };
+
+  /**
+   * 提现记录：按日期区间查（yyyy-MM-dd）。
+   * 每条带 `withdraw_id / amount / settle_account / withdraw_time / status`。
+   */
+  const settleWithdraw = async ({ accountId, startDate, endDate, cursor = 0, size = 100 } = {}) => {
+    if (!isNonEmptyString(accountId)) return fail('param_missing', config.texts.verifyAccountRequired);
+    if (!DATE_RE.test(String(startDate || '')) || !DATE_RE.test(String(endDate || ''))) {
+      return fail('param_invalid', config.texts.settleWithdrawInvalid);
+    }
+    const authorized = await token();
+    if (!authorized.ok) return authorized;
+    return request({
+      method: 'GET',
+      path: config.endpoints.settleWithdraw,
+      query: { account_id: accountId, start_date: startDate, end_date: endDate, cursor, size },
+      token: authorized.token,
+      label: 'settle_withdraw',
+    });
+  };
+
   /** 订单详情：按 `order_id` 查（列表口径不可靠，见文件头注释）。 */
   const orderDetail = async ({ accountId, orderId } = {}) => {
     if (!isNonEmptyString(orderId)) return fail('param_missing', config.texts.orderIdRequired);
@@ -230,6 +270,8 @@ const createLaikeClient = (options = {}) => {
     token,
     verifyRecords,
     settleLedger,
+    settleBill,
+    settleWithdraw,
     orderDetail,
     tokenCacheOf: () => ({ ...tokenCache }),
   };
