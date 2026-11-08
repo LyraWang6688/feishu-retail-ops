@@ -4,9 +4,9 @@
 >
 > 当前基线：
 >
-> - main：`409d9d5b`
-> - 生产：`v0.7.0 / 947a107`
-> - 生产已包含 #978 / #979 / #980 / #981；main 还包含 #982 抖音只读客户端、#983 交割单统一 job、#984 售后重试统一、#986 配置表缓存统一（均未部署）
+> - main：`a35c5a56`
+> - 生产：`v0.7.1 / 244cf72`
+> - 生产已包含 #978~#987；main 还包含 #988（#891 原子性修复，未部署）
 
 ## 1. 统一异步任务（#978）
 
@@ -372,12 +372,20 @@ v1ReferenceResolver → getConfigRows
 
 ## 5. 仍需注意的缺口
 
-```text
-#891  P0
-  - 本地任务 createIfAbsent 并发覆盖
-  - ensureMain 查询失败被当成“没有”
-  - 统一 asyncJobStore 同类并发问题
+### 已修复
 
+```text
+#891  本地任务 createIfAbsent 并发覆盖
+      ensureMain 查询失败被当成“没有”
+      统一 asyncJobStore 同类并发问题
+      → PR #988 已合并：JsonTaskStore 原子 createIfAbsent；
+        salesJobStore / asyncJobStore 共用；
+        ensureMain 查询失败直接抛，不再创建主表
+```
+
+仍缺：
+
+```text
 F4
   - partial_failed 默认不发群
   - “少退几双”仍可能没人看到
