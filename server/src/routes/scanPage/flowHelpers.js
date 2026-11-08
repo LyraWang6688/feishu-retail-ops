@@ -1,14 +1,17 @@
 'use strict';
 
 /**
- * 扫码路由「写上下文 / 多货品提交 / 打印上下文」helpers（深拆 P3c：从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
+ * 扫码路由「写上下文 / 多货品提交」helpers（深拆 P3c：从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
+ *
+ * 🔴 2026-11-09（业务负责人：「隐藏的旧「标签」领域块，可以删除」）：
+ *   「打印这一款」那一整块（渲染 + 动作 + 打印上下文）**物理删除** —— 本文件不再有 `buildPrintContext`。
  */
 
 // ⭐⭐ 2026-10-29：提交成功 = 统一 toast 共用件（四条扫码提交链共用同一份实现）。
 const { redirectWithSubmitToast } = require('../../utils/submitToast');
 
 const createFlowHelpers = ({
-  DEFAULT_REALM, LABEL_PRINT_QUEUE, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, resolveLabelPrintQueue, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
+  DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
 }) => {
     const submitMultiItemOrder = async ({
       req, res, requestId, chain, groups, action,
@@ -214,57 +217,7 @@ const createFlowHelpers = ({
       }
     };
 
-    const buildPrintContext = async (number, realm, { requestId, submitted, duplicated, jobId, target = null } = {}) => {
-      const texts = LABEL_PRINT_QUEUE.texts;
-      // ⭐ 表单 action 落在哪条路上：`/r` 底下是**记录 ID**（`target` 由调用方给），
-      //    缺省 `{mode:'number'}` = 与改前**逐字相同**。
-      //    ⚠️ `number` 这个入参仍然是**编号**（打印队列按编号找"这一款最近一次"），不要混。
-      const base = {
-        enabled: true,
-        submitted: Boolean(submitted),
-        duplicated: Boolean(duplicated),
-        postAction: postActionFor(target || { mode: 'number', value: number }, realm),
-        actionField: writeConfig.fields.action,
-        actionValue: writeConfig.actions.printLabel,
-        submitKeyField: LABEL_PRINT_QUEUE.submitKeyField,
-        againField: LABEL_PRINT_QUEUE.againField,
-        texts,
-      };
-      try {
-        const queue = resolveLabelPrintQueue();
-        if (typeof queue.isEnabled === 'function' && !queue.isEnabled()) {
-          return { ...base, enabled: false };
-        }
-        const [status, latest] = await Promise.all([
-          queue.status(),
-          queue.latestJobForNumber(number),
-        ]);
-        // 本次（刚提交的那一条）优先：横幅上的"N 张"要跟**她刚点的那一次**对得上。
-        const justNow = jobId ? await queue.getJob(jobId).catch(() => null) : null;
-        // ⚠️ 只认"这一条任务确实是这一款"的 —— URL 里的 job 参数是手改得了的，不许拿来显示别的款。
-        const mine = justNow && Array.isArray(justNow.numbers) && justNow.numbers.includes(number) ? justNow : null;
-        // ⭐⭐ 2026-10-12（她：「点完之后没有 Toast、按键置灰之类的提示，页面完全没有及时的交互反馈
-        //    ⇒ 我不知道指令到底有没有到达，就会一直狂点」）⇒ 横幅上要回答"**排在第几位**"。
-        //    ⚠️ 只读一次；**读不到就不显示这一句**（宁可不说，也不编一个数给她）。
-        const queuePosition = mine && typeof queue.queuePositionOf === 'function'
-          ? await queue.queuePositionOf(mine.job_id).catch(() => null)
-          : null;
-        return {
-          ...base,
-          online: Boolean(status.online),
-          last_seen_at: status.last_seen_at || '',
-          count_queued: status.counts?.queued || 0,
-          // 横幅用"刚提交的那一条"（拿不到就退回最近一次 —— 至少不是空白）。
-          banner_job: mine ? queue.summaryOf(mine) : null,
-          queue_position: queuePosition,
-          job: mine ? queue.summaryOf(mine) : latest,
-        };
-      } catch (error) {
-        logError('scan.label_print.ready_failed', { request_id: requestId, error: error.message });
-        return { ...base, enabled: false };
-      }
-    };
-  return { submitMultiItemOrder, buildWriteContext, loadPendingBatches, invalidateInventorySnapshot, clearDraftForScanIfNeeded, buildPrintContext };
+  return { submitMultiItemOrder, buildWriteContext, loadPendingBatches, invalidateInventorySnapshot, clearDraftForScanIfNeeded };
 };
 
 module.exports = { createFlowHelpers };

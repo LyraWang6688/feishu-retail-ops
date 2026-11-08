@@ -44,7 +44,7 @@ const createLabelPrintQueueRouter = (options = {}) => {
   };
 
   /**
-   * 提交打印：`{ mode: 'single', number }` 打这一款；`{ mode: 'batch', filters }` 打一批。
+   * 提交打印：`{ mode: 'single', number }`（按编号）/ `{ mode: 'single', recordId }`（按记录 ID，扫码）。
    * 返回里带上**当前在线状态** ⇒ 她一点就能看到"打印电脑在线"还是"未连接（任务已排队）"。
    *
    * ⭐⭐ 2026-10-11 真机反馈（「连点几次 ⇒ 多打了好几张」）：
@@ -77,11 +77,7 @@ const createLabelPrintQueueRouter = (options = {}) => {
     try {
       const queue = service();
       let result;
-      if (mode === 'batch') {
-        result = await queue.enqueueBatch({
-          filters: req.body?.filters || {}, actor, submitKey, again, rotate, canvas,
-        });
-      } else if (scan) {
+      if (scan) {
         // ⭐ 「扫码打印」：先按形状解析（**服务端唯一一份**，与 `buildLabelScanUrl` 反函数）。
         const parsed = parseLabelScanUrl(scan);
         if (!parsed.ok) {

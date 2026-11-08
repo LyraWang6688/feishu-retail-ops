@@ -3,8 +3,8 @@
 /** 扫码页 GET 页面处理（P4-2b 从 routes.js 搬出）。 */
 const installScanPageGetRoutes = ({ router, ctx }) => {
   const {
-    buildPrintContext, buildWriteContext, clearDraftForScanIfNeeded, PURCHASE_RETURN_REALM, SCAN_PAGE,
-    SUBMIT_TOAST, backTargetFor, badNumberPage, candidatePaymentMethods, config, logInfo, logRendered,
+    buildWriteContext, clearDraftForScanIfNeeded, PURCHASE_RETURN_REALM, SCAN_PAGE,
+    SUBMIT_TOAST, badNumberPage, candidatePaymentMethods, config, logInfo, logRendered,
     logWarn, lookupInputOf, notFoundPage, openIdOf, readMultiItemPending, realmScanPageConfig,
     realmScanTriggered, renderFlowOf, renderScan, renderScanSkeleton, resolveRealm, respondFailure,
     scanTargetOf, sendHtml, sendPaymentStep, service, sessionIdOf, writeConfig, writeService,
@@ -263,19 +263,6 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
       //    这里给它一个最小的上下文（不构造销售 / 补货那两条链的任何东西）。
       const writeForRender = write;  // ⭐ 2026-10-14 晚：验收模式的"最小上下文"随验收退场 ✓
       const renderStartedAt = Date.now();
-      // ⭐ 2026-10-11「货品」领域：把**打印队列的真实状态**带进渲染层（在线 / 未连接 +
-      //    这一款最近一次任务）。⚠️ 只在这个领域取 —— 别的领域一次都不碰打印那条链路。
-      //    `printed=1` = 刚提交完（303 回来的），页面上给一句"已提交打印"。
-      const printContext = realm === 'product'
-        ? await buildPrintContext(view.number, realm, {
-          requestId,
-          submitted: String(req.query?.printed || '') === '1',
-          duplicated: String(req.query?.dup || '') === '1',
-          jobId: String(req.query?.job || '').trim(),
-          // `/r` 底下表单要 POST 回 `/r/{recordId}`；`/s` 底下与改前逐字相同。
-          target: backTargetFor(req, view.number),
-        })
-        : null;
       // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）：把草稿里**已经加进来的那几个货品**
       //   喂给渲染层（`view.multi_items`）—— 渲染层据此渲「已加货品」列表 **＋** 把它并进
       //   那个 hidden 字段（`[首件, ...已加]`）⇒ 她**点一下"加"、前面加的不丢** ✓。
@@ -300,7 +287,6 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
         justSubmittedOrderNo: String(req.query?.[SUBMIT_TOAST.noticeKey || 'done'] || '').slice(0, 40),
         // ⭐ 这一页挂在哪个前缀上（`/s` 或 `/r`）—— 自助块里的批次链接/手输表单必须**留在同一前缀**。
         basePath: req.baseUrl,
-        print: printContext,
         // ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：**只有"加货刚成功、303 回来这一发"才给**
         //   （`?scan=1` ✓）—— 其它任何时候都是 `null` ⇒ 页面上一个字都不多（`AC-ML5` ✓）。
         realmScan: realmScanPageConfig(req, realm),

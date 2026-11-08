@@ -90,7 +90,6 @@ const ACTIONS = Object.freeze({
   //    `if (!writeService) return 503` 那道闸门**之前**）。
   //    ⚠️ 页面上仍然**零 JS**：一个原生 `<form method="post">`，提交后 303 回本领域，
   //      由服务端重新渲染状态（在线 / 未连接（任务已排队）/ 已打印 / 失败 + 原因）。
-  printLabel: readString(process.env, 'SCAN_WRITE_ACTION_PRINT_LABEL', 'print_label'),
 });
 
 /**

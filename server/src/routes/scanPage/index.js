@@ -99,7 +99,7 @@ const { FUNNEL } = require('../../config/funnel');
 const { handleReplenish: handleReplenishOf, handlePurchaseReturn: handlePurchaseReturnOf } = require('./handlers/purchase');
 const { handlePaymentPay: handlePaymentPayOf } = require('./handlers/payment');
 const { handleSubmitOrder: handleSubmitOrderOf } = require('./handlers/salesSubmit');
-const { handlePrintLabel: handlePrintLabelOf, handleAddLine: handleAddLineOf, handleClearDraft: handleClearDraftOf } = require('./handlers/smallActions');
+const { handleAddLine: handleAddLineOf, handleClearDraft: handleClearDraftOf } = require('./handlers/smallActions');
 const { createMultiItemPending: createMultiItemPendingOf, createPurchaseScheduler: createPurchaseSchedulerOf } = require('./sessionFlow');
 // ⭐⭐ 2026-10-18（task-2「扫码会话按页面/设备隔离」）：**per-page token**（cookie）与会话键合成。
 //   · cookie 由中间件种/复用；POST 同源自动携带 ⇒ **一个表单字段都不用加**；
@@ -130,13 +130,8 @@ const { createLarkJsapiService } = require('../../services/larkJsapiService');
 const {
   ENTRY_RULE_TEXTS, purchaseEntryViolation,
 } = require('../../config/scanPurchaseEntryRules');
-// ⭐ 2026-10-11：「货品」领域的【打印这一款】把任务排进**打印队列**（店里那台电脑负责出纸）。
-//   ⚠️ 队列是**进程内单例**（`services/labelPrintQueueRuntime.js`）—— 与电脑侧那条 SSE 路由
-//      **共用同一个实例**，不然任务排进去了、小助手永远看不到。
-//   ⚠️ 只在**真的要打印 / 渲染「货品」领域**时才构建它（`resolveLabelPrintQueue` 延迟创建）：
-//      这一页是"扫码就能看"的入口，不能因为打印那条链路没配好就拖慢 / 打不开。
-const { getLabelPrintQueue } = require('../../services/labelPrintQueueRuntime');
-const { LABEL_PRINT_QUEUE } = require('../../config/labelPrintQueue');
+// 🔴 2026-11-09（业务负责人：「隐藏的旧「标签」领域块，可以删除」）：
+//   扫码页「标签」领域（打印这一款 + 打印上下文）整块删除 ⇒ 本文件不再接打印队列。
 const {SCAN_AUTH_REDIRECT, TICKET, redeemSessionTicket, pathWithoutTicket } = require('../../config/scanAuthRedirect');
 const { logError, logInfo, logWarn } = require('../../utils/logger');
 // ⭐⭐ 2026-10-16 拆分（阶段二·纯搬运）：下面这几件已搬到同目录各文件 ✓ 形状/语义一字未改 ✓
@@ -168,7 +163,7 @@ const { createScanPageSetup } = require('./setup');
 const { createScanPageHelpers } = require('./helpers');
 
 const createScanPageRouter = (options = {}) => {
-  const deps = { COOKIE_NAME, DEFAULT_REALM, ENTRY_RULE_TEXTS, FUNNEL, LABEL_PRINT_QUEUE, PURCHASE_RETURN_REALM, REALM_SCAN, SCAN_AUTH_REDIRECT, SCAN_PAGE, SCAN_WRITE, SalesFollowupService, TICKET, V1BitableGateway, asList, buildLoginStartUrl, buildPaymentRows, createFirstVisitKeyAdopter, createLarkJsapiService, createLegacySessionProbe, createMultiItemOrderService, createMultiItemPendingOf, createPageContext, createPageTokenMiddleware, createPaymentMethodsService, createPurchaseSchedulerOf, createPurchaseWriteBackgroundService, createSalesAsyncRuntime, createScanPageRouter, createScanPageService, createScanWriteService, createVoucherPaymentService, encodeSession, express, feishuAuthEnabled, fillWriteText, getLabelPrintQueue, getSessionUser, handleAddLineOf, handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit, handlePrintLabelOf, handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, handleUiTap, installScanPageRoutes, invalidateLiveInventorySnapshot, isDataNotReady, logError, logInfo, logWarn, markRealmUsedOf, markTapCode, mergeFirstItemEntries, mountedPathOf, orderWithPreferred, pageSessionKey, pageSessionKeyOfRequest, parseMultiItemGroups, parseNumberSegments, parsePaymentRows, parseReplenishEntries, parseReturnEntries, pathWithoutTicket, purchaseAmountInvalidOf, purchaseAmountMissingOf, purchaseAmountRequiredForOf, purchaseEntryViolation, purchaseWriteDisabledError, realmEntryParams, realmOfActionOf, redeemSessionTicket, renderFlowOf, renderMinimalPage, renderSalePaymentStepPage, renderSalesHome, renderScanMessagePage, renderScanPage, renderScanSkeleton, requireWorkbenchAccess, resolveMultiItemOrderConfig, resolvePurchaseReturnImageOptions, resolveRealm, resolveScanNext, roleOf, sellableSizeTexts, sendHtml, setTraceFields, sizesForCategory, uiTapResultMiddleware, withPageSession };
+  const deps = { COOKIE_NAME, DEFAULT_REALM, ENTRY_RULE_TEXTS, FUNNEL, PURCHASE_RETURN_REALM, REALM_SCAN, SCAN_AUTH_REDIRECT, SCAN_PAGE, SCAN_WRITE, SalesFollowupService, TICKET, V1BitableGateway, asList, buildLoginStartUrl, buildPaymentRows, createFirstVisitKeyAdopter, createLarkJsapiService, createLegacySessionProbe, createMultiItemOrderService, createMultiItemPendingOf, createPageContext, createPageTokenMiddleware, createPaymentMethodsService, createPurchaseSchedulerOf, createPurchaseWriteBackgroundService, createSalesAsyncRuntime, createScanPageRouter, createScanPageService, createScanWriteService, createVoucherPaymentService, encodeSession, express, feishuAuthEnabled, fillWriteText, getSessionUser, handleAddLineOf, handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit, handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, handleUiTap, installScanPageRoutes, invalidateLiveInventorySnapshot, isDataNotReady, logError, logInfo, logWarn, markRealmUsedOf, markTapCode, mergeFirstItemEntries, mountedPathOf, orderWithPreferred, pageSessionKey, pageSessionKeyOfRequest, parseMultiItemGroups, parseNumberSegments, parsePaymentRows, parseReplenishEntries, parseReturnEntries, pathWithoutTicket, purchaseAmountInvalidOf, purchaseAmountMissingOf, purchaseAmountRequiredForOf, purchaseEntryViolation, purchaseWriteDisabledError, realmEntryParams, realmOfActionOf, redeemSessionTicket, renderFlowOf, renderMinimalPage, renderSalePaymentStepPage, renderSalesHome, renderScanMessagePage, renderScanPage, renderScanSkeleton, requireWorkbenchAccess, resolveMultiItemOrderConfig, resolvePurchaseReturnImageOptions, resolveRealm, resolveScanNext, roleOf, sellableSizeTexts, sendHtml, setTraceFields, sizesForCategory, uiTapResultMiddleware, withPageSession };
   const setupCtx = createScanPageSetup({ options, deps });
   const { salesAsync, SUBMIT_TOAST, addBackPath, adoptFirstVisitSubmitKey, badNumberPage, candidatePaymentMethods, clearMultiItemPending, config, configuredPaymentMethods, gateway, larkJsapi, logFunnelPage, logRendered, multiItemChainOf, multiItemOrder, multiItemOrderConfig, multiItemOrderEngine, multiItemPendingKey, multiItemWire, notFoundPage, paymentMethodsService, purchaseAmountInvalidPage, purchaseAmountMissingPage, purchaseBackground, purchaseEntryInvalidPage, readMultiItemPending, realmScanActive, realmScanConfig, realmScanPageConfig, realmScanTriggered, renderContext, renderMessage, renderScan, resolveLarkJsapi, respondFailure, respondSettlementBlock, respondWriteFailure, responses, salesRuntime, schedulePurchaseWrite, sendHuman, sendPaymentStep, service, setDraftOrderAmount, step2WriteOf, unknownActionFailure, voucherPayments, withoutRealmQuery, writeConfig, writeMultiItemPending, writeService } = setupCtx;
 
@@ -261,21 +256,21 @@ const createScanPageRouter = (options = {}) => {
   //    ⚠️ 用例可以注入 `options.arrivalService`；`false` = 这一版不挂验收模式。
 
   const helperCtx = createScanPageHelpers({ options, ctx: setupCtx, deps, router });
-  const { arrival, arrivalInstance, backTargetFor, isRecordBase, labelPrintQueue, lookupInputOf, markRealmUsed, openIdOf, postActionFor, purchaseAmountInvalid, purchaseAmountMissing, purchaseAmountRequiredFor, realmOfAction, resolveLabelPrintQueue, scanTargetOf, sessionIdOf } = helperCtx;
+  const { arrival, arrivalInstance, backTargetFor, isRecordBase, lookupInputOf, markRealmUsed, openIdOf, postActionFor, purchaseAmountInvalid, purchaseAmountMissing, purchaseAmountRequiredFor, realmOfAction, scanTargetOf, sessionIdOf } = helperCtx;
 
-  const routeContext = { salesAsync, DEFAULT_REALM, LABEL_PRINT_QUEUE, PURCHASE_RETURN_REALM, SCAN_PAGE,
+  const routeContext = { salesAsync, DEFAULT_REALM, PURCHASE_RETURN_REALM, SCAN_PAGE,
     SUBMIT_TOAST, SalesFollowupService, addBackPath, arrival, asList, backTargetFor, badNumberPage,
     buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, handleAddLineOf,
-    handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit, handlePrintLabelOf,
+    handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit,
     handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, handleUiTap,
-    invalidateLiveInventorySnapshot, isDataNotReady, isRecordBase, logError, logInfo, logRendered, logWarn,
+    invalidateLiveInventorySnapshot, isDataNotReady, logError, logInfo, logRendered, logWarn,
     lookupInputOf, markRealmUsed, markTapCode, mergeFirstItemEntries, multiItemOrder, multiItemOrderConfig,
     multiItemWire, notFoundPage, openIdOf, options, pageSessionKey, parseMultiItemGroups, parsePaymentRows,
     parseReplenishEntries, parseReturnEntries, postActionFor, purchaseAmountInvalid,
     purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseBackground,
     purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, readMultiItemPending,
     realmEntryParams, realmOfAction, realmScanConfig, realmScanPageConfig, realmScanTriggered, renderFlowOf,
-    renderMinimalPage, renderSalesHome, renderScan, renderScanSkeleton, resolveLabelPrintQueue,
+    renderMinimalPage, renderSalesHome, renderScan, renderScanSkeleton,
     resolveLarkJsapi, resolveRealm, respondFailure, respondSettlementBlock, respondWriteFailure,
     salesRuntime, scanTargetOf, schedulePurchaseWrite, sellableSizeTexts, sendHtml, sendHuman,
     sendPaymentStep, service, sessionIdOf, setDraftOrderAmount, uiTapResultMiddleware, unknownActionFailure,

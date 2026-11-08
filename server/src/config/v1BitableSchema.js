@@ -619,6 +619,19 @@ const V1_BITABLE_SCHEMA = {
         stockKey: '库存键',
       },
     },
+    // ⭐⭐ 2026-11-09（业务负责人）：「点「批量打印」进的是飞书表单链接，后续就只用这个了」
+    //   ⇒ 批量打印 = 她填这张表的飞书表单；后端监听该表**新增记录**自动打印（见
+    //   `services/labelPrintFormIntakeService.js` + `routes/larkEvents.js` 的 table_id 分派）。
+    labelPrintRequest: {
+      tableName: '标签打印',
+      tableId: getEnv('FEISHU_V1_LABEL_PRINT_REQUEST_TABLE_ID'),
+      fields: {
+        // 「打印货号」= 单向关联到「货品信息」（表单里可多选 ⇒ 一条记录可关联多个货品）。
+        product: '打印货号',
+        // 🔴 「打印日」是**飞书自动字段**（默认值 = 记录创建时间）—— 刻意**不映射**：
+        //   时间字段代码一行都不写（既有规矩），只由飞书填。
+      },
+    },
     liveInventory: {
       tableName: '实时库存',
       tableId: getEnv('FEISHU_V1_LIVE_INVENTORY_TABLE_ID'),

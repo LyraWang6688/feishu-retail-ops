@@ -37,10 +37,17 @@ const loadScanPrintModule = () => {
   //             （业务负责人 2026-10-16 21:2x 五处口径 ⇒ 参数/文案收敛到登记表 ✓）。
   //   ⚠️ 只改**加载器**（不复制 ⇒ 模块不存在 ⇒ 假红 ✗）；**判据一个字没放宽** ✓。
   fs.copyFileSync(path.join(WORKBENCH, 'config/scanEntries.js'), path.join(dir, 'scanEntries.mjs'));
+  // 🔴 2026-11-09：扫码聚焦页的「去批量打印」链接改指**飞书表单** ⇒ `scan-print.js` 多了两条 import
+  //   （`core/formatters.js` 的 escapeHtml ＋ `config/links.js` 的表单 URL）——
+  //   加载器成对复制（只改加载器，判据不放宽）。
+  fs.copyFileSync(path.join(WORKBENCH, 'core/formatters.js'), path.join(dir, 'formatters.mjs'));
+  fs.copyFileSync(path.join(WORKBENCH, 'config/links.js'), path.join(dir, 'links.mjs'));
   fs.writeFileSync(path.join(dir, 'scan-print.mjs'),
     read('features/labels/scan-print.js')
       .split("from '../../core/ui.js'").join("from './ui.mjs'")
-      .split("from '../../config/scanEntries.js'").join("from './scanEntries.mjs'"),
+      .split("from '../../config/scanEntries.js'").join("from './scanEntries.mjs'")
+      .split("from '../../core/formatters.js'").join("from './formatters.mjs'")
+      .split("from '../../config/links.js'").join("from './links.mjs'"),
     'utf8');
   return import(pathToFileURL(path.join(dir, 'scan-print.mjs')).href);
 };

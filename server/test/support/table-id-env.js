@@ -51,6 +51,7 @@ const TEST_TABLE_IDS = Object.freeze({
   FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID: 'tbl_test_purchase_order_batch',
   FEISHU_V1_INVENTORY_LEDGER_TABLE_ID: 'tbl_test_inventory_ledger',
   FEISHU_V1_LIVE_INVENTORY_TABLE_ID: 'tbl_test_live_inventory',
+  FEISHU_V1_LABEL_PRINT_REQUEST_TABLE_ID: 'tbl_test_label_print_request',
 });
 
 for (const [key, value] of Object.entries(TEST_TABLE_IDS)) {

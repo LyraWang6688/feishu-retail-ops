@@ -47,6 +47,16 @@ export const ACCESSORY_SALE_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnCUHxarWSWhoQRiv6qJeKWh';
 
 /**
+ * ⭐⭐ 2026-11-09（业务负责人）：**批量打印改成「填飞书表单」** ——
+ *   「点「批量打印」进的是飞书表单链接，后续就只用这个了」。
+ *   表单写到生产 Base 的「标签打印」表（`tblcUksCp3EmbmBa` 的同构表；后端监听该表新增记录自动打印）。
+ * ⚠️ URL 只写在这里（**唯一来源**）；`config/domains.js` 的「批量打印」卡只 `import`，不复制字面量。
+ * ⚠️ 旧的「筛选条件 + 批量预览」页已按业务负责人「完全删除」下线（代码物理删除）。
+ */
+export const LABEL_BATCH_FORM_URL =
+  'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnoFRAGvPyAWmSephrLpOvgh';
+
+/**
  * 两个飞书表单，按这个顺序渲染。**消费方**（只负责画，不改这张表）：
  *   `config/domains.js` —— 「采购」tab 的「报货」/「退货」**两个子页各一张卡**（当前正式入口；
  *   ⚠️ 2026-10-10 起「验收到货」不再是一张卡，它成了**独立子页**）。

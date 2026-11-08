@@ -34,6 +34,8 @@ const V1_SCHEMA_SCOPES = {
     //    留着它同样是"闸门去问一张不存在的表"，而且代码里也不该再有任何读写点。
   ],
   inventory: ['product', 'behavior', 'sizeManagement', 'salesDetail', 'inventoryLedger', 'liveInventory'],
+  // ⭐ 2026-11-09：「批量打印」飞书表单写的「标签打印」表（只映射「打印货号」）。
+  labelPrint: ['labelPrintRequest'],
 };
 
 V1_SCHEMA_SCOPES.all = [...new Set(Object.values(V1_SCHEMA_SCOPES).flat())];

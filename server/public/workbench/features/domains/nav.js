@@ -1,7 +1,7 @@
 import { QUERY_SECTIONS } from '../../config/query.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { buildDirectJumpUrl, directJumpEnabled, renderQueryEntries } from '../query/index.js';
-import { entryPageHtml, linksPageHtml, placeholderPageHtml } from './pages.js';
+import { linksPageHtml, placeholderPageHtml } from './pages.js';
 
 /**
  * 领域 tab 的**纯渲染**（不碰 DOM、不发请求）—— 单独一个文件是为了能被测试直接跑：
@@ -71,7 +71,6 @@ export function domainPageHtml(page, options = {}) {
   //    ⚠️ 只在"直跳 + href 非空"时为空：href 为空（或直跳关掉）时**照旧**渲染下面那张卡 ——
   //       空值时是不可点的 `div.disabled-card` + 「链接待配置」，**绝不产生死链**。
   if (directJumpUrlForPage(page, options)) return '';
-  if (page.kind === 'entry') return entryPageHtml(page);
   if (page.kind === 'links') return linksPageHtml(page);
   if (page.kind === 'placeholder') return placeholderPageHtml(page);
   if (page.kind === 'query') {

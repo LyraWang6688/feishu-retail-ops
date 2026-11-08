@@ -58,6 +58,11 @@ const NOTIFICATION_EVENTS = Object.freeze({
   voucher_settlement: Object.freeze({
     target: 'group', enabled: true, format: 'card', card: 'voucher_settlement', title: '【团购券结算】',
   }),
+  // ⭐ 2026-11-09（业务负责人定）：「批量打印」表单自动打印时**失败 / 跳过**的汇总通知
+  //   （同一条表单记录汇总成**一条**，发运营群；文本格式，不建卡片）。
+  label_print_failed: Object.freeze({
+    target: 'group', enabled: true, format: 'text', card: 'label_print_failed', title: '【标签打印】',
+  }),
 });
 
 const NOTIFICATION_EVENT_KEYS = Object.freeze(Object.keys(NOTIFICATION_EVENTS));

@@ -89,9 +89,6 @@ const REALMS = Object.freeze([
   //    ⇒ `accessory`（配品）与 `new`（上新）**从这里撤掉** ✓
   //    ⚠️ 配品**不是删功能** ✓ —— 它**整体搬到工作台「销售 → 配品」子 tab**（逻辑一字不改 ✗）
   //    ⚠️ 旧 `?from=accessory` / `?from=new` ⇒ 按既有口径**认不出的值一律回落销售** ✓
-  // ⚠️ 「标签」**整格撤下条**（只不上条 ✓ **功能不删** ✗ —— 与验收同样处理：
-  //    留在 REALMS 里 ⇒ 旧 `?from=product` 链接照旧能开 ✓）
-  Object.freeze({ id: 'product', label: '标签' }),
   // ⭐⭐ 2026-10-14 晚 **cut B：`accept`（验收）从 REALMS 退场** ——
   //   改前逐字：`Object.freeze({ id: 'accept', label: '验收' }),`
   //     ＋ 上面那句注释「⚠️ 「验收」仍在 REALMS（有活跃会话就切进来）⇒ 必须能解析 ✓ 只是**不上条** ✗」
@@ -103,7 +100,7 @@ const REALMS = Object.freeze([
   //   ⚠️ 能力**不是删功能** ✗：验收仍在**工作台**那条路上（`/api/workbench/purchase/arrivals/confirm` ✓）。
 ]);
 
-/** ⭐ 切换条上的 tab —— 「标签」(`product`) **不在**条上 ✓（见上面那条注释）。 */
+/** 切换条上的 tab = 全部领域（旧「标签」`product` 已整块删除）。 */
 // ⭐⭐ 2026-10-14 晚 **cut B**（改前逐字 → 改后逐字 → 依据）：
 //   改前逐字：`REALMS.filter((realm) => realm.id !== 'accept' && realm.id !== 'product')`
 //   改后逐字：`REALMS.filter((realm) => realm.id !== 'product')`
@@ -111,7 +108,7 @@ const REALMS = Object.freeze([
 //        留着一个"永远为真"的条件只会让人以为 accept 还在（她自己那句话：「要彻底拆掉」）。
 //   🔴 **`!== 'product'` 留着** ✗ —— 「标签」**仍在 REALMS**（旧 `?from=product` 照旧能开 ✓），
 //      它只是**不上条**；把它一起删掉 = 条上多一格（判据：条上仍 **4 格**）。
-const REALM_TABS = Object.freeze(REALMS.filter((realm) => realm.id !== 'product'));
+const REALM_TABS = REALMS;
 
 /** 缺省领域 = **销售**（她 2026-10-11：「默认打开是销售页」；2026-10-09 曾一度是库存）。 */
 const DEFAULT_REALM = 'inventory';
@@ -157,15 +154,12 @@ const REALM_EMPTY_TEXT_KEYS = Object.freeze({
 const REALM_TEXTS = Object.freeze({
   barLabel: '这一页要做什么',
   // ⭐ 2026-10-13：**货品 → 标签**（她改名 ✓ 内部 id `product` 保留）；标题跟着改，页面上不再出现「货品」✗
-  labelHeading: '标签',
   // ⚠️ 2026-10-11 改文案（业务负责人：「扫到某款 ⇒ 货品领域 ⇒【打印这一款】」）：
   //    改前 = '打印这一款的标签 →'，改后 = '打开标签打印页 →'。
   //    理由：「打印这一款」这五个字现在归**新的队列按钮**（`printSingle`，来自
   //    `config/labelPrintQueue.js`）—— 一点就把这一款**送到店里那台电脑打**；
   //    这一条链接仍然是**去工作台标签打印页**（在那里改条件 / 用浏览器打印），
   //    两颗按钮写同一个动作用词会让她点错。⚠️ key 名保留（用例钉着它必须是非空文案）。
-  labelSingleButton: '打开标签打印页 →',
-  labelBatchButton: '批量打印（按条件挑货）→',
   // ── 销售（`from=sales`）：尺码**分两组** —— 有货 ⇒ 现货 / 其余 ⇒ 预订 ──────────
   // ⭐ 2026-11-07（业务负责人截图口径）：销售页「有货」段只写「有货」——
   //   去掉「（样品 + 门盒）」那串解释（分组口径不变：样品 + 门盒 ＞ 0 ⇒ 现货 ✓）。
@@ -359,26 +353,10 @@ const purchaseSizeGroups = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.reple
 };
 
 
-
-/** 「货品标签」的去处（工作台里那个**既有**标签打印页；本文件只拼 URL，不实现打印）。 */
-const LABEL_PRINT_PATH = '/workbench/label-print.html';
-
 /** `?from=` 的取值 → 领域 id（**认不出来的一律回落缺省**，不报错、不白屏）。 */
 const resolveRealm = (value) => {
   const raw = String(value ?? '').trim().toLowerCase();
   return REALMS.some((realm) => realm.id === raw) ? raw : DEFAULT_REALM;
-};
-
-/**
- * 这一款的标签打印链接：**单个** = 带上货号（标签打印页的 `keyword` 认货号，见 `labelPrintService`），
- * **批量** = 不带条件直接开那一页（她再按货号 / 状态 / 最近新增挑货）。
- */
-const labelPrintUrls = (view = {}) => {
-  const itemNo = String(view.item_no || String(view.number || '').split('|')[0] || '').trim();
-  return {
-    single: itemNo ? `${LABEL_PRINT_PATH}?keyword=${encodeURIComponent(itemNo)}` : LABEL_PRINT_PATH,
-    batch: LABEL_PRINT_PATH,
-  };
 };
 
 module.exports = {
@@ -390,10 +368,8 @@ module.exports = {
   NEW_REALM,
   REALM_EMPTY_TEXT_KEYS,
   REALM_TEXTS,
-  LABEL_PRINT_PATH,
   SIZE_GROUP_RANGES,
   resolveRealm,
-  labelPrintUrls,
   sizeGroupOf,
   sellableCountOf,
   saleSizeGroups,

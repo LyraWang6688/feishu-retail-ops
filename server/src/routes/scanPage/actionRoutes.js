@@ -4,16 +4,16 @@
 const installScanPageActionRoutes = ({ router, ctx }) => {
   const {
     invalidateInventorySnapshot, submitMultiItemOrder, buildWriteContext,
-    salesAsync, DEFAULT_REALM, LABEL_PRINT_QUEUE, PURCHASE_RETURN_REALM, SalesFollowupService, addBackPath,
+    salesAsync, DEFAULT_REALM, PURCHASE_RETURN_REALM, SalesFollowupService, addBackPath,
     asList, backTargetFor, badNumberPage, candidatePaymentMethods, config, fillWriteText, handleAddLineOf,
-    handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit, handlePrintLabelOf,
-    handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, isDataNotReady, isRecordBase, logError,
+    handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit,
+    handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, isDataNotReady, logError,
     logInfo, logWarn, lookupInputOf, markRealmUsed, markTapCode, mergeFirstItemEntries, multiItemOrderConfig,
     multiItemWire, notFoundPage, openIdOf, options, pageSessionKey, parseMultiItemGroups, parsePaymentRows,
     parseReplenishEntries, parseReturnEntries, postActionFor, purchaseAmountInvalid,
     purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage,
     purchaseEntryViolation, purchaseWriteDisabledError, readMultiItemPending, realmOfAction, renderScan,
-    resolveLabelPrintQueue, resolveRealm, respondFailure, respondSettlementBlock, respondWriteFailure,
+    resolveRealm, respondFailure, respondSettlementBlock, respondWriteFailure,
     salesRuntime, scanTargetOf, schedulePurchaseWrite, sellableSizeTexts, sendHuman, sendPaymentStep,
     service, uiTapResultMiddleware, unknownActionFailure, voucherPayments, withPageSession, writeConfig,
     writeMultiItemPending, writeService, ROUTE_PATTERNS,
@@ -158,19 +158,6 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       return res.redirect(303, addBackPathFor(realm));
     }
 
-    // ── ⭐⭐ 2026-10-11：扫码页「货品」领域 →【打印这一款】──────────────────────
-    // 🔴 它**排在下面"扫码写入口关着 ⇒ 503"那道闸门之前**：打印这一款**不写任何业务表**
-    //    （只把一条任务排进打印队列），所以与"销售/采购写入口开不开"是两件事。
-    // ⚠️ 编号**只认 URL 里的那个**（表单里刻意不放编号字段）⇒ 手改表单也打不了别的款。
-    // ⚠️ 页面上**零 JS**：这里就是一个原生表单的 POST，成功后 303 回本领域（PRG，
-    //    刷新不会重复提交），状态由 GET 重新渲染。
-      if (action === actions.printLabel) {
-        return handlePrintLabelOf({
-          req, res, requestId, body, fields, realm, action, openId, writeConfig, service, writeService: scopedWriteService, sendHuman, notFoundPage, isRecordBase, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, resolveLabelPrintQueue, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
-        });
-      }
-      
-
     // ⭐ 2026-10-29：非销售 flow（售后换款式）的货品页提交到此为止（不跳资金页、零写入）
     if (handlePendingExchangeSubmit({ req, res, requestId, action, actions, realm, sendHuman, markTapCode, postActionFor, backTargetFor })) return;
 
@@ -187,7 +174,7 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       // ── 加入本单 ────────────────────────────────────────────────────────────
       if (action === actions.addLine) {
         return handleAddLineOf({
-          req, res, requestId, body, fields, realm, action, openId, writeConfig, service, writeService: scopedWriteService, addBackPath, notFoundPage, respondWriteFailure, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
+          req, res, requestId, body, fields, realm, action, openId, writeConfig, service, writeService: scopedWriteService, addBackPath, notFoundPage, respondWriteFailure, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, logInfo, logWarn, logError, sellableSizeTexts, DEFAULT_REALM,
         });
       }
       
@@ -195,7 +182,7 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       // ── 清空本单 ────────────────────────────────────────────────────────────
       if (action === actions.clearDraft) {
         return handleClearDraftOf({
-          req, res, requestId, body, fields, realm, action, openId, writeService: scopedWriteService, backTargetFor, postActionFor, logInfo, logWarn, logError, LABEL_PRINT_QUEUE, sellableSizeTexts, DEFAULT_REALM,
+          req, res, requestId, body, fields, realm, action, openId, writeService: scopedWriteService, backTargetFor, postActionFor, logInfo, logWarn, logError, sellableSizeTexts, DEFAULT_REALM,
         });
       }
       
