@@ -148,7 +148,10 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
         const currentQuantity = liveRecords.length;
         if (currentQuantity < item.quantity) {
           // 与 `applyChange` **逐字同一句**（"退能退的"由调用方先算好；这里只兜底、绝不夹取）。
-          throw new Error(`${states.join('和')}库存不足：${item.input.productRecordId} ${item.size}码，需 ${item.quantity} 双，现有 ${currentQuantity} 双`);
+          throw new Error(stockShortage({
+            states, liveInventoryTableName: this.gateway.table('liveInventory').tableName,
+            productRecordId: item.input.productRecordId, size: item.size, quantity: item.quantity, currentQuantity,
+          }));
         }
         const selected = liveRecords.slice(0, item.quantity);
         // 本地任务形状**逐字照抄** `applyChange` 的 `store.create({...})`。
