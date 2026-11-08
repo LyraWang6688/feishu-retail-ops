@@ -415,8 +415,8 @@
 | `scan.page.viewed` | 1 | src/config/scanPage.js |
 | `scan.payment_step.reset_failed` | 1 | src/config/scanPage.js |
 | `scan.payment_step.reset_on_scan` | 1 | src/config/scanPage.js |
-| `scan.payment_step.stale_clear_failed` | 1 | src/routes/scanPage/routes.js |
-| `scan.payment_step.stale_cleared` | 1 | src/routes/scanPage/routes.js |
+| `scan.payment_step.stale_clear_failed` | 1 | src/routes/scanPage/pages.js |
+| `scan.payment_step.stale_cleared` | 1 | src/routes/scanPage/pages.js |
 | `scan.purchase_return.batch_created` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.image_failed` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.plan_frozen` | 1 | src/config/scanWrite.js |
@@ -475,7 +475,7 @@
 | `scan.snapshot.warm.done` | 1 | src/app.js |
 | `scan.snapshot.warm.skipped` | 1 | src/app.js |
 | `scan.state.unexpected` | 1 | src/config/scanPage.js |
-| `scan.write.action_inferred` | 1 | src/routes/scanPage/routes.js |
+| `scan.write.action_inferred` | 1 | src/routes/scanPage/actionRoutes.js |
 | `scan.write.disabled` | 1 | src/config/scanWrite.js |
 | `scan.write.failed` | 2 | src/config/alerts.js<br>src/config/scanWrite.js |
 | `scan.write.jump_gate_blocked` | 1 | src/routes/scanPage/handlers/salesSubmit.js |

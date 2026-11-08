@@ -114,7 +114,7 @@ const scanPageSource = () => {
   //   否则"按源码文本钉行为"的既有判据会突然找不到实现（那是**判据失效**，不是行为变化 ✗）。
   //   ⚠️ 追加在 `module.exports` 之前（顶层作用域，与 factory 内的同名薄包装**不在同一作用域** ⇒ 不冲突 ✓）；
   //   去掉它们的 `module.exports`（子文件出口不属于旧单文件的语义 ✓）。
-  const extras = ['public.js', 'actions.js', 'renderContext.js', 'sessionFlow.js', 'handlers/purchase.js', 'handlers/payment.js', 'handlers/salesSubmit.js', 'handlers/smallActions.js', 'responses.js', 'flowHelpers.js', 'exchangeFlow.js']
+  const extras = ['public.js', 'pages.js', 'actionRoutes.js', 'errors.js', 'actions.js', 'renderContext.js', 'sessionFlow.js', 'handlers/purchase.js', 'handlers/payment.js', 'handlers/salesSubmit.js', 'handlers/smallActions.js', 'responses.js', 'flowHelpers.js', 'exchangeFlow.js']
     .map((file) => path.join(SCAN_PAGE_DIR, file))
     .filter((full) => fs.existsSync(full))
     .map((full) => {
@@ -151,7 +151,10 @@ const scanPageSource = () => {
     // ⭐ 2026-10-29：`exchangeFlow.js` 里 `../../services/x` 在聚合后（编译路径 = src/routes/scanPage.js）
     //   要降一级成 `../services/x` ✓
     .replace(/require\('\.\.\/\.\.\/services\/scanFlowService'\)/g, "require('../services/scanFlowService')")
-    .replace(/^const \{ installScanPagePublicRoutes \} = require\('\.\/(?:scanPage\/)?public'\);\s*$/gm, '// 聚合后由 public.js 提供');
+    .replace(/^const \{ installScanPagePublicRoutes \} = require\('\.\/(?:scanPage\/)?public'\);\s*$/gm, '// 聚合后由 public.js 提供')
+    .replace(/^const \{ installScanPageGetRoutes \} = require\('\.\/(?:scanPage\/)?pages'\);\s*$/gm, '// 聚合后由 pages.js 提供')
+    .replace(/^const \{ installScanPageActionRoutes \} = require\('\.\/(?:scanPage\/)?actionRoutes'\);\s*$/gm, '// 聚合后由 actionRoutes.js 提供')
+    .replace(/^const \{ installScanPageErrorRoutes \} = require\('\.\/(?:scanPage\/)?errors'\);\s*$/gm, '// 聚合后由 errors.js 提供')
 };
 
 /** 壳必须**只**转发（薄壳口径 ✓）：行数上限 ✓。 */

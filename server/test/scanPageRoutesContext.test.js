@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..', 'src', 'routes', 'scanPage');
-const FILES = ['routes.js', 'public.js'];
+const FILES = ['routes.js', 'public.js', 'pages.js', 'actionRoutes.js', 'errors.js'];
 const read = (name) => fs.readFileSync(path.join(ROOT, name), 'utf8');
 const strip = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')

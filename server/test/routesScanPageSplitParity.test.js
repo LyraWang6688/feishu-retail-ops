@@ -61,27 +61,20 @@ test('AC-SP-R3 ⭐ 导出符号原样（7 个 · 一个不换）', () => {
   }
 });
 
-test('AC-SP-R4 ⭐ 路由注册顺序不变（public 先注册，再扫描页/动作/兜底）', () => {
-  const routes = fs.readFileSync(path.join(__dirname, '..', 'src/routes/scanPage/routes.js'), 'utf8');
-  const pub = fs.readFileSync(path.join(__dirname, '..', 'src/routes/scanPage/public.js'), 'utf8');
-  const pubOrder = [
-    "router.get('/',",
-    "router.post(config.tapFeedback?.reportPath",
-    "router.get(realmScanSignaturePath",
-    "router.post(realmScanSignaturePath.replace(",
-  ];
+test('AC-SP-R4 ⭐ 路由注册顺序不变（public → GET 页面 → POST 动作 → 兜底）', () => {
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'src/routes/scanPage', f), 'utf8');
+  const routes = read('routes.js'), pub = read('public.js'), pages = read('pages.js'), actions = read('actionRoutes.js'), errors = read('errors.js');
+  const pubOrder = ["router.get('/',", "router.post(config.tapFeedback?.reportPath", "router.get(realmScanSignaturePath", "router.post(realmScanSignaturePath.replace("];
   let at = -1;
-  for (const frag of pubOrder) {
-    const found = pub.indexOf(frag, at + 1);
-    assert.ok(found > at, `public 注册顺序错了：${frag}`);
-    at = found;
-  }
-  const callAt = routes.indexOf('installScanPagePublicRoutes({ router, ctx })');
-  const getAt = routes.indexOf('router.get(ROUTE_PATTERNS');
-  const postAt = routes.indexOf("router.post(ROUTE_PATTERNS");
-  const fallbackAt = routes.indexOf("router.post('/',");
-  assert.ok(callAt >= 0 && callAt < getAt && getAt < postAt && postAt < fallbackAt,
-    '注册顺序必须是 public → GET 扫描页 → POST 动作 → 兜底');
+  for (const frag of pubOrder) { const found = pub.indexOf(frag, at + 1); assert.ok(found > at, `public 注册顺序错了：${frag}`); at = found; }
+  assert.ok(pages.includes('router.get(ROUTE_PATTERNS'), 'GET 扫描页必须在 pages.js');
+  assert.ok(actions.includes("router.post(ROUTE_PATTERNS"), 'POST 动作必须在 actionRoutes.js');
+  assert.ok(errors.includes("router.post('/',"), '兜底 POST 必须在 errors.js');
+  const publicCall = routes.indexOf('installScanPagePublicRoutes');
+  const pagesCall = routes.indexOf('installScanPageGetRoutes');
+  const actionsCall = routes.indexOf('installScanPageActionRoutes');
+  const errorsCall = routes.indexOf('installScanPageErrorRoutes');
+  assert.ok(publicCall >= 0 && publicCall < pagesCall && pagesCall < actionsCall && actionsCall < errorsCall, '注册顺序必须是 public → 页面 → 动作 → 兜底');
 });
 
 test('AC-SP-R5 ⭐⭐ 聚合文本必须能通过**语法解析**（有一批用例会把它拿去 require/eval ✗）', () => {
