@@ -442,7 +442,8 @@ class SecondDeliveryService {
     const index = {};
     const productTable = this.gateway.table?.('product');
     if (productTable?.tableId) {
-      const records = await this.read(() => this.gateway.listAll('product'), 'second_delivery.items.list_products');
+      const records = await getConfigRows({ gateway: this.gateway, tableKey: 'product',
+        loader: () => this.read(() => this.gateway.listAll('product'), 'second_delivery.items.list_products') });
       index.product = {
         labelField: productTable.fields?.itemNo,
         // ⭐ 2026-10-08 晚：9 点推送的行要「货号 **颜色** 尺码」⇒ 索引里也带上「颜色」这一列
@@ -454,9 +455,10 @@ class SecondDeliveryService {
     const accessoryTable = this.gateway.table?.('accessory');
     if (accessoryTable?.tableId) {
       try {
-        const records = await this.read(
-          () => this.gateway.listAll('accessory'), 'second_delivery.items.list_accessories',
-        );
+        const records = await getConfigRows({ gateway: this.gateway, tableKey: 'accessory',
+          loader: () => this.read(
+            () => this.gateway.listAll('accessory'), 'second_delivery.items.list_accessories',
+          ) });
         index.accessory = {
           labelField: accessoryTable.fields?.name,
           byId: new Map(records.map((record) => [record.record_id, record])),

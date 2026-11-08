@@ -64,7 +64,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
   const listPurchaseRequests = async (filters = {}) => {
     const [requests, products, batches, behaviors] = await Promise.all([
       cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest')),
-      cachedListAll('product', () => gateway.listAll('product')),
+      getConfigRows({ gateway, tableKey: 'product' }),
       cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch')),
       // ⚠️ 第 4 张（行为管理）也要缓存 ⇒ 否则"第二次快"不成立 ✗（4 张里漏 1 张 = 白等 ✗）
       getConfigRows({ gateway, tableKey: 'behavior' }),

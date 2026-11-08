@@ -987,7 +987,7 @@ class LarkMvpService {
     const table = this.gateway.table?.('product');
     if (!table?.tableId || !table.fields?.completeness) return null;
     const readStartedAt = Date.now();
-    const records = await this.gateway.listAll('product');
+    const records = await getConfigRows({ gateway: this.gateway, tableKey: 'product' });
     const byId = new Map();
     // 同时按「货号」建索引：同一个货号会有多个颜色（每个颜色一条货品记录）。
     // 卖货时要把**这个货号下所有颜色**里资料不全的都提示出来——同款不同色通常

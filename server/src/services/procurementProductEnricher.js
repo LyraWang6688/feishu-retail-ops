@@ -86,7 +86,17 @@ const createProductEnricher = ({ gateway, schema, logger = { logWarn } } = {}) =
   const enrich = async (recordIds = []) => {
     const ids = [...new Set((recordIds || []).filter(Boolean))];
     if (!ids.length) return new Map();
-    const records = await gateway.getBatch('product', ids);
+    let records = [];
+    try {
+      const allProducts = await getConfigRows({ gateway, tableKey: 'product' });
+      const byId = new Map((allProducts || []).map((record) => [String(record.record_id), record]));
+      records = ids.map((id) => byId.get(String(id))).filter(Boolean);
+    } catch (error) {
+      // 兼容只有 getBatch 的旧替身；生产正常走统一配置快照。
+    }
+    if (!records.length && typeof gateway.getBatch === 'function') {
+      records = await gateway.getBatch('product', ids);
+    }
     const colorIds = (records || []).flatMap((record) => linkedIdsOf(record?.fields?.[productFields().color]));
     const colorNames = await colorNamesOf(colorIds);
     return new Map((records || []).map((record) => [String(record.record_id), normalize(record, colorNames)]));
