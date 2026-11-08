@@ -589,7 +589,7 @@ lastGood 告警
 路由级 invalidate 没有测试
 默认 TTL 常量仍有重复
 labelPrint 仍叠加自己的 60s product 缓存
-部分定向读 / 批量读 / filter 读仍不进快照
+部分定向读 / 批量读仍不进快照；按编号找货品已走 configTableCache
 ```
 
 已修复：
