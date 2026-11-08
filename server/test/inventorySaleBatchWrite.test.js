@@ -578,7 +578,7 @@ test('AC-SB3b ⭐ 同一单两行同款同码、只有 1 双 ⇒ 只扣 1 双，
     for (const [label, side] of [['逐条', before], ['批量', after]]) {
       const result = side.result;
       assert.deepStrictEqual(result.failures.map((item) => item.lineNumber), [2], `${label}: 第 2 行失败`);
-      assert.match(result.failures[0].error, /门盒和样品库存不足/,
+      assert.match(result.failures[0].error, /实时库存不足/,
         `${label}: 与改动前**逐字同一句**报文（现有 0 双 —— 前面那行刚把这一双扣掉）`);
       assert.equal(rowsOf(side.harness, 'inventoryLedger').length, 1, `${label}: 只扣 1 双`);
       assert.deepStrictEqual(liveIds(side.harness), [], `${label}: 那一双被扣掉，不重复扣`);

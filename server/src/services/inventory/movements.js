@@ -106,7 +106,9 @@ const STOCK_MOVEMENTS = Object.freeze({
     //   `ledgerLink`（销售主表 record id）覆盖它 —— 见下面 ledgerLink。
     ledgerSource: 'salesDetail',
     // 按顺序消耗这些状态的实时库存；null 表示不消耗既有记录。
-    consumes: ['门盒', '样品'],
+    // ⭐ 2026-11-09：销售出库与「实时库存」页面口径对齐 —— 只要实时库存里有记录（一双一行），
+    //    就视为可卖；所属状态为空/仓库也算，不再只认门盒+样品。
+    consumes: ['门盒', '样品', '仓库', ''],
     // ⭐ 2026-10-18：远端「关联销售」= 销售主表 id（只写不查）；本地幂等仍用明细 id。
     ledgerLink: {
       field: 'salesDetail',

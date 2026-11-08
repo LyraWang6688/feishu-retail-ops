@@ -190,13 +190,24 @@ test('an interrupted sample deduction resumes without deleting stock twice', asy
   assert.equal((await taskStore.get(operationId('STOCK_SALE_DECREASE', request.salesDetailRecordId))).status, 'completed');
 });
 
-test('a sale never consumes warehouse stock and does not write a ledger when total floor stock is short', async () => {
+test('a sale treats an empty-state live-inventory record as sellable stock', async () => {
+  const gateway = gatewayFor([unit('empty_1', ''), unit('door_1', '门盒')]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  const result = await inventory.applySale({ salesDetailRecordId: 'detail_empty', productRecordId: 'product_1',
+    size: 38, quantity: 2 });
+  assert.deepEqual(result.liveRecordIds.sort(), ['door_1', 'empty_1']);
+  assert.equal(gateway.records.get('liveInventory').length, 0);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+});
+
+test('a sale consumes any live-inventory record, including warehouse stock', async () => {
   const gateway = gatewayFor([unit('sample_1', '样品'), unit('warehouse_1', '仓库')]);
   const inventory = new InventoryService({ gateway, store: store() });
-  await assert.rejects(inventory.applySale({ salesDetailRecordId: 'detail_1', productRecordId: 'product_1',
-    size: 38, quantity: 2 }), /门盒和样品库存不足/);
-  assert.equal(gateway.records.get('inventoryLedger'), undefined);
-  assert.equal(gateway.records.get('liveInventory').length, 2);
+  const result = await inventory.applySale({ salesDetailRecordId: 'detail_1', productRecordId: 'product_1',
+    size: 38, quantity: 2 });
+  assert.deepEqual(result.liveRecordIds.sort(), ['sample_1', 'warehouse_1']);
+  assert.equal(gateway.records.get('inventoryLedger').length, 1);
+  assert.equal(gateway.records.get('liveInventory').length, 0);
 });
 
 test('sample replacement moves one selected door-box pair without changing total quantity and is idempotent', async () => {
