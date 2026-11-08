@@ -4,9 +4,9 @@
 >
 > 当前基线：
 >
-> - main：`a35c5a56`
-> - 生产：`v0.7.1 / 244cf72`
-> - 生产已包含 #978~#987；main 还包含 #988（#891 原子性修复，未部署）
+> - main：`ab34e615`
+> - 生产：`v0.7.2 / e8b2bb7`
+> - 生产已包含 #978~#987；main 还包含 #988、#990~#1015 等（未部署）
 
 ## 1. 统一异步任务（#978）
 
@@ -312,6 +312,7 @@ public/workbench/shared/toast.js 显示 5 秒
 | `server/src/config/alerts.js` | 观测告警开关 / 阈值 / 收件群 | `alertMonitor` |
 | `server/src/config/timing.js` | 请求耗时埋点链路与慢阈值 | 请求中间件 |
 | `server/src/config/submitToast.js` | 统一提交回执 | 扫码页 / 工作台采购 |
+| `server/src/config/notifications.js` | 通知目标 + 事件注册 + 发送形式 | 全部通知 |
 | `server/src/config/configTables.js` | 配置表注册表 + 统一 TTL | configTableCache / larkEvents |
 
 ### 3.8 配置表缓存（#986 后）
@@ -355,13 +356,74 @@ v1ReferenceResolver → getConfigRows
 多进程共享缓存 / 跨进程失效（当前单实例 PM2）
 ```
 
+### 3.9 统一通知配置（2026-11-09）
+
+唯一入口：
+
+```text
+config/notifications.js
+services/notificationCard.js
+services/notificationService.js
+```
+
+目标只保留两个（业务负责人 2026-11-08 口径）：
+
+```text
+private → open_id（本人）
+group   → chat_id（运营/采购群）
+```
+
+环境变量：
+
+```text
+NOTIFY_PRIVATE_OPEN_ID     # 回落 OBSERVABILITY_ALERTS_OPEN_ID
+NOTIFY_GROUP_CHAT_ID       # 回落 PURCHASE_CHAT_ID
+```
+
+事件注册表：
+
+```text
+async_job_failed          group / card
+observability_alert       private / card
+lark_event_heartbeat      private / card
+purchase_request_created  group / text（保留图片+@+话题）
+purchase_return_created   group / text（保留图片+@+话题）
+voucher_settlement        group / card
+```
+
+发送形式：
+
+```text
+card → Card JSON 2.0 + CardKit v1
+       card.create → card_id
+       im.message.create 引用 card_id
+       card.update 编辑
+text → 普通文本；支持 replyToMessageId / reply_in_thread
+```
+
+已迁移 / 已删除：
+
+```text
+6 个事件全部接入统一入口
+旧 im.v1.message.patch / interactiveCardFeedback 已删除
+销售/售后/补样品/到货核对群话题卡片已删除
+工作台到货确认、补样品写库、库存写入保留
+```
+
+注意：
+
+```text
+采购的图片仍是图片消息，文字通知走 text 格式并回到图片所在话题；
+通知卡片不再带按钮回调（card.action.trigger 已退场）。
+```
+
 ## 4. 哪些“统一化了”
 
 | 层 | 统一配置/真源 | 覆盖 | 例外 |
 | --- | --- | --- | --- |
 | 异步 job 模型 | `config/asyncJobs.js` | 销售/售后/补货/退货/验收/交割单 | 无（#983 已接） |
 | 异步重试分类 | `config/asyncJobs.js` | 同上 | 无（#984 已统一） |
-| 失败通知 | `asyncJobNotifier` + `ASYNC_JOB_*` | 同上 | `partial_failed` 默认不发 |
+| 失败通知 | `config/notifications.js` + `notificationService` | 6 个通知事件 | `partial_failed` 默认不发 |
 | 飞书写入并发 | `config/feishuWriteScheduler.js` | 所有 gateway 写 | 读请求 / 本地任务 |
 | 飞书写入瞬时重试 | 同上 | 所有 gateway 写 | 5xx/超时交 job 层 |
 | 库存操作键 | `STOCK_MOVEMENTS.operationKey` | 13 条行为 | 旧函数 deprecated 兼容 |
@@ -369,12 +431,16 @@ v1ReferenceResolver → getConfigRows
 | 日志事件 | `config/events.js` | 全仓日志 | 自动生成，禁止手改 |
 | 表/字段映射 | `config/v1BitableSchema.js` | 所有飞书读写 | 改表必须同步 |
 | 配置表缓存 | `config/configTables.js` + `configTableCache` | 8 张配置表 | 单实例；多实例未做 |
+| 通知目标 / 事件 / 卡片 | `config/notifications.js` + `notificationService` | 私聊/群聊 6 类事件 | 采购文字保留图片+@+话题 |
 
 ## 5. 仍需注意的缺口
 
 ### 已修复
 
 ```text
+通知配置：6/6 事件已迁移；旧群话题卡片/旧 message.patch 已删净
+      → PR #1001~#1015
+
 #891  本地任务 createIfAbsent 并发覆盖
       ensureMain 查询失败被当成“没有”
       统一 asyncJobStore 同类并发问题
