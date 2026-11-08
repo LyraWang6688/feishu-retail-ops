@@ -186,7 +186,7 @@ const aggregateRecognizedItems = (items) => {
 //   `settleConfirmDealCard`。
 //
 // ⚠️ 仍然保留的**出站**能力（工作台 / 补样品提醒在用，与群入口无关）：
-//   `sendTaskText` / `sendTaskCard` / `replyTaskCard` 与 `bindGroupSaleThread`
+//   `sendTaskText` / `sendTaskCard` 与 `bindGroupSaleThread`
 //   （没有群上下文的任务照旧只记一条 `lark.private_chat.send_skipped`、返 `null`）。
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -542,28 +542,6 @@ class LarkMvpService {
       eventPrefix: task.type === 'sample_replacement' ? 'lark.sales.sample_card.update' : 'lark.sales.card.update' });
   }
 
-  // 售后卡片的更新单独一个日志前缀：排查时能一眼分出"这是售后那张卡"。
-  async updateAfterSalesCard(task, event, card, metadata = {}) {
-    return updateInteractiveCard({ client: this.client, task, event, card,
-      stage: metadata.stage, interactionId: metadata.interactionId,
-      eventPrefix: 'lark.after_sales.card.update' });
-  }
-
-  async publishSalesResultCard(task, event, card, metadata = {}) {
-    if (await this.updateSalesActionCard(task, event, card, metadata)) return true;
-    try {
-      const messageId = await this.sendTaskCard(task, card);
-      if (messageId) await this.store.update(task.task_id, { card_message_id: messageId });
-      logInfo('lark.sales.card.fallback.sent', { task_id: task.task_id,
-        interaction_id: metadata.interactionId, stage: metadata.stage, card_message_id: messageId });
-      return true;
-    } catch (error) {
-      logWarn('lark.sales.card.fallback.failed', { task_id: task.task_id,
-        interaction_id: metadata.interactionId, stage: metadata.stage, error: error.message });
-      return false;
-    }
-  }
-
   // ── 渠道感知的输出（B）：「回复 / 卡片回到话题」────────────────────────────
   //
   // 🔴 2026-10-07「私聊链路移除」：**没有群上下文的任务 = 没有去处** ——
@@ -628,13 +606,6 @@ class LarkMvpService {
    *    （`replyCard(task.message_id, card)`）—— 私聊入口已移除，非群任务**没有去处**；
    *    这是当时漏掉的最后两条口子之一。见 utils/privateChatSend.js 的口径。
    */
-  async replyTaskCard(task, card) {
-    if (task?.chat_type !== 'group') return skipNoGroupContext('card', task);
-    const sent = await this.replyCardInThread(task.message_id, card);
-    await this.bindGroupSaleThread(task, sent);
-    return sent.messageId;
-  }
-
   /**
    * 记下「这条话题 ↔ 这笔销售」的**本地**路由映射（`data/sales_group_threads/`）。
    *
