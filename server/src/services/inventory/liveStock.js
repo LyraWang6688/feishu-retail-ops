@@ -6,12 +6,22 @@
 const { linkedRecordIds, textValue } = require('../v1BitableGateway');
 const { LIVE_STATES } = require('./movements');
 
+/** 实时库存里这一条记录是不是「这个货品 + 这个尺码」——不看所属状态。 */
+function matchesLiveInventory(record, { productRecordId, sizeRecordId, productField, sizeField } = {}) {
+  return linkedRecordIds(record?.fields?.[productField]).includes(productRecordId) &&
+    linkedRecordIds(record?.fields?.[sizeField]).includes(sizeRecordId);
+}
+
 function findLiveInventoryIn(records, productRecordId, sizeRecordId, state = '门盒') {
     const table = this.gateway.table('liveInventory');
     return records.filter(
       (record) =>
-        linkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId) &&
-        linkedRecordIds(record.fields?.[table.fields.size]).includes(sizeRecordId) &&
+        matchesLiveInventory(record, {
+          productRecordId,
+          sizeRecordId,
+          productField: table.fields.product,
+          sizeField: table.fields.size,
+        }) &&
         (state === null || textValue(record.fields?.[table.fields.state]) === state)
     );
   }
@@ -68,6 +78,7 @@ async function sampleReplacementCandidates(productRecordId, { excludeRecordIds =
   }
 
 module.exports = {
+  matchesLiveInventory,
   findLiveInventoryIn,
   findLiveInventory,
   candidatesFromLiveRecords,
