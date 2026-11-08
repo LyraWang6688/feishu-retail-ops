@@ -158,7 +158,7 @@ const STOCK_MOVEMENTS = Object.freeze({
       fieldMessages: Object.freeze({ productRecordId: FIELD_MISSING.productRecordId }),
     }),
   },
-  // 采购退货：方向=减少，且**状态无关**——样品、门盒、仓库都要退（见上面的注释）。
+  // 采购退货：方向=减少，且**状态无关**——只要实时库存有记录（门盒/样品/仓库/空状态）都要退。
   //
   // ⚠️ ledgerSource 为 null：「库存流水」的两个来源字段是「关联销售」→销售明细、
   // 「关联采购」→采购入库（⚠️ 后者随「采购入库」表一起被删，见上一条），
@@ -174,7 +174,8 @@ const STOCK_MOVEMENTS = Object.freeze({
   [MOVEMENT_PURCHASE_DECREASE]: {
     direction: '减少',
     ledgerSource: null,
-    consumes: ['门盒', '样品', '仓库'],
+    // ⭐ 2026-11-09：与退货页「实时库存里所有记录」口径对齐，空状态也要退。
+    consumes: ['门盒', '样品', '仓库', ''],
     triggerSampleReplacement: false,
     // 与采购入库同一个形状的真实三元组（`purchase_return:` 前缀）：批次身份 ｜ 货品 ｜ 尺码。
     // ⚠️ 不能拿"退货明细行的 record_id"当来源：那条行**先写、库存后扣**，崩溃后重放要看的是
