@@ -201,7 +201,9 @@ class InventoryService {
   }
 
   async getSaleResult(salesDetailRecordId) {
-    const operation = await this.store.get(operationId(MOVEMENT_SALE_DECREASE, salesDetailRecordId));
+    // 销售库存任务按「销售明细 record_id」作为 source_record_id 落盘；
+    // 用 findOperationBySource 取，避免依赖旧 operationId 拼法。
+    const operation = await this.findOperationBySource(String(salesDetailRecordId || ''));
     return operation?.status === 'completed' ? operation.result : null;
   }
 

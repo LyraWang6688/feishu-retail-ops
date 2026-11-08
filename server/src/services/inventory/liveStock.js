@@ -4,6 +4,7 @@
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 「实时库存」记录的纯读取 / 候选计算（不写、不改状态、不再整表读）。
 const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const { LIVE_STATES } = require('./movements');
 
 function findLiveInventoryIn(records, productRecordId, sizeRecordId, state = '门盒') {
     const table = this.gateway.table('liveInventory');
@@ -43,7 +44,7 @@ async function candidatesFromLiveRecords(productRecordId, liveRecords = [], { ex
       if (!linkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId)) continue;
       const size = (await this.sizeReferences.resolveLinkedCell(record.fields?.[table.fields.size])).size;
       const state = textValue(record.fields?.[table.fields.state]);
-      if (!['门盒', '样品', '仓库'].includes(state)) continue;
+      if (!LIVE_STATES.includes(state)) continue;
       if (!bySize.has(size)) bySize.set(size, { size, doorBoxCount: 0, sampleCount: 0, warehouseCount: 0 });
       const counts = bySize.get(size);
       if (state === '门盒') counts.doorBoxCount += 1;

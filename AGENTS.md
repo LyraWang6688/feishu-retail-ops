@@ -397,7 +397,7 @@ config/submitToast.js + utils/submitToast.js
 ```text
 工作台「确认到货」：config/workbenchArrival.js 的「已提交成功，数据会更新」
 售后：config/afterSalesPage.js 的「信息提交成功」＋自建 2200ms toast
-交割单：features/sales-delivery/ui-feedback.js 自建 3000ms toast（PR #1023 在收敛）
+交割单已在 #1023 收口（toast / 轮询统一）
 ```
 
 改这些页面时优先对齐，不要继续复制新的 toast 文案。

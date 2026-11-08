@@ -237,13 +237,11 @@ const createAsyncJobService = ({
           ? classifyResult(rawResult, attempt)
           : classifyResultOutcome(rawResult, config.retry);
         if (outcome?.ok === true) return succeed({ jobId, result: rawResult ?? null, attempt });
-        // "部分写入成功，部分失败" = 终态，**不重试**、也**不是**给群发通知的那种 failed
-        // （状态口径见文档 3.1 / 6.1：通知只认 failed）
+        // "部分写入成功，部分失败" = 终态，**不重试**，但也要发群通知（和 failed 一样需要人看）。
         if (outcome?.partial === true) {
           const message = String(outcome.message || '').trim();
           const partialJob = await markPartialFailed({ jobId, error: message, result: rawResult, attempt });
-          // ⭐ 2026-11-09：partial_failed 是终态；是否发通知由 notifier 的 statuses 配置决定。
-          //   （默认 statuses=['failed'] ⇒ 不发；显式加 partial_failed 才发。）
+          // ⭐ 2026-11-09：partial_failed 是终态，直接发通知（没有额外状态开关）。
           await notifyIfNeeded(jobId);
           return partialJob;
         }

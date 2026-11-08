@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 异步任务**失败通知**（#948 第 6 节）：最终失败（重试耗尽）后发一条结构化文本到运营群。
+ * 异步任务**失败通知**（#948 第 6 节）：failed / partial_failed 终态都发一条结构化文本到运营群。
  *
  * 目标：统一由 config/notifications.js 的 group 目标决定。
  *
@@ -84,9 +84,9 @@ const createAsyncJobNotifier = ({
   const notify = async (job = {}) => {
     const jobId = String(job.job_id || '');
     const type = String(job.type || '');
-    // ① 终态 + 目标状态（默认只有 failed）才发；每次重试都不发（文档 6.1）
-    const statuses = Array.isArray(config.notify?.statuses) ? config.notify.statuses : ['failed'];
-    if (!statuses.includes(String(job.status || ''))) {
+    // ① failed / partial_failed 都是终态，都发；每次重试都不发。
+    const status = String(job.status || '');
+    if (!['failed', 'partial_failed'].includes(status)) {
       return { sent: false, reason: 'not_target_status' };
     }
     // ② 去重：同一 job 只发一次（发送成功才写 notified_at ⇒ 这里见到非空就跳过）

@@ -168,7 +168,7 @@ test('AC-T1 `lookup` 把各阶段毫秒写进 timing 出参：三个阶段分别
   //    `Date.now()` 毫秒截断 + 定时器粒度会让实测值偶尔比注入值小 1ms。
   //    ⇒ 延时抬到 60/100/50、下限给 55/95/45（同一套覆盖率、留 5ms 余量）。
   const service = serviceOf({
-    delays: { 'filter:product': 60, 'filter:liveInventory': 100, sizeManagement: 50 },
+    delays: { product: 60, 'filter:liveInventory': 100, sizeManagement: 50 },
   });
   const timing = {};
   const view = await service.lookup({ number: NUMBER, requestId: 'req_t1', timing });
@@ -348,13 +348,16 @@ test('AC-T5 `whole_table_fallback` 只表示"这一趟走了整表回退"；尺�
   await withFilter.lookup({ number: NUMBER, requestId: 'req_t5b', timing: timingB });
   assert.equal(timingB.whole_table_fallback, false);
 
-  // ③ 有 filter、但一条都没读到（大小写不一致 / 老数据）⇒ 回退整表 ⇒ true
-  const emptyFilter = fakeGateway({ filter: false });
-  emptyFilter.listByFilter = async () => [];
-  const serviceC = createScanPageService(emptyFilter, { config: SCAN_PAGE, startSnapshot: false });
+  // ③ 按编号找货品已改走 configTableCache ⇒ 不再调用 product 的 listByFilter
+  const gatewayC = fakeGateway({ filter: true });
+  const productFilterCalls = [];
+  const originalFilter = gatewayC.listByFilter;
+  gatewayC.listByFilter = async (key) => { productFilterCalls.push(key); return originalFilter(key); };
+  const serviceC = createScanPageService(gatewayC, { config: SCAN_PAGE, startSnapshot: false });
   const timingC = {};
   await serviceC.lookup({ number: NUMBER, requestId: 'req_t5c', timing: timingC });
-  assert.equal(timingC.whole_table_fallback, true, '过滤读一条都没读到 ⇒ 回退整表');
+  assert.equal(timingC.whole_table_fallback, false, '货品改走缓存 ≠ 整表回退');
+  assert.equal(productFilterCalls.includes('product'), false, '货品按编号不再走过滤读');
 });
 
 test('AC-T5 耗时字段全部是数字（日志里不能出现 undefined / NaN）', async () => {

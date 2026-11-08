@@ -13,7 +13,7 @@ const {
   buildNotificationCard, sendNotificationCard, updateNotificationCard,
 } = require('./notificationCard');
 const { logInfo, logWarn } = require('../utils/logger');
-const { NOTIFICATION_EVENTS } = require('../config/notifications');
+const { NOTIFICATION_EVENTS, NOTIFICATION_TEXTS } = require('../config/notifications');
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
@@ -21,7 +21,7 @@ const { getLarkAgentCredentials } = require('../config/larkAgent');
 
 const sendTextMessage = async ({ client, target, text, replyToMessageId = '', inThread = false }) => {
   const api = client?.im?.v1?.message || client?.im?.message;
-  if (!api?.create) throw new Error('飞书客户端不支持发送消息');
+  if (!api?.create) throw new Error(NOTIFICATION_TEXTS.messageUnsupported);
   const replied = String(replyToMessageId || '').trim();
   const response = replied && api.reply
     ? await api.reply({
@@ -32,9 +32,9 @@ const sendTextMessage = async ({ client, target, text, replyToMessageId = '', in
       params: { receive_id_type: target.receiveIdType },
       data: { receive_id: target.receiveId, msg_type: 'text', content: JSON.stringify({ text: String(text || '') }) },
     });
-  if (!response || response.code !== 0) throw new Error(`发送文本失败: ${response?.msg || 'unknown'}`);
+  if (!response || response.code !== 0) throw new Error(`${NOTIFICATION_TEXTS.textSendFailed}: ${response?.msg || 'unknown'}`);
   const messageId = String(response?.data?.message_id || '');
-  if (!messageId) throw new Error('发送文本未返回 message_id');
+  if (!messageId) throw new Error(NOTIFICATION_TEXTS.textMissingId);
   return { messageId, threadId: String(response?.data?.thread_id || '') };
 };
 
