@@ -124,28 +124,6 @@ const createScanArrivalService = (options = {}) => {
   };
 
   /**
-   * ⭐⭐ 2026-10-29（F1/F2 · Lead 批）：**自定义尺码**要能当场验 ——
-   *   否则后台入库才发现"尺码不在「尺码管理」里" ⇒ 页面先回成功、后台写失败 = 假成功 ✗。
-   *   延迟取用：只有真的提交了"不在本批申请行里的自定义尺码"时才调用（普通提交零额外读表）。
-   *   · 用例可注入 `options.sizeReferences`（实例或 accessor）⇒ 不发真实请求 ✓
-   *   · 没接 gateway 时返回 null ⇒ 跳过这项校验（不误拦 ✓）
-   */
-  let sizeReferencesAccessInstance = null;
-  const sizeReferencesOf = () => {
-    if (sizeReferencesAccessInstance) return sizeReferencesAccessInstance;
-    const provided = options.sizeReferences;
-    if (provided) {
-      sizeReferencesAccessInstance = typeof provided === 'function' ? provided : () => provided;
-      return sizeReferencesAccessInstance;
-    }
-    if (!options.gateway) return null;
-    // eslint-disable-next-line global-require
-    const { createSizeReferenceAccess } = require('./sizeReferenceService');
-    sizeReferencesAccessInstance = createSizeReferenceAccess({ gateway: options.gateway });
-    return sizeReferencesAccessInstance;
-  };
-
-  /**
    * ⭐⭐ P0 2026-10-12：「完成验收」的**幂等键**（服务端算，页面只负责带回来）。
    * `accept:<session_id>:<轮次>` —— 轮次在她每次改动清单时 +1 ⇒
    *   · 同一屏**连点两次** = 同一把钥匙 ⇒ 第二次**直接幂等返回**（零写入）✓
@@ -389,7 +367,6 @@ const createScanArrivalService = (options = {}) => {
   const setScans = createSetScans({
     get, store, touch, texts, events, config, logInfo,
     positiveInteger, nonNegativeInteger, resolve,
-    sizeReferencesOf,
   });
 
   /**

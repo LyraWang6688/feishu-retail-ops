@@ -156,25 +156,12 @@ const purchaseBatchCardHtml = (batch) => `
           <!-- ⭐ 2026-11-09（业务负责人批注）：此页出现的批次状态一致 ⇒ 不再显示状态标签 -->
           <span class="order-summary" data-view="arrival-batch-summary">${escapeHtml(batchSummaryOf(batch))}</span>
         </div>
-        <!-- ⭐ 2026-11-09（业务负责人真机：「验收到货」出现两次）：只留**一个**入口 ——
-             details 的 summary 本身就是那颗按钮（点它展开/收起验收表单）。
-             蓝色按钮与 summary 同名的那一行**删掉**（重复且容易误点 ✗）。 -->
+        <!-- 只留一个入口：details 的 summary 就是那颗蓝色按钮（点它展开/收起表单）。 -->
         <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(batch.batch_no)}">
           <summary class="btn btn-primary action-form__summary">${escapeHtml(T.verifyArrival)}</summary>
           <p class="order-note" data-view="arrival-detail-hint">${escapeHtml(ARRIVAL_FULL_TEXTS.detailOpenHint)}</p>
           <div class="action-body">
             <div data-view="arrival-detail" data-batch="${escapeHtml(batch.batch_no)}"></div>
-            <div class="form-field" data-view="arrival-custom-size">
-              <span>${escapeHtml(ARRIVAL_FULL_TEXTS.customSizeLabel)}</span>
-              <input data-field="custom-size" type="text" inputmode="numeric" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customSizePlaceholder)}">
-              <input data-field="custom-quantity" type="text" inputmode="numeric" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customQuantityPlaceholder)}">
-            </div>
-            <div class="form-field" data-view="arrival-custom-item">
-              <span>${escapeHtml(ARRIVAL_FULL_TEXTS.customItemNoLabel)}</span>
-              <input data-field="custom-item-no" type="text" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customItemNoPlaceholder)}">
-              <input data-field="custom-item-size" type="text" inputmode="numeric" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customSizePlaceholder)}">
-              <input data-field="custom-item-quantity" type="text" inputmode="numeric" placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.customQuantityPlaceholder)}">
-            </div>
             <label class="form-field">${escapeHtml(T.arrivalAmount)}
               <input data-field="arrival-amount" type="text" inputmode="decimal" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
             </label>
@@ -183,13 +170,7 @@ const purchaseBatchCardHtml = (batch) => `
         </details>
       </article>`;
 
-/**
- * 验收页（2026-11-09 业务负责人定的两层交互）：
- *   第一层 = **供应商卡片**（供应商来自「供应商管理」配置表；只列有未到货批次的供应商）
- *   第二层 = 点某个供应商卡片后，按**采购日由远及近**（早 → 晚）从上往下展示该供应商的批次；
- *   每一批仍是一张卡（**不显示采购单号**）：状态 + 数量/货品摘要 + 一个「验收到货」（展开表单）。
- *   已到货批次全程不渲染（后端也有闸门：已到货再提交 ⇒ 400 + 零写入）。
- */
+/** 验收页两层：供应商卡片 → 按采购日由远及近的批次（不显示采购单号；已到货不渲染）。 */
 const supplierKeyOfRow = (row = {}) => {
   const id = String(row.supplier_record_id || '').trim();
   const name = String(row.supplier_name || '').trim() || P.supplierFallback;
@@ -255,9 +236,7 @@ export function purchaseOrdersHtml(rows = [], options = {}) {
     if (!b) return -1;
     return a < b ? -1 : a > b ? 1 : 0;
   });
-  // ⭐ 2026-11-09（业务负责人批注）：
-  //   · 不需要「← 返回供应商」按钮（重进验收即回第一层）；
-  //   · **不需要「采购日」三个字，但仍要显示日期、并按日期分组**（由远及近：早 → 晚）。
+  // 不显示「返回」按钮；日期标题只显示日期（仍按日期由远及近分组）。
   const dateHtml = dates.map((date) => `
         <section class="purchase-date-group" data-view="purchase-date" data-purchase-date="${escapeHtml(date)}">
           <h4 class="purchase-date-head">${escapeHtml(date || P.purchaseDateUnknown)}</h4>
@@ -283,10 +262,7 @@ export const arrivalLineKey = (row = {}) => `${String(row.product_record_id || '
 export function arrivalDetailHtml(rows = []) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return `<p data-view="arrival-detail-empty">${escapeHtml(ARRIVAL_FULL_TEXTS.detailEmpty)}</p>`;
-  // ⭐⭐ 2026-11-09（业务负责人）：「在**统一批次号**里**按编号分组**」；
-  //   显示口径跟**采购页卡片标题**一致 = 「货号 · 颜色」（同一货号不同颜色是不同组）。
-  //   · 分组键优先用 `product_record_id`（真正的"这一款"）；缺它才退回 货号+颜色；
-  //   · 组内按尺码逐行给「实际到货数量」；组标题只出现一次 ✓。
+  // 同一批次号内按「货号 · 颜色」分组（采购页卡片标题同口径）；组内按尺码给实际数量。
   const groups = new Map();
   for (const row of list) {
     const itemNo = String(row.item_no || '').trim();
@@ -296,31 +272,43 @@ export function arrivalDetailHtml(rows = []) {
     groups.get(key).rows.push(row);
   }
   const headingOf = ({ itemNo, color, number }) => {
-    if (itemNo) {
-      if (!color) return itemNo;
-      return String(ARRIVAL_FULL_TEXTS.detailGroupLabel)
-        .split('{itemNo}').join(itemNo).split('{color}').join(color);
-    }
-    return number || color || ARRIVAL_FULL_TEXTS.detailGroupUnknown;
+    if (!itemNo) return number || color || ARRIVAL_FULL_TEXTS.detailGroupUnknown;
+    return color ? String(ARRIVAL_FULL_TEXTS.detailGroupLabel).split('{itemNo}').join(itemNo).split('{color}').join(color) : itemNo;
   };
-  const groupHtml = [...groups.entries()].map(([key, group]) => `
-        <section class="order-line-group" data-view="arrival-line-group" data-item-no="${escapeHtml(group.itemNo)}" data-color="${escapeHtml(group.color)}">
-          <h4 class="order-line-group__head">${escapeHtml(headingOf(group))}</h4>
-          <ul class="order-lines">${group.rows.map((row) => `
-            <li class="order-line" data-view="arrival-detail-row"
-                data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
-                data-size="${escapeHtml(String(row.size ?? ''))}"
-                data-declared="${escapeHtml(String(Number(row.quantity || 0)))}">
-              <span class="line-size">${escapeHtml(sizeText(row.size))}</span>
-              <span class="line-amount">${escapeHtml(ARRIVAL_FULL_TEXTS.declaredQuantityLabel)} ${escapeHtml(String(Number(row.quantity || 0)))}</span>
-              <input class="line-actual" data-field="arrival-actual" type="text" inputmode="numeric"
-                data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
-                data-size="${escapeHtml(String(row.size ?? ''))}"
-                value="${escapeHtml(String(Number(row.quantity || 0)))}"
-                placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.zeroMeansNotArrived)}"
-                aria-label="${escapeHtml(ARRIVAL_FULL_TEXTS.actualQuantityLabel)}">
-            </li>`).join('')}</ul>
-        </section>`).join('');
+  // 套用采购页卡片模板：.pr-group / .pr-size-row / .pr-stepper（样式复用 procurement.css）。
+  const totalOf = (rows) => rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+  const groupHtml = [...groups.entries()].map(([key, group]) => {
+    const total = String(ARRIVAL_FULL_TEXTS.detailGroupTotal).split('{total}').join(String(totalOf(group.rows)));
+    const rowsHtml = group.rows.map((row) => `
+          <div class="pr-size-row" data-view="arrival-detail-row"
+              data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
+              data-size="${escapeHtml(String(row.size ?? ''))}"
+              data-declared="${escapeHtml(String(Number(row.quantity || 0)))}">
+            <div class="pr-size-row-head">
+              <div class="pr-size">${escapeHtml(String(row.size ?? ''))}</div>
+              <div class="pr-sale">${escapeHtml(ARRIVAL_FULL_TEXTS.declaredQuantityLabel)} <b>${escapeHtml(String(Number(row.quantity || 0)))}</b></div>
+            </div>
+            <div class="pr-pick pr-pick-no-check">
+              <div class="pr-stepper">
+                <button type="button" data-action="arrival-step" data-delta="-1">−</button>
+                <input class="pr-qty line-actual" data-field="arrival-actual" inputmode="numeric"
+                  data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
+                  data-size="${escapeHtml(String(row.size ?? ''))}"
+                  value="${escapeHtml(String(Number(row.quantity || 0)))}"
+                  placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.zeroMeansNotArrived)}"
+                  aria-label="${escapeHtml(ARRIVAL_FULL_TEXTS.actualQuantityLabel)}">
+                <button type="button" data-action="arrival-step" data-delta="1">+</button>
+              </div>
+            </div>
+          </div>`).join('');
+    return `
+        <section class="pr-group order-line-group" data-view="arrival-line-group" data-item-no="${escapeHtml(group.itemNo)}" data-color="${escapeHtml(group.color)}">
+          <div class="pr-group-head">
+            <h2 class="pr-group-name">${escapeHtml(headingOf(group))}</h2>
+            <div class="pr-group-total">${escapeHtml(total)}</div>
+          </div>${rowsHtml}
+        </section>`;
+  }).join('');
   return `<div data-view="arrival-detail-list">${groupHtml}</div>`;
 }
 
@@ -332,7 +320,7 @@ export function arrivalDetailHtml(rows = []) {
  *     预填是**页面给她看的默认**，她改了就按她的值，提交的永远是**她确认过的那个值** ✓）。
  *   · `extra` = 她自行补充的行（自定义尺码 / 自定义货号）—— 由调用方解析好 `productRecordId` ✓。
  */
-export function arrivalSubmitLines({ rows = [], actuals = {}, extra = [] } = {}) {
+export function arrivalSubmitLines({ rows = [], actuals = {} } = {}) {
   const lines = [];
   for (const row of rows || []) {
     const key = arrivalLineKey(row);
@@ -343,15 +331,6 @@ export function arrivalSubmitLines({ rows = [], actuals = {}, extra = [] } = {})
     const quantity = Number(raw);
     if (quantity === 0) continue;
     lines.push({ productRecordId: String(row.product_record_id || ''), size: Number(row.size), quantity });
-  }
-  for (const line of extra || []) {
-    const size = Number(line?.size);
-    const quantity = Number(line?.quantity);
-    if (!line?.productRecordId) return { ok: false, reason: 'extra_unresolved', lines: [] };
-    if (!Number.isSafeInteger(size) || size <= 0 || !Number.isSafeInteger(quantity) || quantity <= 0) {
-      return { ok: false, reason: 'extra_invalid', lines: [] };
-    }
-    lines.push({ productRecordId: String(line.productRecordId), size, quantity });
   }
   return { ok: true, reason: '', lines };
 }
@@ -576,24 +555,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }
   }
 
-  /** 自定义货号 ⇒ `record_id`（走**既有**货品读取口 ✓ 不打新接口 ✗） */
-  async function resolveItemNo(itemNo) {
-    const wanted = String(itemNo || '').trim().toLowerCase();
-    if (!wanted) return '';
-    try {
-      const res = await api.get(`${ARRIVAL_FULL_API.products}?keyword=${encodeURIComponent(itemNo)}`);
-      const rows = Array.isArray(res?.rows) ? res.rows : [];
-      const exact = rows.find((row) => String(row.item_no || '').trim().toLowerCase() === wanted)
-        || rows.find((row) => String(row.product_number || '').trim().toLowerCase() === wanted);
-      return (exact || rows[0])?.record_id || '';
-    } catch (error) {
-      return '';
-    }
-  }
-
-  /** 这一批的第一条明细（自定义尺码要挂在某个款上 ⇒ 用**这一批**刚读到的明细 ✓ 不猜 ✗） */
-  const firstArrivalRow = (batchNo) => ((state.arrivalRowsByBatch || {})[batchNo] || [])[0] || null;
-
   async function submitArrival(button) {
     const batchNo = button.dataset.batch || '';
     const form = state.container.querySelector(`[data-arrival-batch="${batchNo}"]`);
@@ -620,37 +581,16 @@ export function createOrdersModule({ mode = 'both' } = {}) {
             product_record_id: input.dataset.productRecordId, size: input.dataset.size,
           })] = input.value;
         }
-        const extraLines = [];
-        const customSize = read('custom-size');
-        const customQuantity = read('custom-quantity');
-        if (customSize || customQuantity) {
-          const row = firstArrivalRow(batchNo) || {};
-          if (!row.product_record_id) return renderResult(ARRIVAL_FULL_TEXTS.detailFailed, true);
-          extraLines.push({
-            productRecordId: row.product_record_id, size: customSize,
-            quantity: customQuantity === '' ? row.quantity : customQuantity,
-          });
-        }
-        const itemNo = read('custom-item-no');
-        if (itemNo) {
-          const found = await resolveItemNo(itemNo);
-          if (!found) return renderResult(ARRIVAL_FULL_TEXTS.itemNoNotFound, true);
-          extraLines.push({
-            productRecordId: found,
-            size: read('custom-item-size'),
-            quantity: read('custom-item-quantity') || 1,
-          });
-        }
+        // ⭐ 2026-11-09（业务负责人批注）：自定义尺码 / 自定义货号两个入口**删除** ⇒
+        //   这里只提交「她在明细里填的实际到货数量」（填 0 不提交；不按申请数补齐）。
         const built = arrivalSubmitLines({
           rows: (state.arrivalRowsByBatch || {})[batchNo] || [],
           actuals,
-          extra: extraLines,
         });
         // ⚠️ 「**没填**」与「填 0」是两件事：填 0 = 这一码没到（不提交 ✓）；没填 = **不猜** ⇒ 拦住 + 人话 ✗
         if (!built.ok) {
           const text = built.reason === 'actual_missing' ? ARRIVAL_FULL_TEXTS.actualQuantityRequired
-            : built.reason === 'extra_unresolved' ? ARRIVAL_FULL_TEXTS.itemNoNotFound
-              : ARRIVAL_FULL_TEXTS.sizeInvalid;
+            : ARRIVAL_FULL_TEXTS.sizeInvalid;
           return renderResult(text, true);
         }
         if (!built.lines.length) return renderResult(ARRIVAL_FULL_TEXTS.noArrivalLines, true);
@@ -706,6 +646,14 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       const action = trigger.dataset.action;
       if (action === 'refresh') return loadPurchaseOrders();
       if (action === 'back') return renderList();
+      if (action === 'arrival-step') {
+        const input = trigger.closest('.pr-stepper')?.querySelector('input');
+        if (input) {
+          const next = Math.max(0, Number(input.value || 0) + (Number(trigger.dataset.delta) || 0));
+          input.value = String(next);
+        }
+        return undefined;
+      }
       if (action === 'submit-arrival') return submitArrival(trigger);
       return undefined;
     });

@@ -85,7 +85,10 @@ test('AC-AW5 ⭐ 命中区 ≥44px · 文案走配置（工作台侧不写死中
   // ⚠️ 卡片模板里**本来是**有一处既有中文字面量（`row.product_number || '未填货号'`）
   //    —— 那是**既有债**。
   assert.ok(/T\.verifyArrival/.test(block), '【验收到货】文案走 `T.verifyArrival`（config ✓）');
-  const stripped = block.replace(/<!--[\s\S]*?-->/g, '');
+  const stripped = block
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
   const literals = stripped.match(/[\u4e00-\u9fff]+/g) || [];
   // ⭐⭐ 2026-10-15（task-27）**逐字记录，判据只紧不松** ✓：
   //   改前逐字：`assert.deepEqual(literals, ['未填货号'], ...)`

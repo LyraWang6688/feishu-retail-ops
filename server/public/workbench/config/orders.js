@@ -149,17 +149,13 @@ export const ARRIVAL_FULL_TEXTS = {
   //   显示口径与采购页卡片标题一致 = 「货号 · 颜色」（颜色缺省只显示货号）。
   detailGroupLabel: '{itemNo} · {color}',
   detailGroupUnknown: '未编号',
+  // 组头右侧合计（套用采购页卡片的「需补 N 双」位置）
+  detailGroupTotal: '申请 {total} 双',
   zeroMeansNotArrived: '没到的填 0',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',
   // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）
   sizeInvalid: '尺码要填数字，数量要大于 0',
   noArrivalLines: '这一批没有可提交的实际到货数量，请先点开批次、把实际到货数量填上',
-  customSizeLabel: '自定义尺码',
-  customSizePlaceholder: '尺码',
-  customQuantityPlaceholder: '数量',
-  customItemNoLabel: '自定义货号',
-  customItemNoPlaceholder: '货号',
-  itemNoNotFound: '这个货号没找到，请核对后再填',
   submitting: '正在确认到货…',
   accepted: '已确认到货',
   // ⚠️ 2026-10-15（她追加口径）：明细**挂不上批次** ⇒ **不进这一屏**（见 `groupPurchaseOrders` ✓）——

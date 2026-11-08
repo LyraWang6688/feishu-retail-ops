@@ -164,7 +164,12 @@ test('AC-RC2 ⭐ 点批次 ⇒ 明细只属于**这一批**（且每行有可改
   assert.match(htmlA, /data-size="40"[^>]*value="2"/, '40 码默认 = 申请数 2 ✓');
   assert.match(htmlA, /data-size="41"[^>]*value="1"/, '41 码默认 = 申请数 1 ✓');
   // 申请数量也要给她看（她要看"申请 vs 实际"）
-  assert.ok(htmlA.includes('申请 2'), '申请数量要显示 ✓');
+  assert.ok(htmlA.includes('申请 <b>2</b>'), '申请数量要显示 ✓');
+  // ⭐ 2026-11-09（业务负责人「套用采购页模板」）：明细 = 采购页的卡片/尺码格/步进器
+  assert.ok(htmlA.includes('class="pr-group'), '明细组套用采购页 `.pr-group` 卡片 ✓');
+  assert.ok(htmlA.includes('class="pr-size-row"'), '尺码格套用 `.pr-size-row` ✓');
+  assert.ok(htmlA.includes('class="pr-stepper"'), '数量控件套用 `.pr-stepper` ✓');
+  assert.ok(htmlA.includes('data-action="arrival-step"'), '有 +/− 步进按钮 ✓');
   // 拉明细的接口与参数逐字（既有只读口，不新造 ✗）
   const src = stripComments(readWorkbench('features/orders/index.js'));
   assert.ok(src.includes('${ARRIVAL_FULL_API.detail}?${ARRIVAL_FULL_FIELDS.batchNo}='),
@@ -199,23 +204,21 @@ test('AC-RC2b ⭐ 同一批次里按编号分组：一个编号一个组，组�
 // AC-RC3 / AC-RC4 提交的就是"她填的实际值"——绝不按申请数补齐
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RC3 ⭐ 改数量 + 补一条额外尺码 ⇒ 提交 body 恰好是"她填的实际值"', async () => {
+test('AC-RC3 ⭐ 改数量 ⇒ 提交 body 恰好是"她填的实际值"（不再有自定义补行）', async () => {
   const orders = await loadOrdersModule();
   const built = orders.arrivalSubmitLines({
     rows: [
       { product_record_id: 'p1', size: 40, quantity: 2 },
       { product_record_id: 'p1', size: 41, quantity: 1 },
     ],
-    // 她把 40 改成 2（原样）、41 改成 3（多到）—— 再补一条 42 码 1 双
+    // 她把 40 改成 2（原样）、41 改成 3（多到）
     actuals: { 'p1|40': '2', 'p1|41': '3' },
-    extra: [{ productRecordId: 'p1', size: 42, quantity: 1 }],
   });
   assert.equal(built.ok, true);
   assert.deepEqual(built.lines, [
     { productRecordId: 'p1', size: 40, quantity: 2 },
     { productRecordId: 'p1', size: 41, quantity: 3 },
-    { productRecordId: 'p1', size: 42, quantity: 1 },
-  ], '⭐ 提交的每条都是**她填的那个数** ✓（能真红）');
+  ], '⭐ 提交的每条都是**她填的那个数** ✓（不再接受自定义补行 ✗）');
 });
 
 test('AC-RC4 🔴 **实际 < 申请** ⇒ 提交实际值；**没有任何"按申请数补齐"的路径**', async () => {
@@ -255,7 +258,7 @@ test('AC-RC5 批次缺失 / detail 失败 / accept 失败 ⇒ 人话；**不许�
   assert.ok(orders.arrivalDetailHtml([]).includes('这一批没有可验收的采购明细'), '批次无明细 ⇒ 人话 ✓');
   const config = readWorkbench('config/orders.js');
   const serverConfig = fs.readFileSync(path.join(__dirname, '../src/config/workbenchArrival.js'), 'utf8');
-  for (const key of ['detailFailed', 'itemNoNotFound', 'sizeInvalid', 'accepted']) {
+  for (const key of ['detailFailed', 'sizeInvalid', 'accepted']) {
     assert.ok(config.includes(key), `前端配置里要有 ${key} 那句人话 ✓`);
   }
   // ⚠️ `batchMissing` / `acceptFailed` 的**真源在服务端那一份**（前端不重复抄一份 ✗）

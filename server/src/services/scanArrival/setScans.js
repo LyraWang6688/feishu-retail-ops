@@ -15,8 +15,8 @@
  *   · 空清单 ⇒ `no_scan_lines` 400，**不清旧会话**（她误点一次不丢已填的）✓；
  *   · 同一 (款,尺码) 重复 ⇒ `duplicate_lines` 400（不合并、不静默留一行）✓；
  *   · 款不在本批 ⇒ `not_in_batch` 400（不猜款 ✓）；
- *   · 自定义尺码（款在本批、尺码不在申请行）⇒ **允许**；但必须在「尺码管理」里存在，
- *     否则 `size_unknown` 400（否则后台入库才失败 = 假成功 ✗）；
+ *   · **自定义尺码 / 自定义货号入口已退场（业务负责人 2026-11-09）**：
+ *     提交行必须落在本批申请行里（款 + 尺码都匹配）⇒ 否则 `not_in_batch` 400；
  *   · 数量 0 / 空 ⇒ 这一行**不算到货**（她"没到的改成 0"/从清单里删掉同义 ✓）；非整数/超上限 ⇒ 400；
  *   · 清单**有变化** ⇒ `submit_round + 1`（新的幂等键 ⇒ 改完再提交是"新的一次" ✓）；
  *     清单**完全没变** ⇒ 轮次不动（连点两次同一份 = 同一把钥匙 ⇒ 幂等 ✓）；
@@ -36,14 +36,13 @@
  * @param {Function} deps.positiveInteger 正整数字符串 → number|null
  * @param {Function} deps.nonNegativeInteger 非负整数字符串 → number|null
  * @param {Function} deps.resolve accessor（`() => value`）解引用
- * @param {Function} deps.sizeReferencesOf 延迟取「尺码管理」访问器；返回 null 时跳过自定义尺码校验
  * @returns {Function} `async ({ openId, lines }) => result`
  */
 const { fillText } = require('../../config/scanWrite');
 
 const createSetScans = ({
   get, store, touch, texts, events, config, logInfo,
-  positiveInteger, nonNegativeInteger, resolve, sizeReferencesOf,
+  positiveInteger, nonNegativeInteger,
 }) => async ({ openId, lines } = {}) => {
   const session = await get(openId);
   if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
@@ -78,7 +77,6 @@ const createSetScans = ({
   });
   const normalized = [];
   const seen = new Set();
-  const customSizes = [];
   for (const line of submitted) {
     const productRecordId = String(
       line?.product_record_id ?? line?.productRecordId ?? '',
@@ -109,32 +107,19 @@ const createSetScans = ({
       };
     }
     seen.add(key);
-    if (!reported.has(key)) customSizes.push({ product_record_id: productRecordId, size, quantity });
+    // ⭐ 2026-11-09（业务负责人：前端/后端都不需要自定义尺码、货号逻辑）：
+    //   提交行必须与本批申请行逐字匹配（款 + 尺码）；不在本批 ⇒ 400 + 人话 + 会话不动。
+    if (!reported.has(key)) {
+      logInfo(events.acceptNotInBatch, {
+        session_id: session.session_id, batch_no: session.batch_no,
+        product_record_id: productRecordId, size,
+      });
+      return { ok: false, reason: 'not_in_batch', message: texts.acceptNotInBatchBody };
+    }
     normalized.push({ product_record_id: productRecordId, size, quantity });
   }
   if (!normalized.length) {
     return { ok: false, reason: 'no_scan_lines', message: texts.acceptNoScansBody };
-  }
-  if (customSizes.length) {
-    const accessor = sizeReferencesOf();
-    const resolver = accessor ? resolve(accessor) : null;
-    if (resolver && typeof resolver.resolveByNumber === 'function') {
-      for (const line of customSizes) {
-        let found = null;
-        try {
-          found = await resolver.resolveByNumber(line.size);
-        } catch (_) {
-          found = null;
-        }
-        if (!found) {
-          return {
-            ok: false,
-            reason: 'size_unknown',
-            message: texts.acceptSizeUnknownBody || texts.acceptNotInBatchBody,
-          };
-        }
-      }
-    }
   }
   const keyOf = (list) => list
     .map((item) => `${item.product_record_id}|${Number(item.size)}|${Number(item.quantity)}`)
@@ -152,7 +137,7 @@ const createSetScans = ({
   logInfo(events.acceptRowsSet, {
     session_id: updated.session_id, batch_no: updated.batch_no,
     line_count: normalized.length, scanned, expected: Number(updated.expected || 0),
-    custom_count: customSizes.length, request_rows: reported.size, changed,
+    request_rows: reported.size, changed,
   });
   return {
     ok: true,

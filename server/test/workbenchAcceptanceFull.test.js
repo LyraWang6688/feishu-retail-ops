@@ -290,27 +290,27 @@ test('AC-AW16a ⭐ 明细与提交打的是**新接口**（配置常量 ✓ 不�
   assert.ok(FEATURE.includes('ARRIVAL_FULL_API.detail'), '明细读 /purchase/arrivals/detail ✓');
   assert.ok(FEATURE.includes('ARRIVAL_FULL_API.accept'), '提交打 /purchase/arrivals/accept ✓');
   assert.ok(FEATURE.includes('arrival-detail'), '有只读明细容器 ✓');
-  assert.ok(FEATURE.includes('data-field="custom-size"') && FEATURE.includes('data-field="custom-quantity"'), '自定义尺码（尺码+数量）✓');
-  assert.ok(FEATURE.includes('data-field="custom-item-no"'), '自定义货号 ✓');
+  // ⭐ 2026-11-09（业务负责人批注：「自定义尺码 / 自定义货号」不需要，删除）⇒ 两个入口不许回来
+  assert.equal(FEATURE.includes('data-field="custom-size"'), false, '⛔ 自定义尺码入口已删除 ✓');
+  assert.equal(FEATURE.includes('data-field="custom-item-no"'), false, '⛔ 自定义货号入口已删除 ✓');
   // 服务端两条接口的路径逐字在配置里 ✓（前后端同一份口径）
   assert.match(FE_CONFIG, /detail: '\/api\/workbench\/purchase\/arrivals\/detail'/, '明细接口路径 ✓');
   assert.match(FE_CONFIG, /accept: '\/api\/workbench\/purchase\/arrivals\/accept'/, '验收接口路径 ✓');
 });
 
-test('AC-AW16b ⭐ 自定义货号：认不出 ⇒ **人话**（不静默 ✗）；解析走**既有**货品读取口 ✓', () => {
-  assert.ok(FEATURE.includes('ARRIVAL_FULL_API.products'), '货号 ⇒ record_id 走既有 /inventory/products ✓');
-  assert.ok(FEATURE.includes('ARRIVAL_FULL_TEXTS.itemNoNotFound'), '认不出就显示人话 ✓');
-  assert.ok(FEATURE.includes('renderResult(ARRIVAL_FULL_TEXTS.itemNoNotFound, true)'), '人话以**错误**形式显示（不静默 ✗）');
+test('AC-AW16b ⭐ 自定义入口已退场（业务负责人 2026-11-09 批注）', () => {
+  assert.equal(/custom-size|custom-quantity|custom-item/.test(FEATURE), false, '⛔ 前端不许再有自定义尺码/货号字段 ✓');
+  assert.equal(FEATURE.includes('resolveItemNo'), false, '⛔ 解析自定义货号的辅助函数已删除 ✓');
 });
 
 test('AC-AW16c ⭐ 交互硬规矩：文案走配置 ✓ · 无内联高度 ✗（沿用 ≥44px 的既有控件样式）· 提交有**即时反馈** ✓', () => {
   // 新块用配置文案（不硬编码中文 ✓）
-  assert.ok(FEATURE.includes('ARRIVAL_FULL_TEXTS.customSizeLabel'), '标签走配置 ✓');
-  assert.ok(FE_CONFIG.includes('customSizeLabel'), '配置里确实有这些文案 ✓');
+  // 自定义入口已退场 ⇒ 配置里也不许再留这些文案（能真红：塞回即红）
+  assert.equal(FE_CONFIG.includes('customSizeLabel'), false, '⛔ 配置里的自定义尺码文案已删除 ✓');
   // ≥44px：沿用既有控件样式（base.css 给 --control-height）✓ 且**不写内联高度** ✗
   const base = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'styles', 'base.css'), 'utf8');
   assert.match(base, /\.btn,\s*input,\s*select\s*\{[^}]*min-height:\s*var\(--control-height\)/, '既有控件 ≥44px ✓');
-  const block = FEATURE.slice(FEATURE.indexOf('data-view="arrival-detail"'), FEATURE.indexOf('data-view="arrival-custom-item"'));
+  const block = FEATURE.slice(FEATURE.indexOf('data-view="arrival-detail"'), FEATURE.indexOf('data-field="arrival-amount"'));
   assert.equal(/style="height/.test(block), false, '新块不许写内联高度（走既有令牌 ✓）');
   // 即时反馈：提交仍走既有的 runWriteAction（点击立刻置灰 + 换文案 ✓）
   const submitSlice = FEATURE.slice(FEATURE.indexOf('async function submitArrival'), FEATURE.indexOf('async function runAction'));
