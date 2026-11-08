@@ -64,6 +64,31 @@
 └── .env.example        # 环境变量模板
 ```
 
+### 4.1 统一配置与基础设施入口
+
+改业务前先看这一组**唯一真源**，不要另起一套：
+
+| 范围 | 唯一入口 |
+| --- | --- |
+| 异步任务状态 / 重试 / 失败通知 | `server/src/config/asyncJobs.js` + `services/asyncJobService.js` |
+| 飞书写入并发 / 瞬时重试 | `server/src/config/feishuWriteScheduler.js` + `services/feishuWriteScheduler.js`（固定常开） |
+| 库存操作键 | `server/src/services/inventory/movements.js` 的 `STOCK_MOVEMENTS[*].operationKey` |
+| 配置表缓存 / TTL / 失效 | `server/src/config/configTables.js` + `services/configTableCache.js` |
+| 提交成功 toast | `server/src/config/submitToast.js` + `utils/submitToast.js` |
+| 日志事件目录 | `server/src/config/events.js`（自动生成） |
+| 表 ID / 字段映射 | `server/src/config/v1BitableSchema.js` |
+
+完整盘点与例外：
+
+[统一基础设施与配置盘点](docs/reports/unified-infrastructure-and-config-2026-11-08.md)
+
+注意：
+
+- 所有飞书**写**请求必须走 `V1BitableGateway`，不要直连飞书 HTTP（否则失去调度/重试/幂等重放）。
+- 新增配置表先登记 `config/configTables.js`；读统一走 `getConfigRows`。
+- 新增库存行为先在 `STOCK_MOVEMENTS` 声明 `operationKey`，不要自己拼幂等键。
+- 页面不再有成功页，统一用提交成功 toast；失败不弹页面提示，最终失败由统一异步层发运营群。
+
 ## 5. 快速开始
 
 1. 安装依赖并启动后端

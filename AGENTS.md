@@ -338,6 +338,31 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
      回退到默认值，于是**关不掉**（`getEnv` 的表 ID 默认值就是这个形状）。
    - 检查法：**"这个数字/名字/开关，换一个值需要改代码吗？"** —— 需要改就是没做到。
 
+### 统一配置与基础设施（2026-11-08 定稿）
+
+改异步、写飞书、库存键、配置表缓存之前，先认这一组唯一真源：
+
+| 范围 | 唯一入口 | 硬约束 |
+| --- | --- | --- |
+| 异步任务 | `config/asyncJobs.js` + `services/asyncJobService.js` | 不要自建 job 队列/状态；重试复用同一幂等键 |
+| 飞书写入 | `services/v1BitableGateway.js` → `services/feishuWriteScheduler.js` | **所有写必须走 gateway**；调度器固定常开；读不进调度器 |
+| 库存操作键 | `services/inventory/movements.js` 的 `STOCK_MOVEMENTS[*].operationKey` | 不要自己拼 `operationId` / `operationItemKey`；缺字段抛错 |
+| 配置表缓存 | `config/configTables.js` + `services/configTableCache.js` | 新表先登记；TTL 由注册表给；读走 `getConfigRows`；lastGood 有过期告警 |
+| 提交回执 | `config/submitToast.js` + `utils/submitToast.js` | 统一 toast，不恢复成功页 |
+| 日志事件 | `config/events.js` | 自动生成，禁止手改；新增事件跑生成器 |
+| 表/字段 | `config/v1BitableSchema.js` | 生产表改动必须同步 |
+
+完整盘点（含例外/未统一项）：
+
+`docs/reports/unified-infrastructure-and-config-2026-11-08.md`
+
+边界：
+
+- 配置表缓存当前是**单进程**；多实例跨进程失效未做，不要假设已支持。
+- 飞书 5xx / 网络超时**不在调度器层重试**（结果未知），交 job 层幂等重试。
+- 页面不显示失败提示；最终失败由统一异步层发「邯美皮鞋运营群」。
+- 部署仍需业务负责人当次明确指令，不能因为合并就自动部署。
+
 ### 生产表里的任何更改都要同步到代码（业务负责人 2026-10-05 明确）
 
 > 「我这边在**生产表里面做的任何更改**，**你都要改**啊」
