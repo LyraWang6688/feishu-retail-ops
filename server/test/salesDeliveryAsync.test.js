@@ -132,7 +132,14 @@ test('AC-DA6 生命周期日志：enqueued / started / finished 可串起 job，
     pay: async () => ({}),
   });
   const { job } = await service.enqueue({ type: 'delivery', requestId: uuid(7), payload: { detailRecordIds: ['d1'] } });
-  await waitFor(async () => (await service.get(job.job_id))?.status === 'succeeded');
+  // ⚠️ 竞态：jobs.run 先落 succeeded，返回后 service 才写 job_finished 日志；
+  //    只等 status 会在极窄窗口里读到“状态已完成、完成日志还没写”。
+  //    这里同时等完成日志出现，避免偶发红（不改业务顺序）。
+  await waitFor(async () => {
+    const current = await service.get(job.job_id);
+    return current?.status === 'succeeded'
+      && logs.some((item) => item.event === 'workbench.sales.delivery.job_finished');
+  });
 
   const lifecycle = logs.filter((item) => item.event.startsWith('workbench.sales.delivery.job_'));
   assert.deepEqual(lifecycle.map((item) => item.event), [
