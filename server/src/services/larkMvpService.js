@@ -85,9 +85,7 @@ const { resolveAckReaction } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
 const { extractBatchNos } = require('./purchaseBatchNo');
 // 「群话题 ↔ 销售记录」的本地路由映射（只写本地，不写业务表，见服务的注释）。
-const { SalesGroupThreadLocator } = require('./salesGroupThreadLocator');
 // 「消息深链存哪儿」的唯一落点（本地映射 + 销售主表「消息链接」列，见服务的注释）。
-const { SalesMessageLinkService } = require('./salesMessageLinkService');
 // 「话题里的二次处理识别」（②：预定 / 现货待收的进展同步）——⚠️ 2026-10-28：
 //   独立 service（`services/salesThreadProgressService.js`）与它的配置
 //   （`config/salesProgressIntake.js`）**整文件删除**：它只服务群话题那条入口，
@@ -239,16 +237,7 @@ class LarkMvpService {
     // 执行器用自己的任务存储（data/after_sales_operations），所以这里不能把销售的任务存储传给它。
     this.afterSales = options.afterSales || new AfterSalesService({ gateway: this.gateway });
     this.sampleReplacements = options.sampleReplacements || new SampleReplacementService({
-      gateway: this.gateway, inventory: this.delivery.inventory, store: this.store, client: this.client,
-      updateCard: (task, event, card, metadata) => this.updateSalesActionCard(task, event, card, metadata),
-      // ⭐ 渠道感知的两个出口（接线方式与补样品那条**完全一致**，见 PR #148）：
-      //   群话题里的补样品任务 → 卡片/文字回到**那个话题**（`reply_in_thread`）。
-      //   ⚠️ 2026-10-07 私聊链路移除后，**没有群上下文的任务没有去处**：
-      //     这两个出口里 `chat_type !== 'group'` 会在本类直接记日志 + 返 `null`，
-      //     `SampleReplacementService` 那侧的缺省出口同样不发（它的两个 open_id 发送器已整体删除）。
-      // 飞书语义（reply_in_thread）只留在本类，service 不认识 chat_type / thread_id。
-      sendCardToTask: (task, card) => this.sendTaskCard(task, card),
-      sendTextToTask: (task, message) => this.sendTaskText(task, message),
+      gateway: this.gateway, inventory: this.delivery.inventory, store: this.store,
     });
     // 「确认状态」（用户那一维）的唯一写入口：名字与取值都在 config/salesStatusDimensions。
     // ⚠️ 它**只记她在卡片上点了什么**，不参与任何闸门判据（判据读的是「资金状态」）。
@@ -262,23 +251,6 @@ class LarkMvpService {
     // 一个目录里，将来按任务翻盘时会互相干扰。
     this.purchaseBatchLocator = options.purchaseBatchLocator || new PurchaseBatchLocator({
       store: options.purchaseBatchLocatorStore,
-    });
-    // ── 群聊（销售链路搬进群）────────────────────────────────────────────────
-    // 「这条群消息 / 这个话题 → 是哪一笔销售」的本地定位器。与采购那套**分目录、分实例**
-    // （data/sales_group_threads）：销售和采购是两件事，混在一个目录里将来按任务翻盘
-    // 时会互相干扰。
-    // ⚠️ 业务负责人说过「这个话题不用存」——那说的是**不建业务表、不给业务表加列**；
-    //    机器人要能从话题反查回那笔销售，仍然需要这份**本地**路由映射（见服务注释）。
-    this.salesGroupThreads = options.salesGroupThreads || new SalesGroupThreadLocator({
-      store: options.salesGroupThreadStore,
-    });
-    // 「这条话题 ↔ 这笔销售」的**本地**路由映射的唯一落点（业务负责人 2026-10-06 要的）。
-    // ⚠️ 它同时算/存话题深链，但**只存本地**：原来还往销售主表「消息链接」列写一份，
-    //    那一列 + 那个写入点已在 2026-10-09 随"扫码时代不要这几列了"一起删掉
-    //    （见 `salesMessageLinkService` 与 `config/v1BitableSchema.salesEntry` 段）。
-    //    链接只可能在**发送响应**里出现（实测当前不回带），所以它挂在"我们发卡片/文字的那一刻"上。
-    this.salesMessageLinks = options.salesMessageLinks || new SalesMessageLinkService({
-      locator: this.salesGroupThreads,
     });
     // ⚠️ 2026-10-12（清群聊入口 C3）：这里原先解析两个**只服务群准入**的东西 ——
     //    `this.botOpenId`（判"群里有没有 @ 机器人"，`config/groupPurchase` 的 `LARK_BOT_OPEN_ID`）
@@ -536,12 +508,6 @@ class LarkMvpService {
     }
   }
 
-  async updateSalesActionCard(task, event, card, metadata = {}) {
-    return updateInteractiveCard({ client: this.client, task, event, card,
-      stage: metadata.stage, interactionId: metadata.interactionId,
-      eventPrefix: task.type === 'sample_replacement' ? 'lark.sales.sample_card.update' : 'lark.sales.card.update' });
-  }
-
   // ── 渠道感知的输出（B）：「回复 / 卡片回到话题」────────────────────────────
   //
   // 🔴 2026-10-07「私聊链路移除」：**没有群上下文的任务 = 没有去处** ——
@@ -564,83 +530,6 @@ class LarkMvpService {
    * 刻意**不留任何开关**：要恢复私聊是"重新实现那条链路"，不是翻一个开关
    * （业务负责人 2026-10-07 拍板的 ⓐ，见 docs/private-chat-removal-decision-2026-10-07.md）。
    */
-  async sendTaskText(task, message) {
-    if (task?.chat_type !== 'group') return skipNoGroupContext('text', task);
-    const sent = await this.replyTextInThread(task.message_id, message);
-    // ⚠️ 文字这条出口**只补本地路由映射** —— 两条理由：
-    //   ① 深链是**话题级**的（URL 里只有 chat_id + thread_id，没有 message_id）：同一话题里
-    //      不管哪条回复拼出来都是同一条，卖卡片那条出口（sendTaskCard）已经记过了，再记是空转；
-    //   ② 这条出口里混着"**不猜、不写业务表**"的路径（例：多笔未收款占位 / 金额对不上时
-    //      回一句「有多条待收款，请先人工核对」）——业务表的写入**绝不能搭在它上面**，
-    //      否则"一个字都不写"这条保证会被一个不相干的副作用破掉。
-    //   ⭐ 2026-10-09：销售主表「消息链接」那一列已被她删掉、**写入点整体删除**
-    //      （见 `salesMessageLinkService` / `v1BitableSchema.salesEntry` 段）——
-    //      于是"写表/不写表"这个开关本身没有了，两条出口现在都只记本地映射
-    //      （本地映射是「话题 ↔ 这笔销售」的路由，本来就必须记）。
-    await this.bindGroupSaleThread(task, sent);
-    return sent.messageId;
-  }
-
-  /**
-   * 群里：把卡片回到那条销售话题（没有原卡片可改时的兜底）。
-   * ⚠️ **没有群上下文**的任务：私聊链路已移除，它**没有去处** → 只记一条
-   * `lark.private_chat.send_skipped`、返 `null`，**一个远端调用都不做**（同 `sendTaskText`）。
-   */
-  async sendTaskCard(task, card) {
-    if (task?.chat_type !== 'group') return skipNoGroupContext('card', task);
-    const sent = await this.replyCardInThread(task.message_id, card);
-    await this.bindGroupSaleThread(task, sent);
-    return sent.messageId;
-  }
-
-  /**
-   * ⭐ ③ 售后（以及任何"带任务上下文"的回复）的**渠道感知回复**：
-   *   · 群里 → 回复到 `task.message_id` 的**那个话题**（`reply_in_thread: true`）；
-   *   · 没有群上下文 → **没有去处**：只记一条 `lark.private_chat.send_skipped`、返 `null`。
-   *
-   * 与 `sendTaskCard` 的区别：这个是"回她那条消息"，不是"另发一张"。
-   * 售后的确认卡片、候选卡片、结果卡片都优先走它 —— 她在话题里说话，
-   * 卡片就落在同一个话题里（"在一个话题里解决一切"）。
-   *
-   * 🔴 2026-10-07 二次收尾：非群分支**不再**回落「回复她那条私聊消息」
-   *    （`replyCard(task.message_id, card)`）—— 私聊入口已移除，非群任务**没有去处**；
-   *    这是当时漏掉的最后两条口子之一。见 utils/privateChatSend.js 的口径。
-   */
-  /**
-   * 记下「这条话题 ↔ 这笔销售」的**本地**路由映射（`data/sales_group_threads/`）。
-   *
-   * 时机就是"我们第一条回复发出去之后"：`reply_in_thread` 的响应里才带 thread_id
-   * （普通群里这个话题是**我们这条回复**创建的）。`message_app_link` 一旦飞书回带，就只有
-   * "发出去的那一刻"能拿到（实测 2026-10-06：这个应用当前**根本不回带**，见
-   * docs/reports/group-message-deep-link-2026-10-06.md 的实测四）——所以这里是唯一的落点。
-   * 失败只告警——它只影响"她后面在这个话题里说话能不能被认出来"，
-   * 绝不能因此把已经发出去的卡片判失败。
-   *
-   * ⚠️ 2026-10-09：原来这里还有一个 `storeLink` 开关（要不要顺手写销售主表「消息链接」列）——
-   *    那一列已被业务负责人删除、**写入点整体下线** ⇒ 开关删掉。
-   *    **本地路由映射仍然是任何情况都记**（「9 点推送」里那句「查看原话」的深链读的就是它，
-   *    与业务表那一列无关）：功能没死，只是不再往业务表写。
-   */
-  async bindGroupSaleThread(task, sent = {}) {
-    if (task?.chat_type !== 'group') return null;
-    try {
-      const result = await this.salesMessageLinks.rememberFromSend({
-        salesEntryRecordId: task.sales_entry_record_id || '',
-        taskId: task.task_id,
-        orderNo: task.posting_result?.sourceNo || '',
-        messageId: task.message_id,
-        threadId: String(sent?.threadId || task.group_thread_id || '').trim(),
-        chatId: task.chat_id || '',
-        senderOpenId: task.sender_open_id || '',
-        replyMessageId: sent?.messageId || '',
-        appLink: sent?.appLink || '',
-      });
-      return result.record;
-    } catch (error) {
-      logWarn('sales.group.thread.remember_failed', { task_id: task.task_id, error: error.message });
-      return null;
-    }
-  }
   async acceptMessage(event) {
     const message = event?.message;
     const senderOpenId = event?.sender?.sender_id?.open_id;
