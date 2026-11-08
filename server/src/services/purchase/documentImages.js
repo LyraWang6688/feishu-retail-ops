@@ -248,16 +248,28 @@ const documentImages = {
         // ⚠️ 2026-10-07（业务负责人逐字：「不用说几条，只给出多少双就可以了」）：
         //    文案从配置渲染 —— `{supplier} 这批 {pairs} 双，图可以直接转给供应商。`
         //    **没有「N 条」、也没有「共」**；`{pairs}` = 上面那个 `totalPairs`（口径未动）。
-        const textResult = await this.sendText(
-          target.chatId,
-          this.mentionOperatorText(
-            operatorOpenId,
-            renderPurchaseGroupNoticeText({ label, pairs: totalPairs }, noticeConfig),
-            noticeConfig,
-          ),
-          'chat_id',
-          { replyToMessageId: threadRootMessageId, inThread: textInThread },
+        const noticeText = this.mentionOperatorText(
+          operatorOpenId,
+          renderPurchaseGroupNoticeText({ label, pairs: totalPairs }, noticeConfig),
+          noticeConfig,
         );
+        const notificationEvent = options.notificationEvent
+          || (/退货/.test(String(fileNameSuffix || '')) ? 'purchase_return_created' : 'purchase_request_created');
+        let textResult;
+        if (this.notificationService && typeof this.notificationService.send === 'function') {
+          const sent = await this.notificationService.send(notificationEvent, { text: noticeText }, {
+            target: { receiveIdType: 'chat_id', receiveId: target.chatId },
+            replyToMessageId: threadRootMessageId,
+            inThread: textInThread,
+          });
+          if (!sent.ok) throw new Error(sent.error || sent.reason || '通知发送失败');
+          textResult = { messageId: sent.messageId, threadId: sent.threadId || '' };
+        } else {
+          textResult = await this.sendText(
+            target.chatId, noticeText, 'chat_id',
+            { replyToMessageId: threadRootMessageId, inThread: textInThread },
+          );
+        }
         groupMessages.push(
           { messageId: imageResult.messageId, threadId: imageResult.threadId },
           { messageId: textResult.messageId, threadId: textResult.threadId },

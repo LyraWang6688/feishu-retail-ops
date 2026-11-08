@@ -35,7 +35,7 @@ const sendTextMessage = async ({ client, target, text, replyToMessageId = '', in
   if (!response || response.code !== 0) throw new Error(`发送文本失败: ${response?.msg || 'unknown'}`);
   const messageId = String(response?.data?.message_id || '');
   if (!messageId) throw new Error('发送文本未返回 message_id');
-  return { messageId };
+  return { messageId, threadId: String(response?.data?.thread_id || '') };
 };
 
 const createDefaultClient = () => {

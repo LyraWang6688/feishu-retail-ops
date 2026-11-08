@@ -118,3 +118,30 @@ test('AC-IP3 没有 preparedImages（渲染失败/老调用方）⇒ 逐字退�
   assert.equal(calls.sendImage.length, 2);
   assert.deepEqual(result.sent.sort(), ['一代千金', '信踏']);
 });
+
+
+test('AC-IP4 生产路径：采购文字走统一通知服务（text 格式 + 回复图片话题）', async () => {
+  const { fake, calls } = makeThis();
+  const notifications = [];
+  fake.notificationService = {
+    send: async (event, data, options) => {
+      notifications.push({ event, data, options });
+      return { ok: true, messageId: 'om_notice', threadId: 'omt_1' };
+    },
+  };
+  const prepared = new Map([
+    [PLAN.supplier_groups[0].group_key, Buffer.from('PNG:一代千金')],
+    [PLAN.supplier_groups[1].group_key, Buffer.from('PNG:信踏')],
+  ]);
+  const posting = { batch_no: PLAN.batch_no, batch_key: PLAN.batch_key, supplier_groups: PLAN.supplier_groups, request_ids: ['r1'] };
+  const result = await documentImages.deliverSupplierImagesInner.call(fake, 'task_parallel_1', task, posting, { preparedImages: prepared });
+  assert.equal(notifications.length, 2);
+  assert.equal(notifications[0].event, 'purchase_request_created');
+  assert.match(notifications[0].data.text, /一代千金/);
+  assert.equal(notifications[0].options.target.receiveIdType, 'chat_id');
+  assert.equal(notifications[0].options.target.receiveId, 'oc_test_group');
+  assert.equal(notifications[0].options.replyToMessageId, 'om_img_1');
+  assert.equal(notifications[0].options.inThread, true);
+  assert.equal(calls.sendText.length, 0, '生产路径不再走旧 sendText');
+  assert.equal(result.sent.length, 2);
+});

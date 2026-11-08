@@ -69,6 +69,7 @@ const { purchaseCorrelation } = require('./purchase/correlation');
 //（2026-10-07 附件回填改到「报货批次.单据」，两边都要用同一套解析；
 //  这里只是转发导出，保持既有 `module.exports` 形状不变，避免第二份实现慢慢漂移）。
 const { attachmentTokens } = require('./purchaseOrderBatchService');
+const { createNotificationService } = require('./notificationService');
 
 
 // 🔴 2026-10-08（业务负责人逐条批准）：**采购卡片动作整体退场**。
@@ -169,6 +170,7 @@ class PurchaseWebhookService {
     // 0 表示不设超时，只有极少数测试会这么用。
     // ⚠️ 到货链路的 mediaTimeoutMs / recognitionTimeoutMs（下载图片、视觉识别）已随
     // 「拍照识别」退场一起删除；剩下的只有发 IM 消息这一个对外调用。
+    this.notificationService = options.notificationService || createNotificationService({ client: this.client });
     this.imTimeoutMs = options.imTimeoutMs ?? 15_000; // 飞书消息
     this.gatewayTimeoutMs = options.gatewayTimeoutMs ?? 60_000;
     // 本服务里所有 gateway 调用都套上超时。这里包的是本服务持有的引用，
