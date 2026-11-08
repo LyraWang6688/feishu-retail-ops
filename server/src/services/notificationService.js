@@ -52,9 +52,18 @@ const createNotificationService = ({
   const warn = typeof logger.logWarn === 'function' ? logger.logWarn : () => {};
 
   const send = async (event, data = {}, options = {}) => {
+    const resolved = resolve(event);
+    // ⭐ 2026-11-09：显式 target 只允许覆盖**收件人**，不允许覆盖事件开关。
+    //   事件是否启用仍由 resolveNotification 决定；否则 NOTIFY_<EVENT>_ENABLED=false 会被绕过。
     const target = options.target
-      ? { enabled: true, reason: 'ok', ...options.target }
-      : resolve(event);
+      ? {
+        ...resolved,
+        ...(options.target.receiveId ? { receiveId: options.target.receiveId } : {}),
+        ...(options.target.receiveIdType ? { receiveIdType: options.target.receiveIdType } : {}),
+        ...(options.target.target ? { target: options.target.target } : {}),
+        reason: resolved.enabled && (options.target.receiveId || resolved.receiveId) ? 'ok' : resolved.reason,
+      }
+      : resolved;
     if (!target.enabled || target.reason !== 'ok') {
       warn('notification.skipped', {
         event, reason: target.reason || 'disabled', target: target.target || '', source_env: target.sourceEnv || '',
