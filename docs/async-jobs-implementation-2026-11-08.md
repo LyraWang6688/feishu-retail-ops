@@ -56,7 +56,7 @@
 
 ## 5. 失败通知（唯一出口）
 
-- 群：`ASYNC_JOB_ALERT_CHAT_ID` 优先，否则**复用既有** `PURCHASE_CHAT_ID`（邯美皮鞋运营群）；
+- 群：统一由 `config/notifications.js` 的群目标决定 —— `NOTIFY_GROUP_CHAT_ID` 优先，否则**复用既有** `PURCHASE_CHAT_ID`（邯美皮鞋运营群）；
 - 未配置群 ⇒ 记 **`async_job.notify.chat_missing`**，不静默成功、不写 `notified_at`；
 - **同一 job 只发一次**：发送成功才写 `notified_at`；发送失败记 `async_job.notify.failed`，
   **不改变业务任务状态**，下次启动 `startAsyncJobService()` 会补发（`start()` 只扫 `failed && !notified_at`）；
