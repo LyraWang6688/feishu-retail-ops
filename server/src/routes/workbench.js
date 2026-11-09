@@ -19,6 +19,8 @@ const { createWorkbenchDouyinRoutes } = require('./workbench/douyin');
 // ⭐ 2026-11-08（#948）：统一异步任务状态只读接口 —— 挂在**本文件既有**那道 `requireWorkbenchAccess`
 //   之后（不新开鉴权）；owner 校验 / 不返回 payload 由子 router 自己负责。
 const { createWorkbenchAsyncJobRoutes } = require('./workbench/asyncJobs');
+// ⭐ 2026-11-10（业务负责人）：数据配置页的**存量写入**按钮（样例图 → 云盘）。
+const { createWorkbenchDataConfigRoutes } = require('./workbench/dataConfig');
 // ⭐⭐ 2026-10-16（task-56）：异步之后**金额这道校验留在同步路径** —— 规则与文案**都取既有那一份**
 //    （`parseActualAmount` 只有一处实现 ✓ `config/purchaseArrivalTexts` 的 `pageMessages` ✓）
 //    ⇒ 本文件**不抄第二份规则、也不新写一句中文** ✗。
@@ -160,6 +162,7 @@ const createWorkbenchRouter = (options = {}) => {
 
   // 统一异步任务状态（#948 · 只读；位于本文件上方 `router.use(requireWorkbenchAccess)` 之后）
   router.use(createWorkbenchAsyncJobRoutes({ asyncJobs: options.asyncJobs }));
+  router.use(createWorkbenchDataConfigRoutes({ options }));
   router.use(createWorkbenchPurchaseRoutes({ options, ordersCache }));
   // 库存 / 标签打印：各自子 router（2026-10-28 拆分；鉴权与 no-store 仍由父 router 统一加）。
   router.use(createWorkbenchInventoryRoutes(options));

@@ -43,6 +43,25 @@ const submittedTargets = () => {
 
 /** ⭐ 已核的四跳链（每条都真核过 ✓）；`landing` = [表语义键, 列语义键]，断言该列真的在 schema 里 ✓ */
 const CHAINS = Object.freeze({
+  // ⭐ 2026-11-10（业务负责人）：数据配置页「同步存量样例图」按钮 = 存量写入。
+  //   落点核过：只写「货品信息.已同步云盘」这一个复选框列（样例图本身进云盘文件，不是表列）。
+  // ⭐ 2026-11-10：数据配置页「同步团购券数据」按钮 → 写回「团购券管理」的券目录字段。
+  'DATA_CONFIG_API.voucherCatalogSync': {
+    fe: 'features/domains/dataConfigAction.js', feKey: 'api.post(DATA_CONFIG_API.voucherCatalogSync',
+    route: 'src/routes/workbench/douyin.js', routeKey: /router\.post\('\/douyin\/voucher-catalog-sync'/,
+    service: 'src/services/douyin/voucherCatalogSync.js', serviceKey: /gateway\.update\('groupBuyVoucher'/,
+    landing: [['groupBuyVoucher', 'name'], ['groupBuyVoucher', 'purchasePrice'], ['groupBuyVoucher', 'faceValue'],
+      ['groupBuyVoucher', 'status'], ['groupBuyVoucher', 'externalId'], ['groupBuyVoucher', 'listedAt'],
+      ['groupBuyVoucher', 'delistedAt']],
+  },
+
+  'DATA_CONFIG_API.sampleImageSync': {
+    fe: 'features/domains/dataConfigAction.js', feKey: 'api.post(DATA_CONFIG_API.sampleImageSync',
+    route: 'src/routes/workbench/dataConfig.js', routeKey: /router\.post\('\/data-config\/sample-image-sync'/,
+    service: 'src/services/sampleImageBackfillService.js', serviceKey: /driveService\.syncRecord\(/,
+    landing: [['product', 'sampleImageSynced']],
+  },
+
   'ARRIVAL_FULL_API.accept': {
     fe: 'features/orders/index.js', feKey: 'ARRIVAL_FULL_API.accept',
     // ⭐ 2026-10-16：注册处是**变量路径**（不是字面量 ✗）——

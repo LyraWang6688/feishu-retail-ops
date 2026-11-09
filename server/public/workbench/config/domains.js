@@ -234,9 +234,16 @@ export const DOMAIN_TABS = [
       {
         id: 'product-info-config',
         label: '数据配置',
-        // ⭐ 2026-11-10 业务负责人：这里放**一颗按钮**「同步团购券数据」——
-        //   点一下才去读抖音商品接口、把接口返回的字段写回「团购券管理」（不是定时任务）。
-        kind: 'voucher-sync',
+        // 2026-11-10：数据配置 = 动作卡页。
+        //   · 配品配置：占位卡（与录单入口卡同款）
+        //   · 同步团购券数据：点击触发抖音券目录写回
+        //   · 同步存量样例图：点击触发样例图补传云盘
+        kind: 'action-cards',
+        cards: [
+          { id: 'accessory-config', icon: '🛒', title: '配品配置', placeholder: true },
+          { icon: '🔄', title: '同步团购券数据', action: 'voucher-catalog-sync' },
+          { icon: '🖼️', title: '同步存量样例图', action: 'sample-image-sync' },
+        ],
       },
       {
         id: 'product-notifications',

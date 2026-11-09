@@ -106,6 +106,8 @@ export const ORDERS_API = {
   purchaseRequests: '/api/workbench/purchase/requests',
   // ⭐ 2026-11-09：验收页第一层 = 「供应商管理」全部供应商（只读；走配置表缓存 supplier）
   suppliers: '/api/workbench/purchase/suppliers',
+  // ⭐ 2026-11-10：按供应商拆卡 —— 哪些供应商已验收完（前端隐掉对应卡片）
+  acceptedSuppliers: '/api/workbench/purchase/arrivals/accepted-suppliers',
   arrivalConfirm: '/api/workbench/purchase/arrivals/confirm',
 };
 
@@ -138,6 +140,8 @@ export const ARRIVAL_FULL_API = {
 };
 export const ARRIVAL_FULL_FIELDS = {
   batchNo: 'batchNo', actualAmount: 'actualAmount', lines: 'lines',
+  // ⭐ 2026-11-10：按供应商拆卡后，明细/提交都要带供应商范围（同一批次可有多家分别验收）
+  supplierRecordId: 'supplierRecordId',
   productRecordId: 'productRecordId', size: 'size', quantity: 'quantity',
 };
 export const ARRIVAL_FULL_TEXTS = {
@@ -159,6 +163,10 @@ export const ARRIVAL_FULL_TEXTS = {
   // 货号卡片右上角合计（业务负责人 2026-11-09：保留合计双数；不带「申请/报货」字样）
   detailGroupTotal: '{total} 双',
   zeroMeansNotArrived: '没到的填 0',
+  // ⭐ 2026-11-09（业务负责人）：货款必填（参考销售货品页的金额校验）
+  amountRequired: '请先填「本次货款金额」（大于 0 的数字），再确认到货并入库',
+  // ⚠️ 后端 accept 必回 redirect_url（submitToastUrl 唯一生成）；缺失 = 不该发生的事故，按失败报
+  redirectMissing: '提交回执缺少跳转地址，请刷新工作台后再看；这次不要重复提交',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',
   // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）
   sizeInvalid: '尺码要填数字，数量要大于 0',

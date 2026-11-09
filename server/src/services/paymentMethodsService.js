@@ -26,9 +26,10 @@ const orderWithPreferred = (items = [], preferred = '') => {
 const createPaymentMethodsService = (gateway, options = {}) => {
   if (!gateway) throw new Error('PaymentMethodsService requires gateway');
   const tableKey = options.tableKey || 'paymentMethod';
-  const fieldName = options.fieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.name || '收款方式';
+  const fieldName = options.fieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.name || '';
   const voucherFieldName = options.voucherFieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.voucher || '';
   const orderFieldName = options.orderFieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.order || '';
+  const enabledFieldName = options.enabledFieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.enabled || '';
   // TTL 统一由 `config/configTables.js` 决定，调用方不再传。
   const ttlMs = CONFIG_TABLES.paymentMethod.ttlMs;
   const now = options.now || (() => Date.now());
@@ -54,9 +55,13 @@ const createPaymentMethodsService = (gateway, options = {}) => {
     const columnExists = (rows || []).some((row) =>
       row?.fields && Object.prototype.hasOwnProperty.call(row.fields, refundableFieldName));
     const seen = new Set();
+    const enabledColumnExists = enabledFieldName && (rows || []).some((row) =>
+      row?.fields && Object.prototype.hasOwnProperty.call(row.fields, enabledFieldName));
     const ordered = (rows || []).map((row, index) => ({ row, index, order: orderOf(row) }))
       .sort((a, b) => (a.order - b.order) || (a.index - b.index));
     for (const { row } of ordered) {
+      // 「是否启用」列存在时，未勾选的方式不出现在资金页 / 售后下拉里；列不存在 ⇒ 全部可用。
+      if (enabledColumnExists && row?.fields?.[enabledFieldName] !== true) continue;
       const value = textValue(row?.fields?.[fieldName]).trim();
       if (!value || seen.has(value)) continue;
       seen.add(value);
@@ -105,7 +110,7 @@ const createPaymentMethodsService = (gateway, options = {}) => {
       : { ok: false, items: [], reason: loaded.reason, error: loaded.error };
   };
 
-  return { list, listWithVouchers, listRefundable, tableKey, fieldName, voucherFieldName, refundableFieldName, ttlMs };
+  return { list, listWithVouchers, listRefundable, tableKey, fieldName, voucherFieldName, enabledFieldName, refundableFieldName, ttlMs };
 };
 
 module.exports = { createPaymentMethodsService, orderWithPreferred };

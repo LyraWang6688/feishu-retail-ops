@@ -42,6 +42,29 @@ export function cardsHtml(cards = []) {
  * ⭐ 2026-10-10：同名标题 / 描述行删掉；**卡片 + 动作**就是这一页的全部
  *    （「验收到货」已经改成独立子页 ⇒ 这一页不再有任何"本页锚点 / 内嵌宿主"）。
  */
+/**
+ * ⭐ 2026-11-10（业务负责人）：数据配置页里放**按钮卡**（点它执行动作，不是跳转）——
+ * 卡片外观与「录单」那排 `.entry-card` 完全一致，只是这里渲染成 `<button>`。
+ * 动作名字走配置（`config/domains.js` 的 `cards[].action`），点击处理在
+ * `features/domains/dataConfigAction.js`（本文件只负责画）。
+ */
+export const actionCardsPageHtml = (page) => `
+      <div class="domain-page" data-page-kind="action-cards">
+        <div class="domain-cards">${(page.cards || []).map((card) => (card.placeholder === true
+    ? `<div class="entry-card disabled-card" data-placeholder-card="${escapeHtml(card.id || '')}">
+            <div class="icon">${escapeHtml(card.icon || '')}</div>
+            <h3>${escapeHtml(card.title || '')}</h3>
+            <span class="tag tag-info">${escapeHtml(PLACEHOLDER_STATUS)}</span>
+          </div>`
+    : `<button class="entry-card card-button" type="button"
+            data-domain-action="${escapeHtml(card.action || '')}"
+            data-tap-target="${escapeHtml(card.tapTarget || card.action || '')}">
+            <div class="icon">${escapeHtml(card.icon || '')}</div>
+            <h3>${escapeHtml(card.title || '')}</h3>
+          </button>`)).join('')}</div>
+        <p class="placeholder-note" data-view="domain-action-note"></p>
+      </div>`;
+
 export const linksPageHtml = (page) => `
       <div class="domain-page" data-page-kind="links">
         <div class="domain-cards">${cardsHtml(page.cards || [])}</div>

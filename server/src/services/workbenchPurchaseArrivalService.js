@@ -44,6 +44,12 @@ class WorkbenchPurchaseArrivalService {
    * @returns {Promise<{message: string, alreadyPosted: boolean, batchNo: string}>}
    *   `message` = 给她看的一句话（页面直接显示）。
    */
+  /** ⭐ 2026-11-10：按供应商拆卡 —— 哪些供应商已经验收完（只读任务存储，不读/不写飞书）。 */
+  async acceptedSuppliers() {
+    if (typeof this.arrivalConversation.listAcceptedSuppliersByBatch !== 'function') return {};
+    return this.arrivalConversation.listAcceptedSuppliersByBatch();
+  }
+
   async confirmArrival({ batchNo, actualAmount, operatorOpenId = '' } = {}) {
     const wanted = String(batchNo || '').trim();
     if (!wanted) {

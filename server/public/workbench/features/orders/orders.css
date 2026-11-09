@@ -280,3 +280,10 @@
 [data-view="purchase-acceptance"] .order-card.order-card--detail-open .order-card-head {
   padding: 0 var(--space-1) var(--space-1);
 }
+
+/* ⭐ 2026-11-09（业务负责人）：货款必填提示（参考销售货品页，提示在输入框旁边） */
+.arrival-amount-hint {
+  margin: 0;
+  color: var(--error-text);
+  font-size: var(--font-size-sm);
+}

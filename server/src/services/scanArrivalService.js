@@ -129,7 +129,16 @@ const createScanArrivalService = (options = {}) => {
    *   · 同一屏**连点两次** = 同一把钥匙 ⇒ 第二次**直接幂等返回**（零写入）✓
    *   · 改完数量再提交 = 新钥匙 ⇒ 正常执行 ✓
    */
-  const submitKeyOf = (session) => `accept:${String(session?.session_id || '')}:${Number(session?.submit_round || 0)}`;
+  // ⭐ 2026-11-10（业务负责人：验收按采购明细的供应商拆卡）：
+  //   同一批次内每个供应商是**独立一次验收** ⇒ 幂等键必须带供应商，否则「第二家」会被当成重放。
+  //   没有供应商的旧链路（扫码页）保持原样（acceptor 兼容）。
+  const submitKeyOf = (session) => {
+    const supplier = String(session?.supplier_record_id || '').trim();
+    const round = Number(session?.submit_round || 0);
+    return supplier
+      ? `accept:${String(session?.batch_no || '')}:${supplier}:${round}`
+      : `accept:${String(session?.session_id || '')}:${round}`;
+  };
 
   const summaryOf = (session) => ({
     batch_no: session?.batch_no || '',
@@ -145,18 +154,32 @@ const createScanArrivalService = (options = {}) => {
    * ⚠️ 换一批 ⇒ 直接换成新会话（验收模式一次只服务一批；上一批没完成就重开，按她的口径
    *    "一次验收就是这一批"）。
    */
-  const start = async ({ openId, batchNo, batchRecordId = '', operatorOpenId = '' }) => {
+  const start = async ({ openId, batchNo, batchRecordId = '', supplierRecordId = '', operatorOpenId = '' }) => {
     const wanted = String(batchNo || '').trim();
     if (!wanted) return { ok: false, reason: 'no_batch_no', message: texts.acceptBatchMissingBody };
+    const wantedSupplier = String(supplierRecordId || '').trim();
     const existing = await get(openId);
-    if (existing && existing.batch_no === wanted && existing.status === 'open') {
+    if (existing && existing.batch_no === wanted
+      && String(existing.supplier_record_id || '') === wantedSupplier
+      && existing.status === 'open') {
       return { ok: true, reused: true, session: existing };
     }
     const query = purchaseQueryOf();
     if (!query) return { ok: false, reason: 'not_wired', message: texts.acceptRowsUnreadableBody };
     const rows = await query.listPurchaseRequests({ batchNo: wanted, reportBehavior: 'purchase_request' });
+    // ⭐ 同一批次里可能有多家供应商：本次只验收 `wantedSupplier` 的那部分明细；
+    //   `supplier_record_ids` 记住整批的供应商集合（写回时判断"全批是否都验完"）。
+    const supplierRecordIds = [...new Set((rows || [])
+      .map((row) => String(row?.supplier_record_id || '').trim())
+      .filter(Boolean))];
+    const scopedRows = wantedSupplier
+      ? (rows || []).filter((row) => String(row?.supplier_record_id || '').trim() === wantedSupplier)
+      : (rows || []);
+    if (wantedSupplier && !scopedRows.length) {
+      return { ok: false, reason: 'no_request_rows', message: texts.acceptRowsUnreadableBody };
+    }
     const normalized = [];
-    for (const row of rows || []) {
+    for (const row of scopedRows) {
       const size = positiveInteger(row?.size);
       const quantity = Number(row?.quantity);
       if (!row?.record_id || !row?.product_record_id || size === null || !Number.isSafeInteger(quantity) || quantity <= 0) {
@@ -188,11 +211,14 @@ const createScanArrivalService = (options = {}) => {
       open_id: String(openId || ''),
       batch_no: wanted,
       batch_record_id: String(batchRecordId || '').trim(),
+      // ⭐ 2026-11-10：本次验收的供应商范围（空 = 旧链路整批验收）
+      supplier_record_id: wantedSupplier,
+      supplier_record_ids: supplierRecordIds,
       request_ids: normalized.map((row) => row.request_record_id),
       rows: normalized,
       // ⭐⭐ 2026-10-12（方案 A）：记住"这一批有哪些款 + 各自编号"——
       //    验收页要靠**编号的第 3 段（类别）**算"没报货的尺码"候选（与缺码同一份配置口径）。
-      products: productsOf(rows),
+      products: productsOf(scopedRows),
       expected: normalized.reduce((sum, row) => sum + row.quantity, 0),
       scans: [],
       scanned: 0,
@@ -343,6 +369,9 @@ const createScanArrivalService = (options = {}) => {
         batch_no: session.batch_no,
         batch_record_id: session.batch_record_id,
         request_ids: session.request_ids,
+        // ⭐ 2026-11-10：按供应商分批验收（空 = 旧链路整批）
+        supplier_record_id: session.supplier_record_id || '',
+        supplier_record_ids: session.supplier_record_ids || [],
       },
       actualAmount,
       operatorOpenId: operatorOpenId || session.operator_open_id || openId,

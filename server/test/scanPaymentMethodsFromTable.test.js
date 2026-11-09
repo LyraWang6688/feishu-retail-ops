@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * ⭐⭐ 2026-10-16 A2a ③：**候选收款方式改读表**（`services/paymentMethodsService.js`）。
+ * ⭐⭐ 2026-10-16 A2a ③：**候选交易方式改读表**（`services/paymentMethodsService.js`）。
  *
  * 她 2026-10-14 逐字：「**付款方式用支付方式管理，可选择**」⇒ 资金页那一列候选 =
- * 「收款方式管理」表里**真实那几条**（只读 ✓ + TTL 缓存 ✓）—— 她点名要过「抖音团购券」。
+ * 「交易方式管理」表里**真实那几条**（只读 ✓ + TTL 缓存 ✓）—— 她点名要过「抖音团购券」。
  * 🔴 **读不到表** ⇒ **大声 `logWarn` + 退回配置里的方式**：
  *    · **不许静默**（静默 ⇒ 表坏了没人知道 ✗）；
  *    · **不许留白**（这一页是**展示** —— 候选为空 ⇒ 她"点不出来"，收款这一步就走不下去 ✗）。
@@ -79,18 +79,18 @@ const withServer = async (gateway, run) => {
 //     `test/scanSalePayFront.test.js` 的 AC-PF4 ＋ `test/scanPaymentStepStale.test.js` 的
 //     AC-SM2/SM3/SM7/SM8 **原样未动** ✓。
 //   🔴 **本文件那三条断言一个字没动** ✗ —— 只是把"怎么走到资金页"换成**真实那条路**（裸 URL）：
-//     本文件主题是"**候选收款方式读表**"，与"从哪个 URL 进来"无关 ✓
+//     本文件主题是"**候选交易方式读表**"，与"从哪个 URL 进来"无关 ✓
 //     （改前靠 `?from=sales` 进来，只是因为当时那条接管也认 `?from=sales`；那条 URL 现在按她选的 ② 另有含义 ✓）。
 const getMoneyPage = async (base) => (await fetch(
   `${base}/r/${encodeURIComponent(NUMBER)}`, { headers: { cookie: COOKIE } },
 )).text();
 
-/** 假的「收款方式管理」表（只回答这一个 tableKey ✓ 别的读一律空表）。 */
+/** 假的「交易方式管理」表（只回答这一个 tableKey ✓ 别的读一律空表）。 */
 const tableGateway = (methods, calls = []) => ({
   async listAll(tableKey) {
     calls.push(tableKey);
     if (tableKey !== 'paymentMethod') return [];
-    return methods.map((name, index) => ({ record_id: `pm_${index}`, fields: { 收款方式: name } }));
+    return methods.map((name, index) => ({ record_id: `pm_${index}`, fields: { 交易方式: name } }));
   },
 });
 
@@ -100,7 +100,7 @@ const configuredFallback = () => [SCAN_WRITE.sale.defaultPaymentMethod].filter(B
 // AC-A2A-3a / 3c 读得到表 ⇒ 表里那几条都点得到（且 TTL 缓存）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A2A-3a ⭐ 候选收款方式 = 读「收款方式管理」表：表里那几条都点得到（默认取表里第一项）', async () => {
+test('AC-A2A-3a ⭐ 候选交易方式 = 读「交易方式管理」表：表里那几条都点得到（默认取表里第一项）', async () => {
   const calls = [];
   const gateway = tableGateway(['支付宝', '抖音代金券（89.9）'], calls);
   await withServer(gateway, async (base) => {
@@ -115,7 +115,7 @@ test('AC-A2A-3a ⭐ 候选收款方式 = 读「收款方式管理」表：表里
       '第一行默认选中表里第一项（表里没有微信 ⇒ 不再硬编码微信）');
     assert.equal(html.includes('<option value="微信"'), false,
       '表里没有「微信」⇒ 不许凭空插入');
-    assert.equal(calls.filter((key) => key === 'paymentMethod').length, 1, '这一趟**恰好读一次**收款方式表');
+    assert.equal(calls.filter((key) => key === 'paymentMethod').length, 1, '这一趟**恰好读一次**交易方式表');
   });
 });
 

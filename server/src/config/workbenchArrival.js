@@ -28,6 +28,7 @@ module.exports = {
   fields: Object.freeze({
     batchNo: 'batchNo',
     actualAmount: 'actualAmount',
+    supplierRecordId: 'supplierRecordId',
     lines: 'lines',
     productRecordId: 'productRecordId',
     itemNo: 'itemNo',
@@ -56,5 +57,7 @@ module.exports = {
     duplicateLines: '这一份清单里同一款同一码填了两次：请只留一行，再提交。',
     // ⭐ 2026-11-09（业务负责人真机）：验收页只展示未到货批次；已到货批次若再提交验收 ⇒ 400 + 人话 + 零写入。
     alreadyAccepted: '这一批已经到货验收过了，不用再验收。',
+    supplierRequired: '请先选供应商，再验收。',
+    supplierNotInBatch: '这个供应商在这一批里没有待验收的明细，请刷新后再试。',
   }),
 };

@@ -39,7 +39,6 @@ const collectLogs = () => {
 };
 
 const makeConfig = (over = {}) => buildAsyncJobsConfig({
-  ASYNC_JOB_ENABLED: 'true',
   ASYNC_JOBS_DIR: tmpDir(),
   ASYNC_JOB_MAX_ATTEMPTS: '3',
   ASYNC_JOB_RETRY_BASE_MS: '0',
