@@ -119,7 +119,8 @@ const paymentRowsHtml = (write, opts = {}) => {
     const method = String(row.method || '').trim();
     const isVoucher = voucherMethods.has(method);
     // 空行（她还没选）不设 required：这一行随后可能变成券行；普通行若留空由服务端拦。
-    const required = (!method || isVoucher) ? '' : ' required';
+    // 不在画廊层强制 required：收款方式可在本页切换，服务端会再校验普通行必填。
+    const required = '';
     const voucher = voucherByName.get(method);
     const hint = voucher && t.voucherFaceHint
       ? `<div class="hint">${escapeHtml(fillText(t.voucherFaceHint, {
