@@ -161,12 +161,12 @@ test('AC-SMF4 引擎真跑：一单多货补货 ≥2 货品 ⇒ publisher 收到
   const orderKey = opened.orderKey;
   const added = await engine.addItem({
     openId: 'ou_test', chain: 'replenish', orderKey,
-    item: { product_record_id: 'recA', item_no: 'A1', number: 'A1|黑色|A', color: '黑色', supplier_record_id: 'sup_1' },
+    item: { product_record_id: 'recA', item_no: 'A1', number: 'A1|黑色|男', color: '黑色', supplier_record_id: 'sup_1' },
   });
   assert.equal(added.ok, true);
   await engine.addItem({
     openId: 'ou_test', chain: 'replenish', orderKey,
-    item: { product_record_id: 'recB', item_no: 'B1', number: 'B1|黑色|A', color: '黑色', supplier_record_id: 'sup_1' },
+    item: { product_record_id: 'recB', item_no: 'B1', number: 'B1|黑色|男', color: '黑色', supplier_record_id: 'sup_1' },
   });
   await engine.setEntries({ openId: 'ou_test', chain: 'replenish', orderKey, productRecordId: 'recA', entries: [{ size: '39', quantity: 1 }] });
   await engine.setEntries({ openId: 'ou_test', chain: 'replenish', orderKey, productRecordId: 'recB', entries: [{ size: '41', quantity: 2 }] });

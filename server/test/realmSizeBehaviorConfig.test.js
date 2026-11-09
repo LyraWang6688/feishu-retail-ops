@@ -22,7 +22,7 @@ const realm = require('../src/views/scanPageRealm');
 /** 照抄既有真实 fixture 的最小形状（`cells[0].count` 就是"可卖数"的来源）。 */
 const view = (rows, overrides = {}) => ({
   found: true,
-  number: 'YD6693-2|黑色|A',
+  number: 'YD6693-2|黑色|男',
   item_no: 'YD6693-2',
   columns: [{ key: '门盒', label: '门盒' }],
   rows: rows.map((row) => ({

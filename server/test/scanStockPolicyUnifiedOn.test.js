@@ -122,8 +122,8 @@ const rowOf = (size, counts, missing) => ({
  *   ⇒ 新口径「有货」= {40,42,43,44,46}（**仓库与未标状态都算** ✓ —— "统一不用看状态"）
  */
 const MIXED_A_VIEW = {
-  found: true, number: '8516|黑色|A', item_no: '8516', color: '黑色',
-  category_name: '凉鞋', category_code: 'A', price_text: '¥99',
+  found: true, number: '8516|黑色|男', item_no: '8516', color: '黑色',
+  category_name: '凉鞋', category_code: '男', price_text: '¥99',
   total: 7, // 记录条数 = 1 + 2 + 2 + 1 + 1
   columns: COLUMNS,
   rows: [
@@ -140,8 +140,8 @@ const MIXED_A_VIEW = {
 
 /** ⭐ **女款（B）**：特殊码 = 34/35/41/42/43（离散）· 普通码 = 36–40。 */
 const MIXED_B_VIEW = {
-  found: true, number: 'MK31-1|咖色|B', item_no: 'MK31-1', color: '咖色',
-  category_name: '休闲鞋', category_code: 'B', price_text: '¥299',
+  found: true, number: 'MK31-1|咖色|女', item_no: 'MK31-1', color: '咖色',
+  category_name: '休闲鞋', category_code: '女', price_text: '¥299',
   total: 2, // 36 门盒1 + 42 仓库1
   columns: COLUMNS,
   rows: [
@@ -283,8 +283,8 @@ test('AC-ST6 ⭐⭐ 她的 44 码（只有「未标状态」= 1）⇒ 四页都�
 test('AC-ST8 ⭐⭐ 普通码（A 38–44 / B 36–40）**有货无货都展示** · 特殊码**无货折叠**', () => {
   const { normalSizesOf, specialSizesOf } = require('../src/config/scanStockPolicy');
   const cases = [
-    { view: MIXED_A_VIEW, code: 'A', stocked: ['40', '42', '43', '44', '46'] },
-    { view: MIXED_B_VIEW, code: 'B', stocked: ['36', '42'] },
+    { view: MIXED_A_VIEW, code: '男', stocked: ['40', '42', '43', '44', '46'] },
+    { view: MIXED_B_VIEW, code: '女', stocked: ['36', '42'] },
   ];
   for (const { view, code, stocked } of cases) {
     const normal = normalSizesOf(code).map(String);

@@ -119,7 +119,7 @@ const buildProcurementPageConfig = (env = process.env) => {
       submitKeyInvalid: readString(env, 'PROCUREMENT_TEXT_SUBMIT_KEY', '这张采购单的提交标识不对，请刷新页面后重试。'),
       itemInvalid: readString(env, 'PROCUREMENT_TEXT_ITEM_INVALID', '有一件货品读不到，请刷新页面后重试。'),
       productMissing: readString(env, 'PROCUREMENT_TEXT_PRODUCT_MISSING', '有一件货品在货品信息里查不到了，请刷新页面后重试。'),
-      categoryMissing: readString(env, 'PROCUREMENT_TEXT_CATEGORY_MISSING', '这个货品的类别还没填（A 男鞋 / B 女鞋），先补类别再采购。'),
+      categoryMissing: readString(env, 'PROCUREMENT_TEXT_CATEGORY_MISSING', '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。'),
       replenishEmpty: readString(env, 'PROCUREMENT_TEXT_REPLENISH_EMPTY', '近 3 天没有需要补货的货品。'),
       newProductsEmpty: readString(env, 'PROCUREMENT_TEXT_NEW_PRODUCTS_EMPTY', '今天还没有新增货品。'),
       loadFailed: readString(env, 'PROCUREMENT_TEXT_LOAD_FAILED', '数据没读到，请稍后重试。'),

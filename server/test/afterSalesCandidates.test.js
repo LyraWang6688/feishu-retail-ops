@@ -66,7 +66,7 @@ test('AC-LP1 ⭐ 落地页：动作顺序「换货 · 退货 · 赔货」，读 
 
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
   assert.match(page, /scanCandidatesApi/, '落地页读 scan-candidates（销售日 + 总金额那条只读接口）');
-  assert.match(page, /AFTER_SALES_PAGE\.totalLabel|AFTER_SALES_PAGE\.sizeLabel/, '销售日 / 尺码 / 总金额 的字段名从配置取');
+  assert.match(page, /AFTER_SALES_PAGE\.totalLabel|男FTER_SALES_PAGE\.sizeLabel/, '销售日 / 尺码 / 总金额 的字段名从配置取');
   assert.doesNotMatch(page, /api\.post\(/, '这一版只做页面：不许有写请求（按钮处理逻辑还没接）');
 });
 

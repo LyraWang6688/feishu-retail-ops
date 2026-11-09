@@ -29,8 +29,8 @@ const gatewayOf = (rows) => ({ listAll: async () => rows });
 test('AC-RM1 列不存在 ⇒ 全部可用（今天的行为不变）', async () => {
   invalidateConfigTable('paymentMethod');
   const service = createPaymentMethodsService(gatewayOf([
-    { record_id: 'a', fields: { 收款方式: '现金' } },
-    { record_id: 'b', fields: { 收款方式: '微信转账' } },
+    { record_id: 'a', fields: { 交易方式: '现金' } },
+    { record_id: 'b', fields: { 交易方式: '微信转账' } },
   ]));
   const all = await service.listRefundable();
   assert.deepEqual(all.items.map((item) => item.name), ['现金', '微信转账'], '没有那列 ⇒ 全部可用');
@@ -41,9 +41,9 @@ test('AC-RM1 列不存在 ⇒ 全部可用（今天的行为不变）', async ()
 test('AC-RM2 列存在 ⇒ 只留勾了「可用于退款」的', async () => {
   invalidateConfigTable('paymentMethod');
   const service = createPaymentMethodsService(gatewayOf([
-    { record_id: 'a', fields: { 收款方式: '现金', 可用于退款: true } },
-    { record_id: 'b', fields: { 收款方式: '微信转账', 可用于退款: false } },
-    { record_id: 'c', fields: { 收款方式: '支付宝' } },
+    { record_id: 'a', fields: { 交易方式: '现金', 可用于退款: true } },
+    { record_id: 'b', fields: { 交易方式: '微信转账', 可用于退款: false } },
+    { record_id: 'c', fields: { 交易方式: '支付宝' } },
   ]));
   const out = await service.listRefundable();
   assert.deepEqual(out.items.map((item) => item.name), ['现金'], 'false / 空 都不算可退款');
@@ -86,8 +86,8 @@ test('AC-RM3 未勾「可用于退款」的方式 ⇒ prepare 400，零写入', 
     store: new JsonTaskStore({ dir, idField: 'request_id' }),
     paymentMethods: createPaymentMethodsService({
       listAll: async () => ([
-        { record_id: 'pm_cash', fields: { 收款方式: '现金', 可用于退款: true } },
-        { record_id: 'pm_transfer', fields: { 收款方式: '微信转账', 可用于退款: false } },
+        { record_id: 'pm_cash', fields: { 交易方式: '现金', 可用于退款: true } },
+        { record_id: 'pm_transfer', fields: { 交易方式: '微信转账', 可用于退款: false } },
       ]),
     }),
   });

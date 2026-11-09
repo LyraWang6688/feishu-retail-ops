@@ -219,7 +219,7 @@ test('AC-P6 上新窗口 = [今天 00:00, 明天 00:00)；昨天 23:59:59 不计
 });
 
 test('AC-P7 尺码与默认值：A → 普通 38-44 / 特殊 45-48；B → 普通 36-40 / 特殊 34/35/41/42/43', () => {
-  const records = [product({ id: 'recA', category: 'A' }), product({ id: 'recB', category: 'B' })];
+  const records = [product({ id: 'recA', category: '男' }), product({ id: 'recB', category: '女' })];
   const result = buildNewProductsView({ records, fields: F, config, now: NOW });
   const byId = new Map(result.groups.map((group) => [group.productRecordId, group]));
   assert.deepEqual(byId.get('recA').sizes.normal, [38, 39, 40, 41, 42, 43, 44]);
@@ -240,7 +240,7 @@ test('AC-P7 类别缺失 ⇒ 不猜：categoryMissing=true + 空尺码 + 空 cat
 });
 
 test('AC-P8 上新顶部统计**只有「新增货品」**（不得出现新增颜色数 / 普通码待采购）', () => {
-  const records = [product({ id: 'recA', category: 'A' }), product({ id: 'recB', category: 'B' })];
+  const records = [product({ id: 'recA', category: '男' }), product({ id: 'recB', category: '女' })];
   const result = buildNewProductsView({ records, fields: F, config, now: NOW });
   assert.deepEqual(Object.keys(result.stats), ['productCount']);
   assert.equal(result.stats.productCount, 2);

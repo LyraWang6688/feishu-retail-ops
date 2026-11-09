@@ -65,7 +65,7 @@ const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
 const SERVERSRC = path.join(__dirname, '..', 'src');
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 
 // ── 列名（**只从 schema 取**，不许在用例里写第二份中文列名 ✗）──────────────────────────
 const F = (table, key) => V1_BITABLE_SCHEMA.tables[table].fields[key];
@@ -85,7 +85,7 @@ const PRODUCT = {
     编号: NUMBER,
     货号: 'YD6693-2',
     颜色: { text: '黑色', record_ids: ['color_black'] },
-    类别: 'A',
+    类别: '男',
     单价: 399,
     供应商: ['sup_1'],
   },
@@ -107,7 +107,7 @@ const seedTables = () => ({
     { record_id: 'bh_prepaid', fields: { 行为名称: '预定', 行为编码: 'SALE_PREPAID' } },
     { record_id: 'bh_sale_decrease', fields: { 行为名称: '销售减少', 行为编码: 'STOCK_SALE_DECREASE', 库存方向: '减少', 是否启用: true } },
   ],
-  paymentMethod: [{ record_id: 'pm_wechat', fields: { 收款方式: '微信' } }],
+  paymentMethod: [{ record_id: 'pm_wechat', fields: { 交易方式: '微信' } }],
   salesEntry: [],
   salesDetail: [],
   paymentRecord: [],
@@ -256,7 +256,7 @@ const runSplitSale = async ({ openId, size, inStock, paid }) => {
     const moneyState = {
       totalAmount: master[0].fields[TOTAL],
       fundsStatus: master[0].fields[FUNDS],
-      // ⚠️ 只留**形状与金额**（收款方式那一列是关联 id，与"差额"这件事无关 ⇒ 不进可比形态）
+      // ⚠️ 只留**形状与金额**（交易方式那一列是关联 id，与"差额"这件事无关 ⇒ 不进可比形态）
       payments: rowsOf(h, 'paymentRecord').map((record) => ({
         amount: Number(record.fields[PAY_AMOUNT]), status: record.fields[PAY_STATUS],
       })),

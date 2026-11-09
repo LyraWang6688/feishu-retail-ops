@@ -155,7 +155,7 @@ const makeHelper = (overrides = {}) => {
 
 const JOB = (patch = {}) => ({
   job_id: 'job-1', status: 'claimed', status_label: '已取走', total_labels: 1,
-  numbers: ['XHB8095|棕色|A'], failure_reason: '', ...patch,
+  numbers: ['XHB8095|棕色|男'], failure_reason: '', ...patch,
 });
 
 // ── AC-H1：SSE 分帧 ───────────────────────────────────────────────────────

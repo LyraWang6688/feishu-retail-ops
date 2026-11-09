@@ -5,7 +5,7 @@
  *
  * 她真机 + 服务器实测（逐字）：
  *   · `GET /r/rec28dN0WfM3KH`（未登录）⇒ 302 `Location: /api/auth/feishu/start?next=%2F`   ✗ **丢了路径**
- *   · `GET /r/MK31-1|咖色|B`（未登录）⇒ 302 `...?next=%2Fs%2F…`                          ✓ 保留路径
+ *   · `GET /r/MK31-1|咖色|女`（未登录）⇒ 302 `...?next=%2Fs%2F…`                          ✓ 保留路径
  *   ⇒ 登录回来落**扫码页首页**（标题「请扫下一个标签」= 她截图那一页 ✓）
  *   ⇒ **"扫了货品标签 ⇒ 却没进到那一款"** 的真因 ✓
  *
@@ -33,7 +33,7 @@ const cookieFor = (openId = 'ou_record_next') => {
 };
 
 const RECORD_ID = 'rec28dN0WfM3KH';
-const NUMBER = 'MK31-1|咖色|B';
+const NUMBER = 'MK31-1|咖色|女';
 
 const view = () => ({
   found: true, number: NUMBER, item_no: 'MK31-1', color: '咖色', category_name: '休闲鞋',

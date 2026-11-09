@@ -105,8 +105,8 @@ const postJson = async (base, p, body) => {
 
 const ROWS = [
   // 真实 `listPurchaseRequests` 行：`product_item_no`=货号、`product_color`=颜色、`product_number`=编号（复合值）
-  { record_id: 'r1', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1|黑色|B', size: 40, quantity: 2 },
-  { record_id: 'r2', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1|黑色|B', size: 41, quantity: 1 },
+  { record_id: 'r1', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1|黑色|女', size: 40, quantity: 2 },
+  { record_id: 'r2', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1|黑色|女', size: 41, quantity: 1 },
 ];
 
 test('AC-AW10 ⭐ 卡展开能看到**该批采购明细**（货号/尺码/数量 · **只读** GET ✓ 无输入 ✗）', async () => {
@@ -115,8 +115,8 @@ test('AC-AW10 ⭐ 卡展开能看到**该批采购明细**（货号/尺码/数�
     const res = await getJson(base, `${arrivalTab.api.detail}?batchNo=BH-1`);
     assert.equal(res.status, 200);
     assert.deepEqual(res.body.rows, [
-      { item_no: 'A1', color: '黑色', number: 'A1|黑色|B', size: 40, quantity: 2, product_record_id: 'p1' },
-      { item_no: 'A1', color: '黑色', number: 'A1|黑色|B', size: 41, quantity: 1, product_record_id: 'p1' },
+      { item_no: 'A1', color: '黑色', number: 'A1|黑色|女', size: 40, quantity: 2, product_record_id: 'p1' },
+      { item_no: 'A1', color: '黑色', number: 'A1|黑色|女', size: 41, quantity: 1, product_record_id: 'p1' },
     ], '明细逐字（货号/颜色/编号/尺码/数量 ✓）');
     // 🔴 只读：这条是 GET，而且返回的是**数据**（没有表单字段/输入框语义 ✗）
     assert.equal('fields' in res.body, false, '只读明细不许回"可填字段" ✗');

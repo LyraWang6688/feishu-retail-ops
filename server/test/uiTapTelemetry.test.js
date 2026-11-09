@@ -83,7 +83,7 @@ const { createWorkbenchRouter } = require('../src/routes/workbench');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
 
 const SESSION_SECRET = 'ui-tap-telemetry-test-secret';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 
 const login = () => {
   process.env.LARK_WEB_AUTH_ENABLED = 'true';
@@ -402,7 +402,7 @@ test('AC-UT4c ⑤ **同一份实现**：两个路由都 require 同一个 util�
   // ⚠️ 那一页的脚本只在"有带反馈属性的提交按钮"时才渲染（`content.includes('data-submit-feedback=')`）
   //    ⇒ 直接用**渲染层自己的入口**渲染一页（补货表单就有）—— 不走 HTTP，判据更直接 ✓
   const view = {
-    number: NUMBER, item_no: 'YD6693-2', color: '黑色', category_name: '休闲鞋', category_code: 'A',
+    number: NUMBER, item_no: 'YD6693-2', color: '黑色', category_name: '休闲鞋', category_code: '男',
     price_text: '¥399', total: 1, columns: [{ key: '门盒', label: '门盒' }],
     rows: [{ size_text: '41', cells: [{ key: '门盒', count: 0 }], total: 0, missing: true }],
     missing_count: 1, sizes_degraded: false, notes: [], updated_at_text: '2026-10-14 23:00',

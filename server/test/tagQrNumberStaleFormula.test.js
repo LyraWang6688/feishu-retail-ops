@@ -3,8 +3,8 @@
  *
  * 【现场】她 17:45 扫出来的编号 = `MK31-1|咖色|`（**缺「类别」那一段**）⇒ 扫码页查不到 ⇒ 提交 400。
  *   日志：`product.tag_qr.number_mismatch` formula_number="MK31-1|咖色|"
- *         assembled_number="MK31-1|咖色|B" existing_file_name_number="MK31-1_咖色_" formula_looks_stale=true
- *   只读核生产真表：`MK31-1` 两款 类别=B ✓ 编号=`MK31-1|咖色|B` ✓ ⇒ **真表是对的** ⇒
+ *         assembled_number="MK31-1|咖色|女" existing_file_name_number="MK31-1_咖色_" formula_looks_stale=true
+ *   只读核生产真表：`MK31-1` 两款 类别=B ✓ 编号=`MK31-1|咖色|女` ✓ ⇒ **真表是对的** ⇒
  *   病根 = **写出去的值用了过期的公式值**。
  *
  * 【本轮实现】`resolveQrNumber`：
@@ -33,17 +33,17 @@ const { createTagQrCodeService } = require('../src/services/tagQrCodeService');
 const svc = () => createTagQrCodeService({ gateway: {}, generatePng: async () => Buffer.from('png') });
 
 // 与真机同一串：货号 MK31-1 · 颜色 咖色 · 类别 B
-const FULL = 'MK31-1|咖色|B';
+const FULL = 'MK31-1|咖色|女';
 const STALE_FORMULA = 'MK31-1|咖色|';          // 公式停在旧值（缺类别）
 const OLD_FILE_NAME_NUMBER = 'MK31-1_咖色_';   // 现存附件名里反解出来的（文件名形态）
 
 test('AC-1 公式=旧值（缺段）且源字段齐全 ⇒ **用拼装值**（逐字）', () => {
   const { resolveQrNumber, assembleParts } = svc();
   // 源字段齐全 ⇒ assembleParts 三段都有值
-  const fields = srcFields({ itemNo: 'MK31-1', color: '咖色', category: 'B' });
+  const fields = srcFields({ itemNo: 'MK31-1', color: '咖色', category: '女' });
   const parts = assembleParts(fields);
   assert.deepEqual(parts.map((p) => [p.key, p.value]),
-    [['itemNo', 'MK31-1'], ['color', '咖色'], ['category', 'B']],
+    [['itemNo', 'MK31-1'], ['color', '咖色'], ['category', '女']],
     '三段源字段都要各自读得出值（诊断用）');
 
   const pick = resolveQrNumber({
@@ -75,7 +75,7 @@ test('AC-2 公式与拼装**一致** ⇒ 逐字回归（不变）', () => {
 test('AC-3 拼装**缺段** ⇒ 不静默：标 incomplete + 报出缺哪一段', () => {
   const { resolveQrNumber, assembleParts } = svc();
   // 颜色读成空（关联字段 type 18 读成数组/对象时就是这种形状）
-  const fields = srcFields({ itemNo: 'MK31-1', color: '', category: 'B' });
+  const fields = srcFields({ itemNo: 'MK31-1', color: '', category: '女' });
   const parts = assembleParts(fields);
   assert.equal(parts.find((p) => p.key === 'color').value, '', '颜色那一段确实读空了');
 
@@ -127,5 +127,5 @@ test('哨兵：公式停旧值 + 拼装齐全 ⇒ 绝不许印公式值', () => 
     existingFileNameNumber: OLD_FILE_NAME_NUMBER, recordId: 'rec', parts: [],
   });
   assert.notEqual(pick.number, STALE_FORMULA, '这正是她扫不出商品的根因，绝不许回退');
-  assert.match(pick.number, /^MK31-1\|咖色\|B$/);
+  assert.match(pick.number, /^MK31-1\|咖色\|女$/);
 });

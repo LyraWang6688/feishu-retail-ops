@@ -10,7 +10,7 @@
  *   ① 旧 helper 不得回到源码（定义、调用、导出都不许）；
  *   ② 现行配置只有一份：`config/scanPage.js` 的 `SIZE_SEGMENTS.ranges`；
  *   ③ 运行时 helper 读到的值与配置一致：
- *      `scanStockPolicy.specialSizesOf('B')` / `enterableScopeOf('B')` / `normalSizesOf('B')`。
+ *      `scanStockPolicy.specialSizesOf('女')` / `enterableScopeOf('女')` / `normalSizesOf('女')`。
  *
  * ⚠️ 只读源码 + 纯函数，不读表、不写表。
  */
@@ -54,23 +54,23 @@ test('AC-SR2 ⭐⭐ 现行配置只有一份：女 36–40 普通 / 34,35,41,42,
   // eslint-disable-next-line global-require
   const { SCAN_PAGE } = require('../src/config/scanPage');
   const ranges = SCAN_PAGE.sizeSegments.ranges;
-  assert.deepEqual(ranges.B.normal, [36, 40], '女普通码 = 36–40');
-  assert.deepEqual(ranges.B.special, [34, 35, 41, 42, 43], '女特殊码 = 34/35/41/42/43');
-  assert.deepEqual(ranges.B.enterable, [34, 43], '女可录范围 = 34–43');
-  assert.deepEqual(ranges.A.normal, [38, 44], '男普通码 = 38–44');
-  assert.deepEqual(ranges.A.special, [45, 46, 47, 48], '男特殊码 = 45–48');
-  assert.deepEqual(ranges.A.enterable, [38, 48], '男可录范围 = 38–48');
+  assert.deepEqual(ranges.女.normal, [36, 40], '女普通码 = 36–40');
+  assert.deepEqual(ranges.女.special, [34, 35, 41, 42, 43], '女特殊码 = 34/35/41/42/43');
+  assert.deepEqual(ranges.女.enterable, [34, 43], '女可录范围 = 34–43');
+  assert.deepEqual(ranges.男.normal, [38, 44], '男普通码 = 38–44');
+  assert.deepEqual(ranges.男.special, [45, 46, 47, 48], '男特殊码 = 45–48');
+  assert.deepEqual(ranges.男.enterable, [38, 48], '男可录范围 = 38–48');
 });
 
 test('AC-SR3 ⭐⭐ 运行时 helper 读到的值与配置一致（不另写第二份数字）', () => {
   // eslint-disable-next-line global-require
   const stock = require('../src/config/scanStockPolicy');
-  assert.deepEqual(stock.normalSizesOf('B'), [36, 37, 38, 39, 40], '女普通码 helper = 36–40');
-  assert.deepEqual(stock.specialSizesOf('B'), [34, 35, 41, 42, 43], '女特殊码 helper = 34/35/41/42/43');
-  assert.deepEqual(stock.enterableSizesOf('B'), [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '女可录 helper = 34–43');
+  assert.deepEqual(stock.normalSizesOf('女'), [36, 37, 38, 39, 40], '女普通码 helper = 36–40');
+  assert.deepEqual(stock.specialSizesOf('女'), [34, 35, 41, 42, 43], '女特殊码 helper = 34/35/41/42/43');
+  assert.deepEqual(stock.enterableSizesOf('女'), [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '女可录 helper = 34–43');
   // eslint-disable-next-line global-require
   const { enterableScopeOf } = require('../src/services/scanPageService');
-  assert.deepEqual(enterableScopeOf('B').sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
+  assert.deepEqual(enterableScopeOf('女').sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
     '缺货基准 helper = 可录范围 34–43');
 });
 

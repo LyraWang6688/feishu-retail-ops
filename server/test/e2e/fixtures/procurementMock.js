@@ -31,13 +31,13 @@ const newProductsBody = () => ({
   stats: { productCount: 2 },
   groups: [
     {
-      productRecordId: 'recNewA', number: 'LY001', itemNo: 'LY001', color: '黑色', category: 'A', categoryMissing: false,
+      productRecordId: 'recNewA', number: 'LY001', itemNo: 'LY001', color: '黑色', category: '男', categoryMissing: false,
       supplierName: '供应商 A', supplierRecordId: 'recSupA', createdAt: Date.parse('2026-10-28T09:15:00+08:00'),
       sizes: { normal: [38, 39, 40, 41, 42, 43, 44], special: [45, 46, 47, 48] },
       defaults: { normal: 1, special: 0 },
     },
     {
-      productRecordId: 'recNewB', number: 'LY002', itemNo: 'LY002', color: '米白', category: 'B', categoryMissing: false,
+      productRecordId: 'recNewB', number: 'LY002', itemNo: 'LY002', color: '米白', category: '女', categoryMissing: false,
       supplierName: '供应商 B', supplierRecordId: 'recSupB', createdAt: Date.parse('2026-10-28T10:02:00+08:00'),
       sizes: { normal: [36, 37, 38, 39, 40], special: [34, 35, 41, 42, 43] },
       defaults: { normal: 1, special: 0 },
