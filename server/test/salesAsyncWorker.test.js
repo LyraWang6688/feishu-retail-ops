@@ -74,6 +74,18 @@ test('异步任务保存 tap_id，建主表 / submitSale 都带 correlation', as
   } finally { h.cleanup(); }
 });
 
+test('AC-JOB-KEY ⭐ 同 submit_key 但订单号不同 ⇒ 建新 job，不复用旧 job', async () => {
+  const h = make();
+  try {
+    const first = await h.worker.enqueue({ submitKey: 'scan_sale:s:1', payload: payload({ order_no: 'XSD-20261109-0004' }) });
+    await h.worker.process(first.job.job_id);
+    const second = await h.worker.enqueue({ submitKey: 'scan_sale:s:1', payload: payload({ order_no: 'XSD-20261110-0001' }) });
+    assert.equal(second.created, true, '新订单必须建新 job');
+    assert.notEqual(second.job.job_id, first.job.job_id, 'job id 不能撞旧订单');
+    assert.equal(second.job.payload.order_no, 'XSD-20261110-0001');
+  } finally { h.cleanup(); }
+});
+
 test('升级前旧 job 没 tap_id：入队同键时补元数据，不覆盖 payload', async () => {
   const h = make();
   try {
@@ -82,7 +94,7 @@ test('升级前旧 job 没 tap_id：入队同键时补元数据，不覆盖 payl
       job_id: legacyId, submit_key: 'scan_sale:s:legacy', status: STATUS.queued,
       payload: payload(), attempts: 0, last_error: '', main_record_id: '', order_no: 'XSD-20261026-0001',
     });
-    const out = await h.worker.enqueue({ submitKey: 'scan_sale:s:legacy', payload: payload({ order_no: 'IGNORED' }), tapId: 'tap-legacy' });
+    const out = await h.worker.enqueue({ submitKey: 'scan_sale:s:legacy', payload: payload(), tapId: 'tap-legacy' });
     assert.equal(out.created, false);
     assert.equal(out.job.job_id, legacyId);
     assert.equal(out.job.tap_id, 'tap-legacy');
