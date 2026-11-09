@@ -58,7 +58,10 @@ const fieldsOf = ({
 const imageOf = (token, name = 'x.jpg', type = 'image/jpeg') => ({ file_token: token, name, type });
 
 const createGateway = ({ fields, folderFiles = [], failUploadAt = 0 } = {}) => {
-  const calls = { get: [], list: [], del: [], download: [], upload: [], update: [] };
+  const calls = {
+    get: [], list: [], del: [], download: [], upload: [], update: [],
+    auth: { list: [], del: [], download: [], upload: [] }, // 每次云盘调用用的 user token（'' = tenant）
+  };
   let uploadCount = 0;
   return {
     calls,
@@ -72,21 +75,25 @@ const createGateway = ({ fields, folderFiles = [], failUploadAt = 0 } = {}) => {
     },
     // ⭐ 云盘层 = `services/driveApi.js` 挂出来的 `gateway.drive`（服务只认这一个入口）
     drive: {
-      async listDriveFolder(token) {
+      async listDriveFolder(token, _operation, options) {
         calls.list.push(token);
+        calls.auth.list.push(options?.userAccessToken || '');
         return folderFiles;
       },
-      async deleteDriveFile(token) {
+      async deleteDriveFile(token, _operation, options) {
         calls.del.push(token);
+        calls.auth.del.push(options?.userAccessToken || '');
         return { token };
       },
-      async downloadMedia(token) {
+      async downloadMedia(token, _operation, options) {
         calls.download.push(token);
+        calls.auth.download.push(options?.userAccessToken || '');
         return Buffer.from(`img:${token}`);
       },
-      async uploadDriveFile({ folderToken, fileName, content, operation }) {
+      async uploadDriveFile({ folderToken, fileName, content, operation, userAccessToken }) {
         uploadCount += 1;
         if (failUploadAt && uploadCount === failUploadAt) throw new Error('上传接口炸了');
+        calls.auth.upload.push(userAccessToken || '');
         calls.upload.push({ folderToken, fileName, size: content.length, operation });
         return `cloud_${fileName}`;
       },
@@ -274,4 +281,21 @@ test('AC-SD13 ⭐ 公式「编号」是富文本数组（真机形状）⇒ 必�
   assert.equal(result.status, 'synced');
   assert.equal(gateway.calls.upload[0].fileName, '66888_黑色_男.jpg', '上传文件名必须是编号文本（扩展名跟附件走）');
   assert.equal(gateway.calls.upload[0].fileName.includes('object Object'), false);
+});
+
+
+test('AC-SD14 ⭐ 点击人 user token ⇒ 云盘四个调用都用它（文件所有者 = 点击人）；不传 ⇒ tenant', async () => {
+  const gateway = createGateway({ fields: fieldsOf({ images: [imageOf('ft1')] }) });
+  const service = createSampleImageDriveService({ gateway, config: configOf() });
+  await service.syncRecord('r1', { reason: 'backfill', driveAuth: { userAccessToken: 'ut_clicker' } });
+  assert.deepEqual(gateway.calls.auth, {
+    list: ['ut_clicker'], del: [], download: ['ut_clicker'], upload: ['ut_clicker'],
+  });
+
+  const gateway2 = createGateway({ fields: fieldsOf({ images: [imageOf('ft1')] }) });
+  const service2 = createSampleImageDriveService({ gateway: gateway2, config: configOf() });
+  await service2.syncRecord('r1', { reason: 'record_added' });
+  assert.deepEqual(gateway2.calls.auth, {
+    list: [''], del: [], download: [''], upload: [''],
+  }, '没有点击人 token（新增事件链路）⇒ 回落 tenant（所有者是应用）');
 });

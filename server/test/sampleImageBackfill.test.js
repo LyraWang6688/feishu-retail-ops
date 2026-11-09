@@ -55,6 +55,7 @@ const createFake = ({ records, failList = false, results = {} } = {}) => {
     driveService: {
       async syncRecord(recordId, options) {
         calls.sync.push([recordId, options?.reason]);
+        calls.lastOptions = options;
         return results[recordId] || { record_id: recordId, status: 'synced' };
       },
     },
@@ -169,4 +170,22 @@ test('AC-BF6 接统一异步任务：enqueue(type/owner) → job_id 返回 → r
   assert.equal(status.synced, 1);
   const withJob = await service.statusWithJob();
   assert.equal(withJob.job_status, 'succeeded', '状态接口能查到 job 终态');
+});
+
+
+test('AC-BF7 ⭐ 点击人 user token 会传给每一条 syncRecord（文件所有者 = 点击人）', async () => {
+  const { gateway, driveService, calls } = createFake({
+    records: [recordOf({ id: 'r1', images: [imageOf()] })],
+  });
+  const service = createSampleImageBackfillService({ gateway, driveService, config: configOf() });
+  await service.start({ ownerOpenId: 'ou_owner', driveAuth: { userAccessToken: 'ut_clicker' } });
+  await service.waitForIdle();
+  assert.equal(calls.sync.length, 1);
+  assert.equal(calls.lastOptions.driveAuth.userAccessToken, 'ut_clicker', '每条都带点击人 token');
+
+  const second = createFake({ records: [recordOf({ id: 'r2', images: [imageOf()] })] });
+  const service2 = createSampleImageBackfillService({ gateway: second.gateway, driveService: second.driveService, config: configOf() });
+  await service2.start({ ownerOpenId: 'ou_owner' });
+  await service2.waitForIdle();
+  assert.equal(second.calls.lastOptions.driveAuth.userAccessToken, '', '没 token ⇒ 空串（tenant 回落）');
 });

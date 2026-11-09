@@ -56,6 +56,7 @@ const createSampleImageBackfillService = ({
 
   let state = emptyState();
   let current = null; // { jobId, promise }
+  let runAuth = { userAccessToken: '' }; // 本轮点击人的 user token（内存；不落日志/磁盘）
 
   function emptyState() {
     return {
@@ -114,7 +115,7 @@ const createSampleImageBackfillService = ({
       const recordId = record?.record_id;
       if (!recordId) continue;
       // eslint-disable-next-line no-await-in-loop —— 官方限制：上传不支持并发（5 QPS）
-      const result = await driveService.syncRecord(recordId, { reason: 'backfill' });
+      const result = await driveService.syncRecord(recordId, { reason: 'backfill', driveAuth: runAuth });
       state.done += 1;
       if (result?.status === 'synced') state.synced += 1;
       else if (result?.status === 'failed') { state.failed += 1; attemptFailed += 1; }
@@ -163,10 +164,11 @@ const createSampleImageBackfillService = ({
    * 启动一轮（统一异步任务）。同一时间只跑一轮：再点 ⇒ `started:false`（返回同一个 job_id）。
    * @returns {Promise<{started:boolean, running:boolean, job_id:string, status:object}>}
    */
-  const start = async ({ ownerOpenId = '', operatorName = '' } = {}) => {
+  const start = async ({ ownerOpenId = '', operatorName = '', driveAuth = {} } = {}) => {
     if (current) {
       return { started: false, running: true, job_id: state.job_id, status: status() };
     }
+    runAuth = { userAccessToken: String(driveAuth?.userAccessToken || '').trim() };
     state = { ...emptyState(), running: true, started_at: nowIso(now) };
 
     // 统一异步层关掉 ⇒ 退回进程内跑（页面行为不变，只是没有 job 可查）
@@ -187,7 +189,7 @@ const createSampleImageBackfillService = ({
       ownerOpenId,
       operatorName,
       // 只放"这一轮是什么"，不放任何图片/记录内容（状态接口也不回 payload）
-      payload: { folder_token: config.folder?.token || '', source: 'data-config' },
+      payload: { folder_token: config.folder?.token || '', source: 'data-config', uploader: runAuth.userAccessToken ? 'user' : 'tenant' },
       meta: { source: 'workbench.data-config' },
     });
     if (!enqueued?.job) {

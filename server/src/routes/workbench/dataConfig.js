@@ -26,6 +26,8 @@ const { createSampleImageDriveService } = require('../../services/sampleImageDri
 const { createSampleImageBackfillService } = require('../../services/sampleImageBackfillService');
 // ⭐ 2026-11-10：存量补齐接**统一异步任务**（状态可查 / 失败发运营群 / 临时错误重试）。
 const { getAsyncJobService } = require('../../services/asyncJobRuntime');
+// ⭐ 2026-11-10：点击人的 user token（内存）⇒ 云盘文件所有者 = 点击人（不是「来财」）
+const { getUserAccessToken } = require('../../services/workbenchUserTokenStore');
 
 const createWorkbenchDataConfigRoutes = ({ options = {} } = {}) => {
   const router = express.Router();
@@ -43,9 +45,11 @@ const createWorkbenchDataConfigRoutes = ({ options = {} } = {}) => {
 
   router.post('/data-config/sample-image-sync', async (req, res) => {
     try {
+      const openId = req.workbenchUser?.open_id || '';
       const started = await resolveBackfill().start({
-        ownerOpenId: req.workbenchUser?.open_id || '',
+        ownerOpenId: openId,
         operatorName: req.workbenchUser?.name || '',
+        driveAuth: { userAccessToken: getUserAccessToken(openId) },
       });
       const { done, ...rest } = started; // done 是后台 promise：**不进响应**
       return res.status(started.started ? 202 : 200).json({ success: true, ...rest });

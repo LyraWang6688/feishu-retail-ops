@@ -2,6 +2,8 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
 const {SCAN_AUTH_REDIRECT, TICKET, issueSessionTicket } = require('../config/scanAuthRedirect');
+// ⭐ 2026-11-10（业务负责人）：点击人的 user token 只放内存 ⇒ 云盘文件所有者 = 点击人
+const { saveUserAccessToken, clearUserAccessToken } = require('../services/workbenchUserTokenStore');
 
 const COOKIE_NAME = 'workbench_session';
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -181,8 +183,13 @@ const createFeishuWebAuthRouter = () => {
       const user = info;
       const allowed = allowedOpenIds();
       if (allowed.size && !allowed.has(user.open_id)) return res.status(403).send('当前飞书账号未被授权使用工作台');
+      // ⭐ 存点击人 user token（内存；**不写日志**）⇒ 云盘上传用它的身份，文件所有者 = 点击人
+      //    ⚠️ 只放内存：session cookie 是签名不是加密，token 进 cookie 等于明文。
+      const userTokenSaved = saveUserAccessToken(user.open_id, token.access_token, token.expires_in);
       res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeSession(user)}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=Lax`);
-      logInfo('workbench.auth.success', { request_id: req.requestId, operator_open_id: user.open_id });
+      logInfo('workbench.auth.success', {
+        request_id: req.requestId, operator_open_id: user.open_id, user_token_cached: userTokenSaved,
+      });
       // 回跳目标：`next`（扫码页，走白名单）/ `return_to`（工作台前端，既有语义）——
       // 两者都没有时就是工作台首页（与改动前逐字一致）。
       // 2026-10-13: carry the session back as a one-time URL ticket (WebView keeps no cookie).
@@ -211,7 +218,12 @@ const createFeishuWebAuthRouter = () => {
     }
   });
 
-  router.post('/logout', (req, res) => res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`).json({ success: true }));
+  router.post('/logout', (req, res) => {
+    // 退出登录：把内存里的 user token 一并清掉
+    const current = getSessionUser(req);
+    if (current?.open_id) clearUserAccessToken(current.open_id);
+    return res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`).json({ success: true });
+  });
   return router;
 };
 

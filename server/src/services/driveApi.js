@@ -16,7 +16,20 @@
  *
  * ⚠️ 官方限制（上传类接口）：**5 QPS / 10000 次每天，且不支持并发调用**（并发会回 1061045）
  *    ⇒ 调用方必须**串行**使用本层。
+ *
+ * ⭐ 2026-11-10（业务负责人：「所有者，可以是谁点击属于谁吗？**不能算来财的**」）：
+ *    每个方法都接受 `{ userAccessToken }` —— 传了就用**点击人的 user token** 调飞书，
+ *    上传出来的文件**所有者 = 点击人**；不传 ⇒ 仍用应用 tenant token（所有者 = 应用「来财」）。
+ *    ⚠️ token 只在内存里（`services/workbenchUserTokenStore.js`），**绝不进日志/URL/文件**。
  */
+
+const lark = require('@larksuiteoapi/node-sdk');
+
+/** 传了 user token 就用它（点击人身份）；否则 undefined = SDK 默认 tenant token。 */
+const tokenOptions = (userAccessToken) => {
+  const token = String(userAccessToken || '').trim();
+  return token ? lark.withUserAccessToken(token) : undefined;
+};
 
 /**
  * @param {object} client `@larksuiteoapi/node-sdk` 的 Client 实例（与网关共用同一个）
@@ -36,10 +49,10 @@ const createDriveApi = (client) => {
   };
 
   /** 下载一个素材（多维表格附件里的 `file_token`）为 Buffer。 */
-  const downloadMedia = async (fileToken, operation = 'download media') => {
+  const downloadMedia = async (fileToken, operation = 'download media', { userAccessToken = '' } = {}) => {
     const token = String(fileToken ?? '').trim();
     if (!token) throw new Error(`${operation} 缺少 file_token`);
-    const response = await client.drive.media.download({ path: { file_token: token } });
+    const response = await client.drive.media.download({ path: { file_token: token } }, tokenOptions(userAccessToken));
     if (!response || typeof response.getReadableStream !== 'function') {
       throw new Error(`${operation} 失败：未拿到文件流`);
     }
@@ -50,7 +63,7 @@ const createDriveApi = (client) => {
   };
 
   /** 上传一个文件到云盘文件夹，返回云盘文件的 `file_token`。 */
-  const uploadDriveFile = async ({ folderToken, fileName, content, operation = 'upload drive file' } = {}) => {
+  const uploadDriveFile = async ({ folderToken, fileName, content, operation = 'upload drive file', userAccessToken = '' } = {}) => {
     const parent = String(folderToken ?? '').trim();
     const name = String(fileName ?? '').trim();
     if (!parent) throw new Error(`${operation} 缺少 folder_token`);
@@ -64,7 +77,7 @@ const createDriveApi = (client) => {
         size: content.length,
         file: content,
       },
-    });
+    }, tokenOptions(userAccessToken));
     assertOk(response, operation);
     const token = response?.file_token || response?.data?.file_token || response?.data?.data?.file_token;
     if (!token) throw new Error(`${operation} 成功但未返回 file_token`);
@@ -72,10 +85,10 @@ const createDriveApi = (client) => {
   };
 
   /** 列出一个云盘文件夹里的文件（**只当前层级**；返回 `{ token, name, type }[]`）。 */
-  const listDriveFolder = async (folderToken, operation = 'list drive folder') => {
+  const listDriveFolder = async (folderToken, operation = 'list drive folder', { userAccessToken = '' } = {}) => {
     const parent = String(folderToken ?? '').trim();
     if (!parent) throw new Error(`${operation} 缺少 folder_token`);
-    const response = await client.drive.file.list({ params: { folder_token: parent, page_size: 200 } });
+    const response = await client.drive.file.list({ params: { folder_token: parent, page_size: 200 } }, tokenOptions(userAccessToken));
     assertOk(response, operation);
     return (response?.data?.files || []).map((file) => ({
       token: file?.token,
@@ -85,10 +98,10 @@ const createDriveApi = (client) => {
   };
 
   /** 删除一个云盘文件（同名覆盖时先删旧文件；进回收站，不是硬删）。 */
-  const deleteDriveFile = async (fileToken, operation = 'delete drive file') => {
+  const deleteDriveFile = async (fileToken, operation = 'delete drive file', { userAccessToken = '' } = {}) => {
     const token = String(fileToken ?? '').trim();
     if (!token) throw new Error(`${operation} 缺少 file_token`);
-    const response = await client.drive.file.delete({ params: { type: 'file' }, path: { file_token: token } });
+    const response = await client.drive.file.delete({ params: { type: 'file' }, path: { file_token: token } }, tokenOptions(userAccessToken));
     assertOk(response, operation);
     return { token };
   };

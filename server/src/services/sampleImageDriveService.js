@@ -179,13 +179,15 @@ const createSampleImageDriveService = ({
    * 同步一条货品（**串行**：一张一张传；上传接口不支持并发）。
    * 返回 `{ record_id, status: 'synced'|'skipped'|'failed', ... }`（不抛：事件分支不因单条失败中断）。
    */
-  const syncRecord = async (recordId, { reason = 'record_added', waitForNumber = false } = {}) => {
+  const syncRecord = async (recordId, { reason = 'record_added', waitForNumber = false, driveAuth = {} } = {}) => {
     const id = textOf(recordId);
     if (!id) return { record_id: id, status: 'skipped', reason: 'record_id_missing' };
     if (!drive || typeof drive.uploadDriveFile !== 'function') {
       logError('product.sample_image.drive.failed', { record_id: id, reason, error: 'drive 层缺失（gateway.drive）' });
       return { record_id: id, status: 'failed', reason: 'drive_missing' };
     }
+    // ⭐ 2026-11-10：传了点击人 user token ⇒ 云盘操作都用它的身份（上传出来的文件所有者 = 点击人）
+    const driveOptions = { userAccessToken: String(driveAuth?.userAccessToken || '').trim() };
     try {
       let record = await gateway.get('product', id);
       let fields = record?.fields || {};
@@ -232,10 +234,11 @@ const createSampleImageDriveService = ({
 
       logInfo('product.sample_image.drive.started', {
         record_id: id, reason, sample_image_count: targets.length, item_no: nameBase.itemNo, color: nameBase.color, number: nameBase.number,
+        uploader: driveOptions.userAccessToken ? 'user' : 'tenant',
       });
 
       // 文件夹里已有的文件（一次列出；同名覆盖直接沿用这个快照）
-      const existingFiles = await drive.listDriveFolder(folderToken, ops.list);
+      const existingFiles = await drive.listDriveFolder(folderToken, ops.list, driveOptions);
       const existingByName = new Map(
         (existingFiles || []).filter((file) => file?.name).map((file) => [file.name, file]),
       );
@@ -254,11 +257,13 @@ const createSampleImageDriveService = ({
             continue;
           }
           // 同名覆盖：只删"跟我们命名完全一致"的那个文件（不碰她手工传的）
-          await drive.deleteDriveFile(existing.token, ops.delete);
+          await drive.deleteDriveFile(existing.token, ops.delete, driveOptions);
         }
 
-        const content = await drive.downloadMedia(attachment.file_token, ops.download);
-        const fileToken = await drive.uploadDriveFile({ folderToken, fileName, content, operation: ops.upload });
+        const content = await drive.downloadMedia(attachment.file_token, ops.download, driveOptions);
+        const fileToken = await drive.uploadDriveFile({
+          folderToken, fileName, content, operation: ops.upload, userAccessToken: driveOptions.userAccessToken,
+        });
         uploaded.push({ file_name: fileName, file_token: fileToken });
         logInfo('product.sample_image.drive.uploaded', {
           record_id: id, file_name: fileName, file_token: fileToken,

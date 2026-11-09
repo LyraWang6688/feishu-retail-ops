@@ -142,6 +142,22 @@ e2e（`test/e2e/workbench.spec.js`）：货品 → 数据配置 → 卡片在、
   `buildFileName` 与 `syncRecord` 都必须产出 `66888_黑色_男.jpg`，且**不许**再出现 `object Object`。
 - **善后**（待业务负责人指令）：清掉这 12 条误勾 → 删 2 个垃圾文件 → 部署修复 → 重新点按钮补 343 条。
 
+## 六⅘、所有者 = 点击人（2026-11-10 追加，业务负责人：「不能算来财的」）
+
+**需求**：云盘文件的所有者不能是应用（来财），要**谁点「同步存量样例图」就归谁**。
+
+**实现**（用**点击人的 user_access_token** 调飞书上传 ⇒ 飞书把文件所有者记成该用户）：
+
+| 环节 | 做法 |
+| --- | --- |
+| 登录回调 | `routes/feishuWebAuth.js` 把 `authen/v1/access_token` 返回的 **user_access_token** 存进**内存**（`services/workbenchUserTokenStore.js`），**不进 cookie/磁盘/日志**（session cookie 是签名不是加密） |
+| 点按钮 | `routes/workbench/dataConfig.js` 按当前登录 open_id 取 token → `start({ driveAuth })` → 每条 `syncRecord` 都带上 → `driveApi` 用 `lark.withUserAccessToken(...)` 调飞书（云盘四接口都支持传） |
+| 兜底 | 没有 token（未登录/过期/事件自动同步）⇒ 回落 tenant token（所有者 = 应用「来财」）——这是**唯一限制**，如实记录 |
+| 过期 | 按 `expires_in` 提前 60 秒作废；重新登录自动补上；退出登录清掉 |
+
+**边界**：「新增事件自动同步」没有"点击人"⇒ 仍然记在应用名下（除非预置长期用户授权+刷新，本轮不做）。
+判据：AC-OT1..OT5（token 存取/过期/清理；上传/列目录/删文件透传 user token）＋ AC-SD14（service 四调用都带点击人 token）＋ AC-BF7（批量逐条透传）。
+
 ## 七、未做（等她拍板）
 
 1. 存量 184 条"有图但未勾"的批量补齐（要不要现在做、按什么顺序、失败怎么退）；
