@@ -20,17 +20,17 @@ const write = (voucherMethods) => ({
 const rowsOf = (html) => html.split('<div class="form-row form-row--pay">').slice(1);
 const rowOf = (html, index) => rowsOf(html)[index] || '';
 
-test('AC-VP-AMOUNT-1 券行金额不 required，普通收款行仍 required', () => {
+test('AC-VP-AMOUNT-1 资金页金额不在客户端 required（服务端再校验普通行）', () => {
   const html = paymentRowsHtml(write(['抖音代金券（89.9）']));
   const alipay = rowOf(html, 0);
   const voucher = rowOf(html, 1);
-  assert.match(alipay, /<input[^>]*\brequired\b/, '支付宝行必须 required');
+  assert.doesNotMatch(alipay, /<input[^>]*\brequired\b/, '普通行不在客户端 required，由服务端拦');
   assert.doesNotMatch(voucher, /<input[^>]*\brequired\b/, '券行金额可以空，不许 required');
 });
 
-test('AC-VP-AMOUNT-2 没有券方式清单时，已选普通行仍 required（不误豁免）', () => {
+test('AC-VP-AMOUNT-2 没有券方式清单时也不在客户端 required（服务端仍校验）', () => {
   const html = paymentRowsHtml(write([]));
-  assert.match(rowOf(html, 0), /<input[^>]*\brequired\b/);
+  assert.doesNotMatch(rowOf(html, 0), /<input[^>]*\brequired\b/);
 });
 
 test('AC-VP-AMOUNT-3 未选方式的空行不 required（她随后选券不会被卡），券行显示面值/结算款', () => {
