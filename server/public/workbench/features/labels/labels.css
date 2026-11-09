@@ -25,4 +25,3 @@
 .label-notice { margin: 6px 0 0; font-size: 13px; color: var(--warning); }
 
 /* ⭐ 扫码聚焦屏：整条独立页导航**整条隐藏**（只留扫码本身；返回走浏览器/飞书返回）。 */
-html[data-scan-only="1"] .standalone-nav { display: none; }

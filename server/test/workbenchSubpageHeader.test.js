@@ -61,12 +61,12 @@ test('AC3 登录行逐字保留（两个子页各一条）', () => {
   }
 });
 
-test('AC4 独立页骨架一个不少（compact-header / 独立页导航 / 页面宿主）', () => {
+test('AC4 独立页骨架保留（compact-header / 页面宿主），导航已删除', () => {
   for (const { file } of PAGES) {
     const html = read(file);
     assert.ok(html.includes('class="header compact-header"'), `${file} 的 header 骨架仍在`);
-    assert.ok(html.includes('class="standalone-nav"'), `${file} 的独立页导航仍在`);
-    assert.ok(/<a href="\/workbench\/">返回完整工作台<\/a>/.test(html), `${file} 仍能回工作台`);
+    assert.ok(!html.includes('class="standalone-nav"'), `${file} 的独立页导航已删除（2026-11-09 业务口径）`);
+    assert.ok(!html.includes('返回完整工作台'), `${file} 不再有「返回完整工作台」`);
     assert.ok(html.includes('id="standalone-host"'), `${file} 的页面宿主仍在`);
     assert.ok(html.includes('styles/tokens.css') && html.includes('styles/base.css'),
       `${file} 仍走同一套主题（颜色只在 tokens.css）`);
