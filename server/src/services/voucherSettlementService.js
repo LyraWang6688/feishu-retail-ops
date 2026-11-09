@@ -66,7 +66,10 @@ const money = (cents) => (Number(cents || 0) / 100).toFixed(2);
 const parseSettleDays = (ruleText) => {
   const text = String(ruleText || '').trim();
   if (!text) return null;
-  const match = text.match(/(\d+)\s*(?:个)?\s*(?:自然日|天|日)/) || text.match(/\+\s*(\d+)/);
+  // 生产「结算周期」现在的取值是纯数字（如「5」）；也兼容「核销日+5个自然日」「+5」「T+5」。
+  const match = /^\d+$/.test(text)
+    ? [text, text]
+    : (text.match(/(\d+)\s*(?:个)?\s*(?:自然日|天|日)/) || text.match(/\+\s*(\d+)/));
   if (!match) return null;
   const days = Number(match[1]);
   return Number.isInteger(days) && days >= 0 && days <= 90 ? days : null;

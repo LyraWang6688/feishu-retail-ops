@@ -138,7 +138,7 @@ test('AC-VS1 ⭐ 三方全等 + 券规则 5 天 ⇒ 结清并通知', async () =
   const { service, settled, sent, billCalls, withdrawCalls } = build({
     records: [payment('rec_1', { createdAt: created }), payment('rec_2', { createdAt: created, amount: '47.4', method: '抖音代金券（49.9）' })],
     methods: [methodRow('m1', '抖音代金券（89.9）', 'v1'), methodRow('m2', '抖音代金券（49.9）', 'v2')],
-    vouchers: [voucherRow('v1', '核销日+5个自然日'), voucherRow('v2', '核销日+5个自然日')],
+    vouchers: [voucherRow('v1', '5'), voucherRow('v2', '5')],
     bills: { '2026-11-01': billOf({ sku: 'sku-v1', goods: 8540 }, { sku: 'sku-v2', goods: 4740 }) },
     withdraws: { '2026-11-06': withdrawOf(13280) },
   });
@@ -346,6 +346,7 @@ test('AC-VS17 ⭐ 券方式未映射 ⇒ 不结、不猜', async () => {
 });
 
 test('AC-VS18 ⭐ 规则文本解析', () => {
+  assert.equal(parseSettleDays('5'), 5, '生产「结算周期」是纯数字');
   assert.equal(parseSettleDays('核销日+5个自然日'), 5);
   assert.equal(parseSettleDays('核销日+7天'), 7);
   assert.equal(parseSettleDays('T+3'), 3);
