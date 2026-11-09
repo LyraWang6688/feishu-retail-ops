@@ -169,12 +169,12 @@ test('AC-SD6 上传失败 ⇒ 不勾复选框、失败如实返回（留给补�
   assert.deepEqual(gateway.calls.update, [], '失败不许勾「已同步云盘」');
 });
 
-test('AC-SD7 命名口径：用「编号」（货号|颜色|类别）→ `_` 分隔；多张加序号；兜底/非法字符/.jpg', () => {
+test('AC-SD7 命名口径：只用「编号」（货号|颜色|类别）→ `_` 分隔；编号空 ⇒ 不命名（空串）', () => {
   // ⭐ 2026-11-10 业务负责人：「需要用编号」—— 编号全段都进文件名（含类别 ⇒ 同货号同色、A/B 不撞名）
   assert.equal(buildFileName({ number: '261175|杏色|A', index: 1, total: 1, sourceName: 'x.jpg' }), '261175_杏色_A.jpg');
   assert.equal(buildFileName({ number: 'A1|黑色|B', index: 1, total: 2, sourceName: 'a.png' }), 'A1_黑色_B-1.png');
-  // 编号为空（新增瞬间公式还没算完）⇒ 用源字段兜底（货号+颜色+类别，同序）
-  assert.equal(buildFileName({ number: '', itemNo: 'A1', color: '黑色', category: 'A', index: 1, total: 1, sourceName: 'x.jpg' }), 'A1黑色A.jpg');
+  // ⭐ 2026-11-10（业务负责人）：「重试直到有（编号）」⇒ **不再用货号/颜色兜底**
+  assert.equal(buildFileName({ number: '', index: 1, total: 1, sourceName: 'x.jpg' }), '', '编号空 ⇒ 不命名（由调用方等编号 / 跳过）');
   // 编号里出现非法字符 ⇒ 替换成 `_`
   assert.equal(buildFileName({ number: 'A1|黑/色|A', index: 1, total: 1, sourceName: 'noext' }), 'A1_黑_色_A.jpg');
   assert.equal(sanitizeFileName('A1:黑色', SAMPLE_IMAGE_DRIVE.naming), 'A1_黑色');
@@ -199,4 +199,54 @@ test('AC-SD9 开关关掉 ⇒ 一个字节都不传（连记录都不读）', as
   assert.deepEqual(result, { record_id: 'r1', status: 'skipped', reason: 'disabled' });
   assert.deepEqual(gateway.calls.get, []);
   assert.deepEqual(gateway.calls.upload, []);
+});
+
+
+test('AC-SD10 ⭐ 新增瞬间「编号」为空 ⇒ **重试直到有编号**再用它命名（不用货号兜底）', async () => {
+  const waitConfig = configOf({ numberWait: { attempts: 3, intervalMs: 0 } });
+  let reads = 0;
+  const sequences = [
+    fieldsOf({ number: '', images: [imageOf('ft1')] }),            // 第 1 次：公式还没算完
+    fieldsOf({ number: '', images: [imageOf('ft1')] }),            // 第 2 次：还没
+    fieldsOf({ number: 'A1|黑色|A', images: [imageOf('ft1')] }),   // 第 3 次：有了
+  ];
+  const gateway = {
+    calls: { get: [], upload: [] },
+    async get() { const fields = sequences[Math.min(reads, sequences.length - 1)]; reads += 1; gateway.calls.get.push(reads); return { fields }; },
+    async update() { return {}; },
+    drive: {
+      async listDriveFolder() { return []; },
+      async deleteDriveFile() { return {}; },
+      async downloadMedia() { return Buffer.from('img'); },
+      async uploadDriveFile({ fileName }) { gateway.calls.upload.push(fileName); return 'ft_1'; },
+    },
+  };
+  const service = createSampleImageDriveService({ gateway, config: waitConfig, sleep: async () => {} });
+  const result = await service.syncRecord('r1', { waitForNumber: true });
+
+  assert.equal(result.status, 'synced');
+  assert.equal(reads, 3, '等到第 3 次读到编号才传');
+  assert.deepEqual(gateway.calls.upload, ['A1_黑色_A.jpg'], '用编号命名，不是 A1黑色A.jpg');
+});
+
+test('AC-SD11 ⭐ 一直等不到「编号」⇒ 跳过不传、不勾（留给存量补）', async () => {
+  const waitConfig = configOf({ numberWait: { attempts: 2, intervalMs: 0 } });
+  let reads = 0;
+  const gateway = {
+    calls: { get: 0, upload: [] },
+    async get() { reads += 1; return { fields: fieldsOf({ number: '', images: [imageOf('ft1')] }) }; },
+    async update() { throw new Error('不该勾复选框'); },
+    drive: {
+      async listDriveFolder() { return []; },
+      async deleteDriveFile() { return {}; },
+      async downloadMedia() { return Buffer.from('img'); },
+      async uploadDriveFile({ fileName }) { gateway.calls.upload.push(fileName); return 'ft_1'; },
+    },
+  };
+  const service = createSampleImageDriveService({ gateway, config: waitConfig, sleep: async () => {} });
+  const result = await service.syncRecord('r1', { waitForNumber: true });
+
+  assert.deepEqual(result, { record_id: 'r1', status: 'skipped', reason: 'number_missing' });
+  assert.deepEqual(gateway.calls.upload, [], '编号都没有 ⇒ 不传无名文件');
+  assert.equal(reads, 3, '初次读 1 次 + 等 2 次（attempts=2）');
 });

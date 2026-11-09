@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **441** 个事件。按前缀分组：
+共 **443** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -239,6 +239,8 @@
 | `product.sample_image.drive.failed` | 2 | src/services/sampleImageDriveService.js |
 | `product.sample_image.drive.name_exists` | 1 | src/services/sampleImageDriveService.js |
 | `product.sample_image.drive.not_wired` | 1 | src/routes/larkEvents.js |
+| `product.sample_image.drive.number_missing` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.number_pending` | 1 | src/services/sampleImageDriveService.js |
 | `product.sample_image.drive.partial` | 1 | src/services/sampleImageDriveService.js |
 | `product.sample_image.drive.skipped` | 1 | src/services/sampleImageDriveService.js |
 | `product.sample_image.drive.started` | 1 | src/services/sampleImageDriveService.js |

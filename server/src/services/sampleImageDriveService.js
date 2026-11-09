@@ -78,18 +78,13 @@ const extensionOf = (sourceName, naming) => {
  *   · 多张：`{货号}{颜色}-1.jpg` / `-2` …（序号从 1 开始）
  *   ⚠️ 模板里 `{itemNo}` / `{color}` 来自 config；索引后缀来自 `naming.multiSuffix`。
  */
-const buildFileName = ({
-  number, itemNo, color, category, index, total, sourceName, naming = SAMPLE_IMAGE_DRIVE.naming,
-}) => {
-  // ⭐ 2026-11-10：「用编号」—— 编号 = `货号|颜色|类别`，`|` 换成 numberSeparator（默认 `_`）
+const buildFileName = ({ number, index, total, sourceName, naming = SAMPLE_IMAGE_DRIVE.naming }) => {
+  // ⭐ 2026-11-10（业务负责人）：「用编号」—— 编号 = `货号|颜色|类别`，`|` 换成 numberSeparator（默认 `_`）。
+  //   ⚠️ **不做货号+颜色兜底**：编号为空 ⇒ 返回 `''`，调用方会「重试直到有编号」（或跳过）。
   const separator = String(naming.numberSeparator ?? '_');
   const numberParts = textOf(number).split('|').map((part) => part.trim()).filter(Boolean);
-  const base = numberParts.length
-    ? numberParts.join(separator)
-    : String(naming.fallbackTemplate || '{itemNo}{color}{category}')
-      .replace(/\{itemNo\}/g, textOf(itemNo))
-      .replace(/\{color\}/g, textOf(color))
-      .replace(/\{category\}/g, textOf(category));
+  if (!numberParts.length) return '';
+  const base = numberParts.join(separator);
   const suffix = total > 1 ? String(naming.multiSuffix || '-{index}').replace(/\{index\}/g, String(index)) : '';
   return `${sanitizeFileName(`${base}${suffix}`, naming)}${extensionOf(sourceName, naming)}`;
 };
@@ -107,7 +102,9 @@ const isImageAttachment = (attachment) => {
  * @param {object} options.gateway  V1BitableGateway（或测试替身）
  * @param {object} [options.config] 覆盖 `SAMPLE_IMAGE_DRIVE`（单测注入；生产用默认）
  */
-const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } = {}) => {
+const createSampleImageDriveService = ({
+  gateway, config = SAMPLE_IMAGE_DRIVE, sleep,
+} = {}) => {
   if (!gateway) throw new Error('样例图云盘同步缺少 gateway');
   // ⭐ 云盘层由网关构造器挂载（`services/driveApi.js`）⇒ 服务只认 `gateway.drive`。
   //   ⚠️ 构造时**不抛**：很多测试/脚本只装配了"点表"那一半的网关替身（不跑云盘链路），
@@ -131,6 +128,7 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
     throw new Error('「货品信息」schema 里没有 sampleImageSynced 字段映射（应为「已同步云盘」复选框列）');
   }
 
+  const sleepFn = typeof sleep === 'function' ? sleep : ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const enabled = config.enabled !== false;
   const folderToken = textOf(config.folder?.token);
   const naming = config.naming || SAMPLE_IMAGE_DRIVE.naming;
@@ -167,7 +165,7 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
    * 同步一条货品（**串行**：一张一张传；上传接口不支持并发）。
    * 返回 `{ record_id, status: 'synced'|'skipped'|'failed', ... }`（不抛：事件分支不因单条失败中断）。
    */
-  const syncRecord = async (recordId, { reason = 'record_added' } = {}) => {
+  const syncRecord = async (recordId, { reason = 'record_added', waitForNumber = false } = {}) => {
     const id = textOf(recordId);
     if (!id) return { record_id: id, status: 'skipped', reason: 'record_id_missing' };
     if (!enabled) {
@@ -179,17 +177,40 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
       return { record_id: id, status: 'failed', reason: 'drive_missing' };
     }
     try {
-      const record = await gateway.get('product', id);
-      const fields = record?.fields || {};
+      let record = await gateway.get('product', id);
+      let fields = record?.fields || {};
 
       // 幂等：已勾「已同步云盘」⇒ 不再传（重复事件 / 重试都只会有一次）
       if (fields?.[syncedField] === true) return skip(id, 'already_synced');
 
-      const images = imagesOf(fields);
+      let images = imagesOf(fields);
       if (!images.length) return skip(id, 'no_sample_image');
 
-      const nameBase = nameBaseOf(fields);
-      if (!nameBase.number && !nameBase.itemNo && !nameBase.color) return skip(id, 'name_missing');
+      let nameBase = nameBaseOf(fields);
+      // ⭐⭐ 2026-11-10（业务负责人）：「**重试直到有**（编号）」——新增瞬间公式可能还没算完。
+      //   · 只在事件链路（waitForNumber=true）等；存量补齐里都是老记录，编号该有就有，不等。
+      //   · 每次都**重读记录**（公式算完才会出现在字段里）；最多 attempts 次，间隔 intervalMs。
+      const waitCfg = config.numberWait || { attempts: 0, intervalMs: 0 };
+      const maxWait = Number(waitCfg.attempts) > 0 ? Number(waitCfg.attempts) : 0;
+      let waited = 0;
+      while (waitForNumber && !nameBase.number && waited < maxWait) {
+        waited += 1;
+        logInfo('product.sample_image.drive.number_pending', {
+          record_id: id, attempt: waited, max_attempts: maxWait, interval_ms: Number(waitCfg.intervalMs) || 0,
+        });
+        await sleepFn(Number(waitCfg.intervalMs) || 0);
+        record = await gateway.get('product', id);
+        fields = record?.fields || {};
+        images = imagesOf(fields);
+        nameBase = nameBaseOf(fields);
+      }
+      if (!nameBase.number) {
+        // 等不到编号 ⇒ **不传无名文件、不勾**（等记录补全后由存量按钮补）
+        logWarn('product.sample_image.drive.number_missing', {
+          record_id: id, reason, waited, max_attempts: maxWait,
+        });
+        return skip(id, 'number_missing');
+      }
 
       const maxImages = Number(config.maxImages) > 0 ? Number(config.maxImages) : 0;
       const targets = maxImages && images.length > maxImages ? images.slice(0, maxImages) : images;
@@ -266,7 +287,8 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
       const action = actionItem?.action;
       if (!recordId) continue;
       if (!createdActions.has(action)) continue;
-      const result = await syncRecord(recordId, { reason: action });
+      // ⭐ 事件链路：新增瞬间「编号」公式可能还没算完 ⇒ 等它出来再传（重试直到有）
+      const result = await syncRecord(recordId, { reason: action, waitForNumber: true });
       results.push(result);
       if (result.status === 'failed') failed.push(result);
     }

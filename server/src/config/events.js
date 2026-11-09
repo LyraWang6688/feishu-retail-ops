@@ -140,6 +140,8 @@ const EVENTS = Object.freeze([
   'product.sample_image.drive.failed',
   'product.sample_image.drive.name_exists',
   'product.sample_image.drive.not_wired',
+  'product.sample_image.drive.number_missing',
+  'product.sample_image.drive.number_pending',
   'product.sample_image.drive.partial',
   'product.sample_image.drive.skipped',
   'product.sample_image.drive.started',

@@ -70,15 +70,24 @@ const NAMING = Object.freeze({
   //   · `source: 'number'` = 优先用表里「编号」公式列；为空（新增瞬间公式没算完）才用源字段兜底；
   //   · 编号里的 `|` 在文件名里换成 `numberSeparator`（默认 `_`）⇒ 例 `A1_黑色_A.jpg`；
   //   · 兜底模板 = 货号+颜色+类别（与「编号」同序，只少了分隔符）。
-  source: 'number',
   numberSeparator: '_',
-  fallbackTemplate: '{itemNo}{color}{category}',
   multiSuffix: '-{index}',
   fallbackExtension: '.jpg',
   // 云盘文件名里不允许/容易出问题的字符（编号里的 `|` 已按分隔符替换，不会走到这里）
   illegalChars: Object.freeze(['/', '\\', ':', '*', '?', '"', '<', '>', '|']),
   replacement: '_',
   maxLength: 200,
+});
+
+/**
+ * ⭐⭐ 2026-11-10 业务负责人：「**那就重试直到有**（编号）」——
+ *   新增那一瞬间「编号」公式可能还没算完 ⇒ **不用货号/颜色兜底**，而是隔一会儿重读记录，
+ *   直到编号出来再传（最多等 `attempts × intervalMs`；仍没有 ⇒ 跳过不传、不勾，
+ *   等记录补全后由存量按钮补）。
+ */
+const NUMBER_WAIT = Object.freeze({
+  attempts: readInt(process.env, 'SAMPLE_IMAGE_DRIVE_NUMBER_WAIT_ATTEMPTS', 8, { min: 0, max: 60 }),
+  intervalMs: readInt(process.env, 'SAMPLE_IMAGE_DRIVE_NUMBER_WAIT_MS', 2000, { min: 0, max: 60000 }),
 });
 
 /**
@@ -141,6 +150,7 @@ const SAMPLE_IMAGE_DRIVE = Object.freeze({
   fields: FIELDS,
   operations: DRIVE_OPERATIONS,
   backfill: BACKFILL,
+  numberWait: NUMBER_WAIT,
 });
 
 module.exports = {
@@ -151,4 +161,5 @@ module.exports = {
   SAMPLE_IMAGE_DRIVE_NAMING: NAMING,
   SAMPLE_IMAGE_DRIVE_OPERATIONS: DRIVE_OPERATIONS,
   SAMPLE_IMAGE_DRIVE_BACKFILL: BACKFILL,
+  SAMPLE_IMAGE_DRIVE_NUMBER_WAIT: NUMBER_WAIT,
 };
