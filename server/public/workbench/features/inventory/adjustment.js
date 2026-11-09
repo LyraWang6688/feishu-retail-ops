@@ -1,10 +1,15 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { bindSubTabs, describeError, runWriteAction, setBusy, showPageError } from '../../core/ui.js';
+import { INVENTORY_ADJUSTMENT_TABS } from '../../config/inventoryAdjustment.js';
 
-// 「库存手工调整」——常用功能里的核心子页，两个子 tab：
+// 「库存手工调整」——常用功能里的核心子页，三个子 tab：
 //   · 盘点调整：改**数量**，可增可减（盘多了加、盘少了减）→ POST .../adjustments/count
 //   · 换季调整：改**状态**，数量不变（门盒/样品 ↔ 仓库）→ POST .../adjustments/season
+//   · 状态调整：**占位（待建设）** —— 核心是「样品 ↔ 门盒」之间的状态调整；
+//     ⚠️ 2026-11-09（业务负责人）：「先占位一下，看一起其他的待开发状态」⇒ 这一屏现在**只占位**：
+//        没有输入、没有提交按钮、不发任何接口；等口径定了再按下面两条既有通路实现
+//        （状态类走 `InventoryService.transitionState`，不增删记录、数量不变）。
 //
 // 两条硬约束（后端已实现，界面也必须按它设计）：
 //   ① 流水里的「变动数量」存的是**绝对值**，增减由「库存方向」表达 —— 页面不拼 +N/−N；
@@ -26,8 +31,8 @@ function renderShell(container) {
   container.innerHTML = `
     <section class="panel">
       <div class="sub-tabs">
-        <button class="sub-tab active" type="button" data-subtab="adjust-count">盘点调整</button>
-        <button class="sub-tab" type="button" data-subtab="adjust-season">换季调整</button>
+        <!-- 三级子 tab 的 id / 名称 / 顺序 / 默认选中 = config/inventoryAdjustment.js（不再散落在页面字符串里）。 -->
+        ${INVENTORY_ADJUSTMENT_TABS.map((tab) => `<button class="sub-tab${tab.default ? ' active' : ''}" type="button" data-subtab="${tab.id}">${escapeHtml(tab.label)}</button>`).join('')}
       </div>
 
       <div id="adjust-count-subpanel" class="sub-panel">
@@ -114,6 +119,15 @@ function renderShell(container) {
         </div>
         <button class="btn btn-primary" type="button" data-action="submit-season">提交换季调整</button>
         <p class="operation-result" data-view="season-result" role="status"></p>
+      </div>
+
+      <div id="adjust-state-subpanel" class="sub-panel hidden">
+        <!-- 🔴 2026-11-09（业务负责人）：「增加一个子 tab，为状态调整，核心是样品和门盒的调整，先占位一下」
+             ⇒ 只留一个**待建设**标记 + 这一屏要做什么（样品 ↔ 门盒）；没有任何输入 / 提交 / 请求 ✗ -->
+        <div class="inline-placeholder">
+          <p>样品 ↔ 门盒</p>
+          <span class="tag tag-info">待建设</span>
+        </div>
       </div>
     </section>`;
 }
