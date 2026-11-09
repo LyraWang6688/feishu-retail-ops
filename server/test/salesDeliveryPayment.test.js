@@ -68,7 +68,7 @@ test('AC-DP2 没付清（非券）：新增已收款 + 原未收款改剩余', a
   assert.equal(writes.filter((item) => item.action === 'create').length, 1);
   assert.equal(writes.find((item) => item.action === 'create').input.amount, 50);
   assert.equal(updates.length, 1);
-  assert.equal(updates[0].fields[V1_BITABLE_SCHEMA.tables.paymentRecord.fields.amount], 50);
+  assert.equal(updates[0].fields.amount, 50);
 });
 
 test('AC-DP3 付清（团购券）：原未收款改待平台结算，不写收款日/方向', async () => {
@@ -77,9 +77,9 @@ test('AC-DP3 付清（团购券）：原未收款改待平台结算，不写收�
   assert.equal(result.status, DELIVERY_PAYMENT.platformPendingStatus);
   assert.equal(writes.filter((item) => item.action === 'collect').length, 0);
   assert.equal(updates.length, 1);
-  assert.equal(updates[0].fields[V1_BITABLE_SCHEMA.tables.paymentRecord.fields.status], DELIVERY_PAYMENT.platformPendingStatus);
-  assert.equal(updates[0].fields[V1_BITABLE_SCHEMA.tables.paymentRecord.fields.receivedAt], undefined);
-  assert.equal(updates[0].fields[V1_BITABLE_SCHEMA.tables.paymentRecord.fields.tradeDirection], undefined);
+  assert.equal(updates[0].fields.status, DELIVERY_PAYMENT.platformPendingStatus);
+  assert.equal(updates[0].fields.receivedAt, undefined);
+  assert.equal(updates[0].fields.tradeDirection, undefined);
 });
 
 test('AC-DP4 多条未收款 / 超过待付：写之前拒绝', async () => {
