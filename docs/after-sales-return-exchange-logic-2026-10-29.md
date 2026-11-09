@@ -159,9 +159,9 @@
 
 表单 POST `/api/workbench/sales/after-sales/submit` →
 同步校验（填错 → 303 回售后页带 `err=` 人话，**不入队、零写入**）→ 冻结 payload 入队 →
-`redirectWithSubmitToast()`（`config/submitToast.js`）→ 303 回 `/workbench/after-sales.html?productRecordId=…`
-并显示统一那句「数据提交成功，后台自动写入」→ 后台 worker 写库。
-页面带 `submitted=1` 时 1.5s 后再刷一次候选（退掉的卡片会消失）。
+`redirectWithSubmitToast()`（`config/submitToast.js`）→ **303 回「工作台首页」**（统一 toast 的默认落点，
+与销售/采购提交一致；业务负责人 2026-11-09 定：不再回售后页）并显示统一那句
+「数据提交成功，后台自动写入」→ 后台 worker 写库。**填错才回售后页**（带 `err=`，就地改）。
 
 ### 8.2 写库顺序（`services/afterSalesReturnService.js`）
 

@@ -52,11 +52,11 @@ const mockApi = async (page, { orders = [] } = {}) => {
       return route.fulfill(json({ success: true, items: ['现金', '微信扫码'] }));
     }
     if (path === '/api/workbench/sales/after-sales/submit' && route.request().method() === 'POST') {
-      // 表单 POST ⇒ 服务端入队后 303 回售后页并带统一 toast（e2e 里直接模拟那一跳）
+      // 表单 POST ⇒ 服务端入队后 303 回**工作台首页**并带统一 toast（与销售/采购一致）
       const toast = encodeURIComponent('数据提交成功，后台自动写入');
       return route.fulfill({
         status: 303,
-        headers: { location: `/workbench/after-sales.html?productRecordId=p1&toast=${toast}&submitted=1` },
+        headers: { location: `/workbench/?toast=${toast}` },
         body: '',
       });
     }
@@ -236,12 +236,13 @@ test('售后扫一扫落地页：选哪条卡片，那条卡片就变成三个�
   // 退款方式来自「支付方式管理」接口（不写死）
   await expect(page.locator('[data-as-method] option')).toHaveText(['请选择', '现金', '微信扫码']);
   await page.locator('[data-as-method]').selectOption('现金');
-  // 提交退货表单 ⇒ 303 回售后页 + 统一 toast「数据提交成功，后台自动写入」
+  // 提交退货表单 ⇒ 303 回**工作台首页** + 统一 toast「数据提交成功，后台自动写入」（与销售/采购一致）
   await page.locator('[data-as-return-form] button[type="submit"]').click();
-  // toast 显示后前端会清掉 URL 上的 toast 参数（刷新不重复弹）⇒ 这里等 toast 本体 + submitted 标记
   await expect(page.locator('.workbench-toast')).toContainText('数据提交成功，后台自动写入');
-  await expect(page).toHaveURL(/submitted=1/);
-  // 提交后页面已刷新（候选重新加载、无选中）⇒ 再选一条继续测换货
+  // toast 显示后前端会清掉 URL 上的 toast 参数（刷新不重复弹）⇒ 落在工作台首页
+  await expect(page).toHaveURL(/\/workbench\/$/);
+  // 后端行为已由单测钉住；这里为了继续测「换货弹窗」再回到售后页（候选重新加载、无选中）
+  await page.goto('/workbench/after-sales.html?productRecordId=p1');
   await page.locator('.candidate-card').first().click();
 
   // 点击「换货」→ 换尺码 ⇒ 尺码按销售扫码页口径分三组（现货 / 预订 / 特殊码折叠）
