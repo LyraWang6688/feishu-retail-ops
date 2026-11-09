@@ -67,7 +67,7 @@ partial_failed 也是终态，直接发群
 | `ASYNC_JOB_PERMANENT_FEISHU_CODES` | 永久飞书码 | 内置 |
 | `ASYNC_JOB_PERMANENT_RESULT_CODES` | 业务拒绝码 | 内置 |
 | `ASYNC_JOB_NOTIFY_ENABLED` | 失败通知开关 | `true` |
-| `ASYNC_JOB_ALERT_CHAT_ID` | 失败通知群，空则回落 `PURCHASE_CHAT_ID` | 空 |
+| `NOTIFY_GROUP_CHAT_ID` | 失败通知群（统一通知目标），空则回落 `PURCHASE_CHAT_ID` | 空 |
 | `ASYNC_JOB_NOTIFY_MAX_ERROR_LENGTH` | 群消息错误截断 | `200` |
 | `ASYNC_JOB_NOTIFY_DEDUPE_HOURS` | 通知去重窗口 | `168`（7 天） |
 | `ASYNC_JOB_ALERT_TITLE` | 群消息标题 | `【异步写入失败】` |

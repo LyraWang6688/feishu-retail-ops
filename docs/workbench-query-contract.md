@@ -31,7 +31,7 @@
 
 `GET /api/workbench/sales/orders` 返回已入账订单的 `orders[]`。每单包含 `receivable_amount`（明细成交金额合计，缺失时 `null`）、`paid_amount`（已收款金额）、`platform_pending_amount`（待平台结算金额）、`pending_amount`（仍需向顾客收取的余额）、`payment_status`、`fulfillment_status`、`pending_delivery_quantity`、`details[]`、`payments[]`。每条 `payments[]` 包含 `status` 和 `received_at`。工作台筛出 `pending_amount > 0` 的待收款订单，以及 `pending_delivery_quantity > 0` 的待交付订单。新订单未收齐款时会有一条「未收款」记录；补尾款会更新该记录（本版要求一次收清），旧订单无占位记录时仍新增实际收款。每条明细代表一双鞋，包含 `actual_amount`、`fulfillment_status`；兼容字段 `quantity` 固定为 1，`delivered_quantity` 根据履约状态返回 0 或 1，并不是飞书明细表中的实体字段。
 
-`POST /api/workbench/sales/payments` 仅在实际收到款时操作：新订单有「未收款」记录时，要求一次收清并更新原记录的方式、状态、收款时间；旧订单无占位记录时新增收款，不得超过待收金额。`POST /api/workbench/sales/deliveries` 只对选中的未交付明细逐双扣减门盒库存，门盒不足时扣样品并触发补样品提醒；不自动扣仓库。多条明细逐条尝试：某条库存不足或写入失败时，其他明细继续交付；响应的 `failures` 列出失败明细的 `detailRecordId`、`lineNumber`、`size` 和 `error`，成功明细不会在重试时再次扣库。响应的 `deliveredQuantity` / `totalQuantity` 是整单累计双数，不应把 `success: true` 误显示为全部交付。后端只写销售明细「履约状态」、收款明细「收款状态」与销售主表「订单状态」；主表公式不写。未给出逐双成交金额的多双合计报价不会自动拆分入账。
+`POST /api/workbench/sales/payments` 仅在实际收到款时操作：新订单有「未收款」记录时，要求一次收清并更新原记录的方式、状态、收款时间；旧订单无占位记录时新增收款，不得超过待收金额。`POST /api/workbench/sales/deliveries` 只对选中的未交付明细逐双扣减门盒库存，门盒不足时扣样品并触发补样品提醒；不自动扣仓库。多条明细逐条尝试：某条库存不足或写入失败时，其他明细继续交付；响应的 `failures` 列出失败明细的 `detailRecordId`、`lineNumber`、`size` 和 `error`，成功明细不会在重试时再次扣库。响应的 `deliveredQuantity` / `totalQuantity` 是整单累计双数，不应把 `success: true` 误显示为全部交付。后端只写销售明细「履约状态」、收款明细「钱款状态」与销售主表「写入状态」（2026-10-18 起旧的确认 / 销售 / 资金 / 库存四列已从生产表删除）；主表公式不写。未给出逐双成交金额的多双合计报价不会自动拆分入账。
 
 ## 采购管理（只读）
 

@@ -115,7 +115,7 @@ server/src/config/asyncJobs.js
     maxMs: 60000,
   },
   notify: {
-    chatId: process.env.ASYNC_JOB_ALERT_CHAT_ID || process.env.PURCHASE_CHAT_ID,
+    chatId: process.env.NOTIFY_GROUP_CHAT_ID || process.env.PURCHASE_CHAT_ID,
     enabled: true,
     dedupeHours: 7 * 24,
   },
@@ -129,7 +129,7 @@ server/src/config/asyncJobs.js
 **群选择**：
 
 - 复用 `PURCHASE_CHAT_ID`（文档中即「邯美皮鞋运营群」）；
-- 如需单独群，新增 `ASYNC_JOB_ALERT_CHAT_ID`，未配置时回落到 `PURCHASE_CHAT_ID`；
+- 如需单独群，配 `NOTIFY_GROUP_CHAT_ID`（统一通知配置；旧文里的 `ASYNC_JOB_ALERT_CHAT_ID` **从未接线**），未配置时回落到 `PURCHASE_CHAT_ID`；
 - 未配置群 → 记 `async_job.notify.chat_missing`，不静默成功。
 
 ## 5. 重试规则
