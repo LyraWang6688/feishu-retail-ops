@@ -42,7 +42,9 @@
   - **AC-SL2** 幂等：同一 task 重跑 ⇒ 0 条新链；
   - **AC-SL3** 未关联行不够 ⇒ 链已有的 + warn（不抛）；
   - **AC-SL4** 某条 update 失败 ⇒ 其余继续 + failed 计数（不抛）；
-  - **AC-SL5** 无批次号 ⇒ no-op；gateway 抛错 ⇒ `ok:false` 且不抛。
+  - **AC-SL5** 无批次号 ⇒ no-op；gateway 抛错 ⇒ `ok:false` 且不抛；
+  - **AC-SL7** 上新来源（`source=new`）⇒ **直接不参与回填**（即使存在可关联销售行），不 warn；
+  - **AC-SL8** 补货来源但没有可关联销售记录 ⇒ **静默跳过**（不 warn，仅汇总 info 计数）。
 - `test/procurementPageSubmit.test.js`
   - 后台写成功后 ⇒ 回填一次（taskId 与引擎一致）；后台写失败 ⇒ **不回填**。
 
@@ -55,7 +57,7 @@
 
 ## 5. 边界 / 未做
 
-- 页面协议**不变**（仍只传 product_record_id + 尺码 + 数量；不绑销售单号、不传销售明细 record_id）；
+- 页面协议**向后兼容地新增 `source`**（`replenish` / `new`，用于区分补货与上新；仍不绑销售单号、不传销售明细 record_id）；旧载荷没带 `source` ⇒ 按补货口径处理（见 §7）；
 - 回填失败（网络/限流）不会重试调度：下次打开补货时若这些行仍未关联，会**再次出现**（存在重复报风险）——后续可加"回填失败重试"；
 - 生产 Base **零写入**（回填只会在真实提交链路里发生；测试 Base 验证需先同步该字段列）；
 - 采购/退货/验收/销售其他链路未改；扫一扫仍排最低优先级。
@@ -69,3 +71,25 @@
   - 回读两条销售明细：「采购明细」= 同一条采购明细记录 `reczz28WuW415l1m` ✓；
 - 批次 `CGD-20261108-1432`（采购主表 `reczz28WuVzzVAw3`）；测试 Base 数据按既有口径**保留不删**；
 - ⚠️ 合成测试数据时发现测试 Base 与生产结构不一致（测试 Base 的「尺码」是单向关联、「销售日」是自动创建时间、「库存数量」公式不同）⇒ 验证脚本用 `listAll + 客户端筛` 读候选销售行，**写入仍是真实 `gateway.update`**；生产读侧仍走 `config.filters.replenish`。
+
+
+## 7. 2026-11-09 真机修正：上新/补货分开 + 只在真异常时 warn
+
+真机首单（批次 `CGD-20261109-0001`）暴露：**上新**的 906（当天上架、7 个尺码）没有销售明细可关联，
+但回填按"没凑够数量"记了 7 条 `sales_link_backfill_failed` warn —— 数据没坏，但日志误报。
+
+业务负责人口径（2026-11-09）：
+- **上新行**：直接不参与回填、**不产生 warn**；
+- **补货行**：**没有可关联销售记录** ⇒ 静默跳过（最多汇总一条 info）；
+- **有销售记录但没关联上 / 数量不足 / 写入失败** ⇒ **才 warn/告警**。
+
+实现：
+1. 页面提交 `items[]` 新增 `source`（`replenish` / `new`，来自她在哪个 tab 选的）；
+2. 服务端 `buildItems` 校验并透传（非法值 ⇒ `''`）；`multiItemOrderService` 计划载荷、`postingPlan.plan.items` 冻结 `source`；
+3. 回填按 `plan.items[i].source` 分类：
+   - `new` ⇒ 跳过（`skipped_new_products`）；
+   - `replenish` / 空（旧任务）⇒ 无候选则静默（`skipped_no_sales_rows`），有候选但没凑够/写失败 ⇒ warn；
+4. 汇总 info（`sales_link_backfilled`）新增两个计数：`skipped_new_products`、`skipped_no_sales_rows`。
+
+判据：`test/procurementSalesLinkBackfill.test.js` 新增 **AC-SL7 / AC-SL8**；
+`test/procurementPageSubmit.test.js` 新增 source 透传用例；AC-SL1~SL6 逐字不变。

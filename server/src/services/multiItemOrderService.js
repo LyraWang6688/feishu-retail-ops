@@ -148,6 +148,7 @@ const createMultiItemOrderService = (options = {}) => {
     const at = next.items.findIndex((entry) => productKeyOf(entry) === productKey);
     const normalized = {
       product_record_id: String(item.product_record_id || item.productRecordId || '').trim(),
+      source: String(item.source || '').trim(),
       number: String(item.number || '').trim(),
       item_no: String(item.item_no || '').trim(),
       color: String(item.color || '').trim(),
@@ -310,6 +311,7 @@ const createMultiItemOrderService = (options = {}) => {
         const withBehavior = chainConfig.payload?.withBehavior === true;
         const values = {
           product_record_id: item.product_record_id || productKey,
+          ...(item.source ? { source: String(item.source) } : {}),
           product_number: item.number || '',
           item_no: item.item_no || '',
           color: item.color || '',
@@ -502,6 +504,7 @@ const createMultiItemOrderService = (options = {}) => {
     ok: true,
     items: (Array.isArray(groups) ? groups : []).map((group) => ({
       product_record_id: String(group?.productRecordId ?? group?.product_record_id ?? '').trim(),
+      source: String(group?.source ?? '').trim(),
       number: String(group?.number ?? '').trim(),
       item_no: String(group?.itemNo ?? group?.item_no ?? '').trim(),
       color: String(group?.color ?? '').trim(),
