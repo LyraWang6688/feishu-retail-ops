@@ -163,8 +163,9 @@ const purchaseBatchCardHtml = (batch) => `
           <div class="action-body">
             <div data-view="arrival-detail" data-batch="${escapeHtml(batch.batch_no)}"></div>
             <label class="form-field action-form__amount">${escapeHtml(T.arrivalAmount)}
-              <input data-field="arrival-amount" type="text" inputmode="decimal" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
+              <input data-field="arrival-amount" type="text" inputmode="decimal" required aria-required="true" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
             </label>
+            <p class="arrival-amount-hint" data-view="arrival-amount-hint" hidden>${escapeHtml(ARRIVAL_FULL_TEXTS.amountRequired)}</p>
             <button class="btn btn-primary" type="button" data-action="submit-arrival" data-batch="${escapeHtml(batch.batch_no)}">${escapeHtml(T.arrivalSubmit)}</button>
           </div>
         </details>
@@ -598,13 +599,24 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     const batchNo = button.dataset.batch || '';
     const form = state.container.querySelector(`[data-arrival-batch="${batchNo}"]`);
     const read = (name) => String(form?.querySelector(`[data-field="${name}"]`)?.value ?? '').trim();
+    const amountInput = form?.querySelector('[data-field="arrival-amount"]') || null;
+    const amountHint = form?.querySelector('[data-view="arrival-amount-hint"]') || null;
     const rawAmount = read('arrival-amount');
     // ⭐ 2026-10-16（她逐字：「数据表里已经没有到货文字说明（该列已从真表退场）了…你必须得删」）：工作台这条**不再有**
     //    「到货说明」这个输入框 ⇒ 这里也不再有读值与必填（那条判据**随她这句一起退场** ✓）
     if (!batchNo) return renderResult('这一行没有报货批次号，不能验收到货', true);
+    // ⭐ 2026-11-09（业务负责人：参考销售货品页的金额校验）：
+    //   未填 / 0 / 非法 ⇒ **不发请求**，原生 required 提示 + 聚焦输入框 + 字段旁人话（不只在页面底部提示）。
     if (!/^\d+(\.\d+)?$/.test(rawAmount) || Number(rawAmount) <= 0) {
-      return renderResult('请先填这次的「货款」（大于 0 的数字），再点验收到货', true);
+      if (amountHint) {
+        amountHint.textContent = ARRIVAL_FULL_TEXTS.amountRequired;
+        amountHint.hidden = false;
+      }
+      amountInput?.focus();
+      if (typeof amountInput?.reportValidity === 'function') amountInput.reportValidity();
+      return renderResult('');
     }
+    if (amountHint) amountHint.hidden = true;
     // ⭐ 同上：点一下立刻有反馈 + 防连点（校验放在守卫**之前** —— 没填完不该置灰）
     return runWriteAction(button, async () => {
       renderResult('');

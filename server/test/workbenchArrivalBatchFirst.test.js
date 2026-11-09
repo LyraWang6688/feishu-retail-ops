@@ -348,3 +348,19 @@ test('AC-RC2c ⭐ 移动端明细：去掉外层卡片容器；一行两码且�
   assert.ok(css.includes('.order-card.order-card--detail-open'), '展开后去掉批次卡容器（padding/border/background/shadow）✓');
   assert.ok(readWorkbench('features/orders/index.js').includes("classList.toggle('order-card--detail-open'"), '展开态切类由 JS 挂上 ✓');
 });
+
+test('AC-RC6 ⭐ 货款必填（参考销售货品页）：required + 未填/<=0 不发请求、聚焦输入框 + 字段旁提示', () => {
+  const src = readWorkbench('features/orders/index.js');
+  const config = readWorkbench('config/orders.js');
+  assert.ok(src.includes('data-field="arrival-amount" type="text" inputmode="decimal" required'),
+    '金额输入框带 required ✓');
+  assert.ok(src.includes('data-view="arrival-amount-hint"'), '字段旁有必填提示位 ✓');
+  assert.ok(src.includes('reportValidity'), '未填时调用原生校验提示 ✓');
+  assert.ok(src.includes("'[data-field=\"arrival-amount\"]'") && src.includes('amountInput?.focus()'),
+    '未填时聚焦金额输入框 ✓');
+  assert.ok(config.includes('amountRequired:'), '必填文案走配置 ✓');
+  // 校验发生在 runWriteAction 之前（不发请求）；顺序：amount 判断在 runWriteAction 之前
+  const amountCheck = src.indexOf('amountHint.textContent = ARRIVAL_FULL_TEXTS.amountRequired');
+  const writeAction = src.indexOf('return runWriteAction(button', src.indexOf('async function submitArrival'));
+  assert.ok(amountCheck > 0 && writeAction > amountCheck, '金额校验在发请求之前 ✓');
+});

@@ -159,6 +159,8 @@ export const ARRIVAL_FULL_TEXTS = {
   // 货号卡片右上角合计（业务负责人 2026-11-09：保留合计双数；不带「申请/报货」字样）
   detailGroupTotal: '{total} 双',
   zeroMeansNotArrived: '没到的填 0',
+  // ⭐ 2026-11-09（业务负责人）：货款必填（参考销售货品页的金额校验）
+  amountRequired: '请先填「本次货款金额」（大于 0 的数字），再确认到货并入库',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',
   // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）
   sizeInvalid: '尺码要填数字，数量要大于 0',
