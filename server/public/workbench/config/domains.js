@@ -234,12 +234,14 @@ export const DOMAIN_TABS = [
       {
         id: 'product-info-config',
         label: '数据配置',
-        // 2026-11-08 业务负责人：放在「标签打印」右边，先做占位页。
-        // ⭐ 2026-11-10（业务负责人）：「配置里的数据配置里增加一个卡片，这个卡片是按钮」——
-        //   点击 = **存量写入**（把有图但未勾的记录补传到云盘并勾「已同步云盘」）。
-        //   卡片外观与「录单」那排 entry-card 一致；动作实现见 features/domains/dataConfigAction.js。
+        // 2026-11-10：数据配置 = 动作卡页。
+        //   · 配品配置：占位卡（与录单入口卡同款）
+        //   · 同步团购券数据：点击触发抖音券目录写回
+        //   · 同步存量样例图：点击触发样例图补传云盘
         kind: 'action-cards',
         cards: [
+          { id: 'accessory-config', icon: '🛒', title: '配品配置', placeholder: true },
+          { icon: '🔄', title: '同步团购券数据', action: 'voucher-catalog-sync' },
           { icon: '🖼️', title: '同步存量样例图', action: 'sample-image-sync' },
         ],
       },

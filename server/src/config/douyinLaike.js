@@ -34,6 +34,11 @@ const ENDPOINTS = Object.freeze({
   settleBill: '/goodlife/v1/settle/bill/composite_query/',
   // 提现记录（按日期区间查；withdraw_time = 打款到结算账户的时间）
   settleWithdraw: '/goodlife/v1/settle/withdraw/composite_query/',
+  // 商品（券）线上列表 / 单品详情（单品里才有准的佣金费率）
+  goodsOnlineList: '/goodlife/v1/goods/product/online/query/',
+  goodsOnlineGet: '/goodlife/v1/goods/product/online/get/',
+  // 批量查 SKU（售价 actual_amount / 面值 origin_amount，单位分）
+  goodsSkuGet: '/goodlife/v1/goods/sku/get/',
   // ⛔ 写接口：跨订单验券（会真的核销），**登记位置、不调用**
   batchVerify: '/goodlife/v1/fulfilment/certificate/batch_verify/',
 });

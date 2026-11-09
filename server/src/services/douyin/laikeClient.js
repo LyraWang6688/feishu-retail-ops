@@ -251,6 +251,55 @@ const createLaikeClient = (options = {}) => {
     });
   };
 
+  /** 商品（券）线上列表：目录字段（名称/状态/上架时间/图片/适用规则）。 */
+  // ⚠️ `count` 实测 >50 会**静默返回空列表**（count=100 ⇒ 0 条）；默认 50、上限 50。
+  const fetchProductList = async ({ accountId, count = 50, cursor = 0, status } = {}) => {
+    if (!isNonEmptyString(accountId)) return fail('param_missing', config.texts.verifyAccountRequired);
+    const authorized = await token();
+    if (!authorized.ok) return authorized;
+    return request({
+      method: 'GET',
+      path: config.endpoints.goodsOnlineList,
+      query: { account_id: accountId, count, cursor, status },
+      token: authorized.token,
+      label: 'goods_list',
+    });
+  };
+
+  /**
+   * 商品（券）单品详情：**佣金费率只在这里准**（列表接口的 `platform_take_rate` 实测为 0）。
+   * 返回 `commission_info.platform_take_rate`（万分比：500 = 5%）。
+   */
+  const fetchProduct = async ({ accountId, productIds } = {}) => {
+    if (!isNonEmptyString(accountId)) return fail('param_missing', config.texts.verifyAccountRequired);
+    const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [productIds].filter(Boolean);
+    if (!ids.length) return fail('param_missing', config.texts.orderIdRequired);
+    const authorized = await token();
+    if (!authorized.ok) return authorized;
+    return request({
+      method: 'GET',
+      path: config.endpoints.goodsOnlineGet,
+      query: { account_id: accountId, product_ids: ids },
+      token: authorized.token,
+      label: 'goods_get',
+    });
+  };
+
+  /** 批量查 SKU：售价 `actual_amount` / 面值 `origin_amount`（单位：分）。 */
+  const fetchSkus = async ({ accountId, productId } = {}) => {
+    if (!isNonEmptyString(accountId)) return fail('param_missing', config.texts.verifyAccountRequired);
+    if (!isNonEmptyString(productId)) return fail('param_missing', config.texts.orderIdRequired);
+    const authorized = await token();
+    if (!authorized.ok) return authorized;
+    return request({
+      method: 'GET',
+      path: config.endpoints.goodsSkuGet,
+      query: { account_id: accountId, product_id: productId },
+      token: authorized.token,
+      label: 'goods_skus',
+    });
+  };
+
   /** 订单详情：按 `order_id` 查（列表口径不可靠，见文件头注释）。 */
   const orderDetail = async ({ accountId, orderId } = {}) => {
     if (!isNonEmptyString(orderId)) return fail('param_missing', config.texts.orderIdRequired);
@@ -272,6 +321,9 @@ const createLaikeClient = (options = {}) => {
     settleLedger,
     settleBill,
     settleWithdraw,
+    fetchProductList,
+    fetchProduct,
+    fetchSkus,
     orderDetail,
     tokenCacheOf: () => ({ ...tokenCache }),
   };

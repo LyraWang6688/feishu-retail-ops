@@ -9,6 +9,7 @@
 export const DATA_CONFIG_API = Object.freeze({
   // 同一个路径：POST = 启动一轮存量同步；GET = 查进度（页面轮询）
   sampleImageSync: '/api/workbench/data-config/sample-image-sync',
+  voucherCatalogSync: '/api/workbench/douyin/voucher-catalog-sync',
 });
 
 export const DATA_CONFIG_TEXTS = Object.freeze({
@@ -24,4 +25,8 @@ export const DATA_CONFIG_TEXTS = Object.freeze({
   startToast: '已开始同步存量样例图…',
   finishedToast: '存量样例图同步结束：成功 {synced} 条，跳过 {skipped} 条，失败 {failed} 条',
   pollFailedNote: '查不到同步进度，请刷新页面重试',
+  voucherRunningNote: '正在同步团购券数据…',
+  voucherDoneNote: '已同步 {catalogProducts} 张券，写回 {written} 条',
+  voucherFailedNote: '同步团购券失败，请稍后重试',
+  voucherStartToast: '已开始同步团购券数据…',
 });

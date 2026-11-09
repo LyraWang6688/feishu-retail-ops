@@ -50,13 +50,18 @@ export function cardsHtml(cards = []) {
  */
 export const actionCardsPageHtml = (page) => `
       <div class="domain-page" data-page-kind="action-cards">
-        <div class="domain-cards">${(page.cards || []).map((card) => `
-          <button class="entry-card card-button" type="button"
+        <div class="domain-cards">${(page.cards || []).map((card) => (card.placeholder === true
+    ? `<div class="entry-card disabled-card" data-placeholder-card="${escapeHtml(card.id || '')}">
+            <div class="icon">${escapeHtml(card.icon || '')}</div>
+            <h3>${escapeHtml(card.title || '')}</h3>
+            <span class="tag tag-info">${escapeHtml(PLACEHOLDER_STATUS)}</span>
+          </div>`
+    : `<button class="entry-card card-button" type="button"
             data-domain-action="${escapeHtml(card.action || '')}"
             data-tap-target="${escapeHtml(card.tapTarget || card.action || '')}">
             <div class="icon">${escapeHtml(card.icon || '')}</div>
             <h3>${escapeHtml(card.title || '')}</h3>
-          </button>`).join('')}</div>
+          </button>`)).join('')}</div>
         <p class="placeholder-note" data-view="domain-action-note"></p>
       </div>`;
 

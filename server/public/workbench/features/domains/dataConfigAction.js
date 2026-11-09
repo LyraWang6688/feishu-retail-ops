@@ -54,6 +54,22 @@ export function bindDomainAction(host) {
   };
 
   host.addEventListener('click', async (event) => {
+    const voucherButton = event.target.closest?.('[data-domain-action="voucher-catalog-sync"]');
+    if (voucherButton) {
+      if (voucherButton.disabled) return;
+      voucherButton.disabled = true;
+      paint(DATA_CONFIG_TEXTS.voucherRunningNote);
+      try {
+        const result = await api.post(DATA_CONFIG_API.voucherCatalogSync, {});
+        showToast(DATA_CONFIG_TEXTS.voucherStartToast);
+        paint(fill(DATA_CONFIG_TEXTS.voucherDoneNote, result || {}));
+      } catch (error) {
+        paint(DATA_CONFIG_TEXTS.voucherFailedNote);
+      } finally {
+        voucherButton.disabled = false;
+      }
+      return;
+    }
     const button = event.target.closest?.('[data-domain-action="sample-image-sync"]');
     if (!button) return;
     if (button.disabled) return;
