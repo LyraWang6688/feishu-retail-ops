@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **455** 个事件。按前缀分组：
+共 **463** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -155,7 +155,15 @@
 | `label_print.device.status.failed` | 1 | src/routes/labelPrintDevice.js |
 | `label_print.device.token_missing` | 2 | src/routes/labelPrintDevice.js<br>src/services/labelPrintQueueRuntime.js |
 | `label_print.form.dispatch_failed` | 1 | src/routes/larkEvents.js |
+| `label_print.form.duplicate_skipped` | 1 | src/services/labelPrintFormIntakeService.js |
+| `label_print.form.ignored` | 1 | src/services/labelPrintFormIntakeService.js |
+| `label_print.form.item` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.not_wired` | 1 | src/routes/larkEvents.js |
+| `label_print.form.notify_failed` | 1 | src/services/labelPrintFormIntakeService.js |
+| `label_print.form.processed` | 1 | src/services/labelPrintFormIntakeService.js |
+| `label_print.form.received` | 1 | src/services/labelPrintFormIntakeService.js |
+| `label_print.form.record_failed` | 1 | src/services/labelPrintFormIntakeService.js |
+| `label_print.form.retry` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.job.claimed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.done` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.enqueued` | 1 | src/services/labelPrintQueueService.js |

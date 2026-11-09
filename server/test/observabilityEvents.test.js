@@ -26,6 +26,11 @@ test('事件目录/文档与源码同步（新增日志未登记 ⇒ 红）', as
     'src/config/events.js 已过期 ⇒ 跑 pnpm run observability:events');
   assert.equal(fs.readFileSync(path.join(SERVER_ROOT, '..', 'docs/observability-events.md'), 'utf8'), doc,
     'docs/observability-events.md 已过期 ⇒ 跑 pnpm run observability:events');
+  // 🔴 2026-11-10：`log.info('…')` 包装写法也必须扫得到（曾漏掉 label_print.form.* ⇒ unregistered）
+  const { scanEvents } = await import(modulePath);
+  const scanned = scanEvents();
+  assert.ok(scanned.has('label_print.form.received'),
+    '`log.info(\'label_print.form.received\')` 必须被扫描进目录');
   assert.equal(EVENTS.length, events.size, '运行时目录与扫描结果不一致');
   for (const [event] of events) assert.equal(isRegisteredEvent(event), true, `${event} 未登记`);
   assert.equal(isRegisteredEvent('definitely.not.registered'), false);
