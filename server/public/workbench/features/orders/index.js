@@ -698,7 +698,12 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     });
     state.container.addEventListener('toggle', (event) => {
       const node = event.target;
-      if (node?.matches?.('details[data-action-block="verify-arrival"]') && node.open) loadArrivalDetail(node);
+      if (!node?.matches?.('details[data-action-block="verify-arrival"]')) return;
+      // ⭐ 2026-11-09（业务负责人真机）：展开明细后，批次卡不再充当"固定容器"
+      //   ⇒ 给 article.order-card 打标，CSS 去掉它的内边距/边框/背景/阴影，内容铺满屏宽。
+      const card = node.closest('.order-card');
+      if (card) card.classList.toggle('order-card--detail-open', node.open);
+      if (node.open) loadArrivalDetail(node);
     }, true);
   }
 

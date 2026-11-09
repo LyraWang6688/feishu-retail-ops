@@ -337,3 +337,14 @@ test('AC-RC6 ⭐ 明细**挂不上批次** ⇒ **不出现在页面**；**批次
   assert.ok(src.includes('if (!key || key === NO_BATCH_KEY) continue;'),
     '⭐ 没有批次号 ⇒ 分组时直接跳过（能真红）✓');
 });
+
+test('AC-RC2c ⭐ 移动端明细：去掉外层卡片容器；一行两码且尺码与数量选择器同一行', () => {
+  const css = readWorkbench('features/orders/orders.css');
+  assert.ok(css.includes('[data-view="purchase-acceptance"] .action-form[open]'), '展开态去掉 action-form 内边距/边框 ✓');
+  assert.ok(css.includes('[data-view="purchase-acceptance"] .pr-group.order-line-group'), '货号组不再套外层卡片容器 ✓');
+  const rowRule = css.slice(css.indexOf('[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-size-row {'));
+  assert.ok(rowRule.includes('flex-direction: row'), '尺码与数量选择器同一行 ✓');
+  assert.ok(rowRule.includes('width: calc(50% - var(--space-1))'), '仍然一行两个尺码 ✓');
+  assert.ok(css.includes('.order-card.order-card--detail-open'), '展开后去掉批次卡容器（padding/border/background/shadow）✓');
+  assert.ok(readWorkbench('features/orders/index.js').includes("classList.toggle('order-card--detail-open'"), '展开态切类由 JS 挂上 ✓');
+});
