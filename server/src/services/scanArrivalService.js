@@ -69,9 +69,14 @@ const createScanArrivalService = (options = {}) => {
   const now = options.now || (() => Date.now());
   const store = options.store || new JsonTaskStore({ dir: config.sessionDir, idField: 'session_id' });
 
-  // 会话 id：前缀 + 录单人 open_id 的哈希（只落本地；同一个人的会话跨请求稳定）。
-  const idOf = (openId) => `${config.sessionIdPrefix}_${crypto
-    .createHash('sha256').update(String(openId || '')).digest('hex').slice(0, 16)}`;
+  // 会话 id：前缀 + 录单人 open_id（+ 可选 scope）的哈希（只落本地；跨请求稳定）。
+  // ⭐ 2026-11-10：工作台验收按「用户 + 批次 + 供应商」传 sessionKey ⇒ 各存一份；
+  //   扫码页旧链路不传 ⇒ 仍是"一人一份"（与原行为逐字一致）。
+  const idOf = (openId, sessionKey = '') => {
+    const scope = String(sessionKey || '').trim();
+    const material = scope ? `${String(openId || '')}|${scope}` : String(openId || '');
+    return `${config.sessionIdPrefix}_${crypto.createHash('sha256').update(material).digest('hex').slice(0, 16)}`;
+  };
   const expiresAt = () => new Date(now() + config.ttlMs).toISOString();
   const touch = (patch) => ({ ...patch, expires_at: expiresAt() });
   const isExpired = (session) => {
@@ -80,8 +85,8 @@ const createScanArrivalService = (options = {}) => {
   };
 
   /** 读当前这一份验收会话（**只读**：没有 / 过期都返回 null，绝不建文件）。 */
-  const get = async (openId) => {
-    const session = await store.get(idOf(openId));
+  const get = async (openId, sessionKey = '') => {
+    const session = await store.get(idOf(openId, sessionKey));
     if (!session || isExpired(session)) return null;
     return session;
   };
@@ -154,11 +159,13 @@ const createScanArrivalService = (options = {}) => {
    * ⚠️ 换一批 ⇒ 直接换成新会话（验收模式一次只服务一批；上一批没完成就重开，按她的口径
    *    "一次验收就是这一批"）。
    */
-  const start = async ({ openId, batchNo, batchRecordId = '', supplierRecordId = '', operatorOpenId = '' }) => {
+  const start = async ({
+    openId, batchNo, batchRecordId = '', supplierRecordId = '', operatorOpenId = '', sessionKey = '',
+  }) => {
     const wanted = String(batchNo || '').trim();
     if (!wanted) return { ok: false, reason: 'no_batch_no', message: texts.acceptBatchMissingBody };
     const wantedSupplier = String(supplierRecordId || '').trim();
-    const existing = await get(openId);
+    const existing = await get(openId, sessionKey);
     if (existing && existing.batch_no === wanted
       && String(existing.supplier_record_id || '') === wantedSupplier
       && existing.status === 'open') {
@@ -207,13 +214,15 @@ const createScanArrivalService = (options = {}) => {
       seen.add(key);
     }
     const record = touch({
-      session_id: idOf(openId),
+      session_id: idOf(openId, sessionKey),
       open_id: String(openId || ''),
       batch_no: wanted,
       batch_record_id: String(batchRecordId || '').trim(),
       // ⭐ 2026-11-10：本次验收的供应商范围（空 = 旧链路整批验收）
       supplier_record_id: wantedSupplier,
       supplier_record_ids: supplierRecordIds,
+      // ⭐ 2026-11-10：工作台按「批次×供应商」隔离会话（空 = 扫码页旧链路）
+      session_key: String(sessionKey || '').trim(),
       request_ids: normalized.map((row) => row.request_record_id),
       rows: normalized,
       // ⭐⭐ 2026-10-12（方案 A）：记住"这一批有哪些款 + 各自编号"——
@@ -318,13 +327,15 @@ const createScanArrivalService = (options = {}) => {
    *    输入口 → 既有 `buildPlan` 的扫码分支 → 既有 `confirmLocked`）。
    * 🔴 一双都没扫 / 金额不合法 ⇒ 既有实现会**在写任何东西之前**拒掉（本方法原样把话带回去）。
    */
-  const finish = async ({ openId, actualAmount, submitKey = '', operatorOpenId = '' } = {}) => {
+  const finish = async ({
+    openId, actualAmount, submitKey = '', operatorOpenId = '', sessionKey = '',
+  } = {}) => {
     // ⭐⭐ 2026-10-13（验收提速）：**一条**分阶段耗时汇总（`scan.accept.timing`）。
     //    为什么：真账量出"每批 5 码 143.9 秒、其中逐码库存 119.5 秒（83%）"——
     //    没有分段就只能靠感觉。分段：`session_ms`（读会话）/ `inbound_total_ms`（入库整段，
     //    含"报货批次"写实 + 加库存）/ `inventory_ms`（其中**加库存**那一段，由库存层填）。
     const finishStartedAt = Date.now();
-    const session = await get(openId);
+    const session = await get(openId, sessionKey);
     if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
     const summary = summaryOf(session);
     const sessionMs = Date.now() - finishStartedAt;
