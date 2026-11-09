@@ -123,6 +123,8 @@ test('AC-P22 提交前 0 写请求；点提交只 1 次 POST 且 payload 正确�
   const payload = calls.submit[0];
   expect(payload.submitKey).toBe(draftBefore.submitKey);
   expect(payload.items.map((item) => item.productRecordId).sort()).toEqual(['recProdA', 'recProdB']);
+  // 2026-11-09：页面来源随载荷提交（默认全部来自「补货」tab）
+  expect(payload.items.every((item) => item.source === 'replenish')).toBe(true);
   const lineA = payload.items.find((item) => item.productRecordId === 'recProdA');
   expect(lineA.entries).toEqual([{ size: 39, quantity: 1 }, { size: 41, quantity: 2 }]);
   // 成功之后草稿清空、submitKey 换新（下一单不会被这一单吸收）——

@@ -22,6 +22,18 @@ const createPurchaseQueryRouter = (options = {}) => {
     }
   });
 
+  // ⭐ 2026-11-09（业务负责人）：验收页第一层固定展示「供应商管理」里的全部供应商。
+  //   只读；走 `purchaseQueryService.listSuppliers` → 统一配置表缓存（supplier）。
+  router.get('/suppliers', async (req, res) => {
+    try {
+      const rows = await service.listSuppliers();
+      return res.json({ success: true, rows, total: rows.length });
+    } catch (error) {
+      logError('workbench.purchase.suppliers.failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: error.message });
+    }
+  });
+
   router.get('/arrivals', async (req, res) => {
     try {
       // ⚠️ 原先还接受 recognitionStatus 过滤。识别状态字段已从生产表删除、

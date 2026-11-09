@@ -24,6 +24,10 @@ export const ORDERS_PAGE = {
   batchSummary: '{quantity} 双 · {products} 个货品',
   // 验收页第一层 = 供应商卡片（来自「供应商管理」）；第二层 = 该供应商的采购日（由远及近）
   supplierCardSummary: '{batches} 批 · {quantity} 双待验收',
+  // 该供应商当前没有未到货批次（仍固定显示卡片）
+  supplierCardEmpty: '暂无未到货',
+  // 点进一个没有未到货批次的供应商时的空态
+  supplierEmpty: '这个供应商暂时没有未到货的批次',
   // 日期分组标题：**只显示日期本身**（业务负责人 2026-11-09：不需要「采购日」三个字，但要有日期）
   purchaseDateUnknown: '日期未知',
 };
@@ -100,6 +104,8 @@ export const ORDERS_API = {
   afterSales: '/api/workbench/sales/after-sales',
   // 采购验收：读采购申请 + 按批次确认到货（既有路由）。
   purchaseRequests: '/api/workbench/purchase/requests',
+  // ⭐ 2026-11-09：验收页第一层 = 「供应商管理」全部供应商（只读；走配置表缓存 supplier）
+  suppliers: '/api/workbench/purchase/suppliers',
   arrivalConfirm: '/api/workbench/purchase/arrivals/confirm',
 };
 

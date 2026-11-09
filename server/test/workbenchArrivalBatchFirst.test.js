@@ -146,6 +146,33 @@ test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AC-RC1c 第一层固定展示「供应商管理」全部供应商（没有未到货也出现）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-RC1c ⭐ 第一层固定展示供应商管理全部供应商（没有未到货也出现 + 空态）', async () => {
+  const orders = await loadOrdersModule();
+  const suppliers = [
+    { record_id: 's1', name: '供应商甲' },
+    { record_id: 's2', name: '供应商乙' },
+    { record_id: 's3', name: '供应商丙' }, // 没有未到货批次 ⇒ 也要固定出现
+  ];
+  const html = orders.purchaseOrdersHtml(BATCH_ROWS, { suppliers });
+  assert.equal((html.match(/data-action="pick-supplier"/g) || []).length, 3,
+    '配置表 3 个供应商 ⇒ 3 张卡片（不管有没有未到货）✓');
+  assert.ok(html.includes('供应商丙'), '没有未到货的供应商也要出现 ✓');
+  assert.ok(html.includes('暂无未到货'), '没有未到货时卡片摘要 = 配置文案 ✓');
+  assert.ok(html.includes('供应商甲'), '有未到货的供应商照旧 ✓');
+  // 点进"没有未到货"的供应商 ⇒ 第二层空态（不渲染任何批次卡）
+  const empty = orders.purchaseOrdersHtml(BATCH_ROWS, { suppliers, supplierKey: 's3' });
+  assert.ok(empty.includes('供应商丙'), '空态里仍显示供应商名 ✓');
+  assert.ok(empty.includes('这个供应商暂时没有未到货的批次'), '空态人话走配置 ✓');
+  assert.equal(empty.includes('data-purchase-batch'), false, '没有未到货 ⇒ 不渲染批次卡 ✓');
+  // 配置表读不到（suppliers 为空）⇒ 退回原来的"有未到货的供应商"，页面不空白
+  const fallback = orders.purchaseOrdersHtml(BATCH_ROWS, { suppliers: [] });
+  assert.ok(fallback.includes('供应商甲') && fallback.includes('供应商乙'), '无配置表时按未到货供应商兜底 ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AC-RC2 点开某批 ⇒ 只显示该批的明细（每行带"实际到货数量"输入）
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -309,4 +336,15 @@ test('AC-RC6 ⭐ 明细**挂不上批次** ⇒ **不出现在页面**；**批次
   const src = stripComments(readWorkbench('features/orders/index.js'));
   assert.ok(src.includes('if (!key || key === NO_BATCH_KEY) continue;'),
     '⭐ 没有批次号 ⇒ 分组时直接跳过（能真红）✓');
+});
+
+test('AC-RC2c ⭐ 移动端明细：去掉外层卡片容器；一行两码且尺码与数量选择器同一行', () => {
+  const css = readWorkbench('features/orders/orders.css');
+  assert.ok(css.includes('[data-view="purchase-acceptance"] .action-form[open]'), '展开态去掉 action-form 内边距/边框 ✓');
+  assert.ok(css.includes('[data-view="purchase-acceptance"] .pr-group.order-line-group'), '货号组不再套外层卡片容器 ✓');
+  const rowRule = css.slice(css.indexOf('[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-size-row {'));
+  assert.ok(rowRule.includes('flex-direction: row'), '尺码与数量选择器同一行 ✓');
+  assert.ok(rowRule.includes('width: calc(50% - var(--space-1))'), '仍然一行两个尺码 ✓');
+  assert.ok(css.includes('.order-card.order-card--detail-open'), '展开后去掉批次卡容器（padding/border/background/shadow）✓');
+  assert.ok(readWorkbench('features/orders/index.js').includes("classList.toggle('order-card--detail-open'"), '展开态切类由 JS 挂上 ✓');
 });

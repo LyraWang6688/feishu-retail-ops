@@ -53,6 +53,9 @@ export const computeTotals = (draft) => {
 /** 提交载荷：只产出 items（product_record_id + 尺码/数量）；供应商/批次/幂等键由既有链路处理。 */
 export const buildItems = (draft) => Object.values(draft?.products || {}).map((product) => ({
   productRecordId: product.productRecordId,
+  // ⭐ 2026-11-09：带上**页面来源**（补货/上新）——服务端回填据此区分：
+  //   上新行不参与「销售明细.采购明细」回填（新品还没卖过，没有可关联的销售记录）。
+  source: product.source === 'new' ? 'new' : 'replenish',
   entries: Object.entries(product.entries || {})
     .map(([size, quantity]) => ({ size: Number(size), quantity: Number(quantity) }))
     .filter((entry) => Number.isInteger(entry.size) && entry.quantity > 0)

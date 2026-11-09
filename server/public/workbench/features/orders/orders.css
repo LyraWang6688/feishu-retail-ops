@@ -226,3 +226,57 @@
 .action-form[open] > summary,
 .action-form[open] [data-view="arrival-detail-hint"] { display: none; }
 .action-form[open] > summary { margin-bottom: var(--space-2); }
+
+/* ⭐ 2026-11-09（业务负责人真机）：移动端宽度窄 —— 验收明细去掉外层卡片容器/左右留白；
+   仍然一行两个尺码，且「尺码 + 椭圆形数量选择器」保持在同一行。 */
+[data-view="purchase-acceptance"] .action-form[open] {
+  padding: var(--space-2) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+[data-view="purchase-acceptance"] .action-body { gap: var(--space-2); }
+[data-view="purchase-acceptance"] .pr-group.order-line-group {
+  padding: 0;
+  margin: 0 0 var(--space-2);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  gap: var(--space-1);
+}
+[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-group-head { padding: 0 0 var(--space-1); }
+[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-size-row {
+  width: calc(50% - var(--space-1));
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+}
+[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-size-row-head { width: auto; }
+[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-size { font-size: var(--font-size-lg); }
+[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-pick { width: auto; justify-content: flex-end; }
+[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-stepper { height: 40px; }
+[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-stepper button {
+  width: 36px;
+  height: 38px;
+  font-size: var(--font-size-lg);
+}
+[data-view="purchase-acceptance"] .pr-group.order-line-group .pr-stepper input {
+  width: 36px;
+  min-height: 38px;
+  font-size: var(--font-size-md);
+}
+
+/* ⭐ 2026-11-09（业务负责人真机）：展开明细后，批次卡（article.order-card）不再是"固定容器" ——
+   去掉它的内边距/边框/背景/阴影（内容只保留页面 16px 安全边距，不再多一层 12px 卡片留白）。 */
+[data-view="purchase-acceptance"] .order-card.order-card--detail-open {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+[data-view="purchase-acceptance"] .order-card.order-card--detail-open .order-card-head {
+  padding: 0 var(--space-1) var(--space-1);
+}

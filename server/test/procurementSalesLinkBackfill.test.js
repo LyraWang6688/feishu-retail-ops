@@ -6,7 +6,9 @@
  *   AC-SL2 幂等：同一 task 再跑一次 ⇒ 不再多链（已关联数先抵扣）；
  *   AC-SL3 未关联行不够 ⇒ 链已有的 + 记 warn（不抛）；
  *   AC-SL4 某条 update 失败 ⇒ 其余继续 + failed 计数（不抛，不影响采购事实）；
- *   AC-SL5 本地任务没有批次号 ⇒ 直接 no-op；gateway 抛错 ⇒ 返回 ok:false、不抛。
+ *   AC-SL5 本地任务没有批次号 ⇒ 直接 no-op；gateway 抛错 ⇒ 返回 ok:false、不抛；
+ *   AC-SL7 **上新来源（source=new）**：直接不参与回填（即使存在可关联销售行），不 warn；
+ *   AC-SL8 **补货来源但没有可关联销售记录**：静默跳过（不 warn，汇总 info 计数）。
  */
 'use strict';
 
@@ -146,6 +148,38 @@ test('AC-SL6 预订优先：数量不够时先链预订（同类型内旧→新�
   assert.deepEqual(env.linkedIdsOf('sPreNew1'), ['recDetailA'], '预订（更早）先链');
   assert.deepEqual(env.linkedIdsOf('sPreNew2'), ['recDetailA'], '预订（更晚）再链');
   assert.deepEqual(env.linkedIdsOf('sSpotOld'), [], '数量只有 2 ⇒ 现货留着下次');
+});
+
+test('AC-SL7 上新来源：直接不参与回填（即使有可关联销售行），不产生 warn', async () => {
+  const env = makeEnv({
+    sales: baseSales(),
+    requestIds: ['recDetailA'],
+    items: [{ product_record_id: 'recA1', size: 39, quantity: 1, source: 'new' }],
+  });
+  const result = await env.backfill.run({ taskId: 'task_link_new' });
+  assert.equal(result.ok, true);
+  assert.equal(result.linked, 0, '上新行不参与回填');
+  assert.deepEqual(env.linkedIdsOf('r1'), [], '不写任何关联');
+  assert.equal(env.logs.warn.length, 0, `上新场景不许产生 warn: ${JSON.stringify(env.logs.warn)}`);
+  assert.equal(result.skipped_new_products, 1);
+  const info = env.logs.info.find((one) => one.event === config.events.salesLinkBackfilled);
+  assert.equal(info.payload.skipped_new_products, 1);
+});
+
+test('AC-SL8 补货来源但没有可关联销售记录 ⇒ 静默跳过（不 warn，仅 info 汇总）', async () => {
+  const env = makeEnv({
+    // 只有 A1|39 的销售行；这次补的是 B2|40（没卖过）⇒ 没有候选
+    sales: baseSales(),
+    requestIds: ['recDetailB'],
+    items: [{ product_record_id: 'recB2', size: 40, quantity: 1, source: 'replenish' }],
+  });
+  const result = await env.backfill.run({ taskId: 'task_link_no_sales' });
+  assert.equal(result.ok, true);
+  assert.equal(result.linked, 0);
+  assert.equal(result.skipped_no_sales_rows, 1);
+  assert.equal(env.logs.warn.length, 0, '没有销售记录不是异常，不许 warn');
+  const info = env.logs.info.find((one) => one.event === config.events.salesLinkBackfilled);
+  assert.equal(info.payload.skipped_no_sales_rows, 1);
 });
 
 test('AC-SL2 幂等：同一 task 再跑一次 ⇒ 不再多链', async () => {
