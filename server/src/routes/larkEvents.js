@@ -167,6 +167,25 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
       }
     }
 
+    // ── 货品信息：「样例图 → 云盘」自动同步（**2026-11-10** 业务负责人：只有新增时）──────────
+    // ⚠️ 与上面的「标签二维码」是**两条独立链路**（各自 service / config / 失败域）：
+    //    · 上面那条认"新增 + 修改"，这里**只认新增**（判定在 service 的 config.events）；
+    //    · 两条都异步（`setImmediate`），互不影响：一条抛错不阻断另一条。
+    if (productTableId && tableId === productTableId) {
+      const sampleImageDrive = service?.sampleImageDrive;
+      if (sampleImageDrive && typeof sampleImageDrive.handleTableChanges === 'function') {
+        setImmediate(() => {
+          sampleImageDrive.handleTableChanges(actionList).catch((error) => {
+            logError('product.sample_image.drive.dispatch_failed', {
+              table_id: tableId, error: error.message,
+            });
+          });
+        });
+      } else {
+        logWarn('product.sample_image.drive.not_wired', { table_id: tableId, action_count: actionList.length });
+      }
+    }
+
     // ⭐⭐ 2026-11-09（业务负责人）：「点「批量打印」进的是飞书表单链接，后续就只用这个了」——
     //   「标签打印」表有**新增记录**（= 她在飞书表单提交了一次批量打印）⇒ 交给
     //   `labelPrintFormIntake`：每个「打印货号」各打各的、失败/跳过汇总一条通知。

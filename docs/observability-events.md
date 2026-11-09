@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **423** 个事件。按前缀分组：
+共 **434** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -229,6 +229,17 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `product.sample_image.drive.disabled` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.dispatch_failed` | 1 | src/routes/larkEvents.js |
+| `product.sample_image.drive.failed` | 2 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.name_exists` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.not_wired` | 1 | src/routes/larkEvents.js |
+| `product.sample_image.drive.partial` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.skipped` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.started` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.synced` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.truncated` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.uploaded` | 1 | src/services/sampleImageDriveService.js |
 | `product.tag_qr.assemble_incomplete` | 3 | src/services/tagQrCodeService.js |
 | `product.tag_qr.batch_failed` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.change_criteria` | 1 | src/services/tagQrCodeService.js |

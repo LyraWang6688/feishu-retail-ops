@@ -352,3 +352,70 @@ test('⑤ 没接线（service 上没有 tagQrCodes）→ 不抛错，并留下�
     '没接线要说清楚，不能静默什么都不做',
   );
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑥ 「货品信息」的第二条支路：`样例图 → 云盘`（2026-11-10 业务负责人：只有新增时）
+//
+// 路由层同样只做**分派**：按 table_id 认出货品信息表 ⇒ 把 action_list 原样交给
+// `sampleImageDrive.handleTableChanges`（"只认 record_added" 的判定在 service 里）。
+// 钉住三件事：
+//   · 货品信息事件 ⇒ **两条支路各自收到同一份 action_list**（标签二维码 + 样例图云盘，互不影响）；
+//   · 别的表 ⇒ 两条支路都收不到；
+//   · 一条支路抛错 ⇒ **不阻断**另一条（两条 setImmediate 互不 await）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+const createSampleImageDispatchService = () => {
+  const tagCalls = [];
+  const imageCalls = [];
+  return {
+    tagCalls,
+    imageCalls,
+    service: {
+      tagQrCodes: { handleTableChanges: async (actionList) => { tagCalls.push(actionList); return { results: [] }; } },
+      sampleImageDrive: { handleTableChanges: async (actionList) => { imageCalls.push(actionList); return { results: [] }; } },
+      purchaseWebhooks: { acceptMany: async () => {} },
+    },
+  };
+};
+
+test('⑥ 分派：货品信息事件 ⇒ 标签二维码 与 样例图云盘 **各自**收到同一份 action_list', async () => {
+  const { service, tagCalls, imageCalls } = createSampleImageDispatchService();
+  const handlers = createLarkEventHandlers(service);
+  const actionList = [{ record_id: 'rec_p_new', action: 'record_added' }];
+
+  assert.doesNotThrow(() => handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: PRODUCT_TABLE_ID,
+    action_list: actionList,
+  }));
+  await flushDispatch();
+
+  assert.deepEqual(tagCalls, [actionList], '标签二维码那条照旧');
+  assert.deepEqual(imageCalls, [actionList], '样例图云盘那条也要收到（判定"只认新增"在 service 里）');
+});
+
+test('⑥ 分派只认货品信息：别的表两条支路都收不到', async () => {
+  const { service, tagCalls, imageCalls } = createSampleImageDispatchService();
+  const handlers = createLarkEventHandlers(service);
+  handlers['drive.file.bitable_record_changed_v1'](bitableEvent(UNKNOWN_TABLE_ID, 'rec_other'));
+  await flushDispatch();
+  assert.deepEqual(tagCalls, []);
+  assert.deepEqual(imageCalls, []);
+});
+
+test('⑥ 两条支路互不阻断：样例图那条抛错，标签二维码那条照样跑完', async () => {
+  const tagCalls = [];
+  const service = {
+    tagQrCodes: { handleTableChanges: async (actionList) => { tagCalls.push(actionList); return {}; } },
+    sampleImageDrive: { handleTableChanges: async () => { throw new Error('云盘炸了'); } },
+    purchaseWebhooks: { acceptMany: async () => {} },
+  };
+  const handlers = createLarkEventHandlers(service);
+  assert.doesNotThrow(() => handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: PRODUCT_TABLE_ID,
+    action_list: [{ record_id: 'rec_x', action: 'record_added' }],
+  }));
+  await flushDispatch();
+  assert.equal(tagCalls.length, 1, '另一条支路不许被拖垮');
+});

@@ -10,6 +10,8 @@ const { createBatchWriteTelemetry } = require('../utils/batchWriteTelemetry');
 // ⭐ 2026-11-08（issue #879）：所有**写**飞书的请求共享同一个全局调度器
 //    （并发上限 / 同表串行 / 1254607 与瞬时 400 的统一退避重试）。读请求不进调度器。
 const { getFeishuWriteScheduler } = require('./feishuWriteScheduler');
+// ⭐ 2026-11-10：云盘（Drive）读写（下载附件 / 上传到云盘文件夹 / 列目录 / 删同名旧文件）。
+const { createDriveApi } = require('./driveApi');
 
 /** 飞书 `records/batch_get` 实测 record_ids 上限 **100**（超了必须分片）；写接口仍按 500 分片。 */
 // 批量读写**每次的条数**：500。依据（curl 官方文档核过，2026-10-12）：
@@ -67,6 +69,9 @@ class V1BitableGateway {
       const { appId, appSecret } = getLarkAgentCredentials();
       this.client = new lark.Client({ appId, appSecret, logger: larkLogger });
     }
+    // ⭐ 2026-11-10：云盘（Drive）读写单独一层（`services/driveApi.js`）——
+    //   网关只负责"点表"，云盘文件下载/上传不塞进本文件（单文件 ≤800 行棘轮）。
+    this.drive = options.drive || createDriveApi(this.client);
     this.fieldCache = new Map();
     // ⭐ 2026-10-26（慢请求定位）：`validateTable` 原来**每次都 refresh 字段**（一次 submit 会调
     //   5~10 次 field.list，飞书慢时单次 5~15s ⇒ 几十秒白等）。字段结构在运行期不会变；

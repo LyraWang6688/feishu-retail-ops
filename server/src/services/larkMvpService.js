@@ -22,6 +22,10 @@ const { PurchaseWebhookService } = require('./purchaseWebhookService');
 // 独立 service（一个 service 只干一件事），这里只负责把它接上（见构造函数）。
 const { createTagQrCodeService } = require('./tagQrCodeService');
 const { TAG_QR_CODE } = require('../config/tagQrCode');
+// ⭐ 2026-11-10（业务负责人：「样例图写入到云盘…只有新增…勾上复选框」）：
+//   「货品信息.样例图 → 云盘文件夹」同步 service（与标签二维码**两条独立链路**，同一个事件入口各分派一次）。
+const { createSampleImageDriveService } = require('./sampleImageDriveService');
+const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 // `normalizeText`：新增的「货号有没有建档」判据必须与解析 A 用**同一套**货号归一
 // （大小写 / 空格 / 分隔符），否则会出现「A 认得出来、判据说没有」这种自相矛盾。
 // ⚠️ 2026-10-11（清群聊入口 C0）：`person` 随 `createSalesEntryWithOrderNo` 一起搬去
@@ -222,6 +226,12 @@ class LarkMvpService {
     this.tagQrCodes = options.tagQrCodes || createTagQrCodeService({
       gateway: this.gateway,
       config: TAG_QR_CODE,
+    });
+    // 「样例图 → 云盘」：与上面那条**并列**（各自 config / 各自失败域），
+    // 入口同是 `drive.file.bitable_record_changed_v1` 的货品信息分支（见 routes/larkEvents.js）。
+    this.sampleImageDrive = options.sampleImageDrive || createSampleImageDriveService({
+      gateway: this.gateway,
+      config: SAMPLE_IMAGE_DRIVE,
     });
     this.store =
       options.store ||

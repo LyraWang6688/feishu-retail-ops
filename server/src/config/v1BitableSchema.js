@@ -52,6 +52,12 @@ const V1_BITABLE_SCHEMA = {
         completeness: '缺失信息说明',
         // 「样例图」是附件字段，不在齐备公式里，要单独判断"有没有图"。
         sampleImage: '样例图',
+        // ⭐ 2026-11-10（业务负责人：「样例图写入到云盘…**只有新增**…**那个复选框勾选上**」）：
+        //   「已同步云盘」= **复选框**（生产表里她早就加了这一列；2026-10-13 任务底稿
+        //   `docs/task-sample-image-drive-sync-2026-10-13.md` 里 162 条手工打勾的就是它）。
+        //   ⚠️ 本轮**只加这一行映射**（读=判幂等，写=同步成功后勾上）；别的字段一个不动。
+        //   写入链路的唯一调用方：`services/sampleImageDriveService.js`。
+        sampleImageSynced: '已同步云盘',
         // ⭐ 2026-10-08 业务负责人新建的列：**`标签二维码`（字段类型 = 附件）**。
         // 内容 = `https://hm.bamamei.online/s/{编号}`（编号做 URL 编码），唯一真源在
         // `config/tagQrCode.js` 的 `scanUrl.recordIdTemplate`；这里**只加映射**。
