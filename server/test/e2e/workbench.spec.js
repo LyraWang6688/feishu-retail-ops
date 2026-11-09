@@ -85,7 +85,7 @@ test('六个领域 tab + 订单列表懒加载', async ({ page }) => {
   });
   await page.goto('/workbench/');
   await expect(page.getByText('已登录：E2E')).toBeVisible();
-  await expect(page.locator('.main-tab')).toHaveText(['销售', '库存', '供应', '资金', '配置', '创作']);
+  await expect(page.locator('.main-tab')).toHaveText(['销售', '库存', '供应', '资金', '创作', '配置']);
 
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await expect(page.getByRole('button', { name: /交割单/ })).toBeVisible();
