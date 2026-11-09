@@ -213,9 +213,18 @@ const createLabelPrintQueueService = (deps = {}) => {
         const sameSubmit = jobs.find((job) => job.submit_key === key && job.status !== STATES.failed.id);
         if (sameSubmit) return { job: sameSubmit, reason: 'same_submit_key' };
       }
-      if (dedupeWindowMs > 0) {
+      // ⭐ 2026-11-10（业务负责人真机）：扫码打了一张 → 54 秒后「批量打印」里又包含同一双
+      //    ⇒ 被这道 60s 窗口当成"连点"，只打了一张。**跨来源是两次独立意图，不能合并**：
+      //    · 表单链路（source=form）本身已有两道硬幂等：`submit_key`（同一表单记录同一目标）
+      //      ＋ 表单入口的 10 分钟去重；窗口去重对它只会"吞掉"另一次正常提交（不同表单记录）。
+      //    · 扫码/工作台（workbench）没有"提交身份"，连点只能靠这道窗口 —— 那边保留。
+      //   ⇒ 窗口去重①只对 **非 form 来源** 生效；②只在**同一来源内**复用
+      //     （表单那张不能被扫码"复用"，扫码那张也不该被表单复用 —— 各是各的纸）。
+      //   `again: true` 仍绕过全部去重（原有口径不变）。
+      if (dedupeWindowMs > 0 && source !== SOURCES.form) {
         const since = now() - dedupeWindowMs;
         const recent = jobs.find((job) => job.request_key === requestKey
+          && job.source === source
           && job.status !== STATES.failed.id
           && Number(job.created_at_ms || 0) >= since);
         if (recent) return { job: recent, reason: 'recent_same_request' };
