@@ -78,10 +78,18 @@ const extensionOf = (sourceName, naming) => {
  *   · 多张：`{货号}{颜色}-1.jpg` / `-2` …（序号从 1 开始）
  *   ⚠️ 模板里 `{itemNo}` / `{color}` 来自 config；索引后缀来自 `naming.multiSuffix`。
  */
-const buildFileName = ({ itemNo, color, index, total, sourceName, naming = SAMPLE_IMAGE_DRIVE.naming }) => {
-  const base = String(naming.template || '{itemNo}{color}')
-    .replace(/\{itemNo\}/g, textOf(itemNo))
-    .replace(/\{color\}/g, textOf(color));
+const buildFileName = ({
+  number, itemNo, color, category, index, total, sourceName, naming = SAMPLE_IMAGE_DRIVE.naming,
+}) => {
+  // ⭐ 2026-11-10：「用编号」—— 编号 = `货号|颜色|类别`，`|` 换成 numberSeparator（默认 `_`）
+  const separator = String(naming.numberSeparator ?? '_');
+  const numberParts = textOf(number).split('|').map((part) => part.trim()).filter(Boolean);
+  const base = numberParts.length
+    ? numberParts.join(separator)
+    : String(naming.fallbackTemplate || '{itemNo}{color}{category}')
+      .replace(/\{itemNo\}/g, textOf(itemNo))
+      .replace(/\{color\}/g, textOf(color))
+      .replace(/\{category\}/g, textOf(category));
   const suffix = total > 1 ? String(naming.multiSuffix || '-{index}').replace(/\{index\}/g, String(index)) : '';
   return `${sanitizeFileName(`${base}${suffix}`, naming)}${extensionOf(sourceName, naming)}`;
 };
@@ -110,6 +118,7 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
   const fieldNames = productTable.fields;
   const itemNoField = fieldNames.itemNo;
   const colorField = fieldNames.color;
+  const categoryField = fieldNames.category;
   const numberField = fieldNames.number;
   const sampleImageField = fieldNames[config.fields.sampleImage];
   const syncedField = fieldNames[config.fields.synced];
@@ -128,15 +137,19 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
   const ops = config.operations || SAMPLE_IMAGE_DRIVE.operations || {};
 
   /** 解析这一条记录的文件名主体：优先 货号 + 颜色；缺了就退回「编号」拆段（不猜）。 */
-  const namePartsOf = (fields) => {
+  const nameBaseOf = (fields) => {
+    const number = textOf(fields?.[numberField]);
     let itemNo = textOf(fields?.[itemNoField]);
     let color = linkedTextOf(fields?.[colorField]);
-    if ((!itemNo || !color) && numberField) {
-      const parts = textOf(fields?.[numberField]).split('|').map((part) => part.trim());
+    let category = textOf(fields?.[categoryField]);
+    // 「编号」= 货号|颜色|类别：源字段缺哪段就从编号里补（不猜、只补缺的）
+    if ((!itemNo || !color || !category) && number) {
+      const parts = number.split('|').map((part) => part.trim());
       if (!itemNo) itemNo = parts[0] || '';
       if (!color) color = parts[1] || '';
+      if (!category) category = parts[2] || '';
     }
-    return { itemNo, color };
+    return { number, itemNo, color, category };
   };
 
   const imagesOf = (fields) => {
@@ -175,8 +188,8 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
       const images = imagesOf(fields);
       if (!images.length) return skip(id, 'no_sample_image');
 
-      const { itemNo, color } = namePartsOf(fields);
-      if (!itemNo && !color) return skip(id, 'name_missing');
+      const nameBase = nameBaseOf(fields);
+      if (!nameBase.number && !nameBase.itemNo && !nameBase.color) return skip(id, 'name_missing');
 
       const maxImages = Number(config.maxImages) > 0 ? Number(config.maxImages) : 0;
       const targets = maxImages && images.length > maxImages ? images.slice(0, maxImages) : images;
@@ -187,7 +200,7 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
       }
 
       logInfo('product.sample_image.drive.started', {
-        record_id: id, reason, sample_image_count: targets.length, item_no: itemNo, color,
+        record_id: id, reason, sample_image_count: targets.length, item_no: nameBase.itemNo, color: nameBase.color, number: nameBase.number,
       });
 
       // 文件夹里已有的文件（一次列出；同名覆盖直接沿用这个快照）
@@ -200,7 +213,7 @@ const createSampleImageDriveService = ({ gateway, config = SAMPLE_IMAGE_DRIVE } 
       for (let index = 0; index < targets.length; index += 1) {
         const attachment = targets[index];
         const fileName = buildFileName({
-          itemNo, color, index: index + 1, total: targets.length, sourceName: attachment.name, naming,
+          ...nameBase, index: index + 1, total: targets.length, sourceName: attachment.name, naming,
         });
 
         const existing = existingByName.get(fileName);

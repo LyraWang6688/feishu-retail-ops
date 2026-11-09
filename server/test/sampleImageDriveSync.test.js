@@ -46,10 +46,12 @@ const configOf = (over = {}) => ({
 });
 
 const fieldsOf = ({
-  itemNo = 'A1', color = '黑色', images = [], synced = false, number = `${itemNo}|${color}|A`,
+  itemNo = 'A1', color = '黑色', category = 'A', images = [], synced = false,
+  number = `${itemNo}|${color}|${category}`,
 } = {}) => ({
   [F.itemNo]: itemNo,
   [F.color]: [{ text: color }],
+  [F.category]: category,
   [F.number]: number,
   [F.sampleImage]: images,
   [F.sampleImageSynced]: synced,
@@ -117,7 +119,7 @@ test('AC-SD2 新增有图 ⇒ 下载 + 上传到配置文件夹 + 成功后勾�
   assert.deepEqual(gateway.calls.list, [FOLDER]);
   assert.equal(gateway.calls.upload.length, 1);
   assert.deepEqual(gateway.calls.upload[0], {
-    folderToken: FOLDER, fileName: 'A1黑色.jpg', size: Buffer.from('img:ft1').length, operation: configOf().operations.upload,
+    folderToken: FOLDER, fileName: 'A1_黑色_A.jpg', size: Buffer.from('img:ft1').length, operation: configOf().operations.upload,
   });
   assert.deepEqual(gateway.calls.update, [['product', 'r1', { sampleImageSynced: true }]]);
 });
@@ -145,7 +147,7 @@ test('AC-SD5 多张图 ⇒ 全部上传、命名加序号；同名先删旧文�
   const gateway = createGateway({
     fields: fieldsOf({ images: [imageOf('ft1', 'a.png'), imageOf('ft2', 'b.png')] }),
     folderFiles: [
-      { token: 'old_1', name: 'A1黑色-1.png' },
+      { token: 'old_1', name: 'A1_黑色_A-1.png' },
       { token: 'manual', name: '261175杏色.jpg' }, // 她手工传的：绝不能被删
     ],
   });
@@ -153,7 +155,7 @@ test('AC-SD5 多张图 ⇒ 全部上传、命名加序号；同名先删旧文�
   const result = await service.syncRecord('r1');
 
   assert.equal(result.status, 'synced');
-  assert.deepEqual(gateway.calls.upload.map((item) => item.fileName), ['A1黑色-1.png', 'A1黑色-2.png']);
+  assert.deepEqual(gateway.calls.upload.map((item) => item.fileName), ['A1_黑色_A-1.png', 'A1_黑色_A-2.png']);
   assert.deepEqual(gateway.calls.del, ['old_1'], '只删同名旧文件；她手工传的保留');
   assert.deepEqual(gateway.calls.update, [['product', 'r1', { sampleImageSynced: true }]]);
 });
@@ -167,10 +169,14 @@ test('AC-SD6 上传失败 ⇒ 不勾复选框、失败如实返回（留给补�
   assert.deepEqual(gateway.calls.update, [], '失败不许勾「已同步云盘」');
 });
 
-test('AC-SD7 命名口径：货号 + 颜色 + 原扩展名；非法字符替换；缺图名回退 .jpg', () => {
-  assert.equal(buildFileName({ itemNo: '261175', color: '杏色', index: 1, total: 1, sourceName: 'x.jpg' }), '261175杏色.jpg');
-  assert.equal(buildFileName({ itemNo: 'A1', color: '黑色', index: 1, total: 2, sourceName: 'a.png' }), 'A1黑色-1.png');
-  assert.equal(buildFileName({ itemNo: 'A1', color: '黑/色', index: 1, total: 1, sourceName: 'noext' }), 'A1黑_色.jpg');
+test('AC-SD7 命名口径：用「编号」（货号|颜色|类别）→ `_` 分隔；多张加序号；兜底/非法字符/.jpg', () => {
+  // ⭐ 2026-11-10 业务负责人：「需要用编号」—— 编号全段都进文件名（含类别 ⇒ 同货号同色、A/B 不撞名）
+  assert.equal(buildFileName({ number: '261175|杏色|A', index: 1, total: 1, sourceName: 'x.jpg' }), '261175_杏色_A.jpg');
+  assert.equal(buildFileName({ number: 'A1|黑色|B', index: 1, total: 2, sourceName: 'a.png' }), 'A1_黑色_B-1.png');
+  // 编号为空（新增瞬间公式还没算完）⇒ 用源字段兜底（货号+颜色+类别，同序）
+  assert.equal(buildFileName({ number: '', itemNo: 'A1', color: '黑色', category: 'A', index: 1, total: 1, sourceName: 'x.jpg' }), 'A1黑色A.jpg');
+  // 编号里出现非法字符 ⇒ 替换成 `_`
+  assert.equal(buildFileName({ number: 'A1|黑/色|A', index: 1, total: 1, sourceName: 'noext' }), 'A1_黑_色_A.jpg');
   assert.equal(sanitizeFileName('A1:黑色', SAMPLE_IMAGE_DRIVE.naming), 'A1_黑色');
   assert.equal(extensionOf('whatever.JPEG', SAMPLE_IMAGE_DRIVE.naming), '.jpeg');
   assert.equal(extensionOf('noext', SAMPLE_IMAGE_DRIVE.naming), '.jpg');

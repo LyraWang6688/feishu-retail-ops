@@ -65,10 +65,17 @@ const EVENTS = Object.freeze({
  *   · 非法字符按 Windows/飞书通用规则替换成 `_`（不改变可读性）。
  */
 const NAMING = Object.freeze({
-  template: '{itemNo}{color}',
+  // ⭐⭐ 2026-11-10 业务负责人：「需要用编号」—— 文件名用「**编号**」（= 货号|颜色|类别），
+  //   避免"同货号 + 同颜色、类别 A/B 两条记录"撞成同一个文件名（撞名会互相覆盖）。
+  //   · `source: 'number'` = 优先用表里「编号」公式列；为空（新增瞬间公式没算完）才用源字段兜底；
+  //   · 编号里的 `|` 在文件名里换成 `numberSeparator`（默认 `_`）⇒ 例 `A1_黑色_A.jpg`；
+  //   · 兜底模板 = 货号+颜色+类别（与「编号」同序，只少了分隔符）。
+  source: 'number',
+  numberSeparator: '_',
+  fallbackTemplate: '{itemNo}{color}{category}',
   multiSuffix: '-{index}',
   fallbackExtension: '.jpg',
-  // 云盘文件名里不允许/容易出问题的字符
+  // 云盘文件名里不允许/容易出问题的字符（编号里的 `|` 已按分隔符替换，不会走到这里）
   illegalChars: Object.freeze(['/', '\\', ':', '*', '?', '"', '<', '>', '|']),
   replacement: '_',
   maxLength: 200,
