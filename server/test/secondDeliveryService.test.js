@@ -87,8 +87,8 @@ const BEHAVIOR_ROWS = [
   { record_id: 'behavior_prepaid', fields: { 行为编码: 'SALE_PREPAID', 行为名称: '预定' } },
 ];
 const METHOD_ROWS = [
-  { record_id: 'method_1', fields: { 收款方式: '微信' } },
-  { record_id: 'method_2', fields: { 收款方式: '现金' } },
+  { record_id: 'method_1', fields: { 交易方式: '微信' } },
+  { record_id: 'method_2', fields: { 交易方式: '现金' } },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
