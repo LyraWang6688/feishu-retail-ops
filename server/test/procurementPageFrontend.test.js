@@ -158,7 +158,7 @@ test('AC-P19/P22 草稿纯函数：默认选中 / 合计 / items / submitKey 轮
   ]);
   assert.equal(draftStore.quantityOf(draft, 'recA', 39), 3, '只补不覆盖');
   // 同一 product + 尺码只有一行
-  assert.deepEqual(store.buildItems(draft), [{ productRecordId: 'recA', entries: [{ size: 39, quantity: 3 }] }]);
+  assert.deepEqual(store.buildItems(draft), [{ productRecordId: 'recA', source: 'replenish', entries: [{ size: 39, quantity: 3 }] }]);
   assert.deepEqual(store.computeTotals(draft), { total: 3, replenish: 3, newProducts: 0 });
 
   // 上新普通码默认 1 / 特殊码默认 0
