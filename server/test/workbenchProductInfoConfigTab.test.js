@@ -23,3 +23,12 @@ test('货品页：标签打印右侧有「信息配置」占位子 tab', async (
   assert.equal(pages[config].kind, 'placeholder', '先做占位符');
   assert.equal(fs.existsSync(path.join(ROOT, 'server/public/workbench/features/domains/pages.js')), true);
 });
+
+test('配置页：「信息通知」占位子 tab 在最右边（2026-11-09）', async () => {
+  const domains = await import(pathToFileURL(path.join(ROOT, 'server/public/workbench/config/domains.js')).href);
+  const pages = domains.domainById('product').pages;
+  const last = pages[pages.length - 1];
+  assert.equal(last.id, 'product-notifications');
+  assert.equal(last.label, '信息通知');
+  assert.equal(last.kind, 'placeholder', '先占位，后续接统一通知归集');
+});
