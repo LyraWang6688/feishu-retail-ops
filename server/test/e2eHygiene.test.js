@@ -239,7 +239,7 @@ test('AC-H3（F-3）驱动"已退场的群入口"的两个老脚本：必须**�
     const file = path.join(scriptsDir, name);
     if (!fs.existsSync(file)) continue;                       // 已归档/删除 ⇒ 也算处置过
     const source = fs.readFileSync(file, 'utf8');
-    assert.ok(/群(聊)?入口.*(已)?退场|ARCHIVED_GROUP_SCRIPTS|群入口已退场/.test(source),
+    assert.ok(/群(聊)?入口.*(已)?退场|男RCHIVED_GROUP_SCRIPTS|群入口已退场/.test(source),
       `${name}：必须在文件顶部写清"群入口已退场"这件事`);
     assert.ok(/FEISHU_E2E_ARCHIVED_GROUP_SCRIPTS/.test(source),
       `${name}：要有显式开关才能继续跑（默认**当场退出**，不许跑到超时才报"解析超时"那种误导原因）`);

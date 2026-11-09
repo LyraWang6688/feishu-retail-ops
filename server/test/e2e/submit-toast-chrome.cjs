@@ -67,7 +67,7 @@ const view = () => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 1,
   columns: [{ key: '门盒', label: '门盒' }],

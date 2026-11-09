@@ -33,7 +33,7 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_AUTH_REDIRECT } = require('../src/config/scanAuthRedirect');
 
 const SESSION_SECRET = 'scan_redirect_test_session_secret';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const ENCODED = encodeURIComponent(NUMBER);
 const PAGE = `/r/${ENCODED}`;
 const START = SCAN_AUTH_REDIRECT.login.startPath;
@@ -60,7 +60,7 @@ const view = () => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 1,
   columns: [{ key: '门仓', label: '门仓' }],

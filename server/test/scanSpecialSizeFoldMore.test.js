@@ -33,7 +33,7 @@ const REALM_SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRea
 /** 女鞋（B）一款：36 有货；34/35/41/42/43 是缺货的特殊码；37–40 是缺货的普通码。 */
 const femaleView = () => ({
   found: true,
-  number: 'JX505|咖色|B',
+  number: 'JX505|咖色|女',
   item_no: 'JX505',
   color: '咖色',
   category_name: '休闲鞋',
@@ -123,7 +123,7 @@ test('AC-MF3 ⭐ 补货页：缺货的特殊码进折叠块；缺货的普通码
 });
 
 test('AC-MF4 ⭐ 折叠块仍按**男女各自一块**（女鞋块里不许出现男鞋的特殊码）', () => {
-  const male = { ...femaleView(), number: 'MK31|黑|A', rows: [
+  const male = { ...femaleView(), number: 'MK31|黑|男', rows: [
     { size_text: '40', cells: [{ key: '门盒', count: 1 }], total: 1, missing: false },
     ...[45, 46, 47, 48].map((size) => ({ size_text: String(size), cells: [{ key: '门盒', count: 0 }], total: 0, missing: true })),
   ] };

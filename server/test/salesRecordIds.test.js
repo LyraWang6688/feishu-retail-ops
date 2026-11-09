@@ -55,8 +55,8 @@ const fakeGateway = () => {
     ]],
     ['paymentMethod', [{ record_id: 'method_微信', fields: { [V1_BITABLE_SCHEMA.tables.paymentMethod.fields.name]: '微信' } }]],
     ['product', [
-      { record_id: 'product_A', fields: { [V1_BITABLE_SCHEMA.tables.product.fields.number]: 'A100|黑|A' } },
-      { record_id: 'product_B', fields: { [V1_BITABLE_SCHEMA.tables.product.fields.number]: 'B200|棕|A' } },
+      { record_id: 'product_A', fields: { [V1_BITABLE_SCHEMA.tables.product.fields.number]: 'A100|黑|男' } },
+      { record_id: 'product_B', fields: { [V1_BITABLE_SCHEMA.tables.product.fields.number]: 'B200|棕|男' } },
     ]],
   ]);
   let seq = 0;

@@ -92,14 +92,14 @@ const SERVER_SRC = path.join(__dirname, '..', 'src');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const SESSION_SECRET = 'scan-return-test-session-secret';
 
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const PRODUCT = {
   record_id: 'prod_1',
   fields: {
     编号: NUMBER,
     货号: 'YD6693-2',
     颜色: { text: '黑色', record_ids: ['color_black'] },
-    类别: 'A',
+    类别: '男',
     单价: 399,
     供应商: ['sup_1'],
   },
@@ -300,7 +300,7 @@ const view = (overrides = {}) => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 0,
   columns: [{ key: '门盒', label: '门盒' }],

@@ -75,7 +75,7 @@ const view = () => {
     item_no: '0225',
     color: '棕色',
     category_name: '女鞋',
-    category_code: 'B',
+    category_code: '女',
     price_text: '¥399',
     total: 1,
     columns,

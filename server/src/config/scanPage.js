@@ -230,11 +230,11 @@ const TEXTS = Object.freeze({
   // 状态：本单现在累积了几双（数字来自扫码会话，**跨编号共用**）。
   draftBarCount: '本单：{count} 双',
   // ⭐ 2026-11-08（业务负责人截图口径）：销售页「一行尺码都没有」时的兜底人话 ——
-  //   真实成因 = **编号缺类别段（A/B）**（`scanPageService` 的 `number_without_category` 降级）
+  //   真实成因 = **编号缺类别段（男/女）**（`scanPageService` 的 `number_without_category` 降级）
   //   ＋ 这一款在「实时库存」里也没有记录 ⇒ 算不出任何尺码（**不是「没货」** ✗）。
   //   ⚠️ 文案放在 config：`views/**` 里新增用户可见中文会被硬编码闸门记成「新存量债」✗
   //     （用法见 `views/scanPageRealm.js` 的 REALM_TEXTS.saleSizeUnavailable ✓）。
-  saleSizesUnavailable: '这个编号缺类别（A/B），暂时算不出尺码，请核对编号',
+  saleSizesUnavailable: '这个编号缺类别（男/女），暂时算不出尺码，请核对编号',
   // 能点的：【继续扫下一个】（飞书客户端内 = AppLink 打开扫一扫，见下面的 `SCAN_NEXT`）；
   // **不是**飞书客户端（电脑浏览器 / 手机自带浏览器）时，这里只剩一句如实的状态 ——
   // 「这台设备没有扫码能力」，**绝不给一个点了没反应的按钮**。
@@ -309,7 +309,7 @@ const PRICE = Object.freeze({
  *   · `product.categoryName`（「品类」，关联「品类管理」）：**生产只读核对过**
  *     （`docs/production-base-changes-2026-10-08.md` 第 55 行：货品信息 15 列里有「品类(关联)」）；
  *   · `sizeManagement.category`（「类别」）：**本机测试 Base 只读实测有这一列，而且是
- *     **多选**（`type=4`，选项 A/B）—— 一条尺码可以同时属于 A 与 B（38–43 就是 `['A','B']`）。
+ *     **多选**（`type=4`，选项 男/女）—— 一条尺码可以同时属于 A 与 B（38–43 就是 `['A','B']`）。
  *     ⇒ 判定"这个尺码属不属于这个编号的类别"必须用**成员判断**（见 service 的 `categoryValues`），
  *     不能拿整格文本做等号比较。生产那一列本机核不到。
  */
@@ -450,7 +450,7 @@ const SNAPSHOT = Object.freeze({
 /**
  * ⭐⭐ 2026-10-09（业务负责人定）：**尺码段进配置**，缺码判定不再每次读「尺码管理」。
  *
- *   · A（**男**）= 38–48 · B（**女**）= 34–43 —— 这两段就是"这个类别应该有哪些码"；
+ *   · 男 = 38–48 · 女 = 34–43 —— 这两段就是"这个类别应该有哪些码"；
  *   · 缺码判定 = 该编号的**类别**（编号第 3 段）对应的**配置段**里、库存为 0 的那些码；
  *   · ⚠️ **类别为空 / 配置里没有这个类别** ⇒ **降级**：只显示有货的尺码、**不做缺码提示**
  *     （现状保持，别改坏），并记一条可 grep 的 `scan.sizes.scope_unavailable`（带 reason）。
@@ -515,7 +515,7 @@ const SIZE_SEGMENTS = Object.freeze({
   //      既有渲染层（views/scanPageRealm.js:151）按 from/to 取值 ⇒ **语义不变** ✓
   //      **新代码请读 enterable / default / special** ✓
   ranges: Object.freeze({
-    A: Object.freeze({
+    男: Object.freeze({
       label: '男', from: 38, to: 48,
       enterable: Object.freeze([38, 48]),
       // ⭐ 2026-10-14 她的命名：`normal`（普通码）= ①库存缺码判据 ②销售页预订范围 ✓
@@ -525,7 +525,7 @@ const SIZE_SEGMENTS = Object.freeze({
       // ⭐ 2026-10-18 业务负责人：「男鞋的特殊码改为 45-48」⇒ 45 从普通码移到特殊码。
       special: Object.freeze([45, 46, 47, 48]),
     }),
-    B: Object.freeze({
+    女: Object.freeze({
       label: '女', from: 34, to: 43,
       enterable: Object.freeze([34, 43]),
       // ⭐⭐ 现行口径（2026-10-18 起，唯一真源）：

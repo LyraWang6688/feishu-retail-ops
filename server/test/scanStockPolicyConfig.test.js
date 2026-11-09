@@ -97,20 +97,20 @@ test('AC-STP2 ⭐⭐ 尺码范围指向 `config/scanPage.js`（同一对象 ⇒ 
     '来源写明（下一眼就知道去哪改）');
 
   // 三个语义名都能取到，且**取的就是既有配置**那两段（A 男 / B 女）
-  assert.equal(sizeRangeOf('A'), SCAN_PAGE.sizeSegments.ranges.A, 'A（男）那一段是同一个对象');
-  assert.equal(sizeRangeOf('b'), SCAN_PAGE.sizeSegments.ranges.B, '小写 b 也认（归一化大写 ✓）');
+  assert.equal(sizeRangeOf('男'), SCAN_PAGE.sizeSegments.ranges.男, 'A（男）那一段是同一个对象');
+  assert.equal(sizeRangeOf('女'), SCAN_PAGE.sizeSegments.ranges.女, '小写 b 也认（归一化大写 ✓）');
   assert.equal(sizeRangeOf('C'), null, '认不出的类别 ⇒ null（不猜 ✗）');
   assert.equal(sizeRangeOf(''), null, '空类别 ⇒ null（降级那条路 ✓）');
 
   // 可录范围 = enterable 两端展开（她 2026-10-14 的最终口径：男 38–48 / 女 34–43）
-  assert.deepEqual(enterableSizesOf('A'), Array.from({ length: 11 }, (_, i) => 38 + i), '男可录 = 38…48');
-  assert.deepEqual(enterableSizesOf('B'), Array.from({ length: 10 }, (_, i) => 34 + i), '女可录 = 34…43');
+  assert.deepEqual(enterableSizesOf('男'), Array.from({ length: 11 }, (_, i) => 38 + i), '男可录 = 38…48');
+  assert.deepEqual(enterableSizesOf('女'), Array.from({ length: 10 }, (_, i) => 34 + i), '女可录 = 34…43');
   // 普通码 = normal 两端展开（**以配置为准** —— 配置里现在是 男 38–44 / 女 36–40）
-  assert.deepEqual(normalSizesOf('A'), Array.from({ length: 7 }, (_, i) => 38 + i), '男普通码 = 38…44');
-  assert.deepEqual(normalSizesOf('B'), Array.from({ length: 5 }, (_, i) => 36 + i), '女普通码 = 36…40');
+  assert.deepEqual(normalSizesOf('男'), Array.from({ length: 7 }, (_, i) => 38 + i), '男普通码 = 38…44');
+  assert.deepEqual(normalSizesOf('女'), Array.from({ length: 5 }, (_, i) => 36 + i), '女普通码 = 36…40');
   // 特殊码 = **离散清单**（不是区间！女 = 34/35/42/43 ⇒ 不许 expandRange ✗）
-  assert.deepEqual(specialSizesOf('A'), [45, 46, 47, 48], '男特殊码 = 45–48');
-  assert.deepEqual(specialSizesOf('B'), [34, 35, 41, 42, 43], '女特殊码 = 34/35/41/42/43（**离散** ⇒ 不许当区间 ✗）');
+  assert.deepEqual(specialSizesOf('男'), [45, 46, 47, 48], '男特殊码 = 45–48');
+  assert.deepEqual(specialSizesOf('女'), [34, 35, 41, 42, 43], '女特殊码 = 34/35/41/42/43（**离散** ⇒ 不许当区间 ✗）');
   assert.deepEqual(specialSizesOf('C'), [], '认不出类别 ⇒ 空（一条都不折 ✓）');
 
   // 新文件里**不许**再抄一份尺码数字（除注释外的代码里不许出现那些区间字面量）

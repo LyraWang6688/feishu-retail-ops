@@ -165,8 +165,8 @@ test('AC-W1c 售后：通知发送失败 ⇒ 任务仍是 failed、notified_at �
 const salePayload = () => ({
   open_id: 'ou_scan_user', order_no: 'XSD-20261108-0003', gift: '',
   lines: [
-    { product_record_id: 'p1', size: 41, trade_type: 'SALE_CASH', actual_amount: 99, number: 'p1|黑|A', item_no: 'p1', color: '黑' },
-    { product_record_id: 'p2', size: 42, trade_type: 'SALE_CASH', actual_amount: 88, number: 'p2|黑|A', item_no: 'p2', color: '黑' },
+    { product_record_id: 'p1', size: 41, trade_type: 'SALE_CASH', actual_amount: 99, number: 'p1|黑|男', item_no: 'p1', color: '黑' },
+    { product_record_id: 'p2', size: 42, trade_type: 'SALE_CASH', actual_amount: 88, number: 'p2|黑|男', item_no: 'p2', color: '黑' },
   ],
   payments: [{ method: '微信扫码', amount: 187 }],
   ...{ derived: { paid_amount: 187, owed_amount: 0 } },

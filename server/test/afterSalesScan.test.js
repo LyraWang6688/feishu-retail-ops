@@ -21,8 +21,8 @@ const NOW = Date.parse('2026-10-29T10:00:00+08:00');
 const fakeGateway = (overrides = {}) => {
   const records = {
     product: [
-      { record_id: 'p1', fields: { 编号: 'XHB8095|全黑|A', 货号: 'XHB8095', 颜色: '全黑' } },
-      { record_id: 'p2', fields: { 编号: 'OTHER|米色|B', 货号: 'OTHER', 颜色: '米色' } },
+      { record_id: 'p1', fields: { 编号: 'XHB8095|全黑|男', 货号: 'XHB8095', 颜色: '全黑' } },
+      { record_id: 'p2', fields: { 编号: 'OTHER|米色|女', 货号: 'OTHER', 颜色: '米色' } },
     ],
     salesEntry: [
       { record_id: 'e1', fields: { 销售单号: 'XSD-1', 写入状态: '成功', 录单日: NOW - DAY, 总金额: 300 } },
@@ -216,7 +216,7 @@ test('AC7 ⭐⭐ 缓存：同一货品 TTL 内第二次零读表；空结果不�
 
   // 空结果不缓存：换成一个**一条明细都没有**的货品（p3）⇒ 两次都要真读。
   const emptyGateway = fakeGateway();
-  emptyGateway.records.product.push({ record_id: 'p3', fields: { 编号: 'NONE|白|A', 货号: 'NONE', 颜色: '白' } });
+  emptyGateway.records.product.push({ record_id: 'p3', fields: { 编号: 'NONE|白|男', 货号: 'NONE', 颜色: '白' } });
   const emptyService = new AfterSalesScanService({
     gateway: emptyGateway, now: () => NOW,
     cache: createScanPageCache({ ttlMs: 60_000, maxEntries: 10, now: () => NOW }),

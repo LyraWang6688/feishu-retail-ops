@@ -62,7 +62,7 @@ const viewWith = ({ inStockSizes = [], number }) => ({
   item_no: number.split('|')[0],
   color: '棕色',
   category_name: '女鞋',
-  category_code: 'B',
+  category_code: '女',
   price_text: '¥399',
   total: inStockSizes.length,
   columns: columns(),

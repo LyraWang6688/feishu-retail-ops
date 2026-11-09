@@ -59,7 +59,7 @@ test('AC-SF1 ⭐ 缺货基准 = **可录范围**（女 34–43 / 男 38–48）�
 });
 
 test('AC-SF2 ⭐ 有货（含特殊码）⇒ **现货区正常展开**，不算缺货', () => {
-  const view = viewOf({ number: 'JX505|咖色|B', stocked: [36, 43], missing: [] });
+  const view = viewOf({ number: 'JX505|咖色|女', stocked: [36, 43], missing: [] });
   const groups = realm.saleSizeGroups(view);
   const inStock = groups.inStock.map((item) => item.size_text);
   assert.ok(inStock.includes('43'), '43（特殊码）有货 ⇒ 现货区正常展开 ✓（不许被折叠 ✗）');
@@ -69,7 +69,7 @@ test('AC-SF2 ⭐ 有货（含特殊码）⇒ **现货区正常展开**，不算�
 });
 
 test('AC-SF3 ⭐ 缺货的**普通码** ⇒ 预订区正常显示（不折叠 ✗）', () => {
-  const view = viewOf({ number: 'JX505|咖色|B', stocked: [36], missing: [37, 38, 39, 40] });
+  const view = viewOf({ number: 'JX505|咖色|女', stocked: [36], missing: [37, 38, 39, 40] });
   const groups = realm.saleSizeGroups(view);
   const prepaid = groups.prepaid.map((item) => item.size_text);
   for (const size of ['37', '38', '39', '40']) {
@@ -82,8 +82,8 @@ test('AC-SF3 ⭐ 缺货的**普通码** ⇒ 预订区正常显示（不折叠 �
 });
 
 test('AC-SF4 ⭐ 缺货的**特殊码** ⇒ 收进折叠块（`folded`），且**按男女各自一块**', () => {
-  const female = viewOf({ number: 'JX505|咖色|B', stocked: [36], missing: [34, 35, 41, 42, 43] });
-  const male = viewOf({ number: 'MK31|黑|A', stocked: [40], missing: [45, 46, 47, 48] });
+  const female = viewOf({ number: 'JX505|咖色|女', stocked: [36], missing: [34, 35, 41, 42, 43] });
+  const male = viewOf({ number: 'MK31|黑|男', stocked: [40], missing: [45, 46, 47, 48] });
   assert.deepEqual((realm.saleSizeGroups(female).folded || []).map((item) => Number(item.size_text)), [34, 35, 41, 42, 43],
     '女鞋折叠块 = 女鞋的特殊码（缺货的，含 41）');
   assert.deepEqual((realm.saleSizeGroups(male).folded || []).map((item) => Number(item.size_text)), [45, 46, 47, 48],

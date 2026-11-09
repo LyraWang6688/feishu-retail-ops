@@ -15,7 +15,7 @@ const { createProductEnricher, batchTextOf } = require('../src/services/procurem
 const PF = V1_BITABLE_SCHEMA.tables.product.fields;
 const CF = V1_BITABLE_SCHEMA.tables.color.fields;
 
-const batchProduct = ({ id = 'recA', number = '66133-15|咖色|B', itemNo = '66133-15', colorId = 'recColorKa', supplierId = 'recSup' } = {}) => ({
+const batchProduct = ({ id = 'recA', number = '66133-15|咖色|女', itemNo = '66133-15', colorId = 'recColorKa', supplierId = 'recSup' } = {}) => ({
   record_id: id,
   fields: {
     [PF.number]: { type: 1, value: [{ text: number }] },
@@ -43,7 +43,7 @@ test('AC-E1 batch 形状归一化：number/itemNo/颜色/供应商/类别/上架
   const enricher = createProductEnricher({ gateway: makeGateway(), schema: V1_BITABLE_SCHEMA });
   const map = await enricher.enrich(['recA']);
   const dto = map.get('recA');
-  assert.equal(dto.number, '66133-15|咖色|B');
+  assert.equal(dto.number, '66133-15|咖色|女');
   assert.equal(dto.itemNo, '66133-15');
   assert.equal(dto.color, '咖色', '颜色必须按关联 ID 再读颜色管理解析显示名');
   assert.equal(dto.category, 'B');
@@ -61,7 +61,7 @@ test('AC-E1b 颜色表读不到 ⇒ 颜色留空 + 一条 warn（不崩、不猜
   });
   const dto = (await enricher.enrich(['recA'])).get('recA');
   assert.equal(dto.color, '');
-  assert.equal(dto.number, '66133-15|咖色|B', '颜色失败不影响其他字段');
+  assert.equal(dto.number, '66133-15|咖色|女', '颜色失败不影响其他字段');
   assert.ok(warns.some(([event]) => event === 'procurement.page.color_lookup_failed'));
 });
 

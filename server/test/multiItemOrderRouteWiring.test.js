@@ -45,8 +45,8 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 
 test('AC-MIRW-3 ⭐⭐ 首件合并是**赋值**语义 ⇒ 重复合并不翻倍（改成 `concat` ⇒ 红）', () => {
   const groups = [
-    { product_record_id: 'rec_K1', number: 'K1|黑色|A', item_no: 'K1', entries: [] },
-    { product_record_id: 'rec_K2', number: 'K2|白色|A', item_no: 'K2', entries: [] },
+    { product_record_id: 'rec_K1', number: 'K1|黑色|男', item_no: 'K1', entries: [] },
+    { product_record_id: 'rec_K2', number: 'K2|白色|男', item_no: 'K2', entries: [] },
   ];
   const entries = [{ size: '40', quantity: '2' }, { size: '41', quantity: '1' }];
 
@@ -73,7 +73,7 @@ test('AC-MIRW-3 ⭐⭐ 首件合并是**赋值**语义 ⇒ 重复合并不翻倍
 
 const SESSION_SECRET = 'mi_route_wiring_session_secret';
 const OPEN_ID = 'ou_mirw';
-const NUMBER = 'K1|黑色|A';
+const NUMBER = 'K1|黑色|男';
 
 const sessionCookie = (openId = OPEN_ID) => {
   const payload = Buffer.from(JSON.stringify({
@@ -89,7 +89,7 @@ const view = () => ({
   item_no: 'K1',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 1,
   columns: [],
@@ -226,7 +226,7 @@ const FIRST = {
   supplier_record_id: 'sup_K1', entries: [],
 };
 const SECOND = {
-  product_record_id: 'rec_K2', number: 'K2|白色|A', item_no: 'K2', color: '白色',
+  product_record_id: 'rec_K2', number: 'K2|白色|男', item_no: 'K2', color: '白色',
   supplier_record_id: 'sup_K2', entries: [],
 };
 

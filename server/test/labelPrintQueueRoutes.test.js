@@ -35,7 +35,7 @@ const { LABEL_PRINT } = require('../src/config/labelPrint');
 
 const SESSION_SECRET = 'label_print_queue_test_secret';
 const DEVICE_TOKEN = 'device-token-for-tests';
-const NUMBER = 'XHB8095|棕色|A';
+const NUMBER = 'XHB8095|棕色|男';
 
 const sessionCookie = (openId = 'ou_test_user') => {
   const payload = Buffer.from(JSON.stringify({
@@ -46,7 +46,7 @@ const sessionCookie = (openId = 'ou_test_user') => {
 };
 
 const label = () => ({
-  key: NUMBER, number: NUMBER, item_no: 'XHB8095', color: '棕色', category: '休闲鞋', category_code: 'A',
+  key: NUMBER, number: NUMBER, item_no: 'XHB8095', color: '棕色', category: '休闲鞋', category_code: '男',
   sizes: [{ size: 36, qty: 1 }], size_lines: [[{ size: 36, qty: 1 }]], size_overflow: false, total_qty: 1,
   states: ['门盒'], state_text: '门盒', price: 198, price_text: '¥198', brand_text: '邯美皮鞋',
   qr_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21"><path d="M0 0h21v21H0z"/></svg>',
@@ -503,7 +503,7 @@ test('AC-R9 错误口径：她填错 ⇒ 400 原样回；系统坏 ⇒ 502（都
   try {
     await withServer(harness.app, async (base) => {
       // 编号没库存 ⇒ service 回 400，原因原样到页面。
-      const bad = await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: 'NOT-THERE|X|A' } });
+      const bad = await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: 'NOT-THERE|X|男' } });
       assert.equal(bad.status, 400);
       assert.match((await bad.json()).error, /没有找到编号/);
       // 认领不存在的任务 ⇒ 400。

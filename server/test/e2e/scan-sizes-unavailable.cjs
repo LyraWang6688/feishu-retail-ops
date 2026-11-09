@@ -90,7 +90,7 @@ const NORMAL_NO_STOCK = baseView({
   number: 'QPL8093|卡其|B',
   item_no: 'QPL8093',
   category_name: '女鞋',
-  category_code: 'B',
+  category_code: '女',
   price_text: '¥399',
   rows: [36, 37, 38, 39, 40].map((size) => rowOf(size, { missing: true })),
   missing_count: 5,

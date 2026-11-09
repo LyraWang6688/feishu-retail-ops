@@ -32,10 +32,10 @@ test('AC-SW-1 ⭐⭐ 越界哨兵：`sizesForCategory` 必须**继续**是"可�
 
 test('AC-SW-2 ⭐⭐ 展示侧的**缺货基准**读的是配置的 `enterable`（可录范围 A 38–48 · B 34–43）', () => {
   const ranges = SCAN_PAGE.sizeSegments.ranges;
-  assert.deepEqual(ranges.A.normal, [38, 44], '男普通码 38–44');
-  assert.deepEqual(ranges.B.normal, [36, 40], '女普通码 36–40');
-  assert.deepEqual(ranges.A.special, [45, 46, 47, 48], '男特殊码 45–48（**只在有货时才显示** ✓）');
-  assert.deepEqual(ranges.B.special, [34, 35, 41, 42, 43], '女特殊码 34/35/41/42/43（同上 ✓）');
+  assert.deepEqual(ranges.男.normal, [38, 44], '男普通码 38–44');
+  assert.deepEqual(ranges.女.normal, [36, 40], '女普通码 36–40');
+  assert.deepEqual(ranges.男.special, [45, 46, 47, 48], '男特殊码 45–48（**只在有货时才显示** ✓）');
+  assert.deepEqual(ranges.女.special, [34, 35, 41, 42, 43], '女特殊码 34/35/41/42/43（同上 ✓）');
   // ⭐⭐ 2026-10-14 **改指向**（她最终口径：缺货基准 = **可录范围** —— 依据
   //   docs/special-size-fold-and-enterable-base-2026-10-14.md 她的原话：「都是按照它的**可录范围**来，
   //   只不过把缺码或者预订里包含**特殊码的归集到一个折叠的区域**」）

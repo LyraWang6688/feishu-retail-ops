@@ -25,9 +25,9 @@ delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const RECORD_ID = 'prod_1';
-const PRODUCT = { record_id: RECORD_ID, fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: 'A', 品类: { text: '休闲鞋' }, 单价: 399 } };
+const PRODUCT = { record_id: RECORD_ID, fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: '男', 品类: { text: '休闲鞋' }, 单价: 399 } };
 const cookieOf = () => {
   const payload = Buffer.from(JSON.stringify({
     open_id: 'ou_skel', name: '测试', exp: Date.now() + 3600 * 1000,

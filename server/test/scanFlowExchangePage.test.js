@@ -19,7 +19,7 @@ const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { getFlow } = require('../src/services/scanFlowService');
 
 const VIEW = {
-  number: 'XHB1|黑|A', item_no: 'XHB1', color: '黑',
+  number: 'XHB1|黑|男', item_no: 'XHB1', color: '黑',
   rows: [{ size_text: '38', count: 1, missing: false }], columns: [], total: 1, price_text: '¥100',
 };
 const writeOf = () => ({ ...SCAN_WRITE, draft: { lines: [] }, postAction: '/r/rec1', saleKey: 'k' });

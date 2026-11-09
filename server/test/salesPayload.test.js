@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { buildSalePayload } = require('../src/services/salesPayload');
 
-const line = (over = {}) => ({ productRecordId: 'rec_p', size: 41, tradeTypeCode: 'SPOT', actualAmount: 99, number: 'A|黑色|A', itemNo: 'A', color: '黑色', ...over });
+const line = (over = {}) => ({ productRecordId: 'rec_p', size: 41, tradeTypeCode: 'SPOT', actualAmount: 99, number: 'A|黑色|男', itemNo: 'A', color: '黑色', ...over });
 
 test('一单一货：金额/尺码必填，计算总额与已收齐', () => {
   const out = buildSalePayload({ openId: 'ou_1', lines: [line()], payments: [{ method: '微信扫码', amount: 99 }] });

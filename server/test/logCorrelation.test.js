@@ -121,7 +121,7 @@ const fakeLarkClient = (records) => {
 };
 
 const SHOE = { itemNo: '8088-26', size: 40, quantity: 1, actualAmount: 220 };
-const LABEL = '5801-38|灰色|B|38';
+const LABEL = '5801-38|灰色|女|38';
 
 const makeWorld = ({ withStockKeyLabel = true } = {}) => {
   const records = new Map([

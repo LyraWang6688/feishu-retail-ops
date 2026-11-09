@@ -376,7 +376,7 @@ test('AC-D4 ⭐ 出错**不吞**：异常与失败原因都进 helper.log（他�
       validateOptions: { exists: () => true, checkPaths: false },
     });
     instance.ledger.load();
-    await instance.handleJob({ job_id: 'job-log', status: 'claimed', total_labels: 1, numbers: ['A|B|C'] });
+    await instance.handleJob({ job_id: 'job-log', status: 'claimed', total_labels: 1, numbers: ['A|女|C'] });
     const text = fs.readFileSync(file, 'utf8');
     assert.match(text, /print_helper\.job\.failed/, '失败事件要落文件');
     assert.match(text, /打印机没开/, '原因要原样落文件（不吞）');

@@ -122,8 +122,8 @@ const rowOf = (size, counts, missing) => ({
  *   ⇒ 新口径「有货」= {40,42,43,44,46}（**仓库与未标状态都算** ✓ —— "统一不用看状态"）
  */
 const MIXED_A_VIEW = {
-  found: true, number: '8516|黑色|A', item_no: '8516', color: '黑色',
-  category_name: '凉鞋', category_code: 'A', price_text: '¥99',
+  found: true, number: '8516|黑色|男', item_no: '8516', color: '黑色',
+  category_name: '凉鞋', category_code: '男', price_text: '¥99',
   total: 7, // 记录条数 = 1 + 2 + 2 + 1 + 1
   columns: COLUMNS,
   rows: [
@@ -140,8 +140,8 @@ const MIXED_A_VIEW = {
 
 /** ⭐ **女款（B）**：特殊码 = 34/35/41/42/43（离散）· 普通码 = 36–40。 */
 const MIXED_B_VIEW = {
-  found: true, number: 'MK31-1|咖色|B', item_no: 'MK31-1', color: '咖色',
-  category_name: '休闲鞋', category_code: 'B', price_text: '¥299',
+  found: true, number: 'MK31-1|咖色|女', item_no: 'MK31-1', color: '咖色',
+  category_name: '休闲鞋', category_code: '女', price_text: '¥299',
   total: 2, // 36 门盒1 + 42 仓库1
   columns: COLUMNS,
   rows: [

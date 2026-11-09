@@ -120,11 +120,11 @@ test('采购：货号+颜色命中 0 条 → 判为找不到，由到货链路�
 // 货号唯一就直接用，不唯一就把该货号的颜色候选交给卡片让用户选。
 
 const salesProducts = [
-  { record_id: 'rec_8882_card', fields: { 编号: '8882|卡|B', 货号: '8882', 颜色: [{ text: '卡' }] } },
-  { record_id: 'rec_hyx_khaki', fields: { 编号: 'HYX-115|卡其|A', 货号: 'HYX-115', 颜色: [{ text: '卡其' }] } },
-  { record_id: 'rec_xhb_black', fields: { 编号: 'XHB8095|全黑|A', 货号: 'XHB8095', 颜色: [{ text: '全黑' }] } },
-  { record_id: 'rec_8035_mi', fields: { 编号: '8035|米牛仔|A', 货号: '8035', 颜色: '米牛仔' } },
-  { record_id: 'rec_8035_black', fields: { 编号: '8035|黑牛仔|A', 货号: '8035', 颜色: '黑牛仔' } },
+  { record_id: 'rec_8882_card', fields: { 编号: '8882|卡|女', 货号: '8882', 颜色: [{ text: '卡' }] } },
+  { record_id: 'rec_hyx_khaki', fields: { 编号: 'HYX-115|卡其|男', 货号: 'HYX-115', 颜色: [{ text: '卡其' }] } },
+  { record_id: 'rec_xhb_black', fields: { 编号: 'XHB8095|全黑|男', 货号: 'XHB8095', 颜色: [{ text: '全黑' }] } },
+  { record_id: 'rec_8035_mi', fields: { 编号: '8035|米牛仔|男', 货号: '8035', 颜色: '米牛仔' } },
+  { record_id: 'rec_8035_black', fields: { 编号: '8035|黑牛仔|男', 货号: '8035', 颜色: '黑牛仔' } },
 ];
 
 test('sales resolves a single-color SKU by item number alone', async () => {
@@ -146,10 +146,10 @@ test('sales hands every color of a multi-color SKU to the card', async () => {
 //    「谁给候选、谁带状态」：这张表本来就整表读过了，带出来零新增请求。
 test('候选带上「货品状态」（在售 / 下架）；这一列读不到时留空串（空 ≠ 下架）', async () => {
   const products = [
-    { record_id: 'rec_a', fields: { 编号: '8035|黑牛仔|A', 货号: '8035', 颜色: '黑牛仔', 货品状态: '在售' } },
-    { record_id: 'rec_b', fields: { 编号: '8035|白牛仔|A', 货号: '8035', 颜色: '白牛仔', 货品状态: '下架' } },
+    { record_id: 'rec_a', fields: { 编号: '8035|黑牛仔|男', 货号: '8035', 颜色: '黑牛仔', 货品状态: '在售' } },
+    { record_id: 'rec_b', fields: { 编号: '8035|白牛仔|男', 货号: '8035', 颜色: '白牛仔', 货品状态: '下架' } },
     // 这一条**没有**「货品状态」列（公式没算出来 / 列缺失）。
-    { record_id: 'rec_c', fields: { 编号: '8035|灰牛仔|A', 货号: '8035', 颜色: '灰牛仔' } },
+    { record_id: 'rec_c', fields: { 编号: '8035|灰牛仔|男', 货号: '8035', 颜色: '灰牛仔' } },
   ];
   const result = await new V1ReferenceResolver(makeGateway(products)).resolveProduct({
     itemNo: '8035', matchMode: 'sales',

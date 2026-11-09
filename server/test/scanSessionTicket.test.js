@@ -21,7 +21,7 @@ const { TICKET, issueSessionTicket, redeemSessionTicket, pathWithoutTicket } = r
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const RECORD_ID = 'recTicketAc0001';
-const NUMBER = 'MK31-1|咖色|B';
+const NUMBER = 'MK31-1|咖色|女';
 const view = () => ({
   found: true, number: NUMBER, item_no: 'MK31-1', color: '咖色', category_name: '休闲鞋',
   price_text: '¥399', total: 1, columns: [{ key: '门盒', label: '门盒' }],

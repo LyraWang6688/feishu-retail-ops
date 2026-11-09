@@ -61,7 +61,7 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const SERVER_SRC = path.join(__dirname, '..', 'src');
 const WORKBENCH = path.join(__dirname, '../public/workbench');
 const SESSION_SECRET = 'scan-accept-test-session-secret';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const SESSION_SECRET_ENV = 'LARK_WEB_SESSION_SECRET';
 
 // ── 夹具：一批两行申请（38 码 2 双 / 39 码 1 双），两款货品 ─────────────────────
@@ -76,7 +76,7 @@ const seedTables = (overrides = {}) => ({
   product: [
     { record_id: 'prod_1', fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' } } },
     // 另一款：**不在本批**（AC-A5 用）
-    { record_id: 'prod_other', fields: { 编号: 'XHB1|白色|A', 货号: 'XHB1', 颜色: { text: '白色' } } },
+    { record_id: 'prod_other', fields: { 编号: 'XHB1|白色|男', 货号: 'XHB1', 颜色: { text: '白色' } } },
   ],
   sizeManagement: [
     { record_id: 'size_38', fields: { 尺码: 38 } },
@@ -179,7 +179,7 @@ const view = (overrides = {}) => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 3,
   columns: [{ key: '门盒', label: '门盒' }],

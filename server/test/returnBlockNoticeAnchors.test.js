@@ -33,7 +33,7 @@ delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 const { createScanPageRouter } = require('../src/routes/scanPage');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 
-const NUMBER = 'HL92006|黑|A';
+const NUMBER = 'HL92006|黑|男';
 const COOKIE = (() => {
   const payload = Buffer.from(JSON.stringify({ open_id: 'ou_rb', name: 'rb', exp: Date.now() + 36e5 }))
     .toString('base64url');

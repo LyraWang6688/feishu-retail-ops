@@ -49,14 +49,14 @@ const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
 const SERVER_SRC = path.join(__dirname, '..', 'src');
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const AMOUNT = '399';
 
 const PRODUCT = {
   record_id: 'prod_1',
   fields: {
     编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色', record_ids: ['color_black'] },
-    类别: 'A', 单价: 399, 供应商: ['sup_1'],
+    类别: '男', 单价: 399, 供应商: ['sup_1'],
   },
 };
 const SIZE_RECORDS = [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));

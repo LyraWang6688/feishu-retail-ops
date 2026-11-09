@@ -247,14 +247,14 @@ const scanPrintHarness = () => {
   const store = new LabelPrintJobStore({ dir, artifactsDir: path.join(dir, 'artifacts') });
   const gateway = gatewayOf({
     liveInventory: [
-      stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' }),
-      stockRecord('st2', { stockKey: 'XHB8095|棕色|A|37' }),
+      stockRecord('st1', { stockKey: 'XHB8095|棕色|男|36' }),
+      stockRecord('st2', { stockKey: 'XHB8095|棕色|男|37' }),
       // 同一个货号、**另一个颜色**：按记录 ID 打的时候**不许**把它也带上（否则就是多打 ✗）。
-      stockRecord('st3', { stockKey: 'XHB8095|黑色|A|38' }),
+      stockRecord('st3', { stockKey: 'XHB8095|黑色|男|38' }),
     ],
     product: [
-      productRecord('rec_brown', { number: 'XHB8095|棕色|A', price: 198 }),
-      productRecord('rec_black', { number: 'XHB8095|黑色|A', price: 198 }),
+      productRecord('rec_brown', { number: 'XHB8095|棕色|男', price: 198 }),
+      productRecord('rec_black', { number: 'XHB8095|黑色|男', price: 198 }),
     ],
   });
   const labelPrint = createLabelPrintService(gateway);
@@ -288,7 +288,7 @@ test('AC-SP5/SP6 ⭐ 扫到记录 ID ⇒ **只排这一张**（走既有 /jobs�
       const body = await first.json();
       assert.equal(body.success, true);
       assert.equal(body.total_labels, 1, '⭐ 只排这一张（不是两三张）');
-      assert.deepEqual(body.job.numbers, ['XHB8095|棕色|A'], '打的是扫到的那一款（黑色那一款不许被带上 ✗）');
+      assert.deepEqual(body.job.numbers, ['XHB8095|棕色|男'], '打的是扫到的那一款（黑色那一款不许被带上 ✗）');
       assert.equal(body.reused, undefined, '第一次是真建任务');
 
       // ⭐ 连点（同一把幂等键 / 同一个内容）⇒ **不重复建任务**（不做的话她会白等一张纸）。
@@ -335,7 +335,7 @@ test('AC-SP8 ⭐ 记录读不到 / 这一款没库存 ⇒ 400 人话（不是 50
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-to-print-miss-'));
   const store = new LabelPrintJobStore({ dir, artifactsDir: path.join(dir, 'artifacts') });
   // 货品信息里**没有**这个记录 ⇒ `labelForRecord` 给"找不到了"的人话。
-  const gateway = gatewayOf({ liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })], product: [] });
+  const gateway = gatewayOf({ liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|男|36' })], product: [] });
   const service = createLabelPrintQueueService({
     store,
     labelPrint: createLabelPrintService(gateway),
@@ -714,7 +714,7 @@ test('AC-SP15 ⭐⭐ 「只扫码」聚焦页：进页**只发签名那一个请
     },
     async post(url, body) {
       calls.post.push({ url, body });
-      return { success: true, total_labels: 1, numbers: ['T202-8|米色|B'] };
+      return { success: true, total_labels: 1, numbers: ['T202-8|米色|女'] };
     },
   };
   const { win, state: winState } = fakeWin();
@@ -743,14 +743,14 @@ test('AC-SP16 ⭐⭐ 扫完 ⇒ **大字结果里有编号** + 按钮变「再�
   const container = fakeScanOnlyContainer();
   const api = {
     async get() { return { appId: 'cli_x', timestamp: 1, nonceStr: 'n', signature: 's', jssdkUrl: 'https://cdn.test/h5sdk.js' }; },
-    async post() { return { success: true, total_labels: 1, numbers: ['T202-8|米色|B'] }; },
+    async post() { return { success: true, total_labels: 1, numbers: ['T202-8|米色|女'] }; },
   };
   const { win } = fakeWin();
   const action = module.createScanPrintAction({ api, doc: null, win });
   const button = action.mount(container);
   assert.equal(container.elements['[data-view="scan-print-result"]'].textContent, '');
   await button.handlers.click();
-  assert.equal(container.elements['[data-view="scan-print-result"]'].textContent, '✅ 已提交打印：T202-8|米色|B',
+  assert.equal(container.elements['[data-view="scan-print-result"]'].textContent, '✅ 已提交打印：T202-8|米色|女',
     '结果必须是**带编号的大字**（一眼确认打了哪张 ✓）');
   assert.equal(container.elements['[data-action="scan-print"]'].textContent, '📷 再扫一张',
     '扫完按钮变「再扫一张」⇒ 她可以连着扫下一张 ✓');

@@ -53,7 +53,7 @@ const renderer = require('../src/views/scanPageRenderer');
 
 const RENDERER_SRC = rendererSource();
 
-const NUMBER = '832-500|黑色|A';
+const NUMBER = '832-500|黑色|男';
 const COOKIE = (() => {
   const payload = Buffer.from(JSON.stringify({ open_id: 'ou_mifh', name: 'mifh', exp: Date.now() + 36e5 }))
     .toString('base64url');
@@ -115,11 +115,11 @@ const fetchRealm = async (from, { wire: wireOn = false, ...extra } = {}) => {
 
 const ALREADY = Object.freeze([
   {
-    product_record_id: 'recAdded1', number: 'HL92007|白色|A', item_no: 'HL92007', color: '白色',
+    product_record_id: 'recAdded1', number: 'HL92007|白色|男', item_no: 'HL92007', color: '白色',
     supplier_record_id: 'recSupplier', entries: [{ size: '41', quantity: 2 }],
   },
   {
-    product_record_id: 'recAdded2', number: 'HL92008|红色|A', item_no: 'HL92008', color: '红色',
+    product_record_id: 'recAdded2', number: 'HL92008|红色|男', item_no: 'HL92008', color: '红色',
     supplier_record_id: 'recSupplier', entries: [{ size: '42', quantity: 1 }],
   },
 ]);

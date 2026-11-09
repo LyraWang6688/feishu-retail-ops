@@ -66,7 +66,7 @@ const OLD_EMPTY = '还没有加第二个货品。';
 const OLD_BUTTON = '生成采购退货';
 const NEW_BUTTON = '退货';
 
-const NUMBER = '832-500|黑色|A';
+const NUMBER = '832-500|黑色|男';
 const COOKIE = (() => {
   const payload = Buffer.from(JSON.stringify({ open_id: 'ou_rt', name: 'rt', exp: Date.now() + 36e5 }))
     .toString('base64url');
@@ -148,12 +148,12 @@ test('AC-RT3 🔴 退货块里**不许**再有「还没有加第二个货品。�
 test('AC-RT4 ⭐⭐ **有第二个货品时列表仍要出现**（她删的是"提示"，不是"列表" ✗）', async () => {
   const block = await fetchRealm('purchase_return', {
     multi_items: [
-      { number: 'HL92006|黑色|A', item_no: 'HL92006', color: '黑色', entries: [{ size: '41', quantity: 1 }, { size: '42', quantity: 2 }] },
+      { number: 'HL92006|黑色|男', item_no: 'HL92006', color: '黑色', entries: [{ size: '41', quantity: 1 }, { size: '42', quantity: 2 }] },
     ],
   });
   assert.match(block, /data-view="multi-item-list"/,
     '🔴 **有内容时必须出现列表** —— 去掉它 ⇒ 她加了第二个货品却看不见 ⇒ 红 ✓（防"删过头" ✗）');
-  assert.match(block, /<li class="multi-item-row">HL92006\|黑色\|A/,
+  assert.match(block, /<li class="multi-item-row">HL92006\|黑色\|男/,
     '那一行必须是**已加的那个货品**（编号逐字 ✓）');
   assert.match(block, /2 行/, '行数照旧（`{count} 行` 模板 ✓）');
 });
