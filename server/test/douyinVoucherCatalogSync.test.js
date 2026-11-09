@@ -170,13 +170,14 @@ test('AC-VC9 ⭐ 写回：名称/售价/面值/状态/上下架日期都写（�
   const out = await createVoucherCatalogSync({ gateway, laike, config: { accountId: 'a', statusMap: ONLINE_STATUS_TO_SALES_STATUS, write: true, writeDates: true, texts: {} }, logger: { logInfo: () => {}, logWarn: () => {} } }).run();
   assert.equal(out.written, 1);
   assert.equal(updates.length, 1);
+  assert.equal(updates[0].tableKey, 'groupBuyVoucher');
   assert.deepEqual(updates[0].patch, {
-    '券名称': '100元代金券',
-    '售价': 49.9,
-    '面值': 100,
-    '销售状态': '下架',
-    '上架日期': Date.UTC(2026, 7, 24),
-    '下架日期': Date.UTC(2026, 9, 26),
+    name: '100元代金券',
+    purchasePrice: 49.9,
+    faceValue: 100,
+    status: '下架',
+    listedAt: Date.UTC(2026, 7, 24),
+    delistedAt: Date.UTC(2026, 9, 26),
   });
 });
 

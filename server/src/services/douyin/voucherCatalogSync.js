@@ -129,16 +129,18 @@ const createVoucherCatalogSync = ({
       // ⭐ 2026-11-10（业务负责人）：「需要同步的是这些字段，接口返回什么就写什么」
       //   ⇒ 名称/售价/面值/销售状态/上架日期/下架日期（平台结算款与结算规则接口拿不到、不写；
       //   「种类」与公式列「团购券」不写）。
+      // ⚠️ gateway.update 收的是**语义键**（name/purchasePrice/…），不是中文列名 ——
+      //    传中文列名会抛「未配置语义字段」（2026-11-10 自测抓到的坑）。
       const patch = {};
-      if (diffs.name) patch[fields.name] = entry.name;
-      if (diffs.priceCents && fields.purchasePrice) patch[fields.purchasePrice] = entry.priceCents / 100;
-      if (diffs.faceCents && fields.faceValue) patch[fields.faceValue] = entry.faceCents / 100;
-      if (diffs.status && fields.status) patch[fields.status] = diffs.status.to;
+      if (diffs.name) patch.name = entry.name;
+      if (diffs.priceCents && fields.purchasePrice) patch.purchasePrice = entry.priceCents / 100;
+      if (diffs.faceCents && fields.faceValue) patch.faceValue = entry.faceCents / 100;
+      if (diffs.status && fields.status) patch.status = diffs.status.to;
       if (diffs.listedDay && fields.listedAt && entry.listedMs && config.writeDates !== false) {
-        patch[fields.listedAt] = entry.listedMs;
+        patch.listedAt = entry.listedMs;
       }
       if (diffs.delistedDay && fields.delistedAt && entry.delistedMs && config.writeDates !== false) {
-        patch[fields.delistedAt] = entry.delistedMs;
+        patch.delistedAt = entry.delistedMs;
       }
 
       let written = false;
