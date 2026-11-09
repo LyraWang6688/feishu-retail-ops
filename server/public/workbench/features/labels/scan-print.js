@@ -46,8 +46,10 @@ export const SCAN_PRINT_ENDPOINTS = Object.freeze({
  *     今天它们与下面这句逐字相同 ⇒ **行为零变化** ✓。 */
 export const SCAN_PRINT_TEXTS = Object.freeze({
   button: PLACE_TEXTS.labelPrintButton,
-  scanning: '正在唤起扫一扫…',
-  printing: '正在打印这一张…',
+  // 🔴 2026-11-09（业务负责人：「都是正在打印中」）：过程文案**统一成一句**
+  //   「正在打印中…」——不再分「正在唤起扫一扫 / 正在打印这一张」两套说法
+  //   （她看整条链路就是"在打印中"；按钮上还会自动带「（已 N 秒）」）。
+  printing: '正在打印中…',
   noSdk: '这台设备调不起飞书扫一扫：请在**飞书里**打开工作台，再点一次。',
   cancelled: '取消了扫码，没有打印任何东西。',
   failed: '扫码没有成功，请再试一次。',
@@ -253,7 +255,7 @@ export function createScanPrintAction(options = {}) {
     // ⭐⭐ 2026-10-15：**每一步都带着"我是哪一步挂的"**（真机看不到控制台 ⇒ 这是唯一的线索来源 ✓）
     progress.step = 'signature';
     try {
-      notice(texts.scanning);
+      // 过程不往小字那行写（按钮自己就是「正在打印中…（已 N 秒）」；同一件事不说两遍）。
       const signature = await api.get(signaturePath(win?.location?.href || ''));
       const scanned = await scanOnce(signature);
       const value = scannedValueOf(scanned);
@@ -263,7 +265,6 @@ export function createScanPrintAction(options = {}) {
         report({ ok: false, phase: 'scanCode', reason: 'empty' });
         return null;
       }
-      notice(texts.printing);
       // ⭐ **既有队列接口**（不新开打印接口 ✗）：服务端按形状解析 ⇒ **只排这一张**。
       const result = await api.post(SCAN_PRINT_ENDPOINTS.jobs, {
         mode: 'single',
@@ -339,7 +340,7 @@ export function createScanPrintAction(options = {}) {
    */
   async function runWithFeedback() {
     const button = pick('scan-print');
-    const result = await runWriteAction(button, () => run(), texts.scanning);
+    const result = await runWriteAction(button, () => run(), texts.printing);
     if (result && button) button.textContent = texts.scanAgain;
     return result;
   }

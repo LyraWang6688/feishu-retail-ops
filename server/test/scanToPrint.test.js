@@ -502,7 +502,7 @@ test('AC-SP7 ⭐ 点一下 ⇒ `h5sdk.config` ⇒ `tt.scanCode`（**JSAPI，不�
   assert.equal(/applink|feishu\.cn/i.test(source), false, '扫码打印不许跳外链（JSAPI 弹相机 ✓）');
 });
 
-test('AC-SP7 点了**立刻**有反馈：跑到一半时按钮已置灰 + 换成"正在唤起扫一扫…"', async () => {
+test('AC-SP7 点了**立刻**有反馈：跑到一半时按钮已置灰 + 换成「正在打印中…」', async () => {
   const module = await loadScanPrintModule();
   const container = fakeContainer();
   const { win } = fakeWin();
@@ -517,7 +517,8 @@ test('AC-SP7 点了**立刻**有反馈：跑到一半时按钮已置灰 + 换成
   const running = button.handlers.click();
   // 还没等到签名回来 —— 按钮必须**已经是**置灰 + 处理中文案（她不许"点了没反应"）。
   assert.equal(container.elements['[data-action="scan-print"]'].disabled, true);
-  assert.match(container.elements['[data-action="scan-print"]'].textContent, /正在/);
+  assert.equal(container.elements['[data-action="scan-print"]'].textContent, '正在打印中…',
+    '过程文案统一成「正在打印中…」（业务负责人 2026-11-09）');
   release();
   await running;
   assert.equal(container.elements['[data-action="scan-print"]'].disabled, false);
