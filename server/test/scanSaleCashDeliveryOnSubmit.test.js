@@ -85,7 +85,7 @@ const seedTables = (overrides = {}) => ({
     // 既有库存引擎认识的那条销售减少行为（`InventoryService` 的 MOVEMENT_SALE_DECREASE）
     { record_id: 'bh_sale_decrease', fields: { 行为名称: '销售减少', 行为编码: 'STOCK_SALE_DECREASE', 库存方向: '减少', 是否启用: true } },
   ],
-  paymentMethod: [{ record_id: 'pm_wechat', fields: { 收款方式: '微信' } }],
+  paymentMethod: [{ record_id: 'pm_wechat', fields: { 交易方式: '微信' } }],
   salesEntry: [],
   salesDetail: [],
   paymentRecord: [],

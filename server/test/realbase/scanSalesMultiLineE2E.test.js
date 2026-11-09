@@ -11,7 +11,7 @@
  *   ① `payload.lines` 是**多行**（= 本单行数 2），逐行带 product_record_id / size / actual_amount；
  *   ② 销售主表 **1 条**（按销售单号回查到且只有 1 条），`总金额` = 各行实收之和；
  *   ③ 销售明细 **N 条**（N = 本单行数），每行 `实收金额` 与这一行填的一致；
- *   ④ 收款明细 = 本单填的收款行（2 行 × 100），合计 = 总金额，`收款方式` = 测试 Base 里读出来的真方式；
+ *   ④ 收款明细 = 本单填的收款行（2 行 × 100），合计 = 总金额，`交易方式` = 测试 Base 里读出来的真方式；
  *   ⑤ 库存流水 = N 条（每行一双现货 ⇒ 一条 -1），关联到本单的明细行。
  *
  * 边界：
@@ -236,12 +236,12 @@ test(`AC-ML ⭐ 真实测试 Base：一单多货冒烟（A/B 各 1 张，每单 
   const poolB = listOf('B');
   assert.ok(poolA.length >= LINES_PER_ORDER, `A 类可售货品不足 ${LINES_PER_ORDER} 个（实际 ${poolA.length}）`);
   assert.ok(poolB.length >= LINES_PER_ORDER, `B 类可售货品不足 ${LINES_PER_ORDER} 个（实际 ${poolB.length}）`);
-  // ⚠️ 支付方式必须用「收款方式管理」表里**真实存在**的那条（默认数组不是真源）。
+  // ⚠️ 支付方式必须用「交易方式管理」表里**真实存在**的那条（默认数组不是真源）。
   const methods = await createPaymentMethodsService(gateway).listWithVouchers();
-  assert.equal(methods.ok, true, `收款方式管理读取失败：${methods.reason || ''}`);
+  assert.equal(methods.ok, true, `交易方式管理读取失败：${methods.reason || ''}`);
   const payMethod = (methods.items || []).find((item) => !item.voucherRecordId)?.name || '';
-  assert.ok(payMethod, '测试 Base 的「收款方式管理」里没有非券支付方式 ⇒ 无法完成付款');
-  SAY('支付方式 =', payMethod, '（来自收款方式管理表）· 操作人 =', operator);
+  assert.ok(payMethod, '测试 Base 的「交易方式管理」里没有非券支付方式 ⇒ 无法完成付款');
+  SAY('支付方式 =', payMethod, '（来自交易方式管理表）· 操作人 =', operator);
 
   const orders = [
     { label: 'A·男·一单两货', items: poolA.slice(0, LINES_PER_ORDER) },
@@ -322,7 +322,7 @@ test(`AC-ML ⭐ 真实测试 Base：一单多货冒烟（A/B 各 1 张，每单 
         assert.deepEqual(record.details.map((d) => d.size).sort(), order.items.map((item) => sizeOf(item)).sort(), `${order.label} 明细「尺码」应与本单一致`);
         assert.ok(record.payments.length >= 1, `${order.label} 应有收款明细`);
         assert.equal(record.paymentTotal, total, `${order.label} 收款合计应 = 总金额 ${total}（实际 ${record.paymentTotal}）`);
-        assert.ok(record.payments.every((p) => p.method === payMethod), `${order.label} 收款方式应 = ${payMethod}（实际 ${record.payments.map((p) => p.method).join(',')}）`);
+        assert.ok(record.payments.every((p) => p.method === payMethod), `${order.label} 交易方式应 = ${payMethod}（实际 ${record.payments.map((p) => p.method).join(',')}）`);
         assert.equal(record.ledger.every((l) => l.quantityChange === 1), true, `${order.label} 每条库存流水「变动数量」应为 1（绝对值，方向看「库存行为」）`);
         assert.equal(record.ledger.every((l) => l.behavior === '销售减少'), true, `${order.label} 每条库存流水「库存行为」应为「销售减少」（实际 ${record.ledger.map((l) => l.behavior).join(',')}）`);
         assert.equal(record.ledger.length, record.details.length, `${order.label} 库存流水应逐行一条`);

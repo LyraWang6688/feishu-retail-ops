@@ -231,12 +231,12 @@ test(`AC-SM ⭐ 真实测试 Base：库存单点查询 10 双 ＋ 销售录单 1
   assert.ok(operator, '测试 Base 里找不到真实「录单人」open_id ⇒ 无法建单');
   const candidates = await loadCandidates(gateway);
   const matrix = matrixOf(candidates);
-  // ⚠️ 支付方式必须用「收款方式管理」表里**真实存在**的那条（默认数组不是真源）。
+  // ⚠️ 支付方式必须用「交易方式管理」表里**真实存在**的那条（默认数组不是真源）。
   const methods = await createPaymentMethodsService(gateway).listWithVouchers();
-  assert.equal(methods.ok, true, `收款方式管理读取失败：${methods.reason || ''}`);
+  assert.equal(methods.ok, true, `交易方式管理读取失败：${methods.reason || ''}`);
   const payMethod = (methods.items || []).find((item) => !item.voucherRecordId)?.name || '';
-  assert.ok(payMethod, '测试 Base 的「收款方式管理」里没有非券支付方式 ⇒ 无法完成付款');
-  SAY('支付方式 =', payMethod, '（来自收款方式管理表）');
+  assert.ok(payMethod, '测试 Base 的「交易方式管理」里没有非券支付方式 ⇒ 无法完成付款');
+  SAY('支付方式 =', payMethod, '（来自交易方式管理表）');
   SAY('操作人 =', operator);
   SAY('库存查询候选 =', matrix.inventory.map((c) => c.number).join(' , '));
   SAY('销售录单候选 =', matrix.sales.map((c) => c.number).join(' , '));

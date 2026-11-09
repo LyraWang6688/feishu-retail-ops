@@ -11,7 +11,7 @@
  *   ③ 那一笔的**状态** = 【**待平台结算**】
  *      ⭐ 先例：群聊那条链路的 `groupBuyVoucherPolicy.js`（已于 2026-10-18 按「无前端入口」删除）
  *        就是 `{ method: '抖音团购券', amount: voucher.settlementAmount, status: '待平台结算' }` ✓
- *   ④ 「券方式 ⇒ 金额可空」的判据 = 收款方式表里那个「**团购券管理**」**关联列非空** ✓
+ *   ④ 「券方式 ⇒ 金额可空」的判据 = 交易方式表里那个「**团购券管理**」**关联列非空** ✓
  *      （语义键在 `config/v1BitableSchema.js` 的 `voucher: '团购券管理'` ✓）
  *
  * ⭐⭐ **2026-10-16 迁移（分阶段判据体检）**：这里原有 **4 条"自足替身闸门"** —— 只测**文件内本地 lambda**、
@@ -41,7 +41,7 @@ const VOUCHER_ROWS = Object.freeze([
   Object.freeze({ purchasePrice: 85.4, faceValue: 100, settlementAmount: 85.4 }),
 ]);
 
-/** ⭐ 收款方式表 4 行（两条抖音券：关联列分别指向上面两条券 ✓；两条普通方式：关联列为空 ✓） */
+/** ⭐ 交易方式表 4 行（两条抖音券：关联列分别指向上面两条券 ✓；两条普通方式：关联列为空 ✓） */
 const PAYMENT_METHOD_ROWS = Object.freeze([
   Object.freeze({ name: '微信收款', voucher: null }),
   Object.freeze({ name: '现金收款', voucher: null }),
@@ -73,7 +73,7 @@ test('⭐ 今天能钉（真判据）：目录查表按「采购价｜面值」�
 
 test('⭐ 今天能钉（真判据）：语义键 `voucher` 仍指向「团购券管理」（谁改名 ⇒ 红 ✓）', () => {
   const paymentMethod = V1_BITABLE_SCHEMA.tables.paymentMethod || V1_BITABLE_SCHEMA.tables.paymentMethods;
-  assert.ok(paymentMethod?.fields?.voucher, '收款方式表上必须有 `voucher` 语义键 ✓');
+  assert.ok(paymentMethod?.fields?.voucher, '交易方式表上必须有 `voucher` 语义键 ✓');
   assert.equal(paymentMethod.fields.voucher, '团购券管理', '🔴 它指向的列名就是「团购券管理」（她 ④ 的判据靠它 ✓）');
 });
 
@@ -97,6 +97,6 @@ const COVERAGE = Object.freeze([
   ['② 收款明细那一笔 = 【平台结算款】', ['AC-VP1', 'AC-VP4b']],
   ['③ 那一笔的状态 = 【待平台结算】', ['AC-VP3']],
   ['④ 券方式 ⇒ 金额可空（关联列非空 ✓）', ['AC-VP2b', 'AC-VP7']],
-  ['⑤ 券没映射到收款方式 ⇒ `scan.write.voucher_method_unmapped`', ['AC-VP5', 'AC-VP6']],
+  ['⑤ 券没映射到交易方式 ⇒ `scan.write.voucher_method_unmapped`', ['AC-VP5', 'AC-VP6']],
 ]);
 

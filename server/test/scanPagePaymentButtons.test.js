@@ -185,7 +185,7 @@ test('AC-PB6 ⭐ 资金页默认金额 = 总金额；不记这笔选项已删除
   const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
   const html = renderSalePaymentStepPage({
     write: {
-      texts: { paymentLabel: '收款方式', paymentAmountPlaceholder: '', paymentAmountLabel: '' },
+      texts: { paymentLabel: '交易方式', paymentAmountPlaceholder: '', paymentAmountLabel: '' },
       fields: { paymentMethod: 'payment_method', paymentAmount: 'payment_amount' },
       paymentMethods: ['支付宝', '现金'],
       paymentRowCount: 1,
@@ -193,6 +193,6 @@ test('AC-PB6 ⭐ 资金页默认金额 = 总金额；不记这笔选项已删除
     totalAmountText: '360', count: 1, postAction: '/r/TEST', submitKey: 'k', orderNo: '',
   });
   assert.equal(html.includes('不记这笔'), false, '不记这笔选项必须删除');
-  assert.equal(html.includes('<option value="">'), false, '收款方式下拉不许有空值兜底');
+  assert.equal(html.includes('<option value="">'), false, '交易方式下拉不许有空值兜底');
   assert.ok(html.includes('name="payment_amount"') && html.includes('value="360"'), '默认行金额 = 总金额');
 });

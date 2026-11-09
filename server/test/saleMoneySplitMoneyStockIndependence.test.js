@@ -107,7 +107,7 @@ const seedTables = () => ({
     { record_id: 'bh_prepaid', fields: { 行为名称: '预定', 行为编码: 'SALE_PREPAID' } },
     { record_id: 'bh_sale_decrease', fields: { 行为名称: '销售减少', 行为编码: 'STOCK_SALE_DECREASE', 库存方向: '减少', 是否启用: true } },
   ],
-  paymentMethod: [{ record_id: 'pm_wechat', fields: { 收款方式: '微信' } }],
+  paymentMethod: [{ record_id: 'pm_wechat', fields: { 交易方式: '微信' } }],
   salesEntry: [],
   salesDetail: [],
   paymentRecord: [],
@@ -256,7 +256,7 @@ const runSplitSale = async ({ openId, size, inStock, paid }) => {
     const moneyState = {
       totalAmount: master[0].fields[TOTAL],
       fundsStatus: master[0].fields[FUNDS],
-      // ⚠️ 只留**形状与金额**（收款方式那一列是关联 id，与"差额"这件事无关 ⇒ 不进可比形态）
+      // ⚠️ 只留**形状与金额**（交易方式那一列是关联 id，与"差额"这件事无关 ⇒ 不进可比形态）
       payments: rowsOf(h, 'paymentRecord').map((record) => ({
         amount: Number(record.fields[PAY_AMOUNT]), status: record.fields[PAY_STATUS],
       })),

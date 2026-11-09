@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * ⭐⭐ 2026-10-14：付款方式**读「收款方式管理」表**（她：「付款方式用支付方式管理，可选择」）
+ * ⭐⭐ 2026-10-14：付款方式**读「交易方式管理」表**（她：「付款方式用支付方式管理，可选择」）
  *
  *   AC-PM1 ⭐ 选项**来自那张表**（表里加一条 ⇒ 这里自动多一个 ✓ 能真红 ✓）
  *   AC-PM2 ⭐ 读不到 ⇒ `ok:false` + 原因（**不静默兜底** ✗）
@@ -16,7 +16,7 @@ const { invalidateConfigTable } = require('../src/services/configTableCache');
 const { CONFIG_TABLES } = require('../src/config/configTables');
 
 const gatewayOf = (values, calls = { n: 0 }) => ({
-  listAll: async () => { calls.n += 1; return values.map((v, i) => ({ record_id: `pm${i}`, fields: { 收款方式: v } })); },
+  listAll: async () => { calls.n += 1; return values.map((v, i) => ({ record_id: `pm${i}`, fields: { 交易方式: v } })); },
 });
 
 test('AC-PM1/AC-PM3 ⭐ 选项来自表 · 去重去空 · 顺序照表', async () => {
@@ -48,11 +48,11 @@ test('AC-PM4 ⭐ TTL 内只读一次上游；TTL 由统一注册表给', async (
 
 test('AC-PM5 ⭐ 按「出现顺序」排序（1 最前）；没序号/非数字排最后且保持稳定', async () => {
   const rows = [
-    { record_id: 'a', fields: { 收款方式: '工商银行', 出现顺序: 3 } },
-    { record_id: 'b', fields: { 收款方式: '微信扫码', 出现顺序: 1 } },
-    { record_id: 'c', fields: { 收款方式: '现金', 出现顺序: 2 } },
-    { record_id: 'd', fields: { 收款方式: '无序号' } },
-    { record_id: 'e', fields: { 收款方式: '非数字', 出现顺序: 'x' } },
+    { record_id: 'a', fields: { 交易方式: '工商银行', 出现顺序: 3 } },
+    { record_id: 'b', fields: { 交易方式: '微信扫码', 出现顺序: 1 } },
+    { record_id: 'c', fields: { 交易方式: '现金', 出现顺序: 2 } },
+    { record_id: 'd', fields: { 交易方式: '无序号' } },
+    { record_id: 'e', fields: { 交易方式: '非数字', 出现顺序: 'x' } },
   ];
   const service = createPaymentMethodsService({ listAll: async () => rows });
   const out = await service.list();
@@ -63,7 +63,7 @@ test('AC-PM6 ⭐ 配置表事件失效：invalidate 后下一次读立即拿新�
   const values = ['微信'];
   const calls = { n: 0 };
   const gateway = {
-    listAll: async () => { calls.n += 1; return values.map((value, index) => ({ record_id: `pm${index}`, fields: { 收款方式: value } })); },
+    listAll: async () => { calls.n += 1; return values.map((value, index) => ({ record_id: `pm${index}`, fields: { 交易方式: value } })); },
   };
   const service = createPaymentMethodsService(gateway);
   const first = await service.list();
@@ -74,4 +74,25 @@ test('AC-PM6 ⭐ 配置表事件失效：invalidate 后下一次读立即拿新�
   invalidateConfigTable('paymentMethod');
   assert.deepEqual((await service.list()).items, ['现金'], '事件失效后立即重读');
   assert.equal(calls.n, 2, '只多读一次');
+});
+
+test('AC-PM7 ⭐ 「是否启用」列存在时：未勾选的方式不出现在候选', async () => {
+  const rows = [
+    { record_id: 'a', fields: { 交易方式: '支付宝', 出现顺序: 1, 是否启用: true } },
+    { record_id: 'b', fields: { 交易方式: '微信', 出现顺序: 2, 是否启用: false } },
+    { record_id: 'c', fields: { 交易方式: '现金', 出现顺序: 3, 是否启用: true } },
+  ];
+  const service = createPaymentMethodsService({ listAll: async () => rows });
+  const out = await service.list();
+  assert.deepEqual(out.items, ['支付宝', '现金'], '未勾选「是否启用」的方式被过滤');
+});
+
+test('AC-PM8 ⭐ 「是否启用」列不存在时保持旧行为（全部可用）', async () => {
+  const rows = [
+    { record_id: 'a', fields: { 交易方式: '支付宝' } },
+    { record_id: 'b', fields: { 交易方式: '微信' } },
+  ];
+  const service = createPaymentMethodsService({ listAll: async () => rows });
+  const out = await service.list();
+  assert.deepEqual(out.items, ['支付宝', '微信'], '旧表没有该列 ⇒ 不误过滤');
 });

@@ -31,7 +31,7 @@ process.env.SCAN_PAGE_CACHE_ENABLED = 'true';
  *  ── 2026-10-16 追加（她「**扫完之后数据加载慢**」：整请求 11.4s / 9.7s 那次）──────────
  *  改前逐字：日志里只有 `total_ms`（取数+渲染）与 `render_ms`；`lookup` 返回之后、
  *            `renderScan` 之前那三次 `await`（`routes/scanPage.js` 的 `buildWriteContext`：
- *            读会话 / 读「收款方式管理」/ 读配品表）**一个字段都看不见** ✗
+ *            读会话 / 读「交易方式管理」/ 读配品表）**一个字段都看不见** ✗
  *  改后逐字：`scan.lookup.timing` **新增一个字段** `post_lookup_ms`（= 那一段的毫秒，
  *            已扣掉 `render_ms`；没有落点时显式 `-1`）——
  *            ⇒ 配合 `http.request.completed.duration_ms` 与两条日志的 `ts`，**整请求可逐段归账** ✓
@@ -414,7 +414,7 @@ test('AC-T6/T7/T8/T10 分段字典加厚：每段都有值 · 缺段显式 -1 ·
     //   改前逐字：`createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false })`
     //     ＋ 下面那句 `assert.equal(line.feishu_reads, counts.reads, …)`。
     //   改后逐字：**只多传一个注入口** `paymentMethodsService`（与 `service` / `writeService` 同一套设计 ✓）；
-    //     —— A2a 起，**页面渲染**会去读「收款方式管理」那一张表（只读 + 5 分钟 TTL 缓存 ✓ 见路由里那份注释）；
+    //     —— A2a 起，**页面渲染**会去读「交易方式管理」那一张表（只读 + 5 分钟 TTL 缓存 ✓ 见路由里那份注释）；
     //        那一次读发生在 `lookup` **之后**、**不在** `scan.lookup.timing` 的分段范围内
     //        ⇒ 照原样跑，`counts.reads` 会比日志多 1 ⇒ 这条**关于分段计数的**断言会被**另一件事**打红
     //        （测量噪声 ✗ 不是它要守的东西）。
@@ -573,10 +573,10 @@ test('AC-NS1 ⭐⭐ 一次查款**不再读「采购明细」**（她拍板删�
 // AC-PL1（2026-10-16）⭐ 她「**扫完之后数据加载慢**」（那次整请求 11.4 秒 / 9.7 秒）
 //
 // 病灶（确定的，只读核过源码与线上日志形状）：路由在 `lookup` 返回之后、`renderScan` 之前
-//   还有三次 `await`（`routes/scanPage.js` 的 `buildWriteContext`：读会话 / 读「收款方式管理」
+//   还有三次 `await`（`routes/scanPage.js` 的 `buildWriteContext`：读会话 / 读「交易方式管理」
 //   （TTL 5 分钟）/ 读配品表）—— 它们**既不在 `total_ms`、也不在 `render_ms`** 里
 //   ⇒ 那一段一个字段都看不见 ✗，而 `feishu_reads=0` **也不能排除**它：
-//      收款方式 / 配品那两次读走的是**原始网关**（不在本文件的计数代理后面）✗。
+//      交易方式 / 配品那两次读走的是**原始网关**（不在本文件的计数代理后面）✗。
 //
 // 本 AC 钉住**新字段 `post_lookup_ms`**（一条日志、一个字段，零行为变化）：
 //   · AC-PL1a 这一段**真的被测到**：假时钟推进 5000ms ⇒ 字段就是 5000 − render_ms ✓

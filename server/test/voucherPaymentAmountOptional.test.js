@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const { paymentRowsHtml } = require('../src/views/scanPage/paymentBlock');
 
 const write = (voucherMethods) => ({
-  texts: { paymentLabel: '收款方式', paymentAmountPlaceholder: '金额', paymentAmountLabel: '收款金额', voucherAmountHint: '选择抖音团购券时，无需填写金额' },
+  texts: { paymentLabel: '交易方式', paymentAmountPlaceholder: '金额', paymentAmountLabel: '收款金额', voucherAmountHint: '选择抖音团购券时，无需填写金额' },
   fields: { paymentMethod: 'payment_method', paymentAmount: 'payment_amount' },
   paymentMethods: ['支付宝', '抖音代金券（89.9）'],
   voucherMethods,
