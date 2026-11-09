@@ -533,3 +533,36 @@ test('⑨ 按供应商分批验收：第一家验完仍未到货，全部验完�
   const acceptedAll = await harness.service.listAcceptedSuppliersByBatch();
   assert.deepEqual([...acceptedAll[BATCH_NO]].sort(), ['supplierA', 'supplierB'], '两家都验完 ✓');
 });
+
+test('⑩ ⭐ 注入 markSupplierArrived 时：以主表「供应商/已到货供应商」为准，不再看本地任务 allDone', async () => {
+  const records = baseRecords();
+  records.purchaseRequest = [
+    { record_id: 'req_a38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2, 供应商: '供应商A' } },
+    { record_id: 'req_b39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(39), 数量: 1, 供应商: '供应商B' } },
+  ];
+  const harness = makeHarness({ records });
+  const calls = [];
+  // 故意永远返回未全到货：即使两家本地任务都 posted，也不许写「已到货」
+  harness.service.markSupplierArrived = async ({ supplierRecordId }) => {
+    calls.push(supplierRecordId);
+    return { updated: true, all_arrived: false, expected_ids: ['supplierA', 'supplierB'] };
+  };
+  const supplierIds = ['supplierA', 'supplierB'];
+  for (const [requestId, supplierId, size] of [['req_a38', 'supplierA', 38], ['req_b39', 'supplierB', 39]]) {
+    const result = await harness.service.confirmBatchArrival({
+      batch: {
+        batch_no: BATCH_NO, batch_record_id: BATCH_RECORD_ID,
+        request_ids: [requestId], supplier_record_id: supplierId, supplier_record_ids: supplierIds,
+      },
+      actualAmount: 100,
+      operatorOpenId: 'ou_1',
+      scanLines: [{ product_record_id: PRODUCT_1, size, quantity: 1 }],
+      supplierRecordId: supplierId,
+      supplierRecordIds: supplierIds,
+    });
+    assert.equal(result.ok, true);
+  }
+  assert.deepEqual(calls, ['supplierA', 'supplierB'], '每家验收都会追加「已到货供应商」✓');
+  assert.equal(batchFields(harness.records)['到货状态'], '未到货',
+    '主表字段还没全到货 ⇒ 即使本地任务都 posted 也不许写已到货 ✓');
+});

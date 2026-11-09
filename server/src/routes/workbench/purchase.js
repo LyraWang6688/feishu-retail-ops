@@ -64,6 +64,9 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         //   写成**所有已验收供应商的累计值**（仍走既有 PurchaseOrderBatchService 写口）。
         writeBatchTotals: ({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }) =>
           webhooks.orderBatches.writeAcceptance({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }),
+        // ⭐ 2026-11-10（业务负责人方案）：验收完一家 → 追加「已到货供应商」→ 与「供应商」Lookup 比较
+        markSupplierArrived: ({ batchNo, batchRecordId, supplierRecordId, correlation }) =>
+          webhooks.orderBatches.addArrivedSupplier({ batchNo, batchRecordId, supplierRecordId, correlation }),
       });
       purchaseArrival = new WorkbenchPurchaseArrivalService({
         purchaseQuery: createPurchaseQueryService(arrivalGateway),
