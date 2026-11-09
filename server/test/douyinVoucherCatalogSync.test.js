@@ -150,3 +150,50 @@ test('AC-VC8 ⭐ 上架/下架日期只报差异（readOnly），名称空也算
   assert.deepEqual(item.diffs.listedDay, { from: '2026-08-23', to: '2026-08-24', readOnly: true });
   assert.deepEqual(item.diffs.delistedDay, { from: '', to: '2026-10-26', readOnly: true });
 });
+
+test('AC-VC9 ⭐ 写回：名称/售价/面值/状态/上下架日期都写（接口给什么写什么）', async () => {
+  const updates = [];
+  const F = { ...FIELDS, listedAt: '上架日期', delistedAt: '下架日期' };
+  const gateway = {
+    table: () => ({ fields: F }),
+    listAll: async () => [{
+      record_id: 'rec_1',
+      fields: { '券ID': 'p1', '券名称': '旧名', '售价': '88.8', '面值': '90', '销售状态': '在售', '上架日期': null, '下架日期': null },
+    }],
+    update: async (tableKey, recordId, patch) => { updates.push({ tableKey, recordId, patch }); },
+  };
+  const laike = {
+    fetchProductList: async () => ok({ products: [{ product: { product_id: 'p1', product_name: '100元代金券', sold_start_time: Date.UTC(2026, 7, 24) / 1000, sold_end_time: Date.UTC(2026, 9, 26) / 1000 }, online_status: 2 }] }),
+    fetchSkus: async () => ok({ skus: [{ actual_amount: 4990, origin_amount: 10000 }] }),
+    fetchProduct: async () => ok({ product_onlines: [{ commission_info: { platform_take_rate: 500 } }] }),
+  };
+  const out = await createVoucherCatalogSync({ gateway, laike, config: { accountId: 'a', statusMap: ONLINE_STATUS_TO_SALES_STATUS, write: true, writeDates: true, texts: {} }, logger: { logInfo: () => {}, logWarn: () => {} } }).run();
+  assert.equal(out.written, 1);
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0].patch, {
+    '券名称': '100元代金券',
+    '售价': 49.9,
+    '面值': 100,
+    '销售状态': '下架',
+    '上架日期': Date.UTC(2026, 7, 24),
+    '下架日期': Date.UTC(2026, 9, 26),
+  });
+});
+
+test('AC-VC10 ⭐ write=false ⇒ 只报差异、一个字都不写', async () => {
+  let updates = 0;
+  const gateway = {
+    table: () => ({ fields: FIELDS }),
+    listAll: async () => [row('rec_1', { voucherId: 'p1', name: '', price: '1', face: '1' })],
+    update: async () => { updates += 1; },
+  };
+  const laike = {
+    fetchProductList: async () => ok({ products: [{ product: { product_id: 'p1', product_name: 'X' }, online_status: 1 }] }),
+    fetchSkus: async () => ok({ skus: [{ actual_amount: 100, origin_amount: 200 }] }),
+    fetchProduct: async () => ok({ product_onlines: [{}] }),
+  };
+  const out = await createVoucherCatalogSync({ gateway, laike, config: { accountId: 'a', statusMap: ONLINE_STATUS_TO_SALES_STATUS, write: false, texts: {} }, logger: { logInfo: () => {}, logWarn: () => {} } }).run();
+  assert.equal(out.written, 0);
+  assert.equal(updates, 0);
+  assert.ok(out.matched > 0);
+});

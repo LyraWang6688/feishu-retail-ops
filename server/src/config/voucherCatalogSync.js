@@ -10,7 +10,7 @@
  *    **不写飞书**（写回留到业务负责人点头后的下一步）。
  */
 
-const { readString } = require('./envValue');
+const { readFlag, readInt, readString } = require('./envValue');
 
 const TEXTS = Object.freeze({
   accountMissing: '券目录同步未执行：没配置 DOUYIN_LAIKE_ACCOUNT_ID',
@@ -24,6 +24,12 @@ const ONLINE_STATUS_TO_SALES_STATUS = Object.freeze({ 1: '在售', 2: '下架' }
 const createVoucherCatalogSyncConfig = (env = process.env) => ({
   accountId: readString(env, 'DOUYIN_LAIKE_ACCOUNT_ID', '').trim(),
   statusMap: ONLINE_STATUS_TO_SALES_STATUS,
+  // 写回（2026-11-10 业务负责人：「接口返回什么就写什么」）——默认开。
+  write: readFlag(env, 'VOUCHER_CATALOG_SYNC_WRITE', true),
+  // 时间列（上架/下架日期）是否写：业务负责人本次明确要求同步这两列 ⇒ 默认写。
+  writeDates: readFlag(env, 'VOUCHER_CATALOG_SYNC_DATES', true),
+  hour: readInt(env, 'VOUCHER_CATALOG_SYNC_HOUR', 9, { min: 0, max: 23 }),
+  intervalMs: readInt(env, 'VOUCHER_CATALOG_SYNC_INTERVAL_MS', 60 * 60 * 1000, { min: 60000, max: 24 * 3600000 }),
   texts: TEXTS,
 });
 

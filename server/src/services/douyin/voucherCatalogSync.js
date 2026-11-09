@@ -84,12 +84,15 @@ const createVoucherCatalogSync = ({
         commissionDetail: detail?.commission_info?.commission_detail_list || [],
         listedDay: dayOf(product.sold_start_time, 's'),
         delistedDay: dayOf(product.sold_end_time, 's'),
+        listedMs: Number(product.sold_start_time) > 0 ? Number(product.sold_start_time) * 1000 : null,
+        delistedMs: Number(product.sold_end_time) > 0 ? Number(product.sold_end_time) * 1000 : null,
       });
     }
 
     const byId = new Map(catalog.map((entry) => [entry.productId, entry]));
     const matched = [];
     const unmatchedVouchers = [];
+    const failedWrites = [];
 
     for (const row of rows) {
       const voucherId = textOf(row.fields?.[fields.externalId]).trim();
@@ -123,6 +126,37 @@ const createVoucherCatalogSync = ({
         diffs.delistedDay = { from: delistedNow, to: entry.delistedDay, readOnly: true };
       }
 
+      // ⭐ 2026-11-10（业务负责人）：「需要同步的是这些字段，接口返回什么就写什么」
+      //   ⇒ 名称/售价/面值/销售状态/上架日期/下架日期（平台结算款与结算规则接口拿不到、不写；
+      //   「种类」与公式列「团购券」不写）。
+      const patch = {};
+      if (diffs.name) patch[fields.name] = entry.name;
+      if (diffs.priceCents && fields.purchasePrice) patch[fields.purchasePrice] = entry.priceCents / 100;
+      if (diffs.faceCents && fields.faceValue) patch[fields.faceValue] = entry.faceCents / 100;
+      if (diffs.status && fields.status) patch[fields.status] = diffs.status.to;
+      if (diffs.listedDay && fields.listedAt && entry.listedMs && config.writeDates !== false) {
+        patch[fields.listedAt] = entry.listedMs;
+      }
+      if (diffs.delistedDay && fields.delistedAt && entry.delistedMs && config.writeDates !== false) {
+        patch[fields.delistedAt] = entry.delistedMs;
+      }
+
+      let written = false;
+      if (config.write !== false && Object.keys(patch).length) {
+        try {
+          await gateway.update('groupBuyVoucher', row.record_id, patch);
+          written = true;
+          logger.logInfo('douyin.voucher_catalog.written', {
+            record_id: row.record_id, voucher_id: voucherId, fields: Object.keys(patch),
+          });
+        } catch (error) {
+          failedWrites.push({ recordId: row.record_id, voucherId, error: String(error?.message || error).slice(0, 200) });
+          logger.logWarn('douyin.voucher_catalog.write_failed', {
+            record_id: row.record_id, voucher_id: voucherId, error: String(error?.message || error).slice(0, 200),
+          });
+        }
+      }
+
       matched.push({
         recordId: row.record_id,
         voucherId,
@@ -135,6 +169,7 @@ const createVoucherCatalogSync = ({
         listedDay: entry.listedDay,
         delistedDay: entry.delistedDay,
         changed: Object.keys(diffs).length > 0,
+        written,
         diffs,
       });
     }
@@ -145,6 +180,8 @@ const createVoucherCatalogSync = ({
       voucherRows: rows.length,
       catalogProducts: catalog.length,
       matched: matched.filter((item) => item.changed).length,
+      written: matched.filter((item) => item.written).length,
+      failedWrites,
       unchanged: matched.filter((item) => !item.changed).length,
       unmatchedVouchers,
       unmatchedProducts: [...byId.values()],
