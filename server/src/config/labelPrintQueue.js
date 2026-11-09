@@ -48,9 +48,6 @@ const STATES = Object.freeze({
   failed: Object.freeze({ id: 'failed', label: '失败' }),
 });
 
-/** 状态展示顺序（手机上按它排：待打印在最上）。 */
-const STATUS_ORDER = Object.freeze(['queued', 'claimed', 'failed', 'done']);
-
 /** 一次打印请求的来源（只用于日志与页面提示，不参与任何判断）。 */
 const SOURCES = Object.freeze({
   scan: 'scan',
@@ -63,7 +60,6 @@ const LABEL_PRINT_QUEUE = Object.freeze({
   // 打印任务队列的**显式开关**：关掉时两条新入口都回 503 + 人话（不静默 404）。
   enabled: true,
   states: STATES,
-  statusOrder: STATUS_ORDER,
   sources: SOURCES,
 
   // ── 落盘 ──────────────────────────────────────────────────────────────────
@@ -73,7 +69,7 @@ const LABEL_PRINT_QUEUE = Object.freeze({
 
   // ── 在线判据（心跳）──────────────────────────────────────────────────────
   // 小助手每次心跳 / 每次长连接 ping 都刷新 `last_seen`；超过这么久没动静 = **未连接**。
-  // ⚠️ 她是"要打标签才开机"⇒ **未连接是常态**，页面文案必须不吓人（见 texts.offlineBody）。
+  // ⚠️ 她是"要打标签才开机"⇒ **未连接是常态**，页面文案必须不吓人（见 `onlineTimeoutMs` 的说明：未连接只是排队，不是失败）。
   onlineTimeoutMs: 90 * 1000,
 
   // ── 传输（事件推送）────────────────────────────────────────────────────
@@ -202,12 +198,6 @@ const LABEL_PRINT_QUEUE = Object.freeze({
   //   · 她**真想再打一张**的路没被堵死：窗口内再点 ⇒ 页面**明确二次确认**并给【再打一张】
   //     （那个按钮带 `again=1`，**绕过**窗口）；过了窗口再点就是一次全新提交。
   dedupeWindowMs: 60 * 1000,
-  // 表单带回来的幂等键（可选）：**同一次提交同 key ⇒ 复用**（比窗口更硬的一道）。
-  // ⚠️ 扫码页零 JS、不强依赖它；工作台那一页会带（同一批查询结果一个 key）。
-  submitKeyField: 'submit_key',
-  // 「再打一张 / 再打一份」按钮带的字段（**明确表达"我知道刚打过，还要再打"**）。
-  againField: 'again',
-
   // ── 保留期（小 VPS 磁盘有限）────────────────────────────────────────────
   // `done` / `failed` 超过这么久 ⇒ 任务 JSON 与产物一起清掉。
   // 🔴 **`queued` / `claimed` 永不被清理**（那正是"电脑没开时排队保留"那条要求）。
@@ -229,47 +219,6 @@ const LABEL_PRINT_QUEUE = Object.freeze({
     id: 'store-pc',
   }),
 
-  // ── 手机上看到的字（页面不写死句子）────────────────────────────────────
-  texts: Object.freeze({
-    online: '打印电脑在线',
-    offline: '未连接（任务已排队，打开小助手就会打）',
-    // ⭐⭐ 2026-10-11 真机反馈后加的：**提交完必须"显眼地"说清楚**
-    //   （她的现象：点完没反馈 ⇒ 以为没点上 ⇒ 连点几次 ⇒ 多打了好几张）。
-    //   `{count}` = 本次几张。
-    submittedBanner: '✅ 已发送给打印电脑：本次 {count} 张',
-    // ⭐⭐ 2026-10-12（真机反馈「点完没有反馈 ⇒ 我会一直狂点」）：
-    //    · `printSubmitting` —— 点下去**立刻**把按钮置灰并换成这句（前端那一小段 JS 用；
-    //      文案放配置、由 `data-submitting` 传下去，JS 里不写死中文）；
-    //    · `submittedQueueNote` —— 收到响应后横幅上那句「已下发到电脑（队列第 N 位）」。
-    printSubmitting: '正在下发…',
-    submittedQueueNote: '已下发到电脑 · 队列第 {position} 位',
-    submittedOnline: '打印电脑在线 —— 马上打',
-    submittedOffline: '未连接 —— 已排队，开机自动补打',
-    submittedNoRepeat: '已提交，不用重复点',
-    // 连点去重（窗口内第二次提交）⇒ **明确二次确认**，并给【再打一张】的路。
-    duplicatedBanner: '刚刚已经发过一次：本次 {count} 张（没有重复提交）',
-    duplicatedHint: '确实要再打一张，点下面的按钮',
-    printAgain: '再打一张',
-    queued: '已排队，等打印电脑取走',
-    enqueuedTitle: '已提交打印',
-    enqueueFailed: '提交打印失败',
-    printSingle: '打印这一款',
-    printBatch: '打印到店里那台电脑',
-    // 「再打一份」= 工作台那一页**明确要再打一份**的路（带 `again`，绕过防连点窗口）。
-    printBatchAgain: '再打一份',
-    reprint: '补打',
-    refresh: '刷新状态',
-    // 「最近一次：已打印」—— 扫码页「货品」领域那一行（失败时后面接 `— 原因`）。
-    lastJobPrefix: '最近一次：',
-    // 打印服务不可用（队列坏了 / 明确关掉）—— 那一页**绝不留空白**，用这句如实顶一下。
-    unavailable: '打印服务暂时不可用，稍后再试',
-    // 扫码页零 JS：提交打印失败 ⇒ 渲染一张人话页（标题 + 原因原样）。
-    enqueueFailedTitle: '打不出来这一款',
-    unavailableTitle: '打印服务暂时不可用',
-    // 状态徽标旁边那句"最近一次心跳"。
-    lastSeenPrefix: '最近心跳：',
-    neverSeen: '这台电脑还从没连过',
-  }),
 });
 
 /**
@@ -398,7 +347,6 @@ const hostname = () => {
 module.exports = {
   LABEL_PRINT_QUEUE,
   STATES,
-  STATUS_ORDER,
   SOURCES,
   DEFAULT_STORE_DIR,
   resolveLabelPrintQueueConfig,

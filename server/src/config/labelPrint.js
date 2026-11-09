@@ -129,7 +129,7 @@ const TYPOGRAPHY = Object.freeze({
  *     `qtyBaselineShiftEm` 是直接落到 CSS `vertical-align: -Xem` 上的值，**相对角标自己的字号**
  *     （按打样图量出来 ≈ 0.2em；比例 × 字号 = 角标实际大小，两个旋钮各管一件事）。
  *     ⚠️ **不用 Unicode 下标字符**（`₁` `₂`）——预览里试过，部分字体显示成方框；
- *        角标是**真的 `<span>`**，由 `public/workbench/features/labels/render.js` 画。
+ *        角标是**真的数字/上下标文本**，画法只在产物渲染层（`services/labelPrintArtifactService.js`）一处实现。
  */
 /**
  * ⭐⭐ **右栏行序的白名单**（唯一真源；`artifact.rows` / `LABEL_PRINT_ROWS` 都按它校验）。

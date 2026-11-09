@@ -186,14 +186,19 @@ test('AC-A6 ⭐ 失败 / 取消 / 超时 / 没扫到的人话**一条没丢**（
 // 源码哨兵
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A4 源码哨兵：成功分支里**不再**写"已提交打印"那句小字（只有 notice(\'\') + resultLine）', () => {
+test('AC-A4 源码哨兵：过程文案只有「正在打印中…」；成功只留大字那行（不重复说）', () => {
   const source = read('features/labels/scan-print.js');
   // ⚠️ 先剥注释：成功那段注释里**逐字留着"改前"那一行**（成对翻新要写清改前 → 改后）
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   assert.equal(/notice\(result\?\.reused/.test(code), false,
     '成功那一步不许再往小字那行写（改回两行 ⇒ 红）');
-  const successBlock = source.slice(source.indexOf('notice(texts.printing)'), source.indexOf('report({ ok: true'));
-  assert.ok(successBlock.includes("notice('')"), '成功先把小字那行清空（不留"正在打印…"那句旧的）');
+  // 🔴 2026-11-09（业务负责人：「都是正在打印中」）：过程**只能有一句**「正在打印中…」
+  const textsBlock = code.slice(code.indexOf('export const SCAN_PRINT_TEXTS'), code.indexOf('export const signaturePath'));
+  assert.ok(textsBlock.includes("printing: '正在打印中…'"), '过程文案 = 「正在打印中…」');
+  assert.equal(textsBlock.includes('正在唤起扫一扫'), false, '旧的「正在唤起扫一扫…」必须删掉');
+  assert.equal(textsBlock.includes('正在打印这一张'), false, '旧的「正在打印这一张…」必须删掉');
+  assert.equal(/notice\(texts\.(scanning|printing)/.test(code), false, '过程/成功都不再往小字行写过程文案（同一件事不说两遍）');
+  const successBlock = source.slice(source.indexOf("notice('')"), source.indexOf('report({ ok: true'));
   assert.ok(successBlock.includes('resultLine(scanResultText('), '成功那句话在**大字**那行');
   // 失败那几条照旧（本哨兵只保护"成功不重复"这一件事）
   // ⚠️ "取消"那句走 `scanFailureText(error, texts)`（`/cancel/i` 那支）—— 判据按**真的那几处**钉：

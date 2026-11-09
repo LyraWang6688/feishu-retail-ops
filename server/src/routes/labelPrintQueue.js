@@ -1,10 +1,14 @@
 /**
  * **手机侧**的打印接口（`/api/workbench/label-print/*`）—— 她在手机上点"打印"走的就是这里。
  *
- * 三件事：① **提交**一个打印任务（`POST /jobs`，`single` 支持
- *   **按编号** / ⭐ 2026-10-14「**扫码打印**」按记录 ID（`scan` = 扫到的字符串，服务端解析）；
- *   ② **看状态**（`GET /status`，含 "打印电脑在线 / 未连接（任务已排队）"，以及最近几条任务的
- *   `已打印` / `失败 + 原因`）；③ 补打（`POST /jobs/:jobId/reprint`）。
+ * 现在只剩**一件事**：① **提交**一个打印任务（`POST /jobs`，`single` 支持
+ *   **按编号** / ⭐ 2026-10-14「**扫码打印**」按记录 ID（`scan` = 扫到的字符串，服务端解析））。
+ *
+ * 🔴 2026-11-09（业务负责人：「有死代码吗」⇒「可以删除」）：
+ *   原来还有 ② `GET /status`（队列面板的"刷新状态"）与 ③ `POST /jobs/:jobId/reprint`
+ *   （"再打一份"按钮）—— 它们的页面（工作台队列面板 / 扫码页打印卡）已随标签打印改造删除
+ *   ⇒ 这三个只读/补打端点**物理删除**。⚠️ **电脑侧**（`/api/label-print/*`）同名端点是
+ *   店里小助手在用的，**那一边保留**。
  *
  * 🔴 **不新开鉴权**：`requireWorkbenchAccess` 是从 `routes/workbench.js` **import 复用**的那一个
  *    （与扫码页 `GET /r/:recordId` 同一条闸门：认证没启用 503 / 未登录 401 / 白名单外 403）。
@@ -24,7 +28,7 @@ const { requireWorkbenchAccess } = require('./workbench');
 const { getLabelPrintQueue } = require('../services/labelPrintQueueRuntime');
 const { parseLabelScanUrl } = require('../services/labelPrintService');
 const { logError, logWarn } = require('../utils/logger');
-const { STATES, SOURCES } = require('../config/labelPrintQueue');
+const { SOURCES } = require('../config/labelPrintQueue');
 
 const createLabelPrintQueueRouter = (options = {}) => {
   const router = express.Router();
@@ -115,51 +119,6 @@ const createLabelPrintQueueRouter = (options = {}) => {
       });
     } catch (error) {
       return fail(res, error, 'workbench.label_print.enqueue.failed', { mode });
-    }
-  });
-
-  /** 在线状态 + 最近任务（她用"刷新状态"看的就是这一条）。 */
-  router.get('/status', async (req, res) => {
-    try {
-      const queue = service();
-      const [status, jobs] = await Promise.all([
-        queue.status(),
-        queue.listJobs({ limit: Number(req.query.limit) || undefined }),
-      ]);
-      return res.json({
-        success: true,
-        online: status.online,
-        status,
-        jobs: jobs.map((job) => queue.summaryOf(job)),
-        states: Object.values(STATES).map((state) => ({ id: state.id, label: state.label })),
-        // ⭐ 文案随响应下来（**唯一真源**是 `config/labelPrintQueue.js` 的 `texts`）——
-        //    页面不抄第二份"在线 / 未连接"那些句子（抄了就会两边慢慢走歪）。
-        texts: typeof queue.texts === 'function' ? queue.texts() : {},
-      });
-    } catch (error) {
-      return fail(res, error, 'workbench.label_print.status.failed');
-    }
-  });
-
-  /** 一条任务（页面轮询某一条时用；**不返回产物字节**，只有引用与状态）。 */
-  router.get('/jobs/:jobId', async (req, res) => {
-    try {
-      const job = await service().getJob(String(req.params.jobId || '').trim());
-      if (!job) return res.status(404).json({ success: false, error: '没有这条打印任务' });
-      return res.json({ success: true, job: service().summaryOf(job) });
-    } catch (error) {
-      return fail(res, error, 'workbench.label_print.job.failed');
-    }
-  });
-
-  /** ⭐ **补打**（人工点的）：生成一条**新任务**，原任务不改（对账看得见补打过一次）。 */
-  router.post('/jobs/:jobId/reprint', async (req, res) => {
-    const jobId = String(req.params.jobId || '').trim();
-    try {
-      const result = await service().reprint({ jobId, actor: req.workbenchUser?.open_id || '' });
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      return fail(res, error, 'workbench.label_print.reprint.failed', { job_id: jobId });
     }
   });
 
