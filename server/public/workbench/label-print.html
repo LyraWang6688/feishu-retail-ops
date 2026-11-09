@@ -22,16 +22,16 @@
 <body data-view="label-print">
   <main class="shell standalone-shell">
     <header class="header compact-header">
-      <!-- ⭐ 2026-10-12（业务负责人批准）：品牌行（页面顶部那行小字，与主页面同一个品牌行）与主页面一起收掉（
-           手机屏幕小、省空间）；**功能标题 h1「鞋盒标签打印」保留**（那是这一页的功能标题）。 -->
-      <div><h1>鞋盒标签打印</h1></div>
+      <!-- 🔴 2026-11-09（业务负责人截图口径）：「**需要删除鞋盒标签打印文字**」⇒
+           这一页顶部那颗 h1「鞋盒标签打印」**物理删除**（扫码聚焦屏上只有扫码本身；标题不再重复）。
+           ⚠️ 浏览器标签页的 `<title>` 保留（那是浏览器 UI，不是页面内容）。 -->
       <div class="auth"><span id="auth-status" class="muted">正在检查飞书登录状态…</span><button id="logout" class="btn btn-ghost hidden" type="button">退出登录</button></div>
     </header>
     <nav class="standalone-nav">
       <a href="/workbench/">返回完整工作台</a>
       <!-- ⭐⭐ 2026-11-09（业务负责人截图口径）：`?scan=1`「只扫码」聚焦页上**整条导航都不显示**
            —— 含上面那颗「返回完整工作台」（她逐字：「需要删除返回完整工作台按钮」）。
-           ⚠️ 这里**不删节点**（批量打印页要用这三颗）：隐藏规则在 `labels.css`
+           ⚠️ 这里**不删节点**（导航条是独立页共用外壳，别的入口还要它）：隐藏规则在 `labels.css`
              （`html[data-scan-only="1"] .standalone-nav { display: none; }`），
              而那个属性**只有** `?scan=1` 这条入口会标 ⇒ **不带 `?scan` 的批量打印页一个字节都不改** ✓ -->
       <a href="/workbench/inventory-adjustment.html">库存手工调整</a>

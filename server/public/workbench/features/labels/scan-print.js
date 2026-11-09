@@ -24,27 +24,10 @@ import { describeError, runWriteAction } from '../../core/ui.js';
 //   一律**从登记表取** ✗ 不在这一页里写死（页面只决定"怎么摆" ✓ 不决定"算不算/带不带" ✗）。
 //   ⚠️ 真源是服务端 `src/config/scanEntries.js`；这里是它在浏览器里的**逐字镜像**
 //   （`test/scanFivePlaces.test.js` 的 AC-5S3 把两份逐字对比 ⇒ 改一边忘另一边就红）。
-import { SCAN_ENTRIES, SCAN_LABEL_PRINT_PLACE } from '../../config/scanEntries.js';
+import { SCAN_ENTRIES } from '../../config/scanEntries.js';
 
-/** ①标签打印在五处登记表里的那一行（`null` = 登记表里没有 ⇒ 这一页**不猜**、不硬弹相机）。 */
-export const SCAN_PRINT_PLACE = SCAN_LABEL_PRINT_PLACE;
+/** 这一处在登记表里的**文案**（`labelPrintTitle` / `labelPrintButton` 等；页面不写死句子）。 */
 const PLACE_TEXTS = SCAN_ENTRIES.texts;
-
-/**
- * 这一处的**行为参数**（登记表原样，只读）。
- *   · `returnsToRealm` —— 扫完**回不回当前领域**（① = 不回：扫完就在这一页出结果 ✓）；
- *   · `keepDraft` —— **带不带之前的数据**（① = 不带：标签打印与销售草稿无关 ✓）；
- *   · `mechanism` —— 用哪套（① = `jsapi`：弹飞书相机）；
- *   · `mode` —— `standalone`（不是"领域内扫"）。
- * ⚠️ **别在这一页里再判一次**（那就等于把口径抄成第二份 ✗）。
- */
-export const scanPrintPlaceParams = () => ({
-  id: SCAN_PRINT_PLACE ? SCAN_PRINT_PLACE.id : '',
-  mechanism: SCAN_PRINT_PLACE ? SCAN_PRINT_PLACE.mechanism : '',
-  mode: SCAN_PRINT_PLACE ? SCAN_PRINT_PLACE.mode : '',
-  returnsToRealm: Boolean(SCAN_PRINT_PLACE && SCAN_PRINT_PLACE.returnsToRealm),
-  keepDraft: Boolean(SCAN_PRINT_PLACE && SCAN_PRINT_PLACE.keepDraft),
-});
 
 /** 两个端点（**唯一真源**；AC-SP6 的源码哨兵钉的就是这里）。 */
 export const SCAN_PRINT_ENDPOINTS = Object.freeze({

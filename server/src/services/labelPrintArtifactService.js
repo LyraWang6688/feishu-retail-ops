@@ -82,7 +82,7 @@ const escapeXml = (value) => String(value ?? '').replace(/[<>&'"]/g, (char) => (
 }[char]));
 
 /**
- * 一段文字估多宽（mm）—— 与 `features/labels/render.js` 的 `textWidthMm` **同一套系数**
+ * 一段文字估多宽（mm）—— **同一套系数**（原页面侧 `render.js` 已随「选择编号打印」页删除，
  * （系数本身来自 config 的 `body.itemNoColor.widthEm`，不是这里写死的，所以换分隔符不用改这里）。
  * ⚠️ 估算只用来决定"货号与颜色往右挪多少 / 缩到多小"，纸上**真兜底**的是
  *    `planItemNoColor` 已经算好的字号与截断（这两件事在 service/render 里已定稿）。
