@@ -39,8 +39,8 @@ const baseRecords = () => ({
   color: [{ record_id: 'color_1', fields: { 颜色: '黑色' } }],
   sizeManagement: [{ record_id: 'size_41', fields: { 尺码: 41 } }],
   paymentMethod: [
-    { record_id: 'method_1', fields: { 收款方式: '微信扫码' } },
-    { record_id: 'method_2', fields: { 收款方式: '现金' } },
+    { record_id: 'method_1', fields: { 交易方式: '微信扫码' } },
+    { record_id: 'method_2', fields: { 交易方式: '现金' } },
   ],
 });
 

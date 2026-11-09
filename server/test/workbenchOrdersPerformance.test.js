@@ -46,7 +46,7 @@ const fixture = () => ({
   ],
   sizeManagement: [38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
   paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 交易金额: 50, 支付方式: ['method_1'] } }],
-  paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
+  paymentMethod: [{ record_id: 'method_1', fields: { 交易方式: '微信' } }],
   product: [
     { record_id: 'product_1', fields: { 编号: 'P1', 颜色: '黑色' } },
     { record_id: 'product_2', fields: { 编号: 'P2', 颜色: '米白' } },

@@ -107,7 +107,7 @@ const seedTables = () => ({
     { record_id: 'bh_prepaid', fields: { 行为名称: '预定', 行为编码: 'SALE_PREPAID' } },
     { record_id: 'bh_sale_decrease', fields: { 行为名称: '销售减少', 行为编码: 'STOCK_SALE_DECREASE', 库存方向: '减少', 是否启用: true } },
   ],
-  paymentMethod: [{ record_id: 'pm_wechat', fields: { 收款方式: '微信' } }],
+  paymentMethod: [{ record_id: 'pm_wechat', fields: { 交易方式: '微信' } }],
   salesEntry: [],
   salesDetail: [],
   paymentRecord: [],

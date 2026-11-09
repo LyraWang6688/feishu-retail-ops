@@ -14,7 +14,7 @@ test('workbench groups pending payment and delivery by one sales order', async (
     ],
     sizeManagement: [38, 39, 40].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
     paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 交易金额: 50, 支付方式: ['method_1'] } }],
-    paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
+    paymentMethod: [{ record_id: 'method_1', fields: { 交易方式: '微信' } }],
     product: [1, 2, 3].map((index) => ({ record_id: `product_${index}`, fields: { 编号: `P${index}` } })),
   };
   const gateway = { listAll: async (key) => records[key] || [], table: (key) => V1_BITABLE_SCHEMA.tables[key] };
@@ -46,7 +46,7 @@ test('⭐ 原单的收款被售后退货改成「已退款」后，跟进查询�
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     // 退货口径：**原收款行**的状态被改成「已退款」（金额 / 方向 / 收款方式都不动）
     paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 交易金额: 89, 钱款状态: '已退款', 支付方式: ['method_1'] } }],
-    paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
+    paymentMethod: [{ record_id: 'method_1', fields: { 交易方式: '微信' } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
   };
   const gateway = { listAll: async (key) => records[key] || [], table: (key) => V1_BITABLE_SCHEMA.tables[key] };
@@ -74,7 +74,7 @@ test('⭐ 含「已换货」明细的订单不再让整页查询失败（明细�
     ],
     sizeManagement: [38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
     paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 交易金额: 440, 钱款状态: '已收款', 支付方式: ['method_1'] } }],
-    paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
+    paymentMethod: [{ record_id: 'method_1', fields: { 交易方式: '微信' } }],
     product: [1, 2].map((index) => ({ record_id: `product_${index}`, fields: { 编号: `P${index}` } })),
   };
   const gateway = { listAll: async (key) => records[key] || [], table: (key) => V1_BITABLE_SCHEMA.tables[key] };

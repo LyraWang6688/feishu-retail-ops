@@ -51,9 +51,9 @@ const seed = () => ({
     behaviorRow('behavior_cash', 'SALE_CASH', '现货销售', '减少'),
   ],
   paymentMethod: [
-    { record_id: 'method_wechat', fields: { 收款方式: '微信' } },
+    { record_id: 'method_wechat', fields: { 交易方式: '微信' } },
     // 原单是微信，但她说"退我现金"时要能写成现金（业务负责人 2026-10-06 拍板）。
-    { record_id: 'method_cash', fields: { 收款方式: '现金' } },
+    { record_id: 'method_cash', fields: { 交易方式: '现金' } },
   ],
   product: [
     { record_id: 'product_A', fields: { 货号: 'A100', 颜色: '黑' } },

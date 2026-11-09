@@ -16,7 +16,7 @@ const { invalidateConfigTable } = require('../src/services/configTableCache');
 const { CONFIG_TABLES } = require('../src/config/configTables');
 
 const gatewayOf = (values, calls = { n: 0 }) => ({
-  listAll: async () => { calls.n += 1; return values.map((v, i) => ({ record_id: `pm${i}`, fields: { 收款方式: v } })); },
+  listAll: async () => { calls.n += 1; return values.map((v, i) => ({ record_id: `pm${i}`, fields: { 交易方式: v } })); },
 });
 
 test('AC-PM1/AC-PM3 ⭐ 选项来自表 · 去重去空 · 顺序照表', async () => {
@@ -48,11 +48,11 @@ test('AC-PM4 ⭐ TTL 内只读一次上游；TTL 由统一注册表给', async (
 
 test('AC-PM5 ⭐ 按「出现顺序」排序（1 最前）；没序号/非数字排最后且保持稳定', async () => {
   const rows = [
-    { record_id: 'a', fields: { 收款方式: '工商银行', 出现顺序: 3 } },
-    { record_id: 'b', fields: { 收款方式: '微信扫码', 出现顺序: 1 } },
-    { record_id: 'c', fields: { 收款方式: '现金', 出现顺序: 2 } },
-    { record_id: 'd', fields: { 收款方式: '无序号' } },
-    { record_id: 'e', fields: { 收款方式: '非数字', 出现顺序: 'x' } },
+    { record_id: 'a', fields: { 交易方式: '工商银行', 出现顺序: 3 } },
+    { record_id: 'b', fields: { 交易方式: '微信扫码', 出现顺序: 1 } },
+    { record_id: 'c', fields: { 交易方式: '现金', 出现顺序: 2 } },
+    { record_id: 'd', fields: { 交易方式: '无序号' } },
+    { record_id: 'e', fields: { 交易方式: '非数字', 出现顺序: 'x' } },
   ];
   const service = createPaymentMethodsService({ listAll: async () => rows });
   const out = await service.list();
@@ -63,7 +63,7 @@ test('AC-PM6 ⭐ 配置表事件失效：invalidate 后下一次读立即拿新�
   const values = ['微信'];
   const calls = { n: 0 };
   const gateway = {
-    listAll: async () => { calls.n += 1; return values.map((value, index) => ({ record_id: `pm${index}`, fields: { 收款方式: value } })); },
+    listAll: async () => { calls.n += 1; return values.map((value, index) => ({ record_id: `pm${index}`, fields: { 交易方式: value } })); },
   };
   const service = createPaymentMethodsService(gateway);
   const first = await service.list();

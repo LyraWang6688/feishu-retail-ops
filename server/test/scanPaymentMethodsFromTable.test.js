@@ -90,7 +90,7 @@ const tableGateway = (methods, calls = []) => ({
   async listAll(tableKey) {
     calls.push(tableKey);
     if (tableKey !== 'paymentMethod') return [];
-    return methods.map((name, index) => ({ record_id: `pm_${index}`, fields: { 收款方式: name } }));
+    return methods.map((name, index) => ({ record_id: `pm_${index}`, fields: { 交易方式: name } }));
   },
 });
 

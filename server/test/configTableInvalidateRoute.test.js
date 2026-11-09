@@ -17,7 +17,7 @@ test('record_changed → 配置表缓存失效，下一次读取重读', async (
   const gateway = {
     listAll: async () => {
       reads += 1;
-      return [{ record_id: 'rec_pay', fields: { 收款方式: '微信扫码' } }];
+      return [{ record_id: 'rec_pay', fields: { 交易方式: '微信扫码' } }];
     },
   };
   await getConfigRows({ gateway, tableKey: 'paymentMethod' });
