@@ -256,3 +256,22 @@ test('AC-SD11 ⭐ 一直等不到「编号」⇒ 跳过不传、不勾（留给�
   assert.deepEqual(gateway.calls.upload, [], '编号都没有 ⇒ 不传无名文件');
   assert.equal(reads, 3, '初次读 1 次 + 等 2 次（attempts=2）');
 });
+
+test('AC-SD13 ⭐ 公式「编号」是富文本数组（真机形状）⇒ 必须解出文本命名，不能 [object Object]', async () => {
+  // 生产实际返回（2026-11-10 实查）：[{"text":"66888|黑色|男","type":"text"}]
+  const rawNumber = [{ text: '66888|黑色|男', type: 'text' }];
+  assert.equal(
+    buildFileName({ number: rawNumber, index: 1, total: 1, sourceName: 'x.jpeg' }),
+    '66888_黑色_男.jpeg',
+    '公式列富文本数组要解出 text（旧实现 String() ⇒ [object Object].jpeg）',
+  );
+
+  const gateway = createGateway({
+    fields: fieldsOf({ number: rawNumber, images: [imageOf('ft1')] }),
+  });
+  const service = createSampleImageDriveService({ gateway, config: configOf() });
+  const result = await service.syncRecord('r1');
+  assert.equal(result.status, 'synced');
+  assert.equal(gateway.calls.upload[0].fileName, '66888_黑色_男.jpg', '上传文件名必须是编号文本（扩展名跟附件走）');
+  assert.equal(gateway.calls.upload[0].fileName.includes('object Object'), false);
+});

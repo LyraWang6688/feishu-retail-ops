@@ -129,6 +129,19 @@
 e2e（`test/e2e/workbench.spec.js`）：货品 → 数据配置 → 卡片在、点一下真的发 POST。
 落点登记（`test/workbenchInputLanding.test.js`）：`DATA_CONFIG_API.sampleImageSync` → 只写 `product.sampleImageSynced`。
 
+## 六¾、真机事故与修复（2026-11-10 04:19，上线首次点「同步存量样例图」）
+
+- **现象**：云盘里全是同名 `[object Object].jpeg`（每条记录互相覆盖），表里逐条被勾「已同步云盘」。
+- **根因**：「编号」是**公式列**，接口返回富文本数组 `[{ "text": "66888|黑色|男", "type": "text" }]`；
+  旧 `textOf` 用 `String(value)` ⇒ `[object Object]` ⇒ 文件名全撞一起。
+- **止损**：业务负责人同意「暂停」⇒ 重启服务（`pm2 restart`）中断循环；最后一笔同步 04:21:33，重启 04:21:36。
+- **损伤**（可控）：12 条被误勾「已同步云盘」、云盘里 2 个垃圾文件（`[object Object].jpg` / `.jpeg`）；
+  **原始样例图仍在多维表格附件里，没有丢**。
+- **修复**：`textOf` 改为能解富文本数组/对象（`[{text}]` / `{text}` / 纯字符串）；
+  判据 **AC-SD13** 用真机形状 `[{"text":"66888|黑色|男","type":"text"}]` 钉住：
+  `buildFileName` 与 `syncRecord` 都必须产出 `66888_黑色_男.jpg`，且**不许**再出现 `object Object`。
+- **善后**（待业务负责人指令）：清掉这 12 条误勾 → 删 2 个垃圾文件 → 部署修复 → 重新点按钮补 343 条。
+
 ## 七、未做（等她拍板）
 
 1. 存量 184 条"有图但未勾"的批量补齐（要不要现在做、按什么顺序、失败怎么退）；

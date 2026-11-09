@@ -41,7 +41,22 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 
 const IMAGE_EXTENSIONS = Object.freeze(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.heic']);
-const textOf = (value) => (value === null || value === undefined ? '' : String(value).trim());
+/**
+ * 取纯文本：字符串 / 富文本数组（飞书公式列！例 `[{ text: '66888|黑色|男', type: 'text' }]`）/
+ * 富文本对象（`{ text }`）/ 关联字段数组（`[{ text }]`）都能解。
+ *
+ * 🔴 2026-11-10 真机事故：公式列「编号」返回的是**富文本数组**，旧实现直接 `String(value)`
+ *    ⇒ 文件名变成 `[object Object].jpeg`（343 条全撞同一个名字、互相覆盖）。
+ *    本条判据 AC-SD13 钉住：塞回数组形状必须解出正确名字。
+ */
+const textOf = (value) => {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    return value.map((item) => textOf(item?.text ?? item?.name ?? '')).join('').trim();
+  }
+  if (typeof value === 'object') return textOf(value.text ?? value.name ?? value.value ?? '');
+  return String(value).trim();
+};
 
 /** 关联字段（颜色）取可读文本：`[{ text: '黑色', ... }]` / `{ text }` / 纯字符串都兼容。 */
 const linkedTextOf = (value) => {
