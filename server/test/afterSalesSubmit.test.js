@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 
 const { createWorkbenchOrderActionsRouter } = require('../src/routes/workbenchOrderActions');
-const { DEFAULT_SUBMIT_TOAST_TEXT } = require('../src/config/submitToast');
+const { DEFAULT_SUBMIT_TOAST_TEXT, DEFAULT_SUBMIT_TOAST_PATH } = require('../src/config/submitToast');
 
 const buildApp = ({ returnService, methods } = {}) => {
   const calls = { enqueue: [] };
@@ -56,7 +56,7 @@ const submit = async (port, body) => {
 
 const requestId = () => '11111111-2222-4333-8444-555555555555';
 
-test('AC-SUB1 合法提交 ⇒ 入队 + 303 统一 toast（文案来自配置）+ submitted=1', async () => {
+test('AC-SUB1 合法提交 ⇒ 入队 + 303 回工作台 + 统一 toast（业务负责人 2026-11-09：与销售/采购一致）', async () => {
   const { app, calls } = buildApp();
   const { server, port } = await listen(app);
   try {
@@ -70,11 +70,11 @@ test('AC-SUB1 合法提交 ⇒ 入队 + 303 统一 toast（文案来自配置）
     });
     assert.equal(out.status, 303);
     const url = new URL(out.location, 'http://x');
-    assert.equal(url.pathname, '/workbench/after-sales.html');
-    assert.equal(url.searchParams.get('productRecordId'), 'prod_1');
+    assert.equal(url.pathname, DEFAULT_SUBMIT_TOAST_PATH, '成功必须回工作台（统一落点）');
     assert.equal(url.searchParams.get('toast'), DEFAULT_SUBMIT_TOAST_TEXT);
-    assert.equal(url.searchParams.get('submitted'), '1');
     assert.equal(url.searchParams.get('done'), 'XSD-20261028-0005');
+    assert.equal(url.searchParams.get('productRecordId'), null, '成功不再回售后页 ⇒ 不带 productRecordId');
+    assert.equal(url.searchParams.get('submitted'), null, '旧 submitted 标记已退场');
     assert.equal(calls.enqueue.length, 1);
     assert.deepEqual(calls.enqueue[0].correlation, {}); // 无 tap_id 时只给空对象、不编
   } finally { server.close(); }
