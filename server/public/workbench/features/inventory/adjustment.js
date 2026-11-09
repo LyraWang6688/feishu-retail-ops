@@ -31,7 +31,7 @@ function renderShell(container) {
   container.innerHTML = `
     <section class="panel">
       <div class="sub-tabs">
-        <!-- 三级子 tab 的 id / 名称 / 顺序 / 默认选中 = `config/inventoryAdjustment.js`（不再散落在页面字符串里）。 -->
+        <!-- 三级子 tab 的 id / 名称 / 顺序 / 默认选中 = config/inventoryAdjustment.js（不再散落在页面字符串里）。 -->
         ${INVENTORY_ADJUSTMENT_TABS.map((tab) => `<button class="sub-tab${tab.default ? ' active' : ''}" type="button" data-subtab="${tab.id}">${escapeHtml(tab.label)}</button>`).join('')}
       </div>
 
