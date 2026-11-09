@@ -30,15 +30,15 @@ const fakeGateway = (overrides = {}) => {
       { record_id: 'e3', fields: { 销售单号: 'XSD-3', 写入状态: '成功', 录单日: NOW - 40 * DAY, 总金额: 100 } },
     ],
     salesDetail: [
-      { record_id: 'd1', fields: { 销售单号: ['e1'], 编号: ['p1'], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - DAY, 履约状态: '已交付', 实收金额: 100 } },
-      { record_id: 'd2', fields: { 销售单号: ['e1'], 编号: ['p1'], 尺码: [{ record_ids: ['s42'], text: '42' }], 销售日: NOW - DAY, 履约状态: '未交付', 实收金额: 200 } },
-      { record_id: 'd3', fields: { 销售单号: ['e2'], 编号: ['p1'], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - DAY, 履约状态: '已交付', 实收金额: 100 } },
-      { record_id: 'd4', fields: { 销售单号: ['e3'], 编号: ['p1'], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - 40 * DAY, 履约状态: '已交付', 实收金额: 100 } },
-      { record_id: 'd5', fields: { 销售单号: ['e1'], 编号: ['p1'], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - DAY, 履约状态: '已退货', 实收金额: 100 } },
-      { record_id: 'd6', fields: { 销售单号: ['e1'], 编号: ['p2'], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - DAY, 履约状态: '已交付', 实收金额: 100 } },
+      { record_id: 'd1', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - DAY, 履约状态: '已交付', 实收金额: 100 } },
+      { record_id: 'd2', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s42'], text: '42' }], 销售日: NOW - DAY, 履约状态: '未交付', 实收金额: 200 } },
+      { record_id: 'd3', fields: { 销售单号: [{ record_ids: ['e2'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - DAY, 履约状态: '已交付', 实收金额: 100 } },
+      { record_id: 'd4', fields: { 销售单号: [{ record_ids: ['e3'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - 40 * DAY, 履约状态: '已交付', 实收金额: 100 } },
+      { record_id: 'd5', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - DAY, 履约状态: '已退货', 实收金额: 100 } },
+      { record_id: 'd6', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p2'] }], 尺码: [{ record_ids: ['s41'], text: '41' }], 销售日: NOW - DAY, 履约状态: '已交付', 实收金额: 100 } },
       // ⭐ 2026-10-29 口径：已换货 **要列**、已赔货 **不列**（各钉一条）
-      { record_id: 'd7', fields: { 销售单号: ['e1'], 编号: ['p1'], 尺码: [{ record_ids: ['s42'], text: '42' }], 销售日: NOW - DAY, 履约状态: '已换货', 实收金额: 200 } },
-      { record_id: 'd8', fields: { 销售单号: ['e1'], 编号: ['p1'], 尺码: [{ record_ids: ['s42'], text: '42' }], 销售日: NOW - DAY, 履约状态: '已赔货', 实收金额: 200 } },
+      { record_id: 'd7', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s42'], text: '42' }], 销售日: NOW - DAY, 履约状态: '已换货', 实收金额: 200 } },
+      { record_id: 'd8', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s42'], text: '42' }], 销售日: NOW - DAY, 履约状态: '已赔货', 实收金额: 200 } },
     ],
     ...overrides,
   };
@@ -122,7 +122,7 @@ test('AC2b ⭐⭐ 只认「写入状态 = 成功」：失败 / 部分失败 / �
     gateway.records.salesDetail.push({
       record_id: detailId,
       fields: {
-        销售单号: [entryId], 编号: ['p1'], 尺码: [{ record_ids: ['s41'], text: '41' }],
+        销售单号: [entryId], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s41'], text: '41' }],
         销售日: NOW - DAY, 履约状态: '已交付', 实收金额: 100,
       },
     });

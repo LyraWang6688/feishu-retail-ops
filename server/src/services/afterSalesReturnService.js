@@ -15,7 +15,8 @@
  */
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { textValue } = require('./v1BitableGateway');
+const { salesLinkRecordIds } = require('./afterSalesLinkIds');
 const { InventoryService } = require('./inventoryService');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { nextId, stateFor } = require('./salesRecordIds');
@@ -80,7 +81,7 @@ class AfterSalesReturnService {
     const detail = await this.gateway.get('salesDetail', detailRecordId);
     if (!detail) throw badRequest(this.texts.detailNotFound);
     const detailFields = this.gateway.table('salesDetail').fields;
-    if (!linkedRecordIds(detail.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId)) {
+    if (!salesLinkRecordIds(detail.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId)) {
       throw badRequest(this.texts.detailNotInEntry);
     }
     const fulfillmentStatus = textValue(detail.fields?.[detailFields.fulfillmentStatus]).trim();
@@ -94,9 +95,9 @@ class AfterSalesReturnService {
     if (!rawAmount) throw badRequest(this.texts.amountMissing);
     const amount = Number(rawAmount);
     if (!Number.isFinite(amount) || amount <= 0) throw badRequest(this.texts.amountInvalid);
-    const productRecordId = linkedRecordIds(detail.fields?.[detailFields.product])[0] || '';
+    const productRecordId = salesLinkRecordIds(detail.fields?.[detailFields.product])[0] || '';
     if (!productRecordId) throw badRequest(this.texts.missingProduct);
-    const sizeRecordId = linkedRecordIds(detail.fields?.[detailFields.size])[0] || '';
+    const sizeRecordId = salesLinkRecordIds(detail.fields?.[detailFields.size])[0] || '';
     if (!sizeRecordId) throw badRequest(this.texts.missingSize);
     const sizeRecord = await this.gateway.get('sizeManagement', sizeRecordId);
     const sizeFields = this.gateway.table('sizeManagement').fields;
