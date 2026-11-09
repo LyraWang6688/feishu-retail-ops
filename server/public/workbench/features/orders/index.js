@@ -190,13 +190,15 @@ const groupBatchesBySupplier = (batches = []) => {
   return bySupplier;
 };
 
-const supplierCardHtml = (supplier) => {
-  const batches = supplier.batches.length;
-  const quantity = supplier.batches.reduce((sum, batch) => sum
-    + (batch.rows || []).reduce((n, row) => n + Number(row.quantity || 0), 0), 0);
-  const summary = String(P.supplierCardSummary || '')
-    .split('{batches}').join(String(batches))
-    .split('{quantity}').join(String(quantity));
+const supplierCardHtml = (supplier, group = null) => {
+  const batches = group ? group.batches.length : 0;
+  const quantity = group ? group.batches.reduce((sum, batch) => sum
+    + (batch.rows || []).reduce((n, row) => n + Number(row.quantity || 0), 0), 0) : 0;
+  const summary = batches
+    ? String(P.supplierCardSummary || '')
+      .split('{batches}').join(String(batches))
+      .split('{quantity}').join(String(quantity))
+    : String(P.supplierCardEmpty || '');
   return `<button class="entry-card purchase-supplier-card" type="button" data-action="pick-supplier" data-supplier-key="${escapeHtml(supplier.key)}">
       <span class="entry-card-body"><strong>${escapeHtml(supplier.name)}</strong><span class="purchase-supplier-meta">${escapeHtml(summary)}</span></span>
     </button>`;
@@ -215,13 +217,42 @@ const formatPurchaseDate = (value) => {
 
 export function purchaseOrdersHtml(rows = [], options = {}) {
   const pending = groupPurchaseOrders(rows).filter((batch) => !isArrivedBatch(batch));
-  if (!pending.length) return `<p class="empty" data-view="purchase-empty">${escapeHtml(P.arrivalEmpty)}</p>`;
   const bySupplier = groupBatchesBySupplier(pending);
+  // ⭐ 2026-11-09（业务负责人）：第一层按「供应商管理」**固定出现全部供应商**（不管有没有未到货）；
+  //   配置表读不到时退回"有未到货的供应商"（页面不至于空白）。
+  const configured = (options.suppliers || [])
+    .map((item) => ({
+      key: String(item?.record_id || '').trim() || `name:${String(item?.name || '').trim()}`,
+      name: String(item?.name || '').trim(),
+    }))
+    .filter((item) => item.name);
+  const supplierList = configured.length ? [...configured] : [...bySupplier.values()].map((g) => ({ key: g.key, name: g.name }));
+  // 配置表里没有、但有未到货的供应商（数据异常兜底）：追加，别把批次弄丢
+  const knownKeys = new Set(supplierList.map((item) => item.key));
+  for (const [key, group] of bySupplier) {
+    if (!knownKeys.has(key)) supplierList.push({ key, name: group.name });
+  }
+  if (!pending.length && !supplierList.length) {
+    return `<p class="empty" data-view="purchase-empty">${escapeHtml(P.arrivalEmpty)}</p>`;
+  }
   const activeKey = String(options.supplierKey || '');
-  const active = activeKey ? bySupplier.get(activeKey) : null;
-  // 第一层：供应商卡片
+  // 第一层：供应商卡片（固定按配置表顺序）
+  if (!activeKey) {
+    return `<div class="purchase-orders" data-view="purchase-orders">${supplierList.map((supplier) => supplierCardHtml(supplier, bySupplier.get(supplier.key))).join('')}</div>`;
+  }
+  const activeSupplier = supplierList.find((item) => item.key === activeKey);
+  const active = bySupplier.get(activeKey);
+  // 供应商存在、但当前没有未到货批次 ⇒ 第二层空态（卡片仍固定出现）
   if (!active) {
-    return `<div class="purchase-orders" data-view="purchase-orders">${[...bySupplier.values()].map((supplier) => supplierCardHtml(supplier)).join('')}</div>`;
+    if (!activeSupplier) {
+      return `<div class="purchase-orders" data-view="purchase-orders">${supplierList.map((supplier) => supplierCardHtml(supplier, bySupplier.get(supplier.key))).join('')}</div>`;
+    }
+    return `<div class="purchase-orders" data-view="purchase-orders">
+      <section class="purchase-supplier" data-view="purchase-supplier" data-supplier-key="${escapeHtml(activeSupplier.key)}">
+        <h3 class="purchase-supplier-head">${escapeHtml(activeSupplier.name)}</h3>
+        <p class="empty" data-view="supplier-empty">${escapeHtml(P.supplierEmpty)}</p>
+      </section>
+    </div>`;
   }
   // 第二层：该供应商的采购日（**由远及近**：早 → 晚；日期未知的排最后）
   const byDate = new Map();
@@ -244,7 +275,7 @@ export function purchaseOrdersHtml(rows = [], options = {}) {
         </section>`).join('');
   return `<div class="purchase-orders" data-view="purchase-orders">
       <section class="purchase-supplier" data-view="purchase-supplier" data-supplier-key="${escapeHtml(active.key)}">
-        <h3 class="purchase-supplier-head">${escapeHtml(active.name)}</h3>${dateHtml}
+        <h3 class="purchase-supplier-head">${escapeHtml(activeSupplier?.name || active.name)}</h3>${dateHtml}
       </section>
     </div>`;
 }
@@ -357,6 +388,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     ordersLoaded: false,
     ordersLoading: false,
     purchaseRows: [],
+    // ⭐ 2026-11-09：供应商管理里的**全部供应商**（固定出现；来自配置表缓存）
+    suppliers: [],
     arrivalRowsByBatch: {},
     // ⭐ 2026-11-09：验收页第二层的"当前选中的供应商"（空 = 显示供应商卡片层）
     activeSupplierKey: '',
@@ -436,6 +469,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   function renderPurchaseList() {
     $('[data-view="purchase-host"]').innerHTML = purchaseOrdersHtml(state.purchaseRows, {
       supplierKey: state.activeSupplierKey,
+      suppliers: state.suppliers,
     });
   }
 
@@ -523,8 +557,15 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     if (host) host.innerHTML = '<p class="section-loading">正在读取采购申请…</p>';
     try {
       // ⚠️ 只读「采购申请」（采购退货单不在验收范围内）——用**既有** reportBehavior 过滤。
-      const data = await api.get(`${ORDERS_API.purchaseRequests}?${new URLSearchParams({ reportBehavior: 'purchase_request' })}`);
-      state.purchaseRows = data.rows || [];
+      // ⭐ 2026-11-09：同时读「供应商管理」全部供应商（固定卡片）；它失败不影响验收列表。
+      const [data, suppliers] = await Promise.allSettled([
+        api.get(`${ORDERS_API.purchaseRequests}?${new URLSearchParams({ reportBehavior: 'purchase_request' })}`),
+        api.get(ORDERS_API.suppliers),
+      ]);
+      if (data.status !== 'fulfilled') throw data.reason;
+      state.purchaseRows = data.value.rows || [];
+      state.suppliers = suppliers.status === 'fulfilled' && Array.isArray(suppliers.value?.rows)
+        ? suppliers.value.rows : [];
       renderPurchaseList();
     } catch (error) {
       if (host) host.innerHTML = '<p class="empty">采购申请读取失败</p>';
@@ -657,7 +698,12 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     });
     state.container.addEventListener('toggle', (event) => {
       const node = event.target;
-      if (node?.matches?.('details[data-action-block="verify-arrival"]') && node.open) loadArrivalDetail(node);
+      if (!node?.matches?.('details[data-action-block="verify-arrival"]')) return;
+      // ⭐ 2026-11-09（业务负责人真机）：展开明细后，批次卡不再充当"固定容器"
+      //   ⇒ 给 article.order-card 打标，CSS 去掉它的内边距/边框/背景/阴影，内容铺满屏宽。
+      const card = node.closest('.order-card');
+      if (card) card.classList.toggle('order-card--detail-open', node.open);
+      if (node.open) loadArrivalDetail(node);
     }, true);
   }
 
