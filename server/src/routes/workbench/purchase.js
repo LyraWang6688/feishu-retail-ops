@@ -60,6 +60,10 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         // 入库之后把批次行的「到货状态」改成已到货 —— 仍是**既有** `PurchaseOrderBatchService`。
         markBatchArrived: (batchNo, arriveOptions) =>
           webhooks.orderBatches.markArrived(batchNo, arriveOptions),
+        // ⭐ 2026-11-10（业务负责人：验收按供应商拆卡）：按供应商验收时，把「实际数量/发生金额」
+        //   写成**所有已验收供应商的累计值**（仍走既有 PurchaseOrderBatchService 写口）。
+        writeBatchTotals: ({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }) =>
+          webhooks.orderBatches.writeAcceptance({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }),
       });
       purchaseArrival = new WorkbenchPurchaseArrivalService({
         purchaseQuery: createPurchaseQueryService(arrivalGateway),
@@ -180,28 +184,49 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       texts: { backgroundFailedNotified: ASYNC_JOBS.texts.hints.backgroundFailedNotified },
     },
   });
+  // ⭐ 2026-11-10（业务负责人：一个批次按供应商拆卡）：哪些供应商已经验收完 —— 只读本地任务状态，
+  //   前端据此把已验收的供应商卡隐掉（批次仍「未到货」，等所有供应商都验完才变）。
+  router.get('/purchase/arrivals/accepted-suppliers', async (req, res) => {
+    try {
+      const accepted = await resolvePurchaseArrival().acceptedSuppliers();
+      return res.json({ success: true, accepted });
+    } catch (error) {
+      logError('workbench.purchase.accepted_suppliers.failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: arrivalTab.texts.detailFailed });
+    }
+  });
   router.get(arrivalTab.api.detail, async (req, res) => {
     const batchNo = String(req.query?.[arrivalTab.fields.batchNo] || '').trim();
+    // ⭐ 2026-11-10：按供应商拆卡后，明细只回**这个供应商**的那部分（缺省 = 整批，兼容旧页面）。
+    const supplierRecordId = String(req.query?.[arrivalTab.fields.supplierRecordId] || '').trim();
     if (!batchNo) return res.status(400).json({ success: false, error: arrivalTab.texts.batchMissing });
     try {
-      const rows = (await purchaseQueryForArrival().listPurchaseRequests({
+      let rows = (await purchaseQueryForArrival().listPurchaseRequests({
         batchNo, reportBehavior: 'purchase_request',
       })) || [];
+      if (supplierRecordId) {
+        rows = rows.filter((row) => String(row.supplier_record_id || '').trim() === supplierRecordId);
+      }
       if (!rows.length) return res.json({ success: true, rows: [], notice: arrivalTab.texts.emptyDetail });
       // ⭐ **只读**：只回 货号 / 尺码 / 数量（前端渲染成不可输入的清单 ✓）
       return res.json({
         success: true,
-        rows: rows.map((row) => ({
-          // ⭐ 2026-11-09（业务负责人：验收明细在**同一批次号内按编号分组**）：
-          //   采购页卡片标题是「货号 · 颜色」⇒ 明细也用同一口径分组显示：
-          //   `item_no` 优先取货号（`product_item_no`），`color` 取颜色，另回 `编号`（复合值）兜底。
-          item_no: row.product_item_no || row.item_no || '',
-          color: row.product_color || row.color || '',
-          number: row.product_number || '',
-          size: row.size ?? '',
-          quantity: row.quantity ?? 0,
-          product_record_id: row.product_record_id || '',
-        })),
+        rows: rows.map((row) => {
+          const mapped = {
+            // ⭐ 2026-11-09（业务负责人：验收明细在**同一批次号内按编号分组**）：
+            //   采购页卡片标题是「货号 · 颜色」⇒ 明细也用同一口径分组显示：
+            //   `item_no` 优先取货号（`product_item_no`），`color` 取颜色，另回 `编号`（复合值）兜底。
+            item_no: row.product_item_no || row.item_no || '',
+            color: row.product_color || row.color || '',
+            number: row.product_number || '',
+            size: row.size ?? '',
+            quantity: row.quantity ?? 0,
+            product_record_id: row.product_record_id || '',
+          };
+          // 只有按供应商拆卡的请求（带 supplierRecordId）才回供应商列 —— 旧页面响应形状保持不变。
+          if (supplierRecordId) mapped.supplier_record_id = row.supplier_record_id || '';
+          return mapped;
+        }),
       });
     } catch (error) {
       logError('workbench.purchase.arrival_detail.failed', { request_id: req.requestId, batch_no: batchNo, error: error.message });
@@ -211,6 +236,9 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   router.post(arrivalTab.api.accept, async (req, res) => {
     const openId = req.workbenchUser?.open_id;
     const batchNo = String(req.body?.[arrivalTab.fields.batchNo] || '').trim();
+    // ⭐ 2026-11-10（业务负责人：验收按采购明细的供应商拆卡）：本次验收哪一家供应商。
+    //   缺省 = 旧页面整批验收（兼容）；新页面必传。
+    const supplierRecordId = String(req.body?.[arrivalTab.fields.supplierRecordId] || '').trim();
     const lines = Array.isArray(req.body?.[arrivalTab.fields.lines]) ? req.body[arrivalTab.fields.lines] : [];
     if (!batchNo) return res.status(400).json({ success: false, error: arrivalTab.texts.batchMissing });
     try {
@@ -228,8 +256,14 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       if (batchRows.some((row) => row.arrival_status === arrivalStatuses.arrived)) {
         return res.status(400).json({ success: false, error: arrivalTab.texts.alreadyAccepted });
       }
+      // ⭐ 2026-11-10：传了供应商 ⇒ 必须在这一批的采购明细里真的有它（防旧页面/手工请求）。
+      if (supplierRecordId && !batchRows.some((row) => String(row.supplier_record_id || '').trim() === supplierRecordId)) {
+        return res.status(400).json({ success: false, error: arrivalTab.texts.supplierNotInBatch });
+      }
       // ① 开会话（既有 `start` 读该批采购明细 ✓ 读不到 ⇒ 它自己的人话 `no_request_rows` ✓ 如实回 400 ✗）
-      const started = await arrivalService.start({ openId, batchNo, operatorOpenId: openId });
+      const started = await arrivalService.start({
+        openId, batchNo, supplierRecordId, operatorOpenId: openId,
+      });
       if (!started?.ok) {
         const status = started?.reason === 'not_wired' ? 503 : 400;
         return res.status(status).json({ success: false, error: started?.message || arrivalTab.texts.detailFailed });

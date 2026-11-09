@@ -477,3 +477,59 @@ test('⑧ 没有批次身份的孤儿调用：**不阻塞加库存**（既有能
   // 一个业务表都不新建（入库行没有了），批次行也找不到 ⇒ 只是不写到货信息。
   assert.equal(harness.gateway.writes.filter((item) => item.op === 'create').length, 0);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⑨ ⭐ 2026-11-10（业务负责人：验收按采购明细的供应商拆卡）
+//   同一批次号混两家供应商 ⇒ 每家独立验收；第一家验完**批次仍未到货**、只写累计值；
+//   第二家验完才写「已到货」。
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('⑨ 按供应商分批验收：第一家验完仍未到货，全部验完才已到货 + 累计实际数量/金额', async () => {
+  const records = baseRecords();
+  records.purchaseRequest = [
+    { record_id: 'req_a38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2, 供应商: '供应商A' } },
+    { record_id: 'req_b39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(39), 数量: 1, 供应商: '供应商B' } },
+  ];
+  const harness = makeHarness({ records });
+  const totalsCalls = [];
+  harness.service.writeBatchTotals = async (payload) => { totalsCalls.push(payload); return { updated: true }; };
+  const supplierIds = ['supplierA', 'supplierB'];
+
+  // 第一家：供应商A（2 双，100 元）
+  const r1 = await harness.service.confirmBatchArrival({
+    batch: {
+      batch_no: BATCH_NO, batch_record_id: BATCH_RECORD_ID,
+      request_ids: ['req_a38'], supplier_record_id: 'supplierA', supplier_record_ids: supplierIds,
+    },
+    actualAmount: 100,
+    operatorOpenId: 'ou_1',
+    scanLines: [{ product_record_id: PRODUCT_1, size: 38, quantity: 2 }],
+    supplierRecordId: 'supplierA',
+    supplierRecordIds: supplierIds,
+  });
+  assert.equal(r1.ok, true, '第一家验收成功 ✓');
+  assert.equal(batchFields(harness.records)['到货状态'], '未到货', '只验完一家 ⇒ 批次仍未到货 ✓');
+  assert.deepEqual(totalsCalls.map((c) => [c.actualQuantity, c.actualAmount]), [[2, 100]],
+    '第一家验完只写自己的累计值（2 双 / 100 元）✓');
+  assert.deepEqual(await harness.service.listAcceptedSuppliersByBatch(), { [BATCH_NO]: ['supplierA'] },
+    '已验收供应商（任务 posted）可查 ⇒ 前端据此隐掉 s1 的卡 ✓');
+
+  // 第二家：供应商B（1 双，100 元）⇒ 全批验完
+  const r2 = await harness.service.confirmBatchArrival({
+    batch: {
+      batch_no: BATCH_NO, batch_record_id: BATCH_RECORD_ID,
+      request_ids: ['req_b39'], supplier_record_id: 'supplierB', supplier_record_ids: supplierIds,
+    },
+    actualAmount: 100,
+    operatorOpenId: 'ou_1',
+    scanLines: [{ product_record_id: PRODUCT_1, size: 39, quantity: 1 }],
+    supplierRecordId: 'supplierB',
+    supplierRecordIds: supplierIds,
+  });
+  assert.equal(r2.ok, true, '第二家验收成功 ✓');
+  assert.equal(batchFields(harness.records)['到货状态'], '已到货', '两家都验完 ⇒ 批次才已到货 ✓');
+  assert.deepEqual(totalsCalls.map((c) => [c.actualQuantity, c.actualAmount]), [[2, 100], [3, 200]],
+    '第二家验完写**累计**（2+1=3 双、100+100=200 元）✓');
+  const acceptedAll = await harness.service.listAcceptedSuppliersByBatch();
+  assert.deepEqual([...acceptedAll[BATCH_NO]].sort(), ['supplierA', 'supplierB'], '两家都验完 ✓');
+});

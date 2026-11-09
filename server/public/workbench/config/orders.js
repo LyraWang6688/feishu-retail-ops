@@ -106,6 +106,8 @@ export const ORDERS_API = {
   purchaseRequests: '/api/workbench/purchase/requests',
   // ⭐ 2026-11-09：验收页第一层 = 「供应商管理」全部供应商（只读；走配置表缓存 supplier）
   suppliers: '/api/workbench/purchase/suppliers',
+  // ⭐ 2026-11-10：按供应商拆卡 —— 哪些供应商已验收完（前端隐掉对应卡片）
+  acceptedSuppliers: '/api/workbench/purchase/arrivals/accepted-suppliers',
   arrivalConfirm: '/api/workbench/purchase/arrivals/confirm',
 };
 
@@ -138,6 +140,8 @@ export const ARRIVAL_FULL_API = {
 };
 export const ARRIVAL_FULL_FIELDS = {
   batchNo: 'batchNo', actualAmount: 'actualAmount', lines: 'lines',
+  // ⭐ 2026-11-10：按供应商拆卡后，明细/提交都要带供应商范围（同一批次可有多家分别验收）
+  supplierRecordId: 'supplierRecordId',
   productRecordId: 'productRecordId', size: 'size', quantity: 'quantity',
 };
 export const ARRIVAL_FULL_TEXTS = {

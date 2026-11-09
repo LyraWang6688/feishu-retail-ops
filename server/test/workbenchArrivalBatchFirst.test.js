@@ -173,6 +173,47 @@ test('AC-RC1c ⭐ 第一层固定展示供应商管理全部供应商（没有�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AC-RC1d ⭐ 同一批次号混多家供应商 ⇒ 按采购明细的供应商**拆成不同验收卡**（采购侧仍一个批次号）
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-RC1d ⭐ 一批多供应商 ⇒ 按供应商拆卡；每张卡只含该供应商的明细子集', async () => {
+  const orders = await loadOrdersModule();
+  const base = { ...BATCH_ROWS[0], batch_no: 'CGD-MULTI' };
+  const rows = [
+    { ...base, supplier_record_id: 's1', supplier_name: '一代千金', size: 38, quantity: 2 },
+    { ...base, supplier_record_id: 's1', supplier_name: '一代千金', size: 39, quantity: 1 },
+    { ...base, supplier_record_id: 's2', supplier_name: '信踏', size: 40, quantity: 4 },
+  ];
+  // 验收单位 = 批次 × 供应商（同一批次号不再整批归到第一行那家）
+  const units = orders.groupAcceptanceUnits(rows);
+  assert.equal(units.length, 2, '一批两家供应商 ⇒ 2 个验收单位 ✓');
+  assert.equal(units.find((u) => u.supplier_key === 's1').rows.length, 2, '一代千金卡只含自己 2 行 ✓');
+  assert.equal(units.find((u) => u.supplier_key === 's2').rows.length, 1, '信踏卡只含自己 1 行 ✓');
+  // 第一层：两张供应商卡，各自数量不互相混
+  const first = orders.purchaseOrdersHtml(rows);
+  assert.ok(first.includes('data-supplier-key="s1"') && first.includes('data-supplier-key="s2"'),
+    '两家供应商都固定出现 ✓');
+  assert.ok(first.includes('1 批 · 3 双待验收'), '一代千金 = 自己 3 双 ✓');
+  assert.ok(first.includes('1 批 · 4 双待验收'), '信踏 = 自己 4 双 ✓');
+  // 第二层：点一代千金 ⇒ 只有一张卡（3 双），不带信踏的货
+  const s1 = orders.purchaseOrdersHtml(rows, { supplierKey: 's1' });
+  assert.equal((s1.match(/data-purchase-batch=/g) || []).length, 1, '一代千金在这批只出一张卡 ✓');
+  assert.ok(s1.includes('data-purchase-supplier="s1"')); 
+  assert.ok(s1.includes('3 双'), '卡片摘要按本供应商明细算（3 双）✓');
+  assert.equal(s1.includes('信踏'), false, '一代千金的卡里不混另一家的供应商名 ✓');
+  assert.ok(s1.includes('data-arrival-supplier="s1"'), '提交按钮带供应商范围 ✓');
+  const s2 = orders.purchaseOrdersHtml(rows, { supplierKey: 's2' });
+  assert.ok(s2.includes('4 双'), '信踏卡摘要按自己的明细算（4 双）✓');
+  // ⭐ 已验收完的供应商（任务 posted）⇒ 卡片隐掉；另一家继续显示
+  const unitsAfter = orders.groupAcceptanceUnits(rows, { 'CGD-MULTI': ['s1'] });
+  assert.equal(unitsAfter.length, 1, 's1 验收完 ⇒ 只剩 s2 一个单位 ✓');
+  assert.equal(unitsAfter[0].supplier_key, 's2');
+  const afterHtml = orders.purchaseOrdersHtml(rows, { acceptedSuppliers: { 'CGD-MULTI': ['s1'] } });
+  assert.equal(afterHtml.includes('data-supplier-key="s1"'), false, '已验收的 s1 卡片不再出现 ✓');
+  assert.ok(afterHtml.includes('data-supplier-key="s2"'), '未验收的 s2 卡片继续出现 ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AC-RC2 点开某批 ⇒ 只显示该批的明细（每行带"实际到货数量"输入）
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -209,9 +250,10 @@ test('AC-RC2 ⭐ 点批次 ⇒ 明细只属于**这一批**（且每行有可改
   assert.ok(htmlA.includes('data-action="arrival-step"'), '有 +/− 步进按钮 ✓');
   // 拉明细的接口与参数逐字（既有只读口，不新造 ✗）
   const src = stripComments(readWorkbench('features/orders/index.js'));
-  assert.ok(src.includes('${ARRIVAL_FULL_API.detail}?${ARRIVAL_FULL_FIELDS.batchNo}='),
+  assert.ok(src.includes('ARRIVAL_FULL_API.detail') && src.includes('ARRIVAL_FULL_FIELDS.batchNo'),
     '点开时按 `batchNo` 调既有 `detail` 接口 ✓');
-  assert.ok(src.includes('state.arrivalRowsByBatch'), '明细按批次存（A 批的别串到 B 批 ✗）✓');
+  assert.ok(src.includes('ARRIVAL_FULL_FIELDS.supplierRecordId'), '拆卡后明细还要带供应商范围 ✓');
+  assert.ok(src.includes('state.arrivalRowsByBatch'), '明细按「批次 × 供应商」存（不许串 ✗）✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
