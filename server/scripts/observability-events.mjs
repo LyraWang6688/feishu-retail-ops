@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * 观测事件目录生成器（第一刀）：
- *   ① 扫 src 下所有 .js 里的 `logInfo/logWarn/logError('事件名', …)` 字面量；
+ *   ① 扫 src 下所有 .js 里的 `logInfo/logWarn/logError('事件名', …)` 字面量
+ *      ＋ 等价的包装调用 `log.info/log.warn/log.error('事件名', …)`；
  *   ② 生成唯一真源 `src/config/events.js`（运行时校验用）；
  *   ③ 生成 `docs/observability-events.md`（给人看的清单）。
  *
@@ -18,7 +19,10 @@ export const SERVER_ROOT = path.resolve(HERE, '..');
 export const EVENT_FILE = path.join(SERVER_ROOT, 'src/config/events.js');
 export const DOC_FILE = path.resolve(SERVER_ROOT, '..', 'docs/observability-events.md');
 
-const EVENT_RE = /\blog(?:Info|Warn|Error)\(\s*['"]([a-z0-9][a-z0-9._-]*)['"]/g;
+// 🔴 2026-11-10：也要认 `log.info/warn/error('事件名', …)` —— 包装对象（依赖注入用）
+//    写法与 logInfo 等价，静态扫描漏掉它 ⇒ 事件未登记（运行时 `unregistered: true`），
+//    真实案例：`label_print.form.received/item/processed`（扫码批量的表单链路）。
+const EVENT_RE = /\blog(?:(?:Info|Warn|Error)|\.(?:info|warn|error))\(\s*['"]([a-z0-9][a-z0-9._-]*)['"]/g;
 
 // 只把真正的块注释当注释：`/*` 后必须是空白、`*` 或 `!`。
 // 日志文案/字符串里的 `/*）` 不能开启注释，否则会把后面的事件整段吞掉。
