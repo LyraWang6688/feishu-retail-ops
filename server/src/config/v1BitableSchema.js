@@ -58,6 +58,10 @@ const V1_BITABLE_SCHEMA = {
         //   ⚠️ 本轮**只加这一行映射**（读=判幂等，写=同步成功后勾上）；别的字段一个不动。
         //   写入链路的唯一调用方：`services/sampleImageDriveService.js`。
         sampleImageSynced: '已同步云盘',
+        // ⭐ 2026-11-10（业务负责人：「但是货品信息数据表里有字段录入人员」）：
+        //   「录入人员」是**人员字段**（type 11），只**读**不写 —— 新增自动同步时用它决定
+        //   "以谁的身份上传"（该人 token 在内存里 ⇒ 文件所有者 = 录入人员；否则回落应用身份）。
+        recorder: '录入人员',
         // ⭐ 2026-10-08 业务负责人新建的列：**`标签二维码`（字段类型 = 附件）**。
         // 内容 = `https://hm.bamamei.online/s/{编号}`（编号做 URL 编码），唯一真源在
         // `config/tagQrCode.js` 的 `scanUrl.recordIdTemplate`；这里**只加映射**。

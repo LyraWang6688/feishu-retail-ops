@@ -44,7 +44,7 @@ const configOf = (over = {}) => ({
 });
 
 const fieldsOf = ({
-  itemNo = 'A1', color = '黑色', category = 'A', images = [], synced = false,
+  itemNo = 'A1', color = '黑色', category = 'A', images = [], synced = false, recorder = [],
   number = `${itemNo}|${color}|${category}`,
 } = {}) => ({
   [F.itemNo]: itemNo,
@@ -53,6 +53,7 @@ const fieldsOf = ({
   [F.number]: number,
   [F.sampleImage]: images,
   [F.sampleImageSynced]: synced,
+  [F.recorder]: recorder,
 });
 
 const imageOf = (token, name = 'x.jpg', type = 'image/jpeg') => ({ file_token: token, name, type });
@@ -298,4 +299,29 @@ test('AC-SD14 ⭐ 点击人 user token ⇒ 云盘四个调用都用它（文件�
   assert.deepEqual(gateway2.calls.auth, {
     list: [''], del: [], download: [''], upload: [''],
   }, '没有点击人 token（新增事件链路）⇒ 回落 tenant（所有者是应用）');
+});
+
+
+test('AC-SD15 ⭐ 新增自动同步没有点击人 ⇒ 按「录入人员」的 token 上传（所有者 = 录入人）；没有 token 回落应用', async () => {
+  const recorder = [{ id: 'ou_recorder', name: '王颖' }];
+  const gateway = createGateway({
+    fields: fieldsOf({ images: [imageOf('ft1')], recorder }),
+  });
+  const service = createSampleImageDriveService({
+    gateway,
+    config: configOf(),
+    resolveUserToken: (openId) => (openId === 'ou_recorder' ? 'ut_recorder' : ''),
+  });
+  await service.syncRecord('r1', { reason: 'record_added' });
+  assert.deepEqual(gateway.calls.auth, {
+    list: ['ut_recorder'], del: [], download: ['ut_recorder'], upload: ['ut_recorder'],
+  }, '以「录入人员」身份上传 ⇒ 所有者 = 录入人');
+
+  // 录入人员 token 不在内存（没登录过/过期）⇒ 回落应用身份（如实）
+  const gateway2 = createGateway({ fields: fieldsOf({ images: [imageOf('ft1')], recorder }) });
+  const service2 = createSampleImageDriveService({
+    gateway: gateway2, config: configOf(), resolveUserToken: () => '',
+  });
+  await service2.syncRecord('r1', { reason: 'record_added' });
+  assert.deepEqual(gateway2.calls.auth, { list: [''], del: [], download: [''], upload: [''] });
 });

@@ -39,6 +39,8 @@ const path = require('node:path');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
+// ⭐ 2026-11-10：新增自动同步没有点击人 ⇒ 按「录入人员」找该人的 user token（内存）
+const { getUserAccessToken } = require('./workbenchUserTokenStore');
 
 const IMAGE_EXTENSIONS = Object.freeze(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.heic']);
 /**
@@ -118,7 +120,7 @@ const isImageAttachment = (attachment) => {
  * @param {object} [options.config] 覆盖 `SAMPLE_IMAGE_DRIVE`（单测注入；生产用默认）
  */
 const createSampleImageDriveService = ({
-  gateway, config = SAMPLE_IMAGE_DRIVE, sleep,
+  gateway, config = SAMPLE_IMAGE_DRIVE, sleep, resolveUserToken = getUserAccessToken,
 } = {}) => {
   if (!gateway) throw new Error('样例图云盘同步缺少 gateway');
   // ⭐ 云盘层由网关构造器挂载（`services/driveApi.js`）⇒ 服务只认 `gateway.drive`。
@@ -131,6 +133,7 @@ const createSampleImageDriveService = ({
   const itemNoField = fieldNames.itemNo;
   const colorField = fieldNames.color;
   const categoryField = fieldNames.category;
+  const recorderField = fieldNames.recorder;
   const numberField = fieldNames.number;
   const sampleImageField = fieldNames[config.fields.sampleImage];
   const syncedField = fieldNames[config.fields.synced];
@@ -164,6 +167,12 @@ const createSampleImageDriveService = ({
     return { number, itemNo, color, category };
   };
 
+  /** 人员字段（type 11）→ open_id 列表（`[{ id, name }]` / `{ id }` / 字符串都兼容）。 */
+  const personOpenIdsOf = (value) => {
+    const list = Array.isArray(value) ? value : (value ? [value] : []);
+    return list.map((item) => textOf(item?.id ?? item?.open_id ?? (typeof item === 'string' ? item : ''))).filter(Boolean);
+  };
+
   const imagesOf = (fields) => {
     const value = fields?.[sampleImageField];
     const list = Array.isArray(value) ? value : [];
@@ -186,8 +195,12 @@ const createSampleImageDriveService = ({
       logError('product.sample_image.drive.failed', { record_id: id, reason, error: 'drive 层缺失（gateway.drive）' });
       return { record_id: id, status: 'failed', reason: 'drive_missing' };
     }
-    // ⭐ 2026-11-10：传了点击人 user token ⇒ 云盘操作都用它的身份（上传出来的文件所有者 = 点击人）
-    const driveOptions = { userAccessToken: String(driveAuth?.userAccessToken || '').trim() };
+    // ⭐ 2026-11-10：上传身份优先级
+    //   ① 点击人 token（存量按钮）⇒ 所有者 = 点击人；
+    //   ② 记录「录入人员」的 token（新增自动同步，没有点击人）⇒ 所有者 = 录入人员；
+    //   ③ 都没有 ⇒ tenant（应用身份，所有者 = 来财）。
+    const clickerToken = String(driveAuth?.userAccessToken || '').trim();
+    let driveOptions = { userAccessToken: clickerToken };
     try {
       let record = await gateway.get('product', id);
       let fields = record?.fields || {};
@@ -197,6 +210,14 @@ const createSampleImageDriveService = ({
 
       let images = imagesOf(fields);
       if (!images.length) return skip(id, 'no_sample_image');
+
+      // ⭐ 「录入人员」token（仅当没有点击人 token 时用）：新增自动同步按录入人归所有者
+      if (!driveOptions.userAccessToken && recorderField) {
+        const recorderOpenIds = personOpenIdsOf(fields?.[recorderField]);
+        if (recorderOpenIds.length && typeof resolveUserToken === 'function') {
+          driveOptions = { userAccessToken: String(resolveUserToken(recorderOpenIds[0]) || '').trim() };
+        }
+      }
 
       let nameBase = nameBaseOf(fields);
       // ⭐⭐ 2026-11-10（业务负责人）：「**重试直到有**（编号）」——新增瞬间公式可能还没算完。
