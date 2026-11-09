@@ -47,8 +47,6 @@ const { V1BitableGateway } = require('./services/v1BitableGateway');
 const { resolveTagQrSweepSchedule } = require('./config/tagQrCode');
 // ⭐ 2026-11-08：抖音团购券「待平台结算 → 已收款」——按日期对平（14:00 上海）。
 const { createVoucherSettlementConfig } = require('./config/voucherSettlement');
-const { createVoucherCatalogSyncConfig } = require('./config/voucherCatalogSync');
-const { createVoucherCatalogSync } = require('./services/douyin/voucherCatalogSync');
 const { createVoucherSettlementService } = require('./services/voucherSettlementService');
 const { PaymentService } = require('./services/paymentService');
 const { createNotificationService } = require('./services/notificationService');
@@ -274,37 +272,6 @@ if (require.main === module) {
     });
   } else {
     logInfo('voucher.settlement.disabled', { env: 'VOUCHER_SETTLEMENT_ENABLED' });
-  }
-
-  // ── 抖音团购券 · **券目录同步**（接口返回什么就写什么）────────────────────────
-  //    · 业务负责人 2026-11-10：名称 / 券ID / 售价 / 面值 / 销售状态 / 上架日期 / 下架日期；
-  //    · 平台结算款、结算规则接口拿不到 ⇒ 不写；「种类」与公式列「团购券」不写；
-  //    · 默认每天 9:00 后每小时的 tick 跑一次（幂等：只写有差异的字段）。
-  const voucherCatalog = createVoucherCatalogSyncConfig();
-  if (voucherCatalog.accountId) {
-    const voucherCatalogService = createVoucherCatalogSync({
-      gateway: new V1BitableGateway(),
-      laike: createLaikeClient(),
-      config: voucherCatalog,
-    });
-    startShanghaiDailyScheduler({
-      run: async () => {
-        const summary = await voucherCatalogService.run();
-        if (!summary.ok) {
-          logWarn('douyin.voucher_catalog.failed', { reason: summary.reason, message: summary.message });
-          return;
-        }
-        if (!summary.written && !summary.matched && !(summary.unmatchedVouchers || []).length) return;
-        logInfo('douyin.voucher_catalog.tick', {
-          written: summary.written, changed: summary.matched, unmatched: (summary.unmatchedVouchers || []).length,
-        });
-      },
-      eventPrefix: 'douyin.voucher_catalog',
-      hour: voucherCatalog.hour,
-      intervalMs: voucherCatalog.intervalMs,
-    });
-  } else {
-    logInfo('douyin.voucher_catalog.disabled', { env: 'DOUYIN_LAIKE_ACCOUNT_ID' });
   }
 
   // ⭐ 2026-11-08（#948）：统一异步任务启动收尾 —— **补发**上一次进程里没发出去的失败通知

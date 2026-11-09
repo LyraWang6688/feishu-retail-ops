@@ -10,10 +10,11 @@
  *    **不写飞书**（写回留到业务负责人点头后的下一步）。
  */
 
-const { readFlag, readInt, readString } = require('./envValue');
+const { readFlag, readString } = require('./envValue');
 
 const TEXTS = Object.freeze({
   accountMissing: '券目录同步未执行：没配置 DOUYIN_LAIKE_ACCOUNT_ID',
+  syncFailed: '同步失败，请稍后重试',
   notConfigured: '抖音来客应用未配置：需要 DOUYIN_LAIKE_CLIENT_KEY / DOUYIN_LAIKE_CLIENT_SECRET',
 });
 
@@ -28,8 +29,6 @@ const createVoucherCatalogSyncConfig = (env = process.env) => ({
   write: readFlag(env, 'VOUCHER_CATALOG_SYNC_WRITE', true),
   // 时间列（上架/下架日期）是否写：业务负责人本次明确要求同步这两列 ⇒ 默认写。
   writeDates: readFlag(env, 'VOUCHER_CATALOG_SYNC_DATES', true),
-  hour: readInt(env, 'VOUCHER_CATALOG_SYNC_HOUR', 9, { min: 0, max: 23 }),
-  intervalMs: readInt(env, 'VOUCHER_CATALOG_SYNC_INTERVAL_MS', 60 * 60 * 1000, { min: 60000, max: 24 * 3600000 }),
   texts: TEXTS,
 });
 

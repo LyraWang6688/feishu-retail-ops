@@ -234,8 +234,9 @@ export const DOMAIN_TABS = [
       {
         id: 'product-info-config',
         label: '数据配置',
-        // 2026-11-08 业务负责人：放在「标签打印」右边，先做占位页。
-        kind: 'placeholder',
+        // ⭐ 2026-11-10 业务负责人：这里放**一颗按钮**「同步团购券数据」——
+        //   点一下才去读抖音商品接口、把接口返回的字段写回「团购券管理」（不是定时任务）。
+        kind: 'voucher-sync',
       },
       {
         id: 'product-notifications',

@@ -82,6 +82,16 @@ const CHAINS = Object.freeze({
     service: 'src/services/salesDeliveryPaymentService.js', serviceKey: /const pay = async/,
     landing: [['paymentRecord', 'amount'], ['paymentRecord', 'status'], ['paymentRecord', 'method'], ['paymentRecord', 'receivedAt'], ['paymentRecord', 'tradeDirection']],
   },
+  // ⭐ 2026-11-10：数据配置页「同步团购券数据」按钮 ⇒ 写回「团购券管理」。
+  "'/api/workbench/douyin/voucher-catalog-sync'": {
+    fe: 'features/douyin/voucher-sync.js', feKey: "'/api/workbench/douyin/voucher-catalog-sync'",
+    route: 'src/routes/workbench/douyin.js', routeKey: /router\.post\('\/douyin\/voucher-catalog-sync'/,
+    service: 'src/services/douyin/voucherCatalogSync.js', serviceKey: /gateway\.update\('groupBuyVoucher'/,
+    landing: [
+      ['groupBuyVoucher', 'name'], ['groupBuyVoucher', 'purchasePrice'], ['groupBuyVoucher', 'faceValue'],
+      ['groupBuyVoucher', 'status'], ['groupBuyVoucher', 'listedAt'], ['groupBuyVoucher', 'delistedAt'],
+    ],
+  },
   "'/api/workbench/inventory/adjustments/count'": {
     fe: 'features/inventory/adjustment.js', feKey: '/api/workbench/inventory/adjustments/count',
     route: 'src/routes/workbenchInventoryAdjustment.js', routeKey: /count/i,

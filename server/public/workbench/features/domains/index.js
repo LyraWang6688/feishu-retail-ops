@@ -80,6 +80,8 @@ export function createDomainModule(domainId) {
       return;
     }
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
+    // ⭐ 2026-11-10：数据配置页 —— 抖音团购券目录同步按钮（点击触发，不是定时任务）。
+    if (page.kind === 'voucher-sync') return void createVoucherSyncModule().mount(host);
     // ⭐ 2026-10-15（她：「配品就是走表单了」）：`kind:'accessory'` 那条分派**整段删除** ——
     //   「配品」现在是一张**直跳页**（`kind:'links'` + `directJump:true`，见 `config/domains.js`），
     //   点一下直接打开飞书表单，**工作台不再有自建的配品面板** ✓

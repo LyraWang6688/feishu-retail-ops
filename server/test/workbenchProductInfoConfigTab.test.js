@@ -12,7 +12,7 @@ const { pathToFileURL } = require('node:url');
 
 const ROOT = path.join(__dirname, '..', '..');
 
-test('货品页：标签打印右侧有「数据配置」占位子 tab', async () => {
+test('货品页：标签打印右侧有「数据配置」子 tab（同步按钮）', async () => {
   const domains = await import(pathToFileURL(path.join(ROOT, 'server/public/workbench/config/domains.js')).href);
   const pages = domains.domainById('product').pages;
   const labels = pages.findIndex((page) => page.id === 'product-labels');
@@ -20,7 +20,8 @@ test('货品页：标签打印右侧有「数据配置」占位子 tab', async (
   assert.ok(labels >= 0, '标签打印页仍在');
   assert.equal(config, labels + 1, '数据配置紧挨在标签打印右边');
   assert.equal(pages[config].label, '数据配置');
-  assert.equal(pages[config].kind, 'placeholder', '先做占位符');
+  // 2026-11-10：占位改成**一颗同步按钮**（点击触发券目录同步，不是定时任务）。
+  assert.equal(pages[config].kind, 'voucher-sync', '数据配置 = 同步按钮页');
   assert.equal(fs.existsSync(path.join(ROOT, 'server/public/workbench/features/domains/pages.js')), true);
 });
 

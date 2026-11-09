@@ -15,6 +15,7 @@ const { createWorkbenchLabelRoutes } = require('./workbench/labels');
 const { createWorkbenchInventoryRoutes } = require('./workbench/inventory');
 const { createWorkbenchPurchaseRoutes } = require('./workbench/purchase');
 const { createWorkbenchSalesRoutes } = require('./workbench/sales');
+const { createWorkbenchDouyinRoutes } = require('./workbench/douyin');
 // ⭐ 2026-11-08（#948）：统一异步任务状态只读接口 —— 挂在**本文件既有**那道 `requireWorkbenchAccess`
 //   之后（不新开鉴权）；owner 校验 / 不返回 payload 由子 router 自己负责。
 const { createWorkbenchAsyncJobRoutes } = require('./workbench/asyncJobs');
@@ -164,6 +165,8 @@ const createWorkbenchRouter = (options = {}) => {
   router.use(createWorkbenchInventoryRoutes(options));
   router.use(createWorkbenchLabelRoutes(options));
   router.use(createWorkbenchSalesRoutes({ options, followup, ordersCache }));
+  // 抖音团购券目录同步（数据配置页按钮触发；不是定时任务）。
+  router.use(createWorkbenchDouyinRoutes(options));
   return router;
 };
 
