@@ -187,20 +187,24 @@ test('AC-R1 手机侧：认证没启用 503 / 未登录 401 / 白名单外 403 �
     // ① 认证没启用
     delete process.env.LARK_WEB_AUTH_ENABLED;
     await withServer(harness.app, async (base) => {
-      const response = await fetch(`${base}/api/workbench/label-print/status`);
+      const response = await fetch(`${base}/api/workbench/label-print/jobs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      });
       assert.equal(response.status, 503);
       assert.match((await response.json()).error, /认证尚未启用/);
     });
     // ② 未登录
     login();
     await withServer(harness.app, async (base) => {
-      const response = await fetch(`${base}/api/workbench/label-print/status`);
+      const response = await fetch(`${base}/api/workbench/label-print/jobs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      });
       assert.equal(response.status, 401);
     });
     // ③ 白名单外
     process.env.WORKBENCH_ALLOWED_OPEN_IDS = 'ou_someone_else';
     await withServer(harness.app, async (base) => {
-      const response = await phone(base, '/status');
+      const response = await phone(base, '/jobs', { method: 'POST', body: {} });
       assert.equal(response.status, 403);
     });
     delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
@@ -351,9 +355,10 @@ test('AC-R4 ⭐⭐ 启动补拉：电脑关着时手机点了两次打印，开�
         method: 'POST', body: { mode: 'single', number: NUMBER, again: true },
       })).json();
       assert.notEqual(second.job_id, first.job_id);
-      const statusWhileOffline = await (await phone(base, '/status')).json();
+      // ⭐ 2026-11-09：手机侧 `GET /status` 已删（页面没了）⇒ 直接读进程内 service（不触发心跳）。
+      const statusWhileOffline = await harness.service.status();
       assert.equal(statusWhileOffline.online, false, '电脑没连过 ⇒ 未连接');
-      assert.equal(statusWhileOffline.status.counts.queued, 2, '任务在排队（不是丢了）');
+      assert.equal(statusWhileOffline.counts.queued, 2, '任务在排队（不是丢了）');
 
       // ② 电脑开机：第一件事就是补拉。
       const pending = await (await device(base, '/pending')).json();
@@ -373,9 +378,9 @@ test('AC-R4 ⭐⭐ 启动补拉：电脑关着时手机点了两次打印，开�
       const ack = await device(base, `/jobs/${first.job_id}/ack`, { method: 'POST', body: { status: 'done' } });
       assert.equal(ack.status, 200);
       assert.equal((await ack.json()).job.status, 'done');
-      const statusAfter = await (await phone(base, '/status')).json();
-      assert.equal(statusAfter.status.counts.done, 1);
-      assert.equal(statusAfter.status.counts.queued, 1);
+      const statusAfter = await harness.service.status();
+      assert.equal(statusAfter.counts.done, 1);
+      assert.equal(statusAfter.counts.queued, 1);
     });
   } finally {
     harness.cleanup();
@@ -504,8 +509,6 @@ test('AC-R9 错误口径：她填错 ⇒ 400 原样回；系统坏 ⇒ 502（都
       // 认领不存在的任务 ⇒ 400。
       const ack = await device(base, '/jobs/no-such/ack', { method: 'POST', body: { status: 'done' } });
       assert.equal(ack.status, 400);
-      // 未知任务查详情 ⇒ 404。
-      assert.equal((await phone(base, '/jobs/no-such')).status, 404);
     });
   } finally {
     harness.cleanup();
@@ -523,26 +526,6 @@ test('AC-R9 产物渲染失败 ⇒ 手机侧 502 且不回显内部细节之外�
       assert.equal(body.success, false);
       assert.match(body.error, /打印文件生成失败/);
       assert.equal((await harness.store.listAll()).length, 0, '不许留半条任务');
-    });
-  } finally {
-    harness.cleanup();
-  }
-});
-
-test('AC-R5 手机侧 status / jobs 的返回形状：状态中文名 + 在线 + 计数（她一眼看得见）', async () => {
-  const harness = buildHarness();
-  login();
-  try {
-    await withServer(harness.app, async (base) => {
-      await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: NUMBER } });
-      const body = await (await phone(base, '/status')).json();
-      assert.equal(body.success, true);
-      assert.equal(body.online, false);
-      assert.equal(body.status.counts.queued, 1);
-      assert.deepEqual(body.states.map((state) => state.id), ['queued', 'claimed', 'done', 'failed']);
-      assert.deepEqual(body.states.map((state) => state.label), ['待打印', '已取走', '已打印', '失败']);
-      assert.equal(body.jobs[0].status_label, '待打印');
-      assert.equal(body.jobs[0].total_labels, 1);
     });
   } finally {
     harness.cleanup();

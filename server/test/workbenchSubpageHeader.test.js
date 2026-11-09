@@ -5,7 +5,8 @@
  * **去掉后能省出不少空间**」；Lead 转达的口径：
  *   · ⭐ 两个子页（`inventory-adjustment.html` / `label-print.html`）的 eyebrow
  *     「邯美数智经营工作台」**也一起收掉**（那是**同一个品牌行** ⇒ 同一次省空间）；
- *   · ⚠️ **各自的功能标题 h1 保留**（「库存手工调整」/「鞋盒标签打印」）——
+ *   · ⚠️ **各自的功能标题 h1**：库存手工调整保留；标签打印页 2026-11-09 按业务负责人
+ *     「需要删除鞋盒标签打印文字」**删掉 h1**（扫码聚焦屏不再重复标题）。
  *     那是页面的功能标题，删了就没标题；
  *   · ⚠️ **不改功能**：登录行 / 独立页导航 / 页面宿主一个字节不动。
  *
@@ -30,7 +31,6 @@ const withoutTitle = (html) => html.replace(/<title>[\s\S]*?<\/title>/g, '');
 
 const PAGES = [
   { file: 'inventory-adjustment.html', h1: '库存手工调整' },
-  { file: 'label-print.html', h1: '鞋盒标签打印' },
 ];
 const BRAND = '邯美数智经营工作台';
 
@@ -78,4 +78,12 @@ test('AC5 主页面仍是 batch① 的样子：那串标题一个都没有', () 
   assert.ok(!html.includes('经营管理中心'));
   assert.ok(!html.includes(BRAND));
   assert.ok(html.includes('<title>邯美工作台</title>'));
+});
+
+test('AC6 所有工作台页面浏览器标题统一为邯美工作台（跳转页除外）', () => {
+  const files = ['index.html', 'after-sales.html', 'inventory-adjustment.html', 'label-print.html', 'procurement.html', 'purchase-acceptance.html', 'sales-delivery.html'];
+  for (const file of files) {
+    const html = read(file);
+    assert.ok(html.includes('<title>邯美工作台</title>'), `${file} 的 <title> 应为邯美工作台`);
+  }
 });

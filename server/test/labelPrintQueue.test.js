@@ -599,34 +599,6 @@ test('AC4 按编号入队：精确匹配那一个编号（同货号别的颜色�
   }
 });
 
-test('最近一次任务（扫码页零 JS 靠它）：latestJobForNumber 找得到 / 找不到回 null', async () => {
-  const { store, cleanup } = tmpStore();
-  try {
-    const service = serviceFor({ store });
-    assert.equal(await service.latestJobForNumber('XHB8095|棕色|A'), null, '还没打过 = null（不是错误）');
-    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
-    // ⚠️ 2026-10-11 改夹具（**"取最近一条"这个本意没变**）：
-    //   改前：又 `enqueueSingle({ number: 'XHB8095|棕色|A' })`（同一编号、无 `again`）。
-    //   改后：第二次带 `again: true` = **她明确要再打一张**。
-    //   理由：同编号在防连点窗口内现在是同一个任务 ⇒ 第二次不会再建一条；
-    //        而"她真想再打一张"正是 `again` 那条路，用它造出第二条才是**真实场景**。
-    await service.enqueueSingle({ number: 'XHB8095|棕色|A', again: true });
-    const latest = await service.latestJobForNumber('XHB8095|棕色|A');
-    assert.ok(latest);
-    assert.notEqual(latest.job_id, first.job_id, '取最近一条');
-    assert.equal(await service.latestJobForNumber('NOT-EXIST|X|A'), null);
-  } finally {
-    cleanup();
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 【2026-10-11 真机反馈·第一批】防连点 + 打印方向
-//
-//   她的现象（逐字）：「点完没有反馈 ⇒ 她以为没点上、连点几次 ⇒ 多打了好几张」
-//                    ＋「打印方向反了」（40×30 横版但内容整体转了 90°）
-// ═══════════════════════════════════════════════════════════════════════════
-
 test('AC16 ⭐⭐ 防连点：同一款连点 3 次 ⇒ **只建 1 个任务 / 只打 1 张**', async () => {
   const { store, cleanup } = tmpStore();
   try {

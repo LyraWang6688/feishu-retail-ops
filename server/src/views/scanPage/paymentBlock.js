@@ -113,25 +113,21 @@ const paymentRowsHtml = (write, opts = {}) => {
       defaultAmount: opts.defaultAmount,
     });
   const voucherMethods = new Set((write.voucherMethods || []).map((name) => String(name || '').trim()));
-  const voucherByName = new Map((write.voucherDetails || []).map((item) => [String(item.name || '').trim(), item]));
-  const money = (cents) => Number.isFinite(cents) ? `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}` : '';
-  return rows.map((row) => {
+  const rowsHtml = rows.map((row) => {
     const method = String(row.method || '').trim();
     const isVoucher = voucherMethods.has(method);
     // 空行（她还没选）不设 required：这一行随后可能变成券行；普通行若留空由服务端拦。
     // 不在画廊层强制 required：收款方式可在本页切换，服务端会再校验普通行必填。
     const required = '';
-    const voucher = voucherByName.get(method);
-    const hint = voucher && t.voucherFaceHint
-      ? `<div class="hint">${escapeHtml(fillText(t.voucherFaceHint, {
-        face: money(voucher.faceValueCents), settlement: money(voucher.settlementCents),
-      }))}</div>`
-      : '';
     return `<div class="form-row form-row--pay">
 <select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}">${optionsHtml(write.paymentMethods, row.method || (write.paymentMethods || [])[0])}</select>
 <input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal"${required} min="0" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
-</div>${hint}`;
+</div>`;
   }).join('\n');
+  const fixedHint = t.voucherAmountHint
+    ? `<p class="hint" data-voucher-amount-hint>${escapeHtml(t.voucherAmountHint)}</p>`
+    : '';
+  return `${rowsHtml}${fixedHint}`;
 };
 
 /** 销售表单：**每件层**（加货 / 加配品）+ **总单层**（每件实收 + 付款情况 + 收款行 + 提交）。

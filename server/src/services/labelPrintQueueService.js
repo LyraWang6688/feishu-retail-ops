@@ -421,30 +421,6 @@ const createLabelPrintQueueService = (deps = {}) => {
     return promise;
   };
 
-  /**
-   * ⭐⭐ 2026-10-12：她在扫码页点完【打印这一款】要看到「**已下发到电脑（队列第 N 位）**」。
-   *   N = 1 表示"下一条就轮到这一张"。
-   *   口径 = **排在我前面、还没打完的任务条数 + 1**：
-   *     · 前面 = `created_at` 更早（同一毫秒按 job_id 兜底，与 `listClaimable` 的排序一致）；
-   *     · 只数**还在队列里**的（`queued` / `claimed` / `rendering`）—— `done` / `failed` 不算前面。
-   *   ⚠️ 纯只读；读不到那一条任务 ⇒ 返回 `null`（页面就不显示这一句，**不编一个数**）。
-   */
-  const queuePositionOf = async (jobId) => {
-    const target = await store.get(jobId);
-    if (!target) return null;
-    const active = [states.queued.id, states.claimed.id];
-    const jobs = await store.listAll();
-    const ahead = jobs.filter((job) => {
-      if (!job || job.job_id === jobId) return false;
-      if (!active.includes(job.status)) return false;
-      const left = String(job.created_at || '');
-      const right = String(target.created_at || '');
-      if (left !== right) return left < right;
-      return String(job.job_id) < String(jobId);
-    }).length;
-    return ahead + 1;
-  };
-
   const listJobs = async ({ limit, status } = {}) => {
     const records = await store.listAll();
     const filtered = status ? records.filter((job) => job.status === status) : records;
@@ -603,18 +579,6 @@ const createLabelPrintQueueService = (deps = {}) => {
   };
 
   /**
-   * 这一款**最近一次**打印任务（扫码页"零 JS"就靠它：POST 之后重渲染读它）。
-   * 找不到返回 `null`（页面显示"还没打过"，不是错误）。
-   */
-  const latestJobForNumber = async (number) => {
-    const target = String(number || '').trim();
-    if (!target) return null;
-    const jobs = await store.listAll();
-    const hit = jobs.find((job) => Array.isArray(job.numbers) && job.numbers.includes(target));
-    return hit ? summaryOf(hit) : null;
-  };
-
-  /**
    * ⭐ **补打**（人工点的，不是自动的）—— 生成**一条新任务**，原任务一个字都不改。
    *
    * 为什么新建而不是"把老任务改回待打印"：
@@ -721,7 +685,6 @@ const createLabelPrintQueueService = (deps = {}) => {
   };
 
   return {
-    queuePositionOf,
     enqueue,
     enqueueSingle,
     getJob,
@@ -731,15 +694,10 @@ const createLabelPrintQueueService = (deps = {}) => {
     ack,
     heartbeat,
     status,
-    latestJobForNumber,
     reprint,
     cleanup,
     subscribe,
     summaryOf,
-    /** 这一条链路的显式开关（页面据此决定"出按钮"还是"如实说一句不可用"）。 */
-    isEnabled: () => config.enabled !== false,
-    /** 用户可见文案（**唯一真源**在 `config/labelPrintQueue.js`；页面不许抄第二份）。 */
-    texts: () => ({ ...(config.texts || {}) }),
     /** 产物文件的**绝对路径**（电脑侧路由下载 PDF 用；文件名只从任务记录里取，不接受外部输入）。 */
     artifactPath: (fileName) => store.artifactPath(path.basename(String(fileName || ''))),
     /** 供测试/本地页面用：现在有几个订阅者。 */

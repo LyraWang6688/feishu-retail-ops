@@ -747,5 +747,4 @@ module.exports = {
   createdAtOf,
   buildText,
   asTimestamp,
-  rowFromRecord,
 };

@@ -89,7 +89,5 @@ export const SCAN_ENTRIES = freeze({
 });
 
 /** 按 id 取一处；认不出 ⇒ `null`（页面**不猜**：拿不到就不渲染那一块 ✗，绝不回落到别的入口）。 */
-export const placeById = (id) => SCAN_PLACES.find((place) => place.id === String(id ?? '').trim()) || null;
 
 /** C 套（①标签打印）在登记表里的那一行 —— `scan-print.js` 只认它（不自己写死行为参数 ✗）。 */
-export const SCAN_LABEL_PRINT_PLACE = placeById('label-print');
