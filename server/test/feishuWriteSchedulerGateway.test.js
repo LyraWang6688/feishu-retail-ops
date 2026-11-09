@@ -440,7 +440,7 @@ test('AC-WG4 不同 stock_key 同时写：不同表写入可以并行（不全�
         { record_id: 'door_b2', fields: { 编号: ['product_b'], 尺码: ['size_38'], 所属状态: '门盒' } },
       ],
     },
-    writeDelayMs: 6,
+    writeDelayMs: 40,
   });
   const scheduler = schedulerWith({ maxConcurrency: 2 });
   const gateway = new V1BitableGateway({ schema: SCHEMA, client, writeScheduler: scheduler });

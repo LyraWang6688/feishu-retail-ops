@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **422** 个事件。按前缀分组：
+共 **428** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -267,13 +267,17 @@
 | `purchase.arrival.inventory_applied.persist_failed` | 1 | src/services/purchase/arrival.js |
 | `purchase.arrival.posted` | 1 | src/services/purchase/arrival.js |
 | `purchase.arrival.reconcile.amount_missing` | 1 | src/services/purchaseArrivalConversationService.js |
+| `purchase.arrival.reconcile.arrived_suppliers_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_arrival_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_arrival_skipped` | 1 | src/services/purchaseArrivalConversationService.js |
+| `purchase.arrival.reconcile.batch_totals_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.confirm_duplicate` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.confirm_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.failure_notice` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.posted` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.success_notice` | 2 | src/services/purchaseArrivalConversationService.js |
+| `purchase.arrival.reconcile.supplier_lookup_unmapped` | 1 | src/services/purchaseArrivalConversationService.js |
+| `purchase.arrival.reconcile.supplier_pending` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_already_posted` | 2 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_plan_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_rows_unavailable` | 1 | src/services/purchaseArrivalConversationService.js |
@@ -288,6 +292,7 @@
 | `purchase.batch.arrival_status.no_record` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.arrival_status.pending.cache_hit` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.arrival_status.pending.cache_miss` | 1 | src/services/purchaseOrderBatchService.js |
+| `purchase.batch.arrived_suppliers.updated` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.document.exists` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.document.no_record` | 2 | src/services/purchase/documentImages.js<br>src/services/purchaseOrderBatchService.js |
 | `purchase.batch.order_amount.no_record` | 1 | src/services/purchaseOrderBatchService.js |
@@ -549,6 +554,7 @@
 | `workbench.procurement.new_products.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.replenish.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.submit.failed` | 1 | src/routes/workbench/purchase.js |
+| `workbench.purchase.accepted_suppliers.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_accept.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.rejected` | 1 | src/services/workbenchPurchaseArrivalService.js |
