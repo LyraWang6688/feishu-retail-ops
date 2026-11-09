@@ -20,11 +20,12 @@
  * 顺序 = 渲染顺序 = **默认打开的 tab 是第一条**（= **销售**，她念的第一个）。
  */
 export const MAIN_TABS = [
-  // ⭐⭐ 2026-11-09（业务负责人）：货品 tab 改名「配置」；顺序 = 供应 · 资金 · 配置 · 创作。
+  // ⭐⭐ 2026-11-09（业务负责人）：货品 tab 改名「配置」。
+  // 2026-11-10（业务负责人）：配置与创作换位，先创作、再配置。
   { module: 'sales', label: '销售' },
   { module: 'inventory', label: '库存' },
   { module: 'purchase', label: '供应' },
   { module: 'funds', label: '资金' },
-  { module: 'product', label: '配置' },
   { module: 'creation', label: '创作' },
+  { module: 'product', label: '配置' },
 ];
