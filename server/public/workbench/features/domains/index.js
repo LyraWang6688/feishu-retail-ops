@@ -51,6 +51,11 @@ export function createDomainModule(domainId) {
       host.classList.toggle('hidden', host.dataset.domainHost !== page.id);
     });
     showPageError('');
+    // 2026-11-09（业务负责人）：切走再回到订单列表时，回到三张入口卡，
+    // 不要保留上次点开的「草稿单」占位屏。必须放在 mounted 早退之前。
+    if (page.kind === 'orders' && previous !== page.id) {
+      state.orderModules.get(page.id)?.resetToCards();
+    }
     if (state.mounted.has(page.id)) return;
     state.mounted.add(page.id);
     const host = hostOf(page.id);
@@ -71,10 +76,6 @@ export function createDomainModule(domainId) {
         module = createOrdersModule({ mode: page.mode });
         state.orderModules.set(page.id, module);
         module.mount(host);
-      } else if (previous !== page.id) {
-        // 2026-11-09（业务负责人）：切走再回到订单列表时，回到三张入口卡，
-        // 不要保留上次点开的「草稿单」占位屏。
-        module.resetToCards();
       }
       return;
     }
