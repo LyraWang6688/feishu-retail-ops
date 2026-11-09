@@ -314,6 +314,9 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         accepted: true,
         batchNo,
         message: arrivalTab.texts.submitted,
+        // ⭐ 2026-11-09（业务负责人：回执统一成 toast）：地址由共享的 `submitToastUrl()` 构造
+        //   （文案 / 落点 / 参数名全在 `config/submitToast.js`；前端只负责 assign ✓）。
+        redirect_url: submitToastUrl({}),
       });
     } catch (error) {
       logError('workbench.purchase.arrival_accept.failed', { request_id: req.requestId, batch_no: batchNo, error: error.message });
