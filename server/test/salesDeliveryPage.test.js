@@ -349,6 +349,12 @@ test('AC-SD-P4 工作台入口：「交割单」卡片跳独立页，供应验�
   assert.match(orders, /sectionCard\.dataset\.ordersSection === 'pending'[\s\S]{0,200}window\.location\.href = SALES_DELIVERY_PAGE/);
 });
 
+test('AC-SD-FEEDBACK-WIRING 交割单读接口必须下发统一 toast/轮询字段', () => {
+  const route = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/routes/workbenchSalesDelivery.js'), 'utf8');
+  assert.match(route, /submit_toast:\s*\{\s*text: SUBMIT_TOAST\.text\s*\}/, '接口必须返回 submit_toast.text');
+  assert.match(route, /job_poll:\s*\{\s*interval_ms: ASYNC_JOBS\.poll\.intervalMs,\s*timeout_ms: ASYNC_JOBS\.poll\.maxMs\s*\}/, '接口必须返回 job_poll');
+});
+
 test('AC-SD-JOBTIMEOUT 轮询统一读 asyncJobs 配置：120s 且超时只提示「仍在写入」', () => {
   const asyncConfig = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/config/asyncJobs.js'), 'utf8');
   const pageConfig = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/workbench/config/sales-delivery.js'), 'utf8');

@@ -57,7 +57,14 @@ const createWorkbenchSalesDeliveryRoutes = ({ options = {}, followup, ordersCach
   };
 
   router.get('/sales/delivery', async (req, res) => {
-    try { return res.json({ success: true, ...await read.listDeliveryData() }); }
+    try {
+      return res.json({
+        success: true,
+        ...await read.listDeliveryData(),
+        submit_toast: { text: SUBMIT_TOAST.text },
+        job_poll: { interval_ms: ASYNC_JOBS.poll.intervalMs, timeout_ms: ASYNC_JOBS.poll.maxMs },
+      });
+    }
     catch (error) {
       logError('workbench.sales.orders.failed', { request_id: req.requestId, chain: 'delivery', error: error.message });
       return res.status(502).json({ success: false, error: error.message });
