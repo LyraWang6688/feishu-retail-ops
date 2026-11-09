@@ -1,4 +1,4 @@
-const { textValue, linkedRecordIds } = require('./v1BitableGateway');
+const { textValue } = require('./v1BitableGateway');
 const {
   resolvePurchaseArrivalStatusConfig,
 } = require('../config/purchaseArrivalStatus');
@@ -8,6 +8,7 @@ const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logInfo, logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
+const { arrivedSupplierIds } = require('./acceptanceSupplierProgress');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 
 /**
@@ -252,7 +253,7 @@ class PurchaseOrderBatchService {
     if (!record) return { ok: false, reason: 'no_batch_record' };
     const table = this.gateway.table('purchaseOrderBatch');
     const lookupNames = this.constructor.supplierNamesOfLookup(record.fields?.[table.fields.supplier]);
-    const arrivedIds = linkedRecordIds(record.fields?.[table.fields.arrivedSuppliers]);
+    const arrivedIds = arrivedSupplierIds(record.fields?.[table.fields.arrivedSuppliers]);
     const rows = await getConfigRows({ gateway: this.gateway, tableKey: 'supplier' });
     const supplierNameField = V1_BITABLE_SCHEMA.tables.supplier.fields.name;
     const idByName = new Map((rows || []).map((row) => [

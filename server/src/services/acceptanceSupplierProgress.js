@@ -11,6 +11,24 @@
 
 const crypto = require('node:crypto');
 
+/**
+ * ⭐ 2026-11-10（业务负责人确认后）：只认**实测形状** `[{ record_ids: [...] }]`。
+ * 空关联（`[{ table_id, text_arr: [], type: 'text' }]`）⇒ []。
+ * 其他历史形状（link_record_ids / id / 字符串数组）**刻意不兼容** —— 已确认不需要。
+ */
+const arrivedSupplierIds = (cell) => {
+  if (!Array.isArray(cell)) return [];
+  const ids = [];
+  for (const item of cell) {
+    if (!item || typeof item !== 'object' || !Array.isArray(item.record_ids)) continue;
+    for (const id of item.record_ids) {
+      const value = String(id || '').trim();
+      if (value) ids.push(value);
+    }
+  }
+  return [...new Set(ids)];
+};
+
 const taskIdForBatch = (batchNo, supplierRecordId = '') => {
   const base = `arrival_reconcile_${crypto.createHash('sha256').update(String(batchNo || '')).digest('hex').slice(0, 24)}`;
   const supplier = String(supplierRecordId || '').trim();
@@ -53,4 +71,6 @@ const listAcceptedSuppliers = async (service) => {
   return accepted;
 };
 
-module.exports = { taskIdForBatch, computeSupplierTotals, listAcceptedSuppliers };
+module.exports = {
+  taskIdForBatch, computeSupplierTotals, listAcceptedSuppliers, arrivedSupplierIds,
+};

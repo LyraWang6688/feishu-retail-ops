@@ -26,8 +26,14 @@ const makeGateway = (records) => {
       const record = (records[tableKey] || []).find((r) => r.record_id === recordId);
       const fields = {};
       for (const [key, value] of Object.entries(semanticValues || {})) {
-        fields[schema.fields[key]] = value;
-        if (record) record.fields[schema.fields[key]] = value;
+        const field = schema.fields[key];
+        fields[field] = value;
+        // 真实飞书读回形状（已确认）：[{ record_ids: [...] }]；写入仍是字符串数组。
+        if (record) {
+          record.fields[field] = field === schema.fields.arrivedSuppliers
+            ? [{ record_ids: value }]
+            : value;
+        }
       }
       writes.push({ tableKey, recordId, fields });
       return { record: { record_id: recordId, fields } };
