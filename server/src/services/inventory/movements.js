@@ -199,9 +199,20 @@ const STOCK_MOVEMENTS = Object.freeze({
   // 售后退货的新货流动作：销售增加（与旧 SALE_RETURN 同一套引擎语义，编码不同）。
   [MOVEMENT_SALE_INCREASE]: {
     direction: '增加',
+    // 本地幂等/回查仍按来源明细（`sourceRecordId` = 销售明细 record_id）。
     ledgerSource: 'salesDetail',
     consumes: null,
     triggerSampleReplacement: false,
+    // ⭐⭐ 2026-11-10（真机测试发现）：生产「库存流水.关联销售」指向**销售主表**
+    //   （field-link target = 销售主表，与销售出库同一个字段）——
+    //   ⇒ 远端写入值必须是**销售主表 record_id**（`input.salesEntryRecordId`），
+    //     不能把明细 id 写进去（写进去主表「库存流水」不会出现这一行，关联也是坏的）。
+    //   本地幂等仍用 `sourceRecordId`（明细 id）⇒ 同一单退两双不会撞键。
+    ledgerLink: {
+      field: 'salesDetail',
+      inputKey: 'salesEntryRecordId',
+      operationKey: 'sales_entry_record_id',
+    },
     // 售后链路把「销售明细 record_id（或退回后的复制明细行）」放在 `sourceRecordId` 上传进来。
     operationKey: Object.freeze({ kind: MOVEMENT_SALE_INCREASE, ...GIVEN_SOURCE }),
   },

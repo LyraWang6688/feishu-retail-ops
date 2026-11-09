@@ -155,7 +155,10 @@ class AfterSalesReturnService {
       size: prepared.size,
       state: AFTER_SALES_DERIVED.defaultRestockState,
       quantity: 1,
+      // 本地幂等键用明细 id（同一单退两双不会撞键）；
+      // 远端「库存流水.关联销售」= 销售主表 id（该字段指向主表，见 movements.ledgerLink）。
       sourceRecordId: prepared.detailRecordId,
+      salesEntryRecordId: prepared.salesEntryRecordId,
     }, { correlation: options.correlation });
     await save({ status: 'stock_applied', stock });
 

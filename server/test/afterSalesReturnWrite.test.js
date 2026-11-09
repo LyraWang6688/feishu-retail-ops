@@ -150,7 +150,9 @@ test('AC-RW1 直接退款：明细已退货 + 库存销售增加落门盒 + 新�
   assert.equal(inventory.calls.length, 1);
   assert.deepEqual(inventory.calls[0].input, {
     kind: 'STOCK_SALE_INCREASE', productRecordId: PRODUCT, size: 40,
-    state: '门盒', quantity: 1, sourceRecordId: DETAIL,
+    state: '门盒', quantity: 1,
+    // 本地幂等键用明细 id；远端「库存流水.关联销售」用主表 id（见 movements.ledgerLink）
+    sourceRecordId: DETAIL, salesEntryRecordId: ENTRY,
   });
 
   const created = state.calls.create.find((item) => item.key === 'paymentRecord');
