@@ -1,7 +1,7 @@
 import { QUERY_SECTIONS } from '../../config/query.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { buildDirectJumpUrl, directJumpEnabled, renderQueryEntries } from '../query/index.js';
-import { linksPageHtml, placeholderPageHtml } from './pages.js';
+import { actionCardsPageHtml, linksPageHtml, placeholderPageHtml } from './pages.js';
 
 /**
  * 领域 tab 的**纯渲染**（不碰 DOM、不发请求）—— 单独一个文件是为了能被测试直接跑：
@@ -72,6 +72,7 @@ export function domainPageHtml(page, options = {}) {
   //       空值时是不可点的 `div.disabled-card` + 「链接待配置」，**绝不产生死链**。
   if (directJumpUrlForPage(page, options)) return '';
   if (page.kind === 'links') return linksPageHtml(page);
+  if (page.kind === 'action-cards') return actionCardsPageHtml(page);
   if (page.kind === 'placeholder') return placeholderPageHtml(page);
   if (page.kind === 'query') {
     // ⭐ 2026-10-10：同名标题与那句「在飞书多维表格里看——点一下直接打开」都删掉 ——

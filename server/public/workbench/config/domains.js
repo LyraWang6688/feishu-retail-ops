@@ -235,7 +235,13 @@ export const DOMAIN_TABS = [
         id: 'product-info-config',
         label: '数据配置',
         // 2026-11-08 业务负责人：放在「标签打印」右边，先做占位页。
-        kind: 'placeholder',
+        // ⭐ 2026-11-10（业务负责人）：「配置里的数据配置里增加一个卡片，这个卡片是按钮」——
+        //   点击 = **存量写入**（把有图但未勾的记录补传到云盘并勾「已同步云盘」）。
+        //   卡片外观与「录单」那排 entry-card 一致；动作实现见 features/domains/dataConfigAction.js。
+        kind: 'action-cards',
+        cards: [
+          { icon: '🖼️', title: '同步存量样例图', action: 'sample-image-sync' },
+        ],
       },
       {
         id: 'product-notifications',

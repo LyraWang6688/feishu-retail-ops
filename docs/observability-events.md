@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **430** 个事件。按前缀分组：
+共 **449** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -228,6 +228,23 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `product.sample_image.drive.backfill.done` | 1 | src/services/sampleImageBackfillService.js |
+| `product.sample_image.drive.backfill.failed` | 2 | src/services/sampleImageBackfillService.js |
+| `product.sample_image.drive.backfill.retry` | 1 | src/services/sampleImageBackfillService.js |
+| `product.sample_image.drive.backfill.started` | 1 | src/services/sampleImageBackfillService.js |
+| `product.sample_image.drive.backfill.status_job_failed` | 1 | src/services/sampleImageBackfillService.js |
+| `product.sample_image.drive.dispatch_failed` | 1 | src/routes/larkEvents.js |
+| `product.sample_image.drive.failed` | 2 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.name_exists` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.not_wired` | 1 | src/routes/larkEvents.js |
+| `product.sample_image.drive.number_missing` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.number_pending` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.partial` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.skipped` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.started` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.synced` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.truncated` | 1 | src/services/sampleImageDriveService.js |
+| `product.sample_image.drive.uploaded` | 1 | src/services/sampleImageDriveService.js |
 | `product.tag_qr.assemble_incomplete` | 3 | src/services/tagQrCodeService.js |
 | `product.tag_qr.batch_failed` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.change_criteria` | 1 | src/services/tagQrCodeService.js |
@@ -530,6 +547,8 @@
 | `workbench.auth.failed` | 1 | src/routes/feishuWebAuth.js |
 | `workbench.auth.provider_error` | 1 | src/routes/feishuWebAuth.js |
 | `workbench.auth.success` | 1 | src/routes/feishuWebAuth.js |
+| `workbench.data_config.sample_image_sync.start_failed` | 1 | src/routes/workbench/dataConfig.js |
+| `workbench.data_config.sample_image_sync.status_failed` | 1 | src/routes/workbench/dataConfig.js |
 | `workbench.inventory.categories_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
 | `workbench.inventory.categories_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
 | `workbench.inventory.products_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
