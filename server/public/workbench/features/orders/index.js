@@ -650,18 +650,11 @@ export function createOrdersModule({ mode = 'both' } = {}) {
           [ARRIVAL_FULL_FIELDS.actualAmount]: Number(rawAmount),
           [ARRIVAL_FULL_FIELDS.lines]: built.lines,
         });
-        // ⭐ 2026-11-09（业务负责人：回执统一成 toast）：
-        //   服务端返回 `redirect_url`（`submitToastUrl` 唯一真源）⇒ 回工作台，由 `shared/toast.js`
-        //   顶部弹统一那句「数据提交成功，后台自动写入」。不再在本页 renderResult 留一行字 ✗。
-        if (result?.redirect_url) {
-          window.location.assign(result.redirect_url);
-          return true;
-        }
-        // 兼容旧回执（没有 redirect_url 时才沿用本页提示；线上新后端不会走到这里）
-        await loadPurchaseOrders();
-        renderResult((result.notice ? result.notice : '') || result.alreadyPosted
-          ? `这批（${batchNo}）已经验收入库过了，没有重复入库。`
-          : (result.message || `这批（${batchNo}）已验收入库。`));
+        // ⭐ 2026-11-09（业务负责人：回执统一成 toast，**不保留旧兜底**）：
+        //   accept 必回 `redirect_url`（`submitToastUrl` 唯一真源）⇒ 回工作台，shared/toast.js 弹统一文案。
+        //   ⚠️ 不回 `redirect_url` = 后端漏字段（不该发生）⇒ 按失败如实报，绝不留在本页假装成功 ✗。
+        if (!result?.redirect_url) throw new Error(ARRIVAL_FULL_TEXTS.redirectMissing);
+        window.location.assign(result.redirect_url);
         return true;
       } catch (error) {
         renderResult(describeError(error), true);

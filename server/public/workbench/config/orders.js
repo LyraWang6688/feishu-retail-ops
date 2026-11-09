@@ -161,6 +161,8 @@ export const ARRIVAL_FULL_TEXTS = {
   zeroMeansNotArrived: '没到的填 0',
   // ⭐ 2026-11-09（业务负责人）：货款必填（参考销售货品页的金额校验）
   amountRequired: '请先填「本次货款金额」（大于 0 的数字），再确认到货并入库',
+  // ⚠️ 后端 accept 必回 redirect_url（submitToastUrl 唯一生成）；缺失 = 不该发生的事故，按失败报
+  redirectMissing: '提交回执缺少跳转地址，请刷新工作台后再看；这次不要重复提交',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',
   // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）
   sizeInvalid: '尺码要填数字，数量要大于 0',

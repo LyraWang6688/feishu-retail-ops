@@ -309,9 +309,12 @@ test('AC-RC5 批次缺失 / detail 失败 / accept 失败 ⇒ 人话；**不许�
   assert.ok(src.includes('renderResult(describeError(error), true)'), 'accept 失败 ⇒ 如实说 ✗ 不许假成功 ✓');
   // ④ 一个可提交的行都没有 ⇒ 拦住 + 人话（不空提交）
   assert.ok(src.includes('ARRIVAL_FULL_TEXTS.noArrivalLines'), '没有可提交的实际值 ⇒ 人话 ✓');
-  // ⑤ 成功后**回工作台 + 统一 toast**（服务端回 redirect_url；前端 assign）
+  // ⑤ 成功后**回工作台 + 统一 toast**（服务端必回 redirect_url；前端 assign）
   assert.ok(src.includes('window.location.assign(result.redirect_url)'), '成功后回工作台（统一 toast）✓');
-  assert.ok(src.includes('redirect_url'), '回执认服务端给的 redirect_url ✓');
+  assert.ok(src.includes('if (!result?.redirect_url) throw new Error(ARRIVAL_FULL_TEXTS.redirectMissing)'),
+    '没有 redirect_url ⇒ 按失败报错（不保留"留在本页"的旧兜底）✓');
+  assert.equal(src.includes('result.notice'), false, '⛔ 不再回退到本页 renderResult 兜底 ✓');
+  assert.ok(readWorkbench('config/orders.js').includes('redirectMissing:'), '缺失回执的失败文案走配置 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
