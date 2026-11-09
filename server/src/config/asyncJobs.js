@@ -151,7 +151,6 @@ const buildAsyncJobsConfig = (env = process.env) => {
   const retryBaseMs = readInt(env, 'ASYNC_JOB_RETRY_BASE_MS', 800, { min: 0, max: 60000 });
   const retryMaxDelayMs = readInt(env, 'ASYNC_JOB_RETRY_MAX_DELAY_MS', 10000, { min: 0, max: 600000 });
   return Object.freeze({
-    enabled: readFlag(env, 'ASYNC_JOB_ENABLED', true),
     jobsDir: readString(env, 'ASYNC_JOBS_DIR', path.join(__dirname, '..', '..', 'data', 'async_jobs')),
     retry: Object.freeze({
       maxAttempts: readInt(env, 'ASYNC_JOB_MAX_ATTEMPTS', 3, { min: 1, max: 10 }),

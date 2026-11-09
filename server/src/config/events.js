@@ -13,7 +13,6 @@ const EVENTS = Object.freeze([
   'after_sales.return_funds.uncovered',
   'after_sales.skipped.already_done',
   'after_sales.stock.skipped',
-  'async_job.disabled',
   'async_job.mirror.failed',
   'async_job.start.done',
   'async_job.start.failed',

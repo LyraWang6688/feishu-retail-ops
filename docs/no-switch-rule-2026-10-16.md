@@ -28,3 +28,4 @@
 | `SCAN_MULTI_ITEM_ASYNC_ENABLED`（一单多货异步） | ⭐ **删开关 ⇒ 永远异步** |
 | `SCAN_DRAFT_ENABLED` | ⭐ **随「删存草稿」整条链一起删**（已在做） |
 | `SCAN_STOCK_POLICY_ENABLED` | ⭐ 线上 `true` ⇒ **删开关 ⇒ 永远开** |
+| `ASYNC_JOB_ENABLED`（统一异步任务层 #948） | ⭐ **2026-11-10** 她：「**不需要加开关，就是这个功能**」⇒ **删开关 ⇒ 固定常开**（`test/asyncJobsSwitchRemoval.test.js` 反向哨兵） |
