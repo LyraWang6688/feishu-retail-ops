@@ -15,7 +15,6 @@
  *   AC-SD6 上传失败 ⇒ 不勾复选框（留给补跑），失败如实返回；
  *   AC-SD7 命名口径 = 货号 + 颜色 + 原扩展名（非法字符替换）；
  *   AC-SD8 schema 契约：「样例图」「已同步云盘」两个字段映射必须在货品信息 schema 里；
- *   AC-SD9 开关关掉 ⇒ 一个字节都不传。
  */
 
 const test = require('node:test');
@@ -36,7 +35,6 @@ const FOLDER = 'folder_test_xyz';
 
 const configOf = (over = {}) => ({
   ...SAMPLE_IMAGE_DRIVE,
-  enabled: true,
   folder: { ...SAMPLE_IMAGE_DRIVE.folder, token: FOLDER },
   events: { created: ['record_added'], updated: [] },
   overwrite: 'replace',
@@ -192,13 +190,21 @@ test('AC-SD8 schema 契约：「样例图」/「已同步云盘」两个字段�
   assert.deepEqual(SAMPLE_IMAGE_DRIVE.events.updated, [], '本轮改图不触发');
 });
 
-test('AC-SD9 开关关掉 ⇒ 一个字节都不传（连记录都不读）', async () => {
-  const gateway = createGateway({ fields: fieldsOf({ images: [imageOf('ft1')] }) });
-  const service = createSampleImageDriveService({ gateway, config: configOf({ enabled: false }) });
-  const result = await service.syncRecord('r1');
-  assert.deepEqual(result, { record_id: 'r1', status: 'skipped', reason: 'disabled' });
-  assert.deepEqual(gateway.calls.get, []);
-  assert.deepEqual(gateway.calls.upload, []);
+test('AC-SD12 ⭐ 本功能**没有开关**（业务负责人 2026-11-10：「不需要加开关」）—— 塞回开关即红', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const SERVER = path.join(__dirname, '..');
+  const stripComments = (code) => code
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+  const configSrc = stripComments(fs.readFileSync(path.join(SERVER, 'src/config/sampleImageDrive.js'), 'utf8'));
+  const serviceSrc = stripComments(fs.readFileSync(path.join(SERVER, 'src/services/sampleImageDriveService.js'), 'utf8'));
+  // 注释里写"曾经/不许再有"是允许的；**代码里**出现才红（与仓库"注释不算"的既有口径一致）
+  assert.equal(/SAMPLE_IMAGE_DRIVE_SYNC_ENABLED/.test(configSrc + serviceSrc), false,
+    '开关名不许再出现在代码里（她：「不需要加开关」）');
+  assert.equal(/\benabled\s*:/.test(configSrc), false, '配置里不许再放 enabled 开关字段');
+  assert.equal(/config\.enabled/.test(serviceSrc), false, '服务不许再读 config.enabled');
+  assert.equal(/drive\.disabled/.test(serviceSrc), false, 'disabled 日志分支不许回来');
 });
 
 

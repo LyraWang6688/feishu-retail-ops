@@ -30,7 +30,7 @@
 
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
-| 配置 | `server/src/config/sampleImageDrive.js` | 文件夹 token / 命名模板 / 触发动作（只有 `record_added`）/ 覆盖策略 / 单条最多几张 / 开关（`SAMPLE_IMAGE_DRIVE_*` 可覆盖，显式布尔） |
+| 配置 | `server/src/config/sampleImageDrive.js` | 文件夹 token / 命名模板 / 触发动作（只有 `record_added`）/ 覆盖策略 / 单条最多几张 / 等编号参数（`SAMPLE_IMAGE_DRIVE_*` 可覆盖）；⭐ **没有开关**（业务负责人 2026-11-10：「不需要加开关」，AC-SD12 钉住） |
 | 表字段 | `server/src/config/v1BitableSchema.js` | `product.fields.sampleImageSynced = '已同步云盘'`（复选框；本轮唯一新增映射） |
 | 云盘层 | `server/src/services/driveApi.js` | `downloadMedia` / `uploadDriveFile` / `listDriveFolder` / `deleteDriveFile` 四个 drive 封装（不做业务判断）；网关构造器里挂成 `gateway.drive`（网关本身不塞这四段，避免单文件超 800 行棘轮） |
 | 服务 | `server/src/services/sampleImageDriveService.js` | 判定 + 串行下载/上传 + 幂等（复选框）+ 日志 |
@@ -64,10 +64,10 @@
 | AC-SD5 | 多张 ⇒ `-1` `-2`；同名先删旧文件（她手工传的 `261175杏色.jpg` 这类不同名文件保留） |
 | AC-SD6 | 上传失败 ⇒ 不勾、失败如实返回 |
 | AC-SD7 | 命名口径（**编号 `货号|颜色|类别` → `_` 分隔**；编号空 ⇒ **空串**、不兜底；非法字符替换；缺省 `.jpg`；非图片附件不混入） |
+| AC-SD12 | ⭐ 源码哨兵：不许再出现 `SAMPLE_IMAGE_DRIVE_SYNC_ENABLED` / `enabled` 开关字段（塞回即红） |
 | AC-SD10 | 新增瞬间编号为空 ⇒ **重试直到有编号**再用它命名（读 3 次，文件名 `A1_黑色_A.jpg`，不是 `A1黑色A.jpg`） |
 | AC-SD11 | 一直等不到编号 ⇒ 跳过不传、**不勾**（留给存量补） |
 | AC-SD8 | schema 契约：两个字段映射在货品信息 schema 里；默认文件夹 = `NIxifKs4ulS5uudlGP2cKtDBnkd` |
-| AC-SD9 | 开关关掉 ⇒ 一个字节都不传 |
 
 路由分派另有三条（`server/test/larkEvents.test.js` ⑥）：两条支路各收到同一份 `action_list`、别的表收不到、一条抛错不阻断另一条。
 

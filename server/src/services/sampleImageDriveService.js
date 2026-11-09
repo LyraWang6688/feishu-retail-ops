@@ -129,7 +129,6 @@ const createSampleImageDriveService = ({
   }
 
   const sleepFn = typeof sleep === 'function' ? sleep : ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const enabled = config.enabled !== false;
   const folderToken = textOf(config.folder?.token);
   const naming = config.naming || SAMPLE_IMAGE_DRIVE.naming;
   const ops = config.operations || SAMPLE_IMAGE_DRIVE.operations || {};
@@ -168,10 +167,6 @@ const createSampleImageDriveService = ({
   const syncRecord = async (recordId, { reason = 'record_added', waitForNumber = false } = {}) => {
     const id = textOf(recordId);
     if (!id) return { record_id: id, status: 'skipped', reason: 'record_id_missing' };
-    if (!enabled) {
-      logInfo('product.sample_image.drive.disabled', { record_id: id, reason });
-      return { record_id: id, status: 'skipped', reason: 'disabled' };
-    }
     if (!drive || typeof drive.uploadDriveFile !== 'function') {
       logError('product.sample_image.drive.failed', { record_id: id, reason, error: 'drive 层缺失（gateway.drive）' });
       return { record_id: id, status: 'failed', reason: 'drive_missing' };
@@ -292,11 +287,10 @@ const createSampleImageDriveService = ({
       results.push(result);
       if (result.status === 'failed') failed.push(result);
     }
-    return { enabled, results, failed };
+    return { results, failed };
   };
 
   return {
-    enabled,
     handleTableChanges,
     syncRecord,
     // 纯函数导出（单测直接钉命名口径；生产调用方别跳过 config）

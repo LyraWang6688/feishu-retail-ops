@@ -135,7 +135,6 @@ const EVENTS = Object.freeze([
   'product.sample_image.drive.backfill.retry',
   'product.sample_image.drive.backfill.started',
   'product.sample_image.drive.backfill.status_job_failed',
-  'product.sample_image.drive.disabled',
   'product.sample_image.drive.dispatch_failed',
   'product.sample_image.drive.failed',
   'product.sample_image.drive.name_exists',

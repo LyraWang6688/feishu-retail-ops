@@ -26,7 +26,7 @@
  *   逻辑里一个字符串一个数字都不写死（`config/sampleImageDrive.js` 是唯一真源）。
  */
 
-const { readFlag, readInt, readString } = require('./envValue');
+const { readInt, readString } = require('./envValue');
 
 /**
  * 目标云盘文件夹（业务负责人 2026-10-13 给的链接里的 token）：
@@ -104,10 +104,11 @@ const OVERWRITE = readString(process.env, 'SAMPLE_IMAGE_DRIVE_OVERWRITE', 'repla
 const MAX_IMAGES = readInt(process.env, 'SAMPLE_IMAGE_DRIVE_MAX_IMAGES', 10, { min: 0, max: 100 });
 
 /**
- * 整条链路的开关（**显式布尔**，不用 `||` 兜底 —— 清空变量不等于关闭）。
- * 关掉 = 事件到达时只记一条 `product.sample_image.drive.disabled`，一个字节都不传。
+ * ⭐ 本功能**没有开关**（业务负责人 2026-11-10：「**不需要加开关**」）——
+ *   事件在 ⇒ 就传；存量按钮在 ⇒ 就补。要停只有一招：把代码回滚（或删入口），
+ *   **不留 `SAMPLE_IMAGE_DRIVE_SYNC_ENABLED` 这类"看起来能关"的旋钮**（与 `docs/no-switch-rule-2026-10-16.md` 同一口径）。
+ *   判据：`test/sampleImageDriveSync.test.js` 的 AC-SD12（塞回开关即红）。
  */
-const ENABLED = readFlag(process.env, 'SAMPLE_IMAGE_DRIVE_SYNC_ENABLED', true);
 
 /**
  * 存量补齐（数据配置 → 「同步存量样例图」卡片按钮，业务负责人 2026-11-10）：
@@ -141,7 +142,6 @@ const DRIVE_OPERATIONS = Object.freeze({
 });
 
 const SAMPLE_IMAGE_DRIVE = Object.freeze({
-  enabled: ENABLED,
   folder: FOLDER,
   events: EVENTS,
   naming: NAMING,
