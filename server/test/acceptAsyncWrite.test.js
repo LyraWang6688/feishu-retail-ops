@@ -79,6 +79,8 @@ const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { pageMessages } = require('../src/config/purchaseArrivalTexts');
 const { submitToastUrl } = require('../src/utils/submitToast');
+const { ASYNC_JOB_TYPES } = require('../src/config/asyncJobs');
+const { jobIdFor } = require('../src/services/asyncJobStore');
 const arrivalTab = require('../src/config/workbenchArrival');
 const { createWorkbenchRouter } = require('../src/routes/workbench');
 const { createScanArrivalService } = require('../src/services/scanArrivalService');
@@ -210,6 +212,9 @@ test('AC-AA1 ⭐⭐ 先回成功页（统一那一句）—— 后台那一跑�
       // ⭐ 2026-11-09：统一 toast 回执 —— redirect_url 由 submitToastUrl 唯一生成
       assert.equal(raced.body.redirect_url, submitToastUrl({}),
         '回工作台 + 统一 toast 的 URL（submitToastUrl 唯一真源 ✓）');
+      // ⭐ 2026-11-09：回执带统一 job_id（与 jobRunner 入队同一个派生键 ✓）
+      assert.equal(raced.body.job_id, jobIdFor(ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE, 'accept:sess-aa:2'),
+        'job_id 由统一 jobIdFor(type, submitKey) 派生 ✓');
       assert.equal('notice' in raced.body, false,
         '⛔ 不许再回「已确认到货」那种话（那一刻后台还没写 ⇒ 假成功 ✗）');
       // 后台那一跑**确实已经排下去**（不是"根本没调"✗）

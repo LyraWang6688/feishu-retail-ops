@@ -21,7 +21,7 @@ const { createPurchaseWriteBackgroundService } = require('../../services/purchas
 // #948：验收「后台那一跑」接**统一异步任务**（重试 / 最终失败发运营群）
 const { createAsyncJobPurchaseRunner } = require('../../services/asyncJobPurchaseRunner');
 const { getAsyncJobService } = require('../../services/asyncJobRuntime');
-const { ASYNC_JOBS } = require('../../config/asyncJobs');
+const { ASYNC_JOBS, ASYNC_JOB_TYPES } = require('../../config/asyncJobs');
 const { logError, logWarn } = require('../../utils/logger');
 // ⭐ 2026-10-28（采购页进入生产）：采购页的**只读读模型 + 提交**端点。
 //   🔴 挂在本文件（= 既有 workbench 父 router 已挂载的子路由）⇒ **不改共享文件 `routes/workbench.js`**，
@@ -133,13 +133,13 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
    *    事件名 / 看门狗阈值都取既有配置（`SCAN_WRITE.events.purchaseBackground*` /
    *    `SCAN_WRITE.purchaseAsync` ⇒ `config/scanWrite.js` **一个字不动** ✓）。
    */
+  // ⭐ 2026-11-09：统一异步任务服务**只取一次**（回执里要回 job_id；跑任务与算 id 用同一实例）。
+  const asyncJobs = options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService();
   const acceptBackground = options.acceptBackground || createPurchaseWriteBackgroundService({
     // #948：统一异步任务（重试 / 失败发运营群）；用例注入 `options.acceptBackground` 时不建
     jobRunner: options.purchaseJobRunner !== undefined
       ? options.purchaseJobRunner
-      : createAsyncJobPurchaseRunner({
-        asyncJob: options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService(),
-      }),
+      : createAsyncJobPurchaseRunner({ asyncJob: asyncJobs }),
     // 🔴 `runRest` = **既有写入口**（`scanArrivalService.finish` ✓ 不新开写库路径 ✗）——
     //    实参形状与改前那一次 `await arrivalService.finish(...)` **逐字同形**（键名一个不改 ✗）。
     runRest: async ({ requestId, submitKey, restInput = {} }) => {
@@ -283,6 +283,9 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       // ④ 幂等键：**服务端算**（既有 `submitKeyOf(session)` ✓ 不取表单里的键 ✗）——
       //    ⚠️ 它**只在这里算一次**，原样交给后台那一跑（同一把键 ⇒ 幂等第一层仍在 ✓）。
       const submitKey = arrivalService.submitKeyOf(session);
+      // ⭐ 2026-11-09：统一 job_id（与 jobRunner 入队用的是同一个 `jobIdFor(type, submitKey)`）
+      const jobId = asyncJobs && typeof asyncJobs.jobIdFor === 'function'
+        ? asyncJobs.jobIdFor(ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE, submitKey) : '';
       // ⑤ 排「后台那一跑」（🔴 **不 await** ⇒ 她**先拿到成功页** ✓；写库仍在既有 `finish` 里 ✗ 不新开路径）。
       //    ⚠️ 位置**必须在上面那几道校验之后**：先排后台再校验 = 把"她填错了"变成"看起来成功" ✗。
       acceptBackground.schedulePurchaseRest({
@@ -314,6 +317,8 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         accepted: true,
         batchNo,
         message: arrivalTab.texts.submitted,
+        // ⭐ 2026-11-09（业务负责人）：回执带上统一 job_id，页面/日志可查 `/api/workbench/async-jobs/:jobId`
+        job_id: jobId,
         // ⭐ 2026-11-09（业务负责人：回执统一成 toast）：地址由共享的 `submitToastUrl()` 构造
         //   （文案 / 落点 / 参数名全在 `config/submitToast.js`；前端只负责 assign ✓）。
         redirect_url: submitToastUrl({}),
