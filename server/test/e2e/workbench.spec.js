@@ -107,13 +107,13 @@ test('创作 tab 能打开占位页，不报未知模块', async ({ page }) => {
   await expect(page.getByText(/未知工作台模块/)).toHaveCount(0);
 });
 
-test('货品 → 数据配置：标签打印右侧的占位子 tab', async ({ page }) => {
+test('货品 → 数据配置：同步团购券按钮（点击触发，不是定时任务）', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '配置', exact: true }).click();
   await expect(page.getByRole('button', { name: '标签打印', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '数据配置', exact: true }).click();
-  await expect(page.getByText('待建设')).toBeVisible();
-  await expect(page.locator('[data-placeholder="product-info-config"]')).toBeVisible();
+  await expect(page.getByRole('button', { name: '同步团购券数据', exact: true })).toBeVisible();
+  await expect(page.locator('[data-placeholder="product-info-config"]')).toHaveCount(0);
 });
 
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {
