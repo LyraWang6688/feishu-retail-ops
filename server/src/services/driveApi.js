@@ -93,7 +93,29 @@ const createDriveApi = (client) => {
     return { token };
   };
 
-  return { downloadMedia, uploadDriveFile, listDriveFolder, deleteDriveFile };
+  /**
+   * 把一个云盘文件的**所有者**转移给固定的人（业务负责人 2026-11-10：统一归赵瑞玲）。
+   * @param {string} fileToken 云盘 file_token
+   * @param {{ owner?: { openId?: string, email?: string }, operation?: string }} [options]
+   */
+  const transferFileOwner = async (fileToken, { owner = {}, operation = 'transfer file owner' } = {}) => {
+    const token = String(fileToken ?? '').trim();
+    if (!token) throw new Error(`${operation} 缺少 file_token`);
+    const openId = String(owner?.openId || '').trim();
+    const email = String(owner?.email || '').trim();
+    const memberType = openId ? 'openid' : (email ? 'email' : '');
+    if (!memberType) throw new Error(`${operation} 缺少 owner（openId / email）`);
+    const response = await client.drive.permission.member.transferOwner({
+      data: { member_type: memberType, member_id: openId || email },
+      // ⚠️ 不通知对方（避免每张图都叮一下）；不删旧所有者（应用身份仍保留可见性，便于重跑覆盖）
+      params: { type: 'file', need_notification: false },
+      path: { token },
+    });
+    assertOk(response, operation);
+    return { token, memberType };
+  };
+
+  return { downloadMedia, uploadDriveFile, listDriveFolder, deleteDriveFile, transferFileOwner };
 };
 
 module.exports = { createDriveApi };

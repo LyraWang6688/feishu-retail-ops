@@ -58,7 +58,7 @@ const fieldsOf = ({
 const imageOf = (token, name = 'x.jpg', type = 'image/jpeg') => ({ file_token: token, name, type });
 
 const createGateway = ({ fields, folderFiles = [], failUploadAt = 0 } = {}) => {
-  const calls = { get: [], list: [], del: [], download: [], upload: [], update: [] };
+  const calls = { get: [], list: [], del: [], download: [], upload: [], update: [], transfer: [] };
   let uploadCount = 0;
   return {
     calls,
@@ -89,6 +89,10 @@ const createGateway = ({ fields, folderFiles = [], failUploadAt = 0 } = {}) => {
         if (failUploadAt && uploadCount === failUploadAt) throw new Error('上传接口炸了');
         calls.upload.push({ folderToken, fileName, size: content.length, operation });
         return `cloud_${fileName}`;
+      },
+      async transferFileOwner(fileToken, { owner = {}, operation } = {}) {
+        calls.transfer.push({ fileToken, owner, operation });
+        return { token: fileToken };
       },
     },
   };
@@ -274,4 +278,30 @@ test('AC-SD13 ⭐ 公式「编号」是富文本数组（真机形状）⇒ 必�
   assert.equal(result.status, 'synced');
   assert.equal(gateway.calls.upload[0].fileName, '66888_黑色_男.jpg', '上传文件名必须是编号文本（扩展名跟附件走）');
   assert.equal(gateway.calls.upload[0].fileName.includes('object Object'), false);
+});
+
+
+test('AC-SD16 ⭐ 固定所有者：配置了 owner ⇒ 每个上传成功的文件立刻转移给赵瑞玲；失败则该条不勾', async () => {
+  const fixedOwner = { openId: 'ou_zhaoruiling', email: '' };
+  const gateway = createGateway({ fields: fieldsOf({ images: [imageOf('ft1', 'a.jpg')] }) });
+  const service = createSampleImageDriveService({ gateway, config: configOf({ owner: fixedOwner }) });
+  const result = await service.syncRecord('r1', { reason: 'backfill' });
+  assert.equal(result.status, 'synced');
+  assert.deepEqual(gateway.calls.transfer.map((t) => t.fileToken), ['cloud_A1_黑色_A.jpg']);
+  assert.deepEqual(gateway.calls.transfer[0].owner, fixedOwner, '转移给固定的人（赵瑞玲）');
+  assert.deepEqual(gateway.calls.update.at(-1), ['product', 'r1', { sampleImageSynced: true }]);
+
+  // 没配置 owner ⇒ 不转移（旧行为：所有者 = 应用）
+  const gateway2 = createGateway({ fields: fieldsOf({ images: [imageOf('ft1', 'a.jpg')] }) });
+  const service2 = createSampleImageDriveService({ gateway: gateway2, config: configOf() });
+  await service2.syncRecord('r1');
+  assert.deepEqual(gateway2.calls.transfer, []);
+
+  // 转移失败 ⇒ 该条 failed、不勾（如实；下次点会重传+重转）
+  const gateway3 = createGateway({ fields: fieldsOf({ images: [imageOf('ft1', 'a.jpg')] }) });
+  gateway3.drive.transferFileOwner = async () => { throw new Error('转移失败'); };
+  const service3 = createSampleImageDriveService({ gateway: gateway3, config: configOf({ owner: fixedOwner }) });
+  const failed = await service3.syncRecord('r1');
+  assert.equal(failed.status, 'failed');
+  assert.deepEqual(gateway3.calls.update, [], '转移失败 ⇒ 不勾复选框');
 });

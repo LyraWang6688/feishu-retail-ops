@@ -142,6 +142,25 @@ e2e（`test/e2e/workbench.spec.js`）：货品 → 数据配置 → 卡片在、
   `buildFileName` 与 `syncRecord` 都必须产出 `66888_黑色_男.jpg`，且**不许**再出现 `object Object`。
 - **善后**（待业务负责人指令）：清掉这 12 条误勾 → 删 2 个垃圾文件 → 部署修复 → 重新点按钮补 343 条。
 
+## 六⅘、固定所有者 = 赵瑞玲（2026-11-10 追加，业务负责人定稿）
+
+**需求**：所有样例图文件的所有者**固定为赵瑞玲**（不能算应用「来财」，也不按点击人/录入人）。
+
+**做法**：飞书有「**转移云盘文档所有者**」接口（`drive.permission.member.transferOwner`，`type=file`）——
+每张图上传成功后，立刻把所有者转移给固定的人：
+
+| 环节 | 做法 |
+| --- | --- |
+| 配置 | `SAMPLE_IMAGE_DRIVE_OWNER_OPEN_ID`（推荐）或 `SAMPLE_IMAGE_DRIVE_OWNER_EMAIL`（跨应用更稳）；两个都空 ⇒ 不转移（所有者=应用） |
+| 上传后 | `services/sampleImageDriveService.js` 对**每一张上传成功**的文件调 `transferFileOwner`（`need_notification:false`，不叮人） |
+| 失败 | 转移失败 ⇒ 这条记录**不勾**、记 `failed`（如实；下次点按钮会重传+重转） |
+| 两条链路 | 新增自动同步 + 存量按钮**都走同一套**（同一处上传后逻辑） |
+
+⚠️ 赵瑞玲的测试账号 open_id 属于**测试应用**；生产要配**本应用**口径的 open_id，
+或直接用**邮箱**（`member_type: 'email'`，与哪个应用无关，最稳）。
+
+判据：AC-SD16（配置 owner ⇒ 每个文件都转移；转移失败不勾）＋ AC-OT6（transferOwner 参数形状 / openid 与 email / 缺 owner 抛错）。
+
 ## 七、未做（等她拍板）
 
 1. 存量 184 条"有图但未勾"的批量补齐（要不要现在做、按什么顺序、失败怎么退）；

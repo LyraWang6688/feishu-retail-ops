@@ -164,6 +164,8 @@ const createSampleImageDriveService = ({
     return { number, itemNo, color, category };
   };
 
+  const owner = config.owner || {};
+
   const imagesOf = (fields) => {
     const value = fields?.[sampleImageField];
     const list = Array.isArray(value) ? value : [];
@@ -259,6 +261,13 @@ const createSampleImageDriveService = ({
 
         const content = await drive.downloadMedia(attachment.file_token, ops.download);
         const fileToken = await drive.uploadDriveFile({ folderToken, fileName, content, operation: ops.upload });
+        // ⭐ 2026-11-10（业务负责人）：所有图片的所有者都固定成赵瑞玲 ⇒ 上传后立刻转移
+        if (owner.openId || owner.email) {
+          await drive.transferFileOwner(fileToken, { owner, operation: ops.transfer });
+          logInfo('product.sample_image.drive.owner_transferred', {
+            record_id: id, file_name: fileName, owner: owner.openId ? 'openid' : 'email',
+          });
+        }
         uploaded.push({ file_name: fileName, file_token: fileToken });
         logInfo('product.sample_image.drive.uploaded', {
           record_id: id, file_name: fileName, file_token: fileToken,
