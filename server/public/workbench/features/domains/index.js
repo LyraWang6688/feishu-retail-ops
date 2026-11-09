@@ -31,12 +31,16 @@ import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
 
 export function createDomainModule(domainId) {
   const domain = domainById(domainId);
-  const state = { container: null, active: domain.pages[0].id, mounted: new Set(), scanModules: new Map() };
+  const state = {
+    container: null, active: domain.pages[0].id, mounted: new Set(),
+    scanModules: new Map(), orderModules: new Map(),
+  };
 
   const hostOf = (pageId) => state.container?.querySelector(`[data-domain-host="${pageId}"]`);
 
   function activate(pageId) {
     const page = domain.pages.find((item) => item.id === pageId) || domain.pages[0];
+    const previous = state.active;
     state.active = page.id;
     state.container.querySelectorAll('[data-domain-page]').forEach((tab) => {
       const on = tab.dataset.domainPage === page.id;
@@ -61,7 +65,19 @@ export function createDomainModule(domainId) {
       if (page.kind === 'scan-direct') state.scanModules.set(page.id, module);
       return void module.mount(host);
     }
-    if (page.kind === 'orders') return void createOrdersModule({ mode: page.mode }).mount(host);
+    if (page.kind === 'orders') {
+      let module = state.orderModules.get(page.id);
+      if (!module) {
+        module = createOrdersModule({ mode: page.mode });
+        state.orderModules.set(page.id, module);
+        module.mount(host);
+      } else if (previous !== page.id) {
+        // 2026-11-09（业务负责人）：切走再回到订单列表时，回到三张入口卡，
+        // 不要保留上次点开的「草稿单」占位屏。
+        module.resetToCards();
+      }
+      return;
+    }
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
     // ⭐ 2026-10-15（她：「配品就是走表单了」）：`kind:'accessory'` 那条分派**整段删除** ——
     //   「配品」现在是一张**直跳页**（`kind:'links'` + `directJump:true`，见 `config/domains.js`），
