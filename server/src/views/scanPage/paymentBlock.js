@@ -113,14 +113,23 @@ const paymentRowsHtml = (write, opts = {}) => {
       defaultAmount: opts.defaultAmount,
     });
   const voucherMethods = new Set((write.voucherMethods || []).map((name) => String(name || '').trim()));
+  const voucherByName = new Map((write.voucherDetails || []).map((item) => [String(item.name || '').trim(), item]));
+  const money = (cents) => Number.isFinite(cents) ? `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}` : '';
   return rows.map((row) => {
-    const isVoucher = voucherMethods.has(String(row.method || '').trim());
-    // 券行金额可空：后端会按券目录的【平台结算款】写入；普通收款行仍必填（服务端也会再校验）。
-    const required = isVoucher ? '' : ' required';
+    const method = String(row.method || '').trim();
+    const isVoucher = voucherMethods.has(method);
+    // 空行（她还没选）不设 required：这一行随后可能变成券行；普通行若留空由服务端拦。
+    const required = (!method || isVoucher) ? '' : ' required';
+    const voucher = voucherByName.get(method);
+    const hint = voucher && t.voucherFaceHint
+      ? `<div class="hint">${escapeHtml(fillText(t.voucherFaceHint, {
+        face: money(voucher.faceValueCents), settlement: money(voucher.settlementCents),
+      }))}</div>`
+      : '';
     return `<div class="form-row form-row--pay">
 <select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}">${optionsHtml(write.paymentMethods, row.method || (write.paymentMethods || [])[0])}</select>
 <input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal"${required} min="0" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
-</div>`;
+</div>${hint}`;
   }).join('\n');
 };
 
