@@ -46,7 +46,7 @@ const fixture = () => ({
   ],
   sizeManagement: [38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
   paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 交易金额: 50, 支付方式: ['method_1'] } }],
-  paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
+  paymentMethod: [{ record_id: 'method_1', fields: { 交易方式: '微信' } }],
   product: [
     { record_id: 'product_1', fields: { 编号: 'P1', 颜色: '黑色' } },
     { record_id: 'product_2', fields: { 编号: 'P2', 颜色: '米白' } },
@@ -254,7 +254,7 @@ test('AC6 每张表只读一次（无重复读），且 6 次是并行发出的'
   await service.listOrders();
 
   const keys = ordersCalls(fake.calls).map((call) => call.key);
-  assert.equal(keys.length, 5, '本夹具：销售主表 / 明细 / 收款方式 / 收款明细 / 货品（配品未配置）');
+  assert.equal(keys.length, 5, '本夹具：销售主表 / 明细 / 交易方式 / 收款明细 / 货品（配品未配置）');
   assert.equal(new Set(keys).size, keys.length, '同一张表不许读两次');
   assert.equal(fake.peak(), 5, '5 次读是**同时在飞**的（Promise.all，不是一张一张串行）');
 });

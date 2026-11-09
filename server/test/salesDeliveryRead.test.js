@@ -5,7 +5,7 @@
  *
  * 口径（2026-10-29 业务负责人定稿）：
  *   · 判断只看 销售明细（履约状态）+ 收款明细（收款状态），按销售单号关联；
- *   · 销售主表只用于把两边统一到「销售单号」；货品信息/颜色/尺码/收款方式只用于显示；
+ *   · 销售主表只用于把两边统一到「销售单号」；货品信息/颜色/尺码/交易方式只用于显示；
  *   · 只读，不写任何表。
  */
 
@@ -39,12 +39,12 @@ const baseRecords = () => ({
   color: [{ record_id: 'color_1', fields: { 颜色: '黑色' } }],
   sizeManagement: [{ record_id: 'size_41', fields: { 尺码: 41 } }],
   paymentMethod: [
-    { record_id: 'method_1', fields: { 收款方式: '微信扫码' } },
-    { record_id: 'method_2', fields: { 收款方式: '现金' } },
+    { record_id: 'method_1', fields: { 交易方式: '微信扫码' } },
+    { record_id: 'method_2', fields: { 交易方式: '现金' } },
   ],
 });
 
-test('AC-DR1 真实只读：销售明细 + 收款明细 → 页面订单形状（货号/颜色/尺码/金额/收款方式）', async () => {
+test('AC-DR1 真实只读：销售明细 + 收款明细 → 页面订单形状（货号/颜色/尺码/金额/交易方式）', async () => {
   const service = createSalesDeliveryReadService({ gateway: fakeGateway(baseRecords()) });
   const data = await service.listDeliveryData();
   assert.deepEqual(data.methods.sort(), ['微信扫码', '现金'].sort());

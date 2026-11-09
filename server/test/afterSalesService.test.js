@@ -51,9 +51,9 @@ const seed = () => ({
     behaviorRow('behavior_cash', 'SALE_CASH', '现货销售', '减少'),
   ],
   paymentMethod: [
-    { record_id: 'method_wechat', fields: { 收款方式: '微信' } },
+    { record_id: 'method_wechat', fields: { 交易方式: '微信' } },
     // 原单是微信，但她说"退我现金"时要能写成现金（业务负责人 2026-10-06 拍板）。
-    { record_id: 'method_cash', fields: { 收款方式: '现金' } },
+    { record_id: 'method_cash', fields: { 交易方式: '现金' } },
   ],
   product: [
     { record_id: 'product_A', fields: { 货号: 'A100', 颜色: '黑' } },
@@ -330,7 +330,7 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
   assert.deepEqual(result.originalDetailIdsMarked, ['detail_old_1']);
 
   // 4) 钱（**她的口径**）：**一笔新收款记录都不建**；原收款行的状态 已收款 → 已退款；
-  //    金额/方向/收款方式/关联销售单**一个字节都不改**（她的口径只说"把收款改成已退款"）。
+  //    金额/方向/交易方式/关联销售单**一个字节都不改**（她的口径只说"把收款改成已退款"）。
   assert.deepEqual(paymentRows(gateway), [], '退货不许新建收款记录');
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
   assert.equal(originalPayment.fields['钱款状态'], '已退款');
@@ -518,14 +518,14 @@ test('总闸门按请求指纹认人：同一次分片里塞另一笔售后 → 
 });
 
 // ⭐ 业务负责人 2026-10-06 拍板（AGENTS.md 第 16 条(2)）：
-//   「钱退现金」→ 退款记录的「收款方式」写**她实际说的方式**，不沿用原单。
+//   「钱退现金」→ 退款记录的「交易方式」写**她实际说的方式**，不沿用原单。
 //
 // ⚠️ 2026-10-08 起这条只对**新建收款行**那条腿（换货/赔货的差价、以及回退模式下的退货）成立：
-//    退货默认走"改原收款状态"，那条腿**不写收款方式**（她的口径只说改状态）——
-//    见下面「退货她的口径下不写收款方式」那条用例（**这是与 AGENTS.md 第 16 条(2) 的已知冲突**）。
-test('⭐ 她说了「退我现金」（回退模式 newReturnRow）→ 新建的收款行收款方式写**现金**', async () => {
+//    退货默认走"改原收款状态"，那条腿**不写交易方式**（她的口径只说改状态）——
+//    见下面「退货她的口径下不写交易方式」那条用例（**这是与 AGENTS.md 第 16 条(2) 的已知冲突**）。
+test('⭐ 她说了「退我现金」（回退模式 newReturnRow）→ 新建的收款行交易方式写**现金**', async () => {
   const { gateway, service } = build({ config: { returnFundsMode: 'newReturnRow' } });
-  // 原单的收款方式是微信（seed 里 pay_old_1 = method_wechat），她说的是现金。
+  // 原单的交易方式是微信（seed 里 pay_old_1 = method_wechat），她说的是现金。
   const result = await service.execute(request({ paymentMethod: '现金', originalText: '把那双 A100 退了，退我现金' }));
 
   const payments = paymentRows(gateway);
@@ -536,23 +536,23 @@ test('⭐ 她说了「退我现金」（回退模式 newReturnRow）→ 新建�
   assert.equal(result.money.methodId, 'method_cash');
 });
 
-test('⭐ 退货（她的默认口径）：她说的收款方式**不写进任何记录**，但会解析、会记日志、会进结果', async () => {
+test('⭐ 退货（她的默认口径）：她说的交易方式**不写进任何记录**，但会解析、会记日志、会进结果', async () => {
   const { gateway, service } = build();
   const result = await service.execute(request({
     paymentMethod: '现金', originalText: '把那双 A100 退了，退我现金',
   }));
 
-  // 不新建记录；原收款行的「收款方式」一个字节都不改（她的口径只说改状态）。
+  // 不新建记录；原收款行的「交易方式」一个字节都不改（她的口径只说改状态）。
   assert.deepEqual(paymentRows(gateway), []);
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
   assert.deepEqual(originalPayment.fields['支付方式'], ['method_wechat'],
-    '原收款行的收款方式是历史事实，不许被这次售后再写一遍');
+    '原收款行的交易方式是历史事实，不许被这次售后再写一遍');
   // 但她说过什么必须留痕（结果 + 日志里都有），排查"钱到底怎么退的"能看到。
   assert.equal(result.money.declaredMethodId, 'method_cash');
   assert.equal(result.money.methodSource, 'spoken');
 });
 
-test('⭐ 她没说收款方式（回退模式 newReturnRow）→ 沿用原单的方式（现有逻辑不变，来源标 original）', async () => {
+test('⭐ 她没说交易方式（回退模式 newReturnRow）→ 沿用原单的方式（现有逻辑不变，来源标 original）', async () => {
   const { gateway, service } = build({ config: { returnFundsMode: 'newReturnRow' } });
   // 原话里一个方式词都没有；请求里 paymentMethod 也是空。
   const result = await service.execute(request({ paymentMethod: '', originalText: '把那双 A100 退了' }));
@@ -563,7 +563,7 @@ test('⭐ 她没说收款方式（回退模式 newReturnRow）→ 沿用原单�
   assert.equal(result.money.methodId, 'method_wechat');
 });
 
-test('⭐ 指纹含收款方式：同一分片里"现金"改成"微信"是另一笔，不能被当成重试整次跳过', async () => {
+test('⭐ 指纹含交易方式：同一分片里"现金"改成"微信"是另一笔，不能被当成重试整次跳过', async () => {
   const { gateway, service } = build();
   await service.execute(request({ paymentMethod: '现金' }));
   const writesAfterFirst = countsOf(gateway);
@@ -576,7 +576,7 @@ test('⭐ 指纹含收款方式：同一分片里"现金"改成"微信"是另一
   assert.equal(countsOf(gateway), writesAfterFirst, '拒绝时不许再写一笔');
 });
 
-test('⭐ 她说的方式在「收款方式管理」里不存在 → 当场抛（不偷偷写回原单的方式）', async () => {
+test('⭐ 她说的方式在「交易方式管理」里不存在 → 当场抛（不偷偷写回原单的方式）', async () => {
   const { gateway, service } = build();
   await assert.rejects(
     () => service.execute(request({ paymentMethod: '刷卡' })),
