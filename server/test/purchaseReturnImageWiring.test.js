@@ -94,18 +94,18 @@ const FROZEN_SCAN_WRITE_SHA256 = '8025590dd79e10deaafe2d33506d0863004e3dd3b9d332
 
 const OPEN_ID = 'ou_return_image';
 const SESSION_SECRET = 'return-image-test-session-secret';
-const NUMBER_A = 'KA|黑色|A';
-const NUMBER_B = 'KB|黑色|A';
+const NUMBER_A = 'KA|黑色|男';
+const NUMBER_B = 'KB|黑色|男';
 const SANDBOX_CHAT_ID = 'oc_return_image_group';
 
 /** 两个货品、两个不同供应商（AC-RI3 的输入）。 */
 const PRODUCT_A = {
   record_id: 'prod_A',
-  fields: { 编号: NUMBER_A, 货号: 'KA', 颜色: { text: '黑色', record_ids: ['c1'] }, 类别: 'A', 单价: 399, 供应商: ['sup_a'] },
+  fields: { 编号: NUMBER_A, 货号: 'KA', 颜色: { text: '黑色', record_ids: ['c1'] }, 类别: '男', 单价: 399, 供应商: ['sup_a'] },
 };
 const PRODUCT_B = {
   record_id: 'prod_B',
-  fields: { 编号: NUMBER_B, 货号: 'KB', 颜色: { text: '黑色', record_ids: ['c1'] }, 类别: 'A', 单价: 359, 供应商: ['sup_b'] },
+  fields: { 编号: NUMBER_B, 货号: 'KB', 颜色: { text: '黑色', record_ids: ['c1'] }, 类别: '男', 单价: 359, 供应商: ['sup_b'] },
 };
 const SIZE_RECORDS = [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
 const liveUnit = (id, product, size, state = '门盒') => ({
@@ -338,7 +338,7 @@ const view = (overrides = {}) => ({
   item_no: 'KA',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 0,
   columns: [{ key: '门盒', label: '门盒' }],

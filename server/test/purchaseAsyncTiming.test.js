@@ -45,7 +45,7 @@ const { createScanPageRouter } = require('../src/routes/scanPage');
 const { waitForPendingPurchaseBackgrounds } = require('../src/services/purchaseWriteBackgroundService');
 
 const SESSION_SECRET = 'scan-async-timing-test-secret';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const UNIFIED = SCAN_PAGE.saleSuccess.message;
 /** 响应必须在这么久之内回来（写库那一跑卡住时 ⇒ 改回同步 ⇒ 必然超时 ⇒ 红 ✓）。 */
 const RESPONSE_BUDGET_MS = 1500;
@@ -76,7 +76,7 @@ const view = () => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 0,
   columns: [{ key: '门盒', label: '门盒' }],

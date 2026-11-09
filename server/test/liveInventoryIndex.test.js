@@ -22,23 +22,23 @@ const record = ({ id, stockKey, state = '门盒', product = 'prod_1', size = 'si
 const build = (records) => new LiveInventoryIndex({ records });
 
 test('库存键解析：四段格式', () => {
-  assert.deepEqual(parseStockKey('DN16|黑|A|40'), { itemNo: 'DN16', color: '黑', category: 'A', size: 40 });
+  assert.deepEqual(parseStockKey('DN16|黑|男|40'), { itemNo: 'DN16', color: '黑', category: '男', size: 40 });
 });
 
 test('库存键解析：段数不对、尺码不是数字、货号为空，一律返回 null（不猜）', () => {
-  assert.equal(parseStockKey('DN16|黑|A'), null);
-  assert.equal(parseStockKey('DN16|黑|A|40|extra'), null);
-  assert.equal(parseStockKey('DN16|黑|A|四十'), null);
-  assert.equal(parseStockKey('|黑|A|40'), null);
+  assert.equal(parseStockKey('DN16|黑|男'), null);
+  assert.equal(parseStockKey('DN16|黑|男|40|extra'), null);
+  assert.equal(parseStockKey('DN16|黑|男|四十'), null);
+  assert.equal(parseStockKey('|黑|男|40'), null);
   assert.equal(parseStockKey(''), null);
   assert.equal(parseStockKey(undefined), null);
 });
 
 test('格式不符或状态未知的记录会被跳过并计数，不会被当成别的款', () => {
   const index = build([
-    record({ id: 'r1', stockKey: 'DN16|黑|A|40' }),
+    record({ id: 'r1', stockKey: 'DN16|黑|男|40' }),
     record({ id: 'r2', stockKey: '坏键' }),
-    record({ id: 'r3', stockKey: 'DN16|黑|A|41', state: '未知状态' }),
+    record({ id: 'r3', stockKey: 'DN16|黑|男|41', state: '未知状态' }),
   ]);
   assert.equal(index.skippedRecords, 2);
   assert.equal(index.find({ itemNo: 'DN16', size: 40 }).colors.length, 1);
@@ -46,9 +46,9 @@ test('格式不符或状态未知的记录会被跳过并计数，不会被当�
 
 test('一个货号只有一个颜色时，颜色可以直接定', () => {
   const index = build([
-    record({ id: 'r1', stockKey: '26632|黑|A|37' }),
-    record({ id: 'r2', stockKey: '26632|黑|A|37' }),
-    record({ id: 'r3', stockKey: '26632|黑|A|37', state: '样品' }),
+    record({ id: 'r1', stockKey: '26632|黑|男|37' }),
+    record({ id: 'r2', stockKey: '26632|黑|男|37' }),
+    record({ id: 'r3', stockKey: '26632|黑|男|37', state: '样品' }),
   ]);
   const found = index.find({ itemNo: '26632', size: 37 });
   assert.equal(found.colors.length, 1);
@@ -60,8 +60,8 @@ test('一个货号只有一个颜色时，颜色可以直接定', () => {
 
 test('同一个货号尺码有多个颜色时，颜色交给卡片选（不猜）', () => {
   const index = build([
-    record({ id: 'r1', stockKey: '26632|黑|A|37', product: 'prod_black' }),
-    record({ id: 'r2', stockKey: '26632|棕|A|37', product: 'prod_brown' }),
+    record({ id: 'r1', stockKey: '26632|黑|男|37', product: 'prod_black' }),
+    record({ id: 'r2', stockKey: '26632|棕|男|37', product: 'prod_brown' }),
   ]);
   const found = index.find({ itemNo: '26632', size: 37 });
   assert.deepEqual(found.colors.map((item) => item.color).sort(), ['棕', '黑']);
@@ -70,7 +70,7 @@ test('同一个货号尺码有多个颜色时，颜色交给卡片选（不猜�
 
 test('颜色分组各自带着自己的货品与尺码关联（写销售明细要用）', () => {
   const index = build([
-    record({ id: 'r1', stockKey: '26632|黑|A|37', product: 'prod_black', size: 'size_37' }),
+    record({ id: 'r1', stockKey: '26632|黑|男|37', product: 'prod_black', size: 'size_37' }),
   ]);
   const [entry] = index.find({ itemNo: '26632', size: 37 }).colors;
   assert.equal(entry.productRecordId, 'prod_black');
@@ -80,8 +80,8 @@ test('颜色分组各自带着自己的货品与尺码关联（写销售明细�
 
 test('尺码在店里没有时，colors 为空，并给出同货号其他有货的尺码', () => {
   const index = build([
-    record({ id: 'r1', stockKey: '26632|黑|A|36' }),
-    record({ id: 'r2', stockKey: '26632|黑|A|38' }),
+    record({ id: 'r1', stockKey: '26632|黑|男|36' }),
+    record({ id: 'r2', stockKey: '26632|黑|男|38' }),
   ]);
   const found = index.find({ itemNo: '26632', size: 37 });
   assert.deepEqual(found.colors, []);
@@ -96,11 +96,11 @@ test('货号在库存里完全没有时，colors 与 otherSizes 都为空', () =
 
 test('补样品候选只列门盒有余量的尺码，并可排除刚卖掉的那几双', () => {
   const index = build([
-    record({ id: 'r1', stockKey: 'DN16|黑|A|36' }),
-    record({ id: 'r2', stockKey: 'DN16|黑|A|38' }),
-    record({ id: 'r3', stockKey: 'DN16|黑|A|38' }),
-    record({ id: 'r4', stockKey: 'DN16|黑|A|40', state: '样品' }),
-    record({ id: 'r5', stockKey: 'DN16|黑|A|42', state: '仓库' }),
+    record({ id: 'r1', stockKey: 'DN16|黑|男|36' }),
+    record({ id: 'r2', stockKey: 'DN16|黑|男|38' }),
+    record({ id: 'r3', stockKey: 'DN16|黑|男|38' }),
+    record({ id: 'r4', stockKey: 'DN16|黑|男|40', state: '样品' }),
+    record({ id: 'r5', stockKey: 'DN16|黑|男|42', state: '仓库' }),
   ]);
   assert.deepEqual(index.sampleReplacementCandidates('DN16'), [
     { size: 36, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
@@ -117,8 +117,8 @@ test('补样品候选只列门盒有余量的尺码，并可排除刚卖掉的�
 
 test('库存记录缺少货品或尺码关联时跳过，不能凭空造出关联', () => {
   const index = build([
-    { record_id: 'r1', fields: { 库存键: 'DN16|黑|A|40', 所属状态: '门盒', 编号: [], 尺码: [{ id: 'size_1' }] } },
-    { record_id: 'r2', fields: { 库存键: 'DN16|黑|A|40', 所属状态: '门盒', 编号: [{ id: 'prod_1' }], 尺码: [] } },
+    { record_id: 'r1', fields: { 库存键: 'DN16|黑|男|40', 所属状态: '门盒', 编号: [], 尺码: [{ id: 'size_1' }] } },
+    { record_id: 'r2', fields: { 库存键: 'DN16|黑|男|40', 所属状态: '门盒', 编号: [{ id: 'prod_1' }], 尺码: [] } },
   ]);
   assert.equal(index.skippedRecords, 2);
   assert.deepEqual(index.find({ itemNo: 'DN16', size: 40 }).colors, []);
@@ -126,9 +126,9 @@ test('库存记录缺少货品或尺码关联时跳过，不能凭空造出关�
 
 test('补样品候选按货品记录（货号 + 颜色）取，绝不跨颜色', () => {
   const index = build([
-    record({ id: 'r1', stockKey: 'DN16|黑|A|36', product: 'prod_black' }),
-    record({ id: 'r2', stockKey: 'DN16|黑|A|38', product: 'prod_black' }),
-    record({ id: 'r3', stockKey: 'DN16|米|A|38', product: 'prod_beige' }),
+    record({ id: 'r1', stockKey: 'DN16|黑|男|36', product: 'prod_black' }),
+    record({ id: 'r2', stockKey: 'DN16|黑|男|38', product: 'prod_black' }),
+    record({ id: 'r3', stockKey: 'DN16|米|男|38', product: 'prod_beige' }),
   ]);
   assert.deepEqual(index.sampleReplacementCandidatesForProduct('prod_black'), [
     { size: 36, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
@@ -143,7 +143,7 @@ test('补样品候选按货品记录（货号 + 颜色）取，绝不跨颜色',
 
 test('关联字段按飞书原始 API 形状解析：record_ids 里的 record_id 必须认出来', () => {
   // 回归：曾经只认 { id } / { record_id }，导致整表 1086 条被静默跳过。
-  const index = build([record({ id: 'r1', stockKey: 'DN16|黑|A|40', product: 'rec_product', size: 'rec_size' })]);
+  const index = build([record({ id: 'r1', stockKey: 'DN16|黑|男|40', product: 'rec_product', size: 'rec_size' })]);
   assert.equal(index.skippedRecords, 0, '原始 API 形状的记录不该被跳过');
   const found = index.find({ itemNo: 'DN16', size: 40 });
   assert.equal(found.colors[0].productRecordId, 'rec_product');
@@ -154,14 +154,14 @@ test('简写形状也认（CLI 导出 / 手写夹具）', () => {
   const simple = (id, stockKey, product, size) => ({
     record_id: id, fields: { 库存键: stockKey, 所属状态: '门盒', 编号: [{ id: product }], 尺码: [{ id: size }] },
   });
-  const index = build([simple('r1', 'DN16|黑|A|40', 'p1', 's1')]);
+  const index = build([simple('r1', 'DN16|黑|男|40', 'p1', 's1')]);
   assert.equal(index.skippedRecords, 0, '简写形状同样要认，避免又反过来只认一种');
   assert.equal(index.find({ itemNo: 'DN16', size: 40 }).colors[0].productRecordId, 'p1');
 });
 
 test('关联字段为空时跳过并计数，不猜', () => {
   const index = build([
-    { record_id: 'r1', fields: { 库存键: [{ text: 'DN16|黑|A|40' }], 所属状态: '门盒', 编号: [], 尺码: [] } },
+    { record_id: 'r1', fields: { 库存键: [{ text: 'DN16|黑|男|40' }], 所属状态: '门盒', 编号: [], 尺码: [] } },
   ]);
   assert.equal(index.skippedRecords, 1);
 });

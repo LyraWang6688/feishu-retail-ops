@@ -26,7 +26,7 @@ const SERVER = path.resolve(__dirname, '..', '..');
 const REPORT_DIR = path.resolve(SERVER, '..', 'reports', 'scan-instock-label');
 const SESSION_SECRET = 'scan-instock-label-e2e-secret';
 const OPEN_ID = 'ou_scan_instock_label_e2e';
-const NUMBER = '0225|棕色|B';
+const NUMBER = '0225|棕色|女';
 const PORT = Number(process.env.E2E_PORT || 4293);
 
 process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_instock_label_e2e';
@@ -75,7 +75,7 @@ const view = () => {
     item_no: '0225',
     color: '棕色',
     category_name: '女鞋',
-    category_code: 'B',
+    category_code: '女',
     price_text: '¥399',
     total: 1,
     columns,

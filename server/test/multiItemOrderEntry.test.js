@@ -66,7 +66,7 @@ const service0 = ({ writes }) => ({
 });
 
 const group = (id, entries) => ({
-  productRecordId: `rec_${id}`, number: `${id}|黑色|A`, itemNo: id, color: '黑色', supplierRecordId: `sup_${id}`, entries,
+  productRecordId: `rec_${id}`, number: `${id}|黑色|男`, itemNo: id, color: '黑色', supplierRecordId: `sup_${id}`, entries,
 });
 
 const flow = async (h, { chain = 'replenish', groups, stockView = null, amount = '' }) => {
@@ -127,14 +127,14 @@ test('AC-ENT2 ⭐⭐ N=1（默认开关下真实写入）⇒ 载荷与旧路径*
   assert.deepEqual(h.writes[0].payload, {
     is_batch: true,
     product_record_id: 'rec_K1',
-    product_number: 'K1|黑色|A',
+    product_number: 'K1|黑色|男',
     item_no: 'K1',
     color: '黑色',
     supplier_record_id: 'sup_K1',
     behavior_record_id: 'rec_behavior',
     operator_open_id: 'ou_me',
     items: [{
-      product_record_id: 'rec_K1', product_number: 'K1|黑色|A', item_no: 'K1', color: '黑色',
+      product_record_id: 'rec_K1', product_number: 'K1|黑色|男', item_no: 'K1', color: '黑色',
       supplier_record_id: 'sup_K1', size: 40, quantity: 2,
       behavior_record_id: 'rec_behavior', behavior_kind: 'purchase_request',
     }],

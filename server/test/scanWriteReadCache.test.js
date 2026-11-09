@@ -31,7 +31,7 @@ const makeGateway = () => {
   const calls = [];
   const data = {
     sizeManagement: [{ record_id: 'size_40', fields: { 尺码: 40 } }],
-    product: [{ record_id: 'prod_1', fields: { 编号: 'YD6693-2|黑色|A' } }],
+    product: [{ record_id: 'prod_1', fields: { 编号: 'YD6693-2|黑色|男' } }],
     salesEntry: [{ record_id: 'se_1', fields: {} }],
     liveInventory: [{ record_id: 'inv_1', fields: {} }],
   };

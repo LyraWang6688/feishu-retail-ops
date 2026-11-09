@@ -66,7 +66,7 @@ const COOKIE = (() => {
   return `workbench_session=${payload}.${crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url')}`;
 })();
 
-const NUMBER = 'N05|黑色|A';
+const NUMBER = 'N05|黑色|男';
 const ENCODED = encodeURIComponent(NUMBER);
 
 /** 扫码时**已经取到**的那个尺码/库存结构（`view.rows`）——40 有 3 双、41 缺码 0 双、42 有 1 双。 */

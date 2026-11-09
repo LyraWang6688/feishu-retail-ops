@@ -52,7 +52,7 @@ const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
 const SERVER_SRC = path.join(__dirname, '..', 'src');
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 
 // ── 夹具（照测试 Base 的真实列形状）────────────────────────────────────────
 const PRODUCT = {
@@ -61,7 +61,7 @@ const PRODUCT = {
     编号: NUMBER,
     货号: 'YD6693-2',
     颜色: { text: '黑色', record_ids: ['color_black'] },
-    类别: 'A',
+    类别: '男',
     单价: 399,
     供应商: ['sup_1'],
   },

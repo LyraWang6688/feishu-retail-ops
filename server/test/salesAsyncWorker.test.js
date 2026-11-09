@@ -41,7 +41,7 @@ const make = ({ fail = false } = {}) => {
 
 const payload = (over = {}) => ({
   open_id: 'ou_1', order_no: 'XSD-20261026-0001', gift: '',
-  lines: [{ product_record_id: 'p1', size: 41, trade_type: 'SALE_CASH', actual_amount: 99, number: 'p|黑|A', item_no: 'p', color: '黑' }],
+  lines: [{ product_record_id: 'p1', size: 41, trade_type: 'SALE_CASH', actual_amount: 99, number: 'p|黑|男', item_no: 'p', color: '黑' }],
   payments: [{ method: '微信扫码', amount: 99 }],
   ...over,
 });

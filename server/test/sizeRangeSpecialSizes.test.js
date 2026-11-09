@@ -22,25 +22,25 @@ const R = SIZE_SEGMENTS.ranges;
 // AC-1 ⭐ 普通码 = 默认展示范围，不含任何特殊码
 // ══════════════════════════════════════════════════════════════════════════════
 test('AC-1 ⭐ 普通码：女 36–40 · 男 38–44（默认展示不含特殊码）', () => {
-  assert.deepEqual(expandRange(R.B.normal), [36, 37, 38, 39, 40], '女普通码 36–40');
-  assert.deepEqual(expandRange(R.A.normal), [38, 39, 40, 41, 42, 43, 44], '男普通码 38–44');
+  assert.deepEqual(expandRange(R.女.normal), [36, 37, 38, 39, 40], '女普通码 36–40');
+  assert.deepEqual(expandRange(R.男.normal), [38, 39, 40, 41, 42, 43, 44], '男普通码 38–44');
   // default 是 normal 的兼容别名（同一份，不是第二份）
-  assert.deepEqual(R.B.default, R.B.normal, 'B.default === B.normal（兼容别名 ✓）');
-  assert.deepEqual(R.A.default, R.A.normal, 'A.default === A.normal（兼容别名 ✓）');
+  assert.deepEqual(R.女.default, R.女.normal, 'B.default === B.normal（兼容别名 ✓）');
+  assert.deepEqual(R.男.default, R.男.normal, 'A.default === A.normal（兼容别名 ✓）');
   // 普通码不含特殊码
-  for (const size of R.B.special) assert.equal(R.B.normal.includes(size), false, `女普通码不含特殊码 ${size}`);
-  for (const size of R.A.special) assert.equal(R.A.normal.includes(size), false, `男普通码不含特殊码 ${size}`);
+  for (const size of R.女.special) assert.equal(R.女.normal.includes(size), false, `女普通码不含特殊码 ${size}`);
+  for (const size of R.男.special) assert.equal(R.男.normal.includes(size), false, `男普通码不含特殊码 ${size}`);
   // 2026-10-18 的关键裁决：41 从普通码移入特殊码
-  assert.equal(R.B.normal.includes(41), false, '女普通码不含 41（2026-10-18 移入特殊码）✓');
+  assert.equal(R.女.normal.includes(41), false, '女普通码不含 41（2026-10-18 移入特殊码）✓');
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AC-2 ⭐⭐ 特殊码 = 离散清单（不是区间），且与普通码互斥
 // ══════════════════════════════════════════════════════════════════════════════
 test('AC-2 ⭐⭐ 特殊码：女 34/35/41/42/43 · 男 45/46/47/48（离散、与普通码互斥）', () => {
-  assert.deepEqual(R.B.special, [34, 35, 41, 42, 43], '女特殊码 = 34/35/41/42/43');
-  assert.deepEqual(R.A.special, [45, 46, 47, 48], '男特殊码 = 45–48');
-  for (const key of ['A', 'B']) {
+  assert.deepEqual(R.女.special, [34, 35, 41, 42, 43], '女特殊码 = 34/35/41/42/43');
+  assert.deepEqual(R.男.special, [45, 46, 47, 48], '男特殊码 = 45–48');
+  for (const key of ['男', '女']) {
     const normal = expandRange(R[key].normal);
     for (const size of R[key].special) {
       assert.equal(normal.includes(size), false, `${key} 特殊码 ${size} 不许同时是普通码`);
@@ -55,9 +55,9 @@ test('AC-2 ⭐⭐ 特殊码：女 34/35/41/42/43 · 男 45/46/47/48（离散、�
 // AC-3 ⭐ 可录范围 = 普通码 ∪ 特殊码（现行缺货基准）
 // ══════════════════════════════════════════════════════════════════════════════
 test('AC-3 ⭐ 可录范围：女 34–43 · 男 38–48 = 普通码 ∪ 特殊码', () => {
-  assert.deepEqual(expandRange(R.B.enterable), [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '女可录 34–43');
-  assert.deepEqual(expandRange(R.A.enterable), [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48], '男可录 38–48');
-  for (const key of ['A', 'B']) {
+  assert.deepEqual(expandRange(R.女.enterable), [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '女可录 34–43');
+  assert.deepEqual(expandRange(R.男.enterable), [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48], '男可录 38–48');
+  for (const key of ['男', '女']) {
     const union = [...expandRange(R[key].normal), ...R[key].special].sort((a, b) => a - b);
     assert.deepEqual(union, expandRange(R[key].enterable),
       `${key}：可录范围必须 = 普通码 ∪ 特殊码（不留无人管的码）`);
@@ -68,7 +68,7 @@ test('AC-3 ⭐ 可录范围：女 34–43 · 男 38–48 = 普通码 ∪ 特殊�
 // AC-4 ⭐ 兼容语义：from/to 仍等于 enterable 两端（既有渲染层按 from/to 取值）
 // ══════════════════════════════════════════════════════════════════════════════
 test('AC-4 ⭐ from/to 与 enterable 两端一致（兼容旧语义，不另写一份数字）', () => {
-  for (const key of ['A', 'B']) {
+  for (const key of ['男', '女']) {
     const range = R[key];
     assert.equal(range.from, range.enterable[0], `${key}：from == enterable 起点`);
     assert.equal(range.to, range.enterable[1], `${key}：to == enterable 终点`);

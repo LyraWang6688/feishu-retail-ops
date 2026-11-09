@@ -42,7 +42,7 @@ const CONFIG_SRC = fs.readFileSync(path.join(SERVER, 'src/config/scanWrite.js'),
   + fs.readFileSync(path.join(SERVER, 'src/config/scanPage.js'), 'utf8');
 
 const VIEW = {
-  found: true, number: 'YD6693-2|棕色|A', item_no: 'YD6693-2', color: '棕色', category_name: '休闲鞋',
+  found: true, number: 'YD6693-2|棕色|男', item_no: 'YD6693-2', color: '棕色', category_name: '休闲鞋',
   price_text: '¥399', total: 1, columns: [{ key: '门盒', label: '门盒' }],
   rows: [{ size_text: '41', cells: [{ key: '门盒', count: 1 }], total: 1, missing: false }],
   missing_count: 0, sizes_degraded: false, notes: [], updated_at_text: '2026-10-13 17:00',

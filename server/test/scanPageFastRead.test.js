@@ -43,7 +43,7 @@ const { createScanPageService } = require('../src/services/scanPageService');
 const { V1BitableGateway } = require('../src/services/v1BitableGateway');
 
 const SERVER_SRC = path.join(__dirname, '..', 'src');
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 
 // ── 夹具（测试 Base 的真实形状）──────────────────────────────────────────────
 const PRODUCT = {
@@ -52,7 +52,7 @@ const PRODUCT = {
     编号: [{ text: NUMBER, type: 'text' }],
     货号: 'YD6693-2',
     颜色: [{ record_ids: ['color_black'], text: '黑色', text_arr: ['黑色'], type: 'text' }],
-    类别: 'A',
+    类别: '男',
     品类: [{ record_ids: ['cat_casual'], text: '休闲鞋', text_arr: ['休闲鞋'], type: 'text' }],
     单价: '399',
   },
@@ -60,19 +60,19 @@ const PRODUCT = {
 const OTHER_PRODUCT = {
   record_id: 'prod_2',
   fields: {
-    编号: [{ text: 'X7601|蓝|A', type: 'text' }],
+    编号: [{ text: 'X7601|蓝|男', type: 'text' }],
     货号: 'X7601',
     颜色: [{ record_ids: ['color_blue'], text: '蓝', text_arr: ['蓝'], type: 'text' }],
-    类别: 'A',
+    类别: '男',
     品类: [{ record_ids: ['cat_casual'], text: '休闲鞋', text_arr: ['休闲鞋'], type: 'text' }],
     单价: '249',
   },
 };
 const SIZE_RECORDS = [
-  { record_id: 'size_40', fields: { 尺码: 40, 类别: ['A'] } },
-  { record_id: 'size_41', fields: { 尺码: 41, 类别: ['A'] } },
-  { record_id: 'size_42', fields: { 尺码: 42, 类别: ['A'] } },
-  { record_id: 'size_38', fields: { 尺码: 38, 类别: ['B'] } },
+  { record_id: 'size_40', fields: { 尺码: 40, 类别: ['男'] } },
+  { record_id: 'size_41', fields: { 尺码: 41, 类别: ['男'] } },
+  { record_id: 'size_42', fields: { 尺码: 42, 类别: ['男'] } },
+  { record_id: 'size_38', fields: { 尺码: 38, 类别: ['女'] } },
 ];
 const inventoryRow = (id, productId, number, sizeRecordId, size, state) => ({
   record_id: id,
@@ -89,7 +89,7 @@ const INVENTORY = [
   inventoryRow('inv_42_box', 'prod_1', NUMBER, 'size_42', 42, '门盒'),
   inventoryRow('inv_42_sample', 'prod_1', NUMBER, 'size_42', 42, '样品'),
   // 别的货品：**一条都不许**混进来
-  inventoryRow('inv_other', 'prod_2', 'X7601|蓝|A', 'size_42', 42, '门盒'),
+  inventoryRow('inv_other', 'prod_2', 'X7601|蓝|男', 'size_42', 42, '门盒'),
 ];
 const FIXTURES = { product: [PRODUCT, OTHER_PRODUCT], liveInventory: INVENTORY, sizeManagement: SIZE_RECORDS };
 
@@ -311,10 +311,10 @@ test('② 开关（config 先行）：reads.filterEnabled=false → 一次"按�
 });
 
 test('② 值没法安全拼进公式（编号里带引号）→ **不拼**，直接整表读（宁可慢，不许拼坏公式）', async () => {
-  const weirdNumber = 'A"B|黑色|A';
+  const weirdNumber = 'A"B|黑色|男';
   const weird = {
     record_id: 'prod_weird',
-    fields: { 编号: [{ text: weirdNumber }], 货号: 'A"B', 类别: 'A', 单价: '100' },
+    fields: { 编号: [{ text: weirdNumber }], 货号: 'A"B', 类别: '男', 单价: '100' },
   };
   const gateway = fakeGateway({ fixtures: { ...FIXTURES, product: [weird], liveInventory: [] } });
   const view = await service(gateway).lookup({ number: weirdNumber, requestId: 'req_weird' });
@@ -325,14 +325,14 @@ test('② 值没法安全拼进公式（编号里带引号）→ **不拼**，�
 
 test('② 手打大小写不一致：按条件读 0 条 → 整表回退；库存仍按**表里的编号**筛，不显示 0 双', async () => {
   const gateway = fakeGateway();
-  const view = await service(gateway).lookup({ number: 'yd6693-2|黑色|A', requestId: 'req_ci' });
+  const view = await service(gateway).lookup({ number: 'yd6693-2|黑色|男', requestId: 'req_ci' });
 
   assert.equal(view.found, true, '大小写兜底还在（既有用例钉着它）');
   assert.equal(view.total, 3, '⚠️ 这里最容易出的错：filter 区分大小写，拿 URL 那串去筛库存会 0 条');
   assert.ok(gateway.listAllCalls().some((call) => call.tableKey === 'product'), '货品整表回退');
   assert.match(
     gateway.filterOf('liveInventory'),
-    /"YD6693-2\|黑色\|A"/,
+    /"YD6693-2\|黑色\|男"/,
     '库存的 filter 用的是**表里那条货品的编号**（大写），不是 URL 那串小写',
   );
 });
@@ -408,17 +408,17 @@ test('③ 缓存关掉（config.cache.enabled=false）→ 每次都读，行为�
 test('③ 「没找到」不进缓存（新品刚建档就该立刻扫得到）', async () => {
   const gateway = fakeGateway();
   const scan = service(gateway);
-  const unknown = await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_u1' });
+  const unknown = await scan.lookup({ number: 'NOPE|黑色|男', requestId: 'req_u1' });
   // ⭐⭐ 2026-10-12：形状**只加了一个字段**（`fallback`，见 `scanPageService.resolveByItemNoAndColor`）：
   //    "编号缺段、按（货号 + 颜色）也没找到"这件事要带回路由，页面上才给得出**人话 + 再扫一次**
   //    （她真机那次 400 / 原始错误页的口径）。`found` / `number` / `reason` 三个**逐字不变**。
   assert.deepEqual(unknown, {
     found: false,
-    number: 'NOPE|黑色|A',
+    number: 'NOPE|黑色|男',
     reason: 'unknown',
   });
   // 产品表已由 configTableCache 缓存；否定结果仍由 scanPage 的按款缓存/每次 lookup 重新判断。
-  const again = await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_u2' });
+  const again = await scan.lookup({ number: 'NOPE|黑色|男', requestId: 'req_u2' });
   assert.equal(again.found, false);
 });
 
@@ -441,7 +441,7 @@ test('③ 缓存有上限（不无界增长）：塞满以后仍然只留 maxEnt
   const config = { ...SCAN_PAGE, cache: { ...SCAN_PAGE.cache, maxEntries: 2 } };
   const scan = service(gateway, config);
   await scan.lookup({ number: NUMBER, requestId: 'req_m1' });
-  await scan.lookup({ number: 'X7601|蓝|A', requestId: 'req_m2' });
+  await scan.lookup({ number: 'X7601|蓝|男', requestId: 'req_m2' });
   assert.equal(scan.cache.size(), 2);
   await scan.lookup({ number: NUMBER, requestId: 'req_m3' });
   assert.ok(scan.cache.size() <= 2);
@@ -456,7 +456,7 @@ test('④ 只读：整条提速链路（按条件读 + 缓存）里一次写调�
   const scan = service(gateway);
   await scan.lookup({ number: NUMBER, requestId: 'req_r1' });
   await scan.lookup({ number: NUMBER, requestId: 'req_r2' });
-  await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_r3' });
+  await scan.lookup({ number: 'NOPE|黑色|男', requestId: 'req_r3' });
   assert.deepEqual(gateway.writes, []);
 });
 
@@ -502,7 +502,7 @@ test('⑤ listByFilter：GET 带 filter 公式、分页翻页、公式原样透�
       },
     },
   };
-  const filter = 'CurrentValue.[编号]="YD6693-2|黑色|A"';
+  const filter = 'CurrentValue.[编号]="YD6693-2|黑色|男"';
   const records = await gatewayWithClient(client).listByFilter('liveInventory', filter);
 
   assert.deepEqual(records.map((record) => record.record_id), ['rec_1', 'rec_2']);

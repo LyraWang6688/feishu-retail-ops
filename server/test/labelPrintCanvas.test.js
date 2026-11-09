@@ -26,14 +26,14 @@ const { LABEL_PRINT_QUEUE, resolveLabelPrintQueueConfig } = require('../src/conf
 const artifact = require('../src/services/labelPrintArtifactService');
 
 const label = (patch = {}) => ({
-  key: 'XHB8095|棕色|A', number: 'XHB8095|棕色|A', item_no: 'XHB8095', color: '棕色',
-  category: '休闲鞋', category_code: 'A',
+  key: 'XHB8095|棕色|男', number: 'XHB8095|棕色|男', item_no: 'XHB8095', color: '棕色',
+  category: '休闲鞋', category_code: '男',
   sizes: [{ size: 36, qty: 1 }, { size: 37, qty: 2 }, { size: 38, qty: 1 }, { size: 39, qty: 1 }],
   size_lines: [[{ size: 36, qty: 1 }, { size: 37, qty: 2 }, { size: 38, qty: 1 }], [{ size: 39, qty: 1 }]],
   size_overflow: false, total_qty: 5, states: ['门盒'], state_text: '门盒',
   price: 198, price_text: '¥198', brand_text: '邯美皮鞋',
   qr_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21"><path d="M0 0h21v21H0z"/></svg>',
-  footer_text: 'XHB8095|棕色|A', ...patch,
+  footer_text: 'XHB8095|棕色|男', ...patch,
 });
 
 const layout = (patch = {}) => ({

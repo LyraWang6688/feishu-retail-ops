@@ -183,7 +183,7 @@ test('AC-P4 交易类型判据走「行为管理.行为编码」：关联记录�
 test('AC-P6 上新只查货品信息 + 上架日期>=TODAY()；类别缺失不猜', async () => {
   const gateway = makeGateway({
     products: [
-      productListRecord({ id: 'recToday', category: 'B', createdAt: SH('2026-10-28T08:00:00') }),
+      productListRecord({ id: 'recToday', category: '女', createdAt: SH('2026-10-28T08:00:00') }),
       productListRecord({ id: 'recNoCat', category: '', createdAt: SH('2026-10-28T08:30:00') }),
     ],
   });

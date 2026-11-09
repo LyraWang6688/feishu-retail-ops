@@ -26,7 +26,7 @@ const visibleText = (html) => String(html)
   .replace(/<!--[\s\S]*?-->/g, '');
 
 test('AC-FF1 🔴 骨架首屏：样式原文**不许**作为可见文本出现（"先闪一下 CSS" ✗）', () => {
-  const html = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
+  const html = renderScanSkeleton({ number: 'MK31-1|咖色|女' }, SCAN_PAGE);
   assert.ok(html.includes('<style>'), '骨架必须有一个真 `<style>` 块 ✓');
   const visible = visibleText(html);
   for (const raw of [':root', '--font-family', 'color-scheme']) {
@@ -36,7 +36,7 @@ test('AC-FF1 🔴 骨架首屏：样式原文**不许**作为可见文本出现�
 });
 
 test('AC-FF2 骨架首屏也要带上两个覆盖块（首屏那一刻切换条就不许叠 ✗）', () => {
-  const html = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
+  const html = renderScanSkeleton({ number: 'MK31-1|咖色|女' }, SCAN_PAGE);
   const style = (html.match(/<style>([\s\S]*?)<\/style>/) || ['', ''])[1];
   // 2026-10-13 改指向：切换条覆盖从 `normal` 换成 `nowrap`（竖拆那次的修法 ✓）——
   //   本意不变：**首屏那一刻就必须已经带上这个覆盖块** ✓（否则首屏切换条会叠/会竖拆 ✗）
@@ -47,7 +47,7 @@ test('AC-FF2 骨架首屏也要带上两个覆盖块（首屏那一刻切换条�
 
 test('AC-FF3 回归：正常整页同样没有样式泄漏，且照旧渲染', () => {
   const html = renderScanPage({
-    found: true, number: 'MK31-1|咖色|B', item_no: 'MK31-1', color: '咖色', category_name: '休闲鞋',
+    found: true, number: 'MK31-1|咖色|女', item_no: 'MK31-1', color: '咖色', category_name: '休闲鞋',
     price_text: '¥399', total: 1, columns: [{ key: '门盒', label: '门盒' }],
     rows: [{ size_text: '40', cells: [{ count: 1 }], total: 1, missing: false }],
     missing_count: 0, sizes_degraded: false, notes: [], updated_at_text: 't',

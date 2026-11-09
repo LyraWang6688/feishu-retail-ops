@@ -109,8 +109,8 @@ const sourceOf = (relative) => fs.readFileSync(path.join(SOURCE_DIR, relative), 
 //             本次落点/判据 ⇒ `docs/scan-to-print-jsapi-2026-10-14.md` 第 8 行 · AC-SP4。
 test('二维码内容 = hm 的 /r/{记录 ID}（记录 ID 来自接口读到的那条货品信息）', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
-    product: [productRecord('rec_p1', { number: 'YD6693-2|黑色|A', price: 399 })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
+    product: [productRecord('rec_p1', { number: 'YD6693-2|黑色|男', price: 399 })],
   });
   const data = await service.listLabels({});
   assert.equal(data.labels[0].scan_url, 'https://hm.bamamei.online/r/rec_p1');
@@ -152,7 +152,7 @@ test('二维码 URL 的单一真源：labelPrint.js 里不许有第二份 URL �
 
 // ⚠️ 2026-10-14 改写（**成对翻新**）：
 //   改前逐字：`test('复用 tagQrCode 的 buildScanUrl：空编号 / 模板没有 {number} → 当场抛错（不静默出空码）')`
-//             ＋ `assert.equal(buildLabelScanUrl('XHB8095|黑色|A'), 'https://hm.bamamei.online/r/XHB8095%7C%E9%BB%91%E8%89%B2%7CA')`
+//             ＋ `assert.equal(buildLabelScanUrl('XHB8095|黑色|男'), 'https://hm.bamamei.online/r/XHB8095%7C%E9%BB%91%E8%89%B2%7CA')`
 //             ＋ `assert.throws(() => buildLabelScanUrl(''), /编号/)`
 //   改后逐字：入参换成**记录 ID**，期望 `/r/{记录 ID}`；空记录 ID 的报错逐字 = 「记录没有 record_id」。
 //   依据：她 2026-10-12「新二维码一律 `/r/{recordId}`」＋「不需要保持兼容」；
@@ -167,8 +167,8 @@ test('二维码出图参数可配：fields.qr = false → 不出 SVG，但 URL �
   // ⚠️ 2026-10-14：夹具补一条「货品信息」⇒ 这一条的 `scan_url` 是**主路径 `/r/{记录 ID}`**
   //    （改前这里断的是 `includes('/r/')` —— 形状随她 2026-10-12 的定案翻新，判据没放宽）。
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|A|42' })],
-    product: [productRecord('rec_p2', { number: 'XHB8095|黑色|A', price: 198 })],
+    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|男|42' })],
+    product: [productRecord('rec_p2', { number: 'XHB8095|黑色|男', price: 198 })],
   }, { fields: { qr: false } });
   const data = await service.listLabels({});
   assert.equal(data.labels[0].qr_svg, '');
@@ -181,18 +181,18 @@ test('二维码出图参数可配：fields.qr = false → 不出 SVG，但 URL �
 test('尺码按编号聚合：同一编号的多个尺码 / 多双合成**一张**标签，数量 = 这个尺码有几双', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('r1', { stockKey: 'YD6693-2|黑色|A|38' }),
-      record('r2', { stockKey: 'YD6693-2|黑色|A|39' }),
-      record('r3', { stockKey: 'YD6693-2|黑色|A|39' }),
-      record('r4', { stockKey: 'YD6693-2|黑色|A|40' }),
+      record('r1', { stockKey: 'YD6693-2|黑色|男|38' }),
+      record('r2', { stockKey: 'YD6693-2|黑色|男|39' }),
+      record('r3', { stockKey: 'YD6693-2|黑色|男|39' }),
+      record('r4', { stockKey: 'YD6693-2|黑色|男|40' }),
     ],
   });
   const data = await service.listLabels({});
   assert.equal(data.total_matched, 1, '一个编号 = 一张标签（不再是"一双一张"）');
   assert.equal(data.total_pairs, 4, '同一个编号下 4 双库存');
   const label = data.labels[0];
-  assert.equal(label.key, 'YD6693-2|黑色|A', '标签的唯一键 = 编号');
-  assert.equal(label.number, 'YD6693-2|黑色|A');
+  assert.equal(label.key, 'YD6693-2|黑色|男', '标签的唯一键 = 编号');
+  assert.equal(label.number, 'YD6693-2|黑色|男');
   assert.deepEqual(label.sizes, [
     { size: 38, qty: 1 }, { size: 39, qty: 2 }, { size: 40, qty: 1 },
   ], '尺码升序、每个尺码带数量');
@@ -205,7 +205,7 @@ test('尺码按编号聚合：同一编号的多个尺码 / 多双合成**一张
 });
 
 test('同款同码多双**不再印多张**：两条一模一样的库存 ⇒ 一张标签 + 角标 2', async () => {
-  const same = { stockKey: 'XHB8095|黑色|A|42' };
+  const same = { stockKey: 'XHB8095|黑色|男|42' };
   const { service } = serviceFor({ liveInventory: [record('r1', same), record('r2', same)] });
   const data = await service.listLabels({});
   assert.equal(data.total_matched, 1);
@@ -217,14 +217,14 @@ test('同款同码多双**不再印多张**：两条一模一样的库存 ⇒ �
 test('不同类别 / 颜色 = 不同编号 ⇒ 各出各的标签（编号里的三段都参与）', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('r1', { stockKey: 'XHB8095|黑色|A|42' }),
-      record('r2', { stockKey: 'XHB8095|米白|A|42' }),
-      record('r3', { stockKey: 'XHB8095|黑色|B|42' }),
+      record('r1', { stockKey: 'XHB8095|黑色|男|42' }),
+      record('r2', { stockKey: 'XHB8095|米白|男|42' }),
+      record('r3', { stockKey: 'XHB8095|黑色|女|42' }),
     ],
   });
   const data = await service.listLabels({});
   assert.deepEqual(data.labels.map((label) => label.key),
-    ['XHB8095|黑色|A', 'XHB8095|黑色|B', 'XHB8095|米白|A'], '货架顺序：货号 → 颜色 → 类别');
+    ['XHB8095|黑色|男', 'XHB8095|黑色|女', 'XHB8095|米白|男'], '货架顺序：货号 → 颜色 → 类别');
 });
 
 // ── ② 只印有库存的尺码 ───────────────────────────────────────────────────
@@ -232,8 +232,8 @@ test('不同类别 / 颜色 = 不同编号 ⇒ 各出各的标签（编号里的
 test('只印有库存的尺码：没有库存条目的尺码不出现在标签上（0 的不印，缺号扫码看）', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('r1', { stockKey: 'YD6693-2|黑色|A|38' }),
-      record('r2', { stockKey: 'YD6693-2|黑色|A|40' }),
+      record('r1', { stockKey: 'YD6693-2|黑色|男|38' }),
+      record('r2', { stockKey: 'YD6693-2|黑色|男|40' }),
       // 39 / 41 / 42… 一双都没有 ⇒ 标签上就不该有它们。
     ],
   });
@@ -246,10 +246,10 @@ test('只印有库存的尺码：没有库存条目的尺码不出现在标签�
 test('尺码按数值升序：38 < 40 < 100（**不是字符串序** —— 字符串序会把 100 排到 38 前面）', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('r1', { stockKey: 'YD6693-2|黑色|A|100' }),
-      record('r2', { stockKey: 'YD6693-2|黑色|A|38' }),
-      record('r3', { stockKey: 'YD6693-2|黑色|A|40' }),
-      record('r4', { stockKey: 'YD6693-2|黑色|A|40' }),
+      record('r1', { stockKey: 'YD6693-2|黑色|男|100' }),
+      record('r2', { stockKey: 'YD6693-2|黑色|男|38' }),
+      record('r3', { stockKey: 'YD6693-2|黑色|男|40' }),
+      record('r4', { stockKey: 'YD6693-2|黑色|男|40' }),
     ],
   });
   const data = await service.listLabels({});
@@ -262,7 +262,7 @@ test('尺码按数值升序：38 < 40 < 100（**不是字符串序** —— 字�
 });
 
 test('尺码排序可配：`sizes.order` 倒序 / `sizes.compare` 文本序（只改 config，不改代码）', async () => {
-  const liveInventory = [38, 40, 100].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|A|${size}` }));
+  const liveInventory = [38, 40, 100].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|男|${size}` }));
   const { service: desc } = serviceFor({ liveInventory }, { sizes: { order: 'desc' } });
   assert.deepEqual((await desc.listLabels({})).labels[0].sizes.map((item) => item.size), [100, 40, 38]);
 
@@ -282,7 +282,7 @@ test('compareSizes：纯函数，默认数值升序；读不出数字时退化�
 
 test('版式参数随响应下发：品牌**顶部居中** + 右栏行序「货号+颜色 → 单价 → 尺码」都在 layout.body 里', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
   });
   const data = await service.listLabels({});
   assert.equal(data.layout.body.brandRow, 'top', '品牌在整张标签顶部（她定案）');
@@ -296,7 +296,7 @@ test('版式参数随响应下发：品牌**顶部居中** + 右栏行序「货�
 
   // 换一份 config（倒序 + 不保颜色 + 品牌回右栏）⇒ 响应里的 layout 跟着变。
   const { service: custom } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
   }, {
     body: {
       rows: ['itemNoColor', 'price', 'sizes'],
@@ -320,7 +320,7 @@ test('换行：一行 3 个、上限 6 行 ⇒ **7 个尺码全部排上**（不
   //   改前：7 个码只排 3 + 3，剩 1 个记 `size_overflow: true` ⇒ 真机上她的 **44 码就这么没了** ✗
   //         （她原话：「它是有 44 码的。但是我发现我用标签机打出来的时候，我的 44 码就自动没有了」）
   //   改后：**一个都不省略**，7 个码排成 3 + 3 + 1（页面/产物那边还会按可用高度与字宽再自适应）✓
-  const liveInventory = [38, 39, 40, 41, 42, 43, 44].map((size, index) => record(`r${index}`, { stockKey: `YD6693-2|黑色|A|${size}` }));
+  const liveInventory = [38, 39, 40, 41, 42, 43, 44].map((size, index) => record(`r${index}`, { stockKey: `YD6693-2|黑色|男|${size}` }));
   const { service } = serviceFor({ liveInventory });
   const data = await service.listLabels({});
   const label = data.labels[0];
@@ -331,7 +331,7 @@ test('换行：一行 3 个、上限 6 行 ⇒ **7 个尺码全部排上**（不
 });
 
 test('换行：正好两行排满（6 个）⇒ 不省略；一行放得下（3 个）⇒ 只有一行', async () => {
-  const six = [38, 39, 40, 41, 42, 43].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|A|${size}` }));
+  const six = [38, 39, 40, 41, 42, 43].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|男|${size}` }));
   const { service: service6 } = serviceFor({ liveInventory: six });
   const data6 = await service6.listLabels({});
   assert.equal(data6.labels[0].size_lines.length, 2);
@@ -343,7 +343,7 @@ test('换行：正好两行排满（6 个）⇒ 不省略；一行放得下（3 
 });
 
 test('换行：每行几个 / 最多几行都来自 config（改成 2 个一行、只允许一行 ⇒ 2 + 省略）', async () => {
-  const liveInventory = [38, 39, 40, 41].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|A|${size}` }));
+  const liveInventory = [38, 39, 40, 41].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|男|${size}` }));
   const { service } = serviceFor({ liveInventory }, { sizes: { perLine: 2, maxLines: 1 } });
   const data = await service.listLabels({});
   assert.deepEqual(data.labels[0].size_lines.map((line) => line.map((token) => token.size)), [[38, 39]]);
@@ -364,8 +364,8 @@ test('buildSizeLines：纯函数，按 perLine / maxLines 切行并报 overflow'
 
 test('单价：按编号从「货品信息.单价」取，印成 ¥399（整数不补零）', async () => {
   const { gateway, service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
-    product: [productRecord('p1', { number: 'YD6693-2|黑色|A', price: 399 })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
+    product: [productRecord('p1', { number: 'YD6693-2|黑色|男', price: 399 })],
   });
   const data = await service.listLabels({});
   assert.equal(data.labels[0].price, 399);
@@ -377,26 +377,26 @@ test('单价：按编号从「货品信息.单价」取，印成 ¥399（整数�
 test('单价读不到：**照发标签**、不印价格、计数提示（不许静默丢标签）', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('r1', { stockKey: 'YD6693-2|黑色|A|38' }),
-      record('r2', { stockKey: 'XHB8095|米白|B|42' }),
+      record('r1', { stockKey: 'YD6693-2|黑色|男|38' }),
+      record('r2', { stockKey: 'XHB8095|米白|女|42' }),
     ],
-    // 货品信息里**没有** XHB8095|米白|B 这条（价格缺失的第一种原因）
-    product: [productRecord('p1', { number: 'YD6693-2|黑色|A', price: 399 })],
+    // 货品信息里**没有** XHB8095|米白|女 这条（价格缺失的第一种原因）
+    product: [productRecord('p1', { number: 'YD6693-2|黑色|男', price: 399 })],
   });
   const data = await service.listLabels({});
   assert.equal(data.labels.length, 2, '两条标签都要发出来（一条都不许丢）');
-  const missing = data.labels.find((label) => label.key === 'XHB8095|米白|B');
+  const missing = data.labels.find((label) => label.key === 'XHB8095|米白|女');
   assert.equal(missing.price, null);
   assert.equal(missing.price_text, '');
   assert.equal(data.missing_price, 1);
   assert.equal(data.missing_price_no_product, 1, '连「货品信息」里那条记录都没读到');
-  assert.equal(data.labels.find((label) => label.key === 'YD6693-2|黑色|A').price_text, '¥399');
+  assert.equal(data.labels.find((label) => label.key === 'YD6693-2|黑色|男').price_text, '¥399');
 });
 
 test('单价是空的另一条路：货品记录在、但「单价」没填 ⇒ 同样计数（不算 no_product）', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
-    product: [productRecord('p1', { number: 'YD6693-2|黑色|A' })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
+    product: [productRecord('p1', { number: 'YD6693-2|黑色|男' })],
   });
   const data = await service.listLabels({});
   assert.equal(data.missing_price, 1);
@@ -406,7 +406,7 @@ test('单价是空的另一条路：货品记录在、但「单价」没填 ⇒ 
 
 test('关掉价格印字（fields.price = false）⇒ 不印也不报缺（她没要价格时不该刷提示）', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
   }, { fields: { price: false } });
   const data = await service.listLabels({});
   assert.equal(data.labels[0].price_text, '');
@@ -431,8 +431,8 @@ test('价格格式 / 解析：¥399 不补零、角分保留、货币符号可�
 
 test('品牌：默认用 config 里的文字（即使表里有「品牌」列也不动它）', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
-    product: [productRecord('p1', { number: 'YD6693-2|黑色|A', price: 399, brand: '别的牌子' })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
+    product: [productRecord('p1', { number: 'YD6693-2|黑色|男', price: 399, brand: '别的牌子' })],
   });
   const data = await service.listLabels({});
   assert.equal(data.labels[0].brand_text, '邯美皮鞋');
@@ -443,20 +443,20 @@ test('品牌：from = table 时优先取「货品信息」的列，读不到再�
   const patch = { brand: { from: 'table', text: '邯美皮鞋', tableFieldName: '品牌' } };
   const { service } = serviceFor({
     liveInventory: [
-      record('r1', { stockKey: 'YD6693-2|黑色|A|38' }),
-      record('r2', { stockKey: 'XHB8095|米白|B|42' }),
+      record('r1', { stockKey: 'YD6693-2|黑色|男|38' }),
+      record('r2', { stockKey: 'XHB8095|米白|女|42' }),
     ],
-    product: [productRecord('p1', { number: 'YD6693-2|黑色|A', brand: '邯美' })],
+    product: [productRecord('p1', { number: 'YD6693-2|黑色|男', brand: '邯美' })],
   }, patch);
   const data = await service.listLabels({});
-  assert.equal(data.labels.find((label) => label.key === 'YD6693-2|黑色|A').brand_text, '邯美');
-  assert.equal(data.labels.find((label) => label.key === 'XHB8095|米白|B').brand_text, '邯美皮鞋',
+  assert.equal(data.labels.find((label) => label.key === 'YD6693-2|黑色|男').brand_text, '邯美');
+  assert.equal(data.labels.find((label) => label.key === 'XHB8095|米白|女').brand_text, '邯美皮鞋',
     '表里读不到就回落配置里的文字（不留空）');
 });
 
 test('品牌可以整个关掉：fields.brand = false ⇒ 标签上没有品牌文字', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
   }, { fields: { brand: false } });
   const data = await service.listLabels({});
   assert.equal(data.labels[0].brand_text, '');
@@ -467,7 +467,7 @@ test('品牌可以整个关掉：fields.brand = false ⇒ 标签上没有品牌�
 
 test('40×30mm：A4 + 6mm 边距 ⇒ 4 列 × 9 行 = 每页 36 张（自动算，不写死）', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
   });
   const data = await service.listLabels({});
   assert.equal(data.layout.label.widthMm, 40);
@@ -483,7 +483,7 @@ test('40×30mm：A4 + 6mm 边距 ⇒ 4 列 × 9 行 = 每页 36 张（自动算�
 
 test('尺寸 / 字号 / 字段开关全部来自 config：换一份 config，响应里的 layout 跟着变', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|38' })],
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
   }, {
     label: { widthMm: 40, heightMm: 20 },
     // 边距收到 5mm ⇒ 可用 200×287mm（40mm 一行 5 张、20mm 一列 14 行）。
@@ -506,15 +506,15 @@ test('尺寸 / 字号 / 字段开关全部来自 config：换一份 config，响
 
 test('字段映射：库存键 → 货号/颜色/类别/尺码；标签上印的「品类」取「实时库存.品类」公式列', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|A|42', category: '休闲鞋', state: '样品' })],
+    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|男|42', category: '休闲鞋', state: '样品' })],
   });
   const data = await service.listLabels({});
   const label = data.labels[0];
   assert.equal(label.item_no, 'XHB8095');
   assert.equal(label.color, '黑色');
   assert.equal(label.category, '休闲鞋', '标签上"颜色 · 品类"印的是品类（打样图：黑色 · 休闲鞋）');
-  assert.equal(label.category_code, 'A', '编号里那一段是「类别」（A/B）');
-  assert.equal(label.number, 'XHB8095|黑色|A', '编号 = 货号|颜色|类别');
+  assert.equal(label.category_code, '男', '编号里那一段是「类别」（男/女）');
+  assert.equal(label.number, 'XHB8095|黑色|男', '编号 = 货号|颜色|类别');
   assert.equal(label.states[0], '样品');
 });
 
@@ -532,9 +532,9 @@ test('品类读不到时回落库存键第 3 段（不留空）；所属状态�
 test('同一编号下多个状态：数量合并打印，状态清单留给她（排序按 config 的状态顺序）', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('r1', { stockKey: 'A1|黑色|A|42', state: '仓库' }),
-      record('r2', { stockKey: 'A1|黑色|A|42', state: '门盒' }),
-      record('r3', { stockKey: 'A1|黑色|A|42', state: '样品' }),
+      record('r1', { stockKey: 'A1|黑色|男|42', state: '仓库' }),
+      record('r2', { stockKey: 'A1|黑色|男|42', state: '门盒' }),
+      record('r3', { stockKey: 'A1|黑色|男|42', state: '样品' }),
     ],
   });
   const data = await service.listLabels({});
@@ -547,9 +547,9 @@ test('同一编号下多个状态：数量合并打印，状态清单留给她�
 test('读不出来的记录：只有「库存键不是四段」才跳过并计数（不猜、不静默）', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('ok', { stockKey: 'XHB8095|黑色|A|42' }),
+      record('ok', { stockKey: 'XHB8095|黑色|男|42' }),
       record('bad-key', { stockKey: 'XHB8095|黑色' }),
-      record('no-state', { stockKey: 'YD6693|米白|A|38', state: '' }),
+      record('no-state', { stockKey: 'YD6693|米白|男|38', state: '' }),
     ],
   });
   const data = await service.listLabels({});
@@ -562,8 +562,8 @@ test('读不出来的记录：只有「库存键不是四段」才跳过并计�
 test('所属状态为空：照常算数量／尺码，状态清单里不出现（与销售/退货同一口径）', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('r1', { stockKey: 'YD6693|米白|A|38', state: '' }),
-      record('r2', { stockKey: 'YD6693|米白|A|38', state: '门盒' }),
+      record('r1', { stockKey: 'YD6693|米白|男|38', state: '' }),
+      record('r2', { stockKey: 'YD6693|米白|男|38', state: '门盒' }),
     ],
   });
   const data = await service.listLabels({});
@@ -574,8 +574,8 @@ test('所属状态为空：照常算数量／尺码，状态清单里不出现�
 });
 
 test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能打出那一张（2026-11-09 咖色那次）', async () => {
-  const inventory = [record('live1', { stockKey: '66133-15|咖色|B|37', state: '' })];
-  const products = [{ record_id: 'prod1', fields: { [P.number]: '66133-15|咖色|B' } }];
+  const inventory = [record('live1', { stockKey: '66133-15|咖色|女|37', state: '' })];
+  const products = [{ record_id: 'prod1', fields: { [P.number]: '66133-15|咖色|女' } }];
   const gateway = {
     calls: [],
     async listAll(tableKey) {
@@ -592,7 +592,7 @@ test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能
   const service = createLabelPrintService(gateway);
   const data = await service.labelForRecord('prod1');
   assert.equal(data.labels.length, 1, '状态为空不再导致「没有可打印的标签」');
-  assert.equal(data.labels[0].number, '66133-15|咖色|B');
+  assert.equal(data.labels[0].number, '66133-15|咖色|女');
   assert.deepEqual(data.labels[0].sizes, [{ size: 37, qty: 1 }]);
   assert.equal(data.labels[0].state_text, '');
 });
@@ -601,7 +601,7 @@ test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能
 
 test('只读：整条链路只调 gateway.listAll（实时库存 + 货品信息），没有任何写入路径', async () => {
   const { gateway, service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|A|42' })],
+    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|男|42' })],
   });
   await service.listLabels({});
   // 假网关的 create/update/delete 直接抛错 ⇒ 只要被调到这条用例就红。
@@ -616,7 +616,7 @@ test('只读：整条链路只调 gateway.listAll（实时库存 + 货品信息�
 // ── 筛选 / 排序 / 截断 / 不静默 ───────────────────────────────────────────
 
 test('截断不静默：匹配超过上限时回 truncated + total_matched，labels 只给前 N 张', async () => {
-  const liveInventory = Array.from({ length: 5 }, (unused, index) => record(`r${index}`, { stockKey: `A${index}|黑色|A|41` }));
+  const liveInventory = Array.from({ length: 5 }, (unused, index) => record(`r${index}`, { stockKey: `A${index}|黑色|男|41` }));
   const { service } = serviceFor({ liveInventory }, { limits: { maxLabels: 3 } });
   const data = await service.listLabels({});
   assert.equal(data.total_matched, 5);
@@ -629,22 +629,22 @@ test('截断不静默：匹配超过上限时回 truncated + total_matched，lab
 test('排序：货架顺序默认 货号 → 颜色 → 类别', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      record('warehouse', { stockKey: 'B1|黑色|A|41', state: '仓库' }),
-      record('door', { stockKey: 'B1|黑色|A|41', state: '门盒' }),
-      record('other-item', { stockKey: 'A9|黑色|A|45', state: '门盒' }),
-      record('other-color', { stockKey: 'A9|米白|A|45', state: '门盒' }),
+      record('warehouse', { stockKey: 'B1|黑色|男|41', state: '仓库' }),
+      record('door', { stockKey: 'B1|黑色|男|41', state: '门盒' }),
+      record('other-item', { stockKey: 'A9|黑色|男|45', state: '门盒' }),
+      record('other-color', { stockKey: 'A9|米白|男|45', state: '门盒' }),
     ],
   });
   const data = await service.listLabels({});
   assert.deepEqual(data.labels.map((label) => label.key),
-    ['A9|黑色|A', 'A9|米白|A', 'B1|黑色|A']);
+    ['A9|黑色|男', 'A9|米白|男', 'B1|黑色|男']);
 });
 
 // ── 空结果 / 文案 / 工具函数 ──────────────────────────────────────────────
 
 test('空结果不炸：没有匹配时回 200 + 空 labels + total_matched/total_pairs: 0', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|A|42' })],
+    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|男|42' })],
   });
   const data = await service.listLabels({ keyword: '不存在的货号' });
   assert.equal(data.total_matched, 0);
@@ -664,17 +664,17 @@ test('空表也不炸（一张实时库存都没有）', async () => {
 
 test('底部小字默认 = 编号（默认不印，开关打开才印）；占位符写错当场抛错', async () => {
   const { service } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|A|42' })],
+    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|男|42' })],
   });
   const data = await service.listLabels({});
-  assert.equal(data.labels[0].footer_text, 'XHB8095|黑色|A');
+  assert.equal(data.labels[0].footer_text, 'XHB8095|黑色|男');
   assert.equal(data.layout.fields.footer, false, '底部小字默认不印（打样图上没有）');
 
   const { service: withFooter } = serviceFor({
-    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|A|42' })],
+    liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|男|42' })],
   }, { fields: { footer: true }, footer: { template: '{itemNo}|{color}|{category}|{sizes}|{totalQty}|{price}' } });
   const withText = await withFooter.listLabels({});
-  assert.equal(withText.labels[0].footer_text, 'XHB8095|黑色|A|42×1|1|—');
+  assert.equal(withText.labels[0].footer_text, 'XHB8095|黑色|男|42×1|1|—');
 
   assert.equal(buildText('{itemNo}|{color}|{size}', { itemNo: 'A1', color: '', size: 42 }, '—'), 'A1|—|42');
   assert.throws(() => buildText('{nope}', {}, '—'), /占位符不认识/);

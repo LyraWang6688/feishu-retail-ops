@@ -2,7 +2,7 @@
 const { rendererSource } = require('./support/rendererSource');
 
 /**
- * ⭐⭐ task-31（2026-10-15 21:47 · 业务负责人真机）：扫 **有库存**的款（`HL55173-1|黑色|A`）点「退货」⇒
+ * ⭐⭐ task-31（2026-10-15 21:47 · 业务负责人真机）：扫 **有库存**的款（`HL55173-1|黑色|男`）点「退货」⇒
  *   **只有一颗按钮** ✗（连"取不到尺码"那句人话都没有）。
  *
  * ## 只读复现（本文件把结论钉成判据 ✓）
@@ -65,7 +65,7 @@ const COOKIE = (() => {
     .update(payload).digest('base64url')}`;
 })();
 
-const NUMBER = 'HL55173-1|黑色|A';
+const NUMBER = 'HL55173-1|黑色|男';
 const ENCODED = encodeURIComponent(NUMBER);
 
 /** 照她那一款的**真实形状**造一个视图：11 个码、**5 个有库存**、6 个缺码（只读复现里的 numbers ✓）。 */

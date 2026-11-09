@@ -42,7 +42,7 @@ function runUrlBuilder(builderSource, { pathname, search }) {
   return fn(window);
 }
 
-const SKELETON = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
+const SKELETON = renderScanSkeleton({ number: 'MK31-1|咖色|女' }, SCAN_PAGE);
 const BUILDER = extractUrlBuilder(SKELETON);
 
 test('AC1 ⭐⭐ 五种 location.search 下，最终 URL **都含 `data=1`**（这就是死循环的闸 ✗）', () => {

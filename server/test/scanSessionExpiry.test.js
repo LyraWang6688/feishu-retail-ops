@@ -3,7 +3,7 @@
  *
  * 现场（服务器日志，UTC）：
  * ```
- * 17:48:39Z GET  /8953|黑色|A → 200   17:49:15Z POST → **400**（本单已过期）
+ * 17:48:39Z GET  /8953|黑色|男 → 200   17:49:15Z POST → **400**（本单已过期）
  * 17:49:44Z GET  → 200                17:51:18Z POST → **400**
  * 17:51:57Z GET  → 200                17:52:08Z POST → **400**
  * ```
@@ -56,7 +56,7 @@ const { SalesDeliveryService } = require('../src/services/salesDeliveryService')
 const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 
 // ── 夹具（与 scanSaleE2E 同一套形状；只留这条链路要用的表）────────────────────
 const F = (table, key) => {

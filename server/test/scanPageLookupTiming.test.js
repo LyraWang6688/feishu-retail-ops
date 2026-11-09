@@ -55,7 +55,7 @@ const { createScanPageService } = require('../src/services/scanPageService');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const SESSION_SECRET = 'scan_timing_session_secret';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const ENCODED = 'prod_1';
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -63,11 +63,11 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // ── 夹具（与 scanPage.test.js 同一份真实列形状）──────────────────────────────
 const PRODUCT = {
   record_id: 'prod_1',
-  fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: 'A', 品类: { text: '休闲鞋' }, 单价: 399 },
+  fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: '男', 品类: { text: '休闲鞋' }, 单价: 399 },
 };
 const SIZE_RECORDS = [
-  { record_id: 'size_40', fields: { 尺码: 40, 类别: ['A'] } },
-  { record_id: 'size_41', fields: { 尺码: 41, 类别: ['A'] } },
+  { record_id: 'size_40', fields: { 尺码: 40, 类别: ['男'] } },
+  { record_id: 'size_41', fields: { 尺码: 41, 类别: ['男'] } },
 ];
 const inventoryRow = (id, sizeRecordId, state) => ({
   record_id: id,

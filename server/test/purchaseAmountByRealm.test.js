@@ -45,7 +45,7 @@ const { SCAN_WRITE, PURCHASE_AMOUNT, TEXTS } = require('../src/config/scanWrite'
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const SESSION_SECRET = 'scan-amount-realm-test-secret';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 
 const login = () => {
   process.env.LARK_WEB_AUTH_ENABLED = 'true';
@@ -74,7 +74,7 @@ const view = () => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 2,
   columns: [{ key: '门盒', label: '门盒' }],

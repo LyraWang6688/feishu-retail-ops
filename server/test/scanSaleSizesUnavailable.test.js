@@ -3,7 +3,7 @@
 /**
  * ⭐⭐ 2026-11-08（业务负责人真机截图 · M2165|卡其|）：
  *   销售扫码页「一行尺码都没有」时的兜底人话 —— 从旧句「这一款现在没有可选的尺码」
- *   改成 **「这个编号缺类别（A/B），暂时算不出尺码，请核对编号」**。
+ *   改成 **「这个编号缺类别（男/女），暂时算不出尺码，请核对编号」**。
  *
  * 真实成因（截图三项事实都对上）：
  *   · 编号 `M2165|卡其|` 第 3 段（类别 A/B）为空 ⇒ `scanPageService` 的 `number_without_category`
@@ -97,7 +97,7 @@ test('AC-DS1 ⭐⭐ 三堆全空（编号缺类别 + 无库存）⇒ 只给「�
   // 与她截图一致的形状：编号 M2165|卡其| 第 3 段为空 + rows = []（降级 + 实时库存无记录）
   const html = render(viewOf({ number: 'M2165|卡其|', rows: [], degraded: true, categoryCode: '' }));
   const message = SCAN_PAGE.texts.saleSizesUnavailable;
-  assert.equal(message, '这个编号缺类别（A/B），暂时算不出尺码，请核对编号');
+  assert.equal(message, '这个编号缺类别（男/女），暂时算不出尺码，请核对编号');
   assert.ok(html.includes(message), '兜底那句「核对编号」必须在页面上');
   assert.ok(html.includes('data-view="sale-sizes-unavailable"'), '稳定标记（判据/埋点用）');
   assert.equal(html.includes(OLD_TEXT), false, '旧句「这一款现在没有可选的尺码」不许再出现（它会误导成没货）');
@@ -106,7 +106,7 @@ test('AC-DS1 ⭐⭐ 三堆全空（编号缺类别 + 无库存）⇒ 只给「�
 
 test('AC-DS2 ⭐ 正常「没货」（普通码都在、只是没库存）⇒ 仍是「现货空 + 预订组 + 旧句」；新文案不出现', () => {
   const rows = [36, 37, 38, 39, 40].map((size) => rowOf(size, { missing: true }));
-  const html = render(viewOf({ number: 'QPL8093|卡其|B', rows }));
+  const html = render(viewOf({ number: 'QPL8093|卡其|女', rows }));
   assert.match(html, /data-stock-group="prepaid"/, '预订组照常画');
   assert.ok(html.includes(OLD_TEXT), '空的那一组仍用旧句（业务负责人确认过这句没问题）');
   assert.equal(html.includes(SCAN_PAGE.texts.saleSizesUnavailable), false, '正常没货不许出现「核对编号」那句 ✗');
@@ -114,7 +114,7 @@ test('AC-DS2 ⭐ 正常「没货」（普通码都在、只是没库存）⇒ �
 
 test('AC-DS3 ⭐ 只有特殊码缺货 ⇒ 照常画两组 + 特殊码折叠块（不吞折叠块）；不触发新兜底', () => {
   // 女 B 段：34 是特殊码；只给这一行（缺货）⇒ saleSizeGroups 的 folded 非空
-  const html = render(viewOf({ number: 'M2165|卡其|B', rows: [rowOf(34, { missing: true })] }));
+  const html = render(viewOf({ number: 'M2165|卡其|女', rows: [rowOf(34, { missing: true })] }));
   assert.ok(html.includes(SCAN_PAGE.texts.saleSizesUnavailable) === false,
     '折叠块非空 ⇒ 不走「三堆全空」兜底（否则会把特殊码吞掉 ✗）');
   assert.ok(/data-stock-group="in_stock"/.test(html) && /data-stock-group="prepaid"/.test(html), '两组照常画');
@@ -130,7 +130,7 @@ test('AC-DS4 ⭐ 源码哨兵：冗余 write.sizes 回填已删净 · 新文案�
   assert.match(block, /saleSizeUnavailable/, '兜底用新文案键');
 
   const cfg = fs.readFileSync(path.join(SERVER, 'src/config/scanPage.js'), 'utf8');
-  assert.equal((cfg.match(/这个编号缺类别（A\/B），暂时算不出尺码，请核对编号/g) || []).length, 1,
+  assert.equal((cfg.match(/这个编号缺类别（男\/女），暂时算不出尺码，请核对编号/g) || []).length, 1,
     '新文案**唯一真源**在 config（只出现一次）');
   const realm = fs.readFileSync(path.join(SERVER, 'src/views/scanPageRealm.js'), 'utf8');
   assert.match(realm, /saleSizeUnavailable:\s*SCAN_PAGE\.texts\.saleSizesUnavailable/,
