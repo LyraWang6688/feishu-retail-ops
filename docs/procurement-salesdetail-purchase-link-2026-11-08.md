@@ -93,3 +93,31 @@
 
 判据：`test/procurementSalesLinkBackfill.test.js` 新增 **AC-SL7 / AC-SL8**；
 `test/procurementPageSubmit.test.js` 新增 source 透传用例；AC-SL1~SL6 逐字不变。
+
+
+## 8. 2026-11-10：回填失败/部分失败 → 统一通知链路
+
+业务负责人（2026-11-10）：「可以通知，你用统一的通知配置化链路」。
+
+**触发条件（只认真异常）**
+- 回填抛错（`ok:false`）；
+- 写关联失败（`failed>0`，部分失败也算）；
+- 有候选但销售记录数量不足（`unmatched>0`）；
+- ⚠️ 上新（`source=new`）与「补货但没有可关联销售记录」仍然**静默**，不发通知（§7 口径不变）。
+
+**链路（唯一入口，不直接发 IM）**
+- 事件注册：`config/notifications.js` → `procurement_sales_link_backfill_failed`（group，卡片，标题「【采购明细回填失败】」）；
+- 发送：`notificationService.send(...)`（目标/开关由 `resolveNotification` 统一解析；可用 `NOTIFY_PROCUREMENT_SALES_LINK_BACKFILL_FAILED_ENABLED` 单独关）；
+- 行文案：`config/procurementPage.js` 的 `notifications.salesLinkBackfillFailed`（任务/批次号/失败条数/数量不足条数/示例原因/提示），service 不写中文；
+- 内容包含：批次号、失败条数、数量不足条数、示例原因、提示「采购单已写成功；关联失败的销售明细下次补货可能重复出现，请人工核对」。
+
+**边界**
+- 同一 task 只发一次（submit service 进程内按 taskId 去重；回填只在采购写库成功的那一次跑）；
+- 通知发送失败**不影响采购事实**（只记 `sales_link_backfill_failed` warn，runs 仍 ok）；
+- 本 PR **只加通知，不加重试**（回填本身仍不自动重试；下次补货这些行仍可能出现）；
+- 页面不显示失败提示（统一异步口径）。
+
+**判据**
+- `test/procurementPageSubmit.test.js`：真异常发一次（含批次/失败/数量不足行）、静默场景不发、通知失败后台仍 ok；
+- `test/procurementSalesLinkBackfill.test.js`：返回值带 `failures` / `unmatched` / `unmatched_details`；
+- `test/notifications.test.js`：新事件目标 = group。
