@@ -129,6 +129,7 @@ const createProcurementSalesLinkBackfill = ({
       const used = new Set();
       let linked = 0;
       const failed = [];
+      const unmatched = [];
       // ⭐ 2026-11-09（业务负责人真机口径）：
       //   · 上新行**直接不参与回填**（新品还没卖过，找不到销售记录是正常业务）⇒ 不 warn；
       //   · 补货行：**一条可关联销售记录都没有** ⇒ 静默跳过（最多在汇总 info 里计数）；
@@ -168,6 +169,7 @@ const createProcurementSalesLinkBackfill = ({
         }
         if (remaining > 0) {
           // 有候选却没凑够（数量对不上）⇒ 真异常，要能看见
+          unmatched.push({ purchase_detail_id: detailId, product, size, quantity, remaining });
           warn(config.events.salesLinkBackfillFailed, {
             task_id: taskId, batch_no: batchNo, purchase_detail_id: detailId,
             product, size, quantity, remaining, reason: 'not_enough_unlinked_sales_rows',
@@ -177,6 +179,10 @@ const createProcurementSalesLinkBackfill = ({
       const summary = {
         ok: true, batch_no: batchNo, linked, failed: failed.length, details: planItems.length,
         skipped_new_products: skippedNewProducts, skipped_no_sales_rows: skippedNoSalesRows,
+        // ⭐ 2026-11-10：给「回填失败通知」用的明细（只取前 10 条，防日志/通知过长）
+        failures: failed.slice(0, 10),
+        unmatched: unmatched.length,
+        unmatched_details: unmatched.slice(0, 10),
       };
       if (failed.length) {
         warn(config.events.salesLinkBackfillFailed, { task_id: taskId, ...summary, failures: failed.slice(0, 10) });
@@ -187,7 +193,7 @@ const createProcurementSalesLinkBackfill = ({
     } catch (error) {
       // 🔴 回填失败不影响采购事实（主表/明细已写成功）⇒ 只记日志
       warn(config.events.salesLinkBackfillFailed, { task_id: taskId, error: String(error?.message || error) });
-      return { ok: false, linked: 0, error: String(error?.message || error) };
+      return { ok: false, linked: 0, failed: 0, unmatched: 0, error: String(error?.message || error) };
     }
   };
 

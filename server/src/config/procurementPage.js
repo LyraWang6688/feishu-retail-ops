@@ -102,6 +102,20 @@ const buildProcurementPageConfig = (env = process.env) => {
       sizeAsc: true,
       newProductCreatedAtAsc: true,
     }),
+    // ⭐ 2026-11-10（业务负责人）：「销售明细.采购明细」回填失败/部分失败要发运营群
+    //   （统一通知链路：`config/notifications.js` 注册事件 + `notificationService` 发送；
+    //   本块只放**行文案模板**，service 不写中文）。
+    notifications: Object.freeze({
+      salesLinkBackfillFailed: Object.freeze({
+        task: '任务：{value}',
+        batchNo: '批次号：{value}',
+        failed: '写关联失败：{value} 条',
+        unmatched: '销售记录数量不足：{value} 条',
+        example: '示例原因：{value}',
+        unmatchedExample: '数量不足示例：{product} {size} 码还差 {remaining} 双',
+        hint: '采购单已写成功；关联失败的销售明细下次补货可能重复出现，请人工核对。',
+      }),
+    }),
     // 日志事件名（只报事实：数量 / 耗时 / 结果，不报 PII）
     events: Object.freeze({
       replenishLoaded: readString(env, 'PROCUREMENT_EVENT_REPLENISH', 'procurement.page.replenish_loaded'),

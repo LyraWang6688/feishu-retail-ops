@@ -126,6 +126,47 @@ test('AC-P13/P14 成功：种子草稿 + 只排一次后台；后台跑 = 一次
   assert.equal(env.draftOf().status, 'submitted', '提交成功后草稿状态 = submitted（下一单换键）');
 });
 
+test('2026-11-10 回填失败通知：failed/unmatched 才发；上新/无候选不发', async () => {
+  const sent = [];
+  const notificationService = { send: async (event, data) => { sent.push({ event, data }); return { ok: true }; } };
+  const env = makeEnv({ notificationService, backfillResult: {
+    ok: true, batch_no: 'CGD-20261110-0001', linked: 2, failed: 1, unmatched: 1,
+    failures: [{ sales_detail_id: 'recSaleX', error: 'boom' }],
+    unmatched_details: [{ purchase_detail_id: 'recDetailY', product: '86822', size: 41, remaining: 1 }],
+  } });
+  await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA']) });
+  await env.scheduled[0].run();
+  assert.equal(sent.length, 1, '真异常发一次');
+  assert.equal(sent[0].event, 'procurement_sales_link_backfill_failed');
+  const lines = sent[0].data.lines.join('\n');
+  assert.match(lines, /CGD-20261110-0001/);
+  assert.match(lines, /写关联失败：1 条/);
+  assert.match(lines, /销售记录数量不足：1 条/);
+  assert.match(lines, /示例原因：boom/);
+  assert.match(lines, /数量不足示例：86822 41 码还差 1 双/);
+});
+
+test('2026-11-10 通知发送失败 ⇒ 不影响采购事实（后台仍 ok）', async () => {
+  const notificationService = { send: async () => { throw new Error('notify down'); } };
+  const env = makeEnv({ notificationService, backfillResult: { ok: true, failed: 2 } });
+  await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA']) });
+  const backgroundResult = await env.scheduled[0].run();
+  assert.equal(backgroundResult.ok, true, '通知失败不许把采购写成失败');
+  assert.equal(env.purchaseCalls.length, 1, '采购仍只写一次');
+});
+
+test('2026-11-10 回填静默场景（上新/无候选）⇒ 不发通知', async () => {
+  const sent = [];
+  const notificationService = { send: async (...args) => { sent.push(args); return { ok: true }; } };
+  const env = makeEnv({ notificationService, backfillResult: {
+    ok: true, batch_no: 'CGD-20261110-0001', linked: 0, failed: 0, unmatched: 0,
+    skipped_new_products: 7, skipped_no_sales_rows: 0,
+  } });
+  await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA']) });
+  await env.scheduled[0].run();
+  assert.equal(sent.length, 0, '静默场景不许发通知');
+});
+
 test('2026-11-09 页面来源透传：source=new ⇒ 草稿 → 引擎载荷（回填据此跳过上新）', async () => {
   const env = makeEnv();
   const items = [

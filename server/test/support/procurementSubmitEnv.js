@@ -30,7 +30,7 @@ const colorRecord = (id = 'recColorBlack', name = '黑色') => ({
 });
 
 // 内存版 sessions store（与 JsonTaskStore 同形状：get / update / ensure）
-const makeEnv = ({ products, behavior, purchase, writers: customWriters } = {}) => {
+const makeEnv = ({ products, behavior, purchase, writers: customWriters, notificationService, backfillResult } = {}) => {
   const data = new Map();
   const store = {
     async get(id) { return data.get(id) || null; },
@@ -67,7 +67,7 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters } = {}) 
   const scheduled = [];
   const backfillCalls = [];
   // 回填替身（真正的回填逻辑在 `procurementSalesLinkBackfill` 自己的用例里钉）
-  const salesLinkBackfill = { run: async (args) => { backfillCalls.push(args); return { ok: true, linked: 0 }; } };
+  const salesLinkBackfill = { run: async (args) => { backfillCalls.push(args); return backfillResult || { ok: true, linked: 0 }; } };
   const background = {
     scheduleCustomRest: (args) => { scheduled.push(args); return Promise.resolve({ ok: true }); },
   };
@@ -85,6 +85,7 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters } = {}) 
     writers,
     background,
     salesLinkBackfill,
+    notificationService,
     config,
     now: () => NOW,
     logger: {},

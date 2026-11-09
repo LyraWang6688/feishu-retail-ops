@@ -204,6 +204,8 @@ test('AC-SL3 未关联行不够 ⇒ 链已有的 + warn（不抛）', async () =
   const result = await env.backfill.run({ taskId: 'task_link_2' });
   assert.equal(result.ok, true);
   assert.equal(result.linked, 1);
+  assert.equal(result.unmatched, 1, '数量不足要计数（通知用）');
+  assert.equal(result.unmatched_details[0].purchase_detail_id, 'recDetailB');
   assert.ok(env.logs.warn.some((one) => one.event === config.events.salesLinkBackfillFailed
     && one.payload.reason === 'not_enough_unlinked_sales_rows'));
 });
@@ -224,6 +226,7 @@ test('AC-SL4 某条 update 失败 ⇒ 其余继续 + failed 计数（不抛）',
   assert.deepEqual(env.linkedIdsOf('r2'), ['recDetailA'], '其余照常继续');
   assert.equal(env.linkedIdsOf('r5').length, 1, '另一个供应商的行也链上了');
   assert.ok(result.failed >= 1);
+  assert.equal(result.failures[0].sales_detail_id, 'r1', '失败明细要带回给通知用');
 });
 
 test('AC-SL5 没批次号 ⇒ no-op；gateway 抛错 ⇒ 返回 ok:false 且不抛', async () => {

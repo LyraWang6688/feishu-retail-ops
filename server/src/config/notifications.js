@@ -58,6 +58,12 @@ const NOTIFICATION_EVENTS = Object.freeze({
   voucher_settlement: Object.freeze({
     target: 'group', enabled: true, format: 'card', card: 'voucher_settlement', title: '【团购券结算】',
   }),
+  // ⭐ 2026-11-10（业务负责人）：采购单写成功后的「销售明细.采购明细」回填失败/部分失败
+  //   （写关联失败、销售记录数量不足）→ 发运营群；上新/无可关联记录不会触发（见回填口径）。
+  procurement_sales_link_backfill_failed: Object.freeze({
+    target: 'group', enabled: true, format: 'card', card: 'procurement_sales_link_backfill_failed',
+    title: '【采购明细回填失败】',
+  }),
   // ⭐ 2026-11-09（业务负责人定）：「批量打印」表单自动打印时**失败 / 跳过**的汇总通知
   //   （同一条表单记录汇总成**一条**，发运营群；文本格式，不建卡片）。
   label_print_failed: Object.freeze({

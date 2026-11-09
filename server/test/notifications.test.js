@@ -15,6 +15,7 @@ test('通知目标只有 private/group；事件默认目标正确', () => {
   assert.equal(NOTIFICATION_EVENTS.lark_event_heartbeat.target, 'private');
   assert.equal(NOTIFICATION_EVENTS.purchase_request_created.target, 'group');
   assert.equal(NOTIFICATION_EVENTS.voucher_settlement.target, 'group');
+  assert.equal(NOTIFICATION_EVENTS.procurement_sales_link_backfill_failed.target, 'group');
 });
 
 test('resolveNotification：主 env / fallback / 缺失 / 关掉 / 未知事件', () => {
