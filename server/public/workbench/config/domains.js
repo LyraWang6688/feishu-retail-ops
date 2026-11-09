@@ -239,7 +239,7 @@ export const DOMAIN_TABS = [
       },
       {
         id: 'product-notifications',
-        label: '信息通知',
+        label: '消息通知',
         // 2026-11-09 业务负责人：放在「配置」子 tab 最右边，先占位；
         // 后续做统一通知（群聊 / 私聊）的归集页。
         kind: 'placeholder',
