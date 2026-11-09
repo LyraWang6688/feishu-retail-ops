@@ -23,6 +23,16 @@ const textOf = (value) => {
 };
 
 /** 金额字符串 → 分（'89.9' → 8990）。 */
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+/** epoch 毫秒/秒 → 上海自然日 `YYYY-MM-DD`（取不到返回 ''）。 */
+const dayOf = (value, unit = 'ms') => {
+  const raw = typeof value === 'number' ? value : Number(textOf(value));
+  if (!Number.isFinite(raw) || raw <= 0) return '';
+  const ms = unit === 's' ? raw * 1000 : raw;
+  return new Date(ms + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+};
+
 const toCents = (value) => {
   const cleaned = textOf(value).replace(/[^\d.-]/g, '');
   if (!cleaned.trim()) return null;
@@ -72,6 +82,8 @@ const createVoucherCatalogSync = ({
         faceCents: sku ? Number(sku.origin_amount) : null,
         commissionRate: Number(detail?.commission_info?.platform_take_rate ?? NaN),
         commissionDetail: detail?.commission_info?.commission_detail_list || [],
+        listedDay: dayOf(product.sold_start_time, 's'),
+        delistedDay: dayOf(product.sold_end_time, 's'),
       });
     }
 
@@ -97,6 +109,15 @@ const createVoucherCatalogSync = ({
       if (entry.faceCents !== null && toCents(row.fields?.[fields.faceValue]) !== entry.faceCents) {
         diffs.faceCents = { from: toCents(row.fields?.[fields.faceValue]), to: entry.faceCents };
       }
+      // ⚠️ 只报差异：时间列**代码不写**（AGENTS：只有 receivedAt 允许写）。
+      const listedNow = dayOf(row.fields?.[fields.listedAt]);
+      if (fields.listedAt && entry.listedDay && listedNow !== entry.listedDay) {
+        diffs.listedDay = { from: listedNow, to: entry.listedDay, readOnly: true };
+      }
+      const delistedNow = dayOf(row.fields?.[fields.delistedAt]);
+      if (fields.delistedAt && entry.delistedDay && delistedNow !== entry.delistedDay) {
+        diffs.delistedDay = { from: delistedNow, to: entry.delistedDay, readOnly: true };
+      }
 
       matched.push({
         recordId: row.record_id,
@@ -106,6 +127,8 @@ const createVoucherCatalogSync = ({
         faceCents: entry.faceCents,
         onlineStatus: entry.onlineStatus,
         commissionRate: entry.commissionRate,
+        listedDay: entry.listedDay,
+        delistedDay: entry.delistedDay,
         changed: Object.keys(diffs).length > 0,
         diffs,
       });

@@ -123,3 +123,25 @@ test('AC-VC7 ⭐ 金额换算', () => {
   assert.equal(toCents('100'), 10000);
   assert.equal(toCents(''), null);
 });
+
+test('AC-VC8 ⭐ 上架/下架日期只报差异（readOnly），名称空也算差异', async () => {
+  const F = { ...FIELDS, listedAt: '上架日期', delistedAt: '下架日期' };
+  const gateway = {
+    table: () => ({ fields: F }),
+    listAll: async () => [{
+      record_id: 'rec_1',
+      fields: { '券ID': 'p1', '券名称': '', '售价': '49.9', '面值': '100', '上架日期': Date.UTC(2026, 7, 23, 4), '下架日期': null },
+    }],
+  };
+  const laike = {
+    fetchProductList: async () => ok({ products: [{ product: { product_id: 'p1', product_name: '100元代金券', sold_start_time: Date.UTC(2026, 7, 24) / 1000, sold_end_time: Date.UTC(2026, 9, 26) / 1000 }, online_status: 1 }] }),
+    fetchSkus: async () => ok({ skus: [{ actual_amount: 4990, origin_amount: 10000 }] }),
+    fetchProduct: async () => ok({ product_onlines: [{ commission_info: { platform_take_rate: 500 } }] }),
+  };
+  const out = await createVoucherCatalogSync({ gateway, laike, config: { accountId: 'a', texts: {} }, logger: { logInfo: () => {}, logWarn: () => {} } }).run();
+  const item = out.rows[0];
+  assert.equal(item.changed, true);
+  assert.equal(item.diffs.name.to, '100元代金券');
+  assert.deepEqual(item.diffs.listedDay, { from: '2026-08-23', to: '2026-08-24', readOnly: true });
+  assert.deepEqual(item.diffs.delistedDay, { from: '', to: '2026-10-26', readOnly: true });
+});
