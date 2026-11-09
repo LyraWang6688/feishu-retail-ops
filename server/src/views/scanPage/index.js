@@ -42,7 +42,7 @@ const renderSalesHome = ({ config = SCAN_PAGE, orderNo = '', basePath = '' } = {
       + `${returnPath ? `window.location.replace(${JSON.stringify(returnPath)});` : ''}},${toastMs});</script>`
     : '';
   return renderDocument({
-    title: texts.salesHomeTitle || texts.pageTitle,
+    title: texts.pageTitle,
     config,
     content: `<main class="page" data-view="sales-home">
 ${toast}
@@ -195,7 +195,7 @@ ${paymentFieldsHtml}
     ? ` <span class="payment-step__total" data-view="payment-step-total">${escapeHtml(fillText(step.totalLabel || '', { amount: amountText }))}</span>`
     : '';
   return renderDocument({
-    title: step.heading,
+    title: config.texts.pageTitle,
     config,
     // ⭐ `data-view="payment-step"` = 第 2 步页的**稳定标记**（测试顺着它决定"要不要再走一步"✓）
     content: `<section class="card state-msg" data-view="payment-step">
@@ -330,7 +330,7 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
-<title>${escapeHtml(itemNo || number || '')}</title>
+<title>${escapeHtml(config.texts.pageTitle)}</title>
 <!-- 2026-10-13: STYLE must be wrapped - emitted bare it is foster-parented into
      the body and painted as visible text (she saw the raw style rules first). -->
 <style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}</style>
@@ -349,14 +349,14 @@ ${script}
 };
 
 const renderMinimalPage = (input = {}) => {
-  const title = escapeHtml(input?.title || SCAN_PAGE.texts.errorTitle) || '打不开';
+  const title = escapeHtml(SCAN_PAGE.texts.pageTitle);
   const body = escapeHtml(input?.body || SCAN_PAGE.texts.errorBody) || '请稍后再试。';
   const requestId = input?.requestId ? `<p>请求号 ${escapeHtml(input.requestId)}</p>` : '';
   return '<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'
     + `<title>${title}</title></head>`
     + `<body style="margin:0;padding:24px;font:16px/1.6 -apple-system,BlinkMacSystemFont,\"PingFang SC\",sans-serif;color:#1f2329;background:#fff">`
-    + `<h1 style="font-size:20px">${title}</h1><p>${body}</p>${requestId}</body></html>\n`;
+    + `<h1 style="font-size:20px">${escapeHtml(input?.title || SCAN_PAGE.texts.errorTitle)}</h1><p>${body}</p>${requestId}</body></html>\n`;
 };
 
 

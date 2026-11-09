@@ -79,3 +79,11 @@ test('AC5 主页面仍是 batch① 的样子：那串标题一个都没有', () 
   assert.ok(!html.includes(BRAND));
   assert.ok(html.includes('<title>邯美工作台</title>'));
 });
+
+test('AC6 所有工作台页面浏览器标题统一为邯美工作台（跳转页除外）', () => {
+  const files = ['index.html', 'after-sales.html', 'inventory-adjustment.html', 'label-print.html', 'procurement.html', 'purchase-acceptance.html', 'sales-delivery.html'];
+  for (const file of files) {
+    const html = read(file);
+    assert.ok(html.includes('<title>邯美工作台</title>'), `${file} 的 <title> 应为邯美工作台`);
+  }
+});
