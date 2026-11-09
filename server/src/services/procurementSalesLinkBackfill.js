@@ -129,19 +129,34 @@ const createProcurementSalesLinkBackfill = ({
       const used = new Set();
       let linked = 0;
       const failed = [];
+      // ⭐ 2026-11-09（业务负责人真机口径）：
+      //   · 上新行**直接不参与回填**（新品还没卖过，找不到销售记录是正常业务）⇒ 不 warn；
+      //   · 补货行：**一条可关联销售记录都没有** ⇒ 静默跳过（最多在汇总 info 里计数）；
+      //   · 补货行：**有候选但数量不够/写入失败** ⇒ 才 warn（真异常）。
+      let skippedNewProducts = 0;
+      let skippedNoSalesRows = 0;
       for (let index = 0; index < planItems.length && index < maxRows; index += 1) {
-        const detailId = String(requestIds[index] || '');
         const item = planItems[index] || {};
+        const detailId = String(requestIds[index] || '');
+        if (!detailId) continue;
+        const source = String(item.source || '').trim();
+        if (source === 'new') { skippedNewProducts += 1; continue; }
         const product = numberById.get(String(item.product_record_id || '')) || '';
         const size = String(numberOf(item.size) ?? '');
         const quantity = Math.max(numberOf(item.quantity) || 0, 0);
-        if (!detailId || !product || !size || quantity <= 0) continue;
+        if (!product || !size || quantity <= 0) continue;
         let remaining = quantity - (linkedByDetail.get(detailId) || 0);
         if (remaining <= 0) continue; // 这一行已经关联满（重放/重试）
-        for (const candidate of pool) {
+        const candidates = pool.filter((candidate) => (
+          !used.has(candidate.id) && candidate.product === product && candidate.size === size
+        ));
+        if (!candidates.length) {
+          // 补货行也没有可关联的销售记录（该尺码没卖过 / 已经全部报过）⇒ 正常，不 warn
+          skippedNoSalesRows += 1;
+          continue;
+        }
+        for (const candidate of candidates) {
           if (remaining <= 0) break;
-          if (used.has(candidate.id)) continue;
-          if (candidate.product !== product || candidate.size !== size) continue;
           try {
             await gateway.update('salesDetail', candidate.id, { purchaseDetail: relation(detailId) });
             used.add(candidate.id);
@@ -152,13 +167,17 @@ const createProcurementSalesLinkBackfill = ({
           }
         }
         if (remaining > 0) {
+          // 有候选却没凑够（数量对不上）⇒ 真异常，要能看见
           warn(config.events.salesLinkBackfillFailed, {
             task_id: taskId, batch_no: batchNo, purchase_detail_id: detailId,
             product, size, quantity, remaining, reason: 'not_enough_unlinked_sales_rows',
           });
         }
       }
-      const summary = { ok: true, batch_no: batchNo, linked, failed: failed.length, details: planItems.length };
+      const summary = {
+        ok: true, batch_no: batchNo, linked, failed: failed.length, details: planItems.length,
+        skipped_new_products: skippedNewProducts, skipped_no_sales_rows: skippedNoSalesRows,
+      };
       if (failed.length) {
         warn(config.events.salesLinkBackfillFailed, { task_id: taskId, ...summary, failures: failed.slice(0, 10) });
       } else {

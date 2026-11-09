@@ -104,8 +104,11 @@ const createProcurementPageSubmitService = (options = {}) => {
       const productRecordId = wanted[index];
       const product = byId.get(productRecordId);
       if (!product) return { ok: false, missing: productRecordId };
+      const rawSource = String(items[index]?.source || '').trim();
       built.push({
         product_record_id: productRecordId,
+        // ⭐ 2026-11-09：页面来源（new / replenish）；旧载荷没带 ⇒ ''（回填按补货口径处理，见回填服务）
+        source: rawSource === 'new' || rawSource === 'replenish' ? rawSource : '',
         number: product.number,
         item_no: product.itemNo,
         color: product.color,

@@ -126,6 +126,22 @@ test('AC-P13/P14 成功：种子草稿 + 只排一次后台；后台跑 = 一次
   assert.equal(env.draftOf().status, 'submitted', '提交成功后草稿状态 = submitted（下一单换键）');
 });
 
+test('2026-11-09 页面来源透传：source=new ⇒ 草稿 → 引擎载荷（回填据此跳过上新）', async () => {
+  const env = makeEnv();
+  const items = [
+    { productRecordId: 'recA', source: 'new', entries: [{ size: 39, quantity: 1 }] },
+    { productRecordId: 'recA', source: 'not-a-source', entries: [{ size: 40, quantity: 1 }] },
+  ];
+  const result = await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items });
+  assert.equal(result.ok, true);
+  assert.equal(env.draftOf().items[0].source, 'new', '页面来源进草稿');
+  assert.equal(env.draftOf().items[1].source, '', '非法来源不许透传');
+  await env.scheduled[0].run();
+  const payload = env.purchaseCalls[0].payload;
+  assert.equal(payload.items[0].source, 'new', '来源要进采购载荷（回填从 plan.items 读）');
+  assert.equal(payload.items[1].source, undefined, '空来源不写字段');
+});
+
 test('AC-P15 同一 submitKey 重复提交 ⇒ reused，不再排后台、不再写一次', async () => {
   const env = makeEnv();
   await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA']) });

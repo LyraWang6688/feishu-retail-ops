@@ -708,6 +708,12 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   }
 
   return {
+    /** 回到三张入口卡（切走再切回订单列表时调用；采购模式无入口卡，不处理）。 */
+    resetToCards() {
+      if (mode === 'purchase') return;
+      state.activeSection = null;
+      if (state.container) renderList();
+    },
     mount(container) {
       state.container = container;
       renderShell();
