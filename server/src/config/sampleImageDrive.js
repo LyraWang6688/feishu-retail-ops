@@ -139,6 +139,24 @@ const DRIVE_OPERATIONS = Object.freeze({
   upload: '上传样例图到云盘',
   list: '列出云盘文件夹',
   delete: '删除云盘同名旧文件',
+  transfer: '转移云盘文件所有者',
+});
+
+/**
+ * ⭐⭐ 2026-11-10 业务负责人：「**我们把这些图片的所有者都硬编码为赵瑞玲吧**」
+ *
+ * 飞书规则：文件所有者 = 上传身份。但飞书有「**转移云盘文档所有者**」接口
+ *   （`drive.permission.member.transferOwner`，`type=file`）——
+ *   ⇒ 实现方式：先用应用身份上传，再**逐个文件把所有者转移给固定的人**。
+ *
+ * 配置：`SAMPLE_IMAGE_DRIVE_OWNER_OPEN_ID`（推荐，生产本应用的 open_id）
+ *       或 `SAMPLE_IMAGE_DRIVE_OWNER_EMAIL`（跨应用也稳，按邮箱转）。
+ *   ⚠️ 两个都空 ⇒ 不转移（所有者 = 应用「来财」），并**在启动日志里如实提示**。
+ *   ⚠️ 赵瑞玲测试账号的 open_id 是**另一个（测试）应用**的 ⇒ 生产要用本应用口径的 open_id 或邮箱。
+ */
+const OWNER = Object.freeze({
+  openId: readString(process.env, 'SAMPLE_IMAGE_DRIVE_OWNER_OPEN_ID', ''),
+  email: readString(process.env, 'SAMPLE_IMAGE_DRIVE_OWNER_EMAIL', ''),
 });
 
 const SAMPLE_IMAGE_DRIVE = Object.freeze({
@@ -149,6 +167,7 @@ const SAMPLE_IMAGE_DRIVE = Object.freeze({
   maxImages: MAX_IMAGES,
   fields: FIELDS,
   operations: DRIVE_OPERATIONS,
+  owner: OWNER,
   backfill: BACKFILL,
   numberWait: NUMBER_WAIT,
 });
