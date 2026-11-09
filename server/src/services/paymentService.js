@@ -169,7 +169,15 @@ class PaymentService {
     if (!Array.isArray(payments)) throw new Error('收款记录必须是数组');
     const expected = payments.map((payment) => {
       if (!payment || typeof payment !== 'object') throw new Error('收款记录格式无效');
-      return { ...payment, amount: amount(payment.amount), status: normalizedStatus(payment.status) };
+      const explicitStatus = payment.status;
+      return {
+        ...payment,
+        amount: amount(payment.amount),
+        // 保留“调用方是否显式给了状态”：券行未显式给状态时要默认【待平台结算】，
+        // 不能在上面的 normalizedStatus 里提前落成「已收款」（会把未到账的券钱记成已收）。
+        status: explicitStatus == null || explicitStatus === '' ? '' : normalizedStatus(explicitStatus),
+        __explicitStatus: explicitStatus != null && explicitStatus !== '',
+      };
     });
     if ((options.knownRecordIds || []).slice(expected.length).some(Boolean)) {
       throw new Error('已保存的收款数量超过当前草稿，已停止重试');
@@ -192,9 +200,14 @@ class PaymentService {
     const orderNo = await orderNoOf(this.gateway, salesEntryRecordId);
     const rows = [];
     for (const [index, payment] of expected.entries()) {
-      const status = payment.status;
-      const method = status === '未收款' ? null : await this.references.resolvePaymentMethod(payment.method);
-      if (status !== '未收款' && !method) throw new Error('收款缺少支付方式');
+      const unpaid = payment.__explicitStatus && payment.status === '未收款';
+      const method = unpaid ? null : await this.references.resolvePaymentMethod(payment.method);
+      if (!unpaid && !method) throw new Error('收款缺少支付方式');
+      // 未显式给状态 ⇒ 普通收款「已收款」；券（团购券管理关联非空）⇒「待平台结算」。
+      const status = payment.__explicitStatus
+        ? payment.status
+        : (method ? voucherPendingStatusOf(method.record, '') : normalizedStatus(''));
+      payment.status = status;
       const paid = amount(payment.amount);
       // 批量建单时要用（这里已经解析过；不重复解析、不额外读表）
       payment.__methodRecordId = method?.recordId || '';
