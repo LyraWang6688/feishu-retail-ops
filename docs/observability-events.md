@@ -511,7 +511,7 @@
 | `voucher.settlement.done` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.item_failed` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.item_settled` | 1 | src/services/voucherSettlementService.js |
-| `voucher.settlement.methods_unreadable` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.methods_unreadable` | 1 | src/services/voucherSettlementRules.js |
 | `voucher.settlement.mismatch` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.notified` | 1 | src/services/voucherSettlementService.js |
 | `voucher.settlement.notify_failed` | 1 | src/services/voucherSettlementService.js |
@@ -520,7 +520,7 @@
 | `voucher.settlement.started` | 1 | src/app.js |
 | `voucher.settlement.tick` | 1 | src/app.js |
 | `voucher.settlement.tick_failed` | 1 | src/app.js |
-| `voucher.settlement.vouchers_unreadable` | 1 | src/services/voucherSettlementService.js |
+| `voucher.settlement.vouchers_unreadable` | 1 | src/services/voucherSettlementRules.js |
 
 ## workbench
 

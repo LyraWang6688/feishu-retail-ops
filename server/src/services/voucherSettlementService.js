@@ -20,10 +20,14 @@
 
 const { logInfo, logWarn } = require('../utils/logger');
 const { createVoucherSettlementConfig } = require('../config/voucherSettlement');
-const { getConfigRows } = require('./configTableCache');
-const { linkedRecordIds } = require('./v1BitableGateway');
+const { parseSettleDays, sumBillCents, createSettlementRuleLoader } = require('./voucherSettlementRules');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
+  Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
+));
+
 
 /** 飞书字段值 → 纯文本（单选/文本可能是字符串，关联/多选可能是数组）。 */
 const textOf = (value) => {
@@ -59,36 +63,6 @@ const toCents = (value) => {
 
 const money = (cents) => (Number(cents || 0) / 100).toFixed(2);
 
-/**
- * 「结算规则」文本 → 天数（如「核销日+5个自然日」⇒ 5）。
- * 解析不出 ⇒ null（调用方**跳过并报差异**，不拿默认值顶上——业务要求「不要硬编码」）。
- */
-const parseSettleDays = (ruleText) => {
-  const text = String(ruleText || '').trim();
-  if (!text) return null;
-  // 生产「结算周期」现在的取值是纯数字（如「5」）；也兼容「核销日+5个自然日」「+5」「T+5」。
-  const match = /^\d+$/.test(text)
-    ? [text, text]
-    : (text.match(/(\d+)\s*(?:个)?\s*(?:自然日|天|日)/) || text.match(/\+\s*(\d+)/));
-  if (!match) return null;
-  const days = Number(match[1]);
-  return Number.isInteger(days) && days >= 0 && days <= 90 ? days : null;
-};
-
-const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
-  Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
-));
-
-/** 账单里 `amount.goods` 合计（分）。 */
-const sumBillCents = (billData, skus = null) => {
-  const records = Array.isArray(billData?.ledger_records) ? billData.ledger_records : [];
-  const only = skus instanceof Set && skus.size ? skus : null;
-  return records.reduce((sum, record) => {
-    if (only && !only.has(String(record?.sku_id || ''))) return sum;
-    return sum + Number(record?.amount?.goods || 0);
-  }, 0);
-};
-
 /** 提现记录 `amount` 合计（分）。 */
 const sumWithdrawCents = (withdrawData) => {
   const records = Array.isArray(withdrawData?.bill_withdraw_records) ? withdrawData.bill_withdraw_records : [];
@@ -112,45 +86,7 @@ const createVoucherSettlementService = ({
     throw new Error('VoucherSettlementService requires laike.settleBill / laike.settleWithdraw');
   }
 
-  /**
-   * 读「支付方式管理」+「团购券管理」（统一走 `getConfigRows`：TTL 复用 + record_changed 失效）。
-   * 返回：券 record_id → 结算天数；支付方式名 → 券 record_id。
-   */
-  const loadSettlementRules = async () => {
-    const methodTable = gateway.table('paymentMethod');
-    const voucherTable = gateway.table('groupBuyVoucher');
-    const daysByVoucherId = new Map();
-    const skuByVoucherId = new Map();
-    try {
-      const vouchers = await getConfigRows({
-        gateway, tableKey: 'groupBuyVoucher', loader: () => gateway.listAll('groupBuyVoucher'),
-      });
-      for (const voucher of vouchers) {
-        const rule = textOf(voucher.fields?.[voucherTable.fields.settleRule]);
-        daysByVoucherId.set(voucher.record_id, parseSettleDays(rule));
-        if (voucherTable.fields.externalId) {
-          skuByVoucherId.set(voucher.record_id, textOf(voucher.fields?.[voucherTable.fields.externalId]).trim());
-        }
-      }
-    } catch (error) {
-      logger.logWarn('voucher.settlement.vouchers_unreadable', { error: String(error?.message || error).slice(0, 200) });
-    }
-    const voucherIdByMethod = new Map();
-    try {
-      const methods = await getConfigRows({
-        gateway, tableKey: 'paymentMethod', loader: () => gateway.listAll('paymentMethod'),
-      });
-      for (const method of methods) {
-        const name = textOf(method.fields?.[methodTable.fields.name]).trim();
-        if (!name) continue;
-        const voucherId = String(linkedRecordIds(method.fields?.[methodTable.fields.voucher])[0] || '');
-        if (voucherId) voucherIdByMethod.set(name, voucherId);
-      }
-    } catch (error) {
-      logger.logWarn('voucher.settlement.methods_unreadable', { error: String(error?.message || error).slice(0, 200) });
-    }
-    return { daysByVoucherId, skuByVoucherId, voucherIdByMethod };
-  };
+  const loadSettlementRules = createSettlementRuleLoader({ gateway, logger });
 
   /**
    * 把「待平台结算」按「创建日 + 结算天数」分组。
