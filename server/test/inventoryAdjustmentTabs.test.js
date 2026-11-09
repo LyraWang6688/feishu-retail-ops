@@ -13,13 +13,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const PAGE = path.join(__dirname, '../public/workbench/features/inventory/adjustment.js');
+const CONFIG = path.join(__dirname, '../public/workbench/config/inventoryAdjustment.js');
 const source = () => fs.readFileSync(PAGE, 'utf8');
+const configSource = () => fs.readFileSync(CONFIG, 'utf8');
 
-test('AC-IA1 三个子 tab：状态调整 / 盘点调整 / 换季调整（状态调整排最左；面板 id 固定）', () => {
-  const tabs = [...source().matchAll(/data-subtab="([^"]+)">([^<]+)</g)]
-    .map(([, id, label]) => ({ id, label: label.trim() }));
-  assert.deepEqual(tabs.map((tab) => tab.label), ['状态调整', '盘点调整', '换季调整']);
-  assert.deepEqual(tabs.map((tab) => tab.id), ['adjust-state', 'adjust-count', 'adjust-season']);
+test('AC-IA1 三个子 tab 由配置驱动：状态调整 / 盘点调整 / 换季调整（状态调整排最左）', () => {
+  const cfg = configSource();
+  assert.deepEqual([...cfg.matchAll(/id: '([^']+)', label: '([^']+)'/g)].map(([, id, label]) => ({ id, label })),
+    [{ id: 'adjust-state', label: '状态调整' }, { id: 'adjust-count', label: '盘点调整' }, { id: 'adjust-season', label: '换季调整' }]);
+  assert.ok(source().includes("INVENTORY_ADJUSTMENT_TABS.map"), '页面必须按配置渲染子 tab');
+  assert.equal(/data-subtab="adjust-/.test(source()), false, '页面里不许再写死子 tab 按钮');
 });
 
 test('AC-IA2 「状态调整」= 占位（样品 ↔ 门盒 + 待建设），没有任何输入 / 提交 / 写接口', () => {

@@ -1,6 +1,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { bindSubTabs, describeError, runWriteAction, setBusy, showPageError } from '../../core/ui.js';
+import { INVENTORY_ADJUSTMENT_TABS } from '../../config/inventoryAdjustment.js';
 
 // 「库存手工调整」——常用功能里的核心子页，三个子 tab：
 //   · 盘点调整：改**数量**，可增可减（盘多了加、盘少了减）→ POST .../adjustments/count
@@ -30,11 +31,8 @@ function renderShell(container) {
   container.innerHTML = `
     <section class="panel">
       <div class="sub-tabs">
-        <!-- 🔴 2026-11-09（业务负责人）：「位置放在最左边」⇒ 新增的「状态调整」排第一颗；
-             ⚠️ 默认仍停在「盘点调整」（那一屏才是现在能用的；占位屏不抢默认焦点）。 -->
-        <button class="sub-tab" type="button" data-subtab="adjust-state">状态调整</button>
-        <button class="sub-tab active" type="button" data-subtab="adjust-count">盘点调整</button>
-        <button class="sub-tab" type="button" data-subtab="adjust-season">换季调整</button>
+        <!-- 三级子 tab 的 id / 名称 / 顺序 / 默认选中 = `config/inventoryAdjustment.js`（不再散落在页面字符串里）。 -->
+        ${INVENTORY_ADJUSTMENT_TABS.map((tab) => `<button class="sub-tab${tab.default ? ' active' : ''}" type="button" data-subtab="${tab.id}">${escapeHtml(tab.label)}</button>`).join('')}
       </div>
 
       <div id="adjust-count-subpanel" class="sub-panel">
