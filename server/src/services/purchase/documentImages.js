@@ -21,6 +21,56 @@ const { purchaseCorrelation } = require('./correlation');
 /** 「单据」里那张图的**缺省**文件名后缀（退货那条链会传自己的后缀 ✓ 值没变）。 */
 const DEFAULT_DOCUMENT_FILE_SUFFIX = '采购单';
 
+/**
+ * ⭐ 2026-11-09 真机（业务负责人）：「发在群里的采购单图片**没有货号**」。
+ *
+ * 根因：**预渲染**读 `posting_plan.items`（引擎冻结的纯业务键：货品/供应商/尺码/数量），
+ * 里面**没有** `item_no` / `color` / `number`；而**现场兜底渲染**读 `task.draft.items`，那里面才有。
+ * 预渲染成功时 deliver 直接用预渲染图 ⇒ 图上分组行没有货号（退化成「未标注货号」）。
+ *
+ * 修法：渲染前用 `task.draft.items` 按「货品 + 尺码」把**展示字段**合并进 plan item；
+ * plan item 自带的字段仍**优先**（不覆盖已冻结的业务键）。只影响出图，不写任何表。
+ */
+const renderItemKey = (item) => `${String(item?.product_record_id || '').trim()}|${String(item?.size ?? '').trim()}`;
+
+/** `draft.items` 可能是「一个货品一条 + entries」或「一条尺码一行」；统一摊平成尺码行。 */
+const flattenDraftRenderItems = (draftItems) => {
+  const rows = [];
+  for (const item of Array.isArray(draftItems) ? draftItems : []) {
+    const base = {
+      product_record_id: String(item?.product_record_id || item?.productRecordId || '').trim(),
+      item_no: String(item?.item_no || item?.itemNo || '').trim(),
+      color: String(item?.color || '').trim(),
+      number: String(item?.number || item?.product_number || '').trim(),
+    };
+    const entries = Array.isArray(item?.entries) ? item.entries : [];
+    if (entries.length) {
+      for (const entry of entries) rows.push({ ...base, size: entry?.size, quantity: entry?.quantity });
+    } else {
+      rows.push({ ...base, size: item?.size, quantity: item?.quantity });
+    }
+  }
+  return rows;
+};
+
+/** plan item ← draft 行（按货品+尺码）：只补**缺失的展示字段**，plan 已冻结的值不覆盖。 */
+const withDraftPresentation = (items, draftItems) => {
+  const byKey = new Map();
+  for (const row of flattenDraftRenderItems(draftItems)) {
+    const key = renderItemKey(row);
+    if (!byKey.has(key)) byKey.set(key, row);
+  }
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const fromDraft = byKey.get(renderItemKey(item)) || {};
+    return {
+      ...item,
+      item_no: item?.item_no || fromDraft.item_no || '',
+      color: item?.color || fromDraft.color || '',
+      number: item?.number || item?.product_number || fromDraft.number || '',
+    };
+  });
+};
+
 const documentImages = {
   /**
    * 采购申请写完之后：按供应商出图 → 发给报单人 → 写回「采购申请单」附件。
@@ -59,7 +109,8 @@ const documentImages = {
    */
   async prepareSupplierImages(taskId, task, plan = {}, options = {}) {
     const draft = task?.draft || {};
-    const items = Array.isArray(plan?.items) ? plan.items : [];
+    // ⭐ 2026-11-09：plan.items 只有业务键 ⇒ 渲染前用 draft.items 补回货号/颜色/编号（真机图片缺货号）
+    const items = withDraftPresentation(Array.isArray(plan?.items) ? plan.items : [], draft.items);
     const batchNo = String(plan?.batch_no || draft.batch_no || '');
     if (!items.length) return null;
     const startedAt = Date.now();
