@@ -32,7 +32,7 @@ const COOKIE = (() => {
   return `workbench_session=${p}.${crypto.createHmac('sha256', process.env.LARK_WEB_SESSION_SECRET).update(p).digest('base64url')}`;
 })();
 
-const NUMBER = 'JX505|咖色|B';
+const NUMBER = 'JX505|咖色|女';
 const VIEW = () => ({
   found: true, number: NUMBER, item_no: 'JX505', color: '咖色', category_name: '休闲鞋',
   price_text: '¥399', total: 1, columns: [{ key: '门盒', label: '门盒' }],

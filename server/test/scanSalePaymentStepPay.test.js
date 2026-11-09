@@ -56,11 +56,11 @@ const makeFakeFollowup = ({ fail = false, notOk = false } = {}) => {
 
 const view = () => ({
   found: true,
-  number: 'YD6693-2|黑色|A',
+  number: 'YD6693-2|黑色|男',
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 1,
   columns: [{ key: '门盒', label: '门盒' }],
@@ -87,7 +87,7 @@ const withServer = async (app, run) => {
   }
 };
 
-const post = (base, cookie, body) => fetch(`${base}/r/${encodeURIComponent('YD6693-2|黑色|A')}?from=sales`, {
+const post = (base, cookie, body) => fetch(`${base}/r/${encodeURIComponent('YD6693-2|黑色|男')}?from=sales`, {
   method: 'POST',
   redirect: 'manual',
   headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },

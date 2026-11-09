@@ -107,7 +107,7 @@ const build = ({ env = {} } = {}) => {
 /** 一个货品（`entries` = 勾的尺码 + 数量）。 */
 const item = (id, entries, extra = {}) => ({
   product_record_id: `rec_${id}`,
-  number: `${id}|黑色|A`,
+  number: `${id}|黑色|男`,
   item_no: id,
   color: '黑色',
   supplier_record_id: `sup_${id}`,
@@ -191,7 +191,7 @@ test('AC-MI2 ⭐⭐ N=1 ⇒ 载荷与旧路径（scanWriteService 的 draft 形�
   assert.deepEqual(plan.payload, {
     is_batch: true,
     product_record_id: 'rec_K1',
-    product_number: 'K1|黑色|A',
+    product_number: 'K1|黑色|男',
     item_no: 'K1',
     color: '黑色',
     supplier_record_id: 'sup_K1',
@@ -200,7 +200,7 @@ test('AC-MI2 ⭐⭐ N=1 ⇒ 载荷与旧路径（scanWriteService 的 draft 形�
     items: [
       {
         product_record_id: 'rec_K1',
-        product_number: 'K1|黑色|A',
+        product_number: 'K1|黑色|男',
         item_no: 'K1',
         color: '黑色',
         supplier_record_id: 'sup_K1',
@@ -211,7 +211,7 @@ test('AC-MI2 ⭐⭐ N=1 ⇒ 载荷与旧路径（scanWriteService 的 draft 形�
       },
       {
         product_record_id: 'rec_K1',
-        product_number: 'K1|黑色|A',
+        product_number: 'K1|黑色|男',
         item_no: 'K1',
         color: '黑色',
         supplier_record_id: 'sup_K1',
@@ -251,14 +251,14 @@ test('AC-MI2b ⭐⭐ N=1（退货链）⇒ 载荷与旧路径逐字等价（**�
   // 逐字抄自 `scanWriteService.js:1601-1614`（退货那条老路径的 `draft`）
   assert.deepEqual(plan.payload, {
     product_record_id: 'rec_K2',
-    product_number: 'K2|黑色|A',
+    product_number: 'K2|黑色|男',
     item_no: 'K2',
     color: '黑色',
     supplier_record_id: 'sup_K2',
     behavior_record_id: 'rec_behavior_purchase',
     operator_open_id: 'ou_me',
     items: [{
-      product_record_id: 'rec_K2', product_number: 'K2|黑色|A', item_no: 'K2', color: '黑色',
+      product_record_id: 'rec_K2', product_number: 'K2|黑色|男', item_no: 'K2', color: '黑色',
       supplier_record_id: 'sup_K2', size: 42, quantity: 1,
     }],
     order_amount: '399',

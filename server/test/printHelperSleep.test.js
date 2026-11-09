@@ -94,7 +94,7 @@ const fakeServer = (job) => {
 const makeHelper = (overrides = {}) => {
   const dir = tmpDir();
   const job = overrides.job === undefined
-    ? { job_id: 'job-1', status: 'claimed', numbers: ['XHB8095|棕色|A'], total_labels: 1 }
+    ? { job_id: 'job-1', status: 'claimed', numbers: ['XHB8095|棕色|男'], total_labels: 1 }
     : overrides.job;
   const fetch = overrides.fetch || fakeServer(job);
   const printed = [];

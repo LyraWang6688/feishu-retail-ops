@@ -21,7 +21,7 @@ const assert = require('node:assert/strict');
 const { renderScanSkeleton } = require('../src/views/scanPageRenderer');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 
-const VIEW = { number: 'X7303|绿色|A' };
+const VIEW = { number: 'X7303|绿色|男' };
 
 test('AC-SK1 ⭐ 骨架屏绝不空白：**一张水平垂直居中的卡 + 唯一一句「数据加载中」**（2026-10-14 她改版 ✓）', () => {
   // ⚠️ 2026-10-14 **改指向**（她：「骨架页改成水平垂直居中的卡片，显示：数据加载中」✓）——

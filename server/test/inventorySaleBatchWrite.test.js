@@ -120,7 +120,7 @@ const liveUnit = (recordId, productRecordId, size, state = '门盒') => ({
     [F('liveInventory', 'product')]: [productRecordId],
     [F('liveInventory', 'size')]: [`size_${size}`],
     [F('liveInventory', 'state')]: state,
-    [F('liveInventory', 'stockKey')]: `${productRecordId}|黑色|A|${size}`,
+    [F('liveInventory', 'stockKey')]: `${productRecordId}|黑色|男|${size}`,
   },
 });
 

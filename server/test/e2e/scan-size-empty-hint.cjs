@@ -62,7 +62,7 @@ const viewWith = ({ inStockSizes = [], number }) => ({
   item_no: number.split('|')[0],
   color: '棕色',
   category_name: '女鞋',
-  category_code: 'B',
+  category_code: '女',
   price_text: '¥399',
   total: inStockSizes.length,
   columns: columns(),
@@ -84,11 +84,11 @@ const viewWith = ({ inStockSizes = [], number }) => ({
 });
 
 const CASE_PREPAID_EMPTY = viewWith({
-  number: 'QPL8092|黑色|A'.replace('A', 'B'), // 保持 B 段
+  number: 'QPL8092|黑色|男'.replace('A', 'B'), // 保持 B 段
   inStockSizes: [36, 37, 38, 39, 40], // 普通码全有 ⇒ 预订组空
 });
 const CASE_IN_STOCK_EMPTY = viewWith({
-  number: 'QPL8093|黑色|B',
+  number: 'QPL8093|黑色|女',
   inStockSizes: [], // 全部没货 ⇒ 现货组空
 });
 

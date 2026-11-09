@@ -47,8 +47,8 @@ const detailRecord = ({ id, product, size, quantity }) => ({
 });
 
 const PRODUCT_NUMBERS = {
-  recA1: 'A1|黑色|A',
-  recB2: 'B2|咖色|B',
+  recA1: 'A1|黑色|男',
+  recB2: 'B2|咖色|女',
 };
 // 与 getBatch 同形（公式 `{type, value:[{text}]}`）
 const productBatch = (ids) => ids.map((id) => ({
@@ -105,12 +105,12 @@ const makeEnv = ({ sales, requestIds, items, failIds = [], task } = {}) => {
 };
 
 const baseSales = () => [
-  salesRecord({ id: 'r1', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-07T10:00:00') }),
-  salesRecord({ id: 'r2', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-07T12:00:00') }),
-  salesRecord({ id: 'r3', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-08T01:00:00') }),
-  salesRecord({ id: 'r4', product: 'A1|黑色|A', size: 40, soldAt: at('2026-11-07T11:00:00') }),
-  salesRecord({ id: 'r5', product: 'B2|咖色|B', size: 39, soldAt: at('2026-11-07T09:00:00') }),
-  salesRecord({ id: 'r6', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-06T09:00:00'), linked: ['recOldDetail'] }),
+  salesRecord({ id: 'r1', product: 'A1|黑色|男', size: 39, soldAt: at('2026-11-07T10:00:00') }),
+  salesRecord({ id: 'r2', product: 'A1|黑色|男', size: 39, soldAt: at('2026-11-07T12:00:00') }),
+  salesRecord({ id: 'r3', product: 'A1|黑色|男', size: 39, soldAt: at('2026-11-08T01:00:00') }),
+  salesRecord({ id: 'r4', product: 'A1|黑色|男', size: 40, soldAt: at('2026-11-07T11:00:00') }),
+  salesRecord({ id: 'r5', product: 'B2|咖色|女', size: 39, soldAt: at('2026-11-07T09:00:00') }),
+  salesRecord({ id: 'r6', product: 'A1|黑色|男', size: 39, soldAt: at('2026-11-06T09:00:00'), linked: ['recOldDetail'] }),
 ];
 
 test('AC-SL1 按「编号+尺码」匹配：只链未关联行、旧→新、最多=采购明细数量', async () => {
@@ -135,9 +135,9 @@ test('AC-SL6 预订优先：数量不够时先链预订（同类型内旧→新�
   const env = makeEnv({
     // 现货更旧（若只按日期会先链现货），但预订必须先链
     sales: [
-      salesRecord({ id: 'sSpotOld', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-06T08:00:00'), trade: 'spot' }),
-      salesRecord({ id: 'sPreNew1', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-07T12:00:00'), trade: 'prepaid' }),
-      salesRecord({ id: 'sPreNew2', product: 'A1|黑色|A', size: 39, soldAt: at('2026-11-07T13:00:00'), trade: 'prepaid' }),
+      salesRecord({ id: 'sSpotOld', product: 'A1|黑色|男', size: 39, soldAt: at('2026-11-06T08:00:00'), trade: 'spot' }),
+      salesRecord({ id: 'sPreNew1', product: 'A1|黑色|男', size: 39, soldAt: at('2026-11-07T12:00:00'), trade: 'prepaid' }),
+      salesRecord({ id: 'sPreNew2', product: 'A1|黑色|男', size: 39, soldAt: at('2026-11-07T13:00:00'), trade: 'prepaid' }),
     ],
     requestIds: ['recDetailA'],
     items: [{ product_record_id: 'recA1', size: 39, quantity: 2 }],
@@ -197,7 +197,7 @@ test('AC-SL2 幂等：同一 task 再跑一次 ⇒ 不再多链', async () => {
 
 test('AC-SL3 未关联行不够 ⇒ 链已有的 + warn（不抛）', async () => {
   const env = makeEnv({
-    sales: [salesRecord({ id: 'p1', product: 'B2|咖色|B', size: 39, soldAt: at('2026-11-07T09:00:00') })],
+    sales: [salesRecord({ id: 'p1', product: 'B2|咖色|女', size: 39, soldAt: at('2026-11-07T09:00:00') })],
     requestIds: ['recDetailB'],
     items: [{ product_record_id: 'recB2', size: 39, quantity: 3 }],
   });

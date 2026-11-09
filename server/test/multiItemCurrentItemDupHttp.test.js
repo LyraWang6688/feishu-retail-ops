@@ -55,7 +55,7 @@ const renderer = require('../src/views/scanPageRenderer');
 
 const SESSION_SECRET = 'mi_mid_session_secret';
 const OPEN_ID = 'ou_mimid';
-const NUMBER = 'K1|黑色|A';
+const NUMBER = 'K1|黑色|男';
 const FIELD = MULTI_ITEM_ORDER.field;
 const WIRE = MULTI_ITEM_ORDER.wire;
 
@@ -77,7 +77,7 @@ const viewOf = (number = NUMBER) => {
   const [itemNo, color] = String(number).split('|');
   return {
     found: true, number, item_no: itemNo, color, category_name: '休闲鞋',
-    category_code: 'A', price_text: '¥399', total: 2, columns: [{ key: '门盒', label: '门盒' }],
+    category_code: '男', price_text: '¥399', total: 2, columns: [{ key: '门盒', label: '门盒' }],
     rows: ['40', '41'].map((size, index) => ({
       size_text: size, cells: index === 0 ? [{ key: '门盒', count: 2 }] : [], total: index === 0 ? 2 : 0,
       missing: index !== 0,

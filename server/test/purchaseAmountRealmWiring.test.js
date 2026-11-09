@@ -54,7 +54,7 @@ const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const ROUTE_SRC = fs.readFileSync(path.join(SERVER_DIR, 'src/routes/scanPage.js'), 'utf8');
 const SESSION_SECRET = 'scan-amount-wiring-test-secret';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 检测器（纯函数 —— 探针可以喂坏样本 ✓）
@@ -197,7 +197,7 @@ const view = () => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 2,
   columns: [{ key: '门盒', label: '门盒' }],

@@ -42,12 +42,12 @@ const WORKBENCH = path.join(__dirname, '../public/workbench');
 
 /** 一份 label（= `labelPrintService.listLabels` 输出的形状，只留产物需要的字段）。 */
 const label = (patch = {}) => ({
-  key: 'XHB8095|棕色|A',
-  number: 'XHB8095|棕色|A',
+  key: 'XHB8095|棕色|男',
+  number: 'XHB8095|棕色|男',
   item_no: 'XHB8095',
   color: '棕色',
   category: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   sizes: [{ size: 36, qty: 1 }, { size: 37, qty: 2 }, { size: 38, qty: 1 }, { size: 39, qty: 1 }],
   size_lines: [
     [{ size: 36, qty: 1 }, { size: 37, qty: 2 }, { size: 38, qty: 1 }],
@@ -61,7 +61,7 @@ const label = (patch = {}) => ({
   price_text: '¥198',
   brand_text: '邯美皮鞋',
   qr_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21"><path d="M0 0h21v21H0z"/></svg>',
-  footer_text: 'XHB8095|棕色|A',
+  footer_text: 'XHB8095|棕色|男',
   ...patch,
 });
 
@@ -152,10 +152,10 @@ test('AC1 换配置就换纸：A5 之外的 50×25mm ⇒ 像素与 MediaBox 都�
 });
 
 test('AC1 多张标签 ⇒ PDF 的页数 = 标签张数（一页一张），且每张页一张图', async () => {
-  const labels = [label(), label({ number: 'XHB8095|黑色|A', color: '黑色', key: 'XHB8095|黑色|A' })];
+  const labels = [label(), label({ number: 'XHB8095|黑色|男', color: '黑色', key: 'XHB8095|黑色|男' })];
   const out = await artifact.renderLabels({ labels, layout: layout(), config: { dpi: 203 } });
   assert.equal(out.meta.page_count, 2);
-  assert.deepEqual(out.pages.map((page) => page.number), ['XHB8095|棕色|A', 'XHB8095|黑色|A']);
+  assert.deepEqual(out.pages.map((page) => page.number), ['XHB8095|棕色|男', 'XHB8095|黑色|男']);
   assertPdfStructure(out.pdf, { pages: 2 });
 });
 
@@ -285,7 +285,7 @@ test('AC4 入队（按编号）：状态 queued + 产物已落盘 + 唤醒订阅
     const service = serviceFor({ store });
     const events = [];
     service.subscribe((event) => events.push(event));
-    const result = await service.enqueueSingle({ number: 'XHB8095|棕色|A', actor: 'ou_她' });
+    const result = await service.enqueueSingle({ number: 'XHB8095|棕色|男', actor: 'ou_她' });
     assert.equal(result.job.status, 'queued');
     assert.equal(result.job.status_label, '待打印');
     assert.equal(result.total_labels, 1);
@@ -294,7 +294,7 @@ test('AC4 入队（按编号）：状态 queued + 产物已落盘 + 唤醒订阅
     assert.ok(fs.existsSync(store.artifactPath(job.artifact.pdf)), 'PDF 已落盘');
     assert.ok(fs.existsSync(store.artifactPath(job.artifact.png)), '预览 PNG 已落盘');
     assert.ok(job.artifact.sha256 && job.artifact.sha256.length === 64);
-    assert.deepEqual(job.numbers, ['XHB8095|棕色|A']);
+    assert.deepEqual(job.numbers, ['XHB8095|棕色|男']);
     assert.equal(events.length, 1, '入队立刻推给长连接');
     assert.equal(events[0].type, 'job');
     assert.equal(events[0].payload.job_id, result.job_id);
@@ -308,7 +308,7 @@ test('AC5 ⭐ 电脑离线 ⇒ 任务排队保留 + 手机看到「未连接（�
   try {
     const t = { value: 1_000_000 };
     const service = serviceFor({ store, now: () => t.value, config: { onlineTimeoutMs: 90_000 } });
-    const enqueued = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const enqueued = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     // 从没心跳过 ⇒ 未连接；任务仍然好好排着。
     let status = await service.status();
     assert.equal(status.online, false);
@@ -335,17 +335,17 @@ test('AC6 ⭐⭐ 启动补拉：电脑关着时入队的任务，小助手一起
   const { store, cleanup } = tmpStore();
   try {
     // ⚠️ 2026-10-11 改夹具（**这条 AC 的本意"补拉按先进先出"一个字都没变**）：
-    //   改前：两次都 `enqueueSingle({ number: 'XHB8095|棕色|A' })`（同一个编号）。
+    //   改前：两次都 `enqueueSingle({ number: 'XHB8095|棕色|男' })`（同一个编号）。
     //   改后：第二次换成**另一个编号**。
     //   理由：同编号在**防连点窗口**内现在是**同一个任务**（那是她真机反馈"连点导致多打"之后
     //        有意加的）⇒ 用同编号再也造不出"两条排队任务"。换个编号既保住本意，
     //        也不去放宽防连点那条新规矩。
     const service = serviceFor({
       store,
-      labels: [label(), label({ number: 'XHB8095|黑色|A', key: 'XHB8095|黑色|A', color: '黑色' })],
+      labels: [label(), label({ number: 'XHB8095|黑色|男', key: 'XHB8095|黑色|男', color: '黑色' })],
     });
-    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
-    const second = await service.enqueueSingle({ number: 'XHB8095|黑色|A' });
+    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
+    const second = await service.enqueueSingle({ number: 'XHB8095|黑色|男' });
     assert.equal((await service.status()).online, false);
     // ② 电脑开机：小助手第一件事就是补拉 —— 两条一次全拿到。
     const pending = await service.listPending({ deviceId: 'store-pc' });
@@ -367,7 +367,7 @@ test('AC6 补拉与事件推送是同一份数据：入队后再补拉，看到�
     const service = serviceFor({ store });
     const events = [];
     service.subscribe((event) => events.push(event.payload));
-    await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     const pending = await service.listPending({});
     assert.equal(pending.length, 1);
     assert.equal(pending[0].job_id, events[0].job_id);
@@ -381,7 +381,7 @@ test('AC7 状态流转 queued → claimed → done（记下时间与"谁打的"�
   try {
     let clock = 1_000_000;
     const service = serviceFor({ store, now: () => clock });
-    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     assert.equal((await service.getJob(jobId)).status, 'queued');
     clock += 5_000;
     const claimed = await service.claimNext({ deviceId: 'store-pc' });
@@ -404,7 +404,7 @@ test('AC8 ⭐ 幂等：同一条任务绝不会被领第二次；重复回执是
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store });
-    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     await service.claimNext({ deviceId: 'store-pc' });
     const done = await service.ack({ jobId, status: 'done', deviceId: 'store-pc' });
     // 小助手回执丢了 ⇒ 它重发一次：不许报错、不许把时间刷新、不许变成失败。
@@ -425,7 +425,7 @@ test('AC9 失败必须带原因（空原因 ⇒ 400）；带原因时原因原�
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store });
-    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     await service.claimNext({ deviceId: 'store-pc' });
     await assert.rejects(() => service.ack({ jobId, status: 'failed', deviceId: 'store-pc' }),
       (error) => error.statusCode === 400 && /原因/.test(error.message));
@@ -447,7 +447,7 @@ test('AC10 迟到/冲突的回执不许篡改事实：done 之后来的 failed �
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store });
-    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     await service.claimNext({ deviceId: 'store-pc' });
     await service.ack({ jobId, status: 'done', deviceId: 'store-pc' });
     const late = await service.ack({ jobId, status: 'failed', reason: '迟到的失败', deviceId: 'store-pc' });
@@ -465,7 +465,7 @@ test('AC11 认领超时后才能被别人重投；未超时 claimNext 拿不到�
   try {
     let clock = 1_000_000;
     const service = serviceFor({ store, now: () => clock, config: { claimTimeoutMs: 120_000 } });
-    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     const claimed = await service.claimNext({ deviceId: 'store-pc' });
     assert.equal(claimed.job_id, jobId);
     // 电脑正在打（没超时）⇒ 谁也别想再领走。
@@ -485,7 +485,7 @@ test('AC12 ⭐ 补打生成新任务（reprint_of 指向原任务），原任务
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store });
-    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const { job_id: jobId } = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     await service.claimNext({ deviceId: 'store-pc' });
     await service.ack({ jobId, status: 'failed', reason: '纸卡住了', deviceId: 'store-pc' });
     const before = await service.getJob(jobId);
@@ -514,7 +514,7 @@ test('AC13 不静默①：编号没有库存 ⇒ 400 说清；mode 写错 ⇒ 40
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store, labels: [label()] });
-    await assert.rejects(() => service.enqueueSingle({ number: 'NOT-EXIST|黑色|A' }),
+    await assert.rejects(() => service.enqueueSingle({ number: 'NOT-EXIST|黑色|男' }),
       (error) => error.statusCode === 400 && /没有找到编号/.test(error.message));
     await assert.rejects(() => service.enqueue({ mode: 'whatever' }),
       (error) => error.statusCode === 400 && /mode/.test(error.message));
@@ -535,7 +535,7 @@ test('AC13 不静默③：产物渲染失败 ⇒ 502 且不留半条任务', asy
       config: LABEL_PRINT_QUEUE,
       renderLabels: async () => { throw new Error('sharp 说这张图画不出来'); },
     });
-    await assert.rejects(() => broken.enqueueSingle({ number: 'XHB8095|棕色|A' }),
+    await assert.rejects(() => broken.enqueueSingle({ number: 'XHB8095|棕色|男' }),
       (error) => error.statusCode === 502 && /打印文件生成失败/.test(error.message));
     assert.equal((await store.listAll()).length, 0, '渲染失败不许留下半条任务');
     assert.deepEqual(await fs.promises.readdir(store.artifactsDir), [], '也不许留下垃圾产物文件');
@@ -549,7 +549,7 @@ test('AC15 配置先行：认领超时 / 在线超时 / 一次上限 / 开关，
   try {
     // ① 关掉队列 ⇒ 503（不是 404、不是静默）。
     const off = serviceFor({ store, config: { enabled: false } });
-    await assert.rejects(() => off.enqueueSingle({ number: 'XHB8095|棕色|A' }),
+    await assert.rejects(() => off.enqueueSingle({ number: 'XHB8095|棕色|男' }),
       (error) => error.statusCode === 503);
 
     // ② 在线超时改成 1 秒 ⇒ 心跳 1.5 秒后就算离线。
@@ -562,8 +562,8 @@ test('AC15 配置先行：认领超时 / 在线超时 / 一次上限 / 开关，
 
     // ③ 列表条数可配。
     const limited = serviceFor({ store, config: { listLimit: 1 } });
-    await limited.enqueueSingle({ number: 'XHB8095|棕色|A' });
-    await limited.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    await limited.enqueueSingle({ number: 'XHB8095|棕色|男' });
+    await limited.enqueueSingle({ number: 'XHB8095|棕色|男' });
     assert.equal((await limited.listJobs({})).length, 1);
   } finally {
     cleanup();
@@ -586,13 +586,13 @@ test('AC4 按编号入队：精确匹配那一个编号（同货号别的颜色�
   const { store, cleanup } = tmpStore();
   try {
     const labels = [
-      label({ number: 'XHB8095|棕色|A', color: '棕色' }),
-      label({ number: 'XHB8095|黑色|A', color: '黑色' }),
+      label({ number: 'XHB8095|棕色|男', color: '棕色' }),
+      label({ number: 'XHB8095|黑色|男', color: '黑色' }),
     ];
     const service = serviceFor({ store, labels });
-    const result = await service.enqueueSingle({ number: 'XHB8095|黑色|A' });
+    const result = await service.enqueueSingle({ number: 'XHB8095|黑色|男' });
     const job = await service.getJob(result.job_id);
-    assert.deepEqual(job.numbers, ['XHB8095|黑色|A']);
+    assert.deepEqual(job.numbers, ['XHB8095|黑色|男']);
     assert.equal(job.total_labels, 1);
   } finally {
     cleanup();
@@ -606,7 +606,7 @@ test('AC16 ⭐⭐ 防连点：同一款连点 3 次 ⇒ **只建 1 个任务 / �
     const results = [];
     for (let index = 0; index < 3; index += 1) {
       // eslint-disable-next-line no-await-in-loop
-      results.push(await service.enqueueSingle({ number: 'XHB8095|棕色|A' }));
+      results.push(await service.enqueueSingle({ number: 'XHB8095|棕色|男' }));
     }
     assert.equal(new Set(results.map((item) => item.job_id)).size, 1, '三次连点只应有一个任务');
     assert.equal(results[0].reused, undefined, '第一次是真建');
@@ -624,9 +624,9 @@ test('AC16 ⭐⭐ 防连点（**并发**）：三个一模一样的请求同时�
   try {
     const service = serviceFor({ store });
     const results = await Promise.all([
-      service.enqueueSingle({ number: 'XHB8095|棕色|A' }),
-      service.enqueueSingle({ number: 'XHB8095|棕色|A' }),
-      service.enqueueSingle({ number: 'XHB8095|棕色|A' }),
+      service.enqueueSingle({ number: 'XHB8095|棕色|男' }),
+      service.enqueueSingle({ number: 'XHB8095|棕色|男' }),
+      service.enqueueSingle({ number: 'XHB8095|棕色|男' }),
     ]);
     assert.equal(new Set(results.map((item) => item.job_id)).size, 1, '并发也必须只有一个任务');
     assert.equal((await store.listAll()).length, 1);
@@ -639,13 +639,13 @@ test('AC16 幂等键：同一次提交同 key ⇒ 复用；换 key（新的一�
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store });
-    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A', submitKey: 'k1' });
-    const sameKey = await service.enqueueSingle({ number: 'XHB8095|棕色|A', submitKey: 'k1' });
+    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|男', submitKey: 'k1' });
+    const sameKey = await service.enqueueSingle({ number: 'XHB8095|棕色|男', submitKey: 'k1' });
     assert.equal(sameKey.job_id, first.job_id);
     assert.equal(sameKey.reused_reason, 'same_submit_key');
     // 换 key 且**过了窗口** ⇒ 一次全新提交（她正常的一次新打印）。
     const later = serviceFor({ store, now: () => Date.now() + 10 * 60 * 1000 });
-    const second = await later.enqueueSingle({ number: 'XHB8095|棕色|A', submitKey: 'k2' });
+    const second = await later.enqueueSingle({ number: 'XHB8095|棕色|男', submitKey: 'k2' });
     assert.notEqual(second.job_id, first.job_id);
     assert.equal((await store.listAll()).length, 2);
   } finally {
@@ -657,8 +657,8 @@ test('AC16 ⭐ 「她真想再打一张」的路没被堵死：`again: true` **�
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store });
-    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
-    const again = await service.enqueueSingle({ number: 'XHB8095|棕色|A', again: true });
+    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
+    const again = await service.enqueueSingle({ number: 'XHB8095|棕色|男', again: true });
     assert.notEqual(again.job_id, first.job_id, '明确要再打一张 ⇒ 必须真的再建一个任务');
     assert.equal(again.reused, undefined);
     assert.equal((await store.listAll()).length, 2);
@@ -672,9 +672,9 @@ test('AC16 去重窗口**过了**就能再打（不会把她锁死）', async ()
   try {
     let clock = 1_000_000;
     const service = serviceFor({ store, now: () => clock, config: { dedupeWindowMs: 60_000 } });
-    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const first = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     clock += 61_000;
-    const second = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const second = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     assert.notEqual(second.job_id, first.job_id);
     assert.equal((await store.listAll()).length, 2);
   } finally {
@@ -686,10 +686,10 @@ test('AC16 只复用**没失败过**的任务：上一次失败了 ⇒ 重新提
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store });
-    const failed = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const failed = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     await service.claimNext({ deviceId: 'pc' });
     await service.ack({ jobId: failed.job_id, status: 'failed', reason: '打印机没开', deviceId: 'pc' });
-    const retry = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const retry = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     assert.notEqual(retry.job_id, failed.job_id, '失败过的任务不许被"复用"（那就等于她点了也没用）');
     assert.equal((await store.listAll()).length, 2);
   } finally {
@@ -699,11 +699,11 @@ test('AC16 只复用**没失败过**的任务：上一次失败了 ⇒ 重新提
 
 test('AC16 `requestKeyOf`：按编号 / 按记录 ID 各算各的键（互不串）', () => {
   const { requestKeyOf } = require('../src/services/labelPrintQueueService');
-  assert.equal(requestKeyOf({ mode: 'single', number: 'A|B|C' }), 'single|A|B|C');
+  assert.equal(requestKeyOf({ mode: 'single', number: 'A|女|C' }), 'single|A|女|C');
   assert.equal(requestKeyOf({ mode: 'single', recordId: 'rec_x' }), 'single|record:rec_x');
   assert.notEqual(
-    requestKeyOf({ mode: 'single', number: 'A|B|C' }),
-    requestKeyOf({ mode: 'single', number: 'A|B|D' }),
+    requestKeyOf({ mode: 'single', number: 'A|女|C' }),
+    requestKeyOf({ mode: 'single', number: 'A|女|D' }),
   );
 });
 
@@ -1017,16 +1017,16 @@ test('AC18 方向可以**按这一次**覆盖（试 90°/270° 不用改配置�
   const { store, cleanup } = tmpStore();
   try {
     const service = serviceFor({ store, config: { artifact: { ...LABEL_PRINT_QUEUE.artifact, rotate: 0 } } });
-    const a = await service.enqueueSingle({ number: 'XHB8095|棕色|A', rotate: 90 });
-    const b = await service.enqueueSingle({ number: 'XHB8095|棕色|A', rotate: 270 });
+    const a = await service.enqueueSingle({ number: 'XHB8095|棕色|男', rotate: 90 });
+    const b = await service.enqueueSingle({ number: 'XHB8095|棕色|男', rotate: 270 });
     assert.notEqual(b.job_id, a.job_id, '试 90° 与试 270° 是**两件事**，不能被防连点窗口认成同一次');
     assert.equal(b.reused, undefined);
     assert.equal((await service.getJob(a.job_id)).rotate, 90, '任务上留痕：这一张是按 90° 印的');
     assert.equal((await service.getJob(b.job_id)).rotate, 270);
     // 不传 rotate ⇒ 跟随配置（这里配置是 0）。
-    const follow = await service.enqueueSingle({ number: 'XHB8095|棕色|A' });
+    const follow = await service.enqueueSingle({ number: 'XHB8095|棕色|男' });
     assert.equal((await service.getJob(follow.job_id)).rotate, 0);
-    await assert.rejects(() => service.enqueueSingle({ number: 'XHB8095|棕色|A', rotate: 45 }),
+    await assert.rejects(() => service.enqueueSingle({ number: 'XHB8095|棕色|男', rotate: 45 }),
       (error) => error.statusCode === 400 && /只能是 0 \/ 90 \/ 180 \/ 270/.test(error.message));
   } finally {
     cleanup();

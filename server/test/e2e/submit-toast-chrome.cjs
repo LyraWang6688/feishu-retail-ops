@@ -34,7 +34,7 @@ const SERVER = path.resolve(__dirname, '..', '..');
 const REPORT_DIR = path.resolve(SERVER, '..', 'reports', 'submit-toast');
 const SESSION_SECRET = 'submit-toast-e2e-secret';
 const OPEN_ID = 'ou_submit_toast_e2e';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const PORT = Number(process.env.E2E_PORT || 4287);
 
 // ⚠️ 配置是**模块级求值**的 ⇒ 环境变量必须在 require 业务模块之前设好。
@@ -67,7 +67,7 @@ const view = () => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 1,
   columns: [{ key: '门盒', label: '门盒' }],
@@ -220,7 +220,7 @@ const run = async () => {
           [SCAN_WRITE.fields.replenishSizes]: '41', qty_41: '2',
           multi_items: JSON.stringify([
             { product_record_id: 'prod_1', number: NUMBER, item_no: 'YD6693-2', color: '黑色', supplier_record_id: '', entries: [] },
-            { product_record_id: 'prod_2', number: 'K2|白色|A', item_no: 'K2', color: '白色', supplier_record_id: '', entries: [{ size: '41', quantity: '1' }] },
+            { product_record_id: 'prod_2', number: 'K2|白色|男', item_no: 'K2', color: '白色', supplier_record_id: '', entries: [{ size: '41', quantity: '1' }] },
           ]),
         },
       },

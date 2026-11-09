@@ -115,7 +115,7 @@ test('RT5b 🔴 **零 JS 哨兵**：路由与多货品块里都**不许**有 `<s
   // 把多货品块**真渲一次**（渲染器已导出它 ✓）⇒ 渲出来的 HTML 也不许有脚本 ✓
   const html = multiItemBlockHtml(
     { postAction: '/r/K1', texts: {} },
-    { product_record_id: 'rec_x', number: 'K1|黑色|A', item_no: 'K1', color: '黑色', supplier_record_id: 'sup_x' },
+    { product_record_id: 'rec_x', number: 'K1|黑色|男', item_no: 'K1', color: '黑色', supplier_record_id: 'sup_x' },
   );
   assert.ok(html.length > 0, '多货品块应当渲得出来（`enabled=true` ✓ 字段名有值 ✓）');
   assert.equal(/<script/i.test(html), false, '多货品块**零 JS** ✓（AC-6R5 同口径）');
@@ -139,7 +139,7 @@ test('RT5c ⭐ **探针**：上面两个检测器**真能红** ✓', () => {
 
 test('RT-shape ⭐⭐ 隐藏字段渲的是【首件 + `entries: []`（空）】⇒ 路由**必须**把本次尺码/数量并进首件', () => {
   const payload = JSON.parse(multiItemPayloadJson([{
-    product_record_id: 'rec_x', number: 'K1|黑色|A', item_no: 'K1', color: '黑色',
+    product_record_id: 'rec_x', number: 'K1|黑色|男', item_no: 'K1', color: '黑色',
     supplier_record_id: 'sup_x', entries: [],
   }]));
   assert.equal(payload.length, 1, '隐藏字段只装**首件**一个 ✓');
@@ -173,7 +173,7 @@ test('RT8 ⭐⭐ 走路由将来那条路（`multiItemWriters().behavior(chain)`
     sessions: { idOf: (o) => `s_${o}`, store: { get: async () => null, update: async () => null }, ensure: async () => ({}) },
     config: resolveMultiItemOrderConfig({}),
   });
-  const groups = [{ productRecordId: 'rec_K1', number: 'K1|黑色|A', itemNo: 'K1', color: '黑色', supplierRecordId: 'sup_K1', entries: [{ size: '40', quantity: '2' }] }];
+  const groups = [{ productRecordId: 'rec_K1', number: 'K1|黑色|男', itemNo: 'K1', color: '黑色', supplierRecordId: 'sup_K1', entries: [{ size: '40', quantity: '2' }] }];
   const items = engine.groupPayload({ groups }).items;
   const checked = engine.validateDraft({
     draft: { items, order_amount: '399' }, chainConfig: engineConfigChains().replenish,

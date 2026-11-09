@@ -27,11 +27,11 @@ const BLANK_COLUMN = { key: '', label: SCAN_PAGE.states.emptyLabel };
 /** 三态：40 门盒 1 / 41 缺 / 42 门盒 1＋样品 1 / 43 只有仓库 2 / 44 缺。 */
 const THREE_STATE_VIEW = {
   found: true,
-  number: 'YD6693-2|黑色|A',
+  number: 'YD6693-2|黑色|男',
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 5,
   columns: [{ key: '门盒', label: '门盒' }, { key: '样品', label: '样品' }, { key: '仓库', label: '仓库' }],
@@ -52,11 +52,11 @@ const THREE_STATE_VIEW = {
 /** ⭐ 她截图那一幕：男 A 段 38–48 全列，**只有 44 码 1 双（所属状态为空）**。 */
 const FULL_SIZES_BLANK_VIEW = {
   found: true,
-  number: '8516|黑色|A',
+  number: '8516|黑色|男',
   item_no: '8516',
   color: '黑色',
   category_name: '凉鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥99',
   total: 1,
   columns: [
@@ -80,11 +80,11 @@ const FULL_SIZES_BLANK_VIEW = {
 /** 未标状态 + 仓库 + 门盒/样品 混在一款上（40 门盒1＋样品1 / 43 仓库2 / 44 未标1）。 */
 const BLANK_STATE_VIEW = {
   found: true,
-  number: '8516|黑色|A',
+  number: '8516|黑色|男',
   item_no: '8516',
   color: '黑色',
   category_name: '凉鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥99',
   total: 5,
   columns: [

@@ -1,5 +1,5 @@
 /**
- * ⭐⭐ 2026-10-15 晚（业务负责人真机：那一单是 `L6950|黑色|A`，页面上只能显示"这一张"）：
+ * ⭐⭐ 2026-10-15 晚（业务负责人真机：那一单是 `L6950|黑色|男`，页面上只能显示"这一张"）：
  *   根因 = **`POST /api/workbench/label-print/jobs` 的响应里没有 `numbers`**
  *   （服务端自己的日志有 ✓、HTTP 响应没有 ✗）⇒ 页面拿不到编号 ⇒ 大字退回"这一张" ✗。
  *
@@ -8,7 +8,7 @@
  *   ⚠️ 「扫码打印」那条**复用**路径最容易漏（她真机上正是"又扫了一次/同一把 submit_key"那种）⇒
  *      本文件 **fresh 与 reused 两条都断言** ✓。
  *
- * 判据来源：她 2026-10-15 真机截图 ＋ Lead 转述的服务端日志那一单（`L6950|黑色|A`）。
+ * 判据来源：她 2026-10-15 真机截图 ＋ Lead 转述的服务端日志那一单（`L6950|黑色|男`）。
  * ⚠️ 这半是**真的**路由 + **真的**队列 service + **真的**标签 service（只读假网关；
  *    产物渲染换成假的 ⇒ 不打真飞书、不写打印文件）。
  * ─────────────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ const withServer = async (app, run) => {
   }
 };
 
-/** 一条「实时库存」记录（一双一条）—— 真机那一单的编号逐字：`L6950|黑色|A`。 */
+/** 一条「实时库存」记录（一双一条）—— 真机那一单的编号逐字：`L6950|黑色|男`。 */
 const stockRecord = (id, { stockKey, state = '门盒' } = {}) => ({
   record_id: id,
   fields: { [F.stockKey]: stockKey, [F.state]: state },
@@ -108,13 +108,13 @@ const harness = () => {
   const store = new LabelPrintJobStore({ dir, artifactsDir: path.join(dir, 'artifacts') });
   const gateway = gatewayOf({
     liveInventory: [
-      stockRecord('st1', { stockKey: 'L6950|黑色|A|40' }),
+      stockRecord('st1', { stockKey: 'L6950|黑色|男|40' }),
       // 同一个货号、**另一个颜色** —— 按编号打的时候不许把它也带上 ✓
-      stockRecord('st2', { stockKey: 'L6950|棕色|A|40' }),
+      stockRecord('st2', { stockKey: 'L6950|棕色|男|40' }),
     ],
     product: [
-      productRecord('rec_black', { number: 'L6950|黑色|A', price: 268 }),
-      productRecord('rec_brown', { number: 'L6950|棕色|A', price: 268 }),
+      productRecord('rec_black', { number: 'L6950|黑色|男', price: 268 }),
+      productRecord('rec_brown', { number: 'L6950|棕色|男', price: 268 }),
     ],
   });
   const service = createLabelPrintQueueService({
@@ -139,24 +139,24 @@ const postJobs = (base, body) => fetch(`${base}/api/workbench/label-print/jobs`,
 // AC-A5b / AC-A5c / AC-A5d
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-A5b ⭐⭐ `/jobs` 的响应带上 `numbers`（真机那一单 = L6950|黑色|A）—— 页面大字才拿得到编号', async () => {
+test('AC-A5b ⭐⭐ `/jobs` 的响应带上 `numbers`（真机那一单 = L6950|黑色|男）—— 页面大字才拿得到编号', async () => {
   login();
   const { app, cleanup } = harness();
   try {
     await withServer(app, async (base) => {
-      const response = await postJobs(base, { mode: 'single', number: 'L6950|黑色|A', submit_key: 'k-numbers-1' });
+      const response = await postJobs(base, { mode: 'single', number: 'L6950|黑色|男', submit_key: 'k-numbers-1' });
       assert.equal(response.status, 200);
       const body = await response.json();
       assert.equal(body.success, true);
       // 🔴 本任务的核心：响应里必须有编号（改前只有服务端日志里有 ✗）
-      assert.deepEqual(body.numbers, ['L6950|黑色|A'], `响应必须带 numbers（实际：${JSON.stringify(body.numbers)}）`);
+      assert.deepEqual(body.numbers, ['L6950|黑色|男'], `响应必须带 numbers（实际：${JSON.stringify(body.numbers)}）`);
       // 既有字段一个不动（加字段，不是改形状 ✓）
       assert.equal(body.total_labels, 1);
       assert.ok(body.job && body.job.job_id === body.job_id, 'job / job_id 照旧');
-      assert.deepEqual(body.job.numbers, ['L6950|黑色|A'], '既有 job.numbers 也照旧在');
+      assert.deepEqual(body.job.numbers, ['L6950|黑色|男'], '既有 job.numbers 也照旧在');
       assert.ok(body.status && typeof body.status.online === 'boolean', 'status 那一段照旧');
       // 不能把**别的颜色**也带上（按编号打 = 精确那一张 ✓）
-      assert.equal(body.numbers.includes('L6950|棕色|A'), false);
+      assert.equal(body.numbers.includes('L6950|棕色|男'), false);
     });
   } finally {
     cleanup();
@@ -168,11 +168,11 @@ test('AC-A5c ⭐⭐ **复用**那条路径（同 submit_key 再扫一次）也�
   const { app, cleanup } = harness();
   try {
     await withServer(app, async (base) => {
-      const first = await (await postJobs(base, { mode: 'single', number: 'L6950|黑色|A', submit_key: 'k-same' })).json();
-      assert.deepEqual(first.numbers, ['L6950|黑色|A']);
-      const second = await (await postJobs(base, { mode: 'single', number: 'L6950|黑色|A', submit_key: 'k-same' })).json();
+      const first = await (await postJobs(base, { mode: 'single', number: 'L6950|黑色|男', submit_key: 'k-same' })).json();
+      assert.deepEqual(first.numbers, ['L6950|黑色|男']);
+      const second = await (await postJobs(base, { mode: 'single', number: 'L6950|黑色|男', submit_key: 'k-same' })).json();
       assert.equal(second.reused, true, '同一把 submit_key ⇒ 复用同一个任务 ✓');
-      assert.deepEqual(second.numbers, ['L6950|黑色|A'],
+      assert.deepEqual(second.numbers, ['L6950|黑色|男'],
         '🔴 复用这条路**也要有** numbers（她真机上正是"又扫了一次"；漏了这一条 ⇒ 页面又退回"这一张" ✗）');
     });
   } finally {

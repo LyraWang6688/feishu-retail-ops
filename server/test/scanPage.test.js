@@ -31,14 +31,14 @@ const {
 const SERVER_SRC = path.join(__dirname, '..', 'src');
 
 // ── 夹具 ────────────────────────────────────────────────────────────────────
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const PRODUCT = {
   record_id: 'prod_1',
   fields: {
     编号: NUMBER,
     货号: 'YD6693-2',
     颜色: { text: '黑色', record_ids: ['color_black'] },
-    类别: 'A',
+    类别: '男',
     品类: { text: '休闲鞋', record_ids: ['cat_casual'] },
     单价: 399,
   },
@@ -46,11 +46,11 @@ const PRODUCT = {
 const SIZE_RECORDS = [
   // ⚠️ 本机测试 Base（生产同形状）只读实测：「尺码管理.类别」是**多选**（type=4，选项 A/B），
   //    记录 API 回的是**数组** —— 夹具照真实形状写，别写成 'A' 字符串。
-  { record_id: 'size_40', fields: { 尺码: 40, 类别: ['A'] } },
-  { record_id: 'size_41', fields: { 尺码: 41, 类别: ['A'] } },
-  { record_id: 'size_42', fields: { 尺码: 42, 类别: ['A'] } },
+  { record_id: 'size_40', fields: { 尺码: 40, 类别: ['男'] } },
+  { record_id: 'size_41', fields: { 尺码: 41, 类别: ['男'] } },
+  { record_id: 'size_42', fields: { 尺码: 42, 类别: ['男'] } },
   // ⚠️ 女鞋（B）的尺码：**不许**出现在这个编号的缺码判定里。
-  { record_id: 'size_38', fields: { 尺码: 38, 类别: ['B'] } },
+  { record_id: 'size_38', fields: { 尺码: 38, 类别: ['女'] } },
 ];
 
 const inventoryRow = (id, sizeRecordId, state, extra = {}) => ({
@@ -59,7 +59,7 @@ const inventoryRow = (id, sizeRecordId, state, extra = {}) => ({
     编号: ['prod_1'],
     尺码: [sizeRecordId],
     所属状态: state,
-    库存键: `YD6693-2|黑色|A|${extra.size ?? String(sizeRecordId).replace('size_', '')}`,
+    库存键: `YD6693-2|黑色|男|${extra.size ?? String(sizeRecordId).replace('size_', '')}`,
     品类: '休闲鞋',
     更新时间: extra.updatedAt ?? Date.UTC(2026, 9, 8, 12, 30),
     ...extra.fields,
@@ -93,11 +93,11 @@ const service = (options) => createScanPageService(fakeGateway(options), { confi
 
 // ── ① 编号解码 ──────────────────────────────────────────────────────────────
 test('① 编号解码：URL 编码（中文 + `|`）、未编码中文、以及孤立 `%` 都不出事', () => {
-  assert.equal(decodeScanNumber('YD6693-2%7C%E9%BB%91%E8%89%B2%7CA'), NUMBER);
-  assert.equal(decodeScanNumber('YD6693-2|黑色|A'), NUMBER);
-  assert.equal(decodeScanNumber('  YD6693-2%7C%E9%BB%91%E8%89%B2%7CA  '), NUMBER);
+  assert.equal(decodeScanNumber('YD6693-2%7C%E9%BB%91%E8%89%B2%7C%E7%94%B7'), NUMBER);
+  assert.equal(decodeScanNumber('YD6693-2|黑色|男'), NUMBER);
+  assert.equal(decodeScanNumber('  YD6693-2%7C%E9%BB%91%E8%89%B2%7C%E7%94%B7  '), NUMBER);
   // 双重编码（有些客户端会把整段再编一次）
-  assert.equal(decodeScanNumber('YD6693-2%257C%25E9%25BB%2591%25E8%2589%25B2%257CA'), NUMBER);
+  assert.equal(decodeScanNumber('YD6693-2%257C%25E9%25BB%2591%25E8%2589%25B2%257C%25E7%2594%25B7'), NUMBER);
   // 编号里合法的空格**不许**被折叠：二维码里的空格是 `%20`
   assert.equal(decodeScanNumber('A%20B'), 'A B');
   // 孤立 `%`：decodeURIComponent 会抛 —— 必须退回原值，不许把整页打成 500
@@ -108,8 +108,8 @@ test('① 编号解码：URL 编码（中文 + `|`）、未编码中文、以及
 });
 
 test('① 编号切段：货号 / 颜色 / 类别（切不出第 3 段就是"没有类别"）', () => {
-  assert.deepEqual(parseNumberSegments(NUMBER), { itemNo: 'YD6693-2', color: '黑色', categoryCode: 'A' });
-  assert.deepEqual(parseNumberSegments('26812|黑色|A'), { itemNo: '26812', color: '黑色', categoryCode: 'A' });
+  assert.deepEqual(parseNumberSegments(NUMBER), { itemNo: 'YD6693-2', color: '黑色', categoryCode: '男' });
+  assert.deepEqual(parseNumberSegments('26812|黑色|男'), { itemNo: '26812', color: '黑色', categoryCode: '男' });
   assert.deepEqual(parseNumberSegments('XHB8095|黑色'), { itemNo: 'XHB8095', color: '黑色', categoryCode: '' });
 });
 
@@ -122,7 +122,7 @@ test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显�
   assert.equal(view.item_no, 'YD6693-2');
   assert.equal(view.color, '黑色');
   assert.equal(view.category_name, '休闲鞋');
-  assert.equal(view.category_code, 'A');
+  assert.equal(view.category_code, '男');
   assert.equal(view.price_text, '¥399');
   assert.equal(view.total, 3, '共 N 双 = 「实时库存」里属于这个编号的记录条数');
   assert.deepEqual(view.columns.map((column) => column.label), ['门盒', '样品', '仓库']);
@@ -216,8 +216,8 @@ test('② 缺码**只看配置段**，不再看「尺码管理.类别」（多�
   //   ⇒ 表里把 41 标成"女鞋专属（B）"也**不再**影响男鞋（A）那一页的缺码判定。
   const sizes = [
     { record_id: 'size_40', fields: { 尺码: 40, 类别: ['A', 'B'] } },
-    { record_id: 'size_41', fields: { 尺码: 41, 类别: ['B'] } }, // 表里说它是女鞋专属
-    { record_id: 'size_42', fields: { 尺码: 42, 类别: 'A' } },
+    { record_id: 'size_41', fields: { 尺码: 41, 类别: ['女'] } }, // 表里说它是女鞋专属
+    { record_id: 'size_42', fields: { 尺码: 42, 类别: '男' } },
   ];
   const view = await service({
     sizes,
@@ -240,7 +240,7 @@ test('② 状态里出现配置外的取值 / 读不出尺码：**不丢**、另
     ...DEFAULT_INVENTORY,
     inventoryRow('inv_41_warehouse', 'size_41', '仓库'),
     // 她在表里新加了一个状态
-    { record_id: 'inv_40_other', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '车里', 库存键: 'YD6693-2|黑色|A|40' } },
+    { record_id: 'inv_40_other', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '车里', 库存键: 'YD6693-2|黑色|男|40' } },
     // 尺码关联被清空、库存键也读不出尺码
     { record_id: 'inv_broken', fields: { 编号: ['prod_1'], 尺码: [], 所属状态: '门盒', 库存键: '' } },
   ];
@@ -262,7 +262,7 @@ test('② 状态里出现配置外的取值 / 读不出尺码：**不丢**、另
 
 test('② 尺码关联损坏时退回「库存键」最后一段（关联单元格没有文本也能认出尺码）', async () => {
   const inventory = [
-    { record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['unknown_size_record'], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|A|41' } },
+    { record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['unknown_size_record'], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|男|41' } },
   ];
   const view = await service({ inventory }).lookup({ number: NUMBER, requestId: 'req_5' });
   assert.equal(view.total, 1);
@@ -271,7 +271,7 @@ test('② 尺码关联损坏时退回「库存键」最后一段（关联单元�
 });
 
 test('② 关联单元格为空时用「库存键」前缀认行（数据残缺也要看得见库存）', async () => {
-  const inventory = [{ record_id: 'inv_1', fields: { 编号: [], 尺码: ['size_40'], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|A|40' } }];
+  const inventory = [{ record_id: 'inv_1', fields: { 编号: [], 尺码: ['size_40'], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|男|40' } }];
   const view = await service({ inventory }).lookup({ number: NUMBER, requestId: 'req_6' });
   assert.equal(view.total, 1);
   // ⚠️ 行清单按配置段补全（38–48）⇒ 40 不一定是第一行。
@@ -282,9 +282,9 @@ test('② 关联单元格为空时用「库存键」前缀认行（数据残缺�
 
 test('② 大小写兜底：她照着标签手打一遍（大小写不一致）也能查到', async () => {
   const view = await service({
-    products: [{ ...PRODUCT, fields: { ...PRODUCT.fields, 编号: 'XHB8095|黑色|A' } }],
-    inventory: [{ record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '门盒', 库存键: 'XHB8095|黑色|A|40' } }],
-  }).lookup({ number: 'xhb8095|黑色|A', requestId: 'req_7' });
+    products: [{ ...PRODUCT, fields: { ...PRODUCT.fields, 编号: 'XHB8095|黑色|男' } }],
+    inventory: [{ record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '门盒', 库存键: 'XHB8095|黑色|男|40' } }],
+  }).lookup({ number: 'xhb8095|黑色|男', requestId: 'req_7' });
   assert.equal(view.found, true);
   assert.equal(view.total, 1);
 });
@@ -294,11 +294,11 @@ test('③ 没找到这个编号 / 空编号：`found:false`，不抛、不 500',
   const gateway = fakeGateway();
   const scan = createScanPageService(gateway, { config: SCAN_PAGE });
 
-  const unknown = await scan.lookup({ number: 'NOPE|黑色|A', requestId: 'req_8' });
+  const unknown = await scan.lookup({ number: 'NOPE|黑色|男', requestId: 'req_8' });
   // 编号兜底已删除；找不到时只回 found / number / reason。
   assert.deepEqual(unknown, {
     found: false,
-    number: 'NOPE|黑色|A',
+    number: 'NOPE|黑色|男',
     reason: 'unknown',
   });
 

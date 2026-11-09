@@ -214,7 +214,7 @@ const loadCandidates = async (gateway) => {
 
 const matrixOf = (candidates) => {
   const out = { inventory: [], sales: [] };
-  for (const category of ['A', 'B']) {
+  for (const category of ['男', '女']) {
     const list = candidates
       .filter((c) => c.category === category)
       .sort((a, b) => `${a.itemNo}|${a.color}`.localeCompare(`${b.itemNo}|${b.color}`));

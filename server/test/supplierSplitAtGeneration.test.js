@@ -314,8 +314,8 @@ test('AC-SS2 ⭐⭐ 单供应商 ⇒ 递给写入口的**载荷逐字相同**（
   const draft = {
     open_id: 'ou_me', order_key: 'scan_replenish:s:1', order_amount: '',
     items: [
-      { product_record_id: 'rec_K1', number: 'K1|黑色|A', item_no: 'K1', color: '黑色', supplier_record_id: 'sup_K1', entries: [{ size: 40, quantity: 2 }] },
-      { product_record_id: 'rec_K2', number: 'K2|黑色|A', item_no: 'K2', color: '黑色', supplier_record_id: 'sup_K1', entries: [{ size: 40, quantity: 3 }] },
+      { product_record_id: 'rec_K1', number: 'K1|黑色|男', item_no: 'K1', color: '黑色', supplier_record_id: 'sup_K1', entries: [{ size: 40, quantity: 2 }] },
+      { product_record_id: 'rec_K2', number: 'K2|黑色|男', item_no: 'K2', color: '黑色', supplier_record_id: 'sup_K1', entries: [{ size: 40, quantity: 3 }] },
     ],
   };
   const plan = engine.planSubmission({
@@ -335,12 +335,12 @@ test('AC-SS2 ⭐⭐ 单供应商 ⇒ 递给写入口的**载荷逐字相同**（
     operator_open_id: 'ou_me',
     items: [
       {
-        product_record_id: 'rec_K1', product_number: 'K1|黑色|A', item_no: 'K1', color: '黑色',
+        product_record_id: 'rec_K1', product_number: 'K1|黑色|男', item_no: 'K1', color: '黑色',
         supplier_record_id: 'sup_K1', size: 40, quantity: 2,
         behavior_record_id: 'bh_1', behavior_kind: 'purchase_request',
       },
       {
-        product_record_id: 'rec_K2', product_number: 'K2|黑色|A', item_no: 'K2', color: '黑色',
+        product_record_id: 'rec_K2', product_number: 'K2|黑色|男', item_no: 'K2', color: '黑色',
         supplier_record_id: 'sup_K1', size: 40, quantity: 3,
         behavior_record_id: 'bh_1', behavior_kind: 'purchase_request',
       },

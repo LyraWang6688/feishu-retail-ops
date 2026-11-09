@@ -29,7 +29,7 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const SESSION_SECRET = 'scan_page_test_session_secret';
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const ENCODED = 'prod_1';
 
 const login = () => {
@@ -61,7 +61,7 @@ const view = (overrides = {}) => ({
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 3,
   columns: [{ key: '门盒', label: '门盒' }, { key: '样品', label: '样品' }, { key: '仓库', label: '仓库' }],
@@ -115,13 +115,13 @@ test('页面：200 出库存表（含缺码高亮、0 用「—」、单价与�
 
 test('没找到这个编号 → 404 + 一张说清楚的页面（不白屏、不 500）', async () => {
   login();
-  await withServer(appFor(async () => ({ found: false, number: 'NOPE|黑色|A', reason: 'unknown' })), async (base) => {
+  await withServer(appFor(async () => ({ found: false, number: 'NOPE|黑色|男', reason: 'unknown' })), async (base) => {
     const response = await fetch(`${base}/r/NOPE%7C%E9%BB%91%E8%89%B2%7CA`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 404);
     const html = await response.text();
     assert.match(html, /没找到这个编号/);
     assert.match(html, /可能已删除、或编号变了/);
-    assert.match(html, /NOPE\|黑色\|A/); // 把她扫到的编号原样回显，便于核对
+    assert.match(html, /NOPE\|黑色\|男/); // 把她扫到的编号原样回显，便于核对
   });
 });
 
@@ -219,12 +219,12 @@ test('准入（与工作台同一道闸门）：未启用认证 503、未登录 
 
 // ── 真 app.js：挂载点 + 不在 API_KEY 之下 + 只读 ─────────────────────────────
 const SIZE_RECORDS = [
-  { record_id: 'size_40', fields: { 尺码: 40, 类别: 'A' } },
-  { record_id: 'size_41', fields: { 尺码: 41, 类别: 'A' } },
+  { record_id: 'size_40', fields: { 尺码: 40, 类别: '男' } },
+  { record_id: 'size_41', fields: { 尺码: 41, 类别: '男' } },
 ];
 const PRODUCTS = [{
   record_id: 'prod_1',
-  fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: 'A', 品类: { text: '休闲鞋' }, 单价: 399 },
+  fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: '男', 品类: { text: '休闲鞋' }, 单价: 399 },
 }];
 const INVENTORY = [
   { record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '门盒', 库存键: `${NUMBER}|40`, 品类: '休闲鞋', 更新时间: Date.UTC(2026, 9, 8, 12, 30) } },
@@ -233,7 +233,7 @@ const INVENTORY = [
 test('旧 /s/{编号} 已删除：生产入口只保留 /r/{recordId}', async () => {
   login();
   await withServer(appFor(async () => view()), async (base) => {
-    const response = await fetch(`${base}/s/${encodeURIComponent('YD6693-2|黑色|A')}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/s/${encodeURIComponent('YD6693-2|黑色|男')}`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 404, '旧 /s 必须 404');
   });
 });

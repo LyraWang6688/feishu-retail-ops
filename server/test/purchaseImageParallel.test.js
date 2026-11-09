@@ -102,8 +102,8 @@ test('AC-IP5 预渲染图片带货号/颜色：从 draft.items 补（plan 已冻
   const draftTask = {
     draft: {
       items: [
-        { product_record_id: 'recA', item_no: '86822', color: '黑色', number: '86822|黑色|A', entries: [{ size: 39, quantity: 1 }] },
-        { product_record_id: 'recB', item_no: '832', color: '咖色', number: '832|咖色|B', size: 41, quantity: 2 },
+        { product_record_id: 'recA', item_no: '86822', color: '黑色', number: '86822|黑色|男', entries: [{ size: 39, quantity: 1 }] },
+        { product_record_id: 'recB', item_no: '832', color: '咖色', number: '832|咖色|女', size: 41, quantity: 2 },
       ],
     },
   };

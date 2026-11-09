@@ -29,15 +29,15 @@ test('AC-NS2 ⭐ 普通码默认段：A 38–44 · B **36–40**（逐档参数�
   // eslint-disable-next-line global-require
   const { SCAN_PAGE } = require('../src/config/scanPage');
   const ranges = SCAN_PAGE.sizeSegments.ranges;
-  assert.deepEqual(ranges.A.default, [38, 44], 'A（男）普通码 38–44 ✓');
-  assert.deepEqual(ranges.B.default, [36, 40], 'B（女）普通码 **36–40**（2026-10-18 起 41 移入特殊码 ✓）');
+  assert.deepEqual(ranges.男.default, [38, 44], 'A（男）普通码 38–44 ✓');
+  assert.deepEqual(ranges.女.default, [36, 40], 'B（女）普通码 **36–40**（2026-10-18 起 41 移入特殊码 ✓）');
 });
 
 test('AC-NS3 ⭐⭐ 其他码：**库存里有的就显示**（不算特殊码 ✗）；没有的不显示、也不计缺码', () => {
   // eslint-disable-next-line global-require
   const { saleSizeGroups } = require('../src/views/scanPageRealm');
   const VIEW = {
-    number: 'MK31-1|咖色|B', // B = 女：43 在旧口径里是"特殊码"✗ ⇒ 新口径只要库存里有就要显示 ✓
+    number: 'MK31-1|咖色|女', // B = 女：43 在旧口径里是"特殊码"✗ ⇒ 新口径只要库存里有就要显示 ✓
     rows: [
       { size_text: '36', cells: [{ count: 1 }], total: 1 },   // 有货 ⇒ 现货
       { size_text: '43', cells: [{ count: 2 }], total: 2 },   // 老"特殊码"，但**库存里有** ⇒ 显示 ✓

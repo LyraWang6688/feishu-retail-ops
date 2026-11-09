@@ -25,7 +25,7 @@ const WRITE = {
 const cell = (size, count) => ({ size_text: String(size), cells: [{ key: '门盒', count }], total: count, missing: count === 0 });
 /** 女款（B）：34/42/43 是特殊码（她的最终口径）；36 有货、38 缺货是普通码。 */
 const viewOf = () => ({
-  found: true, number: 'J5|咖色|B', item_no: 'J5', color: '咖色', total: 1,
+  found: true, number: 'J5|咖色|女', item_no: 'J5', color: '咖色', total: 1,
   columns: [{ key: '门盒', label: '门盒' }],
   rows: [cell(36, 1), cell(38, 0), cell(42, 0), cell(43, 2)],
   missing_count: 2, notes: [], updated_at_text: 't',

@@ -30,7 +30,7 @@ const RENDERER_SRC = rendererSource();
 const RECORD_ID = 'rec28dZKS5qr58';
 
 test('AC-RD1 ⭐ 骨架的取数请求 = **当前页面自己的路径**（不再写死 /r/）', () => {
-  const html = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
+  const html = renderScanSkeleton({ number: 'MK31-1|咖色|女' }, SCAN_PAGE);
   // ⚠️ 2026-10-14 改写（她的真机：取数把 from 丢了 ⇒ 六格点了看着都没反应 ✗）—— 改前逐字：
   //     `assert.ok(html.includes("window.location.pathname + '?data=1'"), ...)`
   //   改后：仍是"按当前路径取数" ✓，但**把当前 query（含 ?from=）一起带上**、只强制 data=1 ✓
@@ -59,10 +59,10 @@ test('AC-RD3 回归：不带编号的首页 `/r/` 那条**仍然照旧**（`/r/?
 });
 
 test('AC-RD4 回归：`/r/<编号>` 页面照旧（骨架 + 整页都能渲染，且取数仍是同一处）', () => {
-  const skeleton = renderScanSkeleton({ number: 'MK31-1|咖色|B' }, SCAN_PAGE);
+  const skeleton = renderScanSkeleton({ number: 'MK31-1|咖色|女' }, SCAN_PAGE);
   assert.ok(skeleton.includes('scan-skeleton'), '骨架页结构不变 ✓');
   const page = renderScanPage({
-    found: true, number: 'MK31-1|咖色|B', item_no: 'MK31-1', color: '咖色', category_name: '休闲鞋',
+    found: true, number: 'MK31-1|咖色|女', item_no: 'MK31-1', color: '咖色', category_name: '休闲鞋',
     price_text: '¥399', total: 1, columns: [{ key: '门盒', label: '门盒' }],
     rows: [{ size_text: '40', cells: [{ count: 1 }], total: 1, missing: false }],
     missing_count: 0, sizes_degraded: false, notes: [], updated_at_text: 't',

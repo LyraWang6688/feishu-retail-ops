@@ -58,7 +58,7 @@ test('sale deducts one matching door-box unit, preserves sample, and is idempote
 });
 
 test('sale matches live inventory when Feishu returns product links as record_ids', async () => {
-  const linked = [{ record_ids: ['product_1'], text: '6681-1|黑灰|A', type: 'text' }];
+  const linked = [{ record_ids: ['product_1'], text: '6681-1|黑灰|男', type: 'text' }];
   const gateway = gatewayFor([
     { record_id: 'sample_42', fields: { 编号: linked,
       尺码: [{ record_ids: ['size_42'], text: '42', type: 'text' }], 所属状态: ['样品'] } },

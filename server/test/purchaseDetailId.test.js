@@ -57,7 +57,7 @@ const seedTables = (overrides = {}) => ({
   product: [{
     record_id: 'prod_1',
     fields: {
-      编号: 'YD6693-2|黑色|A', 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: 'A', 单价: 399, 供应商: ['sup_1'],
+      编号: 'YD6693-2|黑色|男', 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: '男', 单价: 399, 供应商: ['sup_1'],
     },
   }],
   sizeManagement: [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
@@ -135,7 +135,7 @@ const reportHarness = (options = {}) => {
     references: {
       resolveProduct: async () => ({
         recordId: 'prod_1',
-        record: { record_id: 'prod_1', fields: { 编号: 'YD6693-2|黑色|A', 货号: 'YD6693-2', 颜色: { text: '黑色' }, 供应商: ['sup_1'] } },
+        record: { record_id: 'prod_1', fields: { 编号: 'YD6693-2|黑色|男', 货号: 'YD6693-2', 颜色: { text: '黑色' }, 供应商: ['sup_1'] } },
       }),
       resolveSupplier: async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '大发鞋厂' } } }),
       resolveBehavior: async () => ({ recordId: 'bh_request', record: { record_id: 'bh_request', fields: { 行为编码: 'STOCK_PURCHASE_INCREASE' } } }),

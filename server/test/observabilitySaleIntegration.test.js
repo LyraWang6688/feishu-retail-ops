@@ -16,8 +16,8 @@ const f = (t, values) => Object.fromEntries(Object.entries(values).map(([k,v]) =
 test('goods click creates master; funds click reaches details, receipts, stock and final update with distinct tap IDs', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(),'observability-sale-'));
   const tables = {
-    product: [{ record_id: 'prod', fields: f('product', { number: 'SHOE|黑色|A', itemNo: 'SHOE', category: 'A', price: 100 }) }],
-    sizeManagement: [{ record_id: 'size40', fields: { ...f('sizeManagement',{ size: 40 }), 类别: ['A'] } }],
+    product: [{ record_id: 'prod', fields: f('product', { number: 'SHOE|黑色|男', itemNo: 'SHOE', category: '男', price: 100 }) }],
+    sizeManagement: [{ record_id: 'size40', fields: { ...f('sizeManagement',{ size: 40 }), 类别: ['男'] } }],
     paymentMethod: [{ record_id: 'wechat', fields: f('paymentMethod',{name:'微信'}) }],
     behavior: [ ['cash','现货','SALE_CASH'],['decrease','销售减少','STOCK_SALE_DECREASE'] ].map(([record_id,name,code]) => ({record_id,fields:f('behavior',{name,code,stockDirection:'减少',enabled:true})})),
     liveInventory: [{ record_id: 'live', fields: f('liveInventory',{product:['prod'],size:['size40'],state:'门盒',operationItemKey:'fixture:1'}) }],
@@ -36,7 +36,7 @@ test('goods click creates master; funds click reaches details, receipts, stock a
   const write=createScanWriteService({gateway,readCache:false,sessionDir:path.join(dir,'sessions'),
     purchase:{},purchaseStore:new JsonTaskStore({dir:path.join(dir,'purchase'),idField:'task_id'}),delivery:new SalesDeliveryService({gateway,inventory})});
   try {
-    const added=await write.addSaleLine({openId:'operator',productRecordId:'prod',number:'SHOE|黑色|A',itemNo:'SHOE',size:'40',amount:'100',inStock:true});
+    const added=await write.addSaleLine({openId:'operator',productRecordId:'prod',number:'SHOE|黑色|男',itemNo:'SHOE',size:'40',amount:'100',inStock:true});
     assert.equal(added.ok,true);
     const key=(await write.sessions.get('operator')).sale.key;
     const goods=await write.submitSale({openId:'operator',submitKey:key,masterOnly:true,lineAmounts:['100']},{correlation:{tap_id:'tap-goods'}});
