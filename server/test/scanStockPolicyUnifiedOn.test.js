@@ -283,8 +283,8 @@ test('AC-ST6 ⭐⭐ 她的 44 码（只有「未标状态」= 1）⇒ 四页都�
 test('AC-ST8 ⭐⭐ 普通码（A 38–44 / B 36–40）**有货无货都展示** · 特殊码**无货折叠**', () => {
   const { normalSizesOf, specialSizesOf } = require('../src/config/scanStockPolicy');
   const cases = [
-    { view: MIXED_A_VIEW, code: 'A', stocked: ['40', '42', '43', '44', '46'] },
-    { view: MIXED_B_VIEW, code: 'B', stocked: ['36', '42'] },
+    { view: MIXED_A_VIEW, code: '男', stocked: ['40', '42', '43', '44', '46'] },
+    { view: MIXED_B_VIEW, code: '女', stocked: ['36', '42'] },
   ];
   for (const { view, code, stocked } of cases) {
     const normal = normalSizesOf(code).map(String);

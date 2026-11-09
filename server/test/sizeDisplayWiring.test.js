@@ -24,9 +24,9 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { sizesForCategory } = require('../src/services/scanPageService');
 
 test('AC-SW-1 ⭐⭐ 越界哨兵：`sizesForCategory` 必须**继续**是"可录范围"（验收页口径：A 38–48 / B 34–43）', () => {
-  assert.deepEqual(sizesForCategory('A', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
+  assert.deepEqual(sizesForCategory('男', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
     'A 可录范围 38–48（验收页"应有尺码"要用它 ⇒ 不许收窄成 normal ✗）');
-  assert.deepEqual(sizesForCategory('B', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
+  assert.deepEqual(sizesForCategory('女', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
     'B 可录范围 34–43');
 });
 

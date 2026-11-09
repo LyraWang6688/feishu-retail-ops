@@ -93,11 +93,11 @@ const service = (options) => createScanPageService(fakeGateway(options), { confi
 
 // ── ① 编号解码 ──────────────────────────────────────────────────────────────
 test('① 编号解码：URL 编码（中文 + `|`）、未编码中文、以及孤立 `%` 都不出事', () => {
-  assert.equal(decodeScanNumber('YD6693-2%7C%E9%BB%91%E8%89%B2%7CA'), NUMBER);
+  assert.equal(decodeScanNumber('YD6693-2%7C%E9%BB%91%E8%89%B2%7C%E7%94%B7'), NUMBER);
   assert.equal(decodeScanNumber('YD6693-2|黑色|男'), NUMBER);
-  assert.equal(decodeScanNumber('  YD6693-2%7C%E9%BB%91%E8%89%B2%7CA  '), NUMBER);
+  assert.equal(decodeScanNumber('  YD6693-2%7C%E9%BB%91%E8%89%B2%7C%E7%94%B7  '), NUMBER);
   // 双重编码（有些客户端会把整段再编一次）
-  assert.equal(decodeScanNumber('YD6693-2%257C%25E9%25BB%2591%25E8%2589%25B2%257CA'), NUMBER);
+  assert.equal(decodeScanNumber('YD6693-2%257C%25E9%25BB%2591%25E8%2589%25B2%257C%25E7%2594%25B7'), NUMBER);
   // 编号里合法的空格**不许**被折叠：二维码里的空格是 `%20`
   assert.equal(decodeScanNumber('A%20B'), 'A B');
   // 孤立 `%`：decodeURIComponent 会抛 —— 必须退回原值，不许把整页打成 500

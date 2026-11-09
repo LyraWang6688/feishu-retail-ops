@@ -47,9 +47,9 @@ test('AC-SF1 ⭐ 缺货基准 = **可录范围**（女 34–43 / 男 38–48）�
   assert.equal(typeof realm.enterableScopeOfOf, 'undefined'); // 防手滑写错模块
   const { enterableScopeOf } = require('../src/services/scanPageService');
   assert.equal(typeof enterableScopeOf, 'function', '`enterableScopeOf` 要能从服务模块直接拿到（模块级 ✓）');
-  assert.deepEqual(enterableScopeOf('B', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
+  assert.deepEqual(enterableScopeOf('女', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
     '女 可录范围 34–43');
-  assert.deepEqual(enterableScopeOf('A', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
+  assert.deepEqual(enterableScopeOf('男', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
     '男 可录范围 38–48');
   // ② 展示链路那一行必须改成它（源码哨兵：改前是 `normalScopeOf` ✗）
   assert.match(SERVICE_SRC, /scope = enterableScopeOf\(parsed\.categoryCode\)/,
@@ -117,9 +117,9 @@ test('AC-SF5 ⭐ 折叠块用**原生 `<details><summary>`**、默认收起、su
 
 test('AC-SF6 ⭐ 回归：可录范围本体（验收页在用）**一字不动**', () => {
   const { sizesForCategory } = require('../src/services/scanPageService');
-  assert.deepEqual(sizesForCategory('A', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
+  assert.deepEqual(sizesForCategory('男', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
     '验收页候选仍按可录范围（含 46/47/48 ✓ AC-AP10）');
-  assert.deepEqual(sizesForCategory('B', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43]);
+  assert.deepEqual(sizesForCategory('女', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43]);
   // 2026-10-28 口径收口：无调用的旧包装 `loadSizeScope` 已删除；可录范围本体是 `sizesForCategory` ✓
   assert.equal(/const loadSizeScope =/.test(SERVICE_SRC), false, '`loadSizeScope` 已删除 ✗');
   // 落点哨兵：折叠块**不许**进库存块（`stockTableHtml` 逐字不变 ⇒ AC1）

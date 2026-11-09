@@ -87,7 +87,7 @@ const baseView = (over) => ({
 const MISSING_CATEGORY = baseView({});
 // ② 正常"没货"：B 段普通码 36–40 都在、只是没库存
 const NORMAL_NO_STOCK = baseView({
-  number: 'QPL8093|卡其|B',
+  number: 'QPL8093|卡其|女',
   item_no: 'QPL8093',
   category_name: '女鞋',
   category_code: '女',

@@ -43,7 +43,7 @@ test('AC-1 公式=旧值（缺段）且源字段齐全 ⇒ **用拼装值**（�
   const fields = srcFields({ itemNo: 'MK31-1', color: '咖色', category: '女' });
   const parts = assembleParts(fields);
   assert.deepEqual(parts.map((p) => [p.key, p.value]),
-    [['itemNo', 'MK31-1'], ['color', '咖色'], ['category', 'B']],
+    [['itemNo', 'MK31-1'], ['color', '咖色'], ['category', '女']],
     '三段源字段都要各自读得出值（诊断用）');
 
   const pick = resolveQrNumber({
