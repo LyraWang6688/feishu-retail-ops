@@ -12,9 +12,9 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 
-test('新 IA：一级 tab = 销售 · 库存 · 供应 · 资金 · 创作 · 配置，没有全局扫一扫', () => {
+test('新 IA：一级 tab = 销售 · 供应 · 库存 · 资金 · 创作 · 配置，没有全局扫一扫', () => {
   const tabs = read('public/workbench/config/tabs.js');
-  for (const label of ["label: '销售'", "label: '库存'", "label: '供应'", "label: '资金'", "label: '创作'", "label: '配置'"]) {
+  for (const label of ["label: '销售'", "label: '供应'", "label: '库存'", "label: '资金'", "label: '创作'", "label: '配置'"]) {
     assert.ok(tabs.includes(label), `缺少一级 tab：${label}`);
   }
   assert.equal(tabs.includes("module: 'scan'"), false, '全局扫一扫一级 tab 必须退场');
