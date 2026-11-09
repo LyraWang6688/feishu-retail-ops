@@ -73,8 +73,8 @@ const createSalesDeliveryPaymentService = ({ gateway, payments, store, now = Dat
       if (isFull) {
         if (isVoucher) {
           await gateway.update('paymentRecord', pendingRow.record_id, {
-            [paymentFields.status]: DELIVERY_PAYMENT.platformPendingStatus,
-            [paymentFields.method]: method.recordId ? relation(method.recordId) : undefined,
+            status: DELIVERY_PAYMENT.platformPendingStatus,
+            ...(method.recordId ? { method: relation(method.recordId) } : {}),
           });
           result = { recordId: pendingRow.record_id, pendingAmount: 0, status: DELIVERY_PAYMENT.platformPendingStatus };
         } else {
@@ -88,7 +88,7 @@ const createSalesDeliveryPaymentService = ({ gateway, payments, store, now = Dat
           salesEntryRecordId, method: methodName, amount: value, receivedAt: now(),
         });
         const remaining = Math.max(0, Math.round((pendingAmount - value) * 100) / 100);
-        await gateway.update('paymentRecord', pendingRow.record_id, { [paymentFields.amount]: remaining });
+        await gateway.update('paymentRecord', pendingRow.record_id, { amount: remaining });
         result = { recordId: created.recordId, pendingAmount: remaining, status: isVoucher ? DELIVERY_PAYMENT.platformPendingStatus : DELIVERY_PAYMENT.paidStatus };
       }
       await store.update(taskId, { status: 'completed', result });
