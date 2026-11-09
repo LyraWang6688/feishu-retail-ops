@@ -101,6 +101,10 @@ const createVoucherCatalogSync = ({
       byId.delete(voucherId);
 
       const diffs = {};
+      // 销售状态：1=在售、2=下架（业务负责人 2026-11-10 确认）；未知码不猜。
+      const statusNow = textOf(row.fields?.[fields.status]).trim();
+      const statusTo = (config.statusMap || {})[entry.onlineStatus];
+      if (statusTo && statusNow !== statusTo) diffs.status = { from: statusNow, to: statusTo };
       const currentName = textOf(row.fields?.[fields.name]).trim();
       if (currentName !== entry.name) diffs.name = { from: currentName, to: entry.name };
       if (entry.priceCents !== null && toCents(row.fields?.[fields.purchasePrice]) !== entry.priceCents) {
@@ -126,6 +130,7 @@ const createVoucherCatalogSync = ({
         priceCents: entry.priceCents,
         faceCents: entry.faceCents,
         onlineStatus: entry.onlineStatus,
+        salesStatus: (config.statusMap || {})[entry.onlineStatus] || '',
         commissionRate: entry.commissionRate,
         listedDay: entry.listedDay,
         delistedDay: entry.delistedDay,

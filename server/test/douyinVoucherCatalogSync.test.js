@@ -15,19 +15,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createVoucherCatalogSync, toCents } = require('../src/services/douyin/voucherCatalogSync');
+const { ONLINE_STATUS_TO_SALES_STATUS } = require('../src/config/voucherCatalogSync');
 
 const FIELDS = Object.freeze({
-  name: '券名称', purchasePrice: '售价', faceValue: '面值', externalId: '券ID',
+  name: '券名称', purchasePrice: '售价', faceValue: '面值', externalId: '券ID', status: '销售状态',
 });
 
 const ok = (data) => ({ ok: true, data });
 
-const row = (id, { voucherId, name, price, face }) => ({
+const row = (id, { voucherId, name, price, face, status = '在售' }) => ({
   record_id: id,
-  fields: { [FIELDS.externalId]: voucherId, [FIELDS.name]: name, [FIELDS.purchasePrice]: price, [FIELDS.faceValue]: face },
+  fields: { [FIELDS.externalId]: voucherId, [FIELDS.name]: name, [FIELDS.purchasePrice]: price, [FIELDS.faceValue]: face, [FIELDS.status]: status },
 });
 
-const build = ({ rows = [], products = [], skus = {}, details = {}, config = { accountId: 'acc_1' } } = {}) => {
+const build = ({ rows = [], products = [], skus = {}, details = {}, config = { accountId: 'acc_1', statusMap: ONLINE_STATUS_TO_SALES_STATUS } } = {}) => {
   const gateway = { table: () => ({ fields: FIELDS }), listAll: async () => rows };
   const laike = {
     fetchProductList: async () => ok({ products }),
@@ -42,7 +43,7 @@ const productOf = (id, name, status = 1) => ({ product: { product_id: id, produc
 test('AC-VC1 ⭐ 匹配并按名称/售价/面值报差异', async () => {
   const service = build({
     rows: [row('rec_1', { voucherId: '1874371212430344', name: '旧券名', price: '88.80', face: '90' })],
-    products: [productOf('1874371212430344', '100元代金券')],
+    products: [productOf('1874371212430344', '100元代金券', 2)],
     skus: { 1874371212430344: [{ actual_amount: 8990, origin_amount: 10000 }] },
     details: { 1874371212430344: { commission_info: { platform_take_rate: 500 } } },
   });
@@ -54,6 +55,8 @@ test('AC-VC1 ⭐ 匹配并按名称/售价/面值报差异', async () => {
   const item = out.rows[0];
   assert.equal(item.changed, true);
   assert.equal(item.diffs.name.to, '100元代金券');
+  assert.equal(item.diffs.status.from, '在售', '表里写在售');
+  assert.equal(item.diffs.status.to, '下架', 'product online_status=2 ⇒ 下架');
   assert.equal(item.diffs.priceCents.from, 8880);
   assert.equal(item.diffs.priceCents.to, 8990);
   assert.equal(item.diffs.faceCents.from, 9000);
@@ -130,18 +133,20 @@ test('AC-VC8 ⭐ 上架/下架日期只报差异（readOnly），名称空也算
     table: () => ({ fields: F }),
     listAll: async () => [{
       record_id: 'rec_1',
-      fields: { '券ID': 'p1', '券名称': '', '售价': '49.9', '面值': '100', '上架日期': Date.UTC(2026, 7, 23, 4), '下架日期': null },
+      fields: { '券ID': 'p1', '券名称': '', '售价': '49.9', '面值': '100', '销售状态': '在售', '上架日期': Date.UTC(2026, 7, 23, 4), '下架日期': null },
     }],
   };
   const laike = {
-    fetchProductList: async () => ok({ products: [{ product: { product_id: 'p1', product_name: '100元代金券', sold_start_time: Date.UTC(2026, 7, 24) / 1000, sold_end_time: Date.UTC(2026, 9, 26) / 1000 }, online_status: 1 }] }),
+    fetchProductList: async () => ok({ products: [{ product: { product_id: 'p1', product_name: '100元代金券', sold_start_time: Date.UTC(2026, 7, 24) / 1000, sold_end_time: Date.UTC(2026, 9, 26) / 1000 }, online_status: 2 }] }),
     fetchSkus: async () => ok({ skus: [{ actual_amount: 4990, origin_amount: 10000 }] }),
     fetchProduct: async () => ok({ product_onlines: [{ commission_info: { platform_take_rate: 500 } }] }),
   };
-  const out = await createVoucherCatalogSync({ gateway, laike, config: { accountId: 'a', texts: {} }, logger: { logInfo: () => {}, logWarn: () => {} } }).run();
+  const out = await createVoucherCatalogSync({ gateway, laike, config: { accountId: 'a', statusMap: ONLINE_STATUS_TO_SALES_STATUS, texts: {} }, logger: { logInfo: () => {}, logWarn: () => {} } }).run();
   const item = out.rows[0];
   assert.equal(item.changed, true);
   assert.equal(item.diffs.name.to, '100元代金券');
+  assert.equal(item.diffs.status.from, '在售', '表里写在售');
+  assert.equal(item.diffs.status.to, '下架', 'product online_status=2 ⇒ 下架');
   assert.deepEqual(item.diffs.listedDay, { from: '2026-08-23', to: '2026-08-24', readOnly: true });
   assert.deepEqual(item.diffs.delistedDay, { from: '', to: '2026-10-26', readOnly: true });
 });

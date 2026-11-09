@@ -17,9 +17,14 @@ const TEXTS = Object.freeze({
   notConfigured: '抖音来客应用未配置：需要 DOUYIN_LAIKE_CLIENT_KEY / DOUYIN_LAIKE_CLIENT_SECRET',
 });
 
+// 抖音商品 `online_status` → 飞书「销售状态」选项。
+// 业务负责人 2026-11-10 确认：**1 = 在售、2 = 下架**（选项真值见生产表：在售 / 下架）。
+const ONLINE_STATUS_TO_SALES_STATUS = Object.freeze({ 1: '在售', 2: '下架' });
+
 const createVoucherCatalogSyncConfig = (env = process.env) => ({
   accountId: readString(env, 'DOUYIN_LAIKE_ACCOUNT_ID', '').trim(),
+  statusMap: ONLINE_STATUS_TO_SALES_STATUS,
   texts: TEXTS,
 });
 
-module.exports = { createVoucherCatalogSyncConfig, TEXTS };
+module.exports = { createVoucherCatalogSyncConfig, ONLINE_STATUS_TO_SALES_STATUS, TEXTS };
