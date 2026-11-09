@@ -61,6 +61,24 @@ const createPurchaseQueryService = (gateway, options = {}) => {
   const tableTtlMs = options.tableCacheTtlMs === undefined ? 60_000 : options.tableCacheTtlMs;
   const cachedListAll = createTableReadCache({ ttlMs: tableTtlMs, now: options.now || (() => Date.now()) });
 
+  /**
+   * ⭐ 2026-11-09（业务负责人）：验收页第一层 = **供应商管理里的全部供应商**（固定出现，
+   *   不管有没有未到货批次）。
+   *   · 只读：`getConfigRows({ tableKey: 'supplier' })` —— 走统一配置表缓存
+   *     （`config/configTables.js` 已登记 supplier，TTL 30 分钟；record_changed 会失效）；
+   *   · 顺序 = 配置表里的顺序（不自己排序，保证"固定出现"的稳定顺序）；
+   *   · 名称取「供应商名称」；空名字的行跳过（不显示无名卡片）。
+   */
+  const listSuppliers = async () => {
+    const suppliers = await getConfigRows({ gateway, tableKey: 'supplier' });
+    return (suppliers || [])
+      .map((record) => ({
+        record_id: String(record?.record_id || '').trim(),
+        name: asText('supplier', record, 'name').trim(),
+      }))
+      .filter((item) => item.name);
+  };
+
   const listPurchaseRequests = async (filters = {}) => {
     const [requests, products, batches, behaviors, suppliers] = await Promise.all([
       cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest')),
@@ -184,7 +202,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
     }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)));
   };
 
-  return { listPurchaseRequests, listPurchaseArrivals };
+  return { listPurchaseRequests, listPurchaseArrivals, listSuppliers };
 };
 
 module.exports = { createPurchaseQueryService, REPORT_BEHAVIOR };
