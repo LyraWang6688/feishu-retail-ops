@@ -107,11 +107,11 @@ test('创作 tab 能打开占位页，不报未知模块', async ({ page }) => {
   await expect(page.getByText(/未知工作台模块/)).toHaveCount(0);
 });
 
-test('货品 → 信息配置：标签打印右侧的占位子 tab', async ({ page }) => {
+test('货品 → 数据配置：标签打印右侧的占位子 tab', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '配置', exact: true }).click();
   await expect(page.getByRole('button', { name: '标签打印', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '信息配置', exact: true }).click();
+  await page.getByRole('button', { name: '数据配置', exact: true }).click();
   await expect(page.getByText('待建设')).toBeVisible();
   await expect(page.locator('[data-placeholder="product-info-config"]')).toBeVisible();
 });
@@ -133,7 +133,7 @@ test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) 
 });
 
 // ⭐ 2026-11-08（业务负责人：「草稿页需要和其他占位前端一致」＋ HTML 批注「返回按钮不需要，删除」）：
-//   草稿单那片占位页 = **和 货品→信息配置 同一套占位卡**（虚线卡 + 「待建设」小标签），
+//   草稿单那片占位页 = **和 货品→数据配置 同一套占位卡**（虚线卡 + 「待建设」小标签），
 //   且**不再有**「← 返回订单列表」那颗按钮。
 test('切走再回到订单列表：回到三张入口卡，不保留草稿单占位', async ({ page }) => {
   await page.goto('/workbench/');
@@ -160,7 +160,7 @@ test('草稿单占位页 = 统一占位卡（虚线卡 + 待建设标签），�
   await expect(card).toHaveClass(/placeholder-card/);
   await expect(card.locator('.tag-info')).toHaveText('待建设');
   const border = await card.evaluate((node) => getComputedStyle(node).borderTopStyle);
-  expect(border, '统一占位卡 = 虚线边框（与信息配置那张同款）').toBe('dashed');
+  expect(border, '统一占位卡 = 虚线边框（与数据配置那张同款）').toBe('dashed');
   await expect(page.getByRole('button', { name: /返回订单列表/ })).toHaveCount(0);
 });
 
