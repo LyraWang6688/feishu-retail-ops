@@ -117,6 +117,9 @@ const V1_BITABLE_SCHEMA = {
         faceValue: '面值',
         settlementAmount: '平台结算款',
         status: '销售状态',
+        // ⭐ 2026-11-09：生产表本来就有「券ID」列（文本），与抖音商品接口的
+        //    `product_id`/`sku_id` 是同一个值 ⇒ 它是**券目录对账键**（只补映射，不改表）。
+        externalId: '券ID',
       },
     },
     paymentMethod: {

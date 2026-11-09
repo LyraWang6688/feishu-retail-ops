@@ -40,6 +40,8 @@ const EVENTS = Object.freeze([
   'config_table_cache.last_good_used',
   'douyin.laike.request.failed',
   'douyin.laike.token.failed',
+  'douyin.voucher_catalog.compared',
+  'douyin.voucher_catalog.skipped',
   'feishu.write.applied',
   'feishu.write.failed',
   'feishu.write.retry',

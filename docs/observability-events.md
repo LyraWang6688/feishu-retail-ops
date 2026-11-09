@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **423** 个事件。按前缀分组：
+共 **425** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -79,6 +79,8 @@
 | --- | --- | --- |
 | `douyin.laike.request.failed` | 5 | src/services/douyin/laikeClient.js |
 | `douyin.laike.token.failed` | 1 | src/services/douyin/laikeClient.js |
+| `douyin.voucher_catalog.compared` | 1 | src/services/douyin/voucherCatalogSync.js |
+| `douyin.voucher_catalog.skipped` | 1 | src/services/douyin/voucherCatalogSync.js |
 
 ## feishu
 
