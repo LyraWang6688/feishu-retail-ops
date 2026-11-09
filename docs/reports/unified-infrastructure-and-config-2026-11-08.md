@@ -416,6 +416,25 @@ text → 普通文本；支持 replyToMessageId / reply_in_thread
 通知卡片不再带按钮回调（card.action.trigger 已退场）。
 ```
 
+### 3.10 工作台 UI tab 配置（2026-11-10）
+
+工作台所有层级的 tab 已经配置驱动，页面只负责渲染，不再写死 tab 名称/顺序：
+
+| 层级 | 唯一配置 | 覆盖 |
+| --- | --- | --- |
+| 一级 tab | `public/workbench/config/tabs.js` 的 `MAIN_TABS` | 销售 · 库存 · 供应 · 资金 · 配置 · 创作 |
+| 二级子页 tab | `public/workbench/config/domains.js` 的 `DOMAIN_TABS[*].pages` | 各领域下的子页（录单 / 订单列表 / 手工调整 / 标签打印 / 数据配置 / 消息通知…） |
+| 三级子 tab | `public/workbench/config/inventoryAdjustment.js` 的 `INVENTORY_ADJUSTMENT_TABS` | 库存 → 手工调整：状态调整 / 盘点调整 / 换季调整 |
+| 交割单页 tab | `public/workbench/config/sales-delivery.js` 的 `TABS` | 货未清 / 钱未清 / 钱货都未清 |
+| 采购页 tab | `public/workbench/config/procurement.js` 的 `tabs` | 补货 / 上新 / 扫一扫（占位） |
+| 扫码页领域 tab | `src/views/scanPageRealm.js` 的 `REALM_TABS` | 销售 / 补货 / 库存 / 退货 |
+
+边界：
+
+- 这是**代码配置**，不是运行时后台可编辑；加减 tab / 改名 / 改顺序仍需要改配置并部署；
+- 每个 tab 对应的面板实现仍按 `id` 走代码，新增功能不能只加配置；
+- 独立页顶部导航（返回完整工作台 / 库存手工调整 / 鞋盒标签打印）已按业务口径删除，不属于 tab 配置范围。
+
 ## 4. 哪些“统一化了”
 
 | 层 | 统一配置/真源 | 覆盖 | 例外 |
@@ -430,6 +449,7 @@ text → 普通文本；支持 replyToMessageId / reply_in_thread
 | 日志事件 | `config/events.js` | 全仓日志 | 自动生成，禁止手改 |
 | 表/字段映射 | `config/v1BitableSchema.js` | 所有飞书读写 | 改表必须同步 |
 | 配置表缓存 | `config/configTables.js` + `configTableCache` | 8 张配置表 | 单实例；多实例未做 |
+| 工作台 UI tab | `config/tabs.js` + `config/domains.js` + `config/inventoryAdjustment.js` | 一级 / 二级 / 三级 tab | 代码配置，改动需部署；独立页导航已删 |
 | 通知目标 / 事件 / 卡片 | `config/notifications.js` + `notificationService` | 私聊/群聊 6 类事件 | 采购文字保留图片+@+话题 |
 
 ## 5. 仍需注意的缺口
@@ -666,3 +686,25 @@ P1：toast 收口（到货确认 / 售后）
 P2：配置表缓存剩余例外（路由失效测试 / labelPrint 叠加缓存）
 P3：events 单段事件名、附件/IM 写调度边界
 ```
+
+
+## 8. 待统一：样例图同步到云盘（Issue #629，未实现）
+
+现状：
+
+- 「货品信息.样例图」只是多维表格附件字段；
+- 代码只在 `larkMvpService.loadProductIndex` 里判断附件数组是否为空（`missingSampleImage`），**没有下载、转存、上传云盘**；
+- 全仓唯一的 drive 上传是标签二维码 `tagQrCodeService` → `V1BitableGateway.uploadMedia()`，写回「货品信息.标签二维码」附件，不是云盘文件夹；
+- 没有 `drive/v1/files/upload_all`，也没有附件下载 / 云盘复制逻辑。
+
+要做「样例图自动同步到云盘」时，先定这 5 个配置项：
+
+```text
+1. 触发时机：货品记录变更事件（drive.file.bitable_record_changed_v1）还是定时全量补齐
+2. 目标位置：云盘 folder_token；是否按货号 / 颜色建子目录
+3. 命名规则：例如 货号|颜色|样例图.jpg
+4. 幂等去重：本地记录（附件 token -> 云盘 file token）还是回写一列云盘文件 token
+5. 失败处理：走统一 asyncJobs + 失败通知，不阻塞货品页面
+```
+
+在口径未定之前，这条**不纳入当前统一配置**；上面的 5 项定完后，再新增独立配置（建议 `config/sampleImageSync.js`）并登记到本文档。
