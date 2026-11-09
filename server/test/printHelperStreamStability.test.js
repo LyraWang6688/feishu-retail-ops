@@ -357,7 +357,7 @@ test('AC-B5 断线后重连仍按退避（不回归）', async () => {
 
 test('AC-B6 有任务 ⇒ 长连接上立刻收到并打成纸（不回归）', async () => {
   const server = fakeStreamServer();
-  server.state.job = { job_id: 'job-1', status: 'claimed', numbers: ['XHB8095|棕色|A'], total_labels: 1 };
+  server.state.job = { job_id: 'job-1', status: 'claimed', numbers: ['XHB8095|棕色|男'], total_labels: 1 };
   const printed = [];
   const dir = tmpDir();
   const h = makeHelper({ fetch: server.fetchImpl, config: {} });

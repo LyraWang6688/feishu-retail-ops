@@ -105,8 +105,8 @@ const postJson = async (base, p, body) => {
 
 const ROWS = [
   // 真实 `listPurchaseRequests` 行：`product_item_no`=货号、`product_color`=颜色、`product_number`=编号（复合值）
-  { record_id: 'r1', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1|黑色|B', size: 40, quantity: 2 },
-  { record_id: 'r2', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1|黑色|B', size: 41, quantity: 1 },
+  { record_id: 'r1', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1|黑色|女', size: 40, quantity: 2 },
+  { record_id: 'r2', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1|黑色|女', size: 41, quantity: 1 },
 ];
 
 test('AC-AW10 ⭐ 卡展开能看到**该批采购明细**（货号/尺码/数量 · **只读** GET ✓ 无输入 ✗）', async () => {
@@ -115,11 +115,25 @@ test('AC-AW10 ⭐ 卡展开能看到**该批采购明细**（货号/尺码/数�
     const res = await getJson(base, `${arrivalTab.api.detail}?batchNo=BH-1`);
     assert.equal(res.status, 200);
     assert.deepEqual(res.body.rows, [
-      { item_no: 'A1', color: '黑色', number: 'A1|黑色|B', size: 40, quantity: 2, product_record_id: 'p1' },
-      { item_no: 'A1', color: '黑色', number: 'A1|黑色|B', size: 41, quantity: 1, product_record_id: 'p1' },
+      { item_no: 'A1', color: '黑色', number: 'A1|黑色|女', size: 40, quantity: 2, product_record_id: 'p1' },
+      { item_no: 'A1', color: '黑色', number: 'A1|黑色|女', size: 41, quantity: 1, product_record_id: 'p1' },
     ], '明细逐字（货号/颜色/编号/尺码/数量 ✓）');
     // 🔴 只读：这条是 GET，而且返回的是**数据**（没有表单字段/输入框语义 ✗）
     assert.equal('fields' in res.body, false, '只读明细不许回"可填字段" ✗');
+  });
+});
+
+test('AC-AW10c ⭐ 按供应商拆卡后：明细只回**这个供应商**的行（同批次多供应商）', async () => {
+  const q = fakeQuery([
+    { record_id: 'r1', product_record_id: 'p1', product_item_no: 'A1', product_color: '黑色', product_number: 'A1', size: 40, quantity: 2, supplier_record_id: 's1', supplier_name: '一代千金' },
+    { record_id: 'r2', product_record_id: 'p2', product_item_no: 'A2', product_color: '黑色', product_number: 'A2', size: 40, quantity: 3, supplier_record_id: 's2', supplier_name: '信踏' },
+  ]);
+  await withServer(appFor({ arrival: fakeArrival(), purchaseQuery: q }), async (base) => {
+    const res = await getJson(base, `${arrivalTab.api.detail}?batchNo=BH-1&supplierRecordId=s1`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.rows, [{
+      item_no: 'A1', color: '黑色', number: 'A1', size: 40, quantity: 2, product_record_id: 'p1', supplier_record_id: 's1',
+    }], '只回一代千金那 1 行（信踏的不混进来 ✓）');
   });
 });
 
@@ -140,6 +154,40 @@ test('AC-AW10b ⭐ 缺批次号 / 明细读不到 / 明细为空 ⇒ 人话 + �
     assert.equal(res.status, 400, '读到失败 ⇒ 400 人话（不当成功 ✗）');
     assert.equal(res.body.error, arrivalTab.texts.detailFailed);
   });
+});
+
+test('AC-AW18 ⭐ 按供应商拆卡：accept 把 supplierRecordId 原样交给会话（每家独立验收）', async () => {
+  const q = fakeQuery([{
+    record_id: 'r1', batch_no: 'BH-1', product_record_id: 'p1', product_item_no: 'A1', size: 40,
+    quantity: 2, report_behavior: 'purchase_request', arrival_status: '未到货', supplier_record_id: 's1',
+  }]);
+  const arrival = fakeArrival();
+  await withServer(appFor({ arrival, purchaseQuery: q }), async (base) => {
+    const res = await postJson(base, arrivalTab.api.accept, {
+      batchNo: 'BH-1', supplierRecordId: 's1', actualAmount: '100',
+      lines: [{ productRecordId: 'p1', size: 40, quantity: 2 }],
+    });
+    assert.equal(res.status, 200);
+    const started = arrival.calls.find((c) => c.m === 'start');
+    assert.equal(started?.input?.supplierRecordId, 's1', '开会话时带上本次验收的供应商 ✓');
+  });
+});
+
+test('AC-AW18b ⭐ 供应商不在这批采购明细里 ⇒ 400 + 人话 + 零会话（防旧页面/手工请求）', async () => {
+  const q = fakeQuery([{
+    record_id: 'r1', batch_no: 'BH-1', product_record_id: 'p1', product_item_no: 'A1', size: 40,
+    quantity: 2, report_behavior: 'purchase_request', arrival_status: '未到货', supplier_record_id: 's1',
+  }]);
+  const arrival = fakeArrival();
+  await withServer(appFor({ arrival, purchaseQuery: q }), async (base) => {
+    const res = await postJson(base, arrivalTab.api.accept, {
+      batchNo: 'BH-1', supplierRecordId: 's-not-here', actualAmount: '100',
+      lines: [{ productRecordId: 'p1', size: 40, quantity: 2 }],
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error, arrivalTab.texts.supplierNotInBatch, '人话走配置 ✓');
+  });
+  assert.equal(arrival.calls.length, 0, '不在本批 ⇒ 零会话 ✓');
 });
 
 test('AC-AW-ALREADY ⭐⭐ 已到货批次再提交验收 ⇒ 400 + 人话 + 零写入（前端已不渲染它，后端也挡）', async () => {

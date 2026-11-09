@@ -42,7 +42,7 @@ const { multiItemPayloadJson } = require('../src/views/scanPageRenderer');
 
 const SESSION_SECRET = 'mi_add_wire_session_secret';
 const OPEN_ID = 'ou_miaw';
-const NUMBER = 'K1|黑色|A';
+const NUMBER = 'K1|黑色|男';
 const WIRE = Object.freeze(
   resolveMultiItemOrderConfig({}).wire,
 );
@@ -65,7 +65,7 @@ const viewOf = (number = NUMBER) => {
   const [itemNo, color] = String(number).split('|');
   return {
     found: true, number, item_no: itemNo, color, category_name: '休闲鞋',
-    category_code: 'A', price_text: '¥399', total: 2, columns: [{ key: '门盒', label: '门盒' }],
+    category_code: '男', price_text: '¥399', total: 2, columns: [{ key: '门盒', label: '门盒' }],
     rows: ['40', '41'].map((size, index) => ({
       size_text: size, cells: index === 0 ? [{ key: '门盒', count: 2 }] : [], total: index === 0 ? 2 : 0,
       missing: index !== 0,
@@ -175,7 +175,7 @@ const K1 = Object.freeze({
   supplier_record_id: 'sup_K1', entries: [],
 });
 const K2 = Object.freeze({
-  product_record_id: 'rec_K2', number: 'K2|白色|A', item_no: 'K2', color: '白色',
+  product_record_id: 'rec_K2', number: 'K2|白色|男', item_no: 'K2', color: '白色',
   supplier_record_id: 'sup_K2', entries: [],
 });
 
@@ -248,10 +248,10 @@ test('AC-MI-A2 ⭐⭐ 303 回本页之后：**已加那件**回到页面上（�
   await withServer(makeApp({ writeService }), async (base) => {
     await postForm(base, addBody({ sizes: ['40'], quantity: '2' }));
     // ⭐ 她**再扫 K2** 那一页（已加的 K1 会跟着 hidden 字段过来 ✓ —— 与真机同一条路）
-    const html = await getPage(base, { number: 'K2|白色|A' });
+    const html = await getPage(base, { number: 'K2|白色|男' });
     // ① 列表里看得见（`data-view="multi-item-list"` + 那一件的编号 ✓）
     assert.match(html, /data-view="multi-item-list"/, '已加货品列表要出现（她看得见自己加了什么 ✓）');
-    assert.match(html, /K1\|黑色\|A/, '那一行是已加的那件（K1 ✓）');
+    assert.match(html, /K1\|黑色\|男/, '那一行是已加的那件（K1 ✓）');
     // ② 每行那颗删除按钮（接线字段 + 该件 id ✓）
     assert.match(html, new RegExp(`data-multi-remove name="${WIRE.removeField}" value="rec_K1"`),
       '🔴 每行一颗删除按钮（`value` = 该件 record_id ✓）');
@@ -272,7 +272,7 @@ test('AC-MI-A3 ⭐⭐ 再加第二件 ⇒ 两件都在草稿里；**删除**一�
     await postForm(base, addBody({ sizes: ['40'], quantity: '2' }));
     // 她**再扫 K2** 那一页（hidden = [K2(首件), K1(已加, 40 码 2 双)]）⇒ 点"加"（K2 填 41 码 1 双）
     await postForm(base, addBody({
-      number: 'K2|白色|A', first: K2,
+      number: 'K2|白色|男', first: K2,
       already: [{ ...K1, entries: [{ size: '40', quantity: '2' }] }],
       sizes: ['41'], quantity: '1',
     }));
@@ -313,7 +313,7 @@ test('AC-MI-B ⭐⭐ 两件一起提交 ⇒ 引擎 **1 次** · `groups.length =
   const writeService = makeWriteService();
   await withServer(makeApp({ writeService }), async (base) => {
     // ① 先扫 K2 填 41 码 1 双、点"加"（⇒ 草稿里记下 K2）
-    await postForm(base, addBody({ number: 'K2|白色|A', first: K2, sizes: ['41'], quantity: '1' }));
+    await postForm(base, addBody({ number: 'K2|白色|男', first: K2, sizes: ['41'], quantity: '1' }));
     // ② 她**再扫 K1**（hidden = `[K1(首件, entries 空), K2(已加)]`）
     const html = await getPage(base);
     const payload = hiddenItemsOf(html);
@@ -349,7 +349,7 @@ test('AC-MI-B2 ⭐ 提交成功之后 ⇒ **暂存清掉**（下一单看不见�
   const writeService = makeWriteService();
   await withServer(makeApp({ writeService }), async (base) => {
     await postForm(base, addBody({ sizes: ['40'], quantity: '2' }));
-    const html = await getPage(base, { number: 'K2|白色|A' });
+    const html = await getPage(base, { number: 'K2|白色|男' });
     await postForm(base, submitBody({ items: hiddenItemsOf(html) }));
     assert.equal(await pendingOf(writeService), null, '🔴 交出去之后暂存必须清空（不清 ⇒ 下一单凭空多货 ✗）');
   });

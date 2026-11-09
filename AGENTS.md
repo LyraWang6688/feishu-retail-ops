@@ -357,6 +357,29 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 
 `docs/reports/unified-infrastructure-and-config-2026-11-08.md`
 
+### ⚠️ 技术债：`linkedRecordIds()` 多形状兼容清理（相关条线 AI 必须确认）
+
+> **Issue #1074**：https://github.com/LyraWang6688/feishu-retail-ops/issues/1074
+>
+> `server/src/services/v1BitableGateway.js` 的 `linkedRecordIds()` 目前兼容多种**关联字段**
+> cell 形状（`record_ids` / `link_record_ids` / `{id}` / 字符串数组）。这是一层**未逐条取证的兼容**：
+> 关联字段分 **SingleLink（type 18）** 与 **DuplexLink（type 21）**，不同读接口返回形状可能不同。
+>
+> **规则（在相关条线确认前）：**
+> 1. **不要**擅自删除 `linkedRecordIds()` 的兼容分支；
+> 2. 各相关条线的 AI 先在本条线涉及的关联字段上做**只读取证**：
+>    - 字段类型（18 / 21）；
+>    - 实际接口（`listAll` / `get` / `getBatch` / create/update 返回）；
+>    - cell 原始 JSON 样例（测试 Base 只读或生产样例）；
+> 3. 确认自己条线只出现哪些形状后，再到 Issue #1074 回报；全局清理要**串行、先清单后改**，
+>    并跑全量测试 + file-size + observability-events。
+>
+> **涉及条线（至少）**：销售交割 / 二次交割 / 采购查询 / 销售进度 / 库存关联。
+>
+> **例外**：「已到货供应商」读取已单独收窄为 `arrivedSupplierIds()`（只认 `[{record_ids:[...]}]`），
+> 不在此技术债范围，**不要改回全局兼容**。
+
+
 ### 通知配置自检（每个 AI 改通知前必须过）
 
 唯一入口：

@@ -18,7 +18,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'skel_r
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { renderScanSkeleton } = require('../src/views/scanPageRenderer');
 
-const VIEW = { number: 'MK31-1|咖色|B', item_no: 'X7303', color: '绿色' };
+const VIEW = { number: 'MK31-1|咖色|女', item_no: 'X7303', color: '绿色' };
 const HTML = renderScanSkeleton(VIEW, SCAN_PAGE);
 const scriptOf = (html) => {
   const start = html.indexOf('<script');

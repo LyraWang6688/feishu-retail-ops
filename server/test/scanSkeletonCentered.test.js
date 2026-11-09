@@ -13,7 +13,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'skel_c
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { renderScanSkeleton } = require('../src/views/scanPageRenderer');
 
-const VIEW = { number: 'MK31-1|咖色|B', item_no: 'X7303', color: '绿色', category_name: '休闲鞋' };
+const VIEW = { number: 'MK31-1|咖色|女', item_no: 'X7303', color: '绿色', category_name: '休闲鞋' };
 const HTML = renderScanSkeleton(VIEW, SCAN_PAGE);
 const BODY = HTML.slice(HTML.indexOf('<body>'), HTML.indexOf('<script'));
 

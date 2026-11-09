@@ -45,7 +45,7 @@ const COOKIE = (() => {
     .update(payload).digest('base64url')}`;
 })();
 
-const NUMBER = 'N05|黑色|A';
+const NUMBER = 'N05|黑色|男';
 const ENCODED = encodeURIComponent(NUMBER);
 
 /** 扫码时**已经取到**的尺码/库存结构 —— 40 有 3 双 · 41 **缺码 0 双** · 42 有 1 双。 */

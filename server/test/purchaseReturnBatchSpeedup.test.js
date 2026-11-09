@@ -83,7 +83,7 @@ const { PurchaseOrderBatchService } = require('../src/services/purchaseOrderBatc
 const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 const ITEM_NO = 'YD6693-2';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -108,7 +108,7 @@ const PRODUCT = {
     编号: NUMBER,
     货号: ITEM_NO,
     颜色: { text: '黑色', record_ids: ['color_black'] },
-    类别: 'A',
+    类别: '男',
     单价: 399,
     供应商: ['sup_1'],
   },

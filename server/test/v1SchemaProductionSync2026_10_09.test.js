@@ -96,11 +96,12 @@ test('A(2026-10-09) 新表「P交易明细」登记进 schema：只登记表，�
   assert.equal(V1_SCHEMA_SCOPES.all.includes('paymentDetail'), true, '`all` 是并集 ⇒ 必须为 true');
 });
 
-test('A(2026-10-09/2026-10-18) 供应商从主表搬到「采购明细」自动字段：只读映射，全仓没有写入点', () => {
+test('A(2026-11-10) 主表「供应商」= Lookup 只读映射；新增「已到货供应商」可写；全仓不写 supplier', () => {
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
   const detail = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
-  // 🔴 2026-10-18：主表列已删 ⇒ 映射删；供应商改为「采购明细」的自动字段（公式/Lookup）。
-  assert.equal(batch.supplier, undefined, '采购主表已删「供应商」列 ⇒ 不许留映射');
+  // ⭐ 2026-11-10（业务负责人重新加回）：主表「供应商」是 Lookup（type 19，只读），只读不写。
+  assert.equal(batch.supplier, '供应商', '主表供应商 = Lookup（只读映射）');
+  assert.equal(batch.arrivedSuppliers, '已到货供应商', '新增多选单向关联「已到货供应商」（可写）');
   assert.equal(detail.supplier, '供应商', '「采购明细.供应商」自动字段必须映射（只读）');
 
   // 只读列 ⇒ 全仓不许有「往『报货批次』写 supplier」的点。

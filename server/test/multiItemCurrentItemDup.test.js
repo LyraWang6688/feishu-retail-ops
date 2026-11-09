@@ -47,7 +47,7 @@ const FIELD = MULTI_ITEM_ORDER.field;
 const WIRE = MULTI_ITEM_ORDER.wire;
 
 const A = Object.freeze({
-  product_record_id: 'rec_A', number: 'K1|黑色|A', item_no: 'K1', color: '黑色', supplier_record_id: 'sup_A',
+  product_record_id: 'rec_A', number: 'K1|黑色|男', item_no: 'K1', color: '黑色', supplier_record_id: 'sup_A',
 });
 /** 草稿里**已经存着**的那一份（旧值：40 码 × 2）—— 她先点过一次「＋ 再加一个货品」 */
 const DRAFT_A = Object.freeze({ ...A, entries: [{ size: '40', quantity: 2 }] });
@@ -177,7 +177,7 @@ test('AC-CID-3 ⭐⭐ 探针（修复前的载荷形状）⇒ 引擎最后拿到
 test('AC-CID-4 ⭐ 列表照旧画**全部**已加的（她刚加的那一件看得见 ✓）；只有载荷把它排掉', () => {
   const html = renderer.multiItemBlockHtml(writeContext(), { ...A, multi_items: [DRAFT_A] }, 'replenish');
   assert.match(html, /data-view="multi-item-list"/, '已加货品列表要出现 ✓');
-  assert.match(html, /<li class="multi-item-row">K1\|黑色\|A/, '🔴 她刚加的那一件**必须看得见**（排列表 ⇒ 她以为没加上 ✗）');
+  assert.match(html, /<li class="multi-item-row">K1\|黑色\|男/, '🔴 她刚加的那一件**必须看得见**（排列表 ⇒ 她以为没加上 ✗）');
   assert.match(html, new RegExp(`data-multi-remove[^>]*name="${WIRE.removeField}"[^>]*value="rec_A"`),
     '那一行那颗删除按钮照旧带着该件 record_id ✓');
   // 🔴 零 JS 哨兵**未动**（既有 AC-W2 / AC-6R5 / RT5b 同口径）

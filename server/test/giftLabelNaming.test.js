@@ -51,8 +51,8 @@ const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { renderScanPage, renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
 
 const VIEW = {
-  found: true, number: 'YD6693-2|黑色|A', item_no: 'YD6693-2', color: '黑色',
-  category_name: '休闲鞋', category_code: 'A', price_text: '¥399', total: 2,
+  found: true, number: 'YD6693-2|黑色|男', item_no: 'YD6693-2', color: '黑色',
+  category_name: '休闲鞋', category_code: '男', price_text: '¥399', total: 2,
   columns: [{ key: '门盒', label: '门盒' }],
   rows: [{ size_text: '40', cells: [{ key: '门盒', count: 2 }], total: 2, missing: false }],
   missing_count: 0, sizes_degraded: false, notes: [], updated_at_text: '2026-10-12 16:00',

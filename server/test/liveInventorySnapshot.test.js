@@ -7,7 +7,7 @@ require('./support/scanPageReadRedirect');   // ⭐ 拆分后：把'按旧路径
  *
  * 线上证据（服务器只读日志 + nginx access.log）：
  *   · `scan.page.cache_miss 08:30:19` → `scan.page.viewed 08:30:33` ⇒ **13.9 秒**；
- *   · 更早一次编号不存在（`3357|黑|B`：过滤读一条没读到 ⇒ **回退整表读「货品信息」**）
+ *   · 更早一次编号不存在（`3357|黑|女`：过滤读一条没读到 ⇒ **回退整表读「货品信息」**）
  *     25 秒还没回来，她在飞书 webview 里等成一张白页，nginx 记 **499**（她先关了）。
  *   ⇒ 每次扫码都要打飞书读「实时库存」，还随时可能掉进整表回退。
  *     快照把这**整张表**搬进内存（后台每 30 秒一拍），扫码时直接查内存。
@@ -41,15 +41,15 @@ const {
   registeredSnapshotCount,
 } = require('../src/services/liveInventorySnapshot');
 
-const NUMBER = 'YD6693-2|黑色|A';
+const NUMBER = 'YD6693-2|黑色|男';
 
 const PRODUCT = {
   record_id: 'prod_1',
-  fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: 'A', 品类: { text: '休闲鞋' }, 单价: 399 },
+  fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: '男', 品类: { text: '休闲鞋' }, 单价: 399 },
 };
 const SIZE_RECORDS = [
-  { record_id: 'size_40', fields: { 尺码: 40, 类别: ['A'] } },
-  { record_id: 'size_41', fields: { 尺码: 41, 类别: ['A'] } },
+  { record_id: 'size_40', fields: { 尺码: 40, 类别: ['男'] } },
+  { record_id: 'size_41', fields: { 尺码: 41, 类别: ['男'] } },
 ];
 const inventoryRow = (id, sizeRecordId, state) => ({
   record_id: id,

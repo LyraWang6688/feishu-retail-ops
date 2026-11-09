@@ -204,8 +204,8 @@ const fakeClock = (start = 1_000_000) => {
   return { now: () => t, advance: (ms) => { t += ms; } };
 };
 const labelListFixture = () => ({
-  liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
-  product: [productRecord('rec1', { number: 'XHB8095|棕色|A', price: 198 })],
+  liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|男|36' })],
+  product: [productRecord('rec1', { number: 'XHB8095|棕色|男', price: 198 })],
 });
 
 /** 结构化日志的出口就是 console.log/warn/error（`src/utils/logger.js`）—— 捕获它们才能断言"记了"。 */
@@ -229,18 +229,18 @@ const captureLogs = () => {
 
 test('AC-N1 无库存但在「货品信息」里的编号 ⇒ 也出一张标签（sizes: []、has_stock: false、记录 ID 版二维码）', async () => {
   const { service } = serviceFor({
-    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|男|36' })],
     product: [
-      productRecord('rec_brown', { number: 'XHB8095|棕色|A', price: 198 }),
+      productRecord('rec_brown', { number: 'XHB8095|棕色|男', price: 198 }),
       // ⭐ 新货：**还没有入库**（「实时库存」里一行都没有），只在「货品信息」里。
-      productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 399, itemNo: 'NEW2026', color: '黑色', category: 'A' }),
+      productRecord('rec_new', { number: 'NEW2026|黑色|男', price: 399, itemNo: 'NEW2026', color: '黑色', category: '男' }),
     ],
   });
   const data = await service.listLabels({});
   assert.equal(data.total_matched, 2, '两个编号各一张标签（其中一个是没入库的新货）');
   assert.equal(data.total_with_stock, 1);
   assert.equal(data.total_without_stock, 1);
-  const fresh = data.labels.find((label) => label.number === 'NEW2026|黑色|A');
+  const fresh = data.labels.find((label) => label.number === 'NEW2026|黑色|男');
   assert.ok(fresh, '⭐ 没入库的新货必须在结果里（她的口径：编号只要在货品信息里就行）');
   assert.deepEqual(fresh.sizes, [], '⭐ 尺码 = **空数组** ⇒ 页面据此不印「尺码 + 库存数量」那一行');
   assert.deepEqual(fresh.size_lines, [], '没有尺码就没有行');
@@ -254,9 +254,9 @@ test('AC-N1 无库存但在「货品信息」里的编号 ⇒ 也出一张标签
   assert.equal(fresh.price_text, '¥399');
   assert.equal(fresh.brand_text, '邯美皮鞋');
   assert.equal(fresh.scan_url, 'https://hm.bamamei.online/r/rec_new', '二维码仍装**接口读到的**记录 ID');
-  assert.equal(fresh.category_code, 'A', '类别来自编号第三段 / 「货品信息.类别」');
+  assert.equal(fresh.category_code, '男', '类别来自编号第三段 / 「货品信息.类别」');
   // 有库存的那一张：**一字未变**（AC-N2）。
-  const stocked = data.labels.find((label) => label.number === 'XHB8095|棕色|A');
+  const stocked = data.labels.find((label) => label.number === 'XHB8095|棕色|男');
   assert.deepEqual(stocked.sizes, [{ size: 36, qty: 1 }]);
   assert.equal(stocked.has_stock, true);
   assert.deepEqual(stocked.record_ids, ['st1']);
@@ -268,18 +268,18 @@ test('AC-N1 无库存但在「货品信息」里的编号 ⇒ 也出一张标签
 test('AC-N2 混合数据集：有库存的编号与没入库的编号各排各的（货架顺序把两侧排在一起）', async () => {
   const { service } = serviceFor({
     liveInventory: [
-      stockRecord('st_b', { stockKey: 'B100|黑色|A|41' }),
-      stockRecord('st_a', { stockKey: 'A100|黑色|A|40', state: '仓库' }),
+      stockRecord('st_b', { stockKey: 'B100|黑色|男|41' }),
+      stockRecord('st_a', { stockKey: 'A100|黑色|男|40', state: '仓库' }),
     ],
     product: [
-      productRecord('rec_b', { number: 'B100|黑色|A', price: 100 }),
-      productRecord('rec_a', { number: 'A100|黑色|A', price: 200 }),
-      productRecord('rec_new', { number: 'A050|白色|A', price: 300, itemNo: 'A050', color: '白色' }),
+      productRecord('rec_b', { number: 'B100|黑色|男', price: 100 }),
+      productRecord('rec_a', { number: 'A100|黑色|男', price: 200 }),
+      productRecord('rec_new', { number: 'A050|白色|男', price: 300, itemNo: 'A050', color: '白色' }),
     ],
   });
   const data = await service.listLabels({});
   assert.deepEqual(data.labels.map((label) => label.number),
-    ['A050|白色|A', 'A100|黑色|A', 'B100|黑色|A'], '货架顺序仍按 货号 → 颜色 → 类别（两侧一起排）');
+    ['A050|白色|男', 'A100|黑色|男', 'B100|黑色|男'], '货架顺序仍按 货号 → 颜色 → 类别（两侧一起排）');
   assert.equal(data.labels[0].has_stock, false, 'A050 没入库');
   assert.equal(data.labels[1].has_stock, true);
   assert.deepEqual(data.labels[1].sizes, [{ size: 40, qty: 1 }], '有库存的照旧（含所属状态那条库存）');
@@ -288,10 +288,10 @@ test('AC-N2 混合数据集：有库存的编号与没入库的编号各排各�
 });
 
 test('AC-N2 截断仍然如实：两侧合起来超过上限 ⇒ truncated + total_matched（没入库的也算在总数里）', async () => {
-  const liveInventory = [1, 2, 3].map((n) => stockRecord(`s${n}`, { stockKey: `S${n}|黑色|A|41` }));
-  const product = [1, 2, 3].map((n) => productRecord(`p${n}`, { number: `S${n}|黑色|A`, price: 10 }));
-  product.push(productRecord('p_n1', { number: 'NEW1|黑色|A', price: 10 }));
-  product.push(productRecord('p_n2', { number: 'NEW2|黑色|A', price: 10 }));
+  const liveInventory = [1, 2, 3].map((n) => stockRecord(`s${n}`, { stockKey: `S${n}|黑色|男|41` }));
+  const product = [1, 2, 3].map((n) => productRecord(`p${n}`, { number: `S${n}|黑色|男`, price: 10 }));
+  product.push(productRecord('p_n1', { number: 'NEW1|黑色|男', price: 10 }));
+  product.push(productRecord('p_n2', { number: 'NEW2|黑色|男', price: 10 }));
   const { service } = serviceFor({ liveInventory, product }, { limits: { maxLabels: 3 } });
   const data = await service.listLabels({});
   assert.equal(data.total_matched, 5, '3 个有库存 + 2 个没入库 = 5 张');
@@ -306,8 +306,8 @@ test('AC-N2 截断仍然如实：两侧合起来超过上限 ⇒ truncated + tot
 
 test('AC-N6 只读：`listLabels` 一次 create/update/delete 都不调', async () => {
   const { gateway, service } = serviceFor({
-    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|A|36' })],
-    product: [productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 399 })],
+    liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|男|36' })],
+    product: [productRecord('rec_new', { number: 'NEW2026|黑色|男', price: 399 })],
   });
   // 假网关的 create/update/delete 直接抛错 ⇒ 只要被调到，这条用例当场红。
   await service.listLabels({});
@@ -420,15 +420,15 @@ test('AC-N14 这一档口径住在 config：`LABEL_PRINT.labelList.cacheTtlMs` �
 test('AC-N7 `labelForRecord`：在「货品信息」里、库存里没有的编号 ⇒ 现在也能打出那一张（数据源并集的必然结果）', async () => {
   const gateway = fakeGateway({
     liveInventory: [],
-    product: [productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 399 })],
+    product: [productRecord('rec_new', { number: 'NEW2026|黑色|男', price: 399 })],
   });
   gateway.get = async (tableKey, id) => (tableKey === 'product' && id === 'rec_new'
-    ? productRecord('rec_new', { number: 'NEW2026|黑色|A', price: 399 })
+    ? productRecord('rec_new', { number: 'NEW2026|黑色|男', price: 399 })
     : null);
   const service = createLabelPrintService(gateway);
   const data = await service.labelForRecord('rec_new');
   assert.equal(data.labels.length, 1, '恰好一张（不是 0 张，也不是多张）');
-  assert.equal(data.labels[0].number, 'NEW2026|黑色|A');
+  assert.equal(data.labels[0].number, 'NEW2026|黑色|男');
   assert.deepEqual(data.labels[0].sizes, [], '新货没有尺码 ⇒ 不印「尺码 + 数量」那一行');
   assert.equal(data.labels[0].has_stock, false);
 });
@@ -438,12 +438,12 @@ test('AC-N7 `labelForRecord`：在「货品信息」里、库存里没有的编�
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('partsOfNumber / compoundNumber 是一对：编号 ↔ 三段（缺段不炸、也不编）', () => {
-  assert.equal(compoundNumber('A1', '黑色', 'A'), 'A1|黑色|A');
-  assert.equal(compoundNumber('A1', '', 'A'), 'A1||A');
-  assert.deepEqual(partsOfNumber('A1|黑色|A'), { item_no: 'A1', color: '黑色', category_code: 'A' });
+  assert.equal(compoundNumber('A1', '黑色', '男'), 'A1|黑色|男');
+  assert.equal(compoundNumber('A1', '', '男'), 'A1||男');
+  assert.deepEqual(partsOfNumber('A1|黑色|男'), { item_no: 'A1', color: '黑色', category_code: '男' });
   assert.deepEqual(partsOfNumber('A1|黑色'), { item_no: 'A1', color: '黑色', category_code: '' });
   assert.deepEqual(partsOfNumber(''), { item_no: '', color: '', category_code: '' });
-  assert.equal(compoundNumber(...Object.values(partsOfNumber('A1|黑色|A'))), 'A1|黑色|A');
+  assert.equal(compoundNumber(...Object.values(partsOfNumber('A1|黑色|男'))), 'A1|黑色|男');
 });
 
 test('createdAtOf：候选列按顺序取第一个读得出的时间；都读不出回 0（不猜）', () => {
@@ -461,8 +461,8 @@ test('createdAtOf：候选列按顺序取第一个读得出的时间；都读不
 test('边界：一张库存都没有时，只回「货品信息」里那批（sizes 全空、total_pairs 0）', async () => {
   const { service } = serviceFor({
     product: [
-      productRecord('p1', { number: 'A1|黑色|A', price: 100 }),
-      productRecord('p2', { number: 'A2|黑色|A', price: 200 }),
+      productRecord('p1', { number: 'A1|黑色|男', price: 100 }),
+      productRecord('p2', { number: 'A2|黑色|男', price: 200 }),
     ],
   });
   const data = await service.listLabels({});

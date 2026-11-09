@@ -146,11 +146,11 @@ const sellableSizesOf = (html, realm) => {
  */
 const BLANK_STATE_FIXTURE = {
   found: true,
-  number: '8516|黑色|A',
+  number: '8516|黑色|男',
   item_no: '8516',
   color: '黑色',
   category_name: '凉鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥99',
   total: 5, // 40 的 2 双 + 43 的 2 双 + 44 的 1 双（标题「共 N 双」= 记录条数）
   columns: [
@@ -179,11 +179,11 @@ const BLANK_STATE_FIXTURE = {
  */
 const FULL_SIZES_BLANK_FIXTURE = {
   found: true,
-  number: '8516|黑色|A',
+  number: '8516|黑色|男',
   item_no: '8516',
   color: '黑色',
   category_name: '凉鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥99',
   total: 1, // 记录条数 = 1（就是那双 44 码、状态为空的）
   columns: BLANK_STATE_FIXTURE.columns,
@@ -209,11 +209,11 @@ const FULL_SIZES_BLANK_FIXTURE = {
  */
 const THREE_STATE_FIXTURE = {
   found: true,
-  number: 'YD6693-2|黑色|A',
+  number: 'YD6693-2|黑色|男',
   item_no: 'YD6693-2',
   color: '黑色',
   category_name: '休闲鞋',
-  category_code: 'A',
+  category_code: '男',
   price_text: '¥399',
   total: 5,
   columns: [{ key: '门盒', label: '门盒' }, { key: '样品', label: '样品' }, { key: '仓库', label: '仓库' }],
@@ -450,15 +450,15 @@ test('AC-ST3b 快照是"活的"：把「未标状态」那一列整列拿掉 ⇒
 const { createScanPageService } = require('../src/services/scanPageService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
-const SERVICE_NUMBER = '8516|黑色|A';
+const SERVICE_NUMBER = '8516|黑色|男';
 const SERVICE_PRODUCT = {
   record_id: 'prod_8516',
-  fields: { 编号: SERVICE_NUMBER, 货号: '8516', 颜色: { text: '黑色' }, 类别: 'A', 品类: { text: '凉鞋' }, 单价: 99 },
+  fields: { 编号: SERVICE_NUMBER, 货号: '8516', 颜色: { text: '黑色' }, 类别: '男', 品类: { text: '凉鞋' }, 单价: 99 },
 };
 const SERVICE_INVENTORY = [{
   record_id: 'inv_8516_44_blank',
   fields: {
-    编号: ['prod_8516'], 尺码: ['size_44'], 所属状态: '', 库存键: '8516|黑色|A|44',
+    编号: ['prod_8516'], 尺码: ['size_44'], 所属状态: '', 库存键: '8516|黑色|男|44',
     品类: '凉鞋', 更新时间: Date.UTC(2026, 9, 16, 12, 35),
   },
 }];

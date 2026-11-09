@@ -24,18 +24,18 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { sizesForCategory } = require('../src/services/scanPageService');
 
 test('AC-SW-1 ⭐⭐ 越界哨兵：`sizesForCategory` 必须**继续**是"可录范围"（验收页口径：A 38–48 / B 34–43）', () => {
-  assert.deepEqual(sizesForCategory('A', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
+  assert.deepEqual(sizesForCategory('男', SCAN_PAGE).sizes, [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48],
     'A 可录范围 38–48（验收页"应有尺码"要用它 ⇒ 不许收窄成 normal ✗）');
-  assert.deepEqual(sizesForCategory('B', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
+  assert.deepEqual(sizesForCategory('女', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43],
     'B 可录范围 34–43');
 });
 
 test('AC-SW-2 ⭐⭐ 展示侧的**缺货基准**读的是配置的 `enterable`（可录范围 A 38–48 · B 34–43）', () => {
   const ranges = SCAN_PAGE.sizeSegments.ranges;
-  assert.deepEqual(ranges.A.normal, [38, 44], '男普通码 38–44');
-  assert.deepEqual(ranges.B.normal, [36, 40], '女普通码 36–40');
-  assert.deepEqual(ranges.A.special, [45, 46, 47, 48], '男特殊码 45–48（**只在有货时才显示** ✓）');
-  assert.deepEqual(ranges.B.special, [34, 35, 41, 42, 43], '女特殊码 34/35/41/42/43（同上 ✓）');
+  assert.deepEqual(ranges.男.normal, [38, 44], '男普通码 38–44');
+  assert.deepEqual(ranges.女.normal, [36, 40], '女普通码 36–40');
+  assert.deepEqual(ranges.男.special, [45, 46, 47, 48], '男特殊码 45–48（**只在有货时才显示** ✓）');
+  assert.deepEqual(ranges.女.special, [34, 35, 41, 42, 43], '女特殊码 34/35/41/42/43（同上 ✓）');
   // ⭐⭐ 2026-10-14 **改指向**（她最终口径：缺货基准 = **可录范围** —— 依据
   //   docs/special-size-fold-and-enterable-base-2026-10-14.md 她的原话：「都是按照它的**可录范围**来，
   //   只不过把缺码或者预订里包含**特殊码的归集到一个折叠的区域**」）
