@@ -7,6 +7,16 @@
 >
 > 销售数据来源：[销售数据](https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=tblXmhAoryDtUU7z)
 
+## 〇、数据来源硬规则（2026-11-10 业务负责人明确）
+
+**iPhone 镜像端的所有销售 E2E 操作，必须且只能基于 [销售数据](https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=tblXmhAoryDtUU7z) 这张 E2E 数据表。**
+
+- 只允许使用表里**已登记**的父单 / 子行（货品、尺码、金额、支付方式、赠品、售后类型）；
+- 不允许在镜像端临时编造货品、换尺码、改金额，或使用表外的真实订单来"凑"用例；
+- 本轮「4 双、一单两双」= **第 16 行父单（N90 37 + 906 42）** 与 **第 17 行父单（71202 42 + 19028 43）**；
+- 表里库存不足 / 字段缺失时，先补表或换已登记行，**不得在镜像里即兴改数据**；
+- 每单完成后回到这张表核对，不拿聊天里的口头数字替代表内记录。
+
 ## 一、环境与前提
 
 | 项 | 要求 |
