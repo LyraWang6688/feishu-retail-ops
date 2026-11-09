@@ -505,7 +505,6 @@ test('⑨ 按供应商分批验收：第一家验完仍未到货，全部验完�
     operatorOpenId: 'ou_1',
     scanLines: [{ product_record_id: PRODUCT_1, size: 38, quantity: 2 }],
     supplierRecordId: 'supplierA',
-    supplierRecordIds: supplierIds,
   });
   assert.equal(r1.ok, true, '第一家验收成功 ✓');
   assert.equal(batchFields(harness.records)['到货状态'], '未到货', '只验完一家 ⇒ 批次仍未到货 ✓');
@@ -524,7 +523,6 @@ test('⑨ 按供应商分批验收：第一家验完仍未到货，全部验完�
     operatorOpenId: 'ou_1',
     scanLines: [{ product_record_id: PRODUCT_1, size: 39, quantity: 1 }],
     supplierRecordId: 'supplierB',
-    supplierRecordIds: supplierIds,
   });
   assert.equal(r2.ok, true, '第二家验收成功 ✓');
   assert.equal(batchFields(harness.records)['到货状态'], '已到货', '两家都验完 ⇒ 批次才已到货 ✓');

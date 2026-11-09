@@ -295,8 +295,9 @@ class PurchaseOrderBatchService {
       if (!state.ok) return { updated: false, all_arrived: false, reason: state.reason };
       const next = [...new Set([...state.arrived_ids, wanted])];
       if (next.length !== state.arrived_ids.length || !state.arrived_ids.includes(wanted)) {
+        // ⚠️ 飞书多选单向关联写入格式 = record_id 字符串数组（实测 [{id}] 会 LinkFieldConvFail）。
         await this.gateway.update('purchaseOrderBatch', state.record_id, {
-          arrivedSuppliers: next.map((id) => ({ id })),
+          arrivedSuppliers: next,
         }, { correlation });
         logInfo('purchase.batch.arrived_suppliers.updated', {
           batch_no: batchNo, batch_record_id: state.record_id,

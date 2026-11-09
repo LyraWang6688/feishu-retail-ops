@@ -67,12 +67,12 @@ test('AC-AS1 ⭐ Lookup 名称 → record_id 集合；追加已到货供应商�
   assert.equal(first.updated, true);
   assert.equal(first.all_arrived, false, '只验完一代千金 ⇒ 还未全到货 ✓');
   assert.deepEqual(first.arrived_ids, ['sup_a']);
-  assert.deepEqual(gateway.writes[0].fields['已到货供应商'], [{ id: 'sup_a' }], '写入关联字段 = [{id}] ✓');
+  assert.deepEqual(gateway.writes[0].fields['已到货供应商'], ['sup_a'], '写入关联字段 = record_id 字符串数组 ✓');
 
   const second = await service.addArrivedSupplier({ batchNo: 'CGD-TEST-0001', supplierRecordId: 'sup_b' });
   assert.equal(second.all_arrived, true, '两家都验完 ⇒ all_arrived ✓');
   assert.deepEqual(second.arrived_ids, ['sup_a', 'sup_b']);
-  assert.deepEqual(gateway.writes[1].fields['已到货供应商'], [{ id: 'sup_a' }, { id: 'sup_b' }]);
+  assert.deepEqual(gateway.writes[1].fields['已到货供应商'], ['sup_a', 'sup_b']);
 });
 
 test('AC-AS2 ⭐ Lookup 名称在供应商管理里找不到 ⇒ 不猜、不标已到货（missing_names 交给调用方告警）', async () => {

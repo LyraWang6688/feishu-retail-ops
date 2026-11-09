@@ -512,7 +512,10 @@ class PurchaseArrivalConversationService {
     }
     // ⭐ 2026-11-10：本次验收的供应商范围（空 = 旧链路整批验收）。
     const supplier = String(supplierRecordId || batch?.supplier_record_id || '').trim();
-    const allSuppliers = [...new Set((supplierRecordIds || batch?.supplier_record_ids || [])
+    // ⚠️ 参数默认 [] 是 truthy ⇒ 不能写 `supplierRecordIds || batch...`（会吞掉 batch 里的集合）。
+    const supplierIdSource = (Array.isArray(supplierRecordIds) && supplierRecordIds.length)
+      ? supplierRecordIds : (batch?.supplier_record_ids || []);
+    const allSuppliers = [...new Set(supplierIdSource
       .map((id) => String(id || '').trim()).filter(Boolean))];
     const amount = parseActualAmount(actualAmount);
     if (!amount.ok) {
