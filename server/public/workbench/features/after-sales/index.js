@@ -417,8 +417,4 @@ export function mountAfterSalesPage(container, options = {}) {
       showStatus(AFTER_SALES_PAGE.failed, true);
     });
   loadCandidates();
-  // 刚提交过（服务端 303 带 submitted=1）⇒ 后台正在写，稍等一下再刷一次候选（退掉的卡片会消失）
-  if (String(params.get('submitted') || '') === '1') {
-    setTimeout(() => { void loadCandidates(); }, 1500);
-  }
 }
