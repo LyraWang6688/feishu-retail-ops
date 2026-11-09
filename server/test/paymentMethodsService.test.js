@@ -96,3 +96,4 @@ test('AC-PM8 ⭐ 「是否启用」列不存在时保持旧行为（全部可用
   const out = await service.list();
   assert.deepEqual(out.items, ['支付宝', '微信'], '旧表没有该列 ⇒ 不误过滤');
 });
+// payment method schema sync 2026-11-10
