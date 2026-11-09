@@ -544,7 +544,7 @@ test('同一编号下多个状态：数量合并打印，状态清单留给她�
   assert.equal(data.labels[0].state_text, '门盒/样品/仓库');
 });
 
-test('读不出来的记录（库存键不是四段 / 所属状态为空）→ 跳过并计数，不猜、不静默', async () => {
+test('读不出来的记录：只有「库存键不是四段」才跳过并计数（不猜、不静默）', async () => {
   const { service } = serviceFor({
     liveInventory: [
       record('ok', { stockKey: 'XHB8095|黑色|A|42' }),
@@ -553,8 +553,48 @@ test('读不出来的记录（库存键不是四段 / 所属状态为空）→ �
     ],
   });
   const data = await service.listLabels({});
-  assert.equal(data.total_returned, 1);
-  assert.deepEqual(data.skipped_records, { stock_key: 1, state: 1, total: 2 });
+  // 🔴 2026-11-09（业务负责人）：「销售前端后端、退货对库存的鉴定已经不依赖所属状态了，
+  //   只要在实时库存里有记录就可以」⇒ 标签打印同一口径：**状态为空的行照常算这一双**。
+  assert.equal(data.total_returned, 2, '状态为空的那一行也出标签（只有库存键坏掉的被跳过）');
+  assert.deepEqual(data.skipped_records, { stock_key: 1, total: 1 });
+});
+
+test('所属状态为空：照常算数量／尺码，状态清单里不出现（与销售/退货同一口径）', async () => {
+  const { service } = serviceFor({
+    liveInventory: [
+      record('r1', { stockKey: 'YD6693|米白|A|38', state: '' }),
+      record('r2', { stockKey: 'YD6693|米白|A|38', state: '门盒' }),
+    ],
+  });
+  const data = await service.listLabels({});
+  assert.equal(data.labels.length, 1);
+  assert.deepEqual(data.labels[0].sizes, [{ size: 38, qty: 2 }], '两条记录都算进数量');
+  assert.deepEqual(data.labels[0].states, ['门盒'], '空状态不进状态清单');
+  assert.equal(data.labels[0].state_text, '门盒');
+});
+
+test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能打出那一张（2026-11-09 咖色那次）', async () => {
+  const inventory = [record('live1', { stockKey: '66133-15|咖色|B|37', state: '' })];
+  const products = [{ record_id: 'prod1', fields: { [P.number]: '66133-15|咖色|B' } }];
+  const gateway = {
+    calls: [],
+    async listAll(tableKey) {
+      this.calls.push(tableKey);
+      if (tableKey === 'liveInventory') return inventory;
+      if (tableKey === 'product') return products;
+      throw new Error(`不该读：${tableKey}`);
+    },
+    async get(tableKey, recordId) {
+      assert.equal(tableKey, 'product');
+      return products.find((item) => item.record_id === recordId) || null;
+    },
+  };
+  const service = createLabelPrintService(gateway);
+  const data = await service.labelForRecord('prod1');
+  assert.equal(data.labels.length, 1, '状态为空不再导致「没有可打印的标签」');
+  assert.equal(data.labels[0].number, '66133-15|咖色|B');
+  assert.deepEqual(data.labels[0].sizes, [{ size: 37, qty: 1 }]);
+  assert.equal(data.labels[0].state_text, '');
 });
 
 // ── ⑦ 只读 ───────────────────────────────────────────────────────────────
@@ -612,7 +652,7 @@ test('空结果不炸：没有匹配时回 200 + 空 labels + total_matched/tota
   assert.deepEqual(data.labels, []);
   assert.equal(data.truncated, false);
   assert.equal(data.missing_price, 0);
-  assert.deepEqual(data.skipped_records, { stock_key: 0, state: 0, total: 0 });
+  assert.deepEqual(data.skipped_records, { stock_key: 0, total: 0 });
 });
 
 test('空表也不炸（一张实时库存都没有）', async () => {
