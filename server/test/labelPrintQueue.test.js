@@ -86,6 +86,14 @@ const labelPrintStub = (labels, extra = {}) => ({
       ...extra,
     };
   },
+  // 「扫码打印」按记录 ID 那条路（测试只关心队列去重，不关心标签内容）。
+  async labelForRecord(recordId) {
+    this.calls.push({ recordId });
+    return {
+      labels, total_matched: labels.length, total_returned: labels.length, total_pairs: 5, layout: layout(),
+      ...extra,
+    };
+  },
 });
 
 const tmpStore = (options = {}) => {
@@ -647,6 +655,26 @@ test('AC16 幂等键：同一次提交同 key ⇒ 复用；换 key（新的一�
     const later = serviceFor({ store, now: () => Date.now() + 10 * 60 * 1000 });
     const second = await later.enqueueSingle({ number: 'XHB8095|棕色|男', submitKey: 'k2' });
     assert.notEqual(second.job_id, first.job_id);
+    assert.equal((await store.listAll()).length, 2);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC16 ⭐⭐ 扫码(workbench)刚打过 ⇒ 60s 内表单(form)批量又包含它 ⇒ **必须再打一张**（跨来源不合并）', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const service = serviceFor({ store });
+    const scan = await service.enqueueSingle({ recordId: 'rec_p1', source: 'workbench' });
+    const form = await service.enqueueSingle({
+      recordId: 'rec_p1', source: 'form', submitKey: 'label_form:formRec:prodRec',
+    });
+    assert.notEqual(form.job_id, scan.job_id, '同一双：扫码一张 + 批量一张 = 必须两条任务');
+    assert.equal(form.reused, undefined, '表单这次是新提交，不许被扫码那张"复用"掉');
+    // 回归：同一来源（workbench）的连点仍要被窗口挡住 —— 防连点那道没有放宽。
+    const sameSourceAgain = await service.enqueueSingle({ recordId: 'rec_p1', source: 'workbench' });
+    assert.equal(sameSourceAgain.job_id, scan.job_id, '同来源连点仍复用第一次那张');
+    assert.equal(sameSourceAgain.reused_reason, 'recent_same_request');
     assert.equal((await store.listAll()).length, 2);
   } finally {
     cleanup();
