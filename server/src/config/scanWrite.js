@@ -607,6 +607,8 @@ const TEXTS = Object.freeze({
   paymentLabel: '收款方式',
   paymentAmountLabel: '收款金额',
   paymentAmountPlaceholder: '金额',
+  // 资金页固定提示：选抖音团购券时金额无需填写（不随选择变化）
+  voucherAmountHint: '选择抖音团购券时，无需填写金额',
   // 券行下方提示：面值 / 平台结算款（资金页显示用；金额仍可留空）
   voucherFaceHint: '面值 {face} · 平台结算 {settlement}',
   // 预置行里那个"空"选项（不填金额 = 这一行不用）。
