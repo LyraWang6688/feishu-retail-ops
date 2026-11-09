@@ -237,6 +237,13 @@ export const DOMAIN_TABS = [
         // 2026-11-08 业务负责人：放在「标签打印」右边，先做占位页。
         kind: 'placeholder',
       },
+      {
+        id: 'product-notifications',
+        label: '信息通知',
+        // 2026-11-09 业务负责人：放在「配置」子 tab 最右边，先占位；
+        // 后续做统一通知（群聊 / 私聊）的归集页。
+        kind: 'placeholder',
+      },
     ],
   },
 
