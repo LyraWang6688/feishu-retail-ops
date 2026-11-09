@@ -117,6 +117,11 @@ const V1_BITABLE_SCHEMA = {
         faceValue: '面值',
         settlementAmount: '平台结算款',
         status: '销售状态',
+        // ⭐ 2026-11-10：结算日**按每张券自己的规则**算（业务负责人：「结算日不要硬编码，
+        //   按照团购券里的配置来」）⇒ 「结算规则」是配置真源（如「核销日+5个自然日」）。
+        settleRule: '结算规则',
+        // 券ID（文本）= 抖音商品 `product_id`/`sku_id`；账单里的 `sku_id` 与它一致 ⇒ 按券归属金额用。
+        externalId: '券ID',
       },
     },
     paymentMethod: {
