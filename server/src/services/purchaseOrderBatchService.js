@@ -7,6 +7,7 @@ const { relation } = require('./v1ReferenceResolver');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logInfo, logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
+const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 
 /**
@@ -81,6 +82,8 @@ class PurchaseOrderBatchService {
     // ⚠️ 2026-10-09：`acceptance`（确认状态取值）随「确认状态」那一列一起退场，
     //    这里**只**再读「到货状态」一份配置。
     this.settings = settings || resolvePurchaseArrivalStatusConfig();
+    // ⭐ 同一批两家同时验收时，「已到货供应商」是读-改-写 ⇒ 必须按 batch 串行，否则后写覆盖前写。
+    this.arrivedSupplierQueue = new KeyedSerialQueue();
   }
 
   /** 新建批次记录时要写的那个取值（她说的字段默认值「未到货」）。 */
@@ -224,10 +227,6 @@ class PurchaseOrderBatchService {
    *
    * @returns {Promise<{record_id: string, matched_by: 'record_id'|'batch_no'}|null>}
    */
-  /**
-   * ⭐ 2026-11-10（业务负责人）：把「供应商」Lookup 的**名称文本**归一化成名称数组。
-   * Lookup 返回形状示例：[{text:'一代千金'},{text:','},{text:'信踏'}] ⇒ ['一代千金','信踏']。
-   */
   static supplierNamesOfLookup(cell) {
     const texts = [];
     const walk = (value) => {
@@ -246,13 +245,6 @@ class PurchaseOrderBatchService {
       .filter(Boolean))];
   }
 
-  /**
-   * ⭐ 2026-11-10：读这一批「供应商」与「已到货供应商」两个字段，归一成 record_id 集合。
-   *
-   * 为什么要映射：生产实测「供应商」Lookup 只返回**名称文本**（没有 record_ids），
-   * 而「已到货供应商」是关联字段（record_id）⇒ 必须用「供应商管理」把名称映射成 record_id
-   * 才能做集合比较。名称认不出时**不猜、不当作已到货**（`missingNames` 交给调用方告警）。
-   */
   async readSupplierArrivalState({ batchNo = '', batchRecordId = '' } = {}) {
     const target = await this.locate({ batchNo, batchRecordId });
     if (!target) return { ok: false, reason: 'no_batch_record' };
@@ -297,29 +289,32 @@ class PurchaseOrderBatchService {
   } = {}) {
     const wanted = String(supplierRecordId || '').trim();
     if (!wanted) return { updated: false, all_arrived: false, reason: 'no_supplier' };
-    const state = await this.readSupplierArrivalState({ batchNo, batchRecordId });
-    if (!state.ok) return { updated: false, all_arrived: false, reason: state.reason };
-    const next = [...new Set([...state.arrived_ids, wanted])];
-    if (next.length !== state.arrived_ids.length || !state.arrived_ids.includes(wanted)) {
-      await this.gateway.update('purchaseOrderBatch', state.record_id, {
-        arrivedSuppliers: next.map((id) => ({ id })),
-      }, { correlation });
-      logInfo('purchase.batch.arrived_suppliers.updated', {
-        batch_no: batchNo, batch_record_id: state.record_id,
-        supplier_record_id: wanted, arrived_count: next.length,
-        expected_count: state.expected_ids.length,
-      });
-    }
-    const arrivedSet = new Set(next);
-    return {
-      updated: true,
-      record_id: state.record_id,
-      all_arrived: state.missing_names.length === 0
-        && state.expected_ids.length > 0 && state.expected_ids.every((id) => arrivedSet.has(id)),
-      arrived_ids: next,
-      expected_ids: state.expected_ids,
-      missing_names: state.missing_names,
-    };
+    const queueKey = String(batchNo || batchRecordId || '').trim();
+    return this.arrivedSupplierQueue.run(queueKey, async () => {
+      const state = await this.readSupplierArrivalState({ batchNo, batchRecordId });
+      if (!state.ok) return { updated: false, all_arrived: false, reason: state.reason };
+      const next = [...new Set([...state.arrived_ids, wanted])];
+      if (next.length !== state.arrived_ids.length || !state.arrived_ids.includes(wanted)) {
+        await this.gateway.update('purchaseOrderBatch', state.record_id, {
+          arrivedSuppliers: next.map((id) => ({ id })),
+        }, { correlation });
+        logInfo('purchase.batch.arrived_suppliers.updated', {
+          batch_no: batchNo, batch_record_id: state.record_id,
+          supplier_record_id: wanted, arrived_count: next.length,
+          expected_count: state.expected_ids.length,
+        });
+      }
+      const arrivedSet = new Set(next);
+      return {
+        updated: true,
+        record_id: state.record_id,
+        all_arrived: state.missing_names.length === 0
+          && state.expected_ids.length > 0 && state.expected_ids.every((id) => arrivedSet.has(id)),
+        arrived_ids: next,
+        expected_ids: state.expected_ids,
+        missing_names: state.missing_names,
+      };
+    });
   }
 
   async locate({ batchNo = '', batchRecordId = '' } = {}) {
