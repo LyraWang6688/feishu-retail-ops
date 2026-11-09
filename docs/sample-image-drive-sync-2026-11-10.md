@@ -95,6 +95,19 @@
 - 幂等：已勾的跳过；失败的不勾 ⇒ **再点一次只补剩下的**（同名覆盖规则仍生效），不会堆重复文件；
 - 一次最多处理条数可配：`SAMPLE_IMAGE_DRIVE_BACKFILL_MAX`（0 = 不限，默认 0）。
 
+### 异步与轻量 toast（2026-11-10 第二轮补充）
+
+业务负责人：「也需要实现异步和轻量 toast，你看下代码有统一配置逻辑」⇒ 存量按钮**接统一异步任务层**，不自己造状态机：
+
+- **job 类型**：`config/asyncJobs.js` 新增 `sample_image_backfill`（id 前缀 `sample_image_backfill_job_`，
+  中文类型名「存量样例图同步」）；重试次数/退避/失败通知群全部沿用 `ASYNC_JOB_*` 配置；
+- **状态可查**：`GET /api/workbench/async-jobs/:jobId`（既有统一接口，只能查自己的；只回状态不返 payload）；
+- **失败处理**：单条失败 ⇒ 整轮落 `partial_failed` 终态 ⇒ 统一层**发运营群**（页面**不显示失败提示**）；
+- **页面轮询**：`GET /api/workbench/data-config/sample-image-sync` 返回计数 + `job_id/job_status`；
+- **轻量 toast**：`features/shared/toast.js` 的 `showToast`（3 秒、复用 `.workbench-toast` 样式）——
+  点一下弹「已开始同步存量样例图…」，跑完弹「同步结束：成功 x，跳过 y，失败 z」；交割单页原来那份
+  toast 实现**收口到同一个**（`ui-feedback.js` 只 re-export，行为逐字不变）。
+
 验收（`server/test/sampleImageBackfill.test.js`，不连网）：
 
 | AC | 判据 |

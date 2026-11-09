@@ -124,6 +124,8 @@ test('货品 → 数据配置：同步存量样例图 按钮卡（点一下触�
   await expect(card).toContainText('同步存量样例图');
   await card.click();
   await expect.poll(() => posts.length, { timeout: 5000 }).toBe(1);
+  // ⭐ 2026-11-10：点完要有一条**轻量 toast**（3 秒消失，不挡页面）
+  await expect(page.locator('.workbench-toast')).toBeVisible({ timeout: 5000 });
 });
 
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {

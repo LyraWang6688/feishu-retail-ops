@@ -24,6 +24,8 @@ const { logError } = require('../../utils/logger');
 const { V1BitableGateway } = require('../../services/v1BitableGateway');
 const { createSampleImageDriveService } = require('../../services/sampleImageDriveService');
 const { createSampleImageBackfillService } = require('../../services/sampleImageBackfillService');
+// ⭐ 2026-11-10：存量补齐接**统一异步任务**（状态可查 / 失败发运营群 / 临时错误重试）。
+const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 
 const createWorkbenchDataConfigRoutes = ({ options = {} } = {}) => {
   const router = express.Router();
@@ -33,13 +35,18 @@ const createWorkbenchDataConfigRoutes = ({ options = {} } = {}) => {
     if (backfill) return backfill;
     const gateway = options.gateway || new V1BitableGateway();
     const driveService = options.sampleImageDriveService || createSampleImageDriveService({ gateway });
-    backfill = createSampleImageBackfillService({ gateway, driveService });
+    // `options.asyncJobs` 显式注入（用例）；未注入 ⇒ 用进程级单例（关掉时为 null ⇒ service 退回进程内跑）
+    const jobs = options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService();
+    backfill = createSampleImageBackfillService({ gateway, driveService, jobs });
     return backfill;
   };
 
-  router.post('/data-config/sample-image-sync', (req, res) => {
+  router.post('/data-config/sample-image-sync', async (req, res) => {
     try {
-      const started = resolveBackfill().start();
+      const started = await resolveBackfill().start({
+        ownerOpenId: req.workbenchUser?.open_id || '',
+        operatorName: req.workbenchUser?.name || '',
+      });
       const { done, ...rest } = started; // done 是后台 promise：**不进响应**
       return res.status(started.started ? 202 : 200).json({ success: true, ...rest });
     } catch (error) {
@@ -50,9 +57,9 @@ const createWorkbenchDataConfigRoutes = ({ options = {} } = {}) => {
     }
   });
 
-  router.get('/data-config/sample-image-sync', (req, res) => {
+  router.get('/data-config/sample-image-sync', async (req, res) => {
     try {
-      return res.json({ success: true, ...resolveBackfill().status() });
+      return res.json({ success: true, ...await resolveBackfill().statusWithJob() });
     } catch (error) {
       logError('workbench.data_config.sample_image_sync.status_failed', {
         request_id: req.requestId, error: error.message,

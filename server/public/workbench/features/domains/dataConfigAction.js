@@ -11,6 +11,7 @@
 
 import { api } from '../../core/api-client.js';
 import { DATA_CONFIG_API, DATA_CONFIG_TEXTS } from '../../config/dataConfig.js';
+import { showToast } from '../shared/toast.js';
 
 const fill = (template, values = {}) => String(template || '')
   .replace(/\{(\w+)\}/g, (match, key) => (values[key] === undefined || values[key] === null ? '' : String(values[key])));
@@ -27,6 +28,7 @@ export function bindDomainAction(host) {
   const note = host.querySelector('[data-view="domain-action-note"]');
   const paint = (text) => { if (note) note.textContent = text || ''; };
   let timer = null;
+  let toastDone = false;
 
   const poll = async () => {
     timer = null;
@@ -36,6 +38,12 @@ export function bindDomainAction(host) {
         paint(fill(DATA_CONFIG_TEXTS.runningNote, status));
         timer = setTimeout(poll, POLL_INTERVAL_MS);
         return;
+      }
+      // 页面反馈（轻量 toast）：跑完只弹一次「成功/跳过/失败」计数；**不弹失败警报**
+      // （统一异步层规则：失败只发运营群，页面不显示失败提示）
+      if (!toastDone) {
+        toastDone = true;
+        showToast(fill(DATA_CONFIG_TEXTS.finishedToast, status || {}));
       }
       paint(status?.error
         ? fill(DATA_CONFIG_TEXTS.errorNote, status)
@@ -50,9 +58,11 @@ export function bindDomainAction(host) {
     if (!button) return;
     if (button.disabled) return;
     button.disabled = true;
-    paint(fill(DATA_CONFIG_TEXTS.runningNote, { done: 0, total: '?' , synced: 0 }));
+    toastDone = false;
+    paint(fill(DATA_CONFIG_TEXTS.runningNote, { done: 0, total: '?', synced: 0 }));
     try {
       await api.post(DATA_CONFIG_API.sampleImageSync, {});
+      showToast(DATA_CONFIG_TEXTS.startToast);
       // 立刻查一次（后台可能很快跑完），拿到 total 后继续轮询
       await poll();
     } catch (error) {

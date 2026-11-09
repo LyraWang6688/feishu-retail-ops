@@ -20,5 +20,8 @@ export const DATA_CONFIG_TEXTS = Object.freeze({
   doneNote: '同步完成：成功 {synced} 条，跳过 {skipped} 条，失败 {failed} 条。',
   errorNote: '同步中断：{error}（失败 {failed} 条，可再点一次继续补）',
   startFailedNote: '没能开始同步，请稍后重试',
+  // 轻量 toast（点完/跑完各一句；3 秒消失，不挡页面）
+  startToast: '已开始同步存量样例图…',
+  finishedToast: '存量样例图同步结束：成功 {synced} 条，跳过 {skipped} 条，失败 {failed} 条',
   pollFailedNote: '查不到同步进度，请刷新页面重试',
 });

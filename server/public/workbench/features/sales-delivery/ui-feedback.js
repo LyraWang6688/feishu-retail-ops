@@ -1,16 +1,7 @@
-/** 交割单页反馈工具：toast + 客户端 request_id（不写死文案）。 */
-export const showToast = (text) => {
-  let toast = document.querySelector('.workbench-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.className = 'workbench-toast';
-    toast.setAttribute('role', 'status');
-    document.body.appendChild(toast);
-  }
-  toast.textContent = text;
-  clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => { toast.remove(); }, 3000);
-};
+/** 交割单页反馈工具：toast + 客户端 request_id（不写死文案）。
+ *  ⭐ 2026-11-10：toast 收口到 `features/shared/toast.js`（数据配置页的按钮卡也用同一个）——
+ *     这里只做 re-export，行为/视觉与改前逐字一致（不再保留第二份实现）。 */
+export { showToast } from '../shared/toast.js';
 
 export const requestId = () => {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
