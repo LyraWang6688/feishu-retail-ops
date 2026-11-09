@@ -186,14 +186,18 @@ const buildSizeLines = (sizes, sizesConfig = {}) => {
 
 /**
  * 一条「实时库存」记录 → 聚合用的一行。
- * 记录里读不出「库存键」四段（或所属状态为空）时返回 `null`（由调用方计数、**不猜**：
+ * 读不出「库存键」四段时返回 `null`（由调用方计数、**不猜**：
  * 按错的键印标签等于把这一双贴到别的款上，宁可少一张也不印错）。
+ *
+ * 🔴 2026-11-09（业务负责人）：「销售前端后端、退货对库存的鉴定**已经不依赖所属状态**了，
+ *    只要在实时库存里有记录就可以」⇒ 标签打印**同一口径**：
+ *    「所属状态」为空的库存行**照常算这一双**（`state: ''`，状态清单里不出现、标签默认也不印状态）；
+ *    只有**库存键本身坏掉**的行才跳过并计数。
  */
 const rowFromRecord = (record, { fieldNames, createdTimeField }) => {
   const key = parseStockKey(record?.fields?.[fieldNames.stockKey]);
   if (!key) return null;
   const state = textValue(record?.fields?.[fieldNames.state]).trim();
-  if (!state) return null;
   // 「品类」= 「实时库存.品类」公式列（休闲鞋 / 单鞋…），**标签上"颜色 · 品类"印的就是它**；
   // 读不到才回落到库存键第 3 段。两者都在**这一次读**里，零额外请求。
   const categoryFromField = fieldNames.category ? textValue(record?.fields?.[fieldNames.category]).trim() : '';
@@ -436,7 +440,7 @@ const createLabelPrintService = (gateway, options = {}) => {
     // 两张整表的短 TTL 缓存（只缓存原始记录；keyword 过滤每次现算）。
     const { records, productRecords } = await labelListCache.get();
 
-    const skipped = { stock_key: 0, state: 0 };
+    const skipped = { stock_key: 0 };
     const rows = [];
     // 「有库存行」的编号集合（= 与「货品信息」去重的判据；所属状态无关）。
     const stockedNumbers = new Set();
@@ -445,8 +449,7 @@ const createLabelPrintService = (gateway, options = {}) => {
       if (key) stockedNumbers.add(compoundNumber(key.itemNo, key.color, key.category));
       const row = rowFromRecord(record, { fieldNames, createdTimeField: '' });
       if (!row) {
-        if (key) skipped.state += 1;
-        else skipped.stock_key += 1;
+        skipped.stock_key += 1;
         continue;
       }
       rows.push(row);
@@ -493,7 +496,7 @@ const createLabelPrintService = (gateway, options = {}) => {
         groups.set(number, group);
       }
       group.sizes.set(row.size, (group.sizes.get(row.size) || 0) + 1);
-      group.states.add(row.state);
+      if (row.state) group.states.add(row.state);
       group.record_ids.push(row.record_id);
       if (row.created_at > group.created_at) group.created_at = row.created_at;
     }
@@ -625,16 +628,14 @@ const createLabelPrintService = (gateway, options = {}) => {
       returned_labels: labels.length,
       truncated: truncated || undefined,
       skipped_stock_key: skipped.stock_key || undefined,
-      skipped_state: skipped.state || undefined,
       missing_price: missingPrice || undefined,
       missing_price_no_product: missingPriceNoProduct || undefined,
       missing_qr_record_id: missingQrRecordId || undefined,
     });
-    if (skipped.stock_key || skipped.state) {
+    if (skipped.stock_key) {
       logWarn('workbench.labels.skipped_records', {
         skipped_stock_key: skipped.stock_key,
-        skipped_state: skipped.state,
-        hint: '「实时库存」里有读不出「库存键」四段或「所属状态」为空的记录，这些记录没有出现在标签里',
+        hint: '「实时库存」里有读不出「库存键」四段的记录，这些记录没有出现在标签里',
       });
     }
     if (missingPrice) {
@@ -660,10 +661,11 @@ const createLabelPrintService = (gateway, options = {}) => {
       total_without_stock: withoutStockMatched,
       truncated,
       max_labels: maxLabels,
+      // 🔴 2026-11-09：不再有「所属状态为空被跳过」这一档（销售/退货/标签统一口径：
+      //    实时库存里有记录就算）。只保留「库存键坏掉」的计数。
       skipped_records: {
         stock_key: skipped.stock_key,
-        state: skipped.state,
-        total: skipped.stock_key + skipped.state,
+        total: skipped.stock_key,
       },
       missing_price: missingPrice,
       missing_price_no_product: missingPriceNoProduct,
