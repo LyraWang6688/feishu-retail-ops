@@ -13,7 +13,6 @@
 
 /** 页面 / 数据来源 / 排序。 */
 export const SALES_DELIVERY_CONFIG = Object.freeze({
-  pageTitle: '交割单',
   /** 页面固定按销售日「远→近」（旧→新）排序；不提供排序控件。 */
   sortDirection: 'asc',
   /** 真实只读接口（销售明细 + 收款明细；销售主表只用于销售单号）。 */

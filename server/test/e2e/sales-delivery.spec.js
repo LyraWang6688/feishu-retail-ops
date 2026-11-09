@@ -150,6 +150,11 @@ const openPage = async (page, options = {}) => {
 const orderNos = (page) => page.locator('[data-sd-item]')
   .evaluateAll((nodes) => nodes.map((node) => node.dataset.sdOrder));
 
+test('AC-TITLE 飞书容器标题仍是「邯美工作台」，不是「交割单」', async ({ page }) => {
+  await openPage(page);
+  await expect(page).toHaveTitle('邯美工作台');
+});
+
 test('AC-TAB1 三 tab + 数量；默认货未清；无标题/返回/排序控件；按销售日分组', async ({ page }) => {
   await openPage(page);
   const tabs = page.locator('[data-sd-tab]');

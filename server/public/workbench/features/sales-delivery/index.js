@@ -47,8 +47,6 @@ export function mountSalesDeliveryPage(container) {
   let host = null;
   const skuLock = createSkuLock(() => host);
 
-  document.title = CONFIG.pageTitle;
-
   function render() {
     if (!host) return;
     const view = viewState(state);
