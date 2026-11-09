@@ -6,6 +6,10 @@ const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/id
 const { relation } = require('./v1ReferenceResolver');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logInfo, logWarn } = require('../utils/logger');
+const { getConfigRows } = require('./configTableCache');
+const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
+const { arrivedSupplierIds } = require('./acceptanceSupplierProgress');
+const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 
 /**
  * 数字列的唯一判据（`undefined` / `null` / 空串 ⇒ `null` = **这一列不写**；
@@ -79,6 +83,8 @@ class PurchaseOrderBatchService {
     // ⚠️ 2026-10-09：`acceptance`（确认状态取值）随「确认状态」那一列一起退场，
     //    这里**只**再读「到货状态」一份配置。
     this.settings = settings || resolvePurchaseArrivalStatusConfig();
+    // ⭐ 同一批两家同时验收时，「已到货供应商」是读-改-写 ⇒ 必须按 batch 串行，否则后写覆盖前写。
+    this.arrivedSupplierQueue = new KeyedSerialQueue();
   }
 
   /** 新建批次记录时要写的那个取值（她说的字段默认值「未到货」）。 */
@@ -222,6 +228,97 @@ class PurchaseOrderBatchService {
    *
    * @returns {Promise<{record_id: string, matched_by: 'record_id'|'batch_no'}|null>}
    */
+  static supplierNamesOfLookup(cell) {
+    const texts = [];
+    const walk = (value) => {
+      if (value == null) return;
+      if (Array.isArray(value)) { value.forEach(walk); return; }
+      if (typeof value === 'string' || typeof value === 'number') { texts.push(String(value)); return; }
+      if (typeof value === 'object') {
+        if (value.text != null) walk(value.text);
+        else if (value.name != null) walk(value.name);
+      }
+    };
+    walk(cell);
+    return [...new Set(texts
+      .flatMap((text) => String(text).split(/[,，、]/))
+      .map((text) => text.trim())
+      .filter(Boolean))];
+  }
+
+  async readSupplierArrivalState({ batchNo = '', batchRecordId = '' } = {}) {
+    const target = await this.locate({ batchNo, batchRecordId });
+    if (!target) return { ok: false, reason: 'no_batch_record' };
+    const record = await this.gateway.get('purchaseOrderBatch', target.record_id).catch(() => null);
+    if (!record) return { ok: false, reason: 'no_batch_record' };
+    const table = this.gateway.table('purchaseOrderBatch');
+    const lookupNames = this.constructor.supplierNamesOfLookup(record.fields?.[table.fields.supplier]);
+    const arrivedIds = arrivedSupplierIds(record.fields?.[table.fields.arrivedSuppliers]);
+    const rows = await getConfigRows({ gateway: this.gateway, tableKey: 'supplier' });
+    const supplierNameField = V1_BITABLE_SCHEMA.tables.supplier.fields.name;
+    const idByName = new Map((rows || []).map((row) => [
+      textValue(row.fields?.[supplierNameField]).trim(),
+      String(row.record_id || '').trim(),
+    ]).filter(([name, id]) => name && id));
+    const expectedIds = [...new Set(lookupNames.map((name) => idByName.get(name)).filter(Boolean))];
+    const missingNames = lookupNames.filter((name) => !idByName.has(name));
+    const arrivedSet = new Set(arrivedIds);
+    return {
+      ok: true,
+      record_id: target.record_id,
+      matched_by: target.matched_by,
+      lookup_names: lookupNames,
+      expected_ids: expectedIds,
+      arrived_ids: arrivedIds,
+      missing_names: missingNames,
+      all_arrived: missingNames.length === 0
+        && expectedIds.length > 0 && expectedIds.every((id) => arrivedSet.has(id)),
+    };
+  }
+
+  /**
+   * ⭐ 2026-11-10（业务负责人方案）：验收完一家 ⇒ 把这家 supplier_record_id **追加**进
+   * 「已到货供应商」（关联字段，去重、幂等），然后拿两个字段做集合比较；
+   * 相等 ⇒ 这一批所有供应商都验完（调用方再写到货状态）。
+   *
+   * ⚠️ 追加是"读当前值 → 合并 → 写回"：同一批两家并发验收会互相覆盖 ⇒ 调用方必须按
+   * **batch_no 串行**（当前在 `confirmLocked` 的批次任务链路里天然串行；后续如需并发要加锁）。
+   * @returns {Promise<{updated:boolean, all_arrived:boolean, reason?:string}>}
+   */
+  async addArrivedSupplier({
+    batchNo = '', batchRecordId = '', supplierRecordId = '', correlation = {},
+  } = {}) {
+    const wanted = String(supplierRecordId || '').trim();
+    if (!wanted) return { updated: false, all_arrived: false, reason: 'no_supplier' };
+    const queueKey = String(batchNo || batchRecordId || '').trim();
+    return this.arrivedSupplierQueue.run(queueKey, async () => {
+      const state = await this.readSupplierArrivalState({ batchNo, batchRecordId });
+      if (!state.ok) return { updated: false, all_arrived: false, reason: state.reason };
+      const next = [...new Set([...state.arrived_ids, wanted])];
+      if (next.length !== state.arrived_ids.length || !state.arrived_ids.includes(wanted)) {
+        // ⚠️ 飞书多选单向关联写入格式 = record_id 字符串数组（实测 [{id}] 会 LinkFieldConvFail）。
+        await this.gateway.update('purchaseOrderBatch', state.record_id, {
+          arrivedSuppliers: next,
+        }, { correlation });
+        logInfo('purchase.batch.arrived_suppliers.updated', {
+          batch_no: batchNo, batch_record_id: state.record_id,
+          supplier_record_id: wanted, arrived_count: next.length,
+          expected_count: state.expected_ids.length,
+        });
+      }
+      const arrivedSet = new Set(next);
+      return {
+        updated: true,
+        record_id: state.record_id,
+        all_arrived: state.missing_names.length === 0
+          && state.expected_ids.length > 0 && state.expected_ids.every((id) => arrivedSet.has(id)),
+        arrived_ids: next,
+        expected_ids: state.expected_ids,
+        missing_names: state.missing_names,
+      };
+    });
+  }
+
   async locate({ batchNo = '', batchRecordId = '' } = {}) {
     const wantedId = String(batchRecordId || '').trim();
     if (wantedId) return { record_id: wantedId, matched_by: 'record_id' };

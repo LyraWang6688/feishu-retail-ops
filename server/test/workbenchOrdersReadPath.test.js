@@ -56,7 +56,7 @@ const pendingFixture = () => ({
   ],
   sizeManagement: [38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
   paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 交易金额: 50, 支付方式: ['method_1'] } }],
-  paymentMethod: [{ record_id: 'method_1', fields: { 收款方式: '微信' } }],
+  paymentMethod: [{ record_id: 'method_1', fields: { 交易方式: '微信' } }],
   product: [
     { record_id: 'product_1', fields: { 编号: 'P1', 颜色: '黑色' } },
     { record_id: 'product_2', fields: { 编号: 'P2', 颜色: '米白' } },
@@ -305,8 +305,8 @@ test('AC-P7 订单列表整表读支付方式配置 ⇒ 售后 refundable / 券�
   resetConfigTableCache();
   const fixture = pendingFixture();
   fixture.paymentMethod = [
-    { record_id: 'method_wechat', fields: { 收款方式: '微信', 可用于退款: true, 团购券管理: ['voucher_1'] } },
-    { record_id: 'method_icbc', fields: { 收款方式: '工商银行', 可用于退款: false } },
+    { record_id: 'method_wechat', fields: { 交易方式: '微信', 可用于退款: true, 团购券管理: ['voucher_1'] } },
+    { record_id: 'method_icbc', fields: { 交易方式: '工商银行', 可用于退款: false } },
   ];
   const env = await buildService(fixture);
   // 冒充真飞书 API：**传了 fieldNames 就只回那几列**（这正是缓存被污染的条件）

@@ -56,7 +56,7 @@ partial_failed 也是终态，直接发群
 
 | 配置 | 作用 | 默认 |
 | --- | --- | --- |
-| `ASYNC_JOB_ENABLED` | 统一异步层开关 | `true` |
+| ~~`ASYNC_JOB_ENABLED`~~ | ~~统一异步层开关~~ ⭐ 2026-11-10 业务负责人「不需要加开关」⇒ **已删除，固定常开** | — |
 | `ASYNC_JOBS_DIR` | 统一 job 存储目录 | `server/data/async_jobs` |
 | `ASYNC_JOB_MAX_ATTEMPTS` | 最大尝试次数 | `3` |
 | `ASYNC_JOB_RETRY_BASE_MS` | 指数退避基数 | `800` |

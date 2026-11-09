@@ -6,8 +6,8 @@
  * 为什么需要单例：七类链路的"入队 / 通知 / 状态查询"必须看**同一份** job 存储与通知去重状态
  * ——各建一份 ⇒ 状态接口查不到、同一 job 可能被通知两次。
  *
- * 开关：`ASYNC_JOB_ENABLED=false` ⇒ `getAsyncJobService()` 返回 `null`（各链路回落到"只记日志"的旧行为）。
- * 默认**开**（业务负责人 2026-11-08 定稿要落地的就是这套机制）。
+ * ⭐ 2026-11-10 业务负责人：「**不需要加开关**」⇒ 统一异步层**固定常开**、没有全局开关。
+ *   （删掉的 `ASYNC_JOB_ENABLED` 见 `test/asyncJobsSwitchRemoval.test.js` 的源码哨兵。）
  *
  * 用例：直接 `createAsyncJobService({ store: 临时目录, notifier: 假发送器 })` 注入，
  * 或用 `setAsyncJobServiceForTests()` 顶掉单例（**不要**在用例里真发群消息）。
@@ -19,14 +19,11 @@ const { logInfo, logWarn } = require('../utils/logger');
 let instance = null;
 let initialized = false;
 
-/** 取单例（`ASYNC_JOB_ENABLED=false` ⇒ null）。 */
+/** 取单例（统一层**固定常开**：没有"关掉"这个档）。 */
 const getAsyncJobService = () => {
   if (!initialized) {
     initialized = true;
-    instance = ASYNC_JOBS.enabled === true
-      ? createAsyncJobService({ config: ASYNC_JOBS })
-      : null;
-    if (!instance) logInfo('async_job.disabled', { env: 'ASYNC_JOB_ENABLED' });
+    instance = createAsyncJobService({ config: ASYNC_JOBS });
   }
   return instance;
 };
