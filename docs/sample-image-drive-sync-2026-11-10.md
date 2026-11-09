@@ -75,6 +75,39 @@
 - ⚠️ 部署前必须跑 `v1:schema-check:all`：本轮新增了 `sampleImageSynced → 已同步云盘` 映射，
   若生产列名不是这个（改名），闸门会当场红 —— **以生产真表为准**。
 
+## 六½、两条链路（2026-11-10 第二轮：存量写入的入口）
+
+业务负责人补充口径：
+
+> 「我们实际上是有两个链路，一个是通过表单提交的时候…所以相当于货品上架，所以的话，是首次，
+>  就写入到云盘里就可以，然后的话，还需要在配置里的数据配置里增加一个卡片，这个卡片是按钮，
+>  卡片的具体样式你可以看下销售录单和采购录单的样式，点击这个，做的就是存量的写入」
+
+| 链路 | 触发 | 做什么 | 入口代码 |
+| --- | --- | --- | --- |
+| ① 新增（上架首次） | 事件 `record_added` | 自动传这一条 + 勾「已同步云盘」 | `routes/larkEvents.js` → `sampleImageDriveService.handleTableChanges` |
+| ② 存量补齐 | 她点「数据配置」里的按钮卡 | 扫全表挑「有图但未勾」逐条补传 + 勾选 | `features/domains/dataConfigAction.js` → `POST /api/workbench/data-config/sample-image-sync` → `services/sampleImageBackfillService.js` |
+
+存量按钮的行为：
+- 卡片外观与「销售录单 / 采购录单」那排 `.entry-card` 一致（按钮形态）；
+- 点一下 ⇒ 启动一轮**后台**同步（HTTP 立刻返回，不挂几分钟）；
+- 页面轮询 `GET /api/workbench/data-config/sample-image-sync` 显示「已处理 x/y、成功 n」；
+- 幂等：已勾的跳过；失败的不勾 ⇒ **再点一次只补剩下的**（同名覆盖规则仍生效），不会堆重复文件；
+- 一次最多处理条数可配：`SAMPLE_IMAGE_DRIVE_BACKFILL_MAX`（0 = 不限，默认 0）。
+
+验收（`server/test/sampleImageBackfill.test.js`，不连网）：
+
+| AC | 判据 |
+| --- | --- |
+| AC-BF1 | 只挑「有图且未勾」的记录（没图 / 已勾 / 非图片附件都不碰） |
+| AC-BF2 | 逐条**串行**调用同一个 `syncRecord`，计数 = 成功/跳过/失败 |
+| AC-BF3 | 已在跑 ⇒ 再点不并发（`started:false`） |
+| AC-BF4 | 整表读失败 ⇒ `running:false` + `error` 如实（不假装完成） |
+| AC-BF5 | `maxRecords` 生效 |
+
+e2e（`test/e2e/workbench.spec.js`）：货品 → 数据配置 → 卡片在、点一下真的发 POST。
+落点登记（`test/workbenchInputLanding.test.js`）：`DATA_CONFIG_API.sampleImageSync` → 只写 `product.sampleImageSynced`。
+
 ## 七、未做（等她拍板）
 
 1. 存量 184 条"有图但未勾"的批量补齐（要不要现在做、按什么顺序、失败怎么退）；

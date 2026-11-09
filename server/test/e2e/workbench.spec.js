@@ -107,13 +107,23 @@ test('创作 tab 能打开占位页，不报未知模块', async ({ page }) => {
   await expect(page.getByText(/未知工作台模块/)).toHaveCount(0);
 });
 
-test('货品 → 数据配置：标签打印右侧的占位子 tab', async ({ page }) => {
+// ⭐ 2026-11-10（业务负责人）：数据配置不再是占位页 —— 里面是**按钮卡**「同步存量样例图」，
+//   点一下 = 存量写入（POST 启动 → 页面轮询进度）。这里钉住"卡在、点了真发 POST"。
+test('货品 → 数据配置：同步存量样例图 按钮卡（点一下触发存量写入）', async ({ page }) => {
+  const posts = [];
+  page.on('request', (request) => {
+    if (request.method() !== 'POST') return;
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/workbench/data-config/sample-image-sync') posts.push(pathname);
+  });
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '配置', exact: true }).click();
-  await expect(page.getByRole('button', { name: '标签打印', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '数据配置', exact: true }).click();
-  await expect(page.getByText('待建设')).toBeVisible();
-  await expect(page.locator('[data-placeholder="product-info-config"]')).toBeVisible();
+  const card = page.locator('[data-domain-action="sample-image-sync"]');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('同步存量样例图');
+  await card.click();
+  await expect.poll(() => posts.length, { timeout: 5000 }).toBe(1);
 });
 
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {

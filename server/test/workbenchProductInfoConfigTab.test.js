@@ -12,7 +12,7 @@ const { pathToFileURL } = require('node:url');
 
 const ROOT = path.join(__dirname, '..', '..');
 
-test('货品页：标签打印右侧有「数据配置」占位子 tab', async () => {
+test('货品页：标签打印右侧有「数据配置」子 tab（2026-11-10 起是按钮卡片，不是占位）', async () => {
   const domains = await import(pathToFileURL(path.join(ROOT, 'server/public/workbench/config/domains.js')).href);
   const pages = domains.domainById('product').pages;
   const labels = pages.findIndex((page) => page.id === 'product-labels');
@@ -20,7 +20,10 @@ test('货品页：标签打印右侧有「数据配置」占位子 tab', async (
   assert.ok(labels >= 0, '标签打印页仍在');
   assert.equal(config, labels + 1, '数据配置紧挨在标签打印右边');
   assert.equal(pages[config].label, '数据配置');
-  assert.equal(pages[config].kind, 'placeholder', '先做占位符');
+  // ⭐ 2026-11-10 业务负责人：占位改成**按钮卡**（点它 = 存量写入样例图到云盘）
+  assert.equal(pages[config].kind, 'action-cards', '数据配置现在是动作卡页');
+  assert.equal(pages[config].cards?.[0]?.action, 'sample-image-sync', '卡片动作 = 存量同步');
+  assert.equal(pages[config].cards?.[0]?.title, '同步存量样例图', '卡片标题');
   assert.equal(fs.existsSync(path.join(ROOT, 'server/public/workbench/features/domains/pages.js')), true);
 });
 

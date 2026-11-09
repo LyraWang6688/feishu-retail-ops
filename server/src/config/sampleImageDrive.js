@@ -94,6 +94,16 @@ const MAX_IMAGES = readInt(process.env, 'SAMPLE_IMAGE_DRIVE_MAX_IMAGES', 10, { m
 const ENABLED = readFlag(process.env, 'SAMPLE_IMAGE_DRIVE_SYNC_ENABLED', true);
 
 /**
+ * 存量补齐（数据配置 → 「同步存量样例图」卡片按钮，业务负责人 2026-11-10）：
+ *   · `maxRecords`：一次最多处理多少条（0 = 不限；防一次点太多把进程占满）——
+ *     默认 0：她点就是要"全部补齐"，184 条左右 ⇒ 串行约几分钟，后台跑；
+ *   · 仍然**只处理「有图且未勾」**的记录（已勾的跳过）；幂等，重复点只会把剩下的补完。
+ */
+const BACKFILL = Object.freeze({
+  maxRecords: readInt(process.env, 'SAMPLE_IMAGE_DRIVE_BACKFILL_MAX', 0, { min: 0, max: 10000 }),
+});
+
+/**
  * 只从语义键取字段（物理列名唯一真源 = `config/v1BitableSchema.js` 的 `product.fields`；
  * 这里**不复制列名**，只在渲染/写库时经网关的语义映射落地）。
  */
@@ -123,6 +133,7 @@ const SAMPLE_IMAGE_DRIVE = Object.freeze({
   maxImages: MAX_IMAGES,
   fields: FIELDS,
   operations: DRIVE_OPERATIONS,
+  backfill: BACKFILL,
 });
 
 module.exports = {
@@ -132,4 +143,5 @@ module.exports = {
   SAMPLE_IMAGE_DRIVE_FOLDER: FOLDER,
   SAMPLE_IMAGE_DRIVE_NAMING: NAMING,
   SAMPLE_IMAGE_DRIVE_OPERATIONS: DRIVE_OPERATIONS,
+  SAMPLE_IMAGE_DRIVE_BACKFILL: BACKFILL,
 };
