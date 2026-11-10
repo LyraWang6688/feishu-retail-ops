@@ -18,6 +18,7 @@
 
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
+import { SUBMIT_PENDING_TEXT } from '../../core/ui.js';
 import { AFTER_SALES_ACTIONS, AFTER_SALES_PAGE } from '../../config/afterSalesPage.js';
 
 /** 毫秒时间戳 → `2026-10-29`（上海时区；取不到就空串，不编一个今天）。 */
@@ -313,7 +314,7 @@ export function mountAfterSalesPage(container, options = {}) {
     const button = form.querySelector('button[type="submit"]');
     if (button) {
       button.disabled = true;
-      button.textContent = AFTER_SALES_PAGE.submitting;
+      button.textContent = SUBMIT_PENDING_TEXT;
     }
   });
 

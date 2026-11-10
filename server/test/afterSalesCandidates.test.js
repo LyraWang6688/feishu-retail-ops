@@ -166,10 +166,10 @@ test('AC-AS-ERR ⭐ 退货弹窗不会再显示「怎么换」（换货校验只
  */
 test('AC-AS-UX 售后页：提交时显示「正在提交…」；viewport 禁止任意缩放', () => {
   const root = path.join(__dirname, '../public/workbench');
-  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
-  assert.match(config, /submitting: '正在提交…'/, '提交中要有明确文案（不能只置灰）');
+  const ui = fs.readFileSync(path.join(root, 'core/ui.js'), 'utf8');
+  assert.match(ui, /export const SUBMIT_PENDING_TEXT = '正在提交，请不要重复点…'/, '统一 pending 文案在 core/ui.js');
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
-  assert.match(page, /button\.textContent = AFTER_SALES_PAGE\.submitting/, '提交后按钮文案要变');
+  assert.match(page, /button\.textContent = SUBMIT_PENDING_TEXT/, '提交后必须复用统一 pending 文案（不许本页再写一份）');
   const html = fs.readFileSync(path.join(root, 'after-sales.html'), 'utf8');
   assert.match(html, /maximum-scale=1/, 'viewport 要限制最大缩放');
   assert.match(html, /user-scalable=no/, 'viewport 要禁止双指缩放');
