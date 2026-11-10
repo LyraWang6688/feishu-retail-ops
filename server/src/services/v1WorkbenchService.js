@@ -216,6 +216,7 @@ const createWorkbenchService = (gateway, options = {}) => {
         state: asText(schema, 'liveInventory', record, 'state'),
         // 「品类」是实时库存上的公式列：工作台「换季调整（按品类批量）」靠它分组。
         category: asText(schema, 'liveInventory', record, 'category'),
+        season: fieldValue(schema, 'liveInventory', record, 'season') === true,
         updated_at: asDate(fieldValue(schema, 'liveInventory', record, 'updatedAt'))?.toISOString() || '',
       };
     }))).filter((row) => {

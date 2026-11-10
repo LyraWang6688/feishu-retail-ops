@@ -104,12 +104,6 @@ export const DOMAIN_TABS = [
     label: '库存',
     pages: [
       {
-        id: 'inventory-point',
-        label: '单点查询',
-        kind: 'scan-direct',
-        scanRealm: 'inventory',
-      },
-      {
         id: 'inventory-all',
         label: '全仓查询',
         kind: 'query',

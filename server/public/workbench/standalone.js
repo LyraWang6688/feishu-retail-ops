@@ -1,11 +1,9 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
-import { createInventoryAdjustmentModule } from './features/inventory/adjustment.js';
 import { createLabelPrintModule } from './features/labels/index.js';
 import { TAP_TELEMETRY } from './config/telemetry.js';
 
 // 独立页面注册表：key = 页面的 <body data-view="...">，value = 该页面的模块工厂。
-//   inventory-adjustment.html → 库存 tab → 手工调整（盘点调整 / 换季调整）
 //   label-print.html          → 货品 tab → 标签打印（**只读**实时库存+货品信息 → 40×30mm A4 标签 → 浏览器打印）
 //
 // ⚠️ 2026-10-08：「信息查询」两个板块（销售查询 / 库存查询）**就是飞书多维表格的外链卡**，
@@ -21,7 +19,6 @@ import { TAP_TELEMETRY } from './config/telemetry.js';
 //      库存 →「手工调整」、货品 →「标签打印」。
 // ⚠️ 留下来的就是**这两个**独立页；两个都**保留**（她要的）。
 const factories = {
-  'inventory-adjustment': () => createInventoryAdjustmentModule(),
   'label-print': () => createLabelPrintModule(),
 };
 

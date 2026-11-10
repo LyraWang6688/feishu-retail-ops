@@ -101,19 +101,6 @@ const CHAINS = Object.freeze({
     service: 'src/services/salesDeliveryPaymentService.js', serviceKey: /const pay = async/,
     landing: [['paymentRecord', 'amount'], ['paymentRecord', 'status'], ['paymentRecord', 'method'], ['paymentRecord', 'receivedAt'], ['paymentRecord', 'tradeDirection']],
   },
-  // ⭐ 2026-11-10：数据配置页「同步团购券数据」按钮 ⇒ 写回「团购券管理」。
-  "'/api/workbench/inventory/adjustments/count'": {
-    fe: 'features/inventory/adjustment.js', feKey: '/api/workbench/inventory/adjustments/count',
-    route: 'src/routes/workbenchInventoryAdjustment.js', routeKey: /count/i,
-    service: 'src/services/inventoryAdjustmentService.js', serviceKey: /count/i,
-    landing: [['liveInventory', 'stockKey'], ['inventoryLedger', 'quantityChange']],
-  },
-  "'/api/workbench/inventory/adjustments/season'": {
-    fe: 'features/inventory/adjustment.js', feKey: '/api/workbench/inventory/adjustments/season',
-    route: 'src/routes/workbenchInventoryAdjustment.js', routeKey: /season/i,
-    service: 'src/services/inventoryAdjustmentService.js', serviceKey: /season|state/i,
-    landing: [['liveInventory', 'state'], ['inventoryLedger', 'quantityChange']],
-  },
 });
 
 /**

@@ -33,7 +33,6 @@ test('新 IA：销售/库存/供应录单入口存在，供应录单有三张卡
   const domains = read('public/workbench/config/domains.js');
   assert.ok(domains.includes("id: 'sales-entry'") && domains.includes("label: '录单'"), '销售缺录单');
   assert.ok(domains.includes("scanRealm: 'sales'"), '销售鞋类必须接领域扫码');
-  assert.ok(domains.includes("scanRealm: 'inventory'"), '库存单点查询必须接领域扫码');
   assert.ok(domains.includes("title: '采购'") && domains.includes("href: '/workbench/procurement.html'"), '供应采购必须打开采购页');
   assert.match(read('public/workbench/features/domains/nav.js'), /data-tap-target=/, '领域子 tab 必须带点击埋点');
   assert.match(read('public/workbench/features/scan/launch.js'), /data-tap-target=/, '领域扫码卡片必须带点击埋点');
@@ -56,7 +55,6 @@ test('领域扫码入口：真实 JSAPI + 扫完带 from 跳转', () => {
   assert.ok(launch.includes('tt.scanCode'), '必须调用飞书 tt.scanCode');
   assert.ok(launch.includes("searchParams.set('from'"), '扫完必须把领域写进 from');
   assert.ok(launch.includes('jsapi-signature'), '必须走既有签名接口');
-  assert.ok(read('public/workbench/config/domains.js').includes("kind: 'scan-direct'"), '单点查询使用直接扫码模式');
 });
 
 test('扫码页按领域显示：不再渲染全局领域切换条；裸扫码默认库存', () => {

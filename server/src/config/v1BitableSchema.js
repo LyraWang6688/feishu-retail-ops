@@ -662,6 +662,8 @@ const V1_BITABLE_SCHEMA = {
         size: '尺码',
         updatedAt: '更新时间',
         state: '所属状态',
+        // 2026-11-11：当季复选框。季节与所属状态相互独立。
+        season: '当季',
         // 「品类」是飞书**公式**列（2026-10-06 只读核过测试 Base：liveInventory.品类
         // type=20，取值就是品类名，如「休闲鞋」「单鞋」；生产真表同一份形状见
         // docs/inventory-adjustment-plan-2026-10-06.md 的只读实测）。

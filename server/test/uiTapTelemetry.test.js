@@ -426,7 +426,7 @@ test('AC-UT4c ⑤ **同一份实现**：两个路由都 require 同一个 util�
   assert.ok(html.includes('data-submit-feedback='), '（前提）这一页确实有带反馈属性的按钮 ✓');
 
   // 工作台的三个页面都先加载**同一个文件**（模块脚本读 `window.dshUiTap` ⇒ 顺序不能反）
-  for (const page of ['index.html', 'inventory-adjustment.html', 'label-print.html']) {
+  for (const page of ['index.html', 'label-print.html']) {
     const html = fs.readFileSync(path.join(WORKBENCH, page), 'utf8');
     const sharedAt = html.indexOf('/workbench/shared/ui-tap.js');
     const moduleAt = html.indexOf('<script type="module"');
