@@ -105,7 +105,7 @@ const storeStub = () => ({ get: async () => null, create: async () => {}, update
 const staleOrderSeed = () => ({
   salesEntry: [{ record_id: 'o1', fields: { 写入状态: '成功', 销售单号: 'XSD-STALE-1' } }],
   salesDetail: [{ record_id: 'd1', fields: {
-    销售单号: ['o1'], 编号: ['p1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 100,
+    销售单号: [{ record_ids: ['o1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '未交付', 实收金额: 100,
     销售日: STALE_SOLD_AT,
   } }],
   sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],

@@ -4,6 +4,7 @@
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 状态类变更通路：transitionState（准备）+ executeStateTransition（执行）。
 const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { relation } = require('../v1ReferenceResolver');
 const { normalizeSize } = require('../sizeReferenceService');
 const { logInfo } = require('../../utils/logger');
@@ -161,8 +162,8 @@ async function executeStateTransition(operation) {
       if (moved.includes(recordId)) continue;
       const record = await this.gateway.get('liveInventory', recordId);
       if (!record) throw new Error(`待变更状态的实时库存 ${recordId} 不存在，请人工核对`);
-      if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(operation.product_record_id) ||
-        !linkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId)) {
+      if (!strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(operation.product_record_id) ||
+        !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId)) {
         throw new Error(`待变更状态的实时库存 ${recordId} 的货品或尺码已改变，请人工核对`);
       }
       const current = textValue(record.fields?.[liveFields.state]);

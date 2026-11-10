@@ -88,7 +88,7 @@ const makeService = (options = {}) => {
     references: {
       resolveProduct: async () => ({
         recordId: 'prod_1',
-        record: { record_id: 'prod_1', fields: { 编号: '8088黑', 货号: '8088', 颜色: [{ text: '黑色' }], 供应商: ['sup_1'] } },
+        record: { record_id: 'prod_1', fields: { 编号: '8088黑', 货号: '8088', 颜色: [{ text: '黑色' }], 供应商: [{ record_ids: ['sup_1'] }] } },
       }),
       resolveSupplier: async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '金猴' } } }),
     },

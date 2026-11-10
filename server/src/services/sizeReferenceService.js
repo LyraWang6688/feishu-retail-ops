@@ -1,4 +1,5 @@
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { getConfigRows, invalidateConfigTable } = require('./configTableCache');
 
 const normalizeSize = (value) => {
@@ -72,7 +73,7 @@ class SizeReferenceService {
   }
 
   async resolveLinkedCells(cellValue) {
-    const ids = [...new Set(linkedRecordIds(cellValue))];
+    const ids = [...new Set(strictLinkedRecordIds(cellValue))];
     if (!ids.length) throw new Error('尺码关联字段为空或格式无效');
     let { byRecordId } = await this.load();
     if (ids.some((recordId) => !byRecordId.has(recordId))) {

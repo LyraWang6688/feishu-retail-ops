@@ -1,5 +1,6 @@
 'use strict';
 const test = require('node:test');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -20,15 +21,15 @@ test('goods click creates master; funds click reaches details, receipts, stock a
     sizeManagement: [{ record_id: 'size40', fields: { ...f('sizeManagement',{ size: 40 }), 类别: ['男'] } }],
     paymentMethod: [{ record_id: 'wechat', fields: f('paymentMethod',{name:'微信'}) }],
     behavior: [ ['cash','现货','SALE_CASH'],['decrease','销售减少','STOCK_SALE_DECREASE'] ].map(([record_id,name,code]) => ({record_id,fields:f('behavior',{name,code,stockDirection:'减少',enabled:true})})),
-    liveInventory: [{ record_id: 'live', fields: f('liveInventory',{product:['prod'],size:['size40'],state:'门盒',operationItemKey:'fixture:1'}) }],
+    liveInventory: [{ record_id: 'live', fields: f('liveInventory',{product:[{ record_ids: ['prod'] }],size:[{ record_ids: ['size40'] }],state:'门盒',operationItemKey:'fixture:1'}) }],
   };
   const writes=[];let seq=0;
   const gateway={
-    table:k=>schema.tables[k], listAll:async k=>tables[k]||[],
-    get:async(k,id)=>(tables[k]||[]).find(r=>r.record_id===id)||null,
+    table:k=>schema.tables[k], listAll:async k=>(tables[k]||[]).map(r=>({record_id:r.record_id,fields:normalizeLinkFields(r.fields)})),
+    get:async(k,id)=>{const r=(tables[k]||[]).find(x=>x.record_id===id);return r?{record_id:r.record_id,fields:normalizeLinkFields(r.fields)}:null;},
     findOneByText:async(k,key,value)=>(tables[k]||[]).find(r=>r.fields[schema.tables[k].fields[key]]===value)||null,
     create:async(k,values,options)=>{const record={record_id:`rec_${++seq}`,fields:f(k,values)};(tables[k]||=[]).push(record);writes.push({k,values,options});return{recordId:record.record_id,record};},
-    update:async(k,id,values,options)=>{const record=await gateway.get(k,id);assert(record);Object.assign(record.fields,f(k,values));writes.push({k,values,options});return record;},
+    update:async(k,id,values,options)=>{const record=(tables[k]||[]).find(r=>r.record_id===id);assert(record);Object.assign(record.fields,f(k,values));writes.push({k,values,options});return record;},
     delete:async(k,id,options)=>{tables[k]=(tables[k]||[]).filter(r=>r.record_id!==id);writes.push({k,delete:id,options});return{deleted:true};},
   };
   gateway.createBatch=async(k,rows,options)=>Promise.all(rows.map(row=>gateway.create(k,row,options)));

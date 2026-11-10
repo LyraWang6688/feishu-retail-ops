@@ -60,11 +60,11 @@ const seed = ({ details, entry = {}, payments = [], products = [], accessories =
   }],
   salesEntry: [{
     record_id: 'o1',
-    fields: { 销售单号: 'XSD-1', 交易类型: ['b_cash'], 录单日: SOLD_AT, 写入状态: '成功', ...entry },
+    fields: { 销售单号: 'XSD-1', 交易类型: [{ record_ids: ['b_cash'] }], 录单日: SOLD_AT, 写入状态: '成功', ...entry },
   }],
   salesDetail: details,
   paymentRecord: payments.length ? payments : [
-    { record_id: 'r1', fields: { 关联销售单: ['o1'], 交易金额: 100, 钱款状态: '未收款' } },
+    { record_id: 'r1', fields: { 关联销售单: [{ record_ids: ['o1'] }], 交易金额: 100, 钱款状态: '未收款' } },
   ],
   product: products,
   accessory: accessories,
@@ -99,11 +99,11 @@ const sizeStub = (byRecordId = { sz37: 37, sz43: 43 }) => ({
 
 const shoe = (recordId, productId, sizeCell) => ({
   record_id: recordId,
-  fields: { 销售单号: ['o1'], 编号: [productId], 尺码: sizeCell, 履约状态: '已交付', 实收金额: 228, 销售日: SOLD_AT },
+  fields: { 销售单号: [{ record_ids: ['o1'] }], 编号: [productId], 尺码: sizeCell, 履约状态: '已交付', 实收金额: 228, 销售日: SOLD_AT },
 });
 const accessoryRow = (recordId, accessoryId) => ({
   record_id: recordId,
-  fields: { 销售单号: ['o1'], 配品: [accessoryId], 履约状态: '已交付', 实收金额: 39, 销售日: SOLD_AT },
+  fields: { 销售单号: [{ record_ids: ['o1'] }], 配品: [accessoryId], 履约状态: '已交付', 实收金额: 39, 销售日: SOLD_AT },
 });
 
 const run = (records, options = {}) => new SecondDeliveryService({
@@ -179,7 +179,7 @@ test('缺货号 / 缺配品名称 / 鞋缺尺码：这些件**不产出**（展�
       accessoryRow('d2', 'a1'), // 名称缺失
       shoe('d3', 'p3', []), // 尺码缺失（关联为空，单元格也没文本）
       shoe('d4', 'p4', [{ record_ids: ['sz43'], text: '43' }]), // 正常
-      { record_id: 'd5', fields: { 销售单号: ['o1'], 履约状态: '已交付', 实收金额: 1 } }, // 既非鞋也非配品
+      { record_id: 'd5', fields: { 销售单号: [{ record_ids: ['o1'] }], 履约状态: '已交付', 实收金额: 1 } }, // 既非鞋也非配品
     ],
     products: [
       { record_id: 'p1', fields: { 编号: 'N-1' } },
@@ -249,7 +249,7 @@ test('历史单：交易类型指向**已被删掉**的行为记录 → 照旧�
     products: [{ record_id: 'p1', fields: { 货号: 'B26002-52' } }],
     // 行为表里**没有**这条记录（被删了）。
     behavior: { 行为编码: 'SALE_SOMETHING_ELSE', 行为名称: '别的' },
-    entry: { 交易类型: ['b_deleted_long_ago'] },
+    entry: { 交易类型: [{ record_ids: ['b_deleted_long_ago'] }] },
   });
   const orders = await run(records, { query: { includeItems: true } });
   assert.equal(orders.length, 1, '关联悬空不许让一笔"还没收齐"的单从提醒里消失');
@@ -276,7 +276,7 @@ test('⭐ 候选 = 尚未完成履约：**现货待收**（已交付 + 钱没结
   // 已经收清的（收款状态=已收款）→ 不算候选（与口径一致：尚未成交才推）。
   const settled = await run(seed({
     details: [shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }])],
-    payments: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 交易金额: 228, 钱款状态: '已收款' } }],
+    payments: [{ record_id: 'r1', fields: { 关联销售单: [{ record_ids: ['o1'] }], 交易金额: 228, 钱款状态: '已收款' } }],
   }), { query: { includeItems: true } });
   assert.deepEqual(settled, []);
 

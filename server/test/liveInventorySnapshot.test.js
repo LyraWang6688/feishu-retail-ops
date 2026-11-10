@@ -54,7 +54,7 @@ const SIZE_RECORDS = [
 const inventoryRow = (id, sizeRecordId, state) => ({
   record_id: id,
   fields: {
-    编号: ['prod_1'],
+    编号: [{ record_ids: ['prod_1'] }],
     尺码: [sizeRecordId],
     所属状态: state,
     库存键: `${NUMBER}|${String(sizeRecordId).replace('size_', '')}`,

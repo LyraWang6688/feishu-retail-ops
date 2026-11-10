@@ -41,11 +41,11 @@ const readSrc = (relative) => fs.readFileSync(path.join(SERVER, relative), 'utf8
 const fixture = () => ({
   salesEntry: [{ record_id: 'order_1', fields: { 写入状态: '成功', 销售单号: 'XSD-001' } }],
   salesDetail: [
-    { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 } },
-    { record_id: 'detail_2', fields: { 销售单号: ['order_1'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '未交付', 实收金额: 59 } },
+    { record_id: 'detail_1', fields: { 销售单号: [{ record_ids: ['order_1'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 89 } },
+    { record_id: 'detail_2', fields: { 销售单号: [{ record_ids: ['order_1'] }], 编号: [{ record_ids: ['product_2'] }], 尺码: [{ record_ids: ['size_39'] }], 履约状态: '未交付', 实收金额: 59 } },
   ],
   sizeManagement: [38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
-  paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 交易金额: 50, 支付方式: ['method_1'] } }],
+  paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: [{ record_ids: ['order_1'] }], 交易金额: 50, 支付方式: [{ record_ids: ['method_1'] }] } }],
   paymentMethod: [{ record_id: 'method_1', fields: { 交易方式: '微信' } }],
   product: [
     { record_id: 'product_1', fields: { 编号: 'P1', 颜色: '黑色' } },

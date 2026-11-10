@@ -458,7 +458,7 @@ const SERVICE_PRODUCT = {
 const SERVICE_INVENTORY = [{
   record_id: 'inv_8516_44_blank',
   fields: {
-    编号: ['prod_8516'], 尺码: ['size_44'], 所属状态: '', 库存键: '8516|黑色|男|44',
+    编号: [{ record_ids: ['prod_8516'] }], 尺码: [{ record_ids: ['size_44'] }], 所属状态: '', 库存键: '8516|黑色|男|44',
     品类: '凉鞋', 更新时间: Date.UTC(2026, 9, 16, 12, 35),
   },
 }];
