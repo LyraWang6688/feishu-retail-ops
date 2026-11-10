@@ -204,13 +204,19 @@ test('AC-RC1d ⭐ 一批多供应商 ⇒ 按供应商拆卡；每张卡只含该
   assert.ok(s1.includes('data-arrival-supplier="s1"'), '提交按钮带供应商范围 ✓');
   const s2 = orders.purchaseOrdersHtml(rows, { supplierKey: 's2' });
   assert.ok(s2.includes('4 双'), '信踏卡摘要按自己的明细算（4 双）✓');
-  // ⭐ 已验收完的供应商（任务 posted）⇒ 卡片隐掉；另一家继续显示
-  const unitsAfter = orders.groupAcceptanceUnits(rows, { 'CGD-MULTI': ['s1'] });
-  assert.equal(unitsAfter.length, 1, 's1 验收完 ⇒ 只剩 s2 一个单位 ✓');
+  // ⭐ 2026-11-11：已验收完的供应商只认**主表字段**（列表每行的 arrived_supplier_ids）
+  const afterRows = rows.map((row) => ({ ...row, arrived_supplier_ids: ['s1'] }));
+  const unitsAfter = orders.groupAcceptanceUnits(afterRows);
+  assert.equal(unitsAfter.length, 1, 's1 在「已到货供应商」里 ⇒ 只剩 s2 一个单位 ✓');
   assert.equal(unitsAfter[0].supplier_key, 's2');
-  const afterHtml = orders.purchaseOrdersHtml(rows, { acceptedSuppliers: { 'CGD-MULTI': ['s1'] } });
+  const afterHtml = orders.purchaseOrdersHtml(afterRows);
   assert.equal(afterHtml.includes('data-supplier-key="s1"'), false, '已验收的 s1 卡片不再出现 ✓');
   assert.ok(afterHtml.includes('data-supplier-key="s2"'), '未验收的 s2 卡片继续出现 ✓');
+  // 不再依赖本地 accepted-suppliers 接口/参数
+  const src = readWorkbench('features/orders/index.js');
+  assert.equal(src.includes('/purchase/arrivals/accepted-suppliers'), false, '前端源码不再调本地 accepted-suppliers 端点 ✓');
+  assert.equal(readWorkbench('config/orders.js').includes('acceptedSuppliers'), false,
+    '前端配置不再有 accepted-suppliers 端点 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

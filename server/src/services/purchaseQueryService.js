@@ -125,6 +125,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         // 「采购批次这个数据表主要控制的是该批次的到货情况」。
         // 批次行本来就已经解析出来了（`batch`），所以这是零额外请求的一次投影。
         arrival_status: batch ? asText('purchaseOrderBatch', batch, 'arrivalStatus') : '',
+        arrived_supplier_ids: batch ? asLinks('purchaseOrderBatch', batch, 'arrivedSuppliers') : [],
         supplier_record_id: supplierIds[0] || '',
         // ⭐ 2026-11-09：验收页按「供应商 → 采购日」分组（不显示采购单号）——
         //   · supplier_name：供应商管理.供应商名称（空 ⇒ 前端显示"未标注供应商"，不编 ✗）
@@ -187,6 +188,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       batch_record_id: record.record_id,
       batch_no: asText('purchaseOrderBatch', record, 'batchNo'),
       arrival_status: asText('purchaseOrderBatch', record, 'arrivalStatus'),
+      arrived_supplier_ids: asLinks('purchaseOrderBatch', record, 'arrivedSuppliers'),
       // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**——
       //   「确认状态」「到货文字说明（该列已从真表退场）」两列在生产真表上没有了（写入点也一起退场），
       //   留着投影只会永远读出空串、把"没记"伪装成"记了但空"。
