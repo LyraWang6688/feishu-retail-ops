@@ -11,7 +11,7 @@ const domains = fs.readFileSync(path.join(root, 'config/domains.js'), 'utf8');
 test('资金是独立一级领域，排在配置之前', () => {
   assert.match(tabs, /\{ module: 'funds', label: '资金' \}/);
   const order = [...tabs.matchAll(/module: '(sales|inventory|purchase|product|funds)'/g)].map((m) => m[1]);
-  assert.deepEqual(order, ['sales', 'inventory', 'purchase', 'funds', 'product']);
+  assert.deepEqual(order, ['sales', 'purchase', 'inventory', 'funds', 'product']);
 });
 
 test('每个一级 tab 都在 modules 表里注册了对应模块', () => {
