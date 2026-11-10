@@ -69,7 +69,7 @@ const {
 const { SELLABLE_KINDS, sellableKindOf } = require('../config/sellableKinds');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway'); const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { InventoryService } = require('./inventoryService');
 const { V1ReferenceResolver, person, relation } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
@@ -490,7 +490,7 @@ class AfterSalesService {
         'after_sales_original_detail',
       );
       if (!record) throw new Error(`找不到原销售明细：${recordId}`);
-      if (!linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(request.originalSalesEntryRecordId)) {
+      if (!strictLinkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(request.originalSalesEntryRecordId)) {
         throw new Error(`原销售明细 ${recordId} 不属于销售单 ${request.originalSalesEntryRecordId}，已停止售后`);
       }
       details.push(record);
@@ -530,13 +530,13 @@ class AfterSalesService {
       () => this.gateway.listAll('paymentRecord'), 'after_sales_original_payments',
     );
     return records
-      .filter((record) => linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId))
+      .filter((record) => strictLinkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId))
       .map((record) => ({
         recordId: record.record_id,
         fields: record.fields || {},
         status: cellText(record.fields?.[fields.status]),
         amount: cellNumber(record.fields?.[fields.amount]),
-        methodIds: linkedRecordIds(record.fields?.[fields.method]),
+        methodIds: strictLinkedRecordIds(record.fields?.[fields.method]),
         orderKey: originalPaymentOrderKey(record, fields),
       }))
       .sort((left, right) => {
@@ -719,7 +719,7 @@ class AfterSalesService {
   /** 原明细行是鞋还是配品，由 sellableKinds 里声明的关联字段决定（不写死「编号」/「配品」）。 */
   detailKindOf(fields, detailFields) {
     for (const [key, declared] of Object.entries(SELLABLE_KINDS)) {
-      const ids = linkedRecordIds(fields?.[detailFields[declared.detailLinkField]]);
+      const ids = strictLinkedRecordIds(fields?.[detailFields[declared.detailLinkField]]);
       if (ids.length > 1) {
         throw new Error(`原销售明细的「${declared.label}」关联了 ${ids.length} 条记录，无法确定售后的是哪一件`);
       }
@@ -729,7 +729,7 @@ class AfterSalesService {
   }
 
   singleLink(cell, label) {
-    const ids = linkedRecordIds(cell);
+    const ids = strictLinkedRecordIds(cell);
     if (ids.length !== 1) throw new Error(`${label}必须且只能关联一条记录`);
     return ids[0];
   }
@@ -799,15 +799,15 @@ class AfterSalesService {
     const record = await this.gateway.get('salesDetail', recordId);
     let mismatch = '';
     if (!record) mismatch = '记录已不存在';
-    else if (!linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(expected.originalSalesEntryRecordId)) {
+    else if (!strictLinkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(expected.originalSalesEntryRecordId)) {
       mismatch = '销售单号关联不是原主表';
-    } else if (!linkedRecordIds(record.fields?.[detailFields[row.linkField]]).includes(row.linkRecordId)) {
+    } else if (!strictLinkedRecordIds(record.fields?.[detailFields[row.linkField]]).includes(row.linkRecordId)) {
       mismatch = `「${row.linkField}」关联不一致`;
-    } else if (row.sizeRecordId && !linkedRecordIds(record.fields?.[detailFields.size]).includes(row.sizeRecordId)) {
+    } else if (row.sizeRecordId && !strictLinkedRecordIds(record.fields?.[detailFields.size]).includes(row.sizeRecordId)) {
       mismatch = '尺码关联不一致';
     } else if (Number(cellNumber(record.fields?.[detailFields.actualAmount])) !== Number(row.amount)) {
       mismatch = '实收金额不一致';
-    } else if (!linkedRecordIds(record.fields?.[detailFields.tradeType]).includes(expected.tradeTypeRecordId)) {
+    } else if (!strictLinkedRecordIds(record.fields?.[detailFields.tradeType]).includes(expected.tradeTypeRecordId)) {
       mismatch = '交易类型不一致';
     }
     if (mismatch) {
@@ -969,7 +969,7 @@ class AfterSalesService {
     else if (Number(cellNumber(record.fields?.[fields.amount])) !== Number(expected.amount)) mismatch = '收款金额不一致';
     else if (cellText(record.fields?.[fields.tradeDirection]) !== expected.direction) mismatch = '交易方向不一致';
     else if (expected.status && cellText(record.fields?.[fields.status]) !== expected.status) mismatch = '收款状态不一致';
-    else if (expected.methodId && !linkedRecordIds(record.fields?.[fields.method]).includes(expected.methodId)) {
+    else if (expected.methodId && !strictLinkedRecordIds(record.fields?.[fields.method]).includes(expected.methodId)) {
       mismatch = '收款方式不一致';
     }
     if (mismatch) {

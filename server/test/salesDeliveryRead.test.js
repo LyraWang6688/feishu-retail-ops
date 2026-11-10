@@ -13,12 +13,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createSalesDeliveryReadService } = require('../src/services/salesDeliveryReadService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 const table = (key) => V1_BITABLE_SCHEMA.tables[key];
 
 const fakeGateway = (records) => ({
-  listAll: async (key) => records[key] || [],
-  getBatch: async (key, ids) => (records[key] || []).filter((row) => ids.includes(row.record_id)),
+  listAll: async (key) => (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+  getBatch: async (key, ids) => (records[key] || []).filter((row) => ids.includes(row.record_id)).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
   table,
 });
 
@@ -35,7 +36,7 @@ const baseRecords = () => ({
     { record_id: 'pay_1', fields: { 关联销售单: [{ record_ids: ['order_1'] }], 支付方式: [{ record_ids: ['method_1'] }], 交易金额: 40, 钱款状态: '已收款' } },
     { record_id: 'pay_2', fields: { 关联销售单: [{ record_ids: ['order_1'] }], 支付方式: [{ record_ids: ['method_2'] }], 交易金额: 60, 钱款状态: '未收款' } },
   ],
-  product: [{ record_id: 'product_1', fields: { 货号: 'XHB8095', 颜色: ['color_1'] } }],
+  product: [{ record_id: 'product_1', fields: { 货号: 'XHB8095', 颜色: [{ record_ids: ['color_1'] }] } }],
   color: [{ record_id: 'color_1', fields: { 颜色: '黑色' } }],
   sizeManagement: [{ record_id: 'size_41', fields: { 尺码: 41 } }],
   paymentMethod: [

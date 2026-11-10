@@ -25,7 +25,8 @@
  *        —— 那才是真正危险的（两行同一个「采购明细ID」）。
  *    ⇒ 取舍写在这里：**空档可以接受，重号不可以**。
  */
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 
 /** 序号补零位数（两位：`01`…`99`；第 100 条是 `100`，**不截断**）。 */
@@ -72,7 +73,7 @@ const createPurchaseDetailIdAllocator = ({ gateway } = {}) => {
     async open({ batchRecordId, batchNo, rows } = {}) {
       const fields = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
       const all = Array.isArray(rows) ? rows : await gateway.listAll('purchaseRequest');
-      const inBatch = all.filter((record) => linkedRecordIds(record.fields?.[fields.batchNo])
+      const inBatch = all.filter((record) => strictLinkedRecordIds(record.fields?.[fields.batchNo])
         .includes(batchRecordId));
       let next = nextPurchaseDetailSequence(batchNo, {
         existingIds: inBatch.map((record) => textValue(record.fields?.[fields.detailId])),

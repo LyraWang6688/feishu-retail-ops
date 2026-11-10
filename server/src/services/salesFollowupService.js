@@ -1,7 +1,8 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {V1BitableGateway, textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { PaymentService, amount } = require('./paymentService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords, cents } = require('./salesProgressService');
@@ -321,8 +322,8 @@ class SalesFollowupService {
         .map(async (order) => {
           const orderNo = textValue(order.fields?.[orderFields.orderNo]) || order.record_id;
           try {
-            const orderDetails = details.filter((detail) => linkedRecordIds(detail.fields?.[detailFields.salesEntry]).includes(order.record_id));
-            const orderPayments = payments.filter((payment) => linkedRecordIds(payment.fields?.[paymentFields.salesEntry]).includes(order.record_id));
+            const orderDetails = details.filter((detail) => strictLinkedRecordIds(detail.fields?.[detailFields.salesEntry]).includes(order.record_id));
+            const orderPayments = payments.filter((payment) => strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry]).includes(order.record_id));
             const progress = progressFromRecords(orderDetails, orderPayments, detailFields, paymentFields);
             // ⭐⭐ 2026-10-11：先把明细那一行算完 —— 待补样品待办要拿**明细的 ID + 尺码**去对。
             const detailRows = await Promise.all(orderDetails
@@ -430,7 +431,7 @@ class SalesFollowupService {
                   amount: Number(textValue(payment.fields?.[paymentFields.amount])),
                   status: textValue(payment.fields?.[paymentFields.status]) || '已收款',
                   received_at: payment.fields?.[paymentFields.receivedAt] || null,
-                  method: methodById.get(linkedRecordIds(payment.fields?.[paymentFields.method])[0]) || '',
+                  method: methodById.get(strictLinkedRecordIds(payment.fields?.[paymentFields.method])[0]) || '',
                 })),
             };
           } catch (error) {
@@ -621,7 +622,7 @@ class SalesFollowupService {
 
       const detailFields = this.gateway.table('salesDetail').fields;
       const details = (await this.gateway.listAll('salesDetail'))
-        .filter((record) => linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(input.salesEntryRecordId));
+        .filter((record) => strictLinkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(input.salesEntryRecordId));
       if (!details.length) throw new Error('这一张销售单没有明细');
 
       // ① 她填的那几件：必须属于这一张单、必须是大于 0 的两位小数金额。

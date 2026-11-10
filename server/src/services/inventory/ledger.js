@@ -3,7 +3,7 @@
 //    方法体一个字符未改（仍用 `this.`），由 facade 用 `Object.defineProperty`
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 库存流水 / 实时库存的**读取与审计**：重放前核对、幂等回查、重复事实检查。
-const { linkedRecordIds, singleLinked, textValue } = require('../v1BitableGateway');
+const {singleLinked, textValue} = require('../v1BitableGateway');
 const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { OPERATION_ITEM_KEY_FIELD } = require('../../infrastructure/idempotencyKey');
 const { requireMovement } = require('./movements');

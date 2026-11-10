@@ -3,7 +3,7 @@
 //    方法体一个字符未改（仍用 `this.`），由 facade 用 `Object.defineProperty`
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 状态类变更通路：transitionState（准备）+ executeStateTransition（执行）。
-const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const {textValue} = require('../v1BitableGateway');
 const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { relation } = require('../v1ReferenceResolver');
 const { normalizeSize } = require('../sizeReferenceService');

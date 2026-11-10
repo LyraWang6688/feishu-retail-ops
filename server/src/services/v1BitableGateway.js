@@ -42,16 +42,17 @@ const textValue = (value) => {
   return '';
 };
 
+/** 关联字段 cell → record_id 数组；只认 record_ids / link_record_ids（issue #1074）。 */
 const linkedRecordIds = (value) => {
   if (Array.isArray(value)) return value.flatMap(linkedRecordIds);
-  if (typeof value === 'string') return value ? [value] : [];
   if (!value || typeof value !== 'object') return [];
-  // Feishu's record GET returns link cells as [{ record_ids: ['rec...'], text: '...' }].
-  // Other endpoints return link_record_ids or direct { id } objects.
   const nested = [value.record_ids, value.link_record_ids].filter(Array.isArray);
-  if (nested.length) return nested.flatMap(linkedRecordIds);
-  const id = value.record_id || value.recordId || value.id;
-  return id ? [id] : [];
+  return nested.length ? nested.flatMap((ids) => ids.flatMap((id) => {
+    if (typeof id === 'string') return id ? [id] : [];
+    if (Array.isArray(id)) return linkedRecordIds(id);
+    if (id && typeof id === 'object') return linkedRecordIds(id);
+    return [];
+  })) : [];
 };
 
 // 单选关联的判定：必须且只能关联到这一条记录。多选或指错记录都不能算匹配，

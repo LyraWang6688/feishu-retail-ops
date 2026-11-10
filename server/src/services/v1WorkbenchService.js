@@ -1,6 +1,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_STATUS_VALUE_DOMAINS, SALES_STATUS_WRITE_VALUES } = require('../config/salesStatusDimensions');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
 const { LIVE_STATES } = require('./inventoryService');
@@ -18,7 +19,7 @@ const fieldValue = (schema, tableKey, record, semanticKey) => {
 };
 
 const asText = (schema, tableKey, record, semanticKey) => textValue(fieldValue(schema, tableKey, record, semanticKey)).trim();
-const asLinks = (schema, tableKey, record, semanticKey) => linkedRecordIds(fieldValue(schema, tableKey, record, semanticKey));
+const asLinks = (schema, tableKey, record, semanticKey) => strictLinkedRecordIds(fieldValue(schema, tableKey, record, semanticKey));
 const asNumber = (value) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   const parsed = Number(textValue(value).replace(/,/g, '').replace(/¥/g, '').trim());

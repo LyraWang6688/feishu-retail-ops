@@ -9,7 +9,8 @@
  * ⚠️ mixin：`this` = `PurchaseWebhookService` 实例（facade 保留同名薄委托方法）。
  */
 const { arrivalToast, inventoryToast } = require('../../config/purchaseWebhookTexts');
-const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const {textValue} = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { invalidatePendingBatchesCache } = require('../purchasePendingBatchService');
 const { logInfo, logWarn } = require('../../utils/logger');
 const { purchaseCorrelation } = require('./correlation');
@@ -47,7 +48,7 @@ const arrival = {
       const table = this.gateway.table('liveInventory');
       const sampleRecords = allLiveRecords.filter((record) => {
         // 使用 linkedRecordIds 处理关联字段，兼容飞书API返回的多种格式
-        const productIds = linkedRecordIds(record.fields?.[table.fields.product]);
+        const productIds = strictLinkedRecordIds(record.fields?.[table.fields.product]);
         // 单选字段可能返回字符串或数组，统一处理
         const stateValue = record.fields?.[table.fields.state];
         const state = Array.isArray(stateValue) ? stateValue[0] : stateValue;

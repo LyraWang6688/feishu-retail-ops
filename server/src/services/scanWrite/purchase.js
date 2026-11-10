@@ -6,7 +6,8 @@
  */
 const { fillText } = require('../../config/scanWrite');
 const { REPORT_BEHAVIOR } = require('../purchaseBehaviorPolicy');
-const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const {textValue} = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { logInfo } = require('../../utils/logger');
 
 const createScanWritePurchase = ({
@@ -121,7 +122,7 @@ const createScanWritePurchase = ({
       }
       const productId = product.record_id || productRecordId;
       const productFields = schema.tables.product.fields;
-      const supplierRecordId = linkedRecordIds(product.fields?.[productFields.supplier])[0] || '';
+      const supplierRecordId = strictLinkedRecordIds(product.fields?.[productFields.supplier])[0] || '';
       const behavior = await references.resolveBehavior(config.replenish.behaviorCode);
       const itemNo = textValue(product.fields?.[productFields.itemNo]).trim();
       const color = textValue(product.fields?.[productFields.color]).trim();
@@ -287,7 +288,7 @@ const createScanWritePurchase = ({
       }
       const productId = product.record_id || productRecordId;
       const productFields = schema.tables.product.fields;
-      const supplierRecordId = linkedRecordIds(product.fields?.[productFields.supplier])[0] || '';
+      const supplierRecordId = strictLinkedRecordIds(product.fields?.[productFields.supplier])[0] || '';
       // 退货那条**既有行为编码**（解析不到 ⇒ 停下来报人话：绝不写一条没有"采购行为"的退货）
       const behavior = await references.resolveBehavior(config.purchaseReturn.behaviorCode);
       const itemNo = textValue(product.fields?.[productFields.itemNo]).trim();

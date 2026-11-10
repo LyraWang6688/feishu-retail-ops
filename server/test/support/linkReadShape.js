@@ -14,7 +14,7 @@
 const LINK_FIELD_NAMES = new Set([
   '销售单号', '关联销售单', '编号', '尺码', '库存行为', '关联销售', '关联采购',
   '支付方式', '团购券管理', '销售明细', '收款明细', '库存流水', '采购明细',
-  '父记录', '供应商', '报货批次', '关联货品', '交易类型',
+  '父记录', '供应商', '报货批次', '报货批次号', '采购行为', '发生行为', '关联货品', '交易类型', '配品',
 ]);
 
 /** 写格式（['rec…'] / [{id}] / [{record_ids}]）→ 读格式 `[{ record_ids: [...] }]`。 */
@@ -28,7 +28,9 @@ const toReadShape = (value) => {
     const id = item.record_id || item.recordId || item.id;
     return id ? [id] : [];
   });
-  return ids.length ? [{ record_ids: ids }] : [];
+  if (!ids.length) return value;
+  const first = value.find((item) => item && typeof item === 'object' && (item.text !== undefined || item.type !== undefined));
+  return [{ record_ids: ids, ...(first?.text !== undefined ? { text: first.text } : {}), ...(first?.type !== undefined ? { type: first.type } : {}) }];
 };
 
 /** 记录 fields（飞书列名）→ 把关联列的值归一成读格式。 */
