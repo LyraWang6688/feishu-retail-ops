@@ -1,0 +1,29 @@
+/** 「货品资料」页（配置 tab）：搜索货品 / 按缺失信息分组 / 同步样例图。 */
+import { PRODUCT_NEW_FORM_URL } from './links.js';
+
+export const PRODUCT_PROFILE_API = Object.freeze({
+  search: '/api/workbench/products/search',
+  incomplete: '/api/workbench/products/incomplete',
+  sampleImageSync: '/api/workbench/data-config/sample-image-sync',
+});
+
+export const PRODUCT_PROFILE_TEXTS = Object.freeze({
+  title: '货品资料',
+  newTitle: '货品上新',
+  completeTitle: '货品完善',
+  sampleTitle: '同步样例图',
+  accessoryTitle: '配品配置',
+  accessoryStatus: '待建设',
+  searchPlaceholder: '录入重复校验',
+  searchEmpty: '输入货号或编号后显示搜索结果。',
+  searchNone: '没有匹配的货品，可以直接点「去上新」。',
+  searchFound: '找到 {count} 条',
+  newAction: '去上新',
+  completeHint: '共 {count} 条待完善；按缺失信息选择查看。',
+  completeField: '缺失信息',
+  completeAction: '去完善',
+  back: '‹ 返回',
+  searchFailed: '搜索失败，请稍后重试',
+  incompleteFailed: '货品完善读取失败，请稍后重试',
+  formUrl: PRODUCT_NEW_FORM_URL,
+});

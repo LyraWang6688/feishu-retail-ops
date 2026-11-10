@@ -1,9 +1,8 @@
 'use strict';
 
-/** 配置 → 数据配置：配品配置占位卡 + 两个同步动作卡。 */
+/** 配置 → 货品资料 / 数据配置 的页面结构。 */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -13,19 +12,18 @@ const loadPages = async () => {
   return domains.domainById('product').pages;
 };
 
-test('货品页：标签打印右侧有「数据配置」，内含配品配置 + 两个同步动作卡', async () => {
+test('货品页：标签打印左边是「货品资料」，数据配置只剩券同步', async () => {
   const pages = await loadPages();
   const labels = pages.findIndex((page) => page.id === 'product-labels');
+  const profile = pages.findIndex((page) => page.id === 'product-new');
   const config = pages.findIndex((page) => page.id === 'product-info-config');
   assert.ok(labels >= 0, '标签打印页仍在');
-  assert.equal(config, labels + 1, '数据配置紧挨在标签打印右边');
+  assert.equal(profile, 0, '货品资料是配置下第一页');
+  assert.equal(pages[profile].label, '货品资料');
+  assert.equal(pages[profile].kind, 'product-profile');
   assert.equal(pages[config].label, '数据配置');
-  assert.equal(pages[config].kind, 'action-cards', '数据配置是动作卡页');
-  assert.equal(pages[config].cards?.[0]?.title, '配品配置');
-  assert.equal(pages[config].cards?.[0]?.placeholder, true, '配品配置先占位');
-  assert.equal(pages[config].cards?.[1]?.action, 'voucher-catalog-sync', '券目录同步动作');
-  assert.equal(pages[config].cards?.[2]?.action, 'sample-image-sync', '样例图同步动作');
-  assert.equal(fs.existsSync(path.join(ROOT, 'server/public/workbench/features/domains/pages.js')), true);
+  assert.equal(pages[config].kind, 'action-cards');
+  assert.deepEqual(pages[config].cards.map((card) => card.action), ['voucher-catalog-sync']);
 });
 
 test('配置页：「消息通知」占位子 tab 在最右边（2026-11-09）', async () => {

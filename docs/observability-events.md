@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **464** 个事件。按前缀分组：
+共 **467** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -590,6 +590,9 @@
 | `workbench.procurement.new_products.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.replenish.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.submit.failed` | 1 | src/routes/workbench/purchase.js |
+| `workbench.product_profile.incomplete_failed` | 1 | src/routes/workbench/products.js |
+| `workbench.product_profile.sample_image_failed` | 1 | src/routes/workbench/products.js |
+| `workbench.product_profile.search_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.purchase.accepted_suppliers.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_accept.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.failed` | 1 | src/routes/workbench/purchase.js |

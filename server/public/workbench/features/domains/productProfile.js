@@ -1,0 +1,139 @@
+/**
+ * 「配置 → 货品资料」页：
+ *   · 货品上新：搜索替代自动查重；用户看结果和样例图自行判断，再去飞书表单；
+ *   · 货品完善：按「缺失信息说明」实际值动态分组，选择分类查看记录；
+ *   · 同步样例图：复用数据配置页原有的存量同步动作。
+ */
+import { api } from '../../core/api-client.js';
+import { PRODUCT_PROFILE_API, PRODUCT_PROFILE_TEXTS as T } from '../../config/productProfile.js';
+import { showToast } from '../shared/toast.js';
+import { bindDomainAction } from './dataConfigAction.js';
+
+const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, k) => (values[k] == null ? '' : String(values[k])));
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const cardsHtml = () => `
+  <div class="domain-cards">
+    <button class="entry-card" type="button" data-pp-view="new"><span class="icon">🆕</span><h3>${esc(T.newTitle)}</h3></button>
+    <button class="entry-card" type="button" data-pp-view="complete"><span class="icon">📝</span><h3>${esc(T.completeTitle)}</h3></button>
+    <button class="entry-card" type="button" data-domain-action="sample-image-sync"><span class="icon">🖼️</span><h3>${esc(T.sampleTitle)}</h3></button>
+    <div class="entry-card disabled-card"><span class="icon">🛒</span><h3>${esc(T.accessoryTitle)}</h3><span class="tag">${esc(T.accessoryStatus)}</span></div>
+  </div>
+  <p class="placeholder-note" data-view="domain-action-note"></p>`;
+
+const backBtn = (view) => `<button class="pp-back" type="button" data-pp-back="${view}">${esc(T.back)}</button>`;
+
+export const productProfilePageHtml = () => `
+  <div class="domain-page" data-page-kind="product-profile">
+    <div data-pp="cards">${cardsHtml()}</div>
+    <div data-pp="new" hidden>
+      <div class="pp-head">${backBtn('new')}<h2>${esc(T.newTitle)}</h2></div>
+      <a class="pp-primary" href="${esc(T.formUrl)}" target="_blank" rel="noopener">${esc(T.newAction)}</a>
+      <div class="pp-search"><input data-pp-search placeholder="${esc(T.searchPlaceholder)}" autocomplete="off"></div>
+      <p class="pp-note" data-pp-count hidden></p>
+      <div data-pp-results></div>
+      <p class="pp-note" data-pp-empty>${esc(T.searchEmpty)}</p>
+      <div class="pp-modal" data-pp-modal hidden><button type="button" data-pp-close>×</button><img data-pp-large alt="样例图大图"></div>
+    </div>
+    <div data-pp="complete" hidden>
+      <div class="pp-head">${backBtn('complete')}<h2>${esc(T.completeTitle)}</h2></div>
+      <p class="pp-note" data-pp-complete-hint></p>
+      <label class="pp-field">${esc(T.completeField)}
+        <select data-pp-select></select>
+      </label>
+      <div data-pp-complete-list></div>
+    </div>
+  </div>`;
+
+export function createProductProfileModule() {
+  return {
+    mount(host) {
+      host.innerHTML = productProfilePageHtml();
+      bindDomainAction(host);
+      const show = (name) => {
+        host.querySelector('[data-pp="cards"]').hidden = name !== 'cards';
+        host.querySelector('[data-pp="new"]').hidden = name !== 'new';
+        host.querySelector('[data-pp="complete"]').hidden = name !== 'complete';
+        if (name === 'complete') loadComplete(host);
+      };
+      host.addEventListener('click', (event) => {
+        const view = event.target.closest?.('[data-pp-view]')?.dataset.ppView;
+        if (view) return show(view);
+        const back = event.target.closest?.('[data-pp-back]')?.dataset.ppBack;
+        if (back) return show('cards');
+        if (event.target.closest?.('[data-pp-close]') || event.target.matches?.('[data-pp-modal]')) {
+          const modal = host.querySelector('[data-pp-modal]');
+          if (modal) modal.hidden = true;
+        }
+      });
+      const input = host.querySelector('[data-pp-search]');
+      let timer = null;
+      input?.addEventListener('input', () => {
+        clearTimeout(timer);
+        const q = input.value.trim();
+        timer = setTimeout(() => loadSearch(host, q), 250);
+      });
+      host.querySelector('[data-pp-results]')?.addEventListener('click', (event) => {
+        const img = event.target.closest?.('img[data-pp-thumb]');
+        if (!img) return;
+        host.querySelector('[data-pp-large]').src = img.dataset.ppThumb;
+        host.querySelector('[data-pp-modal]').hidden = false;
+      });
+    },
+  };
+}
+
+async function loadSearch(host, q) {
+  const results = host.querySelector('[data-pp-results]');
+  const empty = host.querySelector('[data-pp-empty]');
+  const count = host.querySelector('[data-pp-count]');
+  if (!q) {
+    results.innerHTML = '';
+    empty.textContent = T.searchEmpty;
+    empty.hidden = false;
+    count.hidden = true;
+    return;
+  }
+  try {
+    const data = await api.get(`${PRODUCT_PROFILE_API.search}?q=${encodeURIComponent(q)}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    count.hidden = false;
+    count.textContent = fill(T.searchFound, { count: items.length });
+    empty.hidden = items.length > 0;
+    empty.textContent = T.searchNone;
+    results.innerHTML = items.map((item) => `
+      <div class="pp-row">
+        ${item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" src="${esc(item.imageUrl)}" alt="样例图">` : '<span class="pp-thumb pp-thumb-empty">无图</span>'}
+        <div class="pp-meta"><b>${esc(item.number)}</b><span>货号 ${esc(item.itemNo)} · 颜色 ${esc(item.color)} · 类别 ${esc(item.category)}</span></div>
+      </div>`).join('');
+  } catch {
+    empty.hidden = false;
+    empty.textContent = T.searchFailed;
+    count.hidden = true;
+  }
+}
+
+async function loadComplete(host) {
+  const select = host.querySelector('[data-pp-select]');
+  const hint = host.querySelector('[data-pp-complete-hint]');
+  const list = host.querySelector('[data-pp-complete-list]');
+  if (!select) return;
+  try {
+    const data = await api.get(PRODUCT_PROFILE_API.incomplete);
+    const groups = Array.isArray(data?.groups) ? data.groups : [];
+    select.innerHTML = groups.map((g, i) => `<option value="${i}">${esc(g.value)}（${g.count} 条）</option>`).join('');
+    hint.textContent = fill(T.completeHint, { count: data?.total || 0 });
+    const render = () => {
+      const group = groups[Number(select.value)] || groups[0];
+      list.innerHTML = (group?.items || []).map((item) => `
+        <div class="pp-row"><span class="pp-number">${esc(item.number)}</span>
+          <a class="pp-small-btn" href="${esc(item.recordUrl)}" target="_blank" rel="noopener">${esc(T.completeAction)}</a>
+        </div>`).join('');
+    };
+    select.onchange = render;
+    render();
+  } catch {
+    hint.textContent = T.incompleteFailed;
+    list.innerHTML = '';
+  }
+}
