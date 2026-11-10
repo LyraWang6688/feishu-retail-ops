@@ -55,10 +55,11 @@ class AfterSalesReturnService {
   get texts() { return AFTER_SALES_DERIVED.texts; }
 
   /**
-   * 只读校验 + 读原单/原明细/金额（不写任何东西）。
-   * 表单 POST 时先调它 ⇒ 她填错能立刻回页面看见原因（而不是后台才失败）。
+   * **只校验表单形状**（不读飞书、不写任何东西）—— 表单 POST 走它，保证提交立刻返回。
+   * 飞书侧校验（原单是否存在 / 明细状态 / 金额 / 退款方式）全部留给后台 worker 的 `prepare()`。
+   * 业务负责人 2026-11-11：「我们就是要实现异步」⇒ POST 不再同步读飞书。
    */
-  async prepare(payload = {}) {
+  validateShape(payload = {}) {
     const requestId = String(payload.requestId || '').trim();
     if (!REQUEST_ID_PATTERN.test(requestId)) throw badRequest(this.texts.needRequestId);
     const salesEntryRecordId = String(payload.salesEntryRecordId || '').trim();
@@ -73,6 +74,15 @@ class AfterSalesReturnService {
     if (moneyMode === AFTER_SALES_DERIVED.money.modes.REFUND && !paymentMethod) {
       throw badRequest(this.texts.needPaymentMethod);
     }
+    return { requestId, salesEntryRecordId, detailRecordId, moneyMode, paymentMethod };
+  }
+
+  /**
+   * 只读校验 + 读原单/原明细/金额（不写任何东西）。
+   * **异步 worker 内部调用**（POST 不再调它，避免十几秒的飞书读把页面卡住）。
+   */
+  async prepare(payload = {}) {
+    const { requestId, salesEntryRecordId, detailRecordId, moneyMode, paymentMethod } = this.validateShape(payload);
 
     const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
     if (!entry) throw badRequest(this.texts.entryNotFound);

@@ -18,6 +18,7 @@
 
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
+import { SUBMIT_PENDING_TEXT } from '../../core/ui.js';
 import { AFTER_SALES_ACTIONS, AFTER_SALES_PAGE } from '../../config/afterSalesPage.js';
 
 /** 毫秒时间戳 → `2026-10-29`（上海时区；取不到就空串，不编一个今天）。 */
@@ -308,9 +309,13 @@ export function mountAfterSalesPage(container, options = {}) {
         return;
       }
     }
-    // 防止连点重复提交：原生表单提交后页面会跳走，这里禁用按钮即可
+    // 防止连点重复提交：原生表单提交后页面会跳走，这里禁用按钮 **并改文案** ——
+    // 服务端准备 payload 可能要十几秒（读飞书），只置灰不变文案会被当成"点了没反应"（2026-11-11 反馈）。
     const button = form.querySelector('button[type="submit"]');
-    if (button) button.disabled = true;
+    if (button) {
+      button.disabled = true;
+      button.textContent = SUBMIT_PENDING_TEXT;
+    }
   });
 
   container.addEventListener('click', (event) => {
