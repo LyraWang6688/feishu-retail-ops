@@ -1,6 +1,4 @@
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
@@ -32,7 +30,7 @@ const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 //    `services/salesEntryService.js`（本文件不再直接用它）。
 const { V1ReferenceResolver, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
-const { tradeTypeLabel, deliversForTradeType } = require('../config/salesMovements');
+const { deliversForTradeType } = require('../config/salesMovements');
 // 「类型的唯一判据（查完库存再定）」+「录单时要跑哪些解析」的**唯一**判据来源
 //（配置先行，业务负责人 2026-10-07 确认）。
 // ⭐ 2026-10-07 口径大改：**类型 = 实时库存里有没有这一双**（`salesTradeTypeForStock`）
@@ -49,22 +47,12 @@ const { salesDeliverySummaryFor } = require('../config/salesDeliverySummary');
 // ⚠️ 2026-10-07：颜色候选上**不再**打「有货 / 无货」预览标注（业务负责人逐字「甲 去掉」：
 //    「候选只显示颜色（黑色 / 绿色），选完 → 再查库存 → 告诉她"这双有货→现货"或"没货→预定"」）
 //    ⇒ 这里只留"她选完之后读不到库存"那句文案；`SALES_COLOR_STOCK_STATUS` 已随预览一并删除。
-const {
-  resolveSalesColorChoiceConfig,
-} = require('../config/salesColorChoice');
 // 「A 之后：这个货号到底有没有在「货品信息」里建档」那道判据的开关 / 文案 / 事件名。
 // ⚠️ 它与解析 A 是**两步**：A 仍然"找不到就空手回来"，本判据在它之后下结论。
-const {
-  SALES_PRODUCT_REGISTRATION_EVENTS,
-  resolveSalesProductRegistrationConfig,
-  formatMissingProductText,
-} = require('../config/salesProductRegistration');
 // ⚠️ 2026-10-11（清群聊入口 C0）：`withSalesReadRetry` 随 `listSalesOrderNos` 一起搬去
 //    `services/salesEntryService.js`（本文件不再直接用它）。
-const { isDataNotReady } = require('./salesReadRetry');
 // ⚠️ 2026-10-11（清群聊入口 C0）：`allocateSalesOrderNo` 随 `createSalesEntryWithOrderNo`
 //    一起搬去 `services/salesEntryService.js`（本文件不再直接用它）。
-const { resolveAccessory } = require('./accessoryMatchPolicy');
 const { AfterSalesService } = require('./afterSalesService');
 // 🔴 2026-10-16（「与 AI 分析有关的都停掉」）：这里原先还有三行 import ——
 //    `config/salesMissingInfoText` 的 `renderSalesMissingInfo`、
@@ -83,10 +71,7 @@ const { AfterSalesService } = require('./afterSalesService');
 //   业务负责人现行口径：「现在没有群聊入口，也没有旧卡片」⇒ 卡片动作入口
 //   （`handleCardAction` 及下面那一串卡片专用方法）**整体删除**，这些 import 一并摘掉。
 //   ⚠️ 恢复卡片链路 = 重新实现（不是翻开关）。
-const { extractSalesMessageText, isMentioned, stripMentionPlaceholders } = require('../utils/larkMessageText');
-const { resolveAckReaction } = require('../config/groupPurchase');
 const { PurchaseBatchLocator } = require('./purchaseBatchLocator');
-const { extractBatchNos } = require('./purchaseBatchNo');
 // 「群话题 ↔ 销售记录」的本地路由映射（只写本地，不写业务表，见服务的注释）。
 // 「消息深链存哪儿」的唯一落点（本地映射 + 销售主表「消息链接」列，见服务的注释）。
 // 「话题里的二次处理识别」（②：预定 / 现货待收的进展同步）——⚠️ 2026-10-28：
@@ -101,11 +86,9 @@ const { PurchaseArrivalConversationService } = require('./purchaseArrivalConvers
 //   （`PurchaseArrivalConversationService.confirmBatchArrival`）。
 // ⛔ 2026-10-28：`config/voucherSettlement` 的「确认到账」动作名随 9 点推送删除 ——
 //   那条推送（【团购券待结算】区块）与它的「确认到账」按钮一起退场。
-const { logError, logInfo, logWarn } = require('../utils/logger');
-const { skipNoGroupContext } = require('../utils/privateChatSend');
+const { logInfo, logWarn } = require('../utils/logger');
 const { getLarkAgentCredentials } = require('../config/larkAgent');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { recordUrl } = require('../utils/feishuLinks');
 // 交付与否以草稿的交易类型为准：现货当场交付，预定（货还没到 / 还没拿走）不交付。

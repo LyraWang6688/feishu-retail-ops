@@ -1,7 +1,5 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const {
-  postedOf, isPosted, SALES_STATUS_VALUE_DOMAINS, SALES_STATUS_WRITE_VALUES,
-} = require('../config/salesStatusDimensions');
+const { SALES_STATUS_VALUE_DOMAINS, SALES_STATUS_WRITE_VALUES } = require('../config/salesStatusDimensions');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');

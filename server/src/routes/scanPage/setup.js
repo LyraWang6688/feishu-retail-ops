@@ -9,7 +9,6 @@ const createScanPageSetup = ({ options, deps }) => {
   // #948：统一异步任务（重试 / 失败发运营群）—— 适配器与单例都在这里 require（不塞进 index.js 的巨型 deps 列表）
   const { createAsyncJobPurchaseRunner } = require('../../services/asyncJobPurchaseRunner');
   const { getAsyncJobService } = require('../../services/asyncJobRuntime');
-  const { ASYNC_JOBS } = require('../../config/asyncJobs');
 
   const config = options.config || SCAN_PAGE;
   const {
