@@ -351,7 +351,7 @@ const createTagQrCodeService = ({
     const id = String(recordId ?? '').trim();
     if (!id) return { url: '', identity: 'missing', value: '', fallback: true, upgrade: false, previousNumber: '', previousIdentity: '' };
     return { url: buildRecordIdScanUrl(id, config), identity: 'record_id', value: id, fallback: false, upgrade: false, previousNumber: '', previousIdentity: '' };
-  };;
+  };
 
   /**
    * ⭐⭐ AC-X（2026-10-12）：她新加的「记录 ID」**公式字段**与**接口读到的 record_id** 做交叉校验。
@@ -545,7 +545,7 @@ const createTagQrCodeService = ({
       });
     }
     const scanUrl = identity.url;
-    const fileName = buildFileName(number, config);
+    const fileName = buildFileName(identity.value, config); // 规范名按 recordId（巡检同一规则，#1106）
 
     // 「现存附件的文件名 ≠ 当前编号应有的文件名」= **事实上的编号变了**（只读一次就判得出，
     // 不依赖事件带没带前后值）。这一档才是 `numberChanged === null` 时的**唯一**判据。
@@ -822,8 +822,7 @@ const createTagQrCodeService = ({
       if (!recordId) continue;
       const number = textValue(record?.fields?.[numberFieldName]).trim();
       if (!number) { numberMissing += 1; continue; }
-      // ⭐⭐ 2026-10-12 修复（真缺口）：巡检算「规范名」也必须按 **identity（record_id）**，
-      //    不能按编号 —— 否则新码下旧编号命名的附件会被判"不符"⇒ 每次都重生成 ✗。
+      // ⭐⭐ 与 syncRecord 同一规则：按 identity（record_id）算规范名（#1106）
       const expectedFileName = buildFileName(resolveQrIdentity({ recordId, number }).value, config);
       const existing = attachmentsOf(record?.fields?.[tagQrFieldName]);
       if (existing.length && existing.some((item) => item.name === expectedFileName)) {
