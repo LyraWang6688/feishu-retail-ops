@@ -30,6 +30,7 @@ const {
   buildText, asTimestamp,
 } = require('../src/services/labelPrintService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { resolveTransientRetryConfig } = require('../src/config/pushRetry');
 
 const F = V1_BITABLE_SCHEMA.tables.liveInventory.fields;
 const P = V1_BITABLE_SCHEMA.tables.product.fields;
@@ -639,6 +640,36 @@ test('扫码打印「精确读」：只 get 一条产品 + filter 读这一款�
   assert.deepEqual(data.labels[0].sizes, [{ size: 37, qty: 1 }, { size: 38, qty: 1 }]);
   assert.equal(data.labels[0].number, '66133-15|咖色|女');
   assert.deepEqual(gateway.calls, ['get:product', 'filter:liveInventory']);
+});
+
+test('扫码精确读 filter 遇到 1254607 ⇒ 复用 withTransientRetry 自动重试后成功', async () => {
+  const inventory = [record('live1', { stockKey: '66133-15|咖色|女|37', state: '门盒' })];
+  const products = [{ record_id: 'prod1', fields: { [P.number]: '66133-15|咖色|女' } }];
+  let filterCalls = 0;
+  const gateway = {
+    calls: [],
+    async get() { return products[0]; },
+    async listByFilter() {
+      filterCalls += 1;
+      if (filterCalls === 1) {
+        const error = new Error('Data not ready, please try again later');
+        error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready' } };
+        throw error;
+      }
+      return inventory;
+    },
+    async listAll() { throw new Error('精确读链路不许整表读'); },
+  };
+  const transientRetry = resolveTransientRetryConfig({
+    PUSH_TRANSIENT_RETRY_MAX_RETRIES: '2',
+    PUSH_TRANSIENT_RETRY_BASE_DELAY_MS: '0',
+    PUSH_TRANSIENT_RETRY_MAX_DELAY_MS: '0',
+  });
+  const service = createLabelPrintService(gateway, { transientRetry });
+  const data = await service.labelForRecord('prod1');
+  assert.equal(filterCalls, 2, '第一次 1254607 后必须重试一次');
+  assert.equal(data.labels.length, 1);
+  assert.equal(data.labels[0].number, '66133-15|咖色|女');
 });
 
 test('扫码打印「精确读」失败 ⇒ 直接报错（**不再回退整表读**）', async () => {
