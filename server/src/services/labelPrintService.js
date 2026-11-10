@@ -762,12 +762,12 @@ const createLabelPrintService = (gateway, options = {}) => {
     //   · **任何一步拿不到 / 报错 / 筛不出那一张 ⇒ 自动回退整表读** `listLabels`（与改动前逐字一致，保证不退化）。
     const itemNo = number.split('|')[0] || number;
     // ⭐ 2026-11-11（业务负责人）：「不用做回退，这个字段肯定有」——
-    //   只走「实时库存.recordID（查找引用）＝ 货品记录 ID」**精确筛选**这一条路；
+    //   只走「实时库存.recordID（v1BitableSchema 映射的查找引用）＝ 货品记录 ID」**精确筛选**这一条路；
     //   没有整表读兜底（筛选失败就是系统错误，不静默降级）。
-    const fastReadConfig = config.fastRead || {};
-    const recordIdLookupField = String(fastReadConfig.liveInventoryRecordIdField || '').trim();
+    // 字段名唯一真源 = `v1BitableSchema.tables.liveInventory.fields.recordId`（不在这里写死列名）。
+    const recordIdLookupField = String(V1_BITABLE_SCHEMA.tables.liveInventory?.fields?.recordId || '').trim();
     if (!recordIdLookupField) {
-      throw new Error('标签打印缺少「实时库存.recordID」字段配置（见 config/labelPrint.js 的 fastRead）');
+      throw new Error('「实时库存」缺少「recordID」字段映射（v1BitableSchema.liveInventory.fields.recordId）');
     }
     if (typeof gateway.listByFilter !== 'function') {
       throw new Error('打印服务不支持按记录 ID 精确读（gateway 缺少 listByFilter）');

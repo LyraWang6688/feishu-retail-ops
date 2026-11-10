@@ -603,6 +603,12 @@ test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能
   assert.equal(data.labels[0].state_text, '');
 });
 
+test('recordID 字段映射在 `v1BitableSchema`（唯一真源；labelPrint config 里不写第二份）', () => {
+  assert.equal(V1_BITABLE_SCHEMA.tables.liveInventory.fields.recordId, 'recordID');
+  assert.equal(/recordID/.test(sourceOf('config/labelPrint.js')), false,
+    '列名只在 v1BitableSchema 里映射一次');
+});
+
 test('扫码打印「精确读」：只 get 一条产品 + filter 读这一款库存，不再读整表', async () => {
   const inventory = [
     record('live1', { stockKey: '66133-15|咖色|女|37', state: '' }),
