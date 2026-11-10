@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **452** 个事件。按前缀分组：
+共 **453** 个事件。按前缀分组：
 
 ## after_sales
 
