@@ -2,16 +2,28 @@
 
 /**
  * 售后「退货」表单提交入口（2026-11-08）：
- * AC-SUB1 合法提交 ⇒ 同步校验 + 入队 + **303 回售后页并带统一 toast**（文案来自 config/submitToast.js）。
- * AC-SUB2 她填错（缺退款方式等）⇒ 303 回售后页带 `err=` 人话，**不入队、零写入**。
+ * AC-SUB1 合法提交 ⇒ **本地形状校验 + 入队 + 立刻 303 回工作台并带统一 toast**（文案来自 config/submitToast.js）。
+ * AC-SUB2 本地就能判的填错（缺退款方式等）⇒ 303 回页面带 `err=` 人话，**不入队、零写入**。
+ * AC-SUB5 飞书侧的错（例如退款方式不存在）⇒ **POST 不再同步查飞书**：照常入队 + 立刻统一 toast，
+ *         由后台 worker 校验；失败走统一失败通知（业务负责人 2026-11-11：「我们就是要实现异步」）。
  * AC-SUB3 退款方式候选 ⇒ 只读接口返回「支付方式管理」里的方式（不写死）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createWorkbenchOrderActionsRouter } = require('../src/routes/workbenchOrderActions');
+const { AfterSalesReturnService } = require('../src/services/afterSalesReturnService');
 const { DEFAULT_SUBMIT_TOAST_TEXT, DEFAULT_SUBMIT_TOAST_PATH } = require('../src/config/submitToast');
+
+/** 真 service 的本地形状校验（不读飞书；dir 指临时目录，不写仓库 data/）。 */
+const realReturnService = () => new AfterSalesReturnService({
+  gateway: { get: () => { throw new Error('POST 不许同步读飞书'); }, table: () => ({ fields: {} }) },
+  dir: fs.mkdtempSync(path.join(os.tmpdir(), 'as-submit-test-')),
+});
 
 const buildApp = ({ returnService, methods } = {}) => {
   const calls = { enqueue: [] };
@@ -24,7 +36,8 @@ const buildApp = ({ returnService, methods } = {}) => {
       listRefundable: async () => ({ ok: true, items: (methods || []).filter((m) => m !== '微信转账') }),
     },
     afterSalesReturn: returnService || {
-      prepare: async (payload) => ({ requestId: payload.requestId, orderNo: 'XSD-20261028-0005' }),
+      // POST 只调形状校验；飞书读/写在后台 worker（本用例不碰）
+      validateShape: (payload) => ({ requestId: payload.requestId }),
     },
     afterSalesJobs: {
       enqueue: async (job) => { calls.enqueue.push(job); return { job: { job_id: 'job_1', status: 'queued' } }; },
@@ -72,7 +85,7 @@ test('AC-SUB1 合法提交 ⇒ 入队 + 303 回工作台 + 统一 toast（业务
     const url = new URL(out.location, 'http://x');
     assert.equal(url.pathname, DEFAULT_SUBMIT_TOAST_PATH, '成功必须回工作台（统一落点）');
     assert.equal(url.searchParams.get('toast'), DEFAULT_SUBMIT_TOAST_TEXT);
-    assert.equal(url.searchParams.get('done'), 'XSD-20261028-0005');
+    assert.equal(url.searchParams.get('done'), null, '异步：POST 不再同步读单号 ⇒ 不带 done');
     assert.equal(url.searchParams.get('productRecordId'), null, '成功不再回售后页 ⇒ 不带 productRecordId');
     assert.equal(url.searchParams.get('submitted'), null, '旧 submitted 标记已退场');
     assert.equal(calls.enqueue.length, 1);
@@ -80,9 +93,8 @@ test('AC-SUB1 合法提交 ⇒ 入队 + 303 回工作台 + 统一 toast（业务
   } finally { server.close(); }
 });
 
-test('AC-SUB2 她填错 ⇒ 303 回页面带 err= 人话，不入队（零写入）', async () => {
-  const prepare = async () => { throw Object.assign(new Error('直接退款时要选退款方式'), { statusCode: 400 }); };
-  const { app, calls } = buildApp({ returnService: { prepare } });
+test('AC-SUB2 本地就能判的填错（缺退款方式）⇒ 303 回页面带 err= 人话，不入队（零写入）', async () => {
+  const { app, calls } = buildApp({ returnService: realReturnService() });
   const { server, port } = await listen(app);
   try {
     const out = await submit(port, {
@@ -91,9 +103,27 @@ test('AC-SUB2 她填错 ⇒ 303 回页面带 err= 人话，不入队（零写入
     });
     assert.equal(out.status, 303);
     const url = new URL(out.location, 'http://x');
-    assert.equal(url.searchParams.get('err'), '直接退款时要选退款方式');
+    assert.ok(url.searchParams.get('err'), '本地形状错误要带回页面（她当场改）');
     assert.equal(url.searchParams.get('toast'), null, '失败时不许弹成功 toast');
     assert.equal(calls.enqueue.length, 0);
+  } finally { server.close(); }
+});
+
+test('AC-SUB5 ⭐ 飞书侧校验全部在后台：POST 不读飞书，照常入队 + 立刻统一 toast', async () => {
+  const { app, calls } = buildApp({ returnService: realReturnService() });
+  const { server, port } = await listen(app);
+  try {
+    const out = await submit(port, {
+      requestId: requestId(), salesEntryRecordId: 'entry_1', detailRecordId: 'detail_1',
+      moneyMode: 'refund', paymentMethod: '不存在的退款方式', productRecordId: 'prod_1',
+    });
+    assert.equal(out.status, 303);
+    const url = new URL(out.location, 'http://x');
+    assert.equal(url.pathname, DEFAULT_SUBMIT_TOAST_PATH, '立刻回工作台（统一落点）');
+    assert.equal(url.searchParams.get('toast'), DEFAULT_SUBMIT_TOAST_TEXT, '立刻统一 toast');
+    assert.equal(url.searchParams.get('err'), null, '飞书侧的错不在 POST 判');
+    assert.equal(calls.enqueue.length, 1, '照常入队，由后台 worker 校验');
+    assert.equal(calls.enqueue[0].payload.paymentMethod, '不存在的退款方式');
   } finally { server.close(); }
 });
 

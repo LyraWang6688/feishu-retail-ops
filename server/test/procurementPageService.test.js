@@ -218,3 +218,32 @@ test('config 可注入：把补货窗口改成 1 天 ⇒ 筛选公式跟着变�
   await service.loadReplenish({});
   assert.match(gateway.calls[0].filter, /TODAY\(\)-1/);
 });
+
+test('补货读 salesDetail 遇到 1254607 会短重试，成功后正常返回', async () => {
+  let salesCalls = 0;
+  const gateway = makeGateway({
+    sales: [salesRecord({ id: 'recA', size: 39, code: 'SALE_CASH' })],
+    products: [productBatchRecord({ id: 'recA' })],
+    colors: [colorRecord('recColorBlack', '黑色')],
+    behaviors: [behavior('behCash', 'SALE_CASH', '现货')],
+  });
+  const original = gateway.listByFilter;
+  gateway.listByFilter = async function listByFilter(tableKey, filter) {
+    if (tableKey === 'salesDetail') {
+      salesCalls += 1;
+      if (salesCalls === 1) {
+        throw Object.assign(new Error('Request failed with status code 400'), {
+          response: { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } },
+        });
+      }
+    }
+    return original.call(this, tableKey, filter);
+  };
+  const service = createProcurementPageService({
+    gateway, config, now: () => NOW, logger: {}, readRetry: { maxRetries: 1, delayMs: 0 }, sleep: async () => {},
+  });
+  const result = await service.loadReplenish({ requestId: 'r-retry' });
+  assert.equal(salesCalls, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.stats.spotSold, 1);
+});
