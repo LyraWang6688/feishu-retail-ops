@@ -1,8 +1,10 @@
 'use strict';
 
 /**
- * 售后（衍生单）异步队列（2026-11-08）—— 表单 POST 只做：校验 + 冻结 payload + 入队 + 303 统一 toast；
- * 后台 worker 串行执行 `AfterSalesReturnService.execute`（不在这里重写任何写表逻辑）。
+ * 售后（衍生单）异步队列（2026-11-08；2026-11-11 改全异步）——
+ * 表单 POST 只做：**本地形状校验 + 冻结 payload + 入队 + 303 统一 toast**（不读飞书）；
+ * 后台 worker 串行执行 `AfterSalesReturnService.execute`（**飞书校验 + 写库都在这层**，
+ * 写库仍走 gateway → `feishuWriteScheduler`，不在这里重写任何写表逻辑）。
  *
  * 业务负责人 2026-10-29 口径：
  *   · 用户点击后 toast「数据提交成功，后台自动写入」（见 `config/submitToast.js`，本队列不写文案）；
