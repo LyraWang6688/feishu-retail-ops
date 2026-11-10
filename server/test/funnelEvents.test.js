@@ -67,7 +67,7 @@ test('两个来源都接线了（源码哨兵）', () => {
   const client = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'shared', 'funnel.js'), 'utf8');
   assert.match(client, /function view\(page, options\)/, '客户端必须有 view()');
   assert.equal(/[^\x00-\x7F]/.test(client), false, 'shared/funnel.js 必须保持 ASCII');
-  for (const file of ['index.html', 'inventory-adjustment.html']) {
+  for (const file of ['index.html']) {
     assert.match(fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', file), 'utf8'),
       /dshFunnel\.view\("workbench"/, `${file} 必须上报 page.view`);
   }

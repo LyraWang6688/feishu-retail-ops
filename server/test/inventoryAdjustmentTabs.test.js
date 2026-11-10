@@ -1,12 +1,6 @@
-/**
- * 「库存 → 手工调整」页的子 tab 形状（2026-11-09 业务负责人）：
- *   「增加一个子 tab，为状态调整，核心是样品和门盒的调整，先占位一下」
- *
- * 本文件是**反向哨兵**：
- *   · 三个子 tab 顺序/名字/面板 id 固定（塞回两个 / 改错 id ⇒ 红）；
- *   · 「状态调整」**这一屏只占位**：有「待建设」标记 + 「样品 ↔ 门盒」，
- *     但**没有任何输入 / 提交按钮 / 写接口**（先占位，不是偷偷接个半成品接口 ✗）。
- */
+'use strict';
+
+/** 库存 → 手工调整（2026-11-11 前端替换）：两张入口卡 + 直接扫一扫。 */
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -17,23 +11,23 @@ const CONFIG = path.join(__dirname, '../public/workbench/config/inventoryAdjustm
 const source = () => fs.readFileSync(PAGE, 'utf8');
 const configSource = () => fs.readFileSync(CONFIG, 'utf8');
 
-test('AC-IA1 三个子 tab 由配置驱动：状态调整 / 盘点调整 / 换季调整（状态调整排最左）', () => {
+test('AC-IA1 两张入口卡由配置驱动：单双调整 / 批量调整', () => {
   const cfg = configSource();
-  assert.deepEqual([...cfg.matchAll(/id: '([^']+)', label: '([^']+)'/g)].map(([, id, label]) => ({ id, label })),
-    [{ id: 'adjust-state', label: '状态调整' }, { id: 'adjust-count', label: '盘点调整' }, { id: 'adjust-season', label: '换季调整' }]);
-  assert.ok(source().includes("INVENTORY_ADJUSTMENT_TABS.map"), '页面必须按配置渲染子 tab');
-  assert.equal(/data-subtab="adjust-/.test(source()), false, '页面里不许再写死子 tab 按钮');
+  assert.deepEqual([...cfg.matchAll(/id: '([^']+)', icon: '([^']+)', label: '([^']+)'/g)].map(([, id, , label]) => ({ id, label })),
+    [{ id: 'single', label: '单双调整' }, { id: 'batch', label: '批量调整' }]);
+  assert.ok(source().includes('INVENTORY_MANUAL_CARDS.map'), '页面必须按配置渲染入口卡');
 });
 
-test('AC-IA2 「状态调整」= 占位（样品 ↔ 门盒 + 待建设），没有任何输入 / 提交 / 写接口', () => {
+test('AC-IA2 单双调整直接调库存扫一扫，不再有中间页/三个按钮', () => {
   const html = source();
-  const start = html.indexOf('id="adjust-state-subpanel"');
-  assert.notEqual(start, -1, '必须有「状态调整」的面板');
-  const panel = html.slice(start, html.indexOf('</section>`;', start));
-  assert.ok(panel.includes('inline-placeholder'), '占位用统一占位样式');
-  assert.ok(panel.includes('样品') && panel.includes('门盒'), '写清这一屏的核心：样品 ↔ 门盒');
-  assert.ok(panel.includes('待建设'), '占位就写「待建设」（与其它占位页同一口径）');
-  assert.equal(/<(input|select|textarea|button)\b/.test(panel), false, '占位屏不许有任何输入/按钮');
-  assert.equal(/data-action=/.test(panel), false, '占位屏没有提交动作');
-  assert.equal(/adjustments\//.test(panel), false, '占位屏不发任何接口（先占位，不是半成品写接口）');
+  assert.ok(html.includes("scanCodeRaw('inventory')"), '单双调整必须直接调库存扫一扫');
+  assert.equal(html.includes('先扫这一双鞋的二维码'), false, '不再有中间说明页');
+  assert.equal(html.includes('data-panel="status"'), false, '三个按钮已删除');
+});
+
+test('AC-IA3 批量调整只保留当季 / 库存两个入口，异常编号可跳到单双调整', () => {
+  const html = source();
+  assert.ok(html.includes('data-action="batch-check"'), '库存检查入口');
+  assert.ok(html.includes('data-fix='), '异常编号必须有调整按钮');
+  assert.ok(html.includes('data-manual="batch"'), '批量调整入口卡');
 });
