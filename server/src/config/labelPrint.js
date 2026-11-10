@@ -367,6 +367,19 @@ const SCAN_PRINT = Object.freeze({
   }),
 });
 
+/**
+ * 「扫码打印」精确读的筛选项（2026-11-11 业务负责人在「实时库存」新增的 lookup 字段）。
+ *
+ * `liveInventoryRecordIdField`：她加的那一列「recordID」（查找引用，值 = 货品记录 ID）。
+ *   ⇒ 用 `CurrentValue.[recordID]="<扫到的 recordId>"` **精确**读这一款的库存行。
+ *   🔴 2026-11-11（业务负责人）：「不用做回退，这个字段肯定有」——**没有整表读兜底**：
+ *     字段没配/筛选失败 ⇒ 直接报错，不静默降级。
+ * ⚠️ 这是**只读筛选用的物理列名**，不是写入映射（本链路一个字都不写「实时库存」）。
+ */
+const FAST_READ = Object.freeze({
+  liveInventoryRecordIdField: 'recordID',
+});
+
 const LABEL_PRINT = Object.freeze({
   label: LABEL,
   page: PAGE,
@@ -386,6 +399,8 @@ const LABEL_PRINT = Object.freeze({
   scanPrint: SCAN_PRINT,
   // ⭐⭐ 2026-10-15（task-11）：`listLabels` 的短 TTL 缓存（只服务后端链路）。
   labelList: LABEL_LIST,
+  // ⭐ 「扫码打印」精确读的筛选项（见上面 FAST_READ 的注释）。
+  fastRead: FAST_READ,
 });
 
 /**
@@ -426,4 +441,5 @@ module.exports = {
   LIMITS,
   TEXTS,
   LABEL_LIST,
+  FAST_READ,
 };

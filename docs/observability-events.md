@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **451** 个事件。按前缀分组：
+共 **452** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -561,6 +561,7 @@
 | `workbench.labels.missing_price` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.missing_qr_record_id` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.read_retry` | 1 | src/services/labelPrintService.js |
+| `workbench.labels.record_fast_read` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.record_read_failed` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.record_resolved` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.skipped_records` | 1 | src/services/labelPrintService.js |

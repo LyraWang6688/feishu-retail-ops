@@ -588,6 +588,12 @@ test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能
       assert.equal(tableKey, 'product');
       return products.find((item) => item.record_id === recordId) || null;
     },
+    async listByFilter(tableKey, filter) {
+      this.calls.push(`filter:${tableKey}`);
+      assert.equal(tableKey, 'liveInventory');
+      assert.match(filter, /CurrentValue\.\[recordID\]="prod1"/);
+      return inventory;
+    },
   };
   const service = createLabelPrintService(gateway);
   const data = await service.labelForRecord('prod1');
@@ -596,6 +602,58 @@ test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能
   assert.deepEqual(data.labels[0].sizes, [{ size: 37, qty: 1 }]);
   assert.equal(data.labels[0].state_text, '');
 });
+
+test('扫码打印「精确读」：只 get 一条产品 + filter 读这一款库存，不再读整表', async () => {
+  const inventory = [
+    record('live1', { stockKey: '66133-15|咖色|女|37', state: '' }),
+    record('live2', { stockKey: '66133-15|咖色|女|38', state: '门盒' }),
+  ];
+  const products = [{ record_id: 'prod1', fields: { [P.number]: '66133-15|咖色|女', [P.price]: 199 } }];
+  const gateway = {
+    calls: [],
+    async get(tableKey, recordId) {
+      this.calls.push(`get:${tableKey}`);
+      assert.equal(tableKey, 'product');
+      return products.find((item) => item.record_id === recordId) || null;
+    },
+    async listByFilter(tableKey, filter) {
+      this.calls.push(`filter:${tableKey}`);
+      assert.equal(tableKey, 'liveInventory');
+      assert.match(filter, /CurrentValue\.\[recordID\]="prod1"/, '优先按 recordID lookup 精确筛选');
+      return inventory;
+    },
+    async listAll(tableKey) {
+      this.calls.push(`listAll:${tableKey}`);
+      throw new Error('精确读路径不许整表读');
+    },
+  };
+  const service = createLabelPrintService(gateway);
+  const data = await service.labelForRecord('prod1');
+  assert.equal(data.labels.length, 1);
+  assert.deepEqual(data.labels[0].sizes, [{ size: 37, qty: 1 }, { size: 38, qty: 1 }]);
+  assert.equal(data.labels[0].number, '66133-15|咖色|女');
+  assert.deepEqual(gateway.calls, ['get:product', 'filter:liveInventory']);
+});
+
+test('扫码打印「精确读」失败 ⇒ 直接报错（**不再回退整表读**）', async () => {
+  const products = [{ record_id: 'prod1', fields: { [P.number]: '66133-15|咖色|女' } }];
+  const gateway = {
+    calls: [],
+    async get() { return products[0]; },
+    async listByFilter() {
+      this.calls.push('filter:liveInventory');
+      throw new Error('filter 接口坏了');
+    },
+    async listAll(tableKey) {
+      this.calls.push(`listAll:${tableKey}`);
+      throw new Error('精确读失败时不许整表读');
+    },
+  };
+  const service = createLabelPrintService(gateway);
+  await assert.rejects(() => service.labelForRecord('prod1'), /filter 接口坏了/);
+  assert.deepEqual(gateway.calls, ['filter:liveInventory'], '失败就是失败，不静默整表读');
+});
+
 
 // ── ⑦ 只读 ───────────────────────────────────────────────────────────────
 
