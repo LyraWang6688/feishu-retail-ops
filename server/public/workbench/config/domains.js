@@ -60,7 +60,7 @@
 //   扫码页各自的领域里）⇒ 本文件**不 import 任何采购飞书表单 URL**（它们写的「信息填写」表
 //   已被业务负责人整表删除 ⇒ 是死链）。本文件里只留货品上新那一个表单外链。
 //      已经没有任何地方再引用它们了）。
-import { SUPPLIER_DIRECTORY_URL, PRODUCT_NEW_FORM_URL, ACCESSORY_SALE_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
+import { SUPPLIER_DIRECTORY_URL, ACCESSORY_SALE_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
 
 export const DOMAIN_TABS = [
   // ── ① 销售 ────────────────────────────────────────────────────────────────
@@ -182,27 +182,11 @@ export const DOMAIN_TABS = [
     pages: [
       {
         id: 'product-new',
-        label: '货品上新',
-        kind: 'links',
-        // ⭐ 2026-10-12（业务负责人逐字）：「我们『货品』的 tab 页里面不是有一个『**货品上新**』的
-        //    子页面吗？也希望点击『货品上新』之后，**它能直接跳转到我的表单链接**，
-        //    **不用我再去点击那个消息卡片了**」
-        //    ⇒ **点一次就到**：目标 = 下面那张卡的 href（唯一来源仍是 `config/links.js` 的
-        //      `PRODUCT_NEW_FORM_URL`，本文件不复制字面量）。
-        // ⭐⭐ 2026-10-16（业务负责人**亲口**点的"最后三处"之三 · 逐字）：
-        //   「**我也没看到，可以删除**」——
-        //   改前逐字：这一格里有 `arrow: '去填写 →',`
-        //   改后逐字：**整行删掉**（与「配品销售」「供应商名录」同一判据、同一形状）
-        //   依据：卡片本体是 `<a class="entry-card" href=…>`（整张可点）⇒ 那行箭头纯多余 ⇒ 删。
-        //   ⚠️ **只删这一行箭头** ✗ —— `href` / `icon` / `title` 一个字不动。
-        directJump: true,
-        cards: [
-          {
-            icon: '🆕',
-            title: '货品上新',
-            href: PRODUCT_NEW_FORM_URL,
-          },
-        ],
+        label: '货品资料',
+        // 2026-11-10（业务负责人）：原「货品上新」直跳表单改为货品资料页：
+        //   货品上新（搜索后用户自行判断）/ 货品完善（按缺失信息动态分组）/
+        //   同步样例图 / 配品配置（占位）。
+        kind: 'product-profile',
       },
       {
         id: 'product-labels',
@@ -234,15 +218,10 @@ export const DOMAIN_TABS = [
       {
         id: 'product-info-config',
         label: '数据配置',
-        // 2026-11-10：数据配置 = 动作卡页。
-        //   · 配品配置：占位卡（与录单入口卡同款）
-        //   · 同步团购券数据：点击触发抖音券目录写回
-        //   · 同步存量样例图：点击触发样例图补传云盘
+        // 2026-11-10：样例图同步与配品配置已移到「货品资料」；这里只保留券目录同步。
         kind: 'action-cards',
         cards: [
-          { id: 'accessory-config', icon: '🛒', title: '配品配置', placeholder: true },
           { icon: '🔄', title: '同步团购券数据', action: 'voucher-catalog-sync' },
-          { icon: '🖼️', title: '同步存量样例图', action: 'sample-image-sync' },
         ],
       },
       {

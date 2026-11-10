@@ -6,6 +6,7 @@ import { createOrdersModule } from '../orders/index.js';
 import { createScanCardsModule } from '../scan/launch.js';
 import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
 import { bindDomainAction } from './dataConfigAction.js';
+import { createProductProfileModule } from './productProfile.js';
 
 /**
  * ⭐⭐ 工作台**领域 tab** 的骨架（业务负责人 2026-10-09 定的最终结构）。
@@ -81,11 +82,12 @@ export function createDomainModule(domainId) {
       return;
     }
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
+    if (page.kind === 'product-profile') return void createProductProfileModule().mount(host);
     // ⭐ 2026-10-15（她：「配品就是走表单了」）：`kind:'accessory'` 那条分派**整段删除** ——
     //   「配品」现在是一张**直跳页**（`kind:'links'` + `directJump:true`，见 `config/domains.js`），
     //   点一下直接打开飞书表单，**工作台不再有自建的配品面板** ✓
     host.innerHTML = domainPageHtml(page);
-    // ⭐ 只有 action-cards 页需要绑动作（按钮卡：数据配置 → 同步存量样例图）
+    // ⭐ 只有 action-cards 页需要绑动作（按钮卡：货品资料 → 同步样例图 / 数据配置 → 券目录同步）
     if (page.kind === 'action-cards') bindDomainAction(host);
     return undefined;
   }
