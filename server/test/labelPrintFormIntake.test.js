@@ -20,6 +20,7 @@ const path = require('node:path');
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { LABEL_FORM_INTAKE } = require('../src/config/labelPrintForm');
+const { resolveTransientRetryConfig } = require('../src/config/pushRetry');
 const {
   createLabelPrintFormIntakeService, linkRecordIdsOf,
 } = require('../src/services/labelPrintFormIntakeService');
@@ -77,8 +78,8 @@ const fakeNotifications = () => {
   return { sent, async send(event, data) { sent.push({ event, data }); } };
 };
 
-const build = ({ records = {}, behavior = {}, config = {} } = {}) => {
-  const gateway = fakeGateway(records);
+const build = ({ records = {}, behavior = {}, config = {}, gateway: injectedGateway, transientRetry } = {}) => {
+  const gateway = injectedGateway || fakeGateway(records);
   const queue = fakeQueue(behavior);
   const notifications = fakeNotifications();
   const sleeps = [];
@@ -87,6 +88,7 @@ const build = ({ records = {}, behavior = {}, config = {} } = {}) => {
     queue,
     notifications,
     config: { ...LABEL_FORM_INTAKE, ...config },
+    transientRetry,
     sleep: async (ms) => { sleeps.push(ms); },
     now: () => Date.parse('2026-11-09T00:30:00Z'),
   });
@@ -110,6 +112,33 @@ test('AC-FF1 一条表单勾多个货号 ⇒ 每个货号各排一次队（源 =
   ]);
   assert.deepEqual([...new Set(queue.calls.map((call) => call.source))], ['form']);
   assert.equal(result.notified, false, '全成功 ⇒ 不打扰运营群');
+});
+
+test('AC-FF11 读表单记录遇到 1254607 ⇒ 复用 withTransientRetry 短重试后继续处理', async () => {
+  const record = formRecord('rec_form1', ['rec_p1']);
+  let reads = 0;
+  const gateway = {
+    async get() {
+      reads += 1;
+      if (reads === 1) {
+        const error = new Error('Data not ready, please try again later');
+        error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready' } };
+        throw error;
+      }
+      return record;
+    },
+  };
+  const { service } = build({
+    gateway,
+    transientRetry: resolveTransientRetryConfig({
+      PUSH_TRANSIENT_RETRY_MAX_RETRIES: '2',
+      PUSH_TRANSIENT_RETRY_BASE_DELAY_MS: '0',
+      PUSH_TRANSIENT_RETRY_MAX_DELAY_MS: '0',
+    }),
+  });
+  const result = await service.processRecord('rec_form1');
+  assert.equal(reads, 2, '第一次 1254607 后必须重试一次');
+  assert.equal(result.queued, 1);
 });
 
 test('AC-FF2 坏货号（400 没编号/没库存）⇒ 跳过、其他照打；汇总一条通知里说清楚', async () => {

@@ -68,6 +68,9 @@ const { equalsFormula } = require('./bitableFilterFormula');
 //    这里只 import 复用（**值的安全字符检查也在它那里**），**不抄第二份** ✗。
 const { logInfo, logWarn } = require('../utils/logger');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
+// ⭐ 2026-11-11：瞬时错误（飞书 1254607 / 429 / 5xx / 网络）的通用小退避重试——
+//   项目里已有这一份（`config/pushRetry` 的 `withTransientRetry`），**不另写重试器**。
+const { withTransientRetry, resolveTransientRetryConfig } = require('../config/pushRetry');
 // 她填错了（400，原样回显）vs 远端出错（其余，页面只说"查询失败"）——与
 // `inventoryAdjustmentService` 同一条约定，控制器按 statusCode 分流。
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -389,6 +392,8 @@ const createLabelPrintService = (gateway, options = {}) => {
   const now = options.now || (() => Date.now());
   // 读飞书标签底表时的瞬时错误重试：判据与订单/库存查询同一份（config/orderReadRetry）。
   const readRetry = options.readRetry || resolveOrderReadRetryConfig();
+  // 扫码精确读（filter）用的瞬时重试配置（默认 2 次重试 + 指数退避；用例可注入 0 延迟）。
+  const transientRetry = options.transientRetry || resolveTransientRetryConfig();
   const sleep = options.sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
   const listAllWithRetry = async (tableKey) => {
     for (let attempt = 0; ; attempt += 1) {
@@ -774,7 +779,20 @@ const createLabelPrintService = (gateway, options = {}) => {
     }
     const filter = equalsFormula(recordIdLookupField, id);
     if (!filter) throw new Error(`记录 ID 含有不能拼进筛选公式的字符：${id}`);
-    const stockRecords = await gateway.listByFilter('liveInventory', filter);
+    const stockRecords = await withTransientRetry(
+      () => gateway.listByFilter('liveInventory', filter),
+      {
+        operation: 'label_print.scan_read',
+        config: transientRetry,
+        onRetry: ({ attempt, delayMs, error: retryError }) => logWarn('workbench.labels.record_fast_read_retry', {
+          product_record_id: id,
+          filter_kind: 'record_id_lookup',
+          attempt,
+          delay_ms: delayMs,
+          error: String(retryError?.message || ''),
+        }),
+      },
+    );
     const data = await buildLabelsFromTables(stockRecords, [record], { keyword: itemNo });
     const exact = (data.labels || []).filter((label) => label.number === number);
     logInfo('workbench.labels.record_fast_read', {
