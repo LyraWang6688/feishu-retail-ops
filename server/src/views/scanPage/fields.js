@@ -31,26 +31,10 @@
  * ⚠️ 所有来自表里的值（编号 / 颜色 / 品类 / 尺码 / 状态）一律 `escapeHtml` ——
  *    这些是**业务数据**，不是可信 HTML。
  */
-const fs = require('node:fs');
-const path = require('node:path');
-const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS, fillText } = require('../../config/scanPage');
-// ⭐ 2026-10-15（task-23）：退货表单的**默认数量 / 上限**（`defaultQuantity` / `maxQuantity` / `maxSizes`）
-//   唯一真源在**写侧**那一份配置里（后端 `parseReturnEntries` 的兜底用的就是它 ✓）——
-//   页面**直接读同一份**，不在 `config/scanPage.js` 再抄一遍（抄一份必漂 ✗）。
-//   ⚠️ 反向不行：`config/scanWrite.js` **require 了** `config/scanPage.js` ⇒ 在那边 require 这边会成环 ✗。
-const { SCAN_WRITE } = require('../../config/scanWrite');
-// ⭐ 2026-10-16（**一单多货品 · 渲染半**）：提交载荷的**字段名**与开关走 `config/multiItemOrder.js` ✓
-const { MULTI_ITEM_ORDER } = require('../../config/multiItemOrder');
-const { NEW_REALM, REALMS, REALM_TABS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, resolveRealm, saleSizeGroups, purchaseSizeLines, purchaseSizeGroups, foldedSpecialRowsOf, sellableCountOf } = require('../scanPageRealm');
-// ⭐⭐ 2026-10-16（task-61 · 领域内扫一扫）：那一段脚本与它要读的配置块（实现见 `scanRealmScan.js`）。
-const { realmScanConfigHtml, realmScanScriptSource } = require('../scanRealmScan');
-
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[char]));
 
 module.exports = {
   escapeHtml,
-  fs,
-  path,
 };

@@ -285,7 +285,6 @@ module.exports = {
   ARRIVAL_BATCH_KINDS,
   ARRIVAL_DIFF_TYPES,
   ARRIVAL_ALL_PRESENT_PHRASES,
-  ARRIVAL_CONVERSATION_DEFAULTS: DEFAULTS,
   resolveArrivalConversationConfig,
   parseExplicitBoolean,
 };

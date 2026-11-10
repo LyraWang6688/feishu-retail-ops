@@ -1,5 +1,5 @@
 // ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
-const { purchaseToast, arrivalToast, inventoryToast, returnNotice } = require('../config/purchaseWebhookTexts');
+const { purchaseToast, returnNotice } = require('../config/purchaseWebhookTexts');
 const path = require('node:path');
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');

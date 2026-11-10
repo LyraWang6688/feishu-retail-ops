@@ -25,9 +25,7 @@ const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGat
 const { AfterSalesService } = require('./afterSalesService');
 const { SecondDeliveryService } = require('./secondDeliveryService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const {
-  AFTER_SALES_ACTIONS, actionSpecOf, readAfterSalesConfig,
-} = require('../config/afterSales');
+const { actionSpecOf, readAfterSalesConfig } = require('../config/afterSales');
 const {
   readWorkbenchOrdersConfig, WORKBENCH_ORDERS_TEXTS: TEXTS,
 } = require('../config/workbenchOrders');

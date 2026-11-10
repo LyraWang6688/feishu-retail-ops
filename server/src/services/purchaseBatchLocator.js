@@ -1,7 +1,6 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { extractBatchNos } = require('./purchaseBatchNo');
 const { logInfo, logWarn } = require('../utils/logger');
 
 // 消息 key 与真机无关，纯本地推导：同一个 message_id 在任何进程/任何表里都得到同一个 key，

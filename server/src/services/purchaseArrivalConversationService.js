@@ -1,6 +1,5 @@
 // ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
 const { pageMessages, landingMessages, scanMessages } = require('../config/purchaseArrivalTexts');
-const crypto = require('node:crypto');
 const { linkedRecordIds, textValue } = require('./v1BitableGateway');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { resolveArrivalConversationConfig } = require('../config/arrivalConversation');
