@@ -159,7 +159,7 @@ const tempDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 const fakeReferences = {
   resolveProduct: async ({ productRecordId }) => ({
     recordId: productRecordId,
-    record: { record_id: productRecordId, fields: { 编号: '8081黑', 货号: '8081', 颜色: [{ text: '黑色' }], 供应商: ['sup_1'] } },
+    record: { record_id: productRecordId, fields: { 编号: '8081黑', 货号: '8081', 颜色: [{ text: '黑色' }], 供应商: [{ record_ids: ['sup_1'] }] } },
   }),
   resolveSupplier: async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '测试供应商' } } }),
 };
@@ -252,7 +252,7 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
       actual_quantity: 2,
       actual_amount: 1200,
       operator_open_id: 'ou_user_1',
-      requests: [{ record_id: 'req_1', fields: { 编号: ['prod_1'], 尺码: ['size_36'] } }],
+      requests: [{ record_id: 'req_1', fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['size_36'] }] } }],
       actual: [{ product_record_id: 'prod_1', item_no: '8081', color: '黑色', size: 36, quantity: 2 }],
       inventory_applied: {},
     },

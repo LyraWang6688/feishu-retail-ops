@@ -150,13 +150,12 @@ test('关联字段按飞书原始 API 形状解析：record_ids 里的 record_id
   assert.equal(found.colors[0].sizeRecordId, 'rec_size');
 });
 
-test('简写形状也认（CLI 导出 / 手写夹具）', () => {
+test('简写形状不再兼容（issue #1074：只认有真实证据的关联形状）', () => {
   const simple = (id, stockKey, product, size) => ({
     record_id: id, fields: { 库存键: stockKey, 所属状态: '门盒', 编号: [{ id: product }], 尺码: [{ id: size }] },
   });
   const index = build([simple('r1', 'DN16|黑|男|40', 'p1', 's1')]);
-  assert.equal(index.skippedRecords, 0, '简写形状同样要认，避免又反过来只认一种');
-  assert.equal(index.find({ itemNo: 'DN16', size: 40 }).colors[0].productRecordId, 'p1');
+  assert.equal(index.skippedRecords, 1, '无证据的 {id} 简写不再被猜（真实形状是 { record_ids }）');
 });
 
 test('关联字段为空时跳过并计数，不猜', () => {

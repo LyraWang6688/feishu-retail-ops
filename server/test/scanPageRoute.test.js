@@ -227,7 +227,7 @@ const PRODUCTS = [{
   fields: { 编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: '男', 品类: { text: '休闲鞋' }, 单价: 399 },
 }];
 const INVENTORY = [
-  { record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '门盒', 库存键: `${NUMBER}|40`, 品类: '休闲鞋', 更新时间: Date.UTC(2026, 9, 8, 12, 30) } },
+  { record_id: 'inv_1', fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒', 库存键: `${NUMBER}|40`, 品类: '休闲鞋', 更新时间: Date.UTC(2026, 9, 8, 12, 30) } },
 ];
 
 test('旧 /s/{编号} 已删除：生产入口只保留 /r/{recordId}', async () => {

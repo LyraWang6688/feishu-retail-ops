@@ -53,6 +53,7 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 process.env.FEISHU_V1_SIZE_TABLE_ID = process.env.FEISHU_V1_SIZE_TABLE_ID || 'tbl_size_inv_sale_batch_test';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { V1BitableGateway } = require('../src/services/v1BitableGateway');
 const { InventoryService } = require('../src/services/inventoryService');
 const { SalesDeliveryService } = require('../src/services/salesDeliveryService');
@@ -233,7 +234,8 @@ const createStubClient = (store) => {
           const rows = rowsOf(path.table_id);
           const offset = params?.page_token ? Number(params.page_token) : 0;
           const size = Number(params?.page_size) || 500;
-          const items = rows.slice(offset, offset + size);
+          const items = rows.slice(offset, offset + size)
+            .map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
           const hasMore = offset + size < rows.length;
           return ok({ items, has_more: hasMore, page_token: hasMore ? String(offset + size) : undefined });
         },
@@ -241,7 +243,7 @@ const createStubClient = (store) => {
           record('get', { path });
           const found = rowsOf(path.table_id).find((row) => row.record_id === path.record_id);
           if (!found) return { code: 1254005, msg: 'not found' };
-          return ok({ record: found });
+          return ok({ record: { record_id: found.record_id, fields: normalizeLinkFields(found.fields) } });
         },
         async create({ path, data }) {
           record('create', { path });
@@ -296,7 +298,8 @@ const createStubClient = (store) => {
           record('batchGet', { path });
           const wanted = (data?.record_ids || []).map((id) => String(id).trim()).filter(Boolean);
           const items = wanted.map((id) => rowsOf(path.table_id).find((row) => row.record_id === id))
-            .filter(Boolean);
+            .filter(Boolean)
+            .map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
           return ok({ records: items, forbidden_record_ids: [] });
         },
       },

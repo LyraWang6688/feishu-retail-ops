@@ -29,7 +29,7 @@ const {
   readAfterSalesConfig,
   resolveAfterSalesReturnFundsMode,
 } = require('../src/config/afterSales');
-const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema'); const { normalizeLinkFields } = require('./support/linkReadShape');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
 const FIXED_NOW = Date.parse('2026-10-05T10:00:00+08:00');
@@ -66,24 +66,24 @@ const seed = () => ({
   salesDetail: [
     {
       record_id: 'detail_old_1',
-      fields: { 销售单号: ['order_old'], 编号: ['product_A'], 尺码: ['size_41'], 实收金额: 250, 履约状态: '已交付' },
+      fields: { 销售单号: [{ record_ids: ['order_old'] }], 编号: [{ record_ids: ['product_A'] }], 尺码: [{ record_ids: ['size_41'] }], 实收金额: 250, 履约状态: '已交付' },
     },
     {
       record_id: 'detail_old_2',
-      fields: { 销售单号: ['order_old'], 配品: ['accessory_belt'], 实收金额: 30, 履约状态: '已交付' },
+      fields: { 销售单号: [{ record_ids: ['order_old'] }], 配品: ['accessory_belt'], 实收金额: 30, 履约状态: '已交付' },
     },
     {
       record_id: 'detail_old_3',
-      fields: { 销售单号: ['order_old'], 编号: ['product_B'], 尺码: ['size_42'], 实收金额: 300, 履约状态: '已交付' },
+      fields: { 销售单号: [{ record_ids: ['order_old'] }], 编号: [{ record_ids: ['product_B'] }], 尺码: [{ record_ids: ['size_42'] }], 实收金额: 300, 履约状态: '已交付' },
     },
   ],
   paymentRecord: [{
     record_id: 'pay_old_1',
-    fields: { 关联销售单: ['order_old'], 支付方式: ['method_wechat'], 交易金额: 280, 钱款状态: '已收款' },
+    fields: { 关联销售单: [{ record_ids: ['order_old'] }], 支付方式: [{ record_ids: ['method_wechat'] }], 交易金额: 280, 钱款状态: '已收款' },
   }],
   liveInventory: [
-    { record_id: 'live_A_41', fields: { 编号: ['product_A'], 尺码: ['size_41'], 所属状态: '门盒' } },
-    { record_id: 'live_B_42', fields: { 编号: ['product_B'], 尺码: ['size_42'], 所属状态: '门盒' } },
+    { record_id: 'live_A_41', fields: { 编号: [{ record_ids: ['product_A'] }], 尺码: [{ record_ids: ['size_41'] }], 所属状态: '门盒' } },
+    { record_id: 'live_B_42', fields: { 编号: [{ record_ids: ['product_B'] }], 尺码: [{ record_ids: ['size_42'] }], 所属状态: '门盒' } },
   ],
 });
 
@@ -115,8 +115,8 @@ const fakeBase = (options = {}) => {
       return Object.entries(this.table(key).fields)
         .map(([, fieldName]) => ({ field_name: fieldName, type: 1 }));
     },
-    listAll: async (key) => records.get(key) || [],
-    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id) || null,
+    listAll: async (key) => (records.get(key) || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+    get: async (key, id) => { const row = (records.get(key) || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
     async findOneByText(key, semantic, expected) {
       const name = this.fieldName(key, semantic);
       const target = String(expected ?? '').trim();
@@ -187,8 +187,8 @@ const fakeInventory = (gateway) => {
         // 规格要求"新鞋从门盒减一行"：真实服务按注册表 consumes 决定扣哪些状态，
         // 三条售后声明都是 ['门盒']，所以这里也只从门盒扣。
         const pool = (gateway.records.get('liveInventory') || []).filter((row) =>
-          (row.fields['编号'] || []).includes(input.productRecordId) &&
-          (row.fields['尺码'] || []).includes(sizeRecordId) &&
+          (row.fields['编号'] || []).flatMap((cell) => (typeof cell === 'string' ? [cell] : (cell?.record_ids || []))).includes(input.productRecordId) &&
+          (row.fields['尺码'] || []).flatMap((cell) => (typeof cell === 'string' ? [cell] : (cell?.record_ids || []))).includes(sizeRecordId) &&
           row.fields['所属状态'] === '门盒');
         if (pool.length < input.quantity) throw new Error('门盒库存不足');
         for (const row of pool.slice(0, input.quantity)) {
@@ -335,7 +335,7 @@ test('退货（cash 退款）· 她的口径：原收款记录改成「已退款
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
   assert.equal(originalPayment.fields['钱款状态'], '已退款');
   assert.deepEqual(originalPayment.fields, {
-    关联销售单: ['order_old'], 支付方式: ['method_wechat'], 交易金额: 280, 钱款状态: '已退款',
+    关联销售单: [{ record_ids: ['order_old'] }], 支付方式: [{ record_ids: ['method_wechat'] }], 交易金额: 280, 钱款状态: '已退款',
   });
   assert.equal(result.money.route, 'originalPaymentStatus');
   assert.equal(result.money.status, '已退款');
@@ -545,7 +545,7 @@ test('⭐ 退货（她的默认口径）：她说的交易方式**不写进任�
   // 不新建记录；原收款行的「交易方式」一个字节都不改（她的口径只说改状态）。
   assert.deepEqual(paymentRows(gateway), []);
   const originalPayment = rowsOf(gateway, 'paymentRecord').find((row) => row.record_id === 'pay_old_1');
-  assert.deepEqual(originalPayment.fields['支付方式'], ['method_wechat'],
+  assert.deepEqual(originalPayment.fields['支付方式'], [{ record_ids: ['method_wechat'] }],
     '原收款行的交易方式是历史事实，不许被这次售后再写一遍');
   // 但她说过什么必须留痕（结果 + 日志里都有），排查"钱到底怎么退的"能看到。
   assert.equal(result.money.declaredMethodId, 'method_cash');
@@ -981,7 +981,7 @@ const addOriginalPayment = (gateway, { recordId, amount, status = '已收款', c
   gateway.records.get('paymentRecord').push({
     record_id: recordId,
     fields: {
-      关联销售单: ['order_old'], 支付方式: ['method_cash'], 交易金额: amount, 钱款状态: status, 创建时间: createdAt,
+      关联销售单: [{ record_ids: ['order_old'] }], 支付方式: [{ record_ids: ['method_cash'] }], 交易金额: amount, 钱款状态: status, 创建时间: createdAt,
     },
   });
   return recordId;

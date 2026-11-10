@@ -4,6 +4,7 @@
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 库存流水 / 实时库存的**读取与审计**：重放前核对、幂等回查、重复事实检查。
 const { linkedRecordIds, singleLinked, textValue } = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { OPERATION_ITEM_KEY_FIELD } = require('../../infrastructure/idempotencyKey');
 const { requireMovement } = require('./movements');
 const { operationItemKey } = require('./keys');
@@ -136,8 +137,8 @@ async function findLedger(ledgerSource, sourceRecordId, behaviorRecordId) {
     const fieldName = table.fields[ledgerSource];
     const records = await this.gateway.listAll('inventoryLedger');
     const matches = records.filter((record) =>
-      linkedRecordIds(record.fields?.[fieldName]).includes(sourceRecordId) &&
-      (!behaviorRecordId || linkedRecordIds(record.fields?.[table.fields.behavior]).includes(behaviorRecordId)));
+      strictLinkedRecordIds(record.fields?.[fieldName]).includes(sourceRecordId) &&
+      (!behaviorRecordId || strictLinkedRecordIds(record.fields?.[table.fields.behavior]).includes(behaviorRecordId)));
     if (matches.length > 1) throw new Error(`来源明细 ${sourceRecordId} 存在重复库存流水`);
     return matches[0] || null;
   }

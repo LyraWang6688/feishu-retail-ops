@@ -701,7 +701,7 @@ class AfterSalesService {
         linkField: request.shoeKind.detailLinkField,
         linkRecordId: line.productId,
         // 尺码单元格用关联 id 的形态，后面统一按关联解析成数字交给库存服务。
-        sizeCell: [line.sizeId],
+        sizeCell: [{ record_ids: [line.sizeId] }],
         sizeRecordId: line.sizeId,
         // ⭐ 实收金额：配置声明了固定值就用固定值（赔货 = 0），否则用调用方给的价。
         amount: newLineAmountOf(line),

@@ -49,13 +49,13 @@ const pendingFixture = () => ({
     { record_id: 'order_2', fields: { 写入状态: '成功', 销售单号: 'XSD-002' } },
   ],
   salesDetail: [
-    { record_id: 'detail_1', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 89 } },
-    { record_id: 'detail_2', fields: { 销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_39'], 履约状态: '已交付', 实收金额: 59 } },
-    { record_id: 'detail_3', fields: { 销售单号: ['order_2'], 编号: ['product_2'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 79 } },
-    { record_id: 'detail_4', fields: { 销售单号: ['order_2'], 编号: ['product_2'], 尺码: ['size_39'], 履约状态: '未交付', 实收金额: 69 } },
+    { record_id: 'detail_1', fields: { 销售单号: [{ record_ids: ['order_1'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 89 } },
+    { record_id: 'detail_2', fields: { 销售单号: [{ record_ids: ['order_1'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_39'] }], 履约状态: '已交付', 实收金额: 59 } },
+    { record_id: 'detail_3', fields: { 销售单号: [{ record_ids: ['order_2'] }], 编号: [{ record_ids: ['product_2'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '未交付', 实收金额: 79 } },
+    { record_id: 'detail_4', fields: { 销售单号: [{ record_ids: ['order_2'] }], 编号: [{ record_ids: ['product_2'] }], 尺码: [{ record_ids: ['size_39'] }], 履约状态: '未交付', 实收金额: 69 } },
   ],
   sizeManagement: [38, 39].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
-  paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: ['order_1'], 交易金额: 50, 支付方式: ['method_1'] } }],
+  paymentRecord: [{ record_id: 'receipt_1', fields: { 关联销售单: [{ record_ids: ['order_1'] }], 交易金额: 50, 支付方式: [{ record_ids: ['method_1'] }] } }],
   paymentMethod: [{ record_id: 'method_1', fields: { 交易方式: '微信' } }],
   product: [
     { record_id: 'product_1', fields: { 编号: 'P1', 颜色: '黑色' } },
@@ -63,10 +63,10 @@ const pendingFixture = () => ({
   ],
   // 「实时库存」：一双一条 —— 每款两个码各一进门盒（候选的判据用它，`candidatesFor` 只留门盒 > 0 的）
   liveInventory: [
-    { record_id: 'live_1', fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: '门盒' } },
-    { record_id: 'live_2', fields: { 编号: ['product_1'], 尺码: ['size_39'], 所属状态: '门盒' } },
-    { record_id: 'live_3', fields: { 编号: ['product_2'], 尺码: ['size_38'], 所属状态: '门盒' } },
-    { record_id: 'live_4', fields: { 编号: ['product_2'], 尺码: ['size_39'], 所属状态: '样品' } },
+    { record_id: 'live_1', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒' } },
+    { record_id: 'live_2', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_39'] }], 所属状态: '门盒' } },
+    { record_id: 'live_3', fields: { 编号: [{ record_ids: ['product_2'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒' } },
+    { record_id: 'live_4', fields: { 编号: [{ record_ids: ['product_2'] }], 尺码: [{ record_ids: ['size_39'] }], 所属状态: '样品' } },
   ],
 });
 
@@ -305,7 +305,7 @@ test('AC-P7 订单列表整表读支付方式配置 ⇒ 售后 refundable / 券�
   resetConfigTableCache();
   const fixture = pendingFixture();
   fixture.paymentMethod = [
-    { record_id: 'method_wechat', fields: { 交易方式: '微信', 可用于退款: true, 团购券管理: ['voucher_1'] } },
+    { record_id: 'method_wechat', fields: { 交易方式: '微信', 可用于退款: true, 团购券管理: [{ record_ids: ['voucher_1'] }] } },
     { record_id: 'method_icbc', fields: { 交易方式: '工商银行', 可用于退款: false } },
   ];
   const env = await buildService(fixture);
