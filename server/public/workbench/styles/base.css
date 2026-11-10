@@ -137,6 +137,11 @@ summary::marker { color: var(--text-muted); }
 }
 .entry-card:hover:not(.disabled-card) { border-color: var(--primary); background: var(--primary-soft); }
 .entry-card .icon { font-size: var(--font-size-2xl); }
+/* 「手工调整」那两张卡的尺寸 = 入口卡统一模板：旧的 entry-card-icon / entry-card-body
+   也按同一套字号渲染，避免各页卡片一大一小。 */
+.entry-card .entry-card-icon { font-size: var(--font-size-2xl); line-height: 1; }
+.entry-card .entry-card-body { display: inline-flex; align-items: baseline; }
+.entry-card .entry-card-body strong { font-size: var(--font-size-lg); font-weight: var(--weight-bold); }
 .entry-card h3 { margin: 0; font-size: var(--font-size-lg); }
 .entry-card p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
 .entry-card .arrow { margin-top: auto; padding-top: var(--space-2); color: var(--primary); font-weight: var(--weight-bold); }

@@ -112,6 +112,9 @@ test('AC3 按钮 / 输入框 ≥44px · 主按钮占满一行 · 卡片整块可
   assert.match(base, /\.btn-primary\s*\{[^}]*width:\s*100%/, '主按钮占满一行');
   assert.match(domains, /\.card-button/, '「跳到另一个子页」的卡片 = 整块可点的按钮');
   assert.match(base, /\.entry-card\s*\{[^}]*display:\s*flex/s, '入口卡片整块可点（<a> 铺满卡片）');
+  // 所有入口卡共用「手工调整」那一版字号（icon 22 / 标题 18），不再有各页一大一小
+  assert.match(base, /\.entry-card \.entry-card-icon\s*\{[^}]*font-size:\s*var\(--font-size-2xl\)/, '旧卡图标字号与手工调整统一');
+  assert.match(base, /\.entry-card \.entry-card-body strong\s*\{[^}]*font-size:\s*var\(--font-size-lg\)/, '旧卡标题字号与手工调整统一');
   assert.match(ALL_CSS, /-webkit-tap-highlight-color|:hover/, '有触屏反馈（hover / tap 高亮）');
 });
 
