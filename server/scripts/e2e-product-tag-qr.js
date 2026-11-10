@@ -2,8 +2,9 @@
  * 「货品信息 → 标签二维码」的**端到端自测**（走项目代码、真写**测试 Base**）。
  *
  * 证明 2026-11-11 定案后的两条约定真的生效（不是"看起来生效"）：
- *   ① **清空附件后触发新增事件 ⇒ 生成二维码并写回**（`handleTableChanges` + `record_added`）；
- *   ② **再触发一次 ⇒ 幂等跳过**（不重复上传 / 写回；与「编号」字段无关）。
+ *   ① **清空附件后触发「新增」事件 ⇒ 生成二维码并写回**（`handleTableChanges` + `record_added`）；
+ *   ② **再次触发「新增」⇒ 幂等跳过**（不重复上传 / 写回；与「编号」字段无关）。
+ *   ⚠️ 只认「创建」：`record_edited` / `record_updated` 不再处理（业务负责人 2026-11-11）。
  *
  * 用法（⚠️ **只写授权测试 Base**；`assertWritableBase` 会拦住生产）：
  *   cd server && FEISHU_TARGET_ENV=test node --env-file=../.env scripts/e2e-product-tag-qr.js
@@ -63,15 +64,15 @@ const namesOf = (record) => attachmentsOf(record?.fields?.[F.tagQrCode]).map((x)
   say('   写回后的附件', a1);
   say('   期望文件名', buildFileName(id));
 
-  // ④ 再触发一次 ⇒ 幂等跳过（不重复上传 / 写回）
-  const r2 = await service.handleTableChanges([{ record_id: id, action: 'record_edited' }]);
-  say('④ 再触发一次(record_edited) ⇒', r2.results[0]);
+  // ④ 再触发一次「新增」⇒ 幂等跳过（不重复上传 / 写回）
+  const r2 = await service.handleTableChanges([{ record_id: id, action: 'record_added' }]);
+  say('④ 再触发一次(record_added) ⇒', r2.results[0]);
   const a2 = namesOf(await gateway.get('product', id));
   say('   附件（应与③相同）', a2);
 
   const ok = r1.results[0]?.status === 'written' && a1[0] === buildFileName(id)
     && r2.results[0]?.status === 'skipped' && a2[0] === a1[0];
-  console.log(`\n${ok ? '✅ 端到端成立：record_added ⇒ 生成；再触发 ⇒ 幂等跳过（与编号无关）' : '🔴 有一步不成立，见上'}`);
+  console.log(`\n${ok ? '✅ 端到端成立：record_added ⇒ 生成；再次 record_added ⇒ 幂等跳过（与编号无关）' : '🔴 有一步不成立，见上'}`);
   process.exit(ok ? 0 : 1);
 })().catch((error) => {
   console.error(`🔴 运行失败：${error.message}`);

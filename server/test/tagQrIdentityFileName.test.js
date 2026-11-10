@@ -23,17 +23,28 @@ const QR_FIELD = F[TAG_QR_CODE.fields.tagQrCode];
 const fakeGateway = (rows) => {
   const records = new Map(rows.map((row) => [row.record_id, { record_id: row.record_id, fields: { ...row.fields } }]));
   const updates = [];
+  const tokenNames = new Map();
   let tokenSeq = 0;
   const snapshot = (row) => (row ? { record_id: row.record_id, fields: { ...row.fields } } : null);
   return {
     updates,
     get: async (table, id) => snapshot(records.get(id)),
     listAll: async () => [...records.values()].map(snapshot),
-    uploadAttachment: async () => `fake_token_${++tokenSeq}`,
+    uploadAttachment: async (filePath) => {
+      const token = `fake_token_${++tokenSeq}`;
+      tokenNames.set(token, require('node:path').basename(filePath));
+      return token;
+    },
     update: async (table, id, values) => {
       const row = records.get(id);
-      Object.assign(row.fields, values);
-      updates.push({ table, id, values });
+      const mapped = Object.fromEntries(Object.entries(values).map(([key, value]) => {
+        const mappedValue = key === TAG_QR_CODE.fields.tagQrCode
+          ? value.map((item) => ({ ...item, name: item.name || tokenNames.get(item.file_token) || '' }))
+          : value;
+        return [F[key] || key, mappedValue];
+      }));
+      Object.assign(row.fields, mapped);
+      updates.push({ table, id, values: mapped });
       return snapshot(row);
     },
   };
@@ -63,7 +74,7 @@ test('AC-TQ1 旧编号命名的附件：按 recordId 覆盖升级（不再是 sk
   assert.equal(result.file_name, 'tag-qr-rec_old.png');
   assert.equal(result.scan_url, buildRecordIdScanUrl('rec_old'));
   assert.equal(gateway.updates.length, 1);
-  assert.equal(gateway.updates[0].values[TAG_QR_CODE.fields.tagQrCode][0].file_token, 'fake_token_1');
+  assert.equal(gateway.updates[0].values[QR_FIELD][0].file_token, 'fake_token_1');
 });
 
 test('AC-TQ2 已是 recordId 规范名的附件：跳过（幂等，不重复写）', async () => {
@@ -75,15 +86,23 @@ test('AC-TQ2 已是 recordId 规范名的附件：跳过（幂等，不重复写
   assert.equal(gateway.updates.length, 0);
 });
 
-test('AC-TQ3 巡检：旧格式 ⇒ 候选并真的写；规范名 ⇒ consistent；缺附件 ⇒ 补', async () => {
-  const gateway = fakeGateway([oldNumberNamed(), identityNamed(), missing()]);
+test('AC-TQ3 只认「创建」事件：record_added 生成；record_edited / record_updated 一律不处理', async () => {
+  const gateway = fakeGateway([oldNumberNamed(), identityNamed()]);
   const service = serviceFor(gateway);
-  const summary = await service.sweepStaleTagQrCodes({ intervalMs: 0 });
-  assert.equal(summary.scanned, 3);
-  assert.equal(summary.consistent, 1, '规范名那条算一致');
-  assert.equal(summary.candidates, 2, '旧格式 + 缺附件');
-  assert.equal(summary.written, 2, '🔴 改前这里恒为 0（写不进去）');
-  assert.equal(summary.failed.length, 0);
+  // 业务负责人 2026-11-11：其余的记录编辑 / 更新都不需要了 ⇒ 改事件连读都不该触发写
+  for (const action of ['record_edited', 'record_updated']) {
+    // eslint-disable-next-line no-await-in-loop
+    const ignored = await service.handleTableChanges([{ record_id: 'rec_old', action }]);
+    assert.deepEqual(ignored.results, [], `${action} 不应写`);
+  }
+  assert.equal(gateway.updates.length, 0, '修改事件不触发二维码写库');
+  // 新增事件：旧格式 ⇒ 升级；重复「新增」（事件重投）⇒ 幂等跳过
+  const created = await service.handleTableChanges([{ record_id: 'rec_old', action: 'record_added' }]);
+  assert.equal(created.results[0].status, 'written');
+  assert.equal(gateway.updates.length, 1);
+  const again = await service.handleTableChanges([{ record_id: 'rec_old', action: 'record_added' }]);
+  assert.equal(again.results[0].status, 'skipped');
+  assert.equal(gateway.updates.length, 1);
 });
 
 test('AC-TQ4 没有「编号」字段的记录也照样生成（与编号无关）', async () => {

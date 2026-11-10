@@ -22,7 +22,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const QRCode = require('qrcode');
-const { getConfigRows } = require('./configTableCache');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { TAG_QR_CODE } = require('../config/tagQrCode');
 const { logInfo, logWarn, logError } = require('../utils/logger');
@@ -175,7 +174,8 @@ const createTagQrCodeService = ({
   };
 
   /**
-   * 表变更事件入口：**新增 / 修改**都触发一次 `syncRecord`（按文件名幂等；与字段无关）。
+   * 表变更事件入口：**只认「新增」**（业务负责人 2026-11-11：「只需要盯着创建记录，
+   * 编辑/更新都不需要了，也不需要定时任务」）。
    * 逐条 try/catch：一条失败不带走同一包里的其他记录；失败汇总 `batch_failed`。
    */
   const handleTableChanges = async (actionList) => {
@@ -189,11 +189,9 @@ const createTagQrCodeService = ({
       const recordId = actionItem?.record_id;
       const action = actionItem?.action;
       if (!recordId) continue;
-      const isCreated = config.events.created.includes(action);
-      const isUpdated = config.events.updated.includes(action);
-      if (!isCreated && !isUpdated) continue; // 删除等动作没有落点
+      if (!config.events.created.includes(action)) continue; // 修改/删除等动作都不处理
       try {
-        results.push(await syncRecord(recordId, { reason: isCreated ? 'record_added' : 'record_edited' }));
+        results.push(await syncRecord(recordId, { reason: 'record_added' }));
       } catch (error) {
         failed.push({ record_id: recordId, action, error: error.message });
         logError('product.tag_qr.record_failed', { record_id: recordId, action, error: error.message });
@@ -201,86 +199,6 @@ const createTagQrCodeService = ({
     }
     if (failed.length) logError('product.tag_qr.batch_failed', { failed_count: failed.length, failed });
     return { enabled: true, results, failed };
-  };
-
-  /** 兜底巡检：全表逐条比 `tag-qr-{recordId}.png`（缺失 / 名字不符 ⇒ 重写）。 */
-  const sweepStaleTagQrCodes = async ({ limit, intervalMs, dryRun } = {}) => {
-    if (config.enabled !== true) {
-      logInfo('product.tag_qr.disabled', { reason: 'sweep' });
-      return { enabled: false, dry_run: true, results: [] };
-    }
-    const sweepConfig = config.sweep || {};
-    if (sweepConfig.enabled !== true) {
-      logInfo('product.tag_qr.sweep_disabled', {});
-      return { enabled: false, dry_run: true, results: [] };
-    }
-    if (typeof gateway?.listAll !== 'function') {
-      throw new Error('网关不支持 listAll，「标签二维码」巡检无法扫全表');
-    }
-    const configuredLimit = Number.isInteger(sweepConfig.limit) && sweepConfig.limit > 0
-      ? sweepConfig.limit : 0;
-    const maxRecords = Number.isInteger(limit) && limit > 0 ? limit : configuredLimit;
-    const configuredGap = Number.isFinite(sweepConfig.intervalMs) && sweepConfig.intervalMs > 0
-      ? sweepConfig.intervalMs : 0;
-    const gapMs = Number.isFinite(intervalMs) && intervalMs >= 0 ? intervalMs : configuredGap;
-    const isDryRun = dryRun === undefined ? sweepConfig.dryRun !== false : Boolean(dryRun);
-
-    const records = await getConfigRows({ gateway, tableKey: 'product' });
-    const candidates = [];
-    let consistent = 0;
-    for (const record of records || []) {
-      const recordId = record?.record_id;
-      if (!recordId) continue;
-      const expectedFileName = fileNameOf(recordId);
-      const existing = attachmentsOf(record?.fields?.[tagQrFieldName]);
-      if (existing.length && existing.some((item) => item.name === expectedFileName)) {
-        consistent += 1;
-        continue;
-      }
-      candidates.push({
-        record_id: recordId,
-        expected_file_name: expectedFileName,
-        existing_file_names: existing.map((item) => item.name),
-        kind: existing.length ? 'stale' : 'missing',
-      });
-    }
-    const planned = maxRecords > 0 ? candidates.slice(0, maxRecords) : candidates;
-    const summary = {
-      enabled: true, dry_run: isDryRun, scanned: (records || []).length, consistent,
-      candidates: candidates.length, planned: planned.length, written: 0, skipped: 0,
-      failed: [], results: [],
-    };
-    if (isDryRun) {
-      logInfo('product.tag_qr.sweep_dry_run', {
-        scanned: summary.scanned, consistent, candidates: candidates.length,
-        planned: planned.length, record_ids: planned.slice(0, 20).map((item) => item.record_id),
-      });
-      summary.results = planned.map((item) => ({ ...item, status: 'dry_run' }));
-      return summary;
-    }
-    for (let index = 0; index < planned.length; index += 1) {
-      const item = planned[index];
-      // 上传素材 5 QPS 且不支持并发 ⇒ 串行 + 间隔。
-      if (index > 0 && gapMs > 0) await new Promise((resolve) => { setTimeout(resolve, gapMs); });
-      try {
-        const result = await syncRecord(item.record_id, { reason: item.kind === 'missing' ? 'sweep_missing' : 'sweep_stale' });
-        summary.results.push(result);
-        if (result.status === 'written') summary.written += 1;
-        else summary.skipped += 1;
-      } catch (error) {
-        summary.failed.push({ record_id: item.record_id, error: error.message });
-      }
-    }
-    logInfo('product.tag_qr.sweep_done', {
-      scanned: summary.scanned, consistent, candidates: candidates.length, planned: planned.length,
-      written: summary.written, skipped: summary.skipped, failed_count: summary.failed.length,
-    });
-    if (summary.failed.length) {
-      logError('product.tag_qr.sweep_failed', {
-        failed_count: summary.failed.length, failed: summary.failed,
-      });
-    }
-    return summary;
   };
 
   return {
@@ -291,7 +209,6 @@ const createTagQrCodeService = ({
     }),
     syncRecord,
     handleTableChanges,
-    sweepStaleTagQrCodes,
   };
 };
 

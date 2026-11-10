@@ -35,16 +35,10 @@ const { startUploadCleanup } = require('./utils/uploadCleanup');
 //   业务负责人的现行口径：「**9 点群推送不再需要**」＋「现在没有群聊入口，也没有旧卡片」⇒
 //   两条定时推送**整体删除**（服务、配置、卡片渲染器一起删；这里不再起任何群推送定时器）。
 //   ⭐ 2026-10-28 追加：业务负责人选择「只删『待办还有 N 条』，采购/退货/告警群发保留」⇒
-//   `samplePendingNotice` 也已删除；仍在跑的定时任务只剩标签二维码兜底巡检。
+//   `samplePendingNotice` 也已删除；标签二维码只认「创建」事件，**不再有兜底巡检定时任务**。
 //   采购申请/退货图片仍走 `PurchaseWebhookService`/`purchaseReturnImageWiring`，不受影响。
 const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
-// ⭐ 2026-10-12：标签二维码「兜底巡检」的每日调度。
-//   ⚠️ 之前 `sweepStaleTagQrCodes` **全仓没有调用方**（写了、有单测、从没在线上跑过）——
-//      事件路径判漏的那批旧码（她 5 条记录附件名还带 `QPL` 旧前缀）因此一直没人修。
-const { createTagQrSweepRunner } = require('./utils/tagQrSweepScheduler');
-const { createTagQrCodeService } = require('./services/tagQrCodeService');
 const { V1BitableGateway } = require('./services/v1BitableGateway');
-const { resolveTagQrSweepSchedule } = require('./config/tagQrCode');
 // ⭐ 2026-11-08：抖音团购券「待平台结算 → 已收款」——按日期对平（14:00 上海）。
 const { createVoucherSettlementConfig } = require('./config/voucherSettlement');
 const { createVoucherSettlementService } = require('./services/voucherSettlementService');
@@ -203,38 +197,6 @@ if (require.main === module) {
   }
   // ⛔ 2026-10-28：`samplePendingNotice`（待办还有 N 条 → 采购群）已按业务负责人口径删除。
   //   保留的群发只有采购申请/退货图片与告警，不在这里调度。
-  // ── 货品信息「标签二维码」的兜底巡检（每天一次，自愈）────────────────────────
-  //    · 事件路径只管"改这一下"；这条网**不看事件、只认当前事实**：
-  //      全表扫「附件名/编号 ≠ 当前编号」的，重生成（`sweepStaleTagQrCodes`）；
-  //    · ⭐ **按最短间隔去重**（`createTagQrSweepRunner`，默认 **1 小时**一次）——
-  //      `startShanghaiDailyScheduler` 过了起点每个 tick 都会调 `run`，不节流会一天扫几十遍全表；
-  //      2026-10-12 从"每天一次"改成"每小时一次"（真机那次"公式列延迟"的漏判最坏要等到第二天 ✗）；
-  //    · 开关/时点/上限/干跑全部走配置（`TAG_QR_SWEEP_*`，见 `config/tagQrCode.js`）。
-  const tagQrSweep = resolveTagQrSweepSchedule();
-  if (tagQrSweep.enabled) {
-    const tagQrSweepRunner = createTagQrSweepRunner({
-      service: createTagQrCodeService({ gateway: new V1BitableGateway() }),
-      dryRun: tagQrSweep.dryRun,
-      limit: tagQrSweep.limit,
-      minIntervalMs: tagQrSweep.minIntervalMs,
-    });
-    startShanghaiDailyScheduler({
-      run: async ({ now }) => {
-        const summary = await tagQrSweepRunner.run({ now });
-        if (summary.skipped) {
-          logInfo('product.tag_qr.sweep.too_soon', { day: summary.day, next_in_ms: summary.next_in_ms });
-          return;
-        }
-        logInfo('product.tag_qr.sweep.done', summary);
-      },
-      eventPrefix: 'product.tag_qr.sweep',
-      hours: tagQrSweep.hours,
-      intervalMs: tagQrSweep.intervalMs,
-    });
-  } else {
-    logInfo('product.tag_qr.sweep.disabled', { env: 'TAG_QR_SWEEP_ENABLED' });
-  }
-
   // ── 抖音团购券「待平台结算 → 已收款」（业务负责人 2026-11-08 口径）────────────
   //    · 按日期汇总：我方「创建日」待结算合计 === 平台账单（bill_date=创建日, amount.goods）
   //      === 平台提现（withdraw_time 在「创建日+5」那天）——**一分不差**才改；

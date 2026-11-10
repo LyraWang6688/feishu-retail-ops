@@ -24,7 +24,6 @@
 
 const os = require('node:os');
 // ⭐ 2026-10-12：兜底巡检的**每日调度**开关（显式布尔语义，见 `utils/envValue.js`）
-const { readFlag, readInt, readString } = require('./envValue');
 
 /**
  * 二维码内容 = **一个能扫的 URL**。**唯一真源**：域名 / 路径 / 参数名都在这一行里。
@@ -112,14 +111,11 @@ const TEMP = Object.freeze({
  * 事件触发口径 —— `routes/larkEvents.js` 把这个表上的 `action_list` 原样交给本 service，
  * 由这里决定"哪条动作要出码"。
  *
- * ⚠️ 飞书生产日志里「修改」的取值是 **`record_edited`**（见
- *    `docs/purchase-intake-batch-spec.md` 第 3.1 节的真实日志样例）；
- *    `record_updated` 是另一种可能的写法，一并认下来，避免"改个名就不触发"这种静默失效。
- * ⚠️ **删除**（`record_deleted`）不在表里：记录都没了，没有落点。
+ * 业务负责人 2026-11-11：「只需要盯着货品信息创建记录的时候，其余的记录编辑、更新都不需要了，
+ * 以及也不需要定时任务了」⇒ **只认 `record_added`**；修改 / 删除都不处理。
  */
 const EVENTS = Object.freeze({
   created: Object.freeze(['record_added']),
-  updated: Object.freeze(['record_edited', 'record_updated']),
 });
 
 /**
@@ -142,84 +138,6 @@ const BATCH = Object.freeze({
   limit: 0,
 });
 
-/**
- * ⭐ **兜底巡检**（2026-10-09 加）—— 事件那条路只管"改这一下"，**万一判漏了 / 旧格式没升级**
- * 就会静默留脏数据。这个入口**不看事件、只认当前事实**：
- * 全表扫一遍，「附件文件名 ≠ `tag-qr-{recordId}.png`」⇒ 重新生成（旧 `/s/{编号}` 码就是这样升级的）。
- *
- * 它是一个**纯函数式入口**，可以被 cron / scheduler 直接调用（`services/tagQrCodeService.js`
- * 的 `sweepStaleTagQrCodes`）——本文件**不挂任何定时器**，挂不挂由业务负责人决定。
- *
- * `enabled`    —— 巡检总开关（显式布尔，**不用 `||` 兜底**）。
- * `limit`      —— 单次最多处理多少条（**0 = 不限**）。给定时任务留的刹车：
- *                 哪怕某天全表都过期，一次也不会打满飞书「上传素材」的频控。
- * `intervalMs` —— 每条之间的间隔（毫秒）。上传素材 **5 QPS 且不支持并发**（并发会 `1061045`）
- *                 ⇒ 串行 + 间隔。
- * `dryRun`     —— 干跑：只报告"要修哪些"，一个字都不写。
- *                 **默认 `false`**：这个入口的语义就是"自愈兜底"，默认干跑等于它悄悄不干活
- *                 （那是本仓最讨厌的静默失效）。要看影响面时**显式**传 `dryRun: true`。
- */
-const SWEEP = Object.freeze({
-  enabled: true,
-  limit: 0,
-  intervalMs: 500,
-  dryRun: false,
-});
-
-/**
- * ⭐⭐ **兜底巡检的每日调度**（2026-10-12 加）—— 它回答"**谁来每天叫一次巡检**"。
- *
- * 为什么必须加（真机事故）：巡检函数 2026-10-09 就写好了、也有单测，
- * 但**全仓没有任何调用方** ⇒ **从来没在线上跑过** —— 于是事件路径判漏的那批旧码
- * （她 5 条记录附件名里还带 `QPL` 旧前缀）一直没人修。
- *
- * 取值：
- *   · `enabled`     —— 显式布尔（`TAG_QR_SWEEP_ENABLED`；**没设=默认开**、空串=关）；
- *   · `hours`       —— 上海时间几点跑（`TAG_QR_SWEEP_HOURS`，默认 `4` = 凌晨 4 点，店里没人）；
- *   · `intervalMs`  —— 调度器 tick 间隔（默认 10 分钟；**同一个上海日只跑一次**由 runner 去重）；
- *   · `limit`       —— 单次最多处理多少条（0 = 不限，与 `SWEEP.limit` 同义）；
- *   · `dryRun`      —— 干跑（上线首日建议先看一眼影响面）。
- */
-// ⏹️ 延迟复核（recheck）已随业务负责人 2026-10-13 裁定**整条退场**（原话「好的，可以关掉～」）。
-//    能力去向：随裁定退场 —— 事件路径照旧按身份判定；兜底留「每小时巡检」那一层（见下方 sweep）。
-
-const SWEEP_SCHEDULE_DEFAULTS = Object.freeze({
-  enabled: true,
-  // ⚠️ 2026-10-12 改：从"每天凌晨 4 点一次"改成**每小时一次**（562 条只读、成本极低）。
-  //    `hours` 只表示"从几点起允许跑"（0 = 全天）；**真正的频率**看下面的 `minIntervalMs`。
-  hours: Object.freeze([0]),
-  // 调度器 tick 间隔（10 分钟调一次 run，由 runner 按 minIntervalMs 决定要不要真跑）
-  intervalMs: 10 * 60 * 1000,
-  // ⭐ 两次巡检之间的**最短间隔**（默认 1 小时 ⇒ 每小时自愈一次；设成 24h 就退回"每天一次"）
-  minIntervalMs: 60 * 60 * 1000,
-  limit: 0,
-  dryRun: false,
-});
-
-const parseHours = (raw, fallback) => {
-  const text = String(raw ?? '').trim();
-  if (!text) return fallback;
-  const hours = [...new Set(text.split(',').map((item) => Number(item.trim())))]
-    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23)
-    .sort((left, right) => left - right);
-  return hours.length ? hours : fallback;
-};
-
-/** 解析兜底巡检的每日调度（环境变量 → 值；非法值**当场抛**，不静默）。 */
-const resolveTagQrSweepSchedule = (env = process.env) => {
-  const hours = parseHours(readString(env, 'TAG_QR_SWEEP_HOURS', undefined), SWEEP_SCHEDULE_DEFAULTS.hours);
-  return Object.freeze({
-    enabled: readFlag(env, 'TAG_QR_SWEEP_ENABLED', SWEEP_SCHEDULE_DEFAULTS.enabled),
-    hours,
-    intervalMs: readInt(env, 'TAG_QR_SWEEP_INTERVAL_MS', SWEEP_SCHEDULE_DEFAULTS.intervalMs,
-      { min: 1000, max: 24 * 60 * 60 * 1000 }),
-    minIntervalMs: readInt(env, 'TAG_QR_SWEEP_MIN_INTERVAL_MS', SWEEP_SCHEDULE_DEFAULTS.minIntervalMs,
-      { min: 60 * 1000, max: 7 * 24 * 60 * 60 * 1000 }),
-    limit: readInt(env, 'TAG_QR_SWEEP_LIMIT', SWEEP_SCHEDULE_DEFAULTS.limit, { min: 0, max: 100000 }),
-    dryRun: readFlag(env, 'TAG_QR_SWEEP_DRY_RUN', SWEEP_SCHEDULE_DEFAULTS.dryRun),
-  });
-};
-
 const TAG_QR_CODE = Object.freeze({
   enabled: ENABLED,
   scanUrl: SCAN_URL,
@@ -229,7 +147,6 @@ const TAG_QR_CODE = Object.freeze({
   temp: TEMP,
   events: EVENTS,
   batch: BATCH,
-  sweep: SWEEP,
   // 物理列名只有一个去处：`config/v1BitableSchema.js` 的 `product.fields`。
   // 这里只放**语义键**（网关 update 收的就是它），避免同一个列名有两份真源。
   fields: Object.freeze({
@@ -246,7 +163,4 @@ module.exports = {
   TEMP,
   EVENTS,
   BATCH,
-  SWEEP,
-  SWEEP_SCHEDULE_DEFAULTS,
-  resolveTagQrSweepSchedule,
 };
