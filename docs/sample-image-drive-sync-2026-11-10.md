@@ -161,6 +161,18 @@ e2e（`test/e2e/workbench.spec.js`）：货品 → 数据配置 → 卡片在、
 
 判据：AC-SD16（配置 owner ⇒ 每个文件都转移；转移失败不勾）＋ AC-OT6（transferOwner 参数形状 / openid 与 email / 缺 owner 抛错）。
 
+## 六⅚、真机事故 2：转移所有者 SDK 路径写错（2026-11-10 06:55）
+
+- 现象：点按钮后日志全是 `product.sample_image.drive.failed`，
+  `error: "Cannot read properties of undefined (reading 'member')"`；**一条都没勾**。
+- 根因：SDK 资源名是 `client.drive.permissionMember.transferOwner`
+  （camelCase），写成了 `client.drive.permission.member` ⇒ `permission` 为 undefined。
+- 影响：**上传其实成功了**（云盘会看到正确命名的文件），但转移所有者那步抛错 ⇒ 记录被判失败、不勾；
+  整轮终态 `partial_failed`（统一层会给运营群发一条失败通知）。
+- 修复：改成 `permissionMember`；判据 AC-OT6 用**与 SDK 相同的结构**（`drive.permissionMember`）钉住，
+  假客户端里不再用错误结构（塞回旧结构必红）。
+- 处置：等部署修复后**再点一次按钮** ⇒ 同名覆盖重传 + 转移所有者（不会重复堆文件）。
+
 ## 七、未做（等她拍板）
 
 1. 存量 184 条"有图但未勾"的批量补齐（要不要现在做、按什么顺序、失败怎么退）；
