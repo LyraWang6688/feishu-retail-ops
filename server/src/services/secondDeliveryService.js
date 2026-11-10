@@ -1,5 +1,6 @@
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
-const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {V1BitableGateway, textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { PaymentService, amount } = require('./paymentService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords } = require('./salesProgressService');
@@ -176,9 +177,9 @@ class SecondDeliveryService {
       this.read(() => this.gateway.listAll('paymentRecord'), 'second_delivery.confirm.list_payments'),
     ]);
     const orderDetails = allDetails.filter((record) =>
-      linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId));
+      strictLinkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId));
     const orderPayments = allPayments.filter((record) =>
-      linkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(salesEntryRecordId));
+      strictLinkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(salesEntryRecordId));
 
     const pending = orderPayments.filter((record) =>
       textValue(record.fields?.[paymentFields.status]) === '未收款');
@@ -322,18 +323,18 @@ class SecondDeliveryService {
     for (const entry of entries) {
       if (!isPosted(postedOf(entry, entryFields))) continue;
       const orderDetails = allDetails.filter((record) =>
-        linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(entry.record_id));
+        strictLinkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(entry.record_id));
       // ⭐ 2026-10-18：生产「销售主表.交易类型」列已删 ⇒ 交易类型改从**明细行**取
       //   （主表若有旧值仍兼容读；空则逐行找第一个认得出的）。
       const tradeTypeIds = [
-        ...linkedRecordIds(entry.fields?.[entryFields.tradeType]),
-        ...orderDetails.flatMap((record) => linkedRecordIds(record.fields?.[detailFields.tradeType])),
+        ...strictLinkedRecordIds(entry.fields?.[entryFields.tradeType]),
+        ...orderDetails.flatMap((record) => strictLinkedRecordIds(record.fields?.[detailFields.tradeType])),
       ];
       // ⚠️ 取**第一个认得出来的**关联记录只为了显示名称；一个都不认得也继续往下走
       //    （判据是履约进展，不是这个关联）。
       const tradeTypeRecordId = tradeTypeIds.find((id) => behaviorsById.has(id)) || '';
       const orderPayments = allPayments.filter((record) =>
-        linkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(entry.record_id));
+        strictLinkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(entry.record_id));
       // 「这一单是哪天的」：明细「销售日」优先，退回主表「录单日」——和查单链路
       // （`utils/salesDateWindows` + 销售状态判据）用同一条口径，两边不能对同一张单给出两个日期。
       // ⚠️ 两个都读不到时必须**大声跳过**：悄悄按"太老了"处理会让这张单永远收不到提醒，
