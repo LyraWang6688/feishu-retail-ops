@@ -81,6 +81,7 @@ export const AFTER_SALES_PAGE = {
   select: '请选择',
   cancel: '取消',
   confirm: '确认',
+  submitting: '正在提交…',
   // 换货提交回执（原型阶段；退货已改用服务端统一 toast）
   toastExchangeDone: '信息提交成功',
   // 读不到「支付方式管理」时的人话

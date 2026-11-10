@@ -159,3 +159,18 @@ test('AC-AS-ERR ⭐ 退货弹窗不会再显示「怎么换」（换货校验只
   assert.equal((page.match(/exchangeModeLabel/g) || []).length, 1,
     '「怎么换」只能出现在换货弹窗的 aria-label 里，不能再当错误文案');
 });
+
+/**
+ * ⭐ 2026-11-11 真机反馈：① 「确认」点了没反应（服务端准备要十几秒，只置灰不改文案）；
+ *   ② 售后页可以任意双指缩放。两条都钉成判据。
+ */
+test('AC-AS-UX 售后页：提交时显示「正在提交…」；viewport 禁止任意缩放', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  assert.match(config, /submitting: '正在提交…'/, '提交中要有明确文案（不能只置灰）');
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  assert.match(page, /button\.textContent = AFTER_SALES_PAGE\.submitting/, '提交后按钮文案要变');
+  const html = fs.readFileSync(path.join(root, 'after-sales.html'), 'utf8');
+  assert.match(html, /maximum-scale=1/, 'viewport 要限制最大缩放');
+  assert.match(html, /user-scalable=no/, 'viewport 要禁止双指缩放');
+});
