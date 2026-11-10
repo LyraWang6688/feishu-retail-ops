@@ -15,6 +15,10 @@ const PRODUCT_PROFILE = Object.freeze({
   completeValue: readString(process.env, 'PRODUCT_PROFILE_COMPLETE_VALUE', '齐备').trim() || '齐备',
   // 搜索一次最多返回多少条（模糊匹配后截断；避免 559 条全塞给页面）。
   searchLimit: readInt(process.env, 'PRODUCT_PROFILE_SEARCH_LIMIT', 50, { min: 1, max: 200 }),
+  // 搜索专用快照 TTL：不跟 record_changed 失效，避免样例图同步把缓存打穿。
+  searchSnapshotTtlMs: readInt(process.env, 'PRODUCT_PROFILE_SEARCH_SNAPSHOT_TTL_MS', 5 * 60 * 1000, {
+    min: 60 * 1000, max: 60 * 60 * 1000,
+  }),
 });
 
 module.exports = { PRODUCT_PROFILE };
