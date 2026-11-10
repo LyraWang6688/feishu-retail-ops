@@ -484,6 +484,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       window.location.href = `/workbench/after-sales.html?productRecordId=${encodeURIComponent(recordId)}`;
       return undefined;
     } catch (error) {
+      // 401 = 登录过期：`scanCodeRaw` 已在 401 时跳登录页，这里不要再报「扫一扫没有成功」。
+      if (error?.status === 401) return undefined;
       if (/cancel/i.test(String(error?.errMsg || error?.message || ''))) return undefined;
       return renderResult('扫一扫没有成功，请再试一次。', true);
     }

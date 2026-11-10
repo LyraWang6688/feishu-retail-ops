@@ -11,6 +11,7 @@
  */
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
+import { feishuLoginUrl } from '../../core/auth.js';
 
 export const SCAN_SIGNATURE_PATH = '/api/workbench/lark/jsapi-signature';
 
@@ -53,7 +54,17 @@ const withRealm = (url, realm) => {
  * 售后扫一扫也要用同一条链路，避免复制一份签名/相机代码。
  */
 export async function scanCodeRaw(realm, options = {}) {
-  const signature = await api.get(`${SCAN_SIGNATURE_PATH}?url=${encodeURIComponent(window.location.href.split('#')[0])}`);
+  let signature;
+  try {
+    signature = await api.get(`${SCAN_SIGNATURE_PATH}?url=${encodeURIComponent(window.location.href.split('#')[0])}`);
+  } catch (error) {
+    // ⭐⭐ 2026-11-11：session 过期时签名接口回 401 —— 这是"登录过期"，不是"扫码失败"。
+    //    直接 302 去飞书登录（登录后回到当前页），不要让调用方把它显示成「扫一扫没有成功」。
+    if (error?.status === 401) {
+      window.location.href = feishuLoginUrl();
+    }
+    throw error;
+  }
   await withTimeout(loadSdk(signature?.jssdkUrl || ''), DEFAULT_TIMEOUT_MS, 'jssdk_timeout');
   if (!window.h5sdk || typeof window.h5sdk.config !== 'function') throw new Error('jssdk_missing');
   await withTimeout(window.h5sdk.config({
