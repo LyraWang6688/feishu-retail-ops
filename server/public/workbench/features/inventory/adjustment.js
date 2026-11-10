@@ -169,7 +169,7 @@ export function createInventoryAdjustmentModule() {
       host.querySelectorAll('[data-back]').forEach((btn) => btn.addEventListener('click', () => show('cards')));
       host.querySelector('[data-manual="single"]').addEventListener('click', () => { void scanSingle(); });
       host.querySelector('[data-manual="batch"]').addEventListener('click', () => { void enterBatch().catch((error) => showPageError(describeError(error))); });
-      host.querySelector('[data-add-size]').addEventListener('click', () => { state.editorRows.push({ size: , state: '门盒', quantity: 1 }); renderSingle(state.productId); });
+      host.querySelector('[data-add-size]').addEventListener('click', () => { state.editorRows.push({ size: '', state: '门盒', quantity: 1 }); renderSingle(state.productId); });
       host.querySelector('[data-action="batch-check"]').addEventListener('click', () => renderViolations());
       host.querySelector('[data-field="batch-category"]').addEventListener('change', () => renderViolations());
     },
