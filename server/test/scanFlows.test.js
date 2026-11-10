@@ -38,10 +38,10 @@ test('AC-FLOW2 afterSalesExchange flow：无资金页、不加一双、差价步
   assert.equal(allowsAddLine(flow), false);
   assert.equal(hasStep(flow, STEP_TYPES.FUNDS), false, '换款式不跳资金页：steps 里根本没有 funds');
   assert.equal(submitHandlerOf(flow), SUBMIT_HANDLERS.AFTER_SALES_EXCHANGE);
-  assert.equal(submitEndpointOf(flow), '/api/workbench/sales/after-sales/submit');
+  assert.equal(submitEndpointOf(flow), '/api/workbench/sales/after-sales/exchange/submit');
   assert.deepEqual(submitPayloadOf(flow), [
     'requestId', 'salesEntryRecordId', 'detailRecordId',
-    'newProductRecordId', 'newSize', 'newAmount', 'diffAmount', 'diffPaymentMethod',
+    'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod',
   ]);
   assert.deepEqual(flow.context, ['requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount']);
 });

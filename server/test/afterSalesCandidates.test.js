@@ -152,8 +152,8 @@ test('AC-AS-ERR ⭐ 退货弹窗不会再显示「怎么换」（换货校验只
   const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
   assert.match(config, /exchangeModeRequired: '请先选换尺码还是换款式'/, '换货缺模式要有自己的错误文案');
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
-  const guard = page.indexOf("modal?.action !== 'exchange'");
-  const err = page.indexOf('modalError(AFTER_SALES_PAGE.exchangeModeRequired)');
+  const guard = page.lastIndexOf("modal?.action !== 'exchange'");
+  const err = page.lastIndexOf('modalError(AFTER_SALES_PAGE.exchangeModeRequired)');
   assert.ok(guard > 0, '换货校验前必须先判 action === exchange（退货弹窗点确认不能再掉进来）');
   assert.ok(err > guard, '换货缺模式错误必须在 action 守卫之后');
   assert.equal((page.match(/exchangeModeLabel/g) || []).length, 1,

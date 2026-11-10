@@ -53,8 +53,9 @@ const SCAN_FLOWS = Object.freeze({
       Object.freeze({
         type: STEP_TYPES.GOODS,
         allowAddLine: false,
-        // 售后换款式：新鞋金额按「货品信息.单价」算 ⇒ 录入页**不显示"这一双的金额"输入框**
-        hideAmountInput: true,
+        // ⭐ 2026-11-11（业务负责人）：换款式要**显示「这一双的实收金额」输入框**
+        //   （她填金额，系统按「她填的金额 − 原明细金额」算差价；旧口径「货品单价」作废）
+        hideAmountInput: false,
         submitLabel: '提交换货',
         banner: '售后换款式：选 1 双，提交后按差价处理',
       }),
@@ -62,10 +63,10 @@ const SCAN_FLOWS = Object.freeze({
       Object.freeze({
         type: STEP_TYPES.SUBMIT,
         handler: SUBMIT_HANDLERS.AFTER_SALES_EXCHANGE,
-        endpoint: '/api/workbench/sales/after-sales/submit',
+        endpoint: '/api/workbench/sales/after-sales/exchange/submit',
         payload: Object.freeze([
           'requestId', 'salesEntryRecordId', 'detailRecordId',
-          'newProductRecordId', 'newSize', 'newAmount', 'diffAmount', 'diffPaymentMethod',
+          'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod',
         ]),
       }),
     ]),
