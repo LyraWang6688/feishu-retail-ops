@@ -10,6 +10,8 @@
 const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { InventoryService } = require('../services/inventoryService');
+const { InventoryPairAdjustmentService } = require('../services/inventoryPairAdjustmentService');
+const { PAIR_ADJUSTMENT_TEXTS } = require('../config/inventoryPairAdjustment');
 const { InventoryAdjustmentService } = require('../services/inventoryAdjustmentService');
 const { logError } = require('../utils/logger');
 
@@ -18,6 +20,7 @@ const createInventoryAdjustmentRouter = (options = {}) => {
   // 默认依赖**延迟构建**：传了 service（或 inventory）就不要再去 new 一个网关 ——
   // 否则"只想注入一个桩"的调用方（测试、以及将来别的入口）会被迫先配好飞书凭证。
   let adjustment = options.service || null;
+  let pairAdjustment = options.pairService || null;
   const resolveAdjustment = () => {
     if (!adjustment) {
       const inventory = options.inventory
@@ -25,6 +28,12 @@ const createInventoryAdjustmentRouter = (options = {}) => {
       adjustment = new InventoryAdjustmentService({ inventory });
     }
     return adjustment;
+  };
+
+  const resolveInventory = () => options.inventory || new InventoryService({ gateway: options.gateway || new V1BitableGateway() });
+  const resolvePairAdjustment = () => {
+    if (!pairAdjustment) pairAdjustment = new InventoryPairAdjustmentService({ inventory: resolveInventory() });
+    return pairAdjustment;
   };
 
   const handle = (event, fallback, work) => async (req, res) => {
@@ -51,6 +60,20 @@ const createInventoryAdjustmentRouter = (options = {}) => {
       // 「库存流水」还没有「操作人」列，所以这个 open_id 只进本地任务与结构化日志
       //（可回答"谁调的"）；表里加了列之后再补远端写入。
       operatorOpenId: req.workbenchUser?.open_id,
+    })));
+
+  router.post('/pairs', handle('workbench.inventory.adjustment.pairs_failed', PAIR_ADJUSTMENT_TEXTS.pairFailed, (req) =>
+    resolvePairAdjustment().adjustPairs({
+      productRecordId: req.body?.productRecordId,
+      rows: req.body?.rows,
+      requestId: req.body?.requestId,
+      operatorOpenId: req.workbenchUser?.open_id,
+    })));
+
+  router.post('/season-flag', handle('workbench.inventory.adjustment.season_flag_failed', PAIR_ADJUSTMENT_TEXTS.seasonFlagFailed, (req) =>
+    resolvePairAdjustment().setSeason({
+      category: req.body?.category,
+      season: req.body?.season,
     })));
 
   router.post('/season', handle('workbench.inventory.adjustment.season_failed', '换季调整失败', (req) =>

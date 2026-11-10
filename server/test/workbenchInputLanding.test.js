@@ -95,6 +95,18 @@ const CHAINS = Object.freeze({
     service: 'src/services/salesDeliveryService.js', serviceKey: /deliver\(/,
     landing: [['salesDetail', 'fulfillmentStatus'], ['liveInventory', 'stockKey']],
   },
+  "'/api/workbench/inventory/adjustments/pairs'": {
+    fe: 'features/inventory/adjustment.js', feKey: '/api/workbench/inventory/adjustments/pairs',
+    route: 'src/routes/workbenchInventoryAdjustment.js', routeKey: /pairs/,
+    service: 'src/services/inventoryPairAdjustmentService.js', serviceKey: /adjustPairs/,
+    landing: [['liveInventory', 'stockKey'], ['inventoryLedger', 'quantityChange']],
+  },
+  "'/api/workbench/inventory/adjustments/season-flag'": {
+    fe: 'features/inventory/adjustment.js', feKey: '/api/workbench/inventory/adjustments/season-flag',
+    route: 'src/routes/workbenchInventoryAdjustment.js', routeKey: /season-flag/,
+    service: 'src/services/inventoryPairAdjustmentService.js', serviceKey: /setSeason/,
+    landing: [['liveInventory', 'season']],
+  },
   "'/api/workbench/sales/delivery/payments'": {
     fe: 'features/sales-delivery/index.js', feKey: "'/api/workbench/sales/delivery/payments'",
     route: 'src/routes/workbenchSalesDelivery.js', routeKey: /router\.post\('\/sales\/delivery\/payments'[\s\S]{0,600}?req\.body\?\.method/,
