@@ -3,7 +3,7 @@
  * backfill-product-tag-qr.js —— 给「货品信息」的存量记录补上**「标签二维码」**这一列。
  *
  * 干什么：读「货品信息」每条记录 → 用 `config/tagQrCode.js` 里的规范
- *   （`https://hm.bamamei.online/s/{编号}`，编号 URL 编码）出 PNG → 上传拿 `file_token`
+ *   （`https://hm.bamamei.online/r/{recordId}`，记录 ID；旧编号格式不再生成）出 PNG → 上传拿 `file_token`
  *   → 写回**附件列**「标签二维码」。生成 / 上传 / 写回**全部复用**
  *   `services/tagQrCodeService`（这里不自己拼飞书请求，也不用飞书 CLI）。
  *
@@ -24,10 +24,10 @@
  *   ⚠️ 默认就是干跑：不显式给 `--write` 一个字都不写（连上传素材都不会发生）。
  *   ⚠️ 生产写入由 Lead 在服务器上带 `FEISHU_ALLOW_PRODUCTION_WRITE=true` 跑。
  *
- * 🔴 **幂等（2026-10-12 改）**：这一列有值 **且附件名与当前编号一致** 才跳过（记 `already_present`）；
- *   **有值但文件名/编号对不上 ⇒ 报 `stale_file_name` 并列为"待更新"**（真机就是这么发现旧码的：
- *   `tag-qr-QPL2635-1_黑_A.png` vs 当前 `2635-1|黑|A`）。只有带 `--overwrite`
- *   才重写（覆盖前 service 会先记一条 `product.tag_qr.overwriting`）。
+ * 🔴 **幂等（2026-11-11 统一文件名判据）**：这一列有值 **且附件名 = 当前 identity（recordId）规范名**
+ *   才跳过（记 `already_present`）；**有值但文件名对不上 ⇒ 报 `stale_file_name` 并列为"待更新"**
+ *   （旧编号命名的码就属于这一档：`tag-qr-906_黑色_男.png` vs 新的 `tag-qr-{recordId}.png`）。
+ *   只有带 `--overwrite` 才无条件重写（覆盖前 service 会先记一条 `product.tag_qr.overwriting`）。
  *   跑第二遍应当是 **0 条要写**。
  *
  * 🔴 **可重试 / 不静默**：逐条打印结果（跳过 / 写成功 / 失败），失败**计数并以退出码 1 结束**；
@@ -144,16 +144,20 @@ const buildPlans = (records, flags, {
     try {
       if (!number) { action = 'skip'; reason = 'number_missing'; }
       else {
-        scanUrl = service.buildScanUrl(number);
-        fileName = service.buildFileName(number);
+        // ⭐⭐ 2026-11-11：二维码内容/文件名统一按 **identity（recordId）** —— 与 service 的
+        //    `syncRecord` / 巡检共用同一份规则。旧编号命名的附件 ⇒ 名字对不上 ⇒ 待更新（旧码）。
+        //    ⚠️ 改前这里调 `service.buildScanUrl(number)`，但 service 根本没导出这个方法（会 TypeError）✗
+        const identity = service.resolveQrIdentity({ recordId });
+        scanUrl = identity.url;
+        fileName = service.buildFileName(identity.value);
         // 🔴 2026-10-12 修（业务负责人真机发现"改货号后二维码没更新" + Lead 被它误导过一轮）：
         //   改前："这一列**有值**就跳过（already_present）"—— 可她的附件名里还带着**旧货号前缀**
         //   （`tag-qr-QPL2635-1_黑_A.png` vs 当前编号 `2635-1|黑|A`）⇒ 干跑报"已完成"，
         //   而值其实是**旧的**。现在**默认就比对**（与 service 同源的判据）：
-        //   "已完成" = 附件名 = 当前编号该有的**规范名**，**或**从名字里反解出的编号 == 当前编号；
+        //   "已完成" = 附件名 = 当前 identity 该有的**规范名**，**或**从名字里反解出的 identity 一致；
         //   否则如实报 `stale_file_name`（并列出**新旧文件名**给人工核）。
         const inSync = existing.some((item) => item.name === fileName
-          || numberFromFileName(item.name) === sanitizeNumberForFileName(number));
+          || numberFromFileName(item.name) === sanitizeNumberForFileName(identity.value));
         if (existing.length && !flags.overwrite) {
           if (inSync) { action = 'skip'; reason = 'already_present'; }
           else { action = 'write'; reason = 'stale_file_name'; }
