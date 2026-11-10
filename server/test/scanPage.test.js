@@ -56,7 +56,7 @@ const SIZE_RECORDS = [
 const inventoryRow = (id, sizeRecordId, state, extra = {}) => ({
   record_id: id,
   fields: {
-    编号: ['prod_1'],
+    编号: [{ record_ids: ['prod_1'] }],
     尺码: [sizeRecordId],
     所属状态: state,
     库存键: `YD6693-2|黑色|男|${extra.size ?? String(sizeRecordId).replace('size_', '')}`,
@@ -240,9 +240,9 @@ test('② 状态里出现配置外的取值 / 读不出尺码：**不丢**、另
     ...DEFAULT_INVENTORY,
     inventoryRow('inv_41_warehouse', 'size_41', '仓库'),
     // 她在表里新加了一个状态
-    { record_id: 'inv_40_other', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '车里', 库存键: 'YD6693-2|黑色|男|40' } },
+    { record_id: 'inv_40_other', fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '车里', 库存键: 'YD6693-2|黑色|男|40' } },
     // 尺码关联被清空、库存键也读不出尺码
-    { record_id: 'inv_broken', fields: { 编号: ['prod_1'], 尺码: [], 所属状态: '门盒', 库存键: '' } },
+    { record_id: 'inv_broken', fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [], 所属状态: '门盒', 库存键: '' } },
   ];
   const view = await service({ inventory }).lookup({ number: NUMBER, requestId: 'req_4' });
 
@@ -262,7 +262,7 @@ test('② 状态里出现配置外的取值 / 读不出尺码：**不丢**、另
 
 test('② 尺码关联损坏时退回「库存键」最后一段（关联单元格没有文本也能认出尺码）', async () => {
   const inventory = [
-    { record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['unknown_size_record'], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|男|41' } },
+    { record_id: 'inv_1', fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['unknown_size_record'] }], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|男|41' } },
   ];
   const view = await service({ inventory }).lookup({ number: NUMBER, requestId: 'req_5' });
   assert.equal(view.total, 1);
@@ -271,7 +271,7 @@ test('② 尺码关联损坏时退回「库存键」最后一段（关联单元�
 });
 
 test('② 关联单元格为空时用「库存键」前缀认行（数据残缺也要看得见库存）', async () => {
-  const inventory = [{ record_id: 'inv_1', fields: { 编号: [], 尺码: ['size_40'], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|男|40' } }];
+  const inventory = [{ record_id: 'inv_1', fields: { 编号: [], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒', 库存键: 'YD6693-2|黑色|男|40' } }];
   const view = await service({ inventory }).lookup({ number: NUMBER, requestId: 'req_6' });
   assert.equal(view.total, 1);
   // ⚠️ 行清单按配置段补全（38–48）⇒ 40 不一定是第一行。
@@ -283,7 +283,7 @@ test('② 关联单元格为空时用「库存键」前缀认行（数据残缺�
 test('② 大小写兜底：她照着标签手打一遍（大小写不一致）也能查到', async () => {
   const view = await service({
     products: [{ ...PRODUCT, fields: { ...PRODUCT.fields, 编号: 'XHB8095|黑色|男' } }],
-    inventory: [{ record_id: 'inv_1', fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '门盒', 库存键: 'XHB8095|黑色|男|40' } }],
+    inventory: [{ record_id: 'inv_1', fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒', 库存键: 'XHB8095|黑色|男|40' } }],
   }).lookup({ number: 'xhb8095|黑色|男', requestId: 'req_7' });
   assert.equal(view.found, true);
   assert.equal(view.total, 1);
@@ -351,7 +351,7 @@ test('④ 只读（源码扫描）：config / service / view / route 四个文�
 // ── 取数上限 ────────────────────────────────────────────────────────────────
 test('取数上限：超过上限**明确报错**（不许显示一张不完整的库存表）', async () => {
   const many = Array.from({ length: SCAN_PAGE.limits.inventoryRecords + 1 }, (_, index) => ({
-    record_id: `inv_${index}`, fields: { 编号: ['prod_1'], 尺码: ['size_40'], 所属状态: '门盒' },
+    record_id: `inv_${index}`, fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' },
   }));
   await assert.rejects(
     () => service({ inventory: many }).lookup({ number: NUMBER, requestId: 'req_11' }),

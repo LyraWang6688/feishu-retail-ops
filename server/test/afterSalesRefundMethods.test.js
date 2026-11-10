@@ -61,7 +61,7 @@ const makeGateway = () => {
   };
   const state = {
     entry: { record_id: 'e1', fields: { 销售单号: 'XSD-20261028-0005', 售后类型: [], 售后次数: 0 } },
-    detail: { record_id: 'd1', fields: { 销售单号: ['e1'], 编号: ['p1'], 尺码: ['s1'], 履约状态: '已交付', 实收金额: 100 } },
+    detail: { record_id: 'd1', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s1'] }], 履约状态: '已交付', 实收金额: 100 } },
     size: { record_id: 's1', fields: { 尺码: 40 } },
     calls: { create: [], update: [] },
   };

@@ -1,6 +1,5 @@
 const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS, fillText } = require('../../config/scanPage');
-const { MULTI_ITEM_ORDER } = require('../../config/multiItemOrder');
-const { DEFAULT_REALM, REALM_TEXTS, saleSizeGroups } = require('../scanPageRealm');
+const { REALM_TEXTS, saleSizeGroups } = require('../scanPageRealm');
 const { realmScanConfigHtml } = require('../scanRealmScan');
 const { escapeHtml } = require('./fields');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');

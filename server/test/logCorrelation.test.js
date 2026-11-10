@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 // ⚠️ 必须在 require v1BitableSchema **之前**设好：schema 是模块级对象字面量，
 //    tableId 在 require 那一刻求值一次（「尺码管理」这类表没有硬编码兜底，
@@ -103,7 +104,7 @@ const fakeLarkClient = (records) => {
         get: async ({ path }) => {
           const record = find(path.table_id, path.record_id);
           if (!record) return { code: 1254043, msg: 'RecordIdNotFound' };
-          return { code: 0, data: { record } };
+          return { code: 0, data: { record: { record_id: record.record_id, fields: normalizeLinkFields(record.fields) } } };
         },
         delete: async ({ path }) => {
           const list = listOf(path.table_id);
@@ -113,7 +114,7 @@ const fakeLarkClient = (records) => {
         },
         list: async ({ path }) => ({
           code: 0,
-          data: { items: listOf(path.table_id).slice(), has_more: false },
+          data: { items: listOf(path.table_id).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })), has_more: false },
         }),
       },
     },
@@ -132,7 +133,7 @@ const makeWorld = ({ withStockKeyLabel = true } = {}) => {
     } }]],
     ['liveInventory', [{ record_id: 'live_1', fields: {
       ...(withStockKeyLabel ? { 库存键: LABEL } : {}),
-      所属状态: '门盒', 编号: ['product_rec'], 尺码: ['size_40'],
+      所属状态: '门盒', 编号: [{ record_ids: ['product_rec'] }], 尺码: [{ record_ids: ['size_40'] }],
     } }]],
   ]);
   const gateway = new V1BitableGateway({ client: fakeLarkClient(records) });
@@ -542,11 +543,11 @@ test('inventory.sample.promoted：stock_key 与 stock_key_label 并列，且带�
 test('成交链路：收款明细的写入日志带 sales_entry_record_id ＋ order_no（单号零额外请求）', async () => {
   const world = makeWorld();
   world.records.set('salesDetail', [{ record_id: 'detail_1', fields: {
-    销售单号: ['rec_sale'], 编号: ['product_rec'], 尺码: ['size_40'],
+    销售单号: [{ record_ids: ['rec_sale'] }], 编号: [{ record_ids: ['product_rec'] }], 尺码: [{ record_ids: ['size_40'] }],
     实收金额: 220, 履约状态: '已交付', 赠品: '',
   } }]);
   world.records.set('paymentRecord', [{ record_id: 'receipt_1', fields: {
-    关联销售单: ['rec_sale'], 交易金额: 220, 钱款状态: '未收款',
+    关联销售单: [{ record_ids: ['rec_sale'] }], 交易金额: 220, 钱款状态: '未收款',
   } }]);
   // 「成交」要求订单已入账（读「资金状态」）。
   world.records.get('salesEntry')[0].fields.写入状态 = '成功';

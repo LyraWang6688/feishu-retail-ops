@@ -29,6 +29,7 @@ const {
   InventoryService, STOCK_MOVEMENTS, operationSourceIdOf,
 } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
 const LEDGER = 'inventoryLedger';
@@ -78,10 +79,12 @@ const makeGateway = (records = {}, options = {}) => {
     listAll: async (key) => {
       if (key === 'sizeManagement') return SIZE_RECORDS;
       if (key === 'behavior') return behaviors;
-      return records[key] || [];
+      return (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
     },
-    get: async (key, recordId) =>
-      (records[key] || []).find((item) => item.record_id === recordId) || null,
+    get: async (key, recordId) => {
+      const row = (records[key] || []).find((item) => item.record_id === recordId);
+      return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null;
+    },
     create: async (key, semanticValues) => {
       if (key === LEDGER && failLedgerTimes > 0) {
         failLedgerTimes -= 1;

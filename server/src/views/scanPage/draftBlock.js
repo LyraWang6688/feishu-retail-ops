@@ -1,8 +1,7 @@
-const { SCAN_PAGE, fillText } = require('../../config/scanPage');
+const { fillText } = require('../../config/scanPage');
 const { DEFAULT_REALM, REALM_TEXTS, resolveRealm } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { canScanNextWithFeishu } = require('./styles');
-const { submitFeedbackAttrs } = require('./script');
 
 const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}) => {
   const texts = config.texts;

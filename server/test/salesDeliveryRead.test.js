@@ -13,12 +13,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createSalesDeliveryReadService } = require('../src/services/salesDeliveryReadService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 const table = (key) => V1_BITABLE_SCHEMA.tables[key];
 
 const fakeGateway = (records) => ({
-  listAll: async (key) => records[key] || [],
-  getBatch: async (key, ids) => (records[key] || []).filter((row) => ids.includes(row.record_id)),
+  listAll: async (key) => (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+  getBatch: async (key, ids) => (records[key] || []).filter((row) => ids.includes(row.record_id)).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
   table,
 });
 
@@ -27,15 +28,15 @@ const baseRecords = () => ({
   salesDetail: [{
     record_id: 'detail_1',
     fields: {
-      销售单号: ['order_1'], 编号: ['product_1'], 尺码: ['size_41'],
+      销售单号: [{ record_ids: ['order_1'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_41'] }],
       履约状态: '未交付', 库存数量: 1, 实收金额: 100, 销售日: '2026-10-18T10:00:00+08:00',
     },
   }],
   paymentRecord: [
-    { record_id: 'pay_1', fields: { 关联销售单: ['order_1'], 支付方式: ['method_1'], 交易金额: 40, 钱款状态: '已收款' } },
-    { record_id: 'pay_2', fields: { 关联销售单: ['order_1'], 支付方式: ['method_2'], 交易金额: 60, 钱款状态: '未收款' } },
+    { record_id: 'pay_1', fields: { 关联销售单: [{ record_ids: ['order_1'] }], 支付方式: [{ record_ids: ['method_1'] }], 交易金额: 40, 钱款状态: '已收款' } },
+    { record_id: 'pay_2', fields: { 关联销售单: [{ record_ids: ['order_1'] }], 支付方式: [{ record_ids: ['method_2'] }], 交易金额: 60, 钱款状态: '未收款' } },
   ],
-  product: [{ record_id: 'product_1', fields: { 货号: 'XHB8095', 颜色: ['color_1'] } }],
+  product: [{ record_id: 'product_1', fields: { 货号: 'XHB8095', 颜色: [{ record_ids: ['color_1'] }] } }],
   color: [{ record_id: 'color_1', fields: { 颜色: '黑色' } }],
   sizeManagement: [{ record_id: 'size_41', fields: { 尺码: 41 } }],
   paymentMethod: [
@@ -86,9 +87,9 @@ test('AC-DR2 同一销售单号（不同销售主表记录）合并成一组（�
   ];
   records.salesDetail.push({
     record_id: 'detail_2',
-    fields: { 销售单号: ['order_2'], 编号: ['product_2'], 尺码: ['size_42'], 履约状态: '已交付', 实收金额: 200, 销售日: '2026-10-19T10:00:00+08:00' },
+    fields: { 销售单号: [{ record_ids: ['order_2'] }], 编号: [{ record_ids: ['product_2'] }], 尺码: [{ record_ids: ['size_42'] }], 履约状态: '已交付', 实收金额: 200, 销售日: '2026-10-19T10:00:00+08:00' },
   });
-  records.paymentRecord.push({ record_id: 'pay_3', fields: { 关联销售单: ['order_2'], 支付方式: ['method_1'], 交易金额: 200, 钱款状态: '已收款' } });
+  records.paymentRecord.push({ record_id: 'pay_3', fields: { 关联销售单: [{ record_ids: ['order_2'] }], 支付方式: [{ record_ids: ['method_1'] }], 交易金额: 200, 钱款状态: '已收款' } });
   records.product.push({ record_id: 'product_2', fields: { 货号: 'QPL-8957', 颜色: ['color_2'] } });
   records.color.push({ record_id: 'color_2', fields: { 颜色: '咖色' } });
   records.sizeManagement.push({ record_id: 'size_42', fields: { 尺码: 42 } });

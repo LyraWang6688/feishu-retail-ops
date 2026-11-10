@@ -1,5 +1,5 @@
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
-const { REALM_TEXTS, REPLENISH_REALM, purchaseSizeLines, purchaseSizeGroups } = require('../scanPageRealm');
+const { REALM_TEXTS, purchaseSizeLines, purchaseSizeGroups } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { submitFeedbackAttrs } = require('./script');
 const { hiddenField, pageBuildField, specialFoldShellHtml } = require('./paymentBlock');

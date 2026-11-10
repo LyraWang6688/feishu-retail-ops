@@ -1,4 +1,5 @@
-const { linkedRecordIds } = require('./v1BitableGateway');
+const {} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -11,7 +12,7 @@ const readSaleLinkedRecord = async (gateway, tableKey, recordId, linkField, sale
     if (delay) await wait(delay);
     try {
       const record = await gateway.get(tableKey, recordId);
-      if (record && linkedRecordIds(record.fields?.[linkField]).includes(salesEntryRecordId)) return record;
+      if (record && strictLinkedRecordIds(record.fields?.[linkField]).includes(salesEntryRecordId)) return record;
       lastError = null;
     } catch (error) {
       lastError = error;

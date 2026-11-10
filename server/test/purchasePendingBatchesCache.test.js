@@ -30,6 +30,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'pendin
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { PurchasePendingBatchService } = require('../src/services/purchasePendingBatchService');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 const F = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
 
@@ -55,7 +56,7 @@ const makeRecords = () => ([
 const DETAIL = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
 /** 采购明细：供应商在明细的自动字段上（主表那一列已删）。 */
 const makeDetails = () => ([
-  { record_id: 'detail_1', fields: { [DETAIL.batchNo]: ['rec_pending_1'], [DETAIL.supplier]: '金猴' } },
+  { record_id: 'detail_1', fields: { [DETAIL.batchNo]: [{ record_ids: ['rec_pending_1'] }], [DETAIL.supplier]: '金猴' } },
 ]);
 
 const makeFake = (records = makeRecords(), details = makeDetails()) => {
@@ -67,14 +68,15 @@ const makeFake = (records = makeRecords(), details = makeDetails()) => {
       table: (key) => V1_BITABLE_SCHEMA.tables[key],
       listAll: async (key, options) => {
         calls.push({ kind: 'listAll', key, options });
-        return key === 'purchaseRequest' ? details : records;
+        const rows = key === 'purchaseRequest' ? details : records;
+        return rows.map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
       },
       listByFilter: async (key, filter, options) => {
         calls.push({ kind: 'listByFilter', key, filter, options });
         // 假飞书：**真的按过滤条件筛**（否则"过滤下推"这条 AC 就是假绿）。
         const wanted = String(filter || '').match(/\[([^\]]+)\]="([^"]*)"/);
-        if (!wanted) return records;
-        return records.filter((row) => String(row.fields?.[wanted[1]] ?? '') === wanted[2]);
+        const source = wanted ? records.filter((row) => String(row.fields?.[wanted[1]] ?? '') === wanted[2]) : records;
+        return source.map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
       },
     },
   };
@@ -158,7 +160,7 @@ test('AC-P5 内容与「整表读 + 本地过滤」的改前口径**逐条相同
     .map((record) => ({
       batchNo: String(record.fields?.[F.batchNo] ?? '').trim(),
       recordId: record.record_id,
-      suppliers: String(details.find((d) => (d.fields?.[DETAIL.batchNo] || []).includes(record.record_id))?.fields?.[DETAIL.supplier] ?? '').split(/[,，、;；]/).map((x) => x.trim()).filter(Boolean),
+      suppliers: String(details.find((d) => (d.fields?.[DETAIL.batchNo] || []).flatMap((cell) => (typeof cell === 'string' ? [cell] : (cell?.record_ids || []))).includes(record.record_id))?.fields?.[DETAIL.supplier] ?? '').split(/[,，、;；]/).map((x) => x.trim()).filter(Boolean),
       reportedAt: record.fields?.[F.createdAt] ?? '',
       quantity: String(record.fields?.[F.quantity] ?? '').trim(),
     }))

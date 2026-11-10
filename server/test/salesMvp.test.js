@@ -11,6 +11,7 @@ const { PaymentService } = require('../src/services/paymentService');
 const { SalesFollowupService } = require('../src/services/salesFollowupService');
 const { SalesProgressService } = require('../src/services/salesProgressService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 const fake = () => {
   const sizes = [38, 39, 40, 41, 42, 43, 44].map((size) => ({
@@ -24,8 +25,11 @@ const fake = () => {
   const batches = [];
   const gateway = {
     records, batches, table: (key) => V1_BITABLE_SCHEMA.tables[key], validateTables: async () => [],
-    listAll: async (key) => records.get(key) || [],
-    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
+    listAll: async (key) => (records.get(key) || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+    get: async (key, id) => {
+      const row = (records.get(key) || []).find((item) => item.record_id === id);
+      return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : undefined;
+    },
     create: async (key, values) => {
       const recordId = `rec_${++seq}`;
       const fields = Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)
@@ -46,7 +50,7 @@ const fake = () => {
       return created;
     },
     update: async (key, id, values) => {
-      const record = await gateway.get(key, id);
+      const record = (records.get(key) || []).find((row) => row.record_id === id);
       Object.assign(record.fields, Object.fromEntries(Object.entries(values)
         .map(([name, value]) => {
           const field = V1_BITABLE_SCHEMA.tables[key].fields[name];
@@ -185,7 +189,7 @@ test('deposit creates paid and unpaid receipts; follow-up 记一条新收款 + �
   const fresh = await gateway.get('paymentRecord', result.recordId);
   assert.equal(fresh.fields['钱款状态'], '已收款');
   assert.equal(fresh.fields['交易金额'], 140);
-  assert.equal(fresh.fields['支付方式'][0], 'method_微信', '方式照她说（`resolvePaymentMethod` 解析出来的记录）');
+  assert.equal(fresh.fields['支付方式'][0].record_ids[0], 'method_微信', '方式照她说（`resolvePaymentMethod` 解析出来的记录）');
   assert.equal(gateway.records.get('inventoryLedger'), undefined);
   const inventoryCalls = [];
   const delivery = new SalesDeliveryService({ gateway, inventory: {
@@ -359,8 +363,8 @@ test('confirmed sale delivery writes positive stock movement and removes exactly
     行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_38'], 所属状态: '门盒' } },
-    { record_id: 'sample_1', fields: { 编号: ['product_A100'], 尺码: ['size_38'], 所属状态: '样品' } },
+    { record_id: 'door_1', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒' } },
+    { record_id: 'sample_1', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '样品' } },
   ]);
   const sale = new SalesOrderService({ gateway, references });
   const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
@@ -386,7 +390,7 @@ test('a failed fulfillment-state write retries without deducting the same pair t
     行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_38'], 所属状态: '门盒' } },
+    { record_id: 'door_1', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒' } },
   ]);
   const sale = new SalesOrderService({ gateway, references });
   const posted = await sale.confirm({ salesEntryRecordId: 'order_1', items: [
@@ -425,9 +429,9 @@ test('one out-of-stock shoe does not prevent later shoes from delivering, and re
     行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_a', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '门盒' } },
-    { record_id: 'door_c', fields: { 编号: ['product_C300'], 尺码: ['size_43'], 所属状态: '门盒' } },
-    { record_id: 'door_d', fields: { 编号: ['product_D400'], 尺码: ['size_44'], 所属状态: '门盒' } },
+    { record_id: 'door_a', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_39'] }], 所属状态: '门盒' } },
+    { record_id: 'door_c', fields: { 编号: [{ record_ids: ['product_C300'] }], 尺码: [{ record_ids: ['size_43'] }], 所属状态: '门盒' } },
+    { record_id: 'door_d', fields: { 编号: [{ record_ids: ['product_D400'] }], 尺码: [{ record_ids: ['size_44'] }], 所属状态: '门盒' } },
   ]);
   const sale = new SalesOrderService({ gateway, references });
   const posted = await sale.confirm({ salesEntryRecordId: 'order_1',
@@ -454,7 +458,7 @@ test('one out-of-stock shoe does not prevent later shoes from delivering, and re
   assert.equal(gateway.records.get('inventoryLedger').length, 3);
 
   gateway.records.get('liveInventory').push({ record_id: 'door_b', fields: {
-    编号: ['product_B200'], 尺码: ['size_38'], 所属状态: '门盒',
+    编号: [{ record_ids: ['product_B200'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒',
   } });
   const retried = await delivery.deliver(request);
   assert.equal(retried.failures.length, 0);
@@ -532,8 +536,8 @@ test('temporary 1254607 after receipt creation retries reads and delivers once w
     行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '门盒' } },
-    { record_id: 'sample_1', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '样品' } },
+    { record_id: 'door_1', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_39'] }], 所属状态: '门盒' } },
+    { record_id: 'sample_1', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_39'] }], 所属状态: '样品' } },
   ]);
   const listAll = gateway.listAll;
   let pendingReads = 1;
@@ -703,7 +707,7 @@ test('② 库存真的扣完：sales.inventory.applied 带这次写入的流水 
     行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_40'], 所属状态: '门盒' } },
+    { record_id: 'door_1', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' } },
   ]);
   const logs = captureLogs();
   let ledgerId;
@@ -770,7 +774,7 @@ test('③ 部分扣：正向证据只列真的扣成的流水，并把失败条�
   } }]);
   // A100/39 有货；B200/38 一双都没有 → 那一条交付必然失败。
   gateway.records.set('liveInventory', [
-    { record_id: 'door_a', fields: { 编号: ['product_A100'], 尺码: ['size_39'], 所属状态: '门盒' } },
+    { record_id: 'door_a', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_39'] }], 所属状态: '门盒' } },
   ]);
   const logs = captureLogs();
   try {
@@ -806,7 +810,7 @@ test('④ ledger_ids 为空 ≠ 没扣库存：重复交付已交付的明细时
     行为编码: 'STOCK_SALE_DECREASE', 行为名称: '销售减少', 库存方向: '减少', 是否启用: true,
   } }]);
   gateway.records.set('liveInventory', [
-    { record_id: 'door_1', fields: { 编号: ['product_A100'], 尺码: ['size_40'], 所属状态: '门盒' } },
+    { record_id: 'door_1', fields: { 编号: [{ record_ids: ['product_A100'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' } },
   ]);
   const logs = captureLogs();
   try {

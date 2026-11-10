@@ -63,6 +63,7 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_return_mul
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'return_multi_secret';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { MULTI_ITEM_ORDER } = require('../src/config/multiItemOrder');
@@ -118,11 +119,11 @@ const SESSION_SECRET = 'return-multi-test-session-secret';
 /** 两个货品、**两个不同供应商**（AC-RS1/RS3 的输入）。 */
 const PRODUCT_A = {
   record_id: 'prod_A',
-  fields: { 编号: NUMBER_A, 货号: 'KA', 颜色: { text: '黑色', record_ids: ['c1'] }, 类别: '男', 单价: 399, 供应商: ['sup_a'] },
+  fields: { 编号: NUMBER_A, 货号: 'KA', 颜色: { text: '黑色', record_ids: ['c1'] }, 类别: '男', 单价: 399, 供应商: [{ record_ids: ['sup_a'] }] },
 };
 const PRODUCT_B = {
   record_id: 'prod_B',
-  fields: { 编号: NUMBER_B, 货号: 'KB', 颜色: { text: '黑色', record_ids: ['c1'] }, 类别: '男', 单价: 359, 供应商: ['sup_b'] },
+  fields: { 编号: NUMBER_B, 货号: 'KB', 颜色: { text: '黑色', record_ids: ['c1'] }, 类别: '男', 单价: 359, 供应商: [{ record_ids: ['sup_b'] }] },
 };
 const SIZE_RECORDS = [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
 const liveUnit = (id, product, size, state = '门盒') => ({
@@ -188,9 +189,12 @@ const createFakeGateway = (tables = seedTables()) => {
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
     listAll: async (key) => {
       calls.listAll.push(key);
-      return [...(tables[key] || [])];
+      return (tables[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
     },
-    get: async (key, id) => (tables[key] || []).find((record) => record.record_id === id) || null,
+    get: async (key, id) => {
+      const row = (tables[key] || []).find((record) => record.record_id === id);
+      return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null;
+    },
     findOneByText: async (key, semanticKey, expected) => {
       const name = V1_BITABLE_SCHEMA.tables[key].fields[semanticKey];
       const target = String(expected ?? '').trim();

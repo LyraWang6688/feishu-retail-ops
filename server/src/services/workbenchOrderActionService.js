@@ -21,13 +21,12 @@
  *    资金走向取自同一份配置的 `settlements`，退货回库状态取自 `restockStates`。
  *    这里**没有**任何中文业务字面量（除了"原话"前缀，见 `config/workbenchOrders`）。
  */
-const { V1BitableGateway, linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {V1BitableGateway, textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { AfterSalesService } = require('./afterSalesService');
 const { SecondDeliveryService } = require('./secondDeliveryService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const {
-  AFTER_SALES_ACTIONS, actionSpecOf, readAfterSalesConfig,
-} = require('../config/afterSales');
+const { actionSpecOf, readAfterSalesConfig } = require('../config/afterSales');
 const {
   readWorkbenchOrdersConfig, WORKBENCH_ORDERS_TEXTS: TEXTS,
 } = require('../config/workbenchOrders');
@@ -233,7 +232,7 @@ class WorkbenchOrderActionService {
     const record = await this.gateway.get('salesDetail', id);
     if (!record) throw badRequest('原销售明细不存在（可能已被删除）');
     const fields = this.gateway.table('salesDetail').fields;
-    const productIds = linkedRecordIds(record.fields?.[fields.product]);
+    const productIds = strictLinkedRecordIds(record.fields?.[fields.product]);
     const rawAmount = textValue(record.fields?.[fields.actualAmount]).trim();
     const amount = rawAmount === '' ? null : Number(rawAmount);
     return {

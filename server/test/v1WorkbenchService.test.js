@@ -13,9 +13,9 @@ const gatewayFor = (records) => ({
 test('live inventory resolves sizes from the link and filters by the numeric size', async () => {
   const gateway = gatewayFor({
     liveInventory: [
-      { record_id: 'l1', fields: { 编号: ['p1'], 尺码: ['size_36'], 所属状态: '门盒' } },
-      { record_id: 'l2', fields: { 编号: ['p1'], 尺码: ['size_37'], 所属状态: '门盒' } },
-      { record_id: 'l3', fields: { 编号: ['p1'], 尺码: ['size_37'], 所属状态: '门盒' } },
+      { record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_36'] }], 所属状态: '门盒' } },
+      { record_id: 'l2', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_37'] }], 所属状态: '门盒' } },
+      { record_id: 'l3', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_37'] }], 所属状态: '门盒' } },
     ],
     product: [{ record_id: 'p1', fields: { 编号: '93827黑' } }],
   });

@@ -58,16 +58,16 @@ const makeGateway = (overrides = {}) => {
     detail: {
       record_id: DETAIL,
       fields: {
-        销售单号: [{ id: ENTRY }],
-        编号: [{ id: PRODUCT }],
-        尺码: [{ id: SIZE_ID }],
+        销售单号: [{ record_ids: [ENTRY] }],
+        编号: [{ record_ids: [PRODUCT] }],
+        尺码: [{ record_ids: [SIZE_ID] }],
         履约状态: '已交付',
         实收金额: 180,
       },
     },
     size: { record_id: SIZE_ID, fields: { 尺码: 40 } },
     payments: [
-      { record_id: 'pay_1', fields: { 关联销售单: [{ id: ENTRY }], 交易明细ID: `${ORDER_NO}-收款-01`, 交易金额: 180, 钱款状态: '已收款' } },
+      { record_id: 'pay_1', fields: { 关联销售单: [{ record_ids: [ENTRY] }], 交易明细ID: `${ORDER_NO}-收款-01`, 交易金额: 180, 钱款状态: '已收款' } },
     ],
     calls: { create: [], update: [], listAll: [] },
   };
@@ -150,7 +150,9 @@ test('AC-RW1 直接退款：明细已退货 + 库存销售增加落门盒 + 新�
   assert.equal(inventory.calls.length, 1);
   assert.deepEqual(inventory.calls[0].input, {
     kind: 'STOCK_SALE_INCREASE', productRecordId: PRODUCT, size: 40,
-    state: '门盒', quantity: 1, sourceRecordId: DETAIL,
+    state: '门盒', quantity: 1,
+    // 本地幂等键用明细 id；远端「库存流水.关联销售」用主表 id（见 movements.ledgerLink）
+    sourceRecordId: DETAIL, salesEntryRecordId: ENTRY,
   });
 
   const created = state.calls.create.find((item) => item.key === 'paymentRecord');

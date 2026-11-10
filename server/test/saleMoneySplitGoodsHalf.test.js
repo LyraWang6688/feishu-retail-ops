@@ -64,6 +64,7 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_ms_test';
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'ms_secret';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { SalesStatusWriter } = require('../src/services/salesStatusWriter');
 const {
@@ -106,10 +107,10 @@ const makeGateway = ({ master = MASTER() } = {}) => {
     tables, writes,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
     validateTables: async () => [],
-    listAll: async (key) => [...(tables[key] || [])],
+    listAll: async (key) => (tables[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
     listByFilter: async () => [],
     findOneByText: async () => null,
-    get: async (key, id) => (tables[key] || []).find((row) => row.record_id === id) || null,
+    get: async (key, id) => { const row = (tables[key] || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
     create: async (key, values) => {
       if (gateway.failCreateOn && gateway.failCreateOn(key, values)) throw new Error('假的写入失败');
       const fields = physicalOf(key, values);

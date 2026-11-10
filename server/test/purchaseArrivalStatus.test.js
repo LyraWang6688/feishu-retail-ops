@@ -93,7 +93,7 @@ test('⑦ 新建「报货批次」记录时显式写「未到货」（值来自�
     gateway,
     store,
     references: {
-      resolveProduct: async () => ({ recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088黑', 供应商: ['sup_1'] } } }),
+      resolveProduct: async () => ({ recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088黑', 供应商: [{ record_ids: ['sup_1'] }] } } }),
       resolveSupplier: async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '金猴' } } }),
     },
     inventory: { applyPurchase: async () => ({}) },
@@ -167,7 +167,7 @@ const makeArrivalHarness = (options = {}) => {
       fields: { 报货批次号: BATCH_NO, 幂等键: 'k1', 到货状态: DEFAULT_PURCHASE_ARRIVAL_STATUS_PENDING },
     }],
     purchaseRequest: [
-      { record_id: 'req_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: ['prod_1'], 尺码: sizeLink(38), 数量: 2 } },
+      { record_id: 'req_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [{ record_ids: ['prod_1'] }], 尺码: sizeLink(38), 数量: 2 } },
     ],
     // ⚠️ 这里**故意没有** `purchaseArrival`：那张表已被业务负责人整个删除。
     purchaseInbound: [],

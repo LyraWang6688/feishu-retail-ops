@@ -14,7 +14,6 @@
  * 🔴 重试只更新同一条任务（`job_id` 由幂等键稳定派生），不新建任务。
  */
 const crypto = require('node:crypto');
-const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const {
   ASYNC_JOBS, ASYNC_JOB_STATUS, TERMINAL_STATUSES, JOB_ID_PREFIX,

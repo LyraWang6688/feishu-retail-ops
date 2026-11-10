@@ -1,4 +1,5 @@
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
 // ⭐ 2026-10-08：售后"退货改原收款状态"那一支会往「收款明细.收款状态」写 **已退款 / 已留存**
@@ -112,10 +113,10 @@ class SalesProgressService {
     const detailFields = this.gateway.table('salesDetail').fields;
     const paymentFields = this.gateway.table('paymentRecord').fields;
     const detailsById = new Map(allDetails.filter((record) =>
-      linkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId))
+      strictLinkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId))
       .map((record) => [record.record_id, record]));
     const receiptsById = new Map(allReceipts.filter((record) =>
-      linkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(salesEntryRecordId))
+      strictLinkedRecordIds(record.fields?.[paymentFields.salesEntry]).includes(salesEntryRecordId))
       .map((record) => [record.record_id, record]));
     // Bitable's list endpoint can lag behind a successful create. Read the
     // record IDs returned by that create directly before deriving statuses.

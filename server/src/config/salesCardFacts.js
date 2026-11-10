@@ -204,7 +204,6 @@ module.exports = {
   PAYMENT_LINE_KEY,
   UNDETERMINED_TEXT_KEY,
   PENDING_SETTLEMENT_STATUS,
-  SALES_CARD_FACTS_DEFAULTS: DEFAULTS,
   resolveSalesCardFactsConfig,
   salesCardFactsFor,
   yuanText,

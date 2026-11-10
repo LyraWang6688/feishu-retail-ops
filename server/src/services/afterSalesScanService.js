@@ -29,7 +29,8 @@ const {
   SCAN_CACHE, SCAN_EXCLUDED_FULFILLMENT, SCAN_FIELD_KEYS, SCAN_TEXTS, resolveScanWindowDays,
 } = require('../config/afterSalesScan');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const { textValue } = require('./v1BitableGateway');
+const { salesLinkRecordIds } = require('./afterSalesLinkIds');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { createScanPageCache } = require('./scanPageCache');
 const { lookupWindowStart } = require('../utils/salesDateWindows');
@@ -137,7 +138,7 @@ class AfterSalesScanService {
     const pending = [];
     for (const detail of details) {
       const fields = detail.fields || {};
-      if (!linkedRecordIds(fields[detailFields.product]).includes(productId)) continue;
+      if (!salesLinkRecordIds(fields[detailFields.product]).includes(productId)) continue;
       // 🔴 「销售日」**只认销售明细的 `销售日`**（业务负责人 2026-10-29：「不用你做兜底」）——
       //   没有销售日的行**不进候选**（单独计数，如实回给页面），绝不拿「录单日」顶替。
       //   ⚠️ 窗口判断放在「未交付 / 已售后」之前：这样后面两个计数是**近 N 天窗口内**的
@@ -151,7 +152,7 @@ class AfterSalesScanService {
         excluded.byFulfillment[fulfillmentStatus] = (excluded.byFulfillment[fulfillmentStatus] || 0) + 1;
         continue;
       }
-      const entryId = linkedRecordIds(fields[detailFields.salesEntry])[0];
+      const entryId = salesLinkRecordIds(fields[detailFields.salesEntry])[0];
       if (!entryId) { excluded.notPosted += 1; continue; }
       pending.push({ detail, fields, entryId, salesDate });
     }
@@ -179,7 +180,7 @@ class AfterSalesScanService {
         sales_date: salesDate,
         size: Number.isFinite(sizeNumber) && sizeNumber > 0 ? sizeNumber : null,
         // 关联 record_id 一起带上：以后换货/赔货要按尺码写库时直接用，不用再反查一次。
-        size_record_id: linkedRecordIds(sizeCell)[0] || '',
+        size_record_id: salesLinkRecordIds(sizeCell)[0] || '',
         total_amount: numberOf(entry.fields?.[entryFields.totalAmount]),
         actual_amount: numberOf(fields[detailFields.actualAmount]),
         fulfillment_status: asText(textValue(fields[detailFields.fulfillmentStatus])),

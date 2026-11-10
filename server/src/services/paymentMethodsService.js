@@ -10,7 +10,8 @@
  * 🔴 本文件**不再维护自己的 cache**（否则事件失效会被外层旧列表挡住）。
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { textValue, linkedRecordIds } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { getConfigRows } = require('./configTableCache');
 const { PAYMENT_METHODS } = require('../config/paymentMethods');
 const { CONFIG_TABLES } = require('../config/configTables');
@@ -70,7 +71,7 @@ const createPaymentMethodsService = (gateway, options = {}) => {
       detailed.push({
         name: value,
         recordId: String(row?.record_id || ''),
-        voucherRecordId: voucherFieldName ? String(linkedRecordIds(row?.fields?.[voucherFieldName])[0] || '') : '',
+        voucherRecordId: voucherFieldName ? String(strictLinkedRecordIds(row?.fields?.[voucherFieldName])[0] || '') : '',
         refundable,
       });
     }

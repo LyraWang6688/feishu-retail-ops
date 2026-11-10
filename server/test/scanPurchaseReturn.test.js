@@ -75,6 +75,7 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_retur
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_return_test_secret';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { createScanWriteService } = require('../src/services/scanWriteService');
@@ -101,14 +102,14 @@ const PRODUCT = {
     颜色: { text: '黑色', record_ids: ['color_black'] },
     类别: '男',
     单价: 399,
-    供应商: ['sup_1'],
+    供应商: [{ record_ids: ['sup_1'] }],
   },
 };
 const SIZE_RECORDS = [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
 /** 一双「实时库存」记录（三种状态都要能被采购退货扣掉）。 */
 const liveUnit = (id, size, state = '门盒') => ({
   record_id: id,
-  fields: { 编号: ['prod_1'], 尺码: [`size_${size}`], 所属状态: state },
+  fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [`size_${size}`], 所属状态: state },
 });
 
 const seedTables = (overrides = {}) => ({
@@ -162,9 +163,9 @@ const createFakeGateway = (tables = seedTables()) => {
     writes,
     _tables: tables,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
-    listAll: async (key) => [...(tables[key] || [])],
+    listAll: async (key) => (tables[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
     listByFilter: async () => { throw new Error('fake gateway 不支持 filter'); },
-    get: async (key, id) => (tables[key] || []).find((record) => record.record_id === id) || null,
+    get: async (key, id) => { const row = (tables[key] || []).find((record) => record.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
     findOneByText: async (key, semanticKey, expected) => {
       const name = V1_BITABLE_SCHEMA.tables[key].fields[semanticKey];
       const target = String(expected ?? '').trim();
