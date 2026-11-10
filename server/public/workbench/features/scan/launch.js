@@ -101,8 +101,8 @@ const reportLaunch = (realm, result, startedAt) => {
 };
 
 const cardsHtml = (cards = []) => cards.map((card) => {
-  const body = `<span class="entry-card-icon">${escapeHtml(card.icon || '')}</span>
-      <span class="entry-card-body"><strong>${escapeHtml(card.title || '')}</strong></span>`;
+  const body = `<span class="icon">${escapeHtml(card.icon || '')}</span>
+      <h3>${escapeHtml(card.title || '')}</h3>`;
   if (card.disabled) {
     return `<div class="entry-card disabled-card" aria-disabled="true" data-scan-disabled="true">${body}</div>`;
   }

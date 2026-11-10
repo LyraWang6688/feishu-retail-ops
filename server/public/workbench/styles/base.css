@@ -137,11 +137,6 @@ summary::marker { color: var(--text-muted); }
 }
 .entry-card:hover:not(.disabled-card) { border-color: var(--primary); background: var(--primary-soft); }
 .entry-card .icon { font-size: var(--font-size-2xl); }
-/* 「手工调整」那两张卡的尺寸 = 入口卡统一模板：旧的 entry-card-icon / entry-card-body
-   也按同一套字号渲染，避免各页卡片一大一小。 */
-.entry-card .entry-card-icon { font-size: var(--font-size-2xl); line-height: 1; }
-.entry-card .entry-card-body { display: inline-flex; align-items: baseline; }
-.entry-card .entry-card-body strong { font-size: var(--font-size-lg); font-weight: var(--weight-bold); }
 .entry-card h3 { margin: 0; font-size: var(--font-size-lg); }
 .entry-card p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
 .entry-card .arrow { margin-top: auto; padding-top: var(--space-2); color: var(--primary); font-weight: var(--weight-bold); }
@@ -150,6 +145,8 @@ summary::marker { color: var(--text-muted); }
 /* 领域/扫码入口卡：图标 + 文字同一行、整体居中 */
 .domain-cards .entry-card { flex-direction: row; align-items: center; justify-content: center; text-align: center; gap: var(--space-2); }
 .domain-cards .entry-card .entry-card-body { text-align: center; }
+.purchase-supplier-card .entry-card-body { display: block; }
+.purchase-supplier-card .entry-card-body strong { font-size: var(--font-size-lg); }
 
 /* ── 列表 / 指标 / 标签 ───────────────────────────────────────────────────── */
 .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-4) 0; }
