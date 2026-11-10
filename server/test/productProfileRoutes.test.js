@@ -36,7 +36,7 @@ const appWith = (gateway) => {
 
 test('AC-PP1 搜索：货号 / 编号模糊匹配；空搜索不返回结果', async () => {
   const gateway = { listAll: async () => [
-    product('rec1', '906|黑色|男', '906', '黑色', '男', '成本'),
+    product('rec1', '906|黑色|男', '906', '黑色', '男', '成本', 'file_1'),
     product('rec2', '71202|黑色|男', '71202', '黑色', '男', '齐备'),
   ] };
   const { server, port } = await listen(appWith(gateway));
@@ -45,6 +45,7 @@ test('AC-PP1 搜索：货号 / 编号模糊匹配；空搜索不返回结果', a
     const body = await (await fetch(`http://127.0.0.1:${port}/products/search?q=906`)).json();
     assert.equal(body.items.length, 1);
     assert.equal(body.items[0].number, '906|黑色|男');
+    assert.equal(body.items[0].hasSampleImage, true);
     assert.equal(body.items[0].imageUrl, '/api/workbench/products/rec1/sample-image');
   } finally { server.close(); }
 });

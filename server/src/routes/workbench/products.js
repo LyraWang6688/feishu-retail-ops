@@ -30,14 +30,17 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   const itemOf = (row) => {
     const fields = row?.fields || {};
     const id = String(row?.record_id || '');
+    const images = fields[field('sampleImage')];
+    const hasSampleImage = Array.isArray(images) && images.length > 0;
     return {
       recordId: id,
       number: textValue(fields[field('number')]).trim(),
       itemNo: textValue(fields[field('itemNo')]).trim(),
       color: textValue(fields[field('color')]).trim(),
       category: textValue(fields[field('category')]).trim(),
+      hasSampleImage,
       // 图片始终走后端代理，不把飞书附件 token / 临时 URL 暴露给浏览器。
-      imageUrl: id ? `/api/workbench/products/${encodeURIComponent(id)}/sample-image` : '',
+      imageUrl: hasSampleImage && id ? `/api/workbench/products/${encodeURIComponent(id)}/sample-image` : '',
     };
   };
 

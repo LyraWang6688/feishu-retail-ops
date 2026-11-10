@@ -6,6 +6,7 @@
  */
 import { api } from '../../core/api-client.js';
 import { PRODUCT_PROFILE_API, PRODUCT_PROFILE_TEXTS as T } from '../../config/productProfile.js';
+import { showToast } from '../shared/toast.js';
 import { bindDomainAction } from './dataConfigAction.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, k) => (values[k] == null ? '' : String(values[k])));
@@ -70,6 +71,7 @@ export function createProductProfileModule() {
       input?.addEventListener('input', () => {
         clearTimeout(timer);
         const q = input.value.trim();
+        if (q) showToast(T.searchingToast);
         timer = setTimeout(() => loadSearch(host, q), 250);
       });
       host.querySelector('[data-pp-results]')?.addEventListener('click', (event) => {
@@ -102,9 +104,18 @@ async function loadSearch(host, q) {
     empty.textContent = T.searchNone;
     results.innerHTML = items.map((item) => `
       <div class="pp-row">
-        ${item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" src="${esc(item.imageUrl)}" alt="样例图">` : '<span class="pp-thumb pp-thumb-empty">无图</span>'}
+        ${item.hasSampleImage && item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
         <div class="pp-meta"><b>${esc(item.number)}</b><span>货号 ${esc(item.itemNo)} · 颜色 ${esc(item.color)} · 类别 ${esc(item.category)}</span></div>
       </div>`).join('');
+    results.querySelectorAll('img[data-pp-thumb]').forEach((img) => {
+      img.addEventListener('error', () => {
+        img.hidden = true;
+        const fallback = document.createElement('span');
+        fallback.className = 'pp-thumb pp-thumb-empty';
+        fallback.textContent = T.noImage;
+        img.replaceWith(fallback);
+      }, { once: true });
+    });
   } catch {
     empty.hidden = false;
     empty.textContent = T.searchFailed;

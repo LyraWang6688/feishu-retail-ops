@@ -14,6 +14,8 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   accessoryTitle: '配品配置',
   accessoryStatus: '待建设',
   searchPlaceholder: '录入重复校验',
+  searchingToast: '正在查询中…',
+  noImage: '无样例图',
   searchEmpty: '输入货号或编号后显示搜索结果。',
   searchNone: '没有匹配的货品，可以直接点「去上新」。',
   searchFound: '找到 {count} 条',
