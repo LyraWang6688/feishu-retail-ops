@@ -120,3 +120,46 @@ test('两个接口都在飞书身份闸门之内：未启用认证 503、未登�
     assert.equal((await response.json()).auth_required, true);
   });
 });
+
+test('单双调整保存：先本地校验 → 入队 → 立即 202（后台再写库存）', async () => {
+  const calls = [];
+  const asyncJobs = {
+    jobIdFor: (type, key) => `${type}_${key}`,
+    enqueue: async (input) => { calls.push({ kind: 'enqueue', input }); },
+    run: ({ jobId, run }) => { calls.push({ kind: 'run', jobId }); return run().catch(() => {}); },
+  };
+  const pairService = { adjustPairs: async (input) => { calls.push({ kind: 'adjust', input }); return { changed: 1 }; } };
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => { req.workbenchUser = { open_id: 'ou_test' }; next(); });
+  app.use('/api/workbench/inventory/adjustments', createInventoryAdjustmentRouter({ asyncJobs, pairService }));
+  await withServer(app, async (base) => {
+    const response = await post(base, '/api/workbench/inventory/adjustments/pairs', {
+      productRecordId: 'p1', requestId: 'req-1',
+      rows: [{ size: 42, state: '门盒', quantity: 1 }],
+    });
+    assert.equal(response.status, 202);
+    const body = await response.json();
+    assert.equal(body.queued, true);
+    assert.ok(body.job_id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(calls.some((call) => call.kind === 'enqueue'));
+    assert.ok(calls.some((call) => call.kind === 'adjust'));
+  });
+});
+
+test('单双调整保存：本地行不合法 ⇒ 400，不入队', async () => {
+  const calls = [];
+  const asyncJobs = { jobIdFor: () => 'job', enqueue: async () => { calls.push('enqueue'); }, run: async () => {} };
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => { req.workbenchUser = { open_id: 'ou_test' }; next(); });
+  app.use('/api/workbench/inventory/adjustments', createInventoryAdjustmentRouter({ asyncJobs, pairService: { adjustPairs: async () => ({}) } }));
+  await withServer(app, async (base) => {
+    const response = await post(base, '/api/workbench/inventory/adjustments/pairs', {
+      productRecordId: 'p1', requestId: 'req-1', rows: [{ size: 0, state: '仓库', quantity: 1 }],
+    });
+    assert.equal(response.status, 400);
+  });
+  assert.equal(calls.length, 0);
+});
