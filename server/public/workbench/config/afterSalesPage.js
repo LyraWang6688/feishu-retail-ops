@@ -66,6 +66,7 @@ export const AFTER_SALES_PAGE = {
   // 换货弹窗
   exchangeTitle: '换货',
   exchangeModeLabel: '怎么换',
+  exchangeModeRequired: '请先选换尺码还是换款式',
   exchangeSameItem: '换尺码',
   exchangeNewItem: '换款式',
   exchangeSizeLabel: '新尺码',

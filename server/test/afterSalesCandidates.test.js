@@ -138,3 +138,24 @@ test('AC-LP4 ⭐⭐ 选中的那条卡片原地变成三个按钮（换货 · �
   assert.match(css, /\.candidate-card-actions\s*\{[^}]*display:\s*flex/, '三个按钮在卡片里横向排（flex）');
 })
 
+
+/**
+ * ⭐ 2026-11-11 线上反馈（截图）：退货弹窗点「确认」后，按钮下面出现红字「怎么换」。
+ *
+ * 根因：点击处理里换货那段校验**没有先判 action === 'exchange'** ——
+ *   退货弹窗里的任何点击都会掉进换货校验，把换货弹窗的标签「怎么换」当错误文案显示。
+ * 判据（反向钉住）：① 换货校验前必须有 action 守卫；② 「怎么换」只能做无障碍标签，
+ *   不能再被当错误文案（`modalError(exchangeModeLabel)` 一旦回来 ⇒ 红）。
+ */
+test('AC-AS-ERR ⭐ 退货弹窗不会再显示「怎么换」（换货校验只在换货弹窗）', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  assert.match(config, /exchangeModeRequired: '请先选换尺码还是换款式'/, '换货缺模式要有自己的错误文案');
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  const guard = page.indexOf("modal?.action !== 'exchange'");
+  const err = page.indexOf('modalError(AFTER_SALES_PAGE.exchangeModeRequired)');
+  assert.ok(guard > 0, '换货校验前必须先判 action === exchange（退货弹窗点确认不能再掉进来）');
+  assert.ok(err > guard, '换货缺模式错误必须在 action 守卫之后');
+  assert.equal((page.match(/exchangeModeLabel/g) || []).length, 1,
+    '「怎么换」只能出现在换货弹窗的 aria-label 里，不能再当错误文案');
+});

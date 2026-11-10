@@ -363,8 +363,12 @@ export function mountAfterSalesPage(container, options = {}) {
       renderModal();
       return;
     }
+    // 🔴 2026-11-11：**只有换货弹窗**才走下面这段换货校验。
+    //    改前这里没有 action 守卫 ⇒ 退货弹窗里点「确认」也会掉进这段，
+    //    在确认按钮下面弹出「怎么换」（线上截图）。
+    if (modal?.action !== 'exchange') return;
     if (modal.kind !== 'same' && modal.kind !== 'new') {
-      modalError(AFTER_SALES_PAGE.exchangeModeLabel);
+      modalError(AFTER_SALES_PAGE.exchangeModeRequired);
       return;
     }
     if (modal.kind === 'same') {
