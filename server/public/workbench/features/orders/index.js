@@ -93,8 +93,8 @@ export function ordersSectionCardsHtml(orders = []) {
   const listAll = Array.isArray(orders) ? orders : [];
   return `<div class="orders-section-cards" data-view="orders-section-cards">${SALES_SECTIONS.map((section) => {
     return `<button class="entry-card orders-section-card" type="button" data-orders-section="${escapeHtml(section.key)}" data-tap-target="orders-section:${escapeHtml(section.key)}">
-      <span class="entry-card-icon">${escapeHtml(section.icon || '')}</span>
-      <span class="entry-card-body"><strong>${escapeHtml(section.label)}</strong></span>
+      <span class="icon">${escapeHtml(section.icon || '')}</span>
+      <h3>${escapeHtml(section.label)}</h3>
     </button>`;
   }).join('')}</div>`;
 }
