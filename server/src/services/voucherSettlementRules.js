@@ -2,7 +2,6 @@
 
 /** 券结算规则：读「团购券管理.结算周期」+「支付方式管理.团购券管理」并解析天数。 */
 const { getConfigRows } = require('./configTableCache');
-const {} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 
 const textOf = (value) => {

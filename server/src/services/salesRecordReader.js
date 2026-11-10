@@ -1,4 +1,3 @@
-const {} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
