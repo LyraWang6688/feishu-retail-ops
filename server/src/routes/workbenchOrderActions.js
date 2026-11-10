@@ -27,6 +27,7 @@ const { AfterSalesScanService } = require('../services/afterSalesScanService');
 const { createScanPageService } = require('../services/scanPageService');
 const { saleSizeGroups } = require('../views/scanPageRealm');
 const { AfterSalesReturnService } = require('../services/afterSalesReturnService');
+const { AfterSalesExchangeService } = require('../services/afterSalesExchangeService');
 const { createAfterSalesAsyncService } = require('../services/afterSalesAsyncService');
 const { getAsyncJobService } = require('../services/asyncJobRuntime');
 const { createPaymentMethodsService } = require('../services/paymentMethodsService');
@@ -152,6 +153,13 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
     if (!returnService) returnService = new AfterSalesReturnService({ gateway: options.gateway });
     return returnService;
   };
+  let exchangeService = options.afterSalesExchange || null;
+  const resolveExchangeService = () => {
+    if (!exchangeService) {
+      exchangeService = new AfterSalesExchangeService({ gateway: options.gateway });
+    }
+    return exchangeService;
+  };
   let jobs = options.afterSalesJobs || null;
   const resolveJobs = () => {
     if (!jobs) {
@@ -159,7 +167,10 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
         dir: options.afterSalesJobsDir,
         // #948：统一 job（状态 / 重试分类 / 失败通知发运营群）。用例注入 `options.asyncJobs`。
         asyncJobs: options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService(),
-        execute: (payload, execOptions) => resolveReturnService().execute(payload, execOptions),
+        // 退货 / 换货共用同一条售后异步队列（payload.action 决定执行器）。
+        execute: (payload, execOptions) => (payload?.action === 'exchange'
+          ? resolveExchangeService().execute(payload, execOptions)
+          : resolveReturnService().execute(payload, execOptions)),
         onSettled: () => resolveScanService().invalidateCache(),
       });
       jobs.start().catch((error) => logError('workbench.orders.after_sales.failed', {
@@ -220,6 +231,44 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
     } catch (error) {
       logError('workbench.orders.after_sales.failed', {
         request_id: req.requestId, reason: 'submit', error: error.message,
+      });
+      const message = error?.statusCode === 400 ? error.message : AFTER_SALES_DERIVED.texts.submitFailed;
+      return res.redirect(303, `${backTo}${backTo.includes('?') ? '&' : '?'}err=${encodeURIComponent(message)}`);
+    }
+  });
+
+  // 提交换货：表单 POST → 本地形状校验（不读飞书）→ 入队 → 立刻 303 统一 toast。
+  //   · 换尺码：scenario=same + newSize（金额 = 原明细金额，后台算）；
+  //   · 换款式：scenario=new + newProductRecordId/newSize/newAmount（她填的实收金额）+
+  //             diffPaymentMethod（有差价时她选的补/退方式）。
+  router.post('/sales/after-sales/exchange/submit', async (req, res) => {
+    const body = req.body || {};
+    const productRecordId = String(body.productRecordId || '').trim();
+    const backTo = landingPath(productRecordId);
+    const payload = {
+      action: 'exchange',
+      requestId: String(body.requestId || '').trim(),
+      salesEntryRecordId: String(body.salesEntryRecordId || '').trim(),
+      detailRecordId: String(body.detailRecordId || '').trim(),
+      scenario: String(body.scenario || '').trim(),
+      newProductRecordId: String(body.newProductRecordId || '').trim(),
+      newSize: String(body.newSize || '').trim(),
+      newAmount: String(body.newAmount || '').trim(),
+      diffPaymentMethod: String(body.diffPaymentMethod || '').trim(),
+      productRecordId,
+    };
+    try {
+      const shaped = resolveExchangeService().validateShape(payload);
+      await resolveJobs().enqueue({
+        type: 'exchange', requestId: shaped.requestId, payload,
+        correlation: tapIdFromRequest(req),
+        ownerOpenId: req.workbenchUser?.open_id || '',
+        operatorName: req.workbenchUser?.name || '',
+      });
+      return redirectWithSubmitToast(res, {});
+    } catch (error) {
+      logError('workbench.orders.after_sales.failed', {
+        request_id: req.requestId, reason: 'exchange_submit', error: error.message,
       });
       const message = error?.statusCode === 400 ? error.message : AFTER_SALES_DERIVED.texts.submitFailed;
       return res.redirect(303, `${backTo}${backTo.includes('?') ? '&' : '?'}err=${encodeURIComponent(message)}`);

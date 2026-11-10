@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **449** 个事件。按前缀分组：
+共 **451** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -568,7 +568,9 @@
 | `workbench.lark.jsapi_signature.failed` | 1 | src/routes/workbench.js |
 | `workbench.lark.jsapi_signature.ok` | 1 | src/routes/workbench.js |
 | `workbench.orders.after_sales.completed` | 3 | src/services/afterSalesAsyncService.js<br>src/services/afterSalesReturnService.js<br>src/services/workbenchOrderActionService.js |
-| `workbench.orders.after_sales.failed` | 5 | src/routes/workbenchOrderActions.js<br>src/services/afterSalesAsyncService.js |
+| `workbench.orders.after_sales.exchange.completed` | 1 | src/services/afterSalesExchangeService.js |
+| `workbench.orders.after_sales.exchange.total_missing` | 1 | src/services/afterSalesExchangeService.js |
+| `workbench.orders.after_sales.failed` | 6 | src/routes/workbenchOrderActions.js<br>src/services/afterSalesAsyncService.js |
 | `workbench.orders.second_delivery.completed` | 1 | src/services/workbenchOrderActionService.js |
 | `workbench.procurement.new_products.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.replenish.failed` | 1 | src/routes/workbench/purchase.js |

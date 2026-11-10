@@ -25,16 +25,18 @@ const VIEW = {
 const writeOf = () => ({ ...SCAN_WRITE, draft: { lines: [] }, postAction: '/r/rec1', saleKey: 'k' });
 const render = (flow, flowContext) => saleFormHtml(VIEW, writeOf(), { flow, flowContext });
 
-test('AC-FEP1 换款式货品页：无金额输入 / 无加一双 / 提交文案与提示来自 flow / 上下文隐藏字段', () => {
+test('AC-FEP1 换款式货品页：要显示实收金额 / 无加一双 / 提交文案与提示来自 flow / 上下文隐藏字段', () => {
   const flow = getFlow('afterSalesExchange');
   const html = render(flow, {
-    requestId: 'r1', salesEntryRecordId: 'e1', detailRecordId: 'd1', originalAmount: 100,
+    requestId: 'r1', salesEntryRecordId: 'e1', detailRecordId: 'd1', originalAmount: 100, productRecordId: 'p1',
   });
-  assert.equal(html.includes('name="amount"'), false, '换款式金额按货品单价算 ⇒ 页面上没有金额输入');
+  assert.equal(html.includes('name="amount"'), true, '2026-11-11：换款式要显示「这一双的实收金额」输入');
   assert.equal(html.includes('value="add_line"'), false, '换货固定 1 双 ⇒ 不出现"再加一双"');
   assert.match(html, /提交换货/, '提交按钮文案来自 flow 配置');
   assert.match(html, /售后换款式/, '顶部提示来自 flow 配置');
-  for (const key of ['requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount']) {
+  assert.match(html, /data-exchange-form="1"/, '换款式表单带差价弹窗钩子');
+  assert.match(html, /data-view="exchange-diff"/, '换款式页要带「差价弹窗」脚本');
+  for (const key of ['requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount', 'productRecordId']) {
     assert.match(html, new RegExp(`name="ctx_${key}"`), `上下文 ${key} 要用隐藏字段带进 POST`);
   }
 });

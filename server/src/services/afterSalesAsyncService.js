@@ -31,11 +31,17 @@ const STATUS = Object.freeze({
 const jobIdOf = (type, requestId) => jobIdFor(ASYNC_JOB_TYPES.AFTER_SALES, `${type}:${requestId}`);
 
 /** 通知要用的"非敏感元数据"（拿不到就不写，**不编** —— 文档 6.3）。 */
+const isExchange = (payload) => String(payload?.action || '') === 'exchange';
+const unifiedType = (payload) => (isExchange(payload)
+  ? ASYNC_JOB_TYPES.AFTER_SALES_EXCHANGE
+  : ASYNC_JOB_TYPES.AFTER_SALES);
 const unifiedMeta = ({ type, key, payload }) => ({
   request_id: key,
   action: String(type || ''),
   order_no: String(payload?.salesEntryOrderNo || ''),
-  step: ASYNC_JOBS.texts.stepLabels.afterSales,
+  step: isExchange(payload)
+    ? ASYNC_JOBS.texts.stepLabels.afterSalesExchange
+    : ASYNC_JOBS.texts.stepLabels.afterSales,
 });
 
 /**
@@ -173,7 +179,7 @@ const createAfterSalesAsyncService = ({
     if (existing) {
       // 统一 job 若因升级前入队而不存在 ⇒ 补建（幂等；不覆盖任何已冻结字段）
       await mirror(() => asyncJobs?.enqueue({
-        jobId, type: ASYNC_JOB_TYPES.AFTER_SALES, payload, ownerOpenId, operatorName,
+        jobId, type: unifiedType(payload), payload, ownerOpenId, operatorName,
         meta: unifiedMeta({ type, key, payload }),
       }));
       return { job: existing, created: false };
@@ -183,7 +189,7 @@ const createAfterSalesAsyncService = ({
       payload, correlation: correlation || null, attempts: 0, last_error: '',
     });
     await mirror(() => asyncJobs?.enqueue({
-      jobId, type: ASYNC_JOB_TYPES.AFTER_SALES, payload, ownerOpenId, operatorName,
+      jobId, type: unifiedType(payload), payload, ownerOpenId, operatorName,
       meta: unifiedMeta({ type, key, payload }),
     }));
     schedule(jobId);

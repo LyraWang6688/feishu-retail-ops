@@ -419,6 +419,8 @@ const EVENTS = Object.freeze([
   'workbench.lark.jsapi_signature.failed',
   'workbench.lark.jsapi_signature.ok',
   'workbench.orders.after_sales.completed',
+  'workbench.orders.after_sales.exchange.completed',
+  'workbench.orders.after_sales.exchange.total_missing',
   'workbench.orders.after_sales.failed',
   'workbench.orders.second_delivery.completed',
   'workbench.procurement.new_products.failed',

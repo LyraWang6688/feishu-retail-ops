@@ -23,6 +23,7 @@ export const AFTER_SALES_PAGE = {
   stockSizesApi: '/api/workbench/sales/after-sales/stock-sizes',
   // 交易提交（表单 POST；服务端入队 + 303 统一 toast「数据提交成功，后台自动写入」）
   submitApi: '/api/workbench/sales/after-sales/submit',
+  exchangeSubmitApi: '/api/workbench/sales/after-sales/exchange/submit',
   // 退款方式候选（唯一数据源 =「支付方式管理」，走统一配置缓存）
   paymentMethodsApi: '/api/workbench/sales/after-sales/payment-methods',
   // 只取「可用于退款」的方式（「支付方式管理」里那一列；列不存在时=全部）

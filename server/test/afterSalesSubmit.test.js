@@ -17,15 +17,20 @@ const os = require('node:os');
 const path = require('node:path');
 const { createWorkbenchOrderActionsRouter } = require('../src/routes/workbenchOrderActions');
 const { AfterSalesReturnService } = require('../src/services/afterSalesReturnService');
+const { AfterSalesExchangeService } = require('../src/services/afterSalesExchangeService');
 const { DEFAULT_SUBMIT_TOAST_TEXT, DEFAULT_SUBMIT_TOAST_PATH } = require('../src/config/submitToast');
 
 /** 真 service 的本地形状校验（不读飞书；dir 指临时目录，不写仓库 data/）。 */
+const realExchangeService = () => new AfterSalesExchangeService({
+  gateway: {}, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'as-ex-submit-test-')),
+});
+
 const realReturnService = () => new AfterSalesReturnService({
   gateway: { get: () => { throw new Error('POST 不许同步读飞书'); }, table: () => ({ fields: {} }) },
   dir: fs.mkdtempSync(path.join(os.tmpdir(), 'as-submit-test-')),
 });
 
-const buildApp = ({ returnService, methods } = {}) => {
+const buildApp = ({ returnService, exchangeService, methods } = {}) => {
   const calls = { enqueue: [] };
   const router = createWorkbenchOrderActionsRouter({
     gateway: {},
@@ -37,6 +42,9 @@ const buildApp = ({ returnService, methods } = {}) => {
     },
     afterSalesReturn: returnService || {
       // POST 只调形状校验；飞书读/写在后台 worker（本用例不碰）
+      validateShape: (payload) => ({ requestId: payload.requestId }),
+    },
+    afterSalesExchange: exchangeService || {
       validateShape: (payload) => ({ requestId: payload.requestId }),
     },
     afterSalesJobs: {
@@ -145,5 +153,50 @@ test('AC-SUB3 退款方式候选：来自「支付方式管理」的统一配置
     const response = await fetch(`http://127.0.0.1:${port}/api/workbench/sales/after-sales/payment-methods`);
     const body = await response.json();
     assert.deepEqual(body.items, ['现金', '微信扫码']);
+  } finally { server.close(); }
+});
+
+
+test('AC-EX-SUB ⭐ 换货提交：本地校验 + 入队 + 立刻统一 toast（不读飞书）', async () => {
+  const { app, calls } = buildApp();
+  const { server, port } = await listen(app);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/workbench/sales/after-sales/exchange/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        requestId: requestId(), salesEntryRecordId: 'entry_1', detailRecordId: 'detail_1',
+        productRecordId: 'prod_1', scenario: 'same', newSize: '41',
+      }).toString(),
+      redirect: 'manual',
+    });
+    assert.equal(response.status, 303);
+    const url = new URL(response.headers.get('location') || '', 'http://x');
+    assert.equal(url.pathname, DEFAULT_SUBMIT_TOAST_PATH);
+    assert.equal(url.searchParams.get('toast'), DEFAULT_SUBMIT_TOAST_TEXT);
+    assert.equal(calls.enqueue.length, 1);
+    assert.equal(calls.enqueue[0].type, 'exchange');
+    assert.equal(calls.enqueue[0].payload.action, 'exchange');
+    assert.equal(calls.enqueue[0].payload.scenario, 'same');
+  } finally { server.close(); }
+});
+
+test('AC-EX-SUB2 换货缺尺码 ⇒ 本地 400 回页面，不入队', async () => {
+  const { app, calls } = buildApp({ exchangeService: realExchangeService() });
+  const { server, port } = await listen(app);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/workbench/sales/after-sales/exchange/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        requestId: requestId(), salesEntryRecordId: 'entry_1', detailRecordId: 'detail_1',
+        productRecordId: 'prod_1', scenario: 'same',
+      }).toString(),
+      redirect: 'manual',
+    });
+    assert.equal(response.status, 303);
+    const url = new URL(response.headers.get('location') || '', 'http://x');
+    assert.ok(url.searchParams.get('err'), '缺尺码要回页面提示');
+    assert.equal(calls.enqueue.length, 0);
   } finally { server.close(); }
 });
