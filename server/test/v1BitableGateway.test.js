@@ -112,16 +112,17 @@ test('sales schema matches the live three-table field snapshot', () => {
   }
 });
 
-test('relation and display helpers support Feishu record field shapes', () => {
-  assert.deepEqual(linkedRecordIds(['rec_1', { record_id: 'rec_2' }, { id: 'rec_3' }]), [
-    'rec_1',
-    'rec_2',
-    'rec_3',
-  ]);
-  assert.deepEqual(linkedRecordIds({ link_record_ids: ['rec_4'] }), ['rec_4']);
+test('relation and display helpers only accept evidenced link shapes (#1074)', () => {
+  // 有真实接口证据的两种形状：listAll/get → record_ids；search/getBatch → link_record_ids
   assert.deepEqual(linkedRecordIds([{ record_ids: ['rec_5'], table_id: 'tbl_order',
     text: 'XSD-20260925-0062', type: 'text' }]), ['rec_5']);
+  assert.deepEqual(linkedRecordIds({ link_record_ids: ['rec_4'] }), ['rec_4']);
   assert.deepEqual(linkedRecordIds({ record_ids: ['rec_6', 'rec_7'] }), ['rec_6', 'rec_7']);
+  // 🔴 无证据的历史形状一律不猜（issue #1074：留着只会掩盖写错表 / 写错字段）
+  assert.deepEqual(linkedRecordIds(['rec_1', { record_id: 'rec_2' }, { id: 'rec_3' }]), []);
+  assert.deepEqual(linkedRecordIds({ record_id: 'rec_2' }), []);
+  assert.deepEqual(linkedRecordIds({ id: 'rec_3' }), []);
+  assert.deepEqual(linkedRecordIds('rec_1'), []);
   assert.equal(textValue([{ text: 'A' }, { name: 'B' }]), 'A,B');
 });
 

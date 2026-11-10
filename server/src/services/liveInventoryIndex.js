@@ -1,4 +1,4 @@
-const { textValue, linkedRecordIds } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 
 // 「实时库存」是"店里实际有什么"，「货品信息」是"配置过什么"。

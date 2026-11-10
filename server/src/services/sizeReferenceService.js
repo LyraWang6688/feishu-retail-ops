@@ -1,4 +1,4 @@
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { getConfigRows, invalidateConfigTable } = require('./configTableCache');
 
