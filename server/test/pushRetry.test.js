@@ -63,7 +63,7 @@ test('瞬时判据：确定性错误（权限 / 参数 / 缺配置）**一个都
 });
 
 test('瞬时判据可配：认哪些 code 可换、空串 = 一个都不认；退避表可配（指数 / 封顶 / 0 = 不重试）', () => {
-  assert.deepEqual(resolveTransientRetryConfig({}).larkCodes, ['1254607']);
+  assert.deepEqual(resolveTransientRetryConfig({}).larkCodes, ['1254607', '2200']);
   assert.deepEqual(resolveTransientRetryConfig({ PUSH_TRANSIENT_RETRY_LARK_CODES: '1254607,1254291' }).larkCodes,
     ['1254607', '1254291']);
   assert.deepEqual(resolveTransientRetryConfig({ PUSH_TRANSIENT_RETRY_LARK_CODES: '' }).larkCodes, [],
