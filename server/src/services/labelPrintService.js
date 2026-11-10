@@ -66,6 +66,7 @@ const { parseStockKey } = require('./liveInventoryIndex');
 // ⭐⭐ task-15：飞书 `filter` 公式的拼装**只有那一处实现**（`bitableFilterFormula.js`）——
 //    这里只 import 复用（**值的安全字符检查也在它那里**），**不抄第二份** ✗。
 const { logInfo, logWarn } = require('../utils/logger');
+const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 // 她填错了（400，原样回显）vs 远端出错（其余，页面只说"查询失败"）——与
 // `inventoryAdjustmentService` 同一条约定，控制器按 statusCode 分流。
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -385,6 +386,23 @@ const createLabelPrintService = (gateway, options = {}) => {
   if (!gateway) throw new Error('LabelPrintService requires gateway');
   const config = options.config || LABEL_PRINT;
   const now = options.now || (() => Date.now());
+  // 读飞书标签底表时的瞬时错误重试：判据与订单/库存查询同一份（config/orderReadRetry）。
+  const readRetry = options.readRetry || resolveOrderReadRetryConfig();
+  const sleep = options.sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
+  const listAllWithRetry = async (tableKey) => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await gateway.listAll(tableKey);
+      } catch (error) {
+        if (!isRetriableOrderReadError(error) || attempt >= readRetry.maxRetries) throw error;
+        const delayMs = Math.max(0, Number(readRetry.delayMs)) * (attempt + 1);
+        logWarn('workbench.labels.read_retry', {
+          table_key: tableKey, attempt: attempt + 1, of: readRetry.maxRetries + 1, delay_ms: delayMs,
+        });
+        await sleep(delayMs);
+      }
+    }
+  };
   /** 缓存 TTL 从 config 取（**0 是一个合法值** = 关掉；没配才用兜底值）。 */
   const ttlOf = (group, fallback) => (Number.isInteger(group?.cacheTtlMs) && group.cacheTtlMs >= 0
     ? group.cacheTtlMs
@@ -395,8 +413,9 @@ const createLabelPrintService = (gateway, options = {}) => {
    * 读序仍是「实时库存 → 货品信息」（与改动前逐字一致）。
    */
   const loadLabelListTables = async () => {
-    const records = await gateway.listAll('liveInventory');
-    const productRecords = await getConfigRows({ gateway, tableKey: 'product' });
+    const records = await listAllWithRetry('liveInventory');
+    const productRecords = await getConfigRows({ gateway, tableKey: 'product',
+      loader: () => listAllWithRetry('product') });
     return {
       value: { records, productRecords },
       meta: {

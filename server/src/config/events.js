@@ -409,6 +409,7 @@ const EVENTS = Object.freeze([
   'workbench.labels.listed',
   'workbench.labels.missing_price',
   'workbench.labels.missing_qr_record_id',
+  'workbench.labels.read_retry',
   'workbench.labels.record_read_failed',
   'workbench.labels.record_resolved',
   'workbench.labels.skipped_records',
