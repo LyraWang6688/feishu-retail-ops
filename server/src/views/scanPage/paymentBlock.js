@@ -3,6 +3,7 @@ const { REALM_TEXTS, saleSizeGroups } = require('../scanPageRealm');
 const { realmScanConfigHtml } = require('../scanRealmScan');
 const { escapeHtml } = require('./fields');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');
+const { exchangeDiffBlock } = require('./exchangeDiff');
 
 
 const hiddenField = (name, value) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
@@ -264,7 +265,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   });
   return `<section class="card">${flowBanner ? `<p class="flow-banner">${escapeHtml(flowBanner)}</p>` : ''}
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
-<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
 ${sizeInput}
 ${hideAmountInput ? '' : `<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"></div>`}
@@ -278,10 +279,10 @@ ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
      先弹全屏遮罩再 fetch，响应回来 document.write 整页（成功页 / 资金页 / 400 提示页都照原样）。
      ⚠️ 只加**这一个属性**（按钮 name/value/文案一个字未动 ✓）；老环境没有 JS 照样走原生提交。
      ⚠️ 【再加一双】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
-${flowContextHtml}<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(submitLabel || countLabel)}</button>
+${flowContextHtml}${exchangeDiffBlock(flow)}<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(submitLabel || countLabel)}</button>
 ${hideAddLine ? '' : `<button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>`}
 </form>
-${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form">
+${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
 ${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.saleKey)}
 <button type="submit" class="btn btn--ghost"${submitFeedbackAttrs(write)}>${escapeHtml(t.clearButton)}</button>
@@ -408,6 +409,7 @@ const sizeGroupsHtml = (view) => {
  *     ⚠️ **不是放宽**：这个函数**本身一个字没改**（退货的字段名/标签/占位逐字不变 ✓）；
  *       补货那一侧是**更强的反向判据**（`test/replenishTrimThreeFixes.test.js` AC-RP1：塞回即红 ✓）。
  */
+
 
 module.exports = {
   buildPaymentRows,

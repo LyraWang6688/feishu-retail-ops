@@ -43,7 +43,7 @@ test('AC-FLOW2 afterSalesExchange flow：无资金页、不加一双、差价步
     'requestId', 'salesEntryRecordId', 'detailRecordId',
     'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod',
   ]);
-  assert.deepEqual(flow.context, ['requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount']);
+  assert.deepEqual(flow.context, ['requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount', 'productRecordId']);
 });
 
 test('AC-FLOW3 解释器纯查表：认不出的 flow ⇒ 400；缺省 ⇒ sales', () => {
@@ -71,9 +71,9 @@ test('AC-FLOW4 shouldShowStep：差价 0 不显示、非 0 显示（页面不写
 test('AC-FLOW5 pickContext 只带 flow 声明的上下文', () => {
   const flow = getFlow('afterSalesExchange');
   const picked = pickContext(flow, {
-    requestId: 'r1', salesEntryRecordId: 'e1', detailRecordId: 'd1', originalAmount: 199, extra: 'x',
+    requestId: 'r1', salesEntryRecordId: 'e1', detailRecordId: 'd1', originalAmount: 199, productRecordId: 'p1', extra: 'x',
   });
-  assert.deepEqual(picked, { requestId: 'r1', salesEntryRecordId: 'e1', detailRecordId: 'd1', originalAmount: 199 });
+  assert.deepEqual(picked, { requestId: 'r1', salesEntryRecordId: 'e1', detailRecordId: 'd1', originalAmount: 199, productRecordId: 'p1' });
   assert.equal('extra' in picked, false);
 });
 

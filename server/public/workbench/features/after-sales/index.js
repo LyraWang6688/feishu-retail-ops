@@ -212,6 +212,7 @@ export function mountAfterSalesPage(container, options = {}) {
         salesEntryRecordId: String(candidate.sales_entry_record_id || ''),
         detailRecordId: String(candidate.sales_detail_record_id || ''),
         originalAmount: String(candidate.actual_amount ?? ''),
+        productRecordId: String(productRecordId || ''),
       });
       window.location.href = `/r/${encodeURIComponent(recordId)}?${query.toString()}`;
     } catch (error) {
