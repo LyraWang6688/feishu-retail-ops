@@ -16,11 +16,8 @@ const STALE_MINUTES_ENV_KEY = 'LARK_EVENT_STALE_MINUTES';
 const DEFAULT_STALE_MINUTES = 180;
 
 // 告警总开关。**默认关闭**：脚本可能在开发机上被手动跑，而开发机本来就没有事件，
-// 默认开启会往生产群/负责人私聊发假告警。要挂定时，显式设成 true。
+// 默认开启会往负责人私聊发假告警。要挂定时，显式设成 true。
 const ALERT_ENABLED_ENV_KEY = 'LARK_EVENT_ALERT_ENABLED';
-
-// 群里告警要不要 @所有人（显式布尔，默认关）。
-const ALERT_MENTION_ALL_ENV_KEY = 'LARK_EVENT_ALERT_MENTION_ALL';
 
 // 告警文案里要写的**正确**回调地址（填错就是今天那次的根因）。
 const CALLBACK_URL_ENV_KEY = 'LARK_EVENT_CALLBACK_URL';
@@ -59,7 +56,6 @@ const resolveStaleMinutes = (env = process.env) =>
 const isAlertEnabled = (env = process.env) => readExplicitBoolean(env, ALERT_ENABLED_ENV_KEY);
 
 /** 群里告警是否 @所有人（显式布尔，默认关）。 */
-const isMentionAllEnabled = (env = process.env) => readExplicitBoolean(env, ALERT_MENTION_ALL_ENV_KEY);
 
 /** 告警文案里的回调地址。默认就是我们**正确**的那个地址。 */
 const resolveCallbackUrl = (env = process.env) =>
@@ -146,14 +142,12 @@ const buildLarkEventStaleAlertText = ({ minutesSinceLastEvent, lastEventAt, call
 module.exports = {
   STALE_MINUTES_ENV_KEY,
   ALERT_ENABLED_ENV_KEY,
-  ALERT_MENTION_ALL_ENV_KEY,
   CALLBACK_URL_ENV_KEY,
   HEARTBEAT_FILE_ENV_KEY,
   DEFAULT_STALE_MINUTES,
   DEFAULT_CALLBACK_URL,
   resolveStaleMinutes,
   isAlertEnabled,
-  isMentionAllEnabled,
   resolveCallbackUrl,
   resolveHeartbeatFilePath,
   evaluateLarkEventHeartbeat,

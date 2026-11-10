@@ -16,7 +16,6 @@
 //      这一条是唯一有兜底的：表情只是"收到了"的信号，配错不影响任何业务事实。
 
 // 采购单发到哪个群（chat_id，形如 oc_xxx）。**没有默认值**。
-const PURCHASE_CHAT_ID_ENV_KEY = 'PURCHASE_CHAT_ID';
 
 // 机器人自己的 open_id（形如 ou_xxx）。@ 判据就是它。**没有默认值**。
 const BOT_OPEN_ID_ENV_KEY = 'LARK_BOT_OPEN_ID';
@@ -70,7 +69,6 @@ const resolvePurchaseGroupReplies = (env = process.env) => {
 };
 
 module.exports = {
-  PURCHASE_CHAT_ID_ENV_KEY,
   BOT_OPEN_ID_ENV_KEY,
   ACK_REACTION_ENV_KEY,
   NO_BATCH_REPLY_ENV_KEY,

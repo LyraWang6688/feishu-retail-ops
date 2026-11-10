@@ -40,9 +40,6 @@ const resolveVoucherSettlementChatId = (env = process.env) => (
 
 const createVoucherSettlementConfig = (env = process.env) => ({
   enabled: readFlag(env, 'VOUCHER_SETTLEMENT_ENABLED', true),
-  // ⚠️ 2026-11-10：结算天数**不再有全局默认值** —— 每张券读「团购券管理.结算规则」。
-  //   这条老旋钮只为兼容线上 `.env` 保留读取位置，**逻辑不再使用**。
-  legacySettleDays: readInt(env, 'VOUCHER_SETTLEMENT_DAYS', 0, { min: 0, max: 90 }),
   hour: readInt(env, 'VOUCHER_SETTLEMENT_HOUR', DEFAULT_HOUR, { min: 0, max: 23 }),
   intervalMs: readInt(env, 'VOUCHER_SETTLEMENT_INTERVAL_MS', 10 * 60 * 1000, { min: 60 * 1000, max: 24 * 60 * 60 * 1000 }),
   // 来客账号（品牌号）：对账要按它查账单/提现。

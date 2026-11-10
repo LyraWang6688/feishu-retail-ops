@@ -14,7 +14,6 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 const {
   resolveStaleMinutes,
   isAlertEnabled,
-  isMentionAllEnabled,
   resolveCallbackUrl,
   evaluateLarkEventHeartbeat,
   buildLarkEventStaleAlertText,
@@ -52,12 +51,6 @@ test('告警开关：只有显式 true/1/yes/on 才开，空串与写错的值�
     assert.equal(isAlertEnabled({ [key]: value }), false, `${JSON.stringify(value)} 应判定为关`);
   });
   assert.equal(isAlertEnabled({}), false, '键不存在时应判定为关');
-});
-
-test('@所有人开关同样是显式布尔，默认关', () => {
-  assert.equal(isMentionAllEnabled({}), false);
-  assert.equal(isMentionAllEnabled({ LARK_EVENT_ALERT_MENTION_ALL: '' }), false);
-  assert.equal(isMentionAllEnabled({ LARK_EVENT_ALERT_MENTION_ALL: 'true' }), true);
 });
 
 test('回调地址：默认是正确那个，可覆盖', () => {
