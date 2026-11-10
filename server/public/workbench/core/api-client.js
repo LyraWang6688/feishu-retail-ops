@@ -38,6 +38,14 @@ async function request(path, options = {}) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body.success === false) {
+    // 会话过期（401 + auth_required）⇒ 自动回飞书登录，登录后回到当前页。
+    // 否则页面只会把 401 当成业务错误，扫一扫显示「扫码没有成功」。
+    if (response.status === 401 && body.auth_required === true) {
+      const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+      const loginUrl = `/api/auth/feishu/start?return_to=${returnTo}`;
+      if (typeof window.location.assign === 'function') window.location.assign(loginUrl);
+      else window.location.href = loginUrl;
+    }
     throw new ApiError(body.error || `请求失败（${response.status}）`, {
       status: response.status,
       requestId: response.headers.get('x-request-id') || '',
