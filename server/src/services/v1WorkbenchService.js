@@ -78,26 +78,30 @@ const userError = (message) => Object.assign(new Error(message), { statusCode: 4
 
 const indexByRecordId = (records) => new Map(records.map((record) => [record.record_id, record]));
 
-const isDataNotReady = (error) => /1254607|data not ready|数据未准备好/i.test(String(error?.message || error || ''));
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+// 读表瞬时错误重试：判据与订单列表/扫码页同一份（config/orderReadRetry → pushRetry），
+// 不另写第二套。覆盖飞书 1254607、HTTP 429/5xx（含 504）与网络类错误。
+const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 const listAllWithRetry = async (gateway, tableKey, requestId) => {
-  const delays = [0, 1000, 3000];
-  for (let attempt = 0; attempt < delays.length; attempt += 1) {
-    if (delays[attempt]) await wait(delays[attempt]);
+  const retry = resolveOrderReadRetryConfig();
+  for (let attempt = 0; ; attempt += 1) {
     try {
       return await gateway.listAll(tableKey);
     } catch (error) {
-      if (!isDataNotReady(error) || attempt === delays.length - 1) throw error;
+      if (!isRetriableOrderReadError(error) || attempt >= retry.maxRetries) throw error;
+      const delayMs = Math.max(0, Number(retry.delayMs)) * (attempt + 1);
       logWarn('workbench.query.retry', {
         request_id: requestId,
         table_key: tableKey,
         attempt: attempt + 1,
-        reason: 'feishu_data_not_ready',
+        of: retry.maxRetries + 1,
+        delay_ms: delayMs,
+        reason: 'transient_read',
       });
+      if (delayMs > 0) await wait(delayMs);
     }
   }
-  return [];
 };
 
 const relationLabel = (schema, tableKey, recordsById, ids, semanticKey) => {

@@ -65,7 +65,7 @@ const DEFAULT_TRANSIENT_FACTOR = 2;
 const DEFAULT_TRANSIENT_MAX_DELAY_MS = 5_000;
 // 飞书「再等一下」类错误码（默认只认这个：真机上抓到的那一个）。
 // ⚠️ 明确**不是**这个集合的错误码 = 确定性错误 ⇒ **一次都不重试**。
-const DEFAULT_TRANSIENT_LARK_CODES = Object.freeze(['1254607']);
+const DEFAULT_TRANSIENT_LARK_CODES = Object.freeze(['1254607', '2200']);
 
 // 按天层默认：**每 10 分钟一次、最多重试 6 次**（= 一天最多 7 次尝试，首次失败后约 1 小时内）。
 // ⚠️ 这一条**改了 2026-10-08 上午那版**（5 分钟 / 15 分钟各一次 = 只有 2 次重试）：
