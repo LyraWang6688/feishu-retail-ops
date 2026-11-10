@@ -39,6 +39,7 @@ const { startUploadCleanup } = require('./utils/uploadCleanup');
 //   采购申请/退货图片仍走 `PurchaseWebhookService`/`purchaseReturnImageWiring`，不受影响。
 const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
 const { V1BitableGateway } = require('./services/v1BitableGateway');
+const { warmProductSearchSnapshot } = require('./services/productSearchSnapshot');
 // ⭐ 2026-11-08：抖音团购券「待平台结算 → 已收款」——按日期对平（14:00 上海）。
 const { createVoucherSettlementConfig } = require('./config/voucherSettlement');
 const { createVoucherSettlementService } = require('./services/voucherSettlementService');
@@ -261,6 +262,12 @@ if (require.main === module) {
       .then((count) => logInfo('scan.snapshot.warm.done', { warmed: count }))
       // helper 内部已对"刷新失败"记过既有事件名的 warn ✓；这里只兜"意料之外的异常"，不许挡启动 ✗
       .catch((error) => logInfo('scan.snapshot.warm.skipped', { phase: 'warm', error: error.message }));
+    // ⭐ 货品搜索快照预热：第一单搜索不用等整表；失败只 warn，不挡启动。
+    setTimeout(() => {
+      warmProductSearchSnapshot({ gateway: new V1BitableGateway() })
+        .then((count) => logInfo('product_search.snapshot.warm.done', { rows: count }))
+        .catch((error) => logInfo('product_search.snapshot.warm.skipped', { error: error.message }));
+    }, 0).unref?.();
   });
 }
 

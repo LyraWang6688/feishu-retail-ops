@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **455** 个事件。按前缀分组：
+共 **459** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -271,6 +271,15 @@
 | `product.tag_qr.record_failed` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.skipped_existing` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.written` | 1 | src/services/tagQrCodeService.js |
+
+## product_search
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `product_search.snapshot.refresh_failed` | 1 | src/services/productSearchSnapshot.js |
+| `product_search.snapshot.refreshed` | 1 | src/services/productSearchSnapshot.js |
+| `product_search.snapshot.warm.done` | 1 | src/app.js |
+| `product_search.snapshot.warm.skipped` | 1 | src/app.js |
 
 ## purchase
 
@@ -580,8 +589,8 @@
 | `workbench.procurement.submit.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.product_profile.incomplete_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.sample_image_failed` | 1 | src/routes/workbench/products.js |
-| `workbench.product_profile.search_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.search_filter_failed` | 1 | src/routes/workbench/products.js |
+| `workbench.product_profile.search_snapshot_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.purchase.arrival_accept.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.rejected` | 1 | src/services/workbenchPurchaseArrivalService.js |

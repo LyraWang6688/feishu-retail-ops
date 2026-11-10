@@ -16,7 +16,8 @@ const { getConfigRows } = require('../../services/configTableCache');
 const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
 const { recordUrl } = require('../../utils/feishuLinks');
 const { PRODUCT_PROFILE } = require('../../config/productProfile');
-const { containsFormula, orFormula } = require('../../services/bitableFilterFormula');
+const { containsFormula } = require('../../services/bitableFilterFormula');
+const { getProductSearchSnapshot } = require('../../services/productSearchSnapshot');
 
 const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   const router = express.Router();
@@ -48,32 +49,32 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   router.get('/products/search', async (req, res) => {
     const q = String(req.query?.q || '').trim();
     if (!q) return res.json({ success: true, query: '', items: [] });
+    const needle = q.toLowerCase();
     try {
-      // 优先：飞书 filter 只读匹配行（最多 50 条），不再读整张货品信息。
-      // 公式拼装复用唯一实现；值含引号/反斜杠等不安全字符时返回 null ⇒ 回退整表缓存。
-      const formula = orFormula([
-        containsFormula(field('itemNo'), q),
-        containsFormula(field('number'), q),
-      ]);
-      if (formula) {
-        try {
-          const rows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
-          return res.json({ success: true, query: q, items: rows.map(itemOf) });
-        } catch (error) {
-          // filter 失败 / 飞书不支持该公式 ⇒ 回退旧路径，保证不丢结果。
-          logError('workbench.product_profile.search_filter_failed', { request_id: req.requestId, error: error.message });
-        }
-      }
-      const rows = await getConfigRows({ gateway: getGateway(), tableKey: 'product' });
-      const needle = q.toLowerCase();
+      // 快照优先：只读内存，不被 record_changed / 样例图同步打穿；过期时后台刷新。
+      // 只模糊匹配「货号」，不匹配「编号」。
+      const rows = await getProductSearchSnapshot({ gateway: getGateway() });
       const items = rows
         .map(itemOf)
-        .filter((item) => item.itemNo.toLowerCase().includes(needle) || item.number.toLowerCase().includes(needle))
+        .filter((item) => item.itemNo.toLowerCase().includes(needle))
         .slice(0, PRODUCT_PROFILE.searchLimit);
       return res.json({ success: true, query: q, items });
-    } catch (error) {
-      logError('workbench.product_profile.search_failed', { request_id: req.requestId, error: error.message });
-      return res.status(502).json({ success: false, error: 'product_search_failed' });
+    } catch (snapshotError) {
+      logError('workbench.product_profile.search_snapshot_failed', {
+        request_id: req.requestId, error: snapshotError.message,
+      });
+      // 冷启动快照失败：再试一次飞书 filter（只读货号）；仍然失败才回 502。
+      try {
+        const formula = containsFormula(field('itemNo'), q);
+        if (!formula) throw snapshotError;
+        const rows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
+        return res.json({ success: true, query: q, items: rows.map(itemOf) });
+      } catch (filterError) {
+        logError('workbench.product_profile.search_filter_failed', {
+          request_id: req.requestId, error: filterError.message,
+        });
+        return res.status(502).json({ success: false, error: 'product_search_failed' });
+      }
     }
   });
 
