@@ -107,7 +107,7 @@
 
 **链路（唯一入口，不直接发 IM）**
 - 事件注册：`config/notifications.js` → `procurement_sales_link_backfill_failed`（group，卡片，标题「【采购明细回填失败】」）；
-- 发送：`notificationService.send(...)`（目标/开关由 `resolveNotification` 统一解析；可用 `NOTIFY_PROCUREMENT_SALES_LINK_BACKFILL_FAILED_ENABLED` 单独关）；
+- 发送：`notificationService.send(...)`（目标由 `resolveNotification` 统一解析；⚠️ 2026-11-11 起**单事件开关已全部移除**：触发即发，不再有 `NOTIFY_PROCUREMENT_SALES_LINK_BACKFILL_FAILED_ENABLED`）；
 - 行文案：`config/procurementPage.js` 的 `notifications.salesLinkBackfillFailed`（任务/批次号/失败条数/数量不足条数/示例原因/提示），service 不写中文；
 - 内容包含：批次号、失败条数、数量不足条数、示例原因、提示「采购单已写成功；关联失败的销售明细下次补货可能重复出现，请人工核对」。
 

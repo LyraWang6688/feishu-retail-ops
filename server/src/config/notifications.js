@@ -7,7 +7,10 @@
  *   · private → open_id（本人）
  *   · group   → chat_id（运营/采购群）
  *
- * 事件只声明“发到哪个目标、默认开关”，不各自读 process.env。
+ * 事件只声明“发到哪个目标 / 什么格式”，不各自读 process.env。
+ * 🔴 2026-11-11（业务负责人）：「事件不需要开关，把开关去掉，因为就是要通知」
+ *    ⇒ **单事件开关已全部移除**：事件被触发就发（不再有 `NOTIFY_<EVENT>_ENABLED`、也没有事件级默认开关）；
+ *      真正的功能级总开关仍留在各自入口（例如观测告警总开关、心跳自检总开关、异步通知总开关）。
  * 所有通知统一发 interactive 消息卡片（Card JSON 2.0 + CardKit v1）。
  *
  * 取值规则沿用 config/envValue：
@@ -15,7 +18,7 @@
  *   · 设了（含空串）→ 显式取值；
  *   · 认不出来 → 当场抛错。
  */
-const { readFlag, readString } = require('./envValue');
+const { readString } = require('./envValue');
 
 const NOTIFICATION_TARGETS = Object.freeze({
   private: Object.freeze({
@@ -34,40 +37,41 @@ const NOTIFICATION_TARGETS = Object.freeze({
 
 /**
  * 事件注册表。
- * `enabled` 是默认值；可用 `NOTIFY_<EVENT>_ENABLED` 显式覆盖。
+ * ⚠️ 这里**没有** `enabled` / `masterEnv` —— 事件被触发就发（2026-11-11 业务负责人口径）；
+ * 功能级总开关（是否启用整块能力）在各自入口判断，不在这里。
  * `card` 是 notificationCard 使用的标题/字段渲染键（文案真源仍在各自 config）。
  */
 const NOTIFICATION_EVENTS = Object.freeze({
   async_job_failed: Object.freeze({
-    target: 'group', enabled: true, format: 'card', card: 'async_job_failed', title: '【异步写入失败】',
+    target: 'group', format: 'card', card: 'async_job_failed', title: '【异步写入失败】',
   }),
   observability_alert: Object.freeze({
-    target: 'private', enabled: false, masterEnv: 'OBSERVABILITY_ALERTS_ENABLED',
+    target: 'private',
     format: 'card', card: 'observability_alert', title: '【观测告警】',
   }),
   lark_event_heartbeat: Object.freeze({
-    target: 'private', enabled: false, masterEnv: 'LARK_EVENT_ALERT_ENABLED',
+    target: 'private',
     format: 'card', card: 'lark_event_heartbeat', title: '【飞书事件心跳】',
   }),
   purchase_request_created: Object.freeze({
-    target: 'group', enabled: true, format: 'text', card: 'purchase_request_created', title: '【采购申请】',
+    target: 'group', format: 'text', card: 'purchase_request_created', title: '【采购申请】',
   }),
   purchase_return_created: Object.freeze({
-    target: 'group', enabled: true, format: 'text', card: 'purchase_return_created', title: '【采购退货】',
+    target: 'group', format: 'text', card: 'purchase_return_created', title: '【采购退货】',
   }),
   voucher_settlement: Object.freeze({
-    target: 'group', enabled: true, format: 'card', card: 'voucher_settlement', title: '【团购券结算】',
+    target: 'group', format: 'card', card: 'voucher_settlement', title: '【团购券结算】',
   }),
   // ⭐ 2026-11-10（业务负责人）：采购单写成功后的「销售明细.采购明细」回填失败/部分失败
   //   （写关联失败、销售记录数量不足）→ 发运营群；上新/无可关联记录不会触发（见回填口径）。
   procurement_sales_link_backfill_failed: Object.freeze({
-    target: 'group', enabled: true, format: 'card', card: 'procurement_sales_link_backfill_failed',
+    target: 'group', format: 'card', card: 'procurement_sales_link_backfill_failed',
     title: '【采购明细回填失败】',
   }),
   // ⭐ 2026-11-09（业务负责人定）：「批量打印」表单自动打印时**失败 / 跳过**的汇总通知
   //   （同一条表单记录汇总成**一条**，发运营群；文本格式，不建卡片）。
   label_print_failed: Object.freeze({
-    target: 'group', enabled: true, format: 'text', card: 'label_print_failed', title: '【标签打印】',
+    target: 'group', format: 'text', card: 'label_print_failed', title: '【标签打印】',
   }),
 });
 
@@ -91,9 +95,6 @@ const NOTIFICATION_TEXTS = Object.freeze({
 });
 const targetOf = (name) => NOTIFICATION_TARGETS[String(name || '')] || null;
 const eventOf = (name) => NOTIFICATION_EVENTS[String(name || '')] || null;
-
-/** 每个事件可单独用 `NOTIFY_<EVENT>_ENABLED` 覆盖默认开关。 */
-const eventEnabledEnvKey = (event) => `NOTIFY_${String(event || '').toUpperCase()}_ENABLED`;
 
 /** 目标主变量优先，未配置时用 fallback；空串按“没配”处理（避免空串把 fallback 顶掉）。 */
 const resolveReceiveId = (target, env) => {
@@ -122,15 +123,11 @@ const resolveNotification = (event, env = process.env) => {
     return { event, enabled: false, target: targetName || '', receiveIdType: '',
       receiveId: '', chatId: '', openId: '', sourceEnv: '', reason: 'unknown_target' };
   }
-  // 兼容既有总开关（观测告警 / 心跳）：总开关没开 ⇒ 事件默认关；显式 NOTIFY_<EVENT>_ENABLED 优先。
-  const defaultEnabled = definition.masterEnv
-    ? readFlag(env, definition.masterEnv, definition.enabled === true)
-    : definition.enabled === true;
-  const enabled = readFlag(env, eventEnabledEnvKey(event), defaultEnabled);
+  // 🔴 2026-11-11：单事件开关已移除 —— 事件被触发就发，只有“目标没配”会跳过。
   const { receiveId, sourceEnv } = resolveReceiveId(target, env);
   const base = {
     event,
-    enabled,
+    enabled: true,
     target: targetName,
     receiveIdType: target.receiveIdType,
     receiveId,
@@ -139,7 +136,6 @@ const resolveNotification = (event, env = process.env) => {
     sourceEnv,
     reason: '',
   };
-  if (!enabled) return { ...base, reason: 'disabled' };
   if (!receiveId) return { ...base, reason: 'target_missing' };
   return { ...base, reason: 'ok' };
 };
@@ -149,6 +145,5 @@ module.exports = {
   NOTIFICATION_EVENTS,
   NOTIFICATION_EVENT_KEYS,
   NOTIFICATION_TEXTS,
-  eventEnabledEnvKey,
   resolveNotification,
 };

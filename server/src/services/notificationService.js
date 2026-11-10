@@ -53,8 +53,9 @@ const createNotificationService = ({
 
   const send = async (event, data = {}, options = {}) => {
     const resolved = resolve(event);
-    // ⭐ 2026-11-09：显式 target 只允许覆盖**收件人**，不允许覆盖事件开关。
-    //   事件是否启用仍由 resolveNotification 决定；否则 NOTIFY_<EVENT>_ENABLED=false 会被绕过。
+    // 显式 target 只允许覆盖**收件人**（事件本身没有开关：2026-11-11 业务负责人
+    // 「事件不需要开关，因为就是要通知」）。能不能发只看目标有没有配：
+    // reason = ok / target_missing / unknown_event / unknown_target。
     const target = options.target
       ? {
         ...resolved,

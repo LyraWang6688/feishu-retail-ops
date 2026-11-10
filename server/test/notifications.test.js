@@ -3,13 +3,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  NOTIFICATION_TARGETS, NOTIFICATION_EVENTS, resolveNotification, eventEnabledEnvKey,
+  NOTIFICATION_TARGETS, NOTIFICATION_EVENTS, resolveNotification,
 } = require('../src/config/notifications');
 const { buildNotificationCard } = require('../src/services/notificationCard');
 const { createNotificationService } = require('../src/services/notificationService');
 
-test('通知目标只有 private/group；事件默认目标正确', () => {
+test('通知目标只有 private/group；事件默认目标正确，且**没有单事件开关**', () => {
   assert.deepEqual(Object.keys(NOTIFICATION_TARGETS).sort(), ['group', 'private']);
+  for (const [name, definition] of Object.entries(NOTIFICATION_EVENTS)) {
+    assert.equal(definition.enabled, undefined, `${name} 不许有事件级 enabled 开关`);
+    assert.equal(definition.masterEnv, undefined, `${name} 不许有事件级总开关字段`);
+  }
   assert.equal(NOTIFICATION_EVENTS.async_job_failed.target, 'group');
   assert.equal(NOTIFICATION_EVENTS.observability_alert.target, 'private');
   assert.equal(NOTIFICATION_EVENTS.lark_event_heartbeat.target, 'private');
@@ -18,26 +22,24 @@ test('通知目标只有 private/group；事件默认目标正确', () => {
   assert.equal(NOTIFICATION_EVENTS.procurement_sales_link_backfill_failed.target, 'group');
 });
 
-test('resolveNotification：主 env / fallback / 缺失 / 关掉 / 未知事件', () => {
+test('resolveNotification：主 env / fallback / 缺失 / 未知事件（**单事件开关已移除**）', () => {
   const env = {
     NOTIFY_PRIVATE_OPEN_ID: 'ou_owner',
     NOTIFY_GROUP_CHAT_ID: '',
     PURCHASE_CHAT_ID: 'oc_group',
-    [eventEnabledEnvKey('async_job_failed')]: 'true',
+    // 旧开关即便被写成 false，也必须**不再生效**（事件被触发就发）
+    NOTIFY_ASYNC_JOB_FAILED_ENABLED: 'false',
   };
   const group = resolveNotification('async_job_failed', env);
-  assert.equal(group.reason, 'ok');
+  assert.equal(group.reason, 'ok', '旧 NOTIFY_<EVENT>_ENABLED=false 不再关掉通知');
   assert.equal(group.receiveIdType, 'chat_id');
   assert.equal(group.receiveId, 'oc_group');
   assert.equal(group.sourceEnv, 'PURCHASE_CHAT_ID');
 
-  const privateTarget = resolveNotification('observability_alert', { ...env, NOTIFY_PRIVATE_OPEN_ID: 'ou_owner' });
-  assert.equal(privateTarget.reason, 'disabled');
+  // 观测告警不再有「事件默认关」：只要 private 目标配了就是 ok（功能级总开关在 alertMonitor 入口）。
+  const privateTarget = resolveNotification('observability_alert', env);
+  assert.equal(privateTarget.reason, 'ok');
   assert.equal(privateTarget.target, 'private');
-  const masterOn = resolveNotification('observability_alert', {
-    ...env, NOTIFY_PRIVATE_OPEN_ID: 'ou_owner', OBSERVABILITY_ALERTS_ENABLED: 'true',
-  });
-  assert.equal(masterOn.reason, 'ok');
 
   const missing = resolveNotification('async_job_failed', { ...env, PURCHASE_CHAT_ID: '' });
   assert.equal(missing.reason, 'target_missing');
@@ -93,7 +95,7 @@ test('send：CardKit 创建卡片实体 + interactive 消息引用 card_id', asy
   assert.equal(logs.some(([event]) => event === 'notification.sent'), true);
 });
 
-test('send：目标缺失 / 关闭只记 skipped，不创建卡片', async () => {
+test('send：目标缺失 / 不可发（未知事件等）只记 skipped，不创建卡片', async () => {
   const client = fakeClient();
   for (const resolution of [
     { enabled: false, reason: 'disabled', target: 'group' },
@@ -108,7 +110,7 @@ test('send：目标缺失 / 关闭只记 skipped，不创建卡片', async () =>
   assert.equal(client.calls.length, 0);
 });
 
-test('target 覆盖只换收件人，不绕过事件开关', async () => {
+test('target 覆盖只换收件人，不能绕过 resolveNotification 的不可发判定', async () => {
   const client = fakeClient();
   const service = createNotificationService({
     client,
@@ -118,7 +120,7 @@ test('target 覆盖只换收件人，不绕过事件开关', async () => {
   const result = await service.send('voucher_settlement', { lines: ['x'] }, {
     target: { receiveIdType: 'chat_id', receiveId: 'oc_override' },
   });
-  assert.equal(result.ok, false, '事件关闭时 target 不能强行发');
+  assert.equal(result.ok, false, 'resolveNotification 判定不可发时，target 不能强行发');
   assert.equal(client.calls.length, 0);
 });
 
