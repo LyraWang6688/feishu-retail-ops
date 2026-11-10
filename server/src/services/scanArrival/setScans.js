@@ -42,8 +42,8 @@ const { fillText } = require('../../config/scanWrite');
 const createSetScans = ({
   get, store, touch, texts, events, config, logInfo,
   positiveInteger, nonNegativeInteger,
-}) => async ({ openId, lines } = {}) => {
-  const session = await get(openId);
+}) => async ({ openId, lines, sessionKey = '' } = {}) => {
+  const session = await get(openId, sessionKey);
   if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
   if (session.status !== 'open') {
     return {
