@@ -140,3 +140,9 @@
 .edit-row .del { border: 0; background: var(--danger-soft); color: var(--danger); border-radius: 8px; padding: 9px 10px; cursor: pointer; }
 .violation-card { display: flex; align-items: center; gap: 10px; }
 .violation-info { flex: 1; min-width: 0; }
+
+/* 库存手工调整：保存后打印询问 */
+.manual-modal { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; background: color-mix(in srgb, var(--text) 55%, transparent); }
+.manual-modal[hidden] { display: none; }
+.manual-modal-card { width: 100%; max-width: 340px; padding: 16px; border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-pop); }
+.manual-modal-card h3 { margin: 0 0 4px; font-size: var(--font-size-lg); }
