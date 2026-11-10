@@ -687,3 +687,31 @@ test('时间字段解析：毫秒数 / [毫秒] / 可解析字符串都认，其
   assert.equal(asTimestamp('不是时间'), 0);
   assert.equal(asTimestamp(undefined), 0);
 });
+
+test('读实时库存遇到 1254607 会短重试，成功后正常出标签', async () => {
+  let liveCalls = 0;
+  const gateway = {
+    async listAll(tableKey) {
+      if (tableKey === 'liveInventory') {
+        liveCalls += 1;
+        if (liveCalls === 1) {
+          throw Object.assign(new Error('Request failed with status code 400'), {
+            response: { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } },
+          });
+        }
+        return [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })];
+      }
+      if (tableKey === 'product') return [productRecord('rec_p1', { number: 'YD6693-2|黑色|男', price: 399 })];
+      throw new Error(`不该读 ${tableKey}`);
+    },
+  };
+  const service = createLabelPrintService(gateway, {
+    config: configWith({ labelList: { cacheTtlMs: 0 } }),
+    readRetry: { maxRetries: 1, delayMs: 0 },
+    sleep: async () => {},
+  });
+  const data = await service.listLabels({});
+  assert.equal(liveCalls, 2, '第一次 1254607 后必须再读一次');
+  assert.equal(data.labels.length, 1);
+  assert.equal(data.labels[0].scan_url, 'https://hm.bamamei.online/r/rec_p1');
+});
