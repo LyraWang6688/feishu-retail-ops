@@ -226,6 +226,13 @@ const gatewayOf = ({ liveInventory = [], product = [] } = {}) => ({
     if (tableKey !== 'product') throw new Error('只按记录 ID 读「货品信息」');
     return product.find((record) => record.record_id === recordId) || null;
   },
+  // 扫码精确读：按 recordID lookup 筛实时库存（假网关只按表返回；用例只关心"恰好一张"）。
+  async listByFilter(tableKey, filter) {
+    this.calls.push(`filter:${tableKey}`);
+    if (tableKey !== 'liveInventory') throw new Error(`不该按条件读：${tableKey}`);
+    assert.match(filter, /CurrentValue\.\[recordID\]=/);
+    return liveInventory;
+  },
   create() { throw new Error('只读链路：不许 create'); },
   update() { throw new Error('只读链路：不许 update'); },
   delete() { throw new Error('只读链路：不许 delete'); },
