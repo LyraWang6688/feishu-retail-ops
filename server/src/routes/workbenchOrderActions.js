@@ -188,7 +188,9 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
     }
   });
 
-  // 提交退货：表单 POST（不是 XHR）→ 同步校验（她填错立刻回页面）→ 入队 → 303 统一 toast。
+  // 提交退货：表单 POST（不是 XHR）→ **本地形状校验**（不读飞书）→ 入队 → 立刻 303 统一 toast。
+  // ⭐ 2026-11-11（业务负责人）：「我们就是要实现异步」——飞书侧校验（原单/明细/金额/退款方式）
+  //   与写库全部在后台 worker；POST 不再同步读飞书（原来会等十几秒，页面像没反应）。
   router.post('/sales/after-sales/submit', async (req, res) => {
     const body = req.body || {};
     const productRecordId = String(body.productRecordId || '').trim();
@@ -203,17 +205,18 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
       productRecordId,
     };
     try {
-      const prepared = await resolveReturnService().prepare(payload);
+      // 只做本地形状校验（缺字段 / 退款必选方式）——她当场能改；飞书侧校验交给 worker。
+      const shaped = resolveReturnService().validateShape(payload);
       await resolveJobs().enqueue({
-        type: 'return', requestId: prepared.requestId,
-        payload: { ...payload, salesEntryOrderNo: prepared.orderNo },
+        type: 'return', requestId: shaped.requestId,
+        payload,
         correlation: tapIdFromRequest(req),
         // #948：状态接口"只能查自己的任务"靠它；通知里的"操作人"也用它（拿不到名字就不写）
         ownerOpenId: req.workbenchUser?.open_id || '',
         operatorName: req.workbenchUser?.name || '',
       });
-      // 成功回工作台（不传 path ⇒ 用 `config/submitToast.js` 的统一落点 `/workbench/`）
-      return redirectWithSubmitToast(res, { orderNo: prepared.orderNo });
+      // 立刻回工作台（统一落点 + 统一 toast；不传 orderNo —— 单号在后台才读到）
+      return redirectWithSubmitToast(res, {});
     } catch (error) {
       logError('workbench.orders.after_sales.failed', {
         request_id: req.requestId, reason: 'submit', error: error.message,

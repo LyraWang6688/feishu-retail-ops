@@ -22,6 +22,7 @@ const {
   textOf, linkedIdsOf, buildReplenishView,
 } = require('./procurementPageData');
 const { buildNewProductsView } = require('./procurementPageNewProductsData');
+const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 
 const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
   Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
@@ -40,6 +41,22 @@ const createProcurementPageService = (options = {}) => {
   const salesFields = () => (schema.tables?.salesDetail?.fields) || {};
   const enricher = options.enricher || createProductEnricher({ gateway, schema, logger });
   const productFields = () => (schema.tables?.product?.fields) || {};
+  const readRetry = options.readRetry || resolveOrderReadRetryConfig();
+  const sleep = options.sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
+  const listByFilterWithRetry = async (tableKey, filter) => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await gateway.listByFilter(tableKey, filter);
+      } catch (error) {
+        if (!isRetriableOrderReadError(error) || attempt >= readRetry.maxRetries) throw error;
+        const delayMs = Math.max(0, Number(readRetry.delayMs)) * (attempt + 1);
+        warn('workbench.procurement.read_retry', {
+          table_key: tableKey, attempt: attempt + 1, of: readRetry.maxRetries + 1, delay_ms: delayMs,
+        });
+        await sleep(delayMs);
+      }
+    }
+  };
 
   // ── 行为表索引（记录ID → 行为编码）—— 唯一用途：把「销售明细.交易类型」的关联解析成现货/预订 ──
   const loadBehaviorIndex = async () => {
@@ -69,7 +86,7 @@ const createProcurementPageService = (options = {}) => {
     const filter = fill(config.filters.replenish, {
       stockField: fields.stockQuantity, dateField: fields.soldAt, days: config.window.replenishDays,
     });
-    const records = await gateway.listByFilter('salesDetail', filter);
+    const records = await listByFilterWithRetry('salesDetail', filter);
     const productIds = (records || []).flatMap((record) => linkedIdsOf(record?.fields?.[fields.product]));
     // 补货卡片要用「货号 / 颜色」—— 从「货品信息」按记录 ID 批量反查并**归一化**
     // （getBatch 的形状与列表接口不同：颜色是关联列无显示文本 ⇒ 由 enricher 解析颜色名）
@@ -107,7 +124,7 @@ const createProcurementPageService = (options = {}) => {
     const startedAt = Date.now();
     const fields = productFields();
     const filter = fill(config.filters.newProducts, { dateField: fields.createdAt });
-    const records = await gateway.listByFilter('product', filter);
+    const records = await listByFilterWithRetry('product', filter);
     const view = buildNewProductsView({ records, fields, config, now: now() });
     info(config.events.newProductsLoaded, {
       request_id: requestId,
