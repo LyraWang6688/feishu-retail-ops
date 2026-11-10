@@ -1,484 +1,177 @@
+/**
+ * 库存 → 手工调整（2026-11-11 前端替换版）。
+ *
+ * 两张入口卡：
+ *   · 单双调整：直接调库存扫一扫 → 可编辑库存页
+ *   · 批量调整：当季 / 库存（检查当季鞋的样品数量）
+ *
+ * ⚠️ 本版只做前端替换：保存、批量写接口尚未接入，相关按钮禁用并标明原因，
+ *    不留"点了没反应"的死按钮。
+ */
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
-import { bindSubTabs, describeError, runWriteAction, setBusy, showPageError } from '../../core/ui.js';
-import { INVENTORY_ADJUSTMENT_TABS } from '../../config/inventoryAdjustment.js';
+import { describeError, showPageError } from '../../core/ui.js';
+import { scanCodeRaw, scanTargetUrl } from '../scan/launch.js';
+import { INVENTORY_MANUAL_CARDS } from '../../config/inventoryAdjustment.js';
 
-// 「库存手工调整」——常用功能里的核心子页，三个子 tab：
-//   · 盘点调整：改**数量**，可增可减（盘多了加、盘少了减）→ POST .../adjustments/count
-//   · 换季调整：改**状态**，数量不变（门盒/样品 ↔ 仓库）→ POST .../adjustments/season
-//   · 状态调整：**占位（待建设）** —— 核心是「样品 ↔ 门盒」之间的状态调整；
-//     ⚠️ 2026-11-09（业务负责人）：「先占位一下，看一起其他的待开发状态」⇒ 这一屏现在**只占位**：
-//        没有输入、没有提交按钮、不发任何接口；等口径定了再按下面两条既有通路实现
-//        （状态类走 `InventoryService.transitionState`，不增删记录、数量不变）。
-//
-// 两条硬约束（后端已实现，界面也必须按它设计）：
-//   ① 流水里的「变动数量」存的是**绝对值**，增减由「库存方向」表达 —— 页面不拼 +N/−N；
-//   ② 幂等靠**界面侧的 requestId**：一次提交生成一个，**重试复用同一个**
-//      （state.pendingRequest：失败保留、成功清空），这样重试不会重复加/减。
-const $ = (container, selector) => container.querySelector(selector);
+const $ = (host, selector) => host.querySelector(selector);
+const STATES = ['门盒', '样品'];
 
-const STATES = ['门盒', '样品', '仓库'];
-const SEASON_ACTIONS = {
-  season_freeze: { label: '转冻结（门盒/样品 → 仓库）', from: ['门盒', '样品'], needsTarget: false },
-  season_release: { label: '转释放（仓库 → 门盒/样品）', from: ['仓库'], needsTarget: true },
-};
-
-function renderShell(container) {
-  // ⭐ 2026-10-10（业务负责人真机反馈：「下面的这些文字解释就不用了」）：
-  //    这一页现在**两个地方**都用（工作台「库存 → 手工调整」内嵌 + `inventory-adjustment.html`
-  //    独立页）—— 两边都已经有"这一页叫什么"（子 tab / 独立页的 h1）⇒ 下面这层同名大标题
-  //    与它那行说明、以及子面板里那两句使用说明**全部删掉**，只留能填能点的。
-  container.innerHTML = `
-    <section class="panel">
-      <div class="sub-tabs">
-        <!-- 三级子 tab 的 id / 名称 / 顺序 / 默认选中 = config/inventoryAdjustment.js（不再散落在页面字符串里）。 -->
-        ${INVENTORY_ADJUSTMENT_TABS.map((tab) => `<button class="sub-tab${tab.default ? ' active' : ''}" type="button" data-subtab="${tab.id}">${escapeHtml(tab.label)}</button>`).join('')}
-      </div>
-
-      <div id="adjust-count-subpanel" class="sub-panel">
-        <div class="toolbar compact-toolbar">
-          <label class="form-field grow">找货品（货号 / 编号 / 颜色）
-            <input data-field="count-keyword" placeholder="例如 XHB8095 或 YD6693">
-          </label>
-          <button class="btn" type="button" data-action="count-search">查找货品</button>
-        </div>
-        <div class="product-picker" data-view="count-products">
-          <p class="empty compact">先按货号查找，再从结果里选一双鞋</p>
-        </div>
-        <div class="action-form">
-          <div class="order-details" data-view="count-selected"><div><span>已选</span><strong>未选择</strong></div></div>
-          <div class="two-col">
-            <label class="form-field">尺码
-              <input data-field="count-size" type="number" min="1" step="1" inputmode="numeric" placeholder="例如 42">
-            </label>
-            <label class="form-field">所属状态
-              <select data-field="count-state">${STATES.map((state) => `<option>${state}</option>`).join('')}</select>
-            </label>
-          </div>
-          <div class="order-details" data-view="count-levels"><p class="muted">选择货品并填好尺码后，这里显示三种状态的当前库存。</p></div>
-          <div class="mode-choice">
-            <label><input type="radio" name="count-mode" value="counted" checked> 按「实际盘点数」调整</label>
-            <label><input type="radio" name="count-mode" value="delta"> 按「增减数量」调整</label>
-          </div>
-          <label class="form-field" data-view="counted-field">实际盘点数（双）
-            <input data-field="counted-quantity" type="number" min="0" step="1" inputmode="numeric" placeholder="仓库里实际有几双">
-          </label>
-          <label class="form-field hidden" data-view="delta-field">增减数量（正数=加，负数=减）
-            <input data-field="delta-quantity" type="number" step="1" inputmode="numeric" placeholder="例如 2 或 -1">
-          </label>
-          <button class="btn btn-primary" type="button" data-action="submit-count">提交盘点调整</button>
-          <p class="operation-result" data-view="count-result" role="status"></p>
-        </div>
-      </div>
-
-      <div id="adjust-season-subpanel" class="sub-panel hidden">
-        <div class="toolbar compact-toolbar">
-          <label class="form-field grow">动作
-            <select data-field="season-action">
-              ${Object.entries(SEASON_ACTIONS).map(([value, item]) => `<option value="${value}">${escapeHtml(item.label)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="form-field" data-view="release-target-field">释放回哪里
-            <select data-field="season-to-state"><option>门盒</option><option>样品</option></select>
-          </label>
-        </div>
-        <div class="mode-choice">
-          <label><input type="radio" name="season-mode" value="category" checked> 按品类批量</label>
-          <label><input type="radio" name="season-mode" value="single"> 按编号单个</label>
-        </div>
-        <div data-view="season-category-block">
-          <div class="toolbar compact-toolbar">
-            <label class="form-field grow">品类
-              <select data-field="season-category"><option value="">正在加载品类…</option></select>
-            </label>
-            <button class="btn" type="button" data-action="season-list">列出这一品类的鞋</button>
-          </div>
-          <div class="season-list" data-view="season-rows">
-            <p class="empty compact">选好品类和动作后，点「列出这一品类的鞋」</p>
-          </div>
-        </div>
-        <div class="hidden" data-view="season-single-block">
-          <div class="toolbar compact-toolbar">
-            <label class="form-field grow">找货品（货号 / 编号 / 颜色）
-              <input data-field="season-keyword" placeholder="例如 XHB8095">
-            </label>
-            <button class="btn" type="button" data-action="season-search">查找货品</button>
-          </div>
-          <div class="product-picker" data-view="season-products">
-            <p class="empty compact">先按货号查找，再从结果里选一双鞋</p>
-          </div>
-          <div class="two-col">
-            <label class="form-field">尺码
-              <input data-field="season-size" type="number" min="1" step="1" inputmode="numeric" placeholder="例如 42">
-            </label>
-            <label class="form-field">数量（双）
-              <input data-field="season-quantity" type="number" min="1" step="1" inputmode="numeric" value="1">
-            </label>
-          </div>
-          <div class="order-details" data-view="season-single-selected"><div><span>已选</span><strong>未选择</strong></div></div>
-        </div>
-        <button class="btn btn-primary" type="button" data-action="submit-season">提交换季调整</button>
-        <p class="operation-result" data-view="season-result" role="status"></p>
-      </div>
-
-      <div id="adjust-state-subpanel" class="sub-panel hidden">
-        <!-- 🔴 2026-11-09（业务负责人）：「增加一个子 tab，为状态调整，核心是样品和门盒的调整，先占位一下」
-             ⇒ 只留一个**待建设**标记 + 这一屏要做什么（样品 ↔ 门盒）；没有任何输入 / 提交 / 请求 ✗ -->
-        <div class="inline-placeholder">
-          <p>样品 ↔ 门盒</p>
-          <span class="tag tag-info">待建设</span>
-        </div>
-      </div>
-    </section>`;
-}
+const cardsHtml = () => `<div class="domain-cards domain-cards-single">${INVENTORY_MANUAL_CARDS.map((card) => `
+  <button class="entry-card" type="button" data-manual="${card.id}"><span class="icon">${escapeHtml(card.icon)}</span><h3>${escapeHtml(card.label)}</h3></button>`).join('')}</div>`;
 
 export function createInventoryAdjustmentModule() {
-  const state = {
-    container: null,
-    // 幂等：一次提交生成一个 requestId，重试复用同一个（成功后清空）。
-    pendingRequest: null,
-    countProduct: null,
-    seasonProduct: null,
-    categoryRows: [],
-    selectedCategoryKeys: new Set(),
-  };
+  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [] };
 
-  // ── 共用：货品查找 ────────────────────────────────────────────────────
-  async function searchProducts(keyword, listSelector, onPick) {
-    showPageError('');
-    const panel = $(state.container, listSelector);
-    panel.innerHTML = '<p class="section-loading">正在查找货品…</p>';
-    try {
-      const params = new URLSearchParams({ keyword: keyword || '' });
-      const data = await api.get(`/api/workbench/inventory/products?${params}`);
-      const rows = data.rows || [];
-      panel.innerHTML = rows.length
-        ? `<div class="picker-list">${rows.map((row) => `
-            <button class="picker-item" type="button" data-product="${escapeHtml(row.record_id)}"
-              data-label="${escapeHtml([row.item_no, row.color].filter(Boolean).join(' ') || row.product_number)}">
-              <strong>${escapeHtml(row.item_no || row.product_number || row.record_id)}</strong>
-              <span class="muted">${escapeHtml(row.product_number || '')}${row.color ? ` · ${escapeHtml(row.color)}` : ''}</span>
-            </button>`).join('')}</div>`
-        : '<p class="empty compact">没有匹配的货品，换个货号试试。</p>';
-      panel.querySelectorAll('[data-product]').forEach((button) => button.addEventListener('click', () => {
-        panel.querySelectorAll('[data-product]').forEach((item) => item.classList.toggle('active', item === button));
-        onPick({ recordId: button.dataset.product, label: button.dataset.label });
-      }));
-    } catch (error) {
-      panel.innerHTML = '<p class="empty compact">货品查找失败</p>';
-      showPageError(describeError(error));
-    }
+  async function loadRows() {
+    if (state.rows.length) return state.rows;
+    const data = await api.get('/api/workbench/inventory');
+    state.rows = Array.isArray(data.rows) ? data.rows : [];
+    return state.rows;
   }
 
-  function renderSelected(selector, product, extra = '') {
-    $(state.container, selector).innerHTML = product
-      ? `<div><span>已选货品</span><strong>${escapeHtml(product.label)}</strong></div>${extra}`
-      : '<div><span>已选</span><strong>未选择</strong></div>';
+  function show(view) {
+    state.view = view;
+    const host = state.host;
+    $(host, '[data-manual="cards"]')?.classList.toggle('hidden', view !== 'cards');
+    $(host, '[data-view="manual-single"]')?.classList.toggle('hidden', view !== 'single');
+    $(host, '[data-view="manual-batch"]')?.classList.toggle('hidden', view !== 'batch');
   }
 
-  // ── 盘点调整 ─────────────────────────────────────────────────────────
-  function countInputs() {
-    const panel = $(state.container, '#adjust-count-subpanel');
-    return {
-      panel,
-      size: $(panel, '[data-field="count-size"]').value.trim(),
-      state: $(panel, '[data-field="count-state"]').value,
-      mode: panel.querySelector('input[name="count-mode"]:checked')?.value || 'counted',
-      counted: $(panel, '[data-field="counted-quantity"]').value.trim(),
-      delta: $(panel, '[data-field="delta-quantity"]').value.trim(),
-    };
+  function productRows(productId) {
+    return state.rows.filter((row) => row.product_record_id === productId);
   }
 
-  function toggleCountMode() {
-    const { panel, mode } = countInputs();
-    $(panel, '[data-view="counted-field"]').classList.toggle('hidden', mode !== 'counted');
-    $(panel, '[data-view="delta-field"]').classList.toggle('hidden', mode !== 'delta');
+  function renderSingle(productId) {
+    state.productId = productId;
+    state.editorRows = productRows(productId).map((row) => ({ ...row }));
+    const first = state.editorRows[0] || {};
+    const label = [first.product_number, first.color, first.category].filter(Boolean).join('｜') || productId;
+    const host = state.host;
+    const body = $(host, '[data-view="single-rows"]');
+    body.innerHTML = state.editorRows.length ? state.editorRows.map((row, index) => `
+      <div class="edit-row">
+        <input data-row="${index}" data-k="size" value="${escapeHtml(row.size ?? '')}" inputmode="numeric" aria-label="尺码">
+        <select data-row="${index}" data-k="state" aria-label="所属状态">${STATES.map((s) => `<option ${row.state === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
+        <input data-row="${index}" data-k="quantity" value="${escapeHtml(row.quantity ?? 1)}" type="number" min="0" inputmode="numeric" aria-label="数量">
+        <button class="del" type="button" data-remove="${index}">删</button>
+      </div>`).join('') : '<p class="empty compact">这个编号暂时没有实时库存。</p>';
+    $(host, '[data-view="single-label"]').textContent = label;
+    $(host, '[data-view="single-note"]').textContent = '保存接口待接入，当前页面可查看和编辑，但不会写回库存。';
+    body.querySelectorAll('[data-row]').forEach((el) => el.addEventListener('input', () => {
+      state.editorRows[Number(el.dataset.row)][el.dataset.k] = el.value;
+    }));
+    body.querySelectorAll('[data-remove]').forEach((btn) => btn.addEventListener('click', () => {
+      state.editorRows.splice(Number(btn.dataset.remove), 1);
+      renderSingle(productId);
+    }));
+    show('single');
   }
 
-  async function loadCountLevels() {
-    const { panel, size, state: currentState } = countInputs();
-    const view = $(panel, '[data-view="count-levels"]');
-    if (!state.countProduct) return;
-    if (!size) { view.innerHTML = '<p class="muted">先填尺码，再看当前库存。</p>'; return; }
-    if (!/^[1-9]\d*$/.test(size)) { view.innerHTML = '<p class="muted">尺码必须是正整数，例如 42。</p>'; return; }
-    view.innerHTML = '<p class="section-loading">正在读取当前库存…</p>';
-    try {
-      const params = new URLSearchParams({ productRecordId: state.countProduct.recordId, size });
-      const data = await api.get(`/api/workbench/inventory/stock?${params}`);
-      const rows = data.rows || [];
-      view.innerHTML = rows.map((row) => `
-        <div class="${row.state === currentState ? 'level-current' : ''}">
-          <span>${escapeHtml(row.state)}${row.state === currentState ? '（本次调整）' : ''}</span>
-          <strong>${escapeHtml(row.quantity)}</strong>
-        </div>`).join('') + `<div><span>合计</span><strong>${escapeHtml(data.total || 0)}</strong></div>`;
-    } catch (error) {
-      view.innerHTML = '<p class="muted">当前库存读取失败</p>';
-      showPageError(describeError(error));
-    }
-  }
-
-  async function submitCount(button) {
-    const { panel, size, state: currentState, mode, counted, delta } = countInputs();
-    if (!state.countProduct) return showPageError('请先选一个货品');
-    if (!/^[1-9]\d*$/.test(size)) return showPageError('尺码必须是正整数，例如 42');
-    if (mode === 'counted' && !/^\d+$/.test(counted)) return showPageError('实际盘点数必须是不小于 0 的整数');
-    if (mode === 'delta' && !/^-?\d+$/.test(delta)) return showPageError('增减数量必须是整数，例如 2 或 -1');
-    const body = {
-      productRecordId: state.countProduct.recordId,
-      size: Number(size),
-      state: currentState,
-      mode,
-      requestId: state.pendingRequest || crypto.randomUUID(),
-    };
-    state.pendingRequest = body.requestId;
-    if (mode === 'counted') body.countedQuantity = Number(counted);
-    else body.delta = Number(delta);
-    // ⭐⭐ 2026-10-12《前端交互反馈纪律》：点了立刻置灰 +「正在调整…（已 N 秒）」+ 防连点
-    return runWriteAction(button, async () => {
-      showPageError('');
-      try {
-        const result = await api.post('/api/workbench/inventory/adjustments/count', body);
-      state.pendingRequest = null; // 成功后才换新的 requestId
-      $(panel, '[data-view="count-result"]').textContent =
-        `已调整：${result.product_record_id}｜${result.size}码｜${result.state} `
-        + `${result.before_quantity} → ${result.after_quantity} 双（本次 ${result.delta > 0 ? '+' : ''}${result.delta}）。`;
-      $(panel, '[data-view="count-result"]').classList.remove('error-text');
-      await loadCountLevels();
-    } catch (error) {
-      // 400 = 她填错了（没写任何东西），可以换一个 requestId；其余保留，
-      // 重试时复用同一个，避免"其实已经写进去一次"被记成两次。
-      if (error.status === 400) state.pendingRequest = null;
-      $(panel, '[data-view="count-result"]').textContent = describeError(error);
-      $(panel, '[data-view="count-result"]').classList.add('error-text');
-      showPageError(describeError(error));
-      } finally {
-        setBusy(button, false);
-      }
-    }, '正在调整…');
-  }
-
-  // ── 换季调整 ─────────────────────────────────────────────────────────
-  function seasonAction() {
-    const panel = $(state.container, '#adjust-season-subpanel');
-    const action = $(panel, '[data-field="season-action"]').value;
-    return { panel, action, config: SEASON_ACTIONS[action] || SEASON_ACTIONS.season_freeze,
-      toState: $(panel, '[data-field="season-to-state"]').value };
-  }
-
-  function seasonMode() {
-    const panel = $(state.container, '#adjust-season-subpanel');
-    return panel.querySelector('input[name="season-mode"]:checked')?.value || 'category';
-  }
-
-  async function loadCategories() {
-    const panel = $(state.container, '#adjust-season-subpanel');
-    const select = $(panel, '[data-field="season-category"]');
-    try {
-      const data = await api.get('/api/workbench/inventory/categories');
-      const rows = data.rows || [];
-      select.innerHTML = '<option value="">选择品类</option>'
-        + rows.map((row) => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.category)}（${row.quantity} 双）</option>`).join('');
-    } catch (error) {
-      select.innerHTML = '<option value="">品类加载失败</option>';
-      showPageError(describeError(error));
-    }
-  }
-
-  async function loadCategoryRows() {
-    const { panel, config } = seasonAction();
-    const category = $(panel, '[data-field="season-category"]').value;
-    const view = $(panel, '[data-view="season-rows"]');
-    if (!category) return showPageError('请先选一个品类');
-    view.innerHTML = '<p class="section-loading">正在列出这一品类的鞋…</p>';
-    try {
-      const data = await api.get('/api/workbench/inventory');
-      // 只保留这个品类、且状态在本次动作「起点」里的行（转冻结看门盒/样品，转释放只看仓库）。
-      state.categoryRows = (data.rows || []).filter((row) => row.category === category
-        && config.from.includes(row.state));
-      state.selectedCategoryKeys = new Set();
-      renderCategoryRows();
-    } catch (error) {
-      view.innerHTML = '<p class="empty compact">库存读取失败</p>';
-      showPageError(describeError(error));
-    }
-  }
-
-  function renderCategoryRows() {
-    const { panel, config } = seasonAction();
-    const view = $(panel, '[data-view="season-rows"]');
-    const rows = state.categoryRows;
+  function fitRowsForProduct(productId) {
+    const rows = productRows(productId);
     if (!rows.length) {
-      view.innerHTML = `<p class="empty compact">这个品类里没有「${config.from.join(' / ')}」状态的库存。</p>`;
+      showPageError('这个编号没有实时库存，不能调整。');
       return;
     }
-    view.innerHTML = `
-      <div class="row-actions">
-        <button class="btn btn-ghost" type="button" data-action="season-select-all">全选</button>
-        <button class="btn btn-ghost" type="button" data-action="season-select-none">全不选</button>
-      </div>
-      <div class="table-wrap mobile-card-table"><table>
-        <thead><tr><th>选择</th><th>货号</th><th>颜色</th><th>尺码</th><th>所属状态</th><th>现有数量</th></tr></thead>
-        <tbody>${rows.map((row) => {
-          const key = `${row.product_record_id}|${row.size}|${row.state}`;
-          return `<tr><td data-label="选择"><input type="checkbox" data-season-key="${escapeHtml(key)}" ${state.selectedCategoryKeys.has(key) ? 'checked' : ''}></td>
-            <td data-label="货号"><span class="cell-value">${escapeHtml(row.item_no || row.product_number || '-')}</span></td>
-            <td data-label="颜色"><span class="cell-value">${escapeHtml(row.color || '-')}</span></td>
-            <td data-label="尺码"><span class="cell-value">${escapeHtml(row.size ?? '-')}</span></td>
-            <td data-label="所属状态"><span class="cell-value tag tag-info">${escapeHtml(row.state)}</span></td>
-            <td data-label="现有数量" class="quantity"><span class="cell-value">${escapeHtml(row.quantity)}</span></td></tr>`;
-        }).join('')}</tbody></table></div>`;
-    view.querySelectorAll('[data-season-key]').forEach((input) => input.addEventListener('change', () => {
-      if (input.checked) state.selectedCategoryKeys.add(input.dataset.seasonKey);
-      else state.selectedCategoryKeys.delete(input.dataset.seasonKey);
-      updateSeasonSubmit();
-    }));
-    $(view, '[data-action="season-select-all"]').addEventListener('click', () => {
-      rows.forEach((row) => state.selectedCategoryKeys.add(`${row.product_record_id}|${row.size}|${row.state}`));
-      renderCategoryRows();
-    });
-    $(view, '[data-action="season-select-none"]').addEventListener('click', () => {
-      state.selectedCategoryKeys = new Set();
-      renderCategoryRows();
-    });
-    updateSeasonSubmit();
+    showPageError('');
+    renderSingle(productId);
   }
 
-  function buildTargets() {
-    const { config } = seasonAction();
-    if (seasonMode() === 'category') {
-      return state.categoryRows
-        .filter((row) => state.selectedCategoryKeys.has(`${row.product_record_id}|${row.size}|${row.state}`))
-        .map((row) => ({ productRecordId: row.product_record_id, size: row.size, state: row.state, quantity: row.quantity }));
-    }
-    const panel = $(state.container, '#adjust-season-subpanel');
-    const size = $(panel, '[data-field="season-size"]').value.trim();
-    const quantity = $(panel, '[data-field="season-quantity"]').value.trim();
-    if (!state.seasonProduct) return [];
-    if (!/^[1-9]\d*$/.test(size)) return [];
-    if (!/^[1-9]\d*$/.test(quantity)) return [];
-    return [{
-      productRecordId: state.seasonProduct.recordId,
-      size: Number(size),
-      // 按编号时起点由动作决定：冻结从门盒起（样品要单独选）、释放一定从仓库起。
-      state: config.from[0],
-      quantity: Number(quantity),
-    }];
-  }
-
-  function updateSeasonSubmit() {
-    const { panel } = seasonAction();
-    const targets = buildTargets();
-    const button = $(panel, '[data-action="submit-season"]');
-    const total = targets.reduce((sum, item) => sum + item.quantity, 0);
-    button.textContent = `提交换季调整（${targets.length} 条 / ${total} 双）`;
-    button.disabled = !targets.length;
-  }
-
-  async function submitSeason(button) {
-    const { panel, action, config, toState } = seasonAction();
-    const targets = buildTargets();
-    if (!targets.length) return showPageError('请先选择要调整的鞋');
-    const body = {
-      action,
-      targets,
-      requestId: state.pendingRequest || crypto.randomUUID(),
-    };
-    if (config.needsTarget) body.toState = toState;
-    state.pendingRequest = body.requestId;
-    return runWriteAction(button, async () => {
-      showPageError('');
-      try {
-        const result = await api.post('/api/workbench/inventory/adjustments/season', body);
-      state.pendingRequest = null;
-      const failed = result.failures || [];
-      $(panel, '[data-view="season-result"]').innerHTML = failed.length
-        ? `成功 ${result.succeeded} 条，失败 ${result.failed} 条：<br>${failed.map((item) =>
-          `${escapeHtml(item.product_record_id)}｜${escapeHtml(item.size)}码｜${escapeHtml(item.state)}：${escapeHtml(item.error)}`).join('<br>')}`
-        : `已把 ${result.succeeded} 条（共 ${targets.reduce((sum, item) => sum + item.quantity, 0)} 双）改成「${escapeHtml(result.to_state)}」，数量没有变化。`;
-      if (seasonMode() === 'category') await loadCategoryRows();
-      else await loadSeasonSingleLevels();
-    } catch (error) {
-      if (error.status === 400) state.pendingRequest = null;
-      $(panel, '[data-view="season-result"]').textContent = describeError(error);
-      showPageError(describeError(error));
-      } finally {
-        setBusy(button, false);
-        updateSeasonSubmit();
-      }
-    }, '正在调整…');
-  }
-
-  async function loadSeasonSingleLevels() {
-    const { panel, config } = seasonAction();
-    if (!state.seasonProduct) return;
-    const size = $(panel, '[data-field="season-size"]').value.trim();
-    const view = $(panel, '[data-view="season-single-selected"]');
-    if (!/^[1-9]\d*$/.test(size)) { renderSelected('[data-view="season-single-selected"]', state.seasonProduct); return; }
+  async function scanSingle() {
+    showPageError('');
     try {
-      const params = new URLSearchParams({ productRecordId: state.seasonProduct.recordId, size });
-      const data = await api.get(`/api/workbench/inventory/stock?${params}`);
-      const rows = (data.rows || []).filter((row) => config.from.includes(row.state));
-      renderSelected('[data-view="season-single-selected"]', state.seasonProduct,
-        rows.map((row) => `<div><span>${escapeHtml(row.state)}</span><strong>${escapeHtml(row.quantity)}</strong></div>`).join(''));
-    } catch (error) { showPageError(describeError(error)); }
+      const scanned = await scanCodeRaw('inventory');
+      const target = scanTargetUrl(scanned, 'inventory');
+      const match = String(target || '').match(/\/r\/([^/?#]+)/);
+      if (!match) return showPageError('没有认出货品编号，请重新扫码。');
+      await loadRows();
+      fitRowsForProduct(decodeURIComponent(match[1]));
+    } catch (error) {
+      const message = String(error?.message || '');
+      if (/cancel/i.test(message)) return;
+      showPageError(message === 'jssdk_missing' ? '当前设备调不起飞书扫一扫，请在飞书里打开工作台。' : '扫码没有成功，请再试一次。');
+    }
   }
 
-  // ── 事件绑定 ─────────────────────────────────────────────────────────
-  function bindCount() {
-    const panel = $(state.container, '#adjust-count-subpanel');
-    $(panel, '[data-action="count-search"]').addEventListener('click', () => searchProducts(
-      $(panel, '[data-field="count-keyword"]').value.trim(), '[data-view="count-products"]',
-      (product) => { state.countProduct = product; renderSelected('[data-view="count-selected"]', product); loadCountLevels(); },
-    ));
-    $(panel, '[data-field="count-keyword"]').addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') $(panel, '[data-action="count-search"]').click();
-    });
-    $(panel, '[data-field="count-size"]').addEventListener('change', loadCountLevels);
-    $(panel, '[data-field="count-state"]').addEventListener('change', loadCountLevels);
-    panel.querySelectorAll('input[name="count-mode"]').forEach((input) => input.addEventListener('change', toggleCountMode));
-    $(panel, '[data-action="submit-count"]').addEventListener('click', (event) => submitCount(event.currentTarget));
+  function violations() {
+    const selectedCategory = $(state.host, '[data-field="batch-category"]')?.value || '';
+    const rows = state.rows.filter((row) => row.season === true
+      && (!selectedCategory || row.category === selectedCategory));
+    const groups = new Map();
+    for (const row of rows) {
+      const key = row.product_record_id;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    }
+    return [...groups.entries()].map(([productId, items]) => {
+      const samples = items.filter((row) => row.state === '样品');
+      const doorbox = items.filter((row) => row.state === '门盒');
+      const sampleCount = samples.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+      return { productId, items, samples, doorbox, sampleCount,
+        issue: sampleCount > 1 ? `样品多 ${sampleCount - 1} 双` : (sampleCount === 0 ? '缺样品' : '') };
+    }).filter((group) => group.issue);
   }
 
-  function bindSeason() {
-    const panel = $(state.container, '#adjust-season-subpanel');
-    const refresh = () => {
-      const { config } = seasonAction();
-      state.selectedCategoryKeys = new Set();
-      $(panel, '[data-view="release-target-field"]').classList.toggle('hidden', !config.needsTarget);
-      $(panel, '[data-view="season-rows"]').innerHTML = '<p class="empty compact">换动作后请重新「列出这一品类的鞋」</p>';
-      state.categoryRows = [];
-      updateSeasonSubmit();
-    };
-    $(panel, '[data-field="season-action"]').addEventListener('change', refresh);
-    panel.querySelectorAll('input[name="season-mode"]').forEach((input) => input.addEventListener('change', () => {
-      const single = seasonMode() === 'single';
-      $(panel, '[data-view="season-category-block"]').classList.toggle('hidden', single);
-      $(panel, '[data-view="season-single-block"]').classList.toggle('hidden', !single);
-      updateSeasonSubmit();
-    }));
-    $(panel, '[data-action="season-list"]').addEventListener('click', loadCategoryRows);
-    $(panel, '[data-action="season-search"]').addEventListener('click', () => searchProducts(
-      $(panel, '[data-field="season-keyword"]').value.trim(), '[data-view="season-products"]',
-      (product) => { state.seasonProduct = product; loadSeasonSingleLevels(); updateSeasonSubmit(); },
-    ));
-    $(panel, '[data-field="season-keyword"]').addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') $(panel, '[data-action="season-search"]').click();
-    });
-    $(panel, '[data-field="season-size"]').addEventListener('change', () => { loadSeasonSingleLevels(); updateSeasonSubmit(); });
-    $(panel, '[data-field="season-quantity"]').addEventListener('input', updateSeasonSubmit);
-    $(panel, '[data-action="submit-season"]').addEventListener('click', (event) => submitSeason(event.currentTarget));
+  function renderViolations() {
+    const box = $(state.host, '[data-view="batch-violations"]');
+    const list = violations();
+    if (!list.length) {
+      box.innerHTML = '<p class="empty compact">当前品类没有不符合规则的当季鞋。</p>';
+      return;
+    }
+    box.innerHTML = list.map((group) => {
+      const first = group.items[0] || {};
+      const label = [first.product_number, first.color].filter(Boolean).join('｜') || group.productId;
+      const candidates = group.doorbox.map((row) => `${row.size}码`).join('、');
+      return `<div class="row-card violation-card"><div class="violation-info">
+        <div class="row-top"><div class="row-num">${escapeHtml(label)}</div><span class="tag bad">${escapeHtml(group.issue)}</span></div>
+        <div class="row-line">当前：样品 ${group.sampleCount} 双｜门盒 ${group.doorbox.reduce((sum, row) => sum + Number(row.quantity || 0), 0)} 双${group.sampleCount === 0 && candidates ? `；候选：${escapeHtml(candidates)}` : ''}</div>
+      </div><button class="btn small primary" type="button" data-fix="${escapeHtml(group.productId)}">调整</button></div>`;
+    }).join('');
+    box.querySelectorAll('[data-fix]').forEach((btn) => btn.addEventListener('click', () => fitRowsForProduct(btn.dataset.fix)));
+  }
+
+  async function enterBatch() {
+    const host = state.host;
+    const select = $(host, '[data-field="batch-category"]');
+    if (!state.categories.length) {
+      const data = await api.get('/api/workbench/inventory/categories');
+      state.categories = Array.isArray(data.rows) ? data.rows : [];
+      select.innerHTML = state.categories.map((row) => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.category)}</option>`).join('');
+    }
+    await loadRows();
+    renderViolations();
+    show('batch');
   }
 
   return {
-    mount(container) {
-      state.container = container;
-      renderShell(container);
-      bindSubTabs(container);
-      bindCount();
-      bindSeason();
-      toggleCountMode();
-      updateSeasonSubmit();
-      loadCategories();
+    mount(host) {
+      state.host = host;
+      host.innerHTML = `<div data-manual="cards">${cardsHtml()}</div>
+        <div data-view="manual-single" class="hidden">
+          <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>单双调整</h2></div>
+          <div class="row-card"><div class="row-top"><div class="row-num" data-view="single-label"></div><span class="tag season">编辑中</span></div>
+            <div data-view="single-rows" style="margin-top:10px"></div>
+            <button class="btn small" type="button" data-add-size style="margin-top:8px">＋ 添加尺码</button>
+            <p class="hint" data-view="single-note"></p>
+            <div class="row-actions"><button class="btn primary" type="button" disabled title="保存接口待接入">保存库存调整</button><button class="btn" type="button" data-back>取消</button></div>
+          </div>
+        </div>
+        <div data-view="manual-batch" class="hidden">
+          <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>批量调整</h2></div>
+          <div class="batch-section"><h3>① 当季调整</h3>
+            <label class="field"><select data-field="batch-category"></select></label>
+            <div class="row-actions"><button class="btn small primary" type="button" disabled title="批量写接口待接入">当季</button><button class="btn small" type="button" data-action="batch-check">库存</button></div>
+          </div>
+          <div class="batch-section"><h3>② 状态调整</h3><div data-view="batch-violations"></div></div>
+        </div>`;
+      host.querySelectorAll('[data-back]').forEach((btn) => btn.addEventListener('click', () => show('cards')));
+      host.querySelector('[data-manual="single"]').addEventListener('click', () => { void scanSingle(); });
+      host.querySelector('[data-manual="batch"]').addEventListener('click', () => { void enterBatch().catch((error) => showPageError(describeError(error))); });
+      host.querySelector('[data-add-size]').addEventListener('click', () => { state.editorRows.push({ size: '', state: '门盒', quantity: 1 }); renderSingle(state.productId); });
+      host.querySelector('[data-action="batch-check"]').addEventListener('click', () => renderViolations());
+      host.querySelector('[data-field="batch-category"]').addEventListener('change', () => renderViolations());
     },
   };
 }

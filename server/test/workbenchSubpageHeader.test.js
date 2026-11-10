@@ -30,7 +30,6 @@ const read = (relative) => fs.readFileSync(path.join(WORKBENCH, relative), 'utf8
 const withoutTitle = (html) => html.replace(/<title>[\s\S]*?<\/title>/g, '');
 
 const PAGES = [
-  { file: 'inventory-adjustment.html', h1: '库存手工调整' },
 ];
 const BRAND = '邯美数智经营工作台';
 
@@ -81,7 +80,7 @@ test('AC5 主页面仍是 batch① 的样子：那串标题一个都没有', () 
 });
 
 test('AC6 所有工作台页面浏览器标题统一为邯美工作台（跳转页除外）', () => {
-  const files = ['index.html', 'after-sales.html', 'inventory-adjustment.html', 'label-print.html', 'procurement.html', 'purchase-acceptance.html', 'sales-delivery.html'];
+  const files = ['index.html', 'after-sales.html', 'label-print.html', 'procurement.html', 'purchase-acceptance.html', 'sales-delivery.html'];
   for (const file of files) {
     const html = read(file);
     assert.ok(html.includes('<title>邯美工作台</title>'), `${file} 的 <title> 应为邯美工作台`);

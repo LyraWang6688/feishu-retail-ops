@@ -35,7 +35,7 @@ export function createDomainModule(domainId) {
   const domain = domainById(domainId);
   const state = {
     container: null, active: domain.pages[0].id, mounted: new Set(),
-    scanModules: new Map(), orderModules: new Map(),
+    orderModules: new Map(),
   };
 
   const hostOf = (pageId) => state.container?.querySelector(`[data-domain-host="${pageId}"]`);
@@ -67,11 +67,7 @@ export function createDomainModule(domainId) {
     //    `mode: 'purchase'`），点一下子 tab 换一屏；**不是**在报货那一页下面展开
     //    （她真机反馈：「不应该是一点完之后在同一个 tab 页里下面出现」）。
     // ⭐「扫一扫」是一屏独立页面（kind: 'scan'）—— 复用既有机制，不动别的 kind ✓
-    if (page.kind === 'scan-cards' || page.kind === 'scan-direct') {
-      const module = createScanCardsModule(page);
-      if (page.kind === 'scan-direct') state.scanModules.set(page.id, module);
-      return void module.mount(host);
-    }
+    if (page.kind === 'scan-cards') return void createScanCardsModule(page).mount(host);
     if (page.kind === 'orders') {
       let module = state.orderModules.get(page.id);
       if (!module) {
@@ -122,10 +118,6 @@ export function createDomainModule(domainId) {
           const action = resolveTabClick(page);
           if (action.jump) return void window.location.assign(action.jump);
           activate(action.activate);
-          // 单点查询：只有用户真点了这个子 tab 才调飞书扫一扫（进库存不自动扫）
-          if (page.kind === 'scan-direct' && page.scanRealm) {
-            state.scanModules.get(page.id)?.scanNow();
-          }
           return undefined;
         }
         // 「跳到本 tab 里的另一个子页」（由 `data-jump` 卡片触发的老路，机制保留）
