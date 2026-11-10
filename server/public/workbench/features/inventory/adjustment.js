@@ -161,6 +161,7 @@ export function createInventoryAdjustmentModule() {
       state.pendingRequest = null;
       state.savedNumber = first.product_number || '';
       state.rows = [];
+      showToast('已提交，后台写入库存');
       $(state.host, '[data-view="print-modal"]').hidden = false;
     } catch (error) {
       showPageError(describeError(error));
@@ -184,11 +185,9 @@ export function createInventoryAdjustmentModule() {
     const current = state.rows.filter((row) => row.category === category);
     const season = !(current.length > 0 && current.every((row) => row.season === true));
     try {
-      await api.post('/api/workbench/inventory/adjustments/season-flag', { category, season });
+      await api.post('/api/workbench/inventory/adjustments/season-flag', { category, season, requestId: crypto.randomUUID() });
       state.rows = [];
-      await loadRows();
-      renderViolations();
-      showToast(season ? '已批量设为当季' : '已批量取消当季');
+      showToast(season ? '已提交，后台设为当季' : '已提交，后台取消当季');
     } catch (error) { showPageError(describeError(error)); }
   }
 
