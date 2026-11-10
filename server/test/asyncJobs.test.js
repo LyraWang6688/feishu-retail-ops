@@ -142,6 +142,29 @@ test('AC-J2b 永久错误（400 / 字段不存在 / 权限 / 参数）**不重�
   }
 });
 
+test('AC-J2b2 飞书 400 + code=1254607（Data not ready）⇒ 属临时错误，必须重试', async () => {
+  const h = makeService();
+  const { jobId } = await enqueueJob(h);
+  let calls = 0;
+  const done = await h.service.run({
+    jobId,
+    run: async () => {
+      calls += 1;
+      if (calls === 1) {
+        const error = new Error('Request failed with status code 400');
+        error.statusCode = 400;
+        error.code = 1254607;
+        error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } };
+        throw error;
+      }
+      return { ok: true };
+    },
+  });
+  assert.equal(calls, 2, '400 但 code=1254607 是临时错误 ⇒ 要重试一次');
+  assert.equal(done.status, ASYNC_JOB_STATUS.SUCCEEDED);
+  assert.equal(done.attempts, 2);
+});
+
 test('AC-J2c 链路返回 {ok:false, code} 的业务拒绝**不重试**；返回 5xx 字样才重试', async () => {
   const permanent = makeService();
   const p = await enqueueJob(permanent);
