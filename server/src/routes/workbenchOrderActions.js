@@ -137,6 +137,8 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
 
   // ⭐⭐ 2026-11-08（业务负责人定稿）：售后「退货」写入 —— 表单 POST → 入队 → 303 统一 toast → 后台写库。
   //   ⚠️ 旧同步写入口 `POST /sales/after-sales` 保留（灰度可回退），页面不再用它。
+  //   · 提交**成功** ⇒ 回**工作台首页**（统一 toast 的默认落点，与销售/采购一致，业务负责人 2026-11-09 定）；
+  //   · 填错（400）⇒ 仍回售后页并带 `err=`，她可以就地改（这条需要 productRecordId 才能回到原页面）。
   const landingPath = (productRecordId) => (productRecordId
     ? `/workbench/after-sales.html?productRecordId=${encodeURIComponent(productRecordId)}`
     : '/workbench/after-sales.html');
@@ -210,9 +212,8 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
         ownerOpenId: req.workbenchUser?.open_id || '',
         operatorName: req.workbenchUser?.name || '',
       });
-      return redirectWithSubmitToast(res, {
-        path: backTo, orderNo: prepared.orderNo, extra: { submitted: '1' },
-      });
+      // 成功回工作台（不传 path ⇒ 用 `config/submitToast.js` 的统一落点 `/workbench/`）
+      return redirectWithSubmitToast(res, { orderNo: prepared.orderNo });
     } catch (error) {
       logError('workbench.orders.after_sales.failed', {
         request_id: req.requestId, reason: 'submit', error: error.message,

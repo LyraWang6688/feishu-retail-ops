@@ -48,6 +48,7 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_expir
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_expiry_secret';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE, PAYMENT_STATUS } = require('../src/config/scanWrite');
 const { createScanWriteService } = require('../src/services/scanWriteService');
@@ -80,8 +81,8 @@ const seedTables = () => ({
   liveInventory: [{
     record_id: 'live_a_40_box',
     fields: {
-      [F('liveInventory', 'product')]: ['prod_a'],
-      [F('liveInventory', 'size')]: ['size_40'],
+      [F('liveInventory', 'product')]: [{ record_ids: ['prod_a'] }],
+      [F('liveInventory', 'size')]: [{ record_ids: ['size_40'] }],
       [F('liveInventory', 'state')]: '门盒',
       [F('liveInventory', 'stockKey')]: `${NUMBER}|40`,
     },
@@ -121,9 +122,9 @@ const fakeGateway = (tables = seedTables()) => {
   return {
     _tables: tables,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
-    listAll: async (key) => [...(tables[key] || [])],
+    listAll: async (key) => (tables[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
     listByFilter: async () => { throw new Error('假网关不支持 filter'); },
-    get: async (key, id) => (tables[key] || []).find((row) => row.record_id === id) || null,
+    get: async (key, id) => { const row = (tables[key] || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
     findOneByText: async (key, semanticKey, expected) => {
       const name = V1_BITABLE_SCHEMA.tables[key].fields[semanticKey];
       const target = String(expected ?? '').trim();

@@ -31,12 +31,10 @@ const makeClient = () => {
           return { code: 0 };
         },
       },
-      permission: {
-        member: {
-          async transferOwner(payload, options) {
-            calls.transfer.push({ payload, options });
-            return { code: 0 };
-          },
+      permissionMember: {
+        async transferOwner(payload, options) {
+          calls.transfer.push({ payload, options });
+          return { code: 0 };
         },
       },
     },

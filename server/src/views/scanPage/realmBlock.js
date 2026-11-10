@@ -2,8 +2,7 @@ const { SCAN_PAGE } = require('../../config/scanPage');
 const { NEW_REALM, REALMS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, foldedSpecialRowsOf, sellableCountOf } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { stockTableHtml } = require('./stockBlock');
-const { submitFeedbackAttrs } = require('./script');
-const { hiddenField, saleFormHtml, specialFactsHtml } = require('./paymentBlock');
+const { saleFormHtml, specialFactsHtml } = require('./paymentBlock');
 const { replenishFormHtml } = require('./replenishBlock');
 const { returnFormHtml } = require('./returnBlock');
 

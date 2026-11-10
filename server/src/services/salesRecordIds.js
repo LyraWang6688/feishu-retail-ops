@@ -22,7 +22,8 @@
  * 拿不到主表的「销售单号」（理论上不该发生）⇒ **返回空串**，调用方**不写这一列**并记日志 ——
  * 绝不自己编一个号。
  */
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 
 // 交易明细（原「收款明细」）的中缀：收款 / 退款 / 留存
 // （业务负责人 2026-10-29：「改的是后面的收款和序号，也就是类型（收款、退款还是留存）以及序号」）。
@@ -107,7 +108,7 @@ const listRowsForEntries = async (gateway, tableKey, entryIds) => {
   if (!wanted.size) return [];
   const rows = await gateway.listAll(tableKey);
   return (rows || []).filter((row) =>
-    linkedRecordIds(row.fields?.[fields.salesEntry]).some((id) => wanted.has(id)));
+    strictLinkedRecordIds(row.fields?.[fields.salesEntry]).some((id) => wanted.has(id)));
 };
 
 /** 把一批记录上的某个列取成号字符串数组（跳过空值）。 */

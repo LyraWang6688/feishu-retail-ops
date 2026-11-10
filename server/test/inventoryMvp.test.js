@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { InventoryService, operationId, operationSourceIdOf, STOCK_MOVEMENTS, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 // 库存动作现在按「行为编码」匹配，编码是行为管理表里的稳定标识。
 const behavior = (recordId, code, name, direction) => ({ record_id: recordId,
@@ -24,8 +25,8 @@ const gatewayFor = (live, behaviors = [
     listAll: async (key) => records.get(key) || [],
     create: async (key, values) => {
       const recordId = `rec_${++seq}`;
-      const fields = Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)
-        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value]));
+      const fields = normalizeLinkFields(Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)
+        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value])));
       if (!records.has(key)) records.set(key, []);
       records.get(key).push({ record_id: recordId, fields });
       return { recordId };
@@ -34,14 +35,14 @@ const gatewayFor = (live, behaviors = [
     get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
     update: async (key, id, values) => {
       const record = (records.get(key) || []).find((row) => row.record_id === id);
-      Object.assign(record.fields, Object.fromEntries(Object.entries(values)
-        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value])));
+      Object.assign(record.fields, normalizeLinkFields(Object.fromEntries(Object.entries(values)
+        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value]))));
       return record;
     },
   };
 };
 const store = () => new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'inventory-mvp-')), idField: 'operation_id' });
-const unit = (id, state) => ({ record_id: id, fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: state } });
+const unit = (id, state) => ({ record_id: id, fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: state } });
 
 test('sale deducts one matching door-box unit, preserves sample, and is idempotent', async () => {
   const gateway = gatewayFor([unit('door_1', '门盒'), unit('door_2', '门盒'), unit('sample_1', '样品')]);
@@ -52,8 +53,8 @@ test('sale deducts one matching door-box unit, preserves sample, and is idempote
   assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id).sort(), ['door_2', 'sample_1']);
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
-    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1,
-    库存行为: ['behavior_sale'], 关联销售: ['detail_1'],
+    编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 变动数量: 1,
+    库存行为: [{ record_ids: ['behavior_sale'] }], 关联销售: [{ record_ids: ['detail_1'] }],
   });
 });
 
@@ -83,13 +84,13 @@ test('purchase adds one live record per pair', async () => {
   assert.equal(gateway.records.get('liveInventory').length, 2);
   assert.ok(gateway.records.get('liveInventory').every((row) => row.fields['所属状态'] === '仓库'));
   assert.ok(gateway.records.get('liveInventory').every((row) =>
-    JSON.stringify(row.fields['尺码']) === JSON.stringify(['size_38'])));
+    JSON.stringify(row.fields['尺码']) === JSON.stringify([{ record_ids: ['size_38'] }])));
   // ⭐ 2026-10-08：业务负责人把「库存流水.关联采购」从"指向已删除的「采购入库」"
   //    **改成指向「报货批次」** ⇒ 采购加库存的流水**带上**批次那一行的 record id
   //    （`ledgerSource` 仍为 null；这条关联是**只写不查**的，见 purchaseLedgerBatchLink.test.js）。
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
-    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 2,
-    库存行为: ['behavior_purchase'], 关联采购: ['batch_1'],
+    编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 变动数量: 2,
+    库存行为: [{ record_ids: ['behavior_purchase'] }], 关联采购: [{ record_ids: ['batch_1'] }],
   });
   assert.ok(gateway.records.get('liveInventory').every((row) => !Object.hasOwn(row.fields, '更新时间')));
 });
@@ -120,8 +121,8 @@ test('inventory preflight checks both sale and purchase behavior settings', asyn
 test('sale consumes a sample only after door-box stock is exhausted and reports remaining sizes', async () => {
   const gateway = gatewayFor([
     unit('sample_1', '样品'),
-    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
-    { record_id: 'warehouse_41', fields: { 编号: ['product_1'], 尺码: ['size_41'], 所属状态: '仓库' } },
+    { record_id: 'door_40', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' } },
+    { record_id: 'warehouse_41', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_41'] }], 所属状态: '仓库' } },
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
   const request = { salesDetailRecordId: 'detail_1', productRecordId: 'product_1', size: 38, quantity: 1 };
@@ -140,7 +141,7 @@ test('sale consumes a sample only after door-box stock is exhausted and reports 
 test('bad remaining-size link cannot turn an already deducted sample sale into a failed delivery', async () => {
   const gateway = gatewayFor([
     unit('sample_38', '样品'),
-    { record_id: 'door_bad', fields: { 编号: ['product_1'], 尺码: ['missing_size'], 所属状态: '门盒' } },
+    { record_id: 'door_bad', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['missing_size'] }], 所属状态: '门盒' } },
   ]);
   const taskStore = store();
   const inventory = new InventoryService({ gateway, store: taskStore });
@@ -157,7 +158,7 @@ test('bad remaining-size link cannot turn an already deducted sample sale into a
   assert.deepEqual(await inventory.applySale(request), result);
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
 
-  gateway.records.get('liveInventory')[0].fields['尺码'] = ['size_40'];
+  gateway.records.get('liveInventory')[0].fields['尺码'] = [{ record_ids: ['size_40'] }];
   assert.deepEqual(await inventory.sampleReplacementCandidates('product_1'), [
     { size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
   ]);
@@ -166,7 +167,7 @@ test('bad remaining-size link cannot turn an already deducted sample sale into a
 test('an interrupted sample deduction resumes without deleting stock twice', async () => {
   const gateway = gatewayFor([
     unit('sample_38', '样品'),
-    { record_id: 'door_bad', fields: { 编号: ['product_1'], 尺码: ['missing_size'], 所属状态: '门盒' } },
+    { record_id: 'door_bad', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['missing_size'] }], 所属状态: '门盒' } },
   ]);
   const taskStore = store();
   const originalUpdate = taskStore.update.bind(taskStore);
@@ -212,8 +213,8 @@ test('a sale consumes any live-inventory record, including warehouse stock', asy
 
 test('sample replacement moves one selected door-box pair without changing total quantity and is idempotent', async () => {
   const gateway = gatewayFor([
-    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
-    { record_id: 'door_41', fields: { 编号: ['product_1'], 尺码: ['size_41'], 所属状态: '门盒' } },
+    { record_id: 'door_40', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' } },
+    { record_id: 'door_41', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_41'] }], 所属状态: '门盒' } },
   ], [behavior('behavior_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', '不影响')]);
   const inventory = new InventoryService({ gateway, store: store() });
   const request = { salesDetailRecordId: 'detail_sold_sample', productRecordId: 'product_1', size: 40 };
@@ -225,8 +226,8 @@ test('sample replacement moves one selected door-box pair without changing total
   assert.equal(gateway.records.get('liveInventory')[1].fields['所属状态'], '门盒');
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
-    编号: ['product_1'], 尺码: ['size_40'], 变动数量: 0,
-    库存行为: ['behavior_sample'], 关联销售: ['detail_sold_sample'],
+    编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_40'] }], 变动数量: 0,
+    库存行为: [{ record_ids: ['behavior_sample'] }], 关联销售: [{ record_ids: ['detail_sold_sample'] }],
   });
   await assert.rejects(inventory.promoteToSample({ ...request, size: 41 }), /已选择其他补样品尺码/);
 });
@@ -240,10 +241,10 @@ test('sample replacement refuses an unconfigured behavior before writing records
   assert.equal(gateway.records.get('liveInventory')[0].fields['所属状态'], '门盒');
 });
 
-const legacyPurchase = async ({ ledgerSize = ['size_38'], liveSize = ['size_38'],
+const legacyPurchase = async ({ ledgerSize = [{ record_ids: ['size_38'] }], liveSize = [{ record_ids: ['size_38'] }],
   includeLedger = true } = {}) => {
   const live = { record_id: 'legacy_live', fields: {
-    编号: ['product_1'], 尺码: liveSize, 所属状态: '门盒',
+    编号: [{ record_ids: ['product_1'] }], 尺码: liveSize, 所属状态: '门盒',
   } };
   const gateway = gatewayFor([live]);
   // ⚠️ 2026-10-07 深夜：来源标识改用**真实三元组**（批次身份｜货品｜尺码）。
@@ -252,8 +253,8 @@ const legacyPurchase = async ({ ledgerSize = ['size_38'], liveSize = ['size_38']
     purchaseBatchRecordId: 'batch_legacy', productRecordId: 'product_1', size: 38,
   });
   if (includeLedger) gateway.records.set('inventoryLedger', [{ record_id: 'legacy_ledger', fields: {
-    编号: ['product_1'], 尺码: ledgerSize, 变动数量: 2,
-    库存行为: ['behavior_purchase'],
+    编号: [{ record_ids: ['product_1'] }], 尺码: ledgerSize, 变动数量: 2,
+    库存行为: [{ record_ids: ['behavior_purchase'] }],
   } }]);
   const taskStore = store();
   const id = operationId('STOCK_PURCHASE_INCREASE', sourceId);
@@ -274,7 +275,7 @@ const legacyPurchase = async ({ ledgerSize = ['size_38'], liveSize = ['size_38']
 };
 
 test('version 2 purchase refuses an old numeric-size ledger before adding stock', async () => {
-  for (const ledgerSize of [38, ['size_40']]) {
+  for (const ledgerSize of [38, [{ record_ids: ['size_40'] }]]) {
     const { gateway, taskStore, id, inventory, request } = await legacyPurchase({ ledgerSize });
     await assert.rejects(inventory.applyPurchase(request), /已有库存流水.*尺码关联.*不能自动恢复/);
     assert.equal(gateway.records.get('liveInventory').length, 1);
@@ -283,7 +284,7 @@ test('version 2 purchase refuses an old numeric-size ledger before adding stock'
 });
 
 test('version 2 purchase refuses an old numeric-size live row before adding stock', async () => {
-  for (const liveSize of [38, ['size_40']]) {
+  for (const liveSize of [38, [{ record_ids: ['size_40'] }]]) {
     const { gateway, taskStore, id, inventory, request } = await legacyPurchase({ liveSize });
     await assert.rejects(inventory.applyPurchase(request), /已有实时库存.*尺码关联.*不能自动恢复/);
     assert.equal(gateway.records.get('liveInventory').length, 1);
@@ -299,7 +300,7 @@ test('version 2 purchase resumes only after existing ledger and live row links v
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.equal(gateway.records.get('liveInventory').length, 2);
   assert.ok(gateway.records.get('liveInventory').every((record) =>
-    JSON.stringify(record.fields['尺码']) === JSON.stringify(['size_38'])));
+    JSON.stringify(record.fields['尺码']) === JSON.stringify([{ record_ids: ['size_38'] }])));
   assert.equal((await taskStore.get(id)).status, 'completed');
 });
 
@@ -313,8 +314,8 @@ test('version 2 purchase without a confirmable ledger stops for manual reconcili
 test('version 2 sale with already deleted stock cannot silently complete', async () => {
   const gateway = gatewayFor([]);
   gateway.records.set('inventoryLedger', [{ record_id: 'sale_ledger', fields: {
-    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1,
-    库存行为: ['behavior_sale'], 关联销售: ['detail_legacy'],
+    编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 变动数量: 1,
+    库存行为: [{ record_ids: ['behavior_sale'] }], 关联销售: [{ record_ids: ['detail_legacy'] }],
   } }]);
   const taskStore = store();
   const id = operationId('STOCK_SALE_DECREASE', 'detail_legacy');
@@ -334,14 +335,14 @@ test('version 2 sale with already deleted stock cannot silently complete', async
 
 // A resumable sample promotion: the task may already have written its ledger
 // row, so every resume path has to prove that row still belongs to the task.
-const legacySamplePromotion = async ({ ledgerSize = ['size_40'], sizeRecordId = 'size_40',
+const legacySamplePromotion = async ({ ledgerSize = [{ record_ids: ['size_40'] }], sizeRecordId = 'size_40',
   omitSizeRecordId = false } = {}) => {
   const gateway = gatewayFor([
-    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
+    { record_id: 'door_40', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' } },
   ], [behavior('behavior_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', '不影响')]);
   gateway.records.set('inventoryLedger', [{ record_id: 'sample_ledger', fields: {
-    编号: ['product_1'], 尺码: ledgerSize, 变动数量: 0,
-    库存行为: ['behavior_sample'], 关联销售: ['detail_sold_sample'],
+    编号: [{ record_ids: ['product_1'] }], 尺码: ledgerSize, 变动数量: 0,
+    库存行为: [{ record_ids: ['behavior_sample'] }], 关联销售: [{ record_ids: ['detail_sold_sample'] }],
   } }]);
   const taskStore = store();
   const id = operationId('sample', 'detail_sold_sample');
@@ -366,7 +367,7 @@ test('sample promotion without a recorded size link stops for manual reconciliat
 });
 
 test('sample promotion refuses an existing ledger whose size link is empty or wrong', async () => {
-  for (const ledgerSize of [[], ['size_41'], 40]) {
+  for (const ledgerSize of [[], [{ record_ids: ['size_41'] }], 40]) {
     const { gateway, taskStore, id, inventory, request } = await legacySamplePromotion({ ledgerSize });
     await assert.rejects(inventory.promoteToSample(request), /已有库存流水.*尺码关联.*不能自动恢复/);
     assert.equal(gateway.records.get('inventoryLedger').length, 1);
@@ -536,12 +537,12 @@ test('售后动作在真 InventoryService 里生效：退货加一行、现货�
   });
   assert.equal(returned.direction, '增加');
   assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields, {
-    编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1,
-    库存行为: ['behavior_return'], 关联销售: ['detail_ret_1'],
+    编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 变动数量: 1,
+    库存行为: [{ record_ids: ['behavior_return'] }], 关联销售: [{ record_ids: ['detail_ret_1'] }],
   });
   const added = gateway.records.get('liveInventory').filter((row) => row.fields['所属状态'] === '样品');
   assert.equal(added.length, 1);
-  assert.deepEqual(added[0].fields['编号'], ['product_1']);
+  assert.deepEqual(added[0].fields['编号'], [{ record_ids: ['product_1'] }]);
 
   const outgoing = await inventory.applyChange({
     kind: 'SALE_CASH', productRecordId: 'product_1', size: 38, state: '门盒',
@@ -647,8 +648,8 @@ test('C4 远端出现两条相同库存操作键：停止入库并转人工核�
   });
   const operationKey = `${operationId('STOCK_PURCHASE_INCREASE', sourceId)}:1`;
   const gateway = gatewayFor([
-    { record_id: 'dup_a', fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: '仓库', 库存操作键: operationKey } },
-    { record_id: 'dup_b', fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: '仓库', 库存操作键: operationKey } },
+    { record_id: 'dup_a', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '仓库', 库存操作键: operationKey } },
+    { record_id: 'dup_b', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '仓库', 库存操作键: operationKey } },
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
 

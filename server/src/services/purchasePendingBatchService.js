@@ -1,4 +1,5 @@
-const { textValue, linkedRecordIds } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { buildSalesThreadLink } = require('../config/salesThreadLink');
 const { resolvePurchaseArrivalStatusConfig } = require('../config/purchaseArrivalStatus');
 // ⭐ 2026-10-13（验收提速 ②）：过滤公式**复用唯一那一份实现**（不自己拼第二份），
@@ -178,7 +179,7 @@ class PurchasePendingBatchService {
       const labels = String(textValue(row?.fields?.[supplierField]) || '')
         .split(/[,，、;；]/).map((item) => item.trim()).filter(Boolean);
       if (!labels.length) continue;
-      for (const batchId of linkedRecordIds(row?.fields?.[batchField])) {
+      for (const batchId of strictLinkedRecordIds(row?.fields?.[batchField])) {
         const list = index.get(batchId) || [];
         for (const label of labels) if (!list.includes(label)) list.push(label);
         index.set(batchId, list);

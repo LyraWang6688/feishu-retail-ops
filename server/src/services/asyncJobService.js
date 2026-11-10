@@ -21,7 +21,7 @@ const {
   ASYNC_JOBS, ASYNC_JOB_STATUS,
   classifyThrownError, classifyResultOutcome, retryDelayMs,
 } = require('../config/asyncJobs');
-const { createAsyncJobStore, jobIdFor, isTerminalStatus } = require('./asyncJobStore');
+const { createAsyncJobStore, jobIdFor } = require('./asyncJobStore');
 const { createAsyncJobNotifier } = require('./asyncJobNotifier');
 const { logInfo, logWarn } = require('../utils/logger');
 

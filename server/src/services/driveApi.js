@@ -105,7 +105,9 @@ const createDriveApi = (client) => {
     const email = String(owner?.email || '').trim();
     const memberType = openId ? 'openid' : (email ? 'email' : '');
     if (!memberType) throw new Error(`${operation} 缺少 owner（openId / email）`);
-    const response = await client.drive.permission.member.transferOwner({
+    // ⚠️ SDK 资源名是 permissionMember（camelCase），不是 permission.member ——
+    //    写错会报 `Cannot read properties of undefined (reading 'member')`（2026-11-10 真机事故）。
+    const response = await client.drive.permissionMember.transferOwner({
       data: { member_type: memberType, member_id: openId || email },
       // ⚠️ 不通知对方（避免每张图都叮一下）；不删旧所有者（应用身份仍保留可见性，便于重跑覆盖）
       params: { type: 'file', need_notification: false },

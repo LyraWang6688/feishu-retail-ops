@@ -72,7 +72,7 @@ test('闸门 1 交付/扣库存（salesDeliveryService）：只读「资金状�
     gateway: gatewayFor({
       salesEntry: [{ record_id: 'o1', fields: entryFields }],
       salesDetail: [{ record_id: 'd1', fields: {
-        销售单号: ['o1'], 编号: ['p1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 100,
+        销售单号: [{ record_ids: ['o1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '未交付', 实收金额: 100,
       } }],
       sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
       product: [{ record_id: 'p1', fields: { 编号: 'P1' } }],
@@ -96,7 +96,7 @@ test('闸门 2 订单列表（salesFollowupService.listOrders）：只读「资�
     const gateway = gatewayFor({
       salesEntry: [{ record_id: 'o1', fields: { 销售单号: 'XSD-1', ...entryFields } }],
       salesDetail: [{ record_id: 'd1', fields: {
-        销售单号: ['o1'], 编号: ['p1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 100,
+        销售单号: [{ record_ids: ['o1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '未交付', 实收金额: 100,
       } }],
       sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
       product: [{ record_id: 'p1', fields: { 编号: 'P1' } }],
@@ -160,10 +160,10 @@ test('闸门 5 提醒候选（secondDeliveryService.listPendingDeliveries）：�
     const gateway = gatewayFor({
       behavior: [{ record_id: 'b1', fields: { 行为编码: 'SALE_UNPAID', 行为名称: '未付' } }],
       salesEntry: [{ record_id: 'o1', fields: {
-        销售单号: 'XSD-1', 交易类型: ['b1'], 录单日: DAY, ...entryFields,
+        销售单号: 'XSD-1', 交易类型: [{ record_ids: ['b1'] }], 录单日: DAY, ...entryFields,
       } }],
-      salesDetail: [{ record_id: 'd1', fields: { 销售单号: ['o1'], 履约状态: '已交付', 实收金额: 100 } }],
-      paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: ['o1'], 交易金额: 100, 钱款状态: '未收款' } }],
+      salesDetail: [{ record_id: 'd1', fields: { 销售单号: [{ record_ids: ['o1'] }], 履约状态: '已交付', 实收金额: 100 } }],
+      paymentRecord: [{ record_id: 'r1', fields: { 关联销售单: [{ record_ids: ['o1'] }], 交易金额: 100, 钱款状态: '未收款' } }],
     });
     return new SecondDeliveryService({ gateway, store: storeStub(), client: {} })
       .listPendingDeliveries({ now: new Date(DAY) });

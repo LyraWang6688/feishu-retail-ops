@@ -18,7 +18,8 @@
 //    所以它也会出现在这里的货号尺码里。这与上面那个「待收金额」用的是**同一批明细行**
 //    （金额口径一个字没动）；「只列没退过的货」属于**新的业务口径**，要业务负责人点头才能改。
 
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { SELLABLE_KINDS } = require('../config/sellableKinds');
 
 /**
@@ -29,7 +30,7 @@ const itemLinkOfDetail = (fields, detailFields) => {
   for (const [kindKey, kind] of Object.entries(SELLABLE_KINDS)) {
     const linkField = kind.detailLinkField;
     if (!detailFields?.[linkField]) continue;
-    const ids = linkedRecordIds(fields?.[detailFields[linkField]]);
+    const ids = strictLinkedRecordIds(fields?.[detailFields[linkField]]);
     if (ids.length) return { kindKey, kind, recordId: ids[0] };
   }
   return null;

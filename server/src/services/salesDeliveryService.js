@@ -1,4 +1,5 @@
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { InventoryService, MOVEMENT_SALE_DECREASE } = require('./inventoryService');
 // ⭐ 2026-10-11（B）：配品行要**显式识别并跳过**（它没有鞋 ⇒ 不参与交付 / 库存扣减）。
 //    判据是**可售品属性**（`tracksInventory`），不是"配品"这两个字。
@@ -80,7 +81,7 @@ class SalesDeliveryService {
     const listedDetails = (await withSalesReadRetry(
       () => this.gateway.listAll('salesDetail'), 'delivery_detail_list',
     )).filter((record) =>
-      linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId));
+      strictLinkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId));
     const byId = new Map(listedDetails.map((record) => [record.record_id, record]));
     for (const id of detailRecordIds) {
       // The caller has exact IDs from creation. Do not depend on a freshly
@@ -108,7 +109,7 @@ class SalesDeliveryService {
     for (const [index, id] of detailRecordIds.entries()) {
       const detail = byId.get(id);
       const quantity = 1;
-      const productIds = linkedRecordIds(detail.fields?.[fields.product]);
+      const productIds = strictLinkedRecordIds(detail.fields?.[fields.product]);
       // 放在 try 外面：失败分支要把它记进 failures，解析失败时它是 null。
       let size = null;
       try {

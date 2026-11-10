@@ -41,9 +41,7 @@
  *    改那边不改这里 ⇒ 那条用例会红（这正是它存在的意义）。
  */
 const sharp = require('sharp');
-const QRCode = require('qrcode');
 
-const { textValue } = require('./v1BitableGateway');
 const { logInfo, logWarn } = require('../utils/logger');
 // ⭐ 行序白名单**唯一真源在 config**（`artifact.rows` 与 `LABEL_PRINT_ROWS` 同一份口径，防漂移）
 const { ROW_IDS } = require('../config/labelPrint');

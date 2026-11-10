@@ -13,7 +13,7 @@ test('size references resolve numeric business values and Feishu link cells', as
   assert.deepEqual(await service.resolveByNumber(38), { recordId: 'size_38', size: 38 });
   assert.deepEqual(await service.resolveLinkedCell([{ record_ids: ['size_39'], text: '39' }]),
     { recordId: 'size_39', size: 39 });
-  assert.deepEqual(await service.resolveLinkedCells(['size_38', 'size_40']), [
+  assert.deepEqual(await service.resolveLinkedCells([{ record_ids: ['size_38'] }, { record_ids: ['size_40'] }]), [
     { recordId: 'size_38', size: 38 }, { recordId: 'size_40', size: 40 },
   ]);
 });
@@ -24,9 +24,9 @@ test('size references reject decimals, missing sizes and ambiguous links', async
   await assert.rejects(service.resolveByNumber('42.0'), /正整数/);
   await assert.rejects(service.resolveByNumber('0x2a'), /正整数/);
   await assert.rejects(service.resolveByNumber(41), /找不到 41 码/);
-  await assert.rejects(service.resolveLinkedCell(['size_38', 'size_39']), /只能关联一个/);
+  await assert.rejects(service.resolveLinkedCell([{ record_ids: ['size_38'] }, { record_ids: ['size_39'] }]), /只能关联一个/);
   await assert.rejects(service.resolveLinkedCell([]), /为空/);
-  await assert.rejects(service.resolveLinkedCell(['unknown']), /不在尺码管理/);
+  await assert.rejects(service.resolveLinkedCell([{ record_ids: ['unknown'] }]), /不在尺码管理/);
 });
 
 test('schema validation requires an integer-size source and single link to that table', async () => {
@@ -68,8 +68,8 @@ test('new sizes and rebuilt link IDs refresh on lookup misses without a restart'
   data.push({ record_id: 'size_41', fields: { 尺码: 41 } });
   assert.deepEqual(await service.resolveByNumber(41), { recordId: 'size_41', size: 41 });
   data[0] = { record_id: 'rebuilt_38', fields: { 尺码: 38 } };
-  assert.deepEqual(await service.resolveLinkedCell(['rebuilt_38']), { recordId: 'rebuilt_38', size: 38 });
-  await assert.rejects(service.resolveLinkedCell(['size_38']), /不在尺码管理/);
+  assert.deepEqual(await service.resolveLinkedCell([{ record_ids: ['rebuilt_38'] }]), { recordId: 'rebuilt_38', size: 38 });
+  await assert.rejects(service.resolveLinkedCell([{ record_ids: ['size_38'] }]), /不在尺码管理/);
 });
 
 test('deleted and recreated mappings are reloaded after shared config TTL expiry', async () => {

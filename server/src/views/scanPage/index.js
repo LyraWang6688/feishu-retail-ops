@@ -6,7 +6,7 @@ const { SCAN_PAGE, fillText } = require('../../config/scanPage');
 //   提交通一改成「303 回工作台 + toast」（`utils/submitToast.js`）⇒ 这里不再有成功页专属配置。
 const { DEFAULT_REALM, resolveRealm } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
-const { identityHtml, noScriptHtml, realmBarHtml, renderDocument } = require('./layout');
+const { identityHtml, renderDocument } = require('./layout');
 const { draftBarHtml } = require('./draftBlock');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');
 const { realmBlockHtml, realmEmptyHtml } = require('./realmBlock');

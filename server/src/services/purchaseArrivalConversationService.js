@@ -1,7 +1,7 @@
 // ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
 const { pageMessages, landingMessages, scanMessages } = require('../config/purchaseArrivalTexts');
-const crypto = require('node:crypto');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { resolveArrivalConversationConfig } = require('../config/arrivalConversation');
 // ⛔ 2026-10-28：`ARRIVAL_CONVERSATION_ACTIONS`（卡片上的「是」）随**卡片按钮回调**一起摘掉 ——
@@ -782,7 +782,7 @@ class PurchaseArrivalConversationService {
     if (!raw.length) return { ok: false, reason: 'request_rows_unreadable' };
     const rows = [];
     for (const record of raw) {
-      const productRecordId = linkedRecordIds(record.fields?.[requestTable.fields.product])[0] || '';
+      const productRecordId = strictLinkedRecordIds(record.fields?.[requestTable.fields.product])[0] || '';
       if (!productRecordId) return { ok: false, reason: 'request_row_without_product' };
       let size = null;
       try {
@@ -827,7 +827,7 @@ class PurchaseArrivalConversationService {
   /** 「报货批次号」关联：从申请行上读；读不到就返回空串（本次不挂批次关联，但不影响入库）。 */
   readBatchRecordId(rawRequests, requestTable) {
     for (const record of rawRequests) {
-      const linked = linkedRecordIds(record.fields?.[requestTable.fields.batchNo])[0];
+      const linked = strictLinkedRecordIds(record.fields?.[requestTable.fields.batchNo])[0];
       if (linked) return linked;
     }
     return '';

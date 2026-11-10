@@ -18,6 +18,7 @@ const { SalesDeliveryService } = require('../src/services/salesDeliveryService')
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { PaymentService } = require('../src/services/paymentService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 // 群聊相关配置在服务构造时会被读一次；给测试值，免得用例里刷出一条"没配"的警告
@@ -46,8 +47,8 @@ const fakeGateway = (seed = {}) => {
     records, writes,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
     validateTables: async () => [],
-    listAll: async (key) => records.get(key) || [],
-    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
+    listAll: async (key) => (records.get(key) || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+    get: async (key, id) => { const row = (records.get(key) || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : undefined; },
     create: async (key, values) => {
       const recordId = `rec_${key}_${++seq}`;
       if (!records.has(key)) records.set(key, []);
@@ -56,7 +57,7 @@ const fakeGateway = (seed = {}) => {
       return { recordId };
     },
     update: async (key, id, values) => {
-      const record = await gateway.get(key, id);
+      const record = (records.get(key) || []).find((row) => row.record_id === id);
       if (!record) throw new Error(`${key} ${id} 不存在`);
       Object.assign(record.fields, apply(key, values));
       writes.push({ table: key, op: 'update', recordId: id, semantic: values, fields: apply(key, values) });
@@ -103,13 +104,13 @@ test('现货待收单点「成交」：只补收款，库存与明细履约状�
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     // 现货：第一次录单时明细就已经是「已交付」（库存那时候扣过了），收款是一条全额未收款。
     salesEntry: [{ record_id: 'order_unpaid', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-U-1', 交易类型: [{ record_ids: ['behavior_cash'] }],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
-      销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260,
+      销售单号: [{ record_ids: ['order_unpaid'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 260,
     } }],
     paymentRecord: [{ record_id: 'receipt_u1', fields: {
-      关联销售单: ['order_unpaid'], 交易金额: 260, 钱款状态: '未收款',
+      关联销售单: [{ record_ids: ['order_unpaid'] }], 交易金额: 260, 钱款状态: '未收款',
     } }],
   });
   const inventory = fakeInventory();
@@ -156,18 +157,18 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     salesEntry: [{ record_id: 'order_prepaid', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-P-1', 交易类型: ['behavior_prepaid'],
+      '写入状态': '成功', 销售单号: 'XSD-P-1', 交易类型: [{ record_ids: ['behavior_prepaid'] }],
     } }],
     // 预定：货还没到 / 没拿走（未交付），钱是定金 + 余款两条，余款那条是未收款。
     salesDetail: [{ record_id: 'detail_p1', fields: {
-      销售单号: ['order_prepaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 400,
+      销售单号: [{ record_ids: ['order_prepaid'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '未交付', 实收金额: 400,
     } }],
     paymentRecord: [
       { record_id: 'receipt_p1', fields: {
-        关联销售单: ['order_prepaid'], 交易金额: 200, 钱款状态: '已收款', 支付方式: ['method_1'],
+        关联销售单: [{ record_ids: ['order_prepaid'] }], 交易金额: 200, 钱款状态: '已收款', 支付方式: [{ record_ids: ['method_1'] }],
       } },
       { record_id: 'receipt_p2', fields: {
-        关联销售单: ['order_prepaid'], 交易金额: 200, 钱款状态: '未收款',
+        关联销售单: [{ record_ids: ['order_prepaid'] }], 交易金额: 200, 钱款状态: '未收款',
       } },
     ],
   });
@@ -214,13 +215,13 @@ test('同一张单连点两次「成交」：第二次只回"已成交"，不再
     sizeManagement: [{ record_id: 'size_38', fields: { 尺码: 38 } }],
     product: [{ record_id: 'product_1', fields: { 编号: 'P1' } }],
     salesEntry: [{ record_id: 'order_unpaid', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-U-1', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-U-1', 交易类型: [{ record_ids: ['behavior_cash'] }],
     } }],
     salesDetail: [{ record_id: 'detail_u1', fields: {
-      销售单号: ['order_unpaid'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260,
+      销售单号: [{ record_ids: ['order_unpaid'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 260,
     } }],
     paymentRecord: [{ record_id: 'receipt_u1', fields: {
-      关联销售单: ['order_unpaid'], 交易金额: 260, 钱款状态: '未收款',
+      关联销售单: [{ record_ids: ['order_unpaid'] }], 交易金额: 260, 钱款状态: '未收款',
     } }],
   });
   const inventory = fakeInventory();
@@ -270,7 +271,7 @@ test('待平台结算结清时补写「收入」（到账那一刻才算收款�
   const gateway = fakeGateway({
     salesEntry: [{ record_id: 'order_1', fields: { '写入状态': '成功' } }],
     paymentRecord: [{ record_id: 'receipt_1', fields: {
-      关联销售单: ['order_1'], 交易金额: 100, 钱款状态: '待平台结算',
+      关联销售单: [{ record_ids: ['order_1'] }], 交易金额: 100, 钱款状态: '待平台结算',
     } }],
   });
   const payments = new PaymentService({ gateway });
@@ -366,43 +367,43 @@ const reminderSeed = () => ({
   salesEntry: [
     // 要推的：**现货待收**（货已交付、钱没收清）—— 新口径下这类单必须进候选。
     { record_id: 'order_cash_pending', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-U-2', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-U-2', 交易类型: [{ record_ids: ['behavior_cash'] }],
       录单日: inWindow('2026-10-19T10:00:00+08:00'),
     } },
     // 要推的：预定、已入账、7 天内、货没交 + 钱没收清（录单更早，应排在前面）。
     { record_id: 'order_prepaid_pending', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-P-2', 交易类型: ['behavior_prepaid'],
+      '写入状态': '成功', 销售单号: 'XSD-P-2', 交易类型: [{ record_ids: ['behavior_prepaid'] }],
       录单日: inWindow('2026-10-18T10:00:00+08:00'),
     } },
     // 不推：现货、钱货两清（已完成履约）。
     { record_id: 'order_cash', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-C-2', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-C-2', 交易类型: [{ record_ids: ['behavior_cash'] }],
       录单日: inWindow('2026-10-20T10:00:00+08:00'),
     } },
     // 不推：钱货都齐了（已完成履约）。
     { record_id: 'order_cash_done', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-U-3', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-U-3', 交易类型: [{ record_ids: ['behavior_cash'] }],
       录单日: inWindow('2026-10-20T10:00:00+08:00'),
     } },
     // 不推：7 天以外的单。
     { record_id: 'order_cash_old', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-U-9', 交易类型: ['behavior_cash'], 录单日: OUT_OF_WINDOW,
+      '写入状态': '成功', 销售单号: 'XSD-U-9', 交易类型: [{ record_ids: ['behavior_cash'] }], 录单日: OUT_OF_WINDOW,
     } },
   ],
   salesDetail: [
-    { record_id: 'd_c1', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
-    { record_id: 'd_p2', fields: { 销售单号: ['order_prepaid_pending'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '未交付', 实收金额: 400, 交易类型: ['behavior_prepaid'] } },
-    { record_id: 'd_c2', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
-    { record_id: 'd_c3', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash_done'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
-    { record_id: 'd_c9', fields: { 交易类型: ['behavior_cash'], 销售单号: ['order_cash_old'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 100 } },
+    { record_id: 'd_c1', fields: { 交易类型: [{ record_ids: ['behavior_cash'] }], 销售单号: [{ record_ids: ['order_cash_pending'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 260 } },
+    { record_id: 'd_p2', fields: { 销售单号: [{ record_ids: ['order_prepaid_pending'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '未交付', 实收金额: 400, 交易类型: [{ record_ids: ['behavior_prepaid'] }] } },
+    { record_id: 'd_c2', fields: { 交易类型: [{ record_ids: ['behavior_cash'] }], 销售单号: [{ record_ids: ['order_cash'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 100 } },
+    { record_id: 'd_c3', fields: { 交易类型: [{ record_ids: ['behavior_cash'] }], 销售单号: [{ record_ids: ['order_cash_done'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 100 } },
+    { record_id: 'd_c9', fields: { 交易类型: [{ record_ids: ['behavior_cash'] }], 销售单号: [{ record_ids: ['order_cash_old'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 100 } },
   ],
   paymentRecord: [
-    { record_id: 'r_c1', fields: { 关联销售单: ['order_cash_pending'], 交易金额: 260, 钱款状态: '未收款' } },
-    { record_id: 'r_p2a', fields: { 关联销售单: ['order_prepaid_pending'], 交易金额: 200, 钱款状态: '已收款' } },
-    { record_id: 'r_p2b', fields: { 关联销售单: ['order_prepaid_pending'], 交易金额: 200, 钱款状态: '未收款' } },
-    { record_id: 'r_c2', fields: { 关联销售单: ['order_cash'], 交易金额: 100, 钱款状态: '已收款' } },
-    { record_id: 'r_c3', fields: { 关联销售单: ['order_cash_done'], 交易金额: 100, 钱款状态: '已收款' } },
-    { record_id: 'r_c9', fields: { 关联销售单: ['order_cash_old'], 交易金额: 100, 钱款状态: '未收款' } },
+    { record_id: 'r_c1', fields: { 关联销售单: [{ record_ids: ['order_cash_pending'] }], 交易金额: 260, 钱款状态: '未收款' } },
+    { record_id: 'r_p2a', fields: { 关联销售单: [{ record_ids: ['order_prepaid_pending'] }], 交易金额: 200, 钱款状态: '已收款' } },
+    { record_id: 'r_p2b', fields: { 关联销售单: [{ record_ids: ['order_prepaid_pending'] }], 交易金额: 200, 钱款状态: '未收款' } },
+    { record_id: 'r_c2', fields: { 关联销售单: [{ record_ids: ['order_cash'] }], 交易金额: 100, 钱款状态: '已收款' } },
+    { record_id: 'r_c3', fields: { 关联销售单: [{ record_ids: ['order_cash_done'] }], 交易金额: 100, 钱款状态: '已收款' } },
+    { record_id: 'r_c9', fields: { 关联销售单: [{ record_ids: ['order_cash_old'] }], 交易金额: 100, 钱款状态: '未收款' } },
   ],
 });
 
@@ -432,21 +433,21 @@ test('⭐⭐ 数据起点：注入 10-14 与 10-15 两单 ⇒ **只有 10-15 被
   const seed = { ...reminderSeed() };
   seed.salesEntry = [
     { record_id: 'order_before', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-B4', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-B4', 交易类型: [{ record_ids: ['behavior_cash'] }],
       录单日: Date.parse('2026-10-14T10:00:00+08:00'),
     } },
     { record_id: 'order_since', fields: {
-      '写入状态': '成功', 销售单号: 'XSD-SINCE', 交易类型: ['behavior_cash'],
+      '写入状态': '成功', 销售单号: 'XSD-SINCE', 交易类型: [{ record_ids: ['behavior_cash'] }],
       录单日: Date.parse('2026-10-15T10:00:00+08:00'),
     } },
   ];
   seed.salesDetail = [
-    { record_id: 'd_before', fields: { 销售单号: ['order_before'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
-    { record_id: 'd_since', fields: { 销售单号: ['order_since'], 编号: ['product_1'], 尺码: ['size_38'], 履约状态: '已交付', 实收金额: 260 } },
+    { record_id: 'd_before', fields: { 销售单号: [{ record_ids: ['order_before'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 260 } },
+    { record_id: 'd_since', fields: { 销售单号: [{ record_ids: ['order_since'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 履约状态: '已交付', 实收金额: 260 } },
   ];
   seed.paymentRecord = [
-    { record_id: 'r_before', fields: { 关联销售单: ['order_before'], 交易金额: 260, 钱款状态: '未收款' } },
-    { record_id: 'r_since', fields: { 关联销售单: ['order_since'], 交易金额: 260, 钱款状态: '未收款' } },
+    { record_id: 'r_before', fields: { 关联销售单: [{ record_ids: ['order_before'] }], 交易金额: 260, 钱款状态: '未收款' } },
+    { record_id: 'r_since', fields: { 关联销售单: [{ record_ids: ['order_since'] }], 交易金额: 260, 钱款状态: '未收款' } },
   ];
   const service = new SecondDeliveryService({ gateway: fakeGateway(seed) });
   const orders = await service.listPendingDeliveries({ now: DAY });
@@ -472,7 +473,7 @@ test('这一单是哪天的：明细「销售日」优先、主表「录单日�
 test('单条数据不自洽（收款超过成交额）时跳过它，其余单照旧进候选', async () => {
   const seed = reminderSeed();
   seed.paymentRecord.push({ record_id: 'r_bad', fields: {
-    关联销售单: ['order_cash_pending'], 交易金额: 9999, 钱款状态: '已收款',
+    关联销售单: [{ record_ids: ['order_cash_pending'] }], 交易金额: 9999, 钱款状态: '已收款',
   } });
   const service = new SecondDeliveryService({ gateway: fakeGateway(seed) });
   const orders = await service.listPendingDeliveries({ now: NOW });

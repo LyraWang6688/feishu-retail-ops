@@ -76,6 +76,7 @@ process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKE
 process.env.FEISHU_V1_SIZE_TABLE_ID = process.env.FEISHU_V1_SIZE_TABLE_ID || 'tbl_size_return_batch_test';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { V1BitableGateway } = require('../src/services/v1BitableGateway');
 const { createPurchaseReturnService } = require('../src/services/purchaseReturnService');
@@ -110,14 +111,14 @@ const PRODUCT = {
     颜色: { text: '黑色', record_ids: ['color_black'] },
     类别: '男',
     单价: 399,
-    供应商: ['sup_1'],
+    供应商: [{ record_ids: ['sup_1'] }],
   },
 };
 
 /** 一双「实时库存」记录（门盒 / 样品 / 仓库 = 采购退货 consumes 的那三档）。 */
 const liveUnit = (id, size, state = '门盒') => ({
   record_id: id,
-  fields: { 编号: ['prod_1'], 尺码: [`size_${size}`], 所属状态: state },
+  fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [`size_${size}`], 所属状态: state },
 });
 
 /**
@@ -202,7 +203,8 @@ const createStubClient = (store) => {
           const rows = rowsOf(path.table_id);
           const offset = params?.page_token ? Number(params.page_token) : 0;
           const size = Number(params?.page_size) || 500;
-          const items = rows.slice(offset, offset + size);
+          const items = rows.slice(offset, offset + size)
+            .map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
           const hasMore = offset + size < rows.length;
           return ok({ items, has_more: hasMore, page_token: hasMore ? String(offset + size) : undefined });
         },
@@ -210,7 +212,7 @@ const createStubClient = (store) => {
           record('get', { path });
           const found = rowsOf(path.table_id).find((row) => row.record_id === path.record_id);
           if (!found) return { code: 1254005, msg: 'not found' };
-          return ok({ record: found });
+          return ok({ record: { record_id: found.record_id, fields: normalizeLinkFields(found.fields) } });
         },
         async create({ path, data }) {
           record('create', { path });
@@ -275,7 +277,8 @@ const createStubClient = (store) => {
           //     ⚠️ 这里**只修替身的入参位置**：断言一条没删、没 skip、没放宽。
           const wanted = (data?.record_ids || []).map((id) => String(id).trim()).filter(Boolean);
           const items = wanted.map((id) => rowsOf(path.table_id).find((row) => row.record_id === id))
-            .filter(Boolean);
+            .filter(Boolean)
+            .map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
           return ok({ records: items, forbidden_record_ids: [] });
         },
       },

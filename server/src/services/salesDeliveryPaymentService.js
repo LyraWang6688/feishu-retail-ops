@@ -12,7 +12,8 @@
  * 🔴 不新增收款表、不写销售主表；`关联销售单` 由飞书双向关联自动挂到主表「收款明细」。
  */
 const crypto = require('node:crypto');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { relation } = require('./v1ReferenceResolver');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { UNPAID_PAYMENT_STATUS, DELIVERY_PAYMENT } = require('../config/salesDeliveryPage');
@@ -65,7 +66,7 @@ const createSalesDeliveryPaymentService = ({ gateway, payments, store, now = Dat
       if (cents(value) > cents(pendingAmount)) throw new Error(E.overPending(pendingAmount));
 
       const methodFields = gateway.table('paymentMethod').fields;
-      const isVoucher = linkedRecordIds(method.record?.fields?.[methodFields.voucher]).length > 0;
+      const isVoucher = strictLinkedRecordIds(method.record?.fields?.[methodFields.voucher]).length > 0;
       const isFull = cents(value) === cents(pendingAmount);
 
       await store.create({ task_id: taskId, fingerprint, status: 'pending' });

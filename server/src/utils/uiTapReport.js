@@ -14,7 +14,7 @@
 //    ⇒ 两者天然不会串（否则上报请求自己也会被记一条"结果" = 噪声 ✗）。
 const { UI_TAP } = require('../config/uiTap');
 const { FUNNEL, funnelStepOf } = require('../config/funnel');
-const { logInfo, logWarn } = require('./logger');
+const { logInfo } = require('./logger');
 
 /** 只截断、不拒绝（超长串不许把日志撑爆）；空 ⇒ 空串，由调用方决定 400。 */
 const clip = (value, max) => String(value ?? '').trim().slice(0, max);

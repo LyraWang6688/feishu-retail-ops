@@ -74,6 +74,7 @@ const { PurchaseOrderBatchService } = require('../src/services/purchaseOrderBatc
 const { InventoryService } = require('../src/services/inventoryService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKeys } = require('../src/infrastructure/idempotencyKey');
 
 const F = (key) => V1_BITABLE_SCHEMA.tables[key].fields;
@@ -121,10 +122,10 @@ const createFakeGateway = ({
     table: (key) => V1_BITABLE_SCHEMA.tables[key] || null,
     listAll: async (key) => {
       calls.push({ kind: 'listAll', table: key });
-      return (tables[key] || []).map((record) => ({ ...record, fields: { ...record.fields } }));
+      return (tables[key] || []).map((record) => ({ record_id: record.record_id, fields: normalizeLinkFields({ ...record.fields }) }));
     },
     listByFilter: async () => { throw new Error('假网关不支持 filter（本文件的链路不该用到它）'); },
-    get: async (key, id) => (tables[key] || []).find((record) => record.record_id === id) || null,
+    get: async (key, id) => { const row = (tables[key] || []).find((record) => record.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields({ ...row.fields }) } : null; },
     findOneByText: async (key, semanticKey, expected) => {
       const name = V1_BITABLE_SCHEMA.tables[key]?.fields?.[semanticKey];
       const target = String(expected ?? '').trim();

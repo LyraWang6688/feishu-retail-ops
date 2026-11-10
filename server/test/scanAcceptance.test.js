@@ -49,6 +49,7 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_scan_accep
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'scan_accept_test_secret';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { createScanPageRouter } = require('../src/routes/scanPage');
@@ -68,8 +69,8 @@ const SESSION_SECRET_ENV = 'LARK_WEB_SESSION_SECRET';
 const BATCH = 'CGD-20261011-0001';
 const BATCH_RECORD_ID = 'batch_rec_1';
 const rowsOf = () => [
-  { record_id: 'pr_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: ['prod_1'], 尺码: ['size_38'], 数量: 2 } },
-  { record_id: 'pr_39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: ['prod_1'], 尺码: ['size_39'], 数量: 1 } },
+  { record_id: 'pr_38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['size_38'] }], 数量: 2 } },
+  { record_id: 'pr_39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['size_39'] }], 数量: 1 } },
 ];
 const seedTables = (overrides = {}) => ({
   purchaseRequest: rowsOf(),
@@ -94,14 +95,15 @@ const fakeGateway = (records = seedTables()) => ({
   writes: [],
   _tables: records,
   table: (key) => V1_BITABLE_SCHEMA.tables[key],
-  listAll: async (key) => [...(records[key] || [])],
+  listAll: async (key) => (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
   listByFilter: async () => { throw new Error('fake gateway 不支持 filter'); },
-  get: async (key, id) => (records[key] || []).find((record) => record.record_id === id) || null,
+  get: async (key, id) => { const row = (records[key] || []).find((record) => record.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
 });
 
 const ARRIVAL_SIZE_STUB = {
   resolveLinkedCell: async (cell) => {
-    const id = Array.isArray(cell) ? cell[0] : cell;
+    const first = Array.isArray(cell) ? cell[0] : cell;
+    const id = typeof first === 'string' ? first : (first?.record_ids?.[0] || '');
     return { recordId: id, size: Number(String(id).replace('size_', '')) };
   },
   resolveByNumber: async (value) => ({ recordId: `size_${value}`, size: Number(value) }),

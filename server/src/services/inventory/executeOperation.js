@@ -4,7 +4,8 @@
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 数量类库存操作的执行体：executeOperation（逐条路径唯一的"写实时库存"落点）。
 // ⭐ 库存**已经写进飞书** ⇒ 当场作废扫码页那份内存快照（本文件中那一行，永不抛）。
-const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const {textValue} = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { relation } = require('../v1ReferenceResolver');
 const { createOnceByKey, OPERATION_ITEM_KEY_FIELD } = require('../../infrastructure/idempotencyKey');
 const { logInfo, logWarn } = require('../../utils/logger');
@@ -81,8 +82,8 @@ async function executeOperation(operation) {
         const record = await this.gateway.get('liveInventory', recordId);
         if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
         const liveFields = this.gateway.table('liveInventory').fields;
-        if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(operation.product_record_id) ||
-          !linkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId) ||
+        if (!strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(operation.product_record_id) ||
+          !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId) ||
           (!consumesAny && !consumableStates.includes(textValue(record.fields?.[liveFields.state])))) {
           throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
         }

@@ -1,4 +1,5 @@
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { withSalesReadRetry } = require('./salesReadRetry');
@@ -33,7 +34,7 @@ const voucherPendingStatusOf = (record, explicitStatus) => {
   if (explicitStatus) return normalized;
   const field = voucherLinkFieldName();
   if (!field) return normalized;
-  const linked = linkedRecordIds(record?.fields?.[field]);
+  const linked = strictLinkedRecordIds(record?.fields?.[field]);
   if (!linked.length) return normalized;
   return resolveVoucherPaymentConfig().pendingStatus || normalized;
 };
@@ -55,7 +56,7 @@ class PaymentService {
   async recordsForSale(salesEntryRecordId) {
     const field = this.gateway.table('paymentRecord').fields.salesEntry;
     return (await this.gateway.listAll('paymentRecord')).filter((record) =>
-      linkedRecordIds(record.fields?.[field]).includes(salesEntryRecordId));
+      strictLinkedRecordIds(record.fields?.[field]).includes(salesEntryRecordId));
   }
 
   /**
@@ -125,7 +126,7 @@ class PaymentService {
     const { salesEntryRecordId, amount: rawAmount, method, receivedAt = Date.now() } = input;
     const record = await this.gateway.get('paymentRecord', recordId);
     const fields = this.gateway.table('paymentRecord').fields;
-    if (!record || !linkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId)) {
+    if (!record || !strictLinkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId)) {
       throw new Error('待收款记录不属于此销售单');
     }
     if (textValue(record.fields?.[fields.status]) !== '未收款') throw new Error('此记录已不是待收款');
@@ -214,8 +215,8 @@ class PaymentService {
       const knownId = options.knownRecordIds?.[index];
       const match = existing.find((record) => !used.has(record.record_id) &&
         (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
-        (method ? linkedRecordIds(record.fields?.[fields.method]).includes(method.recordId) :
-          linkedRecordIds(record.fields?.[fields.method]).length === 0) &&
+        (method ? strictLinkedRecordIds(record.fields?.[fields.method]).includes(method.recordId) :
+          strictLinkedRecordIds(record.fields?.[fields.method]).length === 0) &&
         Number(textValue(record.fields?.[fields.amount])) === paid &&
         normalizedStatus(textValue(record.fields?.[fields.status])) === status);
       if (knownId && !match) throw new Error(`已记录的收款 ${knownId} 与当前销售草稿不一致，已停止重试`);

@@ -80,12 +80,12 @@ const createHarness = ({ rows = SIZES.map((size) => ({ size, quantity: 1 })), al
     purchaseRequest: [
       ...rows.map((row, index) => ({
         record_id: `pr_${index + 1}`,
-        fields: { 报货批次号: [BATCH_ID], 编号: ['prod_1'], 尺码: [`size_${row.size}`], 数量: row.quantity },
+        fields: { 报货批次号: [BATCH_ID], 编号: [{ record_ids: ['prod_1'] }], 尺码: [`size_${row.size}`], 数量: row.quantity },
       })),
       // 第二款（只在她要验"多款"那条 AC 时加）
       ...(twoProducts ? [{
         record_id: 'pr_other',
-        fields: { 报货批次号: [BATCH_ID], 编号: ['prod_2'], 尺码: ['size_40'], 数量: 1 },
+        fields: { 报货批次号: [BATCH_ID], 编号: [{ record_ids: ['prod_2'] }], 尺码: [{ record_ids: ['size_40'] }], 数量: 1 },
       }] : []),
     ],
     product: [

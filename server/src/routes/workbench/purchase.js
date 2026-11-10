@@ -159,6 +159,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         actualAmount: restInput.actualAmount,
         submitKey,
         operatorOpenId: restInput.operatorOpenId,
+        ...(restInput.sessionKey ? { sessionKey: restInput.sessionKey } : {}),
       });
       // 写完才作废订单列表缓存（她下一次读一定是新数据 ✓）——改前是"写成功后立刻作废"，语义不变 ✓
       if (result?.ok) ordersCache.invalidate();
@@ -169,7 +170,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       const message = String(result?.message || error?.message || '').trim();
       if (!message) return;
       try {
-        const session = await arrivalService.get(String(context.openId || ''));
+        const session = await arrivalService.get(String(context.openId || ''), String(context.sessionKey || ''));
         if (session?.session_id) {
           await arrivalService.store.update(session.session_id, { last_error: message });
         }
@@ -267,9 +268,14 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       if (supplierRecordId && !batchRows.some((row) => String(row.supplier_record_id || '').trim() === supplierRecordId)) {
         return res.status(400).json({ success: false, error: arrivalTab.texts.supplierNotInBatch });
       }
+      // ⭐ 2026-11-10（业务负责人：会话按「用户 + 批次 + 供应商」隔离）：
+      //   工作台验收每张卡各一份会话；连验不同批次/供应商时不会互相覆盖。
+      // 没有供应商的旧请求（旧页面/测试）仍走原来的「一人一份」会话，保持兼容。
+      const sessionKey = supplierRecordId ? `${batchNo}::${supplierRecordId}` : '';
       // ① 开会话（既有 `start` 读该批采购明细 ✓ 读不到 ⇒ 它自己的人话 `no_request_rows` ✓ 如实回 400 ✗）
       const started = await arrivalService.start({
         openId, batchNo, supplierRecordId, operatorOpenId: openId,
+        ...(sessionKey ? { sessionKey } : {}),
       });
       if (!started?.ok) {
         const status = started?.reason === 'not_wired' ? 503 : 400;
@@ -296,7 +302,10 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         }
         submittedLines.push({ product_record_id: productRecordId, size, quantity });
       }
-      const replaced = await arrivalService.setScans({ openId, lines: submittedLines });
+      const replaced = await arrivalService.setScans({
+        openId, lines: submittedLines,
+        ...(sessionKey ? { sessionKey } : {}),
+      });
       if (!replaced?.ok) {
         return res.status(400).json({ success: false, error: replaced?.message || arrivalTab.texts.acceptFailed });
       }
@@ -307,7 +316,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       //      ＋ `config/purchaseArrivalTexts` 的 `pageMessages.m2/m3` ✓（不抄第二份规则 ✗）。
       //    ⚠️ 顺序与**改前那一版同步路径**逐字一致（会话 ⇒ 空单 ⇒ 金额）——两个都错时提示不换 ✗。
       //    命中 ⇒ **400 ＋ 人话 ＋ 零业务写入 ＋ 一次后台都不排** ✓。
-      const session = await arrivalService.get(openId);
+      const session = await arrivalService.get(openId, sessionKey);
       if (!session) {
         return res.status(400).json({ success: false, error: SCAN_WRITE.texts.acceptNoSessionBody });
       }
@@ -333,7 +342,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         chain: 'accept',
         requestId: req.requestId,
         submitKey,
-        context: { openId, requestId: req.requestId, batchNo },
+        context: { openId, requestId: req.requestId, batchNo, sessionKey },
         // #948：统一任务记录 / 失败群通知要用的元数据（**不进**写库入参）
         jobMeta: {
           ownerOpenId: openId,
@@ -347,6 +356,8 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
           //    金额规则在写层还会再走一遍同一份解析（幂等、无副作用 ✓）。
           actualAmount: req.body?.[arrivalTab.fields.actualAmount],
           operatorOpenId: openId,
+          // ⭐ 会话隔离：后台 finish 必须读同一张卡的那份会话（不拿"当前最新"覆盖）
+          ...(sessionKey ? { sessionKey } : {}),
         },
       });
       // ⑥ 成功页 = **统一那一句**（「已提交成功，数据会更新」· 真源在 `config/scanPage.js` 的

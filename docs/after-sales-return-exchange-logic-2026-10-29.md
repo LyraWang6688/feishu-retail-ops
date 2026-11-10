@@ -159,14 +159,16 @@
 
 表单 POST `/api/workbench/sales/after-sales/submit` →
 同步校验（填错 → 303 回售后页带 `err=` 人话，**不入队、零写入**）→ 冻结 payload 入队 →
-`redirectWithSubmitToast()`（`config/submitToast.js`）→ 303 回 `/workbench/after-sales.html?productRecordId=…`
-并显示统一那句「数据提交成功，后台自动写入」→ 后台 worker 写库。
-页面带 `submitted=1` 时 1.5s 后再刷一次候选（退掉的卡片会消失）。
+`redirectWithSubmitToast()`（`config/submitToast.js`）→ **303 回「工作台首页」**（统一 toast 的默认落点，
+与销售/采购提交一致；业务负责人 2026-11-09 定：不再回售后页）并显示统一那句
+「数据提交成功，后台自动写入」→ 后台 worker 写库。**填错才回售后页**（带 `err=`，就地改）。
 
 ### 8.2 写库顺序（`services/afterSalesReturnService.js`）
 
 1. 原「销售明细.履约状态」→ **已退货**（只接受原状态「已交付」；已退货 ⇒ 400）；
-2. 库存流水 +1：行为 =「销售增加」（`STOCK_SALE_INCREASE`）· 实时库存落 **门盒** · 关联原销售明细；
+2. 库存流水 +1：行为 =「销售增加」（`STOCK_SALE_INCREASE`）· 实时库存落 **门盒** ·
+   流水「关联销售」= **原销售主表**（该字段是双向关联→销售主表，主表「库存流水」才看得到这一行）；
+   **本地幂等键仍用明细 id**（`sourceRecordId`，同一单退两双不撞键）；
 3. 新建一条 S交易明细（**不改原行**）：
    - 直接退款：`{单号}-退款-NN` · 支付方式=她选的（「支付方式管理」）· 收支方向=退回 · 已退款；
    - 货款留存：`{单号}-留存-NN` · 支付方式/收支方向不填 · 已留存；

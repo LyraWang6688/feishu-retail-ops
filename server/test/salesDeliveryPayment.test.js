@@ -36,7 +36,7 @@ const harness = ({ rows, methods = {}, voucherMethods = new Set() } = {}) => {
     references: {
       resolvePaymentMethod: async (name) => ({
         recordId: `method_${name}`,
-        record: { fields: { [V1_BITABLE_SCHEMA.tables.paymentMethod.fields.voucher]: voucherMethods.has(name) ? ['voucher_1'] : [] } },
+        record: { fields: { [V1_BITABLE_SCHEMA.tables.paymentMethod.fields.voucher]: voucherMethods.has(name) ? [{ record_ids: ['voucher_1'] }] : [] } },
       }),
     },
     collectPendingReceipt: async (id, input) => { writes.push({ action: 'collect', id, input }); return { recordId: id }; },

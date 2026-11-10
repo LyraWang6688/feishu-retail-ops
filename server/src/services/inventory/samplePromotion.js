@@ -3,7 +3,8 @@
 //    方法体一个字符未改（仍用 `this.`），由 facade 用 `Object.defineProperty`
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 补样品通路：promoteToSample（准备）+ executeSamplePromotion（执行，门盒 → 样品）。
-const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const {textValue} = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { relation } = require('../v1ReferenceResolver');
 const { normalizeSize } = require('../sizeReferenceService');
 const { logInfo } = require('../../utils/logger');
@@ -89,8 +90,8 @@ async function executeSamplePromotion(operation) {
     })) {
       throw new Error(`已有库存流水 ${ledger.record_id} 的货品、尺码关联、行为、来源或数量不一致，请人工核对，不能自动恢复`);
     }
-    if (!linkedRecordIds(record.fields?.[fields.product]).includes(operation.product_record_id) ||
-      !linkedRecordIds(record.fields?.[fields.size]).includes(sizeReference.recordId)) {
+    if (!strictLinkedRecordIds(record.fields?.[fields.product]).includes(operation.product_record_id) ||
+      !strictLinkedRecordIds(record.fields?.[fields.size]).includes(sizeReference.recordId)) {
       throw new Error('待补样品的库存记录与货品或尺码不一致');
     }
     const state = textValue(record.fields?.[fields.state]);
