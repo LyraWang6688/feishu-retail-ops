@@ -219,7 +219,7 @@ const messageOf = (value) => {
  * **抛出来的异常**怎么归类（默认重试；明确是永久错误才不重试）。
  *
  * 顺序：先看"临时"关键字（5xx / 超时 / 限流），再看"永久"关键字（权限 / 字段 / 参数），
- * 然后看 HTTP 状态与飞书错误码，最后兜底**重试** —— 与售后既有口径一致
+ * 然后看飞书错误码（1254607 等临时码**优先于 HTTP 400**），再看 HTTP 状态，最后兜底**重试** —— 与售后既有口径一致
  * （`afterSalesAsyncService` 原来就是"除 400 外都重试"，这里把 400 扩成整类永久错误）。
  *
  * @returns {{retryable: boolean, message: string}}
@@ -230,12 +230,14 @@ const classifyThrownError = (error, retry = ASYNC_JOBS.retry) => {
   const permanentPattern = new RegExp(retry.permanentPattern, 'i');
   if (retryablePattern.test(message)) return { retryable: true, message };
   if (permanentPattern.test(message)) return { retryable: false, message };
-  const status = httpStatusOf(error);
-  if (retry.retryableHttpStatus.includes(status)) return { retryable: true, message };
-  if (retry.permanentHttpStatus.includes(status)) return { retryable: false, message };
+  // ⚠️ 飞书错误码要**先于 HTTP 状态**判：`1254607 Data not ready` 走的是 HTTP 400，
+  //    但它是**临时**错误（限流/数据未就绪）—— 先按 400 判会把它当永久错误，一次都不重试。
   const code = feishuCodeOf(error);
   if (code && retry.retryableFeishuCodes.includes(code)) return { retryable: true, message };
   if (code && retry.permanentFeishuCodes.includes(code)) return { retryable: false, message };
+  const status = httpStatusOf(error);
+  if (retry.retryableHttpStatus.includes(status)) return { retryable: true, message };
+  if (retry.permanentHttpStatus.includes(status)) return { retryable: false, message };
   // 未知异常：按"临时"处理（重试是安全的 —— 各链路重试都复用同一把幂等键）
   return { retryable: true, message };
 };
