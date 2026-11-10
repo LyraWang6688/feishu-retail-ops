@@ -15,7 +15,7 @@ const { logError, logInfo, logWarn } = require('../utils/logger');
 //   同一批次号下**每家供应商是一次独立验收** ⇒ 任务 id 必须带供应商维度（否则第二家会被
 //   第一家那条 posted 任务当重放拦掉）；旧链路（无供应商）任务 id 保持原样 ✓。
 const {
-  taskIdForBatch, computeSupplierTotals, listAcceptedSuppliers,
+  taskIdForBatch, computeSupplierTotals,
 } = require('./acceptanceSupplierProgress');
 
 const TASK_TYPE = 'purchase_arrival_reconcile';
@@ -194,11 +194,6 @@ class PurchaseArrivalConversationService {
   /** 这一批里已验收（posted）供应商的累计实际数量/金额（拆到 `acceptanceSupplierProgress`）。 */
   async supplierTotalsOfBatch(task, batchNo) {
     return computeSupplierTotals(this, task, batchNo);
-  }
-
-  /** 已验收供应商（按批次）；前端隐卡用。 */
-  async listAcceptedSuppliersByBatch() {
-    return listAcceptedSuppliers(this);
   }
 
   async notifyBatchArrived(batchNo, { correlation = {} } = {}) {

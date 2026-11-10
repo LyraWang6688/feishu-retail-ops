@@ -186,10 +186,13 @@ const supplierKeyOfRow = (row = {}) => {
  *   一个批次号可能混多家供应商 ⇒ 验收单位 = **批次号 × 供应商**（每个单位只含该供应商的明细行）。
  *   采购侧「一个提交 = 一个批次号」不变；这里只是把同一批按明细里的供应商拆成多张验收卡。
  */
-export function groupAcceptanceUnits(rows = [], acceptedSuppliers = {}) {
+export function groupAcceptanceUnits(rows = []) {
   const units = [];
   for (const batch of groupPurchaseOrders(rows).filter((item) => !isArrivedBatch(item))) {
-    const accepted = new Set((acceptedSuppliers || {})[batch.batch_no] || []);
+    // ⭐ 2026-11-11（业务负责人）：只认主表「已到货供应商」字段（列表接口每行带过来），
+    //   不再依赖本地任务文件/本地辅助接口。
+    const accepted = new Set((batch.rows || [])
+      .flatMap((row) => (Array.isArray(row.arrived_supplier_ids) ? row.arrived_supplier_ids : [])));
     const bySupplier = new Map();
     for (const row of batch.rows || []) {
       const key = supplierKeyOfRow(row);
@@ -204,7 +207,7 @@ export function groupAcceptanceUnits(rows = [], acceptedSuppliers = {}) {
       bySupplier.get(key).rows.push(row);
     }
     for (const group of bySupplier.values()) {
-      // ⭐ 这一家已经验收完（任务 posted）⇒ 不再出卡；批次还有别家没验 ⇒ 批次本身仍留着
+      // 这一家已在主表「已到货供应商」里 ⇒ 不再出卡；批次还有别家没验 ⇒ 批次本身仍留着
       if (group.supplier_record_id && accepted.has(group.supplier_record_id)) continue;
       units.push({
         batch_no: batch.batch_no,
@@ -257,7 +260,7 @@ const formatPurchaseDate = (value) => {
 export function purchaseOrdersHtml(rows = [], options = {}) {
   // ⭐ 2026-11-10：拆卡后第一层仍按供应商固定出现；第二层是该供应商的「采购日 → 批次卡」，
   //   每张批次卡只含**这个供应商**的明细子集（同一批次号可能出现在多家供应商卡下）。
-  const pendingUnits = groupAcceptanceUnits(rows, options.acceptedSuppliers);
+  const pendingUnits = groupAcceptanceUnits(rows);
   const bySupplier = groupUnitsBySupplier(pendingUnits);
   // ⭐ 2026-11-09（业务负责人）：第一层按「供应商管理」**固定出现全部供应商**（不管有没有未到货）；
   //   配置表读不到时退回"有未到货的供应商"（页面不至于空白）。
@@ -431,8 +434,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     purchaseRows: [],
     // ⭐ 2026-11-09：供应商管理里的**全部供应商**（固定出现；来自配置表缓存）
     suppliers: [],
-    // ⭐ 2026-11-10：已验收完的供应商（按批次）→ 隐掉对应卡片（任务 posted 的唯一事实）
-    acceptedSuppliers: {},
     arrivalRowsByBatch: {},
     // ⭐ 2026-11-09：验收页第二层的"当前选中的供应商"（空 = 显示供应商卡片层）
     activeSupplierKey: '',
@@ -513,7 +514,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     $('[data-view="purchase-host"]').innerHTML = purchaseOrdersHtml(state.purchaseRows, {
       supplierKey: state.activeSupplierKey,
       suppliers: state.suppliers,
-      acceptedSuppliers: state.acceptedSuppliers || {},
     });
   }
 
@@ -602,18 +602,14 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     try {
       // ⚠️ 只读「采购申请」（采购退货单不在验收范围内）——用**既有** reportBehavior 过滤。
       // ⭐ 2026-11-09：同时读「供应商管理」全部供应商（固定卡片）；它失败不影响验收列表。
-      const [data, suppliers, accepted] = await Promise.allSettled([
+      const [data, suppliers] = await Promise.allSettled([
         api.get(`${ORDERS_API.purchaseRequests}?${new URLSearchParams({ reportBehavior: 'purchase_request' })}`),
         api.get(ORDERS_API.suppliers),
-        api.get(ORDERS_API.acceptedSuppliers),
       ]);
       if (data.status !== 'fulfilled') throw data.reason;
       state.purchaseRows = data.value.rows || [];
       state.suppliers = suppliers.status === 'fulfilled' && Array.isArray(suppliers.value?.rows)
         ? suppliers.value.rows : [];
-      // ⭐ 2026-11-10：已验收完的供应商（按批次）→ 对应卡片隐掉；接口失败不影响主列表
-      state.acceptedSuppliers = accepted.status === 'fulfilled' && accepted.value?.accepted
-        ? accepted.value.accepted : {};
       renderPurchaseList();
     } catch (error) {
       if (host) host.innerHTML = '<p class="empty">采购申请读取失败</p>';
