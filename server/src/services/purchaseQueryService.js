@@ -1,5 +1,6 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { classifyReportBehavior, REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
 const { getConfigRows } = require('./configTableCache');
@@ -11,7 +12,7 @@ const asText = (tableKey, record, semanticKey) => {
 
 const asLinks = (tableKey, record, semanticKey) => {
   const fieldName = V1_BITABLE_SCHEMA.tables[tableKey]?.fields?.[semanticKey];
-  return fieldName ? linkedRecordIds(record?.fields?.[fieldName]) : [];
+  return fieldName ? strictLinkedRecordIds(record?.fields?.[fieldName]) : [];
 };
 
 const asNumber = (value) => {
