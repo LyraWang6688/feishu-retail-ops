@@ -71,17 +71,31 @@ const createDriveApi = (client) => {
     return token;
   };
 
-  /** 列出一个云盘文件夹里的文件（**只当前层级**；返回 `{ token, name, type }[]`）。 */
+  /**
+   * 列出一个云盘文件夹里的文件（**只当前层级**；返回 `{ token, name, type }[]`）。
+   *
+   * ⭐ 2026-11-11 真机发现：飞书 `drive.file.list` 单页最多 200 条，**不是全量**。
+   *   2026-11-10 首轮补跑后云盘已有 274 个文件 ⇒ 只取第一页会让「同名覆盖」找不到第 200 名之后的
+   *   同名文件（重传/换图时误判"不存在"⇒ 可能传出同名重复）。
+   *   ⇒ 按 `next_page_token` 翻页拉全（上限 50 页 = 10000 个文件）。
+   */
   const listDriveFolder = async (folderToken, operation = 'list drive folder') => {
     const parent = String(folderToken ?? '').trim();
     if (!parent) throw new Error(`${operation} 缺少 folder_token`);
-    const response = await client.drive.file.list({ params: { folder_token: parent, page_size: 200 } });
-    assertOk(response, operation);
-    return (response?.data?.files || []).map((file) => ({
-      token: file?.token,
-      name: file?.name,
-      type: file?.type,
-    }));
+    const files = [];
+    let pageToken = '';
+    for (let page = 0; page < 50; page += 1) {
+      const params = { folder_token: parent, page_size: 200 };
+      if (pageToken) params.page_token = pageToken;
+      const response = await client.drive.file.list({ params });
+      assertOk(response, operation);
+      for (const file of response?.data?.files || []) {
+        files.push({ token: file?.token, name: file?.name, type: file?.type });
+      }
+      pageToken = response?.data?.next_page_token || '';
+      if (!response?.data?.has_more || !pageToken) break;
+    }
+    return files;
   };
 
   /** 删除一个云盘文件（同名覆盖时先删旧文件；进回收站，不是硬删）。 */

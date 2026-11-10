@@ -58,3 +58,32 @@ test('AC-OT6 固定所有者：transferOwner 用 openid / email 都支持；缺 
   await assert.rejects(() => api.transferFileOwner('ft_3', { owner: {} }), /缺少 owner/);
   await assert.rejects(() => api.transferFileOwner('', { owner: { openId: 'ou_x' } }), /缺少 file_token/);
 });
+
+
+test('AC-OT7 ⭐ 列目录必须翻页拉全（单页 200；云盘已 274 个文件，漏页会误判同名不存在）', async () => {
+  const calls = [];
+  const client = {
+    drive: {
+      file: {
+        async list(payload) {
+          calls.push(payload.params);
+          if (!payload.params.page_token) {
+            return { code: 0, data: {
+              files: [{ token: 'f1', name: 'a.jpg', type: 'file' }],
+              has_more: true, next_page_token: 'p2',
+            } };
+          }
+          return { code: 0, data: {
+            files: [{ token: 'f2', name: 'b.jpg', type: 'file' }],
+            has_more: false,
+          } };
+        },
+      },
+    },
+  };
+  const files = await createDriveApi(client).listDriveFolder('folder', 'list');
+  assert.deepEqual(files.map((f) => f.name), ['a.jpg', 'b.jpg'], '两页都要拿到');
+  assert.equal(calls.length, 2, '第二页要带 page_token');
+  assert.equal(calls[1].page_token, 'p2');
+  assert.equal(calls[0].folder_token, 'folder');
+});
