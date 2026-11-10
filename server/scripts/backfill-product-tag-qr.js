@@ -110,7 +110,7 @@ const selectTargets = (records, { only = [], limit = 0 } = {}) => {
 };
 
 /**
- * 干跑清单：`[{ record_id, number, action, reason, scan_url, file_name, existing_file_names }]`。
+ * 干跑清单：`[{ record_id, action, reason, scan_url, file_name, existing_file_names }]`。
  *
  * ⚠️ 这里**只算不写**（不读表以外的任何东西、不上传、不写库），而且 URL / 文件名用的是
  *    **service 自己那两个方法**（同一个 config、同一套规则 ⇒ 清单与真写不会漂）。
@@ -119,58 +119,38 @@ const selectTargets = (records, { only = [], limit = 0 } = {}) => {
  * @param {Array} records `gateway.listAll('product')` 的结果（只读）
  * @param {{only?: string[], limit?: number, overwrite?: boolean}} flags
  * @param {object} deps
- * @param {{buildScanUrl: Function, buildFileName: Function}} deps.service 标签二维码 service
- * @param {Function} deps.textValue `services/v1BitableGateway` 的取值器（与链路上同一个）
+ * @param {{resolveQrIdentity: Function, buildFileName: Function}} deps.service 标签二维码 service
  * @param {Function} deps.attachmentsOf 附件格解析（与 service 同一个）
- * @param {string} deps.numberField 「编号」的物理列名（来自 schema）
  * @param {string} deps.tagQrField 「标签二维码」的物理列名（来自 schema）
  *   ⚠️ 这些依赖**由调用方传**而不是本文件顶部 require：`.env` 必须在 require 业务模块
  *      **之前**加载（`v1BitableSchema` 是 require 时求值 tableId 的），所以本文件的业务
  *      require 全部在 `main()` 里懒加载；`buildPlans` 保持纯函数，单测可以直接喂桩。
  */
-const buildPlans = (records, flags, {
-  service, textValue, attachmentsOf, numberField, tagQrField,
-  // ⭐ 与 service 同源的"反解编号"判据（注入，不在模块顶层 require —— env 要先加载）
-  numberFromFileName, sanitizeNumberForFileName,
-}) =>
+const buildPlans = (records, flags, { service, attachmentsOf, tagQrField }) =>
   selectTargets(records, flags).map((record) => {
     const recordId = record?.record_id;
-    const number = textValue(record?.fields?.[numberField]).trim();
     const existing = attachmentsOf(record?.fields?.[tagQrField]);
     let action = 'write';
     let reason = 'empty';
     let scanUrl = '';
     let fileName = '';
     try {
-      if (!number) { action = 'skip'; reason = 'number_missing'; }
-      else {
-        // ⭐⭐ 2026-11-11：二维码内容/文件名统一按 **identity（recordId）** —— 与 service 的
-        //    `syncRecord` / 巡检共用同一份规则。旧编号命名的附件 ⇒ 名字对不上 ⇒ 待更新（旧码）。
-        //    ⚠️ 改前这里调 `service.buildScanUrl(number)`，但 service 根本没导出这个方法（会 TypeError）✗
-        const identity = service.resolveQrIdentity({ recordId });
-        scanUrl = identity.url;
-        fileName = service.buildFileName(identity.value);
-        // 🔴 2026-10-12 修（业务负责人真机发现"改货号后二维码没更新" + Lead 被它误导过一轮）：
-        //   改前："这一列**有值**就跳过（already_present）"—— 可她的附件名里还带着**旧货号前缀**
-        //   （`tag-qr-QPL2635-1_黑_A.png` vs 当前编号 `2635-1|黑|A`）⇒ 干跑报"已完成"，
-        //   而值其实是**旧的**。现在**默认就比对**（与 service 同源的判据）：
-        //   "已完成" = 附件名 = 当前 identity 该有的**规范名**，**或**从名字里反解出的 identity 一致；
-        //   否则如实报 `stale_file_name`（并列出**新旧文件名**给人工核）。
-        const inSync = existing.some((item) => item.name === fileName
-          || numberFromFileName(item.name) === sanitizeNumberForFileName(identity.value));
-        if (existing.length && !flags.overwrite) {
-          if (inSync) { action = 'skip'; reason = 'already_present'; }
-          else { action = 'write'; reason = 'stale_file_name'; }
-        } else if (existing.length) { action = 'write'; reason = 'overwrite_requested'; }
-      }
+      // 二维码内容 / 规范名都只由 recordId 决定（与 service 的 syncRecord / 巡检同一规则）。
+      const identity = service.resolveQrIdentity({ recordId });
+      scanUrl = identity.url;
+      fileName = service.buildFileName(identity.value);
+      const inSync = existing.some((item) => item.name === fileName);
+      if (existing.length && !flags.overwrite) {
+        if (inSync) { action = 'skip'; reason = 'already_present'; }
+        else { action = 'write'; reason = 'stale_file_name'; }
+      } else if (existing.length) { action = 'write'; reason = 'overwrite_requested'; }
     } catch (error) {
-      // 配置写错（模板没有 {number} / 占位符不认识…）时**不猜**：标成 skip + config_error。
+      // 配置写错（模板没有 {recordId} / 占位符不认识…）时**不猜**：标成 skip + config_error。
       action = 'skip';
       reason = `config_error: ${error.message}`;
     }
     return {
       record_id: recordId,
-      number,
       action,
       reason,
       scan_url: scanUrl,
@@ -203,16 +183,13 @@ const main = async () => {
   // ⚠️ 懒 require：必须在 .env 注入**之后**（schema 的 tableId 是 require 时求值的）。
   const lark = require('@larksuiteoapi/node-sdk');
   const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-  const { V1BitableGateway, textValue } = require('../src/services/v1BitableGateway');
-  const {
-    createTagQrCodeService, attachmentsOf, numberFromFileName, sanitizeNumberForFileName,
-  } = require('../src/services/tagQrCodeService');
+  const { V1BitableGateway } = require('../src/services/v1BitableGateway');
+  const { createTagQrCodeService, attachmentsOf } = require('../src/services/tagQrCodeService');
   const { TAG_QR_CODE } = require('../src/config/tagQrCode');
   const { assertWritableBase } = require('../src/utils/writeTargetGuard');
   const { getLarkAgentCredentials } = require('../src/config/larkAgent');
 
   const table = V1_BITABLE_SCHEMA.tables.product;
-  const numberField = table.fields.number;
   const tagQrField = table.fields.tagQrCode;
   const targetAppToken = String(V1_BITABLE_SCHEMA.appToken || '').trim();
   const testAppToken = String(process.env.FEISHU_V1_E2E_TEST_APP_TOKEN || '').trim();
@@ -227,7 +204,7 @@ const main = async () => {
   head('货品信息「标签二维码」存量补齐');
   say('  环境文件：');
   for (const source of envSources) say(`    · ${source}`);
-  say(`  二维码内容模板（唯一真源）：${TAG_QR_CODE.scanUrl.urlTemplate}`);
+  say(`  二维码内容模板（唯一真源）：${TAG_QR_CODE.scanUrl.recordIdTemplate}`);
   say(`  目标 Base 是否 = 授权测试 Base（FEISHU_V1_E2E_TEST_APP_TOKEN）：${isAuthorizedTestBase ? '是' : '**不是**'}`);
   say(`  FEISHU_TARGET_ENV：${targetEnv || '（未设置）'}`);
   say(`  FEISHU_ALLOW_PRODUCTION_WRITE：${String(process.env.FEISHU_ALLOW_PRODUCTION_WRITE || '') || '（未设置）'}`);
@@ -262,8 +239,7 @@ const main = async () => {
 
   // ── 算（干跑清单 —— 与 service 用**同一套** URL / 文件名规则，见 buildPlans）──
   const plans = buildPlans(records, { ...flags, limit }, {
-    service, textValue, attachmentsOf, numberField, tagQrField,
-    numberFromFileName, sanitizeNumberForFileName,
+    service, attachmentsOf, tagQrField,
   });
 
   const toWrite = plans.filter((item) => item.action === 'write');
@@ -277,10 +253,9 @@ const main = async () => {
   for (const [reason, count] of Object.entries(counts)) {
     const label = {
       empty: '这一列是空的（要补）',
-      already_present: '已经有值、且附件名与当前编号一致（幂等，跳过）',
-      stale_file_name: '⚠️ 已经有值，但**附件名与当前编号不一致**（旧码）⇒ 待更新',
+      already_present: '已经有值、且附件名 = 当前 recordId 规范名（幂等，跳过）',
+      stale_file_name: '⚠️ 已经有值，但**附件名不是 recordId 规范名**（旧码）⇒ 待更新',
       overwrite_requested: '已经有值 + --overwrite（要覆盖）',
-      number_missing: '没有「编号」（生不出码，跳过）',
     }[reason] || reason;
     say(`    · ${label}：${count} 条`);
   }
@@ -289,16 +264,10 @@ const main = async () => {
     line();
     say('  将要写的前 5 条（样例；完整清单看报告文件）：');
     for (const item of toWrite.slice(0, 5)) {
-      say(`    · ${item.record_id}｜编号=${item.number}`);
+      say(`    · ${item.record_id}`);
       say(`        二维码内容=${item.scan_url}`);
       say(`        附件名=${item.file_name}`);
     }
-  }
-  const missing = skipped.filter((item) => item.reason === 'number_missing');
-  if (missing.length) {
-    say('');
-    say(`  ⚠️ ${missing.length} 条记录没有「编号」，跳过（这些生不出码来，需要先补编号）：`);
-    for (const item of missing.slice(0, 10)) say(`    · ${item.record_id}`);
   }
   const configErrors = skipped.filter((item) => String(item.reason).startsWith('config_error'));
   if (configErrors.length) {
@@ -349,8 +318,8 @@ const main = async () => {
       try {
         const result = await service.syncRecord(item.record_id, {
           reason: 'backfill',
-          // `--overwrite` 时明确告诉 service"该覆盖"；否则走幂等（已有值就跳过）。
-          numberChanged: flags.overwrite ? true : undefined,
+          // `--overwrite` 时强制覆盖；否则走幂等（已有值且名字 = 规范名就跳过）。
+          force: Boolean(flags.overwrite),
         });
         return { item, result };
       } catch (error) {
@@ -360,14 +329,14 @@ const main = async () => {
     for (const entry of settled) {
       if (entry.error) {
         failed.push({ record_id: entry.item.record_id, error: entry.error.message });
-        say(`  ✘ ${entry.item.record_id}（编号=${entry.item.number}）：${entry.error.message}`);
+        say(`  ✘ ${entry.item.record_id}：${entry.error.message}`);
         continue;
       }
       const { result } = entry;
       results.push(result);
       if (result.status === 'written') {
         written += 1;
-        say(`  ✔ ${result.record_id}（编号=${entry.item.number}）← file_token=${result.file_token}｜${result.file_name}`);
+        say(`  ✔ ${result.record_id} ← file_token=${result.file_token}｜${result.file_name}`);
       } else {
         skippedCount += 1;
         say(`  · ${result.record_id} 跳过：${result.reason}`);

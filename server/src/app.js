@@ -51,8 +51,8 @@ const { createVoucherSettlementService } = require('./services/voucherSettlement
 const { PaymentService } = require('./services/paymentService');
 const { createNotificationService } = require('./services/notificationService');
 const { createLaikeClient } = require('./services/douyin');
-// 扫码页的挂载点（`/s`）与它的配置：**与二维码里的 URL 同源**
-// （`config/tagQrCode.js` 的 `scanUrl.recordIdTemplate` = `https://hm.bamamei.online/s/{编号}`）。
+// 扫码页的挂载点（`/r`）与它的配置：**与二维码里的 URL 同源**
+// （`config/tagQrCode.js` 的 `scanUrl.recordIdTemplate` = `https://hm.bamamei.online/r/{recordId}`）。
 const { SCAN_PAGE } = require('./config/scanPage');
 
 const app = express();
@@ -137,7 +137,7 @@ app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
 // Feishu web apps commonly open the configured homepage as "/".
 app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')));
 
-// 扫码页（标签二维码里的 `https://hm.bamamei.online/s/{编号}`）：标签二维码指向的就是这一条
+// 扫码页（标签二维码里的 `https://hm.bamamei.online/r/{recordId}`）：标签二维码指向的就是这一条
 //（挂载点 `SCAN_PAGE.route.recordBasePath` = `/r`，路径段在 router 里）。
 // ⚠️ 刻意**不挂在 `/api/*` 下面**：那一段由下面的 `API_KEY`（`x-api-key` 头）保护，
 //    而扫码的人是手机浏览器**直接打开页面**的，没有那个头 ⇒ 挂过去必被挡。

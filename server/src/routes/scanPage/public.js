@@ -8,12 +8,8 @@ const installScanPagePublicRoutes = ({ router, ctx }) => {
   } = ctx;
 
   router.get('/', async (req, res) => {
+    // 🔴 2026-11-11：不再支持 `?number=` 手输编号入口（旧贴纸不兼容；二维码只认 /r/{recordId}）。
     const requestId = req.requestId;
-    const number = String(req.query?.number || '').trim();
-    if (number) {
-      logInfo(config.events.salesHomeOpened, { request_id: requestId, by: 'manual' });
-      return res.redirect(302, `${req.baseUrl}/${encodeURIComponent(number)}`);
-    }
     const noticeKey = SUBMIT_TOAST.noticeKey || 'done';
     const orderNo = String(req.query?.[noticeKey] || '').trim().slice(0, 40);
     return sendHtml(res, 200, renderSalesHome({ config, orderNo, basePath: req.baseUrl }));

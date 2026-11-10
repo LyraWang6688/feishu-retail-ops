@@ -6,8 +6,9 @@
  *
  * 业务负责人 2026-10-08 定的能力（逐字口径）：
  *   · 「货品信息」表上新建了一列 **`标签二维码`（字段类型 = 附件）**；
- *   · 二维码内容规范（**2026-10-12 起**）：`https://hm.bamamei.online/r/{记录ID}`（`记录ID` = 接口读到的 `record_id`；旧 `/s/{编号}` **只作兼容**，见本文件 `recordIdTemplate`）
- *     其中 `编号` = 该记录「编号」字段的值（形如 `YD6693-2|黑色|A`），**做 URL 编码**；
+ *   · 二维码内容规范（**2026-10-12 起，2026-11-11 去掉旧编号兼容**）：
+ *     `https://hm.bamamei.online/r/{记录ID}`（`记录ID` = 接口读到的 `record_id`，做 URL 编码）；
+ *     不再生成 / 兼容 `/s/{编号}` 旧码（业务已无此入口）；
  *   · **存量 561 条**要批量补这一列（脚本 `scripts/backfill-product-tag-qr.js`）；
  *   · 以后**货品上新**（表单提交 → 表记录变更事件）后**自动**生成并写回。
  *
@@ -17,8 +18,7 @@
  * ⚠️ 与 `config/labelPrint.js` 的 `QR` **不是同一件事**，刻意不合并：
  *    · 那一处是**鞋盒标签打印页**的二维码（指向工作台将来 `/scan` 选鞋的页面，
  *      参数是货号/尺码/颜色三段 query）；
- *    · 这里那一处是**写进「货品信息」附件列**的二维码（指向 `hm` 的 `/s/{编号}`，
- *      整条「编号」当路径一段）。
+ *    · 这里那一处是**写进「货品信息」附件列**的二维码（指向 `hm` 的 `/r/{recordId}`）。
  *    两条链路的消费者不同 ⇒ 各留各的模板；要一起改的时候**两处都要改**。
  */
 
@@ -29,18 +29,12 @@ const { readFlag, readInt, readString } = require('./envValue');
 /**
  * 二维码内容 = **一个能扫的 URL**。**唯一真源**：域名 / 路径 / 参数名都在这一行里。
  *
- * 可用占位符：`{number}` = 该记录「编号」字段的值（形如 `YD6693-2|黑色|A`）。
+ * 可用占位符：`{recordId}` = 飞书记录 ID（接口读到的 `record_id`，永不变）。
  * ⚠️ **只编码替换进去的值，不编码模板**（否则 `/` 会被编成 `%2F`，扫出来不是同一个地址）。
- * 实现见 `services/tagQrCodeService.js` 的 记录 ID 二维码构造器。
- *
- * 例：编号 `YD6693-2|黑色|A` ⇒
- *     `https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA`
+ * 实现见 `services/tagQrCodeService.js` 的 `buildRecordIdScanUrl`。
  */
 const SCAN_URL = Object.freeze({
-  // ⭐ 2026-10-12：二维码标识从【编号】改为【记录 ID】（她今天亲自提的方案）。
-  //    编号 `货号|颜色|类别` 是**会变的快照**（她打印时类别还空着、事后补上 ⇒ 旧码对不上）；
-  //    `record_id` 是飞书**永不变**的身份证。
-  //    新 = /r/{recordId}；旧 = /s/{number}（**旧标签继续兼容**，靠扫码线兜底 + 逐步重打）。
+  // ⭐ 唯一格式：/r/{recordId}（record_id 永不变；2026-11-11 起不再兼容 /s/{编号}）。
   recordIdTemplate: 'https://hm.bamamei.online/r/{recordId}',
 });
 
@@ -89,16 +83,15 @@ const UPLOAD = Object.freeze({
 });
 
 /**
- * 附件文件名模板 —— 与二维码内容**同源**（都用 `{number}`）。
+ * 附件文件名模板 —— 与二维码内容**同源**（都用 `{recordId}`）。
  *
- * ⚠️ 文件名**不是**幂等判据（幂等以"这一列有没有值"为准，见 service）；
- *    但它必须**由编号决定**、同一条记录每次生成都一样，这样她在表里一眼能看出
- *    这张码是哪条编号的，也不会因为重跑而堆出名字不同的重复附件。
+ * ⚠️ 文件名是幂等判据：同一条记录每次生成都一样（`tag-qr-{recordId}.png`）；
+ *    名字不是这个 ⇒ 旧格式/过期 ⇒ 覆盖重写。
  * ⚠️ 文件名要能落到本地临时文件上（服务端是"先写临时文件再上传"）⇒
  *    `/` `\` 这类路径字符、以及冒号/星号这类在别的系统上非法的字符，统一替换掉。
  */
 const FILE_NAME = Object.freeze({
-  template: 'tag-qr-{number}.png',
+  template: 'tag-qr-{recordId}.png',
   // 会被替换成 `replacement` 的字符集（路径分隔符 + Windows 非法字符 + 空白）。
   invalidChars: /[\\/:*?"<>|\s]+/g,
   replacement: '_',
@@ -150,10 +143,9 @@ const BATCH = Object.freeze({
 });
 
 /**
- * ⭐ **兜底巡检**（2026-10-09 加）—— 事件那条路只管"改这一下"，**万一判漏了**
- * （2026-10-09 生产真事：公式列「编号」的前后值在事件里读不出可比文本 ⇒ 被当成"没变"，
- * 那条记录留下了一张**过期二维码**）就会静默留脏数据。这个入口**不看事件、只认当前事实**：
- * 全表扫一遍，「附件文件名 ≠ 当前编号应有的文件名」⇒ 重新生成。
+ * ⭐ **兜底巡检**（2026-10-09 加）—— 事件那条路只管"改这一下"，**万一判漏了 / 旧格式没升级**
+ * 就会静默留脏数据。这个入口**不看事件、只认当前事实**：
+ * 全表扫一遍，「附件文件名 ≠ `tag-qr-{recordId}.png`」⇒ 重新生成（旧 `/s/{编号}` 码就是这样升级的）。
  *
  * 它是一个**纯函数式入口**，可以被 cron / scheduler 直接调用（`services/tagQrCodeService.js`
  * 的 `sweepStaleTagQrCodes`）——本文件**不挂任何定时器**，挂不挂由业务负责人决定。
@@ -240,32 +232,7 @@ const TAG_QR_CODE = Object.freeze({
   sweep: SWEEP,
   // 物理列名只有一个去处：`config/v1BitableSchema.js` 的 `product.fields`。
   // 这里只放**语义键**（网关 update 收的就是它），避免同一个列名有两份真源。
-  /**
-   * ⭐⭐ **二维码 URL 里那串「编号」怎么来**（2026-10-12 业务负责人提的：别只盯公式列）。
-   *
-   * 她表里「编号」列的**公式表达式**（2026-10-12 只读核过；`appTableField.list` → `property.formula_expression`）：
-   * ```text
-   * bitable::$table[tbl5as7poByp36c7].$field[fldJHVi1Pz]                       // 货号（文本）
-   *   & "|" &
-   * bitable::$table[tbl5as7poByp36c7].$field[fldEz0zrsG].$column[fldo2CIis2]  // 颜色（关联列的显示列）
-   *   & "|" &
-   * bitable::$table[tbl5as7poByp36c7].$field[fldOU1H0bt]                      // 类别（单选）
-   * ```
-   * ⇒ 规则就是 **`货号 | 颜色 | 类别`**（分隔符 `|`、顺序如此、**没有空值特判**）。
-   * ⚠️ 公式列**有延迟**（实测几秒~十几秒）⇒ 她刚改完货号那一刻，记录上的「编号」还是旧值。
-   *    ⇒ 判「有没有变」用**源字段**（`货号/颜色/类别`，事件里没有延迟）；
-   *      二维码 URL 那串**优先用公式列读到的值**（它才是扫码页认识的键），**读不出/为空 ⇒ 用这条规则自己拼**。
-   */
-  numberAssembly: Object.freeze({
-    separator: '|',
-    // 顺序 = 她公式的顺序；键取自 `v1BitableSchema.tables.product.fields`
-    fields: Object.freeze(['itemNo', 'color', 'category']),
-    // 交叉核对（公式值 vs 拼装值不一致时记 warn）；显式布尔
-    crossCheck: true,
-  }),
-
   fields: Object.freeze({
-    number: 'number',
     tagQrCode: 'tagQrCode',
   }),
 });

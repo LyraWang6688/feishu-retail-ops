@@ -529,7 +529,7 @@ test('AC-SP8 ⭐ 失败如实：服务端的人话 / 扫码取消 / 没有 h5sdk
   const container = fakeContainer();
 
   // ① 服务端 400 的人话（旧码 / 记录找不到）—— 原样显示，**不吞**。
-  const legacyMessage = LABEL_PRINT.scanPrint.texts.legacySticker;
+  const legacyMessage = LABEL_PRINT.scanPrint.texts.notLabelCode;
   const legacyAction = module.createScanPrintAction({
     api: {
       get: async () => ({ appId: 'x', timestamp: 1, nonceStr: 'n', signature: 's', jssdkUrl: '' }),

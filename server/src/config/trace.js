@@ -12,7 +12,6 @@
 const { readFlag } = require('./envValue');
 
 const ENTRY_RULES = Object.freeze([
-  Object.freeze({ prefix: '/s', entry: 'scan' }),
   Object.freeze({ prefix: '/r', entry: 'scan' }),
   Object.freeze({ prefix: '/api/workbench', entry: 'workbench' }),
   Object.freeze({ prefix: '/workbench', entry: 'workbench' }),

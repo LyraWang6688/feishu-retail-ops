@@ -3,9 +3,8 @@
  *
  * 背景（业务负责人 2026-10-08 定的第一件事）：
  *   她给「货品信息」每一条出了**标签二维码**，码里的 URL 是
- *   `https://hm.bamamei.online/s/{编号}`（**那是 2026-10-08 当时的形状**；**2026-10-12 起**新码一律 `/r/{记录ID}`，唯一真源在
- *   `config/tagQrCode.js` 的 `recordIdTemplate` / `recordIdTemplate`；旧 `/r/` 只作兼容 ✓）。
- *   ⇒ **那些码今天扫开是 404** —— 这个文件配的就是"扫开以后那一页"。
+ *   `https://hm.bamamei.online/r/{recordId}`（唯一真源 `config/tagQrCode.js` 的 `recordIdTemplate`）。
+ *   ⇒ 这个文件配的就是"扫开以后那一页"。
  *
  * 本版**只读**：页面只回答"这个编号有多少双、都在哪儿、缺哪些码"，
  *   **一行都不写**（补货 / 销售 / 验收是下一版的事）。
@@ -27,7 +26,7 @@ const { SCAN_ENTRIES } = require('./scanEntries');
  * 路由挂载点：`GET /r/:recordId`。
  * ⚠️ **不放在 `/api/*` 下面**：那一段被 `API_KEY`（`x-api-key` 头）保护，
  *    而扫码的人是**手机浏览器直接打开**的，没有这个头 ⇒ 会被挡。
- *    挂到 `/s` 后走的是**工作台那一道飞书身份闸门**（未启用 503 / 未登录 401 / 白名单外 403）。
+ *    走的是**工作台那一道飞书身份闸门**（未启用 503 / 未登录 401 / 白名单外 403）。
  */
 const ROUTE = Object.freeze({
   // `app.js` 用 basePath 挂载，router 里用 path（两边不许各写一份）。
@@ -40,9 +39,7 @@ const ROUTE = Object.freeze({
   //   【记录 ID】呀？……虽然它的这些信息可能会变，但我还是用它**不变的记录 ID**」。
   // 根因：二维码里存的**编号**（`货号|颜色|类别`）是**会变的快照** —— 她打印时类别为空、
   //   之后补上 ⇒ 旧码对不上（今天的 400 事故就是这么来的）。
-  // ⇒ **新二维码一律 `/r/{recordId}`**；**旧 `/s/{编号}` 照旧可用**（旧贴纸不重打也能扫）。
-  // 🔴 `/r` 与 `/s` **必须是同一个 router 实例**（`app.js` 双挂载）——
-  //    各建一个实例就会有两套写服务 / 两条按人串行队列 ⇒ **幂等可靠性直接破**。
+  // ⇒ 唯一入口：`/r/{recordId}`（2026-11-11 起删掉 `/s/{编号}` 兼容）。
   recordBasePath: '/r',
   recordPath: '/:recordId',
 });
@@ -377,7 +374,7 @@ const READS = Object.freeze({
   // 关掉 = 回到提速前的"整表读"，用于线上出问题时一键退回。
   filterEnabled: readFlag(process.env, 'SCAN_PAGE_FILTER_READ_ENABLED', true),
   // ⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**。
-  //   · **默认 false** ⇒ `/s/<编号>` 与改动前**逐字相同**（既有整页 AC 一条都不动 ✓ 不假绿 ✓）；
+  //   · **默认 false** ⇒ `/r/<recordId>` 与改动前**逐字相同**（既有整页 AC 一条都不动 ✓ 不假绿 ✓）；
   //   · 打开（线上 `.env` 由 Lead 拿到她授权后设 `SCAN_PAGE_SKELETON_ENABLED=true`）⇒
   //     首屏立刻回骨架（占位 + 正在读取…），数据由**同一段脚本** `fetch('?data=1')` 拿回来；
   //     ⚠️ `?data=1` **走的还是同一个 `service.lookup`**（不新增取数路径 ✗）。
@@ -791,7 +788,7 @@ const REPLENISH_FORM = Object.freeze({
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
   // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（**显式布尔**，缺省 false）。
-  //   · false（默认）⇒ `/s/<编号>` 与改动前**逐字相同** ⇒ 既有整页 AC 一条不用改 ✓（不假绿）
+  //   · false（默认）⇒ `/r/<recordId>` 与改动前**逐字相同** ⇒ 既有整页 AC 一条不用改 ✓（不假绿）
   //   · true（线上 `.env`：`SCAN_PAGE_SKELETON_ENABLED=true`，由 Lead 拿到她授权后打开）⇒
   //     首屏立刻回骨架（占位 + 正在读取…），数据由骨架里**同一段脚本** `fetch('?data=1')` 拿回来；
   //     ⚠️ `?data=1` 走的还是**同一个 `service.lookup`**（不新增取数路径 ✗）
