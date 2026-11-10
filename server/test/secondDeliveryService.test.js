@@ -18,6 +18,7 @@ const { SalesDeliveryService } = require('../src/services/salesDeliveryService')
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { PaymentService } = require('../src/services/paymentService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 // 群聊相关配置在服务构造时会被读一次；给测试值，免得用例里刷出一条"没配"的警告
@@ -46,8 +47,8 @@ const fakeGateway = (seed = {}) => {
     records, writes,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
     validateTables: async () => [],
-    listAll: async (key) => records.get(key) || [],
-    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
+    listAll: async (key) => (records.get(key) || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+    get: async (key, id) => { const row = (records.get(key) || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : undefined; },
     create: async (key, values) => {
       const recordId = `rec_${key}_${++seq}`;
       if (!records.has(key)) records.set(key, []);
@@ -56,7 +57,7 @@ const fakeGateway = (seed = {}) => {
       return { recordId };
     },
     update: async (key, id, values) => {
-      const record = await gateway.get(key, id);
+      const record = (records.get(key) || []).find((row) => row.record_id === id);
       if (!record) throw new Error(`${key} ${id} 不存在`);
       Object.assign(record.fields, apply(key, values));
       writes.push({ table: key, op: 'update', recordId: id, semantic: values, fields: apply(key, values) });

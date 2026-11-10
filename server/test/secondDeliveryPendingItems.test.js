@@ -13,6 +13,7 @@
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 
 const test = require('node:test');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const assert = require('node:assert/strict');
 
 const { SecondDeliveryService } = require('../src/services/secondDeliveryService');
@@ -80,9 +81,9 @@ const gatewayFor = (records, tableDefs = tables()) => {
     validateTables: async () => [],
     listAll: async (key) => {
       calls.push(key);
-      return map.get(key) || [];
+      return (map.get(key) || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
     },
-    get: async (key, id) => (map.get(key) || []).find((row) => row.record_id === id) || null,
+    get: async (key, id) => { const row = (map.get(key) || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
   };
   return gateway;
 };

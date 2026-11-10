@@ -14,7 +14,8 @@
  *
  * 🔴 只读：本文件没有任何写入方法，也不新增写库路径。
  */
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = require('../config/salesDeliveryPage');
 const { createPaymentMethodsService, orderWithPreferred } = require('./paymentMethodsService');
 const { SCAN_WRITE } = require('../config/scanWrite');
@@ -73,7 +74,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const detailFieldsForRefs = gateway.table('salesDetail').fields;
     const productFieldsForRefs = gateway.table('product').fields;
     const idsOf = (records, fields, key) => [...new Set(records.flatMap((record) =>
-      linkedRecordIds(record.fields?.[fields[key]])))];
+      strictLinkedRecordIds(record.fields?.[fields[key]])))];
     const productIds = idsOf(details, detailFieldsForRefs, 'product');
     const sizeIds = idsOf(details, detailFieldsForRefs, 'size');
     // 只批量取被销售明细引用到的记录（不再整表拉 561 条货品）。
@@ -95,7 +96,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       timed('product', () => readReferenced('product', productIds)),
       timed('size', () => readReferenced('sizeManagement', sizeIds)),
     ]);
-    const colorIds = [...new Set(products.flatMap((row) => linkedRecordIds(row.fields?.[productFieldsForRefs.color])))];
+    const colorIds = [...new Set(products.flatMap((row) => strictLinkedRecordIds(row.fields?.[productFieldsForRefs.color])))];
     const colors = await timed('color', () => readReferenced('color', colorIds));
     timings.total_ms = Date.now() - startedAt;
     logInfo('workbench.sales.delivery.read_timing', {
@@ -125,7 +126,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const methodNameById = new Map(methodRows.map((item) => [item.recordId, item.name]));
     const productById = new Map(products.map((item) => [item.record_id, {
       productNo: textValue(item.fields?.[productFields.itemNo]).trim(),
-      colorId: linkedRecordIds(item.fields?.[productFields.color])[0] || '',
+      colorId: strictLinkedRecordIds(item.fields?.[productFields.color])[0] || '',
     }]));
 
     // 按「销售单号」合并：同一单号即使来自不同销售主表记录，也归成一组（业务口径）。
@@ -136,20 +137,20 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       return groups.get(orderNo);
     };
     for (const detail of details) {
-      const orderId = linkedRecordIds(detail.fields?.[detailFields.salesEntry])[0] || '';
+      const orderId = strictLinkedRecordIds(detail.fields?.[detailFields.salesEntry])[0] || '';
       if (orderId) groupOf(orderId).rawDetails.push(detail);
     }
     for (const payment of payments) {
-      const orderId = linkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '';
+      const orderId = strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '';
       if (orderId) groupOf(orderId).rawPayments.push(payment);
     }
 
     const result = [];
     for (const group of groups.values()) {
       const detailRows = group.rawDetails.map((detail) => {
-        const productId = linkedRecordIds(detail.fields?.[detailFields.product])[0] || '';
+        const productId = strictLinkedRecordIds(detail.fields?.[detailFields.product])[0] || '';
         const product = productById.get(productId);
-        const sizeId = linkedRecordIds(detail.fields?.[detailFields.size])[0] || '';
+        const sizeId = strictLinkedRecordIds(detail.fields?.[detailFields.size])[0] || '';
         const sizeText = sizeValueById.get(sizeId) || '';
         return {
           record_id: detail.record_id,
@@ -170,7 +171,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
         record_id: payment.record_id,
         status: textValue(payment.fields?.[paymentFields.status]) || '',
         amount: Number(textValue(payment.fields?.[paymentFields.amount])) || 0,
-        method: methodNameById.get(linkedRecordIds(payment.fields?.[paymentFields.method])[0] || '') || '',
+        method: methodNameById.get(strictLinkedRecordIds(payment.fields?.[paymentFields.method])[0] || '') || '',
       }));
       // 业务负责人 2026-10-29：待付 = 同一销售单号下「收款状态 = 未收款」的收款金额合计。
       const pendingAmount = paymentRows

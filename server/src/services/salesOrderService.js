@@ -1,4 +1,5 @@
-const { linkedRecordIds, singleLinked, textValue } = require('./v1BitableGateway');
+const {singleLinked, textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { readSaleLinkedRecord } = require('./salesRecordReader');
 const { nextId, createState } = require('./salesRecordIds');
@@ -241,7 +242,7 @@ class SalesOrderService {
       const skipExistingRead = freshOneShot && noKnownDetails;
       const existing = skipExistingRead ? [] : (await withSalesReadRetry(
         () => this.gateway.listAll('salesDetail'), 'sale_detail_list',
-      )).filter((record) => linkedRecordIds(record.fields?.[table.salesEntry]).includes(salesEntryRecordId));
+      )).filter((record) => strictLinkedRecordIds(record.fields?.[table.salesEntry]).includes(salesEntryRecordId));
       for (const id of input.knownRecordIds?.details || []) {
         if (!id || existing.some((record) => record.record_id === id)) continue;
         existing.push(await withSalesReadRetry(
@@ -263,11 +264,11 @@ class SalesOrderService {
         };
         const match = existing.find((record) => !used.has(record.record_id) &&
           (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
-          linkedRecordIds(record.fields?.[table[item.linkField]]).includes(item.linkRecordId) &&
+          strictLinkedRecordIds(record.fields?.[table[item.linkField]]).includes(item.linkRecordId) &&
           // 尺码是单选关联：鞋必须正好是这一条；配品没有尺码，关联必须为空。
           (item.sizeRecordId
             ? singleLinked(record.fields?.[table.size], item.sizeRecordId)
-            : linkedRecordIds(record.fields?.[table.size]).length === 0) &&
+            : strictLinkedRecordIds(record.fields?.[table.size]).length === 0) &&
           amountMatches(record));
         // ⚠️ 明细这一侧**不再比赠品**（2026-10-08）：那一列已被她删除，
         //   赠品现在是**整单一条**、比在销售主表上（见下面的 gift 段）。

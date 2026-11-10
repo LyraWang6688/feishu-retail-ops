@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 // ── 赠品落点从「销售明细」搬到「销售主表」（业务负责人 2026-10-08，逐字）─────────
 //   「好的，写入的落点放在销售主表里的赠品，销售明细没有赠品了」
@@ -26,8 +27,8 @@ const fake = () => {
     records,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
     validateTables: async () => [],
-    listAll: async (key) => records.get(key) || [],
-    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
+    listAll: async (key) => (records.get(key) || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+    get: async (key, id) => { const row = (records.get(key) || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : undefined; },
     create: async (key, values) => {
       const recordId = `rec_${++seq}`;
       const fields = Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)
@@ -41,7 +42,7 @@ const fake = () => {
       return { recordId };
     },
     update: async (key, id, values) => {
-      const record = await gateway.get(key, id);
+      const record = (records.get(key) || []).find((row) => row.record_id === id);
       Object.assign(record.fields, Object.fromEntries(Object.entries(values)
         .map(([name, value]) => {
           const field = V1_BITABLE_SCHEMA.tables[key].fields[name];

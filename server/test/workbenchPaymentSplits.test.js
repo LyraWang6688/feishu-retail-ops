@@ -42,6 +42,7 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_payment_sp
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'payment_splits_secret';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SalesFollowupService } = require('../src/services/salesFollowupService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 
@@ -103,9 +104,9 @@ const fakeGateway = (tables) => {
     writes,
     _tables: tables,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
-    listAll: async (key) => [...(tables[key] || [])],
+    listAll: async (key) => (tables[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
     listByFilter: async () => { throw new Error('假网关不支持 filter'); },
-    get: async (key, id) => (tables[key] || []).find((row) => row.record_id === id) || null,
+    get: async (key, id) => { const row = (tables[key] || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
     findOneByText: async (key, semanticKey, expected) => {
       const name = V1_BITABLE_SCHEMA.tables[key].fields[semanticKey];
       const target = String(expected ?? '').trim();

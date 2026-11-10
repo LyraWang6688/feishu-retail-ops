@@ -31,6 +31,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { PaymentService } = require('../src/services/paymentService');
 const { SalesFollowupService } = require('../src/services/salesFollowupService');
@@ -64,8 +65,8 @@ const fakeGateway = () => {
     records,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
     validateTables: async () => [],
-    listAll: async (key) => records.get(key) || [],
-    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
+    listAll: async (key) => (records.get(key) || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+    get: async (key, id) => { const row = (records.get(key) || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : undefined; },
     create: async (key, values) => {
       const recordId = `rec_${++seq}`;
       const fields = {};
@@ -79,7 +80,7 @@ const fakeGateway = () => {
       return { recordId };
     },
     update: async (key, id, values) => {
-      const record = await gateway.get(key, id);
+      const record = (records.get(key) || []).find((row) => row.record_id === id);
       for (const [name, value] of Object.entries(values)) {
         const field = V1_BITABLE_SCHEMA.tables[key].fields[name];
         if (!field) throw new Error(`${key}: unknown semantic field ${name}`);
