@@ -81,3 +81,36 @@ test('AC-PP3 样例图代理：按 record_id 下载附件并返回图片流', as
     assert.equal(Buffer.from(await res.arrayBuffer()).toString(), 'fake-image');
   } finally { server.close(); }
 });
+
+test('AC-PP4 搜索优先走飞书 filter，只读匹配行（不读整表）', async () => {
+  let listAllCalls = 0;
+  let filterSeen = '';
+  const gateway = {
+    listByFilter: async (tableKey, filter) => {
+      assert.equal(tableKey, 'product');
+      filterSeen = filter;
+      return [product('rec1', '906|黑色|男', '906', '黑色', '男', '成本', 'file_1')];
+    },
+    listAll: async () => { listAllCalls += 1; return []; },
+  };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/search?q=906`)).json();
+    assert.equal(body.items.length, 1);
+    assert.equal(listAllCalls, 0, 'filter 命中时不许读整表');
+    assert.ok(filterSeen.includes('CurrentValue.[货号].contains("906")'));
+    assert.ok(filterSeen.includes('CurrentValue.[编号].contains("906")'));
+  } finally { server.close(); }
+});
+
+test('AC-PP5 filter 失败时回退整表缓存，不丢结果', async () => {
+  const gateway = {
+    listByFilter: async () => { throw new Error('InvalidFilter'); },
+    listAll: async () => [product('rec1', '906|黑色|男', '906', '黑色', '男', '成本', 'file_1')],
+  };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/search?q=906`)).json();
+    assert.equal(body.items.length, 1);
+  } finally { server.close(); }
+});
