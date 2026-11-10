@@ -6,8 +6,9 @@
  *
  * 业务负责人 2026-10-08 定的能力（逐字口径）：
  *   · 「货品信息」表上新建了一列 **`标签二维码`（字段类型 = 附件）**；
- *   · 二维码内容规范（**2026-10-12 起**）：`https://hm.bamamei.online/r/{记录ID}`（`记录ID` = 接口读到的 `record_id`；旧 `/s/{编号}` **只作兼容**，见本文件 `recordIdTemplate`）
- *     其中 `编号` = 该记录「编号」字段的值（形如 `YD6693-2|黑色|A`），**做 URL 编码**；
+ *   · 二维码内容规范（**2026-10-12 起，2026-11-11 去掉旧编号兼容**）：
+ *     `https://hm.bamamei.online/r/{记录ID}`（`记录ID` = 接口读到的 `record_id`，做 URL 编码）；
+ *     不再生成 / 兼容 `/s/{编号}` 旧码（业务已无此入口）；
  *   · **存量 561 条**要批量补这一列（脚本 `scripts/backfill-product-tag-qr.js`）；
  *   · 以后**货品上新**（表单提交 → 表记录变更事件）后**自动**生成并写回。
  *
@@ -17,30 +18,22 @@
  * ⚠️ 与 `config/labelPrint.js` 的 `QR` **不是同一件事**，刻意不合并：
  *    · 那一处是**鞋盒标签打印页**的二维码（指向工作台将来 `/scan` 选鞋的页面，
  *      参数是货号/尺码/颜色三段 query）；
- *    · 这里那一处是**写进「货品信息」附件列**的二维码（指向 `hm` 的 `/s/{编号}`，
- *      整条「编号」当路径一段）。
+ *    · 这里那一处是**写进「货品信息」附件列**的二维码（指向 `hm` 的 `/r/{recordId}`）。
  *    两条链路的消费者不同 ⇒ 各留各的模板；要一起改的时候**两处都要改**。
  */
 
 const os = require('node:os');
 // ⭐ 2026-10-12：兜底巡检的**每日调度**开关（显式布尔语义，见 `utils/envValue.js`）
-const { readFlag, readInt, readString } = require('./envValue');
 
 /**
  * 二维码内容 = **一个能扫的 URL**。**唯一真源**：域名 / 路径 / 参数名都在这一行里。
  *
- * 可用占位符：`{number}` = 该记录「编号」字段的值（形如 `YD6693-2|黑色|A`）。
+ * 可用占位符：`{recordId}` = 飞书记录 ID（接口读到的 `record_id`，永不变）。
  * ⚠️ **只编码替换进去的值，不编码模板**（否则 `/` 会被编成 `%2F`，扫出来不是同一个地址）。
- * 实现见 `services/tagQrCodeService.js` 的 记录 ID 二维码构造器。
- *
- * 例：编号 `YD6693-2|黑色|A` ⇒
- *     `https://hm.bamamei.online/s/YD6693-2%7C%E9%BB%91%E8%89%B2%7CA`
+ * 实现见 `services/tagQrCodeService.js` 的 `buildRecordIdScanUrl`。
  */
 const SCAN_URL = Object.freeze({
-  // ⭐ 2026-10-12：二维码标识从【编号】改为【记录 ID】（她今天亲自提的方案）。
-  //    编号 `货号|颜色|类别` 是**会变的快照**（她打印时类别还空着、事后补上 ⇒ 旧码对不上）；
-  //    `record_id` 是飞书**永不变**的身份证。
-  //    新 = /r/{recordId}；旧 = /s/{number}（**旧标签继续兼容**，靠扫码线兜底 + 逐步重打）。
+  // ⭐ 唯一格式：/r/{recordId}（record_id 永不变；2026-11-11 起不再兼容 /s/{编号}）。
   recordIdTemplate: 'https://hm.bamamei.online/r/{recordId}',
 });
 
@@ -89,16 +82,15 @@ const UPLOAD = Object.freeze({
 });
 
 /**
- * 附件文件名模板 —— 与二维码内容**同源**（都用 `{number}`）。
+ * 附件文件名模板 —— 与二维码内容**同源**（都用 `{recordId}`）。
  *
- * ⚠️ 文件名**不是**幂等判据（幂等以"这一列有没有值"为准，见 service）；
- *    但它必须**由编号决定**、同一条记录每次生成都一样，这样她在表里一眼能看出
- *    这张码是哪条编号的，也不会因为重跑而堆出名字不同的重复附件。
+ * ⚠️ 文件名是幂等判据：同一条记录每次生成都一样（`tag-qr-{recordId}.png`）；
+ *    名字不是这个 ⇒ 旧格式/过期 ⇒ 覆盖重写。
  * ⚠️ 文件名要能落到本地临时文件上（服务端是"先写临时文件再上传"）⇒
  *    `/` `\` 这类路径字符、以及冒号/星号这类在别的系统上非法的字符，统一替换掉。
  */
 const FILE_NAME = Object.freeze({
-  template: 'tag-qr-{number}.png',
+  template: 'tag-qr-{recordId}.png',
   // 会被替换成 `replacement` 的字符集（路径分隔符 + Windows 非法字符 + 空白）。
   invalidChars: /[\\/:*?"<>|\s]+/g,
   replacement: '_',
@@ -119,14 +111,11 @@ const TEMP = Object.freeze({
  * 事件触发口径 —— `routes/larkEvents.js` 把这个表上的 `action_list` 原样交给本 service，
  * 由这里决定"哪条动作要出码"。
  *
- * ⚠️ 飞书生产日志里「修改」的取值是 **`record_edited`**（见
- *    `docs/purchase-intake-batch-spec.md` 第 3.1 节的真实日志样例）；
- *    `record_updated` 是另一种可能的写法，一并认下来，避免"改个名就不触发"这种静默失效。
- * ⚠️ **删除**（`record_deleted`）不在表里：记录都没了，没有落点。
+ * 业务负责人 2026-11-11：「只需要盯着货品信息创建记录的时候，其余的记录编辑、更新都不需要了，
+ * 以及也不需要定时任务了」⇒ **只认 `record_added`**；修改 / 删除都不处理。
  */
 const EVENTS = Object.freeze({
   created: Object.freeze(['record_added']),
-  updated: Object.freeze(['record_edited', 'record_updated']),
 });
 
 /**
@@ -149,85 +138,6 @@ const BATCH = Object.freeze({
   limit: 0,
 });
 
-/**
- * ⭐ **兜底巡检**（2026-10-09 加）—— 事件那条路只管"改这一下"，**万一判漏了**
- * （2026-10-09 生产真事：公式列「编号」的前后值在事件里读不出可比文本 ⇒ 被当成"没变"，
- * 那条记录留下了一张**过期二维码**）就会静默留脏数据。这个入口**不看事件、只认当前事实**：
- * 全表扫一遍，「附件文件名 ≠ 当前编号应有的文件名」⇒ 重新生成。
- *
- * 它是一个**纯函数式入口**，可以被 cron / scheduler 直接调用（`services/tagQrCodeService.js`
- * 的 `sweepStaleTagQrCodes`）——本文件**不挂任何定时器**，挂不挂由业务负责人决定。
- *
- * `enabled`    —— 巡检总开关（显式布尔，**不用 `||` 兜底**）。
- * `limit`      —— 单次最多处理多少条（**0 = 不限**）。给定时任务留的刹车：
- *                 哪怕某天全表都过期，一次也不会打满飞书「上传素材」的频控。
- * `intervalMs` —— 每条之间的间隔（毫秒）。上传素材 **5 QPS 且不支持并发**（并发会 `1061045`）
- *                 ⇒ 串行 + 间隔。
- * `dryRun`     —— 干跑：只报告"要修哪些"，一个字都不写。
- *                 **默认 `false`**：这个入口的语义就是"自愈兜底"，默认干跑等于它悄悄不干活
- *                 （那是本仓最讨厌的静默失效）。要看影响面时**显式**传 `dryRun: true`。
- */
-const SWEEP = Object.freeze({
-  enabled: true,
-  limit: 0,
-  intervalMs: 500,
-  dryRun: false,
-});
-
-/**
- * ⭐⭐ **兜底巡检的每日调度**（2026-10-12 加）—— 它回答"**谁来每天叫一次巡检**"。
- *
- * 为什么必须加（真机事故）：巡检函数 2026-10-09 就写好了、也有单测，
- * 但**全仓没有任何调用方** ⇒ **从来没在线上跑过** —— 于是事件路径判漏的那批旧码
- * （她 5 条记录附件名里还带 `QPL` 旧前缀）一直没人修。
- *
- * 取值：
- *   · `enabled`     —— 显式布尔（`TAG_QR_SWEEP_ENABLED`；**没设=默认开**、空串=关）；
- *   · `hours`       —— 上海时间几点跑（`TAG_QR_SWEEP_HOURS`，默认 `4` = 凌晨 4 点，店里没人）；
- *   · `intervalMs`  —— 调度器 tick 间隔（默认 10 分钟；**同一个上海日只跑一次**由 runner 去重）；
- *   · `limit`       —— 单次最多处理多少条（0 = 不限，与 `SWEEP.limit` 同义）；
- *   · `dryRun`      —— 干跑（上线首日建议先看一眼影响面）。
- */
-// ⏹️ 延迟复核（recheck）已随业务负责人 2026-10-13 裁定**整条退场**（原话「好的，可以关掉～」）。
-//    能力去向：随裁定退场 —— 事件路径照旧按身份判定；兜底留「每小时巡检」那一层（见下方 sweep）。
-
-const SWEEP_SCHEDULE_DEFAULTS = Object.freeze({
-  enabled: true,
-  // ⚠️ 2026-10-12 改：从"每天凌晨 4 点一次"改成**每小时一次**（562 条只读、成本极低）。
-  //    `hours` 只表示"从几点起允许跑"（0 = 全天）；**真正的频率**看下面的 `minIntervalMs`。
-  hours: Object.freeze([0]),
-  // 调度器 tick 间隔（10 分钟调一次 run，由 runner 按 minIntervalMs 决定要不要真跑）
-  intervalMs: 10 * 60 * 1000,
-  // ⭐ 两次巡检之间的**最短间隔**（默认 1 小时 ⇒ 每小时自愈一次；设成 24h 就退回"每天一次"）
-  minIntervalMs: 60 * 60 * 1000,
-  limit: 0,
-  dryRun: false,
-});
-
-const parseHours = (raw, fallback) => {
-  const text = String(raw ?? '').trim();
-  if (!text) return fallback;
-  const hours = [...new Set(text.split(',').map((item) => Number(item.trim())))]
-    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23)
-    .sort((left, right) => left - right);
-  return hours.length ? hours : fallback;
-};
-
-/** 解析兜底巡检的每日调度（环境变量 → 值；非法值**当场抛**，不静默）。 */
-const resolveTagQrSweepSchedule = (env = process.env) => {
-  const hours = parseHours(readString(env, 'TAG_QR_SWEEP_HOURS', undefined), SWEEP_SCHEDULE_DEFAULTS.hours);
-  return Object.freeze({
-    enabled: readFlag(env, 'TAG_QR_SWEEP_ENABLED', SWEEP_SCHEDULE_DEFAULTS.enabled),
-    hours,
-    intervalMs: readInt(env, 'TAG_QR_SWEEP_INTERVAL_MS', SWEEP_SCHEDULE_DEFAULTS.intervalMs,
-      { min: 1000, max: 24 * 60 * 60 * 1000 }),
-    minIntervalMs: readInt(env, 'TAG_QR_SWEEP_MIN_INTERVAL_MS', SWEEP_SCHEDULE_DEFAULTS.minIntervalMs,
-      { min: 60 * 1000, max: 7 * 24 * 60 * 60 * 1000 }),
-    limit: readInt(env, 'TAG_QR_SWEEP_LIMIT', SWEEP_SCHEDULE_DEFAULTS.limit, { min: 0, max: 100000 }),
-    dryRun: readFlag(env, 'TAG_QR_SWEEP_DRY_RUN', SWEEP_SCHEDULE_DEFAULTS.dryRun),
-  });
-};
-
 const TAG_QR_CODE = Object.freeze({
   enabled: ENABLED,
   scanUrl: SCAN_URL,
@@ -237,35 +147,9 @@ const TAG_QR_CODE = Object.freeze({
   temp: TEMP,
   events: EVENTS,
   batch: BATCH,
-  sweep: SWEEP,
   // 物理列名只有一个去处：`config/v1BitableSchema.js` 的 `product.fields`。
   // 这里只放**语义键**（网关 update 收的就是它），避免同一个列名有两份真源。
-  /**
-   * ⭐⭐ **二维码 URL 里那串「编号」怎么来**（2026-10-12 业务负责人提的：别只盯公式列）。
-   *
-   * 她表里「编号」列的**公式表达式**（2026-10-12 只读核过；`appTableField.list` → `property.formula_expression`）：
-   * ```text
-   * bitable::$table[tbl5as7poByp36c7].$field[fldJHVi1Pz]                       // 货号（文本）
-   *   & "|" &
-   * bitable::$table[tbl5as7poByp36c7].$field[fldEz0zrsG].$column[fldo2CIis2]  // 颜色（关联列的显示列）
-   *   & "|" &
-   * bitable::$table[tbl5as7poByp36c7].$field[fldOU1H0bt]                      // 类别（单选）
-   * ```
-   * ⇒ 规则就是 **`货号 | 颜色 | 类别`**（分隔符 `|`、顺序如此、**没有空值特判**）。
-   * ⚠️ 公式列**有延迟**（实测几秒~十几秒）⇒ 她刚改完货号那一刻，记录上的「编号」还是旧值。
-   *    ⇒ 判「有没有变」用**源字段**（`货号/颜色/类别`，事件里没有延迟）；
-   *      二维码 URL 那串**优先用公式列读到的值**（它才是扫码页认识的键），**读不出/为空 ⇒ 用这条规则自己拼**。
-   */
-  numberAssembly: Object.freeze({
-    separator: '|',
-    // 顺序 = 她公式的顺序；键取自 `v1BitableSchema.tables.product.fields`
-    fields: Object.freeze(['itemNo', 'color', 'category']),
-    // 交叉核对（公式值 vs 拼装值不一致时记 warn）；显式布尔
-    crossCheck: true,
-  }),
-
   fields: Object.freeze({
-    number: 'number',
     tagQrCode: 'tagQrCode',
   }),
 });
@@ -279,7 +163,4 @@ module.exports = {
   TEMP,
   EVENTS,
   BATCH,
-  SWEEP,
-  SWEEP_SCHEDULE_DEFAULTS,
-  resolveTagQrSweepSchedule,
 };

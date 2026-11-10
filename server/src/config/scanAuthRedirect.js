@@ -2,7 +2,7 @@
  * 扫码页「未登录 → 先飞书登录 → 自动回到刚才那一页」的全部可配参数 —— **配置先行**。
  *
  * 背景（业务负责人在手机飞书上扫标签二维码）：
- *   她扫开 `https://hm.bamamei.online/s/{编号}` 时，手机浏览器里**还没有** `hm.bamamei.online`
+ *   她扫开 `https://hm.bamamei.online/r/{recordId}` 时，手机浏览器里**还没有** `hm.bamamei.online`
  *   的登录 cookie，于是看到的是工作台那套 401 JSON
  *   （`{"success":false,"error":"请先通过飞书身份登录工作台","auth_required":true}`）。
  *   她要的是「**扫码即用**」—— 所以扫码页在未登录时应当 **302 去飞书登录**，

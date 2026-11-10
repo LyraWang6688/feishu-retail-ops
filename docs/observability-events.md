@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **467** 个事件。按前缀分组：
+共 **447** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -259,34 +259,14 @@
 | `product.sample_image.drive.synced` | 1 | src/services/sampleImageDriveService.js |
 | `product.sample_image.drive.truncated` | 1 | src/services/sampleImageDriveService.js |
 | `product.sample_image.drive.uploaded` | 1 | src/services/sampleImageDriveService.js |
-| `product.tag_qr.assemble_incomplete` | 3 | src/services/tagQrCodeService.js |
 | `product.tag_qr.batch_failed` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.change_criteria` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.disabled` | 3 | src/services/tagQrCodeService.js |
+| `product.tag_qr.disabled` | 2 | src/services/tagQrCodeService.js |
 | `product.tag_qr.dispatch_failed` | 1 | src/routes/larkEvents.js |
 | `product.tag_qr.failed` | 4 | src/services/tagQrCodeService.js |
-| `product.tag_qr.field_id_unavailable` | 2 | src/services/tagQrCodeService.js |
 | `product.tag_qr.not_wired` | 1 | src/routes/larkEvents.js |
-| `product.tag_qr.number_change_unknown` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.number_mismatch` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.number_missing` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.overwriting` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.record_failed` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.record_id_mismatch` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.record_id_missing` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.skipped_existing` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.skipped_number_unchanged` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.sweep_disabled` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.sweep_done` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.sweep_dry_run` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.sweep_failed` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.sweep.disabled` | 1 | src/app.js |
-| `product.tag_qr.sweep.done` | 1 | src/app.js |
-| `product.tag_qr.sweep.started` | 1 | src/app.js |
-| `product.tag_qr.sweep.tick_failed` | 1 | src/app.js |
-| `product.tag_qr.sweep.too_soon` | 1 | src/app.js |
-| `product.tag_qr.upgraded_to_record_id` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.used_assembled` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.written` | 1 | src/services/tagQrCodeService.js |
 
 ## purchase

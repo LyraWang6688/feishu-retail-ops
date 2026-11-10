@@ -59,7 +59,7 @@ const V1_BITABLE_SCHEMA = {
         //   写入链路的唯一调用方：`services/sampleImageDriveService.js`。
         sampleImageSynced: '已同步云盘',
         // ⭐ 2026-10-08 业务负责人新建的列：**`标签二维码`（字段类型 = 附件）**。
-        // 内容 = `https://hm.bamamei.online/s/{编号}`（编号做 URL 编码），唯一真源在
+        // 内容 = `https://hm.bamamei.online/r/{recordId}`（recordId 做 URL 编码），唯一真源在
         // `config/tagQrCode.js` 的 `scanUrl.recordIdTemplate`；这里**只加映射**。
         // ⚠️ 「代码能不能写这个附件列」已核实：附件字段可用 `file_token` 写
         //   （官方 FAQ「如何在多维表格中上传附件」＋ 本仓已在生产验证的

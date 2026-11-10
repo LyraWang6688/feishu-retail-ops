@@ -1,9 +1,9 @@
 /**
- * 扫码页路由：**`GET /r/:recordId`**（`number` = 「编号」= `货号|颜色|类别`，URL 编码过的）
+ * 扫码页路由：**`GET /r/:recordId`**（`recordId` = 飞书记录 ID，URL 编码过的）
  * ＋ **`POST /r/:recordId`**（页面上那两个**写入口**：销售建单 / 补货报单）。
  *
  * 这一页就是标签二维码指向的那个地址 —— 二维码内容的唯一真源是
- * `config/tagQrCode.js` 的 `scanUrl.recordIdTemplate`（`https://hm.bamamei.online/s/{编号}`），
+ * `config/tagQrCode.js` 的 `scanUrl.recordIdTemplate`（`https://hm.bamamei.online/r/{recordId}`），
  * 本文件**不抄那份模板**，只用 `config/scanPage.js` 里的挂载点与路径段。
  *
  * 挂载与准入（**先读代码再动**的结果）：
