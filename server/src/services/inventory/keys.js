@@ -11,12 +11,7 @@ const { normalizeSize } = require('../sizeReferenceService');
 // 操作键的**来源身份拼法**声明在行为注册表里（`STOCK_MOVEMENTS[x].operationKey`）——
 // 本文件只实现「照配置生成键」的纯工具，不认具体行为、不碰远端。
 // 依赖方向：keys.js（工具）→ movements.js（纯配置，无 import）——不会成环。
-const {
-  STOCK_MOVEMENTS,
-  MOVEMENT_PURCHASE_INCREASE,
-  MOVEMENT_PURCHASE_DECREASE,
-  BEHAVIOR_SAMPLE_PROMOTION,
-} = require('./movements');
+const { STOCK_MOVEMENTS } = require('./movements');
 // 用户可见 / 部署闸门可见的文案：家在这些 config 里（不写死在 service 层）。
 const { OPERATION_KEY_TEXT } = require('../../config/inventoryOperationKeys');
 // 配置校验（部署闸门用；纯函数，不读远端）在 `./operationKeyConfig.js`（与本文件的工具面分开）。

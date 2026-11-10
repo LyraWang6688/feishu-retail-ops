@@ -3,13 +3,14 @@
 //    方法体一个字符未改（仍用 `this.`），由 facade 用 `Object.defineProperty`
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 「实时库存」记录的纯读取 / 候选计算（不写、不改状态、不再整表读）。
-const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const {textValue} = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { LIVE_STATES } = require('./movements');
 
 /** 实时库存里这一条记录是不是「这个货品 + 这个尺码」——不看所属状态。 */
 function matchesLiveInventory(record, { productRecordId, sizeRecordId, productField, sizeField } = {}) {
-  return linkedRecordIds(record?.fields?.[productField]).includes(productRecordId) &&
-    linkedRecordIds(record?.fields?.[sizeField]).includes(sizeRecordId);
+  return strictLinkedRecordIds(record?.fields?.[productField]).includes(productRecordId) &&
+    strictLinkedRecordIds(record?.fields?.[sizeField]).includes(sizeRecordId);
 }
 
 function findLiveInventoryIn(records, productRecordId, sizeRecordId, state = '门盒') {
@@ -51,7 +52,7 @@ async function candidatesFromLiveRecords(productRecordId, liveRecords = [], { ex
     const excluded = new Set(excludeRecordIds);
     for (const record of Array.isArray(liveRecords) ? liveRecords : []) {
       if (excluded.has(record.record_id)) continue;
-      if (!linkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId)) continue;
+      if (!strictLinkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId)) continue;
       const size = (await this.sizeReferences.resolveLinkedCell(record.fields?.[table.fields.size])).size;
       const state = textValue(record.fields?.[table.fields.state]);
       if (!LIVE_STATES.includes(state)) continue;

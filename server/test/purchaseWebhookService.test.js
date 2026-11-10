@@ -97,7 +97,7 @@ const makeGateway = (records = {}) => {
 };
 
 const makeReferences = (overrides = {}) => ({
-  resolveProduct: overrides.resolveProduct || (async () => ({ recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: ['sup_1'] } } })),
+  resolveProduct: overrides.resolveProduct || (async () => ({ recordId: 'prod_1', record: { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: [{ record_ids: ['sup_1'] }] } } })),
   resolveSupplier: overrides.resolveSupplier || (async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '测试供应商' } } })),
 });
 
@@ -383,7 +383,7 @@ const arrivalActual = (extra = {}) => ({
 test('到货确认：加库存 + 到货信息写到**批次行**（不回写采购申请表、不新建任何明细行）', async () => {
   const inventory = makeInventory();
   const records = {
-    purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
+    purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: ['batch_1'], 编号: [{ record_ids: ['prod_1'] }], 尺码: sizeLink(36), 数量: 2 } }],
     // ⭐ 到货信息的落点：**「报货批次」那一行**（2026-10-07 晚；原来写「到货验收」那张表）。
     purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-TEST-001', 到货状态: '未到货' } }],
   };
@@ -452,7 +452,7 @@ test('到货确认：明细缺货品 record_id ⇒ 拒绝，且**批次行与库
 test('到货确认：同一货品+尺码的两条明细合成**一次**加库存（数量 2），重复确认不重复写', async () => {
   const inventory = makeInventory();
   const records = {
-    purchaseRequest: [{ record_id: 'req_1', fields: { 编号: ['prod_1'], 尺码: sizeLink(36), 数量: 2 } }],
+    purchaseRequest: [{ record_id: 'req_1', fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: sizeLink(36), 数量: 2 } }],
   };
   const { service, store, gateway } = makeService({ inventory, gateway: makeGateway(records) });
   const task = await seedArrivalTask(store, {

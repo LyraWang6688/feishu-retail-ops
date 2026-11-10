@@ -77,6 +77,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'accept
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { pageMessages } = require('../src/config/purchaseArrivalTexts');
 const { submitToastUrl } = require('../src/utils/submitToast');
 const { ASYNC_JOB_TYPES } = require('../src/config/asyncJobs');
@@ -437,9 +438,9 @@ const makeFullChain = () => {
   };
   const gateway = {
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
-    listAll: async (key) => data[key] || [],
+    listAll: async (key) => (data[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
     listByFilter: async (key) => data[key] || [],
-    get: async (key, id) => (data[key] || []).find((record) => record.record_id === id) || null,
+    get: async (key, id) => { const row = (data[key] || []).find((record) => record.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
     create: async (key, values) => { writes.push({ op: 'create', key, values }); return { recordId: push(key, values) }; },
     createBatch: async (key, rows) => {
       if (gate.enabled && key === 'inventoryLedger' && !gate.enteredOnce) {

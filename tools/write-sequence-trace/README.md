@@ -29,9 +29,8 @@ write-sequence-trace/
 ├─ docs/
 │  └─ bitable-cross-table-write-sequence.md  跨表追踪经验
 
-├─ examples/
-│  ├─ sales-XSD-20261018-0001.html   现有真实样例
-│  └─ events-XSD-20261018-0001.json  样例的标准数据
+├─ archive/
+│  └─ sales-XSD-20261018-0001/       真实样例（HTML / events / chain，按单号归档）
 └─ output/                    生成结果（不提交）
 ```
 
@@ -94,7 +93,7 @@ python3 tools/write-sequence-trace/scripts/fetch_trace.py XSD-20261018-0001 --co
 
 ```bash
 python3 tools/write-sequence-trace/scripts/build_html.py \
-  tools/write-sequence-trace/examples/events-XSD-20261018-0001.json \
+  tools/write-sequence-trace/archive/sales-XSD-20261018-0001/events-XSD-20261018-0001.json \
   --out tools/write-sequence-trace/output/XSD-20261018-0001.html
 ```
 
@@ -102,7 +101,7 @@ python3 tools/write-sequence-trace/scripts/build_html.py \
 
 ```bash
 python3 tools/write-sequence-trace/scripts/extract_raw.py \
-  tools/write-sequence-trace/examples/sales-XSD-20261018-0001.html \
+  tools/write-sequence-trace/archive/sales-XSD-20261018-0001/sales-XSD-20261018-0001.html \
   --out /tmp/events.json
 ```
 

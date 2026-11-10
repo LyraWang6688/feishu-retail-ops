@@ -7,6 +7,7 @@ const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { InventoryService, ADJUSTMENT_BEHAVIORS } = require('../src/services/inventoryService');
 const { InventoryAdjustmentService, ADJUSTMENT_ACTIONS, COUNT_MODES } = require('../src/services/inventoryAdjustmentService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 // 「库存手工调整」的验收标准（先写预期，再对照跑）：
 //   ① 盘点调整改**数量**，可增可减：盘多了加、盘少了减；
@@ -42,8 +43,8 @@ const gatewayFor = (live, extraBehaviors = []) => {
     listAll: async (key) => records.get(key) || [],
     create: async (key, values) => {
       const recordId = `rec_${++seq}`;
-      const fields = Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)
-        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value]));
+      const fields = normalizeLinkFields(Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)
+        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value])));
       if (!records.has(key)) records.set(key, []);
       records.get(key).push({ record_id: recordId, fields });
       return { recordId };
@@ -52,8 +53,8 @@ const gatewayFor = (live, extraBehaviors = []) => {
     get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
     update: async (key, id, values) => {
       const record = (records.get(key) || []).find((row) => row.record_id === id);
-      Object.assign(record.fields, Object.fromEntries(Object.entries(values)
-        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value])));
+      Object.assign(record.fields, normalizeLinkFields(Object.fromEntries(Object.entries(values)
+        .map(([name, value]) => [V1_BITABLE_SCHEMA.tables[key].fields[name], value]))));
       return record;
     },
   };
@@ -62,7 +63,7 @@ const gatewayFor = (live, extraBehaviors = []) => {
 const store = () => new JsonTaskStore({
   dir: fs.mkdtempSync(path.join(os.tmpdir(), 'inventory-adjustment-')), idField: 'operation_id',
 });
-const unit = (id, state) => ({ record_id: id, fields: { 编号: ['product_1'], 尺码: ['size_38'], 所属状态: state } });
+const unit = (id, state) => ({ record_id: id, fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: state } });
 const setup = (live, extraBehaviors) => {
   const gateway = gatewayFor(live, extraBehaviors);
   const inventory = new InventoryService({ gateway, store: store() });
@@ -85,7 +86,7 @@ test('盘点调整：实际盘点数比账面多 → 走手工调增，按差额
   assert.equal(ledger(gateway).length, 1);
   // 「变动数量」存的是**绝对值**，增减靠「库存行为」的库存方向表达。
   assert.equal(ledger(gateway)[0]['变动数量'], 2);
-  assert.deepEqual(ledger(gateway)[0]['库存行为'], ['behavior_manual_increase']);
+  assert.deepEqual(ledger(gateway)[0]['库存行为'], [{ record_ids: ['behavior_manual_increase'] }]);
 });
 
 test('盘点调整：实际盘点数比账面少 → 走手工调减，按差额删掉实时库存', async () => {
@@ -101,7 +102,7 @@ test('盘点调整：实际盘点数比账面少 → 走手工调减，按差额
   assert.equal(result.after_quantity, 1);
   assert.equal(gateway.records.get('liveInventory').length, 1);
   assert.equal(ledger(gateway)[0]['变动数量'], 2, '流水里仍是绝对值 2，不是 -2');
-  assert.deepEqual(ledger(gateway)[0]['库存行为'], ['behavior_manual_decrease']);
+  assert.deepEqual(ledger(gateway)[0]['库存行为'], [{ record_ids: ['behavior_manual_decrease'] }]);
 });
 
 test('盘点调整：按增减数量直接提交（正数加、负数减）', async () => {
@@ -159,7 +160,7 @@ test('换季调整：转冻结只改「所属状态」，一条记录都不增�
   assert.equal(gateway.records.get('liveInventory').length, 3, '不新建也不删除');
   assert.deepEqual(states(gateway).sort(), ['仓库', '仓库', '样品']);
   assert.equal(ledger(gateway)[0]['变动数量'], 0, '状态变更不改变数量，流水记 0');
-  assert.deepEqual(ledger(gateway)[0]['库存行为'], ['behavior_freeze']);
+  assert.deepEqual(ledger(gateway)[0]['库存行为'], [{ record_ids: ['behavior_freeze'] }]);
   assert.equal(ledger(gateway)[0]['关联销售'], undefined, '人工调整没有来源列，整列不写');
 });
 
@@ -198,7 +199,7 @@ test('换季调整：起点状态不对 / 数量不足 → 逐条报错，库存
 test('换季调整：批量里一条失败不拖垮其它（与销售交付的 failures 形状一致）', async () => {
   const { gateway, adjustment } = setup([
     unit('door_1', '门盒'),
-    { record_id: 'door_40', fields: { 编号: ['product_1'], 尺码: ['size_40'], 所属状态: '门盒' } },
+    { record_id: 'door_40', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' } },
   ]);
 
   const result = await adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_FREEZE, targets: [

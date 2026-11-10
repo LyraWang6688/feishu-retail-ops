@@ -45,6 +45,7 @@ const path = require('node:path');
 const { SalesOrderService } = require('../src/services/salesOrderService');
 const { SalesProgressService } = require('../src/services/salesProgressService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 
 // 与 `salesMvp.test.js` 同源的假 Base（尺码走关联、字段名走 schema ⇒ 写错字段名当场抛）。
 const fake = () => {
@@ -58,8 +59,8 @@ const fake = () => {
   let seq = 0;
   const gateway = {
     records, table: (key) => V1_BITABLE_SCHEMA.tables[key], validateTables: async () => [],
-    listAll: async (key) => records.get(key) || [],
-    get: async (key, id) => (records.get(key) || []).find((row) => row.record_id === id),
+    listAll: async (key) => (records.get(key) || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+    get: async (key, id) => { const row = (records.get(key) || []).find((item) => item.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : undefined; },
     create: async (key, values) => {
       const recordId = `rec_${++seq}`;
       const fields = Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)
@@ -73,7 +74,7 @@ const fake = () => {
       return { recordId };
     },
     update: async (key, id, values) => {
-      const record = await gateway.get(key, id);
+      const record = (records.get(key) || []).find((row) => row.record_id === id);
       Object.assign(record.fields, Object.fromEntries(Object.entries(values)
         .map(([name, value]) => {
           const field = V1_BITABLE_SCHEMA.tables[key].fields[name];

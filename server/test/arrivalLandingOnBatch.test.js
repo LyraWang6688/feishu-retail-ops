@@ -40,6 +40,7 @@ const {
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
 const { PurchasePendingBatchService } = require('../src/services/purchasePendingBatchService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const {
   ARRIVAL_CONVERSATION_ACTIONS,
@@ -74,13 +75,16 @@ const makeGateway = (records = {}) => {
   return {
     writes,
     table,
-    get: async (tableKey, recordId) => (records[tableKey] || []).find((item) => item.record_id === recordId) || null,
+    get: async (tableKey, recordId) => {
+      const row = (records[tableKey] || []).find((item) => item.record_id === recordId);
+      return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null;
+    },
     listAll: async (tableKey) => {
       if (tableKey === 'sizeManagement') return SIZE_RECORDS;
       if (tableKey === 'behavior' && !records.behavior) {
         return [{ record_id: 'bhv_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } }];
       }
-      return records[tableKey] || [];
+      return (records[tableKey] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
     },
     create: async (tableKey, semanticValues) => {
       const fields = mapFields(tableKey, semanticValues);

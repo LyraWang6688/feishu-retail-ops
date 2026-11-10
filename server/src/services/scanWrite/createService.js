@@ -35,16 +35,14 @@ const { KeyedSerialQueue } = require('../../infrastructure/keyedSerialQueue');
 const { JsonTaskStore } = require('../../infrastructure/jsonTaskStore');
 const { V1ReferenceResolver } = require('../v1ReferenceResolver');
 const { SalesOrderService } = require('../salesOrderService');
-const { mergeCorrelation } = require('../../utils/correlationFields');
 const { SalesStatusWriter } = require('../salesStatusWriter');
 // ⭐ 2026-10-11（A）：现货 ⇒ **提交即交付 + 扣库存**，走的就是这一条**既有交付链路**
 //   （`SalesDeliveryService.deliver`：写「履约状态」+ 扣「实时库存」+ 写「库存流水」+ 写「库存状态」）。
 //   ⚠️ 本文件**不写任何库存**：不 construct InventoryService、不调 applySale、
 //      不认识 liveInventory / inventoryLedger（源码哨兵钉着这一条）。
 const { SalesDeliveryService } = require('../salesDeliveryService');
-const { textValue, linkedRecordIds } = require('../v1BitableGateway');
+const { textValue } = require('../v1BitableGateway');
 const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
-const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../../config/salesStatusDimensions');
 // ⭐⭐ 2026-10-15（⑤ 模块化）：**后台那一半**（调度 + 失败标记 + "等它跑完"的登记簿）已剥成独立一件。
 //   ⚠️ 只**单向** require（新件不认识本文件 ⇒ **不会循环依赖** ✓）；
 //   ⚠️ `waitForPendingSaleBackgrounds` 继续从**本模块**导出（用例的 import **一个字都没改** ✓）。
@@ -52,27 +50,12 @@ const {
   createSaleWriteBackgroundService,
   waitForPendingSaleBackgrounds,
 } = require('../saleWriteBackgroundService');
-const { REPORT_BEHAVIOR } = require('../purchaseBehaviorPolicy');
 // ⭐ 2026-10-09：扫码建单也要写**交易类型**（现货 / 预定），判据用既有的那一个：
 //    「实时库存里有没有这一双」→ `salesTradeTypeForStock`（**唯一**判据，本文件不写死编码）。
 // ⭐ 2026-10-11（A）：「**哪一种类型在提交这一刻就交付**」也来自既有注册表
 //    （`deliversOnSubmit`，见 `config/salesMovements.js`）—— 本文件不写 'SALE_CASH' 字面量。
 const { salesTradeTypeForStock } = require('../../config/salesTradeTypePolicy');
-// ⭐ 2026-10-18「配置先行」：现货/预定的**步骤 / 表 / 字段 / 成功判据**只有一份配置
-//   （`config/salesWritePlan.js`）；本文件不再直接认 `deliversOnSubmit` 或现货/预定编码。
-const {
-  plansOfOrder, requiresInventory, successRequiresFor, deliversOnSubmitFor,
-  // ⭐⭐ 2026-10-18（第 4 步提速）：会话进度标记（货品页只建了主表 / 资金页已开始写明细）——
-  //   取值定义在配置里（配置先行），本文件只读常量。
-  SESSION_FLAGS,
-} = require('../../config/salesWritePlan');
-// 「这一件要不要尺码 / 要不要跟踪库存 / 要不要履约」——可售品的属性（配品：三样都不要）。
-const { SELLABLE_KINDS, sellableKindOf } = require('../../config/sellableKinds');
-const { SCAN_WRITE, fillText } = require('../../config/scanWrite');
-// ⭐⭐ 2026-10-16（task-62「货 / 钱分离」· 阶段二）：会话标记**取值的唯一来源**（配置先行）——
-//   本文件只读这个常量（**不读那个开关** `SCAN_MONEY_SPLIT_ENABLED` ✗：开关是**调用方**（routes）的事，
-//   本文件只有拿到 `deferFunds === true` 才走那条路 ⇒ 不传 / 传 false 时逐字同今天 ✓）。
-const { SESSION_MARKERS } = require('../../config/saleMoneySplit');
+const { SCAN_WRITE } = require('../../config/scanWrite');
 const { createScanSessionService } = require('../scanSessionService');
 // ⭐ 2026-10-29：收款方式统一走 configTableCache（事件失效 + TTL + lastGood），
 //   不再保留本文件自己的短 TTL 缓存。
@@ -81,9 +64,6 @@ const { getConfigRows } = require('../configTableCache');
 //   都搬到 `services/sales/*`（本文件是存量超限件，基线只许变小）—— 纯搬家，逻辑未改 ✓
 const { createReadOnlyReferenceCache } = require('../sales/referenceReadCache');
 const { createDeliveryStep } = require('../sales/deliveryStep');
-const {
-  goodsOnlyResult, planOneShotRun, finalizeSaleOnce: finalizeSaleOnceWith,
-} = require('../sales/oneShotWrite');
 const { logError, logInfo, logWarn } = require('../../utils/logger');
 const { createScanWriteHelpers } = require('./helpers');
 const { createScanWriteSession } = require('./session');

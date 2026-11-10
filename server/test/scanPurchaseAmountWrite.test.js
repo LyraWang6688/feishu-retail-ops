@@ -39,6 +39,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { createScanWriteService } = require('../src/services/scanWriteService');
@@ -56,12 +57,12 @@ const PRODUCT = {
   record_id: 'prod_1',
   fields: {
     编号: NUMBER, 货号: 'YD6693-2', 颜色: { text: '黑色', record_ids: ['color_black'] },
-    类别: '男', 单价: 399, 供应商: ['sup_1'],
+    类别: '男', 单价: 399, 供应商: [{ record_ids: ['sup_1'] }],
   },
 };
 const SIZE_RECORDS = [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
 const liveUnit = (id, size, state = '门盒') => ({
-  record_id: id, fields: { 编号: ['prod_1'], 尺码: [`size_${size}`], 所属状态: state },
+  record_id: id, fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: [`size_${size}`] }], 所属状态: state },
 });
 const seedTables = (overrides = {}) => ({
   product: [PRODUCT],
@@ -96,9 +97,9 @@ const createFakeGateway = (tables = seedTables(), options = {}) => {
     writes,
     _tables: tables,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
-    listAll: async (key) => [...(tables[key] || [])],
+    listAll: async (key) => (tables[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
     listByFilter: async () => { throw new Error('fake gateway 不支持 filter'); },
-    get: async (key, id) => (tables[key] || []).find((record) => record.record_id === id) || null,
+    get: async (key, id) => { const row = (tables[key] || []).find((record) => record.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
     findOneByText: async (key, semanticKey, expected) => {
       const name = V1_BITABLE_SCHEMA.tables[key].fields[semanticKey];
       const target = String(expected ?? '').trim();

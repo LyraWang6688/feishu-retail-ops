@@ -6,12 +6,9 @@
  * 只搬不改：submitSale 仍走既有业务层，不直接写任何业务表。
  * 依赖由 `createScanWriteSales` 注入；配置级常量直接 require。
  */
-const {
-  plansOfOrder, requiresInventory, successRequiresFor, deliversOnSubmitFor, SESSION_FLAGS,
-} = require('../../config/salesWritePlan');
+const { plansOfOrder, successRequiresFor, SESSION_FLAGS } = require('../../config/salesWritePlan');
 const { salesTradeTypeForStock } = require('../../config/salesTradeTypePolicy');
 const { SELLABLE_KINDS } = require('../../config/sellableKinds');
-const { REPORT_BEHAVIOR } = require('../purchaseBehaviorPolicy');
 const { SESSION_MARKERS } = require('../../config/saleMoneySplit');
 const { mergeCorrelation } = require('../../utils/correlationFields');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../../config/salesStatusDimensions');

@@ -37,6 +37,7 @@ process.env.LARK_AGENT_APP_ID = process.env.LARK_AGENT_APP_ID || 'cli_purchase_d
 process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'purchase_detail_id_secret';
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { normalizeLinkFields } = require('./support/linkReadShape');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const {
   formatPurchaseDetailId, nextPurchaseDetailSequence, createPurchaseDetailIdAllocator,
@@ -50,14 +51,14 @@ const BATCH_FIELD = '报货批次号';
 const DETAIL_ID_FIELD = '采购明细ID';
 
 const liveUnit = (id, size, state = '门盒') => ({
-  record_id: id, fields: { 编号: ['prod_1'], 尺码: [`size_${size}`], 所属状态: state },
+  record_id: id, fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [`size_${size}`], 所属状态: state },
 });
 
 const seedTables = (overrides = {}) => ({
   product: [{
     record_id: 'prod_1',
     fields: {
-      编号: 'YD6693-2|黑色|男', 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: '男', 单价: 399, 供应商: ['sup_1'],
+      编号: 'YD6693-2|黑色|男', 货号: 'YD6693-2', 颜色: { text: '黑色' }, 类别: '男', 单价: 399, 供应商: [{ record_ids: ['sup_1'] }],
     },
   }],
   sizeManagement: [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
@@ -95,9 +96,9 @@ const createFakeGateway = (tables = seedTables()) => {
   return {
     _tables: tables,
     table: (key) => V1_BITABLE_SCHEMA.tables[key],
-    listAll: async (key) => [...(tables[key] || [])],
+    listAll: async (key) => (tables[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
     listByFilter: async () => { throw new Error('fake gateway 不支持 filter'); },
-    get: async (key, id) => (tables[key] || []).find((record) => record.record_id === id) || null,
+    get: async (key, id) => { const row = (tables[key] || []).find((record) => record.record_id === id); return row ? { record_id: row.record_id, fields: normalizeLinkFields(row.fields) } : null; },
     findOneByText: async (key, semanticKey, expected) => {
       const name = V1_BITABLE_SCHEMA.tables[key].fields[semanticKey];
       const target = String(expected ?? '').trim();
@@ -135,7 +136,7 @@ const reportHarness = (options = {}) => {
     references: {
       resolveProduct: async () => ({
         recordId: 'prod_1',
-        record: { record_id: 'prod_1', fields: { 编号: 'YD6693-2|黑色|男', 货号: 'YD6693-2', 颜色: { text: '黑色' }, 供应商: ['sup_1'] } },
+        record: { record_id: 'prod_1', fields: { 编号: 'YD6693-2|黑色|男', 货号: 'YD6693-2', 颜色: { text: '黑色' }, 供应商: [{ record_ids: ['sup_1'] }] } },
       }),
       resolveSupplier: async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '大发鞋厂' } } }),
       resolveBehavior: async () => ({ recordId: 'bh_request', record: { record_id: 'bh_request', fields: { 行为编码: 'STOCK_PURCHASE_INCREASE' } } }),
@@ -236,7 +237,7 @@ test('AC-ID8 纯函数边界：别的批次 / 非数字后缀不参与排号', (
   }), 6);
   // 分配器：同一个网关读既有行，逐条给号
   const gateway = createFakeGateway(seedTables({
-    purchaseRequest: [{ record_id: 'r1', fields: { [BATCH_FIELD]: ['bat_1'], [DETAIL_ID_FIELD]: 'CGD-20261012-0001-01' } }],
+    purchaseRequest: [{ record_id: 'r1', fields: { [BATCH_FIELD]: [{ record_ids: ['bat_1'] }], [DETAIL_ID_FIELD]: 'CGD-20261012-0001-01' } }],
   }));
   const allocator = createPurchaseDetailIdAllocator({ gateway });
   return allocator.open({ batchRecordId: 'bat_1', batchNo: 'CGD-20261012-0001' }).then((cursor) => {

@@ -121,7 +121,7 @@ const makeService = (options = {}) => {
     references: options.references || {
       resolveProduct: async () => ({
         recordId: 'prod_1',
-        record: { record_id: 'prod_1', fields: { 编号: '8088黑', 货号: '8088', 颜色: [{ text: '黑色' }], 供应商: ['sup_1'] } },
+        record: { record_id: 'prod_1', fields: { 编号: '8088黑', 货号: '8088', 颜色: [{ text: '黑色' }], 供应商: [{ record_ids: ['sup_1'] }] } },
       }),
       resolveSupplier: async () => ({ recordId: 'sup_1', record: { record_id: 'sup_1', fields: { 供应商名称: '金猴' } } }),
     },
@@ -336,7 +336,7 @@ test('⑥ 9 点推送：供应商取自「采购明细.供应商」自动字段�
     ],
     // ⭐ 2026-10-18：供应商在采购明细的自动字段上（主表那一列已删）。
     purchaseRequest: [
-      { record_id: 'det_1', fields: { 报货批次号: ['bat_1'], 供应商: '金猴、奥康、金猴' } },
+      { record_id: 'det_1', fields: { 报货批次号: [{ record_ids: ['bat_1'] }], 供应商: '金猴、奥康、金猴' } },
     ],
   });
   const service = new PurchasePendingBatchService({ gateway });

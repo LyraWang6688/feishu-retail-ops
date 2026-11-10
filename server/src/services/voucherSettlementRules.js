@@ -2,7 +2,8 @@
 
 /** 券结算规则：读「团购券管理.结算周期」+「支付方式管理.团购券管理」并解析天数。 */
 const { getConfigRows } = require('./configTableCache');
-const { linkedRecordIds } = require('./v1BitableGateway');
+const {} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 
 const textOf = (value) => {
   if (value === null || value === undefined) return '';
@@ -63,7 +64,7 @@ const createSettlementRuleLoader = ({ gateway, logger }) => async () => {
     for (const method of methods) {
       const name = textOf(method.fields?.[methodTable.fields.name]).trim();
       if (!name) continue;
-      const voucherId = String(linkedRecordIds(method.fields?.[methodTable.fields.voucher])[0] || '');
+      const voucherId = String(strictLinkedRecordIds(method.fields?.[methodTable.fields.voucher])[0] || '');
       if (voucherId) voucherIdByMethod.set(name, voucherId);
     }
   } catch (error) {

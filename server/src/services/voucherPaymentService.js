@@ -20,7 +20,6 @@
  * 🔴 **读不到**（券目录 / 收款方式表）⇒ 同样**大声 warn + 拦住**（"读不到"与"没有券"是两件事 ✗）。
  */
 
-const { linkedRecordIds } = require('./v1BitableGateway');
 const { getConfigRows } = require('./configTableCache');
 const { logWarn } = require('../utils/logger');
 const {

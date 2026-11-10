@@ -59,7 +59,7 @@
  *
  * 🔴 **每条明细的供应商从哪来**（只读核查结论，别再猜 ✗）：**代码读「货品信息.供应商」那条
  *   *既有*关联列**（`v1BitableSchema.tables.product.fields.supplier`）——与单货品那条路
- *   （`scanWriteService.submitPurchaseReturn` 的 `linkedRecordIds(product.fields[supplier])`）
+ *   （`scanWriteService.submitPurchaseReturn` 的 `strictLinkedRecordIds(product.fields[supplier])`）
  *   **同一个字段**，只是这里**逐行**读（多货品时每行的货品不同 ⇒ 供应商也可能不同）；
  *   🔴 **不新增列、不写「货品信息」、不写「采购明细.供应商」（公式列）** ✗。
  *   ⚠️ 为什么必须由代码读：扫码页那条多货品载荷里 `supplier_record_id` **是空的**
@@ -68,7 +68,8 @@
  */
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { createOnceByKeys, IDEMPOTENCY_KEY_FIELD } = require('../infrastructure/idempotencyKey');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { relation, V1ReferenceResolver } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
@@ -167,7 +168,7 @@ const createPurchaseReturnService = (options = {}) => {
     const field = table && table.fields ? table.fields.supplier : '';
     // 映射拿不到 ⇒ **不猜**（空供应商 ⇒ 出图那边照旧出"未标注供应商"那一张 ✓）
     const record = field ? await gateway.get('product', wanted).catch(() => null) : null;
-    const supplierRecordId = linkedRecordIds(record && record.fields ? record.fields[field] : null)[0] || '';
+    const supplierRecordId = strictLinkedRecordIds(record && record.fields ? record.fields[field] : null)[0] || '';
     supplierCache.set(wanted, supplierRecordId);
     return supplierRecordId;
   };
@@ -206,8 +207,8 @@ const createPurchaseReturnService = (options = {}) => {
       // ⚠️ 只按关联 record_id 比对，不从库存行反推尺码（坏行不会把整条退货链路拖挂）。
       // ⭐ task-64：比的是**这一行那个货品**（改前是批次级那一个 ⇒ 多货品时空串 ⇒ available 恒 0 ✗）。
       const available = (allLive || []).filter((record) => (
-        linkedRecordIds(record?.fields?.[liveTable.fields.product]).includes(productRecordId)
-        && linkedRecordIds(record?.fields?.[liveTable.fields.size]).includes(sizeRef.recordId)
+        strictLinkedRecordIds(record?.fields?.[liveTable.fields.product]).includes(productRecordId)
+        && strictLinkedRecordIds(record?.fields?.[liveTable.fields.size]).includes(sizeRef.recordId)
         && (states === null || states.includes(textValue(record?.fields?.[liveTable.fields.state])))
       )).length;
       const declared = Number(item.quantity);

@@ -3,10 +3,12 @@
 //    方法体一个字符未改（仍用 `this.`），由 facade 用 `Object.defineProperty`
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 采购退货扣库存的批量口：applyPurchaseReturnBatch。
-const { linkedRecordIds, textValue } = require('../v1BitableGateway');
+const {textValue} = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { relation } = require('../v1ReferenceResolver');
 const { normalizeSize } = require('../sizeReferenceService');
 const { logInfo } = require('../../utils/logger');
+const { stockShortage } = require('../../config/inventoryTexts');
 const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireMovement, MOVEMENT_PURCHASE_DECREASE, LIVE_STATES } = require('./movements');
@@ -234,8 +236,8 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
               if (plan.removedIds.includes(recordId)) continue;
               const record = fetchedById.get(recordId);
               if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
-              if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(plan.item.input.productRecordId) ||
-                !linkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
+              if (!strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(plan.item.input.productRecordId) ||
+                !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
                 (!consumesAny && !consumableStates.includes(textValue(record.fields?.[stateField])))) {
                 throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
               }
@@ -288,8 +290,8 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
               if (plan.removedIds.includes(recordId)) continue;
               const record = fetchedById.get(recordId);
               if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
-              if (!linkedRecordIds(record.fields?.[liveFields.product]).includes(plan.item.input.productRecordId) ||
-                !linkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
+              if (!strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(plan.item.input.productRecordId) ||
+                !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
                 (!consumesAny && !consumableStates.includes(textValue(record.fields?.[stateField])))) {
                 throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
               }

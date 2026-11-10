@@ -30,7 +30,8 @@
  *   · 状态里出现配置外的取值 / 读不出尺码 ⇒ **不丢**，另列一行/一列 + warn（"共 N 双"必须对得上）。
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { linkedRecordIds, textValue } = require('./v1BitableGateway');
+const {textValue} = require('./v1BitableGateway');
+const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
 const { createScanPageCache } = require('./scanPageCache');
@@ -547,7 +548,7 @@ const createScanPageService = (rawGateway, options = {}) => {
    *      —— 只在"关联被清空、但公式还在"这种数据残缺时才生效，不会重复计数。
    */
   const belongsToNumber = (record, { productId, number, stockKeyField }) => {
-    const ids = linkedRecordIds(readField(schema, 'liveInventory', record, 'product'));
+    const ids = strictLinkedRecordIds(readField(schema, 'liveInventory', record, 'product'));
     if (productId && ids.includes(productId)) return true;
     if (ids.length || !config.number.stockKeyPrefixFallback || !stockKeyField) return false;
     const key = textValue(record?.fields?.[stockKeyField]).trim();

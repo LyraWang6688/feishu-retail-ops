@@ -35,7 +35,7 @@ const gatewayOf = () => {
 const voucherReferences = (link) => ({
   resolvePaymentMethod: async () => ({
     recordId: 'method_voucher',
-    record: { fields: link ? { 团购券管理: ['voucher_1'] } : {} },
+    record: { fields: link ? { 团购券管理: [{ record_ids: ['voucher_1'] }] } : {} },
   }),
 });
 
