@@ -23,6 +23,7 @@ const { readFlag, readInt, readList, readString } = require('./envValue');
 const ASYNC_JOB_TYPES = Object.freeze({
   SALES: 'sales',
   AFTER_SALES: 'after_sales',
+  AFTER_SALES_EXCHANGE: 'after_sales_exchange',
   PURCHASE_REPLENISH: 'purchase_replenish',
   PURCHASE_RETURN: 'purchase_return',
   PURCHASE_ACCEPTANCE: 'purchase_acceptance',
@@ -52,6 +53,7 @@ const TERMINAL_STATUSES = Object.freeze([
 const JOB_ID_PREFIX = Object.freeze({
   [ASYNC_JOB_TYPES.SALES]: 'sale_job',
   [ASYNC_JOB_TYPES.AFTER_SALES]: 'after_sales_job',
+  [ASYNC_JOB_TYPES.AFTER_SALES_EXCHANGE]: 'after_sales_job',
   [ASYNC_JOB_TYPES.PURCHASE_REPLENISH]: 'purchase_replenish_job',
   [ASYNC_JOB_TYPES.PURCHASE_RETURN]: 'purchase_return_job',
   [ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE]: 'purchase_acceptance_job',
@@ -76,6 +78,7 @@ const DEFAULT_TEXTS = Object.freeze({
   typeLabels: Object.freeze({
     [ASYNC_JOB_TYPES.SALES]: '销售提交',
     [ASYNC_JOB_TYPES.AFTER_SALES]: '售后退货',
+    [ASYNC_JOB_TYPES.AFTER_SALES_EXCHANGE]: '售后换货',
     [ASYNC_JOB_TYPES.PURCHASE_REPLENISH]: '采购补货',
     [ASYNC_JOB_TYPES.PURCHASE_RETURN]: '采购退货',
     [ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE]: '采购验收',
@@ -90,6 +93,7 @@ const DEFAULT_TEXTS = Object.freeze({
   // 各链路的「失败步骤」标签（通知里那一行；链路代码不许自己写中文 ✗）
   stepLabels: Object.freeze({
     afterSales: '售后退货写库',
+    afterSalesExchange: '售后换货写库',
     sales: '销售写库',
     scanPurchaseReplenish: '扫码补货写库',
     scanPurchaseReturn: '扫码采购退货写库',

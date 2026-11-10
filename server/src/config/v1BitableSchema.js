@@ -673,6 +673,12 @@ const V1_BITABLE_SCHEMA = {
         // 「这一双是某次库存操作创建的第 N 双」。实时库存是一双一条，
         // 没有这个键就无法在 create 结果未知时判断该不该补建。
         operationItemKey: '库存操作键',
+        // ⭐ 2026-11-11（业务负责人新增，同步到本映射）：**查找引用（type 19）**，
+        //   值 = 该库存行关联的「货品信息」记录 ID（与货品 record_id 一致）。
+        //   用途：扫码打印**精确读**这一款的库存行（飞书 filter `CurrentValue.[recordID]="rec…"`），
+        //   不再整表读 1335 行。只**读**、不写（本列由飞书按关联自动算）。
+        //   ⚠️ 删掉/改名 ⇒ `v1:schema-check:inventory` 当场判红（不会静默退回整表读）。
+        recordId: 'recordID',
       },
     },
   },

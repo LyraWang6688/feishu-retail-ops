@@ -212,6 +212,7 @@ export function mountAfterSalesPage(container, options = {}) {
         salesEntryRecordId: String(candidate.sales_entry_record_id || ''),
         detailRecordId: String(candidate.sales_detail_record_id || ''),
         originalAmount: String(candidate.actual_amount ?? ''),
+        productRecordId: String(productRecordId || ''),
       });
       window.location.href = `/r/${encodeURIComponent(recordId)}?${query.toString()}`;
     } catch (error) {
@@ -259,13 +260,22 @@ export function mountAfterSalesPage(container, options = {}) {
       void loadPaymentMethods();
     } else {
       host.innerHTML = `
-        <div class="as-modal-line as-modal-field">
-          <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.exchangeModeLabel)}">
-            <button class="as-segment${modal.kind === 'same' ? ' active' : ''}" type="button" data-as-exchange-kind="same">${escapeHtml(AFTER_SALES_PAGE.exchangeSameItem)}</button>
-            <button class="as-segment${modal.kind === 'new' ? ' active' : ''}" type="button" data-as-exchange-kind="new">${escapeHtml(AFTER_SALES_PAGE.exchangeNewItem)}</button>
+        <form class="as-exchange-form" method="post" action="${escapeHtml(apiBase + AFTER_SALES_PAGE.exchangeSubmitApi)}" data-as-exchange-form>
+          <input type="hidden" name="requestId" value="${escapeHtml(modal.requestId || '')}">
+          <input type="hidden" name="salesEntryRecordId" value="${escapeHtml(selectedCandidate()?.sales_entry_record_id || '')}">
+          <input type="hidden" name="detailRecordId" value="${escapeHtml(selectedCandidate()?.sales_detail_record_id || '')}">
+          <input type="hidden" name="productRecordId" value="${escapeHtml(productRecordId)}">
+          <input type="hidden" name="scenario" value="same">
+          <input type="hidden" name="newSize" value="${escapeHtml(modal.size || '')}">
+          <div class="as-modal-line as-modal-field">
+            <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.exchangeModeLabel)}">
+              <button class="as-segment${modal.kind === 'same' ? ' active' : ''}" type="button" data-as-exchange-kind="same">${escapeHtml(AFTER_SALES_PAGE.exchangeSameItem)}</button>
+              <button class="as-segment${modal.kind === 'new' ? ' active' : ''}" type="button" data-as-exchange-kind="new">${escapeHtml(AFTER_SALES_PAGE.exchangeNewItem)}</button>
+            </div>
           </div>
-        </div>
-        ${modal.kind === 'same' ? sizeGroupsHtml() : ''}`;
+          ${modal.kind === 'same' ? `${sizeGroupsHtml()}
+          <button class="btn btn-primary as-submit" type="submit">${escapeHtml(AFTER_SALES_PAGE.confirm)}</button>` : ''}
+        </form>`;
 
     }
   };
@@ -277,7 +287,10 @@ export function mountAfterSalesPage(container, options = {}) {
         action: 'return', moneyMode: '', method: '',
         requestId: (globalThis.crypto?.randomUUID?.() || '').toString(),
       }
-      : { action: 'exchange', kind: '', size: '', method: '', scanned: false };
+      : {
+        action: 'exchange', kind: '', size: '', method: '', scanned: false,
+        requestId: (globalThis.crypto?.randomUUID?.() || '').toString(),
+      };
     modalError('');
     renderModal();
     const node = modalNode();
@@ -290,6 +303,26 @@ export function mountAfterSalesPage(container, options = {}) {
     if (node) node.hidden = true;
     modal = null;
   };
+
+  // 换货（换尺码）表单提交校验 + 统一 pending 文案
+  container.addEventListener('submit', (event) => {
+    const exchangeForm = event.target.closest('[data-as-exchange-form]');
+    if (exchangeForm && modal?.action === 'exchange') {
+      if (modal.kind !== 'same') {
+        event.preventDefault();
+        modalError(AFTER_SALES_PAGE.exchangeModeRequired);
+        return;
+      }
+      if (!modal.size) {
+        event.preventDefault();
+        modalError(AFTER_SALES_PAGE.exchangeSizeLabel);
+        return;
+      }
+      const button = exchangeForm.querySelector('button[type="submit"]');
+      if (button) { button.disabled = true; button.textContent = SUBMIT_PENDING_TEXT; }
+      return;
+    }
+  });
 
   // 退货表单提交校验（浏览器原生提交；这里只补"退款必须选方式"那一道人话）
   container.addEventListener('submit', (event) => {

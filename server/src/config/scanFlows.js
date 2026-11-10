@@ -53,8 +53,9 @@ const SCAN_FLOWS = Object.freeze({
       Object.freeze({
         type: STEP_TYPES.GOODS,
         allowAddLine: false,
-        // 售后换款式：新鞋金额按「货品信息.单价」算 ⇒ 录入页**不显示"这一双的金额"输入框**
-        hideAmountInput: true,
+        // ⭐ 2026-11-11（业务负责人）：换款式要**显示「这一双的实收金额」输入框**
+        //   （她填金额，系统按「她填的金额 − 原明细金额」算差价；旧口径「货品单价」作废）
+        hideAmountInput: false,
         submitLabel: '提交换货',
         banner: '售后换款式：选 1 双，提交后按差价处理',
       }),
@@ -62,24 +63,36 @@ const SCAN_FLOWS = Object.freeze({
       Object.freeze({
         type: STEP_TYPES.SUBMIT,
         handler: SUBMIT_HANDLERS.AFTER_SALES_EXCHANGE,
-        endpoint: '/api/workbench/sales/after-sales/submit',
+        endpoint: '/api/workbench/sales/after-sales/exchange/submit',
         payload: Object.freeze([
           'requestId', 'salesEntryRecordId', 'detailRecordId',
-          'newProductRecordId', 'newSize', 'newAmount', 'diffAmount', 'diffPaymentMethod',
+          'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod',
         ]),
       }),
     ]),
     allowAddLine: false,
     entry: '/r/{number}?flow=afterSalesExchange',
     // 本步（货品页 → 下一步差价/提交）还没接线时的人话（配置先行；渲染/路由不写中文）
-    texts: Object.freeze({
-      pendingTitle: '换货已选好这一双',
-      pendingBody: '下一步（算差价 / 提交售后）还没接上，这一版先到这里。',
-      backLabel: '返回售后页',
+    // 换款式价格差弹窗（前台 JS 读这段 JSON；脚本里不写中文）
+    exchange: Object.freeze({
+      submitEndpoint: '/api/workbench/sales/after-sales/exchange/submit',
+      paymentMethodsPath: '/api/workbench/sales/after-sales/payment-methods',
+      texts: Object.freeze({
+        needAmount: '请先填这一双的实收金额',
+        needSize: '请先选新鞋的尺码',
+        needMethod: '有差价时要选差价方式',
+        collectTitle: '补差价',
+        refundTitle: '退差价',
+        collectHint: '新鞋比原来贵，差额要收回来',
+        refundHint: '新鞋比原来便宜，差额要退给她',
+        methodLabel: '差价方式',
+        confirm: '确认提交',
+        cancel: '取消',
+      }),
     }),
     // 售后上下文：从售后页带进来（原单 / 原明细 / 原金额 / 请求标识）
     context: Object.freeze([
-      'requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount',
+      'requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount', 'productRecordId',
     ]),
   }),
 });

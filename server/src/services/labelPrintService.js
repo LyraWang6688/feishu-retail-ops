@@ -63,6 +63,7 @@ const { SCAN_URL } = require('../config/tagQrCode');
 const { buildRecordIdScanUrl } = require('./tagQrCodeService');
 const { textValue } = require('./v1BitableGateway');
 const { parseStockKey } = require('./liveInventoryIndex');
+const { equalsFormula } = require('./bitableFilterFormula');
 // ⭐⭐ task-15：飞书 `filter` 公式的拼装**只有那一处实现**（`bitableFilterFormula.js`）——
 //    这里只 import 复用（**值的安全字符检查也在它那里**），**不抄第二份** ✗。
 const { logInfo, logWarn } = require('../utils/logger');
@@ -458,6 +459,20 @@ const createLabelPrintService = (gateway, options = {}) => {
 
     // 两张整表的短 TTL 缓存（只缓存原始记录；keyword 过滤每次现算）。
     const { records, productRecords } = await labelListCache.get();
+    return buildLabelsFromTables(records, productRecords, { keyword });
+  };
+
+  /**
+   * 从**已读到的原始记录**构建标签结果（`listLabels` 与「扫码精确读」共用这一份，不抄第二份）。
+   * @param {Array} records 实时库存原始记录
+   * @param {Array} productRecords 货品信息原始记录（可以是整表，也可以只是扫到的那一条）
+   * @param {{keyword?: string}} input
+   */
+  const buildLabelsFromTables = async (records, productRecords, { keyword: rawKeyword = '' } = {}) => {
+    const table = V1_BITABLE_SCHEMA.tables.liveInventory;
+    const fieldNames = table?.fields || {};
+    const productFields = V1_BITABLE_SCHEMA.tables.product?.fields || {};
+    const keyword = String(rawKeyword ?? '').trim();
 
     const skipped = { stock_key: 0 };
     const rows = [];
@@ -739,8 +754,37 @@ const createLabelPrintService = (gateway, options = {}) => {
     const number = textValue(record?.fields?.[productFields.number]).trim();
     if (!number) throw userError(texts.recordNoNumber);
 
-    const data = await listLabels({ keyword: number.split('|')[0] || number });
+    // ⭐ 2026-11-11（业务负责人：「实时库存表可以先按照编号做筛选吗」）：
+    //   **优先只读这一款**，不再每次读 1335 行实时库存 + 559 行货品：
+    //   · 货品：上面已经按记录 ID 读了那一条（不整表）；
+    //   · 库存：飞书 `filter` 按「库存键 contains 货号」只回这一款的那几行
+    //     （旧的「编号清单」查询已验证公式列 filter 可用，见 `bitableFilterFormula`）；
+    //   · **任何一步拿不到 / 报错 / 筛不出那一张 ⇒ 自动回退整表读** `listLabels`（与改动前逐字一致，保证不退化）。
+    const itemNo = number.split('|')[0] || number;
+    // ⭐ 2026-11-11（业务负责人）：「不用做回退，这个字段肯定有」——
+    //   只走「实时库存.recordID（v1BitableSchema 映射的查找引用）＝ 货品记录 ID」**精确筛选**这一条路；
+    //   没有整表读兜底（筛选失败就是系统错误，不静默降级）。
+    // 字段名唯一真源 = `v1BitableSchema.tables.liveInventory.fields.recordId`（不在这里写死列名）。
+    const recordIdLookupField = String(V1_BITABLE_SCHEMA.tables.liveInventory?.fields?.recordId || '').trim();
+    if (!recordIdLookupField) {
+      throw new Error('「实时库存」缺少「recordID」字段映射（v1BitableSchema.liveInventory.fields.recordId）');
+    }
+    if (typeof gateway.listByFilter !== 'function') {
+      throw new Error('打印服务不支持按记录 ID 精确读（gateway 缺少 listByFilter）');
+    }
+    const filter = equalsFormula(recordIdLookupField, id);
+    if (!filter) throw new Error(`记录 ID 含有不能拼进筛选公式的字符：${id}`);
+    const stockRecords = await gateway.listByFilter('liveInventory', filter);
+    const data = await buildLabelsFromTables(stockRecords, [record], { keyword: itemNo });
     const exact = (data.labels || []).filter((label) => label.number === number);
+    logInfo('workbench.labels.record_fast_read', {
+      product_record_id: id,
+      item_no: itemNo,
+      filter_kind: 'record_id_lookup',
+      stock_rows: (stockRecords || []).length,
+      labels: (data.labels || []).length,
+      exact: exact.length,
+    });
     if (!exact.length) throw userError(texts.noStock);
     logInfo('workbench.labels.record_resolved', {
       product_record_id: id,
