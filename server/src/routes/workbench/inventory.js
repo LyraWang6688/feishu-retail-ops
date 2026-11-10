@@ -10,7 +10,10 @@ const { createInventoryAdjustmentRouter } = require('../workbenchInventoryAdjust
 
 const createWorkbenchInventoryRoutes = (options = {}) => {
   const router = express.Router();
-  router.use('/inventory/adjustments', createInventoryAdjustmentRouter(options.inventoryAdjustment || {}));
+  router.use('/inventory/adjustments', createInventoryAdjustmentRouter({
+    ...(options.inventoryAdjustment || {}),
+    asyncJobs: options.asyncJobs,
+  }));
   router.get('/inventory/products', controller.queryInventoryProducts);
   router.get('/inventory/stock', controller.queryInventoryStock);
   router.get('/inventory/categories', controller.queryInventoryCategories);

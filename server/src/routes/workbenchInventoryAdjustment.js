@@ -10,8 +10,12 @@
 const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { InventoryService } = require('../services/inventoryService');
-const { InventoryPairAdjustmentService } = require('../services/inventoryPairAdjustmentService');
+const { InventoryPairAdjustmentService, normalizeRows } = require('../services/inventoryPairAdjustmentService');
+const { createAsyncJobService } = require('../services/asyncJobService');
+const { ASYNC_JOB_TYPES } = require('../config/asyncJobs');
 const { PAIR_ADJUSTMENT_TEXTS } = require('../config/inventoryPairAdjustment');
+
+const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
 const { InventoryAdjustmentService } = require('../services/inventoryAdjustmentService');
 const { logError } = require('../utils/logger');
 
@@ -21,6 +25,7 @@ const createInventoryAdjustmentRouter = (options = {}) => {
   // 否则"只想注入一个桩"的调用方（测试、以及将来别的入口）会被迫先配好飞书凭证。
   let adjustment = options.service || null;
   let pairAdjustment = options.pairService || null;
+  let asyncJobs = options.asyncJobs || null;
   const resolveAdjustment = () => {
     if (!adjustment) {
       const inventory = options.inventory
@@ -31,6 +36,10 @@ const createInventoryAdjustmentRouter = (options = {}) => {
   };
 
   const resolveInventory = () => options.inventory || new InventoryService({ gateway: options.gateway || new V1BitableGateway() });
+  const resolveAsyncJobs = () => {
+    if (!asyncJobs) asyncJobs = createAsyncJobService();
+    return asyncJobs;
+  };
   const resolvePairAdjustment = () => {
     if (!pairAdjustment) pairAdjustment = new InventoryPairAdjustmentService({ inventory: resolveInventory() });
     return pairAdjustment;
@@ -62,19 +71,43 @@ const createInventoryAdjustmentRouter = (options = {}) => {
       operatorOpenId: req.workbenchUser?.open_id,
     })));
 
-  router.post('/pairs', handle('workbench.inventory.adjustment.pairs_failed', PAIR_ADJUSTMENT_TEXTS.pairFailed, (req) =>
-    resolvePairAdjustment().adjustPairs({
-      productRecordId: req.body?.productRecordId,
-      rows: req.body?.rows,
-      requestId: req.body?.requestId,
-      operatorOpenId: req.workbenchUser?.open_id,
-    })));
+  router.post('/pairs', async (req, res) => {
+    try {
+      const rows = normalizeRows(req.body?.rows);
+      const requestId = String(req.body?.requestId || '').trim();
+      if (!req.body?.productRecordId || !requestId) throw userError('缺少货品或请求编号');
+      const jobs = resolveAsyncJobs();
+      const jobId = jobs.jobIdFor(ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT, `pairs:${requestId}`);
+      await jobs.enqueue({ jobId, type: ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT,
+        ownerOpenId: req.workbenchUser?.open_id || '', operatorName: req.workbenchUser?.name || '' });
+      void jobs.run({ jobId, run: () => resolvePairAdjustment().adjustPairs({
+        productRecordId: req.body?.productRecordId, rows, requestId,
+        operatorOpenId: req.workbenchUser?.open_id,
+      }) }).catch(() => {});
+      return res.status(202).json({ success: true, queued: true, job_id: jobId });
+    } catch (error) {
+      const status = error?.statusCode === 400 ? 400 : 502;
+      return res.status(status).json({ success: false, error: error.message || PAIR_ADJUSTMENT_TEXTS.pairFailed });
+    }
+  });
 
-  router.post('/season-flag', handle('workbench.inventory.adjustment.season_flag_failed', PAIR_ADJUSTMENT_TEXTS.seasonFlagFailed, (req) =>
-    resolvePairAdjustment().setSeason({
-      category: req.body?.category,
-      season: req.body?.season,
-    })));
+  router.post('/season-flag', async (req, res) => {
+    try {
+      const category = String(req.body?.category || '').trim();
+      const season = req.body?.season;
+      const requestId = String(req.body?.requestId || '').trim();
+      if (!category || typeof season !== 'boolean' || !requestId) throw userError('品类 / 当季 / 请求编号不完整');
+      const jobs = resolveAsyncJobs();
+      const jobId = jobs.jobIdFor(ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT, `season:${requestId}`);
+      await jobs.enqueue({ jobId, type: ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT,
+        ownerOpenId: req.workbenchUser?.open_id || '', operatorName: req.workbenchUser?.name || '' });
+      void jobs.run({ jobId, run: () => resolvePairAdjustment().setSeason({ category, season }) }).catch(() => {});
+      return res.status(202).json({ success: true, queued: true, job_id: jobId });
+    } catch (error) {
+      const status = error?.statusCode === 400 ? 400 : 502;
+      return res.status(status).json({ success: false, error: error.message || PAIR_ADJUSTMENT_TEXTS.seasonFlagFailed });
+    }
+  });
 
   router.post('/season', handle('workbench.inventory.adjustment.season_failed', '换季调整失败', (req) =>
     resolveAdjustment().adjustSeason({
