@@ -87,7 +87,7 @@ export function createDomainModule(domainId) {
     //   「配品」现在是一张**直跳页**（`kind:'links'` + `directJump:true`，见 `config/domains.js`），
     //   点一下直接打开飞书表单，**工作台不再有自建的配品面板** ✓
     host.innerHTML = domainPageHtml(page);
-    // ⭐ 只有 action-cards 页需要绑动作（按钮卡：数据配置 → 同步存量样例图）
+    // ⭐ 只有 action-cards 页需要绑动作（按钮卡：货品资料 → 同步样例图 / 数据配置 → 券目录同步）
     if (page.kind === 'action-cards') bindDomainAction(host);
     return undefined;
   }

@@ -4,7 +4,6 @@ import { PRODUCT_NEW_FORM_URL } from './links.js';
 export const PRODUCT_PROFILE_API = Object.freeze({
   search: '/api/workbench/products/search',
   incomplete: '/api/workbench/products/incomplete',
-  sampleImageSync: '/api/workbench/data-config/sample-image-sync',
 });
 
 export const PRODUCT_PROFILE_TEXTS = Object.freeze({

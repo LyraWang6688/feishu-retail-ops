@@ -13,9 +13,6 @@ export const DATA_CONFIG_API = Object.freeze({
 });
 
 export const DATA_CONFIG_TEXTS = Object.freeze({
-  cardIcon: '🖼️',
-  cardTitle: '同步存量样例图',
-  tileHint: '把「有样例图、但还没勾已同步云盘」的货品补传到云盘',
   // 状态行（模板；占位符缺值用空串顶，不留 {xxx}）
   runningNote: '正在同步…（已处理 {done}/{total} 条，成功 {synced} 条）',
   doneNote: '同步完成：成功 {synced} 条，跳过 {skipped} 条，失败 {failed} 条。',

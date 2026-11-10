@@ -2,11 +2,10 @@
  * 「配置 → 货品资料」页：
  *   · 货品上新：搜索替代自动查重；用户看结果和样例图自行判断，再去飞书表单；
  *   · 货品完善：按「缺失信息说明」实际值动态分组，选择分类查看记录；
- *   · 同步样例图：复用数据配置页原有的存量同步动作。
+ *   · 同步样例图：复用货品资料的存量同步动作（bindDomainAction）。
  */
 import { api } from '../../core/api-client.js';
 import { PRODUCT_PROFILE_API, PRODUCT_PROFILE_TEXTS as T } from '../../config/productProfile.js';
-import { showToast } from '../shared/toast.js';
 import { bindDomainAction } from './dataConfigAction.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, k) => (values[k] == null ? '' : String(values[k])));

@@ -1,5 +1,5 @@
 /**
- * 「货品 → 数据配置」页上的**按钮卡动作**（业务负责人 2026-11-10）：
+ * 「货品资料」/「数据配置」页上的**按钮卡动作**（业务负责人 2026-11-10）：
  *   · 卡片：`data-domain-action="sample-image-sync"`（来自 `config/domains.js`）；
  *   · 点击 ⇒ `POST /api/workbench/data-config/sample-image-sync`（启动存量写入，后台跑）；
  *   · 然后轮询 `GET` 同一个路径，把「已处理 x/y、成功 n」写进状态行；
