@@ -53,24 +53,4 @@ const computeSupplierTotals = async (service, task, batchNo) => {
   return { quantity, amount, doneCount, total: ids.length, allDone: doneCount > 0 && doneCount === ids.length };
 };
 
-/** { batch_no: [supplier_record_id] } —— 前端用来隐掉已验收完的供应商卡（任务 posted）。 */
-const listAcceptedSuppliers = async (service) => {
-  const accepted = {};
-  let tasks = [];
-  try {
-    tasks = await service.store.list();
-  } catch { return accepted; }
-  for (const task of tasks || []) {
-    if (String(task?.status || '') !== 'posted') continue;
-    const batchNo = String(task?.batch_no || '').trim();
-    const supplierId = String(task?.supplier_record_id || '').trim();
-    if (!batchNo || !supplierId) continue;
-    if (!accepted[batchNo]) accepted[batchNo] = [];
-    if (!accepted[batchNo].includes(supplierId)) accepted[batchNo].push(supplierId);
-  }
-  return accepted;
-};
-
-module.exports = {
-  taskIdForBatch, computeSupplierTotals, listAcceptedSuppliers, arrivedSupplierIds,
-};
+module.exports = { taskIdForBatch, computeSupplierTotals, arrivedSupplierIds };

@@ -192,17 +192,6 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       texts: { backgroundFailedNotified: ASYNC_JOBS.texts.hints.backgroundFailedNotified },
     },
   });
-  // ⭐ 2026-11-10（业务负责人：一个批次按供应商拆卡）：哪些供应商已经验收完 —— 只读本地任务状态，
-  //   前端据此把已验收的供应商卡隐掉（批次仍「未到货」，等所有供应商都验完才变）。
-  router.get('/purchase/arrivals/accepted-suppliers', async (req, res) => {
-    try {
-      const accepted = await resolvePurchaseArrival().acceptedSuppliers();
-      return res.json({ success: true, accepted });
-    } catch (error) {
-      logError('workbench.purchase.accepted_suppliers.failed', { request_id: req.requestId, error: error.message });
-      return res.status(502).json({ success: false, error: arrivalTab.texts.detailFailed });
-    }
-  });
   router.get(arrivalTab.api.detail, async (req, res) => {
     const batchNo = String(req.query?.[arrivalTab.fields.batchNo] || '').trim();
     // ⭐ 2026-11-10：按供应商拆卡后，明细只回**这个供应商**的那部分（缺省 = 整批，兼容旧页面）。

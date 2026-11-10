@@ -514,8 +514,6 @@ test('⑨ 按供应商分批验收：第一家验完仍未到货，全部验完�
   assert.equal(batchFields(harness.records)['到货状态'], '未到货', '只验完一家 ⇒ 批次仍未到货 ✓');
   assert.deepEqual(totalsCalls.map((c) => [c.actualQuantity, c.actualAmount]), [[2, 100]],
     '第一家验完只写自己的累计值（2 双 / 100 元）✓');
-  assert.deepEqual(await harness.service.listAcceptedSuppliersByBatch(), { [BATCH_NO]: ['supplierA'] },
-    '已验收供应商（任务 posted）可查 ⇒ 前端据此隐掉 s1 的卡 ✓');
 
   // 第二家：供应商B（1 双，100 元）⇒ 全批验完
   const r2 = await harness.service.confirmBatchArrival({
@@ -532,8 +530,6 @@ test('⑨ 按供应商分批验收：第一家验完仍未到货，全部验完�
   assert.equal(batchFields(harness.records)['到货状态'], '已到货', '两家都验完 ⇒ 批次才已到货 ✓');
   assert.deepEqual(totalsCalls.map((c) => [c.actualQuantity, c.actualAmount]), [[2, 100], [3, 200]],
     '第二家验完写**累计**（2+1=3 双、100+100=200 元）✓');
-  const acceptedAll = await harness.service.listAcceptedSuppliersByBatch();
-  assert.deepEqual([...acceptedAll[BATCH_NO]].sort(), ['supplierA', 'supplierB'], '两家都验完 ✓');
 });
 
 test('⑩ ⭐ 注入 markSupplierArrived 时：以主表「供应商/已到货供应商」为准，不再看本地任务 allDone', async () => {

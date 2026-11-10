@@ -27,7 +27,7 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
       { record_id: 'prod_2', fields: { 编号: '9099黑', 供应商: [{ record_ids: ['sup_2'] }] } },
     ],
     purchaseOrderBatch: [
-      { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: [{ record_ids: ['sup_1'] }], 到货状态: '部分到货' } },
+      { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: [{ record_ids: ['sup_1'] }], 到货状态: '部分到货', 已到货供应商: [{ record_ids: ['sup_1'] }] } },
       { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 供应商: [{ record_ids: ['sup_2'] }], 到货状态: '未到货' } },
     ],
   });
@@ -41,6 +41,9 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
   assert.equal(all[0].quantity, 1);
   assert.equal(all[0].arrival_status, '未到货');
   assert.equal(all[0].supplier_record_id, 'sup_2');
+  assert.deepEqual(all[0].arrived_supplier_ids, [], '未到货批次没有已到货供应商 ✓');
+  const arrivedRow = (await service.listPurchaseRequests({ batchNo: 'BH-001' }))[0];
+  assert.deepEqual(arrivedRow.arrived_supplier_ids, ['sup_1'], '主表「已到货供应商」投影到列表行 ✓');
 
   const filtered = await service.listPurchaseRequests({ batchNo: 'BH-001' });
   assert.equal(filtered.length, 1);
@@ -68,6 +71,7 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
         fields: {
           报货批次号: 'BH-001',
           到货状态: '已到货',
+          已到货供应商: [{ record_ids: ['sup_1'] }],
           // ⛔ 2026-10-09：「确认状态」「验收原话」两列已从真表删除 ⇒ fixture 里不再有它们。
         },
       },
@@ -85,6 +89,7 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
   assert.deepEqual(all.map((row) => row.batch_no), ['BH-002', 'BH-001']);
   const arrived = all.find((row) => row.batch_no === 'BH-001');
   assert.equal(arrived.arrival_status, '已到货');
+  assert.deepEqual(arrived.arrived_supplier_ids, ['sup_1'], '到货面板也带「已到货供应商」ids ✓');
   // ⛔ 那两个投影**已删除**（列都没有了，留着只会永远读出空串、把"没记"伪装成"记了但空"）。
   assert.equal('confirm_status' in arrived, false, '确认状态投影已退场');
   assert.equal('acceptance_text' in arrived, false, '验收原话投影已退场');
