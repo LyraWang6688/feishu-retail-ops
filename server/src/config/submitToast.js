@@ -24,7 +24,8 @@ const { readInt, readString } = require('./envValue');
  *
  * ⚠️ 落点默认 = 工作台首页（`/workbench/`）：她提交完**直接回工作台**看列表/继续干活
  *   （销售 2026-10-27 起就是这么走的 ✓；本轮把其余三条链一起统一过来）。
- *   前端**不用改**：`public/workbench/shared/toast.js` 本来就读 `?toast=` 并显示 5 秒 ✓。
+ *   前端**不用改**：`public/workbench/shared/toast.js` 读 `?toast=`，
+ *   并按「当前模块挂载 + 首屏读请求空闲」决定何时消失（最多 20 秒兜底）。
  */
 
 /** 缺省那一句（她的原话；别处不许再抄一份 ✗）。 */

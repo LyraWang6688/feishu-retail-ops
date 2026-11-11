@@ -136,7 +136,7 @@ export function createInventoryAdjustmentModule() {
   async function enterBatch() {
     const host = state.host;
     const select = $(host, '[data-field="batch-category"]');
-    showToast(INVENTORY_MANUAL_TEXTS.batchLoading);
+    showToast(INVENTORY_MANUAL_TEXTS.batchLoading, { sticky: true });
     try {
       // 品类与库存并行：品类短请求不再串行挡住 1335 行的库存读取。
       const categoriesPromise = state.categories.length

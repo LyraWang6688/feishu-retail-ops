@@ -147,3 +147,20 @@ test('AC-ST5 ⭐ 成功页那一句旧文案不许再被当成"回执"引用（�
   assert.equal(SUBMIT_TOAST.text.includes('已提交成功，数据会更新'), false,
     'toast 文案是新那一句（数据提交成功，后台自动写入），不是旧成功页那句');
 });
+
+
+test('AC-ST6 回执 toast 跟页面就绪走：不固定 5 秒，模块挂载/读空闲/切页都有事件', () => {
+  const front = read('public/workbench/shared/toast.js');
+  assert.match(front, /workbench:module-mounted/);
+  assert.match(front, /workbench:reads-idle/);
+  assert.match(front, /workbench:reads-start/);
+  assert.match(front, /workbench:view-change/);
+  assert.equal(front.includes('5000'), false, '不再固定 5 秒后消失');
+  assert.match(front, /MAX_WAIT_MS\s*=\s*20000/, '异常时最多保留 20 秒');
+  const api = read('public/workbench/core/api-client.js');
+  assert.match(api, /workbench:reads-start/);
+  assert.match(api, /workbench:reads-idle/);
+  const main = read('public/workbench/main.js');
+  assert.match(main, /workbench:module-mounted/);
+  assert.match(main, /workbench:view-change/);
+});
