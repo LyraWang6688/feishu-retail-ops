@@ -6,7 +6,7 @@
  *
  * 口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`）：
  *   · 上新 = `货品信息.上架日期` 今天（上海时区）；按记录 ID 分组；
- *   · 类别 A/B + `SCAN_PAGE.SIZE_SEGMENTS` 的 normal / special（normal 是闭区间 ⇒ 展开成逐码）；
+ *   · 类别 男/女 + `SCAN_PAGE.SIZE_SEGMENTS` 的 normal / special（normal 是闭区间 ⇒ 展开成逐码）；
  *   · 类别缺失 ⇒ **不猜**（categoryMissing + 空尺码）；
  *   · 顶部统计**只有「新增货品」**（业务负责人 2026-10-28 再确认）。
  */
