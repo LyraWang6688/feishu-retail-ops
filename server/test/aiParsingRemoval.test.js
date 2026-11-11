@@ -255,8 +255,8 @@ test('AC-10 ⭐⭐ 反方向：扫码链路 / 共享落库层 / 配品销售仍�
   const webhook = read('server/src/services/purchaseWebhookService.js');
   assert.equal(/ensureArrivalProducts\s*\(/.test(webhook), false, '⛔ 到货建档死代码不许复活 ✗');
   assert.equal(/applyArrivalCost\s*\(/.test(webhook), false, '⛔ 到货成本死代码不许复活 ✗');
-  // 配品销售的两条链路
-  assert.equal(exists('server/src/services/accessoryMatchPolicy.js'), true, '⛔ 配品匹配必须还在 ✗');
+  // 配品销售已全部走飞书表单：旧匹配链路必须保持删除状态。
+  assert.equal(exists('server/src/services/accessoryMatchPolicy.js'), false, '⛔ 配品匹配死代码不许复活 ✗');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1,9 +1,8 @@
 /**
  * 可售品：一笔销售里能卖的东西。
  *
- * 鞋和配品的差别只有三个属性——要规格（尺码）、要跟踪库存、要履约。
- * 这里按属性声明，代码问的是「这个属性是什么」，而不是「这是不是配品」，
- * 所以新增第三种可售品（比如以后卖服务或充值卡）是加一条配置，不是加一条分支。
+ * 可售品按属性声明（要规格 / 要跟踪库存 / 要履约）。
+ * 当前只有鞋；新增可售品时加一条配置，而不是加一条分支。
  */
 const SELLABLE_KINDS = Object.freeze({
   shoe: Object.freeze({
@@ -11,7 +10,7 @@ const SELLABLE_KINDS = Object.freeze({
     // 销售明细里指向这种可售品的字段（语义键，交给 v1BitableSchema 映射成中文列名）。
     detailLinkField: 'product',
     // 「这一件叫什么」——给**只读展示**用的表与字段（同样是语义键，见 v1BitableSchema）：
-    // 鞋的货号在「货品信息.货号」；配品没有货号，用的是「其他配品.名称」。
+    // 鞋的货号在「货品信息.货号」。
     // 2026-10-07 加：待处理单推送要按「货号 + 尺码」显示每一条，
     // 展示侧因此不该自己写死「product / itemNo」这种映射（换一种可售品就得改展示代码）。
     detailTableKey: 'product',
@@ -20,22 +19,7 @@ const SELLABLE_KINDS = Object.freeze({
     tracksInventory: true,
     requiresFulfillment: true,
   }),
-  accessory: Object.freeze({
-    label: '配品',
-    // ⭐⭐ 2026-10-14（业务负责人逐字）：「**并且配品都是默认的现货**」——
-    //   ⇒ 配品行默认按**现货**走（`salesTradeTypeForStock({ inStock:true })` ⇒ `SALE_CASH` ✓）。
-    //   🔴 **不扣库存** 这条一个字不变 ✗：配品 `tracksInventory=false` ＋ `requiresFulfillment=false`
-    //      ⇒ `scanWriteService` 的"提交即交付 + 扣库存"闸门（`requiresFulfillment && tracksInventory`）
-    //      **永远不会为配品放行** ✓（依据 `docs/sales-total-and-accessory-render-2026-10-07.md:75` C5 ✓）
-    defaultInStock: true,
-    detailLinkField: 'accessory',
-    detailTableKey: 'accessory',
-    detailLabelField: 'name',
-    requiresSize: false,
-    tracksInventory: false,
-    // 配品当场结清，不参与交付跟踪；明细直接写成已交付，不会进待交付列表。
-    requiresFulfillment: false,
-  }),
+
 });
 
 const DEFAULT_KIND = 'shoe';

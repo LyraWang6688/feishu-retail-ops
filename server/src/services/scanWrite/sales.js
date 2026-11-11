@@ -8,7 +8,6 @@
  */
 const { plansOfOrder, successRequiresFor, SESSION_FLAGS } = require('../../config/salesWritePlan');
 const { salesTradeTypeForStock } = require('../../config/salesTradeTypePolicy');
-const { SELLABLE_KINDS } = require('../../config/sellableKinds');
 const { SESSION_MARKERS } = require('../../config/saleMoneySplit');
 const { mergeCorrelation } = require('../../utils/correlationFields');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../../config/salesStatusDimensions');
@@ -178,33 +177,6 @@ const createScanWriteSales = ({
       const amountField = line.amount === null || line.amount === undefined
         ? {}
         : { actualAmount: Math.round(Number(line.amount) * 100) / 100 };
-      // ⚠️ `SELLABLE_KINDS` 里的一行**没有 `key`**（`key` 是 `sellableKindOf` 补上去的）
-      //    —— 这里自己补上，别拿 `undefined` 当 kind 传给业务层（那会被当成"鞋"）。
-      const kindKey = String(line.kind || '').trim() || 'shoe';
-      const sellableKind = SELLABLE_KINDS[kindKey]
-        ? { key: kindKey, ...SELLABLE_KINDS[kindKey] }
-        : { key: 'shoe', ...SELLABLE_KINDS.shoe };
-      // ── 配品那一行（B）：`配品` 有值、**编号 / 尺码留空**、实收金额单列 ──────────
-      //    ⚠️ 它不参与交付 / 库存扣减（没有鞋）—— 交付那一步按可售品属性天然跳过（见 A 段）。
-      if (sellableKind && !sellableKind.requiresSize) {
-        const accessoryRecordId = String(line.accessory_record_id || '').trim();
-        if (!accessoryRecordId) {
-          const error = new Error(texts.accessoryMissingBody);
-          error.scanUserMessage = texts.accessoryMissingBody;
-          return fail({ code: 'line_accessory_missing', message: userMessageFor(error), requestId, error });
-        }
-        items.push({
-          kind: sellableKind.key,
-          // 既有业务层按可售品配置决定落哪个字段（「销售明细.配品」）——本文件不写字段名。
-          accessoryRecordId,
-          quantity: 1,
-          ...amountField,
-          giftDescription: String(line.gift || '').trim(),
-          // 配品没有货号 / 尺码 ⇒ 没有"现货 / 预订"这回事：**不写**交易类型（空着比写错好）。
-          tradeTypeCode: '',
-        });
-        continue;
-      }
       const productRecordId = String(line.product_record_id || '').trim();
       if (!productRecordId) {
         const error = new Error(texts.sizeUnknownBody);
@@ -218,7 +190,7 @@ const createScanWriteSales = ({
         return fail({ code: 'line_size_missing', message: userMessageFor(error), requestId, error });
       }
       items.push({
-        kind: (sellableKind && sellableKind.key) || 'shoe',
+        kind: 'shoe',
         productRecordId,
         size,
         quantity: 1,

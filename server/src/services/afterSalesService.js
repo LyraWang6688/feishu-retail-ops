@@ -716,7 +716,7 @@ class AfterSalesService {
     return plan;
   }
 
-  /** 原明细行是鞋还是配品，由 sellableKinds 里声明的关联字段决定（不写死「编号」/「配品」）。 */
+  /** 原明细行按 sellableKinds 里声明的关联字段解析（当前只有鞋）。 */
   detailKindOf(fields, detailFields) {
     for (const [key, declared] of Object.entries(SELLABLE_KINDS)) {
       const ids = strictLinkedRecordIds(fields?.[detailFields[declared.detailLinkField]]);
@@ -725,7 +725,7 @@ class AfterSalesService {
       }
       if (ids.length === 1) return { ...sellableKindOf({ kind: key }), recordId: ids[0] };
     }
-    throw new Error('原销售明细既没有「编号」也没有「配品」，无法生成售后明细行');
+    throw new Error('原销售明细既没有「编号」，无法生成售后明细行');
   }
 
   singleLink(cell, label) {

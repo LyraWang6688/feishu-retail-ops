@@ -83,8 +83,8 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_CATEGORY_TABLE_ID'),
       fields: { name: '品类', category: '类别' },
     },
-    // 配品（腰带、鞋油、袜子、包等）：没有尺码、不跟踪库存，销售明细里用它自己的关联字段。
-    // 表 ID 没有默认值：不同租户这张表不同，未配置时销售只支持鞋。
+    // 其他配品（腰带、鞋油、袜子、包等）：只用于资金页赠品候选（配品=true）。
+    // 表 ID 没有默认值：不同租户这张表不同。
     accessory: {
       tableName: '其他配品',
       tableId: getEnv('FEISHU_V1_ACCESSORY_TABLE_ID'),

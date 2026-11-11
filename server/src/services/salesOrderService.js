@@ -172,7 +172,7 @@ class SalesOrderService {
       };
       const expected = [];
       for (const item of input.items) {
-        // 可售品按属性走：鞋才需要解析尺码和跟踪库存，配品只记「卖了什么、收了多少」。
+        // 可售品按属性走：当前只有鞋一种。
         const kind = sellableKindOf(item);
         // ⭐⭐ 2026-10-11（业务负责人选"方案甲"）：「**实收金额可以是空的**」——
         //   扫码建单允许"先只记货"（她什么钱都没填），她事后再去工作台订单列表逐件补。
@@ -200,18 +200,12 @@ class SalesOrderService {
           // ⭐ 一件明细自己的赠品文本（有描述用描述；`gift=true` 没描述用占位；否则空）。
           //   ⚠️ 它**不再写进明细**（那一列已被她删掉），只在下面合并成**主表那一列**。
           gift: giftTextOfItem(item),
-          // 配品当场结清、不跟踪交付，直接写成已交付，不会进待交付列表也不会扣库存。
           fulfillmentStatus: kind.requiresFulfillment
             ? initialFulfillmentStatusFor(item.tradeTypeCode)
             : '已交付',
           // **这一行自己的**交易类型关联（单选）。
           tradeTypeRecordId: await tradeTypeRecordIdForItem(item.tradeTypeCode),
         };
-        if (!kind.requiresSize) {
-          // 🔴 2026-10-18：配品不再走销售写链路（生产「销售明细.配品」列已删；
-          //   配品改由工作台表单 + 多维表格工作流处理）。
-          throw new Error('配品已改为飞书表单录入，不再通过销售提交写入');
-        }
         const product = await this.references.resolveProduct({ ...item, matchMode: 'sales' });
         const size = positiveInteger(item.size, '尺码');
         const sizeReference = await this.getSizeReferences().resolveByNumber(size);
@@ -265,7 +259,7 @@ class SalesOrderService {
         const match = existing.find((record) => !used.has(record.record_id) &&
           (knownId ? record.record_id === knownId : !reserved.has(record.record_id)) &&
           strictLinkedRecordIds(record.fields?.[table[item.linkField]]).includes(item.linkRecordId) &&
-          // 尺码是单选关联：鞋必须正好是这一条；配品没有尺码，关联必须为空。
+          // 尺码是单选关联：必须正好是这一条。
           (item.sizeRecordId
             ? singleLinked(record.fields?.[table.size], item.sizeRecordId)
             : strictLinkedRecordIds(record.fields?.[table.size]).length === 0) &&

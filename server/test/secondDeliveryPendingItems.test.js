@@ -3,10 +3,8 @@
 // 这份文件盯的是 `secondDeliveryService.listPendingDeliveries({ includeItems: true })`：
 //   □ 货号取「货品信息.**货号**」（不是「编号」）；
 //   □ 尺码走**共享的尺码解析**（销售明细里是关联「尺码管理」），解析不了退回单元格文本；
-//   □ 配品取「其他配品.名称」，**没有尺码**（返回空串，不是 undefined）；
 //   □ 缺货号 / 缺名称的那一件**不产出条目**（展示层因此不会拼出「 码」这种空壳）；
-//   □ 表**整表各读一次**：货品信息 1 次、「其他配品」配了才读 1 次，
-//     **不为了货号尺码再读一遍销售明细**（复用本轮已经读进来的那份）；
+//   □ 表**整表各读一次**：货品信息 1 次，**不为了货号尺码再读一遍销售明细**（复用本轮已经读进来的那份）；
 //   □ `includeItems` 默认**关**：第二次交付提醒那条路读表与返回形状**一个字都不变**；
 //   □ 卡片显示要用的 `tradeTypeLabel`（行为名称）照常给；`fulfillmentStatus` 也照常给
 //     （**分区判据是它**，不是交易类型编码 —— 2026-10-07 口径大改）。
@@ -30,8 +28,6 @@ const SOLD_AT = Date.parse('2026-10-20T10:00:00+08:00');
 // 表定义：语义键与真实 `v1BitableSchema` 一致，只是 tableId 由用例自己给。
 const tables = (overrides = {}) => ({
   product: { tableId: 'tbl_product', fields: { itemNo: '货号', number: '编号', color: '颜色' } },
-  // ⚠️ 默认**没配**「其他配品」表（有些部署只卖鞋）——要用它的用例显式打开。
-  accessory: { tableId: '', fields: { name: '名称' } },
   behavior: { tableId: 'tbl_behavior', fields: { code: '行为编码', name: '行为名称' } },
   salesEntry: {
     tableId: 'tbl_entry',
@@ -40,7 +36,7 @@ const tables = (overrides = {}) => ({
   salesDetail: {
     tableId: 'tbl_detail',
     fields: {
-      salesEntry: '销售单号', product: '编号', accessory: '配品', size: '尺码',
+      salesEntry: '销售单号', product: '编号', size: '尺码',
       soldAt: '销售日', fulfillmentStatus: '履约状态', actualAmount: '实收金额',
     },
   },
@@ -54,7 +50,7 @@ const tables = (overrides = {}) => ({
 
 // 一笔「现货、已入账、货已交付但钱没结清」的单（= 新口径下的**现货待收**）：
 // 主表 1 条 + 明细 1 条（已交付）+ 收款 1 条（未收款）。
-const seed = ({ details, entry = {}, payments = [], products = [], accessories = [], behavior = {} } = {}) => ({
+const seed = ({ details, entry = {}, payments = [], products = [], behavior = {} } = {}) => ({
   behavior: [{
     record_id: 'b_cash',
     fields: { 行为编码: 'SALE_CASH', 行为名称: '现货', ...behavior },
@@ -68,7 +64,6 @@ const seed = ({ details, entry = {}, payments = [], products = [], accessories =
     { record_id: 'r1', fields: { 关联销售单: [{ record_ids: ['o1'] }], 交易金额: 100, 钱款状态: '未收款' } },
   ],
   product: products,
-  accessory: accessories,
 });
 
 const gatewayFor = (records, tableDefs = tables()) => {
@@ -102,10 +97,7 @@ const shoe = (recordId, productId, sizeCell) => ({
   record_id: recordId,
   fields: { 销售单号: [{ record_ids: ['o1'] }], 编号: [productId], 尺码: sizeCell, 履约状态: '已交付', 实收金额: 228, 销售日: SOLD_AT },
 });
-const accessoryRow = (recordId, accessoryId) => ({
-  record_id: recordId,
-  fields: { 销售单号: [{ record_ids: ['o1'] }], 配品: [accessoryId], 履约状态: '已交付', 实收金额: 39, 销售日: SOLD_AT },
-});
+
 
 const run = (records, options = {}) => new SecondDeliveryService({
   gateway: gatewayFor(records, options.tableDefs),
@@ -116,30 +108,26 @@ const run = (records, options = {}) => new SecondDeliveryService({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('货号取「货品信息.货号」、尺码走共享解析；配品取「名称」且**没有尺码**', async () => {
+test('货号取「货品信息.货号」、尺码走共享解析', async () => {
   const gatewayRecords = seed({
     details: [
       shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }]),
-      accessoryRow('d2', 'a1'),
     ],
     products: [{ record_id: 'p1', fields: { 货号: 'B26002-52', 编号: 'N-1', 颜色: '黑色' } }],
-    accessories: [{ record_id: 'a1', fields: { 名称: '腰带' } }],
   });
   const orders = await run(gatewayRecords, {
-    tableDefs: tables({ accessory: { tableId: 'tbl_accessory', fields: { name: '名称' } } }),
     query: { includeItems: true },
   });
 
   assert.equal(orders.length, 1);
   assert.deepEqual(orders[0].items, [
     { kind: 'shoe', itemNo: 'B26002-52', color: '黑色', size: '37' }, // 货号，不是「编号」N-1；颜色也带出来了
-    { kind: 'accessory', itemNo: '腰带', color: '', size: '' }, // 配品没有尺码：空串；也没有颜色列
   ]);
   assert.equal(orders[0].tradeTypeCode, 'SALE_CASH');
   assert.equal(orders[0].fulfillmentStatus, '已交付', '分区判据 = 履约状态（现货待收 → 已交付）');
 });
 
-test('表整表各读一次：货品信息 1 次、配品 1 次、销售明细**不重复读**', async () => {
+test('表整表各读一次：货品信息 1 次、销售明细**不重复读**', async () => {
   const gatewayRecords = seed({
     details: [shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }]), shoe('d2', 'p2', [{ record_ids: ['sz43'], text: '43' }])],
     products: [
@@ -147,7 +135,7 @@ test('表整表各读一次：货品信息 1 次、配品 1 次、销售明细**
       { record_id: 'p2', fields: { 货号: '6A637-7' } },
     ],
   });
-  const gateway = gatewayFor(gatewayRecords, tables({ accessory: { tableId: 'tbl_accessory', fields: { name: '名称' } } }));
+  const gateway = gatewayFor(gatewayRecords, tables());
   const orders = await new SecondDeliveryService({
     gateway, sizeReferences: sizeStub(), store: {}, client: {},
   }).listPendingDeliveries({ now: DAY, includeItems: true });
@@ -156,10 +144,10 @@ test('表整表各读一次：货品信息 1 次、配品 1 次、销售明细**
   const count = (key) => gateway.calls.filter((call) => call === key).length;
   assert.equal(count('salesDetail'), 1, '销售明细只读一次（复用候选筛选那次）');
   assert.equal(count('product'), 1, '货品信息整表只读一次');
-  assert.equal(count('accessory'), 1, '其他配品整表只读一次');
+  assert.equal(count('accessory'), 0, '其他配品不再读');
 });
 
-test('没配「其他配品」表：不去读它（只卖鞋的部署照样工作）', async () => {
+test('配品整表不再读（只卖鞋）', async () => {
   const gatewayRecords = seed({
     details: [shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }])],
     products: [{ record_id: 'p1', fields: { 货号: 'B26002-52' } }],
@@ -173,11 +161,10 @@ test('没配「其他配品」表：不去读它（只卖鞋的部署照样工�
   assert.equal(gateway.calls.includes('accessory'), false);
 });
 
-test('缺货号 / 缺配品名称 / 鞋缺尺码：这些件**不产出**（展示层因此拼不出空壳）', async () => {
+test('缺货号 / 鞋缺尺码：这些件**不产出**（展示层因此拼不出空壳）', async () => {
   const gatewayRecords = seed({
     details: [
       shoe('d1', 'p1', [{ record_ids: ['sz37'], text: '37' }]), // 货号缺失
-      accessoryRow('d2', 'a1'), // 名称缺失
       shoe('d3', 'p3', []), // 尺码缺失（关联为空，单元格也没文本）
       shoe('d4', 'p4', [{ record_ids: ['sz43'], text: '43' }]), // 正常
       { record_id: 'd5', fields: { 销售单号: [{ record_ids: ['o1'] }], 履约状态: '已交付', 实收金额: 1 } }, // 既非鞋也非配品
@@ -187,10 +174,8 @@ test('缺货号 / 缺配品名称 / 鞋缺尺码：这些件**不产出**（展�
       { record_id: 'p3', fields: { 货号: 'NO-SIZE' } },
       { record_id: 'p4', fields: { 货号: '6A637-7' } },
     ],
-    accessories: [{ record_id: 'a1', fields: {} }],
   });
   const orders = await run(gatewayRecords, {
-    tableDefs: tables({ accessory: { tableId: 'tbl_accessory', fields: { name: '名称' } } }),
     query: { includeItems: true },
   });
 

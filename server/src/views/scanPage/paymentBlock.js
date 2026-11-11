@@ -21,10 +21,8 @@ const optionsHtml = (values, selected) => values
   .map((value) => `<option value="${escapeHtml(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escapeHtml(value)}</option>`)
   .join('');
 
-/** 本单里一行的人话（配品行只有名称；鞋行是 `货号 · N 码`）。 */
-const draftLineText = (t, line) => (line.accessory_record_id
-  ? fillText(t.draftAccessoryItem, { name: line.accessory_name || '' })
-  : fillText(t.draftItem, { itemNo: line.item_no || line.number || '', size: line.size }));
+/** 本单里一行的人话（`货号 · N 码`）。 */
+const draftLineText = (t, line) => fillText(t.draftItem, { itemNo: line.item_no || line.number || '', size: line.size });
 
 /**
  * ⭐⭐ 2026-10-11：**每件实收** —— 提交表单里**一行一双**，行尾一个数字输入框。
@@ -42,7 +40,7 @@ const draftLinesHtml = (write) => {
   // ⭐ 2026-10-14 晚（她：「实收金额下的两行文字说明不需要」）⇒ 空态那句整条退场 ✗
   if (!lines.length) return '';
   const rows = lines.map((line) => {
-    const label = line.accessory_record_id ? t.accessoryLineAmountLabel : t.lineAmountLabel;
+    const label = t.lineAmountLabel;
     const value = line.amount === null || line.amount === undefined ? '' : String(line.amount);
     return `<div class="draft-line">
 <span class="draft-line__text">${escapeHtml(draftLineText(t, line))}</span>

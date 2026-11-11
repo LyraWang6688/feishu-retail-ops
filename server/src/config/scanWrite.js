@@ -64,9 +64,6 @@ const ROUTE = Object.freeze({
 const ACTIONS = Object.freeze({
   // 销售：把当前这一双加进"本单"（**只写本地会话**，一个字都不落业务表）
   addLine: readString(process.env, 'SCAN_WRITE_ACTION_ADD', 'add_line'),
-  // ⭐ 2026-10-11（B）：把**一件配品**加进"本单"（同样只写本地会话）。
-  //    与「再加一双」分成两个动作（表单不同：配品没有尺码、金额单列），
-  //    但落进本单之后是**同一种东西** —— 一行销售明细（`kind` 不同而已）。
   // 销售：提交整单（**这是唯一的写库时机** —— 她说"点【提交】才写"）
   submitOrder: readString(process.env, 'SCAN_WRITE_ACTION_SUBMIT', 'submit_order'),
   // 销售：清空本单（还没提交时撤掉加错的那些）
@@ -186,11 +183,9 @@ const FIELDS = Object.freeze({
   //    🔴 它**没有第二个金额概念**：页面上、表里都只有这一个数
   //      （物理列名 = 「实收金额」，见 `v1BitableSchema.salesDetail.actualAmount`）。
   //    留空 ⇒ **那一列就留空**（2026-10-11 方案甲：**不再读「单价」兜底**，表里不出现假数字）；
-  //    填了 ⇒ 必须 > 0（0 / 非数字照旧拦住，见 `line_amount_invalid` / `accessory_amount_invalid`）。
+  //    填了 ⇒ 必须 > 0（0 / 非数字照旧拦住，见 `line_amount_invalid`）。
   amount: 'amount',
   gift: 'gift',
-  // ⭐ 配品那一行的「其他配品」记录 id（下拉里选中的名称对应的记录）。
-  //    ⚠️ 与 `size` 二选一：配品行没有尺码、鞋行没有配品（见 `config/sellableKinds`）。
   // ⭐⭐ 2026-10-11：**总单层**的两个字段。
   //    ① 每件实收（提交表单里按本单顺序**逐行一个输入框**，同名重复 ⇒ body 里是有序数组，
   //       下标与本单的明细行**一一对应**）；
@@ -338,25 +333,20 @@ const SALE = Object.freeze({
     'payment_row_incomplete', 'payment_amount_invalid',
     // 每件实收：不是数字（**空不再是失败** —— 2026-10-11 方案甲：没填 ⇒ 那一列留空）
     'line_amount_invalid',
-    'accessory_amount_invalid',
   ],
   // 主表「原话」那一列：扫码来的单也留一句人话（谁、扫了什么、几双）。
   originalTextTemplate: readString(
     process.env, 'SCAN_SALE_ORIGINAL_TEXT', '扫码建单（{count} 双）：{products}',
   ),
   giftMaxLength: readInt(process.env, 'SCAN_SALE_GIFT_MAX_LENGTH', 100, { min: 1, max: 500 }),
-  //    30 秒足够短：她在飞书里新加一件配品，最迟半分钟后刷新这一页就能选到。
-  accessoryCacheTtlMs: readInt(process.env, 'SCAN_SALE_ACCESSORY_CACHE_TTL_MS', 30_000,
-    { min: 0, max: 10 * 60 * 1000 }),
   // 金额文本框允许的小数位（两位 = 分）。
   amountDecimals: readInt(process.env, 'SCAN_SALE_AMOUNT_DECIMALS', 2, { min: 0, max: 2 }),
   // ⭐⭐ 2026-10-15（⑰ B 异步 · 她逐字）：
   //   「**单号一出立刻回**…**明细/库存/交付转后台**；失败落「**写入失败**」、
   //    工作台显示「**未完成，可点重试**」；重试**只走 `submitSale` 同一把 `submitKey`**」
-  //   ＋她晚间那句：「**统一文字改成：本单已创建成功（单号），其余文字不需要**，
-  //    **销售和配品都这样**」
+  //   ＋她晚间那句：「**统一文字改成：本单已创建成功（单号），其余文字不需要**」
   //   ⇒ 配置先行：开关 / 那句话 / 后台看门狗超时 **全部可配** ✓（不散写 if-else ✗）。
-  //   ⚠️ 那句话**销售与配品共用**（一处配置 ✓）；`{orderNo}` 占位用**真单号**填 ✓（拿不到就不编 ✗）。
+  //   ⚠️ `{orderNo}` 占位用**真单号**填 ✓（拿不到就不编 ✗）。
   asyncWrite: Object.freeze({
     // ⭐⭐ **2026-10-15（⑨b-2）：默认翻成 `true`** —— 她这才**真正看到异步**（单号先出立刻回）。
     //   为什么现在才翻（历史顺序，别再翻回去 ✗）：
@@ -533,7 +523,6 @@ const TEXTS = Object.freeze({
   // ── 销售表单 ──────────────────────────────────────────────────────────────
   draftHeading: '本单已加 {count} 双',
   draftItem: '{itemNo} · {size} 码',
-  // 配品行在本单里的那一行（没有尺码、没有货号 —— 只有名称）。
   sizeLabel: '尺码',
   sizePlaceholder: '选尺码',
   amountLabel: '实收金额',
@@ -574,16 +563,6 @@ const TEXTS = Object.freeze({
   unpaidMethodLabel: '未收款',
   // ⭐ 2026-10-18：按写计划核对库存步骤时，少请求的行数（人话/日志用）
   stockStepMissingBody: '库存步骤少请求了 {count} 行',
-  // ── ⭐ 2026-10-11（B）：配品（单独一行销售明细；不是校验项）────────────────
-  //    「配品」选的是「其他配品」表里的**名称**；选中后它是**独立的一行销售明细**：
-  //    `配品` 有值、`编号`/`尺码` 留空、**实收金额单列**。
-  accessoryLabel: '配品',
-  // 不选配品时下拉里的那一项（空 value = 不加这一行）。
-  accessoryPlaceholder: '不加配品',
-  // ⭐ 配品行与鞋**同一条规则**（她 2026-10-11 未单独定 → 本轮按"与鞋同规则"实现，
-  //    取舍已写在交付报告里）：它也有「实收金额」，留空同样兜底读「其他配品.单价」。
-  accessoryAmountLabel: '配品实收金额（可不填）',
-  accessoryAmountPlaceholder: '留空按配品单价',
   submitButton: '提交',
   // ⭐ 2026-10-12（她的意见：一单一笔居多）——按钮上直接写**几双**，一眼就知道这一单里有几双。
   //    ⚠️ 主按钮那颗就是"选好尺码直接提交"（一单一笔 = 选尺码 + 提交，**两下**）；
@@ -827,13 +806,7 @@ const TEXTS = Object.freeze({
   amountInvalidBody: '实收金额要填数字（例：399 或 399.5）。',
   // ⛔ 2026-10-11（方案甲）两句"没有单价 ⇒ 请填"已随"读单价兜底"一起退场：
   //    没填实收**不再是失败**（那一列留空，她事后再补）⇒ 留着它们就是**说反了**。
-  // ── 配品（B）：三条人话 ────────────────────────────────────────────────────
-  // ⚠️ 配品**不是校验项**（不选不报错）；下面两句只在"选了配品但缺东西"时才出现。
-  accessoryMissingBody: '请先选一件配品。',
-  accessoryUnknownBody: '这件配品不在「其他配品」里，请刷新这一页重新选。',
-  accessoryAmountInvalidBody: '配品实收金额要填数字（例：39 或 39.9）。',
   // ⭐⭐ 总单层：多笔收款的人话。
-  //    ⚠️ 「每件实收」不是数字时复用上面的 `amountInvalidBody` / `accessoryAmountInvalidBody`
   //      （同一个字段、同一个说法；不为第二个入口再抄一句）。
   paymentAmountInvalidBody: '这次收款金额要填数字（例：100 或 100.5）。',
   quantityInvalidBody: '数量要填 1 ~ {max} 之间的整数。',

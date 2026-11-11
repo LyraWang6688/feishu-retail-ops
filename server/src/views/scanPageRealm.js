@@ -129,8 +129,6 @@ const REALM_EMPTY_TEXT_KEYS = Object.freeze({
   replenish: 'realmEmptyPurchaseBody',
   // ⭐ 2026-10-14 晚：退货用自己的人话 ✓（配品那句随配品一起搬去工作台 ✓）
   purchase_return: 'realmEmptyReturnBody',
-  // ⭐ 2026-10-14：配品独立成领域 `accessory` ⇒ 复用上面那句**配品的人话**（零新增文案 ✓）
-  accessory: 'realmEmptyPurchaseReturnBody',
   // ⭐⭐ 2026-10-14 晚 cut B：`accept: 'realmEmptyAcceptanceBody'` **删掉**（改前逐字即这一行）
   //   依据：`accept` 已从 REALMS 退场 ⇒ 这两个键都不可能再被取到（`realmEmptyHtml` 查不到键时
   //        走它自己的兜底 ✓）；留着 = 一条指向已退场领域的死映射 ✗。对应的文案

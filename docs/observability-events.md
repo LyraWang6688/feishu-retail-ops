@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **446** 个事件。按前缀分组：
+共 **444** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -194,7 +194,6 @@
 | `lark.mvp.health.checked` | 1 | src/routes/larkEvents.js |
 | `lark.private_chat.disabled` | 1 | src/services/larkMvpService.js |
 | `lark.private_chat.notice_failed` | 1 | src/services/larkMvpService.js |
-| `lark.sales.accessory.list_failed` | 1 | src/services/salesEntryService.js |
 | `lark.sales.detail.trade_type.resolve_failed` | 1 | src/services/salesOrderService.js |
 | `lark.sales.group_buy_vouchers.list_failed` | 1 | src/services/larkMvpService.js |
 | `lark.sales.live_inventory.loaded` | 1 | src/services/larkMvpService.js |
@@ -368,7 +367,6 @@
 | `sales.pending_deal_push.purchase_supplier_index_failed` | 1 | src/services/purchasePendingBatchService.js |
 | `sales.read.retry` | 1 | src/services/salesReadRetry.js |
 | `sales.second_delivery.completed` | 1 | src/services/secondDeliveryService.js |
-| `sales.second_delivery.items.accessory_read_failed` | 1 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.items.incomplete` | 1 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.items.index_failed` | 1 | src/services/secondDeliveryService.js |
 | `sales.second_delivery.reminder.order_skipped` | 3 | src/services/secondDeliveryService.js |
