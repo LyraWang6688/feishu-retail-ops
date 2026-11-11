@@ -122,7 +122,7 @@ test('货品 → 货品资料：四张卡 + 货品完善分组', async ({ page }
   await expect(page.getByRole('button', { name: /货品上新/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /货品完善/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /同步样例图/ })).toBeVisible();
-  await expect(page.getByText('配品配置')).toBeVisible();
+  await expect(page.locator('[data-page-kind="product-profile"]:visible').getByRole('heading', { name: '配品配置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /货品完善/ }).click();
   await expect(page.locator('[data-pp-select]')).toBeVisible();
 });
