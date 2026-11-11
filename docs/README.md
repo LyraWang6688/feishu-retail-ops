@@ -12,6 +12,7 @@
 |---|---|
 | [sample-image-drive-sync-2026-11-10.md](sample-image-drive-sync-2026-11-10.md) | ⭐⭐ **样例图 → 云盘自动同步**（业务负责人 2026-11-10 逐字：「样例图写入到云盘…**只有新增的时候**…**那个复选框勾选上**」）：只认 `record_added` · 下载样例图 → 上传云盘文件夹 · 成功后勾「已同步云盘」（幂等）· 命名 `{货号}{颜色}` 多张加序号 · 同名覆盖只删我们命名的文件 · 串行（5 QPS 限制）· AC-SD1..SD11（含「编号为空 ⇒ 重试直到有」）＋ 路由分派 3 条 ＋ **数据配置页「同步存量样例图」按钮卡 = 存量写入**（AC-BF1..5，后台跑/轮询进度） |
 | [README.md](README.md) | 文档索引 |
+| [field-write-map-2026-11-11.md](field-write-map-2026-11-11.md) | ⭐ **「字段清单」退役快照**（2026-11-11）：业务负责人决定删除 Base 表「字段清单」，字段名单唯一来源改为「数据表字段字典」，代码实际契约以 `v1BitableSchema` 的 13 张核心表为准；本文保存删除前 45 条写库字段说明（来源表 / 类型 / 页面 / 写入时点 / payload / 必填） |
 | [iphone-mirroring-e2e-2026-11-07.md](iphone-mirroring-e2e-2026-11-07.md) | ⭐⭐ **用 iPhone 镜像 + 相册二维码做真实端到端测试**（iPhone 镜像里相机不可用）：正确路径 = 工作台 → 销售 → 鞋类 → 扫一扫 → **相册** → 选二维码 → 扫码页；含 Mac 侧 `osascript`/`screencapture`/`cliclick` 坐标换算、录屏拆帧、提交后三重核对、**禁止自动删除手机照片**的边界 |
 | [iphone-mirroring-sales-e2e-runbook-2026-11-08.md](iphone-mirroring-sales-e2e-runbook-2026-11-08.md) | ⭐⭐ **销售扫码页真实 E2E 操作手册**（可直接照做）：镜像窗口坐标/截图、销售路径、尺码选中坑、资金页多笔支付与金额校验、赠品中文剪贴板、销售单号分配/写库时机、`302 login_redirect` 会话过期排查、7 单实测结果与第 8 单失败记录 |
 | [purchase-image-itemno-fix-2026-11-09.md](purchase-image-itemno-fix-2026-11-09.md) | ⭐ **采购单图片缺货号修复**（2026-11-09 真机：群图没有货号）：根因 = 预渲染读 `posting_plan.items`（纯业务键，无 item_no/color），现场兜底读 `task.draft.items`（有）⇒ 生产核实 `plan_missing_item_no=12 / draft_missing_item_no=0`；修法 = 渲染前按「货品+尺码」从 draft 合并展示字段（plan 冻结值优先）；AC-IP5 + 修复前后截图；只影响出图、不写任何表；不部署 |
