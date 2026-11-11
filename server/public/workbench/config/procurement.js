@@ -33,7 +33,7 @@ export const PROCUREMENT_UI = Object.freeze({
     retry: '重新加载',
     replenishEmpty: '近 3 天没有需要补货的货品。',
     newProductsEmpty: '今天还没有新增货品。',
-    categoryMissing: '这个货品的类别还没填（A 男鞋 / B 女鞋），先补类别再采购。',
+    categoryMissing: '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。',
     submitting: '提交中…',
     submit: '提交',
     submitFailed: '提交没成功，请稍后重试。',
