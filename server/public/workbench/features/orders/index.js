@@ -738,7 +738,9 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         }
         state.activeSection = sectionCard.dataset.ordersSection;
         renderList();
-        if (!state.ordersLoaded && !state.ordersLoading) loadOrders();
+        // ⭐ 2026-11-11：点「草稿单」不拉订单列表（占位页不需要数据；以前会闪「刷新中…」，
+        //   飞书读表抖动时还会直接显示 400 报错）。交割单/售后单在更上面就分流 ⇒ 本页零调用。
+        if (state.activeSection !== 'draft' && !state.ordersLoaded && !state.ordersLoading) loadOrders();
         return;
       }
       const pickSupplier = event.target.closest('[data-action="pick-supplier"]');

@@ -146,6 +146,22 @@ test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) 
 // ⭐ 2026-11-08（业务负责人：「草稿页需要和其他占位前端一致」＋ HTML 批注「返回按钮不需要，删除」）：
 //   草稿单那片占位页 = **和 货品→数据配置 同一套占位卡**（虚线卡 + 「待建设」小标签），
 //   且**不再有**「← 返回订单列表」那颗按钮。
+// ⭐ 2026-11-11（业务负责人真机）：点「草稿单」会闪「刷新中…」，飞书读表抖动时还会直接显示
+//   `Request failed with status code 400`。根因 = 点 section 卡会顺手 loadOrders()。
+//   草稿单只是占位卡 ⇒ 点它**不许**发 /api/workbench/sales/orders 请求、也不许出现「刷新中…」。
+test('点「草稿单」不触发订单刷新（0 次 /sales/orders 请求、不出现「刷新中…」）', async ({ page }) => {
+  const orderRequests = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/api/workbench/sales/orders') orderRequests.push(request.url());
+  });
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '订单列表', exact: true }).click();
+  await page.getByRole('button', { name: /草稿单/ }).click();
+  await expect(page.locator('[data-placeholder="draft"]')).toBeVisible();
+  await expect(page.getByText('刷新中…')).toHaveCount(0);
+  expect(orderRequests, '草稿单占位页不需要订单数据').toHaveLength(0);
+});
+
 test('切走再回到订单列表：回到三张入口卡，不保留草稿单占位', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
