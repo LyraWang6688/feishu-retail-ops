@@ -120,7 +120,7 @@ function bindMainTabClicks() {
       //      （`workbenchScanEntry` / `workbenchMainTitle` 等）⇒ 一个属性都不加 ✓ 判据不放宽 ✓
       //    ⚠️ 一次**点击**记一条（服务端按窗口判 `ui.tap.repeated`）—— 埋点失败静默 ✓
       trackTap(`tab:${tab.dataset.module}`);
-      activateModule(tab.dataset.module);
+      activateModule(tab.dataset.module, { userInitiated: true });
     });
   });
 }
@@ -161,7 +161,12 @@ function installPanelFluency(container, moduleId) {
   scan();
 }
 
-function activateModule(moduleId) {
+const dispatchWorkbenchEvent = (name, detail = {}) => {
+  try { window.dispatchEvent(new CustomEvent(name, { detail })); } catch (error) { /* 老 WebView */ }
+};
+
+function activateModule(moduleId, { userInitiated = false } = {}) {
+  if (userInitiated) dispatchWorkbenchEvent('workbench:view-change', { moduleId });
   showPageError('');
   document.querySelectorAll('.main-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.module === moduleId));
   mounted.forEach((container, id) => container.classList.toggle('hidden', id !== moduleId));
@@ -173,6 +178,7 @@ function activateModule(moduleId) {
   host.append(container);
   mounted.set(moduleId, container);
   module.mount(container);
+  dispatchWorkbenchEvent('workbench:module-mounted', { moduleId });
   fluency?.realmEntered(moduleId);
   installPanelFluency(container, moduleId);
 }

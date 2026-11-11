@@ -71,7 +71,7 @@ export function createProductProfileModule() {
       input?.addEventListener('input', () => {
         clearTimeout(timer);
         const q = input.value.trim();
-        if (q) showToast(T.searchingToast);
+        if (q) showToast(T.searchingToast, { sticky: true });
         timer = setTimeout(() => loadSearch(host, q), 250);
       });
       host.querySelector('[data-pp-results]')?.addEventListener('click', (event) => {

@@ -23,35 +23,64 @@ function currentTap() {
   };
 }
 
+/**
+ * 读请求生命周期事件：供「提交回执 toast」等页面级反馈知道**首屏数据是否还在读**。
+ * 只有 GET 计入，写请求不参与；事件只给页面内用，不带任何业务数据。
+ */
+let pendingReads = 0;
+const notifyReadState = (name) => {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  try {
+    window.dispatchEvent(new CustomEvent(name, { detail: { pending: pendingReads } }));
+  } catch (error) { /* 老 WebView 不支持 CustomEvent 时不影响请求本身 */ }
+};
+
 async function request(path, options = {}) {
   const method = options.method || 'GET';
-  const url = new URL(path, window.location.origin);
-  if (method === 'GET') url.searchParams.set('_', Date.now());
-  const response = await fetch(url, {
-    credentials: 'same-origin',
-    cache: 'no-store',
-    ...options,
-    headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {}),
-    },
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok || body.success === false) {
-    // 会话过期（401 + auth_required）⇒ 自动回飞书登录，登录后回到当前页。
-    // 否则页面只会把 401 当成业务错误，扫一扫显示「扫码没有成功」。
-    if (response.status === 401 && body.auth_required === true) {
-      const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
-      const loginUrl = `/api/auth/feishu/start?return_to=${returnTo}`;
-      if (typeof window.location.assign === 'function') window.location.assign(loginUrl);
-      else window.location.href = loginUrl;
-    }
-    throw new ApiError(body.error || `请求失败（${response.status}）`, {
-      status: response.status,
-      requestId: response.headers.get('x-request-id') || '',
-    });
+  const isRead = method === 'GET';
+  if (isRead) {
+    pendingReads += 1;
+    notifyReadState('workbench:reads-start');
   }
-  return body;
+  let finished = false;
+  const finishRead = () => {
+    if (!isRead || finished) return;
+    finished = true;
+    pendingReads = Math.max(0, pendingReads - 1);
+    if (pendingReads === 0) notifyReadState('workbench:reads-idle');
+  };
+  try {
+    const url = new URL(path, window.location.origin);
+    if (isRead) url.searchParams.set('_', Date.now());
+    const response = await fetch(url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      ...options,
+      headers: {
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.success === false) {
+      // 会话过期（401 + auth_required）⇒ 自动回飞书登录，登录后回到当前页。
+      // 否则页面只会把 401 当成业务错误，扫一扫显示「扫码没有成功」。
+      if (response.status === 401 && body.auth_required === true) {
+        const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+        const loginUrl = `/api/auth/feishu/start?return_to=${returnTo}`;
+        if (typeof window.location.assign === 'function') window.location.assign(loginUrl);
+        else window.location.href = loginUrl;
+      }
+      throw new ApiError(body.error || `请求失败（${response.status}）`, {
+        status: response.status,
+        requestId: response.headers.get('x-request-id') || '',
+      });
+    }
+    finishRead();
+    return body;
+  } finally {
+    finishRead();
+  }
 }
 
 export const api = {

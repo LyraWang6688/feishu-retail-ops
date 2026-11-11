@@ -38,7 +38,7 @@ test('AC-IA3 批量调整只保留当季 / 库存两个入口，异常编号可�
 test('AC-IA4 批量调整：品类与库存并行读取 + 轻量 toast 提示', () => {
   const src = source();
   assert.match(src, /Promise\.all\(\[categoriesPromise, loadRows\(\)\]\)/, '品类与库存必须并行');
-  assert.ok(src.includes("showToast(INVENTORY_MANUAL_TEXTS.batchLoading)"), '点击后立即提示读取中');
+  assert.ok(src.includes("showToast(INVENTORY_MANUAL_TEXTS.batchLoading, { sticky: true })"), '点击后立即提示读取中，并在数据读完后收起');
   assert.match(configSource(), /batchLoading: '正在读取品类和库存…'/, '提示文案在配置里');
 });
 
