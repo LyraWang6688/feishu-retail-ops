@@ -70,7 +70,9 @@ const createInventoryAdjustmentRouter = (options = {}) => {
         ownerOpenId: req.workbenchUser?.open_id || '', operatorName: req.workbenchUser?.name || '' });
       void jobs.run({
         jobId,
-        run: () => resolvePairAdjustment().setSeason({ category, season }),
+        run: () => resolvePairAdjustment().setSeason({
+          category, season, requestId, operatorOpenId: req.workbenchUser?.open_id,
+        }),
         classifyResult: () => ({ ok: true, retryable: false, message: '', code: '' }),
       }).catch(() => {});
       return res.status(202).json({ success: true, queued: true, job_id: jobId });

@@ -27,11 +27,12 @@ test('AC-IA2 单双调整直接调库存扫一扫，不再有中间页/三个按
 
 test('AC-IA3 批量调整只保留当季 / 库存两个入口，异常编号可跳到单双调整', () => {
   const html = source();
-  assert.ok(html.includes('data-action="batch-check"'), '库存检查入口');
+  assert.ok(html.includes('data-action="season-set"'), '当季/库存入口');
+  assert.ok(html.includes('data-season="false"'), '库存 = 转冻结入口');
   assert.ok(html.includes('data-fix='), '异常编号必须有调整按钮');
   assert.ok(html.includes('data-manual="batch"'), '批量调整入口卡');
   assert.ok(html.includes('data-save'), '单双页有保存按钮');
-  assert.ok(html.includes('data-action="season-toggle"'), '当季批量入口');
+  assert.ok(html.includes('data-season="true"'), '当季 = 转释放入口');
   assert.ok(html.includes('/label-print/jobs'), '保存后可打印');
 });
 

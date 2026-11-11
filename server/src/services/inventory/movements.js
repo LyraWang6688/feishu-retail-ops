@@ -28,7 +28,7 @@ const MOVEMENT_PURCHASE_INCREASE = 'STOCK_PURCHASE_INCREASE';
 // 行为本身（名称「采购减少」、方向=减少、已启用）由她在「行为管理」里维护并已核实；
 // 这里只声明引擎语义。
 const MOVEMENT_PURCHASE_DECREASE = 'STOCK_PURCHASE_DECREASE';
-const BEHAVIOR_SAMPLE_PROMOTION = 'STOCK_DOORBOX_TO_SAMPLE';
+const BEHAVIOR_SAMPLE_PROMOTION = 'STOCK_TO_SAMPLE';
 
 // 售后（退货 / 赔货 / 换货出货）用到的三个行为编码。
 // 它们和销售、采购一样是「引擎语义」声明：方向、消耗哪些状态的实时库存、
@@ -64,8 +64,8 @@ const ADJUSTMENT_BEHAVIORS = Object.freeze({
   //    ⚠️ 待确认：新名字/新编码字面指向「仓库 → 门盒」，但 `UNFREEZE_STATE_TRANSITION`
   //    目前仍允许回「门盒 / 样品」两种（工作台也仍让她选）。若她确实要收窄成只回门盒，
   //    要一并改 `UNFREEZE_STATE_TRANSITION` 与工作台入口——**确认前不动配置**。
-  UNFREEZE: 'STOCK_RELEASE_TO_DOOR_BOX',
-  SAMPLE_TO_DOORBOX: 'STOCK_SAMPLE_TO_DOORBOX',
+  UNFREEZE: 'STOCK_RELEASE',
+  SAMPLE_TO_DOORBOX: 'STOCK_TO_DOORBOX',
   // 门盒转样品＝补样品链路已经在用的同一个编码（见 BEHAVIOR_SAMPLE_PROMOTION），
   // 这里登记的是**同一个行为**，不是新行为：一边是"卖出去一双样品后补回来"，
   // 一边是"人工把一双门盒挪成样品"，都改「所属状态」门盒→样品。

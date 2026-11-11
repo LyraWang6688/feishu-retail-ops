@@ -22,10 +22,15 @@ const fakeInventory = ({ counts = [], records = [] } = {}) => {
       table: (key) => ({
         fields: {
           category: '品类', season: '当季', product: '编号', size: '尺码', state: '所属状态',
+          operator: '操作人', behavior: '库存行为', quantityChange: '变动数量', stockKey: '库存键',
         },
       }),
       listAll: async () => effectiveRecords,
       update: async (key, id, values) => { calls.push({ type: 'update', key, id, values }); },
+      createBatch: async (key, rows) => {
+        calls.push({ type: 'ledger', key, rows });
+        return rows.map((row, index) => ({ recordId: `ledger_${index}` }));
+      },
     },
     sizeReferences: {
       resolveLinkedCell: async (cell) => {
@@ -38,6 +43,7 @@ const fakeInventory = ({ counts = [], records = [] } = {}) => {
     },
     candidatesFromLiveRecords: async () => counts,
     applyChange: async (input) => { calls.push({ type: 'change', ...input }); },
+    resolveStockBehavior: async (code) => ({ recordId: `behavior_${code}` }),
   };
 };
 
@@ -74,6 +80,9 @@ test('AC-PAIR-1b 总数不变、只改样品→门盒：原地改状态，不增
   assert.equal(result.changed, 1);
   assert.equal(inventory.calls.filter((call) => call.type === 'change').length, 0, '不调用 applyChange');
   assert.deepEqual(inventory.calls.filter((call) => call.type === 'update').map((call) => [call.id, call.values.state]), [['l2', '门盒']]);
+  const ledger = inventory.calls.find((call) => call.type === 'ledger');
+  assert.ok(ledger, '状态调整必须写库存流水');
+  assert.deepEqual(ledger.rows[0].behavior, ['behavior_STOCK_TO_DOORBOX']);
 });
 
 test('AC-PAIR-1c 状态为空的行也能原地改成门盒', async () => {
@@ -90,6 +99,9 @@ test('AC-PAIR-1c 状态为空的行也能原地改成门盒', async () => {
   });
   assert.equal(result.changed, 1);
   assert.deepEqual(inventory.calls.filter((call) => call.type === 'update').map((call) => [call.id, call.values.state]), [['l1', '门盒']]);
+  const ledger = inventory.calls.find((call) => call.type === 'ledger');
+  assert.ok(ledger, '空状态改成门盒也要写库存流水');
+  assert.deepEqual(ledger.rows[0].behavior, ['behavior_STOCK_TO_DOORBOX']);
 });
 
 test('AC-PAIR-2 数量/尺码/状态差异逐项走 applyChange（增/减）', async () => {
@@ -119,11 +131,25 @@ test('AC-PAIR-2 数量/尺码/状态差异逐项走 applyChange（增/减）', a
   assert.ok(result.changed >= 2, '数量调整后还会补状态标签');
 });
 
+test('AC-PAIR-3b 批量库存：season=false 写 STOCK_FREEZE 流水', async () => {
+  const inventory = fakeInventory({
+    records: [
+      { record_id: 'l1', fields: { 品类: '休闲鞋', 当季: true, 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }] } },
+    ],
+  });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  const result = await service.setSeason({ category: '休闲鞋', season: false });
+  assert.equal(result.updated, 1);
+  const ledger = inventory.calls.find((call) => call.type === 'ledger');
+  assert.ok(ledger);
+  assert.deepEqual(ledger.rows[0].behavior, ['behavior_STOCK_FREEZE']);
+});
+
 test('AC-PAIR-3 批量当季：只更新当前品类的实时库存', async () => {
   const records = [
-    { record_id: 'l1', fields: { 品类: '休闲鞋', 当季: false } },
-    { record_id: 'l2', fields: { 品类: '休闲鞋', 当季: true } },
-    { record_id: 'l3', fields: { 品类: '单鞋', 当季: false } },
+    { record_id: 'l1', fields: { 品类: '休闲鞋', 当季: false, 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }] } },
+    { record_id: 'l2', fields: { 品类: '休闲鞋', 当季: true, 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }] } },
+    { record_id: 'l3', fields: { 品类: '单鞋', 当季: false, 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }] } },
   ];
   const inventory = fakeInventory({ records });
   const service = new InventoryPairAdjustmentService({ inventory });
@@ -132,4 +158,9 @@ test('AC-PAIR-3 批量当季：只更新当前品类的实时库存', async () =
   assert.ok(inventory.calls.some((call) => call.type === 'update' && call.id === 'l1'));
   assert.ok(!inventory.calls.some((call) => call.id === 'l2'));
   assert.ok(!inventory.calls.some((call) => call.id === 'l3'));
+  const ledger = inventory.calls.find((call) => call.type === 'ledger');
+  assert.ok(ledger, '当季调整必须写库存流水');
+  assert.equal(ledger.rows.length, 1);
+  assert.deepEqual(ledger.rows[0].behavior, ['behavior_STOCK_RELEASE']);
+  assert.equal(ledger.rows[0].quantityChange, 0);
 });
