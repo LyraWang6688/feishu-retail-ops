@@ -68,3 +68,12 @@ test('AC-IA6 状态调整按问题分组，可按问题筛选，货号之间有�
     assert.ok(cfg.includes(`${key}:`), `配置缺少 ${key}`);
   }
 });
+
+
+test('AC-IA7 添加尺码后保留新行；删除行也不重置编辑器', () => {
+  const src = source();
+  assert.ok(src.includes("state.editorRows.push({ size: '', state: '门盒', quantity: 1 }); renderEditor();"), '添加尺码必须只重绘编辑器，不能重新从库存重建');
+  assert.ok(src.includes('state.editorRows.splice(Number(btn.dataset.remove), 1);') && src.includes('      renderEditor();'), '删除后也只重绘编辑器');
+  assert.ok(src.includes('function renderEditor()'), '有独立编辑器渲染函数');
+  assert.ok(src.includes('state.editorRows = productRows(productId).map'), '只有进入单双调整时才从库存初始化');
+});

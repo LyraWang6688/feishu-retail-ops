@@ -44,11 +44,9 @@ export function createInventoryAdjustmentModule() {
     return state.rows.filter((row) => row.product_record_id === productId);
   }
 
-  function renderSingle(productId) {
-    state.productId = productId;
-    state.editorRows = productRows(productId).map((row) => ({ ...row }));
+  function renderEditor() {
     const first = state.editorRows[0] || {};
-    const label = [first.product_number, first.color, first.category].filter(Boolean).join('｜') || productId;
+    const label = [first.product_number, first.color, first.category].filter(Boolean).join('｜') || state.productId;
     const host = state.host;
     const body = $(host, '[data-view="single-rows"]');
     body.innerHTML = state.editorRows.length ? state.editorRows.map((row, index) => `
@@ -65,9 +63,15 @@ export function createInventoryAdjustmentModule() {
     }));
     body.querySelectorAll('[data-remove]').forEach((btn) => btn.addEventListener('click', () => {
       state.editorRows.splice(Number(btn.dataset.remove), 1);
-      renderSingle(productId);
+      renderEditor();
     }));
     show('single');
+  }
+
+  function renderSingle(productId) {
+    state.productId = productId;
+    state.editorRows = productRows(productId).map((row) => ({ ...row }));
+    renderEditor();
   }
 
   function fitRowsForProduct(productId) {
@@ -251,7 +255,7 @@ export function createInventoryAdjustmentModule() {
       host.querySelectorAll('[data-back]').forEach((btn) => btn.addEventListener('click', () => show('cards')));
       host.querySelector('[data-manual="single"]').addEventListener('click', () => { void scanSingle(); });
       host.querySelector('[data-manual="batch"]').addEventListener('click', () => { void enterBatch().catch((error) => showPageError(describeError(error))); });
-      host.querySelector('[data-add-size]').addEventListener('click', () => { state.editorRows.push({ size: '', state: '门盒', quantity: 1 }); renderSingle(state.productId); });
+      host.querySelector('[data-add-size]').addEventListener('click', () => { state.editorRows.push({ size: '', state: '门盒', quantity: 1 }); renderEditor(); });
       host.querySelector('[data-save]').addEventListener('click', () => { void savePairs(); });
       host.querySelector('[data-action="season-toggle"]').addEventListener('click', () => { void toggleSeason(); });
       host.querySelectorAll('[data-print]').forEach((btn) => btn.addEventListener('click', () => { void printSaved(btn.dataset.print === 'yes'); }));
