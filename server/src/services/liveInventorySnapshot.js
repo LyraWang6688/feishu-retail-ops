@@ -30,6 +30,7 @@
  */
 const { logInfo, logWarn } = require('../utils/logger');
 const { SCAN_PAGE } = require('../config/scanPage');
+const { invalidateConfigTable } = require('./configTableCache');
 
 const DEFAULT_TABLE_KEY = 'liveInventory';
 
@@ -265,6 +266,8 @@ const invalidateLiveInventorySnapshot = (reason = 'write', options = {}) => {
   //   把库存快照一起作废等于让它白重拉一次两万行（每改一次价就一次）。
   //   ⚠️ **不传 tableKey 时行为与改动前逐字相同**（作废全部）—— 库存写入口就是这么调的。
   const wanted = String(options?.tableKey || '').trim();
+  // 工作台的实时库存配置快照与扫码快照用同一份失效信号。
+  if (!wanted || wanted === DEFAULT_TABLE_KEY) invalidateConfigTable(DEFAULT_TABLE_KEY);
   let hit = 0;
   for (const snapshot of [...registry]) {
     if (wanted && snapshot.tableKey !== wanted) continue;

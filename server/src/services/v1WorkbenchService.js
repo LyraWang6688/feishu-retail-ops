@@ -101,6 +101,16 @@ const listAllWithRetry = async (gateway, tableKey, requestId) => {
   }
 };
 
+/**
+ * 「实时库存」读统一走配置表快照（5 分钟 TTL，record_changed/写操作失效）。
+ * 库存状态页、品类清单、盘点调整共用同一份，不再每次整表读飞书。
+ */
+const readLiveInventory = (gateway, requestId) => getConfigRows({
+  gateway,
+  tableKey: 'liveInventory',
+  loader: () => listAllWithRetry(gateway, 'liveInventory', requestId),
+});
+
 const relationLabel = (schema, tableKey, recordsById, ids, semanticKey) => {
   const labels = ids.map((id) => asText(schema, tableKey, recordsById.get(id), semanticKey)).filter(Boolean);
   return labels.join('、');

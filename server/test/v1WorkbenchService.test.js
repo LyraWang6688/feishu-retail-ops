@@ -104,3 +104,25 @@ test('实时库存走统一缓存：5 分钟内的第二次读取不再打飞书
   await service.getLiveInventory();
   assert.equal(liveCalls, 1, 'TTL 内第二次读取必须命中缓存');
 });
+
+
+test('实时库存读复用配置表快照：同一张表第二次不再整表读', async () => {
+  resetConfigTableCache();
+  let liveCalls = 0;
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listAll: async (key) => {
+      if (key === 'liveInventory') {
+        liveCalls += 1;
+        return [{ record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_36'] }], 所属状态: '门盒' } }];
+      }
+      if (key === 'sizeManagement') return SIZES;
+      if (key === 'product') return [{ record_id: 'p1', fields: { 编号: '93827黑' } }];
+      return [];
+    },
+  };
+  const service = createWorkbenchService(gateway);
+  await service.getLiveInventory();
+  await service.getLiveInventory();
+  assert.equal(liveCalls, 1, '同一份实时库存快照只读一次');
+});
