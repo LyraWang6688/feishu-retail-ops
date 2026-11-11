@@ -21,7 +21,7 @@ const stripComments = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-test('AC-E1 标签打印子页：一级标签二维码/销售凭证，标签二维码展开扫码打印+批量打印', () => {
+test('AC-E1 标签打印子页：一级标签二维码/销售凭证，点标签二维码原地变动作按钮', () => {
   const domains = readWorkbench('config/domains.js');
   const start = domains.indexOf("id: 'product-labels'");
   const end = domains.indexOf("id: 'product-info-config'");
@@ -44,8 +44,11 @@ test('AC-E1 标签打印子页：一级标签二维码/销售凭证，标签二�
   assert.match(block, /href: LABEL_BATCH_FORM_URL/, '「批量打印」卡 = 飞书表单（URL 只从 links.js 引）');
 
   const hub = readWorkbench('features/labels/hub.js');
-  assert.match(hub, /data-label-card/, '一级卡片可进入二级');
-  assert.match(hub, /cardsHtml\(card\.actions/, '二级动作复用统一卡片模板');
+  assert.match(hub, /data-label-card/, '一级卡片可点击');
+  assert.match(hub, /candidate-card-actions/, '选中后原卡片位置变成动作按钮组');
+  assert.match(hub, /candidate-action/, '复用售后单动作按钮样式');
+  assert.match(hub, /actionsHtml\(card\)/, '选中卡片原地换动作，不进入第二页');
+  assert.equal(/data-label-back/.test(hub), false, '不需要返回按钮');
   assert.match(hub, /PLACEHOLDER_STATUS/, '销售凭证占位使用统一占位标记');
 });
 
