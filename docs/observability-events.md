@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **459** 个事件。按前缀分组：
+共 **455** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -558,12 +558,8 @@
 | `workbench.douyin.voucher_catalog_sync.failed` | 1 | src/routes/workbench/douyin.js |
 | `workbench.inventory.categories_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
 | `workbench.inventory.categories_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
-| `workbench.inventory.products_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
-| `workbench.inventory.products_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
 | `workbench.inventory.query_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
 | `workbench.inventory.query_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
-| `workbench.inventory.stock_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
-| `workbench.inventory.stock_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
 | `workbench.label_print.scan.rejected` | 1 | src/routes/labelPrintQueue.js |
 | `workbench.labels.cache_hit` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.cache_miss` | 1 | src/services/labelPrintService.js |
