@@ -86,22 +86,14 @@ export const AFTER_SALES_PAGE = {
   toastExchangeDone: '信息提交成功',
   // 读不到「支付方式管理」时的人话
   paymentMethodsFailed: '退款方式读取失败，请稍后重试',
-  // 赔货：只占位（按钮灰置不可点）
-  compensationDisabled: '赔货暂未开放',
   // 原型用的兜底：退款方式 / 差价方式（真实运行读「支付方式管理」统一配置）
   demoPaymentMethods: ['微信扫码', '微信转账', '现金', '支付宝', '工商银行'],
   // 原型用的兜底：换款式模拟扫到的新鞋（真实运行走销售扫码货品页）
   demoNewItem: { itemNo: 'XHB8096', color: '全黑', price: 190 },
 };
 
-/**
- * 售后动作 —— 顺序就是她定的**水平顺序**：换货 · 退货 · 赔货。
- * ⭐ 2026-10-29：按钮上**只有这三个词**（她：「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」）
- *   ⇒ 原先那行解释小字（hint）已删掉，不留在配置里。
- */
+/** 售后动作：换货 · 退货（赔货无前端入口，后端动作已删除）。 */
 export const AFTER_SALES_ACTIONS = [
   { value: 'exchange', label: '换货' },
   { value: 'return', label: '退货' },
-  // 赔货：只做展示占位 —— 灰置、不可点（业务负责人 2026-10-29：「先不开发任何功能」）。
-  { value: 'compensation', label: '赔货', disabled: true },
 ];
