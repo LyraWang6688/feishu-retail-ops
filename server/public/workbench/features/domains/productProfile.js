@@ -17,7 +17,7 @@ const cardsHtml = () => `
     <button class="entry-card" type="button" data-pp-view="new"><span class="icon">🆕</span><h3>${esc(T.newTitle)}</h3></button>
     <button class="entry-card" type="button" data-pp-view="complete"><span class="icon">📝</span><h3>${esc(T.completeTitle)}</h3></button>
     <button class="entry-card" type="button" data-domain-action="sample-image-sync"><span class="icon">🖼️</span><h3>${esc(T.sampleTitle)}</h3></button>
-    <button class="entry-card" type="button" data-pp-view="accessory"><span class="icon">🛒</span><h3>${esc(T.accessoryTitle)}</h3></button>
+    <a class="entry-card" href="${esc(T.accessoryTableUrl)}" rel="noopener"><span class="icon">🛒</span><h3>${esc(T.accessoryTitle)}</h3></a>
   </div>
   <p class="placeholder-note" data-view="domain-action-note"></p>`;
 
@@ -43,12 +43,6 @@ export const productProfilePageHtml = () => `
       </label>
       <div data-pp-complete-list></div>
     </div>
-    <div data-pp="accessory" hidden>
-      <div class="pp-head">${backBtn('accessory')}<h2>${esc(T.accessoryTitle)}</h2></div>
-      <p class="pp-note">${esc(T.accessoryHint)} · <a class="pp-small-btn" data-pp-accessory-link href="${esc(T.accessoryTableUrl)}" target="_blank" rel="noopener">${esc(T.accessoryOpenExternal)}</a></p>
-      <iframe class="pp-accessory-frame" data-pp-accessory title="${esc(T.accessoryTitle)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
-      <p class="pp-note">${esc(T.accessoryEmbedNote)}</p>
-    </div>
   </div>`;
 
 export function createProductProfileModule() {
@@ -60,12 +54,7 @@ export function createProductProfileModule() {
         host.querySelector('[data-pp="cards"]').hidden = name !== 'cards';
         host.querySelector('[data-pp="new"]').hidden = name !== 'new';
         host.querySelector('[data-pp="complete"]').hidden = name !== 'complete';
-        host.querySelector('[data-pp="accessory"]').hidden = name !== 'accessory';
         if (name === 'complete') loadComplete(host);
-        if (name === 'accessory') {
-          const frame = host.querySelector('[data-pp-accessory]');
-          if (frame && !frame.getAttribute('src')) frame.setAttribute('src', T.accessoryTableUrl);
-        }
       };
       host.addEventListener('click', (event) => {
         const view = event.target.closest?.('[data-pp-view]')?.dataset.ppView;

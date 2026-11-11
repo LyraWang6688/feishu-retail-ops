@@ -52,7 +52,7 @@ export const ACCESSORY_SALE_FORM_URL =
  * ⚠️ 若飞书 Base 返回 X-Frame-Options / CSP 拦截，页面会显示「在飞书中打开」兜底链接。
  */
 export const ACCESSORY_TABLE_URL =
-  'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=tblxEeiXYAeUF4gH&view=vewsk5LJgq&hideHeader=1&hideSidebar=1';
+  'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=tblxEeiXYAeUF4gH&view=vewsk5LJgq';
 
 /**
  * ⭐⭐ 2026-11-09（业务负责人）：**批量打印改成「填飞书表单」** ——
