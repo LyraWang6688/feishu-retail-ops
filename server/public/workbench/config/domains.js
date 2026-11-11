@@ -190,22 +190,34 @@ export const DOMAIN_TABS = [
         //   ② 「**选择编号打印**那个页面也不需要了，可以直接删除，因为点击批量打印的时候，
         //      只选择一个就可以了」⇒ 单品打印的入口 / 页面 / 前端渲染 / 后端批量查询端点**全部删除**；
         //   ③ 2026-11-09 更早一句：「入口就保持这 3 个卡片，其余都删除」—— 现在「选择编号打印」
-        //      也退了 ⇒ 这一页只剩**两颗卡**：扫码打印 · 批量打印（表单）。
+        //      也退了；2026-11-12 再加一层：一级「标签二维码 / 销售凭证」，标签二维码下才是扫码打印 · 批量打印。
         //   ⚠️ 旧的筛选批量页 / 编号选择器 / `targetTemplate` 都已物理删除，不再有表单入口。
-        kind: 'links',
+        kind: 'label-print',
+        // 一级两张卡：标签二维码 / 销售凭证（占位）。
+        // 标签二维码点进去才是「扫码打印 / 批量打印」两个动作；卡片模板统一用 `.entry-card`。
         cards: [
           {
-            icon: '📷',
-            // 「扫码打印」：进标签打印页的**聚焦屏**（`scan=1` ⇒ 进页面就弹扫一扫，扫到直接排进队列）。
-            title: '扫码打印',
-            href: '/workbench/label-print.html?scan=1',
+            id: 'label-qr',
+            icon: '🏷️',
+            title: '标签二维码',
+            actions: [
+              {
+                icon: '📷',
+                title: '扫码打印',
+                href: '/workbench/label-print.html?scan=1',
+              },
+              {
+                icon: '🖨️',
+                title: '批量打印',
+                href: LABEL_BATCH_FORM_URL,
+              },
+            ],
           },
           {
-            icon: '🖨️',
-            // 「批量打印」= 飞书表单（URL 唯一来源 = `config/links.js` 的 `LABEL_BATCH_FORM_URL`）。
-            // 表单写「标签打印」表；后端监听新增记录自动打印（另一条链路）。
-            title: '批量打印',
-            href: LABEL_BATCH_FORM_URL,
+            id: 'sales-voucher',
+            icon: '🧾',
+            title: '销售凭证',
+            placeholder: true,
           },
         ],
       },

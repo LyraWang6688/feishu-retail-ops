@@ -21,25 +21,32 @@ const stripComments = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-test('AC-E1 标签打印子页只剩两颗卡：扫码打印 + 批量打印（飞书表单），没有任何入口表单', () => {
+test('AC-E1 标签打印子页：一级标签二维码/销售凭证，标签二维码展开扫码打印+批量打印', () => {
   const domains = readWorkbench('config/domains.js');
   const start = domains.indexOf("id: 'product-labels'");
   const end = domains.indexOf("id: 'product-info-config'");
   assert.ok(start !== -1 && end > start, '`config/domains.js` 里要能找到 product-labels 子页');
   const block = stripComments(domains.slice(start, end));
 
-  assert.match(block, /kind: 'links'/, '这一页是纯卡片（旧的 `kind: \'entry\'` 表单页已删）');
-  assert.equal(/targetTemplate|numberPicker|fieldLabel|buttonLabel|placeholder/.test(block), false,
+  assert.match(block, /kind: 'label-print'/, '标签打印是两级卡片页');
+  assert.equal(/targetTemplate|numberPicker|fieldLabel|buttonLabel/.test(block), false,
     '旧的「选择编号打印」入口字段（落点模板 / 编号选择器 / 输入框）必须删干净');
-  assert.equal((block.match(/title: '/g) || []).length, 2, '只有两颗卡');
+  assert.match(block, /title: '标签二维码'/);
+  assert.match(block, /title: '销售凭证'/);
   assert.match(block, /title: '扫码打印'/);
   assert.match(block, /href: '\/workbench\/label-print\.html\?scan=1'/);
   assert.match(block, /title: '批量打印'/);
+  assert.match(block, /placeholder: true/, '销售凭证是占位卡');
 
   const links = readWorkbench('config/links.js');
   const formUrl = (links.match(/LABEL_BATCH_FORM_URL =\s*\n?\s*'([^']+)'/) || [])[1];
   assert.ok(formUrl, '`config/links.js` 里要有批量打印表单 URL（唯一来源）');
   assert.match(block, /href: LABEL_BATCH_FORM_URL/, '「批量打印」卡 = 飞书表单（URL 只从 links.js 引）');
+
+  const hub = readWorkbench('features/labels/hub.js');
+  assert.match(hub, /data-label-card/, '一级卡片可进入二级');
+  assert.match(hub, /cardsHtml\(card\.actions/, '二级动作复用统一卡片模板');
+  assert.match(hub, /PLACEHOLDER_STATUS/, '销售凭证占位使用统一占位标记');
 });
 
 test('AC-E2 删掉的东西真的不在了（文件 / 端点 / 页面引用 / 扫码页旧链接）', () => {
