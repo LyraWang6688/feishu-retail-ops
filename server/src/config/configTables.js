@@ -14,24 +14,27 @@
  *    过期后下一次读取重读；读失败用 lastGood（并告警）。
  */
 const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+// ⭐ 2026-11-11（业务负责人）：配置表缓存以 record_changed 即时失效为主；TTL 只做极端兜底，统一 24 小时。
+const CONFIG_TTL_MS = 24 * HOUR;
 
 const CONFIG_TABLES = Object.freeze({
-  paymentMethod: Object.freeze({ ttlMs: 30 * MINUTE, label: '支付方式管理' }),
-  sizeManagement: Object.freeze({ ttlMs: 30 * 1000, label: '尺码管理' }),
-  behavior: Object.freeze({ ttlMs: 30 * MINUTE, label: '行为管理' }),
-  accessory: Object.freeze({ ttlMs: 30 * MINUTE, label: '其他配品' }),
-  supplier: Object.freeze({ ttlMs: 30 * MINUTE, label: '供应商管理' }),
-  groupBuyVoucher: Object.freeze({ ttlMs: 30 * MINUTE, label: '团购券管理' }),
-  product: Object.freeze({ ttlMs: 30 * MINUTE, label: '货品信息' }),
-  color: Object.freeze({ ttlMs: 30 * MINUTE, label: '颜色管理' }),
-  category: Object.freeze({ ttlMs: 30 * MINUTE, label: '品类管理' }),
+  paymentMethod: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '支付方式管理' }),
+  sizeManagement: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '尺码管理' }),
+  behavior: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '行为管理' }),
+  accessory: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '其他配品' }),
+  supplier: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '供应商管理' }),
+  groupBuyVoucher: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '团购券管理' }),
+  product: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '货品信息' }),
+  color: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '颜色管理' }),
+  category: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '品类管理' }),
 });
 
 /** record_changed 需要失效的表（顺序稳定，日志/测试可读）。 */
 const CONFIG_TABLE_KEYS = Object.freeze(Object.keys(CONFIG_TABLES));
 
 /** 未知表（测试/未来扩展）用默认 30 分钟；生产配置表应显式登记。 */
-const DEFAULT_CONFIG_TTL_MS = 30 * MINUTE;
+const DEFAULT_CONFIG_TTL_MS = CONFIG_TTL_MS;
 
 const configTableOf = (tableKey) => CONFIG_TABLES[String(tableKey || '')] || null;
 const configTableTtlMs = (tableKey) => {
