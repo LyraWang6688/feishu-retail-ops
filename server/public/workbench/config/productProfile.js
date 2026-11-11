@@ -12,9 +12,7 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   completeTitle: '货品完善',
   sampleTitle: '同步样例图',
   accessoryTitle: '配品配置',
-  accessoryHint: '其他配品数据表',
-  accessoryOpenExternal: '在飞书中打开',
-  accessoryEmbedNote: '如果下方没有显示，请在飞书中打开；手机端如果要求登录，请先明确分享权限为可编辑。',
+
   searchPlaceholder: '录入货号进行重复校验',
   searchingToast: '正在查询中…',
   noImage: '无样例图',
