@@ -366,6 +366,10 @@ export function mountAfterSalesPage(container, options = {}) {
       return;
     }
     if (event.target.closest('[data-as-modal-close]')) { closeModal(); return; }
+    // ⭐ 2026-11-11 真机：换货表单的「确认」按钮点击**冒泡到这里**，被下面老的"原型 toast"逻辑
+    //    closeModal + toast 截胡 ⇒ 原生表单提交没发生（页面停在售后页、没跳工作台）。
+    //    ⇒ 换货表单的提交按钮交给浏览器原生 submit（服务端 303 统一 toast + 回工作台）。
+    if (event.target.closest('[data-as-exchange-form] button[type="submit"]')) return;
     const mode = event.target.closest('[data-as-money-mode]');
     if (mode && modal?.action === 'return') {
       modal.moneyMode = mode.dataset.asMoneyMode;
@@ -423,8 +427,6 @@ export function mountAfterSalesPage(container, options = {}) {
         if (!modal.method) { modalError(AFTER_SALES_PAGE.exchangeDiffMethodLabel); return; }
       }
     }
-    closeModal();
-    toast(AFTER_SALES_PAGE.toastExchangeDone);
   });
 
   if (!productRecordId) {
