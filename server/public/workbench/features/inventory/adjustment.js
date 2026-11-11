@@ -13,7 +13,7 @@ import { escapeHtml } from '../../core/formatters.js';
 import { describeError, showPageError } from '../../core/ui.js';
 import { showToast } from '../shared/toast.js';
 import { scanCodeRaw, scanTargetUrl } from '../scan/launch.js';
-import { INVENTORY_MANUAL_CARDS } from '../../config/inventoryAdjustment.js';
+import { INVENTORY_MANUAL_CARDS, INVENTORY_MANUAL_TEXTS } from '../../config/inventoryAdjustment.js';
 
 const $ = (host, selector) => host.querySelector(selector);
 const STATES = ['门盒', '样品'];
@@ -136,14 +136,22 @@ export function createInventoryAdjustmentModule() {
   async function enterBatch() {
     const host = state.host;
     const select = $(host, '[data-field="batch-category"]');
-    if (!state.categories.length) {
-      const data = await api.get('/api/workbench/inventory/categories');
-      state.categories = Array.isArray(data.rows) ? data.rows : [];
-      select.innerHTML = state.categories.map((row) => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.category)}</option>`).join('');
+    showToast(INVENTORY_MANUAL_TEXTS.batchLoading);
+    try {
+      // 品类与库存并行：品类短请求不再串行挡住 1335 行的库存读取。
+      const categoriesPromise = state.categories.length
+        ? Promise.resolve(null)
+        : api.get('/api/workbench/inventory/categories');
+      const [data] = await Promise.all([categoriesPromise, loadRows()]);
+      if (data) {
+        state.categories = Array.isArray(data.rows) ? data.rows : [];
+        select.innerHTML = state.categories.map((row) => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.category)}</option>`).join('');
+      }
+      renderViolations();
+      show('batch');
+    } catch (error) {
+      showPageError(describeError(error));
     }
-    await loadRows();
-    renderViolations();
-    show('batch');
   }
 
 

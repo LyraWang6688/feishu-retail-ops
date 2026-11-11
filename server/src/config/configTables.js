@@ -28,6 +28,9 @@ const CONFIG_TABLES = Object.freeze({
   product: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '货品信息' }),
   color: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '颜色管理' }),
   category: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '品类管理' }),
+  // 实时库存是业务数据，不走 24h 配置 TTL；只给工作台批量调整做 5 分钟短快照，
+  // 但复用同一套缓存/失效/lastGood 机制（写库存的 record_changed 会失效）。
+  liveInventory: Object.freeze({ ttlMs: 5 * MINUTE, label: '实时库存' }),
 });
 
 /** record_changed 需要失效的表（顺序稳定，日志/测试可读）。 */
