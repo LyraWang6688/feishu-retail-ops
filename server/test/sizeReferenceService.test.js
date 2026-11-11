@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { SizeReferenceService } = require('../src/services/sizeReferenceService');
+const { CONFIG_TABLES } = require('../src/config/configTables');
 
 const gatewayFor = (rows) => ({
   table: () => ({ fields: { size: '尺码' } }),
@@ -78,7 +79,7 @@ test('deleted and recreated mappings are reloaded after shared config TTL expiry
   const service = new SizeReferenceService({ gateway: gatewayFor(data), now: () => clock });
   assert.deepEqual(await service.resolveByNumber(38), { recordId: 'size_38', size: 38 });
   data.splice(0, 1);
-  clock = 30 * 60 * 1000 + 1;
+  clock = CONFIG_TABLES.sizeManagement.ttlMs + 1;
   await assert.rejects(service.resolveByNumber(38), /找不到 38 码/);
   data.push({ record_id: 'rebuilt_38', fields: { 尺码: 38 } });
   service.clearCache();
