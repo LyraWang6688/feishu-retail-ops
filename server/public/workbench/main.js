@@ -4,7 +4,6 @@ import { mainTabsHtml, MAIN_TABS } from './core/tabs.js';
 import { TAP_TELEMETRY, FLUENCY_TELEMETRY } from './config/telemetry.js';
 import { createFluencyTracker, installFluencyObservers } from './shared/ui-fluency.js';
 import { createDomainModule } from './features/domains/index.js';
-import { createPlaceholderModule } from './features/shared/placeholder.js';
 
 /**
  * ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤「工作台接同一套上报」）：
@@ -76,10 +75,6 @@ function bindTapTelemetry() {
 //      （`common.html` / `others.html` / `purchase.html` / `purchase-return.html`，
 //      口径：「代码从仓库里删，不是隐藏」）⇒ （已删除的旧首页模块）
 //      **当前没有任何页面挂载**（`standalone.js` 的注册已摘），只是先留着没删。
-// ⚠️ HIDDEN（入口隐去、**代码保留**）：douyin / platform ——
-//    它们仍在下面这个 modules 表里（占位模块），但**当前没有任何页面列出它们**
-//    （原先列它们的「其它 / 历史功能」页已删）。要恢复某个入口：在 `config/tabs.js` 的
-//    `MAIN_TABS` 里加回一条即可，逻辑不用改。
 const modules = new Map([
   // ── 一级 tab 的来源（顺序 = `config/tabs.js` 的 MAIN_TABS；第一条 = 她 2026-10-13 定的「扫一扫」）──
   ['sales', createDomainModule('sales')],
@@ -90,17 +85,6 @@ const modules = new Map([
   ['funds', createDomainModule('funds')],
   // 创作（2026-11-07）：抖音创作入口，页面在 config/domains.js 的 creation 领域。
   ['creation', createDomainModule('creation')],
-  // ── 以下两个是隐去的入口（保留代码）─────────────────────────────────────
-  ['douyin', createPlaceholderModule({
-    title: '抖音运营',
-    description: '管理第三方券种、核销记录、平台结算和对账差异。',
-    planned: ['券种映射', '核销汇总', '平台结算对账'],
-  })],
-  ['platform', createPlaceholderModule({
-    title: '平台管理',
-    description: '维护货品、供应商、客户、门店、库存行为和支付方式等基础资料。',
-    planned: ['基础资料查询', '业务配置入口', '权限与操作记录'],
-  })],
 ]);
 
 const mounted = new Map();
