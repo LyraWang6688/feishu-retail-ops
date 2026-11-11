@@ -25,3 +25,8 @@
 .label-notice { margin: 6px 0 0; font-size: 13px; color: var(--warning); }
 
 /* ⭐ 扫码聚焦屏：整条独立页导航**整条隐藏**（只留扫码本身；返回走浏览器/飞书返回）。 */
+
+/* 库存调整保存后自动打印的任务状态（?print_job=，与扫码打印同页） */
+.print-job-status { margin: 0 0 12px; }
+.print-job-status h3 { margin: 0 0 8px; font-size: var(--font-size-lg); }
+.print-job-status .error { color: var(--danger); font-weight: 600; }

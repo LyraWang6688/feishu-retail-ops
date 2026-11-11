@@ -61,6 +61,10 @@ const LABEL_PRINT_QUEUE = Object.freeze({
   enabled: true,
   states: STATES,
   sources: SOURCES,
+  jobMessages: Object.freeze({
+    missingJobId: '缺少打印任务 ID',
+    jobNotFound: '没有这条打印任务',
+  }),
 
   // ── 落盘 ──────────────────────────────────────────────────────────────────
   storeDir: DEFAULT_STORE_DIR,

@@ -28,7 +28,7 @@ const { requireWorkbenchAccess } = require('./workbench');
 const { getLabelPrintQueue } = require('../services/labelPrintQueueRuntime');
 const { parseLabelScanUrl } = require('../services/labelPrintService');
 const { logError, logWarn } = require('../utils/logger');
-const { SOURCES } = require('../config/labelPrintQueue');
+const { SOURCES, LABEL_PRINT_QUEUE } = require('../config/labelPrintQueue');
 
 const createLabelPrintQueueRouter = (options = {}) => {
   const router = express.Router();
@@ -119,6 +119,43 @@ const createLabelPrintQueueRouter = (options = {}) => {
       });
     } catch (error) {
       return fail(res, error, 'workbench.label_print.enqueue.failed', { mode });
+    }
+  });
+
+  /**
+   * 只读：按 job_id 查打印任务状态（库存调整保存后跳转的「打印状态」区用）。
+   * 不暴露产物文件路径，只给页面需要的摘要。
+   */
+  router.get('/jobs/:jobId', async (req, res) => {
+    const jobId = String(req.params?.jobId || '').trim();
+    if (!jobId) return res.status(400).json({ success: false, error: LABEL_PRINT_QUEUE.jobMessages.missingJobId });
+    try {
+      const job = await service().getJob(jobId);
+      if (!job) return res.status(404).json({ success: false, error: LABEL_PRINT_QUEUE.jobMessages.jobNotFound });
+      const queueStatus = await service().status();
+      return res.json({
+        success: true,
+        job: {
+          job_id: job.job_id,
+          status: job.status,
+          status_label: job.status_label || '',
+          total_labels: job.total_labels || 0,
+          numbers: job.numbers || [],
+          created_at: job.created_at || '',
+          claimed_at: job.claimed_at || '',
+          printed_at: job.printed_at || '',
+          failed_at: job.failed_at || '',
+          failure_reason: job.failure_reason || '',
+          source: job.source || '',
+        },
+        printer: {
+          online: queueStatus.online,
+          last_seen_at: queueStatus.last_seen_at,
+          seconds_since_seen: queueStatus.seconds_since_seen,
+        },
+      });
+    } catch (error) {
+      return fail(res, error, 'workbench.label_print.job.read_failed', { job_id: jobId });
     }
   });
 
