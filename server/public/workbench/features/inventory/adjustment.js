@@ -109,8 +109,12 @@ export function createInventoryAdjustmentModule() {
       const doorbox = items.filter((row) => row.state === '门盒');
       const sampleCount = samples.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
       const doorboxCount = doorbox.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-      return { productId, items, samples, doorbox, sampleCount, doorboxCount,
-        issue: sampleCount === 0 && doorboxCount > 0 ? '缺样品' : '' };
+      const emptyCount = items.filter((row) => !['门盒', '样品'].includes(row.state)).length;
+      const issue = emptyCount > 0
+        ? '状态为空'
+        : (sampleCount === 0 ? '缺样品'
+          : (sampleCount > 1 ? `样品多 ${sampleCount - 1} 双` : ''));
+      return { productId, items, samples, doorbox, sampleCount, doorboxCount, emptyCount, issue };
     }).filter((group) => group.issue);
   }
 

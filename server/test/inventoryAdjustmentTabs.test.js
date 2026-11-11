@@ -43,11 +43,12 @@ test('AC-IA4 批量调整：品类与库存并行读取 + 轻量 toast 提示', 
 });
 
 
-test('AC-IA5 状态调整与当季调整独立：不看品类、不看当季，只找缺一双样品的编号', () => {
+test('AC-IA5 状态调整与当季调整独立：不看品类/当季，显示所有不满足一样品+其余门盒的编号', () => {
   const html = source();
   assert.equal(html.includes('selectedCategory'), false, '状态调整不再按品类过滤');
-  assert.ok(html.includes('sampleCount === 0 && doorboxCount > 0'), '判据 = 没有样品且其余是门盒');
-  assert.ok(html.includes("'缺样品'"), '异常文案 = 缺样品');
+  assert.ok(html.includes("const issue = emptyCount > 0"), '状态为空也要报');
+  assert.ok(html.includes("sampleCount === 0 ? '缺样品'"), '没有样品要报');
+  assert.ok(html.includes("sampleCount > 1 ? `样品多"), '样品大于一双要报');
   assert.equal(html.includes('① 当季调整'), false, '板块标题不再带编号');
   assert.equal(html.includes('② 状态调整'), false, '板块标题不再带编号');
   assert.ok(html.includes('await loadRows(true)'), '当季调整后强制重新加载状态调整数据');
