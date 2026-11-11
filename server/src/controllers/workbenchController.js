@@ -32,36 +32,6 @@ const queryInventory = async (req, res) => {
   }
 };
 
-// 货品选择器：人工库存调整要先按货号找到货品 record_id。
-const queryInventoryProducts = async (req, res) => {
-  try {
-    return res.json({
-      success: true,
-      ...await service.findProducts({ keyword: req.query.keyword, requestId: req.requestId }),
-    });
-  } catch (error) {
-    return respondQueryFailure(res, error, {
-      requestId: req.requestId, event: 'workbench.inventory.products_failed', fallback: '货品查询失败',
-    });
-  }
-};
-
-// 盘点调整：先看这个货号 + 尺码在三种状态下各有几双。
-const queryInventoryStock = async (req, res) => {
-  try {
-    return res.json({
-      success: true,
-      ...await service.getInventoryStockLevels({
-        productRecordId: req.query.productRecordId, size: req.query.size, requestId: req.requestId,
-      }),
-    });
-  } catch (error) {
-    return respondQueryFailure(res, error, {
-      requestId: req.requestId, event: 'workbench.inventory.stock_failed', fallback: '库存数量查询失败',
-    });
-  }
-};
-
 // 换季调整（按品类批量）：品类清单来自「实时库存」的「品类」公式列。
 const queryInventoryCategories = async (req, res) => {
   try {
@@ -75,8 +45,6 @@ const queryInventoryCategories = async (req, res) => {
 
 module.exports = {
   queryInventory,
-  queryInventoryProducts,
-  queryInventoryStock,
   queryInventoryCategories,
   // 查询类接口的**失败口径**只有这一份实现（400 原样回显她填错的 / 503 飞书数据未准备好 /
   // 其余 500 不回显内部细节）。鞋盒标签打印那条只读查询挂在 `routes/workbench.js` 里，

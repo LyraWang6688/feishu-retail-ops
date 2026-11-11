@@ -5,10 +5,7 @@ const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
 const { LIVE_STATES } = require('./inventoryService');
-const {
-  WORKBENCH_PRODUCT_SEARCH_LIMIT,
-  WORKBENCH_CATEGORY_LIMIT,
-} = require('../config/workbenchQuery');
+const { WORKBENCH_CATEGORY_LIMIT } = require('../config/workbenchQuery');
 const { logWarn } = require('../utils/logger');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -141,50 +138,6 @@ const createWorkbenchService = (gateway, options = {}) => {
     }
   };
 
-  // 工作台「盘点调整 / 换季调整」要按 货号 找货品：返回 record_id 供库存接口用。
-  const findProducts = async ({ keyword = '', limit = WORKBENCH_PRODUCT_SEARCH_LIMIT, requestId } = {}) => {
-    const products = await getConfigRows({ gateway, tableKey: 'product',
-      loader: () => listAllWithRetry(gateway, 'product', requestId) });
-    const normalized = String(keyword).trim().toLowerCase();
-    const rows = products.map((record) => ({
-      record_id: record.record_id,
-      product_number: asText(schema, 'product', record, 'number'),
-      item_no: asText(schema, 'product', record, 'itemNo'),
-      color: asText(schema, 'product', record, 'color'),
-    })).filter((row) => !normalized || [row.product_number, row.item_no, row.color]
-      .some((value) => String(value).toLowerCase().includes(normalized)));
-    return { rows: rows.slice(0, limit), total: rows.length };
-  };
-
-  // 某个 货号 + 尺码 在三种「所属状态」下各有多少双 —— 「实时库存」是一双一条，
-  // 所以**数量 = 记录条数**（与 getLiveInventory 的分组口径一致）。
-  const getInventoryStockLevels = async ({ productRecordId, size, requestId } = {}) => {
-    const product = String(productRecordId ?? '').trim();
-    if (!product) throw userError('缺少货号 record_id');
-    const requestedSize = String(size ?? '').trim();
-    if (requestedSize && !/^[1-9]\d*$/.test(requestedSize)) throw userError('尺码必须是正整数');
-    const inventory = await listAllWithRetry(gateway, 'liveInventory', requestId);
-    const counts = new Map(LIVE_STATES.map((state) => [state, 0]));
-    let total = 0;
-    for (const record of inventory) {
-      if (!asLinks(schema, 'liveInventory', record, 'product').includes(product)) continue;
-      if (requestedSize) {
-        const rowSize = await resolveSize('liveInventory', record);
-        if (String(rowSize) !== requestedSize) continue;
-      }
-      const state = asText(schema, 'liveInventory', record, 'state');
-      if (!counts.has(state)) continue;
-      counts.set(state, counts.get(state) + 1);
-      total += 1;
-    }
-    return {
-      product_record_id: product,
-      size: requestedSize ? Number(requestedSize) : null,
-      total,
-      rows: LIVE_STATES.map((state) => ({ state, quantity: counts.get(state) })),
-    };
-  };
-
   // 「换季调整（按品类批量）」的品类清单。品类取自「实时库存」的「品类」公式列
   // （读生产/测试真表核过：liveInventory.品类 type=20 公式，返回品类名）。
   const listInventoryCategories = async ({ requestId, limit = WORKBENCH_CATEGORY_LIMIT } = {}) => {
@@ -247,8 +200,6 @@ const createWorkbenchService = (gateway, options = {}) => {
 
   return {
     getLiveInventory,
-    findProducts,
-    getInventoryStockLevels,
     listInventoryCategories,
   };
 };

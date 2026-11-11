@@ -134,7 +134,6 @@ export const ORDERS_TEXTS = {
 export const ARRIVAL_FULL_API = {
   detail: '/api/workbench/purchase/arrivals/detail',
   accept: '/api/workbench/purchase/arrivals/accept',
-  products: '/api/workbench/inventory/products',
 };
 export const ARRIVAL_FULL_FIELDS = {
   batchNo: 'batchNo', actualAmount: 'actualAmount', lines: 'lines',
