@@ -4,7 +4,6 @@
  * 销售提交的金额 / 收款 / 付款状态解析（P4 从 sales.js 搬出，只搬不改）。
  * 返回 ok:false + result 时，调用方直接返回 result（与搬出前逐字一致）。
  */
-const { SELLABLE_KINDS } = require('../../config/sellableKinds');
 const { fillText } = require('../../config/scanWrite');
 const { logWarn } = require('../../utils/logger');
 
@@ -22,10 +21,7 @@ const resolveSaleSettlement = async ({
         : (line.amount === null || line.amount === undefined ? '' : String(line.amount));
       const parsed = positiveAmount(raw);
       if (!parsed.ok) {
-        const sellableKind = SELLABLE_KINDS[String(line.kind || '').trim() || 'shoe'];
-        const message = sellableKind && !sellableKind.requiresSize
-          ? texts.accessoryAmountInvalidBody : texts.amountInvalidBody;
-        const error = new Error(message);
+        const error = new Error(texts.amountInvalidBody);
         error.scanUserMessage = message;
         return fail({ code: 'line_amount_invalid', message, requestId, error });
       }

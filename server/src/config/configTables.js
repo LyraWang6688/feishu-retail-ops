@@ -22,7 +22,6 @@ const CONFIG_TABLES = Object.freeze({
   paymentMethod: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '支付方式管理' }),
   sizeManagement: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '尺码管理' }),
   behavior: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '行为管理' }),
-  accessory: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '其他配品' }),
   supplier: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '供应商管理' }),
   groupBuyVoucher: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '团购券管理' }),
   product: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '货品信息' }),

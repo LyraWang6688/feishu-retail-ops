@@ -274,7 +274,7 @@ class SecondDeliveryService {
    * 待处理单推送要按「货号 + 尺码」显示每条单。那两个字段的**事实**在这里顺手取最省：
    * 本轮已经把 `salesDetail` 整表读进来了（就在下面的 `orderDetails` 里），
    * 所以**不会为了货号尺码再读一遍销售明细**；只额外整表读一次「货品信息」，
-   * 「其他配品」**配了才读**，尺码走共享的尺码解析（有缓存）。
+   * 尺码走共享的尺码解析（有缓存）。
    * ⚠️ 关着时（第二次交付提醒那条路）返回的对象**一个字都不变**：
    *    `items` 根本不加，读表也一次都不多发。
    * ⚠️ 这段是**增强**：货品表读挂了只记一条 warn、这一轮没有货号尺码，**不让整条推送失败**。
@@ -427,7 +427,7 @@ class SecondDeliveryService {
         order_count: orders.length,
         unlabeled_item_count: unlabeledItemCount,
         missing_size_count: missingSizeCount,
-        hint: '有明细行取不到货号/配品名称，或鞋的尺码解析不出来；这些件不会出现在推送文案里',
+        hint: '有明细行取不到货号，或鞋的尺码解析不出来；这些件不会出现在推送文案里',
       });
     }
     // 最早的单排最前：越久没成交的越该先被看见。
@@ -435,9 +435,8 @@ class SecondDeliveryService {
   }
 
   /**
-   * 「货号 / 配品名称」要用的两张索引：**整表各读一次**（不是每单、每件各读一次）。
+   * 「货号」要用的索引：**整表读一次**（不是每单、每件各读一次）。
    *   · 「货品信息」：核心表，读挂了让调用方降级（这一轮没有货号尺码，不影响推送本身）；
-   *   · 「其他配品」：**没配 tableId 就不读**（有些部署只卖鞋；见 larkMvpService 同款处理）。
    */
   async loadItemIndex() {
     const index = {};
@@ -453,29 +452,12 @@ class SecondDeliveryService {
         byId: new Map(records.map((record) => [record.record_id, record])),
       };
     }
-    const accessoryTable = this.gateway.table?.('accessory');
-    if (accessoryTable?.tableId) {
-      try {
-        const records = await getConfigRows({ gateway: this.gateway, tableKey: 'accessory',
-          loader: () => this.read(
-            () => this.gateway.listAll('accessory'), 'second_delivery.items.list_accessories',
-          ) });
-        index.accessory = {
-          labelField: accessoryTable.fields?.name,
-          byId: new Map(records.map((record) => [record.record_id, record])),
-        };
-      } catch (error) {
-        // 配品表读不到不该让整条推送掉：配品那一件这轮就没有名称（不会拼出空壳），其余照旧。
-        logWarn('sales.second_delivery.items.accessory_read_failed', { error: error.message });
-      }
-    }
     return index;
   }
 
   /**
    * 明细的尺码：关联「尺码管理」→ 走共享解析（有缓存）；老数据 / 没配「尺码管理」
    * 退回单元格自带的文本；都没有就留空 —— 调用方据此**不拼「码」**。
-   * ⚠️ 配品没有尺码关联，这里会走 catch 分支拿到空串，**不是**错误。
    * ⚠️ 退回的文本**必须是正整数**才算尺码（与 SizeReferenceService.normalizeSize 同一值域）：
    *    有的接口把关联单元格回成 `['recXXXX']`（只有 record_id、没有文本），
    *    照单全收就会把 record_id 当尺码拼进群里（`A-2 recXXXX码`）——那比留空更糟。

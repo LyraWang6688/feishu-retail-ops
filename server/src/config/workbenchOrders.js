@@ -109,7 +109,7 @@ const WORKBENCH_ARRIVAL_INPUT_REASONS = Object.freeze([
  *
  * 她在服务器上实测：`/api/workbench/sales/orders` 真实耗时 **3.6s ~ 26s**；逐张表整表读 ——
  * `salesEntry 188 条 3243ms` · `salesDetail 173 条 2629ms` · `paymentMethod **6 条** 1851ms` ·
- * `paymentRecord 158 条 5527ms` · `product 562 条 7805ms` · `accessory 21 条 1517ms`（合计 ≈22.6s）。
+ * `paymentRecord 158 条 5527ms` · `product 562 条 7805ms`（合计 ≈22.6s）。
  * ⇒ **瓶颈不是"数据多"，是飞书 API 每张表 1.5~7.8 秒的固定开销**（6 条的小表也要 1.9s）。
  *
  * 对策两条，都在这里配置化：
@@ -126,10 +126,10 @@ const DEFAULT_ORDERS_CACHE_MS = 30000;
  * 依据是逐条核过 `services/salesFollowupService.js` 与它调用的三个纯函数：
  *   · `salesEntry`    ：`orderNo`（单号）+ `writeStatus`（「写入状态」，`postedOf` 判"已入账"）；
  *   · `salesDetail`   ：`salesEntry`（关联销售单）· `size` · `fulfillmentStatus` · `actualAmount`
- *                       · `product`（关联货品；配品列已随生产表删除）
+ *                       · `product`（关联货品）
  *                       的 `detailLinkField`）；
  *   · `paymentRecord` ：`salesEntry` · `amount` · `status` · `method` · `receivedAt`；
- *   · `product`：`number` · `color`； · `accessory`：`name`。
+ *   · `product`：`number` · `color`。
  *
  * 🔴 **`paymentMethod` 刻意不在这张清单里**（2026-11-08 真实事故）：
  *   它同时是**共享配置缓存**的源（售后「可用于退款」、交割单券关联都读同一份快照）——
@@ -144,7 +144,6 @@ const ORDER_FIELD_KEYS = Object.freeze({
   salesDetail: Object.freeze(['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product']),
   paymentRecord: Object.freeze(['salesEntry', 'amount', 'status', 'method', 'receivedAt']),
   product: Object.freeze(['number', 'color']),
-  accessory: Object.freeze(['name']),
 });
 
 /**

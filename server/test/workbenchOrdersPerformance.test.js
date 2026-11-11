@@ -81,7 +81,7 @@ const fakeGateway = (records) => {
   };
 };
 
-const ORDERS_TABLES = ['salesEntry', 'salesDetail', 'paymentMethod', 'paymentRecord', 'product', 'accessory'];
+const ORDERS_TABLES = ['salesEntry', 'salesDetail', 'paymentMethod', 'paymentRecord', 'product'];
 const ordersCalls = (calls) => calls.filter((call) => ORDERS_TABLES.includes(call.key));
 
 /** 真读那一遍的构造（TTL = 0 ⇒ 每次真读），用于"语义不变"的对照。 */
@@ -182,7 +182,6 @@ test('AC5a 字段清单（语义键）逐字 = 页面真正用到的列，多一
     salesDetail: ['salesEntry', 'size', 'fulfillmentStatus', 'actualAmount', 'product'],
     paymentRecord: ['salesEntry', 'amount', 'status', 'method', 'receivedAt'],
     product: ['number', 'color'],
-    accessory: ['name'],
   }, '这张清单是"页面上真正用到的列"的唯一来源（加列必须有消费点）');
 });
 

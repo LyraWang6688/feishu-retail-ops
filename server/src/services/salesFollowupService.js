@@ -7,8 +7,7 @@ const { PaymentService, amount } = require('./paymentService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SalesProgressService, progressFromRecords, cents } = require('./salesProgressService');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-// ⭐ 2026-10-11（C）：明细那一行"是鞋还是配品 / 要不要尺码"由**可售品配置**说了算
-//    （`config/sellableKinds`），`itemLinkOfDetail` 是既有的事实解析（谁的关联字段有值）。
+// 明细那一行按可售品配置解析；`itemLinkOfDetail` 是既有的事实解析。
 const { SELLABLE_KINDS } = require('../config/sellableKinds');
 const { itemLinkOfDetail } = require('./salesDetailItemFacts');
 const {
@@ -203,15 +202,11 @@ class SalesFollowupService {
   /**
    * 真读那一次的实现（优化前就是这一整段）。
    *
-   * ⭐ 2026-10-12：六次 `listAll` 都**按需取字段**（`ORDER_FIELD_KEYS` → 飞书 `field_names`）——
+   * ⭐ 2026-10-12：各次 `listAll` 都**按需取字段**（`ORDER_FIELD_KEYS` → 飞书 `field_names`）——
    *    562 条的「货品信息」整表全字段要 7.8 秒，而这一页只用「货号 / 颜色」。
    *    语义键映射不到的列（比如配置里换了列名）**自动退回整表读**（宁可慢，不许少列）。
    */
   async buildOrdersList() {
-    // ⭐ 2026-10-11（C）：「其他配品」这张表是**可选配置**（没配时销售只支持鞋，见
-    //    `services/salesEntryService.listAccessories` 的注释）。这里先看 tableId 再读 ——
-    //    未配置时**跳过**（配品行照样认得出来，只是没有名称），绝不把整页打成 500。
-    const accessoryConfigured = Boolean(this.gateway.table?.('accessory')?.tableId);
     // ⭐ 2026-10-12：**按需取字段** —— 语义键（`ORDER_FIELD_KEYS`，一处定义）→ 飞书列名；
     //    一个都映射不到（例：schema 改了列名）就**不传**这个参数 ⇒ 退回整表读（宁可慢，不许少列）。
     //    ⭐ 2026-10-16（性能）：「实时库存」快照也按需取字段（`ORDER_SUPPORT_FIELD_KEYS`）——
@@ -225,7 +220,7 @@ class SalesFollowupService {
     // ⭐⭐ 2026-10-15：这六次读**全部走带重试的那条路**（瞬时错误自动重试一次；确定性错误不重试）——
     //   她那次 502 的根因就是这里某一张表回了 `1254607 Data not ready` ✓
     //   ⚠️ **返回形状一个字没变**（还是这六个数组）⇒ 页面与下游**一个字都不用改** ✓
-    const [orders, details, methods, payments, products, accessories] = await Promise.all([
+    const [orders, details, methods, payments, products] = await Promise.all([
       this.listAllWithRetry('salesEntry', fieldOptions('salesEntry')),
       this.listAllWithRetry('salesDetail', fieldOptions('salesDetail')),
       // 🔴 2026-11-08（缓存被精简数据污染的真实事故）：这张表示**共享配置缓存**的源
@@ -246,23 +241,16 @@ class SalesFollowupService {
         fields: fieldOptions('product').fieldNames,
         loader: () => this.listAllWithRetry('product', fieldOptions('product')),
       }),
-      accessoryConfigured ? getConfigRows({
-        gateway: this.gateway, tableKey: 'accessory',
-        fields: fieldOptions('accessory').fieldNames,
-        loader: () => this.listAllWithRetry('accessory', fieldOptions('accessory')),
-      }) : Promise.resolve([]),
     ]);
     const orderFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
     const paymentFields = this.gateway.table('paymentRecord').fields;
     const methodFields = this.gateway.table('paymentMethod').fields;
     const productFields = this.gateway.table('product').fields;
-    const accessoryFields = this.gateway.table('accessory')?.fields || {};
     const methodById = new Map(methods.map((item) => [item.record_id, textValue(item.fields?.[methodFields.name])]));
     // ⚠️ 这里存的是**记录本身**（不是货号）：2026-10-11（C）起订单列表还要给出**颜色**
     //    （"货品信息 = 货号 / 颜色 / 尺码"），货号与颜色都从这一条记录上取，**零额外请求**。
     const productById = new Map(products.map((item) => [item.record_id, item]));
-    const accessoryById = new Map(accessories.map((item) => [item.record_id, item]));
     return {
       methods: [...new Set(methodById.values())].filter(Boolean),
       // ⭐ 「账做完了没有」= 两代字面量都算（见 config/salesStatusDimensions 的 POSTED_VALUES）。
@@ -283,25 +271,18 @@ class SalesFollowupService {
                   //
                   // ⭐ 2026-10-11（C）：订单列表三态要按**新判据**分（货品信息 = 货号/颜色/尺码；
                   //   资金信息 = 收款方式 + 至少一笔收款），所以这里再补三样**只读**事实：
-                  //     · `kind` / `requires_size` —— 这一行是哪种可售品、要不要尺码
-                  //       （判据 = `config/sellableKinds` 的属性，**配品行天然不需要货品信息**）；
-                  //     · `color` —— 颜色（货品信息三项之一；配品没有这一列，留空不编）；
-                  //     · `accessory` / `accessory_record_id` —— 配品行显示哪一件（「其他配品.名称」）。
+                  //     · `kind` / `requires_size` —— 这一行是哪种可售品、要不要尺码；
+                  //     · `color` —— 颜色（货品信息三项之一）。
                   //   ⚠️ 一个字段都不新造：全部来自既有表与既有可售品配置。
                   const link = itemLinkOfDetail(detail.fields, detailFields);
                   const kind = link ? SELLABLE_KINDS[link.kindKey] : null;
-                  // ⚠️ 尺码只有**需要尺码的可售品**才去解析：**配品行本来就没有尺码**，
-                  //    照旧无脑解析会抛「尺码关联字段为空」⇒ 整个单被兜底跳过（那是错的）。
                   //    认不出是哪一种可售品的行**沿用既有行为**（大声抛 → 单条兜底跳过 + warn）。
                   let sizeEntry = { size: null, recordId: '' };
                   if (!kind || kind.requiresSize) {
                     sizeEntry = await this.getSizeReferences()
                       .resolveLinkedCell(detail.fields?.[detailFields.size]);
                   }
-                  const linkedProduct = link && link.kindKey === 'shoe'
-                    ? productById.get(link.recordId) : null;
-                  const linkedAccessory = link && link.kindKey !== 'shoe'
-                    ? accessoryById.get(link.recordId) : null;
+                  const linkedProduct = link ? productById.get(link.recordId) : null;
                   return {
                     record_id: detail.record_id,
                     product: linkedProduct
@@ -313,9 +294,6 @@ class SalesFollowupService {
                     kind: kind ? link.kindKey : '',
                     // 认不出是哪一种可售品时按"需要货品信息"算（宁可让她补，也不静默放过）。
                     requires_size: kind ? kind.requiresSize : true,
-                    accessory: linkedAccessory
-                      ? textValue(linkedAccessory.fields?.[accessoryFields.name]).trim() : '',
-                    accessory_record_id: linkedAccessory ? linkedAccessory.record_id : '',
                     size: sizeEntry.size,
                     size_record_id: sizeEntry.recordId || '',
                     quantity: 1,

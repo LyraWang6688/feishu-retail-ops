@@ -78,7 +78,7 @@ test('AC-PA-T4 ⭐ 「别动」哨兵：她 2026-10-11 定的「收款行预置 
 
 test('AC-PA-T5 ⭐ 边界：本刀只动配置文案与新键 ⇒ 销售的**校验**一个字没改', () => {
   const codes = SCAN_WRITE.sale.formFailureCodes || [];
-  for (const code of ['line_amount_invalid', 'accessory_amount_invalid']) {
+  for (const code of ['line_amount_invalid']) {
     assert.ok(codes.includes(code), `销售的「每件实收」校验码「${code}」必须**仍在**（本刀没碰校验 ✓）`);
   }
   assert.equal(SCAN_WRITE.fields.amount, 'amount', '字段名没动 ✓（改文案 ≠ 改字段 ✗）');

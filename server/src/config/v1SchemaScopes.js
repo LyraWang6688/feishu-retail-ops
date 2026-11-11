@@ -1,5 +1,5 @@
 const V1_SCHEMA_SCOPES = {
-  // accessory（其他配品）也纳入销售范围：销售明细的「配品」字段指向它，缺配置会在运行时才炸。
+  // accessory（其他配品）保留在销售范围：资金页赠品候选需要它（配品= true）。
   // ⚠️ `customerCredit`（「客户往来货款」）已从这里**删除**（2026-10-08）：
   //    业务负责人把那张表**整表删除**了 ⇒ 留着它 = 闸门去问一张不存在的表，
   //    `v1:schema-check:all` 直接判红（TableIdNotFound 1254041）。

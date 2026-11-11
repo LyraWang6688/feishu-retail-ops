@@ -1,11 +1,11 @@
 /**
- * 销售主表建单 + 单号分配 + 配品清单（**共享处理层**）。
+ * 销售主表建单 + 单号分配（**共享处理层**）。
  *
  * 为什么把这三个方法从 `larkMvpService` 剥出来（2026-10-11 清群聊入口 C0）：
  *   · 它们**只有 `this.gateway` 一个依赖**（`createSalesEntryWithOrderNo` 只用到
  *     `this.gateway` 与 `this.listSalesOrderNos`），与"群消息 / 话题 / AI 解析"毫无关系；
- *   · 但**扫码页在用它们** —— `scanWriteService` 建单（sales）与配品下拉（listAccessories）
- *     都是借 `LarkMvpService.prototype.xxx.call({ gateway })` 调的；
+ *   · 但**扫码页在用它们** —— `scanWriteService` 建单（sales）借
+ *     `LarkMvpService.prototype.xxx.call({ gateway })` 调；
  *   · 群入口层要被整体删掉，如果它们还长在 `LarkMvpService` 上，扫码页就被"群聊入口"
  *     绑住了 —— 删群入口会连扫码一起删掉。剥出来之后：**删入口不影响扫码**。
  *
@@ -17,7 +17,6 @@
  *    群聊入口与扫码入口**都**该走这里；不许在入口层另写一套建单 / 单号逻辑。
  */
 const { textValue } = require('./v1BitableGateway');
-const { getConfigRows } = require('./configTableCache');
 const { person } = require('./v1ReferenceResolver');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { allocateSalesOrderNo } = require('./salesOrderNo');
@@ -98,39 +97,7 @@ const createSalesEntryWithOrderNo = async ({ gateway } = {}, task = {}, options 
   return created;
 };
 
-/**
- * 「其他配品」清单。没配置这张表时返回空——那种部署下销售只支持鞋，
- * 配品说法会被当成未知货号处理，而不是报配置错误。
- *
- * @param {{gateway: object}} receiver
- * @returns {Promise<Array<{record_id: string, name: string, category: string}>>}
- */
-const listAccessories = async ({ gateway } = {}) => {
-  const table = gateway.table?.('accessory');
-  if (!table?.tableId) return [];
-  try {
-    const records = await getConfigRows({ gateway, tableKey: 'accessory' });
-    return records
-      .map((record) => ({
-        record_id: record.record_id,
-        name: textValue(record.fields?.[table.fields.name]).trim(),
-        // 「种类」是配品的品类（鞋油、腰带…），用户嘴里说的通常就是它。
-        // 单选字段读回来是数组，textValue 会归一成「鞋油」这样的字符串。
-        // 部署里没配这个字段映射（或某条没填）时留空：那种情况下只按名称匹配，
-        // 与改动前的行为完全一致，不会因为缺分类就匹配失败。
-        category: table.fields.category
-          ? textValue(record.fields?.[table.fields.category]).trim()
-          : '',
-      }))
-      .filter((item) => item.name);
-  } catch (error) {
-    logWarn('lark.sales.accessory.list_failed', { error: error.message });
-    return [];
-  }
-};
-
 module.exports = {
   listSalesOrderNos,
   createSalesEntryWithOrderNo,
-  listAccessories,
 };
