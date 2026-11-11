@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **445** 个事件。按前缀分组：
+共 **448** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -65,6 +65,14 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `client.resource.failed` | 1 | src/utils/uiTapReport.js |
+
+## config_cache
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `config_cache.warm.done` | 1 | src/services/configCacheWarmup.js |
+| `config_cache.warm.failed` | 1 | src/services/configCacheWarmup.js |
+| `config_cache.warm.skipped` | 1 | src/app.js |
 
 ## config_table_cache
 

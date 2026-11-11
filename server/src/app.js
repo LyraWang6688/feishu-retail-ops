@@ -40,6 +40,7 @@ const { startUploadCleanup } = require('./utils/uploadCleanup');
 const { startShanghaiDailyScheduler } = require('./utils/shanghaiDailyScheduler');
 const { V1BitableGateway } = require('./services/v1BitableGateway');
 const { warmProductSearchSnapshot } = require('./services/productSearchSnapshot');
+const { warmConfigCaches } = require('./services/configCacheWarmup');
 // ⭐ 2026-11-08：抖音团购券「待平台结算 → 已收款」——按日期对平（14:00 上海）。
 const { createVoucherSettlementConfig } = require('./config/voucherSettlement');
 const { createVoucherSettlementService } = require('./services/voucherSettlementService');
@@ -274,6 +275,12 @@ if (require.main === module) {
         .then((count) => logInfo('product_search.snapshot.warm.done', { rows: count }))
         .catch((error) => logInfo('product_search.snapshot.warm.skipped', { error: error.message }));
     }, 0).unref?.();
+    // ⭐ 配置表缓存预热：部署/重启后「货品完善」等页面首次打开直接命中缓存。
+    //   与上面快照错开 1 秒，避免启动瞬间同时打多张飞书表；失败只 warn。
+    setTimeout(() => {
+      warmConfigCaches({ gateway: new V1BitableGateway() })
+        .catch((error) => logInfo('config_cache.warm.skipped', { error: error.message }));
+    }, 1000).unref?.();
   });
 }
 
