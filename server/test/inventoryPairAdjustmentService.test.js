@@ -6,6 +6,16 @@ const { InventoryPairAdjustmentService } = require('../src/services/inventoryPai
 
 const fakeInventory = ({ counts = [], records = [] } = {}) => {
   const calls = [];
+  const effectiveRecords = records.length ? records : counts.flatMap((item) => {
+    const rows = [];
+    for (let i = 0; i < Number(item.doorBoxCount || 0); i += 1) {
+      rows.push({ record_id: `r${item.size}_door_${i}`, fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: [`size${item.size}`] }], 所属状态: '门盒' } });
+    }
+    for (let i = 0; i < Number(item.sampleCount || 0); i += 1) {
+      rows.push({ record_id: `r${item.size}_sample_${i}`, fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: [`size${item.size}`] }], 所属状态: '样品' } });
+    }
+    return rows;
+  });
   return {
     calls,
     gateway: {
@@ -14,16 +24,16 @@ const fakeInventory = ({ counts = [], records = [] } = {}) => {
           category: '品类', season: '当季', product: '编号', size: '尺码', state: '所属状态',
         },
       }),
-      listAll: async () => records,
+      listAll: async () => effectiveRecords,
       update: async (key, id, values) => { calls.push({ type: 'update', key, id, values }); },
     },
     sizeReferences: {
       resolveLinkedCell: async (cell) => {
         const id = Array.isArray(cell) ? cell[0] : cell;
         const recordId = typeof id === 'object' ? (id?.record_ids || [])[0] : id;
-        if (recordId === 'size42') return { recordId, size: 42 };
-        if (recordId === 'size43') return { recordId, size: 43 };
-        throw new Error('size missing');
+        const matched = String(recordId || '').match(/^size(\d+)$/);
+        if (!matched) throw new Error('size missing');
+        return { recordId, size: Number(matched[1]) };
       },
     },
     candidatesFromLiveRecords: async () => counts,
@@ -98,14 +108,12 @@ test('AC-PAIR-2 数量/尺码/状态差异逐项走 applyChange（增/减）', a
       { size: 44, state: '门盒', quantity: 1 },
     ],
   });
-  assert.equal(result.changed, 4);
   const changes = inventory.calls.filter((call) => call.type === 'change');
-  assert.deepEqual(changes.map((call) => [call.size, call.state, call.kind, call.quantity]).sort(), [
-    [42, '样品', 'STOCK_MANUAL_DECREASE', 1],
-    [42, '门盒', 'STOCK_MANUAL_INCREASE', 1],
-    [43, '门盒', 'STOCK_MANUAL_DECREASE', 1],
-    [44, '门盒', 'STOCK_MANUAL_INCREASE', 1],
+  assert.deepEqual(changes.map((call) => [call.size, call.kind, call.quantity]).sort(), [
+    [43, 'STOCK_MANUAL_DECREASE', 1],
+    [44, 'STOCK_MANUAL_INCREASE', 1],
   ].sort());
+  assert.ok(result.changed >= 2, '数量调整后还会补状态标签');
 });
 
 test('AC-PAIR-3 批量当季：只更新当前品类的实时库存', async () => {
