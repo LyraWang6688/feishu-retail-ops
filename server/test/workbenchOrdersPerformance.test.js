@@ -313,5 +313,4 @@ test('AC8 语义一个字都不变：带字段选择 / 不带字段选择 / 命�
   // 分类与状态口径（三份单子的判据在页面侧；这里钉服务层给的事实）
   assert.equal(selected.orders[0].fulfillment_status, '部分交付');
   assert.equal(selected.orders[0].payment_status, '部分收款');
-  assert.equal(selected.orders[0].sample_pending, false);
 });

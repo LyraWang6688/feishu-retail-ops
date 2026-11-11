@@ -394,8 +394,6 @@ test('AC-K5 写入件里不再有 per-behavior 的来源拼法（只有统一入
     ['services', 'inventory', 'purchaseBatch.js'],
     ['services', 'inventory', 'purchaseReturnBatch.js'],
     ['services', 'inventory', 'saleBatch.js'],
-    ['services', 'inventory', 'stateTransition.js'],
-    ['services', 'inventory', 'samplePromotion.js'],
     ['services', 'inventoryAdjustmentService.js'],
   ];
   // ① 来源**组成字面量**一个都不许留在写入件里（拼法只声明在行为注册表）

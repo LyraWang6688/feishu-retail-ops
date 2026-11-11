@@ -243,42 +243,7 @@ test('④ `LarkMvpService.sendCard`（open_id 口径的卡片发送器，全仓�
   assert.equal(typeof LarkMvpService.prototype.sendText, 'function');
 });
 
-test('④ 三个 service 里再没有"发到某个 open_id"的代码（ⓐ：一行私聊都不留）', () => {
-  // 源码级哨兵：缺省出口那 5 处已改成"记 skip + 返 null"，
-  // **字面上**不该再出现"把 `sender_open_id` 当收件人交出去"这种代码。
-  // ⚠️ 注释里可以提（那是解释为什么删），所以先把注释剥掉再断言。
-  const stripComments = (source) => source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
-  // ⭐ 2026-10-28：原来这份名单里两行都是 `salesThreadProgressService.js`（它在"群话题进展识别"
-  //   那条链路里也有缺省出口）。那个 service 已随群入口/卡片一起**整体删除** ⇒
-  //   现在真正需要盯的是这两个**仍活着**的 service。
-  const serviceFiles = [
-    'src/services/larkMvpService.js',
-    'src/services/sampleReplacementService.js',
-  ];
-  const patterns = [
-    [/sendCard\(\s*task\??\.?\s*sender_open_id/, 'sendCard(sender_open_id)'],
-    [/sendText\(\s*task\??\.?\s*sender_open_id/, 'sendText(sender_open_id)'],
-    [/options\.sendText\?\.\(\s*task\??\.?\s*sender_open_id/, 'options.sendText(sender_open_id)'],
-    [/sender_open_id:\s*openId/, '把 open_id 当收件人写进 payload'],
-  ];
-  for (const file of serviceFiles) {
-    const code = stripComments(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
-    for (const [pattern, label] of patterns) {
-      assert.equal(pattern.test(code), false, `${file} 里还有「${label}」`);
-    }
-  }
-  // ⭐ 全仓只有 `utils/privateChatSend.js` 一个地方**定义**这条 skip 日志；
-  //    其余 service 只能调它 —— 这样"哪个出口偷偷长出一条私聊路"会立刻露馅。
-  const emitter = fs.readFileSync(path.join(__dirname, '../src/utils/privateChatSend.js'), 'utf8');
-  assert.match(emitter, /lark\.private_chat\.send_skipped/);
-  for (const file of [...serviceFiles, 'src/services/larkMvpService.js', 'src/services/sampleReplacementService.js']) {
-    const code = stripComments(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'));
-    assert.equal(/logWarn\(\s*'lark\.private_chat\.send_skipped'/.test(code), false,
-      `${file} 自己打 skip 日志（应改为调 utils/privateChatSend）`);
-  }
-});
+;
 
 test('④ 路由不再注册机器人菜单事件（application.bot.menu_v6）；卡片回调也已退场，但消息入口还在', () => {
   const handlers = createLarkEventHandlers({
@@ -290,17 +255,7 @@ test('④ 路由不再注册机器人菜单事件（application.bot.menu_v6）�
   assert.equal('card.action.trigger' in handlers, false, '卡片回调不许再注册');
 });
 
-test('④ SampleReplacementService 里**没有** open_id 发送器（sendCard / sendText 已整体删除）', () => {
-  const { SampleReplacementService } = require('../src/services/sampleReplacementService');
-  const notifier = new SampleReplacementService({
-    gateway: { table: () => ({ fields: {} }), get: async () => null },
-    inventory: { sampleReplacementCandidates: async () => [] },
-    store: tempStore('private-chat-no-sender-'),
-    client: {},
-  });
-  assert.equal(notifier.sendCard, undefined);
-  assert.equal(notifier.sendText, undefined);
-});
+;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ⑤ 群聊那条真入口不受影响

@@ -82,18 +82,6 @@ class SalesFollowupService {
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/sales_followup_tasks'), idField: 'task_id',
     });
-    // ⭐⭐ 2026-10-11：「卖了样品、没指定门盒」的**待办**（复用既有的 `sample_replacement` 任务，
-    //    落在 `data/lark_mvp_tasks`；工作台交付路径本来就在写它）。
-    //    ⚠️ 本 service 对它是**只读 + 一个补掉的动作**：订单列表据此挂 `sample_pending`。
-    //    用例可注入 `options.samplePending`。
-    // eslint-disable-next-line global-require
-    const { createSamplePendingService } = require('./samplePendingService');
-    this.samplePending = options.samplePending || createSamplePendingService({
-      gateway: this.gateway,
-      inventory: this.delivery.inventory,
-      store: options.sampleTaskStore,
-      taskDir: options.sampleTaskDir,
-    });
     this.queue = Promise.resolve();
     // ⭐⭐ 2026-10-12（她「一直说正在读取订单」）：订单列表的**读取结果 TTL 缓存**。
     //    · TTL 在 `config/workbenchOrders.js`（`WORKBENCH_ORDERS_CACHE_MS`，默认 30 秒；`0` = 关掉）；
@@ -220,17 +208,6 @@ class SalesFollowupService {
    *    语义键映射不到的列（比如配置里换了列名）**自动退回整表读**（宁可慢，不许少列）。
    */
   async buildOrdersList() {
-    // ⭐⭐ 2026-10-11：待补样品待办（**一次读表**，与下面几处取数并行不了 —— 它要看明细 id，
-    //    但读任务本身与明细无关 ⇒ 先并行发出）。读失败**不打挂整页**：当成"没有待办"+ 一条 warn。
-    const pendingSampleTasks = await this.samplePending.listPending().catch((error) => {
-      logWarn('workbench.sales.sample_pending.tasks_unreadable', {
-        error: error.message, hint: '这一次订单列表里不显示"待补样品"待办，其余照常',
-      });
-      return [];
-    });
-    const pendingSampleByDetail = new Map(
-      pendingSampleTasks.map((task) => [task.sales_detail_record_id, task]),
-    );
     // ⭐ 2026-10-11（C）：「其他配品」这张表是**可选配置**（没配时销售只支持鞋，见
     //    `services/salesEntryService.listAccessories` 的注释）。这里先看 tableId 再读 ——
     //    未配置时**跳过**（配品行照样认得出来，只是没有名称），绝不把整页打成 500。
@@ -275,35 +252,6 @@ class SalesFollowupService {
         loader: () => this.listAllWithRetry('accessory', fieldOptions('accessory')),
       }) : Promise.resolve([]),
     ]);
-    /**
-     * ⭐⭐ 2026-10-16（性能 · 线上 27~42 秒的真凶）：**「实时库存」一次请求只整表读一次**。
-     *
-     * 改前：`samplePending.candidatesFor` 里**每条待补样品**都让
-     *   `InventoryService.sampleReplacementCandidates` 自己 `listAll('liveInventory')`
-     *   ——「实时库存」是**一双一行**的最大一张表，而这几读在
-     *   `Promise.all(orderDetails.map(async …))` 里**逐个 await** ⇒ **串行 N 次整表读**
-     *   （她 2026-10-12 那条通知里待补样品 = 8 ⇒ 8 次串行）。
-     * 改后：这里读**一次**当快照，原样透传下去；下面每条待办都从**同一批记录**里算
-     *   ⇒ 读表次数从 N 变 1，**算出来的候选逐字不变**（同一批记录、同一段判据）。
-     *
-     * 🔴 三条边界：
-     *   · **没有待办就一次都不读**（`pendingSampleByDetail.size === 0`）—— 不给没有待办的
-     *     请求平白加一次飞书读；
-     *   · 快照读失败 ⇒ **不打断整页**，退回"逐条自己读"（与改前完全同路）—— 待办照旧看得见；
-     *   · 不用 `listAllWithRetry`：这一次读**失败不再是错误**（下面逐条读那条路本来就有自己的
-     *     兜底 `candidates_unreadable`），为它重试只会让"读不到"更慢地被发现。
-     */
-    let liveSnapshot = null;
-    if (pendingSampleByDetail.size > 0) {
-      try {
-        liveSnapshot = await this.gateway.listAll('liveInventory', fieldOptions('liveInventory'));
-      } catch (error) {
-        logWarn('workbench.sales.sample_pending.live_snapshot_unreadable', {
-          error: error.message,
-          hint: '这一次退回"每条待办各自读一次实时库存"（待办照旧显示，只是慢一点）',
-        });
-      }
-    }
     const orderFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
     const paymentFields = this.gateway.table('paymentRecord').fields;
@@ -376,36 +324,6 @@ class SalesFollowupService {
                     actual_amount: textValue(detail.fields?.[detailFields.actualAmount]) === '' ? null : Number(textValue(detail.fields?.[detailFields.actualAmount])),
                   };
                 }));
-            // ⭐⭐ 待补样品待办 → 每条待办一行：**哪条明细** + 这一款**还有哪些码有门盒**
-            //    （她点进去就能选；与群里那条卡片同一个取数实现 `inventoryService.js:1308`）。
-            //    ⚠️ 取候选失败**不打断整页**：这一行照给，候选为空 + 一条 warn。
-            const samplePendingLines = (await Promise.all(orderDetails.map(async (detail) => {
-              const task = pendingSampleByDetail.get(detail.record_id);
-              if (!task) return null;
-              let candidates = [];
-              try {
-                // ⚠️ 只列**还有门盒**的码：她选中一个码就是要拿它补 ⇒ 不给"门盒 0 双"的选项
-                //    （群里那张卡片列全部码，是因为那边失败后会重发一张 —— 这里直接不给不能选的）。
-                // ⭐ 2026-10-16（性能）：带上**本次请求已经读到的那一份**「实时库存」快照
-                //    ⇒ 这里**不再整表读**（改前是每条待办读一次、串行）。快照读失败时
-                //    `liveSnapshot` 是 `null` ⇒ 回到"逐条自己读"，与改前同路。
-                candidates = (await this.samplePending.candidatesFor(task.product_record_id,
-                  { excludeRecordIds: task.consumed_live_record_ids || [], liveRecords: liveSnapshot }))
-                  .filter((candidate) => Number(candidate.doorBoxCount || 0) > 0);
-              } catch (error) {
-                logWarn('workbench.sales.sample_pending.candidates_unreadable', {
-                  order_no: orderNo, sales_detail_record_id: detail.record_id, error: error.message,
-                });
-              }
-              const row = detailRows.find((item) => item.record_id === detail.record_id);
-              return {
-                detail_record_id: detail.record_id,
-                product_record_id: task.product_record_id,
-                product_number: task.product_number || '',
-                size: row?.size ?? null,
-                candidates,
-              };
-            }))).filter(Boolean);
             return {
               record_id: order.record_id,
               order_no: orderNo,
@@ -422,9 +340,6 @@ class SalesFollowupService {
               platform_pending_amount: progress.platformPendingAmount,
               pending_delivery_quantity: progress.pendingDeliveryQuantity,
               details: detailRows,
-              // ⭐⭐ 待补样品待办（**只读字段**；判据在页面那一侧：`sample_pending` 为真 ⇒ 进「待补充」）。
-              sample_pending: samplePendingLines.length > 0,
-              sample_pending_lines: samplePendingLines,
               payments: orderPayments
                 .map((payment) => ({
                   record_id: payment.record_id,
@@ -458,27 +373,6 @@ class SalesFollowupService {
     };
   }
 
-  /**
-   * ⭐⭐ 2026-10-11：**补样品**（工作台 → 销售 → 订单列表 →【待补充】里那条待办）。
-   *
-   * 她把"卖了样品、没指定门盒"的那一单选一个尺码 ⇒ 那一双 **门盒 → 样品**（**1 双**）。
-   * ⚠️ 真正的动作与幂等在 `SamplePendingService.fill` → `InventoryService.promoteToSample`
-   *    （**与群卡片共用同一个 `operationId`** ⇒ 跨入口绝不重复挪）。
-   */
-  async fillSample(input = {}) {
-    const result = await this.samplePending.fill({
-      detailRecordId: input.detailRecordId,
-      size: input.size,
-      operatorOpenId: input.operatorOpenId,
-      requestId: input.requestId,
-      correlation: { request_id: input.requestId },
-    });
-    // ⭐ 2026-10-12：**本 service 自己的写成功之后立刻作废自己的缓存** ——
-    //    不依赖调用方（路由层）记得失效：直接调 service 的地方（测试 / 将来的内部调用）
-    //    也不会读到旧数据。路由层那几处失效是给"不经过本 service 的写"兜底的。
-    this.ordersCache.invalidate();
-    return result;
-  }
 
   /**
    * 把那张销售单**唯一**那条【未收款】的「收款金额」同步成**当前剩余待收**（收满 ⇒ `0`）。

@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **455** 个事件。按前缀分组：
+共 **444** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -123,12 +123,9 @@
 | `inventory.adjustment.count.replayed` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.adjustment.pairs.applied` | 1 | src/services/inventoryPairAdjustmentService.js |
 | `inventory.adjustment.season_flag.applied` | 1 | src/services/inventoryPairAdjustmentService.js |
-| `inventory.adjustment.season.applied` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.change.applied` | 4 | src/services/inventory/executeOperation.js<br>src/services/inventory/purchaseBatch.js<br>src/services/inventory/purchaseReturnBatch.js<br>…等 4 个文件 |
 | `inventory.change.failed` | 1 | src/config/alerts.js |
 | `inventory.sample_candidates.failed` | 2 | src/services/inventory/executeOperation.js<br>src/services/inventory/saleBatch.js |
-| `inventory.sample.promoted` | 1 | src/services/inventory/samplePromotion.js |
-| `inventory.state.transitioned` | 1 | src/services/inventory/stateTransition.js |
 
 ## label
 
@@ -208,7 +205,6 @@
 | `lark.sales.product_missing.blocked` | 1 | src/config/salesProductRegistration.js |
 | `lark.sales.product_missing.guard_disabled` | 1 | src/config/salesProductRegistration.js |
 | `lark.sales.product_missing.undetermined` | 1 | src/config/salesProductRegistration.js |
-| `lark.sales.sample_replacement.applied` | 1 | src/services/sampleReplacementService.js |
 | `lark.sales.trade_type.resolve_failed` | 1 | src/services/larkMvpService.js |
 | `lark.sdk.error` | 1 | src/utils/larkLogger.js |
 | `lark.sdk.info` | 1 | src/utils/larkLogger.js |
@@ -606,11 +602,4 @@
 | `workbench.sales.orders.order_skipped` | 1 | src/services/salesFollowupService.js |
 | `workbench.sales.orders.read_retry` | 2 | src/services/salesDeliveryReadService.js<br>src/services/salesFollowupService.js |
 | `workbench.sales.payment.failed` | 2 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryPaymentService.js |
-| `workbench.sales.sample_fill.applied` | 1 | src/services/samplePendingService.js |
-| `workbench.sales.sample_fill.no_doorbox` | 1 | src/services/samplePendingService.js |
-| `workbench.sales.sample_fill.reused` | 1 | src/services/samplePendingService.js |
-| `workbench.sales.sample_notice.failed` | 1 | src/routes/workbenchSalesDelivery.js |
-| `workbench.sales.sample_pending.candidates_unreadable` | 1 | src/services/salesFollowupService.js |
-| `workbench.sales.sample_pending.live_snapshot_unreadable` | 1 | src/services/salesFollowupService.js |
-| `workbench.sales.sample_pending.tasks_unreadable` | 1 | src/services/salesFollowupService.js |
 | `workbench.size.unresolved` | 1 | src/services/v1WorkbenchService.js |

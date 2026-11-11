@@ -57,8 +57,6 @@ const { applySaleBatch } = require('./inventory/saleBatch');
 const { applyPurchaseBatch } = require('./inventory/purchaseBatch');
 const { applyPurchaseReturnBatch } = require('./inventory/purchaseReturnBatch');
 const { executeOperation } = require('./inventory/executeOperation');
-const { transitionState, executeStateTransition } = require('./inventory/stateTransition');
-const { promoteToSample, executeSamplePromotion } = require('./inventory/samplePromotion');
 const {
   assertNoDuplicateOperationItems,
   findOperationLedger,
@@ -387,13 +385,11 @@ class InventoryService {
 
   async resumePending(stockKey) {
     const pending = (await this.store.list()).filter(
-      (record) => ['inventory_change', 'sample_promotion', 'state_transition'].includes(record.type) &&
+      (record) => record.type === 'inventory_change' &&
         record.stock_key === stockKey && record.status !== 'completed'
     );
     for (const operation of pending.reverse()) {
-      if (operation.type === 'sample_promotion') await this.executeSamplePromotion(operation);
-      else if (operation.type === 'state_transition') await this.executeStateTransition(operation);
-      else await this.executeOperation(operation);
+      await this.executeOperation(operation);
     }
   }
 }
@@ -406,10 +402,6 @@ for (const [name, method] of Object.entries({
   applyPurchaseBatch,
   applyPurchaseReturnBatch,
   executeOperation,
-  transitionState,
-  executeStateTransition,
-  promoteToSample,
-  executeSamplePromotion,
   assertNoDuplicateOperationItems,
   findOperationLedger,
   ledgerMatchesOperation,

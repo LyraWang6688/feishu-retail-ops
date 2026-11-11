@@ -521,28 +521,7 @@ test('AC-SB2b ⭐ 流水字段逐字：编号 / 尺码 / 变动数量 / 库存�
   } finally { h.cleanup(); }
 });
 
-test('AC-SB2c ⭐ 门盒→样品顺序 / 样品消耗 / 补样品候选（remainingSizes）一个字没变', async () => {
-  for (const batchPorts of [false, true]) {
-    const h = createHarness('sample', { batchPorts });
-    try {
-      const result = await deliverAll(h);
-      assert.equal(result.failures.length, 0);
-      const sampleLine = result.results.find((item) => item.detailRecordId === 'detail_s');
-      assert.equal(sampleLine.inventoryResult.sampleConsumedQuantity, 1,
-        '1 门盒都没有 ⇒ 扣到样品，样品消耗计数 = 1');
-      // 扣的是**先门盒、后样品**那一条口径下应当扣的那一双：两双样品里 record_id 小的那双。
-      assert.deepStrictEqual(sampleLine.inventoryResult.consumedLiveRecordIds, ['live_s_40_sample_1'],
-        '同一状态内按 record_id 升序（与改动前逐个 sort 的顺序一致）');
-      // 补样品候选：这一单卖了 40 码样品 ⇒ 40 码还剩 1 双样品（41 码门盒不属于这个货品）
-      assert.deepStrictEqual(sampleLine.inventoryResult.remainingSizes,
-        [{ size: 40, doorBoxCount: 0, sampleCount: 1, warehouseCount: 0 }],
-        'remainingSizes 与逐条路径同一份（从这批已读到的实时库存算，零额外整表读）');
-      assert.deepStrictEqual(result.sampleReplacements.map((item) => item.salesDetailRecordId), ['detail_s']);
-      assert.deepStrictEqual(liveIds(h), ['live_s_40_sample_2'],
-        '扣掉 1 双样品（detail_s）＋ 1 双门盒（detail_t），余量正确');
-    } finally { h.cleanup(); }
-  }
-});
+;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-SB3 ⭐ 部分失败语义：一行缺货不拖累其余，且如实带 reason

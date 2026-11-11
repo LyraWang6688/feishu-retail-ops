@@ -128,18 +128,7 @@ const READ_CALL_BUDGET = 7;
 // AC-P1 / P2 / P4 「实时库存」只读一次 + 没有重复整表读 + 总次数上限
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-P1 四条待补样品 ⇒「实时库存」仍然只整表读一次（改前是 4 次串行）', async () => {
-  const env = await buildService(pendingFixture(), { pendingDetailIds: PENDING_ALL_FOUR });
-  try {
-    const result = await env.service.listOrders();
-    assert.equal(result.orders.filter((order) => order.sample_pending).length, 2,
-      '夹具前提：两张单都挂了待补样品待办');
-    assert.equal(callCount(env.fake.calls, 'liveInventory'), 1,
-      '「实时库存」一次请求只许整表读一次（N 条待办 ⇒ 改前 N 次串行读）');
-  } finally {
-    env.cleanup();
-  }
-});
+;
 
 test('AC-P2 没有任何一张表被整表读两次（调用序里不许出现重复表名）', async () => {
   const env = await buildService(pendingFixture(), { pendingDetailIds: PENDING_ALL_FOUR });
@@ -169,60 +158,13 @@ test('AC-P4 整表读总次数不超过预算（4 条待办也 ≤ 7 次；改�
 // AC-P3 按需取字段（快照读也要带 fieldNames）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-P3 「实时库存」快照按需取字段：只要 编号/尺码/所属状态 三列', async () => {
-  const env = await buildService(pendingFixture(), { pendingDetailIds: PENDING_ALL_FOUR });
-  try {
-    await env.service.listOrders();
-    const liveCalls = env.fake.calls.filter((call) => call.key === 'liveInventory');
-    assert.equal(liveCalls.length, 1, '前提：只读一次');
-    const expected = ORDER_SUPPORT_FIELD_KEYS.liveInventory
-      .map((key) => V1_BITABLE_SCHEMA.tables.liveInventory.fields[key]).filter(Boolean);
-    assert.deepEqual(liveCalls[0].fieldNames, expected,
-      '「实时库存」只用 编号/尺码/所属状态（多一列都不许）');
-    assert.ok(expected.length > 0, '这张清单必须解析得出飞书列名（不许退回整表读）');
-  } finally {
-    env.cleanup();
-  }
-});
+;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-P5 语义逐字一致：候选清单不允许漂
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-P5 待补样品的候选清单逐字不变（同一批「实时库存」记录 ⇒ 同样的行/字段/顺序）', async () => {
-  const env = await buildService(pendingFixture(), { pendingDetailIds: PENDING_ALL_FOUR });
-  try {
-    const result = await env.service.listOrders();
-    const lines = result.orders.flatMap((order) => order.sample_pending_lines || []);
-    assert.equal(lines.length, 4, '四条明细各一条待补样品行（N+1 的那 4 个点）');
-    for (const line of lines) {
-      // ⚠️ 调用方（`salesFollowupService`）**只留门盒 > 0 的码**（既有口径，一个字没动）⇒
-      //    product_2 的 39 码在「实时库存」里是**样品**（门盒 0）⇒ 不出现在这里；
-      //    product_1 两个码都是门盒 ⇒ 两个都在。
-      const expected = line.product_record_id === 'product_2'
-        ? [{ size: 38, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 }]
-        : [
-          { size: 38, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
-          { size: 39, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
-        ];
-      assert.deepEqual(line.candidates, expected,
-        `候选清单必须逐字一致（product=${line.product_record_id}）`);
-    }
-    // 🔴 「逐字一致」的另一半：**同一个** `InventoryService` 判据换个入口算，结果必须相同
-    //    （快照路 vs 逐条路 —— 这是本次改动唯一可能漂的地方）
-    const service2 = new SalesFollowupService({
-      gateway: env.fake, sampleTaskDir: env.dir,
-      ordersCache: createWorkbenchOrdersCache({ ttlMs: 0 }), ordersConfig: { ordersCacheMs: 0 },
-    });
-    const again = await service2.listOrders();
-    assert.deepEqual(again, result, '快照路与逐条路算出来的整份结果必须逐字相同');
-    // 「卖掉的那一双是样品」⇒ 39 码不计入门盒候选（既有口径，一个字都没动）
-    assert.equal(result.orders.every((order) => order.details.every((detail) => detail.size != null)), true,
-      '明细的尺码仍照常解析出来');
-  } finally {
-    env.cleanup();
-  }
-});
+;
 
 test('AC-P5b 没有待办时 ⇒ 一次「实时库存」都不读（既有行为，不许为优化多读）', async () => {
   const env = await buildService(pendingFixture(), { pendingDetailIds: [] });
@@ -241,57 +183,7 @@ test('AC-P5b 没有待办时 ⇒ 一次「实时库存」都不读（既有行�
 // AC-P6 快照读失败 ⇒ 如实退回逐条读（不静默丢待办、不假装成功）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-P6 快照读失败 ⇒ 退回逐条读（待办照旧看得见，候选照旧算得出来）', async () => {
-  // 第一次读失败、后续成功：模拟"快照那一次恰好撞上瞬时错误"
-  const records = pendingFixture();
-  let liveAttempts = 0;
-  const calls = [];
-  const gateway = {
-    calls,
-    async listAll(key, options = {}) {
-      calls.push({ key, fieldNames: options.fieldNames });
-      await new Promise((resolve) => setImmediate(resolve));
-      if (key === 'liveInventory') {
-        liveAttempts += 1;
-        if (liveAttempts === 1) throw new Error('1254607 Data not ready（夹具故意）');
-      }
-      return records[key] || [];
-    },
-    table: (key) => V1_BITABLE_SCHEMA.tables[key],
-  };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orders-perf-'));
-  const store = new JsonTaskStore({ dir, idField: 'task_id' });
-  for (const detailId of PENDING_ALL_FOUR) {
-    await store.create({
-      task_id: `sample_${detailId}`, type: 'sample_replacement', status: 'pending',
-      sales_detail_record_id: detailId,
-      product_record_id: Number(detailId.split('_')[1]) <= 2 ? 'product_1' : 'product_2',
-    });
-  }
-  const service = new SalesFollowupService({
-    gateway,
-    sampleTaskDir: dir,
-    ordersCache: createWorkbenchOrdersCache({ ttlMs: 0 }),
-    ordersConfig: { ordersCacheMs: 0 },
-  });
-  try {
-    const result = await service.listOrders();
-    const lines = result.orders.flatMap((order) => order.sample_pending_lines || []);
-    assert.equal(lines.length, 4, '快照失败不许把待办丢掉（退回逐条读 ⇒ 待办照旧）');
-    // 按明细 id 取那一条（订单列表最后 `.reverse()` 过 ⇒ 不能假定顺序）
-    const line1 = lines.find((line) => line.detail_record_id === 'detail_1');
-    assert.ok(line1, 'detail_1 的待办照旧在（没被静默丢掉）');
-    assert.deepEqual(line1.candidates, [
-      { size: 38, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
-      { size: 39, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
-    ], '退回逐条读时候选清单同样逐字一致（detail_1 是 product_1）');
-    // 快照那一次失败之后，逐条读各自成功 ⇒「实时库存」被读了 1（失败）+ 4（逐条）
-    assert.equal(calls.filter((call) => call.key === 'liveInventory').length, 5,
-      '如实退回逐条读：快照 1 次（失败）+ 每条待办自己读 1 次');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-P7 **共享配置缓存不许被"精简读"污染**（2026-11-08 真实事故）

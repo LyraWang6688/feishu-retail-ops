@@ -471,73 +471,9 @@ test('同一个 service 实例连跑两笔单：各自的日志带各自的键�
 });
 
 // ── ⑦ 相关库存日志也两种键都给（状态变更 / 补样品） ───────────────────────────
-test('inventory.state.transitioned：stock_key 与 stock_key_label 并列，且带关联键', async () => {
-  const world = makeWorld();
-  world.records.get('behavior').push({ record_id: 'behavior_freeze', fields: {
-    行为编码: 'STOCK_FREEZE', 行为名称: '转冻结', 库存方向: '不影响', 是否启用: true,
-  } });
-  const inventory = new InventoryService({ gateway: world.gateway, store: world.store() });
+;
 
-  const logs = captureLogs();
-  try {
-    // ⚠️ 2026-11-08（issue #961）成对迁移：状态变更的来源身份改由行为注册表声明
-    //    （请求编号 + 目标身份），所以这里传 `requestId`，不再自己拼 `sourceRecordId`。
-    await inventory.transitionState({
-      kind: 'STOCK_FREEZE', productRecordId: 'product_rec', size: 40, fromState: '门盒',
-      quantity: 1, requestId: 'freeze_req_1',
-    }, { correlation: CORRELATION });
-  } finally {
-    logs.restore();
-  }
-
-  const rows = logs.logs('inventory.state.transitioned');
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].stock_key, 'product_rec|40|门盒');
-  assert.equal(rows[0].stock_key_label, LABEL);
-  assert.equal(rows[0].stock_key_label_source, 'live_inventory');
-  // 既有字段一个不少
-  assert.equal(rows[0].kind, 'STOCK_FREEZE');
-  assert.equal(rows[0].from_state, '门盒');
-  assert.equal(rows[0].to_state, '仓库');
-  assert.equal(rows[0].quantity, 1);
-  assert.deepEqual(rows[0].live_record_ids, ['live_1']);
-  assert.equal(typeof rows[0].ledger_record_id, 'string');
-  // 新增关联键
-  assert.equal(rows[0].task_id, 'sale_om_test');
-  assert.equal(rows[0].sales_entry_record_id, 'rec_sale');
-  assert.equal(world.productReads(), 0);
-});
-
-test('inventory.sample.promoted：stock_key 与 stock_key_label 并列，且带关联键', async () => {
-  const world = makeWorld();
-  world.records.get('behavior').push({ record_id: 'behavior_sample', fields: {
-    行为编码: 'STOCK_DOORBOX_TO_SAMPLE', 行为名称: '门盒转样品', 库存方向: '不影响', 是否启用: true,
-  } });
-  const inventory = new InventoryService({ gateway: world.gateway, store: world.store() });
-
-  const logs = captureLogs();
-  try {
-    await inventory.promoteToSample({
-      salesDetailRecordId: 'detail_1', productRecordId: 'product_rec', size: 40,
-    }, { correlation: CORRELATION });
-  } finally {
-    logs.restore();
-  }
-
-  const rows = logs.logs('inventory.sample.promoted');
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].stock_key, 'product_rec|40|门盒');
-  assert.equal(rows[0].stock_key_label, LABEL);
-  assert.equal(rows[0].stock_key_label_source, 'live_inventory');
-  // 既有字段一个不少
-  assert.equal(rows[0].live_record_id, 'live_1');
-  assert.equal(typeof rows[0].ledger_record_id, 'string');
-  assert.equal(rows[0].size, 40);
-  // 新增关联键
-  assert.equal(rows[0].task_id, 'sale_om_test');
-  assert.equal(rows[0].sales_entry_record_id, 'rec_sale');
-  assert.equal(world.productReads(), 0);
-});
+;
 
 // ── ⑥ 「成交」（第二次交付）那条链：收款明细的写入日志也要能串 ────────────────
 test('成交链路：收款明细的写入日志带 sales_entry_record_id ＋ order_no（单号零额外请求）', async () => {
