@@ -191,7 +191,7 @@ async function applySaleBatch(items = [], options = {}) {
             throw new Error(`来源明细 ${item.sourceRecordId} 已有库存流水，但缺少可恢复任务，请人工核对实时库存`);
           }
           // ⭐ 2026-11-11：不看状态；按「创建时间」FIFO 选最早的行（与逐条路径同一规则）。
-          const liveRecords = this.sortLiveInventoryFifo(
+          const liveRecords = this.sortLiveInventoryForConsumption(
             this.findLiveInventoryIn(allLive, item.input.productRecordId, sizeReference.recordId)
               .filter((record) => !claimed.has(record.record_id)),
           );

@@ -113,6 +113,9 @@ test('AC-PAIR-2 数量/尺码/状态差异逐项走 applyChange（增/减）', a
     [43, 'STOCK_MANUAL_DECREASE', 1],
     [44, 'STOCK_MANUAL_INCREASE', 1],
   ].sort());
+  const increase = changes.find((call) => call.size === 44);
+  assert.equal(increase.state, '门盒', '新增行必须用用户选择的状态');
+  assert.equal(increase.statePolicy, 'explicit', '人工调整不套自动入库规则');
   assert.ok(result.changed >= 2, '数量调整后还会补状态标签');
 });
 

@@ -36,25 +36,18 @@ const aggregateArrivalItems = (items) => {
 
 const arrival = {
   /**
-   * 决定采购入库的库存状态：
-   * - 如果该编号（货号）下完全没有样品库存（不管哪个尺码），则先作为样品入库
-   * - 如果该编号下已有任意尺码的样品库存，则作为门盒入库
-   * 这和销售相反（销售先卖门盒，再卖样品）
+   * 决定采购入库的第一双状态（业务负责人 2026-11-12）：
+   * - 该「编号」下所有尺码合计**没有任何库存记录** ⇒ 第一双样品
+   * - 该编号下已有任何库存记录（门盒、样品、空状态都算） ⇒ 第一双门盒
+   * 同一批后续由调用方继续按「先样品、后门盒」推演。
    */
   async resolvePurchaseInboundState(productRecordId) {
     try {
-      // 查询该编号下所有尺码的样品库存记录（不指定尺码）
       const allLiveRecords = await this.gateway.listAll('liveInventory');
       const table = this.gateway.table('liveInventory');
-      const sampleRecords = allLiveRecords.filter((record) => {
-        // 使用 linkedRecordIds 处理关联字段，兼容飞书API返回的多种格式
-        const productIds = strictLinkedRecordIds(record.fields?.[table.fields.product]);
-        // 单选字段可能返回字符串或数组，统一处理
-        const stateValue = record.fields?.[table.fields.state];
-        const state = Array.isArray(stateValue) ? stateValue[0] : stateValue;
-        return productIds.includes(productRecordId) && String(state) === '样品';
-      });
-      return sampleRecords.length === 0 ? '样品' : '门盒';
+      const hasAny = allLiveRecords.some((record) =>
+        strictLinkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId));
+      return hasAny ? '门盒' : '样品';
     } catch (error) {
       logWarn('purchase.inbound.state_check.failed', { product_record_id: productRecordId, error: error.message });
       return '门盒'; // 查询失败时默认入门盒
@@ -177,13 +170,9 @@ const arrival = {
       inboundEntries.push({ item, key });
     }
     if (inboundEntries.length) {
-      // 决定入库状态：没有样品则入样品库，有样品则入门盒库（口径与改动前逐字一致）。
-      // ⚠️ 原来这条整表读在循环里**每条一次**（5 码 = 5 次）；同一款只算一次。
-      // ⚠️ 口径与逐条路径**逐字一致**：`resolvePurchaseInboundState` = "这一款已有「样品」行 ⇒ 门盒，
-      //    否则 ⇒ 样品"。逐条路径是**边写边判** ⇒ 同一款的第一双入样品之后，**后面几双看到那条样品行
-      //    就都入门盒**。批量把写入挪到了后面 ⇒ 必须**本地推演**出同一串状态，否则同一款的第 2 双会被
-      //    错判成样品（既有用例「每个货号第一双先入样品」抓到的就是这个）。
-      //    ⇒ 每款仍只读一次（原来每码一次），第 2 双起按"已经有一双样品"推。
+      // 决定入库状态：该编号所有尺码合计为 0 ⇒ 第一双样品，其余门盒；已有任何库存 ⇒ 全部门盒。
+      // 批量写入在循环后统一做，因此必须按同一顺序本地推演，不能每双都重新读（否则第 2 双会被再次判成样品）。
+      // 每款只读一次；第一双之后固定记为已有库存。
       const sampleSeenOf = new Map();
       const stateOfEntry = new Map();
       for (const entry of inboundEntries) {

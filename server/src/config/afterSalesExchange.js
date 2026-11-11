@@ -36,7 +36,7 @@ const AFTER_SALES_EXCHANGE = Object.freeze({
     salesDate: 'now',
   }),
 
-  // 库存两条腿：旧鞋车回门盒 / 新鞋出门盒（行为编码与退货/销售共用既有注册表）。
+  // 库存两条腿：旧鞋回库（增加，状态由内核按编号库存自动判定）/ 新鞋出库（减少，按门盒→样品优先级选行）。
   stock: Object.freeze({
     restockState: '门盒',
     returnedBehaviorCode: 'STOCK_SALE_INCREASE', // 销售增加（旧鞋回库）

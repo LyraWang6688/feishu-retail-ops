@@ -66,7 +66,11 @@ test('purchase adds one live record per pair', async () => {
   await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1', size: 38,
     quantity: 2, state: '门盒' });
   assert.equal(gateway.records.get('liveInventory').length, 2);
-  assert.ok(gateway.records.get('liveInventory').every((row) => row.fields['所属状态'] === '门盒'));
+  // 该编号原本没有任何库存 ⇒ 第一双样品，第二双门盒。
+  assert.deepEqual(
+    gateway.records.get('liveInventory').map((row) => row.fields['所属状态']).sort(),
+    ['样品', '门盒'].sort(),
+  );
   assert.ok(gateway.records.get('liveInventory').every((row) =>
     JSON.stringify(row.fields['尺码']) === JSON.stringify([{ record_ids: ['size_38'] }])));
   // ⭐ 2026-10-08：业务负责人把「库存流水.关联采购」从"指向已删除的「采购入库」"
@@ -329,8 +333,10 @@ test('售后动作在真 InventoryService 里生效：退货加一行、现货�
     编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 变动数量: 1,
     库存行为: [{ record_ids: ['behavior_return'] }], 关联销售: [{ record_ids: ['detail_ret_1'] }],
   });
-  const added = gateway.records.get('liveInventory').filter((row) => row.fields['所属状态'] === '样品');
+  // 该编号已有门盒库存 ⇒ 退货回库也进门盒（不是按传入的 state）。
+  const added = gateway.records.get('liveInventory').filter((row) => row.record_id !== 'door_1');
   assert.equal(added.length, 1);
+  assert.equal(added[0].fields['所属状态'], '门盒');
   assert.deepEqual(added[0].fields['编号'], [{ record_ids: ['product_1'] }]);
 
   const outgoing = await inventory.applyChange({
@@ -463,4 +469,41 @@ test('C5 同一个 applyPurchase 重复执行：流水只有一条，库存只�
   assert.equal(gateway.records.get('inventoryLedger').length, 1);
   assert.equal(gateway.records.get('liveInventory').length, 3, '重复执行不得把库存变成 6');
   assert.deepEqual(liveKeys(gateway).map((key) => key.slice(-2)), [':1', ':2', ':3']);
+});
+
+
+test('出库优先扣门盒：样品更早入库也不先扣样品', async () => {
+  const gateway = gatewayFor([unit('a_sample', '样品'), unit('z_door', '门盒')]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await inventory.applySale({ salesDetailRecordId: 'detail_priority', productRecordId: 'product_1', size: 38, quantity: 1 });
+  assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['a_sample']);
+});
+
+test('空状态按门盒优先：空状态行先于样品被扣', async () => {
+  const gateway = gatewayFor([unit('a_empty', ''), unit('z_sample', '样品')]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await inventory.applySale({ salesDetailRecordId: 'detail_empty', productRecordId: 'product_1', size: 38, quantity: 1 });
+  assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.record_id), ['z_sample']);
+});
+
+test('入库按编号所有尺码合计：其他尺码已有库存 ⇒ 新尺码也进门盒', async () => {
+  const otherSize = { record_id: 'live_other', fields: {
+    编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒',
+  } };
+  const gateway = gatewayFor([otherSize]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_other', productRecordId: 'product_1', size: 38,
+    quantity: 1 });
+  const added = gateway.records.get('liveInventory').find((row) => row.record_id !== 'live_other');
+  assert.equal(added.fields['所属状态'], '门盒');
+});
+
+test('人工显式状态：新增两双都写用户选择的状态', async () => {
+  const gateway = gatewayFor([], [behavior('behavior_manual', 'STOCK_MANUAL_INCREASE', '手工调增', '增加')]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await inventory.applyChange({
+    kind: 'STOCK_MANUAL_INCREASE', productRecordId: 'product_1', size: 38, state: '样品',
+    quantity: 2, requestId: 'req_explicit', statePolicy: 'explicit',
+  });
+  assert.deepEqual(gateway.records.get('liveInventory').map((row) => row.fields['所属状态']), ['样品', '样品']);
 });
