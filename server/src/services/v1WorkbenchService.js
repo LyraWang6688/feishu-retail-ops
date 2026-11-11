@@ -138,20 +138,23 @@ const createWorkbenchService = (gateway, options = {}) => {
     }
   };
 
-  // 「换季调整（按品类批量）」的品类清单。品类取自「实时库存」的「品类」公式列
-  // （读生产/测试真表核过：liveInventory.品类 type=20 公式，返回品类名）。
+  // 「换季调整（按品类批量）」的品类清单：走统一配置表缓存（品类管理），
+  // 不再整表读 1335 行实时库存。
   const listInventoryCategories = async ({ requestId, limit = WORKBENCH_CATEGORY_LIMIT } = {}) => {
-    const inventory = await listAllWithRetry(gateway, 'liveInventory', requestId);
-    const counts = new Map();
-    for (const record of inventory) {
-      const category = asText(schema, 'liveInventory', record, 'category');
-      if (!category) continue;
-      counts.set(category, (counts.get(category) || 0) + 1);
+    const records = await getConfigRows({
+      gateway, tableKey: 'category',
+      loader: () => listAllWithRetry(gateway, 'category', requestId),
+    });
+    const names = new Set();
+    for (const record of records) {
+      const name = asText(schema, 'category', record, 'name');
+      if (name) names.add(name);
     }
-    const rows = [...counts.entries()]
-      .map(([category, quantity]) => ({ category, quantity }))
-      .sort((a, b) => b.quantity - a.quantity || a.category.localeCompare(b.category, 'zh-CN'));
-    return { rows: rows.slice(0, limit), total: rows.length };
+    const rows = [...names]
+      .sort((a, b) => a.localeCompare(b, 'zh-CN'))
+      .slice(0, limit)
+      .map((category) => ({ category }));
+    return { rows, total: names.size };
   };
 
   const getLiveInventory = async ({ keyword = '', size = '', requestId } = {}) => {

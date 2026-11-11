@@ -21,7 +21,8 @@ const gatewayOf = (values, calls = { n: 0 }) => ({
 test('配置表 TTL 由统一注册表给定（调用方不再传）', () => {
   assert.ok(CONFIG_TABLE_KEYS.includes('paymentMethod'));
   assert.ok(CONFIG_TABLE_KEYS.includes('sizeManagement'));
-  assert.equal(CONFIG_TABLE_KEYS.length, 8, '注册表覆盖既有 8 张配置表');
+  assert.equal(CONFIG_TABLE_KEYS.length, 9, '注册表覆盖既有 9 张配置表');
+  assert.equal(CONFIG_TABLES.category.ttlMs, 30 * 60 * 1000);
   assert.equal(CONFIG_TABLES.paymentMethod.ttlMs, 30 * 60 * 1000);
   assert.equal(CONFIG_TABLES.sizeManagement.ttlMs, 30 * 1000);
   assert.equal(CONFIG_TABLES.product.ttlMs, 30 * 60 * 1000);
