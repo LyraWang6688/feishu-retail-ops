@@ -174,3 +174,18 @@ test('AC-AS-UX 售后页：提交时显示「正在提交…」；viewport 禁�
   assert.match(html, /maximum-scale=1/, 'viewport 要限制最大缩放');
   assert.match(html, /user-scalable=no/, 'viewport 要禁止双指缩放');
 });
+
+/**
+ * ⭐ 2026-11-11 真机：换货「确认」点了不跳工作台、停在售后页。
+ * 根因：确认按钮的 click 冒泡进老的原型处理（closeModal + toast「信息提交成功」）截胡，
+ * 原生表单提交没发生。判据：提交按钮必须被显式放行（交给浏览器 submit）。
+ */
+test('AC-AS-SUBMIT 换货确认按钮必须走原生表单提交（不能被点击处理截胡）', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  assert.ok(page.includes('[data-as-exchange-form] button[type="submit"]'),
+    '确认按钮点击要提前放行，交给原生 submit');
+  assert.match(page, /exchangeSubmitApi/, '换货表单 action 指向换货提交接口');
+  assert.doesNotMatch(page, /toastExchangeDone/,
+    '换货不再走原型 toast（真实提交走服务端统一 toast）');
+});
