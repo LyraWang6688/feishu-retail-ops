@@ -40,7 +40,7 @@ async function executeOperation(operation) {
       // 先确认远端没有「同一个键出现两条」这种已经重复的事实，再写流水：
       // 已经重复时应该停下来让人核对，而不是再补一条流水把差异藏起来。
       await this.assertNoDuplicateOperationItems(operation, (operation.created_live_record_ids || []).length + 1,
-        operation.quantity);
+        operation.quantity, await this.readLiveInventoryForProduct(operation.product_record_id));
     }
     if (!ledger) {
       // 远端关联值：注册表声明的"只写不查"关联列（`ledgerLink`）。取不到就**整列不写**。

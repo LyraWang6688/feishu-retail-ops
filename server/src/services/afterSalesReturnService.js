@@ -84,11 +84,14 @@ class AfterSalesReturnService {
   async prepare(payload = {}) {
     const { requestId, salesEntryRecordId, detailRecordId, moneyMode, paymentMethod } = this.validateShape(payload);
 
-    const entry = await this.gateway.get('salesEntry', salesEntryRecordId);
+    // ⭐ 2026-11-11（提速）：原单 / 原明细互不依赖 ⇒ 并行读（飞书写入前少等一轮）
+    const [entry, detail] = await Promise.all([
+      this.gateway.get('salesEntry', salesEntryRecordId),
+      this.gateway.get('salesDetail', detailRecordId),
+    ]);
     if (!entry) throw badRequest(this.texts.entryNotFound);
     const entryFields = this.gateway.table('salesEntry').fields;
     const orderNo = textValue(entry.fields?.[entryFields.orderNo]).trim();
-    const detail = await this.gateway.get('salesDetail', detailRecordId);
     if (!detail) throw badRequest(this.texts.detailNotFound);
     const detailFields = this.gateway.table('salesDetail').fields;
     if (!salesLinkRecordIds(detail.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId)) {
@@ -109,7 +112,12 @@ class AfterSalesReturnService {
     if (!productRecordId) throw badRequest(this.texts.missingProduct);
     const sizeRecordId = salesLinkRecordIds(detail.fields?.[detailFields.size])[0] || '';
     if (!sizeRecordId) throw badRequest(this.texts.missingSize);
-    const sizeRecord = await this.gateway.get('sizeManagement', sizeRecordId);
+    // ⭐ 2026-11-11（提速）：尺码 & 支付方式候选互不依赖 ⇒ 并行读
+    const [sizeRecord, listed] = await Promise.all([
+      this.gateway.get('sizeManagement', sizeRecordId),
+      moneyMode === AFTER_SALES_DERIVED.money.modes.REFUND
+        ? this.paymentMethods.listWithVouchers() : Promise.resolve(null),
+    ]);
     const sizeFields = this.gateway.table('sizeManagement').fields;
     const size = Number(textValue(sizeRecord?.fields?.[sizeFields.size]));
     if (!Number.isFinite(size)) throw badRequest(this.texts.sizeUnreadable);
@@ -117,7 +125,6 @@ class AfterSalesReturnService {
     // 她选的退款方式必须真的在「支付方式管理」里（配置表唯一数据源）
     let method = null;
     if (moneyMode === AFTER_SALES_DERIVED.money.modes.REFUND) {
-      const listed = await this.paymentMethods.listWithVouchers();
       const detailed = listed?.detailed || listed?.items || [];
       const hit = detailed.find((item) => item.name === paymentMethod && item.recordId);
       if (!hit) throw badRequest(this.texts.unknownPaymentMethod);
