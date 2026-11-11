@@ -42,10 +42,15 @@ const createInventoryAdjustmentRouter = (options = {}) => {
       const jobId = jobs.jobIdFor(ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT, `pairs:${requestId}`);
       await jobs.enqueue({ jobId, type: ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT,
         ownerOpenId: req.workbenchUser?.open_id || '', operatorName: req.workbenchUser?.name || '' });
-      void jobs.run({ jobId, run: () => resolvePairAdjustment().adjustPairs({
-        productRecordId: req.body?.productRecordId, rows, requestId,
-        operatorOpenId: req.workbenchUser?.open_id,
-      }) }).catch(() => {});
+      void jobs.run({
+        jobId,
+        run: () => resolvePairAdjustment().adjustPairs({
+          productRecordId: req.body?.productRecordId, rows, requestId,
+          operatorOpenId: req.workbenchUser?.open_id,
+        }),
+        // 调整成功 = 业务结果（不是 async job 的 {ok} 形态）；不给分类器会被当成失败。
+        classifyResult: () => ({ ok: true, retryable: false, message: '', code: '' }),
+      }).catch(() => {});
       return res.status(202).json({ success: true, queued: true, job_id: jobId });
     } catch (error) {
       const status = error?.statusCode === 400 ? 400 : 502;
@@ -63,7 +68,11 @@ const createInventoryAdjustmentRouter = (options = {}) => {
       const jobId = jobs.jobIdFor(ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT, `season:${requestId}`);
       await jobs.enqueue({ jobId, type: ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT,
         ownerOpenId: req.workbenchUser?.open_id || '', operatorName: req.workbenchUser?.name || '' });
-      void jobs.run({ jobId, run: () => resolvePairAdjustment().setSeason({ category, season }) }).catch(() => {});
+      void jobs.run({
+        jobId,
+        run: () => resolvePairAdjustment().setSeason({ category, season }),
+        classifyResult: () => ({ ok: true, retryable: false, message: '', code: '' }),
+      }).catch(() => {});
       return res.status(202).json({ success: true, queued: true, job_id: jobId });
     } catch (error) {
       const status = error?.statusCode === 400 ? 400 : 502;
