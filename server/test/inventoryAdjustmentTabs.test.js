@@ -41,3 +41,14 @@ test('AC-IA4 批量调整：品类与库存并行读取 + 轻量 toast 提示', 
   assert.ok(src.includes("showToast(INVENTORY_MANUAL_TEXTS.batchLoading)"), '点击后立即提示读取中');
   assert.match(configSource(), /batchLoading: '正在读取品类和库存…'/, '提示文案在配置里');
 });
+
+
+test('AC-IA5 状态调整与当季调整独立：不看品类、不看当季，只找缺一双样品的编号', () => {
+  const html = source();
+  assert.equal(html.includes('selectedCategory'), false, '状态调整不再按品类过滤');
+  assert.ok(html.includes('sampleCount === 0 && doorboxCount > 0'), '判据 = 没有样品且其余是门盒');
+  assert.ok(html.includes("'缺样品'"), '异常文案 = 缺样品');
+  assert.equal(html.includes('① 当季调整'), false, '板块标题不再带编号');
+  assert.equal(html.includes('② 状态调整'), false, '板块标题不再带编号');
+  assert.ok(html.includes('await loadRows(true)'), '当季调整后强制重新加载状态调整数据');
+});

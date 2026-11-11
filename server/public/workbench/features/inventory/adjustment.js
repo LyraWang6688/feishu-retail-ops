@@ -24,8 +24,8 @@ const cardsHtml = () => `<div class="domain-cards domain-cards-single">${INVENTO
 export function createInventoryAdjustmentModule() {
   const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, savedNumber: '' };
 
-  async function loadRows() {
-    if (state.rows.length) return state.rows;
+  async function loadRows(force = false) {
+    if (state.rows.length && !force) return state.rows;
     const data = await api.get('/api/workbench/inventory');
     state.rows = Array.isArray(data.rows) ? data.rows : [];
     return state.rows;
@@ -96,11 +96,10 @@ export function createInventoryAdjustmentModule() {
   }
 
   function violations() {
-    const selectedCategory = $(state.host, '[data-field="batch-category"]')?.value || '';
-    const rows = state.rows.filter((row) => row.season === true
-      && (!selectedCategory || row.category === selectedCategory));
+    // 状态调整与当季调整相互独立：不看品类，也不看当季。
+    //    判据 = 同一个编号没有一双样品，其余是门盒。
     const groups = new Map();
-    for (const row of rows) {
+    for (const row of state.rows) {
       const key = row.product_record_id;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(row);
@@ -109,8 +108,9 @@ export function createInventoryAdjustmentModule() {
       const samples = items.filter((row) => row.state === '样品');
       const doorbox = items.filter((row) => row.state === '门盒');
       const sampleCount = samples.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-      return { productId, items, samples, doorbox, sampleCount,
-        issue: sampleCount > 1 ? `样品多 ${sampleCount - 1} 双` : (sampleCount === 0 ? '缺样品' : '') };
+      const doorboxCount = doorbox.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+      return { productId, items, samples, doorbox, sampleCount, doorboxCount,
+        issue: sampleCount === 0 && doorboxCount > 0 ? '缺样品' : '' };
     }).filter((group) => group.issue);
   }
 
@@ -118,7 +118,7 @@ export function createInventoryAdjustmentModule() {
     const box = $(state.host, '[data-view="batch-violations"]');
     const list = violations();
     if (!list.length) {
-      box.innerHTML = '<p class="empty compact">当前品类没有不符合规则的当季鞋。</p>';
+      box.innerHTML = '<p class="empty compact">当前没有缺少一双样品的鞋。</p>';
       return;
     }
     box.innerHTML = list.map((group) => {
@@ -195,6 +195,8 @@ export function createInventoryAdjustmentModule() {
     try {
       await api.post('/api/workbench/inventory/adjustments/season-flag', { category, season, requestId: crypto.randomUUID() });
       state.rows = [];
+      await loadRows(true);
+      renderViolations();
       showToast(season ? '已提交，后台设为当季' : '已提交，后台取消当季');
     } catch (error) { showPageError(describeError(error)); }
   }
@@ -214,11 +216,11 @@ export function createInventoryAdjustmentModule() {
         </div>
         <div data-view="manual-batch" class="hidden">
           <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>批量调整</h2></div>
-          <div class="batch-section"><h3>① 当季调整</h3>
+          <div class="batch-section"><h3>当季调整</h3>
             <label class="field"><select data-field="batch-category"></select></label>
             <div class="row-actions"><button class="btn small primary" type="button" data-action="season-toggle">当季</button><button class="btn small" type="button" data-action="batch-check">库存</button></div>
           </div>
-          <div class="batch-section"><h3>② 状态调整</h3><div data-view="batch-violations"></div></div>
+          <div class="batch-section"><h3>状态调整</h3><div data-view="batch-violations"></div></div>
         </div>
         <div class="manual-modal" data-view="print-modal" hidden>
           <div class="manual-modal-card"><h3>是否需要打印？</h3><p class="hint">库存调整已保存，可以继续打印这一款标签。</p>
