@@ -1,5 +1,5 @@
 /** 「货品资料」页（配置 tab）：搜索货品 / 按缺失信息分组 / 同步样例图。 */
-import { PRODUCT_NEW_FORM_URL } from './links.js';
+import { PRODUCT_NEW_FORM_URL, ACCESSORY_TABLE_URL } from './links.js';
 
 export const PRODUCT_PROFILE_API = Object.freeze({
   search: '/api/workbench/products/search',
@@ -12,7 +12,9 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   completeTitle: '货品完善',
   sampleTitle: '同步样例图',
   accessoryTitle: '配品配置',
-  accessoryStatus: '待建设',
+  accessoryHint: '其他配品数据表',
+  accessoryOpenExternal: '在飞书中打开',
+  accessoryEmbedNote: '如果下方没有显示，请在飞书中打开；手机端如果要求登录，请先明确分享权限为可编辑。',
   searchPlaceholder: '录入货号进行重复校验',
   searchingToast: '正在查询中…',
   noImage: '无样例图',
@@ -27,4 +29,5 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   searchFailed: '搜索失败，请稍后重试',
   incompleteFailed: '货品完善读取失败，请稍后重试',
   formUrl: PRODUCT_NEW_FORM_URL,
+  accessoryTableUrl: ACCESSORY_TABLE_URL,
 });
