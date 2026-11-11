@@ -124,9 +124,26 @@ async function applySaleBatch(items = [], options = {}) {
       const behavior = await this.resolveStockBehavior(MOVEMENT_SALE_DECREASE);
       const liveFields = this.gateway.table('liveInventory').fields;
       const stateField = liveFields.state;
-      // ⭐ 整批**一次**整表读（改动前：每一行一次）。同一批里前后几行同款同码时，
-      //    用 `claimed` 把前面行已经挑中的那一双排除掉 ⇒ 与"扣完再读"的逐条路径同一个可见面。
-      const allLive = await this.gateway.listAll('liveInventory');
+      // ⭐ 2026-11-11（交割单提速）：按**货品**条件读实时库存，不再整表拉 1300+ 行。
+      //    复用 #1140 的 `readLiveInventoryForProduct()`：有 recordID 列走 filter，
+      //    没有 / 读失败自动回退整表读（慢一次但对，不静默丢库存）。
+      //    同一批里前后几行同款同码时，仍用 `claimed` 把前面行已经挑中的那一双排除掉
+      //    ⇒ 与"扣完再读"的逐条路径同一个可见面。
+      const productIds = [...new Set(prepared.map((item) => item.input.productRecordId))];
+      // 网关没有 filter / 没有 recordID 列 ⇒ 退回一次整表读（老替身与测试替身仍同原形状）。
+      // 有 filter ⇒ 每个货品并行条件读，批量只有 1~N 个小结果，不再拉 1300+ 行。
+      const canFilterLive = typeof this.gateway.listByFilter === 'function' && Boolean(liveFields.recordId);
+      let allLive;
+      if (canFilterLive) {
+        const liveByProduct = await Promise.all(productIds.map((id) => this.readLiveInventoryForProduct(id)));
+        const liveById = new Map();
+        for (const records of liveByProduct) {
+          for (const record of records || []) liveById.set(record.record_id, record);
+        }
+        allLive = [...liveById.values()];
+      } else {
+        allLive = await this.gateway.listAll('liveInventory');
+      }
       const claimed = new Set();
       // 与 `applyChange` 的 `findLedger` **同一个判据**（"已有流水但缺少可恢复任务 ⇒ 停下要人工核对"），
       // 只是把它从"每行整表读一次"换成"整批读一次 + 内存索引" —— 判据与报文一条都不放宽。
