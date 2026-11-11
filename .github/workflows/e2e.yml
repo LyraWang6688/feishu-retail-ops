@@ -27,8 +27,25 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('server/pnpm-lock.yaml') }}
+
+      # GitHub runner 的 apt 源会偶发 DNS 失败；--with-deps 会把一次浏览器安装
+      # 放大成几十个 apt 下载。runner 镜像已带 Chromium 所需系统库，这里只装浏览器，
+      # 并对 CDN 下载做 3 次短重试；缓存命中时直接跳过下载。
       - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm exec playwright install chromium; then
+              exit 0
+            fi
+            echo "Chromium install failed (attempt ${attempt}/3), retrying..."
+            sleep 5
+          done
+          exit 1
 
       - name: Run browser E2E
         run: pnpm run test:e2e
