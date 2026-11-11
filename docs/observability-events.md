@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **448** 个事件。按前缀分组：
+共 **446** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -127,8 +127,6 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
-| `inventory.adjustment.count.applied` | 1 | src/services/inventoryAdjustmentService.js |
-| `inventory.adjustment.count.replayed` | 1 | src/services/inventoryAdjustmentService.js |
 | `inventory.adjustment.pairs.applied` | 1 | src/services/inventoryPairAdjustmentService.js |
 | `inventory.adjustment.pairs.state_applied` | 1 | src/services/inventoryPairAdjustmentService.js |
 | `inventory.adjustment.season_flag.applied` | 1 | src/services/inventoryPairAdjustmentService.js |

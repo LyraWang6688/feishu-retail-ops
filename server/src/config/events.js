@@ -58,8 +58,6 @@ const EVENTS = Object.freeze([
   'idempotency.reconciled_after_unknown',
   'idempotency.reused',
   'idempotency.unknown_outcome',
-  'inventory.adjustment.count.applied',
-  'inventory.adjustment.count.replayed',
   'inventory.adjustment.pairs.applied',
   'inventory.adjustment.pairs.state_applied',
   'inventory.adjustment.season_flag.applied',
