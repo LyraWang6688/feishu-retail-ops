@@ -9,9 +9,22 @@ const fakeInventory = ({ counts = [], records = [] } = {}) => {
   return {
     calls,
     gateway: {
-      table: (key) => ({ fields: { category: '品类', season: '当季' } }),
+      table: (key) => ({
+        fields: {
+          category: '品类', season: '当季', product: '编号', size: '尺码', state: '所属状态',
+        },
+      }),
       listAll: async () => records,
       update: async (key, id, values) => { calls.push({ type: 'update', key, id, values }); },
+    },
+    sizeReferences: {
+      resolveLinkedCell: async (cell) => {
+        const id = Array.isArray(cell) ? cell[0] : cell;
+        const recordId = typeof id === 'object' ? (id?.record_ids || [])[0] : id;
+        if (recordId === 'size42') return { recordId, size: 42 };
+        if (recordId === 'size43') return { recordId, size: 43 };
+        throw new Error('size missing');
+      },
     },
     candidatesFromLiveRecords: async () => counts,
     applyChange: async (input) => { calls.push({ type: 'change', ...input }); },
@@ -19,7 +32,13 @@ const fakeInventory = ({ counts = [], records = [] } = {}) => {
 };
 
 test('AC-PAIR-1 目标数量与当前一致 ⇒ 不写任何库存', async () => {
-  const inventory = fakeInventory({ counts: [{ size: 42, doorBoxCount: 1, sampleCount: 1 }] });
+  const inventory = fakeInventory({
+    counts: [{ size: 42, doorBoxCount: 1, sampleCount: 1 }],
+    records: [
+      { record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: '门盒' } },
+      { record_id: 'l2', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: '样品' } },
+    ],
+  });
   const service = new InventoryPairAdjustmentService({ inventory });
   const result = await service.adjustPairs({
     productRecordId: 'p1', requestId: 'req',
@@ -27,6 +46,40 @@ test('AC-PAIR-1 目标数量与当前一致 ⇒ 不写任何库存', async () =>
   });
   assert.equal(result.changed, 0);
   assert.equal(inventory.calls.length, 0);
+});
+
+test('AC-PAIR-1b 总数不变、只改样品→门盒：原地改状态，不增删库存', async () => {
+  const inventory = fakeInventory({
+    counts: [{ size: 42, doorBoxCount: 1, sampleCount: 1 }],
+    records: [
+      { record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: '门盒' } },
+      { record_id: 'l2', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: '样品' } },
+    ],
+  });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  const result = await service.adjustPairs({
+    productRecordId: 'p1', requestId: 'req',
+    rows: [{ size: 42, state: '门盒', quantity: 2 }],
+  });
+  assert.equal(result.changed, 1);
+  assert.equal(inventory.calls.filter((call) => call.type === 'change').length, 0, '不调用 applyChange');
+  assert.deepEqual(inventory.calls.filter((call) => call.type === 'update').map((call) => [call.id, call.values.state]), [['l2', '门盒']]);
+});
+
+test('AC-PAIR-1c 状态为空的行也能原地改成门盒', async () => {
+  const inventory = fakeInventory({
+    counts: [{ size: 42, doorBoxCount: 0, sampleCount: 0 }],
+    records: [
+      { record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: [] } },
+    ],
+  });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  const result = await service.adjustPairs({
+    productRecordId: 'p1', requestId: 'req',
+    rows: [{ size: 42, state: '门盒', quantity: 1 }],
+  });
+  assert.equal(result.changed, 1);
+  assert.deepEqual(inventory.calls.filter((call) => call.type === 'update').map((call) => [call.id, call.values.state]), [['l1', '门盒']]);
 });
 
 test('AC-PAIR-2 数量/尺码/状态差异逐项走 applyChange（增/减）', async () => {
