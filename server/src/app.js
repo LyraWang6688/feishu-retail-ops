@@ -128,6 +128,12 @@ app.use('/api/label-print', require('./routes/labelPrintDevice').createLabelPrin
 // The workbench uses Feishu web sessions; its query and follow-up endpoints
 // never expose the service credentials to the browser.
 app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter());
+// ⭐ 2026-11-11：`label-print.html` 只允许带 `?scan=1` 的扫码打印入口；
+// 不带参数的旧链接不再渲染空白页（直接 404）。扫描功能本身不变。
+app.get('/workbench/label-print.html', (req, res, next) => {
+  if (String(req.query.scan || '') === '1') return next();
+  return res.status(404).type('text/plain').send('Not Found');
+});
 app.use('/workbench', express.static(workbenchPath, { index: 'index.html' }));
 // Feishu web apps commonly open the configured homepage as "/".
 app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')));
