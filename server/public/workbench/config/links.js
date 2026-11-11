@@ -47,6 +47,14 @@ export const ACCESSORY_SALE_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnCUHxarWSWhoQRiv6qJeKWh';
 
 /**
+ * 「其他配品」数据表（Base 表 `tblxEeiXYAeUF4gH`）。
+ * 配品配置页用 iframe 直接嵌入这张表；
+ * ⚠️ 若飞书 Base 返回 X-Frame-Options / CSP 拦截，页面会显示「在飞书中打开」兜底链接。
+ */
+export const ACCESSORY_TABLE_URL =
+  'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=tblxEeiXYAeUF4gH';
+
+/**
  * ⭐⭐ 2026-11-09（业务负责人）：**批量打印改成「填飞书表单」** ——
  *   「点「批量打印」进的是飞书表单链接，后续就只用这个了」。
  *   表单写到生产 Base 的「标签打印」表（`tblcUksCp3EmbmBa` 的同构表；后端监听该表新增记录自动打印）。
