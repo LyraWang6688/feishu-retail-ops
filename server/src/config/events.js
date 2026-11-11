@@ -58,6 +58,7 @@ const EVENTS = Object.freeze([
   'inventory.adjustment.count.applied',
   'inventory.adjustment.count.replayed',
   'inventory.adjustment.pairs.applied',
+  'inventory.adjustment.pairs.state_applied',
   'inventory.adjustment.season_flag.applied',
   'inventory.change.applied',
   'inventory.change.failed',
