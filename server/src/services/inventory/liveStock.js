@@ -6,6 +6,7 @@
 const {textValue} = require('../v1BitableGateway');
 const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { LIVE_STATES } = require('./movements');
+const { outboundStateRank } = require('../../config/inventoryStatePolicy');
 
 /** 实时库存里这一条记录是不是「这个货品 + 这个尺码」——不看所属状态。 */
 function matchesLiveInventory(record, { productRecordId, sizeRecordId, productField, sizeField } = {}) {
@@ -117,6 +118,31 @@ async function readLiveInventoryForProduct(productRecordId) {
   }
 }
 
+/**
+ * 出库选行顺序（业务负责人 2026-11-12 定）：
+ *   · 门盒 / 空状态同优先级（空状态按门盒算）
+ *   · 样品最后
+ *   · 同一优先级按创建时间 FIFO
+ */
+function sortLiveInventoryForConsumption(records = []) {
+  const field = this.gateway.table('liveInventory').readOnlyFields?.createdAt?.name || '';
+  const timeOf = (record) => {
+    const raw = record?.fields?.[field];
+    const number = Number(raw);
+    if (Number.isFinite(number) && number > 0) return number;
+    const parsed = Date.parse(String(raw || ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const stateField = this.gateway.table('liveInventory').fields.state;
+  return [...records].sort((left, right) => {
+    const rankDiff = outboundStateRank(left?.fields?.[stateField]) - outboundStateRank(right?.fields?.[stateField]);
+    if (rankDiff !== 0) return rankDiff;
+    const diff = timeOf(left) - timeOf(right);
+    if (diff !== 0) return diff;
+    return String(left.record_id).localeCompare(String(right.record_id));
+  });
+}
+
 module.exports = {
   matchesLiveInventory,
   findLiveInventoryIn,
@@ -125,4 +151,5 @@ module.exports = {
   sampleReplacementCandidates,
   readLiveInventoryForProduct,
   sortLiveInventoryFifo,
+  sortLiveInventoryForConsumption,
 };

@@ -176,6 +176,10 @@ test('AC-B2 写入结果与逐条 applyPurchase **逐字相同**（流水字段�
   assert.deepEqual(
     results.map((r) => r.movementQuantity), legacyResults.map((r) => r.movementQuantity),
   );
+  // 新口径：该编号原本没有库存 ⇒ 这一批第一双样品、其余门盒。
+  const liveStates = fake.data.liveInventory.map((row) => row.fields['所属状态']);
+  assert.equal(liveStates.filter((state) => state === '样品').length, 1);
+  assert.equal(liveStates.filter((state) => state === '门盒').length, liveStates.length - 1);
 });
 
 test('AC-B3 重跑 ⇒ **零写**（同一批再跑一次不多写一行）', async () => {

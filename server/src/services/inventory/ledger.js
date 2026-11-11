@@ -98,9 +98,10 @@ async function auditExistingOperationRecords(operation, ledger, sizeRecordId) {
     if (operation.direction === '增加') {
       for (const [index, recordId] of createdIds.entries()) {
         const record = await this.gateway.get('liveInventory', recordId);
+        const expectedState = (operation.created_states || [])[index] || operation.state;
         if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
           !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
-          textValue(record.fields?.[liveFields.state]) !== operation.state) {
+          textValue(record.fields?.[liveFields.state]) !== expectedState) {
           manual(`已有实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
         }
         // 库存操作键是「这一双属于本次操作第几条」的证明。老记录可能没有这个值

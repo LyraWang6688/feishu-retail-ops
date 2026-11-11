@@ -30,7 +30,7 @@ const AFTER_SALES_DERIVED = Object.freeze({
   // 退货允许操作的原明细状态：只有「已交付」的才谈得上退回。
   returnableFulfillmentStatuses: Object.freeze(['已交付']),
   detailFulfillment: Object.freeze({ RETURNED: '已退货' }),
-  // 货：退回的鞋默认回门盒（业务负责人 2026-10-29：不用再问样品/门盒）。
+  // 货：退回的鞋用这个状态作为调用兜底；真正落样品/门盒由库存内核按编号库存自动判定。
   defaultRestockState: '门盒',
   // 货流行为编码：生产「行为管理」里她新增的「销售增加」（可用 env 覆盖）。
   stockBehaviorCode: String(process.env.AFTER_SALES_RETURN_BEHAVIOR_CODE || 'STOCK_SALE_INCREASE').trim(),
