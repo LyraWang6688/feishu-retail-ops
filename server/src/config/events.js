@@ -391,6 +391,8 @@ const EVENTS = Object.freeze([
   'voucher.settlement.tick',
   'voucher.settlement.tick_failed',
   'voucher.settlement.vouchers_unreadable',
+  'workbench.accessories.gift_options_failed',
+  'workbench.accessories.gifts_failed',
   'workbench.async_job.viewed',
   'workbench.auth.failed',
   'workbench.auth.provider_error',

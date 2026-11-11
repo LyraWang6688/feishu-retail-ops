@@ -420,3 +420,15 @@ module.exports = {
   specialFoldShellHtml,
   specialFactsHtml,
 };
+
+
+/** 资金页赠品行样式（ASCII；挂在资金页内容里，不动全局 STYLE 行）。 */
+const GIFT_ROW_STYLE = `/* gift rows: block section; one row = select + quantity + remove; empty by default */
+.form-row--gift { display: block; }
+.form-row--gift > label { display: block; flex: none; margin-bottom: var(--space-2); }
+.form-row--gift [data-gift-rows] { margin-bottom: var(--space-2); }
+.form-row--gift-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.form-row--gift-row select { flex: 1 1 55%; }
+.form-row--gift-row input { flex: 0 0 72px; text-align: center; }
+.form-row--gift-row .btn { flex: 0 0 auto; }
+.form-row--gift [data-gift-add] { width: 100%; }`;

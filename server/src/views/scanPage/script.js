@@ -310,3 +310,78 @@ module.exports = {
   paymentAddRowScriptHtml,
   submitFeedbackAttrs,
 };
+
+/**
+ * 资金页「赠品」行：默认不出现；点添加才拉候选并出现一行，
+ * 数量默认 1，可删除；提交前把「名称×数量、…」写进既有 hidden gift 字段。
+ * 仅当页面有 `data-gift-add` 时注入。
+ */
+const giftRowsScriptHtml = () => `<script data-view="gift-rows">
+(function(){
+  var section = document.querySelector('[data-gift-section]');
+  if (!section) return;
+  var rows = section.querySelector('[data-gift-rows]');
+  var tpl = section.querySelector('[data-gift-template]');
+  var value = section.querySelector('[data-gift-value]');
+  var empty = section.querySelector('[data-gift-empty]');
+  var error = section.querySelector('[data-gift-error]');
+  var add = section.querySelector('[data-gift-add]');
+  if (!rows || !tpl || !value || !add) return;
+  var options = null;
+  var loading = null;
+  function load() {
+    if (options) return Promise.resolve(options);
+    if (loading) return loading;
+    loading = fetch('/api/workbench/accessories/gifts', { credentials: 'same-origin' })
+      .then(function (res) { return res.json(); })
+      .then(function (data) { options = Array.isArray(data.items) ? data.items : []; return options; })
+      .catch(function () { options = []; return options; });
+    return loading;
+  }
+  function refresh() {
+    if (empty) empty.hidden = rows.children.length > 0;
+    var parts = [];
+    var list = rows.querySelectorAll('[data-gift-row]');
+    for (var i = 0; i < list.length; i++) {
+      var select = list[i].querySelector('[data-gift-name]');
+      var qty = list[i].querySelector('[data-gift-quantity]');
+      var name = select ? String(select.value || '').trim() : '';
+      var n = qty ? Math.max(1, Math.floor(Number(qty.value) || 1)) : 1;
+      if (name) parts.push(name + '×' + n);
+    }
+    value.value = parts.join('、');
+    if (error) error.hidden = true;
+  }
+  function addRow() {
+    load().then(function (items) {
+      if (!items.length) { if (error) error.hidden = false; return; }
+      var row = tpl.content.firstElementChild.cloneNode(true);
+      var select = row.querySelector('[data-gift-name]');
+      var placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = section.getAttribute('data-gift-placeholder') || '';
+      select.appendChild(placeholder);
+      for (var i = 0; i < items.length; i++) {
+        var option = document.createElement('option');
+        option.value = String(items[i].name || '');
+        option.textContent = String(items[i].name || '');
+        select.appendChild(option);
+      }
+      var qty = row.querySelector('[data-gift-quantity]');
+      if (qty) qty.value = '1';
+      row.querySelector('[data-gift-remove]').addEventListener('click', function () {
+        row.remove();
+        refresh();
+      });
+      rows.appendChild(row);
+      refresh();
+    });
+  }
+  add.addEventListener('click', addRow);
+  rows.addEventListener('input', refresh);
+  rows.addEventListener('change', refresh);
+  refresh();
+})();
+</script>`;
+
+module.exports.giftRowsScriptHtml = giftRowsScriptHtml;

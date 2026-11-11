@@ -1,6 +1,6 @@
 const { multiItemBlockHtml, multiItemPayloadJson, MULTI_ITEM_ITEM_KEYS, MULTI_ITEM_ENTRY_KEYS } = require('./multiItemBlock');
 const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, SKELETON_STYLE, STYLE, SCAN_TOAST_STYLE } = require('./styles');
-const { buildPaymentRows, paymentRowsHtml } = require('./paymentBlock');
+const { buildPaymentRows, paymentRowsHtml, GIFT_ROW_STYLE } = require('./paymentBlock');
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
 // ⭐⭐ 2026-10-29：**成功页整件退场**（业务负责人：「以后就没有成功页了」）——
 //   提交通一改成「303 回工作台 + toast」（`utils/submitToast.js`）⇒ 这里不再有成功页专属配置。
@@ -170,7 +170,15 @@ const renderSalePaymentStepPage = ({
   //   重复提交仍说「这一单刚才已经交过了」（pay 分支 `paidReused` 已对齐 skip 口径 ✓）。
   //   反向哨兵：`test/scanPagePaymentButtons.test.js` AC-PB1。
   const addRowButtonHtml = `<button type="button" class="btn" data-payment-add>${escapeHtml(step.addRowButton || '')}</button>`;
-  const giftFieldHtml = `<div class="form-row"><label>${escapeHtml(t.giftLabel || '')}</label><input name="${escapeHtml(fields.gift || 'gift')}"></div>`;
+  const giftFieldHtml = `<style>${GIFT_ROW_STYLE}</style><div class="form-row form-row--gift" data-gift-section data-gift-placeholder="${escapeHtml(t.giftSelectPlaceholder || '')}">
+<label>${escapeHtml(t.giftLabel || '')}</label>
+<div data-gift-rows></div>
+<p class="hint" data-gift-empty>${escapeHtml(t.giftEmpty || '')}</p>
+<p class="hint" data-gift-error hidden>${escapeHtml(t.giftLoadFailed || '')}</p>
+<button type="button" class="btn" data-gift-add>${escapeHtml(t.giftAddButton || '')}</button>
+<input type="hidden" name="${escapeHtml(fields.gift || 'gift')}" data-gift-value value="">
+<template data-gift-template><div class="form-row form-row--gift-row" data-gift-row><select data-gift-name aria-label="${escapeHtml(t.giftSelectLabel || '')}"></select><input type="number" min="1" step="1" value="1" inputmode="numeric" data-gift-quantity aria-label="${escapeHtml(t.giftQuantityLabel || '')}"><button type="button" class="btn" data-gift-remove aria-label="${escapeHtml(t.giftRemoveLabel || '')}">×</button></div></template>
+</div>`;
   // ⭐⭐ 2026-10-13 结构重排（**行为不变**）：三件套（三档 / 收款行 / 赠品）先攒成一块，
   //    由 `payForm` 统一放进"提交整单付款"那张表单里（**在表单外就是"提交上去什么都没有"** ✗）。
   //    ⚠️ 还没配 `payAction` 时 ⇒ 退化成原来那个 `<div class="payment-step">`（逐字同形 ✓ 不吃亏 ✓）
