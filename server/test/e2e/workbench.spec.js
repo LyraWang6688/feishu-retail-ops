@@ -192,10 +192,10 @@ test('草稿单占位页 = 统一占位卡（虚线卡 + 待建设标签），�
 });
 
 // ⭐ 2026-10-29（业务负责人当天定的页面口径）：扫一扫落地页 = 货品（颜色）→ 近 7 天销售
-//   （销售日 / 尺码 / 该单总金额）→ 选一条 → 三个动作按钮，水平顺序 **换货 · 退货 · 赔货**。
-//   ⭐ 2026-10-29 第二步：按钮之后是**弹窗原型**（退货=退款/留存；换货=换尺码/换款式；赔货灰置），
+//   （销售日 / 尺码 / 该单总金额）→ 选一条 → 两个动作按钮，水平顺序 **换货 · 退货**。
+//   ⭐ 2026-10-29 第二步：按钮之后是**弹窗原型**（退货=退款/留存；换货=换尺码/换款式），
 //   确认只 toast、不写库（本用例钉住弹窗交互；接写库时再改断言）。
-test('售后扫一扫落地页：选哪条卡片，那条卡片就变成三个动作按钮', async ({ page }) => {
+test('售后扫一扫落地页：选哪条卡片，那条卡片就变成换货/退货两个按钮', async ({ page }) => {
   await page.goto('/workbench/after-sales.html?productRecordId=p1');
   await expect(page.getByText('YD1 · 黑')).toBeVisible();
   // ⭐ 2026-10-29 HTML 批注：提示语逐字是「请选择售后单」（「要」字已去掉），且居中加粗大字号。
@@ -226,23 +226,21 @@ test('售后扫一扫落地页：选哪条卡片，那条卡片就变成三个�
   expect(styles[0].weight).not.toBe('600');
   expect(styles[0].weight).not.toBe('700');
 
-  // ⭐⭐ 2026-10-29（她定的交互）：选中哪条记录，**那条卡片上**就变成三个按钮（换货 · 退货 · 赔货），
-  //   且按钮上**只有这三个词、没有解释小字**。
+  // 选中哪条记录，**那条卡片上**就变成两个按钮（换货 · 退货）。
   await first.click();
   const buttons = page.locator('.candidate-action');
-  await expect(buttons).toHaveCount(3);
+  await expect(buttons).toHaveCount(2);
   await expect(buttons.nth(0)).toHaveText('换货');
   await expect(buttons.nth(1)).toHaveText('退货');
-  await expect(buttons.nth(2)).toHaveText('赔货');
   await expect(page.getByText('换一双给她')).toHaveCount(0);
   // 三个按钮出现在**被选中的那条卡片的位置**，其余记录仍是卡片。
   await expect(page.locator('.candidate-card-actions')).toHaveCount(1);
   await expect(page.locator('.candidate-card:not(.candidate-card-actions)')).toHaveCount(1);
 
-  // 换选另一条 ⇒ 按钮跟着挪到新选中的那条卡片上（仍然是三个）。
+  // 换选另一条 ⇒ 按钮跟着挪到新选中的那条卡片上（仍然是两个）。
   await page.locator('.candidate-card:not(.candidate-card-actions)').click();
   await expect(page.locator('.candidate-card-actions')).toHaveCount(1);
-  await expect(page.locator('.candidate-action')).toHaveCount(3);
+  await expect(page.locator('.candidate-action')).toHaveCount(2);
 
   // 点击「退货」⇒ 弹窗（只剩 退款 / 留存；选退款才出现退款方式）
   await page.locator('.candidate-action').nth(1).click();

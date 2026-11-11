@@ -4,7 +4,7 @@
  * 用户路径：工作台「售后单」→ 飞书扫一扫 → 扫货品二维码 → 落到这一页：
  *   ① 读「近 7 天、这款货品、还没售后过」的销售明细；
  *   ② 每条候选摆「销售日 / 尺码 / 总金额」；
- *   ③ 选中一条 ⇒ 那条卡片原地变成三个按钮：**换货 · 退货 · 赔货**（赔货灰置不可点）；
+ *   ③ 选中一条 ⇒ 那条卡片原地变成两个按钮：**换货 · 退货**；
  *   ④ 点「退货 / 换货」⇒ 弹窗（居中，样式对齐交割单页付款弹窗）。
  *
  * ⚠️ 当前是**页面原型**（业务负责人：「先把页面做好」）：
@@ -53,12 +53,12 @@ const candidateCardHtml = (item) => {
   </button>`;
 };
 
-/** 选中的那条卡片 ⇒ 原地变成三个按钮（换货 / 退货 / 赔货；赔货灰置不可点）。 */
+/** 选中的那条卡片 ⇒ 原地变成两个按钮（换货 / 退货）。 */
 const candidateActionsHtml = () => `
   <div class="candidate-card candidate-card-actions" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.actionLabel)}">
     ${AFTER_SALES_ACTIONS.map((action) => `
       <button class="candidate-action" type="button" data-action="${escapeHtml(action.value)}"
-        ${action.disabled ? `disabled aria-disabled="true" title="${escapeHtml(AFTER_SALES_PAGE.compensationDisabled)}"` : ''}>${escapeHtml(action.label)}</button>`).join('')}
+        >${escapeHtml(action.label)}</button>`).join('')}
   </div>`;
 
 const candidateHtml = (item, selected) => (selected ? candidateActionsHtml() : candidateCardHtml(item));
@@ -361,7 +361,6 @@ export function mountAfterSalesPage(container, options = {}) {
     }
     const action = event.target.closest('[data-action]');
     if (action) {
-      if (action.disabled) return; // 赔货：灰置占位，不弹窗、不处理
       openModal(action.dataset.action);
       return;
     }

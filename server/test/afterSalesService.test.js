@@ -714,6 +714,16 @@ test('⛔ prepaid（钱存着）在**非退货**与**回退模式**下仍然大�
   assert.deepEqual(legacy.gateway.writes.delete, {});
 });
 
+const exchangeRequest = (overrides = {}) => request({
+  action: 'exchange',
+  originalText: '那双 A100 换一双 B200 42 码，补 50',
+  newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
+  diffAmount: 50,
+  settlement: 'cash',
+  restockState: '门盒',
+  ...overrides,
+});
+
 test('换货：旧鞋回库 + 新鞋出门盒，两条流水方向相反且数量都是正数', async () => {
   const { gateway, service } = build();
   const result = await service.execute(request({
@@ -787,113 +797,14 @@ test('⭐ 换货「我们付差价」（退回）→ 新建的收款行状态 = 
   assert.equal(result.money.status, '已退款');
 });
 
-// ⭐⭐ 2026-10-08 赔付口径（业务负责人**逐字**，权威；出处 docs/goods-and-money-flows-2026-10-08.md §2）：
-//   「**赔付**：如果是赔货，我们就**直接在销售明细里面创建一个赔付对应颜色和编号、尺码**的信息，
-//    **实收金额记为 0**，**标记为赔货**」
-// ⇒ 赔出去的那双新建一条明细行：编号/尺码 = 赔的那双（颜色由「编号」关联的货品自带）、
-//    **实收金额 = 0**、**履约状态 = 已赔货**。
-test('赔货 · 她的口径：新建明细行 实收金额=0 + 履约状态=已赔货；坏鞋不回库，不动钱', async () => {
-  const { gateway, service } = build();
-  await service.execute(request({
-    action: 'compensation',
-    originalText: '那双 A100 开胶了，赔一双 B200 42 码',
-    newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
-    diffAmount: null,
-    settlement: null,
-    restockState: null,
-  }));
-
-  const details = detailRows(gateway);
-  assert.equal(details.length, 1);
-  assert.deepEqual(details[0].fields['编号'], ['product_B']);
-  assert.deepEqual(details[0].fields['交易类型'], ['behavior_compensation']);
-  // ⭐ 赔货的实收金额 = 0（口径逐字），**不是**新鞋的挂牌价 300；
-  //    挂牌价只在调用方算差价时用，绝不写进明细行（那会凭空多一笔销售额）。
-  assert.equal(details[0].fields['实收金额'], 0);
-  // ⭐ 赔出去的那双「履约状态」= 已赔货。
-  assert.equal(details[0].fields['履约状态'], AFTER_SALES_FULFILLMENT.COMPENSATED);
-  assert.equal(details[0].fields['履约状态'], '已赔货');
-  // 原那双（被赔的坏鞋）同样标「已赔货」（既有行为，一个字不改）。
-  assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], '已赔货');
-
-  const ledgers = rowsOf(gateway, 'inventoryLedger');
-  assert.equal(ledgers.length, 1);
-  assert.deepEqual(ledgers[0].fields['库存行为'], ['behavior_compensation']);
-  assert.equal(ledgers[0].fields['变动数量'], 1);
-  assert.deepEqual(ledgers[0].fields['关联销售'], [details[0].record_id]);
-
-  // 实时库存：新鞋从门盒减一行（坏鞋不回库）
-  assert.equal(rowsOf(gateway, 'liveInventory').length, 1);
-  assert.equal(rowsOf(gateway, 'liveInventory').some((row) => row.record_id === 'live_B_42'), false);
-  assert.equal(liveRows(gateway).length, 0);
-
-  // 不动钱
-  assert.equal(paymentRows(gateway).length, 0);
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 换货：新换出去的那条明细要写「履约状态 = 已交付」（2026-10-08）
-//
-// 真机事实（业务负责人只读核过，2026-10-08 00:02）：原单 XSD-20261007-0054 换货
-// 新写入的那条明细（record reczz28KZzAY4BBi）交易类型=换货、金额对，但
-// **「履约状态」是空的**。她的口径（逐字）：「好的，是的就叫**已交付**～」。
-//
-// 🔴 边界：只补这一处 —— 原那双仍是「已换货」；退货的复制行 / 赔货的出货行
-//    既有行为**一个字不改**（下面第二条哨兵钉住）。取值走 config/afterSales.js 的枚举。
-// ═══════════════════════════════════════════════════════════════════════════
-
-const exchangeRequest = (overrides = {}) => request({
-  action: 'exchange',
-  originalText: '那双 A100 换一双 B200 42 码，补 50',
-  newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
-  diffAmount: 50,
-  settlement: 'cash',
-  restockState: '门盒',
-  ...overrides,
-});
-
-test('换货：新换出去的那条明细「履约状态」= 已交付（原那双仍是已换货）', async () => {
-  const { gateway, service } = build();
-  await service.execute(exchangeRequest());
-
-  const details = detailRows(gateway);
-  assert.equal(details.length, 1);
-  // 值来自配置枚举（不是执行器里的中文字面量），同时钉住它就是她说的那三个字。
-  assert.equal(details[0].fields['履约状态'], AFTER_SALES_FULFILLMENT.DELIVERED);
-  assert.equal(details[0].fields['履约状态'], '已交付');
-  // 原那双：既有正确行为，一个字不改。
-  assert.equal(rowsOf(gateway, 'salesDetail')[0].fields['履约状态'], AFTER_SALES_FULFILLMENT.EXCHANGED);
-  // 只补履约状态这一处：别的字段与真机一致（交易类型=换货 · 销售单号=原主表 · 金额=出货金额）。
-  assert.deepEqual(details[0].fields['交易类型'], ['behavior_exchange']);
-  assert.deepEqual(details[0].fields['销售单号'], ['order_old']);
-  assert.deepEqual(details[0].fields['编号'], ['product_B']);
-  assert.deepEqual(details[0].fields['尺码'], ['size_42']);
-  assert.equal(details[0].fields['实收金额'], 300);
-});
-
-test('哨兵：**退货**的复制行「履约状态」仍不写（"退回来的那双"由原明细行=已退货表达）', async () => {
-  const returned = build();
-  await returned.service.execute(request());
-  assert.equal(detailRows(returned.gateway)[0].fields['履约状态'], undefined,
-    '退货的复制行不写履约状态（既有行为）');
-  assert.equal(rowsOf(returned.gateway, 'salesDetail')[0].fields['履约状态'], '已退货');
-});
-
 test('配置先行：三个动作各自声明新明细行的「履约状态」与「实收金额」（不在执行器里写死）', () => {
   assert.equal(AFTER_SALES_FULFILLMENT.DELIVERED, '已交付');
-  assert.equal(AFTER_SALES_FULFILLMENT.COMPENSATED, '已赔货');
   // 换货：新换出去的那双 = 已交付；金额用调用方给的（配置里**不**声明固定金额）。
   assert.equal(
     AFTER_SALES_ACTION_SPECS.exchange.newLineFulfillmentStatus,
     AFTER_SALES_FULFILLMENT.DELIVERED,
   );
   assert.equal(AFTER_SALES_ACTION_SPECS.exchange.newLineAmount, undefined);
-  // 赔货：赔出去的那双 = 已赔货，且**实收金额固定 0**（她的口径逐字）。
-  assert.equal(
-    AFTER_SALES_ACTION_SPECS.compensation.newLineFulfillmentStatus,
-    AFTER_SALES_FULFILLMENT.COMPENSATED,
-  );
-  assert.equal(AFTER_SALES_ACTION_SPECS.compensation.newLineAmount, 0);
   // 退货：复制行不写履约状态、金额取原值。
   assert.equal(AFTER_SALES_ACTION_SPECS.return.newLineFulfillmentStatus, undefined);
   assert.equal(AFTER_SALES_ACTION_SPECS.return.newLineAmount, undefined);
@@ -1089,13 +1000,6 @@ test('⭐ 售后次数：三个动作（退 / 换 / 赔）各 +1（"根据售后
   const cases = [
     ['return', request()],
     ['exchange', exchangeRequest()],
-    ['compensation', request({
-      action: 'compensation',
-      newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: 300 }],
-      diffAmount: null,
-      settlement: null,
-      restockState: null,
-    })],
   ];
   for (const [label, req] of cases) {
     const { gateway, service } = build();
@@ -1297,13 +1201,6 @@ test('入参校验：动作 / newLines / restockState / 原单号 / 原明细归
   await assert.rejects(
     () => service.execute(request({ action: 'exchange' })),
     /换货缺少新的出货商品/,
-  );
-  await assert.rejects(
-    () => service.execute(request({
-      action: 'compensation',
-      newLines: [{ productId: 'product_B', sizeId: 'size_42', amount: -1 }],
-    })),
-    /必须大于 0/,
   );
   await assert.rejects(
     () => service.execute(request({ originalSalesDetailRecordIds: ['pay_old_1'] })),

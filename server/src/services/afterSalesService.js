@@ -618,7 +618,6 @@ class AfterSalesService {
    * ⚠️ **赔货不看原明细金额**（它新建行、金额由口径固定成 `newLineAmount: 0`）⇒ 不拦。
    */
   assertOriginalAmountsAvailable(request, original) {
-    if (request.action === AFTER_SALES_ACTIONS.COMPENSATION) return;
     const detailFields = this.tableOf('salesDetail').fields;
     for (const record of original.details || []) {
       if (cellText(record?.fields?.[detailFields.actualAmount]) === '') {
@@ -671,7 +670,7 @@ class AfterSalesService {
       request.spec?.newLineAmount == null ? line.amount : Number(request.spec.newLineAmount)
     );
     const plan = [];
-    if (request.action !== AFTER_SALES_ACTIONS.COMPENSATION) {
+    {
       const originals = [...original.details].sort((left, right) =>
         String(left.record_id).localeCompare(String(right.record_id)));
       for (const record of originals) {

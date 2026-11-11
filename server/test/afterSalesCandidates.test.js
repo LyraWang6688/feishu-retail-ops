@@ -42,7 +42,8 @@ test('售后页面与接口存在，且三步流程文案在配置里', () => {
   assert.ok(fs.existsSync(path.join(root, 'after-sales.html')));
   assert.ok(fs.existsSync(path.join(root, 'features/after-sales/index.js')));
   const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
-  for (const label of ['退货', '换货', '赔货']) assert.match(config, new RegExp(label));
+  for (const label of ['退货', '换货']) assert.match(config, new RegExp(label));
+  assert.doesNotMatch(config, /value: 'compensation'/);
   const service = fs.readFileSync(path.join(__dirname, '../src/services/salesFollowupService.js'), 'utf8');
   assert.match(service, /listAfterSalesCandidates/);
 });
@@ -50,19 +51,19 @@ test('售后页面与接口存在，且三步流程文案在配置里', () => {
 /**
  * ⭐ 2026-10-29：售后**扫一扫落地页**的判据（业务负责人当天定的页面口径）。
  *
- *   ① 三个动作的**水平顺序**逐字是「换货 → 退货 → 赔货」（顺序换了要红）；
+ *   ① 动作顺序是「换货 → 退货」（赔货已下线）；
  *   ② 页面读的是**扫一扫落地页自己的只读接口**（`scan-candidates`），
  *      不是订单列表那条候选接口 —— 因为落地页要摆「销售日 + 销售主表总金额」；
  *   ③ 页面**不写库**：这一版没有 POST（按钮处理逻辑还没接，谁偷偷接上要红）；
  *   ④ 数据来源在页面里写清楚（她问过"数据来自哪里"）。
  */
-test('AC-LP1 ⭐ 落地页：动作顺序「换货 · 退货 · 赔货」，读 scan-candidates，且这一版不写库', () => {
+test('AC-LP1 ⭐ 落地页：动作顺序「换货 · 退货」，读 scan-candidates，且这一版不写库', () => {
   const root = path.join(__dirname, '../public/workbench');
   const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
   const actions = config.slice(config.indexOf('export const AFTER_SALES_ACTIONS'));
-  const order = ['exchange', 'return', 'compensation'].map((value) => actions.indexOf(`value: '${value}'`));
-  for (const index of order) assert.ok(index >= 0, '三个动作都要在配置里');
-  assert.deepEqual([...order].sort((a, b) => a - b), order, '水平顺序必须是 换货 → 退货 → 赔货');
+  const order = ['exchange', 'return'].map((value) => actions.indexOf(`value: '${value}'`));
+  for (const index of order) assert.ok(index >= 0, '换货/退货都要在配置里');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, '顺序必须是 换货 → 退货');
 
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
   assert.match(page, /scanCandidatesApi/, '落地页读 scan-candidates（销售日 + 总金额那条只读接口）');
@@ -115,27 +116,26 @@ test('AC-LP3 ⭐ 货品行居中加粗；提示语逐字「请选择售后单」
 
 /**
  * ⭐⭐ 2026-10-29（业务负责人定的交互）：
- *   「用户选择哪条记录，就在那条卡片上把它变成三个按钮」＋
- *   「那三个按钮就是单纯的换货、退货和赔货，你不用做解释」。
+ *   用户选择哪条记录，就在那条卡片上变成换货 / 退货按钮。
  *   判据反向钉住：退回"选中后另起一块按钮"、或按钮上又加解释小字 ⇒ 红。
  */
-test('AC-LP4 ⭐⭐ 选中的那条卡片原地变成三个按钮（换货 · 退货 · 赔货，无解释文案）', () => {
+test('AC-LP4 ⭐⭐ 选中的那条卡片原地变成换货 / 退货两个按钮（无解释文案）', () => {
   const root = path.join(__dirname, '../public/workbench');
   const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
   const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
 
   // 选中 ⇒ 整张卡片换成"三个按钮"这一块（同一个 candidate-card 位置），而不是另起一块。
-  assert.match(page, /candidateActionsHtml/, '要有"卡片变成三个按钮"的那一块');
+  assert.match(page, /candidateActionsHtml/, '要有"卡片变成按钮"的那一块');
   assert.match(page, /const candidateHtml = \(item, selected\) => \(\s*selected \? candidateActionsHtml\(\) : candidateCardHtml\(item\)/,
-    '选中时整条卡片换成三个按钮、未选中仍是卡片');
-  assert.match(page, /data-detail=|data-action="\$\{escapeHtml\(action\.value\)\}"/, '三按钮各自带动作');
+    '选中时整条卡片换成按钮、未选中仍是卡片');
+  assert.match(page, /data-detail=|data-action="\$\{escapeHtml\(action\.value\)\}"/, '按钮各自带动作');
   // 不再有"另起一块常驻动作区 / 灰置闸门"的旧实现。
   assert.doesNotMatch(page, /after-sales-actions|syncActionsState|action-button/, '旧的"常驻动作区"实现要删干净');
-  // 按钮上只有三个词，没有解释小字。
+  // 按钮上只有动作词，没有解释小字。
   assert.doesNotMatch(config, /\bhint\s*:/, '动作配置里不许再有解释小字（她说"不用做解释"）');
   assert.doesNotMatch(page, /action\.hint/, '按钮里不许再渲染解释小字');
-  assert.match(css, /\.candidate-card-actions\s*\{[^}]*display:\s*flex/, '三个按钮在卡片里横向排（flex）');
+  assert.match(css, /\.candidate-card-actions\s*\{[^}]*display:\s*flex/, '按钮在卡片里横向排（flex）');
 })
 
 
