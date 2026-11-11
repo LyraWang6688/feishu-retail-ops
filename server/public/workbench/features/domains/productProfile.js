@@ -128,10 +128,22 @@ async function loadComplete(host) {
   const hint = host.querySelector('[data-pp-complete-hint]');
   const list = host.querySelector('[data-pp-complete-list]');
   if (!select) return;
+  // 首次读货品表可能要几秒：先给明确加载态，不能只留一个「无选项」空下拉。
+  select.disabled = true;
+  select.innerHTML = `<option value="">${esc(T.completeSelectLoading)}</option>`;
+  hint.textContent = T.completeLoading;
+  list.innerHTML = '';
   try {
     const data = await api.get(PRODUCT_PROFILE_API.incomplete);
     const groups = Array.isArray(data?.groups) ? data.groups : [];
-    select.innerHTML = groups.map((g, i) => `<option value="${i}">${esc(g.value)}（${g.count} 条）</option>`).join('');
+    if (!groups.length) {
+      select.innerHTML = `<option value="">${esc(T.completeSelectPlaceholder)}</option>`;
+      hint.textContent = T.completeEmpty;
+      return;
+    }
+    select.disabled = false;
+    select.innerHTML = `<option value="">${esc(T.completeSelectPlaceholder)}</option>${groups.map((g, i) => `<option value="${i}">${esc(g.value)}（${g.count} 条）</option>`).join('')}`;
+    select.value = '0';
     hint.textContent = fill(T.completeHint, { count: data?.total || 0 });
     const render = () => {
       const group = groups[Number(select.value)] || groups[0];
@@ -143,6 +155,8 @@ async function loadComplete(host) {
     select.onchange = render;
     render();
   } catch {
+    select.disabled = false;
+    select.innerHTML = `<option value="">${esc(T.completeSelectPlaceholder)}</option>`;
     hint.textContent = T.incompleteFailed;
     list.innerHTML = '';
   }
