@@ -28,7 +28,7 @@
  * ── 她要的映射（本文件逐条落实，渲染层只负责画）─────────────────────────────
  *   | Tab  | 子页面（子 tab 短名逐字）                                                |
  *   | 销售 | ① 订单列表 ② 销售查询（直跳）③ 客户往来款（占位）                         |
- *   | 库存 | ① 全仓查询（直跳）② 手工调整                                             |
+ *   | 库存 | ① 手工调整 ② 全仓查询（直跳）                                             |
  *   | 采购 | ① 订单列表（占位，原名「采购订单列表」）② 供应商往来款（占位）              |
  *   | 货品 | ① 货品上新（直跳）② 标签打印                                            |
  *   ⚠️ **2026-10-12 变更**（都是"**只删工作台入口**"，后端一条链路都没删）：
@@ -104,16 +104,16 @@ export const DOMAIN_TABS = [
     label: '库存',
     pages: [
       {
+        id: 'inventory-adjust',
+        label: '手工调整',
+        kind: 'inventory-adjustment',
+      },
+      {
         id: 'inventory-all',
         label: '全仓查询',
         kind: 'query',
         sectionId: 'inventory-query',
         directJump: true,
-      },
-      {
-        id: 'inventory-adjust',
-        label: '手工调整',
-        kind: 'inventory-adjustment',
       },
     ],
   },
