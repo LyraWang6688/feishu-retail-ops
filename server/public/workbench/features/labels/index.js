@@ -18,6 +18,7 @@
  */
 import { api } from '../../core/api-client.js';
 import { createScanPrintAction, mountScanOnlyPage, wantsScanFromSearch } from './scan-print.js';
+import { mountPrintJobStatus } from './printJobStatus.js';
 
 export function createLabelPrintModule() {
   /** ⭐ 扫码打印那一块（扫码 ⇒ 直接排进既有队列；与「扫码页」共用同一份实现）。 */
@@ -27,7 +28,11 @@ export function createLabelPrintModule() {
     mount(container) {
       // 只有「扫码打印」带 `?scan=1` 进来；其余情况（收藏 / 旧链接 / 后退）不渲染任何内容。
       if (wantsScanFromSearch(typeof window === 'undefined' ? '' : window.location.search)) {
-        mountScanOnlyPage(container, scanPrint);
+        const params = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
+        const printJobId = String(params.get('print_job') || '').trim();
+        // 自动提交完打印任务后进来：先显示刚才那张的打印状态，不立刻唤起相机。
+        const panel = mountScanOnlyPage(container, scanPrint, { autoOpen: !printJobId });
+        if (printJobId) mountPrintJobStatus(panel, printJobId, { api });
         return;
       }
     },

@@ -737,3 +737,27 @@ test('AC-L1 ⭐ 长轮询期间任务进来 ⇒ **立刻**返回（这是"降级
     harness.cleanup();
   }
 });
+
+
+test('AC-R10 手机侧按 job_id 只读查询打印任务状态', async () => {
+  const harness = buildHarness();
+  login();
+  try {
+    await withServer(harness.app, async (base) => {
+      const enqueued = await (await phone(base, '/jobs', { method: 'POST', body: { mode: 'single', number: NUMBER } })).json();
+      assert.ok(enqueued.job_id);
+      const response = await phone(base, `/jobs/${encodeURIComponent(enqueued.job_id)}`);
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.success, true);
+      assert.equal(body.job.job_id, enqueued.job_id);
+      assert.equal(body.job.status, 'queued');
+      assert.deepEqual(body.job.numbers, [NUMBER]);
+      assert.equal(typeof body.printer.online, 'boolean');
+      const missing = await phone(base, '/jobs/not-exist');
+      assert.equal(missing.status, 404);
+    });
+  } finally {
+    harness.cleanup();
+  }
+});

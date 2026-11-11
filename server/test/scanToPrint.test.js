@@ -788,8 +788,9 @@ test('AC-SP17 纯函数：聚焦壳**只有扫码那一块**（说明句 / 去�
 
 test('AC-SP18 源码哨兵：`?scan=1` 在标签页里**只挂聚焦页并 return**（那条 23.6 秒的查询不会跑）', () => {
   const page = read('features/labels/index.js');
-  assert.match(page, /if \(wantsScanFromSearch\([\s\S]{0,80}?\)\) \{\s*mountScanOnlyPage\(container, scanPrint\);\s*return;/,
-    '命中这条入口就直接挂聚焦页 + return ✓');
+  assert.match(page, /if \(wantsScanFromSearch\([\s\S]{0,160}?\)\) \{[\s\S]{0,400}?mountScanOnlyPage\(container, scanPrint,[\s\S]{0,160}?return;/, '命中这条入口就直接挂聚焦页 + return ✓');
+  assert.equal(page.includes('mountScanOnlyPage(container, scanPrint);'), false, '不再是无条件挂载（print_job 模式要关自动扫码）');
+
   assert.match(page, /import \{[^}]*mountScanOnlyPage[^}]*\} from '\.\/scan-print\.js';/,
     '聚焦页的挂载器来自 `scan-print.js`（**不新开一套启动逻辑** ✓）');
 });

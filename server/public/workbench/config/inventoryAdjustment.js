@@ -13,4 +13,8 @@ export const INVENTORY_MANUAL_TEXTS = Object.freeze({
   statusIssueEmpty: '状态为空',
   statusIssueMissing: '缺样品',
   statusGroupCount: '{count} 个货号',
+  submittedToast: '数据提交成功，后台自动写入',
+  printWaiting: '正在等待库存调整完成，然后提交打印…',
+  printJobMissing: '打印任务没有创建成功，请重试。',
+  inventoryJobTimeout: '库存调整还没有完成，请稍后在工作台重试打印。',
 });

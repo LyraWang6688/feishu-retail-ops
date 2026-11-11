@@ -23,7 +23,7 @@ const cardsHtml = () => `<div class="domain-cards domain-cards-single">${INVENTO
   <button class="entry-card" type="button" data-manual="${card.id}"><span class="icon">${escapeHtml(card.icon)}</span><h3>${escapeHtml(card.label)}</h3></button>`).join('')}</div>`;
 
 export function createInventoryAdjustmentModule() {
-  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, savedNumber: '' };
+  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, savedNumber: '', inventoryJobId: '' };
 
   async function loadRows(force = false) {
     if (state.rows.length && !force) return state.rows;
@@ -186,11 +186,12 @@ export function createInventoryAdjustmentModule() {
     if (!rows.length) return showPageError('请至少保留一行数量大于 0 的库存');
     state.pendingRequest = state.pendingRequest || crypto.randomUUID();
     try {
-      await api.post('/api/workbench/inventory/adjustments/pairs', {
+      const result = await api.post('/api/workbench/inventory/adjustments/pairs', {
         productRecordId: state.productId, rows, requestId: state.pendingRequest,
       });
       state.pendingRequest = null;
       state.savedNumber = first.product_number || '';
+      state.inventoryJobId = String(result?.job_id || '').trim();
       state.rows = [];
       showToast('已提交，后台写入库存');
       $(state.host, '[data-view="print-modal"]').hidden = false;
@@ -199,12 +200,38 @@ export function createInventoryAdjustmentModule() {
     }
   }
 
+  async function waitForInventoryJob(jobId) {
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      const payload = await api.get(`/api/workbench/async-jobs/${encodeURIComponent(jobId)}`);
+      const job = payload?.job || payload;
+      if (job?.status === 'succeeded') return job;
+      if (job?.status === 'failed' || job?.status === 'partial_failed') {
+        throw new Error(job.last_error || job.error || '库存调整失败');
+      }
+      await new Promise((resolve) => { setTimeout(resolve, 2000); });
+    }
+    throw new Error(INVENTORY_MANUAL_TEXTS.inventoryJobTimeout);
+  }
+
   async function printSaved(yes) {
     $(state.host, '[data-view="print-modal"]').hidden = true;
-    if (!yes) return;
+    if (!yes) {
+      window.location.assign(`/workbench/?toast=${encodeURIComponent(INVENTORY_MANUAL_TEXTS.submittedToast)}`);
+      return;
+    }
+    showToast(INVENTORY_MANUAL_TEXTS.printWaiting, { sticky: true });
     try {
-      await api.post('/api/workbench/label-print/jobs', { mode: 'single', number: state.savedNumber });
-      showPageError('');
+      if (!state.inventoryJobId) throw new Error(INVENTORY_MANUAL_TEXTS.inventoryJobTimeout);
+      await waitForInventoryJob(state.inventoryJobId);
+      const result = await api.post('/api/workbench/label-print/jobs', {
+        mode: 'single',
+        number: state.savedNumber,
+        submit_key: state.pendingRequest || crypto.randomUUID(),
+      });
+      const printJobId = String(result?.job_id || '').trim();
+      if (!printJobId) throw new Error(INVENTORY_MANUAL_TEXTS.printJobMissing);
+      window.location.assign(`/workbench/label-print.html?scan=1&print_job=${encodeURIComponent(printJobId)}`);
     } catch (error) {
       showPageError(describeError(error));
     }
