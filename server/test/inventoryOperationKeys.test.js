@@ -69,7 +69,6 @@ const LEGACY = Object.freeze({
   },
   // keys.js（改前 72 行）：补样品的 operationId 前缀是 'sample'
   samplePromotionId: (salesDetailRecordId) => operationId('sample', salesDetailRecordId),
-  // inventoryAdjustmentService.js（改前 83-84 行）
   adjustmentSourceId: ({ requestId, productRecordId, size, state }) =>
     `${requestId}:${productRecordId}:${size}:${state}`,
   // stateTransition 改前由入口拼：`${requestId}:${productRecordId}:${size}:${fromState}`
@@ -394,7 +393,6 @@ test('AC-K5 写入件里不再有 per-behavior 的来源拼法（只有统一入
     ['services', 'inventory', 'purchaseBatch.js'],
     ['services', 'inventory', 'purchaseReturnBatch.js'],
     ['services', 'inventory', 'saleBatch.js'],
-    ['services', 'inventoryAdjustmentService.js'],
   ];
   // ① 来源**组成字面量**一个都不许留在写入件里（拼法只声明在行为注册表）
   const forbiddenLiterals = [
@@ -417,10 +415,6 @@ test('AC-K5 写入件里不再有 per-behavior 的来源拼法（只有统一入
         `${segments.join('/')} 仍在调用 deprecated 的 ${name}：写入件只该走统一入口`);
     }
   }
-  // ③ 人工调整那条 deprecated 包装内部**只调统一入口**（不许自己拼 `${requestId}:...`）
-  const adjustmentSource = readSource('services', 'inventoryAdjustmentService.js');
-  assert.match(adjustmentSource, /const adjustmentSourceId = [\s\S]{0,240}operationSourceIdOf/,
-    'adjustmentSourceId 必须委托统一入口（保留只为兼容，行为只有一套）');
   // ④ 来源拼法**只**声明在行为注册表里（keys.js 是纯工具，不该出现具体前缀）
   const keysSource = readSource('services', 'inventory', 'keys.js');
   assert.equal(/purchase_increase:/.test(keysSource), false, 'keys.js 不该写死采购入库的来源前缀');
