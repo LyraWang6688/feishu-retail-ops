@@ -24,6 +24,7 @@ const CONFIG_TABLES = Object.freeze({
   groupBuyVoucher: Object.freeze({ ttlMs: 30 * MINUTE, label: '团购券管理' }),
   product: Object.freeze({ ttlMs: 30 * MINUTE, label: '货品信息' }),
   color: Object.freeze({ ttlMs: 30 * MINUTE, label: '颜色管理' }),
+  category: Object.freeze({ ttlMs: 30 * MINUTE, label: '品类管理' }),
 });
 
 /** record_changed 需要失效的表（顺序稳定，日志/测试可读）。 */

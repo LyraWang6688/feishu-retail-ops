@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createWorkbenchService } = require('../src/services/v1WorkbenchService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { resetConfigTableCache } = require('../src/services/configTableCache');
 
 // 2026-11-08：自建销售查询已退场，本文件只保留实时库存读模型用例。
 const SIZES = [36, 37, 38].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
@@ -55,4 +56,31 @@ test('实时库存读遇到 504/2200 瞬态错误会短重试，成功后正常�
     if (original === undefined) delete process.env.WORKBENCH_ORDERS_RETRY_DELAY_MS;
     else process.env.WORKBENCH_ORDERS_RETRY_DELAY_MS = original;
   }
+});
+
+test('批量调整品类走「品类管理」配置表缓存，不读实时库存', async () => {
+  resetConfigTableCache();
+  let categoryCalls = 0;
+  let liveCalls = 0;
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listAll: async (key) => {
+      if (key === 'category') {
+        categoryCalls += 1;
+        return [
+          { record_id: 'c1', fields: { 品类: '男鞋', 类别: 'A' } },
+          { record_id: 'c2', fields: { 品类: '女鞋', 类别: 'B' } },
+        ];
+      }
+      if (key === 'liveInventory') liveCalls += 1;
+      return [];
+    },
+  };
+  const service = createWorkbenchService(gateway);
+  const first = await service.listInventoryCategories();
+  const second = await service.listInventoryCategories();
+  assert.deepEqual(first.rows.map((row) => row.category), ['男鞋', '女鞋']);
+  assert.equal(categoryCalls, 1, '第二次应命中配置表缓存');
+  assert.equal(liveCalls, 0, '品类下拉不许再读实时库存');
+  assert.equal(second.total, 2);
 });
