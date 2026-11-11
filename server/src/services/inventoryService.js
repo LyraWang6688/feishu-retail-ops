@@ -71,7 +71,9 @@ const {
   sampleReplacementCandidates,
   readLiveInventoryForProduct,
   sortLiveInventoryFifo,
+  sortLiveInventoryForConsumption,
 } = require('./inventory/liveStock');
+const { inboundStatesFor, explicitInboundStates } = require('../config/inventoryStatePolicy');
 const { stockShortage } = require('../config/inventoryTexts');
 
 class InventoryService {
@@ -283,6 +285,7 @@ class InventoryService {
     const quantity = positiveInteger(input.quantity, '变动数量');
     const state = String(input.state || '门盒');
     if (!LIVE_STATES.includes(state)) throw new Error('库存所属状态无效');
+    const explicitState = options.statePolicy === 'explicit' || input.statePolicy === 'explicit';
     // ⭐ 2026-11-11：内部库存键不再含状态（状态只做展示/统计）。
   const stockKey = `${input.productRecordId}|${size}`;
     // 关联键：落进本地任务记录，**重放/续跑时用它自己的那一份**（不是当前请求的）——
@@ -298,6 +301,10 @@ class InventoryService {
           operation.kind !== input.kind || operation.product_record_id !== input.productRecordId ||
           operation.size !== size || operation.state !== state || operation.quantity !== quantity
         )) throw new Error(`来源明细 ${sourceRecordId} 的库存操作内容与首次提交不一致`);
+        if (operation.schema_version === 4 && (
+          operation.kind !== input.kind || operation.product_record_id !== input.productRecordId ||
+          operation.size !== size || operation.quantity !== quantity
+        )) throw new Error(`来源明细 ${sourceRecordId} 的库存操作内容与首次提交不一致`);
       } else {
         const behavior = await this.resolveStockBehavior(input.kind);
         // 没有来源字段的动作（例如采购退货）拿不到"远端已经写过这条流水"的证明，
@@ -310,8 +317,10 @@ class InventoryService {
         }
         const delta = behavior.direction === '减少' ? -quantity : quantity;
         const allLiveRecords = await this.readLiveInventoryForProduct(input.productRecordId);
-        // ⭐ 2026-11-11：**不看状态** —— 有记录就是库存；减少时按「创建时间」升序 FIFO 选最早的行。
-        const liveRecords = this.sortLiveInventoryFifo(
+        // 看库存不看状态；写库存时状态参与：
+        //   · 减少 → 门盒/空状态优先，样品最后，同优先级 FIFO
+        //   · 增加 → 同编号所有尺码合计为 0 时第一双样品，其余门盒；否则全部门盒
+        const liveRecords = this.sortLiveInventoryForConsumption(
           this.findLiveInventoryIn(allLiveRecords, input.productRecordId, sizeReference.recordId),
         );
         const currentQuantity = liveRecords.length;
@@ -328,10 +337,15 @@ class InventoryService {
         const sampleConsumed = selected.filter((record) =>
           textValue(record.fields?.[stateField]) === '样品').length;
         const targetQuantity = currentQuantity + delta;
+        const createdStates = delta > 0
+          ? (explicitState
+            ? explicitInboundStates(state, quantity)
+            : inboundStatesFor({ existingTotal: allLiveRecords.length, quantity }))
+          : [];
         operation = await this.store.create({
           operation_id: id,
           type: 'inventory_change',
-          schema_version: 3,
+          schema_version: 4,
           status: 'prepared',
           kind: input.kind,
           stock_key: stockKey,
@@ -347,7 +361,8 @@ class InventoryService {
           product_record_id: input.productRecordId,
           size,
           size_record_id: sizeReference.recordId,
-          state,
+          state: createdStates[0] || state,
+          created_states: createdStates,
           quantity,
           direction: behavior.direction,
           behavior_record_id: behavior.recordId,
@@ -414,6 +429,7 @@ for (const [name, method] of Object.entries({
   sampleReplacementCandidates,
   readLiveInventoryForProduct,
   sortLiveInventoryFifo,
+  sortLiveInventoryForConsumption,
 })) {
   Object.defineProperty(InventoryService.prototype, name, {
     value: method,

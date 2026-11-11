@@ -108,6 +108,8 @@ class InventoryPairAdjustmentService {
         quantity: Math.abs(delta),
         requestId: source,
         operatorOpenId,
+        // 人工单双调整：新增行严格按用户选择的状态，不套自动入库规则。
+        statePolicy: 'explicit',
       });
       quantityOperations.push({ size, state: targetState, delta });
     }

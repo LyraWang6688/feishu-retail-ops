@@ -219,6 +219,7 @@ class AfterSalesExchangeService {
       kind: EX.stock.returnedBehaviorCode,
       productRecordId: prepared.originalProductId,
       size: prepared.originalSize,
+      // 仅作兜底；增加库存时由库存内核自动决定样品/门盒。
       state: EX.stock.restockState,
       quantity: EX.stock.quantity,
       sourceRecordId: prepared.detailRecordId,
@@ -228,6 +229,7 @@ class AfterSalesExchangeService {
       kind: EX.stock.newBehaviorCode,
       productRecordId: prepared.newProductRecordId,
       size: prepared.newSize,
+      // 减少库存时不参与选行；保留字段只为本地任务形状兼容。
       state: EX.stock.restockState,
       quantity: EX.stock.quantity,
       sourceRecordId: newDetailRecordId,

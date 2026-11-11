@@ -20,7 +20,7 @@ const {
 
 async function executeOperation(operation) {
     if (operation.status === 'completed') return operation.result;
-    if (![2, 3].includes(operation.schema_version)) {
+    if (![2, 3, 4].includes(operation.schema_version)) {
       throw new Error(`库存操作 ${operation.operation_id} 使用旧结构且尚未完成，请先人工核对，不能自动重试`);
     }
     const movement = requireMovement(operation.kind);
@@ -107,7 +107,7 @@ async function executeOperation(operation) {
           values: {
             product: relation(operation.product_record_id),
             size: relation(sizeReference.recordId),
-            state: operation.state || '门盒',
+            state: (operation.created_states || [])[createdIds.length] || operation.state || '门盒',
             operationItemKey: itemKey,
           },
         });

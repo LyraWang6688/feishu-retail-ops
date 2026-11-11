@@ -6,7 +6,7 @@
  * 业务负责人 2026-10-29 定稿 / 2026-11-08 落库：
  *   · **不新建销售主表 / 售后单**：在原销售主表上丰富（售后类型多选累加「退货」+ 售后次数 +1）；
  *   · 货：原销售明细「履约状态」→ 已退货；库存流水 +1（行为 =「销售增加」）；
- *        实时库存 +1，默认落**门盒**（不再问样品/门盒）；
+ *        实时库存 +1，落样品还是门盒由库存内核按「编号所有尺码合计」自动判定；
  *   · 钱：**新建一条 S交易明细**（不改原行）——
  *        直接退款：`{单号}-退款-NN` · 支付方式=她选的 · 收支方向=退回 · 钱款状态=已退款；
  *        货款留存：`{单号}-留存-NN` · 支付方式/收支方向不填 · 钱款状态=已留存；
@@ -171,6 +171,7 @@ class AfterSalesReturnService {
       kind: AFTER_SALES_DERIVED.stockBehaviorCode,
       productRecordId: prepared.productRecordId,
       size: prepared.size,
+      // 仅作兜底；增加库存时由库存内核按「编号所有尺码合计」自动决定样品/门盒。
       state: AFTER_SALES_DERIVED.defaultRestockState,
       quantity: 1,
       // 本地幂等键用明细 id（同一单退两双不会撞键）；

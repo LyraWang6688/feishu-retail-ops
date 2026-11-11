@@ -4,6 +4,7 @@
 //    以**与 class 方法相同的属性描述符**挂回 `InventoryService.prototype`。
 // 采购到货加库存的批量口：applyPurchaseBatch。
 const { textValue } = require('../v1BitableGateway');
+const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { relation } = require('../v1ReferenceResolver');
 const { normalizeSize } = require('../sizeReferenceService');
 const { OPERATION_ITEM_KEY_FIELD } = require('../../infrastructure/idempotencyKey');
@@ -11,6 +12,7 @@ const { logInfo } = require('../../utils/logger');
 const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireMovement, MOVEMENT_PURCHASE_INCREASE, LIVE_STATES } = require('./movements');
+const { inboundStatesFor } = require('../../config/inventoryStatePolicy');
 const {
   operationSourceIdOf,
   operationIdOf,
@@ -82,11 +84,25 @@ async function applyPurchaseBatch(items = [], options = {}) {
       const itemKeyField = liveFields?.[OPERATION_ITEM_KEY_FIELD];
       // ⭐ 一批**一次**整表读（原来每码 3 次：调用方的状态判定 + 重复检查 + 幂等回查各 1 次）。
       const allLive = await this.gateway.listAll('liveInventory');
+      // 入库状态按「编号」所有尺码合计推演：合计 0 → 第一双样品，其余门盒；否则全部门盒。
+      const productTotals = new Map();
+      const totalOf = (productRecordId) => {
+        if (!productTotals.has(productRecordId)) {
+          const total = allLive.filter((record) =>
+            strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(productRecordId)).length;
+          productTotals.set(productRecordId, total);
+        }
+        return productTotals.get(productRecordId);
+      };
       const plans = [];
       for (const item of prepared) {
         const sizeReference = await this.sizeReferences.resolveByNumber(item.size);
+        const existingTotal = totalOf(item.input.productRecordId);
+        item.createdStates = inboundStatesFor({ existingTotal, quantity: item.quantity });
+        item.state = item.createdStates[0] || '门盒';
+        productTotals.set(item.input.productRecordId, existingTotal + item.quantity);
         const existingRows = this.findLiveInventoryIn(
-          allLive, item.input.productRecordId, sizeReference.recordId, item.state,
+          allLive, item.input.productRecordId, sizeReference.recordId,
         );
         const journal = await this.store.get(item.operationId);
         // ⭐ 与逐条路径**同一处**的"重复事实"检查（一份已读数据传进去 ⇒ 不额外读表、不新写文案）。
@@ -107,13 +123,13 @@ async function applyPurchaseBatch(items = [], options = {}) {
               table_key: 'liveInventory', key: itemKey, record_id: matches[0].record_id,
             });
             liveRecordIds.push(matches[0].record_id);
-          } else toCreate.push(itemKey);
+          } else toCreate.push({ itemKey, state: item.createdStates[sequence - 1] || item.state });
         }
         // 本地任务形状**逐字照抄**逐条路径的 `store.create({...})`（journal 是幂等与续跑的唯一依据）。
         const operation = {
           operation_id: item.operationId,
           type: 'inventory_change',
-          schema_version: 3,
+          schema_version: 4,
           status: 'prepared',
           kind: MOVEMENT_PURCHASE_INCREASE,
           stock_key: item.stockKey,
@@ -127,6 +143,7 @@ async function applyPurchaseBatch(items = [], options = {}) {
           size: item.size,
           size_record_id: sizeReference.recordId,
           state: item.state,
+          created_states: item.createdStates,
           quantity: item.quantity,
           direction: behavior.direction,
           behavior_record_id: behavior.recordId,
@@ -171,12 +188,12 @@ async function applyPurchaseBatch(items = [], options = {}) {
         ledgerNeeded.forEach((plan, index) => { plan.ledgerRecordId = created[index]?.recordId || ''; });
       }
       // ② 实时库存：这一批里"还没有那一条"的才建 —— **一批一次**。
-      const liveNeeded = plans.flatMap((plan) => plan.toCreate.map((itemKey) => ({ plan, itemKey })));
+      const liveNeeded = plans.flatMap((plan) => plan.toCreate.map((entry) => ({ plan, ...entry })));
       if (liveNeeded.length) {
-        const rows = liveNeeded.map(({ plan, itemKey }) => ({
+        const rows = liveNeeded.map(({ plan, itemKey, state }) => ({
           product: relation(plan.item.input.productRecordId),
           size: relation(plan.sizeReference.recordId),
-          state: plan.item.state,
+          state,
           operationItemKey: itemKey,
         }));
         const created = await this.gateway.createBatch('liveInventory', rows, { correlation });

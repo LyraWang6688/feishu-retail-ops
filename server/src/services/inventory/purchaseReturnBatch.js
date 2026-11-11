@@ -142,7 +142,7 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
           continue;
         }
         // ⭐ 2026-11-11：不看状态；按「创建时间」FIFO 选最早的行。
-        const liveRecords = this.sortLiveInventoryFifo(
+        const liveRecords = this.sortLiveInventoryForConsumption(
           this.findLiveInventoryIn(allLive, item.input.productRecordId, sizeReference.recordId),
         );
         const currentQuantity = liveRecords.length;
