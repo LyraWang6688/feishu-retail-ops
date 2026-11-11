@@ -93,6 +93,8 @@ const V1_BITABLE_SCHEMA = {
         category: '种类',
         price: '单价',
         cost: '成本',
+        // 2026-11-11：业务负责人新增的复选框；资金页赠品候选只取 true。
+        isAccessory: '配品',
       },
     },
     behavior: {

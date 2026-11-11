@@ -104,6 +104,8 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
       const id = V1_BITABLE_SCHEMA.tables?.[key]?.tableId;
       if (id && id === tableId) {
         invalidateConfigTable(key);
+        // 「其他配品」变化时，只含 配品=true 的赠品候选缓存也要失效。
+        if (key === 'accessory') invalidateConfigTable('giftAccessory');
         break;
       }
     }
