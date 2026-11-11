@@ -84,3 +84,23 @@ test('批量调整品类走「品类管理」配置表缓存，不读实时库�
   assert.equal(liveCalls, 0, '品类下拉不许再读实时库存');
   assert.equal(second.total, 2);
 });
+
+test('实时库存走统一缓存：5 分钟内的第二次读取不再打飞书', async () => {
+  resetConfigTableCache();
+  let liveCalls = 0;
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listAll: async (key) => {
+      if (key === 'liveInventory') {
+        liveCalls += 1;
+        return [{ record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_36'] }], 所属状态: '门盒' } }];
+      }
+      if (key === 'sizeManagement') return SIZES;
+      return key === 'product' ? [{ record_id: 'p1', fields: { 编号: '93827黑' } }] : [];
+    },
+  };
+  const service = createWorkbenchService(gateway);
+  await service.getLiveInventory();
+  await service.getLiveInventory();
+  assert.equal(liveCalls, 1, 'TTL 内第二次读取必须命中缓存');
+});

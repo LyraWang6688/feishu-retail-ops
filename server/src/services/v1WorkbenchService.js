@@ -159,7 +159,8 @@ const createWorkbenchService = (gateway, options = {}) => {
 
   const getLiveInventory = async ({ keyword = '', size = '', requestId } = {}) => {
     const [inventory, products] = await Promise.all([
-      listAllWithRetry(gateway, 'liveInventory', requestId),
+      getConfigRows({ gateway, tableKey: 'liveInventory',
+        loader: () => listAllWithRetry(gateway, 'liveInventory', requestId) }),
       getConfigRows({ gateway, tableKey: 'product',
         loader: () => listAllWithRetry(gateway, 'product', requestId) }),
     ]);
