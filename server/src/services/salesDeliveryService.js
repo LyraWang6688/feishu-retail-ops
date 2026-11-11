@@ -62,9 +62,18 @@ class SalesDeliveryService {
     //    "一条销售被劈成两半"里看不见的那半（2026-10-07 业务负责人拍板「日志改下吧！」）。
     //    它**只进日志**，不改任何写入内容、不改顺序。
     let correlation = mergeCorrelation(options.correlation, { sales_entry_record_id: salesEntryRecordId });
-    const entry = await withSalesReadRetry(
+    // ⭐ 2026-11-11（交割单提速）：主表与明细互不依赖 ⇒ 并行读；明细用 getBatch 精确取，
+    //    不再整表拉 salesDetail 后再逐条 get。没有 getBatch 的旧替身回退原来的整表路径。
+    const entryPromise = withSalesReadRetry(
       () => this.gateway.get('salesEntry', salesEntryRecordId), 'delivery_sale_entry',
     );
+    const canBatchDetails = typeof this.gateway.getBatch === 'function';
+    const detailBatchPromise = canBatchDetails
+      ? withSalesReadRetry(
+        () => this.gateway.getBatch('salesDetail', detailRecordIds), 'delivery_detail_batch',
+      ).catch(() => null) // 老替身可能只有 getBatch 壳、没有底层 batchGet ⇒ 回退整表路径
+      : null;
+    const [entry, detailRows] = await Promise.all([entryPromise, detailBatchPromise]);
     if (!entry) throw new Error('销售主表记录不存在');
     const entryFields = this.gateway.table('salesEntry').fields;
     // 单号就在这条**已经读到的**主表记录上 ⇒ 零额外请求地补进关联键。
@@ -78,12 +87,20 @@ class SalesDeliveryService {
     //      允许在资金状态尚未写入时交付 ✓；**其它调用方照旧** ✓。
     if (!allowUnposted && !isPosted(postedOf(entry, entryFields))) throw new Error('销售订单尚未确认入账');
     const fields = this.gateway.table('salesDetail').fields;
-    const listedDetails = (await withSalesReadRetry(
-      () => this.gateway.listAll('salesDetail'), 'delivery_detail_list',
-    )).filter((record) =>
-      strictLinkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId));
-    const byId = new Map(listedDetails.map((record) => [record.record_id, record]));
+    const byId = new Map();
+    if (detailRows) {
+      for (const record of detailRows) byId.set(record.record_id, record);
+    } else {
+      const listedDetails = (await withSalesReadRetry(
+        () => this.gateway.listAll('salesDetail'), 'delivery_detail_list',
+      )).filter((record) =>
+        strictLinkedRecordIds(record.fields?.[fields.salesEntry]).includes(salesEntryRecordId));
+      for (const record of listedDetails) byId.set(record.record_id, record);
+    }
     for (const id of detailRecordIds) {
+      // getBatch 已经拿到了就不再多读；缺记录 / 关联对不上时仍走原来的精确读（同一句报错）。
+      const batched = byId.get(id);
+      if (batched && strictLinkedRecordIds(batched.fields?.[fields.salesEntry]).includes(salesEntryRecordId)) continue;
       // The caller has exact IDs from creation. Do not depend on a freshly
       // created relation already appearing in Bitable's list response.
       const detail = await withSalesReadRetry(

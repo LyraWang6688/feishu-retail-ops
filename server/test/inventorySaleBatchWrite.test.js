@@ -438,7 +438,10 @@ test('AC-SB1 ⭐ 销售扣库存：逐条整表读＋逐双 get/delete ⇒ 整�
       assert.equal(a.createLedger, 0, '批量路不许再有逐条 create 流水的调用');
       assert.equal(a.getLive, 0, '批量路不许再有逐双 get');
       assert.equal(a.deleteLive, 0, '批量路不许再有逐双 delete');
-      assert.equal(a.listLive, 1, '改后：库存那一段整批只读一次「实时库存」');
+      const productCount = new Set(after.harness.scenario.details
+        .map(([, productRecordId]) => productRecordId)).size;
+      assert.equal(a.listLive, productCount, '改后：按货品条件读实时库存（每个货品一次，不再整表读）');
+      assert.ok(a.listLive <= lines, '改后：实时库存读次数不超过明细行数');
       assert.equal(a.listBehavior, 1, '改后：整批只读一次行为表');
       assert.equal(a.listLedger, 1, '改后：远端"已有流水"守护整批只读一次');
       // 改前的形状（这就是要批量的理由）
