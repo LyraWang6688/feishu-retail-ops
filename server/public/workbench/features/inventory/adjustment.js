@@ -237,17 +237,17 @@ export function createInventoryAdjustmentModule() {
     }
   }
 
-  async function toggleSeason() {
+  async function setSeason(season) {
     const category = $(state.host, '[data-field="batch-category"]')?.value || '';
     if (!category) return showPageError('请先选择品类');
-    const current = state.rows.filter((row) => row.category === category);
-    const season = !(current.length > 0 && current.every((row) => row.season === true));
     try {
-      await api.post('/api/workbench/inventory/adjustments/season-flag', { category, season, requestId: crypto.randomUUID() });
+      await api.post('/api/workbench/inventory/adjustments/season-flag', {
+        category, season, requestId: crypto.randomUUID(),
+      });
       state.rows = [];
       await loadRows(true);
       renderViolations();
-      showToast(season ? '已提交，后台设为当季' : '已提交，后台取消当季');
+      showToast(season ? '已提交，后台设为当季' : '已提交，后台入库');
     } catch (error) { showPageError(describeError(error)); }
   }
 
@@ -268,7 +268,7 @@ export function createInventoryAdjustmentModule() {
           <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>批量调整</h2></div>
           <div class="batch-section"><h3>当季调整</h3>
             <label class="field"><select data-field="batch-category"></select></label>
-            <div class="row-actions"><button class="btn small primary" type="button" data-action="season-toggle">当季</button><button class="btn small" type="button" data-action="batch-check">库存</button></div>
+            <div class="row-actions"><button class="btn small primary" type="button" data-action="season-set" data-season="true">当季</button><button class="btn small" type="button" data-action="season-set" data-season="false">库存</button></div>
           </div>
           <div class="batch-section"><h3>状态调整</h3>
             <label class="field"><select data-field="status-filter" aria-label="${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterLabel)}"><option value="all">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterAll)}</option><option value="extra">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueExtraGroup)}</option><option value="empty">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueEmpty)}</option><option value="missing">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueMissing)}</option></select></label>
@@ -284,9 +284,10 @@ export function createInventoryAdjustmentModule() {
       host.querySelector('[data-manual="batch"]').addEventListener('click', () => { void enterBatch().catch((error) => showPageError(describeError(error))); });
       host.querySelector('[data-add-size]').addEventListener('click', () => { state.editorRows.push({ size: '', state: '门盒', quantity: 1 }); renderEditor(); });
       host.querySelector('[data-save]').addEventListener('click', () => { void savePairs(); });
-      host.querySelector('[data-action="season-toggle"]').addEventListener('click', () => { void toggleSeason(); });
+      host.querySelectorAll('[data-action="season-set"]').forEach((btn) => btn.addEventListener('click', () => {
+        void setSeason(btn.dataset.season === 'true');
+      }));
       host.querySelectorAll('[data-print]').forEach((btn) => btn.addEventListener('click', () => { void printSaved(btn.dataset.print === 'yes'); }));
-      host.querySelector('[data-action="batch-check"]').addEventListener('click', () => renderViolations());
       host.querySelector('[data-field="batch-category"]').addEventListener('change', () => renderViolations());
       host.querySelector('[data-field="status-filter"]')?.addEventListener('change', () => renderViolations());
     },

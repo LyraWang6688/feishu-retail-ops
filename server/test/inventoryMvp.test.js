@@ -234,7 +234,7 @@ const legacySamplePromotion = async ({ ledgerSize = [{ record_ids: ['size_40'] }
   omitSizeRecordId = false } = {}) => {
   const gateway = gatewayFor([
     { record_id: 'door_40', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' } },
-  ], [behavior('behavior_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', '不影响')]);
+  ], [behavior('behavior_sample', 'STOCK_TO_SAMPLE', '门盒转样品', '不影响')]);
   gateway.records.set('inventoryLedger', [{ record_id: 'sample_ledger', fields: {
     编号: [{ record_ids: ['product_1'] }], 尺码: ledgerSize, 变动数量: 0,
     库存行为: [{ record_ids: ['behavior_sample'] }], 关联销售: [{ record_ids: ['detail_sold_sample'] }],
@@ -277,9 +277,9 @@ test('stock behavior lookup survives renaming the display name', async () => {
     behavior('behavior_manual_increase', 'STOCK_MANUAL_INCREASE', '手工调增', '增加'),
     behavior('behavior_manual_decrease', 'STOCK_MANUAL_DECREASE', '手工调减', '减少'),
     behavior('behavior_freeze', 'STOCK_FREEZE', '转冻结', '不影响'),
-    behavior('behavior_release_to_doorbox', 'STOCK_RELEASE_TO_DOOR_BOX', '转释放门盒', '不影响'),
-    behavior('behavior_sample_to_doorbox', 'STOCK_SAMPLE_TO_DOORBOX', '样品转门盒', '不影响'),
-    behavior('behavior_doorbox_to_sample', 'STOCK_DOORBOX_TO_SAMPLE', '门盒转样品', '不影响'),
+    behavior('behavior_release_to_doorbox', 'STOCK_RELEASE', '转释放门盒', '不影响'),
+    behavior('behavior_sample_to_doorbox', 'STOCK_TO_DOORBOX', '样品转门盒', '不影响'),
+    behavior('behavior_doorbox_to_sample', 'STOCK_TO_SAMPLE', '门盒转样品', '不影响'),
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.validateStockBehaviors();

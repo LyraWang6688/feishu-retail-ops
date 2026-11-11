@@ -18,6 +18,7 @@
 const { ADJUSTMENT_BEHAVIORS } = require('./inventoryService');
 const { logInfo } = require('../utils/logger');
 const { PAIR_STATES } = require('../config/inventoryPairAdjustment');
+const { writeManualLedger } = require('./inventory/manualLedger');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { textValue } = require('./v1BitableGateway');
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
@@ -149,6 +150,7 @@ class InventoryPairAdjustmentService {
   async applyStateLabels({ productRecordId, rows, recordsBySizeMap, requestId, operatorOpenId } = {}) {
     const liveFields = this.inventory.gateway.table('liveInventory').fields;
     const operations = [];
+    const ledgerChanges = [];
     for (const [size, records] of [...recordsBySizeMap.entries()].sort((a, b) => a - b)) {
       const targets = { 门盒: 0, 样品: 0 };
       for (const row of rows.filter((item) => Number(item.size) === Number(size))) targets[row.state] = row.quantity;
@@ -168,10 +170,21 @@ class InventoryPairAdjustmentService {
           if (current !== state) {
             await this.inventory.gateway.update('liveInventory', record.record_id, { state });
             operations.push({ size: Number(size), state, record_id: record.record_id, from: current || '' });
+            ledgerChanges.push({
+              record_id: record.record_id,
+              productRecordId,
+              sizeRecordId: strictLinkedRecordIds(record.fields?.[liveFields.size])[0] || '',
+              behaviorCode: state === PAIR_STATES[0]
+                ? ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX
+                : ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE,
+            });
           }
           need -= 1;
         }
       }
+    }
+    if (ledgerChanges.length) {
+      await writeManualLedger({ inventory: this.inventory, changes: ledgerChanges, operatorOpenId });
     }
     if (operations.length) invalidateLiveInventorySnapshot('state_label_adjust');
     logInfo('inventory.adjustment.pairs.state_applied', {
@@ -188,23 +201,38 @@ class InventoryPairAdjustmentService {
     };
   }
 
-  async setSeason({ category, season } = {}) {
+  async setSeason({ category, season, requestId, operatorOpenId } = {}) {
     const name = String(category || '').trim();
     if (!name) throw userError('请先选择品类');
     if (typeof season !== 'boolean') throw userError('当季必须是布尔值');
     const gateway = this.inventory.gateway;
     const table = gateway.table('liveInventory');
     const records = await gateway.listAll('liveInventory');
-    let updated = 0;
+    const operations = [];
     for (const record of records) {
       const fields = record.fields || {};
       if (String(fields[table.fields.category] || '').trim() !== name) continue;
       if (fields[table.fields.season] === season) continue;
       await gateway.update('liveInventory', record.record_id, { season });
-      updated += 1;
+      operations.push({
+        record_id: record.record_id,
+        productRecordId: strictLinkedRecordIds(fields?.[table.fields.product])[0] || '',
+        sizeRecordId: strictLinkedRecordIds(fields?.[table.fields.size])[0] || '',
+        behaviorCode: season ? ADJUSTMENT_BEHAVIORS.UNFREEZE : ADJUSTMENT_BEHAVIORS.FREEZE,
+      });
     }
-    logInfo('inventory.adjustment.season_flag.applied', { category: name, season, updated });
-    return { category: name, season, updated };
+    if (operations.length) {
+      await writeManualLedger({ inventory: this.inventory, changes: operations, operatorOpenId });
+      invalidateLiveInventorySnapshot('season_flag_adjust');
+    }
+    logInfo('inventory.adjustment.season_flag.applied', {
+      request_id: requestId,
+      category: name,
+      season,
+      updated: operations.length,
+      operator_open_id: operatorOpenId || undefined,
+    });
+    return { category: name, season, updated: operations.length, operations };
   }
 }
 
