@@ -78,10 +78,33 @@ async function sampleReplacementCandidates(productRecordId, { excludeRecordIds =
     return this.candidatesFromLiveRecords(productRecordId, records, { excludeRecordIds });
   }
 
+
+/**
+ * ⭐ 2026-11-11（售后写库提速）：**按货品记录 ID 条件读**「实时库存」，不再整表拉 1300+ 行。
+ *
+ * 「实时库存.recordID」是业务负责人 2026-11-11 新增的查找引用列（= 货品 record_id），
+ * 标签打印已经在用同一个 filter 精确读。拿不到该列 / 条件读失败 ⇒ **回退整表读**（慢一次但对）。
+ */
+async function readLiveInventoryForProduct(productRecordId) {
+  const table = this.gateway.table('liveInventory');
+  const field = table.fields?.recordId;
+  const wanted = String(productRecordId || '').trim();
+  if (!field || typeof this.gateway.listByFilter !== 'function' || !/^[A-Za-z0-9]+$/.test(wanted)) {
+    return this.gateway.listAll('liveInventory');
+  }
+  try {
+    const rows = await this.gateway.listByFilter('liveInventory', `CurrentValue.[${field}]="${wanted}"`);
+    return Array.isArray(rows) ? rows : [];
+  } catch (error) {
+    return this.gateway.listAll('liveInventory');
+  }
+}
+
 module.exports = {
   matchesLiveInventory,
   findLiveInventoryIn,
   findLiveInventory,
   candidatesFromLiveRecords,
   sampleReplacementCandidates,
+  readLiveInventoryForProduct,
 };

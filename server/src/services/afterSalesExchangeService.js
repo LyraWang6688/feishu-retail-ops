@@ -91,11 +91,13 @@ class AfterSalesExchangeService {
     const entryFields = this.gateway.table('salesEntry').fields;
     const detailFields = this.gateway.table('salesDetail').fields;
 
-    const entry = await this.gateway.get('salesEntry', shaped.salesEntryRecordId);
+    // ⭐ 2026-11-11（提速）：原单 / 原明细互不依赖 ⇒ 并行读
+    const [entry, detail] = await Promise.all([
+      this.gateway.get('salesEntry', shaped.salesEntryRecordId),
+      this.gateway.get('salesDetail', shaped.detailRecordId),
+    ]);
     if (!entry) throw badRequest(this.texts.entryNotFound);
     const orderNo = textValue(entry.fields?.[entryFields.orderNo]).trim();
-
-    const detail = await this.gateway.get('salesDetail', shaped.detailRecordId);
     if (!detail) throw badRequest(this.texts.detailNotFound);
     if (!salesLinkRecordIds(detail.fields?.[detailFields.salesEntry]).includes(shaped.salesEntryRecordId)) {
       throw badRequest(this.texts.detailNotInEntry);
@@ -116,7 +118,11 @@ class AfterSalesExchangeService {
     const originalSize = Number(textValue(originalSizeRecord?.fields?.[sizeFields.size]));
     if (!Number.isFinite(originalSize)) throw badRequest(this.texts.originalSizeUnreadable);
     // 页面只传尺码数字（销售尺码分组模型里没有 size 记录 id）⇒ 按数字反查「尺码管理」记录。
-    const sizeRows = await this.gateway.listAll('sizeManagement');
+    // ⭐ 2026-11-11（提速）：尺码表 & 交易类型（行为配置）互不依赖 ⇒ 并行读
+    const [sizeRows, behavior] = await Promise.all([
+      this.gateway.listAll('sizeManagement'),
+      this.references.resolveBehavior(EX.newLine.tradeTypeCode),
+    ]);
     const newSizeRecord = (sizeRows || []).find((row) =>
       Number(textValue(row.fields?.[sizeFields.size])) === shaped.newSize) || null;
     if (!newSizeRecord) throw badRequest(this.texts.newSizeNotFound);
@@ -145,7 +151,6 @@ class AfterSalesExchangeService {
       method = hit;
     }
 
-    const behavior = await this.references.resolveBehavior(EX.newLine.tradeTypeCode);
     return {
       ...shaped, orderNo, originalAmount, originalProductId, originalSize,
       newProductRecordId, newSizeRecordId, newSize, newAmount, diff, method,

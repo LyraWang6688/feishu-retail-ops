@@ -71,6 +71,7 @@ const {
   findLiveInventory,
   candidatesFromLiveRecords,
   sampleReplacementCandidates,
+  readLiveInventoryForProduct,
 } = require('./inventory/liveStock');
 const { stockShortage } = require('../config/inventoryTexts');
 
@@ -308,7 +309,7 @@ class InventoryService {
           throw new Error(`来源明细 ${sourceRecordId} 已有库存流水，但缺少可恢复任务，请人工核对实时库存`);
         }
         const delta = behavior.direction === '减少' ? -quantity : quantity;
-        const allLiveRecords = await this.gateway.listAll('liveInventory');
+        const allLiveRecords = await this.readLiveInventoryForProduct(input.productRecordId);
         // 消耗哪些状态由注册表声明；增加方向不消耗既有记录，只看目标状态本身。
         const states = movement.consumes === '*' ? [null] : (movement.consumes || [state]);
         const liveRecords = states.flatMap((candidateState) =>
@@ -418,6 +419,7 @@ for (const [name, method] of Object.entries({
   findLiveInventory,
   candidatesFromLiveRecords,
   sampleReplacementCandidates,
+  readLiveInventoryForProduct,
 })) {
   Object.defineProperty(InventoryService.prototype, name, {
     value: method,
