@@ -9,13 +9,13 @@
  * 做法：读一次实时库存 → 按 尺码|状态 算当前数量。
  *   · 每个尺码的目标总数与当前总数一致、只是状态分布不同 ⇒ **只改行的所属状态**，
  *     不增删库存（state-agnostic 内核下这是唯一正确的“状态调整”）；
- *   · 数量也变了 ⇒ 逐项差额走 `InventoryService.applyChange`（人工调增 / 调减），
- *     这样每一种数量差异都有库存流水、幂等键与串行队列，不绕过库存引擎。
+ *   · 数量/尺码也变了 ⇒ 先按**尺码记录总数**做新增/删除，再统一改状态标签；
+ *     这样增减仍走 `InventoryService.applyChange`，状态只在第二阶段修改。
  *
  * 只读 → 算差异 → 逐项写；同一 requestId 重试时差额会变成 0（不会再写），
  * 与盘点调整的幂等语义一致。
  */
-const { InventoryService, ADJUSTMENT_BEHAVIORS } = require('./inventoryService');
+const { ADJUSTMENT_BEHAVIORS } = require('./inventoryService');
 const { logInfo } = require('../utils/logger');
 const { PAIR_STATES } = require('../config/inventoryPairAdjustment');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
@@ -43,17 +43,6 @@ const normalizeRows = (rows) => {
   }).filter((row) => row.quantity > 0);
 };
 
-const countsFromCandidates = (candidates = []) => {
-  const counts = new Map();
-  for (const item of candidates) {
-    const size = Number(item.size);
-    counts.set(size, {
-      doorbox: Number(item.doorBoxCount || 0),
-      sample: Number(item.sampleCount || 0),
-    });
-  }
-  return counts;
-};
 
 /**
  * 把实时库存原始行按「尺码」分组（只读；状态为空的行也保留）。
@@ -92,59 +81,59 @@ class InventoryPairAdjustmentService {
     if (!source) throw userError('缺少请求编号');
     const desired = normalizeRows(rows);
     const raw = await this.inventory.gateway.listAll('liveInventory');
-    const currentCounts = countsFromCandidates(
-      await this.inventory.candidatesFromLiveRecords(product, raw),
-    );
-    const desiredByKey = new Map();
-    for (const row of desired) desiredByKey.set(`${row.size}|${row.state}`, row.quantity);
-    const sizes = new Set([...currentCounts.keys()]);
-    for (const row of desired) sizes.add(row.size);
-
-    // 如果每个尺码的目标总数与当前总数一致，只是「门盒/样品」分布不同，
-    // 只改行的所属状态，不增删库存（state-agnostic 内核下这是唯一正确的做法）。
-    const recordsBySizeMap = await recordsBySize(this.inventory, product, raw);
     const desiredTotals = new Map();
-    for (const row of desired) desiredTotals.set(row.size, (desiredTotals.get(row.size) || 0) + row.quantity);
-    const sizeKeys = new Set([...currentCounts.keys(), ...desiredTotals.keys(), ...recordsBySizeMap.keys()]);
-    const stateOnly = [...sizeKeys].every((size) => {
+    const desiredStatesBySize = new Map();
+    for (const row of desired) {
+      desiredTotals.set(row.size, (desiredTotals.get(row.size) || 0) + row.quantity);
+      if (!desiredStatesBySize.has(row.size)) desiredStatesBySize.set(row.size, []);
+      desiredStatesBySize.get(row.size).push(row);
+    }
+    const recordsBySizeMap = await recordsBySize(this.inventory, product, raw);
+    const sizeKeys = new Set([...desiredTotals.keys(), ...recordsBySizeMap.keys()]);
+    const quantityOperations = [];
+
+    // 第一阶段：先把每个尺码的**记录总数**调到目标总数（只做新增/删除）。
+    // 这里不按状态做增减 —— 状态不参与库存数量，按状态算增减会被 FIFO 删错行。
+    for (const size of [...sizeKeys].sort((a, b) => a - b)) {
       const records = recordsBySizeMap.get(size) || [];
-      return Number(desiredTotals.get(size) || 0) === records.length;
-    });
-    if (stateOnly) {
-      return this.applyStateLabels({
+      const delta = Number(desiredTotals.get(size) || 0) - records.length;
+      if (delta === 0) continue;
+      const increase = delta > 0;
+      const targetState = (desiredStatesBySize.get(size) || []).find((row) => row.quantity > 0)?.state || PAIR_STATES[0];
+      await this.inventory.applyChange({
+        kind: increase ? ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE : ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE,
         productRecordId: product,
-        rows: desired,
-        recordsBySizeMap,
+        size,
+        state: targetState,
+        quantity: Math.abs(delta),
         requestId: source,
         operatorOpenId,
       });
+      quantityOperations.push({ size, state: targetState, delta });
     }
 
-    const operations = [];
-    for (const size of [...sizes].sort((a, b) => a - b)) {
-      const current = currentCounts.get(size) || { doorbox: 0, sample: 0 };
-      for (const [state, currentQuantity] of [[PAIR_STATES[0], current.doorbox], [PAIR_STATES[1], current.sample]]) {
-        const targetQuantity = desiredByKey.get(`${size}|${state}`) || 0;
-        const delta = targetQuantity - currentQuantity;
-        if (delta === 0) continue;
-        const increase = delta > 0;
-        await this.inventory.applyChange({
-          kind: increase ? ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE : ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE,
-          productRecordId: product,
-          size,
-          state,
-          quantity: Math.abs(delta),
-          requestId: source,
-          operatorOpenId,
-        });
-        operations.push({ size, state, delta });
-      }
-    }
+    // 第二阶段：总数已对齐后，只改记录的「所属状态」来满足目标分布。
+    // 写操作可能刚结束，重新读一次，避免拿旧行做标签分配。
+    const after = quantityOperations.length
+      ? await this.inventory.gateway.listAll('liveInventory')
+      : raw;
+    const afterBySize = quantityOperations.length
+      ? await recordsBySize(this.inventory, product, after)
+      : recordsBySizeMap;
+    const stateResult = await this.applyStateLabels({
+      productRecordId: product,
+      rows: desired,
+      recordsBySizeMap: afterBySize,
+      requestId: source,
+      operatorOpenId,
+    });
+    const operations = [...quantityOperations, ...(stateResult.operations || [])];
     logInfo('inventory.adjustment.pairs.applied', {
       request_id: source,
       product_record_id: product,
       rows: desired.length,
-      operations: operations.length,
+      quantity_operations: quantityOperations.length,
+      state_operations: stateResult.changed,
       operator_open_id: operatorOpenId || undefined,
     });
     return {
