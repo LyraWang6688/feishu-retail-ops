@@ -92,3 +92,32 @@ test('单双调整在飞书身份闸门之内：未启用认证 503、未登录 
     assert.equal((await response.json()).auth_required, true);
   });
 });
+
+
+test('库存调整异步 job：业务结果按成功分类，不能被当成 unknown error', async () => {
+  let classified = null;
+  const asyncJobs = {
+    jobIdFor: () => 'inventory_adjustment_job_test',
+    enqueue: async () => {},
+    run: async ({ run, classifyResult }) => {
+      const result = await run();
+      classified = classifyResult ? classifyResult(result) : result;
+    },
+  };
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => { req.workbenchUser = { open_id: 'ou_test' }; next(); });
+  app.use('/api/workbench/inventory/adjustments', createInventoryAdjustmentRouter({
+    asyncJobs,
+    pairService: { adjustPairs: async () => ({ changed: 1, operations: [{ size: 44, state: '样品', from: '门盒' }] }) },
+  }));
+  await withServer(app, async (base) => {
+    const response = await post(base, '/api/workbench/inventory/adjustments/pairs', {
+      productRecordId: 'p1', requestId: 'req-ok',
+      rows: [{ size: 44, state: '样品', quantity: 1 }],
+    });
+    assert.equal(response.status, 202);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+  assert.deepEqual(classified, { ok: true, retryable: false, message: '', code: '' });
+});
