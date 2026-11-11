@@ -95,7 +95,7 @@ const UNFREEZE_STATE_TRANSITION = Object.freeze({ from: ['仓库'], to: null, ta
 
 // 「实时库存」的「所属状态」选项。原先写死在 applyChange 的入参校验里；
 // 抽成常量是因为状态类变更（人工调整）也要用同一份值域，两份会漂移。
-const LIVE_STATES = Object.freeze(['门盒', '样品', '仓库']);
+const LIVE_STATES = Object.freeze(['门盒', '样品']);
 
 const STOCK_MOVEMENTS = Object.freeze({
   [MOVEMENT_SALE_DECREASE]: {

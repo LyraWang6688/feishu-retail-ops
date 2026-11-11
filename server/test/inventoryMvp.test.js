@@ -64,9 +64,9 @@ test('purchase adds one live record per pair', async () => {
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1', size: 38,
-    quantity: 2, state: '仓库' });
+    quantity: 2, state: '门盒' });
   assert.equal(gateway.records.get('liveInventory').length, 2);
-  assert.ok(gateway.records.get('liveInventory').every((row) => row.fields['所属状态'] === '仓库'));
+  assert.ok(gateway.records.get('liveInventory').every((row) => row.fields['所属状态'] === '门盒'));
   assert.ok(gateway.records.get('liveInventory').every((row) =>
     JSON.stringify(row.fields['尺码']) === JSON.stringify([{ record_ids: ['size_38'] }])));
   // ⭐ 2026-10-08：业务负责人把「库存流水.关联采购」从"指向已删除的「采购入库」"
@@ -119,7 +119,7 @@ test('a sale treats an empty-state live-inventory record as sellable stock', asy
 });
 
 test('a sale consumes any live-inventory record, including warehouse stock', async () => {
-  const gateway = gatewayFor([unit('sample_1', '样品'), unit('warehouse_1', '仓库')]);
+  const gateway = gatewayFor([unit('sample_1', '样品'), unit('warehouse_1', '门盒')]);
   const inventory = new InventoryService({ gateway, store: store() });
   const result = await inventory.applySale({ salesDetailRecordId: 'detail_1', productRecordId: 'product_1',
     size: 38, quantity: 2 });
@@ -381,7 +381,7 @@ test('C1 采购 2 双：1 条流水、2 条实时库存，且两条库存操作�
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1',
-    size: 38, quantity: 2, state: '仓库' });
+    size: 38, quantity: 2, state: '门盒' });
 
   assert.equal(gateway.records.get('inventoryLedger').length, 1, '一次采购入库只写一条业务流水');
   const rows = gateway.records.get('liveInventory');
@@ -399,7 +399,7 @@ test('C2 第一双已写入远端但本地清单没落盘：重试只补第二�
     store: failingOnceStore(store(), (patch) => Array.isArray(patch.created_live_record_ids)),
   });
   const input = { purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1',
-    size: 38, quantity: 2, state: '仓库' };
+    size: 38, quantity: 2, state: '门盒' };
 
   await assert.rejects(inventory.applyPurchase(input), /模拟本地落盘失败/);
   assert.equal(gateway.records.get('liveInventory').length, 1, '第一双已经写进远端');
@@ -421,7 +421,7 @@ test('C3 实时库存已创建但响应丢失：按库存操作键找回，不�
   const inventory = new InventoryService({ gateway, store: store() });
 
   const result = await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1',
-    productRecordId: 'product_1', size: 38, quantity: 2, state: '仓库' });
+    productRecordId: 'product_1', size: 38, quantity: 2, state: '门盒' });
 
   assert.equal(gateway.records.get('liveInventory').length, 2, '必须找回已写入的那一双，而不是再建');
   assert.equal(result.liveRecordIds.length, 2);
@@ -437,14 +437,14 @@ test('C4 远端出现两条相同库存操作键：停止入库并转人工核�
   });
   const operationKey = `${operationId('STOCK_PURCHASE_INCREASE', sourceId)}:1`;
   const gateway = gatewayFor([
-    { record_id: 'dup_a', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '仓库', 库存操作键: operationKey } },
-    { record_id: 'dup_b', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '仓库', 库存操作键: operationKey } },
+    { record_id: 'dup_a', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒', 库存操作键: operationKey } },
+    { record_id: 'dup_b', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒', 库存操作键: operationKey } },
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
 
   await assert.rejects(
     inventory.applyChange({ kind: 'STOCK_PURCHASE_INCREASE', purchaseBatchRecordId: 'inbound_dup',
-      productRecordId: 'product_1', size: 38, quantity: 1, state: '仓库' }),
+      productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒' }),
     /库存事实重复，请人工核对/,
   );
   assert.equal(gateway.records.get('liveInventory').length, 2, '重复事实存在时不得再写入新的实时库存');

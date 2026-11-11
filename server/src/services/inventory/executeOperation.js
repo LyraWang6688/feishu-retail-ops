@@ -69,10 +69,7 @@ async function executeOperation(operation) {
     const liveRecordIds = operation.live_record_ids || [];
     const removedIds = operation.removed_live_record_ids || [];
     const createdIds = operation.created_live_record_ids || [];
-    // 可扣减的状态 = 注册表声明的消耗清单（销售是 门盒+样品，采购退货还要加 仓库）。
-    // 以前这里写死成 ['门盒','样品']：写死会让"仓库里的退货"永远报"状态已改变"。
-    const consumesAny = movement.consumes === '*';
-    const consumableStates = movement.consumes === '*' ? null : (movement.consumes || [operation.state]);
+    // ⭐ 2026-11-11：扣减**不看状态**（有记录就是库存；空状态也算）。
     if (operation.direction === '减少') {
       for (const recordId of liveRecordIds) {
         if (removedIds.includes(recordId)) continue;
@@ -83,8 +80,7 @@ async function executeOperation(operation) {
         if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
         const liveFields = this.gateway.table('liveInventory').fields;
         if (!strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(operation.product_record_id) ||
-          !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId) ||
-          (!consumesAny && !consumableStates.includes(textValue(record.fields?.[liveFields.state])))) {
+          !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(sizeReference.recordId)) {
           throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
         }
         await this.gateway.delete('liveInventory', recordId);

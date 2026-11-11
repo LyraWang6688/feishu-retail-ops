@@ -300,7 +300,7 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
   assert.equal(applied[0].purchase_arrival_record_id, undefined);
   // 既有字段一个都不少
   assert.equal(applied[0].kind, 'STOCK_PURCHASE_INCREASE');
-  assert.equal(applied[0].stock_key, 'prod_1|36|样品');
+  assert.equal(applied[0].stock_key, 'prod_1|36');
   assert.equal(applied[0].movement_quantity, 2);
   assert.equal(applied[0].direction, '增加');
   assert.equal(applied[0].target_quantity, 2);

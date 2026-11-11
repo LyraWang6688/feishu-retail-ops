@@ -406,7 +406,7 @@ test('inventory.change.applied：stock_key 原值不动 ＋ stock_key_label 抄�
   const applied = logs.logs('inventory.change.applied');
   assert.equal(applied.length, 1);
   // a. 内部键**原值不动**（既有排查脚本 / 断言依赖它）
-  assert.equal(applied[0].stock_key, 'product_rec|40|门盒');
+  assert.equal(applied[0].stock_key, 'product_rec|40');
   // b. 人类可读那串逐字就是飞书算出来的（不是代码重新拼的）
   assert.equal(applied[0].stock_key_label, LABEL);
   assert.equal(applied[0].stock_key_label_source, 'live_inventory');
@@ -432,7 +432,7 @@ test('拿不到人类可读那串时如实说 unavailable，绝不猜一个（st
 
   const applied = logs.logs('inventory.change.applied');
   assert.equal(applied.length, 1);
-  assert.equal(applied[0].stock_key, 'product_rec|40|门盒');
+  assert.equal(applied[0].stock_key, 'product_rec|40');
   assert.equal(applied[0].stock_key_label, undefined, '抄不到就不写这个字段，不猜');
   assert.equal(applied[0].stock_key_label_source, 'unavailable');
   assert.equal(world.productReads(), 0);

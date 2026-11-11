@@ -109,7 +109,7 @@ async function applySaleBatch(items = [], options = {}) {
           quantity,
           state,
           operationId: operationIdOf(movement, input),
-          stockKey: `${input.productRecordId}|${size}|${state}`,
+          stockKey: `${input.productRecordId}|${size}`,
         });
       } catch (error) {
         outcomes[index] = { ok: false, error };
@@ -190,18 +190,16 @@ async function applySaleBatch(items = [], options = {}) {
           if (await existingLedgerOf(item.sourceRecordId)) {
             throw new Error(`来源明细 ${item.sourceRecordId} 已有库存流水，但缺少可恢复任务，请人工核对实时库存`);
           }
-          // 消耗哪些状态由注册表声明（销售 = 门盒 → 样品），同一状态内按 record_id 升序
-          // —— 与 `applyChange` 那两行逐字同形。
-          const states = movement.consumes === '*' ? [null] : (movement.consumes || [item.state]);
-          const liveRecords = states.flatMap((candidateState) =>
-            this.findLiveInventoryIn(allLive, item.input.productRecordId, sizeReference.recordId, candidateState)
-              .filter((record) => !claimed.has(record.record_id))
-              .sort((left, right) => String(left.record_id).localeCompare(String(right.record_id))));
+          // ⭐ 2026-11-11：不看状态；按「创建时间」FIFO 选最早的行（与逐条路径同一规则）。
+          const liveRecords = this.sortLiveInventoryFifo(
+            this.findLiveInventoryIn(allLive, item.input.productRecordId, sizeReference.recordId)
+              .filter((record) => !claimed.has(record.record_id)),
+          );
           const currentQuantity = liveRecords.length;
           if (currentQuantity < item.quantity) {
             // 与 `applyChange` **逐字同一句**（文案里的状态来自注册表，不写死）。
             throw new Error(stockShortage({
-              states, liveInventoryTableName: this.gateway.table('liveInventory').tableName,
+              states: [null], liveInventoryTableName: this.gateway.table('liveInventory').tableName,
               productRecordId: item.input.productRecordId, size: item.size, quantity: item.quantity, currentQuantity,
             }));
           }
@@ -290,12 +288,9 @@ async function applySaleBatch(items = [], options = {}) {
         // deleting; never report a deduction based only on its absence from a possibly stale list.
         const record = fetchedById.get(recordId);
         if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
-        const consumesAny = movement.consumes === '*';
-        const consumableStates = movement.consumes === '*' ? null : (movement.consumes || [plan.operation.state]);
         if (!strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(plan.operation.product_record_id) ||
-          !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
-          (!consumesAny && !consumableStates.includes(textValue(record.fields?.[stateField])))) {
-          throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
+          !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId)) {
+          throw new Error(`待扣减实时库存 ${recordId} 的货品或尺码已改变，请人工核对`);
         }
       };
       const recordRemoved = async () => {

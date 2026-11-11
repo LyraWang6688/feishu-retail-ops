@@ -13,24 +13,41 @@ function matchesLiveInventory(record, { productRecordId, sizeRecordId, productFi
     strictLinkedRecordIds(record?.fields?.[sizeField]).includes(sizeRecordId);
 }
 
-function findLiveInventoryIn(records, productRecordId, sizeRecordId, state = '门盒') {
+function findLiveInventoryIn(records, productRecordId, sizeRecordId) {
+    // ⭐ 2026-11-11：**不看所属状态** —— 只要「货品+尺码」匹配就是库存（空状态也算）。
     const table = this.gateway.table('liveInventory');
-    return records.filter(
-      (record) =>
-        matchesLiveInventory(record, {
-          productRecordId,
-          sizeRecordId,
-          productField: table.fields.product,
-          sizeField: table.fields.size,
-        }) &&
-        (state === null || textValue(record.fields?.[table.fields.state]) === state)
-    );
+    return records.filter((record) => matchesLiveInventory(record, {
+      productRecordId,
+      sizeRecordId,
+      productField: table.fields.product,
+      sizeField: table.fields.size,
+    }));
   }
 
-async function findLiveInventory(productRecordId, size, state = '门盒') {
+/**
+ * FIFO：按「实时库存.创建时间」升序（最早入库的先被消耗/删除）。
+ * 缺失创建时间的行视为**最早**；同一时间用 record_id 兜底，保证顺序稳定。
+ */
+function sortLiveInventoryFifo(records = []) {
+  const field = this.gateway.table('liveInventory').readOnlyFields?.createdAt?.name || '';
+  const timeOf = (record) => {
+    const raw = record?.fields?.[field];
+    const number = Number(raw);
+    if (Number.isFinite(number) && number > 0) return number;
+    const parsed = Date.parse(String(raw || ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  return [...records].sort((left, right) => {
+    const diff = timeOf(left) - timeOf(right);
+    if (diff !== 0) return diff;
+    return String(left.record_id).localeCompare(String(right.record_id));
+  });
+}
+
+async function findLiveInventory(productRecordId, size) {
     const sizeReference = await this.sizeReferences.resolveByNumber(size);
     return this.findLiveInventoryIn(await this.gateway.listAll('liveInventory'), productRecordId,
-      sizeReference.recordId, state);
+      sizeReference.recordId);
   }
 
   /**
@@ -107,4 +124,5 @@ module.exports = {
   candidatesFromLiveRecords,
   sampleReplacementCandidates,
   readLiveInventoryForProduct,
+  sortLiveInventoryFifo,
 };

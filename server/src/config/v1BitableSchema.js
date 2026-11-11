@@ -656,11 +656,16 @@ const V1_BITABLE_SCHEMA = {
     liveInventory: {
       tableName: '实时库存',
       tableId: getEnv('FEISHU_V1_LIVE_INVENTORY_TABLE_ID'),
+      // 2026-11-11：FIFO 选行依据（飞书自动字段；只读、不写）。缺失创建时间的旧行按「最早」处理。
+      readOnlyFields: Object.freeze({
+        createdAt: Object.freeze({ name: '创建时间', type: 1001, writable: false }),
+      }),
       fields: {
         stockKey: '库存键',
         product: '编号',
         size: '尺码',
         updatedAt: '更新时间',
+        // 2026-11-11：状态**只做展示/统计**，不参与库存判断（有记录就是库存；空状态也算）。
         state: '所属状态',
         // 2026-11-11：当季复选框。季节与所属状态相互独立。
         season: '当季',
