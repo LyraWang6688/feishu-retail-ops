@@ -49,6 +49,10 @@ test('AC-E1 标签打印子页：一级标签二维码/销售凭证，点标签�
   assert.match(hub, /candidate-action/, '复用售后单动作按钮样式');
   assert.match(hub, /actionsHtml\(card\)/, '选中卡片原地换动作，不进入第二页');
   assert.equal(/data-label-back/.test(hub), false, '不需要返回按钮');
+  assert.match(hub, /resetToCards/, '点动作/从页面返回后要恢复一级卡片');
+  assert.match(hub, /pageshow/, 'bfcache 返回也要恢复');
+  const domainIndex = readWorkbench('features/domains/index.js');
+  assert.match(domainIndex, /resetToCards\?\.\(\)/, '切换子 tab 时恢复一级卡片');
   assert.match(hub, /PLACEHOLDER_STATUS/, '销售凭证占位使用统一占位标记');
 });
 

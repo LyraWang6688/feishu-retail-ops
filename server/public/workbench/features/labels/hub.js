@@ -16,6 +16,7 @@ const actionsHtml = (card) => `
   <div class="candidate-card-actions" role="group" aria-label="${escapeHtml(card.title || '')}">
     ${(card.actions || []).map((action) => `
       <a class="candidate-action" href="${escapeHtml(action.href || '')}" rel="noopener"
+        data-label-action="${escapeHtml(action.title || '')}"
         data-tap-target="${escapeHtml(action.tapTarget || `link:${action.title || ''}`)}">${escapeHtml(action.title || '')}</a>`).join('')}
   </div>`;
 
@@ -45,16 +46,32 @@ export function createLabelPrintHubModule() {
     host.innerHTML = `<div class="domain-page" data-page-kind="label-print"><div class="domain-cards">${topCardsHtml(page.cards || [], selectedId)}</div></div>`;
   };
 
+  const resetToCards = () => {
+    selectedId = '';
+    render();
+  };
+
   return {
+    resetToCards,
     mount(container, config) {
       host = container;
       page = config;
       host.addEventListener('click', (event) => {
+        const action = event.target.closest('[data-label-action]');
+        if (action) {
+          // 点动作后马上回一级卡：从扫码页/飞书表单返回或 bfcache 恢复时不再停在按钮组。
+          resetToCards();
+          return;
+        }
         const card = event.target.closest('[data-label-card]');
         if (!card) return;
         selectedId = card.dataset.labelCard || '';
         render();
       });
+      // 从扫码打印页 / 飞书表单返回时也恢复一级卡片。
+      if (typeof window !== 'undefined') {
+        window.addEventListener('pageshow', resetToCards);
+      }
       render();
     },
   };

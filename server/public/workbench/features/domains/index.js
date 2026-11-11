@@ -36,7 +36,7 @@ export function createDomainModule(domainId) {
   const domain = domainById(domainId);
   const state = {
     container: null, active: domain.pages[0].id, mounted: new Set(),
-    orderModules: new Map(),
+    orderModules: new Map(), labelPrintModules: new Map(),
   };
 
   const hostOf = (pageId) => state.container?.querySelector(`[data-domain-host="${pageId}"]`);
@@ -59,6 +59,11 @@ export function createDomainModule(domainId) {
     if (page.kind === 'orders' && previous !== page.id) {
       state.orderModules.get(page.id)?.resetToCards();
     }
+    // 标签打印：切走再回来 / 从动作页返回，都回到一级「标签二维码 / 销售凭证」。
+    const previousPage = domain.pages.find((item) => item.id === previous);
+    if (previousPage?.kind === 'label-print' && previous !== page.id) {
+      state.labelPrintModules.get(previous)?.resetToCards?.();
+    }
     if (state.mounted.has(page.id)) return;
     state.mounted.add(page.id);
     const host = hostOf(page.id);
@@ -80,7 +85,15 @@ export function createDomainModule(domainId) {
     }
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
     if (page.kind === 'product-profile') return void createProductProfileModule().mount(host);
-    if (page.kind === 'label-print') return void createLabelPrintHubModule().mount(host, page);
+    if (page.kind === 'label-print') {
+      let module = state.labelPrintModules.get(page.id);
+      if (!module) {
+        module = createLabelPrintHubModule();
+        state.labelPrintModules.set(page.id, module);
+        module.mount(host, page);
+      }
+      return;
+    }
     // ⭐ 2026-10-15（她：「配品就是走表单了」）：`kind:'accessory'` 那条分派**整段删除** ——
     //   「配品」现在是一张**直跳页**（`kind:'links'` + `directJump:true`，见 `config/domains.js`），
     //   点一下直接打开飞书表单，**工作台不再有自建的配品面板** ✓
