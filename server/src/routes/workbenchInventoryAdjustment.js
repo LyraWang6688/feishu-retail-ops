@@ -109,15 +109,6 @@ const createInventoryAdjustmentRouter = (options = {}) => {
     }
   });
 
-  router.post('/season', handle('workbench.inventory.adjustment.season_failed', '换季调整失败', (req) =>
-    resolveAdjustment().adjustSeason({
-      action: req.body?.action,
-      targets: req.body?.targets,
-      toState: req.body?.toState,
-      requestId: req.body?.requestId,
-      operatorOpenId: req.workbenchUser?.open_id,
-    })));
-
   return router;
 };
 

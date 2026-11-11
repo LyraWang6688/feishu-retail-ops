@@ -70,7 +70,7 @@ async function applyPurchaseBatch(items = [], options = {}) {
         state,
         quantity: positiveInteger(input.quantity, '采购入库数量'),
         operationId: operationIdOf(movement, input),
-        stockKey: `${input.productRecordId}|${size}|${state}`,
+        stockKey: `${input.productRecordId}|${size}`,
       };
     });
     const stockKeys = [...new Set(prepared.map((item) => item.stockKey))].sort();

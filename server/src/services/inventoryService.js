@@ -57,8 +57,6 @@ const { applySaleBatch } = require('./inventory/saleBatch');
 const { applyPurchaseBatch } = require('./inventory/purchaseBatch');
 const { applyPurchaseReturnBatch } = require('./inventory/purchaseReturnBatch');
 const { executeOperation } = require('./inventory/executeOperation');
-const { transitionState, executeStateTransition } = require('./inventory/stateTransition');
-const { promoteToSample, executeSamplePromotion } = require('./inventory/samplePromotion');
 const {
   assertNoDuplicateOperationItems,
   findOperationLedger,
@@ -72,6 +70,7 @@ const {
   candidatesFromLiveRecords,
   sampleReplacementCandidates,
   readLiveInventoryForProduct,
+  sortLiveInventoryFifo,
 } = require('./inventory/liveStock');
 const { stockShortage } = require('../config/inventoryTexts');
 
@@ -284,7 +283,8 @@ class InventoryService {
     const quantity = positiveInteger(input.quantity, '变动数量');
     const state = String(input.state || '门盒');
     if (!LIVE_STATES.includes(state)) throw new Error('库存所属状态无效');
-    const stockKey = `${input.productRecordId}|${size}|${state}`;
+    // ⭐ 2026-11-11：内部库存键不再含状态（状态只做展示/统计）。
+  const stockKey = `${input.productRecordId}|${size}`;
     // 关联键：落进本地任务记录，**重放/续跑时用它自己的那一份**（不是当前请求的）——
     // 这正是为什么不走 AsyncLocalStorage：resumePending 会把上一笔单的操作放到这次请求里跑。
     const correlation = correlationFields(options.correlation);
@@ -310,17 +310,16 @@ class InventoryService {
         }
         const delta = behavior.direction === '减少' ? -quantity : quantity;
         const allLiveRecords = await this.readLiveInventoryForProduct(input.productRecordId);
-        // 消耗哪些状态由注册表声明；增加方向不消耗既有记录，只看目标状态本身。
-        const states = movement.consumes === '*' ? [null] : (movement.consumes || [state]);
-        const liveRecords = states.flatMap((candidateState) =>
-          this.findLiveInventoryIn(allLiveRecords, input.productRecordId, sizeReference.recordId, candidateState)
-            .sort((left, right) => String(left.record_id).localeCompare(String(right.record_id))));
+        // ⭐ 2026-11-11：**不看状态** —— 有记录就是库存；减少时按「创建时间」升序 FIFO 选最早的行。
+        const liveRecords = this.sortLiveInventoryFifo(
+          this.findLiveInventoryIn(allLiveRecords, input.productRecordId, sizeReference.recordId),
+        );
         const currentQuantity = liveRecords.length;
         if (delta < 0 && currentQuantity < quantity) {
           // 文案里的状态来自注册表（销售是"门盒和样品"，采购退货是"门盒、样品和仓库"），
           // 不再写死——写死的文案会在退货时告诉她"门盒和样品不足"，而仓库里其实有货。
           throw new Error(stockShortage({
-            states, liveInventoryTableName: this.gateway.table('liveInventory').tableName,
+            states: [null], liveInventoryTableName: this.gateway.table('liveInventory').tableName,
             productRecordId: input.productRecordId, size, quantity, currentQuantity,
           }));
         }
@@ -387,13 +386,11 @@ class InventoryService {
 
   async resumePending(stockKey) {
     const pending = (await this.store.list()).filter(
-      (record) => ['inventory_change', 'sample_promotion', 'state_transition'].includes(record.type) &&
-        record.stock_key === stockKey && record.status !== 'completed'
+      (record) => record.type === 'inventory_change' &&
+        (record.stock_key === stockKey || String(record.stock_key || '').startsWith(`${stockKey}|`)) && record.status !== 'completed'
     );
     for (const operation of pending.reverse()) {
-      if (operation.type === 'sample_promotion') await this.executeSamplePromotion(operation);
-      else if (operation.type === 'state_transition') await this.executeStateTransition(operation);
-      else await this.executeOperation(operation);
+      await this.executeOperation(operation);
     }
   }
 }
@@ -406,10 +403,6 @@ for (const [name, method] of Object.entries({
   applyPurchaseBatch,
   applyPurchaseReturnBatch,
   executeOperation,
-  transitionState,
-  executeStateTransition,
-  promoteToSample,
-  executeSamplePromotion,
   assertNoDuplicateOperationItems,
   findOperationLedger,
   ledgerMatchesOperation,
@@ -420,6 +413,7 @@ for (const [name, method] of Object.entries({
   candidatesFromLiveRecords,
   sampleReplacementCandidates,
   readLiveInventoryForProduct,
+  sortLiveInventoryFifo,
 })) {
   Object.defineProperty(InventoryService.prototype, name, {
     value: method,

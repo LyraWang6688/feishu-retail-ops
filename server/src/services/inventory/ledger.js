@@ -113,16 +113,12 @@ async function auditExistingOperationRecords(operation, ledger, sizeRecordId) {
       }
     } else if (operation.direction === '减少') {
       if (selectedIds.length !== operation.quantity) manual('待扣减实时库存数量不一致');
-      // 同 executeOperation：可扣状态来自注册表的 consumes（销售 门盒+样品、采购退货还要加 仓库）。
-      const movement = requireMovement(operation.kind);
-      const consumesAny = movement.consumes === '*';
-      const consumableStates = movement.consumes === '*' ? null : (movement.consumes || [operation.state]);
+      // ⭐ 2026-11-11：扣减不看状态（有记录就是库存）。
       for (const recordId of selectedIds) {
         if (removedIds.includes(recordId)) continue;
         const record = await this.gateway.get('liveInventory', recordId);
         if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
-          !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
-          (!consumesAny && !consumableStates.includes(textValue(record.fields?.[liveFields.state])))) {
+          !singleLinked(record.fields?.[liveFields.size], sizeRecordId)) {
           manual(`待扣减实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
         }
       }

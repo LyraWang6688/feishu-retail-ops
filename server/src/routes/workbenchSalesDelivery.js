@@ -9,7 +9,6 @@ const { createSalesDeliveryAsyncService } = require('../services/salesDeliveryAs
 const { getAsyncJobService } = require('../services/asyncJobRuntime');
 const { SUBMIT_TOAST } = require('../config/submitToast');
 const { ASYNC_JOBS } = require('../config/asyncJobs');
-const { SampleReplacementService } = require('../services/sampleReplacementService');
 const { logError, logWarn } = require('../utils/logger');
 
 const createWorkbenchSalesDeliveryRoutes = ({ options = {}, followup, ordersCache } = {}) => {
@@ -38,13 +37,6 @@ const createWorkbenchSalesDeliveryRoutes = ({ options = {}, followup, ordersCach
             salesEntryRecordId: payload.salesEntryRecordId,
             detailRecordIds: payload.detailRecordIds,
           }, { correlation });
-          if (result.sampleReplacements?.length) {
-            const notifier = options.sampleNotifier || new SampleReplacementService({
-              gateway: followup.gateway, inventory: followup.delivery.inventory,
-            });
-            await notifier.notifySampleReplacements(result, payload.operatorOpenId).catch((error) =>
-              logWarn('workbench.sales.sample_notice.failed', { error: error.message }));
-          }
           return result;
         },
         pay: (payload) => getPay().pay(payload),

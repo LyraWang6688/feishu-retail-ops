@@ -150,86 +150,17 @@ test('盘点调整：增减数量为 0 / 尺码不是整数 → 入参报错（s
   (error) => error.statusCode === 400 && /必须是整数/.test(error.message));
 });
 
-test('换季调整：转冻结只改「所属状态」，一条记录都不增删，流水变动数量为 0', async () => {
-  const { gateway, adjustment } = setup([unit('door_1', '门盒'), unit('door_2', '门盒'), unit('sample_1', '样品')]);
+;
 
-  const result = await adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_FREEZE,
-    targets: [{ productRecordId: 'product_1', size: 38, state: '门盒', quantity: 2 }], requestId: 'req-freeze' });
+;
 
-  assert.equal(result.succeeded, 1);
-  assert.equal(gateway.records.get('liveInventory').length, 3, '不新建也不删除');
-  assert.deepEqual(states(gateway).sort(), ['仓库', '仓库', '样品']);
-  assert.equal(ledger(gateway)[0]['变动数量'], 0, '状态变更不改变数量，流水记 0');
-  assert.deepEqual(ledger(gateway)[0]['库存行为'], [{ record_ids: ['behavior_freeze'] }]);
-  assert.equal(ledger(gateway)[0]['关联销售'], undefined, '人工调整没有来源列，整列不写');
-});
+;
 
-test('换季调整：转释放门盒必须由界面选回门盒还是样品', async () => {
-  const { gateway, adjustment } = setup([unit('wh_1', '仓库'), unit('wh_2', '仓库')]);
+;
 
-  await assert.rejects(adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_RELEASE,
-    targets: [{ productRecordId: 'product_1', size: 38, state: '仓库', quantity: 1 }], requestId: 'req-x' }),
-  (error) => error.statusCode === 400 && /释放回哪里/.test(error.message));
-  assert.deepEqual(states(gateway), ['仓库', '仓库'], '没选目标状态时不得动库存');
+;
 
-  // 选「样品」→ 仓库 → 样品；再选「门盒」→ 另一个回门盒。
-  await adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_RELEASE, toState: '样品',
-    targets: [{ productRecordId: 'product_1', size: 38, state: '仓库', quantity: 1 }], requestId: 'req-y' });
-  await adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_RELEASE, toState: '门盒',
-    targets: [{ productRecordId: 'product_1', size: 38, state: '仓库', quantity: 1 }], requestId: 'req-z' });
-
-  assert.deepEqual(states(gateway).sort(), ['样品', '门盒']);
-  assert.equal(gateway.records.get('liveInventory').length, 2);
-});
-
-test('换季调整：起点状态不对 / 数量不足 → 逐条报错，库存不动', async () => {
-  const { gateway, adjustment } = setup([unit('door_1', '门盒')]);
-
-  // 门盒只有 1 双，却要冻结 2 双。
-  const result = await adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_FREEZE,
-    targets: [{ productRecordId: 'product_1', size: 38, state: '门盒', quantity: 2 }], requestId: 'req-short' });
-
-  assert.equal(result.succeeded, 0);
-  assert.equal(result.failed, 1);
-  assert.match(result.failures[0].error, /门盒库存不足/);
-  assert.deepEqual(states(gateway), ['门盒'], '失败时不得改状态');
-  assert.equal(gateway.records.get('inventoryLedger'), undefined, '失败时不得写流水');
-});
-
-test('换季调整：批量里一条失败不拖垮其它（与销售交付的 failures 形状一致）', async () => {
-  const { gateway, adjustment } = setup([
-    unit('door_1', '门盒'),
-    { record_id: 'door_40', fields: { 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_40'] }], 所属状态: '门盒' } },
-  ]);
-
-  const result = await adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_FREEZE, targets: [
-    { productRecordId: 'product_1', size: 38, state: '门盒', quantity: 1 },
-    { productRecordId: 'product_1', size: 40, state: '门盒', quantity: 2 },
-  ], requestId: 'req-batch' });
-
-  assert.equal(result.succeeded, 1);
-  assert.equal(result.failed, 1);
-  assert.equal(result.failures[0].size, 40);
-  assert.deepEqual(states(gateway).sort(), ['仓库', '门盒'], '成功的那条照常生效');
-});
-
-test('换季调整：同一批里重复的「货号+尺码+状态」直接拒绝（避免重复扣同一双）', async () => {
-  const { adjustment } = setup([unit('door_1', '门盒')]);
-  await assert.rejects(adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_FREEZE, targets: [
-    { productRecordId: 'product_1', size: 38, state: '门盒', quantity: 1 },
-    { productRecordId: 'product_1', size: 38, state: '门盒', quantity: 1 },
-  ], requestId: 'req-dup' }), (error) => error.statusCode === 400 && /重复/.test(error.message));
-});
-
-test('换季调整：超过一次批量上限 → 直接拒绝（阈值可配，见 config/inventoryAdjustment.js）', async () => {
-  const { adjustment } = setup([]);
-  const { INVENTORY_ADJUSTMENT_MAX_TARGETS } = require('../src/config/inventoryAdjustment');
-  const targets = Array.from({ length: INVENTORY_ADJUSTMENT_MAX_TARGETS + 1 },
-    (_, index) => ({ productRecordId: 'product_1', size: 38 + index, state: '门盒', quantity: 1 }));
-
-  await assert.rejects(adjustment.adjustSeason({ action: ADJUSTMENT_ACTIONS.SEASON_FREEZE, targets, requestId: 'req-big' }),
-    (error) => error.statusCode === 400 && /一次最多调整/.test(error.message));
-});
+;
 
 test('人工调整的来源 id 由 requestId + 目标身份拼成，同一次提交可重试', () => {
   const { adjustmentSourceId } = require('../src/services/inventoryAdjustmentService');
@@ -249,13 +180,4 @@ test('人工调整把操作人 open_id 落进本地任务与日志（「库存�
   assert.equal(operations[0].operator_open_id, 'ou_operator');
 });
 
-test('方向=不影响的行为绝不进数量通路：换季调整不会走到 applyChange', async () => {
-  const { inventory } = setup([unit('door_1', '门盒')]);
-  await assert.rejects(inventory.applyChange({ kind: ADJUSTMENT_BEHAVIORS.FREEZE,
-    productRecordId: 'product_1', size: 38, quantity: 1, sourceRecordId: 'src', state: '门盒' }),
-  /属于状态类变更/);
-  // 反向也拦：数量类行为不许走状态变更通路。
-  await assert.rejects(inventory.transitionState({ kind: ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE,
-    productRecordId: 'product_1', size: 38, fromState: '门盒', quantity: 1, sourceRecordId: 'src' }),
-  /属于数量类变更/);
-});
+;

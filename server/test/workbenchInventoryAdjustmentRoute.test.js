@@ -63,22 +63,7 @@ test('盘点调整接口：入参原样交给 service，并把登录用户的 op
   assert.equal(call.operatorOpenId, 'ou_test_user', '「谁调的」必须一路传到 service');
 });
 
-test('换季调整接口：targets / toState 一路传到 service', async () => {
-  const calls = [];
-  const service = { adjustSeason: async (input) => { calls.push(input); return { succeeded: 1, failed: 0, to_state: '样品' }; } };
-  await withServer(appFor(service), async (base) => {
-    const response = await post(base, '/api/workbench/inventory/adjustments/season', {
-      action: 'season_release', toState: '样品',
-      targets: [{ productRecordId: 'p_1', size: 42, state: '仓库', quantity: 2 }], requestId: 'req-2',
-    });
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).to_state, '样品');
-  });
-  assert.deepEqual(calls[0].targets, [{ productRecordId: 'p_1', size: 42, state: '仓库', quantity: 2 }]);
-  assert.equal(calls[0].action, 'season_release');
-  assert.equal(calls[0].toState, '样品');
-  assert.equal(calls[0].operatorOpenId, 'ou_test_user');
-});
+;
 
 test('入参错误回 400 并原样说她哪里填错了；系统/业务错误回 502', async () => {
   const inputError = Object.assign(new Error('尺码必须是整数'), { statusCode: 400 });

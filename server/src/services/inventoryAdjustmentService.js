@@ -40,21 +40,12 @@ const { logInfo } = require('../utils/logger');
 const ADJUSTMENT_ACTIONS = Object.freeze({
   COUNT_INCREASE: 'count_increase',
   COUNT_DECREASE: 'count_decrease',
-  SEASON_FREEZE: 'season_freeze',
-  SEASON_RELEASE: 'season_release',
 });
 
 // 盘点调整的两种输入方式：
 //   · counted = 她数出来「实际有几双」→ 代码算差额（盘多了加、盘少了减）；
 //   · delta   = 她直接说「加几双 / 减几双」。
 const COUNT_MODES = Object.freeze({ COUNTED: 'counted', DELTA: 'delta' });
-
-// 换季调整的两个动作。释放回门盒还是样品由她选（见 inventoryService 的注释：
-// 记录进了「仓库」以后，原来在哪就查不到了，只能靠她指定）。
-const SEASON_ACTION_KIND = Object.freeze({
-  [ADJUSTMENT_ACTIONS.SEASON_FREEZE]: ADJUSTMENT_BEHAVIORS.FREEZE,
-  [ADJUSTMENT_ACTIONS.SEASON_RELEASE]: ADJUSTMENT_BEHAVIORS.UNFREEZE,
-});
 
 // 入参错误（她填错了）与系统错误（飞书/表出错）要分开：
 // 前者回 400 并原样告诉她哪里填错了，后者回 5xx 且不回显内部细节。
@@ -207,88 +198,7 @@ class InventoryAdjustmentService {
     };
   }
 
-  // ── ② 换季调整（改状态，数量不变）────────────────────────────────────────
-  // targets: [{ productRecordId, size, state(起点), quantity }]
-  // 转释放门盒时要传 toState（回门盒还是样品，由她选）。
-  async adjustSeason({ action, targets, toState, requestId, operatorOpenId } = {}) {
-    const source = requireText(requestId, '请求编号');
-    const adjustAction = requireText(action, '调整动作');
-    const kind = SEASON_ACTION_KIND[adjustAction];
-    if (!kind) throw userError(`换季调整动作只能是：${Object.values(ADJUSTMENT_ACTIONS).filter((item) => SEASON_ACTION_KIND[item]).join(' / ')}`);
-    if (!Array.isArray(targets) || !targets.length) throw userError('请先选择要调整的鞋');
-    if (targets.length > INVENTORY_ADJUSTMENT_MAX_TARGETS) {
-      throw userError(`一次最多调整 ${INVENTORY_ADJUSTMENT_MAX_TARGETS} 条，请分批提交`);
-    }
-    // 「转释放门盒」回到门盒还是样品**必须由她选**（记录进了「仓库」后原来在哪就查不到了）。
-    // 在这一层先校验：否则同一个错误会变成"每一条都失败"，她看到一堆重复的报错。
-    const transition = STOCK_MOVEMENTS[kind].stateTransition;
-    let targetState = toState;
-    if (transition && !transition.to) {
-      targetState = requireText(toState, '释放回哪里');
-      if (!transition.targets.includes(targetState)) {
-        throw userError(`释放回哪里只能是：${transition.targets.join(' / ')}`);
-      }
-    }
-    const normalized = targets.map((target) => ({
-      productRecordId: requireText(target?.productRecordId, '货号'),
-      size: requireInteger(target?.size, '尺码'),
-      state: requireState(target?.state, '所属状态'),
-      quantity: target?.quantity === undefined ? 1 : requireInteger(target.quantity, '数量'),
-    }));
-    normalized.forEach((target, index) => {
-      if (target.quantity <= 0) throw userError(`第 ${index + 1} 条的调整数量必须大于 0`);
-    });
-    const keys = normalized.map((target) => `${target.productRecordId}|${target.size}|${target.state}`);
-    if (new Set(keys).size !== keys.length) {
-      throw userError('同一批里有重复的「货号 + 尺码 + 所属状态」，请合并后再提交');
-    }
-    const results = await runWithConcurrency(normalized, INVENTORY_ADJUSTMENT_BATCH_CONCURRENCY,
-      async (target) => {
-        try {
-          const result = await this.inventory.transitionState({
-            kind,
-            productRecordId: target.productRecordId,
-            size: target.size,
-            fromState: target.state,
-            toState: targetState,
-            quantity: target.quantity,
-            // 来源身份由 transitionState 按注册表声明自己算（requestId + 目标身份）。
-            requestId: source,
-            operatorOpenId,
-          });
-          return { ...target, ok: true, ...result };
-        } catch (error) {
-          // 单个目标失败（例如"仓库里只有 2 双、她要拿出 3 双"）不拖垮整批：
-          // 逐条报给她，成功的那些照常生效（与销售交付的 failures 形状一致）。
-          return { ...target, ok: false, error: error.message };
-        }
-      });
-    const failures = results.filter((item) => !item.ok);
-    const succeeded = results.filter((item) => item.ok);
-    for (const item of succeeded) {
-      logInfo('inventory.adjustment.season.applied', {
-        request_id: source,
-        operation_kind: kind,
-        product_record_id: item.productRecordId,
-        size: item.size,
-        from_state: item.fromState,
-        to_state: item.toState,
-        quantity: item.quantity,
-        ledger_record_id: item.ledgerRecordId,
-        operator_open_id: operatorOpenId || undefined,
-      });
-    }
-    return {
-      action: adjustAction,
-      to_state: succeeded[0]?.toState || String(targetState || ''),
-      total: results.length,
-      succeeded: succeeded.length,
-      failed: failures.length,
-      results,
-      failures: failures.map((item) => ({ product_record_id: item.productRecordId, size: item.size,
-        state: item.state, quantity: item.quantity, error: item.error })),
-    };
-  }
+
 }
 
 module.exports = {

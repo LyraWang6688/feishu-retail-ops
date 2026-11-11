@@ -125,7 +125,7 @@ test('① 采购加库存的流水**带上**「关联采购」= 报货批次那�
   const gateway = makeGateway({});
   await inventoryFor(gateway).applyPurchase({
     purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38,
-    quantity: 2, state: '仓库',
+    quantity: 2, state: '门盒',
   });
   assert.equal(gateway.records[LEDGER].length, 1);
   assert.deepEqual(gateway.records[LEDGER][0].fields, {
@@ -143,7 +143,7 @@ test('①-补 同一批次的多个（货品+尺码）→ 多条流水共用同�
   const inventory = inventoryFor(gateway);
   for (const size of [38, 39]) {
     await inventory.applyPurchase({
-      purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size, quantity: 1, state: '仓库',
+      purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size, quantity: 1, state: '门盒',
     });
   }
   assert.equal(gateway.records[LEDGER].length, 2);
@@ -155,7 +155,7 @@ test('①-补 同一批次的多个（货品+尺码）→ 多条流水共用同�
   const inventoryWithStore = new InventoryService({ gateway: makeGateway({}), store });
   for (const size of [38, 39]) {
     await inventoryWithStore.applyPurchase({
-      purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size, quantity: 1, state: '仓库',
+      purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size, quantity: 1, state: '门盒',
     });
   }
   const ids = (await store.list()).map((row) => row.source_record_id).sort();
@@ -177,7 +177,7 @@ test('② 拿不到批次 record id 时**这一列一个字都不写**（批次�
   for (const extra of cases) {
     const gateway = makeGateway({});
     await inventoryFor(gateway).applyPurchase({
-      ...extra, productRecordId: 'product_1', size: 38, quantity: 1, state: '仓库',
+      ...extra, productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒',
     });
     const row = gateway.records[LEDGER][0];
     assert.equal(Object.hasOwn(row.fields, '关联采购'), false,
@@ -208,12 +208,12 @@ test('③ 销售减少 / 采购退货的流水**不带**「关联采购」；销
     库存行为: ['bhv_sale'], 关联销售: ['detail_1'],
   });
 
-  const returnGateway = makeGateway({ [LIVE]: [liveUnit('door_9', 38, '仓库')] });
+  const returnGateway = makeGateway({ [LIVE]: [liveUnit('door_9', 38, '门盒')] });
   // ⚠️ 2026-11-08（issue #961）成对迁移：采购退货的来源身份改由行为注册表声明
   //    （真实三元组：批次身份 ｜ 货品 ｜ 尺码），所以这里传批次身份而不是裸 `sourceRecordId`。
   await inventoryFor(returnGateway).applyChange({
     kind: PURCHASE_DECREASE, purchaseBatchRecordId: 'purchase_return_1',
-    productRecordId: 'product_1', size: 38, quantity: 1, state: '仓库',
+    productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒',
   });
   assert.deepEqual(returnGateway.records[LEDGER][0].fields, {
     编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1, 库存行为: ['bhv_buy_back'],
@@ -257,7 +257,7 @@ test('④ 同一（批次｜货品｜尺码）重复调用 → 仍只 1 条流�
   const gateway = makeGateway({});
   const inventory = inventoryFor(gateway);
   const input = {
-    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 2, state: '仓库',
+    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 2, state: '门盒',
   };
   const first = await inventory.applyPurchase(input);
   const second = await inventory.applyPurchase(input);

@@ -110,7 +110,7 @@ const seedRecords = () => ({
   sizeManagement: [40, 41, 42].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } })),
   liveInventory: [
     liveUnit('live_40_box_1', 40), liveUnit('live_40_box_2', 40), liveUnit('live_40_box_3', 40),
-    liveUnit('live_41_box', 41), liveUnit('live_41_sample', 41, '样品'), liveUnit('live_41_store', 41, '仓库'),
+    liveUnit('live_41_box', 41), liveUnit('live_41_sample', 41, '样品'), liveUnit('live_41_store', 41, '门盒'),
     liveUnit('live_42_box_1', 42), liveUnit('live_42_box_2', 42),
   ],
   inventoryLedger: [],

@@ -111,7 +111,7 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
         state,
         quantity: positiveInteger(input.quantity, '采购退货数量'),
         operationId: operationIdOf(movement, input),
-        stockKey: `${input.productRecordId}|${size}|${state}`,
+        stockKey: `${input.productRecordId}|${size}`,
       });
     }
     const stockKeys = [...new Set(prepared.map((item) => item.stockKey))].sort();
@@ -141,17 +141,15 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
           results[index] = await this.executeOperation(journal);
           continue;
         }
-        const states = movement.consumes === '*' ? [null] : (movement.consumes || [item.state]);
-        const liveRecords = states.flatMap((candidateState) =>
-          this.findLiveInventoryIn(
-            allLive, item.input.productRecordId, sizeReference.recordId, candidateState,
-          ))
-          .sort((left, right) => String(left.record_id).localeCompare(String(right.record_id)));
+        // ⭐ 2026-11-11：不看状态；按「创建时间」FIFO 选最早的行。
+        const liveRecords = this.sortLiveInventoryFifo(
+          this.findLiveInventoryIn(allLive, item.input.productRecordId, sizeReference.recordId),
+        );
         const currentQuantity = liveRecords.length;
         if (currentQuantity < item.quantity) {
           // 与 `applyChange` **逐字同一句**（"退能退的"由调用方先算好；这里只兜底、绝不夹取）。
           throw new Error(stockShortage({
-            states, liveInventoryTableName: this.gateway.table('liveInventory').tableName,
+            states: [null], liveInventoryTableName: this.gateway.table('liveInventory').tableName,
             productRecordId: item.input.productRecordId, size: item.size, quantity: item.quantity, currentQuantity,
           }));
         }
@@ -230,16 +228,13 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
           //    再**一次**删（≤500/片由网关分片）。
           const confirmed = [];
           for (const plan of plans) {
-            const consumesAny = movement.consumes === '*';
-            const consumableStates = movement.consumes === '*' ? null : (movement.consumes || [plan.operation.state]);
             for (const recordId of plan.operation.live_record_ids) {
               if (plan.removedIds.includes(recordId)) continue;
               const record = fetchedById.get(recordId);
               if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
               if (!strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(plan.item.input.productRecordId) ||
-                !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
-                (!consumesAny && !consumableStates.includes(textValue(record.fields?.[stateField])))) {
-                throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
+                !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId)) {
+                throw new Error(`待扣减实时库存 ${recordId} 的货品或尺码已改变，请人工核对`);
               }
               confirmed.push({ plan, recordId });
             }
@@ -284,16 +279,13 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
           // ⚠️ 老替身 / 夹具没有 `deleteBatch` ⇒ **只有删这一步**退回逐双：下面这段与改动前
           //    **逐字相同**（"确认一条 → 删一条 → 记一条"**交错**，连出错时已删到哪一条都一样）。
           for (const plan of plans) {
-            const consumesAny = movement.consumes === '*';
-            const consumableStates = movement.consumes === '*' ? null : (movement.consumes || [plan.operation.state]);
             for (const recordId of plan.operation.live_record_ids) {
               if (plan.removedIds.includes(recordId)) continue;
               const record = fetchedById.get(recordId);
               if (!record) throw new Error(`待扣减实时库存 ${recordId} 不存在，请人工核对`);
               if (!strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(plan.item.input.productRecordId) ||
-                !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId) ||
-                (!consumesAny && !consumableStates.includes(textValue(record.fields?.[stateField])))) {
-                throw new Error(`待扣减实时库存 ${recordId} 的货品、尺码或状态已改变，请人工核对`);
+                !strictLinkedRecordIds(record.fields?.[liveFields.size]).includes(plan.sizeReference.recordId)) {
+                throw new Error(`待扣减实时库存 ${recordId} 的货品或尺码已改变，请人工核对`);
               }
               await this.gateway.delete('liveInventory', recordId);
               plan.removedIds.push(recordId);

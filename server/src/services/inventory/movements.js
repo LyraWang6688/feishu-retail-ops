@@ -95,7 +95,7 @@ const UNFREEZE_STATE_TRANSITION = Object.freeze({ from: ['仓库'], to: null, ta
 
 // 「实时库存」的「所属状态」选项。原先写死在 applyChange 的入参校验里；
 // 抽成常量是因为状态类变更（人工调整）也要用同一份值域，两份会漂移。
-const LIVE_STATES = Object.freeze(['门盒', '样品', '仓库']);
+const LIVE_STATES = Object.freeze(['门盒', '样品']);
 
 const STOCK_MOVEMENTS = Object.freeze({
   [MOVEMENT_SALE_DECREASE]: {
@@ -117,7 +117,6 @@ const STOCK_MOVEMENTS = Object.freeze({
       operationKey: 'sales_entry_record_id',
     },
     // 扣到样品时要不要触发补样品提醒。
-    triggerSampleReplacement: true,
     // 来源身份 = 这条销售明细的 record_id（旧 `applySale` 直接把它当 sourceRecordId）。
     operationKey: Object.freeze({ kind: MOVEMENT_SALE_DECREASE, ...SALE_DETAIL_SOURCE }),
   },
@@ -143,7 +142,6 @@ const STOCK_MOVEMENTS = Object.freeze({
       operationKey: 'purchase_batch_record_id',
     },
     consumes: null,
-    triggerSampleReplacement: false,
     // 来源身份 = **真实三元组**「批次身份 ｜ 货品 record_id ｜ 尺码」（`purchase_increase:` 前缀）。
     // 历史事故：漏掉尺码 ⇒ 同款不同码共用同一把 `:1` 键、重放时触发「库存事实重复」。
     // 回落顺序：批次记录 id → 批次号 → 到货核对任务 id（前两个是业务身份，第三个只在孤儿调用时兜底）。
@@ -178,7 +176,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     // ⭐ 2026-11-09：与退货页「实时库存里所有记录」口径对齐，空状态也要退。
     // '*' = 不看所属状态：实时库存里只要有这一双就算可卖/可退。
     consumes: '*',
-    triggerSampleReplacement: false,
     // 与采购入库同一个形状的真实三元组（`purchase_return:` 前缀）：批次身份 ｜ 货品 ｜ 尺码。
     // ⚠️ 不能拿"退货明细行的 record_id"当来源：那条行**先写、库存后扣**，崩溃后重放要看的是
     //    "这一次退货的（货品+尺码）"是不是已经扣过 —— 三元组最稳（与采购入库同源）。
@@ -202,7 +199,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     // 本地幂等/回查仍按来源明细（`sourceRecordId` = 销售明细 record_id）。
     ledgerSource: 'salesDetail',
     consumes: null,
-    triggerSampleReplacement: false,
     // ⭐⭐ 2026-11-10（真机测试发现）：生产「库存流水.关联销售」指向**销售主表**
     //   （field-link target = 销售主表，与销售出库同一个字段）——
     //   ⇒ 远端写入值必须是**销售主表 record_id**（`input.salesEntryRecordId`），
@@ -220,7 +216,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '增加',
     ledgerSource: 'salesDetail',
     consumes: null,
-    triggerSampleReplacement: false,
     operationKey: Object.freeze({ kind: MOVEMENT_SALE_RETURN, ...GIVEN_SOURCE }),
   },
   // 赔货 / 换货出货：新鞋从门盒减一行。
@@ -230,7 +225,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '减少',
     ledgerSource: 'salesDetail',
     consumes: ['门盒'],
-    triggerSampleReplacement: false,
     operationKey: Object.freeze({ kind: MOVEMENT_SALE_COMPENSATION, ...GIVEN_SOURCE }),
   },
   // 现货销售：换货时新鞋出库走它，方向=减少。它同时是「交易类型」和「库存行为」。
@@ -238,7 +232,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '减少',
     ledgerSource: 'salesDetail',
     consumes: ['门盒'],
-    triggerSampleReplacement: false,
     operationKey: Object.freeze({ kind: MOVEMENT_SALE_CASH, ...GIVEN_SOURCE }),
   },
 
@@ -252,7 +245,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '增加',
     ledgerSource: null,
     consumes: null,
-    triggerSampleReplacement: false,
     operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE, ...MANUAL_COUNT_SOURCE }),
   },
   // 手工调减：数量类，减少 N 双 → 消耗既有「实时库存」＋ 一条 变动数量=N 的流水。
@@ -261,7 +253,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '减少',
     ledgerSource: null,
     consumes: MANUAL_DECREASE_CONSUMES,
-    triggerSampleReplacement: false,
     operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE, ...MANUAL_COUNT_SOURCE }),
   },
   // 四个「转」：方向=不影响，只改「实时库存」的「所属状态」，数量一条不变。
@@ -270,7 +261,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '不影响',
     ledgerSource: null,
     consumes: null,
-    triggerSampleReplacement: false,
     stateTransition: FREEZE_STATE_TRANSITION, // 门盒/样品 → 仓库（换季收起）
     operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.FREEZE, ...MANUAL_STATE_SOURCE }),
   },
@@ -278,7 +268,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '不影响',
     ledgerSource: null,
     consumes: null,
-    triggerSampleReplacement: false,
     // 仓库 → 门盒/样品；**回哪一个由入口选**（to: null + targets）。
     stateTransition: UNFREEZE_STATE_TRANSITION,
     operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.UNFREEZE, ...MANUAL_STATE_SOURCE }),
@@ -287,7 +276,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '不影响',
     ledgerSource: null,
     consumes: null,
-    triggerSampleReplacement: false,
     // 规则明确：样品 → 门盒。
     stateTransition: Object.freeze({ from: '样品', to: '门盒' }),
     operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.SAMPLE_TO_DOORBOX, ...MANUAL_STATE_SOURCE }),
@@ -296,7 +284,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     direction: '不影响',
     ledgerSource: null,
     consumes: null,
-    triggerSampleReplacement: false,
     // 规则明确：门盒 → 样品（补样品链路已在用同一编码，见 ADJUSTMENT_BEHAVIORS 注释）。
     stateTransition: Object.freeze({ from: '门盒', to: '样品' }),
     // ⚠️ 同一个行为有**两条通路**，历史上用的是**两把不同的操作键**（都不许改）：

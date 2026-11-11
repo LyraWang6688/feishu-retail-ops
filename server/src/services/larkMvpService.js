@@ -14,7 +14,6 @@ const { V1BitableGateway, textValue } = require('./v1BitableGateway');
 const { V1PostingService } = require('./v1PostingService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SecondDeliveryService } = require('./secondDeliveryService');
-const { SampleReplacementService } = require('./sampleReplacementService');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
 // 「货品信息.标签二维码」：表变更事件（新增 / 编号变更）→ 自动生成二维码并写回那一列。
 // 独立 service（一个 service 只干一件事），这里只负责把它接上（见构造函数）。
@@ -226,9 +225,6 @@ class LarkMvpService {
     //   · 卡片渲染在 utils/larkCards，本类不拼卡片内容。
     // 执行器用自己的任务存储（data/after_sales_operations），所以这里不能把销售的任务存储传给它。
     this.afterSales = options.afterSales || new AfterSalesService({ gateway: this.gateway });
-    this.sampleReplacements = options.sampleReplacements || new SampleReplacementService({
-      gateway: this.gateway, inventory: this.delivery.inventory, store: this.store,
-    });
     // 「确认状态」（用户那一维）的唯一写入口：名字与取值都在 config/salesStatusDimensions。
     // ⚠️ 它**只记她在卡片上点了什么**，不参与任何闸门判据（判据读的是「资金状态」）。
     this.salesStatus = options.salesStatus || new SalesStatusWriter({ gateway: this.gateway });
@@ -307,33 +303,6 @@ class LarkMvpService {
       },
     });
     if (response.code !== 0) throw new Error(`发送飞书消息失败: ${response.msg} (Code: ${response.code})`);
-  }
-
-  /**
-   * 执行确认卡片上已经选好的补样品。
-   *
-   * 模块边界：补样品这件事由 SampleReplacementService 负责，这里只把
-   * "哪条明细、哪个货品、补哪个尺码"整理好交给它。
-   */
-  async applyChosenSampleReplacements(task, postingResult, { correlation } = {}) {
-    const replacements = (task.draft?.items || [])
-      .map((item, index) => ({
-        salesDetailRecordId: postingResult?.detailRecordIds?.[index] || '',
-        productRecordId: item.product_record_id || '',
-        size: item.sample_replacement_size || '',
-      }))
-      .filter((item) => item.salesDetailRecordId && item.productRecordId && item.size);
-    if (!replacements.length) return new Set();
-    // 关联键继续往下传（补样品写的库存流水也属于这条销售链）。
-    return this.sampleReplacements.applyPreChosen(replacements, { correlation });
-  }
-
-  /**
-   * 「补样品提醒」的转发口：只创建本地待办，不再发群/私聊消息。
-   * 工作台订单列表读这条待办；补样品写库走 `applyPreChosen`。
-   */
-  async notifySampleReplacements(deliveryResult, operatorOpenId, options = {}) {
-    return this.sampleReplacements.notifySampleReplacements(deliveryResult, operatorOpenId, options);
   }
 
   // ⭐ 私聊专属功能已删（2026-10-07，随私聊入口一起移除）：
@@ -464,21 +433,6 @@ class LarkMvpService {
       });
     }
     return { accepted: false, reason: 'private_chat_removed' };
-  }
-  samplePlanFor({ productRecordId, stock, quantity = 1 }, liveInventory) {
-    const none = { uses_sample: false, needs_sample_replacement: false, sample_replacement_options: [] };
-    const needs = Number(quantity || 1);
-    const doorBox = Number(stock?.doorBox || 0);
-    const sample = Number(stock?.sample || 0);
-    if (!productRecordId || doorBox >= needs || sample < needs) return none;
-    const options = (liveInventory?.sampleReplacementCandidatesForProduct?.(productRecordId) || [])
-      .filter((row) => row.doorBoxCount > 0);
-    return {
-      uses_sample: true,
-      // 有候选项才需要她选；一个都没有时只在卡片上提示（另行调拨），不拦住确认。
-      needs_sample_replacement: options.length > 0,
-      sample_replacement_options: options,
-    };
   }
 
   /**
