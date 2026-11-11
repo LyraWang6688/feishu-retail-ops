@@ -16,6 +16,7 @@ import { scanCodeRaw, scanTargetUrl } from '../scan/launch.js';
 import { INVENTORY_MANUAL_CARDS, INVENTORY_MANUAL_TEXTS } from '../../config/inventoryAdjustment.js';
 
 const $ = (host, selector) => host.querySelector(selector);
+const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const STATES = ['门盒', '样品'];
 
 const cardsHtml = () => `<div class="domain-cards domain-cards-single">${INVENTORY_MANUAL_CARDS.map((card) => `
@@ -110,29 +111,43 @@ export function createInventoryAdjustmentModule() {
       const sampleCount = samples.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
       const doorboxCount = doorbox.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
       const emptyCount = items.filter((row) => !['门盒', '样品'].includes(row.state)).length;
-      const issue = emptyCount > 0
-        ? '状态为空'
-        : (sampleCount === 0 ? '缺样品'
-          : (sampleCount > 1 ? `样品多 ${sampleCount - 1} 双` : ''));
-      return { productId, items, samples, doorbox, sampleCount, doorboxCount, emptyCount, issue };
-    }).filter((group) => group.issue);
+      const issueKey = emptyCount > 0
+        ? 'empty'
+        : (sampleCount === 0 ? 'missing'
+          : (sampleCount > 1 ? 'extra' : ''));
+      const issue = issueKey === 'empty'
+        ? INVENTORY_MANUAL_TEXTS.statusIssueEmpty
+        : (issueKey === 'missing'
+          ? INVENTORY_MANUAL_TEXTS.statusIssueMissing
+          : (issueKey === 'extra'
+            ? fill(INVENTORY_MANUAL_TEXTS.statusIssueExtra, { count: sampleCount - 1 }) : ''));
+      return { productId, items, samples, doorbox, sampleCount, doorboxCount, emptyCount, issueKey, issue };
+    }).filter((group) => group.issueKey);
   }
 
   function renderViolations() {
     const box = $(state.host, '[data-view="batch-violations"]');
-    const list = violations();
+    const filter = $(state.host, '[data-field="status-filter"]')?.value || 'all';
+    const list = violations().filter((group) => filter === 'all' || group.issueKey === filter);
     if (!list.length) {
-      box.innerHTML = '<p class="empty compact">当前没有缺少一双样品的鞋。</p>';
+      box.innerHTML = '<p class="empty compact">当前没有不符合规则的状态。</p>';
       return;
     }
-    box.innerHTML = list.map((group) => {
-      const first = group.items[0] || {};
-      const label = [first.product_number, first.color].filter(Boolean).join('｜') || group.productId;
-      const candidates = group.doorbox.map((row) => `${row.size}码`).join('、');
-      return `<div class="row-card violation-card"><div class="violation-info">
-        <div class="row-top"><div class="row-num">${escapeHtml(label)}</div><span class="tag bad">${escapeHtml(group.issue)}</span></div>
-        <div class="row-line">当前：样品 ${group.sampleCount} 双｜门盒 ${group.doorbox.reduce((sum, row) => sum + Number(row.quantity || 0), 0)} 双${group.sampleCount === 0 && candidates ? `；候选：${escapeHtml(candidates)}` : ''}</div>
-      </div><button class="btn small primary" type="button" data-fix="${escapeHtml(group.productId)}">调整</button></div>`;
+    const groups = ['extra', 'empty', 'missing']
+      .map((key) => ({ key, items: list.filter((group) => group.issueKey === key) }))
+      .filter((group) => group.items.length);
+    box.innerHTML = groups.map((group) => {
+      const title = group.items[0]?.issue || '';
+      const cards = group.items.map((item) => {
+        const first = item.items[0] || {};
+        const label = [first.product_number, first.color].filter(Boolean).join('｜') || item.productId;
+        const candidates = item.doorbox.map((row) => `${row.size}码`).join('、');
+        return `<div class="row-card violation-card"><div class="violation-info">
+          <div class="row-top"><div class="row-num">${escapeHtml(label)}</div><span class="tag bad">${escapeHtml(item.issue)}</span></div>
+          <div class="row-line">当前：样品 ${item.sampleCount} 双｜门盒 ${item.doorboxCount} 双${item.sampleCount === 0 && candidates ? `；候选：${escapeHtml(candidates)}` : ''}</div>
+        </div><button class="btn small primary" type="button" data-fix="${escapeHtml(item.productId)}">调整</button></div>`;
+      }).join('');
+      return `<section class="violation-group" data-issue="${escapeHtml(group.key)}"><h4 class="violation-group-title">${escapeHtml(title)} <span>${escapeHtml(fill(INVENTORY_MANUAL_TEXTS.statusGroupCount, { count: group.items.length }))}</span></h4><div class="violation-list">${cards}</div></section>`;
     }).join('');
     box.querySelectorAll('[data-fix]').forEach((btn) => btn.addEventListener('click', () => fitRowsForProduct(btn.dataset.fix)));
   }
@@ -224,7 +239,9 @@ export function createInventoryAdjustmentModule() {
             <label class="field"><select data-field="batch-category"></select></label>
             <div class="row-actions"><button class="btn small primary" type="button" data-action="season-toggle">当季</button><button class="btn small" type="button" data-action="batch-check">库存</button></div>
           </div>
-          <div class="batch-section"><h3>状态调整</h3><div data-view="batch-violations"></div></div>
+          <div class="batch-section"><h3>状态调整</h3>
+            <label class="field"><select data-field="status-filter" aria-label="${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterLabel)}"><option value="all">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterAll)}</option><option value="extra">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueExtraGroup)}</option><option value="empty">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueEmpty)}</option><option value="missing">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueMissing)}</option></select></label>
+            <div data-view="batch-violations"></div></div>
         </div>
         <div class="manual-modal" data-view="print-modal" hidden>
           <div class="manual-modal-card"><h3>是否需要打印？</h3><p class="hint">库存调整已保存，可以继续打印这一款标签。</p>
@@ -240,6 +257,7 @@ export function createInventoryAdjustmentModule() {
       host.querySelectorAll('[data-print]').forEach((btn) => btn.addEventListener('click', () => { void printSaved(btn.dataset.print === 'yes'); }));
       host.querySelector('[data-action="batch-check"]').addEventListener('click', () => renderViolations());
       host.querySelector('[data-field="batch-category"]').addEventListener('change', () => renderViolations());
+      host.querySelector('[data-field="status-filter"]')?.addEventListener('change', () => renderViolations());
     },
   };
 }

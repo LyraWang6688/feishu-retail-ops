@@ -46,10 +46,25 @@ test('AC-IA4 批量调整：品类与库存并行读取 + 轻量 toast 提示', 
 test('AC-IA5 状态调整与当季调整独立：不看品类/当季，显示所有不满足一样品+其余门盒的编号', () => {
   const html = source();
   assert.equal(html.includes('selectedCategory'), false, '状态调整不再按品类过滤');
-  assert.ok(html.includes("const issue = emptyCount > 0"), '状态为空也要报');
-  assert.ok(html.includes("sampleCount === 0 ? '缺样品'"), '没有样品要报');
-  assert.ok(html.includes("sampleCount > 1 ? `样品多"), '样品大于一双要报');
+  assert.ok(html.includes("issueKey === 'empty'"), '状态为空也要报');
+  assert.ok(html.includes("issueKey === 'missing'"), '没有样品要报');
+  assert.ok(html.includes("issueKey === 'extra'"), '样品大于一双要报');
   assert.equal(html.includes('① 当季调整'), false, '板块标题不再带编号');
   assert.equal(html.includes('② 状态调整'), false, '板块标题不再带编号');
   assert.ok(html.includes('await loadRows(true)'), '当季调整后强制重新加载状态调整数据');
+});
+
+
+test('AC-IA6 状态调整按问题分组，可按问题筛选，货号之间有分割线', () => {
+  const html = source();
+  assert.ok(html.includes('data-field="status-filter"'), '问题类型筛选');
+  assert.ok(html.includes('data-issue="' + '${escapeHtml(group.key)}' + '"'), '按问题分组');
+  assert.ok(html.includes('violation-group-title'), '分组标题');
+  assert.ok(html.includes('data-fix='), '每条货号仍有调整按钮');
+  const css = fs.readFileSync(path.join(__dirname, '../public/workbench/features/domains/domains.css'), 'utf8');
+  assert.match(css, /\.violation-list \.violation-card \+ \.violation-card/, '货号之间有分割线');
+  const cfg = configSource();
+  for (const key of ['statusFilterAll', 'statusIssueExtraGroup', 'statusIssueEmpty', 'statusIssueMissing', 'statusGroupCount']) {
+    assert.ok(cfg.includes(`${key}:`), `配置缺少 ${key}`);
+  }
 });

@@ -147,3 +147,11 @@
 .manual-modal-card { width: 100%; max-width: 340px; padding: 16px; border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-pop); }
 .manual-modal-card h3 { margin: 0 0 4px; font-size: var(--font-size-lg); }
 
+
+/* 状态调整：按问题分组，货号之间用分割线 */
+.violation-group { margin: 0 0 14px; }
+.violation-group-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: 13px; color: var(--text-secondary); font-weight: 600; }
+.violation-group-title span { font-weight: 400; color: var(--text-muted); }
+.violation-list { border: 1px solid var(--border-light); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.violation-list .violation-card { margin: 0; border: 0; border-radius: 0; background: transparent; padding: 10px 12px; }
+.violation-list .violation-card + .violation-card { border-top: 1px solid var(--border-light); }

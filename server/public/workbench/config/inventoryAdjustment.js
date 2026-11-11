@@ -6,4 +6,11 @@ export const INVENTORY_MANUAL_CARDS = Object.freeze([
 
 export const INVENTORY_MANUAL_TEXTS = Object.freeze({
   batchLoading: '正在读取品类和库存…',
+  statusFilterLabel: '问题类型',
+  statusFilterAll: '全部问题',
+  statusIssueExtra: '样品多 {count} 双',
+  statusIssueExtraGroup: '样品多',
+  statusIssueEmpty: '状态为空',
+  statusIssueMissing: '缺样品',
+  statusGroupCount: '{count} 个货号',
 });
