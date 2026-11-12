@@ -5,9 +5,6 @@
  * 鉴权、no-store、ui-tap 仍由 workbench.js 的父 router 统一加。
  */
 const express = require('express');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { V1BitableGateway } = require('../../services/v1BitableGateway');
 const { createPurchaseQueryRouter } = require('../purchaseQuery');
 const { WorkbenchPurchaseArrivalService } = require('../../services/workbenchPurchaseArrivalService');
@@ -35,6 +32,7 @@ const { submitToastUrl } = require('../../utils/submitToast');
 const { createProcurementPageService } = require('../../services/procurementPageService');
 const { createProcurementPageSubmitService } = require('../../services/procurementPageSubmitService');
 const { createScanWriteService } = require('../../services/scanWriteService');
+const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 
 const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   const router = express.Router();
@@ -89,28 +87,21 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     }
     let rawName = '';
     try { rawName = decodeURIComponent(String(req.get('x-file-name') || '')); } catch { rawName = ''; }
-    const safeName = path.basename(rawName).replace(/[^\w.\-\u4e00-\u9fa5]+/g, '_').slice(-100)
-      || `acceptance-${Date.now()}.jpg`;
-    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'acceptance-doc-'));
-    const filePath = path.join(tmpDir, safeName);
-    let fileToken = '';
     try {
-      await fs.promises.writeFile(filePath, buffer);
       const gateway = options.gateway || new V1BitableGateway();
-      fileToken = await gateway.uploadAttachment(filePath, {
-        parentType: 'bitable_image',
+      const fileToken = await uploadAcceptanceDocument({
+        gateway,
+        buffer,
+        fileName: rawName,
         operation: arrivalTab.texts.acceptanceDocUploadOperation,
       });
+      return res.json({ success: true, file: { file_token: fileToken, file_name: safeFileName(rawName) } });
     } catch (error) {
       logError('workbench.purchase.acceptance_doc.failed', {
-        request_id: req.requestId, file_name: safeName, error: error.message,
+        request_id: req.requestId, file_name: rawName, error: error.message,
       });
       return res.status(502).json({ success: false, error: arrivalTab.texts.counterpartyDocUploadFailed });
-    } finally {
-      // ⚠️ 先清理临时文件再回执（用例能确定"上传完没留垃圾"）。
-      await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
-    return res.json({ success: true, file: { file_token: fileToken, file_name: safeName } });
   });
   router.post('/purchase/arrivals/confirm', async (req, res) => {
     const batchNo = String(req.body?.batchNo || '').trim();
