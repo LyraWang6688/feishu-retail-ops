@@ -310,7 +310,7 @@ const createHarness = (options = {}) => {
 
 const entriesOf = (harness, tableKey) => harness.tables[tableKey] || [];
 const documentNamesOf = (harness) => attachmentNames(
-  (entriesOf(harness, 'purchaseOrderBatch')[0] || {}).fields?.['单据'],
+  (entriesOf(harness, 'purchaseOrderBatch')[0] || {}).fields?.['我方单据'],
 );
 const documentSuffix = SCAN_WRITE.purchaseReturn.fileNameSuffix;
 

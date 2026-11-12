@@ -352,7 +352,7 @@ const ledgerTotal = (harness) => entriesOf(harness, 'inventoryLedger')
   .reduce((sum, record) => sum + Number(record.fields['变动数量'] || 0), 0);
 const liveIds = (harness) => entriesOf(harness, 'liveInventory').map((record) => record.record_id).sort();
 const documentNamesOf = (harness) => attachmentNames(
-  (entriesOf(harness, 'purchaseOrderBatch')[0] || {}).fields?.['单据'],
+  (entriesOf(harness, 'purchaseOrderBatch')[0] || {}).fields?.['我方单据'],
 );
 /** 这一轮退货的幂等键（会话还没建时 = 第 1 轮那把，纯函数算出来 —— 与页面同一条口径）。 */
 const returnKey = async (harness, openId = OPEN_ID) => harness.write.sessions
@@ -720,7 +720,7 @@ test('AC-RS4b 探针：判据不是空跑 —— 把「单据」里那张图拿�
     const rendersBefore = h.renders.length;
     // 手动把"已经出过"的证据拿掉（= 其实那一张根本没出过）⇒ 必须重出，否则就是静默少发一家 ✗
     const batch = entriesOf(h, 'purchaseOrderBatch')[0];
-    batch.fields['单据'] = batch.fields['单据'].filter((item) => !String(item.name).startsWith('乙供应商'));
+    batch.fields['我方单据'] = batch.fields['我方单据'].filter((item) => !String(item.name).startsWith('乙供应商'));
     await h.purchaseReturn.submit(plan.taskId, plan.payload);
     assert.equal(h.renders.length, rendersBefore + 1, '证据不在了 ⇒ 照旧要出（判据读的是**已经落库的事实** ✓）');
     assert.deepEqual(h.renders.slice(rendersBefore).map((render) => render.supplierName), ['乙供应商'],

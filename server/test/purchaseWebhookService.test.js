@@ -76,8 +76,8 @@ const makeGateway = (records = {}) => {
       writes.push({ op: 'update', tableKey, recordId, values: patch });
       // 飞书附件字段读回来带 `name`（= 上传时的文件名）；这里照着补上，
       // 否则「重复执行不新增第二条」的去重判据在假 Base 上永远命中不了。
-      if (Array.isArray(patch['单据'])) {
-        patch['单据'] = patch['单据'].map((item) => ({
+      if (Array.isArray(patch['我方单据'])) {
+        patch['我方单据'] = patch['我方单据'].map((item) => ({
           ...item, name: tokenNames.get(item.file_token) || item.name || '',
         }));
       }
