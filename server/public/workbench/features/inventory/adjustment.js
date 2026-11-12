@@ -23,7 +23,7 @@ const cardsHtml = () => `<div class="domain-cards domain-cards-single">${INVENTO
   <button class="entry-card" type="button" data-manual="${card.id}"><span class="icon">${escapeHtml(card.icon)}</span><h3>${escapeHtml(card.label)}</h3></button>`).join('')}</div>`;
 
 export function createInventoryAdjustmentModule() {
-  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, savedNumber: '', inventoryJobId: '' };
+  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, savedNumber: '', inventoryJobId: '', productInfo: null };
 
   async function loadRows(force = false) {
     if (state.rows.length && !force) return state.rows;
@@ -46,7 +46,9 @@ export function createInventoryAdjustmentModule() {
 
   function renderEditor() {
     const first = state.editorRows[0] || {};
-    const label = [first.product_number, first.color, first.category].filter(Boolean).join('｜') || state.productId;
+    const info = state.productInfo || {};
+    const label = [first.product_number || info.number, first.color || info.color, first.category || info.category]
+      .filter(Boolean).join('｜') || state.productId;
     const host = state.host;
     const body = $(host, '[data-view="single-rows"]');
     body.innerHTML = state.editorRows.length ? state.editorRows.map((row, index) => `
@@ -75,13 +77,18 @@ export function createInventoryAdjustmentModule() {
   }
 
   function fitRowsForProduct(productId) {
-    const rows = productRows(productId);
-    if (!rows.length) {
-      showPageError('这个编号没有实时库存，不能调整。');
-      return;
-    }
+    // 无库存也要进编辑器：显示「＋ 添加尺码」，从空白开始建库存。
     showPageError('');
     renderSingle(productId);
+  }
+
+  async function loadProductInfo(productId) {
+    try {
+      const data = await api.get(`/api/workbench/products/${encodeURIComponent(productId)}`);
+      state.productInfo = data?.item || null;
+    } catch {
+      state.productInfo = null;
+    }
   }
 
   async function scanSingle() {
@@ -92,7 +99,9 @@ export function createInventoryAdjustmentModule() {
       const match = String(target || '').match(/\/r\/([^/?#]+)/);
       if (!match) return showPageError('没有认出货品编号，请重新扫码。');
       await loadRows();
-      fitRowsForProduct(decodeURIComponent(match[1]));
+      const productId = decodeURIComponent(match[1]);
+      if (!productRows(productId).length) await loadProductInfo(productId);
+      fitRowsForProduct(productId);
     } catch (error) {
       const message = String(error?.message || '');
       if (/cancel/i.test(message)) return;
@@ -190,7 +199,7 @@ export function createInventoryAdjustmentModule() {
         productRecordId: state.productId, rows, requestId: state.pendingRequest,
       });
       state.pendingRequest = null;
-      state.savedNumber = first.product_number || '';
+      state.savedNumber = first.product_number || state.productInfo?.number || '';
       state.inventoryJobId = String(result?.job_id || '').trim();
       state.rows = [];
       showToast('已提交，后台写入库存');

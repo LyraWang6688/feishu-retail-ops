@@ -162,3 +162,21 @@ test('AC-PP8 货品完善搜索不支持按编号匹配', async () => {
     assert.equal(body.total, 0);
   } finally { server.close(); }
 });
+
+test('AC-PP10 无库存货品也能按 record_id 取货品资料', async () => {
+  const gateway = {
+    get: async (key, id) => (id === 'rec1'
+      ? product('rec1', '906|黑色|男', '906', '黑色', '男', '成本')
+      : null),
+  };
+  const app = express();
+  app.use(createWorkbenchProductRoutes({ options: { gateway } }));
+  const { server, port } = await listen(app);
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/rec1`)).json();
+    assert.equal(body.item.recordId, 'rec1');
+    assert.equal(body.item.itemNo, '906');
+    assert.match(body.item.recordUrl, /record=rec1/);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/products/nope`)).status, 404);
+  } finally { server.close(); }
+});

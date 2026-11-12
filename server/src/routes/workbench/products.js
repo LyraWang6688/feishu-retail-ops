@@ -105,6 +105,21 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     }
   });
 
+  router.get('/products/:recordId', async (req, res) => {
+    const recordId = String(req.params?.recordId || '').trim();
+    if (!recordId) return res.status(400).json({ success: false, error: 'missing_record_id' });
+    try {
+      const record = await getGateway().get('product', recordId);
+      if (!record) return res.status(404).json({ success: false, error: 'product_not_found' });
+      return res.json({ success: true, item: itemOf(record) });
+    } catch (error) {
+      logError('workbench.product_profile.product_failed', {
+        request_id: req.requestId, record_id: recordId, error: error.message,
+      });
+      return res.status(502).json({ success: false, error: 'product_failed' });
+    }
+  });
+
   router.get('/products/:recordId/sample-image', async (req, res) => {
     const recordId = String(req.params?.recordId || '').trim();
     if (!recordId) return res.status(400).json({ success: false, error: 'missing_record_id' });

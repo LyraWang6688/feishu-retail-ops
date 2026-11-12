@@ -78,3 +78,12 @@ test('AC-IA7 添加尺码后保留新行；删除行也不重置编辑器', () =
   assert.ok(src.includes('function renderEditor()'), '有独立编辑器渲染函数');
   assert.ok(src.includes('state.editorRows = productRows(productId).map'), '只有进入单双调整时才从库存初始化');
 });
+
+
+test('AC-IA9 无库存货品也能进单双调整：显示添加尺码，不再报不能调整', () => {
+  const src = source();
+  assert.equal(src.includes('这个编号没有实时库存，不能调整'), false);
+  assert.match(src, /function fitRowsForProduct\(productId\) \{\s*\/\/ 无库存也要进编辑器[\s\S]*?renderSingle\(productId\);/);
+  assert.match(src, /data-add-size/, '无库存时仍有添加尺码按钮');
+  assert.match(src, /这个编号暂时没有实时库存/, '空行提示保留');
+});
