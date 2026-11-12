@@ -26,6 +26,8 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   completeSelectPlaceholder: '请选择缺失信息',
   completeSelectLoading: '正在读取…',
   completeField: '缺失信息',
+  completeSearchPlaceholder: '按货号搜索待完善货品',
+  completeSearchEmpty: '没有匹配的待完善货品。',
   completeAction: '去完善',
   back: '‹ 返回',
   searchFailed: '搜索失败，请稍后重试',
