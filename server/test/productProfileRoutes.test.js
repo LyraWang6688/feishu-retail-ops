@@ -49,6 +49,7 @@ test('AC-PP1 搜索：只按货号模糊匹配；空搜索不返回结果', asyn
     assert.equal(body.items[0].number, '906|黑色|男');
     assert.equal(body.items[0].hasSampleImage, true);
     assert.equal(body.items[0].imageUrl, '/api/workbench/products/rec1/sample-image');
+    assert.match(body.items[0].recordUrl, /\/base\/app_test\?table=.*record=rec1/, '结果卡片要能打开货品记录');
   } finally { server.close(); }
 });
 
@@ -131,5 +132,33 @@ test('AC-PP6 冷启动快照失败 ⇒ 回退飞书 filter（只查货号）', a
     assert.equal(body.items.length, 1);
     assert.ok(filterSeen.includes('CurrentValue.[货号].contains("906")'));
     assert.ok(!filterSeen.includes('CurrentValue.[编号]'));
+  } finally { server.close(); }
+});
+
+
+test('AC-PP7 货品完善：只搜索非齐备货品，按货号匹配', async () => {
+  const gateway = { listAll: async () => [
+    product('rec1', 'A|黑|男', '906', '黑', '男', '成本'),
+    product('rec2', 'B|黑|男', '71202', '黑', '男', '成本'),
+    product('rec3', 'C|黑|男', '906', '黑', '男', '齐备'),
+  ] };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/incomplete?q=906`)).json();
+    assert.equal(body.total, 1);
+    assert.equal(body.groups[0].items[0].recordId, 'rec1');
+    const all = await (await fetch(`http://127.0.0.1:${port}/products/incomplete`)).json();
+    assert.equal(all.total, 2, '齐备的不进入货品完善');
+  } finally { server.close(); }
+});
+
+test('AC-PP8 货品完善搜索不支持按编号匹配', async () => {
+  const gateway = { listAll: async () => [
+    product('rec1', 'ABC|黑|男', '906', '黑', '男', '成本'),
+  ] };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/incomplete?q=ABC`)).json();
+    assert.equal(body.total, 0);
   } finally { server.close(); }
 });

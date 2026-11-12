@@ -43,6 +43,8 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       hasSampleImage,
       // 图片始终走后端代理，不把飞书附件 token / 临时 URL 暴露给浏览器。
       imageUrl: hasSampleImage && id ? `/api/workbench/products/${encodeURIComponent(id)}/sample-image` : '',
+      // 搜索结果卡片直接跳到「货品信息」对应记录。
+      recordUrl: recordUrl({ appToken: V1_BITABLE_SCHEMA.appToken, tableId: table.tableId, recordId: id }),
     };
   };
 
@@ -80,6 +82,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
 
   router.get('/products/incomplete', async (req, res) => {
     try {
+      const q = String(req.query?.q || '').trim().toLowerCase();
       const rows = await getConfigRows({ gateway: getGateway(), tableKey: 'product' });
       const groups = new Map();
       for (const row of rows) {
@@ -87,11 +90,8 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
         if (!missing || missing === PRODUCT_PROFILE.completeValue) continue;
         const item = itemOf(row);
         if (!item.recordId || !item.number) continue;
-        item.recordUrl = recordUrl({
-          appToken: V1_BITABLE_SCHEMA.appToken,
-          tableId: table.tableId,
-          recordId: item.recordId,
-        });
+        // 「货品完善」只搜非齐备货品；按货号匹配，不按编号匹配。
+        if (q && !item.itemNo.toLowerCase().includes(q)) continue;
         if (!groups.has(missing)) groups.set(missing, []);
         groups.get(missing).push(item);
       }

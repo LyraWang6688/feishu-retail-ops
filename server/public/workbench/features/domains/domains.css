@@ -188,3 +188,7 @@
   border-color: var(--primary);
   background: var(--primary-soft);
 }
+
+/* 货品上新搜索结果：整行点击打开「货品信息」对应记录；样例图仍点开大图 */
+.pp-row[data-pp-record-url] { cursor: pointer; }
+.pp-row[data-pp-record-url]:hover { border-color: var(--primary); }

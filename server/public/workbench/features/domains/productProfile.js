@@ -38,6 +38,7 @@ export const productProfilePageHtml = () => `
     <div data-pp="complete" hidden>
       <div class="pp-head">${backBtn('complete')}<h2>${esc(T.completeTitle)}</h2></div>
       <p class="pp-note" data-pp-complete-hint></p>
+      <div class="pp-search"><input data-pp-complete-search placeholder="${esc(T.completeSearchPlaceholder)}" autocomplete="off"></div>
       <label class="pp-field">${esc(T.completeField)}
         <select data-pp-select></select>
       </label>
@@ -54,7 +55,7 @@ export function createProductProfileModule() {
         host.querySelector('[data-pp="cards"]').hidden = name !== 'cards';
         host.querySelector('[data-pp="new"]').hidden = name !== 'new';
         host.querySelector('[data-pp="complete"]').hidden = name !== 'complete';
-        if (name === 'complete') loadComplete(host);
+        if (name === 'complete') loadComplete(host, host.querySelector('[data-pp-complete-search]')?.value.trim() || '');
       };
       host.addEventListener('click', (event) => {
         const view = event.target.closest?.('[data-pp-view]')?.dataset.ppView;
@@ -67,18 +68,28 @@ export function createProductProfileModule() {
         }
       });
       const input = host.querySelector('[data-pp-search]');
+      const completeSearch = host.querySelector('[data-pp-complete-search]');
       let timer = null;
+      let completeTimer = null;
       input?.addEventListener('input', () => {
         clearTimeout(timer);
         const q = input.value.trim();
         if (q) showToast(T.searchingToast, { sticky: true });
         timer = setTimeout(() => loadSearch(host, q), 250);
       });
+      completeSearch?.addEventListener('input', () => {
+        clearTimeout(completeTimer);
+        completeTimer = setTimeout(() => loadComplete(host, completeSearch.value.trim()), 250);
+      });
       host.querySelector('[data-pp-results]')?.addEventListener('click', (event) => {
         const img = event.target.closest?.('img[data-pp-thumb]');
-        if (!img) return;
-        host.querySelector('[data-pp-large]').src = img.dataset.ppThumb;
-        host.querySelector('[data-pp-modal]').hidden = false;
+        if (img) {
+          host.querySelector('[data-pp-large]').src = img.dataset.ppThumb;
+          host.querySelector('[data-pp-modal]').hidden = false;
+          return;
+        }
+        const row = event.target.closest?.('[data-pp-record-url]');
+        if (row?.dataset.ppRecordUrl) window.open(row.dataset.ppRecordUrl, '_blank', 'noopener');
       });
     },
   };
@@ -103,7 +114,7 @@ async function loadSearch(host, q) {
     empty.hidden = items.length > 0;
     empty.textContent = T.searchNone;
     results.innerHTML = items.map((item) => `
-      <div class="pp-row">
+      <div class="pp-row" data-pp-record-url="${esc(item.recordUrl || '')}">
         ${item.hasSampleImage && item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
         <div class="pp-meta"><b>${esc(item.number)}</b><span>货号 ${esc(item.itemNo)} · 颜色 ${esc(item.color)} · 类别 ${esc(item.category)}</span></div>
       </div>`).join('');
@@ -123,7 +134,7 @@ async function loadSearch(host, q) {
   }
 }
 
-async function loadComplete(host) {
+async function loadComplete(host, q = '') {
   const select = host.querySelector('[data-pp-select]');
   const hint = host.querySelector('[data-pp-complete-hint]');
   const list = host.querySelector('[data-pp-complete-list]');
@@ -134,11 +145,12 @@ async function loadComplete(host) {
   hint.textContent = T.completeLoading;
   list.innerHTML = '';
   try {
-    const data = await api.get(PRODUCT_PROFILE_API.incomplete);
+    const data = await api.get(`${PRODUCT_PROFILE_API.incomplete}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
     const groups = Array.isArray(data?.groups) ? data.groups : [];
     if (!groups.length) {
+      select.disabled = false;
       select.innerHTML = `<option value="">${esc(T.completeSelectPlaceholder)}</option>`;
-      hint.textContent = T.completeEmpty;
+      hint.textContent = q ? T.completeSearchEmpty : T.completeEmpty;
       return;
     }
     select.disabled = false;
