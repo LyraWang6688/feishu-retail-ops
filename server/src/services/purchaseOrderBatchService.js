@@ -556,6 +556,49 @@ class PurchaseOrderBatchService {
       document_count: tokens.length,
     };
   }
+
+  /**
+   * ⭐ 2026-11-12（业务负责人）：验收时上传的「验收单」写进主表**「对方单据」**附件列。
+   *   · 与 `writeDocument` 不同：这里不覆盖「我方单据」，只追加到「对方单据」；
+   *   · 已有附件原样带上（多张/多次验收不会把之前的上传冲掉）；
+   *   · 同一个 file_token 重复写 ⇒ 跳过（job 重试幂等）。
+   */
+  async writeCounterpartyDocument({
+    batchNo = '', batchRecordId = '', documents = [], correlation = {},
+  } = {}) {
+    const table = this.gateway.table('purchaseOrderBatch');
+    const field = table?.fields?.counterpartyDocument;
+    if (!field) throw new Error('「采购主表」未配置「对方单据」字段映射');
+    const incoming = (Array.isArray(documents) ? documents : [])
+      .map((doc) => ({
+        file_token: String(doc?.fileToken || doc?.file_token || '').trim(),
+        fileName: String(doc?.fileName || doc?.file_name || '').trim(),
+      }))
+      .filter((doc) => doc.file_token);
+    if (!incoming.length) return { written: false, skipped: true, reason: 'no_documents' };
+    const target = await this.locate({ batchNo, batchRecordId });
+    if (!target) return { written: false, skipped: true, reason: 'no_batch_record' };
+    const record = await this.gateway.get('purchaseOrderBatch', target.record_id).catch(() => null);
+    if (!record) return { written: false, skipped: true, reason: 'no_batch_record' };
+    const existing = attachmentTokens(record.fields?.[field]);
+    const next = [...existing];
+    for (const doc of incoming) {
+      if (!next.includes(doc.file_token)) next.push(doc.file_token);
+    }
+    if (next.length === existing.length) {
+      return { written: false, skipped: true, record_id: target.record_id, batch_no: batchNo };
+    }
+    await this.gateway.update('purchaseOrderBatch', target.record_id, {
+      counterpartyDocument: next.map((token) => ({ file_token: token })),
+    }, { correlation });
+    return {
+      written: true,
+      record_id: target.record_id,
+      batch_no: batchNo,
+      document_count: next.length,
+      added: next.length - existing.length,
+    };
+  }
 }
 
 module.exports = {

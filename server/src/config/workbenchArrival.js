@@ -24,12 +24,16 @@ module.exports = {
   api: Object.freeze({
     detail: '/purchase/arrivals/detail',
     accept: '/purchase/arrivals/accept',
+    // ⭐ 2026-11-12：验收单（对方单据）图片上传 —— 原始二进制 POST，返回 file_token
+    acceptanceDoc: '/purchase/arrivals/acceptance-doc',
   }),
   fields: Object.freeze({
     batchNo: 'batchNo',
     actualAmount: 'actualAmount',
     supplierRecordId: 'supplierRecordId',
     lines: 'lines',
+    // ⭐ 2026-11-12：验收单（要写进主表「对方单据」附件列）
+    counterpartyDocuments: 'counterpartyDocuments',
     productRecordId: 'productRecordId',
     itemNo: 'itemNo',
     size: 'size',
@@ -59,5 +63,9 @@ module.exports = {
     alreadyAccepted: '这一批已经到货验收过了，不用再验收。',
     supplierRequired: '请先选供应商，再验收。',
     supplierNotInBatch: '这个供应商在这一批里没有待验收的明细，请刷新后再试。',
+    counterpartyDocInvalid: '验收单格式不对，请重新拍照或选择图片。',
+    counterpartyDocTooMany: '验收单最多上传 5 张，请删掉多余的再提交。',
+    counterpartyDocUploadFailed: '验收单没上传成功，请稍后再试。',
+    acceptanceDocUploadOperation: '上传验收单',
   }),
 };

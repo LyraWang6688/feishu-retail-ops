@@ -52,12 +52,13 @@ async function request(path, options = {}) {
   try {
     const url = new URL(path, window.location.origin);
     if (isRead) url.searchParams.set('_', Date.now());
+    const isBinary = typeof Blob !== 'undefined' && options.body instanceof Blob;
     const response = await fetch(url, {
       credentials: 'same-origin',
       cache: 'no-store',
       ...options,
       headers: {
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.body && !isBinary ? { 'Content-Type': 'application/json' } : {}),
         ...(options.headers || {}),
       },
     });
@@ -85,6 +86,18 @@ async function request(path, options = {}) {
 
 export const api = {
   get(path) { return request(path); },
+  /** 原始二进制上传（验收单拍照/选图）；文件名用 URL 编码进头，避免非 ASCII header 问题。 */
+  postRaw(path, file) {
+    const type = String(file?.type || 'application/octet-stream');
+    return request(path, {
+      method: 'POST',
+      body: file,
+      headers: {
+        'Content-Type': type,
+        'x-file-name': encodeURIComponent(String(file?.name || '')),
+      },
+    });
+  },
   post(path, body) {
     // ⭐⭐ 2026-10-14 晚（埋点 P0 ②）：把"这次写请求是哪一次点击引起的"带上 ——
     //   服务端（`utils/uiTapReport.js` 的 `uiTapResultMiddleware`）据此记一条

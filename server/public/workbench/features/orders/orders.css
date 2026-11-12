@@ -286,3 +286,21 @@
   color: var(--error-text);
   font-size: var(--font-size-sm);
 }
+
+/* ⭐ 2026-11-12（业务负责人）：验收单（拍照/选图）—— 一行上传，选填，最多 5 张 */
+.form-field.action-form__doc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.form-field.action-form__doc input[type="file"] {
+  width: 100%;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+.action-form__doc-hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}

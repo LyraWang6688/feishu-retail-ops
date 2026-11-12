@@ -134,11 +134,15 @@ export const ORDERS_TEXTS = {
 export const ARRIVAL_FULL_API = {
   detail: '/api/workbench/purchase/arrivals/detail',
   accept: '/api/workbench/purchase/arrivals/accept',
+  // ⭐ 2026-11-12：验收单图片上传（原始二进制 POST，返回 file_token）
+  acceptanceDoc: '/api/workbench/purchase/arrivals/acceptance-doc',
 };
 export const ARRIVAL_FULL_FIELDS = {
   batchNo: 'batchNo', actualAmount: 'actualAmount', lines: 'lines',
   // ⭐ 2026-11-10：按供应商拆卡后，明细/提交都要带供应商范围（同一批次可有多家分别验收）
   supplierRecordId: 'supplierRecordId',
+  // ⭐ 2026-11-12：验收单 → 主表「对方单据」
+  counterpartyDocuments: 'counterpartyDocuments',
   productRecordId: 'productRecordId', size: 'size', quantity: 'quantity',
 };
 export const ARRIVAL_FULL_TEXTS = {
@@ -162,6 +166,13 @@ export const ARRIVAL_FULL_TEXTS = {
   zeroMeansNotArrived: '没到的填 0',
   // ⭐ 2026-11-09（业务负责人）：货款必填（参考销售货品页的金额校验）
   amountRequired: '请先填「本次货款金额」（大于 0 的数字），再确认到货并入库',
+  // ⭐ 2026-11-12（业务负责人）：验收单（拍照/选图上传）→ 主表「对方单据」
+  acceptanceDocLabel: '验收单',
+  acceptanceDocHint: '可拍照或从相册选择（选填，最多 5 张）',
+  acceptanceDocTooMany: '验收单最多上传 5 张，请删掉多余的再提交。',
+  acceptanceDocInvalid: '验收单只支持图片，请重新拍照或选择图片。',
+  acceptanceDocTooLarge: '单张验收单不能超过 10MB。',
+  acceptanceDocUploadFailed: '验收单没上传成功，请稍后再试。',
   // ⚠️ 后端 accept 必回 redirect_url（submitToastUrl 唯一生成）；缺失 = 不该发生的事故，按失败报
   redirectMissing: '提交回执缺少跳转地址，请刷新工作台后再看；这次不要重复提交',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',

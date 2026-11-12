@@ -67,11 +67,13 @@ function loadOrdersModule() {
   copy('core/formatters.js', 'formatters.mjs');
   copy('core/api-client.js', 'api-client.mjs');
   copy('core/ui.js', 'ui.mjs');
+  copy('features/orders/acceptanceDoc.js', 'acceptanceDoc.mjs');
   copy('features/orders/index.js', 'orders-index.mjs', [
     ["from '../../config/orders.js'", "from './orders-config.mjs'"],
     ["from '../../core/formatters.js'", "from './formatters.mjs'"],
     ["from '../../core/api-client.js'", "from './api-client.mjs'"],
     ["from '../../core/ui.js'", "from './ui.mjs'"],
+    ["from './acceptanceDoc.js'", "from './acceptanceDoc.mjs'"],
   ]);
   return import(pathToFileURL(path.join(dir, 'orders-index.mjs')).href);
 }
@@ -415,4 +417,34 @@ test('AC-RC6 ⭐ 货款必填（参考销售货品页）：required + 未填/<=0
   const amountCheck = src.indexOf('amountHint.textContent = ARRIVAL_FULL_TEXTS.amountRequired');
   const writeAction = src.indexOf('return runWriteAction(button', src.indexOf('async function submitArrival'));
   assert.ok(amountCheck > 0 && writeAction > amountCheck, '金额校验在发请求之前 ✓');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC-RC8 ⭐ 验收单：拍照/选图上传 → 主表「对方单据」
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC-RC8 ⭐ 验收单一行：file input 支持拍照/选图；上传后随 accept 提交（我的单据保持不变）', async () => {
+  const orders = await loadOrdersModule();
+  const html = orders.purchaseOrdersHtml(BATCH_ROWS, { supplierKey: 's1' });
+  assert.ok(html.includes('验收单'), '有「验收单」这一行 ✓');
+  assert.ok(html.includes('data-field="arrival-doc"'), '验收单 file input ✓');
+  assert.ok(html.includes('type="file"') && html.includes('accept="image/*"'), '只收图片，可拍照/相册 ✓');
+  assert.ok(html.includes('multiple'), '支持多张（最多 5 张，提交前校验）✓');
+
+  const config = readWorkbench('config/orders.js');
+  assert.ok(config.includes("acceptanceDoc: '/api/workbench/purchase/arrivals/acceptance-doc'"),
+    '验收单上传端点走配置 ✓');
+  assert.ok(config.includes("counterpartyDocuments: 'counterpartyDocuments'"),
+    '验收单提交字段走配置 ✓');
+
+  const src = readWorkbench('features/orders/index.js');
+  const docModule = readWorkbench('features/orders/acceptanceDoc.js');
+  assert.ok(docModule.includes('api.postRaw(endpoint, file)'),
+    '验收单先上传拿 file_token ✓');
+  assert.ok(src.includes('uploadArrivalDocuments('), '提交时调用验收单上传 ✓');
+  assert.ok(src.includes('ARRIVAL_FULL_FIELDS.counterpartyDocuments'), 'accept body 带验收单 tokens ✓');
+  assert.ok(src.includes('arrivalDocFieldHtml('), '验收单上传行走配置文案 ✓');
+  // 我方单据仍由服务端出图回填；前端验收单不会覆盖「我方单据」
+  assert.equal(src.includes("data-field=\"arrival-doc\"") && src.includes("counterpartyDocuments"),
+    true);
 });

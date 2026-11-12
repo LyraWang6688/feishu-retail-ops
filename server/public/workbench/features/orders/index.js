@@ -1,6 +1,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml, money, statusClass } from '../../core/formatters.js';
 import { describeError, runWriteAction, showPageError } from '../../core/ui.js';
+import { arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments } from './acceptanceDoc.js';
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
   SALES_SECTIONS, SALES_DELIVERY_PAGE,
@@ -168,6 +169,11 @@ const purchaseBatchCardHtml = (unit) => {
               <input data-field="arrival-amount" type="text" inputmode="decimal" required aria-required="true" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
             </label>
             <p class="arrival-amount-hint" data-view="arrival-amount-hint" hidden>${escapeHtml(ARRIVAL_FULL_TEXTS.amountRequired)}</p>
+            ${arrivalDocFieldHtml({
+              escapeHtml,
+              label: ARRIVAL_FULL_TEXTS.acceptanceDocLabel,
+              hint: ARRIVAL_FULL_TEXTS.acceptanceDocHint,
+            })}
             <button class="btn btn-primary" type="button" data-action="submit-arrival" data-batch="${escapeHtml(unit.batch_no)}" data-supplier="${escapeHtml(supplier)}">${escapeHtml(T.arrivalSubmit)}</button>
           </div>
         </details>
@@ -181,16 +187,11 @@ const supplierKeyOfRow = (row = {}) => {
   return id || `name:${name}`;
 };
 
-/**
- * ⭐ 2026-11-10（业务负责人：验收按采购明细的供应商拆卡）：
- *   一个批次号可能混多家供应商 ⇒ 验收单位 = **批次号 × 供应商**（每个单位只含该供应商的明细行）。
- *   采购侧「一个提交 = 一个批次号」不变；这里只是把同一批按明细里的供应商拆成多张验收卡。
- */
+// 验收单位 = 批次号 × 供应商（采购侧仍是一个提交一个批次号）。
 export function groupAcceptanceUnits(rows = []) {
   const units = [];
   for (const batch of groupPurchaseOrders(rows).filter((item) => !isArrivedBatch(item))) {
-    // ⭐ 2026-11-11（业务负责人）：只认主表「已到货供应商」字段（列表接口每行带过来），
-    //   不再依赖本地任务文件/本地辅助接口。
+    // 只认主表「已到货供应商」（列表每行带过来），不依赖本地任务文件。
     const accepted = new Set((batch.rows || [])
       .flatMap((row) => (Array.isArray(row.arrived_supplier_ids) ? row.arrived_supplier_ids : [])));
     const bySupplier = new Map();
@@ -438,11 +439,9 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     // ⭐ 2026-11-09：验收页第二层的"当前选中的供应商"（空 = 显示供应商卡片层）
     activeSupplierKey: '',
   };
-
   const $ = (selector) => state.container.querySelector(selector);
   const field = (name) => $(`[data-field="${name}"]`);
   const valueOf = (name) => (field(name)?.value ?? '').trim();
-
   function renderResult(text, isError = false) {
     const node = $('[data-view="action-result"]');
     if (node) {
@@ -452,7 +451,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     if (isError) showPageError(text || '');
     else showPageError('');
   }
-
   function renderShell() {
     // ⚠️ 2026-10-29：老列表/详情退场后，这一页**只画当前领域那一块**（销售 = 三卡入口；采购 = 验收）。
     //    单领域模式（销售 tab / 采购 tab）本来就没有内部子 tab，这次把那段也一起删了。
@@ -467,7 +465,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       ${mode === 'sales' ? '' : purchasePanel}
       <p class="operation-result" data-view="action-result" role="status"></p>`;
   }
-
   /** 售后单不是列表：点卡片直接扫货品码，再进入售后候选页。 */
   async function scanAfterSales() {
     try {
@@ -489,7 +486,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       return renderResult('扫一扫没有成功，请再试一次。', true);
     }
   }
-
   function renderList() {
     const host = $('[data-view="orders-host"]');
     if (!host) return;
@@ -509,7 +505,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         <span class="tag tag-info">待建设</span>
       </div>`;
   }
-
   function renderPurchaseList() {
     $('[data-view="purchase-host"]').innerHTML = purchaseOrdersHtml(state.purchaseRows, {
       supplierKey: state.activeSupplierKey,
@@ -536,18 +531,15 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     const timer = setInterval(render, 1000);
     return () => clearInterval(timer);
   }
-
   /** localStorage 拿不到（隐私模式 / 老内核）⇒ 当没有缓存，功能照旧。 */
   const safeStorage = () => {
     try { return globalThis.localStorage; } catch { return undefined; }
   };
-
   /** 只负责"拉一次最新订单"（缓存读写都在首屏那一层做）。 */
   const fetchOrders = async () => {
     const data = await api.get(ORDERS_API.orders);
     return data.orders || [];
   };
-
   /**
    * ⭐⭐【首屏】先旧后新（业务负责人 2026-10-12）：
    *   ① 第一次打开 ⇒ **立刻**用"上次那批"画出来（0 秒可看）+ 一行「刷新中」；
@@ -555,7 +547,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
    * 🔴 写操作之后走 `loadOrders({ freshOnly: true })` —— **绝不读旧缓存**（不能给她看旧的 ✗）。
    */
   const ordersLoader = createFirstPaintLoader({ storage: safeStorage(), load: fetchOrders });
-
   async function loadOrders({ freshOnly = false } = {}) {
     if (state.ordersLoading) return;
     state.ordersLoading = true;
@@ -616,7 +607,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       showPageError(describeError(error));
     }
   }
-
   /**
    * 「验收到货」：把这张卡上的批次 + 实际金额 + 到货说明交给后端既有入库链路。
    * ⚠️ 金额必填（既有口径）；校验放在提交前，后端还会再判一次（两道）。
@@ -642,7 +632,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       box.innerHTML = `<p>${escapeHtml(ARRIVAL_FULL_TEXTS.detailFailed)}</p>`;
     }
   }
-
   async function submitArrival(button) {
     const batchNo = button.dataset.batch || '';
     const supplier = button.dataset.supplier || '';
@@ -697,12 +686,23 @@ export function createOrdersModule({ mode = 'both' } = {}) {
           return renderResult(text, true);
         }
         if (!built.lines.length) return renderResult(ARRIVAL_FULL_TEXTS.noArrivalLines, true);
+        // ⭐ 2026-11-12（业务负责人）：验收单（拍照/选图）先上传拿 file_token，再随验收一起提交；
+        //   上传失败 ⇒ 不提交验收（如实报错）。
+        const docInput = form.querySelector('[data-field="arrival-doc"]');
+        const files = docInput?.files ? [...docInput.files] : [];
+        const uploadedDocs = await uploadArrivalDocuments({
+          api, endpoint: ARRIVAL_FULL_API.acceptanceDoc, files, texts: ARRIVAL_FULL_TEXTS,
+        });
+        if (!uploadedDocs.ok) return renderResult(uploadedDocs.error, true);
+        const counterpartyDocuments = uploadedDocs.documents;
         const result = await api.post(ARRIVAL_FULL_API.accept, {
           [ARRIVAL_FULL_FIELDS.batchNo]: batchNo,
           // ⭐ 2026-11-10：只验这一家供应商的明细子集；后端按「批次 × 供应商」独立验收/幂等
           ...(supplier ? { [ARRIVAL_FULL_FIELDS.supplierRecordId]: supplier } : {}),
           [ARRIVAL_FULL_FIELDS.actualAmount]: Number(rawAmount),
           [ARRIVAL_FULL_FIELDS.lines]: built.lines,
+          ...(counterpartyDocuments.length
+            ? { [ARRIVAL_FULL_FIELDS.counterpartyDocuments]: counterpartyDocuments } : {}),
         });
         // ⭐ 2026-11-09（业务负责人：回执统一成 toast，**不保留旧兜底**）：
         //   accept 必回 `redirect_url`（`submitToastUrl` 唯一真源）⇒ 回工作台，shared/toast.js 弹统一文案。
@@ -718,12 +718,12 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   }
 
  
-
-
-
-
-
   function bind() {
+    state.container.addEventListener('change', (event) => {
+      const input = event.target.closest?.('[data-field="arrival-doc"]');
+      if (!input) return;
+      updateArrivalDocHint(input, ARRIVAL_FULL_TEXTS);
+    });
     state.container.addEventListener('click', (event) => {
       const sectionCard = event.target.closest('[data-orders-section]');
       if (sectionCard) {

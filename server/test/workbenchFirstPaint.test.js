@@ -26,6 +26,7 @@ async function loadOrders() {
     'core/formatters.js': 'formatters.mjs',
     'core/api-client.js': 'api-client.mjs',
     'core/ui.js': 'ui.mjs',
+    'features/orders/acceptanceDoc.js': 'acceptanceDoc.mjs',
   };
   for (const [from, to] of Object.entries(copies)) fs.copyFileSync(path.join(WORKBENCH, from), path.join(dir, to));
   let source = read('features/orders/index.js');
@@ -34,6 +35,7 @@ async function loadOrders() {
     ["from '../../core/formatters.js'", "from './formatters.mjs'"],
     ["from '../../core/api-client.js'", "from './api-client.mjs'"],
     ["from '../../core/ui.js'", "from './ui.mjs'"],
+    ["from './acceptanceDoc.js'", "from './acceptanceDoc.mjs'"],
   ]) {
     assert.ok(source.includes(needle), `harness 失配（源码里没有 ${needle}）`);
     source = source.split(needle).join(replacement);
