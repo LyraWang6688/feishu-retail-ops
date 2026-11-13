@@ -1,7 +1,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml, money, statusClass } from '../../core/formatters.js';
 import { describeError, runWriteAction, showPageError } from '../../core/ui.js';
-import { arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments } from './acceptanceDoc.js';
+import { arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments, validateArrivalDocuments } from './acceptanceDoc.js';
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
   SALES_SECTIONS, SALES_DELIVERY_PAGE,
@@ -658,6 +658,9 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       return renderResult('');
     }
     if (amountHint) amountHint.hidden = true;
+    // ⭐ 2026-11-14：验收单也必填；未选图不发请求，字段旁给提示并聚焦。
+    const docs = validateArrivalDocuments(form, ARRIVAL_FULL_TEXTS);
+    if (!docs.ok) return renderResult(docs.error, true);
     // ⭐ 同上：点一下立刻有反馈 + 防连点（校验放在守卫**之前** —— 没填完不该置灰）
     return runWriteAction(button, async () => {
       renderResult('');
@@ -688,10 +691,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         if (!built.lines.length) return renderResult(ARRIVAL_FULL_TEXTS.noArrivalLines, true);
         // ⭐ 2026-11-12（业务负责人）：验收单（拍照/选图）先上传拿 file_token，再随验收一起提交；
         //   上传失败 ⇒ 不提交验收（如实报错）。
-        const docInput = form.querySelector('[data-field="arrival-doc"]');
-        const files = docInput?.files ? [...docInput.files] : [];
         const uploadedDocs = await uploadArrivalDocuments({
-          api, endpoint: ARRIVAL_FULL_API.acceptanceDoc, files, texts: ARRIVAL_FULL_TEXTS,
+          api, endpoint: ARRIVAL_FULL_API.acceptanceDoc, files: docs.files, texts: ARRIVAL_FULL_TEXTS,
         });
         if (!uploadedDocs.ok) return renderResult(uploadedDocs.error, true);
         const counterpartyDocuments = uploadedDocs.documents;
