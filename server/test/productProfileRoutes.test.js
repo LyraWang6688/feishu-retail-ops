@@ -64,7 +64,7 @@ test('AC-PP2 缺失分组：排除齐备，按缺失值动态分组、数量降�
   const { server, port } = await listen(appWith(gateway));
   try {
     const body = await (await fetch(`http://127.0.0.1:${port}/products/incomplete`)).json();
-    assert.equal(body.total, 3);
+    assert.equal(body.total, 3, '只统计至少缺一个维度的货品');
     assert.deepEqual(body.groups.map((g) => [g.value, g.count]), [['成本', 2], ['成本、品类', 1]]);
     assert.ok(body.groups[0].items[0].recordUrl.startsWith('https://'));
   } finally { server.close(); }
@@ -188,11 +188,12 @@ test('AC-PP11 货品完善三维度：样例图 / 商品信息缺失 / 标签信
     product('rec1', 'A|黑|男', 'A', '黑', '男', '齐备', '', '齐备'),
     product('rec2', 'B|黑|男', 'B', '黑', '男', '成本', 'file_2', '齐备'),
     product('rec3', 'C|黑|男', 'C', '黑', '男', '齐备', 'file_3', '主推人群'),
+    product('rec4', 'D|黑|男', 'D', '黑', '男', '齐备', 'file_4', '齐备'),
   ] };
   const { server, port } = await listen(appWith(gateway));
   try {
     const body = await (await fetch(`http://127.0.0.1:${port}/products/completion`)).json();
-    assert.equal(body.total, 3);
+    assert.equal(body.total, 3, '只统计至少缺一个维度的货品');
     assert.deepEqual(body.dimensions.map((d) => [d.key, d.count]), [['sample', 1], ['product', 1], ['tag', 1]]);
     assert.equal(body.dimensions[0].items.map((i) => i.recordId).join(','), 'rec1');
     assert.match(body.dimensions[1].items[0].recordUrl, /record=rec2/);

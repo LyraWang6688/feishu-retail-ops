@@ -131,7 +131,8 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
           .sort((a, b) => a.number.localeCompare(b.number, 'zh-CN'))
           .slice(0, PRODUCT_PROFILE.completionLimit),
       }));
-      return res.json({ success: true, total: all.length, dimensions });
+      const total = new Set(dimensions.flatMap((dimension) => dimension.items.map((item) => item.recordId))).size;
+      return res.json({ success: true, total, dimensions });
     } catch (error) {
       logError('workbench.product_profile.completion_failed', { request_id: req.requestId, error: error.message });
       return res.status(502).json({ success: false, error: 'product_completion_failed' });
