@@ -38,10 +38,7 @@ export const productProfilePageHtml = () => `
     <div data-pp="complete" hidden>
       <div class="pp-head">${backBtn('complete')}<h2>${esc(T.completeTitle)}</h2></div>
       <p class="pp-note" data-pp-complete-hint></p>
-      <div class="pp-search"><input data-pp-complete-search placeholder="${esc(T.completeSearchPlaceholder)}" autocomplete="off"></div>
-      <label class="pp-field">${esc(T.completeField)}
-        <select data-pp-select></select>
-      </label>
+      <div class="pp-tabs" data-pp-complete-tabs></div>
       <div data-pp-complete-list></div>
     </div>
   </div>`;
