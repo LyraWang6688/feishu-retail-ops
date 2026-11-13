@@ -237,3 +237,7 @@
 
 /* hidden 属性优先级兜底：.domain-cards 自带 display:grid，不加这条会被覆盖 */
 .domain-cards[hidden], .placeholder-note[hidden] { display: none !important; }
+
+/* 货品上新搜索结果：只显示有问题的维度，编号下方不再重复货号/颜色/类别 */
+.pp-issues { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.pp-issue { display: inline-block; max-width: 100%; padding: 3px 8px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
