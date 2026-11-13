@@ -305,3 +305,43 @@ test('AC-SD16 ⭐ 固定所有者：配置了 owner ⇒ 每个上传成功的文
   assert.equal(failed.status, 'failed');
   assert.deepEqual(gateway3.calls.update, [], '转移失败 ⇒ 不勾复选框');
 });
+
+test('AC-SD17 ⭐ 读记录遇到飞书 1254607（Data not ready）⇒ 就地短重试后成功，不丢同步', async () => {
+  let reads = 0;
+  const transient = Object.assign(new Error('Request failed with status code 400'), {
+    response: { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } },
+  });
+  const gateway = createGateway({ folderFiles: [] });
+  gateway.get = async () => {
+    reads += 1;
+    if (reads === 1) throw transient;
+    return { fields: fieldsOf({ images: [imageOf('ft1', 'a.jpg')] }) };
+  };
+  const service = createSampleImageDriveService({
+    gateway,
+    config: configOf({ readRetry: { maxRetries: 2, baseDelayMs: 0 } }),
+    retrySleep: async () => {},
+  });
+  const result = await service.syncRecord('r1', { reason: 'record_added' });
+  assert.equal(result.status, 'synced');
+  assert.equal(reads, 2, '第一次瞬时失败 ⇒ 第二次读到记录（重试生效）');
+  assert.deepEqual(gateway.calls.upload.map((u) => u.fileName), ['A1_黑色_A.jpg']);
+});
+
+test('AC-SD18 ⭐ 确定性错误（403 / 非瞬时码）⇒ 一次都不重试，如实 failed', async () => {
+  let reads = 0;
+  const permanent = Object.assign(new Error('Request failed with status code 403'), {
+    response: { status: 403, data: { code: 91403, msg: 'forbidden' } },
+  });
+  const gateway = createGateway({ folderFiles: [] });
+  gateway.get = async () => { reads += 1; throw permanent; };
+  const service = createSampleImageDriveService({
+    gateway,
+    config: configOf({ readRetry: { maxRetries: 3, baseDelayMs: 0 } }),
+    retrySleep: async () => {},
+  });
+  const result = await service.syncRecord('r1', { reason: 'record_added' });
+  assert.equal(result.status, 'failed');
+  assert.equal(reads, 1, '权限类错误不重试（只读一次）');
+  assert.deepEqual(gateway.calls.upload, []);
+});
