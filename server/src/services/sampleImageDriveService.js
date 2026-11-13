@@ -40,7 +40,7 @@ const { logInfo, logWarn, logError } = require('../utils/logger');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 // ⭐ 2026-11-13：读记录遇飞书 1254607 / 5xx / 限流时**就地短重试**（单条事件链路没人替它重跑）
-const { withTransientRetry, resolveTransientRetryConfig } = require('../config/pushRetry');
+const { resolveTransientRetryConfig } = require('../config/pushRetry');
 
 const IMAGE_EXTENSIONS = Object.freeze(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.heic']);
 /**
@@ -153,14 +153,7 @@ const createSampleImageDriveService = ({
     baseDelayMs: Number(config.readRetry?.baseDelayMs ?? 1500),
     factor: 2,
   };
-  const readRecord = (recordId) => withTransientRetry(
-    () => gateway.get('product', recordId, { retry: false }),
-    {
-      operation: 'sample_image.read_record',
-      config: readRetryConfig,
-      ...(typeof retrySleep === 'function' ? { sleep: retrySleep } : {}),
-    },
-  );
+  const readRecord = (recordId) => gateway.get('product', recordId, { retry: readRetryConfig });
   const folderToken = textOf(config.folder?.token);
   const naming = config.naming || SAMPLE_IMAGE_DRIVE.naming;
   const ops = config.operations || SAMPLE_IMAGE_DRIVE.operations || {};

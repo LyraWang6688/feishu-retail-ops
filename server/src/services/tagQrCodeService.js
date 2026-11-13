@@ -106,16 +106,7 @@ const createTagQrCodeService = ({
     ensureFieldNames();
     const scanUrl = scanUrlOf(recordId);
     const fileName = fileNameOf(recordId);
-    const record = await withTransientRetry(
-      () => gateway.get('product', recordId, { retry: false }),
-      {
-        operation: 'product.tag_qr.read_record',
-        config: retryConfig,
-        onRetry: ({ attempt, delayMs, error: retryError }) => logWarn('product.tag_qr.retry', {
-          record_id: recordId, step: 'read_record', attempt, delay_ms: delayMs, error: retryError.message,
-        }),
-      },
-    );
+    const record = await gateway.get('product', recordId, { retry: retryConfig });
     const existing = attachmentsOf(record?.fields?.[tagQrFieldName]);
     const namesMatch = existing.some((item) => item.name === fileName);
 
@@ -173,17 +164,8 @@ const createTagQrCodeService = ({
       }
       try {
         // 附件字段写法（官方 FAQ）：`[{ file_token }]`。
-        // ⚠️ 重试**复用同一个 file_token**（不重新上传）⇒ 上一次若其实已写入，重试写的是同一张图。
-        await withTransientRetry(
-          () => gateway.update('product', recordId, { [config.fields.tagQrCode]: [{ file_token: fileToken }] }),
-          {
-            operation: 'product.tag_qr.write_back',
-            config: retryConfig,
-            onRetry: ({ attempt, delayMs, error: retryError }) => logWarn('product.tag_qr.retry', {
-              record_id: recordId, step: 'write_back', attempt, delay_ms: delayMs, error: retryError.message,
-            }),
-          },
-        );
+        // ⚠️ 写回由 gateway 写调度器重试；这里保留短重试只为兼容旧用例的 fake gateway。
+        await gateway.update('product', recordId, { [config.fields.tagQrCode]: [{ file_token: fileToken }] });
         // 改了货品 ⇒ 作废扫码页「货品信息」内存快照（只作废货品那一份）。
         invalidateLiveInventorySnapshot('product_tag_qr_written', { tableKey: 'product' });
       } catch (error) {

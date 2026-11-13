@@ -70,7 +70,7 @@ const { logInfo, logWarn } = require('../utils/logger');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 // ⭐ 2026-11-11：瞬时错误（飞书 1254607 / 429 / 5xx / 网络）的通用小退避重试——
 //   项目里已有这一份（`config/pushRetry` 的 `withTransientRetry`），**不另写重试器**。
-const { withTransientRetry, resolveTransientRetryConfig } = require('../config/pushRetry');
+const { resolveTransientRetryConfig } = require('../config/pushRetry');
 // 她填错了（400，原样回显）vs 远端出错（其余，页面只说"查询失败"）——与
 // `inventoryAdjustmentService` 同一条约定，控制器按 statusCode 分流。
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -779,20 +779,7 @@ const createLabelPrintService = (gateway, options = {}) => {
     }
     const filter = equalsFormula(recordIdLookupField, id);
     if (!filter) throw new Error(`记录 ID 含有不能拼进筛选公式的字符：${id}`);
-    const stockRecords = await withTransientRetry(
-      () => gateway.listByFilter('liveInventory', filter, { retry: false }),
-      {
-        operation: 'label_print.scan_read',
-        config: transientRetry,
-        onRetry: ({ attempt, delayMs, error: retryError }) => logWarn('workbench.labels.record_fast_read_retry', {
-          product_record_id: id,
-          filter_kind: 'record_id_lookup',
-          attempt,
-          delay_ms: delayMs,
-          error: String(retryError?.message || ''),
-        }),
-      },
-    );
+    const stockRecords = await gateway.listByFilter('liveInventory', filter, { retry: transientRetry });
     const data = await buildLabelsFromTables(stockRecords, [record], { keyword: itemNo });
     const exact = (data.labels || []).filter((label) => label.number === number);
     logInfo('workbench.labels.record_fast_read', {

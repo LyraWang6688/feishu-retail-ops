@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **455** 个事件。按前缀分组：
+共 **453** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -170,7 +170,6 @@
 | `label_print.form.processed` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.received` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.record_failed` | 1 | src/services/labelPrintFormIntakeService.js |
-| `label_print.form.record_read_retry` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.retry` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.job.claimed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.done` | 1 | src/services/labelPrintQueueService.js |
@@ -272,7 +271,7 @@
 | `product.tag_qr.not_wired` | 1 | src/routes/larkEvents.js |
 | `product.tag_qr.overwriting` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.record_failed` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.retry` | 3 | src/services/tagQrCodeService.js |
+| `product.tag_qr.retry` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.skipped_existing` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.written` | 1 | src/services/tagQrCodeService.js |
 
@@ -573,7 +572,6 @@
 | `workbench.labels.missing_qr_record_id` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.read_retry` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.record_fast_read` | 1 | src/services/labelPrintService.js |
-| `workbench.labels.record_fast_read_retry` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.record_read_failed` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.record_resolved` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.skipped_records` | 1 | src/services/labelPrintService.js |
