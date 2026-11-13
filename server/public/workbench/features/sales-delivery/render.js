@@ -47,6 +47,7 @@ const productRowsHtml = (item, T, statuses) => {
 const itemCardHtml = (item, T, statuses) => `
   <article class="sd-card" data-sd-item data-sd-kind="${escapeHtml(item.kind)}" data-sd-order="${escapeHtml(item.orderNo)}" data-sd-entry="${escapeHtml(item.salesEntryRecordId || '')}" data-sd-pending="${escapeHtml(item.pendingAmount ?? '')}">
     ${productRowsHtml(item, T, statuses)}
+    ${item.orderNo ? `<div class="sd-audit-row"><a class="sd-audit-link" href="/workbench/write-audit.html?order_no=${encodeURIComponent(item.orderNo)}">写入时序</a></div>` : ''}
     ${item.hasAmounts ? `<div class="sd-row-footer">${amountsHtml(item, T)}<div class="sd-actions">${paymentButtonHtml(item, T)}</div></div>` : ''}
   </article>`;
 
