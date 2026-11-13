@@ -234,3 +234,6 @@
 .pf-modal-actions { display: flex; gap: 8px; margin-top: 14px; }
 .pf-modal-actions .btn { flex: 1; }
 .pf-modal-actions .danger { background: var(--danger); color: var(--surface); }
+
+/* hidden 属性优先级兜底：.domain-cards 自带 display:grid，不加这条会被覆盖 */
+.domain-cards[hidden], .placeholder-note[hidden] { display: none !important; }

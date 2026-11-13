@@ -20,6 +20,7 @@ test('AC-PF3 数据配置有「产品特点配置」卡片，点击打开三个�
   assert.ok(page.includes('data-feature-add'));
   assert.ok(page.includes('tag.toLowerCase() === value.toLowerCase()'), '前端先做重复校验');
   assert.ok(page.includes('PRODUCT_FEATURES_API.add'), '新增走接口');
+  assert.ok(page.includes("cards.classList.add('hidden')"), '打开配置时隐藏入口卡片');
   assert.ok(page.includes('PRODUCT_FEATURES_API.update'), '修改走接口');
   assert.ok(page.includes('PRODUCT_FEATURES_API.remove'), '删除走接口');
   assert.ok(page.includes('item.usage'), '展示使用次数');

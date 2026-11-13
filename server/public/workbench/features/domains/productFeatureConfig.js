@@ -34,8 +34,8 @@ export function openProductFeatureConfig(host) {
   const panel = document.createElement('div');
   panel.dataset.view = 'product-feature-config';
   host.append(panel);
-  if (cards) cards.hidden = true;
-  if (note) note.hidden = true;
+  if (cards) cards.classList.add('hidden');
+  if (note) note.classList.add('hidden');
   panel.hidden = false;
   panel.innerHTML = `<p class="pf-empty">${escapeHtml(T.loading)}</p>`;
   let dimensions = [];
@@ -43,8 +43,8 @@ export function openProductFeatureConfig(host) {
   let deleting = null;
   const close = () => {
     panel.hidden = true;
-    if (cards) cards.hidden = false;
-    if (note) note.hidden = false;
+    if (cards) cards.classList.remove('hidden');
+    if (note) note.classList.remove('hidden');
   };
   const render = () => {
     panel.innerHTML = panelHtml(dimensions, editing, deleting);
