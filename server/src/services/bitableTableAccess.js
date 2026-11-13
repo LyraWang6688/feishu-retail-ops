@@ -46,4 +46,36 @@ const createRecordInTable = async (gateway, tableId, fields, options = {}) => {
   };
 };
 
-module.exports = { listRecordsInTable, createRecordInTable };
+const updateRecordInTable = async (gateway, tableId, recordId, fields, options = {}) => {
+  const id = assertTableId(tableId);
+  const rid = String(recordId || '').trim();
+  if (!rid) throw new Error('record_id is required');
+  const correlation = correlationFields(options.correlation);
+  const payload = { ...(fields || {}) };
+  const response = await gateway.scheduledWrite(options.tableName || id, 'update', async () => {
+    const result = await gateway.client.bitable.appTableRecord.update({
+      path: { app_token: gateway.schema.appToken, table_id: id, record_id: rid },
+      data: { fields: payload },
+    });
+    gateway.assertSuccess(result, `updateRecordInTable failed: ${id}`);
+    return result;
+  }, { correlation });
+  return { recordId: rid, record: response?.data?.record };
+};
+
+const deleteRecordInTable = async (gateway, tableId, recordId, options = {}) => {
+  const id = assertTableId(tableId);
+  const rid = String(recordId || '').trim();
+  if (!rid) throw new Error('record_id is required');
+  const correlation = correlationFields(options.correlation);
+  const response = await gateway.scheduledWrite(options.tableName || id, 'delete', async () => {
+    const result = await gateway.client.bitable.appTableRecord.delete({
+      path: { app_token: gateway.schema.appToken, table_id: id, record_id: rid },
+    });
+    gateway.assertSuccess(result, `deleteRecordInTable failed: ${id}`);
+    return result;
+  }, { correlation });
+  return { recordId: rid, deleted: Boolean(response?.data?.deleted) };
+};
+
+module.exports = { listRecordsInTable, createRecordInTable, updateRecordInTable, deleteRecordInTable };

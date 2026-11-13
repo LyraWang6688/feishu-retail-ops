@@ -18,7 +18,9 @@ const { recordUrl } = require('../../utils/feishuLinks');
 const { PRODUCT_PROFILE } = require('../../config/productProfile');
 const { containsFormula } = require('../../services/bitableFilterFormula');
 const { getProductSearchSnapshot } = require('../../services/productSearchSnapshot');
-const { listProductFeatures, addProductFeatureTag } = require('../../services/productFeatureTagService');
+const {
+  listProductFeatures, addProductFeatureTag, updateProductFeatureTag, deleteProductFeatureTag,
+} = require('../../services/productFeatureTagService');
 
 const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   const router = express.Router();
@@ -42,6 +44,8 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       color: textValue(fields[field('color')]).trim(),
       category: textValue(fields[field('category')]).trim(),
       hasSampleImage,
+      missingProduct: textValue(fields[field('completeness')]).trim(),
+      missingTag: textValue(fields[PRODUCT_PROFILE.tagMissingField]).trim(),
       // 图片始终走后端代理，不把飞书附件 token / 临时 URL 暴露给浏览器。
       imageUrl: hasSampleImage && id ? `/api/workbench/products/${encodeURIComponent(id)}/sample-image` : '',
       // 搜索结果卡片直接跳到「货品信息」对应记录。
@@ -125,6 +129,64 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
         request_id: req.requestId, key: req.params?.key, error: error.message,
       });
       return res.status(status).json({ success: false, error: error.message });
+    }
+  });
+
+  router.patch('/products/features/:key/tags/:recordId', async (req, res) => {
+    try {
+      const result = await updateProductFeatureTag(getGateway(), req.params?.key, req.params?.recordId, req.body?.tag);
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      const status = error?.statusCode === 400 ? 400 : 502;
+      logError('workbench.product_features.update_failed', {
+        request_id: req.requestId, key: req.params?.key, record_id: req.params?.recordId, error: error.message,
+      });
+      return res.status(status).json({ success: false, error: error.message });
+    }
+  });
+
+  router.delete('/products/features/:key/tags/:recordId', async (req, res) => {
+    try {
+      const result = await deleteProductFeatureTag(getGateway(), req.params?.key, req.params?.recordId);
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      const status = error?.statusCode === 400 ? 400 : 502;
+      logError('workbench.product_features.delete_failed', {
+        request_id: req.requestId, key: req.params?.key, record_id: req.params?.recordId, error: error.message,
+      });
+      return res.status(status).json({ success: false, error: error.message });
+    }
+  });
+
+  router.get('/products/completion', async (req, res) => {
+    try {
+      const rows = await getConfigRows({ gateway: getGateway(), tableKey: 'product' });
+      const all = rows.map(itemOf).filter((item) => item.recordId && item.number);
+      const dimensions = [
+        {
+          ...PRODUCT_PROFILE.completionDimensions[0],
+          items: all.filter((item) => !item.hasSampleImage),
+        },
+        {
+          ...PRODUCT_PROFILE.completionDimensions[1],
+          items: all.filter((item) => item.missingProduct && item.missingProduct !== PRODUCT_PROFILE.completeValue),
+        },
+        {
+          ...PRODUCT_PROFILE.completionDimensions[2],
+          items: all.filter((item) => item.missingTag && item.missingTag !== PRODUCT_PROFILE.completeValue),
+        },
+      ].map((dimension) => ({
+        ...dimension,
+        count: dimension.items.length,
+        items: dimension.items
+          .sort((a, b) => a.number.localeCompare(b.number, 'zh-CN'))
+          .slice(0, PRODUCT_PROFILE.completionLimit),
+      }));
+      const total = new Set(dimensions.flatMap((dimension) => dimension.items.map((item) => item.recordId))).size;
+      return res.json({ success: true, total, dimensions });
+    } catch (error) {
+      logError('workbench.product_profile.completion_failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: 'product_completion_failed' });
     }
   });
 

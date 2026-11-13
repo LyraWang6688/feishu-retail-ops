@@ -16,14 +16,15 @@ const listen = (app) => new Promise((resolve) => {
   });
 });
 
-const product = (id, number, itemNo, color, category, missing, token = '') => ({
+const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备') => ({
   record_id: id,
   fields: {
     编号: [{ text: number, type: 'text' }],
     货号: itemNo,
     颜色: [{ text: color, type: 'text' }],
     类别: [{ text: category, type: 'text' }],
-    缺失信息说明: missing,
+    商品信息缺失: missing,
+    标签信息缺失: tagMissing,
     样例图: token ? [{ file_token: token, type: 'image/jpeg', name: 'x.jpg' }] : [],
   },
 });
@@ -63,7 +64,7 @@ test('AC-PP2 缺失分组：排除齐备，按缺失值动态分组、数量降�
   const { server, port } = await listen(appWith(gateway));
   try {
     const body = await (await fetch(`http://127.0.0.1:${port}/products/incomplete`)).json();
-    assert.equal(body.total, 3);
+    assert.equal(body.total, 3, '只统计至少缺一个维度的货品');
     assert.deepEqual(body.groups.map((g) => [g.value, g.count]), [['成本', 2], ['成本、品类', 1]]);
     assert.ok(body.groups[0].items[0].recordUrl.startsWith('https://'));
   } finally { server.close(); }
@@ -178,5 +179,23 @@ test('AC-PP10 无库存货品也能按 record_id 取货品资料', async () => {
     assert.equal(body.item.itemNo, '906');
     assert.match(body.item.recordUrl, /record=rec1/);
     assert.equal((await fetch(`http://127.0.0.1:${port}/products/nope`)).status, 404);
+  } finally { server.close(); }
+});
+
+
+test('AC-PP11 货品完善三维度：样例图 / 商品信息缺失 / 标签信息缺失', async () => {
+  const gateway = { listAll: async () => [
+    product('rec1', 'A|黑|男', 'A', '黑', '男', '齐备', '', '齐备'),
+    product('rec2', 'B|黑|男', 'B', '黑', '男', '成本', 'file_2', '齐备'),
+    product('rec3', 'C|黑|男', 'C', '黑', '男', '齐备', 'file_3', '主推人群'),
+    product('rec4', 'D|黑|男', 'D', '黑', '男', '齐备', 'file_4', '齐备'),
+  ] };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/completion`)).json();
+    assert.equal(body.total, 3, '只统计至少缺一个维度的货品');
+    assert.deepEqual(body.dimensions.map((d) => [d.key, d.count]), [['sample', 1], ['product', 1], ['tag', 1]]);
+    assert.equal(body.dimensions[0].items.map((i) => i.recordId).join(','), 'rec1');
+    assert.match(body.dimensions[1].items[0].recordUrl, /record=rec2/);
   } finally { server.close(); }
 });

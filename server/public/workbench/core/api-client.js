@@ -98,6 +98,12 @@ export const api = {
       },
     });
   },
+  patch(path, body) {
+    return request(path, { method: 'PATCH', body: JSON.stringify(body || {}) });
+  },
+  delete(path) {
+    return request(path, { method: 'DELETE' });
+  },
   post(path, body) {
     // ⭐⭐ 2026-10-14 晚（埋点 P0 ②）：把"这次写请求是哪一次点击引起的"带上 ——
     //   服务端（`utils/uiTapReport.js` 的 `uiTapResultMiddleware`）据此记一条

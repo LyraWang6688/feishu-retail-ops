@@ -1,6 +1,8 @@
 export const PRODUCT_FEATURES_API = Object.freeze({
   list: '/api/workbench/products/features',
   add: (key) => `/api/workbench/products/features/${encodeURIComponent(key)}/tags`,
+  update: (key, recordId) => `/api/workbench/products/features/${encodeURIComponent(key)}/tags/${encodeURIComponent(recordId)}`,
+  remove: (key, recordId) => `/api/workbench/products/features/${encodeURIComponent(key)}/tags/${encodeURIComponent(recordId)}`,
 });
 
 export const PRODUCT_FEATURES_TEXTS = Object.freeze({
@@ -15,4 +17,16 @@ export const PRODUCT_FEATURES_TEXTS = Object.freeze({
   duplicate: '这个标签已经存在，不要重复添加',
   addFailed: '添加失败，请稍后重试',
   count: '{count} 条',
+  usage: '使用 {count} 次',
+  edit: '改',
+  remove: '删',
+  save: '保存',
+  cancel: '取消',
+  saving: '正在保存…',
+  removing: '正在删除…',
+  updateFailed: '修改失败，请稍后重试',
+  deleteFailed: '删除失败，请稍后重试',
+  deleteTitle: '删除这个标签？',
+  deleteHint: '删除后，飞书「{table}」里的这条记录也会删除。已有货品如果引用了它，需要重新检查。',
+  confirmDelete: '删除',
 });
