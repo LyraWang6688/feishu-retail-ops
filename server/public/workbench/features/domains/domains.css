@@ -192,3 +192,12 @@
 /* 货品上新搜索结果：整行点击打开「货品信息」对应记录；样例图仍点开大图 */
 .pp-row[data-pp-record-url] { cursor: pointer; }
 .pp-row[data-pp-record-url]:hover { border-color: var(--primary); }
+
+/* 货品完善：样例图 / 商品信息缺失 / 标签信息缺失 三个维度 */
+.pp-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.pp-tab { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); padding: 9px 5px; min-height: 58px; color: var(--text-secondary); cursor: pointer; font-family: var(--font-family); }
+.pp-tab b { display: block; color: var(--text); font-size: 13px; line-height: 1.35; margin-bottom: 2px; }
+.pp-tab span { font-size: 12px; }
+.pp-tab.active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+.pp-tab.active b, .pp-tab.active span { color: var(--primary); }
+.pp-row .pp-small-btn { margin-left: auto; flex: none; }
