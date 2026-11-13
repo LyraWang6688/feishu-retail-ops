@@ -55,6 +55,10 @@ export function bindDomainAction(host) {
   };
 
   host.addEventListener('click', async (event) => {
+    if (event.target.closest?.('[data-domain-action="write-audit"]')) {
+      window.location.href = '/workbench/write-audit.html';
+      return;
+    }
     if (event.target.closest?.('[data-domain-action="product-feature-config"]')) {
       openProductFeatureConfig(host);
       return;

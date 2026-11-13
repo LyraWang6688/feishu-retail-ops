@@ -107,11 +107,13 @@ test('创作 tab 能打开占位页，不报未知模块', async ({ page }) => {
   await expect(page.getByText(/未知工作台模块/)).toHaveCount(0);
 });
 
-test('货品 → 数据配置：只剩券目录同步', async ({ page }) => {
+test('货品 → 配置审计：券目录同步 + 产品特点配置 + 写入时序', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '配置', exact: true }).click();
-  await page.getByRole('button', { name: '数据配置', exact: true }).click();
+  await page.getByRole('button', { name: '配置审计', exact: true }).click();
   await expect(page.getByRole('button', { name: /同步团购券数据/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /产品特点配置/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /写入时序/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /同步存量样例图/ })).toHaveCount(0);
 });
 
