@@ -20,7 +20,7 @@ const path = require('node:path');
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { LABEL_FORM_INTAKE } = require('../src/config/labelPrintForm');
-const { resolveTransientRetryConfig } = require('../src/config/pushRetry');
+const { resolveTransientRetryConfig, withTransientRetry } = require('../src/config/pushRetry');
 const {
   createLabelPrintFormIntakeService, linkRecordIdsOf,
 } = require('../src/services/labelPrintFormIntakeService');
@@ -118,14 +118,17 @@ test('AC-FF11 读表单记录遇到 1254607 ⇒ 复用 withTransientRetry 短重
   const record = formRecord('rec_form1', ['rec_p1']);
   let reads = 0;
   const gateway = {
-    async get() {
-      reads += 1;
-      if (reads === 1) {
-        const error = new Error('Data not ready, please try again later');
-        error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready' } };
-        throw error;
-      }
-      return record;
+    async get(table, id, options = {}) {
+      const work = async () => {
+        reads += 1;
+        if (reads === 1) {
+          const error = new Error('Data not ready, please try again later');
+          error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready' } };
+          throw error;
+        }
+        return record;
+      };
+      return options.retry ? withTransientRetry(work, { config: options.retry, sleep: async () => {} }) : work();
     },
   };
   const { service } = build({

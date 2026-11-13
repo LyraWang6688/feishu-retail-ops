@@ -16,7 +16,7 @@ const { TAG_QR_CODE } = require('../src/config/tagQrCode');
 const {
   createTagQrCodeService, attachmentsOf, buildRecordIdScanUrl,
 } = require('../src/services/tagQrCodeService');
-const { resolveTransientRetryConfig } = require('../src/config/pushRetry');
+const { resolveTransientRetryConfig, withTransientRetry } = require('../src/config/pushRetry');
 
 const F = V1_BITABLE_SCHEMA.tables.product.fields;
 const QR_FIELD = F[TAG_QR_CODE.fields.tagQrCode];
@@ -77,10 +77,13 @@ const flakyGateway = ({ record, failGet = 0, failUpload = 0, failUpdate = 0, fai
   const row = { record_id: record.record_id, fields: { ...record.fields } };
   return {
     counts,
-    get: async () => {
-      counts.get += 1;
-      if (counts.get <= failGet) throw feishuError(failStatus, failCode, 'Data not ready');
-      return { record_id: row.record_id, fields: { ...row.fields } };
+    get: async (table, id, options = {}) => {
+      const work = async () => {
+        counts.get += 1;
+        if (counts.get <= failGet) throw feishuError(failStatus, failCode, 'Data not ready');
+        return { record_id: row.record_id, fields: { ...row.fields } };
+      };
+      return options.retry ? withTransientRetry(work, { config: options.retry, sleep: async () => {} }) : work();
     },
     uploadAttachment: async () => {
       counts.upload += 1;
@@ -192,12 +195,11 @@ test('AC-TQ-R2 上传遇 504 ⇒ 重试后成功；写回复用同一 file_token
   assert.equal(result.file_token, 'retry_token_1');
 });
 
-test('AC-TQ-R3 写回遇 1254607 ⇒ 重试写回成功（不重复上传素材）', async () => {
+test('AC-TQ-R3 写回失败由 gateway 写调度器负责（service 不再包写重试）', async () => {
   const gateway = flakyGateway({ record: { record_id: 'rec_retry', fields: {} }, failUpdate: 1 });
-  const result = await serviceFor(gateway).syncRecord('rec_retry');
-  assert.equal(result.status, 'written');
-  assert.equal(gateway.counts.update, 2);
-  assert.equal(gateway.counts.upload, 1, '写回重试复用同一个 file_token');
+  await assert.rejects(() => serviceFor(gateway).syncRecord('rec_retry'), /400/);
+  assert.equal(gateway.counts.update, 1);
+  assert.equal(gateway.counts.upload, 1);
 });
 
 test('AC-TQ-R4 确定性错误（403）一次都不重试', async () => {

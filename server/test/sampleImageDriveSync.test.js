@@ -22,6 +22,7 @@ const assert = require('node:assert/strict');
 
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { SAMPLE_IMAGE_DRIVE } = require('../src/config/sampleImageDrive');
+const { withTransientRetry } = require('../src/config/pushRetry');
 const {
   createSampleImageDriveService,
   buildFileName,
@@ -312,15 +313,17 @@ test('AC-SD17 ⭐ 读记录遇到飞书 1254607（Data not ready）⇒ 就地短
     response: { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } },
   });
   const gateway = createGateway({ folderFiles: [] });
-  gateway.get = async () => {
-    reads += 1;
-    if (reads === 1) throw transient;
-    return { fields: fieldsOf({ images: [imageOf('ft1', 'a.jpg')] }) };
+  gateway.get = async (table, id, options = {}) => {
+    const work = async () => {
+      reads += 1;
+      if (reads === 1) throw transient;
+      return { fields: fieldsOf({ images: [imageOf('ft1', 'a.jpg')] }) };
+    };
+    return options.retry ? withTransientRetry(work, { config: options.retry, sleep: async () => {} }) : work();
   };
   const service = createSampleImageDriveService({
     gateway,
     config: configOf({ readRetry: { maxRetries: 2, baseDelayMs: 0 } }),
-    retrySleep: async () => {},
   });
   const result = await service.syncRecord('r1', { reason: 'record_added' });
   assert.equal(result.status, 'synced');
@@ -334,11 +337,13 @@ test('AC-SD18 ⭐ 确定性错误（403 / 非瞬时码）⇒ 一次都不重试�
     response: { status: 403, data: { code: 91403, msg: 'forbidden' } },
   });
   const gateway = createGateway({ folderFiles: [] });
-  gateway.get = async () => { reads += 1; throw permanent; };
+  gateway.get = async (table, id, options = {}) => {
+    const work = async () => { reads += 1; throw permanent; };
+    return options.retry ? withTransientRetry(work, { config: options.retry, sleep: async () => {} }) : work();
+  };
   const service = createSampleImageDriveService({
     gateway,
     config: configOf({ readRetry: { maxRetries: 3, baseDelayMs: 0 } }),
-    retrySleep: async () => {},
   });
   const result = await service.syncRecord('r1', { reason: 'record_added' });
   assert.equal(result.status, 'failed');

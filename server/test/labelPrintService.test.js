@@ -30,7 +30,7 @@ const {
   buildText, asTimestamp,
 } = require('../src/services/labelPrintService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { resolveTransientRetryConfig } = require('../src/config/pushRetry');
+const { resolveTransientRetryConfig, withTransientRetry } = require('../src/config/pushRetry');
 
 const F = V1_BITABLE_SCHEMA.tables.liveInventory.fields;
 const P = V1_BITABLE_SCHEMA.tables.product.fields;
@@ -649,14 +649,17 @@ test('扫码精确读 filter 遇到 1254607 ⇒ 复用 withTransientRetry 自动
   const gateway = {
     calls: [],
     async get() { return products[0]; },
-    async listByFilter() {
-      filterCalls += 1;
-      if (filterCalls === 1) {
-        const error = new Error('Data not ready, please try again later');
-        error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready' } };
-        throw error;
-      }
-      return inventory;
+    async listByFilter(table, filter, options = {}) {
+      const work = async () => {
+        filterCalls += 1;
+        if (filterCalls === 1) {
+          const error = new Error('Data not ready, please try again later');
+          error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready' } };
+          throw error;
+        }
+        return inventory;
+      };
+      return options.retry ? withTransientRetry(work, { config: options.retry, sleep: async () => {} }) : work();
     },
     async listAll() { throw new Error('精确读链路不许整表读'); },
   };

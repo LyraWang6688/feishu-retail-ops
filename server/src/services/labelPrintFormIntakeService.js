@@ -24,7 +24,7 @@ const { LABEL_FORM_INTAKE } = require('../config/labelPrintForm');
 const { classifyThrownError, retryDelayMs } = require('../config/asyncJobs');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 // ⭐ 2026-11-11：读表单记录遇到飞书 1254607 等瞬时错误 ⇒ 复用项目已有的小退避重试。
-const { withTransientRetry, resolveTransientRetryConfig } = require('../config/pushRetry');
+const { resolveTransientRetryConfig } = require('../config/pushRetry');
 
 /** 把配置模板里的 `{name}` 占位符换成值（认不出的占位符原样保留）。 */
 const fill = (template, values = {}) => String(template ?? '').replace(/\{(\w+)\}/g, (match, key) => (
@@ -124,19 +124,7 @@ const createLabelPrintFormIntakeService = (deps = {}) => {
 
   /** 读一条「标签打印」记录（只读）。瞬时错误（1254607 等）自动小退避重试。 */
   const readRecord = async (recordId) => {
-    const record = await withTransientRetry(
-      () => resolveGateway().get('labelPrintRequest', recordId, { retry: false }),
-      {
-        operation: 'label_print.form.record_read',
-        config: transientRetry,
-        onRetry: ({ attempt, delayMs, error: retryError }) => log.warn('label_print.form.record_read_retry', {
-          form_record_id: recordId,
-          attempt,
-          delay_ms: delayMs,
-          error: String(retryError?.message || ''),
-        }),
-      },
-    );
+    const record = await resolveGateway().get('labelPrintRequest', recordId, { retry: transientRetry });
     if (!record) throw new Error(`「标签打印」里找不到记录 ${recordId}`);
     return record;
   };
