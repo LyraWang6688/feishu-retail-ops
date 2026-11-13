@@ -366,7 +366,7 @@ export function createInventoryAdjustmentModule() {
       host.addEventListener('click', (event) => {
         const back = event.target.closest?.('[data-back]');
         if (back) { resetSingleEntry(); show('cards'); return; }
-        const manual = event.target.closest?.('[data-manual]');
+        const manual = event.target.closest?.('[data-manual="single"], [data-manual="batch"]');
         if (manual) {
           if (manual.dataset.manual === 'single') {
             state.singleExpanded = true;

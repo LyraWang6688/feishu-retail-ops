@@ -22,6 +22,7 @@ test('AC-IA2 单双调整点开后有扫码 / 输入货号两种入口', () => {
   const html = source();
   assert.match(html, /data-single-action="scan"/, '扫码入口');
   assert.match(html, /data-single-action="input"/, '输入货号入口');
+  assert.ok(html.includes('[data-manual="single"], [data-manual="batch"]'), '委托选择器不能匹配外层 data-manual=cards');
   assert.ok(html.includes("scanCodeRaw('inventory')"), '扫码仍走原库存扫一扫');
   assert.ok(html.includes('data-single-search'), '输入货号搜索框');
   assert.ok(html.includes('data-pick-product'), '搜索后用户选择编号');
