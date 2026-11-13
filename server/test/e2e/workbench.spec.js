@@ -126,7 +126,7 @@ test('货品 → 货品资料：四张卡 + 货品完善分组', async ({ page }
   await expect(page.getByRole('button', { name: /同步样例图/ })).toBeVisible();
   await expect(page.locator('[data-page-kind="product-profile"]:visible').getByRole('heading', { name: '配品配置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /货品完善/ }).click();
-  await expect(page.locator('[data-pp-select]')).toBeVisible();
+  await expect(page.locator('[data-pp-complete-tabs]')).toBeVisible();
 });
 
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {
