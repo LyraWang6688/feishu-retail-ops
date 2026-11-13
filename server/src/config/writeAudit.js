@@ -17,7 +17,7 @@ const DOMAIN_ENV_KEYS = Object.freeze({
 });
 
 const DEFAULT_DOMAINS = Object.freeze({
-  sales: true,
+  sales: process.env.NODE_ENV !== 'test',
   purchase: false,
   acceptance: false,
   return: false,

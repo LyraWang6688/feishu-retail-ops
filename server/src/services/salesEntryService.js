@@ -23,6 +23,7 @@ const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
 const { logInfo, logWarn } = require('../utils/logger');
 const { mergeCorrelation } = require('../utils/correlationFields');
+const { recordWrite } = require('./writeAuditService');
 
 /**
  * 「销售主表 · 销售单号」这一列的现有取值（只读；读不到映射时返回空列表）。
@@ -94,6 +95,26 @@ const createSalesEntryWithOrderNo = async ({ gateway } = {}, task = {}, options 
     today_count: allocation.todayCount,
     attempts: allocation.attempts,
   });
+  // 主表 create 发生在单号生成之前，gateway 当时还拿不到 order_no；
+  // 单号落定后补一条带 order_no 的销售创建审计，保证时间线第一笔可查。
+  if (created?.recordId) {
+    const table = gateway.table('salesEntry');
+    const auditFields = {};
+    if (table?.fields?.orderNo) auditFields[table.fields.orderNo] = allocation.orderNo;
+    if (table?.fields?.writeStatus) auditFields[table.fields.writeStatus] = WRITE.writeStatus.pending;
+    void recordWrite({
+      domain: 'sales',
+      tableKey: 'salesEntry',
+      tableId: table?.tableId || '',
+      operation: 'create',
+      recordId: created.recordId,
+      traceId: task.task_id || '',
+      correlation: mergeCorrelation(correlation, {
+        order_no: allocation.orderNo, sales_entry_record_id: created.recordId,
+      }),
+      fields: auditFields,
+    });
+  }
   return created;
 };
 
