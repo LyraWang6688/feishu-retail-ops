@@ -12,7 +12,7 @@ const loadPages = async () => {
   return domains.domainById('product').pages;
 };
 
-test('货品页：标签打印左边是「货品资料」，配置审计有券同步、产品特点配置和写入时序', async () => {
+test('货品页：标签打印左边是「货品资料」，配置审计有券同步、产品特点配置和数据写入审计', async () => {
   const pages = await loadPages();
   const labels = pages.findIndex((page) => page.id === 'product-labels');
   const profile = pages.findIndex((page) => page.id === 'product-new');

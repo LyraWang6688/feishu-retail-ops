@@ -231,7 +231,7 @@ export const DOMAIN_TABS = [
         cards: [
           { icon: '🔄', title: '同步团购券数据', action: 'voucher-catalog-sync' },
           { icon: '🏷️', title: '产品特点配置', action: 'product-feature-config' },
-          { icon: '🔍', title: '写入时序', action: 'write-audit' },
+          { icon: '🔍', title: '数据写入审计', action: 'write-audit' },
         ],
       },
       {
