@@ -29,6 +29,19 @@
 const { readInt, readString } = require('./envValue');
 
 /**
+ * ⭐⭐ 2026-11-13 真机：批量上新时新增记录**间歇性没同步**——日志显示
+ *   `product.sample_image.drive.failed  error: Request failed with status code 400`，
+ *   飞书码 `1254607 Data not ready`（记录刚创建、数据还没就绪）。
+ *   事件链路是**单条** `syncRecord`，失败只记日志、不重试 ⇒ 漏勾。
+ *   ⇒ 读记录走既有的瞬时重试纯件（`config/pushRetry` 的 `withTransientRetry`），
+ *     次数/退避可配（默认 4 次 / 1.5s 起，指数退避，最多约 22s）。
+ */
+const READ_RETRY = Object.freeze({
+  maxRetries: readInt(process.env, 'SAMPLE_IMAGE_DRIVE_READ_RETRIES', 4, { min: 0, max: 10 }),
+  baseDelayMs: readInt(process.env, 'SAMPLE_IMAGE_DRIVE_READ_RETRY_MS', 1500, { min: 0, max: 60000 }),
+});
+
+/**
  * 目标云盘文件夹（业务负责人 2026-10-13 给的链接里的 token）：
  * `https://scnzoiwpgxik.feishu.cn/drive/folder/NIxifKs4ulS5uudlGP2cKtDBnkd`
  *
@@ -170,6 +183,7 @@ const SAMPLE_IMAGE_DRIVE = Object.freeze({
   owner: OWNER,
   backfill: BACKFILL,
   numberWait: NUMBER_WAIT,
+  readRetry: READ_RETRY,
 });
 
 module.exports = {

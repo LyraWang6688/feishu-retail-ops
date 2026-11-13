@@ -39,6 +39,8 @@ const path = require('node:path');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
+// ⭐ 2026-11-13：读记录遇飞书 1254607 / 5xx / 限流时**就地短重试**（单条事件链路没人替它重跑）
+const { withTransientRetry, resolveTransientRetryConfig } = require('../config/pushRetry');
 
 const IMAGE_EXTENSIONS = Object.freeze(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.heic']);
 /**
@@ -118,7 +120,7 @@ const isImageAttachment = (attachment) => {
  * @param {object} [options.config] 覆盖 `SAMPLE_IMAGE_DRIVE`（单测注入；生产用默认）
  */
 const createSampleImageDriveService = ({
-  gateway, config = SAMPLE_IMAGE_DRIVE, sleep,
+  gateway, config = SAMPLE_IMAGE_DRIVE, sleep, retrySleep,
 } = {}) => {
   if (!gateway) throw new Error('样例图云盘同步缺少 gateway');
   // ⭐ 云盘层由网关构造器挂载（`services/driveApi.js`）⇒ 服务只认 `gateway.drive`。
@@ -144,6 +146,21 @@ const createSampleImageDriveService = ({
   }
 
   const sleepFn = typeof sleep === 'function' ? sleep : ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  // ⭐ 2026-11-13：读记录瞬时重试配置（次数/退避来自 config；默认 4 次 ≈22s）
+  const readRetryConfig = {
+    ...resolveTransientRetryConfig(),
+    maxRetries: Number(config.readRetry?.maxRetries ?? 4),
+    baseDelayMs: Number(config.readRetry?.baseDelayMs ?? 1500),
+    factor: 2,
+  };
+  const readRecord = (recordId) => withTransientRetry(
+    () => gateway.get('product', recordId),
+    {
+      operation: 'sample_image.read_record',
+      config: readRetryConfig,
+      ...(typeof retrySleep === 'function' ? { sleep: retrySleep } : {}),
+    },
+  );
   const folderToken = textOf(config.folder?.token);
   const naming = config.naming || SAMPLE_IMAGE_DRIVE.naming;
   const ops = config.operations || SAMPLE_IMAGE_DRIVE.operations || {};
@@ -189,7 +206,7 @@ const createSampleImageDriveService = ({
       return { record_id: id, status: 'failed', reason: 'drive_missing' };
     }
     try {
-      let record = await gateway.get('product', id);
+      let record = await readRecord(id);
       let fields = record?.fields || {};
 
       // 幂等：已勾「已同步云盘」⇒ 不再传（重复事件 / 重试都只会有一次）
@@ -211,7 +228,7 @@ const createSampleImageDriveService = ({
           record_id: id, attempt: waited, max_attempts: maxWait, interval_ms: Number(waitCfg.intervalMs) || 0,
         });
         await sleepFn(Number(waitCfg.intervalMs) || 0);
-        record = await gateway.get('product', id);
+        record = await readRecord(id);
         fields = record?.fields || {};
         images = imagesOf(fields);
         nameBase = nameBaseOf(fields);
