@@ -84,6 +84,10 @@ const createScanWriteSession = ({
   const clearDraft = async ({ openId, sessionKey = '', requestId = '' }) => {
     const sessionId = sessionKeyOf(openId, sessionKey);
     const session = await queue.run(`sale:${sessionId}`, () => sessions.clearSale(sessionId));
+    logInfo(config.events.draftCleared, {
+      session_id: session?.[config.session.idField] || sessionId,
+      request_id: requestId,
+    });
     return { ok: true, count: 0, session, request_id: requestId };
   };
 
