@@ -18,11 +18,14 @@ test('AC-IA1 两张入口卡由配置驱动：单双调整 / 批量调整', () =
   assert.ok(source().includes('INVENTORY_MANUAL_CARDS.map'), '页面必须按配置渲染入口卡');
 });
 
-test('AC-IA2 单双调整直接调库存扫一扫，不再有中间页/三个按钮', () => {
+test('AC-IA2 单双调整点开后有扫码 / 输入货号两种入口', () => {
   const html = source();
-  assert.ok(html.includes("scanCodeRaw('inventory')"), '单双调整必须直接调库存扫一扫');
-  assert.equal(html.includes('先扫这一双鞋的二维码'), false, '不再有中间说明页');
-  assert.equal(html.includes('data-panel="status"'), false, '三个按钮已删除');
+  assert.match(html, /data-single-action="scan"/, '扫码入口');
+  assert.match(html, /data-single-action="input"/, '输入货号入口');
+  assert.ok(html.includes("scanCodeRaw('inventory')"), '扫码仍走原库存扫一扫');
+  assert.ok(html.includes('data-single-search'), '输入货号搜索框');
+  assert.ok(html.includes('data-pick-product'), '搜索后用户选择编号');
+  assert.match(configSource(), /productSearchApi: '\/api\/workbench\/products\/search'/);
 });
 
 test('AC-IA3 批量调整只保留当季 / 库存两个入口，异常编号可跳到单双调整', () => {
@@ -30,7 +33,7 @@ test('AC-IA3 批量调整只保留当季 / 库存两个入口，异常编号可�
   assert.ok(html.includes('data-action="season-set"'), '当季/库存入口');
   assert.ok(html.includes('data-season="false"'), '库存 = 转冻结入口');
   assert.ok(html.includes('data-fix='), '异常编号必须有调整按钮');
-  assert.ok(html.includes('data-manual="batch"'), '批量调整入口卡');
+  assert.match(html, /data-manual="\$\{card\.id\}"/, '批量调整入口卡由配置渲染');
   assert.ok(html.includes('data-save'), '单双页有保存按钮');
   assert.ok(html.includes('data-season="true"'), '当季 = 转释放入口');
   assert.ok(html.includes('/label-print/jobs'), '保存后可打印');
@@ -73,7 +76,7 @@ test('AC-IA6 状态调整按问题分组，可按问题筛选，货号之间有�
 
 test('AC-IA7 添加尺码后保留新行；删除行也不重置编辑器', () => {
   const src = source();
-  assert.ok(src.includes("state.editorRows.push({ size: '', state: '门盒', quantity: 1 }); renderEditor();"), '添加尺码必须只重绘编辑器，不能重新从库存重建');
+  assert.match(src, /state\.editorRows\.push\(\{ size: '', state: '门盒', quantity: 1 \}\);\s*renderEditor\(\);/, '添加尺码必须只重绘编辑器，不能重新从库存重建');
   assert.ok(src.includes('state.editorRows.splice(Number(btn.dataset.remove), 1);') && src.includes('      renderEditor();'), '删除后也只重绘编辑器');
   assert.ok(src.includes('function renderEditor()'), '有独立编辑器渲染函数');
   assert.ok(src.includes('state.editorRows = productRows(productId).map'), '只有进入单双调整时才从库存初始化');

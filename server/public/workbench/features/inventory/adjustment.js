@@ -19,11 +19,18 @@ const $ = (host, selector) => host.querySelector(selector);
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const STATES = ['门盒', '样品'];
 
-const cardsHtml = () => `<div class="domain-cards domain-cards-single">${INVENTORY_MANUAL_CARDS.map((card) => `
-  <button class="entry-card" type="button" data-manual="${card.id}"><span class="icon">${escapeHtml(card.icon)}</span><h3>${escapeHtml(card.label)}</h3></button>`).join('')}</div>`;
+const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-cards-single">${INVENTORY_MANUAL_CARDS.map((card) => {
+  if (card.id === 'single' && expandedSingle) {
+    return `<div class="candidate-card-actions" role="group" aria-label="${escapeHtml(card.label)}">
+      <button class="candidate-action" type="button" data-single-action="scan">${escapeHtml(INVENTORY_MANUAL_TEXTS.singleScan)}</button>
+      <button class="candidate-action" type="button" data-single-action="input">${escapeHtml(INVENTORY_MANUAL_TEXTS.singleInput)}</button>
+    </div>`;
+  }
+  return `<button class="entry-card" type="button" data-manual="${card.id}"><span class="icon">${escapeHtml(card.icon)}</span><h3>${escapeHtml(card.label)}</h3></button>`;
+}).join('')}</div>`;
 
 export function createInventoryAdjustmentModule() {
-  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, savedNumber: '', inventoryJobId: '', productInfo: null };
+  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, savedNumber: '', inventoryJobId: '', productInfo: null, singleExpanded: false };
 
   async function loadRows(force = false) {
     if (state.rows.length && !force) return state.rows;
@@ -38,6 +45,17 @@ export function createInventoryAdjustmentModule() {
     $(host, '[data-manual="cards"]')?.classList.toggle('hidden', view !== 'cards');
     $(host, '[data-view="manual-single"]')?.classList.toggle('hidden', view !== 'single');
     $(host, '[data-view="manual-batch"]')?.classList.toggle('hidden', view !== 'batch');
+    $(host, '[data-view="manual-picker"]')?.classList.toggle('hidden', view !== 'picker');
+  }
+
+  function renderCards() {
+    const box = $(state.host, '[data-manual="cards"]');
+    if (box) box.innerHTML = cardsHtml(state.singleExpanded);
+  }
+
+  function resetSingleEntry() {
+    state.singleExpanded = false;
+    renderCards();
   }
 
   function productRows(productId) {
@@ -89,6 +107,50 @@ export function createInventoryAdjustmentModule() {
     } catch {
       state.productInfo = null;
     }
+  }
+
+  function showSinglePicker() {
+    resetSingleEntry();
+    const input = $(state.host, '[data-single-search]');
+    const status = $(state.host, '[data-single-status]');
+    const results = $(state.host, '[data-single-results]');
+    if (input) input.value = '';
+    if (status) status.textContent = '';
+    if (results) results.innerHTML = '';
+    show('picker');
+    input?.focus();
+  }
+
+  async function loadSingleSearch(host, q) {
+    const status = $(host, '[data-single-status]');
+    const results = $(host, '[data-single-results]');
+    if (!q) {
+      if (status) status.textContent = '';
+      if (results) results.innerHTML = '';
+      return;
+    }
+    if (status) status.textContent = INVENTORY_MANUAL_TEXTS.singleSearchLoading;
+    try {
+      const data = await api.get(`${INVENTORY_MANUAL_TEXTS.productSearchApi}?q=${encodeURIComponent(q)}`);
+      const items = Array.isArray(data?.items) ? data.items : [];
+      if (status) status.textContent = items.length ? '' : INVENTORY_MANUAL_TEXTS.singleSearchEmpty;
+      if (results) {
+        results.innerHTML = items.length
+          ? `<div class="domain-cards">${items.map((item) => `<button class="entry-card card-button" type="button" data-pick-product="${escapeHtml(item.recordId || '')}"><span class="icon">🔎</span><h3>${escapeHtml(item.number || '')}</h3></button>`).join('')}</div>`
+          : '';
+      }
+    } catch {
+      if (status) status.textContent = INVENTORY_MANUAL_TEXTS.singleSearchFailed;
+      if (results) results.innerHTML = '';
+    }
+  }
+
+  async function selectProduct(productId) {
+    if (!productId) return;
+    showPageError('');
+    await loadRows(true);
+    if (!productRows(productId).length) await loadProductInfo(productId);
+    fitRowsForProduct(productId);
   }
 
   async function scanSingle() {
@@ -263,7 +325,7 @@ export function createInventoryAdjustmentModule() {
   return {
     mount(host) {
       state.host = host;
-      host.innerHTML = `<div data-manual="cards">${cardsHtml()}</div>
+      host.innerHTML = `<div data-manual="cards"></div>
         <div data-view="manual-single" class="hidden">
           <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>单双调整</h2></div>
           <div class="row-card"><div class="row-top"><div class="row-num" data-view="single-label"></div><span class="tag season">编辑中</span></div>
@@ -272,6 +334,12 @@ export function createInventoryAdjustmentModule() {
             <p class="hint" data-view="single-note"></p>
             <div class="row-actions"><button class="btn primary" type="button" data-save>保存库存调整</button><button class="btn" type="button" data-back>取消</button></div>
           </div>
+        </div>
+        <div data-view="manual-picker" class="hidden">
+          <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>${escapeHtml(INVENTORY_MANUAL_TEXTS.singlePickTitle)}</h2></div>
+          <div class="pp-search"><input data-single-search placeholder="${escapeHtml(INVENTORY_MANUAL_TEXTS.singleSearchPlaceholder)}" autocomplete="off"></div>
+          <p class="pp-note" data-single-status></p>
+          <div data-single-results></div>
         </div>
         <div data-view="manual-batch" class="hidden">
           <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>批量调整</h2></div>
@@ -288,15 +356,45 @@ export function createInventoryAdjustmentModule() {
             <div class="row-actions"><button class="btn" type="button" data-print="no">不打印</button><button class="btn primary" type="button" data-print="yes">打印</button></div>
           </div>
         </div>`;
-      host.querySelectorAll('[data-back]').forEach((btn) => btn.addEventListener('click', () => show('cards')));
-      host.querySelector('[data-manual="single"]').addEventListener('click', () => { void scanSingle(); });
-      host.querySelector('[data-manual="batch"]').addEventListener('click', () => { void enterBatch().catch((error) => showPageError(describeError(error))); });
-      host.querySelector('[data-add-size]').addEventListener('click', () => { state.editorRows.push({ size: '', state: '门盒', quantity: 1 }); renderEditor(); });
-      host.querySelector('[data-save]').addEventListener('click', () => { void savePairs(); });
-      host.querySelectorAll('[data-action="season-set"]').forEach((btn) => btn.addEventListener('click', () => {
-        void setSeason(btn.dataset.season === 'true');
-      }));
-      host.querySelectorAll('[data-print]').forEach((btn) => btn.addEventListener('click', () => { void printSaved(btn.dataset.print === 'yes'); }));
+      renderCards();
+      let singleTimer = null;
+      host.querySelector('[data-single-search]')?.addEventListener('input', (event) => {
+        clearTimeout(singleTimer);
+        const q = event.target.value.trim();
+        singleTimer = setTimeout(() => { void loadSingleSearch(host, q); }, 250);
+      });
+      host.addEventListener('click', (event) => {
+        const back = event.target.closest?.('[data-back]');
+        if (back) { resetSingleEntry(); show('cards'); return; }
+        const manual = event.target.closest?.('[data-manual]');
+        if (manual) {
+          if (manual.dataset.manual === 'single') {
+            state.singleExpanded = true;
+            renderCards();
+            return;
+          }
+          void enterBatch().catch((error) => showPageError(describeError(error)));
+          return;
+        }
+        const singleAction = event.target.closest?.('[data-single-action]');
+        if (singleAction) {
+          resetSingleEntry();
+          if (singleAction.dataset.singleAction === 'scan') void scanSingle();
+          else showSinglePicker();
+          return;
+        }
+        const pick = event.target.closest?.('[data-pick-product]');
+        if (pick) { void selectProduct(pick.dataset.pickProduct); return; }
+        if (event.target.closest?.('[data-save]')) { void savePairs(); return; }
+        const season = event.target.closest?.('[data-action="season-set"]');
+        if (season) { void setSeason(season.dataset.season === 'true'); return; }
+        const print = event.target.closest?.('[data-print]');
+        if (print) { void printSaved(print.dataset.print === 'yes'); return; }
+        if (event.target.closest?.('[data-add-size]')) {
+          state.editorRows.push({ size: '', state: '门盒', quantity: 1 });
+          renderEditor();
+        }
+      });
       host.querySelector('[data-field="batch-category"]').addEventListener('change', () => renderViolations());
       host.querySelector('[data-field="status-filter"]')?.addEventListener('change', () => renderViolations());
     },
