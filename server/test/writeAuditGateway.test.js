@@ -22,6 +22,10 @@ const gateway = () => new V1BitableGateway({
       appTableRecord: {
         create: async ({ data }) => ({ code: 0, data: { record: { record_id: 'rec_new', fields: data.fields } } }),
         update: async ({ data }) => ({ code: 0, data: { record: { record_id: 'rec_new', fields: data.fields } } }),
+        batchCreate: async ({ data }) => ({
+          code: 0,
+          data: { records: data.records.map((record, index) => ({ record_id: `rec_batch_${index + 1}`, fields: record.fields })) },
+        }),
       },
     },
   },
@@ -44,4 +48,20 @@ test('AC-WG1 销售主表 create 自动按 order_no 写审计', async () => {
   assert.equal(rows[0].operation, 'create');
   assert.equal(rows[0].table_key, 'salesEntry');
   assert.ok(Object.keys(rows[0].fields).length > 0);
+});
+
+
+test('AC-WG2 批量创建拆成逐条审计', async () => {
+  const table = V1_BITABLE_SCHEMA.tables.salesEntry.fields;
+  await gateway().createBatch('salesEntry', [
+    { orderNo: 'XSD-AUDIT-B1', writeStatus: '未完成' },
+    { orderNo: 'XSD-AUDIT-B1', writeStatus: '未完成' },
+  ], { correlation: { order_no: 'XSD-AUDIT-B1', task_id: 'job-audit-batch' } });
+  await wait();
+  const rows = await queryWriteAudit({ orderNo: 'XSD-AUDIT-B1' });
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.operation), ['createBatch', 'createBatch']);
+  assert.deepEqual(rows.map((row) => row.record_id), ['rec_batch_1', 'rec_batch_2']);
+  assert.ok(rows.every((row) => row.batch_id));
+  assert.ok(table);
 });
