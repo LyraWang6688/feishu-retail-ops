@@ -193,6 +193,19 @@
 .pp-row[data-pp-record-url] { cursor: pointer; }
 .pp-row[data-pp-record-url]:hover { border-color: var(--primary); }
 
+/* 产品特点配置：三个标签字典 */
+.pf-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.pf-head h2 { margin: 0; }
+.pf-section { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; background: var(--surface); }
+.pf-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.pf-section-head h3 { margin: 0; font-size: 15px; }
+.pf-count { color: var(--muted); font-size: 12px; }
+.pf-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; }
+.pf-tag { display: inline-block; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); font-size: 12px; }
+.pf-empty { color: var(--muted); font-size: 13px; margin: 4px 0; }
+.pf-add { display: flex; gap: 8px; margin-top: 10px; }
+.pf-add input { flex: 1; min-width: 0; }
+.pf-error { color: var(--danger); font-size: 12px; margin: 6px 0 0; }
 /* 货品完善：样例图 / 商品信息缺失 / 标签信息缺失 三个维度 */
 .pp-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
 .pp-tab { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); padding: 9px 5px; min-height: 58px; color: var(--text-secondary); cursor: pointer; font-family: var(--font-family); }
@@ -201,3 +214,23 @@
 .pp-tab.active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
 .pp-tab.active b, .pp-tab.active span { color: var(--primary); }
 .pp-row .pp-small-btn { margin-left: auto; flex: none; }
+
+
+/* 产品特点配置：使用次数 / 行内修改 / 删除确认 */
+.pf-list { display: flex; flex-direction: column; }
+.pf-row { display: flex; align-items: center; gap: 6px; min-height: 44px; border-top: 1px solid var(--border); }
+.pf-list .pf-row:first-child { border-top: 0; }
+.pf-tag-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-usage { color: var(--text-muted); font-size: 12px; white-space: nowrap; margin-right: 2px; }
+.pf-mini { min-height: 32px; padding: 0 9px; border: 0; border-radius: 8px; background: var(--surface-soft); color: var(--primary); font-size: 12px; cursor: pointer; font-family: var(--font-family); }
+.pf-mini.danger { color: var(--danger); background: var(--danger-soft); }
+.pf-row-editing { gap: 6px; padding: 5px 0; }
+.pf-edit-input { flex: 1; min-width: 0; height: 38px; border: 1px solid var(--primary); border-radius: 9px; padding: 0 10px; font-size: 14px; font-family: var(--font-family); }
+.pf-modal { position: fixed; inset: 0; background: rgba(23,32,51,.42); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 20; }
+.pf-modal-card { width: 100%; max-width: 360px; background: var(--surface); border-radius: var(--radius-lg); padding: 20px; box-shadow: var(--shadow-pop); }
+.pf-modal-card h3 { margin: 0 0 8px; font-size: 17px; }
+.pf-modal-card p { margin: 0 0 10px; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
+.pf-modal-tag { color: var(--text); font-weight: 600; }
+.pf-modal-actions { display: flex; gap: 8px; margin-top: 14px; }
+.pf-modal-actions .btn { flex: 1; }
+.pf-modal-actions .danger { background: var(--danger); color: var(--surface); }
