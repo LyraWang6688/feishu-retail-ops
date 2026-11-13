@@ -11,9 +11,9 @@ const { createBatchWriteTelemetry } = require('../utils/batchWriteTelemetry');
 //    （并发上限 / 同表串行 / 1254607 与瞬时 400 的统一退避重试）。读请求不进调度器。
 const { getFeishuWriteScheduler } = require('./feishuWriteScheduler');
 const { readWithRetry } = require('./gatewayReadRetry');
+const { auditGatewayWrite } = require('./writeAuditService');
 // ⭐ 2026-11-10：云盘（Drive）读写（下载附件 / 上传到云盘文件夹 / 列目录 / 删同名旧文件）。
 const { createDriveApi } = require('./driveApi');
-
 /** 飞书 `records/batch_get` 实测 record_ids 上限 **100**（超了必须分片）；写接口仍按 500 分片。 */
 // 批量读写**每次的条数**：500。依据（curl 官方文档核过，2026-10-12）：
 //   · batch_create：「单次调用最多新增 1,000 条记录」（错误码 1254104 RecordAddOnceExceedLimit）；
@@ -32,9 +32,7 @@ const compact = (value) => {
   });
   return result;
 };
-
 const recordIdOf = (response) => response?.data?.record?.record_id || response?.data?.record_id || '';
-
 const textValue = (value) => {
   if (value == null) return '';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
@@ -42,7 +40,6 @@ const textValue = (value) => {
   if (typeof value === 'object') return String(value.text ?? value.name ?? value.value ?? '');
   return '';
 };
-
 /** 关联字段 cell → record_id 数组；只认 record_ids / link_record_ids（issue #1074）。 */
 const linkedRecordIds = (value) => {
   if (Array.isArray(value)) return value.flatMap(linkedRecordIds);
@@ -55,14 +52,12 @@ const linkedRecordIds = (value) => {
     return [];
   })) : [];
 };
-
 // 单选关联的判定：必须且只能关联到这一条记录。多选或指错记录都不能算匹配，
 // 否则幂等比对会把「另一条尺码」或「一次关联多个」误当成同一条业务明细。
 const singleLinked = (cell, recordId) => {
   const ids = linkedRecordIds(cell);
   return ids.length === 1 && ids[0] === recordId;
 };
-
 class V1BitableGateway {
   constructor(options = {}) {
     this.schema = options.schema || V1_BITABLE_SCHEMA;
@@ -87,7 +82,6 @@ class V1BitableGateway {
       ? options.writeScheduler
       : getFeishuWriteScheduler();
   }
-
   /**
    * ⭐ 2026-11-08（issue #879）：**写飞书的唯一通道** —— 所有写请求经全局调度器。
    *
@@ -107,11 +101,9 @@ class V1BitableGateway {
       groupKey: options.groupKey,
     });
   }
-
   table(tableKey) {
     return this.schema.tables?.[tableKey] || getV1Table(tableKey);
   }
-
   /**
    * 取表配置，并**先确认 table_id 非空**再返回。
    *
@@ -136,7 +128,6 @@ class V1BitableGateway {
   async listFields(tableKey, options = {}) {
     const table = this.tableWithId(tableKey);
     if (!options.refresh && this.fieldCache.has(tableKey)) return this.fieldCache.get(tableKey);
-
     return readWithRetry(`list_fields:${tableKey}`, async () => {
       const fields = [];
       let pageToken;
@@ -233,6 +224,7 @@ class V1BitableGateway {
         duration_ms: Date.now() - startedAt,
         ...correlation,
       });
+      auditGatewayWrite({ options, correlation, tableKey, tableName: table.tableName, tableId: table.tableId, operation: 'create', recordId, fields });
       return { recordId, record: response.data?.record };
     } catch (error) {
       logError('bitable.record.create_failed', {
@@ -273,7 +265,8 @@ class V1BitableGateway {
       const attempt = telemetry.start(offset, chunk.length);
       try {
         // payload 在调度外算好 ⇒ 重试重放逐字相同的请求（不改任何业务键）。
-        const payload = { records: chunk.map((values) => ({ fields: compact(this.fields(tableKey, values)) })) };
+        const payloadFields = chunk.map((values) => compact(this.fields(tableKey, values)));
+        const payload = { records: payloadFields.map((fields) => ({ fields })) };
         const response = await this.scheduledWrite(tableKey, 'create', async () => {
           const result = await this.client.bitable.appTableRecord.batchCreate({
             path: { app_token: this.schema.appToken, table_id: table.tableId },
@@ -307,6 +300,11 @@ class V1BitableGateway {
         created.push(...records.map((record) => ({
           recordId: record?.record_id || '', record,
         })));
+        records.forEach((record, index) => auditGatewayWrite({
+          options, correlation, tableKey, tableName: table.tableName, tableId: table.tableId, operation: 'createBatch',
+          recordId: record?.record_id || '', fields: payloadFields[index],
+          batchId: attempt.context.batch_id, batchIndex: offset + index,
+        }));
         attempt.success(records.length);
       } catch (error) {
         attempt.failure(error);
@@ -334,10 +332,11 @@ class V1BitableGateway {
       const attempt = telemetry.start(offset, chunk.length);
       try {
         // payload 在调度外算好 ⇒ 重试重放逐字相同的请求（不改任何业务键）。
+        const payloadFields = chunk.map((patch) => compact(this.fields(tableKey, patch?.values || {})));
         const payload = {
-          records: chunk.map((patch) => ({
+          records: chunk.map((patch, index) => ({
             record_id: String(patch?.recordId || '').trim(),
-            fields: compact(this.fields(tableKey, patch?.values || {})),
+            fields: payloadFields[index],
           })),
         };
         const response = await this.scheduledWrite(tableKey, 'update', async () => {
@@ -369,6 +368,11 @@ class V1BitableGateway {
         updated.push(...records.map((record) => ({
           recordId: record?.record_id || '', record,
         })));
+        records.forEach((record, index) => auditGatewayWrite({
+          options, correlation, tableKey, tableName: table.tableName, tableId: table.tableId, operation: 'updateBatch',
+          recordId: record?.record_id || '', fields: payloadFields[index],
+          batchId: attempt.context.batch_id, batchIndex: offset + index,
+        }));
         attempt.success(records.length);
       } catch (error) {
         attempt.failure(error);
@@ -399,6 +403,7 @@ class V1BitableGateway {
         duration_ms: Date.now() - startedAt,
         ...correlation,
       });
+      auditGatewayWrite({ options, correlation, tableKey, tableName: table.tableName, tableId: table.tableId, operation: 'update', recordId, fields });
       return response.data?.record || { record_id: recordId };
     } catch (error) {
       logError('bitable.record.update_failed', {
@@ -538,7 +543,6 @@ class V1BitableGateway {
       return records;
     }, options);
   }
-
   async delete(tableKey, recordId, options = {}) {
     const table = this.tableWithId(tableKey);
     const correlation = correlationFields(options.correlation);
@@ -736,7 +740,6 @@ class V1BitableGateway {
       return records;
     }, options);
   }
-
   async findOneByText(tableKey, semanticKey, expected) {
     const fieldName = this.table(tableKey).fields[semanticKey];
     if (!fieldName) throw new Error(`未配置查询字段: ${tableKey}.${semanticKey}`);
