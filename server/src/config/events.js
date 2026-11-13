@@ -171,6 +171,7 @@ const EVENTS = Object.freeze([
   'product.tag_qr.not_wired',
   'product.tag_qr.overwriting',
   'product.tag_qr.record_failed',
+  'product.tag_qr.retry',
   'product.tag_qr.skipped_existing',
   'product.tag_qr.written',
   'purchase.arrival.accept',

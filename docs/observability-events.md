@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **448** 个事件。按前缀分组：
+共 **449** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -271,6 +271,7 @@
 | `product.tag_qr.not_wired` | 1 | src/routes/larkEvents.js |
 | `product.tag_qr.overwriting` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.record_failed` | 1 | src/services/tagQrCodeService.js |
+| `product.tag_qr.retry` | 3 | src/services/tagQrCodeService.js |
 | `product.tag_qr.skipped_existing` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.written` | 1 | src/services/tagQrCodeService.js |
 
