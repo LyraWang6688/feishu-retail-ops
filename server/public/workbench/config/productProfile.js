@@ -4,6 +4,7 @@ import { PRODUCT_NEW_FORM_URL, ACCESSORY_TABLE_URL } from './links.js';
 export const PRODUCT_PROFILE_API = Object.freeze({
   search: '/api/workbench/products/search',
   incomplete: '/api/workbench/products/incomplete',
+  completion: '/api/workbench/products/completion',
 });
 
 export const PRODUCT_PROFILE_TEXTS = Object.freeze({
@@ -26,6 +27,10 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   completeSelectPlaceholder: '请选择缺失信息',
   completeSelectLoading: '正在读取…',
   completeField: '缺失信息',
+  completeTabCount: '{count} 条',
+  completeMissingPrefix: '缺：',
+  completeSampleMissing: '缺少样例图',
+  completeGo: '去完善',
   completeSearchPlaceholder: '按货号搜索待完善货品',
   completeSearchEmpty: '没有匹配的待完善货品。',
   completeAction: '去完善',

@@ -1,7 +1,7 @@
 /**
  * 「配置 → 货品资料」页：
  *   · 货品上新：搜索替代自动查重；用户看结果和样例图自行判断，再去飞书表单；
- *   · 货品完善：按「缺失信息说明」实际值动态分组，选择分类查看记录；
+ *   · 货品完善：按「商品信息缺失」实际值动态分组，选择分类查看记录；
  *   · 同步样例图：复用货品资料的存量同步动作（bindDomainAction）。
  */
 import { api } from '../../core/api-client.js';
@@ -55,7 +55,7 @@ export function createProductProfileModule() {
         host.querySelector('[data-pp="cards"]').hidden = name !== 'cards';
         host.querySelector('[data-pp="new"]').hidden = name !== 'new';
         host.querySelector('[data-pp="complete"]').hidden = name !== 'complete';
-        if (name === 'complete') loadComplete(host, host.querySelector('[data-pp-complete-search]')?.value.trim() || '');
+        if (name === 'complete') loadComplete(host);
       };
       host.addEventListener('click', (event) => {
         const view = event.target.closest?.('[data-pp-view]')?.dataset.ppView;
@@ -68,18 +68,12 @@ export function createProductProfileModule() {
         }
       });
       const input = host.querySelector('[data-pp-search]');
-      const completeSearch = host.querySelector('[data-pp-complete-search]');
       let timer = null;
-      let completeTimer = null;
       input?.addEventListener('input', () => {
         clearTimeout(timer);
         const q = input.value.trim();
         if (q) showToast(T.searchingToast, { sticky: true });
         timer = setTimeout(() => loadSearch(host, q), 250);
-      });
-      completeSearch?.addEventListener('input', () => {
-        clearTimeout(completeTimer);
-        completeTimer = setTimeout(() => loadComplete(host, completeSearch.value.trim()), 250);
       });
       host.querySelector('[data-pp-results]')?.addEventListener('click', (event) => {
         const img = event.target.closest?.('img[data-pp-thumb]');
@@ -134,42 +128,44 @@ async function loadSearch(host, q) {
   }
 }
 
-async function loadComplete(host, q = '') {
-  const select = host.querySelector('[data-pp-select]');
+async function loadComplete(host) {
   const hint = host.querySelector('[data-pp-complete-hint]');
+  const tabs = host.querySelector('[data-pp-complete-tabs]');
   const list = host.querySelector('[data-pp-complete-list]');
-  if (!select) return;
-  // 首次读货品表可能要几秒：先给明确加载态，不能只留一个「无选项」空下拉。
-  select.disabled = true;
-  select.innerHTML = `<option value="">${esc(T.completeSelectLoading)}</option>`;
+  if (!tabs || !list) return;
   hint.textContent = T.completeLoading;
+  tabs.innerHTML = '';
   list.innerHTML = '';
   try {
-    const data = await api.get(`${PRODUCT_PROFILE_API.incomplete}${q ? `?q=${encodeURIComponent(q)}` : ''}`);
-    const groups = Array.isArray(data?.groups) ? data.groups : [];
-    if (!groups.length) {
-      select.disabled = false;
-      select.innerHTML = `<option value="">${esc(T.completeSelectPlaceholder)}</option>`;
-      hint.textContent = q ? T.completeSearchEmpty : T.completeEmpty;
+    const data = await api.get(PRODUCT_PROFILE_API.completion);
+    const dimensions = Array.isArray(data?.dimensions) ? data.dimensions : [];
+    if (!dimensions.length) {
+      hint.textContent = T.completeEmpty;
       return;
     }
-    select.disabled = false;
-    select.innerHTML = `<option value="">${esc(T.completeSelectPlaceholder)}</option>${groups.map((g, i) => `<option value="${i}">${esc(g.value)}（${g.count} 条）</option>`).join('')}`;
-    select.value = '0';
-    hint.textContent = fill(T.completeHint, { count: data?.total || 0 });
+    let active = dimensions.some((item) => item.key === host.__ppDimension) ? host.__ppDimension : dimensions[0].key;
     const render = () => {
-      const group = groups[Number(select.value)] || groups[0];
-      list.innerHTML = (group?.items || []).map((item) => `
-        <div class="pp-row"><span class="pp-number">${esc(item.number)}</span>
-          <a class="pp-small-btn" href="${esc(item.recordUrl)}" target="_blank" rel="noopener">${esc(T.completeAction)}</a>
-        </div>`).join('');
+      const dimension = dimensions.find((item) => item.key === active) || dimensions[0];
+      tabs.innerHTML = dimensions.map((item) => `<button class="pp-tab ${item.key === active ? 'active' : ''}" type="button" data-pp-dimension="${esc(item.key)}"><b>${esc(item.label)}</b><span>${esc(fill(T.completeTabCount, { count: item.count || 0 }))}</span></button>`).join('');
+      hint.textContent = fill(T.completeHint, { count: data?.total || 0 });
+      list.innerHTML = (dimension.items || []).map((item) => {
+        const missing = item.key === 'sample' || dimension.key === 'sample'
+          ? T.completeSampleMissing
+          : `${T.completeMissingPrefix}${dimension.key === 'product' ? item.missingProduct : item.missingTag}`;
+        return `<div class="pp-row"><span class="pp-thumb-wrap">${item.imageUrl ? `<img class="pp-thumb" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}</span><div class="pp-meta"><b>${esc(item.number)}</b><span>${esc(missing)}</span></div><a class="pp-small-btn" href="${esc(item.recordUrl)}" target="_blank" rel="noopener">${esc(T.completeGo)}</a></div>`;
+      }).join('');
     };
-    select.onchange = render;
+    tabs.onclick = (event) => {
+      const button = event.target.closest?.('[data-pp-dimension]');
+      if (!button) return;
+      active = button.dataset.ppDimension;
+      host.__ppDimension = active;
+      render();
+    };
     render();
   } catch {
-    select.disabled = false;
-    select.innerHTML = `<option value="">${esc(T.completeSelectPlaceholder)}</option>`;
     hint.textContent = T.incompleteFailed;
+    tabs.innerHTML = '';
     list.innerHTML = '';
   }
 }

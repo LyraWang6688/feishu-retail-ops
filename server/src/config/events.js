@@ -428,6 +428,7 @@ const EVENTS = Object.freeze([
   'workbench.procurement.new_products.failed',
   'workbench.procurement.replenish.failed',
   'workbench.procurement.submit.failed',
+  'workbench.product_profile.completion_failed',
   'workbench.product_profile.incomplete_failed',
   'workbench.product_profile.product_failed',
   'workbench.product_profile.sample_image_failed',
