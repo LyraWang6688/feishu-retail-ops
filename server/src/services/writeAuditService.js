@@ -66,6 +66,7 @@ const recordWrite = (input = {}) => {
     trace_id: String(input.traceId || input.correlation?.trace_id || input.correlation?.task_id || '').trim(),
     domain,
     table_key: String(input.tableKey || '').trim(),
+    table_name: String(input.tableName || '').trim(),
     table_id: String(input.tableId || '').trim(),
     operation: String(input.operation || '').trim(),
     record_id: String(input.recordId || '').trim(),
@@ -113,14 +114,14 @@ const queryWriteAudit = async ({
 };
 
 /** 网关写成功后调用：按 options/correlation 决定域，best-effort。 */
-const auditGatewayWrite = ({ options = {}, correlation = {}, tableKey, tableId, operation, recordId, fields, batchId, batchIndex } = {}) => {
+const auditGatewayWrite = ({ options = {}, correlation = {}, tableKey, tableName, tableId, operation, recordId, fields, batchId, batchIndex } = {}) => {
   const explicit = options.audit;
   const domain = explicit
     ? (typeof explicit === 'string' ? explicit : String(explicit.domain || '').trim())
     : auditDomainForCorrelation(correlation);
   if (!domain) return;
   void recordWrite({
-    domain, correlation, tableKey, tableId, operation, recordId, fields, batchId, batchIndex,
+    domain, correlation, tableKey, tableName, tableId, operation, recordId, fields, batchId, batchIndex,
     traceId: typeof explicit === 'object' ? explicit.traceId : '',
   });
 };

@@ -51,6 +51,7 @@ test('AC-WG1 销售主表 create 自动按 order_no 写审计', async () => {
   assert.equal(rows[0].domain, 'sales');
   assert.equal(rows[0].operation, 'create');
   assert.equal(rows[0].table_key, 'salesEntry');
+  assert.ok(rows[0].table_name, '审计带中文表名');
   assert.ok(Object.keys(rows[0].fields).length > 0);
 });
 

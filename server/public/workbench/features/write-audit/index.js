@@ -11,10 +11,19 @@ const fieldsHtml = (fields) => {
   return `<div class="wa-fields">${entries.map(([name, value]) => `<span class="wa-field"><b>${escapeHtml(name)}</b><span>${escapeHtml(value)}</span></span>`).join('')}</div>`;
 };
 
+const timeText = (iso) => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return String(iso || '');
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(date);
+};
+
 const eventHtml = (event) => `
   <article class="wa-row">
-    <div class="wa-row-head"><span class="wa-time">${escapeHtml(event.at)}</span><span class="wa-op">${escapeHtml(event.operation)}</span></div>
-    <div class="wa-row-meta"><span>${escapeHtml(T.table)}：${escapeHtml(event.table_key || event.table_id)}</span><span>${escapeHtml(T.record)}：${escapeHtml(event.record_id || '-')}</span></div>
+    <div class="wa-row-head"><span class="wa-time">${escapeHtml(timeText(event.at))}</span><span class="wa-op">${escapeHtml(event.operation)}</span></div>
+    <div class="wa-row-meta"><span>${escapeHtml(T.table)}：${escapeHtml(event.table_name || event.table_key || event.table_id)}</span><span>${escapeHtml(T.record)}：${escapeHtml(event.record_id || '-')}</span></div>
     ${fieldsHtml(event.fields)}
   </article>`;
 

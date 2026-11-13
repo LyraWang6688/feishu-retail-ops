@@ -224,7 +224,7 @@ class V1BitableGateway {
         duration_ms: Date.now() - startedAt,
         ...correlation,
       });
-      auditGatewayWrite({ options, correlation, tableKey, tableId: table.tableId, operation: 'create', recordId, fields });
+      auditGatewayWrite({ options, correlation, tableKey, tableName: table.tableName, tableId: table.tableId, operation: 'create', recordId, fields });
       return { recordId, record: response.data?.record };
     } catch (error) {
       logError('bitable.record.create_failed', {
@@ -301,7 +301,7 @@ class V1BitableGateway {
           recordId: record?.record_id || '', record,
         })));
         records.forEach((record, index) => auditGatewayWrite({
-          options, correlation, tableKey, tableId: table.tableId, operation: 'createBatch',
+          options, correlation, tableKey, tableName: table.tableName, tableId: table.tableId, operation: 'createBatch',
           recordId: record?.record_id || '', fields: payloadFields[index],
           batchId: attempt.context.batch_id, batchIndex: offset + index,
         }));
@@ -369,7 +369,7 @@ class V1BitableGateway {
           recordId: record?.record_id || '', record,
         })));
         records.forEach((record, index) => auditGatewayWrite({
-          options, correlation, tableKey, tableId: table.tableId, operation: 'updateBatch',
+          options, correlation, tableKey, tableName: table.tableName, tableId: table.tableId, operation: 'updateBatch',
           recordId: record?.record_id || '', fields: payloadFields[index],
           batchId: attempt.context.batch_id, batchIndex: offset + index,
         }));
@@ -403,7 +403,7 @@ class V1BitableGateway {
         duration_ms: Date.now() - startedAt,
         ...correlation,
       });
-      auditGatewayWrite({ options, correlation, tableKey, tableId: table.tableId, operation: 'update', recordId, fields });
+      auditGatewayWrite({ options, correlation, tableKey, tableName: table.tableName, tableId: table.tableId, operation: 'update', recordId, fields });
       return response.data?.record || { record_id: recordId };
     } catch (error) {
       logError('bitable.record.update_failed', {
