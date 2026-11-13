@@ -57,6 +57,3 @@
 .sd-modal-error { margin: 0; color: var(--danger); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .sd-stock-short { flex: none; color: var(--danger); font-size: var(--font-size-xs); white-space: nowrap; }
 .sd-action-btn:disabled { opacity: .55; cursor: not-allowed; }
-
-.sd-audit-row { display: flex; justify-content: flex-end; margin-top: 6px; }
-.sd-audit-link { color: var(--primary); font-size: var(--font-size-xs); text-decoration: none; }

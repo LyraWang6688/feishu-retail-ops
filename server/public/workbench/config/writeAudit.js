@@ -4,7 +4,7 @@ export const WRITE_AUDIT_PAGE = Object.freeze({
 });
 
 export const WRITE_AUDIT_TEXTS = Object.freeze({
-  title: '写入时序',
+  title: '数据写入审计',
   back: '‹ 返回',
   orderLabel: '销售单号',
   query: '查询',
