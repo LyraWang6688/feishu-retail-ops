@@ -111,15 +111,19 @@ const paymentRowsHtml = (write, opts = {}) => {
       defaultAmount: opts.defaultAmount,
     });
   const voucherMethods = new Set((write.voucherMethods || []).map((name) => String(name || '').trim()));
-  const rowsHtml = rows.map((row) => {
+  const rowsHtml = rows.map((row, index) => {
     const method = String(row.method || '').trim();
     const isVoucher = voucherMethods.has(method);
     // 空行（她还没选）不设 required：这一行随后可能变成券行；普通行若留空由服务端拦。
     // 不在画廊层强制 required：收款方式可在本页切换，服务端会再校验普通行必填。
     const required = '';
-    return `<div class="form-row form-row--pay">
+    const remove = index > 0
+      ? `<button type="button" class="btn payment-row__remove" data-payment-remove aria-label="${escapeHtml(t.paymentRemoveLabel || '')}">×</button>`
+      : '';
+    return `<div class="form-row form-row--pay" data-payment-row>
 <select name="${escapeHtml(fields.paymentMethod)}" aria-label="${escapeHtml(t.paymentLabel)}">${optionsHtml(write.paymentMethods, row.method || (write.paymentMethods || [])[0])}</select>
 <input name="${escapeHtml(fields.paymentAmount)}" inputmode="decimal"${required} min="0" placeholder="${escapeHtml(t.paymentAmountPlaceholder)}" aria-label="${escapeHtml(t.paymentAmountLabel)}" value="${escapeHtml(row.amount)}">
+${remove}
 </div>`;
   }).join('\n');
   const fixedHint = t.voucherAmountHint
@@ -411,13 +415,15 @@ const sizeGroupsHtml = (view) => {
 
 const GIFT_ROW_STYLE = `/* gift rows: block section; one row = select + quantity + remove; empty by default */
 .form-row--gift { display: block; }
-.form-row--gift > label { display: block; flex: none; margin-bottom: var(--space-2); }
+.gift-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
+.gift-head__label { flex: none; color: var(--text-secondary); font-size: var(--font-size-md); }
+.gift-head__add { flex: 0 0 auto; width: auto; min-height: var(--control-height); margin-top: 0; padding: 0 var(--space-3); }
 .form-row--gift [data-gift-rows] { margin-bottom: var(--space-2); }
 .form-row--gift-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
 .form-row--gift-row select { flex: 1 1 55%; }
 .form-row--gift-row input { flex: 0 0 72px; text-align: center; }
 .form-row--gift-row .btn { flex: 0 0 var(--control-height); width: var(--control-height); min-width: var(--control-height); margin-top: 0; padding: 0; }
-.form-row--gift [data-gift-add] { width: 100%; }`;
+.payment-row__remove { flex: 0 0 var(--control-height); width: var(--control-height); min-width: var(--control-height); margin: 0; padding: 0; }`;
 
 module.exports = {
   buildPaymentRows,

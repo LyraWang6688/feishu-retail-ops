@@ -296,9 +296,23 @@ const paymentAddRowScriptHtml = () => `<script data-view="payment-add-row">
       for (var s = 0; s < selects.length; s++) { selects[s].value = ''; }
       var inputs = clone.querySelectorAll('input');
       for (var n = 0; n < inputs.length; n++) { inputs[n].value = ''; }
+      if (!clone.querySelector('[data-payment-remove]')) {
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn payment-row__remove';
+        remove.setAttribute('data-payment-remove', '');
+        remove.textContent = '×';
+        clone.appendChild(remove);
+      }
       last.parentNode.insertBefore(clone, last.nextSibling);
     });
   }
+  document.addEventListener('click', function(event) {
+    var remove = event.target.closest && event.target.closest('[data-payment-remove]');
+    if (!remove) return;
+    var row = remove.closest('.form-row--pay');
+    if (row) row.remove();
+  });
 })();
 </script>`;
 
@@ -323,7 +337,6 @@ const giftRowsScriptHtml = () => `<script data-view="gift-rows">
   var rows = section.querySelector('[data-gift-rows]');
   var tpl = section.querySelector('[data-gift-template]');
   var value = section.querySelector('[data-gift-value]');
-  var empty = section.querySelector('[data-gift-empty]');
   var error = section.querySelector('[data-gift-error]');
   var add = section.querySelector('[data-gift-add]');
   if (!rows || !tpl || !value || !add) return;
@@ -339,7 +352,6 @@ const giftRowsScriptHtml = () => `<script data-view="gift-rows">
     return loading;
   }
   function refresh() {
-    if (empty) empty.hidden = rows.children.length > 0;
     var parts = [];
     var list = rows.querySelectorAll('[data-gift-row]');
     for (var i = 0; i < list.length; i++) {

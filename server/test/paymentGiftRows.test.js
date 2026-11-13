@@ -29,7 +29,8 @@ test('AC-GF3 资金页赠品：默认零行、添加按钮、隐藏 gift 字段'
   assert.match(html, /data-gift-value/);
   assert.match(html, new RegExp(`name="${SCAN_WRITE.fields.gift}"`), '仍提交既有 gift 字段');
   assert.match(html, /data-gift-placeholder="请选择赠品"/);
-  assert.match(html, /还没有赠品/);
+  assert.equal(html.includes('还没有赠品'), false, '空提示删除');
+  assert.match(html, /gift-head__label/);
   assert.match(html, /添加赠品/);
   assert.match(html, /data-view="gift-rows"/);
   // 模板里只有一份赠品行；页面容器默认不渲染任何赠品行
@@ -44,4 +45,28 @@ test('AC-GF4 赠品候选接口路径/序列化规则钉在源码里', () => {
   assert.match(script, /parts\.push\(name \+ '×' \+ n\)/);
   assert.match(script, /value\.value = parts\.join\('、'\)/);
   assert.match(script, /qty\.value = '1'/);
+});
+
+
+test('AC-GF5 赠品行一行 + 付款行可删除', () => {
+  const html = renderSalePaymentStepPage({
+    write: {
+      ...write,
+      paymentRows: [
+        { method: '微信扫码', amount: '100' },
+        { method: '微信扫码', amount: '160' },
+      ],
+    },
+    orderNo: 'XSD-TEST', config: SCAN_PAGE, postAction: '/pay', totalAmountText: '260',
+  });
+  assert.match(html, /class="gift-head"/);
+  assert.match(html, /gift-head__label/);
+  assert.match(html, /gift-head__add/);
+  assert.equal(html.includes('data-gift-empty'), false, '空提示元素删除');
+  assert.match(html, /data-payment-row/);
+  assert.match(html, /data-payment-remove/);
+  assert.match(html, /payment-row__remove/);
+  assert.match(html, /data-payment-remove/);
+  const script = fs.readFileSync(path.join(__dirname, '../src/views/scanPage/script.js'), 'utf8');
+  assert.match(script, /event\.target\.closest\('\[data-payment-remove\]'\)/);
 });
