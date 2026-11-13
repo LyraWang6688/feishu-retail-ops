@@ -16,6 +16,7 @@ const { TAG_QR_CODE } = require('../src/config/tagQrCode');
 const {
   createTagQrCodeService, attachmentsOf, buildRecordIdScanUrl,
 } = require('../src/services/tagQrCodeService');
+const { resolveTransientRetryConfig } = require('../src/config/pushRetry');
 
 const F = V1_BITABLE_SCHEMA.tables.product.fields;
 const QR_FIELD = F[TAG_QR_CODE.fields.tagQrCode];
@@ -50,10 +51,50 @@ const fakeGateway = (rows) => {
   };
 };
 
+// 用例里把退避压到 0，避免真的等 1s/2s。
+const RETRY_FAST = resolveTransientRetryConfig({
+  PUSH_TRANSIENT_RETRY_MAX_RETRIES: '2',
+  PUSH_TRANSIENT_RETRY_BASE_DELAY_MS: '0',
+  PUSH_TRANSIENT_RETRY_MAX_DELAY_MS: '0',
+});
 const serviceFor = (gateway) => createTagQrCodeService({
   gateway,
   generatePng: async () => Buffer.from('fake-png'),
+  transientRetry: RETRY_FAST,
 });
+
+/** 飞书瞬时/确定性错误（形状与真实 SDK 一致：`response.data.code`）。 */
+const feishuError = (status, code, msg) => {
+  const error = new Error(`Request failed with status code ${status}`);
+  error.response = { status, data: { code, msg } };
+  return error;
+};
+
+/** 可注入"前 N 次失败"的假网关（失败后恢复成功，用来验证 withTransientRetry 真的重试）。 */
+const flakyGateway = ({ record, failGet = 0, failUpload = 0, failUpdate = 0, failCode = 1254607, failStatus = 400 } = {}) => {
+  const counts = { get: 0, upload: 0, update: 0 };
+  let tokenSeq = 0;
+  const row = { record_id: record.record_id, fields: { ...record.fields } };
+  return {
+    counts,
+    get: async () => {
+      counts.get += 1;
+      if (counts.get <= failGet) throw feishuError(failStatus, failCode, 'Data not ready');
+      return { record_id: row.record_id, fields: { ...row.fields } };
+    },
+    uploadAttachment: async () => {
+      counts.upload += 1;
+      if (counts.upload <= failUpload) throw feishuError(504, 2200, 'Gateway timeout');
+      return `retry_token_${++tokenSeq}`;
+    },
+    update: async (table, id, values) => {
+      counts.update += 1;
+      if (counts.update <= failUpdate) throw feishuError(failStatus, failCode, 'Data not ready');
+      Object.assign(row.fields, values);
+      return { record_id: id, fields: { ...row.fields } };
+    },
+  };
+};
 
 const oldNumberNamed = () => ({
   record_id: 'rec_old',
@@ -133,4 +174,34 @@ test('AC-TQ5 回填脚本：旧格式 ⇒ stale_file_name；规范名 ⇒ alread
   assert.equal(newPlan.action, 'skip');
   assert.equal(newPlan.reason, 'already_present');
   assert.equal(plainPlan.action, 'write', '没有编号字段 ⇒ 仍要生成');
+});
+
+
+test('AC-TQ-R1 读记录遇 1254607 ⇒ withTransientRetry 重试后成功写入', async () => {
+  const gateway = flakyGateway({ record: { record_id: 'rec_retry', fields: {} }, failGet: 1 });
+  const result = await serviceFor(gateway).syncRecord('rec_retry');
+  assert.equal(result.status, 'written');
+  assert.equal(gateway.counts.get, 2, '第一次 1254607 后必须重试一次');
+});
+
+test('AC-TQ-R2 上传遇 504 ⇒ 重试后成功；写回复用同一 file_token', async () => {
+  const gateway = flakyGateway({ record: { record_id: 'rec_retry', fields: {} }, failUpload: 1 });
+  const result = await serviceFor(gateway).syncRecord('rec_retry');
+  assert.equal(result.status, 'written');
+  assert.equal(gateway.counts.upload, 2);
+  assert.equal(result.file_token, 'retry_token_1');
+});
+
+test('AC-TQ-R3 写回遇 1254607 ⇒ 重试写回成功（不重复上传素材）', async () => {
+  const gateway = flakyGateway({ record: { record_id: 'rec_retry', fields: {} }, failUpdate: 1 });
+  const result = await serviceFor(gateway).syncRecord('rec_retry');
+  assert.equal(result.status, 'written');
+  assert.equal(gateway.counts.update, 2);
+  assert.equal(gateway.counts.upload, 1, '写回重试复用同一个 file_token');
+});
+
+test('AC-TQ-R4 确定性错误（403）一次都不重试', async () => {
+  const gateway = flakyGateway({ record: { record_id: 'rec_retry', fields: {} }, failGet: 1, failStatus: 403, failCode: 99991400 });
+  await assert.rejects(() => serviceFor(gateway).syncRecord('rec_retry'), /403/);
+  assert.equal(gateway.counts.get, 1, '403 不许重试');
 });
