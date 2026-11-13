@@ -32,6 +32,7 @@ const { submitToastUrl } = require('../../utils/submitToast');
 const { createProcurementPageService } = require('../../services/procurementPageService');
 const { createProcurementPageSubmitService } = require('../../services/procurementPageSubmitService');
 const { createScanWriteService } = require('../../services/scanWriteService');
+const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 
 const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   const router = express.Router();
@@ -75,6 +76,33 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     }
     return purchaseArrival;
   };
+  /**
+   * ⭐ 2026-11-12（业务负责人）：验收单上传 —— 手机拍照/选图；原始二进制 POST（不改全局 multipart），
+   *   上传到本 Base 素材库拿 file_token，验收提交时一并写主表「对方单据」。
+   */
+  router.post('/purchase/arrivals/acceptance-doc', express.raw({ type: 'image/*', limit: '12mb' }), async (req, res) => {
+    const buffer = Buffer.isBuffer(req.body) ? req.body : null;
+    if (!buffer || !buffer.length) {
+      return res.status(400).json({ success: false, error: arrivalTab.texts.counterpartyDocInvalid });
+    }
+    let rawName = '';
+    try { rawName = decodeURIComponent(String(req.get('x-file-name') || '')); } catch { rawName = ''; }
+    try {
+      const gateway = options.gateway || new V1BitableGateway();
+      const fileToken = await uploadAcceptanceDocument({
+        gateway,
+        buffer,
+        fileName: rawName,
+        operation: arrivalTab.texts.acceptanceDocUploadOperation,
+      });
+      return res.json({ success: true, file: { file_token: fileToken, file_name: safeFileName(rawName) } });
+    } catch (error) {
+      logError('workbench.purchase.acceptance_doc.failed', {
+        request_id: req.requestId, file_name: rawName, error: error.message,
+      });
+      return res.status(502).json({ success: false, error: arrivalTab.texts.counterpartyDocUploadFailed });
+    }
+  });
   router.post('/purchase/arrivals/confirm', async (req, res) => {
     const batchNo = String(req.body?.batchNo || '').trim();
     try {
@@ -161,6 +189,14 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         operatorOpenId: restInput.operatorOpenId,
         ...(restInput.sessionKey ? { sessionKey: restInput.sessionKey } : {}),
       });
+      // ⭐ 2026-11-12：验收单（对方单据）随验收一起写；失败抛错 ⇒ 统一 job 重试。
+      if (result?.ok === true && Array.isArray(restInput.counterpartyDocuments) && restInput.counterpartyDocuments.length) {
+        await webhooks.orderBatches.writeCounterpartyDocument({
+          batchNo: restInput.batchNo || '',
+          documents: restInput.counterpartyDocuments,
+          correlation: { batch_no: restInput.batchNo || '' },
+        });
+      }
       // 写完才作废订单列表缓存（她下一次读一定是新数据 ✓）——改前是"写成功后立刻作废"，语义不变 ✓
       if (result?.ok) ordersCache.invalidate();
       return result;
@@ -237,6 +273,20 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     //   缺省 = 旧页面整批验收（兼容）；新页面必传。
     const supplierRecordId = String(req.body?.[arrivalTab.fields.supplierRecordId] || '').trim();
     const lines = Array.isArray(req.body?.[arrivalTab.fields.lines]) ? req.body[arrivalTab.fields.lines] : [];
+    const rawDocs = Array.isArray(req.body?.[arrivalTab.fields.counterpartyDocuments])
+      ? req.body[arrivalTab.fields.counterpartyDocuments] : [];
+    if (rawDocs.length > 5) {
+      return res.status(400).json({ success: false, error: arrivalTab.texts.counterpartyDocTooMany });
+    }
+    const counterpartyDocuments = [];
+    for (const doc of rawDocs) {
+      const fileToken = String(doc?.fileToken || doc?.file_token || '').trim();
+      const fileName = String(doc?.fileName || doc?.file_name || '').trim();
+      if (!fileToken || fileToken.length > 512 || fileName.length > 200) {
+        return res.status(400).json({ success: false, error: arrivalTab.texts.counterpartyDocInvalid });
+      }
+      counterpartyDocuments.push({ fileToken, fileName });
+    }
     if (!batchNo) return res.status(400).json({ success: false, error: arrivalTab.texts.batchMissing });
     try {
       // ⭐⭐ 2026-10-17（业务负责人逐字）：「验收就是我报货、然后货到了，我需要验收；
@@ -341,12 +391,15 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         },
         restInput: {
           openId,
+          batchNo,
           // ⚠️ 金额**原样**透传（不改成 `amount.value`）—— 形状与改前那一次 `finish(...)` 逐字同形 ✓；
           //    金额规则在写层还会再走一遍同一份解析（幂等、无副作用 ✓）。
           actualAmount: req.body?.[arrivalTab.fields.actualAmount],
           operatorOpenId: openId,
           // ⭐ 会话隔离：后台 finish 必须读同一张卡的那份会话（不拿"当前最新"覆盖）
           ...(sessionKey ? { sessionKey } : {}),
+          // ⭐ 验收单（对方单据）—— finish 成功后追加附件；失败由 job 重试
+          ...(counterpartyDocuments.length ? { counterpartyDocuments } : {}),
         },
       });
       // ⑥ 成功页 = **统一那一句**（「已提交成功，数据会更新」· 真源在 `config/scanPage.js` 的

@@ -85,10 +85,13 @@ const fakeArrival = (overrides = {}) => {
 };
 const fakeQuery = (rows) => ({ calls: [], listPurchaseRequests: async (input) => { fakeQuery.last = input; return rows; } });
 
-const appFor = ({ arrival, purchaseQuery }) => {
+const appFor = ({ arrival, purchaseQuery, gateway = {}, acceptBackground = null }) => {
   const app = express();
   app.use(express.json());
-  app.use('/api/workbench', createWorkbenchRouter({ gateway: {}, purchaseQuery, arrival }));
+  app.use('/api/workbench', createWorkbenchRouter({
+    gateway, purchaseQuery, arrival,
+    ...(acceptBackground ? { acceptBackground } : {}),
+  }));
   app.use((error, req, res, next) => res.status(500).json({ success: false, error: error.message }));
   return app;
 };
@@ -371,4 +374,52 @@ test('AC-AW16d ⭐ 幂等键不来自表单：前端**不传** submitKey（由�
   const submitSlice = FEATURE.slice(FEATURE.indexOf('async function submitArrival'), FEATURE.indexOf('async function runAction'))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.equal(/submitKey/.test(submitSlice), false, 'frontend must not invent or send the idempotency key');
+});
+
+
+test('AC-AW-DOC1 ⭐ 验收单上传：图片原始二进制 → 飞书素材 → 返回 file_token（写「对方单据」用）', async () => {
+  let uploadedPath = '';
+  const gateway = {
+    uploadAttachment: async (filePath, options) => {
+      uploadedPath = filePath;
+      assert.equal(options.parentType, 'bitable_image');
+      return 'file_token_doc_1';
+    },
+  };
+  await withServer(appFor({ arrival: fakeArrival(), purchaseQuery: fakeQuery([]), gateway }), async (base) => {
+    const res = await fetch(`${base}/api/workbench${arrivalTab.api.acceptanceDoc}`, {
+      method: 'POST',
+      headers: {
+        cookie: COOKIE,
+        'Content-Type': 'image/jpeg',
+        'x-file-name': encodeURIComponent('验收单 1.jpg'),
+      },
+      body: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    });
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.file.file_token, 'file_token_doc_1');
+    assert.equal(body.file.file_name, '验收单_1.jpg', '文件名解码并安全化 ✓');
+    assert.ok(uploadedPath.includes('acceptance-doc-'), '上传后临时文件已传路径 ✓');
+    assert.equal(fs.existsSync(uploadedPath), false, '临时文件已清理 ✓');
+  });
+});
+
+test('AC-AW-DOC2 ⭐ accept 把验收单 tokens 原样交给后台（后台写「对方单据」）', async () => {
+  const scheduled = [];
+  const acceptBackground = { schedulePurchaseRest: (input) => { scheduled.push(input); } };
+  const docs = [{ fileToken: 'file_token_doc_1', fileName: '验收单 1.jpg' }];
+  await withServer(appFor({
+    arrival: fakeArrival(), purchaseQuery: fakeQuery(ROWS), acceptBackground,
+  }), async (base) => {
+    const res = await postJson(base, arrivalTab.api.accept, {
+      batchNo: 'BH-1', actualAmount: '300',
+      lines: [{ productRecordId: 'p1', size: 40, quantity: 2 }],
+      counterpartyDocuments: docs,
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(scheduled[0].restInput.counterpartyDocuments, docs,
+      '验收单 tokens 进后台 restInput ✓');
+    assert.equal(scheduled[0].restInput.batchNo, 'BH-1');
+  });
 });
