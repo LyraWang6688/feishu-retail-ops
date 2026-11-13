@@ -16,7 +16,7 @@ const write = (voucherMethods) => ({
   ],
 });
 
-const rowsOf = (html) => html.split('<div class="form-row form-row--pay">').slice(1);
+const rowsOf = (html) => html.split('<div class="form-row form-row--pay"').slice(1);
 const rowOf = (html, index) => rowsOf(html)[index] || '';
 
 test('AC-VP-AMOUNT-1 资金页金额不在客户端 required（服务端再校验普通行）', () => {

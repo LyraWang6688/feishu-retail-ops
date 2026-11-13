@@ -171,11 +171,9 @@ const renderSalePaymentStepPage = ({
   //   反向哨兵：`test/scanPagePaymentButtons.test.js` AC-PB1。
   const addRowButtonHtml = `<button type="button" class="btn" data-payment-add>${escapeHtml(step.addRowButton || '')}</button>`;
   const giftFieldHtml = `<style>${GIFT_ROW_STYLE}</style><div class="form-row form-row--gift" data-gift-section data-gift-placeholder="${escapeHtml(t.giftSelectPlaceholder || '')}">
-<label>${escapeHtml(t.giftLabel || '')}</label>
+<div class="gift-head"><span class="gift-head__label">${escapeHtml(t.giftLabel || '')}</span><button type="button" class="btn gift-head__add" data-gift-add>${escapeHtml(t.giftAddButton || '')}</button></div>
 <div data-gift-rows></div>
-<p class="hint" data-gift-empty>${escapeHtml(t.giftEmpty || '')}</p>
 <p class="hint" data-gift-error hidden>${escapeHtml(t.giftLoadFailed || '')}</p>
-<button type="button" class="btn" data-gift-add>${escapeHtml(t.giftAddButton || '')}</button>
 <input type="hidden" name="${escapeHtml(fields.gift || 'gift')}" data-gift-value value="">
 <template data-gift-template><div class="form-row form-row--gift-row" data-gift-row><select data-gift-name aria-label="${escapeHtml(t.giftSelectLabel || '')}"></select><input type="number" min="1" step="1" value="1" inputmode="numeric" data-gift-quantity aria-label="${escapeHtml(t.giftQuantityLabel || '')}"><button type="button" class="btn" data-gift-remove aria-label="${escapeHtml(t.giftRemoveLabel || '')}">×</button></div></template>
 </div>`;
