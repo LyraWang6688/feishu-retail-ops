@@ -192,3 +192,17 @@
 /* 货品上新搜索结果：整行点击打开「货品信息」对应记录；样例图仍点开大图 */
 .pp-row[data-pp-record-url] { cursor: pointer; }
 .pp-row[data-pp-record-url]:hover { border-color: var(--primary); }
+
+/* 产品特点配置：三个标签字典 */
+.pf-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.pf-head h2 { margin: 0; }
+.pf-section { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; background: var(--surface); }
+.pf-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.pf-section-head h3 { margin: 0; font-size: 15px; }
+.pf-count { color: var(--muted); font-size: 12px; }
+.pf-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; }
+.pf-tag { display: inline-block; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); font-size: 12px; }
+.pf-empty { color: var(--muted); font-size: 13px; margin: 4px 0; }
+.pf-add { display: flex; gap: 8px; margin-top: 10px; }
+.pf-add input { flex: 1; min-width: 0; }
+.pf-error { color: var(--danger); font-size: 12px; margin: 6px 0 0; }

@@ -22,6 +22,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { PRODUCT_FEATURE_DIMENSIONS, PRODUCT_FEATURE_TAG_FIELD } = require('../src/config/productFeatures');
 
 const FEATURE_DIR = 'public/workbench/features';
 
@@ -53,6 +54,13 @@ const CHAINS = Object.freeze({
     landing: [['groupBuyVoucher', 'name'], ['groupBuyVoucher', 'purchasePrice'], ['groupBuyVoucher', 'faceValue'],
       ['groupBuyVoucher', 'status'], ['groupBuyVoucher', 'externalId'], ['groupBuyVoucher', 'listedAt'],
       ['groupBuyVoucher', 'delistedAt']],
+  },
+
+  'PRODUCT_FEATURES_API.add(key)': {
+    fe: 'features/domains/productFeatureConfig.js', feKey: 'PRODUCT_FEATURES_API.add(key)',
+    route: 'src/routes/workbench/products.js', routeKey: /router\.post\('\/products\/features\/:key\/tags'/,
+    service: 'src/services/productFeatureTagService.js', serviceKey: /createRecordInTable\(/,
+    externalLanding: PRODUCT_FEATURE_DIMENSIONS.map((item) => ({ tableName: item.tableName, column: PRODUCT_FEATURE_TAG_FIELD })),
   },
 
   'DATA_CONFIG_API.sampleImageSync': {
@@ -137,11 +145,14 @@ test('AC-LANDING-2 ⭐ 已核的每条链四跳都在（前端 → 路由 → �
     assert.match(read(chain.route), chain.routeKey, `② 路由没读到 ${target} 的入参 ✗`);
     assert.match(read(chain.service), chain.serviceKey, `③ 服务没消费 ${target} ✗`);
     if (chain.config) assert.match(read(chain.config), chain.configKey, `②b 端点常量对不上 ${target} ✗`);
-    for (const [table, column] of chain.landing) {
+    for (const [table, column] of chain.landing || []) {
       const tableDef = V1_BITABLE_SCHEMA.tables[table];
       assert.ok(tableDef, `④ 落点表 ${table} 不存在 ✗`);
       assert.ok(tableDef.fields[column],
         `④ 落点列 \`${table}.${column}\` 不存在 ⇒ 这正是「到货说明」当时那种"写进不存在的东西" ✗（${target}）`);
+    }
+    for (const landing of chain.externalLanding || []) {
+      assert.ok(landing.tableName && landing.column, `④ 外部落点未写清 ✗（${target}）`);
     }
   }
 });

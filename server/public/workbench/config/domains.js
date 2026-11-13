@@ -228,6 +228,7 @@ export const DOMAIN_TABS = [
         kind: 'action-cards',
         cards: [
           { icon: '🔄', title: '同步团购券数据', action: 'voucher-catalog-sync' },
+          { icon: '🏷️', title: '产品特点配置', action: 'product-feature-config' },
         ],
       },
       {

@@ -18,6 +18,7 @@ const { recordUrl } = require('../../utils/feishuLinks');
 const { PRODUCT_PROFILE } = require('../../config/productProfile');
 const { containsFormula } = require('../../services/bitableFilterFormula');
 const { getProductSearchSnapshot } = require('../../services/productSearchSnapshot');
+const { listProductFeatures, addProductFeatureTag } = require('../../services/productFeatureTagService');
 
 const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   const router = express.Router();
@@ -102,6 +103,28 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     } catch (error) {
       logError('workbench.product_profile.incomplete_failed', { request_id: req.requestId, error: error.message });
       return res.status(502).json({ success: false, error: 'product_incomplete_failed' });
+    }
+  });
+
+  router.get('/products/features', async (req, res) => {
+    try {
+      return res.json({ success: true, ...await listProductFeatures(getGateway()) });
+    } catch (error) {
+      logError('workbench.product_features.list_failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: 'product_features_failed' });
+    }
+  });
+
+  router.post('/products/features/:key/tags', async (req, res) => {
+    try {
+      const result = await addProductFeatureTag(getGateway(), req.params?.key, req.body?.tag);
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      const status = error?.statusCode === 400 ? 400 : 502;
+      logError('workbench.product_features.add_failed', {
+        request_id: req.requestId, key: req.params?.key, error: error.message,
+      });
+      return res.status(status).json({ success: false, error: error.message });
     }
   });
 
