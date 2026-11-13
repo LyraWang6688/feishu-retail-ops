@@ -23,6 +23,8 @@ test('AC-PF3 数据配置有「产品特点配置」卡片，点击打开三个�
   assert.ok(page.includes("cards.classList.add('hidden')"), '打开配置时隐藏入口卡片');
   assert.ok(page.includes('data-feature-tab'), '三个维度用 tab 切换');
   assert.ok(page.includes('activeKey'), '只渲染当前 tab');
+  assert.equal(page.includes('pf-section-head'), false, 'tab 已有维度标题/条数，section 内不重复');
+  assert.ok(page.indexOf('data-feature-add') < page.indexOf('pf-list'), '新增输入在标签列表之前');
   assert.ok(page.includes('PRODUCT_FEATURES_API.update'), '修改走接口');
   assert.ok(page.includes('PRODUCT_FEATURES_API.remove'), '删除走接口');
   assert.ok(page.includes('item.usage'), '展示使用次数');
