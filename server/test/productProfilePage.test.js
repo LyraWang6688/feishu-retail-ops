@@ -15,6 +15,8 @@ test('AC-PP9 货品上新结果卡片可打开货品记录', () => {
 test('AC-PP12 货品完善三维度 tab：样例图 / 商品信息缺失 / 标签信息缺失', () => {
   const page = read('features/domains/productProfile.js');
   assert.ok(page.includes('data-pp-complete-tabs'));
+  assert.equal(page.includes('data-pp-select'), false, '不再有缺失信息下拉');
+  assert.equal(page.includes('data-pp-complete-search'), false, '不再有货品完善搜索框');
   assert.ok(page.includes('data-pp-dimension'));
   assert.ok(page.includes('PRODUCT_PROFILE_API.completion'));
   assert.ok(page.includes("dimension.key === 'product'"));
