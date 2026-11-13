@@ -14,18 +14,23 @@ const assertTableId = (tableId) => {
 
 const listRecordsInTable = async (gateway, tableId) => {
   const id = assertTableId(tableId);
-  const records = [];
-  let pageToken;
-  do {
-    const response = await gateway.client.bitable.appTableRecord.list({
-      path: { app_token: gateway.schema.appToken, table_id: id },
-      params: { page_size: 500, page_token: pageToken },
-    });
-    gateway.assertSuccess(response, `listRecordsInTable failed: ${id}`);
-    records.push(...(response.data?.items || []));
-    pageToken = response.data?.has_more ? response.data?.page_token : undefined;
-  } while (pageToken);
-  return records;
+  const work = async () => {
+    const records = [];
+    let pageToken;
+    do {
+      const response = await gateway.client.bitable.appTableRecord.list({
+        path: { app_token: gateway.schema.appToken, table_id: id },
+        params: { page_size: 500, page_token: pageToken },
+      });
+      gateway.assertSuccess(response, `listRecordsInTable failed: ${id}`);
+      records.push(...(response.data?.items || []));
+      pageToken = response.data?.has_more ? response.data?.page_token : undefined;
+    } while (pageToken);
+    return records;
+  };
+  return typeof gateway.readWithRetry === 'function'
+    ? gateway.readWithRetry(`list_records_in_table:${id}`, work)
+    : work();
 };
 
 const createRecordInTable = async (gateway, tableId, fields, options = {}) => {

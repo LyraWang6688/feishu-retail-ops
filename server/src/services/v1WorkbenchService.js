@@ -84,7 +84,7 @@ const listAllWithRetry = async (gateway, tableKey, requestId) => {
   const retry = resolveOrderReadRetryConfig();
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await gateway.listAll(tableKey);
+      return await gateway.listAll(tableKey, { retry: false });
     } catch (error) {
       if (!isRetriableOrderReadError(error) || attempt >= retry.maxRetries) throw error;
       const delayMs = Math.max(0, Number(retry.delayMs)) * (attempt + 1);

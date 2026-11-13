@@ -398,7 +398,7 @@ const createLabelPrintService = (gateway, options = {}) => {
   const listAllWithRetry = async (tableKey) => {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await gateway.listAll(tableKey);
+        return await gateway.listAll(tableKey, { retry: false });
       } catch (error) {
         if (!isRetriableOrderReadError(error) || attempt >= readRetry.maxRetries) throw error;
         const delayMs = Math.max(0, Number(readRetry.delayMs)) * (attempt + 1);
@@ -780,7 +780,7 @@ const createLabelPrintService = (gateway, options = {}) => {
     const filter = equalsFormula(recordIdLookupField, id);
     if (!filter) throw new Error(`记录 ID 含有不能拼进筛选公式的字符：${id}`);
     const stockRecords = await withTransientRetry(
-      () => gateway.listByFilter('liveInventory', filter),
+      () => gateway.listByFilter('liveInventory', filter, { retry: false }),
       {
         operation: 'label_print.scan_read',
         config: transientRetry,

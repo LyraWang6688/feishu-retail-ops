@@ -178,7 +178,7 @@ class SalesFollowupService {
     for (let attempt = 0; ; attempt += 1) {
       const startedAt = Date.now();
       try {
-        return await this.gateway.listAll(tableKey, options);
+        return await this.gateway.listAll(tableKey, { ...options, retry: false });
       } catch (error) {
         const retriable = isRetriableOrderReadError(error);
         const left = maxRetries - attempt;

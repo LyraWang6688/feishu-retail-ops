@@ -108,7 +108,7 @@ const createLiveInventorySnapshot = (options = {}) => {
     let lastFailure = null;
     for (let attempt = 0; attempt <= readRetryTimes; attempt += 1) {
       try {
-        return await gateway.listAll(tableKey);
+        return await gateway.listAll(tableKey, { retry: false });
       } catch (error) {
         lastFailure = error;
         if (attempt < readRetryTimes) {

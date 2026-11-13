@@ -10,6 +10,7 @@ const { createBatchWriteTelemetry } = require('../utils/batchWriteTelemetry');
 // ⭐ 2026-11-08（issue #879）：所有**写**飞书的请求共享同一个全局调度器
 //    （并发上限 / 同表串行 / 1254607 与瞬时 400 的统一退避重试）。读请求不进调度器。
 const { getFeishuWriteScheduler } = require('./feishuWriteScheduler');
+const { readWithRetry } = require('./gatewayReadRetry');
 // ⭐ 2026-11-10：云盘（Drive）读写（下载附件 / 上传到云盘文件夹 / 列目录 / 删同名旧文件）。
 const { createDriveApi } = require('./driveApi');
 
@@ -132,27 +133,26 @@ class V1BitableGateway {
     if (!table.tableId) throw new Error(`“${table.tableName}”未配置 table_id，请设置对应的 FEISHU_V1_*_TABLE_ID`);
     return table;
   }
-
   async listFields(tableKey, options = {}) {
     const table = this.tableWithId(tableKey);
     if (!options.refresh && this.fieldCache.has(tableKey)) return this.fieldCache.get(tableKey);
 
-    const fields = [];
-    let pageToken;
-    do {
-      const response = await this.client.bitable.appTableField.list({
-        path: { app_token: this.schema.appToken, table_id: table.tableId },
-        params: { page_size: 200, page_token: pageToken },
-      });
-      this.assertSuccess(response, `读取“${table.tableName}”字段`);
-      fields.push(...(response.data?.items || []));
-      pageToken = response.data?.has_more ? response.data?.page_token : undefined;
-    } while (pageToken);
-
-    this.fieldCache.set(tableKey, fields);
-    return fields;
+    return readWithRetry(`list_fields:${tableKey}`, async () => {
+      const fields = [];
+      let pageToken;
+      do {
+        const response = await this.client.bitable.appTableField.list({
+          path: { app_token: this.schema.appToken, table_id: table.tableId },
+          params: { page_size: 200, page_token: pageToken },
+        });
+        this.assertSuccess(response, `读取“${table.tableName}”字段`);
+        fields.push(...(response.data?.items || []));
+        pageToken = response.data?.has_more ? response.data?.page_token : undefined;
+      } while (pageToken);
+      this.fieldCache.set(tableKey, fields);
+      return fields;
+    }, options);
   }
-
   async validateTable(tableKey) {
     const table = this.table(tableKey);
     const at = this.now();
@@ -175,7 +175,6 @@ class V1BitableGateway {
     });
     return promise;
   }
-
   async validateTables(tableKeys) {
     const results = [];
     for (const key of tableKeys) results.push(await this.validateTable(key));
@@ -378,7 +377,6 @@ class V1BitableGateway {
     }
     return updated;
   }
-
   async update(tableKey, recordId, semanticValues, options = {}) {
     const table = this.tableWithId(tableKey);
     const startedAt = Date.now();
@@ -414,14 +412,15 @@ class V1BitableGateway {
       throw error;
     }
   }
-
-  async get(tableKey, recordId) {
+  async get(tableKey, recordId, options = {}) {
     const table = this.tableWithId(tableKey);
-    const response = await this.client.bitable.appTableRecord.get({
-      path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
-    });
-    this.assertSuccess(response, `读取“${table.tableName}”记录`);
-    return response.data?.record;
+    return readWithRetry(`get:${tableKey}:${recordId}`, async () => {
+      const response = await this.client.bitable.appTableRecord.get({
+        path: { app_token: this.schema.appToken, table_id: table.tableId, record_id: recordId },
+      });
+      this.assertSuccess(response, `读取“${table.tableName}”记录`);
+      return response.data?.record;
+    }, options);
   }
 
   /**
@@ -458,21 +457,20 @@ class V1BitableGateway {
    *
    * @returns {Promise<object|null>} 飞书那条 record（形状与 `get` 相同）；读不到 ⇒ `null`
    */
-  async getByTableId({
-    tableId = '', recordId = '', fieldNames = [], correlation = {}, reason = '',
-  } = {}) {
+  async getByTableId({ tableId = '', recordId = '', fieldNames = [], correlation = {}, reason = '', retry } = {}) {
     const wantedTableId = String(tableId || '').trim();
     const wantedRecordId = String(recordId || '').trim();
     if (!wantedTableId) throw new Error('getByTableId 需要 tableId（空表 ID 会打到 .../tables//records）');
     if (!wantedRecordId) throw new Error('getByTableId 需要 recordId');
     const names = (Array.isArray(fieldNames) ? fieldNames : []).filter((name) => String(name || '').trim());
-    const response = await this.client.bitable.appTableRecord.get({
-      path: { app_token: this.schema.appToken, table_id: wantedTableId, record_id: wantedRecordId },
-      ...(names.length ? { params: { field_names: JSON.stringify(names) } } : {}),
-    });
-    // ⚠️ 读不到（飞书 404 之类）**如实抛** ⇒ 调用方自己决定"当失败还是当没有"（不许在这里吞 ✗）
-    this.assertSuccess(response, `按 table_id 读取记录（${reason || 'get_by_table_id'}）`);
-    return response.data?.record || null;
+    return readWithRetry(`get_by_table_id:${wantedTableId}:${wantedRecordId}`, async () => {
+      const response = await this.client.bitable.appTableRecord.get({
+        path: { app_token: this.schema.appToken, table_id: wantedTableId, record_id: wantedRecordId },
+        ...(names.length ? { params: { field_names: JSON.stringify(names) } } : {}),
+      });
+      this.assertSuccess(response, `按 table_id 读取记录（${reason || 'get_by_table_id'}）`);
+      return response.data?.record || null;
+    }, { retry, correlation });
   }
 
   /**
@@ -506,39 +504,39 @@ class V1BitableGateway {
     }, { correlation });
     return response.data?.record || null;
   }
-
   async getBatch(tableKey, ids = [], options = {}) {
     const table = this.tableWithId(tableKey);
     const wanted = (Array.isArray(ids) ? ids : [])
       .map((id) => String(id || '').trim()).filter(Boolean);
     if (!wanted.length) return [];
     const correlation = correlationFields(options.correlation);
-    const records = [];
-    for (let offset = 0; offset < wanted.length; offset += BATCH_GET_IDS_LIMIT) {
-      const chunk = wanted.slice(offset, offset + BATCH_GET_IDS_LIMIT);
-      const startedAt = Date.now();
-      const response = await this.client.bitable.appTableRecord.batchGet({
-        path: { app_token: this.schema.appToken, table_id: table.tableId },
-        data: { record_ids: chunk },
-      });
-      this.assertSuccess(response, `批量读取“${table.tableName}”记录`);
-      const got = response.data?.records || [];
-      const forbidden = response.data?.forbidden_record_ids;
-      records.push(...got);
-      logInfo('bitable.record.batch_read', {
-        table_key: tableKey,
-        table_id: table.tableId,
-        requested: chunk.length,
-        returned: got.length,
-        // ⭐「缺了几条」如实报（官方没给名字就只报数，不猜是哪条）。
-        missing: Math.max(0, chunk.length - got.length),
-        forbidden: Array.isArray(forbidden) ? forbidden.length : 0,
-        chunk_offset: offset,
-        duration_ms: Date.now() - startedAt,
-        ...correlation,
-      });
-    }
-    return records;
+    return readWithRetry(`get_batch:${tableKey}`, async () => {
+      const records = [];
+      for (let offset = 0; offset < wanted.length; offset += BATCH_GET_IDS_LIMIT) {
+        const chunk = wanted.slice(offset, offset + BATCH_GET_IDS_LIMIT);
+        const startedAt = Date.now();
+        const response = await this.client.bitable.appTableRecord.batchGet({
+          path: { app_token: this.schema.appToken, table_id: table.tableId },
+          data: { record_ids: chunk },
+        });
+        this.assertSuccess(response, `批量读取“${table.tableName}”记录`);
+        const got = response.data?.records || [];
+        const forbidden = response.data?.forbidden_record_ids;
+        records.push(...got);
+        logInfo('bitable.record.batch_read', {
+          table_key: tableKey,
+          table_id: table.tableId,
+          requested: chunk.length,
+          returned: got.length,
+          missing: Math.max(0, chunk.length - got.length),
+          forbidden: Array.isArray(forbidden) ? forbidden.length : 0,
+          chunk_offset: offset,
+          duration_ms: Date.now() - startedAt,
+          ...correlation,
+        });
+      }
+      return records;
+    }, options);
   }
 
   async delete(tableKey, recordId, options = {}) {
@@ -666,24 +664,24 @@ class V1BitableGateway {
     const fieldNames = Array.isArray(options.fieldNames)
       ? options.fieldNames.map((name) => String(name).trim()).filter(Boolean)
       : [];
-    const records = [];
-    let pageToken;
-    do {
-      const response = await this.client.bitable.appTableRecord.list({
-        path: { app_token: this.schema.appToken, table_id: table.tableId },
-        params: {
-          page_size: 500,
-          page_token: pageToken,
-          // ⚠️ 空数组要**整个不带这个参数**（带空 `field_names` 会变成"一列都不要"）；
-          //    非空必须 `JSON.stringify`（官方类型是 string，见上面的注释）。
-          ...(fieldNames.length ? { field_names: JSON.stringify(fieldNames) } : {}),
-        },
-      });
-      this.assertSuccess(response, `读取“${table.tableName}”记录列表`);
-      records.push(...(response.data?.items || []));
-      pageToken = response.data?.has_more ? response.data?.page_token : undefined;
-    } while (pageToken);
-    return records;
+    return readWithRetry(`list_all:${tableKey}`, async () => {
+      const records = [];
+      let pageToken;
+      do {
+        const response = await this.client.bitable.appTableRecord.list({
+          path: { app_token: this.schema.appToken, table_id: table.tableId },
+          params: {
+            page_size: 500,
+            page_token: pageToken,
+            ...(fieldNames.length ? { field_names: JSON.stringify(fieldNames) } : {}),
+          },
+        });
+        this.assertSuccess(response, `读取“${table.tableName}”记录列表`);
+        records.push(...(response.data?.items || []));
+        pageToken = response.data?.has_more ? response.data?.page_token : undefined;
+      } while (pageToken);
+      return records;
+    }, options);
   }
 
   /**
@@ -723,18 +721,20 @@ class V1BitableGateway {
     const maxRecords = Number.isInteger(options.maxRecords) && options.maxRecords > 0 ? options.maxRecords : 0;
     const requested = Number.isInteger(options.pageSize) && options.pageSize > 0 ? options.pageSize : 500;
     const pageSize = Math.min(requested, 500);
-    const records = [];
-    let pageToken;
-    do {
-      const response = await this.client.bitable.appTableRecord.list({
-        path: { app_token: this.schema.appToken, table_id: table.tableId },
-        params: { page_size: pageSize, page_token: pageToken, filter: expression },
-      });
-      this.assertSuccess(response, `按条件读取“${table.tableName}”记录`);
-      records.push(...(response.data?.items || []));
-      pageToken = response.data?.has_more ? response.data?.page_token : undefined;
-    } while (pageToken && (!maxRecords || records.length < maxRecords));
-    return records;
+    return readWithRetry(`list_by_filter:${tableKey}`, async () => {
+      const records = [];
+      let pageToken;
+      do {
+        const response = await this.client.bitable.appTableRecord.list({
+          path: { app_token: this.schema.appToken, table_id: table.tableId },
+          params: { page_size: pageSize, page_token: pageToken, filter: expression },
+        });
+        this.assertSuccess(response, `按条件读取“${table.tableName}”记录`);
+        records.push(...(response.data?.items || []));
+        pageToken = response.data?.has_more ? response.data?.page_token : undefined;
+      } while (pageToken && (!maxRecords || records.length < maxRecords));
+      return records;
+    }, options);
   }
 
   async findOneByText(tableKey, semanticKey, expected) {

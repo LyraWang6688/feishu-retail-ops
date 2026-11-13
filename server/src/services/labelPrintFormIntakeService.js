@@ -125,7 +125,7 @@ const createLabelPrintFormIntakeService = (deps = {}) => {
   /** 读一条「标签打印」记录（只读）。瞬时错误（1254607 等）自动小退避重试。 */
   const readRecord = async (recordId) => {
     const record = await withTransientRetry(
-      () => resolveGateway().get('labelPrintRequest', recordId),
+      () => resolveGateway().get('labelPrintRequest', recordId, { retry: false }),
       {
         operation: 'label_print.form.record_read',
         config: transientRetry,

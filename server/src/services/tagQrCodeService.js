@@ -107,7 +107,7 @@ const createTagQrCodeService = ({
     const scanUrl = scanUrlOf(recordId);
     const fileName = fileNameOf(recordId);
     const record = await withTransientRetry(
-      () => gateway.get('product', recordId),
+      () => gateway.get('product', recordId, { retry: false }),
       {
         operation: 'product.tag_qr.read_record',
         config: retryConfig,
