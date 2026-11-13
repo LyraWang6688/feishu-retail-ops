@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **453** 个事件。按前缀分组：
+共 **456** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -617,3 +617,11 @@
 | `workbench.sales.orders.read_retry` | 2 | src/services/salesDeliveryReadService.js<br>src/services/salesFollowupService.js |
 | `workbench.sales.payment.failed` | 2 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryPaymentService.js |
 | `workbench.size.unresolved` | 1 | src/services/v1WorkbenchService.js |
+
+## write_audit
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `write_audit.append_failed` | 1 | src/services/writeAuditService.js |
+| `write_audit.cache_hit` | 1 | src/services/writeAuditService.js |
+| `write_audit.cache_miss` | 1 | src/services/writeAuditService.js |
