@@ -12,6 +12,16 @@ const mockApi = async (page, { orders = [] } = {}) => {
     if (path === '/api/auth/feishu/me') {
       return route.fulfill(json({ enabled: true, authenticated: true, user: { name: 'E2E' } }));
     }
+    if (path === '/api/workbench/products/completion') {
+      return route.fulfill(json({
+        success: true, total: 1,
+        dimensions: [
+          { key: 'sample', label: '样例图', count: 1, items: [{ number: 'E2E|黑|男', recordId: 'p1', recordUrl: 'https://example.com/base', imageUrl: '', missingProduct: '齐备', missingTag: '齐备' }] },
+          { key: 'product', label: '商品信息缺失', count: 0, items: [] },
+          { key: 'tag', label: '标签信息缺失', count: 0, items: [] },
+        ],
+      }));
+    }
     if (path === '/api/workbench/sales/orders') {
       return route.fulfill(json({ success: true, methods: [], orders }));
     }
