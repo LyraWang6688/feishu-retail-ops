@@ -132,6 +132,9 @@ export const SALES_QUERY_PAGE_URL =
 export const INVENTORY_QUERY_PAGE_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc';
 
+export const PURCHASE_QUERY_PAGE_URL =
+  'https://scnzoiwpgxik.feishuapp.cn/basevibe/shrcngCXYuX93PFFuVO80jO60Nd';
+
 /**
  * 飞书 **AppLink：在端内打开一个 web-view** 的基址 —— AGENTS §13 实查过的那条官方格式
  * （2026-10-12 又 `curl` 核过官方文档：`mode` 是**PC 端**容器模式）。

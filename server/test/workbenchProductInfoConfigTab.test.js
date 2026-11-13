@@ -12,7 +12,7 @@ const loadPages = async () => {
   return domains.domainById('product').pages;
 };
 
-test('货品页：标签打印左边是「货品资料」，数据配置有券同步和产品特点配置', async () => {
+test('货品页：标签打印左边是「货品资料」，配置审计有券同步、产品特点配置和写入时序', async () => {
   const pages = await loadPages();
   const labels = pages.findIndex((page) => page.id === 'product-labels');
   const profile = pages.findIndex((page) => page.id === 'product-new');
@@ -21,9 +21,9 @@ test('货品页：标签打印左边是「货品资料」，数据配置有券�
   assert.equal(profile, 0, '货品资料是配置下第一页');
   assert.equal(pages[profile].label, '货品资料');
   assert.equal(pages[profile].kind, 'product-profile');
-  assert.equal(pages[config].label, '数据配置');
+  assert.equal(pages[config].label, '配置审计');
   assert.equal(pages[config].kind, 'action-cards');
-  assert.deepEqual(pages[config].cards.map((card) => card.action), ['voucher-catalog-sync', 'product-feature-config']);
+  assert.deepEqual(pages[config].cards.map((card) => card.action), ['voucher-catalog-sync', 'product-feature-config', 'write-audit']);
 });
 
 test('配置页：「消息通知」占位子 tab 在最右边（2026-11-09）', async () => {

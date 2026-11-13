@@ -12,6 +12,16 @@ const mockApi = async (page, { orders = [] } = {}) => {
     if (path === '/api/auth/feishu/me') {
       return route.fulfill(json({ enabled: true, authenticated: true, user: { name: 'E2E' } }));
     }
+    if (path === '/api/workbench/products/completion') {
+      return route.fulfill(json({
+        success: true, total: 1,
+        dimensions: [
+          { key: 'sample', label: '样例图', count: 1, items: [{ number: 'E2E|黑|男', recordId: 'p1', recordUrl: 'https://example.com/base', imageUrl: '', missingProduct: '齐备', missingTag: '齐备' }] },
+          { key: 'product', label: '商品信息缺失', count: 0, items: [] },
+          { key: 'tag', label: '标签信息缺失', count: 0, items: [] },
+        ],
+      }));
+    }
     if (path === '/api/workbench/sales/orders') {
       return route.fulfill(json({ success: true, methods: [], orders }));
     }
@@ -107,11 +117,13 @@ test('创作 tab 能打开占位页，不报未知模块', async ({ page }) => {
   await expect(page.getByText(/未知工作台模块/)).toHaveCount(0);
 });
 
-test('货品 → 数据配置：只剩券目录同步', async ({ page }) => {
+test('货品 → 配置审计：券目录同步 + 产品特点配置 + 写入时序', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '配置', exact: true }).click();
-  await page.getByRole('button', { name: '数据配置', exact: true }).click();
+  await page.getByRole('button', { name: '配置审计', exact: true }).click();
   await expect(page.getByRole('button', { name: /同步团购券数据/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /产品特点配置/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /写入时序/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /同步存量样例图/ })).toHaveCount(0);
 });
 
@@ -124,7 +136,7 @@ test('货品 → 货品资料：四张卡 + 货品完善分组', async ({ page }
   await expect(page.getByRole('button', { name: /同步样例图/ })).toBeVisible();
   await expect(page.locator('[data-page-kind="product-profile"]:visible').getByRole('heading', { name: '配品配置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /货品完善/ }).click();
-  await expect(page.locator('[data-pp-select]')).toBeVisible();
+  await expect(page.locator('[data-pp-complete-tabs]')).toBeVisible();
 });
 
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {

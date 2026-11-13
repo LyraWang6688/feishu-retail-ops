@@ -136,8 +136,10 @@ export const DOMAIN_TABS = [
       },
       {
         id: 'purchase-orders',
-        label: '订单列表',
-        kind: 'placeholder',
+        label: '供应查询',
+        kind: 'query',
+        sectionId: 'purchase-query',
+        directJump: true,
       },
       {
         id: 'purchase-supplier-money',
@@ -223,12 +225,13 @@ export const DOMAIN_TABS = [
       },
       {
         id: 'product-info-config',
-        label: '数据配置',
+        label: '配置审计',
         // 2026-11-10：样例图同步与配品配置已移到「货品资料」；这里只保留券目录同步。
         kind: 'action-cards',
         cards: [
           { icon: '🔄', title: '同步团购券数据', action: 'voucher-catalog-sync' },
           { icon: '🏷️', title: '产品特点配置', action: 'product-feature-config' },
+          { icon: '🔍', title: '写入时序', action: 'write-audit' },
         ],
       },
       {

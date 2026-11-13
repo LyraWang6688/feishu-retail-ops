@@ -8,9 +8,11 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..', 'public/workbench');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
-test('AC-WP1 销售交割单卡有写入时序入口，页面可查询按单时间线', () => {
-  const render = read('features/sales-delivery/render.js');
-  assert.ok(render.includes('/workbench/write-audit.html?order_no='));
+test('AC-WP1 配置审计页有写入时序入口，页面可查询按单时间线', () => {
+  const domains = read('config/domains.js');
+  const action = read('features/domains/dataConfigAction.js');
+  assert.ok(domains.includes("title: '写入时序', action: 'write-audit'"));
+  assert.ok(action.includes('data-domain-action="write-audit"'));
   const page = read('write-audit.html');
   assert.ok(page.includes('id="wa-order"'));
   assert.ok(page.includes('features/write-audit/index.js'));

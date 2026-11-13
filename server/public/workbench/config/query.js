@@ -1,4 +1,4 @@
-import { SALES_QUERY_PAGE_URL, INVENTORY_QUERY_PAGE_URL } from './links.js';
+import { SALES_QUERY_PAGE_URL, INVENTORY_QUERY_PAGE_URL, PURCHASE_QUERY_PAGE_URL } from './links.js';
 
 /**
  * 多维表格 AI 页面（外链）的两个板块 —— **配置先行：加减板块 / 改文案只改这一个文件**，
@@ -36,6 +36,12 @@ export const QUERY_SECTIONS = [
     icon: '📦',
     title: '全仓查询',
     href: INVENTORY_QUERY_PAGE_URL,
+  },
+  {
+    id: 'purchase-query',
+    icon: '🚚',
+    title: '供应查询',
+    href: PURCHASE_QUERY_PAGE_URL,
   },
 ];
 
