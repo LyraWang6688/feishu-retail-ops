@@ -157,7 +157,7 @@ class SecondDeliveryService {
     const entryFields = this.gateway.table('salesEntry').fields;
     // ⭐ 2026-10-08（P0）：读表走瞬时小退避（读是幂等的，重试安全）。**写一步都不重试**。
     const entry = await this.read(
-      () => this.gateway.get('salesEntry', salesEntryRecordId), 'second_delivery.confirm.get_entry',
+      () => this.gateway.get('salesEntry', salesEntryRecordId, { retry: false }), 'second_delivery.confirm.get_entry',
     );
     if (!entry) throw new Error('销售主表记录不存在');
     if (!isPosted(postedOf(entry, entryFields))) throw new Error('销售订单尚未确认入账');
@@ -173,8 +173,8 @@ class SecondDeliveryService {
     const detailFields = this.gateway.table('salesDetail').fields;
     const paymentFields = this.gateway.table('paymentRecord').fields;
     const [allDetails, allPayments] = await Promise.all([
-      this.read(() => this.gateway.listAll('salesDetail'), 'second_delivery.confirm.list_details'),
-      this.read(() => this.gateway.listAll('paymentRecord'), 'second_delivery.confirm.list_payments'),
+      this.read(() => this.gateway.listAll('salesDetail', { retry: false }), 'second_delivery.confirm.list_details'),
+      this.read(() => this.gateway.listAll('paymentRecord', { retry: false }), 'second_delivery.confirm.list_payments'),
     ]);
     const orderDetails = allDetails.filter((record) =>
       strictLinkedRecordIds(record.fields?.[detailFields.salesEntry]).includes(salesEntryRecordId));
@@ -283,12 +283,12 @@ class SecondDeliveryService {
     // ⭐ 2026-10-08（P0）：这一组整表读正是早上 9:00 最容易撞上瞬时错误的地方
     //   （读一次「实时库存」要 5~9 秒、1337 行分页；两条链路并发读多张表）⇒ 每张表各自小退避。
     const [entries, allDetails, allPayments, behaviors] = await Promise.all([
-      this.read(() => this.gateway.listAll('salesEntry'), 'second_delivery.reminder.list_entries'),
-      this.read(() => this.gateway.listAll('salesDetail'), 'second_delivery.reminder.list_details'),
-      this.read(() => this.gateway.listAll('paymentRecord'), 'second_delivery.reminder.list_payments'),
+      this.read(() => this.gateway.listAll('salesEntry', { retry: false }), 'second_delivery.reminder.list_entries'),
+      this.read(() => this.gateway.listAll('salesDetail', { retry: false }), 'second_delivery.reminder.list_details'),
+      this.read(() => this.gateway.listAll('paymentRecord', { retry: false }), 'second_delivery.reminder.list_payments'),
       getConfigRows({
         gateway: this.gateway, tableKey: 'behavior',
-        loader: () => this.read(() => this.gateway.listAll('behavior'), 'second_delivery.reminder.list_behaviors'),
+        loader: () => this.read(() => this.gateway.listAll('behavior', { retry: false }), 'second_delivery.reminder.list_behaviors'),
       }),
     ]);
     const entryFields = this.gateway.table('salesEntry').fields;
@@ -443,7 +443,7 @@ class SecondDeliveryService {
     const productTable = this.gateway.table?.('product');
     if (productTable?.tableId) {
       const records = await getConfigRows({ gateway: this.gateway, tableKey: 'product',
-        loader: () => this.read(() => this.gateway.listAll('product'), 'second_delivery.items.list_products') });
+        loader: () => this.read(() => this.gateway.listAll('product', { retry: false }), 'second_delivery.items.list_products') });
       index.product = {
         labelField: productTable.fields?.itemNo,
         // ⭐ 2026-10-08 晚：9 点推送的行要「货号 **颜色** 尺码」⇒ 索引里也带上「颜色」这一列

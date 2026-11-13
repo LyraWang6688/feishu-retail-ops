@@ -34,7 +34,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     for (let attempt = 0; ; attempt += 1) {
       const startedAt = Date.now();
       try {
-        return await gateway.listAll(tableKey, options);
+        return await gateway.listAll(tableKey, { ...options, retry: false });
       } catch (error) {
         const left = maxRetries - attempt;
         if (!isRetriableOrderReadError(error) || left <= 0) throw error;

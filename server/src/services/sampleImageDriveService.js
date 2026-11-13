@@ -154,7 +154,7 @@ const createSampleImageDriveService = ({
     factor: 2,
   };
   const readRecord = (recordId) => withTransientRetry(
-    () => gateway.get('product', recordId),
+    () => gateway.get('product', recordId, { retry: false }),
     {
       operation: 'sample_image.read_record',
       config: readRetryConfig,

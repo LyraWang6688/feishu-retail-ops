@@ -47,6 +47,7 @@ const EVENTS = Object.freeze([
   'douyin.voucher_catalog.triggered',
   'douyin.voucher_catalog.write_failed',
   'douyin.voucher_catalog.written',
+  'feishu.read.retry',
   'feishu.write.applied',
   'feishu.write.failed',
   'feishu.write.retry',
