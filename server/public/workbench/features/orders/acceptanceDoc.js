@@ -6,7 +6,7 @@
 export const arrivalDocFieldHtml = ({ escapeHtml, label, hint }) => `
             <!-- ⭐ 2026-11-12（业务负责人）：验收单 = 拍照/选图上传 ⇒ 主表「对方单据」 -->
             <label class="form-field action-form__doc">${escapeHtml(label)}
-              <input data-field="arrival-doc" type="file" accept="image/*" multiple>
+              <input data-field="arrival-doc" type="file" accept="image/*" multiple required aria-required="true">
               <span class="action-form__doc-hint" data-view="arrival-doc-hint">${escapeHtml(hint)}</span>
             </label>`;
 
@@ -47,4 +47,19 @@ export const uploadArrivalDocuments = async ({ api, endpoint, files = [], texts 
     });
   }
   return { ok: true, documents };
+};
+
+/** 验收单也必填：未选图时聚焦 + 原生校验 + 字段旁人话，调用方直接 return。 */
+export const validateArrivalDocuments = (form, texts) => {
+  const input = form?.querySelector('[data-field="arrival-doc"]') || null;
+  const hint = form?.querySelector('[data-view="arrival-doc-hint"]') || null;
+  const files = input?.files ? [...input.files] : [];
+  if (files.length) return { ok: true, files };
+  if (hint) {
+    hint.textContent = texts.acceptanceDocRequired;
+    hint.hidden = false;
+  }
+  input?.focus();
+  if (typeof input?.reportValidity === 'function') input.reportValidity();
+  return { ok: false, files, error: texts.acceptanceDocRequired };
 };

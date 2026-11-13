@@ -168,11 +168,12 @@ export const ARRIVAL_FULL_TEXTS = {
   amountRequired: '请先填「本次货款金额」（大于 0 的数字），再确认到货并入库',
   // ⭐ 2026-11-12（业务负责人）：验收单（拍照/选图上传）→ 主表「对方单据」
   acceptanceDocLabel: '验收单',
-  acceptanceDocHint: '可拍照或从相册选择（选填，最多 5 张）',
+  acceptanceDocHint: '必填：可拍照或从相册选择，最多 5 张',
   acceptanceDocTooMany: '验收单最多上传 5 张，请删掉多余的再提交。',
   acceptanceDocInvalid: '验收单只支持图片，请重新拍照或选择图片。',
   acceptanceDocTooLarge: '单张验收单不能超过 10MB。',
   acceptanceDocUploadFailed: '验收单没上传成功，请稍后再试。',
+  acceptanceDocRequired: '请先上传验收单（最多 5 张），再确认到货并入库',
   // ⚠️ 后端 accept 必回 redirect_url（submitToastUrl 唯一生成）；缺失 = 不该发生的事故，按失败报
   redirectMissing: '提交回执缺少跳转地址，请刷新工作台后再看；这次不要重复提交',
   actualQuantityRequired: '每个尺码都要填「实际到货数量」（没到的填 0），再点确认到货并入库',

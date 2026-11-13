@@ -448,3 +448,19 @@ test('AC-RC8 ⭐ 验收单一行：file input 支持拍照/选图；上传后随
   assert.equal(src.includes("data-field=\"arrival-doc\"") && src.includes("counterpartyDocuments"),
     true);
 });
+
+
+test('AC-RC9 验收单必填：未选图不发请求，字段旁提示并聚焦', () => {
+  const src = readWorkbench('features/orders/index.js');
+  const config = readWorkbench('config/orders.js');
+  const doc = readWorkbench('features/orders/acceptanceDoc.js');
+  assert.ok(doc.includes('data-field="arrival-doc"') && doc.includes('required aria-required="true"'),
+    '验收单 file input 必填 ✓');
+  assert.ok(config.includes('acceptanceDocRequired:'), '必填文案走配置 ✓');
+  assert.ok(src.includes('validateArrivalDocuments(form, ARRIVAL_FULL_TEXTS)'), '未选图时调用必填校验 ✓');
+  assert.ok(doc.includes('texts.acceptanceDocRequired') && doc.includes("input?.focus()") && doc.includes('input.reportValidity()'),
+    '未选图时聚焦并触发原生校验 ✓');
+  const docCheck = src.indexOf('validateArrivalDocuments(form, ARRIVAL_FULL_TEXTS)');
+  const writeAction = src.indexOf('return runWriteAction(button', src.indexOf('async function submitArrival'));
+  assert.ok(docCheck > 0 && writeAction > docCheck, '验收单校验在发请求之前 ✓');
+});
