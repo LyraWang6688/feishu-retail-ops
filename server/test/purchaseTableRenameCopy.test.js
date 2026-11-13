@@ -209,7 +209,7 @@ test('AC-R3 新叫法逐字：给她看的用「采购单」/「采购明细」�
   assert.ok(webhook.includes("label: '采购主表'"), '日志 label = 采购主表');
   // ⑤ 开发者可见的配置/映射报错也同步（含表名）
   assert.ok(webhook.includes('未配置「采购主表」的表 ID'), '表 ID 未配置的报错同步新表名');
-  assert.ok(readSrc('services/purchaseOrderBatchService.js').includes('「采购主表」未配置「单据」字段映射'));
+  assert.ok(readSrc('services/purchaseOrderBatchService.js').includes('「采购主表」未配置「我方单据」字段映射'));
   // ⑥ 两条内部 hint（人话、排查可见）
   assert.ok(readSrc('services/purchaseArrivalConversationService.js')
     .includes('「采购主表」的到货状态没改成已到货'));
