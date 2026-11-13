@@ -26,6 +26,10 @@ const gateway = () => new V1BitableGateway({
           code: 0,
           data: { records: data.records.map((record, index) => ({ record_id: `rec_batch_${index + 1}`, fields: record.fields })) },
         }),
+        batchUpdate: async ({ data }) => ({
+          code: 0,
+          data: { records: data.records.map((record) => ({ record_id: record.record_id, fields: record.fields })) },
+        }),
       },
     },
   },
@@ -64,4 +68,30 @@ test('AC-WG2 批量创建拆成逐条审计', async () => {
   assert.deepEqual(rows.map((row) => row.record_id), ['rec_batch_1', 'rec_batch_2']);
   assert.ok(rows.every((row) => row.batch_id));
   assert.ok(table);
+});
+
+
+test('AC-WG3 单条 update 记录审计', async () => {
+  await gateway().update('salesEntry', 'rec_update_1', { writeStatus: '成功' }, {
+    correlation: { order_no: 'XSD-AUDIT-U1', task_id: 'job-audit-update' },
+  });
+  await wait();
+  const rows = await queryWriteAudit({ orderNo: 'XSD-AUDIT-U1' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].operation, 'update');
+  assert.equal(rows[0].record_id, 'rec_update_1');
+  assert.ok(Object.keys(rows[0].fields).length > 0);
+});
+
+test('AC-WG4 updateBatch 拆成逐条审计', async () => {
+  await gateway().updateBatch('salesEntry', [
+    { recordId: 'rec_u1', values: { writeStatus: '成功' } },
+    { recordId: 'rec_u2', values: { writeStatus: '失败' } },
+  ], { correlation: { order_no: 'XSD-AUDIT-U2', task_id: 'job-audit-update-batch' } });
+  await wait();
+  const rows = await queryWriteAudit({ orderNo: 'XSD-AUDIT-U2' });
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.operation), ['updateBatch', 'updateBatch']);
+  assert.deepEqual(rows.map((row) => row.record_id), ['rec_u1', 'rec_u2']);
+  assert.ok(rows.every((row) => row.batch_id));
 });
