@@ -14,9 +14,8 @@ const rowHtml = (dimension, item, editing) => {
 
 const sectionHtml = (dimension, editing) => `
   <section class="pf-section" data-feature-key="${escapeHtml(dimension.key)}">
-    <div class="pf-section-head"><h3>${escapeHtml(dimension.label)}</h3><span class="pf-count">${escapeHtml(fill(T.count, { count: dimension.count || 0 }))}</span></div>
-    <div class="pf-list">${(dimension.items || []).map((item) => rowHtml(dimension, item, editing)).join('') || `<p class="pf-empty">${escapeHtml(T.empty)}</p>`}</div>
     <div class="pf-add"><input data-feature-input="${escapeHtml(dimension.key)}" placeholder="${escapeHtml(T.addPlaceholder)}" autocomplete="off"><button class="btn small primary" type="button" data-feature-add="${escapeHtml(dimension.key)}">${escapeHtml(T.add)}</button></div>
+    <div class="pf-list">${(dimension.items || []).map((item) => rowHtml(dimension, item, editing)).join('') || `<p class="pf-empty">${escapeHtml(T.empty)}</p>`}</div>
     <p class="pf-error" data-feature-error="${escapeHtml(dimension.key)}" hidden></p>
   </section>`;
 
