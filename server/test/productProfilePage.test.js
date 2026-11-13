@@ -10,6 +10,9 @@ test('AC-PP9 货品上新结果卡片可打开货品记录', () => {
   const page = read('features/domains/productProfile.js');
   assert.match(page, /data-pp-record-url="\$\{esc\(item\.recordUrl/);
   assert.match(page, /window\.open\(row\.dataset\.ppRecordUrl/);
+  assert.ok(page.includes('issueChipsOf'), '搜索结果按缺失维度生成标签');
+  assert.ok(page.includes('pp-issue'), '问题标签有独立样式');
+  assert.equal(page.includes('货号 ${esc(item.itemNo)} · 颜色'), false, '不再重复货号/颜色/类别');
 });
 
 test('AC-PP12 货品完善三维度 tab：样例图 / 商品信息缺失 / 标签信息缺失', () => {
