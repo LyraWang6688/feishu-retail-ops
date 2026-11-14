@@ -25,39 +25,8 @@ const BATCH_GET_CHUNK_SIZE = 500;
 //    只给 getBatch 用，不动 createBatch / updateBatch / deleteBatch 的 500 分片。
 const BATCH_GET_IDS_LIMIT = 100;
 
-const compact = (value) => {
-  const result = {};
-  Object.entries(value || {}).forEach(([key, item]) => {
-    if (item !== undefined) result[key] = item;
-  });
-  return result;
-};
-const recordIdOf = (response) => response?.data?.record?.record_id || response?.data?.record_id || '';
-const textValue = (value) => {
-  if (value == null) return '';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return value.map(textValue).filter(Boolean).join(',');
-  if (typeof value === 'object') return String(value.text ?? value.name ?? value.value ?? '');
-  return '';
-};
-/** 关联字段 cell → record_id 数组；只认 record_ids / link_record_ids（issue #1074）。 */
-const linkedRecordIds = (value) => {
-  if (Array.isArray(value)) return value.flatMap(linkedRecordIds);
-  if (!value || typeof value !== 'object') return [];
-  const nested = [value.record_ids, value.link_record_ids].filter(Array.isArray);
-  return nested.length ? nested.flatMap((ids) => ids.flatMap((id) => {
-    if (typeof id === 'string') return id ? [id] : [];
-    if (Array.isArray(id)) return linkedRecordIds(id);
-    if (id && typeof id === 'object') return linkedRecordIds(id);
-    return [];
-  })) : [];
-};
-// 单选关联的判定：必须且只能关联到这一条记录。多选或指错记录都不能算匹配，
-// 否则幂等比对会把「另一条尺码」或「一次关联多个」误当成同一条业务明细。
-const singleLinked = (cell, recordId) => {
-  const ids = linkedRecordIds(cell);
-  return ids.length === 1 && ids[0] === recordId;
-};
+const { compact, recordIdOf, textValue, linkedRecordIds, singleLinked } = require('./v1Gateway/cells');
+
 class V1BitableGateway {
   constructor(options = {}) {
     this.schema = options.schema || V1_BITABLE_SCHEMA;
@@ -790,6 +759,8 @@ class V1BitableGateway {
   }
 }
 
+// ⭐ 2026-11-14（#48）：cell 工具已拆到 `services/v1Gateway/cells.js`；这里继续 re-export，
+//   保证二十多处 `require('v1BitableGateway').textValue` 的调用方**零改动**。
 module.exports = {
   V1BitableGateway,
   compact,
