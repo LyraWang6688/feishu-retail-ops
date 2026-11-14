@@ -32,7 +32,5 @@ export const INVENTORY_MANUAL_TEXTS = Object.freeze({
   scanNoProduct: '没有认出货品编号，请重新扫码。',
   scanNoSdk: '当前设备调不起飞书扫一扫，请在飞书里打开工作台。',
   scanFailed: '扫码没有成功，请再试一次。',
-  printWaiting: '正在等待库存调整完成，然后提交打印…',
-  printJobMissing: '打印任务没有创建成功，请重试。',
-  inventoryJobTimeout: '库存调整还没有完成，请稍后在工作台重试打印。',
+  printQueuedToast: '已加入打印队列，库存调整完成后自动打印',
 });

@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **475** 个事件。按前缀分组：
+共 **481** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -132,6 +132,12 @@
 | `inventory.adjustment.season_flag.applied` | 1 | src/services/inventoryPairAdjustmentService.js |
 | `inventory.change.applied` | 4 | src/services/inventory/executeOperation.js<br>src/services/inventory/purchaseBatch.js<br>src/services/inventory/purchaseReturnBatch.js<br>…等 4 个文件 |
 | `inventory.change.failed` | 1 | src/config/alerts.js |
+| `inventory.print.intent.failed` | 1 | src/services/inventoryPrintIntentService.js |
+| `inventory.print.intent.missing_product` | 1 | src/services/inventoryPrintIntentService.js |
+| `inventory.print.intent.queued` | 1 | src/services/inventoryPrintIntentService.js |
+| `inventory.print.intent.recover_failed` | 1 | src/services/inventoryPrintIntentRuntime.js |
+| `inventory.print.intent.recovered` | 1 | src/services/inventoryPrintIntentRuntime.js |
+| `inventory.print.intent.request_failed` | 1 | src/routes/workbenchInventoryAdjustment.js |
 | `inventory.sample_candidates.failed` | 2 | src/services/inventory/executeOperation.js<br>src/services/inventory/saleBatch.js |
 
 ## label
