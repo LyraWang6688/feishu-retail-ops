@@ -13,7 +13,14 @@
  */
 const { SECURITY } = require('../config/security');
 
-const normalize = (origin) => String(origin || '').trim().replace(/\/+$/, '').toLowerCase();
+// ⚠️ 不用 `/\/+$/`（CodeQL ReDoS：用户可控 Origin 里塞大量 '/' 会拖慢正则）——
+//   手动从尾部剥斜杠是线性；再限长 300 兜底。
+const normalize = (origin) => {
+  const value = String(origin || '').trim().toLowerCase().slice(0, 300);
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
+};
 
 /** 扫码页 **写请求**（POST/PUT/PATCH/DELETE）的来源校验；GET/HEAD/OPTIONS 不拦。 */
 const createOriginGuard = ({ allowedOrigins = SECURITY.scanPostAllowedOrigins } = {}) => {
