@@ -4,7 +4,7 @@
 
 | 日期 | 单号 | 产物 | 说明 |
 |---|---|---|---|
-| 2026-10-18 | XSD-20261018-0001 | [HTML](sales-XSD-20261018-0001/sales-XSD-20261018-0001.html) · [events](sales-XSD-20261018-0001/events-XSD-20261018-0001.json) · [chain](sales-XSD-20261018-0001/trace_chain-XSD-20261018-0001.json) | 销售链路真实样例；17 个历史事件 + 1 个删除推断 |
+| 2026-10-18 | XSD-20261018-0001 | `sales-XSD-20261018-0001/{sales-*.html, events-*.json, trace_chain-*.json}`（**数据文件不入库**，见目录内 README） | 销售链路真实样例；17 个历史事件 + 1 个删除推断 |
 
 归档目录各自带 `README.md`，写清：
 
