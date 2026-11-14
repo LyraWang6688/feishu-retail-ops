@@ -12,6 +12,7 @@
 const express = require('express');
 const { logError } = require('../../utils/logger');
 const { V1BitableGateway, textValue } = require('../../services/v1BitableGateway');
+const { createProductSampleImageCache } = require('../../services/productSampleImageCache');
 const { getConfigRows } = require('../../services/configTableCache');
 const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
 const { recordUrl } = require('../../utils/feishuLinks');
@@ -31,6 +32,24 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   };
   const table = V1_BITABLE_SCHEMA.tables.product;
   const field = (key) => table.fields[key];
+  // ⭐ #1204：样例图 token 短 TTL 缓存（命中 ⇒ 0 次记录读）+ 连续限流熔断。
+  const imageCache = options.sampleImageCache || createProductSampleImageCache({
+    ttlMs: PRODUCT_PROFILE.sampleImageCacheTtlMs,
+    maxEntries: PRODUCT_PROFILE.sampleImageCacheMax,
+  });
+  const breaker = { failures: 0, lastFailureAt: 0, openUntil: 0 };
+  const breakerConfig = PRODUCT_PROFILE.sampleImageBreaker;
+  const noteImageFailure = () => {
+    const at = Date.now();
+    if (breaker.lastFailureAt && at - breaker.lastFailureAt > breakerConfig.windowMs) breaker.failures = 0;
+    breaker.lastFailureAt = at;
+    breaker.failures += 1;
+    if (breaker.failures >= breakerConfig.failures) {
+      breaker.openUntil = at + breakerConfig.cooldownMs;
+      breaker.failures = 0;
+    }
+  };
+  const retryAfterSeconds = () => Math.max(1, Math.ceil((breaker.openUntil - Date.now()) / 1000));
 
   const itemOf = (row) => {
     const fields = row?.fields || {};
@@ -208,20 +227,43 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   router.get('/products/:recordId/sample-image', async (req, res) => {
     const recordId = String(req.params?.recordId || '').trim();
     if (!recordId) return res.status(400).json({ success: false, error: 'missing_record_id' });
+    // ⭐ #1204：熔断窗口内直接回 503 + Retry-After（页面提示"稍后刷新"），不再打飞书。
+    if (breaker.openUntil > Date.now()) {
+      res.set('Retry-After', String(retryAfterSeconds()));
+      return res.status(503).json({ success: false, error: 'sample_image_throttled' });
+    }
     try {
-      const record = await getGateway().get('product', recordId);
-      const images = record?.fields?.[field('sampleImage')];
-      const attachment = Array.isArray(images) ? images[0] : null;
-      const fileToken = String(attachment?.file_token || attachment?.id || '').trim();
-      if (!fileToken) return res.status(404).json({ success: false, error: 'sample_image_missing' });
-      const buffer = await getGateway().drive.downloadMedia(fileToken, 'download product sample image');
-      res.set('Content-Type', String(attachment?.type || 'image/jpeg'));
-      res.set('Cache-Control', 'private, max-age=300');
+      let entry = imageCache.get(recordId);
+      if (!entry) {
+        // 页面加载类读：**不重试**（重试只会放大限流），限流由 503/熔断兜住。
+        const record = await getGateway().get('product', recordId, { retry: false });
+        const images = record?.fields?.[field('sampleImage')];
+        const attachment = Array.isArray(images) ? images[0] : null;
+        const fileToken = String(attachment?.file_token || attachment?.id || '').trim();
+        if (!fileToken) return res.status(404).json({ success: false, error: 'sample_image_missing' });
+        entry = { fileToken, type: String(attachment?.type || 'image/jpeg') };
+        imageCache.set(recordId, entry);
+      }
+      const etag = `W/"${entry.fileToken}"`;
+      res.set('ETag', etag);
+      res.set('Cache-Control', 'private, max-age=300, must-revalidate');
+      if (String(req.headers['if-none-match'] || '') === etag) return res.status(304).end();
+      const buffer = await getGateway().drive.downloadMedia(entry.fileToken, 'download product sample image');
+      res.set('Content-Type', entry.type);
+      breaker.failures = 0;
       return res.send(buffer);
     } catch (error) {
+      const message = String(error?.message || '');
+      const dataNotReady = /1254607|data not ready|数据未准备好/i.test(message)
+        || /1254607/.test(String(error?.code || ''));
       logError('workbench.product_profile.sample_image_failed', {
-        request_id: req.requestId, record_id: recordId, error: error.message,
+        request_id: req.requestId, record_id: recordId, error: message, throttled: dataNotReady,
       });
+      if (dataNotReady) {
+        noteImageFailure();
+        res.set('Retry-After', '5');
+        return res.status(503).json({ success: false, error: 'sample_image_not_ready' });
+      }
       return res.status(502).json({ success: false, error: 'sample_image_failed' });
     }
   });

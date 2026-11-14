@@ -17,6 +17,8 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   searchPlaceholder: '录入货号进行重复校验',
   searchingToast: '正在查询中…',
   noImage: '无样例图',
+  thumbFailed: '加载失败 · 点击重试',
+  more: '加载更多（还有 {count} 条）',
   searchEmpty: '录入货号后显示搜索结果。',
   searchNone: '没有匹配的货品，可以直接点「去上新」。',
   searchFound: '找到 {count} 条',

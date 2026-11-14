@@ -27,3 +27,14 @@ test('AC-PP12 货品完善三维度 tab：样例图 / 商品信息缺失 / 标�
   assert.ok(page.includes('item.imageUrl'), '有样例图时显示缩略图');
   assert.ok(page.includes('item.recordUrl'), '去完善打开飞书记录');
 });
+
+test('AC-PP13 #1204：缩略图懒加载 / 分页 / 失败可重试', () => {
+  const page = read('features/domains/productProfile.js');
+  const texts = read('config/productProfile.js');
+  assert.ok((page.match(/loading="lazy"/g) || []).length >= 2, '两处缩略图都要懒加载');
+  assert.ok(page.includes('COMPLETE_PAGE_SIZE'), '完整度列表分页');
+  assert.ok(page.includes('data-pp-more'), '有「加载更多」');
+  assert.ok(page.includes('data-pp-retry'), '失败可点重试');
+  assert.match(texts, /thumbFailed: '加载失败 · 点击重试'/);
+  assert.match(texts, /more: '加载更多（还有 \{count\} 条）'/);
+});

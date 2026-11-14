@@ -88,6 +88,57 @@ test('AC-PP3 样例图代理：按 record_id 下载附件并返回图片流', as
   } finally { server.close(); }
 });
 
+test('AC-PP3b 样例图：token 缓存 + ETag/304（第二次不再读记录）', async () => {
+  let getCalls = 0;
+  let downloadCalls = 0;
+  const gateway = {
+    get: async () => { getCalls += 1; return product('rec1', '906|黑色|男', '906', '黑色', '男', '成本', 'file_1'); },
+    drive: { downloadMedia: async () => { downloadCalls += 1; return Buffer.from('fake-image'); } },
+  };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const first = await fetch(`http://127.0.0.1:${port}/products/rec1/sample-image`);
+    assert.equal(first.status, 200);
+    const etag = first.headers.get('etag');
+    assert.ok(etag, '必须有 ETag');
+    await first.arrayBuffer();
+
+    const second = await fetch(`http://127.0.0.1:${port}/products/rec1/sample-image`, { headers: { 'If-None-Match': etag } });
+    assert.equal(second.status, 304, '带 If-None-Match ⇒ 304');
+    assert.equal(getCalls, 1, '缓存命中不许再读货品记录');
+    assert.equal(downloadCalls, 1, '304 不该下载附件');
+
+    const third = await fetch(`http://127.0.0.1:${port}/products/rec1/sample-image`);
+    assert.equal(third.status, 200);
+    await third.arrayBuffer();
+    assert.equal(getCalls, 1, 'TTL 内仍是同一份 token');
+    assert.equal(downloadCalls, 2);
+  } finally { server.close(); }
+});
+
+test('AC-PP3c 样例图：1254607 ⇒ 503 + Retry-After；连续失败后熔断（不再打飞书）', async () => {
+  let getCalls = 0;
+  const gateway = {
+    get: async () => {
+      getCalls += 1;
+      throw new Error('1254607 Data not ready, please try again later');
+    },
+    drive: { downloadMedia: async () => Buffer.from('x') },
+  };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      const res = await fetch(`http://127.0.0.1:${port}/products/rec1/sample-image`);
+      assert.equal(res.status, 503, '数据未准备好 ⇒ 503（页面可提示稍后刷新）');
+      assert.ok(res.headers.get('retry-after'), '必须带 Retry-After');
+    }
+    const before = getCalls;
+    const blocked = await fetch(`http://127.0.0.1:${port}/products/rec1/sample-image`);
+    assert.equal(blocked.status, 503);
+    assert.equal(getCalls, before, '熔断窗口内不许再打飞书');
+  } finally { server.close(); }
+});
+
 test('AC-PP4 搜索走内存快照：连续两次搜索只读一次货品表', async () => {
   let listAllCalls = 0;
   const gateway = {
