@@ -73,7 +73,6 @@ test('AC-U5 旧 helper 已改为 import 同一实现（源码哨兵）', () => {
   for (const rel of [
     'config/groupBuyVouchers.js',
     'routes/scanPage/setup.js',
-    'routes/scanPage/handlers/payment.js',
     'services/scanWrite/helpers.js',
     'services/voucherPaymentService.js',
     'services/douyin/voucherCatalogSync.js',
@@ -82,4 +81,7 @@ test('AC-U5 旧 helper 已改为 import 同一实现（源码哨兵）', () => {
     const source = fs.readFileSync(path.join(root, rel), 'utf8');
     assert.match(source, /require\('[^']*money'\)/, `${rel} 必须 import utils/money`);
   }
+  // 资金页 handler 的金额计算已下沉到 paymentSettlement（该模块再 import utils/money）
+  const paymentHandler = fs.readFileSync(path.join(root, 'routes', 'scanPage', 'handlers', 'payment.js'), 'utf8');
+  assert.match(paymentHandler, /require\('[^']*paymentSettlement'\)/);
 });

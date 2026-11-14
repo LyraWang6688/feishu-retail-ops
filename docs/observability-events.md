@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **473** 个事件。按前缀分组：
+共 **474** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -22,6 +22,7 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `async_job.cleanup.failed` | 2 | src/app.js<br>src/services/asyncJobRuntime.js |
 | `async_job.mirror.failed` | 1 | src/services/afterSalesAsyncService.js |
 | `async_job.recover.interval_failed` | 1 | src/services/asyncJobRuntime.js |
 | `async_job.recover.reaped` | 1 | src/services/asyncJobRecovery.js |

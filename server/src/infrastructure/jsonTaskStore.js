@@ -123,6 +123,16 @@ class JsonTaskStore {
     });
   }
 
+  /** 删除一条记录（同 id 写互斥内执行；不存在也不抛）。 */
+  async remove(recordId) {
+    const id = String(recordId ?? '').trim();
+    if (!id) throw new Error('remove requires recordId');
+    return this._serializeWrite(id, async () => {
+      await fs.promises.rm(this._filePath(id), { force: true });
+      return true;
+    });
+  }
+
   async list(filter = {}) {
     const records = [];
     for (const file of await fs.promises.readdir(this.dir)) {

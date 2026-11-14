@@ -314,6 +314,13 @@ if (require.main === module) {
     .catch((error) => logWarn('write_audit.cleanup_failed', { error: String(error?.message || error).slice(0, 200) }));
   setTimeout(cleanupAudit, 5000).unref?.();
   setInterval(cleanupAudit, 24 * 60 * 60 * 1000).unref?.();
+
+  // #1203：异步 job 终态文件保留期清理（同一条日常节奏；失败只 warn）。
+  const { cleanupAsyncJobService } = require('./services/asyncJobRuntime');
+  const cleanupJobs = () => cleanupAsyncJobService()
+    .catch((error) => logWarn('async_job.cleanup.failed', { error: String(error?.message || error).slice(0, 200) }));
+  setTimeout(cleanupJobs, 6000).unref?.();
+  setInterval(cleanupJobs, 24 * 60 * 60 * 1000).unref?.();
 }
 
 module.exports = app;

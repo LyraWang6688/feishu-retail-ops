@@ -68,6 +68,17 @@ const startAsyncJobService = async () => {
   }
 };
 
+/** #1203：清理终态过期 job 文件（启动 + 每日一次；失败只 warn）。 */
+const cleanupAsyncJobService = async ({ retentionDays } = {}) => {
+  if (!initialized || !instance) return null;
+  try {
+    return await instance.cleanupOldJobs({ retentionDays });
+  } catch (error) {
+    logWarn('async_job.cleanup.failed', { error: String(error?.message || error).slice(0, 200) });
+    return null;
+  }
+};
+
 /** 优雅退出：停巡检 + 等正在跑的 run() 收尾（最多 timeoutMs）。 */
 const stopAsyncJobService = async ({ timeoutMs } = {}) => {
   if (recoverTimer) {
@@ -89,4 +100,5 @@ module.exports = {
   resetAsyncJobServiceForTests,
   startAsyncJobService,
   stopAsyncJobService,
+  cleanupAsyncJobService,
 };
