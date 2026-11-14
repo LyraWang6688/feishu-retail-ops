@@ -79,7 +79,7 @@
 | `GET /api/workbench/purchase/requests`、`GET /api/workbench/purchase/arrivals`                                         | 采购申请与到货查询                       |
 | `GET /workbench`                                                                                                      | 网页工作台静态页面（`GET /` 同样回落到工作台首页）   |
 | `GET /health`                                                                                                         | 健康检查（含版本与 commit）               |
-| 其余 `/api/*`                                                                                                           | 由 `API_KEY`（`x-api-key` 头）中间件保护 |
+| 其余 `/api/*`                                                                                                           | 无全局 API_KEY（2026-11-14 删除死代码）；各入口各自鉴权：事件验签 / 飞书身份会话 / 扫码 POST 来源校验+限流 |
 
 > ⚠️ **2026-10-08 删除的两条自建查询接口**：`GET /api/workbench/sales/today`（今日销售）与
 > `GET /api/workbench/sales/query`（销售查询按某日 / 按区间）——
@@ -117,7 +117,6 @@ pnpm run dev
 - `LARK_AGENT_VERIFICATION_TOKEN` / `LARK_AGENT_ENCRYPT_KEY` - 飞书事件回调校验与解密
 - `FEISHU_V1_BITABLE_APP_TOKEN` - V1 目标多维表格（无默认值，缺失直接报错）
 - `FEISHU_V1_*_TABLE_ID` - V1 各业务表 ID（货品、销售、采购、库存等）
-- `API_KEY` - 非飞书 `/api` 接口的 `x-api-key` 鉴权
 
 > ⚠️ `TEXT_LLM_*` / `VISION_LLM_*` / `ARK_*` / `PURCHASE_ARRIVAL_INTAKE_ENABLED` **都已无运行期读取点**
 > （AI 解析与拍照识别链路已退场，见 `docs/archive/ai-parsing-removal-2026-10-16.md`）⇒ **不要再配、也不要依赖它们**判断功能是否开启。

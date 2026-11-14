@@ -3,7 +3,7 @@
  *
  * 钉住四件事：
  *   ① **挂载点**：真 `app.js` 里就有 `/s` 这一条 —— 不是只在测试里拼出来的；
- *      而且它**不在 `API_KEY` 保护的 `/api/*` 之下**（扫码的人是手机浏览器直接打开，没有 `x-api-key`）；
+ *      而且它**不要求自定义请求头**（扫码的人是手机浏览器直接打开）；
  *   ② **准入**：与工作台**同一道**闸门（`routes/workbench.js` 导出的
  *      `requireWorkbenchAccess`，两处是**同一个函数**）—— 未启用认证 503 /
  *      白名单外 403（`/api/workbench/*` 那一侧也一并回归了）。
@@ -217,7 +217,7 @@ test('准入（与工作台同一道闸门）：未启用认证 503、未登录 
   assert.equal(app.calls.length, 0, '闸门没过时 service 一次都不该被调用');
 });
 
-// ── 真 app.js：挂载点 + 不在 API_KEY 之下 + 只读 ─────────────────────────────
+// ── 真 app.js：挂载点 + 不要求自定义头 + 只读 ───────────────────────────────
 const SIZE_RECORDS = [
   { record_id: 'size_40', fields: { 尺码: 40, 类别: '男' } },
   { record_id: 'size_41', fields: { 尺码: 41, 类别: '男' } },
@@ -238,7 +238,7 @@ test('旧 /s/{编号} 已删除：生产入口只保留 /r/{recordId}', async ()
   });
 });
 
-test('真 app.js：`/r/:number` 确实挂上了、不要 API_KEY、走同一道工作台闸门，且一次写调用都没有', async () => {
+test('真 app.js：`/r/:number` 确实挂上了、不要求自定义头、走同一道工作台闸门，且一次写调用都没有', async () => {
   login();
   const gateway = require('../src/services/v1BitableGateway');
   const writes = [];
