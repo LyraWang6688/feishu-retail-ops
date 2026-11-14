@@ -229,7 +229,11 @@ class InventoryPairAdjustmentService {
     const operations = [];
     for (const record of records) {
       const fields = record.fields || {};
-      if (String(fields[table.fields.category] || '').trim() !== name) continue;
+      // ⚠️ 2026-11-14 真机 + 线上数据取证：「品类」是**公式列**，读回来是
+      //   [{ text: '休闲鞋', type: 'text' }]（富文本数组），不是字符串。
+      //   旧写法 String(fields[...]) ⇒ "[object Object]" ≠ "休闲鞋" ⇒ **永远 updated:0**。
+      //   ⇒ 必须走统一取值器 textValue（与页面下拉/列表同一口径）。
+      if (textValue(fields?.[table.fields.category]).trim() !== name) continue;
       if (fields[table.fields.season] === season) continue;
       await gateway.update('liveInventory', record.record_id, { season }, { correlation });
       operations.push({

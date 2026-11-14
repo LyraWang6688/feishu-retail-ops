@@ -25,8 +25,10 @@ export const INVENTORY_MANUAL_TEXTS = Object.freeze({
   // 单双调整 / 批量当季调整的页内文案（2026-11-14 #1206：页面里不再写中文字面量）
   rowsRequired: '请至少保留一行数量大于 0 的库存',
   submittedStock: '已提交，后台写入库存',
-  seasonApplied: '已提交，后台设为当季',
-  seasonCleared: '已提交，后台入库',
+  seasonApplied: '已设为当季',
+  seasonCleared: '已设为库存（取消当季）',
+  seasonApplying: '正在批量设置当季，请稍候…',
+  seasonUpdateFailed: '当季调整失败，请稍后重试',
   categoryRequired: '请先选择品类',
   inventoryJobFailed: '库存调整失败',
   scanNoProduct: '没有认出货品编号，请重新扫码。',
