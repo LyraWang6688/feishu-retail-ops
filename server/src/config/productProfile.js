@@ -26,6 +26,17 @@ const PRODUCT_PROFILE = Object.freeze({
   searchSnapshotTtlMs: readInt(process.env, 'PRODUCT_PROFILE_SEARCH_SNAPSHOT_TTL_MS', 5 * 60 * 1000, {
     min: 60 * 1000, max: 60 * 60 * 1000,
   }),
+  // ⭐ #1204：样例图缩略图 —— 记录 file_token 的短 TTL 缓存（一张图一次飞书读 → 一次读服务多张）。
+  sampleImageCacheTtlMs: readInt(process.env, 'PRODUCT_SAMPLE_IMAGE_CACHE_TTL_MS', 10 * 60 * 1000, {
+    min: 0, max: 60 * 60 * 1000,
+  }),
+  sampleImageCacheMax: readInt(process.env, 'PRODUCT_SAMPLE_IMAGE_CACHE_MAX', 500, { min: 1, max: 5000 }),
+  // ⭐ #1204：连续 1254607/限流 ⇒ 短路一段时间（503 + Retry-After），不再逐张打飞书。
+  sampleImageBreaker: Object.freeze({
+    failures: readInt(process.env, 'PRODUCT_SAMPLE_IMAGE_BREAKER_FAILURES', 5, { min: 1, max: 100 }),
+    windowMs: readInt(process.env, 'PRODUCT_SAMPLE_IMAGE_BREAKER_WINDOW_MS', 60 * 1000, { min: 1000, max: 600000 }),
+    cooldownMs: readInt(process.env, 'PRODUCT_SAMPLE_IMAGE_BREAKER_COOLDOWN_MS', 30 * 1000, { min: 1000, max: 600000 }),
+  }),
 });
 
 module.exports = { PRODUCT_PROFILE };

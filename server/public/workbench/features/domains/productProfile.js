@@ -10,6 +10,7 @@ import { showToast } from '../shared/toast.js';
 import { bindDomainAction } from './dataConfigAction.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, k) => (values[k] == null ? '' : String(values[k])));
+const COMPLETE_PAGE_SIZE = 40;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const issueChipsOf = (item) => {
@@ -66,7 +67,32 @@ export function createProductProfileModule() {
         host.querySelector('[data-pp="complete"]').hidden = name !== 'complete';
         if (name === 'complete') loadComplete(host);
       };
+      // ⭐ #1204：图片加载失败 → 变成「加载失败 · 点击重试」（不再冒充"无样例图"）。
+      host.addEventListener('error', (event) => {
+        const img = event.target?.closest?.('img[data-pp-thumb]');
+        if (!img) return;
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'pp-thumb pp-thumb-empty pp-thumb-retry';
+        retry.dataset.ppRetry = img.dataset.ppThumb || img.getAttribute('src') || '';
+        retry.textContent = T.thumbFailed;
+        img.replaceWith(retry);
+      }, true);
       host.addEventListener('click', (event) => {
+        const retry = event.target.closest?.('[data-pp-retry]');
+        if (retry) {
+          const url = retry.dataset.ppRetry || '';
+          if (!url) return;
+          const img = document.createElement('img');
+          img.className = 'pp-thumb';
+          img.alt = '样例图';
+          img.loading = 'lazy';
+          img.decoding = 'async';
+          img.dataset.ppThumb = url;
+          img.src = `${url}${url.includes('?') ? '&' : '?'}r=${Date.now()}`;
+          retry.replaceWith(img);
+          return;
+        }
         const view = event.target.closest?.('[data-pp-view]')?.dataset.ppView;
         if (view) return show(view);
         const back = event.target.closest?.('[data-pp-back]')?.dataset.ppBack;
@@ -118,7 +144,7 @@ async function loadSearch(host, q) {
     empty.textContent = T.searchNone;
     results.innerHTML = items.map((item) => `
       <div class="pp-row" data-pp-record-url="${esc(item.recordUrl || '')}">
-        ${item.hasSampleImage && item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
+        ${item.hasSampleImage && item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" loading="lazy" decoding="async" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
         <div class="pp-meta"><b>${esc(item.number)}</b>${issueChipsOf(item).length ? `<div class="pp-issues">${issueChipsOf(item).map((issue) => `<span class="pp-issue">${esc(issue)}</span>`).join('')}</div>` : ''}</div>
       </div>`).join('');
     results.querySelectorAll('img[data-pp-thumb]').forEach((img) => {
@@ -153,22 +179,33 @@ async function loadComplete(host) {
       return;
     }
     let active = dimensions.some((item) => item.key === host.__ppDimension) ? host.__ppDimension : dimensions[0].key;
+    // ⭐ #1204：完整度列表**分页渲染**（默认 40 条）—— 不再一次铺 300+ 张图。
+    let shown = COMPLETE_PAGE_SIZE;
     const render = () => {
       const dimension = dimensions.find((item) => item.key === active) || dimensions[0];
       tabs.innerHTML = dimensions.map((item) => `<button class="pp-tab ${item.key === active ? 'active' : ''}" type="button" data-pp-dimension="${esc(item.key)}"><b>${esc(item.label)}</b><span>${esc(fill(T.completeTabCount, { count: item.count || 0 }))}</span></button>`).join('');
       hint.textContent = fill(T.completeHint, { count: data?.total || 0 });
-      list.innerHTML = (dimension.items || []).map((item) => {
+      const items = dimension.items || [];
+      const visible = items.slice(0, shown);
+      const more = items.length - visible.length;
+      list.innerHTML = visible.map((item) => {
         const missing = item.key === 'sample' || dimension.key === 'sample'
           ? T.completeSampleMissing
           : `${T.completeMissingPrefix}${dimension.key === 'product' ? item.missingProduct : item.missingTag}`;
-        return `<div class="pp-row"><span class="pp-thumb-wrap">${item.imageUrl ? `<img class="pp-thumb" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}</span><div class="pp-meta"><b>${esc(item.number)}</b><span>${esc(missing)}</span></div><a class="pp-small-btn" href="${esc(item.recordUrl)}" target="_blank" rel="noopener">${esc(T.completeGo)}</a></div>`;
-      }).join('');
+        return `<div class="pp-row"><span class="pp-thumb-wrap">${item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" loading="lazy" decoding="async" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}</span><div class="pp-meta"><b>${esc(item.number)}</b><span>${esc(missing)}</span></div><a class="pp-small-btn" href="${esc(item.recordUrl)}" target="_blank" rel="noopener">${esc(T.completeGo)}</a></div>`;
+      }).join('') + (more > 0 ? `<div class="pp-more"><button class="btn small" type="button" data-pp-more>${esc(fill(T.more, { count: more }))}</button></div>` : '');
     };
     tabs.onclick = (event) => {
       const button = event.target.closest?.('[data-pp-dimension]');
       if (!button) return;
       active = button.dataset.ppDimension;
       host.__ppDimension = active;
+      shown = COMPLETE_PAGE_SIZE;
+      render();
+    };
+    list.onclick = (event) => {
+      if (!event.target.closest?.('[data-pp-more]')) return;
+      shown += COMPLETE_PAGE_SIZE;
       render();
     };
     render();
