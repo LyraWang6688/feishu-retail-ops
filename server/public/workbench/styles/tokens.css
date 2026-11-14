@@ -31,7 +31,7 @@
   /* ── ④ 字体 ────────────────────────────────────────────────────────────── */
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-size-xs: 12px;     /* 标签 / 脚注 */
-  --font-size-2xs: 11px;    /* 极小辅助信息（登录行：字要比 tab / 正文小） */
+  --font-size-2xs: 10px;    /* 极小辅助信息（登录行：所有页面统一 10px，比 tab / 正文小） */
   --font-size-sm: 13px;     /* 次要文字（说明、辅助信息） */
   --font-size-md: 15px;     /* 正文小一号（表单标签、列表行） */
   --font-size-base: 16px;   /* 正文 */
