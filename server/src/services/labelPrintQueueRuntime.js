@@ -84,8 +84,7 @@ const getLabelPrintQueue = (options = {}) => {
 };
 
 /** 用例用：把单例清掉（每个用例自己注入 service 时不必调它）。 */
-const resetLabelPrintQueue = () => {
-  shared = null;
-};
 
-module.exports = { getLabelPrintQueue, resetLabelPrintQueue };
+module.exports = {
+  getLabelPrintQueue
+};

@@ -34,7 +34,6 @@ const jobIdFor = (type, key) => {
   return `${prefix}_${digest}`;
 };
 
-const isTerminalStatus = (status) => TERMINAL_STATUSES.includes(String(status || ''));
 
 const createAsyncJobStore = ({ dir } = {}) => {
   const store = new JsonTaskStore({
@@ -92,4 +91,8 @@ const createAsyncJobStore = ({ dir } = {}) => {
   return { store, get, createIfAbsent, update, list, remove, dir: store.dir };
 };
 
-module.exports = { createAsyncJobStore, jobIdFor, isTerminalStatus, JOB_ID_PATTERN };
+module.exports = {
+  createAsyncJobStore,
+  jobIdFor,
+  JOB_ID_PATTERN
+};

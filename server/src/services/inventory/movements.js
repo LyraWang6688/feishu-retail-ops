@@ -329,41 +329,12 @@ const requireQuantityMovement = (code) => {
 
 // 反向闸门：数量类行为不许走状态变更通路（只改「所属状态」不改数量的那条路）。
 // 与 requireQuantityMovement 互为镜像，两侧都拦，避免"走错通路"变成静默的账实不符。
-const requireStateMovement = (code) => {
-  const movement = requireMovement(code);
-  if (QUANTITY_DIRECTIONS.includes(movement.direction)) {
-    throw new Error(`库存动作「${code}」的库存方向是“${movement.direction}”，属于数量类变更，`
-      + '不能走状态变更通路（transitionState）；请走 applyChange');
-  }
-  if (!movement.stateTransition) {
-    throw new Error(`库存动作「${code}」没有配置状态流转目标（stateTransition 为空），`
-      + '无法执行状态变更：请先在注册表里补齐 from/to');
-  }
-  return movement;
-};
 
 // 状态流转的目标状态：固定目标直接用配置里的 to；「由入口选」的（to: null）
 // 必须落进 targets 白名单，否则会写进一个「所属状态」里不存在的选项
 //（飞书会自动新建选项，于是账面留下一批谁也读不懂的状态）。
-const resolveTargetState = (code, transition, requested) => {
-  if (transition.to) {
-    if (requested && String(requested) !== transition.to) {
-      throw new Error(`库存动作「${code}」的目标状态固定为「${transition.to}」，不接受「${requested}」`);
-    }
-    return transition.to;
-  }
-  const target = String(requested || '').trim();
-  if (!LIVE_STATES.includes(target)) {
-    throw new Error(`库存动作「${code}」必须选择目标状态：${(transition.targets || LIVE_STATES).join(' / ')}`);
-  }
-  if (transition.targets && !transition.targets.includes(target)) {
-    throw new Error(`库存动作「${code}」的目标状态只能是：${transition.targets.join(' / ')}`);
-  }
-  return target;
-};
 
 // 补样品不算数量变动，但它的流水同样挂在销售明细上，用销售动作的来源字段查找。
-const SALE_LEDGER_SOURCE = STOCK_MOVEMENTS[MOVEMENT_SALE_DECREASE].ledgerSource;
 
 module.exports = {
   BEHAVIOR_SAMPLE_PROMOTION,
@@ -373,7 +344,6 @@ module.exports = {
   LIVE_STATES,
   QUANTITY_DIRECTIONS,
   STOCK_MOVEMENTS,
-  SALE_LEDGER_SOURCE,
   MOVEMENT_SALE_DECREASE,
   MOVEMENT_PURCHASE_INCREASE,
   MOVEMENT_PURCHASE_DECREASE,
@@ -382,7 +352,5 @@ module.exports = {
   MOVEMENT_SALE_CASH,
   MOVEMENT_SALE_INCREASE,
   requireMovement,
-  requireQuantityMovement,
-  requireStateMovement,
-  resolveTargetState,
+  requireQuantityMovement
 };

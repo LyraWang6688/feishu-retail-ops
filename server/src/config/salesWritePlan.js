@@ -117,7 +117,6 @@ const PAGE_STEPS = Object.freeze({
 });
 
 /** 这一屏要跑哪几步（认不出的屏名 ⇒ 空数组，调用方按"什么都不做"处理，不猜）。 */
-const stepsForPage = (page) => PAGE_STEPS[String(page || '').trim()] || Object.freeze([]);
 
 /**
  * ⭐⭐ 2026-10-18（第 4 步提速）：**会话标记**（本地草稿里的进度位，不写业务表）。
@@ -154,7 +153,6 @@ module.exports = {
   SALES_WRITE_PLANS: PLANS,
   PAGE_STEPS,
   SESSION_FLAGS,
-  stepsForPage,
   planForTradeType,
   planForStock,
   plansForItems,
@@ -162,5 +160,5 @@ module.exports = {
   requiresInventory,
   successRequiresFor,
   initialFulfillmentStatusFor,
-  deliversOnSubmitFor,
+  deliversOnSubmitFor
 };

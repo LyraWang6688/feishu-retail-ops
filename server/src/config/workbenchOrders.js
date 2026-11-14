@@ -84,13 +84,6 @@ const WORKBENCH_ARRIVAL_TEXTS = Object.freeze({
  * 业务事实：**样品被卖掉、她又没指定用哪个码的门盒补** ⇒ 待办；她选一个码 ⇒ 补掉（门盒→样品，1 双）。
  * ⚠️ 这些不是业务状态（状态取值仍在各自的配置里），只是"这一步成没成、为什么没成"的话。
  */
-const WORKBENCH_SAMPLE_FILL_TEXTS = Object.freeze({
-  needSize: '请先选一个门盒尺码，再补样品',
-  noDoorBox: '{size} 码已没有门盒库存，请换一个尺码',
-  notPending: '这一条不是"待补样品"的待办（可能已经补过，或这一单没有卖掉样品）',
-  done: '{size} 码已从门盒转为样品，库存总数不变。',
-  reused: '这一条已经补过了：{size} 码（没有重复调整）。',
-});
 
 /**
  * 「她填错了」这一类拒绝（= HTTP 400，**一个字节都没写**）的 reason 白名单。
@@ -184,7 +177,6 @@ const readWorkbenchOrdersConfig = (env = process.env) => ({
 });
 
 module.exports = {
-  WORKBENCH_SAMPLE_FILL_TEXTS,
   DEFAULT_COLLECTION_METHOD,
   WORKBENCH_ORIGINAL_TEXT_PREFIX,
   WORKBENCH_ORDERS_TEXTS,
@@ -194,5 +186,5 @@ module.exports = {
   DEFAULT_ORDERS_CACHE_MS,
   ORDER_FIELD_KEYS,
   ORDER_SUPPORT_FIELD_KEYS,
-  readWorkbenchOrdersConfig,
+  readWorkbenchOrdersConfig
 };

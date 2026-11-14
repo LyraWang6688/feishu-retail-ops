@@ -36,10 +36,6 @@ const setAsyncJobServiceForTests = (service) => {
 };
 
 /** 用例恢复（下一次 `getAsyncJobService()` 重新按配置建）。 */
-const resetAsyncJobServiceForTests = () => {
-  initialized = false;
-  instance = null;
-};
 
 /**
  * 启动收尾（后台、不阻塞服务）：补发未通知的失败 + 如实记录残留 running。
@@ -97,8 +93,7 @@ const stopAsyncJobService = async ({ timeoutMs } = {}) => {
 module.exports = {
   getAsyncJobService,
   setAsyncJobServiceForTests,
-  resetAsyncJobServiceForTests,
   startAsyncJobService,
   stopAsyncJobService,
-  cleanupAsyncJobService,
+  cleanupAsyncJobService
 };

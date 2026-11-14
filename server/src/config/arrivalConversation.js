@@ -44,11 +44,6 @@ const ARRIVAL_BATCH_KINDS = Object.freeze({
 //    ⇒ `实际 = 0` 是**由「少」这条差异算出来的正常结果**（例：申请 1 双、她说少 1 双），
 //      该行**不入库、但不阻断整单**；差异**类型**仍然只有下面这三个。
 //    口径见 `docs/arrival-zero-arrived-rule-2026-10-07.md`。
-const ARRIVAL_DIFF_TYPES = Object.freeze({
-  SAME: 'same',
-  MORE: 'more',
-  LESS: 'less',
-});
 
 // ⭐ 「全到」类说法的**保守兜底词组表**（业务负责人 2026-10-07 批准修，逐字：「这个也可以做～」）。
 //
@@ -74,26 +69,6 @@ const ARRIVAL_DIFF_TYPES = Object.freeze({
 //   · 清单外的任何字 → 一律不兜底。
 //   ⇒ 「到了 2 双」「8230 到了 1 双」「还有一双没到」**必须**仍走原来的差异比对/追问 ——
 //      被这层吞掉就会按申请数**整单入库**，那是写错账。
-const ARRIVAL_ALL_PRESENT_PHRASES = Object.freeze({
-  // 「全 / 都 / 齐」这一族 = "整批全到"的意思标记（至少出现一个才算"全到"）。
-  completeWords: Object.freeze(['全部', '整批', '全都', '全齐', '收齐', '全', '都', '到齐', '齐']),
-  // 「到」这一族 = 到货动词（至少出现一个）。
-  // ⚠️ `到齐` / `全齐` / `收齐` / `齐` 同时属于两族：它们本身就同时表达了"到"和"齐"。
-  arrivalWords: Object.freeze(['到齐', '到货', '收到', '到了', '来了', '全齐', '收齐', '齐', '到']),
-  // 允许多出来的语气 / 收尾词（**不含任何数量信息**；「完毕」是她说过的旧收尾话术）。
-  fillerWords: Object.freeze(['已经', '完毕', '了', '啦', '呢', '啊', '哦', '呀', '嘛', '哈']),
-  // 出现这些 → 不兜底（她在说"没到 / 还差 / 缺"）。
-  negationWords: Object.freeze(['没', '未', '不', '少', '差', '缺', '剩', '退', '漏', '空']),
-  // 出现这些 → 不兜底（那是**问句**，不是"到货反馈"）。
-  // ⚠️ 刻意**不含**「吧」：带了它就分不清"都到了吧？"是陈述还是发问，宁可交给模型。
-  questionMarkers: Object.freeze(['?', '？', '吗']),
-  // 中文数字 / 数量字（有它们就是"有具体数量"）。
-  numberWords: Object.freeze(['零', '一', '二', '两', '三', '四', '五', '六', '七', '八', '九', '十', '半', '几']),
-  // 数量单位（「双」是鞋的业务单位；货号里通常还有阿拉伯数字/字母 → 见下面那条正则）。
-  quantityUnitWords: Object.freeze(['双', '个', '件', '只', '箱', '码', '号', '款', '色', '对']),
-  // 阿拉伯数字 / 拉丁字母（货号形如 XHB8095 / 8230）—— 有它们就是"有具体内容"。
-  concreteContentPattern: '[0-9０-９A-Za-z]',
-});
 
 const DEFAULTS = Object.freeze({
   enabled: true,
@@ -283,8 +258,6 @@ module.exports = {
   //    （原 `ARRIVAL_FORM_DEFAULTS`，即那张卡片表单的默认值常量）随群聊话题入口一起删除。
   ARRIVAL_CONVERSATION_ACTIONS,
   ARRIVAL_BATCH_KINDS,
-  ARRIVAL_DIFF_TYPES,
-  ARRIVAL_ALL_PRESENT_PHRASES,
   resolveArrivalConversationConfig,
-  parseExplicitBoolean,
+  parseExplicitBoolean
 };

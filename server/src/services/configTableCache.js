@@ -119,14 +119,6 @@ const invalidateConfigTable = (tableKeyOrId) => {
 };
 
 /** 启动预热 / 测试用：强制重读。 */
-const warmConfigTable = async ({ gateway, tableKey, loader, fields, now = () => Date.now() } = {}) => {
-  const fieldsKey = fieldsKeyOf(fields);
-  const key = keyOf(gateway, tableKey, fieldsKey);
-  const entry = entries.get(key) || { gateway, tableKey, fieldsKey, rows: null, lastGood: null, at: 0, loading: null, lastError: null, lastWarnAt: 0 };
-  entries.set(key, entry);
-  entry.at = 0;
-  return loadEntry(entry, loader, now, configTableTtlMs(tableKey));
-};
 
 const resetConfigTableCache = () => entries.clear();
 
@@ -135,6 +127,5 @@ module.exports = {
   CONFIG_TABLE_KEYS,
   getConfigRows,
   invalidateConfigTable,
-  warmConfigTable,
-  resetConfigTableCache,
+  resetConfigTableCache
 };

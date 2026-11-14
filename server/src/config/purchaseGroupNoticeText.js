@@ -42,11 +42,6 @@ const KEYS = Object.freeze({
 });
 
 // 占位符（**只有这几个**；未知占位符原样留着，方便一眼看出模板写错了）。
-const PLACEHOLDERS = Object.freeze({
-  supplier: '供应商名（取不到时用 `unknownSupplier` 那句兜底，如「未标注供应商」）',
-  pairs: '**双数**（= 这一组明细的 `quantity` 求和；不是明细条数）',
-  openId: '经办人的 open_id（只有 @ 那条模板用）',
-});
 
 const DEFAULTS = Object.freeze({
   // ⚠️ 2026-10-07 改动点：删掉「{rowCount} 条（共 …）」整段，只留 `{pairs} 双`。
@@ -129,11 +124,10 @@ const renderPurchaseGroupNotice = ({ supplierName, label, pairs, operatorOpenId 
 module.exports = {
   PREFIX,
   KEYS,
-  PLACEHOLDERS,
   PURCHASE_GROUP_NOTICE_DEFAULTS_BY_KEY: DEFAULTS_BY_KEY,
   resolvePurchaseGroupNoticeConfig,
   supplierLabel,
   renderPurchaseGroupNoticeText,
   renderPurchaseGroupNoticeMention,
-  renderPurchaseGroupNotice,
+  renderPurchaseGroupNotice
 };

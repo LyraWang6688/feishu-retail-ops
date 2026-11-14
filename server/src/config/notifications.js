@@ -75,7 +75,6 @@ const NOTIFICATION_EVENTS = Object.freeze({
   }),
 });
 
-const NOTIFICATION_EVENT_KEYS = Object.freeze(Object.keys(NOTIFICATION_EVENTS));
 
 // 用户可见文案（service 层不许写中文；错误文案也在这里）。
 const NOTIFICATION_TEXTS = Object.freeze({
@@ -143,7 +142,6 @@ const resolveNotification = (event, env = process.env) => {
 module.exports = {
   NOTIFICATION_TARGETS,
   NOTIFICATION_EVENTS,
-  NOTIFICATION_EVENT_KEYS,
   NOTIFICATION_TEXTS,
-  resolveNotification,
+  resolveNotification
 };

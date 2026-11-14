@@ -49,15 +49,6 @@ const readInt = (env, key, fallback, { min, max }) => {
 };
 
 /** 可选整数：**没设 / 设成空串** → null（"这一项就不要"），其余同 readInt。 */
-const readOptionalInt = (env, key, { min, max }) => {
-  const raw = readRaw(env, key);
-  if (raw === null || raw === '') return null;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < min || value > max) {
-    throw new Error(`${key} 必须是 ${min}~${max} 之间的整数（或留空表示不要），当前值无法识别`);
-  }
-  return value;
-};
 
 /**
  * 显式列表：中英文逗号 / 分号 / 空白都算分隔符，去重且保序。
@@ -71,4 +62,10 @@ const readList = (env, key) => {
   return [...new Set(items)];
 };
 
-module.exports = { readRaw, readString, readFlag, readInt, readOptionalInt, readList };
+module.exports = {
+  readRaw,
+  readString,
+  readFlag,
+  readInt,
+  readList
+};
