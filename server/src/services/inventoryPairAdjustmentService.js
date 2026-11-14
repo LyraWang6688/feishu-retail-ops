@@ -226,6 +226,7 @@ class InventoryPairAdjustmentService {
     const table = gateway.table('liveInventory');
     const correlation = { audit_domain: 'inventoryManual', task_id: String(requestId || '') };
     const records = await gateway.listAll('liveInventory');
+    const updates = [];
     const operations = [];
     for (const record of records) {
       const fields = record.fields || {};
@@ -235,7 +236,7 @@ class InventoryPairAdjustmentService {
       //   ⇒ 必须走统一取值器 textValue（与页面下拉/列表同一口径）。
       if (textValue(fields?.[table.fields.category]).trim() !== name) continue;
       if (fields[table.fields.season] === season) continue;
-      await gateway.update('liveInventory', record.record_id, { season }, { correlation });
+      updates.push({ recordId: record.record_id, values: { season } });
       operations.push({
         record_id: record.record_id,
         productRecordId: strictLinkedRecordIds(fields?.[table.fields.product])[0] || '',
@@ -243,7 +244,18 @@ class InventoryPairAdjustmentService {
         behaviorCode: season ? ADJUSTMENT_BEHAVIORS.UNFREEZE : ADJUSTMENT_BEHAVIORS.FREEZE,
       });
     }
-    if (operations.length) {
+    if (updates.length) {
+      // ⚡ 2026-11-14：库存「当季」是整品类批量改（单鞋 472 条）——
+      //   逐条 gateway.update 要 16~24 分钟，页面 120s 超时。
+      //   ⇒ 复用网关已有的 updateBatch（内部按 500 条分片 + 语义字段映射 + 审计 correlation）。
+      //   老网关/测试桩没有 updateBatch 时回退逐条，语义不变。
+      if (typeof gateway.updateBatch === 'function') {
+        await gateway.updateBatch('liveInventory', updates, { correlation });
+      } else {
+        for (const update of updates) {
+          await gateway.update('liveInventory', update.recordId, update.values, { correlation });
+        }
+      }
       await writeManualLedger({ inventory: this.inventory, changes: operations, operatorOpenId, correlation });
       invalidateLiveInventorySnapshot('season_flag_adjust');
     }

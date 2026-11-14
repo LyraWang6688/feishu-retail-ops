@@ -27,6 +27,10 @@ const fakeInventory = ({ counts = [], records = [] } = {}) => {
       }),
       listAll: async () => effectiveRecords,
       update: async (key, id, values, options) => { calls.push({ type: 'update', key, id, values, options }); },
+      updateBatch: async (key, patches, options) => {
+        calls.push({ type: 'updateBatch', key, patches, options });
+        return patches.map((patch, index) => ({ recordId: patch.recordId || `batch_${index}` }));
+      },
       createBatch: async (key, rows, options) => {
         calls.push({ type: 'ledger', key, rows, options });
         return rows.map((row, index) => ({ recordId: `ledger_${index}` }));
@@ -140,6 +144,10 @@ test('AC-PAIR-3b 批量库存：season=false 写 STOCK_FREEZE 流水', async () 
   const service = new InventoryPairAdjustmentService({ inventory });
   const result = await service.setSeason({ category: '休闲鞋', season: false });
   assert.equal(result.updated, 1);
+  const batch = inventory.calls.find((call) => call.type === 'updateBatch');
+  assert.ok(batch, '当季调整必须走批量更新');
+  assert.deepEqual(batch.patches.map((patch) => patch.recordId), ['l1']);
+  assert.equal(batch.patches[0].values.season, false);
   const ledger = inventory.calls.find((call) => call.type === 'ledger');
   assert.ok(ledger);
   assert.deepEqual(ledger.rows[0].behavior, ['behavior_STOCK_FREEZE']);
@@ -155,7 +163,9 @@ test('AC-PAIR-3 批量当季：只更新当前品类的实时库存', async () =
   const service = new InventoryPairAdjustmentService({ inventory });
   const result = await service.setSeason({ category: '休闲鞋', season: true });
   assert.equal(result.updated, 1);
-  assert.ok(inventory.calls.some((call) => call.type === 'update' && call.id === 'l1'));
+  const batch = inventory.calls.find((call) => call.type === 'updateBatch');
+  assert.ok(batch, '必须一次批量更新');
+  assert.deepEqual(batch.patches.map((patch) => patch.recordId), ['l1']);
   assert.ok(!inventory.calls.some((call) => call.id === 'l2'));
   assert.ok(!inventory.calls.some((call) => call.id === 'l3'));
   const ledger = inventory.calls.find((call) => call.type === 'ledger');
@@ -175,8 +185,40 @@ test('AC-PAIR-3c 品类是公式富文本数组（线上真形状）⇒ 仍按�
   const service = new InventoryPairAdjustmentService({ inventory });
   const result = await service.setSeason({ category: '休闲鞋', season: true });
   assert.equal(result.updated, 1, '公式列必须按文本值匹配，不能 String([object Object])');
-  assert.ok(inventory.calls.some((call) => call.type === 'update' && call.id === 'l1'));
+  const batch = inventory.calls.find((call) => call.type === 'updateBatch');
+  assert.deepEqual(batch.patches.map((patch) => patch.recordId), ['l1']);
   assert.ok(!inventory.calls.some((call) => call.id === 'l2'));
+});
+
+test('AC-PAIR-3d 472 条品类：一次 updateBatch，不再逐条 update', async () => {
+  const records = Array.from({ length: 472 }, (_, index) => ({
+    record_id: `l${index}`,
+    fields: {
+      品类: [{ text: '单鞋', type: 'text' }], 当季: true,
+      编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }],
+    },
+  }));
+  const inventory = fakeInventory({ records });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  const result = await service.setSeason({ category: '单鞋', season: false });
+  assert.equal(result.updated, 472);
+  assert.equal(inventory.calls.filter((call) => call.type === 'update').length, 0, '不许逐条 update');
+  const batch = inventory.calls.find((call) => call.type === 'updateBatch');
+  assert.equal(batch.patches.length, 472, '472 条必须一次交给批量接口（网关内部再分片）');
+});
+
+test('AC-PAIR-3e 没有 updateBatch 的网关回退逐条 update（兼容旧网关/测试桩）', async () => {
+  const inventory = fakeInventory({
+    records: [{
+      record_id: 'l1',
+      fields: { 品类: [{ text: '休闲鞋', type: 'text' }], 当季: true, 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }] },
+    }],
+  });
+  delete inventory.gateway.updateBatch;
+  const service = new InventoryPairAdjustmentService({ inventory });
+  const result = await service.setSeason({ category: '休闲鞋', season: false });
+  assert.equal(result.updated, 1);
+  assert.ok(inventory.calls.some((call) => call.type === 'update' && call.id === 'l1'));
 });
 
 test('AC-PAIR-AUDIT 手工调整写入带 inventoryManual 审计关联键', async () => {
