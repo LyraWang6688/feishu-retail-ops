@@ -6,19 +6,17 @@
     "frontend": 800
   },
   "maxNetIncrease": 100,
-  "updatedAt": "2026-11-08",
+  "updatedAt": "2026-11-14",
   "files": {
-    "server/src/config/scanPage.js": 959,
-    "server/src/config/scanWrite.js": 1054,
-    "server/src/services/afterSalesService.js": 1264,
-    "server/src/services/labelPrintArtifactService.js": 1436,
-    "server/src/services/labelPrintService.js": 1325,
-    "server/src/services/larkMvpService.js": 1149,
-    "server/src/services/purchaseArrivalConversationService.js": 1132,
-    "server/src/services/scanPageService.js": 1275,
-    "server/src/services/tagQrCodeService.js": 936,
-    "server/test/afterSalesService.test.js": 1392,
-    "server/test/labelPrintCanvas.test.js": 1270,
-    "server/test/labelPrintProducts.test.js": 1251
+    "server/src/config/scanPage.js": 946,
+    "server/src/config/scanWrite.js": 1025,
+    "server/src/services/afterSalesService.js": 1263,
+    "server/src/services/labelPrintArtifactService.js": 1434,
+    "server/src/services/labelPrintService.js": 820,
+    "server/src/services/larkMvpService.js": 847,
+    "server/src/services/purchaseArrivalConversationService.js": 856,
+    "server/src/services/scanPageService.js": 1218,
+    "server/test/afterSalesService.test.js": 1289,
+    "server/test/labelPrintCanvas.test.js": 1270
   }
 }
