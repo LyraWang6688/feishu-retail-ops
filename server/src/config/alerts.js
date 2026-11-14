@@ -27,6 +27,10 @@ const DEFAULT_CRITICAL_EVENTS = [
   'scan.write.failed',
   'label_print.job.failed',
   'config_table_cache.last_good_used',
+  // #50：异步 running 残留收敛 / 写入审计落盘失败必须能进告警（原来不在清单里）
+  'async_job.recover.running_reaped',
+  'async_job.recover.running_orphaned',
+  'write_audit.append_failed',
 ];
 
 const OBSERVABILITY_ALERTS = Object.freeze({

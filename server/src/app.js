@@ -258,7 +258,7 @@ if (require.main === module) {
   // 直接暴露在公网，绕过 Nginx 的 TLS 与过滤。实测从公网 nc 该端口 TCP 握手成功。
   // Nginx 本来就是转发到 127.0.0.1:port，所以改成回环不影响任何入口。
   const host = String(process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
-  app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     logInfo('server.started', { port, host });
     // ⭐⭐ 2026-10-14（她 02:31 扫码 7.4 秒那次）：**启动就预热一次**「实时库存」快照 ——
     //   否则"服务重启 ⇒ 到第一次扫码之间快照是冷的"⇒ 那次会退回真读（`feishu_reads=2` ✗）。
@@ -282,6 +282,19 @@ if (require.main === module) {
         .catch((error) => logInfo('config_cache.warm.skipped', { error: error.message }));
     }, 1000).unref?.();
   });
+
+  // #50（2026-11-14）：SIGTERM/SIGINT 优雅退出 + 未处理异常兜底。
+  //   只在**真启动**时注册（单测加载 app.js 不挂任何 process 监听器）。
+  //   drain：统一异步 job 收尾 → 写入审计队列落盘；超时也退出，不卡部署。
+  const { installGracefulShutdown, installProcessGuards } = require('./services/processLifecycle');
+  const { flushWriteAudit } = require('./services/writeAuditService');
+  const { stopAsyncJobService } = require('./services/asyncJobRuntime');
+  const shutdown = installGracefulShutdown({
+    server,
+    drains: [() => stopAsyncJobService({ timeoutMs: 10000 }), () => flushWriteAudit()],
+    timeoutMs: Number(process.env.APP_SHUTDOWN_TIMEOUT_MS || 10000),
+  });
+  installProcessGuards({ onFatal: () => shutdown('uncaughtException', 1) });
 }
 
 module.exports = app;

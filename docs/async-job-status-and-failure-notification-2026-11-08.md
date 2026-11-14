@@ -336,3 +336,20 @@ GET /api/workbench/async-jobs/:jobId
 - 不恢复群聊录入；
 - 不修改成功 toast 文案；
 - 不在本卡内部署。
+
+---
+
+## 2026-11-14 补丁：#50 / #44（running 收敛 · 终态补发 · 优雅退出）
+
+> 审计记录 #50 / #44 的修复落点；不改变本文既有状态机语义。
+
+- **`running` 残留收敛**：进程重启后，`running` 且 `started_at` 超过 `ASYNC_JOB_RUNNING_STALE_MINUTES`（默认 30）的 job ⇒
+  置 `failed`（`last_error` 写明"需人工核对"）+ 发失败通知；启动时跑一次，之后每 `ASYNC_JOB_RECOVER_INTERVAL_MS`（默认 15 分钟）巡检。
+  事件：`async_job.recover.running_reaped`（已加入观测告警 critical events），汇总 `async_job.recover.reaped`。
+- **启动补发集合**：由 `NOTIFY_STATUSES = [failed, partial_failed]` 统一给出（原来只筛 failed ⇒ #44）；
+  `notified_at` 仍是唯一去重依据。
+- **优雅退出**：`SIGTERM/SIGINT` ⇒ 停接新连接 → 等正在跑的异步 job 收尾（`asyncJobService.shutdown`）→ 刷写入审计队列（`flushWriteAudit`）→ 退出；
+  总超时 `APP_SHUTDOWN_TIMEOUT_MS`（默认 10s，超时也退出）。
+- **未处理异常**：`unhandledRejection` 记 `process.unhandled_rejection`（不退出）；`uncaughtException` 记 `process.uncaught_exception` 后走同一条优雅退出。
+- **库存手工调整并发**：`InventoryPairAdjustmentService.adjustPairs / setSeason` 按货品/品类加**进程内串行锁**（`utils/keyedLock`），
+  避免两个 job 同时"先读后写"导致重复增减（PM2 单实例前提不变）。

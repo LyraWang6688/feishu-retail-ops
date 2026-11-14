@@ -18,11 +18,12 @@
  * 🔴 任何一次统一层自身的落盘/通知异常都**不许打断业务链路**（catch + warn，返回 null）。
  */
 const {
-  ASYNC_JOBS, ASYNC_JOB_STATUS,
+  ASYNC_JOBS, ASYNC_JOB_STATUS, NOTIFY_STATUSES,
   classifyThrownError, classifyResultOutcome, retryDelayMs,
 } = require('../config/asyncJobs');
 const { createAsyncJobStore, jobIdFor } = require('./asyncJobStore');
 const { createAsyncJobNotifier } = require('./asyncJobNotifier');
+const { createAsyncJobRecovery } = require('./asyncJobRecovery');
 const { logInfo, logWarn } = require('../utils/logger');
 
 /** 状态接口只回这些字段（**不返回 payload / 敏感字段**，文档第 7 节）。 */
@@ -65,6 +66,12 @@ const createAsyncJobService = ({
   const info = typeof logger.logInfo === 'function' ? logger.logInfo : () => {};
   const warn = typeof logger.logWarn === 'function' ? logger.logWarn : () => {};
   const nowIso = () => now().toISOString();
+  // ⚠️ 不许 unref：shutdown 的兜底超时**必须触发**（事件循环里没有别的 handle 时也要返回）。
+  const sleepTimeout = (ms) => new Promise((resolve) => {
+    setTimeout(() => resolve(false), Math.max(1, Number(ms) || 1));
+  });
+  /** 正在执行的 `run()`（优雅退出时 drain；只用作进程内观测，不参与状态判定）。 */
+  const activeRuns = new Set();
 
   /** 统一层自己的异常**只留痕**：绝不让"记 job 状态失败"把业务链路带崩。 */
   const safe = async (label, work) => {
@@ -216,7 +223,7 @@ const createAsyncJobService = ({
    * @param {Function} [input.classifyResult] 结果分类器（默认 `classifyResultOutcome`）
    * @param {Function} [input.classifyError] 异常分类器（默认 `classifyThrownError`；链路可把业务异常标成不可重试）
    */
-  const run = async ({ jobId, run: runFn, classifyResult, classifyError } = {}) => {
+  const runJob = async ({ jobId, run: runFn, classifyResult, classifyError } = {}) => {
     const job = await get(jobId);
     if (!job) return null;
     // ⚠️ 刻意**不**因"job 已是终态"而跳过执行：同一个 submitKey 重放（页面重提 / 崩溃后续跑）
@@ -266,6 +273,18 @@ const createAsyncJobService = ({
   };
 
   /**
+   * 对外 `run()`：在 `runJob` 外面登记"正在执行"，供优雅退出 drain。
+   * 🔴 不改变任何状态机/重试语义（纯进程内观测）。
+   */
+  const run = (input = {}) => {
+    const execution = Promise.resolve(runJob(input));
+    activeRuns.add(execution);
+    const clear = () => activeRuns.delete(execution);
+    execution.then(clear, clear);
+    return execution;
+  };
+
+  /**
    * 只读视图（状态接口用）：只能查**自己的**任务。
    * 不是自己的 / 没有 owner ⇒ 一律 `not_found`（不泄露"这条任务存在"）。
    */
@@ -279,6 +298,11 @@ const createAsyncJobService = ({
     return { ok: true, job: publicJobView(job) };
   };
 
+  /** #50：超龄 `running` 收敛（启动一次 + 周期巡检共用）。 */
+  const reapStaleRunning = createAsyncJobRecovery({
+    store: jobStore, notifyIfNeeded, config, logger, now,
+  });
+
   /**
    * 启动时的收尾：
    *   ① **补发**未通知的终态失败（上一次进程里 "落 failed 了但通知没发出去 / 发送失败"）；
@@ -286,8 +310,19 @@ const createAsyncJobService = ({
    */
   const start = async () => {
     const jobs = await safe('start_list', () => jobStore.list());
-    if (!jobs) return { notified: 0, pending: 0, running: 0 };
-    const pending = jobs.filter((job) => job.status === ASYNC_JOB_STATUS.FAILED
+    if (!jobs) return { notified: 0, pending: 0, running: 0, reaped: 0 };
+
+    // ① #50：先把"上一进程留下的超龄 running"收敛成 failed + 通知（不再只 warn）。
+    const recovery = await safe('recover_running', () => reapStaleRunning());
+    if (recovery?.reaped) {
+      info('async_job.recover.running_reaped_summary', {
+        count: recovery.reaped, job_ids: recovery.ids.slice(0, 10),
+        hint: config.texts?.hints?.orphanedReaped || '',
+      });
+    }
+
+    // ② #44：补发未通知的**全部**需通知终态（failed + partial_failed），复用同一份集合。
+    const pending = jobs.filter((job) => NOTIFY_STATUSES.includes(job.status)
       && !job.notified_at && String(job.type || ''));
     let notified = 0;
     for (const job of pending) {
@@ -303,12 +338,28 @@ const createAsyncJobService = ({
       });
     }
     if (pending.length) info('async_job.recover.notified', { pending: pending.length, notified });
-    return { notified, pending: pending.length, running: running.length };
+    return { notified, pending: pending.length, running: running.length, reaped: recovery?.reaped || 0 };
+  };
+
+  /**
+   * 优雅退出（#50）：等正在跑的 `run()` 收尾，最多 `timeoutMs`。
+   * 超时也返回（部署不许被一个卡住的 job 拖死）。
+   */
+  const shutdown = async ({ timeoutMs = 10000 } = {}) => {
+    const pending = [...activeRuns];
+    if (!pending.length) return { drained: true, active: 0, timed_out: false };
+    const all = Promise.allSettled(pending).then(() => true);
+    const timed = await Promise.race([all, sleepTimeout(timeoutMs)]);
+    const timedOut = timed !== true;
+    if (timedOut) {
+      warn('process.shutdown.timeout', { active: activeRuns.size, timeout_ms: timeoutMs });
+    }
+    return { drained: !timedOut, active: activeRuns.size, timed_out: timedOut };
   };
 
   return {
     enqueue, begin, succeed, markPartialFailed, recordAttemptFailure, fail,
-    notifyIfNeeded, run, view, get, start,
+    notifyIfNeeded, run, view, get, start, shutdown, reapStaleRunning,
     store: jobStore,
     jobIdFor,
   };

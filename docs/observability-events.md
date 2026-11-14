@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **461** 个事件。按前缀分组：
+共 **471** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -23,8 +23,13 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `async_job.mirror.failed` | 1 | src/services/afterSalesAsyncService.js |
+| `async_job.recover.interval_failed` | 1 | src/services/asyncJobRuntime.js |
+| `async_job.recover.reaped` | 1 | src/services/asyncJobRecovery.js |
+| `async_job.recover.running_orphaned` | 1 | src/config/alerts.js |
+| `async_job.recover.running_reaped` | 2 | src/config/alerts.js<br>src/services/asyncJobRecovery.js |
 | `async_job.start.done` | 1 | src/services/asyncJobRuntime.js |
 | `async_job.start.failed` | 2 | src/app.js<br>src/services/asyncJobRuntime.js |
+| `async_job.stop.failed` | 1 | src/services/asyncJobRuntime.js |
 
 ## auth
 
@@ -228,6 +233,16 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `perf.request.completed` | 2 | src/config/alerts.js<br>src/utils/requestTiming.js |
+
+## process
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `process.shutdown.done` | 1 | src/services/processLifecycle.js |
+| `process.shutdown.drain_failed` | 1 | src/services/processLifecycle.js |
+| `process.shutdown.start` | 1 | src/services/processLifecycle.js |
+| `process.uncaught_exception` | 1 | src/services/processLifecycle.js |
+| `process.unhandled_rejection` | 1 | src/services/processLifecycle.js |
 
 ## procurement
 

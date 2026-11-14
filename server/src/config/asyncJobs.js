@@ -49,6 +49,15 @@ const TERMINAL_STATUSES = Object.freeze([
   ASYNC_JOB_STATUS.FAILED,
 ]);
 
+/**
+ * 需要发"失败通知"的终态（#44：启动补发必须复用这一份集合，不许只写 failed）。
+ * notifier 接受的就是这两个；`succeeded` 不发。
+ */
+const NOTIFY_STATUSES = Object.freeze([
+  ASYNC_JOB_STATUS.FAILED,
+  ASYNC_JOB_STATUS.PARTIAL_FAILED,
+]);
+
 /** `job_id` 前缀：**沿用各链路既有形状**（销售 / 售后已有 `sale_job_` / `after_sales_job_`）。 */
 const JOB_ID_PREFIX = Object.freeze({
   [ASYNC_JOB_TYPES.SALES]: 'sale_job',
@@ -110,7 +119,12 @@ const DEFAULT_TEXTS = Object.freeze({
     chatMissing: '群没配 ⇒ 失败通知发不出去（不是发送成功）',
     notifyRetry: '通知没发出去 ⇒ 保持未通知，后续可重试',
     orphanedRunning: '进程重启时还在跑；是否真写成由各链路自己的幂等/断点记录判定（本层不猜）',
+    orphanedReaped: '进程重启后 running 超过阈值 ⇒ 已置为失败并通知（是否真写成仍需人工核对）',
     backgroundFailedNotified: '后台写入没成功 ⇒ 状态可查、可点重试（最终失败已进统一失败通知）',
+  }),
+  // 收敛 running 残留时写进 job.last_error 的人话（会出现在失败通知的「错误」行）
+  recover: Object.freeze({
+    runningError: '进程重启时任务仍在 running（可能未完成），已按超龄置为失败；是否真写成需人工核对',
   }),
   // 默认发送器抛错的原文（内部日志用）
   sendFailed: '发送异步失败通知失败',
@@ -165,6 +179,11 @@ const buildAsyncJobsConfig = (env = process.env) => {
   const retryMaxDelayMs = readInt(env, 'ASYNC_JOB_RETRY_MAX_DELAY_MS', 10000, { min: 0, max: 600000 });
   return Object.freeze({
     jobsDir: readString(env, 'ASYNC_JOBS_DIR', path.join(__dirname, '..', '..', 'data', 'async_jobs')),
+    // #50：进程重启后 `running` 残留的收敛（超龄 ⇒ failed + 通知；周期巡检同一条判据）。
+    recover: Object.freeze({
+      staleRunningMinutes: readInt(env, 'ASYNC_JOB_RUNNING_STALE_MINUTES', 30, { min: 1, max: 1440 }),
+      intervalMs: readInt(env, 'ASYNC_JOB_RECOVER_INTERVAL_MS', 15 * 60 * 1000, { min: 60000, max: 24 * 60 * 60 * 1000 }),
+    }),
     retry: Object.freeze({
       maxAttempts: readInt(env, 'ASYNC_JOB_MAX_ATTEMPTS', 3, { min: 1, max: 10 }),
       baseMs: retryBaseMs,
@@ -288,6 +307,7 @@ module.exports = {
   ASYNC_JOB_TYPES,
   ASYNC_JOB_STATUS,
   TERMINAL_STATUSES,
+  NOTIFY_STATUSES,
   JOB_ID_PREFIX,
   ASYNC_JOBS,
   buildAsyncJobsConfig,
