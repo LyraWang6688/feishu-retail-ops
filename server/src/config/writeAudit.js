@@ -21,7 +21,7 @@ const DEFAULT_DOMAINS = Object.freeze({
   purchase: false,
   acceptance: false,
   return: false,
-  inventoryManual: false,
+  inventoryManual: process.env.NODE_ENV !== 'test',
 });
 
 const domains = Object.freeze(Object.fromEntries(
@@ -46,6 +46,7 @@ const auditDomainEnabled = (domain) => Boolean(
 
 /** 没有显式 audit.domain 时，按关联键推断业务域（只推断已开启的域）。 */
 const auditDomainForCorrelation = (correlation = {}) => {
+  if (correlation?.audit_domain && auditDomainEnabled(correlation.audit_domain)) return String(correlation.audit_domain);
   if (correlation?.order_no && auditDomainEnabled('sales')) return 'sales';
   if (correlation?.batch_no && auditDomainEnabled('purchase')) return 'purchase';
   return '';

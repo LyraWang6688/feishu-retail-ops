@@ -207,6 +207,8 @@ test('correlationFields：只放行白名单里的业务键，其余（含疑似
     //   ⚠️ 本断言**没有放宽**：仍然是**逐字 deepEqual**（多一个键就得有人来这里改一次 ✓），
     //      而且下面「混进来的可疑键」那一段**一个都没删** ✓。
     'tap_id',
+    // 写入审计业务域（手工库存调整等），只进日志/审计，不改请求内容。
+    'audit_domain',
   ]);
 
   const picked = correlationFields({

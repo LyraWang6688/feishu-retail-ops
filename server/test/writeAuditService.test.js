@@ -10,6 +10,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'write-audit-'));
 process.env.WRITE_AUDIT_DIR = dir;
 process.env.WRITE_AUDIT_SALES = 'true';
 process.env.WRITE_AUDIT_PURCHASE = 'false';
+process.env.WRITE_AUDIT_INVENTORY_MANUAL = 'true';
 
 const { recordWrite, queryWriteAudit, queryRecentWriteAudit } = require('../src/services/writeAuditService');
 const { auditDomainForCorrelation } = require('../src/config/writeAudit');
@@ -53,6 +54,7 @@ test('AC-WA3 按 trace_id 查询与值截断', async () => {
 test('AC-WA4 按关联键推断业务域：销售默认开启，采购默认关闭', () => {
   assert.equal(auditDomainForCorrelation({ order_no: 'XSD-001' }), 'sales');
   assert.equal(auditDomainForCorrelation({ batch_no: 'CGD-001' }), '');
+  assert.equal(auditDomainForCorrelation({ audit_domain: 'inventoryManual' }), 'inventoryManual');
   assert.equal(auditDomainForCorrelation({}), '');
 });
 
