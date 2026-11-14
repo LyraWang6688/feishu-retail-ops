@@ -21,8 +21,6 @@
 const BOT_OPEN_ID_ENV_KEY = 'LARK_BOT_OPEN_ID';
 
 // 「收到」表情的 emoji_type。有默认值（表情不是业务事实）。
-const ACK_REACTION_ENV_KEY = 'LARK_ACK_REACTION';
-const DEFAULT_ACK_REACTION = 'OneSecond';
 
 // 取一个"写了才算配置"的环境变量：去首尾空白，空串等于没配。
 // ⚠️ 刻意不用 `process.env.X || 默认值` 那种写法（仓库里 getEnv 就是那样）：
@@ -69,12 +67,10 @@ const resolvePurchaseGroupReplies = (env = process.env) => {
 
 module.exports = {
   BOT_OPEN_ID_ENV_KEY,
-  ACK_REACTION_ENV_KEY,
   NO_BATCH_REPLY_ENV_KEY,
   AMBIGUOUS_BATCH_REPLY_ENV_KEY,
   DEFAULT_NO_BATCH_REPLY,
   DEFAULT_AMBIGUOUS_BATCH_REPLY,
   resolvePurchaseGroupReplies,
-  DEFAULT_ACK_REACTION,
   resolveBotOpenId
 };

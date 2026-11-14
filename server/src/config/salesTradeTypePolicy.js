@@ -104,7 +104,6 @@ const orderTradeTypeCodes = (items = [], orderTradeTypeCode = '') => {
 //    类型的判据是 `salesTradeTypeForStock`（库存有没有）。
 //    ⚠️ 它读的是**解析层给的提示**（她嘴上说"定金 / 以后来取"的那一件），
 //    只在"多明细 + 定金、说不清定金属于哪一件"时用到；调用点不许再写 `=== 'SALE_PREPAID'`。
-const SALES_PREPAID_TRADE_TYPE_CODES = Object.freeze(['SALE_PREPAID']);
 
 
 // 「多明细 + 定金」时，说不清定金属于哪一件的追问（**用户可见文案**，所以放配置）。
@@ -113,7 +112,6 @@ const SALES_PREPAID_TRADE_TYPE_CODES = Object.freeze(['SALE_PREPAID']);
 
 module.exports = {
   SALES_TRADE_TYPE_BY_STOCK,
-  SALES_PREPAID_TRADE_TYPE_CODES,
   salesTradeTypeForStock,
   itemTradeTypeCode,
   orderTradeTypeCodes
