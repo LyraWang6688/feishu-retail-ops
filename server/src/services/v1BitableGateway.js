@@ -21,11 +21,9 @@ const { createDriveApi } = require('./driveApi');
 //   ⇒ 官方上限 1000，我们取 **500**：与既有 `getBatch` 同一把尺子、且给"内容变更较大"的
 //     1254002（Fail）留出余量（官方排查建议就是"单次减少数据量"）。
 const BATCH_GET_CHUNK_SIZE = 500;
-// ⭐ 2026-10-29：飞书 records/batch_get 的 record_ids 实测上限 100（160 个会 400 field validation failed）；
-//    只给 getBatch 用，不动 createBatch / updateBatch / deleteBatch 的 500 分片。
-const BATCH_GET_IDS_LIMIT = 100;
 
 const { compact, recordIdOf, textValue, linkedRecordIds, singleLinked } = require('./v1Gateway/cells');
+const { listAllRecords, listByFilterRecords, getBatchRecords } = require('./v1Gateway/readRecords');
 
 class V1BitableGateway {
   constructor(options = {}) {
@@ -484,33 +482,17 @@ class V1BitableGateway {
       .map((id) => String(id || '').trim()).filter(Boolean);
     if (!wanted.length) return [];
     const correlation = correlationFields(options.correlation);
-    return readWithRetry(`get_batch:${tableKey}`, async () => {
-      const records = [];
-      for (let offset = 0; offset < wanted.length; offset += BATCH_GET_IDS_LIMIT) {
-        const chunk = wanted.slice(offset, offset + BATCH_GET_IDS_LIMIT);
-        const startedAt = Date.now();
-        const response = await this.client.bitable.appTableRecord.batchGet({
-          path: { app_token: this.schema.appToken, table_id: table.tableId },
-          data: { record_ids: chunk },
-        });
-        this.assertSuccess(response, `批量读取“${table.tableName}”记录`);
-        const got = response.data?.records || [];
-        const forbidden = response.data?.forbidden_record_ids;
-        records.push(...got);
-        logInfo('bitable.record.batch_read', {
-          table_key: tableKey,
-          table_id: table.tableId,
-          requested: chunk.length,
-          returned: got.length,
-          missing: Math.max(0, chunk.length - got.length),
-          forbidden: Array.isArray(forbidden) ? forbidden.length : 0,
-          chunk_offset: offset,
-          duration_ms: Date.now() - startedAt,
-          ...correlation,
-        });
-      }
-      return records;
-    }, options);
+    return readWithRetry(`get_batch:${tableKey}`, () => getBatchRecords({
+      client: this.client,
+      appToken: this.schema.appToken,
+      tableId: table.tableId,
+      tableName: table.tableName,
+      tableKey,
+      wanted,
+      correlation,
+      assertSuccess: (response, operation) => this.assertSuccess(response, operation),
+      logInfo,
+    }), options);
   }
   async delete(tableKey, recordId, options = {}) {
     const table = this.tableWithId(tableKey);
@@ -637,24 +619,14 @@ class V1BitableGateway {
     const fieldNames = Array.isArray(options.fieldNames)
       ? options.fieldNames.map((name) => String(name).trim()).filter(Boolean)
       : [];
-    return readWithRetry(`list_all:${tableKey}`, async () => {
-      const records = [];
-      let pageToken;
-      do {
-        const response = await this.client.bitable.appTableRecord.list({
-          path: { app_token: this.schema.appToken, table_id: table.tableId },
-          params: {
-            page_size: 500,
-            page_token: pageToken,
-            ...(fieldNames.length ? { field_names: JSON.stringify(fieldNames) } : {}),
-          },
-        });
-        this.assertSuccess(response, `读取“${table.tableName}”记录列表`);
-        records.push(...(response.data?.items || []));
-        pageToken = response.data?.has_more ? response.data?.page_token : undefined;
-      } while (pageToken);
-      return records;
-    }, options);
+    return readWithRetry(`list_all:${tableKey}`, () => listAllRecords({
+      client: this.client,
+      appToken: this.schema.appToken,
+      tableId: table.tableId,
+      tableName: table.tableName,
+      fieldNames,
+      assertSuccess: (response, operation) => this.assertSuccess(response, operation),
+    }), options);
   }
 
   /**
@@ -694,21 +666,18 @@ class V1BitableGateway {
     const maxRecords = Number.isInteger(options.maxRecords) && options.maxRecords > 0 ? options.maxRecords : 0;
     const requested = Number.isInteger(options.pageSize) && options.pageSize > 0 ? options.pageSize : 500;
     const pageSize = Math.min(requested, 500);
-    return readWithRetry(`list_by_filter:${tableKey}`, async () => {
-      const records = [];
-      let pageToken;
-      do {
-        const response = await this.client.bitable.appTableRecord.list({
-          path: { app_token: this.schema.appToken, table_id: table.tableId },
-          params: { page_size: pageSize, page_token: pageToken, filter: expression },
-        });
-        this.assertSuccess(response, `按条件读取“${table.tableName}”记录`);
-        records.push(...(response.data?.items || []));
-        pageToken = response.data?.has_more ? response.data?.page_token : undefined;
-      } while (pageToken && (!maxRecords || records.length < maxRecords));
-      return records;
-    }, options);
+    return readWithRetry(`list_by_filter:${tableKey}`, () => listByFilterRecords({
+      client: this.client,
+      appToken: this.schema.appToken,
+      tableId: table.tableId,
+      tableName: table.tableName,
+      expression,
+      pageSize,
+      maxRecords,
+      assertSuccess: (response, operation) => this.assertSuccess(response, operation),
+    }), options);
   }
+
   async findOneByText(tableKey, semanticKey, expected) {
     const fieldName = this.table(tableKey).fields[semanticKey];
     if (!fieldName) throw new Error(`未配置查询字段: ${tableKey}.${semanticKey}`);
