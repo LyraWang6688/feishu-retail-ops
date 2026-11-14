@@ -23,7 +23,6 @@ const INBOUND_STATE = Object.freeze({
   DOOR_BOX: '门盒',
 });
 
-const OUTBOUND_STATE_ORDER = Object.freeze([INBOUND_STATE.DOOR_BOX, INBOUND_STATE.SAMPLE]);
 
 /** 空状态按门盒算；其余未知状态也按门盒算（只有明确的「样品」排最后）。 */
 const outboundStateRank = (state) => {
@@ -55,8 +54,7 @@ const explicitInboundStates = (state, quantity = 0) => {
 
 module.exports = {
   INBOUND_STATE,
-  OUTBOUND_STATE_ORDER,
   outboundStateRank,
   inboundStatesFor,
-  explicitInboundStates,
+  explicitInboundStates
 };

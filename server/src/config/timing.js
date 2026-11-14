@@ -12,10 +12,6 @@ const { readFlag, readInt } = require('./envValue');
 const { SCAN_WRITE } = require('./scanWrite');
 const { SCAN_PAGE } = require('./scanPage');
 
-const ACTION_CHAINS = Object.freeze({
-  [SCAN_WRITE.actions.replenish]: 'scan.replenish',
-  [SCAN_WRITE.actions.purchaseReturn]: 'scan.purchase_return',
-});
 
 const REQUEST_TIMING = Object.freeze({
   enabled: readFlag(process.env, 'REQUEST_TIMING_ENABLED', true),
@@ -49,4 +45,7 @@ const resolveTimingChain = ({ method = '', path = '', body = {} } = {}) => {
   return null;
 };
 
-module.exports = { REQUEST_TIMING, ACTION_CHAINS, resolveTimingChain };
+module.exports = {
+  REQUEST_TIMING,
+  resolveTimingChain
+};

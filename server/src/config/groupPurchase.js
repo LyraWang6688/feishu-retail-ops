@@ -16,7 +16,6 @@
 //      这一条是唯一有兜底的：表情只是"收到了"的信号，配错不影响任何业务事实。
 
 // 采购单发到哪个群（chat_id，形如 oc_xxx）。**没有默认值**。
-const PURCHASE_CHAT_ID_ENV_KEY = 'PURCHASE_CHAT_ID';
 
 // 机器人自己的 open_id（形如 ou_xxx）。@ 判据就是它。**没有默认值**。
 const BOT_OPEN_ID_ENV_KEY = 'LARK_BOT_OPEN_ID';
@@ -38,7 +37,6 @@ const readExplicit = (env, key) => {
 const resolveBotOpenId = (env = process.env) => readExplicit(env, BOT_OPEN_ID_ENV_KEY);
 
 /** 「收到」表情类型。未配置回落到 OneSecond。 */
-const resolveAckReaction = (env = process.env) => readExplicit(env, ACK_REACTION_ENV_KEY) || DEFAULT_ACK_REACTION;
 
 // ── 「认不出是哪一批」的两句回复（文案也配置先行）─────────────────────────────
 // 2026-10-07：报货批次号从 `BH-…`（手填 + 出单时生成）改成 `CGD-…`（代码生成），
@@ -70,7 +68,6 @@ const resolvePurchaseGroupReplies = (env = process.env) => {
 };
 
 module.exports = {
-  PURCHASE_CHAT_ID_ENV_KEY,
   BOT_OPEN_ID_ENV_KEY,
   ACK_REACTION_ENV_KEY,
   NO_BATCH_REPLY_ENV_KEY,
@@ -79,6 +76,5 @@ module.exports = {
   DEFAULT_AMBIGUOUS_BATCH_REPLY,
   resolvePurchaseGroupReplies,
   DEFAULT_ACK_REACTION,
-  resolveBotOpenId,
-  resolveAckReaction,
+  resolveBotOpenId
 };

@@ -120,13 +120,6 @@ const deliverySummaryOfDraft = (draft = {}, orderDelivers = true) =>
 const idFor = (prefix, value) =>
   `${prefix}_${crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 20)}`;
 
-const parseContent = (content) => {
-  try {
-    return JSON.parse(content || '{}');
-  } catch (_error) {
-    return {};
-  }
-};
 
 const timestamp = (value) => {
   const numeric = Number(value);
@@ -841,6 +834,5 @@ class LarkMvpService {
 module.exports = {
   LarkMvpService,
   aggregateRecognizedItems,
-  idFor,
-  parseContent,
+  idFor
 };

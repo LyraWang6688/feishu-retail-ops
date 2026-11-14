@@ -54,16 +54,10 @@ const buildSalesThreadLink = ({ chatId = '', threadId = '', template, threadPosi
 };
 
 /** 模板从环境变量读（没配就用她给的那条）；空串 = 显式不要拼链接。 */
-const resolveSalesThreadLinkTemplate = (env = process.env) => {
-  const raw = env ? env[SALES_THREAD_LINK_TEMPLATE_ENV_KEY] : undefined;
-  if (raw === undefined || raw === null) return DEFAULT_SALES_THREAD_LINK_TEMPLATE;
-  return String(raw).trim();
-};
 
 module.exports = {
   SALES_THREAD_LINK_TEMPLATE_ENV_KEY,
   DEFAULT_SALES_THREAD_LINK_TEMPLATE,
   DEFAULT_THREAD_POSITION,
-  buildSalesThreadLink,
-  resolveSalesThreadLinkTemplate,
+  buildSalesThreadLink
 };

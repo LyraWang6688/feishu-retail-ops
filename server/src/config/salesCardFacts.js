@@ -129,74 +129,6 @@ const moneyText = (value) => {
  *
  * @returns {{ type: string, fulfillment: string, payment: string, lines: string[] }}
  */
-const salesCardFactsFor = (draft = {}, config = resolveSalesCardFactsConfig()) => {
-  const items = Array.isArray(draft.items) ? draft.items : [];
-  const codes = items.map((item) => itemTradeTypeCode(item, draft.trade_type_code));
-  // 认不出来的编码 = "这一行还没定"（多颜色、颜色还没选，库存还没查）。
-  const undetermined = codes.some((code) => !code);
-
-  // ── 类型 ──
-  const labels = [...new Set(codes.map((code) => tradeTypeLabel(code)).filter(Boolean))];
-  if (undetermined || !labels.length) labels.push(config.undetermined);
-  const type = labels.join(config.tradeTypeSeparator);
-
-  // ── 履约状态 ──
-  // 预定 → 不交付；现货 → 交付；一张单里两种都有 → 部分交付。
-  // ⚠️ 交付状态由**类型**推出来（`config/salesMovements.delivery`），这里不另立判据。
-  let fulfillment = config.undetermined;
-  if (!undetermined && codes.length) {
-    const deliverable = codes.filter((code) => deliversForTradeType(code)).length;
-    fulfillment = deliverable === 0 ? config.fulfillment.undelivered
-      : deliverable === codes.length ? config.fulfillment.delivered
-        : config.fulfillment.partial;
-  }
-
-  // ── 收款情况 ──
-  const payments = Array.isArray(draft.payments) ? draft.payments : [];
-  const received = payments.filter((payment) => payment.status !== PENDING_SETTLEMENT_STATUS);
-  const receivedCents = Math.round(received
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0) * 100);
-  const platformCents = Math.round(payments
-    .filter((payment) => payment.status === PENDING_SETTLEMENT_STATUS)
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0) * 100);
-  const totalCents = Math.round(Number(draft.agreed_total || 0) * 100);
-  const receivedText = received.length
-    ? fill(config.payment.received, {
-      items: received.map((payment) => {
-        const method = String(payment.method || '').trim();
-        return fill(config.payment.receivedItem, {
-          method: method ? `${method} ` : '',
-          amount: yuanText(payment.amount, config.payment),
-        });
-      }).join(config.payment.separator),
-    })
-    : config.payment.receivedEmpty;
-  // 还欠 = 成交额 − 已收 − 待平台结算（封底 0）。成交额读不出来 → 用她明说的欠款，
-  // 两者都没有才显示占位符（**绝不**显示 ￥0 —— 那是在说"这单不用收钱"）。
-  const statedOwed = moneyText(draft.owed);
-  const outstandingCents = totalCents > 0
-    ? Math.max(0, totalCents - receivedCents - platformCents)
-    : (statedOwed === null ? null : Math.round(statedOwed * 100));
-  const owedClause = outstandingCents === 0
-    ? config.payment.settled
-    : fill(config.payment.owed, {
-      amount: outstandingCents === null
-        ? config.payment.amountPlaceholder
-        : yuanText(outstandingCents / 100, config.payment),
-    });
-  const payment = `${receivedText}${config.payment.separator}${owedClause}`;
-
-  return {
-    type,
-    fulfillment,
-    payment,
-    lines: [
-      fill(config.tradeTypeLine, { type }),
-      fill(config.fulfillmentLine, { fulfillment }),
-      fill(config.paymentLine, { payment }),
-    ],
-  };
-};
 
 module.exports = {
   TRADE_TYPE_LINE_KEY,
@@ -205,6 +137,5 @@ module.exports = {
   UNDETERMINED_TEXT_KEY,
   PENDING_SETTLEMENT_STATUS,
   resolveSalesCardFactsConfig,
-  salesCardFactsFor,
-  yuanText,
+  yuanText
 };

@@ -772,14 +772,6 @@ const ringSafeScale = (geometry, box, ringMm = 0.8, overhangMm = 0.3) => {
 };
 
 /** 页面尺寸（mm）—— 兼容旧调用（竖版画布 = 画布 30×40、页面仍 40×30）。 */
-const pageSizeMm = (layout, options = {}) => {
-  const geo = canvasGeometry(layout, options);
-  return {
-    labelW: geo.labelW, labelH: geo.labelH,
-    pageW: geo.pageW, pageH: geo.pageH,
-    rotate: geo.rotate, swapped: geo.allowSwap,
-  };
-};
 
 /**
  * 内容相对页面的那个 `transform`。
@@ -1421,7 +1413,6 @@ module.exports = {
   planItemNoColor,
   placeQrSvg,
   normalizeRotation,
-  pageSizeMm,
   rotationTransform,
   labelSvg,
   svgToPng,
@@ -1430,5 +1421,5 @@ module.exports = {
   renderLabels,
   mmToPt,
   mmToPx,
-  round,
+  round
 };

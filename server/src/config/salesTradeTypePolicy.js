@@ -106,20 +106,15 @@ const orderTradeTypeCodes = (items = [], orderTradeTypeCode = '') => {
 //    只在"多明细 + 定金、说不清定金属于哪一件"时用到；调用点不许再写 `=== 'SALE_PREPAID'`。
 const SALES_PREPAID_TRADE_TYPE_CODES = Object.freeze(['SALE_PREPAID']);
 
-const isPrepaidTradeType = (code) => SALES_PREPAID_TRADE_TYPE_CODES.includes(String(code || ''));
 
 // 「多明细 + 定金」时，说不清定金属于哪一件的追问（**用户可见文案**，所以放配置）。
 // ⚠️ 措辞**只说钱的事**（哪一件付了定金），**不把"预定"当类型问她** ——
 //    类型是查完库存才有的结论，不该由她来选。
-const SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS =
-  '这一单里哪一件是付了定金的那件，我有点拿不准，请逐件说明哪一件付了定金、每双多少钱～';
 
 module.exports = {
   SALES_TRADE_TYPE_BY_STOCK,
   SALES_PREPAID_TRADE_TYPE_CODES,
-  SALES_MULTI_LINE_DEPOSIT_TARGET_AMBIGUOUS,
   salesTradeTypeForStock,
   itemTradeTypeCode,
-  orderTradeTypeCodes,
-  isPrepaidTradeType,
+  orderTradeTypeCodes
 };

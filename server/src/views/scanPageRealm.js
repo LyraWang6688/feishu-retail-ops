@@ -200,11 +200,6 @@ const REALM_TEXTS = Object.freeze({
 //   与缺码判定**同源**——2026-10-09 之前这里另有一份内联的硬编码副本。）
 
 /** 这一款的类别（编号第 3 段）属于哪一组（认不出返回 null，不猜）。 */
-const sizeGroupOf = (categoryCode) => {
-  const key = String(categoryCode ?? '').trim().toUpperCase();
-  const range = SIZE_GROUP_RANGES[key];
-  return range ? { key, label: range.label, from: range.from, to: range.to } : null;
-};
 
 /**
  * ⭐⭐ 2026-10-16 晚（**成对迁移 · 改前逐字 → 改后逐字 → 依据**）：
@@ -367,11 +362,10 @@ module.exports = {
   REALM_TEXTS,
   SIZE_GROUP_RANGES,
   resolveRealm,
-  sizeGroupOf,
   sellableCountOf,
   saleSizeGroups,
   sellableSizeTexts,
   purchaseSizeLines,
   purchaseSizeGroups,
-  foldedSpecialRowsOf,
+  foldedSpecialRowsOf
 };
