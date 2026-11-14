@@ -34,8 +34,8 @@ const dayOf = (date) => shanghaiDayOf(date instanceof Date ? date.getTime() : Nu
 
 const auditFileOf = (date, dir = WRITE_AUDIT.dir) => path.join(dir, `${dayOf(date)}.jsonl`);
 
-const appendEvent = (event) => {
-  const file = auditFileOf(new Date(event.at));
+const appendEvent = (event, dir = WRITE_AUDIT.dir) => {
+  const file = auditFileOf(new Date(event.at), dir);
   const previous = appendQueues.get(file) || Promise.resolve();
   const next = previous.then(async () => {
     await fs.promises.mkdir(path.dirname(file), { recursive: true });
@@ -96,6 +96,7 @@ const recordWrite = (input = {}) => {
   const domain = String(input.domain || '').trim();
   if (!auditDomainEnabled(domain)) return Promise.resolve(null);
   const now = input.now instanceof Date ? input.now : new Date();
+  const dir = input.dir || WRITE_AUDIT.dir;
   const event = {
     event: 'write_audit',
     at: now.toISOString(),
@@ -114,7 +115,7 @@ const recordWrite = (input = {}) => {
       .map(([key, value]) => [key, String(value)])),
     fields: safeFields(input.fields),
   };
-  return appendEvent(event);
+  return appendEvent(event, dir);
 };
 
 /**

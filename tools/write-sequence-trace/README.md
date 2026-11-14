@@ -30,7 +30,7 @@ write-sequence-trace/
 │  └─ bitable-cross-table-write-sequence.md  跨表追踪经验
 
 ├─ archive/
-│  └─ sales-XSD-20261018-0001/       真实样例（HTML / events / chain，按单号归档）
+│  └─ sales-XSD-20261018-0001/       真实样例（**数据文件不入库**，2026-11-14 起因含真实单号/金额；目录内 README 仍在）
 └─ output/                    生成结果（不提交）
 ```
 

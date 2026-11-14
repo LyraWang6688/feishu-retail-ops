@@ -76,3 +76,6 @@ server/.playwright/
 docs/reports/large-files-*.md
 docs/reports/unified-infrastructure-and-config-*.md
 reports/
+# 生产销售链路真实样例（含真实单号/金额；仓库是 PUBLIC）——只保留 README，数据文件不入库
+tools/write-sequence-trace/archive/*/*.json
+tools/write-sequence-trace/archive/*/*.html
