@@ -5,6 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'app_test';
+process.env.FEISHU_V1_PRODUCT_VIEW_ID = process.env.FEISHU_V1_PRODUCT_VIEW_ID || 'vew_test';
 const { createWorkbenchProductRoutes } = require('../src/routes/workbench/products');
 const { invalidateConfigTable } = require('../src/services/configTableCache');
 const { resetProductSearchSnapshot } = require('../src/services/productSearchSnapshot');
@@ -51,6 +52,7 @@ test('AC-PP1 搜索：只按货号模糊匹配；空搜索不返回结果', asyn
     assert.equal(body.items[0].hasSampleImage, true);
     assert.equal(body.items[0].imageUrl, '/api/workbench/products/rec1/sample-image');
     assert.match(body.items[0].recordUrl, /\/base\/app_test\?table=.*record=rec1/, '结果卡片要能打开货品记录');
+    assert.match(body.items[0].recordUrl, /[?&]view=vew_test(&|$)/, '记录链接要落在指定视图');
   } finally { server.close(); }
 });
 

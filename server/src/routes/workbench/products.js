@@ -49,7 +49,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       // 图片始终走后端代理，不把飞书附件 token / 临时 URL 暴露给浏览器。
       imageUrl: hasSampleImage && id ? `/api/workbench/products/${encodeURIComponent(id)}/sample-image` : '',
       // 搜索结果卡片直接跳到「货品信息」对应记录。
-      recordUrl: recordUrl({ appToken: V1_BITABLE_SCHEMA.appToken, tableId: table.tableId, recordId: id }),
+      recordUrl: recordUrl({ appToken: V1_BITABLE_SCHEMA.appToken, tableId: table.tableId, viewId: table.viewId, recordId: id }),
     };
   };
 

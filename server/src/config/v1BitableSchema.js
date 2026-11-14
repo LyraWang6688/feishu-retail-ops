@@ -1,3 +1,5 @@
+const { readString } = require('./envValue');
+
 const getEnv = (key, fallback = '') => process.env[key] || fallback;
 
 // 目标多维表格不再有硬编码兜底：读不到就明确报错。此前默认值指向生产 Base，
@@ -23,6 +25,10 @@ const V1_BITABLE_SCHEMA = {
     product: {
       tableName: '货品信息',
       tableId: getEnv('FEISHU_V1_PRODUCT_TABLE_ID'),
+      // ⭐ 2026-11-14（业务负责人）：「记录链接用『货品信息填写』这个视图」——
+      //   该视图无筛选/无排序（2026-11-14 核实），全部货品都在 ⇒ 记录链接统一带它。
+      //   换视图 / 换租户时用 FEISHU_V1_PRODUCT_VIEW_ID 覆盖；设成**空串** ⇒ 链接不带 view。
+      viewId: readString(process.env, 'FEISHU_V1_PRODUCT_VIEW_ID', 'vewcH6N1xI'),
       fields: {
         number: '编号',
         itemNo: '货号',
