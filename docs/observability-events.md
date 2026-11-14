@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **471** 个事件。按前缀分组：
+共 **470** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -30,13 +30,6 @@
 | `async_job.start.done` | 1 | src/services/asyncJobRuntime.js |
 | `async_job.start.failed` | 2 | src/app.js<br>src/services/asyncJobRuntime.js |
 | `async_job.stop.failed` | 1 | src/services/asyncJobRuntime.js |
-
-## auth
-
-| 事件 | 次数 | 文件 |
-| --- | --- | --- |
-| `auth.misconfigured` | 1 | src/middleware/auth.js |
-| `auth.rejected` | 1 | src/middleware/auth.js |
 
 ## bitable
 
@@ -198,6 +191,7 @@
 | `lark.bitable.record_changed` | 1 | src/routes/larkEvents.js |
 | `lark.bitable.record_changed.base_unconfigured` | 1 | src/routes/larkEvents.js |
 | `lark.event.challenge` | 1 | src/routes/larkEvents.js |
+| `lark.event.challenge_rejected` | 1 | src/routes/larkEvents.js |
 | `lark.event.received` | 1 | src/routes/larkEvents.js |
 | `lark.group.message.disabled` | 1 | src/services/larkMvpService.js |
 | `lark.heartbeat.file_unreadable` | 1 | src/infrastructure/larkEventHeartbeat.js |

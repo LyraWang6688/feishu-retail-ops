@@ -54,7 +54,7 @@ const RETURN_PATH = Object.freeze({
   allowedExactPaths: Object.freeze([SCAN_PAGE.route.recordBasePath]),
 });
 
-/** 未登录时 302 的登录入口（`app.js` 挂在 `/api/auth/feishu`，**在 `API_KEY` 之前**，手机能直接打开）。 */
+/** 未登录时 302 的登录入口（`app.js` 挂在 `/api/auth/feishu`，手机可直接打开）。 */
 const LOGIN = Object.freeze({
   startPath: '/api/auth/feishu/start',
 });

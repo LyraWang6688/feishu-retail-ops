@@ -231,8 +231,10 @@ const createLarkEventsRouter = (options = {}) => {
   const verificationToken = process.env.LARK_AGENT_VERIFICATION_TOKEN || '';
   const encryptKey = process.env.LARK_AGENT_ENCRYPT_KEY || '';
 
-  if (process.env.NODE_ENV === 'production' && !verificationToken) {
-    throw new Error('生产环境必须配置 LARK_AGENT_VERIFICATION_TOKEN');
+  // #51（2026-11-14）：生产环境**两者都必须有** —— 原来只校验 verificationToken，
+  //    encryptKey 从未被检查；而 SDK 在双空时直接放行（fail-open）。
+  if (process.env.NODE_ENV === 'production' && (!verificationToken || !encryptKey)) {
+    throw new Error('生产环境必须同时配置 LARK_AGENT_VERIFICATION_TOKEN 与 LARK_AGENT_ENCRYPT_KEY');
   }
 
   // EventDispatcher validates the callback signature/token before invoking these handlers.
@@ -253,6 +255,12 @@ const createLarkEventsRouter = (options = {}) => {
     //    "回调地址填错"掩盖掉——监控被喂假数据比没有监控更糟。
     if (looksLikeLarkEnvelope(req.body)) heartbeat.recordEvent();
     if (req.body?.challenge) {
+      // #51：challenge 原来**不做 token 校验**（任何扫描器 POST 一个 challenge 都能被回显）。
+      //   飞书 URL 验证的 body 带 `token`；配了 verificationToken 就必须相符。
+      if (verificationToken && String(req.body?.token || '') !== verificationToken) {
+        logWarn('lark.event.challenge_rejected', { reason: 'invalid_token' });
+        return res.status(403).json({ success: false, error: 'Forbidden' });
+      }
       logInfo('lark.event.challenge', { challenge: req.body.challenge });
       return res.json({ challenge: req.body.challenge });
     }

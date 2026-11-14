@@ -50,6 +50,8 @@ const { createLaikeClient } = require('./services/douyin');
 // 扫码页的挂载点（`/r`）与它的配置：**与二维码里的 URL 同源**
 // （`config/tagQrCode.js` 的 `scanUrl.recordIdTemplate` = `https://hm.bamamei.online/r/{recordId}`）。
 const { SCAN_PAGE } = require('./config/scanPage');
+const { SECURITY } = require('./config/security');
+const { createOriginGuard, createRateLimit } = require('./middleware/security');
 
 const app = express();
 
@@ -113,11 +115,12 @@ app.use(require('./utils/traceMiddleware').traceMiddleware());
 
 // Feishu callbacks do not carry the project's x-api-key, so mount the verified
 // Lark event endpoint before the generic /api authentication middleware.
-app.use('/api/lark/events', require('./routes/larkEvents').createLarkEventsRouter());
+app.use('/api/lark/events', createRateLimit({ max: SECURITY.rateLimit.eventMax, name: 'lark_events' }),
+  require('./routes/larkEvents').createLarkEventsRouter());
 // Feishu web-app OAuth routes are mounted before generic /api authentication.
 app.use('/api/auth/feishu', require('./routes/feishuWebAuth').createFeishuWebAuthRouter());
 // ⭐ 2026-10-11（业务负责人：手机点打印 ⇒ 店里那台 Windows 电脑执行打印）：
-//   两条新入口，**都挂在下面 `/api` 的 API_KEY 中间件之前**（电脑侧的小助手没有那个头）：
+//   两条新入口（电脑侧的小助手没有浏览器会话，走独立设备令牌）：
 //     · 手机侧 `/api/workbench/label-print/*` —— 提交打印 / 看在线状态；沿用**工作台那一道**
 //       飞书身份闸门（`routes/labelPrintQueue.js` import 复用 `requireWorkbenchAccess`，没新开鉴权）；
 //     · 电脑侧 `/api/label-print/*` —— 独立**设备令牌**（`x-label-print-token`）+ **SSE 长连接**。
@@ -141,7 +144,7 @@ app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')))
 
 // 扫码页（标签二维码里的 `https://hm.bamamei.online/r/{recordId}`）：标签二维码指向的就是这一条
 //（挂载点 `SCAN_PAGE.route.recordBasePath` = `/r`，路径段在 router 里）。
-// ⚠️ 刻意**不挂在 `/api/*` 下面**：那一段由下面的 `API_KEY`（`x-api-key` 头）保护，
+// ⚠️ 刻意**不挂在 `/api/*` 下面**：浏览器直接打开页面，不能要求自定义请求头；
 //    而扫码的人是手机浏览器**直接打开页面**的，没有那个头 ⇒ 挂过去必被挡。
 // ⚠️ 准入用的是**工作台同一道飞书身份闸门**（`routes/workbench.js` 导出的
 //    `requireWorkbenchAccess`，与 `/api/workbench/*` 是**同一个函数**），
@@ -160,7 +163,12 @@ app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')))
 // ⭐ 2026-10-14：启动时预热「实时库存」快照（用**已有实例**，不新建 ✓ 见 services/scanPageService.js）
 const { warmLiveInventorySnapshot } = require('./services/scanPageService');
 const scanPageRouter = require('./routes/scanPage').createScanPageRouter();
-app.use(SCAN_PAGE.route.recordBasePath, scanPageRouter);
+app.use(
+  SCAN_PAGE.route.recordBasePath,
+  createOriginGuard(),
+  createRateLimit({ max: SECURITY.rateLimit.scanMax, name: 'scan_page' }),
+  scanPageRouter,
+);
 
 // Health check route. Also answers "服务器上跑的是哪一版"——部署时由 deploy_run.sh
 // 写入版本号与 commit，否则回落到 package.json 的版本。
@@ -177,7 +185,11 @@ app.get('/health', (req, res) => {
 // Routes
 // Legacy WeChat was retired on 2026-10-01: the frozen router and the
 // miniprogram that drove it are gone, so no switch re-enables them.
-app.use('/api', require('./middleware/auth'));
+//
+// ⚠️ 2026-11-14（#51）：**全局 API_KEY 中间件已删除** —— 它挂在所有 router 之后，
+//    实际只保护"未注册路径"（等于死代码）；而且浏览器入口本来就不能带自定义头。
+//    现行鉴权：飞书事件=cryptographic 验签；工作台/扫码页=飞书身份会话；
+//    扫码页写请求=来源校验 + IP 限流（middleware/security.js）。
 
 // Error handling middleware
 app.use((err, req, res, next) => {

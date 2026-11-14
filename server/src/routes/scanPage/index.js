@@ -8,7 +8,7 @@
  *
  * 挂载与准入（**先读代码再动**的结果）：
  *   · `app.js` 把本 router 挂在 **`SCAN_PAGE.route.recordBasePath`（`/r`）** 上，
- *     **不在 `/api/*` 之下** —— 那一段被 `API_KEY`（`x-api-key`）保护，
+ *     **不在 `/api/*` 之下** —— 浏览器直接打开页面，不能要求自定义请求头；
  *     而扫码的人是**手机浏览器直接打开**的页面，没有那个头，挂过去必被挡；
  *   · 准入用的是**工作台那一道**闸门（`routes/workbench.js` 里的 `requireWorkbenchAccess`，
  *     两处共用**同一个函数**）：认证没启用 503 / 未登录 302 去登录 / 白名单外 403，
@@ -198,7 +198,7 @@ const createScanPageRouter = (options = {}) => {
       const redeemed = redeemSessionTicket(String(ticketToken), { targetPath });
       if (redeemed.ok) {
         const sessionCookie = encodeSession({ open_id: redeemed.openId, name: redeemed.name });
-        res.setHeader('Set-Cookie', `${COOKIE_NAME}=${sessionCookie}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=None`);
+        res.setHeader('Set-Cookie', `${COOKIE_NAME}=${sessionCookie}; Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=Lax`);
         return res.redirect(302, targetPath);
       }
       logWarn(SCAN_AUTH_REDIRECT.events.loginRedirect, {

@@ -74,14 +74,17 @@ test('AC-LEV-2 事件 token 不对 ⇒ 不执行业务 handler（200 空响应�
   }
 });
 
-test('AC-LEV-3 challenge 分支当前不做 token 校验（现状；加固见 #51）', async () => {
+test('AC-LEV-3 challenge 必须带正确 token（配了 verificationToken）', async () => {
   process.env.NODE_ENV = 'production';
   process.env.LARK_AGENT_VERIFICATION_TOKEN = 'tok_ok';
+  process.env.LARK_AGENT_ENCRYPT_KEY = 'enc_ok';
   const server = await listen(createLarkEventsRouter({ service: {}, heartbeat: fakeHeartbeat() }));
   try {
-    const out = await post(server, { challenge: 'abc123' });
-    assert.equal(out.status, 200);
-    assert.deepEqual(JSON.parse(out.text), { challenge: 'abc123' });
+    const rejected = await post(server, { challenge: 'abc123' });
+    assert.equal(rejected.status, 403, 'challenge 不再无条件回显（#51）');
+    const accepted = await post(server, { challenge: 'abc123', token: 'tok_ok' });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(JSON.parse(accepted.text), { challenge: 'abc123' });
   } finally {
     server.close();
   }
