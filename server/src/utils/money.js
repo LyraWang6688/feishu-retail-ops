@@ -25,4 +25,8 @@ const toCents = (value, { fallback = null, clean = true } = {}) => {
 
 const toCentsOrZero = (value, options = {}) => toCents(value, { ...options, fallback: 0 });
 
-module.exports = { toCents, toCentsOrZero };
+/** 一组金额 → 分合计（不可解析按 0；扫码页/写服务共用同一口径）。 */
+const sumCents = (values) => (Array.isArray(values) ? values : [])
+  .reduce((sum, value) => sum + toCentsOrZero(value), 0);
+
+module.exports = { toCents, toCentsOrZero, sumCents };
