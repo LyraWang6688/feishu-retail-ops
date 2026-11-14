@@ -231,10 +231,19 @@ const createLarkEventsRouter = (options = {}) => {
   const verificationToken = process.env.LARK_AGENT_VERIFICATION_TOKEN || '';
   const encryptKey = process.env.LARK_AGENT_ENCRYPT_KEY || '';
 
-  // #51（2026-11-14）：生产环境**两者都必须有** —— 原来只校验 verificationToken，
-  //    encryptKey 从未被检查；而 SDK 在双空时直接放行（fail-open）。
-  if (process.env.NODE_ENV === 'production' && (!verificationToken || !encryptKey)) {
-    throw new Error('生产环境必须同时配置 LARK_AGENT_VERIFICATION_TOKEN 与 LARK_AGENT_ENCRYPT_KEY');
+  // #51（2026-11-14）：生产环境必须配 verificationToken —— 原来双空时 SDK 直接放行（fail-open）。
+  // 🔴 2026-11-14 部署事故校正（hotfix）：encryptKey **不是必配**。
+  //    线上 .env 里 `LARK_AGENT_ENCRYPT_KEY=` 是**空值**（该飞书应用没开事件加密），
+  //    强行要求它 ⇒ 服务起不来（pm2 errored、5000 拒连、整站不可用）✗
+  //    · token 仍在 ⇒ 明文回调按 token 校验；
+  //    · 真开了加密却漏配 ⇒ SDK 解不出事件、明确报错（不是静默放行）✓
+  if (process.env.NODE_ENV === 'production' && !verificationToken) {
+    throw new Error('生产环境必须配置 LARK_AGENT_VERIFICATION_TOKEN');
+  }
+  if (process.env.NODE_ENV === 'production' && !encryptKey) {
+    logWarn('lark.event.encrypt_key_missing', {
+      hint: '未配置事件加密（明文回调 + token 校验）；若飞书应用开了加密，必须补 LARK_AGENT_ENCRYPT_KEY',
+    });
   }
 
   // EventDispatcher validates the callback signature/token before invoking these handlers.

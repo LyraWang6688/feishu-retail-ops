@@ -114,6 +114,7 @@ const EVENTS = Object.freeze([
   'lark.bitable.record_changed.base_unconfigured',
   'lark.event.challenge',
   'lark.event.challenge_rejected',
+  'lark.event.encrypt_key_missing',
   'lark.event.received',
   'lark.group.message.disabled',
   'lark.heartbeat.file_unreadable',
