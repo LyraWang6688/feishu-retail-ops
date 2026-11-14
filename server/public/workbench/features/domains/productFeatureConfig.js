@@ -1,6 +1,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { PRODUCT_FEATURES_API, PRODUCT_FEATURES_TEXTS as T } from '../../config/productFeatures.js';
+import { showToast } from '../shared/toast.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const usageText = (usage) => fill(T.usage, { count: Number(usage) || 0 });
@@ -101,18 +102,39 @@ export function openProductFeatureConfig(host) {
       const value = String(panel.querySelector('.pf-edit-input')?.value || '').trim();
       if (!value) return showError(key, T.addPlaceholder);
       if (duplicates(key, value, saveButton.dataset.recordId)) return showError(key, T.duplicate);
+      const originalText = saveButton.textContent;
+      saveButton.disabled = true;
+      saveButton.textContent = T.saving;
       try {
         await api.patch(PRODUCT_FEATURES_API.update(key, saveButton.dataset.recordId), { tag: value });
         await load();
-      } catch (err) { showError(key, err?.message || T.updateFailed); }
+        showToast(T.updatedToast);
+      } catch (err) {
+        saveButton.disabled = false;
+        saveButton.textContent = originalText;
+        showError(key, err?.message || T.updateFailed);
+      }
       return;
     }
     if (event.target.closest?.('[data-feature-delete-confirm]')) {
       if (!deleting) return;
+      const confirmButton = event.target.closest('[data-feature-delete-confirm]');
+      const originalText = confirmButton?.textContent || T.confirmDelete;
+      if (confirmButton) {
+        confirmButton.disabled = true;
+        confirmButton.textContent = T.removing;
+      }
       try {
         await api.delete(PRODUCT_FEATURES_API.remove(deleting.key, deleting.recordId));
         await load();
-      } catch (err) { showError(deleting.key, err?.message || T.deleteFailed); }
+        showToast(T.removedToast);
+      } catch (err) {
+        if (confirmButton) {
+          confirmButton.disabled = false;
+          confirmButton.textContent = originalText;
+        }
+        showError(deleting.key, err?.message || T.deleteFailed);
+      }
       return;
     }
     const addButton = event.target.closest?.('[data-feature-add]');
@@ -127,6 +149,7 @@ export function openProductFeatureConfig(host) {
     try {
       await api.post(PRODUCT_FEATURES_API.add(key), { tag: value });
       await load();
+      showToast(T.addedToast);
     } catch (err) {
       addButton.disabled = false;
       addButton.textContent = original;

@@ -31,3 +31,17 @@ test('AC-PF3 数据配置有「产品特点配置」卡片，点击打开三个�
   assert.ok(page.includes('data-feature-edit'), '行内修改');
   assert.ok(page.includes('data-feature-delete-confirm'), '删除确认');
 });
+
+test('AC-PF4 新增/修改/删除成功都有统一轻提示（#1205）', () => {
+  const page = read('features/domains/productFeatureConfig.js');
+  const texts = read('config/productFeatures.js');
+  assert.match(texts, /addedToast: '已添加'/);
+  assert.match(texts, /updatedToast: '已修改'/);
+  assert.match(texts, /removedToast: '已删除'/);
+  assert.ok(page.includes("import { showToast } from '../shared/toast.js'"), '复用统一 toast（不新写一套）');
+  assert.ok(page.includes('showToast(T.addedToast)'), '新增成功 → toast');
+  assert.ok(page.includes('showToast(T.updatedToast)'), '修改成功 → toast');
+  assert.ok(page.includes('showToast(T.removedToast)'), '删除成功 → toast');
+  assert.ok(page.includes('T.saving'), '保存中有 loading');
+  assert.ok(page.includes('T.removing'), '删除中有 loading');
+});

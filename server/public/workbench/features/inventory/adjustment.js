@@ -159,7 +159,7 @@ export function createInventoryAdjustmentModule() {
       const scanned = await scanCodeRaw('inventory');
       const target = scanTargetUrl(scanned, 'inventory');
       const match = String(target || '').match(/\/r\/([^/?#]+)/);
-      if (!match) return showPageError('没有认出货品编号，请重新扫码。');
+      if (!match) return showPageError(INVENTORY_MANUAL_TEXTS.scanNoProduct);
       await loadRows();
       const productId = decodeURIComponent(match[1]);
       if (!productRows(productId).length) await loadProductInfo(productId);
@@ -167,7 +167,7 @@ export function createInventoryAdjustmentModule() {
     } catch (error) {
       const message = String(error?.message || '');
       if (/cancel/i.test(message)) return;
-      showPageError(message === 'jssdk_missing' ? '当前设备调不起飞书扫一扫，请在飞书里打开工作台。' : '扫码没有成功，请再试一次。');
+      showPageError(message === 'jssdk_missing' ? INVENTORY_MANUAL_TEXTS.scanNoSdk : INVENTORY_MANUAL_TEXTS.scanFailed);
     }
   }
 
@@ -254,7 +254,7 @@ export function createInventoryAdjustmentModule() {
     const rows = state.editorRows
       .filter((row) => Number(row.quantity) > 0)
       .map((row) => ({ size: Number(row.size), state: String(row.state || ''), quantity: Number(row.quantity) }));
-    if (!rows.length) return showPageError('请至少保留一行数量大于 0 的库存');
+    if (!rows.length) return showPageError(INVENTORY_MANUAL_TEXTS.rowsRequired);
     state.pendingRequest = state.pendingRequest || crypto.randomUUID();
     try {
       const result = await api.post('/api/workbench/inventory/adjustments/pairs', {
@@ -264,7 +264,7 @@ export function createInventoryAdjustmentModule() {
       state.savedNumber = first.product_number || state.productInfo?.number || '';
       state.inventoryJobId = String(result?.job_id || '').trim();
       state.rows = [];
-      showToast('已提交，后台写入库存');
+      showToast(INVENTORY_MANUAL_TEXTS.submittedStock);
       $(state.host, '[data-view="print-modal"]').hidden = false;
     } catch (error) {
       showPageError(describeError(error));
@@ -278,7 +278,7 @@ export function createInventoryAdjustmentModule() {
       const job = payload?.job || payload;
       if (job?.status === 'succeeded') return job;
       if (job?.status === 'failed' || job?.status === 'partial_failed') {
-        throw new Error(job.last_error || job.error || '库存调整失败');
+        throw new Error(job.last_error || job.error || INVENTORY_MANUAL_TEXTS.inventoryJobFailed);
       }
       await new Promise((resolve) => { setTimeout(resolve, 2000); });
     }
@@ -310,7 +310,7 @@ export function createInventoryAdjustmentModule() {
 
   async function setSeason(season) {
     const category = $(state.host, '[data-field="batch-category"]')?.value || '';
-    if (!category) return showPageError('请先选择品类');
+    if (!category) return showPageError(INVENTORY_MANUAL_TEXTS.categoryRequired);
     try {
       await api.post('/api/workbench/inventory/adjustments/season-flag', {
         category, season, requestId: crypto.randomUUID(),
@@ -318,7 +318,7 @@ export function createInventoryAdjustmentModule() {
       state.rows = [];
       await loadRows(true);
       renderViolations();
-      showToast(season ? '已提交，后台设为当季' : '已提交，后台入库');
+      showToast(season ? INVENTORY_MANUAL_TEXTS.seasonApplied : INVENTORY_MANUAL_TEXTS.seasonCleared);
     } catch (error) { showPageError(describeError(error)); }
   }
 
