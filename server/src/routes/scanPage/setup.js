@@ -1,4 +1,5 @@
 'use strict';
+const { toCentsOrZero } = require('../../utils/money');
 
 /** 扫码页装配上下文（阶段 5c-2 从 index.js 搬出）。 */
 const createScanPageSetup = ({ options, deps }) => {
@@ -149,7 +150,7 @@ const createScanPageSetup = ({ options, deps }) => {
   const respondSettlementBlock = async (res, req, ctx) => {
     const { settlement, effectiveLineAmounts, paidPayments, realm, body, fields, pendingLines,
       effectivePaymentStatus, pendingPaidAmount } = ctx;
-    const toCents = (value) => Math.round(Number(value || 0) * 100);
+    const toCents = toCentsOrZero;
             const blockText = (() => {
               const t = writeConfig.texts || {};
               const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;

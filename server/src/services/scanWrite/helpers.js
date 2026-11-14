@@ -1,4 +1,5 @@
 'use strict';
+const { toCentsOrZero } = require('../../utils/money');
 
 /**
  * scanWrite 的纯工具/基础件（从 `scanWriteService.js` 搬出，只搬不改）。
@@ -51,7 +52,7 @@ const createScanWriteHelpers = ({ schema, config, logError = defaultLogError }) 
   };
 
   /** 金额 → 分（整数运算，不拿浮点数比大小）。 */
-  const toCents = (value) => Math.round(Number(value || 0) * 100);
+  const toCents = toCentsOrZero;
 
   /** 分 → 人话金额（整数不带小数点；带角分才给两位）。 */
   const moneyText = (value) => {

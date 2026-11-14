@@ -39,7 +39,7 @@ const { createLiveInventorySnapshot } = require('./liveInventorySnapshot');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
 const { logInfo, logWarn } = require('../utils/logger');
 
-const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const { shanghaiDateTimeText } = require('../utils/shanghaiDay');
 
 const fieldName = (schema, tableKey, semanticKey) => schema?.tables?.[tableKey]?.fields?.[semanticKey] || '';
 const readField = (schema, tableKey, record, semanticKey) => {
@@ -187,14 +187,8 @@ const asTimestamp = (value) => {
 /**
  * 毫秒 → 上海时间文案（**UTC+8**）。
  * ⚠️ 服务端日志是 UTC，但**给她看的**一律 +8（AGENTS.md《协作纪律》第 6 条）。
+ * 实现已收口到 `utils/shanghaiDay`（2026-11-14）。
  */
-const shanghaiDateTimeText = (timestamp) => {
-  if (!timestamp) return '';
-  const shifted = new Date(timestamp + SHANGHAI_OFFSET_MS);
-  const pad = (value) => String(value).padStart(2, '0');
-  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} `
-    + `${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}`;
-};
 
 const sortSizes = (sizes) => [...sizes].sort((left, right) => {
   if (typeof left === 'number' && typeof right === 'number') return left - right;

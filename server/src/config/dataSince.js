@@ -15,40 +15,8 @@
  */
 const DATA_SINCE = '2026-10-15';
 
-const pad = (n) => String(n).padStart(2, '0');
-
-/** 把各种输入统一成**上海的** `YYYY-MM-DD`；认不出 ⇒ `''`（**不猜** ✗）。 */
-const shanghaiDayKeyOf = (value) => {
-  if (value === null || value === undefined || value === '') return '';
-  if (typeof value === 'string') {
-    const raw = value.trim();
-    // ⭐ 纯日期（只有 YYYY-MM-DD，**不带时间**）⇒ 直接就是上海那一天 ✓
-    const plain = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (plain) return `${plain[1]}-${plain[2]}-${plain[3]}`;
-    // ⭐ 带时间/时区的字符串（`2026-10-14T16:30:00Z`）⇒ **按时间戳解析**再折算上海 ✗ 不许只看日期前缀 ✗
-    const parsed = Date.parse(raw);
-    if (Number.isFinite(parsed)) {
-      const t = new Date(parsed + 8 * 3600 * 1000);
-      return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
-    }
-    const asNum = Number(raw);
-    if (!Number.isFinite(asNum)) return '';
-    value = asNum;
-  }
-  if (value instanceof Date) {
-    if (Number.isNaN(value.getTime())) return '';
-    // 上海 = UTC+8（项目所在地不涉及夏令时 ✓）
-    const t = new Date(value.getTime() + 8 * 3600 * 1000);
-    return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
-  }
-  const num = Number(value);
-  if (!Number.isFinite(num)) return '';
-  // 10 位 = 秒；13 位 = 毫秒（两种都吃 ✓）
-  const ms = num < 1e12 ? num * 1000 : num;
-  const t = new Date(ms + 8 * 3600 * 1000);
-  if (Number.isNaN(t.getTime())) return '';
-  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
-};
+// 上海日口径的唯一实现：`utils/shanghaiDay`（2026-11-14 收口；这里只 re-export）。
+const { shanghaiDayKeyOf } = require('../utils/shanghaiDay');
 
 /**
  * ⭐ **唯一判据**：这一天（上海）在 `DATA_SINCE`（含）之后吗？

@@ -29,6 +29,7 @@
  * ⚠️ 定时器**一律 `unref()`**：它只是后台刷新，绝不许把进程（或测试）吊住。
  */
 const { logInfo, logWarn } = require('../utils/logger');
+const { isTransientLarkError } = require('../config/pushRetry');
 const { SCAN_PAGE } = require('../config/scanPage');
 const { invalidateConfigTable } = require('./configTableCache');
 
@@ -103,7 +104,11 @@ const createLiveInventorySnapshot = (options = {}) => {
     };
   };
 
-  /** ⚠️ **只给读用**：失败重试 `readRetryTimes` 次（默认 1 次），线性退避；最后仍失败 ⇒ 抛出原错 ✓ */
+  /**
+   * ⚠️ **只给读用**：失败重试 `readRetryTimes` 次（默认 1 次），线性退避；最后仍失败 ⇒ 抛出原错 ✓
+   * ⭐ 2026-11-14（#61）：**只重试瞬时错误**（5xx/超时/限流/1254607）—— 原来 401/404/字段不存在
+   *   也会白重试一遍，且把"确定性错误"包装成疑似临时故障。
+   */
   const listAllWithRetry = async () => {
     let lastFailure = null;
     for (let attempt = 0; attempt <= readRetryTimes; attempt += 1) {
@@ -111,13 +116,16 @@ const createLiveInventorySnapshot = (options = {}) => {
         return await gateway.listAll(tableKey, { retry: false });
       } catch (error) {
         lastFailure = error;
-        if (attempt < readRetryTimes) {
+        if (attempt < readRetryTimes && isTransientLarkError(error)) {
           logWarn(events.snapshotFailed, {
             reason: 'read_retry', table_key: tableKey, attempt: attempt + 1,
             of: readRetryTimes + 1, ...describeGatewayError(error),
           });
           await sleep(readRetryDelayMs * (attempt + 1));
+          continue;
         }
+        // 确定性错误 / 次数用尽 ⇒ 立即抛（不再空转）
+        break;
       }
     }
     throw lastFailure;

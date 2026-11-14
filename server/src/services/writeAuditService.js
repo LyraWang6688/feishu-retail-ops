@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { WRITE_AUDIT, auditDomainEnabled, auditDomainForCorrelation } = require('../config/writeAudit');
 const { logWarn } = require('../utils/logger');
+const { shanghaiDayOf } = require('../utils/shanghaiDay');
 
 const SENSITIVE_KEY = /token|secret|password|authorization|open_id|chat_id/i;
 const appendQueues = new Map();
@@ -28,10 +29,8 @@ const safeFields = (fields) => {
   ]));
 };
 
-const dayOf = (date) => {
-  const pad = (value) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-};
+// 审计按**上海自然日**分文件（`utils/shanghaiDay` 唯一实现；原来误用进程本地时区）。
+const dayOf = (date) => shanghaiDayOf(date instanceof Date ? date.getTime() : Number(date)) || 'unknown-day';
 
 const auditFileOf = (date, dir = WRITE_AUDIT.dir) => path.join(dir, `${dayOf(date)}.jsonl`);
 
@@ -95,7 +94,7 @@ const recordWrite = (input = {}) => {
  * 单进程、低数据量；一次读取时间范围内的 JSONL。
  */
 const queryWriteAudit = async ({
-  orderNo = '', traceId = '', domain = '', limit = 500, dir = WRITE_AUDIT.dir,
+  orderNo = '', traceId = '', domain = '', limit = WRITE_AUDIT.queryLimit, dir = WRITE_AUDIT.dir,
 } = {}) => {
   const wantedOrder = String(orderNo || '').trim();
   const wantedTrace = String(traceId || '').trim();
@@ -137,11 +136,13 @@ const auditGatewayWrite = ({ options = {}, correlation = {}, tableKey, tableName
 };
 
 /** 最近 24 小时写入：按时间由近及远；页面默认展示，不提供用户搜索。 */
-const queryRecentWriteAudit = async ({ domain = '', limit = 1000, dir = WRITE_AUDIT.dir, now = Date.now() } = {}) => {
-  const since = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+const queryRecentWriteAudit = async ({
+  domain = '', limit = WRITE_AUDIT.queryDefaultLimit, dir = WRITE_AUDIT.dir, now = Date.now(),
+} = {}) => {
+  const since = new Date(now - WRITE_AUDIT.recentWindowHours * 60 * 60 * 1000).toISOString();
   let files = [];
   try {
-    files = (await fs.promises.readdir(dir)).filter((name) => name.endsWith('.jsonl')).sort().reverse().slice(0, 3);
+    files = (await fs.promises.readdir(dir)).filter((name) => name.endsWith('.jsonl')).sort().reverse().slice(0, WRITE_AUDIT.recentMaxFiles);
   } catch (error) {
     if (error.code === 'ENOENT') return [];
     throw error;

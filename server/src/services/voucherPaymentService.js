@@ -26,10 +26,8 @@ const {
   resolveVoucherPaymentConfig, VOUCHER_METHOD_UNMAPPED_EVENT, VOUCHER_CATALOG_UNREADABLE_EVENT,
 } = require('../config/voucherPayment');
 
-const toCents = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? Math.round(number * 100) : null;
-};
+const { toCents: parseCents } = require('../utils/money');
+const toCents = (value) => parseCents(value, { clean: false });
 
 /**
  * @param {{ gateway: object, paymentMethods: object, config?: object, log?: Function }} deps

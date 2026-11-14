@@ -32,6 +32,10 @@ const CONFIG_TABLES = Object.freeze({
   liveInventory: Object.freeze({ ttlMs: 5 * MINUTE, label: '实时库存' }),
   // 不是独立 Base 表：只缓存「其他配品」里 配品=true 的候选（资金页赠品下拉）。
   giftAccessory: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '其他配品（赠品候选）' }),
+  // 「产品特点配置」三个标签字典表（2026-11-14 登记；走 configTableCache 的 TTL/lastGood/失效）。
+  productAudience: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '主推人群标签' }),
+  productSellingPoint: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '核心卖点标签' }),
+  productScene: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '主推场景标签' }),
 });
 
 /** record_changed 需要失效的表（顺序稳定，日志/测试可读）。 */
