@@ -475,6 +475,9 @@ const EVENTS = Object.freeze([
   'write_audit.append_failed',
   'write_audit.cache_hit',
   'write_audit.cache_miss',
+  'write_audit.cleanup',
+  'write_audit.cleanup_failed',
+  'write_audit.query_failed',
 ]);
 
 const EVENT_SET = new Set(EVENTS);

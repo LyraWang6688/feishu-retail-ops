@@ -1,6 +1,7 @@
 // ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
 const { purchaseToast, returnNotice } = require('../config/purchaseWebhookTexts');
 const path = require('node:path');
+const { readFlag } = require('../config/envValue');
 const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
@@ -193,7 +194,10 @@ class PurchaseWebhookService {
     // 「明细 → PNG」。默认是 SVG+sharp 的真实实现；测试注入假实现就能断言
     // "每个供应商一张图"、"先发图后写表"，而不必在单测里真的跑一遍图形库。
     this.images = options.images || { render: renderPurchaseRequestPng };
-    this.enablePurchaseInventory = true;
+    // ⭐ 2026-11-14（#57）：不再写死 true —— 真开关 `PURCHASE_WRITE_INVENTORY_ENABLED`（默认开）；
+    //    测试仍可用 `options.enablePurchaseInventory` 注入（优先级最高）。
+    this.enablePurchaseInventory = options.enablePurchaseInventory
+      ?? readFlag(process.env, 'PURCHASE_WRITE_INVENTORY_ENABLED', true);
     this.store = options.store || new JsonTaskStore({
       dir: path.join(__dirname, '../../data/purchase_webhook_tasks'),
       idField: 'task_id',

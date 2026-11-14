@@ -307,6 +307,13 @@ if (require.main === module) {
     timeoutMs: Number(process.env.APP_SHUTDOWN_TIMEOUT_MS || 10000),
   });
   installProcessGuards({ onFatal: () => shutdown('uncaughtException', 1) });
+
+  // #57：写入审计按保留期清理（启动 5s 后一次 + 每 24h 一次；失败只 warn）。
+  const { cleanupWriteAuditFiles } = require('./services/writeAuditService');
+  const cleanupAudit = () => cleanupWriteAuditFiles()
+    .catch((error) => logWarn('write_audit.cleanup_failed', { error: String(error?.message || error).slice(0, 200) }));
+  setTimeout(cleanupAudit, 5000).unref?.();
+  setInterval(cleanupAudit, 24 * 60 * 60 * 1000).unref?.();
 }
 
 module.exports = app;

@@ -15,7 +15,6 @@ const { ASYNC_JOB_TYPES } = require('../config/asyncJobs');
 const { PAIR_ADJUSTMENT_TEXTS } = require('../config/inventoryPairAdjustment');
 
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
-const { logError } = require('../utils/logger');
 
 const createInventoryAdjustmentRouter = (options = {}) => {
   const router = express.Router();
