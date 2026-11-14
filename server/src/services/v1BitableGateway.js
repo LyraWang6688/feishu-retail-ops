@@ -24,6 +24,7 @@ const BATCH_GET_CHUNK_SIZE = 500;
 
 const { compact, recordIdOf, textValue, linkedRecordIds, singleLinked } = require('./v1Gateway/cells');
 const { listAllRecords, listByFilterRecords, getBatchRecords } = require('./v1Gateway/readRecords');
+const { runScheduledWrite, assertResponseSuccess } = require('./v1Gateway/writePath');
 
 class V1BitableGateway {
   constructor(options = {}) {
@@ -58,14 +59,8 @@ class V1BitableGateway {
    * · 仅测试可注入 `null` 关闭调度；生产始终走全局调度器（没有环境变量开关）。
    */
   async scheduledWrite(tableKey, operation, work, options = {}) {
-    const scheduler = this.writeScheduler;
-    if (!scheduler || typeof scheduler.run !== 'function') return work();
-    return scheduler.run({
-      tableKey,
-      operation,
-      work,
-      correlation: options.correlation,
-      groupKey: options.groupKey,
+    return runScheduledWrite({
+      scheduler: this.writeScheduler, tableKey, operation, work, options,
     });
   }
   table(tableKey) {
@@ -715,16 +710,7 @@ class V1BitableGateway {
   }
 
   assertSuccess(response, operation) {
-    if (!response || response.code !== 0) {
-      const error = new Error(`${operation}失败: ${response?.msg || 'unknown'} (Code: ${response?.code ?? 'unknown'})`);
-      // response.code 是飞书对请求的结构化应答：请求被处理并明确拒绝，可以确定没有写入。
-      // 幂等写入靠这个标记区分「明确失败」和「结果未知」——网络超时、连接重置这类
-      // 异常没有该标记，一律按可能已经写入处理。
-      error.bitableRejected = true;
-      error.bitableCode = response?.code;
-      error.larkData = { code: response?.code, msg: response?.msg, log_id: response?.log_id, method_id: response?.method_id };
-      throw error;
-    }
+    return assertResponseSuccess(response, operation);
   }
 }
 
