@@ -40,7 +40,7 @@
 | `bitable.record.batch_created` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
 | `bitable.record.batch_delete_failed` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
 | `bitable.record.batch_deleted` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
-| `bitable.record.batch_read` | 1 | src/services/v1BitableGateway.js |
+| `bitable.record.batch_read` | 1 | src/services/v1Gateway/readRecords.js |
 | `bitable.record.batch_started` | 1 | src/utils/batchWriteTelemetry.js |
 | `bitable.record.batch_update_failed` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
 | `bitable.record.batch_updated` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
