@@ -48,19 +48,23 @@ test('AC-SEC-2 IP 限流：超配额 429、窗口滚动恢复、不同 IP 独立
   assert.equal((await hit('1.1.1.1')).kind, 'next', '窗口滚动后恢复');
 });
 
-test('AC-SEC-3 生产缺 encryptKey 也启动失败（双空即拒）', () => {
+test('AC-SEC-3 生产缺 verificationToken 启动失败；仅缺 encryptKey 不阻塞（只 warn）', () => {
   const original = {
     nodeEnv: process.env.NODE_ENV,
     token: process.env.LARK_AGENT_VERIFICATION_TOKEN,
     key: process.env.LARK_AGENT_ENCRYPT_KEY,
   };
   try {
+    const { createLarkEventsRouter } = require('../src/routes/larkEvents');
+    const heartbeat = { recordEvent() {}, snapshot: () => ({}) };
     process.env.NODE_ENV = 'production';
     process.env.LARK_AGENT_VERIFICATION_TOKEN = 'tok_ok';
     delete process.env.LARK_AGENT_ENCRYPT_KEY;
-    const { createLarkEventsRouter } = require('../src/routes/larkEvents');
-    assert.throws(() => createLarkEventsRouter({ service: {}, heartbeat: { recordEvent() {}, snapshot: () => ({}) } }),
-      /ENCRYPT_KEY/);
+    // 线上真实形状（2026-11-14 部署事故）：token 有、encryptKey 空 ⇒ 必须能起
+    assert.doesNotThrow(() => createLarkEventsRouter({ service: {}, heartbeat }));
+    delete process.env.LARK_AGENT_VERIFICATION_TOKEN;
+    assert.throws(() => createLarkEventsRouter({ service: {}, heartbeat }),
+      /VERIFICATION_TOKEN/);
   } finally {
     if (original.nodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = original.nodeEnv;
     if (original.token === undefined) delete process.env.LARK_AGENT_VERIFICATION_TOKEN; else process.env.LARK_AGENT_VERIFICATION_TOKEN = original.token;

@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **474** 个事件。按前缀分组：
+共 **475** 个事件。按前缀分组：
 
 ## after_sales
 
@@ -193,6 +193,7 @@
 | `lark.bitable.record_changed.base_unconfigured` | 1 | src/routes/larkEvents.js |
 | `lark.event.challenge` | 1 | src/routes/larkEvents.js |
 | `lark.event.challenge_rejected` | 1 | src/routes/larkEvents.js |
+| `lark.event.encrypt_key_missing` | 1 | src/routes/larkEvents.js |
 | `lark.event.received` | 1 | src/routes/larkEvents.js |
 | `lark.group.message.disabled` | 1 | src/services/larkMvpService.js |
 | `lark.heartbeat.file_unreadable` | 1 | src/infrastructure/larkEventHeartbeat.js |
