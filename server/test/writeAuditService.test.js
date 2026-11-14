@@ -11,7 +11,7 @@ process.env.WRITE_AUDIT_DIR = dir;
 process.env.WRITE_AUDIT_SALES = 'true';
 process.env.WRITE_AUDIT_PURCHASE = 'false';
 
-const { recordWrite, queryWriteAudit } = require('../src/services/writeAuditService');
+const { recordWrite, queryWriteAudit, queryRecentWriteAudit } = require('../src/services/writeAuditService');
 const { auditDomainForCorrelation } = require('../src/config/writeAudit');
 
 test.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
@@ -54,4 +54,13 @@ test('AC-WA4 按关联键推断业务域：销售默认开启，采购默认关�
   assert.equal(auditDomainForCorrelation({ order_no: 'XSD-001' }), 'sales');
   assert.equal(auditDomainForCorrelation({ batch_no: 'CGD-001' }), '');
   assert.equal(auditDomainForCorrelation({}), '');
+});
+
+
+test('AC-WA5 最近写入按时间由近及远', async () => {
+  await recordWrite({ domain: 'sales', tableKey: 'salesEntry', operation: 'create', recordId: 'rec_old', correlation: { order_no: 'XSD-OLD' }, fields: { x: 1 }, now: new Date('2026-11-14T04:00:00Z') });
+  await recordWrite({ domain: 'sales', tableKey: 'salesEntry', operation: 'update', recordId: 'rec_new', correlation: { order_no: 'XSD-NEW' }, fields: { x: 2 }, now: new Date('2026-11-14T04:01:00Z') });
+  const rows = await queryRecentWriteAudit({ limit: 10, now: new Date('2026-11-14T05:00:00Z') });
+  assert.equal(rows[0].correlation.order_no, 'XSD-NEW');
+  assert.equal(rows[1].correlation.order_no, 'XSD-OLD');
 });

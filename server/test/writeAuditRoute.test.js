@@ -24,7 +24,7 @@ const listen = (app) => new Promise((resolve) => {
   });
 });
 
-test('AC-WR1 按 order_no 查询写入审计', async () => {
+test('AC-WR1 不带参数返回最近 24 小时写入', async () => {
   await recordWrite({
     domain: 'sales', tableKey: 'salesEntry', operation: 'create', recordId: 'rec1',
     correlation: { order_no: 'XSD-ROUTE-1' }, fields: { 销售单号: 'XSD-ROUTE-1' },
@@ -33,11 +33,10 @@ test('AC-WR1 按 order_no 查询写入审计', async () => {
   app.use('/api/workbench', createWorkbenchWriteAuditRoutes());
   const { server, port } = await listen(app);
   try {
-    const body = await (await fetch(`http://127.0.0.1:${port}/api/workbench/write-audit?order_no=XSD-ROUTE-1`)).json();
+    const body = await (await fetch(`http://127.0.0.1:${port}/api/workbench/write-audit`)).json();
     assert.equal(body.success, true);
+    assert.equal(body.mode, 'recent');
     assert.equal(body.total, 1);
     assert.equal(body.rows[0].table_key, 'salesEntry');
-    const missing = await fetch(`http://127.0.0.1:${port}/api/workbench/write-audit`);
-    assert.equal(missing.status, 400);
   } finally { server.close(); }
 });
