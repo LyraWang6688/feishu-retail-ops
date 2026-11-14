@@ -192,3 +192,19 @@ test('AC6 不依赖外链资源、不引新依赖、页面不白屏', () => {
   assert.match(STYLE, /\.card\s*\{[^}]*background:\s*var\(--surface\)/s, '扫码页的卡片也是白卡片');
   assert.match(STYLE, /@media|max-width:\s*var\(--page-max\)/, '扫码页仍然是移动端优先（单列 / 限宽）');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC7 登录行压缩（2026-11-14 业务负责人 C 版）+ tab 行不许有纵向滚动条
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('AC7 登录行 24px / 11px（比 tab 与正文小），tab 行不出现纵向滚动条', () => {
+  assert.match(tokens, /--font-size-2xs:\s*11px;/, '登录行专用 11px 字号令牌');
+  assert.match(tokens, /--login-row-height:\s*24px;/, '登录行 24px 高度令牌');
+  assert.match(base, /\.header \.auth \.muted,[\s\S]{0,180}?font-size:\s*var\(--font-size-2xs\)/,
+    '「已登录」字号必须比 tab / 正文小');
+  assert.match(base, /\.header \.auth \.btn-ghost\s*\{[^}]*min-height:\s*var\(--login-row-height\)/s,
+    '退出登录按钮随登录行压到 24px');
+  assert.match(base, /\.header\s*\{[^}]*margin-bottom:\s*var\(--space-1\)/s, 'header 下边距 4px');
+  assert.match(base, /\.main-tabs\s*\{[^}]*overflow-y:\s*hidden/s,
+    '只写 overflow-x 会让 overflow-y 变 auto；tab 的负 margin 会溢出成纵向滚动条');
+});
