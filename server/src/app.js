@@ -261,6 +261,8 @@ if (require.main === module) {
   //   ⚠️ 刻意 require 在 `if (require.main === module)` 内：单测加载 app.js 时**不触发**任何真发送。
   setImmediate(() => {
     require('./services/asyncJobRuntime').startAsyncJobService()
+      // #1210：进程重启/部署后补做"已成功但还没建打印任务"的打印意图（后台、异常只 warn）。
+      .then(() => require('./services/inventoryPrintIntentRuntime').recoverInventoryPrintIntents())
       .catch((error) => logWarn('async_job.start.failed', { error: String(error?.message || error) }));
   });
 

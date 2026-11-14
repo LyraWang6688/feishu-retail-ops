@@ -121,6 +121,15 @@ const CHAINS = Object.freeze({
     service: 'src/services/salesDeliveryPaymentService.js', serviceKey: /const pay = async/,
     landing: [['paymentRecord', 'amount'], ['paymentRecord', 'status'], ['paymentRecord', 'method'], ['paymentRecord', 'receivedAt'], ['paymentRecord', 'tradeDirection']],
   },
+
+  // ⭐ #1210：点「打印」只记**打印意图**（不写业务表）——
+  //   落点是本地异步 job 文件：print_intent / print_job_id；真正的打印任务另由打印队列生成。
+  '`/api/workbench/inventory/adjustments/pairs/${encodeURIComponent(state.inventoryJobId)}/print-intent`': {
+    fe: 'features/inventory/adjustment.js', feKey: '/print-intent',
+    route: 'src/routes/workbenchInventoryAdjustment.js', routeKey: /router\.post\('\/pairs\/:jobId\/print-intent'/,
+    service: 'src/services/inventoryPrintIntentService.js', serviceKey: /print_intent/,
+    externalLanding: [{ tableName: '本地异步 job 文件（data/async_jobs）', column: 'print_intent / print_job_id' }],
+  },
 });
 
 /**
