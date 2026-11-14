@@ -81,6 +81,7 @@ class InventoryPairAdjustmentService {
     const source = String(requestId || '').trim();
     if (!source) throw userError('缺少请求编号');
     const desired = normalizeRows(rows);
+    const correlation = { audit_domain: 'inventoryManual', task_id: source };
     const raw = await this.inventory.gateway.listAll('liveInventory');
     const desiredTotals = new Map();
     const desiredStatesBySize = new Map();
@@ -111,6 +112,7 @@ class InventoryPairAdjustmentService {
         operatorOpenId,
         // 人工单双调整：新增行严格按用户选择的状态，不套自动入库规则。
         statePolicy: 'explicit',
+        correlation,
       });
       quantityOperations.push({ size, state: targetState, delta });
     }
@@ -129,6 +131,7 @@ class InventoryPairAdjustmentService {
       recordsBySizeMap: afterBySize,
       requestId: source,
       operatorOpenId,
+      correlation,
     });
     const operations = [...quantityOperations, ...(stateResult.operations || [])];
     logInfo('inventory.adjustment.pairs.applied', {
@@ -147,7 +150,7 @@ class InventoryPairAdjustmentService {
     };
   }
 
-  async applyStateLabels({ productRecordId, rows, recordsBySizeMap, requestId, operatorOpenId } = {}) {
+  async applyStateLabels({ productRecordId, rows, recordsBySizeMap, requestId, operatorOpenId, correlation } = {}) {
     const liveFields = this.inventory.gateway.table('liveInventory').fields;
     const operations = [];
     const ledgerChanges = [];
@@ -168,7 +171,7 @@ class InventoryPairAdjustmentService {
           unassigned.delete(record);
           const current = textValue(record.fields?.[liveFields.state]);
           if (current !== state) {
-            await this.inventory.gateway.update('liveInventory', record.record_id, { state });
+            await this.inventory.gateway.update('liveInventory', record.record_id, { state }, { correlation });
             operations.push({ size: Number(size), state, record_id: record.record_id, from: current || '' });
             ledgerChanges.push({
               record_id: record.record_id,
@@ -184,7 +187,7 @@ class InventoryPairAdjustmentService {
       }
     }
     if (ledgerChanges.length) {
-      await writeManualLedger({ inventory: this.inventory, changes: ledgerChanges, operatorOpenId });
+      await writeManualLedger({ inventory: this.inventory, changes: ledgerChanges, operatorOpenId, correlation });
     }
     if (operations.length) invalidateLiveInventorySnapshot('state_label_adjust');
     logInfo('inventory.adjustment.pairs.state_applied', {
@@ -207,13 +210,14 @@ class InventoryPairAdjustmentService {
     if (typeof season !== 'boolean') throw userError('当季必须是布尔值');
     const gateway = this.inventory.gateway;
     const table = gateway.table('liveInventory');
+    const correlation = { audit_domain: 'inventoryManual', task_id: String(requestId || '') };
     const records = await gateway.listAll('liveInventory');
     const operations = [];
     for (const record of records) {
       const fields = record.fields || {};
       if (String(fields[table.fields.category] || '').trim() !== name) continue;
       if (fields[table.fields.season] === season) continue;
-      await gateway.update('liveInventory', record.record_id, { season });
+      await gateway.update('liveInventory', record.record_id, { season }, { correlation });
       operations.push({
         record_id: record.record_id,
         productRecordId: strictLinkedRecordIds(fields?.[table.fields.product])[0] || '',
@@ -222,7 +226,7 @@ class InventoryPairAdjustmentService {
       });
     }
     if (operations.length) {
-      await writeManualLedger({ inventory: this.inventory, changes: operations, operatorOpenId });
+      await writeManualLedger({ inventory: this.inventory, changes: operations, operatorOpenId, correlation });
       invalidateLiveInventorySnapshot('season_flag_adjust');
     }
     logInfo('inventory.adjustment.season_flag.applied', {

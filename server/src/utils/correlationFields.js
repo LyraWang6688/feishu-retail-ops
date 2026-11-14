@@ -64,6 +64,8 @@ const CORRELATION_KEYS = Object.freeze([
   //   ⚠️ 任务书里写的 `client_tap_id` **没有采用**：同一个东西若有两个名字，
   //      `grep '"tap_id":"xxx"'` 就串不起整条链 —— 那正是本文件开头点名要消灭的现象 ✗。
   'tap_id',
+  // 写入审计业务域（如 inventoryManual）；只进日志/审计，不改请求内容。
+  'audit_domain',
 ]);
 
 /**

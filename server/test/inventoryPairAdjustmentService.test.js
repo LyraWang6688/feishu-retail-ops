@@ -26,9 +26,9 @@ const fakeInventory = ({ counts = [], records = [] } = {}) => {
         },
       }),
       listAll: async () => effectiveRecords,
-      update: async (key, id, values) => { calls.push({ type: 'update', key, id, values }); },
-      createBatch: async (key, rows) => {
-        calls.push({ type: 'ledger', key, rows });
+      update: async (key, id, values, options) => { calls.push({ type: 'update', key, id, values, options }); },
+      createBatch: async (key, rows, options) => {
+        calls.push({ type: 'ledger', key, rows, options });
         return rows.map((row, index) => ({ recordId: `ledger_${index}` }));
       },
     },
@@ -163,4 +163,25 @@ test('AC-PAIR-3 批量当季：只更新当前品类的实时库存', async () =
   assert.equal(ledger.rows.length, 1);
   assert.deepEqual(ledger.rows[0].behavior, ['behavior_STOCK_RELEASE']);
   assert.equal(ledger.rows[0].quantityChange, 0);
+});
+
+
+test('AC-PAIR-AUDIT 手工调整写入带 inventoryManual 审计关联键', async () => {
+  const inventory = fakeInventory({
+    counts: [{ size: 42, doorBoxCount: 1, sampleCount: 1 }],
+    records: [
+      { record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: '门盒' } },
+      { record_id: 'l2', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: '样品' } },
+    ],
+  });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  await service.adjustPairs({
+    productRecordId: 'p1', requestId: 'req-audit',
+    rows: [{ size: 42, state: '门盒', quantity: 2 }],
+  });
+  const update = inventory.calls.find((call) => call.type === 'update');
+  const ledger = inventory.calls.find((call) => call.type === 'ledger');
+  assert.equal(update.options.correlation.audit_domain, 'inventoryManual');
+  assert.equal(update.options.correlation.task_id, 'req-audit');
+  assert.equal(ledger.options.correlation.audit_domain, 'inventoryManual');
 });
