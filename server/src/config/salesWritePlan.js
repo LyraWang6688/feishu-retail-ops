@@ -111,10 +111,6 @@ const plansOfOrder = (items = []) => plansForItems(items).filter(Boolean);
  *     → finalize（**一次**写 总金额 + 赠品 + 写入状态）。
  * ⚠️ 顺序就是数组顺序（资金页那几步**不许**前挪：收口必须在库存/履约之后）。
  */
-const PAGE_STEPS = Object.freeze({
-  goods: Object.freeze(['main']),
-  money: Object.freeze(['children', 'inventory', 'fulfillment', 'finalize']),
-});
 
 /** 这一屏要跑哪几步（认不出的屏名 ⇒ 空数组，调用方按"什么都不做"处理，不猜）。 */
 
@@ -151,7 +147,6 @@ const deliversOnSubmitFor = (code) => planForTradeType(code)?.deliverOnSubmit ==
 module.exports = {
   TABLE_FIELDS,
   SALES_WRITE_PLANS: PLANS,
-  PAGE_STEPS,
   SESSION_FLAGS,
   planForTradeType,
   planForStock,

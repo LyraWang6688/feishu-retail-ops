@@ -21,7 +21,6 @@
 // 配置先行：格式哪天变了（飞书改协议 / 她给新样例）→ **只改这一段模板**，逻辑不动。
 // 模板可用占位符：`{chat_id}` / `{thread_id}` / `{thread_position}`。
 
-const SALES_THREAD_LINK_TEMPLATE_ENV_KEY = 'SALES_THREAD_LINK_TEMPLATE';
 
 // 她给的那一条（含两套参数名：下划线版与无下划线版，飞书两种都认；thread_position=-1 表示首条）。
 const DEFAULT_SALES_THREAD_LINK_TEMPLATE =
@@ -56,7 +55,6 @@ const buildSalesThreadLink = ({ chatId = '', threadId = '', template, threadPosi
 /** 模板从环境变量读（没配就用她给的那条）；空串 = 显式不要拼链接。 */
 
 module.exports = {
-  SALES_THREAD_LINK_TEMPLATE_ENV_KEY,
   DEFAULT_SALES_THREAD_LINK_TEMPLATE,
   DEFAULT_THREAD_POSITION,
   buildSalesThreadLink

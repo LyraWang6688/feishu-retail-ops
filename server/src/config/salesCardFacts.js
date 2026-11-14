@@ -25,10 +25,6 @@ const { readRaw, readString } = require('./envValue');
 const { itemTradeTypeCode } = require('./salesTradeTypePolicy');
 const { deliversForTradeType, tradeTypeLabel } = require('./salesMovements');
 
-const TRADE_TYPE_LINE_KEY = 'SALES_CARD_TRADE_TYPE_LINE';
-const FULFILLMENT_LINE_KEY = 'SALES_CARD_FULFILLMENT_LINE';
-const PAYMENT_LINE_KEY = 'SALES_CARD_PAYMENT_LINE';
-const UNDETERMINED_TEXT_KEY = 'SALES_CARD_UNDETERMINED_TEXT';
 
 // 「待平台结算」是**收款明细的状态值**（表里的取值，不是文案）：
 // 团购券那笔钱由平台结算，不算"她已经收到的钱"，但仍然不是欠款。
@@ -83,39 +79,11 @@ const assertTemplate = (label, template, allowed) => {
   return text;
 };
 
-const resolveSalesCardFactsConfig = (env = process.env) => {
-  const read = (key, fallback) => {
-    const raw = readRaw(env, key);
-    return raw === null ? fallback : readString(env, key, fallback);
-  };
-  const undetermined = read(UNDETERMINED_TEXT_KEY, DEFAULTS.undetermined);
-  return {
-    tradeTypeLine: assertTemplate(TRADE_TYPE_LINE_KEY,
-      read(TRADE_TYPE_LINE_KEY, DEFAULTS.tradeTypeLine), TEMPLATE_PLACEHOLDERS.tradeTypeLine),
-    fulfillmentLine: assertTemplate(FULFILLMENT_LINE_KEY,
-      read(FULFILLMENT_LINE_KEY, DEFAULTS.fulfillmentLine), TEMPLATE_PLACEHOLDERS.fulfillmentLine),
-    paymentLine: assertTemplate(PAYMENT_LINE_KEY,
-      read(PAYMENT_LINE_KEY, DEFAULTS.paymentLine), TEMPLATE_PLACEHOLDERS.paymentLine),
-    // 空串 = 用默认（它是"还没定"那一刻唯一可见的解释，留空只会让人看不懂）。
-    undetermined: undetermined.trim() ? undetermined : DEFAULTS.undetermined,
-    tradeTypeSeparator: DEFAULTS.tradeTypeSeparator,
-    fulfillment: DEFAULTS.fulfillment,
-    payment: DEFAULTS.payment,
-  };
-};
 
 const fill = (template, values) => String(template ?? '')
   .replace(/\{([^{}]*)\}/g, (whole, key) => (
     values[key] === undefined || values[key] === null ? '' : String(values[key])));
 
-const yuanText = (value, payment) => {
-  if (value === null || value === undefined || value === '') return payment.amountPlaceholder;
-  const number = Number(value);
-  if (!Number.isFinite(number)) return payment.amountPlaceholder;
-  const fixed = Math.round(number * 100) / 100;
-  // 整数不显示 `.00`（与她原话里的写法一致：￥100 而不是 ￥100.00）。
-  return `${payment.yuan}${Number.isInteger(fixed) ? fixed : fixed.toFixed(2)}`;
-};
 
 const moneyText = (value) => {
   if (value === null || value === undefined || value === '') return null;
@@ -131,11 +99,5 @@ const moneyText = (value) => {
  */
 
 module.exports = {
-  TRADE_TYPE_LINE_KEY,
-  FULFILLMENT_LINE_KEY,
-  PAYMENT_LINE_KEY,
-  UNDETERMINED_TEXT_KEY,
-  PENDING_SETTLEMENT_STATUS,
-  resolveSalesCardFactsConfig,
-  yuanText
+  PENDING_SETTLEMENT_STATUS
 };
