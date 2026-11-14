@@ -31,8 +31,10 @@ const { parseSettleDays, sumBillCents, createSettlementRuleLoader } = require('.
 const { createVoucherSettlementBatchStore, loadActiveBatches } = require('./voucherSettlementBatches');
 const { createSettlementPaging } = require('./voucherSettlementPaging');
 const { createSettlementMessages } = require('./voucherSettlementMessages');
+const { toCentsOrZero } = require('../utils/money');
+const { shanghaiDayOf: shanghaiDayOfMs, addDays: addDaysUtil } = require('../utils/shanghaiDay');
 
-const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+// 上海日 / 金额解析均已收口：`utils/shanghaiDay` + `utils/money`（2026-11-14）。
 
 /** 飞书字段值 → 纯文本（单选/文本可能是字符串，关联/多选可能是数组）。 */
 const textOf = (value) => {
@@ -44,27 +46,16 @@ const textOf = (value) => {
   return String(value);
 };
 
-/** epoch 毫秒 → 上海自然日 `YYYY-MM-DD`。 */
-const shanghaiDayOf = (epochMs) => {
-  const value = Number(epochMs);
-  if (!Number.isFinite(value) || value <= 0) return '';
-  return new Date(value + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
-};
+/** epoch 毫秒 → 上海自然日 `YYYY-MM-DD`（唯一实现：utils/shanghaiDay）。 */
+const shanghaiDayOf = (epochMs) => shanghaiDayOfMs(epochMs);
 
-/** `YYYY-MM-DD` + N 天（纯日期运算，不经过本地时区）。 */
-const addDays = (dayKey, days) => {
-  const base = new Date(`${dayKey}T00:00:00.000Z`);
-  if (Number.isNaN(base.getTime())) return '';
-  base.setUTCDate(base.getUTCDate() + Number(days));
-  return base.toISOString().slice(0, 10);
-};
+/** `YYYY-MM-DD` + N 天（唯一实现：utils/shanghaiDay）。 */
+const addDays = (dayKey, days) => addDaysUtil(dayKey, days);
 
-/** 金额 → 分（整数）。取不到按 0（群里如实显示，不编）。 */
-const toCents = (value) => {
-  const raw = typeof value === 'number' ? String(value) : textOf(value).replace(/[^\d.-]/g, '');
-  const number = Number(raw);
-  return Number.isFinite(number) ? Math.round(number * 100) : 0;
-};
+/** 金额 → 分（整数）。取不到按 0（群里如实显示，不编）。唯一解析：utils/money。 */
+const toCents = (value) => toCentsOrZero(
+  (typeof value === 'string' || typeof value === 'number') ? value : textOf(value),
+);
 
 /** 提现记录 `amount` 合计（分）。 */
 const sumWithdrawCents = (withdrawData) => {

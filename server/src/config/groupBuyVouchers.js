@@ -11,9 +11,11 @@
 // 收款明细里记的是**平台结算款**，既不是售价也不是面值。
 
 // 用分比较，避免 89.9 这类小数在浮点上比不相等。
-const toCents = (value) => Math.round(Number(value) * 100);
+const { toCentsOrZero } = require('../utils/money');
+// 兼容旧调用方（test/voucherPaymentRules 等）：语义与 toCentsOrZero 相同（不可解析 ⇒ 0）。
+const toCents = toCentsOrZero;
 
-const voucherKey = (voucher) => `${toCents(voucher?.purchasePrice)}|${toCents(voucher?.faceValue)}`;
+const voucherKey = (voucher) => `${toCentsOrZero(voucher?.purchasePrice)}|${toCentsOrZero(voucher?.faceValue)}`;
 
 /**
  * 在券目录里按「售价 + 面值」找一张券。

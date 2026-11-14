@@ -22,22 +22,15 @@ const textOf = (value) => {
   return String(value);
 };
 
-/** 金额字符串 → 分（'89.9' → 8990）。 */
-const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+/** 金额字符串 → 分（'89.9' → 8990）。唯一解析：utils/money（2026-11-14 收口）。 */
+const { toCents } = require('../../utils/money');
+const { shanghaiDayOf } = require('../../utils/shanghaiDay');
 
-/** epoch 毫秒/秒 → 上海自然日 `YYYY-MM-DD`（取不到返回 ''）。 */
+/** epoch 毫秒/秒 → 上海自然日 `YYYY-MM-DD`（取不到返回 ''）。唯一实现：utils/shanghaiDay。 */
 const dayOf = (value, unit = 'ms') => {
   const raw = typeof value === 'number' ? value : Number(textOf(value));
   if (!Number.isFinite(raw) || raw <= 0) return '';
-  const ms = unit === 's' ? raw * 1000 : raw;
-  return new Date(ms + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
-};
-
-const toCents = (value) => {
-  const cleaned = textOf(value).replace(/[^\d.-]/g, '');
-  if (!cleaned.trim()) return null;
-  const number = Number(cleaned);
-  return Number.isFinite(number) ? Math.round(number * 100) : null;
+  return shanghaiDayOf(unit === 's' ? raw * 1000 : raw);
 };
 
 const createVoucherCatalogSync = ({

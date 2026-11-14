@@ -2,7 +2,9 @@
 
 const {
   PRODUCT_FEATURE_DIMENSIONS, PRODUCT_FEATURE_TAG_FIELD, PRODUCT_FEATURE_USAGE_FIELD,
+  PRODUCT_FEATURE_MAX_TAG_LENGTH,
 } = require('../config/productFeatures');
+const { getConfigRows, invalidateConfigTable } = require('./configTableCache');
 const {
   listRecordsInTable, createRecordInTable, updateRecordInTable, deleteRecordInTable,
 } = require('./bitableTableAccess');
@@ -17,7 +19,12 @@ const usageOf = (record) => {
 };
 
 const listDimension = async (gateway, dimension) => {
-  const records = await listRecordsInTable(gateway, dimension.tableId);
+  // 走统一配置表缓存：record_changed 即时失效 + TTL 兜底 + lastGood（2026-11-14 #49）
+  const records = await getConfigRows({
+    gateway,
+    tableKey: dimension.cacheKey,
+    loader: () => listRecordsInTable(gateway, dimension.tableId),
+  });
   const items = records
     .map((record) => ({ recordId: record.record_id || '', tag: tagOf(record), usage: usageOf(record) }))
     .filter((item) => item.tag)
@@ -32,7 +39,7 @@ const listProductFeatures = async (gateway) => ({
 const normalizeTag = (rawValue) => {
   const value = String(rawValue || '').trim();
   if (!value) throw userError('标签不能为空');
-  if (value.length > 40) throw userError('标签最多 40 个字');
+  if (value.length > PRODUCT_FEATURE_MAX_TAG_LENGTH) throw userError(`标签最多 ${PRODUCT_FEATURE_MAX_TAG_LENGTH} 个字`);
   return value;
 };
 
@@ -50,6 +57,7 @@ const addProductFeatureTag = async (gateway, key, rawValue) => {
   const created = await createRecordInTable(gateway, dimension.tableId, {
     [PRODUCT_FEATURE_TAG_FIELD]: value,
   }, { tableName: dimension.tableName });
+  invalidateConfigTable(dimension.cacheKey);
   return {
     dimension: { key: dimension.key, label: dimension.label },
     item: { recordId: created.recordId, tag: value, usage: 0 },
@@ -69,6 +77,7 @@ const updateProductFeatureTag = async (gateway, key, recordId, rawValue) => {
   await updateRecordInTable(gateway, dimension.tableId, rid, {
     [PRODUCT_FEATURE_TAG_FIELD]: value,
   }, { tableName: dimension.tableName });
+  invalidateConfigTable(dimension.cacheKey);
   return {
     dimension: { key: dimension.key, label: dimension.label },
     item: { recordId: rid, tag: value, usage: target.usage },
@@ -84,6 +93,7 @@ const deleteProductFeatureTag = async (gateway, key, recordId) => {
   const target = existing.items.find((item) => item.recordId === rid);
   if (!target) throw userError('要删除的标签不存在，请刷新后重试');
   await deleteRecordInTable(gateway, dimension.tableId, rid, { tableName: dimension.tableName });
+  invalidateConfigTable(dimension.cacheKey);
   return {
     dimension: { key: dimension.key, label: dimension.label },
     item: target,

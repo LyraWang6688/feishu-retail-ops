@@ -7,7 +7,7 @@
  */
 const { textValue } = require('../services/v1BitableGateway');
 
-const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const { SHANGHAI_OFFSET_MS, shanghaiDayKeyOfDate, shanghaiDayStart: shanghaiStartOf } = require('./shanghaiDay');
 
 // ⚠️ 这个常量原来是 `config/saleLookup.js` 里的（那份配置要随查单**整份退场** ✓）
 //    ⇒ 逐字搬一份过来（值完全相同 ✓），免得工具跟着一起死 ✗。
@@ -24,10 +24,10 @@ const asDate = (value) => {
 
 // 东八区日键：门店按上海时间营业，"最近几天"必须按上海的自然日算，
 // 不能按服务器时区（线上是 UTC，会把凌晨的单算到前一天）。
-const shanghaiDayKey = (date) =>
-  new Date(date.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+// 实现已收口到 `utils/shanghaiDay`（2026-11-14）。
+const shanghaiDayKey = (date) => shanghaiDayKeyOfDate(date);
 
-const shanghaiDayStart = (date) => Date.parse(`${shanghaiDayKey(date)}T00:00:00+08:00`);
+const shanghaiDayStart = (date) => shanghaiStartOf(shanghaiDayKey(date));
 
 /**
  * 查询窗口 = 今天 + 往前 (days - 1) 个上海自然日。

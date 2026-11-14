@@ -38,6 +38,12 @@ const WRITE_AUDIT = Object.freeze({
     || path.join(__dirname, '..', '..', 'data', 'write_audit'),
   maxValueLength: readInt(process.env, 'WRITE_AUDIT_MAX_VALUE_LENGTH', 300, { min: 20, max: 5000 }),
   maxFieldCount: readInt(process.env, 'WRITE_AUDIT_MAX_FIELD_COUNT', 40, { min: 1, max: 200 }),
+  // 查询/页面口径（2026-11-14 #49：原来写死在 service / route 里）
+  recentWindowHours: readInt(process.env, 'WRITE_AUDIT_RECENT_HOURS', 24, { min: 1, max: 720 }),
+  recentMaxFiles: readInt(process.env, 'WRITE_AUDIT_RECENT_MAX_FILES', 3, { min: 1, max: 30 }),
+  queryLimit: readInt(process.env, 'WRITE_AUDIT_QUERY_LIMIT', 500, { min: 1, max: 5000 }),
+  queryDefaultLimit: readInt(process.env, 'WRITE_AUDIT_QUERY_DEFAULT_LIMIT', 1000, { min: 1, max: 10000 }),
+  queryMaxLimit: readInt(process.env, 'WRITE_AUDIT_QUERY_MAX_LIMIT', 2000, { min: 1, max: 20000 }),
 });
 
 const auditDomainEnabled = (domain) => Boolean(
