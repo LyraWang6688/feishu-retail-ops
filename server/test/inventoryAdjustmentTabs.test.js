@@ -37,7 +37,7 @@ test('AC-IA3 批量调整只保留当季 / 库存两个入口，异常编号可�
   assert.match(html, /data-manual="\$\{card\.id\}"/, '批量调整入口卡由配置渲染');
   assert.ok(html.includes('data-save'), '单双页有保存按钮');
   assert.ok(html.includes('data-season="true"'), '当季 = 转释放入口');
-  assert.ok(html.includes('/label-print/jobs'), '保存后可打印');
+  assert.ok(html.includes('/print-intent'), '保存后可打印（#1210：后端打印意图）');
 });
 
 test('AC-IA4 批量调整：品类与库存并行读取 + 轻量 toast 提示', () => {

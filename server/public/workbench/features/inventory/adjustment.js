@@ -30,7 +30,7 @@ const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-c
 }).join('')}</div>`;
 
 export function createInventoryAdjustmentModule() {
-  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, savedNumber: '', inventoryJobId: '', productInfo: null, singleExpanded: false };
+  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false };
 
   async function loadRows(force = false) {
     if (state.rows.length && !force) return state.rows;
@@ -250,7 +250,6 @@ export function createInventoryAdjustmentModule() {
 
 
   async function savePairs() {
-    const first = state.editorRows[0] || {};
     const rows = state.editorRows
       .filter((row) => Number(row.quantity) > 0)
       .map((row) => ({ size: Number(row.size), state: String(row.state || ''), quantity: Number(row.quantity) }));
@@ -261,7 +260,6 @@ export function createInventoryAdjustmentModule() {
         productRecordId: state.productId, rows, requestId: state.pendingRequest,
       });
       state.pendingRequest = null;
-      state.savedNumber = first.product_number || state.productInfo?.number || '';
       state.inventoryJobId = String(result?.job_id || '').trim();
       state.rows = [];
       showToast(INVENTORY_MANUAL_TEXTS.submittedStock);
@@ -271,38 +269,17 @@ export function createInventoryAdjustmentModule() {
     }
   }
 
-  async function waitForInventoryJob(jobId) {
-    const deadline = Date.now() + 120000;
-    while (Date.now() < deadline) {
-      const payload = await api.get(`/api/workbench/async-jobs/${encodeURIComponent(jobId)}`);
-      const job = payload?.job || payload;
-      if (job?.status === 'succeeded') return job;
-      if (job?.status === 'failed' || job?.status === 'partial_failed') {
-        throw new Error(job.last_error || job.error || INVENTORY_MANUAL_TEXTS.inventoryJobFailed);
-      }
-      await new Promise((resolve) => { setTimeout(resolve, 2000); });
-    }
-    throw new Error(INVENTORY_MANUAL_TEXTS.inventoryJobTimeout);
-  }
-
   async function printSaved(yes) {
     $(state.host, '[data-view="print-modal"]').hidden = true;
     if (!yes) {
       window.location.assign(`/workbench/?toast=${encodeURIComponent(INVENTORY_MANUAL_TEXTS.submittedToast)}`);
       return;
     }
-    showToast(INVENTORY_MANUAL_TEXTS.printWaiting, { sticky: true });
     try {
-      if (!state.inventoryJobId) throw new Error(INVENTORY_MANUAL_TEXTS.inventoryJobTimeout);
-      await waitForInventoryJob(state.inventoryJobId);
-      const result = await api.post('/api/workbench/label-print/jobs', {
-        mode: 'single',
-        number: state.savedNumber,
-        submit_key: state.pendingRequest || crypto.randomUUID(),
-      });
-      const printJobId = String(result?.job_id || '').trim();
-      if (!printJobId) throw new Error(INVENTORY_MANUAL_TEXTS.printJobMissing);
-      window.location.assign(`/workbench/label-print.html?scan=1&print_job=${encodeURIComponent(printJobId)}`);
+      if (!state.inventoryJobId) throw new Error(INVENTORY_MANUAL_TEXTS.inventoryJobFailed);
+      // ⭐ #1210：只发**一次**意图请求；库存成功后由后端建打印任务（页面可以直接走）。
+      await api.post(`/api/workbench/inventory/adjustments/pairs/${encodeURIComponent(state.inventoryJobId)}/print-intent`, {});
+      window.location.assign(`/workbench/?toast=${encodeURIComponent(INVENTORY_MANUAL_TEXTS.printQueuedToast)}`);
     } catch (error) {
       showPageError(describeError(error));
     }

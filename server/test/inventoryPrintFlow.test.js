@@ -7,13 +7,14 @@ const path = require('node:path');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
-test('AC-PF1 库存调整保存后：等库存 job 成功才提交打印；不打印回工作台', () => {
+test('AC-PF1 库存调整保存后：点打印只记**后端意图**并回工作台（#1210）', () => {
   const page = read('public/workbench/features/inventory/adjustment.js');
   assert.match(page, /state\.inventoryJobId = String\(result\?\.job_id/);
-  assert.match(page, /waitForInventoryJob\(state\.inventoryJobId\)/);
-  assert.match(page, /await waitForInventoryJob\(state\.inventoryJobId\);\n      const result = await api\.post\('\/api\/workbench\/label-print\/jobs'/);
-  assert.match(page, /label-print\.html\?scan=1&print_job=/);
+  assert.match(page, /\/print-intent/);
+  assert.equal(page.includes('waitForInventoryJob'), false, '旧的前端轮询必须删掉');
+  assert.equal(page.includes("api.post('/api/workbench/label-print/jobs'"), false, '打印任务由后端建');
   assert.match(page, /window\.location\.assign\(`\/workbench\/\?toast=/);
+  assert.match(page, /printQueuedToast/);
 });
 
 test('AC-PF2 打印页 ?print_job= 显示任务状态并轮询只读接口', () => {
