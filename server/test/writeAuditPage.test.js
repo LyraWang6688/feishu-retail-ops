@@ -16,6 +16,8 @@ test('AC-WP1 配置审计页有数据写入审计入口，默认展示过去 24 
   const page = read('write-audit.html');
   assert.equal(page.includes('wa-order'), false, '不再提供销售单号搜索');
   assert.equal(page.includes('销售单号'), false, '页面不出现搜索条件');
+  assert.equal(page.includes('wa-back'), false, '删除返回入口');
+  assert.equal(page.includes('wa-head'), false, '删除返回标题行');
   assert.ok(page.includes('<title>邯美工作台</title>'), '标题统一为邯美工作台');
   assert.ok(page.includes('features/write-audit/index.js'));
   const script = read('features/write-audit/index.js');
