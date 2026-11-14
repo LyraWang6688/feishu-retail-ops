@@ -52,7 +52,6 @@ const { salesDeliverySummaryFor } = require('../config/salesDeliverySummary');
 //    `services/salesEntryService.js`（本文件不再直接用它）。
 // ⚠️ 2026-10-11（清群聊入口 C0）：`allocateSalesOrderNo` 随 `createSalesEntryWithOrderNo`
 //    一起搬去 `services/salesEntryService.js`（本文件不再直接用它）。
-const { AfterSalesService } = require('./afterSalesService');
 // 🔴 2026-10-16（「与 AI 分析有关的都停掉」）：这里原先还有三行 import ——
 //    `config/salesMissingInfoText` 的 `renderSalesMissingInfo`、
 //    `config/saleIntents` 的 `isAfterSalesIntent` / `normalizeMessageIntent`、
@@ -223,8 +222,8 @@ class LarkMvpService {
     //   · 定位复用第一期的只读 SaleLookupService（同上一个实例，共享任务状态）；
     //   · 写入复用第二期第一步的 AfterSalesService 执行器（幂等由它自己负责）；
     //   · 卡片渲染在 utils/larkCards，本类不拼卡片内容。
-    // 执行器用自己的任务存储（data/after_sales_operations），所以这里不能把销售的任务存储传给它。
-    this.afterSales = options.afterSales || new AfterSalesService({ gateway: this.gateway });
+    // ⛔ 2026-11-14（#56）：`this.afterSales` 是**死接线**（全类零调用点）⇒ 已删；
+    //    售后执行器由 `workbenchOrderActionService` 自己 new（真正的生产入口）。
     // 「确认状态」（用户那一维）的唯一写入口：名字与取值都在 config/salesStatusDimensions。
     // ⚠️ 它**只记她在卡片上点了什么**，不参与任何闸门判据（判据读的是「资金状态」）。
     this.salesStatus = options.salesStatus || new SalesStatusWriter({ gateway: this.gateway });

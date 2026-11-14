@@ -4,7 +4,6 @@ const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
-const { LIVE_STATES } = require('./inventoryService');
 const { WORKBENCH_CATEGORY_LIMIT } = require('../config/workbenchQuery');
 const { logWarn } = require('../utils/logger');
 

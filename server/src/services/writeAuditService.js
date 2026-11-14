@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { WRITE_AUDIT, auditDomainEnabled, auditDomainForCorrelation } = require('../config/writeAudit');
-const { logWarn } = require('../utils/logger');
+const { logInfo, logWarn } = require('../utils/logger');
 const { shanghaiDayOf } = require('../utils/shanghaiDay');
 
 const SENSITIVE_KEY = /token|secret|password|authorization|open_id|chat_id/i;
@@ -58,6 +58,34 @@ const flushWriteAudit = async () => {
   await Promise.allSettled([...appendQueues.values()]);
   appendQueues.clear();
   return true;
+};
+
+/**
+ * 清理超过保留期的审计文件（#57：原来只增不删，磁盘无界增长）。
+ * 文件名按上海日 `YYYY-MM-DD.jsonl`；`retentionDays <= 0` ⇒ 不清理。
+ * @returns {{deleted:number, cutoff?:string, skipped?:string}}
+ */
+const cleanupWriteAuditFiles = async ({
+  dir = WRITE_AUDIT.dir, retentionDays = WRITE_AUDIT.retentionDays, now = Date.now(),
+} = {}) => {
+  const days = Number(retentionDays);
+  if (!(days > 0)) return { deleted: 0, skipped: 'disabled' };
+  const cutoff = shanghaiDayOf(now - days * 24 * 60 * 60 * 1000);
+  let files = [];
+  try {
+    files = await fs.promises.readdir(dir);
+  } catch (error) {
+    if (error.code === 'ENOENT') return { deleted: 0, cutoff };
+    throw error;
+  }
+  const stale = files.filter((name) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(name)
+    && name.slice(0, 10) < cutoff);
+  for (const name of stale) {
+    // eslint-disable-next-line no-await-in-loop
+    await fs.promises.rm(path.join(dir, name), { force: true });
+  }
+  if (stale.length) logInfo('write_audit.cleanup', { deleted: stale.length, cutoff, retention_days: days });
+  return { deleted: stale.length, cutoff };
 };
 
 /**
@@ -164,5 +192,5 @@ const queryRecentWriteAudit = async ({
 };
 
 module.exports = {
-  recordWrite, queryWriteAudit, queryRecentWriteAudit, auditGatewayWrite, flushWriteAudit,
+  recordWrite, queryWriteAudit, queryRecentWriteAudit, auditGatewayWrite, flushWriteAudit, cleanupWriteAuditFiles,
 };

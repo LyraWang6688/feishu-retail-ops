@@ -44,6 +44,8 @@ const WRITE_AUDIT = Object.freeze({
   queryLimit: readInt(process.env, 'WRITE_AUDIT_QUERY_LIMIT', 500, { min: 1, max: 5000 }),
   queryDefaultLimit: readInt(process.env, 'WRITE_AUDIT_QUERY_DEFAULT_LIMIT', 1000, { min: 1, max: 10000 }),
   queryMaxLimit: readInt(process.env, 'WRITE_AUDIT_QUERY_MAX_LIMIT', 2000, { min: 1, max: 20000 }),
+  // 保留期（天；0 = 不清理）。按上海自然日的文件名判旧。
+  retentionDays: readInt(process.env, 'WRITE_AUDIT_RETENTION_DAYS', 30, { min: 0, max: 3650 }),
 });
 
 const auditDomainEnabled = (domain) => Boolean(

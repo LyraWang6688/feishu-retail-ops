@@ -134,7 +134,7 @@ pnpm run dev
 > `PRIVATE_CHAT_DISABLED_NOTICE_TEXT`（默认「这个机器人现在只在群里工作，请到群里说～」；
 > **空串 = 关掉那句话**）。
 > 私聊消息只记一条 `lark.private_chat.disabled`；没有群上下文的任务只记一条
-> `lark.private_chat.send_skipped`（全仓只有 `src/utils/privateChatSend.js` 一处定义）。
+> `lark.private_chat.send_skipped`（该 skip 实现已随遗留链路删除；2026-11-14 #47）。
 > 见 `docs/archive/private-chat-removal-2026-10-07.md`。
 - `LARK_ACK_REACTION` - **已无运行期读取点**（群聊入口退场后无消费方）⇒ 不要再配。
 
