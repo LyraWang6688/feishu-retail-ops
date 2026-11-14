@@ -1,5 +1,5 @@
 'use strict';
-const { toCentsOrZero } = require('../../utils/money');
+const { sumCents } = require('../../utils/money');
 
 /** 扫码页装配上下文（阶段 5c-2 从 index.js 搬出）。 */
 const createScanPageSetup = ({ options, deps }) => {
@@ -150,13 +150,12 @@ const createScanPageSetup = ({ options, deps }) => {
   const respondSettlementBlock = async (res, req, ctx) => {
     const { settlement, effectiveLineAmounts, paidPayments, realm, body, fields, pendingLines,
       effectivePaymentStatus, pendingPaidAmount } = ctx;
-    const toCents = toCentsOrZero;
             const blockText = (() => {
               const t = writeConfig.texts || {};
               const money = (cents) => `¥${(cents / 100).toFixed(2).replace(/\.00$/, '')}`;
               // ⚠️ 用**解析后**那两个数（与上面 `settlement` / 与真正要落库的金额**同一份** ✓ 不两套算法）
-              const itemsCents = effectiveLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
-              const paymentsCents = paidPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
+              const itemsCents = sumCents(effectiveLineAmounts);
+              const paymentsCents = sumCents(paidPayments.map((row) => row.amount));
               if (settlement.code === 'amount_mismatch' && t.amountMismatchBody) {
                 const diff = Math.abs(paymentsCents - itemsCents);
                 const side = itemsCents === 0

@@ -1,5 +1,5 @@
 'use strict';
-const { toCentsOrZero } = require('../../../utils/money');
+const { sumCents } = require('../../../utils/money');
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
 const { buildSalePayload } = require('../../../services/salesPayload');
 // ⭐⭐ 2026-10-29：**提交成功 = 统一 toast 共用件**（文案/落点/参数全部走 `config/submitToast.js`）。
@@ -194,9 +194,8 @@ async function handlePaymentPay(ctx) {
           //   🔴 **本段仍然接受** body 里的旧档位（**不拒绝** ✗ —— 拒绝留到 A3 ✓）；它只是**不再是判据**了 ✓
           //   ⭐ 券那一刀（2026-10-16）只换了**两个入参**（`effectiveLineAmounts` / `paidPayments`）——
           //      档位怎么算、后面怎么校验，**一个字没改** ✗
-          const toCents = toCentsOrZero;
-          const itemsCents = effectiveLineAmounts.reduce((sum, value) => sum + toCents(value), 0);
-          const paymentsCents = paidPayments.reduce((sum, row) => sum + toCents(row.amount), 0);
+          const itemsCents = sumCents(effectiveLineAmounts);
+          const paymentsCents = sumCents(paidPayments.map((row) => row.amount));
           // eslint-disable-next-line global-require
           const { resolveSettlement, autoModeOf } = require('../../../config/saleSettlement');
           const auto = autoModeOf({ itemsCents, paymentsCents });

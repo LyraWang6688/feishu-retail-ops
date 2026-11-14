@@ -6,11 +6,12 @@
  */
 const { fillText } = require('../../config/scanWrite');
 const { logWarn } = require('../../utils/logger');
+const { sumCents } = require('../../utils/money');
 
 const resolveSaleSettlement = async ({
   lines, lineAmounts, paymentRows, paymentStatus, paidAmount, openId,
   sessionId, key, requestId, config, texts, sessions, fundsDeferred, goodsOnly,
-  fail, userMessageFor, positiveAmount, toCents, moneyText, amountMismatchMessage, amountList,
+  fail, userMessageFor, positiveAmount, moneyText, amountMismatchMessage, amountList,
 }) => {
     const postedLineAmounts = amountList(lineAmounts);
     const hasPostedLineAmounts = postedLineAmounts.length > 0;
@@ -80,9 +81,9 @@ const resolveSaleSettlement = async ({
     //      · **未付（默认）**：只记货 —— **不写【未收款】**（见下面 2026-10-11 晚那段）。
     //    ⚠️ 三档都**只跟"每件实收金额加起来"比**（`itemsCents`）—— 这里没有"应收/单价"这个判据。
     //    ⚠️ 比大小用**分**（整数），不拿浮点数比：0.1 + 0.2 ≠ 0.3 那类误差会误报。
-    const itemsCents = resolvedLines.reduce((sum, line) => sum
-      + (line.amount === null || line.amount === undefined ? 0 : toCents(line.amount)), 0);
-    const paymentsCents = usedPayments.reduce((sum, payment) => sum + toCents(payment.amount), 0);
+    // 金额合计统一口径（#61/#48）：`utils/money.sumCents`（不可解析按 0）
+    const itemsCents = sumCents(resolvedLines.map((line) => line.amount));
+    const paymentsCents = sumCents(usedPayments.map((payment) => payment.amount));
     const statusValues = (config.sale.paymentStatus?.values) || [];
     const statusDefault = config.sale.paymentStatus?.default || '';
     // ⚠️ 逻辑里**只认语义键**（`mode.full` / `mode.partial` / `mode.unpaid`）——

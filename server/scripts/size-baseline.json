@@ -13,7 +13,7 @@
     "server/src/services/afterSalesService.js": 1263,
     "server/src/services/labelPrintArtifactService.js": 1434,
     "server/src/services/labelPrintService.js": 820,
-    "server/src/services/larkMvpService.js": 847,
+    "server/src/services/larkMvpService.js": 846,
     "server/src/services/purchaseArrivalConversationService.js": 856,
     "server/src/services/scanPageService.js": 1218,
     "server/test/afterSalesService.test.js": 1289,
