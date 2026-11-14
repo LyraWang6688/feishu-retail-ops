@@ -342,6 +342,39 @@ const createAsyncJobService = ({
   };
 
   /**
+   * #1203：清理**终态**且超过保留期的 job 文件（running/queued 绝不动）。
+   * @returns {{deleted:number, skipped?:string}}
+   */
+  const cleanupOldJobs = async ({
+    retentionDays = config.retention?.days, now: nowFn = now,
+  } = {}) => {
+    const days = Number(retentionDays);
+    if (!(days > 0)) return { deleted: 0, skipped: 'disabled' };
+    const cutoff = nowFn().getTime() - days * 24 * 60 * 60 * 1000;
+    const jobs = await safe('cleanup_list', () => jobStore.list());
+    if (!jobs) return { deleted: 0 };
+    const stale = jobs.filter((job) => {
+      const status = String(job?.status || '');
+      const terminal = status === ASYNC_JOB_STATUS.SUCCEEDED
+        || status === ASYNC_JOB_STATUS.PARTIAL_FAILED
+        || status === ASYNC_JOB_STATUS.FAILED;
+      if (!terminal) return false;
+      const finished = Date.parse(String(job.finished_at || job.created_at || ''));
+      return Number.isFinite(finished) && finished < cutoff;
+    });
+    for (const job of stale) {
+      // eslint-disable-next-line no-await-in-loop
+      await safe('cleanup_remove', () => jobStore.remove(job.job_id));
+    }
+    if (stale.length) {
+      info('async_job.cleanup', {
+        deleted: stale.length, retention_days: days, job_ids: stale.slice(0, 10).map((job) => job.job_id),
+      });
+    }
+    return { deleted: stale.length };
+  };
+
+  /**
    * 优雅退出（#50）：等正在跑的 `run()` 收尾，最多 `timeoutMs`。
    * 超时也返回（部署不许被一个卡住的 job 拖死）。
    */
@@ -359,7 +392,7 @@ const createAsyncJobService = ({
 
   return {
     enqueue, begin, succeed, markPartialFailed, recordAttemptFailure, fail,
-    notifyIfNeeded, run, view, get, start, shutdown, reapStaleRunning,
+    notifyIfNeeded, run, view, get, start, shutdown, reapStaleRunning, cleanupOldJobs,
     store: jobStore,
     jobIdFor,
   };

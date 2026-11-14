@@ -1,5 +1,5 @@
 'use strict';
-const { sumCents } = require('../../../utils/money');
+const { resolvePaymentSettlement } = require('../../../services/scanWrite/paymentSettlement');
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
 const { buildSalePayload } = require('../../../services/salesPayload');
 // ⭐⭐ 2026-10-29：**提交成功 = 统一 toast 共用件**（文案/落点/参数全部走 `config/submitToast.js`）。
@@ -194,38 +194,11 @@ async function handlePaymentPay(ctx) {
           //   🔴 **本段仍然接受** body 里的旧档位（**不拒绝** ✗ —— 拒绝留到 A3 ✓）；它只是**不再是判据**了 ✓
           //   ⭐ 券那一刀（2026-10-16）只换了**两个入参**（`effectiveLineAmounts` / `paidPayments`）——
           //      档位怎么算、后面怎么校验，**一个字没改** ✗
-          const itemsCents = sumCents(effectiveLineAmounts);
-          const paymentsCents = sumCents(paidPayments.map((row) => row.amount));
-          // eslint-disable-next-line global-require
-          const { resolveSettlement, autoModeOf } = require('../../../config/saleSettlement');
-          const auto = autoModeOf({ itemsCents, paymentsCents });
-          // ⭐ 档位的真源仍在 `config/scanWrite.js` 的 `PAYMENT_STATUS`（语义键 ↔ 中文取值 ✓ 不另抄一份 ✗）——
-          //   自动定档算出的是**语义键**；交给写服务时要换回**中文取值** ✓
-          // eslint-disable-next-line global-require
-          const { PAYMENT_STATUS } = require('../../../config/scanWrite');
-          const payStatusMap = PAYMENT_STATUS || {};
-          const pendingMode = auto.mode || '';
-          // ⭐ 交给写服务的档位 = **自动定出来的那一档**（不是请求体里那个旧档位 ✗）——
-          //   ⇒ "带着旧档位提交"也照新口径走 ⇒ 旧档位**不会**再把请求带进老分支 ✓（她 2026-10-16 口径 ✓）
-          const effectivePaymentStatus = payStatusMap[pendingMode] || '';
-          // ⭐⭐ 2026-10-16 A2a：交给写服务的「本次已收」（`paidAmount`）—— **就是收款行合计** ✓
-          //   （与下面 `resolveSettlement` 的 `paidCents: paymentsCents` **同一个口径** ✗ 不两套算法）
-          //   ⚠️ 一行收款都没有 ⇒ 用原来那个值（空串 ⇒ 不写；未付/全付两支**本来就不读它** ✓ 逐字同旧行为）
-          const effectivePaidAmount = paymentsCents > 0 ? String(paymentsCents / 100) : pendingPaidAmount;
-          // 收多了 ⇒ 纯函数已经给了 `block`（与既有 `amount_mismatch` **同一句话** ✓ 不新编中文 ✗）
-          const settlement = auto.action === 'block' ? auto : resolveSettlement({
-            mode: pendingMode,
-            itemsCents,
-            paymentsCents,
-            // ⚠️ 这两处用**解析后**的那一份（券行已经有金额了 / 货品那一侧已扣掉券的抽佣）——
-            //    判据形状一个字没变，只是喂给它的是**真正要落库的那两个数** ✓（不然"券金额可空"
-            //    会把券行当成"没填钱"，与后面写进去的东西对不上 ✗）。
-            hasPaymentRows: paidPayments.filter((row) => String(row.amount ?? '').trim()).length > 0,
-            anyLineAmount: effectiveLineAmounts.some((value) => String(value ?? '').trim()),
-            // ⭐ 新形状**页面上没有**「实付多少」这个框了（随三档一起去掉 ✓）⇒ "本次已收"**就是收款行合计** ✓
-            //   ⚠️ 若传 `null` 会被判 `partial_amount_missing` —— 那是**旧形状**才有的失败 ✗ 不传 ✗
-            paidCents: paymentsCents,
-          });
+          // ⭐ 2026-11-14（#48）：按金额自动定档 / 结算校验已下沉到
+          //   `services/scanWrite/paymentSettlement.js`（含历史口径注释），入口只拿结果。
+          const {
+            itemsCents, paymentsCents, pendingMode, effectivePaymentStatus, effectivePaidAmount, settlement,
+          } = resolvePaymentSettlement({ effectiveLineAmounts, paidPayments, pendingPaidAmount });
           if (settlement.action === 'block') {
             // ⭐ 2026-10-14 晚（她批准埋点补充③：「失败日志带**人话原因码**」）——
             //   今天真机上她点了 6 次「提交整单付款」都只看到 400、日志里**没有任何原因** ✗ ⇒

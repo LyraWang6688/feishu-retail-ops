@@ -82,7 +82,14 @@ const createAsyncJobStore = ({ dir } = {}) => {
 
   const list = (filter = {}) => store.list(filter);
 
-  return { store, get, createIfAbsent, update, list, dir: store.dir };
+  /** 删除一条 job 记录（清理用；不存在也不抛）。 */
+  const remove = async (jobId) => {
+    const id = String(jobId ?? '').trim();
+    if (!JOB_ID_PATTERN.test(id)) return false;
+    return store.remove(id);
+  };
+
+  return { store, get, createIfAbsent, update, list, remove, dir: store.dir };
 };
 
 module.exports = { createAsyncJobStore, jobIdFor, isTerminalStatus, JOB_ID_PATTERN };

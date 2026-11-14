@@ -184,6 +184,10 @@ const buildAsyncJobsConfig = (env = process.env) => {
       staleRunningMinutes: readInt(env, 'ASYNC_JOB_RUNNING_STALE_MINUTES', 30, { min: 1, max: 1440 }),
       intervalMs: readInt(env, 'ASYNC_JOB_RECOVER_INTERVAL_MS', 15 * 60 * 1000, { min: 60000, max: 24 * 60 * 60 * 1000 }),
     }),
+    // 终态 job 文件保留期（天；0 = 不清理）。issue #1203：只增不减的文件要有人清。
+    retention: Object.freeze({
+      days: readInt(env, 'ASYNC_JOBS_RETENTION_DAYS', 90, { min: 0, max: 3650 }),
+    }),
     retry: Object.freeze({
       maxAttempts: readInt(env, 'ASYNC_JOB_MAX_ATTEMPTS', 3, { min: 1, max: 10 }),
       baseMs: retryBaseMs,

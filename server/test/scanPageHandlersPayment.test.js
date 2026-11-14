@@ -19,7 +19,7 @@ test('路由只做分派：分支体已搬走（塞回即红）', () => {
   assert.match(index, /return handlePaymentPayOf\(\{/);
   const file = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'handlers', 'payment.js'), 'utf8');
   for (const marker of ['respondSettlementBlock', 'sendPaymentStep', 'redirectWithSubmitToast',
-    'scan_sale_paid', 'PAYMENT_STATUS', 'submitSale']) {
+    'scan_sale_paid', 'resolvePaymentSettlement', 'submitSale']) {
     assert.ok(file.includes(marker), `payment handler 里必须能看到原分支用的 ${marker}`);
   }
   assert.match(file, /const \{ [^}]+ \} = ctx;/, 'handler 必须用显式 ctx');
