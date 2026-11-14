@@ -19,3 +19,7 @@
 .wa-field b { min-width: 88px; color: var(--text-secondary); font-weight: 500; }
 .wa-field span { color: var(--text); overflow-wrap: anywhere; }
 .wa-empty { color: var(--text-muted); font-size: var(--font-size-sm); padding: 12px 0; }
+
+.wa-recent-title { font-size: var(--font-size-lg); margin: 16px 0 4px; }
+.wa-hint { color: var(--text-muted); font-size: var(--font-size-sm); margin: 0 0 8px; }
+.wa-trace h2 small { font-weight: 400; color: var(--text-muted); font-size: var(--font-size-xs); margin-left: 6px; }

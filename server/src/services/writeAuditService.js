@@ -126,4 +126,30 @@ const auditGatewayWrite = ({ options = {}, correlation = {}, tableKey, tableName
   });
 };
 
-module.exports = { recordWrite, queryWriteAudit, auditGatewayWrite };
+/** 最近 24 小时写入：按时间由近及远；页面默认展示，不提供用户搜索。 */
+const queryRecentWriteAudit = async ({ domain = '', limit = 1000, dir = WRITE_AUDIT.dir, now = Date.now() } = {}) => {
+  const since = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+  let files = [];
+  try {
+    files = (await fs.promises.readdir(dir)).filter((name) => name.endsWith('.jsonl')).sort().reverse().slice(0, 3);
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  const rows = [];
+  for (const file of files) {
+    const content = await fs.promises.readFile(path.join(dir, file), 'utf8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (domain && event.domain !== domain) continue;
+        if (String(event.at) < since) continue;
+        rows.push(event);
+      } catch { /* skip bad line */ }
+    }
+  }
+  return rows.sort((a, b) => String(b.at).localeCompare(String(a.at)) || (b.seq - a.seq)).slice(0, limit);
+};
+
+module.exports = { recordWrite, queryWriteAudit, queryRecentWriteAudit, auditGatewayWrite };
