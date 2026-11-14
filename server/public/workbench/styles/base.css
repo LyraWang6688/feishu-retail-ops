@@ -43,8 +43,9 @@ h4 { font-size: var(--font-size-base); }
 /* ⭐ 2026-11-14（业务负责人）：登录行整体压缩 —— 字号比 tab / 正文小，行高 24px，给下面省空间。
    所有带登录行的页面统一走 .auth（首页 + label-print 独立页），不按 header 变体分开。 */
 .auth .muted,
-.auth .btn-ghost { font-size: var(--font-size-2xs); }
-.auth .btn-ghost { min-height: var(--login-row-height); height: var(--login-row-height); padding: 0 var(--space-1); }
+.auth .btn { font-size: var(--font-size-2xs); }
+/* 登录 / 去登录 都收进 24px 行高（不只是已登录后的「退出登录」） */
+.auth .btn { min-height: var(--login-row-height); height: var(--login-row-height); padding: 0 var(--space-1); }
 .muted, .subtitle, .data-caption { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .subtitle { margin: var(--space-1) 0 0; }
 .data-caption { margin: calc(-1 * var(--space-1)) 0 var(--space-4); }
