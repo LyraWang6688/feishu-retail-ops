@@ -71,8 +71,7 @@ const SIZE_GROUP_RANGES = SCAN_STOCK_POLICY.sizes.ranges;
  *   · **验收**从"非 tab 的临时模式"升级成**正式领域**（有活跃验收会话时，裸扫仍会被自动切进来）；
  *   · 销售 / 库存 / 货品 照旧。
  *
- * ⚠️ **一个二维码、六个领域**：标签二维码内容**一个字没变**（`https://hm.bamamei.online/s/{编号}`，
- *    只含编号）⇒ 每个领域都是"同一个码扫开、点不同 tab / 带不同 `?from=`"。
+ * ⚠️ **一个二维码、六个领域**：标签二维码内容**只含记录 ID**（`https://hm.bamamei.online/r/{记录ID}`），⇒ 每个领域都是"同一个码扫开、点不同 tab / 带不同 `?from=`"。
  * ⚠️ `?from=purchase`（已退役的领域）**认不出来 ⇒ 回落缺省（销售）** —— 与"认不出的值一律回落"
  *    同一条既有口径；工作台那边指向它的入口已全部撤掉（见 `public/workbench/config/domains.js`）。
  */

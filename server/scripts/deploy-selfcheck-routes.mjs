@@ -10,7 +10,7 @@
  *
  * This script therefore asserts behavior, not liveness:
  *   1. unauthenticated GET /r/<recordId>      => 302 and Location contains next=%2Fr%2F<recordId>
- *   2. unauthenticated GET /s/<number>?from=sales => 302 and next contains the encoded /s/...?from=sales
+ *   2. GET /s/<number>                        => 404（旧入口已于 2026-11-11 删除；必须真的不可用）
  *   3. GET /workbench/                        => every referenced JS/CSS responds 200
  * It prints the ACTUAL values it saw (no bare "OK"), and exits non-zero on any failure.
  *
@@ -56,15 +56,13 @@ const checkRecordIdRedirect = async () => {
     + (res.status === 503 ? AUTH_OFF_HINT : ''));
 };
 
-/** 2) /s/<编号>?from=sales 未登录 => 302 + next 含编码后的 /s/…?from=sales（回归） */
-const checkScanRedirect = async () => {
-  const path = `/s/${encodeURIComponent(NUMBER)}?from=sales`;
-  const expected = `next=${encodeURIComponent(path)}`;
+/** 2) /s/<编号> => 404（旧入口 2026-11-11 已删；不能再 302 到登录页） */
+const checkLegacyScanRetired = async () => {
+  const path = `/s/${encodeURIComponent(NUMBER)}`;
   const res = await get(path);
-  const ok = res.status === 302 && res.location.includes(expected);
-  record(ok, 'GET /s/<编号>?from=sales（未登录）=> 302 且 next 含 %2Fs%2F…%3Ffrom%3Dsales',
-    `status=${res.status} · Location=${res.location || '(空)'} · 期望含 ${expected}`
-    + (res.status === 503 ? AUTH_OFF_HINT : ''));
+  const ok = res.status === 404;
+  record(ok, `GET /s/<编号> => 404（旧入口已删除）`,
+    `status=${res.status} · Location=${res.location || '(空)'}`);
 };
 
 /** 3) /workbench/ 里引用的每个 JS/CSS 都要 200（"页面 200 但脚本 404" => 整页空白） */
@@ -96,7 +94,7 @@ const checkWorkbenchAssets = async () => {
 
 const main = async () => {
   console.log(`部署自检（只读）· 目标 ${BASE} · 开始 ${new Date().toISOString()}`);
-  const steps = [checkRecordIdRedirect, checkScanRedirect, checkWorkbenchAssets];
+  const steps = [checkRecordIdRedirect, checkLegacyScanRetired, checkWorkbenchAssets];
   for (const step of steps) {
     try {
       // eslint-disable-next-line no-await-in-loop

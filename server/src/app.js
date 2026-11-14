@@ -45,7 +45,7 @@ const { warmConfigCaches } = require('./services/configCacheWarmup');
 const { createVoucherSettlementConfig } = require('./config/voucherSettlement');
 const { createVoucherSettlementService } = require('./services/voucherSettlementService');
 const { PaymentService } = require('./services/paymentService');
-const { createNotificationService } = require('./services/notificationService');
+const { createDefaultNotificationService } = require('./services/notificationService');
 const { createLaikeClient } = require('./services/douyin');
 // 扫码页的挂载点（`/r`）与它的配置：**与二维码里的 URL 同源**
 // （`config/tagQrCode.js` 的 `scanUrl.recordIdTemplate` = `https://hm.bamamei.online/r/{recordId}`）。
@@ -149,16 +149,14 @@ app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')))
 // ⭐ 2026-10-08：`GET` 仍然**只读**（第一版：查库存）；**写入口**是同一条路径上的 `POST`
 //    （销售建单 / 补货报单），实现全在 `services/scanWriteService.js` ——
 //    它只调**既有业务层**（销售入账 / 采购申请发布），入口参数在 `config/scanWrite.js`。
-// ⭐⭐ 2026-10-12（治根）：**同一个 router 实例**挂到两个前缀上。
+// ⭐⭐ 2026-10-12（治根）：扫码页只保留**一个** router 实例 / 一个挂载点。
 //
-//   `/s/{编号}`  = 旧标签（编号是**会变的快照**：她打印时类别为空、之后补上 ⇒ 旧码对不上）。
-//   `/r/{记录ID}` = **新二维码**（她：「用它**不变的记录 ID**」）—— 改颜色/类别/任何字段都不影响。
+//   `/r/{记录ID}` = **唯一入口**（她：「用它**不变的记录 ID**」）—— 改颜色/类别/任何字段都不影响。
+//   ⛔ `/s/{编号}` 旧入口已于 **2026-11-11 删除**（编号是**会变的快照**，旧贴纸已按她口径重打）。
 //
-//   🔴 **必须共用同一个实例**：`createScanPageRouter()` 每次调用都会新建一套
+//   🔴 **只能有一个实例**：`createScanPageRouter()` 每次调用都会新建一套
 //      写服务（`scanWriteService`）与它内部**按录单人串行的队列**；建两个实例 =
 //      **两条串行队列** ⇒ 她连点两次就可能在两条队列上各跑一遍 ⇒ **幂等可靠性直接破**。
-//   ⚠️ 两个前缀用**同一份准入闸门 / 同一套渲染 / 同一套写入**（只是"取商品"那一步的策略不同，
-//      判定点在 `routes/scanPage.js` 的 `scanTargetOf`，唯一判据是 `req.baseUrl`）。
 // ⭐ 2026-10-14：启动时预热「实时库存」快照（用**已有实例**，不新建 ✓ 见 services/scanPageService.js）
 const { warmLiveInventorySnapshot } = require('./services/scanPageService');
 const scanPageRouter = require('./routes/scanPage').createScanPageRouter();
@@ -212,7 +210,9 @@ if (require.main === module) {
   const voucherSettlement = createVoucherSettlementConfig();
   if (voucherSettlement.enabled) {
     const voucherGateway = new V1BitableGateway();
-    const voucherNotifications = createNotificationService();
+    // ⚠️ 2026-11-14：必须用带默认飞书客户端的工厂 —— `createNotificationService()` 不传 client
+    //   时发卡片会直接失败（voucher_settlement 是 Card 格式），结算通知会静默发不出去。
+    const voucherNotifications = createDefaultNotificationService();
     const voucherSettlementService = createVoucherSettlementService({
       gateway: voucherGateway,
       payments: new PaymentService({ gateway: voucherGateway }),

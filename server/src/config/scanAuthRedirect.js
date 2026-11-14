@@ -27,8 +27,8 @@ const { SCAN_PAGE } = require('./scanPage');
  *   ① `safeReturnTo`（既有，在 `routes/feishuWebAuth.js`）：只接受**站内相对路径** ——
  *      必须以单个 `/` 开头、不能是 `//host`、不能含协议、不能含反斜杠、不能是绝对 URL
  *      （防开放重定向 / `js/server-side-unvalidated-url-redirection`）；
- *   ② **白名单**（本文件）：在 ① 之上再收一道 —— `next` **只放行扫码页自己**（`/s/...`），
- *      别的一律回落到默认落地页。`/a//b`、`/s/../api/...` 这类都由这一道挡住
+ *   ② **白名单**（本文件）：在 ① 之上再收一道 —— `next` **只放行扫码页自己**（`/r/...`），
+ *      别的一律回落到默认落地页。`/a//b`、`/r/../api/...` 这类都由这一道挡住
  *      （白名单按**归一化后**的 pathname 判，见 `resolveScanNext`）。
  *
  * ⚠️ `return_to`（工作台前端 `public/workbench/core/auth.js` 在用的那个参数名）**不走白名单**：

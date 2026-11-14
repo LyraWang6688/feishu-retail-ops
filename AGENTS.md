@@ -10,7 +10,7 @@
 
 `feishu-retail-ops` 的通用产品名是“零售数智经营助手”，邯美部署名称是“邯美数智经营工作台”。它以飞书机器人、飞书网页应用和飞书多维表格为基础，为线下零售与小型企业提供销售、采购、库存和资金联动能力。
 
-**现行入口与职责**：数据录入只有两种 —— ① **扫一扫页面的前端 UI 表单**（销售 / 补货 / 库存 / 退货）；② **飞书多维表格表单**。**飞书多维表格是唯一事实源**，后端只做确定性执行（校验 / 幂等 / 写表 / 联动）。**采购申请**由扫码页「补货」直接调 `PurchaseWebhookService.publishPurchaseRequest`（免确认）；**供应商报单表事件入口与「数量说明」AI 解析均已退场删除**（2026-10-09 / 2026-10-16，见 `docs/ai-parsing-removal-2026-10-16.md`）。**销售**在扫码页走「货品页 → 资金页 → 成功页」：逐件实收、资金页金额必填（可填 0，不要求等于货品合计）、异步写库、统一极简成功页。网页工作台负责订单交割 / 售后 / 补充样品、库存调整、货品上新与标签打印、采购验收（只认「报货」批次）等**处理与查询**，不承担文字录入。历史入口（微信小程序 / 私聊 / 群聊 / 语音转文字 / 拍照识别 / 群话题到货核对）均已退场并从代码删除，**不可恢复、无开关**（详见下方「已退场入口」与 `docs/archive/`）。
+**现行入口与职责**：数据录入只有两种 —— ① **扫一扫页面的前端 UI 表单**（销售 / 补货 / 库存 / 退货）；② **飞书多维表格表单**。**飞书多维表格是唯一事实源**，后端只做确定性执行（校验 / 幂等 / 写表 / 联动）。**采购申请**由扫码页「补货」直接调 `PurchaseWebhookService.publishPurchaseRequest`（免确认）；**供应商报单表事件入口与「数量说明」AI 解析均已退场删除**（2026-10-09 / 2026-10-16，见 `docs/archive/ai-parsing-removal-2026-10-16.md`）。**销售**在扫码页走「货品页 → 资金页 → 成功页」：逐件实收、资金页金额必填（可填 0，不要求等于货品合计）、异步写库、统一极简成功页。网页工作台负责订单交割 / 售后 / 补充样品、库存调整、货品上新与标签打印、采购验收（只认「报货」批次）等**处理与查询**，不承担文字录入。历史入口（微信小程序 / 私聊 / 群聊 / 语音转文字 / 拍照识别 / 群话题到货核对）均已退场并从代码删除，**不可恢复、无开关**（详见下方「已退场入口」与 `docs/archive/`）。
 
 ## 已退场入口（历史，不可恢复）
 
@@ -58,12 +58,12 @@
 （`lark.sales.card.sent` / `sale_lookup.card.sent`）。
 ⚠️ `replyCard` **不是孤儿**（`LarkMvpService` 里仍有 **3** 个调用方：
 `:138` 销售查单群路径 / `:158` 售后接线 / `:442` 采购卡片无话题回落）→ 保留。
-⭐ 详见 `docs/private-chat-removal-2026-10-07.md` 第七节（验收标准 + 逐条对照）。
+⭐ 详见 `docs/archive/private-chat-removal-2026-10-07.md` 第七节（验收标准 + 逐条对照）。
 **有意的行为变化**：
 `SampleReplacementService.notifySampleReplacements` 在**工作台触发**（
 `routes/workbench.js`，没有群上下文）时**不再静默发私聊**；
 群销售那条则回到**那条销售话题**（`reply_in_thread`）。
-⭐ 验收标准、实现与测试证据见 `docs/private-chat-removal-2026-10-07.md`。
+⭐ 验收标准、实现与测试证据见 `docs/archive/private-chat-removal-2026-10-07.md`。
 
 > **采购链路的历史**：曾存在一条"机器人收采购图片 → 写「采购批次」表 → `PurchasePostingService`"
 > 的旧链路（`acceptPurchaseImage` / `finishPurchaseImages` / `processPurchaseTask` /
@@ -103,7 +103,7 @@
 - **后端**：Node.js + Express (>=20)
 - **部署方式**：腾讯云轻量应用服务器 + Nginx + PM2
 - **AI**：当前运行期**没有** AI 解析调用（销售文字 / 采购数量说明 / 到货对话解析均已退场删除，
-  见 `docs/ai-parsing-removal-2026-10-16.md`）；即使环境里保留模型配置，也没有业务读取点。
+  见 `docs/archive/ai-parsing-removal-2026-10-16.md`）；即使环境里保留模型配置，也没有业务读取点。
 - **表格服务**：飞书多维表格 (Feishu Bitable) API
 
 ## 目录结构
@@ -194,7 +194,7 @@ pnpm run dev
 - `API_KEY` - 非飞书 `/api` 接口的 `x-api-key` 鉴权
 
 > ⚠️ `TEXT_LLM_*` / `VISION_LLM_*` / `ARK_*` / `PURCHASE_ARRIVAL_INTAKE_ENABLED` **都已无运行期读取点**
-> （AI 解析与拍照识别链路已退场，见 `docs/ai-parsing-removal-2026-10-16.md`）⇒ **不要再配、也不要依赖它们**判断功能是否开启。
+> （AI 解析与拍照识别链路已退场，见 `docs/archive/ai-parsing-removal-2026-10-16.md`）⇒ **不要再配、也不要依赖它们**判断功能是否开启。
 
 **采购分发 / 提醒（不是录入入口；取值在 `src/config/groupPurchase.js`）**
 
@@ -210,7 +210,7 @@ pnpm run dev
 > **空串 = 关掉那句话**）。
 > 私聊消息只记一条 `lark.private_chat.disabled`；没有群上下文的任务只记一条
 > `lark.private_chat.send_skipped`（全仓只有 `src/utils/privateChatSend.js` 一处定义）。
-> 见 `docs/private-chat-removal-2026-10-07.md`。
+> 见 `docs/archive/private-chat-removal-2026-10-07.md`。
 - `LARK_ACK_REACTION` - **已无运行期读取点**（群聊入口退场后无消费方）⇒ 不要再配。
 
 > ⚠️ 模型配置（`TEXT_LLM_*` / `VISION_LLM_*` / `ARK_*`）**都已无运行期读取点**（AI 解析链路退场）；
@@ -575,7 +575,7 @@ config/submitToast.js + utils/submitToast.js
   「采购到货」→到货验收）；当时的日志样例里仍是旧名，属历史记录，不改。
   键清单 / 写库动作清单 / 验收标准 / 真实日志样例见
   `docs/log-correlation-and-stock-key-label-2026-10-07.md` **第六、七节**；
-  到货落点大改的验收标准见 `docs/arrival-landing-on-batch-2026-10-07.md`。
+  到货落点大改的验收标准见 `docs/archive/arrival-landing-on-batch-2026-10-07.md`。
 
 ### ⭐ 「库存键」两种写法并列（同一天）
 

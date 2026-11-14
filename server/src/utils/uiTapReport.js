@@ -95,7 +95,7 @@ const tapResultFields = ({ tapId, scope, status, code, durationMs, req }) => ({
 const serverTapId = () => `srv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 /**
- * `POST <tap path>`（扫码页 `/s/ui-tap`、`/r/ui-tap`；工作台 `/api/workbench/ui-tap`）——
+ * `POST <tap path>`（扫码页 `/r/ui-tap`；工作台 `/api/workbench/ui-tap`）——
  * **同一个处理**：
  *   · 关掉埋点（`UI_TAP_ENABLED`）⇒ **204 且一条日志都不打**（不是 400：她那边不该看到异常）；
  *   · 没有 `target` ⇒ **400**（不静默吞 ✓ —— 与改前逐字一致）；
