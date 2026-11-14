@@ -166,6 +166,19 @@ test('AC-PAIR-3 批量当季：只更新当前品类的实时库存', async () =
 });
 
 
+test('AC-PAIR-3c 品类是公式富文本数组（线上真形状）⇒ 仍按文本匹配', async () => {
+  const records = [
+    { record_id: 'l1', fields: { 品类: [{ text: '休闲鞋', type: 'text' }], 当季: false, 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }] } },
+    { record_id: 'l2', fields: { 品类: [{ text: '单鞋', type: 'text' }], 当季: false, 编号: [{ record_ids: ['p2'] }], 尺码: [{ record_ids: ['size42'] }] } },
+  ];
+  const inventory = fakeInventory({ records });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  const result = await service.setSeason({ category: '休闲鞋', season: true });
+  assert.equal(result.updated, 1, '公式列必须按文本值匹配，不能 String([object Object])');
+  assert.ok(inventory.calls.some((call) => call.type === 'update' && call.id === 'l1'));
+  assert.ok(!inventory.calls.some((call) => call.id === 'l2'));
+});
+
 test('AC-PAIR-AUDIT 手工调整写入带 inventoryManual 审计关联键', async () => {
   const inventory = fakeInventory({
     counts: [{ size: 42, doorBoxCount: 1, sampleCount: 1 }],

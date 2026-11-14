@@ -40,6 +40,16 @@ test('AC-IA3 批量调整只保留当季 / 库存两个入口，异常编号可�
   assert.ok(html.includes('/print-intent'), '保存后可打印（#1210：后端打印意图）');
 });
 
+test('AC-IA6 当季/库存：等后台 job 成功再刷新（不再看到旧值）', () => {
+  const html = source();
+  assert.ok(html.includes('/api/workbench/inventory/adjustments/season-flag'));
+  assert.ok(html.includes('waitForAsyncJob(jobId)'), '必须等后台 job 成功');
+  assert.ok(html.includes('seasonApplying'), '等待时要有提示');
+  const cfg = configSource();
+  assert.match(cfg, /seasonApplying: /);
+  assert.match(cfg, /seasonUpdateFailed: /);
+});
+
 test('AC-IA4 批量调整：品类与库存并行读取 + 轻量 toast 提示', () => {
   const src = source();
   assert.match(src, /Promise\.all\(\[categoriesPromise, loadRows\(\)\]\)/, '品类与库存必须并行');

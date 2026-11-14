@@ -285,18 +285,44 @@ export function createInventoryAdjustmentModule() {
     }
   }
 
+  async function waitForAsyncJob(jobId, timeoutMs = 120000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const payload = await api.get(`/api/workbench/async-jobs/${encodeURIComponent(jobId)}`);
+      const job = payload?.job || payload;
+      if (job?.status === 'succeeded') return job;
+      if (job?.status === 'failed' || job?.status === 'partial_failed') {
+        throw new Error(job.last_error || INVENTORY_MANUAL_TEXTS.seasonUpdateFailed);
+      }
+      await new Promise((resolve) => { setTimeout(resolve, 1500); });
+    }
+    throw new Error(INVENTORY_MANUAL_TEXTS.seasonUpdateFailed);
+  }
+
   async function setSeason(season) {
     const category = $(state.host, '[data-field="batch-category"]')?.value || '';
     if (!category) return showPageError(INVENTORY_MANUAL_TEXTS.categoryRequired);
+    const buttons = [...state.host.querySelectorAll('[data-action="season-set"]')];
+    buttons.forEach((button) => { button.disabled = true; });
+    // 非 sticky：轮询读请求不会把它撤掉；最长留 2 分钟，结束时会被结果 toast 替换。
+    showToast(INVENTORY_MANUAL_TEXTS.seasonApplying, { durationMs: 120000 });
     try {
-      await api.post('/api/workbench/inventory/adjustments/season-flag', {
+      const result = await api.post('/api/workbench/inventory/adjustments/season-flag', {
         category, season, requestId: crypto.randomUUID(),
       });
+      const jobId = String(result?.job_id || '').trim();
+      // ⭐ 2026-11-14：后台逐条写可能要几十秒；**等它成功再刷新**，
+      //   否则页面立刻重读会看到旧值（她以为没生效）。
+      if (jobId) await waitForAsyncJob(jobId);
       state.rows = [];
       await loadRows(true);
       renderViolations();
       showToast(season ? INVENTORY_MANUAL_TEXTS.seasonApplied : INVENTORY_MANUAL_TEXTS.seasonCleared);
-    } catch (error) { showPageError(describeError(error)); }
+    } catch (error) {
+      showPageError(String(error?.message || '') || INVENTORY_MANUAL_TEXTS.seasonUpdateFailed);
+    } finally {
+      buttons.forEach((button) => { button.disabled = false; });
+    }
   }
 
   return {
