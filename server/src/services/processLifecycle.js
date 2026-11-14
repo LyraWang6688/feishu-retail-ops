@@ -15,10 +15,9 @@
 
 const { logInfo, logWarn, logError } = require('../utils/logger');
 
-const sleep = (ms) => new Promise((resolve) => {
-  const timer = setTimeout(resolve, ms);
-  if (timer.unref) timer.unref();
-});
+// ⚠️ 不许 unref：这是**必须触发**的退出兜底超时；unref 后若事件循环里没别的 handle，
+//   Node 会直接"事件循环已空"退出，导致 drain 卡住时退出处理器永远不返回（CI 实测）。
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /** 可单测的退出处理器：server + drains + 超时，全部可注入。 */
 const createShutdownHandler = ({

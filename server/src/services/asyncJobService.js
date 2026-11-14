@@ -66,9 +66,9 @@ const createAsyncJobService = ({
   const info = typeof logger.logInfo === 'function' ? logger.logInfo : () => {};
   const warn = typeof logger.logWarn === 'function' ? logger.logWarn : () => {};
   const nowIso = () => now().toISOString();
+  // ⚠️ 不许 unref：shutdown 的兜底超时**必须触发**（事件循环里没有别的 handle 时也要返回）。
   const sleepTimeout = (ms) => new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), Math.max(1, Number(ms) || 1));
-    if (timer.unref) timer.unref();
+    setTimeout(() => resolve(false), Math.max(1, Number(ms) || 1));
   });
   /** 正在执行的 `run()`（优雅退出时 drain；只用作进程内观测，不参与状态判定）。 */
   const activeRuns = new Set();
