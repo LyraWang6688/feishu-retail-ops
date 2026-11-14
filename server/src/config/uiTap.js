@@ -62,7 +62,7 @@ const FIELDS = Object.freeze({
 
 /**
  * 两个入口的路径：
- *   · 扫码页 ⇒ `/s/ui-tap` · `/r/ui-tap`：**相对路径的唯一真源是 `SCAN_PAGE.tapFeedback.reportPath`**
+ *   · 扫码页 ⇒ `/r/ui-tap`：**相对路径的唯一真源是 `SCAN_PAGE.tapFeedback.reportPath`**
  *     （渲染层写 URL、路由挂端点，两边读的是同一个值 ⇒ 不会漂移 ✓）—— 这里不另立一份 ✗。
  *   · 工作台 ⇒ `/api/workbench/ui-tap`（`routes/workbench.js`，走**既有**工作台闸门 ✓）。
  */

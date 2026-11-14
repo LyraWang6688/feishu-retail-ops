@@ -40,7 +40,8 @@ const resolveTimingChain = ({ method = '', path = '', body = {} } = {}) => {
     if (chain.method !== verb) continue;
     if (chain.path && url === chain.path) return chain.name;
     if (chain.prefix && url.startsWith(chain.prefix)) return chain.name;
-    if (chain.scanPath && (url.startsWith('/s/') || url.startsWith('/r/'))) {
+    // ⛔ 2026-11-11：旧 `/s/{编号}` 入口已删除 ⇒ 只认 `/r/{记录ID}`。
+    if (chain.scanPath && url.startsWith('/r/')) {
       const action = String((body && body.action) || '');
       if (action === chain.action) return chain.name;
     }
