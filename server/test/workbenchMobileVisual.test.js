@@ -202,8 +202,8 @@ test('AC7 登录行全站统一 24px / 10px（比 tab 与正文小），tab 行�
   assert.match(tokens, /--login-row-height:\s*24px;/, '登录行 24px 高度令牌');
   assert.match(base, /\.auth \.muted,[\s\S]{0,180}?font-size:\s*var\(--font-size-2xs\)/,
     '所有页面「已登录」字号必须比 tab / 正文小');
-  assert.match(base, /\.auth \.btn-ghost\s*\{[^}]*min-height:\s*var\(--login-row-height\)/s,
-    '所有页面退出登录按钮随登录行压到 24px');
+  assert.match(base, /\.auth \.btn\s*\{[^}]*min-height:\s*var\(--login-row-height\)/s,
+    '登录 / 去登录 所有按钮都随登录行压到 24px（不只是 btn-ghost）');
   assert.match(base, /\.header\s*\{[^}]*margin-bottom:\s*var\(--space-1\)/s, 'header 下边距 4px');
   assert.match(base, /\.main-tabs\s*\{[^}]*overflow-y:\s*hidden/s,
     '只写 overflow-x 会让 overflow-y 变 auto；tab 的负 margin 会溢出成纵向滚动条');
