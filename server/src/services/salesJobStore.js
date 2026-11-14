@@ -26,34 +26,51 @@ const createSalesJobStore = ({ dir } = {}) => {
   const createIfAbsent = async (submitKey, payload, meta = {}) => {
     // 2026-11-10（真实 E2E 发现）：扫码页的提交键只带 session_id + 序号（如 :1），
     // 同一台设备/同一个 page token 下，旧会话的 :1 会跨天残留；若只按 submitKey 建 job，
-    // 新订单会被昨天那笔同键 job 当成“重复提交”直接复用，页面成功但一张表都没写。
-    // ⇒ 新订单（order_no 不同）必须换一把唯一键，同一订单重提仍复用。
+    // 新订单会被昨天那笔同键 job 当成"重复提交"直接复用，页面成功但一张表都没写。
+    //
+    // ⭐⭐ 2026-11-14（#45）：**订单号必须在"派生 jobId"时就带上，不能在原子创建锁外先 get 再分流**。
+    //   旧实现两个不同订单并发时都先 get 不到、都选基础键，底层原子创建让后者返回前者订单 ⇒ 跨订单合并。
+    //   新实现：有 order_no ⇒ jobId 一律由 `submitKey|order:<order_no>` 派生（同订单稳定复用，
+    //   不同订单天然隔离）；只有**没有 order_no** 才退回基础键。
     const requestedKey = String(submitKey || '');
     const orderNo = String(payload?.order_no || '').trim();
-    let key = requestedKey;
-    let jobId = jobIdOf(key);
-    const existing = await store.get(jobId);
-    if (existing && orderNo && String(existing.order_no || '').trim() !== orderNo) {
-      key = `${requestedKey}|order:${orderNo}`;
-      jobId = jobIdOf(key);
-    }
-    const { created, record } = await store.createIfAbsent({
-      job_id: jobId,
-      submit_key: key,
-      status: STATUS.queued,
-      payload,
-      tap_id: String(meta.tapId || '').slice(0, 64),
-      attempts: 0,
-      last_error: '',
-      main_record_id: '',
-      order_no: String(payload?.order_no || ''),
-    });
-    let job = record;
-    if (!created && !job.tap_id && meta.tapId) {
+    const tapPatch = async (jobId) => {
+      const current = await store.get(jobId);
+      if (!current || current.tap_id || !meta.tapId) return current;
       // 旧 job 可能没有 tap_id（升级前入队）；补一次元数据，不动已经冻结的 payload。
-      job = await store.update(jobId, { tap_id: String(meta.tapId).slice(0, 64) });
+      return store.update(jobId, { tap_id: String(meta.tapId).slice(0, 64) });
+    };
+    const create = async (jobId, key) => {
+      const { created, record } = await store.createIfAbsent({
+        job_id: jobId,
+        submit_key: key,
+        status: STATUS.queued,
+        payload,
+        tap_id: String(meta.tapId || '').slice(0, 64),
+        attempts: 0,
+        last_error: '',
+        main_record_id: '',
+        order_no: String(payload?.order_no || ''),
+      });
+      if (!created) return { job: await tapPatch(jobId) || record, created };
+      return { job: record, created };
+    };
+
+    if (!orderNo) return create(jobIdOf(requestedKey), requestedKey);
+
+    const orderKey = `${requestedKey}|order:${orderNo}`;
+    const orderJobId = jobIdOf(orderKey);
+    const existingOrder = await store.get(orderJobId);
+    if (existingOrder) return { job: (await tapPatch(orderJobId)) || existingOrder, created: false };
+
+    // 兼容迁移：2026-11-10～11-13 的 old job 用的是**基础键**。同订单重提仍要复用，不能新建。
+    const baseJobId = jobIdOf(requestedKey);
+    const legacy = await store.get(baseJobId);
+    if (legacy && String(legacy.order_no || '').trim() === orderNo) {
+      return { job: (await tapPatch(baseJobId)) || legacy, created: false };
     }
-    return { job, created };
+
+    return create(orderJobId, orderKey);
   };
 
   const get = (jobId) => store.get(jobId);

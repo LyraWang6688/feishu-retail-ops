@@ -32,16 +32,20 @@ test('JsonTaskStore.createIfAbsent：同 id 并发只建一次，先创建 paylo
   }
 });
 
-test('salesJobStore.createIfAbsent：同 submitKey 并发只有 created=true 一次，payload 不被后写覆盖', async () => {
+test('salesJobStore.createIfAbsent：同 submitKey 同订单并发只有 created=true 一次，payload 不被后写覆盖', async () => {
   const dir = tmp('sales-job-atomic-');
+  // ⚠️ 2026-11-14（#45）：这里是**同一订单**的并发重提；不同订单现在会派生不同 job
+  //   （跨订单隔离见 test/salesJobStoreOrderIsolation.test.js）。
+  const orderNo = 'XSD-SAME-ORDER';
   try {
     const store = createSalesJobStore({ dir });
-    const results = await Promise.all(Array.from({ length: 12 }, (_, index) =>
-      store.createIfAbsent('scan_sale:same:1', { order_no: `XSD-${index}`, lines: [] })));
+    const results = await Promise.all(Array.from({ length: 12 }, () =>
+      store.createIfAbsent('scan_sale:same:1', { order_no: orderNo, lines: [] })));
     assert.equal(results.filter((item) => item.created).length, 1);
-    const persisted = await store.get(store.jobIdOf('scan_sale:same:1'));
+    const persisted = await store.get(store.jobIdOf(`scan_sale:same:1|order:${orderNo}`));
     const winner = results.find((item) => item.created).job;
     assert.equal(persisted.payload.order_no, winner.payload.order_no);
+    assert.equal(persisted.order_no, orderNo);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

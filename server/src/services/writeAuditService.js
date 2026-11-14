@@ -52,6 +52,16 @@ const appendEvent = (event) => {
 };
 
 /**
+ * 等待所有待落盘的审计事件（优雅退出 / 测试用）。
+ * best-effort：单个文件失败已在 appendEvent 内 warn，这里只等队列清空。
+ */
+const flushWriteAudit = async () => {
+  await Promise.allSettled([...appendQueues.values()]);
+  appendQueues.clear();
+  return true;
+};
+
+/**
  * 记录一次成功写入；best-effort，绝不抛给业务。
  * @param {object} input {domain, correlation, tableKey, tableId, operation, recordId, fields, batchId, traceId}
  */
@@ -152,4 +162,6 @@ const queryRecentWriteAudit = async ({ domain = '', limit = 1000, dir = WRITE_AU
   return rows.sort((a, b) => String(b.at).localeCompare(String(a.at)) || (b.seq - a.seq)).slice(0, limit);
 };
 
-module.exports = { recordWrite, queryWriteAudit, queryRecentWriteAudit, auditGatewayWrite };
+module.exports = {
+  recordWrite, queryWriteAudit, queryRecentWriteAudit, auditGatewayWrite, flushWriteAudit,
+};

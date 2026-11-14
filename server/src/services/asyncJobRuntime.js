@@ -18,6 +18,7 @@ const { logInfo, logWarn } = require('../utils/logger');
 
 let instance = null;
 let initialized = false;
+let recoverTimer = null;
 
 /** 取单例（统一层**固定常开**：没有"关掉"这个档）。 */
 const getAsyncJobService = () => {
@@ -50,9 +51,34 @@ const startAsyncJobService = async () => {
   try {
     const summary = await service.start();
     logInfo('async_job.start.done', summary);
+    // #50：周期巡检 running 残留（与启动同一条判据；unref 不挡进程退出）。
+    const interval = Number(ASYNC_JOBS.recover?.intervalMs || 0);
+    if (!recoverTimer && interval > 0 && typeof service.reapStaleRunning === 'function') {
+      recoverTimer = setInterval(() => {
+        service.reapStaleRunning().catch((error) => {
+          logWarn('async_job.recover.interval_failed', { error: String(error?.message || error).slice(0, 200) });
+        });
+      }, interval);
+      if (recoverTimer.unref) recoverTimer.unref();
+    }
     return summary;
   } catch (error) {
     logWarn('async_job.start.failed', { error: String(error?.message || error).slice(0, 300) });
+    return null;
+  }
+};
+
+/** 优雅退出：停巡检 + 等正在跑的 run() 收尾（最多 timeoutMs）。 */
+const stopAsyncJobService = async ({ timeoutMs } = {}) => {
+  if (recoverTimer) {
+    clearInterval(recoverTimer);
+    recoverTimer = null;
+  }
+  if (!initialized || !instance) return null;
+  try {
+    return await instance.shutdown({ timeoutMs });
+  } catch (error) {
+    logWarn('async_job.stop.failed', { error: String(error?.message || error).slice(0, 200) });
     return null;
   }
 };
@@ -62,4 +88,5 @@ module.exports = {
   setAsyncJobServiceForTests,
   resetAsyncJobServiceForTests,
   startAsyncJobService,
+  stopAsyncJobService,
 };

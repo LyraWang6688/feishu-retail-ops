@@ -22,8 +22,12 @@ const { writeManualLedger } = require('./inventory/manualLedger');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { textValue } = require('./v1BitableGateway');
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
+const { createKeyedLock } = require('../utils/keyedLock');
 
 const MAX_ROWS = 200;
+// #50：同一款货品的 read-modify-write 必须串行（两个 job 同时跑会重复增减）。
+//   进程内锁即可（PM2 单实例；多实例是已知边界）。
+const adjustmentLock = createKeyedLock();
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
 
 const normalizeRows = (rows) => {
@@ -75,7 +79,12 @@ class InventoryPairAdjustmentService {
     this.inventory = options.inventory;
   }
 
-  async adjustPairs({ productRecordId, rows, requestId, operatorOpenId } = {}) {
+  /** 公开入口：同款串行（按 product_record_id 加进程内锁），不同款并行。 */
+  async adjustPairs(input = {}) {
+    return adjustmentLock(`inventory-pair:${String(input.productRecordId || '')}`, () => this._adjustPairs(input));
+  }
+
+  async _adjustPairs({ productRecordId, rows, requestId, operatorOpenId } = {}) {
     const product = String(productRecordId || '').trim();
     if (!product) throw userError('缺少货品 record_id');
     const source = String(requestId || '').trim();
@@ -204,7 +213,12 @@ class InventoryPairAdjustmentService {
     };
   }
 
-  async setSeason({ category, season, requestId, operatorOpenId } = {}) {
+  /** 公开入口：同一品类串行（与库存改动共用"先读后写"语义）。 */
+  async setSeason(input = {}) {
+    return adjustmentLock(`inventory-season:${String(input.category || '')}`, () => this._setSeason(input));
+  }
+
+  async _setSeason({ category, season, requestId, operatorOpenId } = {}) {
     const name = String(category || '').trim();
     if (!name) throw userError('请先选择品类');
     if (typeof season !== 'boolean') throw userError('当季必须是布尔值');
