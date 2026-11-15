@@ -509,6 +509,36 @@ test('AC-SP7 ⭐ 点一下 ⇒ `h5sdk.config` ⇒ `tt.scanCode`（**JSAPI，不�
   assert.equal(/applink|feishu\.cn/i.test(source), false, '扫码打印不许跳外链（JSAPI 弹相机 ✓）');
 });
 
+test('AC-SP14 先成功、再扫到旧码失败 ⇒ **不保留上一次成功的大字**（截图：成功 + 失败同时显示）', async () => {
+  const module = await loadScanPrintModule();
+  const container = fakeContainer();
+  const { win } = fakeWin();
+  let jobCalls = 0;
+  const api = {
+    async get() {
+      return { appId: 'cli_x', timestamp: 1700000000, nonceStr: 'n1', signature: 'sig1', jssdkUrl: 'https://cdn.test/h5sdk.js' };
+    },
+    async post(url) {
+      if (url === module.SCAN_PRINT_ENDPOINTS.report) return { success: true };
+      jobCalls += 1;
+      if (jobCalls === 1) {
+        return { success: true, total_labels: 1, job_id: 'job-1', numbers: ['3877|白蓝|男'] };
+      }
+      throw Object.assign(new Error('这个码不是我们的标签码（只认「货品」里那个带「记录 ID」的标签码）。'), { status: 400 });
+    },
+  };
+  const action = module.createScanPrintAction({ api, doc: null, win });
+  const button = action.mount(container);
+  await button.handlers.click();
+  assert.match(container.elements['[data-view="scan-print-result"]'].textContent, /3877/);
+  assert.equal(container.elements['[data-view="scan-print-notice"]'].textContent, '');
+
+  await button.handlers.click();
+  assert.equal(container.elements['[data-view="scan-print-result"]'].textContent, '',
+    '第二次失败 ⇒ 上一次成功的大字必须清掉（否则读起来像这一张又成功又失败）');
+  assert.match(container.elements['[data-view="scan-print-notice"]'].textContent, /不是我们的标签码/);
+});
+
 test('AC-SP7 点了**立刻**有反馈：跑到一半时按钮已置灰 + 换成「正在打印中…」', async () => {
   const module = await loadScanPrintModule();
   const container = fakeContainer();
