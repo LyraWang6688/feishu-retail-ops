@@ -898,9 +898,12 @@ function labelSvg(label, layout, options = {}) {
   //   把它拆开后最宽那行变窄 ⇒ **右边腾出空间** ⇒ 能继续右移（她要的 +2mm 以上）。
   //   ⚠️ **默认（不传 `artifact.rows`）⇒ 走 `body.rows`，老版式逐字节不变**（有回归 AC 钉着）。
   //   ⚠️ 只换行序，**不动品牌行/二维码位置/裁切线/外边距/字号**。
-  const rows = normalizeRows(options.rows) || (Array.isArray(body.rows) && body.rows.length
-    ? body.rows
-    : (v5 ? ['itemNoColor', 'price', 'sizes'] : ['brand', 'itemNoColor', 'price', 'state', 'sizes']));
+  // V5 的行序是定稿，**忽略旧环境变量 LABEL_PRINT_ROWS 的覆盖**（生产 .env 还留着旧值）。
+  const rows = v5
+    ? (Array.isArray(body.rows) && body.rows.length ? body.rows : ['itemNoColor', 'price', 'sizes'])
+    : (normalizeRows(options.rows) || (Array.isArray(body.rows) && body.rows.length
+      ? body.rows
+      : ['brand', 'itemNoColor', 'price', 'state', 'sizes']));
   const itemNoMm = num(typography.itemNoMm, 3.6);
   const fieldMm = num(typography.fieldMm, 2.8);
   const priceMm = num(typography.priceMm, 3.2);
