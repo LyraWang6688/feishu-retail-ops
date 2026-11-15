@@ -12,6 +12,13 @@ test('handler 导出销售提交分支', () => {
   assert.equal(typeof handlers.handleSubmitOrder, 'function');
 });
 
+test('AC-SS1 单行金额用 currentAmount，不许引用已删除的 singleRowAmount', () => {
+  const file = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'handlers', 'salesSubmit.js'), 'utf8');
+  assert.equal(file.includes('singleRowAmount'), false, 'singleRowAmount 已在 2026-10-29 删除，禁止再引用');
+  assert.match(file, /const singleLineAmount = currentAmount && finalLines\.length === 1 \? \[currentAmount\] : \[\];/,
+    '单行金额必须回落到当前行金额');
+});
+
 test('路由只做分派：分支体已搬走（塞回即红）', () => {
   const index = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'index.js'), 'utf8')
     + fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'scanPage', 'actionRoutes.js'), 'utf8');

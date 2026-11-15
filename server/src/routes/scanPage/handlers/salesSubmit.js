@@ -173,7 +173,10 @@ return sendPaymentStep(res, req, {
         // ⭐ 2026-10-29：把逐件实收写回草稿行本身 —— 唯一真源 = sale.lines[].amount。
         //   `line_amount` 表单按已有行下标对应；当前这一双的金额在 addLine 时已经带上。
         const explicitLineAmounts = bodyLineAmounts.length ? bodyLineAmounts : [];
-        const singleLineAmount = singleRowAmount && finalLines.length === 1 ? [singleRowAmount] : [];
+        // ⚠️ 2026-11-15 线上 P0：这里原来引用了一个在 2026-10-29 重构里已被删除的旧变量
+        //   ⇒ 每次提交都 ReferenceError（进程 unhandled_rejection，页面一直停在"正在提交"）。
+        //   当前行的金额就是上面已取好的 `currentAmount`（来自 fields.amount），直接复用。
+        const singleLineAmount = currentAmount && finalLines.length === 1 ? [currentAmount] : [];
         const amountSource = explicitLineAmounts.length ? explicitLineAmounts : singleLineAmount;
         if (amountSource.length) {
           finalLines = finalLines.map((line, index) => {
