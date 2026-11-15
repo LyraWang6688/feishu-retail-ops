@@ -42,6 +42,15 @@ test('V5-2 第一行到第二行的纵向行距 = 4.8mm（3.6 + 1.2 空白）', 
   assert.equal(Number((y41 - y38).toFixed(2)), 4.8, '38 到 41 的基线差应为 4.8mm');
 });
 
+test('V5-5 长货号可以使用整张纸安全宽度，不提前截断', () => {
+  const lab = label();
+  lab.item_no = '1234567890';
+  lab.color = '白蓝';
+  const svg = artifact.labelSvg(lab, LABEL_PRINT_V5, cfg);
+  assert.ok(svg.includes('1234567890'), '10 位货号应完整显示');
+  assert.ok(!svg.includes('…'), '不应提前用省略号截断');
+});
+
 test('V5-4 旧 LABEL_PRINT_ROWS 覆盖不影响 V5 行序（货号+颜色同行、单价下一行）', () => {
   const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, {
     ...cfg,
