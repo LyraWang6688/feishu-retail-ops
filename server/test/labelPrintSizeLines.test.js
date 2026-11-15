@@ -42,6 +42,10 @@ test('V5-2 第一行到第二行的纵向行距 = 4.8mm（3.6 + 1.2 空白）', 
   assert.equal(Number((y41 - y38).toFixed(2)), 4.8, '38 到 41 的基线差应为 4.8mm');
 });
 
+test('V5-6 货号与颜色间距为 0.5mm', () => {
+  assert.equal(LABEL_PRINT_V5.body.itemNoColor.gapMm, 0.5);
+});
+
 test('V5-5 长货号可以使用整张纸安全宽度，不提前截断', () => {
   const lab = label();
   lab.item_no = '1234567890';
