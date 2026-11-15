@@ -269,6 +269,36 @@ export function createInventoryAdjustmentModule() {
     }
   }
 
+  function openClearConfirm() {
+    const count = productRows(state.productId)
+      .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+    if (!count) return showToast(INVENTORY_MANUAL_TEXTS.clearNoStock);
+    const body = $(state.host, '[data-view="clear-body"]');
+    if (body) body.textContent = fill(INVENTORY_MANUAL_TEXTS.clearConfirmBody, { count });
+    $(state.host, '[data-view="clear-modal"]').hidden = false;
+  }
+
+  async function clearAll() {
+    $(state.host, '[data-view="clear-modal"]').hidden = true;
+    const requestId = state.pendingRequest || crypto.randomUUID();
+    state.pendingRequest = requestId;
+    showToast(INVENTORY_MANUAL_TEXTS.clearSubmitted, { durationMs: 300000 });
+    try {
+      const result = await api.post('/api/workbench/inventory/adjustments/pairs', {
+        productRecordId: state.productId, rows: [], clearAll: true, requestId,
+      });
+      state.pendingRequest = null;
+      const jobId = String(result?.job_id || '').trim();
+      if (jobId) await waitForAsyncJob(jobId, 300000);
+      state.rows = [];
+      await loadRows(true);
+      renderSingle(state.productId);
+      showToast(INVENTORY_MANUAL_TEXTS.clearedToast);
+    } catch (error) {
+      showPageError(describeError(error));
+    }
+  }
+
   async function printSaved(yes) {
     $(state.host, '[data-view="print-modal"]').hidden = true;
     if (!yes) {
@@ -335,7 +365,7 @@ export function createInventoryAdjustmentModule() {
             <div data-view="single-rows" style="margin-top:10px"></div>
             <button class="btn small" type="button" data-add-size style="margin-top:8px">＋ 添加尺码</button>
             <p class="hint" data-view="single-note"></p>
-            <div class="row-actions"><button class="btn primary" type="button" data-save>保存库存调整</button><button class="btn" type="button" data-back>取消</button></div>
+            <div class="row-actions"><button class="btn primary" type="button" data-save>保存库存调整</button><button class="btn" type="button" data-clear-stock>${INVENTORY_MANUAL_TEXTS.clearStock}</button><button class="btn" type="button" data-back>取消</button></div>
           </div>
         </div>
         <div data-view="manual-picker" class="hidden">
@@ -353,6 +383,11 @@ export function createInventoryAdjustmentModule() {
           <div class="batch-section"><h3>状态调整</h3>
             <label class="field"><select data-field="status-filter" aria-label="${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterLabel)}"><option value="all">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterAll)}</option><option value="extra">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueExtraGroup)}</option><option value="empty">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueEmpty)}</option><option value="missing">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueMissing)}</option></select></label>
             <div data-view="batch-violations"></div></div>
+        </div>
+        <div class="manual-modal" data-view="clear-modal" hidden>
+          <div class="manual-modal-card"><h3>${INVENTORY_MANUAL_TEXTS.clearConfirmTitle}</h3><p class="hint" data-view="clear-body"></p>
+            <div class="row-actions"><button class="btn" type="button" data-clear-cancel>${INVENTORY_MANUAL_TEXTS.clearCancel}</button><button class="btn primary" type="button" data-clear-confirm>${INVENTORY_MANUAL_TEXTS.clearConfirm}</button></div>
+          </div>
         </div>
         <div class="manual-modal" data-view="print-modal" hidden>
           <div class="manual-modal-card"><h3>是否需要打印？</h3><p class="hint">库存调整已保存，可以继续打印这一款标签。</p>
@@ -388,6 +423,9 @@ export function createInventoryAdjustmentModule() {
         }
         const pick = event.target.closest?.('[data-pick-product]');
         if (pick) { void selectProduct(pick.dataset.pickProduct); return; }
+        if (event.target.closest?.('[data-clear-stock]')) { openClearConfirm(); return; }
+        if (event.target.closest?.('[data-clear-cancel]')) { $(state.host, '[data-view="clear-modal"]').hidden = true; return; }
+        if (event.target.closest?.('[data-clear-confirm]')) { void clearAll(); return; }
         if (event.target.closest?.('[data-save]')) { void savePairs(); return; }
         const season = event.target.closest?.('[data-action="season-set"]');
         if (season) { void setSeason(season.dataset.season === 'true'); return; }

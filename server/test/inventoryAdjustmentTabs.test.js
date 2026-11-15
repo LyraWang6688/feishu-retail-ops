@@ -40,6 +40,15 @@ test('AC-IA3 批量调整只保留当季 / 库存两个入口，异常编号可�
   assert.ok(html.includes('/print-intent'), '保存后可打印（#1210：后端打印意图）');
 });
 
+test('AC-IA7 单双调整有显式「清零库存」入口 + 二次确认', () => {
+  const html = source();
+  assert.ok(html.includes('data-clear-stock'), '有清零按钮');
+  assert.ok(html.includes('data-view="clear-modal"'), '有二次确认弹层');
+  assert.ok(html.includes('data-clear-confirm'), '有确认按钮');
+  assert.ok(html.includes('clearAll: true'), '提交时显式带 clearAll');
+  assert.ok(html.includes('clearConfirmBody'), '确认文案从 config 取');
+});
+
 test('AC-IA6 当季/库存：等后台 job 成功再刷新（不再看到旧值）', () => {
   const html = source();
   assert.ok(html.includes('/api/workbench/inventory/adjustments/season-flag'));
