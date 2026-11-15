@@ -445,6 +445,11 @@ const LABEL_PRINT_V5 = Object.freeze({
     contentLeftMm: 4,
     headerTopMm: 1.35,
     headerGapMm: 0.2,
+    // 2026-11-15：业务负责人要求货号与颜色间距 0.5mm（V5 专用）。
+    itemNoColor: Object.freeze({
+      ...LABEL_PRINT.body.itemNoColor,
+      gapMm: 0.5,
+    }),
     qrTopMm: 10.55,
     ruleTopMm: 10.05,
     sizesTopMm: 10.75,
