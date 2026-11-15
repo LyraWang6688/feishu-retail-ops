@@ -1070,7 +1070,7 @@ function labelSvg(label, layout, options = {}) {
       const drawLines = sizesFit ? sizesFit.lines : sizeLines;
       const emForSize = body.itemNoColor?.widthEm || {};
       drawLines.forEach((tokens, lineIndex) => {
-        const lineBaseline = cursor + (lineIndex + 0.82) * drawSizeMm * LINE_HEIGHTS.sizes;
+        const lineBaseline = cursor + num(sizesCfg.yOffsetMm, 0) + (lineIndex + 0.82) * drawSizeMm * LINE_HEIGHTS.sizes;
         let x = rightX;
         for (const token of tokens) {
           const sizeText = String(token?.size ?? '');
