@@ -42,6 +42,15 @@ test('V5-2 第一行到第二行的纵向行距 = 4.8mm（3.6 + 1.2 空白）', 
   assert.equal(Number((y41 - y38).toFixed(2)), 4.8, '38 到 41 的基线差应为 4.8mm');
 });
 
+test('V5-4 旧 LABEL_PRINT_ROWS 覆盖不影响 V5 行序（货号+颜色同行、单价下一行）', () => {
+  const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, {
+    ...cfg,
+    rows: ['brand', 'itemNo', 'colorPrice', 'sizes'],
+  });
+  assert.equal(yOfText(svg, '3877'), yOfText(svg, '白蓝'), '货号与颜色必须同一行');
+  assert.ok(yOfText(svg, '¥189') > yOfText(svg, '3877'), '单价必须在下一行');
+});
+
 test('V5-3 品牌在二维码下方居中', () => {
   const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
   const brandY = yOfText(svg, '邯美皮鞋');
