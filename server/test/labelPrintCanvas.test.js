@@ -846,7 +846,7 @@ const verticalLabel = ({ sizeLineCount = 1, perLine = 3, itemNoLines = 1 } = {})
   });
 };
 
-test('AC-C14-1 ⭐⭐ 三档内容量下"二维码中心 == 右栏内容中心 == 中段中心"（±0.5mm）', () => {
+test('AC-C14-1 ⭐⭐ 内容量变化时动态居中；右栏按 infoOffsetYMm 整体上移（±0.5mm）', () => {
   const lay = layout();
   const cfg = { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: CANDIDATE_ROWS };
   // ⚠️ 2026-10-12 改：尺码区自适应之后，"行数"由**可用高度 + 实际字宽**算出来（不再由夹具决定），
@@ -864,14 +864,14 @@ test('AC-C14-1 ⭐⭐ 三档内容量下"二维码中心 == 右栏内容中心 =
     assert.equal(m.overflows, false, `${tier.name} 不该溢出`);
     assert.ok(Math.abs(m.qr_center_mm - m.main_center_mm) <= 0.5,
       `${tier.name}：二维码中心 ${m.qr_center_mm} 应 ≈ 中段中心 ${m.main_center_mm}`);
-    assert.ok(Math.abs(m.content_center_mm - m.main_center_mm) <= 0.5,
-      `${tier.name}：右栏内容中心 ${m.content_center_mm} 应 ≈ 中段中心 ${m.main_center_mm}`);
+    const expectedCenter = Math.max(m.main_top_mm, m.main_top_mm + Math.max(0, (m.main_h_mm - m.content_total_h_mm) / 2) + LABEL_PRINT.body.infoOffsetYMm) + m.content_total_h_mm / 2;
+    assert.ok(Math.abs(m.content_center_mm - expectedCenter) <= 0.5,
+      `${tier.name}：右栏内容中心 ${m.content_center_mm} 应 ≈ 上移后的中心 ${expectedCenter}`);
     centers.push({ name: tier.name, content: m.content_center_mm, qr: m.qr_center_mm, total: m.content_total_h_mm });
   }
-  // ⭐ 行数变了（内容高变了）但**中心不变** ⇒ 就是"动态居中"的定义
-  assert.notEqual(centers[0].total, centers[1].total, '两档内容总高必须不同（否则证明不了"随行数变")');
-  assert.equal(centers[0].content, centers[1].content, '两档的**内容中心必须一致**（动态居中 ✓）');
-  assert.equal(centers[0].qr, centers[1].qr, '二维码中心也一致 ✓');
+  assert.notEqual(centers[0].total, centers[1].total, '两档内容总高必须不同');
+  // 11 个码时上移会被 mainTop 夹住；二维码仍严格居中。
+  assert.equal(centers[0].qr, centers[1].qr, '二维码中心一致 ✓');
 });
 
 test('AC-C14-2 ⭐⭐ 放不下时：**顶部对齐**（不是跑到纸外），并且记 warn', async () => {
