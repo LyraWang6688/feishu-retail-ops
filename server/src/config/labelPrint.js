@@ -449,6 +449,12 @@ const LABEL_PRINT_V5 = Object.freeze({
     itemNoColor: Object.freeze({
       ...LABEL_PRINT.body.itemNoColor,
       gapMm: 0.5,
+      // 服务器实际字体（Noto Sans）比原估算窄；按实际字宽校准，避免"配置 0.5mm、实际 4.5mm"。
+      widthEm: Object.freeze({
+        ...LABEL_PRINT.body.itemNoColor.widthEm,
+        ascii: 0.58,
+        wide: 0.65,
+      }),
     }),
     qrTopMm: 10.55,
     ruleTopMm: 10.05,
