@@ -443,7 +443,7 @@ const LABEL_PRINT_V5 = Object.freeze({
     brandAlign: 'center',
     brandGapMm: 0.65,
     contentLeftMm: 1.5,
-    headerTopMm: 1.35,
+    headerTopMm: 0.8,
     headerGapMm: 0.2,
     // 2026-11-15：业务负责人要求货号与颜色间距 0.5mm（V5 专用）。
     itemNoColor: Object.freeze({

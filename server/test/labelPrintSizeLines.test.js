@@ -64,6 +64,13 @@ test('V5-4 旧 LABEL_PRINT_ROWS 覆盖不影响 V5 行序（货号+颜色同行�
   assert.ok(yOfText(svg, '¥189') > yOfText(svg, '3877'), '单价必须在下一行');
 });
 
+test('V5-8 第一行距纸顶 0.8mm', () => {
+  assert.equal(LABEL_PRINT_V5.body.headerTopMm, 0.8);
+  const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
+  const itemY = yOfText(svg, '3877');
+  assert.ok(itemY > 0 && itemY < 5, `第一行基线应在顶部（实际 ${itemY}）`);
+});
+
 test('V5-7 二维码左边缘为 1.5mm', () => {
   const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
   assert.match(svg, /<svg x="1.5" y="10.55" width="15" height="15"/, '二维码应从 1.5mm 开始、15×15');
