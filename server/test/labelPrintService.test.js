@@ -5,7 +5,7 @@
  * 钉住的几件事（brief 里逐条点名的那些）：
  *   ① **尺码按「编号」聚合**：一张标签 = 一个编号（= `货号|颜色|类别`，= 库存键前三段），
  *      尺码那一项 = 该编号下**所有尺码 + 各自数量**（数量 = 这个尺码有几双）；
- *   ② **只印有库存的尺码**（数量 > 0；0 的不印，缺号扫码看）；
+ *   ② **普通码全量印**（无库存只印数字、不带角标）；特殊码只在有库存时印；类别缺失退回只印有库存的码；
  *   ③ **尺码按数值从小到大**（`38` < `40` < `100`；比较方式与方向都来自 `config/labelPrint.js`
  *      的 `sizes.compare` / `sizes.order`）；
  *   ④ 一行放不下自动换行（最多 `maxLines` 行；再超出省略 —— `size_overflow` 让页面补 `…`）；
@@ -55,12 +55,13 @@ const record = (id, { stockKey, state = '门盒', category, createdAt } = {}) =>
 });
 
 /** 一条「货品信息」记录（编号 / 单价 / 品牌）。 */
-const productRecord = (id, { number, price, brand } = {}) => ({
+const productRecord = (id, { number, price, brand, category } = {}) => ({
   record_id: id,
   fields: {
     [P.number]: number,
     ...(price === undefined ? {} : { [P.price]: price }),
     ...(brand === undefined ? {} : { 品牌: brand }),
+    ...(category === undefined ? {} : { [P.category]: category }),
   },
 });
 
@@ -196,11 +197,11 @@ test('尺码按编号聚合：同一编号的多个尺码 / 多双合成**一张
   assert.equal(label.number, 'YD6693-2|黑色|男');
   assert.deepEqual(label.sizes, [
     { size: 38, qty: 1 }, { size: 39, qty: 2 }, { size: 40, qty: 1 },
-  ], '尺码升序、每个尺码带数量');
+    { size: 41, qty: '' }, { size: 42, qty: '' }, { size: 43, qty: '' }, { size: 44, qty: '' },
+  ], '普通码全量：有库存带数量，无库存只留尺码');
   assert.equal(label.total_qty, 4);
-  assert.deepEqual(label.size_lines, [[
-    { size: 38, qty: 1 }, { size: 39, qty: 2 }, { size: 40, qty: 1 },
-  ]], '一行放得下 ⇒ 只有一行');
+  assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)),
+    [[38, 39, 40], [41, 42, 43], [44]], '普通码 7 个全部排上');
   assert.equal(label.size_overflow, false);
   assert.deepEqual(label.record_ids, ['r1', 'r2', 'r3', 'r4'], '这一个编号是由哪几条库存聚合的（排障用）');
 });
@@ -211,7 +212,8 @@ test('同款同码多双**不再印多张**：两条一模一样的库存 ⇒ �
   const data = await service.listLabels({});
   assert.equal(data.total_matched, 1);
   assert.equal(data.labels.length, 1);
-  assert.deepEqual(data.labels[0].size_lines, [[{ size: 42, qty: 2 }]]);
+  assert.equal(data.labels[0].sizes.find((item) => item.size === 42)?.qty, 2);
+  assert.equal(data.labels[0].total_qty, 2);
   assert.equal(data.total_pairs, 2);
 });
 
@@ -228,18 +230,48 @@ test('不同类别 / 颜色 = 不同编号 ⇒ 各出各的标签（编号里的
     ['XHB8095|黑色|男', 'XHB8095|黑色|女', 'XHB8095|米白|男'], '货架顺序：货号 → 颜色 → 类别');
 });
 
-// ── ② 只印有库存的尺码 ───────────────────────────────────────────────────
+// ── ② 普通码全量 / 特殊码只有有库存才印 ──────────────────────────────────
 
-test('只印有库存的尺码：没有库存条目的尺码不出现在标签上（0 的不印，缺号扫码看）', async () => {
+test('普通码全量：没有库存的普通码也印数字，但不带数量角标（特殊码不强制印）', async () => {
   const { service } = serviceFor({
     liveInventory: [
       record('r1', { stockKey: 'YD6693-2|黑色|男|38' }),
       record('r2', { stockKey: 'YD6693-2|黑色|男|40' }),
-      // 39 / 41 / 42… 一双都没有 ⇒ 标签上就不该有它们。
     ],
   });
   const data = await service.listLabels({});
-  assert.deepEqual(data.labels[0].sizes.map((item) => item.size), [38, 40]);
+  assert.deepEqual(data.labels[0].sizes, [
+    { size: 38, qty: 1 }, { size: 39, qty: '' }, { size: 40, qty: 1 },
+    { size: 41, qty: '' }, { size: 42, qty: '' }, { size: 43, qty: '' }, { size: 44, qty: '' },
+  ]);
+  assert.equal(data.labels[0].sizes[1].qty, '', '没有库存 ⇒ 空角标，不是 0');
+});
+
+test('普通码按「货品信息.类别」取范围（库存键里的类别可能是 A/B，不拿它猜男/女）', async () => {
+  const { service } = serviceFor({
+    liveInventory: [record('r1', { stockKey: 'A1|黑色|A|37' })],
+    product: [productRecord('rec_p1', { number: 'A1|黑色|A', category: '女' })],
+  });
+  const data = await service.listLabels({});
+  assert.deepEqual(data.labels[0].sizes.map((item) => item.size), [36, 37, 38, 39, 40]);
+});
+
+test('特殊码只有有库存才印：男 45 有货 ⇒ 出现；没货 ⇒ 不出现', async () => {
+  const { service } = serviceFor({
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|45' })],
+  });
+  const data = await service.listLabels({});
+  const sizes = data.labels[0].sizes;
+  assert.deepEqual(sizes.filter((item) => item.size === 45), [{ size: 45, qty: 1 }]);
+  assert.equal(sizes.some((item) => item.size === 46), false, '没库存的特殊码不强制印');
+});
+
+test('类别缺失时退回旧行为：只印有库存的码（不猜男/女）', async () => {
+  const { service } = serviceFor({
+    liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|A|42' })],
+  });
+  const data = await service.listLabels({});
+  assert.deepEqual(data.labels[0].sizes, [{ size: 42, qty: 1 }]);
 });
 
 // ── ③-2 尺码**按数值从小到大**（她 2026-10-08 定案：「按照从小到大排序」）──────────────────
@@ -256,20 +288,24 @@ test('尺码按数值升序：38 < 40 < 100（**不是字符串序** —— 字�
   const data = await service.listLabels({});
   const label = data.labels[0];
   assert.deepEqual(label.sizes, [
-    { size: 38, qty: 1 }, { size: 40, qty: 2 }, { size: 100, qty: 1 },
-  ], '数值升序，数量跟着尺码走');
-  assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)), [[38, 40, 100]],
-    '分行用的也是这个顺序');
+    { size: 38, qty: 1 }, { size: 39, qty: '' }, { size: 40, qty: 2 },
+    { size: 41, qty: '' }, { size: 42, qty: '' }, { size: 43, qty: '' },
+    { size: 44, qty: '' }, { size: 100, qty: 1 },
+  ], '数值升序；普通码全量 + 有库存的 100');
+  assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)),
+    [[38, 39, 40], [41, 42, 43], [44, 100]], '分行用的也是这个顺序');
 });
 
 test('尺码排序可配：`sizes.order` 倒序 / `sizes.compare` 文本序（只改 config，不改代码）', async () => {
   const liveInventory = [38, 40, 100].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|男|${size}` }));
   const { service: desc } = serviceFor({ liveInventory }, { sizes: { order: 'desc' } });
-  assert.deepEqual((await desc.listLabels({})).labels[0].sizes.map((item) => item.size), [100, 40, 38]);
+  assert.deepEqual((await desc.listLabels({})).labels[0].sizes.map((item) => item.size),
+    [100, 44, 43, 42, 41, 40, 39, 38]);
 
   const { service: asText } = serviceFor({ liveInventory }, { sizes: { compare: 'string' } });
-  assert.deepEqual((await asText.listLabels({})).labels[0].sizes.map((item) => item.size), [100, 38, 40],
-    '文本序："100" < "38" < "40"（留着这个开关是为了 S/M/L 这类非数字尺码）');
+  assert.deepEqual((await asText.listLabels({})).labels[0].sizes.map((item) => item.size),
+    [100, 38, 39, 40, 41, 42, 43, 44],
+    '文本序："100" < "38" < "39" …（留着这个开关是为了 S/M/L 这类非数字尺码）');
 });
 
 test('compareSizes：纯函数，默认数值升序；读不出数字时退化成文本比较（不产出 NaN）', () => {
@@ -332,7 +368,7 @@ test('换行：一行 3 个、上限 6 行 ⇒ **7 个尺码全部排上**（不
 });
 
 test('换行：正好两行排满（6 个）⇒ 不省略；一行放得下（3 个）⇒ 只有一行', async () => {
-  const six = [38, 39, 40, 41, 42, 43].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|男|${size}` }));
+  const six = [38, 39, 40, 41, 42, 43].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|A|${size}` }));
   const { service: service6 } = serviceFor({ liveInventory: six });
   const data6 = await service6.listLabels({});
   assert.equal(data6.labels[0].size_lines.length, 2);
@@ -344,7 +380,7 @@ test('换行：正好两行排满（6 个）⇒ 不省略；一行放得下（3 
 });
 
 test('换行：每行几个 / 最多几行都来自 config（改成 2 个一行、只允许一行 ⇒ 2 + 省略）', async () => {
-  const liveInventory = [38, 39, 40, 41].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|男|${size}` }));
+  const liveInventory = [38, 39, 40, 41].map((size, index) => record(`r${index}`, { stockKey: `A1|黑色|A|${size}` }));
   const { service } = serviceFor({ liveInventory }, { sizes: { perLine: 2, maxLines: 1 } });
   const data = await service.listLabels({});
   assert.deepEqual(data.labels[0].size_lines.map((line) => line.map((token) => token.size)), [[38, 39]]);
@@ -540,7 +576,8 @@ test('同一编号下多个状态：数量合并打印，状态清单留给她�
   });
   const data = await service.listLabels({});
   assert.equal(data.labels.length, 1);
-  assert.deepEqual(data.labels[0].size_lines, [[{ size: 42, qty: 3 }]], '三个状态的三双都算进数量');
+  assert.equal(data.labels[0].sizes.find((item) => item.size === 42)?.qty, 3, '三个状态的三双都算进数量');
+  assert.equal(data.labels[0].total_qty, 3);
   assert.deepEqual(data.labels[0].states, ['门盒', '样品', '仓库']);
   assert.equal(data.labels[0].state_text, '门盒/样品/仓库');
 });
@@ -569,7 +606,8 @@ test('所属状态为空：照常算数量／尺码，状态清单里不出现�
   });
   const data = await service.listLabels({});
   assert.equal(data.labels.length, 1);
-  assert.deepEqual(data.labels[0].sizes, [{ size: 38, qty: 2 }], '两条记录都算进数量');
+  assert.equal(data.labels[0].sizes.find((item) => item.size === 38)?.qty, 2, '两条记录都算进数量');
+  assert.equal(data.labels[0].total_qty, 2);
   assert.deepEqual(data.labels[0].states, ['门盒'], '空状态不进状态清单');
   assert.equal(data.labels[0].state_text, '门盒');
 });
@@ -600,7 +638,10 @@ test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能
   const data = await service.labelForRecord('prod1');
   assert.equal(data.labels.length, 1, '状态为空不再导致「没有可打印的标签」');
   assert.equal(data.labels[0].number, '66133-15|咖色|女');
-  assert.deepEqual(data.labels[0].sizes, [{ size: 37, qty: 1 }]);
+  assert.deepEqual(data.labels[0].sizes, [
+    { size: 36, qty: '' }, { size: 37, qty: 1 }, { size: 38, qty: '' },
+    { size: 39, qty: '' }, { size: 40, qty: '' },
+  ]);
   assert.equal(data.labels[0].state_text, '');
 });
 
@@ -637,7 +678,10 @@ test('扫码打印「精确读」：只 get 一条产品 + filter 读这一款�
   const service = createLabelPrintService(gateway);
   const data = await service.labelForRecord('prod1');
   assert.equal(data.labels.length, 1);
-  assert.deepEqual(data.labels[0].sizes, [{ size: 37, qty: 1 }, { size: 38, qty: 1 }]);
+  assert.deepEqual(data.labels[0].sizes, [
+    { size: 36, qty: '' }, { size: 37, qty: 1 }, { size: 38, qty: 1 },
+    { size: 39, qty: '' }, { size: 40, qty: '' },
+  ]);
   assert.equal(data.labels[0].number, '66133-15|咖色|女');
   assert.deepEqual(gateway.calls, ['get:product', 'filter:liveInventory']);
 });
@@ -772,7 +816,7 @@ test('底部小字默认 = 编号（默认不印，开关打开才印）；占�
     liveInventory: [record('r1', { stockKey: 'XHB8095|黑色|男|42' })],
   }, { fields: { footer: true }, footer: { template: '{itemNo}|{color}|{category}|{sizes}|{totalQty}|{price}' } });
   const withText = await withFooter.listLabels({});
-  assert.equal(withText.labels[0].footer_text, 'XHB8095|黑色|男|42×1|1|—');
+  assert.equal(withText.labels[0].footer_text, 'XHB8095|黑色|男|38 39 40 41 42×1 43 44|1|—');
 
   assert.equal(buildText('{itemNo}|{color}|{size}', { itemNo: 'A1', color: '', size: 42 }, '—'), 'A1|—|42');
   assert.throws(() => buildText('{nope}', {}, '—'), /占位符不认识/);

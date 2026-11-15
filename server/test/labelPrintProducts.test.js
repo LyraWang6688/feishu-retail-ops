@@ -10,7 +10,7 @@
  *      缺失信息说明 / 样例图 / 标签二维码 —— **没有尺码、没有库存数量**
  *
  * ── 验收标准（**先写（这一节）后做**，逐条对照）──────────────────────────────
- * · **AC-N1** 无库存但在「货品信息」里的编号 ⇒ **出现在 `listLabels` 结果里**（`sizes: []`、
+ * · **AC-N1** 无库存但在「货品信息」里的编号 ⇒ **出现在 `listLabels` 结果里**（普通码全量、
  *   `has_stock: false`、`record_ids: []`），并有 `price` / `brand_text` / 记录 ID 版二维码
  *   （`scan_url` = `/r/{recordId}`）；`total_pairs` 只数库存双数。
  * · **AC-N2** **有库存的编号行为逐字不变**：尺码 / 数量 / 排序 / 截断 / `record_ids` / 二维码
@@ -29,7 +29,7 @@
  * · **AC-N6** **只读**：`listLabels` **没有任何创建 / 更新 / 删除调用**
  *   （假网关 `create/update/delete` 直接抛错 ＋ 源码哨兵）。
  * · **AC-N7**（**如实记录的副作用**，不是她新提的口径）`labelForRecord`（扫码打印）复用的是
- *   `listLabels` ⇒ 一个「在货品信息里、但库存里没有」的编号**现在也能打出一张**（`sizes: []`），
+ *   `listLabels` ⇒ 一个「在货品信息里、但库存里没有」的编号**现在也能打出一张**（普通码全量），
  *   不再回「没有可打印的标签」。这是数据源改成并集的**必然结果**，本文件把它**钉出来**
  *   （要退回旧行为 = 显式改这里，不是"悄悄变了"）。
  *
@@ -103,6 +103,8 @@ const SOURCE_DIR = path.join(__dirname, '../src');
 
 /** 「货品信息」的创建时间列在**真表**里的名字（只读核过：`type:1001 = CreatedTime`）。 */
 const PRODUCT_CREATED_FIELD = '上架日期';
+const NORMAL_MALE = [38, 39, 40, 41, 42, 43, 44];
+const normalTokens = (sizes, qtyBySize = {}) => sizes.map((size) => ({ size, qty: qtyBySize[size] || '' }));
 
 /** 一份只覆盖指定几组的 config（其余沿用 `config/labelPrint.js` 的默认值）。 */
 const configWith = (patch = {}) => {
@@ -227,7 +229,7 @@ const captureLogs = () => {
 // AC-N1 / AC-N2 「货品信息 ∪ 实时库存」（按编号去重）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-N1 无库存但在「货品信息」里的编号 ⇒ 也出一张标签（sizes: []、has_stock: false、记录 ID 版二维码）', async () => {
+test('AC-N1 无库存但在「货品信息」里的编号 ⇒ 也出一张标签（普通码全量、has_stock: false、记录 ID 版二维码）', async () => {
   const { service } = serviceFor({
     liveInventory: [stockRecord('st1', { stockKey: 'XHB8095|棕色|男|36' })],
     product: [
@@ -242,8 +244,9 @@ test('AC-N1 无库存但在「货品信息」里的编号 ⇒ 也出一张标签
   assert.equal(data.total_without_stock, 1);
   const fresh = data.labels.find((label) => label.number === 'NEW2026|黑色|男');
   assert.ok(fresh, '⭐ 没入库的新货必须在结果里（她的口径：编号只要在货品信息里就行）');
-  assert.deepEqual(fresh.sizes, [], '⭐ 尺码 = **空数组** ⇒ 页面据此不印「尺码 + 库存数量」那一行');
-  assert.deepEqual(fresh.size_lines, [], '没有尺码就没有行');
+  assert.deepEqual(fresh.sizes, normalTokens(NORMAL_MALE), '⭐ 普通码全量、无库存不带角标');
+  assert.deepEqual(fresh.size_lines.map((line) => line.map((token) => token.size)),
+    [[38, 39, 40], [41, 42, 43], [44]], '普通码 7 个全部排上');
   assert.equal(fresh.total_qty, 0);
   assert.equal(fresh.has_stock, false, '⭐ 明确如实：这个编号在「实时库存」里没有行');
   assert.deepEqual(fresh.record_ids, [], '没有库存行 ⇒ 没有可聚合的库存记录');
@@ -257,7 +260,8 @@ test('AC-N1 无库存但在「货品信息」里的编号 ⇒ 也出一张标签
   assert.equal(fresh.category_code, '男', '类别来自编号第三段 / 「货品信息.类别」');
   // 有库存的那一张：**一字未变**（AC-N2）。
   const stocked = data.labels.find((label) => label.number === 'XHB8095|棕色|男');
-  assert.deepEqual(stocked.sizes, [{ size: 36, qty: 1 }]);
+  assert.equal(stocked.sizes.find((item) => item.size === 36)?.qty, 1, '库存里的 36 码带数量');
+  assert.equal(stocked.total_qty, 1);
   assert.equal(stocked.has_stock, true);
   assert.deepEqual(stocked.record_ids, ['st1']);
   assert.equal(stocked.scan_url, 'https://hm.bamamei.online/r/rec_brown');
@@ -282,7 +286,8 @@ test('AC-N2 混合数据集：有库存的编号与没入库的编号各排各�
     ['A050|白色|男', 'A100|黑色|男', 'B100|黑色|男'], '货架顺序仍按 货号 → 颜色 → 类别（两侧一起排）');
   assert.equal(data.labels[0].has_stock, false, 'A050 没入库');
   assert.equal(data.labels[1].has_stock, true);
-  assert.deepEqual(data.labels[1].sizes, [{ size: 40, qty: 1 }], '有库存的照旧（含所属状态那条库存）');
+  assert.equal(data.labels[1].sizes.find((item) => item.size === 40)?.qty, 1, '有库存的照旧（含所属状态那条库存）');
+  assert.equal(data.labels[1].total_qty, 1);
   assert.deepEqual(data.labels[1].states, ['仓库']);
   assert.equal(data.labels[1].state_text, '仓库');
 });
@@ -429,7 +434,7 @@ test('AC-N7 `labelForRecord`：在「货品信息」里、库存里没有的编�
   const data = await service.labelForRecord('rec_new');
   assert.equal(data.labels.length, 1, '恰好一张（不是 0 张，也不是多张）');
   assert.equal(data.labels[0].number, 'NEW2026|黑色|男');
-  assert.deepEqual(data.labels[0].sizes, [], '新货没有尺码 ⇒ 不印「尺码 + 数量」那一行');
+  assert.deepEqual(data.labels[0].sizes, normalTokens(NORMAL_MALE), '新货普通码全量、无角标');
   assert.equal(data.labels[0].has_stock, false);
 });
 
@@ -458,7 +463,7 @@ test('createdAtOf：候选列按顺序取第一个读得出的时间；都读不
 // 无库存那批的边界：空表 / 只有新货（一张库存都没有）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('边界：一张库存都没有时，只回「货品信息」里那批（sizes 全空、total_pairs 0）', async () => {
+test('边界：一张库存都没有时，只回「货品信息」里那批（普通码全量、total_pairs 0）', async () => {
   const { service } = serviceFor({
     product: [
       productRecord('p1', { number: 'A1|黑色|男', price: 100 }),
@@ -470,7 +475,7 @@ test('边界：一张库存都没有时，只回「货品信息」里那批（si
   assert.equal(data.total_pairs, 0);
   assert.equal(data.total_with_stock, 0);
   assert.equal(data.total_without_stock, 2);
-  assert.deepEqual(data.labels.map((label) => label.sizes), [[], []]);
+  assert.deepEqual(data.labels.map((label) => label.sizes), [normalTokens(NORMAL_MALE), normalTokens(NORMAL_MALE)]);
   assert.deepEqual(data.labels.map((label) => label.has_stock), [false, false]);
 });
 

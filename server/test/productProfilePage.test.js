@@ -10,8 +10,11 @@ test('AC-PP9 货品上新结果卡片可打开货品记录', () => {
   const page = read('features/domains/productProfile.js');
   assert.match(page, /data-pp-record-url="\$\{esc\(item\.recordUrl/);
   assert.match(page, /window\.open\(row\.dataset\.ppRecordUrl/);
-  assert.ok(page.includes('issueChipsOf'), '搜索结果按缺失维度生成标签');
+  assert.ok(page.includes('productIssueChipsOf'), '搜索结果按缺失维度生成标签（共享 helper）');
   assert.ok(page.includes('pp-issue'), '问题标签有独立样式');
+  const shared = read('features/shared/productIssues.js');
+  assert.ok(shared.includes('missingProduct') && shared.includes('missingTag') && shared.includes('hasSampleImage'),
+    '缺失维度只在共享 helper 里定义一份');
   assert.equal(page.includes('货号 ${esc(item.itemNo)} · 颜色'), false, '不再重复货号/颜色/类别');
 });
 

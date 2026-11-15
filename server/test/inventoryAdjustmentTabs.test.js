@@ -49,6 +49,16 @@ test('AC-IA7 单双调整有显式「清零库存」入口 + 二次确认', () =
   assert.ok(html.includes('clearConfirmBody'), '确认文案从 config 取');
 });
 
+test('AC-IA10 搜索货号复用货品上新的缺失信息：同一个接口 + 同一份 issue helper', () => {
+  const src = source();
+  assert.ok(src.includes('productIssueChipsOf'), '复用共享的缺失信息 helper');
+  assert.ok(src.includes('pp-issues') && src.includes('pp-issue'), '缺失信息用同一套样式');
+  assert.match(configSource(), /productSearchApi: '\/api\/workbench\/products\/search'/,
+    '仍然是货品上新同一个搜索接口');
+  const profile = fs.readFileSync(path.join(__dirname, '../public/workbench/features/domains/productProfile.js'), 'utf8');
+  assert.ok(profile.includes('productIssueChipsOf'), '货品资料页也走同一份 helper');
+});
+
 test('AC-IA6 当季/库存：等后台 job 成功再刷新（不再看到旧值）', () => {
   const html = source();
   assert.ok(html.includes('/api/workbench/inventory/adjustments/season-flag'));
