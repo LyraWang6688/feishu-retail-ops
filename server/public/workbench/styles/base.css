@@ -37,15 +37,7 @@ h4 { font-size: var(--font-size-base); }
 
 /* ── 外壳 ─────────────────────────────────────────────────────────────────── */
 .shell { max-width: var(--shell-max); margin: 0 auto; padding: var(--space-4); padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
-.header { display: flex; align-items: stretch; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-1); }
 .eyebrow { color: var(--text-secondary); font-size: var(--font-size-sm); }
-.auth { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-/* ⭐ 2026-11-14（业务负责人）：登录行整体压缩 —— 字号比 tab / 正文小，行高 24px，给下面省空间。
-   所有带登录行的页面统一走 .auth（首页 + label-print 独立页），不按 header 变体分开。 */
-.auth .muted,
-.auth .btn { font-size: var(--font-size-2xs); }
-/* 登录 / 去登录 都收进 24px 行高（不只是已登录后的「退出登录」） */
-.auth .btn { min-height: var(--login-row-height); height: var(--login-row-height); padding: 0 var(--space-1); }
 .muted, .subtitle, .data-caption { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .subtitle { margin: var(--space-1) 0 0; }
 .data-caption { margin: calc(-1 * var(--space-1)) 0 var(--space-4); }
@@ -235,8 +227,6 @@ th { color: var(--text-secondary); background: var(--surface-sunken); font-weigh
 /* ── 桌面（≥761px）：铺开成多列，其余与手机一致 ──────────────────────────── */
 @media (min-width: 761px) {
   .shell { padding: var(--space-6); }
-  .header { align-items: flex-end; flex-direction: row; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-1); }
-  .auth { justify-content: flex-start; }
   .main-tabs { position: static; margin: 0 0 var(--space-5); padding: 0; background: transparent; }
   .main-tab { flex: 0 0 auto; padding: var(--space-3) var(--space-6); font-size: var(--font-size-base); }
   .panel { padding: var(--card-pad); }

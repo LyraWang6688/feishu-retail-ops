@@ -335,7 +335,7 @@ test('AC-ENTRY 工作台入口：订单列表「交割单」卡片跳到独立�
   await mockWorkbenchApis(page);
   await mockDeliveryApi(page);
   await page.goto('/workbench/');
-  await expect(page.getByText('已登录：E2E')).toBeVisible();
+  await expect(page).toHaveTitle('邯美工作台 · E2E');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   expect(orderRequests).toHaveLength(0);
   await page.getByRole('button', { name: /交割单/ }).click();

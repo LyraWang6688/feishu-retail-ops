@@ -37,10 +37,7 @@ async function start() {
     }
   } catch { /* 埋点失败静默 ✓ */ }
   try {
-    const ready = await requireFeishuAuth({
-      statusElement: document.getElementById('auth-status'),
-      logoutButton: document.getElementById('logout'),
-    });
+    const ready = await requireFeishuAuth();
     if (!ready) return;
     const view = document.body.dataset.view;
     const factory = factories[view];

@@ -94,7 +94,7 @@ test('六个领域 tab + 订单列表懒加载', async ({ page }) => {
     if (new URL(request.url()).pathname === '/api/workbench/sales/orders') orderRequests.push(request.url());
   });
   await page.goto('/workbench/');
-  await expect(page.getByText('已登录：E2E')).toBeVisible();
+  await expect(page).toHaveTitle('邯美工作台 · E2E');
   await expect(page.locator('.main-tab')).toHaveText(['销售', '供应', '库存', '资金', '创作', '配置']);
 
   await page.getByRole('button', { name: '订单列表', exact: true }).click();

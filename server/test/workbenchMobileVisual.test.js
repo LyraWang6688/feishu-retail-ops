@@ -197,14 +197,7 @@ test('AC6 不依赖外链资源、不引新依赖、页面不白屏', () => {
 // AC7 登录行压缩（2026-11-14 业务负责人 C 版）+ tab 行不许有纵向滚动条
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC7 登录行全站统一 24px / 10px（比 tab 与正文小），tab 行不出现纵向滚动条', () => {
-  assert.match(tokens, /--font-size-2xs:\s*10px;/, '登录行专用 10px 字号令牌');
-  assert.match(tokens, /--login-row-height:\s*24px;/, '登录行 24px 高度令牌');
-  assert.match(base, /\.auth \.muted,[\s\S]{0,180}?font-size:\s*var\(--font-size-2xs\)/,
-    '所有页面「已登录」字号必须比 tab / 正文小');
-  assert.match(base, /\.auth \.btn\s*\{[^}]*min-height:\s*var\(--login-row-height\)/s,
-    '登录 / 去登录 所有按钮都随登录行压到 24px（不只是 btn-ghost）');
-  assert.match(base, /\.header\s*\{[^}]*margin-bottom:\s*var\(--space-1\)/s, 'header 下边距 4px');
+test('AC7 tab 行不出现纵向滚动条', () => {
   assert.match(base, /\.main-tabs\s*\{[^}]*overflow-y:\s*hidden/s,
     '只写 overflow-x 会让 overflow-y 变 auto；tab 的负 margin 会溢出成纵向滚动条');
 });
