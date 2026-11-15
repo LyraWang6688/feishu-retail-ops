@@ -22,7 +22,6 @@
  *    两条链路的消费者不同 ⇒ 各留各的模板；要一起改的时候**两处都要改**。
  */
 
-const { readFlag } = require('./envValue');
 const os = require('node:os');
 // ⭐ 2026-10-12：兜底巡检的**每日调度**开关（显式布尔语义，见 `utils/envValue.js`）
 
@@ -120,12 +119,10 @@ const EVENTS = Object.freeze({
 });
 
 /**
- * 整条链路的开关（显式布尔，**不用 `||` 兜底** —— 清空变量不等于关闭）。
- * 关掉 = 事件到达时只记一条 `product.tag_qr.disabled`，一个字都不写。
- * ⚠️ 批量补脚本**不看这个开关**：它是人手动跑的、走的是自己的闸门（见脚本文件头）。
- * ⭐ 2026-11-14（#57）：不再写死 `true` —— 改成**真开关** `TAG_QR_CODE_ENABLED`（默认开）。
+ * ⭐ 2026-11-15（业务负责人）：**不设开关** —— 货品新增就必须生成标签二维码。
+ *   原来那个"关掉二维码"的开关已删除；服务端不再读任何同类开关。
+ *   批量补脚本仍走自己的写库闸门（见脚本文件头）。
  */
-const ENABLED = readFlag(process.env, 'TAG_QR_CODE_ENABLED', true);
 
 /**
  * 批量补脚本的默认节奏（`scripts/backfill-product-tag-qr.js` 的命令行参数覆盖这里）。
@@ -141,7 +138,6 @@ const BATCH = Object.freeze({
 });
 
 const TAG_QR_CODE = Object.freeze({
-  enabled: ENABLED,
   scanUrl: SCAN_URL,
   qr: QR,
   upload: UPLOAD,

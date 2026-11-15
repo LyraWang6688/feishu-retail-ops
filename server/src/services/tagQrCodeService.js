@@ -99,10 +99,6 @@ const createTagQrCodeService = ({
 
   /** 让一条货品记录的「标签二维码」与它的 recordId 一致。失败一律抛错（调用方记日志）。 */
   const syncRecord = async (recordId, { reason = 'manual', force = false } = {}) => {
-    if (config.enabled !== true) {
-      logInfo('product.tag_qr.disabled', { record_id: recordId, reason });
-      return { record_id: recordId, status: 'skipped', reason: 'disabled' };
-    }
     ensureFieldNames();
     const scanUrl = scanUrlOf(recordId);
     const fileName = fileNameOf(recordId);
@@ -194,10 +190,6 @@ const createTagQrCodeService = ({
    * 逐条 try/catch：一条失败不带走同一包里的其他记录；失败汇总 `batch_failed`。
    */
   const handleTableChanges = async (actionList) => {
-    if (config.enabled !== true) {
-      logInfo('product.tag_qr.disabled', { action_count: (actionList || []).length });
-      return { enabled: false, results: [] };
-    }
     const results = [];
     const failed = [];
     for (const actionItem of Array.isArray(actionList) ? actionList : []) {

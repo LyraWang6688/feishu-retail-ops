@@ -182,7 +182,6 @@ const EVENTS = Object.freeze([
   'product.sample_image.drive.truncated',
   'product.sample_image.drive.uploaded',
   'product.tag_qr.batch_failed',
-  'product.tag_qr.disabled',
   'product.tag_qr.dispatch_failed',
   'product.tag_qr.failed',
   'product.tag_qr.not_wired',
