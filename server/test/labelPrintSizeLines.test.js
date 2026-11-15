@@ -41,3 +41,16 @@ test('AC-C19-3 信息区上移 2.5mm：7 个普通码仍是 3 行，但 44 整�
   assert.equal(LABEL_PRINT.body.infoOffsetYMm, -2.5, '默认值 = 这次真机修法的 2.5mm 上移');
   assert.ok(shifted.includes('>44<'), '44 码仍在图上');
 });
+
+test('AC-C19-4 品牌单独上移 0.5mm：只动品牌，货号位置不变', () => {
+  const withBrand = (offset) => ({
+    ...LABEL_PRINT,
+    body: { ...LABEL_PRINT.body, brandOffsetYMm: offset },
+  });
+  const plain = artifact.labelSvg(label(), withBrand(0), cfg);
+  const shifted = artifact.labelSvg(label(), withBrand(-0.5), cfg);
+  assert.equal(Number((yOfText(plain, '邯美皮鞋') - yOfText(shifted, '邯美皮鞋')).toFixed(2)), 0.5,
+    '品牌应上移 0.5mm');
+  assert.equal(yOfText(plain, 'XHB8095'), yOfText(shifted, 'XHB8095'), '货号位置不动');
+  assert.equal(LABEL_PRINT.body.brandOffsetYMm, -0.5, '默认值 = 这次试版的 0.5mm 上移');
+});
