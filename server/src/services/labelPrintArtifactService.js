@@ -979,7 +979,7 @@ function labelSvg(label, layout, options = {}) {
     });
   }
   const totalH = activeRows.reduce((sum, id) => sum + rowHeight(id), 0);
-  let cursor = mainTop + Math.max(0, (mainH - totalH) / 2);
+  let cursor = Math.max(mainTop, mainTop + Math.max(0, (mainH - totalH) / 2) + num(body.infoOffsetYMm, 0));
   // ⭐⭐ 2026-10-12 她问"垂直方向能不能随行数动态居中" —— **一直是动态居中的**：
   //   二维码 `qrY = mainTop + (mainH - qrMm)/2`；右栏 `cursor = mainTop + (mainH - totalH)/2`
   //   ⇒ `totalH` 随**货号几行 / 尺码几行**变 ⇒ 行数一变就**重新居中**（中心仍是中段中心）。

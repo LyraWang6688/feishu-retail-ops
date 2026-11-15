@@ -2,7 +2,7 @@
 
 /**
  * 真机 bug（2026-11-15）：普通码全量后，3877 的 44 码在纸底被打印机裁掉。
- * 修法：每行 4 个，7 个普通码排成 2 行（4+3），44 不再贴纸底。
+ * 修法：品牌与货号之间还有空白 ⇒ 右侧信息区整体上移 2.5mm（`body.infoOffsetYMm`）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -23,16 +23,21 @@ const label = (count = 7) => {
     footer_text: 'XHB8095|棕色|男',
   };
 };
-const layout = {
+const layout = (infoOffsetYMm) => ({
   ...LABEL_PRINT,
-  sizes: { ...LABEL_PRINT.sizes, perLine: 4, itemGapMm: 0.6 },
-};
+  body: { ...LABEL_PRINT.body, infoOffsetYMm },
+});
 const cfg = { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: ['brand', 'itemNo', 'colorPrice', 'sizes'] };
+const yOfText = (svg, text) => {
+  const match = new RegExp(`<text x="[-\\d.]+" y="([-\\d.]+)"[^>]*>${text}<\\/text>`).exec(svg);
+  return match ? Number(match[1]) : NaN;
+};
 
-test('AC-C19-3 7 个普通码 ⇒ 每行 4 个、排成 2 行，44 在第二行', () => {
-  const m = artifact.measureVerticalLayout(label(), layout, cfg);
-  assert.deepEqual(m.sizes_line_items, [['38', '39', '40', '41'], ['42', '43', '44']]);
-  assert.equal(m.sizes_lines, 2);
-  assert.equal(m.sizes_hidden, 0);
-  assert.equal(m.sizes_per_line, 4);
+test('AC-C19-3 信息区上移 2.5mm：7 个普通码仍是 3 行，但 44 整体上移', () => {
+  const plain = artifact.labelSvg(label(), layout(0), cfg);
+  const shifted = artifact.labelSvg(label(), layout(-2.5), cfg);
+  assert.equal(Number((yOfText(plain, '44') - yOfText(shifted, '44')).toFixed(2)), 2.5,
+    '44 码应比默认位置上移 2.5mm（品牌与货号之间的空白）');
+  assert.equal(LABEL_PRINT.body.infoOffsetYMm, -2.5, '默认值 = 这次真机修法的 2.5mm 上移');
+  assert.ok(shifted.includes('>44<'), '44 码仍在图上');
 });

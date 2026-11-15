@@ -201,7 +201,7 @@ test('尺码按编号聚合：同一编号的多个尺码 / 多双合成**一张
   ], '普通码全量：有库存带数量，无库存只留尺码');
   assert.equal(label.total_qty, 4);
   assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)),
-    [[38, 39, 40, 41], [42, 43, 44]], '普通码 7 个排成 2 行（4+3）');
+    [[38, 39, 40], [41, 42, 43], [44]], '普通码 7 个全部排上');
   assert.equal(label.size_overflow, false);
   assert.deepEqual(label.record_ids, ['r1', 'r2', 'r3', 'r4'], '这一个编号是由哪几条库存聚合的（排障用）');
 });
@@ -293,7 +293,7 @@ test('尺码按数值升序：38 < 40 < 100（**不是字符串序** —— 字�
     { size: 44, qty: '' }, { size: 100, qty: 1 },
   ], '数值升序；普通码全量 + 有库存的 100');
   assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)),
-    [[38, 39, 40, 41], [42, 43, 44, 100]], '分行用的也是这个顺序');
+    [[38, 39, 40], [41, 42, 43], [44, 100]], '分行用的也是这个顺序');
 });
 
 test('尺码排序可配：`sizes.order` 倒序 / `sizes.compare` 文本序（只改 config，不改代码）', async () => {
@@ -363,7 +363,7 @@ test('换行：一行 3 个、上限 6 行 ⇒ **7 个尺码全部排上**（不
   const label = data.labels[0];
   assert.equal(label.sizes.length, 7, '数据里 7 个尺码一个不少');
   assert.deepEqual(label.size_lines.map((line) => line.map((token) => token.size)),
-    [[38, 39, 40, 41], [42, 43, 44]], '⭐ 7 个码全部排上（44 在第二行）');
+    [[38, 39, 40], [41, 42, 43], [44]], '⭐ 7 个码全部排上（44 在第三行）');
   assert.equal(label.size_overflow, false, '⭐ 不再有省略 —— 44 码必须在');
 });
 
@@ -515,7 +515,7 @@ test('40×30mm：A4 + 6mm 边距 ⇒ 4 列 × 9 行 = 每页 36 张（自动算�
     { columns: 4, rows: 9, perPage: 36 },
   );
   assert.equal(data.layout.grid.usableWidthMm, 198);
-  assert.equal(data.layout.sizes.perLine, 4, '每行几个尺码也是 config 里的值');
+  assert.equal(data.layout.sizes.perLine, 3, '每行几个尺码也是 config 里的值');
 });
 
 test('尺寸 / 字号 / 字段开关全部来自 config：换一份 config，响应里的 layout 跟着变', async () => {

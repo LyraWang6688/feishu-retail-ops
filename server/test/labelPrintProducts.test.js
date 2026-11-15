@@ -246,7 +246,7 @@ test('AC-N1 无库存但在「货品信息」里的编号 ⇒ 也出一张标签
   assert.ok(fresh, '⭐ 没入库的新货必须在结果里（她的口径：编号只要在货品信息里就行）');
   assert.deepEqual(fresh.sizes, normalTokens(NORMAL_MALE), '⭐ 普通码全量、无库存不带角标');
   assert.deepEqual(fresh.size_lines.map((line) => line.map((token) => token.size)),
-    [[38, 39, 40, 41], [42, 43, 44]], '普通码 7 个排成 2 行（4+3）');
+    [[38, 39, 40], [41, 42, 43], [44]], '普通码 7 个全部排上');
   assert.equal(fresh.total_qty, 0);
   assert.equal(fresh.has_stock, false, '⭐ 明确如实：这个编号在「实时库存」里没有行');
   assert.deepEqual(fresh.record_ids, [], '没有库存行 ⇒ 没有可聚合的库存记录');

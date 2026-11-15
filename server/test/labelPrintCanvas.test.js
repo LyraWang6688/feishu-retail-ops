@@ -777,19 +777,19 @@ test('AC-C13-4 ⭐⭐ 新排法的**最宽那一行**与 maxSafe（逐字举例�
   const fx = (v) => Number(Number(v).toFixed(3));
   assert.equal(fx(w.widths.itemNo), 16.632, '货号那行 16.632mm');
   assert.equal(fx(w.widths.colorPrice), 15.648, '颜色+市价那行 15.648mm');
-  assert.equal(w.widest_id, 'itemNo', '⭐ 4 个/行后，最宽的是货号行');
-  assert.equal(fx(w.widest_mm), 16.632, '货号行 16.632mm');
+  assert.equal(w.widest_id, 'sizes', '⭐ 新排法里最宽的是**尺码行**（老版式是"货号+颜色"）');
+  assert.equal(fx(w.widest_mm), 17.636, '尺码行 17.636mm');
   assert.equal(w.column, 20.5, '信息栏仍是 20.5mm（字号/二维码尺寸都没动）');
   const safe = artifact.maxSafeOffsetXMm(lay, options);
-  assert.equal(safe.right, 5.368, '⭐ 新的右移上限 = 5.368mm');
-  assert.equal(safe.spare_mm, 3.868, '多出来的空间 = 栏宽 − 最宽行 = 3.868mm');
+  assert.equal(safe.right, 4.364, '⭐ 新的右移上限 = 4.364mm（老版式只有 1.5mm）');
+  assert.equal(safe.spare_mm, 2.864, '多出来的空间 = 栏宽 − 最宽行 = 2.864mm');
   // 超过即拒（逐档）
   for (const offset of [0, 2, 2.5, 4]) {
     assert.doesNotThrow(() => artifact.labelSvg(newLayoutLabel(), lay, candidateConfig({ contentOffsetXMm: offset })),
       `新排法偏移 ${offset} 应在安全区内`);
   }
-  assert.throws(() => artifact.labelSvg(newLayoutLabel(), lay, candidateConfig({ contentOffsetXMm: 5.5 })),
-    /contentOffsetXMm/, '5.5mm 超上限 ⇒ 当场拒');
+  assert.throws(() => artifact.labelSvg(newLayoutLabel(), lay, candidateConfig({ contentOffsetXMm: 4.5 })),
+    /contentOffsetXMm/, '4.5mm 超上限 ⇒ 当场拒');
   // 老版式**一点没放宽**：仍旧 1.5 / 超过即拒
   const oldSafe = artifact.maxSafeOffsetXMm(lay, { leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, label: newLayoutLabel() });
   assert.equal(oldSafe.right, 1.5, '老版式仍是 1.5mm（没有偷偷放宽）');
@@ -846,7 +846,7 @@ const verticalLabel = ({ sizeLineCount = 1, perLine = 3, itemNoLines = 1 } = {})
   });
 };
 
-test('AC-C14-1 ⭐⭐ 三档内容量下"二维码中心 == 右栏内容中心 == 中段中心"（±0.5mm）', () => {
+test('AC-C14-1 ⭐⭐ 内容量变化时动态居中；右栏按 infoOffsetYMm 整体上移（±0.5mm）', () => {
   const lay = layout();
   const cfg = { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: CANDIDATE_ROWS };
   // ⚠️ 2026-10-12 改：尺码区自适应之后，"行数"由**可用高度 + 实际字宽**算出来（不再由夹具决定），
@@ -864,14 +864,14 @@ test('AC-C14-1 ⭐⭐ 三档内容量下"二维码中心 == 右栏内容中心 =
     assert.equal(m.overflows, false, `${tier.name} 不该溢出`);
     assert.ok(Math.abs(m.qr_center_mm - m.main_center_mm) <= 0.5,
       `${tier.name}：二维码中心 ${m.qr_center_mm} 应 ≈ 中段中心 ${m.main_center_mm}`);
-    assert.ok(Math.abs(m.content_center_mm - m.main_center_mm) <= 0.5,
-      `${tier.name}：右栏内容中心 ${m.content_center_mm} 应 ≈ 中段中心 ${m.main_center_mm}`);
+    const expectedCenter = Math.max(m.main_top_mm, m.main_top_mm + Math.max(0, (m.main_h_mm - m.content_total_h_mm) / 2) + LABEL_PRINT.body.infoOffsetYMm) + m.content_total_h_mm / 2;
+    assert.ok(Math.abs(m.content_center_mm - expectedCenter) <= 0.5,
+      `${tier.name}：右栏内容中心 ${m.content_center_mm} 应 ≈ 上移后的中心 ${expectedCenter}`);
     centers.push({ name: tier.name, content: m.content_center_mm, qr: m.qr_center_mm, total: m.content_total_h_mm });
   }
-  // ⭐ 行数变了（内容高变了）但**中心不变** ⇒ 就是"动态居中"的定义
-  assert.notEqual(centers[0].total, centers[1].total, '两档内容总高必须不同（否则证明不了"随行数变")');
-  assert.equal(centers[0].content, centers[1].content, '两档的**内容中心必须一致**（动态居中 ✓）');
-  assert.equal(centers[0].qr, centers[1].qr, '二维码中心也一致 ✓');
+  assert.notEqual(centers[0].total, centers[1].total, '两档内容总高必须不同');
+  // 11 个码时上移会被 mainTop 夹住；二维码仍严格居中。
+  assert.equal(centers[0].qr, centers[1].qr, '二维码中心一致 ✓');
 });
 
 test('AC-C14-2 ⭐⭐ 放不下时：**顶部对齐**（不是跑到纸外），并且记 warn', async () => {
@@ -967,8 +967,9 @@ test('AC-C15-2 ⭐⭐⭐ 真实最大量级（38–48 共 **11** 个码）：全
   assert.equal(m.sizes_size_mm, 2.8, '⭐ 11 个码时**字号不用变**（先加行）');
   assert.equal(m.sizes_shrunk, false);
   // ⭐ 行数是**按可用高度算出来的**（不是配置里拍一个数）：11 个码排 3 行
-  // 2026-11-15：每行 4 个 ⇒ 11 个码 = **3 行（4+4+3）**
-  assert.equal(m.sizes_lines, 3, '11 个码 ⇒ 3 行（4+4+3）');
+  // ⚠️ 2026-10-12 改：恢复"每行 ≤ `sizes.perLine`(3)"之后，11 个码 = **4 行（3+3+3+2）**
+  //   （改前自适应只按宽度打包 ⇒ 一行 5 个、3 行；她真机发现"一行变 5 个了" ✗）
+  assert.equal(m.sizes_lines, 4, '11 个码 ⇒ 4 行（3+3+3+2）');
   const svg = artifact.labelSvg(lab, layout(), sizesCfgFor());
   assert.ok(!svg.includes('…'), '不许有 `…`');
   for (const size of ['38', '42', '48']) assert.ok(svg.includes(`>${size}<`), `${size} 要在图上`);
@@ -1151,7 +1152,7 @@ test('AC-C17-2 ⭐⭐ 未设 ⇒ 与现状**逐字节一致**；设了 ⇒ 行�
   assert.equal(color.y, price.y, '设了开关 ⇒ 颜色与市价同一行');
   const safe = artifact.maxSafeOffsetXMm(layout({ label: { ...LABEL_PRINT.label, leftPaddingMm: 3.5 } }),
     { ...baseCfg, rows: on.rows, label: lab });
-  assert.equal(safe.right, 5.368, '⭐ 切到新排法后右移上限 = 5.368mm（老版式只有 1.5mm）');
+  assert.equal(safe.right, 4.364, '⭐ 切到新排法后右移上限 = 4.364mm（老版式只有 1.5mm）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1160,12 +1161,12 @@ test('AC-C17-2 ⭐⭐ 未设 ⇒ 与现状**逐字节一致**；设了 ⇒ 行�
 //   ⇒ 现在每行个数**同时**受 `perLine` 与宽度约束；装不下时**先加行（≤ maxLines）→ 再缩字号 → 最后 +N** ✓
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-C18-1 ⭐⭐⭐ 真机量级：7 码 ⇒ **每行 4**、2 行（4+3）、无 `…`、字号不变', () => {
+test('AC-C18-1 ⭐⭐⭐ 真机量级：7 码 ⇒ **每行 ≤3**、3 行（3+3+1）、无 `…`、字号不变', () => {
   const lab = sizeLabel({ count: 7 });
   const m = artifact.measureVerticalLayout(lab, layout(), sizesCfgFor());
-  assert.deepEqual(m.sizes_line_items, [['38', '39', '40', '41'], ['42', '43', '44']],
-    '⭐ 一行 4 个（4+3），44 不再贴纸底');
-  assert.equal(m.sizes_lines, 2);
+  assert.deepEqual(m.sizes_line_items, [['38', '39', '40'], ['41', '42', '43'], ['44']],
+    '⭐ 一行 3 个（3+3+1）—— 不是"一行 5 个"');
+  assert.equal(m.sizes_lines, 3);
   assert.equal(m.sizes_shown, 7);
   assert.equal(m.sizes_hidden, 0, '44 码仍在');
   assert.equal(m.sizes_size_mm, 2.8, '字号不变');
@@ -1173,9 +1174,9 @@ test('AC-C18-1 ⭐⭐⭐ 真机量级：7 码 ⇒ **每行 4**、2 行（4+3）�
   assert.ok(!svg.includes('…'), '不许有 `…`');
 });
 
-test('AC-C18-2 ⭐⭐ 11 码（真实最大 38–48）⇒ **每行 4**、3 行（4+4+3）、不丢码', () => {
+test('AC-C18-2 ⭐⭐ 11 码（真实最大 38–48）⇒ **每行 ≤3**、4 行（3+3+3+2）、不丢码', () => {
   const m = artifact.measureVerticalLayout(sizeLabel({ count: 11 }), layout(), sizesCfgFor());
-  assert.deepEqual(m.sizes_line_items, [['38', '39', '40', '41'], ['42', '43', '44', '45'], ['46', '47', '48']]);
+  assert.deepEqual(m.sizes_line_items, [['38', '39', '40'], ['41', '42', '43'], ['44', '45', '46'], ['47', '48']]);
   assert.equal(m.sizes_hidden, 0);
   assert.equal(m.sizes_shown, 11);
   assert.equal(m.sizes_size_mm, 2.8, '11 个码也不用缩字号（先加行）');
@@ -1184,7 +1185,7 @@ test('AC-C18-2 ⭐⭐ 11 码（真实最大 38–48）⇒ **每行 4**、3 行�
 test('AC-C18-3 ⭐⭐ 任何档位：**每行个数 ≤ `sizes.perLine`**（用设计字宽算，跨环境确定）', () => {
   for (const count of [1, 2, 3, 4, 5, 7, 9, 11, 15, 18, 24, 40]) {
     const m = artifact.measureVerticalLayout(sizeLabel({ count }), layout(), sizesCfgFor());
-    assert.ok(m.sizes_per_line <= 4, 'perLine 上限就是配置里的 4');
+    assert.ok(m.sizes_per_line <= 3, 'perLine 上限就是配置里的 3');
     for (const line of m.sizes_line_items) {
       assert.ok(line.length <= m.sizes_per_line,
         `${count} 码时有一行放了 ${line.length} 个（上限 ${m.sizes_per_line}）—— 「一行 3 个」是配置约定`);
@@ -1193,11 +1194,11 @@ test('AC-C18-3 ⭐⭐ 任何档位：**每行个数 ≤ `sizes.perLine`**（用�
   }
 });
 
-test('AC-C18-4 ⭐ 3 码 ⇒ 一行 3 个；4 码 ⇒ 一行 4 个；`perLine` 缺失/非法 ⇒ 回落 3', () => {
+test('AC-C18-4 ⭐ 3 码 ⇒ 一行 3 个；4 码 ⇒ 3+1；`perLine` 缺失/非法 ⇒ 回落 3', () => {
   assert.deepEqual(artifact.measureVerticalLayout(sizeLabel({ count: 3 }), layout(), sizesCfgFor()).sizes_line_items,
     [['38', '39', '40']], '3 个码一行放满');
   assert.deepEqual(artifact.measureVerticalLayout(sizeLabel({ count: 4 }), layout(), sizesCfgFor()).sizes_line_items,
-    [['38', '39', '40', '41']], '4 个码 ⇒ 一行 4 个');
+    [['38', '39', '40'], ['41']], '4 个码 ⇒ 3+1（宁可加行，不加密）');
   const noPerLine = layout({ sizes: { ...LABEL_PRINT.sizes, perLine: undefined } });
   const m = artifact.measureVerticalLayout(sizeLabel({ count: 7 }), noPerLine, sizesCfgFor());
   assert.ok(m.sizes_line_items.every((line) => line.length <= 3), 'perLine 缺失 ⇒ 回落 3');
@@ -1210,7 +1211,7 @@ test('AC-C18-5 ⭐ 优先级逐条钉住：**先加行 → 再缩字号 → 最�
   const cfg = sizesCfgFor();
   // ① 先加行：7 码 3 行、字号不变（不是"缩字号挤成 2 行"）
   const seven = artifact.measureVerticalLayout(sizeLabel({ count: 7 }), layout(), cfg);
-  assert.equal(seven.sizes_lines, 2);
+  assert.equal(seven.sizes_lines, 3);
   assert.equal(seven.sizes_size_mm, 2.8, '优先加行、**不**缩字号');
   // ② 行数顶到上限/高度不够 ⇒ 才缩字号（11 码仍是 2.8；更多才降）
   const many = artifact.measureVerticalLayout(sizeLabel({ count: 15 }), layout(), cfg);
@@ -1227,11 +1228,11 @@ test('AC-C18-5 ⭐ 优先级逐条钉住：**先加行 → 再缩字号 → 最�
   assert.ok(lines.some((line) => line.includes('label.print.sizes_overflow')), '要记 warn');
 });
 
-test('AC-C19-1 ⭐⭐⭐ 她那款 7 码：4+3，且她点名的 **41 / 42 / 44 三个码逐字都在图上**', () => {
+test('AC-C19-1 ⭐⭐⭐ 她那款 7 码：3+3+1，且她点名的 **41 / 42 / 44 三个码逐字都在图上**', () => {
   const lab = sizeLabel({ count: 7 });
   const cfg = sizesCfgFor();
   const m = artifact.measureVerticalLayout(lab, layout(), cfg);
-  assert.deepEqual(m.sizes_line_items, [['38', '39', '40', '41'], ['42', '43', '44']]);
+  assert.deepEqual(m.sizes_line_items, [['38', '39', '40'], ['41', '42', '43'], ['44']]);
   const svg = artifact.labelSvg(lab, layout(), cfg);
   for (const size of ['41', '42', '44']) {
     assert.ok(svg.includes(`>${size}<`), `⭐ ${size} 码必须在图上（她今天点名丢的就是这几个）`);
