@@ -848,7 +848,7 @@ function labelSvg(label, layout, options = {}) {
     const align = String(body.brandAlign || 'center');
     const anchor = align === 'left' ? 'start' : (align === 'right' ? 'end' : 'middle');
     const tx = align === 'left' ? x0 : (align === 'right' ? x0 + contentW : x0 + contentW / 2);
-    parts.push(`<text x="${round(tx)}" y="${round(y0 + brandMm * 0.85)}" font-family="${FONT_FAMILY}" font-size="${round(brandMm)}" text-anchor="${anchor}">${escapeXml(brandText)}</text>`);
+    parts.push(`<text x="${round(tx)}" y="${round(y0 + brandMm * 0.85 + num(body.brandOffsetYMm, 0))}" font-family="${FONT_FAMILY}" font-size="${round(brandMm)}" text-anchor="${anchor}">${escapeXml(brandText)}</text>`);
     mainTop = y0 + lineH + num(body.brandGapMm, 0.6);
   }
 
