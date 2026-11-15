@@ -254,6 +254,10 @@ export function createScanPrintAction(options = {}) {
     state.busy = true;
     // ⭐⭐ 2026-10-15：**每一步都带着"我是哪一步挂的"**（真机看不到控制台 ⇒ 这是唯一的线索来源 ✓）
     progress.step = 'signature';
+    // ⭐ 2026-11-15（业务负责人截图）：上一次成功的大字 + 这一次失败的小字会同时留在页面上，
+    //   看起来像"这一张失败了、但又打印出来了" ✗。每次开扫先清空两行，结果只反映**这一次**。
+    resultLine('');
+    notice('');
     try {
       // 过程不往小字那行写（按钮自己就是「正在打印中…（已 N 秒）」；同一件事不说两遍）。
       const signature = await api.get(signaturePath(win?.location?.href || ''));
