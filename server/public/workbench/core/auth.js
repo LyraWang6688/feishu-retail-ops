@@ -1,4 +1,5 @@
 import { api } from './api-client.js';
+import { setUserTitle } from './userTitle.js';
 
 // 飞书登录入口。`return_to` 带上当前页（含查询串），登录完回到这里。
 export const feishuLoginUrl = () =>
@@ -53,7 +54,7 @@ export async function requireFeishuAuth({ statusElement } = {}) {
   const name = body.user?.name || '飞书用户';
   // ⭐ 2026-11-15（业务负责人）：不再保留「已登录：王颖 / 退出登录」那一行；
   //   姓名拼进容器标题（浏览器 / 飞书 WebView 的 document.title）——"邯美工作台 · 王颖"。
-  document.title = `邯美工作台 · ${name}`;
+  setUserTitle(name);
   if (statusElement) statusElement.textContent = `已登录：${name}`;
   return true;
 }

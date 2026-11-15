@@ -27,8 +27,10 @@ const WORKBENCH = path.join(__dirname, '../public/workbench/core');
 const loadAuthModule = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-auth-'));
   fs.copyFileSync(path.join(WORKBENCH, 'api-client.js'), path.join(dir, 'api-client.mjs'));
+  fs.copyFileSync(path.join(WORKBENCH, 'userTitle.js'), path.join(dir, 'userTitle.mjs'));
   const authSource = fs.readFileSync(path.join(WORKBENCH, 'auth.js'), 'utf8')
-    .replace("from './api-client.js'", "from './api-client.mjs'");
+    .replace("from './api-client.js'", "from './api-client.mjs'")
+    .replace("from './userTitle.js'", "from './userTitle.mjs'");
   fs.writeFileSync(path.join(dir, 'auth.mjs'), authSource, 'utf8');
   return import(pathToFileURL(path.join(dir, 'auth.mjs')).href);
 };

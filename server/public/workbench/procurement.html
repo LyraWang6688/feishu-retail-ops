@@ -15,6 +15,10 @@
   <script src="/workbench/shared/ui-tap.js"></script>
   <script>if (window.dshUiTap) window.dshUiTap.bind({ path: '/api/workbench/ui-tap', page: 'workbench' });</script>
   <script type="module">
+    import { syncUserTitle } from '/workbench/core/userTitle.js';
+    syncUserTitle();
+  </script>
+  <script type="module">
     import { mountProcurementPage } from '/workbench/features/procurement/index.js';
     mountProcurementPage(document.getElementById('procurement-app'));
   </script>

@@ -17,6 +17,10 @@
   <main class="shell" id="sales-delivery-app"></main>
   <script src="shared/ui-tap.js"></script>
   <script type="module">
+    import { syncUserTitle } from '/workbench/core/userTitle.js';
+    syncUserTitle();
+  </script>
+  <script type="module">
     import { mountSalesDeliveryPage } from './features/sales-delivery/index.js';
     mountSalesDeliveryPage(document.getElementById('sales-delivery-app'));
   </script>

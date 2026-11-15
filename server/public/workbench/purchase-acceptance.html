@@ -18,6 +18,10 @@
   <main class="shell" id="purchase-acceptance-app"></main>
   <script src="shared/ui-tap.js"></script>
   <script type="module">
+    import { syncUserTitle } from '/workbench/core/userTitle.js';
+    syncUserTitle();
+  </script>
+  <script type="module">
     import { createOrdersModule } from './features/orders/index.js';
     createOrdersModule({ mode: 'purchase' }).mount(document.getElementById('purchase-acceptance-app'));
   </script>

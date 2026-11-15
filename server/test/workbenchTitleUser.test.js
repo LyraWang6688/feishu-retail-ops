@@ -11,8 +11,24 @@ const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
 test('AC-TITLE1 登录后把姓名写进 document.title', () => {
   const auth = read('core/auth.js');
-  assert.match(auth, /document\.title = `邯美工作台 · \$\{name\}`/, '标题必须是「邯美工作台 · 姓名」');
+  const title = read('core/userTitle.js');
+  assert.match(title, /document\.title = `邯美工作台 · \$\{name \|\| '飞书用户'\}`/,
+    '标题必须是「邯美工作台 · 姓名」');
   assert.match(auth, /body\.user\?\.name \|\| '飞书用户'/, '取 /me 返回的姓名');
+  assert.match(auth, /setUserTitle\(name\)/, '首页/标签打印复用同一份写标题逻辑');
+});
+
+test('AC-TITLE3 所有工作台容器页都会把姓名写进标题', () => {
+  const pages = [
+    'index.html', 'label-print.html', 'after-sales.html', 'procurement.html',
+    'purchase-acceptance.html', 'sales-delivery.html', 'write-audit.html',
+  ];
+  for (const page of pages) {
+    const html = read(page);
+    const viaAuth = html.includes('/workbench/main.js') || html.includes('/workbench/standalone.js');
+    const viaSync = html.includes('syncUserTitle');
+    assert.ok(viaAuth || viaSync, `${page} 必须走 requireFeishuAuth 或 syncUserTitle，否则标题不会带姓名`);
+  }
 });
 
 test('AC-TITLE2 首页与 label-print 都不再保留登录行 / 退出登录', () => {
