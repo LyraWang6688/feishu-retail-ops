@@ -8,22 +8,11 @@ import { api } from '../../core/api-client.js';
 import { PRODUCT_PROFILE_API, PRODUCT_PROFILE_TEXTS as T } from '../../config/productProfile.js';
 import { showToast } from '../shared/toast.js';
 import { bindDomainAction } from './dataConfigAction.js';
+import { productIssueChipsOf } from '../shared/productIssues.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, k) => (values[k] == null ? '' : String(values[k])));
 const COMPLETE_PAGE_SIZE = 40;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-const issueChipsOf = (item) => {
-  const issues = [];
-  if (!item.hasSampleImage) issues.push(T.issueSample);
-  if (item.missingProduct && item.missingProduct !== T.completeValue) {
-    issues.push(fill(T.issueProduct, { value: item.missingProduct }));
-  }
-  if (item.missingTag && item.missingTag !== T.completeValue) {
-    issues.push(fill(T.issueTag, { value: item.missingTag }));
-  }
-  return issues;
-};
 
 const cardsHtml = () => `
   <div class="domain-cards">
@@ -145,7 +134,7 @@ async function loadSearch(host, q) {
     results.innerHTML = items.map((item) => `
       <div class="pp-row" data-pp-record-url="${esc(item.recordUrl || '')}">
         ${item.hasSampleImage && item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" loading="lazy" decoding="async" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
-        <div class="pp-meta"><b>${esc(item.number)}</b>${issueChipsOf(item).length ? `<div class="pp-issues">${issueChipsOf(item).map((issue) => `<span class="pp-issue">${esc(issue)}</span>`).join('')}</div>` : ''}</div>
+        <div class="pp-meta"><b>${esc(item.number)}</b>${productIssueChipsOf(item).length ? `<div class="pp-issues">${productIssueChipsOf(item).map((issue) => `<span class="pp-issue">${esc(issue)}</span>`).join('')}</div>` : ''}</div>
       </div>`).join('');
     results.querySelectorAll('img[data-pp-thumb]').forEach((img) => {
       img.addEventListener('error', () => {

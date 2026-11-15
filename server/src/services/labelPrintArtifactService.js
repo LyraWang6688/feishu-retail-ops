@@ -1329,7 +1329,7 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
       number: label.number || label.key || '',
       item_no: label.item_no || '',
       color: label.color || '',
-      sizes: (label.sizes || []).map((item) => `${item.size}×${item.qty}`).join(' '),
+      sizes: (label.sizes || []).map((item) => (item.qty ? `${item.size}×${item.qty}` : String(item.size))).join(' '),
       total_qty: label.total_qty ?? null,
     });
   }

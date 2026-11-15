@@ -12,6 +12,7 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { describeError, showPageError } from '../../core/ui.js';
 import { showToast } from '../shared/toast.js';
+import { productIssueChipsOf } from '../shared/productIssues.js';
 import { scanCodeRaw, scanTargetUrl } from '../scan/launch.js';
 import { INVENTORY_MANUAL_CARDS, INVENTORY_MANUAL_TEXTS } from '../../config/inventoryAdjustment.js';
 
@@ -136,7 +137,13 @@ export function createInventoryAdjustmentModule() {
       if (status) status.textContent = items.length ? '' : INVENTORY_MANUAL_TEXTS.singleSearchEmpty;
       if (results) {
         results.innerHTML = items.length
-          ? `<div class="domain-cards">${items.map((item) => `<button class="entry-card card-button" type="button" data-pick-product="${escapeHtml(item.recordId || '')}"><span class="icon">🔎</span><h3>${escapeHtml(item.number || '')}</h3></button>`).join('')}</div>`
+          ? `<div class="domain-cards">${items.map((item) => {
+            const issues = productIssueChipsOf(item);
+            const issueHtml = issues.length
+              ? `<div class="pp-issues">${issues.map((issue) => `<span class="pp-issue">${escapeHtml(issue)}</span>`).join('')}</div>`
+              : '';
+            return `<button class="entry-card card-button" type="button" data-pick-product="${escapeHtml(item.recordId || '')}"><span class="icon">🔎</span><h3>${escapeHtml(item.number || '')}</h3>${issueHtml}</button>`;
+          }).join('')}</div>`
           : '';
       }
     } catch {

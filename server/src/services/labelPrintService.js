@@ -6,7 +6,7 @@
  * 业务负责人 2026-10-08 **定案**的版式改造（40×30mm）：
  *   · **一张标签 = 一个编号**（不是一双）—— 尺码那一项 = 该编号下**所有尺码 + 各自数量**
  *     （数量是角标：小号字下沉；**不用 Unicode 下标字符**，见 config 的 `SIZES`）；
- *   · **只印有库存（数量>0）的尺码**（0 的不印，缺号扫码看）；
+ *   · **普通码全量印**（无库存只印尺码、不带角标）；特殊码只印有库存的；
  *   · **尺码按数值从小到大**（`38` < `40` < `100`，不是字符串序）⇒ config 的 `sizes.order` / `sizes.compare`；
  *     一行放不下**自动换行**（`maxLines` 是**安全上限**，默认 6 —— **不是固定行数**；
  *     真正装不下才省略并留 `…`）—— `perLine` / `maxLines` 来自 config；
@@ -60,6 +60,7 @@ const { getConfigRows } = require('./configTableCache');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_PRINT, resolveGrid } = require('../config/labelPrint');
 const { SCAN_URL } = require('../config/tagQrCode');
+const { buildSizeLines, planSizeTokens } = require('./labelSizePlan');
 const { buildRecordIdScanUrl } = require('./tagQrCodeService');
 const { textValue } = require('./v1BitableGateway');
 const { parseStockKey } = require('./liveInventoryIndex');
@@ -170,23 +171,6 @@ const compareSizes = (left, right, sizesConfig = {}) => {
     ? leftNumber - rightNumber
     : String(left).localeCompare(String(right), 'zh-CN');
   return sizesConfig.order === 'desc' ? -delta : delta;
-};
-
-/**
- * 尺码 + 数量 → **按每行几个自动分行**（她定案的规则 ③）。
- * 返回 `{ lines, overflow }`：`lines` 最多 `maxLines` 行（**安全上限**；每行至多 `perLine` 个），
- * `overflow = true` 表示还有尺码没排上（页面在最后一行尾上补 `…`，**不静默吞掉**）。
- */
-const buildSizeLines = (sizes, sizesConfig = {}) => {
-  const perLine = Number.isInteger(sizesConfig.perLine) && sizesConfig.perLine > 0 ? sizesConfig.perLine : 3;
-  // 安全上限（默认 6）：**它不是"固定行数"** —— 打印产物那边还会按"可用高度 + 实际字宽"再自适应
-  const maxLines = Number.isInteger(sizesConfig.maxLines) && sizesConfig.maxLines > 0 ? sizesConfig.maxLines : 6;
-  const visible = sizes.slice(0, perLine * maxLines);
-  const lines = [];
-  for (let index = 0; index < visible.length; index += perLine) {
-    lines.push(visible.slice(index, index + perLine));
-  }
-  return { lines, overflow: sizes.length > visible.length };
 };
 
 /**
@@ -449,7 +433,7 @@ const createLabelPrintService = (gateway, options = {}) => {
    *     · 队列的单品 / 表单链路也复用它。
    *
    * 数据源 = **「货品信息」∪「实时库存」**（按**编号**去重，见文件头）：
-   *   · 有库存行的编号 ⇒ 尺码 + 数量角标；没有库存行的新货 ⇒ 也出一张（不印尺码那一行）。
+   *   · 有库存行的编号 ⇒ 普通码全量 + 数量角标；没有库存行的新货 ⇒ 也出一张（普通码全量，不带角标）。
    *
    * @param {{keyword?: string}} input
    */
@@ -498,7 +482,7 @@ const createLabelPrintService = (gateway, options = {}) => {
     const brandFieldName = config.brand?.from === 'table' ? String(config.brand.tableFieldName || '').trim() : '';
     const productIndex = buildProductIndex(productRecords, productFields, brandFieldName, []);
 
-    // 没有库存行、但在「货品信息」里的编号 ⇒ 每个编号一张「新品标签」（sizes 为空 ⇒ 不印尺码行）。
+    // 没有库存行、但在「货品信息」里的编号 ⇒ 每个编号一张「新品标签」（普通码全量、无角标）。
     let withoutStock = [];
     for (const [number, product] of productIndex) {
       if (stockedNumbers.has(number)) continue;
@@ -585,12 +569,16 @@ const createLabelPrintService = (gateway, options = {}) => {
         if (!product) missingPriceNoProduct += 1;
       }
       const priceText = config.fields?.price ? formatPrice(price, config.price) : '';
-      const sizes = [...group.sizes.entries()]
-        .map(([sizeValue, quantity]) => ({ size: sizeValue, qty: quantity }))
-        .sort((left, right) => compareSizes(left.size, right.size, config.sizes));
+      // ⭐ 2026-11-15（业务负责人）：普通码全量印（无库存只印码、不带角标）；
+      //   特殊码只在该尺码有库存时印；类别缺失 ⇒ 退回旧行为（只印有库存的码）。
+      const sizes = planSizeTokens({
+        stockSizes: group.sizes,
+        category: product?.category || group.category_code,
+        compare: (left, right) => compareSizes(left.size, right.size, config.sizes),
+      });
       const { lines, overflow } = buildSizeLines(sizes, config.sizes);
       const states = [...group.states].sort((left, right) => stateRank(left) - stateRank(right));
-      const totalQty = sizes.reduce((sum, item) => sum + item.qty, 0);
+      const totalQty = sizes.reduce((sum, item) => sum + (Number(item.qty) || 0), 0);
       const brandText = (brandFieldName && product?.brand) || String(config.brand?.text ?? '');
       const productRecordId = String(product?.record_id || '').trim();
       let scanUrl;
@@ -605,7 +593,7 @@ const createLabelPrintService = (gateway, options = {}) => {
         itemNo: group.item_no,
         color: group.color,
         category: group.category,
-        sizes: sizes.map((item) => `${item.size}×${item.qty}`).join(' '),
+        sizes: sizes.map((item) => (item.qty ? `${item.size}×${item.qty}` : String(item.size))).join(' '),
         totalQty,
         price: priceText,
         state: states.join(config.texts.stateSeparator),
