@@ -27,7 +27,7 @@ export function showLoginButton() {
   return button;
 }
 
-export async function requireFeishuAuth({ statusElement, logoutButton }) {
+export async function requireFeishuAuth({ statusElement } = {}) {
   let body;
   try {
     body = await api.get('/api/auth/feishu/me');
@@ -50,11 +50,10 @@ export async function requireFeishuAuth({ statusElement, logoutButton }) {
     window.location.href = feishuLoginUrl();
     return false;
   }
-  statusElement.textContent = `已登录：${body.user?.name || '飞书用户'}`;
-  logoutButton.classList.remove('hidden');
-  logoutButton.addEventListener('click', async () => {
-    await fetch('/api/auth/feishu/logout', { method: 'POST', credentials: 'include' });
-    window.location.reload();
-  });
+  const name = body.user?.name || '飞书用户';
+  // ⭐ 2026-11-15（业务负责人）：不再保留「已登录：王颖 / 退出登录」那一行；
+  //   姓名拼进容器标题（浏览器 / 飞书 WebView 的 document.title）——"邯美工作台 · 王颖"。
+  document.title = `邯美工作台 · ${name}`;
+  if (statusElement) statusElement.textContent = `已登录：${name}`;
   return true;
 }

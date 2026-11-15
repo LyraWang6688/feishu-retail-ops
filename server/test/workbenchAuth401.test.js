@@ -94,6 +94,16 @@ test('工作台 401：页面上还有一个能点的「去登录」（自动跳�
   assert.equal(typeof button.listeners.click, 'function');
 });
 
+test('登录成功：姓名写进容器标题「邯美工作台 · 王颖」', async () => {
+  installGlobals();
+  global.fetch = async () => jsonResponse(200, { success: true, enabled: true, authenticated: true, user: { name: '王颖' } });
+  const { requireFeishuAuth } = await loadAuthModule();
+
+  const ready = await requireFeishuAuth({});
+  assert.equal(ready, true);
+  assert.equal(document.title, '邯美工作台 · 王颖');
+});
+
 test('工作台 403（账号未被授权）→ 不跳登录，抛出去让页面显示真实原因', async () => {
   const { location, element } = installGlobals();
   global.fetch = async () => jsonResponse(403, { success: false, error: '当前飞书账号未被授权使用工作台' });

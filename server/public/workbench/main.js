@@ -195,10 +195,7 @@ async function start() {
   renderMainTabs();
   bindMainTabClicks();
   try {
-    const ready = await requireFeishuAuth({
-      statusElement: document.getElementById('auth-status'),
-      logoutButton: document.getElementById('logout'),
-    });
+    const ready = await requireFeishuAuth();
     if (!ready) return;
     activateModule(initialModule);
   } catch (error) {
