@@ -58,7 +58,7 @@
 const QRCode = require('qrcode');
 const { getConfigRows } = require('./configTableCache');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { LABEL_PRINT, resolveGrid } = require('../config/labelPrint');
+const { LABEL_PRINT, LABEL_PRINT_V5, resolveGrid } = require('../config/labelPrint');
 const { SCAN_URL } = require('../config/tagQrCode');
 const { buildSizeLines, planSizeTokens } = require('./labelSizePlan');
 const { buildRecordIdScanUrl } = require('./tagQrCodeService');
@@ -372,7 +372,7 @@ const createShortTtlCache = ({ now, ttlMs, event, load, maxEntries = 1 }) => {
 
 const createLabelPrintService = (gateway, options = {}) => {
   if (!gateway) throw new Error('LabelPrintService requires gateway');
-  const config = options.config || LABEL_PRINT;
+  const config = options.config || LABEL_PRINT_V5;
   const now = options.now || (() => Date.now());
   // 读飞书标签底表时的瞬时错误重试：判据与订单/库存查询同一份（config/orderReadRetry）。
   const readRetry = options.readRetry || resolveOrderReadRetryConfig();

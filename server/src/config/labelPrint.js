@@ -413,8 +413,52 @@ const resolveGrid = (config = LABEL_PRINT) => {
   return { columns, rows, perPage: columns * rows, usableWidthMm, usableHeightMm };
 };
 
+/**
+ * ⭐ 2026-11-15 V5 定稿（业务负责人确认）：
+ *   - 第一行货号+颜色（居中），第二行单价；
+ *   - 二维码 15×15 左侧，品牌在二维码下方；
+ *   - 尺码 3.6mm、横向 2mm、两行空白 1.2mm（行距 4.8mm）；
+ *   - 正式 SVG 字宽较宽，尺码横向按 0.80 压缩以保持 3 个一行且不裁右边。
+ * 旧版 LABEL_PRINT 保留给历史用例/回退；线上服务默认用这一份。
+ */
+const LABEL_PRINT_V5 = Object.freeze({
+  ...LABEL_PRINT,
+  typography: Object.freeze({
+    ...LABEL_PRINT.typography,
+    itemNoMm: 4.2,
+    fieldMm: 3.8,
+    sizeMm: 3.6,
+    priceMm: 4.0,
+  }),
+  sizes: Object.freeze({
+    ...LABEL_PRINT.sizes,
+    itemGapMm: 2,
+    lineHeight: 1.3333,
+    xScale: 0.8,
+    fitWidthMm: 100,
+  }),
+  body: Object.freeze({
+    ...LABEL_PRINT.body,
+    layout: 'v5',
+    rows: Object.freeze(['itemNoColor', 'price', 'sizes']),
+    brandRow: 'underQr',
+    brandAlign: 'center',
+    brandGapMm: 0.65,
+    contentLeftMm: 4,
+    headerTopMm: 1.35,
+    headerGapMm: 0.2,
+    qrTopMm: 10.55,
+    ruleTopMm: 10.05,
+    sizesTopMm: 10.75,
+    sizesWidthMm: 18,
+    sizesMaxHeightMm: 15,
+    qrGapMm: 1.5,
+  }),
+});
+
 module.exports = {
   LABEL_PRINT,
+  LABEL_PRINT_V5,
   SCAN_PRINT,
   ROW_IDS,
   resolveGrid,
