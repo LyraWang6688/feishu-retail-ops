@@ -833,6 +833,9 @@ function labelSvg(label, layout, options = {}) {
   const x0 = leftPadMm + borderMm;
   const y0 = padMm + borderMm;
   const contentW = Math.max(0, widthMm - x0 - (padMm + borderMm));
+  // V5 顶部两行可以使用**整张纸的安全宽度**（左右各 1.5mm），不必跟着二维码的 4mm 左留白缩窄。
+  const headerLeft = v5 ? padMm + borderMm : x0;
+  const headerW = v5 ? Math.max(0, widthMm - 2 * (padMm + borderMm)) : contentW;
   const contentBottom = heightMm - y0;
 
   const parts = [];
@@ -914,7 +917,7 @@ function labelSvg(label, layout, options = {}) {
   const sizesLineFactor = num(sizesCfg.lineHeight, LINE_HEIGHTS.sizes);
 
   const itemPlan = planItemNoColor(label, layout, v5
-    ? { availableWidthMm: contentW }
+    ? { availableWidthMm: headerW }
     : {
       designWidthMm: widthMm,
       leftPaddingMm: options.leftPaddingMm,
@@ -1081,7 +1084,7 @@ function labelSvg(label, layout, options = {}) {
       const itemW = itemPlan.itemNoText ? textWidthMm(itemPlan.itemNoText, itemPlan.itemNoSizeMm, em) : 0;
       const colorW = itemPlan.colorText ? textWidthMm(itemPlan.colorText, fieldMm, em) : 0;
       const totalW = itemW + (itemPlan.itemNoText && itemPlan.colorText ? itemPlan.gapMm : 0) + colorW;
-      let x = v5 ? x0 + Math.max(0, (contentW - totalW) / 2) : rightX;
+      let x = v5 ? headerLeft + Math.max(0, (headerW - totalW) / 2) : rightX;
       if (itemPlan.itemNoText) {
         parts.push(`<text x="${round(x)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(itemPlan.itemNoSizeMm)}" font-weight="800">${escapeXml(itemPlan.itemNoText)}</text>`);
         x += textWidthMm(itemPlan.itemNoText, itemPlan.itemNoSizeMm, body.itemNoColor?.widthEm || {}) + itemPlan.gapMm;
@@ -1092,7 +1095,7 @@ function labelSvg(label, layout, options = {}) {
     } else if (id === 'price') {
       const priceText = String(label.price_text);
       const px = v5
-        ? x0 + Math.max(0, (contentW - textWidthMm(priceText, priceMm, body.itemNoColor?.widthEm || {})) / 2)
+        ? headerLeft + Math.max(0, (headerW - textWidthMm(priceText, priceMm, body.itemNoColor?.widthEm || {})) / 2)
         : rightX;
       parts.push(`<text x="${round(px)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(priceMm)}" font-weight="700">${escapeXml(priceText)}</text>`);
     } else if (id === 'state') {
