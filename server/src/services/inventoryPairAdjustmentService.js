@@ -34,7 +34,7 @@ const normalizeRows = (rows) => {
   if (!Array.isArray(rows) || !rows.length) throw userError('请至少保留一行库存');
   if (rows.length > MAX_ROWS) throw userError(`一次最多调整 ${MAX_ROWS} 行`);
   const seen = new Set();
-  return rows.map((row) => {
+  const normalized = rows.map((row) => {
     const size = Number(row?.size);
     const quantity = Number(row?.quantity);
     const state = String(row?.state || '').trim();
@@ -46,6 +46,10 @@ const normalizeRows = (rows) => {
     seen.add(key);
     return { size, state, quantity };
   }).filter((row) => row.quantity > 0);
+  // ⚠️ 2026-11-15：过滤后再判一次 —— 全 0 行不能靠“隐式空数组”清库存；
+  //   整款清零必须显式传 clearAll:true（见 _adjustPairs）。
+  if (!normalized.length) throw userError('请至少保留一行数量大于 0 的库存');
+  return normalized;
 };
 
 
@@ -84,12 +88,16 @@ class InventoryPairAdjustmentService {
     return adjustmentLock(`inventory-pair:${String(input.productRecordId || '')}`, () => this._adjustPairs(input));
   }
 
-  async _adjustPairs({ productRecordId, rows, requestId, operatorOpenId } = {}) {
+  async _adjustPairs({ productRecordId, rows, clearAll = false, requestId, operatorOpenId } = {}) {
     const product = String(productRecordId || '').trim();
     if (!product) throw userError('缺少货品 record_id');
     const source = String(requestId || '').trim();
     if (!source) throw userError('缺少请求编号');
-    const desired = normalizeRows(rows);
+    if (clearAll && Array.isArray(rows) && rows.length) {
+      throw userError('清零时不能再提交库存行');
+    }
+    // 整款清零：目标为空，下面按现有条数逐尺码走 MANUAL_DECREASE ⇒ 全部删行。
+    const desired = clearAll ? [] : normalizeRows(rows);
     const correlation = { audit_domain: 'inventoryManual', task_id: source };
     const raw = await this.inventory.gateway.listAll('liveInventory');
     const desiredTotals = new Map();
@@ -147,6 +155,7 @@ class InventoryPairAdjustmentService {
       request_id: source,
       product_record_id: product,
       rows: desired.length,
+      clear_all: Boolean(clearAll),
       quantity_operations: quantityOperations.length,
       state_operations: stateResult.changed,
       operator_open_id: operatorOpenId || undefined,
@@ -154,6 +163,7 @@ class InventoryPairAdjustmentService {
     return {
       product_record_id: product,
       rows: desired,
+      clear_all: Boolean(clearAll),
       operations,
       changed: operations.length,
     };

@@ -221,6 +221,50 @@ test('AC-PAIR-3e 没有 updateBatch 的网关回退逐条 update（兼容旧网�
   assert.ok(inventory.calls.some((call) => call.type === 'update' && call.id === 'l1'));
 });
 
+test('AC-PAIR-CLEAR 显式 clearAll：删除整个货品的全部库存', async () => {
+  const inventory = fakeInventory({
+    counts: [
+      { size: 42, doorBoxCount: 2, sampleCount: 1 },
+      { size: 43, doorBoxCount: 1 },
+    ],
+  });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  const result = await service.adjustPairs({ productRecordId: 'p1', requestId: 'clear', clearAll: true, rows: [] });
+  const changes = inventory.calls.filter((call) => call.type === 'change');
+  assert.deepEqual(changes.map((call) => [call.size, call.kind, call.quantity]).sort(), [
+    [42, 'STOCK_MANUAL_DECREASE', 3],
+    [43, 'STOCK_MANUAL_DECREASE', 1],
+  ].sort(), '每个尺码按现有条数全删');
+  assert.equal(result.clear_all, true);
+  assert.equal(result.changed, 2, '每个尺码一条数量操作');
+});
+
+test('AC-PAIR-CLEAR2 clearAll 与 rows 同时传 ⇒ 400（不许隐式清零）', async () => {
+  const inventory = fakeInventory({ counts: [{ size: 42, doorBoxCount: 1 }] });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  await assert.rejects(
+    () => service.adjustPairs({
+      productRecordId: 'p1', requestId: 'bad', clearAll: true,
+      rows: [{ size: 42, state: '门盒', quantity: 1 }],
+    }),
+    /清零时不能再提交库存行/,
+  );
+  assert.equal(inventory.calls.length, 0);
+});
+
+test('AC-PAIR-CLEAR3 全 0 行但不带 clearAll ⇒ 400（堵掉旧隐式路径）', async () => {
+  const inventory = fakeInventory({ counts: [{ size: 42, doorBoxCount: 1 }] });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  await assert.rejects(
+    () => service.adjustPairs({
+      productRecordId: 'p1', requestId: 'zero',
+      rows: [{ size: 42, state: '门盒', quantity: 0 }],
+    }),
+    /请至少保留一行数量大于 0 的库存/,
+  );
+  assert.equal(inventory.calls.length, 0);
+});
+
 test('AC-PAIR-AUDIT 手工调整写入带 inventoryManual 审计关联键', async () => {
   const inventory = fakeInventory({
     counts: [{ size: 42, doorBoxCount: 1, sampleCount: 1 }],

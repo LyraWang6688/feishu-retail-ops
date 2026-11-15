@@ -35,7 +35,10 @@ const createInventoryAdjustmentRouter = (options = {}) => {
 
   router.post('/pairs', async (req, res) => {
     try {
-      const rows = normalizeRows(req.body?.rows);
+      // ⭐ 2026-11-15：整款清零是**显式**动作（clearAll:true + rows 必须为空）；
+      //   不允许再用“一行 quantity=0”隐式清掉全部库存。
+      const clearAll = req.body?.clearAll === true;
+      const rows = clearAll ? [] : normalizeRows(req.body?.rows);
       const requestId = String(req.body?.requestId || '').trim();
       if (!req.body?.productRecordId || !requestId) throw userError('缺少货品或请求编号');
       const jobs = resolveAsyncJobs();
@@ -47,7 +50,7 @@ const createInventoryAdjustmentRouter = (options = {}) => {
       void jobs.run({
         jobId,
         run: () => resolvePairAdjustment().adjustPairs({
-          productRecordId: req.body?.productRecordId, rows, requestId,
+          productRecordId: req.body?.productRecordId, rows, clearAll, requestId,
           operatorOpenId: req.workbenchUser?.open_id,
         }),
         // 调整成功 = 业务结果（不是 async job 的 {ok} 形态）；不给分类器会被当成失败。
