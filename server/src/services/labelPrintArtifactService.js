@@ -41,6 +41,7 @@
  *    改那边不改这里 ⇒ 那条用例会红（这正是它存在的意义）。
  */
 const sharp = require('sharp');
+const { buildPdf } = require('./labelPrintPdf');
 
 const { logInfo, logWarn } = require('../utils/logger');
 // ⭐ 行序白名单**唯一真源在 config**（`artifact.rows` 与 `LABEL_PRINT_ROWS` 同一份口径，防漂移）
@@ -525,6 +526,7 @@ const resolveCutLineMm = (layout, options = {}) => {
 };
 
 function availableWidthMm(layout, options = {}) {
+  if (options.availableWidthMm !== undefined) return Math.max(0, num(options.availableWidthMm));
   const label = layout.label || {};
   const body = layout.body || {};
   const fields = layout.fields || {};
@@ -811,6 +813,7 @@ function labelSvg(label, layout, options = {}) {
   const typography = layout.typography || {};
   const sizesCfg = layout.sizes || {};
   const texts = layout.texts || {};
+  const v5 = body.layout === 'v5';
 
   // ⭐⭐ 画布几何：`widthMm/heightMm` 这里是**逻辑画布**（怎么排版），
   //    页面（MediaBox）与"转多少度"由 `geometry` 决定 —— 竖版画布下两者不同（30×40 画布 → 40×30 页面）。
@@ -826,7 +829,7 @@ function labelSvg(label, layout, options = {}) {
 
   // 内容区（`box-sizing: border-box` ⇒ 留白与裁切线都占尺寸）。
   // ⭐ 左留白可配（`label.leftPaddingMm` / `artifact.leftPaddingMm`）：右边仍是 `padMm`
-  const leftPadMm = resolveLeftPaddingMm(layout, options);
+  const leftPadMm = v5 ? num(body.contentLeftMm, 4) : resolveLeftPaddingMm(layout, options);
   const x0 = leftPadMm + borderMm;
   const y0 = padMm + borderMm;
   const contentW = Math.max(0, widthMm - x0 - (padMm + borderMm));
@@ -840,7 +843,7 @@ function labelSvg(label, layout, options = {}) {
 
   // ── 品牌行（`brandRow: 'top'`，她定案：顶部居中、跨整张）────────────────
   const brandText = fields.brand && label.brand_text ? String(label.brand_text) : '';
-  const brandOnTop = body.brandRow !== 'inline';
+  const brandOnTop = !v5 && body.brandRow !== 'inline';
   let mainTop = y0;
   if (brandText && brandOnTop) {
     const brandMm = num(typography.brandMm, 2.4);
@@ -848,7 +851,7 @@ function labelSvg(label, layout, options = {}) {
     const align = String(body.brandAlign || 'center');
     const anchor = align === 'left' ? 'start' : (align === 'right' ? 'end' : 'middle');
     const tx = align === 'left' ? x0 : (align === 'right' ? x0 + contentW : x0 + contentW / 2);
-    parts.push(`<text x="${round(tx)}" y="${round(y0 + brandMm * 0.85 + num(body.brandOffsetYMm, 0))}" font-family="${FONT_FAMILY}" font-size="${round(brandMm)}" text-anchor="${anchor}">${escapeXml(brandText)}</text>`);
+    parts.push(`<text x="${round(tx)}" y="${round(y0 + brandMm * 0.85 + (v5 ? 0 : num(body.brandOffsetYMm, 0)))}" font-family="${FONT_FAMILY}" font-size="${round(brandMm)}" text-anchor="${anchor}">${escapeXml(brandText)}</text>`);
     mainTop = y0 + lineH + num(body.brandGapMm, 0.6);
   }
 
@@ -873,10 +876,16 @@ function labelSvg(label, layout, options = {}) {
   //   ⚠️ 竖版画布的"行方向"只有 30mm（画布是 30×40）⇒ 二维码旁边只剩 ~10mm 给货号，
   //      所以竖版把二维码**调小**（`typography.portraitQrSizeMm`，配置可改）—— 见那里的说明。
   let rightX = x0;
+  let qrY = mainTop + Math.max(0, (mainH - qrMm) / 2);
   if (fields.qr && qrMm > 0) {
-    const qrY = mainTop + Math.max(0, (mainH - qrMm) / 2);
+    qrY = v5 ? num(body.qrTopMm, 10.55) : qrY;
     parts.push(placeQrSvg(label.qr_svg, { x: round(x0), y: round(qrY), sizeMm: round(qrMm) }));
     rightX = x0 + qrMm + qrGapMm;
+  }
+  // ⭐ V5：品牌从顶部移到二维码下方居中（业务负责人 2026-11-15 定稿）。
+  if (v5 && brandText && fields.qr && qrMm > 0) {
+    const brandMm = num(typography.brandMm, 2.4);
+    parts.push(`<text x="${round(x0 + qrMm / 2)}" y="${round(qrY + qrMm + num(body.brandGapMm, 0.65) + brandMm * 0.85)}" font-family="${FONT_FAMILY}" font-size="${round(brandMm)}" text-anchor="middle">${escapeXml(brandText)}</text>`);
   }
   // 右栏从 `rightX` 到内容区右边（竖版画布下 = 整幅内容宽）—— 具体画多宽由下面的估算决定，
   // 排版不会越过这条界线（`planItemNoColor` 已经把字宽算进可用宽度里）。
@@ -891,7 +900,7 @@ function labelSvg(label, layout, options = {}) {
   //   ⚠️ 只换行序，**不动品牌行/二维码位置/裁切线/外边距/字号**。
   const rows = normalizeRows(options.rows) || (Array.isArray(body.rows) && body.rows.length
     ? body.rows
-    : ['brand', 'itemNoColor', 'price', 'state', 'sizes']);
+    : (v5 ? ['itemNoColor', 'price', 'sizes'] : ['brand', 'itemNoColor', 'price', 'state', 'sizes']));
   const itemNoMm = num(typography.itemNoMm, 3.6);
   const fieldMm = num(typography.fieldMm, 2.8);
   const priceMm = num(typography.priceMm, 3.2);
@@ -899,13 +908,16 @@ function labelSvg(label, layout, options = {}) {
   const qtyRatio = num(sizesCfg.qtyFontRatio, 0.64);
   const qtyShiftEm = num(sizesCfg.qtyBaselineShiftEm, 0.2);
   const sizeGapMm = num(sizesCfg.itemGapMm, 1);
+  const sizesLineFactor = num(sizesCfg.lineHeight, LINE_HEIGHTS.sizes);
 
-  const itemPlan = planItemNoColor(label, layout, {
-    designWidthMm: widthMm,
-    leftPaddingMm: options.leftPaddingMm,
-    qrSizeMm: options.qrSizeMm,
-    cutLineMm: options.cutLineMm,
-  });
+  const itemPlan = planItemNoColor(label, layout, v5
+    ? { availableWidthMm: contentW }
+    : {
+      designWidthMm: widthMm,
+      leftPaddingMm: options.leftPaddingMm,
+      qrSizeMm: options.qrSizeMm,
+      cutLineMm: options.cutLineMm,
+    });
   const sizeLines = Array.isArray(label.size_lines) ? label.size_lines.filter((line) => Array.isArray(line) && line.length) : [];
   const overflowMark = String(texts.overflowMark ?? '…');
 
@@ -932,8 +944,8 @@ function labelSvg(label, layout, options = {}) {
     if (id === 'sizes') {
       // ⭐ 用**自适应之后**的字号与行数（没放不下时 = 老行为，逐字不变）
       const fit = sizesFit;
-      if (fit) return Math.max(1, fit.lines.length) * fit.size_mm * LINE_HEIGHTS.sizes;
-      return Math.max(1, sizeLines.length) * sizeMm * LINE_HEIGHTS.sizes;
+      if (fit) return Math.max(1, fit.lines.length) * fit.size_mm * sizesLineFactor;
+      return Math.max(1, sizeLines.length) * sizeMm * sizesLineFactor;
     }
     if (id === 'brand') return brandMmRow();
     // ⭐ 二维码自己占一行（竖版画布）：高度 = 二维码边长 + 上面一点空隙。
@@ -941,7 +953,7 @@ function labelSvg(label, layout, options = {}) {
   };
 
   const activeRows = rows.filter((id) => {
-    if (id === 'brand') return Boolean(brandText) && !brandOnTop;
+    if (id === 'brand') return Boolean(brandText) && !v5 && !brandOnTop;
     if (id === 'itemNoColor') return Boolean(itemPlan.itemNoText || itemPlan.colorText);
     if (id === 'itemNo') return Boolean(fields.itemNo) && Boolean(itemPlan.soloItemNoText);
     if (id === 'color') return Boolean(fields.color) && Boolean(itemPlan.colorText);
@@ -963,10 +975,14 @@ function labelSvg(label, layout, options = {}) {
   let sizesFit = null;
   if (activeRows.includes('sizes')) {
     const othersH = activeRows.filter((id) => id !== 'sizes').reduce((sum, id) => sum + rowHeight(id), 0);
-    const availableH = Math.max(0, mainH - othersH);
+    const availableH = v5
+      ? Math.max(0, num(body.sizesMaxHeightMm, 15))
+      : Math.max(0, mainH - othersH);
     sizesFit = layoutSizesFit({
       items: sizeItemsAll,
-      maxWidthMm: Math.max(0, contentW - num(body.sizes?.insetMm, 0)),
+      maxWidthMm: v5
+        ? Math.max(0, num(sizesCfg.fitWidthMm, 100))
+        : Math.max(0, contentW - num(body.sizes?.insetMm, 0)),
       maxHeightMm: availableH,
       baseSizeMm: sizeMm,
       floorSizeMm: sizesFloorMm,
@@ -976,10 +992,13 @@ function labelSvg(label, layout, options = {}) {
       qtyRatio,
       gapMm: sizeGapMm,
       widthEm: body.itemNoColor?.widthEm || {},
+      lineFactor: sizesLineFactor,
     });
   }
   const totalH = activeRows.reduce((sum, id) => sum + rowHeight(id), 0);
-  let cursor = Math.max(mainTop, mainTop + Math.max(0, (mainH - totalH) / 2) + num(body.infoOffsetYMm, 0));
+  let cursor = v5
+    ? num(body.headerTopMm, 1.35)
+    : Math.max(mainTop, mainTop + Math.max(0, (mainH - totalH) / 2) + num(body.infoOffsetYMm, 0));
   // ⭐⭐ 2026-10-12 她问"垂直方向能不能随行数动态居中" —— **一直是动态居中的**：
   //   二维码 `qrY = mainTop + (mainH - qrMm)/2`；右栏 `cursor = mainTop + (mainH - totalH)/2`
   //   ⇒ `totalH` 随**货号几行 / 尺码几行**变 ⇒ 行数一变就**重新居中**（中心仍是中段中心）。
@@ -994,8 +1013,8 @@ function labelSvg(label, layout, options = {}) {
       content_top_mm: round(cursor),
       content_center_mm: round(cursor + totalH / 2),
       qr_size_mm: round(qrMm),
-      qr_top_mm: round(mainTop + Math.max(0, (mainH - qrMm) / 2)),
-      qr_center_mm: round(mainTop + Math.max(0, (mainH - qrMm) / 2) + qrMm / 2),
+      qr_top_mm: round(v5 ? num(body.qrTopMm, 10.55) : mainTop + Math.max(0, (mainH - qrMm) / 2)),
+      qr_center_mm: round((v5 ? num(body.qrTopMm, 10.55) : mainTop + Math.max(0, (mainH - qrMm) / 2)) + qrMm / 2),
       main_center_mm: round(mainTop + mainH / 2),
       overflows: totalH > mainH + 1e-9,
       rows: activeRows,
@@ -1017,6 +1036,9 @@ function labelSvg(label, layout, options = {}) {
   }
 
   const contentTopMm = cursor; // ⭐ 内容块的顶（下面算"旋转后外圈是否干净"要用）
+  if (v5) {
+    parts.push(`<line x1="${round(x0)}" y1="${round(num(body.ruleTopMm, 10.05))}" x2="${round(x0 + contentW)}" y2="${round(num(body.ruleTopMm, 10.05))}" stroke="#d9d9d9" stroke-width="0.15" />`);
+  }
   for (const id of activeRows) {
     const h = rowHeight(id);
     const baseline = cursor + h * 0.82;
@@ -1052,7 +1074,11 @@ function labelSvg(label, layout, options = {}) {
           + `font-size="${round(priceMm)}" font-weight="700">${escapeXml(String(label.price_text))}</text>`);
       }
     } else if (id === 'itemNoColor') {
-      let x = rightX;
+      const em = body.itemNoColor?.widthEm || {};
+      const itemW = itemPlan.itemNoText ? textWidthMm(itemPlan.itemNoText, itemPlan.itemNoSizeMm, em) : 0;
+      const colorW = itemPlan.colorText ? textWidthMm(itemPlan.colorText, fieldMm, em) : 0;
+      const totalW = itemW + (itemPlan.itemNoText && itemPlan.colorText ? itemPlan.gapMm : 0) + colorW;
+      let x = v5 ? x0 + Math.max(0, (contentW - totalW) / 2) : rightX;
       if (itemPlan.itemNoText) {
         parts.push(`<text x="${round(x)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(itemPlan.itemNoSizeMm)}" font-weight="800">${escapeXml(itemPlan.itemNoText)}</text>`);
         x += textWidthMm(itemPlan.itemNoText, itemPlan.itemNoSizeMm, body.itemNoColor?.widthEm || {}) + itemPlan.gapMm;
@@ -1061,26 +1087,32 @@ function labelSvg(label, layout, options = {}) {
         parts.push(`<text x="${round(x)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(fieldMm)}">${escapeXml(itemPlan.colorText)}</text>`);
       }
     } else if (id === 'price') {
-      parts.push(`<text x="${round(rightX)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(priceMm)}" font-weight="700">${escapeXml(String(label.price_text))}</text>`);
+      const priceText = String(label.price_text);
+      const px = v5
+        ? x0 + Math.max(0, (contentW - textWidthMm(priceText, priceMm, body.itemNoColor?.widthEm || {})) / 2)
+        : rightX;
+      parts.push(`<text x="${round(px)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(priceMm)}" font-weight="700">${escapeXml(priceText)}</text>`);
     } else if (id === 'state') {
       parts.push(`<text x="${round(rightX)}" y="${round(baseline)}" font-family="${FONT_FAMILY}" font-size="${round(fieldMm)}">${escapeXml(String(label.state_text || texts.missingValue || ''))}</text>`);
     } else if (id === 'sizes') {
       // ⭐⭐ 用**自适应之后**的字号与换行结果（有空间时 = 上游给的分组，逐字不变）
+      const sizeParts = [];
       const drawSizeMm = sizesFit ? sizesFit.size_mm : sizeMm;
       const drawLines = sizesFit ? sizesFit.lines : sizeLines;
       const emForSize = body.itemNoColor?.widthEm || {};
+      const sizeTop = v5 ? num(body.sizesTopMm, 10.75) : cursor;
       drawLines.forEach((tokens, lineIndex) => {
-        const lineBaseline = cursor + (lineIndex + 0.82) * drawSizeMm * LINE_HEIGHTS.sizes;
+        const lineBaseline = sizeTop + (lineIndex + 0.82) * drawSizeMm * sizesLineFactor;
         let x = rightX;
         for (const token of tokens) {
           const sizeText = String(token?.size ?? '');
-          parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(drawSizeMm)}">${escapeXml(sizeText)}</text>`);
+          sizeParts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(drawSizeMm)}">${escapeXml(sizeText)}</text>`);
           const sizeTextW = textWidthMm(sizeText, drawSizeMm, emForSize);
           const qtyText = String(token?.qty ?? '');
           if (qtyText) {
             const qtyMm = drawSizeMm * qtyRatio;
             // CSS 的 `vertical-align: -Xem` 是**相对角标自己的字号**下沉 ⇒ y 加 X × 角标字号。
-            parts.push(`<text x="${round(x + sizeTextW)}" y="${round(lineBaseline + qtyMm * qtyShiftEm)}" font-family="${FONT_FAMILY}" font-size="${round(qtyMm)}">${escapeXml(qtyText)}</text>`);
+            sizeParts.push(`<text x="${round(x + sizeTextW)}" y="${round(lineBaseline + qtyMm * qtyShiftEm)}" font-family="${FONT_FAMILY}" font-size="${round(qtyMm)}">${escapeXml(qtyText)}</text>`);
             x += sizeTextW + textWidthMm(qtyText, qtyMm, emForSize) + sizeGapMm;
           } else {
             x += sizeTextW + sizeGapMm;
@@ -1090,19 +1122,26 @@ function labelSvg(label, layout, options = {}) {
         // ⚠️ 2026-10-12 改：原来这里补的是 `…` —— 那等于**拿"少印一个真实的码"换装下** ✗
         //    （她的 44 码就是这么没的）。现在只在"连下限都放不下"时才用 `+N`，且必带 warn。
         if (sizesFit && sizesFit.hidden > 0 && lineIndex === drawLines.length - 1) {
-          parts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(drawSizeMm)}" font-weight="700">${escapeXml(sizesFit.plus_mark)}</text>`);
+          sizeParts.push(`<text x="${round(x)}" y="${round(lineBaseline)}" font-family="${FONT_FAMILY}" font-size="${round(drawSizeMm)}" font-weight="700">${escapeXml(sizesFit.plus_mark)}</text>`);
         }
       });
+      if (v5) {
+        const sx = num(sizesCfg.xScale, 0.87);
+        parts.push(`<g transform="translate(${round(rightX)} 0) scale(${sx} 1) translate(${round(-rightX)} 0)">${sizeParts.join('')}</g>`);
+      } else {
+        parts.push(sizeParts.join(''));
+      }
     }
     cursor += h;
+    if (v5 && id === 'itemNoColor') cursor += num(body.headerGapMm, 0.2);
   }
 
   // ⭐ 内容整体平移（`artifact.contentOffsetXMm/YMm`）：**只动内容，裁切线留在纸边**。
   // ⚠️ 安全上限**要按这条记录自己的行宽算**（尺码行宽随尺码个数变）⇒ 把 label 一起传进去
-  const offsetX = assertSafeOffsetXMm(
+  const offsetX = v5 ? 0 : assertSafeOffsetXMm(
     normalizeOffsetMm(options.contentOffsetXMm, 'contentOffsetXMm'), layout, { ...options, label },
   );
-  const offsetY = normalizeOffsetMm(options.contentOffsetYMm, 'contentOffsetYMm');
+  const offsetY = v5 ? 0 : normalizeOffsetMm(options.contentOffsetYMm, 'contentOffsetYMm');
   const hasCutLine = borderMm > 0;
   const borderPart = hasCutLine ? parts[0] : '';
   const contentParts = hasCutLine ? parts.slice(1) : parts;
@@ -1169,93 +1208,6 @@ const pngToJpeg = (png, options = {}) => sharp(png)
  * `test/labelPrintArtifact.test.js` 会**逐条解析 xref**，断言每个偏移都真的指回 `N 0 obj` —— 
  * 手写 PDF 最容易错的就是偏移，所以那条用例不是"点一下"，是把文件当真 PDF 验。
  */
-function buildPdf(pages, options = {}) {
-  const list = (Array.isArray(pages) ? pages : []).filter(Boolean);
-  if (!list.length) throw new Error('buildPdf 至少需要一页');
-  const objects = new Map(); // 对象号 → Buffer（按号排序写出，号与顺序都不许跳）
-  let nextId = 1;
-  const alloc = () => {
-    const id = nextId;
-    nextId += 1;
-    objects.set(id, null);
-    return id;
-  };
-
-  const catalogId = alloc();
-  const pagesId = alloc();
-  const pageIds = list.map(() => ({ pageId: alloc(), contentId: alloc(), imageId: alloc() }));
-  const title = String(options.title || '');
-  const infoId = title ? alloc() : null;
-
-  const kids = pageIds.map((entry) => `${entry.pageId} 0 R`).join(' ');
-  objects.set(catalogId, Buffer.from(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`));
-  objects.set(pagesId, Buffer.from(`<< /Type /Pages /Kids [${kids}] /Count ${pageIds.length} >>`));
-  if (infoId) {
-    // 标题里的 `(` `)` `\` 在 PDF 字符串里必须转义（中文用 UTF-16BE 太啰嗦，这里只放 ASCII 占位）。
-    const safeTitle = title.replace(/([()\\])/g, '\\$1');
-    objects.set(infoId, Buffer.from(`<< /Title (${safeTitle}) /Producer (feishu-retail-ops labelPrintArtifactService) >>`));
-  }
-
-  list.forEach((page, index) => {
-    const { pageId, contentId, imageId } = pageIds[index];
-    const wPt = mmToPt(page.widthMm);
-    const hPt = mmToPt(page.heightMm);
-    const content = `q ${wPt} 0 0 ${hPt} 0 0 cm /Im0 Do Q`;
-    const jpeg = Buffer.isBuffer(page.jpeg) ? page.jpeg : Buffer.from(page.jpeg || '');
-
-    objects.set(pageId, Buffer.from(
-      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${wPt} ${hPt}] `
-      + `/Resources << /XObject << /Im0 ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`,
-    ));
-    objects.set(contentId, Buffer.from(
-      `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
-    ));
-    // ⚠️ 图片流是**二进制**：必须是独立的 Buffer 拼进来（字符串模板会把 JPEG 弄坏）。
-    const imageHead = Buffer.from(
-      `<< /Type /XObject /Subtype /Image /Width ${page.widthPx} /Height ${page.heightPx} `
-      + `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
-    );
-    objects.set(imageId, Buffer.concat([imageHead, jpeg, Buffer.from('\nendstream')]));
-  });
-
-  const chunks = [];
-  let offset = 0;
-  const push = (buffer) => {
-    chunks.push(buffer);
-    offset += buffer.length;
-  };
-  // 二进制注释行：告诉所有工具"这是二进制文件"，别按文本处理（PDF 规范推荐）。
-  push(Buffer.from('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n', 'binary'));
-
-  // ⚠️ 偏移必须**逐字节**对得上，否则她的打印机驱动会直接打不开 —— 用累计 offset，不靠估算。
-  const offsets = new Map();
-  const ids = [...objects.keys()].sort((left, right) => left - right);
-  for (const id of ids) {
-    const body = objects.get(id);
-    if (!body) continue;
-    offsets.set(id, offset);
-    push(Buffer.from(`${id} 0 obj\n`));
-    push(body);
-    push(Buffer.from('\nendobj\n'));
-  }
-
-  const xrefOffset = offset;
-  const maxId = ids[ids.length - 1];
-  const lines = ['xref', `0 ${maxId + 1}`, '0000000000 65535 f '];
-  for (let id = 1; id <= maxId; id += 1) {
-    const at = offsets.get(id);
-    lines.push(at === undefined
-      ? '0000000000 65535 f '
-      : `${String(at).padStart(10, '0')} 00000 n `);
-  }
-  push(Buffer.from(`${lines.join('\n')}\n`));
-  push(Buffer.from(
-    `trailer\n<< /Size ${maxId + 1} /Root ${catalogId} 0 R${infoId ? ` /Info ${infoId} 0 R` : ''} >>\n`
-    + `startxref\n${xrefOffset}\n%%EOF\n`,
-  ));
-  return Buffer.concat(chunks);
-}
-
 /**
  * 一整批标签 → 可打印产物（**纯函数**，不落盘）。
  * 返回：

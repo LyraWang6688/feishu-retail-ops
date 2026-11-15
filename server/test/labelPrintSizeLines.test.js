@@ -1,56 +1,51 @@
 'use strict';
 
 /**
- * 真机 bug（2026-11-15）：普通码全量后，3877 的 44 码在纸底被打印机裁掉。
- * 修法：品牌与货号之间还有空白 ⇒ 右侧信息区整体上移 2.5mm（`body.infoOffsetYMm`）。
+ * V5 定稿（2026-11-15）：
+ * 第一行货号+颜色、第二行单价；二维码左；品牌在二维码下；尺码 3.6mm/横向2mm/行距4.8mm。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { LABEL_PRINT } = require('../src/config/labelPrint');
+const { LABEL_PRINT_V5 } = require('../src/config/labelPrint');
 const artifact = require('../src/services/labelPrintArtifactService');
 
-const label = (count = 7) => {
-  const items = Array.from({ length: count }, (_, i) => ({ size: 38 + i, qty: (i % 2) + 1 }));
+const label = (specs = [[38, ''], [39, ''], [40, 1], [41, 1], [42, ''], [43, 1], [44, '']]) => {
+  const items = specs.map(([size, qty]) => ({ size, qty }));
   return {
-    key: 'XHB8095|棕色|男', number: 'XHB8095|棕色|男', item_no: 'XHB8095', color: '棕色',
-    category: '休闲鞋', category_code: '男',
-    sizes: items,
-    // activeRows 以 size_lines 是否为空决定「有没有尺码行」；artifact 实际以 sizes 重排。
-    size_lines: [items],
-    size_overflow: false, total_qty: count,
-    price: 198, price_text: '¥198', brand_text: '邯美皮鞋',
+    key: '3877|白蓝|男', number: '3877|白蓝|男', item_no: '3877', color: '白蓝',
+    category: '男', category_code: '男',
+    sizes: items, size_lines: [items], size_overflow: false, total_qty: 3,
+    price: 189, price_text: '¥189', brand_text: '邯美皮鞋',
     qr_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21"><path d="M0 0h21v21H0z"/></svg>',
-    footer_text: 'XHB8095|棕色|男',
+    footer_text: '',
   };
 };
-const layout = (infoOffsetYMm) => ({
-  ...LABEL_PRINT,
-  body: { ...LABEL_PRINT.body, infoOffsetYMm },
-});
-const cfg = { dpi: 203, leftPaddingMm: 3.5, qrSizeMm: 13, cutLineMm: 0, rows: ['brand', 'itemNo', 'colorPrice', 'sizes'] };
+const cfg = { dpi: 203, cutLineMm: 0 };
 const yOfText = (svg, text) => {
   const match = new RegExp(`<text x="[-\\d.]+" y="([-\\d.]+)"[^>]*>${text}<\\/text>`).exec(svg);
   return match ? Number(match[1]) : NaN;
 };
 
-test('AC-C19-3 信息区上移 2.5mm：7 个普通码仍是 3 行，但 44 整体上移', () => {
-  const plain = artifact.labelSvg(label(), layout(0), cfg);
-  const shifted = artifact.labelSvg(label(), layout(-2.5), cfg);
-  assert.equal(Number((yOfText(plain, '44') - yOfText(shifted, '44')).toFixed(2)), 2.5,
-    '44 码应比默认位置上移 2.5mm（品牌与货号之间的空白）');
-  assert.equal(LABEL_PRINT.body.infoOffsetYMm, -2.5, '默认值 = 这次真机修法的 2.5mm 上移');
-  assert.ok(shifted.includes('>44<'), '44 码仍在图上');
+test('V5-1 3877 普通码：3 个一行、3 行（3+3+1），44 完整', () => {
+  const m = artifact.measureVerticalLayout(label(), LABEL_PRINT_V5, cfg);
+  assert.deepEqual(m.sizes_line_items, [['38', '39', '40'], ['41', '42', '43'], ['44']]);
+  assert.equal(m.sizes_lines, 3);
+  assert.equal(m.sizes_shown, 7);
+  assert.equal(m.sizes_hidden, 0);
+  assert.equal(m.sizes_size_mm, 3.6);
 });
 
-test('AC-C19-4 品牌单独上移 0.5mm：只动品牌，货号位置不变', () => {
-  const withBrand = (offset) => ({
-    ...LABEL_PRINT,
-    body: { ...LABEL_PRINT.body, brandOffsetYMm: offset },
-  });
-  const plain = artifact.labelSvg(label(), withBrand(0), cfg);
-  const shifted = artifact.labelSvg(label(), withBrand(-0.5), cfg);
-  assert.equal(Number((yOfText(plain, '邯美皮鞋') - yOfText(shifted, '邯美皮鞋')).toFixed(2)), 0.5,
-    '品牌应上移 0.5mm');
-  assert.equal(yOfText(plain, 'XHB8095'), yOfText(shifted, 'XHB8095'), '货号位置不动');
-  assert.equal(LABEL_PRINT.body.brandOffsetYMm, -0.5, '默认值 = 这次试版的 0.5mm 上移');
+test('V5-2 第一行到第二行的纵向行距 = 4.8mm（3.6 + 1.2 空白）', () => {
+  const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
+  const y38 = yOfText(svg, '38');
+  const y41 = yOfText(svg, '41');
+  assert.equal(Number((y41 - y38).toFixed(2)), 4.8, '38 到 41 的基线差应为 4.8mm');
+});
+
+test('V5-3 品牌在二维码下方居中', () => {
+  const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
+  const brandY = yOfText(svg, '邯美皮鞋');
+  assert.ok(brandY > 25, `品牌应在二维码下方，实际 y=${brandY}`);
+  const brand = /<text x="([-\d.]+)" y="[-\d.]+"[^>]*text-anchor="middle">邯美皮鞋<\/text>/.exec(svg);
+  assert.equal(Number(brand[1]), 11.5, '品牌中心 = 二维码中心（4 + 15/2）');
 });

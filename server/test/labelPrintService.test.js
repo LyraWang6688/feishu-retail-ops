@@ -322,10 +322,10 @@ test('版式参数随响应下发：品牌**顶部居中** + 右栏行序「货�
     liveInventory: [record('r1', { stockKey: 'YD6693-2|黑色|男|38' })],
   });
   const data = await service.listLabels({});
-  assert.equal(data.layout.body.brandRow, 'top', '品牌在整张标签顶部（她定案）');
-  assert.equal(data.layout.body.brandAlign, 'center', '顶部居中');
-  assert.deepEqual(data.layout.body.rows, ['brand', 'itemNoColor', 'price', 'state', 'sizes'],
-    '右栏行序：货号+颜色 → 单价 → 尺码（状态那行默认不印）');
+  assert.equal(data.layout.body.brandRow, 'underQr', 'V5：品牌在二维码下方');
+  assert.equal(data.layout.body.brandAlign, 'center', '品牌居中');
+  assert.deepEqual(data.layout.body.rows, ['itemNoColor', 'price', 'sizes'],
+    'V5 行序：货号+颜色 → 单价 → 尺码');
   assert.equal(data.layout.body.itemNoColor.preferColorOverCategory, true, '放不下时优先保颜色');
   assert.equal(data.layout.body.itemNoColor.minItemNoMm, 2.4, '货号缩字号的下限也在 config 里');
   assert.equal(data.layout.sizes.order, 'asc');
