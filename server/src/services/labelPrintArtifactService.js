@@ -833,7 +833,7 @@ function labelSvg(label, layout, options = {}) {
   const x0 = leftPadMm + borderMm;
   const y0 = padMm + borderMm;
   const contentW = Math.max(0, widthMm - x0 - (padMm + borderMm));
-  // V5 顶部两行可以使用**整张纸的安全宽度**（左右各 1.5mm），不必跟着二维码的 4mm 左留白缩窄。
+  // V5 顶部两行可以使用**整张纸的安全宽度**（左右各 1.5mm），不跟随二维码的左边距缩窄。
   const headerLeft = v5 ? padMm + borderMm : x0;
   const headerW = v5 ? Math.max(0, widthMm - 2 * (padMm + borderMm)) : contentW;
   const contentBottom = heightMm - y0;

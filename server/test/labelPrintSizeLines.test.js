@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * V5 定稿（2026-11-15）：
- * 第一行货号+颜色、第二行单价；二维码左；品牌在二维码下；尺码 3.6mm/横向2mm/行距4.8mm。
+ * V5 定稿（2026-11-16）：
+ * 第一行货号+颜色、第二行单价；二维码左 0.5mm；品牌在二维码下；
+ * 尺码 3.6mm / 列间距 4mm / 行距 5.1mm（空白 1.5mm）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
