@@ -430,8 +430,8 @@ const LABEL_PRINT_V5 = Object.freeze({
   }),
   sizes: Object.freeze({
     ...LABEL_PRINT.sizes,
-    itemGapMm: 2,
-    lineHeight: 1.3333,
+    itemGapMm: 4,
+    lineHeight: 1.4167,
     xScale: 0.8,
     fitWidthMm: 100,
   }),
@@ -445,22 +445,11 @@ const LABEL_PRINT_V5 = Object.freeze({
     contentLeftMm: 4,
     headerTopMm: 1.35,
     headerGapMm: 0.2,
-    // 2026-11-15：业务负责人要求货号与颜色间距 0.5mm（V5 专用）。
-    itemNoColor: Object.freeze({
-      ...LABEL_PRINT.body.itemNoColor,
-      gapMm: 0,
-      // 服务器实际字体（Noto Sans）比原估算窄；按实际字宽校准，避免"配置 0.5mm、实际 4.5mm"。
-      widthEm: Object.freeze({
-        ...LABEL_PRINT.body.itemNoColor.widthEm,
-        ascii: 0.58,
-        wide: 0.65,
-      }),
-    }),
     qrTopMm: 10.55,
     ruleTopMm: 10.05,
     sizesTopMm: 10.75,
     sizesWidthMm: 18,
-    sizesMaxHeightMm: 15,
+    sizesMaxHeightMm: 16,
     qrGapMm: 1.5,
   }),
 });
