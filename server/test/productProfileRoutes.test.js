@@ -50,6 +50,7 @@ test('AC-PP1 搜索：只按货号模糊匹配；空搜索不返回结果', asyn
     assert.equal(body.items.length, 1);
     assert.equal(body.items[0].number, '906|黑色|男');
     assert.equal(body.items[0].hasSampleImage, true);
+    assert.deepEqual(body.items[0].issues, ['缺商品信息：成本'], '缺失 chips 由服务端唯一判定给出');
     assert.equal(body.items[0].imageUrl, '/api/workbench/products/rec1/sample-image');
     assert.match(body.items[0].recordUrl, /\/base\/app_test\?table=.*record=rec1/, '结果卡片要能打开货品记录');
     assert.match(body.items[0].recordUrl, /[?&]view=vew_test(&|$)/, '记录链接要落在指定视图');
@@ -249,6 +250,7 @@ test('AC-PP11 货品完善三维度：样例图 / 商品信息缺失 / 标签信
     assert.equal(body.total, 3, '只统计至少缺一个维度的货品');
     assert.deepEqual(body.dimensions.map((d) => [d.key, d.count]), [['sample', 1], ['product', 1], ['tag', 1]]);
     assert.equal(body.dimensions[0].items.map((i) => i.recordId).join(','), 'rec1');
+    assert.deepEqual(body.dimensions[0].items[0].issues, ['缺样例图'], '样例图缺失也是同一份判定');
     assert.match(body.dimensions[1].items[0].recordUrl, /record=rec2/);
   } finally { server.close(); }
 });

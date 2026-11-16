@@ -6,6 +6,8 @@ const { realmScanScriptTagHtml, paymentAddRowScriptHtml, submitFeedbackScriptHtm
 // ⭐ 2026-10-18（第 4 步提速 · 提交不再白屏）：提交进度遮罩的样式/脚本搬到 `views/scanPage/submitProgress.js`
 //   （Lead 的文件大小门禁：本文件相对 PR base 净增 ≤100 行）
 const { SUBMIT_PROGRESS_STYLE, hasProgressSubmit, submitProgressScriptHtml } = require('./submitProgress');
+// ⭐ 2026-11-17：货品卡上的「库存调整 / 资料不齐去补全」两个入口（只挂 sales / purchase_return）。
+const { productActionsHtml } = require('./productActions');
 
 const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = '' }) => `<!doctype html>
 <html lang="zh-CN">
@@ -48,7 +50,7 @@ const categoryLabelOf = (code, config) => {
   return String(ranges[key] && ranges[key].label ? ranges[key].label : '').trim();
 };
 
-const identityHtml = (view, config) => {
+const identityHtml = (view, config, options = {}) => {
   // ⭐ 三段：颜色 · **品类**（category_name）· **类别**（category_code ⇒ 映射成 男/女，认不出就原样）
   const categoryLabel = categoryLabelOf(view.category_code, config) || view.category_code;
   const meta = [view.color, view.category_name, categoryLabel]
@@ -63,6 +65,7 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
 <span class="price__label">${escapeHtml(config.texts.priceLabel)}</span>
 <span class="price__value">${escapeHtml(view.price_text)}</span>
 </div>
+${productActionsHtml(view, config, options.realm)}
 </header>`;
 };
 

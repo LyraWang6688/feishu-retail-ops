@@ -83,7 +83,7 @@ export function createDomainModule(domainId) {
       }
       return;
     }
-    if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule().mount(host);
+    if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule({ initialProductId: state.initialProductId }).mount(host);
     if (page.kind === 'product-profile') return void createProductProfileModule().mount(host);
     if (page.kind === 'label-print') {
       let module = state.labelPrintModules.get(page.id);
@@ -104,8 +104,13 @@ export function createDomainModule(domainId) {
   }
 
   return {
-    mount(container) {
+    mount(container, initial = {}) {
       state.container = container;
+      // ⭐ 2026-11-17：深链可以点名子页与货品（扫码页「库存调整」按钮）。
+      //   只认 domain.pages 里真实存在的 page；认不出就回落到第一个子页（与改动前一致）。
+      const wantedPage = domain.pages.find((item) => item.id === String(initial.page || '').trim());
+      state.active = wantedPage ? wantedPage.id : domain.pages[0].id;
+      state.initialProductId = String(initial.productId || '').trim();
       // ⭐ 2026-10-10（业务负责人真机反馈：「我已经点到了采购，直接出来报货、退货、到货就行，
       //    下面的这些文字解释就不用了」）⇒ **一级领域的大标题与它下面那行描述整行删掉**：
       //    一级 tab 上已经写了领域名，页内再写一遍就是"说明书"。
