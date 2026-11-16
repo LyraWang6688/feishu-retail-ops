@@ -60,10 +60,14 @@ test('V5-4 旧 LABEL_PRINT_ROWS 覆盖不影响 V5 行序（货号+颜色同行�
   assert.ok(yOfText(svg, '¥189') > yOfText(svg, '3877'), '单价必须在下一行');
 });
 
-test('V5-7 二维码和尺码区一起左移2.5mm', () => {
+test('V5-7 二维码左边缘0.5mm，尺码区一起左移', () => {
   const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
-  assert.match(svg, /<svg x="1.5" y="10.55" width="15" height="15"/, '二维码左边缘应为1.5mm');
-  assert.ok(svg.includes('<text x="18"'), '尺码区起点应随二维码左移到18mm');
+  assert.match(svg, /<svg x="0.5" y="10.55" width="15" height="15"/, '二维码左边缘应为0.5mm');
+  assert.ok(svg.includes('<text x="17"'), '尺码区起点应为17mm');
+});
+
+test('V5-6 货号与颜色间距配置为0', () => {
+  assert.equal(LABEL_PRINT_V5.body.itemNoColor.gapMm, 0);
 });
 
 test('V5-3 品牌在二维码下方居中', () => {
@@ -71,5 +75,5 @@ test('V5-3 品牌在二维码下方居中', () => {
   const brandY = yOfText(svg, '邯美皮鞋');
   assert.ok(brandY > 25, `品牌应在二维码下方，实际 y=${brandY}`);
   const brand = /<text x="([-\d.]+)" y="[-\d.]+"[^>]*text-anchor="middle">邯美皮鞋<\/text>/.exec(svg);
-  assert.equal(Number(brand[1]), 9, '品牌中心 = 二维码中心（1.5 + 15/2）');
+  assert.equal(Number(brand[1]), 8, '品牌中心 = 二维码中心（0.5 + 15/2）');
 });
