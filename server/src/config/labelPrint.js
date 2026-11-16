@@ -442,7 +442,7 @@ const LABEL_PRINT_V5 = Object.freeze({
     brandRow: 'underQr',
     brandAlign: 'center',
     brandGapMm: 0.65,
-    contentLeftMm: 4,
+    contentLeftMm: 1.5,
     headerTopMm: 1.35,
     headerGapMm: 0.2,
     qrTopMm: 10.55,
@@ -450,7 +450,8 @@ const LABEL_PRINT_V5 = Object.freeze({
     sizesTopMm: 10.75,
     sizesWidthMm: 18,
     sizesMaxHeightMm: 16,
-    qrGapMm: 1.5,
+    // 二维码左移2.5mm，但尺码区起点保持线上20.5mm不变 ⇒ 二维码与尺码之间的间距由1.5变为4.0mm。
+    qrGapMm: 4.0,
   }),
 });
 
