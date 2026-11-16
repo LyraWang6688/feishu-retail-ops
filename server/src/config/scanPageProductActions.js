@@ -1,0 +1,32 @@
+'use strict';
+
+/**
+ * 扫码页「货品卡」上那两个入口（2026-11-17 · 业务负责人）：
+ *   · **库存调整** —— 点一下直达 工作台 → 库存 → 手工调整 → 单双调整，并带出这一款；
+ *   · **资料不齐：… · 去补全** —— 只在「商品信息缺失 / 标签信息缺失」不是「齐备」时出现。
+ *
+ * 两个领域共用同一张货品卡（`views/scanPage/layout.js` 的 `identityHtml`）⇒ 写一处、两页都有。
+ * 链接一律**相对路径**（`/workbench/?…`）⇒ 与扫码页同源、共用同一个飞书会话 cookie。
+ *
+ * ⚠️ `adjustHrefTemplate` 里的 `{recordId}` 由服务层用 `encodeURIComponent` 填；
+ *    工作台那边读 `module/page/product` 三个参数（见 `public/workbench/main.js`）。
+ */
+const { readList, readString } = require('./envValue');
+
+const PRODUCT_ACTIONS = Object.freeze({
+  // 哪两个领域显示。以后要加到补货 / 库存，只改这里（不用改渲染层）。
+  realms: Object.freeze(readList(process.env, 'SCAN_PAGE_PRODUCT_ACTIONS_REALMS') ?? ['sales', 'purchase_return']),
+  adjustLabel: readString(process.env, 'SCAN_PAGE_PRODUCT_ADJUST_LABEL', '库存调整'),
+  adjustHrefTemplate: readString(
+    process.env,
+    'SCAN_PAGE_PRODUCT_ADJUST_HREF',
+    '/workbench/?module=inventory&page=inventory-adjust&product={recordId}',
+  ),
+  gapLabel: readString(process.env, 'SCAN_PAGE_PRODUCT_GAP_LABEL', '资料不齐：{missing}'),
+  gapLinkLabel: readString(process.env, 'SCAN_PAGE_PRODUCT_GAP_LINK_LABEL', '去补全'),
+  gapLinkSeparator: readString(process.env, 'SCAN_PAGE_PRODUCT_GAP_LINK_SEPARATOR', ' · '),
+  // 多个缺失项之间（缺样例图；缺商品信息：…；缺标签：…）—— 与货品资料页 chips 同一套口径。
+  gapIssueSeparator: readString(process.env, 'SCAN_PAGE_PRODUCT_GAP_ISSUE_SEPARATOR', '；'),
+});
+
+module.exports = { PRODUCT_ACTIONS };

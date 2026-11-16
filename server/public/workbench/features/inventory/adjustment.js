@@ -19,6 +19,8 @@ import { INVENTORY_MANUAL_CARDS, INVENTORY_MANUAL_TEXTS } from '../../config/inv
 const $ = (host, selector) => host.querySelector(selector);
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const STATES = ['门盒', '样品'];
+// ⭐ 2026-11-17：深链带来的 record_id 先过形状检查（与审计里的 record_id 校验同一口径）。
+const PRODUCT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-cards-single">${INVENTORY_MANUAL_CARDS.map((card) => {
   if (card.id === 'single' && expandedSingle) {
@@ -30,7 +32,7 @@ const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-c
   return `<button class="entry-card" type="button" data-manual="${card.id}"><span class="icon">${escapeHtml(card.icon)}</span><h3>${escapeHtml(card.label)}</h3></button>`;
 }).join('')}</div>`;
 
-export function createInventoryAdjustmentModule() {
+export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) {
   const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false };
 
   async function loadRows(force = false) {
@@ -445,6 +447,12 @@ export function createInventoryAdjustmentModule() {
       });
       host.querySelector('[data-field="batch-category"]').addEventListener('change', () => renderViolations());
       host.querySelector('[data-field="status-filter"]')?.addEventListener('change', () => renderViolations());
+      // ⭐⭐ 2026-11-17：深链（扫码页「库存调整」）—— 直接展开这一款的单双调整，不用再扫码/输货号。
+      //   形状不对 ⇒ 什么都不做（不要拿一个坏 id 去打接口）；接口失败 ⇒ 人话错误，不留白屏。
+      const deepLinkProductId = String(initialProductId || '').trim();
+      if (PRODUCT_ID_PATTERN.test(deepLinkProductId)) {
+        void selectProduct(deepLinkProductId).catch((error) => showPageError(describeError(error)));
+      }
     },
   };
 }
