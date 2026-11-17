@@ -306,7 +306,7 @@ test('AC-SP5/SP6 ⭐ 扫到记录 ID ⇒ **只排这一张**（走既有 /jobs�
 
       const jobs = await harness.store.listAll();
       assert.equal(jobs.length, 1, '队列里**只有一条**任务 ✓');
-      assert.equal(jobs[0].source, 'workbench', '来源如实记 workbench');
+      assert.equal(jobs[0].source, 'scan', '来源如实记 scan（打印请求记录据此写「扫码打印」）');
       assert.equal(jobs[0].request.mode, 'single');
       assert.equal(jobs[0].request.recordId, 'rec_brown');
       // ⭐ 源码 + 运行双证据：这条请求真的打到了**既有**的 `/jobs`（没有第二条打印接口）。

@@ -13,7 +13,7 @@ const waitFor = async (fn, { timeoutMs = 2000, intervalMs = 10 } = {}) => {
   throw new Error('waitFor timeout');
 };
 
-const make = ({ fail = false } = {}) => {
+const make = ({ fail = false, onSettled = null } = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sale-async-'));
   const calls = { create: 0, submit: 0, lines: [], createOptions: null, submitOptions: null };
   const gateway = {
@@ -35,7 +35,10 @@ const make = ({ fail = false } = {}) => {
     },
   };
   const jobStore = createSalesJobStore({ dir });
-  const worker = createSalesAsyncWorker({ gateway, writeService, jobStore, logger: { logInfo() {}, logWarn() {}, logError() {} } });
+  const worker = createSalesAsyncWorker({
+    gateway, writeService, jobStore, onSettled,
+    logger: { logInfo() {}, logWarn() {}, logError() {} },
+  });
   return { dir, worker, jobStore, gateway, calls, writeService, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 };
 
@@ -60,6 +63,24 @@ test('同一 submit_key 只建一个 job；worker 写成功后状态 succeeded',
     assert.equal(h.calls.submit, 1);
     assert.equal(h.calls.lines.length, 1);
     assert.equal(h.calls.lines[0].trade_type_code, 'SALE_CASH');
+  } finally { h.cleanup(); }
+});
+
+test('⭐ 2026-11-17：销售成功收口后调用 onSettled（打印意图 flush 的挂点）；失败不调用', async () => {
+  const seen = [];
+  const h = make({ onSettled: async (input) => { seen.push(input); } });
+  try {
+    const ok = await h.worker.enqueue({ submitKey: 'scan_sale:s:settled', payload: payload() });
+    await h.worker.process(ok.job.job_id);
+    assert.equal(seen.length, 1, '成功后调用一次');
+    assert.equal(seen[0].jobId, ok.job.job_id);
+
+    const bad = make({ fail: true, onSettled: async (input) => { seen.push(input); } });
+    try {
+      const failed = await bad.worker.enqueue({ submitKey: 'scan_sale:s:failed', payload: payload() });
+      await bad.worker.process(failed.job.job_id);
+      assert.equal(seen.length, 1, '失败不调用 onSettled');
+    } finally { bad.cleanup(); }
   } finally { h.cleanup(); }
 });
 

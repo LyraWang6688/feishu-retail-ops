@@ -88,6 +88,17 @@ const createLabelPrintQueueService = (deps = {}) => {
   const idFactory = deps.idFactory || (() => crypto.randomUUID());
   const artifactConfig = config.artifact || {};
   const states = config.states || STATES;
+  // ⭐ 2026-11-17：打印请求记录（写飞书「标签打印」表）。可注入；不注入 = 不写。
+  //   ⚠️ best-effort：写失败只记日志，**绝不阻塞/回滚打印**；队列落盘才是唯一事实源。
+  const requestLog = deps.requestLog || null;
+  const logPrintRequest = (job) => {
+    if (!requestLog || typeof requestLog.record !== 'function') return;
+    void Promise.resolve()
+      .then(() => requestLog.record(job))
+      .catch((error) => logWarn('label_print.request_log.dispatch_failed', {
+        job_id: job?.job_id, error: error.message,
+      }));
+  };
 
   // SSE 订阅者（每个长连接一个；小助手断开时自己摘掉）。
   const subscribers = new Set();
@@ -374,6 +385,9 @@ const createLabelPrintQueueService = (deps = {}) => {
       throw systemError(`打印任务落盘失败：${error.message}`);
     }
 
+    // ⭐ 2026-11-17：只记录**新建任务**的请求（复用同一任务的连点不会走到这里）。
+    logPrintRequest(job);
+
     logInfo('label_print.job.enqueued', {
       job_id: jobId,
       source,
@@ -630,6 +644,8 @@ const createLabelPrintQueueService = (deps = {}) => {
     };
     delete job.updated_at;
     await store.create(job);
+    // ⭐ 2026-11-17：补打也是一次**新的打印请求**，同样记一行（表单来源由 log service 跳过）。
+    logPrintRequest(job);
     logInfo('label_print.job.reprinted', {
       job_id: jobIdNew,
       reprint_of: source.job_id,

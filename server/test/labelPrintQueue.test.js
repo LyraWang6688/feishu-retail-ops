@@ -102,12 +102,13 @@ const tmpStore = (options = {}) => {
   return { dir, store, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 };
 
-const serviceFor = ({ labels = [label()], store, config, now, idFactory } = {}) => createLabelPrintQueueService({
+const serviceFor = ({ labels = [label()], store, config, now, idFactory, requestLog } = {}) => createLabelPrintQueueService({
   store,
   labelPrint: labelPrintStub(labels),
   config: { ...LABEL_PRINT_QUEUE, ...(config || {}) },
   now,
   idFactory,
+  requestLog,
 });
 
 /** 逐字节解析 xref，断言每个偏移真的指回 `N 0 obj`（手写 PDF 最容易错的地方）。 */
@@ -306,6 +307,31 @@ test('AC4 入队（按编号）：状态 queued + 产物已落盘 + 唤醒订阅
     assert.equal(events.length, 1, '入队立刻推给长连接');
     assert.equal(events[0].type, 'job');
     assert.equal(events[0].payload.job_id, result.job_id);
+  } finally {
+    cleanup();
+  }
+});
+
+test('AC-LOG1 ⭐ 新建任务后写一条「打印请求记录」；同一请求复用不再写', async () => {
+  const { store, cleanup } = tmpStore();
+  try {
+    const calls = [];
+    const requestLog = { async record(job) { calls.push(job); } };
+    const service = serviceFor({ store, requestLog });
+    const first = await service.enqueueSingle({
+      recordId: 'rec_p1', source: 'scan', submitKey: 'scan-key-1', actor: 'ou_她',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls.length, 1, '新建任务 ⇒ 写一行请求记录');
+    assert.equal(calls[0].job_id, first.job_id);
+    assert.equal(calls[0].source, 'scan');
+
+    const again = await service.enqueueSingle({
+      recordId: 'rec_p1', source: 'scan', submitKey: 'scan-key-1', actor: 'ou_她',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(again.reused, true);
+    assert.equal(calls.length, 1, '复用同一任务 ⇒ 不再写第二行');
   } finally {
     cleanup();
   }

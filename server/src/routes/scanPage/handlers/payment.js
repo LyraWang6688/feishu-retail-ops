@@ -3,7 +3,33 @@ const { resolvePaymentSettlement } = require('../../../services/scanWrite/paymen
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
 const { buildSalePayload } = require('../../../services/salesPayload');
 // ⭐⭐ 2026-10-29：**提交成功 = 统一 toast 共用件**（文案/落点/参数全部走 `config/submitToast.js`）。
-const { redirectWithSubmitToast } = require('../../../utils/submitToast');
+const { redirectWithSubmitToast, submitToastUrl } = require('../../../utils/submitToast');
+// ⭐ 2026-11-17：资金页提交成功后的「是否打印」轻页（一次性令牌）。
+const { SOURCES } = require('../../../config/labelPrintQueue');
+const { getPrintPromptService } = require('../../../services/printPromptRuntime');
+const { printPromptUrlOf } = require('../../../services/printPromptService');
+
+/**
+ * 本单涉及的鞋类货品（去重；配品/没有 product_record_id 的不进打印页）。
+ * 一行 = 一个货品；同款多尺码只留一行。
+ */
+const salePrintProductsOf = (lines = [], extra = null) => {
+  const map = new Map();
+  const add = (line) => {
+    const recordId = String(line?.product_record_id || line?.productRecordId || '').trim();
+    if (!recordId || line?.kind === 'accessory') return;
+    if (map.has(recordId)) return;
+    map.set(recordId, {
+      recordId,
+      itemNo: String(line?.item_no || '').trim(),
+      color: String(line?.color || '').trim(),
+      number: String(line?.number || '').trim(),
+    });
+  };
+  for (const line of Array.isArray(lines) ? lines : []) add(line);
+  if (extra) add(extra);
+  return [...map.values()];
+};
 
 /**
  * 扫码路由核心深拆 P1：资金处理（`payment_pay`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -21,6 +47,8 @@ async function handlePaymentPay(ctx) {
         const paySession = await writeService?.sessions?.get?.(openIdOf(req)).catch(() => null);
         const payPending = (paySession?.sale?.paymentStep || paySession?.paymentStep) === 'pending';
         let createdResult = null;
+        // ⭐ 2026-11-17：本单鞋类货品（提交成功后拿来做「是否打印」页；配品不进来）。
+        let salePrintProducts = [];
         // ⭐ 这一步的墙钟起点（打点用 ✓ 见下面那条 `scan.sale.timing`）
         //   ＋ ⭐⭐ 2026-10-15（⑨b-2）：**打点载体**要**留一个名字** —— 写服务把各分段**写进传进去的
         //   这个对象**（`submitSale({ timing })` ✓），而它**不把 timing 放回返回值** ✗。
@@ -33,6 +61,7 @@ async function handlePaymentPay(ctx) {
         const payStepTiming = {};
         if (payPending) {
           const pendingLines = Array.isArray(paySession?.sale?.lines) ? paySession.sale.lines : [];
+          salePrintProducts = salePrintProductsOf(pendingLines);
           const pendingInfo = paySession?.sale?.submitPending || paySession?.submitPending || {};
           // ⭐ 2026-10-29：逐件实收的唯一真源 = 草稿行自己的 amount。
           //   货品页提交时已写回 sale.lines[].amount；资金页不再读第二份 submitPending.lineAmounts。
@@ -171,6 +200,23 @@ async function handlePaymentPay(ctx) {
               payment_count: paidPayments.length,
               reused: enqueued.created === false,
             });
+            // ⭐ 2026-11-17：异步销售也是「先回执、后台写库存」——
+            //   先回「是否打印」轻页；她勾选后只记打印意图，等这条销售 job 成功后由后端自动入队。
+            const saleJobId = String(enqueued.job?.job_id || '').trim();
+            if (saleJobId && salePrintProducts.length) {
+              const prompt = getPrintPromptService().create({
+                kind: 'sale',
+                source: SOURCES.sale,
+                operationId: saleJobId,
+                ownerOpenId: openIdOf(req),
+                products: salePrintProducts,
+                returnUrl: submitToastUrl({ orderNo }),
+              });
+              if (prompt) {
+                res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+                return res.redirect(303, printPromptUrlOf(prompt.token));
+              }
+            }
             // ⭐⭐ 2026-10-27 起的"回工作台 + toast"；2026-10-29 起**收进共用件**（`utils/submitToast.js`）：
             //   文案 / 落点 / 参数名全部走配置，四条提交链（销售 / 补货 / 退货 / 多货）共用同一份实现。
             return redirectWithSubmitToast(res, { orderNo });
@@ -228,6 +274,22 @@ async function handlePaymentPay(ctx) {
           const pendingHasLines = pendingLines.length > 0;
           const pendingView = (pendingSize && !pendingHasLines)
             ? await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null) : null;
+          if (pendingView?.found) {
+            salePrintProducts = salePrintProductsOf(
+              salePrintProducts.map((item) => ({
+                product_record_id: item.recordId,
+                item_no: item.itemNo,
+                color: item.color,
+                number: item.number,
+              })),
+              {
+                product_record_id: pendingView.product_record_id,
+                number: pendingView.number,
+                item_no: pendingView.item_no,
+                color: pendingView.color,
+              },
+            );
+          }
           // eslint-disable-next-line no-await-in-loop
           // ⭐ 2026-10-18：资金页上的「赠品」也要落主表（之前被丢弃）。
           const payGift = String(body[fields.gift] || '').trim();
@@ -356,6 +418,7 @@ async function handlePaymentPay(ctx) {
           if (createdResult.deferred) {
             return redirectWithSubmitToast(res, { orderNo: paidOrderNo });
           }
+          // ⚠️ 销售已统一走异步 job；同步分支不再有「是否打印」轻页（没有 job 可等）。
           return redirectWithSubmitToast(res, { orderNo: paidOrderNo });
         }
         // ⭐ 没填金额（或行数为 0）⇒ **待补充**：**一个字都不写**、成功页照给、**不报错** ✓

@@ -95,10 +95,13 @@ const build = ({ records = {}, behavior = {}, config = {}, gateway: injectedGate
   return { gateway, queue, notifications, sleeps, service };
 };
 
-const formRecord = (id, productIds) => ({
-  record_id: id,
-  fields: { [V1_BITABLE_SCHEMA.tables.labelPrintRequest.fields.product]: productIds ? linkValue(productIds) : [] },
-});
+const formRecord = (id, productIds, source) => {
+  const table = V1_BITABLE_SCHEMA.tables.labelPrintRequest;
+  const fields = { [table.fields.product]: productIds ? linkValue(productIds) : [] };
+  // ⭐ 2026-11-17：来源是服务端写「打印请求记录」时必带的区分字段。
+  if (source !== undefined) fields[table.fields.source] = [source];
+  return { record_id: id, fields };
+};
 
 test('AC-FF1 一条表单勾多个货号 ⇒ 每个货号各排一次队（源 = form，幂等键按记录+货品各一把）', async () => {
   const { queue, service } = build({
@@ -112,6 +115,36 @@ test('AC-FF1 一条表单勾多个货号 ⇒ 每个货号各排一次队（源 =
   ]);
   assert.deepEqual([...new Set(queue.calls.map((call) => call.source))], ['form']);
   assert.equal(result.notified, false, '全成功 ⇒ 不打扰运营群');
+});
+
+test('AC-FF12 ⭐ 服务端写的请求记录（来源=扫码打印 / 库存调整打印）⇒ 跳过，不再打印/通知', async () => {
+  const records = {
+    rec_log_scan: formRecord('rec_log_scan', ['rec_p1'], '扫码打印'),
+    rec_log_inv: formRecord('rec_log_inv', ['rec_p1'], '库存调整打印'),
+  };
+  const { queue, notifications, service } = build({ records });
+
+  const scan = await service.processRecord('rec_log_scan');
+  assert.equal(scan.skipped, true);
+  assert.equal(scan.reason, 'not_a_form_request');
+  const inv = await service.processRecord('rec_log_inv');
+  assert.equal(inv.skipped, true);
+  assert.equal(inv.reason, 'not_a_form_request');
+
+  assert.equal(queue.calls.length, 0, '服务端写的请求记录绝不再次入队');
+  assert.equal(notifications.sent.length, 0, '也不发「没勾选货号」之类的通知');
+});
+
+test('AC-FF13 来源=批量打印（或为空）⇒ 照常当真表单请求处理', async () => {
+  const { queue, service } = build({
+    records: {
+      rec_batch: formRecord('rec_batch', ['rec_p1'], '批量打印'),
+      rec_legacy: formRecord('rec_legacy', ['rec_p2']),
+    },
+  });
+  assert.equal((await service.processRecord('rec_batch')).queued, 1);
+  assert.equal((await service.processRecord('rec_legacy')).queued, 1);
+  assert.deepEqual(queue.calls.map((call) => call.recordId), ['rec_p1', 'rec_p2']);
 });
 
 test('AC-FF11 读表单记录遇到 1254607 ⇒ 复用 withTransientRetry 短重试后继续处理', async () => {
@@ -231,7 +264,10 @@ test('AC-FF7 只认「新增」动作：record_edited / record_deleted 不触发
 test('AC-FF8 「打印日」是飞书自动字段：schema 不映射、本链路没有任何写表路径', () => {
   const table = V1_BITABLE_SCHEMA.tables.labelPrintRequest;
   assert.equal(table.tableName, '标签打印');
-  assert.deepEqual(Object.keys(table.fields), ['product'], '只映射「打印货号」；「打印日」刻意不映射');
+  assert.deepEqual(Object.keys(table.fields), ['product', 'source', 'count'],
+    '只映射「打印货号」「来源」「申请次数」；「打印日」刻意不映射');
+  assert.equal(table.fields.source, '来源', '来源字段是服务端请求记录与表单请求的区分键');
+  assert.equal(table.fields.count, '申请次数', '申请次数按「货品 + 来源」累计');
   const source = fs.readFileSync(path.join(SOURCE_DIR, 'services/labelPrintFormIntakeService.js'), 'utf8');
   for (const forbidden of ['gateway.update', 'gateway.create', 'bitable.record.created', 'bitable.record.updated']) {
     assert.equal(source.includes(forbidden), false, `本链路只读 + 入队，不许出现 ${forbidden}`);

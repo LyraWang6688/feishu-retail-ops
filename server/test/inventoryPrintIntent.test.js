@@ -4,6 +4,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createInventoryPrintIntentService, submitKeyOf } = require('../src/services/inventoryPrintIntentService');
+const { ASYNC_JOB_TYPES } = require('../src/config/asyncJobs');
+const { SOURCES } = require('../src/config/labelPrintQueue');
 
 const silent = { logInfo() {}, logWarn() {} };
 
@@ -59,7 +61,7 @@ test('AC-PI1 已成功的 job：点打印 → 立即按记录 ID 入队（submit
   assert.equal(outcome.queued, true);
   assert.equal(outcome.print_job_id, 'print_job_1');
   assert.deepEqual(queue.calls[0], {
-    recordId: 'rec_product', actor: 'ou_owner', submitKey: submitKeyOf('inventory_adjustment_job_1'), source: 'workbench',
+    recordId: 'rec_product', actor: 'ou_owner', submitKey: submitKeyOf('inventory_adjustment_job_1'), source: 'inventory',
   });
   assert.equal(jobs.state.jobs[0].print_job_id, 'print_job_1');
   assert.equal(jobs.state.jobs[0].print_intent.status, 'queued');
@@ -124,6 +126,46 @@ test('AC-PI6 打印入队失败：意图标 failed、不回滚库存、不抛', 
   assert.equal(outcome.queued, false);
   assert.equal(jobs.state.jobs[0].print_intent.status, 'failed');
   assert.match(jobs.state.jobs[0].print_intent.last_error, /queue down/);
+});
+
+test('AC-PI8 ⭐ 验收：一个 job 多款 ⇒ 每款各建一个打印任务（来源=验收录单打印）', async () => {
+  const jobs = makeJobs(makeJob({
+    type: ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE,
+    payload: {},
+    status: 'succeeded',
+  }));
+  const calls = [];
+  let seq = 0;
+  const queue = {
+    enqueueSingle: async (input) => {
+      calls.push(input);
+      seq += 1;
+      return { job_id: 'print_accept_' + seq };
+    },
+  };
+  const service = createInventoryPrintIntentService({ jobs, queue, logger: silent });
+
+  const outcome = await service.request({
+    jobId: 'inventory_adjustment_job_1',
+    ownerOpenId: 'ou_owner',
+    productRecordIds: ['rec_a', 'rec_b'],
+    source: SOURCES.acceptance,
+    expectedType: ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE,
+    submitKeyPrefix: 'acceptance_print',
+  });
+
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.queued, true);
+  assert.deepEqual(calls.map((item) => item.recordId), ['rec_a', 'rec_b']);
+  assert.deepEqual([...new Set(calls.map((item) => item.source))], [SOURCES.acceptance]);
+  assert.deepEqual(calls.map((item) => item.submitKey), [
+    'acceptance_print_inventory_adjustment_job_1:rec_a',
+    'acceptance_print_inventory_adjustment_job_1:rec_b',
+  ]);
+  assert.deepEqual(jobs.state.jobs[0].print_job_ids, {
+    rec_a: 'print_accept_1', rec_b: 'print_accept_2',
+  });
+  assert.equal(jobs.state.jobs[0].print_job_id, 'print_accept_1');
 });
 
 test('AC-PI7 启动补做：已成功 + 有意图 + 没打印任务 ⇒ 补建', async () => {

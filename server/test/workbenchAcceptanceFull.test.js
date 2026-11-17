@@ -89,7 +89,7 @@ const appFor = ({ arrival, purchaseQuery, gateway = {}, acceptBackground = null 
   const app = express();
   app.use(express.json());
   app.use('/api/workbench', createWorkbenchRouter({
-    gateway, purchaseQuery, arrival,
+    gateway, purchaseQuery, arrival, printPrompt: false,
     ...(acceptBackground ? { acceptBackground } : {}),
   }));
   app.use((error, req, res, next) => res.status(500).json({ success: false, error: error.message }));
