@@ -28,6 +28,46 @@ test('live inventory resolves sizes from the link and filters by the numeric siz
 });
 
 
+test('单双调整按产品过滤读：只读 1 条货品 + 这一款库存，不整表读', async () => {
+  resetConfigTableCache();
+  let filteredCalls = 0;
+  const listAllCalls = [];
+  const live = [
+    { record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_36'] }], 所属状态: '门盒' } },
+    { record_id: 'l2', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size_37'] }], 所属状态: '门盒' } },
+    { record_id: 'l3', fields: { 编号: [{ record_ids: ['p2'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒' } },
+  ];
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    get: async (key, id) => (id === 'p1' ? { record_id: 'p1', fields: { 编号: '93827黑' } } : null),
+    listByFilter: async (key, formula, options) => {
+      filteredCalls += 1;
+      assert.equal(key, 'liveInventory');
+      assert.ok(formula, '必须带库存键前缀 filter');
+      assert.equal(options.maxRecords, 200);
+      return live;
+    },
+    listAll: async (key) => {
+      listAllCalls.push(key);
+      return key === 'sizeManagement' ? SIZES : [];
+    },
+  };
+  const result = await createWorkbenchService(gateway).getLiveInventory({ productRecordId: 'p1' });
+
+  assert.deepEqual(result.rows.map((row) => [row.size, row.quantity]), [[36, 1], [37, 1]], '只返回这一款');
+  assert.equal(filteredCalls, 1, '走一次过滤读');
+  assert.equal(listAllCalls.includes('liveInventory'), false, '不许再整表读实时库存');
+  assert.equal(listAllCalls.includes('product'), false, '不许再整表读货品');
+});
+
+test('单双调整：记录 ID 形状不合法 ⇒ 400，不拿坏 id 打飞书', async () => {
+  const gateway = { table: (key) => V1_BITABLE_SCHEMA.tables[key], listAll: async () => [] };
+  await assert.rejects(
+    () => createWorkbenchService(gateway).getLiveInventory({ productRecordId: '../bad' }),
+    (error) => error.statusCode === 400,
+  );
+});
+
 test('实时库存读遇到 504/2200 瞬态错误会短重试，成功后正常返回', async () => {
   const original = process.env.WORKBENCH_ORDERS_RETRY_DELAY_MS;
   process.env.WORKBENCH_ORDERS_RETRY_DELAY_MS = '0';

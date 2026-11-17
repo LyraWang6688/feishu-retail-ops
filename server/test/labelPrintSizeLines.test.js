@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * V5 定稿（2026-11-15）：
- * 第一行货号+颜色、第二行单价；二维码左；品牌在二维码下；尺码 3.6mm/横向2mm/行距4.8mm。
+ * V5 定稿（2026-11-16）：
+ * 第一行货号+颜色、第二行单价；二维码左 0.5mm；品牌在二维码下；
+ * 尺码 3.6mm / 列间距 4mm / 行距 5.1mm（空白 1.5mm）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -35,15 +36,11 @@ test('V5-1 3877 普通码：3 个一行、3 行（3+3+1），44 完整', () => {
   assert.equal(m.sizes_size_mm, 3.6);
 });
 
-test('V5-2 第一行到第二行的纵向行距 = 4.8mm（3.6 + 1.2 空白）', () => {
+test('V5-2 第一行到第二行的纵向行距 = 5.1mm（3.6 + 1.5 空白）', () => {
   const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
   const y38 = yOfText(svg, '38');
   const y41 = yOfText(svg, '41');
-  assert.equal(Number((y41 - y38).toFixed(2)), 4.8, '38 到 41 的基线差应为 4.8mm');
-});
-
-test('V5-6 货号与颜色间距配置为 0（视觉约 0.5–0.6mm）', () => {
-  assert.equal(LABEL_PRINT_V5.body.itemNoColor.gapMm, 0);
+  assert.equal(Number((y41 - y38).toFixed(1)), 5.1, '38 到 41 的基线差应为 5.1mm');
 });
 
 test('V5-5 长货号可以使用整张纸安全宽度，不提前截断', () => {
@@ -64,10 +61,20 @@ test('V5-4 旧 LABEL_PRINT_ROWS 覆盖不影响 V5 行序（货号+颜色同行�
   assert.ok(yOfText(svg, '¥189') > yOfText(svg, '3877'), '单价必须在下一行');
 });
 
+test('V5-7 二维码左边缘0.5mm，尺码区一起左移', () => {
+  const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
+  assert.match(svg, /<svg x="0.5" y="10.55" width="15" height="15"/, '二维码左边缘应为0.5mm');
+  assert.ok(svg.includes('<text x="17"'), '尺码区起点应为17mm');
+});
+
+test('V5-6 货号与颜色间距配置为0', () => {
+  assert.equal(LABEL_PRINT_V5.body.itemNoColor.gapMm, 0);
+});
+
 test('V5-3 品牌在二维码下方居中', () => {
   const svg = artifact.labelSvg(label(), LABEL_PRINT_V5, cfg);
   const brandY = yOfText(svg, '邯美皮鞋');
   assert.ok(brandY > 25, `品牌应在二维码下方，实际 y=${brandY}`);
   const brand = /<text x="([-\d.]+)" y="[-\d.]+"[^>]*text-anchor="middle">邯美皮鞋<\/text>/.exec(svg);
-  assert.equal(Number(brand[1]), 11.5, '品牌中心 = 二维码中心（4 + 15/2）');
+  assert.equal(Number(brand[1]), 8, '品牌中心 = 二维码中心（0.5 + 15/2）');
 });

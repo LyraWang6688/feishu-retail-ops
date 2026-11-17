@@ -21,7 +21,7 @@
 const { readFlag, readInt, readList, readString } = require('./envValue');
 // ⭐ 2026-10-17（假配置接线）：领域条第 5 格文案的**唯一真源** = 五处登记表（不再在两边各写一份）。
 const { SCAN_ENTRIES } = require('./scanEntries');
-
+const { PRODUCT_ACTIONS } = require('./scanPageProductActions');
 /**
  * 路由挂载点：`GET /r/:recordId`。
  * ⚠️ **不放在 `/api/*` 下面**：浏览器直接打开页面，不能要求自定义请求头；
@@ -782,7 +782,6 @@ const REPLENISH_FORM = Object.freeze({
    */
   amountRow: readFlag(process.env, 'SCAN_PAGE_REPLENISH_AMOUNT_ROW_ENABLED', false),
 });
-
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
   // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（**显式布尔**，缺省 false）。
@@ -855,6 +854,7 @@ const SCAN_PAGE = Object.freeze({
   // ⭐ 2026-10-14（她：「按照**尺码×数量**的形式……**一行 3 个**，多了就换行，保持一行 3 个」）：
   //   补货列表版式 —— 列数**走配置**（以后改 2/4 只改这里 ✓ 显式数字 ✓ 不许 `|| 兜底` ✗）
   purchaseSizes: PURCHASE_SIZES,
+  productActions: PRODUCT_ACTIONS,
   texts: TEXTS,
   salesHomeToastMs: 5000,
   salesHomeReturnPath: '/workbench',

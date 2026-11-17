@@ -40,6 +40,9 @@ const { SCAN_PAGE, fillText } = require('../config/scanPage');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const { shanghaiDateTimeText } = require('../utils/shanghaiDay');
+// ⭐ 2026-11-17：货品卡两个入口 / 金额文案都拆成小模块（本文件是存量超限件，只许变小）。
+const { resolveProductActions } = require('./scanPageProductActions');
+const { asAmount, formatPrice } = require('./scanPagePrice');
 
 const fieldName = (schema, tableKey, semanticKey) => schema?.tables?.[tableKey]?.fields?.[semanticKey] || '';
 const readField = (schema, tableKey, record, semanticKey) => {
@@ -150,23 +153,6 @@ const categoryValues = (cell) => {
     .flatMap((value) => (Array.isArray(value) ? value : String(value ?? '').split(/[,，、;；\s]+/)))
     .map((value) => textValue(value).trim())
     .filter(Boolean);
-};
-
-const asAmount = (value) => {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  const text = textValue(value).replace(/[¥,\s]/g, '');
-  if (!text) return null;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-/** 金额文案：整数不补零（`¥399`），带角分才显示小数（`¥399.50`）。 */
-const formatPrice = (value, config = SCAN_PAGE) => {
-  if (value === null || value === undefined) return config.texts.missingValue;
-  const decimals = Number.isInteger(config.price.decimals) && config.price.decimals >= 0 ? config.price.decimals : 2;
-  const text = Number.isInteger(value) ? String(value) : value.toFixed(decimals);
-  return `${config.price.prefix}${text}`;
 };
 
 /** 飞书时间字段 → 毫秒（Date / 数字 / 数字串 / 可解析文本都认；读不出回 0）。 */
@@ -1155,6 +1141,7 @@ const createScanPageService = (rawGateway, options = {}) => {
     if (missingCount) notes.push(config.missingSize.hint);
 
     const productText = (semanticKey) => textValue(readField(schema, 'product', product, semanticKey)).trim();
+    const productActions = resolveProductActions({ schema, product, productId, config });
     const categoryNameField = config.fieldNamesPendingSchema?.productCategoryName || '';
     const view = {
       found: true,
@@ -1175,6 +1162,7 @@ const createScanPageService = (rawGateway, options = {}) => {
       notes,
       updated_at_text: updatedAt ? shanghaiDateTimeText(updatedAt) : config.texts.updatedAtUnknown,
       product_record_id: productId,
+      ...productActions,
     };
 
     logInfo(config.events.viewed, {

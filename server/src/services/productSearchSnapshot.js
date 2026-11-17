@@ -69,10 +69,11 @@ const getProductSearchSnapshot = async ({
   if (!gateway) throw new Error('getProductSearchSnapshot requires gateway');
   const entry = entryOf(gateway);
   entry.gateway = gateway;
-  const fresh = entry.rows.length > 0 && (now() - entry.at < ttlMs);
+  const fresh = entry.rows.length > 0 && entry.at > 0 && (now() - entry.at < ttlMs);
   if (fresh) return entry.rows;
-  if (entry.rows.length) {
-    // stale-while-revalidate：先把旧快照给她，刷新在后台跑，不阻塞搜索。
+  // ⭐ 2026-11-17：新增货品后由事件标记 at=0 ⇒ 这一次搜索**等刷新完成**（保证新货品立刻可搜）。
+  //   普通 TTL 过期仍是 stale-while-revalidate：先回旧快照、后台刷新。
+  if (entry.rows.length && entry.at > 0) {
     if (!entry.loading) void load(entry, now).catch(() => {});
     return entry.rows;
   }
@@ -89,10 +90,16 @@ const warmProductSearchSnapshot = async ({ gateway, now = () => Date.now() } = {
   return rows.length;
 };
 
+/** 新增货品 / 编号变更后调用：下一次搜索等一次刷新，避免新货品在旧快照里搜不到。 */
+const invalidateProductSearchSnapshot = () => {
+  for (const entry of entries.values()) entry.at = 0;
+};
+
 const resetProductSearchSnapshot = () => entries.clear();
 
 module.exports = {
   getProductSearchSnapshot,
   warmProductSearchSnapshot,
+  invalidateProductSearchSnapshot,
   resetProductSearchSnapshot,
 };

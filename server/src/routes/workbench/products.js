@@ -17,8 +17,10 @@ const { getConfigRows } = require('../../services/configTableCache');
 const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
 const { recordUrl } = require('../../utils/feishuLinks');
 const { PRODUCT_PROFILE } = require('../../config/productProfile');
+const { productGapsOf, gapItemsOf } = require('../../services/productGaps');
+const { extraOfAttachment } = require('../../services/driveApi');
 const { containsFormula } = require('../../services/bitableFilterFormula');
-const { getProductSearchSnapshot } = require('../../services/productSearchSnapshot');
+const { getProductSearchSnapshot, invalidateProductSearchSnapshot } = require('../../services/productSearchSnapshot');
 const {
   listProductFeatures, addProductFeatureTag, updateProductFeatureTag, deleteProductFeatureTag,
 } = require('../../services/productFeatureTagService');
@@ -54,19 +56,29 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   const itemOf = (row) => {
     const fields = row?.fields || {};
     const id = String(row?.record_id || '');
-    const images = fields[field('sampleImage')];
-    const hasSampleImage = Array.isArray(images) && images.length > 0;
+    // ⭐ 2026-11-17：三样（商品信息 / 标签信息 / 样例图）走**唯一判定** `productGapsOf`，
+    //   与扫码页「资料不齐」链接同一份，避免两处规则漂移。
+    const gaps = productGapsOf({
+      fields,
+      fieldNames: {
+        completeness: field('completeness'),
+        tagCompleteness: field('tagCompleteness'),
+        sampleImage: field('sampleImage'),
+      },
+    });
     return {
       recordId: id,
       number: textValue(fields[field('number')]).trim(),
       itemNo: textValue(fields[field('itemNo')]).trim(),
       color: textValue(fields[field('color')]).trim(),
       category: textValue(fields[field('category')]).trim(),
-      hasSampleImage,
-      missingProduct: textValue(fields[field('completeness')]).trim(),
-      missingTag: textValue(fields[PRODUCT_PROFILE.tagMissingField]).trim(),
+      hasSampleImage: gaps.hasSampleImage,
+      missingProduct: gaps.productText,
+      missingTag: gaps.tagText,
+      // ⭐ 缺失 chips 的**文案由服务端唯一判定给出**（扫码页「资料不齐」用的是同一份）。
+      issues: gapItemsOf(gaps),
       // 图片始终走后端代理，不把飞书附件 token / 临时 URL 暴露给浏览器。
-      imageUrl: hasSampleImage && id ? `/api/workbench/products/${encodeURIComponent(id)}/sample-image` : '',
+      imageUrl: gaps.hasSampleImage && id ? `/api/workbench/products/${encodeURIComponent(id)}/sample-image` : '',
       // 搜索结果卡片直接跳到「货品信息」对应记录。
       recordUrl: recordUrl({ appToken: V1_BITABLE_SCHEMA.appToken, tableId: table.tableId, viewId: table.viewId, recordId: id }),
     };
@@ -80,10 +92,26 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       // 快照优先：只读内存，不被 record_changed / 样例图同步打穿；过期时后台刷新。
       // 只模糊匹配「货号」，不匹配「编号」。
       const rows = await getProductSearchSnapshot({ gateway: getGateway() });
-      const items = rows
+      let items = rows
         .map(itemOf)
         .filter((item) => item.itemNo.toLowerCase().includes(needle))
         .slice(0, PRODUCT_PROFILE.searchLimit);
+      // ⭐ 2026-11-17：刚新增的货品可能还没进快照 ⇒ 快照 0 命中时按货号直接 filter 兜底一次，
+      //   查到就返回，并让下一次快照刷新（新增后立刻可搜，不用等 5 分钟 TTL）。
+      if (!items.length) {
+        try {
+          const formula = containsFormula(field('itemNo'), q);
+          if (formula) {
+            const freshRows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
+            items = freshRows.map(itemOf);
+            if (items.length) invalidateProductSearchSnapshot();
+          }
+        } catch (filterError) {
+          logError('workbench.product_profile.search_filter_failed', {
+            request_id: req.requestId, error: filterError.message,
+          });
+        }
+      }
       return res.json({ success: true, query: q, items });
     } catch (snapshotError) {
       logError('workbench.product_profile.search_snapshot_failed', {
@@ -241,14 +269,21 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
         const attachment = Array.isArray(images) ? images[0] : null;
         const fileToken = String(attachment?.file_token || attachment?.id || '').trim();
         if (!fileToken) return res.status(404).json({ success: false, error: 'sample_image_missing' });
-        entry = { fileToken, type: String(attachment?.type || 'image/jpeg') };
+        entry = {
+          fileToken,
+          type: String(attachment?.type || 'image/jpeg'),
+          // ⭐ 2026-11-17：高级权限 Base 的附件下载必须带 extra（从附件 tmp_url 取）。
+          extra: extraOfAttachment(attachment),
+        };
         imageCache.set(recordId, entry);
       }
       const etag = `W/"${entry.fileToken}"`;
       res.set('ETag', etag);
       res.set('Cache-Control', 'private, max-age=300, must-revalidate');
       if (String(req.headers['if-none-match'] || '') === etag) return res.status(304).end();
-      const buffer = await getGateway().drive.downloadMedia(entry.fileToken, 'download product sample image');
+      const buffer = await getGateway().drive.downloadMedia(
+        entry.fileToken, 'download product sample image', { extra: entry.extra },
+      );
       res.set('Content-Type', entry.type);
       breaker.failures = 0;
       return res.send(buffer);

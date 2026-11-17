@@ -83,7 +83,7 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
     //   ⇒ **货品卡在上、6 格 tab 条在下** ✓（原来是反的 ✗）· 只改顺序 ✓ 内容一字不动 ✗
     content: `${bar}
 ${draftNotice}
-${identityHtml(view, config)}
+${identityHtml(view, config, { realm: safeRealm })}
 ${block}
 <p class="foot">${escapeHtml(config.texts.footerNumberLabel)} <span class="mono">${escapeHtml(view.number)}</span>`
   + `${view.updated_at_text ? ` · ${escapeHtml(config.texts.updatedAtLabel)} ${escapeHtml(view.updated_at_text)}` : ''}</p>`,

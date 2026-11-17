@@ -17,7 +17,7 @@ const listen = (app) => new Promise((resolve) => {
   });
 });
 
-const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备') => ({
+const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备', extra = '') => ({
   record_id: id,
   fields: {
     编号: [{ text: number, type: 'text' }],
@@ -26,7 +26,10 @@ const product = (id, number, itemNo, color, category, missing, token = '', tagMi
     类别: [{ text: category, type: 'text' }],
     商品信息缺失: missing,
     标签信息缺失: tagMissing,
-    样例图: token ? [{ file_token: token, type: 'image/jpeg', name: 'x.jpg' }] : [],
+    样例图: token ? [{
+      file_token: token, type: 'image/jpeg', name: 'x.jpg',
+      ...(extra ? { tmp_url: `https://open.feishu.cn/open-apis/drive/v1/medias/batch_get_tmp_download_url?file_tokens=${token}&extra=${encodeURIComponent(extra)}` } : {}),
+    }] : [],
   },
 });
 
@@ -50,9 +53,31 @@ test('AC-PP1 搜索：只按货号模糊匹配；空搜索不返回结果', asyn
     assert.equal(body.items.length, 1);
     assert.equal(body.items[0].number, '906|黑色|男');
     assert.equal(body.items[0].hasSampleImage, true);
+    assert.deepEqual(body.items[0].issues, ['缺商品信息：成本'], '缺失 chips 由服务端唯一判定给出');
     assert.equal(body.items[0].imageUrl, '/api/workbench/products/rec1/sample-image');
     assert.match(body.items[0].recordUrl, /\/base\/app_test\?table=.*record=rec1/, '结果卡片要能打开货品记录');
     assert.match(body.items[0].recordUrl, /[?&]view=vew_test(&|$)/, '记录链接要落在指定视图');
+  } finally { server.close(); }
+});
+
+test('AC-PP1b 新增货品还没进快照 ⇒ 按货号 filter 兜底，立刻能搜到', async () => {
+  let filterCalls = 0;
+  const gateway = {
+    listAll: async () => [product('rec_old', 'OLD|黑色|男', 'OLD', '黑色', '男', '齐备')],
+    listByFilter: async (tableKey, formula, options) => {
+      filterCalls += 1;
+      assert.equal(tableKey, 'product');
+      assert.ok(formula, '必须带 filter');
+      assert.equal(options.maxRecords, 50);
+      return [product('rec_new', 'NEW|黑色|男', 'NEW', '黑色', '男', '齐备')];
+    },
+  };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/search?q=NEW`)).json();
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].recordId, 'rec_new');
+    assert.equal(filterCalls, 1, '快照 0 命中才兜底一次');
   } finally { server.close(); }
 });
 
@@ -85,6 +110,23 @@ test('AC-PP3 样例图代理：按 record_id 下载附件并返回图片流', as
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'image/jpeg');
     assert.equal(Buffer.from(await res.arrayBuffer()).toString(), 'fake-image');
+  } finally { server.close(); }
+});
+
+test('AC-PP3d 高级权限：附件 tmp_url 的 extra 必须原样传给下载（否则飞书 400）', async () => {
+  const extra = '{"bitablePerm":{"tableId":"tbl_test_product","rev":9}}';
+  let seen = null;
+  const gateway = {
+    get: async () => product('rec1', '906|黑色|男', '906', '黑色', '男', '成本', 'file_1', '齐备', extra),
+    drive: { downloadMedia: async (token, operation, options) => { seen = { token, operation, options }; return Buffer.from('fake-image'); } },
+  };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/products/rec1/sample-image`);
+    assert.equal(res.status, 200);
+    await res.arrayBuffer();
+    assert.equal(seen.token, 'file_1');
+    assert.equal(seen.options.extra, extra, 'extra 必须逐字带下去');
   } finally { server.close(); }
 });
 
@@ -249,6 +291,7 @@ test('AC-PP11 货品完善三维度：样例图 / 商品信息缺失 / 标签信
     assert.equal(body.total, 3, '只统计至少缺一个维度的货品');
     assert.deepEqual(body.dimensions.map((d) => [d.key, d.count]), [['sample', 1], ['product', 1], ['tag', 1]]);
     assert.equal(body.dimensions[0].items.map((i) => i.recordId).join(','), 'rec1');
+    assert.deepEqual(body.dimensions[0].items[0].issues, ['缺样例图'], '样例图缺失也是同一份判定');
     assert.match(body.dimensions[1].items[0].recordUrl, /record=rec2/);
   } finally { server.close(); }
 });

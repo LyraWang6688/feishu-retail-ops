@@ -14,6 +14,12 @@ const PRODUCT_PROFILE = Object.freeze({
   tagMissingField: readString(process.env, 'PRODUCT_PROFILE_TAG_MISSING_FIELD', '标签信息缺失').trim() || '标签信息缺失',
   // 这个值表示资料已齐备，不进入「货品完善」。
   completeValue: readString(process.env, 'PRODUCT_PROFILE_COMPLETE_VALUE', '齐备').trim() || '齐备',
+  // ⭐ 2026-11-17：缺失项的**给用户看的标签**（与工作台货品资料页的缺失 chips 同一套文案）。
+  //   扫码页「资料不齐」链接、货品资料页的 chips 都从这里取，避免两处各写一份。
+  issueSample: readString(process.env, 'PRODUCT_PROFILE_ISSUE_SAMPLE', '缺样例图').trim() || '缺样例图',
+  issueProduct: readString(process.env, 'PRODUCT_PROFILE_ISSUE_PRODUCT', '缺商品信息：{value}').trim() || '缺商品信息：{value}',
+  issueTag: readString(process.env, 'PRODUCT_PROFILE_ISSUE_TAG', '缺标签：{value}').trim() || '缺标签：{value}',
+  issueSeparator: readString(process.env, 'PRODUCT_PROFILE_ISSUE_SEPARATOR', '；').trim() || '；',
   // 搜索一次最多返回多少条（模糊匹配后截断；避免 559 条全塞给页面）。
   searchLimit: readInt(process.env, 'PRODUCT_PROFILE_SEARCH_LIMIT', 50, { min: 1, max: 200 }),
   // 搜索专用快照 TTL：不跟 record_changed 失效，避免样例图同步把缓存打穿。

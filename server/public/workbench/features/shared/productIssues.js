@@ -15,6 +15,9 @@ const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m,
 ));
 
 export function productIssueChipsOf(item) {
+  // ⭐ 2026-11-17：服务端已经把「缺样例图 / 缺商品信息 / 缺标签」算好了（与扫码页同一份判定），
+  //   有就直接用；老接口 / 假数据没有 `issues` 时走下面的兜底（行为与改前一致）。
+  if (Array.isArray(item?.issues)) return item.issues;
   const issues = [];
   if (!item?.hasSampleImage) issues.push(T.issueSample);
   if (item?.missingProduct && item.missingProduct !== T.completeValue) {

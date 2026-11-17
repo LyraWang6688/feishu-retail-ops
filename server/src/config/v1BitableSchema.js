@@ -1,6 +1,10 @@
 const { readString } = require('./envValue');
+// ⭐ 2026-11-17：三张产品特点标签表的 tableId 唯一真源仍在 `productFeatures`（含环境变量/生产兜底），
+//   这里只引用，不在 schema 里再写一份硬编码兜底。
+const { PRODUCT_FEATURE_DIMENSIONS } = require('./productFeatures');
 
 const getEnv = (key, fallback = '') => process.env[key] || fallback;
+const featureTableIdOf = (cacheKey) => (PRODUCT_FEATURE_DIMENSIONS.find((item) => item.cacheKey === cacheKey) || {}).tableId || '';
 
 // 目标多维表格不再有硬编码兜底：读不到就明确报错。此前默认值指向生产 Base，
 // 任何漏配环境变量的场合都会静默写到生产，比如本地脚本和自动化测试。
@@ -76,6 +80,26 @@ const V1_BITABLE_SCHEMA = {
         // ⚠️ 本轮**只加这一行**，不动本表其余映射（schema 里还有别的链路在用）。
         tagQrCode: '标签二维码',
       },
+    },
+    // ⭐ 2026-11-17：「产品特点配置」三张标签字典表。
+    //   它们原来只登记在 `config/configTables.js` + `config/productFeatures.js`，
+    //   不在 schema ⇒ 启动预热按 tableKey 读时被判「Unknown V1 table」（每次重启 3 条 warn），
+    //   而且 record_changed 的失效逻辑按 schema.tableId 匹配 ⇒ 直接改飞书里的标签不会失效缓存。
+    //   登记进 schema 后：预热能读、变更能失效；tableId 仍可用环境变量覆盖。
+    productAudience: {
+      tableName: '主推人群标签',
+      tableId: getEnv('FEISHU_V1_PRODUCT_AUDIENCE_TABLE_ID', featureTableIdOf('productAudience')),
+      fields: { tag: '标签' },
+    },
+    productSellingPoint: {
+      tableName: '核心卖点标签',
+      tableId: getEnv('FEISHU_V1_PRODUCT_SELLING_POINT_TABLE_ID', featureTableIdOf('productSellingPoint')),
+      fields: { tag: '标签' },
+    },
+    productScene: {
+      tableName: '主推场景标签',
+      tableId: getEnv('FEISHU_V1_PRODUCT_SCENE_TABLE_ID', featureTableIdOf('productScene')),
+      fields: { tag: '标签' },
     },
     // 「颜色管理」：货品信息的「颜色」是**关联字段**，不是文本。
     // 给新品自动建档时必须按颜色名找到对应记录；颜色表里没有的颜色要先新建一条

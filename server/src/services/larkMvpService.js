@@ -29,6 +29,7 @@ const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 //    `services/salesEntryService.js`（本文件不再直接用它）。
 const { V1ReferenceResolver, relation, normalizeText, normalizeColor } = require('./v1ReferenceResolver');
 const { LiveInventoryIndex, buildLiveInventoryIndex } = require('./liveInventoryIndex');
+const { productGapsOf } = require('./productGaps');
 const { deliversForTradeType } = require('../config/salesMovements');
 // 「类型的唯一判据（查完库存再定）」+「录单时要跑哪些解析」的**唯一**判据来源
 //（配置先行，业务负责人 2026-10-07 确认）。
@@ -97,7 +98,6 @@ const shouldDeliverFor = (task, action) => {
   if (declared === '已交付' || declared === '未交付') return declared === '已交付';
   return action === 'confirm_sale_delivered';
 };
-
 // 「这一单交付了哪些行」——**逐明细**按交易类型推（现货交付并扣库存，预定不交付）。
 // 判据全在配置：`deliversForTradeType`（要不要交付）+ `salesDeliverySummaryFor`（那三句话）。
 // ⚠️ 抽成一处是因为它在**两处**用到（入账终态卡 + 她重复点确认时的终态卡），
@@ -695,16 +695,16 @@ class LarkMvpService {
       const fields = record?.fields || {};
       // 「信息是否齐备」是飞书公式：齐备时返回「齐备」，否则返回缺的字段名。
       // 不自己逐字段判断——单一数据源留在表里，她在飞书改公式这里自动跟着变。
-      const completeness = textValue(fields[table.fields.completeness]).trim();
-      const sampleImages = fields[table.fields.sampleImage];
       const itemNo = textValue(fields[table.fields.itemNo]).trim();
       const color = textValue(fields[table.fields.color]).trim();
+      const gaps = productGapsOf({
+        fields,
+        fieldNames: { completeness: table.fields.completeness, sampleImage: table.fields.sampleImage },
+      });
       const info = {
-        missing: completeness && completeness !== '齐备'
-          ? completeness.split('、').map((name) => name.trim()).filter(Boolean)
-          : [],
-        // 「样例图」是附件字段，不在齐备公式里，单独看有没有图。
-        missingSampleImage: !(Array.isArray(sampleImages) && sampleImages.length > 0),
+        missing: gaps.missingProductList,
+        // 「样例图」是附件字段，不在齐备公式里，单独看有没有图（同一判定见 `productGapsOf`）。
+        missingSampleImage: gaps.missingSampleImage,
         label: `${itemNo}${color}`,
       };
       if (fields[table.fields.completeness] !== undefined) completenessSeen += 1;

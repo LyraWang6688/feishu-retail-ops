@@ -412,10 +412,10 @@ const resolveGrid = (config = LABEL_PRINT) => {
 };
 
 /**
- * ⭐ 2026-11-15 V5 定稿（业务负责人确认）：
+ * ⭐ 2026-11-16 V5 定稿（业务负责人确认）：
  *   - 第一行货号+颜色（居中），第二行单价；
- *   - 二维码 15×15 左侧，品牌在二维码下方；
- *   - 尺码 3.6mm、横向 2mm、两行空白 1.2mm（行距 4.8mm）；
+ *   - 二维码 15×15 左侧（左边缘 0.5mm），品牌在二维码下方；
+ *   - 尺码 3.6mm、列间距 4mm、两行空白 1.5mm（行距 5.1mm）；
  *   - 正式 SVG 字宽较宽，尺码横向按 0.80 压缩以保持 3 个一行且不裁右边。
  * 旧版 LABEL_PRINT 保留给历史用例/回退；线上服务默认用这一份。
  */
@@ -430,8 +430,8 @@ const LABEL_PRINT_V5 = Object.freeze({
   }),
   sizes: Object.freeze({
     ...LABEL_PRINT.sizes,
-    itemGapMm: 2,
-    lineHeight: 1.3333,
+    itemGapMm: 4,
+    lineHeight: 1.4167,
     xScale: 0.8,
     fitWidthMm: 100,
   }),
@@ -442,14 +442,12 @@ const LABEL_PRINT_V5 = Object.freeze({
     brandRow: 'underQr',
     brandAlign: 'center',
     brandGapMm: 0.65,
-    contentLeftMm: 4,
+    contentLeftMm: 0.5,
     headerTopMm: 1.35,
     headerGapMm: 0.2,
-    // 2026-11-15：业务负责人要求货号与颜色间距 0.5mm（V5 专用）。
     itemNoColor: Object.freeze({
       ...LABEL_PRINT.body.itemNoColor,
       gapMm: 0,
-      // 服务器实际字体（Noto Sans）比原估算窄；按实际字宽校准，避免"配置 0.5mm、实际 4.5mm"。
       widthEm: Object.freeze({
         ...LABEL_PRINT.body.itemNoColor.widthEm,
         ascii: 0.58,
@@ -460,7 +458,7 @@ const LABEL_PRINT_V5 = Object.freeze({
     ruleTopMm: 10.05,
     sizesTopMm: 10.75,
     sizesWidthMm: 18,
-    sizesMaxHeightMm: 15,
+    sizesMaxHeightMm: 16,
     qrGapMm: 1.5,
   }),
 });

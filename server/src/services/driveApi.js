@@ -21,6 +21,16 @@
 /**
  * @param {object} client `@larksuiteoapi/node-sdk` 的 Client 实例（与网关共用同一个）
  */
+const extraOfAttachment = (attachment) => {
+  const raw = String(attachment?.tmp_url || attachment?.url || '').trim();
+  if (!raw) return '';
+  try {
+    return new URL(raw).searchParams.get('extra') || '';
+  } catch (error) {
+    return '';
+  }
+};
+
 const createDriveApi = (client) => {
   if (!client) throw new Error('createDriveApi 需要 lark client');
 
@@ -35,11 +45,22 @@ const createDriveApi = (client) => {
     }
   };
 
-  /** 下载一个素材（多维表格附件里的 `file_token`）为 Buffer。 */
-  const downloadMedia = async (fileToken, operation = 'download media') => {
+  /**
+   * 下载一个素材（多维表格附件里的 `file_token`）为 Buffer。
+   *
+   * ⭐ 2026-11-17（业务负责人昨天开了高级权限）：开了**高级权限**的多维表格，下载素材必须
+   *   带 `extra` 查询参数（`{"bitablePerm":{"tableId":"…","rev":…}}`），否则飞书回 400。
+   *   `extra` 不用自己拼：附件对象里的 `tmp_url` 已经带了，`extraOfAttachment()` 取出来即可。
+   *   不传 `extra` 时请求形状与改前逐字一致（兼容没有高级权限 / 非 Bitable 素材）。
+   */
+  const downloadMedia = async (fileToken, operation = 'download media', { extra = '' } = {}) => {
     const token = String(fileToken ?? '').trim();
     if (!token) throw new Error(`${operation} 缺少 file_token`);
-    const response = await client.drive.media.download({ path: { file_token: token } });
+    const extraParam = String(extra || '').trim();
+    const response = await client.drive.media.download({
+      path: { file_token: token },
+      ...(extraParam ? { params: { extra: extraParam } } : {}),
+    });
     if (!response || typeof response.getReadableStream !== 'function') {
       throw new Error(`${operation} 失败：未拿到文件流`);
     }
@@ -134,4 +155,4 @@ const createDriveApi = (client) => {
   return { downloadMedia, uploadDriveFile, listDriveFolder, deleteDriveFile, transferFileOwner };
 };
 
-module.exports = { createDriveApi };
+module.exports = { createDriveApi, extraOfAttachment };

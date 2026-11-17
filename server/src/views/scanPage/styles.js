@@ -92,6 +92,12 @@ body {
 .identity__main { min-width: 0; }
 .identity__item { margin: 0; font-size: var(--font-size-xl); font-weight: 700; letter-spacing: .3px; overflow-wrap: anywhere; }
 .identity__meta { margin: var(--space-1) 0 0; color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+/* ⭐ 2026-11-17：货品卡上的两个入口（库存调整 / 资料不齐去补全）—— 满宽第二行，手机上可折行。 */
+.identity { flex-wrap: wrap; }
+.identity__actions { flex: 0 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.identity__action { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-pill); color: var(--text); font-size: var(--font-size-sm); font-weight: 600; text-decoration: none; }
+.identity__action--gap { border-color: var(--warning); background: var(--warning-soft); color: var(--warning); font-weight: 500; }
+.identity__action-cta { margin-left: 2px; font-weight: 600; }
 .price { text-align: right; white-space: nowrap; }
 .price__label { display: block; color: var(--text-muted); font-size: var(--font-size-xs); }
 .price__value { font-size: var(--font-size-amount); font-weight: 700; }

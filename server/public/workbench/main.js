@@ -165,7 +165,7 @@ const dispatchWorkbenchEvent = (name, detail = {}) => {
   try { window.dispatchEvent(new CustomEvent(name, { detail })); } catch (error) { /* 老 WebView */ }
 };
 
-function activateModule(moduleId, { userInitiated = false } = {}) {
+function activateModule(moduleId, { userInitiated = false, deepLink = null } = {}) {
   if (userInitiated) dispatchWorkbenchEvent('workbench:view-change', { moduleId });
   showPageError('');
   document.querySelectorAll('.main-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.module === moduleId));
@@ -177,10 +177,34 @@ function activateModule(moduleId, { userInitiated = false } = {}) {
   container.dataset.modulePanel = moduleId;
   host.append(container);
   mounted.set(moduleId, container);
-  module.mount(container);
+  module.mount(container, deepLink || {});
   dispatchWorkbenchEvent('workbench:module-mounted', { moduleId });
   fluency?.realmEntered(moduleId);
   installPanelFluency(container, moduleId);
+}
+
+/**
+ * ⭐⭐ 2026-11-17：扫码页「库存调整」按钮的深链参数。
+ *
+ *   /workbench/?module=inventory&page=inventory-adjust&product=<recordId>
+ *
+ * 以前工作台**完全不读 URL** ⇒ 永远打开第一个 tab（销售）。这里只认这三个参数：
+ *   · module 必须是 modules 里真实存在的键，否则忽略（回落到第一个 tab）；
+ *   · page 由各领域模块自己按 domain.pages 校验；
+ *   · product 只认 record_id 形状（features/inventory/adjustment.js 再校验一次）。
+ * 解析失败（老 WebView / 坏 URL）⇒ 与改动前逐字一样，不影响正常打开。
+ */
+function readDeepLink() {
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    return {
+      module: String(params.get('module') || '').trim(),
+      page: String(params.get('page') || '').trim(),
+      productId: String(params.get('product') || '').trim(),
+    };
+  } catch {
+    return { module: '', page: '', productId: '' };
+  }
 }
 
 async function start() {
@@ -192,12 +216,15 @@ async function start() {
   //    之后，而 `/me` 一返回 401 就在那里面抛了错，这一句永远走不到 —— 现象正是她遇到的
   //    「工作台启动失败：请求失败（401）」＋ tab 点了没反应。
   //    绑在这里之后，鉴权失败时页面仍然是可交互的（各模块自己会提示取不到数据）。
+  const deepLink = readDeepLink();
   renderMainTabs();
+  // ⭐ 2026-11-17：深链点名了真实存在的 module ⇒ 从那一栏开始（page/product 交给领域模块）。
+  if (deepLink.module && modules.has(deepLink.module)) initialModule = deepLink.module;
   bindMainTabClicks();
   try {
     const ready = await requireFeishuAuth();
     if (!ready) return;
-    activateModule(initialModule);
+    activateModule(initialModule, { deepLink });
   } catch (error) {
     showPageError(`工作台启动失败：${describeError(error)}`);
     // 401 已经在 requireFeishuAuth 里自动跳登录了；这里是兜底（跳不过去 / 403 账号

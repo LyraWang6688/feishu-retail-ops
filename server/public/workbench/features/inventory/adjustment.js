@@ -19,6 +19,8 @@ import { INVENTORY_MANUAL_CARDS, INVENTORY_MANUAL_TEXTS } from '../../config/inv
 const $ = (host, selector) => host.querySelector(selector);
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const STATES = ['门盒', '样品'];
+// ⭐ 2026-11-17：深链带来的 record_id 先过形状检查（与审计里的 record_id 校验同一口径）。
+const PRODUCT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-cards-single">${INVENTORY_MANUAL_CARDS.map((card) => {
   if (card.id === 'single' && expandedSingle) {
@@ -30,14 +32,22 @@ const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-c
   return `<button class="entry-card" type="button" data-manual="${card.id}"><span class="icon">${escapeHtml(card.icon)}</span><h3>${escapeHtml(card.label)}</h3></button>`;
 }).join('')}</div>`;
 
-export function createInventoryAdjustmentModule() {
-  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false };
+export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) {
+  // `rows` = 全量库存（批量调整用）；`singleRows` = 当前这一款（单双调整用，按产品过滤读）。
+  const state = { host: null, rows: [], singleRows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false };
 
   async function loadRows(force = false) {
     if (state.rows.length && !force) return state.rows;
     const data = await api.get('/api/workbench/inventory');
     state.rows = Array.isArray(data.rows) ? data.rows : [];
     return state.rows;
+  }
+
+  // 单双调整只读这一款：服务端先过滤，再返回（不再整表拉回前端过滤）。
+  async function loadSingleRows(productId) {
+    const data = await api.get(`/api/workbench/inventory?productRecordId=${encodeURIComponent(productId)}`);
+    state.singleRows = Array.isArray(data.rows) ? data.rows : [];
+    return state.singleRows;
   }
 
   function show(view) {
@@ -60,7 +70,7 @@ export function createInventoryAdjustmentModule() {
   }
 
   function productRows(productId) {
-    return state.rows.filter((row) => row.product_record_id === productId);
+    return state.singleRows.filter((row) => row.product_record_id === productId);
   }
 
   function renderEditor() {
@@ -155,7 +165,9 @@ export function createInventoryAdjustmentModule() {
   async function selectProduct(productId) {
     if (!productId) return;
     showPageError('');
-    await loadRows(true);
+    state.productInfo = null;
+    state.singleRows = [];
+    await loadSingleRows(productId);
     if (!productRows(productId).length) await loadProductInfo(productId);
     fitRowsForProduct(productId);
   }
@@ -167,10 +179,7 @@ export function createInventoryAdjustmentModule() {
       const target = scanTargetUrl(scanned, 'inventory');
       const match = String(target || '').match(/\/r\/([^/?#]+)/);
       if (!match) return showPageError(INVENTORY_MANUAL_TEXTS.scanNoProduct);
-      await loadRows();
-      const productId = decodeURIComponent(match[1]);
-      if (!productRows(productId).length) await loadProductInfo(productId);
-      fitRowsForProduct(productId);
+      await selectProduct(decodeURIComponent(match[1]));
     } catch (error) {
       const message = String(error?.message || '');
       if (/cancel/i.test(message)) return;
@@ -231,7 +240,9 @@ export function createInventoryAdjustmentModule() {
       }).join('');
       return `<section class="violation-group" data-issue="${escapeHtml(group.key)}"><h4 class="violation-group-title">${escapeHtml(title)} <span>${escapeHtml(fill(INVENTORY_MANUAL_TEXTS.statusGroupCount, { count: group.items.length }))}</span></h4><div class="violation-list">${cards}</div></section>`;
     }).join('');
-    box.querySelectorAll('[data-fix]').forEach((btn) => btn.addEventListener('click', () => fitRowsForProduct(btn.dataset.fix)));
+    box.querySelectorAll('[data-fix]').forEach((btn) => btn.addEventListener('click', () => {
+      void selectProduct(btn.dataset.fix).catch((error) => showPageError(describeError(error)));
+    }));
   }
 
   async function enterBatch() {
@@ -297,8 +308,9 @@ export function createInventoryAdjustmentModule() {
       state.pendingRequest = null;
       const jobId = String(result?.job_id || '').trim();
       if (jobId) await waitForAsyncJob(jobId, 300000);
+      // 只刷新这一款；全量 rows 标记失效，下次进批量调整再整表读。
       state.rows = [];
-      await loadRows(true);
+      await loadSingleRows(state.productId);
       renderSingle(state.productId);
       showToast(INVENTORY_MANUAL_TEXTS.clearedToast);
     } catch (error) {
@@ -429,7 +441,10 @@ export function createInventoryAdjustmentModule() {
           return;
         }
         const pick = event.target.closest?.('[data-pick-product]');
-        if (pick) { void selectProduct(pick.dataset.pickProduct); return; }
+        if (pick) {
+          void selectProduct(pick.dataset.pickProduct).catch((error) => showPageError(describeError(error)));
+          return;
+        }
         if (event.target.closest?.('[data-clear-stock]')) { openClearConfirm(); return; }
         if (event.target.closest?.('[data-clear-cancel]')) { $(state.host, '[data-view="clear-modal"]').hidden = true; return; }
         if (event.target.closest?.('[data-clear-confirm]')) { void clearAll(); return; }
@@ -445,6 +460,12 @@ export function createInventoryAdjustmentModule() {
       });
       host.querySelector('[data-field="batch-category"]').addEventListener('change', () => renderViolations());
       host.querySelector('[data-field="status-filter"]')?.addEventListener('change', () => renderViolations());
+      // ⭐⭐ 2026-11-17：深链（扫码页「库存调整」）—— 直接展开这一款的单双调整，不用再扫码/输货号。
+      //   形状不对 ⇒ 什么都不做（不要拿一个坏 id 去打接口）；接口失败 ⇒ 人话错误，不留白屏。
+      const deepLinkProductId = String(initialProductId || '').trim();
+      if (PRODUCT_ID_PATTERN.test(deepLinkProductId)) {
+        void selectProduct(deepLinkProductId).catch((error) => showPageError(describeError(error)));
+      }
     },
   };
 }
