@@ -68,8 +68,8 @@ const fakeGateway = (initialRecords = []) => {
 const existingRow = ({ recordId = 'rec_existing', product = 'rec_product', source = '扫码打印', count = 1 } = {}) => ({
   record_id: recordId,
   fields: {
-    [physical('product')]: [{ id: product }],
-    [physical('source')]: [source],
+    [physical('product')]: [{ record_ids: [product] }],
+    [physical('source')]: source,
     [physical('count')]: count,
   },
 });
@@ -81,8 +81,8 @@ test('AC-RL1 第一次扫码打印 ⇒ 新建一行：打印货号 + 来源 + �
   assert.equal(result.ok, true);
   assert.equal(result.action, 'created');
   assert.equal(gateway.records.length, 1);
-  assert.deepEqual(gateway.records[0].fields[physical('product')], [{ id: 'rec_product' }]);
-  assert.deepEqual(gateway.records[0].fields[physical('source')], ['扫码打印']);
+  assert.deepEqual(gateway.records[0].fields[physical('product')], [{ record_ids: ['rec_product'] }]);
+  assert.equal(gateway.records[0].fields[physical('source')], '扫码打印');
   assert.equal(gateway.records[0].fields[physical('count')], 1);
 });
 
@@ -106,7 +106,7 @@ test('AC-RL3 不同来源 ⇒ 同一货品各记各的（扫码 1 次、库存�
   }));
   assert.equal(result.action, 'created');
   assert.equal(gateway.records.length, 2);
-  assert.deepEqual(gateway.records[1].fields[physical('source')], ['库存调整打印']);
+  assert.equal(gateway.records[1].fields[physical('source')], '库存调整打印');
   assert.equal(gateway.records[1].fields[physical('count')], 1);
 });
 
@@ -114,12 +114,12 @@ test('AC-RL4 销售录单 / 验收录单来源文案与表选项一致', async (
   const saleGateway = fakeGateway();
   const sale = createLabelPrintRequestLogService({ gateway: saleGateway, logger: silent });
   await sale.record(job({ source: SOURCES.sale }));
-  assert.deepEqual(saleGateway.records[0].fields[physical('source')], ['销售录单打印']);
+  assert.equal(saleGateway.records[0].fields[physical('source')], '销售录单打印');
 
   const acceptGateway = fakeGateway();
   const accept = createLabelPrintRequestLogService({ gateway: acceptGateway, logger: silent });
   await accept.record(job({ source: SOURCES.acceptance }));
-  assert.deepEqual(acceptGateway.records[0].fields[physical('source')], ['验收录单打印']);
+  assert.equal(acceptGateway.records[0].fields[physical('source')], '验收录单打印');
 });
 
 test('AC-RL5 批量打印（source=form）⇒ 跳过，不参与申请次数', async () => {

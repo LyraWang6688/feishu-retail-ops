@@ -184,8 +184,10 @@ const createLabelPrintRequestLogService = ({
 
       try {
         const created = await gateway.create(config.tableKey, {
-          [config.fields.product]: [{ id: productRecordId }],
-          [config.fields.source]: [sourceLabel],
+          // 飞书关联列写入形状（生产实测）：[{ record_ids: ['rec…'] }]；[{ id }] 会 LinkFieldConvFail (1254067)。
+          [config.fields.product]: [{ record_ids: [productRecordId] }],
+          // 单选列写字符串，不包数组。
+          [config.fields.source]: sourceLabel,
           [config.fields.count]: 1,
         });
         const recordId = String(created?.recordId || '').trim();
