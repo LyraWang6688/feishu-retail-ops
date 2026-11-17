@@ -6,7 +6,10 @@
 
 // 「实时库存」按品类批量调整时，最多返回多少个品类。
 const WORKBENCH_CATEGORY_LIMIT = 100;
+// 单双调整按产品过滤读库存时的行数上限（一款的尺码 × 状态远小于这个数）。
+const WORKBENCH_PRODUCT_INVENTORY_LIMIT = 200;
 
 module.exports = {
   WORKBENCH_CATEGORY_LIMIT,
+  WORKBENCH_PRODUCT_INVENTORY_LIMIT,
 };

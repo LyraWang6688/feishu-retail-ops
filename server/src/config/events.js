@@ -424,6 +424,7 @@ const EVENTS = Object.freeze([
   'workbench.douyin.voucher_catalog_sync.failed',
   'workbench.inventory.categories_failed.cache_hit',
   'workbench.inventory.categories_failed.cache_miss',
+  'workbench.inventory.filtered_read_failed',
   'workbench.inventory.query_failed.cache_hit',
   'workbench.inventory.query_failed.cache_miss',
   'workbench.label_print.scan.rejected',

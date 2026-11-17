@@ -24,7 +24,13 @@ const respondQueryFailure = (res, error, { requestId, event, fallback }) => {
 
 const queryInventory = async (req, res) => {
   try {
-    return res.json({ success: true, ...await service.getLiveInventory({ keyword: req.query.keyword, size: req.query.size, requestId: req.requestId }) });
+    return res.json({ success: true, ...await service.getLiveInventory({
+      keyword: req.query.keyword,
+      size: req.query.size,
+      // ⭐ 2026-11-17：单双调整按产品只读这一款，不再把整仓库存传到前端。
+      productRecordId: req.query.productRecordId,
+      requestId: req.requestId,
+    }) });
   } catch (error) {
     return respondQueryFailure(res, error, {
       requestId: req.requestId, event: 'workbench.inventory.query_failed', fallback: '实时库存查询失败',
