@@ -36,14 +36,13 @@
 - 只认 record_added；编辑/删除不补记；
 - 代码：server/src/services/accessorySaleSyncService.js；
 - 配置：server/src/config/accessorySaleSync.js；
-- 开关：ACCESSORY_SALE_SYNC_ENABLED，**默认 false**。
+- **不设开关**：配了源表 ID，代码就一直同步（业务负责人 2026-11-17 定）。
 
 ## 四、🔴 上线顺序（必须）
 
 1. 先停飞书工作流「配品销售同步」；
 2. 配 FEISHU_V1_ACCESSORY_SALE_TABLE_ID（生产 tblkT1QTUsESnl5b）；
-3. 再把 ACCESSORY_SALE_SYNC_ENABLED=true；
-4. 重启服务。
+3. 部署并重启服务（没有额外开关）。
 
 两者同时开会给同一条配品销售写两条 S交易明细。
 
@@ -62,4 +61,4 @@ server/test/accessorySaleSync.test.js：
 - **AC-AS2** 同记录重投 → 按 ID 回查跳过；
 - **AC-AS3** 名称/数量/金额不合法 → 跳过，不写 0 元；
 - **AC-AS4** 只认 record_added；
-- **AC-AS5** 关闭/未配源表/读源失败 → 不写、不抛。
+- **AC-AS5** 未配源表/读源失败 → 不写、不抛。

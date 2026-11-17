@@ -69,7 +69,6 @@ const createAccessorySaleSyncService = ({
 
   const processRecord = async (recordId) => {
     const sourceRecordId = String(recordId || '').trim();
-    if (!config.enabled) return { recordId: sourceRecordId, skipped: true, reason: 'disabled' };
     if (!config.sourceTableId) {
       log.warn('accessory.sale.sync.skipped', { record_id: sourceRecordId, reason: 'source_table_not_configured' });
       return { recordId: sourceRecordId, skipped: true, reason: 'source_table_not_configured' };

@@ -18,11 +18,11 @@
  * 🔴 上线顺序：**先停飞书工作流，再开 ACCESSORY_SALE_SYNC_ENABLED=true**；
  *    两者同时开会给同一条配品销售写两条 S交易明细。
  */
-const { readFlag, readString } = require('./envValue');
+const { readString } = require('./envValue');
 
 const ACCESSORY_SALE_SYNC = Object.freeze({
-  // 默认关：部署时先确认飞书工作流已停，再显式打开；避免双写。
-  enabled: readFlag(process.env, 'ACCESSORY_SALE_SYNC_ENABLED', false),
+  // 不设开关：只要配了源表 ID，代码就一直同步（业务负责人 2026-11-17：「不需要配置这个开关，就一直是开着的」）。
+  // 上线前先停飞书工作流，避免双写。
   // 飞书「配品销售」表 ID（不在 v1 schema 的业务表里，用独立 env；空 ⇒ 不处理）。
   sourceTableId: readString(process.env, 'FEISHU_V1_ACCESSORY_SALE_TABLE_ID', '') || '',
   sourceFields: Object.freeze({

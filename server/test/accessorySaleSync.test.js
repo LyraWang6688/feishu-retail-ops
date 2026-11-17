@@ -34,7 +34,6 @@ const sourceRecord = (overrides = {}) => ({
 
 const config = (overrides = {}) => ({
   ...ACCESSORY_SALE_SYNC,
-  enabled: true,
   sourceTableId: 'tbl_test_accessory_sale',
   ...overrides,
 });
@@ -112,10 +111,7 @@ test('AC-AS4 只认 record_added；编辑/删除不补记', async () => {
   assert.equal(gateway.calls.length, 0);
 });
 
-test('AC-AS5 关闭 / 未配源表 ⇒ 不读不写；读源失败也不抛', async () => {
-  const off = createAccessorySaleSyncService({ gateway: fakeGateway(), config: config({ enabled: false }), logger: silent });
-  assert.equal((await off.processRecord('rec_src_1')).reason, 'disabled');
-
+test('AC-AS5 未配源表 ⇒ 不读不写；读源失败也不抛', async () => {
   const noTable = createAccessorySaleSyncService({ gateway: fakeGateway(), config: config({ sourceTableId: '' }), logger: silent });
   assert.equal((await noTable.processRecord('rec_src_1')).reason, 'source_table_not_configured');
 
