@@ -12,7 +12,7 @@
  *       收支方向 = 收入
  *       交易金额 ← 金额（要求 > 0）
  *       钱款状态 = 已收款
- *       收付日 ← 配品销售记录创建时间
+ *       收付日 ← 配品销售.销售日（拿不到才退记录创建时间/处理时刻）
  *   · 幂等：交易明细ID = PX-<配品销售 record_id>；写前按它回查，已有就跳过；
  *   · 只读源表 / 只写目标表；失败不吞，记录日志。
  *
@@ -146,9 +146,12 @@ const createAccessorySaleSyncService = ({
       }
 
       const methodId = recordIdsOf(fields[F.method])[0] || '';
-      // 工作流用「记录创建时间」；拿不到才用处理时刻（不编销售日）。
+      // 收付日：优先用源表「销售日」（业务负责人 2026-11-17：比处理时刻准确）；
+      // 拿不到才退记录创建时间，再拿不到才用处理时刻。
+      const saleDate = amountOf(fields[F.saleDate]);
       const sourceCreatedAt = Number(record.created_time);
-      const receivedAt = Number.isFinite(sourceCreatedAt) && sourceCreatedAt > 0 ? sourceCreatedAt : now();
+      const receivedAt = [saleDate, sourceCreatedAt]
+        .find((value) => Number.isFinite(value) && value > 0) || now();
       try {
         const created = await gateway.create(config.targetTableKey, {
           ...(methodId ? { method: relation(methodId) } : {}),
