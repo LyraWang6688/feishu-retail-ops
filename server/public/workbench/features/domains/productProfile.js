@@ -84,6 +84,10 @@ export const productProfilePageHtml = () => `
     </div>
     <div data-pp="complete" hidden>
       <div class="pp-head">${backBtn('complete')}<h2>${esc(T.completeTitle)}</h2></div>
+      <div class="pp-search"><input data-pp-complete-search placeholder="${esc(T.completeSearchPlaceholder)}" autocomplete="off"></div>
+      <p class="pp-note" data-pp-complete-search-count hidden></p>
+      <div data-pp-complete-search-results hidden></div>
+      <p class="pp-note" data-pp-complete-search-empty hidden></p>
       <p class="pp-note" data-pp-complete-hint></p>
       <div class="pp-tabs" data-pp-complete-tabs></div>
       <div data-pp-complete-list></div>
@@ -100,7 +104,11 @@ export function createProductProfileModule() {
         host.querySelector('[data-pp="cards"]').hidden = name !== 'cards';
         host.querySelector('[data-pp="new"]').hidden = name !== 'new';
         host.querySelector('[data-pp="complete"]').hidden = name !== 'complete';
-        if (name === 'complete') loadComplete(host);
+        if (name === 'complete') {
+          loadComplete(host);
+          const q = host.querySelector('[data-pp-complete-search]')?.value.trim() || '';
+          loadCompleteSearch(host, q);
+        }
       };
       // ⭐ #1204：图片加载失败 → 变成「加载失败 · 点击重试」（不再冒充"无样例图"）。
       host.addEventListener('error', (event) => {
@@ -156,9 +164,31 @@ export function createProductProfileModule() {
         const row = event.target.closest?.('[data-pp-record-url]');
         if (row?.dataset.ppRecordUrl) window.open(row.dataset.ppRecordUrl, '_blank', 'noopener');
       });
+      const completeInput = host.querySelector('[data-pp-complete-search]');
+      let completeTimer = null;
+      completeInput?.addEventListener('input', () => {
+        clearTimeout(completeTimer);
+        const q = completeInput.value.trim();
+        if (q) showToast(T.searchingToast, { sticky: true });
+        completeTimer = setTimeout(() => loadCompleteSearch(host, q), 250);
+      });
+      host.querySelector('[data-pp-complete-search-results]')?.addEventListener('click', (event) => {
+        if (event.target.closest?.('a')) return;
+        const row = event.target.closest?.('[data-pp-record-url]');
+        if (row?.dataset.ppRecordUrl) window.open(row.dataset.ppRecordUrl, '_blank', 'noopener');
+      });
     },
   };
 }
+
+const searchRowsHtml = (items, actionText = '') => (items || []).map((item) => {
+  const chips = productIssueChipsOf(item);
+  return `<div class="pp-row" data-pp-record-url="${esc(item.recordUrl || '')}">
+    ${item.hasSampleImage && item.imageUrl ? thumbImgHtml(item.imageUrl) : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
+    <div class="pp-meta"><b>${esc(item.number)}</b>${chips.length ? `<div class="pp-issues">${chips.map((issue) => `<span class="pp-issue">${esc(issue)}</span>`).join('')}</div>` : ''}</div>
+    ${actionText ? `<a class="pp-small-btn" href="${esc(item.recordUrl || '')}" target="_blank" rel="noopener">${esc(actionText)}</a>` : ''}
+  </div>`;
+}).join('');
 
 async function loadSearch(host, q) {
   const results = host.querySelector('[data-pp-results]');
@@ -179,11 +209,7 @@ async function loadSearch(host, q) {
     count.textContent = fill(T.searchFound, { count: items.length });
     empty.hidden = items.length > 0;
     empty.textContent = T.searchNone;
-    results.innerHTML = items.map((item) => `
-      <div class="pp-row" data-pp-record-url="${esc(item.recordUrl || '')}">
-        ${item.hasSampleImage && item.imageUrl ? thumbImgHtml(item.imageUrl) : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
-        <div class="pp-meta"><b>${esc(item.number)}</b>${productIssueChipsOf(item).length ? `<div class="pp-issues">${productIssueChipsOf(item).map((issue) => `<span class="pp-issue">${esc(issue)}</span>`).join('')}</div>` : ''}</div>
-      </div>`).join('');
+    results.innerHTML = searchRowsHtml(items);
     resetThumbs(host);
     observeThumbs(host, results);
     results.querySelectorAll('img[data-pp-thumb]').forEach((img) => {
@@ -257,3 +283,48 @@ async function loadComplete(host) {
     list.innerHTML = '';
   }
 }
+async function loadCompleteSearch(host, q) {
+  const results = host.querySelector('[data-pp-complete-search-results]');
+  const count = host.querySelector('[data-pp-complete-search-count]');
+  const empty = host.querySelector('[data-pp-complete-search-empty]');
+  const hint = host.querySelector('[data-pp-complete-hint]');
+  const tabs = host.querySelector('[data-pp-complete-tabs]');
+  const list = host.querySelector('[data-pp-complete-list]');
+  if (!results || !count || !empty || !hint || !tabs || !list) return;
+
+  const showDefault = () => {
+    results.hidden = true;
+    count.hidden = true;
+    empty.hidden = true;
+    hint.hidden = false;
+    tabs.hidden = false;
+    list.hidden = false;
+  };
+  if (!q) {
+    showDefault();
+    return;
+  }
+
+  hint.hidden = true;
+  tabs.hidden = true;
+  list.hidden = true;
+  results.hidden = false;
+  try {
+    // 搜索范围 = 货品信息全量，不限制在「待完善」分组里；默认分组视图不变。
+    const data = await api.get(`${PRODUCT_PROFILE_API.completion}?q=${encodeURIComponent(q)}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    count.hidden = false;
+    count.textContent = fill(T.searchFound, { count: items.length });
+    empty.hidden = items.length > 0;
+    empty.textContent = T.completeSearchEmpty;
+    results.innerHTML = searchRowsHtml(items, T.completeAction);
+    resetThumbs(host);
+    observeThumbs(host, results);
+  } catch {
+    results.innerHTML = '';
+    count.hidden = true;
+    empty.hidden = false;
+    empty.textContent = T.searchFailed;
+  }
+}
+

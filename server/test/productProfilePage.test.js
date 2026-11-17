@@ -22,9 +22,12 @@ test('AC-PP12 货品完善三维度 tab：样例图 / 商品信息缺失 / 标�
   const page = read('features/domains/productProfile.js');
   assert.ok(page.includes('data-pp-complete-tabs'));
   assert.equal(page.includes('data-pp-select'), false, '不再有缺失信息下拉');
-  assert.equal(page.includes('data-pp-complete-search'), false, '不再有货品完善搜索框');
-  assert.ok(page.includes('data-pp-dimension'));
-  assert.ok(page.includes('PRODUCT_PROFILE_API.completion'));
+  assert.ok(page.includes('data-pp-complete-search'), '货品完善有搜索框');
+  assert.ok(page.includes('T.completeSearchPlaceholder'), '搜索框用配置里的占位文案');
+  assert.match(page, /PRODUCT_PROFILE_API\.completion\}\?q=/, '货品完善搜索继续用 completion 接口，q 查全量');
+  assert.ok(page.includes('PRODUCT_PROFILE_API.search'), '货品上新仍用自己的搜索接口');
+  assert.equal(page.includes('PRODUCT_PROFILE_API.incomplete'), false, '搜索不限制在待完善列表');
+  assert.ok(page.includes('PRODUCT_PROFILE_API.completion'), '默认分组仍走 completion');
   assert.ok(page.includes("dimension.key === 'product'"));
   assert.ok(page.includes('item.missingTag'), '标签信息缺失用公式字段');
   assert.ok(page.includes('item.imageUrl'), '有样例图时显示缩略图');

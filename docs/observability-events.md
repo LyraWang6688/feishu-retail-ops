@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **500** 个事件。按前缀分组：
+共 **501** 个事件。按前缀分组：
 
 ## accessory
 
@@ -644,6 +644,7 @@
 | `workbench.product_profile.incomplete_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.product_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.sample_image_failed` | 1 | src/routes/workbench/products.js |
+| `workbench.product_profile.search_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.search_filter_failed` | 2 | src/routes/workbench/products.js |
 | `workbench.product_profile.search_snapshot_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.purchase.acceptance_doc.failed` | 1 | src/routes/workbench/purchase.js |

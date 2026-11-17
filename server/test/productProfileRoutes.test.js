@@ -60,6 +60,21 @@ test('AC-PP1 搜索：只按货号模糊匹配；空搜索不返回结果', asyn
   } finally { server.close(); }
 });
 
+test('AC-PP14 货品完善搜索 q=货号全量：能搜到已齐备货品，不返回待完善分组', async () => {
+  const gateway = { listAll: async () => [
+    product('rec1', '906|黑色|男', '906', '黑色', '男', '成本'),
+    product('rec2', '71202|黑色|男', '71202', '黑色', '男', '齐备'),
+  ] };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/completion?q=71202`)).json();
+    assert.equal(body.success, true);
+    assert.equal(body.query, '71202');
+    assert.deepEqual(body.items.map((item) => item.recordId), ['rec2'], '已齐备货品也能搜到');
+    assert.equal(body.dimensions, undefined, '搜索不返回待完善分组');
+  } finally { server.close(); }
+});
+
 test('AC-PP1b 新增货品还没进快照 ⇒ 按货号 filter 兜底，立刻能搜到', async () => {
   let filterCalls = 0;
   const gateway = {
