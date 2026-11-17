@@ -28,6 +28,8 @@ const sourceRecord = (overrides = {}) => ({
     [F.quantity]: 1,
     [F.amount]: 15,
     [F.method]: [{ id: 'rec_cash' }],
+    // 销售日比 created_time 早，必须优先用它（2026-11-17 口径）。
+    [F.saleDate]: 1794099000000,
     ...overrides,
   },
 });
@@ -72,8 +74,20 @@ test('AC-AS1 新增配品销售 ⇒ 新增 S交易明细：支付方式/收入/�
   assert.equal(create.values.tradeDirection, '收入');
   assert.equal(create.values.status, '已收款');
   assert.equal(create.values.receiptId, 'PX-rec_src_1');
-  assert.equal(create.values.receivedAt, 1794100000000);
+  assert.equal(create.values.receivedAt, 1794099000000);
   assert.equal(create.values.salesEntry, undefined, '配品销售不关联销售单');
+});
+
+test('AC-AS1b 销售日缺失 ⇒ 退记录创建时间；都没有才用处理时刻', async () => {
+  const noSaleDate = fakeGateway({ record: sourceRecord({ [F.saleDate]: undefined }) });
+  const a = createAccessorySaleSyncService({ gateway: noSaleDate, config: config(), logger: silent });
+  await a.processRecord('rec_src_1');
+  assert.equal(noSaleDate.calls.find((call) => call.op === 'create').values.receivedAt, 1794100000000);
+
+  const noTimes = fakeGateway({ record: { ...sourceRecord(), created_time: undefined, fields: { ...sourceRecord().fields, [F.saleDate]: undefined } } });
+  const b = createAccessorySaleSyncService({ gateway: noTimes, config: config(), now: () => 1794200000000, logger: silent });
+  await b.processRecord('rec_src_1');
+  assert.equal(noTimes.calls.find((call) => call.op === 'create').values.receivedAt, 1794200000000);
 });
 
 test('AC-AS2 同一配品销售记录重投/重跑 ⇒ 按交易明细ID 回查后跳过，不重复记账', async () => {
