@@ -19,7 +19,7 @@ export const formatDay = (isoText, config) => {
 };
 
 export const rangeText = (tab, range, config) => {
-  if (tab !== 'replenish') return config.range.newProducts;
+  if (tab !== 'replenish') return fill(config.range.newProducts, { days: Number(range?.days) || 7 });
   return fill(config.range.replenish, { from: formatDay(range?.from, config), to: formatDay(range?.to, config) });
 };
 

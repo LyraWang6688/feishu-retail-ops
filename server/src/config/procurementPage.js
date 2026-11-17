@@ -138,7 +138,7 @@ const buildProcurementPageConfig = (env = process.env) => {
       productMissing: readString(env, 'PROCUREMENT_TEXT_PRODUCT_MISSING', '有一件货品在货品信息里查不到了，请刷新页面后重试。'),
       categoryMissing: readString(env, 'PROCUREMENT_TEXT_CATEGORY_MISSING', '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。'),
       replenishEmpty: readString(env, 'PROCUREMENT_TEXT_REPLENISH_EMPTY', '近 3 天没有需要补货的货品。'),
-      newProductsEmpty: readString(env, 'PROCUREMENT_TEXT_NEW_PRODUCTS_EMPTY', '近 7 天还没有新增货品。'),
+      newProductsEmpty: readString(env, 'PROCUREMENT_TEXT_NEW_PRODUCTS_EMPTY', '近期还没有新增货品。'),
       loadFailed: readString(env, 'PROCUREMENT_TEXT_LOAD_FAILED', '数据没读到，请稍后重试。'),
     }),
   });
