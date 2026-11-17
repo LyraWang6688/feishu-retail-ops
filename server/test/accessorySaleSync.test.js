@@ -62,6 +62,7 @@ test('AC-AS1 新增配品销售 ⇒ 新增 S交易明细：支付方式/收入/�
   assert.equal(gateway.calls[0].tableId, 'tbl_test_accessory_sale');
   assert.equal(gateway.calls[0].recordId, 'rec_src_1');
   assert.equal(gateway.calls[1].op, 'listByFilter');
+  assert.equal(gateway.calls[1].tableKey, 'paymentRecord');
   assert.match(gateway.calls[1].formula, /PX-rec_src_1/);
   const create = gateway.calls.find((call) => call.op === 'create');
   assert.equal(create.tableKey, 'paymentRecord');

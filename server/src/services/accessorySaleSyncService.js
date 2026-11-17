@@ -113,7 +113,8 @@ const createAccessorySaleSyncService = ({
         return { recordId: sourceRecordId, skipped: true, reason: 'amount_invalid' };
       }
 
-      const target = V1_BITABLE_SCHEMA.tables[config.targetTableKey];
+      const targetTableKey = config.targetTableKey;
+      const target = V1_BITABLE_SCHEMA.tables[targetTableKey];
       const targetFields = target?.fields || {};
       if (!target?.tableId || !targetFields.receiptId || !targetFields.amount || !targetFields.method) {
         log.warn('accessory.sale.sync.skipped', {
@@ -130,7 +131,7 @@ const createAccessorySaleSyncService = ({
       let existing;
       try {
         const formula = equalsFormula(targetFields.receiptId, receiptId);
-        existing = formula ? await gateway.listByFilter(target.tableKey, formula) : null;
+        existing = formula ? await gateway.listByFilter(targetTableKey, formula) : null;
       } catch (error) {
         log.warn('accessory.sale.sync.failed', {
           record_id: sourceRecordId, step: 'dedupe_read', error: error.message,
