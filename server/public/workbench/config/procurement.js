@@ -100,7 +100,9 @@ export const PROCUREMENT_UI = Object.freeze({
   defaults: Object.freeze({ normalQuantity: 0, specialQuantity: 0, maxQuantity: 99 }),
   timezoneOffsetMinutes: 480,
   // 草稿：localStorage，key 必须带当前用户 open_id（同一浏览器换账号不串）
-  storage: Object.freeze({ prefix: 'procurement:draft:v1', version: 1 }),
+  // ⭐ 2026-11-17：上新默认从 1 改 0 ⇒ 旧草稿里全是自动填的 1，升 version 让旧草稿作废，
+  // 刷新后按新默认 0 重新种子（不覆盖用户新选择的语义仍保留）。
+  storage: Object.freeze({ prefix: 'procurement:draft:v1', version: 2 }),
   submitKey: Object.freeze({ prefix: 'procurement' }),
   panels: Object.freeze({ replenish: 'replenish', new: 'new' }),
 });
