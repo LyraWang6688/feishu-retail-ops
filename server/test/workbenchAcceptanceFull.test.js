@@ -85,12 +85,18 @@ const fakeArrival = (overrides = {}) => {
 };
 const fakeQuery = (rows) => ({ calls: [], listPurchaseRequests: async (input) => { fakeQuery.last = input; return rows; } });
 
-const appFor = ({ arrival, purchaseQuery, gateway = {}, acceptBackground = null }) => {
+const appFor = ({
+  arrival, purchaseQuery, gateway = {}, acceptBackground = null,
+  webhooks, purchaseJobRunner, asyncJobs,
+}) => {
   const app = express();
   app.use(express.json());
   app.use('/api/workbench', createWorkbenchRouter({
     gateway, purchaseQuery, arrival, printPrompt: false,
     ...(acceptBackground ? { acceptBackground } : {}),
+    ...(webhooks ? { webhooks } : {}),
+    ...(purchaseJobRunner ? { purchaseJobRunner } : {}),
+    ...(asyncJobs !== undefined ? { asyncJobs } : {}),
   }));
   app.use((error, req, res, next) => res.status(500).json({ success: false, error: error.message }));
   return app;
@@ -421,5 +427,36 @@ test('AC-AW-DOC2 ⭐ accept 把验收单 tokens 原样交给后台（后台写�
     assert.deepEqual(scheduled[0].restInput.counterpartyDocuments, docs,
       '验收单 tokens 进后台 restInput ✓');
     assert.equal(scheduled[0].restInput.batchNo, 'BH-1');
+  });
+});
+
+test('AC-AW-DOC3 ⭐ 后台真的写「对方单据」：runRest 不再抛 webhooks is not defined', async () => {
+  // 2026-11-17 线上事故：`runRest` 里引用了 `resolvePurchaseArrival()` 的局部变量 `webhooks`
+  // ⇒ 带验收单提交时后台抛 ReferenceError（主体写成功、附件永远没写、任务被标失败）。
+  // 这条用例把后台**真跑一遍**（前面的 DOC2 只断言"交给了后台"，跑不到 runRest，抓不到它）。
+  const written = [];
+  const webhooks = {
+    orderBatches: {
+      writeCounterpartyDocument: async (input) => { written.push(input); return { written: true }; },
+    },
+  };
+  const jobRunner = {
+    ready: true,
+    run: async ({ runFn }) => ({ handled: true, ok: true, result: await runFn({ attempt: 1 }) }),
+  };
+  const docs = [{ fileToken: 'file_token_doc_2', fileName: '验收单 2.jpg' }];
+  await withServer(appFor({
+    arrival: fakeArrival(), purchaseQuery: fakeQuery(ROWS), webhooks, purchaseJobRunner: jobRunner, asyncJobs: null,
+  }), async (base) => {
+    const res = await postJson(base, arrivalTab.api.accept, {
+      batchNo: 'BH-1', actualAmount: '300',
+      lines: [{ productRecordId: 'p1', size: 40, quantity: 2 }],
+      counterpartyDocuments: docs,
+    });
+    assert.equal(res.status, 200);
+    await waitForPendingPurchaseBackgrounds();
+    assert.equal(written.length, 1, '后台真的调了写「对方单据」');
+    assert.deepEqual(written[0].documents, docs);
+    assert.equal(written[0].batchNo, 'BH-1');
   });
 });
