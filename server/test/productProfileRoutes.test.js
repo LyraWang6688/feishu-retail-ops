@@ -60,6 +60,27 @@ test('AC-PP1 搜索：只按货号模糊匹配；空搜索不返回结果', asyn
   } finally { server.close(); }
 });
 
+test('AC-PP1b 新增货品还没进快照 ⇒ 按货号 filter 兜底，立刻能搜到', async () => {
+  let filterCalls = 0;
+  const gateway = {
+    listAll: async () => [product('rec_old', 'OLD|黑色|男', 'OLD', '黑色', '男', '齐备')],
+    listByFilter: async (tableKey, formula, options) => {
+      filterCalls += 1;
+      assert.equal(tableKey, 'product');
+      assert.ok(formula, '必须带 filter');
+      assert.equal(options.maxRecords, 50);
+      return [product('rec_new', 'NEW|黑色|男', 'NEW', '黑色', '男', '齐备')];
+    },
+  };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${port}/products/search?q=NEW`)).json();
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].recordId, 'rec_new');
+    assert.equal(filterCalls, 1, '快照 0 命中才兜底一次');
+  } finally { server.close(); }
+});
+
 test('AC-PP2 缺失分组：排除齐备，按缺失值动态分组、数量降序', async () => {
   const gateway = { listAll: async () => [
     product('rec1', 'A|黑|男', 'A', '黑', '男', '成本'),

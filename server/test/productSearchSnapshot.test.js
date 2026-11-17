@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   getProductSearchSnapshot, warmProductSearchSnapshot, resetProductSearchSnapshot,
+  invalidateProductSearchSnapshot,
 } = require('../src/services/productSearchSnapshot');
 
 test('快照 TTL 内命中；过期时先返回旧数据，后台刷新失败也不影响', async () => {
@@ -26,6 +27,21 @@ test('快照 TTL 内命中；过期时先返回旧数据，后台刷新失败也
   const rows = await getProductSearchSnapshot({ gateway, now: () => now, ttlMs: 60_000 });
   assert.equal(rows.length, 1, '过期但刷新失败 ⇒ 继续用旧快照');
   await new Promise((resolve) => setImmediate(resolve));
+});
+
+test('新增货品 invalidate ⇒ 下一次搜索等刷新，立刻拿到新行', async () => {
+  resetProductSearchSnapshot();
+  let rows = [{ record_id: 'old' }];
+  const gateway = {
+    schema: { appToken: 'app_snapshot_test_add' },
+    table: () => ({ tableId: 'tbl_product' }),
+    listAll: async () => rows,
+  };
+  await warmProductSearchSnapshot({ gateway });
+  rows = [{ record_id: 'old' }, { record_id: 'new' }];
+  invalidateProductSearchSnapshot();
+  const got = await getProductSearchSnapshot({ gateway, ttlMs: 60 * 60 * 1000 });
+  assert.deepEqual(got.map((row) => row.record_id), ['old', 'new'], '不能先回旧快照把新增货品漏掉');
 });
 
 test('从未成功读过且刷新失败 ⇒ 抛错，不假装空结果', async () => {
