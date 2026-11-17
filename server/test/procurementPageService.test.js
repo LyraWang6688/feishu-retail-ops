@@ -4,7 +4,7 @@
  * 口径（2026-10-28 业务负责人确认）：
  *   · **只查「销售明细」一张表**（业务负责人纠正：库存数量来自销售明细，不是实时库存）；
  *   · 补货筛选公式 = `库存数量 = 0` + `销售日 >= TODAY()-3`；
- *   · 上新筛选公式 = `上架日期 >= TODAY()`；
+ *   · 上新筛选公式 = `上架日期 >= TODAY()-6`（最近 7 天）；
  *   · 交易类型判据来自「行为管理.行为编码」（复用 salesMovements 的编码集合）。
  */
 const test = require('node:test');
@@ -180,7 +180,7 @@ test('AC-P4 交易类型判据走「行为管理.行为编码」：关联记录�
   assert.equal(result.stats.prepaidPending, 1);
 });
 
-test('AC-P6 上新只查货品信息 + 上架日期>=TODAY()；类别缺失不猜', async () => {
+test('AC-P6 上新只查货品信息 + 上架日期>=TODAY()-6（最近 7 天）；类别缺失不猜', async () => {
   const gateway = makeGateway({
     products: [
       productListRecord({ id: 'recToday', category: '女', createdAt: SH('2026-10-28T08:00:00') }),
@@ -192,7 +192,7 @@ test('AC-P6 上新只查货品信息 + 上架日期>=TODAY()；类别缺失不�
   assert.equal(result.stats.productCount, 2);
   const filters = gateway.calls.filter((call) => call.kind === 'listByFilter');
   assert.equal(filters[0].tableKey, 'product');
-  assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${PF.createdAt}\\]>=TODAY\\(\\)`));
+  assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${PF.createdAt}\\]>=TODAY\\(\\)-6`));
   const missing = result.groups.find((group) => group.productRecordId === 'recNoCat');
   assert.equal(missing.categoryMissing, true);
   assert.deepEqual(missing.sizes, { normal: [], special: [] });

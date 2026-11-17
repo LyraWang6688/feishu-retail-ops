@@ -5,7 +5,7 @@
  *
  * 业务口径（2026-10-28 业务负责人逐条确认，见 `docs/procurement-page-real-2026-10-28.md`）：
  *   · 补货：**只查「销售明细」一张表**（库存数量 = 0，销售日 = 今天 00:00 往前 3 个自然日）；
- *   · 上新：`货品信息` 上架日期 = 今天；按记录 ID 分组；普通码默认 1、特殊码默认 0 并折叠；
+ *   · 上新：`货品信息` 上架日期 = 最近 7 天（今天 + 往前 6 天）；按记录 ID 分组；普通码默认 1、特殊码默认 0 并折叠；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
  *   · 扫一扫：**本轮不做**（tab 仅占位/禁用，无接口、无数据表行）；
  *   · 提交：复用既有 `multiItemOrderService` → `purchaseWebhookService.publishPurchaseRequest`，
@@ -60,6 +60,8 @@ const buildProcurementPageConfig = (env = process.env) => {
     window: Object.freeze({
       replenishDays: readInt(env, 'PROCUREMENT_REPLENISH_DAYS', 3, { min: 1, max: 31 }),
       includeToday: readFlag(env, 'PROCUREMENT_REPLENISH_INCLUDE_TODAY', true),
+      // ⭐ 2026-11-17（业务负责人）：上新从「今天」改为「最近 7 天」= 今天 + 往前 6 天。
+      newProductsDays: readInt(env, 'PROCUREMENT_NEW_PRODUCTS_DAYS', 7, { min: 1, max: 31 }),
       offsetMinutes: readInt(env, 'PROCUREMENT_TZ_OFFSET_MINUTES', SHANGHAI_OFFSET_MINUTES, { min: -720, max: 840 }),
     }),
     // 默认值（可手改；改这里不用改渲染层）
@@ -94,7 +96,8 @@ const buildProcurementPageConfig = (env = process.env) => {
     // 筛选公式（列名由调用方按 schema 解析后填进来；这里只留公式骨架）
     filters: Object.freeze({
       replenish: 'AND(CurrentValue.[{stockField}]=0,CurrentValue.[{dateField}]>=TODAY()-{days})',
-      newProducts: 'CurrentValue.[{dateField}]>=TODAY()',
+      // days 传「往前的天数」：7 个自然日（含今天）= TODAY()-6。
+      newProducts: 'CurrentValue.[{dateField}]>=TODAY()-{days}',
     }),
     // 排序（单一真源：服务层按它排；改口径改这里）
     sort: Object.freeze({
@@ -135,7 +138,7 @@ const buildProcurementPageConfig = (env = process.env) => {
       productMissing: readString(env, 'PROCUREMENT_TEXT_PRODUCT_MISSING', '有一件货品在货品信息里查不到了，请刷新页面后重试。'),
       categoryMissing: readString(env, 'PROCUREMENT_TEXT_CATEGORY_MISSING', '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。'),
       replenishEmpty: readString(env, 'PROCUREMENT_TEXT_REPLENISH_EMPTY', '近 3 天没有需要补货的货品。'),
-      newProductsEmpty: readString(env, 'PROCUREMENT_TEXT_NEW_PRODUCTS_EMPTY', '今天还没有新增货品。'),
+      newProductsEmpty: readString(env, 'PROCUREMENT_TEXT_NEW_PRODUCTS_EMPTY', '近期还没有新增货品。'),
       loadFailed: readString(env, 'PROCUREMENT_TEXT_LOAD_FAILED', '数据没读到，请稍后重试。'),
     }),
   });

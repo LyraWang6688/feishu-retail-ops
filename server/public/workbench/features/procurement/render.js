@@ -19,7 +19,7 @@ export const formatDay = (isoText, config) => {
 };
 
 export const rangeText = (tab, range, config) => {
-  if (tab !== 'replenish') return config.range.newProducts;
+  if (tab !== 'replenish') return fill(config.range.newProducts, { days: Number(range?.days) || 7 });
   return fill(config.range.replenish, { from: formatDay(range?.from, config), to: formatDay(range?.to, config) });
 };
 
@@ -27,6 +27,13 @@ export const formatClock = (epoch, offsetMinutes) => {
   if (!Number.isFinite(Number(epoch))) return '';
   const date = new Date(Number(epoch) + Number(offsetMinutes) * 60 * 1000);
   return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
+};
+
+/** epoch → 「M月D日」（上海时区）；上新窗口跨多天后卡片小字要带日期，不能都写「今日」。 */
+export const formatDayOfEpoch = (epoch, config) => {
+  if (!Number.isFinite(Number(epoch))) return '';
+  const date = new Date(Number(epoch) + Number(config.timezoneOffsetMinutes) * 60 * 1000);
+  return formatDay(date.toISOString().slice(0, 10), config);
 };
 
 export const titleOf = (product, config) => {
@@ -123,6 +130,7 @@ export const newGroupHtml = (group, draft, store, config) => {
   const supplier = String(group.supplierName || '').trim();
   // 供应商为空 ⇒ 用无「·」的模板（否则卡片小字会多一个孤零零的「·」）
   const subtitle = fill(supplier ? config.card.newSubtitle : config.card.newSubtitleNoSupplier, {
+    date: formatDayOfEpoch(group.createdAt, config),
     time: formatClock(group.createdAt, config.timezoneOffsetMinutes),
     supplier,
   });

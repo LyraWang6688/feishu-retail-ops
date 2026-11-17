@@ -3,7 +3,7 @@
  *
  * 业务口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`）：
  *   · 补货：近 3 天销售（销售明细，库存数量=0）；现货/预订；预订默认选中；
- *   · 上新：今天新增货品；卡片「货号 · 颜色」+「今日 HH:mm 新增 · 供应商」；普通码默认 1 / 特殊码默认 0 折叠；
+ *   · 上新：最近 7 天新增货品（今天 + 往前 6 天）；卡片「货号 · 颜色」+「M月D日 HH:mm 新增 · 供应商」；普通码默认 1 / 特殊码默认 0 折叠；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
  *   · 扫一扫：**本轮只占位/禁用**（不扫码、不开会话、不提交）；
  *   · 提交：复用既有采购链路；成功后端返回**统一异步 toast 文案**（`config/submitToast.js` 唯一真源）。
@@ -20,7 +20,7 @@ export const PROCUREMENT_UI = Object.freeze({
   title: '采购',
   tabs: Object.freeze([
     Object.freeze({ id: 'replenish', label: '补货', hint: '近 3 天销售' }),
-    Object.freeze({ id: 'new', label: '上新', hint: '近 1 天新增货品' }),
+    Object.freeze({ id: 'new', label: '上新', hint: '近期新增货品' }),
     // 扫一扫本轮不做：保留视觉入口（禁用 + 不可点），不挂扫码模块
     Object.freeze({
       id: 'scan', label: '扫一扫', hint: '补货扫码', disabled: true,
@@ -32,7 +32,7 @@ export const PROCUREMENT_UI = Object.freeze({
     loadFailed: '数据没读到，请稍后重试。',
     retry: '重新加载',
     replenishEmpty: '近 3 天没有需要补货的货品。',
-    newProductsEmpty: '今天还没有新增货品。',
+    newProductsEmpty: '近期还没有新增货品。',
     categoryMissing: '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。',
     submitting: '提交中…',
     submit: '提交',
@@ -60,7 +60,7 @@ export const PROCUREMENT_UI = Object.freeze({
   range: Object.freeze({
     // 业务负责人 2026-10-29 口径：补货窗口 = 今天 00:00 - 3 天 ~ **现在**（含今天已发生）
     replenish: '{from} 00:00 – 现在',
-    newProducts: '今日 00:00 – 现在',
+    newProducts: '近 {days} 天（含今天）',
     dayTemplate: '{month}月{day}日',
   }),
   // 数据刷新（业务负责人 2026-10-29）：「实时」= **打开页面时更新一次**；不要自动轮询。
@@ -84,8 +84,8 @@ export const PROCUREMENT_UI = Object.freeze({
     // 卡片标题只显示「货号 · 颜色」（记录 ID 只内部用，页面不展示）
     titleTemplate: '{itemNo} · {color}',
     titleFallback: '{number} · {color}',
-    newSubtitle: '今日 {time} 新增 · {supplier}',
-    newSubtitleNoSupplier: '今日 {time} 新增', // 供应商为空时不显示孤立的「·」（业务负责人 2026-10-29）
+    newSubtitle: '{date} {time} 新增 · {supplier}',
+    newSubtitleNoSupplier: '{date} {time} 新增', // 供应商为空时不显示孤立的「·」（业务负责人 2026-10-29）
     replenishTotal: '需补{total}双',
     newNormalTotal: '普通码 {total} 双',
     specialSummary: '特殊码 · {count} 个（默认 0 双，点开选择）',
