@@ -129,6 +129,9 @@ app.use('/api/auth/feishu', require('./routes/feishuWebAuth').createFeishuWebAut
 //      不然手机会把任务排进一个"小助手永远看不到"的队列里。
 app.use('/api/workbench/label-print', require('./routes/labelPrintQueue').createLabelPrintQueueRouter());
 app.use('/api/label-print', require('./routes/labelPrintDevice').createLabelPrintDeviceRouter());
+// ⭐ 2026-11-17：销售资金页 / 验收提交后的「是否打印」轻页（一次性令牌；不要求登录）。
+//   ⚠️ 令牌是一次性的能力凭证：URL 不可猜、默认 15 分钟过期；不在页面里裸露货品列表之外的东西。
+app.use('/print-prompt', require('./routes/printPrompt').createPrintPromptRouter());
 // The workbench uses Feishu web sessions; its query and follow-up endpoints
 // never expose the service credentials to the browser.
 app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter());

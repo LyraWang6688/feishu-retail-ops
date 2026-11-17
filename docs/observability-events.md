@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **486** 个事件。按前缀分组：
+共 **500** 个事件。按前缀分组：
 
 ## accessory
 
@@ -143,6 +143,7 @@
 | `inventory.change.applied` | 4 | src/services/inventory/executeOperation.js<br>src/services/inventory/purchaseBatch.js<br>src/services/inventory/purchaseReturnBatch.js<br>…等 4 个文件 |
 | `inventory.change.failed` | 1 | src/config/alerts.js |
 | `inventory.print.intent.failed` | 1 | src/services/inventoryPrintIntentService.js |
+| `inventory.print.intent.item_failed` | 1 | src/services/inventoryPrintIntentService.js |
 | `inventory.print.intent.missing_product` | 1 | src/services/inventoryPrintIntentService.js |
 | `inventory.print.intent.queued` | 1 | src/services/inventoryPrintIntentService.js |
 | `inventory.print.intent.recover_failed` | 1 | src/services/inventoryPrintIntentRuntime.js |
@@ -186,6 +187,7 @@
 | `label_print.form.received` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.record_failed` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.retry` | 1 | src/services/labelPrintFormIntakeService.js |
+| `label_print.form.skipped_source` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.job.claimed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.done` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.enqueued` | 1 | src/services/labelPrintQueueService.js |
@@ -195,6 +197,12 @@
 | `label_print.job.reprinted` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.reused` | 2 | src/services/labelPrintQueueService.js |
 | `label_print.queue.ready` | 1 | src/services/labelPrintQueueRuntime.js |
+| `label_print.request_log.created` | 1 | src/services/labelPrintRequestLogService.js |
+| `label_print.request_log.dispatch_failed` | 1 | src/services/labelPrintQueueService.js |
+| `label_print.request_log.duplicate_rows` | 1 | src/services/labelPrintRequestLogService.js |
+| `label_print.request_log.failed` | 3 | src/services/labelPrintRequestLogService.js |
+| `label_print.request_log.incremented` | 1 | src/services/labelPrintRequestLogService.js |
+| `label_print.request_log.skipped` | 4 | src/services/labelPrintRequestLogService.js |
 | `label_print.scan.report` | 1 | src/routes/workbench/labels.js |
 | `label_print.stream.backlog_failed` | 1 | src/routes/labelPrintDevice.js |
 | `label_print.stream.connected` | 1 | src/routes/labelPrintDevice.js |
@@ -245,6 +253,15 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `perf.request.completed` | 2 | src/config/alerts.js<br>src/utils/requestTiming.js |
+
+## print_prompt
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `print_prompt.acceptance.failed` | 1 | src/routes/printPrompt.js |
+| `print_prompt.acceptance.request_failed` | 1 | src/routes/printPrompt.js |
+| `print_prompt.sale.intent_error` | 1 | src/routes/printPrompt.js |
+| `print_prompt.sale.intent_failed` | 1 | src/routes/printPrompt.js |
 
 ## process
 
@@ -472,6 +489,7 @@
 | `scan.sale.async.enqueued` | 1 | src/routes/scanPage/handlers/payment.js |
 | `scan.sale.async.failed` | 4 | src/config/alerts.js<br>src/services/salesAsyncWorker.js |
 | `scan.sale.async.invalid_payload` | 1 | src/routes/scanPage/handlers/payment.js |
+| `scan.sale.async.print_intent_flush_failed` | 1 | src/services/salesAsyncWorker.js |
 | `scan.sale.async.queue_failed` | 1 | src/services/salesAsyncWorker.js |
 | `scan.sale.async.queued` | 1 | src/services/salesAsyncWorker.js |
 | `scan.sale.async.start_failed` | 3 | src/config/alerts.js<br>src/services/salesAsyncRuntime.js |
@@ -630,6 +648,7 @@
 | `workbench.product_profile.search_snapshot_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.purchase.acceptance_doc.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_accept.failed` | 1 | src/routes/workbench/purchase.js |
+| `workbench.purchase.arrival_accept.print_intent_flush_failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_confirm.rejected` | 1 | src/services/workbenchPurchaseArrivalService.js |
 | `workbench.purchase.arrival_detail.failed` | 1 | src/routes/workbench/purchase.js |

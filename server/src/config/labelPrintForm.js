@@ -24,6 +24,9 @@ const LABEL_FORM_INTAKE = Object.freeze({
   submitKeyPrefix: 'label_form',
   // 队列来源（`config/labelPrintQueue.js` 的 SOURCES.form）。
   queueSource: 'form',
+  // 「来源」字段里代表**表单请求**的值；为空也按表单处理（兼容加字段前的存量记录）。
+  // 其他值（扫码打印 / 库存调整打印）是服务端写的**请求记录**，监听端必须跳过，否则会重复打印。
+  formSourceLabel: '批量打印',
   // 只认「新增」动作（表单提交 = 新增一条记录）；删除 / 编辑不触发打印。
   triggerActions: Object.freeze(['record_added']),
   // 临时错误的重试次数（0 = 不重试）。业务负责人 2026-11-09：「3 次」。

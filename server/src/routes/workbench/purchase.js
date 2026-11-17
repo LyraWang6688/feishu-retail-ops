@@ -29,6 +29,11 @@ const { logError, logWarn } = require('../../utils/logger');
 //   🔴 提交走既有 `multiItemOrderService` → `publishPurchaseRequest`（不新建写库路径）。
 const { PROCUREMENT_PAGE } = require('../../config/procurementPage');
 const { submitToastUrl } = require('../../utils/submitToast');
+// ⭐ 2026-11-17：验收提交后的「是否打印」轻页 + 打印意图。
+const { SOURCES } = require('../../config/labelPrintQueue');
+const { getPrintPromptService } = require('../../services/printPromptRuntime');
+const { printPromptUrlOf } = require('../../services/printPromptService');
+const { getInventoryPrintIntentService } = require('../../services/inventoryPrintIntentRuntime');
 const { createProcurementPageService } = require('../../services/procurementPageService');
 const { createProcurementPageSubmitService } = require('../../services/procurementPageSubmitService');
 const { createScanWriteService } = require('../../services/scanWriteService');
@@ -341,6 +346,26 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         }
         submittedLines.push({ product_record_id: productRecordId, size, quantity });
       }
+      // ⭐ 2026-11-17：验收提交成功后「是否打印」页的候选货品（只列本次实际到货 >0 的款）。
+      const infoByProduct = new Map();
+      for (const row of Array.isArray(batchRows) ? batchRows : []) {
+        const id = String(row?.product_record_id || '').trim();
+        if (!id || infoByProduct.has(id)) continue;
+        infoByProduct.set(id, {
+          recordId: id,
+          itemNo: String(row.product_item_no || row.item_no || '').trim(),
+          color: String(row.product_color || row.color || '').trim(),
+          number: String(row.product_number || row.number || '').trim(),
+        });
+      }
+      const printProducts = [];
+      const seenPrintProducts = new Set();
+      for (const line of submittedLines) {
+        const id = String(line.product_record_id || '').trim();
+        if (!id || Number(line.quantity) <= 0 || seenPrintProducts.has(id)) continue;
+        seenPrintProducts.add(id);
+        printProducts.push(infoByProduct.get(id) || { recordId: id, itemNo: '', color: '', number: '' });
+      }
       const replaced = await arrivalService.setScans({
         openId, lines: submittedLines,
         ...(sessionKey ? { sessionKey } : {}),
@@ -377,7 +402,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         ? asyncJobs.jobIdFor(ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE, submitKey) : '';
       // ⑤ 排「后台那一跑」（🔴 **不 await** ⇒ 她**先拿到成功页** ✓；写库仍在既有 `finish` 里 ✗ 不新开路径）。
       //    ⚠️ 位置**必须在上面那几道校验之后**：先排后台再校验 = 把"她填错了"变成"看起来成功" ✗。
-      acceptBackground.schedulePurchaseRest({
+      const acceptanceBackground = acceptBackground.schedulePurchaseRest({
         chain: 'accept',
         requestId: req.requestId,
         submitKey,
@@ -402,6 +427,27 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
           ...(counterpartyDocuments.length ? { counterpartyDocuments } : {}),
         },
       });
+      // ⭐ 2026-11-17：验收提交后先回「是否打印」轻页；她勾选后记打印意图，
+      //   等这条库存 job 成功再建打印任务（与库存调整同一套意图）。
+      let printPromptUrl = '';
+      if (options.printPrompt !== false && jobId && printProducts.length) {
+        const prompt = getPrintPromptService().create({
+          kind: 'acceptance',
+          source: SOURCES.acceptance,
+          operationId: jobId,
+          ownerOpenId: openId,
+          products: printProducts,
+          returnUrl: submitToastUrl({}),
+        });
+        if (prompt) printPromptUrl = printPromptUrlOf(prompt.token);
+      }
+      if (printPromptUrl) {
+        void Promise.resolve(acceptanceBackground)
+          .then((result) => (result?.ok === false ? null : getInventoryPrintIntentService().flush(jobId)))
+          .catch((error) => logWarn('workbench.purchase.arrival_accept.print_intent_flush_failed', {
+            request_id: req.requestId, job_id: jobId, error: error.message,
+          }));
+      }
       // ⑥ 成功页 = **统一那一句**（「已提交成功，数据会更新」· 真源在 `config/scanPage.js` 的
       //    `SCAN_PAGE.saleSuccess` ✓ 本文件不新造字面量 ✗）。
       //    ⚠️ **不许**回 "已确认到货"：这一刻后台还没写 ⇒ 那是假成功 ✗（真失败另有出口：
@@ -415,7 +461,9 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         job_id: jobId,
         // ⭐ 2026-11-09（业务负责人：回执统一成 toast）：地址由共享的 `submitToastUrl()` 构造
         //   （文案 / 落点 / 参数名全在 `config/submitToast.js`；前端只负责 assign ✓）。
-        redirect_url: submitToastUrl({}),
+        // ⭐ 2026-11-17：有候选货品时先回「是否打印」轻页；点完再回工作台 toast。
+        redirect_url: printPromptUrl || submitToastUrl({}),
+        ...(printPromptUrl ? { print_prompt_url: printPromptUrl } : {}),
       });
     } catch (error) {
       logError('workbench.purchase.arrival_accept.failed', { request_id: req.requestId, batch_no: batchNo, error: error.message });

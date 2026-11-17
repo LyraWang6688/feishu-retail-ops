@@ -134,6 +134,8 @@
 | [accessory-sale-sync-2026-11-17.md](accessory-sale-sync-2026-11-17.md) | ⭐ **把飞书工作流「配品销售同步」搬进代码**（2026-11-17）：配品销售新增 → S交易明细；幂等键 PX-<record_id>、金额必须 >0；上线前先停飞书工作流 |
 | [label-print-entries-2026-10-14.md](label-print-entries-2026-10-14.md) | 「货品 → 标签打印」的入口结构（2026-10-14 晚 · 业务负责人逐字） |
 | [label-print-form-chain-2026-11-09.md](label-print-form-chain-2026-11-09.md) | ⭐ **「批量打印」飞书表单 → 自动打印**（2026-11-09 业务负责人定）：表单写「标签打印」表 → 事件按 table_id 分派 → 每个货号各打各的（400 坏货号跳过）、同条记录汇总一条运营群通知、临时错误重试 3 次、电脑离线排队补打、「打印日」不写 |
+| [label-print-request-log-2026-11-17.md](label-print-request-log-2026-11-17.md) | ⭐ **扫码打印 / 库存调整打印的“请求”也写进「标签打印」表**（2026-11-17 业务负责人：「只是记录请求」）：新增「来源」单选做防重复打印守卫；按「打印货号 + 来源」累计**申请次数**（新建=1、已有+1），不写状态/结果 |
+| [stock-label-print-prompt-2026-11-17.md](stock-label-print-prompt-2026-11-17.md) | ⭐ **销售录单 / 验收提交后的「是否打印」轻页**（2026-11-17 业务负责人拍板）：资金页成功后 / 验收提交后先回轻页；多款默认全勾可取消、没库存跳过；销售立即入队、验收等 job 成功再打 |
 | [money-page-v2-spec-2026-10-14.md](archive/money-page-v2-spec-2026-10-14.md) | 资金页 v2 · 施工规格（2026-10-14 晚 · 业务负责人逐字） |
 | [multi-item-order-design-2026-10-15.md](multi-item-order-design-2026-10-15.md) | 「一单多货品」设计（单据草稿 + 批量提交 · 共用模块） |
 | [multi-item-sales-recon-2026-10-16.md](multi-item-sales-recon-2026-10-16.md) | ⭐ **「一单多货」接到【销售】领域**（task-59 · 只读核对 + 甲′ 取舍 + 判据落点）：🔴 **性质订正 = 销售今天就已经有自己的一单多件机制**（`add_line` → `addSaleLine` → `sale.lines` ⇒ 资金页 ⇒ 既有 `submitSale`），本刀只是**补上货品页那个入口 +「本单已加的货品」列表**（**不是**新建机制 ✗、**不是**"销售不支持多件" ✗）＋ 三条实现约束（`multiItemBlockHtml` 调用点被 AC-MIR1 钉成恰好 2 ⇒ 销售那块要落在 `saleFormHtml`；加货那颗必须是本表单 submit；`chains.sales` 需成对迁移 AC-RT7b）＋ 门控与判据落点（`test/multiItemOrderSalesChain.test.js`） |
