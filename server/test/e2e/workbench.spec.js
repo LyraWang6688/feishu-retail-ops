@@ -12,7 +12,27 @@ const mockApi = async (page, { orders = [] } = {}) => {
     if (path === '/api/auth/feishu/me') {
       return route.fulfill(json({ enabled: true, authenticated: true, user: { name: 'E2E' } }));
     }
+    if (path === '/api/workbench/products/search') {
+      return route.fulfill(json({
+        success: true,
+        items: [{
+          recordId: 'p2', number: 'COMPLETE|黑|男', itemNo: 'COMPLETE', color: '黑',
+          recordUrl: 'https://example.com/base?record=p2', hasSampleImage: false, imageUrl: '', issues: [],
+        }],
+      }));
+    }
     if (path === '/api/workbench/products/completion') {
+      const q = new URL(route.request().url()).searchParams.get('q');
+      if (q) {
+        return route.fulfill(json({
+          success: true,
+          query: q,
+          items: [{
+            recordId: 'p2', number: 'COMPLETE|黑|男', itemNo: 'COMPLETE', color: '黑',
+            recordUrl: 'https://example.com/base?record=p2', hasSampleImage: false, imageUrl: '', issues: [],
+          }],
+        }));
+      }
       return route.fulfill(json({
         success: true, total: 1,
         dimensions: [
@@ -137,6 +157,24 @@ test('货品 → 货品资料：四张卡 + 货品完善分组', async ({ page }
   await expect(page.locator('[data-page-kind="product-profile"]:visible').getByRole('heading', { name: '配品配置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /货品完善/ }).click();
   await expect(page.locator('[data-pp-complete-tabs]')).toBeVisible();
+});
+
+test('货品完善：搜索按货品全量，不限制待完善；清空恢复默认分组', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '配置', exact: true }).click();
+  await page.getByRole('button', { name: '货品资料', exact: true }).click();
+  await page.getByRole('button', { name: /货品完善/ }).click();
+  const tabs = page.locator('[data-pp-complete-tabs]');
+  await expect(tabs).toBeVisible();
+
+  const input = page.getByPlaceholder('按货号搜索待完善货品');
+  await input.fill('COMPLETE');
+  await expect(page.locator('[data-pp-complete-search-results]')).toContainText('COMPLETE|黑|男');
+  await expect(tabs).toBeHidden();
+
+  await input.fill('');
+  await expect(tabs).toBeVisible();
 });
 
 test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {

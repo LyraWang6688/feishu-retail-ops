@@ -132,6 +132,7 @@
 | [async-submit-copy-and-plan-2026-10-14.md](archive/async-submit-copy-and-plan-2026-10-14.md) | 异步提交 · 统一文案（2026-10-14 晚 · 业务负责人逐字） |
 | [douyin-voucher-payment-rules-2026-10-16.md](douyin-voucher-payment-rules-2026-10-16.md) | ⭐ **抖音团购券 · 资金页三条口径落地**（业务负责人 2026-10-16 逐字：「差额的计算**按照面值**来」「收款明细里的收款金额**按照平台结算款**来」「抖音团购券是**待平台结算**」）—— 面值算差额 / 平台结算款写那笔收款金额 / 状态写「待平台结算」。⚠️ **本条是补登记**：该文档由 #704 带入 main，但**漏进本索引** ⇒ `docsIndexCompleteness` 的 AC-DI1 在 main 上就是**红的**，这里顺带补上（一个字未改文档正文） |
 | [accessory-sale-sync-2026-11-17.md](accessory-sale-sync-2026-11-17.md) | ⭐ **把飞书工作流「配品销售同步」搬进代码**（2026-11-17）：配品销售新增 → S交易明细；幂等键 PX-<record_id>、金额必须 >0；上线前先停飞书工作流 |
+| [product-profile-complete-search-2026-11-17.md](product-profile-complete-search-2026-11-17.md) | ⭐ **货品完善搜索框**：默认仍按缺失信息分组；搜索时按「货品信息全量」查（不限制待完善），复用 /products/search，清空恢复默认分组 |
 | [label-print-entries-2026-10-14.md](label-print-entries-2026-10-14.md) | 「货品 → 标签打印」的入口结构（2026-10-14 晚 · 业务负责人逐字） |
 | [label-print-form-chain-2026-11-09.md](label-print-form-chain-2026-11-09.md) | ⭐ **「批量打印」飞书表单 → 自动打印**（2026-11-09 业务负责人定）：表单写「标签打印」表 → 事件按 table_id 分派 → 每个货号各打各的（400 坏货号跳过）、同条记录汇总一条运营群通知、临时错误重试 3 次、电脑离线排队补打、「打印日」不写 |
 | [label-print-request-log-2026-11-17.md](label-print-request-log-2026-11-17.md) | ⭐ **扫码打印 / 库存调整打印的“请求”也写进「标签打印」表**（2026-11-17 业务负责人：「只是记录请求」）：新增「来源」单选做防重复打印守卫；按「打印货号 + 来源」累计**申请次数**（新建=1、已有+1），不写状态/结果 |

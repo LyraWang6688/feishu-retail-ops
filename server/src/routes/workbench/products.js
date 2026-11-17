@@ -84,51 +84,68 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     };
   };
 
-  router.get('/products/search', async (req, res) => {
-    const q = String(req.query?.q || '').trim();
-    if (!q) return res.json({ success: true, query: '', items: [] });
+  /**
+   * 货品全量搜索（货号模糊匹配）：
+   *   · 货品上新搜索、货品完善搜索框共用；
+   *   · 不做「待完善」过滤，搜索范围就是货品信息全量。
+   */
+  const searchProductItems = async (q, requestId) => {
     const needle = q.toLowerCase();
+    let rows;
     try {
       // 快照优先：只读内存，不被 record_changed / 样例图同步打穿；过期时后台刷新。
       // 只模糊匹配「货号」，不匹配「编号」。
-      const rows = await getProductSearchSnapshot({ gateway: getGateway() });
-      let items = rows
-        .map(itemOf)
-        .filter((item) => item.itemNo.toLowerCase().includes(needle))
-        .slice(0, PRODUCT_PROFILE.searchLimit);
-      // ⭐ 2026-11-17：刚新增的货品可能还没进快照 ⇒ 快照 0 命中时按货号直接 filter 兜底一次，
-      //   查到就返回，并让下一次快照刷新（新增后立刻可搜，不用等 5 分钟 TTL）。
-      if (!items.length) {
-        try {
-          const formula = containsFormula(field('itemNo'), q);
-          if (formula) {
-            const freshRows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
-            items = freshRows.map(itemOf);
-            if (items.length) invalidateProductSearchSnapshot();
-          }
-        } catch (filterError) {
-          logError('workbench.product_profile.search_filter_failed', {
-            request_id: req.requestId, error: filterError.message,
-          });
-        }
-      }
-      return res.json({ success: true, query: q, items });
+      rows = await getProductSearchSnapshot({ gateway: getGateway() });
     } catch (snapshotError) {
       logError('workbench.product_profile.search_snapshot_failed', {
-        request_id: req.requestId, error: snapshotError.message,
+        request_id: requestId, error: snapshotError.message,
       });
-      // 冷启动快照失败：再试一次飞书 filter（只读货号）；仍然失败才回 502。
+      // 冷启动快照失败：再试一次飞书 filter（只读货号）；仍然失败才抛。
+      const formula = containsFormula(field('itemNo'), q);
+      if (!formula) throw snapshotError;
       try {
-        const formula = containsFormula(field('itemNo'), q);
-        if (!formula) throw snapshotError;
-        const rows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
-        return res.json({ success: true, query: q, items: rows.map(itemOf) });
+        return (await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit })).map(itemOf);
       } catch (filterError) {
         logError('workbench.product_profile.search_filter_failed', {
-          request_id: req.requestId, error: filterError.message,
+          request_id: requestId, error: filterError.message,
         });
-        return res.status(502).json({ success: false, error: 'product_search_failed' });
+        throw snapshotError;
       }
+    }
+    let items = rows
+      .map(itemOf)
+      .filter((item) => item.itemNo.toLowerCase().includes(needle))
+      .slice(0, PRODUCT_PROFILE.searchLimit);
+    // ⭐ 2026-11-17：刚新增的货品可能还没进快照 ⇒ 快照 0 命中时按货号直接 filter 兜底一次，
+    //   查到就返回，并让下一次快照刷新（新增后立刻可搜，不用等 5 分钟 TTL）。
+    if (!items.length) {
+      try {
+        const formula = containsFormula(field('itemNo'), q);
+        if (formula) {
+          const freshRows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
+          items = freshRows.map(itemOf);
+          if (items.length) invalidateProductSearchSnapshot();
+        }
+      } catch (filterError) {
+        logError('workbench.product_profile.search_filter_failed', {
+          request_id: requestId, error: filterError.message,
+        });
+      }
+    }
+    return items;
+  };
+
+  router.get('/products/search', async (req, res) => {
+    const q = String(req.query?.q || '').trim();
+    if (!q) return res.json({ success: true, query: '', items: [] });
+    try {
+      const items = await searchProductItems(q, req.requestId);
+      return res.json({ success: true, query: q, items });
+    } catch (error) {
+      logError('workbench.product_profile.search_failed', {
+        request_id: req.requestId, error: error.message,
+      });
+      return res.status(502).json({ success: false, error: 'product_search_failed' });
     }
   });
 
@@ -207,6 +224,13 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
 
   router.get('/products/completion', async (req, res) => {
     try {
+      // 搜索框：继续用当前 completion 接口，但 q 的范围是「货品信息全量」，
+      // 不限制在待完善分组里（她要搜到已完善的货品去修改）。
+      const q = String(req.query?.q || '').trim();
+      if (q) {
+        const items = await searchProductItems(q, req.requestId);
+        return res.json({ success: true, query: q, items });
+      }
       const rows = await getConfigRows({ gateway: getGateway(), tableKey: 'product' });
       const all = rows.map(itemOf).filter((item) => item.recordId && item.number);
       const dimensions = [
