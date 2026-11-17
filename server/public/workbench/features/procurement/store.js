@@ -24,7 +24,7 @@ export const defaultReplenishQuantity = (sizeRow) => {
   return 0;
 };
 
-/** 上新某个尺码的默认数量：普通码 = normalQuantity（默认 1）；特殊码 = specialQuantity（默认 0）。 */
+/** 上新某个尺码的默认数量：普通码 / 特殊码都默认 0（需手动选；normalQuantity/specialQuantity 可配）。 */
 export const defaultNewQuantity = (kind, defaults) => (
   kind === 'special' ? Number(defaults.specialQuantity) || 0 : Number(defaults.normalQuantity) || 0
 );

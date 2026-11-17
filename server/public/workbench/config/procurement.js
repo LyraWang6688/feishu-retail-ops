@@ -3,7 +3,7 @@
  *
  * 业务口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`）：
  *   · 补货：近 3 天销售（销售明细，库存数量=0）；现货/预订；预订默认选中；
- *   · 上新：最近 7 天新增货品（今天 + 往前 6 天）；卡片「货号 · 颜色」+「M月D日 HH:mm 新增 · 供应商」；普通码默认 1 / 特殊码默认 0 折叠；
+ *   · 上新：最近 7 天新增货品（今天 + 往前 6 天）；卡片「货号 · 颜色」+「M月D日 HH:mm 新增 · 供应商」；普通码 / 特殊码默认都 0（需手动选）；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
  *   · 扫一扫：**本轮只占位/禁用**（不扫码、不开会话、不提交）；
  *   · 提交：复用既有采购链路；成功后端返回**统一异步 toast 文案**（`config/submitToast.js` 唯一真源）。
@@ -76,7 +76,7 @@ export const PROCUREMENT_UI = Object.freeze({
       Object.freeze({ kind: 'spot', text: '现货：按需自行选择' }),
     ]),
     newProducts: Object.freeze([
-      Object.freeze({ kind: 'spot', text: '普通码：默认采购 1 双' }),
+      Object.freeze({ kind: 'spot', text: '普通码：默认 0，手动选择' }),
       Object.freeze({ kind: 'prepaid', text: '特殊码：默认 0，自动折叠' }),
     ]),
   }),
@@ -97,7 +97,7 @@ export const PROCUREMENT_UI = Object.freeze({
     pickedBreakdown: '补货 {replenish} · 上新 {newProducts}',
   }),
   a11y: Object.freeze({ qtyLabel: '{size}码采购数量' }),
-  defaults: Object.freeze({ normalQuantity: 1, specialQuantity: 0, maxQuantity: 99 }),
+  defaults: Object.freeze({ normalQuantity: 0, specialQuantity: 0, maxQuantity: 99 }),
   timezoneOffsetMinutes: 480,
   // 草稿：localStorage，key 必须带当前用户 open_id（同一浏览器换账号不串）
   storage: Object.freeze({ prefix: 'procurement:draft:v1', version: 1 }),

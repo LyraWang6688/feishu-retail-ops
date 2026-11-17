@@ -207,7 +207,9 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
   await expect(page.getByText('数据提交成功，后台自动写入')).toBeVisible();
   expect(calls.submit).toHaveLength(1);
   const payload = calls.submit[0];
-  expect(payload.items.map((item) => item.productRecordId).sort()).toEqual(['recNewA', 'recNewB', 'recProdA', 'recProdB']);
+  // 上新默认全部 0：只有手动填了 recNewA 2 双，recNewB 不进 payload；
+  // recProdB 是补货侧的预订默认（与上新无关），仍在 payload 里。
+  expect(payload.items.map((item) => item.productRecordId).sort()).toEqual(['recNewA', 'recProdA', 'recProdB']);
   expect(payload.items.find((item) => item.productRecordId === 'recNewA').entries)
     .toContainEqual({ size: 38, quantity: 2 });
   // 提交成功清空整张草稿（两个来源都清）

@@ -136,8 +136,8 @@ test('AC-P19/P22 草稿纯函数：默认选中 / 合计 / items / submitKey 轮
   // 补货默认选中：预订必补 = 预订数；只有现货 ⇒ 0（默认不选）
   assert.equal(store.defaultReplenishQuantity({ prepaidSold: 2, spotSold: 5 }), 2);
   assert.equal(store.defaultReplenishQuantity({ prepaidSold: 0, spotSold: 5 }), 0);
-  // 上新默认：普通 1 / 特殊 0
-  assert.equal(store.defaultNewQuantity('normal', config.defaults), 1);
+  // 上新默认：普通 / 特殊都是 0（需手动选）
+  assert.equal(store.defaultNewQuantity('normal', config.defaults), 0);
   assert.equal(store.defaultNewQuantity('special', config.defaults), 0);
 
   const memory = new Map();
@@ -166,14 +166,14 @@ test('AC-P19/P22 草稿纯函数：默认选中 / 合计 / items / submitKey 轮
   assert.deepEqual(store.buildItems(draft), [{ productRecordId: 'recA', source: 'replenish', entries: [{ size: 39, quantity: 3 }] }]);
   assert.deepEqual(store.computeTotals(draft), { total: 3, replenish: 3, newProducts: 0 });
 
-  // 上新普通码默认 1 / 特殊码默认 0
+  // 上新普通码 / 特殊码默认都 0，不自动进草稿
   draft = draftStore.seedDefaults(draft, 'new', [{
     productRecordId: 'recB', number: 'LY001', itemNo: 'LY001', color: '米白',
     sizes: { normal: [36, 37], special: [34] },
   }]);
-  assert.equal(draftStore.quantityOf(draft, 'recB', 36), 1);
+  assert.equal(draftStore.quantityOf(draft, 'recB', 36), 0);
   assert.equal(draftStore.quantityOf(draft, 'recB', 34), 0);
-  assert.deepEqual(store.computeTotals(draft), { total: 5, replenish: 3, newProducts: 2 });
+  assert.deepEqual(store.computeTotals(draft), { total: 3, replenish: 3, newProducts: 0 });
 
   // 提交成功才换 submitKey（这里显式调 rotate；清理 = 新草稿 + 新键）
   draftStore.clear();

@@ -236,7 +236,7 @@ test('AC-P7 尺码与默认值：A → 普通 38-44 / 特殊 45-48；B → 普�
   assert.deepEqual(byId.get('recA').sizes.special, [45, 46, 47, 48]);
   assert.deepEqual(byId.get('recB').sizes.normal, [36, 37, 38, 39, 40]);
   assert.deepEqual(byId.get('recB').sizes.special, [34, 35, 41, 42, 43]);
-  assert.deepEqual(byId.get('recA').defaults, { normal: 1, special: 0 });
+  assert.deepEqual(byId.get('recA').defaults, { normal: 0, special: 0 });
 });
 
 test('AC-P7 类别缺失 ⇒ 不猜：categoryMissing=true + 空尺码 + 空 category（不默认 A）', () => {

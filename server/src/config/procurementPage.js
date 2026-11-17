@@ -5,7 +5,7 @@
  *
  * 业务口径（2026-10-28 业务负责人逐条确认，见 `docs/procurement-page-real-2026-10-28.md`）：
  *   · 补货：**只查「销售明细」一张表**（库存数量 = 0，销售日 = 今天 00:00 往前 3 个自然日）；
- *   · 上新：`货品信息` 上架日期 = 最近 7 天（今天 + 往前 6 天）；按记录 ID 分组；普通码默认 1、特殊码默认 0 并折叠；
+ *   · 上新：`货品信息` 上架日期 = 最近 7 天（今天 + 往前 6 天）；按记录 ID 分组；普通码 / 特殊码默认都 0（需手动选）；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
  *   · 扫一扫：**本轮不做**（tab 仅占位/禁用，无接口、无数据表行）；
  *   · 提交：复用既有 `multiItemOrderService` → `purchaseWebhookService.publishPurchaseRequest`，
@@ -66,7 +66,7 @@ const buildProcurementPageConfig = (env = process.env) => {
     }),
     // 默认值（可手改；改这里不用改渲染层）
     defaults: Object.freeze({
-      normalQuantity: readInt(env, 'PROCUREMENT_NORMAL_QTY', 1, { min: 1, max: 99 }),
+      normalQuantity: readInt(env, 'PROCUREMENT_NORMAL_QTY', 0, { min: 0, max: 99 }),
       specialQuantity: readInt(env, 'PROCUREMENT_SPECIAL_QTY', 0, { min: 0, max: 99 }),
       prepaidSelected: readFlag(env, 'PROCUREMENT_PREPAID_SELECTED', true),
       spotSelected: readFlag(env, 'PROCUREMENT_SPOT_SELECTED', false),
