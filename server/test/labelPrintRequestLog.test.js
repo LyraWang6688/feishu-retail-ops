@@ -81,7 +81,7 @@ test('AC-RL1 第一次扫码打印 ⇒ 新建一行：打印货号 + 来源 + �
   assert.equal(result.ok, true);
   assert.equal(result.action, 'created');
   assert.equal(gateway.records.length, 1);
-  assert.deepEqual(gateway.records[0].fields[physical('product')], [{ record_ids: ['rec_product'] }]);
+  assert.deepEqual(gateway.records[0].fields[physical('product')], ['rec_product']);
   assert.equal(gateway.records[0].fields[physical('source')], '扫码打印');
   assert.equal(gateway.records[0].fields[physical('count')], 1);
 });
