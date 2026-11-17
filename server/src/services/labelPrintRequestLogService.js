@@ -24,6 +24,7 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_PRINT_REQUEST_LOG } = require('../config/labelPrintRequestLog');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { textValue } = require('./v1Gateway/cells');
+const { relation } = require('./v1ReferenceResolver');
 const { logInfo, logWarn } = require('../utils/logger');
 
 /**
@@ -184,9 +185,9 @@ const createLabelPrintRequestLogService = ({
 
       try {
         const created = await gateway.create(config.tableKey, {
-          // 飞书「单向关联」type=18 的写入形状：简单数组 ['rec…']（或 { link_record_ids: [...] }）。
-          // ⚠️ [{ id }] 和 [{ record_ids }] 都会 LinkFieldConvFail (1254067)；那是「读取」形状，不是写入形状。
-          [config.fields.product]: [productRecordId],
+          // 关联字段写入形状的**唯一入口** = v1ReferenceResolver.relation（见该文件第 14-22 行）。
+          // ⚠️ 不要在这里手写 [{ id }] / [{ record_ids }]：它们是读取形状，会 LinkFieldConvFail (1254067)。
+          [config.fields.product]: relation(productRecordId),
           // 单选列写字符串，不包数组。
           [config.fields.source]: sourceLabel,
           [config.fields.count]: 1,
