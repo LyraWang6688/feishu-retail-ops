@@ -23,33 +23,9 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_PRINT_REQUEST_LOG } = require('../config/labelPrintRequestLog');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
-const { textValue } = require('./v1Gateway/cells');
+const { textValue, linkedRecordIds } = require('./v1Gateway/cells');
+const { relation } = require('./v1ReferenceResolver');
 const { logInfo, logWarn } = require('../utils/logger');
-
-/**
- * 关联字段 cell → record_id 数组。
- * ⚠️ 这里刻意**不只用** `linkedRecordIds`（它只认 record_ids / link_record_ids）：
- *    本表是单向关联（type 18），读回来可能是 `[{id}]` / `[{record_ids}]` / 字符串，
- *    历史形状见 issue #1074。只为了"找到同一货品那一行"，认得出就够，不做全局兼容承诺。
- */
-const recordIdsOf = (value) => {
-  const ids = [];
-  const push = (id) => {
-    const text = String(id ?? '').trim();
-    if (text) ids.push(text);
-  };
-  const walk = (item) => {
-    if (item === null || item === undefined) return;
-    if (typeof item === 'string') return push(item);
-    if (Array.isArray(item)) return item.forEach(walk);
-    if (Array.isArray(item.record_ids)) return item.record_ids.forEach(walk);
-    if (item.recordId) return push(item.recordId);
-    if (item.id) return push(item.id);
-    return undefined;
-  };
-  walk(value);
-  return [...new Set(ids)];
-};
 
 /**
  * @param {object} deps
@@ -74,7 +50,8 @@ const createLabelPrintRequestLogService = ({
 
   const existingOf = (records, productRecordId, sourceLabel, productField, sourceField) => {
     const hits = (records || []).filter((row) => {
-      const ids = recordIdsOf(row?.fields?.[productField]);
+      // 关联字段读取统一走 v1Gateway/cells.linkedRecordIds（只认 record_ids / link_record_ids）。
+      const ids = linkedRecordIds(row?.fields?.[productField]);
       const source = textValue(row?.fields?.[sourceField]).trim();
       return ids.includes(productRecordId) && source === sourceLabel;
     });
@@ -184,8 +161,9 @@ const createLabelPrintRequestLogService = ({
 
       try {
         const created = await gateway.create(config.tableKey, {
-          // 飞书关联列写入形状（生产实测）：[{ record_ids: ['rec…'] }]；[{ id }] 会 LinkFieldConvFail (1254067)。
-          [config.fields.product]: [{ record_ids: [productRecordId] }],
+          // 关联字段写入形状的**唯一入口** = v1ReferenceResolver.relation（见该文件第 14-22 行）。
+          // ⚠️ 不要在这里手写 [{ id }] / [{ record_ids }]：它们是读取形状，会 LinkFieldConvFail (1254067)。
+          [config.fields.product]: relation(productRecordId),
           // 单选列写字符串，不包数组。
           [config.fields.source]: sourceLabel,
           [config.fields.count]: 1,
