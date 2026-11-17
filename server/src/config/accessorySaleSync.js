@@ -30,6 +30,8 @@ const ACCESSORY_SALE_SYNC = Object.freeze({
     quantity: '数量',
     amount: '金额',
     method: '收款方式',
+    // 收付日优先取它（业务负责人 2026-11-17：源表销售日比处理时刻准确）。
+    saleDate: '销售日',
   }),
   targetTableKey: 'paymentRecord',
   // S交易明细的固定值 / ID 规则
