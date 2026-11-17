@@ -18,9 +18,8 @@ const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMov
 const { createProductEnricher } = require('./procurementProductEnricher');
 const { logInfo, logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
-const {
-  textOf, linkedIdsOf, buildReplenishView,
-} = require('./procurementPageData');
+const { textOf, buildReplenishView } = require('./procurementPageData');
+const { linkedRecordIds } = require('./v1Gateway/cells');
 const { buildNewProductsView } = require('./procurementPageNewProductsData');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 
@@ -72,7 +71,7 @@ const createProcurementPageService = (options = {}) => {
 
   /** 交易类型单元格 → 编码（关联记录优先，回落显示文本；认不出 ⇒ ''，由纯函数丢弃该行）。 */
   const tradeTypeCodeOf = (cell, index) => {
-    for (const id of linkedIdsOf(cell)) {
+    for (const id of linkedRecordIds(cell)) {
       const code = index.get(id);
       if (isSalesTradeType(code)) return code;
     }
@@ -87,7 +86,7 @@ const createProcurementPageService = (options = {}) => {
       stockField: fields.stockQuantity, dateField: fields.soldAt, days: config.window.replenishDays,
     });
     const records = await listByFilterWithRetry('salesDetail', filter);
-    const productIds = (records || []).flatMap((record) => linkedIdsOf(record?.fields?.[fields.product]));
+    const productIds = (records || []).flatMap((record) => linkedRecordIds(record?.fields?.[fields.product]));
     // 补货卡片要用「货号 / 颜色」—— 从「货品信息」按记录 ID 批量反查并**归一化**
     // （getBatch 的形状与列表接口不同：颜色是关联列无显示文本 ⇒ 由 enricher 解析颜色名）
     const products = await enricher.enrich(productIds);

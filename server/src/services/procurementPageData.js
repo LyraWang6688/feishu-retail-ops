@@ -10,6 +10,8 @@
  *   · 颜色只读字段；「品类」不读；「记录 ID」只作内部主键，不出现在展示文案里。
  */
 
+const { linkedRecordIds } = require('./v1Gateway/cells');
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** 上海时区某一天 00:00 的 epoch（毫秒）。offsetMinutes 默认 +480。 */
@@ -68,21 +70,10 @@ const numberOf = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
-/** 关联列 → record_id 列表（GET list 的形状：`[{record_ids:[…], text}]`）。 */
-const linkedIdsOf = (value) => {
-  if (Array.isArray(value)) return value.flatMap(linkedIdsOf);
-  if (typeof value === 'string') return value ? [value] : [];
-  if (!value || typeof value !== 'object') return [];
-  const nested = [value.record_ids, value.link_record_ids].filter(Array.isArray);
-  if (nested.length) return nested.flatMap(linkedIdsOf);
-  const id = value.record_id || value.recordId || value.id;
-  return id ? [String(id)] : [];
-};
-
 /** 一行销售明细 → 规整行；认不出（缺主键 / 尺码 / 编码）⇒ null（不猜）。 */
 const normalizeSalesRow = (record, fields) => {
   const fieldsOf = record?.fields || {};
-  const productIds = linkedIdsOf(fieldsOf[fields.product]);
+  const productIds = linkedRecordIds(fieldsOf[fields.product]);
   const productRecordId = productIds[0] || '';
   const size = numberOf(fieldsOf[fields.size]);
   const soldAt = numberOf(fieldsOf[fields.soldAt]);
@@ -95,7 +86,7 @@ const normalizeSalesRow = (record, fields) => {
     tradeTypeCell: fieldsOf[fields.tradeType],
     // ⭐ 2026-11-08：这条销售明细是否**已经被补货报过**（关联到采购明细记录）。
     //   读侧据此排除（默认），避免 3 天窗口重叠导致重复报货。
-    purchaseDetailIds: linkedIdsOf(fieldsOf[fields.purchaseDetail]),
+    purchaseDetailIds: linkedRecordIds(fieldsOf[fields.purchaseDetail]),
   };
 };
 
@@ -194,7 +185,6 @@ module.exports = {
   replenishWindow,
   textOf,
   numberOf,
-  linkedIdsOf,
   normalizeSalesRow,
   buildReplenishView,
 };

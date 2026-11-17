@@ -11,7 +11,8 @@
  *   · 顶部统计**只有「新增货品」**（业务负责人 2026-10-28 再确认）。
  */
 
-const { DAY_MS, dayStart, dayIso, textOf, numberOf, linkedIdsOf } = require('./procurementPageData');
+const { DAY_MS, dayStart, dayIso, textOf, numberOf } = require('./procurementPageData');
+const { linkedRecordIds } = require('./v1Gateway/cells');
 
 /**
  * 上新窗口：`[今天 00:00 - (days-1) 天, 明天 00:00)`（上海时区）。
@@ -44,7 +45,7 @@ const normalizeProduct = (record, fields, config) => {
     category: sizes ? category : '',
     categoryMissing: !sizes,
     supplierName: textOf(fieldsOf[fields.supplier]),
-    supplierRecordId: linkedIdsOf(fieldsOf[fields.supplier])[0] || '',
+    supplierRecordId: linkedRecordIds(fieldsOf[fields.supplier])[0] || '',
     createdAt: numberOf(fieldsOf[fields.createdAt]),
     sizes: { normal: sizes ? [...sizes.normal] : [], special: sizes ? [...sizes.special] : [] },
     defaults: { normal: config.defaults.normalQuantity, special: config.defaults.specialQuantity },

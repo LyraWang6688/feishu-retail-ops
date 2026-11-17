@@ -24,10 +24,10 @@ const sourceRecord = (overrides = {}) => ({
   record_id: 'rec_src_1',
   created_time: 1794100000000,
   fields: {
-    [F.name]: [{ id: 'rec_accessory_1' }],
+    [F.name]: [{ record_ids: ['rec_accessory_1'] }],
     [F.quantity]: 1,
     [F.amount]: 15,
-    [F.method]: [{ id: 'rec_cash' }],
+    [F.method]: [{ record_ids: ['rec_cash'] }],
     // 销售日比 created_time 早，必须优先用它（2026-11-17 口径）。
     [F.saleDate]: 1794099000000,
     ...overrides,
