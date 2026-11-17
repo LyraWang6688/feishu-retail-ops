@@ -69,6 +69,21 @@ test('卡片回调事件已退场：`card.action.trigger` 不再被注册（塞�
     '表变更事件入口必须在（货品信息 → 标签二维码仍在用）');
 });
 
+test('⭐ 2026-11-17：配品销售表新增事件 ⇒ 分派给 accessorySaleSync（不阻塞事件响应）', async () => {
+  const calls = [];
+  const handlers = createLarkEventHandlers({}, {
+    accessorySaleSync: { handleTableChanges: async (actionList) => { calls.push(actionList); } },
+  });
+  handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: process.env.FEISHU_V1_ACCESSORY_SALE_TABLE_ID,
+    action_list: [{ action: 'record_added', record_id: 'rec_accessory_sale_1' }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], [{ action: 'record_added', record_id: 'rec_accessory_sale_1' }]);
+});
+
 test('① 私聊链路已移除：非文字消息只回那一句「请到群里说」（不建任务、不跑链路）', async () => {
   // 🔴 2026-10-07「私聊链路移除」：这条用例原来钉的是「私聊既有行为逐字不变：
   //    非文字消息仍然回同样那一条私聊文字」。私聊入口已整体删除（业务负责人拍板的 ⓐ：
