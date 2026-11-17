@@ -13,6 +13,51 @@ import { productIssueChipsOf } from '../shared/productIssues.js';
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, k) => (values[k] == null ? '' : String(values[k])));
 const COMPLETE_PAGE_SIZE = 40;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// ⭐ 2026-11-17（业务负责人）：缩略图**严格进入视口才请求**。
+//   初始 `src` 用透明占位（不产生网络请求），URL 只存 `data-pp-thumb`；
+//   IntersectionObserver 看到进入视口再赋给 `src`。
+const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const thumbImgHtml = (url) => `<img class="pp-thumb" data-pp-thumb="${esc(url)}" decoding="async" src="${TRANSPARENT_PIXEL}" alt="样例图">`;
+
+/** host → IntersectionObserver（每个货品资料页实例一个）。 */
+const thumbObservers = new WeakMap();
+const ensureThumbObserver = (host) => {
+  let observer = thumbObservers.get(host);
+  if (observer) return observer;
+  observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) loadThumb(host, entry.target);
+    }
+  }, { rootMargin: '0px', threshold: 0 });
+  thumbObservers.set(host, observer);
+  return observer;
+};
+const loadThumb = (host, img) => {
+  if (!img || img.dataset.ppLoaded === '1') return;
+  img.dataset.ppLoaded = '1';
+  thumbObservers.get(host)?.unobserve(img);
+  const url = img.dataset.ppThumb || '';
+  if (url) img.src = url;
+};
+const observeThumbs = (host, root) => {
+  const imgs = [...root.querySelectorAll('img[data-pp-thumb]')];
+  if (!imgs.length) return;
+  if (!('IntersectionObserver' in window)) {
+    // 老 WebView 没有 IO ⇒ 退回“渲染即加载”（不会白图；新浏览器仍是严格视口加载）。
+    imgs.forEach((img) => loadThumb(host, img));
+    return;
+  }
+  const observer = ensureThumbObserver(host);
+  imgs.forEach((img) => {
+    if (img.dataset.ppLoaded !== '1') observer.observe(img);
+  });
+};
+const resetThumbs = (host) => {
+  const observer = thumbObservers.get(host);
+  if (!observer) return;
+  observer.disconnect();
+  thumbObservers.delete(host);
+};
 
 const cardsHtml = () => `
   <div class="domain-cards">
@@ -49,6 +94,7 @@ export function createProductProfileModule() {
   return {
     mount(host) {
       host.innerHTML = productProfilePageHtml();
+      resetThumbs(host);
       bindDomainAction(host);
       const show = (name) => {
         host.querySelector('[data-pp="cards"]').hidden = name !== 'cards';
@@ -78,6 +124,7 @@ export function createProductProfileModule() {
           img.loading = 'lazy';
           img.decoding = 'async';
           img.dataset.ppThumb = url;
+          img.dataset.ppLoaded = '1';
           img.src = `${url}${url.includes('?') ? '&' : '?'}r=${Date.now()}`;
           retry.replaceWith(img);
           return;
@@ -118,6 +165,7 @@ async function loadSearch(host, q) {
   const empty = host.querySelector('[data-pp-empty]');
   const count = host.querySelector('[data-pp-count]');
   if (!q) {
+    resetThumbs(host);
     results.innerHTML = '';
     empty.textContent = T.searchEmpty;
     empty.hidden = false;
@@ -133,9 +181,11 @@ async function loadSearch(host, q) {
     empty.textContent = T.searchNone;
     results.innerHTML = items.map((item) => `
       <div class="pp-row" data-pp-record-url="${esc(item.recordUrl || '')}">
-        ${item.hasSampleImage && item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" loading="lazy" decoding="async" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
+        ${item.hasSampleImage && item.imageUrl ? thumbImgHtml(item.imageUrl) : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
         <div class="pp-meta"><b>${esc(item.number)}</b>${productIssueChipsOf(item).length ? `<div class="pp-issues">${productIssueChipsOf(item).map((issue) => `<span class="pp-issue">${esc(issue)}</span>`).join('')}</div>` : ''}</div>
       </div>`).join('');
+    resetThumbs(host);
+    observeThumbs(host, results);
     results.querySelectorAll('img[data-pp-thumb]').forEach((img) => {
       img.addEventListener('error', () => {
         img.hidden = true;
@@ -158,6 +208,7 @@ async function loadComplete(host) {
   const list = host.querySelector('[data-pp-complete-list]');
   if (!tabs || !list) return;
   hint.textContent = T.completeLoading;
+  resetThumbs(host);
   tabs.innerHTML = '';
   list.innerHTML = '';
   try {
@@ -181,8 +232,10 @@ async function loadComplete(host) {
         const missing = item.key === 'sample' || dimension.key === 'sample'
           ? T.completeSampleMissing
           : `${T.completeMissingPrefix}${dimension.key === 'product' ? item.missingProduct : item.missingTag}`;
-        return `<div class="pp-row"><span class="pp-thumb-wrap">${item.imageUrl ? `<img class="pp-thumb" data-pp-thumb="${esc(item.imageUrl)}" loading="lazy" decoding="async" src="${esc(item.imageUrl)}" alt="样例图">` : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}</span><div class="pp-meta"><b>${esc(item.number)}</b><span>${esc(missing)}</span></div><a class="pp-small-btn" href="${esc(item.recordUrl)}" target="_blank" rel="noopener">${esc(T.completeGo)}</a></div>`;
+        return `<div class="pp-row"><span class="pp-thumb-wrap">${item.imageUrl ? thumbImgHtml(item.imageUrl) : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}</span><div class="pp-meta"><b>${esc(item.number)}</b><span>${esc(missing)}</span></div><a class="pp-small-btn" href="${esc(item.recordUrl)}" target="_blank" rel="noopener">${esc(T.completeGo)}</a></div>`;
       }).join('') + (more > 0 ? `<div class="pp-more"><button class="btn small" type="button" data-pp-more>${esc(fill(T.more, { count: more }))}</button></div>` : '');
+      resetThumbs(host);
+      observeThumbs(host, list);
     };
     tabs.onclick = (event) => {
       const button = event.target.closest?.('[data-pp-dimension]');

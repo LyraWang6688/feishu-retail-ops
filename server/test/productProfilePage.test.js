@@ -31,10 +31,14 @@ test('AC-PP12 货品完善三维度 tab：样例图 / 商品信息缺失 / 标�
   assert.ok(page.includes('item.recordUrl'), '去完善打开飞书记录');
 });
 
-test('AC-PP13 #1204：缩略图懒加载 / 分页 / 失败可重试', () => {
+test('AC-PP13 #1204：缩略图严格进入视口才请求 / 分页 / 失败可重试', () => {
   const page = read('features/domains/productProfile.js');
   const texts = read('config/productProfile.js');
-  assert.ok((page.match(/loading="lazy"/g) || []).length >= 2, '两处缩略图都要懒加载');
+  assert.ok(page.includes('IntersectionObserver'), '用 IntersectionObserver 严格判断视口');
+  assert.ok(page.includes("rootMargin: '0px'"), '不提前加载（rootMargin 0）');
+  assert.ok(page.includes('thumbImgHtml'), '缩略图统一走 data-pp-thumb + 透明占位');
+  assert.ok(page.includes('TRANSPARENT_PIXEL'), '初始 src 是透明占位，不产生网络请求');
+  assert.equal((page.match(/loading="lazy"/g) || []).length, 0, '初始 markup 不再直接给 src/loading');
   assert.ok(page.includes('COMPLETE_PAGE_SIZE'), '完整度列表分页');
   assert.ok(page.includes('data-pp-more'), '有「加载更多」');
   assert.ok(page.includes('data-pp-retry'), '失败可点重试');
