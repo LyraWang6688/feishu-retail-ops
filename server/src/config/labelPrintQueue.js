@@ -48,12 +48,22 @@ const STATES = Object.freeze({
   failed: Object.freeze({ id: 'failed', label: '失败' }),
 });
 
-/** 一次打印请求的来源（只用于日志与页面提示，不参与任何判断）。 */
+/**
+ * 一次打印请求的来源。
+ *   · 用于日志 / 页面提示，以及「打印请求记录」写入飞书「标签打印」表时选哪个「来源」值；
+ *   · 连点去重窗口按来源分开（同一来源内才复用；跨来源是两次独立意图，见 enqueue）。
+ */
 const SOURCES = Object.freeze({
   scan: 'scan',
   workbench: 'workbench',
   // ⭐ 2026-11-09：飞书表单「批量打印」新增记录自动入队（监听链路）。
   form: 'form',
+  // ⭐ 2026-11-17：库存手工调整成功后由后端补排的打印（与「扫码打印」区分开）。
+  inventory: 'inventory',
+  // ⭐ 2026-11-17：销售资金页提交成功后的「打印最新库存标签」。
+  sale: 'sale',
+  // ⭐ 2026-11-17：验收到货提交后的「打印最新库存标签」。
+  acceptance: 'acceptance',
 });
 
 const LABEL_PRINT_QUEUE = Object.freeze({

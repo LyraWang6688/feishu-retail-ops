@@ -16,6 +16,7 @@ const { resolveLabelPrintQueueConfig, artifactsDirOf } = require('../config/labe
 const { LabelPrintJobStore } = require('../infrastructure/labelPrintJobStore');
 const { createLabelPrintService } = require('./labelPrintService');
 const { createLabelPrintQueueService } = require('./labelPrintQueueService');
+const { createLabelPrintRequestLogService } = require('./labelPrintRequestLogService');
 const { V1BitableGateway } = require('./v1BitableGateway');
 
 let shared = null;
@@ -36,6 +37,8 @@ const getLabelPrintQueue = (options = {}) => {
   shared = createLabelPrintQueueService({
     store,
     labelPrint: options.labelPrint || createLabelPrintService(gateway),
+    // ⭐ 2026-11-17：新建打印任务时，把「打印请求」写进飞书「标签打印」表（best-effort）。
+    requestLog: options.requestLog || createLabelPrintRequestLogService({ gateway }),
     config,
   });
   if (!config.device.token) {

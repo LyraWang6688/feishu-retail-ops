@@ -27,6 +27,8 @@ const paymentStatusOf = (derived = {}) => {
 
 const createSalesAsyncWorker = ({
   gateway, sessions, writeService, jobStore = createSalesJobStore(), asyncJobs = null,
+  // ⭐ 2026-11-17：销售 job 成功后，让打印意图（如果她点过「打印」）自动入队。
+  onSettled = null,
   logger = { logInfo, logWarn, logError },
 } = {}) => {
   if (!gateway || !writeService) throw new Error('SalesAsyncWorker requires gateway + writeService');
@@ -140,6 +142,16 @@ const createSalesAsyncWorker = ({
         line_count: (payload.lines || []).length,
         payment_count: (payload.payments || []).length,
       });
+      // ⭐ 2026-11-17：库存已写完 ⇒ 如果她点过「打印」，把打印意图变成打印任务。
+      if (typeof onSettled === 'function') {
+        try {
+          await onSettled({ jobId, job, outcome });
+        } catch (error) {
+          logger.logWarn('scan.sale.async.print_intent_flush_failed', {
+            job_id: jobId, error: String(error?.message || error),
+          });
+        }
+      }
       return;
     }
     // 关键：submitSale 返回 ok:false（部分失败/失败）时也必须打 error 事件，

@@ -21,6 +21,7 @@
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_FORM_INTAKE } = require('../config/labelPrintForm');
+const { textValue } = require('./v1Gateway/cells');
 const { classifyThrownError, retryDelayMs } = require('../config/asyncJobs');
 const { logError, logInfo, logWarn } = require('../utils/logger');
 // ⭐ 2026-11-11：读表单记录遇到飞书 1254607 等瞬时错误 ⇒ 复用项目已有的小退避重试。
@@ -219,6 +220,19 @@ const createLabelPrintFormIntakeService = (deps = {}) => {
     }
     const table = tableOf();
     const record = await readRecord(recordId);
+    // ⭐⭐ 2026-11-17：这张表现在同时收「服务端写的打印请求记录」（扫码 / 库存调整）。
+    //   监听端只处理「来源为空 / 批量打印」的记录；来源是扫码 / 库存的**一律跳过**，
+    //   否则服务端写一条请求记录就会再触发一次批量打印（重复出纸）。
+    const sourceField = table.fields?.source;
+    const source = sourceField ? textValue(record?.fields?.[sourceField]).trim() : '';
+    if (source && source !== config.formSourceLabel) {
+      log.info('label_print.form.skipped_source', {
+        form_record_id: recordId, source, reason: 'not_a_form_request',
+      });
+      return {
+        recordId, skipped: true, reason: 'not_a_form_request', source, outcomes: [],
+      };
+    }
     const productIds = linkRecordIdsOf(record?.fields?.[table.fields.product]);
     log.info('label_print.form.received', {
       form_record_id: recordId,

@@ -125,10 +125,14 @@ const withServer = async (app, run) => {
   try { return await run(base); } finally { await new Promise((resolve) => server.close(resolve)); }
 };
 
-const appFor = ({ arrival, gateway = {}, purchaseQuery = { listPurchaseRequests: async () => [] } }) => {
+const appFor = ({
+  arrival, gateway = {}, purchaseQuery = { listPurchaseRequests: async () => [] }, printPrompt = false,
+}) => {
   const app = express();
   app.use(express.json());
-  app.use('/api/workbench', createWorkbenchRouter({ gateway, purchaseQuery, arrival }));
+  app.use('/api/workbench', createWorkbenchRouter({
+    gateway, purchaseQuery, arrival, printPrompt,
+  }));
   app.use((error, req, res, next) => res.status(500).json({ success: false, error: error.message }));
   return app;
 };
@@ -187,6 +191,19 @@ const VALID_BODY = {
   batchNo: 'BH-1', actualAmount: '300',
   lines: [{ productRecordId: 'p1', size: 40, quantity: 1 }],
 };
+
+test('AC-AA-PP ⭐ 验收有到货货品 ⇒ 回执先给「是否打印」轻页（点完再回工作台）', async () => {
+  login();
+  const arrival = fakeArrival();
+  await withServer(appFor({ arrival, printPrompt: true }), async (base) => {
+    const res = await postJson(base, arrivalTab.api.accept, VALID_BODY);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.match(res.body.redirect_url, /^\/print-prompt\?token=/, '先回轻页，不是直接回工作台');
+    assert.equal(res.body.print_prompt_url, res.body.redirect_url);
+    await waitForPendingPurchaseBackgrounds();
+  });
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-AA1：先回成功页 ＋ 统一那一句

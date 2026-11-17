@@ -98,12 +98,19 @@ const createLabelPrintQueueRouter = (options = {}) => {
           again,
           rotate,
           canvas,
-          // 从工作台页面扫的 ⇒ 来源如实记 `workbench`（排障时与扫码页那条区分得开）。
-          source: SOURCES.workbench,
+          // 从工作台页面扫的 ⇒ 来源记 `scan`（「打印请求记录」据此写「扫码打印」）。
+          source: SOURCES.scan,
         });
       } else {
         result = await queue.enqueueSingle({
-          number: req.body?.number, actor, submitKey, again, rotate, canvas,
+          number: req.body?.number,
+          actor,
+          submitKey,
+          again,
+          rotate,
+          canvas,
+          // 按编号（旧接口，无页面入口）⇒ 与扫码打印区分开。
+          source: SOURCES.workbench,
         });
       }
       const status = await queue.status();
