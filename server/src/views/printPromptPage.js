@@ -57,20 +57,6 @@ const renderPrintPromptPage = ({ token, products = [], returnUrl = '/workbench/'
   return pageHtml(body, texts);
 };
 
-const renderPrintPromptResult = ({
-  printed = 0, skipped = 0, failed = 0, deferred = false, returnUrl = '/workbench/', texts = PRINT_PROMPT_TEXTS,
-} = {}) => {
-  const lines = deferred
-    ? [texts.deferredPrefix + printed + texts.deferredSuffix]
-    : [texts.resultPrefix + printed + texts.resultUnit];
-  if (skipped) lines.push(texts.skippedPrefix + skipped + texts.skippedSuffix);
-  if (failed) lines.push(texts.failedPrefix + failed + texts.failedSuffix);
-  const body = '<div class="card"><p class="result">' + escapeHtml(lines.join(texts.resultSeparator)) + '</p>'
-    + '<p class="hint">' + escapeHtml(texts.submittedHint) + '</p>'
-    + '<div class="actions"><a class="btn primary" href="' + escapeHtml(returnUrl) + '">' + escapeHtml(texts.back) + '</a></div></div>';
-  return pageHtml(body, texts);
-};
-
 const renderPrintPromptInvalid = ({ texts = PRINT_PROMPT_TEXTS } = {}) => pageHtml(
   '<div class="card"><p class="result">' + escapeHtml(texts.invalidTitle) + '</p>'
   + '<p class="hint">' + escapeHtml(texts.invalidHint) + '</p>'
@@ -80,6 +66,5 @@ const renderPrintPromptInvalid = ({ texts = PRINT_PROMPT_TEXTS } = {}) => pageHt
 
 module.exports = {
   renderPrintPromptPage,
-  renderPrintPromptResult,
   renderPrintPromptInvalid,
 };

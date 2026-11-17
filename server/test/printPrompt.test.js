@@ -17,6 +17,7 @@ const { createPrintPromptService } = require('../src/services/printPromptService
 const { createPrintPromptRouter } = require('../src/routes/printPrompt');
 const { SOURCES } = require('../src/config/labelPrintQueue');
 const { ASYNC_JOB_TYPES } = require('../src/config/asyncJobs');
+const { PRINT_PROMPT_TEXTS } = require('../src/config/printPrompt');
 
 const withServer = async (app, run) => {
   const server = await new Promise((resolve) => { const i = app.listen(0, '127.0.0.1', () => resolve(i)); });
@@ -91,15 +92,35 @@ test('AC-PP4 销售：勾中的每款各记一条打印意图（来源=销售录
     const body = new URLSearchParams();
     body.append('product', 'p1');
     body.append('product', 'p2');
-    const res = await fetch(base + '/print-prompt?token=' + prompt.token, { method: 'POST', body });
-    assert.equal(res.status, 200);
+    const res = await fetch(base + '/print-prompt?token=' + prompt.token, { method: 'POST', body, redirect: 'manual' });
+    assert.equal(res.status, 303, '点打印成功 ⇒ 直接 303 回工作台，不再渲染结果页');
+    assert.equal(res.headers.get('location'), '/workbench/');
     assert.equal(requests.length, 1);
     assert.equal(requests[0].jobId, 'sale_job_1');
     assert.deepEqual(requests[0].productRecordIds, ['p1', 'p2']);
     assert.equal(requests[0].source, SOURCES.sale);
     assert.equal(requests[0].expectedType, ASYNC_JOB_TYPES.SALES);
     assert.equal(requests[0].submitKeyPrefix, 'sale_print');
-    assert.match(await res.text(), /库存写入完成后自动打印/);
+  });
+});
+
+test('AC-PP4b 销售打印意图失败 ⇒ 303 回工作台，toast 改成「重新打印」', async () => {
+  const prompts = createPrintPromptService({ idFactory: () => 'tok_sale_fail' });
+  const prompt = prompts.create({
+    kind: 'sale', source: SOURCES.sale, operationId: 'sale_job_fail', ownerOpenId: 'ou_1',
+    products: [product('p1', 'A', '黑')],
+    returnUrl: '/workbench/?done=XSD-1&toast=' + encodeURIComponent('数据提交成功，后台自动写入'),
+  });
+  const app = appFor({ prompts, intentService: { request: async () => ({ ok: false, reason: 'job_failed' }) } });
+  await withServer(app, async (base) => {
+    const body = new URLSearchParams();
+    body.append('product', 'p1');
+    const res = await fetch(base + '/print-prompt?token=' + prompt.token, { method: 'POST', body, redirect: 'manual' });
+    assert.equal(res.status, 303);
+    const url = new URL(res.headers.get('location'), 'http://x');
+    assert.equal(url.pathname, '/workbench/');
+    assert.equal(url.searchParams.get('done'), 'XSD-1');
+    assert.equal(url.searchParams.get('toast'), PRINT_PROMPT_TEXTS.printFailedRedirect);
   });
 });
 
@@ -117,8 +138,9 @@ test('AC-PP5 验收：只写打印意图（来源=验收录单打印），等库
   await withServer(app, async (base) => {
     const body = new URLSearchParams();
     body.append('product', 'p1');
-    const res = await fetch(base + '/print-prompt?token=' + prompt.token, { method: 'POST', body });
-    assert.equal(res.status, 200);
+    const res = await fetch(base + '/print-prompt?token=' + prompt.token, { method: 'POST', body, redirect: 'manual' });
+    assert.equal(res.status, 303, '验收点打印成功 ⇒ 直接 303 回工作台');
+    assert.equal(res.headers.get('location'), '/workbench/');
     assert.equal(requests.length, 1);
     assert.equal(requests[0].jobId, 'job_accept');
     assert.deepEqual(requests[0].productRecordIds, ['p1']);
