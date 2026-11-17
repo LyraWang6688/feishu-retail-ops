@@ -5,6 +5,11 @@
 
 /** 全仓日志事件名的唯一真源（由 scripts/observability-events.mjs 生成）。 */
 const EVENTS = Object.freeze([
+  'accessory.sale.sync.created',
+  'accessory.sale.sync.dispatch_failed',
+  'accessory.sale.sync.failed',
+  'accessory.sale.sync.not_wired',
+  'accessory.sale.sync.skipped',
   'after_sales.cash.method',
   'after_sales.count.applied',
   'after_sales.executed',
