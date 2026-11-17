@@ -3,7 +3,8 @@
  *
  * 数据来自 `GET /api/workbench/procurement/replenish`（服务端只读，只查销售明细）；
  * 会话草稿在 `store.js`（同一张草稿给补货 + 上新共用）。
- * 默认选中口径：**预订必补、默认已选（数量 = 预订数）**；只有现货的尺码默认不选。
+ * 默认选中口径（2026-11-17 业务负责人）：**补货所有尺码默认 0，不自动填数量**
+ * （预订 / 现货一致，与上新相同）；数量由她手填 / 点 ± 决定。
  */
 import { statsHtml, legendHtml, replenishGroupHtml, emptyHtml, totalTemplateHtml } from './render.js';
 

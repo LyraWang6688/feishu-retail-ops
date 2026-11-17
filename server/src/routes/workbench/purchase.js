@@ -52,10 +52,24 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   //      所以那个按钮点开的是一个小表单，不是一个"点了就入库"的裸按钮。
   //   ⚠️ 依赖**延迟构建**：只想注入一个桩的调用方（测试）不必先配好飞书凭证。
   let purchaseArrival = options.purchaseArrival || null;
+  // ⭐ 2026-11-17：验收单（对方单据）要在**主体写完之后**再写这一批的附件 —— 必须与验收链路
+  //   共用同一个 `PurchaseWebhookService` 实例（同一个 store / gateway）。用例可注入 `options.webhooks`。
+  //   🔴 事故修复：`runRest` 曾直接写 `webhooks.orderBatches...`，而 `webhooks` 只是
+  //   `resolvePurchaseArrival()` 里的**局部变量** ⇒ 带验收单提交时后台抛 `webhooks is not defined`
+  //   （库存/验收主体已写成功，附件永远没写、任务被标失败）。读实例一律走这个入口。
+  let arrivalWebhooks = options.webhooks || null;
+  const resolveArrivalWebhooks = (gateway) => {
+    if (!arrivalWebhooks) {
+      arrivalWebhooks = new PurchaseWebhookService({
+        gateway: gateway || options.gateway || new V1BitableGateway(),
+      });
+    }
+    return arrivalWebhooks;
+  };
   const resolvePurchaseArrival = () => {
     if (!purchaseArrival) {
       const arrivalGateway = options.gateway || new V1BitableGateway();
-      const webhooks = new PurchaseWebhookService({ gateway: arrivalGateway });
+      const webhooks = resolveArrivalWebhooks(arrivalGateway);
       const arrivalConversation = new PurchaseArrivalConversationService({
         gateway: arrivalGateway,
         // ⚠️ 与采购链路**共用同一个任务存储**：`confirmArrival` 要读的草稿就在那里。
@@ -196,7 +210,8 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       });
       // ⭐ 2026-11-12：验收单（对方单据）随验收一起写；失败抛错 ⇒ 统一 job 重试。
       if (result?.ok === true && Array.isArray(restInput.counterpartyDocuments) && restInput.counterpartyDocuments.length) {
-        await webhooks.orderBatches.writeCounterpartyDocument({
+        // ⚠️ 必须走 `resolveArrivalWebhooks()`（不是函数外的局部变量——线上事故根因见上方注释）。
+        await resolveArrivalWebhooks().orderBatches.writeCounterpartyDocument({
           batchNo: restInput.batchNo || '',
           documents: restInput.counterpartyDocuments,
           correlation: { batch_no: restInput.batchNo || '' },
