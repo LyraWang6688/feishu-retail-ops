@@ -6,6 +6,8 @@ const assert = require('node:assert/strict');
 const express = require('express');
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'app_test';
 const { createWorkbenchProductRoutes } = require('../src/routes/workbench/products');
+const { PRODUCT_FEATURE_DIMENSIONS } = require('../src/config/productFeatures');
+const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const listen = (app) => new Promise((resolve) => {
   const server = app.listen(0, '127.0.0.1', () => {
@@ -52,6 +54,15 @@ const gatewayOf = (tables) => ({
       },
     },
   },
+});
+
+test('AC-PF0 三个标签字典表已登记进 schema（预热 / record_changed 失效共用）', () => {
+  for (const dimension of PRODUCT_FEATURE_DIMENSIONS) {
+    const table = V1_BITABLE_SCHEMA.tables[dimension.cacheKey];
+    assert.ok(table, dimension.cacheKey + ' 必须在 v1BitableSchema.tables 里');
+    assert.equal(table.tableId, dimension.tableId, dimension.cacheKey + ' 的 tableId 必须同源');
+    assert.equal(table.fields.tag, '标签');
+  }
 });
 
 test('AC-PF1 三个维度返回已有标签', async () => {
