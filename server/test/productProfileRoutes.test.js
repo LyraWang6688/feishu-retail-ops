@@ -17,7 +17,7 @@ const listen = (app) => new Promise((resolve) => {
   });
 });
 
-const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备') => ({
+const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备', extra = '') => ({
   record_id: id,
   fields: {
     编号: [{ text: number, type: 'text' }],
@@ -26,7 +26,10 @@ const product = (id, number, itemNo, color, category, missing, token = '', tagMi
     类别: [{ text: category, type: 'text' }],
     商品信息缺失: missing,
     标签信息缺失: tagMissing,
-    样例图: token ? [{ file_token: token, type: 'image/jpeg', name: 'x.jpg' }] : [],
+    样例图: token ? [{
+      file_token: token, type: 'image/jpeg', name: 'x.jpg',
+      ...(extra ? { tmp_url: `https://open.feishu.cn/open-apis/drive/v1/medias/batch_get_tmp_download_url?file_tokens=${token}&extra=${encodeURIComponent(extra)}` } : {}),
+    }] : [],
   },
 });
 
@@ -86,6 +89,23 @@ test('AC-PP3 样例图代理：按 record_id 下载附件并返回图片流', as
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'image/jpeg');
     assert.equal(Buffer.from(await res.arrayBuffer()).toString(), 'fake-image');
+  } finally { server.close(); }
+});
+
+test('AC-PP3d 高级权限：附件 tmp_url 的 extra 必须原样传给下载（否则飞书 400）', async () => {
+  const extra = '{"bitablePerm":{"tableId":"tbl_test_product","rev":9}}';
+  let seen = null;
+  const gateway = {
+    get: async () => product('rec1', '906|黑色|男', '906', '黑色', '男', '成本', 'file_1', '齐备', extra),
+    drive: { downloadMedia: async (token, operation, options) => { seen = { token, operation, options }; return Buffer.from('fake-image'); } },
+  };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/products/rec1/sample-image`);
+    assert.equal(res.status, 200);
+    await res.arrayBuffer();
+    assert.equal(seen.token, 'file_1');
+    assert.equal(seen.options.extra, extra, 'extra 必须逐字带下去');
   } finally { server.close(); }
 });
 
