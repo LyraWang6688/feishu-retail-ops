@@ -16,7 +16,8 @@
  * ⚠️ 只读：不写任何表；输入是 record_id 列表，输出是页面/载荷要用的纯字段。
  */
 
-const { textOf, linkedIdsOf } = require('./procurementPageData');
+const { textOf } = require('./procurementPageData');
+const { linkedRecordIds } = require('./v1Gateway/cells');
 const { logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
 
@@ -66,14 +67,14 @@ const createProductEnricher = ({ gateway, schema, logger = { logWarn } } = {}) =
   const normalize = (record, colorNames = new Map()) => {
     const fields = record?.fields || {};
     const mapping = productFields();
-    const colorIds = linkedIdsOf(fields[mapping.color]);
+    const colorIds = linkedRecordIds(fields[mapping.color]);
     return {
       productRecordId: String(record?.record_id || ''),
       number: batchTextOf(fields[mapping.number]).trim(),
       itemNo: batchTextOf(fields[mapping.itemNo]).trim(),
       color: colorNames.get(colorIds[0]) || '',
       colorRecordId: colorIds[0] || '',
-      supplierRecordId: linkedIdsOf(fields[mapping.supplier])[0] || '',
+      supplierRecordId: linkedRecordIds(fields[mapping.supplier])[0] || '',
       category: batchTextOf(fields[mapping.category]).trim().toUpperCase(),
       createdAt: Number(batchTextOf(fields[mapping.createdAt])) || null,
     };
@@ -97,7 +98,7 @@ const createProductEnricher = ({ gateway, schema, logger = { logWarn } } = {}) =
     if (!records.length && typeof gateway.getBatch === 'function') {
       records = await gateway.getBatch('product', ids);
     }
-    const colorIds = (records || []).flatMap((record) => linkedIdsOf(record?.fields?.[productFields().color]));
+    const colorIds = (records || []).flatMap((record) => linkedRecordIds(record?.fields?.[productFields().color]));
     const colorNames = await colorNamesOf(colorIds);
     return new Map((records || []).map((record) => [String(record.record_id), normalize(record, colorNames)]));
   };

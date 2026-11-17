@@ -27,7 +27,8 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { relation } = require('./v1ReferenceResolver');
-const { textOf, numberOf, linkedIdsOf } = require('./procurementPageData');
+const { textOf, numberOf } = require('./procurementPageData');
+const { linkedRecordIds } = require('./v1Gateway/cells');
 const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMovements');
 const { logInfo, logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
@@ -95,7 +96,7 @@ const createProcurementSalesLinkBackfill = ({
         record.record_id, textOf(record.fields?.[schema.tables?.behavior?.fields?.code]),
       ]));
       const tradeCodeOf = (cell) => {
-        for (const id of linkedIdsOf(cell)) {
+        for (const id of linkedRecordIds(cell)) {
           const code = behaviorCodeById.get(id);
           if (isSalesTradeType(code)) return code;
         }
@@ -109,7 +110,7 @@ const createProcurementSalesLinkBackfill = ({
           product: textOf(record.fields?.[salesFields.product]),
           size: String(numberOf(record.fields?.[salesFields.size]) ?? ''),
           soldAt: numberOf(record.fields?.[salesFields.soldAt]) ?? 0,
-          linkedDetailIds: linkedIdsOf(record.fields?.[salesFields.purchaseDetail]),
+          linkedDetailIds: linkedRecordIds(record.fields?.[salesFields.purchaseDetail]),
           tradeCode,
           prepaid: tradeCode === config.behavior?.prepaid,
         };

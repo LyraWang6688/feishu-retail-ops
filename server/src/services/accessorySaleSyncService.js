@@ -22,29 +22,9 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { ACCESSORY_SALE_SYNC } = require('../config/accessorySaleSync');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { equalsFormula } = require('./bitableFilterFormula');
-const { textValue } = require('./v1Gateway/cells');
+const { textValue, linkedRecordIds } = require('./v1Gateway/cells');
 const { relation } = require('./v1ReferenceResolver');
 const { logInfo, logWarn } = require('../utils/logger');
-
-/** 关联 cell → record_id 数组（兼容 [{id}] / [{record_ids}] / 字符串；与 issue #1074 口径一致）。 */
-const recordIdsOf = (value) => {
-  const ids = [];
-  const push = (id) => {
-    const text = String(id ?? '').trim();
-    if (text) ids.push(text);
-  };
-  const walk = (item) => {
-    if (item === null || item === undefined) return;
-    if (typeof item === 'string') return push(item);
-    if (Array.isArray(item)) return item.forEach(walk);
-    if (Array.isArray(item.record_ids)) return item.record_ids.forEach(walk);
-    if (item.recordId) return push(item.recordId);
-    if (item.id) return push(item.id);
-    return undefined;
-  };
-  walk(value);
-  return [...new Set(ids)];
-};
 
 const amountOf = (value) => {
   const n = Number(textValue(value));
@@ -97,7 +77,7 @@ const createAccessorySaleSyncService = ({
 
       const fields = record.fields || {};
       const F = config.sourceFields;
-      const nameIds = recordIdsOf(fields[F.name]);
+      const nameIds = linkedRecordIds(fields[F.name]);
       const quantity = amountOf(fields[F.quantity]);
       const amount = amountOf(fields[F.amount]);
       if (!nameIds.length) {
@@ -145,7 +125,7 @@ const createAccessorySaleSyncService = ({
         return { recordId: sourceRecordId, skipped: true, reason: 'already_synced', receipt_id: receiptId };
       }
 
-      const methodId = recordIdsOf(fields[F.method])[0] || '';
+      const methodId = linkedRecordIds(fields[F.method])[0] || '';
       // 收付日：优先用源表「销售日」（业务负责人 2026-11-17：比处理时刻准确）；
       // 拿不到才退记录创建时间，再拿不到才用处理时刻。
       const saleDate = amountOf(fields[F.saleDate]);

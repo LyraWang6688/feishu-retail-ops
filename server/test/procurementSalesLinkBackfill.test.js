@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const { buildProcurementPageConfig } = require('../src/config/procurementPage');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const { createProcurementSalesLinkBackfill } = require('../src/services/procurementSalesLinkBackfill');
+const { linkedRecordIds } = require('../src/services/v1Gateway/cells');
 
 const config = buildProcurementPageConfig({});
 const S = V1_BITABLE_SCHEMA.tables.salesDetail.fields;
@@ -81,8 +82,14 @@ const makeEnv = ({ sales, requestIds, items, failIds = [], task } = {}) => {
       assert.equal(tableKey, 'salesDetail');
       if (failIds.includes(recordId)) throw new Error('fake update failed');
       const row = salesRows.find((one) => one.record_id === recordId);
-      // 与真网关同形：语义键 → 物理列名（真网关在 `fields()` 里做这层映射）
-      const physical = Object.fromEntries(Object.entries(semanticValues).map(([key, value]) => [S[key], value]));
+      // 与真网关同形：语义键 → 物理列名（真网关在 fields() 里做这层映射）。
+      // 关联列写入是 ['rec…']，但**读回来**是 [{ record_ids: ['rec…'] }]；夹具必须模拟读形状。
+      const physical = {};
+      for (const [key, value] of Object.entries(semanticValues)) {
+        physical[S[key]] = key === 'purchaseDetail' && Array.isArray(value)
+          ? value.map((id) => ({ record_ids: [id] }))
+          : value;
+      }
       row.fields = { ...row.fields, ...physical };
       return { record_id: recordId };
     },
@@ -97,9 +104,7 @@ const makeEnv = ({ sales, requestIds, items, failIds = [], task } = {}) => {
   });
   const linkedIdsOf = (id) => {
     const row = salesRows.find((one) => one.record_id === id);
-    return (row?.fields?.[S.purchaseDetail] || []).flatMap((cell) => (
-      typeof cell === 'string' ? [cell] : (cell?.record_ids || [])
-    ));
+    return linkedRecordIds(row?.fields?.[S.purchaseDetail]);
   };
   return { backfill, linkedIdsOf, logs, salesRows };
 };
