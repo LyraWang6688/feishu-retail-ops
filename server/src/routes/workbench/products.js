@@ -18,6 +18,7 @@ const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
 const { recordUrl } = require('../../utils/feishuLinks');
 const { PRODUCT_PROFILE } = require('../../config/productProfile');
 const { productGapsOf, gapItemsOf } = require('../../services/productGaps');
+const { extraOfAttachment } = require('../../services/driveApi');
 const { containsFormula } = require('../../services/bitableFilterFormula');
 const { getProductSearchSnapshot } = require('../../services/productSearchSnapshot');
 const {
@@ -252,14 +253,21 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
         const attachment = Array.isArray(images) ? images[0] : null;
         const fileToken = String(attachment?.file_token || attachment?.id || '').trim();
         if (!fileToken) return res.status(404).json({ success: false, error: 'sample_image_missing' });
-        entry = { fileToken, type: String(attachment?.type || 'image/jpeg') };
+        entry = {
+          fileToken,
+          type: String(attachment?.type || 'image/jpeg'),
+          // ⭐ 2026-11-17：高级权限 Base 的附件下载必须带 extra（从附件 tmp_url 取）。
+          extra: extraOfAttachment(attachment),
+        };
         imageCache.set(recordId, entry);
       }
       const etag = `W/"${entry.fileToken}"`;
       res.set('ETag', etag);
       res.set('Cache-Control', 'private, max-age=300, must-revalidate');
       if (String(req.headers['if-none-match'] || '') === etag) return res.status(304).end();
-      const buffer = await getGateway().drive.downloadMedia(entry.fileToken, 'download product sample image');
+      const buffer = await getGateway().drive.downloadMedia(
+        entry.fileToken, 'download product sample image', { extra: entry.extra },
+      );
       res.set('Content-Type', entry.type);
       breaker.failures = 0;
       return res.send(buffer);

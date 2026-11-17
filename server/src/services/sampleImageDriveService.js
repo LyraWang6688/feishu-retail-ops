@@ -37,6 +37,8 @@
 const path = require('node:path');
 
 const { logInfo, logWarn, logError } = require('../utils/logger');
+// ⭐ 2026-11-17：高级权限的多维表格下载素材要带 `extra`（附件 tmp_url 里自带）。
+const { extraOfAttachment } = require('./driveApi');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 // ⭐ 2026-11-13：读记录遇飞书 1254607 / 5xx / 限流时**就地短重试**（单条事件链路没人替它重跑）
@@ -269,7 +271,9 @@ const createSampleImageDriveService = ({
           await drive.deleteDriveFile(existing.token, ops.delete);
         }
 
-        const content = await drive.downloadMedia(attachment.file_token, ops.download);
+        const content = await drive.downloadMedia(attachment.file_token, ops.download, {
+          extra: extraOfAttachment(attachment),
+        });
         const fileToken = await drive.uploadDriveFile({ folderToken, fileName, content, operation: ops.upload });
         // ⭐ 2026-11-10（业务负责人）：所有图片的所有者都固定成赵瑞玲 ⇒ 上传后立刻转移
         if (owner.openId || owner.email) {

@@ -56,10 +56,13 @@ const fieldsOf = ({
   [F.sampleImageSynced]: synced,
 });
 
-const imageOf = (token, name = 'x.jpg', type = 'image/jpeg') => ({ file_token: token, name, type });
+const imageOf = (token, name = 'x.jpg', type = 'image/jpeg', extra = '') => ({
+  file_token: token, name, type,
+  ...(extra ? { tmp_url: `https://open.feishu.cn/open-apis/drive/v1/medias/batch_get_tmp_download_url?file_tokens=${token}&extra=${encodeURIComponent(extra)}` } : {}),
+});
 
 const createGateway = ({ fields, folderFiles = [], failUploadAt = 0 } = {}) => {
-  const calls = { get: [], list: [], del: [], download: [], upload: [], update: [], transfer: [] };
+  const calls = { get: [], list: [], del: [], download: [], downloadOptions: [], upload: [], update: [], transfer: [] };
   let uploadCount = 0;
   return {
     calls,
@@ -81,8 +84,9 @@ const createGateway = ({ fields, folderFiles = [], failUploadAt = 0 } = {}) => {
         calls.del.push(token);
         return { token };
       },
-      async downloadMedia(token) {
+      async downloadMedia(token, operation, options) {
         calls.download.push(token);
+        calls.downloadOptions.push(options);
         return Buffer.from(`img:${token}`);
       },
       async uploadDriveFile({ folderToken, fileName, content, operation }) {
@@ -125,6 +129,14 @@ test('AC-SD2 新增有图 ⇒ 下载 + 上传到配置文件夹 + 成功后勾�
     folderToken: FOLDER, fileName: 'A1_黑色_A.jpg', size: Buffer.from('img:ft1').length, operation: configOf().operations.upload,
   });
   assert.deepEqual(gateway.calls.update, [['product', 'r1', { sampleImageSynced: true }]]);
+});
+
+test('AC-SD9 高级权限：附件 tmp_url 的 extra 必须传给下载（否则飞书 400）', async () => {
+  const extra = '{"bitablePerm":{"tableId":"tbl9z4Oi8Vc57Kin","rev":5786}}';
+  const gateway = createGateway({ fields: fieldsOf({ images: [imageOf('ft1', 'x.jpg', 'image/jpeg', extra)] }) });
+  const service = createSampleImageDriveService({ gateway, config: configOf() });
+  await service.handleTableChanges([{ record_id: 'r1', action: 'record_added' }]);
+  assert.equal(gateway.calls.downloadOptions[0].extra, extra);
 });
 
 test('AC-SD3 已勾「已同步云盘」⇒ 幂等跳过，不重复下载/上传', async () => {

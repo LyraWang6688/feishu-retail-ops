@@ -10,10 +10,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createDriveApi } = require('../src/services/driveApi');
+const { createDriveApi, extraOfAttachment } = require('../src/services/driveApi');
 
 const makeClient = () => {
-  const calls = { upload: [], list: [], del: [], transfer: [] };
+  const calls = { upload: [], list: [], del: [], transfer: [], download: [] };
   return {
     calls,
     drive: {
@@ -29,6 +29,12 @@ const makeClient = () => {
         async delete(payload, options) {
           calls.del.push({ payload, options });
           return { code: 0 };
+        },
+      },
+      media: {
+        async download(payload) {
+          calls.download.push(payload);
+          return { getReadableStream: async function* () { yield Buffer.from('img'); } };
         },
       },
       permissionMember: {
@@ -59,6 +65,23 @@ test('AC-OT6 固定所有者：transferOwner 用 openid / email 都支持；缺 
   await assert.rejects(() => api.transferFileOwner('', { owner: { openId: 'ou_x' } }), /缺少 file_token/);
 });
 
+
+test('AC-OT8 高级权限：下载素材带 extra（从附件 tmp_url 取）；不带时请求形状不变', async () => {
+  const extra = '{"bitablePerm":{"tableId":"tbl9z4Oi8Vc57Kin","rev":5786}}';
+  const tmpUrl = `https://open.feishu.cn/open-apis/drive/v1/medias/batch_get_tmp_download_url?file_tokens=ft_1&extra=${encodeURIComponent(extra)}`;
+  assert.equal(extraOfAttachment({ tmp_url: tmpUrl }), extra, 'tmp_url 里的 extra 要能解析出来');
+  assert.equal(extraOfAttachment({}), '');
+
+  const client = makeClient();
+  const api = createDriveApi(client);
+  const buf = await api.downloadMedia('ft_1', 'download', { extra });
+  assert.equal(buf.toString(), 'img');
+  assert.deepEqual(client.calls.download[0].path, { file_token: 'ft_1' });
+  assert.equal(client.calls.download[0].params.extra, extra);
+
+  await api.downloadMedia('ft_2', 'download');
+  assert.equal(client.calls.download[1].params, undefined, '没有 extra 时不许凭空造 params');
+});
 
 test('AC-OT7 ⭐ 列目录必须翻页拉全（单页 200；云盘已 274 个文件，漏页会误判同名不存在）', async () => {
   const calls = [];
