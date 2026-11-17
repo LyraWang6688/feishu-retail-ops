@@ -4,7 +4,9 @@ const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
-const { WORKBENCH_CATEGORY_LIMIT } = require('../config/workbenchQuery');
+const { containsFormula } = require('./bitableFilterFormula');
+const { SCAN_PAGE } = require('../config/scanPage');
+const { WORKBENCH_CATEGORY_LIMIT, WORKBENCH_PRODUCT_INVENTORY_LIMIT } = require('../config/workbenchQuery');
 const { logWarn } = require('../utils/logger');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -166,16 +168,9 @@ const createWorkbenchService = (gateway, options = {}) => {
     return { rows, total: names.size };
   };
 
-  const getLiveInventory = async ({ keyword = '', size = '', requestId } = {}) => {
-    const [inventory, products] = await Promise.all([
-      getConfigRows({ gateway, tableKey: 'liveInventory',
-        loader: () => listAllWithRetry(gateway, 'liveInventory', requestId) }),
-      getConfigRows({ gateway, tableKey: 'product',
-        loader: () => listAllWithRetry(gateway, 'product', requestId) }),
-    ]);
-    const productsById = indexByRecordId(products);
+  const inventoryRowsOf = async (records, productsById, { keyword = '', size = '' } = {}) => {
     const normalizedKeyword = String(keyword).trim().toLowerCase();
-    const rawRows = (await Promise.all(inventory.map(async (record) => {
+    const rawRows = (await Promise.all((Array.isArray(records) ? records : []).map(async (record) => {
       const productIds = asLinks(schema, 'liveInventory', record, 'product');
       const product = buildProductLabel(schema, productsById, productIds);
       return {
@@ -207,7 +202,60 @@ const createWorkbenchService = (gateway, options = {}) => {
         grouped.set(key, { ...row, quantity: 1 });
       }
     });
-    const rows = [...grouped.values()].sort((a, b) => String(a.stock_key).localeCompare(String(b.stock_key), 'zh-CN'));
+    return [...grouped.values()].sort((a, b) => String(a.stock_key).localeCompare(String(b.stock_key), 'zh-CN'));
+  };
+
+  /**
+   * 单双调整：只读这一款。先读 1 条货品拿「编号」，按「库存键」前缀过滤读实时库存；
+   * 过滤读不可用/失败才回退整表读（仍只返回这一款）。
+   */
+  const readInventoryForProduct = async ({ productRecordId, requestId } = {}) => {
+    const id = String(productRecordId || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
+      const error = new Error('货品记录 ID 不合法');
+      error.statusCode = 400;
+      throw error;
+    }
+    const product = typeof gateway.get === 'function' ? await gateway.get('product', id) : null;
+    if (!product) return [];
+    const number = asText(schema, 'product', product, 'number');
+    const stockKeyField = schema.tables.liveInventory?.fields?.stockKey;
+    let records = null;
+    if (number && stockKeyField && typeof gateway.listByFilter === 'function') {
+      try {
+        records = await gateway.listByFilter(
+          'liveInventory',
+          containsFormula(stockKeyField, `${number}${SCAN_PAGE.number.separator}`),
+          { maxRecords: WORKBENCH_PRODUCT_INVENTORY_LIMIT },
+        );
+      } catch (error) {
+        logWarn('workbench.inventory.filtered_read_failed', {
+          request_id: requestId, product_record_id: id, error: String(error?.message || error).slice(0, 200),
+        });
+      }
+    }
+    if (!Array.isArray(records)) {
+      records = await getConfigRows({
+        gateway, tableKey: 'liveInventory',
+        loader: () => listAllWithRetry(gateway, 'liveInventory', requestId),
+      });
+    }
+    const ownRows = records.filter((record) => asLinks(schema, 'liveInventory', record, 'product').includes(id));
+    return inventoryRowsOf(ownRows, new Map([[id, product]]));
+  };
+
+  const getLiveInventory = async ({ keyword = '', size = '', productRecordId = '', requestId } = {}) => {
+    if (String(productRecordId || '').trim()) {
+      const rows = await readInventoryForProduct({ productRecordId, requestId });
+      return { rows, duplicate_stock_keys: [] };
+    }
+    const [inventory, products] = await Promise.all([
+      getConfigRows({ gateway, tableKey: 'liveInventory',
+        loader: () => listAllWithRetry(gateway, 'liveInventory', requestId) }),
+      getConfigRows({ gateway, tableKey: 'product',
+        loader: () => listAllWithRetry(gateway, 'product', requestId) }),
+    ]);
+    const rows = await inventoryRowsOf(inventory, indexByRecordId(products), { keyword, size });
     return { rows, duplicate_stock_keys: [] };
   };
 

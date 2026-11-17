@@ -12,12 +12,14 @@ const json = (body, status = 200) => ({
 });
 
 test('深链：module=inventory&page=inventory-adjust&product=… 直接展开这一款', async ({ page }) => {
+  let inventoryQuery = '';
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/api/auth/feishu/me') {
       return route.fulfill(json({ enabled: true, authenticated: true, user: { name: 'E2E' } }));
     }
     if (url.pathname === '/api/workbench/inventory') {
+      inventoryQuery = url.searchParams.get('productRecordId') || '';
       return route.fulfill(json({
         success: true,
         rows: [{
@@ -40,4 +42,5 @@ test('深链：module=inventory&page=inventory-adjust&product=… 直接展开�
   await expect(page.locator('[data-view="single-label"]')).toContainText('HL55173-1');
   await expect(page.locator('[data-view="single-rows"] .edit-row')).toHaveCount(1);
   await expect(page.locator('[data-manual="cards"]')).toBeHidden();
+  expect(inventoryQuery).toBe('p1');
 });

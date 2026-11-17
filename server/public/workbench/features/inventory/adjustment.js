@@ -33,13 +33,21 @@ const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-c
 }).join('')}</div>`;
 
 export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) {
-  const state = { host: null, rows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false };
+  // `rows` = 全量库存（批量调整用）；`singleRows` = 当前这一款（单双调整用，按产品过滤读）。
+  const state = { host: null, rows: [], singleRows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false };
 
   async function loadRows(force = false) {
     if (state.rows.length && !force) return state.rows;
     const data = await api.get('/api/workbench/inventory');
     state.rows = Array.isArray(data.rows) ? data.rows : [];
     return state.rows;
+  }
+
+  // 单双调整只读这一款：服务端先过滤，再返回（不再整表拉回前端过滤）。
+  async function loadSingleRows(productId) {
+    const data = await api.get(`/api/workbench/inventory?productRecordId=${encodeURIComponent(productId)}`);
+    state.singleRows = Array.isArray(data.rows) ? data.rows : [];
+    return state.singleRows;
   }
 
   function show(view) {
@@ -62,7 +70,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
   }
 
   function productRows(productId) {
-    return state.rows.filter((row) => row.product_record_id === productId);
+    return state.singleRows.filter((row) => row.product_record_id === productId);
   }
 
   function renderEditor() {
@@ -157,7 +165,9 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
   async function selectProduct(productId) {
     if (!productId) return;
     showPageError('');
-    await loadRows(true);
+    state.productInfo = null;
+    state.singleRows = [];
+    await loadSingleRows(productId);
     if (!productRows(productId).length) await loadProductInfo(productId);
     fitRowsForProduct(productId);
   }
@@ -169,10 +179,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       const target = scanTargetUrl(scanned, 'inventory');
       const match = String(target || '').match(/\/r\/([^/?#]+)/);
       if (!match) return showPageError(INVENTORY_MANUAL_TEXTS.scanNoProduct);
-      await loadRows();
-      const productId = decodeURIComponent(match[1]);
-      if (!productRows(productId).length) await loadProductInfo(productId);
-      fitRowsForProduct(productId);
+      await selectProduct(decodeURIComponent(match[1]));
     } catch (error) {
       const message = String(error?.message || '');
       if (/cancel/i.test(message)) return;
@@ -233,7 +240,9 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       }).join('');
       return `<section class="violation-group" data-issue="${escapeHtml(group.key)}"><h4 class="violation-group-title">${escapeHtml(title)} <span>${escapeHtml(fill(INVENTORY_MANUAL_TEXTS.statusGroupCount, { count: group.items.length }))}</span></h4><div class="violation-list">${cards}</div></section>`;
     }).join('');
-    box.querySelectorAll('[data-fix]').forEach((btn) => btn.addEventListener('click', () => fitRowsForProduct(btn.dataset.fix)));
+    box.querySelectorAll('[data-fix]').forEach((btn) => btn.addEventListener('click', () => {
+      void selectProduct(btn.dataset.fix).catch((error) => showPageError(describeError(error)));
+    }));
   }
 
   async function enterBatch() {
@@ -299,8 +308,9 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       state.pendingRequest = null;
       const jobId = String(result?.job_id || '').trim();
       if (jobId) await waitForAsyncJob(jobId, 300000);
+      // 只刷新这一款；全量 rows 标记失效，下次进批量调整再整表读。
       state.rows = [];
-      await loadRows(true);
+      await loadSingleRows(state.productId);
       renderSingle(state.productId);
       showToast(INVENTORY_MANUAL_TEXTS.clearedToast);
     } catch (error) {
@@ -431,7 +441,10 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
           return;
         }
         const pick = event.target.closest?.('[data-pick-product]');
-        if (pick) { void selectProduct(pick.dataset.pickProduct); return; }
+        if (pick) {
+          void selectProduct(pick.dataset.pickProduct).catch((error) => showPageError(describeError(error)));
+          return;
+        }
         if (event.target.closest?.('[data-clear-stock]')) { openClearConfirm(); return; }
         if (event.target.closest?.('[data-clear-cancel]')) { $(state.host, '[data-view="clear-modal"]').hidden = true; return; }
         if (event.target.closest?.('[data-clear-confirm]')) { void clearAll(); return; }
