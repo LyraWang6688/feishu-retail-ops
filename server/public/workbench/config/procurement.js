@@ -1,8 +1,9 @@
 /**
  * 采购页（供应 → 录单 → 采购）的前端配置 —— 文案 / 端点 / 默认值 / 尺码规则 / 刷新参数**只在这里**。
  *
- * 业务口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`）：
- *   · 补货：近 3 天销售（销售明细，库存数量=0）；现货/预订；预订默认选中；
+ * 业务口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`；
+ *   2026-11-17 更新：**预订不再自动填数量**，与现货 / 上新一致，默认全 0）：
+ *   · 补货：近 3 天销售（销售明细，库存数量=0）；现货/预订都默认 0，按需手选；
  *   · 上新：最近 7 天新增货品（今天 + 往前 6 天）；卡片「货号 · 颜色」+「M月D日 HH:mm 新增 · 供应商」；普通码 / 特殊码默认都 0（需手动选）；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
  *   · 扫一扫：**本轮只占位/禁用**（不扫码、不开会话、不提交）；
@@ -72,7 +73,8 @@ export const PROCUREMENT_UI = Object.freeze({
   }),
   legends: Object.freeze({
     replenish: Object.freeze([
-      Object.freeze({ kind: 'prepaid', text: '预订：必补，默认已选' }),
+      // 2026-11-17（业务负责人）：「预定不用自动加数量了，和现货还有上新当前的逻辑一样」
+      Object.freeze({ kind: 'prepaid', text: '预订：按需自行选择' }),
       Object.freeze({ kind: 'spot', text: '现货：按需自行选择' }),
     ]),
     newProducts: Object.freeze([
@@ -102,7 +104,9 @@ export const PROCUREMENT_UI = Object.freeze({
   // 草稿：localStorage，key 必须带当前用户 open_id（同一浏览器换账号不串）
   // ⭐ 2026-11-17：上新默认从 1 改 0 ⇒ 旧草稿里全是自动填的 1，升 version 让旧草稿作废，
   // 刷新后按新默认 0 重新种子（不覆盖用户新选择的语义仍保留）。
-  storage: Object.freeze({ prefix: 'procurement:draft:v1', version: 2 }),
+  // ⭐ 2026-11-17 晚：预订也不自动填数量（全 0）⇒ 再升 version：v2 草稿里可能还带着
+  // 自动填的预订数，作废后按新口径（全 0）重新种子。
+  storage: Object.freeze({ prefix: 'procurement:draft:v1', version: 3 }),
   submitKey: Object.freeze({ prefix: 'procurement' }),
   panels: Object.freeze({ replenish: 'replenish', new: 'new' }),
 });

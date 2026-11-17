@@ -50,15 +50,20 @@ test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切�
   expect(calls.writes).toHaveLength(0);
 });
 
-test('AC-P18/P22 默认选中：预订默认已选且数量=预订数（不显示勾选框）；只有现货默认 0 且可勾选', async ({ page }) => {
+test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾选框）；手填/点 + 才选中', async ({ page }) => {
   await mockApi(page);
   await page.reload();
   await openPage(page);
-  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1', { timeout: 5000 });
+  // 2026-11-17 业务负责人：预订不再自动加数量，与现货 / 上新一致，全部默认 0
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('0', { timeout: 5000 });
+  await expect(qtyOf(page, 'recProdA', 41)).toHaveValue('0');
   // 2026-10-29 业务负责人两次批注：**所有尺码行都不要勾选框**（预订/现货都不要方框）；
   // 是否选中由数量框决定（0 = 不选），现货行第一次点「+」按「现货已售数」选中。
   await expect(page.locator('[data-pr-check]')).toHaveCount(0, { timeout: 5000 });
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('0');
+  // 预订行手点「+」⇒ 从 0 开始加 1（不再按预订数起步）
+  await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="41"]').click();
+  await expect(qtyOf(page, 'recProdA', 41)).toHaveValue('1');
   // 顶部统计（补货 3 项）+ 统计范围
   await expect(page.getByText('预订待补')).toBeVisible();
   await expect(page.getByText('涉及货品')).toBeVisible();
@@ -78,7 +83,7 @@ test('AC-P19b 手动「刷新」= 实时重新拉一次；已选数量保留；�
   const calls = await mockApi(page);
   await page.reload();
   await openPage(page);
-  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('0');
   await qtyOf(page, 'recProdA', 39).fill('4');
   await page.waitForTimeout(100);
   expect(calls.replenish).toBe(1);
@@ -110,8 +115,13 @@ test('AC-P22 提交前 0 写请求；点提交只 1 次 POST 且 payload 正确�
   const calls = await mockApi(page);
   await page.reload();
   await openPage(page);
-  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('0');
   expect(calls.writes).toHaveLength(0);
+  // 默认全 0 ⇒ 要手动选：A 两个码 + B 一个码（与下面 payload 断言对应）
+  await qtyOf(page, 'recProdA', 39).fill('1');
+  await qtyOf(page, 'recProdA', 41).fill('2');
+  await qtyOf(page, 'recProdB', 43).fill('2');
+  await page.waitForTimeout(100);
   const draftBefore = await draftInStorage(page);
   expect(draftBefore.submitKey).toBeTruthy();
 
@@ -139,7 +149,9 @@ test('AC-P22 提交失败：给人话 + 草稿保留（刷新还在）', async (
   await mockApi(page, { submitFails: true });
   await page.reload();
   await openPage(page);
-  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('0');
+  await qtyOf(page, 'recProdA', 39).fill('1');
+  await page.waitForTimeout(100);
   await page.getByRole('button', { name: '提交' }).click();
   await expect(page.getByText('提交没成功，请稍后重试。')).toBeVisible();
   await page.reload();
@@ -189,8 +201,9 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
   await page.reload();
   await openPage(page);
 
-  // 补货选一个码
+  // 补货选一个码（另一个货品也手选一个码，补货默认已全 0）
   await qtyOf(page, 'recProdA', 39).fill('2');
+  await qtyOf(page, 'recProdB', 43).fill('2');
   await page.waitForTimeout(100);
 
   // 切到上新，选一个普通码
@@ -207,8 +220,7 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
   await expect(page.getByText('数据提交成功，后台自动写入')).toBeVisible();
   expect(calls.submit).toHaveLength(1);
   const payload = calls.submit[0];
-  // 上新默认全部 0：只有手动填了 recNewA 2 双，recNewB 不进 payload；
-  // recProdB 是补货侧的预订默认（与上新无关），仍在 payload 里。
+  // 上新 / 补货默认全部 0：只有手动填过的行进 payload（recNewB 不选 ⇒ 不进 payload）。
   expect(payload.items.map((item) => item.productRecordId).sort()).toEqual(['recNewA', 'recProdA', 'recProdB']);
   expect(payload.items.find((item) => item.productRecordId === 'recNewA').entries)
     .toContainEqual({ size: 38, quantity: 2 });

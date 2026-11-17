@@ -5,6 +5,7 @@
  *
  * 业务口径（2026-10-28 业务负责人逐条确认，见 `docs/procurement-page-real-2026-10-28.md`）：
  *   · 补货：**只查「销售明细」一张表**（库存数量 = 0，销售日 = 今天 00:00 往前 3 个自然日）；
+ *     ⭐ 2026-11-17（业务负责人）：**预订不再自动填数量**，与现货 / 上新一致，默认全 0（需手动选）；
  *   · 上新：`货品信息` 上架日期 = 最近 7 天（今天 + 往前 6 天）；按记录 ID 分组；普通码 / 特殊码默认都 0（需手动选）；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
  *   · 扫一扫：**本轮不做**（tab 仅占位/禁用，无接口、无数据表行）；
@@ -65,12 +66,11 @@ const buildProcurementPageConfig = (env = process.env) => {
       offsetMinutes: readInt(env, 'PROCUREMENT_TZ_OFFSET_MINUTES', SHANGHAI_OFFSET_MINUTES, { min: -720, max: 840 }),
     }),
     // 默认值（可手改；改这里不用改渲染层）
+    // ⚠️ 2026-11-17：删掉 3 个**从未被读取**的开关（prepaidSelected / spotSelected / quantityFromSales）——
+    //   前端默认数量在 `public/workbench/config/procurement.js`，这里只保留服务端真的会用的两个上新默认。
     defaults: Object.freeze({
       normalQuantity: readInt(env, 'PROCUREMENT_NORMAL_QTY', 0, { min: 0, max: 99 }),
       specialQuantity: readInt(env, 'PROCUREMENT_SPECIAL_QTY', 0, { min: 0, max: 99 }),
-      prepaidSelected: readFlag(env, 'PROCUREMENT_PREPAID_SELECTED', true),
-      spotSelected: readFlag(env, 'PROCUREMENT_SPOT_SELECTED', false),
-      quantityFromSales: readFlag(env, 'PROCUREMENT_QTY_FROM_SALES', true),
     }),
     // 上限：前两项复用 multiItemOrder（唯一真源）；其余是本页自己的输入护栏
     limits: Object.freeze({

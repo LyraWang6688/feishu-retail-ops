@@ -17,13 +17,6 @@ export const newSubmitKey = (prefix, now = () => Date.now(), random = () => Math
   return `${prefix}_${timestamp}_${noise}`;
 };
 
-/** 补货某个尺码的默认数量：预订必补（= 预订数）；只有现货 ⇒ 默认不选（0）。 */
-export const defaultReplenishQuantity = (sizeRow) => {
-  const prepaid = Number(sizeRow?.prepaidSold) || 0;
-  if (prepaid > 0) return prepaid;
-  return 0;
-};
-
 /** 上新某个尺码的默认数量：普通码 / 特殊码都默认 0（需手动选；normalQuantity/specialQuantity 可配）。 */
 export const defaultNewQuantity = (kind, defaults) => (
   kind === 'special' ? Number(defaults.specialQuantity) || 0 : Number(defaults.normalQuantity) || 0
@@ -136,14 +129,11 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
         number: group.number || '', itemNo: group.itemNo || '', color: group.color || '',
         supplierRecordId: group.supplierRecordId || '',
       };
-      if (source === 'replenish') {
-        for (const row of group.sizes || []) {
-          const size = Number(row.size);
-          if (!Number.isInteger(size) || size in entries) continue;
-          const quantity = defaultReplenishQuantity(row);
-          if (quantity > 0) entries[size] = clampQuantity(quantity, config.defaults.maxQuantity);
-        }
-      } else {
+      // ⭐ 2026-11-17（业务负责人）：「预定不用自动加数量了，和现货还有上新当前的逻辑一样」
+      //   ⇒ 补货所有尺码默认 0，不自动进草稿；数量由她手填 / 点 ± 决定。
+      //   已有 entries 原样保留（只补不覆盖）——现在没有"自动填回"的来源，
+      //   她改成 0 之后刷新/重开也不会再弹回预订数。
+      if (source !== 'replenish') {
         const all = [
           ...(group.sizes?.normal || []).map((size) => ({ size, kind: 'normal' })),
           ...(group.sizes?.special || []).map((size) => ({ size, kind: 'special' })),

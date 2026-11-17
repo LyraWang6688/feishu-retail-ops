@@ -110,7 +110,10 @@ test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉
     { productRecordId: 'recKeep', itemNo: 'A1', color: '黑', sizes: [{ size: 39, prepaidSold: 1, spotSold: 0 }] },
     { productRecordId: 'recGone', itemNo: 'A2', color: '黑', sizes: [{ size: 40, prepaidSold: 2, spotSold: 0 }] },
   ]);
-  assert.equal(draftStore.quantityOf(draft, 'recGone', 40), 2);
+  // 2026-11-17：预订也不再自动填数量（默认 0）⇒ 她手填的行才进草稿
+  assert.equal(draftStore.quantityOf(draft, 'recGone', 40), 0, '预订行默认 0');
+  draft = draftStore.setQuantity(draft, { productRecordId: 'recKeep', source: 'replenish' }, 39, 1);
+  draft = draftStore.setQuantity(draft, { productRecordId: 'recGone', source: 'replenish' }, 40, 2);
   const pruned = draftStore.pruneSource(draft, 'replenish', ['recKeep']);
   assert.equal(draftStore.quantityOf(pruned, 'recKeep', 39), 1, '还在数据里的已选行保留');
   assert.equal(pruned.products.recGone, undefined, '刷新后已消失的货品要从草稿剔除（防提交看不见的行）');
@@ -129,7 +132,7 @@ test('底部提交条 + 空/错态 + 统计范围都在渲染层（与视觉稿�
   assert.equal(rangeText('new', { days: 3 }, config), '近 3 天（含今天）');
 });
 
-test('AC-P23 旧版草稿（version 1）在默认 0 上线后作废，不把旧自动 1 带回来', async () => {
+test('AC-P23 旧版草稿（version 1/2）在默认 0 上线后作废，不把旧自动数量带回来', async () => {
   const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
   const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
   const memory = new Map();
@@ -138,25 +141,26 @@ test('AC-P23 旧版草稿（version 1）在默认 0 上线后作废，不把旧�
     setItem: (key, value) => memory.set(key, value),
     removeItem: (key) => memory.delete(key),
   };
-  memory.set(config.storage.prefix + ':ou_old', JSON.stringify({
-    version: 1,
-    submitKey: 'old-key',
-    products: { recOld: { productRecordId: 'recOld', source: 'new', entries: { 36: 1, 37: 1 } } },
-  }));
-  const draftStore = store.createDraftStore({ openId: 'ou_old', config, storage, now: () => 1761600000000 });
-  const draft = draftStore.ensure();
-  assert.equal(draft.version, 2);
-  assert.deepEqual(draft.products, {});
-  assert.notEqual(draft.submitKey, 'old-key');
+  // v1：上新自动 1 那一版；v2：预订仍自动填预订数那一版 —— 两版都要作废。
+  for (const version of [1, 2]) {
+    memory.clear();
+    memory.set(config.storage.prefix + ':ou_old', JSON.stringify({
+      version,
+      submitKey: 'old-key',
+      products: { recOld: { productRecordId: 'recOld', source: 'new', entries: { 36: 1, 37: 1 } } },
+    }));
+    const draftStore = store.createDraftStore({ openId: 'ou_old', config, storage, now: () => 1761600000000 });
+    const draft = draftStore.ensure();
+    assert.equal(draft.version, 3);
+    assert.deepEqual(draft.products, {}, '旧草稿的产品/数量全部作废');
+    assert.notEqual(draft.submitKey, 'old-key');
+  }
 });
 
 test('AC-P19/P22 草稿纯函数：默认选中 / 合计 / items / submitKey 轮换', async () => {
   const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
   const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
 
-  // 补货默认选中：预订必补 = 预订数；只有现货 ⇒ 0（默认不选）
-  assert.equal(store.defaultReplenishQuantity({ prepaidSold: 2, spotSold: 5 }), 2);
-  assert.equal(store.defaultReplenishQuantity({ prepaidSold: 0, spotSold: 5 }), 0);
   // 上新默认：普通 / 特殊都是 0（需手动选）
   assert.equal(store.defaultNewQuantity('normal', config.defaults), 0);
   assert.equal(store.defaultNewQuantity('special', config.defaults), 0);
@@ -173,16 +177,20 @@ test('AC-P19/P22 草稿纯函数：默认选中 / 合计 / items / submitKey 轮
   const firstKey = draft.submitKey;
   assert.match(firstKey, /^procurement_/);
 
-  draft = draftStore.seedDefaults(draft, 'replenish', [
-    { productRecordId: 'recA', number: '86822', itemNo: '86822', color: '黑色', sizes: [{ size: 39, prepaidSold: 1, spotSold: 0 }] },
-  ]);
-  assert.equal(draftStore.quantityOf(draft, 'recA', 39), 1, '预订默认选中且数量 = 预订数');
+  const replenishGroups = [
+    { productRecordId: 'recA', number: '86822', itemNo: '86822', color: '黑色', sizes: [{ size: 39, prepaidSold: 1, spotSold: 5 }] },
+  ];
+  draft = draftStore.seedDefaults(draft, 'replenish', replenishGroups);
+  assert.equal(draftStore.quantityOf(draft, 'recA', 39), 0, '预订也不再自动填数量（默认 0）');
   // 用户手改之后 seed 不许覆盖
   draft = draftStore.setQuantity(draft, { productRecordId: 'recA', source: 'replenish' }, 39, 3);
-  draft = draftStore.seedDefaults(draft, 'replenish', [
-    { productRecordId: 'recA', number: '86822', itemNo: '86822', color: '黑色', sizes: [{ size: 39, prepaidSold: 1, spotSold: 0 }] },
-  ]);
+  draft = draftStore.seedDefaults(draft, 'replenish', replenishGroups);
   assert.equal(draftStore.quantityOf(draft, 'recA', 39), 3, '只补不覆盖');
+  // 改成 0 之后再刷新也不会弹回（以前会自动填回预订数）
+  draft = draftStore.setQuantity(draft, { productRecordId: 'recA', source: 'replenish' }, 39, 0);
+  draft = draftStore.seedDefaults(draft, 'replenish', replenishGroups);
+  assert.equal(draftStore.quantityOf(draft, 'recA', 39), 0, '改成 0 后刷新保持 0');
+  draft = draftStore.setQuantity(draft, { productRecordId: 'recA', source: 'replenish' }, 39, 3);
   // 同一 product + 尺码只有一行
   assert.deepEqual(store.buildItems(draft), [{ productRecordId: 'recA', source: 'replenish', entries: [{ size: 39, quantity: 3 }] }]);
   assert.deepEqual(store.computeTotals(draft), { total: 3, replenish: 3, newProducts: 0 });

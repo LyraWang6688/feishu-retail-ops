@@ -120,9 +120,10 @@ const createProcurementSalesLinkBackfill = ({
       for (const row of rows) {
         for (const detailId of row.linkedDetailIds) linkedByDetail.set(detailId, (linkedByDetail.get(detailId) || 0) + 1);
       }
-      // 关联顺序：**预订优先**（预订必补／默认已选），同类型内按销售日旧→新。
-      //   理由：补货数量默认 = 预订数；先链预订，剩下的才是"没报的现货"（下次页面显示现货，默认 0），
-      //   不会出现"明明报了预订却还剩预订待补"的错觉。
+      // 关联顺序：**预订优先**，同类型内按销售日旧→新。
+      //   理由：预订是"人来订的、要留货"的那类，先链预订，剩下的才是"没报的现货"
+      //   （下次页面显示现货，默认 0），不会出现"明明报了预订却还剩预订待补"的错觉。
+      //   ⚠️ 2026-11-17 起补货数量**不再默认等于预订数**（所有尺码默认 0），但回填顺序不变。
       const pool = rows.filter((row) => row.linkedDetailIds.length === 0).sort((a, b) => {
         if (a.prepaid !== b.prepaid) return a.prepaid ? -1 : 1;
         return a.soldAt - b.soldAt;
