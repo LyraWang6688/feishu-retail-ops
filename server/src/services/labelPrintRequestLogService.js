@@ -184,8 +184,9 @@ const createLabelPrintRequestLogService = ({
 
       try {
         const created = await gateway.create(config.tableKey, {
-          // 飞书关联列写入形状（生产实测）：[{ record_ids: ['rec…'] }]；[{ id }] 会 LinkFieldConvFail (1254067)。
-          [config.fields.product]: [{ record_ids: [productRecordId] }],
+          // 飞书「单向关联」type=18 的写入形状：简单数组 ['rec…']（或 { link_record_ids: [...] }）。
+          // ⚠️ [{ id }] 和 [{ record_ids }] 都会 LinkFieldConvFail (1254067)；那是「读取」形状，不是写入形状。
+          [config.fields.product]: [productRecordId],
           // 单选列写字符串，不包数组。
           [config.fields.source]: sourceLabel,
           [config.fields.count]: 1,
