@@ -4,8 +4,8 @@
  * 采购页「上新」读模型的纯函数（无 I/O）—— 从 `procurementPageData.js` 按职责拆出
  * （新文件 ≤200 行的硬约束；口径一字未改）。
  *
- * 口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`）：
- *   · 上新 = `货品信息.上架日期` 今天（上海时区）；按记录 ID 分组；
+ * 口径（2026-10-28 业务负责人确认；2026-11-17 改为最近 7 天）：
+ *   · 上新 = `货品信息.上架日期` 最近 7 天（今天 + 往前 6 天，上海时区）；按记录 ID 分组；
  *   · 类别 男/女 + `SCAN_PAGE.SIZE_SEGMENTS` 的 normal / special（normal 是闭区间 ⇒ 展开成逐码）；
  *   · 类别缺失 ⇒ **不猜**（categoryMissing + 空尺码）；
  *   · 顶部统计**只有「新增货品」**（业务负责人 2026-10-28 再确认）。
@@ -13,12 +13,21 @@
 
 const { DAY_MS, dayStart, dayIso, textOf, numberOf, linkedIdsOf } = require('./procurementPageData');
 
-/** 上新窗口：`[今天 00:00, 明天 00:00)`（上海时区）。 */
-const todayWindow = (now, config) => {
+/**
+ * 上新窗口：`[今天 00:00 - (days-1) 天, 明天 00:00)`（上海时区）。
+ * days=7 ⇒ 今天 + 往前 6 天，共 7 个自然日。
+ */
+const newProductsWindow = (now, config) => {
   const offset = config.window.offsetMinutes;
-  const start = dayStart(now, offset);
+  const days = Math.max(1, Number(config.window.newProductsDays) || 7);
+  const today = dayStart(now, offset);
+  const start = today - (days - 1) * DAY_MS;
   return {
-    start, end: start + DAY_MS, from: dayIso(start, offset), to: dayIso(start, offset),
+    start,
+    end: start + days * DAY_MS,
+    from: dayIso(start, offset),
+    to: dayIso(today, offset),
+    days,
   };
 };
 
@@ -42,9 +51,9 @@ const normalizeProduct = (record, fields, config) => {
   };
 };
 
-/** 上新视图：今天新增的货品（按记录 ID 分组 = 一条记录一张卡；统计只有「新增货品」）。 */
+/** 上新视图：最近 N 天新增的货品（按记录 ID 分组 = 一条记录一张卡；统计只有「新增货品」）。 */
 const buildNewProductsView = ({ records, fields, config, now }) => {
-  const range = todayWindow(now, config);
+  const range = newProductsWindow(now, config);
   const groups = [];
   let skippedRows = 0;
   for (const record of records || []) {
@@ -66,4 +75,4 @@ const buildNewProductsView = ({ records, fields, config, now }) => {
 };
 
 
-module.exports = { todayWindow, normalizeProduct, buildNewProductsView };
+module.exports = { newProductsWindow, normalizeProduct, buildNewProductsView };

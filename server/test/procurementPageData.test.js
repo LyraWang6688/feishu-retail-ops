@@ -4,7 +4,7 @@
  * 钉住的口径（2026-10-28 业务负责人确认）：
  *   · 补货只查「销售明细」；库存数量 = 0；销售日 = 今天 00:00 往前 3 个自然日（上海时区，不含今天）；
  *   · 交易类型判据复用 salesMovements（现货 SALE_CASH / 预订 SALE_PREPAID），认不出 ⇒ 不计入、不猜；
- *   · 上新 = 上架日期今天；按记录 ID 分组；类别缺失**不猜**；顶部统计**只有「新增货品」**。
+ *   · 上新 = 上架日期最近 7 天（今天 + 往前 6 天）；按记录 ID 分组；类别缺失**不猜**；顶部统计**只有「新增货品」**。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -13,7 +13,7 @@ const { buildProcurementPageConfig } = require('../src/config/procurementPage');
 const {
   buildReplenishView, replenishWindow, dayIso, dayStart,
 } = require('../src/services/procurementPageData');
-const { buildNewProductsView, todayWindow } = require('../src/services/procurementPageNewProductsData');
+const { buildNewProductsView, newProductsWindow } = require('../src/services/procurementPageNewProductsData');
 
 const config = buildProcurementPageConfig({});
 const SH = (iso) => Date.parse(`${iso}+08:00`);
@@ -205,17 +205,27 @@ test('AC-P5 按货品记录ID分组；组排序 = 预订降序 → 现货降序 
 });
 
 // ── AC-P6/P7/P8 上新 ─────────────────────────────────────────────────────
-test('AC-P6 上新窗口 = [今天 00:00, 明天 00:00)；昨天 23:59:59 不计入', () => {
-  const range = todayWindow(NOW, config);
-  assert.equal(range.start, SH('2026-10-28T00:00:00'));
+test('AC-P6 上新窗口 = 最近 7 天 [10-22 00:00, 10-29 00:00)；10-21 23:59:59 不计入', () => {
+  const range = newProductsWindow(NOW, config);
+  assert.equal(range.start, SH('2026-10-22T00:00:00'));
   assert.equal(range.end, SH('2026-10-29T00:00:00'));
+  assert.equal(range.days, 7);
   const records = [
     product({ id: 'recToday', createdAt: SH('2026-10-28T00:00:00') }),
     product({ id: 'recYesterday', createdAt: SH('2026-10-27T23:59:59') }),
+    product({ id: 'recTooOld', createdAt: SH('2026-10-21T23:59:59') }),
   ];
   const result = buildNewProductsView({ records, fields: F, config, now: NOW });
-  assert.equal(result.stats.productCount, 1);
-  assert.equal(result.groups[0].productRecordId, 'recToday');
+  assert.equal(result.stats.productCount, 2);
+  assert.deepEqual(result.groups.map((group) => group.productRecordId), ['recYesterday', 'recToday']);
+});
+
+test('AC-P6b 配置可注入：days=1 ⇒ 回到今天窗口（配置先行）', () => {
+  const custom = buildProcurementPageConfig({ PROCUREMENT_NEW_PRODUCTS_DAYS: '1' });
+  const range = newProductsWindow(NOW, custom);
+  assert.equal(range.start, SH('2026-10-28T00:00:00'));
+  assert.equal(range.end, SH('2026-10-29T00:00:00'));
+  assert.equal(range.days, 1);
 });
 
 test('AC-P7 尺码与默认值：A → 普通 38-44 / 特殊 45-48；B → 普通 36-40 / 特殊 34/35/41/42/43', () => {

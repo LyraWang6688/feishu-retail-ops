@@ -84,7 +84,7 @@ test('AC-P9/P21 扫一扫本轮占位：tab 视觉保留但禁用；页面不 im
 
 test('AC-P18f 上新副标题：供应商为空时不出现孤立的「·」', () => {
   const configSource = read(`${PUBLIC}/config/procurement.js`);
-  assert.match(configSource, /newSubtitleNoSupplier: '今日 \{time\} 新增'/);
+  assert.match(configSource, /newSubtitleNoSupplier: '\{date\} \{time\} 新增'/);
   assert.match(read(`${PUBLIC}/features/procurement/render.js`), /supplier \? config\.card\.newSubtitle : config\.card\.newSubtitleNoSupplier/);
 });
 
@@ -121,7 +121,7 @@ test('底部提交条 + 空/错态 + 统计范围都在渲染层（与视觉稿�
   for (const marker of ['data-pr-total', 'data-pr-breakdown', 'data-pr-submit', 'data-pr-toast', 'pr-summary-grid', 'pr-group', 'pr-stepper', 'data-pr-retry']) {
     assert.ok(render.includes(marker), `渲染层缺 ${marker}`);
   }
-  assert.match(render, /todayWindow|newProducts/);
+  assert.match(render, /newProductsWindow|newProducts/);
 });
 
 test('AC-P19/P22 草稿纯函数：默认选中 / 合计 / items / submitKey 轮换', async () => {

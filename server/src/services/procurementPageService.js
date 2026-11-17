@@ -123,7 +123,11 @@ const createProcurementPageService = (options = {}) => {
   const loadNewProducts = async ({ requestId = '' } = {}) => {
     const startedAt = Date.now();
     const fields = productFields();
-    const filter = fill(config.filters.newProducts, { dateField: fields.createdAt });
+    const filter = fill(config.filters.newProducts, {
+      dateField: fields.createdAt,
+      // 7 个自然日（含今天）= 往前 6 天。
+      days: Math.max(0, Number(config.window.newProductsDays || 1) - 1),
+    });
     const records = await listByFilterWithRetry('product', filter);
     const view = buildNewProductsView({ records, fields, config, now: now() });
     info(config.events.newProductsLoaded, {

@@ -29,6 +29,13 @@ export const formatClock = (epoch, offsetMinutes) => {
   return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
 };
 
+/** epoch → 「M月D日」（上海时区）；上新窗口跨多天后卡片小字要带日期，不能都写「今日」。 */
+export const formatDayOfEpoch = (epoch, config) => {
+  if (!Number.isFinite(Number(epoch))) return '';
+  const date = new Date(Number(epoch) + Number(config.timezoneOffsetMinutes) * 60 * 1000);
+  return formatDay(date.toISOString().slice(0, 10), config);
+};
+
 export const titleOf = (product, config) => {
   const primary = product?.itemNo || product?.number;
   return primary ? fill(config.card.titleTemplate, { itemNo: primary, color: product?.color || '' })
@@ -123,6 +130,7 @@ export const newGroupHtml = (group, draft, store, config) => {
   const supplier = String(group.supplierName || '').trim();
   // 供应商为空 ⇒ 用无「·」的模板（否则卡片小字会多一个孤零零的「·」）
   const subtitle = fill(supplier ? config.card.newSubtitle : config.card.newSubtitleNoSupplier, {
+    date: formatDayOfEpoch(group.createdAt, config),
     time: formatClock(group.createdAt, config.timezoneOffsetMinutes),
     supplier,
   });
