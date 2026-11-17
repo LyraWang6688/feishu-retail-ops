@@ -129,6 +129,27 @@ test('底部提交条 + 空/错态 + 统计范围都在渲染层（与视觉稿�
   assert.equal(rangeText('new', { days: 3 }, config), '近 3 天（含今天）');
 });
 
+test('AC-P23 旧版草稿（version 1）在默认 0 上线后作废，不把旧自动 1 带回来', async () => {
+  const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
+  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
+  const memory = new Map();
+  const storage = {
+    getItem: (key) => (memory.has(key) ? memory.get(key) : null),
+    setItem: (key, value) => memory.set(key, value),
+    removeItem: (key) => memory.delete(key),
+  };
+  memory.set(config.storage.prefix + ':ou_old', JSON.stringify({
+    version: 1,
+    submitKey: 'old-key',
+    products: { recOld: { productRecordId: 'recOld', source: 'new', entries: { 36: 1, 37: 1 } } },
+  }));
+  const draftStore = store.createDraftStore({ openId: 'ou_old', config, storage, now: () => 1761600000000 });
+  const draft = draftStore.ensure();
+  assert.equal(draft.version, 2);
+  assert.deepEqual(draft.products, {});
+  assert.notEqual(draft.submitKey, 'old-key');
+});
+
 test('AC-P19/P22 草稿纯函数：默认选中 / 合计 / items / submitKey 轮换', async () => {
   const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
   const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
