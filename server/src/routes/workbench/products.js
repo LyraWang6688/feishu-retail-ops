@@ -20,7 +20,7 @@ const { PRODUCT_PROFILE } = require('../../config/productProfile');
 const { productGapsOf, gapItemsOf } = require('../../services/productGaps');
 const { extraOfAttachment } = require('../../services/driveApi');
 const { containsFormula } = require('../../services/bitableFilterFormula');
-const { getProductSearchSnapshot } = require('../../services/productSearchSnapshot');
+const { getProductSearchSnapshot, invalidateProductSearchSnapshot } = require('../../services/productSearchSnapshot');
 const {
   listProductFeatures, addProductFeatureTag, updateProductFeatureTag, deleteProductFeatureTag,
 } = require('../../services/productFeatureTagService');
@@ -92,10 +92,26 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       // 快照优先：只读内存，不被 record_changed / 样例图同步打穿；过期时后台刷新。
       // 只模糊匹配「货号」，不匹配「编号」。
       const rows = await getProductSearchSnapshot({ gateway: getGateway() });
-      const items = rows
+      let items = rows
         .map(itemOf)
         .filter((item) => item.itemNo.toLowerCase().includes(needle))
         .slice(0, PRODUCT_PROFILE.searchLimit);
+      // ⭐ 2026-11-17：刚新增的货品可能还没进快照 ⇒ 快照 0 命中时按货号直接 filter 兜底一次，
+      //   查到就返回，并让下一次快照刷新（新增后立刻可搜，不用等 5 分钟 TTL）。
+      if (!items.length) {
+        try {
+          const formula = containsFormula(field('itemNo'), q);
+          if (formula) {
+            const freshRows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
+            items = freshRows.map(itemOf);
+            if (items.length) invalidateProductSearchSnapshot();
+          }
+        } catch (filterError) {
+          logError('workbench.product_profile.search_filter_failed', {
+            request_id: req.requestId, error: filterError.message,
+          });
+        }
+      }
       return res.json({ success: true, query: q, items });
     } catch (snapshotError) {
       logError('workbench.product_profile.search_snapshot_failed', {

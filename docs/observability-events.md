@@ -615,7 +615,7 @@
 | `workbench.product_profile.incomplete_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.product_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.sample_image_failed` | 1 | src/routes/workbench/products.js |
-| `workbench.product_profile.search_filter_failed` | 1 | src/routes/workbench/products.js |
+| `workbench.product_profile.search_filter_failed` | 2 | src/routes/workbench/products.js |
 | `workbench.product_profile.search_snapshot_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.purchase.acceptance_doc.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.purchase.arrival_accept.failed` | 1 | src/routes/workbench/purchase.js |

@@ -11,6 +11,7 @@ const { larkLogger } = require('../utils/larkLogger');
 const { LarkEventHeartbeat } = require('../infrastructure/larkEventHeartbeat');
 const { evaluateLarkEventHeartbeat, resolveStaleMinutes } = require('../config/larkEventHeartbeat');
 const { createLabelPrintFormIntakeService } = require('../services/labelPrintFormIntakeService');
+const { invalidateProductSearchSnapshot } = require('../services/productSearchSnapshot');
 
 // 事件入口的「最后一次收到事件」心跳（记录器见 infrastructure/larkEventHeartbeat）：
 // · 最外层 `recordEvent()`            —— 任何到达的请求（含飞书 URL 验证 challenge）；
@@ -159,6 +160,11 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
     //    · 写库是**异步**的（`setImmediate`，沿用本文件既有形状），不阻塞事件响应。
     const productTableId = V1_BITABLE_SCHEMA.tables.product.tableId;
     if (productTableId && tableId === productTableId) {
+      // ⭐ 2026-11-17：新增货品 ⇒ 让货品搜索快照失效（下一次搜索等一次刷新）。
+      //   只认 record_added：样例图同步等 record_edited 不能把快照打穿。
+      if (actionList.some((item) => item?.action === 'record_added')) {
+        invalidateProductSearchSnapshot();
+      }
       const tagQrCodes = service?.tagQrCodes;
       if (tagQrCodes && typeof tagQrCodes.handleTableChanges === 'function') {
         setImmediate(() => {
