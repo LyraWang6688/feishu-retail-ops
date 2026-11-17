@@ -18,14 +18,26 @@ const { SOURCES } = require('../config/labelPrintQueue');
 const { ASYNC_JOB_TYPES } = require('../config/asyncJobs');
 const { getPrintPromptService } = require('../services/printPromptRuntime');
 const { getInventoryPrintIntentService } = require('../services/inventoryPrintIntentRuntime');
+const { PRINT_PROMPT_TEXTS } = require('../config/printPrompt');
 const { logError } = require('../utils/logger');
 const {
-  renderPrintPromptPage, renderPrintPromptResult, renderPrintPromptInvalid,
+  renderPrintPromptPage, renderPrintPromptInvalid,
 } = require('../views/printPromptPage');
 
 const selectedIdsOf = (value) => {
   const list = Array.isArray(value) ? value : (value === undefined || value === null ? [] : [value]);
   return [...new Set(list.map((item) => String(item || '').trim()).filter(Boolean))];
+};
+
+/**
+ * 点完「打印选中」直接回工作台（不再渲染结果页）。
+ * 只有打印意图提交失败时，才把成功 toast 换成失败文案，让用户知道要重打。
+ */
+const redirectAfterPrint = (res, returnUrl, { failed = false } = {}) => {
+  if (!failed) return res.redirect(303, returnUrl || '/workbench/');
+  const url = new URL(returnUrl || '/workbench/', 'http://local');
+  url.searchParams.set('toast', PRINT_PROMPT_TEXTS.printFailedRedirect);
+  return res.redirect(303, url.pathname + url.search + url.hash);
 };
 
 const createPrintPromptRouter = (options = {}) => {
@@ -75,25 +87,14 @@ const createPrintPromptRouter = (options = {}) => {
           logError('print_prompt.sale.intent_failed', {
             token: prompt.token, operation_id: prompt.operationId, reason: outcome?.reason || '',
           });
-          return res.status(409).type('html').send(renderPrintPromptResult({
-            printed: 0, skipped: 0, failed: selected.length, returnUrl: prompt.returnUrl,
-          }));
+          return redirectAfterPrint(res, prompt.returnUrl, { failed: true });
         }
-        const failed = Number(outcome.failed || 0);
-        return res.type('html').send(renderPrintPromptResult({
-          printed: Math.max(0, selected.length - failed),
-          skipped: 0,
-          failed,
-          deferred: outcome.deferred === true,
-          returnUrl: prompt.returnUrl,
-        }));
+        return redirectAfterPrint(res, prompt.returnUrl);
       } catch (error) {
         logError('print_prompt.sale.intent_error', {
           token: prompt.token, operation_id: prompt.operationId, error: error.message,
         });
-        return res.status(502).type('html').send(renderPrintPromptResult({
-          printed: 0, skipped: 0, failed: selected.length, returnUrl: prompt.returnUrl,
-        }));
+        return redirectAfterPrint(res, prompt.returnUrl, { failed: true });
       }
     }
 
@@ -121,25 +122,14 @@ const createPrintPromptRouter = (options = {}) => {
           logError('print_prompt.acceptance.request_failed', {
             token: prompt.token, operation_id: prompt.operationId, reason: outcome?.reason || '',
           });
-          return res.status(409).type('html').send(renderPrintPromptResult({
-            printed: 0, skipped: 0, failed: selected.length, returnUrl: prompt.returnUrl,
-          }));
+          return redirectAfterPrint(res, prompt.returnUrl, { failed: true });
         }
-        const failed = Number(outcome.failed || 0);
-        return res.type('html').send(renderPrintPromptResult({
-          printed: Math.max(0, selected.length - failed),
-          skipped: 0,
-          failed,
-          deferred: outcome.deferred === true,
-          returnUrl: prompt.returnUrl,
-        }));
+        return redirectAfterPrint(res, prompt.returnUrl);
       } catch (error) {
         logError('print_prompt.acceptance.failed', {
           token: prompt.token, operation_id: prompt.operationId, error: error.message,
         });
-        return res.status(502).type('html').send(renderPrintPromptResult({
-          printed: 0, skipped: 0, failed: selected.length, returnUrl: prompt.returnUrl,
-        }));
+        return redirectAfterPrint(res, prompt.returnUrl, { failed: true });
       }
     }
 
