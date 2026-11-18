@@ -83,7 +83,10 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
     body.innerHTML = state.editorRows.length ? state.editorRows.map((row, index) => `
       <div class="edit-row">
         <input data-row="${index}" data-k="size" value="${escapeHtml(row.size ?? '')}" inputmode="numeric" aria-label="尺码">
-        <select data-row="${index}" data-k="state" aria-label="所属状态">${STATES.map((s) => `<option ${row.state === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
+        <select data-row="${index}" data-k="state" aria-label="所属状态">
+          <option value="" ${STATES.includes(String(row.state || '')) ? '' : 'selected'} disabled>${escapeHtml(INVENTORY_MANUAL_TEXTS.statePlaceholder)}</option>
+          ${STATES.map((s) => `<option value="${s}" ${row.state === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
         <input data-row="${index}" data-k="quantity" value="${escapeHtml(row.quantity ?? 1)}" type="number" min="0" inputmode="numeric" aria-label="数量">
         <button class="del" type="button" data-remove="${index}">删</button>
       </div>`).join('') : '<p class="empty compact">这个编号暂时没有实时库存。</p>';
@@ -268,10 +271,19 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
 
 
   async function savePairs() {
-    const rows = state.editorRows
-      .filter((row) => Number(row.quantity) > 0)
-      .map((row) => ({ size: Number(row.size), state: String(row.state || ''), quantity: Number(row.quantity) }));
-    if (!rows.length) return showPageError(INVENTORY_MANUAL_TEXTS.rowsRequired);
+    const filled = state.editorRows.filter((row) => Number(row.quantity) > 0);
+    if (!filled.length) return showPageError(INVENTORY_MANUAL_TEXTS.rowsRequired);
+    // ⭐ 2026-11-18：空状态**不再冒充门盒**——下拉显示「请选择状态」，保存前必须显式选一个。
+    //   以前空状态行的下拉视觉上是门盒、内部值却是空，点保存才被后端拒绝，用户不知道哪里错了。
+    const missing = filled.find((row) => !STATES.includes(String(row.state || '')));
+    if (missing) {
+      const index = state.editorRows.indexOf(missing);
+      state.host.querySelector(`select[data-row="${index}"][data-k="state"]`)?.focus();
+      return showPageError(INVENTORY_MANUAL_TEXTS.stateRequired);
+    }
+    const rows = filled.map((row) => ({
+      size: Number(row.size), state: String(row.state || ''), quantity: Number(row.quantity),
+    }));
     state.pendingRequest = state.pendingRequest || crypto.randomUUID();
     try {
       const result = await api.post('/api/workbench/inventory/adjustments/pairs', {

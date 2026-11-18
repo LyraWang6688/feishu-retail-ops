@@ -24,6 +24,9 @@ export const INVENTORY_MANUAL_TEXTS = Object.freeze({
   submittedToast: '数据提交成功，后台自动写入',
   // 单双调整 / 批量当季调整的页内文案（2026-11-14 #1206：页面里不再写中文字面量）
   rowsRequired: '请至少保留一行数量大于 0 的库存',
+  // ⭐ 2026-11-18：空状态不冒充「门盒」——下拉显示「请选择状态」，保存前必须显式选一个。
+  statePlaceholder: '请选择状态',
+  stateRequired: '请先为每一行选择「所属状态」（门盒 / 样品）再保存',
   clearStock: '清零库存',
   clearConfirmTitle: '确认清零？',
   clearConfirmBody: '这个货品共 {count} 条库存，清零后全部删除，确定吗？',
