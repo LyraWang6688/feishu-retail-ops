@@ -24,6 +24,7 @@ const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 const { ASYNC_JOBS, ASYNC_JOB_TYPES } = require('../../config/asyncJobs');
 const { logError, logWarn } = require('../../utils/logger');
 const { createSupplyDocumentSyncService } = require('../../services/supplyDocumentSyncService');
+const { createPurchasePaymentDetailService } = require('../../services/purchasePaymentDetailService');
 // ⭐ 2026-10-28（采购页进入生产）：采购页的**只读读模型 + 提交**端点。
 //   🔴 挂在本文件（= 既有 workbench 父 router 已挂载的子路由）⇒ **不改共享文件 `routes/workbench.js`**，
 //     也自动带上父 router 的准入闸门 / no-store / ui-tap 结果事件（不新开鉴权）。
@@ -72,13 +73,27 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     if (!purchaseArrival) {
       const arrivalGateway = options.gateway || new V1BitableGateway();
       const webhooks = resolveArrivalWebhooks(arrivalGateway);
+      const paymentDetails = createPurchasePaymentDetailService({ gateway: arrivalGateway });
       const arrivalConversation = new PurchaseArrivalConversationService({
         gateway: arrivalGateway,
         // ⚠️ 与采购链路**共用同一个任务存储**：`confirmArrival` 要读的草稿就在那里。
         store: webhooks.store,
         sizeReferences: webhooks.getSizeReferences,
-        confirmArrival: (taskId, task, operatorOpenId) =>
-          webhooks.confirmArrival(taskId, task, operatorOpenId),
+        // 验收成功（库存 + 批次落表）后，再按供应商写 P发生明细；写失败让任务停在 posting，job 可重试。
+        confirmArrival: async (taskId, task, operatorOpenId) => {
+          const result = await webhooks.confirmArrival(taskId, task, operatorOpenId);
+          const supplierRecordId = String(task?.supplier_record_id || '').trim();
+          if (supplierRecordId) {
+            await paymentDetails.writeForSupplier({
+              batchNo: task?.batch_no || '',
+              batchRecordId: task?.batch_record_id || '',
+              supplierRecordId,
+              amount: task?.actual_amount,
+              correlation: { task_id: taskId, batch_no: task?.batch_no || '' },
+            });
+          }
+          return result;
+        },
         // 入库之后把批次行的「到货状态」改成已到货 —— 仍是**既有** `PurchaseOrderBatchService`。
         markBatchArrived: (batchNo, arriveOptions) =>
           webhooks.orderBatches.markArrived(batchNo, arriveOptions),
@@ -89,6 +104,8 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         // ⭐ 2026-11-10（业务负责人方案）：验收完一家 → 追加「已到货供应商」→ 与「供应商」Lookup 比较
         markSupplierArrived: ({ batchNo, batchRecordId, supplierRecordId, correlation }) =>
           webhooks.orderBatches.addArrivedSupplier({ batchNo, batchRecordId, supplierRecordId, correlation }),
+        // 2026-11-19：每验收完一家供应商，把本次货款金额写一条 P发生明细。
+        writePaymentDetail: (input) => paymentDetails.writeForSupplier(input),
       });
       purchaseArrival = new WorkbenchPurchaseArrivalService({
         purchaseQuery: createPurchaseQueryService(arrivalGateway),
