@@ -53,6 +53,17 @@
 - **没有** 15 元/现金/空交易明细ID 的那条 ⇒ 这个工作流第一次实际记录没有落出对应明细。
   先看飞书工作流「运行日志」确认是没触发还是动作失败。
 
+## 五之二、2026-11-18 线上现场（记录 reczz28ayBd8rl53）
+
+- 02:07:10 事件到达：`tblkT1QTUsESnl5b`，`record_added` + `record_edited`；
+- 02:07:22 / 02:07:34 读源两次均失败：飞书 `1254607 Data not ready, please try again later`；
+- 网关默认只重试 1 次（共 2 次）⇒ 服务把 `read_source` 当失败收口，没有写 S交易明细；
+- 02:11 只读复核：同一条记录已能正常读到；`PX-reczz28ayBd8rl53` 在 S交易明细仍为 0 条。
+
+**修法**：配品销售读源单独放宽重试（`readRetry.maxRetries=6`，约 45s 等待），并把飞书 code/msg/log_id 打进 `accessory.sale.sync.failed`。
+
+> 这不是配置/订阅问题：事件已到达；问题是**新记录刚创建时的读一致性**。
+
 ## 六、验收
 
 server/test/accessorySaleSync.test.js：

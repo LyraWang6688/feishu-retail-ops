@@ -40,6 +40,14 @@ const ACCESSORY_SALE_SYNC = Object.freeze({
   receiptPrefix: 'PX',
   // 只认新增（与飞书工作流一致；编辑/删除不补记）。
   triggerActions: Object.freeze(['record_added']),
+  // ⭐ 2026-11-18：新记录刚创建时读源可能拿到 1254607「Data not ready」——
+  //   网关默认只重试 1 次，实测不够（事件到达后 24s 仍 400）⇒ 这里放宽到 7 次、最多约 45s 等待。
+  readRetry: Object.freeze({
+    maxRetries: 6,
+    baseDelayMs: 1000,
+    factor: 2,
+    maxDelayMs: 15000,
+  }),
   // 财务记录不写 0 元：金额缺失/<=0 跳过并告警。
   requirePositiveAmount: true,
   minQuantity: 1,

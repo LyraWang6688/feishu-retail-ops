@@ -63,10 +63,14 @@ const createAccessorySaleSyncService = ({
           tableId: config.sourceTableId,
           recordId: sourceRecordId,
           reason: 'accessory_sale_sync',
+          // 新记录可能还没准备好（1254607）⇒ 读源重试要足够长（见 config.readRetry）。
+          retry: config.readRetry,
         });
       } catch (error) {
+        const detail = error?.response?.data || {};
         log.warn('accessory.sale.sync.failed', {
           record_id: sourceRecordId, step: 'read_source', error: error.message,
+          code: error?.code || detail.code, msg: detail.msg, log_id: detail.log_id,
         });
         return { recordId: sourceRecordId, ok: false, reason: 'read_source_failed', error: error.message };
       }

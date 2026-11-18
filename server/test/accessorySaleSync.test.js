@@ -63,6 +63,8 @@ test('AC-AS1 新增配品销售 ⇒ 新增 S交易明细：支付方式/收入/�
   assert.equal(out.receipt_id, 'PX-rec_src_1');
   assert.equal(gateway.calls[0].tableId, 'tbl_test_accessory_sale');
   assert.equal(gateway.calls[0].recordId, 'rec_src_1');
+  assert.deepEqual(gateway.calls[0].retry, config().readRetry,
+    '读源必须带放宽后的瞬时重试（1254607 Data not ready）');
   assert.equal(gateway.calls[1].op, 'listByFilter');
   assert.equal(gateway.calls[1].tableKey, 'paymentRecord');
   assert.match(gateway.calls[1].formula, /PX-rec_src_1/);
