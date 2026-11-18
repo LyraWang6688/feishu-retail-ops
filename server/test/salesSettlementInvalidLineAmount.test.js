@@ -143,3 +143,37 @@ test('AC-SS-AMOUNT3 付款状态非法时给人话，不抛 current is not defin
   assert.equal(result.code, 'payment_status_invalid');
   assert.equal(result.message, '付款情况不对');
 });
+test('AC-SS-AMOUNT4 部分付使用 toCents 比较实付与收款合计（回归：toCents is not defined）', async () => {
+  const helpers = makeHelpers();
+  const result = await resolveSaleSettlement({
+    lines: [{ amount: 213.4 }],
+    lineAmounts: ['213.4'],
+    paymentRows: [
+      { method: '微信扫码', amount: 118 },
+      { method: '抖音代金券', amount: 85.4 },
+    ],
+    paymentStatus: '部分付',
+    paidAmount: '203.4',
+    openId: 'ou_test',
+    sessionId: 'session_test',
+    key: 'submit_key',
+    requestId: 'req_test',
+    config: settlementConfig(),
+    texts: {},
+    sessions: { saveSaleProgress: async () => undefined },
+    fundsDeferred: false,
+    goodsOnly: false,
+    fail: helpers.fail,
+    userMessageFor: helpers.userMessageFor,
+    positiveAmount: helpers.positiveAmount,
+    toCents: helpers.toCents,
+    moneyText: helpers.moneyText,
+    amountMismatchMessage: helpers.amountMismatchMessage,
+    amountList: helpers.amountList,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.effectiveMode, '部分付');
+  assert.equal(result.payments.length, 2);
+  assert.equal(result.owedCents, 1000, '213.4 − 203.4 = 10 元欠款');
+});

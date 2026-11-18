@@ -11,7 +11,7 @@ const { sumCents } = require('../../utils/money');
 const resolveSaleSettlement = async ({
   lines, lineAmounts, paymentRows, paymentStatus, paidAmount, openId,
   sessionId, key, requestId, config, texts, sessions, fundsDeferred, goodsOnly,
-  fail, userMessageFor, positiveAmount, moneyText, amountMismatchMessage, amountList,
+  fail, userMessageFor, positiveAmount, toCents, moneyText, amountMismatchMessage, amountList,
 }) => {
     const postedLineAmounts = amountList(lineAmounts);
     const hasPostedLineAmounts = postedLineAmounts.length > 0;
