@@ -23,8 +23,10 @@ const resolveSaleSettlement = async ({
       const parsed = positiveAmount(raw);
       if (!parsed.ok) {
         const error = new Error(texts.amountInvalidBody);
-        error.scanUserMessage = message;
-        return fail({ code: 'line_amount_invalid', message, requestId, error });
+        // ⚠️ 2026-11-18 线上事故（XSD-20261118-0001）：这里曾写 `message`（未声明）⇒ 一遇到
+        //   非法行金额就抛 ReferenceError，后台只报 `message is not defined`，真实的人话被吞掉。
+        error.scanUserMessage = texts.amountInvalidBody;
+        return fail({ code: 'line_amount_invalid', message: texts.amountInvalidBody, requestId, error });
       }
       resolvedLines.push({ ...line, amount: parsed.value, explicit_amount: parsed.value !== null });
     }
