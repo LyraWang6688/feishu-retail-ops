@@ -4,7 +4,7 @@
  * 验收 → P发生明细（tblWaafeodl2oILI）。
  *
  * 2026-11-19 业务负责人：每验收完一家供应商，把这家本次填的货款金额写一条 P发生明细；
- * 交易明细ID = 批次号-供应商名；最新余额先留空；发生行为是 Lookup，不写。
+ * 交易明细ID = 批次号-供应商名；最新余额字段已从生产表删除，不写；发生行为是 Lookup，不写。
  * 幂等：先按交易明细ID回查，已有就跳过。
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
