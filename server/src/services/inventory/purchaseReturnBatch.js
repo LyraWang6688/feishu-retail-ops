@@ -122,7 +122,14 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
       const liveFields = this.gateway.table('liveInventory').fields;
       const stateField = liveFields.state;
       // ⭐ 整批**一次**整表读（原来每个尺码一次：生产几千行 ⇒ 翻页 ⇒ 多个 HTTP）。
-      const allLive = await this.gateway.listAll('liveInventory');
+      // 2026-11-18：按货品精确读，避免一次整表读在 1254607 时拖垮整批。
+      const productIds = [...new Set(prepared.map((item) => item.input.productRecordId))];
+      const liveByProduct = await Promise.all(productIds.map((id) => this.readLiveInventoryForProduct(id)));
+      const allLiveById = new Map();
+      for (const records of liveByProduct) {
+        for (const record of records || []) allLiveById.set(record.record_id, record);
+      }
+      const allLive = [...allLiveById.values()];
       const results = new Array(prepared.length);
       const plans = [];
       for (const [index, item] of prepared.entries()) {

@@ -8,6 +8,7 @@ const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { OPERATION_ITEM_KEY_FIELD } = require('../../infrastructure/idempotencyKey');
 const { requireMovement } = require('./movements');
 const { operationItemKey } = require('./keys');
+const { INVENTORY_READ_RETRY } = require('../../config/inventoryReadRetry');
 
   // 同一个键出现两条实时库存，说明这一双已经被写过两次：真实库存已经错了。
   // 这时不能继续补写，也不能挑一条继续，只能停下让人核对。
@@ -46,7 +47,7 @@ async function findOperationLedger(operation) {
       }
       return listed;
     }
-    const direct = await this.gateway.get('inventoryLedger', operation.ledger_record_id);
+    const direct = await this.gateway.get('inventoryLedger', operation.ledger_record_id, { retry: INVENTORY_READ_RETRY });
     if (!direct || (listed && listed.record_id !== direct.record_id)) {
       throw new Error(`库存操作 ${operation.operation_id} 的已创建流水不存在或不一致，请人工核对`);
     }
@@ -97,7 +98,7 @@ async function auditExistingOperationRecords(operation, ledger, sizeRecordId) {
     const liveFields = this.gateway.table('liveInventory').fields;
     if (operation.direction === '增加') {
       for (const [index, recordId] of createdIds.entries()) {
-        const record = await this.gateway.get('liveInventory', recordId);
+        const record = await this.gateway.get('liveInventory', recordId, { retry: INVENTORY_READ_RETRY });
         const expectedState = (operation.created_states || [])[index] || operation.state;
         if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
           !singleLinked(record.fields?.[liveFields.size], sizeRecordId) ||
@@ -117,7 +118,7 @@ async function auditExistingOperationRecords(operation, ledger, sizeRecordId) {
       // ⭐ 2026-11-11：扣减不看状态（有记录就是库存）。
       for (const recordId of selectedIds) {
         if (removedIds.includes(recordId)) continue;
-        const record = await this.gateway.get('liveInventory', recordId);
+        const record = await this.gateway.get('liveInventory', recordId, { retry: INVENTORY_READ_RETRY });
         if (!record || !singleLinked(record.fields?.[liveFields.product], operation.product_record_id) ||
           !singleLinked(record.fields?.[liveFields.size], sizeRecordId)) {
           manual(`待扣减实时库存 ${recordId} 的货品、尺码关联或状态不一致`);
@@ -132,7 +133,20 @@ async function auditExistingOperationRecords(operation, ledger, sizeRecordId) {
 async function findLedger(ledgerSource, sourceRecordId, behaviorRecordId) {
     const table = this.gateway.table('inventoryLedger');
     const fieldName = table.fields[ledgerSource];
-    const records = await this.gateway.listAll('inventoryLedger');
+    let records = null;
+    // 2026-11-18：优先按来源字段条件读，避免整张流水表（几千行）在 1254607 时
+    //   把整个销售/采购写库拖失败；条件读失败才回退整表（判据仍按同一字段过滤）。
+    if (fieldName && typeof this.gateway.listByFilter === 'function') {
+      try {
+        records = await this.gateway.listByFilter('inventoryLedger',
+          `CurrentValue.[${fieldName}]="${sourceRecordId}"`, { retry: INVENTORY_READ_RETRY });
+      } catch (error) {
+        records = null;
+      }
+    }
+    if (!Array.isArray(records)) {
+      records = await this.gateway.listAll('inventoryLedger', { retry: INVENTORY_READ_RETRY });
+    }
     const matches = records.filter((record) =>
       strictLinkedRecordIds(record.fields?.[fieldName]).includes(sourceRecordId) &&
       (!behaviorRecordId || strictLinkedRecordIds(record.fields?.[table.fields.behavior]).includes(behaviorRecordId)));

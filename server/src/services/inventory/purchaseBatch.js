@@ -82,7 +82,14 @@ async function applyPurchaseBatch(items = [], options = {}) {
       const liveFields = this.gateway.table('liveInventory').fields;
       const itemKeyField = liveFields?.[OPERATION_ITEM_KEY_FIELD];
       // ⭐ 一批**一次**整表读（原来每码 3 次：调用方的状态判定 + 重复检查 + 幂等回查各 1 次）。
-      const allLive = await this.gateway.listAll('liveInventory');
+      // 2026-11-18：按货品精确读，避免一次整表读在 1254607 时拖垮整批。
+      const productIds = [...new Set(prepared.map((item) => item.input.productRecordId))];
+      const liveByProduct = await Promise.all(productIds.map((id) => this.readLiveInventoryForProduct(id)));
+      const allLiveById = new Map();
+      for (const records of liveByProduct) {
+        for (const record of records || []) allLiveById.set(record.record_id, record);
+      }
+      const allLive = [...allLiveById.values()];
       // 2026-11-18：验收必须显式指定「哪个入库尺码做样品」；不再有“合计 0 自动第一双”。
       //   已有样品 ⇒ 不需要指定，本次全部门盒；没有样品且没指定 ⇒ 整批拒绝（不静默写错）。
       const chosenByProduct = new Map();

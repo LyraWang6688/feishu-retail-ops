@@ -841,7 +841,8 @@ test('AC-IV6 源码哨兵：批量口与 applyPurchaseBatch 同形（runForStock
   const end = batchBody.indexOf('\n  async ', 10);
   const body = end > 0 ? batchBody.slice(0, end) : batchBody;
   assert.match(body, /this\.runForStocks\(/, '必须与 applyPurchaseBatch 一样按 stock_key 占住串行队列');
-  assert.match(body, /this\.gateway\.listAll\('liveInventory'\)/, '必须一次整表读＋内存索引');
+  assert.match(body, /this\.readLiveInventoryForProduct\(/, '必须按货品精确读实时库存');
+  assert.doesNotMatch(body, /this\.gateway\.listAll\('liveInventory'\)/, '不许再整表读实时库存');
   assert.match(body, /this\.gateway\.createBatch\('inventoryLedger'/, '流水必须走既有批量口');
   assert.match(body, /this\.gateway\.getBatch\('liveInventory'/, '逐双 get 必须换成既有批量读口');
   // ⭐ task-65 收口（Lead 授权加口）：删除改走网关新加的 `deleteBatch`，

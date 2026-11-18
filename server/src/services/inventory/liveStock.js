@@ -7,6 +7,7 @@ const {textValue} = require('../v1BitableGateway');
 const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { LIVE_STATES } = require('./movements');
 const { outboundStateRank } = require('../../config/inventoryStatePolicy');
+const { INVENTORY_READ_RETRY } = require('../../config/inventoryReadRetry');
 
 /** 实时库存里这一条记录是不是「这个货品 + 这个尺码」——不看所属状态。 */
 function matchesLiveInventory(record, { productRecordId, sizeRecordId, productField, sizeField } = {}) {
@@ -47,7 +48,7 @@ function sortLiveInventoryFifo(records = []) {
 
 async function findLiveInventory(productRecordId, size) {
     const sizeReference = await this.sizeReferences.resolveByNumber(size);
-    return this.findLiveInventoryIn(await this.gateway.listAll('liveInventory'), productRecordId,
+    return this.findLiveInventoryIn(await this.gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY }), productRecordId,
       sizeReference.recordId);
   }
 
@@ -92,7 +93,7 @@ async function candidatesFromLiveRecords(productRecordId, liveRecords = [], { ex
 async function sampleReplacementCandidates(productRecordId, { excludeRecordIds = [], liveRecords = null } = {}) {
     const records = Array.isArray(liveRecords)
       ? liveRecords
-      : await this.gateway.listAll('liveInventory');
+      : await this.gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
     return this.candidatesFromLiveRecords(productRecordId, records, { excludeRecordIds });
   }
 
@@ -108,13 +109,13 @@ async function readLiveInventoryForProduct(productRecordId) {
   const field = table.fields?.recordId;
   const wanted = String(productRecordId || '').trim();
   if (!field || typeof this.gateway.listByFilter !== 'function' || !/^[A-Za-z0-9]+$/.test(wanted)) {
-    return this.gateway.listAll('liveInventory');
+    return this.gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
   }
   try {
-    const rows = await this.gateway.listByFilter('liveInventory', `CurrentValue.[${field}]="${wanted}"`);
+    const rows = await this.gateway.listByFilter('liveInventory', `CurrentValue.[${field}]="${wanted}"`, { retry: INVENTORY_READ_RETRY });
     return Array.isArray(rows) ? rows : [];
   } catch (error) {
-    return this.gateway.listAll('liveInventory');
+    return this.gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
   }
 }
 
