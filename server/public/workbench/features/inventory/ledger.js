@@ -75,21 +75,33 @@ export function createInventoryLedgerModule() {
       const today = todayKey();
       host.innerHTML = `<div class="domain-page ledger-page">
         <div class="ledger-filters">
-          <label class="ledger-filter"><span>${escapeHtml(PAGE.texts.startLabel)}</span><input type="date" value="${today}" data-ledger-from></label>
-          <label class="ledger-filter"><span>${escapeHtml(PAGE.texts.endLabel)}</span><input type="date" value="${today}" data-ledger-to></label>
+          <label class="ledger-filter"><span>${escapeHtml(PAGE.texts.startLabel)}</span><input type="date" value="${today}" max="${today}" data-ledger-from></label>
+          <label class="ledger-filter"><span>${escapeHtml(PAGE.texts.endLabel)}</span><input type="date" value="${today}" min="${today}" data-ledger-to></label>
           <button class="ledger-btn" type="button" data-ledger-query>${escapeHtml(PAGE.texts.query)}</button>
-          <button class="ledger-btn ledger-btn--ghost" type="button" data-ledger-today>${escapeHtml(PAGE.texts.today)}</button>
         </div>
         <p class="ledger-summary" data-ledger-summary></p>
         <div data-ledger-body></div>
       </div>`;
-      host.querySelector('[data-ledger-query]')?.addEventListener('click', () => { void load(); });
-      host.querySelector('[data-ledger-today]')?.addEventListener('click', () => {
-        const key = todayKey();
-        host.querySelector('[data-ledger-from]').value = key;
-        host.querySelector('[data-ledger-to]').value = key;
-        void load();
+      const fromInput = host.querySelector('[data-ledger-from]');
+      const toInput = host.querySelector('[data-ledger-to]');
+      const syncBounds = () => {
+        if (!fromInput || !toInput) return;
+        toInput.min = fromInput.value || '';
+        fromInput.max = toInput.value || '';
+        if (fromInput.value && toInput.value && fromInput.value > toInput.value) {
+          toInput.value = fromInput.value;
+        }
+        toInput.min = fromInput.value || '';
+      };
+      fromInput?.addEventListener('change', syncBounds);
+      toInput?.addEventListener('change', () => {
+        if (fromInput?.value && toInput.value && fromInput.value > toInput.value) {
+          fromInput.value = toInput.value;
+        }
+        syncBounds();
       });
+      host.querySelector('[data-ledger-query]')?.addEventListener('click', () => { void load(); });
+      syncBounds();
       void load();
     },
   };
