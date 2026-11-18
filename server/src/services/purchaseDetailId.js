@@ -28,6 +28,7 @@
 const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { PURCHASE_REQUEST_READ_RETRY } = require('../config/purchaseRequestReadRetry');
 
 /** 序号补零位数（两位：`01`…`99`；第 100 条是 `100`，**不截断**）。 */
 const DETAIL_ID_PAD = 2;
@@ -67,12 +68,35 @@ const nextPurchaseDetailSequence = (batchNo, { existingIds = [], rowCount = 0 } 
  *   两次读的是**逐字相同的一份数据**，读两遍纯属浪费：飞书单次整表读实测 8~11 秒 ✗）。
  *   ⚠️ 不传 `rows` ⇒ 行为与改动前**逐字不变**（自己读一次）✓。
  */
+/**
+ * 2026-11-18：只读这一批的采购明细快照。
+ * 采购写库的幂等回查 / 明细 ID 取号都只需要同一个 batchRecordId 的行；
+ * 优先按「报货批次号」条件读，网关不支持或失败才回退整表。
+ */
+const readPurchaseRequestsForBatch = async ({ gateway, batchRecordId } = {}) => {
+  if (!gateway) throw new Error('采购明细快照需要 gateway');
+  const table = V1_BITABLE_SCHEMA.tables.purchaseRequest;
+  const field = table?.fields?.batchNo;
+  const wanted = String(batchRecordId || '').trim();
+  if (field && /^[A-Za-z0-9]+$/.test(wanted) && typeof gateway.listByFilter === 'function') {
+    try {
+      const rows = await gateway.listByFilter('purchaseRequest',
+        `CurrentValue.[${field}]="${wanted}"`, { retry: PURCHASE_REQUEST_READ_RETRY });
+      if (Array.isArray(rows)) return rows;
+    } catch (error) {
+      // 条件读失败（字段/语法/瞬时错误）⇒ 回退整表；判据不变。
+    }
+  }
+  return gateway.listAll('purchaseRequest', { retry: PURCHASE_REQUEST_READ_RETRY });
+};
+
 const createPurchaseDetailIdAllocator = ({ gateway } = {}) => {
   if (!gateway) throw new Error('采购明细ID 分配器需要 gateway');
   return {
     async open({ batchRecordId, batchNo, rows } = {}) {
       const fields = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
-      const all = Array.isArray(rows) ? rows : await gateway.listAll('purchaseRequest');
+      const all = Array.isArray(rows) ? rows
+        : await readPurchaseRequestsForBatch({ gateway, batchRecordId });
       const inBatch = all.filter((record) => strictLinkedRecordIds(record.fields?.[fields.batchNo])
         .includes(batchRecordId));
       let next = nextPurchaseDetailSequence(batchNo, {
@@ -93,4 +117,5 @@ module.exports = {
   sequenceOfDetailId,
   nextPurchaseDetailSequence,
   createPurchaseDetailIdAllocator,
+  readPurchaseRequestsForBatch,
 };
