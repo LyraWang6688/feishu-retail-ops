@@ -334,6 +334,7 @@ test('AC-WG2 跨模块并发（销售 + 采购 + 库存同时写）：全局并�
   })();
   const inventoryWrite = inventory.applyPurchase({
     purchaseBatchRecordId: 'batch_1', productRecordId: 'product_2', size: 38, quantity: 1, state: '门盒',
+    sampleSize: 38,
   });
 
   await Promise.all([salesWrite, purchaseWrite, inventoryWrite]);

@@ -684,6 +684,7 @@ test('AC-PB7 ⭐ 两条链各自的数字：补货 = 读 1 / 写 1；验收 = �
     size,
     quantity: 1,
     state: '门盒',
+    sampleSize: SIZES[0],
   })));
   const acceptCounts = calls.reduce((acc, call) => {
     const key = `${call.kind}:${call.table}`;

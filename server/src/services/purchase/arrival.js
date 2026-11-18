@@ -10,7 +10,6 @@
  */
 const { arrivalToast, inventoryToast } = require('../../config/purchaseWebhookTexts');
 const {textValue} = require('../v1BitableGateway');
-const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { invalidatePendingBatchesCache } = require('../purchasePendingBatchService');
 const { logInfo, logWarn } = require('../../utils/logger');
 const { purchaseCorrelation } = require('./correlation');
@@ -35,25 +34,6 @@ const aggregateArrivalItems = (items) => {
 };
 
 const arrival = {
-  /**
-   * 决定采购入库的第一双状态（业务负责人 2026-11-12）：
-   * - 该「编号」下所有尺码合计**没有任何库存记录** ⇒ 第一双样品
-   * - 该编号下已有任何库存记录（门盒、样品、空状态都算） ⇒ 第一双门盒
-   * 同一批后续由调用方继续按「先样品、后门盒」推演。
-   */
-  async resolvePurchaseInboundState(productRecordId) {
-    try {
-      const allLiveRecords = await this.gateway.listAll('liveInventory');
-      const table = this.gateway.table('liveInventory');
-      const hasAny = allLiveRecords.some((record) =>
-        strictLinkedRecordIds(record.fields?.[table.fields.product]).includes(productRecordId));
-      return hasAny ? '门盒' : '样品';
-    } catch (error) {
-      logWarn('purchase.inbound.state_check.failed', { product_record_id: productRecordId, error: error.message });
-      return '门盒'; // 查询失败时默认入门盒
-    }
-  },
-
   /** 真正的入库实现：只由 confirmArrival 串行调用，不要直接调（会丢掉串行保证）。 */
   async confirmArrivalLocked(taskId, task, operatorOpenId, options = {}) {
     // ⚠️ 2026-10-07 晚：这句话原先写「到货验收已入库」，但那**张表已被业务负责人删除** ——
@@ -170,23 +150,6 @@ const arrival = {
       inboundEntries.push({ item, key });
     }
     if (inboundEntries.length) {
-      // 决定入库状态：该编号所有尺码合计为 0 ⇒ 第一双样品，其余门盒；已有任何库存 ⇒ 全部门盒。
-      // 批量写入在循环后统一做，因此必须按同一顺序本地推演，不能每双都重新读（否则第 2 双会被再次判成样品）。
-      // 每款只读一次；第一双之后固定记为已有库存。
-      const sampleSeenOf = new Map();
-      const stateOfEntry = new Map();
-      for (const entry of inboundEntries) {
-        const productRecordId = entry.item.product_record_id;
-        if (!sampleSeenOf.has(productRecordId)) {
-          // eslint-disable-next-line no-await-in-loop
-          const first = await this.resolvePurchaseInboundState(productRecordId);
-          sampleSeenOf.set(productRecordId, first === '门盒');
-        }
-        const state = sampleSeenOf.get(productRecordId) ? '门盒' : '样品';
-        stateOfEntry.set(entry, state);
-        // 这一双落库之后，这一款就有「样品」行了 ⇒ 后面的都走门盒（与逐条路径的读写顺序等价）。
-        sampleSeenOf.set(productRecordId, true);
-      }
       const sampleChoices = draft.sample_choices && typeof draft.sample_choices === 'object'
         ? draft.sample_choices : {};
       const inboundPayload = inboundEntries.map((entry) => ({
@@ -199,7 +162,6 @@ const arrival = {
           ? { sampleSize: Number(sampleChoices[entry.item.product_record_id]) } : {}),
         // ⚠️ 2026-10-06：不再传 occurredAt（只进本地任务记录、无人读）；
         // 时间交给飞书自动的「创建时间」。
-        state: stateOfEntry.get(entry),
       }));
       if (typeof this.inventory.applyPurchaseBatch === 'function') {
         // ⭐ 批量路径：**整批一次写**（失败粒度 A）⇒ 这一批写成功后，才逐条落进度。

@@ -5,7 +5,7 @@
  *
  * 真账（Lead 实测量）：每批 5 码 = 143.9 秒，其中**逐码"库存流水 + 实时库存" = 119.5 秒（83%）**。
  * 为什么慢：每码要串行敲 **6 次**飞书（≈4 秒/次）——
- *   ① `resolvePurchaseInboundState` → `listAll('liveInventory')` 整表读（**每码重复一次**）
+ *   ① 旧 `resolvePurchaseInboundState` 已随 2026-11-18 显式样品选择删除；现在是整批一次读。
  *   ② `resolveStockBehavior`    → `listAll('behavior')`
  *   ③ `assertNoDuplicateOperationItems` → `listAll('liveInventory')` 又一次整表读
  *   ④ `createOnceByKey`         → `listAll('liveInventory')` 幂等回查
@@ -114,15 +114,20 @@ const makeService = (fake) => new InventoryService({
 });
 
 /** 一批 5 码：每码 1 双、门盒（与验收现场同形）。 */
-const batchItems = (sizes = SIZES) => sizes.map((size) => ({
-  purchaseBatchRecordId: 'rec_batch_row',
-  purchaseBatchNo: 'CGD-TEST-0001',
-  arrivalTaskId: 'arrival_task_1',
-  productRecordId: 'prod_1',
-  size,
-  quantity: 1,
-  state: '门盒',
-}));
+const batchItems = (sizes = SIZES) => {
+  const items = sizes.map((size) => ({
+    purchaseBatchRecordId: 'rec_batch_row',
+    purchaseBatchNo: 'CGD-TEST-0001',
+    arrivalTaskId: 'arrival_task_1',
+    productRecordId: 'prod_1',
+    size,
+    quantity: 1,
+    state: '门盒',
+  }));
+  // 2026-11-18：没有样品时必须显式指定样品尺码；默认让第一码做样品。
+  if (items.length) items[0].sampleSize = sizes[0];
+  return items;
+};
 
 const norm = (value) => JSON.stringify(value, Object.keys(value || {}).sort());
 
@@ -245,4 +250,13 @@ test('AC-SAMPLE-BATCH1 指定样品尺码：该尺码第一双样品，其余门
   const stateField = F('liveInventory').state;
   const states = fake.data.liveInventory.map((row) => row.fields[stateField]).sort();
   assert.deepEqual(states, ['样品', '门盒', '门盒'].sort());
+});
+
+test('AC-SAMPLE-BATCH2 没有样品且没指定尺码 ⇒ 整批拒绝，不静默写门盒', async () => {
+  const fake = makeFake();
+  const inventory = makeService(fake);
+  const items = batchItems([39]).map(({ sampleSize, ...rest }) => rest);
+  await assert.rejects(inventory.applyPurchaseBatch(items), /purchase_sample_choice_required/);
+  assert.equal(fake.data.inventoryLedger.length, 0);
+  assert.equal(fake.data.liveInventory.length, 0);
 });

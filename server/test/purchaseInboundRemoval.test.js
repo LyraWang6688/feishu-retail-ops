@@ -185,6 +185,11 @@ const seedArrivalTask = async (store, {
   //   生产上这两个值由到货核对那一步算好放在草稿上；这里按 actual 逐行求和。
   actualQuantity = (actual || []).reduce((sum, item) => sum + Number(item?.quantity || 0), 0),
   actualAmount = 1200,
+  // 2026-11-18：采购验收必须显式指定样品尺码；测试默认每个货号第一个到货尺码做样品。
+  sampleChoices = (actual || []).reduce((out, item) => {
+    if (Number(item?.quantity) > 0 && !out[item.product_record_id]) out[item.product_record_id] = item.size;
+    return out;
+  }, {}),
 } = {}) => {
   await store.create({
     task_id: taskId, kind: 'arrival', record_id: batchRecordId, status: 'awaiting_confirmation',
@@ -197,6 +202,7 @@ const seedArrivalTask = async (store, {
       acceptance_text: acceptanceText,
       actual_quantity: actualQuantity,
       actual_amount: actualAmount,
+      sample_choices: sampleChoices,
       direct_arrival: true,
       operator_open_id: 'ou_1',
       requests,

@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **505** 个事件。按前缀分组：
+共 **504** 个事件。按前缀分组：
 
 ## accessory
 
@@ -378,7 +378,6 @@
 | `purchase.group.message.remembered` | 1 | src/services/purchaseBatchLocator.js |
 | `purchase.group.thread.bind_failed` | 1 | src/services/purchaseBatchLocator.js |
 | `purchase.group.thread.bound` | 1 | src/services/purchaseBatchLocator.js |
-| `purchase.inbound.state_check.failed` | 1 | src/services/purchase/arrival.js |
 | `purchase.request.created` | 1 | src/services/purchaseWebhookService.js |
 | `purchase.request.image.attachment_exists` | 2 | src/services/purchase/documentImages.js |
 | `purchase.request.image.attachment_write_failed` | 1 | src/services/purchase/documentImages.js |

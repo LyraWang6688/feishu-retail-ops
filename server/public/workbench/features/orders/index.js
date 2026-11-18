@@ -694,8 +694,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
           ...(supplier ? { [ARRIVAL_FULL_FIELDS.supplierRecordId]: supplier } : {}),
           [ARRIVAL_FULL_FIELDS.actualAmount]: Number(rawAmount),
           [ARRIVAL_FULL_FIELDS.lines]: built.lines,
-          // 2026-11-18：新页面始终带这个字段（哪怕空对象）⇒ 后端知道“这是会选样品的新页面”，
-          //   需要选却没选时才能 400；旧页面不带字段 ⇒ 后端沿用原有自动规则。
+          // 2026-11-18：始终带这个字段（哪怕空对象）⇒ 后端能区分“确实没有需要选的编号”
+          //   和“需要选却没选”；不再保留旧页面的自动第一双兜底。
           [ARRIVAL_FULL_FIELDS.sampleChoices]: sampleChoices,
           ...(counterpartyDocuments.length
             ? { [ARRIVAL_FULL_FIELDS.counterpartyDocuments]: counterpartyDocuments } : {}),

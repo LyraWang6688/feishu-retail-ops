@@ -298,10 +298,6 @@ class PurchaseWebhookService {
     return documentImages.writeSupplierImageAttachment.call(this, options);
   }
 
-  async resolvePurchaseInboundState(productRecordId) {
-    return arrival.resolvePurchaseInboundState.call(this, productRecordId);
-  }
-
   async ensurePostingPlan(taskId, task, options = {}) {
     return postingPlan.ensurePostingPlan.call(this, taskId, task, options);
   }
@@ -467,7 +463,7 @@ class PurchaseWebhookService {
   //   ⛔ 2026-10-17：**成本与建档整条删除**（到货单价格识别已退场；货品建档的唯一路径是
   //      工作台「货品上新」→ 多维表格表单外链，提交后由表变更自动生成标签二维码）。
   //      现在本文件**不写「货品.成本」、不建新品**；只保留加库存与本单批次写实。
-  //   · aggregateArrivalItems / resolvePurchaseInboundState
+  //   · aggregateArrivalItems
   // 它们的输入（draft.actual）由
   // services/purchaseArrivalConversationService.js 写入，形状与 processArrival 原先落的草稿一致。
   //

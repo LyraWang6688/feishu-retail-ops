@@ -580,6 +580,8 @@ const makeFullChain = () => {
   const bodyFor = (batchNo) => ({
     batchNo, actualAmount: '12800',
     lines: SIZES.map((size) => ({ productRecordId: PRODUCT, size, quantity: 1 })),
+    // 2026-11-18：真链没有库存 ⇒ 必须指定样品尺码（第一码做样品）。
+    [arrivalTab.fields.sampleChoices]: { [PRODUCT]: SIZES[0] },
   });
   return {
     gateway, writes, data, arrival, conversation, conversationCalls, finishResults, taskStore,
@@ -607,6 +609,7 @@ test('AC-AA5-L1 ⭐ 幂等第一层（会话级键）：这把键用过了 ⇒ `
     }));
     await chain.arrival.store.update(session.session_id, {
       scans: submitted,
+      sample_choices: body[arrivalTab.fields.sampleChoices] || {},
       scanned: submitted.reduce((sum, line) => sum + line.quantity, 0),
       submit_round: 1,
     });

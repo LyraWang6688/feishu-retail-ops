@@ -12,7 +12,6 @@ const { logInfo } = require('../../utils/logger');
 const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireMovement, MOVEMENT_PURCHASE_INCREASE, LIVE_STATES } = require('./movements');
-const { inboundStatesFor } = require('../../config/inventoryStatePolicy');
 const {
   operationSourceIdOf,
   operationIdOf,
@@ -84,18 +83,13 @@ async function applyPurchaseBatch(items = [], options = {}) {
       const itemKeyField = liveFields?.[OPERATION_ITEM_KEY_FIELD];
       // ⭐ 一批**一次**整表读（原来每码 3 次：调用方的状态判定 + 重复检查 + 幂等回查各 1 次）。
       const allLive = await this.gateway.listAll('liveInventory');
-      // 入库状态按「编号」所有尺码合计推演：合计 0 → 第一双样品，其余门盒；否则全部门盒。
-      // ⭐ 2026-11-18：验收弹窗指定了样品尺码时，按指定尺码做第一双样品；已有样品 / 未指定
-      //   时仍走原规则（no sampleSize + 合计 0 → 第一双样品；合计 > 0 → 全部门盒）。
-      const productTotals = new Map();
-      const totalOf = (productRecordId) => {
-        if (!productTotals.has(productRecordId)) {
-          const total = allLive.filter((record) =>
-            strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(productRecordId)).length;
-          productTotals.set(productRecordId, total);
-        }
-        return productTotals.get(productRecordId);
-      };
+      // 2026-11-18：验收必须显式指定「哪个入库尺码做样品」；不再有“合计 0 自动第一双”。
+      //   已有样品 ⇒ 不需要指定，本次全部门盒；没有样品且没指定 ⇒ 整批拒绝（不静默写错）。
+      const chosenByProduct = new Map();
+      for (const item of prepared) {
+        const chosen = Number(item.input.sampleSize);
+        if (Number.isSafeInteger(chosen) && chosen > 0) chosenByProduct.set(item.input.productRecordId, chosen);
+      }
       const sampleExistsOf = new Map();
       const hasSampleOf = (productRecordId) => {
         if (!sampleExistsOf.has(productRecordId)) {
@@ -106,26 +100,29 @@ async function applyPurchaseBatch(items = [], options = {}) {
         }
         return sampleExistsOf.get(productRecordId);
       };
+      for (const productRecordId of new Set(prepared.map((item) => item.input.productRecordId))) {
+        if (hasSampleOf(productRecordId)) continue;
+        const chosen = chosenByProduct.get(productRecordId);
+        if (!chosen) throw new Error('purchase_sample_choice_required');
+        if (!prepared.some((item) => item.input.productRecordId === productRecordId
+          && Number(item.size) === chosen)) {
+          throw new Error('purchase_sample_choice_invalid');
+        }
+      }
       const samplePlanned = new Set();
       const plans = [];
       for (const item of prepared) {
         const sizeReference = await this.sizeReferences.resolveByNumber(item.size);
-        const existingTotal = totalOf(item.input.productRecordId);
         const targetSize = Number(item.size);
         const chosenSampleSize = Number(item.input.sampleSize);
-        const canChooseSample = Number.isSafeInteger(chosenSampleSize) && chosenSampleSize > 0;
         const alreadyHasSample = hasSampleOf(item.input.productRecordId) || samplePlanned.has(item.input.productRecordId);
-        const makeSample = !alreadyHasSample && (canChooseSample
-          ? targetSize === chosenSampleSize
-          : existingTotal === 0);
-        item.createdStates = !canChooseSample
-          ? inboundStatesFor({ existingTotal, quantity: item.quantity })
-          : (makeSample
-            ? ['样品', ...Array.from({ length: Math.max(0, item.quantity - 1) }, () => '门盒')]
-            : Array.from({ length: item.quantity }, () => '门盒'));
+        const makeSample = !alreadyHasSample && Number.isSafeInteger(chosenSampleSize)
+          && chosenSampleSize > 0 && targetSize === chosenSampleSize;
+        item.createdStates = makeSample
+          ? ['样品', ...Array.from({ length: Math.max(0, item.quantity - 1) }, () => '门盒')]
+          : Array.from({ length: item.quantity }, () => '门盒');
         if (makeSample) samplePlanned.add(item.input.productRecordId);
         item.state = item.createdStates[0] || '门盒';
-        productTotals.set(item.input.productRecordId, existingTotal + item.quantity);
         const existingRows = this.findLiveInventoryIn(
           allLive, item.input.productRecordId, sizeReference.recordId,
         );

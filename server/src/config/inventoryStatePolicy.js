@@ -12,10 +12,11 @@
  *   同一优先级内按创建时间 FIFO。
  *
  * 入库（增加）：
- *   维度是同一个「编号」的所有尺码合计：
- *     · 合计 = 0 → 这一批第一双写「样品」，其余写「门盒」
- *     · 合计 > 0 → 全部写「门盒」
- *   注意：这里不是按单个尺码判断，而是按编号（product_record_id）整体判断。
+ *   采购验收由她在弹窗里指定「哪个入库尺码做样品」：
+ *     · 指定尺码：第一双写「样品」，其余写「门盒」
+ *     · 其他尺码：全部写「门盒」
+ *     · 该编号已有样品：忽略指定，全部写「门盒」
+ *   ⚠️ 2026-11-18 起不再有“合计 0 ⇒ 第一双自动样品”的旧规则。
  */
 
 const INBOUND_STATE = Object.freeze({
@@ -31,10 +32,8 @@ const outboundStateRank = (state) => {
 };
 
 /**
- * 一批入库要写的状态序列。
- * @param {{ existingTotal: number, quantity: number }} input
- *   existingTotal = 同一个编号所有尺码的实时库存合计（含空状态）
- * @returns {string[]}
+ * 非采购验收的增加（例：销售退货回库）仍用这条兜底规则。
+ * 采购验收 2026-11-18 起改为显式指定样品尺码，不再调用它。
  */
 const inboundStatesFor = ({ existingTotal = 0, quantity = 0 } = {}) => {
   const total = Number(existingTotal) || 0;

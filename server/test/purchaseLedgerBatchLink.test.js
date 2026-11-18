@@ -125,7 +125,7 @@ test('① 采购加库存的流水**带上**「关联采购」= 报货批次那�
   const gateway = makeGateway({});
   await inventoryFor(gateway).applyPurchase({
     purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38,
-    quantity: 2, state: '门盒',
+    quantity: 2, state: '门盒', sampleSize: 38,
   });
   assert.equal(gateway.records[LEDGER].length, 1);
   assert.deepEqual(gateway.records[LEDGER][0].fields, {
@@ -143,7 +143,7 @@ test('①-补 同一批次的多个（货品+尺码）→ 多条流水共用同�
   const inventory = inventoryFor(gateway);
   for (const size of [38, 39]) {
     await inventory.applyPurchase({
-      purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size, quantity: 1, state: '门盒',
+      purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size, quantity: 1, state: '门盒', sampleSize: 38,
     });
   }
   assert.equal(gateway.records[LEDGER].length, 2);
@@ -155,7 +155,7 @@ test('①-补 同一批次的多个（货品+尺码）→ 多条流水共用同�
   const inventoryWithStore = new InventoryService({ gateway: makeGateway({}), store });
   for (const size of [38, 39]) {
     await inventoryWithStore.applyPurchase({
-      purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size, quantity: 1, state: '门盒',
+      purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size, quantity: 1, state: '门盒', sampleSize: 38,
     });
   }
   const ids = (await store.list()).map((row) => row.source_record_id).sort();
@@ -177,7 +177,7 @@ test('② 拿不到批次 record id 时**这一列一个字都不写**（批次�
   for (const extra of cases) {
     const gateway = makeGateway({});
     await inventoryFor(gateway).applyPurchase({
-      ...extra, productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒',
+      ...extra, productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒', sampleSize: 38,
     });
     const row = gateway.records[LEDGER][0];
     assert.equal(Object.hasOwn(row.fields, '关联采购'), false,
@@ -201,7 +201,7 @@ test('② 拿不到批次 record id 时**这一列一个字都不写**（批次�
 test('③ 销售减少 / 采购退货的流水**不带**「关联采购」；销售那条仍挂「关联销售」', async () => {
   const saleGateway = makeGateway({ [LIVE]: [liveUnit('door_1', 38)] });
   await inventoryFor(saleGateway).applySale({
-    salesDetailRecordId: 'detail_1', productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒',
+    salesDetailRecordId: 'detail_1', productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒', sampleSize: 38,
   });
   assert.deepEqual(saleGateway.records[LEDGER][0].fields, {
     编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1,
@@ -213,7 +213,7 @@ test('③ 销售减少 / 采购退货的流水**不带**「关联采购」；销
   //    （真实三元组：批次身份 ｜ 货品 ｜ 尺码），所以这里传批次身份而不是裸 `sourceRecordId`。
   await inventoryFor(returnGateway).applyChange({
     kind: PURCHASE_DECREASE, purchaseBatchRecordId: 'purchase_return_1',
-    productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒',
+    productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒', sampleSize: 38,
   });
   assert.deepEqual(returnGateway.records[LEDGER][0].fields, {
     编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1, 库存行为: ['bhv_buy_back'],
@@ -257,7 +257,7 @@ test('④ 同一（批次｜货品｜尺码）重复调用 → 仍只 1 条流�
   const gateway = makeGateway({});
   const inventory = inventoryFor(gateway);
   const input = {
-    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 2, state: '门盒',
+    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 2, state: '门盒', sampleSize: 38,
   };
   const first = await inventory.applyPurchase(input);
   const second = await inventory.applyPurchase(input);
@@ -272,7 +272,7 @@ test('④-补 崩溃恢复：流水写失败 → 本地任务停在 prepared →
   const store = tempStore('purchase-ledger-link-resume-');
   const inventory = new InventoryService({ gateway, store });
   const input = {
-    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒',
+    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒', sampleSize: 38,
   };
   await assert.rejects(inventory.applyPurchase(input), /boom/);
   assert.equal(gateway.records[LEDGER], undefined, '第一次一个字都没写进去');
@@ -292,7 +292,7 @@ test('④-补2 重放时 state 仍取自**本地任务**（#253 那套一个字�
   const gateway = makeGateway({});
   const inventory = inventoryFor(gateway);
   const input = {
-    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 1, state: '样品',
+    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 1, state: '样品', sampleSize: 38,
   };
   const first = await inventory.applyPurchase(input);
   // 重放时调用方给了不同的 state（真实场景：重算"有没有样品"必然算出反的）——
@@ -325,11 +325,11 @@ test('④-补4 加了关联列之后，**按来源回查流水**那条路仍然�
   const store = tempStore('purchase-ledger-link-nolookup-');
   const inventory = new InventoryService({ gateway, store });
   await inventory.applyPurchase({
-    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒',
+    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒', sampleSize: 38,
   });
   // 同一个批次、**另一个货品**：不能让"按批次回查"把上一条流水当成它的。
   await inventory.applyPurchase({
-    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_2', size: 38, quantity: 1, state: '门盒',
+    purchaseBatchRecordId: BATCH_RECORD_ID, productRecordId: 'product_2', size: 38, quantity: 1, state: '门盒', sampleSize: 38,
   });
   assert.equal(gateway.records[LEDGER].length, 2);
   for (const row of gateway.records[LEDGER]) {
