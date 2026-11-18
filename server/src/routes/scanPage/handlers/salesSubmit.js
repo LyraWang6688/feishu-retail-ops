@@ -4,6 +4,8 @@ const { redirectWithSubmitToast } = require('../../../utils/submitToast');
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
 const { salesTradeTypeForStock } = require('../../../config/salesTradeTypePolicy');
 const { prepareSubmitDraft } = require('../../../services/scanWrite/submitDraft');
+const { resolveSaleSubmitPlan } = require('../../../services/scanWrite/saleSubmitPlan');
+const { enqueueSaleAsync, salePrintProductsOf } = require('../../../services/scanWrite/saleAsyncSubmit');
 
 /**
  * 扫码路由核心深拆 P2：销售提交（`submit_order`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -11,7 +13,7 @@ const { prepareSubmitDraft } = require('../../../services/scanWrite/submitDraft'
  */
 
 async function handleSubmitOrder(ctx) {
-  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, sellableSizeTexts, sendHuman, sendPaymentStep, service, writeConfig, writeService } = ctx;
+  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHuman, sendPaymentStep, service, writeConfig, writeService } = ctx;
         // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
         //    + ②**「付款情况」三档**（整单：全付（默认）/ 部分付 / 未付）
         //    + ③多笔收款（同名重复 ⇒ 两个数组按下标对齐）+ 「部分付」的实付多少。
@@ -230,6 +232,60 @@ return sendPaymentStep(res, req, {
           stock_ms: 0,
           finalize_ms: 0,
         });
+        // ⭐ 2026-11-18（业务负责人）：整单实收全 0 ⇒ 货品页直接异步建单，不跳资金页。
+        //   去向由配置声明（`sale.submitPlans`），这里只按 action 做映射，不写 `if (金额 === 0)`。
+        const planAmounts = finalLines.map((line) => String(line?.amount ?? '').trim());
+        const submitPlan = resolveSaleSubmitPlan({
+          lineAmounts: planAmounts,
+          salesAsyncEnabled: Boolean(salesAsync),
+          config: writeConfig,
+        });
+        if (submitPlan.action === 'async_sale') {
+          if (!goodsOrderNo) {
+            return sendHuman(res, 400, {
+              title: writeConfig.texts.failedTitle,
+              body: writeConfig.texts.failedBody || '',
+              requestId,
+            });
+          }
+          const payloadLines = finalLines.map((line) => ({
+            productRecordId: line.product_record_id,
+            size: line.size,
+            tradeTypeCode: line.trade_type_code,
+            actualAmount: line.amount,
+            number: line.number,
+            itemNo: line.item_no,
+            color: line.color,
+            kind: line.kind,
+            gift: line.gift,
+          }));
+          const outcome = await enqueueSaleAsync({
+            salesAsync,
+            writeService,
+            openId: openIdOf(req),
+            submitKey: String(body[fields.submitKey] || ''),
+            orderNo: goodsOrderNo,
+            gift: body[fields.gift],
+            lines: payloadLines,
+            // 0 元单：不写任何收款明细 ⇒ S交易明细 0 条。
+            payments: [],
+            tapId: String(tapIdFromRequest(req).tap_id || ''),
+            printProducts: salePrintProductsOf(finalLines),
+            requestId,
+          });
+          if (!outcome.ok) {
+            return sendHuman(res, outcome.status || 500, {
+              title: writeConfig.texts.failedTitle,
+              body: writeConfig.texts.failedBody || '',
+              requestId,
+            });
+          }
+          if (outcome.printPromptUrl) {
+            res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            return res.redirect(303, outcome.printPromptUrl);
+          }
+          return redirectWithSubmitToast(res, { orderNo: goodsOrderNo });
+        }
         return sendPaymentStep(res, req, {
           paymentMethods: await candidatePaymentMethods(req),
           realm,

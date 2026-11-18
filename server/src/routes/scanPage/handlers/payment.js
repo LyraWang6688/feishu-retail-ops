@@ -1,35 +1,10 @@
 'use strict';
 const { resolvePaymentSettlement } = require('../../../services/scanWrite/paymentSettlement');
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
-const { buildSalePayload } = require('../../../services/salesPayload');
+// ⭐ 2026-11-18：资金页与「货品页 0 元直达」共用同一个异步提交件（行为不变）。
+const { enqueueSaleAsync, salePrintProductsOf } = require('../../../services/scanWrite/saleAsyncSubmit');
 // ⭐⭐ 2026-10-29：**提交成功 = 统一 toast 共用件**（文案/落点/参数全部走 `config/submitToast.js`）。
-const { redirectWithSubmitToast, submitToastUrl } = require('../../../utils/submitToast');
-// ⭐ 2026-11-17：资金页提交成功后的「是否打印」轻页（一次性令牌）。
-const { SOURCES } = require('../../../config/labelPrintQueue');
-const { getPrintPromptService } = require('../../../services/printPromptRuntime');
-const { printPromptUrlOf } = require('../../../services/printPromptService');
-
-/**
- * 本单涉及的鞋类货品（去重；配品/没有 product_record_id 的不进打印页）。
- * 一行 = 一个货品；同款多尺码只留一行。
- */
-const salePrintProductsOf = (lines = [], extra = null) => {
-  const map = new Map();
-  const add = (line) => {
-    const recordId = String(line?.product_record_id || line?.productRecordId || '').trim();
-    if (!recordId || line?.kind === 'accessory') return;
-    if (map.has(recordId)) return;
-    map.set(recordId, {
-      recordId,
-      itemNo: String(line?.item_no || '').trim(),
-      color: String(line?.color || '').trim(),
-      number: String(line?.number || '').trim(),
-    });
-  };
-  for (const line of Array.isArray(lines) ? lines : []) add(line);
-  if (extra) add(extra);
-  return [...map.values()];
-};
+const { redirectWithSubmitToast } = require('../../../utils/submitToast');
 
 /**
  * 扫码路由核心深拆 P1：资金处理（`payment_pay`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -159,66 +134,31 @@ async function handlePaymentPay(ctx) {
               kind: line.kind,
               gift: line.gift,
             }));
-            const built = buildSalePayload({
-              openId: openIdOf(req), orderNo, gift: body[fields.gift],
-              lines: payloadLines, payments: paidPayments,
-            });
-            if (!built.ok) {
-              logWarn('scan.sale.async.invalid_payload', { request_id: requestId, errors: built.errors });
-              return sendHuman(res, 400, {
-                title: writeConfig.texts.failedTitle,
-                body: writeConfig.texts.failedBody || '',
-                requestId,
-              });
-            }
-            const tapId = String(tapIdFromRequest(req).tap_id || '');
-            const enqueued = await salesAsync.enqueue({
+            // ⭐ 2026-11-18：入队 / 轮换 submit_key / 打印轻页 / 统一 toast 全部收进共用件。
+            const outcome = await enqueueSaleAsync({
+              salesAsync,
+              writeService,
+              openId: openIdOf(req),
               submitKey: String(body[fields.submitKey] || ''),
-              payload: built.payload,
-              tapId,
+              orderNo,
+              gift: body[fields.gift],
+              lines: payloadLines,
+              payments: paidPayments,
+              tapId: String(tapIdFromRequest(req).tap_id || ''),
+              printProducts: salePrintProducts,
+              requestId,
             });
-            if (!enqueued.ok) {
-              logError('scan.sale.async.enqueue_failed', { request_id: requestId, errors: enqueued.errors });
-              return sendHuman(res, 500, {
+            if (!outcome.ok) {
+              return sendHuman(res, outcome.status || 500, {
                 title: writeConfig.texts.failedTitle,
                 body: writeConfig.texts.failedBody || '',
                 requestId,
               });
             }
-            // ⭐ 2026-10-27：入队后必须**轮换本单的 submit_key**（completeSale 会 lines/order_no 归零、
-            //   并把 key 的 seq +1）—— 只 clearDraft 不轮换 ⇒ 下一单拿到同一把 key ⇒ job_id 撞车。
-            await writeService.sessions.completeSale(openIdOf(req), {
-              key: String(body[fields.submitKey] || ''),
-              result: { job_id: enqueued.job?.job_id, order_no: orderNo },
-            });
-            logInfo('scan.sale.async.enqueued', {
-              request_id: requestId,
-              job_id: enqueued.job?.job_id,
-              tap_id: tapId || undefined,
-              order_no: orderNo,
-              line_count: pendingLines.length,
-              payment_count: paidPayments.length,
-              reused: enqueued.created === false,
-            });
-            // ⭐ 2026-11-17：异步销售也是「先回执、后台写库存」——
-            //   先回「是否打印」轻页；她勾选后只记打印意图，等这条销售 job 成功后由后端自动入队。
-            const saleJobId = String(enqueued.job?.job_id || '').trim();
-            if (saleJobId && salePrintProducts.length) {
-              const prompt = getPrintPromptService().create({
-                kind: 'sale',
-                source: SOURCES.sale,
-                operationId: saleJobId,
-                ownerOpenId: openIdOf(req),
-                products: salePrintProducts,
-                returnUrl: submitToastUrl({ orderNo }),
-              });
-              if (prompt) {
-                res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-                return res.redirect(303, printPromptUrlOf(prompt.token));
-              }
+            if (outcome.printPromptUrl) {
+              res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+              return res.redirect(303, outcome.printPromptUrl);
             }
-            // ⭐⭐ 2026-10-27 起的"回工作台 + toast"；2026-10-29 起**收进共用件**（`utils/submitToast.js`）：
-            //   文案 / 落点 / 参数名全部走配置，四条提交链（销售 / 补货 / 退货 / 多货）共用同一份实现。
             return redirectWithSubmitToast(res, { orderNo });
           }
           // ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）** —— ⭐ 2026-10-16 深夜 · 修「资金页那一按 500」✗：
