@@ -353,7 +353,7 @@ test('① 组内明细行不再重复写货号：每行只有 颜色 | 尺码×�
   }
   assert.equal((svg.match(/>8088</g) || []).length, 1, '货号只在分组行写一次');
   assert.equal((svg.match(/>A-1366-31</g) || []).length, 1, '货号只在分组行写一次');
-  assert.ok(!svg.includes('>货号</text>'), '货号已经变成分组行，表头里不该再有「货号」这一列');
+  assert.ok(svg.includes('>货号</text>'), '业务负责人 2026-11-18：表头「说明」改为「货号」');
   // 合并版里「数量」不再是单独一列
   assert.ok(!svg.includes('>数量</text>'), '「数量」列已经并进「尺码×数量」那一格');
   assert.equal(COLUMNS.length, 2);
