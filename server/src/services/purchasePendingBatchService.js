@@ -7,6 +7,7 @@ const { resolvePurchaseArrivalStatusConfig } = require('../config/purchaseArriva
 const { equalsFormula } = require('./bitableFilterFormula');
 const { resolvePendingCacheTtlMs } = require('../config/purchasePendingCache');
 const { logInfo, logWarn } = require('../utils/logger');
+const { PURCHASE_REQUEST_READ_RETRY } = require('../config/purchaseRequestReadRetry');
 
 // 「**还没到货**的报货批次」—— 9 点推送【采购】区的候选来源。
 //
@@ -167,6 +168,7 @@ class PurchasePendingBatchService {
     try {
       rows = await this.gateway.listAll('purchaseRequest', {
         fieldNames: [batchField, supplierField],
+        retry: PURCHASE_REQUEST_READ_RETRY,
       }) || [];
     } catch (error) {
       logWarn('sales.pending_deal_push.purchase_supplier_index_failed', {

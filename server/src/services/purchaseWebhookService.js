@@ -48,7 +48,7 @@ const { PurchaseBatchNoGenerator } = require('./purchaseBatchNoGenerator');
 // 抽成独立 service：本类只管"报货 → 出单"，批次行怎么维护不属于它（模块化）。
 const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
 // ⭐ 2026-10-12 采购明细ID（`{报货批次号}-{两位序号}`）—— 分配器只有一处实现。
-const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
+const { createPurchaseDetailIdAllocator, readPurchaseRequestsForBatch } = require('./purchaseDetailId');
 // ⭐⭐ 2026-10-16（业务负责人拍板 **ⓐ**：「同一个报货批次号下**按供应商拆分/分组**」）——
 //   分组口径 / 每组幂等键 / "没标注供应商"的桶只在 `config/supplierSplit.js` ＋
 //   `services/supplierSplitService.js` 一处（本文件**不抄第二份** ✗）。
@@ -588,7 +588,9 @@ class PurchaseWebhookService {
       && typeof this.gateway.listAll === 'function';
     // 攒批时**先读一次**采购明细快照：幂等回查与明细取号**共用这一份**（两次读的是逐字相同的数据，
     // 读两遍纯属浪费 ✗）。退回逐条时不读（那条路的读法一个字都没动 ✓）。
-    const requestSnapshot = detailBatchWrite ? await this.gateway.listAll('purchaseRequest') : undefined;
+    const requestSnapshot = detailBatchWrite
+      ? await readPurchaseRequestsForBatch({ gateway: this.gateway, batchRecordId })
+      : undefined;
     const detailIdCursor = await this.detailIds.open({
       batchRecordId, batchNo: plan.batch_no, rows: requestSnapshot,
     });
