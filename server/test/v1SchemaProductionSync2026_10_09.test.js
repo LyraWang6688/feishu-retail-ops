@@ -66,12 +66,12 @@ const objectLiteralAfter = (source, fromIndex) => {
 // ⭐⭐ 2026-10-09 收尾的**唯一**改动对象：这 5 个语义键（真表那 5 列已被她删掉）。
 const REMOVED_SALES_ENTRY_KEYS = ['originalText', 'parseStatus', 'parseSummary', 'failureReason', 'messageLink'];
 
-test('A(2026-10-09) 新表「P交易明细」登记进 schema：只登记表，不编字段映射、不进闸门范围', () => {
+test('A(2026-10-09) 新表「P发生明细」登记进 schema：表 + 2026-11-19 生产字段', () => {
   const table = V1_BITABLE_SCHEMA.tables.paymentDetail;
   assert.ok(table, '「P交易明细」是她 2026-10-09 在生产 Base 新建的表，schema 必须登记');
 
   // 表名 + table_id 都按**生产真表**的只读核对结果。
-  assert.equal(table.tableName, 'P交易明细');
+  assert.equal(table.tableName, 'P发生明细');
   // ⚠️ table_id 照旧走环境变量（本机 .env 指向测试 Base，不能写死成"生产 id 才对"）。
   assert.equal(
     table.tableId,
@@ -84,9 +84,9 @@ test('A(2026-10-09) 新表「P交易明细」登记进 schema：只登记表，�
     transactionDetailId: '交易明细ID',
     supplier: '供应商',
     batchNo: '报货批次号',
-    behavior: '发生行为',
     amount: '发生额',
-  }, 'P交易明细字段按 2026-11-19 生产真表登记');
+  }, 'P发生明细可写字段按 2026-11-19 生产真表登记');
+  assert.equal(table.readOnlyFields.behavior.name, '发生行为', '发生行为是 Lookup，只读');
 
   // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
   //   改前逐字：`V1_SCHEMA_SCOPES.all.includes('paymentDetail') === false`（理由：列还没定 ⇒ 不进闸门）

@@ -466,15 +466,20 @@ const V1_BITABLE_SCHEMA = {
     //   等她定了列 ⇒ ① 在这里补 `fields`；② 把新列接进对应链路（判断要不要写入点）。
     // ⚠️ table_id 仍走环境变量（`FEISHU_V1_PAYMENT_DETAIL_TABLE_ID`），默认值 = 生产真表的 id。
     paymentDetail: {
-      // 2026-10-29 生产表改名：付款明细 → P交易明细（table_id 不变）。
-      tableName: 'P交易明细',
+      // 2026-11-19 生产实际表名：P发生明细（table_id 不变；同 Base 另有 P交易明细，别混）。
+      tableName: 'P发生明细',
       tableId: getEnv('FEISHU_V1_PAYMENT_DETAIL_TABLE_ID'),
       // 2026-11-19 只读核对生产真表：已从「只有文本」长成业务列；代码仍无读写点，仅登记供闸门核对。
+      // 「发生行为」是 Lookup（只读），绝不能进可写 fields；登记在 readOnlyFields。
+      readOnlyFields: Object.freeze({
+        behavior: Object.freeze({
+          name: '发生行为', type: 19, uiType: 'Lookup', writable: false,
+        }),
+      }),
       fields: {
         transactionDetailId: '交易明细ID',
         supplier: '供应商',
         batchNo: '报货批次号',
-        behavior: '发生行为',
         amount: '发生额',
       },
     },
