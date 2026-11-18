@@ -289,6 +289,16 @@ const classifyResultOutcome = (result, retry = ASYNC_JOBS.retry) => {
   if (code && retry.permanentResultCodes.includes(code)) {
     return { ok: false, retryable: false, message, code };
   }
+  // 2026-11-18：销售链路会把底层 AxiosError 放在 result.error 里；
+  //   飞书 1254607 在 error.response.data.code，顶层只有 400。
+  //   ⚠️ 飞书临时码必须先于 HTTP 400 判，否则会把它当永久失败（只跑 1 次）。
+  const nestedCode = feishuCodeOf(result?.error) || feishuCodeOf(result?.cause);
+  if (nestedCode && retry.retryableFeishuCodes.includes(nestedCode)) {
+    return { ok: false, retryable: true, message, code };
+  }
+  if (nestedCode && retry.permanentFeishuCodes.includes(nestedCode)) {
+    return { ok: false, retryable: false, message, code };
+  }
   const retryablePattern = new RegExp(retry.retryablePattern, 'i');
   if (retryablePattern.test(message)) return { ok: false, retryable: true, message, code };
   const permanentPattern = new RegExp(retry.permanentPattern, 'i');

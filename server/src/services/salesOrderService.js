@@ -18,6 +18,7 @@ const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimen
 // ⭐ 赠品的落点/归一（业务负责人 2026-10-08：落点从「销售明细」搬到「销售主表」）。
 //   分隔符与占位文案都在那份 config 里；这里只负责按它的规则算与写。
 const { giftTextOfItem, mergeGiftTexts } = require('../config/salesGift');
+const { SALES_PRODUCT_READ_RETRY } = require('../config/salesProductRead');
 const { SalesStatusWriter } = require('./salesStatusWriter');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 const { mergeCorrelation } = require('../utils/correlationFields');
@@ -208,7 +209,10 @@ class SalesOrderService {
           // **这一行自己的**交易类型关联（单选）。
           tradeTypeRecordId: await tradeTypeRecordIdForItem(item.tradeTypeCode),
         };
-        const product = await this.references.resolveProduct({ ...item, matchMode: 'sales' });
+        const product = await this.references.resolveProduct(
+          { ...item, matchMode: 'sales' },
+          { retry: SALES_PRODUCT_READ_RETRY },
+        );
         const size = positiveInteger(item.size, '尺码');
         const sizeReference = await this.getSizeReferences().resolveByNumber(size);
         expected.push({ ...row, linkRecordId: product.recordId, size, sizeRecordId: sizeReference.recordId });

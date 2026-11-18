@@ -75,9 +75,11 @@ class V1ReferenceResolver {
     this.gateway = gateway;
   }
 
-  async resolveProduct(input = {}) {
+  async resolveProduct(input = {}, options = {}) {
     if (input.productRecordId) {
-      const record = await this.gateway.get('product', input.productRecordId);
+      const record = options.retry
+        ? await this.gateway.get('product', input.productRecordId, { retry: options.retry })
+        : await this.gateway.get('product', input.productRecordId);
       if (!record) throw new Error(`找不到货品记录：${input.productRecordId}`);
       return { recordId: input.productRecordId, record };
     }

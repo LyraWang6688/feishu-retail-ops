@@ -20,7 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  ASYNC_JOB_STATUS, ASYNC_JOB_TYPES, buildAsyncJobsConfig,
+  ASYNC_JOB_STATUS, ASYNC_JOB_TYPES, ASYNC_JOBS, buildAsyncJobsConfig, classifyResultOutcome,
 } = require('../src/config/asyncJobs');
 const { createAsyncJobStore, jobIdFor } = require('../src/services/asyncJobStore');
 const { createAsyncJobNotifier, renderAsyncJobFailureMessage, formatShanghaiTime } = require('../src/services/asyncJobNotifier');
@@ -389,4 +389,15 @@ test('AC-J10 统一通知服务：发 async_job_failed 卡片并保存 card_id /
   assert.equal(calls[0].data.title, '【异步写入失败】');
   assert.equal(job.notification_card_id, 'card_1');
   assert.equal(job.notification_message_id, 'msg_1');
+});
+
+test('AC-J2b3 结果里嵌套 error.response.data.code=1254607 ⇒ 仍是临时错误，job 要重试', () => {
+  const outcome = {
+    ok: false,
+    code: 'sale_partial_failed',
+    message: '没提交成功：Request failed with status code 400',
+    error: { response: { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } } },
+  };
+  const classified = classifyResultOutcome(outcome, ASYNC_JOBS.retry);
+  assert.equal(classified.retryable, true, '1254607 不能被顶层 400 判成永久失败');
 });
