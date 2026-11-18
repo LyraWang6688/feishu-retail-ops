@@ -122,22 +122,42 @@ export function createSalesQueryModule() {
       const today = todayKey();
       host.innerHTML = `<div class="domain-page sq-page">
         <div class="sq-filters">
-          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.startLabel)}</span><input type="date" value="${today}" data-sq-from></label>
-          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.endLabel)}</span><input type="date" value="${today}" data-sq-to></label>
+          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.startLabel)}</span><input type="date" value="${today}" max="${today}" data-sq-from></label>
+          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.endLabel)}</span><input type="date" value="${today}" min="${today}" data-sq-to></label>
           <label class="sq-filter"><span>${escapeHtml(PAGE.texts.quickRangeLabel)}</span><select data-sq-range>${PAGE.texts.quickRanges.map((item) => `<option value="${item.days}">${escapeHtml(item.label)}</option>`).join('')}</select></label>
           <button class="sq-btn" type="button" data-sq-query>${escapeHtml(PAGE.texts.query)}</button>
         </div>
         <div data-sq-body></div>
       </div>`;
+      const fromInput = host.querySelector('[data-sq-from]');
+      const toInput = host.querySelector('[data-sq-to]');
+      const syncBounds = () => {
+        if (!fromInput || !toInput) return;
+        toInput.min = fromInput.value || '';
+        fromInput.max = toInput.value || '';
+        if (fromInput.value && toInput.value && fromInput.value > toInput.value) {
+          toInput.value = fromInput.value;
+        }
+        toInput.min = fromInput.value || '';
+      };
+      fromInput?.addEventListener('change', () => { syncBounds(); });
+      toInput?.addEventListener('change', () => {
+        if (fromInput?.value && toInput.value && fromInput.value > toInput.value) {
+          fromInput.value = toInput.value;
+        }
+        syncBounds();
+      });
       host.querySelector('[data-sq-query]')?.addEventListener('click', () => { void load(); });
       host.querySelector('[data-sq-range]')?.addEventListener('change', (event) => {
         const days = Number(event.target.value) || 1;
         const end = new Date();
         const start = new Date(end.getTime() - (days - 1) * 86400000);
-        host.querySelector('[data-sq-from]').value = dateKey(start);
-        host.querySelector('[data-sq-to]').value = dateKey(end);
+        fromInput.value = dateKey(start);
+        toInput.value = dateKey(end);
+        syncBounds();
         void load();
       });
+      syncBounds();
       void load();
     },
   };
