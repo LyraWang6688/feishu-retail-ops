@@ -1,4 +1,5 @@
 'use strict';
+const { SAMPLE_PROMOTION } = require('../../../config/samplePromotion');
 
 /**
  * 扫码路由深拆 P3a：剩余小动作分支（加货 / 清空）——从 `routes/scanPage/index.js` 搬出，**只搬不改**。
@@ -25,6 +26,8 @@ async function handleAddLine(ctx) {
           size: body[fields.size],
           amount: body[fields.amount],
           gift: body[fields.gift],
+          // 2026-11-18：卖到「只有样品」的尺码时，她在弹窗里选的新样品尺码。
+          samplePromotionSize: body[SAMPLE_PROMOTION.field],
           // ⭐ 2026-10-09（**本文件唯一的一处新增**）：「选中的这一双是现货还是预订」——
           //    判据与页面上那两个分组**同一份**（所选尺码在「样品 + 门盒」有没有货，
           //    纯函数在 `views/scanPageRealm.js`）。交易类型**编码**不在这里写死：

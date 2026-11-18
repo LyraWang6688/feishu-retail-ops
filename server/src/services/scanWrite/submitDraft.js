@@ -13,6 +13,8 @@
  * ⚠️ 行为逐字保持（含注释里记录的历史 P0）；改动前先看本文件底部两条回归判据。
  */
 
+const { SAMPLE_PROMOTION } = require('../../config/samplePromotion');
+
 /** 本单已有的草稿行（兼容 `sale.lines` 与旧形状 `lines`）。 */
 const resolvePendingDraftLines = (session) => (Array.isArray(session?.sale?.lines)
   ? session.sale.lines
@@ -48,6 +50,8 @@ const buildSubmitPending = ({ body, fields, parsePaymentRows }) => ({
   payments: parsePaymentRows(body, fields),
   paymentStatus: String(body[fields.paymentStatus] || '').trim(),
   paidAmount: String(body[fields.paidAmount] ?? ''),
+  // 2026-11-18：货品页弹窗里选的新样品尺码（没有就不带）。
+  samplePromotionSize: String(body[SAMPLE_PROMOTION.field] ?? '').trim(),
 });
 
 /**

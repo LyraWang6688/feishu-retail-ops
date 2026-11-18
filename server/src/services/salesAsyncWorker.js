@@ -16,6 +16,8 @@ const {
 } = require('../config/asyncJobs');
 const { createSalesJobStore, STATUS } = require('./salesJobStore');
 const { buildSalePayload } = require('./salesPayload');
+const { InventoryService } = require('./inventoryService');
+const { createSamplePromotionService } = require('./samplePromotionService');
 const { logInfo, logWarn, logError } = require('../utils/logger');
 
 const paymentStatusOf = (derived = {}) => {
@@ -29,10 +31,21 @@ const createSalesAsyncWorker = ({
   gateway, sessions, writeService, jobStore = createSalesJobStore(), asyncJobs = null,
   // ⭐ 2026-11-17：销售 job 成功后，让打印意图（如果她点过「打印」）自动入队。
   onSettled = null,
+  // 2026-11-18：补样品（卖到只有样品的尺码时）。可注入用例替身。
+  samplePromotion = null,
   logger = { logInfo, logWarn, logError },
 } = {}) => {
   if (!gateway || !writeService) throw new Error('SalesAsyncWorker requires gateway + writeService');
   const sessionService = sessions || writeService.sessions;
+  let samplePromotionInstance = samplePromotion;
+  const samplePromotionOf = () => {
+    if (!samplePromotionInstance) {
+      samplePromotionInstance = createSamplePromotionService({
+        inventory: new InventoryService({ gateway }), logger,
+      });
+    }
+    return samplePromotionInstance;
+  };
   const running = new Map();
   // ⭐ 2026-10-27：全局 FIFO 队列。异步提交会连续入队，不能多个 job 同时打飞书。
   const pendingQueue = [];
@@ -89,6 +102,7 @@ const createSalesAsyncWorker = ({
         trade_type_code: line.trade_type,
         amount: line.actual_amount,
         gift: payload.gift,
+        samplePromotionSize: line.samplePromotionSize,
         added_at: new Date().toISOString(),
       });
     }
@@ -116,6 +130,34 @@ const createSalesAsyncWorker = ({
       oneShot: true,
     }, { correlation: correlationOf(job) });
     const ok = result?.ok === true && !(Number(result?.stock?.failed || 0) > 0);
+    // ⭐ 2026-11-18：销售库存已经成功 ⇒ 才补样品。补样品失败只记 warn，不改销售结果。
+    if (ok) {
+      const replacements = Array.isArray(result?.stock?.sampleReplacements) ? result.stock.sampleReplacements : [];
+      for (const item of replacements) {
+        const chosen = String(item?.samplePromotionSize || '').trim();
+        if (!chosen) continue;
+        try {
+          const out = await samplePromotionOf().promote({
+            productRecordId: item.productRecordId,
+            size: chosen,
+            salesDetailRecordId: item.salesDetailRecordId,
+            operatorOpenId: job.payload?.open_id || '',
+            requestId: job.job_id,
+          });
+          if (out && out.ok === false) {
+            logger.logWarn('inventory.sample.promotion_failed', {
+              job_id: job.job_id, product_record_id: item.productRecordId, size: chosen,
+              sales_detail_record_id: item.salesDetailRecordId, reason: out.code || 'failed',
+            });
+          }
+        } catch (error) {
+          logger.logWarn('inventory.sample.promotion_failed', {
+            job_id: job.job_id, product_record_id: item.productRecordId, size: chosen,
+            sales_detail_record_id: item.salesDetailRecordId, error: String(error?.message || error),
+          });
+        }
+      }
+    }
     return {
       ok,
       status: ok ? STATUS.succeeded : (result?.ok === true ? STATUS.partialFailed : STATUS.failed),

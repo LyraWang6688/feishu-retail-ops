@@ -135,6 +135,7 @@ const createScanWriteSales = ({
         amount: pendingLine.amount === undefined || pendingLine.amount === null || pendingLine.amount === ''
           ? null : Number(pendingLine.amount),
         gift: String(pendingLine.gift || ''),
+        sample_promotion_size: String(pendingLine.samplePromotionSize || '').trim(),
         added_at: new Date(now()).toISOString(),
       });
       if (!added.ok) {
@@ -202,6 +203,8 @@ const createScanWriteSales = ({
         //    既有业务层按它解析「行为管理」记录、写进「销售明细.交易类型」；
         //    解析不到不阻塞入账（退回主表那条 / 留空），与它原来的口径一字不差。
         tradeTypeCode: String(line.trade_type_code || '').trim(),
+        // 2026-11-18：只把她的选择带到交付结果；真正补样品在销售成功后。
+        samplePromotionSize: String(line.sample_promotion_size || '').trim(),
       });
     }
 

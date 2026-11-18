@@ -32,8 +32,9 @@ const createDeliveryStep = ({ delivery, now, events, logError }) => {
     const deliverable = items
       .map((item, index) => ({ item, detailRecordId: String(detailRecordIds?.[index] || '') }))
       .filter(({ item, detailRecordId }) => detailRecordId && lineDeliversOnSubmit(item));
-    if (!deliverable.length) return { requested: 0, delivered: 0, failed: 0, reasons: [] };
+    if (!deliverable.length) return { requested: 0, delivered: 0, failed: 0, reasons: [], sampleReplacements: [] };
     const detailIds = deliverable.map(({ detailRecordId }) => detailRecordId);
+    const itemByDetail = new Map(deliverable.map(({ item, detailRecordId }) => [detailRecordId, item]));
     try {
       const invoice = await delivery().deliver({
         salesEntryRecordId,
@@ -44,11 +45,18 @@ const createDeliveryStep = ({ delivery, now, events, logError }) => {
         occurredAt: now(),
       }, { correlation });
       const failures = invoice?.failures || [];
+      // 2026-11-18：把「这一行补样品选的是哪个尺码」挂到交付结果上（不额外读表）。
+      const sampleReplacements = (Array.isArray(invoice?.sampleReplacements) ? invoice.sampleReplacements : [])
+        .map((item) => ({
+          ...item,
+          samplePromotionSize: String(itemByDetail.get(item?.salesDetailRecordId)?.samplePromotionSize || '').trim(),
+        }));
       return {
         requested: detailIds.length,
         delivered: detailIds.length - failures.length,
         failed: failures.length,
         reasons: failures.map((failure) => String(failure?.error || '').trim()).filter(Boolean),
+        sampleReplacements,
       };
     } catch (error) {
       // 交付这一段**整体抛**（例：明细不属于这一单 / 主表还没入账 / 库存校验失败）：
@@ -62,6 +70,7 @@ const createDeliveryStep = ({ delivery, now, events, logError }) => {
         delivered: 0,
         failed: detailIds.length,
         reasons: [String(error.message || error)],
+        sampleReplacements: [],
       };
     }
   };

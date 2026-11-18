@@ -16,6 +16,7 @@ delete process.env.WORKBENCH_ALLOWED_OPEN_IDS;
 
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
+const { SAMPLE_PROMOTION } = require('../src/config/samplePromotion');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
 const cookie = (() => {
@@ -100,6 +101,7 @@ test('AC-ZERO-ROUTE1 全 0 ⇒ 不跳资金页，直接入队（payments=[]）',
         [SCAN_WRITE.fields.size]: '40',
         [SCAN_WRITE.fields.amount]: '0',
         [SCAN_WRITE.fields.gift]: '',
+        [SAMPLE_PROMOTION.field]: '40',
       }).toString(),
     });
     assert.equal(response.status, 303);
@@ -110,6 +112,7 @@ test('AC-ZERO-ROUTE1 全 0 ⇒ 不跳资金页，直接入队（payments=[]）',
     assert.deepEqual(payload.payments, [], '0 元单不写 S交易明细');
     assert.equal(payload.lines.length, 1);
     assert.equal(payload.lines[0].actual_amount, 0);
+    assert.equal(payload.lines[0].samplePromotionSize, '40', '弹窗选择随行进入 payload');
     assert.equal(payload.derived.total_amount, 0);
     assert.equal(payload.derived.owed_amount, 0);
     assert.equal(payload.order_no, 'XSD-20261118-0009');

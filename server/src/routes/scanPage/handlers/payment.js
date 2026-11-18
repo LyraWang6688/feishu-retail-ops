@@ -3,6 +3,7 @@ const { resolvePaymentSettlement } = require('../../../services/scanWrite/paymen
 const { tapIdFromRequest } = require('../../../utils/correlationFields');
 // ⭐ 2026-11-18：资金页与「货品页 0 元直达」共用同一个异步提交件（行为不变）。
 const { enqueueSaleAsync, salePrintProductsOf } = require('../../../services/scanWrite/saleAsyncSubmit');
+const { SAMPLE_PROMOTION } = require('../../../config/samplePromotion');
 // ⭐⭐ 2026-10-29：**提交成功 = 统一 toast 共用件**（文案/落点/参数全部走 `config/submitToast.js`）。
 const { redirectWithSubmitToast } = require('../../../utils/submitToast');
 
@@ -133,6 +134,7 @@ async function handlePaymentPay(ctx) {
               color: line.color,
               kind: line.kind,
               gift: line.gift,
+              samplePromotionSize: line.sample_promotion_size,
             }));
             // ⭐ 2026-11-18：入队 / 轮换 submit_key / 打印轻页 / 统一 toast 全部收进共用件。
             const outcome = await enqueueSaleAsync({
@@ -278,6 +280,7 @@ async function handlePaymentPay(ctx) {
               size: pendingSize,
               amount: String(pendingInfo.amount || ''),
               gift: String(pendingInfo.gift || ''),
+              samplePromotionSize: String(pendingInfo.samplePromotionSize || body[SAMPLE_PROMOTION.field] || '').trim(),
               inStock: sellableSizeTexts(pendingView).has(pendingSize),
             } : null,
           }, { correlation: tapIdFromRequest(req) });

@@ -39,6 +39,7 @@ test('AC-SD-2 submitPending 原样存、不存第二份逐件实收', () => {
   });
   assert.deepEqual(pending, {
     size: '40', amount: '99', gift: '袜子', payments: [{ amount: '99' }], paymentStatus: '全付', paidAmount: '99',
+    samplePromotionSize: '',
   });
   assert.equal(Object.prototype.hasOwnProperty.call(pending, 'lineAmounts'), false);
 });

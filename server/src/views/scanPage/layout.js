@@ -8,6 +8,7 @@ const { realmScanScriptTagHtml, paymentAddRowScriptHtml, submitFeedbackScriptHtm
 const { SUBMIT_PROGRESS_STYLE, hasProgressSubmit, submitProgressScriptHtml } = require('./submitProgress');
 // ⭐ 2026-11-17：货品卡上的「库存调整 / 资料不齐去补全」两个入口（只挂 sales / purchase_return）。
 const { productActionsHtml } = require('./productActions');
+const { SAMPLE_PROMOTION_STYLE, samplePromotionScriptHtml } = require('./samplePromotion');
 
 const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = '' }) => `<!doctype html>
 <html lang="zh-CN">
@@ -17,14 +18,14 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = 
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 ${head}
-<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}${hasProgressSubmit(content) ? SUBMIT_PROGRESS_STYLE : ''}</style>
+<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}${content.includes('data-sample-promotion') ? SAMPLE_PROMOTION_STYLE : ''}${hasProgressSubmit(content) ? SUBMIT_PROGRESS_STYLE : ''}</style>
 </head>
 <body>
 <main class="page">
 ${content}
 </main>
 ${requestId ? `<p class="foot">${escapeHtml(config.texts.requestIdLabel)} <span class="mono">${escapeHtml(requestId)}</span></p>` : ''}
-${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}${content.includes('data-payment-add') ? `\n${paymentAddRowScriptHtml()}` : ''}${content.includes('data-gift-add') ? `\n${giftRowsScriptHtml()}` : ''}${hasProgressSubmit(content) ? `\n${submitProgressScriptHtml(config.texts.submitFailureText)}` : ''}
+${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}${content.includes('data-payment-add') ? `\n${paymentAddRowScriptHtml()}` : ''}${content.includes('data-gift-add') ? `\n${giftRowsScriptHtml()}` : ''}${content.includes('data-sample-promotion') ? `\n${samplePromotionScriptHtml()}` : ''}${hasProgressSubmit(content) ? `\n${submitProgressScriptHtml(config.texts.submitFailureText)}` : ''}
 </body>
 </html>
 `;

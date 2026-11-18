@@ -41,6 +41,8 @@ const normalizeLine = (line = {}, index) => {
       color: asText(line.color),
       gift: asText(line.gift),
       kind: asText(line.kind) || 'shoe',
+      // 2026-11-18：卖到「只有样品」的尺码时，她在弹窗里选的新样品尺码。
+      samplePromotionSize: asText(line.samplePromotionSize ?? line.sample_promotion_size),
     },
   };
 };

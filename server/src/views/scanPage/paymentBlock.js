@@ -4,6 +4,8 @@ const { realmScanConfigHtml } = require('../scanRealmScan');
 const { escapeHtml } = require('./fields');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');
 const { exchangeDiffBlock } = require('./exchangeDiff');
+const { samplePromotionHtml } = require('./samplePromotion');
+const { SAMPLE_PROMOTION } = require('../../config/samplePromotion');
 
 
 const hiddenField = (name, value) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
@@ -220,6 +222,10 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   // ══════════════════════════════════════════════════════════════════════════
   // 🔴 2026-10-29：没有开关了 ⇒ 「再加一个货品」只要这一单有明细就给 ✓
   const multiItemAdd = lines.length > 0;
+  // 候选尺码 = 实时库存里真的有记录的尺码（不按状态筛选），与视图的行同源。
+  const sampleCandidates = (Array.isArray(view?.rows) ? view.rows : [])
+    .filter((row) => !row?.unknown_size && Number(row?.total) > 0)
+    .map((row) => String(row.size_text));
   const multiItemTitleHtml = multiItemAdd
     ? `<h3 class="multi-item__title">${escapeHtml(MULTI_ITEM_RENDER_TEXTS.title)}</h3>\n`
     : '';
@@ -267,8 +273,9 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   });
   return `<section class="card">${flowBanner ? `<p class="flow-banner">${escapeHtml(flowBanner)}</p>` : ''}
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
-<form method="post" action="${escapeHtml(write.postAction)}" class="write-form"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-sample-candidates="${escapeHtml(JSON.stringify(sampleCandidates))}"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
+${samplePromotionHtml()}
 ${sizeInput}
 ${hideAmountInput ? '' : `<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"></div>`}
 ${alert}
@@ -309,16 +316,27 @@ ${hiddenField(fields.submitKey, write.saleKey)}
  *    ⇒ 这里**不再渲染 `size-chip__meta`**（原来它写着「N 双」/「预订」）：
  *       数量只在「库存」页看；「预订」已经在**组标题**那颗小标签上了，卡上不必每张重复。
  */
+/**
+ * 一个可选的尺码卡：尺码 + 状态标签（门盒/样品/空状态，不带数量）。
+ * data-sample-only=1 只在**所有库存记录都是样品**时出现 ⇒ 弹窗脚本据此触发。
+ */
+const sizeChipHtml = (item) => {
+  const states = Array.isArray(item?.states) ? item.states : [];
+  const tags = states.map((state) => `<span class="size-chip__state" data-state="${escapeHtml(state.key)}">${escapeHtml(state.label)}</span>`).join('');
+  const onlySample = states.length === 1 && states[0].key === SAMPLE_PROMOTION.texts.tagSample ? '1' : '0';
+  return `<label class="size-chip" data-size="${escapeHtml(item.size_text)}" data-sample-only="${onlySample}">
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
+<span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>${tags ? `<span class="size-chip__states">${tags}</span>` : ''}
+</label>`;
+};
+
 const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
 <fieldset class="size-group" data-stock-group="${escapeHtml(id)}">
 <legend class="size-group__legend">
 ${String(heading || '').trim() ? `<span class="size-group__title">${escapeHtml(heading)}</span>\n` : ''}<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
 </legend>
 ${items.length
-    ? `<div class="size-chips">${items.map((item) => `<label class="size-chip">
-<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
-<span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
-</label>`).join('\n')}</div>`
+    ? `<div class="size-chips">${items.map((item) => sizeChipHtml(item)).join('\n')}</div>`
     : `<p class="hint">${escapeHtml(empty)}</p>`}
 </fieldset>`;
 
@@ -344,10 +362,7 @@ ${inner}
 };
 
 /** 销售页那一块（#515）：折叠块里是**能选的尺码卡**（与外面同规则：`name="size"` 的 radio ✓） */
-const specialFoldHtml = (items) => specialFoldShellHtml(items, `<div class="size-chips">${items.map((item) => `<label class="size-chip">
-<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
-<span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>
-</label>`).join('\n')}</div>`);
+const specialFoldHtml = (items) => specialFoldShellHtml(items, `<div class="size-chips">${items.map((item) => sizeChipHtml(item)).join('\n')}</div>`);
 
 /** 库存 / 补货共用：折叠块里的条目**只是事实**（尺码 + 数量），不是可点的卡 ✓ */
 const specialFactsHtml = (items, v) => specialFoldShellHtml(items, `<ul class="size-fold__list">${items.map((item) => `
