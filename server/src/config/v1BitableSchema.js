@@ -398,6 +398,11 @@ const V1_BITABLE_SCHEMA = {
         // 🔴 2026-11-09：生产「S交易明细」已删除「交易类型」列（只读核过真表）
         //   ⇒ 映射同步删除；闸门会当场拦「缺少 V1 字段」。
       },
+      // 2026-11-18 销售查询：待结算券没有收付日时，按创建时间归属查询区间（只读，
+      // 不写自动时间列）；用独立语义键，避免被「createdAt = 可写时间列」的哨兵误伤。
+      readOnlyFields: Object.freeze({
+        createdTime: Object.freeze({ name: '创建时间', type: 1001, uiType: 'CreatedTime', writable: false }),
+      }),
     },
     // ⛔ 「客户往来货款」整段已删除（2026-10-08）。
     //

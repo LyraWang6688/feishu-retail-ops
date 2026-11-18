@@ -20,6 +20,10 @@ const table = (key) => V1_BITABLE_SCHEMA.tables[key];
 const fakeGateway = (records) => ({
   listAll: async (key) => (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
   getBatch: async (key, ids) => (records[key] || []).filter((row) => ids.includes(row.record_id)).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) })),
+  listFields: async (key) => (key === 'product' ? [{ field_name: '类别', property: { options: [
+    { id: 'optYH4QVvz', name: '男' },
+    { id: 'opthipbNy3', name: '女' },
+  ] } }] : []),
   table,
 });
 
@@ -141,4 +145,15 @@ test('AC-DR4 只批量取被引用记录：货品/颜色/尺码不再整表 list
   assert.equal(calls.listAll.salesEntry, 2, '销售主表是业务数据，每次读');
   assert.equal(calls.listAll.salesDetail, 2, '销售明细是业务数据，每次读');
   assert.equal(calls.listAll.paymentRecord, 2, '收款明细是业务数据，每次读');
+});
+
+test('AC-DR9 销售查询字段：类别选项 ID 映射为文字，编号富文本转字符串', async () => {
+  const records = baseRecords();
+  records.salesDetail[0].fields['类别'] = ['opthipbNy3'];
+  records.salesDetail[0].fields['品类'] = [{ text: '休闲棉鞋', type: 'text' }];
+  records.product[0].fields['编号'] = [{ text: 'XHB8095|黑色|女', type: 'text' }];
+  const data = await createSalesDeliveryReadService({ gateway: fakeGateway(records) }).listDeliveryData({ query: true });
+  assert.equal(data.orders[0].details[0].category_type, '女');
+  assert.equal(data.orders[0].details[0].category_name, '休闲棉鞋');
+  assert.equal(data.orders[0].details[0].number, 'XHB8095|黑色|女');
 });

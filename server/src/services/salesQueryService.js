@@ -38,7 +38,9 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
     }
     const data = await reader.listDeliveryData({ query: true });
     const payments = (data.all_payments || []).filter((row) => (
-      SALES_QUERY.paymentStatuses.includes(row.status) && inRange(row.received_at, fromText, toText)
+      SALES_QUERY.paymentStatuses.includes(row.status)
+      && row.received_at != null
+      && inRange(row.received_at, fromText, toText)
     ));
     const methodMap = new Map();
     for (const payment of payments) {
@@ -49,6 +51,16 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
       .map(([method, amount]) => ({ method, amount: Math.round(amount * 100) / 100 }))
       .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method));
     const revenue = Math.round(paymentMethods.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
+    const pendingMap = new Map();
+    for (const payment of data.all_payments || []) {
+      if (payment.status !== SALES_QUERY.pendingStatus || payment.received_at != null) continue;
+      if (!inRange(payment.created_at, fromText, toText)) continue;
+      const method = payment.method || SALES_QUERY.unknownMethod;
+      pendingMap.set(method, (pendingMap.get(method) || 0) + Number(payment.amount || 0));
+    }
+    const pendingMethods = [...pendingMap.entries()]
+      .map(([method, amount]) => ({ method, amount: Math.round(amount * 100) / 100 }))
+      .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method));
 
     const salesDetails = [];
     for (const order of data.orders || []) {
@@ -115,6 +127,7 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
       summary: {
         revenue,
         payment_methods: paymentMethods,
+        pending_methods: pendingMethods,
         delivered: { count: delivered.length, amount: sumAmount(delivered) },
         undelivered: { count: undelivered.length, amount: sumAmount(undelivered) },
         by_category: groupDetails('category_type'),

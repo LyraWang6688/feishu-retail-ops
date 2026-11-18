@@ -40,7 +40,7 @@ const TABLE_FIELD_KEYS = Object.freeze({
     'salesEntry', 'product', 'size', 'fulfillmentStatus', 'stockQuantity',
     'actualAmount', 'soldAt', 'categoryName', 'categoryType',
   ]),
-  paymentRecord: Object.freeze(['salesEntry', 'method', 'amount', 'status', 'tradeDirection', 'receivedAt']),
+  paymentRecord: Object.freeze(['salesEntry', 'method', 'amount', 'status', 'tradeDirection', 'receivedAt', 'createdTime']),
   product: Object.freeze(['itemNo', 'color', 'number']),
   color: Object.freeze(['name']),
   sizeManagement: Object.freeze(['size']),

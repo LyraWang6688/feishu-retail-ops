@@ -32,5 +32,6 @@ export const SALES_QUERY_PAGE = Object.freeze({
     byType: '按品类',
     orders: '销售明细',
     pendingTag: '待平台结算',
+    pendingExcluded: '待结算，未计入',
   }),
 });
