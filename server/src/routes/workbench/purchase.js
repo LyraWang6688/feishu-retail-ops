@@ -160,6 +160,56 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     //   ⇒ 传 **gateway 本体**（与 `scanArrivalService.purchaseQueryOf` 同一个形状 ✓）。
     return createPurchaseQueryService(options.gateway || new V1BitableGateway());
   };
+  // 验收详情 → 验收提交是两次 HTTP；同一批的采购明细和实时库存样品状态在 30 秒内复用，
+  // 避免提交时再整表读一遍（详情页刚读过）。失败不缓存；验收成功后主动失效。
+  const arrivalReadCache = new Map();
+  const sampleStateCache = new Map();
+  const readCacheTtlMs = Number(arrivalTab.readCacheTtlMs) || 30_000;
+  const cacheGet = (map, key) => {
+    const hit = map.get(key);
+    if (!hit) return null;
+    if (Date.now() - hit.at > readCacheTtlMs) {
+      map.delete(key);
+      return null;
+    }
+    return hit.value;
+  };
+  const cacheSet = (map, key, value) => {
+    if (map.size > 100) {
+      const oldest = [...map.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) map.delete(oldest[0]);
+    }
+    map.set(key, { at: Date.now(), value });
+    return value;
+  };
+  const arrivalRowsOf = async (batchNo) => {
+    const key = String(batchNo || '').trim();
+    const cached = cacheGet(arrivalReadCache, key);
+    if (cached) return cached;
+    const rows = (await purchaseQueryForArrival().listPurchaseRequests({
+      batchNo: key, reportBehavior: 'purchase_request',
+    })) || [];
+    return cacheSet(arrivalReadCache, key, rows);
+  };
+  let arrivalSampleStateService = null;
+  const arrivalSampleStatesOf = async (productIds) => {
+    const ids = [...new Set((productIds || []).map((id) => String(id || '').trim()).filter(Boolean))].sort();
+    if (!ids.length) return new Map();
+    const key = ids.join('|');
+    const cached = cacheGet(sampleStateCache, key);
+    if (cached) return cached;
+    if (!arrivalSampleStateService) {
+      arrivalSampleStateService = createPurchaseAcceptanceSampleService({
+        gateway: options.gateway || new V1BitableGateway(),
+      });
+    }
+    const states = await arrivalSampleStateService.stateOfProducts(ids);
+    return cacheSet(sampleStateCache, key, states);
+  };
+  const arrivalCacheInvalidate = (batchNo) => {
+    arrivalReadCache.delete(String(batchNo || '').trim());
+    sampleStateCache.clear();
+  };
   const arrivalService = options.arrival || createScanArrivalService({
     gateway: options.gateway || new V1BitableGateway(),
     config: (options.writeConfig || SCAN_WRITE).acceptance,
@@ -255,20 +305,13 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     const supplierRecordId = String(req.query?.[arrivalTab.fields.supplierRecordId] || '').trim();
     if (!batchNo) return res.status(400).json({ success: false, error: arrivalTab.texts.batchMissing });
     try {
-      let rows = (await purchaseQueryForArrival().listPurchaseRequests({
-        batchNo, reportBehavior: 'purchase_request',
-      })) || [];
+      let rows = await arrivalRowsOf(batchNo);
       if (supplierRecordId) {
         rows = rows.filter((row) => String(row.supplier_record_id || '').trim() === supplierRecordId);
       }
       if (!rows.length) return res.json({ success: true, rows: [], notice: arrivalTab.texts.emptyDetail });
-      // 2026-11-18：只读判断每个编号要不要她选样品尺码（一次实时库存读，不按行重复读）。
-      const sampleStateService = createPurchaseAcceptanceSampleService({
-        gateway: options.gateway || new V1BitableGateway(),
-      });
-      const sampleStates = await sampleStateService.stateOfProducts(
-        rows.map((row) => row.product_record_id),
-      );
+      // 2026-11-18：只读判断每个编号要不要她选样品尺码；短 TTL 缓存供提交复用。
+      const sampleStates = await arrivalSampleStatesOf(rows.map((row) => row.product_record_id));
       // ⭐ **只读**：只回 货号 / 尺码 / 数量（前端渲染成不可输入的清单 ✓）
       return res.json({
         success: true,
@@ -327,7 +370,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       // ⭐⭐ 2026-10-17（业务负责人逐字）：「验收就是我报货、然后货到了，我需要验收；
       //   退货是发给别人的，也就不用验收」⇒ **硬闸门**：只有「发生行为 = 报货」的批次能验收；
       //   退货批次 ⇒ 400 ＋ 人话 ＋ **零写入**（`scanArrivalService` 自己不判行为，必须在这里挡）。
-      const batchRows = (await purchaseQueryForArrival().listPurchaseRequests({ batchNo })) || [];
+      const batchRows = await arrivalRowsOf(batchNo);
       if (batchRows.some((row) => row.report_behavior === 'purchase_return')) {
         return res.status(400).json({ success: false, error: arrivalTab.texts.notRequestBatch });
       }
@@ -389,10 +432,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       }
       const submittedProductIds = [...new Set(submittedLines
         .map((line) => String(line.product_record_id || '').trim()).filter(Boolean))];
-      const sampleStateService = createPurchaseAcceptanceSampleService({
-        gateway: options.gateway || new V1BitableGateway(),
-      });
-      const sampleStates = await sampleStateService.stateOfProducts(submittedProductIds);
+      const sampleStates = await arrivalSampleStatesOf(submittedProductIds);
       const sizesByProduct = new Map();
       for (const line of submittedLines) {
         const product = String(line.product_record_id || '').trim();
@@ -526,6 +566,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       //    `SCAN_PAGE.saleSuccess` ✓ 本文件不新造字面量 ✗）。
       //    ⚠️ **不许**回 "已确认到货"：这一刻后台还没写 ⇒ 那是假成功 ✗（真失败另有出口：
       //       后台件的 warn ＋ 会话 `last_error` ⇒ 可查、可重试 ✓）。
+      arrivalCacheInvalidate(batchNo);
       return res.json({
         success: true,
         accepted: true,

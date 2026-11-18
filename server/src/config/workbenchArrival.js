@@ -21,6 +21,8 @@
 const { SCAN_PAGE } = require('./scanPage');
 
 module.exports = {
+  // 验收页 / 提交共用的短 TTL 只读缓存：详情页先读、提交时复用，避免同一批反复整表读。
+  readCacheTtlMs: 30_000,
   api: Object.freeze({
     detail: '/purchase/arrivals/detail',
     accept: '/purchase/arrivals/accept',
