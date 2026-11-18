@@ -63,7 +63,7 @@ const ON = { purchaseRequest: '采购明细', purchaseOrderBatch: '采购主表'
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-B1 源码哨兵：建「采购明细」行的 payload 里不许再写「采购行为」（报货 + 退货两条路）', () => {
-  for (const rel of ['services/purchaseWebhookService.js', 'services/purchaseReturnService.js']) {
+  for (const rel of ['services/purchaseWebhookService.js']) {
     const source = read(rel);
     const windows = payloadWindow(source, 'purchaseRequest');
     assert.ok(windows.length > 0, `${rel} 里应当有建「${ON.purchaseRequest}」行的地方（否则这条哨兵是空的）`);
@@ -75,7 +75,7 @@ test('AC-B1 源码哨兵：建「采购明细」行的 payload 里不许再写�
     }
   }
   // ⚠️ 反向：也不许"换个写法偷偷写"（例：先建再 update 那一列）
-  for (const rel of ['services/purchaseWebhookService.js', 'services/purchaseReturnService.js']) {
+  for (const rel of ['services/purchaseWebhookService.js']) {
     const source = read(rel);
     assert.equal(/update\(\s*'purchaseRequest'[^)]*behavior/.test(source), false,
       `${rel}：不许用 update 往「${ON.purchaseRequest}.采购行为」补写`);

@@ -203,7 +203,7 @@ test('AC-PAW1 ⭐ 退货非空金额 ⇒ 批次行「发生金额」**逐字**�
     // 老口径不许被碰：退货批次**仍然不写「到货状态」**（她 2026-10-07 的口径）
     assert.equal('到货状态' in batches[0].fields, false, '退货批次照旧不写「到货状态」✓');
     // 明细 / 库存照旧（这次改动一个字节都没动它们）
-    assert.equal((h.tables.purchaseRequest || []).length, 1, '退货明细照写 ✓');
+    assert.equal((h.tables.purchaseRequest || []).length, 0, '退货不写采购明细 ✓');
     assert.equal((h.tables.inventoryLedger || []).length, 1, '库存照扣 ✓');
   } finally { h.cleanup(); }
 });
@@ -293,7 +293,7 @@ test('AC-PAW3 ⭐ 幂等：同一把 `submitKey`（串行两跑 + 并发两跑�
     assert.equal(batchesOf(serial).length, 1, '只建一个批次 ✓');
     assert.equal(batchesOf(serial)[0].fields['发生金额'], Number(AMOUNT), '金额仍是那个数 ✓');
     assert.equal(amountWritesOf(serial).length, 1, '「发生金额」**只写了一次**（重放不再写 ✓）');
-    assert.equal((serial.tables.purchaseRequest || []).length, 1, '明细只一条 ✓');
+    assert.equal((serial.tables.purchaseRequest || []).length, 0, '退货不写采购明细 ✓');
     assert.equal((serial.tables.inventoryLedger || []).length, 1, '库存只扣一次 ✓');
   } finally { serial.cleanup(); }
 
@@ -349,7 +349,7 @@ test('AC-PAW4 🔴 金额没写进去 ⇒ 如实报失败（**不许假成功**�
     assert.equal(retry.ok, true, JSON.stringify(retry));
     assert.equal(batchesOf(h).length, 1, '重试**不建第二个批次** ✓');
     assert.equal(batchesOf(h)[0].fields['发生金额'], Number(AMOUNT), '重试把金额写上了 ✓');
-    assert.equal((h.tables.purchaseRequest || []).length, 1, '明细补齐 ✓');
+    assert.equal((h.tables.purchaseRequest || []).length, 0, '退货不写采购明细 ✓');
     assert.equal((h.tables.inventoryLedger || []).length, 1, '库存扣一次 ✓');
   } finally { h.cleanup(); }
 });

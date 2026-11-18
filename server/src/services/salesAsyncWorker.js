@@ -142,6 +142,7 @@ const createSalesAsyncWorker = ({
             productRecordId: item.productRecordId,
             size: chosen,
             salesDetailRecordId: item.salesDetailRecordId,
+            salesEntryRecordId: item.salesEntryRecordId || '',
             operatorOpenId: job.payload?.open_id || '',
             requestId: job.job_id,
           });

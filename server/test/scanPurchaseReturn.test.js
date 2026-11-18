@@ -396,30 +396,13 @@ test('AC-R2 提交退货 ⇒「采购明细」退货明细（行为列不写：L
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.shortfall, 0, '库存够 ⇒ 没有差额');
     assert.equal(result.taken_count, 3);
-    assert.equal(result.request_count, 2);
+    assert.equal(result.request_count, 0);
     assert.equal(result.batch_no, 'CGD-20261011-0001');
 
-    // ① 明细行：数量 = 实退数、挂在同一个报货批次上（⚠️ 「采购行为」列**不再写**：它是 Lookup）
-    const requests = entriesOf(h, 'purchaseRequest');
-    assert.equal(requests.length, 2);
-    const bySize = new Map(requests.map((record) => [String(record.fields['尺码']), record]));
-    assert.equal(bySize.get('size_41').fields['数量'], 2);
-    assert.equal(bySize.get('size_42').fields['数量'], 1);
-    for (const record of requests) {
-      assert.deepEqual(record.fields['编号'], ['prod_1']);
-      // 🔴 2026-10-12 热修：Lookup（只读）⇒ 退货明细也不许写这一列
-      assert.equal('发生行为' in record.fields, false, '发生行为是 Lookup，不许写');
-    }
-    // ⭐⭐ 2026-10-12（她确认要写）：退货那一档写**主表**行（明细由它 Lookup 带出）
-    // ⭐ 2026-10-17：主表行为列真表已改名「发生行为」（她逐字）
+    // ① 2026-11-18：退货不写采购明细；主表行为列照常写。
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.deepEqual(entriesOf(h, 'purchaseOrderBatch')[0].fields['发生行为'], ['bh_return_purchase'],
       '主表「采购行为」= 采购退货那一档');
-    for (const record of requests) {
-      assert.equal('发生行为' in record.fields, false, '发生行为是 Lookup，不许写');
-      assert.ok(record.fields['幂等键'], '每条退货明细都有幂等键（既有 createOnceByKey 的判据）');
-      assert.deepEqual(record.fields['报货批次号'], [entriesOf(h, 'purchaseOrderBatch')[0].record_id],
-        '退货明细必须挂「报货批次号」（退货单 PNG 才有落点）');
-    }
 
     // ② 批次行：只写 批次号 + 幂等键 —— 🔴 没有「到货状态」这一列的值
     const batches = entriesOf(h, 'purchaseOrderBatch');
@@ -511,8 +494,7 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
     assert.equal(result.taken_count, 3);
     assert.equal(result.shortfall, 2);
     assert.deepEqual(result.shortfalls, [{ size: 41, declared: 5, available: 3, taken: 3, shortfall: 2 }]);
-    const request = entriesOf(h, 'purchaseRequest')[0];
-    assert.equal(request.fields['数量'], 3, '写的是实退数（不是她填的 5）');
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.equal(ledgerTotal(h), 3, '库存按实退数扣');
     assert.equal(entriesOf(h, 'liveInventory').length, 1, '41 码三双扣完，只剩 42 那一条');
 
@@ -562,7 +544,7 @@ test('AC-R5 超库存：报 5 双、库存 3 双 ⇒ 明细写 3、差额 2 如�
       await waitForPendingPurchaseBackgrounds();
       assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 2,
         '⭐ 等后台那一跑 ⇒ 第二批**真的**建出来（先回成功页 ≠ 没写 ✓）');
-      assert.equal(entriesOf(h, 'purchaseRequest').length, 2, '第二批的退货明细也写了 ✓');
+      assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细 ✓');
     });
   } finally { h.cleanup(); }
 });
@@ -606,7 +588,7 @@ test('AC-R6 幂等：同一把键连点两次（含并发）⇒ 只写一次，�
     assert.equal([first, second].filter((item) => item.reused === true).length, 1,
       '并发两次里恰有一次是"把上一次的结果还给她"');
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1);
-    assert.equal(entriesOf(h, 'purchaseRequest').length, 2);
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.equal(ledgerTotal(h), 2, '库存只扣一次');
     const third = await h.write.submitPurchaseReturn(input);
     assert.equal(third.reused, true);
@@ -642,7 +624,7 @@ test('AC-R6b 中途失败后重试：不重新取号、已写过的明细不写�
     assert.equal(retry.ok, true, JSON.stringify(retry));
     assert.equal(h.batchNoCalls(), 1, '重试不重新取号');
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '不建第二个批次');
-    assert.equal(entriesOf(h, 'purchaseRequest').length, 2, '两条明细各一条，不重复');
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.equal(ledgerTotal(h), 2, '库存最终只扣一次');
     assert.equal(entriesOf(h, 'liveInventory').length, 2);
   } finally { h.cleanup(); }
@@ -695,7 +677,6 @@ test('AC-R8 源码哨兵：scanWriteService 不直连写库、不 construct 库�
   // 新增的退货 service：库存只经 InventoryService 的薄方法
   const service = fs.readFileSync(path.join(SERVER_SRC, 'services', 'purchaseReturnService.js'), 'utf8');
   assert.match(service, /applyPurchaseReturn/);
-  assert.match(service, /createOnceByKey/);
   assert.match(service, /createForReturnBatch/);
   assert.equal(/gateway\.(update|delete)\s*\(/.test(service), false,
     '退货 service 自己不 update/delete 业务表（写入全部经既有件）');
@@ -730,7 +711,7 @@ test('AC-R9 失败有人话：内部错误（表名/字段名/record_id）不回
     // 模拟飞书侧的内部错误（字段名 + record_id 都在里面，属于不许回显的那一类）
     const originalCreate = h.gateway.create;
     h.gateway.create = async (key, values) => {
-      if (key === 'purchaseRequest') throw Object.assign(new Error('FieldNameNotFound: 数量 (record_id: rec_1)'), { bitableRejected: true });
+      if (key === 'purchaseOrderBatch') throw Object.assign(new Error('FieldNameNotFound: 数量 (record_id: rec_1)'), { bitableRejected: true });
       return originalCreate(key, values);
     };
     await withServer(formApp(h), async (base) => {

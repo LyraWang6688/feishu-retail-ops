@@ -7,14 +7,13 @@
  *   | 这一步 | 走哪个既有件 |
  *   | --- | --- |
  *   | 「采购主表」建一行（批次号 + 幂等键 + **采购行为**；**不写到达状态**） | `PurchaseOrderBatchService.createForReturnBatch` |
- *   | 「采购明细」写退货明细（**一次攒批**；幂等键一次认完 + 批量建行） | `createOnceByKeys`（`infrastructure/idempotencyKey`，与报货同一套语义） |
+ *   | 退货**不写采购明细**（2026-11-18 起） | 无（只保留退货批次 + 库存流水 + 实时库存） |
  *   | 扣库存 | `InventoryService.applyPurchaseReturnBatch`（⭐ task-65：一批一次；没有批量口时回落 `applyPurchaseReturn`） |
  *   | 出「采购退货单」PNG → 发群 → 回填「报货批次.单据」 | `PurchaseWebhookService.deliverSupplierImages`（只换标题/文件名后缀） |
  *   | 批次号 | 既有 `PurchaseBatchNoGenerator`（`CGD-YYYYMMDD-NNNN`） |
  *
- * ⭐ 2026-10-16（业务负责人逐字「**退货也需要批量提速**」）：**明细写入由逐条改攒批** ——
- *   改前：N 个尺码 ⇒ **N 次整表读**（逐条 `createOnceByKey` 的幂等回查，`listAll` 是翻页读）
- *   ＋ **N 次单条 create**；改后：**1 次整表读 ＋ 1 次 `createBatch`**。落表内容一字不差。
+ * ⭐ 2026-11-18（业务负责人）：退货**不再写采购明细**，只保留退货批次、库存流水和实时库存；
+ *   退货单图片仍由 `draft.items` 生成，不再依赖 purchaseRequest 行。
  *   ⚠️ **实时库存那一段（`ensurePlan`）本来就不慢**：整表读在**循环外只读一次**、
  *   循环里只剩内存 filter（`resolveSize` 走 30 秒缓存）⇒ **一个字都没改**。
  *   ⚠️ `inventoryService` 内部（逐尺码 `listAll('liveInventory')` ＋ 逐双 `get`/`delete`）
@@ -67,7 +66,6 @@
  *   ⇒ 只认载荷就会把混供应商的退货整单落进「未标注供应商」✗。
  */
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
-const { createOnceByKeys, IDEMPOTENCY_KEY_FIELD } = require('../infrastructure/idempotencyKey');
 const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { relation, V1ReferenceResolver } = require('./v1ReferenceResolver');
@@ -80,7 +78,6 @@ const {
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { correlationFields } = require('../utils/correlationFields');
 // ⭐ 2026-10-12 采购明细ID（`{报货批次号}-{两位序号}`）—— 与报货那条**同一个分配器**。
-const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
@@ -161,7 +158,6 @@ const createPurchaseReturnService = (options = {}) => {
   const inventory = options.inventory || new InventoryService({ gateway });
   const orderBatches = options.orderBatches || new PurchaseOrderBatchService({ gateway });
   // ⭐ 2026-10-12：采购明细ID 分配器（用例可注入替身）。
-  const detailIds = options.detailIds || createPurchaseDetailIdAllocator({ gateway });
   // 只为"出退货单图"那一步（发群 / 回填附件都在它内部）；用例可以不注入（那就只记一条 warn）。
   const webhooks = options.webhooks || null;
   const batchNoGenerator = options.batchNoGenerator || new PurchaseBatchNoGenerator({ gateway });
@@ -395,56 +391,10 @@ const createPurchaseReturnService = (options = {}) => {
       await store.update(taskId, { order_amount_written: amountWrite.actual_amount });
     }
 
-    // ⭐⭐ 2026-10-12：采购明细ID = `{报货批次号}-{两位序号}`（退货这条链路同样要写；
-    //    与报货那条**同一个分配器** ⇒ 同一批次内 01/02… 不重排、不重号、重放不重复占号）。
-    const detailIdCursor = await detailIds.open({ batchRecordId, batchNo: plan.batch_no });
-
-    // ② **一次攒批**：把这一批的退货明细一次写完（幂等键**一次认完** ＋ 批量建行）。
-    //    ⚠️ 顺序仍是**计划顺序**：`detailIdCursor.next()` 只在 `taken > 0` 的尺码上按序取号
-    //    （与逐条写法同一口径：跳过 `taken <= 0` 的尺码 ⇒ 它们**不占序号**）。
-    //    `resolveSize` 走 30 秒内存缓存 ⇒ 这一步**不发额外请求**（见文件头"这里本来就不慢"）。
-    const sizeRecordIdBySize = new Map();
-    for (const item of plan.items) {
-      if (item.taken <= 0) continue;
-      sizeRecordIdBySize.set(item.size, (await resolveSize(item.size)).recordId);
-    }
+    // ② 2026-11-18：退货**不写采购明细**（采购明细只属于报货/采购申请）。
+    //    退货保留「报货批次」；库存流水通过「关联采购」指向该批次。
+    // ⚠️ 出图不依赖 purchaseRequest 行：下面的 drawItems 直接由 plan/draft 生成。
     const drawnItems = plan.items.filter((item) => item.taken > 0);
-    const docs = await createOnceByKeys({
-      gateway,
-      tableKey: 'purchaseRequest',
-      keyField: IDEMPOTENCY_KEY_FIELD,
-      correlation,
-      rows: drawnItems.map((item) => {
-        const line = lineOf(item);
-        // 幂等键由「这个任务 + 这个尺码」推出 ⇒ 重放命中同一条远端记录，不写第二条。
-        // ⭐ task-64：**多货品**时再带上**这一行的货品** —— 两个货品同尺码时会撞同一把键
-        //   （第二行被当成重放吸收 ⇒ 静默少一行 ✗）；单货品仍是那串**逐字**不变的键 ✓（AC-RS2）。
-        const docKey = rowIdentity
-          ? `purchase_return_doc:${taskId}:${line.product_record_id}:${item.size}`
-          : `purchase_return_doc:${taskId}:${item.size}`;
-        return {
-          keyValue: docKey,
-          label: `采购退货明细 ${taskId} ${item.size}码`,
-          values: {
-            batchNo: relation(batchRecordId),
-            // 🔴 2026-10-12 热修（同一个 Lookup 列）：**不许再写「采购行为」** ——
-            //    「采购明细.采购行为」已被她改成 **Lookup（只读，按「报货批次号」关联采购主表）**，
-            //    写它轻则被忽略、重则整条退货明细 create 失败。
-            //    ⚠️ 与报货那条同一个待定项：主表的「采购行为」没有写入点（她 2026-10-07 说过不用管）
-            //    ⇒ 退货明细的这一列也会是空的，分流判据读不到就按现状=采购申请分流。
-            // ⭐ task-64：`product` 取**这一行**那个货品（改前是批次级那一个 ⇒ 多货品时是空串 ✗）
-            product: relation(line.product_record_id),
-            size: relation(sizeRecordIdBySize.get(item.size)),
-            quantity: item.taken,
-            // ⭐ 采购明细ID（`{报货批次号}-01`、`-02`…）
-            detailId: detailIdCursor.next(),
-            idempotencyKey: docKey,
-          },
-        };
-      }),
-    });
-
-    // ③ 逐尺码：扣库存（走 InventoryService；这一段**上一刀一个字没动**）＋ 准备出图入参。
     // ③ 扣库存（走 InventoryService；**本刀把它由"逐尺码"改成"一批一次"**）＋ 准备出图入参。
     //    ⭐ task-65（业务负责人 2026-10-16 逐字「退货也需要批量提速」）——
     //    **改前逐字**：`for (const item of drawnItems) { const change = await inventory.applyPurchaseReturn({...}) }`
@@ -475,16 +425,13 @@ const createPurchaseReturnService = (options = {}) => {
     const drawItems = [];
     for (let index = 0; index < drawnItems.length; index += 1) {
       const item = drawnItems[index];
-      const doc = docs[index];
       const change = changes[index];
       // ⭐ task-64：这一行的**身份**逐行取（货品 / 货号 / 颜色 / 供应商）——
       //   单货品时三个 `||` 右边**全中** ⇒ 与今天**逐字同一份** `drawItems`（AC-RS2 的 deepEqual ✓）。
       const line = lineOf(item);
-      requestIds.push(doc.recordId);
       logInfo(events.returnStockApplied, {
         task_id: taskId, batch_no: plan.batch_no, size: item.size, quantity: item.taken,
         product_record_id: line.product_record_id,
-        doc_id: doc.recordId, reused_doc: doc.reused === true,
         ledger_record_id: change?.ledgerRecordId || '',
         live_record_ids: change?.liveRecordIds || [],
         ...correlation,

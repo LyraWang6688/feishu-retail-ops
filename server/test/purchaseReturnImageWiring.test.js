@@ -467,7 +467,7 @@ test('AC-RI2 单货品退货（1 件）⇒ 1 张图 ＋ 「单据」1 张 ＋ �
       '「单据」里 1 张、文件名 = `documentFileNameOf`（唯一一处拼法 ✓）');
     assert.equal(h.messages.length, 2, '图 + @文字 = 2 条 ✓');
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '主表 1 行 ✓');
-    assert.equal(entriesOf(h, 'purchaseRequest').length, 1, '明细 1 行 ✓');
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细 ✓');
     assert.equal(logs.lines.some((line) => line.includes('"reason":"no_image_pipeline"')), false);
   } finally { logs.restore(); h.cleanup(); }
 });

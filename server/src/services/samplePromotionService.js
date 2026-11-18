@@ -20,7 +20,7 @@ const { logInfo, logWarn } = require('../utils/logger');
 
 const createSamplePromotionService = ({ inventory, logger = { logInfo, logWarn } } = {}) => {
   const promote = async ({
-    productRecordId, size, salesDetailRecordId = '', operatorOpenId = '', requestId = '',
+    productRecordId, size, salesDetailRecordId = '', salesEntryRecordId = '', operatorOpenId = '', requestId = '',
   } = {}) => {
     const product = String(productRecordId || '').trim();
     const wanted = Number(size);
@@ -72,6 +72,7 @@ const createSamplePromotionService = ({ inventory, logger = { logInfo, logWarn }
         productRecordId: product,
         sizeRecordId: target.sizeRecordId,
         behaviorCode: ADJUSTMENT_BEHAVIORS.DOORBOX_TO_SAMPLE,
+        salesEntryRecordId,
       }],
       operatorOpenId,
       correlation,

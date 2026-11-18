@@ -219,7 +219,7 @@ test('2026-11-18：销售成功后按 sampleReplacements 补样品；补样品�
     stock: {
       failed: 0,
       sampleReplacements: [{
-        salesDetailRecordId: 'd1', productRecordId: 'p1', sampleConsumedQuantity: 1,
+        salesDetailRecordId: 'd1', salesEntryRecordId: 's1', productRecordId: 'p1', sampleConsumedQuantity: 1,
         samplePromotionSize: '41',
       }],
     },
@@ -235,7 +235,7 @@ test('2026-11-18：销售成功后按 sampleReplacements 补样品；补样品�
     assert.equal(h.calls.lines[0].samplePromotionSize, undefined,
       '不再写驼峰字段（写驼峰会让交付侧读不到，补样品静默跳过）');
     assert.deepEqual(promoted, [{
-      productRecordId: 'p1', size: '41', salesDetailRecordId: 'd1',
+      productRecordId: 'p1', size: '41', salesDetailRecordId: 'd1', salesEntryRecordId: 's1',
       operatorOpenId: 'ou_1', requestId: a.job.job_id,
     }]);
 

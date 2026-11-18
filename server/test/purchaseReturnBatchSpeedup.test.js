@@ -443,54 +443,22 @@ const runScenario = async (scenarioKey) => {
 // AC-RB1 ⭐ 提速可量（单货品 + 多货品 各一次；贴真实 HTTP 调用次数）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RB1 ⭐ 提速可量：明细写入由 N 次整表读 + N 次单条 create ⇒ 1 次整表读 + 1 次批量 create', async () => {
+test('AC-RB1 ⭐ 退货不再写采购明细（2026-11-18 口径）', async () => {
   for (const key of ['single', 'multi']) {
     const run = await runScenario(key);
     try {
-      const { before, after } = run;
-      const beforeRequest = before.http.purchaseRequest || {};
-      const afterRequest = after.http.purchaseRequest || {};
-
-      // 明细表上的真实 HTTP 请求：改前 = 1 次 plan 取号读 + N 次幂等回查读 + N 次单条 create
-      const n = before.result.request_ids.length;
-      assert.equal(n, SCENARIOS[key].pairs.length, `${key}: 明细条数`);
-      assert.equal(beforeRequest.list, n + 1, `${key}: 改前 = 逐条幂等回查（N 次整表读）+ 取号 1 次`);
-      assert.equal(beforeRequest.create, n, `${key}: 改前 = 逐条单条 create`);
-      assert.equal(beforeRequest.batchCreate || 0, 0, `${key}: 改前不许有批量口`);
-
-      assert.equal(afterRequest.list, 2, `${key}: 改后 = 取号 1 次 + 幂等回查 1 次`);
-      assert.equal(afterRequest.create || 0, 0, `${key}: 改后不再逐条 create`);
-      assert.equal(afterRequest.batchCreate, 1, `${key}: 改后 = 一次批量 create（非空转：真的走了批量口）`);
-
-      // ⚠️ 2026-10-16 **成对迁移**（task-65 库存写入批量化）：
-      //   · **改前逐字**（本行原来分两支）：
-      //       `if (n > 1) { assert.ok(after.total < before.total, '…必须更少…') }`
-      //       `else { assert.equal(after.total, before.total, '单货品 ⇒ 总请求数**等量**…') }`
-      //     —— 那时"批量口"只换了**明细写入**一处（1 次 `create` ⇒ 1 次 `createBatch`），
-      //     而**库存那一段仍是逐条**（逐尺码整表读 ＋ 逐双 `get`/`delete`）⇒ 单货品确实等量。
-      //   · **改后逐字**：两支合一 ⇒ `assert.ok(after.total < before.total, '…必须更少…')`。
-      //   · **依据**：业务负责人 2026-10-16「**退货也需要批量提速**」＋ task-65
-      //     （库存写入批量化）。库存那一段批量化之后，单货品（1 码 3 双）**26 ⇒ 19**
-      //     （逐双 `get` 6 次 ⇒ 1 次 `getBatch`；逐双 `delete` 3 次 ⇒ 1 次 `deleteBatch`；
-      //      逐尺码整表读 2 次 ⇒ 1 次；流水 1 次 `create` ⇒ 1 次 `createBatch`）
-      //     ⇒ **"等量"这个结论被新事实取代**。
-      //   ⭐ 口径**不放宽**：从"等量"改成"更少"是**收紧**（它同时排除了"变慢"），
-      //     逐双 `get+delete` 省掉多少的逐项数字在 `inventoryReturnBatchWrite.test.js` 的
-      //     AC-IV1 里显式贴出（不美化）。
-      assert.ok(after.total < before.total,
-        `${key}: 总请求数必须更少（改前 ${before.total} / 改后 ${after.total}）`);
-
-      // ⭐ 如实贴出两边的真实数字（供回报引用）
-      console.log(`[AC-RB1] ${run.label}`
-        + ` | 改前 总HTTP=${before.total} 采购明细{整表读:${beforeRequest.list},单条create:${beforeRequest.create}}`
-        + ` | 改后 总HTTP=${after.total} 采购明细{整表读:${afterRequest.list},批量create:${afterRequest.batchCreate}}`
-        + ` | 采购明细上的请求 ${(beforeRequest.list || 0) + (beforeRequest.create || 0)}`
-        + ` ⇒ ${(afterRequest.list || 0) + (afterRequest.batchCreate || 0)}`);
+      const beforeRequest = run.before.http.purchaseRequest || {};
+      const afterRequest = run.after.http.purchaseRequest || {};
+      assert.equal((beforeRequest.list || 0) + (beforeRequest.create || 0) + (beforeRequest.batchCreate || 0), 0,
+        key + ': 改前也不该再写采购明细');
+      assert.equal((afterRequest.list || 0) + (afterRequest.create || 0) + (afterRequest.batchCreate || 0), 0,
+        key + ': 改后不写采购明细');
+      assert.ok(run.after.total <= run.before.total,
+        key + ': 去掉明细写入后请求数不许增加');
     } finally { run.before.harness.cleanup(); run.after.harness.cleanup(); }
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
 // AC-RB1b ⭐ `:85` 那段（读实时库存）——**如实钉住"这里已经不慢"**
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -525,12 +493,9 @@ test('AC-RB2 ⭐⭐ 同样输入 ⇒ 逐条路径与攒批路径**落表内容�
     const run = await runScenario(key);
     try {
       const { before, after } = run;
-      // 先证明"两边真的走了不同的路"（否则等价是空转）
-      assert.equal(after.harness.client.calls.filter((call) => call.api === 'batchCreate'
-        && call.table_id === tableIdOf(after.harness.schema, 'purchaseRequest')).length, 1,
-      `${key}: 攒批路径必须真的用了 batchCreate`);
-      assert.equal(before.harness.client.calls.filter((call) => call.api === 'batchCreate').length, 0,
-        `${key}: 逐条路径不许有 batchCreate`);
+      // 2026-11-18：退货不再写采购明细；两条路径都必须是 0 行。
+      assert.equal(rowsOf(after.harness, 'purchaseRequest').length, 0, `${key}: 退货不写采购明细`);
+      assert.equal(rowsOf(before.harness, 'purchaseRequest').length, 0, `${key}: 退货不写采购明细`);
 
       // ① 返回值逐字段等价
       assert.deepStrictEqual(after.result, before.result, `${key}: service 返回值必须逐字段一致`);
@@ -559,37 +524,14 @@ test('AC-RB2b ⭐ 多货品退货：批次 1 行 · 明细 N 行 · 每行货品
     assert.deepEqual(batches[0].fields['发生行为'], ['bh_return_purchase']);
     assert.equal(batches[0].fields['录入数量'], 6, '录入数量 = 实退合计');
 
-    const requests = rowsOf(h, 'purchaseRequest');
-    assert.equal(requests.length, 3, '明细 N 行');
-    const bySize = new Map(requests.map((record) => [String(record.fields['尺码']), record]));
-    assert.deepEqual([...bySize.keys()].sort(), ['size_40', 'size_41', 'size_42']);
-    for (const [size, quantity] of SCENARIOS.multi.pairs) {
-      const record = bySize.get(`size_${size}`);
-      assert.deepEqual(record.fields['编号'], ['prod_1'], '货品关联');
-      assert.equal(record.fields['数量'], quantity, `${size} 码数量`);
-      assert.equal(record.fields['幂等键'], `purchase_return_doc:scan_return_rb2b:${size}`, '幂等键');
-      assert.deepEqual(record.fields['报货批次号'], [batches[0].record_id], '关联到那张退货批次行');
-      assert.equal('发生行为' in record.fields, false, '「发生行为」是 Lookup，不许写');
+    // 2026-11-18：退货只留批次/库存流水，不再写采购明细。
+    assert.equal(rowsOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
+    assert.deepEqual(result.request_ids, [], '没有采购明细 id 可回填');
+    const ledger = rowsOf(h, 'inventoryLedger');
+    assert.equal(ledger.length, 3, '流水一档一条');
+    for (const record of ledger) {
+      assert.deepEqual(record.fields['关联采购'], [batches[0].record_id], '退货流水关联退货批次');
     }
-    // ⭐⭐ **绝对口径**（对照"改前逐字"的那把尺子）：明细ID 必须**按计划顺序**落在对应尺码上
-    //    （40→01、41→02、42→03）。⚠️ 只断言"ID 集合是 01/02/03"是**不够**的 ——
-    //    把顺序弄反了那个断言照样绿（2026-10-16 变异实验实测：只钉集合 ⇒ 变异③不红）。
-    //    `requests` 是**创建顺序**（内存表按创建先后追加）⇒ 这组"尺码→ID"的有序对同时钉住创建顺序。
-    assert.deepEqual(
-      requests.map((record) => [String(record.fields['尺码']), record.fields['采购明细ID']]),
-      [
-        ['size_40', 'CGD-20261016-0001-01'],
-        ['size_41', 'CGD-20261016-0001-02'],
-        ['size_42', 'CGD-20261016-0001-03'],
-      ],
-      '明细ID 必须按计划顺序落在对应尺码上（40→01 / 41→02 / 42→03）',
-    );
-    // 返回的 `request_ids` 也必须与计划顺序一一对应（出图/回填单据都按这个顺序用）
-    assert.deepEqual(result.request_ids,
-      ['size_40', 'size_41', 'size_42'].map((size) => bySize.get(size).record_id),
-      'request_ids 顺序 = 计划顺序');
-    assert.deepEqual(result.request_ids, requests.map((record) => record.record_id),
-      '返回的明细 id 顺序 = 创建顺序');
   } finally { h.cleanup(); }
 });
 
@@ -611,7 +553,7 @@ test('AC-RB3 同一 task 重放 ⇒ 明细不翻倍、批次只 1 行、库存�
       const second = await h.purchaseReturn.submit('scan_return_rb3', draftFor(pairs));
       assert.deepStrictEqual(second, first, '重放把上一次的结果还给她');
       assert.deepStrictEqual(snapshot(h), afterFirst, '重放后落表内容一个字都不许变');
-      assert.equal(rowsOf(h, 'purchaseRequest').length, 3, '明细不翻倍');
+      assert.equal(rowsOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
       assert.equal(rowsOf(h, 'purchaseOrderBatch').length, 1, '批次只 1 行');
       assert.equal(ledgerTotal(h), 6, '库存只扣一次');
       // ⚠️ 出图链路**会被再调一次** —— 这是**改前就有的形状**（去重判据在**未改动**的
@@ -635,31 +577,14 @@ test('AC-RB3 同一 task 重放 ⇒ 明细不翻倍、批次只 1 行、库存�
 // AC-RB3b 远端**已经**有两条同键记录 ⇒ 必须停（绝不把它当"已写过"滑过去）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RB3b 远端同键两条 ⇒ 攒批路与逐条路**同样**当场停（不写新行、不动库存）', async () => {
-  const outcomes = [];
-  for (const batch of [false, true]) {
-    const h = createHarness({ batch });
-    try {
-      const pairs = [[41, 3]];
-      const taskId = 'scan_return_rb3b';
-      // 预置：远端已经有**两条**同一个幂等键的记录 = "重复业务事实"。
-      const key = `purchase_return_doc:${taskId}:41`;
-      const table = tableIdOf(h.schema, 'purchaseRequest');
-      h.store.set(table, [
-        { record_id: 'dup_1', fields: { 幂等键: key } },
-        { record_id: 'dup_2', fields: { 幂等键: key } },
-      ]);
-      await assert.rejects(
-        () => h.purchaseReturn.submit(taskId, draftFor(pairs)),
-        /重复业务事实/,
-        '同键两条 ⇒ 必须停下来报"重复业务事实"（与逐条版同一句）',
-      );
-      assert.equal(rowsOf(h, 'purchaseRequest').length, 2, '不许多写一行明细');
-      assert.equal(rowsOf(h, 'inventoryLedger').length, 0, '库存一个字都不许动');
-      outcomes.push(rowsOf(h, 'purchaseRequest').length);
-    } finally { h.cleanup(); }
-  }
-  assert.deepStrictEqual(outcomes[0], outcomes[1], '两条路的"停下"形状逐字相同');
+test('AC-RB3b 退货不再读取或写入采购明细', async () => {
+  const h = createHarness({ batch: true });
+  try {
+    const result = await h.purchaseReturn.submit('scan_return_rb3b', draftFor([[41, 3]]));
+    assert.equal(result.taken_count, 3);
+    assert.equal(rowsOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
+    assert.equal(rowsOf(h, 'inventoryLedger').length, 1, '库存流水照常写');
+  } finally { h.cleanup(); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -680,7 +605,7 @@ test('AC-RB4a 写到一半中断（批量删那一步抛）⇒ 接着跑不重�
     await assert.rejects(() => first.purchaseReturn.submit('scan_return_rb4a', draftFor(pairs)),
       /injected transient failure/, '中断必须如实抛（不许假成功）');
     // 中断时：明细已经一次批量写完（N 行），库存那一段只写了流水、一双都没删
-    assert.equal(rowsOf(first, 'purchaseRequest').length, 3, '攒批 ⇒ 明细是一次写完的');
+    assert.equal(rowsOf(first, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.equal(rowsOf(first, 'purchaseOrderBatch').length, 1);
     assert.equal(rowsOf(first, 'liveInventory').length, 8, '删那一步失败 ⇒ 实时库存一双都不许少');
 
@@ -688,7 +613,7 @@ test('AC-RB4a 写到一半中断（批量删那一步抛）⇒ 接着跑不重�
     try {
       const resumed = await second.purchaseReturn.submit('scan_return_rb4a', draftFor(pairs));
       assert.equal(resumed.taken_count, 6, '续跑接着把没扣的扣完');
-      assert.equal(rowsOf(second, 'purchaseRequest').length, 3, '明细不翻倍');
+      assert.equal(rowsOf(second, 'purchaseRequest').length, 0, '退货不写采购明细');
       assert.equal(rowsOf(second, 'purchaseOrderBatch').length, 1, '批次不重复建');
       assert.equal(rowsOf(second, 'inventoryLedger').length, 3, '流水不重记（一档一条）');
       assert.equal(ledgerTotal(second), 6, '总共只扣 6 双');
@@ -701,15 +626,12 @@ test('AC-RB4a 写到一半中断（批量删那一步抛）⇒ 接着跑不重�
   } finally { rmDir(first.dirs.inventory); rmDir(first.dirs.ret); }
 });
 
-test('AC-RB4b 批量写**瞬时失败一次** ⇒ 逐条兜底 ⇒ 不重不漏（明细仍是 N 行）', async () => {
-  const h = createHarness({ batch: true, failOnce: { api: 'batchCreate', at: 1 } });
+test('AC-RB4b 退货不写采购明细，库存批量写入照常成功', async () => {
+  const h = createHarness({ batch: true });
   try {
     const result = await h.purchaseReturn.submit('scan_return_rb4b', draftFor(SCENARIOS.multi.pairs));
     assert.equal(result.taken_count, 6);
-    assert.equal(rowsOf(h, 'purchaseRequest').length, 3, '兜底路径也不许多写一行');
-    assert.equal(rowsOf(h, 'purchaseRequest').filter(
-      (record) => record.fields['幂等键'],
-    ).length, 3);
+    assert.equal(rowsOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.equal(ledgerTotal(h), 6);
     assert.equal(rowsOf(h, 'purchaseOrderBatch').length, 1);
   } finally { h.cleanup(); }
@@ -747,7 +669,6 @@ test('AC-RB5b 超库存（报 5 双、只有 3 双）⇒ 明细与流水都写�
     const result = await h.purchaseReturn.submit('scan_return_rb5b', draftFor([[41, 5]]));
     assert.equal(result.taken_count, 3);
     assert.equal(result.shortfall, 2);
-    assert.equal(rowsOf(h, 'purchaseRequest')[0].fields['数量'], 3);
     assert.equal(ledgerTotal(h), 3);
     assert.equal(rowsOf(h, 'liveInventory').some((record) => record.record_id.includes('live_41')), false);
   } finally { h.cleanup(); }
@@ -767,13 +688,8 @@ test('AC-RB6 出退货单图：链路被调用一次、入参与改前逐字相�
     assert.equal(delivery.options.title, SCAN_WRITE.purchaseReturn.imageTitle);
     assert.equal(delivery.options.fileNameSuffix, SCAN_WRITE.purchaseReturn.fileNameSuffix);
     assert.equal(delivery.posting.batch_no, 'CGD-20261016-0001');
-    assert.deepStrictEqual(delivery.posting.request_ids, result.request_ids, '回填单据统计的就是这一次的明细');
-    // ⭐ 绝对口径：回填单据的明细 id 必须按**计划顺序**（40 / 41 / 42）——
-    //    与 `result.request_ids` 自比是**不够**的（两条一起被弄反时自比照样绿）。
-    const recordIdOfSize = (size) => rowsOf(h, 'purchaseRequest')
-      .find((record) => String(record.fields['尺码']) === size).record_id;
-    assert.deepStrictEqual(delivery.posting.request_ids,
-      ['size_40', 'size_41', 'size_42'].map(recordIdOfSize), '回填单据的明细 id 顺序 = 计划顺序');
+    assert.deepStrictEqual(delivery.posting.request_ids, [], '退货不写采购明细');
+    assert.deepStrictEqual(result.request_ids, [], '退货不写采购明细');
     // 出图入参 = **只有真的退掉的尺码**，顺序与计划一致（供应商分组按它分组，一个字没动）
     assert.deepStrictEqual(delivery.draft.items, [
       {
@@ -801,10 +717,8 @@ test('AC-RB7 源码哨兵：禁改文件与「一次一件」的老写法都不�
   const src = path.join(__dirname, '..', 'src');
   // ⚠️ 这条哨兵钉的是"本刀改法"的自证：明细写入**不再**在循环里逐条 createOnceByKey。
   const returnService = fs.readFileSync(path.join(src, 'services/purchaseReturnService.js'), 'utf8');
-  assert.match(returnService, /createOnceByKeys/, '明细写入必须走批量件');
-  // 循环里那一条逐条写法不许再出现（正则宽容空白）
-  assert.equal(/for \(const item of plan\.items\)[\s\S]{0,400}?createOnceByKey\(/.test(returnService), false,
-    '明细循环里不许再有逐条 createOnceByKey');
+  assert.equal(returnService.includes("tableKey: 'purchaseRequest'"), false, '退货源码里不许再写采购明细');
+  assert.equal(returnService.includes('createOnceByKey'), false, '退货源码里不许再有采购明细幂等写入');
 });
 
 test('AC-RB0 旧任务（无商品身份）不允许复用：同 ID 新退货草稿 ⇒ 派生新任务，不报缺少商品 record_id', async () => {

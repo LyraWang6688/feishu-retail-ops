@@ -768,7 +768,7 @@ test('AC-IV4a 批量删那一步中断（deleteBatch 抛）⇒ 接着跑不重�
       assert.equal(rowsOf(second, 'inventoryLedger').length, 3, '流水不重记（一档一条）');
       assert.equal(ledgerTotal(second), 6, '总共只扣 6 双');
       assert.deepStrictEqual(liveIds(second), ['live_40_box_3', 'live_42_box_2'], '余量正确');
-      assert.equal(rowsOf(second, 'purchaseRequest').length, 3, '明细不翻倍');
+      assert.equal(rowsOf(second, 'purchaseRequest').length, 0, '退货不写采购明细');
       assert.equal(rowsOf(second, 'purchaseOrderBatch').length, 1, '批次不重复建');
     } finally { second.cleanup(); }
   } finally { rmDir(first.dirs.inventory); rmDir(first.dirs.ret); }

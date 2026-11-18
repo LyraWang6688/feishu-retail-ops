@@ -30,7 +30,7 @@ const rec = (id, state) => ({ record_id: id, fields: { 尺码: [{ record_ids: ['
 
 test('AC-SAMPLE-SVC1 门盒 ⇒ 改样品 + 写 STOCK_TO_SAMPLE 流水', async () => {
   const { service, updates, ledgers } = make([rec('live_1', '门盒')]);
-  const out = await service.promote({ productRecordId: 'p1', size: 41, salesDetailRecordId: 'd1', requestId: 'req1' });
+  const out = await service.promote({ productRecordId: 'p1', size: 41, salesDetailRecordId: 'd1', salesEntryRecordId: 'sale_main_1', requestId: 'req1' });
   assert.equal(out.ok, true);
   assert.equal(out.fromState, '门盒');
   assert.equal(updates.length, 1);
@@ -38,6 +38,7 @@ test('AC-SAMPLE-SVC1 门盒 ⇒ 改样品 + 写 STOCK_TO_SAMPLE 流水', async (
   assert.equal(ledgers.length, 1);
   assert.equal(ledgers[0].rows[0].quantityChange, 0);
   assert.deepEqual(ledgers[0].rows[0].behavior, ['behavior_sample']);
+  assert.deepEqual(ledgers[0].rows[0].salesDetail, ['sale_main_1']);
 });
 
 test('AC-SAMPLE-SVC2 空状态 ⇒ 也可以改成样品', async () => {

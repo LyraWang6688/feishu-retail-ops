@@ -342,29 +342,16 @@ test('AC-ID4 幂等重放 ⇒ 不重复占号（条数与每行 id 都不变）'
 // AC-ID5 退货链路也写
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ID5 扫码采购退货那条链路同样写：同一批次内 01/02', async () => {
+test('AC-ID5 扫码采购退货不再写采购明细，但批次与库存照常', async () => {
   const h = returnHarness();
   const result = await h.service.submit('task_1', returnDraft());
-  // ⚠️ `purchaseReturnService.submit` 返回的是**服务层结果**（没有 `ok`；`ok` 是扫码写服务那层的壳）
   assert.equal(result.skipped, '', JSON.stringify(result));
-  assert.equal(result.request_ids.length, 2, '两条退货明细都写了');
-  const batchNo = result.batch_no;
-  assert.ok(batchNo, '照常出号');
-  const ids = detailIds(h.tables).sort();
-  assert.equal(ids.length, 2, '两条退货明细');
-  assert.deepEqual(ids, [`${batchNo}-01`, `${batchNo}-02`]);
-  // 回归：退货明细其余字段 + 主表那两列（批次号 + 采购行为）
-  for (const record of h.tables.purchaseRequest) {
-    assert.deepEqual(record.fields['编号'], ['prod_1']);
-    assert.ok(record.fields['幂等键']);
-    assert.equal('发生行为' in record.fields, false, '明细那列是 Lookup：不许写');
-  }
-  assert.equal(h.tables.purchaseOrderBatch[0].fields[BATCH_FIELD], batchNo);
-  // ⭐ 2026-10-17 同上迁移：主表行为列真表已改名「发生行为」
+  assert.equal(result.request_ids.length, 0, '退货不写采购明细');
+  assert.ok(result.batch_no, '照常出号');
+  assert.equal(h.tables.purchaseRequest.length, 0, '退货不写采购明细');
+  assert.equal(h.tables.purchaseOrderBatch[0].fields[BATCH_FIELD], result.batch_no);
   assert.deepEqual(h.tables.purchaseOrderBatch[0].fields['发生行为'], ['bh_return'], '主表行为照旧');
-  // 重放：不重复占号
   const replay = await h.service.submit('task_1', returnDraft());
   assert.equal(replay.skipped, '');
-  assert.deepEqual(detailIds(h.tables).sort(), ids, '重放后号不变');
-  assert.equal(h.tables.purchaseRequest.length, 2, '重放不新增行');
+  assert.equal(h.tables.purchaseRequest.length, 0, '重放仍不写采购明细');
 });
