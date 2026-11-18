@@ -359,6 +359,11 @@ const V1_BITABLE_SCHEMA = {
         //           关联到本次生成的采购明细记录。写库形状 = `relation(recordId)`（关联列只认 id 数组）。
         purchaseDetail: '采购明细',
       },
+      // 2026-11-18 销售查询：只读 lookup（品类/类别），**不进 fields 可写集**。
+      readOnlyFields: Object.freeze({
+        categoryName: Object.freeze({ name: '品类', type: 19, uiType: 'Lookup', writable: false }),
+        categoryType: Object.freeze({ name: '类别', type: 19, uiType: 'Lookup', writable: false }),
+      }),
     },
     paymentRecord: {
       // 2026-10-29 生产表改名：收款明细 → S交易明细（table_id 不变）；字段同步改名。

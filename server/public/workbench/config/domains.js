@@ -62,6 +62,7 @@
 //      已经没有任何地方再引用它们了）。
 import { SUPPLIER_DIRECTORY_URL, ACCESSORY_SALE_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
 import { INVENTORY_LEDGER_PAGE } from './inventoryLedger.js';
+import { SALES_QUERY_PAGE } from './salesQuery.js';
 
 export const DOMAIN_TABS = [
   // ── ① 销售 ────────────────────────────────────────────────────────────────
@@ -85,11 +86,9 @@ export const DOMAIN_TABS = [
         mode: 'sales',
       },
       {
-        id: 'sales-query',
-        label: '销售查询',
-        kind: 'query',
-        sectionId: 'sales-query',
-        directJump: true,
+        id: SALES_QUERY_PAGE.id,
+        label: SALES_QUERY_PAGE.label,
+        kind: 'sales-query',
       },
       {
         id: 'sales-customer-money',

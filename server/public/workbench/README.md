@@ -34,7 +34,7 @@ Tab 页的顺序从左往右是：**销售、库存、采购和货品**」）：
   已迁到活着的采购页上继续钉（逐条清单见 PR #607）；`config/links.js` 里那两个飞书表单 URL 常量**照旧保留** ✓。
 - 原「信息查询」的**两个板块**没有被丢掉，而是各回各的领域：
   `sales-query` → 销售 · 销售查询；`inventory-query` → 库存 · **全仓查询**（清单仍在 `config/query.js`，
-  URL 仍只在 `config/links.js`：`SALES_QUERY_PAGE_URL` / `INVENTORY_QUERY_PAGE_URL`）。
+  库存查询 URL 仍只在 `config/links.js`：`INVENTORY_QUERY_PAGE_URL`；销售查询 2026-11-18 已改为自研页）。
   ⚠️ 这一维**不新增任何接口 / 页面**（渲染层一次 `fetch` 都没有，有测试守着）。
 - 原「订单列表」也是同一个模块（`features/orders/`）挂两处：销售 tab 只看销售、采购 tab 只看采购
   （`createOrdersModule({ mode })`，`mode` 由 `config/domains.js` 给）。
