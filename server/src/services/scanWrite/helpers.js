@@ -40,14 +40,19 @@ const createScanWriteHelpers = ({ schema, config, logError = defaultLogError }) 
     return fillText(texts.businessFailedBody, { reason: raw });
   };
 
-  const positiveAmount = (raw) => {
+  /**
+   * 金额解析。
+   * ⚠️ 2026-11-18（业务负责人）：**每件实收可以填 0**（赠送 / 自家穿），
+   *   所以行金额调用方要传 `{ allowZero: true }`；收款行 / 实付金额仍要求 > 0。
+   */
+  const positiveAmount = (raw, { allowZero = false } = {}) => {
     const text = String(raw ?? '').trim().replace(/[¥￥,\s]/g, '');
     if (!text) return { ok: true, value: null };
     const decimals = Number.isInteger(config.sale.amountDecimals) ? config.sale.amountDecimals : 2;
     const pattern = new RegExp(`^\\d+(\\.\\d{1,${decimals}})?$`);
     if (!pattern.test(text)) return { ok: false };
     const value = Number(text);
-    if (!Number.isFinite(value) || value <= 0) return { ok: false };
+    if (!Number.isFinite(value) || (!allowZero && value <= 0)) return { ok: false };
     return { ok: true, value: Math.round(value * 100) / 100 };
   };
 

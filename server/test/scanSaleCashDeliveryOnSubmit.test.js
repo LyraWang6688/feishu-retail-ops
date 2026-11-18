@@ -271,6 +271,33 @@ test('AC-A1 现货（有货）：提交即交付 + 库存真的少一双 + 主�
   } finally { logs.restore(); h.cleanup(); }
 });
 
+// ⭐ 2026-11-18：实收金额可以填 0（赠送 / 自家穿），库存变化必须照常。
+test('AC-A1b 0 元（赠送 / 自用）：照常交付 + 扣库存 + 写销售流水', async () => {
+  const h = createHarness();
+  try {
+    const openId = 'ou_cash_zero';
+    const added = await h.write.addSaleLine({
+      openId, productRecordId: 'prod_1', number: NUMBER, itemNo: 'YD6693-2', color: '黑色',
+      size: 40, inStock: true, amount: 0,
+    });
+    assert.equal(added.ok, true, JSON.stringify(added));
+
+    const result = await h.write.submitSale({
+      openId,
+      submitKey: await currentKey(h, openId),
+      lineAmounts: [0],
+      payments: [],
+      paymentStatus: PAYMENT_STATUS.full,
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.stock?.failed, 0, `0 元现货也要扣成功：${JSON.stringify(result.stock)}`);
+    assert.equal(detailBySize(h, 'size_40').fields['实收金额'], 0, '明细写显式 0（不是留空）');
+    assert.deepEqual(entriesOf(h, 'liveInventory').map((record) => record.record_id), [],
+      '0 元也要扣掉那一双门盒');
+    assert.equal(entriesOf(h, 'inventoryLedger').length, 1, '库存流水照常写一条');
+  } finally { h.cleanup(); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-A2 预订 ⇒ 不交付、不扣库存
 // ═══════════════════════════════════════════════════════════════════════════

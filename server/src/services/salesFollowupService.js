@@ -503,8 +503,9 @@ class SalesFollowupService {
         if (!details.some((record) => record.record_id === entry.detailRecordId)) {
           throw new Error('要补的明细不属于这一张销售单');
         }
-        if (!/^\d+(\.\d{1,2})?$/.test(entry.raw) || Number(entry.raw) <= 0) {
-          throw new Error('实收金额要填大于 0 的数字（最多两位小数）');
+        // ⭐ 2026-11-18：实收金额允许 0（赠送 / 自家穿），只拦负数 / 非数字。
+        if (!/^\d+(\.\d{1,2})?$/.test(entry.raw)) {
+          throw new Error('实收金额要填 0 或正数（最多两位小数）');
         }
         wanted.set(entry.detailRecordId, Math.round(Number(entry.raw) * 100) / 100);
       }

@@ -20,7 +20,8 @@ const resolveSaleSettlement = async ({
       const raw = hasPostedLineAmounts && index < postedLineAmounts.length
         ? postedLineAmounts[index]
         : (line.amount === null || line.amount === undefined ? '' : String(line.amount));
-      const parsed = positiveAmount(raw);
+      // ⭐ 2026-11-18：每件实收可以填 0（赠送 / 自家穿），仍照常写库存变动。
+      const parsed = positiveAmount(raw, { allowZero: true });
       if (!parsed.ok) {
         const error = new Error(texts.amountInvalidBody);
         // ⚠️ 2026-11-18 线上事故（XSD-20261118-0001）：这里曾写 `message`（未声明）⇒ 一遇到
@@ -97,7 +98,7 @@ const resolveSaleSettlement = async ({
     if (!statusValues.includes(payMode)) {
       // 手改表单塞了第四种取值 ⇒ 人话拦住（**不静默当成某一档**：猜错档位会写错账）。
       logWarn(config.events.failed, {
-        session_id: current.session_id, submit_key: key, reason: 'payment_status_invalid',
+        session_id: sessionId, submit_key: key, reason: 'payment_status_invalid',
         payment_status: statusRaw, request_id: requestId,
       });
       const error = new Error(texts.paymentStatusInvalidBody);
@@ -134,7 +135,7 @@ const resolveSaleSettlement = async ({
     const anyLineAmount = resolvedLines.some((line) => line.explicit_amount);
     if (payMode === statusMode.full && !hasPaymentRows && !anyLineAmount) {
       logWarn(config.events.failed, {
-        session_id: current.session_id, submit_key: key, reason: 'full_without_money',
+        session_id: sessionId, submit_key: key, reason: 'full_without_money',
         detail_count: resolvedLines.length, payment_count: 0, request_id: requestId,
       });
       const error = new Error(texts.fullWithoutMoneyBody);
@@ -144,14 +145,16 @@ const resolveSaleSettlement = async ({
       });
     }
     // 「她显式选了全付、但一笔收款都没填」⇒ 按**未付**落库 + 页面给一句人话（不是失败）。
-    const fullWithoutPayments = payMode === statusMode.full && !hasPaymentRows;
+    // ⭐ 2026-11-18：整单 0 元（赠送/自用）时，「全付」不需要收款行 ——
+    //   0 = 0 已经相等，不能再被降级成「未付」。
+    const fullWithoutPayments = payMode === statusMode.full && !hasPaymentRows && itemsCents > 0;
     const effectiveMode = fullWithoutPayments ? statusMode.unpaid : payMode;
     if (effectiveMode === statusMode.full) {
       // ── 全付：两边必须相等（走到这里说明**她填了收款行**）──────────────────────
       if (itemsCents !== paymentsCents) {
         const message = amountMismatchMessage({ itemsCents, paymentsCents, strict: true });
         logWarn(config.events.amountMismatch, {
-          session_id: current.session_id, submit_key: key, payment_status: payMode,
+          session_id: sessionId, submit_key: key, payment_status: payMode,
           items_cents: itemsCents, payments_cents: paymentsCents,
           detail_count: resolvedLines.length, payment_count: payments.length, request_id: requestId,
         });
@@ -175,7 +178,7 @@ const resolveSaleSettlement = async ({
         if (parsedPaid.value === null) {
           const message = fillText(texts.partialAmountMissingBody, { payments: moneyText(paymentsCents / 100) });
           logWarn(config.events.failed, {
-            session_id: current.session_id, submit_key: key, reason: 'partial_amount_missing',
+            session_id: sessionId, submit_key: key, reason: 'partial_amount_missing',
             payments_cents: paymentsCents, request_id: requestId,
           });
           const error = new Error(message);
@@ -188,7 +191,7 @@ const resolveSaleSettlement = async ({
             paid: moneyText(paidCents / 100), payments: moneyText(paymentsCents / 100),
           });
           logWarn(config.events.amountMismatch, {
-            session_id: current.session_id, submit_key: key, payment_status: payMode,
+            session_id: sessionId, submit_key: key, payment_status: payMode,
             items_cents: itemsCents, paid_cents: paidCents, payments_cents: paymentsCents,
             request_id: requestId,
           });
@@ -203,7 +206,7 @@ const resolveSaleSettlement = async ({
       if (paidCents > itemsCents) {
         const message = amountMismatchMessage({ itemsCents, paymentsCents: paidCents });
         logWarn(config.events.amountMismatch, {
-          session_id: current.session_id, submit_key: key, payment_status: payMode,
+          session_id: sessionId, submit_key: key, payment_status: payMode,
           items_cents: itemsCents, payments_cents: paidCents, request_id: requestId,
         });
         const error = new Error(message);
