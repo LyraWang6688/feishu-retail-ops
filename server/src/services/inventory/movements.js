@@ -72,13 +72,6 @@ const ADJUSTMENT_BEHAVIORS = Object.freeze({
   DOORBOX_TO_SAMPLE: BEHAVIOR_SAMPLE_PROMOTION,
 });
 
-// ⚠️ TODO(inventory-adjustment) 待业务负责人定 ①：手工调减要消耗哪些「所属状态」的实时库存？
-//    · null                     = 只消耗调用方明确指定的那一种状态（最保守；不会顺手吃掉样品）
-//    · ['门盒', '样品']          = 按销售出库口径（先门盒、后样品）
-//    · ['门盒', '样品', '仓库']  = 按采购退货口径（状态无关）
-//    她定下来之前先按最保守的 null 走。**只改这个常量，逻辑一行都不用动。**
-const MANUAL_DECREASE_CONSUMES = null;
-
 // ✅ 待定 ② 已定（业务负责人 2026-10-06，工作台改造需求）：
 //    **转冻结 = 门盒/样品 → 仓库；转释放门盒 = 仓库 → 门盒/样品**（换季收鞋 / 拿鞋）。
 //    ⚠️ 待确认（2026-10-08）：她把这条行为的名字改成「转释放门盒」、编码改成
@@ -248,11 +241,11 @@ const STOCK_MOVEMENTS = Object.freeze({
     operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.MANUAL_INCREASE, ...MANUAL_COUNT_SOURCE }),
   },
   // 手工调减：数量类，减少 N 双 → 消耗既有「实时库存」＋ 一条 变动数量=N 的流水。
-  // ⚠️ 消耗哪些状态**待她定**，值在 MANUAL_DECREASE_CONSUMES（见上面的 TODO）。
+  // ⚠️ 扣哪几行**不在这里配**：applyChange 统一按「门盒 / 空状态优先、样品最后、同状态 FIFO」
+  //    （`config/inventoryStatePolicy.js`）。旧字段 `consumes` 写着"只扣指定状态"，与代码不符，已删。
   [ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE]: {
     direction: '减少',
     ledgerSource: null,
-    consumes: MANUAL_DECREASE_CONSUMES,
     operationKey: Object.freeze({ kind: ADJUSTMENT_BEHAVIORS.MANUAL_DECREASE, ...MANUAL_COUNT_SOURCE }),
   },
   // 四个「转」：方向=不影响，只改「实时库存」的「所属状态」，数量一条不变。
