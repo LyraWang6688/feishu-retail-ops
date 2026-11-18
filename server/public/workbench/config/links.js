@@ -114,8 +114,8 @@ export const LABEL_BATCH_FORM_URL =
 //    「通过分享链接访问的用户可查看当前页面展示的**全部数据，不受多维表格高级权限限制**」。
 // ⚠️ 该页面声明的统计口径 + 与系统口径的差异，留档：
 //    `docs/sales-query-page-and-system-caliber-2026-10-08.md`（她定的定位 = **最小 MVP，之后迭代**）。
-export const SALES_QUERY_PAGE_URL =
-  'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh';
+// 2026-11-18：销售查询已改为工作台自研页面（config/domains.js → kind:'sales-query'），
+// 不再保留飞书分享外链。
 
 /**
  * 「库存查询」URL —— 业务负责人 **2026-10-08** 给的发布分享链接（逐字）：

@@ -16,6 +16,7 @@
 const express = require('express');
 const { createWorkbenchOrderActionsRouter } = require('../workbenchOrderActions');
 const { createWorkbenchSalesDeliveryRoutes } = require('../workbenchSalesDelivery');
+const { createSalesQueryService } = require('../../services/salesQueryService');
 const { logError } = require('../../utils/logger');
 
 const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}) => {
@@ -49,6 +50,25 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
     catch (error) {
       logError('workbench.sales.orders.failed', { request_id: req.requestId, error: error.message });
       return res.status(502).json({ success: false, error: error.message });
+    }
+  });
+
+  let salesQueryInstance = null;
+  const salesQuery = () => {
+    if (!salesQueryInstance) salesQueryInstance = createSalesQueryService({
+      gateway: options.gateway || followup.gateway,
+    });
+    return salesQueryInstance;
+  };
+  router.get('/sales/query', async (req, res) => {
+    try {
+      return res.json({ success: true, ...await salesQuery().getSalesQuery({
+        from: req.query.from, to: req.query.to,
+      }) });
+    } catch (error) {
+      logError('workbench.sales.query.failed', { request_id: req.requestId, error: error.message });
+      return res.status(error?.statusCode === 400 ? 400 : 502)
+        .json({ success: false, error: error.message || 'sales query failed' });
     }
   });
 

@@ -36,9 +36,12 @@ const DELIVERY_PAYMENT = Object.freeze({
 
 const TABLE_FIELD_KEYS = Object.freeze({
   salesEntry: Object.freeze(['orderNo', 'recordedAt', 'totalAmount']),
-  salesDetail: Object.freeze(['salesEntry', 'product', 'size', 'fulfillmentStatus', 'stockQuantity']),
-  paymentRecord: Object.freeze(['salesEntry', 'method', 'amount', 'status']),
-  product: Object.freeze(['itemNo', 'color']),
+  salesDetail: Object.freeze([
+    'salesEntry', 'product', 'size', 'fulfillmentStatus', 'stockQuantity',
+    'actualAmount', 'soldAt', 'categoryName', 'categoryType',
+  ]),
+  paymentRecord: Object.freeze(['salesEntry', 'method', 'amount', 'status', 'tradeDirection', 'receivedAt']),
+  product: Object.freeze(['itemNo', 'color', 'number']),
   color: Object.freeze(['name']),
   sizeManagement: Object.freeze(['size']),
   paymentMethod: Object.freeze(['name']),

@@ -50,12 +50,16 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
   };
 
   const fieldOptions = (tableKey) => {
-    const fields = gateway.table?.(tableKey)?.fields || {};
-    const names = (TABLE_FIELD_KEYS[tableKey] || []).map((key) => fields[key]).filter(Boolean);
+    const table = gateway.table?.(tableKey);
+    const fields = table?.fields || {};
+    const readOnly = table?.readOnlyFields || {};
+    const names = (TABLE_FIELD_KEYS[tableKey] || [])
+      .map((key) => fields[key] || readOnly[key]?.name)
+      .filter(Boolean);
     return names.length ? { fieldNames: names } : {};
   };
 
-  const listDeliveryData = async () => {
+  const listDeliveryData = async ({ query = false } = {}) => {
     const startedAt = Date.now();
     const timings = {};
     const timed = async (key, run) => {
@@ -72,6 +76,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       timed('payment_method', () => methodsService.listWithVouchers()),
     ]);
     const detailFieldsForRefs = gateway.table('salesDetail').fields;
+    const detailReadOnlyFields = gateway.table('salesDetail').readOnlyFields || {};
     const productFieldsForRefs = gateway.table('product').fields;
     const idsOf = (records, fields, key) => [...new Set(records.flatMap((record) =>
       strictLinkedRecordIds(record.fields?.[fields[key]])))];
@@ -125,6 +130,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const methodRows = methodList?.ok ? methodList.items : [];
     const methodNameById = new Map(methodRows.map((item) => [item.recordId, item.name]));
     const productById = new Map(products.map((item) => [item.record_id, {
+      number: textValue(item.fields?.[productFields.number]).trim(),
       productNo: textValue(item.fields?.[productFields.itemNo]).trim(),
       colorId: strictLinkedRecordIds(item.fields?.[productFields.color])[0] || '',
     }]));
@@ -165,6 +171,13 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
             const raw = textValue(detail.fields?.[stockField]).trim();
             return raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw);
           })(),
+          ...(query ? {
+            number: product?.number || '',
+            actual_amount: Number(textValue(detail.fields?.[detailFields.actualAmount])) || 0,
+            category_name: textValue(detail.fields?.[detailReadOnlyFields.categoryName?.name]).trim(),
+            category_type: textValue(detail.fields?.[detailReadOnlyFields.categoryType?.name]).trim(),
+            sold_at: detail.fields?.[detailFields.soldAt] ?? null,
+          } : {}),
         };
       });
       const paymentRows = group.rawPayments.map((payment) => ({
@@ -172,6 +185,10 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
         status: textValue(payment.fields?.[paymentFields.status]) || '',
         amount: Number(textValue(payment.fields?.[paymentFields.amount])) || 0,
         method: methodNameById.get(strictLinkedRecordIds(payment.fields?.[paymentFields.method])[0] || '') || '',
+        ...(query ? {
+          trade_direction: textValue(payment.fields?.[paymentFields.tradeDirection]) || '',
+          received_at: payment.fields?.[paymentFields.receivedAt] ?? null,
+        } : {}),
       }));
       // 业务负责人 2026-10-29：待付 = 同一销售单号下「收款状态 = 未收款」的收款金额合计。
       const pendingAmount = paymentRows
@@ -188,9 +205,19 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       });
     }
 
+    const allPayments = query ? payments.map((payment) => ({
+      record_id: payment.record_id,
+      status: textValue(payment.fields?.[paymentFields.status]) || '',
+      amount: Number(textValue(payment.fields?.[paymentFields.amount])) || 0,
+      method: methodNameById.get(strictLinkedRecordIds(payment.fields?.[paymentFields.method])[0] || '') || '',
+      trade_direction: textValue(payment.fields?.[paymentFields.tradeDirection]) || '',
+      received_at: payment.fields?.[paymentFields.receivedAt] ?? null,
+      sales_entry_record_id: strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '',
+    })) : [];
     return {
       methods: orderWithPreferred(methodRows.map((item) => item.name), SCAN_WRITE.sale.defaultPaymentMethod),
       orders: result,
+      ...(query ? { all_payments: allPayments } : {}),
     };
   };
 

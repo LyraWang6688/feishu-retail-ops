@@ -3,6 +3,7 @@ import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { createInventoryAdjustmentModule } from '../inventory/adjustment.js';
 import { createInventoryLedgerModule } from '../inventory/ledger.js';
+import { createSalesQueryModule } from '../sales-query/index.js';
 import { createOrdersModule } from '../orders/index.js';
 import { createScanCardsModule } from '../scan/launch.js';
 import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
@@ -86,6 +87,7 @@ export function createDomainModule(domainId) {
     }
     if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule({ initialProductId: state.initialProductId }).mount(host);
     if (page.kind === 'inventory-ledger') return void createInventoryLedgerModule().mount(host);
+    if (page.kind === 'sales-query') return void createSalesQueryModule().mount(host);
     if (page.kind === 'product-profile') return void createProductProfileModule().mount(host);
     if (page.kind === 'label-print') {
       let module = state.labelPrintModules.get(page.id);
