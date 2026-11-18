@@ -152,8 +152,28 @@ test('AC-DR9 销售查询字段：类别选项 ID 映射为文字，编号富文
   records.salesDetail[0].fields['类别'] = ['opthipbNy3'];
   records.salesDetail[0].fields['品类'] = [{ text: '休闲棉鞋', type: 'text' }];
   records.product[0].fields['编号'] = { type: 1, value: [{ text: 'XHB8095|黑色|女', type: 'text' }] };
+  records.salesEntry[0].fields['销售明细'] = [{ record_ids: ['detail_1'] }];
+  records.salesEntry[0].fields['收款明细'] = [{ record_ids: ['pay_1', 'pay_2'] }];
   const data = await createSalesDeliveryReadService({ gateway: fakeGateway(records) }).listDeliveryData({ query: true });
   assert.equal(data.orders[0].details[0].category_type, '女');
   assert.equal(data.orders[0].details[0].category_name, '休闲棉鞋');
   assert.equal(data.orders[0].details[0].number, 'XHB8095|黑色|女');
+});
+
+test('AC-DR10 销售查询订单区块只认主表关联；未关联明细只进 all_details（数量仍可统计）', async () => {
+  const records = baseRecords();
+  records.salesEntry[0].fields['销售明细'] = [{ record_ids: ['detail_1'] }];
+  records.salesEntry[0].fields['收款明细'] = [{ record_ids: ['pay_1'] }];
+  records.salesDetail.push({
+    record_id: 'detail_orphan',
+    fields: {
+      销售单号: [{ record_ids: ['order_1'] }], 编号: [{ record_ids: ['product_1'] }], 尺码: [{ record_ids: ['size_41'] }],
+      履约状态: '已交付', 实收金额: 80, 销售日: '2026-10-18T11:00:00+08:00',
+      类别: ['opthipbNy3'], 品类: [{ text: '休闲棉鞋', type: 'text' }],
+    },
+  });
+  const data = await createSalesDeliveryReadService({ gateway: fakeGateway(records) }).listDeliveryData({ query: true });
+  assert.equal(data.orders.length, 1);
+  assert.equal(data.orders[0].details.length, 1, '主表只关联 detail_1');
+  assert.equal(data.all_details.length, 2, '未关联明细仍在 all_details，供销售数量统计');
 });

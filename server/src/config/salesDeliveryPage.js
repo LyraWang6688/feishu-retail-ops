@@ -35,7 +35,7 @@ const DELIVERY_PAYMENT = Object.freeze({
 });
 
 const TABLE_FIELD_KEYS = Object.freeze({
-  salesEntry: Object.freeze(['orderNo', 'recordedAt', 'totalAmount']),
+  salesEntry: Object.freeze(['orderNo', 'recordedAt', 'totalAmount', 'salesDetails', 'paymentRecords']),
   salesDetail: Object.freeze([
     'salesEntry', 'product', 'size', 'fulfillmentStatus', 'stockQuantity',
     'actualAmount', 'soldAt', 'categoryName', 'categoryType',
