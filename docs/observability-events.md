@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **507** 个事件。按前缀分组：
+共 **510** 个事件。按前缀分组：
 
 ## accessory
 
@@ -555,6 +555,14 @@
 | `supplier.split.group_already_reported` | 1 | src/config/supplierSplit.js |
 | `supplier.split.grouped` | 1 | src/config/supplierSplit.js |
 | `supplier.split.mismatch` | 1 | src/config/supplierSplit.js |
+
+## supply
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `supply.document.sync.done` | 1 | src/services/supplyDocumentSyncService.js |
+| `supply.document.sync.failed` | 2 | src/routes/workbench/purchase.js<br>src/services/purchaseReturnService.js |
+| `supply.document.sync.file` | 1 | src/services/supplyDocumentSyncService.js |
 
 ## ui
 

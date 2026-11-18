@@ -132,6 +132,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     });
 
     const orderFields = gateway.table('salesEntry').fields;
+    const orderReadOnlyFields = gateway.table('salesEntry').readOnlyFields || {};
     const detailFields = gateway.table('salesDetail').fields;
     const paymentFields = gateway.table('paymentRecord').fields;
     const productFields = gateway.table('product').fields;
@@ -154,54 +155,74 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       colorId: strictLinkedRecordIds(item.fields?.[productFields.color])[0] || '',
     }]));
 
-    // 按「销售单号」合并：同一单号即使来自不同销售主表记录，也归成一组（业务口径）。
-    const groups = new Map();
-    const groupOf = (orderId) => {
-      const orderNo = orderNoById.get(orderId) || orderId;
-      if (!groups.has(orderNo)) groups.set(orderNo, { salesEntryRecordId: orderId, orderNo, recordedAt: recordedAtById.get(orderId) ?? null, totalAmount: totalAmountById.get(orderId) ?? null, rawDetails: [], rawPayments: [] });
-      return groups.get(orderNo);
+    const detailRowOf = (detail) => {
+      const productId = strictLinkedRecordIds(detail.fields?.[detailFields.product])[0] || '';
+      const product = productById.get(productId);
+      const sizeId = strictLinkedRecordIds(detail.fields?.[detailFields.size])[0] || '';
+      const sizeText = sizeValueById.get(sizeId) || '';
+      return {
+        record_id: detail.record_id,
+        product: product?.productNo || '',
+        product_record_id: productId,
+        color: product?.colorId ? (colorNameById.get(product.colorId) || '') : '',
+        size: sizeText === '' ? null : (Number.isFinite(Number(sizeText)) ? Number(sizeText) : sizeText),
+        fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '',
+        stock_quantity: (() => {
+          const stockField = detailFields.stockQuantity || SALES_DETAIL_STOCK_FIELD;
+          const raw = textValue(detail.fields?.[stockField]).trim();
+          return raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw);
+        })(),
+        ...(query ? {
+          number: product?.number || '',
+          actual_amount: Number(textValue(detail.fields?.[detailFields.actualAmount])) || 0,
+          category_name: textValue(detail.fields?.[detailReadOnlyFields.categoryName?.name]).trim(),
+          category_type: (() => {
+            const rawId = textValue(detail.fields?.[detailReadOnlyFields.categoryType?.name]).trim();
+            return categoryTypeNameById.get(rawId) || rawId;
+          })(),
+          sold_at: detail.fields?.[detailFields.soldAt] ?? null,
+        } : {}),
+      };
     };
-    for (const detail of details) {
-      const orderId = strictLinkedRecordIds(detail.fields?.[detailFields.salesEntry])[0] || '';
-      if (orderId) groupOf(orderId).rawDetails.push(detail);
-    }
-    for (const payment of payments) {
-      const orderId = strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '';
-      if (orderId) groupOf(orderId).rawPayments.push(payment);
+
+    const groups = new Map();
+    if (query) {
+      // 2026-11-18：销售查询的订单区块以**销售主表 record_id** 为唯一入口，
+      // 明细 / 收款只取主表上的「销售明细 / 收款明细」关联，不再按销售单号合并、不再反向猜关联。
+      const detailById = new Map(details.map((detail) => [detail.record_id, detail]));
+      const paymentById = new Map(payments.map((payment) => [payment.record_id, payment]));
+      for (const order of orders) {
+        const detailIds = strictLinkedRecordIds(order.fields?.[orderReadOnlyFields.salesDetails?.name]);
+        const paymentIds = strictLinkedRecordIds(order.fields?.[orderReadOnlyFields.paymentRecords?.name]);
+        groups.set(order.record_id, {
+          salesEntryRecordId: order.record_id,
+          orderNo: orderNoById.get(order.record_id) || order.record_id,
+          recordedAt: recordedAtById.get(order.record_id) ?? null,
+          totalAmount: totalAmountById.get(order.record_id) ?? null,
+          rawDetails: detailIds.map((id) => detailById.get(id)).filter(Boolean),
+          rawPayments: paymentIds.map((id) => paymentById.get(id)).filter(Boolean),
+        });
+      }
+    } else {
+      // 交割单页保留既有口径：按「销售单号」合并；同一单号即使来自不同销售主表记录，也归成一组。
+      const groupOf = (orderId) => {
+        const orderNo = orderNoById.get(orderId) || orderId;
+        if (!groups.has(orderNo)) groups.set(orderNo, { salesEntryRecordId: orderId, orderNo, recordedAt: recordedAtById.get(orderId) ?? null, totalAmount: totalAmountById.get(orderId) ?? null, rawDetails: [], rawPayments: [] });
+        return groups.get(orderNo);
+      };
+      for (const detail of details) {
+        const orderId = strictLinkedRecordIds(detail.fields?.[detailFields.salesEntry])[0] || '';
+        if (orderId) groupOf(orderId).rawDetails.push(detail);
+      }
+      for (const payment of payments) {
+        const orderId = strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '';
+        if (orderId) groupOf(orderId).rawPayments.push(payment);
+      }
     }
 
     const result = [];
     for (const group of groups.values()) {
-      const detailRows = group.rawDetails.map((detail) => {
-        const productId = strictLinkedRecordIds(detail.fields?.[detailFields.product])[0] || '';
-        const product = productById.get(productId);
-        const sizeId = strictLinkedRecordIds(detail.fields?.[detailFields.size])[0] || '';
-        const sizeText = sizeValueById.get(sizeId) || '';
-        return {
-          record_id: detail.record_id,
-          // 页面显示「货号」= 货品信息.货号（不是 编号 公式）。
-          product: product?.productNo || '',
-          product_record_id: productId,
-          color: product?.colorId ? (colorNameById.get(product.colorId) || '') : '',
-          size: sizeText === '' ? null : (Number.isFinite(Number(sizeText)) ? Number(sizeText) : sizeText),
-          fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '',
-          stock_quantity: (() => {
-            const stockField = detailFields.stockQuantity || SALES_DETAIL_STOCK_FIELD;
-            const raw = textValue(detail.fields?.[stockField]).trim();
-            return raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw);
-          })(),
-          ...(query ? {
-            number: product?.number || '',
-            actual_amount: Number(textValue(detail.fields?.[detailFields.actualAmount])) || 0,
-            category_name: textValue(detail.fields?.[detailReadOnlyFields.categoryName?.name]).trim(),
-            category_type: (() => {
-              const rawId = textValue(detail.fields?.[detailReadOnlyFields.categoryType?.name]).trim();
-              return categoryTypeNameById.get(rawId) || rawId;
-            })(),
-            sold_at: detail.fields?.[detailFields.soldAt] ?? null,
-          } : {}),
-        };
-      });
+      const detailRows = group.rawDetails.map(detailRowOf);
       const paymentRows = group.rawPayments.map((payment) => ({
         record_id: payment.record_id,
         status: textValue(payment.fields?.[paymentFields.status]) || '',
@@ -237,10 +258,15 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       created_at: payment.fields?.[gateway.table('paymentRecord').readOnlyFields?.createdTime?.name] ?? null,
       sales_entry_record_id: strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '',
     })) : [];
+    // 销售数量仍按全部销售明细统计，不能因为「订单区块只显示主表关联」而漏掉未关联明细。
+    const allDetails = query ? details.map((detail) => {
+      const orderId = strictLinkedRecordIds(detail.fields?.[detailFields.salesEntry])[0] || '';
+      return { ...detailRowOf(detail), recorded_at: recordedAtById.get(orderId) ?? null };
+    }) : [];
     return {
       methods: orderWithPreferred(methodRows.map((item) => item.name), SCAN_WRITE.sale.defaultPaymentMethod),
       orders: result,
-      ...(query ? { all_payments: allPayments } : {}),
+      ...(query ? { all_payments: allPayments, all_details: allDetails } : {}),
     };
   };
 
