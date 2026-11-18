@@ -509,7 +509,7 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
       '「单据」里每组一张、文件名 = `documentFileNameOf`（唯一一处拼法 ✓）',
     );
     assert.equal(h.messages.length, 4, '2 组 ×（图 + @文字）');
-    assert.equal(SCAN_WRITE.purchaseReturn.imageTitle, '邯美皮鞋采购退货单');
+    assert.equal(SCAN_WRITE.purchaseReturn.imageTitle, '邯美皮鞋退货单');
   } finally { h.cleanup(); }
 });
 

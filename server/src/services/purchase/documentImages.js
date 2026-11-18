@@ -256,7 +256,7 @@ const documentImages = {
           supplierName,
           batchNo: posting.batch_no || draft.batch_no || '',
           items: group.items,
-          // 不传就是采购申请单（渲染器里的默认标题），退货传「邯美皮鞋采购退货单」。
+          // 不传就是采购申请单（渲染器里的默认标题），退货传「邯美皮鞋退货单」。
           title: options.title,
         });
         // ⚠️ 一条开话题、后面的回复它（业务负责人 2026-10-06 拍板）：
