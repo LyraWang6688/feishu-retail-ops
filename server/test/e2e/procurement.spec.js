@@ -190,7 +190,8 @@ test('AC-P23 无横向滚动 + 点击区 ≥44px（390 / 604 两个 project 都�
   // 上新 tab 也留一张（卡片小字 / 特殊码折叠 / 只有「新增货品」一个统计）
   await tab(page, /上新/).click();
   await expect(page.getByText('LY001 · 黑色')).toBeVisible();
-  await expect(page.getByText('特殊码 · 4 个（默认 0 双，点开选择）')).toBeVisible();
+  // 男、女两组现在都是 4 个特殊码 ⇒ 文本会命中两组；这里只要求至少有一组可见。
+  await expect(page.getByText('特殊码 · 4 个（默认 0 双，点开选择）').last()).toBeVisible();
   const newShot = path.join(SHOTS, `procurement-${testInfo.project.name}-new.png`);
   await page.screenshot({ path: newShot, fullPage: true });
   await testInfo.attach(`采购页·上新 ${testInfo.project.name}`, { path: newShot, contentType: 'image/png' });
