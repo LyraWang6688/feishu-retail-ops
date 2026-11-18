@@ -195,10 +195,11 @@ test('AC-TQ-R2 上传遇 504 ⇒ 重试后成功；写回复用同一 file_token
   assert.equal(result.file_token, 'retry_token_1');
 });
 
-test('AC-TQ-R3 写回失败由 gateway 写调度器负责（service 不再包写重试）', async () => {
+test('AC-TQ-R3 写回遇瞬时 400 也按统一关键读重试，重试后成功', async () => {
   const gateway = flakyGateway({ record: { record_id: 'rec_retry', fields: {} }, failUpdate: 1 });
-  await assert.rejects(() => serviceFor(gateway).syncRecord('rec_retry'), /400/);
-  assert.equal(gateway.counts.update, 1);
+  const result = await serviceFor(gateway).syncRecord('rec_retry');
+  assert.equal(result.status, 'written');
+  assert.equal(gateway.counts.update, 2, '第一次 1254607 后必须重试一次');
   assert.equal(gateway.counts.upload, 1);
 });
 

@@ -22,7 +22,7 @@ const { writeManualLedger } = require('./inventory/manualLedger');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { textValue } = require('./v1BitableGateway');
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
-const { INVENTORY_READ_RETRY } = require('../config/inventoryReadRetry');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 const { createKeyedLock } = require('../utils/keyedLock');
 
 const MAX_ROWS = 200;
@@ -102,7 +102,7 @@ class InventoryPairAdjustmentService {
     const correlation = { audit_domain: 'inventoryManual', task_id: source };
     const readProductLive = () => (typeof this.inventory.readLiveInventoryForProduct === 'function'
       ? this.inventory.readLiveInventoryForProduct(product)
-      : this.inventory.gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY }));
+      : this.inventory.gateway.listAll('liveInventory', { retry: CRITICAL_READ_RETRY }));
     const raw = await readProductLive();
     const desiredTotals = new Map();
     const desiredStatesBySize = new Map();
@@ -239,7 +239,7 @@ class InventoryPairAdjustmentService {
     const gateway = this.inventory.gateway;
     const table = gateway.table('liveInventory');
     const correlation = { audit_domain: 'inventoryManual', task_id: String(requestId || '') };
-    const records = await gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
+    const records = await gateway.listAll('liveInventory', { retry: CRITICAL_READ_RETRY });
     const updates = [];
     const operations = [];
     for (const record of records) {

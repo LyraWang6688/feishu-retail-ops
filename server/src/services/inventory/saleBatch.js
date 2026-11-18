@@ -11,7 +11,7 @@ const { logInfo, logWarn } = require('../../utils/logger');
 const { stockShortage } = require('../../config/inventoryTexts');
 const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
-const { INVENTORY_READ_RETRY } = require('../../config/inventoryReadRetry');
+const { CRITICAL_READ_RETRY } = require('../../config/gatewayReadRetry');
 const { requireMovement, MOVEMENT_SALE_DECREASE } = require('./movements');
 const {
   operationSourceIdOf,
@@ -143,7 +143,7 @@ async function applySaleBatch(items = [], options = {}) {
         }
         allLive = [...liveById.values()];
       } else {
-        allLive = await this.gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
+        allLive = await this.gateway.listAll('liveInventory', { retry: CRITICAL_READ_RETRY });
       }
       const claimed = new Set();
       // 2026-11-18：与 applyChange 共用 findLedger 的来源精确读（优先 listByFilter，

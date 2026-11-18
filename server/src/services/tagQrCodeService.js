@@ -29,7 +29,8 @@ const { logInfo, logWarn, logError } = require('../utils/logger');
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
 // ⭐ 2026-11-13：飞书瞬时错误（1254607 / 504 / 429 / 网络）的通用小退避重试——
 //   项目里已有这一份（`config/pushRetry` 的 `withTransientRetry`），**不另写重试器**。
-const { withTransientRetry, resolveTransientRetryConfig } = require('../config/pushRetry');
+const { withTransientRetry } = require('../config/pushRetry');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
 const RECORD_ID_PLACEHOLDER = '{recordId}';
 
@@ -88,7 +89,7 @@ const createTagQrCodeService = ({
   generatePng = generateQrPng,
   transientRetry,
 } = {}) => {
-  const retryConfig = transientRetry || resolveTransientRetryConfig();
+  const retryConfig = transientRetry || CRITICAL_READ_RETRY;
   const productTable = V1_BITABLE_SCHEMA.tables.product;
   const tagQrFieldName = productTable.fields[config.fields.tagQrCode];
   const ensureFieldNames = () => {
@@ -161,7 +162,18 @@ const createTagQrCodeService = ({
       try {
         // 附件字段写法（官方 FAQ）：`[{ file_token }]`。
         // ⚠️ 写回由 gateway 写调度器重试；这里保留短重试只为兼容旧用例的 fake gateway。
-        await gateway.update('product', recordId, { [config.fields.tagQrCode]: [{ file_token: fileToken }] });
+        await withTransientRetry(
+          () => gateway.update('product', recordId, {
+            [config.fields.tagQrCode]: [{ file_token: fileToken }],
+          }),
+          {
+            operation: 'product.tag_qr.write_back',
+            config: retryConfig,
+            onRetry: ({ attempt, delayMs, error: retryError }) => logWarn('product.tag_qr.retry', {
+              record_id: recordId, step: 'write_back', attempt, delay_ms: delayMs, error: retryError.message,
+            }),
+          },
+        );
         // 改了货品 ⇒ 作废扫码页「货品信息」内存快照（只作废货品那一份）。
         invalidateLiveInventorySnapshot('product_tag_qr_written', { tableKey: 'product' });
       } catch (error) {

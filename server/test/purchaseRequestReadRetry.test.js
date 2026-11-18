@@ -4,13 +4,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { PURCHASE_REQUEST_READ_RETRY } = require('../src/config/purchaseRequestReadRetry');
+const { CRITICAL_READ_RETRY } = require('../src/config/gatewayReadRetry');
 const { createPurchaseDetailIdAllocator, readPurchaseRequestsForTask } = require('../src/services/purchaseDetailId');
 
 test('PURCHASE-RETRY1 配置：最多 6 次，1s 起，封顶 15s', () => {
-  assert.deepEqual(PURCHASE_REQUEST_READ_RETRY, {
-    maxRetries: 5, baseDelayMs: 1000, factor: 2, maxDelayMs: 15000,
-  });
+  assert.equal(CRITICAL_READ_RETRY.maxRetries, 5);
+  assert.equal(CRITICAL_READ_RETRY.baseDelayMs, 1000);
+  assert.equal(CRITICAL_READ_RETRY.factor, 2);
+  assert.equal(CRITICAL_READ_RETRY.maxDelayMs, 15000);
+  assert.ok(Array.isArray(CRITICAL_READ_RETRY.larkCodes));
 });
 
 test('PURCHASE-RETRY2 采购明细分配器自己读 purchaseRequest 时带 retry', async () => {
@@ -25,7 +27,7 @@ test('PURCHASE-RETRY2 采购明细分配器自己读 purchaseRequest 时带 retr
   const allocator = createPurchaseDetailIdAllocator({ gateway });
   const cursor = await allocator.open({ batchRecordId: 'batch_1', batchNo: 'CGD-TEST-0001' });
   assert.equal(cursor.peek(), 1);
-  assert.deepEqual(seen, { table: 'purchaseRequest', options: { retry: PURCHASE_REQUEST_READ_RETRY } });
+  assert.deepEqual(seen, { table: 'purchaseRequest', options: { retry: CRITICAL_READ_RETRY } });
 });
 
 test('PURCHASE-RETRY3 采购明细快照按任务幂等键前缀精确读，失败才整表回退', async () => {
@@ -42,7 +44,7 @@ test('PURCHASE-RETRY3 采购明细快照按任务幂等键前缀精确读，失�
   assert.deepEqual(rows, [{ record_id: 'detail_1' }]);
   assert.equal(calls.length, 1);
   assert.match(calls[0].filter, /CurrentValue\.\[幂等键\]\.contains\("purchase_request:task1:"\)/);
-  assert.deepEqual(calls[0].options, { retry: PURCHASE_REQUEST_READ_RETRY });
+  assert.deepEqual(calls[0].options, { retry: CRITICAL_READ_RETRY });
 });
 
 test('PURCHASE-RETRY4 采购写库/查询/待办读 purchaseRequest 都挂统一 retry 或精确读', () => {
@@ -51,7 +53,7 @@ test('PURCHASE-RETRY4 采购写库/查询/待办读 purchaseRequest 都挂统一
   assert.match(webhook, /readPurchaseRequestsForTask/, '采购写库必须用按任务幂等键前缀精确读');
   for (const file of ['purchasePendingBatchService.js', 'purchaseQueryService.js']) {
     const source = fs.readFileSync(path.join(root, file), 'utf8');
-    assert.match(source, /PURCHASE_REQUEST_READ_RETRY/, `${file} 必须引用统一配置`);
-    assert.match(source, /retry: PURCHASE_REQUEST_READ_RETRY/, `${file} 的 purchaseRequest 读必须带 retry`);
+    assert.match(source, /CRITICAL_READ_RETRY/, `${file} 必须引用统一配置`);
+    assert.match(source, /retry: CRITICAL_READ_RETRY/, `${file} 的 purchaseRequest 读必须带 retry`);
   }
 });

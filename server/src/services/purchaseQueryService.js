@@ -4,7 +4,7 @@ const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { classifyReportBehavior, REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
 const { getConfigRows } = require('./configTableCache');
-const { PURCHASE_REQUEST_READ_RETRY } = require('../config/purchaseRequestReadRetry');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
 const asText = (tableKey, record, semanticKey) => {
   const fieldName = V1_BITABLE_SCHEMA.tables[tableKey]?.fields?.[semanticKey];
@@ -83,7 +83,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
 
   const listPurchaseRequests = async (filters = {}) => {
     const [requests, products, batches, behaviors, suppliers] = await Promise.all([
-      cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest', { retry: PURCHASE_REQUEST_READ_RETRY })),
+      cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest', { retry: CRITICAL_READ_RETRY })),
       getConfigRows({ gateway, tableKey: 'product' }),
       cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch')),
       // ⚠️ 第 4 张（行为管理）也要缓存 ⇒ 否则"第二次快"不成立 ✗（4 张里漏 1 张 = 白等 ✗）
