@@ -137,3 +137,25 @@ export function sampleChoiceProducts({ rows = [], lines = [] } = {}) {
   }
   return [...products.values()];
 }
+
+/** 2026-11-18：验收提交成功后，卡片留在页面上也要明确“已提交”并锁住重复提交。 */
+export const markArrivalSubmitted = ({ button, form, texts = {} } = {}) => {
+  if (!button || !form) return;
+  const card = form.closest?.('.order-card');
+  form.dataset.arrivalSubmitted = '1';
+  card?.setAttribute('data-arrival-submitted', '1');
+  button.disabled = true;
+  button.textContent = texts.arrivalSubmitted || '';
+  form.querySelectorAll('input, button, textarea, select').forEach((field) => {
+    if (field !== button) field.disabled = true;
+  });
+  let note = form.querySelector('[data-view="arrival-submitted-note"]');
+  if (!note) {
+    note = document.createElement('p');
+    note.className = 'arrival-submitted-note';
+    note.dataset.view = 'arrival-submitted-note';
+    note.textContent = texts.arrivalSubmittedNote || '';
+    button.after(note);
+  }
+  note.hidden = false;
+};

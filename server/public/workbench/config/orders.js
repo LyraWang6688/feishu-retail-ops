@@ -192,6 +192,9 @@ export const ARRIVAL_FULL_TEXTS = {
   sampleChoiceCancel: '返回修改数量',
   submitting: '正在确认到货…',
   accepted: '已确认到货',
+  // 2026-11-18：异步受理成功后，卡片留在页面上也要明确“已点击/已提交”。
+  arrivalSubmitted: '已提交，后台处理中…',
+  arrivalSubmittedNote: '已提交，后台正在入库，请勿重复提交。',
   // ⚠️ 2026-10-15（她追加口径）：明细**挂不上批次** ⇒ **不进这一屏**（见 `groupPurchaseOrders` ✓）——
   //    所以这里**不需要**"这批没有批次号、无法验收"那句文案了 ✗（我上一版加过，她口径一改就作废 ✓）。
 };

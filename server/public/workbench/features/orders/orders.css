@@ -364,3 +364,21 @@
 .sample-choice-error { margin: 0; color: var(--danger); font-size: var(--font-size-sm); }
 .sample-choice-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .sample-choice-actions .btn { min-width: 96px; min-height: var(--control-height); }
+
+/* 2026-11-18：验收已提交（后台处理中）—— 卡片保留，但明确锁住重复提交 */
+.order-card[data-arrival-submitted="1"] {
+  opacity: 0.82;
+}
+.action-form[data-arrival-submitted="1"] .arrival-submitted-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+.action-form[data-arrival-submitted="1"] input:disabled,
+.action-form[data-arrival-submitted="1"] button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}

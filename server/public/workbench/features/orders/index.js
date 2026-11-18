@@ -3,7 +3,7 @@ import { escapeHtml, money, statusClass } from '../../core/formatters.js';
 import { describeError, runWriteAction, showPageError } from '../../core/ui.js';
 import {
   arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments, validateArrivalDocuments,
-  arrivalLineKey, arrivalSubmitLines, sampleChoiceProducts,
+  arrivalLineKey, arrivalSubmitLines, sampleChoiceProducts, markArrivalSubmitted,
 } from './acceptanceDoc.js';
 
 // 兼容既有调用方/用例：这两个纯函数仍从 index.js 导出。
@@ -704,13 +704,14 @@ export function createOrdersModule({ mode = 'both' } = {}) {
         //   accept 必回 `redirect_url`（`submitToastUrl` 唯一真源）⇒ 回工作台，shared/toast.js 弹统一文案。
         //   ⚠️ 不回 `redirect_url` = 后端漏字段（不该发生）⇒ 按失败如实报，绝不留在本页假装成功 ✗。
         if (!result?.redirect_url) throw new Error(ARRIVAL_FULL_TEXTS.redirectMissing);
+        markArrivalSubmitted({ button, form, texts: ARRIVAL_FULL_TEXTS });
         window.location.assign(result.redirect_url);
         return true;
       } catch (error) {
         renderResult(describeError(error), true);
         return false;
       }
-    }, '正在验收入库…');
+    }, '正在验收入库…', { keepDisabled: (accepted) => accepted === true });
   }
 
  
