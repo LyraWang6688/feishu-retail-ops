@@ -12,7 +12,7 @@
 .ledger-table { width: calc(100% + var(--card-pad-mobile) * 2); margin-left: calc(var(--card-pad-mobile) * -1); margin-right: calc(var(--card-pad-mobile) * -1); overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 .ledger-row {
   display: grid;
-  grid-template-columns: 68px 64px minmax(min-content, 1fr) 30px 48px;
+  grid-template-columns: 68px 64px minmax(min-content, 1fr) 30px 40px;
   gap: 8px;
   align-items: start;
   padding: 8px;
@@ -42,7 +42,7 @@
 }
 @media (max-width: 420px) {
   .ledger-row {
-    grid-template-columns: 64px 60px minmax(min-content, 1fr) 28px 48px;
+    grid-template-columns: 64px 60px minmax(min-content, 1fr) 28px 40px;
     gap: 8px;
     padding: 7px 8px;
     font-size: var(--font-size-xs);
