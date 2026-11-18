@@ -57,7 +57,7 @@ const createSupplyDocumentSyncService = ({ gateway, config = CONFIG } = {}) => {
     return { fileName, fileToken, overwritten: sameName.length };
   };
 
-  const syncBatch = async ({ batchNo = '', batchRecordId = '' } = {}) => {
+  const syncBatch = async ({ batchNo = '', batchRecordId = '', supplierName = '', supplierNames = [] } = {}) => {
     const wantedNo = String(batchNo || '').trim();
     const wantedId = String(batchRecordId || '').trim();
     if (!wantedId && !wantedNo) throw new Error('同步供应单据缺少批次身份');
@@ -84,16 +84,26 @@ const createSupplyDocumentSyncService = ({ gateway, config = CONFIG } = {}) => {
       return { ok: true, skipped: 'no_documents', batch_no: wantedNo, behavior, status };
     }
     const dateKey = dayKeyOfBatchNo(wantedNo) || config.texts.unknownDate;
-    const supplier = safePart(textValue(fields[config.fields.supplier]).trim()) || config.texts.unknownSupplier;
-    const prefix = `${dateKey}_${supplier}_${behavior || config.texts.unknownBehavior}`;
+    const baseSupplier = safePart(supplierName || textValue(fields[config.fields.supplier]).trim())
+      || config.texts.unknownSupplier;
+    const knownSuppliers = [...new Set((Array.isArray(supplierNames) ? supplierNames : [])
+      .map((name) => safePart(name)).filter(Boolean))];
+    // 多供应商退货：附件名以「供应商名-」开头；逐个匹配，不再统一用主表空供应商。
+    const supplierFor = (doc) => knownSuppliers.find((name) => String(doc.name || '').startsWith(`${name}-`))
+      || baseSupplier;
+    const prefixFor = (doc) => `${dateKey}_${supplierFor(doc)}_${behavior || config.texts.unknownBehavior}`;
     const correlation = { batch_no: wantedNo };
     const synced = [];
     for (const doc of myDocs) {
-      synced.push(await syncFile({ attachment: doc, folderToken: config.folders.our, prefix, correlation }));
+      synced.push(await syncFile({
+        attachment: doc, folderToken: config.folders.our, prefix: prefixFor(doc), correlation,
+      }));
     }
     if (isPurchase && status === config.arrivedStatus) {
       for (const doc of otherDocs) {
-        synced.push(await syncFile({ attachment: doc, folderToken: config.folders.counterparty, prefix, correlation }));
+        synced.push(await syncFile({
+          attachment: doc, folderToken: config.folders.counterparty, prefix: prefixFor(doc), correlation,
+        }));
       }
     }
     await gateway.update('purchaseOrderBatch', record.record_id, { documentSync: true }, { correlation });

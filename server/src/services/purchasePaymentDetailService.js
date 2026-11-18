@@ -50,12 +50,29 @@ const createPurchasePaymentDetailService = ({ gateway, config = CONFIG } = {}) =
     if (!fields.transactionDetailId || !fields.supplier || !fields.batchNo || !fields.amount) {
       throw new Error('P发生明细未配置交易明细ID/供应商/报货批次号/发生额字段映射');
     }
+    // 单测 / 未接线的替身网关可能没有 listByFilter：不做无幂等保证的盲写，跳过并记录。
+    if (typeof gateway.listByFilter !== 'function') {
+      logWarn(config.events.failed, {
+        batch_no: wantedNo, supplier_record_id: supplierId,
+        reason: 'list_by_filter_unavailable',
+      });
+      return { ok: false, skipped: true, reason: 'list_by_filter_unavailable' };
+    }
     const supplierName = await supplierNameOf(supplierId);
     const transactionDetailId = idOf({ batchNo: wantedNo, supplierName });
     const formula = equalsFormula(fields.transactionDetailId, transactionDetailId);
     let existing = [];
     if (formula) {
-      existing = await gateway.listByFilter(config.targetTableKey, formula);
+      try {
+        existing = await gateway.listByFilter(config.targetTableKey, formula);
+      } catch (error) {
+        logWarn(config.events.failed, {
+          batch_no: wantedNo, supplier_record_id: supplierId,
+          transaction_detail_id: transactionDetailId,
+          reason: 'dedupe_read_failed', error: String(error?.message || error).slice(0, 200),
+        });
+        return { ok: false, skipped: true, reason: 'dedupe_read_failed' };
+      }
       if (Array.isArray(existing) && existing.length) {
         logInfo(config.events.skipped, {
           batch_no: wantedNo, supplier_record_id: supplierId,
