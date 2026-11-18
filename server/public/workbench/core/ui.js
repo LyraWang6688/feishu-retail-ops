@@ -72,7 +72,7 @@ export const createSubmitGuard = (options = {}) => {
   return {
     isPending: (button) => Boolean(button) && inFlight.has(button),
     pendingText: defaultText,
-    async run(button, task, pendingText) {
+    async run(button, task, pendingText, options = {}) {
       if (!button) return task();
       if (inFlight.has(button)) return undefined; // ⭐ 连点：上一次还在跑，这一次直接忽略
       inFlight.add(button);
@@ -84,13 +84,20 @@ export const createSubmitGuard = (options = {}) => {
       const ticker = startTimer(() => {
         button.textContent = pendingLabel(base, (now() - startedAt) / 1000);
       }, 1000);
+      let keepDisabled = false;
       try {
-        return await task();
+        const result = await task();
+        // 2026-11-18：成功提交后需要保留“已提交”态的调用方（验收）可以传 keepDisabled(result)。
+        keepDisabled = typeof options.keepDisabled === 'function'
+          && options.keepDisabled(result) === true;
+        return result;
       } finally {
         stopTimer(ticker);
         inFlight.delete(button);
-        button.disabled = false;
-        button.textContent = originalText; // 失败也恢复 ⇒ 她能再点一次
+        if (!keepDisabled) {
+          button.disabled = false;
+          button.textContent = originalText; // 失败也恢复 ⇒ 她能再点一次
+        }
       }
     },
   };
@@ -100,4 +107,4 @@ export const createSubmitGuard = (options = {}) => {
 export const submitGuard = createSubmitGuard();
 
 /** 写操作的统一入口：点了**立刻有反馈** + **防连点**（各模块只调这一个）。 */
-export const runWriteAction = (button, task, pendingText) => submitGuard.run(button, task, pendingText);
+export const runWriteAction = (button, task, pendingText, options = {}) => submitGuard.run(button, task, pendingText, options);
