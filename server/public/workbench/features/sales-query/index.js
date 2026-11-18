@@ -21,14 +21,19 @@ const timeText = (value) => {
 };
 const statusClass = (status) => (status === '已交付' ? 'ok' : (status === '未交付' ? 'wait' : 'back'));
 
-function methodsHtml(methods, revenue) {
-  if (!methods.length) return `<p class="sq-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
+function methodsHtml(methods, pendingMethods, revenue) {
   const max = Math.max(...methods.map((item) => Number(item.amount) || 0), 1);
-  return methods.map((item) => `<div class="sq-bar-row">
+  const normal = methods.map((item) => `<div class="sq-bar-row">
     <span>${escapeHtml(item.method || '未标注方式')}</span>
     <div class="sq-bar"><i style="width:${Math.max(2, (Number(item.amount) || 0) / max * 100)}%"></i></div>
     <b>${escapeHtml(amountText(item.amount))}</b>
   </div>`).join('');
+  const pending = (pendingMethods || []).map((item) => `<div class="sq-pending-row">
+    <span>${escapeHtml(item.method || '未标注方式')}</span>
+    <b>${escapeHtml(amountText(item.amount))}</b>
+    <em>${escapeHtml(PAGE.texts.pendingExcluded)}</em>
+  </div>`).join('');
+  return normal + pending || `<p class="sq-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
 }
 
 function breakdownRows(rows) {
@@ -86,13 +91,14 @@ export function createSalesQueryModule() {
       const summary = data?.summary || {};
       const revenue = Number(summary.revenue || 0);
       const methods = Array.isArray(summary.payment_methods) ? summary.payment_methods : [];
+      const pendingMethods = Array.isArray(summary.pending_methods) ? summary.pending_methods : [];
       const delivered = summary.delivered || { count: 0, amount: 0 };
       const undelivered = summary.undelivered || { count: 0, amount: 0 };
       body.innerHTML = `
         <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.amountTitle)}</h2></div>
         <div class="sq-top">
           <div class="sq-revenue"><span>${escapeHtml(PAGE.texts.revenue)}</span><b>${escapeHtml(amountText(revenue))}</b></div>
-          <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.methods)}</h2></div>${methodsHtml(methods, revenue)}</div>
+          <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.methods)}</h2></div>${methodsHtml(methods, pendingMethods, revenue)}</div>
         </div>
         <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.volumeTitle)}</h2></div>
         <div class="sq-volume-cards">

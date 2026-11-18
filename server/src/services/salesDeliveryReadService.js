@@ -22,6 +22,14 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 const { logInfo, logWarn } = require('../utils/logger');
 
+const richTextValue = (value) => {
+  if (!Array.isArray(value)) return textValue(value);
+  return value.map((item) => {
+    if (item && typeof item === 'object') return textValue(item.text ?? item.text_arr ?? item);
+    return textValue(item);
+  }).join('');
+};
+
 const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetry, sleep } = {}) => {
   if (!gateway) throw new Error('SalesDeliveryReadService requires gateway');
   const retry = orderReadRetry || resolveOrderReadRetryConfig();
@@ -78,6 +86,14 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const detailFieldsForRefs = gateway.table('salesDetail').fields;
     const detailReadOnlyFields = gateway.table('salesDetail').readOnlyFields || {};
     const productFieldsForRefs = gateway.table('product').fields;
+    const categoryTypeNameById = new Map();
+    if (query && typeof gateway.listFields === 'function') {
+      const productFieldMeta = await gateway.listFields('product');
+      const categoryField = productFieldMeta.find((field) => field.field_name === productFieldsForRefs.category);
+      for (const option of categoryField?.property?.options || []) {
+        if (option?.id != null && option?.name != null) categoryTypeNameById.set(String(option.id), String(option.name));
+      }
+    }
     const idsOf = (records, fields, key) => [...new Set(records.flatMap((record) =>
       strictLinkedRecordIds(record.fields?.[fields[key]])))];
     const productIds = idsOf(details, detailFieldsForRefs, 'product');
@@ -130,7 +146,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const methodRows = methodList?.ok ? methodList.items : [];
     const methodNameById = new Map(methodRows.map((item) => [item.recordId, item.name]));
     const productById = new Map(products.map((item) => [item.record_id, {
-      number: textValue(item.fields?.[productFields.number]).trim(),
+      number: richTextValue(item.fields?.[productFields.number]).trim(),
       productNo: textValue(item.fields?.[productFields.itemNo]).trim(),
       colorId: strictLinkedRecordIds(item.fields?.[productFields.color])[0] || '',
     }]));
@@ -175,7 +191,10 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
             number: product?.number || '',
             actual_amount: Number(textValue(detail.fields?.[detailFields.actualAmount])) || 0,
             category_name: textValue(detail.fields?.[detailReadOnlyFields.categoryName?.name]).trim(),
-            category_type: textValue(detail.fields?.[detailReadOnlyFields.categoryType?.name]).trim(),
+            category_type: (() => {
+              const rawId = textValue(detail.fields?.[detailReadOnlyFields.categoryType?.name]).trim();
+              return categoryTypeNameById.get(rawId) || rawId;
+            })(),
             sold_at: detail.fields?.[detailFields.soldAt] ?? null,
           } : {}),
         };
@@ -212,6 +231,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       method: methodNameById.get(strictLinkedRecordIds(payment.fields?.[paymentFields.method])[0] || '') || '',
       trade_direction: textValue(payment.fields?.[paymentFields.tradeDirection]) || '',
       received_at: payment.fields?.[paymentFields.receivedAt] ?? null,
+      created_at: payment.fields?.[paymentFields.createdTime] ?? null,
       sales_entry_record_id: strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '',
     })) : [];
     return {

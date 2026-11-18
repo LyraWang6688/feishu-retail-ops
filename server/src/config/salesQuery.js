@@ -9,6 +9,7 @@ const SALES_QUERY = Object.freeze({
   fulfillmentStatuses: Object.freeze(['已交付', '未交付']),
   deliveredStatus: '已交付',
   undeliveredStatus: '未交付',
+  pendingStatus: '待平台结算',
   unknownGroup: '未分类',
   unknownMethod: '未标注方式',
   invalidRangeMessage: '日期范围不合法',
