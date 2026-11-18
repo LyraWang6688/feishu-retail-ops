@@ -23,11 +23,14 @@ const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../c
 const { logInfo, logWarn } = require('../utils/logger');
 
 const richTextValue = (value) => {
-  if (!Array.isArray(value)) return textValue(value);
-  return value.map((item) => {
-    if (item && typeof item === 'object') return textValue(item.text ?? item.text_arr ?? item);
-    return textValue(item);
-  }).join('');
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      if (item && typeof item === 'object') return textValue(item.text ?? item.text_arr ?? item);
+      return textValue(item);
+    }).join('');
+  }
+  if (value && typeof value === 'object' && Array.isArray(value.value)) return richTextValue(value.value);
+  return textValue(value);
 };
 
 const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetry, sleep } = {}) => {
@@ -231,7 +234,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       method: methodNameById.get(strictLinkedRecordIds(payment.fields?.[paymentFields.method])[0] || '') || '',
       trade_direction: textValue(payment.fields?.[paymentFields.tradeDirection]) || '',
       received_at: payment.fields?.[paymentFields.receivedAt] ?? null,
-      created_at: payment.fields?.[paymentFields.createdTime] ?? null,
+      created_at: payment.fields?.[gateway.table('paymentRecord').readOnlyFields?.createdTime?.name] ?? null,
       sales_entry_record_id: strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '',
     })) : [];
     return {

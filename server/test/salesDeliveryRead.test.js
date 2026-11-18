@@ -151,7 +151,7 @@ test('AC-DR9 销售查询字段：类别选项 ID 映射为文字，编号富文
   const records = baseRecords();
   records.salesDetail[0].fields['类别'] = ['opthipbNy3'];
   records.salesDetail[0].fields['品类'] = [{ text: '休闲棉鞋', type: 'text' }];
-  records.product[0].fields['编号'] = [{ text: 'XHB8095|黑色|女', type: 'text' }];
+  records.product[0].fields['编号'] = { type: 1, value: [{ text: 'XHB8095|黑色|女', type: 'text' }] };
   const data = await createSalesDeliveryReadService({ gateway: fakeGateway(records) }).listDeliveryData({ query: true });
   assert.equal(data.orders[0].details[0].category_type, '女');
   assert.equal(data.orders[0].details[0].category_name, '休闲棉鞋');
