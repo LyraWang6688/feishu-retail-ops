@@ -144,6 +144,7 @@ body {
 .size-check { flex: 1 1 auto; min-height: var(--control-height); display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-base); }
 .size-check input { width: 20px; height: 20px; }
 .size-qty { flex: 0 0 84px; min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-sm); font-size: var(--font-size-base); text-align: center; }
+
 .hint { color: var(--text-muted); font-size: var(--font-size-sm); }
 /* ── ⭐⭐ 2026-10-11 销售建单两层结构（每件实收 + 多笔收款）──────────────────
    ① 校验失败原地给她的人话（差额）—— 挂在表单**上方**，她改一下就能再提交；
@@ -284,6 +285,11 @@ const PAYMENT_STEP_STYLE = `.pay-status__options { display: grid; grid-template-
 .payment-step { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }`;
 
 
+const RETURN_STEPPER_STYLE = `.size-stepper { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.size-stepper .size-qty { flex: 0 0 48px; width: 48px; padding: 0 var(--space-1); }
+.size-step { width: 40px; height: var(--control-height); padding: 0; border: 1px solid var(--control-border); border-radius: var(--radius-sm); background: var(--surface); color: var(--primary); font-size: 20px; line-height: 1; }
+.size-step:disabled { opacity: .35; }`;
+
 const SCAN_TOAST_STYLE = `.scan-toast { position: fixed; left: 50%; top: var(--space-5); transform: translateX(-50%); z-index: 9999; max-width: calc(100vw - var(--space-8)); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--success-soft); color: var(--success); border: 1px solid var(--success); box-shadow: var(--shadow-pop); font-size: var(--font-size-md); font-weight: var(--weight-bold); }`;
 
 module.exports = {
@@ -295,4 +301,5 @@ module.exports = {
   REALM_BAR_STYLE,
   SCAN_TAB_MARKER,
   PAYMENT_STEP_STYLE,
+  RETURN_STEPPER_STYLE,
 };

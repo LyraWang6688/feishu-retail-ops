@@ -187,8 +187,14 @@ test('AC-RT1 ⭐ 每个尺码一行：**尺码** + **当前库存数量** + **�
   assert.ok(rowFor('40').includes('size-qty'), '数量输入在 ✓');
   assert.ok(rowFor('40').includes('data-stock="3"'), '40 码的数量输入带着库存上限 3 ✓');
   assert.ok(rowFor('42').includes('data-stock="1"'), '42 码带着上限 1 ✓');
-  // 数量默认值**留空**（不是 1）：否则她一提交就把每个码都退 1 双（凭空多退 ✗）
-  assert.match(rowFor('40'), /class="size-qty"[^>]*value=""/, '数量默认留空 = 这一码默认不退 ✓');
+  // 数量默认值**是 0**（不是 1）：否则她一提交就把每个码都退 1 双（凭空多退 ✗）
+  assert.match(rowFor('40'), /class="size-qty"[^>]*value="0"/, '数量默认 0 = 这一码默认不退 ✓');
+  assert.match(rowFor('40'), /data-stepper="1"/, '退货行挂步进标记 ✓');
+  assert.match(rowFor('40'), /data-return-step="-1"[^>]*disabled/, '数量为 0 时减号初始禁用 ✓');
+  assert.match(rowFor('40'), /data-return-step="1"/, '有加号步进按钮 ✓');
+  const scriptSrc = fs.readFileSync(new URL('../src/views/scanPage/script.js', `file://${__filename}`), 'utf8');
+  assert.match(scriptSrc, /data-return-step/, '脚本处理步进按钮 ✓');
+  assert.match(scriptSrc, /data-stock/, '步进上限读行库存 ✓');
   const rendererSrc = rendererSource();
   assert.match(rendererSrc, /checkbox: false/, '渲染层：退货块显式关掉勾选框 ✓');
   assert.match(rendererSrc, /quantityPlaceholder: rf\.quantityPlaceholder/, '占位文案走配置 ✓');
