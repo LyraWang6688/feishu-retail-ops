@@ -230,7 +230,10 @@ test('2026-11-18：销售成功后按 sampleReplacements 补样品；补样品�
     const a = await h.worker.enqueue({ submitKey: 'scan_sale:s:sample', payload: samplePayload });
     const done = await h.worker.process(a.job.job_id);
     assert.equal(done.status, STATUS.succeeded);
-    assert.equal(h.calls.lines[0].samplePromotionSize, '41', 'payload 里的选择要进 job 会话行');
+    assert.equal(h.calls.lines[0].sample_promotion_size, '41',
+      'payload 里的选择要按会话行字段 sample_promotion_size 落盘');
+    assert.equal(h.calls.lines[0].samplePromotionSize, undefined,
+      '不再写驼峰字段（写驼峰会让交付侧读不到，补样品静默跳过）');
     assert.deepEqual(promoted, [{
       productRecordId: 'p1', size: '41', salesDetailRecordId: 'd1',
       operatorOpenId: 'ou_1', requestId: a.job.job_id,

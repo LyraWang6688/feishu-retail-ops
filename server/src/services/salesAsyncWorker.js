@@ -102,7 +102,8 @@ const createSalesAsyncWorker = ({
         trade_type_code: line.trade_type,
         amount: line.actual_amount,
         gift: payload.gift,
-        samplePromotionSize: line.samplePromotionSize,
+        // 2026-11-18：会话行用下划线字段；这里不能写驼峰（写了交付侧读不到，补样品会静默跳过）。
+        sample_promotion_size: line.samplePromotionSize,
         added_at: new Date().toISOString(),
       });
     }
