@@ -70,7 +70,7 @@ test('AC-SAMPLE-TAG1 尺码卡带状态标签；仅样品尺码带 data-sample-o
     assert.match(html, />门盒</);
     assert.match(html, />样品</);
     assert.match(html, />空状态</);
-    const script = samplePromotionScriptHtml().replace(/^<script>|<\/script>$/g, '');
+    const script = samplePromotionScriptHtml().replace(/^<script>|<\/script>$/gi, '');
     assert.doesNotThrow(() => new Function(script), '弹窗脚本必须能通过语法解析');
   });
 });
