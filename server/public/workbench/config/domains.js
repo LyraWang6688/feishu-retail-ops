@@ -140,13 +140,6 @@ export const DOMAIN_TABS = [
         ],
       },
       {
-        id: 'purchase-orders',
-        label: '查询',
-        kind: 'query',
-        sectionId: 'purchase-query',
-        directJump: true,
-      },
-      {
         id: 'purchase-supplier-money',
         label: '往来款',
         kind: 'placeholder',

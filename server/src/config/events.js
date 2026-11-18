@@ -495,7 +495,6 @@ const EVENTS = Object.freeze([
   'workbench.purchase.arrival_confirm.failed',
   'workbench.purchase.arrival_confirm.rejected',
   'workbench.purchase.arrival_detail.failed',
-  'workbench.purchase.arrivals.failed',
   'workbench.purchase.requests.failed',
   'workbench.purchase.suppliers.failed',
   'workbench.query.retry',
