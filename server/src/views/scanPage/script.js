@@ -180,6 +180,43 @@ ${UI_TAP_SHARED_SOURCE}
       }, 1000);
     });
   }
+  // 2026-11-18: return quantity steppers. 0 means "not returned"; +/- respects row stock cap.
+  var returnSteps = document.querySelectorAll('[data-return-step]');
+  for (var rs = 0; rs < returnSteps.length; rs += 1) {
+    (function (step) {
+      var input = step.parentNode ? step.parentNode.querySelector('input[name]') : null;
+      if (!input) return;
+      var form = step.closest ? step.closest('form') : null;
+      var globalMax = form ? parseInt(form.getAttribute('data-return-max-quantity') || '', 10) : NaN;
+      var capOf = function () {
+        var stock = parseInt(input.getAttribute('data-stock') || '', 10);
+        if (isFinite(stock)) return stock;
+        return isFinite(globalMax) && globalMax > 0 ? globalMax : null;
+      };
+      var sync = function () {
+        var current = parseInt(String(input.value || '0').replace(/[^0-9-]/g, ''), 10);
+        if (!isFinite(current) || current < 0) current = 0;
+        var cap = capOf();
+        var dec = step.parentNode.querySelector('[data-return-step="-1"]');
+        var inc = step.parentNode.querySelector('[data-return-step="1"]');
+        if (dec) dec.disabled = current <= 0;
+        if (inc) inc.disabled = cap !== null && current >= cap;
+      };
+      step.addEventListener('click', function () {
+        var delta = parseInt(step.getAttribute('data-return-step') || '0', 10);
+        var current = parseInt(String(input.value || '0').replace(/[^0-9-]/g, ''), 10);
+        if (!isFinite(current) || current < 0) current = 0;
+        var cap = capOf();
+        var next = current + delta;
+        if (next < 0) next = 0;
+        if (cap !== null && next > cap) next = cap;
+        input.value = String(next);
+        sync();
+      });
+      input.addEventListener('input', sync);
+      sync();
+    })(returnSteps[rs]);
+  }
   // 2026-10-13: instant feedback on navigation links + one ui.tap report.
   // ASCII-only inside this template (a Chinese comment here would trip the hardcoded-Chinese gate).
   var tapLinks = document.querySelectorAll('a[data-tap-target]');

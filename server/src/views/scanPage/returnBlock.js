@@ -38,10 +38,16 @@ const sizeRowsHtml = ({
   const placeholder = quantityPlaceholder
     ? ` placeholder="${escapeHtml(quantityPlaceholder)}"`
     : ` placeholder="${escapeHtml(quantityLabel)}"`;
+  const inputHtml = `<input class="size-qty" name="${escapeHtml(quantityName)}" value="${escapeHtml(String(defaultQuantity))}"${quantityAttrs} inputmode="numeric" aria-label="${escapeHtml(`${size} ${quantityLabel}`)}"${placeholder}>`;
+  const quantityHtml = checkbox ? inputHtml : `<span class="size-stepper" data-stepper="1">
+<button type="button" class="size-step" data-return-step="-1" aria-label="${escapeHtml(`${size} ${quantityLabel} −`)}" disabled>−</button>
+${inputHtml}
+<button type="button" class="size-step" data-return-step="1" aria-label="${escapeHtml(`${size} ${quantityLabel} +`)}">+</button>
+</span>`;
   return `<div class="size-row">
 ${sizeBadge}
 ${stock ? `<span class="hint" data-view="${escapeHtml(stock.view)}">${escapeHtml(stock.text)}</span>` : ''}
-<input class="size-qty" name="${escapeHtml(quantityName)}" value="${escapeHtml(String(defaultQuantity))}"${quantityAttrs} inputmode="numeric" aria-label="${escapeHtml(`${size} ${quantityLabel}`)}"${placeholder}>
+${quantityHtml}
 </div>`;
 }).join('');
 
@@ -88,7 +94,7 @@ const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     checkbox: false,
     quantityPlaceholder: rf.quantityPlaceholder,
     sizeLabelTemplate: SCAN_PAGE.texts.sizeLabel,
-    defaultQuantity: '',
+    defaultQuantity: 0,
     // ⚠️ 走到这里的行**一定是"有数量"的**（0 已被上面滤掉 ✓）⇒ 数量列直接就是那个数；
     //    `cap` = 她那条口径的判据（**退货数量 ≤ 当前库存** ✓ 原样保留）；
     //    取不到的行（`sellable` 不是数字）⇒ 如实说"取不到"、**不带上限** ✓

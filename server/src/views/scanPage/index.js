@@ -1,5 +1,5 @@
 const { multiItemBlockHtml, multiItemPayloadJson, MULTI_ITEM_ITEM_KEYS, MULTI_ITEM_ENTRY_KEYS } = require('./multiItemBlock');
-const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, SKELETON_STYLE, STYLE, SCAN_TOAST_STYLE } = require('./styles');
+const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, RETURN_STEPPER_STYLE, SKELETON_STYLE, STYLE, SCAN_TOAST_STYLE } = require('./styles');
 const { buildPaymentRows, paymentRowsHtml, GIFT_ROW_STYLE } = require('./paymentBlock');
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
 // ⭐⭐ 2026-10-29：**成功页整件退场**（业务负责人：「以后就没有成功页了」）——
@@ -339,7 +339,7 @@ const renderScanSkeleton = (view = {}, config = SCAN_PAGE) => {
 <title>${escapeHtml(config.texts.pageTitle)}</title>
 <!-- 2026-10-13: STYLE must be wrapped - emitted bare it is foster-parented into
      the body and painted as visible text (she saw the raw style rules first). -->
-<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}</style>
+<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}${RETURN_STEPPER_STYLE}</style>
 </head>
 <body>
 <div class="page">

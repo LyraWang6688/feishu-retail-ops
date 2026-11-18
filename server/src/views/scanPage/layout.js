@@ -1,7 +1,7 @@
 const { SCAN_PAGE } = require('../../config/scanPage');
 const { REALM_TABS, DEFAULT_REALM, REALM_TEXTS } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
-const { PAYMENT_STEP_STYLE, REALM_BAR_STYLE, SCAN_TAB_MARKER, SKELETON_STYLE, STYLE, canScanNextWithFeishu } = require('./styles');
+const { PAYMENT_STEP_STYLE, REALM_BAR_STYLE, RETURN_STEPPER_STYLE, SCAN_TAB_MARKER, SKELETON_STYLE, STYLE, canScanNextWithFeishu } = require('./styles');
 const { realmScanScriptTagHtml, paymentAddRowScriptHtml, submitFeedbackScriptHtml, giftRowsScriptHtml } = require('./script');
 // ⭐ 2026-10-18（第 4 步提速 · 提交不再白屏）：提交进度遮罩的样式/脚本搬到 `views/scanPage/submitProgress.js`
 //   （Lead 的文件大小门禁：本文件相对 PR base 净增 ≤100 行）
@@ -18,7 +18,7 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = 
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 ${head}
-<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}${content.includes('data-sample-promotion') ? SAMPLE_PROMOTION_STYLE : ''}${hasProgressSubmit(content) ? SUBMIT_PROGRESS_STYLE : ''}</style>
+<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}${RETURN_STEPPER_STYLE}${content.includes('data-sample-promotion') ? SAMPLE_PROMOTION_STYLE : ''}${hasProgressSubmit(content) ? SUBMIT_PROGRESS_STYLE : ''}</style>
 </head>
 <body>
 <main class="page">
