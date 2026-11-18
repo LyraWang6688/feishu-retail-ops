@@ -441,7 +441,9 @@ test('AC-WG4 不同 stock_key 同时写：不同表写入可以并行（不全�
         { record_id: 'door_b2', fields: { 编号: [{ record_ids: ['product_b'] }], 尺码: [{ record_ids: ['size_38'] }], 所属状态: '门盒' } },
       ],
     },
-    writeDelayMs: 40,
+    // CI 上读表比本地慢；40ms 的写入窗口有时会在第二次写开始前就结束。
+    // 拉长到 500ms，确保两个不同 stock_key 的写确实有重叠窗口（判据不变）。
+    writeDelayMs: 500,
   });
   const scheduler = schedulerWith({ maxConcurrency: 2 });
   const gateway = new V1BitableGateway({ schema: SCHEMA, client, writeScheduler: scheduler });
