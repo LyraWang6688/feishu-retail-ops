@@ -485,10 +485,10 @@
 | `scan.realm_scan.signature_ok` | 1 | src/routes/scanPage/public.js |
 | `scan.sale.amount_mismatch` | 1 | src/config/scanWrite.js |
 | `scan.sale.async.done` | 1 | src/services/salesAsyncWorker.js |
-| `scan.sale.async.enqueue_failed` | 4 | src/config/alerts.js<br>src/routes/scanPage/handlers/payment.js<br>src/services/salesAsyncWorker.js |
-| `scan.sale.async.enqueued` | 1 | src/routes/scanPage/handlers/payment.js |
+| `scan.sale.async.enqueue_failed` | 4 | src/config/alerts.js<br>src/services/salesAsyncWorker.js<br>src/services/scanWrite/saleAsyncSubmit.js |
+| `scan.sale.async.enqueued` | 1 | src/services/scanWrite/saleAsyncSubmit.js |
 | `scan.sale.async.failed` | 4 | src/config/alerts.js<br>src/services/salesAsyncWorker.js |
-| `scan.sale.async.invalid_payload` | 1 | src/routes/scanPage/handlers/payment.js |
+| `scan.sale.async.invalid_payload` | 1 | src/services/scanWrite/saleAsyncSubmit.js |
 | `scan.sale.async.print_intent_flush_failed` | 1 | src/services/salesAsyncWorker.js |
 | `scan.sale.async.queue_failed` | 1 | src/services/salesAsyncWorker.js |
 | `scan.sale.async.queued` | 1 | src/services/salesAsyncWorker.js |
