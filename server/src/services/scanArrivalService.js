@@ -390,6 +390,8 @@ const createScanArrivalService = (options = {}) => {
       scanLines: (session.scans || []).map((item) => ({
         product_record_id: item.product_record_id, size: item.size, quantity: item.quantity,
       })),
+      // 2026-11-18：没有库存 / 没有样品时，她在弹窗里选的样品尺码。
+      sampleChoices: session.sample_choices || {},
       timing,
     });
     // ⚠️ 成功与失败**都**打这一条（她的现场就是"慢/卡"，失败原因也要能按分段定位）。

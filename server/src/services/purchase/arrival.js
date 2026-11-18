@@ -187,11 +187,16 @@ const arrival = {
         // 这一双落库之后，这一款就有「样品」行了 ⇒ 后面的都走门盒（与逐条路径的读写顺序等价）。
         sampleSeenOf.set(productRecordId, true);
       }
+      const sampleChoices = draft.sample_choices && typeof draft.sample_choices === 'object'
+        ? draft.sample_choices : {};
       const inboundPayload = inboundEntries.map((entry) => ({
         ...batchIdentity,
         productRecordId: entry.item.product_record_id,
         size: entry.item.size,
         quantity: entry.item.quantity,
+        // 2026-11-18：没有库存 / 没有样品时，她选的「哪个入库尺码做样品」。
+        ...(sampleChoices[entry.item.product_record_id]
+          ? { sampleSize: Number(sampleChoices[entry.item.product_record_id]) } : {}),
         // ⚠️ 2026-10-06：不再传 occurredAt（只进本地任务记录、无人读）；
         // 时间交给飞书自动的「创建时间」。
         state: stateOfEntry.get(entry),

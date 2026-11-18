@@ -1,7 +1,13 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml, money, statusClass } from '../../core/formatters.js';
 import { describeError, runWriteAction, showPageError } from '../../core/ui.js';
-import { arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments, validateArrivalDocuments } from './acceptanceDoc.js';
+import {
+  arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments, validateArrivalDocuments,
+  arrivalLineKey, arrivalSubmitLines, sampleChoiceProducts,
+} from './acceptanceDoc.js';
+
+// 兼容既有调用方/用例：这两个纯函数仍从 index.js 导出。
+export { arrivalLineKey, arrivalSubmitLines };
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
   SALES_SECTIONS, SALES_DELIVERY_PAGE,
@@ -325,16 +331,6 @@ export function purchaseOrdersHtml(rows = [], options = {}) {
     </div>`;
 }
 
-/**
- * ⭐⭐ 2026-10-15（task-27 · 她逐字）：「点进去之后才是对应的采购明细情况，然后**可以自行补充**这个货号下的
- *   其余尺码和数量」＋「**实际到多少就是到多少**」
- *
- * `arrivalDetailHtml(rows)` = 那一批的**明细 + 每行一个「实际到货数量」输入**
- *   · 默认值 = 该行的**申请数量**（她要"改"，不是"从空开始填" ✓）；
- *   · 行的身份挂在 `data-*` 上（`product_record_id` / `size` / `declared`）⇒ 提交时**不用猜** ✓。
- */
-export const arrivalLineKey = (row = {}) => `${String(row.product_record_id || '').trim()}|${String(row.size ?? '').trim()}`;
-
 export function arrivalDetailHtml(rows = []) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return `<p data-view="arrival-detail-empty">${escapeHtml(ARRIVAL_FULL_TEXTS.detailEmpty)}</p>`;
@@ -385,28 +381,6 @@ export function arrivalDetailHtml(rows = []) {
         </section>`;
   }).join('');
   return `<div data-view="arrival-detail-list">${groupHtml}</div>`;
-}
-
-/**
- * 🔴 **她填的实际到货数量** ⇒ 提交用的 `lines`（**唯一来源** ✓ 绝不按申请数补齐 ✗）：
- *   · 某个尺码**填 0** ⇒ **不提交那一行**（没到就是没到 ✓）；
- *   · **没填**（清空）⇒ **不猜**（`ok:false` + 人话，页面上拦住 ✓）—— 「没填」与「填 0」是两件事 ✗；
- *   · 没碰过的行 ⇒ 用页面**预填值**（= 申请数量 ✓ 这与"按申请数补齐"不是一回事：
- *     预填是**页面给她看的默认**，她改了就按她的值，提交的永远是**她确认过的那个值** ✓）。
- */
-export function arrivalSubmitLines({ rows = [], actuals = {} } = {}) {
-  const lines = [];
-  for (const row of rows || []) {
-    const key = arrivalLineKey(row);
-    const has = Object.prototype.hasOwnProperty.call(actuals || {}, key);
-    const raw = String((has ? actuals[key] : row.quantity) ?? '').trim();
-    if (raw === '') return { ok: false, reason: 'actual_missing', lines: [] };
-    if (!/^\d+$/.test(raw)) return { ok: false, reason: 'actual_invalid', lines: [] };
-    const quantity = Number(raw);
-    if (quantity === 0) continue;
-    lines.push({ productRecordId: String(row.product_record_id || ''), size: Number(row.size), quantity });
-  }
-  return { ok: true, reason: '', lines };
 }
 
 /**
@@ -689,6 +663,24 @@ export function createOrdersModule({ mode = 'both' } = {}) {
           return renderResult(text, true);
         }
         if (!built.lines.length) return renderResult(ARRIVAL_FULL_TEXTS.noArrivalLines, true);
+        // 2026-11-18：按本次实际到货数量 > 0 的尺码，判断哪些编号需要她选样品尺码。
+        //   一个弹窗分产品；全部选完才能确认入库；取消 = 回到验收页，不提交。
+        const sampleProducts = sampleChoiceProducts({
+          rows: (state.arrivalRowsByBatch || {})[unitKey] || [],
+          lines: built.lines,
+        });
+        let sampleChoices = {};
+        if (sampleProducts.length) {
+          // 弹窗模块按需加载：不拖慢验收首屏，也不影响既有页面初始解析。
+          const { openSampleChoiceModal } = await import('./sampleChoice.js');
+          const chosen = await openSampleChoiceModal({
+            products: sampleProducts,
+            texts: ARRIVAL_FULL_TEXTS,
+            escapeHtml,
+          });
+          if (!chosen) return false;
+          sampleChoices = chosen;
+        }
         // ⭐ 2026-11-12（业务负责人）：验收单（拍照/选图）先上传拿 file_token，再随验收一起提交；
         //   上传失败 ⇒ 不提交验收（如实报错）。
         const uploadedDocs = await uploadArrivalDocuments({
@@ -702,6 +694,9 @@ export function createOrdersModule({ mode = 'both' } = {}) {
           ...(supplier ? { [ARRIVAL_FULL_FIELDS.supplierRecordId]: supplier } : {}),
           [ARRIVAL_FULL_FIELDS.actualAmount]: Number(rawAmount),
           [ARRIVAL_FULL_FIELDS.lines]: built.lines,
+          // 2026-11-18：新页面始终带这个字段（哪怕空对象）⇒ 后端知道“这是会选样品的新页面”，
+          //   需要选却没选时才能 400；旧页面不带字段 ⇒ 后端沿用原有自动规则。
+          [ARRIVAL_FULL_FIELDS.sampleChoices]: sampleChoices,
           ...(counterpartyDocuments.length
             ? { [ARRIVAL_FULL_FIELDS.counterpartyDocuments]: counterpartyDocuments } : {}),
         });

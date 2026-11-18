@@ -85,6 +85,8 @@ async function applyPurchaseBatch(items = [], options = {}) {
       // ⭐ 一批**一次**整表读（原来每码 3 次：调用方的状态判定 + 重复检查 + 幂等回查各 1 次）。
       const allLive = await this.gateway.listAll('liveInventory');
       // 入库状态按「编号」所有尺码合计推演：合计 0 → 第一双样品，其余门盒；否则全部门盒。
+      // ⭐ 2026-11-18：验收弹窗指定了样品尺码时，按指定尺码做第一双样品；已有样品 / 未指定
+      //   时仍走原规则（no sampleSize + 合计 0 → 第一双样品；合计 > 0 → 全部门盒）。
       const productTotals = new Map();
       const totalOf = (productRecordId) => {
         if (!productTotals.has(productRecordId)) {
@@ -94,11 +96,34 @@ async function applyPurchaseBatch(items = [], options = {}) {
         }
         return productTotals.get(productRecordId);
       };
+      const sampleExistsOf = new Map();
+      const hasSampleOf = (productRecordId) => {
+        if (!sampleExistsOf.has(productRecordId)) {
+          const has = allLive.some((record) =>
+            strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(productRecordId)
+            && textValue(record.fields?.[liveFields.state]).trim() === '样品');
+          sampleExistsOf.set(productRecordId, has);
+        }
+        return sampleExistsOf.get(productRecordId);
+      };
+      const samplePlanned = new Set();
       const plans = [];
       for (const item of prepared) {
         const sizeReference = await this.sizeReferences.resolveByNumber(item.size);
         const existingTotal = totalOf(item.input.productRecordId);
-        item.createdStates = inboundStatesFor({ existingTotal, quantity: item.quantity });
+        const targetSize = Number(item.size);
+        const chosenSampleSize = Number(item.input.sampleSize);
+        const canChooseSample = Number.isSafeInteger(chosenSampleSize) && chosenSampleSize > 0;
+        const alreadyHasSample = hasSampleOf(item.input.productRecordId) || samplePlanned.has(item.input.productRecordId);
+        const makeSample = !alreadyHasSample && (canChooseSample
+          ? targetSize === chosenSampleSize
+          : existingTotal === 0);
+        item.createdStates = !canChooseSample
+          ? inboundStatesFor({ existingTotal, quantity: item.quantity })
+          : (makeSample
+            ? ['样品', ...Array.from({ length: Math.max(0, item.quantity - 1) }, () => '门盒')]
+            : Array.from({ length: item.quantity }, () => '门盒'));
+        if (makeSample) samplePlanned.add(item.input.productRecordId);
         item.state = item.createdStates[0] || '门盒';
         productTotals.set(item.input.productRecordId, existingTotal + item.quantity);
         const existingRows = this.findLiveInventoryIn(

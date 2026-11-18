@@ -304,3 +304,63 @@
   font-size: var(--font-size-sm);
   overflow-wrap: anywhere;
 }
+
+/* 2026-11-18：验收「哪个入库尺码做样品」——一个弹窗分产品 */
+.sample-choice-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--text) 55%, transparent);
+}
+.sample-choice-card {
+  width: min(100%, 460px);
+  max-height: 88vh;
+  overflow: auto;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.sample-choice-card h3 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+.sample-choice-card > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+.sample-choice-form { display: grid; gap: var(--space-3); }
+.sample-choice-product {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+.sample-choice-product h4 { margin: 0; font-size: var(--font-size-base); }
+.sample-choice-product p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.sample-choice-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.sample-choice-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+.sample-choice-option input { width: 18px; height: 18px; margin: 0; }
+.sample-choice-error { margin: 0; color: var(--danger); font-size: var(--font-size-sm); }
+.sample-choice-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.sample-choice-actions .btn { min-width: 96px; min-height: var(--control-height); }

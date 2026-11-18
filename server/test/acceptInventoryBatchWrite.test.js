@@ -232,3 +232,17 @@ test('AC-B6 打点：配置里有 `scan.accept.timing`（验收分阶段耗时�
   assert.equal(SCAN_WRITE.events.acceptTiming, 'scan.accept.timing',
     '① 的打点事件名必须在 config/scanWrite.js 里（服务层透传、收尾 logInfo）');
 });
+
+
+test('AC-SAMPLE-BATCH1 指定样品尺码：该尺码第一双样品，其余门盒；其他尺码门盒', async () => {
+  const fake = makeFake({ sizes: [39, 40] });
+  const inventory = makeService(fake);
+  const items = batchItems([39, 40]);
+  items[0].quantity = 1;
+  items[1].quantity = 2;
+  items[1].sampleSize = 40;
+  await inventory.applyPurchaseBatch(items);
+  const stateField = F('liveInventory').state;
+  const states = fake.data.liveInventory.map((row) => row.fields[stateField]).sort();
+  assert.deepEqual(states, ['样品', '门盒', '门盒'].sort());
+});

@@ -337,11 +337,25 @@ class InventoryService {
         const sampleConsumed = selected.filter((record) =>
           textValue(record.fields?.[stateField]) === '样品').length;
         const targetQuantity = currentQuantity + delta;
-        const createdStates = delta > 0
-          ? (explicitState
-            ? explicitInboundStates(state, quantity)
-            : inboundStatesFor({ existingTotal: allLiveRecords.length, quantity }))
-          : [];
+        let createdStates = [];
+        if (delta > 0) {
+          if (explicitState) {
+            createdStates = explicitInboundStates(state, quantity);
+          } else {
+            const sampleSize = Number(input.sampleSize);
+            const canChooseSample = Number.isSafeInteger(sampleSize) && sampleSize > 0;
+            const sampleStateField = this.gateway.table('liveInventory').fields.state;
+            const hasSample = allLiveRecords.some((record) =>
+              textValue(record?.fields?.[sampleStateField]).trim() === '样品');
+            if (canChooseSample && !hasSample) {
+              createdStates = Number(size) === sampleSize
+                ? ['样品', ...Array.from({ length: Math.max(0, quantity - 1) }, () => '门盒')]
+                : Array.from({ length: quantity }, () => '门盒');
+            } else {
+              createdStates = inboundStatesFor({ existingTotal: allLiveRecords.length, quantity });
+            }
+          }
+        }
         operation = await this.store.create({
           operation_id: id,
           type: 'inventory_change',

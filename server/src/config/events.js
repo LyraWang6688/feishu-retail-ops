@@ -210,6 +210,7 @@ const EVENTS = Object.freeze([
   'product.tag_qr.retry',
   'product.tag_qr.skipped_existing',
   'product.tag_qr.written',
+  'purchase.acceptance.sample_state_failed',
   'purchase.arrival.accept',
   'purchase.arrival.acceptance.skipped',
   'purchase.arrival.inventory_applied.persist_failed',

@@ -17,6 +17,7 @@ const { logError, logInfo, logWarn } = require('../utils/logger');
 const {
   taskIdForBatch, computeSupplierTotals,
 } = require('./acceptanceSupplierProgress');
+const { normalizeSampleChoices } = require('./purchaseArrival/sampleChoices');
 
 const TASK_TYPE = 'purchase_arrival_reconcile';
 
@@ -310,6 +311,8 @@ class PurchaseArrivalConversationService {
       //     · actual_quantity = **代码算出来的**实际到货数合计（与库存口径一致）。
       actual_amount: actualAmount,
       actual_quantity: actualQuantity,
+      // 2026-11-18：哪个编号的哪个入库尺码做样品（无库存 / 无样品时由前端弹窗选）。
+      sample_choices: { ...(task.sample_choices || {}) },
       operator_open_id: String(task.operator_open_id || operatorOpenId || ''),
       requests,
       actual: postableRows.map((row) => ({
@@ -499,7 +502,7 @@ class PurchaseArrivalConversationService {
    */
   async confirmBatchArrival({
     batch, actualAmount, operatorOpenId = '', scanLines = null, timing = null,
-    supplierRecordId = '', supplierRecordIds = [],
+    supplierRecordId = '', supplierRecordIds = [], sampleChoices = {},
   } = {}) {
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
@@ -529,6 +532,9 @@ class PurchaseArrivalConversationService {
     if (scans && !scans.length) {
       return { ok: false, reason: 'no_scan_lines', message: this.scanRowsMessage('no_scan_lines') };
     }
+    // 2026-11-18：没有库存 / 没有样品时，她选「哪个入库尺码做样品」。
+    //   只认正整数字段，非法值不在这里猜；真正校验在验收提交那一层。
+    const normalizedSampleChoices = normalizeSampleChoices(sampleChoices);
     const taskId = taskIdForBatch(batchNo, supplier);
     const existing = await this.store.get(taskId).catch(() => null);
     if (existing?.status === 'posted') {
@@ -590,6 +596,7 @@ class PurchaseArrivalConversationService {
         request_rows: snapshot.rows,
         plan: plan.rows,
         differences: plan.differences,
+        sample_choices: normalizedSampleChoices,
         actual_amount: amount.value,
         status: 'awaiting_confirmation',
         source: scans ? 'scan' : 'workbench',
@@ -650,7 +657,6 @@ class PurchaseArrivalConversationService {
     };
     return copy[reason] || scanMessages.m12;
   }
-
   // ── 已删除（2026-10-07 晚）：`createArrivalRecord` / `findExistingArrival` ──────────
   //
   // 两个方法都在往**已被业务负责人删除的**「到货验收」表里建行 / 回查：
@@ -663,7 +669,6 @@ class PurchaseArrivalConversationService {
   //   · 「验收人」在真表上是**创建人**（自动字段）⇒ 代码不写（原来那次
   //     `UserFieldConvFail` 退一步重试的补丁随之删除，连同 `person` / `relation` 依赖）；
   //   · 批次行的维护归 `PurchaseOrderBatchService`（本类一个业务表都不写）。
-
   /**
    * 把她说的话算成"实际到货"。
    *
@@ -753,7 +758,6 @@ class PurchaseArrivalConversationService {
     }
     return { ok: true, rows: plan, differences };
   }
-
   /**
    * 读这批的采购申请明细（**只读**）。
    *
@@ -818,7 +822,6 @@ class PurchaseArrivalConversationService {
       batchRecordId: this.readBatchRecordId(raw, requestTable),
     };
   }
-
   /** 「报货批次号」关联：从申请行上读；读不到就返回空串（本次不挂批次关联，但不影响入库）。 */
   readBatchRecordId(rawRequests, requestTable) {
     for (const record of rawRequests) {
@@ -827,7 +830,6 @@ class PurchaseArrivalConversationService {
     }
     return '';
   }
-
   async visibleFailure({ tier, taskId, operator = '', logEvent = '', error = null, toastType = 'error', copy } = {}) {
     logInfo('purchase.arrival.reconcile.failure_notice', {
       tier, task_id: taskId, operator_open_id: operator || '', log_event: logEvent,
@@ -835,14 +837,12 @@ class PurchaseArrivalConversationService {
     });
     return { toast: { type: toastType, content: copy } };
   }
-
   async visibleAlreadyPosted({ taskId } = {}) {
     const copy = this.config.replies.alreadyPosted;
     logInfo('purchase.arrival.reconcile.success_notice', { task_id: taskId });
     return { toast: { type: 'info', content: copy } };
   }
 }
-
 module.exports = {
   PurchaseArrivalConversationService,
   taskIdForBatch,

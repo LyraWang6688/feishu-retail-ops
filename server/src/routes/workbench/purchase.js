@@ -38,6 +38,7 @@ const { createProcurementPageService } = require('../../services/procurementPage
 const { createProcurementPageSubmitService } = require('../../services/procurementPageSubmitService');
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
+const { createPurchaseAcceptanceSampleService } = require('../../services/purchaseAcceptanceSampleService');
 
 const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   const router = express.Router();
@@ -261,6 +262,13 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         rows = rows.filter((row) => String(row.supplier_record_id || '').trim() === supplierRecordId);
       }
       if (!rows.length) return res.json({ success: true, rows: [], notice: arrivalTab.texts.emptyDetail });
+      // 2026-11-18：只读判断每个编号要不要她选样品尺码（一次实时库存读，不按行重复读）。
+      const sampleStateService = createPurchaseAcceptanceSampleService({
+        gateway: options.gateway || new V1BitableGateway(),
+      });
+      const sampleStates = await sampleStateService.stateOfProducts(
+        rows.map((row) => row.product_record_id),
+      );
       // ⭐ **只读**：只回 货号 / 尺码 / 数量（前端渲染成不可输入的清单 ✓）
       return res.json({
         success: true,
@@ -276,6 +284,13 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
             quantity: row.quantity ?? 0,
             product_record_id: row.product_record_id || '',
           };
+          // 2026-11-18：没有样品（含无库存）⇒ 前端必须让她选一个本次入库尺码做样品。
+          const sampleState = sampleStates.get(String(row.product_record_id || '').trim());
+          if (sampleState && !sampleState.unavailable) {
+            mapped.needs_sample_choice = sampleState.needsSampleChoice === true;
+            mapped.has_stock = sampleState.hasStock === true;
+            mapped.has_sample = sampleState.hasSample === true;
+          }
           // 只有按供应商拆卡的请求（带 supplierRecordId）才回供应商列 —— 旧页面响应形状保持不变。
           if (supplierRecordId) mapped.supplier_record_id = row.supplier_record_id || '';
           return mapped;
@@ -361,6 +376,46 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         }
         submittedLines.push({ product_record_id: productRecordId, size, quantity });
       }
+      // ⭐ 2026-11-18：没有库存 / 已有库存但没有样品 ⇒ 必须为每个编号选一个本次入库尺码做样品。
+      //   前端弹窗只负责交互；这里按实时库存再校验一次（防旧页面/手工请求/选择过期）。
+      const hasSampleChoicesField = Boolean(req.body
+        && Object.prototype.hasOwnProperty.call(req.body, arrivalTab.fields.sampleChoices));
+      const rawSampleChoices = req.body?.[arrivalTab.fields.sampleChoices];
+      const requestedSampleChoices = {};
+      if (rawSampleChoices && typeof rawSampleChoices === 'object' && !Array.isArray(rawSampleChoices)) {
+        for (const [productId, size] of Object.entries(rawSampleChoices)) {
+          const product = String(productId || '').trim();
+          const wanted = Number(size);
+          if (product && Number.isSafeInteger(wanted) && wanted > 0) requestedSampleChoices[product] = wanted;
+        }
+      }
+      const submittedProductIds = [...new Set(submittedLines
+        .map((line) => String(line.product_record_id || '').trim()).filter(Boolean))];
+      const sampleStateService = createPurchaseAcceptanceSampleService({
+        gateway: options.gateway || new V1BitableGateway(),
+      });
+      const sampleStates = await sampleStateService.stateOfProducts(submittedProductIds);
+      const sizesByProduct = new Map();
+      for (const line of submittedLines) {
+        const product = String(line.product_record_id || '').trim();
+        if (!sizesByProduct.has(product)) sizesByProduct.set(product, new Set());
+        sizesByProduct.get(product).add(Number(line.size));
+      }
+      const sampleChoices = {};
+      for (const product of submittedProductIds) {
+        const state = sampleStates.get(product);
+        // 读不到实时库存 / 旧页面没带 sampleChoices 字段 ⇒ 不假装知道，沿用原有自动规则。
+        if (state.unavailable === true || state.needsSampleChoice !== true) continue;
+        if (!hasSampleChoicesField) continue;
+        const chosen = requestedSampleChoices[product];
+        if (!chosen) {
+          return res.status(400).json({ success: false, error: arrivalTab.texts.sampleChoiceRequired });
+        }
+        if (!sizesByProduct.get(product)?.has(chosen)) {
+          return res.status(400).json({ success: false, error: arrivalTab.texts.sampleChoiceInvalid });
+        }
+        sampleChoices[product] = chosen;
+      }
       // ⭐ 2026-11-17：验收提交成功后「是否打印」页的候选货品（只列本次实际到货 >0 的款）。
       const infoByProduct = new Map();
       for (const row of Array.isArray(batchRows) ? batchRows : []) {
@@ -383,6 +438,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       }
       const replaced = await arrivalService.setScans({
         openId, lines: submittedLines,
+        ...(Object.keys(sampleChoices).length ? { sampleChoices } : {}),
         ...(sessionKey ? { sessionKey } : {}),
       });
       if (!replaced?.ok) {
