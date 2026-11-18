@@ -13,7 +13,7 @@ export const INVENTORY_LEDGER_PAGE = Object.freeze({
     { key: 'behavior', label: '库存行为' },
     { key: 'number', label: '编号' },
     { key: 'size', label: '尺码' },
-    { key: 'quantity_change', label: '变动数量', cls: 'qty' },
+    { key: 'quantity_change', label: '数量', cls: 'qty' },
   ]),
   texts: Object.freeze({
     startLabel: '开始日期',
