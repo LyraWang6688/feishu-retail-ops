@@ -494,8 +494,7 @@ const ACCEPTANCE = Object.freeze({
   // 单条扫码明细的数量上限 / 默认值（页面默认 1，可改）。
   maxQuantity: readInt(process.env, 'SCAN_ACCEPT_MAX_QUANTITY', 99, { min: 1, max: 999 }),
   defaultQuantity: readInt(process.env, 'SCAN_ACCEPT_DEFAULT_QUANTITY', 1, { min: 1, max: 99 }),
-  // 「发生金额」必填（既有业务口径，业务负责人 2026-10-08：「金额这个是必填的」）
-  amountRequired: readFlag(process.env, 'SCAN_ACCEPT_AMOUNT_REQUIRED', true),
+  // ⚠️ 「发生金额」必填没有开关（前端 required + 后端 parseActualAmount 无条件判）；原 SCAN_ACCEPT_AMOUNT_REQUIRED 无读取点 ⇒ 已删除。
   // ⭐⭐ 2026-10-12（业务负责人口述版）：「用户点验收的时候，**先默认带出我们采购申请里的尺码和数量**。
   //    用户可以在给定的区域里直接修改，同时也可以自定义；自定义的时候同样支持扫码。」
   //    ⇒ 进验收就渲染那张**可编辑清单**（默认值 = 报货数量）。
