@@ -12,8 +12,8 @@
 .ledger-table { width: 100%; margin: 0 auto; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 .ledger-row {
   display: grid;
-  grid-template-columns: 68px 64px minmax(min-content, 1fr) 30px 42px;
-  gap: 4px;
+  grid-template-columns: 68px 64px minmax(min-content, 1fr) 30px 48px;
+  gap: 8px;
   align-items: start;
   padding: 8px;
   border-top: 1px solid var(--border-light);
@@ -26,7 +26,7 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
 }
-.ledger-row--head .ledger-cell { text-align: center; }
+.ledger-row--head .ledger-cell { text-align: center; white-space: nowrap; }
 .ledger-cell { min-width: 0; overflow-wrap: anywhere; }
 .ledger-cell.time, .ledger-cell[data-ledger-field="behavior"] { color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; overflow-wrap: normal; }
 .ledger-cell[data-ledger-field="number"] { min-width: min-content; white-space: nowrap; overflow-wrap: normal; }
@@ -39,8 +39,8 @@
 }
 @media (max-width: 420px) {
   .ledger-row {
-    grid-template-columns: 64px 60px minmax(min-content, 1fr) 28px 40px;
-    gap: 3px;
+    grid-template-columns: 64px 60px minmax(min-content, 1fr) 28px 48px;
+    gap: 8px;
     padding: 7px 8px;
     font-size: var(--font-size-xs);
   }
