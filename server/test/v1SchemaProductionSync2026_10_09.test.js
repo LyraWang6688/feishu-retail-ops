@@ -79,9 +79,14 @@ test('A(2026-10-09) 新表「P交易明细」登记进 schema：只登记表，�
     '默认值 = 生产真表的 table_id（服务器只读核对：tblWaafeodl2oILI）',
   );
 
-  // 🔴 真表现在**只有 1 列**，而且是主字段「文本」（type=1）—— 一个业务列都没有。
-  //    ⇒ 一个字段映射都不许编（编了就是"凭空造逻辑"）。
-  assert.deepEqual(table.fields, { text: '文本' }, '真表当前只有主字段「文本」');
+  // 2026-11-19 生产已从「只有文本」扩成业务列；按真表同步映射，供闸门核对（仍无读写点）。
+  assert.deepEqual(table.fields, {
+    transactionDetailId: '交易明细ID',
+    supplier: '供应商',
+    batchNo: '报货批次号',
+    behavior: '发生行为',
+    amount: '发生额',
+  }, 'P交易明细字段按 2026-11-19 生产真表登记');
 
   // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
   //   改前逐字：`V1_SCHEMA_SCOPES.all.includes('paymentDetail') === false`（理由：列还没定 ⇒ 不进闸门）
