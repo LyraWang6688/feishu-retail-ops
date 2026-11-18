@@ -9,6 +9,13 @@ export const SALES_QUERY_PAGE = Object.freeze({
   texts: Object.freeze({
     startLabel: '开始日期',
     endLabel: '结束日期',
+    quickRangeLabel: '快捷范围',
+    quickRanges: Object.freeze([
+      { days: 1, label: '今天' },
+      { days: 3, label: '近3天' },
+      { days: 7, label: '近7天' },
+      { days: 30, label: '近30天' },
+    ]),
     query: '查询',
     today: '今天',
     loading: '正在读取销售查询…',

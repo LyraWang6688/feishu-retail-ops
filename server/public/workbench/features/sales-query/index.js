@@ -124,16 +124,18 @@ export function createSalesQueryModule() {
         <div class="sq-filters">
           <label class="sq-filter"><span>${escapeHtml(PAGE.texts.startLabel)}</span><input type="date" value="${today}" data-sq-from></label>
           <label class="sq-filter"><span>${escapeHtml(PAGE.texts.endLabel)}</span><input type="date" value="${today}" data-sq-to></label>
+          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.quickRangeLabel)}</span><select data-sq-range>${PAGE.texts.quickRanges.map((item) => `<option value="${item.days}">${escapeHtml(item.label)}</option>`).join('')}</select></label>
           <button class="sq-btn" type="button" data-sq-query>${escapeHtml(PAGE.texts.query)}</button>
-          <button class="sq-btn sq-btn--ghost" type="button" data-sq-today>${escapeHtml(PAGE.texts.today)}</button>
         </div>
         <div data-sq-body></div>
       </div>`;
       host.querySelector('[data-sq-query]')?.addEventListener('click', () => { void load(); });
-      host.querySelector('[data-sq-today]')?.addEventListener('click', () => {
-        const key = todayKey();
-        host.querySelector('[data-sq-from]').value = key;
-        host.querySelector('[data-sq-to]').value = key;
+      host.querySelector('[data-sq-range]')?.addEventListener('change', (event) => {
+        const days = Number(event.target.value) || 1;
+        const end = new Date();
+        const start = new Date(end.getTime() - (days - 1) * 86400000);
+        host.querySelector('[data-sq-from]').value = dateKey(start);
+        host.querySelector('[data-sq-to]').value = dateKey(end);
         void load();
       });
       void load();

@@ -4,6 +4,8 @@
 .sq-filter { display:flex; flex-direction:column; gap:5px; flex:1 1 150px; min-width:0; color:var(--text-secondary); font-size:var(--font-size-xs); }
 .sq-filter input { width:100%; height:var(--control-height); border:1px solid var(--control-border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text); padding:0 10px; font:inherit; font-size:var(--font-size-sm); }
 .sq-filter input:focus { outline:2px solid var(--primary-soft); border-color:var(--primary); }
+.sq-filter select { width:100%; height:var(--control-height); border:1px solid var(--control-border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text); padding:0 10px; font:inherit; font-size:var(--font-size-sm); }
+.sq-filter select:focus { outline:2px solid var(--primary-soft); border-color:var(--primary); }
 .sq-btn { height:var(--control-height); border:0; border-radius:var(--radius-sm); background:var(--primary); color:var(--surface); padding:0 18px; font:inherit; font-size:var(--font-size-sm); cursor:pointer; }
 .sq-btn--ghost { border:1px solid var(--control-border); background:var(--surface); color:var(--text-secondary); }
 .sq-section-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin:var(--space-3) 0 var(--space-2); }
