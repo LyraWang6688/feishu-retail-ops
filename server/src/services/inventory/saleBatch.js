@@ -11,6 +11,7 @@ const { logInfo, logWarn } = require('../../utils/logger');
 const { stockShortage } = require('../../config/inventoryTexts');
 const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
+const { INVENTORY_READ_RETRY } = require('../../config/inventoryReadRetry');
 const { requireMovement, MOVEMENT_SALE_DECREASE } = require('./movements');
 const {
   operationSourceIdOf,
@@ -142,28 +143,14 @@ async function applySaleBatch(items = [], options = {}) {
         }
         allLive = [...liveById.values()];
       } else {
-        allLive = await this.gateway.listAll('liveInventory');
+        allLive = await this.gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
       }
       const claimed = new Set();
-      // 与 `applyChange` 的 `findLedger` **同一个判据**（"已有流水但缺少可恢复任务 ⇒ 停下要人工核对"），
-      // 只是把它从"每行整表读一次"换成"整批读一次 + 内存索引" —— 判据与报文一条都不放宽。
-      let ledgerIndex = null;
+      // 2026-11-18：与 applyChange 共用 findLedger 的来源精确读（优先 listByFilter，
+      //   失败才回退整表）；不再为每条销售明细整表拉一遍库存流水。
       const existingLedgerOf = async (sourceRecordId) => {
         if (!movement.ledgerSource) return null;
-        const ledgerFields = this.gateway.table('inventoryLedger').fields;
-        if (!ledgerIndex) {
-          ledgerIndex = new Map();
-          for (const record of await this.gateway.listAll('inventoryLedger')) {
-            for (const linkedId of strictLinkedRecordIds(record.fields?.[ledgerFields[movement.ledgerSource]])) {
-              if (!ledgerIndex.has(linkedId)) ledgerIndex.set(linkedId, []);
-              ledgerIndex.get(linkedId).push(record);
-            }
-          }
-        }
-        const matches = (ledgerIndex.get(sourceRecordId) || []).filter((record) =>
-          !behavior.recordId || strictLinkedRecordIds(record.fields?.[ledgerFields.behavior]).includes(behavior.recordId));
-        if (matches.length > 1) throw new Error(`来源明细 ${sourceRecordId} 存在重复库存流水`);
-        return matches[0] || null;
+        return this.findLedger(movement.ledgerSource, sourceRecordId, behavior.recordId);
       };
       for (const item of prepared) {
         try {

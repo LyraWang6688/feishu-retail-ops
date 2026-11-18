@@ -82,6 +82,7 @@ const { correlationFields } = require('../utils/correlationFields');
 // ⭐ 2026-10-12 采购明细ID（`{报货批次号}-{两位序号}`）—— 与报货那条**同一个分配器**。
 const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 const { logInfo, logWarn } = require('../utils/logger');
+const { INVENTORY_READ_RETRY } = require('../config/inventoryReadRetry');
 
 /** 退货要扣哪些状态 —— **不在这里写死**，从库存注册表读（现存 = 门盒 + 样品 + 仓库）。 */
 const purchaseReturnStates = () => {
@@ -195,7 +196,7 @@ const createPurchaseReturnService = (options = {}) => {
     const items = Array.isArray(draft.items) ? draft.items : [];
     if (!items.length) throw new Error('采购退货草稿没有任何明细');
     const liveTable = gateway.table('liveInventory');
-    const allLive = await gateway.listAll('liveInventory');
+    const allLive = await gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
     const states = purchaseReturnStates();
     // 这一次要不要逐行带身份（多货品 ⇒ 要；单货品 ⇒ 不要，逐字走今天那条 ✓）
     const withRowIdentity = needsRowIdentity(items, draft);

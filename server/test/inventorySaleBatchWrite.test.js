@@ -443,7 +443,7 @@ test('AC-SB1 ⭐ 销售扣库存：逐条整表读＋逐双 get/delete ⇒ 整�
       assert.equal(a.listLive, productCount, '改后：按货品条件读实时库存（每个货品一次，不再整表读）');
       assert.ok(a.listLive <= lines, '改后：实时库存读次数不超过明细行数');
       assert.equal(a.listBehavior, 1, '改后：整批只读一次行为表');
-      assert.equal(a.listLedger, 1, '改后：远端"已有流水"守护整批只读一次');
+      assert.equal(a.listLedger, lines, '改后：远端“已有流水”守护按明细来源精确读（每条一次）');
       // 改前的形状（这就是要批量的理由）
       assert.equal(b.batchCreateLedger + b.batchGetLive + b.batchDeleteLive, 0, '改前没有批量口');
       assert.equal(b.createLedger, applied, '改前：每条明细 1 次 create 流水');
@@ -772,7 +772,9 @@ test('AC-SB6 源码哨兵：applySaleBatch 与 applyPurchaseReturnBatch 同形�
   const nextMethod = inventory.indexOf('\n  async ', batchStart + 10);
   const body = nextMethod > 0 ? inventory.slice(batchStart, nextMethod) : inventory.slice(batchStart);
   assert.match(body, /this\.runForStocks\(/, '必须与其它批量口一样按 stock_key 占住串行队列');
-  assert.match(body, /this\.gateway\.listAll\('liveInventory'\)/, '必须一次整表读＋内存索引');
+  assert.match(body, /this\.gateway\.listAll\('liveInventory'/, '无 filter 时必须能回退实时库存整表读');
+  assert.match(body, /this\.findLedger\(/, '库存流水必须按来源精确读');
+  assert.doesNotMatch(body, /this\.gateway\.listAll\('inventoryLedger'\)/, '不许再整表读库存流水');
   assert.match(body, /this\.gateway\.createBatch\('inventoryLedger'/, '流水必须走既有批量口');
   assert.match(body, /this\.gateway\.getBatch\('liveInventory'/, '逐双 get 必须换成既有批量读口');
   assert.match(body, /this\.gateway\.deleteBatch\('liveInventory'/, '逐双 delete 必须换成批量删口');

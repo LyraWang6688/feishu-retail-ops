@@ -15,6 +15,7 @@ const { textValue } = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { INBOUND_STATE } = require('../config/inventoryStatePolicy');
 const { logWarn } = require('../utils/logger');
+const { INVENTORY_READ_RETRY } = require('../config/inventoryReadRetry');
 
 const createPurchaseAcceptanceSampleService = ({ gateway } = {}) => {
   const stateOfProducts = async (productIds = []) => {
@@ -32,7 +33,7 @@ const createPurchaseAcceptanceSampleService = ({ gateway } = {}) => {
         for (const value of out.values()) value.unavailable = true;
         return out;
       }
-      const records = await gateway.listAll('liveInventory');
+      const records = await gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
       for (const record of Array.isArray(records) ? records : []) {
         const productId = strictLinkedRecordIds(record?.fields?.[productField])[0] || '';
         const value = out.get(productId);

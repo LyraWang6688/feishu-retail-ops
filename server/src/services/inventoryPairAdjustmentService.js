@@ -22,6 +22,7 @@ const { writeManualLedger } = require('./inventory/manualLedger');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { textValue } = require('./v1BitableGateway');
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
+const { INVENTORY_READ_RETRY } = require('../config/inventoryReadRetry');
 const { createKeyedLock } = require('../utils/keyedLock');
 
 const MAX_ROWS = 200;
@@ -99,7 +100,10 @@ class InventoryPairAdjustmentService {
     // 整款清零：目标为空，下面按现有条数逐尺码走 MANUAL_DECREASE ⇒ 全部删行。
     const desired = clearAll ? [] : normalizeRows(rows);
     const correlation = { audit_domain: 'inventoryManual', task_id: source };
-    const raw = await this.inventory.gateway.listAll('liveInventory');
+    const readProductLive = () => (typeof this.inventory.readLiveInventoryForProduct === 'function'
+      ? this.inventory.readLiveInventoryForProduct(product)
+      : this.inventory.gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY }));
+    const raw = await readProductLive();
     const desiredTotals = new Map();
     const desiredStatesBySize = new Map();
     for (const row of desired) {
@@ -137,7 +141,7 @@ class InventoryPairAdjustmentService {
     // 第二阶段：总数已对齐后，只改记录的「所属状态」来满足目标分布。
     // 写操作可能刚结束，重新读一次，避免拿旧行做标签分配。
     const after = quantityOperations.length
-      ? await this.inventory.gateway.listAll('liveInventory')
+      ? await readProductLive()
       : raw;
     const afterBySize = quantityOperations.length
       ? await recordsBySize(this.inventory, product, after)
@@ -235,7 +239,7 @@ class InventoryPairAdjustmentService {
     const gateway = this.inventory.gateway;
     const table = gateway.table('liveInventory');
     const correlation = { audit_domain: 'inventoryManual', task_id: String(requestId || '') };
-    const records = await gateway.listAll('liveInventory');
+    const records = await gateway.listAll('liveInventory', { retry: INVENTORY_READ_RETRY });
     const updates = [];
     const operations = [];
     for (const record of records) {
