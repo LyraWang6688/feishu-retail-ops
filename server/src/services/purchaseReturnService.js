@@ -81,6 +81,7 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 const { correlationFields } = require('../utils/correlationFields');
 // ⭐ 2026-10-12 采购明细ID（`{报货批次号}-{两位序号}`）—— 与报货那条**同一个分配器**。
 const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
+const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
@@ -118,6 +119,24 @@ const needsRowIdentity = (items, draft) => {
     (Array.isArray(items) ? items : []).map((item) => rowProductIdOf(item, {})).filter(Boolean),
   );
   return !batchProduct || rowProducts.size > 1;
+};
+
+/** 本次草稿的稳定指纹：只取会影响退货事实的字段，用来区分"重试"和"另一张退货单"。 */
+const draftFingerprintOf = (draft) => {
+  const items = (Array.isArray(draft?.items) ? draft.items : []).map((item) => ({
+    product_record_id: rowProductIdOf(item, draft),
+    size: Number(item?.size),
+    quantity: Number(item?.quantity),
+    supplier_record_id: rowSupplierIdOf(item, draft),
+  })).sort((a, b) => (a.product_record_id || '').localeCompare(b.product_record_id || '')
+    || a.size - b.size || a.quantity - b.quantity);
+  return crypto.createHash('sha1').update(JSON.stringify({
+    product_record_id: String(draft?.product_record_id || ''),
+    supplier_record_id: String(draft?.supplier_record_id || ''),
+    behavior_record_id: String(draft?.behavior_record_id || ''),
+    order_amount: String(draft?.order_amount ?? ''),
+    items,
+  })).digest('hex').slice(0, 12);
 };
 
 /**
@@ -191,7 +210,13 @@ const createPurchaseReturnService = (options = {}) => {
    *   🔴 单货品**不带**这两个键（计划逐字与今天一致 ✓ AC-RS2）。
    */
   const ensurePlan = async (taskId, task) => {
-    if (task?.plan?.version === 1) return task.plan;
+    if (task?.plan?.version === 1) {
+      const planItems = Array.isArray(task.plan.items) ? task.plan.items : [];
+      if (needsRowIdentity(planItems, task.draft) && planItems.some((item) => !item.product_record_id)) {
+        throw new Error('采购退货任务已失效（旧计划缺少商品记录），请重新提交');
+      }
+      return task.plan;
+    }
     const draft = task?.draft || {};
     const items = Array.isArray(draft.items) ? draft.items : [];
     if (!items.length) throw new Error('采购退货草稿没有任何明细');
@@ -263,10 +288,17 @@ const createPurchaseReturnService = (options = {}) => {
    * @param {object} draft  这次要退什么（货品 / 供应商 / 采购行为 + items[{size, quantity}]）
    */
   const submit = async (taskId, draft) => {
-    let task = await store.get(taskId);
+    const baseTaskId = taskId;
+    const fingerprint = draftFingerprintOf(draft);
+    let task = await store.get(baseTaskId);
+    // 旧任务（没有指纹）或同 ID 但退货内容不同 ⇒ 不能复用它的冻结计划；派生一个带指纹的新任务。
+    if (task && task.draft_fingerprint !== fingerprint) {
+      taskId = `${baseTaskId}__${fingerprint}`;
+      task = await store.get(taskId);
+    }
     if (!task) {
       task = await store.create({
-        task_id: taskId, kind: 'scan_purchase_return', status: 'posting', draft,
+        task_id: taskId, kind: 'scan_purchase_return', status: 'posting', draft, draft_fingerprint: fingerprint,
       });
     }
     const plan = await ensurePlan(taskId, task);
