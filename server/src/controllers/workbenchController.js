@@ -41,7 +41,9 @@ const queryInventory = async (req, res) => {
 // 换季调整（按品类批量）：品类清单来自「实时库存」的「品类」公式列。
 const queryInventoryLedger = async (req, res) => {
   try {
-    return res.json({ success: true, ...await service.getInventoryLedger({ requestId: req.requestId }) });
+    return res.json({ success: true, ...await service.getInventoryLedger({
+      requestId: req.requestId, from: req.query.from, to: req.query.to,
+    }) });
   } catch (error) {
     return respondQueryFailure(res, error, {
       requestId: req.requestId, event: 'workbench.inventory.ledger_failed', fallback: '库存流水查询失败',

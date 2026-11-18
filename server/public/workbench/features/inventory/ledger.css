@@ -1,11 +1,17 @@
-/* 库存流水：沿用工作台的 tokens / 卡片密度；四列在手机上也不横向滚动。 */
+/* 库存流水：沿用工作台的 tokens / 卡片密度；五列在手机上也不横向滚动。 */
 .ledger-page { gap: var(--space-2); }
+.ledger-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2); margin-bottom: var(--space-3); }
+.ledger-filter { display: flex; flex-direction: column; gap: 5px; flex: 1 1 128px; min-width: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.ledger-filter input { width: 100%; height: var(--control-height); border: 1px solid var(--control-border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); padding: 0 10px; font: inherit; font-size: var(--font-size-sm); }
+.ledger-filter input:focus { outline: 2px solid var(--primary-soft); border-color: var(--primary); }
+.ledger-btn { height: var(--control-height); border: 0; border-radius: var(--radius-sm); background: var(--primary); color: var(--surface); padding: 0 18px; font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
+.ledger-btn--ghost { border: 1px solid var(--control-border); background: var(--surface); color: var(--text-secondary); }
 .ledger-summary { margin: 0; min-height: 20px; color: var(--text-muted); font-size: var(--font-size-sm); }
 .ledger-summary:empty { display: none; }
 .ledger-table { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 .ledger-row {
   display: grid;
-  grid-template-columns: minmax(68px, .9fr) minmax(0, 2.2fr) minmax(40px, .55fr) minmax(58px, .7fr);
+  grid-template-columns: 62px minmax(64px, .9fr) minmax(0, 2.2fr) 40px 56px;
   gap: var(--space-2);
   align-items: start;
   padding: 10px 12px;
@@ -20,14 +26,17 @@
   font-weight: 600;
 }
 .ledger-cell { min-width: 0; overflow-wrap: anywhere; }
+.ledger-cell.time { color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; }
 .ledger-cell[data-ledger-field="quantity_change"] { text-align: right; font-variant-numeric: tabular-nums; }
 .ledger-row--head .ledger-cell:last-child { text-align: right; }
 .ledger-empty { margin: 0; padding: 12px; color: var(--text-muted); font-size: var(--font-size-sm); }
 @media (max-width: 420px) {
   .ledger-row {
-    grid-template-columns: minmax(62px, .9fr) minmax(0, 2fr) minmax(38px, .5fr) minmax(52px, .65fr);
+    grid-template-columns: 56px minmax(56px, .9fr) minmax(0, 2fr) 36px 50px;
     gap: 6px;
     padding: 9px 10px;
     font-size: var(--font-size-xs);
   }
+  .ledger-filter { flex-basis: 118px; }
+  .ledger-btn { padding: 0 12px; }
 }

@@ -178,7 +178,7 @@ test('库存流水：按创建时间倒序，映射四列并可限制条数', as
     listAll: async (key) => (key === 'inventoryLedger' ? ledger : []),
   };
   const service = createWorkbenchService(gateway);
-  const all = await service.getInventoryLedger();
+  const all = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15' });
   assert.deepEqual(all.rows.map((row) => row.record_id), ['l_new', 'l_mid', 'l_old']);
   assert.deepEqual(all.rows[0], {
     record_id: 'l_new',
@@ -191,7 +191,7 @@ test('库存流水：按创建时间倒序，映射四列并可限制条数', as
   assert.equal(all.total, 3);
   assert.equal(all.truncated, false);
 
-  const limited = await service.getInventoryLedger({ limit: 2 });
+  const limited = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15', limit: 2 });
   assert.deepEqual(limited.rows.map((row) => row.record_id), ['l_new', 'l_mid']);
   assert.equal(limited.total, 3);
   assert.equal(limited.truncated, true);
