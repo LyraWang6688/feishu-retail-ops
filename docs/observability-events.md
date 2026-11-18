@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **512** 个事件。按前缀分组：
+共 **513** 个事件。按前缀分组：
 
 ## accessory
 
@@ -473,6 +473,7 @@
 | `scan.payment_step.stale_cleared` | 1 | src/routes/scanPage/pages.js |
 | `scan.purchase_return.batch_created` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.image_failed` | 1 | src/config/scanWrite.js |
+| `scan.purchase_return.key_rotate_failed` | 1 | src/routes/scanPage/actionRoutes.js |
 | `scan.purchase_return.plan_frozen` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.reused` | 1 | src/config/scanWrite.js |
 | `scan.purchase_return.shortfall` | 1 | src/config/scanWrite.js |
