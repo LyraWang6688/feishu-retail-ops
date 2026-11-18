@@ -117,7 +117,6 @@ class PurchaseArrivalConversationService {
     markBatchArrived,
     writeBatchTotals,
     markSupplierArrived,
-    writePaymentDetail,
     config,
     now,
   } = {}) {
@@ -153,9 +152,6 @@ class PurchaseArrivalConversationService {
     //   · 「已到货供应商」关联字段 ⇒ 追加本家后，两集合相等 = 全批到货。
     //   注入而不是自己写表：谁维护「报货批次」是 `PurchaseOrderBatchService` 的职责。
     this.markSupplierArrived = markSupplierArrived || null;
-    // 2026-11-19：每验收完一家供应商，把本次货款金额写一条 P发生明细（幂等：交易明细ID）。
-    // 不注入时（单测/旧调用方）不写，行为与改动前一致。
-    this.writePaymentDetail = writePaymentDetail || null;
     // 群里的反馈一律**引用回复/回复卡片**（群聊没有"上一次对话"的概念）。
     // ⭐ ④ 两个端口都收第三个参数 `{ threadId }`：非空时由**飞书发送适配器**
     //    带 `reply_in_thread` 把这条反馈回到**那个话题**（本类不认识 reply_in_thread）。
@@ -347,18 +343,6 @@ class PurchaseArrivalConversationService {
         logEvent: 'purchase.arrival.reconcile.confirm_failed',
       });
     }
-    const scopedSupplier = String(task.supplier_record_id || '').trim();
-    // 2026-11-19：验收货款按供应商记入 P发生明细。放在 posted 之前：
-    // 写失败 ⇒ 任务不置 posted，异步 job 重试时库存幂等、P发生明细也按交易明细ID幂等。
-    if (scopedSupplier && typeof this.writePaymentDetail === 'function') {
-      await this.writePaymentDetail({
-        batchNo: this.taskBatchNo(task, draft),
-        batchRecordId: String(task.batch_record_id || draft.batch_record_id || '').trim(),
-        supplierRecordId: scopedSupplier,
-        amount: actualAmount,
-        correlation: { task_id: taskId, batch_no: this.taskBatchNo(task, draft) },
-      });
-    }
     await this.store.update(taskId, { status: 'posted', posted_at: new Date(this.now()).toISOString() });
     // ⭐ 到货事实落地之后 → 把「报货批次」那一行的到货状态改成「已到货」
     //（业务负责人 2026-10-07：「**当用户在话题群里说了到货之后，状态应该改成「已到货」**」）。
@@ -369,6 +353,7 @@ class PurchaseArrivalConversationService {
     // ⭐ 2026-11-10（业务负责人：验收按供应商拆卡）：
     //   本次只验了**一家** ⇒ 只写「实际数量/发生金额」的**累计值**；批次只有等**所有供应商**
     //   都有 posted 任务后才标「已到货」（中间态保持未到货，另一家的卡继续在验收页）。
+    const scopedSupplier = String(task.supplier_record_id || '').trim();
     if (scopedSupplier) {
       const batchNo = this.taskBatchNo(task, draft);
       const totals = await this.supplierTotalsOfBatch(task, batchNo);

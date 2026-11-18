@@ -79,8 +79,21 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         // ⚠️ 与采购链路**共用同一个任务存储**：`confirmArrival` 要读的草稿就在那里。
         store: webhooks.store,
         sizeReferences: webhooks.getSizeReferences,
-        confirmArrival: (taskId, task, operatorOpenId) =>
-          webhooks.confirmArrival(taskId, task, operatorOpenId),
+        // 验收成功（库存 + 批次落表）后，再按供应商写 P发生明细；写失败让任务停在 posting，job 可重试。
+        confirmArrival: async (taskId, task, operatorOpenId) => {
+          const result = await webhooks.confirmArrival(taskId, task, operatorOpenId);
+          const supplierRecordId = String(task?.supplier_record_id || '').trim();
+          if (supplierRecordId) {
+            await paymentDetails.writeForSupplier({
+              batchNo: task?.batch_no || '',
+              batchRecordId: task?.batch_record_id || '',
+              supplierRecordId,
+              amount: task?.actual_amount,
+              correlation: { task_id: taskId, batch_no: task?.batch_no || '' },
+            });
+          }
+          return result;
+        },
         // 入库之后把批次行的「到货状态」改成已到货 —— 仍是**既有** `PurchaseOrderBatchService`。
         markBatchArrived: (batchNo, arriveOptions) =>
           webhooks.orderBatches.markArrived(batchNo, arriveOptions),
