@@ -39,7 +39,7 @@ const newProductsBody = () => ({
     {
       productRecordId: 'recNewB', number: 'LY002', itemNo: 'LY002', color: '米白', category: '女', categoryMissing: false,
       supplierName: '供应商 B', supplierRecordId: 'recSupB', createdAt: Date.parse('2026-10-28T10:02:00+08:00'),
-      sizes: { normal: [36, 37, 38, 39, 40], special: [34, 35, 41, 42, 43] },
+      sizes: { normal: [36, 37, 38, 39, 40, 41], special: [34, 35, 42, 43] },
       defaults: { normal: 1, special: 0 },
     },
   ],

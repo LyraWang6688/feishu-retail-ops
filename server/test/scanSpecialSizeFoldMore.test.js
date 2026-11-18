@@ -30,7 +30,7 @@ const { saleSizeGroups, purchaseSizeLines, purchaseSizeGroups } = require('../sr
 const RENDERER_SRC = rendererSource();
 const REALM_SRC = fs.readFileSync(path.join(__dirname, '../src/views/scanPageRealm.js'), 'utf8');
 
-/** 女鞋（B）一款：36 有货；34/35/41/42/43 是缺货的特殊码；37–40 是缺货的普通码。 */
+/** 女鞋（B）一款：36 有货；34/35/42/43 是缺货的特殊码；37–41 是缺货的普通码。 */
 const femaleView = () => ({
   found: true,
   number: 'JX505|咖色|女',
@@ -93,7 +93,7 @@ test('AC-MF2 ⭐ 库存页：缺货的特殊码出现在**折叠块**里（默�
   const fold = html.slice(foldStart, html.indexOf('</details>', foldStart));
   assert.ok(fold.includes('<summary'), '折叠块用原生 `<summary>` ✓');
   assert.equal(/<details[^>]*\sopen/.test(fold.slice(0, 200)), false, '**默认收起**（不带 open ✓）');
-  for (const size of ['34', '35', '41', '42', '43']) {
+  for (const size of ['34', '35', '42', '43']) {
     assert.ok(fold.includes(`>${size} 码<`) || fold.includes(`>${size}<`), `缺货的特殊码 ${size} 要在折叠块里`);
   }
   // ⭐ 折叠块**不许**塞进库存表本体（`stockTableHtml` 那块是 `AC1` 逐字哨兵罩着的）
@@ -110,14 +110,13 @@ test('AC-MF3 ⭐ 补货页：缺货的特殊码进折叠块；缺货的普通码
   // `purchaseSizeLines()` 是原始全量行，不能拿来断言"普通码" ✗。
   const groups = purchaseSizeGroups(femaleView());
   const lines = groups.lines.map((item) => item.size_text);
-  for (const size of ['37', '38', '39', '40']) {
+  for (const size of ['37', '38', '39', '40', '41']) {
     assert.ok(lines.includes(size), `缺货的普通码 ${size} 照旧在补货清单里 ✓`);
   }
-  assert.equal(lines.includes('41'), false, '41 是特殊码 ⇒ 不许留在补货主列表 ✗（它进折叠块）');
   const foldStart = html.indexOf('data-special-fold');
   assert.ok(foldStart > -1, '补货页也要有「特殊码」折叠块 ✓');
   const fold = html.slice(foldStart, html.indexOf('</details>', foldStart));
-  for (const size of ['34', '35', '41', '42', '43']) {
+  for (const size of ['34', '35', '42', '43']) {
     assert.ok(fold.includes(size), `缺货的特殊码 ${size} 要在补货折叠块里`);
   }
 });
@@ -195,6 +194,6 @@ test('AC-MF8 ⭐ 哨兵：可录范围本体 + 销售页（#515）**一字不动
   assert.deepEqual(sizesForCategory('女', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '验收页口径不动 ✓');
   assert.deepEqual(enterableScopeOf('女', SCAN_PAGE).sizes, [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '可录范围不动 ✓');
   const groups = saleSizeGroups(femaleView());
-  assert.deepEqual(groups.folded.map((item) => Number(item.size_text)), [34, 35, 42, 43, 41], '销售页折叠组（#515）随 41 入特殊码；顺序按视图行 ✓');
+  assert.deepEqual(groups.folded.map((item) => Number(item.size_text)), [34, 35, 42, 43], '销售页折叠组 = 女特殊码 34/35/42/43；顺序按视图行 ✓');
   assert.deepEqual(groups.inStock.map((item) => item.size_text), ['36'], '有货的 36 仍在现货 ✓');
 });
