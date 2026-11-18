@@ -30,9 +30,9 @@
 .sq-breakdown { display:grid; grid-template-columns:1fr; gap:var(--space-3); }
 .sq-card .sq-section-head { margin-top:0; }
 .sq-table { width:100%; border-collapse:collapse; font-size:var(--font-size-sm); }
-.sq-table th, .sq-table td { padding:8px 0; border-bottom:1px solid var(--border-light); text-align:left; }
-.sq-table th { color:var(--text-secondary); font-size:var(--font-size-xs); font-weight:500; text-align:center; }
-.sq-table td:not(:first-child) { text-align:right; font-variant-numeric:tabular-nums; }
+.sq-table th, .sq-table td { padding:8px 0; border-bottom:1px solid var(--border-light); text-align:center; }
+.sq-table th { color:var(--text-secondary); font-size:var(--font-size-xs); font-weight:500; }
+.sq-table td { font-variant-numeric:tabular-nums; }
 .sq-table tr:last-child td { border-bottom:0; }
 .sq-orders { display:flex; flex-direction:column; gap:10px; }
 .sq-order { border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); overflow-x:auto; overflow-y:hidden; }
