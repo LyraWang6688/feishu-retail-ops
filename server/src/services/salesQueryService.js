@@ -62,13 +62,16 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
       .map(([method, amount]) => ({ method, amount: Math.round(amount * 100) / 100 }))
       .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method));
 
+    const allDetailRows = Array.isArray(data.all_details)
+      ? data.all_details
+      : (data.orders || []).flatMap((order) => (order.details || []).map((detail) => ({
+        ...detail, recorded_at: order.recorded_at, order_no: order.order_no,
+      })));
     const salesDetails = [];
-    for (const order of data.orders || []) {
-      for (const detail of order.details || []) {
-        if (!SALES_QUERY.fulfillmentStatuses.includes(detail.fulfillment_status)) continue;
-        if (!inRange(detail.sold_at ?? order.recorded_at, fromText, toText)) continue;
-        salesDetails.push({ ...detail, order_no: order.order_no });
-      }
+    for (const detail of allDetailRows) {
+      if (!SALES_QUERY.fulfillmentStatuses.includes(detail.fulfillment_status)) continue;
+      if (!inRange(detail.sold_at ?? detail.recorded_at, fromText, toText)) continue;
+      salesDetails.push(detail);
     }
     const emptyBucket = (name) => ({ name, delivered_count: 0, undelivered_count: 0, delivered_amount: 0, undelivered_amount: 0 });
     const groupDetails = (key) => {

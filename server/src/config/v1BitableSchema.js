@@ -209,6 +209,13 @@ const V1_BITABLE_SCHEMA = {
         amountCheck: Object.freeze({
           name: '金额核对', type: 19, uiType: 'Lookup', writable: false,
         }),
+        // 2026-11-18 销售查询：销售主表上的双向关联；只读，用于按主表 record_id 取明细/收款。
+        salesDetails: Object.freeze({
+          name: '销售明细', type: 21, uiType: 'DuplexLink', writable: false,
+        }),
+        paymentRecords: Object.freeze({
+          name: '收款明细', type: 21, uiType: 'DuplexLink', writable: false,
+        }),
       }),
       tableId: getEnv('FEISHU_V1_SALES_ENTRY_TABLE_ID'),
       fields: {
