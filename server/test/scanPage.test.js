@@ -114,7 +114,7 @@ test('① 编号切段：货号 / 颜色 / 类别（切不出第 3 段就是"没
 });
 
 // ── ② 库存聚合 + 缺码 ───────────────────────────────────────────────────────
-test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显示占位，缺码高亮', async () => {
+test('② 按编号聚合：每个尺码一行 × 门盒/样品，0 显示占位，缺码高亮', async () => {
   const view = await service().lookup({ number: NUMBER, requestId: 'req_1' });
 
   assert.equal(view.found, true);
@@ -125,7 +125,7 @@ test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显�
   assert.equal(view.category_code, '男');
   assert.equal(view.price_text, '¥399');
   assert.equal(view.total, 3, '共 N 双 = 「实时库存」里属于这个编号的记录条数');
-  assert.deepEqual(view.columns.map((column) => column.label), ['门盒', '样品', '仓库']);
+  assert.deepEqual(view.columns.map((column) => column.label), ['门盒', '样品']);
 
   // ⭐ 2026-10-09：缺码判定改读**配置里的尺码段**（A 男 38–48）⇒ 行的清单就是这一整段
   //   （不再是「尺码管理」里那个类别勾了哪几个码）。
@@ -142,11 +142,11 @@ test('② 按编号聚合：每个尺码一行 × 门盒/样品/仓库，0 显�
     '尺码按数字升序，且 = **可录范围**（A 男 38–48，她 2026-10-14 最终口径）',
   );
   const bySize = new Map(view.rows.map((row) => [row.size_text, row]));
-  assert.deepEqual(bySize.get('40').cells.map((cell) => cell.count), [1, 0, 0]);
-  assert.deepEqual(bySize.get('42').cells.map((cell) => cell.count), [1, 1, 0]);
+  assert.deepEqual(bySize.get('40').cells.map((cell) => cell.count), [1, 0]);
+  assert.deepEqual(bySize.get('42').cells.map((cell) => cell.count), [1, 1]);
   // 缺码：**A 段里库存为 0 的每一个码**（41 与其余 8 个）
   assert.equal(bySize.get('41').missing, true);
-  assert.deepEqual(bySize.get('41').cells.map((cell) => cell.count), [0, 0, 0]);
+  assert.deepEqual(bySize.get('41').cells.map((cell) => cell.count), [0, 0]);
   assert.equal(bySize.get('40').missing, false);
   assert.equal(bySize.get('42').missing, false);
   assert.equal(bySize.get('38').missing, true, '38 也在可录范围（38–48）里、且库存为 0 ⇒ 缺码');
