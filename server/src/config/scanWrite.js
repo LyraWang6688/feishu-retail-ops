@@ -445,7 +445,7 @@ const PURCHASE_RETURN = Object.freeze({
   // 勾了尺码但没填数量 ⇒ 按 1 双算。
   defaultQuantity: readInt(process.env, 'SCAN_RETURN_DEFAULT_QUANTITY', 1, { min: 1, max: 99 }),
   // 退货单出图：与采购申请单共用渲染器，只换标题与文件名后缀（既有出图链路支持这两个参数）。
-  imageTitle: readString(process.env, 'SCAN_RETURN_IMAGE_TITLE', '邯美皮鞋采购退货单'),
+  imageTitle: readString(process.env, 'SCAN_RETURN_IMAGE_TITLE', '邯美皮鞋退货单'),
   fileNameSuffix: readString(process.env, 'SCAN_RETURN_FILE_SUFFIX', '采购退货单'),
   // ⭐⭐ 2026-10-16（退货「出图发群」接线 · 本卡）：**装配处接不接出图链路**的唯一判据。
   //   为什么今天才需要它：这条链路的 `webhooks` **一直是没人传**的 ⇒ 每一次退货出图那一步
