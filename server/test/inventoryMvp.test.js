@@ -64,7 +64,7 @@ test('purchase adds one live record per pair', async () => {
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1', size: 38,
-    quantity: 2, state: '门盒' });
+    quantity: 2, state: '门盒', sampleSize: 38 });
   assert.equal(gateway.records.get('liveInventory').length, 2);
   // 该编号原本没有任何库存 ⇒ 第一双样品，第二双门盒。
   assert.deepEqual(
@@ -165,7 +165,7 @@ const legacyPurchase = async ({ ledgerSize = [{ record_ids: ['size_38'] }], live
   });
   const inventory = new InventoryService({ gateway, store: taskStore });
   const request = { purchaseBatchRecordId: 'batch_legacy', productRecordId: 'product_1',
-    size: 38, quantity: 2, state: '门盒' };
+    size: 38, quantity: 2, state: '门盒', sampleSize: 38 };
   return { gateway, taskStore, id, inventory, request };
 };
 
@@ -387,7 +387,7 @@ test('C1 采购 2 双：1 条流水、2 条实时库存，且两条库存操作�
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1',
-    size: 38, quantity: 2, state: '门盒' });
+    size: 38, quantity: 2, state: '门盒', sampleSize: 38 });
 
   assert.equal(gateway.records.get('inventoryLedger').length, 1, '一次采购入库只写一条业务流水');
   const rows = gateway.records.get('liveInventory');
@@ -405,7 +405,7 @@ test('C2 第一双已写入远端但本地清单没落盘：重试只补第二�
     store: failingOnceStore(store(), (patch) => Array.isArray(patch.created_live_record_ids)),
   });
   const input = { purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1',
-    size: 38, quantity: 2, state: '门盒' };
+    size: 38, quantity: 2, state: '门盒', sampleSize: 38 };
 
   await assert.rejects(inventory.applyPurchase(input), /模拟本地落盘失败/);
   assert.equal(gateway.records.get('liveInventory').length, 1, '第一双已经写进远端');
@@ -427,7 +427,7 @@ test('C3 实时库存已创建但响应丢失：按库存操作键找回，不�
   const inventory = new InventoryService({ gateway, store: store() });
 
   const result = await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_1',
-    productRecordId: 'product_1', size: 38, quantity: 2, state: '门盒' });
+    productRecordId: 'product_1', size: 38, quantity: 2, state: '门盒', sampleSize: 38 });
 
   assert.equal(gateway.records.get('liveInventory').length, 2, '必须找回已写入的那一双，而不是再建');
   assert.equal(result.liveRecordIds.length, 2);
@@ -450,7 +450,7 @@ test('C4 远端出现两条相同库存操作键：停止入库并转人工核�
 
   await assert.rejects(
     inventory.applyChange({ kind: 'STOCK_PURCHASE_INCREASE', purchaseBatchRecordId: 'inbound_dup',
-      productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒' }),
+      productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒', sampleSize: 38 }),
     /库存事实重复，请人工核对/,
   );
   assert.equal(gateway.records.get('liveInventory').length, 2, '重复事实存在时不得再写入新的实时库存');
@@ -461,7 +461,7 @@ test('C5 同一个 applyPurchase 重复执行：流水只有一条，库存只�
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });
   const input = { purchaseBatchRecordId: 'batch_1', productRecordId: 'product_1',
-    size: 38, quantity: 3, state: '门盒' };
+    size: 38, quantity: 3, state: '门盒', sampleSize: 38 };
 
   await inventory.applyPurchase(input);
   await inventory.applyPurchase(input);
@@ -493,9 +493,9 @@ test('入库按编号所有尺码合计：其他尺码已有库存 ⇒ 新尺码
   const gateway = gatewayFor([otherSize]);
   const inventory = new InventoryService({ gateway, store: store() });
   await inventory.applyPurchase({ purchaseBatchRecordId: 'batch_other', productRecordId: 'product_1', size: 38,
-    quantity: 1 });
+    quantity: 1, sampleSize: 38 });
   const added = gateway.records.get('liveInventory').find((row) => row.record_id !== 'live_other');
-  assert.equal(added.fields['所属状态'], '门盒');
+  assert.equal(added.fields['所属状态'], '样品', '没有样品时必须按选择做样品');
 });
 
 test('人工显式状态：新增两双都写用户选择的状态', async () => {

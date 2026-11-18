@@ -254,7 +254,6 @@ const EVENTS = Object.freeze([
   'purchase.group.message.remembered',
   'purchase.group.thread.bind_failed',
   'purchase.group.thread.bound',
-  'purchase.inbound.state_check.failed',
   'purchase.request.created',
   'purchase.request.image.attachment_exists',
   'purchase.request.image.attachment_write_failed',

@@ -341,19 +341,20 @@ class InventoryService {
         if (delta > 0) {
           if (explicitState) {
             createdStates = explicitInboundStates(state, quantity);
-          } else {
+          } else if (input.kind === MOVEMENT_PURCHASE_INCREASE) {
+            // 2026-11-18：采购验收没有样品时必须显式指定样品尺码；不再自动第一双。
             const sampleSize = Number(input.sampleSize);
-            const canChooseSample = Number.isSafeInteger(sampleSize) && sampleSize > 0;
-            const sampleStateField = this.gateway.table('liveInventory').fields.state;
             const hasSample = allLiveRecords.some((record) =>
-              textValue(record?.fields?.[sampleStateField]).trim() === '样品');
-            if (canChooseSample && !hasSample) {
-              createdStates = Number(size) === sampleSize
-                ? ['样品', ...Array.from({ length: Math.max(0, quantity - 1) }, () => '门盒')]
-                : Array.from({ length: quantity }, () => '门盒');
-            } else {
-              createdStates = inboundStatesFor({ existingTotal: allLiveRecords.length, quantity });
+              textValue(record?.fields?.[stateField]).trim() === '样品');
+            if (!hasSample && !(Number.isSafeInteger(sampleSize) && sampleSize > 0)) {
+              throw new Error('purchase_sample_choice_required');
             }
+            createdStates = !hasSample && Number(size) === sampleSize
+              ? ['样品', ...Array.from({ length: Math.max(0, quantity - 1) }, () => '门盒')]
+              : Array.from({ length: quantity }, () => '门盒');
+          } else {
+            // 非采购验收的增加（销售退货回库等）仍沿用原规则。
+            createdStates = inboundStatesFor({ existingTotal: allLiveRecords.length, quantity });
           }
         }
         operation = await this.store.create({

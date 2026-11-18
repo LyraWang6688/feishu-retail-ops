@@ -378,8 +378,6 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       }
       // ⭐ 2026-11-18：没有库存 / 已有库存但没有样品 ⇒ 必须为每个编号选一个本次入库尺码做样品。
       //   前端弹窗只负责交互；这里按实时库存再校验一次（防旧页面/手工请求/选择过期）。
-      const hasSampleChoicesField = Boolean(req.body
-        && Object.prototype.hasOwnProperty.call(req.body, arrivalTab.fields.sampleChoices));
       const rawSampleChoices = req.body?.[arrivalTab.fields.sampleChoices];
       const requestedSampleChoices = {};
       if (rawSampleChoices && typeof rawSampleChoices === 'object' && !Array.isArray(rawSampleChoices)) {
@@ -404,17 +402,10 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       const sampleChoices = {};
       for (const product of submittedProductIds) {
         const state = sampleStates.get(product);
-        // 读不到实时库存 / 旧页面没带 sampleChoices 字段 ⇒ 不假装知道，沿用原有自动规则。
+        // 读不到实时库存 ⇒ 不假装知道；其余“没有样品”必须选。
         if (state.unavailable === true || state.needsSampleChoice !== true) continue;
-        if (!hasSampleChoicesField) continue;
         const chosen = requestedSampleChoices[product];
-        if (!chosen) {
-          return res.status(400).json({ success: false, error: arrivalTab.texts.sampleChoiceRequired });
-        }
-        if (!sizesByProduct.get(product)?.has(chosen)) {
-          return res.status(400).json({ success: false, error: arrivalTab.texts.sampleChoiceInvalid });
-        }
-        sampleChoices[product] = chosen;
+        if (chosen && sizesByProduct.get(product)?.has(chosen)) sampleChoices[product] = chosen;
       }
       // ⭐ 2026-11-17：验收提交成功后「是否打印」页的候选货品（只列本次实际到货 >0 的款）。
       const infoByProduct = new Map();
@@ -464,6 +455,18 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
           success: false,
           error: amount.reason === 'amount_missing' ? pageMessages.m2 : pageMessages.m3,
         });
+      }
+      // 2026-11-18：金额是既有第一道闸门；金额通过后再校验“必须选样品尺码”。
+      for (const product of submittedProductIds) {
+        const state = sampleStates.get(product);
+        if (state.unavailable === true || state.needsSampleChoice !== true) continue;
+        const chosen = requestedSampleChoices[product];
+        if (!chosen) {
+          return res.status(400).json({ success: false, error: arrivalTab.texts.sampleChoiceRequired });
+        }
+        if (!sizesByProduct.get(product)?.has(chosen)) {
+          return res.status(400).json({ success: false, error: arrivalTab.texts.sampleChoiceInvalid });
+        }
       }
       // ④ 幂等键：**服务端算**（既有 `submitKeyOf(session)` ✓ 不取表单里的键 ✗）——
       //    ⚠️ 它**只在这里算一次**，原样交给后台那一跑（同一把键 ⇒ 幂等第一层仍在 ✓）。

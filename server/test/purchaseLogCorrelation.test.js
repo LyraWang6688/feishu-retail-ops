@@ -251,6 +251,7 @@ test('到货确认：写「报货批次.到货信息」/加库存的日志带 ta
       // ⭐ 2026-10-09：那次 update 写的是「实际数量 / 发生金额」（「验收原话 / 确认状态」已退场）。
       actual_quantity: 2,
       actual_amount: 1200,
+      sample_choices: { prod_1: 36 },
       operator_open_id: 'ou_user_1',
       requests: [{ record_id: 'req_1', fields: { 编号: [{ record_ids: ['prod_1'] }], 尺码: [{ record_ids: ['size_36'] }] } }],
       actual: [{ product_record_id: 'prod_1', item_no: '8081', color: '黑色', size: 36, quantity: 2 }],

@@ -513,6 +513,11 @@ test('AC-SAMPLE-ROUTE1 无库存 ⇒ 没选样品尺码 400 且不排后台；�
         { productRecordId: 'p1', size: 40, quantity: 2 },
         { productRecordId: 'p1', size: 41, quantity: 1 },
       ];
+      const noField = await postAccept(base, {
+        batchNo: BATCH, actualAmount: 100, lines,
+      });
+      assert.equal(noField.status, 400, '旧页面不带 sampleChoices ⇒ 也不再自动第一双');
+      assert.equal(noField.body.error, arrivalTab.texts.sampleChoiceRequired);
       const missing = await postAccept(base, {
         batchNo: BATCH, actualAmount: 100, lines,
         [arrivalTab.fields.sampleChoices]: {},
