@@ -60,7 +60,7 @@
 //   扫码页各自的领域里）⇒ 本文件**不 import 任何采购飞书表单 URL**（它们写的「信息填写」表
 //   已被业务负责人整表删除 ⇒ 是死链）。本文件里只留货品上新那一个表单外链。
 //      已经没有任何地方再引用它们了）。
-import { SUPPLIER_DIRECTORY_URL, ACCESSORY_SALE_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
+import { SUPPLIER_DIRECTORY_URL, PURCHASE_TRANSACTION_FORM_URL, ACCESSORY_SALE_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
 import { INVENTORY_LEDGER_PAGE } from './inventoryLedger.js';
 import { SALES_QUERY_PAGE } from './salesQuery.js';
 
@@ -141,19 +141,28 @@ export const DOMAIN_TABS = [
       },
       {
         id: 'purchase-orders',
-        label: '供应查询',
+        label: '查询',
         kind: 'query',
         sectionId: 'purchase-query',
         directJump: true,
       },
       {
         id: 'purchase-supplier-money',
-        label: '供应商往来款',
+        label: '往来款',
         kind: 'placeholder',
       },
       {
+        id: 'purchase-transactions',
+        label: '交易记录',
+        kind: 'links',
+        directJump: true,
+        cards: [
+          { icon: '📒', title: '交易记录', href: PURCHASE_TRANSACTION_FORM_URL },
+        ],
+      },
+      {
         id: 'purchase-suppliers',
-        label: '供应商名录',
+        label: '名录',
         kind: 'links',
         directJump: true,
         cards: [
