@@ -2,14 +2,16 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { INVENTORY_READ_RETRY } = require('../src/config/inventoryReadRetry');
+const { CRITICAL_READ_RETRY } = require('../src/config/gatewayReadRetry');
 const { readLiveInventoryForProduct } = require('../src/services/inventory/liveStock');
 const { findLedger } = require('../src/services/inventory/ledger');
 
 test('INV-RETRY1 库存读重试配置：最多 6 次，1s 起，封顶 15s', () => {
-  assert.deepEqual(INVENTORY_READ_RETRY, {
-    maxRetries: 5, baseDelayMs: 1000, factor: 2, maxDelayMs: 15000,
-  });
+  assert.equal(CRITICAL_READ_RETRY.maxRetries, 5);
+  assert.equal(CRITICAL_READ_RETRY.baseDelayMs, 1000);
+  assert.equal(CRITICAL_READ_RETRY.factor, 2);
+  assert.equal(CRITICAL_READ_RETRY.maxDelayMs, 15000);
+  assert.ok(Array.isArray(CRITICAL_READ_RETRY.larkCodes));
 });
 
 test('INV-RETRY2 按货品读实时库存：带统一 retry，不再整表读', async () => {
@@ -27,7 +29,7 @@ test('INV-RETRY2 按货品读实时库存：带统一 retry，不再整表读', 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].table, 'liveInventory');
   assert.match(calls[0].filter, /reczz123/);
-  assert.deepEqual(calls[0].options, { retry: INVENTORY_READ_RETRY });
+  assert.deepEqual(calls[0].options, { retry: CRITICAL_READ_RETRY });
 });
 
 test('INV-RETRY3 库存流水按来源精确读；条件读失败才回退整表', async () => {
@@ -48,7 +50,7 @@ test('INV-RETRY3 库存流水按来源精确读；条件读失败才回退整表
   assert.equal(found.record_id, 'ledger_1');
   assert.equal(calls.length, 1);
   assert.match(calls[0].filter, /CurrentValue\.\[关联销售\]="detail_1"/);
-  assert.deepEqual(calls[0].options, { retry: INVENTORY_READ_RETRY });
+  assert.deepEqual(calls[0].options, { retry: CRITICAL_READ_RETRY });
 
   const failing = {
     table: () => ({ fields }),

@@ -317,7 +317,7 @@
 | `product.tag_qr.not_wired` | 1 | src/routes/larkEvents.js |
 | `product.tag_qr.overwriting` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.record_failed` | 1 | src/services/tagQrCodeService.js |
-| `product.tag_qr.retry` | 1 | src/services/tagQrCodeService.js |
+| `product.tag_qr.retry` | 2 | src/services/tagQrCodeService.js |
 | `product.tag_qr.skipped_existing` | 1 | src/services/tagQrCodeService.js |
 | `product.tag_qr.written` | 1 | src/services/tagQrCodeService.js |
 

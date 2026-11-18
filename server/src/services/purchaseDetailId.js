@@ -28,7 +28,7 @@
 const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
-const { PURCHASE_REQUEST_READ_RETRY } = require('../config/purchaseRequestReadRetry');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 const { containsFormula } = require('./bitableFilterFormula');
 
 /** 序号补零位数（两位：`01`…`99`；第 100 条是 `100`，**不截断**）。 */
@@ -87,13 +87,13 @@ const readPurchaseRequestsForTask = async ({ gateway, taskId } = {}) => {
   if (formula && typeof gateway.listByFilter === 'function') {
     try {
       const rows = await gateway.listByFilter('purchaseRequest', formula,
-        { retry: PURCHASE_REQUEST_READ_RETRY });
+        { retry: CRITICAL_READ_RETRY });
       if (Array.isArray(rows)) return rows;
     } catch (error) {
       // 条件读失败 ⇒ 回退整表；判据不变。
     }
   }
-  return gateway.listAll('purchaseRequest', { retry: PURCHASE_REQUEST_READ_RETRY });
+  return gateway.listAll('purchaseRequest', { retry: CRITICAL_READ_RETRY });
 };
 
 const createPurchaseDetailIdAllocator = ({ gateway } = {}) => {
@@ -104,7 +104,7 @@ const createPurchaseDetailIdAllocator = ({ gateway } = {}) => {
       const all = Array.isArray(rows) ? rows
         : (taskId
           ? await readPurchaseRequestsForTask({ gateway, taskId })
-          : await gateway.listAll('purchaseRequest', { retry: PURCHASE_REQUEST_READ_RETRY }));
+          : await gateway.listAll('purchaseRequest', { retry: CRITICAL_READ_RETRY }));
       const inBatch = all.filter((record) => strictLinkedRecordIds(record.fields?.[fields.batchNo])
         .includes(batchRecordId));
       let next = nextPurchaseDetailSequence(batchNo, {

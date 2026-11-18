@@ -4,7 +4,7 @@
 
 ## 1. 重试
 
-新增 `config/inventoryReadRetry.js`：
+统一使用 `config/gatewayReadRetry.js` 的 `CRITICAL_READ_RETRY`：
 
 ```js
 { maxRetries: 5, baseDelayMs: 1000, factor: 2, maxDelayMs: 15000 }

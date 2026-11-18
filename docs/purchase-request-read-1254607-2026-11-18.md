@@ -4,7 +4,7 @@
 
 ## 改动
 
-- 新增 `config/purchaseRequestReadRetry.js`：6 次、1s 起、2 倍、封顶 15s；
+- 统一使用 `config/gatewayReadRetry.js` 的 `CRITICAL_READ_RETRY`：6 次、1s 起、2 倍、封顶 15s；
 - `readPurchaseRequestsForTask`：按「幂等键」文本列前缀读当前任务的明细，失败才回退整表；
   - ⚠️ 「报货批次号」是关联列，项目已实测关联列 filter 不可用；不能用它做条件读；
 - `purchaseWebhookService`、`purchaseDetailId`、`purchasePendingBatchService`、`purchaseQueryService` 全部使用该配置；
