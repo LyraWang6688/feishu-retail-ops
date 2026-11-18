@@ -42,7 +42,7 @@ const { fillText } = require('../../config/scanWrite');
 const createSetScans = ({
   get, store, touch, texts, events, config, logInfo,
   positiveInteger, nonNegativeInteger,
-}) => async ({ openId, lines, sessionKey = '' } = {}) => {
+}) => async ({ openId, lines, sampleChoices = {}, sessionKey = '' } = {}) => {
   const session = await get(openId, sessionKey);
   if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
   if (session.status !== 'open') {
@@ -120,14 +120,35 @@ const createSetScans = ({
   if (!normalized.length) {
     return { ok: false, reason: 'no_scan_lines', message: texts.acceptNoScansBody };
   }
-  const keyOf = (list) => list
+  // 2026-11-18：只保留本次清单里真实存在的「编号 + 入选尺码」；其余忽略。
+  const normalSampleChoices = {};
+  if (sampleChoices && typeof sampleChoices === 'object' && !Array.isArray(sampleChoices)) {
+    const byProduct = new Map();
+    for (const line of normalized) {
+      if (!byProduct.has(line.product_record_id)) byProduct.set(line.product_record_id, new Set());
+      byProduct.get(line.product_record_id).add(Number(line.size));
+    }
+    for (const [productId, rawSize] of Object.entries(sampleChoices)) {
+      const product = String(productId || '').trim();
+      const size = positiveInteger(rawSize);
+      if (product && size !== null && byProduct.get(product)?.has(size)) {
+        normalSampleChoices[product] = size;
+      }
+    }
+  }
+  const keyOf = (list, choices = {}) => `${list
     .map((item) => `${item.product_record_id}|${Number(item.size)}|${Number(item.quantity)}`)
     .sort()
-    .join(';');
-  const changed = keyOf(session.scans || []) !== keyOf(normalized);
+    .join(';')}|sample:${Object.entries(choices)
+    .sort((left, right) => String(left[0]).localeCompare(String(right[0])))
+    .map(([product, size]) => `${product}|${Number(size)}`)
+    .join(';')}`;
+  const changed = keyOf(session.scans || [], session.sample_choices || {})
+    !== keyOf(normalized, normalSampleChoices);
   const scanned = normalized.reduce((sum, item) => sum + item.quantity, 0);
   const updated = await store.update(session.session_id, touch({
     scans: normalized,
+    sample_choices: normalSampleChoices,
     scanned,
     // ⭐ 清单变了 ⇒ 新一轮（新的幂等键）；没变 ⇒ 轮次不动（连点两次同一份 = 同一把钥匙 ✓）
     submit_round: Number(session.submit_round || 0) + (changed ? 1 : 0),
@@ -145,6 +166,7 @@ const createSetScans = ({
     scanned,
     expected: Number(updated.expected || 0),
     scans: normalized,
+    sampleChoices: normalSampleChoices,
   };
 };
 

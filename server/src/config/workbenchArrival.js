@@ -38,6 +38,8 @@ module.exports = {
     itemNo: 'itemNo',
     size: 'size',
     quantity: 'quantity',
+    // 2026-11-18：本次验收每个编号选的样品尺码（{ productRecordId: size }）。
+    sampleChoices: 'sampleChoices',
   }),
   texts: Object.freeze({
     batchMissing: '这一批的批次号没拿到，请刷新后再试',
@@ -63,6 +65,9 @@ module.exports = {
     alreadyAccepted: '这一批已经到货验收过了，不用再验收。',
     supplierRequired: '请先选供应商，再验收。',
     supplierNotInBatch: '这个供应商在这一批里没有待验收的明细，请刷新后再试。',
+    // 2026-11-18：没有库存 / 已有库存但没有样品时，必须选一个入库尺码做样品。
+    sampleChoiceRequired: '这一批有编号需要指定样品尺码，请先选择再做确认入库。',
+    sampleChoiceInvalid: '选的样品尺码不在本次入库的尺码里，请重新选择。',
     counterpartyDocInvalid: '验收单格式不对，请重新拍照或选择图片。',
     counterpartyDocTooMany: '验收单最多上传 5 张，请删掉多余的再提交。',
     counterpartyDocUploadFailed: '验收单没上传成功，请稍后再试。',

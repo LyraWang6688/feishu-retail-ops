@@ -144,6 +144,8 @@ export const ARRIVAL_FULL_FIELDS = {
   // ⭐ 2026-11-12：验收单 → 主表「对方单据」
   counterpartyDocuments: 'counterpartyDocuments',
   productRecordId: 'productRecordId', size: 'size', quantity: 'quantity',
+  // 2026-11-18：本次验收每个编号选的样品尺码（{ productRecordId: size }）。
+  sampleChoices: 'sampleChoices',
 };
 export const ARRIVAL_FULL_TEXTS = {
   detailTitle: '这一批的采购明细',
@@ -180,6 +182,14 @@ export const ARRIVAL_FULL_TEXTS = {
   // 与**服务端**那一份同口径（`src/config/workbenchArrival.js` 的 `texts.sizeInvalid` ✓）
   sizeInvalid: '尺码要填数字，数量要大于 0',
   noArrivalLines: '这一批没有可提交的实际到货数量，请先点开批次、把实际到货数量填上',
+  // 2026-11-18：本次入库没有库存 / 已有库存但没有样品时，必须选一个尺码做样品。
+  sampleChoiceTitle: '这次入库哪些尺码做样品？',
+  sampleChoiceBody: '这些编号现在没有样品，必须为每个编号选一个本次入库的尺码做样品。',
+  sampleChoiceConfirm: '确认入库',
+  sampleChoiceRequired: '每个编号都要选一个样品尺码，才能确认入库。',
+  sampleChoiceNoStock: '这个编号当前没有库存',
+  sampleChoiceNoSample: '这个编号已有库存，但没有样品',
+  sampleChoiceCancel: '返回修改数量',
   submitting: '正在确认到货…',
   accepted: '已确认到货',
   // ⚠️ 2026-10-15（她追加口径）：明细**挂不上批次** ⇒ **不进这一屏**（见 `groupPurchaseOrders` ✓）——

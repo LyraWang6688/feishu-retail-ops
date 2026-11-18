@@ -97,7 +97,7 @@ const scansOf = (session) => (session.scans || [])
   .sort();
 
 /** 路由夹具：真路由 + **真** scanArrivalService（后台那一跑用替身）。 */
-const appFor = ({ arrival, purchaseQuery, scheduled }) => {
+const appFor = ({ arrival, purchaseQuery, scheduled, gateway }) => {
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => {
@@ -109,7 +109,7 @@ const appFor = ({ arrival, purchaseQuery, scheduled }) => {
     options: {
       arrival,
       purchaseQuery,
-      gateway: { table: () => ({ fields: {} }) },
+      gateway: gateway || { table: () => ({ fields: {} }) },
       acceptBackground: {
         schedulePurchaseRest: (input) => { scheduled.push(input); return true; },
       },
@@ -497,4 +497,58 @@ test('AC-SS12 ⭐ 自定义尺码从会话一路传到 finish 的 scanLines（�
       'scanLines = 她提交的实际数量（不再有自定义行）✓',
     );
   } finally { rmDir(sessionDir); }
+});
+test('AC-SAMPLE-ROUTE1 无库存 ⇒ 没选样品尺码 400 且不排后台；选了才排', async () => {
+  const h = makeHarness();
+  const scheduled = [];
+  const gateway = {
+    table: (key) => key === 'liveInventory' ? { fields: { product: '货品', state: '所属状态' } } : { fields: {} },
+    listAll: async () => [],
+  };
+  try {
+    await startSession(h);
+    const app = appFor({ ...h, scheduled, gateway });
+    await withServer(app, async (base) => {
+      const lines = [
+        { productRecordId: 'p1', size: 40, quantity: 2 },
+        { productRecordId: 'p1', size: 41, quantity: 1 },
+      ];
+      const missing = await postAccept(base, {
+        batchNo: BATCH, actualAmount: 100, lines,
+        [arrivalTab.fields.sampleChoices]: {},
+      });
+      assert.equal(missing.status, 400);
+      assert.equal(missing.body.error, arrivalTab.texts.sampleChoiceRequired);
+      assert.equal(scheduled.length, 0, '缺样品选择 ⇒ 不排后台');
+
+      const ok = await postAccept(base, {
+        batchNo: BATCH, actualAmount: 100, lines,
+        [arrivalTab.fields.sampleChoices]: { p1: 41 },
+      });
+      assert.equal(ok.status, 200);
+      assert.equal(scheduled.length, 1, '选择齐全 ⇒ 排一次后台');
+      const session = await h.arrival.get(OPEN_ID);
+      assert.deepEqual(session.sample_choices, { p1: 41 });
+    });
+  } finally { h.cleanup(); }
+});
+test('AC-SAMPLE-DETAIL1 明细接口告诉前端：无库存需要选样品；有样品不需要', async () => {
+  const h = makeHarness();
+  const gateway = {
+    table: (key) => key === 'liveInventory' ? { fields: { product: '货品', state: '所属状态' } } : { fields: {} },
+    listAll: async () => [],
+  };
+  try {
+    await startSession(h);
+    const app = appFor({ ...h, scheduled: [], gateway });
+    await withServer(app, async (base) => {
+      const response = await fetch(`${base}${arrivalTab.api.detail}?batchNo=${encodeURIComponent(BATCH)}`);
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.rows.length, 2);
+      assert.equal(body.rows[0].needs_sample_choice, true);
+      assert.equal(body.rows[0].has_stock, false);
+      assert.equal(body.rows[0].has_sample, false);
+    });
+  } finally { h.cleanup(); }
 });
