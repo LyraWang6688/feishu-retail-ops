@@ -55,9 +55,23 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
     const pageToken = req?.scanPageTokenFromCookie === true ? String(req?.scanPageToken || '').trim() : '';
     const sessionId = pageSessionKey(openId, pageToken);
     const scopedWriteService = withPageSession(writeService, pageToken);
-    const schedulePurchaseWriteForPage = (args) => (pageToken
-      ? schedulePurchaseWrite({ ...args, context: { ...(args.context || {}), sessionKey: sessionId } })
-      : schedulePurchaseWrite(args));
+    const schedulePurchaseWriteForPage = (args) => {
+      const scheduled = pageToken
+        ? schedulePurchaseWrite({ ...args, context: { ...(args.context || {}), sessionKey: sessionId } })
+        : schedulePurchaseWrite(args);
+      // 2026-11-19：退货排后台成功后**立即**轮换下一把 key（复用销售 completeSale 的时机）。
+      // 否则第一笔还在写库存时，新开的退货页仍拿旧 key，会被服务端当重放吸收。
+      if (args.chain === 'purchase_return'
+        && writeService?.sessions
+        && typeof writeService.sessions.beginPurchaseReturn === 'function') {
+        void writeService.sessions.beginPurchaseReturn(sessionId, { key: args.submitKey })
+          .catch((error) => logWarn('scan.purchase_return.key_rotate_failed', {
+            request_id: args.requestId,
+            error: String(error?.message || error).slice(0, 200),
+          }));
+      }
+      return scheduled;
+    };
     const markRealmUsedForPage = (who, realmId) => markRealmUsed(pageSessionKey(who, pageToken), realmId);
 
     // ══════════════════════════════════════════════════════════════════════════

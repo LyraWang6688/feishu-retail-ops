@@ -476,23 +476,63 @@ const createScanSessionService = (options = {}) => {
     }));
   };
 
-  /** 退货提交成功：**只轮换退货那一把键** + 留档结果（销售 / 补货两把键一个字不动）。 */
-  const completePurchaseReturn = async (openId, { key, result }) => {
+  /**
+   * 退货**已排后台**：立刻轮换下一把退货 key，先把本次 key 记为 pending。
+   *
+   * 复用销售 completeSale 的时机（入队后立即轮换），但结果还没出来，所以只记 pending；
+   * 后台完成后由 completePurchaseReturn 回填结果，**不再二次轮换**。
+   * 同一 key 重复调用是幂等的（不会连续跳 key）。
+   */
+  const beginPurchaseReturn = async (openId, { key, result = {} } = {}) => {
+    const wanted = String(key || '').trim();
+    if (!wanted) return ensure(openId);
     const session = await ensure(openId);
-    const purchaseReturn = session.purchaseReturn || {};
-    const completed = [...(purchaseReturn.completed || []), { key, ...result }].slice(-5);
-    const next = await store.update(session[sessionConfig.idField], touch({
-      purchaseReturn: {
-        ...purchaseReturn,
-        key: keyFor(
-          sessionConfig.returnKeyPrefix, session[sessionConfig.idField], (purchaseReturn.seq || 1) + 1,
-        ),
-        seq: (purchaseReturn.seq || 1) + 1,
-        status: sessionConfig.statuses.submitted,
-        last_error: '',
-        completed,
-      },
-    }));
+    const next = await store.update(session[sessionConfig.idField], (current) => {
+      const purchaseReturn = current.purchaseReturn || {};
+      const completed = Array.isArray(purchaseReturn.completed) ? purchaseReturn.completed : [];
+      if (completed.some((item) => item && item.key === wanted)) return {};
+      return touch({
+        purchaseReturn: {
+          ...purchaseReturn,
+          key: keyFor(
+            sessionConfig.returnKeyPrefix, current[sessionConfig.idField], (purchaseReturn.seq || 1) + 1,
+          ),
+          seq: (purchaseReturn.seq || 1) + 1,
+          status: sessionConfig.statuses.submitted,
+          last_error: '',
+          completed: [...completed, { key: wanted, pending: true, ...result }].slice(-5),
+        },
+      });
+    });
+    return next;
+  };
+
+  /** 退货后台完成：回填结果；若已由 begin 轮换过 key，**不再二次轮换**。 */
+  const completePurchaseReturn = async (openId, { key, result }) => {
+    const wanted = String(key || '').trim();
+    const session = await ensure(openId);
+    const next = await store.update(session[sessionConfig.idField], (current) => {
+      const purchaseReturn = current.purchaseReturn || {};
+      const completed = Array.isArray(purchaseReturn.completed) ? purchaseReturn.completed : [];
+      const index = completed.findIndex((item) => item && item.key === wanted);
+      if (index >= 0) {
+        const merged = completed.slice();
+        merged[index] = { ...merged[index], ...result, pending: false };
+        return touch({ purchaseReturn: { ...purchaseReturn, completed: merged } });
+      }
+      return touch({
+        purchaseReturn: {
+          ...purchaseReturn,
+          key: keyFor(
+            sessionConfig.returnKeyPrefix, current[sessionConfig.idField], (purchaseReturn.seq || 1) + 1,
+          ),
+          seq: (purchaseReturn.seq || 1) + 1,
+          status: sessionConfig.statuses.submitted,
+          last_error: '',
+          completed: [...completed, { key: wanted, ...result }].slice(-5),
+        },
+      });
+    });
     return next;
   };
 
@@ -532,6 +572,7 @@ const createScanSessionService = (options = {}) => {
     saveSaleProgress,
     completeSale,
     completeReplenish,
+    beginPurchaseReturn,
     completePurchaseReturn,
     markSaleFailed,
     markReplenishFailed,
