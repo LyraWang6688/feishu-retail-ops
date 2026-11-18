@@ -186,10 +186,14 @@ const FULL_SIZES_BLANK_FIXTURE = {
   category_code: '男',
   price_text: '¥99',
   total: 1, // 记录条数 = 1（就是那双 44 码、状态为空的）
-  columns: BLANK_STATE_FIXTURE.columns,
+  columns: [
+    { key: '门盒', label: '门盒' },
+    { key: '样品', label: '样品' },
+    { key: '', label: SCAN_PAGE.states.emptyLabel },
+  ],
   rows: [38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48].map((size) => ({
     size_text: String(size),
-    cells: [{ key: '门盒', count: 0 }, { key: '样品', count: 0 }, { key: '仓库', count: 0 },
+    cells: [{ key: '门盒', count: 0 }, { key: '样品', count: 0 },
       { key: '', count: size === 44 ? 1 : 0 }],
     total: size === 44 ? 1 : 0,
     // 缺码 = 该码在可录范围里、且这一行合计为 0（44 有 1 双 ⇒ 不缺）
@@ -337,11 +341,11 @@ test('AC-ST2 44 码 1 双在「未标状态」⇒ 四个 tab 的显示逐字钉�
     '库存页标题 = 「库存（共 1 双）」（**她截图那一句**）');
   assert.ok(inventory.includes(`<th>${SCAN_PAGE.states.emptyLabel}</th>`),
     '库存页把空状态另列一列（列头 = 配置里的 emptyLabel）');
-  assert.ok(inventory.includes('<th scope="row">44</th><td class="zero">—</td><td class="zero">—</td><td class="zero">—</td><td>1</td>'),
-    '44 码那一行：**只有「未标状态」= 1**（她截图里的那一行）');
+  assert.ok(inventory.includes('<th scope="row">44</th><td class="zero">—</td><td class="zero">—</td><td>1</td>'),
+    '44 码那一行：**只有「空状态」= 1**（她截图里的那一行）');
   assert.equal(/<tr class="missing"><th scope="row">44/.test(inventory), false,
     '44 码不算缺码（那一行合计 = 1）');
-  assert.equal(inventoryCellsOf(inventory, '44').join('|'), '—|—|—|1', '44 行四格逐字');
+  assert.equal(inventoryCellsOf(inventory, '44').join('|'), '—|—|1', '44 行三格逐字');
 
   const sales = htmlOf(FULL_SIZES_BLANK_FIXTURE, 'sales');
   // ⭐ 2026-10-16 23:0x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：改前逐字：`assert.ok(sales.includes('…没有可选的尺码…'))`（旧口径：44 不算有货 ⇒ 有货段为空 ⇒ 出那句）
@@ -426,9 +430,9 @@ test('AC-ST3 四 tab 的逐字快照：三种状态与「未标状态」两款�
     'page_build 确实被换成了占位符（否则本地绿、CI 红）');
 });
 
-test('AC-ST3b 快照是"活的"：把「未标状态」那一列整列拿掉 ⇒ 快照当场红', () => {
+test('AC-ST3b 快照是"活的"：把「空状态」那一列整列拿掉 ⇒ 快照当场红', () => {
   const golden = JSON.parse(fs.readFileSync(GOLDEN_PATH, 'utf8'));
-  // 造一份"未标状态不再另列"的视图（= 有人把空状态列吞掉的样子）：快照必须对不上
+  // 造一份"空状态不再另列"的视图（= 有人把空状态列吞掉的样子）：快照必须对不上
   const withoutBlankColumn = {
     ...FULL_SIZES_BLANK_FIXTURE,
     columns: FULL_SIZES_BLANK_FIXTURE.columns.filter((column) => column.key !== ''),
@@ -440,7 +444,7 @@ test('AC-ST3b 快照是"活的"：把「未标状态」那一列整列拿掉 ⇒
     golden.blankStateBlocks.inventory,
     '空状态那一列被吞掉 ⇒ 库存页快照必须变（这条证明快照不是"随便改都绿"）');
   assert.ok(golden.blankStateBlocks.inventory.includes(`<th>${SCAN_PAGE.states.emptyLabel}</th>`),
-    '快照里确实留着「未标状态」那一列（**没被静默吞掉**）');
+    '快照里确实留着「空状态」那一列（**没被静默吞掉**）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -476,11 +480,11 @@ test('AC-ST4 端到端：她那一款（1 条记录、所属状态为空）⇒ �
 
   // ① 服务层聚合：空状态**不丢、不猜**，另列一列（列头来自配置），并且仍然计数
   assert.deepEqual(view.columns.map((column) => column.label),
-    ['门盒', '样品', '仓库', SCAN_PAGE.states.emptyLabel],
-    '四列：三个配置状态 + 配置里的 emptyLabel（空状态另列，不吞）');
+    ['门盒', '样品', SCAN_PAGE.states.emptyLabel],
+    '三列：门盒 + 样品 + 配置里的 emptyLabel（空状态另列，不吞）');
   assert.equal(view.total, 1, '「共 N 双」= 「实时库存」里属于这一款的**记录条数**（含空状态那一条）');
   const row44 = view.rows.find((row) => row.size_text === '44');
-  assert.deepEqual(row44.cells.map((cell) => cell.count), [0, 0, 0, 1], '44 码：只有空状态那一格 = 1');
+  assert.deepEqual(row44.cells.map((cell) => cell.count), [0, 0, 1], '44 码：只有空状态那一格 = 1');
   assert.equal(row44.missing, false, '44 不是缺码（它合计 = 1）');
   // ⭐ 2026-10-16 23:0x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：改前逐字：`assert.equal(sellableCountOf(row44, view.columns), 0, '可卖 = 门盒 + 样品 = 0（空状态不在清单里）')`
   // 改后逐字：⭐ 44（未标状态 1 双）**算有货** ⇒ **1**（实测 ✓）
