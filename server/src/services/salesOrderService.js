@@ -177,7 +177,7 @@ class SalesOrderService {
         // ⭐⭐ 2026-10-11（业务负责人选"方案甲"）：「**实收金额可以是空的**」——
         //   扫码建单允许"先只记货"（她什么钱都没填），她事后再去工作台订单列表逐件补。
         //   ⇒ **空 ⇒ 不写这一列、不计入合计**；
-        //   🔴 **放宽只针对"缺省"**：**填了就必须 > 0**（0 / 负数照旧拦住）。
+        //   🔴 **放宽只针对"缺省"**：**填了就必须 >= 0**（0 = 赠送/自用，负数拦住）。
         //   ⚠️ **「0」与「空」是两件事**：赔货那条路写的是**明确的 0**
         //      （`config/afterSales` 的 `newLineAmount: 0`），它走的是 `afterSalesService`
         //      自己的 `create`、**不经本函数**；读侧 `salesProgressService` 也用
@@ -186,7 +186,9 @@ class SalesOrderService {
         const amountKnown = !(rawAmount === undefined || rawAmount === null
           || String(rawAmount).trim() === '');
         const actualAmountCents = amountKnown ? cents(rawAmount, '销售明细实收金额') : 0;
-        if (amountKnown && actualAmountCents <= 0) throw new Error('销售明细实收金额必须大于 0');
+        // ⭐ 2026-11-18（业务负责人）：**实收金额可以填 0**（赠送 / 自家穿），0 是显式金额，
+        //   与"没填"不同；只有负数才拦。
+        if (amountKnown && actualAmountCents < 0) throw new Error('销售明细实收金额不能为负数');
         if (positiveInteger(item.quantity, '销售数量') !== 1) {
           throw new Error(kind.requiresSize
             ? '一条销售明细只能记录一双鞋；请逐双说明实收金额'
@@ -311,8 +313,9 @@ class SalesOrderService {
       //   与 2026-10-11「方案甲」（空 = 不写这一列）以及下面 `amountsKnown` 的
       //   `no_known_total` 同一条口径 —— **累计不可知 ⇒ 不编**。写 0 会把"还没填"说成
       //   "这一单收了 0 元"，那是错账。
-      //   ⚠️ 每个已知的行金额都 > 0（上面：`actualAmountCents <= 0` 当场抛）⇒
-      //      `amountsKnown` 为真时 `totalCents` **必然 > 0**，不会悄悄写 0；负值也进不来。
+      //   ⚠️ 已知的行金额都 >= 0（上面：只有负数当场抛）⇒ `amountsKnown` 为真时
+      //      `totalCents` 可以是 0（整单赠送/自用）—— 那是**显式 0**，要照写；
+      //      "没填"仍由 `amountsKnown` 区分，不会把"没填"写成 0。
       //
       //   改前逐字：`const amountsKnown = expected.every((item) => item.amountKnown);`（只此一处，
       //     位置在下面「差额」那一段）；

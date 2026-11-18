@@ -34,7 +34,8 @@ const createScanWriteSession = ({
     if (!sellableKind) {
       return fail({ code: 'unknown_kind', message: texts.internalFailedBody, requestId });
     }
-    const parsedAmount = positiveAmount(amount);
+    // ⭐ 2026-11-18：每件实收可以填 0（赠送 / 自家穿），仍照常写库存变动。
+    const parsedAmount = positiveAmount(amount, { allowZero: true });
     if (!parsedAmount.ok) {
       const error = new Error(texts.amountInvalidBody);
       error.scanUserMessage = error.message;

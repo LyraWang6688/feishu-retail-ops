@@ -22,7 +22,8 @@
  *         总金额**跟着调后的行金额走**（本层不认识券，口径天然一致 —— 不是巧合，是同一个 `totalCents`）。
  *  AC-TA2 **有行没填「实收金额」⇒ 一个字都不写**（那一格留空，**绝不写 0** ✗）＋ 如实记 skip 日志；
  *         ⚠️ 既有行为一个字不变（明细照建、赠品照写）。
- *  AC-TA3 **零 / 负值**：既有校验照旧当场拦住（人话）⇒ **总金额一个字都没写**（没有任何一次 PATCH 带它）。
+ *  AC-TA3 **负值**：当场拦住（人话）⇒ **总金额一个字都没写**；
+ *  AC-TA3b **0 是合法金额**（赠送 / 自家穿）：明细写 0、总金额写 0（与"没填"区分）。
  *  AC-TA4 **同一笔写库**：总金额与**赠品同在一条 PATCH** 里 ⇒ **不新增一次请求** ✗。
  *  AC-TA5 **重试幂等**：同一单跑两次 ⇒ 总金额值相同、明细不重复、那条【未收款】不重复挂。
  *  AC-TA6 **单货品（N=1）也写**（建议 + 依据见下面那一条测试的注释）。
@@ -272,18 +273,24 @@ test('AC-TA2 有行没填「实收金额」⇒ **一个字都不写**（留空�
   }
 });
 
-test('AC-TA3 零 / 负值 ⇒ 既有校验照旧拦住 ＋ 总金额一个字都没写', async () => {
-  for (const bad of [0, -1]) {
-    const gateway = makeGateway();
-    await assert.rejects(
-      () => runConfirm(gateway, { items: [shoe(38, 200), shoe(39, bad)], payments: [] }),
-      /实收金额必须大于 0|非负的两位小数金额/,
-      `${bad} 必须照旧被既有的「填了就必须 > 0」拦下（人话），不许放宽`,
-    );
-    assert.equal(gateway.totalPatches().length, 0, `拦下时总金额一个字都不许写（bad=${bad}）`);
-    assert.equal(Object.prototype.hasOwnProperty.call(gateway.masterFields(), TOTAL), false);
-    assert.equal(gateway.detailAmounts().length, 0, '拦下时一条明细都不许落库');
-  }
+test('AC-TA3 负值 ⇒ 既有校验拦住 ＋ 总金额一个字都没写', async () => {
+  const gateway = makeGateway();
+  await assert.rejects(
+    () => runConfirm(gateway, { items: [shoe(38, 200), shoe(39, -1)], payments: [] }),
+    /不能为负数|非负的两位小数金额/,
+    '负数必须被人话拦下（0 已允许，2026-11-18）',
+  );
+  assert.equal(gateway.totalPatches().length, 0, '拦下时总金额一个字都不许写');
+  assert.equal(Object.prototype.hasOwnProperty.call(gateway.masterFields(), TOTAL), false);
+  assert.equal(gateway.detailAmounts().length, 0, '拦下时一条明细都不许落库');
+});
+
+test('AC-TA3b 显式 0 ⇒ 明细写 0、总金额写 0（与"没填"区分）', async () => {
+  const gateway = makeGateway();
+  await runConfirm(gateway, { items: [shoe(38, 0)], payments: [] });
+  assert.deepEqual(gateway.detailAmounts(), [0], '0 是显式金额，明细必须写 0');
+  assert.equal(gateway.totalPatches().length, 1, '整单 0 元也要写总金额');
+  assert.equal(gateway.masterFields()[TOTAL], 0, '总金额 = 0，不是留空');
 });
 
 test('AC-TA4 同一笔写库：总金额与赠品在**同一条 PATCH** 里 ⇒ 不新增一次请求', async () => {
