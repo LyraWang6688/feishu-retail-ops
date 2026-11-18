@@ -185,3 +185,18 @@ test('sales never corrects a misspelled item number into a different shoe', asyn
     await assert.rejects(resolver.resolveProduct({ itemNo, matchMode: 'sales' }), /找不到货品/);
   }
 });
+
+test('2026-11-18：销售写库读货品可传独立的读重试配置（不改其他 resolveProduct 调用）', async () => {
+  let seen = null;
+  const gateway = {
+    get: async (table, id, options) => {
+      seen = { table, id, options };
+      return { record_id: id, fields: {} };
+    },
+  };
+  const resolver = new V1ReferenceResolver(gateway);
+  const retry = { maxRetries: 5, baseDelayMs: 1000, factor: 2, maxDelayMs: 15000 };
+  const result = await resolver.resolveProduct({ productRecordId: 'p1' }, { retry });
+  assert.equal(result.recordId, 'p1');
+  assert.deepEqual(seen, { table: 'product', id: 'p1', options: { retry } });
+});
