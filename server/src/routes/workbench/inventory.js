@@ -15,6 +15,7 @@ const createWorkbenchInventoryRoutes = (options = {}) => {
     asyncJobs: options.asyncJobs,
   }));
   router.get('/inventory/categories', controller.queryInventoryCategories);
+  router.get('/inventory/ledger', controller.queryInventoryLedger);
   router.get('/inventory', controller.queryInventory);
   return router;
 };

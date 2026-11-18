@@ -1,0 +1,33 @@
+/* 库存流水：沿用工作台的 tokens / 卡片密度；四列在手机上也不横向滚动。 */
+.ledger-page { gap: var(--space-2); }
+.ledger-summary { margin: 0; min-height: 20px; color: var(--text-muted); font-size: var(--font-size-sm); }
+.ledger-summary:empty { display: none; }
+.ledger-table { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.ledger-row {
+  display: grid;
+  grid-template-columns: minmax(68px, .9fr) minmax(0, 2.2fr) minmax(40px, .55fr) minmax(58px, .7fr);
+  gap: var(--space-2);
+  align-items: start;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-light);
+  font-size: var(--font-size-sm);
+}
+.ledger-row--head {
+  border-top: 0;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+.ledger-cell { min-width: 0; overflow-wrap: anywhere; }
+.ledger-cell[data-ledger-field="quantity_change"] { text-align: right; font-variant-numeric: tabular-nums; }
+.ledger-row--head .ledger-cell:last-child { text-align: right; }
+.ledger-empty { margin: 0; padding: 12px; color: var(--text-muted); font-size: var(--font-size-sm); }
+@media (max-width: 420px) {
+  .ledger-row {
+    grid-template-columns: minmax(62px, .9fr) minmax(0, 2fr) minmax(38px, .5fr) minmax(52px, .65fr);
+    gap: 6px;
+    padding: 9px 10px;
+    font-size: var(--font-size-xs);
+  }
+}

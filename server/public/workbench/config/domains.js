@@ -61,6 +61,7 @@
 //   已被业务负责人整表删除 ⇒ 是死链）。本文件里只留货品上新那一个表单外链。
 //      已经没有任何地方再引用它们了）。
 import { SUPPLIER_DIRECTORY_URL, ACCESSORY_SALE_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
+import { INVENTORY_LEDGER_PAGE } from './inventoryLedger.js';
 
 export const DOMAIN_TABS = [
   // ── ① 销售 ────────────────────────────────────────────────────────────────
@@ -107,6 +108,11 @@ export const DOMAIN_TABS = [
         id: 'inventory-adjust',
         label: '手工调整',
         kind: 'inventory-adjustment',
+      },
+      {
+        id: INVENTORY_LEDGER_PAGE.id,
+        label: INVENTORY_LEDGER_PAGE.label,
+        kind: 'inventory-ledger',
       },
       {
         id: 'inventory-all',

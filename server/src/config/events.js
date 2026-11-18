@@ -446,6 +446,8 @@ const EVENTS = Object.freeze([
   'workbench.inventory.categories_failed.cache_hit',
   'workbench.inventory.categories_failed.cache_miss',
   'workbench.inventory.filtered_read_failed',
+  'workbench.inventory.ledger_failed.cache_hit',
+  'workbench.inventory.ledger_failed.cache_miss',
   'workbench.inventory.query_failed.cache_hit',
   'workbench.inventory.query_failed.cache_miss',
   'workbench.label_print.scan.rejected',
