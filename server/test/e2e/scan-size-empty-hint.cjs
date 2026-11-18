@@ -52,9 +52,9 @@ const columns = () => [
   { key: '', label: SCAN_PAGE.states.emptyLabel },
 ];
 
-/** 女 B 段：普通码 36–40 / 特殊码 34,35,41,42,43。 */
+/** 女 B 段：普通码 36–41 / 特殊码 34,35,42,43。 */
 const B_SIZES = [34, 35, 36, 37, 38, 39, 40, 41, 42, 43];
-const NORMAL = new Set([36, 37, 38, 39, 40]);
+const NORMAL = new Set([36, 37, 38, 39, 40, 41]);
 
 const viewWith = ({ inStockSizes = [], number }) => ({
   found: true,
@@ -85,7 +85,7 @@ const viewWith = ({ inStockSizes = [], number }) => ({
 
 const CASE_PREPAID_EMPTY = viewWith({
   number: 'QPL8092|黑色|男'.replace('A', 'B'), // 保持 B 段
-  inStockSizes: [36, 37, 38, 39, 40], // 普通码全有 ⇒ 预订组空
+  inStockSizes: [36, 37, 38, 39, 40, 41], // 普通码全有 ⇒ 预订组空
 });
 const CASE_IN_STOCK_EMPTY = viewWith({
   number: 'QPL8093|黑色|女',

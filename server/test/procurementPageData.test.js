@@ -228,14 +228,14 @@ test('AC-P6b 配置可注入：days=1 ⇒ 回到今天窗口（配置先行）',
   assert.equal(range.days, 1);
 });
 
-test('AC-P7 尺码与默认值：A → 普通 38-44 / 特殊 45-48；B → 普通 36-40 / 特殊 34/35/41/42/43', () => {
+test('AC-P7 尺码与默认值：A → 普通 38-44 / 特殊 45-48；B → 普通 36-41 / 特殊 34/35/42/43', () => {
   const records = [product({ id: 'recA', category: '男' }), product({ id: 'recB', category: '女' })];
   const result = buildNewProductsView({ records, fields: F, config, now: NOW });
   const byId = new Map(result.groups.map((group) => [group.productRecordId, group]));
   assert.deepEqual(byId.get('recA').sizes.normal, [38, 39, 40, 41, 42, 43, 44]);
   assert.deepEqual(byId.get('recA').sizes.special, [45, 46, 47, 48]);
-  assert.deepEqual(byId.get('recB').sizes.normal, [36, 37, 38, 39, 40]);
-  assert.deepEqual(byId.get('recB').sizes.special, [34, 35, 41, 42, 43]);
+  assert.deepEqual(byId.get('recB').sizes.normal, [36, 37, 38, 39, 40, 41]);
+  assert.deepEqual(byId.get('recB').sizes.special, [34, 35, 42, 43]);
   assert.deepEqual(byId.get('recA').defaults, { normal: 0, special: 0 });
 });
 

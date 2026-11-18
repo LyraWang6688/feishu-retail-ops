@@ -48,7 +48,7 @@ const sessionCookie = () => {
   return `${payload}.${signature}`;
 };
 
-/** 她截图那一款：女 B 段（普通码 36–40 / 特殊码 34,35,41,42,43）。 */
+/** 她截图那一款：女 B 段（普通码 36–41 / 特殊码 34,35,42,43）。 */
 const view = () => {
   const columns = [
     { key: '门盒', label: '门盒' },
@@ -56,8 +56,8 @@ const view = () => {
     { key: '仓库', label: '仓库' },
     { key: '', label: SCAN_PAGE.states.emptyLabel },
   ];
-  const normalMissing = new Set([36, 37, 39, 40]);
-  const special = new Set([34, 35, 41, 42, 43]);
+  const normalMissing = new Set([36, 37, 39, 40, 41]);
+  const special = new Set([34, 35, 42, 43]);
   const sizes = [34, 35, 36, 37, 38, 39, 40, 41, 42, 43];
   const rows = sizes.map((size) => {
     const box = size === 38 ? 1 : 0; // 截图：只有 38 码有货（门盒）
@@ -148,9 +148,9 @@ const run = async () => {
     for (const size of ['36', '37', '39', '40']) {
       assert.ok(prepaidSizes.includes(size), `预订组必须仍含 ${size} 码（实得 ${JSON.stringify(prepaidSizes)}）`);
     }
-    // ④ 特殊码标签数量不变（她截图那把 = 5）
+    // ④ 特殊码标签数量（41 移入普通码后 = 4）
     const specialTag = (await page.locator('details.size-fold .tag').first().textContent() || '').trim();
-    assert.equal(specialTag, '5', `特殊码数量标签保持 5（实得「${specialTag}」）`);
+    assert.equal(specialTag, '4', `特殊码数量标签保持 4（实得「${specialTag}」）`);
 
     const shot = path.join(REPORT_DIR, 'sales-page.png');
     await page.screenshot({ path: shot, fullPage: false });
@@ -162,7 +162,7 @@ const run = async () => {
       prepaid_tag: prepaidTag,
       contains_removed_text: bodyText.includes('样品 + 门盒'),
       in_stock_sizes: inStockSizes,
-      prepaid_sizes_contains_36_37_39_40: ['36', '37', '39', '40'].every((size) => prepaidSizes.includes(size)),
+      prepaid_sizes_contains_36_37_39_40: ['36', '37', '39', '40', '41'].every((size) => prepaidSizes.includes(size)),
       special_title: specialTitle,
       special_tag: specialTag,
       screenshot: shot.replace(`${SERVER}/..`, ''),

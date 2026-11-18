@@ -2,7 +2,7 @@
 /**
  * ⭐⭐ 2026-10-28「尺码范围口径收口」的**单一来源哨兵**。
  *
- * 背景：女士尺码在历史上改过三次（36–42 → 36–41 → **36–40 + 41 特殊码**），
+ * 背景：女士尺码在历史上改过三次（36–42 → 36–41 → **36–41 + 41 特殊码**），
  *   旧 helper（`normalScopeOf` / `loadSizeScope` / `missingSizes` / `displaySizes`）
  *   与旧注释/旧文档并存，读代码时容易误判“到底哪个是普通码、哪个参与缺码”。
  *
@@ -50,12 +50,12 @@ test('AC-SR1 ⭐ 旧 helper 不得回到源码（定义 / 调用 / 导出）', (
   assert.equal(config.displaySizes, undefined, '`displaySizes` 不许再导出');
 });
 
-test('AC-SR2 ⭐⭐ 现行配置只有一份：女 36–40 普通 / 34,35,41,42,43 特殊 / 34–43 可录', () => {
+test('AC-SR2 ⭐⭐ 现行配置只有一份：女 36–41 普通 / 34,35,42,43 特殊 / 34–43 可录', () => {
   // eslint-disable-next-line global-require
   const { SCAN_PAGE } = require('../src/config/scanPage');
   const ranges = SCAN_PAGE.sizeSegments.ranges;
-  assert.deepEqual(ranges.女.normal, [36, 40], '女普通码 = 36–40');
-  assert.deepEqual(ranges.女.special, [34, 35, 41, 42, 43], '女特殊码 = 34/35/41/42/43');
+  assert.deepEqual(ranges.女.normal, [36, 41], '女普通码 = 36–41');
+  assert.deepEqual(ranges.女.special, [34, 35, 42, 43], '女特殊码 = 34/35/42/43');
   assert.deepEqual(ranges.女.enterable, [34, 43], '女可录范围 = 34–43');
   assert.deepEqual(ranges.男.normal, [38, 44], '男普通码 = 38–44');
   assert.deepEqual(ranges.男.special, [45, 46, 47, 48], '男特殊码 = 45–48');
@@ -65,8 +65,8 @@ test('AC-SR2 ⭐⭐ 现行配置只有一份：女 36–40 普通 / 34,35,41,42,
 test('AC-SR3 ⭐⭐ 运行时 helper 读到的值与配置一致（不另写第二份数字）', () => {
   // eslint-disable-next-line global-require
   const stock = require('../src/config/scanStockPolicy');
-  assert.deepEqual(stock.normalSizesOf('女'), [36, 37, 38, 39, 40], '女普通码 helper = 36–40');
-  assert.deepEqual(stock.specialSizesOf('女'), [34, 35, 41, 42, 43], '女特殊码 helper = 34/35/41/42/43');
+  assert.deepEqual(stock.normalSizesOf('女'), [36, 37, 38, 39, 40, 41], '女普通码 helper = 36–41');
+  assert.deepEqual(stock.specialSizesOf('女'), [34, 35, 42, 43], '女特殊码 helper = 34/35/42/43');
   assert.deepEqual(stock.enterableSizesOf('女'), [34, 35, 36, 37, 38, 39, 40, 41, 42, 43], '女可录 helper = 34–43');
   // eslint-disable-next-line global-require
   const { enterableScopeOf } = require('../src/services/scanPageService');

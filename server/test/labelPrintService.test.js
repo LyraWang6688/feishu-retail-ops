@@ -253,7 +253,7 @@ test('普通码按「货品信息.类别」取范围（库存键里的类别可�
     product: [productRecord('rec_p1', { number: 'A1|黑色|A', category: '女' })],
   });
   const data = await service.listLabels({});
-  assert.deepEqual(data.labels[0].sizes.map((item) => item.size), [36, 37, 38, 39, 40]);
+  assert.deepEqual(data.labels[0].sizes.map((item) => item.size), [36, 37, 38, 39, 40, 41]);
 });
 
 test('特殊码只有有库存才印：男 45 有货 ⇒ 出现；没货 ⇒ 不出现', async () => {
@@ -640,7 +640,7 @@ test('扫码打印 labelForRecord：库存行「所属状态」为空 ⇒ 仍能
   assert.equal(data.labels[0].number, '66133-15|咖色|女');
   assert.deepEqual(data.labels[0].sizes, [
     { size: 36, qty: '' }, { size: 37, qty: 1 }, { size: 38, qty: '' },
-    { size: 39, qty: '' }, { size: 40, qty: '' },
+    { size: 39, qty: '' }, { size: 40, qty: '' }, { size: 41, qty: '' },
   ]);
   assert.equal(data.labels[0].state_text, '');
 });
@@ -680,7 +680,7 @@ test('扫码打印「精确读」：只 get 一条产品 + filter 读这一款�
   assert.equal(data.labels.length, 1);
   assert.deepEqual(data.labels[0].sizes, [
     { size: 36, qty: '' }, { size: 37, qty: 1 }, { size: 38, qty: 1 },
-    { size: 39, qty: '' }, { size: 40, qty: '' },
+    { size: 39, qty: '' }, { size: 40, qty: '' }, { size: 41, qty: '' },
   ]);
   assert.equal(data.labels[0].number, '66133-15|咖色|女');
   assert.deepEqual(gateway.calls, ['get:product', 'filter:liveInventory']);

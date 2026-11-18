@@ -25,12 +25,12 @@ test('AC-NS1 ⭐⭐ 扫码页这条链**不再读采购明细 / 不再有特殊�
   }
 });
 
-test('AC-NS2 ⭐ 普通码默认段：A 38–44 · B **36–40**（逐档参数化 ✓）', () => {
+test('AC-NS2 ⭐ 普通码默认段：A 38–44 · B **36–41**（逐档参数化 ✓）', () => {
   // eslint-disable-next-line global-require
   const { SCAN_PAGE } = require('../src/config/scanPage');
   const ranges = SCAN_PAGE.sizeSegments.ranges;
   assert.deepEqual(ranges.男.default, [38, 44], 'A（男）普通码 38–44 ✓');
-  assert.deepEqual(ranges.女.default, [36, 40], 'B（女）普通码 **36–40**（2026-10-18 起 41 移入特殊码 ✓）');
+  assert.deepEqual(ranges.女.default, [36, 41], 'B（女）普通码 **36–41**（2026-10-18 起 41 移入特殊码 ✓）');
 });
 
 test('AC-NS3 ⭐⭐ 其他码：**库存里有的就显示**（不算特殊码 ✗）；没有的不显示、也不计缺码', () => {
