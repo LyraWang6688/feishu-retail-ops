@@ -31,6 +31,7 @@ const writeManualLedger = async ({
     size: relation(item.sizeRecordId),
     quantityChange: 0,
     behavior: relation(behaviorIds.get(item.behaviorCode)),
+    ...(item.salesEntryRecordId ? { salesDetail: relation(item.salesEntryRecordId) } : {}),
     ...(operatorOpenId ? { operator: [{ id: operatorOpenId }] } : {}),
   }));
   const table = gateway.table('inventoryLedger');

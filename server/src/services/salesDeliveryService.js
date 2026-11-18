@@ -221,6 +221,7 @@ class SalesDeliveryService {
     // ⚠️ 只是把纯计算往前挪了一格，**没有改任何写入顺序**。
     const sampleReplacements = results.filter((item) => item.inventoryResult?.sampleConsumedQuantity > 0)
       .map((item) => ({ salesDetailRecordId: item.detailRecordId,
+        salesEntryRecordId,
         productRecordId: item.inventoryResult.productRecordId,
         sampleConsumedQuantity: item.inventoryResult.sampleConsumedQuantity,
         consumedLiveRecordIds: item.inventoryResult.consumedLiveRecordIds || [],

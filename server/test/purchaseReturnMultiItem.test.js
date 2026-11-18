@@ -477,15 +477,13 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
     assert.deepEqual(batches[0].fields['发生行为'], ['bh_return_purchase'],
       '多货品退货的批次行也要有「采购行为」= 采购退货那一档（空 ⇒ 工作台会按"采购申请"分流 ✗）');
 
-    // ② 两行明细，各自带**自己的货品**、都挂在同一个批次行上
-    const details = entriesOf(h, 'purchaseRequest');
-    assert.equal(details.length, 2, '2 个货品 × 1 个尺码 ⇒ 2 行明细');
-    assert.deepEqual(
-      details.map((record) => record.fields['编号'][0]).sort(), ['prod_A', 'prod_B'],
-      '每条明细带**它自己那件**的货品（批次级那个空串不许当所有行的货品 ✗）',
-    );
-    const batchLinks = new Set(details.map((record) => JSON.stringify(record.fields['报货批次号'])));
-    assert.equal(batchLinks.size, 1, '两行明细挂在**同一个批次行**上 ✓（ⓐ 的物理含义）');
+    // ② 2026-11-18：退货不写采购明细；批次保留，库存流水关联退货批次。
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
+    const ledgers = entriesOf(h, 'inventoryLedger');
+    assert.ok(ledgers.length > 0, '库存流水照常写');
+    for (const record of ledgers) {
+      assert.deepEqual(record.fields['关联采购'], [batches[0].record_id], '库存流水关联退货批次');
+    }
 
     // ③ ⭐ 出单**分成 2 组**：每组只含该供应商的行
     assert.equal(h.renders.length, 2, '🔴 2 个供应商 ⇒ **2 张退货单**（1 张 = 混在一起 ⇒ 红）');
@@ -557,9 +555,8 @@ test('AC-RS2 🔴 单货品退货 ⇒ 与今天**逐字一致**（载荷 `deepEq
       '🔴 单货品 ⇒ 计划里**不多**任何键（`behavior_record_id` / 逐行身份都不许有 ✓）');
     assert.deepEqual(task.plan.items, result.shortfalls, '计划里那几行就是回给调用方的那一份 ✓');
 
-    // ③ 明细的幂等键**逐字**不变（既有判据 `purchaseReturnBatchSpeedup.test.js` 钉着这一串）
-    assert.equal(entriesOf(h, 'purchaseRequest')[0].fields['幂等键'], `purchase_return_doc:${taskId}:41`);
-    assert.deepEqual(entriesOf(h, 'purchaseRequest')[0].fields['编号'], ['prod_A']);
+    // ③ 2026-11-18：退货不写采购明细（幂等仍由任务/库存操作键保证）。
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
 
     // ④ 主表 1 行 / 单据 1 张 / 图 1 张 / 群消息 2 条 / 号源 1 次
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1);
@@ -642,10 +639,8 @@ test('AC-RS3 ⭐ 混供应商**不再**落到「未标注供应商」（每行�
     assert.deepEqual(groupNames(h), ['乙供应商', '甲供应商'], '🔴 两家各一组（退回旧写法 ⇒ 全落「未标注供应商」⇒ 红）');
     assert.equal(h.renders.some((render) => render.supplierName === '未标注供应商'), false,
       '🔴 **混供应商的退货不许落到「未标注供应商」那一张**（错账级后果 ✗）');
-    // 明细行上也不带供应商（「采购明细.供应商」是 Formula/Lookup ⇒ 代码一个字都不写 ✓）
-    for (const record of entriesOf(h, 'purchaseRequest')) {
-      assert.equal('供应商' in record.fields, false, '明细的供应商是公式列 ⇒ 代码不写 ✓');
-    }
+    // 2026-11-18：退货不写采购明细。
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.deepEqual(
       Object.keys(entriesOf(h, 'purchaseOrderBatch')[0].fields).includes('供应商'), false,
       '主表「供应商」是 SingleLink、**代码只读不写**（她自己维护）✓',
@@ -694,7 +689,7 @@ test('AC-RS4 🔴 幂等：同一组重复生成 ⇒ 图 +0 · 群消息 +0 · �
     assert.equal(documentNamesOf(h).length, documentsAfter, '「单据」里还是那 2 张、不重复 ✗');
     assert.deepEqual(liveIds(h), liveAfterFirst, '库存也不重复扣 ✓');
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '重放也不会多一行主表 ✓');
-    assert.equal(entriesOf(h, 'purchaseRequest').length, 2, '重放不会多明细行 ✓');
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.equal(h.batchNoCalls(), 1, '重放不取新号 ✓');
   } finally { h.cleanup(); }
 });
@@ -765,19 +760,8 @@ test('AC-RS5 🔴 多货品退货 ⇒ 扣库存**逐条正确**（每个货品�
       '🔴 三条流水、逐行数量正确（漏一条 / 加倍 ⇒ 红）');
     assert.equal(ledgerTotal(h), 4);
 
-    // 明细也是逐行（3 行 = 2 + 1 + 1）
-    const details = entriesOf(h, 'purchaseRequest');
-    assert.equal(details.length, 3);
-    assert.deepEqual(
-      details.map((record) => `${record.fields['编号'][0]}:${record.fields['数量']}`).sort(),
-      ['prod_A:1', 'prod_A:2', 'prod_B:1'].sort(),
-    );
-    // ⭐ 采购明细ID 逐行、按计划顺序（同一个批次内不重号）
-    assert.deepEqual(
-      details.map((record) => record.fields['采购明细ID']).sort(),
-      details.map((record) => record.fields['采购明细ID']).slice().sort(),
-    );
-    assert.equal(new Set(details.map((record) => record.fields['采购明细ID'])).size, 3, 'ID 不重号 ✓');
+    // 2026-11-18：退货不写采购明细；库存流水逐行正确即可。
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
   } finally { h.cleanup(); }
 });
 
@@ -799,7 +783,7 @@ test('AC-RS6b 🔴 退货 service 仍然**不直连写库**，分组也**只用�
   assert.equal(/gateway\.(update|delete)\s*\(/.test(service), false,
     '退货 service 自己不 update/delete 业务表 ✓');
   for (const pattern of [
-    /applyPurchaseReturn/, /createOnceByKey/, /createForReturnBatch/, /deliverSupplierImages/,
+    /applyPurchaseReturn/, /createForReturnBatch/, /deliverSupplierImages/,
   ]) {
     assert.match(service, pattern, `复用点必须在：${pattern}`);
   }

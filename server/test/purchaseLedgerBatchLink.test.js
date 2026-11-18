@@ -198,7 +198,7 @@ test('② 拿不到批次 record id 时**这一列一个字都不写**（批次�
 // ③ 其他行为一个都不带（销售侧仍是「关联销售」；采购退货一个字都不带）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('③ 销售减少 / 采购退货的流水**不带**「关联采购」；销售那条仍挂「关联销售」', async () => {
+test('③ 销售减少的流水**不带**「关联采购」；采购退货 2026-11-18 起挂退货批次', async () => {
   const saleGateway = makeGateway({ [LIVE]: [liveUnit('door_1', 38)] });
   await inventoryFor(saleGateway).applySale({
     salesDetailRecordId: 'detail_1', productRecordId: 'product_1', size: 38, quantity: 1, state: '门盒', sampleSize: 38,
@@ -217,6 +217,7 @@ test('③ 销售减少 / 采购退货的流水**不带**「关联采购」；销
   });
   assert.deepEqual(returnGateway.records[LEDGER][0].fields, {
     编号: ['product_1'], 尺码: ['size_38'], 变动数量: 1, 库存行为: ['bhv_buy_back'],
+    关联采购: ['purchase_return_1'],
   });
 });
 
@@ -231,11 +232,13 @@ test('③-补 来源注册表：**只有**采购增加的来源被补了这一�
   assert.deepEqual(STOCK_MOVEMENTS[SALE_DECREASE].ledgerLink, {
     field: 'salesDetail', inputKey: 'salesEntryRecordId', operationKey: 'sales_entry_record_id',
   });
+  assert.deepEqual(STOCK_MOVEMENTS['STOCK_PURCHASE_DECREASE'].ledgerLink, {
+    field: 'purchaseBatch', inputKey: 'purchaseBatchRecordId', operationKey: 'purchase_batch_record_id',
+  });
   const unchanged = {
     SALE_RETURN: 'salesDetail',
     SALE_COMPENSATION: 'salesDetail',
     SALE_CASH: 'salesDetail',
-    STOCK_PURCHASE_DECREASE: null,
     STOCK_MANUAL_INCREASE: null,
     STOCK_MANUAL_DECREASE: null,
     STOCK_FREEZE: null,
