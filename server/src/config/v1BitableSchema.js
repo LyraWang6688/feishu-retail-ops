@@ -469,8 +469,14 @@ const V1_BITABLE_SCHEMA = {
       // 2026-10-29 生产表改名：付款明细 → P交易明细（table_id 不变）。
       tableName: 'P交易明细',
       tableId: getEnv('FEISHU_V1_PAYMENT_DETAIL_TABLE_ID'),
-      // 真表当前只有主字段「文本」；代码尚无读写点，登记出来供闸门核对。
-      fields: { text: '文本' },
+      // 2026-11-19 只读核对生产真表：已从「只有文本」长成业务列；代码仍无读写点，仅登记供闸门核对。
+      fields: {
+        transactionDetailId: '交易明细ID',
+        supplier: '供应商',
+        batchNo: '报货批次号',
+        behavior: '发生行为',
+        amount: '发生额',
+      },
     },
     // ⚠️ 表名沿革：「采购申请」→（2026-10-05）「单据信息」→（2026-10-07）「具体信息」
     //   →（同日深夜）**「报货信息」**（业务负责人当天的第三次改名，她只改名字、tableId 不变）。
