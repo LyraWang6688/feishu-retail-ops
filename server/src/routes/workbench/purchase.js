@@ -23,6 +23,7 @@ const { createAsyncJobPurchaseRunner } = require('../../services/asyncJobPurchas
 const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 const { ASYNC_JOBS, ASYNC_JOB_TYPES } = require('../../config/asyncJobs');
 const { logError, logWarn } = require('../../utils/logger');
+const { createSupplyDocumentSyncService } = require('../../services/supplyDocumentSyncService');
 // ⭐ 2026-10-28（采购页进入生产）：采购页的**只读读模型 + 提交**端点。
 //   🔴 挂在本文件（= 既有 workbench 父 router 已挂载的子路由）⇒ **不改共享文件 `routes/workbench.js`**，
 //     也自动带上父 router 的准入闸门 / no-store / ui-tap 结果事件（不新开鉴权）。
@@ -206,6 +207,15 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     const states = await arrivalSampleStateService.stateOfProducts(ids);
     return cacheSet(sampleStateCache, key, states);
   };
+  let supplyDocumentSync = options.supplyDocumentSync || null;
+  const resolveSupplyDocumentSync = () => {
+    if (!supplyDocumentSync) {
+      supplyDocumentSync = createSupplyDocumentSyncService({
+        gateway: options.gateway || new V1BitableGateway(),
+      });
+    }
+    return supplyDocumentSync;
+  };
   const arrivalCacheInvalidate = (batchNo) => {
     arrivalReadCache.delete(String(batchNo || '').trim());
     sampleStateCache.clear();
@@ -267,6 +277,20 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
           documents: restInput.counterpartyDocuments,
           correlation: { batch_no: restInput.batchNo || '' },
         });
+      }
+      // 2026-11-18：验收完成 + 对方单据落表后，自动同步供应单据；失败不影响入库事实。
+      if (result?.ok) {
+        try {
+          await resolveSupplyDocumentSync().syncBatch({
+            batchNo: restInput.batchNo || '',
+            batchRecordId: result.batch_record_id || '',
+          });
+        } catch (error) {
+          logWarn('supply.document.sync.failed', {
+            request_id: requestId, chain: 'accept', batch_no: restInput.batchNo || '',
+            error: String(error?.message || error).slice(0, 200),
+          });
+        }
       }
       // 写完才作废订单列表缓存（她下一次读一定是新数据 ✓）——改前是"写成功后立刻作废"，语义不变 ✓
       if (result?.ok) ordersCache.invalidate();

@@ -72,6 +72,7 @@ const { relation, V1ReferenceResolver } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
 const { PurchaseBatchNoGenerator } = require('./purchaseBatchNoGenerator');
+const { createSupplyDocumentSyncService } = require('./supplyDocumentSyncService');
 const {
   InventoryService, MOVEMENT_PURCHASE_DECREASE, STOCK_MOVEMENTS,
 } = require('./inventoryService');
@@ -161,6 +162,7 @@ const createPurchaseReturnService = (options = {}) => {
   // 只为"出退货单图"那一步（发群 / 回填附件都在它内部）；用例可以不注入（那就只记一条 warn）。
   const webhooks = options.webhooks || null;
   const batchNoGenerator = options.batchNoGenerator || new PurchaseBatchNoGenerator({ gateway });
+  const supplyDocumentSync = options.supplyDocumentSync || createSupplyDocumentSyncService({ gateway });
   // ⭐ task-64：**采购行为**那条既有解析器（`scanWriteService` 也是用它解析同一个编码 ✓）——
   //   只在"草稿里没带行为"时用（引擎的多货品载荷正是这种形状 ✓）；懒建 ⇒ 单货品那条老路
   //   **一次都不碰它**（零额外读 ✓）。
@@ -474,6 +476,19 @@ const createPurchaseReturnService = (options = {}) => {
       logWarn(events.returnImageFailed, {
         task_id: taskId, batch_no: plan.batch_no, reason: 'no_image_pipeline',
         note: '没有接出图链路（用例 / 未接线）：退货事实照样落地',
+      });
+    }
+
+    // 2026-11-18：退货单落表后自动同步「我方单据」到云盘；失败不影响退货事实。
+    try {
+      await supplyDocumentSync.syncBatch({
+        batchNo: plan.batch_no,
+        batchRecordId,
+      });
+    } catch (error) {
+      logWarn('supply.document.sync.failed', {
+        task_id: taskId, batch_no: plan.batch_no, chain: 'return',
+        error: String(error?.message || error).slice(0, 200),
       });
     }
 

@@ -583,6 +583,8 @@ const V1_BITABLE_SCHEMA = {
         //    · 只有「验收上传」链路写它（`purchaseOrderBatchService.appendCounterpartyDocuments`）；
         //    · 不要映射成 document，否则出图回填会写错列。
         counterpartyDocument: '对方单据',
+        // 2026-11-18：供应单据自动同步成功后由后端勾选；Checkbox，可写。
+        documentSync: '单据同步',
         // ⭐ 2026-11-10（业务负责人重新加回）：采购主表「供应商」= **Lookup（type 19，只读）**，
         //   自动带出这一批采购明细里的供应商名称（多供应商时以逗号分隔）。
         //   ⇒ 只读：映射只用于**读**（判断"这一批有哪些供应商"）；代码不许写它。
