@@ -8,8 +8,11 @@
 const WORKBENCH_CATEGORY_LIMIT = 100;
 // 单双调整按产品过滤读库存时的行数上限（一款的尺码 × 状态远小于这个数）。
 const WORKBENCH_PRODUCT_INVENTORY_LIMIT = 200;
+// 库存流水一次返回的最近条数（表会持续增长；其余历史暂不一次性拖给前端）。
+const WORKBENCH_LEDGER_LIMIT = 200;
 
 module.exports = {
   WORKBENCH_CATEGORY_LIMIT,
   WORKBENCH_PRODUCT_INVENTORY_LIMIT,
+  WORKBENCH_LEDGER_LIMIT,
 };

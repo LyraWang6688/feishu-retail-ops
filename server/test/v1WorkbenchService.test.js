@@ -166,3 +166,33 @@ test('实时库存读复用配置表快照：同一张表第二次不再整表�
   await service.getLiveInventory();
   assert.equal(liveCalls, 1, '同一份实时库存快照只读一次');
 });
+
+test('库存流水：按创建时间倒序，映射四列并可限制条数', async () => {
+  const ledger = [
+    { record_id: 'l_old', fields: { 创建时间: 1700000000000, 库存行为: [{ text: '手工调增' }], 编号: [{ text: 'A|黑|男' }], 尺码: [{ text: '38' }], 变动数量: '1' } },
+    { record_id: 'l_new', fields: { 创建时间: 1700000003000, 库存行为: [{ text: '销售减少' }], 编号: [{ text: 'B|白|女' }], 尺码: [{ text: '40' }], 变动数量: 2 } },
+    { record_id: 'l_mid', fields: { 创建时间: 1700000002000, 库存行为: [{ text: '采购增加' }], 编号: [{ text: 'C|米|男' }], 尺码: [{ text: '42' }], 变动数量: 1 } },
+  ];
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listAll: async (key) => (key === 'inventoryLedger' ? ledger : []),
+  };
+  const service = createWorkbenchService(gateway);
+  const all = await service.getInventoryLedger();
+  assert.deepEqual(all.rows.map((row) => row.record_id), ['l_new', 'l_mid', 'l_old']);
+  assert.deepEqual(all.rows[0], {
+    record_id: 'l_new',
+    behavior: '销售减少',
+    number: 'B|白|女',
+    size: '40',
+    quantity_change: 2,
+    created_at: new Date(1700000003000).toISOString(),
+  });
+  assert.equal(all.total, 3);
+  assert.equal(all.truncated, false);
+
+  const limited = await service.getInventoryLedger({ limit: 2 });
+  assert.deepEqual(limited.rows.map((row) => row.record_id), ['l_new', 'l_mid']);
+  assert.equal(limited.total, 3);
+  assert.equal(limited.truncated, true);
+});

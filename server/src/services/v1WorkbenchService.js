@@ -6,7 +6,7 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
 const { containsFormula } = require('./bitableFilterFormula');
 const { SCAN_PAGE } = require('../config/scanPage');
-const { WORKBENCH_CATEGORY_LIMIT, WORKBENCH_PRODUCT_INVENTORY_LIMIT } = require('../config/workbenchQuery');
+const { WORKBENCH_CATEGORY_LIMIT, WORKBENCH_PRODUCT_INVENTORY_LIMIT, WORKBENCH_LEDGER_LIMIT } = require('../config/workbenchQuery');
 const { logWarn } = require('../utils/logger');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -168,6 +168,22 @@ const createWorkbenchService = (gateway, options = {}) => {
     return { rows, total: names.size };
   };
 
+  // ⭐ 2026-11-18：库存流水（只读）。按「创建时间」倒序；时间相同的按 record_id 倒序，保证稳定。
+  const getInventoryLedger = async ({ requestId, limit = WORKBENCH_LEDGER_LIMIT } = {}) => {
+    const records = await listAllWithRetry(gateway, 'inventoryLedger', requestId);
+    const rows = records.map((record) => ({
+      record_id: record.record_id,
+      behavior: asText(schema, 'inventoryLedger', record, 'behavior'),
+      number: asText(schema, 'inventoryLedger', record, 'product'),
+      size: asText(schema, 'inventoryLedger', record, 'size'),
+      quantity_change: asNumber(fieldValue(schema, 'inventoryLedger', record, 'quantityChange')),
+      created_at: asDate(fieldValue(schema, 'inventoryLedger', record, 'ledgerCreatedAt'))?.toISOString() || '',
+    })).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')
+      || String(b.record_id).localeCompare(String(a.record_id)));
+    const cap = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : WORKBENCH_LEDGER_LIMIT;
+    return { rows: rows.slice(0, cap), total: rows.length, truncated: rows.length > cap };
+  };
+
   const inventoryRowsOf = async (records, productsById, { keyword = '', size = '' } = {}) => {
     const normalizedKeyword = String(keyword).trim().toLowerCase();
     const rawRows = (await Promise.all((Array.isArray(records) ? records : []).map(async (record) => {
@@ -262,6 +278,7 @@ const createWorkbenchService = (gateway, options = {}) => {
   return {
     getLiveInventory,
     listInventoryCategories,
+    getInventoryLedger,
   };
 };
 

@@ -39,6 +39,16 @@ const queryInventory = async (req, res) => {
 };
 
 // 换季调整（按品类批量）：品类清单来自「实时库存」的「品类」公式列。
+const queryInventoryLedger = async (req, res) => {
+  try {
+    return res.json({ success: true, ...await service.getInventoryLedger({ requestId: req.requestId }) });
+  } catch (error) {
+    return respondQueryFailure(res, error, {
+      requestId: req.requestId, event: 'workbench.inventory.ledger_failed', fallback: '库存流水查询失败',
+    });
+  }
+};
+
 const queryInventoryCategories = async (req, res) => {
   try {
     return res.json({ success: true, ...await service.listInventoryCategories({ requestId: req.requestId }) });
@@ -51,6 +61,7 @@ const queryInventoryCategories = async (req, res) => {
 
 module.exports = {
   queryInventory,
+  queryInventoryLedger,
   queryInventoryCategories,
   // 查询类接口的**失败口径**只有这一份实现（400 原样回显她填错的 / 503 飞书数据未准备好 /
   // 其余 500 不回显内部细节）。鞋盒标签打印那条只读查询挂在 `routes/workbench.js` 里，
