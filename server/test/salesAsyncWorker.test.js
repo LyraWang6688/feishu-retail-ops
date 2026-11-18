@@ -13,7 +13,7 @@ const waitFor = async (fn, { timeoutMs = 2000, intervalMs = 10 } = {}) => {
   throw new Error('waitFor timeout');
 };
 
-const make = ({ fail = false, onSettled = null } = {}) => {
+const make = ({ fail = false, onSettled = null, samplePromotion = null, stock = null } = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sale-async-'));
   const calls = { create: 0, submit: 0, lines: [], createOptions: null, submitOptions: null };
   const gateway = {
@@ -31,12 +31,12 @@ const make = ({ fail = false, onSettled = null } = {}) => {
       calls.submit += 1;
       calls.submitOptions = options;
       if (fail) throw new Error('boom');
-      return { ok: true, order_no: input.openId ? 'XSD-20261026-0001' : '', stock: { failed: 0 } };
+      return { ok: true, order_no: input.openId ? 'XSD-20261026-0001' : '', stock: stock || { failed: 0 } };
     },
   };
   const jobStore = createSalesJobStore({ dir });
   const worker = createSalesAsyncWorker({
-    gateway, writeService, jobStore, onSettled,
+    gateway, writeService, jobStore, onSettled, samplePromotion,
     logger: { logInfo() {}, logWarn() {}, logError() {} },
   });
   return { dir, worker, jobStore, gateway, calls, writeService, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
@@ -207,5 +207,43 @@ test('#891 主表查询失败 ⇒ 不得新建主表，job 记 failed（不把�
     assert.match(done.last_error, /listByFilter timeout/);
     assert.equal(h.calls.create, 0, '查询失败不得调用 create');
     assert.equal(h.calls.submit, 0, '不得继续提交');
+  } finally { h.cleanup(); }
+});
+test('2026-11-18：销售成功后按 sampleReplacements 补样品；补样品失败不影响销售', async () => {
+  const promoted = [];
+  const samplePromotion = {
+    async promote(input) { promoted.push(input); return { ok: true }; },
+  };
+  const h = make({
+    samplePromotion,
+    stock: {
+      failed: 0,
+      sampleReplacements: [{
+        salesDetailRecordId: 'd1', productRecordId: 'p1', sampleConsumedQuantity: 1,
+        samplePromotionSize: '41',
+      }],
+    },
+  });
+  try {
+    const samplePayload = payload();
+    samplePayload.lines[0].samplePromotionSize = '41';
+    const a = await h.worker.enqueue({ submitKey: 'scan_sale:s:sample', payload: samplePayload });
+    const done = await h.worker.process(a.job.job_id);
+    assert.equal(done.status, STATUS.succeeded);
+    assert.equal(h.calls.lines[0].samplePromotionSize, '41', 'payload 里的选择要进 job 会话行');
+    assert.deepEqual(promoted, [{
+      productRecordId: 'p1', size: '41', salesDetailRecordId: 'd1',
+      operatorOpenId: 'ou_1', requestId: a.job.job_id,
+    }]);
+
+    const failing = make({
+      samplePromotion: { async promote() { throw new Error('promotion boom'); } },
+      stock: { failed: 0, sampleReplacements: [{ salesDetailRecordId: 'd1', productRecordId: 'p1', samplePromotionSize: '41' }] },
+    });
+    try {
+      const b = await failing.worker.enqueue({ submitKey: 'scan_sale:s:sample-fail', payload: payload() });
+      const result = await failing.worker.process(b.job.job_id);
+      assert.equal(result.status, STATUS.succeeded, '补样品失败不能把销售改成失败');
+    } finally { failing.cleanup(); }
   } finally { h.cleanup(); }
 });

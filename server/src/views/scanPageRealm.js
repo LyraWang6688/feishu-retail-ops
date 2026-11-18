@@ -276,6 +276,22 @@ const specialSizesOfView = (view) => {
   return new Set(specialSizesOf(categoryCode).map((size) => String(size)));
 };
 
+/**
+ * 一行尺码的状态标签（只取 count > 0 的状态；空状态 key 是空串，标签来自 view.columns）。
+ * 例：40 码 门盒 2 + 样品 1 ⇒ [{ key:'门盒', label:'门盒', count:2 }, { key:'样品', label:'样品', count:1 }]
+ */
+const stateTagsOf = (row, columns = []) => {
+  const labels = new Map((Array.isArray(columns) ? columns : [])
+    .map((column) => [String(column?.key ?? ''), String(column?.label ?? column?.key ?? '')]));
+  return (Array.isArray(row?.cells) ? row.cells : [])
+    .filter((cell) => Number(cell?.count) > 0)
+    .map((cell) => ({
+      key: String(cell.key ?? ''),
+      label: labels.get(String(cell.key ?? '')) || String(cell.key ?? ''),
+      count: Number(cell.count),
+    }));
+};
+
 const saleSizeGroups = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.sales) => {
   // 分组口径来自配置（`group` 不是配置里的枚举值 ⇒ 平表、不分组）；
   // ⚠️ 库存页的 0 占位是**渲染层**的事（真源在 `views/scanPageRenderer.js`），这里不管。
@@ -286,7 +302,12 @@ const saleSizeGroups = (view, behavior = SCAN_PAGE.REALM_SIZE_BEHAVIOR.sales) =>
   const folded = [];
   const specialSet = specialSizesOfView(view);
   for (const row of sizeRowsOf(view)) {
-    const item = { size_text: String(row.size_text), count: sellableCountOf(row, view?.columns) };
+    const item = {
+      size_text: String(row.size_text),
+      count: sellableCountOf(row, view?.columns),
+      // ⭐ 2026-11-18：把每行已有的状态计数带到尺码卡上（不新增飞书读）。
+      states: stateTagsOf(row, view?.columns),
+    };
     if (item.count > 0 || !grouped) inStock.push(item);
     else if (!view?.sizes_degraded || behavior.groupWhenDegraded) {
       if (specialSet.has(item.size_text)) folded.push(item);

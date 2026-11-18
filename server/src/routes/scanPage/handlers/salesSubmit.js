@@ -6,6 +6,7 @@ const { salesTradeTypeForStock } = require('../../../config/salesTradeTypePolicy
 const { prepareSubmitDraft } = require('../../../services/scanWrite/submitDraft');
 const { resolveSaleSubmitPlan } = require('../../../services/scanWrite/saleSubmitPlan');
 const { enqueueSaleAsync, salePrintProductsOf } = require('../../../services/scanWrite/saleAsyncSubmit');
+const { SAMPLE_PROMOTION } = require('../../../config/samplePromotion');
 
 /**
  * 扫码路由核心深拆 P2：销售提交（`submit_order`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -161,6 +162,7 @@ return sendPaymentStep(res, req, {
             trade_type_code: salesTradeTypeForStock({ inStock }),
             amount: currentAmount,
             gift: String(body[fields.gift] ?? '').trim(),
+            sample_promotion_size: String(body[SAMPLE_PROMOTION.field] || '').trim(),
             added_at: new Date().toISOString(),
           });
           if (!added?.ok) {
@@ -258,6 +260,7 @@ return sendPaymentStep(res, req, {
             color: line.color,
             kind: line.kind,
             gift: line.gift,
+            samplePromotionSize: line.sample_promotion_size,
           }));
           const outcome = await enqueueSaleAsync({
             salesAsync,
@@ -322,6 +325,7 @@ return sendPaymentStep(res, req, {
             size: body[fields.size],
             amount: body[fields.amount],
             gift: body[fields.gift],
+            samplePromotionSize: body[SAMPLE_PROMOTION.field],
             // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
             inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
           } : null,

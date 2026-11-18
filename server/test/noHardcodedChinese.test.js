@@ -182,7 +182,9 @@ test('AC-5b ⭐ 真文件：报出来的每一条都**不是注释**（本切片
   const source = raw.replace(/<style[\s\S]*?<\/style>/gi, '');
   const flags = commentLineFlags(raw);
   const found = scanSource(relative, source);
-  assert.ok(found.length > 5, `这个文件本来就是"文案大户"，应该扫出一堆（实际 ${found.length}）`);
+  // 2026-11-18：尺码卡的「码」收口到 sizeChipHtml 后少了一处重复字面量（6 → 4），
+  //   这里仍要求扫出多条**真实 UI 文案**；不是放宽"新增中文"那条判据。
+  assert.ok(found.length >= 4, `这个文件本来就是"文案大户"，应该扫出一堆（实际 ${found.length}）`);
   const fromComments = found.filter((item) => flags[item.line - 1]);
   assert.deepEqual(fromComments, [],
     `这些"中文"其实来自**注释**（状态机失步了）：\n${fromComments.slice(0, 12).map((i) => `  :${i.line} ${i.text}`).join('\n')}`);
