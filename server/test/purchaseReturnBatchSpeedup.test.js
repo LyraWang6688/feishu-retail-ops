@@ -806,3 +806,22 @@ test('AC-RB7 源码哨兵：禁改文件与「一次一件」的老写法都不�
   assert.equal(/for \(const item of plan\.items\)[\s\S]{0,400}?createOnceByKey\(/.test(returnService), false,
     '明细循环里不许再有逐条 createOnceByKey');
 });
+
+test('AC-RB0 旧任务（无商品身份）不允许复用：同 ID 新退货草稿 ⇒ 派生新任务，不报缺少商品 record_id', async () => {
+  const h = createHarness({ batch: true });
+  try {
+    const taskId = 'scan_return_stale_plan';
+    const oldDraft = draftFor([[41, 1]], { product_record_id: 'legacy_product', product_number: 'OLD', order_amount: '10' });
+    await h.purchaseReturn.store.create({
+      task_id: taskId, kind: 'scan_purchase_return', status: 'posted', draft: oldDraft,
+      plan: { version: 1, batch_no: 'CGD-OLD-0001', items: [{ size: 41, declared: 1, available: 1, taken: 1, shortfall: 0 }] },
+    });
+    const newDraft = draftFor([[41, 1]], {
+      product_record_id: '', items: [{ size: 41, quantity: 1, product_record_id: 'prod_1' }], order_amount: '399',
+    });
+    const result = await h.purchaseReturn.submit(taskId, newDraft);
+    assert.notEqual(result.batch_no, 'CGD-OLD-0001', '必须用新计划/新批次，不许复用旧任务');
+    assert.equal(result.taken_count, 1, '新退货草稿正常扣 1 双');
+    assert.equal((await h.purchaseReturn.store.get(taskId)).status, 'posted', '旧任务保持原样，不被改写成新草稿');
+  } finally { h.cleanup(); }
+});
