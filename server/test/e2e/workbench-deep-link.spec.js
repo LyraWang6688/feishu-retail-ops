@@ -88,6 +88,13 @@ test('空状态：下拉显示「请选择状态」，保存前必须先选，�
 
   await stateSelect.selectOption('门盒');
   await page.locator('[data-save]').click();
+  await expect(page.locator('[data-view="sample-modal"]')).toBeVisible();
+  await expect(page.locator('[data-view="sample-modal"]')).toContainText('需要一双样品');
+  expect(pairPosts).toHaveLength(0);
+
+  await page.locator('[data-sample-confirm]').click();
+  await stateSelect.selectOption('样品');
+  await page.locator('[data-save]').click();
   await expect.poll(() => pairPosts.length).toBe(1);
-  expect(pairPosts[0].rows).toEqual([{ size: 40, state: '门盒', quantity: 2 }]);
+  expect(pairPosts[0].rows).toEqual([{ size: 40, state: '样品', quantity: 2 }]);
 });
