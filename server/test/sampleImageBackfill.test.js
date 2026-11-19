@@ -170,3 +170,43 @@ test('AC-BF6 接统一异步任务：enqueue(type/owner) → job_id 返回 → r
   const withJob = await service.statusWithJob();
   assert.equal(withJob.job_status, 'succeeded', '状态接口能查到 job 终态');
 });
+
+
+test('AC-BF7 同一按钮补货品 + 配品：各自源串行处理', async () => {
+  const calls = { listAll: [], sync: [] };
+  const productRows = [recordOf({ id: 'p1', images: [imageOf('pft')] })];
+  const accessoryRecords = [{
+    record_id: 'a1',
+    fields: {
+      [V1_BITABLE_SCHEMA.tables.accessory.fields.name]: '39元腰带',
+      [V1_BITABLE_SCHEMA.tables.accessory.fields.category]: '腰带',
+      [V1_BITABLE_SCHEMA.tables.accessory.fields.sampleImage]: [imageOf('aft')],
+      [V1_BITABLE_SCHEMA.tables.accessory.fields.sampleImageSynced]: false,
+    },
+  }];
+  const gateway = {
+    async listAll(tableKey) {
+      calls.listAll.push(tableKey);
+      return tableKey === 'accessory' ? accessoryRecords : productRows;
+    },
+  };
+  const productDrive = {
+    async syncRecord(id) { calls.sync.push([id, 'product']); return { record_id: id, status: 'synced' }; },
+  };
+  const accessoryDrive = {
+    isPending(row) { return row.fields[V1_BITABLE_SCHEMA.tables.accessory.fields.sampleImageSynced] !== true; },
+    async syncRecord(id) { calls.sync.push([id, 'accessory']); return { record_id: id, status: 'synced' }; },
+  };
+  const service = createSampleImageBackfillService({
+    gateway,
+    driveService: productDrive,
+    config: configOf(),
+    extraSources: [{ key: 'accessory', driveService: accessoryDrive, isPending: accessoryDrive.isPending }],
+  });
+  await service.start();
+  const status = await service.waitForIdle();
+  assert.deepEqual(calls.listAll, ['product', 'accessory']);
+  assert.deepEqual(calls.sync, [['p1', 'product'], ['a1', 'accessory']]);
+  assert.equal(status.total, 2);
+  assert.equal(status.synced, 2);
+});

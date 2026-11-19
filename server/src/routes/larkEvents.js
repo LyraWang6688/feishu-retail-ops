@@ -205,6 +205,23 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
       }
     }
 
+    // ── 其他配品：「样例图 → 配品云盘」自动同步（2026-11-19，只认新增）────────────
+    const accessoryImageTableId = V1_BITABLE_SCHEMA.tables.accessory?.tableId;
+    if (accessoryImageTableId && tableId === accessoryImageTableId) {
+      const accessoryDrive = service?.accessorySampleImageDrive;
+      if (accessoryDrive && typeof accessoryDrive.handleTableChanges === 'function') {
+        setImmediate(() => {
+          accessoryDrive.handleTableChanges(actionList).catch((error) => {
+            logError('accessory.sample_image.drive.dispatch_failed', {
+              table_id: tableId, error: error.message,
+            });
+          });
+        });
+      } else {
+        logWarn('accessory.sample_image.drive.not_wired', { table_id: tableId, action_count: actionList.length });
+      }
+    }
+
     // ⭐⭐ 2026-11-09（业务负责人）：「点「批量打印」进的是飞书表单链接，后续就只用这个了」——
     //   「标签打印」表有**新增记录**（= 她在飞书表单提交了一次批量打印）⇒ 交给
     //   `labelPrintFormIntake`：每个「打印货号」各打各的、失败/跳过汇总一条通知。

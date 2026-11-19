@@ -30,6 +30,14 @@ const sampleImageOperations = Object.freeze({
   transfer: '转移云盘文件所有者',
 });
 
+const accessoryImageOperations = Object.freeze({
+  download: '下载配品样例图',
+  list: '列出配品云盘文件夹',
+  delete: '删除配品云盘同名旧文件',
+  upload: '上传配品样例图到云盘',
+  transfer: '转移配品云盘文件所有者',
+});
+
 const supplyDocumentOperations = Object.freeze({
   download: '下载供应单据',
   list: '列供应单据目录',
@@ -53,6 +61,23 @@ const DESTINATIONS = Object.freeze({
       email: readString(process.env, 'SAMPLE_IMAGE_DRIVE_OWNER_EMAIL', ''),
     }),
     operations: sampleImageOperations,
+  }),
+
+  accessorySampleImages: Object.freeze({
+    folderToken: readString(process.env, 'ACCESSORY_SAMPLE_IMAGE_DRIVE_FOLDER_TOKEN', 'WaZbfpRFglYOmadW3eqcpMOjn9d'),
+    folderUrl: readString(
+      process.env,
+      'ACCESSORY_SAMPLE_IMAGE_DRIVE_FOLDER_URL',
+      'https://scnzoiwpgxik.feishu.cn/drive/folder/WaZbfpRFglYOmadW3eqcpMOjn9d',
+    ),
+    parentType: 'explorer',
+    overwrite: readString(process.env, 'ACCESSORY_SAMPLE_IMAGE_DRIVE_OVERWRITE', 'replace'),
+    maxFiles: readInt(process.env, 'ACCESSORY_SAMPLE_IMAGE_DRIVE_MAX_IMAGES', 1, { min: 0, max: 10 }),
+    owner: Object.freeze({
+      openId: readString(process.env, 'ACCESSORY_SAMPLE_IMAGE_DRIVE_OWNER_OPEN_ID', ''),
+      email: readString(process.env, 'ACCESSORY_SAMPLE_IMAGE_DRIVE_OWNER_EMAIL', ''),
+    }),
+    operations: accessoryImageOperations,
   }),
 
   supplyDocuments: Object.freeze({
@@ -82,5 +107,6 @@ module.exports = {
   DESTINATIONS,
   OPERATIONS,
   sampleImageOperations,
+  accessoryImageOperations,
   supplyDocumentOperations,
 };

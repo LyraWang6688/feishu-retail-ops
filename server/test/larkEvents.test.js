@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+process.env.FEISHU_V1_ACCESSORY_TABLE_ID = process.env.FEISHU_V1_ACCESSORY_TABLE_ID || 'tbl_test_accessory';
 const { createLarkEventHandlers } = require('../src/routes/larkEvents');
 const { LarkMvpService } = require('../src/services/larkMvpService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
@@ -379,15 +380,20 @@ test('⑤ 没接线（service 上没有 tagQrCodes）→ 不抛错，并留下�
 //   · 一条支路抛错 ⇒ **不阻断**另一条（两条 setImmediate 互不 await）。
 // ─────────────────────────────────────────────────────────────────────────────
 
+const ACCESSORY_TABLE_ID = V1_BITABLE_SCHEMA.tables.accessory.tableId;
+
 const createSampleImageDispatchService = () => {
   const tagCalls = [];
   const imageCalls = [];
+  const accessoryCalls = [];
   return {
     tagCalls,
     imageCalls,
+    accessoryCalls,
     service: {
       tagQrCodes: { handleTableChanges: async (actionList) => { tagCalls.push(actionList); return { results: [] }; } },
       sampleImageDrive: { handleTableChanges: async (actionList) => { imageCalls.push(actionList); return { results: [] }; } },
+      accessorySampleImageDrive: { handleTableChanges: async (actionList) => { accessoryCalls.push(actionList); return { results: [] }; } },
       purchaseWebhooks: { acceptMany: async () => {} },
     },
   };
@@ -433,4 +439,18 @@ test('⑥ 两条支路互不阻断：样例图那条抛错，标签二维码那�
   }));
   await flushDispatch();
   assert.equal(tagCalls.length, 1, '另一条支路不许被拖垮');
+});
+
+test('⑥ 分派：其他配品新增 ⇒ 只走配品样例图云盘，不碰货品样例图', async () => {
+  const { service, imageCalls, accessoryCalls } = createSampleImageDispatchService();
+  const handlers = createLarkEventHandlers(service);
+  const actionList = [{ record_id: 'rec_a_new', action: 'record_added' }];
+  handlers['drive.file.bitable_record_changed_v1']({
+    file_token: APP_TOKEN,
+    table_id: ACCESSORY_TABLE_ID,
+    action_list: actionList,
+  });
+  await flushDispatch();
+  assert.deepEqual(accessoryCalls, [actionList]);
+  assert.deepEqual(imageCalls, []);
 });

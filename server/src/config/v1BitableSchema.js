@@ -132,6 +132,8 @@ const V1_BITABLE_SCHEMA = {
         stockQuantity: '库存数量',
         // 2026-11-19：样例图（附件）；配品配置页支持上传一张。
         sampleImage: '样例图',
+        // 2026-11-19：配品样例图同步云盘完成标记（幂等 / 一眼看进度）。
+        sampleImageSynced: '同步云盘',
       },
       // 只读字段：不参与写入；时间字段由飞书自动生成。
       readOnlyFields: Object.freeze({

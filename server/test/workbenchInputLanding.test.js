@@ -75,7 +75,7 @@ const CHAINS = Object.freeze({
     fe: 'features/domains/dataConfigAction.js', feKey: 'api.post(DATA_CONFIG_API.sampleImageSync',
     route: 'src/routes/workbench/dataConfig.js', routeKey: /router\.post\('\/data-config\/sample-image-sync'/,
     service: 'src/services/sampleImageBackfillService.js', serviceKey: /driveService\.syncRecord\(/,
-    landing: [['product', 'sampleImageSynced']],
+    landing: [['product', 'sampleImageSynced'], ['accessory', 'sampleImageSynced']],
   },
 
   'ARRIVAL_FULL_API.accept': {

@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **514** 个事件。按前缀分组：
+共 **520** 个事件。按前缀分组：
 
 ## accessory
 
@@ -14,6 +14,12 @@
 | `accessory.sale.sync.failed` | 4 | src/services/accessorySaleSyncService.js |
 | `accessory.sale.sync.not_wired` | 1 | src/routes/larkEvents.js |
 | `accessory.sale.sync.skipped` | 7 | src/services/accessorySaleSyncService.js |
+| `accessory.sample_image.drive.dispatch_failed` | 1 | src/routes/larkEvents.js |
+| `accessory.sample_image.drive.failed` | 2 | src/services/accessorySampleImageDriveService.js |
+| `accessory.sample_image.drive.name_exists` | 1 | src/services/accessorySampleImageDriveService.js |
+| `accessory.sample_image.drive.not_wired` | 1 | src/routes/larkEvents.js |
+| `accessory.sample_image.drive.skipped` | 1 | src/services/accessorySampleImageDriveService.js |
+| `accessory.sample_image.drive.synced` | 1 | src/services/accessorySampleImageDriveService.js |
 
 ## after_sales
 

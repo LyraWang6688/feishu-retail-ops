@@ -22,6 +22,7 @@ const { TAG_QR_CODE } = require('../config/tagQrCode');
 // ⭐ 2026-11-10（业务负责人：「样例图写入到云盘…只有新增…勾上复选框」）：
 //   「货品信息.样例图 → 云盘文件夹」同步 service（与标签二维码**两条独立链路**，同一个事件入口各分派一次）。
 const { createSampleImageDriveService } = require('./sampleImageDriveService');
+const { createAccessorySampleImageDriveService } = require('./accessorySampleImageDriveService');
 const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 // `normalizeText`：新增的「货号有没有建档」判据必须与解析 A 用**同一套**货号归一
 // （大小写 / 空格 / 分隔符），否则会出现「A 认得出来、判据说没有」这种自相矛盾。
@@ -201,18 +202,17 @@ class LarkMvpService {
       gateway: this.gateway,
       config: TAG_QR_CODE,
     });
-    // 「样例图 → 云盘」：与上面那条**并列**（各自 config / 各自失败域），
-    // 入口同是 `drive.file.bitable_record_changed_v1` 的货品信息分支（见 routes/larkEvents.js）。
+    // 「样例图 → 云盘」：与上面那条并列（各自 config / 各自失败域）。
     this.sampleImageDrive = options.sampleImageDrive || createSampleImageDriveService({
       gateway: this.gateway,
       config: SAMPLE_IMAGE_DRIVE,
     });
+    this.accessorySampleImageDrive = options.accessorySampleImageDrive || createAccessorySampleImageDriveService({ gateway: this.gateway });
     this.store =
       options.store ||
       new JsonTaskStore({ dir: path.join(__dirname, '../../data/lark_mvp_tasks'), idField: 'task_id' });
     // 退换货第二期：售后**编排**（定位 → 组装方案 → 确认卡片 → 调执行器）也是独立 service。
-    // 本类只留"意图 → 分派"的接线：
-    //   · 定位复用第一期的只读 SaleLookupService（同上一个实例，共享任务状态）；
+    // 定位复用第一期只读 SaleLookupService（同上一个实例，共享状态）；
     //   · 写入复用第二期第一步的 AfterSalesService 执行器（幂等由它自己负责）；
     //   · 卡片渲染在 utils/larkCards，本类不拼卡片内容。
     // ⛔ 2026-11-14（#56）：`this.afterSales` 是**死接线**（全类零调用点）⇒ 已删；
