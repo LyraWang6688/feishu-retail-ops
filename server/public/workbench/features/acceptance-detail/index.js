@@ -88,7 +88,6 @@ const productsHtml = (groups) => groups.map((group) => {
 }).join('');
 
 const shellHtml = (batchNo, supplierName) => '<header class="arrival-detail-head">'
-  + '<a class="btn btn-ghost" href="/workbench/purchase-acceptance.html">' + escapeHtml(ARRIVAL_FULL_TEXTS.detailBack) + '</a>'
   + '<div><h1>' + escapeHtml(ARRIVAL_FULL_TEXTS.detailPageTitle) + '</h1>'
   + '<p class="arrival-detail-meta"><span data-view="arrival-batch-label">' + escapeHtml(batchNo) + '</span>'
   + (supplierName ? ' · <span data-view="arrival-supplier-label">' + escapeHtml(supplierName) + '</span>' : '')

@@ -167,7 +167,6 @@ export const ARRIVAL_FULL_TEXTS = {
   detailGroupTotal: '{total} 双',
   // 2026-11-19：独立验收明细页（批次卡不再原地展开）。
   detailPageTitle: '验收明细',
-  detailBack: '返回验收列表',
   summaryExpected: '应到 {count} 双',
   summaryActual: '实到 {count} 双',
   summaryExtra: '多到 {count} 双',
