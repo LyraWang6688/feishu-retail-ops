@@ -270,7 +270,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
   }
 
 
-  async function savePairs() {
+  async function savePairs({ skipSampleWarning = false } = {}) {
     const filled = state.editorRows.filter((row) => Number(row.quantity) > 0);
     if (!filled.length) return showPageError(INVENTORY_MANUAL_TEXTS.rowsRequired);
     // ⭐ 2026-11-18：空状态**不再冒充门盒**——下拉显示「请选择状态」，保存前必须显式选一个。
@@ -281,9 +281,9 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       state.host.querySelector(`select[data-row="${index}"][data-k="state"]`)?.focus();
       return showPageError(INVENTORY_MANUAL_TEXTS.stateRequired);
     }
-    // 2026-11-19：这一款最终必须有一双样品；没有就拦在保存前并发请求。
+    // 2026-11-19：没有样品只提醒，不阻断保存；用户可以选择仍然保存。
     const hasSample = filled.some((row) => String(row.state) === '样品' && Number(row.quantity) > 0);
-    if (!hasSample) {
+    if (!hasSample && !skipSampleWarning) {
       const modal = $(state.host, '[data-view="sample-modal"]');
       if (modal) modal.hidden = false;
       return;
@@ -424,7 +424,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
         </div>
         <div class="manual-modal" data-view="sample-modal" hidden>
           <div class="manual-modal-card"><h3>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredTitle)}</h3><p class="hint">${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredBody)}</p>
-            <div class="row-actions"><button class="btn primary" type="button" data-sample-confirm>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredConfirm)}</button></div>
+            <div class="row-actions"><button class="btn" type="button" data-sample-cancel>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleCancel)}</button><button class="btn primary" type="button" data-sample-continue>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleContinue)}</button></div>
           </div>
         </div>
         <div class="manual-modal" data-view="clear-modal" hidden>
@@ -469,7 +469,12 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
           void selectProduct(pick.dataset.pickProduct).catch((error) => showPageError(describeError(error)));
           return;
         }
-        if (event.target.closest?.('[data-sample-confirm]')) { $(state.host, '[data-view="sample-modal"]').hidden = true; return; }
+        if (event.target.closest?.('[data-sample-cancel]')) { $(state.host, '[data-view="sample-modal"]').hidden = true; return; }
+        if (event.target.closest?.('[data-sample-continue]')) {
+          $(state.host, '[data-view="sample-modal"]').hidden = true;
+          void savePairs({ skipSampleWarning: true });
+          return;
+        }
         if (event.target.closest?.('[data-clear-stock]')) { openClearConfirm(); return; }
         if (event.target.closest?.('[data-clear-cancel]')) { $(state.host, '[data-view="clear-modal"]').hidden = true; return; }
         if (event.target.closest?.('[data-clear-confirm]')) { void clearAll(); return; }
