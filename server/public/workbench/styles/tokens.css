@@ -29,7 +29,7 @@
   color-scheme: light;
 
   /* ── ④ 字体 ────────────────────────────────────────────────────────────── */
-  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   --font-size-xs: 12px;     /* 标签 / 脚注 */
   --font-size-sm: 13px;     /* 次要文字（说明、辅助信息） */
   --font-size-md: 15px;     /* 正文小一号（表单标签、列表行） */
@@ -53,6 +53,13 @@
   --space-5: 20px;
   --space-6: 24px;
   --space-8: 32px;
+
+  /* 手机端布局密度：只给 tab / panel / 卡片列表用，不改变 --space-* 的全局含义。 */
+  --mobile-tab-bottom: var(--space-3);      /* 12px */
+  --mobile-panel-top: var(--space-3);       /* 12px */
+  --mobile-subtabs-top: var(--space-2);     /* 8px */
+  --mobile-subtabs-bottom: var(--space-3);  /* 12px */
+  --mobile-card-gap: var(--space-2);        /* 8px */
 
   /* ── ③ 圆角（卡片 12~16）───────────────────────────────────────────────── */
   --radius-sm: 10px;
