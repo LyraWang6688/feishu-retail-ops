@@ -133,7 +133,5 @@ module.exports = {
   createAccessory,
   updateAccessory,
   deleteAccessory,
-  normalizeName,
   nameKey,
-  mapAccessory,
 };
