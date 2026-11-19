@@ -19,6 +19,12 @@ const timeText = (value) => {
   const get = (type) => (parts.find((part) => part.type === type) || {}).value || '';
   return `${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
 };
+// 销售单头只展示时分，日期不再单独占一行。
+const timeOnlyText = (value) => {
+  const text = timeText(value);
+  const match = String(text).match(/\d{2}:\d{2}/);
+  return match ? match[0] : '';
+};
 const statusClass = (status) => (status === '已交付' ? 'ok' : (status === '未交付' ? 'wait' : 'back'));
 
 function methodsHtml(methods, pendingMethods, revenue) {
@@ -59,9 +65,8 @@ function ordersHtml(orders) {
     </div>`).join('');
     return `<article class="sq-order">
       <div class="sq-order-head">
-        <div class="sq-order-title"><b>${escapeHtml(order.order_no)}</b></div>
+        <div class="sq-order-title"><b>${escapeHtml(order.order_no)}</b><span class="sq-order-time">${escapeHtml(timeOnlyText(order.recorded_at))}</span></div>
         <div class="sq-order-total">${order.total_amount == null ? '—' : escapeHtml(amountText(order.total_amount))}</div>
-        <div class="sq-order-time">${escapeHtml(timeText(order.recorded_at))}</div>
         <div class="sq-order-pays">${pays}</div>
       </div>
       ${details}
