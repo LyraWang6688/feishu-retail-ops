@@ -18,6 +18,7 @@
 
 const crypto = require('node:crypto');
 const { createLarkJsapiConfig } = require('../config/larkJsapi');
+const { withTransientRetry } = require('../config/pushRetry');
 
 // 与既有代码同一套取凭证口径（`config/larkAgent.js` 只读这两个变量名 ✓ 不回退旧租户 ✗）
 const readCreds = (env = process.env) => ({
@@ -55,7 +56,15 @@ const createLarkJsapiService = (options = {}) => {
       return await fn(controller?.signal);
     } catch (error) {
       // ⭐ 超时/网络错一律当成"上游不可用" ⇒ 调用方给**人话** ✓ 绝不静默 ✗
-      throw Object.assign(new Error(`${label}_failed: ${error?.message || 'unknown'}`), { reason: label });
+      // ⚠️ 保留 HTTP status / 飞书 code / response：重试判据（withTransientRetry）要用，
+      //    日志也要能看出是 429、5xx 还是 1254607。
+      const wrapped = Object.assign(new Error(`${label}_failed: ${error?.message || 'unknown'}`), {
+        reason: label,
+      });
+      for (const key of ['status', 'code', 'response']) {
+        if (error?.[key] !== undefined) wrapped[key] = error[key];
+      }
+      throw wrapped;
     } finally {
       clearTimeout(timer);
     }
@@ -72,6 +81,19 @@ const createLarkJsapiService = (options = {}) => {
     return { ok: response.ok, status: response.status, payload };
   };
 
+  /** HTTP 非 2xx 或飞书 code 非 0：保留 status/code/response 供瞬时重试判据使用。 */
+  const upstreamError = (reason, result) => {
+    const payload = result?.payload || {};
+    const code = payload?.code ?? payload?.data?.code;
+    const error = Object.assign(new Error(reason), {
+      reason,
+      status: Number(result?.status || 0) || undefined,
+      response: { status: result?.status, data: payload },
+    });
+    if (code !== undefined && code !== null && code !== '') error.code = code;
+    return error;
+  };
+
   const tenantToken = async () => {
     const cached = tokenCache.value && now() - tokenCache.at < config.tokenTtlMs;
     if (cached) return tokenCache.value;
@@ -79,12 +101,20 @@ const createLarkJsapiService = (options = {}) => {
     if (!appId || !appSecret) {
       throw Object.assign(new Error('creds_missing'), { reason: 'creds_missing' });
     }
-    const { payload } = await withTimeout(
-      (signal) => postJson(config.endpoints.tenantAccessToken, { app_id: appId, app_secret: appSecret }, signal),
-      'tenant_token',
-    );
+    const payload = await withTransientRetry(async () => {
+      const result = await withTimeout(
+        (signal) => postJson(config.endpoints.tenantAccessToken, { app_id: appId, app_secret: appSecret }, signal),
+        'tenant_token',
+      );
+      if (!result.ok) throw upstreamError('tenant_token_http', result);
+      if (result.payload?.code && result.payload.code !== 0) throw upstreamError('tenant_token_http', result);
+      const token = String(result.payload?.tenant_access_token || '').trim();
+      if (!token) throw Object.assign(new Error('tenant_token_empty'), {
+        reason: 'tenant_token_empty', code: result.payload?.code,
+      });
+      return result.payload;
+    }, { operation: 'lark_jsapi_tenant_token', config: config.retry });
     const token = String(payload?.tenant_access_token || '').trim();
-    if (!token) throw Object.assign(new Error('tenant_token_empty'), { reason: 'tenant_token_empty' });
     tokenCache = { value: token, at: now() };
     return token;
   };
@@ -97,18 +127,25 @@ const createLarkJsapiService = (options = {}) => {
     const cached = ticketCache.value && now() - ticketCache.at < ttl;
     if (cached) return ticketCache.value;
     const token = await tenantToken();
-    const { ok, payload } = await withTimeout(async (signal) => {
-      const response = await fetchImpl(config.endpoints.jsapiTicket, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ type: 'jsapi' }),
-        signal,
+    const payload = await withTransientRetry(async () => {
+      const result = await withTimeout(async (signal) => {
+        const response = await fetchImpl(config.endpoints.jsapiTicket, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ type: 'jsapi' }),
+          signal,
+        });
+        return { ok: response.ok, status: response.status, payload: await response.json().catch(() => ({})) };
+      }, 'jsapi_ticket');
+      if (!result.ok) throw upstreamError('jsapi_ticket_http', result);
+      if (result.payload?.code && result.payload.code !== 0) throw upstreamError('jsapi_ticket_http', result);
+      const nextTicket = String(result.payload?.data?.ticket || result.payload?.ticket || '').trim();
+      if (!nextTicket) throw Object.assign(new Error('jsapi_ticket_empty'), {
+        reason: 'jsapi_ticket_empty', code: result.payload?.code,
       });
-      return { ok: response.ok, payload: await response.json().catch(() => ({})) };
-    }, 'jsapi_ticket');
-    if (!ok) throw Object.assign(new Error('jsapi_ticket_http'), { reason: 'jsapi_ticket_http' });
+      return result.payload;
+    }, { operation: 'lark_jsapi_ticket', config: config.retry });
     const ticket = String(payload?.data?.ticket || payload?.ticket || '').trim();
-    if (!ticket) throw Object.assign(new Error('jsapi_ticket_empty'), { reason: 'jsapi_ticket_empty' });
     const expireInSec = Number(payload?.data?.expire_in || payload?.expire_in || 0);
     const ttlMs = expireInSec > 0
       ? Math.max(60 * 1000, (expireInSec - 300) * 1000)
@@ -144,7 +181,14 @@ const createLarkJsapiService = (options = {}) => {
     } catch (error) {
       const reason = String(error?.reason || 'upstream_failed');
       const message = reason === 'creds_missing' ? config.texts.notConfigured : config.texts.upstreamFailed;
-      return { ok: false, reason, message };
+      return {
+        ok: false,
+        reason,
+        message,
+        // 只用于排障；不含 token / ticket / 密钥。
+        upstream_status: error?.status,
+        upstream_code: error?.code,
+      };
     }
   };
 
