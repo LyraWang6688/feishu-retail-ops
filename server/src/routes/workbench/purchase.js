@@ -203,9 +203,10 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     const key = String(batchNo || '').trim();
     const cached = cacheGet(arrivalReadCache, key);
     if (cached) return cached;
-    const rows = (await purchaseQueryForArrival().listPurchaseRequests({
-      batchNo: key, reportBehavior: 'purchase_request',
-    })) || [];
+    const query = purchaseQueryForArrival();
+    const rows = (typeof query.listPurchaseRequestsForBatch === 'function'
+      ? await query.listPurchaseRequestsForBatch({ batchNo: key })
+      : await query.listPurchaseRequests({ batchNo: key, reportBehavior: 'purchase_request' })) || [];
     return cacheSet(arrivalReadCache, key, rows);
   };
   let arrivalSampleStateService = null;

@@ -117,3 +117,37 @@ test('listPurchaseArrivals：批次表里什么都没有时返回空数组（不
   const service = createPurchaseQueryService(makeGateway({ purchaseOrderBatch: [] }));
   assert.deepEqual(await service.listPurchaseArrivals(), []);
 });
+
+test('AC-BATCH1 按批次读：走「供应主表.采购明细」link + getBatch，不整表读 purchaseRequest', async () => {
+  const records = {
+    purchaseRequest: [
+      { record_id: 'req_1', fields: { 报货批次号: [{ record_ids: ['batch_1'] }], 编号: [{ record_ids: ['prod_1'] }], 尺码: sizeLink(36), 数量: 2 } },
+    ],
+    product: [{ record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: [{ record_ids: ['sup_1'] }] } }],
+    purchaseOrderBatch: [{
+      record_id: 'batch_1',
+      fields: { 报货批次号: 'BH-001', 采购明细: [{ record_ids: ['req_1'] }], 到货状态: '未到货' },
+    }],
+  };
+  const calls = { fullPurchaseReads: 0, batchGets: [] };
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listAll: async (key) => {
+      if (key === 'purchaseRequest') { calls.fullPurchaseReads += 1; throw new Error('must not read full purchaseRequest'); }
+      if (key === 'sizeManagement') return SIZE_RECORDS;
+      return (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
+    },
+    getBatch: async (key, ids) => {
+      calls.batchGets.push({ key, ids });
+      return (records[key] || []).filter((row) => ids.includes(row.record_id))
+        .map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
+    },
+  };
+  const service = createPurchaseQueryService(gateway);
+  const rows = await service.listPurchaseRequestsForBatch({ batchNo: 'BH-001' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].record_id, 'req_1');
+  assert.equal(rows[0].size, 36);
+  assert.equal(calls.fullPurchaseReads, 0, '不许整表读 purchaseRequest');
+  assert.deepEqual(calls.batchGets, [{ key: 'purchaseRequest', ids: ['req_1'] }]);
+});

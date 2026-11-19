@@ -597,6 +597,8 @@ const V1_BITABLE_SCHEMA = {
         //    若不是附件（文本 / 关联 / 公式），写回会失败 —— 那种情况**停下来报告**，
         //    不要改写成别的写库方式。
         document: '我方单据',
+        // 2026-11-19：从「供应主表」直接拿本批采购明细记录 id（双向关联，只读）。
+        details: '采购明细',
         // 「对方单据」：验收环节拍照/选图上传的验收单附件（2026-11-12 最新口径）。
         //    · 只有「验收上传」链路写它（`purchaseOrderBatchService.appendCounterpartyDocuments`）；
         //    · 不要映射成 document，否则出图回填会写错列。

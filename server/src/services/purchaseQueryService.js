@@ -81,6 +81,69 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       .filter((item) => item.name);
   };
 
+  /**
+   * 2026-11-19：按报货批次读**本批采购明细**（不再整表读后过滤）。
+   * 「供应主表.采购明细」是双向关联，直接拿本批明细 record_id → getBatch。
+   * 关联字段不能用于飞书 filter（项目已实测），所以走主表 link 是最稳的按批次下推。
+   */
+  const listPurchaseRequestsForBatch = async ({ batchNo = '' } = {}) => {
+    const wanted = String(batchNo || '').trim();
+    if (!wanted) return [];
+    const [batches, products, behaviors, suppliers] = await Promise.all([
+      cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch')),
+      getConfigRows({ gateway, tableKey: 'product' }),
+      getConfigRows({ gateway, tableKey: 'behavior' }),
+      getConfigRows({ gateway, tableKey: 'supplier' }),
+    ]);
+    const batch = (batches || []).find((record) => asText('purchaseOrderBatch', record, 'batchNo') === wanted);
+    if (!batch) return [];
+    const detailIds = asLinks('purchaseOrderBatch', batch, 'details');
+    let requests = [];
+    if (detailIds.length && typeof gateway.getBatch === 'function') {
+      requests = await gateway.getBatch('purchaseRequest', detailIds);
+    } else {
+      // 老批次没有反向 link 时回退；结果仍按 batchNo 过滤。
+      requests = await cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest', { retry: CRITICAL_READ_RETRY }));
+    }
+    const productMap = indexByRecordId(products);
+    const behaviorMap = indexByRecordId(behaviors);
+    const supplierMap = indexByRecordId(suppliers);
+    const behaviorIds = asLinks('purchaseOrderBatch', batch, 'behavior');
+    const behavior = behaviorIds.length ? behaviorMap.get(behaviorIds[0]) : null;
+    const rows = await Promise.all((requests || []).map(async (record) => {
+      const productIds = asLinks('purchaseRequest', record, 'product');
+      const product = productIds.length ? productMap.get(productIds[0]) : null;
+      const recordBatchIds = asLinks('purchaseRequest', record, 'batchNo');
+      const recordBatch = recordBatchIds.length
+        ? (batches || []).find((item) => item.record_id === recordBatchIds[0]) : null;
+      if (recordBatch && asText('purchaseOrderBatch', recordBatch, 'batchNo') !== wanted) return null;
+      const size = await getSizeReferences().resolveLinkedCell(
+        record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.size]
+      );
+      const supplierIds = product ? asLinks('product', product, 'supplier') : [];
+      return {
+        record_id: record.record_id,
+        batch_no: wanted,
+        product_number: product ? asText('product', product, 'number') : '',
+        product_record_id: productIds[0] || '',
+        size: size.size,
+        quantity: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.quantity]),
+        arrival_status: asText('purchaseOrderBatch', batch, 'arrivalStatus'),
+        supplier_record_id: supplierIds[0] || '',
+        product_item_no: product ? asText('product', product, 'itemNo') : '',
+        product_color: product ? asText('product', product, 'color') : '',
+        supplier_name: supplierIds[0] ? asText('supplier', supplierMap.get(supplierIds[0]), 'name') : '',
+        arrival_created_at: asNumber(batch?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.createdAt]),
+        report_behavior: classifyReportBehavior({
+          name: behavior ? asText('behavior', behavior, 'name') : '',
+          code: behavior ? asText('behavior', behavior, 'code') : '',
+        }),
+        report_behavior_name: behavior ? asText('behavior', behavior, 'name') : '',
+      };
+    }));
+    return rows.filter(Boolean).sort((a, b) => a.size - b.size);
+  };
+
   const listPurchaseRequests = async (filters = {}) => {
     const [requests, products, batches, behaviors, suppliers] = await Promise.all([
       cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest', { retry: CRITICAL_READ_RETRY })),
@@ -206,7 +269,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
     }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)));
   };
 
-  return { listPurchaseRequests, listPurchaseArrivals, listSuppliers };
+  return { listPurchaseRequests, listPurchaseRequestsForBatch, listPurchaseArrivals, listSuppliers };
 };
 
 module.exports = { createPurchaseQueryService, REPORT_BEHAVIOR };
