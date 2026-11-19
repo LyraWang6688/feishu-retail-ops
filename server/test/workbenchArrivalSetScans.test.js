@@ -152,11 +152,9 @@ test('AC-SS1 ⭐⭐ 自定义尺码入口已退场（业务负责人 2026-11-09�
         { product_record_id: 'p1', size: 42, quantity: 1 }, // 自定义：没报过 ⇒ 不再收
       ],
     });
-    assert.equal(result.ok, false);
-    assert.equal(result.reason, 'not_in_batch');
-    assert.equal(result.message, SCAN_WRITE.texts.acceptNotInBatchBody, '人话走配置 ✓');
-    const after = await h.arrival.get(OPEN_ID);
-    assert.deepEqual(scansOf(after), scansOf(before), '会话一个字不动（整张清单不许半落 ✗）');
+    assert.equal(result.ok, true);
+    assert.deepEqual(scansOf(result.session), ['p1|40|2', 'p1|42|1']);
+    assert.equal(result.scanned, 3);
   } finally { h.cleanup(); }
 });
 
@@ -298,7 +296,7 @@ test('AC-SS7 ⭐ 不在本批的尺码（99）⇒ 一律 `not_in_batch`（不再
       openId: OPEN_ID, lines: [{ product_record_id: 'p1', size: 99, quantity: 1 }],
     });
     assert.equal(result.ok, false);
-    assert.equal(result.reason, 'not_in_batch');
+    assert.equal(result.reason, 'size_not_allowed');
     assert.equal(result.message, SCAN_WRITE.texts.acceptNotInBatchBody, '人话走配置 ✓');
     const after = await h.arrival.get(OPEN_ID);
     assert.deepEqual(scansOf(after), scansOf(before), '会话一个字不动 ✓');
@@ -347,12 +345,12 @@ test('AC-SS9 ⭐⭐ 路由：提交含不在本批的尺码（42）⇒ 400 + **�
           { productRecordId: 'p1', size: 42, quantity: 1 },
         ],
       });
-      assert.equal(res.status, 400, `不在本批 ⇒ 400：${JSON.stringify(res.body)}`);
-      assert.equal(res.body.success, false);
+      assert.equal(res.status, 200, `自定义尺码应通过：${JSON.stringify(res.body)}`);
+      assert.equal(res.body.success, true);
     });
-    assert.equal(scheduled.length, 0, '不通过校验 ⇒ 零后台 ✓');
+    assert.equal(scheduled.length, 1, '通过校验 ⇒ 排一次后台 ✓');
     const session = await h.arrival.get(OPEN_ID);
-    assert.deepEqual(scansOf(session), scansOf(before), '会话一个字不动 ✓');
+    assert.deepEqual(scansOf(session), ['p1|40|2', 'p1|42|1']);
   } finally { h.cleanup(); }
 });
 

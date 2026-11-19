@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <link rel="icon" href="data:,">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <title>邯美工作台 · 验收明细</title>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/base.css">
+  <link rel="stylesheet" href="features/orders/orders.css">
+  <link rel="stylesheet" href="/workbench/procurement.css">
+  <link rel="stylesheet" href="features/acceptance-detail/detail.css">
+</head>
+<body data-view="purchase-acceptance-detail">
+  <p class="page-error hidden" id="page-error" role="alert"></p>
+  <main class="shell" id="purchase-acceptance-detail-app"></main>
+  <script src="shared/ui-tap.js"></script>
+  <script type="module">
+    import { syncUserTitle } from '/workbench/core/userTitle.js';
+    syncUserTitle();
+  </script>
+  <script type="module">
+    import { mountPurchaseAcceptanceDetail } from './features/acceptance-detail/index.js';
+    mountPurchaseAcceptanceDetail(document.getElementById('purchase-acceptance-detail-app'));
+  </script>
+</body>
+</html>

@@ -360,19 +360,14 @@ test('AC-AW16b ⭐ 自定义入口已退场（业务负责人 2026-11-09 批注�
   assert.equal(FEATURE.includes('resolveItemNo'), false, '⛔ 解析自定义货号的辅助函数已删除 ✓');
 });
 
-test('AC-AW16c ⭐ 交互硬规矩：文案走配置 ✓ · 无内联高度 ✗（沿用 ≥44px 的既有控件样式）· 提交有**即时反馈** ✓', () => {
-  // 新块用配置文案（不硬编码中文 ✓）
-  // 自定义入口已退场 ⇒ 配置里也不许再留这些文案（能真红：塞回即红）
-  assert.equal(FE_CONFIG.includes('customSizeLabel'), false, '⛔ 配置里的自定义尺码文案已删除 ✓');
-  // ≥44px：沿用既有控件样式（base.css 给 --control-height）✓ 且**不写内联高度** ✗
+test('AC-AW16c ⭐ 交互硬规矩：自定义尺码文案走配置 ✓ · 无内联高度 ✗ · 提交有即时反馈 ✓', () => {
+  const detail = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'acceptance-detail', 'index.js'), 'utf8');
+  assert.ok(FE_CONFIG.includes('customSizeLabel'), '配置里有自定义尺码文案 ✓');
   const base = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'styles', 'base.css'), 'utf8');
   assert.match(base, /\.btn,\s*input,\s*select\s*\{[^}]*min-height:\s*var\(--control-height\)/, '既有控件 ≥44px ✓');
-  const block = FEATURE.slice(FEATURE.indexOf('data-view="arrival-detail"'), FEATURE.indexOf('data-field="arrival-amount"'));
-  assert.equal(/style="height/.test(block), false, '新块不许写内联高度（走既有令牌 ✓）');
-  // 即时反馈：提交仍走既有的 runWriteAction（点击立刻置灰 + 换文案 ✓）
-  const submitSlice = FEATURE.slice(FEATURE.indexOf('async function submitArrival'), FEATURE.indexOf('async function runAction'));
-  assert.ok(submitSlice.includes('runWriteAction('), '提交必须走既有即时反馈封装 ✓');
-  assert.ok(submitSlice.includes('ARRIVAL_FULL_API.accept'), '而且打的是新接口 ✓');
+  assert.equal(/style="height/.test(detail), false, '新页不许写内联高度（走既有令牌 ✓）');
+  assert.ok(detail.includes('button.disabled = true'), '提交时立刻禁用按钮（防连点 ✓）');
+  assert.ok(detail.includes('ARRIVAL_FULL_API.accept'), '而且打的是既有 accept 接口 ✓');
 });
 
 test('AC-AW16d ⭐ 幂等键不来自表单：前端**不传** submitKey（由服务端会话决定 ✓）', () => {

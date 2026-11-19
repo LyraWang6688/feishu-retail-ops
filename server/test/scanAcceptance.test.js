@@ -216,6 +216,7 @@ const scanApp = (harness, lookup = async () => view()) => {
 test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 /r/accept）；既有验收链路一字不改', () => {
   const config = fs.readFileSync(path.join(WORKBENCH, 'config/orders.js'), 'utf8');
   const orders = fs.readFileSync(path.join(WORKBENCH, 'features/orders/index.js'), 'utf8');
+  const detail = fs.readFileSync(path.join(WORKBENCH, 'features/acceptance-detail/index.js'), 'utf8');
   // ⭐⭐ 2026-10-14 **改指向**（口径 (a) · 依据：业务负责人逐字
   //   「**连它一起改造进工作台（变成工作台自己的页面）**」· 详见
   //   `docs/acceptance-into-workbench-2026-10-14.md` §二/§三）：
@@ -239,18 +240,15 @@ test('AC-A1 工作台的扫码验收入口**已改造进工作台**（不再跳 
   //      `POST /purchase/arrivals/confirm` 端点/服务与 `ORDERS_API.arrivalConfirm` 常量**保留** ✓
   //      （下面那条 `assert.match(config, /arrivalConfirm: .../)` 照旧 ✓）。
   for (const needle of [
-    'data-action-block="verify-arrival"', 'data-action="submit-arrival"',
-  // ⭐⭐ 2026-10-16（她逐字：「**「到货说明」，到货说明必须得删**。因为目前我们的**数据表里面已经没有
-  //   验收原话了**，这个是**之前我们的群聊链路**，跟这个**已经没有关系了**。**你必须得删**」）
-  //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
-  //   · 改后逐字：该沿用项删除 ＋ 新增反向断言 `assert.equal(orders.includes('data-field="arrival-note"'), false)`
-  //   · 依据：她 2026-10-16 逐字（同上）；⭐ 反向钉住 ⇒ 把框塞回即红 ✓
+    'data-view="arrival-submit"',
     'data-field="arrival-amount"',
     'api.post(ARRIVAL_FULL_API.accept, {',
   ]) {
-    assert.ok(orders.includes(needle), `既有验收逻辑少了 ${needle}`);
+    assert.ok(detail.includes(needle), `明细页少了 ${needle}`);
   }
-  assert.equal(orders.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
+  assert.equal(detail.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
+  const cardBlock = orders.slice(orders.indexOf('const purchaseBatchCardHtml'), orders.indexOf('const purchaseBatchCardHtml') + 2000);
+  assert.equal(cardBlock.includes('data-field="arrival-amount"'), false, '列表页不再原地展开验收表单 ✓');
   assert.match(config, /arrivalConfirm: '\/api\/workbench\/purchase\/arrivals\/confirm'/);
 });
 

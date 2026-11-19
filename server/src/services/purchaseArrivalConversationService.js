@@ -18,6 +18,7 @@ const {
   taskIdForBatch, computeSupplierTotals,
 } = require('./acceptanceSupplierProgress');
 const { normalizeSampleChoices } = require('./purchaseArrival/sampleChoices');
+const { buildScanPlan } = require('./purchaseArrival/scanPlan');
 
 const TASK_TYPE = 'purchase_arrival_reconcile';
 
@@ -699,38 +700,7 @@ class PurchaseArrivalConversationService {
     //      也不能把实际数记到别的行上）。
     //    ⭐⭐ 2026-10-12（她口述版的"自定义"）：**没报过的尺码**只要是**本批的款**就允许
     //      —— 见下面 `extra` 那一段（款不认识 ⇒ 照旧 `scan_not_in_batch`，不猜 ✗）。
-    if (parsed.scanLines) {
-      // ⭐⭐ 2026-10-11（方案A · 扫码验收）：**逐码实际到货**。
-      //    · 按 (货品 record_id, 尺码) 精确匹配申请行（一批里可能同码不同款）；
-      //    · 没扫到的行 = 0（调用方入库时摘掉）；
-      //    · 命中多行 / 扫到本批没有的货 / 同一行被两条扫码行命中 ⇒ 拦住。
-      //    不在申请行里的扫码行 ⇒ 一律 `scan_not_in_batch`（不猜款 ✓）。
-      const keyOf = (productRecordId, size) => `${productRecordId}|${Number(size)}`;
-      const byKey = new Map();
-      for (const row of rows) {
-        const key = keyOf(row.product_record_id, row.size);
-        if (byKey.has(key)) return { ok: false, reason: 'duplicate_request_rows' };
-        byKey.set(key, row);
-      }
-      const actualById = new Map(rows.map((row) => [row.request_record_id, 0]));
-      const hit = new Set();
-      for (const scan of parsed.scanLines) {
-        const row = byKey.get(keyOf(scan?.product_record_id, scan?.size));
-        if (!row) return { ok: false, reason: 'scan_not_in_batch' };
-        if (hit.has(row.request_record_id)) return { ok: false, reason: 'scan_duplicated' };
-        const quantity = Number(scan?.quantity);
-        if (!Number.isSafeInteger(quantity) || quantity < 0) {
-          return { ok: false, reason: 'actual_not_positive' };
-        }
-        hit.add(row.request_record_id);
-        actualById.set(row.request_record_id, quantity);
-      }
-      const scanned = rows.map((row) => ({ ...row, actual: actualById.get(row.request_record_id) }));
-      if (scanned.some((row) => !Number.isSafeInteger(row.actual) || row.actual < 0)) {
-        return { ok: false, reason: 'actual_not_positive' };
-      }
-      return { ok: true, rows: scanned, differences: [] };
-    }
+    if (parsed.scanLines) return buildScanPlan(rows, parsed.scanLines);
     const actualById = new Map(rows.map((row) => [row.request_record_id, row.quantity]));
     if (parsed.same) {
       return { ok: true, rows: rows.map((row) => ({ ...row, actual: row.quantity })), differences: [] };

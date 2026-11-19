@@ -315,9 +315,16 @@ const createScanArrivalService = (options = {}) => {
 
   // ⭐⭐ 2026-10-29（F1/F2）：**整单替换**会话清单（自定义尺码 / 改数量 / 改 0 都生效）——
   //   实现拆到 `scanArrival/setScans.js`（本文件只做装配；文件大小棘轮只允许变小 ✓）。
+  const sizeReferences = options.sizeReferences || null;
+  const validateSize = options.validateSize || (sizeReferences
+    ? async (_productRecordId, size) => {
+      try { return Boolean(await sizeReferences.resolveByNumber(size)); } catch { return false; }
+    }
+    : undefined);
   const setScans = createSetScans({
     get, store, touch, texts, events, config, logInfo,
     positiveInteger, nonNegativeInteger, resolve,
+    validateSize,
   });
 
   /**

@@ -159,30 +159,20 @@ const batchSummaryOf = (batch) => {
 
 const purchaseBatchCardHtml = (unit) => {
   const supplier = String(unit.supplier_record_id || '').trim();
+  // 2026-11-19：点「验收」跳到独立明细页，不在列表卡里原地展开。
+  const params = new URLSearchParams({
+    batchNo: String(unit.batch_no || ''),
+    supplierRecordId: supplier,
+    supplierName: String(unit.supplier_name || ''),
+  });
+  const href = `/workbench/purchase-acceptance-detail.html?${params.toString()}`;
   return `
       <article class="order-card" data-purchase-batch="${escapeHtml(unit.batch_no)}" data-purchase-supplier="${escapeHtml(unit.supplier_key)}">
         <div class="order-card-head">
           <!-- ⭐ 2026-11-09（业务负责人批注）：此页出现的批次状态一致 ⇒ 不再显示状态标签 -->
           <span class="order-summary" data-view="arrival-batch-summary">${escapeHtml(batchSummaryOf(unit))}</span>
         </div>
-        <!-- 只留一个入口：details 的 summary 就是那颗蓝色按钮（点它展开/收起表单）。 -->
-        <details class="action-form" data-action-block="verify-arrival" data-arrival-batch="${escapeHtml(unit.batch_no)}" data-arrival-supplier="${escapeHtml(supplier)}">
-          <summary class="btn btn-primary action-form__summary">${escapeHtml(T.verifyArrival)}</summary>
-          <p class="order-note" data-view="arrival-detail-hint">${escapeHtml(ARRIVAL_FULL_TEXTS.detailOpenHint)}</p>
-          <div class="action-body">
-            <div data-view="arrival-detail" data-batch="${escapeHtml(unit.batch_no)}" data-supplier="${escapeHtml(supplier)}"></div>
-            <label class="form-field action-form__amount">${escapeHtml(T.arrivalAmount)}
-              <input data-field="arrival-amount" type="text" inputmode="decimal" required aria-required="true" placeholder="${escapeHtml(ARRIVAL_CONFIRM.amountPlaceholder)}">
-            </label>
-            <p class="arrival-amount-hint" data-view="arrival-amount-hint" hidden>${escapeHtml(ARRIVAL_FULL_TEXTS.amountRequired)}</p>
-            ${arrivalDocFieldHtml({
-              escapeHtml,
-              label: ARRIVAL_FULL_TEXTS.acceptanceDocLabel,
-              hint: ARRIVAL_FULL_TEXTS.acceptanceDocHint,
-            })}
-            <button class="btn btn-primary" type="button" data-action="submit-arrival" data-batch="${escapeHtml(unit.batch_no)}" data-supplier="${escapeHtml(supplier)}">${escapeHtml(T.arrivalSubmit)}</button>
-          </div>
-        </details>
+        <a class="btn btn-primary action-form__summary" data-action="open-arrival" href="${escapeHtml(href)}">${escapeHtml(T.verifyArrival)}</a>
       </article>`;
 };
 

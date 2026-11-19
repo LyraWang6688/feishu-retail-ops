@@ -564,3 +564,35 @@ test('⑩ ⭐ 注入 markSupplierArrived 时：以主表「供应商/已到货�
   assert.equal(batchFields(harness.records)['到货状态'], '未到货',
     '主表字段还没全到货 ⇒ 即使本地任务都 posted 也不许写已到货 ✓');
 });
+
+test('⭐ 自定义尺码：buildPlan 把本批货品的额外尺码作为额外行带入入库计划', () => {
+  const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
+  const rows = [
+    { request_record_id: 'req_38', product_record_id: PRODUCT_1, item_no: 'A1', color: '黑色', size: 38, quantity: 2 },
+    { request_record_id: 'req_39', product_record_id: PRODUCT_1, item_no: 'A1', color: '黑色', size: 39, quantity: 1 },
+  ];
+  const plan = harness.service.buildPlan(rows, {
+    scanLines: [{ product_record_id: PRODUCT_1, size: 40, quantity: 3 }],
+  });
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.rows.map((row) => [row.size, row.actual, row.quantity, row.custom === true]), [
+    [38, 0, 2, false],
+    [39, 0, 1, false],
+    [40, 3, 0, true],
+  ]);
+});
+
+test('⭐ 自定义尺码：整条 confirmBatchArrival 链路把它带进入库，应到不把自定义量算进去', async () => {
+  const harness = makeHarness();
+  const { result } = await arriveAndConfirm(harness, {
+    scanLines: [
+      { product_record_id: PRODUCT_1, size: 38, quantity: 2 },
+      { product_record_id: PRODUCT_1, size: 40, quantity: 1 },
+    ],
+  });
+  assert.equal(result.ok, true);
+  const custom = harness.inventory.calls.find((call) => Number(call.size) === 40);
+  assert.ok(custom, '自定义尺码要走到库存入库 ✓');
+  assert.equal(Number(custom.quantity), 1);
+  assert.equal(batchFields(harness.records)['实际数量'], 3, '实际数量 = 原申请实到 2 + 自定义 1 ✓');
+});
