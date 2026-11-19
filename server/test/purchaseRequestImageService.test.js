@@ -48,7 +48,7 @@ const LAYOUT = require('../src/config/purchaseRequestImageLayout');
 //   ② 货号分组行跨满整张表、有底色、字比正文重
 //   ③ 尺码×数量拼在**同一格**（`37码×1、41码×3`），颜色（首次出现）＋ 尺码（数字升序、均码最后）
 //   ④ 🔴 **底部那条「合计」整条删掉**（表格下面没有任何文本、图高里没有 FOOTER 那一截）；
-//      「合计」挪进**副标题（供应商那一行）**：`供应商：X　　报货日期：Y　　合计：M 双`
+//      「合计」挪进**副标题（供应商那一行）**：`供应商：X　　日期：Y　　合计：M 双`
 //      —— ⚠️ **只留双数**，**「N 条」不要了**（她的原话：「共多少条以及合计多少双的不需要了，
 //      需要把合计多少双的放在，供应商那一行」）；
 //      放哪些字段/什么文案/怎么隔 **全在排版配置里**（`SUBTITLE_FIELDS` / `SUBTITLE_SEPARATOR`）
@@ -385,7 +385,7 @@ const subtitleTextOf = (svg) => parseSvg(svg)
 /** 图上**任何位置**出现的「合计：…」片段（2026-10-07 起只可能在副标题那一行里）。 */
 const totalSegmentsOf = (svg) => [...svg.matchAll(/合计：[^<]*/g)].map((match) => match[0]);
 
-test('④ 副标题 =「供应商：X　　报货日期：Y　　合计：M 双」；M = 总双数，且**只有双数**（「N 条」不要了）', () => {
+test('④ 副标题 =「供应商：X　　日期：Y　　合计：M 双」；M = 总双数，且**只有双数**（「N 条」不要了）', () => {
   const svg = buildPurchaseRequestSvg({
     supplierName: '金猴', batchNo: '202610071', items: ITEMS, generatedAt: GENERATED_AT,
   });
@@ -398,7 +398,7 @@ test('④ 副标题 =「供应商：X　　报货日期：Y　　合计：M 双�
 
   // ITEMS = 3 条明细 / 2+1+3 = 6 双
   assert.deepEqual(summarize(normalizeItems(ITEMS)), { rowCount: 3, totalPairs: 6 });
-  assert.equal(subtitleTextOf(svg), `供应商：金猴　　报货日期：${SUBTITLE_DATE}　　合计：6 双`,
+  assert.equal(subtitleTextOf(svg), `供应商：金猴　　日期：${SUBTITLE_DATE}　　合计：6 双`,
     '副标题就是这三段，顺序与文案逐字节钉死');
 
   // 🔴 她明确说「条数不需要了」：图上**一个「条」字都不许有**。
@@ -436,26 +436,26 @@ test('④ 「合计 M 双」按**明细**求和，不按图上数得出来的行
   const svg = buildPurchaseRequestSvg({ supplierName: '金猴', items: MERGED_ITEMS, generatedAt: GENERATED_AT });
   assert.deepEqual(summarize(normalizeItems(MERGED_ITEMS)), { rowCount: 4, totalPairs: 7 });
   assert.equal(readGroups(svg).flatMap((group) => rowsOf(group)).length, 2, '图上 2 行');
-  assert.equal(subtitleTextOf(svg), `供应商：金猴　　报货日期：${SUBTITLE_DATE}　　合计：7 双`,
+  assert.equal(subtitleTextOf(svg), `供应商：金猴　　日期：${SUBTITLE_DATE}　　合计：7 双`,
     '合计按**明细**算，不按图上的行数算');
 });
 
 test('④ 副标题纯函数：取值 + 按配置拼串；空值按配置省掉整段', () => {
   const values = subtitleValuesOf({ supplierName: ' 金猴 ', generatedAt: GENERATED_AT, totalPairs: 5 });
   assert.deepEqual(values, { supplier: '金猴', date: SUBTITLE_DATE, totalPairs: '5' });
-  assert.equal(buildSubtitle(values), `供应商：金猴　　报货日期：${SUBTITLE_DATE}　　合计：5 双`);
+  assert.equal(buildSubtitle(values), `供应商：金猴　　日期：${SUBTITLE_DATE}　　合计：5 双`);
 
   // 没维护供应商 → 那一段整段不画（`hideWhenEmpty`），日期与合计照画。
   assert.equal(
     buildSubtitle(subtitleValuesOf({ supplierName: '', generatedAt: GENERATED_AT, totalPairs: 5 })),
-    `报货日期：${SUBTITLE_DATE}　　合计：5 双`,
+    `日期：${SUBTITLE_DATE}　　合计：5 双`,
   );
   // 0 双（空明细）→ 「合计」整段不画：那正是被禁止的"合计和为 0"。
   // ⚠️ 这里钉的是**取值**层：0 → 空串，配置的 `hideWhenEmpty` 据此省掉整段。
   assert.equal(subtitleValuesOf({ supplierName: '金猴', generatedAt: GENERATED_AT, totalPairs: 0 }).totalPairs, '');
   assert.equal(
     buildSubtitle(subtitleValuesOf({ supplierName: '金猴', generatedAt: GENERATED_AT, totalPairs: 0 })),
-    `供应商：金猴　　报货日期：${SUBTITLE_DATE}`,
+    `供应商：金猴　　日期：${SUBTITLE_DATE}`,
   );
 });
 
@@ -577,12 +577,12 @@ test('⑤ 报货批次**不再显示**；没维护供应商时不画「供应商
   // 🔴 2026-10-07：报货批次不再显示 —— 既没有那四个字，也没有那个批次号文本。
   assert.ok(!svg.includes('报货批次'), '「报货批次」不能再出现在图上');
   assert.ok(!svg.includes('B-1'), '批次号文本也不能出现在图上');
-  assert.equal(subtitleTextOf(svg), `报货日期：${SUBTITLE_DATE}　　合计：6 双`, '日期与合计照画');
+  assert.equal(subtitleTextOf(svg), `日期：${SUBTITLE_DATE}　　合计：6 双`, '日期与合计照画');
 
   const withSupplier = buildPurchaseRequestSvg({
     supplierName: '金猴', batchNo: 'B-1', items: ITEMS, generatedAt: GENERATED_AT,
   });
-  assert.equal(subtitleTextOf(withSupplier), `供应商：金猴　　报货日期：${SUBTITLE_DATE}　　合计：6 双`,
+  assert.equal(subtitleTextOf(withSupplier), `供应商：金猴　　日期：${SUBTITLE_DATE}　　合计：6 双`,
     '有供应商时照旧渲染「供应商：xxx」');
   assert.ok(!withSupplier.includes('报货批次'), '有供应商时也不显示报货批次');
 });
@@ -610,7 +610,7 @@ test('⑥ 空明细不崩：照旧给「本批次没有明细」，不画任何�
     // 「合计：0 双」正是被禁止的"合计和为 0"：空明细连「合计」两个字都不许出现。
     assert.deepEqual(totalSegmentsOf(svg), [], '空明细不画任何合计');
     assert.ok(!svg.includes('合计'), '空明细不该出现「合计」两个字');
-    assert.equal(subtitleTextOf(svg), `供应商：金猴　　报货日期：${SUBTITLE_DATE}`, '供应商/日期照画，只是不带合计');
+    assert.equal(subtitleTextOf(svg), `供应商：金猴　　日期：${SUBTITLE_DATE}`, '供应商/日期照画，只是不带合计');
     assert.deepEqual(readGroups(svg), [], '空明细不该产出一条空的分组行');
     assert.deepEqual(stripesOf(svg), []);
   }

@@ -69,7 +69,7 @@ const BOTTOM_PADDING = 36;
 //    · 数组顺序 = 图上从左到右的顺序
 const SUBTITLE_FIELDS = [
   { key: 'supplier', label: '供应商：', hideWhenEmpty: true },
-  { key: 'date', label: '报货日期：' },
+  { key: 'date', label: '日期：' },
   { key: 'totalPairs', label: '合计：', format: (totalPairs) => `${totalPairs} 双`, hideWhenEmpty: true },
 ];
 // 字段之间的分隔符：全角空格 ×2（与 2026-10-06 那一版逐字节相同）。
