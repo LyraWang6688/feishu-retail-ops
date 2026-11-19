@@ -2,6 +2,7 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { PRODUCT_FEATURES_API, PRODUCT_FEATURES_TEXTS as T } from '../../config/productFeatures.js';
 import { showToast } from '../shared/toast.js';
+import { waitForAsyncJob } from '../shared/asyncJob.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const usageText = (usage) => fill(T.usage, { count: Number(usage) || 0 });
@@ -69,7 +70,13 @@ export function openProductFeatureConfig(host) {
   };
   const dimensionOf = (key) => dimensions.find((item) => item.key === key);
   const duplicates = (key, value, exceptRecordId = '') => (dimensionOf(key)?.items || [])
-    .some((item) => item.recordId !== exceptRecordId && item.tag.toLowerCase() === value.toLowerCase());
+    .some((item) => item.recordId !== exceptRecordId && item.tag.trim().toLowerCase() === value.trim().toLowerCase());
+  const submitKey = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`);
+  const waitAccepted = async (result) => {
+    if (result?.toast) showToast(result.toast);
+    const jobId = String(result?.job_id || '').trim();
+    if (jobId) await waitForAsyncJob(jobId);
+  };
   panel.addEventListener('click', async (event) => {
     const tab = event.target.closest?.('[data-feature-tab]');
     if (tab) { activeKey = tab.dataset.featureTab; editing = null; deleting = null; render(); return; }
@@ -100,7 +107,8 @@ export function openProductFeatureConfig(host) {
       saveButton.disabled = true;
       saveButton.textContent = T.saving;
       try {
-        await api.patch(PRODUCT_FEATURES_API.update(key, saveButton.dataset.recordId), { tag: value });
+        const result = await api.patch(PRODUCT_FEATURES_API.update(key, saveButton.dataset.recordId), { tag: value, submitKey: submitKey() });
+        await waitAccepted(result);
         await load();
         showToast(T.updatedToast);
       } catch (err) {
@@ -119,7 +127,8 @@ export function openProductFeatureConfig(host) {
         confirmButton.textContent = T.removing;
       }
       try {
-        await api.delete(PRODUCT_FEATURES_API.remove(deleting.key, deleting.recordId));
+        const result = await api.delete(PRODUCT_FEATURES_API.remove(deleting.key, deleting.recordId), { submitKey: submitKey() });
+        await waitAccepted(result);
         await load();
         showToast(T.removedToast);
       } catch (err) {
@@ -141,7 +150,8 @@ export function openProductFeatureConfig(host) {
     const original = addButton.textContent;
     addButton.textContent = T.adding;
     try {
-      await api.post(PRODUCT_FEATURES_API.add(key), { tag: value });
+      const result = await api.post(PRODUCT_FEATURES_API.add(key), { tag: value, submitKey: submitKey() });
+      await waitAccepted(result);
       await load();
       showToast(T.addedToast);
     } catch (err) {

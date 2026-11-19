@@ -240,3 +240,38 @@
 /* 货品上新搜索结果：只显示有问题的维度，编号下方不再重复货号/颜色/类别 */
 .pp-issues { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
 .pp-issue { display: inline-block; max-width: 100%; padding: 3px 8px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+
+/* ── 配品配置（货品资料内页）────────────────────────────────────────────── */
+.ac-page { display: grid; gap: var(--space-4); }
+.ac-form { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.ac-form h2 { margin: 0; font-size: var(--font-size-lg); }
+.ac-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.ac-field { display: grid; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.ac-field-full { grid-column: 1 / -1; }
+.ac-field input, .ac-field select { width: 100%; min-height: var(--control-height); border: 1px solid var(--control-border); border-radius: var(--radius-md); background: var(--surface); color: var(--text); padding: 0 var(--space-3); font-size: var(--font-size-base); }
+.ac-upload-row { display: flex; align-items: center; gap: var(--space-3); }
+.ac-upload { width: 84px; height: 84px; flex: 0 0 84px; display: grid; place-items: center; overflow: hidden; border: 1px dashed var(--control-border); border-radius: var(--radius-md); background: var(--surface-soft); color: var(--text-secondary); font-size: var(--font-size-xs); text-align: center; cursor: pointer; }
+.ac-upload img { width: 100%; height: 100%; object-fit: cover; }
+.ac-upload-row small { color: var(--text-muted); font-size: var(--font-size-xs); line-height: var(--line-height); }
+.ac-error { margin: 0; color: var(--danger); font-size: var(--font-size-sm); }
+.ac-actions { display: flex; gap: var(--space-2); align-items: center; }
+.ac-actions .btn { flex: 1 1 auto; }
+.ac-actions .btn:not(.primary) { flex: 0 0 auto; }
+.ac-list { display: grid; gap: var(--space-4); }
+.ac-empty { margin: 0; padding: var(--space-5); text-align: center; color: var(--text-muted); font-size: var(--font-size-sm); }
+.ac-group { display: grid; gap: var(--space-2); }
+.ac-group h3 { margin: 0; display: flex; gap: var(--space-2); align-items: center; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.ac-group h3:before { content: ""; width: 4px; height: 15px; border-radius: 3px; background: var(--primary); }
+.ac-group h3 span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--weight-normal); }
+.ac-cards { display: grid; gap: var(--space-2); }
+.ac-card { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-2); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface); }
+.ac-thumb { width: 64px; height: 64px; overflow: hidden; display: grid; place-items: center; border-radius: var(--radius-sm); background: var(--surface-soft); font-size: 28px; }
+.ac-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.ac-main { min-width: 0; display: grid; gap: 5px; }
+.ac-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-base); }
+.ac-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); }
+.ac-meta span:first-child { color: var(--primary); font-weight: var(--weight-bold); }
+.ac-row-actions { display: flex; gap: 4px; align-items: center; }
+.ac-row-actions .mini { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-secondary); min-height: 34px; padding: 0 8px; font-size: var(--font-size-xs); }
+.ac-row-actions .mini.danger { color: var(--danger); border-color: var(--danger-soft); background: var(--surface); }
+@media (max-width: 360px) { .ac-grid { grid-template-columns: 1fr; } .ac-field-full { grid-column: auto; } .ac-card { grid-template-columns: 56px minmax(0, 1fr) auto; } .ac-thumb { width: 56px; height: 56px; } }

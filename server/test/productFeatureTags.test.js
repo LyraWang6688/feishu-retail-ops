@@ -16,10 +16,17 @@ const listen = (app) => new Promise((resolve) => {
   });
 });
 
+const fakeAsyncJobs = () => ({
+  jobIdFor: (type, key) => `${type}_${key}`,
+  enqueue: async ({ jobId }) => ({ created: true, job: { job_id: jobId, status: 'queued' } }),
+  run: async ({ run }) => run(),
+});
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
 const appWith = (gateway) => {
   const app = express();
   app.use(express.json());
-  app.use(createWorkbenchProductRoutes({ options: { gateway } }));
+  app.use(createWorkbenchProductRoutes({ options: { gateway, asyncJobs: fakeAsyncJobs() } }));
   return app;
 };
 
@@ -83,7 +90,8 @@ test('AC-PF2 新增写对应表；重复标签被拦截', async () => {
     const ok = await fetch(`http://127.0.0.1:${port}/products/features/audience/tags`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tag: ' 小个子女生 ' }),
     });
-    assert.equal(ok.status, 200);
+    assert.equal(ok.status, 202);
+    await settle();
     assert.equal(tables.tbloFxwZa5q504t2.at(-1).fields.标签, '小个子女生');
     const dup = await fetch(`http://127.0.0.1:${port}/products/features/audience/tags`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tag: '学生党' }),
@@ -101,10 +109,12 @@ test('AC-PF3 修改 / 删除已有标签', async () => {
     const renamed = await fetch(`http://127.0.0.1:${port}/products/features/audience/tags/r1`, {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tag: '学生党（新）' }),
     });
-    assert.equal(renamed.status, 200);
+    assert.equal(renamed.status, 202);
+    await settle();
     assert.equal(tables.tbloFxwZa5q504t2[0].fields.标签, '学生党（新）');
     const removed = await fetch(`http://127.0.0.1:${port}/products/features/audience/tags/r1`, { method: 'DELETE' });
-    assert.equal(removed.status, 200);
+    assert.equal(removed.status, 202);
+    await settle();
     assert.equal(tables.tbloFxwZa5q504t2.length, 0);
   } finally { server.close(); }
 });

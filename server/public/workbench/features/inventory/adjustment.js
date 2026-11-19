@@ -9,6 +9,7 @@
  *    不留"点了没反应"的死按钮。
  */
 import { api } from '../../core/api-client.js';
+import { waitForAsyncJob } from '../shared/asyncJob.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { describeError, showPageError } from '../../core/ui.js';
 import { showToast } from '../shared/toast.js';
@@ -351,20 +352,6 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
     } catch (error) {
       showPageError(describeError(error));
     }
-  }
-
-  async function waitForAsyncJob(jobId, timeoutMs = 120000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const payload = await api.get(`/api/workbench/async-jobs/${encodeURIComponent(jobId)}`);
-      const job = payload?.job || payload;
-      if (job?.status === 'succeeded') return job;
-      if (job?.status === 'failed' || job?.status === 'partial_failed') {
-        throw new Error(job.last_error || INVENTORY_MANUAL_TEXTS.seasonUpdateFailed);
-      }
-      await new Promise((resolve) => { setTimeout(resolve, 1500); });
-    }
-    throw new Error(INVENTORY_MANUAL_TEXTS.seasonUpdateFailed);
   }
 
   async function setSeason(season) {

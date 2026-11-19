@@ -38,6 +38,8 @@ const PRODUCT_PROFILE = Object.freeze({
   }),
   sampleImageCacheMax: readInt(process.env, 'PRODUCT_SAMPLE_IMAGE_CACHE_MAX', 500, { min: 1, max: 5000 }),
   // ⭐ #1204：连续 1254607/限流 ⇒ 短路一段时间（503 + Retry-After），不再逐张打飞书。
+  accessoryUploadOperation: '上传配品样例图',
+  accessoryDownloadOperation: '下载配品样例图',
   sampleImageBreaker: Object.freeze({
     failures: readInt(process.env, 'PRODUCT_SAMPLE_IMAGE_BREAKER_FAILURES', 5, { min: 1, max: 100 }),
     windowMs: readInt(process.env, 'PRODUCT_SAMPLE_IMAGE_BREAKER_WINDOW_MS', 60 * 1000, { min: 1000, max: 600000 }),

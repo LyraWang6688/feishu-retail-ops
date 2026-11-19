@@ -32,6 +32,8 @@ const ASYNC_JOB_TYPES = Object.freeze({
   // ⭐ 2026-11-10：数据配置页「同步存量样例图」（样例图 → 云盘存量补齐）
   SAMPLE_IMAGE_BACKFILL: 'sample_image_backfill',
   INVENTORY_ADJUSTMENT: 'inventory_adjustment',
+  // 2026-11-19：产品特点 / 配品配置的异步写入
+  PRODUCT_CONFIG_WRITE: 'product_config_write',
 });
 
 /** 状态值域（#948 第 3.1 节）。`failed` 是唯一会触发群通知的终态（文档 6.1）。 */
@@ -70,6 +72,7 @@ const JOB_ID_PREFIX = Object.freeze({
   [ASYNC_JOB_TYPES.SALES_PAYMENT]: 'payment_job',
   [ASYNC_JOB_TYPES.SAMPLE_IMAGE_BACKFILL]: 'sample_image_backfill_job',
   [ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT]: 'inventory_adjustment_job',
+  [ASYNC_JOB_TYPES.PRODUCT_CONFIG_WRITE]: 'product_config_job',
 });
 
 const DEFAULT_TEXTS = Object.freeze({
@@ -95,6 +98,7 @@ const DEFAULT_TEXTS = Object.freeze({
     [ASYNC_JOB_TYPES.SALES_PAYMENT]: '交割单付款',
     [ASYNC_JOB_TYPES.SAMPLE_IMAGE_BACKFILL]: '存量样例图同步',
     [ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT]: '库存手工调整',
+    [ASYNC_JOB_TYPES.PRODUCT_CONFIG_WRITE]: '产品配置写入',
   }),
   unknownType: '未知任务',
   defaultStep: '后台写库',
@@ -113,6 +117,7 @@ const DEFAULT_TEXTS = Object.freeze({
     salesPayment: '交割单付款写库',
     sampleImageBackfill: '存量样例图同步',
     inventoryAdjustment: '库存手工调整写库',
+    productConfig: '产品配置写库',
   }),
   // 排查提示（日志字段，不是群消息正文；同样不许散写在 service 里 ✗）
   hints: Object.freeze({
