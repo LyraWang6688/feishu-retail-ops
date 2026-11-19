@@ -127,3 +127,26 @@ test('AC-SP14 ⭐⭐ ticket 的 TTL **以飞书回的 `expire_in` 为准**（它
   assert.equal(calls.filter((u) => u.includes('jssdk/ticket')).length, 2,
     '超过飞书给的 expire_in ⇒ 必须重取（不再用写死的 110 分钟 ✓）');
 });
+
+test('AC-SP6b ⭐ 换 ticket 遇到 5xx ⇒ 自动重试一次，随后成功', async () => {
+  const calls = [];
+  let ticketCalls = 0;
+  const env = { ...ENV, LARK_JSAPI_RETRY_MAX_RETRIES: '1', LARK_JSAPI_RETRY_BASE_DELAY_MS: '0' };
+  const fake = async (url) => {
+    calls.push(url);
+    if (String(url).includes('tenant_access_token')) {
+      return { ok: true, status: 200, json: async () => ({ tenant_access_token: 'token_retry' }) };
+    }
+    if (String(url).includes('jssdk/ticket')) {
+      ticketCalls += 1;
+      if (ticketCalls === 1) return { ok: false, status: 500, json: async () => ({ msg: 'busy' }) };
+      return { ok: true, status: 200, json: async () => ({ data: { ticket: 'ticket_retry' } }) };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const service = createLarkJsapiService({ env, fetch: fake, randomNonce: () => 'n', now: () => 1700000000000 });
+  const out = await service.signatureFor('https://hm.bamamei.online/a.html');
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(ticketCalls, 2, '第一次 500 后应重试一次 ✓');
+  assert.equal(calls.filter((u) => u.includes('tenant_access_token')).length, 1, 'token 不重复取 ✓');
+});

@@ -13,6 +13,7 @@
  */
 
 const { readString } = require('./envValue');
+const { resolveTransientRetryConfig } = require('./pushRetry');
 
 const readInt = (env, key, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) => {
   const raw = String(env[key] ?? '').trim();
@@ -35,6 +36,15 @@ const readInt = (env, key, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } 
 const DEFAULT_JSSDK_URL = 'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.22.js';
 
 const createLarkJsapiConfig = (env = process.env) => Object.freeze({
+  // 2026-11-19：换 token / jsapi_ticket 遇到飞书瞬时错误（429 / 5xx / 1254607）时
+  //   先小退避重试；判据复用 `pushRetry` 的唯一实现，不另造一套。
+  retry: Object.freeze({
+    ...resolveTransientRetryConfig(env),
+    maxRetries: readInt(env, 'LARK_JSAPI_RETRY_MAX_RETRIES', 1, { min: 0, max: 3 }),
+    baseDelayMs: readInt(env, 'LARK_JSAPI_RETRY_BASE_DELAY_MS', 300, { min: 0, max: 2_000 }),
+    factor: 2,
+    maxDelayMs: readInt(env, 'LARK_JSAPI_RETRY_MAX_DELAY_MS', 1_000, { min: 0, max: 5_000 }),
+  }),
   // 飞书 JSAPI 签名接口（v1）
   endpoints: Object.freeze({
     tenantAccessToken: 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',

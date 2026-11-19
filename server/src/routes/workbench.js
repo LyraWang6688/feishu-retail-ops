@@ -133,7 +133,10 @@ const createWorkbenchRouter = (options = {}) => {
           ? 400
           : (result.reason === 'not_configured' ? 503 : 502);
         logWarn('workbench.lark.jsapi_signature.failed', {
-          request_id: req.requestId, reason: result.reason,
+          request_id: req.requestId,
+          reason: result.reason,
+          upstream_status: result.upstream_status,
+          upstream_code: result.upstream_code,
         });
         return res.status(status).json({ success: false, error: result.message, reason: result.reason });
       }
