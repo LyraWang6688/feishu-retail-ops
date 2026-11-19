@@ -9,7 +9,7 @@ import { describeError, showPageError } from '../../core/ui.js';
 import { showToast } from '../shared/toast.js';
 import {
   arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments,
-  validateArrivalDocuments, arrivalSubmitLines, sampleChoiceProducts,
+  validateArrivalDocuments, arrivalSubmitLines, sampleChoiceProducts, compareArrivalProducts,
 } from '../orders/acceptanceDoc.js';
 import { openSampleChoiceModal } from '../orders/sampleChoice.js';
 import { ARRIVAL_CONFIRM, ARRIVAL_FULL_API, ARRIVAL_FULL_TEXTS, ORDERS_TEXTS } from '../../config/orders.js';
@@ -17,7 +17,6 @@ import { ARRIVAL_CONFIRM, ARRIVAL_FULL_API, ARRIVAL_FULL_TEXTS, ORDERS_TEXTS } f
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (match, key) => (
   Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
 ));
-const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
 const asQuantity = (value) => {
   const text = String(value ?? '').trim();
   if (text === '') return null;
@@ -46,9 +45,7 @@ const groupRows = (rows) => {
       ...group,
       rows: group.rows.slice().sort((left, right) => Number(left.size) - Number(right.size)),
     }))
-    .sort((left, right) => collator.compare(left.itemNo, right.itemNo)
-      || collator.compare(left.color, right.color)
-      || collator.compare(left.productId, right.productId));
+    .sort(compareArrivalProducts);
 };
 
 const groupLabel = (group) => [group.itemNo, group.color].filter(Boolean).join(' · ')
