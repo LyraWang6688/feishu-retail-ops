@@ -1,5 +1,5 @@
 /** 「货品资料」页（配置 tab）：搜索货品 / 按缺失信息分组 / 同步样例图。 */
-import { PRODUCT_NEW_FORM_URL, ACCESSORY_TABLE_URL } from './links.js';
+import { PRODUCT_NEW_FORM_URL } from './links.js';
 
 export const PRODUCT_PROFILE_API = Object.freeze({
   search: '/api/workbench/products/search',
@@ -43,5 +43,4 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   searchFailed: '搜索失败，请稍后重试',
   incompleteFailed: '货品完善读取失败，请稍后重试',
   formUrl: PRODUCT_NEW_FORM_URL,
-  accessoryTableUrl: ACCESSORY_TABLE_URL,
 });

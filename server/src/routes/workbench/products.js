@@ -22,8 +22,11 @@ const { extraOfAttachment } = require('../../services/driveApi');
 const { containsFormula } = require('../../services/bitableFilterFormula');
 const { getProductSearchSnapshot, invalidateProductSearchSnapshot } = require('../../services/productSearchSnapshot');
 const {
-  listProductFeatures, addProductFeatureTag, updateProductFeatureTag, deleteProductFeatureTag,
+  listProductFeatures,
 } = require('../../services/productFeatureTagService');
+const { createProductConfigWriteService } = require('../../services/productConfigWriteService');
+const { getAsyncJobService } = require('../../services/asyncJobRuntime');
+const { createWorkbenchAccessoryConfigRoutes } = require('./accessoryConfig');
 
 const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
   const router = express.Router();
@@ -39,6 +42,16 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     ttlMs: PRODUCT_PROFILE.sampleImageCacheTtlMs,
     maxEntries: PRODUCT_PROFILE.sampleImageCacheMax,
   });
+  let productConfigWrites = null;
+  const resolveProductConfigWrites = () => {
+    if (!productConfigWrites) {
+      productConfigWrites = createProductConfigWriteService({
+        gateway: getGateway(),
+        asyncJobs: options.asyncJobs || getAsyncJobService(),
+      });
+    }
+    return productConfigWrites;
+  };
   const breaker = { failures: 0, lastFailureAt: 0, openUntil: 0 };
   const breakerConfig = PRODUCT_PROFILE.sampleImageBreaker;
   const noteImageFailure = () => {
@@ -185,8 +198,12 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
 
   router.post('/products/features/:key/tags', async (req, res) => {
     try {
-      const result = await addProductFeatureTag(getGateway(), req.params?.key, req.body?.tag);
-      return res.json({ success: true, ...result });
+      const accepted = await resolveProductConfigWrites().submit({
+        resource: 'feature', action: 'create', dimension: req.params?.key, tag: req.body?.tag,
+        submitKey: req.body?.submitKey, ownerOpenId: req.workbenchUser?.open_id,
+        operatorName: req.workbenchUser?.name,
+      });
+      return res.status(202).json({ success: true, accepted: true, job_id: accepted.jobId, toast: accepted.toast });
     } catch (error) {
       const status = error?.statusCode === 400 ? 400 : 502;
       logError('workbench.product_features.add_failed', {
@@ -198,8 +215,12 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
 
   router.patch('/products/features/:key/tags/:recordId', async (req, res) => {
     try {
-      const result = await updateProductFeatureTag(getGateway(), req.params?.key, req.params?.recordId, req.body?.tag);
-      return res.json({ success: true, ...result });
+      const accepted = await resolveProductConfigWrites().submit({
+        resource: 'feature', action: 'update', dimension: req.params?.key, tag: req.body?.tag,
+        recordId: req.params?.recordId, submitKey: req.body?.submitKey,
+        ownerOpenId: req.workbenchUser?.open_id, operatorName: req.workbenchUser?.name,
+      });
+      return res.status(202).json({ success: true, accepted: true, job_id: accepted.jobId, toast: accepted.toast });
     } catch (error) {
       const status = error?.statusCode === 400 ? 400 : 502;
       logError('workbench.product_features.update_failed', {
@@ -211,8 +232,12 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
 
   router.delete('/products/features/:key/tags/:recordId', async (req, res) => {
     try {
-      const result = await deleteProductFeatureTag(getGateway(), req.params?.key, req.params?.recordId);
-      return res.json({ success: true, ...result });
+      const accepted = await resolveProductConfigWrites().submit({
+        resource: 'feature', action: 'delete', dimension: req.params?.key,
+        recordId: req.params?.recordId, submitKey: req.body?.submitKey,
+        ownerOpenId: req.workbenchUser?.open_id, operatorName: req.workbenchUser?.name,
+      });
+      return res.status(202).json({ success: true, accepted: true, job_id: accepted.jobId, toast: accepted.toast });
     } catch (error) {
       const status = error?.statusCode === 400 ? 400 : 502;
       logError('workbench.product_features.delete_failed', {
@@ -221,6 +246,9 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       return res.status(status).json({ success: false, error: error.message });
     }
   });
+
+
+  router.use(createWorkbenchAccessoryConfigRoutes({ getGateway, asyncJobs: options.asyncJobs }));
 
   router.get('/products/completion', async (req, res) => {
     try {

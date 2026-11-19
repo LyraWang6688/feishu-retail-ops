@@ -63,6 +63,14 @@ const CHAINS = Object.freeze({
     externalLanding: PRODUCT_FEATURE_DIMENSIONS.map((item) => ({ tableName: item.tableName, column: PRODUCT_FEATURE_TAG_FIELD })),
   },
 
+  'API.create': {
+    fe: 'features/domains/accessoryConfig.js', feKey: 'api.post(API.create',
+    route: 'src/routes/workbench/accessoryConfig.js', routeKey: /router\.post\('\/products\/accessories'/,
+    service: 'src/services/accessoryConfigService.js', serviceKey: /gateway\.create\('accessory'/,
+    landing: [['accessory', 'name'], ['accessory', 'category'], ['accessory', 'price'],
+      ['accessory', 'cost'], ['accessory', 'stockQuantity']],
+  },
+
   'DATA_CONFIG_API.sampleImageSync': {
     fe: 'features/domains/dataConfigAction.js', feKey: 'api.post(DATA_CONFIG_API.sampleImageSync',
     route: 'src/routes/workbench/dataConfig.js', routeKey: /router\.post\('\/data-config\/sample-image-sync'/,

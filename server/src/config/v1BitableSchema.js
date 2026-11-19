@@ -128,7 +128,17 @@ const V1_BITABLE_SCHEMA = {
         cost: '成本',
         // 2026-11-11：业务负责人新增的复选框；资金页赠品候选只取 true。
         isAccessory: '配品',
+        // 2026-11-19：配品配置页新增的库存数量（Number）；可维护。
+        stockQuantity: '库存数量',
+        // 2026-11-19：样例图（附件）；配品配置页支持上传一张。
+        sampleImage: '样例图',
       },
+      // 只读字段：不参与写入；时间字段由飞书自动生成。
+      readOnlyFields: Object.freeze({
+        salesQuantity: Object.freeze({ name: '销售数量', type: 19, uiType: 'Lookup', writable: false }),
+        createdAt: Object.freeze({ name: '创建时间', type: 1001, uiType: 'CreatedTime', writable: false }),
+        updatedAt: Object.freeze({ name: '更新时间', type: 1002, uiType: 'ModifiedTime', writable: false }),
+      }),
     },
     behavior: {
       tableName: '行为管理',

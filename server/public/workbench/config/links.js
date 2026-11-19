@@ -52,14 +52,6 @@ export const ACCESSORY_SALE_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnCUHxarWSWhoQRiv6qJeKWh';
 
 /**
- * 「其他配品」数据表（Base 表 `tblxEeiXYAeUF4gH`）。
- * 配品配置页用 iframe 直接嵌入这张表；
- * ⚠️ 若飞书 Base 返回 X-Frame-Options / CSP 拦截，页面会显示「在飞书中打开」兜底链接。
- */
-export const ACCESSORY_TABLE_URL =
-  'https://scnzoiwpgxik.feishu.cn/base/QrXlbwXMLaJ2TNsxSfFcIA3rnwh?table=tblxEeiXYAeUF4gH&view=vewsk5LJgq';
-
-/**
  * ⭐⭐ 2026-11-09（业务负责人）：**批量打印改成「填飞书表单」** ——
  *   「点「批量打印」进的是飞书表单链接，后续就只用这个了」。
  *   表单写到生产 Base 的「标签打印」表（`tblcUksCp3EmbmBa` 的同构表；后端监听该表新增记录自动打印）。
@@ -69,71 +61,7 @@ export const ACCESSORY_TABLE_URL =
 export const LABEL_BATCH_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnoFRAGvPyAWmSephrLpOvgh';
 
-/**
- * 两个飞书表单，按这个顺序渲染。**消费方**（只负责画，不改这张表）：
- *   `config/domains.js` —— 「采购」tab 的「报货」/「退货」**两个子页各一张卡**（当前正式入口；
- *   ⚠️ 2026-10-10 起「验收到货」不再是一张卡，它成了**独立子页**）。
- *   （历史）`features/purchase/links.js` —— 老「采购和退货」独立页的两张卡：
- *     那一页 `purchase-return.html` 已于 2026-10-09 按她的口令删掉；
- *     连它所在的 `features/purchase/**` 也于 **2026-10-15 整目录删除**（她：「是死代码，给删除了吧」）✓
- *   `config/home.js` —— 首页【常用功能】那**一张**「报货与退货」卡的 `href`
- *   （只 `import` 本文件的 `旧采购报货表单常量`，**不复制 URL**）。
- *   ⚠️ 2026-10-08（业务负责人逐字，**ⓐ**）：「ⓐ（另一种）：**采购卡继续点一次直达报货表单**，
- *      只删退货那张卡……现在就是按照原来一样，**采购和退货用的是一个表单**」——
- *      ⇒ 首页那**一张**卡**直连报货飞书表单**（不再指回内页 `purchase-return.html`）。
- *      ⚠️ **`旧采购退货表单常量` 一个字节都不删**：它仍被「采购」tab 的「退货」卡用着。
- *      留档：`docs/workbench-report-return-direct-form-2026-10-08.md`。
- * 加 / 减表单只改这张表。
- */
-
-/**
- * 【信息查询】两个板块的网页 URL —— **飞书多维表格里的页面**（不是我们自建的页面）。
- *
- * ⭐ 业务负责人 2026-10-08（逐字）：
- *   「目前我采用的并不是我们自己搭建的页面，而是**多维表格里的页面**。我希望就像我们的**报货和退货**一样，
- *    点开之后是**一个表单**，**销售查询和库存查询点开也是多维表格上的一个网页**。
- *    ⇒ 在这个维度上我们**不用自己搭建接口**」
- *
- * ⇒ 「信息查询」那两个板块**就是两张外链卡**，点一下直接打开她配好的多维表格网页；
- *    工作台**不新增任何接口 / 页面**，也不在本地重算任何业务事实。
- *
- * ⚠️ 空值的**明确行为**（现在两条都配好了，这段留给将来再加板块时用）：
- *    `features/query/index.js` 把它渲染成 `<div class="entry-card disabled-card">`（**不是 `<a>`**），
- *    卡面 arrow 文案 = **「链接待配置」** ⇒ **不产生空 `href`、点了不跳空链接、不报错**。
- *    给了 URL 就**只改下面那一行**（配置先行），页面一行都不用动。
- *
- * 写法与 `旧采购报货表单常量` 同一套（`*_URL` 常量；`config/query.js` 只 import、不复制）。
- */
-// ⭐ 2026-10-08 业务负责人**改口定稿**（逐字）：
-//   「另外我们的URL就是用的这两个，**严禁你换成别的**：
-//    销售的，https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnY3ZG9LAjrArEe5RzfS8UGh ；
-//    库存的，https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc」
-// ⇒ 两条都**逐字**用她给的**发布分享链接**（`/share/base/webpage/<shareId>`），
-//    谁都不许改成另一种形状（早先我自作主张用过内部页面 URL `/base/<appToken>?table=<页面id>`，已按她的口径改回）。
-// ⚠️ 这是**多维表格里的 AI 生成网页**（vibe view）：`wbpzfEmPGK` / `wbpmx4eW9A` 是**页面 id、不是 tableId**。
-//    **页面代码不在本仓库** ⇒ 不进 CI、不受 `v1:schema-check` 保护；
-//    她改生产表之后，**页面可能静默算错或变空，我们这边没有任何告警**
-//    （她 2026-10-08 已经遇到一次：「今日销售减少和采购增加的数据不对」，排查留档在
-//     `docs/todo-inventory-query-page-logic.md`）。
-// ⚠️ 分享链接的权限提示（她知情）：飞书页面上写着
-//    「通过分享链接访问的用户可查看当前页面展示的**全部数据，不受多维表格高级权限限制**」。
-// ⚠️ 该页面声明的统计口径 + 与系统口径的差异，留档：
-//    `docs/sales-query-page-and-system-caliber-2026-10-08.md`（她定的定位 = **最小 MVP，之后迭代**）。
-// 2026-11-18：销售查询已改为工作台自研页面（config/domains.js → kind:'sales-query'），
-// 不再保留飞书分享外链。
-
-/**
- * 「库存查询」URL —— 业务负责人 **2026-10-08** 给的发布分享链接（逐字）：
- *   「你可以把库存URL也放上去，https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc」
- *   （她同一条消息里定稿：「我们的URL就是用的这两个，**严禁你换成别的**」）
- *
- * ⇒ **两条都是发布分享链接**（`/share/base/webpage/<shareId>`），逐字用她给的，不做任何加工、
- *    也不换成内部页面 URL（`/base/<appToken>?table=<页面id>`）。
- * ⚠️ 权限提示（她知情）：飞书对这种链接写着「通过分享链接访问的用户可查看当前页面展示的
- *    **全部数据，不受多维表格高级权限限制**」。
- * ⚠️ 页面代码**不在本仓库** ⇒ 口径与风险见 `docs/todo-inventory-query-page-logic.md`
- *    （口径她 2026-10-08 已定；给页面生成 AI 的提示词、以及「今日变动」的对账表都在那一份里）。
- */
+/** 「库存查询」URL（当前工作台仍保留该外链配置）。 */
 export const INVENTORY_QUERY_PAGE_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc';
 

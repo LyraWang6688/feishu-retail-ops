@@ -9,6 +9,7 @@ import { PRODUCT_PROFILE_API, PRODUCT_PROFILE_TEXTS as T } from '../../config/pr
 import { showToast } from '../shared/toast.js';
 import { bindDomainAction } from './dataConfigAction.js';
 import { productIssueChipsOf } from '../shared/productIssues.js';
+import { createAccessoryConfigModule } from './accessoryConfig.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, k) => (values[k] == null ? '' : String(values[k])));
 const COMPLETE_PAGE_SIZE = 40;
@@ -64,7 +65,7 @@ const cardsHtml = () => `
     <button class="entry-card" type="button" data-pp-view="new"><span class="icon">🆕</span><h3>${esc(T.newTitle)}</h3></button>
     <button class="entry-card" type="button" data-pp-view="complete"><span class="icon">📝</span><h3>${esc(T.completeTitle)}</h3></button>
     <button class="entry-card" type="button" data-domain-action="sample-image-sync"><span class="icon">🖼️</span><h3>${esc(T.sampleTitle)}</h3></button>
-    <a class="entry-card" href="${esc(T.accessoryTableUrl)}" rel="noopener"><span class="icon">🛒</span><h3>${esc(T.accessoryTitle)}</h3></a>
+    <button class="entry-card" type="button" data-pp-view="accessory"><span class="icon">🛒</span><h3>${esc(T.accessoryTitle)}</h3></button>
   </div>
   <p class="placeholder-note" data-view="domain-action-note"></p>`;
 
@@ -90,6 +91,7 @@ export const productProfilePageHtml = () => `
       <div class="pp-tabs" data-pp-complete-tabs></div>
       <div data-pp-complete-list></div>
     </div>
+    <div data-pp="accessory" hidden></div>
   </div>`;
 
 export function createProductProfileModule() {
@@ -98,10 +100,19 @@ export function createProductProfileModule() {
       host.innerHTML = productProfilePageHtml();
       resetThumbs(host);
       bindDomainAction(host);
+      let accessoryModule = null;
       const show = (name) => {
         host.querySelector('[data-pp="cards"]').hidden = name !== 'cards';
         host.querySelector('[data-pp="new"]').hidden = name !== 'new';
         host.querySelector('[data-pp="complete"]').hidden = name !== 'complete';
+        host.querySelector('[data-pp="accessory"]').hidden = name !== 'accessory';
+        if (name === 'accessory') {
+          if (!accessoryModule) {
+            accessoryModule = createAccessoryConfigModule();
+            accessoryModule.mount(host.querySelector('[data-pp="accessory"]'));
+          }
+          return;
+        }
         if (name === 'complete') {
           loadComplete(host);
           const q = host.querySelector('[data-pp-complete-search]')?.value.trim() || '';
