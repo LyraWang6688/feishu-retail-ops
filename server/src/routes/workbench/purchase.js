@@ -41,6 +41,7 @@ const { createProcurementPageSubmitService } = require('../../services/procureme
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 const { createPurchaseAcceptanceSampleService } = require('../../services/purchaseAcceptanceSampleService');
+const { SizeReferenceService } = require('../../services/sizeReferenceService');
 
 const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   const router = express.Router();
@@ -237,8 +238,21 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     arrivalReadCache.delete(String(batchNo || '').trim());
     sampleStateCache.clear();
   };
+  let arrivalSizeReferences = null;
+  const validateArrivalSize = async (_productRecordId, size) => {
+    if (!arrivalSizeReferences) {
+      arrivalSizeReferences = new SizeReferenceService({ gateway: options.gateway || new V1BitableGateway() });
+    }
+    try {
+      await arrivalSizeReferences.resolveByNumber(size);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const arrivalService = options.arrival || createScanArrivalService({
     gateway: options.gateway || new V1BitableGateway(),
+    validateSize: validateArrivalSize,
     config: (options.writeConfig || SCAN_WRITE).acceptance,
     store: options.arrivalStore,
     // ⭐ 2026-11-10：工作台 accept 必须用**带主表字段写口**的会话（writeBatchTotals /

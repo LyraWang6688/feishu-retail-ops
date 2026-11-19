@@ -41,22 +41,16 @@ test('AC-AW1 🔴 工作台「验收」页**不再有**指向 `/r/accept` 的入
   assert.equal(/ARRIVAL_SCAN/.test(code), false, '也不许再用 `ARRIVAL_SCAN` 当入口 ✗');
 });
 
-test('AC-AW1b ⭐ 那一屏**有**提交到既有 confirm 接口的表单（判据不许松 ✗）', () => {
-  // ① 提交目标 = **既有** `ORDERS_API.arrivalConfirm`（工作台自己不新开接口 ✓）
-  assert.ok(FEATURE.includes('ORDERS_API.arrivalConfirm'), '卡片上的提交走既有 confirm 接口 ✓');
-  assert.equal(ORDERS_CONFIG.includes("arrivalConfirm: '/api/workbench/purchase/arrivals/confirm'"), true,
+test('AC-AW1b ⭐ 那一屏**有**提交到既有 accept 接口的独立明细页（判据不许松 ✗）', () => {
+  const detail = read('public/workbench/features/acceptance-detail/index.js');
+  assert.ok(detail.includes('ARRIVAL_FULL_API.accept'), '独立明细页提交走既有 accept 接口 ✓');
+  assert.equal(ORDERS_CONFIG.includes("accept: '/api/workbench/purchase/arrivals/accept'"), true,
     '接口路径只在这里写一次 ✓');
-  // ② 工作台内那张表单三件套（发生金额 / 验收原话 / 提交按钮）都在
-  // ⭐⭐ 2026-10-16（她逐字：「到货说明必须得删……数据表里面已经没有验收原话了……你必须得删」）
-  //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
-  //   · 改后逐字：该项删除 ＋ 下面那条**反向**断言（塞回即红 ✓）
-  //   · 依据 = 她 2026-10-16 逐字（同上）✓
-  for (const needle of ['data-action-block="verify-arrival"', 'data-field="arrival-amount"', 'data-action="submit-arrival"']) {
-    assert.ok(FEATURE.includes(needle), `卡上缺 ${needle}（工作台内的确认路径 ✓）`);
+  for (const needle of ['data-field="arrival-amount"', 'data-view="arrival-submit"', 'data-field="arrival-actual"']) {
+    assert.ok(detail.includes(needle), `明细页缺 ${needle} ✓`);
   }
-  assert.equal(FEATURE.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
-  // ③ 明细（只读）也在：批次号 + 每行货号/尺码/数量
-  assert.ok(/data-purchase-batch=/.test(FEATURE) && /order-line/.test(FEATURE), '明细那一块还在 ✓');
+  assert.equal(detail.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
+  assert.ok(/data-purchase-batch=/.test(FEATURE), '批次列表还在 ✓');
 });
 
 test('AC-AW4 🔴 `/r/accept` 那条路**已彻底拆掉**（本 AC 换判据 —— 旧口径被她晚间的原话覆盖）', () => {

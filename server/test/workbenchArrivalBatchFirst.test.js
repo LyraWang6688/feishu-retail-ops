@@ -115,7 +115,7 @@ test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采�
   assert.equal(second.includes('data-action="back-suppliers"'), false, '返回按钮元素不许回来 ✓');
   assert.equal(second.includes('未到货'), false, '⛔ 此页都是未到货 ⇒ 不再显示「未到货」标签（批注）✓');
   assert.ok(second.includes('data-purchase-batch'), '第二层才有批次卡 ✓');
-  assert.ok(second.includes('data-action-block="verify-arrival"'), '每批仍有验收入口 ✓');
+  assert.ok(second.includes('data-action="open-arrival"'), '每批有独立验收页跳转入口 ✓');
   assert.ok(second.includes('data-view="arrival-batch-summary"'), '有一行摘要（多少双/几个货品）✓');
   // ③ **由远及近**（早 → 晚）：给同一供应商补一条更早的批次（日期不再显示，但顺序仍要由远及近）
   const earlier = {
@@ -130,10 +130,8 @@ test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采�
   // 供应商名居中（批注）
   const css = readWorkbench('features/orders/orders.css');
   assert.ok(css.includes('text-align: center'), '供应商名居中样式在 ✓');
-  // ⭐ 2026-11-09 批注：展开后不再显示「验收到货」按钮和「点开看明细」提示
-  assert.ok(css.includes('.action-form[open] > summary'), '展开后隐藏入口按钮的样式在 ✓');
-  assert.ok(css.includes('.action-form[open] [data-view="arrival-detail-hint"]'), '展开后隐藏提示文字的样式在 ✓');
-  assert.ok(css.includes('.form-field.action-form__amount { display: flex'), '实际金额与输入框同一行 ✓');
+  // 2026-11-19：批次卡改为跳转独立明细页，不再原地展开。
+  assert.ok(second.includes('/workbench/purchase-acceptance-detail.html?'), '验收入口指向独立明细页 ✓');
   assert.ok(readWorkbench('config/orders.js').includes("arrivalAmount: '货款'"), '金额字段文案 = 「货款」（业务负责人 2026-11-09）✓');
   // ④ **采购单号不许作为可见文字出现**（data 属性留给提交用，页面看不到）
   for (const batch of ['CGD-WAIT-1', 'CGD-WAIT-2', 'CGD-WAIT-3']) {
@@ -203,7 +201,7 @@ test('AC-RC1d ⭐ 一批多供应商 ⇒ 按供应商拆卡；每张卡只含该
   assert.ok(s1.includes('data-purchase-supplier="s1"')); 
   assert.ok(s1.includes('3 双'), '卡片摘要按本供应商明细算（3 双）✓');
   assert.equal(s1.includes('信踏'), false, '一代千金的卡里不混另一家的供应商名 ✓');
-  assert.ok(s1.includes('data-arrival-supplier="s1"'), '提交按钮带供应商范围 ✓');
+  assert.ok(s1.includes('supplierRecordId=s1'), '跳转链接带供应商范围 ✓');
   const s2 = orders.purchaseOrdersHtml(rows, { supplierKey: 's2' });
   assert.ok(s2.includes('4 双'), '信踏卡摘要按自己的明细算（4 双）✓');
   // ⭐ 2026-11-11：已验收完的供应商只认**主表字段**（列表每行的 arrived_supplier_ids）
@@ -403,20 +401,19 @@ test('AC-RC2c ⭐ 移动端明细：去掉外层卡片容器；一行两码且�
   assert.ok(readWorkbench('features/orders/index.js').includes("classList.toggle('order-card--detail-open'"), '展开态切类由 JS 挂上 ✓');
 });
 
-test('AC-RC6 ⭐ 货款必填（参考销售货品页）：required + 未填/<=0 不发请求、聚焦输入框 + 字段旁提示', () => {
-  const src = readWorkbench('features/orders/index.js');
+test('AC-RC6 ⭐ 货款必填（独立明细页）：required + 未填/<=0 不发请求、聚焦输入框 + 字段旁提示', () => {
+  const src = readWorkbench('features/acceptance-detail/index.js');
   const config = readWorkbench('config/orders.js');
   assert.ok(src.includes('data-field="arrival-amount" type="text" inputmode="decimal" required'),
     '金额输入框带 required ✓');
   assert.ok(src.includes('data-view="arrival-amount-hint"'), '字段旁有必填提示位 ✓');
   assert.ok(src.includes('reportValidity'), '未填时调用原生校验提示 ✓');
-  assert.ok(src.includes("'[data-field=\"arrival-amount\"]'") && src.includes('amountInput?.focus()'),
+  assert.ok(src.includes("'[data-field=\"arrival-amount\"]'") && src.includes('?.focus()'),
     '未填时聚焦金额输入框 ✓');
   assert.ok(config.includes('amountRequired:'), '必填文案走配置 ✓');
-  // 校验发生在 runWriteAction 之前（不发请求）；顺序：amount 判断在 runWriteAction 之前
-  const amountCheck = src.indexOf('amountHint.textContent = ARRIVAL_FULL_TEXTS.amountRequired');
-  const writeAction = src.indexOf('return runWriteAction(button', src.indexOf('async function submitArrival'));
-  assert.ok(amountCheck > 0 && writeAction > amountCheck, '金额校验在发请求之前 ✓');
+  const amountCheck = src.indexOf('amountRequired');
+  const postCheck = src.indexOf('ARRIVAL_FULL_API.accept');
+  assert.ok(amountCheck > 0 && postCheck > amountCheck, '金额校验在发请求之前 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -424,34 +421,25 @@ test('AC-RC6 ⭐ 货款必填（参考销售货品页）：required + 未填/<=0
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-RC8 ⭐ 验收单一行：file input 支持拍照/选图；上传后随 accept 提交（我的单据保持不变）', async () => {
-  const orders = await loadOrdersModule();
-  const html = orders.purchaseOrdersHtml(BATCH_ROWS, { supplierKey: 's1' });
-  assert.ok(html.includes('验收单'), '有「验收单」这一行 ✓');
-  assert.ok(html.includes('data-field="arrival-doc"'), '验收单 file input ✓');
-  assert.ok(html.includes('type="file"') && html.includes('accept="image/*"'), '只收图片，可拍照/相册 ✓');
-  assert.ok(html.includes('multiple'), '支持多张（最多 5 张，提交前校验）✓');
+  const src = readWorkbench('features/acceptance-detail/index.js');
+  const docModule = readWorkbench('features/orders/acceptanceDoc.js');
+  assert.ok(src.includes('arrivalDocFieldHtml('), '验收单上传行走配置文案 ✓');
+  assert.ok(src.includes('uploadArrivalDocuments('), '提交时调用验收单上传 ✓');
+  assert.ok(src.includes('counterpartyDocuments: uploaded.documents'), 'accept body 带验收单 tokens ✓');
+  assert.ok(docModule.includes('api.postRaw(endpoint, file)'), '验收单先上传拿 file_token ✓');
 
   const config = readWorkbench('config/orders.js');
   assert.ok(config.includes("acceptanceDoc: '/api/workbench/purchase/arrivals/acceptance-doc'"),
     '验收单上传端点走配置 ✓');
   assert.ok(config.includes("counterpartyDocuments: 'counterpartyDocuments'"),
     '验收单提交字段走配置 ✓');
-
-  const src = readWorkbench('features/orders/index.js');
-  const docModule = readWorkbench('features/orders/acceptanceDoc.js');
-  assert.ok(docModule.includes('api.postRaw(endpoint, file)'),
-    '验收单先上传拿 file_token ✓');
-  assert.ok(src.includes('uploadArrivalDocuments('), '提交时调用验收单上传 ✓');
-  assert.ok(src.includes('ARRIVAL_FULL_FIELDS.counterpartyDocuments'), 'accept body 带验收单 tokens ✓');
-  assert.ok(src.includes('arrivalDocFieldHtml('), '验收单上传行走配置文案 ✓');
-  // 我方单据仍由服务端出图回填；前端验收单不会覆盖「我方单据」
-  assert.equal(src.includes("data-field=\"arrival-doc\"") && src.includes("counterpartyDocuments"),
-    true);
+  assert.ok(docModule.includes('data-field="arrival-doc"') && docModule.includes('multiple'),
+    '验收单 file input 支持多张 ✓');
 });
 
 
 test('AC-RC9 验收单必填：未选图不发请求，字段旁提示并聚焦', () => {
-  const src = readWorkbench('features/orders/index.js');
+  const src = readWorkbench('features/acceptance-detail/index.js');
   const config = readWorkbench('config/orders.js');
   const doc = readWorkbench('features/orders/acceptanceDoc.js');
   assert.ok(doc.includes('data-field="arrival-doc"') && doc.includes('required aria-required="true"'),
@@ -461,6 +449,6 @@ test('AC-RC9 验收单必填：未选图不发请求，字段旁提示并聚焦'
   assert.ok(doc.includes('texts.acceptanceDocRequired') && doc.includes("input?.focus()") && doc.includes('input.reportValidity()'),
     '未选图时聚焦并触发原生校验 ✓');
   const docCheck = src.indexOf('validateArrivalDocuments(form, ARRIVAL_FULL_TEXTS)');
-  const writeAction = src.indexOf('return runWriteAction(button', src.indexOf('async function submitArrival'));
-  assert.ok(docCheck > 0 && writeAction > docCheck, '验收单校验在发请求之前 ✓');
+  const postCheck = src.indexOf('ARRIVAL_FULL_API.accept');
+  assert.ok(docCheck > 0 && postCheck > docCheck, '验收单校验在发请求之前 ✓');
 });

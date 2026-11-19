@@ -41,7 +41,7 @@ const { fillText } = require('../../config/scanWrite');
 
 const createSetScans = ({
   get, store, touch, texts, events, config, logInfo,
-  positiveInteger, nonNegativeInteger,
+  positiveInteger, nonNegativeInteger, validateSize,
 }) => async ({ openId, lines, sampleChoices = {}, sessionKey = '' } = {}) => {
   const session = await get(openId, sessionKey);
   if (!session) return { ok: false, reason: 'no_session', message: texts.acceptNoSessionBody };
@@ -106,14 +106,26 @@ const createSetScans = ({
       };
     }
     seen.add(key);
-    // ⭐ 2026-11-09（业务负责人：前端/后端都不需要自定义尺码、货号逻辑）：
-    //   提交行必须与本批申请行逐字匹配（款 + 尺码）；不在本批 ⇒ 400 + 人话 + 会话不动。
+    // 2026-11-19：允许「本批已有的货品」补录自定义尺码；
+    //   原申请行照旧精确匹配；自定义尺码必须过可录尺码校验（调用方注入）。
     if (!reported.has(key)) {
-      logInfo(events.acceptNotInBatch, {
-        session_id: session.session_id, batch_no: session.batch_no,
-        product_record_id: productRecordId, size,
-      });
-      return { ok: false, reason: 'not_in_batch', message: texts.acceptNotInBatchBody };
+      // 自定义尺码只有在调用方注入「可录尺码校验」时才允许；没有校验器就维持旧的 not_in_batch，
+      // 避免扫码页旧链路静默收下任意尺码。
+      if (typeof validateSize !== 'function') {
+        logInfo(events.acceptNotInBatch, {
+          session_id: session.session_id, batch_no: session.batch_no,
+          product_record_id: productRecordId, size,
+        });
+        return { ok: false, reason: 'not_in_batch', message: texts.acceptNotInBatchBody };
+      }
+      const allowed = await validateSize(productRecordId, size);
+      if (!allowed) {
+        logInfo(events.acceptNotInBatch, {
+          session_id: session.session_id, batch_no: session.batch_no,
+          product_record_id: productRecordId, size, reason: 'size_not_allowed',
+        });
+        return { ok: false, reason: 'size_not_allowed', message: texts.acceptNotInBatchBody };
+      }
     }
     normalized.push({ product_record_id: productRecordId, size, quantity });
   }

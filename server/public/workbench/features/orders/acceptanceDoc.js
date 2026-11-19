@@ -11,7 +11,7 @@ export const arrivalDocFieldHtml = ({ escapeHtml, label, hint }) => `
             </label>`;
 
 export const updateArrivalDocHint = (input, texts) => {
-  const hint = input.closest('details')?.querySelector('[data-view="arrival-doc-hint"]');
+  const hint = input.closest('details, form')?.querySelector('[data-view="arrival-doc-hint"]');
   const files = [...(input.files || [])];
   if (!hint) return;
   hint.textContent = files.length

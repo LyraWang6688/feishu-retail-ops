@@ -35,10 +35,11 @@ test('AC-AN1 ⭐ 界面**不再出现**「到货说明」输入框（能真红�
   assert.equal(/\bT\.arrivalNote\b/.test(feature), false, '⛔ 不许再引用 `T.arrivalNote` ✗');
   assert.equal(/read\('arrival-note'\)/.test(feature), false, '⛔ 不许再读它的值 ✗');
   assert.equal(feature.includes('请先写一句到货说明'), false, '⛔ 那条"必填"拦截也随框退场 ✓（她说了必须删 ✓）');
-  // ⭐ 其余验收能力**一个不少**（AC-AN6 的前半）：发生金额 + 提交按钮 + 明细行都还在 ✓
-  assert.match(feature, /data-field="arrival-amount"/, '「发生金额」还在 ✓');
-  assert.match(feature, /data-action="submit-arrival"/, '提交按钮还在 ✓');
-  assert.match(feature, /data-field="arrival-actual"/, '逐码实际到货输入还在 ✓');
+  // ⭐ 其余验收能力**一个不少**：明细页仍保留金额 + 提交 + 逐码数量输入 ✓
+  const detail = read('public/workbench/features/acceptance-detail/index.js');
+  assert.match(detail, /data-field="arrival-amount"/, '「发生金额」还在 ✓');
+  assert.match(detail, /data-view="arrival-submit"/, '提交按钮还在 ✓');
+  assert.match(detail, /data-field="arrival-actual"/, '逐码实际到货输入还在 ✓');
 });
 
 test('AC-AN4 配置里**0 孤儿**（能真红：把 `arrivalNote:` 塞回配置 ⇒ 红）', () => {
