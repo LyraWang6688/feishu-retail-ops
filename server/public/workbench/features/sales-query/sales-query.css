@@ -1,16 +1,17 @@
 /* 销售查询：沿用工作台 tokens；金额 / 数量都为可扫读的表格与卡片。 */
 .sq-page { gap: var(--space-2); }
-.sq-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:end; gap:var(--space-2); margin-left:calc(var(--card-pad-mobile) * -1); margin-right:calc(var(--card-pad-mobile) * -1); margin-bottom:var(--space-3); }
+.sq-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:end; gap:var(--space-2); margin-bottom:var(--space-3); }
 .sq-filter { display:flex; flex-direction:column; gap:5px; min-width:0; color:var(--text-secondary); font-size:var(--font-size-xs); }
 .sq-filter input, .sq-filter select, .sq-btn { box-sizing:border-box; min-width:0; }
 .sq-filter input { width:100%; height:var(--control-height); border:1px solid var(--control-border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text); padding:0 10px; font:inherit; font-size:var(--font-size-sm); }
+.sq-filter input[type="date"] { max-width:180px; }
 .sq-filter input:focus { outline:2px solid var(--primary-soft); border-color:var(--primary); }
 .sq-filter select { width:100%; height:var(--control-height); border:1px solid var(--control-border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text); padding:0 10px; font:inherit; font-size:var(--font-size-sm); }
 .sq-filter select:focus { outline:2px solid var(--primary-soft); border-color:var(--primary); }
 .sq-btn { height:var(--control-height); border:0; border-radius:var(--radius-sm); background:var(--primary); color:var(--surface); padding:0 18px; font:inherit; font-size:var(--font-size-sm); cursor:pointer; }
 .sq-btn--ghost { border:1px solid var(--control-border); background:var(--surface); color:var(--text-secondary); }
 .sq-section-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin:var(--space-3) 0 var(--space-2); }
-.sq-section-head h2 { margin:0; font-size:var(--font-size-base); }
+.sq-section-head h2 { margin:0; font-size:var(--font-size-xs); font-weight:600; }
 .sq-top { display:grid; grid-template-columns:minmax(180px,.8fr) minmax(0,1.3fr); gap:var(--space-3); }
 .sq-revenue, .sq-card, .sq-volume-card { border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-soft); padding:12px; }
 .sq-revenue { display:flex; flex-direction:column; justify-content:center; }
@@ -53,9 +54,6 @@
 .sq-status.wait { color:var(--warning); background:var(--warning-soft); }
 .sq-status.back { color:var(--danger); background:var(--danger-soft); }
 .sq-empty { margin:0; padding:12px; color:var(--text-muted); font-size:var(--font-size-sm); }
-@media (min-width:761px) {
-  .sq-filters { margin-left:calc(var(--card-pad) * -1); margin-right:calc(var(--card-pad) * -1); }
-}
 @media (min-width:760px) {
   .sq-filters { grid-template-columns:repeat(4,minmax(0,1fr)); }
 }
