@@ -52,7 +52,7 @@
  *  AC-RB2  ⭐⭐ **结果逐字段等价（最重要）**：同样输入 ⇒
  *          「逐条路径」与「攒批路径」的**落表内容一字不差**
  *          （全表快照 deepStrictEqual：退货批次行 / 明细 N 行 / 库存流水 / 实时库存余量
- *            ＋ 每行的货品/尺码/数量/幂等键/明细ID/关联 ＋「发生金额」＋ 单据/出图入参）。
+ *            ＋ 每行的货品/尺码/数量/幂等键/明细ID/关联 ＋「货单金额」＋ 单据/出图入参）。
  *          ⚠️ 判据必须**非空转**：同时断言攒批路径**真的用了** `batchCreate`。
  *  AC-RB3  幂等：同一 task 重放 ⇒ 明细不翻倍、批次只有一行、库存只扣一次。
  *  AC-RB4  续跑：写到一半中断 ⇒ 接着跑**不重不漏**
@@ -499,7 +499,7 @@ test('AC-RB2 ⭐⭐ 同样输入 ⇒ 逐条路径与攒批路径**落表内容�
 
       // ① 返回值逐字段等价
       assert.deepStrictEqual(after.result, before.result, `${key}: service 返回值必须逐字段一致`);
-      // ② **全表快照**逐字节等价（批次行 / 明细 N 行 / 库存流水 / 实时库存余量 / 幂等键 / 明细ID / 发生金额）
+      // ② **全表快照**逐字节等价（批次行 / 明细 N 行 / 库存流水 / 实时库存余量 / 幂等键 / 明细ID / 货单金额）
       assert.deepStrictEqual(snapshot(after.harness), snapshot(before.harness),
         `${key}: 落表内容必须一字不差`);
       // ③ 出图链路的入参逐字等价（⇒ 分组出图的张数与群消息条数不变）
@@ -519,7 +519,7 @@ test('AC-RB2b ⭐ 多货品退货：批次 1 行 · 明细 N 行 · 每行货品
     const batches = rowsOf(h, 'purchaseOrderBatch');
     assert.equal(batches.length, 1, '退货批次 1 行');
     assert.equal(batches[0].fields['到货状态'], undefined, '退货批次不写「到货状态」');
-    assert.equal(batches[0].fields['发生金额'], 399, '「发生金额」= 整单金额');
+    assert.equal(batches[0].fields['货单金额'], 399, '「货单金额」= 整单金额');
     // ⭐ 2026-10-17：主表行为列真表已改名「发生行为」（她逐字）
     assert.deepEqual(batches[0].fields['发生行为'], ['bh_return_purchase']);
     assert.equal(batches[0].fields['录入数量'], 6, '录入数量 = 实退合计');

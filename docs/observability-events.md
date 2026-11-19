@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **515** 个事件。按前缀分组：
+共 **512** 个事件。按前缀分组：
 
 ## accessory
 
@@ -340,7 +340,6 @@
 | `purchase.arrival.inventory_applied.persist_failed` | 1 | src/services/purchase/arrival.js |
 | `purchase.arrival.posted` | 1 | src/services/purchase/arrival.js |
 | `purchase.arrival.reconcile.amount_missing` | 1 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.arrived_suppliers_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_arrival_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_arrival_skipped` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_totals_failed` | 1 | src/services/purchaseArrivalConversationService.js |
@@ -349,8 +348,6 @@
 | `purchase.arrival.reconcile.failure_notice` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.posted` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.success_notice` | 2 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.supplier_lookup_unmapped` | 1 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.supplier_pending` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_already_posted` | 2 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_plan_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.workbench_rows_unavailable` | 1 | src/services/purchaseArrivalConversationService.js |

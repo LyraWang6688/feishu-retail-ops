@@ -209,7 +209,7 @@ test('① 点「是」之后：到货信息的落点 = **「报货批次」那�
   assert.equal(fields['到货状态'], '已到货', '到货状态（这条本来就有，不许被写歪）');
   // ⭐⭐ 2026-10-08：「实际数量」（代码算出来的）= 申请 2 + 2；「发生金额」= 她填的整批金额。
   assert.equal(fields['实际数量'], 4, '实际数量 = plan.rows 的 actual 合计（代码算，不用她填）');
-  assert.equal(fields['发生金额'], AMOUNT, '发生金额 = 她在卡片表单里填的整批金额');
+  assert.equal(fields['货单金额'], AMOUNT, '发生金额 = 她在卡片表单里填的整批金额');
   // 批次行上的「报货批次号」一个字没动。
   assert.equal(fields['报货批次号'], BATCH_NO);
 });
@@ -386,7 +386,7 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
   assert.equal(fields['到货状态'], '已到货');
   // ⭐ 2026-10-08：实际数量 = 12 行 − 3 行 0 双 = 9（0 双的行加 0 ⇒ 与库存口径一致）。
   assert.equal(fields['实际数量'], 9, '实际数量只数真的到货的那些（0 双的行不影响合计）');
-  assert.equal(fields['发生金额'], AMOUNT);
+  assert.equal(fields['货单金额'], AMOUNT);
   // 「报货信息」（采购申请表）一个字都没写。
   assert.deepEqual(writesTo(harness.gateway, 'purchaseRequest'), []);
 });
@@ -488,81 +488,12 @@ test('⑧ 没有批次身份的孤儿调用：**不阻塞加库存**（既有能
 //   第二家验完才写「已到货」。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('⑨ 按供应商分批验收：第一家验完仍未到货，全部验完才已到货 + 累计实际数量/金额', async () => {
-  const records = baseRecords();
-  records.purchaseRequest = [
-    { record_id: 'req_a38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2, 供应商: '供应商A' } },
-    { record_id: 'req_b39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(39), 数量: 1, 供应商: '供应商B' } },
-  ];
-  const harness = makeHarness({ records });
-  const totalsCalls = [];
-  harness.service.writeBatchTotals = async (payload) => { totalsCalls.push(payload); return { updated: true }; };
-  const supplierIds = ['supplierA', 'supplierB'];
-
-  // 第一家：供应商A（2 双，100 元）
-  const r1 = await harness.service.confirmBatchArrival({
-    batch: {
-      batch_no: BATCH_NO, batch_record_id: BATCH_RECORD_ID,
-      request_ids: ['req_a38'], supplier_record_id: 'supplierA', supplier_record_ids: supplierIds,
-    },
-    actualAmount: 100,
-    operatorOpenId: 'ou_1',
-    scanLines: [{ product_record_id: PRODUCT_1, size: 38, quantity: 2 }],
-    supplierRecordId: 'supplierA',
-  });
-  assert.equal(r1.ok, true, '第一家验收成功 ✓');
-  assert.equal(batchFields(harness.records)['到货状态'], '未到货', '只验完一家 ⇒ 批次仍未到货 ✓');
-  assert.deepEqual(totalsCalls.map((c) => [c.actualQuantity, c.actualAmount]), [[2, 100]],
-    '第一家验完只写自己的累计值（2 双 / 100 元）✓');
-
-  // 第二家：供应商B（1 双，100 元）⇒ 全批验完
-  const r2 = await harness.service.confirmBatchArrival({
-    batch: {
-      batch_no: BATCH_NO, batch_record_id: BATCH_RECORD_ID,
-      request_ids: ['req_b39'], supplier_record_id: 'supplierB', supplier_record_ids: supplierIds,
-    },
-    actualAmount: 100,
-    operatorOpenId: 'ou_1',
-    scanLines: [{ product_record_id: PRODUCT_1, size: 39, quantity: 1 }],
-    supplierRecordId: 'supplierB',
-  });
-  assert.equal(r2.ok, true, '第二家验收成功 ✓');
-  assert.equal(batchFields(harness.records)['到货状态'], '已到货', '两家都验完 ⇒ 批次才已到货 ✓');
-  assert.deepEqual(totalsCalls.map((c) => [c.actualQuantity, c.actualAmount]), [[2, 100], [3, 200]],
-    '第二家验完写**累计**（2+1=3 双、100+100=200 元）✓');
-});
-
-test('⑩ ⭐ 注入 markSupplierArrived 时：以主表「供应商/已到货供应商」为准，不再看本地任务 allDone', async () => {
-  const records = baseRecords();
-  records.purchaseRequest = [
-    { record_id: 'req_a38', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(38), 数量: 2, 供应商: '供应商A' } },
-    { record_id: 'req_b39', fields: { 报货批次号: [BATCH_RECORD_ID], 编号: [PRODUCT_1], 尺码: sizeLink(39), 数量: 1, 供应商: '供应商B' } },
-  ];
-  const harness = makeHarness({ records });
-  const calls = [];
-  // 故意永远返回未全到货：即使两家本地任务都 posted，也不许写「已到货」
-  harness.service.markSupplierArrived = async ({ supplierRecordId }) => {
-    calls.push(supplierRecordId);
-    return { updated: true, all_arrived: false, expected_ids: ['supplierA', 'supplierB'] };
-  };
-  const supplierIds = ['supplierA', 'supplierB'];
-  for (const [requestId, supplierId, size] of [['req_a38', 'supplierA', 38], ['req_b39', 'supplierB', 39]]) {
-    const result = await harness.service.confirmBatchArrival({
-      batch: {
-        batch_no: BATCH_NO, batch_record_id: BATCH_RECORD_ID,
-        request_ids: [requestId], supplier_record_id: supplierId, supplier_record_ids: supplierIds,
-      },
-      actualAmount: 100,
-      operatorOpenId: 'ou_1',
-      scanLines: [{ product_record_id: PRODUCT_1, size, quantity: 1 }],
-      supplierRecordId: supplierId,
-      supplierRecordIds: supplierIds,
-    });
-    assert.equal(result.ok, true);
-  }
-  assert.deepEqual(calls, ['supplierA', 'supplierB'], '每家验收都会追加「已到货供应商」✓');
-  assert.equal(batchFields(harness.records)['到货状态'], '未到货',
-    '主表字段还没全到货 ⇒ 即使本地任务都 posted 也不许写已到货 ✓');
+test('⑨ 单批次验收完成直接已到货（不再比较供应商双字段）', async () => {
+  const harness = makeHarness();
+  const { result } = await arriveAndConfirm(harness);
+  assert.equal(result.ok, true);
+  assert.equal(batchFields(harness.records)['到货状态'], '已到货', '本批验收完成即可已到货 ✓');
+  assert.equal(batchFields(harness.records)['货单金额'], AMOUNT, '货单金额照常写 ✓');
 });
 
 test('⭐ 自定义尺码：buildPlan 把本批货品的额外尺码作为额外行带入入库计划', () => {

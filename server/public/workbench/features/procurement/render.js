@@ -7,6 +7,7 @@
  * 🔴 记录 ID 只作 `data-*` 内部主键，**不出现在展示文本里**。
  */
 import { escapeHtml } from '../../core/formatters.js';
+import { productActionsHtml } from './productActions.js';
 
 const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
   Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
@@ -113,6 +114,7 @@ export const replenishGroupHtml = (group, draft, store, config) => `<section cla
     <h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(config.card.replenishTotal, 0)}</div>
   </div>
+  ${productActionsHtml(group, config)}
   ${(group.sizes || []).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}
 </section>`;
 
