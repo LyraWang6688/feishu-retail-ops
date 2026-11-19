@@ -169,7 +169,7 @@ export function mountPurchaseAcceptanceDetail(host) {
     const parent = state.rows.find((row) => row.productId === productId);
     if (!parent) return;
     const row = {
-      uid: 'custom_' + Date.now() + '_' + Math.random().toString(16).slice(2),
+      uid: 'custom_' + crypto.randomUUID(),
       productId: parent.productId,
       product_record_id: parent.productId,
       itemNo: parent.itemNo,
