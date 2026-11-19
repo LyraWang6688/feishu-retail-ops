@@ -41,6 +41,8 @@ const nowIso = (now) => now().toISOString();
  */
 const createSampleImageBackfillService = ({
   gateway, driveService, jobs = null, config = SAMPLE_IMAGE_DRIVE, now = () => new Date(),
+  // 2026-11-19：同一按钮追加「其他配品」源；不传 ⇒ 行为与原来只有货品时完全一致。
+  extraSources = [],
 } = {}) => {
   if (!gateway) throw new Error('存量补齐缺少 gateway');
   if (!driveService || typeof driveService.syncRecord !== 'function') {
@@ -81,6 +83,12 @@ const createSampleImageBackfillService = ({
     return images.some((item) => item && item.file_token && isImageAttachment(item));
   };
 
+  const sources = [
+    {
+      key: 'product', driveService, isPending, maxRecords: config.backfill?.maxRecords,
+    },
+    ...(Array.isArray(extraSources) ? extraSources : []),
+  ];
   const status = () => ({ ...state });
 
   /**
@@ -96,29 +104,41 @@ const createSampleImageBackfillService = ({
       state.skipped = 0;
       state.failed = 0;
     }
-    const records = await gateway.listAll('product');
-    const pending = (records || []).filter(isPending);
-    const maxRecords = Number(config.backfill?.maxRecords) > 0 ? Number(config.backfill.maxRecords) : 0;
-    const targets = maxRecords ? pending.slice(0, maxRecords) : pending;
-    state.total = Math.max(state.total, targets.length);
+    const batches = [];
+    let totalTargets = 0;
+    for (const source of sources) {
+      const records = await gateway.listAll(source.key);
+      const pending = (records || []).filter(source.isPending);
+      const maxRecords = Number(source.maxRecords) > 0 ? Number(source.maxRecords) : 0;
+      const targets = maxRecords ? pending.slice(0, maxRecords) : pending;
+      batches.push({ source, pending, targets });
+      totalTargets += targets.length;
+    }
+    state.total = Math.max(state.total, totalTargets);
     if (attempt === 1) {
       logInfo('product.sample_image.drive.backfill.started', {
-        pending: pending.length, targets: targets.length, max_records: maxRecords,
+        pending: batches.reduce((sum, batch) => sum + batch.pending.length, 0),
+        targets: totalTargets,
+        sources: batches.map((batch) => ({ table: batch.source.key, targets: batch.targets.length })),
       });
     } else {
-      logInfo('product.sample_image.drive.backfill.retry', { attempt, pending: pending.length });
+      logInfo('product.sample_image.drive.backfill.retry', {
+        attempt, pending: batches.reduce((sum, batch) => sum + batch.pending.length, 0),
+      });
     }
 
     let attemptFailed = 0;
-    for (const record of targets) {
-      const recordId = record?.record_id;
-      if (!recordId) continue;
-      // eslint-disable-next-line no-await-in-loop —— 官方限制：上传不支持并发（5 QPS）
-      const result = await driveService.syncRecord(recordId, { reason: 'backfill' });
-      state.done += 1;
-      if (result?.status === 'synced') state.synced += 1;
-      else if (result?.status === 'failed') { state.failed += 1; attemptFailed += 1; }
-      else state.skipped += 1;
+    for (const batch of batches) {
+      for (const record of batch.targets) {
+        const recordId = record?.record_id;
+        if (!recordId) continue;
+        // eslint-disable-next-line no-await-in-loop —— 官方限制：上传不支持并发（5 QPS）
+        const result = await batch.source.driveService.syncRecord(recordId, { reason: 'backfill' });
+        state.done += 1;
+        if (result?.status === 'synced') state.synced += 1;
+        else if (result?.status === 'failed') { state.failed += 1; attemptFailed += 1; }
+        else state.skipped += 1;
+      }
     }
     return {
       ok: true,

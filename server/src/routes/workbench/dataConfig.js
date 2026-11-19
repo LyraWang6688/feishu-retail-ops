@@ -23,6 +23,8 @@ const express = require('express');
 const { logError } = require('../../utils/logger');
 const { V1BitableGateway } = require('../../services/v1BitableGateway');
 const { createSampleImageDriveService } = require('../../services/sampleImageDriveService');
+const { createAccessorySampleImageDriveService } = require('../../services/accessorySampleImageDriveService');
+const { ACCESSORY_SAMPLE_IMAGE_DRIVE } = require('../../config/accessorySampleImageDrive');
 const { createSampleImageBackfillService } = require('../../services/sampleImageBackfillService');
 // ⭐ 2026-11-10：存量补齐接**统一异步任务**（状态可查 / 失败发运营群 / 临时错误重试）。
 const { getAsyncJobService } = require('../../services/asyncJobRuntime');
@@ -35,9 +37,21 @@ const createWorkbenchDataConfigRoutes = ({ options = {} } = {}) => {
     if (backfill) return backfill;
     const gateway = options.gateway || new V1BitableGateway();
     const driveService = options.sampleImageDriveService || createSampleImageDriveService({ gateway });
+    const accessoryDrive = options.accessorySampleImageDriveService
+      || createAccessorySampleImageDriveService({ gateway, config: ACCESSORY_SAMPLE_IMAGE_DRIVE });
     // `options.asyncJobs` 显式注入（用例）；未注入 ⇒ 用进程级单例（关掉时为 null ⇒ service 退回进程内跑）
     const jobs = options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService();
-    backfill = createSampleImageBackfillService({ gateway, driveService, jobs });
+    backfill = createSampleImageBackfillService({
+      gateway,
+      driveService,
+      jobs,
+      extraSources: [{
+        key: 'accessory',
+        driveService: accessoryDrive,
+        isPending: accessoryDrive.isPending,
+        maxRecords: ACCESSORY_SAMPLE_IMAGE_DRIVE.backfill.maxRecords,
+      }],
+    });
     return backfill;
   };
 
