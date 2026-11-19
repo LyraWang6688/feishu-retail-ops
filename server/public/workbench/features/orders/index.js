@@ -1,19 +1,15 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml, money, statusClass } from '../../core/formatters.js';
 import { describeError, runWriteAction, showPageError } from '../../core/ui.js';
-import {
-  arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments, validateArrivalDocuments,
-  arrivalLineKey, arrivalSubmitLines, sampleChoiceProducts, markArrivalSubmitted,
-} from './acceptanceDoc.js';
+import { arrivalLineKey, arrivalSubmitLines } from './acceptanceDoc.js';
 
 // 兼容既有调用方/用例：这两个纯函数仍从 index.js 导出。
 export { arrivalLineKey, arrivalSubmitLines };
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
   SALES_SECTIONS, SALES_DELIVERY_PAGE,
-  ARRIVAL_CONFIRM, ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
+  ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
 } from '../../config/orders.js';
-import { ARRIVAL_FULL_API, ARRIVAL_FULL_FIELDS, ARRIVAL_FULL_TEXTS } from '../../config/orders.js';
 
 // 工作台【订单列表】—— 一级 tab 的第三个（**只剩三条路径**，业务负责人 2026-10-29 定稿）。
 //
@@ -146,8 +142,7 @@ const isArrivedBatch = (batch) => arrivalStatusOf(batch) === ARRIVAL_STATUS_ARRI
 export const NO_BATCH_KEY = '（无批次号）';
 
 // 2026-10-15 task-27: first screen = batch no + arrival status only; the purchase detail rows
-//   are loaded after she opens the disclosure (see arrivalDetailHtml / loadArrivalDetail below).
-//   (Kept in ASCII on purpose: test/workbenchAcceptanceInPlace.test.js AC-AW5 scans this window.)
+//   are on the independent acceptance detail page now (features/acceptance-detail).
 const batchSummaryOf = (batch) => {
   const rows = batch.rows || [];
   const quantity = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
@@ -187,9 +182,6 @@ const supplierKeyOfRow = (row = {}) => {
 export function groupAcceptanceUnits(rows = []) {
   const units = [];
   for (const batch of groupPurchaseOrders(rows).filter((item) => !isArrivedBatch(item))) {
-    // 只认主表「已到货供应商」（列表每行带过来），不依赖本地任务文件。
-    const accepted = new Set((batch.rows || [])
-      .flatMap((row) => (Array.isArray(row.arrived_supplier_ids) ? row.arrived_supplier_ids : [])));
     const bySupplier = new Map();
     for (const row of batch.rows || []) {
       const key = supplierKeyOfRow(row);
@@ -204,8 +196,6 @@ export function groupAcceptanceUnits(rows = []) {
       bySupplier.get(key).rows.push(row);
     }
     for (const group of bySupplier.values()) {
-      // 这一家已在主表「已到货供应商」里 ⇒ 不再出卡；批次还有别家没验 ⇒ 批次本身仍留着
-      if (group.supplier_record_id && accepted.has(group.supplier_record_id)) continue;
       units.push({
         batch_no: batch.batch_no,
         supplier_key: group.key,
@@ -321,58 +311,6 @@ export function purchaseOrdersHtml(rows = [], options = {}) {
     </div>`;
 }
 
-export function arrivalDetailHtml(rows = []) {
-  const list = Array.isArray(rows) ? rows : [];
-  if (!list.length) return `<p data-view="arrival-detail-empty">${escapeHtml(ARRIVAL_FULL_TEXTS.detailEmpty)}</p>`;
-  // 同一批次号内按「货号 · 颜色」分组（采购页卡片标题同口径）；组内按尺码给实际数量。
-  const groups = new Map();
-  for (const row of list) {
-    const itemNo = String(row.item_no || '').trim();
-    const color = String(row.color || '').trim();
-    const key = String(row.product_record_id || '').trim() || `${itemNo}|${color}`;
-    if (!groups.has(key)) groups.set(key, { itemNo, color, number: String(row.number || '').trim(), rows: [] });
-    groups.get(key).rows.push(row);
-  }
-  const headingOf = ({ itemNo, color, number }) => {
-    if (!itemNo) return number || color || ARRIVAL_FULL_TEXTS.detailGroupUnknown;
-    return color ? String(ARRIVAL_FULL_TEXTS.detailGroupLabel).split('{itemNo}').join(itemNo).split('{color}').join(color) : itemNo;
-  };
-  // 套用采购页卡片模板：.pr-group / .pr-size-row / .pr-stepper（样式复用 procurement.css）。
-  const groupHtml = [...groups.entries()].map(([key, group]) => {
-    const total = group.rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-    const totalText = String(ARRIVAL_FULL_TEXTS.detailGroupTotal || '').split('{total}').join(String(total));
-    const rowsHtml = group.rows.map((row) => `
-          <div class="pr-size-row" data-view="arrival-detail-row"
-              data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
-              data-size="${escapeHtml(String(row.size ?? ''))}"
-              data-declared="${escapeHtml(String(Number(row.quantity || 0)))}">
-            <div class="pr-size-row-head">
-              <div class="pr-size">${escapeHtml(String(row.size ?? ''))}</div>
-            </div>
-            <div class="pr-pick pr-pick-no-check">
-              <div class="pr-stepper">
-                <button type="button" data-action="arrival-step" data-delta="-1">−</button>
-                <input class="pr-qty line-actual" data-field="arrival-actual" inputmode="numeric"
-                  data-product-record-id="${escapeHtml(String(row.product_record_id || ''))}"
-                  data-size="${escapeHtml(String(row.size ?? ''))}"
-                  value="${escapeHtml(String(Number(row.quantity || 0)))}"
-                  placeholder="${escapeHtml(ARRIVAL_FULL_TEXTS.zeroMeansNotArrived)}"
-                  aria-label="${escapeHtml(ARRIVAL_FULL_TEXTS.actualQuantityLabel)}">
-                <button type="button" data-action="arrival-step" data-delta="1">+</button>
-              </div>
-            </div>
-          </div>`).join('');
-    return `
-        <section class="pr-group order-line-group" data-view="arrival-line-group" data-item-no="${escapeHtml(group.itemNo)}" data-color="${escapeHtml(group.color)}">
-          <div class="pr-group-head">
-            <h2 class="pr-group-name">${escapeHtml(headingOf(group))}</h2>
-            <div class="pr-group-total">${escapeHtml(totalText)}</div>
-          </div>${rowsHtml}
-        </section>`;
-  }).join('');
-  return `<div data-view="arrival-detail-list">${groupHtml}</div>`;
-}
-
 /**
  * ⭐⭐ 2026-10-11（方案甲之后的**补充入口**）：**逐件补「实收金额」**。
  *
@@ -399,7 +337,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     purchaseRows: [],
     // ⭐ 2026-11-09：供应商管理里的**全部供应商**（固定出现；来自配置表缓存）
     suppliers: [],
-    arrivalRowsByBatch: {},
     // ⭐ 2026-11-09：验收页第二层的"当前选中的供应商"（空 = 显示供应商卡片层）
     activeSupplierKey: '',
   };
@@ -576,141 +513,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
    * ⚠️ 金额必填（既有口径）；校验放在提交前，后端还会再判一次（两道）。
    */
   /** 明细（只读）：展开时拉一次 `GET /purchase/arrivals/detail` ✓ 失败给人话 ✗ */
-  async function loadArrivalDetail(host) {
-    const box = host.querySelector('[data-view="arrival-detail"]');
-    const batchNo = box?.dataset?.batch || '';
-    // ⭐ 2026-11-10：同一批次号可能有多家供应商的卡 ⇒ 明细键 = 批次号 × 供应商（否则互相覆盖）
-    const supplier = box?.dataset?.supplier || '';
-    const unitKey = `${batchNo}|${supplier}`;
-    if (!box || !batchNo || box.dataset.loaded === '1') return;
-    box.dataset.loaded = '1';
-    try {
-      const params = new URLSearchParams({ [ARRIVAL_FULL_FIELDS.batchNo]: batchNo });
-      if (supplier) params.set(ARRIVAL_FULL_FIELDS.supplierRecordId, supplier);
-      const res = await api.get(`${ARRIVAL_FULL_API.detail}?${params.toString()}`);
-      const rows = Array.isArray(res?.rows) ? res.rows : [];
-      // ⚠️ **按「批次 × 供应商」存**：她可能开了多家/多批 —— 提交时只能读**这一张卡**的明细 ✓（不许串 ✗）
-      state.arrivalRowsByBatch = { ...(state.arrivalRowsByBatch || {}), [unitKey]: rows };
-      box.innerHTML = arrivalDetailHtml(rows);
-    } catch (error) {
-      box.innerHTML = `<p>${escapeHtml(ARRIVAL_FULL_TEXTS.detailFailed)}</p>`;
-    }
-  }
-  async function submitArrival(button) {
-    const batchNo = button.dataset.batch || '';
-    const supplier = button.dataset.supplier || '';
-    const unitKey = `${batchNo}|${supplier}`;
-    const form = state.container.querySelector(
-      `[data-arrival-batch="${batchNo}"][data-arrival-supplier="${supplier}"]`,
-    );
-    const read = (name) => String(form?.querySelector(`[data-field="${name}"]`)?.value ?? '').trim();
-    const amountInput = form?.querySelector('[data-field="arrival-amount"]') || null;
-    const amountHint = form?.querySelector('[data-view="arrival-amount-hint"]') || null;
-    const rawAmount = read('arrival-amount');
-    // ⭐ 2026-10-16（她逐字：「数据表里已经没有到货文字说明（该列已从真表退场）了…你必须得删」）：工作台这条**不再有**
-    //    「到货说明」这个输入框 ⇒ 这里也不再有读值与必填（那条判据**随她这句一起退场** ✓）
-    if (!batchNo) return renderResult('这一行没有报货批次号，不能验收到货', true);
-    // ⭐ 2026-11-09（业务负责人：参考销售货品页的金额校验）：
-    //   未填 / 0 / 非法 ⇒ **不发请求**，原生 required 提示 + 聚焦输入框 + 字段旁人话（不只在页面底部提示）。
-    if (!/^\d+(\.\d+)?$/.test(rawAmount) || Number(rawAmount) <= 0) {
-      if (amountHint) {
-        amountHint.textContent = ARRIVAL_FULL_TEXTS.amountRequired;
-        amountHint.hidden = false;
-      }
-      amountInput?.focus();
-      if (typeof amountInput?.reportValidity === 'function') amountInput.reportValidity();
-      return renderResult('');
-    }
-    if (amountHint) amountHint.hidden = true;
-    // ⭐ 2026-11-14：验收单也必填；未选图不发请求，字段旁给提示并聚焦。
-    const docs = validateArrivalDocuments(form, ARRIVAL_FULL_TEXTS);
-    if (!docs.ok) return renderResult(docs.error, true);
-    // ⭐ 同上：点一下立刻有反馈 + 防连点（校验放在守卫**之前** —— 没填完不该置灰）
-    return runWriteAction(button, async () => {
-      renderResult('');
-      try {
-        // ⭐⭐ 2026-10-15（task-27 · 她逐字：「**实际到多少就是到多少**」）：
-        //   🔴 改前：没有自定义行 ⇒ 走 `ORDERS_API.arrivalConfirm`（= **全部按申请数到货**）✗
-        //      —— 与她的口径**正面冲突**（少到的会被按申请数补齐 ✗）。
-        //   改后：**一律走 `accept`**，`lines` = **她在明细里填的实际到货数量**（填 0 的那一行**不提交** ✓）
-        //      ＋ 她自行补充的行（自定义尺码 / 自定义货号）✓ —— **没有任何"按申请数补齐"的路径** ✗。
-        const actuals = {};
-        for (const input of form.querySelectorAll('[data-field="arrival-actual"]')) {
-          actuals[arrivalLineKey({
-            product_record_id: input.dataset.productRecordId, size: input.dataset.size,
-          })] = input.value;
-        }
-        // ⭐ 2026-11-09（业务负责人批注）：自定义尺码 / 自定义货号两个入口**删除** ⇒
-        //   这里只提交「她在明细里填的实际到货数量」（填 0 不提交；不按申请数补齐）。
-        const built = arrivalSubmitLines({
-          rows: (state.arrivalRowsByBatch || {})[unitKey] || [],
-          actuals,
-        });
-        // ⚠️ 「**没填**」与「填 0」是两件事：填 0 = 这一码没到（不提交 ✓）；没填 = **不猜** ⇒ 拦住 + 人话 ✗
-        if (!built.ok) {
-          const text = built.reason === 'actual_missing' ? ARRIVAL_FULL_TEXTS.actualQuantityRequired
-            : ARRIVAL_FULL_TEXTS.sizeInvalid;
-          return renderResult(text, true);
-        }
-        if (!built.lines.length) return renderResult(ARRIVAL_FULL_TEXTS.noArrivalLines, true);
-        // 2026-11-18：按本次实际到货数量 > 0 的尺码，判断哪些编号需要她选样品尺码。
-        //   一个弹窗分产品；全部选完才能确认入库；取消 = 回到验收页，不提交。
-        const sampleProducts = sampleChoiceProducts({
-          rows: (state.arrivalRowsByBatch || {})[unitKey] || [],
-          lines: built.lines,
-        });
-        let sampleChoices = {};
-        if (sampleProducts.length) {
-          // 弹窗模块按需加载：不拖慢验收首屏，也不影响既有页面初始解析。
-          const { openSampleChoiceModal } = await import('./sampleChoice.js');
-          const chosen = await openSampleChoiceModal({
-            products: sampleProducts,
-            texts: ARRIVAL_FULL_TEXTS,
-            escapeHtml,
-          });
-          if (!chosen) return false;
-          sampleChoices = chosen;
-        }
-        // ⭐ 2026-11-12（业务负责人）：验收单（拍照/选图）先上传拿 file_token，再随验收一起提交；
-        //   上传失败 ⇒ 不提交验收（如实报错）。
-        const uploadedDocs = await uploadArrivalDocuments({
-          api, endpoint: ARRIVAL_FULL_API.acceptanceDoc, files: docs.files, texts: ARRIVAL_FULL_TEXTS,
-        });
-        if (!uploadedDocs.ok) return renderResult(uploadedDocs.error, true);
-        const counterpartyDocuments = uploadedDocs.documents;
-        const result = await api.post(ARRIVAL_FULL_API.accept, {
-          [ARRIVAL_FULL_FIELDS.batchNo]: batchNo,
-          // ⭐ 2026-11-10：只验这一家供应商的明细子集；后端按「批次 × 供应商」独立验收/幂等
-          ...(supplier ? { [ARRIVAL_FULL_FIELDS.supplierRecordId]: supplier } : {}),
-          [ARRIVAL_FULL_FIELDS.actualAmount]: Number(rawAmount),
-          [ARRIVAL_FULL_FIELDS.lines]: built.lines,
-          // 2026-11-18：始终带这个字段（哪怕空对象）⇒ 后端能区分“确实没有需要选的编号”
-          //   和“需要选却没选”；不再保留旧页面的自动第一双兜底。
-          [ARRIVAL_FULL_FIELDS.sampleChoices]: sampleChoices,
-          ...(counterpartyDocuments.length
-            ? { [ARRIVAL_FULL_FIELDS.counterpartyDocuments]: counterpartyDocuments } : {}),
-        });
-        // ⭐ 2026-11-09（业务负责人：回执统一成 toast，**不保留旧兜底**）：
-        //   accept 必回 `redirect_url`（`submitToastUrl` 唯一真源）⇒ 回工作台，shared/toast.js 弹统一文案。
-        //   ⚠️ 不回 `redirect_url` = 后端漏字段（不该发生）⇒ 按失败如实报，绝不留在本页假装成功 ✗。
-        if (!result?.redirect_url) throw new Error(ARRIVAL_FULL_TEXTS.redirectMissing);
-        markArrivalSubmitted({ button, form, texts: ARRIVAL_FULL_TEXTS });
-        window.location.assign(result.redirect_url);
-        return true;
-      } catch (error) {
-        renderResult(describeError(error), true);
-        return false;
-      }
-    }, '正在验收入库…', { keepDisabled: (accepted) => accepted === true });
-  }
-
- 
   function bind() {
-    state.container.addEventListener('change', (event) => {
-      const input = event.target.closest?.('[data-field="arrival-doc"]');
-      if (!input) return;
-      updateArrivalDocHint(input, ARRIVAL_FULL_TEXTS);
-    });
     state.container.addEventListener('click', (event) => {
       const sectionCard = event.target.closest('[data-orders-section]');
       if (sectionCard) {
@@ -740,26 +543,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       const action = trigger.dataset.action;
       if (action === 'refresh') return loadPurchaseOrders();
       if (action === 'back') return renderList();
-      if (action === 'arrival-step') {
-        const input = trigger.closest('.pr-stepper')?.querySelector('input');
-        if (input) {
-          const next = Math.max(0, Number(input.value || 0) + (Number(trigger.dataset.delta) || 0));
-          input.value = String(next);
-        }
-        return undefined;
-      }
-      if (action === 'submit-arrival') return submitArrival(trigger);
       return undefined;
     });
-    state.container.addEventListener('toggle', (event) => {
-      const node = event.target;
-      if (!node?.matches?.('details[data-action-block="verify-arrival"]')) return;
-      // ⭐ 2026-11-09（业务负责人真机）：展开明细后，批次卡不再充当"固定容器"
-      //   ⇒ 给 article.order-card 打标，CSS 去掉它的内边距/边框/背景/阴影，内容铺满屏宽。
-      const card = node.closest('.order-card');
-      if (card) card.classList.toggle('order-card--detail-open', node.open);
-      if (node.open) loadArrivalDetail(node);
-    }, true);
   }
 
   return {

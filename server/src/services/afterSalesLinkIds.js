@@ -15,7 +15,7 @@
  *     空关联 = `[{ "table_id": "tbl…", "text_arr": [], "type": "text" }]`（没有 record_ids 键）。
  *   · 售后**不使用** `search` / `getBatch`；所以连 `link_record_ids` 都不收。
  *
- * 先例：`services/acceptanceSupplierProgress.js` 的 `arrivedSupplierIds()` 也是同样收窄。
+ * 先例：`services/acceptanceSupplierProgress.js` 的关联字段读取也曾采用同样的窄形状口径。
  *
  * 收益：2026-11-10 那个真 bug（退货流水把**明细 id** 写进指向销售主表的关联字段）
  * 正是 permissive helper 掩盖出来的——严格解析能让"写错表/写错字段"更早暴露。
