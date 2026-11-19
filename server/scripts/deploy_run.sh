@@ -89,6 +89,16 @@ echo "Deploying version $APP_VERSION (commit $APP_COMMIT) at $APP_DEPLOYED_AT"
 if [ "$CHECK_ONLY" -eq 1 ]; then
   echo "(--check-only) 跳过 pm2 重启，只对已经在跑的服务做版本自检。"
 else
+  # ── 2026-11-19：重启前最后一步检查 queued/running 异步任务 ────────────────
+  # 背景：库存手工调整任务在 17:29 开始，17:35 部署重启时仍 running，
+  #       30 分钟后被 recovery 置 failed，只能人工核对。
+  # 规则：有活跃任务 / 任务文件读不懂 ⇒ 中止部署，绝不重启（fail closed）。
+  echo "Checking queued/running async jobs (read-only)..."
+  if ! node "$PROJECT_DIR/scripts/check_running_async_jobs.js"; then
+    echo "❌ 部署已中止：还有 queued/running 异步任务（或有任务文件无法确认），未重启进程。" >&2
+    echo "   等任务结束后重新执行 deploy_run.sh；不要强行重启。" >&2
+    exit 1
+  fi
   # ⚠️ 这里用 startOrReload + --update-env（2026-10-07 00:16 的那次改动）：
   #   应用【已在运行】时 `pm2 start` 不更新进程 env，那时 /health 会一直回报旧版本。
   #   ⚠️ 但【别再假设 startOrReload + --update-env 就一定成功】——
