@@ -37,13 +37,13 @@
 .sq-table tr:last-child td { border-bottom:0; }
 .sq-orders { display:flex; flex-direction:column; gap:10px; }
 .sq-order { border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); overflow-x:auto; overflow-y:hidden; }
-.sq-order-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 10px; align-items:start; padding:12px; background:var(--surface-soft); border-bottom:1px solid var(--border-light); }
-.sq-order-title { min-width:0; white-space:nowrap; }
+.sq-order-head { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"title total" "pays pays"; gap:6px 10px; align-items:start; padding:12px; background:var(--surface-soft); border-bottom:1px solid var(--border-light); }
+.sq-order-title { grid-area:title; display:flex; align-items:baseline; gap:8px; min-width:0; white-space:nowrap; }
 .sq-order-title b { font-size:var(--font-size-sm); white-space:nowrap; }
-.sq-order-total { justify-self:end; font-size:var(--font-size-base); font-variant-numeric:tabular-nums; }
+.sq-order-total { grid-area:total; justify-self:end; font-size:var(--font-size-base); font-variant-numeric:tabular-nums; }
 .sq-order-time { color:var(--text-muted); font-size:var(--font-size-xs); white-space:nowrap; }
-.sq-order-pays { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:4px; justify-self:end; max-width:70%; }
-.sq-pay-tag { display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border-radius:6px; background:var(--surface-soft); color:var(--text-secondary); font-size:11px; }
+.sq-order-pays { grid-area:pays; display:flex; flex-wrap:wrap; justify-content:flex-start; gap:4px; justify-self:start; max-width:100%; }
+.sq-pay-tag { display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border-radius:6px; background:var(--surface-soft); color:var(--text-secondary); font-size:11px; white-space:nowrap; flex:none; }
 .sq-pay-tag b { color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
 .sq-detail-row { display:grid; grid-template-columns:minmax(min-content,3fr) 36px 64px auto; gap:5px; align-items:center; padding:9px 12px; border-top:1px solid var(--border-light); font-size:var(--font-size-sm); }
 .sq-detail-product { min-width:min-content; white-space:nowrap; overflow-wrap:normal; }
