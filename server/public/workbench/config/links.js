@@ -61,9 +61,6 @@ export const ACCESSORY_SALE_FORM_URL =
 export const LABEL_BATCH_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnoFRAGvPyAWmSephrLpOvgh';
 
-/** 「库存查询」URL（当前工作台仍保留该外链配置）。 */
-export const INVENTORY_QUERY_PAGE_URL =
-  'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnaSFKbJAci7YxvC1AXpweBc';
 
 /**
  * 飞书 **AppLink：在端内打开一个 web-view** 的基址 —— AGENTS §13 实查过的那条官方格式
@@ -71,8 +68,8 @@ export const INVENTORY_QUERY_PAGE_URL =
  *
  * `https://applink.feishu.cn/client/web_url/open?mode=<mode>&url=<encodeURIComponent 后的网址>`
  *
- * ⚠️ **URL 字面量只在本文件出现一次** —— `config/query.js` / `features/query/index.js` 里
- *    **不许再写 `feishu.cn`**（那条规矩有测试钉着，见 `test/workbenchTwoTabsAndQueryEntries.test.js` AC4）。
+ * ⚠️ **URL 字面量只在本文件出现一次** —— `config/domains.js` / `features/domains/**` 里
+ *    **不许再写 `feishu.cn`**。
  */
 export const FEISHU_APPLINK_WEB_URL_OPEN = 'https://applink.feishu.cn/client/web_url/open';
 
@@ -80,13 +77,7 @@ export const FEISHU_APPLINK_WEB_URL_OPEN = 'https://applink.feishu.cn/client/web
  * ⭐⭐ **外链怎么"到达"** —— 配置先行（业务负责人 **2026-10-12**）。三个值都是**显式**的
  * （**不写 `||` 兜底**：清空 / 改错一个值必须能真的改变行为）。
  *
- * 她的原话（逐字）：
- *   「关于**销售查询**，我希望在点击了『销售查询』这个按钮之后，**系统可以直接自动跳转到我们的
- *    多维表格页面**，而**不需要让我再去点一下那个消息查询的卡片**。」
- *   「同理来说，**库存的全仓查询**也是……」
- *   「同理，我们『**货品**』的 tab 页里面不是有一个『**货品上新**』的子页面吗？也希望点击
- *    『货品上新』之后，**它能直接跳转到我的表单链接**，**不用我再去点击那个消息卡片了**」
- *   「『销售查询』和『全仓查询』**(乙) 飞书【端内】打开（AppLink，手机体验更好）**」
+ * 现在仍使用直跳的是「货品上新 / 配品」；销售查询已改为自研页。
  *
  *   `LINK_DIRECT_JUMP_ENABLED` —— 显式布尔：`true`（当前）= 点子 tab **一次就跳**、**不渲染**
  *       中间那张卡；`false` = 回到老路（渲染卡片，她自己点）。
