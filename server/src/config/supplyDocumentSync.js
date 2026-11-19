@@ -5,11 +5,15 @@
  * 退货：        我方单据 → 供应单据/我方
  * 同步成功后由后端勾选采购主表「单据同步」。
  */
+const { DRIVE_SYNC } = require('./driveSync');
+
+const DESTINATION = DRIVE_SYNC.destinations.supplyDocuments;
+
 module.exports = Object.freeze({
-  rootFolderToken: 'GeE2fZVzUliEz3dNFaKcDgGynig',
+  rootFolderToken: DESTINATION.rootFolderToken,
   folders: Object.freeze({
-    our: 'QXT9fkXkClKicndPJWOcigOFnDg',
-    counterparty: 'DwRdfewUvlwdurdd6oBcM6ttnvv',
+    our: DESTINATION.our.folderToken,
+    counterparty: DESTINATION.counterparty.folderToken,
   }),
   fields: Object.freeze({
     behavior: '发生行为',
@@ -27,10 +31,5 @@ module.exports = Object.freeze({
     unknownSupplier: '未标注供应商',
     unknownBehavior: '未标行为',
   }),
-  operations: Object.freeze({
-    download: '下载供应单据',
-    list: '列供应单据目录',
-    delete: '覆盖同名供应单据',
-    upload: '上传供应单据',
-  }),
+  operations: DESTINATION.operations,
 });

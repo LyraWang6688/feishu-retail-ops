@@ -26,7 +26,10 @@
  *   逻辑里一个字符串一个数字都不写死（`config/sampleImageDrive.js` 是唯一真源）。
  */
 
-const { readInt, readString } = require('./envValue');
+const { readInt } = require('./envValue');
+const { DRIVE_SYNC } = require('./driveSync');
+
+const DESTINATION = DRIVE_SYNC.destinations.sampleImages;
 
 /**
  * ⭐⭐ 2026-11-13 真机：批量上新时新增记录**间歇性没同步**——日志显示
@@ -49,15 +52,11 @@ const READ_RETRY = Object.freeze({
  *   —— **不删**（只覆盖"我们按命名模板生成的名字"）。
  */
 const FOLDER = Object.freeze({
-  token: readString(process.env, 'SAMPLE_IMAGE_DRIVE_FOLDER_TOKEN', 'NIxifKs4ulS5uudlGP2cKtDBnkd'),
+  token: DESTINATION.folderToken,
   // `drive.file.upload_all` 的 parent_type：云空间文件夹 = `explorer`
-  parentType: 'explorer',
+  parentType: DESTINATION.parentType || DRIVE_SYNC.parentType,
   // 只用于日志 / 人话提示（不参与任何请求）
-  displayUrl: readString(
-    process.env,
-    'SAMPLE_IMAGE_DRIVE_FOLDER_URL',
-    'https://scnzoiwpgxik.feishu.cn/drive/folder/NIxifKs4ulS5uudlGP2cKtDBnkd',
-  ),
+  displayUrl: DESTINATION.folderUrl,
 });
 
 /**
@@ -108,13 +107,13 @@ const NUMBER_WAIT = Object.freeze({
  * `skip` = 同名已存在就不传（更保守，但换图后云盘会停旧图）。
  * ⚠️ 本轮"只新增"，同名极少；默认按 2026-10-13 任务底稿的建议 = `replace`。
  */
-const OVERWRITE = readString(process.env, 'SAMPLE_IMAGE_DRIVE_OVERWRITE', 'replace');
+const OVERWRITE = DESTINATION.overwrite;
 
 /**
  * 单条记录最多处理几张样例图（防一张记录挂几十张图把事件拖死）。
  * 超出的不传、记一条 warn（**不静默**）；`0` = 不限。
  */
-const MAX_IMAGES = readInt(process.env, 'SAMPLE_IMAGE_DRIVE_MAX_IMAGES', 10, { min: 0, max: 100 });
+const MAX_IMAGES = DESTINATION.maxFiles;
 
 /**
  * ⭐ 本功能**没有开关**（业务负责人 2026-11-10：「**不需要加开关**」）——
@@ -147,13 +146,7 @@ const FIELDS = Object.freeze({
  * ⚠️ 中文文案放在 **config**（`views`/`services` 里新增中文会被硬编码中文闸门记成新增存量债；
  *    config 目录不在扫描范围内 ✓）。
  */
-const DRIVE_OPERATIONS = Object.freeze({
-  download: '下载样例图素材',
-  upload: '上传样例图到云盘',
-  list: '列出云盘文件夹',
-  delete: '删除云盘同名旧文件',
-  transfer: '转移云盘文件所有者',
-});
+const DRIVE_OPERATIONS = DESTINATION.operations;
 
 /**
  * ⭐⭐ 2026-11-10 业务负责人：「**我们把这些图片的所有者都硬编码为赵瑞玲吧**」
@@ -167,10 +160,7 @@ const DRIVE_OPERATIONS = Object.freeze({
  *   ⚠️ 两个都空 ⇒ 不转移（所有者 = 应用「来财」），并**在启动日志里如实提示**。
  *   ⚠️ 赵瑞玲测试账号的 open_id 是**另一个（测试）应用**的 ⇒ 生产要用本应用口径的 open_id 或邮箱。
  */
-const OWNER = Object.freeze({
-  openId: readString(process.env, 'SAMPLE_IMAGE_DRIVE_OWNER_OPEN_ID', ''),
-  email: readString(process.env, 'SAMPLE_IMAGE_DRIVE_OWNER_EMAIL', ''),
-});
+const OWNER = DESTINATION.owner;
 
 const SAMPLE_IMAGE_DRIVE = Object.freeze({
   folder: FOLDER,
