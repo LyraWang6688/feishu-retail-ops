@@ -68,13 +68,11 @@ const cardsHtml = () => `
   </div>
   <p class="placeholder-note" data-view="domain-action-note"></p>`;
 
-const backBtn = (view) => `<button class="pp-back" type="button" data-pp-back="${view}">${esc(T.back)}</button>`;
-
 export const productProfilePageHtml = () => `
   <div class="domain-page" data-page-kind="product-profile">
     <div data-pp="cards">${cardsHtml()}</div>
     <div data-pp="new" hidden>
-      <div class="pp-head">${backBtn('new')}<h2>${esc(T.newTitle)}</h2></div>
+      <div class="pp-head"><h2>${esc(T.newTitle)}</h2></div>
       <a class="pp-primary" href="${esc(T.formUrl)}" target="_blank" rel="noopener">${esc(T.newAction)}</a>
       <div class="pp-search"><input data-pp-search placeholder="${esc(T.searchPlaceholder)}" autocomplete="off"></div>
       <p class="pp-note" data-pp-count hidden></p>
@@ -83,7 +81,7 @@ export const productProfilePageHtml = () => `
       <div class="pp-modal" data-pp-modal hidden><button type="button" data-pp-close>×</button><img data-pp-large alt="样例图大图"></div>
     </div>
     <div data-pp="complete" hidden>
-      <div class="pp-head">${backBtn('complete')}<h2>${esc(T.completeTitle)}</h2></div>
+      <div class="pp-head"><h2>${esc(T.completeTitle)}</h2></div>
       <div class="pp-search"><input data-pp-complete-search placeholder="${esc(T.completeSearchPlaceholder)}" autocomplete="off"></div>
       <p class="pp-note" data-pp-complete-search-count hidden></p>
       <div data-pp-complete-search-results hidden></div>
@@ -139,8 +137,6 @@ export function createProductProfileModule() {
         }
         const view = event.target.closest?.('[data-pp-view]')?.dataset.ppView;
         if (view) return show(view);
-        const back = event.target.closest?.('[data-pp-back]')?.dataset.ppBack;
-        if (back) return show('cards');
         if (event.target.closest?.('[data-pp-close]') || event.target.matches?.('[data-pp-modal]')) {
           const modal = host.querySelector('[data-pp-modal]');
           if (modal) modal.hidden = true;

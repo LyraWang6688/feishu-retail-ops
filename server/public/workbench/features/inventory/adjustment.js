@@ -398,22 +398,22 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       state.host = host;
       host.innerHTML = `<div data-manual="cards"></div>
         <div data-view="manual-single" class="hidden">
-          <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>单双调整</h2></div>
+          <div class="page-head"><h2>单双调整</h2></div>
           <div class="row-card"><div class="row-top"><div class="row-num" data-view="single-label"></div><span class="tag season">编辑中</span></div>
             <div data-view="single-rows" style="margin-top:10px"></div>
             <button class="btn small" type="button" data-add-size style="margin-top:8px">＋ 添加尺码</button>
             <p class="hint" data-view="single-note"></p>
-            <div class="row-actions"><button class="btn primary" type="button" data-save>保存库存调整</button><button class="btn" type="button" data-clear-stock>${INVENTORY_MANUAL_TEXTS.clearStock}</button><button class="btn" type="button" data-back>取消</button></div>
+            <div class="row-actions"><button class="btn primary" type="button" data-save>保存库存调整</button><button class="btn" type="button" data-clear-stock>${INVENTORY_MANUAL_TEXTS.clearStock}</button><button class="btn" type="button" data-cancel>取消</button></div>
           </div>
         </div>
         <div data-view="manual-picker" class="hidden">
-          <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>${escapeHtml(INVENTORY_MANUAL_TEXTS.singlePickTitle)}</h2></div>
+          <div class="page-head"><h2>${escapeHtml(INVENTORY_MANUAL_TEXTS.singlePickTitle)}</h2></div>
           <div class="pp-search"><input data-single-search placeholder="${escapeHtml(INVENTORY_MANUAL_TEXTS.singleSearchPlaceholder)}" autocomplete="off"></div>
           <p class="pp-note" data-single-status></p>
           <div data-single-results></div>
         </div>
         <div data-view="manual-batch" class="hidden">
-          <div class="page-head"><button class="back" type="button" data-back>‹ 返回</button><h2>批量调整</h2></div>
+          <div class="page-head"><h2>批量调整</h2></div>
           <div class="batch-section"><h3>当季调整</h3>
             <label class="field"><select data-field="batch-category"></select></label>
             <div class="row-actions"><button class="btn small primary" type="button" data-action="season-set" data-season="true">当季</button><button class="btn small" type="button" data-action="season-set" data-season="false">库存</button></div>
@@ -445,8 +445,8 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
         singleTimer = setTimeout(() => { void loadSingleSearch(host, q); }, 250);
       });
       host.addEventListener('click', (event) => {
-        const back = event.target.closest?.('[data-back]');
-        if (back) { resetSingleEntry(); show('cards'); return; }
+        const cancel = event.target.closest?.('[data-cancel]');
+        if (cancel) { resetSingleEntry(); show('cards'); return; }
         const manual = event.target.closest?.('[data-manual="single"], [data-manual="batch"]');
         if (manual) {
           if (manual.dataset.manual === 'single') {

@@ -120,6 +120,11 @@ function bindMainTabClicks() {
       //      （`workbenchScanEntry` / `workbenchMainTitle` 等）⇒ 一个属性都不加 ✓ 判据不放宽 ✓
       //    ⚠️ 一次**点击**记一条（服务端按窗口判 `ui.tap.repeated`）—— 埋点失败静默 ✓
       trackTap(`tab:${tab.dataset.module}`);
+      // 2026-11-19：无「返回」按钮后，再点一次当前一级 tab 也要回到该页第一屏。
+      if (tab.classList.contains('active')) {
+        const module = modules.get(tab.dataset.module);
+        if (module?.reset?.()) return;
+      }
       activateModule(tab.dataset.module, { userInitiated: true });
     });
   });

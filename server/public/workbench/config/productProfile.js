@@ -40,7 +40,6 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   completeSearchPlaceholder: '按货号搜索待完善货品',
   completeSearchEmpty: '没有匹配的待完善货品。',
   completeAction: '去完善',
-  back: '‹ 返回',
   searchFailed: '搜索失败，请稍后重试',
   incompleteFailed: '货品完善读取失败，请稍后重试',
   formUrl: PRODUCT_NEW_FORM_URL,

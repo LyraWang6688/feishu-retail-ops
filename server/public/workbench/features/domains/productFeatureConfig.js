@@ -23,7 +23,7 @@ const sectionHtml = (dimension, editing) => `
 const panelHtml = (dimensions, editing, deleting, activeKey) => {
   const active = dimensions.find((dimension) => dimension.key === activeKey) || dimensions[0];
   return `
-  <div class="pf-head"><button class="pp-back" type="button" data-feature-back>${escapeHtml(T.back)}</button><h2>${escapeHtml(T.title)}</h2></div>
+  <div class="pf-head"><h2>${escapeHtml(T.title)}</h2></div>
   <div class="pp-tabs">${dimensions.map((dimension) => `<button class="pp-tab ${dimension.key === active?.key ? 'active' : ''}" type="button" data-feature-tab="${escapeHtml(dimension.key)}"><b>${escapeHtml(dimension.label)}</b><span>${escapeHtml(fill(T.count, { count: dimension.count || 0 }))}</span></button>`).join('')}</div>
   <div data-feature-sections>${active ? sectionHtml(active, editing) : ''}</div>
   ${deleting ? `<div class="pf-modal"><div class="pf-modal-card"><h3>${escapeHtml(T.deleteTitle)}</h3><p>${escapeHtml(fill(T.deleteHint, { table: deleting.tableName }))}</p><p class="pf-modal-tag">${escapeHtml(deleting.tag)}</p><div class="pf-modal-actions"><button class="btn" type="button" data-feature-delete-cancel>${escapeHtml(T.cancel)}</button><button class="btn danger" type="button" data-feature-delete-confirm>${escapeHtml(T.confirmDelete)}</button></div></div></div>` : ''}`;
@@ -46,11 +46,6 @@ export function openProductFeatureConfig(host) {
   let activeKey = '';
   let editing = null;
   let deleting = null;
-  const close = () => {
-    panel.hidden = true;
-    if (cards) cards.classList.remove('hidden');
-    if (note) note.classList.remove('hidden');
-  };
   const render = () => {
     panel.innerHTML = panelHtml(dimensions, editing, deleting, activeKey);
     const input = panel.querySelector('.pf-edit-input');
@@ -65,7 +60,7 @@ export function openProductFeatureConfig(host) {
       deleting = null;
       render();
     } catch {
-      panel.innerHTML = `<div class="pf-head"><button class="pp-back" type="button" data-feature-back>${escapeHtml(T.back)}</button><h2>${escapeHtml(T.title)}</h2></div><p class="pf-empty">${escapeHtml(T.loadFailed)}</p>`;
+      panel.innerHTML = `<div class="pf-head"><h2>${escapeHtml(T.title)}</h2></div><p class="pf-empty">${escapeHtml(T.loadFailed)}</p>`;
     }
   };
   const showError = (key, text) => {
@@ -76,7 +71,6 @@ export function openProductFeatureConfig(host) {
   const duplicates = (key, value, exceptRecordId = '') => (dimensionOf(key)?.items || [])
     .some((item) => item.recordId !== exceptRecordId && item.tag.toLowerCase() === value.toLowerCase());
   panel.addEventListener('click', async (event) => {
-    if (event.target.closest?.('[data-feature-back]')) { close(); return; }
     const tab = event.target.closest?.('[data-feature-tab]');
     if (tab) { activeKey = tab.dataset.featureTab; editing = null; deleting = null; render(); return; }
     if (event.target.closest?.('[data-feature-cancel]')) { editing = null; render(); return; }
