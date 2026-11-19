@@ -53,6 +53,12 @@ const makePinnedRepo = () => {
     path.join(dir, 'server', 'ecosystem.config.js'));
   // ⚠️ 软链**真实脚本**（不复制）：测的永远是仓库里那一份，不会漂。
   fs.symlinkSync(SCRIPT, path.join(dir, 'server', 'scripts', 'deploy_run.sh'));
+  // 2026-11-19：deploy_run.sh 重启前会调用同目录的 running-jobs 检查；
+  // 临时仓库必须也有它，否则测的是"脚本缺失"而不是部署逻辑。
+  fs.copyFileSync(
+    path.join(REPO, 'server', 'scripts', 'check_running_async_jobs.js'),
+    path.join(dir, 'server', 'scripts', 'check_running_async_jobs.js'),
+  );
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   git('init', '-q');
   git('config', 'user.email', 'pinned@local');

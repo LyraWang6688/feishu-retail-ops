@@ -383,11 +383,14 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
 
 ### 配套的两条（同样必须遵守）
 
-1. **部署前检查「最近几分钟有没有业务写入」**。
+1. **部署前检查「最近几分钟有没有业务写入」＋「有没有 queued/running 异步任务」**。
    ⚠️ **只看 `server/data/lark_mvp_tasks/*.json` 的 status 是不够的** ——
    「已经点了确认、正在逐条写入」这个阶段**不在那些状态里**，会漏判成"没有在跑"。
    判据应包含最近的：`inventory.change.applied` · `bitable.record.created` ·
    `bitable.record.updated` · `purchase.webhook.accepted` · `purchase.arrival.card.sent`。
+   ⭐ 2026-11-19 起：`deploy_run.sh` 在 `pm2` 重启前自动执行
+   `node scripts/check_running_async_jobs.js`，扫描 `server/data/async_jobs/*.json`；
+   只要有 `queued` / `running` 或状态读不懂，**部署直接中止、不重启进程**。
 2. **部署顺序不变**：**先跑部署闸门（`deploy_build.sh`），闸门绿了才重启**。
    闸门失败**绝不重启** —— 它会挡住"字段改名没同步"这类静默失效。
 
