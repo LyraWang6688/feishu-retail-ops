@@ -281,6 +281,13 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       state.host.querySelector(`select[data-row="${index}"][data-k="state"]`)?.focus();
       return showPageError(INVENTORY_MANUAL_TEXTS.stateRequired);
     }
+    // 2026-11-19：这一款最终必须有一双样品；没有就拦在保存前并发请求。
+    const hasSample = filled.some((row) => String(row.state) === '样品' && Number(row.quantity) > 0);
+    if (!hasSample) {
+      const modal = $(state.host, '[data-view="sample-modal"]');
+      if (modal) modal.hidden = false;
+      return;
+    }
     const rows = filled.map((row) => ({
       size: Number(row.size), state: String(row.state || ''), quantity: Number(row.quantity),
     }));
@@ -415,6 +422,11 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
             <label class="field"><select data-field="status-filter" aria-label="${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterLabel)}"><option value="all">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterAll)}</option><option value="extra">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueExtraGroup)}</option><option value="empty">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueEmpty)}</option><option value="missing">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueMissing)}</option></select></label>
             <div data-view="batch-violations"></div></div>
         </div>
+        <div class="manual-modal" data-view="sample-modal" hidden>
+          <div class="manual-modal-card"><h3>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredTitle)}</h3><p class="hint">${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredBody)}</p>
+            <div class="row-actions"><button class="btn primary" type="button" data-sample-confirm>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredConfirm)}</button></div>
+          </div>
+        </div>
         <div class="manual-modal" data-view="clear-modal" hidden>
           <div class="manual-modal-card"><h3>${INVENTORY_MANUAL_TEXTS.clearConfirmTitle}</h3><p class="hint" data-view="clear-body"></p>
             <div class="row-actions"><button class="btn" type="button" data-clear-cancel>${INVENTORY_MANUAL_TEXTS.clearCancel}</button><button class="btn primary" type="button" data-clear-confirm>${INVENTORY_MANUAL_TEXTS.clearConfirm}</button></div>
@@ -457,6 +469,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
           void selectProduct(pick.dataset.pickProduct).catch((error) => showPageError(describeError(error)));
           return;
         }
+        if (event.target.closest?.('[data-sample-confirm]')) { $(state.host, '[data-view="sample-modal"]').hidden = true; return; }
         if (event.target.closest?.('[data-clear-stock]')) { openClearConfirm(); return; }
         if (event.target.closest?.('[data-clear-cancel]')) { $(state.host, '[data-view="clear-modal"]').hidden = true; return; }
         if (event.target.closest?.('[data-clear-confirm]')) { void clearAll(); return; }
