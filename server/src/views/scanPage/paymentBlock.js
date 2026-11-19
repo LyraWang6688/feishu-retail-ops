@@ -222,9 +222,15 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   // ══════════════════════════════════════════════════════════════════════════
   // 🔴 2026-10-29：没有开关了 ⇒ 「再加一个货品」只要这一单有明细就给 ✓
   const multiItemAdd = lines.length > 0;
-  // 候选尺码 = 实时库存里真的有记录的尺码（不按状态筛选），与视图的行同源。
+  // 候选尺码 = 实时库存里真的有记录、且至少有一条「门盒 / 空状态」可转成样品的尺码。
+  // 只有样品 / 只有仓库的尺码不能做补样品候选（后端 promote 也只认门盒 / 空状态）。
+  const promotableCountOf = (row) => (Array.isArray(row?.cells) ? row.cells : [])
+    .reduce((sum, cell) => {
+      const key = String(cell?.key ?? '');
+      return sum + (key === SAMPLE_PROMOTION.texts.tagDoorbox || key === '' ? Number(cell?.count || 0) : 0);
+    }, 0);
   const sampleCandidates = (Array.isArray(view?.rows) ? view.rows : [])
-    .filter((row) => !row?.unknown_size && Number(row?.total) > 0)
+    .filter((row) => !row?.unknown_size && Number(row?.total) > 0 && promotableCountOf(row) > 0)
     .map((row) => String(row.size_text));
   const multiItemTitleHtml = multiItemAdd
     ? `<h3 class="multi-item__title">${escapeHtml(MULTI_ITEM_RENDER_TEXTS.title)}</h3>\n`

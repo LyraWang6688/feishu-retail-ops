@@ -63,7 +63,8 @@ test('AC-SAMPLE-TAG1 尺码卡带状态标签；仅样品尺码带 data-sample-o
     assert.equal(response.status, 200);
     const html = await response.text();
     assert.match(html, /data-sample-promotion/);
-    assert.match(html, /data-sample-candidates="\[&quot;40&quot;,&quot;41&quot;,&quot;42&quot;\]"/);
+    assert.match(html, /data-sample-candidates="\[&quot;40&quot;,&quot;42&quot;\]"/);
+    assert.doesNotMatch(html, /data-sample-candidates="[^"]*&quot;41&quot;[^"]*"/, '只有样品的尺码不能做补样品候选');
     assert.match(html, /data-size="40"[^>]*data-sample-only="0"/);
     assert.match(html, /data-size="41"[^>]*data-sample-only="1"/);
     assert.match(html, /data-size="42"[^>]*data-sample-only="0"/);
