@@ -37,14 +37,19 @@ const listAllRecords = async ({
 
 /** 按条件读：GET + filter 公式（返回体与 `listAll` 逐字同形状）；`maxRecords` 读够就停。 */
 const listByFilterRecords = async ({
-  client, appToken, tableId, tableName, expression, pageSize, maxRecords, assertSuccess,
+  client, appToken, tableId, tableName, expression, fieldNames = [], pageSize, maxRecords, assertSuccess,
 }) => {
   const records = [];
   let pageToken;
   do {
     const response = await client.bitable.appTableRecord.list({
       path: { app_token: appToken, table_id: tableId },
-      params: { page_size: pageSize, page_token: pageToken, filter: expression },
+      params: {
+        page_size: pageSize,
+        page_token: pageToken,
+        filter: expression,
+        ...(fieldNames.length ? { field_names: JSON.stringify(fieldNames) } : {}),
+      },
     });
     assertSuccess(response, `按条件读取“${tableName}”记录`);
     records.push(...(response.data?.items || []));

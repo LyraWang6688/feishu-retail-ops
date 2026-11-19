@@ -36,7 +36,7 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
       error.statusCode = 400;
       throw error;
     }
-    const data = await reader.listDeliveryData({ query: true });
+    const data = await reader.listDeliveryData({ query: true, from: fromText, to: toText });
     const payments = (data.all_payments || []).filter((row) => (
       SALES_QUERY.paymentStatuses.includes(row.status)
       && row.received_at != null
