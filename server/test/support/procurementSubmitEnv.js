@@ -91,9 +91,11 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters, notific
     logger: {},
   });
   const openId = 'ou_procurement';
-  const draftOf = (key = SUBMIT_KEY) => (data.get(`session_${openId}`) || {})[config.draft.ordersField]?.[
-    `${config.draft.orderKeyPrefix}:${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`
-  ];
+  const draftOf = (key = SUBMIT_KEY) => {
+    const orders = (data.get(`session_${openId}`) || {})[config.draft.ordersField] || {};
+    const prefix = `${config.draft.orderKeyPrefix}:${key.replace(/[^a-zA-Z0-9_-]/g, '_')}:`;
+    return Object.entries(orders).find(([orderKey]) => orderKey.startsWith(prefix))?.[1];
+  };
   return { service, data, draftOf, scheduled, purchaseCalls, behaviorCalls, backfillCalls, openId };
 };
 const itemsOf = (ids = ['recA']) => ids.map((id) => ({

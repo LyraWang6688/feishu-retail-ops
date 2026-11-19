@@ -147,6 +147,9 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
       itemNo: textOf(dto.itemNo),
       color: textOf(dto.color),
       supplierRecordId: dto.supplierRecordId || '',
+      product_missing_text: dto.product_missing_text || '',
+      product_record_url: dto.product_record_url || '',
+      product_adjust_url: dto.product_adjust_url || '',
     };
   };
   const groups = [...groupsByKey.values()].map((group) => {

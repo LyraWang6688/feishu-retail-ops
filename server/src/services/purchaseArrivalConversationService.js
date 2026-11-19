@@ -373,41 +373,9 @@ class PurchaseArrivalConversationService {
           });
         }
       }
-      // ⭐ 2026-11-10（业务负责人方案）：以主表「供应商」Lookup 与「已到货供应商」为准判断全批。
-      //   没有注入实现时（单测/旧调用方）退回任务存储的旧判据。
-      let allArrived = totals?.allDone === true;
-      if (typeof this.markSupplierArrived === 'function') {
-        try {
-          const arrivedState = await this.markSupplierArrived({
-            batchNo,
-            batchRecordId: String(task.batch_record_id || draft.batch_record_id || '').trim(),
-            supplierRecordId: scopedSupplier,
-            correlation: { task_id: taskId, batch_no: batchNo },
-          });
-          allArrived = arrivedState?.all_arrived === true;
-          if (arrivedState?.missing_names?.length) {
-            logWarn('purchase.arrival.reconcile.supplier_lookup_unmapped', {
-              task_id: taskId, batch_no: batchNo,
-              missing_names: arrivedState.missing_names.slice(0, 10),
-              note: '「供应商」Lookup 里有名称在「供应商管理」找不到 ⇒ 不标已到货（不猜）',
-            });
-          }
-        } catch (error) {
-          allArrived = false;
-          logWarn('purchase.arrival.reconcile.arrived_suppliers_failed', {
-            task_id: taskId, batch_no: batchNo, error: String(error?.message || error).slice(0, 200),
-          });
-        }
-      }
-      if (allArrived) {
-        await this.notifyBatchArrived(batchNo, { correlation: { task_id: taskId } });
-      } else {
-        logInfo('purchase.arrival.reconcile.supplier_pending', {
-          task_id: taskId, batch_no: batchNo, supplier_record_id: scopedSupplier,
-          done_suppliers: totals?.doneCount || 0, total_suppliers: totals?.total || 0,
-          note: '这一批还有别的供应商没验收 ⇒ 批次保持未到货',
-        });
-      }
+      // 2026-11-19：一批只有一个供应商 ⇒ 验收完直接写本批「已到货」。
+      //   不再读「供应商」Lookup，也不写「已到货供应商」（生产已无此列）。
+      await this.notifyBatchArrived(batchNo, { correlation: { task_id: taskId } });
     } else {
       await this.notifyBatchArrived(this.taskBatchNo(task, draft), { correlation: { task_id: taskId } });
     }

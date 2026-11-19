@@ -43,7 +43,7 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
   assert.equal(all[0].supplier_record_id, 'sup_2');
   assert.deepEqual(all[0].arrived_supplier_ids, [], '未到货批次没有已到货供应商 ✓');
   const arrivedRow = (await service.listPurchaseRequests({ batchNo: 'BH-001' }))[0];
-  assert.deepEqual(arrivedRow.arrived_supplier_ids, ['sup_1'], '主表「已到货供应商」投影到列表行 ✓');
+  assert.deepEqual(arrivedRow.arrived_supplier_ids, [], '生产已无「已到货供应商」✓');
 
   const filtered = await service.listPurchaseRequests({ batchNo: 'BH-001' });
   assert.equal(filtered.length, 1);
@@ -89,7 +89,7 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
   assert.deepEqual(all.map((row) => row.batch_no), ['BH-002', 'BH-001']);
   const arrived = all.find((row) => row.batch_no === 'BH-001');
   assert.equal(arrived.arrival_status, '已到货');
-  assert.deepEqual(arrived.arrived_supplier_ids, ['sup_1'], '到货面板也带「已到货供应商」ids ✓');
+  assert.deepEqual(arrived.arrived_supplier_ids, [], '生产已无「已到货供应商」✓');
   // ⛔ 那两个投影**已删除**（列都没有了，留着只会永远读出空串、把"没记"伪装成"记了但空"）。
   assert.equal('confirm_status' in arrived, false, '确认状态投影已退场');
   assert.equal('acceptance_text' in arrived, false, '验收原话投影已退场');

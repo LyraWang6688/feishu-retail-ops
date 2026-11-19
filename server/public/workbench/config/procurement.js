@@ -93,6 +93,12 @@ export const PROCUREMENT_UI = Object.freeze({
     specialSummary: '特殊码 · {count} 个（默认 0 双，点开选择）',
     tags: Object.freeze({ spot: '现货', prepaid: '预订' }),
   }),
+  productActions: Object.freeze({
+    adjustLabel: '库存调整',
+    gapLabel: '资料不齐：{missing}',
+    gapLinkLabel: '去补全',
+    gapSeparator: ' · ',
+  }),
   units: Object.freeze({
     pair: '双',
     pickedLabel: '已选采购',

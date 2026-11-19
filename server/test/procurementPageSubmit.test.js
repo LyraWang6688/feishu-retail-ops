@@ -81,7 +81,7 @@ test('2026-11-08 后台写成功后 ⇒ 回填「销售明细.采购明细」（
   assert.equal(result.ok, true);
   await env.scheduled[0].run();
   assert.equal(env.backfillCalls.length, 1, '采购写成功后回填一次');
-  assert.equal(env.backfillCalls[0].taskId, `scan_replenish_${SUBMIT_KEY}`);
+  assert.ok(env.backfillCalls[0].taskId.startsWith(`scan_replenish_${SUBMIT_KEY}`));
 });
 
 test('2026-11-08 后台写失败 ⇒ 不回填（采购事实没落地，不能假装已报货）', async () => {
@@ -101,7 +101,7 @@ test('AC-P13/P14 成功：种子草稿 + 只排一次后台；后台跑 = 一次
   assert.equal(result.message, SUBMIT_TOAST.text);
   const draft = env.draftOf();
   assert.equal(draft.status, 'draft');
-  assert.equal(draft.submit_key, SUBMIT_KEY);
+  assert.ok(draft.submit_key.startsWith(SUBMIT_KEY));
   assert.equal(draft.items[0].supplier_record_id, 'recSupplier', '供应商由服务端按记录ID权威反查');
   // Bug-2 回归：batch 形状归一化后，payload 不许出现 `[object Object]`、颜色必须解析出来
   assert.equal(draft.items[0].number, 'no_recA');
@@ -110,7 +110,7 @@ test('AC-P13/P14 成功：种子草稿 + 只排一次后台；后台跑 = 一次
   assert.equal(/\[object Object\]/.test(JSON.stringify(draft.items)), false);
   assert.equal(env.scheduled.length, 1);
   assert.equal(env.scheduled[0].chain, 'replenish');
-  assert.equal(env.scheduled[0].submitKey, SUBMIT_KEY);
+  assert.ok(env.scheduled[0].submitKey.startsWith(SUBMIT_KEY));
   assert.equal(env.behaviorCalls.length, 1, '采购行为在排后台之前当场解析');
 
   const backgroundResult = await env.scheduled[0].run();
@@ -212,4 +212,28 @@ test('AC-P14 后台写入抛错 ⇒ 不假成功：HTTP 已 accepted，但会话
   const draft = env.draftOf();
   assert.equal(draft.status, 'failed');
   assert.match(String(draft.last_error), /bitable down/);
+});
+
+test('AC-P16 一次提交 3 家供应商 ⇒ 拆成 3 个独立任务/批次（含未标注供应商）', async () => {
+  const { PF } = require('./support/procurementSubmitEnv');
+  const withSupplier = (id, supplierId) => {
+    const base = productRecord(id);
+    return {
+      ...base,
+      fields: {
+        ...base.fields,
+        [PF.supplier]: supplierId ? { link_record_ids: [supplierId] } : undefined,
+      },
+    };
+  };
+  const env = makeEnv({ products: [withSupplier('recA', 'supA'), withSupplier('recB', 'supB'), withSupplier('recC', '')] });
+  const result = await env.service.submit({ openId: env.openId, submitKey: SUBMIT_KEY, items: itemsOf(['recA', 'recB', 'recC']) });
+  assert.equal(result.ok, true);
+  assert.equal(env.scheduled.length, 3, '3 家供应商 ⇒ 3 个后台任务');
+  const keys = env.scheduled.map((job) => job.submitKey);
+  assert.equal(new Set(keys).size, 3, '每个供应商任务键不同');
+  for (const job of env.scheduled) await job.run();
+  assert.equal(env.purchaseCalls.length, 3, '每家供应商各走一次既有写入件');
+  const suppliers = env.purchaseCalls.map((call) => call.payload.items[0].supplier_record_id);
+  assert.deepEqual(suppliers.sort(), ['', 'supA', 'supB'].sort(), '未标注供应商单独一组');
 });

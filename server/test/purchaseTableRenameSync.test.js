@@ -54,7 +54,7 @@ test('A1 schema 表名 = 采购明细（「信息填写」整段已随入口退�
   //    （两张表的 tableId / 语义键 / 字段名一个都没动，只读核过生产真表。）
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '采购明细');
   // 同一轮一起改的那张
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '采购主表');
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '供应主表');
 });
 
 test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列、采购行为不映射', () => {
@@ -83,7 +83,7 @@ test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列�
   // ⭐ 2026-11-10（业务负责人）：主表「供应商」列**重新加回**，是 Lookup（type 19，只读）——
   //   自动带出这一批采购明细的供应商名称；代码只读、不写。
   assert.equal(batch.supplier, '供应商', '主表供应商 = Lookup（只读）');
-  assert.equal(batch.arrivedSuppliers, '已到货供应商', '新增多选单向关联「已到货供应商」');
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'arrivedSuppliers'), false, '生产已无「已到货供应商」');
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.supplier, '供应商');
   // ⛔ 同日：「验收原话」「确认状态」两列在真表上也没有了 ⇒ 映射一起删除。
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'acceptanceText'), false);
@@ -154,7 +154,7 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点 = 「报货
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'confirmStatus'), false);
   assert.equal(batch.arrivalStatus, '到货状态', '到货状态照旧（这一条本来就有）');
   assert.equal(batch.actualQuantity, '实际数量');
-  assert.equal(batch.actualAmount, '发生金额');
+  assert.equal(batch.actualAmount, '货单金额');
 
   // ③ ⚠️ 「到货日」「验收人」在真表上是**飞书自动字段**（更新时间 / 创建人）⇒ 不建映射、不写。
   //    只读需要时才会加，加的时候也要认清"它是自动的"——现在两处都不需要。
@@ -175,7 +175,7 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点 = 「报货
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseReport, undefined, '「信息填写」整段已删除');
   // ⚠️ 2026-10-07 深夜她**又**把这张表从「具体信息」改名为「**报货信息**」（tableId 不变）。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest.tableName, '采购明细');
-  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '采购主表');
+  assert.equal(V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.tableName, '供应主表');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

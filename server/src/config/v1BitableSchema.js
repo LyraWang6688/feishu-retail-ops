@@ -569,7 +569,7 @@ const V1_BITABLE_SCHEMA = {
       //    ⛔ 字段名**不许**改成「采购单号」（业务负责人 2026-10-12 定的）：
       //      闸门与 schema 按**列名**核（改了闸门直接判红），而且界面上会与她 Base 的列名对不上
       //      ⇒ 留待她**连列名一起改**时再同步。
-      tableName: '采购主表',
+      tableName: '供应主表',
       // Current V1 tenant default; forks can override it with the environment variable.
       tableId: getEnv('FEISHU_V1_PURCHASE_ORDER_BATCH_TABLE_ID'),
       fields: {
@@ -607,10 +607,7 @@ const V1_BITABLE_SCHEMA = {
         //   自动带出这一批采购明细里的供应商名称（多供应商时以逗号分隔）。
         //   ⇒ 只读：映射只用于**读**（判断"这一批有哪些供应商"）；代码不许写它。
         supplier: '供应商',
-        // ⭐ 2026-11-10（业务负责人新增）：「已到货供应商」= SingleLink（type 18，multiple=true，
-        //   关联「供应商管理」）—— 每验收完一家，把该供应商 record_id 追加进来；
-        //   它与 Lookup「供应商」的集合相等 ⇒ 这一批所有供应商都验完 ⇒ 写「已到货」。
-        arrivedSuppliers: '已到货供应商',
+        // 2026-11-19：生产「供应主表」已没有「已到货供应商」；验收改为单批次直接已到货。
         // 🔴 2026-10-18（业务负责人）：采购主表的「供应商」列曾删除 ——
         //   2026-11-10 她重新加回（见上：Lookup 只读）；旧注释保留作历史沿革。
         // ⛔ 「到货文字说明（该列已从真表退场）」(`acceptanceText`) 与「确认状态」(`confirmStatus`) 两行映射
@@ -651,7 +648,7 @@ const V1_BITABLE_SCHEMA = {
         //     若真表是文本列，写数值可能被判 `*ConvFail` —— 那种情况**停下来报告**，
         //     不要改成"写字符串"了事（会与数字列冲突）。
         actualQuantity: '实际数量',
-        actualAmount: '发生金额',
+        actualAmount: '货单金额',
       },
     },
     // ⚠️ 这里原先有 `purchaseInbound`（表名「采购入库」，tableId `tblK3Uzd0nN1GJrr`）
