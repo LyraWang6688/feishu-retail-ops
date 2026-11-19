@@ -36,3 +36,23 @@ test('AC-SAMPLE-FRONT2 数量 0 不会进候选；没有需要选的编号返回
     lines: [{ productRecordId: 'p1', size: 40, quantity: 1 }],
   }), []);
 });
+
+test('AC-SAMPLE-FRONT3 验收明细页转换后的 camelCase 字段也能识别', () => {
+  const products = sampleChoiceProducts({
+    rows: [{
+      product_record_id: 'p1', item_no: 'YA8902', color: '黑色',
+      needsSampleChoice: true, hasStock: false, hasSample: false,
+    }, {
+      product_record_id: 'p2', item_no: 'A1', color: '黑',
+      needsSampleChoice: false, hasStock: true, hasSample: true,
+    }],
+    lines: [
+      { productRecordId: 'p1', size: 39, quantity: 1 },
+      { productRecordId: 'p2', size: 40, quantity: 1 },
+    ],
+  });
+  assert.equal(products.length, 1, 'camelCase 的 needsSampleChoice 必须能触发弹窗');
+  assert.equal(products[0].productRecordId, 'p1');
+  assert.equal(products[0].hasStock, false);
+  assert.deepEqual(products[0].candidates.map((item) => item.size), [39]);
+});

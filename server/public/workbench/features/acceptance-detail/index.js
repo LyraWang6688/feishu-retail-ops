@@ -6,6 +6,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { describeError, showPageError } from '../../core/ui.js';
+import { showToast } from '../shared/toast.js';
 import {
   arrivalDocFieldHtml, updateArrivalDocHint, uploadArrivalDocuments,
   validateArrivalDocuments, arrivalSubmitLines, sampleChoiceProducts,
@@ -113,7 +114,7 @@ export function mountPurchaseAcceptanceDetail(host) {
   const batchNo = String(params.get('batchNo') || '').trim();
   const supplierRecordId = String(params.get('supplierRecordId') || '').trim();
   const supplierName = String(params.get('supplierName') || '').trim();
-  const state = { host, batchNo, supplierRecordId, supplierName, rows: [] };
+  const state = { host, batchNo, supplierRecordId, supplierName, rows: [], submitting: false };
 
   const groups = () => groupRows(state.rows);
   const totalsOf = () => {
@@ -218,46 +219,74 @@ export function mountPurchaseAcceptanceDetail(host) {
     return true;
   };
 
+  const amountInputOf = () => host.querySelector('[data-field="arrival-amount"]');
+  const amountHintOf = () => host.querySelector('[data-view="arrival-amount-hint"]');
+  const clearAmountHint = () => {
+    const hint = amountHintOf();
+    if (hint) { hint.textContent = ''; hint.hidden = true; }
+  };
+  const submitButtonOf = () => host.querySelector('[data-view="arrival-submit"]');
+  const setSubmitBusy = (busy, text = ARRIVAL_FULL_TEXTS.submitting) => {
+    const button = submitButtonOf();
+    if (!button) return;
+    if (busy) button.disabled = true;
+    else button.disabled = false;
+    button.textContent = busy ? text : ORDERS_TEXTS.arrivalSubmit;
+  };
+
   const submit = async () => {
+    if (state.submitting) return;
+    state.submitting = true;
     showPageError('');
+    clearAmountHint();
+    setSubmitBusy(true, ARRIVAL_FULL_TEXTS.submitting);
+    const finish = (message = '', { toast = false } = {}) => {
+      state.submitting = false;
+      setSubmitBusy(false);
+      if (!message) return;
+      if (toast) showToast(message, { durationMs: 6000 });
+      else showPageError(message);
+    };
+
     const form = host.querySelector('[data-arrival-form]');
-    const amount = Number(String(host.querySelector('[data-field="arrival-amount"]')?.value || '').replace(/[¥,，\s]/g, ''));
+    const amountInput = amountInputOf();
+    const amount = Number(String(amountInput?.value || '').replace(/[¥,，\s]/g, ''));
     if (!Number.isFinite(amount) || amount <= 0) {
-      const hint = host.querySelector('[data-view="arrival-amount-hint"]');
+      const hint = amountHintOf();
       if (hint) { hint.textContent = ARRIVAL_FULL_TEXTS.amountRequired; hint.hidden = false; }
-      const amountInput = host.querySelector('[data-field="arrival-amount"]');
       amountInput?.focus();
       amountInput?.reportValidity?.();
+      finish();
       return;
     }
     const docs = validateArrivalDocuments(form, ARRIVAL_FULL_TEXTS);
-    if (!docs.ok) return;
-    if (!validateRows()) return;
+    if (!docs.ok) { finish(); return; }
+    if (!validateRows()) { finish(); return; }
     const built = arrivalSubmitLines({ rows: state.rows, actuals: collectActuals() });
     if (!built.ok) {
-      showPageError(built.reason === 'actual_missing'
+      finish(built.reason === 'actual_missing'
         ? ARRIVAL_FULL_TEXTS.actualQuantityRequired : ARRIVAL_FULL_TEXTS.sizeInvalid);
       return;
     }
     if (!built.lines.length) {
-      showPageError(ARRIVAL_FULL_TEXTS.noArrivalLines);
+      finish(ARRIVAL_FULL_TEXTS.noArrivalLines);
       return;
     }
     const products = sampleChoiceProducts({ rows: state.rows, lines: built.lines });
     let sampleChoices = {};
     if (products.length) {
       sampleChoices = await openSampleChoiceModal({ products, texts: ARRIVAL_FULL_TEXTS, escapeHtml });
-      if (!sampleChoices) return;
+      if (!sampleChoices) { finish(); return; }
     }
+    setSubmitBusy(true, ARRIVAL_FULL_TEXTS.uploading);
     const uploaded = await uploadArrivalDocuments({
       api, endpoint: ARRIVAL_FULL_API.acceptanceDoc, files: docs.files, texts: ARRIVAL_FULL_TEXTS,
     });
     if (!uploaded.ok) {
-      showPageError(uploaded.error);
+      finish(uploaded.error);
       return;
     }
-    const button = host.querySelector('[data-view="arrival-submit"]');
-    if (button) button.disabled = true;
+    setSubmitBusy(true, ARRIVAL_FULL_TEXTS.submitting);
     try {
       const result = await api.post(ARRIVAL_FULL_API.accept, {
         batchNo: state.batchNo,
@@ -270,8 +299,8 @@ export function mountPurchaseAcceptanceDetail(host) {
       if (!result?.redirect_url) throw new Error(ARRIVAL_FULL_TEXTS.redirectMissing);
       window.location.assign(result.redirect_url);
     } catch (error) {
-      if (button) button.disabled = false;
-      showPageError(describeError(error));
+      const message = describeError(error) || ARRIVAL_FULL_TEXTS.acceptFailed;
+      finish(message, { toast: true });
     }
   };
 
@@ -297,11 +326,18 @@ export function mountPurchaseAcceptanceDetail(host) {
         actual: Number(input.quantity || 0),
         custom: false,
         needsSampleChoice: input.needs_sample_choice === true,
+        hasStock: input.has_stock === true,
+        hasSample: input.has_sample === true,
       })).filter((row) => row.productId);
       state.rows = rows;
       host.innerHTML = shellHtml(batchNo, supplierName);
       renderProducts();
       host.addEventListener('input', (event) => {
+        const amountInput = event.target.closest?.('[data-field="arrival-amount"]');
+        if (amountInput) {
+          const hint = host.querySelector('[data-view="arrival-amount-hint"]');
+          if (hint) { hint.textContent = ''; hint.hidden = true; }
+        }
         const input = event.target.closest?.('[data-field="arrival-actual"]');
         if (input) updateActual(input.dataset.rowUid, input.value);
         if (event.target.closest?.('[data-field="custom-size"]')) {
