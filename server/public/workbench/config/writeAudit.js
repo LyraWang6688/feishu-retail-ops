@@ -4,7 +4,6 @@ export const WRITE_AUDIT_PAGE = Object.freeze({
 
 export const WRITE_AUDIT_TEXTS = Object.freeze({
   title: '数据写入审计',
-  back: '‹ 返回',
   recentTitle: '过去 24 小时写入',
   recentLoading: '正在读取过去 24 小时写入…',
   empty: '过去 24 小时没有写入记录。',

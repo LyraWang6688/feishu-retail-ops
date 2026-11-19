@@ -7,7 +7,6 @@ export const PRODUCT_FEATURES_API = Object.freeze({
 
 export const PRODUCT_FEATURES_TEXTS = Object.freeze({
   title: '产品特点配置',
-  back: '‹ 返回',
   loading: '正在读取已有标签…',
   loadFailed: '标签读取失败，请稍后重试',
   addPlaceholder: '输入新标签',

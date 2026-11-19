@@ -43,6 +43,23 @@ export function createDomainModule(domainId) {
 
   const hostOf = (pageId) => state.container?.querySelector(`[data-domain-host="${pageId}"]`);
 
+  /**
+   * 2026-11-19：所有内页不再提供「返回」按钮后，当前 active 子 tab 再点一次
+   * 必须能把该页重置回第一屏（货品资料四张卡 / 库存手工调整卡片 / 配置审计卡片）。
+   * 用 remount 而不是每个模块各写一份 reset：overlay、表单临时态都会被清掉。
+   */
+  function resetPage(pageId) {
+    const page = domain.pages.find((item) => item.id === pageId);
+    const host = hostOf(pageId);
+    if (!page || !host || !state.mounted.has(pageId)) return false;
+    state.mounted.delete(pageId);
+    state.orderModules.delete(pageId);
+    state.labelPrintModules.delete(pageId);
+    host.innerHTML = '';
+    activate(pageId);
+    return true;
+  }
+
   function activate(pageId) {
     const page = domain.pages.find((item) => item.id === pageId) || domain.pages[0];
     const previous = state.active;
@@ -108,6 +125,8 @@ export function createDomainModule(domainId) {
   }
 
   return {
+    /** 一级 tab 再点一次：重置当前子页（无返回按钮后的统一退出路径）。 */
+    reset() { return resetPage(state.active); },
     mount(container, initial = {}) {
       state.container = container;
       // ⭐ 2026-11-17：深链可以点名子页与货品（扫码页「库存调整」按钮）。
@@ -141,6 +160,11 @@ export function createDomainModule(domainId) {
           //    （目标 URL 全部来自配置；空 href 不产生目标 ⇒ 回落到切页 + 不可点卡片，没有死链）。
           const action = resolveTabClick(page);
           if (action.jump) return void window.location.assign(action.jump);
+          // 当前子 tab 再点一次 = 退出内页、回到本页第一屏。
+          if (page.id === state.active && state.mounted.has(page.id)) {
+            resetPage(page.id);
+            return undefined;
+          }
           activate(action.activate);
           return undefined;
         }

@@ -15,7 +15,6 @@
 
 export const AFTER_SALES_PAGE = {
   title: '售后单',
-  back: '← 返回工作台',
   // 只读候选接口（后端 `server/src/routes/workbenchOrderActions.js` 的 scan-candidates）
   scanCandidatesApi: '/api/workbench/sales/after-sales/scan-candidates',
   // 换尺码：按销售扫码页口径取「现货 / 预定 / 特殊码」三组尺码的只读接口（本地预览由 preview 服务提供；

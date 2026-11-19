@@ -106,7 +106,6 @@
 /* ── 货品资料（2026-11-10）：搜索 / 货品完善 / 同步样例图 ───────────────── */
 .pp-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 .pp-head h2{margin:0;font-size:17px}
-.pp-back{border:0;background:transparent;color:var(--primary);font-size:14px;padding:4px 0;cursor:pointer}
 .pp-primary{display:block;text-align:center;text-decoration:none;border-radius:10px;padding:13px;background:var(--primary);color:var(--surface);font-size:16px;font-weight:600;margin-bottom:12px}
 .pp-search input{width:100%;box-sizing:border-box;border:1px solid var(--control-border);border-radius:10px;padding:12px;font-size:16px;background:var(--surface);color:var(--text)}
 .pp-search input:focus{outline:2px solid var(--primary-soft);border-color:var(--primary)}
@@ -129,7 +128,6 @@
 /* 手工调整（2026-11-11 前端替换） */
 .page-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .page-head h2 { margin: 0; font-size: var(--font-size-lg); }
-.back { border: 0; background: transparent; color: var(--primary); font-size: 14px; padding: 2px 0; cursor: pointer; }
 .hint { font-size: 12px; color: var(--text-secondary); line-height: 1.6; margin: 10px 0; }
 .batch-section { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px; margin-bottom: 10px; }
 .batch-section h3 { margin: 0 0 8px; font-size: var(--font-size-md); }
