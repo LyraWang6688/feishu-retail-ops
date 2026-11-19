@@ -265,7 +265,7 @@ const createSampleImageBackfillService = ({
     return status();
   };
 
-  return { start, status, statusWithJob, waitForIdle, isPending };
+  return { start, status, statusWithJob, waitForIdle };
 };
 
 module.exports = { createSampleImageBackfillService };

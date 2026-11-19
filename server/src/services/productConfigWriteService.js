@@ -108,4 +108,4 @@ const createProductConfigWriteService = ({ gateway, asyncJobs } = {}) => {
   return { submit, execute };
 };
 
-module.exports = { createProductConfigWriteService, RESOURCES, ACTIONS };
+module.exports = { createProductConfigWriteService };
