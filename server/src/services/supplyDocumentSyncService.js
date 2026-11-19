@@ -11,6 +11,7 @@
  */
 const { textValue } = require('./v1BitableGateway');
 const { extraOfAttachment } = require('./driveApi');
+const { createDriveFileSyncService } = require('./driveFileSyncService');
 const { logInfo, logWarn } = require('../utils/logger');
 const CONFIG = require('../config/supplyDocumentSync');
 
@@ -34,27 +35,25 @@ const safePart = (value) => String(value || '')
 
 const createSupplyDocumentSyncService = ({ gateway, config = CONFIG } = {}) => {
   if (!gateway) throw new Error('SupplyDocumentSyncService requires gateway');
+  const driveFiles = createDriveFileSyncService({
+    gateway, operations: config.operations, overwrite: config.overwrite || 'replace',
+  });
 
   const syncFile = async ({ attachment, folderToken, prefix, correlation }) => {
-    if (!gateway.drive) throw new Error('gateway.drive 未挂载，无法同步供应单据');
     const baseName = safePart(attachment.name) || attachment.fileToken;
     const fileName = safePart(`${prefix}_${baseName}`).slice(0, 180);
-    const content = await gateway.drive.downloadMedia(
-      attachment.fileToken, config.operations.download, { extra: attachment.extra },
-    );
-    const existing = await gateway.drive.listDriveFolder(folderToken, config.operations.list);
-    const sameName = (existing || []).filter((item) => item.type === 'file' && item.name === fileName);
-    for (const item of sameName) {
-      await gateway.drive.deleteDriveFile(item.token, config.operations.delete);
-    }
-    const fileToken = await gateway.drive.uploadDriveFile({
-      folderToken, fileName, content, operation: config.operations.upload,
+    const result = await driveFiles.syncAttachment({
+      attachment: { ...attachment, name: fileName },
+      folderToken,
+      fileName,
+      operations: config.operations,
+      overwrite: config.overwrite || 'replace',
     });
     logInfo('supply.document.sync.file', {
       batch_no: correlation?.batch_no || '', folder: folderToken,
-      file_name: fileName, file_token: fileToken, overwritten: sameName.length,
+      file_name: fileName, file_token: result.fileToken, overwritten: result.overwritten,
     });
-    return { fileName, fileToken, overwritten: sameName.length };
+    return { fileName, fileToken: result.fileToken, overwritten: result.overwritten };
   };
 
   const syncBatch = async ({ batchNo = '', batchRecordId = '', supplierName = '', supplierNames = [] } = {}) => {

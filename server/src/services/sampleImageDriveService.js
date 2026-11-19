@@ -37,9 +37,8 @@
 const path = require('node:path');
 
 const { logInfo, logWarn, logError } = require('../utils/logger');
-// ⭐ 2026-11-17：高级权限的多维表格下载素材要带 `extra`（附件 tmp_url 里自带）。
-const { extraOfAttachment } = require('./driveApi');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { createDriveFileSyncService } = require('./driveFileSyncService');
 const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 // ⭐ 2026-11-13：读记录遇飞书 1254607 / 5xx / 限流时**就地短重试**（单条事件链路没人替它重跑）
 const { resolveTransientRetryConfig } = require('../config/pushRetry');
@@ -177,6 +176,9 @@ const createSampleImageDriveService = ({
   };
 
   const owner = config.owner || {};
+  const driveFiles = createDriveFileSyncService({
+    gateway, operations: ops, overwrite: config.overwrite, owner,
+  });
 
   const imagesOf = (fields) => {
     const value = fields?.[sampleImageField];
@@ -248,11 +250,8 @@ const createSampleImageDriveService = ({
         record_id: id, reason, sample_image_count: targets.length, item_no: nameBase.itemNo, color: nameBase.color, number: nameBase.number,
       });
 
-      // 文件夹里已有的文件（一次列出；同名覆盖直接沿用这个快照）
-      const existingFiles = await drive.listDriveFolder(folderToken, ops.list);
-      const existingByName = new Map(
-        (existingFiles || []).filter((file) => file?.name).map((file) => [file.name, file]),
-      );
+      // 文件夹里已有的文件（一次列出；同名覆盖沿用这个快照）
+      const existingFiles = await driveFiles.listFolder(folderToken, ops);
 
       const uploaded = [];
       for (let index = 0; index < targets.length; index += 1) {
@@ -261,30 +260,28 @@ const createSampleImageDriveService = ({
           ...nameBase, index: index + 1, total: targets.length, sourceName: attachment.name, naming,
         });
 
-        const existing = existingByName.get(fileName);
-        if (existing) {
-          if (config.overwrite !== 'replace') {
-            logInfo('product.sample_image.drive.name_exists', { record_id: id, file_name: fileName });
-            continue;
-          }
-          // 同名覆盖：只删"跟我们命名完全一致"的那个文件（不碰她手工传的）
-          await drive.deleteDriveFile(existing.token, ops.delete);
-        }
-
-        const content = await drive.downloadMedia(attachment.file_token, ops.download, {
-          extra: extraOfAttachment(attachment),
+        const result = await driveFiles.syncAttachment({
+          attachment,
+          folderToken,
+          fileName,
+          existingFiles,
+          onlyFiles: false,
+          operations: ops,
+          overwrite: config.overwrite,
+          owner,
         });
-        const fileToken = await drive.uploadDriveFile({ folderToken, fileName, content, operation: ops.upload });
-        // ⭐ 2026-11-10（业务负责人）：所有图片的所有者都固定成赵瑞玲 ⇒ 上传后立刻转移
-        if (owner.openId || owner.email) {
-          await drive.transferFileOwner(fileToken, { owner, operation: ops.transfer });
+        if (result.skipped) {
+          logInfo('product.sample_image.drive.name_exists', { record_id: id, file_name: fileName });
+          continue;
+        }
+        if (result.ownerTransferred) {
           logInfo('product.sample_image.drive.owner_transferred', {
             record_id: id, file_name: fileName, owner: owner.openId ? 'openid' : 'email',
           });
         }
-        uploaded.push({ file_name: fileName, file_token: fileToken });
+        uploaded.push({ file_name: fileName, file_token: result.fileToken });
         logInfo('product.sample_image.drive.uploaded', {
-          record_id: id, file_name: fileName, file_token: fileToken,
+          record_id: id, file_name: fileName, file_token: result.fileToken,
         });
       }
 
