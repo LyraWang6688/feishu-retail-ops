@@ -36,7 +36,7 @@ h3 { font-size: var(--font-size-lg); }
 h4 { font-size: var(--font-size-base); }
 
 /* ── 外壳 ─────────────────────────────────────────────────────────────────── */
-.shell { max-width: var(--shell-max); margin: 0 auto; padding: var(--space-4); padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
+.shell { max-width: var(--shell-max); margin: 0 auto; padding: var(--space-4); padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px)); padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px)); }
 .eyebrow { color: var(--text-secondary); font-size: var(--font-size-sm); }
 .muted, .subtitle, .data-caption { color: var(--text-secondary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .subtitle { margin: var(--space-1) 0 0; }
@@ -78,7 +78,7 @@ summary::marker { color: var(--text-muted); }
 .main-tabs {
   position: sticky;
   z-index: 10;
-  top: 0;
+  top: env(safe-area-inset-top, 0px);
   display: flex;
   gap: var(--space-1);
   margin: 0 calc(-1 * var(--space-4)) var(--space-5);
@@ -223,6 +223,22 @@ th { color: var(--text-secondary); background: var(--surface-sunken); font-weigh
 .mobile-card-table td { display: grid; grid-template-columns: minmax(84px, 38%) minmax(0, 1fr); align-items: start; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-light); text-align: right; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 .mobile-card-table td:last-child { border-bottom: 0; }
 .mobile-card-table td::before { content: attr(data-label); flex: none; color: var(--text-muted); font-size: var(--font-size-sm); text-align: left; }
+
+
+/* ── 手机端布局密度（2026-11-19）──────────────────────────────────────────
+   只压缩空白，不压 44px 点击区；桌面端保持原值。 */
+@media (max-width: 760px) {
+  .main-tabs { margin-bottom: var(--mobile-tab-bottom); }
+  .main-tab { flex: 1 1 0; min-width: 0; text-align: center; }
+  .panel { padding-top: var(--mobile-panel-top); }
+  .sub-tabs,
+  .page-hint + .sub-tabs,
+  .panel-lead + .sub-tabs {
+    margin-top: var(--mobile-subtabs-top);
+    margin-bottom: var(--mobile-subtabs-bottom);
+  }
+  .domain-cards { gap: var(--mobile-card-gap); }
+}
 
 /* ── 桌面（≥761px）：铺开成多列，其余与手机一致 ──────────────────────────── */
 @media (min-width: 761px) {

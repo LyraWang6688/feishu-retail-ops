@@ -201,3 +201,27 @@ test('AC7 tab 行不出现纵向滚动条', () => {
   assert.match(base, /\.main-tabs\s*\{[^}]*overflow-y:\s*hidden/s,
     '只写 overflow-x 会让 overflow-y 变 auto；tab 的负 margin 会溢出成纵向滚动条');
 });
+
+test('AC8 手机端布局密度：tab → 子 tab 从 52px 压到 32px，点击区不变', () => {
+  assert.ok(tokens.includes('--mobile-tab-bottom: var(--space-3);'), '一级 tab 下边距 12px');
+  assert.ok(tokens.includes('--mobile-panel-top: var(--space-3);'), 'panel 顶部 12px');
+  assert.ok(tokens.includes('--mobile-subtabs-top: var(--space-2);'), '子 tab 上边距 8px');
+  assert.ok(tokens.includes('--mobile-subtabs-bottom: var(--space-3);'), '子 tab 下边距 12px');
+  assert.ok(tokens.includes('--mobile-card-gap: var(--space-2);'), '卡片 gap 8px');
+  assert.ok(base.includes('margin-bottom: var(--mobile-tab-bottom);'), '手机端覆盖一级 tab 下边距');
+  assert.ok(base.includes('flex: 1 1 0; min-width: 0; text-align: center;'), '手机端一级 tab 等宽');
+  assert.ok(base.includes('margin-top: var(--mobile-subtabs-top);'), '手机端子 tab 上边距');
+  assert.ok(tokens.includes('--control-height: 44px;'), '点击区仍为 44px');
+});
+
+test('AC9 多设备基础：统一 viewport + 顶部安全区 + 中文字体 fallback', () => {
+  const htmlFiles = walk(WORKBENCH, ['.html']);
+  for (const file of htmlFiles) {
+    const source = fs.readFileSync(file, 'utf8');
+    if (!source.includes('name="viewport"')) continue;
+    assert.ok(source.includes('viewport-fit=cover'), path.relative(WORKBENCH, file) + ' 缺 viewport-fit=cover');
+  }
+  assert.ok(base.includes('padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px));'), '顶部安全区');
+  assert.ok(base.includes('top: env(safe-area-inset-top, 0px);'), 'sticky 一级 tab 避开顶部安全区');
+  assert.ok(tokens.includes('"Noto Sans CJK SC"'), 'Android 中文字体 fallback');
+});
