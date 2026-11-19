@@ -260,8 +260,10 @@ const createAsyncJobService = ({
       }
       lastError = String(outcome?.message || outcome?.error || '').trim() || 'unknown error';
       const retryable = outcome?.retryable === true && attempt < maxAttempts;
-      await recordAttemptFailure({ jobId, error: lastError, attempt, retryable });
+      // 终态失败必须**一次写入** failed + result，不能先写 failed 再补 result：
+      // 否则调用方/状态接口会短暂看到 failed 但 result=null（CI 竞态真实出现过）。
       if (!retryable) return fail({ jobId, error: lastError, attempt, result: rawResult });
+      await recordAttemptFailure({ jobId, error: lastError, attempt, retryable });
       const delay = retryDelayMs(attempt, config.retry);
       warn('async_job.retrying', {
         job_id: jobId, type: job.type, attempt, max_attempts: maxAttempts,
