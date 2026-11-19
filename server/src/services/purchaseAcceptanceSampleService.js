@@ -16,8 +16,33 @@ const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { INBOUND_STATE } = require('../config/inventoryStatePolicy');
 const { logWarn } = require('../utils/logger');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
+const { equalsFormula, orFormula } = require('./bitableFilterFormula');
 
-const createPurchaseAcceptanceSampleService = ({ gateway } = {}) => {
+const createPurchaseAcceptanceSampleService = ({ gateway, cacheTtlMs = 30_000, now = Date.now } = {}) => {
+  const cache = new Map();
+  const loadRecords = async (productIds = []) => {
+    const key = [...productIds].sort().join('|');
+    const hit = cache.get(key);
+    if (hit && Number(cacheTtlMs) > 0 && now() - hit.at < Number(cacheTtlMs)) return hit.records;
+    const table = gateway?.table?.('liveInventory');
+    const recordIdField = table?.fields?.recordId;
+    const formula = recordIdField && Array.isArray(productIds) && productIds.length
+      ? orFormula(productIds.map((id) => equalsFormula(recordIdField, id)))
+      : null;
+    let records = null;
+    if (formula && typeof gateway.listByFilter === 'function') {
+      try {
+        records = await gateway.listByFilter('liveInventory', formula, { retry: CRITICAL_READ_RETRY });
+      } catch (error) {
+        records = null;
+      }
+    }
+    if (!Array.isArray(records)) {
+      records = await gateway.listAll('liveInventory', { retry: CRITICAL_READ_RETRY });
+    }
+    cache.set(key, { records, at: now() });
+    return records;
+  };
   const stateOfProducts = async (productIds = []) => {
     const ids = [...new Set((Array.isArray(productIds) ? productIds : [])
       .map((id) => String(id || '').trim()).filter(Boolean))];
@@ -33,7 +58,7 @@ const createPurchaseAcceptanceSampleService = ({ gateway } = {}) => {
         for (const value of out.values()) value.unavailable = true;
         return out;
       }
-      const records = await gateway.listAll('liveInventory', { retry: CRITICAL_READ_RETRY });
+      const records = await loadRecords(ids);
       for (const record of Array.isArray(records) ? records : []) {
         const productId = strictLinkedRecordIds(record?.fields?.[productField])[0] || '';
         const value = out.get(productId);
