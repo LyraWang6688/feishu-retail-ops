@@ -196,3 +196,25 @@ test('库存流水：按创建时间倒序，映射四列并可限制条数', as
   assert.equal(limited.total, 3);
   assert.equal(limited.truncated, true);
 });
+
+test('库存流水按创建时间下推并带字段裁剪；过滤失败才回退整表', async () => {
+  const calls = [];
+  const rows = [
+    { record_id: 'led_1', fields: { 库存行为: '采购增加', 编号: 'W1820', 尺码: '36', 变动数量: 1, 创建时间: Date.parse('2026-11-19T10:00:00+08:00') } },
+  ];
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listAll: async () => [],
+    listByFilter: async (key, filter, options = {}) => {
+      calls.push({ key, filter, fields: options.fieldNames || [] });
+      return rows;
+    },
+  };
+  const result = await createWorkbenchService(gateway).getInventoryLedger({ from: '2026-11-19', to: '2026-11-19' });
+  assert.equal(result.rows.length, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].key, 'inventoryLedger');
+  assert.match(calls[0].filter, /^AND\(CurrentValue\.\[创建时间\]/);
+  assert.ok(calls[0].fields.includes('创建时间'));
+  assert.ok(calls[0].fields.includes('变动数量'));
+});

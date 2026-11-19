@@ -661,12 +661,15 @@ class V1BitableGateway {
     const maxRecords = Number.isInteger(options.maxRecords) && options.maxRecords > 0 ? options.maxRecords : 0;
     const requested = Number.isInteger(options.pageSize) && options.pageSize > 0 ? options.pageSize : 500;
     const pageSize = Math.min(requested, 500);
+    const fieldNames = Array.isArray(options.fieldNames)
+      ? options.fieldNames.map((name) => String(name || '').trim()).filter(Boolean) : [];
     return readWithRetry(`list_by_filter:${tableKey}`, () => listByFilterRecords({
       client: this.client,
       appToken: this.schema.appToken,
       tableId: table.tableId,
       tableName: table.tableName,
       expression,
+      fieldNames,
       pageSize,
       maxRecords,
       assertSuccess: (response, operation) => this.assertSuccess(response, operation),

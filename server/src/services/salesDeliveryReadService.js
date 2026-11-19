@@ -20,6 +20,7 @@ const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = re
 const { createPaymentMethodsService, orderWithPreferred } = require('./paymentMethodsService');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
+const { dateRangeFormula } = require('./bitableFilterFormula');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const richTextValue = (value) => {
@@ -32,6 +33,10 @@ const richTextValue = (value) => {
   if (value && typeof value === 'object' && Array.isArray(value.value)) return richTextValue(value.value);
   return textValue(value);
 };
+
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const shanghaiDayKey = (date = new Date()) => new Date(date.getTime() + SHANGHAI_OFFSET_MS)
+  .toISOString().slice(0, 10);
 
 const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetry, sleep } = {}) => {
   if (!gateway) throw new Error('SalesDeliveryReadService requires gateway');
@@ -60,6 +65,26 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     }
   };
 
+  /** 按日期过滤读；过滤不可用/失败时回退整表，保证结果正确。 */
+  const listByFilterWithRetry = async (tableKey, filter, options = {}) => {
+    const maxRetries = Math.max(0, Number(retry?.maxRetries) || 0);
+    const delayMs = Math.max(0, Number(retry?.delayMs) || 0);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await gateway.listByFilter(tableKey, filter, { ...options, retry: false });
+      } catch (error) {
+        const left = maxRetries - attempt;
+        if (!isRetriableOrderReadError(error) || left <= 0) throw error;
+        const waitMs = delayMs * (attempt + 1);
+        logWarn('workbench.sales.orders.read_retry', {
+          table_key: tableKey, reason: 'read_retry', operation: 'sales_delivery_filter',
+          attempt: attempt + 1, of: maxRetries + 1, delay_ms: waitMs, duration_ms: 0, error: error?.message,
+        });
+        await wait(waitMs);
+      }
+    }
+  };
+
   const fieldOptions = (tableKey) => {
     const table = gateway.table?.(tableKey);
     const fields = table?.fields || {};
@@ -70,7 +95,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     return names.length ? { fieldNames: names } : {};
   };
 
-  const listDeliveryData = async ({ query = false } = {}) => {
+  const listDeliveryData = async ({ query = false, from = '', to = '', today = '' } = {}) => {
     const startedAt = Date.now();
     const timings = {};
     const timed = async (key, run) => {
@@ -79,16 +104,52 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       timings[`${key}_ms`] = Date.now() - start;
       return value;
     };
-    const methodsService = paymentMethods || createPaymentMethodsService(gateway);
-    const [orders, details, payments, methodList] = await Promise.all([
-      timed('sales_entry', () => listAllWithRetry('salesEntry', fieldOptions('salesEntry'))),
-      timed('sales_detail', () => listAllWithRetry('salesDetail', fieldOptions('salesDetail'))),
-      timed('payment_record', () => listAllWithRetry('paymentRecord', fieldOptions('paymentRecord'))),
-      timed('payment_method', () => methodsService.listWithVouchers()),
-    ]);
+    const salesEntryFields = gateway.table('salesEntry').fields;
     const detailFieldsForRefs = gateway.table('salesDetail').fields;
     const detailReadOnlyFields = gateway.table('salesDetail').readOnlyFields || {};
+    const paymentFieldsForRefs = gateway.table('paymentRecord').fields;
+    const paymentReadOnlyFields = gateway.table('paymentRecord').readOnlyFields || {};
     const productFieldsForRefs = gateway.table('product').fields;
+    const todayKey = /^\d{4}-\d{2}-\d{2}$/.test(String(today || '').trim())
+      ? String(today).trim() : shanghaiDayKey(new Date());
+    const rangeValid = query
+      && /^\d{4}-\d{2}-\d{2}$/.test(String(from || '').trim())
+      && /^\d{4}-\d{2}-\d{2}$/.test(String(to || '').trim())
+      && String(from).trim() <= String(to).trim()
+      && String(to).trim() <= todayKey;
+    const readByDate = async (tableKey, filter) => {
+      const options = fieldOptions(tableKey);
+      if (!filter) return listAllWithRetry(tableKey, options);
+      try {
+        return await listByFilterWithRetry(tableKey, filter, options);
+      } catch (error) {
+        logWarn('workbench.sales.query.filter_fallback', {
+          table_key: tableKey, filter, error: String(error?.message || error).slice(0, 200),
+        });
+        return listAllWithRetry(tableKey, options);
+      }
+    };
+    const readPayments = async () => {
+      if (!rangeValid) return listAllWithRetry('paymentRecord', fieldOptions('paymentRecord'));
+      const receivedFilter = dateRangeFormula(paymentFieldsForRefs.receivedAt, from, to, todayKey);
+      const pendingFilter = dateRangeFormula(paymentReadOnlyFields.createdTime?.name, from, to, todayKey);
+      const [received, pending] = await Promise.all([
+        readByDate('paymentRecord', receivedFilter),
+        readByDate('paymentRecord', pendingFilter),
+      ]);
+      return [...new Map([...received, ...pending].map((row) => [row.record_id, row])).values()];
+    };
+    const methodsService = paymentMethods || createPaymentMethodsService(gateway);
+    const [orders, details, payments, methodList] = await Promise.all([
+      timed('sales_entry', () => (rangeValid
+        ? readByDate('salesEntry', dateRangeFormula(salesEntryFields.recordedAt, from, to, todayKey))
+        : listAllWithRetry('salesEntry', fieldOptions('salesEntry')))),
+      timed('sales_detail', () => (rangeValid
+        ? readByDate('salesDetail', dateRangeFormula(detailFieldsForRefs.soldAt, from, to, todayKey))
+        : listAllWithRetry('salesDetail', fieldOptions('salesDetail')))),
+      timed('payment_record', readPayments),
+      timed('payment_method', () => methodsService.listWithVouchers()),
+    ]);
     const categoryTypeNameById = new Map();
     if (query && typeof gateway.listFields === 'function') {
       const productFieldMeta = await gateway.listFields('product');

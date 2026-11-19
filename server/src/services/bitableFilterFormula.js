@@ -44,6 +44,35 @@ const containsFormula = (field, value) => {
 };
 
 /** `OR(条件1,条件2)`；只有一个条件时就去掉 OR（少一层解析）；拼出来太长也不拼。 */
+/**
+ * 日期区间（含首尾日期）的 GET filter 公式。
+ *
+ * 飞书实测：DateTime 比较用 TODAY() 的**日期**语义；
+ * 区间写法必须是 `>= 起始日` + `< 结束日次日`，否则会把结束日排除。
+ * from/to 均为上海日期 YYYY-MM-DD；today 也传上海日期。
+ */
+const dateRangeFormula = (field, from, to, today) => {
+  const name = String(field || '').trim();
+  const f = String(from || '').trim();
+  const t = String(to || '').trim();
+  const now = String(today || '').trim();
+  if (!name || !/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)
+    || !/^\d{4}-\d{2}-\d{2}$/.test(now) || f > t) return null;
+  const utc = (value) => {
+    const [year, month, day] = value.split('-').map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  const day = 86400000;
+  const fromDays = Math.round((utc(now) - utc(f)) / day);
+  const toDays = Math.round((utc(now) - utc(t)) / day);
+  // 允许历史区间；未来区间无法用 TODAY() 表示，交调用方回退。
+  if (fromDays < 0 || toDays < 0 || toDays > fromDays) return null;
+  const lower = fromDays === 0 ? 'TODAY()' : `TODAY()-${fromDays}`;
+  const upper = toDays === 0 ? 'TODAY()+1' : (toDays === 1 ? 'TODAY()' : `TODAY()-${toDays - 1}`);
+  const formula = `AND(CurrentValue.[${name}]>=${lower},CurrentValue.[${name}]<${upper})`;
+  return formula.length <= MAX_FILTER_CHARS ? formula : null;
+};
+
 const orFormula = (parts) => {
   const conditions = (parts || []).filter(Boolean);
   if (!conditions.length) return null;
@@ -57,5 +86,6 @@ module.exports = {
   filterTextLiteral,
   equalsFormula,
   containsFormula,
+  dateRangeFormula,
   orFormula,
 };

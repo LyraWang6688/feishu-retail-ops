@@ -177,3 +177,28 @@ test('AC-DR10 销售查询订单区块只认主表关联；未关联明细只进
   assert.equal(data.orders[0].details.length, 1, '主表只关联 detail_1');
   assert.equal(data.all_details.length, 2, '未关联明细仍在 all_details，供销售数量统计');
 });
+
+test('AC-DR11 销售查询把日期下推：主表/明细/收款走 listByFilter，并带字段裁剪', async () => {
+  const records = baseRecords();
+  records.salesEntry[0].fields['销售明细'] = [{ record_ids: ['detail_1'] }];
+  records.salesEntry[0].fields['收款明细'] = [{ record_ids: ['pay_1'] }];
+  const calls = [];
+  const gateway = {
+    ...fakeGateway(records),
+    listByFilter: async (key, filter, options = {}) => {
+      calls.push({ key, filter, fields: options.fieldNames || [] });
+      return (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
+    },
+  };
+  await createSalesDeliveryReadService({ gateway }).listDeliveryData({
+    query: true, from: '2026-10-18', to: '2026-10-19', today: '2026-10-19',
+  });
+  const keys = calls.map((call) => call.key);
+  assert.equal(keys.filter((key) => key === 'salesEntry').length, 1);
+  assert.equal(keys.filter((key) => key === 'salesDetail').length, 1);
+  assert.equal(keys.filter((key) => key === 'paymentRecord').length, 2, '收付日 + 创建时间两路收款');
+  for (const call of calls) {
+    assert.match(call.filter, /^AND\(CurrentValue\.\[/);
+    assert.ok(call.fields.length > 0, '过滤读也必须带 fieldNames');
+  }
+});
