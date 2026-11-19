@@ -40,10 +40,10 @@ test('AC-SAMPLE-FRONT2 数量 0 不会进候选；没有需要选的编号返回
 test('AC-SAMPLE-FRONT3 验收明细页转换后的 camelCase 字段也能识别', () => {
   const products = sampleChoiceProducts({
     rows: [{
-      product_record_id: 'p1', item_no: 'YA8902', color: '黑色',
+      product_record_id: 'p1', itemNo: 'YA8902', color: '黑色',
       needsSampleChoice: true, hasStock: false, hasSample: false,
     }, {
-      product_record_id: 'p2', item_no: 'A1', color: '黑',
+      product_record_id: 'p2', itemNo: 'A1', color: '黑',
       needsSampleChoice: false, hasStock: true, hasSample: true,
     }],
     lines: [
@@ -53,6 +53,23 @@ test('AC-SAMPLE-FRONT3 验收明细页转换后的 camelCase 字段也能识别'
   });
   assert.equal(products.length, 1, 'camelCase 的 needsSampleChoice 必须能触发弹窗');
   assert.equal(products[0].productRecordId, 'p1');
+  assert.equal(products[0].itemNo, 'YA8902', 'camelCase itemNo 必须显示在弹窗标题');
   assert.equal(products[0].hasStock, false);
   assert.deepEqual(products[0].candidates.map((item) => item.size), [39]);
+});
+
+test('AC-SAMPLE-FRONT4 弹窗产品顺序 = 货号 → 颜色 → productId', () => {
+  const products = sampleChoiceProducts({
+    rows: [
+      { product_record_id: 'p-ya', itemNo: 'YA8902', color: '黑色', needsSampleChoice: true },
+      { product_record_id: 'p-8905', itemNo: 'A8905', color: '黑色', needsSampleChoice: true },
+      { product_record_id: 'p-2601', itemNo: '2601', color: '咖啡色', needsSampleChoice: true },
+    ],
+    lines: [
+      { productRecordId: 'p-ya', size: 40, quantity: 1 },
+      { productRecordId: 'p-8905', size: 39, quantity: 1 },
+      { productRecordId: 'p-2601', size: 38, quantity: 1 },
+    ],
+  });
+  assert.deepEqual(products.map((item) => item.itemNo), ['2601', 'A8905', 'YA8902']);
 });

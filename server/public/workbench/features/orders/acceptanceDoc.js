@@ -105,6 +105,17 @@ export function arrivalSubmitLines({ rows = [], actuals = {} } = {}) {
  *
  * 返回：每个需要选的产品一段，候选只来自本次实际到货数量 > 0 的尺码。
  */
+const ARRIVAL_PRODUCT_COLLATOR = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+
+/** 验收页与样品弹窗共用的产品顺序：货号 → 颜色 → 产品 recordId。 */
+export function compareArrivalProducts(left = {}, right = {}) {
+  const leftId = left.productId || left.productRecordId || '';
+  const rightId = right.productId || right.productRecordId || '';
+  return ARRIVAL_PRODUCT_COLLATOR.compare(String(left.itemNo || ''), String(right.itemNo || ''))
+    || ARRIVAL_PRODUCT_COLLATOR.compare(String(left.color || ''), String(right.color || ''))
+    || ARRIVAL_PRODUCT_COLLATOR.compare(String(leftId), String(rightId));
+}
+
 export function sampleChoiceProducts({ rows = [], lines = [] } = {}) {
   const rowsByProduct = new Map();
   for (const row of rows || []) {
@@ -122,7 +133,7 @@ export function sampleChoiceProducts({ rows = [], lines = [] } = {}) {
     if (!products.has(productId)) {
       products.set(productId, {
         productRecordId: productId,
-        itemNo: String(row.item_no || '').trim(),
+        itemNo: String(row.item_no || row.itemNo || '').trim(),
         color: String(row.color || '').trim(),
         number: String(row.number || '').trim(),
         hasStock: row.has_stock === true || row.hasStock === true,
@@ -137,6 +148,6 @@ export function sampleChoiceProducts({ rows = [], lines = [] } = {}) {
   for (const product of products.values()) {
     product.candidates.sort((left, right) => left.size - right.size);
   }
-  return [...products.values()];
+  return [...products.values()].sort(compareArrivalProducts);
 }
 

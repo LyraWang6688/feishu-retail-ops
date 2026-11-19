@@ -19,8 +19,10 @@ test('AC-PAD1 批次卡跳独立验收明细页，不再原地展开', () => {
 
 test('AC-PAD2 明细页有应到/实到/多到、固定底栏和自定义尺码入口', () => {
   const src = read('public/workbench/features/acceptance-detail/index.js');
+  const acceptanceDoc = read('public/workbench/features/orders/acceptanceDoc.js');
   const config = read('public/workbench/config/orders.js');
-  assert.ok(src.includes('Intl.Collator(\'zh-CN\', { numeric: true'), '按货号自然排序 ✓');
+  assert.ok(src.includes('compareArrivalProducts'), '明细页与样品弹窗共用产品排序 ✓');
+  assert.ok(acceptanceDoc.includes('Intl.Collator(\'zh-CN\', { numeric: true'), '按货号自然排序 ✓');
   assert.ok(src.includes('data-add-size'), '每个商品卡片有添加尺码入口 ✓');
   assert.ok(src.includes('arrival-summary'), '正文顶部有应到/实到/多到汇总 ✓');
   assert.ok(src.includes('data-view="arrival-total"'), '底部有到货合计 ✓');
