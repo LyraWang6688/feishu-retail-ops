@@ -207,6 +207,7 @@ export const ARRIVAL_FULL_TEXTS = {
   sampleChoiceNoStock: '这个编号当前没有库存',
   sampleChoiceNoSample: '这个编号已有库存，但没有样品',
   sampleChoiceCancel: '返回修改数量',
+  uploading: '正在上传验收单…',
   submitting: '正在确认到货…',
   accepted: '已确认到货',
   // 2026-11-18：异步受理成功后，卡片留在页面上也要明确“已点击/已提交”。

@@ -116,14 +116,16 @@ export function sampleChoiceProducts({ rows = [], lines = [] } = {}) {
   for (const line of lines || []) {
     const productId = String(line?.productRecordId || line?.product_record_id || '').trim();
     const row = rowsByProduct.get(productId);
-    if (!row || row.needs_sample_choice !== true) continue;
+    // 兼容后端原始 snake_case 与验收明细页转换后的 camelCase。
+    const needsChoice = row?.needs_sample_choice === true || row?.needsSampleChoice === true;
+    if (!row || !needsChoice) continue;
     if (!products.has(productId)) {
       products.set(productId, {
         productRecordId: productId,
         itemNo: String(row.item_no || '').trim(),
         color: String(row.color || '').trim(),
         number: String(row.number || '').trim(),
-        hasStock: row.has_stock === true,
+        hasStock: row.has_stock === true || row.hasStock === true,
         candidates: [],
       });
     }
