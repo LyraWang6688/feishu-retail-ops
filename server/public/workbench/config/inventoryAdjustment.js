@@ -27,6 +27,9 @@ export const INVENTORY_MANUAL_TEXTS = Object.freeze({
   // ⭐ 2026-11-18：空状态不冒充「门盒」——下拉显示「请选择状态」，保存前必须显式选一个。
   statePlaceholder: '请选择状态',
   stateRequired: '请先为每一行选择「所属状态」（门盒 / 样品）再保存',
+  sampleRequiredTitle: '需要一双样品',
+  sampleRequiredBody: '这一款最终库存里没有「样品」，请把其中一行改成「样品」后再保存。',
+  sampleRequiredConfirm: '知道了',
   clearStock: '清零库存',
   clearConfirmTitle: '确认清零？',
   clearConfirmBody: '这个货品共 {count} 条库存，清零后全部删除，确定吗？',
