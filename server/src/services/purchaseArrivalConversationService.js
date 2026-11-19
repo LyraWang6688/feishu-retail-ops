@@ -117,7 +117,6 @@ class PurchaseArrivalConversationService {
     confirmArrival,
     markBatchArrived,
     writeBatchTotals,
-    markSupplierArrived,
     config,
     now,
   } = {}) {
@@ -148,11 +147,6 @@ class PurchaseArrivalConversationService {
     //   注入而不是自己 new：写「报货批次」那一行是 `PurchaseOrderBatchService` 的职责。
     //   失败只 warn（入库已成功，累计列没写不改变事实）。
     this.writeBatchTotals = writeBatchTotals || (async () => ({ updated: false, reason: 'not_wired' }));
-    // ⭐ 2026-11-10：按供应商拆卡后，用主表两个字段判断"全批验完"：
-    //   · 「供应商」Lookup（名称）→ 映射成 supplier_record_id 集合；
-    //   · 「已到货供应商」关联字段 ⇒ 追加本家后，两集合相等 = 全批到货。
-    //   注入而不是自己写表：谁维护「报货批次」是 `PurchaseOrderBatchService` 的职责。
-    this.markSupplierArrived = markSupplierArrived || null;
     // 群里的反馈一律**引用回复/回复卡片**（群聊没有"上一次对话"的概念）。
     // ⭐ ④ 两个端口都收第三个参数 `{ threadId }`：非空时由**飞书发送适配器**
     //    带 `reply_in_thread` 把这条反馈回到**那个话题**（本类不认识 reply_in_thread）。

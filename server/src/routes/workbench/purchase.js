@@ -255,7 +255,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     config: (options.writeConfig || SCAN_WRITE).acceptance,
     store: options.arrivalStore,
     // ⭐ 2026-11-10：工作台 accept 必须用**带主表字段写口**的会话（writeBatchTotals /
-    //   markSupplierArrived）→ 直接用 `resolvePurchaseArrival()` 构造的那个会话；
+    //   → 直接用 `resolvePurchaseArrival()` 构造的那个会话；
     //   扫码页那条旧链路不传（保持无这些写口）。
     arrivalConversation: () => resolvePurchaseArrival().arrivalConversation,
     // ⭐ 2026-10-29（F1/F2）：两条新判据的人话真源在 `config/workbenchArrival.js`

@@ -71,14 +71,14 @@ const CHAINS = Object.freeze({
   },
 
   'ARRIVAL_FULL_API.accept': {
-    fe: 'features/orders/index.js', feKey: 'ARRIVAL_FULL_API.accept',
+    fe: 'features/acceptance-detail/index.js', feKey: 'ARRIVAL_FULL_API.accept',
     // ⭐ 2026-10-16：注册处是**变量路径**（不是字面量 ✗）——
     //    `src/routes/workbench.js:252` 的 `router.post(arrivalTab.api.accept, …)`，
     //    而 `arrivalTab.api.accept` = `config/workbenchArrival.js` 的 '/purchase/arrivals/accept' ✓
     //    ⚠️ 这条是我 grep 了三轮才核到的（先以为是别的 router / catch-all ✗）⇒ 断言必须认"变量路径"这种形状 ✓
     route: 'src/routes/workbench/purchase.js', routeKey: /router\.post\(arrivalTab\.api\.accept/,
     config: 'src/config/workbenchArrival.js', configKey: /accept: '\/purchase\/arrivals\/accept'/,
-    service: 'src/services/workbenchPurchaseArrivalService.js', serviceKey: /async confirmArrival\(\{ batchNo, actualAmount/,
+    service: 'src/services/scanArrivalService.js', serviceKey: /const setScans/,
     landing: [['purchaseOrderBatch', 'actualAmount'], ['purchaseOrderBatch', 'arrivalStatus'], ['liveInventory', 'stockKey']],
   },
 

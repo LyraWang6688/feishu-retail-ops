@@ -68,7 +68,7 @@ export const validateArrivalDocuments = (form, texts) => {
  * ⭐⭐ 2026-10-15（task-27 · 她逐字）：「点进去之后才是对应的采购明细情况，然后**可以自行补充**这个货号下的
  *   其余尺码和数量」＋「**实际到多少就是到多少**」
  *
- * `arrivalDetailHtml(rows)` = 那一批的**明细 + 每行一个「实际到货数量」输入**
+ * 独立验收明细页（`features/acceptance-detail`）使用同一份 `arrivalSubmitLines` / 样品选择逻辑。
  *   · 默认值 = 该行的**申请数量**（她要"改"，不是"从空开始填" ✓）；
  *   · 行的身份挂在 `data-*` 上（`product_record_id` / `size` / `declared`）⇒ 提交时**不用猜** ✓。
  */
@@ -138,24 +138,3 @@ export function sampleChoiceProducts({ rows = [], lines = [] } = {}) {
   return [...products.values()];
 }
 
-/** 2026-11-18：验收提交成功后，卡片留在页面上也要明确“已提交”并锁住重复提交。 */
-export const markArrivalSubmitted = ({ button, form, texts = {} } = {}) => {
-  if (!button || !form) return;
-  const card = form.closest?.('.order-card');
-  form.dataset.arrivalSubmitted = '1';
-  card?.setAttribute('data-arrival-submitted', '1');
-  button.disabled = true;
-  button.textContent = texts.arrivalSubmitted || '';
-  form.querySelectorAll('input, button, textarea, select').forEach((field) => {
-    if (field !== button) field.disabled = true;
-  });
-  let note = form.querySelector('[data-view="arrival-submitted-note"]');
-  if (!note) {
-    note = document.createElement('p');
-    note.className = 'arrival-submitted-note';
-    note.dataset.view = 'arrival-submitted-note';
-    note.textContent = texts.arrivalSubmittedNote || '';
-    button.after(note);
-  }
-  note.hidden = false;
-};

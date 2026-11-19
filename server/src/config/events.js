@@ -238,7 +238,6 @@ const EVENTS = Object.freeze([
   'purchase.batch.arrival_status.no_record',
   'purchase.batch.arrival_status.pending.cache_hit',
   'purchase.batch.arrival_status.pending.cache_miss',
-  'purchase.batch.arrived_suppliers.updated',
   'purchase.batch.document.exists',
   'purchase.batch.document.no_record',
   'purchase.batch.order_amount.no_record',

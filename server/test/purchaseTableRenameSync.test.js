@@ -377,10 +377,11 @@ test('B7 ⭐ 工作台采购页（= 现在的「采购 → 验收」子页）：
   //   · 改前逐字：needle 列表里有 `'data-field="arrival-note"',`
   //   · 改后逐字：该项删除 ＋ 下面那条**反向**断言（塞回即红 ✓）
   //   · 依据 = 她 2026-10-16 逐字（同上）✓
-  for (const needle of ['data-action-block="verify-arrival"', 'data-field="arrival-amount"']) {
-    assert.ok(page.includes(needle), `验收面板少了 ${needle}`);
-  }
+  assert.ok(page.includes('data-action="open-arrival"'), '列表页有验收跳转入口 ✓');
+  const detailPage = fs.readFileSync(path.join(SERVER_ROOT, 'public/workbench/features/acceptance-detail/index.js'), 'utf8');
+  assert.ok(detailPage.includes('data-field="arrival-amount"'), '独立明细页有货款输入 ✓');
   assert.equal(page.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
+  assert.equal(detailPage.includes('data-field="arrival-note"'), false, '⛔「到货说明」输入框不许再回来 ✗');
   // ③ 当年删掉的东西**不许回来**（去注释后扫活页面 + 它的文案真源 —— 注释里留沿革不算 ✗）
   for (const gone of ['采购到货情况', '没有匹配的采购到货记录', '图片数', 'image_count', '到货日', '登记到货与验收情况']) {
     assert.equal(livingPage.includes(gone), false, `被删的列 / 文案不许再出现在验收面板上：${gone}`);

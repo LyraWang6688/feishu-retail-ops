@@ -344,9 +344,10 @@ const FEATURE = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench'
 const FE_CONFIG = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'config', 'orders.js'), 'utf8');
 
 test('AC-AW16a ⭐ 明细与提交打的是**新接口**（配置常量 ✓ 不写死 URL ✗）', () => {
-  assert.ok(FEATURE.includes('ARRIVAL_FULL_API.detail'), '明细读 /purchase/arrivals/detail ✓');
-  assert.ok(FEATURE.includes('ARRIVAL_FULL_API.accept'), '提交打 /purchase/arrivals/accept ✓');
-  assert.ok(FEATURE.includes('arrival-detail'), '有只读明细容器 ✓');
+  const detail = fs.readFileSync(path.join(__dirname, '..', 'public', 'workbench', 'features', 'acceptance-detail', 'index.js'), 'utf8');
+  assert.ok(detail.includes('ARRIVAL_FULL_API.detail'), '明细读 /purchase/arrivals/detail ✓');
+  assert.ok(detail.includes('ARRIVAL_FULL_API.accept'), '提交打 /purchase/arrivals/accept ✓');
+  assert.ok(detail.includes('arrival-summary'), '独立明细页有明细结构 ✓');
   // ⭐ 2026-11-09（业务负责人批注：「自定义尺码 / 自定义货号」不需要，删除）⇒ 两个入口不许回来
   assert.equal(FEATURE.includes('data-field="custom-size"'), false, '⛔ 自定义尺码入口已删除 ✓');
   assert.equal(FEATURE.includes('data-field="custom-item-no"'), false, '⛔ 自定义货号入口已删除 ✓');
