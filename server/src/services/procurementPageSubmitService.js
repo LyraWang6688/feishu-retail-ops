@@ -36,6 +36,7 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { createProcurementPurchaseWriters } = require('./procurementPurchaseWriters');
 const { createProductEnricher } = require('./procurementProductEnricher');
 const { createProcurementSalesLinkBackfill } = require('./procurementSalesLinkBackfill');
+const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const reject = (code, message) => ({ ok: false, code, message });
@@ -45,6 +46,24 @@ const fillText = (template, value) => String(template || '').replace(/\{value\}/
 const fillTemplate = (template, values = {}) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
   Object.prototype.hasOwnProperty.call(values, key) ? String(values[key] ?? '') : match
 ));
+
+/** 2026-11-19：一次采购提交按供应商拆成独立任务/批次；未标注供应商单独一组。 */
+const supplierGroupKeyOf = (supplierRecordId) => {
+  const id = String(supplierRecordId || '').trim();
+  if (!id) return 'unassigned';
+  return `s_${crypto.createHash('sha256').update(id).digest('hex').slice(0, 12)}`;
+};
+
+const groupItemsBySupplier = (items = []) => {
+  const groups = new Map();
+  for (const item of items) {
+    const supplierRecordId = String(item.supplier_record_id || '').trim();
+    const key = supplierGroupKeyOf(supplierRecordId);
+    if (!groups.has(key)) groups.set(key, { key, supplierRecordId, items: [] });
+    groups.get(key).items.push(item);
+  }
+  return [...groups.values()];
+};
 
 const createProcurementPageSubmitService = (options = {}) => {
   const gateway = options.gateway || null;
@@ -172,47 +191,55 @@ const createProcurementPageSubmitService = (options = {}) => {
       || !Array.isArray(item?.entries));
     if (malformed) return reject('item_invalid', config.texts.itemInvalid);
 
-    const orderKey = `${config.draft.orderKeyPrefix}:${engine.sanitizeKey(submitKey)}`;
+    const built = await buildItems(items);
+    if (!built.ok) return reject('product_missing', config.texts.productMissing);
+
+    const grouped = groupItemsBySupplier(built.items).map((group) => ({
+      ...group,
+      orderKey: config.draft.orderKeyPrefix + ':' + engine.sanitizeKey(submitKey) + ':' + group.key,
+      submitKey: submitKey + ':' + group.key,
+    }));
     const ordersField = config.draft.ordersField;
     const sessionId = sessions.idOf(openId);
-    // ⚠️ 这里**只读**会话（不 ensure）：校验失败时**一个字节都不写**（AC-P11）
-    const existing = await sessions.store.get(sessionId);
-    const existingDraft = (existing?.[ordersField] || {})[orderKey];
-    if (existingDraft?.status === orderConfig.session.submittedStatus) {
+    const existingSession = await sessions.store.get(sessionId);
+    const existingOrders = (existingSession && existingSession[ordersField]) || {};
+    const allSubmitted = grouped.every((group) => (
+      existingOrders[group.orderKey]?.status === orderConfig.session.submittedStatus
+    ));
+    if (allSubmitted) {
       info(config.events.submitAccepted, {
         request_id: requestId, open_id: String(openId || ''), submit_key: submitKey, reused: true,
       });
       return { ok: true, accepted: true, reused: true, message: SUBMIT_TOAST.text };
     }
 
-    const built = await buildItems(items);
-    if (!built.ok) return reject('product_missing', config.texts.productMissing);
-
     const timestamp = new Date(now()).toISOString();
-    const draft = {
-      chain: chainConfig.id,
-      open_id: String(openId || ''),
-      created_at: existingDraft?.created_at || timestamp,
-      updated_at: timestamp,
-      submit_key: submitKey,
-      order_key: orderKey,
-      items: built.items,
-      order_amount: '',
-      batch_record_id: '',
-      batch_no: '',
-      detail_ids: [],
-      status: orderConfig.session.draftStatus,
-      chain_prefix: chainConfig.orderKeyPrefix,
-    };
-    // ① 同步校验（纯函数，不写库）：空单 / 尺码 / 数量 / 重复 / 20 货品 / 50 行
-    const checked = engine.validateDraft({ draft, chainConfig });
-    if (!checked.ok) {
+    const drafts = grouped.map((group) => {
+      const draft = {
+        chain: chainConfig.id,
+        open_id: String(openId || ''),
+        created_at: existingOrders[group.orderKey]?.created_at || timestamp,
+        updated_at: timestamp,
+        submit_key: group.submitKey,
+        order_key: group.orderKey,
+        items: group.items,
+        order_amount: '',
+        batch_record_id: '',
+        batch_no: '',
+        detail_ids: [],
+        status: orderConfig.session.draftStatus,
+        chain_prefix: chainConfig.orderKeyPrefix,
+      };
+      return { group, draft, checked: engine.validateDraft({ draft, chainConfig }) };
+    });
+    const invalid = drafts.find((plan) => plan.checked.ok !== true);
+    if (invalid) {
       info(config.events.submitRejected, {
-        request_id: requestId, open_id: String(openId || ''), submit_key: submitKey, code: checked.code,
+        request_id: requestId, open_id: String(openId || ''), submit_key: submitKey, code: invalid.checked.code,
       });
-      return reject(checked.code, checked.message);
+      return reject(invalid.checked.code, invalid.checked.message);
     }
-    // ② 采购行为必须当场解析出来（解析不到就**不假装成功**：返回人话 + 零写入）
+
     let behavior = {};
     try {
       behavior = await writers.behavior(chainConfig.id);
@@ -222,48 +249,54 @@ const createProcurementPageSubmitService = (options = {}) => {
       });
       return reject('behavior_missing', config.texts.submitFailed);
     }
-    // ③ 草稿种子写进既有会话 store（**本地 JSON，不碰业务表**）—— 只有校验通过之后才写
+
     await sessions.ensure(openId);
-    await sessions.store.update(sessionId, (session) => {
-      const orders = { ...((session || {})[ordersField] || {}) };
-      orders[orderKey] = draft;
-      return { [ordersField]: orders, updated_at: timestamp };
-    });
-    // ④ 后台那一跑：engine.submitDraft → planSubmission → publishPurchaseRequest（既有链路）
-    background.scheduleCustomRest({
-      chain: chainConfig.id,
-      requestId,
-      submitKey,
-      context: { orderKey },
-      // #948：统一任务记录 / 失败群通知要用的元数据（**不进**写库入参）
-      jobMeta: { ownerOpenId: openId, step: ASYNC_JOBS.texts.stepLabels.procurementPageReplenish },
-      run: async () => {
-        const result = await engine.submitDraft({
-          openId, chain: chainConfig.id, orderKey, submitKey, requestId,
-          behavior: { recordId: behavior.recordId || '', kind: chainConfig.behaviorCode || '' },
-        });
-        // 采购单写成功后回填「销售明细.采购明细」（只影响补货读侧；失败不影响采购事实）
-        if (result?.ok === true && salesLinkBackfill) {
-          const taskId = `${chainConfig.taskIdPrefix}_${engine.sanitizeKey(submitKey)}`;
-          const backfillResult = await salesLinkBackfill.run({ taskId }).catch((error) => ({
-            ok: false, failed: 0, unmatched: 0, error: String(error?.message || error),
-          }));
-          const hasProblem = backfillResult && (
-            backfillResult.ok === false
-            || Number(backfillResult.failed) > 0
-            || Number(backfillResult.unmatched) > 0
-          );
-          if (hasProblem) await notifyBackfillFailure({ taskId, result: backfillResult });
-        }
-        return result;
-      },
-    });
+    let totalProducts = 0;
+    let totalLines = 0;
+    for (const plan of drafts) {
+      if (existingOrders[plan.group.orderKey]?.status === orderConfig.session.submittedStatus) continue;
+      const { group, draft, checked } = plan;
+      totalProducts += group.items.length;
+      totalLines += checked.normalized.lineCount;
+      await sessions.store.update(sessionId, (session) => {
+        const orders = { ...((session || {})[ordersField] || {}) };
+        orders[group.orderKey] = draft;
+        return { [ordersField]: orders, updated_at: timestamp };
+      });
+      background.scheduleCustomRest({
+        chain: chainConfig.id,
+        requestId,
+        submitKey: group.submitKey,
+        context: { orderKey: group.orderKey },
+        jobMeta: { ownerOpenId: openId, step: ASYNC_JOBS.texts.stepLabels.procurementPageReplenish },
+        run: async () => {
+          const result = await engine.submitDraft({
+            openId, chain: chainConfig.id, orderKey: group.orderKey, submitKey: group.submitKey, requestId,
+            behavior: { recordId: behavior.recordId || '', kind: chainConfig.behaviorCode || '' },
+          });
+          if (result?.ok === true && salesLinkBackfill) {
+            const taskId = chainConfig.taskIdPrefix + '_' + engine.sanitizeKey(group.submitKey);
+            const backfillResult = await salesLinkBackfill.run({ taskId }).catch((error) => ({
+              ok: false, failed: 0, unmatched: 0, error: String(error?.message || error),
+            }));
+            const hasProblem = backfillResult && (
+              backfillResult.ok === false
+              || Number(backfillResult.failed) > 0
+              || Number(backfillResult.unmatched) > 0
+            );
+            if (hasProblem) await notifyBackfillFailure({ taskId, result: backfillResult });
+          }
+          return result;
+        },
+      });
+    }
     info(config.events.submitAccepted, {
       request_id: requestId,
       open_id: String(openId || ''),
       submit_key: submitKey,
-      products: built.items.length,
-      lines: checked.normalized.lineCount,
+      products: totalProducts,
+      lines: totalLines,
+      supplier_groups: grouped.length,
       reused: false,
     });
     return { ok: true, accepted: true, reused: false, message: SUBMIT_TOAST.text };
