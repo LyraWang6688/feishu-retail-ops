@@ -893,6 +893,19 @@ function labelSvg(label, layout, options = {}) {
   // 右栏从 `rightX` 到内容区右边（竖版画布下 = 整幅内容宽）—— 具体画多宽由下面的估算决定，
   // 排版不会越过这条界线（`planItemNoColor` 已经把字宽算进可用宽度里）。
 
+  // ⭐ 2026-11-21：打印时间（生成打印文件时的上海时间）——二维码正上方，一行。
+  const printTimeCfg = layout.printTime || {};
+  const printTimeText = String(label.print_time || '').trim();
+  const printTimeVisible = Boolean(printTimeCfg.enabled && fields.qr && qrMm > 0 && printTimeText);
+  if (printTimeVisible) {
+    const printTimeMm = num(printTimeCfg.fontMm, 2);
+    const printTimeGapMm = num(printTimeCfg.gapMm, 0.65);
+    const printTimeScale = num(printTimeCfg.xScale, 0.86);
+    parts.push('<g transform="translate(' + round(x0 + qrMm / 2) + ' ' + round(qrY - printTimeGapMm)
+      + ') scale(' + printTimeScale + ' 1)"><text x="0" y="0" font-family="' + FONT_FAMILY
+      + '" font-size="' + round(printTimeMm) + '" text-anchor="middle">'
+      + escapeXml(printTimeText) + '</text></g>');
+  }
   // ── 右栏：行序与每一行的画法都来自 config（`body.rows`）——
   //   ⚠️ **竖版画布不再另排行序**（她要求"保持原构图"）：两档用的是**同一份 `body.rows`**。
   // ⭐⭐ 2026-10-12 候选版式（业务负责人提的）：`artifact.rows` 可以覆盖行序，
@@ -1019,6 +1032,9 @@ function labelSvg(label, layout, options = {}) {
       content_top_mm: round(cursor),
       content_center_mm: round(cursor + totalH / 2),
       qr_size_mm: round(qrMm),
+      print_time_visible: printTimeVisible,
+      print_time_font_mm: round(num(printTimeCfg.fontMm, 2)),
+      print_time_y_mm: round(qrY - num(printTimeCfg.gapMm, 0.65)),
       qr_top_mm: round(v5 ? num(body.qrTopMm, 10.55) : mainTop + Math.max(0, (mainH - qrMm) / 2)),
       qr_center_mm: round((v5 ? num(body.qrTopMm, 10.55) : mainTop + Math.max(0, (mainH - qrMm) / 2)) + qrMm / 2),
       main_center_mm: round(mainTop + mainH / 2),
@@ -1221,9 +1237,11 @@ const pngToJpeg = (png, options = {}) => sharp(png)
  *   · `pngFirst` —— 第一页的 PNG（kept 时写盘：测试打印 / 排障 / 本地页面预览）；
  *   · `pages`    —— 每页的元信息（编号 / 尺寸 / 像素），进任务记录供页面显示。
  */
-async function renderLabels({ labels, layout, config = {}, logger = null }) {
+async function renderLabels({ labels, layout, config = {}, logger = null, printTime = '' }) {
   const list = Array.isArray(labels) ? labels : [];
   if (!list.length) throw new Error('没有可打印的标签（renderLabels 收到空列表）');
+  // 同一份打印文件里的每张标签共用同一个生成时间（不是每页各取一次）。
+  const printable = printTime ? list.map((label) => ({ ...label, print_time: printTime })) : list;
   const dpi = num(config.dpi, 203);
   // ⭐⭐ 画布方向：`canvas` 决定"按哪个画布排版"（竖版 = 旋转画布、原尺寸铺满）；
   //    `rotate` / `rotatePageWithContent` 是更底层的旋钮（老路 A/B/C 都靠它们精确复现）。
@@ -1233,7 +1251,7 @@ async function renderLabels({ labels, layout, config = {}, logger = null }) {
   const page = canvasGeometry(layout, { canvas, rotate, rotatePageWithContent });
   const pages = [];
   let pngFirst = null;
-  for (const label of list) {
+  for (const label of printable) {
     // ⚠️ 内容比中段还高 ⇒ 顶部对齐（不会跑到纸外），但要**留下日志**（她那条 AC 要求）
     const verticalMeasure = {};
     const svg = labelSvg(label, layout, {

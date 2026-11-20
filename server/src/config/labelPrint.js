@@ -371,6 +371,20 @@ const SCAN_PRINT = Object.freeze({
   }),
 });
 
+/**
+ * 鞋盒标签上的「打印时间」——生成打印文件时写入，固定上海时间。
+ * 业务口径（2026-11-21）：一行、2mm、放在二维码正上方；与二维码的间距复用
+ * 「邯美皮鞋」的 0.65mm（`body.brandGapMm`）。
+ */
+const PRINT_TIME = Object.freeze({
+  enabled: true,
+  fontMm: 2,
+  gapMm: 0.65,
+  // 2mm 字号的 16 字符时间比二维码宽；只横向压缩字形，高度仍 2mm。
+  xScale: 0.86,
+  timeZone: 'Asia/Shanghai',
+});
+
 const LABEL_PRINT = Object.freeze({
   label: LABEL,
   page: PAGE,
@@ -382,6 +396,7 @@ const LABEL_PRINT = Object.freeze({
   brand: BRAND,
   price: PRICE,
   qr: QR,
+  printTime: PRINT_TIME,
   footer: FOOTER,
   stateOrder: STATE_ORDER,
   limits: LIMITS,
@@ -479,6 +494,7 @@ module.exports = {
   BRAND,
   PRICE,
   QR,
+  PRINT_TIME,
   FOOTER,
   LIMITS,
   TEXTS,

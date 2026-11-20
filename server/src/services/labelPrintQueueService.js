@@ -27,6 +27,7 @@ const { STATES, SOURCES } = require('../config/labelPrintQueue');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { logInfo, logWarn } = require('../utils/logger');
 const { renderLabels, normalizeRotation, normalizeCanvas } = require('./labelPrintArtifactService');
+const { formatPrintTime } = require('./labelPrintTime');
 
 /** 她填错 / 业务上做不到 ⇒ 400，原因原样回页面（与工作台其它写接口同一套口径）。 */
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -300,7 +301,10 @@ const createLabelPrintQueueService = (deps = {}) => {
     // ── 画产物（**在服务器上画好**，电脑那边只负责送进打印机）────────────────────────
     let rendered;
     try {
-      rendered = await render({ labels, layout: data.layout, config: renderConfig });
+      const printTime = data.layout?.printTime?.enabled
+        ? formatPrintTime(new Date(now()), data.layout.printTime)
+        : '';
+      rendered = await render({ labels, layout: data.layout, config: renderConfig, printTime });
     } catch (error) {
       throw systemError(`打印文件生成失败：${error.message}`);
     }
