@@ -356,7 +356,7 @@ class PurchaseOrderBatchService {
    *   因为"到货信息没有落点"等于她这次确认没被记下来）。
    */
   async writeAcceptance({
-    batchNo = '', batchRecordId = '', actualQuantity, actualAmount, correlation = {},
+    batchNo = '', batchRecordId = '', actualQuantity, actualAmount, differenceAnalysis, correlation = {},
   }) {
     // 没有批次身份（两个都空）= "孤儿调用"（历史草稿 / 手工种的测试任务）：
     // 明确区分于"有身份但找不到行"，调用方对两者的处置不同（前者不阻塞、后者要报）。
@@ -374,9 +374,11 @@ class PurchaseOrderBatchService {
     //    **判据只有一处** ✓（行为一个字没变：同一个 lambda 原样搬走）。
     const quantityValue = numericOrNull(actualQuantity);
     const amountValue = numericOrNull(actualAmount);
+    const differenceValue = String(differenceAnalysis ?? '').trim();
     const values = {};
     if (quantityValue !== null) values.actualQuantity = quantityValue;
     if (amountValue !== null) values.actualAmount = amountValue;
+    if (differenceValue) values.differenceAnalysis = differenceValue;
     // 两列都没值 = 这一次没有任何结构化验收结果可落（老草稿 / 只说话没填数）：
     // **不发那次空的 update**（往飞书写一个空对象是白跑一次调用，还可能被当异常）。
     if (Object.keys(values).length === 0) {
@@ -393,8 +395,10 @@ class PurchaseOrderBatchService {
       // ⭐ 2026-10-08：这两个值写在同一行（`null` = 这一列这次没写）。
       actual_quantity: quantityValue,
       actual_amount: amountValue,
+      difference_analysis: differenceValue || null,
       wrote_actual_quantity: quantityValue !== null,
       wrote_actual_amount: amountValue !== null,
+      wrote_difference_analysis: Boolean(differenceValue),
       // 明写"没写到货日 / 验收人"：这是口径，也是将来别人改这段代码时的绊线
       //（后两者是飞书自动字段；那条文字说明列 2026-10-09 已从真表消失）。
       wrote_arrival_date: false,
@@ -407,6 +411,7 @@ class PurchaseOrderBatchService {
       batch_no: batchNo,
       actual_quantity: quantityValue,
       actual_amount: amountValue,
+      difference_analysis: differenceValue || null,
     };
   }
 

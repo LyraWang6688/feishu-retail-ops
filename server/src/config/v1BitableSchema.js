@@ -663,6 +663,8 @@ const V1_BITABLE_SCHEMA = {
         //     不要改成"写字符串"了事（会与数字列冲突）。
         actualQuantity: '实际数量',
         actualAmount: '货单金额',
+        // 2026-11-20：验收成功时按当前供应商写「应到 / 实到 / 多到」。
+        differenceAnalysis: '差异分析',
       },
     },
     // ⚠️ 这里原先有 `purchaseInbound`（表名「采购入库」，tableId `tblK3Uzd0nN1GJrr`）

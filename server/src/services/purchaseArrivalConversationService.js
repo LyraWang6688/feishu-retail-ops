@@ -1,5 +1,5 @@
 // ⭐ 用户可见文案抽到 config（2026-10-12 技术债批次：只挪位置，一个字符没改）
-const { pageMessages, landingMessages, scanMessages } = require('../config/purchaseArrivalTexts');
+const { pageMessages, landingMessages, scanMessages, differenceAnalysis: differenceAnalysisTemplate } = require('../config/purchaseArrivalTexts');
 const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
@@ -19,6 +19,7 @@ const {
 } = require('./acceptanceSupplierProgress');
 const { normalizeSampleChoices } = require('./purchaseArrival/sampleChoices');
 const { buildScanPlan } = require('./purchaseArrival/scanPlan');
+const { summarizeArrivalDifference, formatArrivalDifference } = require('./purchaseArrival/differenceAnalysis');
 
 const TASK_TYPE = 'purchase_arrival_reconcile';
 
@@ -268,6 +269,10 @@ class PurchaseArrivalConversationService {
     //    ⚠️ 与**库存口径一致**：`actual = 0` 的行不入库、但它们在这里加的是 **0**
     //       ⇒ "按全量求和"与"按实际入库的行求和"是**同一个数**（0 加不加都一样）。
     const actualQuantity = task.plan.reduce((sum, row) => sum + Number(row.actual || 0), 0);
+    // 当前供应商这次验收的差异分析；每个供应商是独立任务/独立主表行，互不覆盖。
+    const differenceAnalysis = formatArrivalDifference(
+      summarizeArrivalDifference(task.plan), differenceAnalysisTemplate,
+    );
     // ⭐ 2026-10-07 晚：这里原先会**新建「到货验收」一行**并落盘 `arrival_record_id`。
     //    那张表已被业务负责人删除，落点改到「报货批次」那一行 ⇒ 这一步整段删除：
     //      · 批次记录 id 本来就在任务上（`task.batch_record_id`，发图时从采购申请行读到的，
@@ -306,6 +311,7 @@ class PurchaseArrivalConversationService {
       //     · actual_quantity = **代码算出来的**实际到货数合计（与库存口径一致）。
       actual_amount: actualAmount,
       actual_quantity: actualQuantity,
+      difference_analysis: differenceAnalysis,
       // 2026-11-18：哪个编号的哪个入库尺码做样品（无库存 / 无样品时由前端弹窗选）。
       sample_choices: { ...(task.sample_choices || {}) },
       operator_open_id: String(task.operator_open_id || operatorOpenId || ''),

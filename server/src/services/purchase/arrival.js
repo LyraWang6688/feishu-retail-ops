@@ -262,6 +262,7 @@ const arrival = {
       // ⭐⭐ 2026-10-08：草稿上那两个值原样传下去（`undefined` = 这一列不写）。
       actualQuantity: draft?.actual_quantity,
       actualAmount: draft?.actual_amount,
+      differenceAnalysis: draft?.difference_analysis,
       correlation,
     });
     if (!result.updated) {

@@ -43,6 +43,9 @@ const landingMessages = {
   m9: '这一批现在不能验收入库（原因已记日志，请找管理员看一眼）',
 };
 
+// 验收成功写到「供应主表.差异分析」的文案（按当前供应商、当前验收任务计算）。
+const differenceAnalysis = '应到 {expected} 双 / 实到 {actual} 双 / 多到 {extra} 双';
+
 const scanMessages = {
   // 原行 :893
   m1: '还没扫到任何一双：先扫一双，再点【完成验收】。',
@@ -70,5 +73,5 @@ const scanMessages = {
   m12: '这一批现在不能验收入库（原因已记日志，请找管理员看一眼）',
 };
 
-module.exports = { pageMessages, landingMessages, scanMessages };
+module.exports = { pageMessages, landingMessages, scanMessages, differenceAnalysis };
 
