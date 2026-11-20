@@ -15,10 +15,7 @@ const SUPPLIER_BALANCE = Object.freeze({
     transactionAmount: '交易额',
     goodsAmount: '货单金额',
     behavior: '发生行为',
-    rowChange: '本行变动额',
-    previousBalance: '上次余额',
     latestBalance: '最新余额',
-    supplier: '供应商',
   }),
 
   // 最近交易明细窗口（天）。
@@ -34,20 +31,18 @@ const SUPPLIER_BALANCE = Object.freeze({
 
   // 余额来源：有交易取最新交易的最新余额；否则取初始化期初余额；兜底 0。
   balanceRules: Object.freeze([
-    Object.freeze({ when: 'hasTransactions', source: 'transactions', field: 'latestBalance' }),
-    Object.freeze({ when: 'always', source: 'initialization', field: 'initialBalance' }),
+    Object.freeze({ when: 'hasTransactions', field: 'latestBalance' }),
+    Object.freeze({ when: 'always', field: 'initialBalance' }),
   ]),
 
   // P 交易明细的两组字段，按顺序匹配。
   transactionFamilies: Object.freeze([
     Object.freeze({
-      code: 'payment',
       match: Object.freeze({ field: 'tradeDirection', values: Object.freeze(['付', '收']) }),
       labels: Object.freeze({ 付: '付款', 收: '收款' }),
       amountField: 'transactionAmount',
     }),
     Object.freeze({
-      code: 'supply',
       match: Object.freeze({ field: 'behavior', nonEmpty: true }),
       labels: Object.freeze({ contains: Object.freeze({ 退货: '退货' }), default: '报货' }),
       amountField: 'goodsAmount',

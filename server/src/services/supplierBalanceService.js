@@ -36,7 +36,7 @@ const createSupplierBalanceService = ({
   const txSchema = V1_BITABLE_SCHEMA.tables.paymentTransaction;
   const txFields = { ...txSchema.fields, ...config.transactionFields };
 
-  const supplierNameOf = (row, fields = txFields) => textValue(row?.fields?.[fields.supplierName]).trim();
+  const supplierNameOf = (row) => textValue(row?.fields?.[txFields.supplierName]).trim();
 
   const classify = (row) => {
     const fields = row.fields || {};
@@ -45,7 +45,7 @@ const createSupplierBalanceService = ({
       if (match.field === 'tradeDirection') {
         const direction = textValue(fields[txFields.tradeDirection]).trim();
         if ((match.values || []).includes(direction)) {
-          return { family: family.code, type: family.labels?.[direction] || direction, amountField: family.amountField };
+          return { type: family.labels?.[direction] || direction, amountField: family.amountField };
         }
         continue;
       }
@@ -54,7 +54,7 @@ const createSupplierBalanceService = ({
         if (match.nonEmpty ? Boolean(behavior) : false) {
           const contains = family.labels?.contains || {};
           const hit = Object.entries(contains).find(([needle]) => behavior.includes(needle));
-          return { family: family.code, type: hit ? hit[1] : family.labels?.default || behavior, amountField: family.amountField };
+          return { type: hit ? hit[1] : family.labels?.default || behavior, amountField: family.amountField };
         }
       }
     }
@@ -72,7 +72,6 @@ const createSupplierBalanceService = ({
       tradeDate: isoDate(ms),
       amount: Math.abs(num(fields[txFields[classified.amountField]])),
       balance: num(fields[txFields.latestBalance]),
-      detailId: textValue(fields[txFields.transactionDetailId]).trim(),
       _ms: ms,
     };
   };
@@ -122,16 +121,13 @@ const createSupplierBalanceService = ({
         .sort((a, b) => (b._ms - a._ms) || String(b.recordId).localeCompare(String(a.recordId)));
       const latest = all[0] || null;
       let balance = 0;
-      let source = 'none';
       for (const rule of config.balanceRules) {
         if (rule.when === 'hasTransactions' && latest) {
           balance = latest.balance;
-          source = rule.source;
           break;
         }
         if (rule.when === 'always') {
           balance = entry.initialBalance;
-          source = rule.source;
           break;
         }
       }
@@ -144,10 +140,7 @@ const createSupplierBalanceService = ({
       suppliers.push({
         recordId: entry.recordId,
         name: entry.name,
-        longTerm: entry.longTerm,
         balance,
-        balanceSource: source,
-        latestTradeDate: latest?.tradeDate || '',
         transactions: all
           .filter((tx) => Number.isFinite(tx._ms) && tx._ms >= cutoff)
           .map(({ _ms, ...tx }) => tx),
