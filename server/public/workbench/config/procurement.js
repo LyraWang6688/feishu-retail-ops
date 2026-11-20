@@ -82,11 +82,10 @@ export const PROCUREMENT_UI = Object.freeze({
     specialSummary: '特殊码 · {count} 个（默认 0 双，点开选择）',
     tags: Object.freeze({ spot: '现货', prepaid: '预订' }),
   }),
+  // 兜底文案；正常由服务端 `product_action_labels` 下发（与扫码页共用同一份配置）。
   productActions: Object.freeze({
     adjustLabel: '库存调整',
-    gapLabel: '资料不齐：{missing}',
-    gapLinkLabel: '信息完善',
-    gapSeparator: ' · ',
+    infoLabel: '信息完善',
   }),
   units: Object.freeze({
     pair: '双',

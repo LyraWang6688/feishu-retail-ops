@@ -4,20 +4,19 @@
  */
 import { escapeHtml } from '../../core/formatters.js';
 
-const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (match, key) => (
-  Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
-));
-
 export const productActionsHtml = (group, config) => {
-  const labels = config.productActions || {};
+  const fallback = config.productActions || {};
+  const labels = group.product_action_labels || {};
+  const adjustLabel = labels.adjust || fallback.adjustLabel || '';
+  const infoLabel = labels.info || fallback.infoLabel || '';
   const adjustHref = String(group.product_adjust_url || '').trim();
   const recordHref = String(group.product_record_url || '').trim();
   const missing = String(group.product_missing_text || '').trim();
   const adjust = adjustHref
-    ? `<a class="pr-product-action pr-product-action--adjust" href="${escapeHtml(adjustHref)}">${escapeHtml(labels.adjustLabel || '')}</a>`
+    ? `<a class="pr-product-action pr-product-action--adjust" href="${escapeHtml(adjustHref)}">${escapeHtml(adjustLabel)}</a>`
     : '';
-  const gap = missing && recordHref
-    ? `<a class="pr-product-action pr-product-action--gap" href="${escapeHtml(recordHref)}" target="_blank" rel="noopener">${escapeHtml(fill(labels.gapLabel || '', { missing }))}${escapeHtml(labels.gapSeparator || '')}<span>${escapeHtml(labels.gapLinkLabel || '')} →</span></a>`
+  const info = missing && recordHref
+    ? `<a class="pr-product-action pr-product-action--gap" href="${escapeHtml(recordHref)}" target="_blank" rel="noopener">${escapeHtml(infoLabel)}</a>`
     : '';
-  return adjust || gap ? `<div class="pr-product-actions">${adjust}${gap}</div>` : '';
+  return adjust || info ? `<div class="pr-product-actions">${adjust}${info}</div>` : '';
 };

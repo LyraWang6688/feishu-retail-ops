@@ -15,7 +15,7 @@ test('采购页固定 tab，库存调整 / 信息完善单独占一行', () => {
   assert.match(css, /\.pr-tabs\s*\{[^}]*top:\s*env\(safe-area-inset-top/, '避开安全区');
   assert.match(css, /\.pr-product-actions\s*\{[^}]*width:\s*100%/, '操作区独占一行');
   assert.match(css, /\.pr-product-actions\s*\{[^}]*flex:\s*0 0 100%/, '不再和尺码卡抢同一行');
-  assert.match(config, /gapLinkLabel:\s*'信息完善'/, '资料不齐入口显示「信息完善」');
+  assert.match(config, /infoLabel:\s*'信息完善'/, '资料不齐入口显示「信息完善」');
 });
 
 test('验收明细不显示标题/批次/供应商，汇总条固定在顶部', () => {
