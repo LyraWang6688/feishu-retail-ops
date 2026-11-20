@@ -180,7 +180,7 @@ const createScanArrivalService = (options = {}) => {
     }
     const query = purchaseQueryOf();
     if (!query) return { ok: false, reason: 'not_wired', message: texts.acceptRowsUnreadableBody };
-    const rows = await query.listPurchaseRequests({ batchNo: wanted, reportBehavior: 'purchase_request' });
+    const rows = await query.listPurchaseRequests({ batchNo: wanted, behaviorCode: PURCHASE_BEHAVIORS.order });
     // 当前模型一个批次只属于一个供应商；`wantedSupplier` 仍用于限制本次验收范围。
     const scopedRows = wantedSupplier
       ? (rows || []).filter((row) => String(row?.supplier_record_id || '').trim() === wantedSupplier)

@@ -370,7 +370,7 @@ test('AC-W4 工作台验收路由：后台失败 ⇒ 统一 job(type=purchase_ac
   const app = express();
   app.use(express.json());
   app.use('/api/workbench', createWorkbenchRouter({
-    gateway: {}, purchaseQuery: { listPurchaseRequests: async () => [{ report_behavior: 'purchase_request' }] },
+    gateway: {}, purchaseQuery: { listPurchaseRequests: async () => [{ behavior_code: 'PURCHASE_ORDER', behavior_name: '报货' }] },
     arrival, asyncJobs: stackService,
   }));
   const server = await new Promise((resolve) => { const instance = app.listen(0, '127.0.0.1', () => resolve(instance)); });

@@ -30,8 +30,8 @@ const { InventoryService } = require('./inventoryService');
 // ⛔ 2026-10-09：「数量说明」解析（`purchaseQuantityPolicy`）与报货/退货归批窗口
 //   （`config/reportBatchWindow` / `config/purchaseReturnBatchWindow`）＋读记录重试
 //   （`config/reportReadRetry`）**全部随「信息填写」入口一起退场**，本文件不再 import。
-//   ⚠️ 「采购行为」分流（`classifyReportBehavior`）**仍在**，但已经不在本文件里用
-//   —— 它现在的调用方是 `services/purchaseQueryService`（按「报货信息.采购行为」分流）。
+//   ⚠️ 「采购行为」由 `services/purchaseQueryService` 直接投影 behavior_code/behavior_name，
+//   本文件不参与分流判断。
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { renderPurchaseRequestPng } = require('./purchaseRequestImageService');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
@@ -609,10 +609,7 @@ class PurchaseWebhookService {
         //    **Lookup（19，按「报货批次号」关联采购主表的「采购行为」）**，Lookup 是**只读**的：
         //    轻则白写被忽略，重则**整条明细 create 失败**（那样这批报货一条明细都建不出来）。
         //    ⚠️ **只撤写入、保留读取**：`v1BitableSchema` 的映射留着，
-        //    工作台采购查询的分流判据（`purchaseQueryService.classifyReportBehavior`）还在读它。
-        //    ⚠️ 待定：主表的「采购行为」目前**没有写入点**（业务负责人 2026-10-07 说过
-        //    「报货批次里面的采购行为你不用管」）⇒ 这一列在明细上会是空的，
-        //    `classifyReportBehavior` 读不到就按现状=采购申请分流（口径待她确认）。
+        //    工作台采购查询直接投影主表的 behavior_code/behavior_name。
         idempotencyKey: item.request_key,
       };
     };

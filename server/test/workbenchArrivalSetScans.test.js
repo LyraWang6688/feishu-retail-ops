@@ -61,7 +61,6 @@ const makeHarness = (options = {}) => {
     listPurchaseRequests: async () => rows.map((row) => ({
       ...row,
       record_id: row.record_id,
-      report_behavior: 'purchase_request',
     })),
   };
   const sizeReferences = options.sizeReferences || {
@@ -461,7 +460,7 @@ test('AC-SS12 ⭐ 自定义尺码从会话一路传到 finish 的 scanLines（�
   const store = new JsonTaskStore({ dir: sessionDir, idField: 'session_id' });
   const captured = [];
   const purchaseQuery = {
-    listPurchaseRequests: async () => ROWS.map((row) => ({ ...row, report_behavior: 'purchase_request' })),
+    listPurchaseRequests: async () => ROWS.map((row) => ({ ...row })),
   };
   const arrival = createScanArrivalService({
     config: SCAN_WRITE.acceptance,

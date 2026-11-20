@@ -85,9 +85,11 @@ const seedTables = (overrides = {}) => ({
     { record_id: 'size_40', fields: { 尺码: 40 } },
   ],
   purchaseOrderBatch: [
-    { record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH, 到货状态: '未到货' } },
+    { record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH, 发生行为: ['bh_order'] } },
   ],
-  behavior: [],
+  behavior: [
+    { record_id: 'bh_order', fields: { 行为名称: '报货', 行为编码: 'PURCHASE_ORDER' } },
+  ],
   ...overrides,
 });
 

@@ -2,7 +2,6 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const { classifyReportBehavior } = require('./purchaseBehaviorPolicy');
 const { getConfigRows } = require('./configTableCache');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
@@ -134,10 +133,6 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         product_color: product ? asText('product', product, 'color') : '',
         supplier_name: supplierIds[0] ? asText('supplier', supplierMap.get(supplierIds[0]), 'name') : '',
         arrival_created_at: asNumber(batch?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.createdAt]),
-        report_behavior: classifyReportBehavior({
-          name: behavior ? asText('behavior', behavior, 'name') : '',
-          code: behavior ? asText('behavior', behavior, 'code') : '',
-        }),
       };
     }));
     return rows.filter(Boolean).sort((a, b) => a.size - b.size);
@@ -153,8 +148,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
       // ⭐ 2026-11-09（验收页按供应商分组）：供应商名称取自「供应商管理」（configTableCache ✓）
       getConfigRows({ gateway, tableKey: 'supplier' }),
       // 「报货信息」的「采购行为」是关联「行为管理」：采购申请与采购退货写在同一张表里，
-      // 靠这一列分流。分流口径复用采购链路的同一份策略（purchaseBehaviorPolicy），
-      // 不在查询里另写一套判断——两套判断迟早在"什么算退货"上分家。
+      // 查询直接投影 behavior_code / behavior_name；调用方按编码精确筛选。
     ]);
     const productMap = indexByRecordId(products);
     const batchMap = indexByRecordId(batches);
@@ -198,16 +192,12 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         arrival_created_at: batch
           ? asNumber(batch?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.createdAt]) : null,
         // 'purchase_request' | 'purchase_return'（读不到行为记录时按现状=采购申请）
-        report_behavior: classifyReportBehavior({
-          name: behavior ? asText('behavior', behavior, 'name') : '',
-          code: behavior ? asText('behavior', behavior, 'code') : '',
-        }),
       };
     }));
 
     return rows.filter((row) => {
       if (filters.batchNo && row.batch_no !== filters.batchNo) return false;
-      if (filters.reportBehavior && row.report_behavior !== filters.reportBehavior) return false;
+      if (filters.behaviorCode && row.behavior_code !== filters.behaviorCode) return false;
       return true;
     }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)) || a.size - b.size);
   };

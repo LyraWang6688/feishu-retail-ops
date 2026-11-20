@@ -514,6 +514,13 @@ const makeFullChain = () => {
     });
   });
   data.behavior.push({
+    record_id: 'bhv_report',
+    fields: {
+      [F('behavior').code]: 'PURCHASE_ORDER',
+      [F('behavior').name]: '报货',
+    },
+  });
+  data.behavior.push({
     record_id: 'beh_in',
     fields: {
       [F('behavior').code]: 'STOCK_PURCHASE_INCREASE',

@@ -43,7 +43,8 @@ export const SALES_SECTIONS = [
   { key: 'draft', label: '草稿单', tag: '待建设', tone: 'info', icon: '📝' },
 ];
 
-// 验收到货的唯一判据：发生行为 = 入库（行为编码稳定，不按中文名判断）。
+// 采购验收判据：发生行为编码稳定，不按中文名判断。
+export const PURCHASE_ORDER_BEHAVIOR_CODE = 'PURCHASE_ORDER';
 export const PURCHASE_IN_BEHAVIOR_CODE = 'PURCHASE_IN';
 
 /**

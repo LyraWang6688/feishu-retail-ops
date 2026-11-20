@@ -1,4 +1,5 @@
 const { createPurchaseQueryService } = require('./purchaseQueryService');
+const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
 const { WORKBENCH_ARRIVAL_TEXTS, WORKBENCH_ARRIVAL_INPUT_REASONS } = require('../config/workbenchOrders');
 const { logInfo } = require('../utils/logger');
 
@@ -18,8 +19,7 @@ const { logInfo } = require('../utils/logger');
  *    · 一句 `applyPurchase` / `writeAcceptance` / `markConfirmed` / `buildPlan` 都没有
  *      （由 `test/workbenchOrders.test.js` 的 AC12 源码哨兵钉住）。
  *
- * ⚠️ 只收「采购申请」的批次：`reportBehavior: 'purchase_request'` 是**既有**过滤器
- *    （`services/purchaseBehaviorPolicy`），采购退货单不进这个入口。
+ * ⚠️ 只收「报货」的批次：按发生行为编码 `PURCHASE_ORDER` 过滤，采购退货单不进这个入口。
  * ⚠️ 失败一律**抛**（由路由按既有口径映射成 400 / 502，原因原样回到页面），
  *    参考 `services/workbenchOrderActionService.js` 的同一条纪律。
  */
@@ -51,7 +51,7 @@ class WorkbenchPurchaseArrivalService {
     }
     // 既有只读查询：这一批的采购申请明细（口径与「采购管理」页一致）
     const rows = await this.purchaseQuery.listPurchaseRequests({
-      batchNo: wanted, reportBehavior: 'purchase_request',
+      batchNo: wanted, behaviorCode: PURCHASE_BEHAVIORS.order,
     });
     const requestIds = [...new Set((rows || []).map((row) => String(row?.record_id || '').trim()).filter(Boolean))];
     if (!requestIds.length) {
