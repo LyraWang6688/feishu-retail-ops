@@ -81,25 +81,11 @@ V1_IDEMPOTENCY_KEY_TABLES.all = [...new Map(Object.values(V1_IDEMPOTENCY_KEY_TAB
 const getV1IdempotencyKeyTables = (scope = 'sales') =>
   V1_IDEMPOTENCY_KEY_TABLES[getV1SchemaScope(scope).key] || [];
 
-// 「单选取值契约」：真表这一列必须是单选、且**已经存在**代码要写的那些选项名。
-// 字段名闸门看不出取值，而往单选里写一个不存在的取值 → 飞书**自动新建选项** →
-// 表被悄悄污染、按该取值查询静默查不到（2026-10-07 加，起因见 purchaseArrivalStatus.js）。
-// ⚠️ 取值本身在各自那份配置里（配置先行），这里只负责**汇总"哪些列要校验"**：
-//    · 「报货批次.到货状态」（未到货 / 已到货）—— 2026-10-07 加。
-//    ⛔ 「报货批次.确认状态」的契约**已删除（2026-10-09）**：那一列在真表上没有了
-//      （生产 12 列里没有「确认状态」）⇒ 契约留着 = 闸门去问一列不存在的字段、直接判红；
-//      `config/purchaseAcceptance.js` 随它一起退场（全仓零读取点）。
-const V1_SELECT_OPTION_CONTRACT_SCOPES = Object.freeze([]);
-
-const getV1SelectOptionContracts = () => [];
-
 module.exports = {
   V1_SCHEMA_SCOPES,
   V1_SIZE_LINK_TABLES,
   V1_IDEMPOTENCY_KEY_TABLES,
-  V1_SELECT_OPTION_CONTRACT_SCOPES,
   getV1SchemaScope,
   getV1SizeLinkTables,
   getV1IdempotencyKeyTables,
-  getV1SelectOptionContracts,
 };

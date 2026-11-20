@@ -168,7 +168,7 @@ test('AC-AW10b ⭐ 缺批次号 / 明细读不到 / 明细为空 ⇒ 人话 + �
 test('AC-AW18 ⭐ 按供应商拆卡：accept 把 supplierRecordId 原样交给会话（每家独立验收）', async () => {
   const q = fakeQuery([{
     record_id: 'r1', batch_no: 'BH-1', product_record_id: 'p1', product_item_no: 'A1', size: 40,
-    quantity: 2, report_behavior: 'purchase_request', arrival_status: '未到货', supplier_record_id: 's1',
+    quantity: 2, report_behavior: 'purchase_request', behavior_code: 'PURCHASE_ORDER', behavior_name: '报货', supplier_record_id: 's1',
   }]);
   const arrival = fakeArrival();
   await withServer(appFor({ arrival, purchaseQuery: q }), async (base) => {
@@ -185,7 +185,7 @@ test('AC-AW18 ⭐ 按供应商拆卡：accept 把 supplierRecordId 原样交给�
 test('AC-AW18b ⭐ 供应商不在这批采购明细里 ⇒ 400 + 人话 + 零会话（防旧页面/手工请求）', async () => {
   const q = fakeQuery([{
     record_id: 'r1', batch_no: 'BH-1', product_record_id: 'p1', product_item_no: 'A1', size: 40,
-    quantity: 2, report_behavior: 'purchase_request', arrival_status: '未到货', supplier_record_id: 's1',
+    quantity: 2, report_behavior: 'purchase_request', behavior_code: 'PURCHASE_ORDER', behavior_name: '报货', supplier_record_id: 's1',
   }]);
   const arrival = fakeArrival();
   await withServer(appFor({ arrival, purchaseQuery: q }), async (base) => {
@@ -203,7 +203,7 @@ test('AC-AW-ALREADY ⭐⭐ 已到货批次再提交验收 ⇒ 400 + 人话 + 零
   const arrival = fakeArrival();
   const q = fakeQuery([{
     record_id: 'r1', batch_no: 'BH-1', product_record_id: 'p1', item_no: 'A1', size: 40,
-    quantity: 1, arrival_status: '已到货', report_behavior: 'purchase_request',
+    quantity: 1, behavior_code: 'PURCHASE_IN', behavior_name: '入库', report_behavior: 'purchase_request',
   }]);
   await withServer(appFor({ arrival, purchaseQuery: q }), async (base) => {
     const res = await postJson(base, arrivalTab.api.accept, {

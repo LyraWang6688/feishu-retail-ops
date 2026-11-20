@@ -36,8 +36,6 @@ const { rendererSource } = require('./support/rendererSource');
  *  AC-R2 提交退货 ⇒ ①「采购明细」写退货明细（数量 = 实退数；**「采购行为」是 Lookup，不写**、
  *        带「报货批次号」关联）；②「报货批次」建一行，**只写 批次号 + 幂等键**——
  *        🔴 **不写「到货状态」**（她自己 2026-10-07 的退货口径：留空 ⇒ 9 点推送看不见它）。
- *  AC-R3 退货批次**不进**「到货验收情况」面板（`PurchaseQueryService.listPurchaseArrivals`
- *        按"有到达状态"过滤）；也不进 9 点「未到货」候选（那一处按 `到货状态 = 未到货` 过滤）。
  *  AC-R4 **真扣库存**（走既有 `InventoryService`，不新写一套）：按退货口径
  *        `STOCK_PURCHASE_DECREASE` 的 consumes（门盒 + 样品 + 仓库）逐尺码扣；写「库存流水」；
  *        重放**不重复扣**。
@@ -413,34 +411,6 @@ test('AC-R2 提交退货 ⇒「采购明细」退货明细（行为列不写：L
       '退货批次不写「到货状态」（她的口径：留空 ⇒ 9 点推送看不见它）');
     // 配置的批次号生成器只被问过一次
     assert.equal(h.batchNoCalls(), 1);
-  } finally { h.cleanup(); }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AC-R3 退货批次不进「到货验收情况」面板
-// ═══════════════════════════════════════════════════════════════════════════
-
-test('AC-R3 退货批次不进「到货验收情况」面板（到达状态为空的行被既有过滤掉）', async () => {
-  const h = createHarness();
-  try {
-    const openId = 'ou_return_3';
-    await h.write.submitPurchaseReturn({
-      openId, submitKey: await returnKey(h, openId), productRecordId: 'prod_1', number: NUMBER,
-      entries: entries([42, 1]),
-    });
-    // 再报一条**采购申请**的批次（有到达状态）作为对照 —— 面板只该看见它。
-    const requestTables = h.gateway._tables;
-    requestTables.purchaseOrderBatch = [
-      ...requestTables.purchaseOrderBatch,
-      { record_id: 'batch_purchase', fields: { 报货批次号: 'CGD-20261011-0099', 发生行为: ['bh_request'], 幂等键: 'purchase_batch:x' } },
-    ];
-    const query = createPurchaseQueryService(h.gateway);
-    const arrivals = await query.listPurchaseArrivals();
-    assert.deepEqual(arrivals.map((row) => row.batch_no), ['CGD-20261011-0099'],
-      '退货批次没有到达状态 ⇒ 既有的 `filter(row => row.arrival_status)` 把它挡在面板外');
-    // 9 点推送的候选取值也是「未到货」（同一处口径）
-    const pending = arrivals.filter((row) => row.arrival_status === '未到货');
-    assert.equal(pending.length, 1);
   } finally { h.cleanup(); }
 });
 

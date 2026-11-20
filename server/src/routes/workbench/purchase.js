@@ -15,7 +15,6 @@ const { pageMessages } = require('../../config/purchaseArrivalTexts');
 const { SCAN_WRITE } = require('../../config/scanWrite');
 const arrivalTab = require('../../config/workbenchArrival');
 // ⭐ 2026-11-09：到货状态值域的真源（未到货 / 已到货，可配）—— 验收页只收「未到货」。
-const { resolvePurchaseArrivalStatusConfig } = require('../../config/purchaseArrivalStatus');
 const { PURCHASE_BEHAVIORS } = require('../../config/purchaseBehaviors');
 const { createScanArrivalService } = require('../../services/scanArrivalService');
 const { createPurchaseWriteBackgroundService } = require('../../services/purchaseWriteBackgroundService');
@@ -108,8 +107,6 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         writeBatchTotals: ({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }) =>
           webhooks.orderBatches.writeAcceptance({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }),
 
-        // 2026-11-20：每验收完一家供应商，写一条 P交易明细（只写交易明细ID + 报货批次号）。
-        writePaymentDetail: (input) => paymentTransactions.writeForSupplier(input),
       });
       purchaseArrival = new WorkbenchPurchaseArrivalService({
         purchaseQuery: createPurchaseQueryService(arrivalGateway),
@@ -438,8 +435,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       // ⭐⭐ 2026-11-09（业务负责人真机：「只展示未到货，不需要显示已到货」）：
       //   已到货批次**不许再验收** —— 前端不再渲染它，但后端也挡一道（防旧页面/双击/手工请求）：
       //   400 + 人话 + **零写入 + 一次后台都不排**。
-      const arrivalStatuses = resolvePurchaseArrivalStatusConfig();
-      if (batchRows.some((row) => row.arrival_status === arrivalStatuses.arrived)) {
+      if (batchRows.some((row) => String(row.behavior_code || '').trim() === PURCHASE_BEHAVIORS.inbound)) {
         return res.status(400).json({ success: false, error: arrivalTab.texts.alreadyAccepted });
       }
       // ⭐ 2026-11-10：传了供应商 ⇒ 必须在这一批的采购明细里真的有它（防旧页面/手工请求）。

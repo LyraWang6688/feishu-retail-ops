@@ -13,7 +13,7 @@ const { PurchaseWebhookService } = require('../src/services/purchaseWebhookServi
 const { PurchaseOrderBatchService } = require('../src/services/purchaseOrderBatchService');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { getV1SelectOptionContracts } = require('../src/config/v1SchemaScopes');
+
 
 process.env.FEISHU_V1_BITABLE_APP_TOKEN = process.env.FEISHU_V1_BITABLE_APP_TOKEN || 'test_app_token';
 process.env.PURCHASE_CHAT_ID = process.env.PURCHASE_CHAT_ID || 'oc_test_purchase_group';
@@ -146,10 +146,9 @@ test('writeAcceptance：实际数量 / 货单金额 / 差异分析照写，不�
   assert.equal('到货状态' in fields, false);
 });
 
-test('到货状态彻底退场：无映射 / 无方法 / 无单选取值契约', () => {
+test('到货状态彻底退场：无映射 / 无方法', () => {
   const fields = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
   assert.equal(fields.arrivalStatus, undefined);
   assert.equal(PurchaseOrderBatchService.prototype.setArrivalStatus, undefined);
   assert.equal(PurchaseOrderBatchService.prototype.markPending, undefined);
-  assert.deepEqual(getV1SelectOptionContracts('purchase'), []);
 });

@@ -8,7 +8,7 @@ export { arrivalLineKey, arrivalSubmitLines };
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
   SALES_SECTIONS, SALES_DELIVERY_PAGE,
-  ARRIVAL_STATUS_PENDING, ARRIVAL_STATUS_ARRIVED,
+  PURCHASE_IN_BEHAVIOR_CODE,
 } from '../../config/orders.js';
 
 // 工作台【订单列表】—— 一级 tab 的第三个（**只剩三条路径**，业务负责人 2026-10-29 定稿）。
@@ -124,19 +124,10 @@ export function groupPurchaseOrders(rows = []) {
   return [...byBatch.values()];
 }
 
-/** 这一批的到货状态（既有字段；同批次里任一明细说没到货就算没到货）。 */
-const arrivalStatusOf = (batch) => {
-  const statuses = (batch.rows || []).map((row) => String(row.arrival_status || '').trim()).filter(Boolean);
-  if (statuses.includes(ARRIVAL_STATUS_PENDING)) return ARRIVAL_STATUS_PENDING;
-  return statuses[0] || '';
-};
-
-/**
- * ⭐ 2026-10-10：这一批是不是**已经到过货**（只有取值严格等于「已到货」才算）。
- *   其余（含状态为空 / 未来她新加的取值）一律当"还没到货" ⇒ 排前面等验收 ——
- *   **宁可多给她一张待验收的卡，也不把一个还没验收的批次收进折叠里**。
- */
-const isArrivedBatch = (batch) => arrivalStatusOf(batch) === ARRIVAL_STATUS_ARRIVED;
+/** 这一批是否已入库：直接看供应主表的发生行为编码，不再翻译成「未到货/已到货」。 */
+const isArrivedBatch = (batch) => (batch.rows || []).some(
+  (row) => String(row.behavior_code || '').trim() === PURCHASE_IN_BEHAVIOR_CODE,
+);
 
 /** 旧分组用的占位键（历史数据里出现过）—— 现在**只用来识别并跳过**它 ✓（不再往页面上渲染）。 */
 export const NO_BATCH_KEY = '（无批次号）';

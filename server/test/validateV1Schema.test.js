@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { validateV1SchemaScope } = require('../scripts/validate_v1_schema');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const {
-  V1_SCHEMA_SCOPES, getV1SchemaScope, getV1IdempotencyKeyTables, getV1SelectOptionContracts,
+  V1_SCHEMA_SCOPES, getV1SchemaScope, getV1IdempotencyKeyTables,
 } = require('../src/config/v1SchemaScopes');
 
 // ⚠️ 2026-10-07 深夜：「采购入库」表已被业务负责人整表删除 ⇒ 它的尺码关联不用再核
@@ -179,11 +179,3 @@ test('幂等键字段类型不是文本时 schema-check 直接失败', async () 
 //    ⛔ 2026-10-09：原先还有第二条（「确认状态」）—— 那一列在真表上**已经被删掉**，
 //       契约与 `config/purchaseAcceptance.js` 一起退场。下面只留「到货状态」那条，
 //       并补一条守门：**契约里不许再有 confirmStatus**（留着 = 闸门去问一列不存在的字段、直接判红）。
-test('到货状态字段删除后，不再有单选取值契约', async () => {
-  assert.deepEqual(getV1SelectOptionContracts('purchase'), [], '没有需要校验选项的单选列了');
-  assert.deepEqual(getV1SelectOptionContracts('all'), []);
-  await validateV1SchemaScope({
-    gateway: gatewayFor({ purchaseOrderBatch: [{ field_name: '幂等键', type: 1 }] }),
-    scope: 'purchase',
-  });
-});

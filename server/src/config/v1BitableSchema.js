@@ -623,10 +623,10 @@ const V1_BITABLE_SCHEMA = {
         //      · 写入点：`PurchaseOrderBatchService.writeAcceptance` 只再写
         //        「实际数量」「发生金额」；`markConfirmed`（写确认状态）**整个删除**；
         //        `config/purchaseAcceptance.js` 与它的单选取值契约一起退场；
-        //      · 读取点：`purchaseQueryService.listPurchaseArrivals` 的
-        //        `confirm_status` / `acceptance_text` 两个投影与 `confirmStatus` 筛选一起删除。
-        //    ⭐ **保留**：「到货状态」(`arrivalStatus`) ＋「实际数量」＋「发生金额」——
-        //      结构化验收仍然要写（她 2026-10-08 批准的口径）。
+        //      · 2026-11-20：`purchaseQueryService` 不再兼容「到货状态」，
+        //        验收判断直接读「发生行为」= `PURCHASE_IN`。
+        //    ⭐ **保留**：「实际数量」＋「货单金额」＋「差异分析」＋「到货日」——
+        //      验收成功由 `markArrived` 写发生行为/到货日，`writeAcceptance` 写数量和差异。
         //    ⚠️ **到货日 / 验收人不在这个映射里**：它们在真表上是**自动字段**
         //      （到货日=更新时间 type 1002、验收人=创建人 type 1003），代码不读不写。
         // ⭐ 2026-10-08：9 点推送【采购】那行的文字要带**录入数量**

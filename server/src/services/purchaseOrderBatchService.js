@@ -48,9 +48,7 @@ const numericOrNull = (value) => (value === undefined || value === null || value
 //    `PurchaseWebhookService` 已经背了"报货 → 出单 → 出图 → 发群"整条链路；
 //    批次行怎么维护是另一件事，将来还会被 9 点推送 / 到货核对复用。
 //
-// ⚠️ 取值**不写死中文**：到货状态两个值来自 `config/purchaseArrivalStatus.js`
-//    （并由部署闸门对着真表 `property.options` 核对 —— 往单选里写不存在的取值，
-//    飞书会自动新建选项、把表污染掉，而 9 点推送按「未到货」查就静默查不到了）。
+// 到货判断只看「发生行为」：报货 = PURCHASE_ORDER，验收成功 = PURCHASE_IN。
 
 // ⛔ `purchaseBatchRowKey` 曾在 2026-10-09 随 `createForReturnBatch` 一起删除；
 //    **2026-10-11 随退货入口（改走扫码页）一起恢复** —— 报货那条链路的批次键仍在
@@ -172,7 +170,7 @@ class PurchaseOrderBatchService {
   async markArrived(batchNo, { behaviorRecordId = '', arrivalDate = '', correlation = {} } = {}) {
     const record = await this.findByBatchNo(batchNo);
     if (!record) {
-      logWarn('purchase.batch.arrival_status.no_record', { batch_no: batchNo });
+      logWarn('purchase.batch.arrived.no_record', { batch_no: batchNo });
       return { updated: false, reason: 'no_batch_record', batch_no: batchNo };
     }
     const values = {};
@@ -190,7 +188,7 @@ class PurchaseOrderBatchService {
     await this.gateway.update('purchaseOrderBatch', record.record_id, values, { correlation });
     logInfo('purchase.batch.arrived.written', {
       batch_no: batchNo, record_id: record.record_id, behavior_record_id: behaviorId,
-      arrival_date: arrivedAt, arrival_date_ms: arrivedAtMs, wrote_arrival_status: false,
+      arrival_date: arrivedAt, arrival_date_ms: arrivedAtMs,
     });
     return {
       updated: true, record_id: record.record_id, batch_no: batchNo,
@@ -248,7 +246,7 @@ class PurchaseOrderBatchService {
    * 🔴 **只有退货走这里——补货（报货）那条不写这一列**：
    *   我在 2026-10-15 只读核出的事实（不凭印象 ✗）：
    *   · 补货那条：`services/purchaseWebhookService.js` 的 `confirmPurchaseRequest`
-   *     建行时**显式写 `arrivalStatus = 未到货`**（那里的 `:1603`；注释逐字：
+   *     建行时只写批次号 / 幂等键 / 发生行为（不再写 `arrivalStatus`；注释逐字：
    *     「她走的两条入口（供应商报单 webhook / 扫码页补货）都汇到这一处建行点」）
    *     ⇒ 这条批次**会**进到货验收清单（`services/purchasePendingBatchService.js`
    *     按 `到货状态 = 未到货` 过滤）⇒ 她之后**到货核对**填的「发生金额」
@@ -308,7 +306,7 @@ class PurchaseOrderBatchService {
       source: 'scan_return_submit',
       // 明写"没动别的列"：这是口径，也是将来别人改这段代码时的绊线。
       wrote_actual_quantity: false,
-      wrote_arrival_status: false,
+
     });
     return {
       updated: true, record_id: target.record_id, matched_by: target.matched_by,

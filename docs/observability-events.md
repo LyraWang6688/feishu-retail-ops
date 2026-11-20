@@ -361,8 +361,8 @@
 | `purchase.batch.acceptance.no_record` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.acceptance.nothing_to_write` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.acceptance.written` | 1 | src/services/purchaseOrderBatchService.js |
-| `purchase.batch.arrival_status.no_record` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.arrived.invalid_date` | 1 | src/services/purchaseOrderBatchService.js |
+| `purchase.batch.arrived.no_record` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.arrived.written` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.document.exists` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.document.no_record` | 2 | src/services/purchase/documentImages.js<br>src/services/purchaseOrderBatchService.js |
