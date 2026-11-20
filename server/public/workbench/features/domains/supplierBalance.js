@@ -66,9 +66,6 @@ export function createSupplierBalanceModule() {
     mount(host) {
       host.innerHTML = `
         <div class="domain-page" data-page-kind="supplier-balance">
-          <div class="sb-head">
-            <h2>${esc(T.title)}</h2>
-          </div>
           <div class="pp-search">
             <input data-sb-search type="search" placeholder="${esc(T.searchPlaceholder)}" autocomplete="off">
           </div>
