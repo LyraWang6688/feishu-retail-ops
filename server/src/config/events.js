@@ -238,6 +238,7 @@ const EVENTS = Object.freeze([
   'purchase.batch.acceptance.nothing_to_write',
   'purchase.batch.acceptance.written',
   'purchase.batch.arrival_status.no_record',
+  'purchase.batch.arrived.invalid_date',
   'purchase.batch.arrived.written',
   'purchase.batch.document.exists',
   'purchase.batch.document.no_record',

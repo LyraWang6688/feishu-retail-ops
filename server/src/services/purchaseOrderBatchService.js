@@ -179,14 +179,23 @@ class PurchaseOrderBatchService {
     const behaviorId = String(behaviorRecordId || '').trim();
     if (behaviorId) values.behavior = relation(behaviorId);
     const arrivedAt = String(arrivalDate || '').trim();
-    if (arrivedAt) values.arrivalDate = arrivedAt;
+    const arrivedAtMs = arrivedAt ? Date.parse(arrivedAt) : null;
+    if (arrivedAt && !Number.isFinite(arrivedAtMs)) {
+      logWarn('purchase.batch.arrived.invalid_date', { batch_no: batchNo, arrival_date: arrivedAt });
+      return { updated: false, reason: 'invalid_arrival_date', batch_no: batchNo };
+    }
+    // 飞书日期时间字段收毫秒时间戳，不收 ISO 字符串（生产实测 1254064 DatetimeFieldConvFail）。
+    if (arrivedAtMs) values.arrivalDate = arrivedAtMs;
     if (!Object.keys(values).length) return { updated: false, reason: 'nothing_to_write', batch_no: batchNo };
     await this.gateway.update('purchaseOrderBatch', record.record_id, values, { correlation });
     logInfo('purchase.batch.arrived.written', {
-      batch_no: batchNo, record_id: record.record_id, behavior_record_id: behaviorId, arrival_date: arrivedAt,
-      wrote_arrival_status: false,
+      batch_no: batchNo, record_id: record.record_id, behavior_record_id: behaviorId,
+      arrival_date: arrivedAt, arrival_date_ms: arrivedAtMs, wrote_arrival_status: false,
     });
-    return { updated: true, record_id: record.record_id, batch_no: batchNo, behavior_record_id: behaviorId, arrival_date: arrivedAt };
+    return {
+      updated: true, record_id: record.record_id, batch_no: batchNo,
+      behavior_record_id: behaviorId, arrival_date: arrivedAt, arrival_date_ms: arrivedAtMs,
+    };
   }
 
   // ── 到货核对的落点（2026-10-07 晚：从已删除的「到货验收」表搬到这里）───────────
