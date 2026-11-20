@@ -14,9 +14,7 @@ const { logError, logInfo, logWarn } = require('../utils/logger');
 // ⭐ 2026-11-10（业务负责人：验收按采购明细的供应商拆卡）：
 //   同一批次号下**每家供应商是一次独立验收** ⇒ 任务 id 必须带供应商维度（否则第二家会被
 //   第一家那条 posted 任务当重放拦掉）；旧链路（无供应商）任务 id 保持原样 ✓。
-const {
-  taskIdForBatch, computeSupplierTotals,
-} = require('./acceptanceSupplierProgress');
+const { taskIdForBatch } = require('./acceptanceSupplierProgress');
 const { normalizeSampleChoices } = require('./purchaseArrival/sampleChoices');
 const { buildScanPlan } = require('./purchaseArrival/scanPlan');
 const { summarizeArrivalDifference, formatArrivalDifference } = require('./purchaseArrival/differenceAnalysis');
@@ -117,7 +115,6 @@ class PurchaseArrivalConversationService {
     sizeReferences,
     confirmArrival,
     markBatchArrived,
-    writeBatchTotals,
     config,
     now,
   } = {}) {
@@ -144,10 +141,6 @@ class PurchaseArrivalConversationService {
     // ⚠️ 默认空实现 = 什么都不做（单测/别的调用方不关心这条链路时行为与改动前一模一样）。
     // 🔴 它**必须永不抛**：入库事实已经落地，批次状态只是投影。
     this.markBatchArrived = markBatchArrived || (async () => ({ updated: false, reason: 'not_wired' }));
-    // ⭐ 2026-11-10：按供应商分批验收时，「实际数量 / 发生金额」要写**所有已验收供应商的累计**。
-    //   注入而不是自己 new：写「报货批次」那一行是 `PurchaseOrderBatchService` 的职责。
-    //   失败只 warn（入库已成功，累计列没写不改变事实）。
-    this.writeBatchTotals = writeBatchTotals || (async () => ({ updated: false, reason: 'not_wired' }));
     // 群里的反馈一律**引用回复/回复卡片**（群聊没有"上一次对话"的概念）。
     // ⭐ ④ 两个端口都收第三个参数 `{ threadId }`：非空时由**飞书发送适配器**
     //    带 `reply_in_thread` 把这条反馈回到**那个话题**（本类不认识 reply_in_thread）。
@@ -188,11 +181,6 @@ class PurchaseArrivalConversationService {
    * ⚠️ 方法名与注入依赖名（`this.markBatchArrived`）**必须不同**：
    *    同名的话构造函数里那个实例属性会**静默覆盖**原型方法（AGENTS.md 记过这个坑）。
    */
-  /** 这一批里已验收（posted）供应商的累计实际数量/金额（拆到 `acceptanceSupplierProgress`）。 */
-  async supplierTotalsOfBatch(task, batchNo) {
-    return computeSupplierTotals(this, task, batchNo);
-  }
-
   async notifyBatchArrived(batchNo, { correlation = {}, arrivalDate = '' } = {}) {
     const wanted = String(batchNo || '').trim();
     if (!wanted) {
@@ -346,46 +334,12 @@ class PurchaseArrivalConversationService {
       });
     }
     await this.store.update(taskId, { status: 'posted', posted_at: new Date(this.now()).toISOString() });
-    // ⭐ 到货事实落地之后 → 把「报货批次」那一行的到货状态改成「已到货」
-    //（业务负责人 2026-10-07：「**当用户在话题群里说了到货之后，状态应该改成「已到货」**」）。
-    // ⚠️ 位置**必须在入库之后**：入库是事实，批次状态是它的投影 —— 反过来的话，
-    //    写状态成功、入库失败，她会看到"已到货"而库存里没有这批货。
-    // ⚠️ 它是**增强**：失败只记 warn，**绝不**把已经入库成功的一单判成失败
-    //    （与"附件写回失败不阻塞主流程"同一条纪律）。
-    // ⭐ 2026-11-10（业务负责人：验收按供应商拆卡）：
-    //   本次只验了**一家** ⇒ 只写「实际数量/发生金额」的**累计值**；批次只有等**所有供应商**
-    //   都有 posted 任务后才标「已到货」（中间态保持未到货，另一家的卡继续在验收页）。
-    const scopedSupplier = String(task.supplier_record_id || '').trim();
-    if (scopedSupplier) {
-      const batchNo = this.taskBatchNo(task, draft);
-      const totals = await this.supplierTotalsOfBatch(task, batchNo);
-      if (totals && totals.quantity >= 0) {
-        try {
-          await this.writeBatchTotals({
-            batchNo,
-            batchRecordId: String(task.batch_record_id || draft.batch_record_id || '').trim(),
-            actualQuantity: totals.quantity,
-            actualAmount: totals.amount,
-            correlation: { task_id: taskId, batch_no: batchNo },
-          });
-        } catch (error) {
-          logWarn('purchase.arrival.reconcile.batch_totals_failed', {
-            task_id: taskId, batch_no: batchNo, error: String(error?.message || error).slice(0, 200),
-          });
-        }
-      }
-      // 2026-11-19：一批只有一个供应商 ⇒ 验收完直接写本批「已到货」。
-      //   不再读「供应商」Lookup，也不写「已到货供应商」（生产已无此列）。
-      await this.notifyBatchArrived(batchNo, {
-        correlation: { task_id: taskId },
-        arrivalDate: draft.accepted_at,
-      });
-    } else {
-      await this.notifyBatchArrived(this.taskBatchNo(task, draft), {
-        correlation: { task_id: taskId },
-        arrivalDate: draft.accepted_at,
-      });
-    }
+    // 采购提交已按供应商拆成独立批次 ⇒ 本任务验收完成即是本批完成。
+    // 实际数量/金额由 `writeArrivalAcceptance` 在本任务入库前写；这里只把发生行为改成入库并写到货日。
+    await this.notifyBatchArrived(this.taskBatchNo(task, draft), {
+      correlation: { task_id: taskId },
+      arrivalDate: draft.accepted_at,
+    });
     const total = draft.actual.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     // 回话模板（可配）：没有 0 行 → 与改动前逐字相同；有 0 行 → 说清"这些行没入库"；
     // 全是 0 行 → 不能写成"已入库 0 条"含糊过去，用专门那句。
@@ -478,19 +432,14 @@ class PurchaseArrivalConversationService {
    */
   async confirmBatchArrival({
     batch, actualAmount, operatorOpenId = '', scanLines = null, timing = null,
-    supplierRecordId = '', supplierRecordIds = [], sampleChoices = {}, acceptedAt = '',
+    supplierRecordId = '', sampleChoices = {}, acceptedAt = '',
   } = {}) {
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
       return { ok: false, reason: 'no_batch_no', message: pageMessages.m1 };
     }
-    // ⭐ 2026-11-10：本次验收的供应商范围（空 = 旧链路整批验收）。
+    // 本次验收的供应商（当前一个批次只属于一个供应商；空 = 旧链路整批验收）。
     const supplier = String(supplierRecordId || batch?.supplier_record_id || '').trim();
-    // ⚠️ 参数默认 [] 是 truthy ⇒ 不能写 `supplierRecordIds || batch...`（会吞掉 batch 里的集合）。
-    const supplierIdSource = (Array.isArray(supplierRecordIds) && supplierRecordIds.length)
-      ? supplierRecordIds : (batch?.supplier_record_ids || []);
-    const allSuppliers = [...new Set(supplierIdSource
-      .map((id) => String(id || '').trim()).filter(Boolean))];
     const amount = parseActualAmount(actualAmount);
     if (!amount.ok) {
       return {
@@ -565,9 +514,8 @@ class PurchaseArrivalConversationService {
         type: TASK_TYPE,
         batch_no: batchNo,
         batch_record_id: String(batch?.batch_record_id || snapshot.batchRecordId || '').trim(),
-        // ⭐ 2026-11-10：把供应商范围冻结在任务上（写回时判断全批是否验完、累计各家的数）
+        // 把本次验收的供应商冻结在任务上（任务 id / 验收范围）
         supplier_record_id: supplier,
-        supplier_record_ids: allSuppliers,
         request_ids: snapshot.requestIds,
         request_rows: snapshot.rows,
         plan: plan.rows,

@@ -102,11 +102,6 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
             behaviorRecordId: behavior?.recordId || '',
           });
         },
-        // ⭐ 2026-11-10（业务负责人：验收按供应商拆卡）：按供应商验收时，把「实际数量/发生金额」
-        //   写成**所有已验收供应商的累计值**（仍走既有 PurchaseOrderBatchService 写口）。
-        writeBatchTotals: ({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }) =>
-          webhooks.orderBatches.writeAcceptance({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }),
-
       });
       purchaseArrival = new WorkbenchPurchaseArrivalService({
         purchaseQuery: createPurchaseQueryService(arrivalGateway),
@@ -256,9 +251,8 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     validateSize: validateArrivalSize,
     config: (options.writeConfig || SCAN_WRITE).acceptance,
     store: options.arrivalStore,
-    // ⭐ 2026-11-10：工作台 accept 必须用**带主表字段写口**的会话（writeBatchTotals /
-    //   → 直接用 `resolvePurchaseArrival()` 构造的那个会话；
-    //   扫码页那条旧链路不传（保持无这些写口）。
+    // 工作台 accept 直接用 `resolvePurchaseArrival()` 构造的会话（含 markBatchArrived）；
+    // 扫码页那条旧链路不传（保持无这些写口）。
     arrivalConversation: () => resolvePurchaseArrival().arrivalConversation,
     // ⭐ 2026-10-29（F1/F2）：两条新判据的人话真源在 `config/workbenchArrival.js`
     //   （服务自己的 `texts` 仍以 `SCAN_WRITE.texts` 为基底；这里只覆盖新增那两句 ✓）

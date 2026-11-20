@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **516** 个事件。按前缀分组：
+共 **515** 个事件。按前缀分组：
 
 ## accessory
 
@@ -346,7 +346,6 @@
 | `purchase.arrival.reconcile.amount_missing` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_arrival_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.batch_arrival_skipped` | 1 | src/services/purchaseArrivalConversationService.js |
-| `purchase.arrival.reconcile.batch_totals_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.confirm_duplicate` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.confirm_failed` | 1 | src/services/purchaseArrivalConversationService.js |
 | `purchase.arrival.reconcile.failure_notice` | 1 | src/services/purchaseArrivalConversationService.js |
