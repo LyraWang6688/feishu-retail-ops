@@ -17,13 +17,14 @@ const listen = (app) => new Promise((resolve) => {
   });
 });
 
-const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备', extra = '') => ({
+const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备', extra = '', status = '下架') => ({
   record_id: id,
   fields: {
     编号: [{ text: number, type: 'text' }],
     货号: itemNo,
     颜色: [{ text: color, type: 'text' }],
     类别: [{ text: category, type: 'text' }],
+    货品状态: status,
     商品信息缺失: missing,
     标签信息缺失: tagMissing,
     样例图: token ? [{
@@ -33,11 +34,12 @@ const product = (id, number, itemNo, color, category, missing, token = '', tagMi
   },
 });
 
-const appWith = (gateway) => {
+const appWith = (gateway, extra = {}) => {
   invalidateConfigTable('product');
   resetProductSearchSnapshot();
   const app = express();
-  app.use(createWorkbenchProductRoutes({ options: { gateway } }));
+  app.use(express.json());
+  app.use(createWorkbenchProductRoutes({ options: { gateway, ...extra } }));
   return app;
 };
 
@@ -111,6 +113,63 @@ test('AC-PP2 缺失分组：排除齐备，按缺失值动态分组、数量降�
     assert.ok(body.groups[0].items[0].recordUrl.startsWith('https://'));
   } finally { server.close(); }
 });
+
+
+test('AC-PP-D1 货品下架：只返回下架记录，按货号搜索，默认全部', async () => {
+  const gateway = { listAll: async () => [
+    product('rec_down', 'A1|黑色|男', 'A1', '黑色', '男', '齐备', '', '齐备', '', '下架'),
+    product('rec_up', 'A2|黑色|男', 'A2', '黑色', '男', '齐备', '', '齐备', '', '在售'),
+    product('rec_down_2', 'B1|白色|女', 'B1', '白色', '女', '齐备', '', '齐备', '', '下架'),
+  ] };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const all = await (await fetch(`http://127.0.0.1:${port}/products/delisted`)).json();
+    assert.equal(all.success, true);
+    assert.deepEqual(all.items.map((item) => item.recordId), ['rec_down', 'rec_down_2']);
+    assert.equal(all.items[0].status, '下架');
+    const searched = await (await fetch(`http://127.0.0.1:${port}/products/delisted?q=B1`)).json();
+    assert.deepEqual(searched.items.map((item) => item.recordId), ['rec_down_2']);
+  } finally { server.close(); }
+});
+
+test('AC-PP-D2 删除接口：透传 allowNoSample / 操作人 / 请求编号', async () => {
+  const calls = [];
+  const productDelist = {
+    deleteDelistedProduct: async (input) => {
+      calls.push(input);
+      return { ok: true, record_id: input.recordId, archive: { archived: 0 } };
+    },
+  };
+  const { server, port } = await listen(appWith({ listAll: async () => [] }, { productDelist }));
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/products/rec_1`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ allowNoSample: true }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.success, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].recordId, 'rec_1');
+    assert.equal(calls[0].allowNoSample, true);
+    assert.ok(calls[0].correlation, '请求关联对象必须透传');
+  } finally { server.close(); }
+});
+
+test('AC-PP-D3 删除失败：在售返回 400，归档失败返回 502', async () => {
+  let reason = 'product_not_delisted';
+  const productDelist = { deleteDelistedProduct: async () => ({ ok: false, reason }) };
+  const { server, port } = await listen(appWith({ listAll: async () => [] }, { productDelist }));
+  try {
+    const first = await fetch(`http://127.0.0.1:${port}/products/rec_1`, { method: 'DELETE' });
+    assert.equal(first.status, 400);
+    reason = 'archive_failed';
+    const second = await fetch(`http://127.0.0.1:${port}/products/rec_1`, { method: 'DELETE' });
+    assert.equal(second.status, 502);
+  } finally { server.close(); }
+});
+
 
 test('AC-PP3 样例图代理：按 record_id 下载附件并返回图片流', async () => {
   const gateway = {

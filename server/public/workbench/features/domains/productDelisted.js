@@ -1,0 +1,144 @@
+/** 「货品资料 → 货品下架」子视图：搜索 / 加载更多 / 删除确认。 */
+export const createProductDelistedModule = ({
+  api, PRODUCT_PROFILE_API, T, esc, fill, COMPLETE_PAGE_SIZE, thumbImgHtml, resetThumbs, observeThumbs, showToast, showPageError,
+}) => {
+  const rowsHtml = (items) => (items || []).map((item) => `
+    <div class="pp-row" data-pp-delisted-row="${esc(item.recordId)}">
+      ${item.hasSampleImage && item.imageUrl ? thumbImgHtml(item.imageUrl) : `<span class="pp-thumb pp-thumb-empty">${esc(T.noImage)}</span>`}
+      <div class="pp-meta"><b>${esc(item.number)}</b><span>${esc(item.itemNo)}</span></div>
+      <button class="pp-small-btn pp-danger-btn" type="button" data-pp-delete="${esc(item.recordId)}" data-pp-delete-number="${esc(item.number)}" data-pp-has-sample="${item.hasSampleImage ? '1' : '0'}">${esc(T.delistedDelete)}</button>
+    </div>`).join('');
+
+  const viewHtml = () => `
+    <div data-pp="delisted" hidden>
+      <div class="pp-head"><h2>${esc(T.delistedTitle)}</h2></div>
+      <div class="pp-search"><input data-pp-delisted-search placeholder="${esc(T.delistedSearchPlaceholder)}" autocomplete="off"></div>
+      <p class="pp-note" data-pp-delisted-count hidden></p>
+      <div data-pp-delisted-list></div>
+      <p class="pp-note" data-pp-delisted-empty hidden></p>
+      <div class="pp-delete-modal" data-pp-delete-modal hidden>
+        <div class="pp-delete-card">
+          <h3>${esc(T.delistedDeleteTitle)}</h3>
+          <p class="pp-note" data-pp-delete-number></p>
+          <p class="pp-note" data-pp-delete-warning></p>
+          <p class="pp-note" data-pp-delete-sample></p>
+          <div class="pp-delete-actions">
+            <button class="btn" type="button" data-pp-delete-cancel>${esc(T.delistedDeleteCancel)}</button>
+            <button class="btn danger" type="button" data-pp-delete-confirm>${esc(T.delistedDeleteConfirm)}</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  const load = async (host, q = '') => {
+    const list = host.querySelector('[data-pp-delisted-list]');
+    const count = host.querySelector('[data-pp-delisted-count]');
+    const empty = host.querySelector('[data-pp-delisted-empty]');
+    if (!list || !count || !empty) return;
+    host.__ppDelistedQuery = q;
+    host.__ppDelistedShown = COMPLETE_PAGE_SIZE;
+    try {
+      const suffix = q ? `?q=${encodeURIComponent(q)}` : '';
+      const data = await api.get(`${PRODUCT_PROFILE_API.delisted}${suffix}`);
+      host.__ppDelistedItems = Array.isArray(data?.items) ? data.items : [];
+      render(host);
+    } catch {
+      host.__ppDelistedItems = [];
+      list.innerHTML = '';
+      count.hidden = true;
+      empty.hidden = false;
+      empty.textContent = T.searchFailed;
+    }
+  };
+
+  const render = (host) => {
+    const list = host.querySelector('[data-pp-delisted-list]');
+    const count = host.querySelector('[data-pp-delisted-count]');
+    const empty = host.querySelector('[data-pp-delisted-empty]');
+    if (!list || !count || !empty) return;
+    const items = host.__ppDelistedItems || [];
+    const shown = host.__ppDelistedShown || COMPLETE_PAGE_SIZE;
+    const visible = items.slice(0, shown);
+    const more = items.length - visible.length;
+    list.innerHTML = rowsHtml(visible)
+      + (more > 0 ? `<div class="pp-more"><button class="btn small" type="button" data-pp-delisted-more>${esc(fill(T.more, { count: more }))}</button></div>` : '');
+    count.hidden = false;
+    count.textContent = fill(T.delistedHint, { count: items.length });
+    empty.hidden = items.length > 0;
+    empty.textContent = host.__ppDelistedQuery ? T.delistedSearchEmpty : T.delistedEmpty;
+    resetThumbs(host);
+    observeThumbs(host, list);
+  };
+
+  const closeModal = (host) => {
+    const modal = host.querySelector('[data-pp-delete-modal]');
+    if (modal) modal.hidden = true;
+  };
+
+  const openModal = (host, button) => {
+    host.__ppDelete = {
+      recordId: button.dataset.ppDelete || '',
+      number: button.dataset.ppDeleteNumber || '',
+      hasSampleImage: button.dataset.ppHasSample === '1',
+    };
+    if (!host.__ppDelete.recordId) return;
+    host.querySelector('[data-pp-delete-number]').textContent = `编号：${host.__ppDelete.number}`;
+    host.querySelector('[data-pp-delete-warning]').textContent = `${T.delistedDeleteWarning}${T.delistedDeleteIrreversible}`;
+    host.querySelector('[data-pp-delete-sample]').textContent = host.__ppDelete.hasSampleImage
+      ? T.delistedDeleteSample : T.delistedDeleteNoSample;
+    const modal = host.querySelector('[data-pp-delete-modal]');
+    if (modal) modal.hidden = false;
+  };
+
+  const confirm = async (host) => {
+    const item = host.__ppDelete;
+    const button = host.querySelector('[data-pp-delete-confirm]');
+    if (!item?.recordId || !button) return;
+    showPageError('');
+    button.disabled = true;
+    button.textContent = T.delistedDeleting;
+    try {
+      await api.delete(PRODUCT_PROFILE_API.product(item.recordId), { allowNoSample: !item.hasSampleImage });
+      closeModal(host);
+      host.__ppDelete = null;
+      showToast(T.delistedDeleted);
+      await load(host, host.__ppDelistedQuery || '');
+    } catch (error) {
+      const code = String(error?.message || '');
+      const message = code === 'product_not_delisted' ? T.delistedNotDelisted
+        : (code === 'archive_failed' ? T.delistedArchiveFailed
+          : (code === 'no_sample_image' ? T.delistedNoSample : T.delistedDeleteFailed));
+      showPageError(message);
+    } finally {
+      button.disabled = false;
+      button.textContent = T.delistedDeleteConfirm;
+    }
+  };
+
+  const bind = (host) => {
+    const input = host.querySelector('[data-pp-delisted-search]');
+    let timer = null;
+    input?.addEventListener('input', () => {
+      clearTimeout(timer);
+      const q = input.value.trim();
+      if (q) showToast(T.searchingToast, { sticky: true });
+      timer = setTimeout(() => load(host, q), 250);
+    });
+    host.querySelector('[data-pp-delisted-list]')?.addEventListener('click', (event) => {
+      if (event.target.closest?.('[data-pp-delisted-more]')) {
+        host.__ppDelistedShown = (host.__ppDelistedShown || COMPLETE_PAGE_SIZE) + COMPLETE_PAGE_SIZE;
+        render(host);
+        return;
+      }
+      const button = event.target.closest?.('[data-pp-delete]');
+      if (button) openModal(host, button);
+    });
+    host.querySelector('[data-pp-delete-cancel]')?.addEventListener('click', () => closeModal(host));
+    host.querySelector('[data-pp-delete-modal]')?.addEventListener('click', (event) => {
+      if (event.target === event.currentTarget) closeModal(host);
+    });
+    host.querySelector('[data-pp-delete-confirm]')?.addEventListener('click', () => confirm(host));
+  };
+
+  return { viewHtml, bind, load };
+};

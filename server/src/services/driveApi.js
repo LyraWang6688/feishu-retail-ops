@@ -119,6 +119,20 @@ const createDriveApi = (client) => {
     return files;
   };
 
+  /** 把一个云盘文件移动到另一个文件夹（官方 drive.file.move，异步任务）。 */
+  const moveDriveFile = async (fileToken, folderToken, operation = 'move drive file') => {
+    const token = String(fileToken ?? '').trim();
+    const parent = String(folderToken ?? '').trim();
+    if (!token) throw new Error(`${operation} 缺少 file_token`);
+    if (!parent) throw new Error(`${operation} 缺少 folder_token`);
+    const response = await client.drive.file.move({
+      path: { file_token: token },
+      data: { type: 'file', folder_token: parent },
+    });
+    assertOk(response, operation);
+    return { token, taskId: response?.data?.task_id || response?.data?.data?.task_id || '' };
+  };
+
   /** 删除一个云盘文件（同名覆盖时先删旧文件；进回收站，不是硬删）。 */
   const deleteDriveFile = async (fileToken, operation = 'delete drive file') => {
     const token = String(fileToken ?? '').trim();
@@ -152,7 +166,7 @@ const createDriveApi = (client) => {
     return { token, memberType };
   };
 
-  return { downloadMedia, uploadDriveFile, listDriveFolder, deleteDriveFile, transferFileOwner };
+  return { downloadMedia, uploadDriveFile, listDriveFolder, moveDriveFile, deleteDriveFile, transferFileOwner };
 };
 
 module.exports = { createDriveApi, extraOfAttachment };

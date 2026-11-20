@@ -7,9 +7,11 @@
 import { api } from '../../core/api-client.js';
 import { PRODUCT_PROFILE_API, PRODUCT_PROFILE_TEXTS as T } from '../../config/productProfile.js';
 import { showToast } from '../shared/toast.js';
+import { showPageError } from '../../core/ui.js';
 import { bindDomainAction } from './dataConfigAction.js';
 import { productIssueChipsOf } from '../shared/productIssues.js';
 import { createAccessoryConfigModule } from './accessoryConfig.js';
+import { createProductDelistedModule } from './productDelisted.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, k) => (values[k] == null ? '' : String(values[k])));
 const COMPLETE_PAGE_SIZE = 40;
@@ -60,10 +62,15 @@ const resetThumbs = (host) => {
   thumbObservers.delete(host);
 };
 
+const delistedModule = createProductDelistedModule({
+  api, PRODUCT_PROFILE_API, T, esc, fill, COMPLETE_PAGE_SIZE, thumbImgHtml, resetThumbs, observeThumbs, showToast, showPageError,
+});
+
 const cardsHtml = () => `
   <div class="domain-cards">
     <button class="entry-card" type="button" data-pp-view="new"><span class="icon">🆕</span><h3>${esc(T.newTitle)}</h3></button>
     <button class="entry-card" type="button" data-pp-view="complete"><span class="icon">📝</span><h3>${esc(T.completeTitle)}</h3></button>
+    <button class="entry-card" type="button" data-pp-view="delisted"><span class="icon">📤</span><h3>${esc(T.delistedTitle)}</h3></button>
     <button class="entry-card" type="button" data-domain-action="sample-image-sync"><span class="icon">🖼️</span><h3>${esc(T.sampleTitle)}</h3></button>
     <button class="entry-card" type="button" data-pp-view="accessory"><span class="icon">🛒</span><h3>${esc(T.accessoryTitle)}</h3></button>
   </div>
@@ -91,6 +98,7 @@ export const productProfilePageHtml = () => `
       <div class="pp-tabs" data-pp-complete-tabs></div>
       <div data-pp-complete-list></div>
     </div>
+    ${delistedModule.viewHtml()}
     <div data-pp="accessory" hidden></div>
   </div>`;
 
@@ -105,6 +113,7 @@ export function createProductProfileModule() {
         host.querySelector('[data-pp="cards"]').hidden = name !== 'cards';
         host.querySelector('[data-pp="new"]').hidden = name !== 'new';
         host.querySelector('[data-pp="complete"]').hidden = name !== 'complete';
+        host.querySelector('[data-pp="delisted"]').hidden = name !== 'delisted';
         host.querySelector('[data-pp="accessory"]').hidden = name !== 'accessory';
         if (name === 'accessory') {
           if (!accessoryModule) {
@@ -118,6 +127,7 @@ export function createProductProfileModule() {
           const q = host.querySelector('[data-pp-complete-search]')?.value.trim() || '';
           loadCompleteSearch(host, q);
         }
+        if (name === 'delisted') delistedModule.load(host, '');
       };
       // ⭐ #1204：图片加载失败 → 变成「加载失败 · 点击重试」（不再冒充"无样例图"）。
       host.addEventListener('error', (event) => {
@@ -184,6 +194,7 @@ export function createProductProfileModule() {
         const row = event.target.closest?.('[data-pp-record-url]');
         if (row?.dataset.ppRecordUrl) window.open(row.dataset.ppRecordUrl, '_blank', 'noopener');
       });
+      delistedModule.bind(host);
     },
   };
 }
@@ -234,6 +245,7 @@ async function loadSearch(host, q) {
     count.hidden = true;
   }
 }
+
 
 async function loadComplete(host) {
   const hint = host.querySelector('[data-pp-complete-hint]');

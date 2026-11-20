@@ -124,6 +124,15 @@
 .pp-modal[hidden]{display:none}
 .pp-modal img{max-width:100%;max-height:82vh;border-radius:12px;background:var(--surface)}
 .pp-modal button{position:absolute;top:18px;right:18px;width:40px;height:40px;border:0;border-radius:20px;background:var(--surface);color:var(--text);font-size:22px;line-height:40px;cursor:pointer}
+.pp-danger-btn{border-color:color-mix(in srgb,var(--danger) 35%,var(--border-light));background:var(--danger-soft);color:var(--danger)}
+.pp-delete-modal{position:fixed;inset:0;z-index:51;display:flex;align-items:center;justify-content:center;padding:16px;background:color-mix(in srgb,var(--text) 55%,transparent)}
+.pp-delete-modal[hidden]{display:none}
+.pp-delete-card{width:100%;max-width:360px;padding:18px;border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-pop)}
+.pp-delete-card h3{margin:0 0 8px;font-size:17px}
+.pp-delete-card .pp-note{margin:8px 0}
+.pp-delete-actions{display:flex;gap:8px;margin-top:16px}
+.pp-delete-actions .btn{flex:1}
+.pp-delete-actions .danger{background:var(--danger);color:var(--surface)}
 
 /* 手工调整（2026-11-11 前端替换） */
 .page-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
