@@ -85,7 +85,7 @@ export const PROCUREMENT_UI = Object.freeze({
   productActions: Object.freeze({
     adjustLabel: '库存调整',
     gapLabel: '资料不齐：{missing}',
-    gapLinkLabel: '去补全',
+    gapLinkLabel: '信息完善',
     gapSeparator: ' · ',
   }),
   units: Object.freeze({

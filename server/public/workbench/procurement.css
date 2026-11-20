@@ -12,7 +12,7 @@
 }
 
 /* 三个 tab（扫一扫本轮禁用：视觉保留、不可点） */
-.pr-tabs { display: flex; gap: var(--space-2); margin: 0 0 var(--space-3); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.pr-tabs { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; gap: var(--space-2); margin: 0 0 var(--space-3); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
 .pr-tab { flex: 1 1 0; min-width: 0; min-height: var(--control-height); border: 0; border-radius: var(--radius-md); padding: var(--space-2); background: transparent; color: var(--text-secondary); font-weight: var(--weight-medium); font-size: var(--font-size-sm); text-align: center; cursor: pointer; }
 .pr-tab small { display: block; margin-top: 2px; font-size: var(--font-size-xs); font-weight: var(--weight-normal); color: var(--text-muted); }
 .pr-tab.active { background: var(--primary-soft); color: var(--primary); }
@@ -94,7 +94,7 @@
 .pr-submit:disabled { opacity: 0.65; cursor: wait; }
 
 /* 2026-11-19：补货卡片的库存调整 / 资料不齐入口 */
-.pr-product-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); padding:0 var(--space-4) var(--space-2); }
-.pr-product-action { display:inline-flex; align-items:center; min-height:36px; padding:0 var(--space-3); border:1px solid var(--border); border-radius:var(--radius-pill); color:var(--primary); font-size:var(--font-size-xs); text-decoration:none; }
-.pr-product-action--gap { color:var(--warning-text); border-color:var(--warning-soft); background:var(--warning-soft); }
+.pr-product-actions { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); width:100%; flex:0 0 100%; box-sizing:border-box; padding:0 var(--space-4) var(--space-2); }
+.pr-product-action { display:inline-flex; align-items:center; flex:0 0 auto; min-height:36px; padding:0 var(--space-3); border:1px solid var(--border); border-radius:var(--radius-pill); color:var(--primary); font-size:var(--font-size-xs); white-space:nowrap; text-decoration:none; }
+.pr-product-action--gap { max-width:100%; color:var(--warning-text); border-color:var(--warning-soft); background:var(--warning-soft); white-space:normal; overflow-wrap:anywhere; }
 .pr-product-action span { font-weight:var(--weight-bold); }

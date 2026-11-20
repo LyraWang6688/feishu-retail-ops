@@ -85,12 +85,7 @@ const productsHtml = (groups) => groups.map((group) => {
     + '<div data-view="arrival-size-rows">' + rows + '</div></section>';
 }).join('');
 
-const shellHtml = (batchNo, supplierName) => '<header class="arrival-detail-head">'
-  + '<div><h1>' + escapeHtml(ARRIVAL_FULL_TEXTS.detailPageTitle) + '</h1>'
-  + '<p class="arrival-detail-meta"><span data-view="arrival-batch-label">' + escapeHtml(batchNo) + '</span>'
-  + (supplierName ? ' · <span data-view="arrival-supplier-label">' + escapeHtml(supplierName) + '</span>' : '')
-  + '</p></div></header>'
-  + '<section class="arrival-summary" data-view="arrival-summary" aria-live="polite"></section>'
+const shellHtml = () => '<section class="arrival-summary" data-view="arrival-summary" aria-live="polite"></section>'
   + '<div data-view="arrival-products"></div>'
   + '<form class="arrival-detail-form" data-arrival-form>'
   + '<label class="form-field">' + escapeHtml(ORDERS_TEXTS.arrivalAmount)
@@ -327,7 +322,7 @@ export function mountPurchaseAcceptanceDetail(host) {
         hasSample: input.has_sample === true,
       })).filter((row) => row.productId);
       state.rows = rows;
-      host.innerHTML = shellHtml(batchNo, supplierName);
+      host.innerHTML = shellHtml();
       renderProducts();
       host.addEventListener('input', (event) => {
         const amountInput = event.target.closest?.('[data-field="arrival-amount"]');
