@@ -12,18 +12,18 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 
-test('新 IA：一级 tab = 销售 · 供应 · 库存 · 资金 · 创作 · 配置，没有全局扫一扫', () => {
+test('新 IA：一级 tab = 销售 · 供应 · 库存 · 创作 · 配置，没有全局扫一扫', () => {
   const tabs = read('public/workbench/config/tabs.js');
-  for (const label of ["label: '销售'", "label: '供应'", "label: '库存'", "label: '资金'", "label: '创作'", "label: '配置'"]) {
+  for (const label of ["label: '销售'", "label: '供应'", "label: '库存'", "label: '创作'", "label: '配置'"]) {
     assert.ok(tabs.includes(label), `缺少一级 tab：${label}`);
   }
   assert.equal(tabs.includes("module: 'scan'"), false, '全局扫一扫一级 tab 必须退场');
-  assert.equal((tabs.match(/module: '/g) || []).length, 6, '一级 tab 只能有 6 个模块');
+  assert.equal((tabs.match(/module: '/g) || []).length, 5, '一级 tab 只能有 5 个模块');
   assert.equal(tabs.includes("label: '采购'"), false, '采购已改名为供应');
   // ⭐ 2026-11-07：每个一级 tab 必须在 main.js 的 modules 表里注册，否则点击会报
   //   「未知工作台模块：<id>」。
   const mainJs = read('public/workbench/main.js');
-  for (const moduleId of ['sales', 'inventory', 'purchase', 'product', 'funds', 'creation']) {
+  for (const moduleId of ['sales', 'inventory', 'purchase', 'product', 'creation']) {
     assert.ok(mainJs.includes(`['${moduleId}', createDomainModule('${moduleId}')]`),
       `一级 tab ${moduleId} 未在 main.js 注册`);
   }
