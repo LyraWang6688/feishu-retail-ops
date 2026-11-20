@@ -140,6 +140,7 @@ const createSupplierBalanceService = ({
       suppliers.push({
         recordId: entry.recordId,
         name: entry.name,
+        longTerm: entry.longTerm,
         balance,
         transactions: all
           .filter((tx) => Number.isFinite(tx._ms) && tx._ms >= cutoff)

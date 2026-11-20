@@ -77,6 +77,7 @@ test('供应商显示：长期合作固定显示；未勾选仅最新余额非 0
     '七匹狼/吉祥鸟', '一代千金', '三星', '信踏', '恒安利', '舒美特',
   ].sort());
   assert.equal(result.suppliers.some((item) => item.name === '贵帝'), false, '未勾选且余额 0 ⇒ 不显示');
+  assert.deepEqual(result.suppliers.slice(0, 3).map((item) => item.longTerm), [true, true, true], '长期合作优先排序');
   const star = result.suppliers.find((item) => item.name === '三星');
   assert.equal(star.balance, 0);
 });
