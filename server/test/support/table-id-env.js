@@ -43,6 +43,7 @@ const TEST_TABLE_IDS = Object.freeze({
   FEISHU_V1_GROUP_BUY_VOUCHER_TABLE_ID: 'tbl_test_group_buy_voucher',
   FEISHU_V1_PAYMENT_METHOD_TABLE_ID: 'tbl_test_payment_method',
   FEISHU_V1_SUPPLIER_TABLE_ID: 'tbl_test_supplier',
+  FEISHU_V1_SUPPLIER_BALANCE_INIT_TABLE_ID: 'tbl_test_supplier_balance_init',
   FEISHU_V1_SALES_ENTRY_TABLE_ID: 'tbl_test_sales_entry',
   FEISHU_V1_SALES_DETAIL_TABLE_ID: 'tbl_test_sales_detail',
   FEISHU_V1_PAYMENT_RECORD_TABLE_ID: 'tbl_test_payment_record',

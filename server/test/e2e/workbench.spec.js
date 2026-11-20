@@ -21,6 +21,23 @@ const mockApi = async (page, { orders = [] } = {}) => {
         }],
       }));
     }
+    if (path === '/api/workbench/purchase/supplier-balances') {
+      return route.fulfill(json({
+        success: true,
+        windowDays: 30,
+        suppliers: [{
+          recordId: 'sup1', name: '七匹狼/吉祥鸟', longTerm: true, balance: 10430,
+          balanceSource: 'transactions', latestTradeDate: '2026-11-20T12:56:47+08:00',
+          transactions: [
+            { recordId: 'tx1', type: '付款', tradeDate: '2026-11-20T12:56:47+08:00', amount: 20000, balance: 10430 },
+            { recordId: 'tx2', type: '报货', tradeDate: '2026-11-20T00:00:00+08:00', amount: 2732, balance: 30430 },
+          ],
+        }, {
+          recordId: 'sup2', name: '恒安利', longTerm: false, balance: -60,
+          balanceSource: 'initialization', latestTradeDate: '', transactions: [],
+        }],
+      }));
+    }
     if (path === '/api/workbench/products/delisted') {
       return route.fulfill(json({
         success: true,
@@ -170,6 +187,21 @@ test('货品 → 货品资料：五张卡 + 货品完善分组', async ({ page }
   await expect(page.locator('[data-page-kind="product-profile"]:visible').getByRole('heading', { name: '配品配置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /货品完善/ }).click();
   await expect(page.locator('[data-pp-complete-tabs]')).toBeVisible();
+});
+
+test('供应往来款：供应商余额 + 最近30天交易', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '供应', exact: true }).click();
+  await page.getByRole('button', { name: '往来款', exact: true }).click();
+  await expect(page.locator('[data-page-kind="supplier-balance"]')).toBeVisible();
+  await expect(page.locator('[data-sb-card]')).toHaveCount(2);
+  await expect(page.locator('[data-sb-card]').first()).toContainText('七匹狼/吉祥鸟');
+  await expect(page.locator('[data-sb-card]').first()).toContainText('10,430');
+  await expect(page.locator('[data-sb-card]').first()).toContainText('付款');
+  await page.getByPlaceholder('搜索供应商').fill('恒安利');
+  await expect(page.locator('[data-sb-card]')).toHaveCount(1);
+  await expect(page.locator('[data-sb-card]')).toContainText('恒安利');
 });
 
 test('货品下架：默认列表 + 按货号搜索 + 删除确认', async ({ page }) => {

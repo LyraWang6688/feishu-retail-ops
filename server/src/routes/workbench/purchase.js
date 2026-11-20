@@ -42,6 +42,7 @@ const { createScanWriteService } = require('../../services/scanWriteService');
 const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 const { createPurchaseAcceptanceSampleService } = require('../../services/purchaseAcceptanceSampleService');
 const { SizeReferenceService } = require('../../services/sizeReferenceService');
+const { createSupplierBalanceService } = require('../../services/supplierBalanceService');
 
 const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   const router = express.Router();
@@ -716,6 +717,24 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       return res.status(502).json({ success: false, error: procurementTexts.submitFailed });
     }
   });
+  // 「供应 → 往来款」只读：供应商最新余额 + 最近 30 天 P 交易明细。
+  let supplierBalance = options.supplierBalance || null;
+  const resolveSupplierBalance = () => {
+    if (!supplierBalance) {
+      supplierBalance = createSupplierBalanceService({ gateway: options.gateway || new V1BitableGateway() });
+    }
+    return supplierBalance;
+  };
+  router.get('/purchase/supplier-balances', async (req, res) => {
+    try {
+      const result = await resolveSupplierBalance().list();
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.purchase.supplier_balances.failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: 'supplier_balances_failed' });
+    }
+  });
+
   router.use('/purchase', createPurchaseQueryRouter({ gateway: options.gateway || new V1BitableGateway() }));
   return router;
 };

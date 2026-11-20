@@ -25,6 +25,8 @@ const V1_SCHEMA_SCOPES = {
     'purchaseRequest',
     'purchaseOrderBatch',
     'paymentTransaction',
+    // 「往来款」初始化余额（只读）。纳入采购闸门，漏配 tableId 时部署前就红。
+    'supplierBalanceInit',
     // ⚠️ 2026-10-09 新表「P交易明细」曾**刻意不在这里**（真表只有主字段「文本」、无业务列）；
     //    ⭐ 2026-10-17 她已指令把它纳入 **sales**（只验表存在、不验列）⇒ 见 sales 那段注释 ✓
     // ⚠️ `purchaseArrival`（「到货验收」）已从 schema 与这里**一并删除**（2026-10-07 晚）：

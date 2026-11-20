@@ -206,6 +206,17 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_SUPPLIER_TABLE_ID'),
       fields: {
         name: '供应商名称',
+        longTerm: '长期合作',
+      },
+    },
+    // 「往来款」的初始化余额（只读）。表名 / 列名按生产真表登记，代码只读。
+    supplierBalanceInit: {
+      tableName: '供应商货款初始化（使用中）',
+      tableId: getEnv('FEISHU_V1_SUPPLIER_BALANCE_INIT_TABLE_ID'),
+      fields: {
+        supplierName: '供应商名',
+        initialBalance: '期初余额',
+        baselineDate: '基准日',
       },
     },
     salesEntry: {

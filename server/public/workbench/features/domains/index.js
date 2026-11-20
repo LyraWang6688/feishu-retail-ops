@@ -9,6 +9,7 @@ import { createScanCardsModule } from '../scan/launch.js';
 import { domainPageHtml, domainSubTabsHtml, resolveTabClick } from './nav.js';
 import { bindDomainAction } from './dataConfigAction.js';
 import { createProductProfileModule } from './productProfile.js';
+import { createSupplierBalanceModule } from './supplierBalance.js';
 import { createLabelPrintHubModule } from '../labels/hub.js';
 
 /**
@@ -106,6 +107,7 @@ export function createDomainModule(domainId) {
     if (page.kind === 'inventory-ledger') return void createInventoryLedgerModule().mount(host);
     if (page.kind === 'sales-query') return void createSalesQueryModule().mount(host);
     if (page.kind === 'product-profile') return void createProductProfileModule().mount(host);
+    if (page.kind === 'supplier-balance') return void createSupplierBalanceModule().mount(host);
     if (page.kind === 'label-print') {
       let module = state.labelPrintModules.get(page.id);
       if (!module) {
