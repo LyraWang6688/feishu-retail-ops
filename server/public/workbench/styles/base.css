@@ -51,7 +51,7 @@ h4 { font-size: var(--font-size-base); }
   background: var(--surface);
   color: var(--text);
 }
-.btn { cursor: pointer; color: var(--primary); font-weight: var(--weight-bold); }
+.btn { cursor: pointer; color: var(--primary); font-weight: var(--weight-bold); text-decoration: none; }
 .btn:hover { background: var(--primary-soft); }
 .btn:disabled { cursor: wait; opacity: .65; }
 /* 主按钮**占满一行**（她的口径：手机上主操作一眼就能点到）。 */
