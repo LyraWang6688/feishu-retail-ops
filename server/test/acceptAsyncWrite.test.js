@@ -485,7 +485,7 @@ const makeFullChain = () => {
     const recordId = `batch_${batchNo}`;
     data.purchaseOrderBatch.push({
       record_id: recordId,
-      fields: { [F('purchaseOrderBatch').batchNo]: batchNo, [F('purchaseOrderBatch').arrivalStatus]: '未到货' },
+      fields: { [F('purchaseOrderBatch').batchNo]: batchNo, [F('purchaseOrderBatch').behavior]: ['bhv_report'] },
     });
     for (const size of SIZES) {
       data.purchaseRequest.push({

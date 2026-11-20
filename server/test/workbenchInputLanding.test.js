@@ -87,7 +87,11 @@ const CHAINS = Object.freeze({
     route: 'src/routes/workbench/purchase.js', routeKey: /router\.post\(arrivalTab\.api\.accept/,
     config: 'src/config/workbenchArrival.js', configKey: /accept: '\/purchase\/arrivals\/accept'/,
     service: 'src/services/scanArrivalService.js', serviceKey: /const setScans/,
-    landing: [['purchaseOrderBatch', 'actualAmount'], ['purchaseOrderBatch', 'arrivalStatus'], ['liveInventory', 'stockKey']],
+    landing: [
+      ['purchaseOrderBatch', 'actualAmount'], ['purchaseOrderBatch', 'arrivalDate'],
+      ['paymentTransaction', 'transactionDetailId'], ['paymentTransaction', 'batchNo'],
+      ['liveInventory', 'stockKey'],
+    ],
   },
 
 

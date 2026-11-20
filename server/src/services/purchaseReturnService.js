@@ -73,8 +73,8 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
 const { PurchaseBatchNoGenerator } = require('./purchaseBatchNoGenerator');
 const { createSupplyDocumentSyncService } = require('./supplyDocumentSyncService');
-const { createPurchasePaymentDetailService } = require('./purchasePaymentDetailService');
-const { groupItemsBySupplier, pairCountOf } = require('./supplierSplitService');
+const { createPurchaseTransactionService } = require('./purchaseTransactionService');
+const { groupItemsBySupplier } = require('./supplierSplitService');
 const {
   InventoryService, MOVEMENT_PURCHASE_DECREASE, STOCK_MOVEMENTS,
 } = require('./inventoryService');
@@ -165,7 +165,7 @@ const createPurchaseReturnService = (options = {}) => {
   const webhooks = options.webhooks || null;
   const batchNoGenerator = options.batchNoGenerator || new PurchaseBatchNoGenerator({ gateway });
   const supplyDocumentSync = options.supplyDocumentSync || createSupplyDocumentSyncService({ gateway });
-  const paymentDetails = options.paymentDetails || createPurchasePaymentDetailService({ gateway });
+  const paymentTransactions = options.paymentTransactions || createPurchaseTransactionService({ gateway });
   // ⭐ task-64：**采购行为**那条既有解析器（`scanWriteService` 也是用它解析同一个编码 ✓）——
   //   只在"草稿里没带行为"时用（引擎的多货品载荷正是这种形状 ✓）；懒建 ⇒ 单货品那条老路
   //   **一次都不碰它**（零额外读 ✓）。
@@ -454,31 +454,15 @@ const createPurchaseReturnService = (options = {}) => {
       });
     }
 
-    // 2026-11-19：退货也记 P发生明细；多供应商按退货双数比例分摊整单金额（分到分，尾差给最后一组）。
-    // 放在 posted 之前：写失败 ⇒ 任务保持 posting，异步 job 重试；P发生明细按交易明细ID幂等。
-    const orderAmountText = draft.order_amount;
-    if (orderAmountText !== undefined && orderAmountText !== null && String(orderAmountText).trim() !== '') {
-      const totalCents = Math.round(Number(orderAmountText) * 100);
-      const groups = groupItemsBySupplier(drawItems);
-      const totalPairs = groups.reduce((sum, group) => sum + pairCountOf(group.items), 0);
-      if (Number.isFinite(totalCents) && totalCents > 0 && totalPairs > 0) {
-        let allocated = 0;
-        for (let index = 0; index < groups.length; index += 1) {
-          const group = groups[index];
-          const last = index === groups.length - 1;
-          const cents = last
-            ? totalCents - allocated
-            : Math.round((totalCents * pairCountOf(group.items)) / totalPairs);
-          allocated += cents;
-          await paymentDetails.writeForSupplier({
-            batchNo: plan.batch_no,
-            batchRecordId,
-            supplierRecordId: group.supplierRecordId,
-            amount: cents / 100,
-            correlation,
-          });
-        }
-      }
+    // 2026-11-20：退货也写 P交易明细，只写交易明细ID + 报货批次号；不再写金额。
+    // 放在 posted 之前：写失败 ⇒ 任务保持 posting，异步 job 重试；P交易明细按交易明细ID幂等。
+    for (const group of groupItemsBySupplier(drawItems)) {
+      await paymentTransactions.writeForSupplier({
+        batchNo: plan.batch_no,
+        batchRecordId,
+        supplierRecordId: group.supplierRecordId,
+        correlation,
+      });
     }
 
     // 明细与库存都落地了 ⇒ 把这次要画的图（只有真的退掉的尺码）写进任务草稿，

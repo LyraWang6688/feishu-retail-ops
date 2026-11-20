@@ -5,6 +5,8 @@ const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { classifyReportBehavior, REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
 const { getConfigRows } = require('./configTableCache');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
+const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
+const { resolvePurchaseArrivalStatusConfig } = require('../config/purchaseArrivalStatus');
 
 const asText = (tableKey, record, semanticKey) => {
   const fieldName = V1_BITABLE_SCHEMA.tables[tableKey]?.fields?.[semanticKey];
@@ -28,6 +30,13 @@ const asNumber = (value) => {
 //  不留死代码。）
 
 const indexByRecordId = (records) => new Map(records.map((r) => [r.record_id, r]));
+
+const ARRIVAL_STATUS_LABELS = resolvePurchaseArrivalStatusConfig();
+const arrivalStatusOf = (behavior) => {
+  const code = String(textValue(behavior?.fields?.[V1_BITABLE_SCHEMA.tables.behavior.fields.code])).trim();
+  if (code === PURCHASE_BEHAVIORS.return) return '';
+  return code === PURCHASE_BEHAVIORS.inbound ? ARRIVAL_STATUS_LABELS.arrived : ARRIVAL_STATUS_LABELS.pending;
+};
 
 /**
  * ⭐⭐ 2026-10-14（她真机：工作台「采购 → 验收」显示"采购申请读取失败"，且那一屏很慢）：
@@ -128,7 +137,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         product_record_id: productIds[0] || '',
         size: size.size,
         quantity: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.quantity]),
-        arrival_status: asText('purchaseOrderBatch', batch, 'arrivalStatus'),
+        arrival_status: arrivalStatusOf(behavior),
         supplier_record_id: supplierIds[0] || '',
         product_item_no: product ? asText('product', product, 'itemNo') : '',
         product_color: product ? asText('product', product, 'color') : '',
@@ -188,7 +197,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         // 改读**「报货批次」**那一行上的同名语义键 —— 她的口径是
         // 「采购批次这个数据表主要控制的是该批次的到货情况」。
         // 批次行本来就已经解析出来了（`batch`），所以这是零额外请求的一次投影。
-        arrival_status: batch ? asText('purchaseOrderBatch', batch, 'arrivalStatus') : '',
+        arrival_status: batch ? arrivalStatusOf(behavior) : '',
         supplier_record_id: supplierIds[0] || '',
         // ⭐ 2026-11-09：验收页按「供应商 → 采购日」分组（不显示采购单号）——
         //   · supplier_name：供应商管理.供应商名称（空 ⇒ 前端显示"未标注供应商"，不编 ✗）
@@ -243,20 +252,32 @@ const createPurchaseQueryService = (gateway, options = {}) => {
    *   ⚠️ 2026-10-09 之后"有到货信息"的判据**只剩「到货状态」**（另两列已删）。
    */
   const listPurchaseArrivals = async (filters = {}) => {
-    const batches = await gateway.listAll('purchaseOrderBatch');
+    const [batches, behaviors] = await Promise.all([
+      gateway.listAll('purchaseOrderBatch'),
+      getConfigRows({ gateway, tableKey: 'behavior' }),
+    ]);
+    const behaviorMap = indexByRecordId(behaviors || []);
 
     const rows = (batches || []).map((record) => ({
       // `record_id` / `batch_record_id` 都是**批次记录 id**（到货信息的落点）。
       record_id: record.record_id,
       batch_record_id: record.record_id,
       batch_no: asText('purchaseOrderBatch', record, 'batchNo'),
-      arrival_status: asText('purchaseOrderBatch', record, 'arrivalStatus'),
+      arrival_status: (() => {
+        const behaviorIds = asLinks('purchaseOrderBatch', record, 'behavior');
+        const behavior = behaviorIds.length ? behaviorMap.get(behaviorIds[0]) : null;
+        return behavior ? arrivalStatusOf(behavior) : '';
+      })(),
       // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**——
       //   「确认状态」「到货文字说明（该列已从真表退场）」两列在生产真表上没有了（写入点也一起退场），
       //   留着投影只会永远读出空串、把"没记"伪装成"记了但空"。
       // 兼容字段（前端与既有调用方原先读它）：到货落点搬到批次行之后**没有**可投影的日期
       // —— 批次行上那个「到货日」是自动的「更新时间」，不是真的到货时刻（见方法注释）。
-      arrival_at: null,
+      arrival_at: (() => {
+        const field = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.arrivalDate;
+        const value = field ? record?.fields?.[field] : null;
+        return value === undefined || value === null || value === '' ? null : value;
+      })(),
       supplier_record_id: '',
     })).filter((row) => row.arrival_status);
 

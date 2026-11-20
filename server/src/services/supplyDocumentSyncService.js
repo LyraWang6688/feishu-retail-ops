@@ -71,16 +71,15 @@ const createSupplyDocumentSyncService = ({ gateway, config = CONFIG } = {}) => {
       return { ok: true, skipped: 'already_synced', batch_no: wantedNo };
     }
     const behavior = textValue(fields[config.fields.behavior]).trim();
-    const status = textValue(fields[config.fields.status]).trim();
     const myDocs = attachmentList(fields[config.fields.myDocuments]);
     const otherDocs = attachmentList(fields[config.fields.counterpartyDocuments]);
     const isReturn = behavior === config.behavior.return;
-    const isPurchase = behavior === config.behavior.purchase;
-    if (!isReturn && !(isPurchase && status === config.arrivedStatus)) {
-      return { ok: true, skipped: 'not_ready', batch_no: wantedNo, behavior, status };
+    const isInbound = behavior === config.behavior.inbound;
+    if (!isReturn && !isInbound) {
+      return { ok: true, skipped: 'not_ready', batch_no: wantedNo, behavior };
     }
     if (!myDocs.length && !otherDocs.length) {
-      return { ok: true, skipped: 'no_documents', batch_no: wantedNo, behavior, status };
+      return { ok: true, skipped: 'no_documents', batch_no: wantedNo, behavior };
     }
     const dateKey = dayKeyOfBatchNo(wantedNo) || config.texts.unknownDate;
     const baseSupplier = safePart(supplierName || textValue(fields[config.fields.supplier]).trim())
@@ -98,7 +97,7 @@ const createSupplyDocumentSyncService = ({ gateway, config = CONFIG } = {}) => {
         attachment: doc, folderToken: config.folders.our, prefix: prefixFor(doc), correlation,
       }));
     }
-    if (isPurchase && status === config.arrivedStatus) {
+    if (isInbound) {
       for (const doc of otherDocs) {
         synced.push(await syncFile({
           attachment: doc, folderToken: config.folders.counterparty, prefix: prefixFor(doc), correlation,
@@ -108,13 +107,13 @@ const createSupplyDocumentSyncService = ({ gateway, config = CONFIG } = {}) => {
     await gateway.update('purchaseOrderBatch', record.record_id, { documentSync: true }, { correlation });
     logInfo('supply.document.sync.done', {
       batch_no: wantedNo, batch_record_id: record.record_id, behavior,
-      status, my_count: myDocs.length, counterparty_count: isPurchase ? otherDocs.length : 0,
+      my_count: myDocs.length, counterparty_count: isInbound ? otherDocs.length : 0,
       synced_count: synced.length,
     });
     return {
       ok: true, batch_no: wantedNo, batch_record_id: record.record_id,
-      behavior, status, my_count: myDocs.length,
-      counterparty_count: isPurchase ? otherDocs.length : 0,
+      behavior, my_count: myDocs.length,
+      counterparty_count: isInbound ? otherDocs.length : 0,
       synced,
     };
   };

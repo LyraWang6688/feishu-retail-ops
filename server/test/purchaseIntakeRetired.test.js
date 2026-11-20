@@ -244,11 +244,12 @@ test('④ ⭐ 生成采购申请仍在：写「报货批次」＋「报货信息
 
   const result = await service.publishPurchaseRequest(taskId, task);
 
-  // a. 「报货批次」那一行建成（到货状态默认「未到货」）。
+  // a. 「报货批次」那一行建成（发生行为 = 报货；不再写「到货状态」）。
   const batches = await gateway.listAll('purchaseOrderBatch');
   assert.equal(batches.length, 1);
   assert.equal(batches[0].fields['报货批次号'], result.batch_no);
-  assert.equal(batches[0].fields['到货状态'], '未到货');
+  assert.deepEqual(batches[0].fields['发生行为'], ['beh_1']);
+  assert.equal('到货状态' in batches[0].fields, false);
   // b. 「报货信息」（采购申请落点，**保留**）逐条写成：批次关联 + 货品 + 尺码 + 数量 + 幂等键。
   const requests = await gateway.listAll('purchaseRequest');
   assert.equal(requests.length, 1);
@@ -276,8 +277,9 @@ test('⑤ 「报货批次」不再映射「验收原话 / 确认状态」；写�
   const fields = table('purchaseOrderBatch').fields;
   assert.equal(fields.acceptanceText, undefined);
   assert.equal(fields.confirmStatus, undefined);
-  // ⭐ 保留下来的结构化验收：到货状态 + 实际数量 + 货单金额（一个字都没动）。
-  assert.equal(fields.arrivalStatus, '到货状态');
+  // ⭐ 到货状态字段已删除；保留实际数量 + 货单金额，新增到货日。
+  assert.equal(fields.arrivalStatus, undefined);
+  assert.equal(fields.arrivalDate, '到货日');
   assert.equal(fields.actualQuantity, '实际数量');
   assert.equal(fields.actualAmount, '货单金额');
 
@@ -330,9 +332,14 @@ test('⑤ 「报货批次」不再映射「验收原话 / 确认状态」；写�
 
 test('⑥ 9 点推送：供应商取自「采购明细.供应商」自动字段，一格多个去重', async () => {
   const gateway = makeGateway({
+    behavior: [
+      { record_id: 'bhv_order', fields: { 行为名称: '报货', 行为编码: 'PURCHASE_ORDER' } },
+      { record_id: 'bhv_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN' } },
+      { record_id: 'bhv_ret', fields: { 行为名称: '退货', 行为编码: 'PURCHASE_RETURN' } },
+    ],
     purchaseOrderBatch: [
-      { record_id: 'bat_1', fields: { 报货批次号: 'BH-1', 到货状态: '未到货' } },
-      { record_id: 'bat_2', fields: { 报货批次号: 'BH-2', 到货状态: '未到货' } },
+      { record_id: 'bat_1', fields: { 报货批次号: 'BH-1', 发生行为: ['bhv_order'] } },
+      { record_id: 'bat_2', fields: { 报货批次号: 'BH-2', 发生行为: ['bhv_order'] } },
     ],
     // ⭐ 2026-10-18：供应商在采购明细的自动字段上（主表那一列已删）。
     purchaseRequest: [

@@ -1,7 +1,4 @@
 const { textValue } = require('./v1BitableGateway');
-const {
-  resolvePurchaseArrivalStatusConfig,
-} = require('../config/purchaseArrivalStatus');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
 const { relation } = require('./v1ReferenceResolver');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
@@ -72,24 +69,9 @@ const attachmentNames = (value) => (Array.isArray(value) ? value : [])
   .filter(Boolean);
 
 class PurchaseOrderBatchService {
-  constructor({ gateway, settings } = {}) {
+  constructor({ gateway } = {}) {
     if (!gateway) throw new Error('PurchaseOrderBatchService 需要 gateway');
     this.gateway = gateway;
-    // 配置读一次（启动时）：取值写错要在服务起来那一刻就吵，而不是等她第一次提交报单。
-    // ⚠️ 2026-10-09：`acceptance`（确认状态取值）随「确认状态」那一列一起退场，
-    //    这里**只**再读「到货状态」一份配置。
-    this.settings = settings || resolvePurchaseArrivalStatusConfig();
-  }
-
-  /** 新建批次记录时要写的那个取值（她说的字段默认值「未到货」）。 */
-  get pendingStatus() {
-    return this.settings.pending;
-  }
-
-
-  /** 到货核对确认成功之后要写的那个取值。 */
-  get arrivedStatus() {
-    return this.settings.arrived;
   }
 
   /**
@@ -182,32 +164,29 @@ class PurchaseOrderBatchService {
   }
 
   /**
-   * 到货核对**确认成功之后**：把这一批的到货状态改成「已到货」。
+   * 验收成功之后：发生行为改成「入库」，并写用户点击验收的时间到「到货日」。
+   * 不再写「到货状态」。
    *
-   * ⚠️ 调用方必须把它当**增强**：入库事实已经落地，这一步失败**不能**把整单判失败
-   *    （与"附件写失败不阻塞主流程"同一条纪律）。所以这里只把错误往上抛给调用方
-   *    去 catch + warn，自己**不吞**（吞掉的话调用方连日志都写不了）。
+   * ⚠️ 调用方必须把它当**增强**：入库事实已经落地，这一步失败**不能**把整单判失败。
    */
-  async markArrived(batchNo, { correlation = {} } = {}) {
-    return this.setArrivalStatus(batchNo, this.arrivedStatus, { correlation, event: 'purchase.batch.arrival_status.arrived' });
-  }
-
-  /** 建批次记录之后（或任何需要时）显式写「未到货」。 */
-  async markPending(batchNo, { correlation = {} } = {}) {
-    return this.setArrivalStatus(batchNo, this.pendingStatus, { correlation, event: 'purchase.batch.arrival_status.pending' });
-  }
-
-  async setArrivalStatus(batchNo, status, { correlation = {}, event = '' } = {}) {
+  async markArrived(batchNo, { behaviorRecordId = '', arrivalDate = '', correlation = {} } = {}) {
     const record = await this.findByBatchNo(batchNo);
     if (!record) {
-      logWarn('purchase.batch.arrival_status.no_record', { batch_no: batchNo, status });
+      logWarn('purchase.batch.arrival_status.no_record', { batch_no: batchNo });
       return { updated: false, reason: 'no_batch_record', batch_no: batchNo };
     }
-    await this.gateway.update('purchaseOrderBatch', record.record_id, { arrivalStatus: status }, { correlation });
-    logInfo(event || 'purchase.batch.arrival_status.updated', {
-      batch_no: batchNo, record_id: record.record_id, arrival_status: status,
+    const values = {};
+    const behaviorId = String(behaviorRecordId || '').trim();
+    if (behaviorId) values.behavior = relation(behaviorId);
+    const arrivedAt = String(arrivalDate || '').trim();
+    if (arrivedAt) values.arrivalDate = arrivedAt;
+    if (!Object.keys(values).length) return { updated: false, reason: 'nothing_to_write', batch_no: batchNo };
+    await this.gateway.update('purchaseOrderBatch', record.record_id, values, { correlation });
+    logInfo('purchase.batch.arrived.written', {
+      batch_no: batchNo, record_id: record.record_id, behavior_record_id: behaviorId, arrival_date: arrivedAt,
+      wrote_arrival_status: false,
     });
-    return { updated: true, record_id: record.record_id, batch_no: batchNo, arrival_status: status };
+    return { updated: true, record_id: record.record_id, batch_no: batchNo, behavior_record_id: behaviorId, arrival_date: arrivedAt };
   }
 
   // ── 到货核对的落点（2026-10-07 晚：从已删除的「到货验收」表搬到这里）───────────

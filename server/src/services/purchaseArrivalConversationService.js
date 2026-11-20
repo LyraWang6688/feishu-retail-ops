@@ -193,14 +193,14 @@ class PurchaseArrivalConversationService {
     return computeSupplierTotals(this, task, batchNo);
   }
 
-  async notifyBatchArrived(batchNo, { correlation = {} } = {}) {
+  async notifyBatchArrived(batchNo, { correlation = {}, arrivalDate = '' } = {}) {
     const wanted = String(batchNo || '').trim();
     if (!wanted) {
       logInfo('purchase.arrival.reconcile.batch_arrival_skipped', { reason: 'no_batch_no' });
       return { updated: false, reason: 'no_batch_no' };
     }
     try {
-      return await this.markBatchArrived(wanted, { correlation });
+      return await this.markBatchArrived(wanted, { correlation, arrivalDate });
     } catch (error) {
       logWarn('purchase.arrival.reconcile.batch_arrival_failed', {
         batch_no: wanted, error: error.message,
@@ -312,6 +312,7 @@ class PurchaseArrivalConversationService {
       actual_amount: actualAmount,
       actual_quantity: actualQuantity,
       difference_analysis: differenceAnalysis,
+      accepted_at: String(task.accepted_at || ''),
       // 2026-11-18：哪个编号的哪个入库尺码做样品（无库存 / 无样品时由前端弹窗选）。
       sample_choices: { ...(task.sample_choices || {}) },
       operator_open_id: String(task.operator_open_id || operatorOpenId || ''),
@@ -375,9 +376,15 @@ class PurchaseArrivalConversationService {
       }
       // 2026-11-19：一批只有一个供应商 ⇒ 验收完直接写本批「已到货」。
       //   不再读「供应商」Lookup，也不写「已到货供应商」（生产已无此列）。
-      await this.notifyBatchArrived(batchNo, { correlation: { task_id: taskId } });
+      await this.notifyBatchArrived(batchNo, {
+        correlation: { task_id: taskId },
+        arrivalDate: draft.accepted_at,
+      });
     } else {
-      await this.notifyBatchArrived(this.taskBatchNo(task, draft), { correlation: { task_id: taskId } });
+      await this.notifyBatchArrived(this.taskBatchNo(task, draft), {
+        correlation: { task_id: taskId },
+        arrivalDate: draft.accepted_at,
+      });
     }
     const total = draft.actual.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     // 回话模板（可配）：没有 0 行 → 与改动前逐字相同；有 0 行 → 说清"这些行没入库"；
@@ -471,7 +478,7 @@ class PurchaseArrivalConversationService {
    */
   async confirmBatchArrival({
     batch, actualAmount, operatorOpenId = '', scanLines = null, timing = null,
-    supplierRecordId = '', supplierRecordIds = [], sampleChoices = {},
+    supplierRecordId = '', supplierRecordIds = [], sampleChoices = {}, acceptedAt = '',
   } = {}) {
     const batchNo = String(batch?.batch_no || '').trim();
     if (!batchNo) {
@@ -567,6 +574,7 @@ class PurchaseArrivalConversationService {
         differences: plan.differences,
         sample_choices: normalizedSampleChoices,
         actual_amount: amount.value,
+        accepted_at: String(acceptedAt || new Date(this.now()).toISOString()),
         status: 'awaiting_confirmation',
         source: scans ? 'scan' : 'workbench',
         operator_open_id: String(operatorOpenId || existing?.operator_open_id || ''),

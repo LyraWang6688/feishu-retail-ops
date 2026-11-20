@@ -26,9 +26,13 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
       { record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: [{ record_ids: ['sup_1'] }] } },
       { record_id: 'prod_2', fields: { 编号: '9099黑', 供应商: [{ record_ids: ['sup_2'] }] } },
     ],
+    behavior: [
+      { record_id: 'behavior_order', fields: { 行为名称: '报货', 行为编码: 'PURCHASE_ORDER' } },
+      { record_id: 'behavior_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN' } },
+    ],
     purchaseOrderBatch: [
-      { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: [{ record_ids: ['sup_1'] }], 到货状态: '部分到货', 已到货供应商: [{ record_ids: ['sup_1'] }] } },
-      { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 供应商: [{ record_ids: ['sup_2'] }], 到货状态: '未到货' } },
+      { record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 供应商: [{ record_ids: ['sup_1'] }], 发生行为: ['behavior_in'], 到货日: '2026-11-20T07:00:00.000Z' } },
+      { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 供应商: [{ record_ids: ['sup_2'] }], 发生行为: ['behavior_order'] } },
     ],
   });
   const service = createPurchaseQueryService(gateway);
@@ -47,7 +51,7 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0].batch_no, 'BH-001');
 
-  const byStatus = await service.listPurchaseRequests({ arrivalStatus: '部分到货' });
+  const byStatus = await service.listPurchaseRequests({ arrivalStatus: '已到货' });
   assert.equal(byStatus.length, 1);
   assert.equal(byStatus[0].record_id, 'req_1');
 });
@@ -60,6 +64,11 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
   // ⚠️ 下面这台假 Base **故意还留着 `purchaseArrival` 的旧记录**（本机测试 Base 落后）：
   //    接口**一个字都不许再读它** —— 断言"返回的行来自批次表"就是这条。
   const gateway = makeGateway({
+    behavior: [
+      { record_id: 'behavior_order', fields: { 行为名称: '报货', 行为编码: 'PURCHASE_ORDER' } },
+      { record_id: 'behavior_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN' } },
+      { record_id: 'behavior_ret', fields: { 行为名称: '退货', 行为编码: 'PURCHASE_RETURN' } },
+    ],
     purchaseArrival: [
       { record_id: 'arr_legacy', fields: { 到货日: 1758844800000, 报货批次号: ['batch_1'], 确认状态: '待确认' } },
     ],
@@ -68,15 +77,12 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
         record_id: 'batch_1',
         fields: {
           报货批次号: 'BH-001',
-          到货状态: '已到货',
-          已到货供应商: [{ record_ids: ['sup_1'] }],
-          // ⛔ 2026-10-09：「确认状态」「验收原话」两列已从真表删除 ⇒ fixture 里不再有它们。
+          发生行为: ['behavior_in'],
+          到货日: '2026-11-20T07:00:00.000Z',
         },
       },
-      { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 到货状态: '未到货' } },
-      // ⭐ **退货批次**：只写 批次号 + 幂等键（业务负责人 2026-10-07 晚口径：退货**不写**「到货状态」）
-      //    ⇒ 它既不进 9 点推送的「未到货」候选，也不该出现在"到货验收情况"里（一行空白像数据丢了）。
-      { record_id: 'batch_ret', fields: { 报货批次号: 'BH-003', 幂等键: 'purchase_batch:BH-003' } },
+      { record_id: 'batch_2', fields: { 报货批次号: 'BH-002', 发生行为: ['behavior_order'] } },
+      { record_id: 'batch_ret', fields: { 报货批次号: 'BH-003', 发生行为: ['behavior_ret'], 幂等键: 'purchase_batch:BH-003' } },
     ],
   });
   const service = createPurchaseQueryService(gateway);
@@ -97,8 +103,7 @@ test('listPurchaseArrivals ⭐ 改读「报货批次」那一行（到货落点 
   assert.equal('recognition_status' in arrived, false);
   assert.equal('failure_reason' in arrived, false);
   assert.equal('image_count' in arrived, false, '「图片」列已随表删除 → 不许再投影 image_count');
-  // ⚠️ 「到货日」不投影：批次行上那一列是飞书自动的「更新时间」，不是真的到货时刻。
-  assert.equal(arrived.arrival_at, null, '不给"到货日"编一个值（它是自动的更新时间）');
+  assert.equal(arrived.arrival_at, '2026-11-20T07:00:00.000Z', '到货日 = 点击验收时间');
 
   const byBatch = await service.listPurchaseArrivals({ batchNo: 'BH-002' });
   assert.deepEqual(byBatch.map((row) => row.batch_no), ['BH-002']);
@@ -123,7 +128,7 @@ test('AC-BATCH1 按批次读：走「供应主表.采购明细」link + getBatch
     product: [{ record_id: 'prod_1', fields: { 编号: '8088灰', 供应商: [{ record_ids: ['sup_1'] }] } }],
     purchaseOrderBatch: [{
       record_id: 'batch_1',
-      fields: { 报货批次号: 'BH-001', 采购明细: [{ record_ids: ['req_1'] }], 到货状态: '未到货' },
+      fields: { 报货批次号: 'BH-001', 采购明细: [{ record_ids: ['req_1'] }], 发生行为: ['behavior_order'] },
     }],
   };
   const calls = { fullPurchaseReads: 0, batchGets: [] };

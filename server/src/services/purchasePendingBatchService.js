@@ -1,10 +1,9 @@
 const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { buildSalesThreadLink } = require('../config/salesThreadLink');
-const { resolvePurchaseArrivalStatusConfig } = require('../config/purchaseArrivalStatus');
-// ⭐ 2026-10-13（验收提速 ②）：过滤公式**复用唯一那一份实现**（不自己拼第二份），
-//    短缓存 TTL 从配置来（见 config/purchasePendingCache）。
-const { equalsFormula } = require('./bitableFilterFormula');
+const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
+const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+// ⭐ 2026-10-13（验收提速 ②）：短缓存 TTL 从配置来（见 config/purchasePendingCache）。
 const { resolvePendingCacheTtlMs } = require('../config/purchasePendingCache');
 const { logInfo, logWarn } = require('../utils/logger');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
@@ -46,11 +45,11 @@ const invalidatePendingBatchesCache = () => {
 };
 
 class PurchasePendingBatchService {
-  constructor({ gateway, batchLocator, settings, cacheTtlMs, now } = {}) {
+  constructor({ gateway, batchLocator, cacheTtlMs, now } = {}) {
     if (!gateway) throw new Error('PurchasePendingBatchService 需要 gateway');
     this.gateway = gateway;
     this.batchLocator = batchLocator || null;
-    this.settings = settings || resolvePurchaseArrivalStatusConfig();
+    this.behaviorIds = null;
     // ⭐ 2026-10-13（验收提速 ②）：短缓存（TTL 可配；`0` = 关掉）。`now` 可注入 ⇒ TTL 用例不靠 sleep。
     this.cacheTtlMs = Number.isFinite(cacheTtlMs) && cacheTtlMs >= 0 ? cacheTtlMs : resolvePendingCacheTtlMs();
     this.now = typeof now === 'function' ? now : () => Date.now();
@@ -63,9 +62,25 @@ class PurchasePendingBatchService {
     this.cache = null;
   }
 
-  /** 「未到货」那个取值（配置来的，不是中文字面量）。 */
-  get pendingStatus() {
-    return this.settings.pending;
+  /** 解析行为记录 id（按行为编码；行为表只读一次）。 */
+  async resolveBehaviorId(code) {
+    const wanted = String(code || '').trim();
+    if (!this.behaviorIds) {
+      const table = V1_BITABLE_SCHEMA.tables.behavior;
+      const codeField = table?.fields?.code;
+      if (!codeField) throw new Error('行为管理未配置行为编码字段');
+      const records = await this.gateway.listAll('behavior');
+      this.behaviorIds = new Map((records || []).map((row) => [
+        String(textValue(row?.fields?.[codeField])).trim(), row.record_id,
+      ]));
+    }
+    const hit = this.behaviorIds.get(wanted);
+    if (!hit) throw new Error(`行为管理缺少行为（${wanted}）`);
+    return hit;
+  }
+
+  async resolveInboundBehaviorId() {
+    return this.resolveBehaviorId(PURCHASE_BEHAVIORS.inbound);
   }
 
   /**
@@ -95,18 +110,27 @@ class PurchasePendingBatchService {
    */
   async listPendingBatches() {
     const table = this.gateway.table('purchaseOrderBatch');
-    const statusField = table?.fields?.arrivalStatus;
+    const behaviorField = table?.fields?.behavior;
     const batchField = table?.fields?.batchNo;
-    if (!statusField || !batchField) return [];
+    if (!behaviorField || !batchField) return [];
     // ⭐ 热读：TTL 内**零飞书调用**（这就是"点 4、5 次"的直接解药）。
     const nowMs = this.now();
     if (this.cache && this.cache.expiresAt > nowMs) return this.cache.value;
     const records = await this.readPendingRecords(table);
     // ⭐ 2026-10-18：供应商已从采购主表移到「采购明细」的自动字段（公式）⇒ 按批次记录 id 建一次索引。
     const supplierIndex = await this.loadSupplierIndexByBatch();
+    let inboundBehaviorId = '';
+    let returnBehaviorId = '';
+    try {
+      inboundBehaviorId = await this.resolveInboundBehaviorId();
+      returnBehaviorId = await this.resolveBehaviorId(PURCHASE_BEHAVIORS.return);
+    } catch (error) {
+      logWarn('purchase.pending.behavior_unavailable', { error: error.message });
+      return [];
+    }
     const pending = (records || []).filter((record) => {
-      const value = textValue(record?.fields?.[statusField]).trim();
-      return value === this.pendingStatus;
+      const ids = strictLinkedRecordIds(record?.fields?.[behaviorField]);
+      return !ids.includes(inboundBehaviorId) && !ids.includes(returnBehaviorId);
     });
     if (!pending.length) {
       this.cache = { value: [], expiresAt: nowMs + this.cacheTtlMs };
@@ -136,21 +160,9 @@ class PurchasePendingBatchService {
    *    省不掉那一次 RT ⇒ 所以短缓存才是本机/真机的正解（AC 如实写）。
    */
   async readPendingRecords(table) {
-    const filter = equalsFormula(table?.fields?.arrivalStatus, this.pendingStatus);
-    const fieldNames = ['arrivalStatus', 'batchNo', 'createdAt', 'quantity']
+    const fieldNames = ['behavior', 'batchNo', 'createdAt', 'quantity']
       .map((key) => table?.fields?.[key])
       .filter(Boolean);
-    if (filter && typeof this.gateway.listByFilter === 'function') {
-      try {
-        return await this.gateway.listByFilter('purchaseOrderBatch', filter, { fieldNames });
-      } catch (error) {
-        // ⚠️ 过滤读失败**不许把候选批次弄丢**（她那条"绝不静默丢单"的纪律）：
-        //    回落整表读，并**记一条 warn**（不是静默 —— 过滤这条路坏了要能查出来）。
-        logWarn('scan.accept.pending_filter_failed', {
-          filter, fallback: 'listAll', error: error.message,
-        });
-      }
-    }
     return this.gateway.listAll('purchaseOrderBatch', { fieldNames });
   }
 

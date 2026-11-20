@@ -24,6 +24,7 @@
 const crypto = require('node:crypto');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { SCAN_WRITE, fillText } = require('../config/scanWrite');
+const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
 const { logInfo, logWarn } = require('../utils/logger');
 // ⭐ 2026-10-29（F1/F2）：验收会话"整单替换"（`setScans`）的实现拆到独立模块（文件体量棘轮 ✓）。
 const { createSetScans } = require('./scanArrival/setScans');
@@ -124,7 +125,13 @@ const createScanArrivalService = (options = {}) => {
       confirmArrival: (taskId, task, operatorOpenId, options) => webhooks.confirmArrival(
         taskId, task, operatorOpenId, options,
       ),
-      markBatchArrived: (batchNo, arrivalOptions) => webhooks.orderBatches.markArrived(batchNo, arrivalOptions),
+      markBatchArrived: async (batchNo, arrivalOptions = {}) => {
+        const behavior = await webhooks.references.resolveBehavior(PURCHASE_BEHAVIORS.inbound);
+        return webhooks.orderBatches.markArrived(batchNo, {
+          ...arrivalOptions,
+          behaviorRecordId: behavior?.recordId || '',
+        });
+      },
     });
   };
 
@@ -335,7 +342,7 @@ const createScanArrivalService = (options = {}) => {
    * 🔴 一双都没扫 / 金额不合法 ⇒ 既有实现会**在写任何东西之前**拒掉（本方法原样把话带回去）。
    */
   const finish = async ({
-    openId, actualAmount, submitKey = '', operatorOpenId = '', sessionKey = '',
+    openId, actualAmount, submitKey = '', operatorOpenId = '', sessionKey = '', acceptedAt = '',
   } = {}) => {
     // ⭐⭐ 2026-10-13（验收提速）：**一条**分阶段耗时汇总（`scan.accept.timing`）。
     //    为什么：真账量出"每批 5 码 143.9 秒、其中逐码库存 119.5 秒（83%）"——
@@ -399,6 +406,7 @@ const createScanArrivalService = (options = {}) => {
       })),
       // 2026-11-18：没有库存 / 没有样品时，她在弹窗里选的样品尺码。
       sampleChoices: session.sample_choices || {},
+      acceptedAt,
       timing,
     });
     // ⚠️ 成功与失败**都**打这一条（她的现场就是"慢/卡"，失败原因也要能按分段定位）。

@@ -29,10 +29,6 @@ const DEFAULT_PURCHASE_ARRIVAL_STATUS_PENDING = '未到货';
 // 到货核对**确认成功之后**改成的那个取值。
 const DEFAULT_PURCHASE_ARRIVAL_STATUS_ARRIVED = '已到货';
 
-// schema 里的**语义键**（`V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.arrivalStatus`）。
-// 放在这里是为了让"闸门要对哪一列做契约校验"与"service 要写哪一列"共用同一处声明。
-const PURCHASE_ARRIVAL_STATUS_FIELD_KEY = 'arrivalStatus';
-
 const resolvePurchaseArrivalStatusConfig = (env = process.env) => {
   const pending = readString(
     env, PURCHASE_ARRIVAL_STATUS_PENDING_ENV_KEY, DEFAULT_PURCHASE_ARRIVAL_STATUS_PENDING,
@@ -52,25 +48,10 @@ const resolvePurchaseArrivalStatusConfig = (env = process.env) => {
   return Object.freeze({ pending: String(pending), arrived: String(arrived) });
 };
 
-/**
- * 部署闸门用的「单选取值契约」：`[{ tableKey, fieldKey, requiredOptions }]`。
- * 只回答「真表这一列是单选、且含这两个取值」——**只读**，不写任何东西。
- */
-const purchaseArrivalStatusOptionContract = (env = process.env) => {
-  const { pending, arrived } = resolvePurchaseArrivalStatusConfig(env);
-  return [{
-    tableKey: 'purchaseOrderBatch',
-    fieldKey: PURCHASE_ARRIVAL_STATUS_FIELD_KEY,
-    requiredOptions: [pending, arrived],
-  }];
-};
-
 module.exports = {
   PURCHASE_ARRIVAL_STATUS_PENDING_ENV_KEY,
   PURCHASE_ARRIVAL_STATUS_ARRIVED_ENV_KEY,
   DEFAULT_PURCHASE_ARRIVAL_STATUS_PENDING,
   DEFAULT_PURCHASE_ARRIVAL_STATUS_ARRIVED,
-  PURCHASE_ARRIVAL_STATUS_FIELD_KEY,
   resolvePurchaseArrivalStatusConfig,
-  purchaseArrivalStatusOptionContract,
 };
