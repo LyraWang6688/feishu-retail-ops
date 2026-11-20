@@ -46,7 +46,7 @@ const createLarkJsapiService = (options = {}) => {
   // ⚠️ 可注入（测试用假 fetch ✓ 真跑时用全局 fetch ✓）
   const fetchImpl = options.fetch || globalThis.fetch;
 
-  let tokenCache = { value: null, at: 0 };
+  let tokenCache = { value: null, at: 0, ttlMs: 0 };
   let ticketCache = { value: null, at: 0 };
 
   const withTimeout = async (fn, label) => {
@@ -95,7 +95,8 @@ const createLarkJsapiService = (options = {}) => {
   };
 
   const tenantToken = async () => {
-    const cached = tokenCache.value && now() - tokenCache.at < config.tokenTtlMs;
+    const tokenTtlMs = tokenCache.ttlMs || config.tokenTtlMs;
+    const cached = tokenCache.value && now() - tokenCache.at < tokenTtlMs;
     if (cached) return tokenCache.value;
     const { appId, appSecret } = readCreds(env);
     if (!appId || !appSecret) {
@@ -115,7 +116,12 @@ const createLarkJsapiService = (options = {}) => {
       return result.payload;
     }, { operation: 'lark_jsapi_tenant_token', config: config.retry });
     const token = String(payload?.tenant_access_token || '').trim();
-    tokenCache = { value: token, at: now() };
+    // tenant_access_token 也按飞书返回的 expire 计算 TTL；没回才退回配置值。
+    const expireInSec = Number(payload?.expire || payload?.data?.expire || 0);
+    const ttlMs = expireInSec > 0
+      ? Math.max(60 * 1000, (expireInSec - 300) * 1000)
+      : config.tokenTtlMs;
+    tokenCache = { value: token, at: now(), ttlMs };
     return token;
   };
 
@@ -126,8 +132,7 @@ const createLarkJsapiService = (options = {}) => {
     const ttl = ticketCache.ttlMs || config.ticketTtlMs;
     const cached = ticketCache.value && now() - ticketCache.at < ttl;
     if (cached) return ticketCache.value;
-    const token = await tenantToken();
-    const payload = await withTransientRetry(async () => {
+    const fetchTicket = (token) => withTransientRetry(async () => {
       const result = await withTimeout(async (signal) => {
         const response = await fetchImpl(config.endpoints.jsapiTicket, {
           method: 'POST',
@@ -145,6 +150,21 @@ const createLarkJsapiService = (options = {}) => {
       });
       return result.payload;
     }, { operation: 'lark_jsapi_ticket', config: config.retry });
+
+    let token = await tenantToken();
+    let payload;
+    try {
+      payload = await fetchTicket(token);
+    } catch (error) {
+      // 99991663 = 缓存的 tenant_access_token 已被飞书判定失效。
+      // 这不是"稍后再试"的瞬时错误：清缓存、重取一次 token，再重放一次 ticket。
+      const code = String(error?.code ?? '').trim();
+      if (code !== '99991663') throw error;
+      tokenCache = { value: null, at: 0, ttlMs: 0 };
+      ticketCache = { value: null, at: 0 };
+      token = await tenantToken();
+      payload = await fetchTicket(token);
+    }
     const ticket = String(payload?.data?.ticket || payload?.ticket || '').trim();
     const expireInSec = Number(payload?.data?.expire_in || payload?.expire_in || 0);
     const ttlMs = expireInSec > 0

@@ -150,3 +150,70 @@ test('AC-SP6b ⭐ 换 ticket 遇到 5xx ⇒ 自动重试一次，随后成功', 
   assert.equal(ticketCalls, 2, '第一次 500 后应重试一次 ✓');
   assert.equal(calls.filter((u) => u.includes('tenant_access_token')).length, 1, 'token 不重复取 ✓');
 });
+
+test('AC-SP15 ⭐ ticket 99991663 ⇒ 清 token 缓存、重取 token 并重放一次 ticket', async () => {
+  const calls = [];
+  let tokenCalls = 0;
+  let ticketCalls = 0;
+  const fake = async (url) => {
+    calls.push(url);
+    if (String(url).includes('tenant_access_token')) {
+      tokenCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ tenant_access_token: `tok_${tokenCalls}` }) };
+    }
+    if (String(url).includes('jssdk/ticket')) {
+      ticketCalls += 1;
+      if (ticketCalls === 1) {
+        return { ok: false, status: 400, json: async () => ({ code: 99991663, msg: 'Invalid access token' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ data: { ticket: 'ticket_after_refresh', expire_in: 3600 } }) };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const service = createLarkJsapiService({ env: ENV, fetch: fake, randomNonce: () => 'n', now: () => 1700000000000 });
+  const out = await service.signatureFor('https://hm.bamamei.online/a.html');
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(tokenCalls, 2, '失效后必须重新取一次 token');
+  assert.equal(ticketCalls, 2, 'ticket 只重放一次');
+  assert.equal(service.tokenCacheOf().value, 'tok_2', '缓存已替换为新 token');
+});
+
+test('AC-SP16 ⭐ ticket 连续两次 99991663 ⇒ 返回失败，不无限重试', async () => {
+  let tokenCalls = 0;
+  let ticketCalls = 0;
+  const fake = async (url) => {
+    if (String(url).includes('tenant_access_token')) {
+      tokenCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ tenant_access_token: `tok_${tokenCalls}` }) };
+    }
+    if (String(url).includes('jssdk/ticket')) {
+      ticketCalls += 1;
+      return { ok: false, status: 400, json: async () => ({ code: 99991663, msg: 'Invalid access token' }) };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const service = createLarkJsapiService({ env: ENV, fetch: fake, randomNonce: () => 'n', now: () => 1700000000000 });
+  const out = await service.signatureFor('https://hm.bamamei.online/a.html');
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'jsapi_ticket_http');
+  assert.equal(out.upstream_code, 99991663);
+  assert.equal(tokenCalls, 2);
+  assert.equal(ticketCalls, 2, '严格两次，不能循环');
+});
+
+test('AC-SP17 ⭐ tenant token 按飞书 expire 过期重取', async () => {
+  let clock = 1700000000000;
+  let tokenCalls = 0;
+  const fake = async (url) => {
+    if (String(url).includes('tenant_access_token')) {
+      tokenCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ tenant_access_token: `tok_${tokenCalls}`, expire: 400 }) };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const service = createLarkJsapiService({ env: ENV, fetch: fake, now: () => clock });
+  await service.tenantToken();
+  clock += 101000;
+  await service.tenantToken();
+  assert.equal(tokenCalls, 2, '超过 expire - 5 分钟必须重取');
+});
