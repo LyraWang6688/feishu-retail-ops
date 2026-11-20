@@ -243,10 +243,6 @@ test('A4 schema 同步「创建时间」→「报货日」；到货日由验收�
       'src/services/pendingPushCandidateService.js',
       'src/services/pendingDealPushService.js',
       'src/services/reportedAt.js',
-      // ⭐ 2026-10-08 加：售后执行器**只读**「收款明细.创建时间」，用来给"多笔收款"排序
-      //（退货"改原收款状态"时按**后进先出**决定先冲哪一笔，见
-      // `afterSalesService.originalPaymentOrderKey`）—— 一个字节都不写这一列。
-      'src/services/afterSalesService.js',
       // ⭐ 2026-10-08（第二步，团购券待结算）加：这一处也**只读**「收款明细.创建时间」——
       //   它是「结算日 = 创建时间(上海日) + 5 个自然日」的算法输入（业务负责人逐字口径：
       //   「抖音团购券是从收款明细里的**创建时间**开始算」）。服务端**不写**这一列：

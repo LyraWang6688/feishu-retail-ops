@@ -17,7 +17,7 @@ const { withSalesReadRetry } = require('./salesReadRetry');
 //     2026-10-08 01:41（+8）level=error event=workbench.sales.orders.failed
 //     request_id=fe605d92-b824-4e4f-b86c-ab3c44502829 error="未知销售明细履约状态：已换货"
 //   ⚠️ 判据只从 `config/afterSales` 取（`isAfterSalesFulfillment`）——本文件**不新造一份中文**。
-const { isAfterSalesFulfillment, isSettledAfterSalesPaymentStatus } = require('../config/afterSales');
+const { isAfterSalesFulfillment, isSettledAfterSalesPaymentStatus } = require('../config/afterSalesStatus');
 
 const cents = (value, label) => {
   const number = Number(value);

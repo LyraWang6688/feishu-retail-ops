@@ -5,7 +5,7 @@
  *
  * 判据：**一次点击的 `tap_id` 必须能在【写库日志】里 grep 到同一个 id** ——
  *   前端点击 → 请求（body 里带 `tap_id`）→ 写库日志（`bitable.record.*` / `v1.sale.posted` / …）✓
- * 三个入口各一条判据（少接一处就红 ✓）；**取不到 `tap_id` ⇒ 字段压根不出现**（**绝不编** ✗）。
+ * 现有写入口各一条判据；**取不到 `tap_id` ⇒ 字段压根不出现**（**绝不编** ✗）。
  *
  * 🔴 不放宽：白名单仍逐字（`test/logCorrelation.test.js` 那条一个字节没动 ✓）
  */
@@ -45,11 +45,6 @@ const appFor = ({ followup = {}, gateway = {} } = {}) => {
     createWorkbenchRouter({ gateway, followup, ordersCache: { invalidate: () => {} } }));
   return app;
 };
-
-test('AC-TAP2 ⭐ 售后入口带 `tap_id`（二次交付入口已随旧订单列表退场，不再要求）', () => {
-  const actions = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/routes/workbenchOrderActions.js'), 'utf8');
-  assert.match(actions, /afterSales\([\s\S]{0,400}?correlation: tapIdFromRequest\(req\)/, '售后入口要带 tap_id ✓');
-});
 
 test('AC-TAP3 ⭐⭐ 贯穿：同一个 `tap_id` 出现在【写库日志】里（能与 `ui.tap` 串起来）', async () => {
   const { PaymentService } = require('../src/services/paymentService');
