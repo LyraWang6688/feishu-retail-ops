@@ -17,15 +17,13 @@ module.exports = Object.freeze({
   }),
   fields: Object.freeze({
     behavior: '发生行为',
-    status: '到货状态',
     myDocuments: '我方单据',
     counterpartyDocuments: '对方单据',
     documentSync: '单据同步',
     supplier: '供应商',
     batchNo: '报货批次号',
   }),
-  behavior: Object.freeze({ purchase: '报货', return: '退货' }),
-  arrivedStatus: '已到货',
+  behavior: Object.freeze({ purchase: '报货', inbound: '入库', return: '退货' }),
   texts: Object.freeze({
     unknownDate: '未标日期',
     unknownSupplier: '未标注供应商',

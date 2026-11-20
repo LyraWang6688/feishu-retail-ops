@@ -66,39 +66,21 @@ const objectLiteralAfter = (source, fromIndex) => {
 // ⭐⭐ 2026-10-09 收尾的**唯一**改动对象：这 5 个语义键（真表那 5 列已被她删掉）。
 const REMOVED_SALES_ENTRY_KEYS = ['originalText', 'parseStatus', 'parseSummary', 'failureReason', 'messageLink'];
 
-test('A(2026-10-09) 新表「P发生明细」登记进 schema：表 + 2026-11-19 生产字段', () => {
-  const table = V1_BITABLE_SCHEMA.tables.paymentDetail;
-  assert.ok(table, '「P交易明细」是她 2026-10-09 在生产 Base 新建的表，schema 必须登记');
-
-  // 表名 + table_id 都按**生产真表**的只读核对结果。
-  assert.equal(table.tableName, 'P发生明细');
-  // ⚠️ table_id 照旧走环境变量（本机 .env 指向测试 Base，不能写死成"生产 id 才对"）。
+test('A(2026-11-20) P交易明细登记进 schema：只写交易明细ID + 报货批次号', () => {
+  const table = V1_BITABLE_SCHEMA.tables.paymentTransaction;
+  assert.ok(table, 'P交易明细必须登记');
+  assert.equal(table.tableName, 'P交易明细');
   assert.equal(
     table.tableId,
-    process.env.FEISHU_V1_PAYMENT_DETAIL_TABLE_ID || 'tblWaafeodl2oILI',
-    '默认值 = 生产真表的 table_id（服务器只读核对：tblWaafeodl2oILI）',
+    process.env.FEISHU_V1_PAYMENT_TRANSACTION_TABLE_ID || 'tblYLkCKlTw9CB9P',
+    '默认值 = 生产真表的 table_id（tblYLkCKlTw9CB9P）',
   );
-
-  // 2026-11-19 生产已从「只有文本」扩成业务列；按真表同步映射，供闸门核对（仍无读写点）。
   assert.deepEqual(table.fields, {
     transactionDetailId: '交易明细ID',
-    supplier: '供应商',
     batchNo: '报货批次号',
-    amount: '发生额',
-  }, 'P发生明细可写字段按 2026-11-19 生产真表登记');
-  assert.equal(table.readOnlyFields.behavior.name, '发生行为', '发生行为是 Lookup，只读');
-
-  // ⭐ 2026-10-17 成对迁移（改前逐字 → 改后逐字 → 依据）：
-  //   改前逐字：`V1_SCHEMA_SCOPES.all.includes('paymentDetail') === false`（理由：列还没定 ⇒ 不进闸门）
-  //   改后逐字：**进 `sales` 闸门（`all` 是并集 ⇒ 也为 true）**，但 `fields` 仍空 ⇒ 只验"表在不在" ✓
-  //   依据 = 业务负责人 2026-10-17 逐字：「**把 2、3、17 加进 sales 闸门范围**」
-  //   ⚠️ 不是放宽：从"完全不查"变成"查表在不在"（更严）✓
-  assert.equal(
-    V1_SCHEMA_SCOPES.sales.includes('paymentDetail'),
-    true,
-    '「P交易明细」按她 2026-10-17 指令进 sales 闸门（只验表存在）',
-  );
-  assert.equal(V1_SCHEMA_SCOPES.all.includes('paymentDetail'), true, '`all` 是并集 ⇒ 必须为 true');
+  }, 'P交易明细只写这两个字段');
+  assert.equal(V1_SCHEMA_SCOPES.purchase.includes('paymentTransaction'), true);
+  assert.equal(V1_SCHEMA_SCOPES.all.includes('paymentTransaction'), true);
 });
 
 test('A(2026-11-10) 主表「供应商」= Lookup 只读映射；生产已无「已到货供应商」；全仓不写 supplier', () => {

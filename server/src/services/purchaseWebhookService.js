@@ -218,7 +218,7 @@ class PurchaseWebhookService {
     // 单独一个小 service：本类继续只管"报货 → 出单"，批次行怎么维护是它的事。
     this.orderBatches = options.orderBatches || new PurchaseOrderBatchService({
       gateway: this.gateway,
-      settings: options.arrivalStatus,
+
     });
     // 卡片确认按 taskId 串行。重复的卡片事件（双击、飞书重投）会同时读到
     // awaiting_confirmation 并各自走一遍副作用，把同一批采购事实写两遍；
@@ -517,15 +517,9 @@ class PurchaseWebhookService {
         keyValue: plan.batch_key,
         label: '采购主表',
         correlation: baseCorrelation,
-        // ⭐ 到货状态：**新建记录时显式写「未到货」**（业务负责人 2026-10-07 的原话：
-        // 「每创建一条新记录时，默认值是「未到货」」）。取值来自 config/purchaseArrivalStatus
-        //（不是中文字面量），并由部署闸门对着真表 `property.options` 核对过。
-        // ⚠️ 只在**新建**这一支写：`createOnceByKey` 回查到已有记录时不会走这里
-        //   —— 历史批次行**零改动**（她的口径：历史不要动）。
         values: {
           batchNo: plan.batch_no,
           idempotencyKey: plan.batch_key,
-          arrivalStatus: this.orderBatches.pendingStatus,
           // ⭐⭐ 2026-10-12（业务负责人测出来的缺口，逐字：「这**录入数量**里面应该是 5 啊，
           //    但是对于我们的这个数据表里面，它是记录为空呀」）：
           //    「录入数量」= **这一批的录入数量合计**（明细数量求和）。

@@ -179,44 +179,11 @@ test('幂等键字段类型不是文本时 schema-check 直接失败', async () 
 //    ⛔ 2026-10-09：原先还有第二条（「确认状态」）—— 那一列在真表上**已经被删掉**，
 //       契约与 `config/purchaseAcceptance.js` 一起退场。下面只留「到货状态」那条，
 //       并补一条守门：**契约里不许再有 confirmStatus**（留着 = 闸门去问一列不存在的字段、直接判红）。
-test('单选取值契约：到货状态不是单选 / 缺「未到货」选项 → schema-check 直接失败；确认状态已退场', async () => {
-  // 契约按**语义键**找列（`arrivalStatus` → 「到货状态」）。假 gateway 的 `table()` 默认只给
-  // 幂等键/行为那几个键，这里把「到货状态」这个语义键补上（其余契约列不暴露 ⇒ 自动跳过）。
-  const selectGateway = (field) => {
-    const gateway = gatewayFor({ purchaseOrderBatch: [{ field_name: '幂等键', type: 1 }, field] });
-    const base = gateway.table;
-    gateway.table = (key) => {
-      const table = base(key);
-      if (key !== 'purchaseOrderBatch') return table;
-      return { ...table, fields: { ...table.fields, arrivalStatus: '到货状态' } };
-    };
-    return gateway;
-  };
-  // ① 不是单选。
-  await assert.rejects(
-    validateV1SchemaScope({ gateway: selectGateway({ field_name: '到货状态', type: 1 }), scope: 'purchase' }),
-    /「到货状态」必须是单选字段/,
-  );
-  // ② 是单选，但选项里没有「未到货」⇒ 必须判红（绝不放行、也绝不替她建选项）。
-  await assert.rejects(
-    validateV1SchemaScope({
-      gateway: selectGateway({
-        field_name: '到货状态', type: 3, property: { options: [{ name: '已到货' }] },
-      }),
-      scope: 'purchase',
-    }),
-    /「到货状态」缺少选项: 未到货/,
-  );
-  // ③ 选项齐了才放行。
+test('到货状态字段删除后，不再有单选取值契约', async () => {
+  assert.deepEqual(getV1SelectOptionContracts('purchase'), [], '没有需要校验选项的单选列了');
+  assert.deepEqual(getV1SelectOptionContracts('all'), []);
   await validateV1SchemaScope({
-    gateway: selectGateway({
-      field_name: '到货状态', type: 3,
-      property: { options: [{ name: '未到货' }, { name: '已到货' }] },
-    }),
+    gateway: gatewayFor({ purchaseOrderBatch: [{ field_name: '幂等键', type: 1 }] }),
     scope: 'purchase',
   });
-  // ④ 守门：「确认状态」那一列与它的契约都不许回来。
-  const contracts = getV1SelectOptionContracts('purchase');
-  assert.equal(contracts.some((item) => item.fieldKey === 'confirmStatus'), false,
-    '确认状态那一列已从真表删除 ⇒ 契约里不许再有它');
 });

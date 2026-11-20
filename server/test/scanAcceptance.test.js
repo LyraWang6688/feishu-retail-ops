@@ -466,7 +466,8 @@ test('AC-A12 源码哨兵：验收没有第二套入库（复用 buildPlan / con
   //    orderBatches.markArrived(...)`，与 `routes/workbench.js` 那条接线逐字同形）——
   //    本 service **自己不写批次行**（写状态的是既有 `confirmLocked → notifyBatchArrived`）。
   assert.equal((service.match(/markArrived/g) || []).length, 1, 'markArrived 只作为既有能力被注入一次');
-  assert.match(service, /markBatchArrived:.*markArrived/, '注入形状与工作台那条一致');
+  assert.match(service, /markBatchArrived:/, '注入 markBatchArrived');
+  assert.match(service, /orderBatches\.markArrived/, '代理到既有 markArrived');
   const conversation = stripComments(fs.readFileSync(path.join(SERVER_SRC, 'services/purchaseArrivalConversationService.js'), 'utf8'));
   assert.match(conversation, /buildPlan\(snapshot\.rows, \{ scanLines: scans \}\)/, '扫码验收复用同一个 buildPlan（新增输入口，不写第二套算法）');
   assert.match(conversation, /buildPlan\(snapshot\.rows, \{ same: true, differences: \[\] \}\)/, '既有「全额验收」分支逐字还在');

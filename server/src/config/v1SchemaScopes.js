@@ -6,15 +6,15 @@ const V1_SCHEMA_SCOPES = {
   //    售后 prepaid 通路随之下线（见 services/afterSalesService.assertPrepaidAvailable）；
   //    等她定了「已留存」的新落点，把新表加回这个列表即可。
   // ⭐⭐ 2026-10-17（业务负责人指令）：「**把 2、3、17 加进 sales 闸门范围**」——
-  //   2 = 颜色管理（`color`）· 3 = 品类管理（`category`）· 17 = P交易明细（`paymentDetail`）。
+  //   2 = 颜色管理（`color`）· 3 = 品类管理（`category`）· 17 = P交易明细（`paymentTransaction`）。
   //   为什么：这三张之前**不在任何 scope** ⇒ 表被删 / 漏配时 `v1:schema-check` **不会红**（运行时才炸）。
-  //   ⚠️ 2026-11-19：`paymentDetail`（生产名为「P发生明细」）已按真表登记字段 ⇒ 闸门会逐字段验。
+  //   ⚠️ 2026-11-20：验收/退货使用 P交易明细；P发生明细已删除。
   //   ⚠️ `color` / `category` 在 `product` 里是**关联字段** ⇒ 本闸门会去查它们**自己的字段名**；
   //      `product.颜色/类别` 这两个字段的**存在性**仍由 `validateTable('product')` 钉着 ✓
   // ⭐ 2026-10-17（同一条指令的追加）：「**团购券管理这个数据表也需要**」——
   //   它原来刻意不进闸门（"可选项不拦部署"），现在**进 sales**；schema 里有 5 个字段映射
   //   （券名称 / 售价 / 面值 / 平台结算款 / 销售状态）⇒ 闸门会**逐字段**验 ✓
-  sales: ['product', 'color', 'category', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord', 'paymentDetail', 'groupBuyVoucher'],
+  sales: ['product', 'color', 'category', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord', 'groupBuyVoucher'],
   purchase: [
     'product',
     'supplier',
@@ -24,6 +24,7 @@ const V1_SCHEMA_SCOPES = {
     //    留着它 = 部署闸门去问一张不存在的表、`v1:schema-check:all` 持续判红（就是本次要修的那件事）。
     'purchaseRequest',
     'purchaseOrderBatch',
+    'paymentTransaction',
     // ⚠️ 2026-10-09 新表「P交易明细」曾**刻意不在这里**（真表只有主字段「文本」、无业务列）；
     //    ⭐ 2026-10-17 她已指令把它纳入 **sales**（只验表存在、不验列）⇒ 见 sales 那段注释 ✓
     // ⚠️ `purchaseArrival`（「到货验收」）已从 schema 与这里**一并删除**（2026-10-07 晚）：
@@ -88,15 +89,9 @@ const getV1IdempotencyKeyTables = (scope = 'sales') =>
 //    ⛔ 「报货批次.确认状态」的契约**已删除（2026-10-09）**：那一列在真表上没有了
 //      （生产 12 列里没有「确认状态」）⇒ 契约留着 = 闸门去问一列不存在的字段、直接判红；
 //      `config/purchaseAcceptance.js` 随它一起退场（全仓零读取点）。
-const V1_SELECT_OPTION_CONTRACT_SCOPES = Object.freeze(['purchase', 'all']);
+const V1_SELECT_OPTION_CONTRACT_SCOPES = Object.freeze([]);
 
-const getV1SelectOptionContracts = (scope = 'purchase', env = process.env) => {
-  const key = getV1SchemaScope(scope).key;
-  if (!V1_SELECT_OPTION_CONTRACT_SCOPES.includes(key)) return [];
-  // 延迟 require：只在真要校验的范围内才去读那份配置（它自己会在取值不合法时抛错）。
-  const { purchaseArrivalStatusOptionContract } = require('./purchaseArrivalStatus');
-  return [...purchaseArrivalStatusOptionContract(env)];
-};
+const getV1SelectOptionContracts = () => [];
 
 module.exports = {
   V1_SCHEMA_SCOPES,

@@ -82,7 +82,10 @@ const makeGateway = (records = {}) => {
     listAll: async (tableKey) => {
       if (tableKey === 'sizeManagement') return SIZE_RECORDS;
       if (tableKey === 'behavior' && !records.behavior) {
-        return [{ record_id: 'bhv_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } }];
+        return [
+          { record_id: 'bhv_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN', 库存方向: '增加', 是否启用: true } },
+          { record_id: 'bhv_ret', fields: { 行为名称: '退货', 行为编码: 'PURCHASE_RETURN', 库存方向: '减少', 是否启用: true } },
+        ];
       }
       return (records[tableKey] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
     },
@@ -125,7 +128,7 @@ const baseRecords = () => ({
   purchaseOrderBatch: [{
     record_id: BATCH_RECORD_ID,
     // ⭐ 2026-10-18：主表「供应商」列已删 ⇒ 供应商改在采购明细的自动字段上。
-    fields: { 报货批次号: BATCH_NO, 到货状态: '未到货' },
+    fields: { 报货批次号: BATCH_NO, 发生行为: ['bhv_report'] },
   }],
   product: [{ record_id: PRODUCT_1, fields: { 货号: 'XHB8095', 颜色: '黑' } }],
   purchaseRequest: [
@@ -146,7 +149,10 @@ const makeHarness = ({ records = baseRecords(), parseResult, inboundCreated } = 
     store,
         sizeReferences: webhook.getSizeReferences,
     confirmArrival: (taskId, task, operatorOpenId) => webhook.confirmArrival(taskId, task, operatorOpenId),
-    markBatchArrived: (batchNo, options) => webhook.orderBatches.markArrived(batchNo, options),
+    markBatchArrived: (batchNo, options = {}) => webhook.orderBatches.markArrived(batchNo, {
+      ...options,
+      behaviorRecordId: 'bhv_in',
+    }),
     replyText: async () => 'om_reply',
     replyCard: async () => 'om_card_1',
     updateCard: async () => true,
@@ -206,7 +212,8 @@ test('① 点「是」之后：到货信息的落点 = **「报货批次」那�
   //   （不是"写了空值"，而是根本没进那次 values）。
   assert.equal('验收原话' in fields, false, '「验收原话」那一列已从真表删除，不许再写');
   assert.equal('确认状态' in fields, false, '「确认状态」那一列已从真表删除，不许再写');
-  assert.equal(fields['到货状态'], '已到货', '到货状态（这条本来就有，不许被写歪）');
+  assert.deepEqual(fields['发生行为'], ['bhv_in'], '验收成功改为入库行为');
+  assert.ok(fields['到货日'], '到货日 = 点击验收时间');
   // ⭐⭐ 2026-10-08：「实际数量」（代码算出来的）= 申请 2 + 2；「发生金额」= 她填的整批金额。
   assert.equal(fields['实际数量'], 4, '实际数量 = plan.rows 的 actual 合计（代码算，不用她填）');
   assert.equal(fields['货单金额'], AMOUNT, '发生金额 = 她在卡片表单里填的整批金额');
@@ -344,7 +351,7 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
     record_id: `req_${index}_${size}`, productId, size,
   })));
   const records = {
-    purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO, 到货状态: '未到货' } }],
+    purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO, 发生行为: ['bhv_report'] } }],
     product: products.map((id, index) => ({ record_id: id, fields: { 货号: `XHB809${index}`, 颜色: ['黑', '棕', '白'][index] } })),
     purchaseRequest: rows.map((row) => ({
       record_id: row.record_id,
@@ -383,7 +390,8 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
   const fields = batchFields(harness.records);
   assert.equal('验收原话' in fields, false, '「验收原话」那一列已从真表删除，不许再写');
   assert.equal('确认状态' in fields, false, '「确认状态」那一列已从真表删除，不许再写');
-  assert.equal(fields['到货状态'], '已到货');
+  assert.deepEqual(fields['发生行为'], ['bhv_in']);
+  assert.ok(fields['到货日']);
   // ⭐ 2026-10-08：实际数量 = 12 行 − 3 行 0 双 = 9（0 双的行加 0 ⇒ 与库存口径一致）。
   assert.equal(fields['实际数量'], 9, '实际数量只数真的到货的那些（0 双的行不影响合计）');
   assert.equal(fields['货单金额'], AMOUNT);
@@ -397,12 +405,15 @@ test('⑤ 12 件全链路：3 行实际 0 双 → 其余 9 行**加库存**，�
 
 test('⑥ 9 点推送候选：到货确认之后这一批**不再**进「未到货」候选；退货批次从来不在候选里', async () => {
   const gateway = makeGateway({
+    behavior: [
+      { record_id: 'bhv_order', fields: { 行为名称: '报货', 行为编码: 'PURCHASE_ORDER' } },
+      { record_id: 'bhv_in', fields: { 行为名称: '入库', 行为编码: 'PURCHASE_IN' } },
+      { record_id: 'bhv_ret', fields: { 行为名称: '退货', 行为编码: 'PURCHASE_RETURN' } },
+    ],
     purchaseOrderBatch: [
-      // ⭐ 2026-10-18：供应商在采购明细的自动字段上（主表那一列已删）。
-      { record_id: 'b_pending', fields: { 报货批次号: 'BH-PENDING', 到货状态: '未到货' } },
-      { record_id: 'b_arrived', fields: { 报货批次号: 'BH-ARRIVED', 到货状态: '已到货' } },
-      // 退货批次：只写 批次号 + 幂等键（不写「到货状态」）——她说「退货，不用写」。
-      { record_id: 'b_return', fields: { 报货批次号: 'BH-RETURN', 幂等键: 'purchase_batch:BH-RETURN' } },
+      { record_id: 'b_pending', fields: { 报货批次号: 'BH-PENDING', 发生行为: ['bhv_order'] } },
+      { record_id: 'b_arrived', fields: { 报货批次号: 'BH-ARRIVED', 发生行为: ['bhv_in'] } },
+      { record_id: 'b_return', fields: { 报货批次号: 'BH-RETURN', 发生行为: ['bhv_ret'] } },
     ],
     purchaseRequest: [{ record_id: 'pr_pending', fields: { 报货批次号: ['b_pending'], 供应商: '供应商A' } }],
   });
@@ -410,7 +421,7 @@ test('⑥ 9 点推送候选：到货确认之后这一批**不再**进「未到�
 
   const pending = await service.listPendingBatches();
   assert.deepEqual(pending.map((item) => item.batchNo), ['BH-PENDING'],
-    '候选只有一个：仍是按到货状态 = 未到货 筛（已到货/退货行都不进）');
+    '候选只有一个：发生行为不含入库（已入库/退货行都不进）');
   assert.deepEqual(pending[0].suppliers, ['供应商A']);
 });
 
@@ -433,24 +444,15 @@ test('⑥-补 到货确认**真的会**把这一批从 9 点候选里摘掉（�
 // □ ⑦ 不写飞书自动字段 · □ ⑧ 孤儿调用不阻塞
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('⑦ 任何一次写入里都没有「到货日」「验收人」（飞书自动字段：更新时间 / 创建人）', async () => {
+test('⑦ 到货日写点击验收时间；验收人仍不写', async () => {
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
   await arriveAndConfirm(harness);
 
+  const batchWrites = writesTo(harness.gateway, 'purchaseOrderBatch');
+  assert.ok(batchWrites.some((write) => write.values?.['到货日']), '到货日必须写');
   for (const write of harness.gateway.writes) {
-    assert.equal('到货日' in (write.values || {}), false, `不许写「到货日」：${write.tableKey}`);
     assert.equal('验收人' in (write.values || {}), false, `不许写「验收人」：${write.tableKey}`);
   }
-  // 源码级：这条链路里根本没有这两个键（映射也不该有）。
-  const source = fs.readFileSync(path.join(__dirname, '../src/services/purchaseOrderBatchService.js'), 'utf8');
-  const codeOnly = source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '')
-    .replace(/([^:])\/\/.*$/gm, '$1');
-  assert.equal(/(^|[^_\w])arrivalAt\s*:/.test(codeOnly), false, '不许出现 arrivalAt 这个语义键');
-  // ⚠️ 别用 `\binspector` —— `wrote_inspector: false`（日志字段）会被带进来；
-  //    这里要抓的是**语义键** inspector。
-  assert.equal(/(^|[^_\w])inspector\s*:/.test(codeOnly), false, '不许出现 inspector 这个语义键');
 });
 
 test('⑧ 没有批次身份的孤儿调用：**不阻塞加库存**（既有能力），也不写批次行', async () => {
@@ -492,7 +494,8 @@ test('⑨ 单批次验收完成直接已到货（不再比较供应商双字段�
   const harness = makeHarness();
   const { result } = await arriveAndConfirm(harness);
   assert.equal(result.ok, true);
-  assert.equal(batchFields(harness.records)['到货状态'], '已到货', '本批验收完成即可已到货 ✓');
+  assert.deepEqual(batchFields(harness.records)['发生行为'], ['bhv_in'], '本批验收完成即可入库 ✓');
+  assert.ok(batchFields(harness.records)['到货日']);
   assert.equal(batchFields(harness.records)['货单金额'], AMOUNT, '货单金额照常写 ✓');
 });
 

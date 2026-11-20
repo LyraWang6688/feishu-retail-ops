@@ -432,7 +432,7 @@ test('AC-R3 退货批次不进「到货验收情况」面板（到达状态为�
     const requestTables = h.gateway._tables;
     requestTables.purchaseOrderBatch = [
       ...requestTables.purchaseOrderBatch,
-      { record_id: 'batch_purchase', fields: { 报货批次号: 'CGD-20261011-0099', 到货状态: '未到货', 幂等键: 'purchase_batch:x' } },
+      { record_id: 'batch_purchase', fields: { 报货批次号: 'CGD-20261011-0099', 发生行为: ['bh_request'], 幂等键: 'purchase_batch:x' } },
     ];
     const query = createPurchaseQueryService(h.gateway);
     const arrivals = await query.listPurchaseArrivals();

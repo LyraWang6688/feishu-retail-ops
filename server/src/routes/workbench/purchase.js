@@ -16,6 +16,7 @@ const { SCAN_WRITE } = require('../../config/scanWrite');
 const arrivalTab = require('../../config/workbenchArrival');
 // ⭐ 2026-11-09：到货状态值域的真源（未到货 / 已到货，可配）—— 验收页只收「未到货」。
 const { resolvePurchaseArrivalStatusConfig } = require('../../config/purchaseArrivalStatus');
+const { PURCHASE_BEHAVIORS } = require('../../config/purchaseBehaviors');
 const { createScanArrivalService } = require('../../services/scanArrivalService');
 const { createPurchaseWriteBackgroundService } = require('../../services/purchaseWriteBackgroundService');
 // #948：验收「后台那一跑」接**统一异步任务**（重试 / 最终失败发运营群）
@@ -24,7 +25,7 @@ const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 const { ASYNC_JOBS, ASYNC_JOB_TYPES } = require('../../config/asyncJobs');
 const { logError, logWarn } = require('../../utils/logger');
 const { createSupplyDocumentSyncService } = require('../../services/supplyDocumentSyncService');
-const { createPurchasePaymentDetailService } = require('../../services/purchasePaymentDetailService');
+const { createPurchaseTransactionService } = require('../../services/purchaseTransactionService');
 // ⭐ 2026-10-28（采购页进入生产）：采购页的**只读读模型 + 提交**端点。
 //   🔴 挂在本文件（= 既有 workbench 父 router 已挂载的子路由）⇒ **不改共享文件 `routes/workbench.js`**，
 //     也自动带上父 router 的准入闸门 / no-store / ui-tap 结果事件（不新开鉴权）。
@@ -74,37 +75,41 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     if (!purchaseArrival) {
       const arrivalGateway = options.gateway || new V1BitableGateway();
       const webhooks = resolveArrivalWebhooks(arrivalGateway);
-      const paymentDetails = createPurchasePaymentDetailService({ gateway: arrivalGateway });
+      const paymentTransactions = createPurchaseTransactionService({ gateway: arrivalGateway });
       const arrivalConversation = new PurchaseArrivalConversationService({
         gateway: arrivalGateway,
         // ⚠️ 与采购链路**共用同一个任务存储**：`confirmArrival` 要读的草稿就在那里。
         store: webhooks.store,
         sizeReferences: webhooks.getSizeReferences,
-        // 验收成功（库存 + 批次落表）后，再按供应商写 P发生明细；写失败让任务停在 posting，job 可重试。
+        // 验收成功（库存 + 批次落表）后，再按供应商写 P交易明细；写失败让任务停在 posting，job 可重试。
         confirmArrival: async (taskId, task, operatorOpenId) => {
           const result = await webhooks.confirmArrival(taskId, task, operatorOpenId);
           const supplierRecordId = String(task?.supplier_record_id || '').trim();
           if (supplierRecordId) {
-            await paymentDetails.writeForSupplier({
+            await paymentTransactions.writeForSupplier({
               batchNo: task?.batch_no || '',
               batchRecordId: task?.batch_record_id || '',
               supplierRecordId,
-              amount: task?.actual_amount,
               correlation: { task_id: taskId, batch_no: task?.batch_no || '' },
             });
           }
           return result;
         },
         // 入库之后把批次行的「到货状态」改成已到货 —— 仍是**既有** `PurchaseOrderBatchService`。
-        markBatchArrived: (batchNo, arriveOptions) =>
-          webhooks.orderBatches.markArrived(batchNo, arriveOptions),
+        markBatchArrived: async (batchNo, arriveOptions = {}) => {
+          const behavior = await webhooks.references.resolveBehavior(PURCHASE_BEHAVIORS.inbound);
+          return webhooks.orderBatches.markArrived(batchNo, {
+            ...arriveOptions,
+            behaviorRecordId: behavior?.recordId || '',
+          });
+        },
         // ⭐ 2026-11-10（业务负责人：验收按供应商拆卡）：按供应商验收时，把「实际数量/发生金额」
         //   写成**所有已验收供应商的累计值**（仍走既有 PurchaseOrderBatchService 写口）。
         writeBatchTotals: ({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }) =>
           webhooks.orderBatches.writeAcceptance({ batchNo, batchRecordId, actualQuantity, actualAmount, correlation }),
 
-        // 2026-11-19：每验收完一家供应商，把本次货款金额写一条 P发生明细。
-        writePaymentDetail: (input) => paymentDetails.writeForSupplier(input),
+        // 2026-11-20：每验收完一家供应商，写一条 P交易明细（只写交易明细ID + 报货批次号）。
+        writePaymentDetail: (input) => paymentTransactions.writeForSupplier(input),
       });
       purchaseArrival = new WorkbenchPurchaseArrivalService({
         purchaseQuery: createPurchaseQueryService(arrivalGateway),
@@ -297,6 +302,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         actualAmount: restInput.actualAmount,
         submitKey,
         operatorOpenId: restInput.operatorOpenId,
+        acceptedAt: restInput.acceptedAt || '',
         ...(restInput.sessionKey ? { sessionKey: restInput.sessionKey } : {}),
       });
       // ⭐ 2026-11-12：验收单（对方单据）随验收一起写；失败抛错 ⇒ 统一 job 重试。
@@ -399,6 +405,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     }
   });
   router.post(arrivalTab.api.accept, async (req, res) => {
+    const acceptedAt = new Date().toISOString();
     const openId = req.workbenchUser?.open_id;
     const batchNo = String(req.body?.[arrivalTab.fields.batchNo] || '').trim();
     // ⭐ 2026-11-10（业务负责人：验收按采购明细的供应商拆卡）：本次验收哪一家供应商。
@@ -588,6 +595,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
           // ⚠️ 金额**原样**透传（不改成 `amount.value`）—— 形状与改前那一次 `finish(...)` 逐字同形 ✓；
           //    金额规则在写层还会再走一遍同一份解析（幂等、无副作用 ✓）。
           actualAmount: req.body?.[arrivalTab.fields.actualAmount],
+          acceptedAt,
           operatorOpenId: openId,
           // ⭐ 会话隔离：后台 finish 必须读同一张卡的那份会话（不拿"当前最新"覆盖）
           ...(sessionKey ? { sessionKey } : {}),

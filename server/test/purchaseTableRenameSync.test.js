@@ -17,7 +17,6 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { PURCHASE_ARRIVAL_STATUS_FIELD_KEY } = require('../src/config/purchaseArrivalStatus');
 
 // ⭐ 业务负责人 2026-10-07 在生产表做了这些事，代码必须同步（AGENTS.md：
 //   「我这边在生产表里面做的任何更改，你都要改」）：
@@ -68,8 +67,8 @@ test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列�
   // ⭐ 2026-10-17：采购明细那一列也改名了（她逐字「采购明细里的采购行为字段名称改为了发生行为字段」）
   assert.equal(request.behavior, '发生行为', '采购明细的行为列映射必须跟真表（发生行为）');
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
-  assert.equal(batch.arrivalStatus, '到货状态');
-  assert.equal(batch[PURCHASE_ARRIVAL_STATUS_FIELD_KEY], '到货状态', '到货状态的语义键与配置里声明的一致');
+  assert.equal(batch.arrivalStatus, undefined, '到货状态字段已删除');
+  assert.equal(batch.arrivalDate, '到货日', '到货日改为代码写入点击验收时间');
   assert.equal(batch.document, '我方单据', '代码生成的采购单/退货单图片回填「我方单据」');
   assert.equal(batch.counterpartyDocument, '对方单据', '验收单图片回填「对方单据」');
   // ⭐ 她 2026-10-12（逐字）：「采购主表里面的采购行为确实是需要的，因为一个是报货，一个是退货」
@@ -152,17 +151,15 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点 = 「报货
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'acceptanceText'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'confirmStatus'), false);
-  assert.equal(batch.arrivalStatus, '到货状态', '到货状态照旧（这一条本来就有）');
+  assert.equal(batch.arrivalStatus, undefined, '到货状态已删除');
+  assert.equal(batch.arrivalDate, '到货日', '到货日由代码写点击验收时间');
   assert.equal(batch.actualQuantity, '实际数量');
   assert.equal(batch.actualAmount, '货单金额');
 
-  // ③ ⚠️ 「到货日」「验收人」在真表上是**飞书自动字段**（更新时间 / 创建人）⇒ 不建映射、不写。
-  //    只读需要时才会加，加的时候也要认清"它是自动的"——现在两处都不需要。
-  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'arrivalAt'), false,
-    '「到货日」= 更新时间（自动）→ 不许建映射（代码也不许写）');
+  // ③ 「验收人」仍是创建人（自动，不写）；「到货日」现在是普通日期时间，由验收链路写。
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'inspector'), false,
     '「验收人」= 创建人（自动）→ 不许建映射（代码也不许写）');
-  assert.equal(Object.values(batch).includes('到货日'), false);
+  assert.equal(batch.arrivalDate, '到货日');
   assert.equal(Object.values(batch).includes('验收人'), false);
 
   // ④ ⭐ 2026-10-07 **深夜**：「采购入库」表被业务负责人**整表删除** ⇒ schema 里整段没了。
@@ -187,18 +184,16 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点 = 「报货
 //   ⚠️ 本次只改**字段名映射**（语义键 `createdAt` 原名不动）；自动时间列**代码一行都不写**。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('A4 schema 同步「创建时间」→「报货日」；两个自动时间列都没有写入点', () => {
+test('A4 schema 同步「创建时间」→「报货日」；到货日由验收链路写', () => {
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
 
   // ① 语义键名保持不变，只换物理列名。
   assert.equal(batch.createdAt, '报货日', '「创建时间」已被业务负责人改名为「报货日」');
   assert.equal(Object.values(batch).includes('创建时间'), false, '旧名不许再留在映射里');
 
-  // ② ⚠️ 「到货日」= 改名后的「更新时间」（自动 `type=1002`）⇒ 仍**不建映射、不写**
-  //    （与 A3③ / B4 同一条口径：时间字段一律交给飞书自动生成）。
-  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'updatedAt'), false,
-    '「到货日」= 更新时间（自动）→ 不许建映射（代码也不许写）');
-  assert.equal(Object.values(batch).includes('到货日'), false);
+  // ② 「到货日」现在是普通日期时间，由验收链路写点击时间；不再有 updatedAt 自动列语义。
+  assert.equal(Object.prototype.hasOwnProperty.call(batch, 'updatedAt'), false, '不再使用更新时间的旧语义键');
+  assert.equal(batch.arrivalDate, '到货日', '到货日必须映射（代码要写点击验收时间）');
 
   // ③ ⭐ 守门：两个自动时间列的**物理名**在代码里一个都不许出现。
   //    写入只可能经两条路 —— 语义键（`createdAt`）或物理列名；两条都扫 = 钉住"没有写入点"。
@@ -229,9 +224,7 @@ test('A4 schema 同步「创建时间」→「报货日」；两个自动时间�
     if (rel !== SCHEMA_REL && /['"]报货日['"]/.test(codeOnly)) {
       offenders.push(`${rel}: 代码里出现「报货日」这个物理列名`);
     }
-    if (/['"]到货日['"]/.test(codeOnly)) {
-      offenders.push(`${rel}: 代码里出现「到货日」这个物理列名`);
-    }
+    // 「到货日」现在由验收链路写入，允许出现在实现里；只禁止在 schema 之外硬编码物理列名以外的上下文无法自动判定，故不再全仓禁字。
     // ⚠️ 「创建时间」/ `createdAt` 现在**两张表都有**：
     //    · 「报货批次」的那一列 = 被改名为「报货日」⇒ 旧名与语义键都不许再出现在别处；
     //    · 「收款明细」的「创建时间」= **另一张表**的自动列，本链路**只读**它当时间窗
@@ -294,7 +287,7 @@ test('B4 「到货验收.图片」的问题随表一起消失：全仓没有任�
   assert.equal(batchNames.includes('鞋盒图片'), false, '「鞋盒图片」是更早一版的名字，同样不许出现');
   const allNames = Object.values(V1_BITABLE_SCHEMA.tables)
     .flatMap((table) => Object.values(table.fields || {}));
-  assert.equal(allNames.includes('到货日'), false, '「到货日」是自动字段，不许在任何表里建映射');
+  assert.equal(allNames.includes('到货日'), true, '「到货日」现在是验收链路写入的普通日期字段');
 });
 
 test('B5 「到货验收」表的读写点全清：全仓不再引用这个表键（去注释后扫描）', () => {

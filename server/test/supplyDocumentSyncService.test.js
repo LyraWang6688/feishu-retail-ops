@@ -29,8 +29,7 @@ const makeGateway = (fields, existingByFolder = {}) => {
 test('AC-SDS1 报货 + 已到货：我方→我方，对方→对方，成功后勾选单据同步', async () => {
   const h = makeGateway({
     报货批次号: 'CGD-20261117-0001',
-    发生行为: '报货',
-    到货状态: '已到货',
+    发生行为: '入库',
     报货日: Date.parse('2026-11-17T10:00:00+08:00'),
     供应商: '信踏',
     我方单据: [{ file_token: 'f_my', name: '采购单.png', tmp_url: 'https://x?extra=e' }],
@@ -46,8 +45,8 @@ test('AC-SDS1 报货 + 已到货：我方→我方，对方→对方，成功后
     'DwRdfewUvlwdurdd6oBcM6ttnvv',
   ]);
   assert.deepEqual(h.uploaded.map((item) => item.fileName), [
-    '2026-11-17_信踏_报货_采购单.png',
-    '2026-11-17_信踏_报货_验收.jpg',
+    '2026-11-17_信踏_入库_采购单.png',
+    '2026-11-17_信踏_入库_验收.jpg',
   ]);
   assert.deepEqual(h.updates[0].patch, { documentSync: true });
 });
@@ -71,7 +70,7 @@ test('AC-SDS2 退货：只同步我方单据到 我方', async () => {
 
 test('AC-SDS3 未到货 / 已勾选：跳过，不读云盘', async () => {
   const notReady = makeGateway({
-    报货批次号: 'CGD-1', 发生行为: '报货', 到货状态: '未到货', 供应商: '信踏',
+    报货批次号: 'CGD-1', 发生行为: '报货', 供应商: '信踏',
     我方单据: [{ file_token: 'f', name: 'x.png' }], 单据同步: false,
   });
   const skipped = await createSupplyDocumentSyncService({ gateway: notReady.gateway })

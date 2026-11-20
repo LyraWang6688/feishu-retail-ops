@@ -463,12 +463,12 @@ const V1_BITABLE_SCHEMA = {
     //   `confirmPurchaseRequest`）：它写的是**「报货批次」＋「报货信息」**两张表，
     //   全仓**没有**任何 `purchaseReport` 读写 —— 扫码补货报单与工作台都还在用它。
     //   ⚠️ 采购领域现在的三张表：报货批次（`purchaseOrderBatch`）· 报货信息
-    //   （`purchaseRequest`，采购申请/退货明细的落点，**保留**）· P交易明细（`paymentDetail`，占位）。
+    //   （`purchaseRequest`，采购申请/退货明细的落点，**保留**）· P交易明细（`paymentTransaction`）。
     // ⭐⭐ 「P交易明细」（原名「付款明细」，业务负责人 2026-10-09 在生产 Base 新建，`tblWaafeodl2oILI`）。
     //
     // 只读核对到的事实（服务器上走项目自己的只读接口 `appTable.list` / `appTableField.list`）：
     //   · 它现在**只有 1 列**，而且是主字段「文本」（`type=1`）—— **一个业务列都还没有**；
-    //   · 全仓（`server/src`）grep：`P交易明细` / `paymentDetail` 零读写点、零业务链路引用。
+    //   · 2026-11-20：验收/退货改为写 P交易明细（只写交易明细ID + 报货批次号）。
     // ⇒ 本次**只登记这张表**（表名 + table_id），**不建任何字段映射、不接任何写入点**：
     //   列还没定，此刻编一个映射，只会让她下一次改列名时踩空（"写库抛未配置语义字段"那一类坑）。
     // ⭐ 2026-10-17（业务负责人指令）**已进 `V1_SCHEMA_SCOPES.sales`** ——
@@ -476,23 +476,14 @@ const V1_BITABLE_SCHEMA = {
     //   改后逐字：进 sales 闸门，但 `fields` 仍为 `{}` ⇒ **只验"这张表在不在"**，不验列 ✓
     //   依据 = 她 2026-10-17 逐字：「把 2、3、17 加进 sales 闸门范围」。
     //   等她定了列 ⇒ ① 在这里补 `fields`；② 把新列接进对应链路（判断要不要写入点）。
-    // ⚠️ table_id 仍走环境变量（`FEISHU_V1_PAYMENT_DETAIL_TABLE_ID`），默认值 = 生产真表的 id。
-    paymentDetail: {
-      // 2026-11-19 生产实际表名：P发生明细（table_id 不变；同 Base 另有 P交易明细，别混）。
-      tableName: 'P发生明细',
-      tableId: getEnv('FEISHU_V1_PAYMENT_DETAIL_TABLE_ID'),
-      // 2026-11-19 只读核对生产真表：已从「只有文本」长成业务列；代码仍无读写点，仅登记供闸门核对。
-      // 「发生行为」是 Lookup（只读），绝不能进可写 fields；登记在 readOnlyFields。
-      readOnlyFields: Object.freeze({
-        behavior: Object.freeze({
-          name: '发生行为', type: 19, uiType: 'Lookup', writable: false,
-        }),
-      }),
+    // ⚠️ table_id 走环境变量（`FEISHU_V1_PAYMENT_TRANSACTION_TABLE_ID`）。
+    // ⭐ 2026-11-20：P发生明细已删除，验收/退货统一写「P交易明细」。
+    paymentTransaction: {
+      tableName: 'P交易明细',
+      tableId: getEnv('FEISHU_V1_PAYMENT_TRANSACTION_TABLE_ID'),
       fields: {
         transactionDetailId: '交易明细ID',
-        supplier: '供应商',
         batchNo: '报货批次号',
-        amount: '发生额',
       },
     },
     // ⚠️ 表名沿革：「采购申请」→（2026-10-05）「单据信息」→（2026-10-07）「具体信息」
@@ -598,10 +589,8 @@ const V1_BITABLE_SCHEMA = {
         //   ⚠️ 自动字段 ⇒ **代码一行都不写**：这个映射的用途只有一个 —— 让闸门盯住这个名字。
         createdAt: '报货日',
         idempotencyKey: '幂等键',
-        // 到货状态（单选）：新建批次记录时显式写「未到货」；到货核对确认成功后改「已到货」。
-        // 取值**不写死在代码里** —— 语义键在这里、字面量在 `config/purchaseArrivalStatus.js`，
-        // 并由部署闸门（`validate_v1_schema.js`）对着真表 `property.options` 核对。
-        arrivalStatus: '到货状态',
+        // 2026-11-20：生产「到货状态」字段已删除；验收成功改写「发生行为 = 入库」并写到货日。
+        arrivalDate: '到货日',
         // 「我方单据」：**附件字段**，出图之后把采购申请单 / 采购退货单的 PNG 回填到这里。
         // ⚠️ 2026-11-13 生产真表把原「单据」改名成「我方单据」，并新增「对方单据」。
         //    语义键 `document` 保持不变 ⇒ 所有出图回填代码不用改，只换物理列名。

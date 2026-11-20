@@ -15,6 +15,7 @@ const { V1PostingService } = require('./v1PostingService');
 const { SalesDeliveryService } = require('./salesDeliveryService');
 const { SecondDeliveryService } = require('./secondDeliveryService');
 const { PurchaseWebhookService } = require('./purchaseWebhookService');
+const { createArrivalMarkHandler } = require('./purchase/arrivalBehavior');
 // 「货品信息.标签二维码」：表变更事件（新增 / 编号变更）→ 自动生成二维码并写回那一列。
 // 独立 service（一个 service 只干一件事），这里只负责把它接上（见构造函数）。
 const { createTagQrCodeService } = require('./tagQrCodeService');
@@ -261,11 +262,7 @@ class LarkMvpService {
       // 接线**只做一件事**：把批次号交给那个小 service；改哪张表、写什么取值都不是这里的事。
       // ⚠️ 采购服务桩（单测注入的）可能没有 orderBatches → 退回"什么都不做"，
       //    这样注入桩的既有用例与本条链路的接线互不影响。
-      markBatchArrived: (batchNo, options) => (
-        this.purchaseWebhooks.orderBatches?.markArrived
-          ? this.purchaseWebhooks.orderBatches.markArrived(batchNo, options)
-          : Promise.resolve({ updated: false, reason: 'not_wired' })
-      ),
+      markBatchArrived: createArrivalMarkHandler(this.purchaseWebhooks),
     });
     // ⚠️⚠️ 2026-10-12（清群聊入口 C2）：这里原先 new 的**群采购入站**分派 service
     //    （按 thread_id / parent_id / 正文批次号定位是哪一批 → 到货核对）**整块删除**。

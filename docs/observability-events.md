@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **518** 个事件。按前缀分组：
+共 **515** 个事件。按前缀分组：
 
 ## accessory
 
@@ -361,11 +361,8 @@
 | `purchase.batch.acceptance.no_record` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.acceptance.nothing_to_write` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.acceptance.written` | 1 | src/services/purchaseOrderBatchService.js |
-| `purchase.batch.arrival_status.arrived.cache_hit` | 1 | src/services/purchaseOrderBatchService.js |
-| `purchase.batch.arrival_status.arrived.cache_miss` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.arrival_status.no_record` | 1 | src/services/purchaseOrderBatchService.js |
-| `purchase.batch.arrival_status.pending.cache_hit` | 1 | src/services/purchaseOrderBatchService.js |
-| `purchase.batch.arrival_status.pending.cache_miss` | 1 | src/services/purchaseOrderBatchService.js |
+| `purchase.batch.arrived.written` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.document.exists` | 1 | src/services/purchaseOrderBatchService.js |
 | `purchase.batch.document.no_record` | 2 | src/services/purchase/documentImages.js<br>src/services/purchaseOrderBatchService.js |
 | `purchase.batch.order_amount.no_record` | 1 | src/services/purchaseOrderBatchService.js |
@@ -378,9 +375,10 @@
 | `purchase.group.message.remembered` | 1 | src/services/purchaseBatchLocator.js |
 | `purchase.group.thread.bind_failed` | 1 | src/services/purchaseBatchLocator.js |
 | `purchase.group.thread.bound` | 1 | src/services/purchaseBatchLocator.js |
-| `purchase.payment_detail.created` | 1 | src/config/purchasePaymentDetail.js |
-| `purchase.payment_detail.failed` | 1 | src/config/purchasePaymentDetail.js |
-| `purchase.payment_detail.skipped` | 1 | src/config/purchasePaymentDetail.js |
+| `purchase.payment_transaction.created` | 1 | src/config/purchaseTransaction.js |
+| `purchase.payment_transaction.failed` | 1 | src/config/purchaseTransaction.js |
+| `purchase.payment_transaction.skipped` | 1 | src/config/purchaseTransaction.js |
+| `purchase.pending.behavior_unavailable` | 1 | src/services/purchasePendingBatchService.js |
 | `purchase.request.created` | 1 | src/services/purchaseWebhookService.js |
 | `purchase.request.image.attachment_exists` | 2 | src/services/purchase/documentImages.js |
 | `purchase.request.image.attachment_write_failed` | 1 | src/services/purchase/documentImages.js |
@@ -442,7 +440,6 @@
 | `scan.accept.not_in_batch` | 1 | src/config/scanWrite.js |
 | `scan.accept.pending_batches_failed` | 1 | src/services/scanArrivalService.js |
 | `scan.accept.pending_cache.invalidate_failed` | 2 | src/services/purchase/arrival.js<br>src/services/scanArrivalService.js |
-| `scan.accept.pending_filter_failed` | 1 | src/services/purchasePendingBatchService.js |
 | `scan.accept.reused` | 1 | src/config/scanWrite.js |
 | `scan.accept.rows_set` | 1 | src/config/scanWrite.js |
 | `scan.accept.started` | 1 | src/config/scanWrite.js |

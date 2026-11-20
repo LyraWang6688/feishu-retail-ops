@@ -291,13 +291,11 @@ test('①-补 schema / 范围 / 尺码关联清单里都没有它了；「关联
   }
 });
 
-test('①-补2 「采购入库」行的「采购行为」配置随入库行一起退场（不再有读取点）', () => {
-  assert.equal(fs.existsSync(path.join(SERVER_ROOT, 'src/config/purchaseBehaviors.js')), false,
-    '那个配置模块的唯一消费者是入库行的「采购行为」⇒ 随之退场');
-  const files = walk(path.join(SERVER_ROOT, 'src')).filter((file) => file.endsWith('.js'));
-  const offenders = files.filter((file) =>
-    /PURCHASE_BEHAVIORS/.test(stripComments(fs.readFileSync(file, 'utf8'))));
-  assert.deepEqual(offenders.map((file) => path.relative(SERVER_ROOT, file)), []);
+test('①-补2 采购行为编码配置仍在（验收改入库需要）', () => {
+  const file = path.join(SERVER_ROOT, 'src/config/purchaseBehaviors.js');
+  assert.equal(fs.existsSync(file), true, '采购行为编码配置仍在使用');
+  const source = stripComments(fs.readFileSync(file, 'utf8'));
+  assert.match(source, /PURCHASE_IN/, '必须包含入库行为编码');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -518,8 +516,7 @@ test('G ⛔ 「报货批次.确认状态」整条退场 ⇒ 它的单选取值�
   const contracts = getV1SelectOptionContracts('purchase');
   assert.equal(contracts.some((item) => item.fieldKey === 'confirmStatus'), false,
     '确认状态那一列不存在了 ⇒ 契约里不许再有它');
-  const arrival = contracts.find((item) => item.fieldKey === 'arrivalStatus');
-  assert.deepEqual(arrival.requiredOptions, ['未到货', '已到货']);
+  assert.deepEqual(contracts, [], '到货状态字段删除后，不再有任何单选取值契约');
   // inventory 范围不该被带上「报货批次」的任何契约。
   assert.deepEqual(getV1SelectOptionContracts('inventory'), []);
 });
