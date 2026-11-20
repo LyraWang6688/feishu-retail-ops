@@ -3,8 +3,8 @@
  *
  * 业务负责人 2026-11-17 的口径：
  *   「扫码打印、库存调整打印的打印请求，也写进这张『标签打印』数据表；**只是记录请求**」。
- *   ⇒ 只写「打印货号 + 打印日 + 来源」，**不写状态 / 打印时间 / 失败原因**；
- *     一次**新建打印任务**写一行，队列复用（防连点）不重复写。
+ *   ⇒ **一个新建打印任务 = 一行**，只写「打印货号 + 来源」；
+ *     不查历史、不合并、不累加次数；队列复用（防连点）不重复写。
  *
  * ⚠️ **为什么必须加「来源」字段**：
  *   这张表同时是「批量打印」表单的**输入表** —— 后端监听该表的 `record_added`，
@@ -27,7 +27,6 @@ const LABEL_PRINT_REQUEST_LOG = Object.freeze({
   fields: Object.freeze({
     product: 'product',
     source: 'source',
-    count: 'count',
   }),
   // 队列来源 → 「来源」单选值。表单来源不写第二行（表单记录本身就是请求）。
   // ⚠️ 来源值必须与业务负责人表里的「来源」选项逐字一致。
@@ -46,9 +45,7 @@ const LABEL_PRINT_REQUEST_LOG = Object.freeze({
   // 表单监听端认的「批量打印」值（与上面的 sourceLabels[form] 同一份文案）。
   formSourceLabel: '批量打印',
   // 日志里给排查用的人话（service 层不写中文）。
-  texts: Object.freeze({
-    duplicateRowsHint: '同一货品+来源有多行；本次只给第一行 +1，建议手工合并',
-  }),
+  texts: Object.freeze({}),
 });
 
 module.exports = { LABEL_PRINT_REQUEST_LOG };

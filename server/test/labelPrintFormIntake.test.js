@@ -264,10 +264,9 @@ test('AC-FF7 只认「新增」动作：record_edited / record_deleted 不触发
 test('AC-FF8 「打印日」是飞书自动字段：schema 不映射、本链路没有任何写表路径', () => {
   const table = V1_BITABLE_SCHEMA.tables.labelPrintRequest;
   assert.equal(table.tableName, '标签打印');
-  assert.deepEqual(Object.keys(table.fields), ['product', 'source', 'count'],
-    '只映射「打印货号」「来源」「申请次数」；「打印日」刻意不映射');
+  assert.deepEqual(Object.keys(table.fields), ['product', 'source'],
+    '只映射「打印货号」「来源」；「打印日」由飞书默认值填，刻意不映射');
   assert.equal(table.fields.source, '来源', '来源字段是服务端请求记录与表单请求的区分键');
-  assert.equal(table.fields.count, '申请次数', '申请次数按「货品 + 来源」累计');
   const source = fs.readFileSync(path.join(SOURCE_DIR, 'services/labelPrintFormIntakeService.js'), 'utf8');
   for (const forbidden of ['gateway.update', 'gateway.create', 'bitable.record.created', 'bitable.record.updated']) {
     assert.equal(source.includes(forbidden), false, `本链路只读 + 入队，不许出现 ${forbidden}`);
