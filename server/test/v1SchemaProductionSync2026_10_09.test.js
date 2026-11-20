@@ -156,15 +156,3 @@ test('B2(2026-10-09) 全仓 src 没有对这 5 列的写入点（删映射不删
   assert.deepEqual(offenders, [],
     `这 5 列已被她删除 ⇒ 写入点必须一起删：${offenders.join('、')}`);
 });
-
-test('B3(2026-10-09) 「原话」的读取点也删了（读已删除的列只会拿到空 ⇒ 售后重试必抛）', () => {
-  const source = stripComments(
-    fs.readFileSync(path.join(SERVER_ROOT, 'src/services/afterSalesService.js'), 'utf8'),
-  );
-  assert.doesNotMatch(source, /fields\s*\??\.\s*originalText\b/,
-    '「原话」列已删除：verifyMaster 不许再拿它做判据（undefined !== 请求原话 ⇒ 每次重试都判不一致）');
-  // ⚠️ 请求里的 `originalText` **必须留着** —— 它是幂等指纹（`fingerprintOf`）的一部分，
-  //    只是不再落业务表；所以这里**不断言**它消失（"不再写表"由 B2 的写入点扫描守）。
-  assert.match(source, /originalText: request\.originalText,/,
-    '售后请求里的「原话」仍要进幂等指纹（删了会把两笔不同的售后当成同一笔）');
-});

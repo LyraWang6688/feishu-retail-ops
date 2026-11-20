@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **519** 个事件。按前缀分组：
+共 **510** 个事件。按前缀分组：
 
 ## accessory
 
@@ -20,19 +20,6 @@
 | `accessory.sample_image.drive.not_wired` | 1 | src/routes/larkEvents.js |
 | `accessory.sample_image.drive.skipped` | 1 | src/services/accessorySampleImageDriveService.js |
 | `accessory.sample_image.drive.synced` | 1 | src/services/accessorySampleImageDriveService.js |
-
-## after_sales
-
-| 事件 | 次数 | 文件 |
-| --- | --- | --- |
-| `after_sales.cash.method` | 1 | src/services/afterSalesService.js |
-| `after_sales.count.applied` | 1 | src/services/afterSalesService.js |
-| `after_sales.executed` | 1 | src/services/afterSalesService.js |
-| `after_sales.return_funds.no_original_payment` | 1 | src/services/afterSalesService.js |
-| `after_sales.return_funds.payment_status_updated` | 1 | src/services/afterSalesService.js |
-| `after_sales.return_funds.uncovered` | 1 | src/services/afterSalesService.js |
-| `after_sales.skipped.already_done` | 1 | src/services/afterSalesService.js |
-| `after_sales.stock.skipped` | 1 | src/services/afterSalesService.js |
 
 ## async_job
 
@@ -648,11 +635,10 @@
 | `workbench.lark.jsapi_signature.error` | 1 | src/routes/workbench.js |
 | `workbench.lark.jsapi_signature.failed` | 1 | src/routes/workbench.js |
 | `workbench.lark.jsapi_signature.ok` | 1 | src/routes/workbench.js |
-| `workbench.orders.after_sales.completed` | 3 | src/services/afterSalesAsyncService.js<br>src/services/afterSalesReturnService.js<br>src/services/workbenchOrderActionService.js |
+| `workbench.orders.after_sales.completed` | 2 | src/services/afterSalesAsyncService.js<br>src/services/afterSalesReturnService.js |
 | `workbench.orders.after_sales.exchange.completed` | 1 | src/services/afterSalesExchangeService.js |
 | `workbench.orders.after_sales.exchange.total_missing` | 1 | src/services/afterSalesExchangeService.js |
 | `workbench.orders.after_sales.failed` | 6 | src/routes/workbenchOrderActions.js<br>src/services/afterSalesAsyncService.js |
-| `workbench.orders.second_delivery.completed` | 1 | src/services/workbenchOrderActionService.js |
 | `workbench.procurement.new_products.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.replenish.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.submit.failed` | 1 | src/routes/workbench/purchase.js |

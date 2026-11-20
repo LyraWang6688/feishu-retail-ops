@@ -1,12 +1,8 @@
 /**
  * 工作台【订单列表】的单条操作 —— 写入口（业务负责人 2026-10-09）。
  *
- *   POST /api/workbench/sales/after-sales      售后：退 / 换 / 赔
- *   GET  /api/workbench/sales/after-sales/scan-candidates   售后扫一扫落地页的只读候选
- *
  * 🔴 2026-10-29（旧订单列表前端退场）：`POST /sales/second-delivery` 已删（旧详情页的二次交付入口没了）；
- *    **业务能力保留**：`WorkbenchOrderActionService.secondDelivery` / `SecondDeliveryService` 一行没动，
- *    以后独立页要用时从服务层接。
+ *    `SecondDeliveryService` 业务能力仍保留，以后独立页要用时从服务层接。
  *
  * ⭐ 2026-10-29：另加一条**只读**入口给「售后扫一扫落地页」——
  *   GET  /api/workbench/sales/after-sales/scan-candidates
@@ -19,10 +15,9 @@
  *    **既有**的 `requireWorkbenchAccess`（未启用认证 503 / 未登录 401 / 白名单外 403）。
  * 🔴 失败口径与 `workbenchInventoryAdjustment.js` 同一套：她填错的（statusCode=400）→ 400，
  *    业务拒绝 → 502，**两种都把原因原样回到页面**（页面上看得见原因，不许静默）。
- * 🔴 这里**没有任何写库逻辑** —— 全部交 `WorkbenchOrderActionService` → 既有业务处理层。
+ * 🔴 这里**没有任何写库逻辑** —— 退货 / 换货全部交新的售后执行器。
  */
 const express = require('express');
-const { WorkbenchOrderActionService } = require('../services/workbenchOrderActionService');
 const { AfterSalesScanService } = require('../services/afterSalesScanService');
 const { createScanPageService } = require('../services/scanPageService');
 const { saleSizeGroups } = require('../views/scanPageRealm');
@@ -43,36 +38,6 @@ const { logError } = require('../utils/logger');
  */
 const createWorkbenchOrderActionsRouter = (options = {}) => {
   const router = express.Router();
-  // 默认依赖**延迟构建**：只想注入一个桩的调用方（测试）不必先配好飞书凭证。
-  let service = options.service || null;
-  const resolveService = () => {
-    if (!service) service = new WorkbenchOrderActionService({ gateway: options.gateway });
-    return service;
-  };
-
-  const handle = (event, fallback, work) => async (req, res) => {
-    try {
-      const result = await work(req);
-      // ⭐ 写成功了才作废缓存（失败 / 被拒的那几次一个字节都没写，不该影响缓存）。
-      options.ordersCache?.invalidate();
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      logError(event, { request_id: req.requestId, error: error.message });
-      // 503 只给"整条动作被开关关掉"这一种（她在页面上会看见那句人话）。
-      const status = error?.statusCode === 400 ? 400 : error?.statusCode === 503 ? 503 : 502;
-      return res.status(status).json({ success: false, error: error.message || fallback });
-    }
-  };
-
-  router.post('/sales/after-sales', handle(
-    'workbench.orders.after_sales.failed', '售后没做成',
-    // ⭐ 2026-10-15（task-48 b）：关联键走**尾部可选参数**（既有约定 ✓）——
-    //    ⚠️ **不塞进入参**：入参形状逐字不变 ⇒ 既有 AC6 那条 deepEqual 一行都不用改 ✓
-    (req) => resolveService().afterSales(
-      { ...req.body, operatorOpenId: req.workbenchUser?.open_id },
-      { correlation: tapIdFromRequest(req) },
-    ),
-  ));
 
   // ⭐⭐⭐ 2026-10-29：售后**扫一扫落地页**的只读候选（不写库、不作废缓存 —— 它什么都没改）。
   //   入参：`productRecordId`（二维码里的货品记录 id）+ `days`（默认 7，配置里封顶）。
@@ -137,7 +102,6 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
   });
 
   // ⭐⭐ 2026-11-08（业务负责人定稿）：售后「退货」写入 —— 表单 POST → 入队 → 303 统一 toast → 后台写库。
-  //   ⚠️ 旧同步写入口 `POST /sales/after-sales` 保留（灰度可回退），页面不再用它。
   //   · 提交**成功** ⇒ 回**工作台首页**（统一 toast 的默认落点，与销售/采购一致，业务负责人 2026-11-09 定）；
   //   · 填错（400）⇒ 仍回售后页并带 `err=`，她可以就地改（这条需要 productRecordId 才能回到原页面）。
   const landingPath = (productRecordId) => (productRecordId

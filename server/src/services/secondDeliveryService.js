@@ -21,7 +21,7 @@ const { logInfo, logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
 const { mergeCorrelation } = require('../utils/correlationFields');
 // ⭐ 2026-10-08：「退过 / 换过 / 赔过 的明细不属于待处理」——判据（唯一一处）在售后配置里。
-const { isAfterSalesFulfillment } = require('../config/afterSales');
+const { isAfterSalesFulfillment } = require('../config/afterSalesStatus');
 // ⭐ 2026-10-08：飞书错误的**真实** code / msg / log_id / method_id（唯一取用口）。
 // ⭐ 2026-10-08（P0）· 失败要重试 + 失败要可见 + 瞬时错误自动重试：
 //   原来这条链路"当天失败即落 failed、当天不再重试，而且只写日志"（真机 10-06 / 10-08 早上
@@ -133,7 +133,7 @@ class SecondDeliveryService {
 
   /**
    * 「成交」：补收款 + 交付。**工作台「销售订单列表 → 待交割单 → 二次交付」**调的就是它
-   * （`routes/workbenchOrderActions.js` → `WorkbenchOrderActionService.secondDelivery`）。
+   * （旧订单列表接线层已删除；业务能力保留在本服务，独立页以后从服务层接）。
    *
    * 顺序是**先收钱、再交货**：钱没记上就不该把货记成已交付（预定单的货是收了钱才给）。
    * 任一步失败会向上抛（工作台把原因原样回显到页面）；底层两个写操作都是幂等的，

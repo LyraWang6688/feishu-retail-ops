@@ -15,7 +15,7 @@
  *    · `DEFAULT_COLLECTION_METHOD` 是**这一页**的默认收款方式（业务负责人 2026-10-08 定的「微信」）；
  *    · 🔴 **群聊链路一个字都不碰** —— 群里那套的口径是「用户会主动说收款方式，系统不猜、也不设默认」
  *      （见 AGENTS.md 第 16 条(1)）。所以这个常量在 `src/**` 里的读取点**只有两处**：
- *      本文件（定义）＋ `services/workbenchOrderActionService.js`（工作台接线层），
+ *      本文件（定义）＋ `services/workbenchOrdersCache.js` / `services/salesFollowupService.js`，
  *      有一条源码哨兵钉着它（`test/workbenchOrders.test.js` 的 AC3b）。
  */
 
