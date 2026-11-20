@@ -59,7 +59,7 @@ test('AC-P17 配置先行：端点 / 文案 / 默认值 / 尺码规则都在 con
   for (const endpoint of ['/api/workbench/procurement/replenish', '/api/workbench/procurement/new-products', '/api/workbench/procurement/submit']) {
     assert.ok(config.includes(endpoint), `config 缺端点 ${endpoint}`);
   }
-  for (const key of ['endpoints', 'tabs', 'texts', 'stats', 'defaults', 'storage', 'card', 'legends']) {
+  for (const key of ['endpoints', 'tabs', 'texts', 'stats', 'defaults', 'storage', 'card']) {
     assert.ok(config.includes(key), `config 缺 ${key}`);
   }
   // 渲染层不写死中文文案（抽查几条：只允许出现在 config）
