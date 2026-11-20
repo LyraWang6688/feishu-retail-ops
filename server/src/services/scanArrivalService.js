@@ -3,7 +3,7 @@
  *
  *  工作台 → 采购 → 验收到货 → 选【未到货】的报货号 → 点【验收】⇒ 本服务 `start()` 开一次
  *  **验收会话**（把这一批的采购申请明细缓存进会话）；
- *  之后每扫一个码（标签二维码就是 `/s/{编号}`）⇒ `addScan()` 把这一双记进会话
+ *  之后每扫一个码（标签二维码就是 `/r/{recordId}`）⇒ `addScan()` 把这一双记进会话
  *  （**不在本批不记、重复扫只记一次**）；
  *  最后【完成验收】⇒ `finish()` 把**已扫合计**交给**既有**到货核对链路
  *  （`PurchaseArrivalConversationService.confirmBatchArrival` → `buildPlan` → `confirmLocked`

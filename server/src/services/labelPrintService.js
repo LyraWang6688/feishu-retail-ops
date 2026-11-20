@@ -37,9 +37,9 @@
  *    🔴 仍然是**只读**：依旧只有 `listAll('liveInventory')` / `listAll('product')` 两次读。
  *
  * ⚠️ **二维码内容是单一真源**：模板来自 `config/tagQrCode.js` 的 `SCAN_URL.recordIdTemplate`
- *    （`https://hm.bamamei.online/s/{编号}`），替换用 `services/tagQrCodeService.js` 导出的
- *    记录 ID 二维码构造器（只编码值、不编码模板）。本文件**不抄第二份 URL 模板** —— 旧的那条
- *    `https://workbench.bamamei.online/scan?no=…` 已随本次改造删除。
+ *    （`https://hm.bamamei.online/r/{recordId}`），替换用 `services/tagQrCodeService.js` 导出的
+ *    记录 ID 二维码构造器（只编码值、不编码模板）。本文件**不抄第二份 URL 模板**。
+ *    ⛔ 旧 `/s/{编号}` 入口已于 2026-11-11 删除，不再生成也不再兼容。
  *
  * ⚠️ **排版不进这里**（那是页面的事）：service 只回答"印什么"（数值 / 文案 / SVG 字符串 /
  *    尺码怎么分行），40×30mm、每页几行几列、字号这些**怎么摆**的参数原样带在响应的 `layout` 里，
@@ -209,8 +209,8 @@ const rowFromRecord = (record, { fieldNames, createdTimeField }) => {
  * 的索引（只读一次表就够）。
  * 同一个编号出现多条时：**第一条非空**的价格 / 品牌 / 三段 / 创建时间为准（不覆盖已有值）。
  *
- * ⭐ 2026-10-14：多留一个 `record_id` —— 标签上的二维码从 `/s/{编号}` 改成
- *   `/r/{记录 ID}`（她 2026-10-12 定案：「新二维码一律 `https://hm.bamamei.online/r/{recordId}`」；
+ * ⭐ 2026-10-14：多留一个 `record_id` —— 标签上的二维码固定使用
+ *   `/r/{recordId}`（她 2026-10-12 定案：「新二维码一律 `https://hm.bamamei.online/r/{recordId}`」；
  *   依据见 `docs/qr-record-id-and-js-2026-10-12.md`）。QR 里装的是**接口读到的** record_id
  *   （她那个「记录 ID」公式列有延迟 ⇒ 只作交叉校验，以接口值为准）。
  *
@@ -263,9 +263,9 @@ const createdAtOf = (record, createdFields = []) => {
  * 按**记录 ID**出码（URL 模板与替换实现都复用 `tagQrCode` 那一份，**不抄第二份**）。
  *
  * ⚠️ 2026-10-14（业务负责人 2026-10-12 定案 + Lead 当晚裁决走 ⓐ）：
- *   标签上的二维码从 `/s/{编号}` 换成 **`/r/{记录 ID}`** —— 编号是**会变的快照**
+ *   标签上的二维码固定使用 **`/r/{recordId}`** —— 编号是**会变的快照**
  *   （她打印时类别还空着、事后补上 ⇒ 旧码对不上），record_id 是飞书**永不变**的身份证。
- *   旧贴纸按她的口径**重打**（`/s/{编号}` 路径保留，但扫码打印**不认它** ⇒ 人话提示重打）。
+ *   旧贴纸按她的口径**重打**；旧 `/s/{编号}` 入口已删除，扫码时按非标签码拒绝。
  */
 const buildLabelScanUrl = (recordId) => buildRecordIdScanUrl(recordId, { scanUrl: SCAN_URL });
 
@@ -295,10 +295,9 @@ const scanPrintTextsOf = (config) => config?.scanPrint?.texts || LABEL_PRINT.sca
  * ⭐⭐ 「扫码打印」：**扫到的字符串 ⇒ 记录 ID**（与 `buildLabelScanUrl` 是**一对反函数**）。
  *
  * 形状唯一真源 = `config/tagQrCode.js` 的 `SCAN_URL`（本函数里**没有第二个 URL 模板** ✗）。
- * 三种结果：
+ * 两种结果：
  *   · `/r/{recordId}` ⇒ `{ ok:true, mode:'recordId', value }` ✓
- *   · `/s/{编号}`（旧贴纸）⇒ `{ ok:false, reason:'legacy_sticker', message }`（**可操作**的人话 ✓）
- *   · 别的 / 空 ⇒ `{ ok:false, reason:'not_label_code' | 'empty', message }`（**不猜** ✗）
+ *   · 旧 `/s/{编号}` / 别的 / 空 ⇒ `{ ok:false, reason:'not_label_code' | 'empty', message }`（**不猜** ✗）
  * ⚠️ **绝不**"从随便一段文字里抠一个像 ID 的串" —— 形状不对就是不对（那是替她乱打一张纸）。
  */
 const parseLabelScanUrl = (raw, config = LABEL_PRINT) => {
@@ -428,7 +427,6 @@ const createLabelPrintService = (gateway, options = {}) => {
    * 🔴 2026-11-09（业务负责人：旧批量逻辑「完全删除」）：原来的条件筛选
    *   （所属状态 / 类别 / 尺码 / 最近新增 / 排序）以及对应的配置项**整段物理删除** ✗。
    *   本方法现在**只认一个** `keyword`：
-   *     · 「选择编号打印」带进来的编号 / 货号；
    *     · 「扫码打印」按记录 ID 拿到编号后复用它（`labelForRecord`）；
    *     · 队列的单品 / 表单链路也复用它。
    *
@@ -675,7 +673,7 @@ const createLabelPrintService = (gateway, options = {}) => {
     if (missingQrRecordId) {
       logWarn('workbench.labels.missing_qr_record_id', {
         missing_qr_record_id: missingQrRecordId,
-        hint: '这些编号在「货品信息」里没有对应记录 ⇒ 二维码退回旧的编号版格式；扫码打印只认记录 ID 版（她会收到"请重打新标签"的人话）',
+        hint: '这些编号在「货品信息」里没有对应记录 ⇒ 该标签不生成二维码；扫码打印只认记录 ID 版',
       });
     }
 
