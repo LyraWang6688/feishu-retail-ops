@@ -222,7 +222,6 @@ const EVENTS = Object.freeze([
   'purchase.arrival.reconcile.amount_missing',
   'purchase.arrival.reconcile.batch_arrival_failed',
   'purchase.arrival.reconcile.batch_arrival_skipped',
-  'purchase.arrival.reconcile.batch_totals_failed',
   'purchase.arrival.reconcile.confirm_duplicate',
   'purchase.arrival.reconcile.confirm_failed',
   'purchase.arrival.reconcile.failure_notice',

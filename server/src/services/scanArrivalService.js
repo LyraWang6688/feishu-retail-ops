@@ -181,11 +181,7 @@ const createScanArrivalService = (options = {}) => {
     const query = purchaseQueryOf();
     if (!query) return { ok: false, reason: 'not_wired', message: texts.acceptRowsUnreadableBody };
     const rows = await query.listPurchaseRequests({ batchNo: wanted, reportBehavior: 'purchase_request' });
-    // ⭐ 同一批次里可能有多家供应商：本次只验收 `wantedSupplier` 的那部分明细；
-    //   `supplier_record_ids` 记住整批的供应商集合（写回时判断"全批是否都验完"）。
-    const supplierRecordIds = [...new Set((rows || [])
-      .map((row) => String(row?.supplier_record_id || '').trim())
-      .filter(Boolean))];
+    // 当前模型一个批次只属于一个供应商；`wantedSupplier` 仍用于限制本次验收范围。
     const scopedRows = wantedSupplier
       ? (rows || []).filter((row) => String(row?.supplier_record_id || '').trim() === wantedSupplier)
       : (rows || []);
@@ -225,9 +221,8 @@ const createScanArrivalService = (options = {}) => {
       open_id: String(openId || ''),
       batch_no: wanted,
       batch_record_id: String(batchRecordId || '').trim(),
-      // ⭐ 2026-11-10：本次验收的供应商范围（空 = 旧链路整批验收）
+      // 本次验收的供应商（空 = 旧链路整批验收）
       supplier_record_id: wantedSupplier,
-      supplier_record_ids: supplierRecordIds,
       // ⭐ 2026-11-10：工作台按「批次×供应商」隔离会话（空 = 扫码页旧链路）
       session_key: String(sessionKey || '').trim(),
       request_ids: normalized.map((row) => row.request_record_id),
@@ -396,7 +391,6 @@ const createScanArrivalService = (options = {}) => {
         request_ids: session.request_ids,
         // ⭐ 2026-11-10：按供应商分批验收（空 = 旧链路整批）
         supplier_record_id: session.supplier_record_id || '',
-        supplier_record_ids: session.supplier_record_ids || [],
       },
       actualAmount,
       operatorOpenId: operatorOpenId || session.operator_open_id || openId,
