@@ -290,13 +290,15 @@ test('⭐ writeAcceptance：按**批次 record id** 写「实际数量 / 货单�
 
   // ① 有 record id：直接用（零额外请求）
   const byId = await service.writeAcceptance({
-    batchNo: BATCH_NO, batchRecordId: BATCH_RECORD_ID, actualQuantity: 3, actualAmount: 1680, correlation: {},
+    batchNo: BATCH_NO, batchRecordId: BATCH_RECORD_ID, actualQuantity: 3, actualAmount: 1680,
+    differenceAnalysis: '应到 3 双 / 实到 3 双 / 多到 0 双', correlation: {},
   });
   assert.equal(byId.updated, true);
   assert.equal(byId.matched_by, 'record_id');
   const first = (await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields;
   assert.equal(first['实际数量'], 3);
   assert.equal(first['货单金额'], 1680);
+  assert.equal(first['差异分析'], '应到 3 双 / 实到 3 双 / 多到 0 双');
   // ⛔ 2026-10-09：「验收原话」那一列在生产真表上**已经没有了** ⇒ 一个字都不写。
   assert.equal('验收原话' in first, false, '已经退场的那一列不许再写');
 
