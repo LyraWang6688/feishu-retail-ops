@@ -193,6 +193,7 @@ test('供应往来款：供应商余额 + 最近30天交易', async ({ page }) =
   await page.getByRole('button', { name: '供应', exact: true }).click();
   await page.getByRole('button', { name: '往来款', exact: true }).click();
   await expect(page.locator('[data-page-kind="supplier-balance"]')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '往来款', exact: true })).toHaveCount(0);
   await expect(page.locator('[data-sb-card]')).toHaveCount(2);
   await expect(page.locator('[data-sb-card]').first()).toContainText('七匹狼/吉祥鸟');
   await expect(page.locator('[data-sb-card]').first()).toContainText('10,430');

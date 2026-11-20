@@ -284,8 +284,6 @@
 @media (max-width: 360px) { .ac-grid { grid-template-columns: 1fr; } .ac-field-full { grid-column: auto; } .ac-card { grid-template-columns: 56px minmax(0, 1fr) auto; } .ac-thumb { width: 56px; height: 56px; } }
 
 /* ── 供应 · 往来款（2026-11-20） ───────────────────────────────────────── */
-.sb-head{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
-.sb-head h2{margin:0;font-size:18px}
 .sb-card{border:1px solid var(--border-light);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-card);margin-bottom:10px;overflow:hidden}
 .sb-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 14px 12px}
 .sb-card-name{min-width:0;display:flex;flex-direction:column}

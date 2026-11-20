@@ -2,7 +2,6 @@
 export const SUPPLIER_BALANCE_API = '/api/workbench/purchase/supplier-balances';
 
 export const SUPPLIER_BALANCE_TEXTS = Object.freeze({
-  title: '往来款',
   searchPlaceholder: '搜索供应商',
   loading: '正在读取供应商余额…',
   failed: '往来款读取失败，请稍后重试',
