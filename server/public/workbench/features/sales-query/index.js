@@ -112,10 +112,10 @@ export function createSalesQueryModule() {
         </div>
         <div class="sq-breakdown">
           <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.byCategory)}</h2></div>
-            <table class="sq-table"><thead><tr><th>类别</th><th>已交付（双 / 元）</th><th>未交付（双 / 元）</th></tr></thead><tbody>${breakdownRows(summary.by_category || [])}</tbody></table>
+            <div class="sq-table-scroll"><table class="sq-table"><thead><tr><th>类别</th><th>已交付（双 / 元）</th><th>未交付（双 / 元）</th></tr></thead><tbody>${breakdownRows(summary.by_category || [])}</tbody></table></div>
           </div>
           <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.byType)}</h2></div>
-            <table class="sq-table"><thead><tr><th>品类</th><th>已交付（双 / 元）</th><th>未交付（双 / 元）</th></tr></thead><tbody>${breakdownRows(summary.by_type || [])}</tbody></table>
+            <div class="sq-table-scroll"><table class="sq-table"><thead><tr><th>品类</th><th>已交付（双 / 元）</th><th>未交付（双 / 元）</th></tr></thead><tbody>${breakdownRows(summary.by_type || [])}</tbody></table></div>
           </div>
         </div>
         <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.orders)}</h2></div>
