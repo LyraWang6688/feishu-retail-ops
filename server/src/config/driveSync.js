@@ -45,6 +45,15 @@ const supplyDocumentOperations = Object.freeze({
   upload: '上传供应单据',
 });
 
+const productHistoryOperations = Object.freeze({
+  download: '下载历史货品样例图',
+  list: '列出历史货品目录',
+  delete: '覆盖历史货品同名文件',
+  upload: '上传历史货品样例图',
+  move: '移动到历史货品目录',
+  transfer: '转移历史货品文件所有者',
+});
+
 const DESTINATIONS = Object.freeze({
   sampleImages: Object.freeze({
     folderToken: readString(process.env, 'SAMPLE_IMAGE_DRIVE_FOLDER_TOKEN', 'NIxifKs4ulS5uudlGP2cKtDBnkd'),
@@ -80,6 +89,18 @@ const DESTINATIONS = Object.freeze({
     operations: accessoryImageOperations,
   }),
 
+  productHistory: Object.freeze({
+    folderToken: readString(process.env, 'PRODUCT_HISTORY_DRIVE_FOLDER_TOKEN', 'QmEOfCRkPlYAX8dWftZcq51Engf'),
+    folderUrl: readString(
+      process.env,
+      'PRODUCT_HISTORY_DRIVE_FOLDER_URL',
+      'https://scnzoiwgxik.feishu.cn/drive/folder/QmEOfCRkPlYAX8dWftZcq51Engf',
+    ),
+    parentType: 'explorer',
+    overwrite: readString(process.env, 'PRODUCT_HISTORY_DRIVE_OVERWRITE', 'replace'),
+    operations: productHistoryOperations,
+  }),
+
   supplyDocuments: Object.freeze({
     rootFolderToken: readString(process.env, 'SUPPLY_DOCUMENT_DRIVE_ROOT_FOLDER_TOKEN', 'GeE2fZVzUliEz3dNFaKcDgGynig'),
     our: Object.freeze({
@@ -109,4 +130,5 @@ module.exports = {
   sampleImageOperations,
   accessoryImageOperations,
   supplyDocumentOperations,
+  productHistoryOperations,
 };

@@ -21,6 +21,16 @@ const mockApi = async (page, { orders = [] } = {}) => {
         }],
       }));
     }
+    if (path === '/api/workbench/products/delisted') {
+      return route.fulfill(json({
+        success: true,
+        total: 1,
+        items: [{
+          recordId: 'down1', number: 'DOWN|黑|男', itemNo: 'DOWN', status: '下架',
+          hasSampleImage: false, imageUrl: '',
+        }],
+      }));
+    }
     if (path === '/api/workbench/products/completion') {
       const q = new URL(route.request().url()).searchParams.get('q');
       if (q) {
@@ -147,16 +157,36 @@ test('货品 → 配置审计：券目录同步 + 产品特点配置 + 数据写
   await expect(page.getByRole('button', { name: /同步存量样例图/ })).toHaveCount(0);
 });
 
-test('货品 → 货品资料：四张卡 + 货品完善分组', async ({ page }) => {
+test('货品 → 货品资料：五张卡 + 货品完善分组', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '配置', exact: true }).click();
   await page.getByRole('button', { name: '货品资料', exact: true }).click();
   await expect(page.getByRole('button', { name: /货品上新/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /货品完善/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /货品下架/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /同步样例图/ })).toBeVisible();
+  expect(await page.locator('[data-pp="cards"] .entry-card h3').allTextContents())
+    .toEqual(['货品上新', '货品完善', '货品下架', '同步样例图', '配品配置']);
   await expect(page.locator('[data-page-kind="product-profile"]:visible').getByRole('heading', { name: '配品配置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: /货品完善/ }).click();
   await expect(page.locator('[data-pp-complete-tabs]')).toBeVisible();
+});
+
+test('货品下架：默认列表 + 按货号搜索 + 删除确认', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '配置', exact: true }).click();
+  await page.getByRole('button', { name: '货品资料', exact: true }).click();
+  await page.getByRole('button', { name: /货品下架/ }).click();
+  await expect(page.locator('[data-pp-delisted-list]')).toContainText('DOWN|黑|男');
+  const input = page.getByPlaceholder('按货号搜索下架货品');
+  await input.fill('DOWN');
+  await expect(page.locator('[data-pp-delisted-list]')).toContainText('DOWN|黑|男');
+  await page.locator('[data-pp-delete]').click();
+  await expect(page.locator('[data-pp-delete-modal]')).toBeVisible();
+  await expect(page.locator('[data-pp-delete-modal]')).toContainText('确认删除这个下架货品');
+  await page.locator('[data-pp-delete-cancel]').click();
+  await expect(page.locator('[data-pp-delete-modal]')).toBeHidden();
 });
 
 test('货品完善：搜索按货品全量，不限制待完善；清空恢复默认分组', async ({ page }) => {

@@ -13,7 +13,7 @@ const assert = require('node:assert/strict');
 const { createDriveApi, extraOfAttachment } = require('../src/services/driveApi');
 
 const makeClient = () => {
-  const calls = { upload: [], list: [], del: [], transfer: [], download: [] };
+  const calls = { upload: [], list: [], del: [], transfer: [], download: [], move: [] };
   return {
     calls,
     drive: {
@@ -29,6 +29,10 @@ const makeClient = () => {
         async delete(payload, options) {
           calls.del.push({ payload, options });
           return { code: 0 };
+        },
+        async move(payload, options) {
+          calls.move.push({ payload, options });
+          return { code: 0, data: { task_id: 'task_1' } };
         },
       },
       media: {
@@ -81,6 +85,17 @@ test('AC-OT8 高级权限：下载素材带 extra（从附件 tmp_url 取）；�
 
   await api.downloadMedia('ft_2', 'download');
   assert.equal(client.calls.download[1].params, undefined, '没有 extra 时不许凭空造 params');
+});
+
+test('AC-OT9 云盘移动：file_token + 历史 folder_token 原样传给 drive.file.move', async () => {
+  const client = makeClient();
+  const result = await createDriveApi(client).moveDriveFile('ft_src', 'folder_history', 'move history');
+  assert.deepEqual(client.calls.move[0].payload, {
+    path: { file_token: 'ft_src' },
+    data: { type: 'file', folder_token: 'folder_history' },
+  });
+  assert.equal(result.taskId, 'task_1');
+  await assert.rejects(() => createDriveApi(client).moveDriveFile('', 'folder'), /缺少 file_token/);
 });
 
 test('AC-OT7 ⭐ 列目录必须翻页拉全（单页 200；云盘已 274 个文件，漏页会误判同名不存在）', async () => {

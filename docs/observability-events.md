@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **515** 个事件。按前缀分组：
+共 **519** 个事件。按前缀分组：
 
 ## accessory
 
@@ -297,6 +297,8 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `product.delisted.archive_failed` | 1 | src/services/productDelistService.js |
+| `product.delisted.deleted` | 1 | src/services/productDelistService.js |
 | `product.sample_image.drive.backfill.done` | 1 | src/services/sampleImageBackfillService.js |
 | `product.sample_image.drive.backfill.failed` | 2 | src/services/sampleImageBackfillService.js |
 | `product.sample_image.drive.backfill.retry` | 1 | src/services/sampleImageBackfillService.js |
@@ -659,6 +661,8 @@
 | `workbench.product_features.list_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_features.update_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.completion_failed` | 1 | src/routes/workbench/products.js |
+| `workbench.product_profile.delete_failed` | 1 | src/routes/workbench/products.js |
+| `workbench.product_profile.delisted_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.incomplete_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.product_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.sample_image_failed` | 1 | src/routes/workbench/products.js |

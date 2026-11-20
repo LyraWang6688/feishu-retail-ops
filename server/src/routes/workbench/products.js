@@ -25,6 +25,7 @@ const {
   listProductFeatures,
 } = require('../../services/productFeatureTagService');
 const { createProductConfigWriteService } = require('../../services/productConfigWriteService');
+const { createProductDelistService } = require('../../services/productDelistService');
 const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 const { createWorkbenchAccessoryConfigRoutes } = require('./accessoryConfig');
 
@@ -43,6 +44,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     maxEntries: PRODUCT_PROFILE.sampleImageCacheMax,
   });
   let productConfigWrites = null;
+  let productDelist = null;
   const resolveProductConfigWrites = () => {
     if (!productConfigWrites) {
       productConfigWrites = createProductConfigWriteService({
@@ -51,6 +53,12 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       });
     }
     return productConfigWrites;
+  };
+  const resolveProductDelist = () => {
+    if (!productDelist) {
+      productDelist = options.productDelist || createProductDelistService({ gateway: getGateway() });
+    }
+    return productDelist;
   };
   const breaker = { failures: 0, lastFailureAt: 0, openUntil: 0 };
   const breakerConfig = PRODUCT_PROFILE.sampleImageBreaker;
@@ -85,6 +93,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       itemNo: textValue(fields[field('itemNo')]).trim(),
       color: textValue(fields[field('color')]).trim(),
       category: textValue(fields[field('category')]).trim(),
+      status: textValue(fields[field('status')]).trim(),
       hasSampleImage: gaps.hasSampleImage,
       missingProduct: gaps.productText,
       missingTag: gaps.tagText,
@@ -286,6 +295,49 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     } catch (error) {
       logError('workbench.product_profile.completion_failed', { request_id: req.requestId, error: error.message });
       return res.status(502).json({ success: false, error: 'product_completion_failed' });
+    }
+  });
+
+  /** 货品资料 → 货品下架：只读全部下架货品，按货号模糊筛选。 */
+  router.get('/products/delisted', async (req, res) => {
+    try {
+      const q = String(req.query?.q || '').trim().toLowerCase();
+      const rows = await getConfigRows({ gateway: getGateway(), tableKey: 'product' });
+      const items = (rows || [])
+        .map(itemOf)
+        .filter((item) => item.recordId && item.status === PRODUCT_PROFILE.delistedStatus)
+        .filter((item) => !q || item.itemNo.toLowerCase().includes(q))
+        .sort((a, b) => a.number.localeCompare(b.number, 'zh-CN'))
+        .slice(0, PRODUCT_PROFILE.delistedLimit);
+      return res.json({ success: true, total: items.length, items });
+    } catch (error) {
+      logError('workbench.product_profile.delisted_failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: 'product_delisted_failed' });
+    }
+  });
+
+  /** 货品资料 → 货品下架：硬删货品记录，删除前归档样例图。 */
+  router.delete('/products/:recordId', async (req, res) => {
+    const recordId = String(req.params?.recordId || '').trim();
+    if (!recordId) return res.status(400).json({ success: false, error: 'missing_record_id' });
+    try {
+      const result = await resolveProductDelist().deleteDelistedProduct({
+        recordId,
+        allowNoSample: req.body?.allowNoSample === true,
+        operatorOpenId: req.workbenchUser?.open_id || '',
+        correlation: { request_id: req.requestId },
+      });
+      if (!result.ok) {
+        const status = result.reason === 'product_not_found' ? 404
+          : (result.reason === 'archive_failed' ? 502 : 400);
+        return res.status(status).json({ success: false, error: result.reason, status: result.status });
+      }
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.product_profile.delete_failed', {
+        request_id: req.requestId, record_id: recordId, error: error.message,
+      });
+      return res.status(502).json({ success: false, error: 'product_delete_failed' });
     }
   });
 
