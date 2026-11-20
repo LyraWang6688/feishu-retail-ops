@@ -35,7 +35,16 @@ const resolveProductActions = ({ schema, product, productId, config } = {}) => {
   const productAdjustUrl = productId && template
     ? fillText(template, { recordId: encodeURIComponent(productId) })
     : '';
-  return { product_missing_text: missingText, product_record_url: productRecordUrl, product_adjust_url: productAdjustUrl };
+  return {
+    product_missing_text: missingText,
+    product_record_url: productRecordUrl,
+    product_adjust_url: productAdjustUrl,
+    // 统一标签来源：扫码页直接渲染，采购页随 DTO 下发（前端不再维护第二份文案）。
+    product_action_labels: {
+      adjust: String(actionsConfig.adjustLabel || ''),
+      info: String(actionsConfig.infoLabel || ''),
+    },
+  };
 };
 
 module.exports = { resolveProductActions };

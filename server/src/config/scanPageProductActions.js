@@ -3,7 +3,7 @@
 /**
  * 扫码页「货品卡」上那两个入口（2026-11-17 · 业务负责人）：
  *   · **库存调整** —— 点一下直达 工作台 → 库存 → 手工调整 → 单双调整，并带出这一款；
- *   · **资料不齐：… · 去补全** —— 只在「商品信息缺失 / 标签信息缺失」不是「齐备」时出现。
+ *   · **信息完善** —— 只在「商品信息缺失 / 标签信息缺失」不是「齐备」时出现；按钮只显示固定文案。
  *
  * 两个领域共用同一张货品卡（`views/scanPage/layout.js` 的 `identityHtml`）⇒ 写一处、两页都有。
  * 链接一律**相对路径**（`/workbench/?…`）⇒ 与扫码页同源、共用同一个飞书会话 cookie。
@@ -22,9 +22,8 @@ const PRODUCT_ACTIONS = Object.freeze({
     'SCAN_PAGE_PRODUCT_ADJUST_HREF',
     '/workbench/?module=inventory&page=inventory-adjust&product={recordId}',
   ),
-  gapLabel: readString(process.env, 'SCAN_PAGE_PRODUCT_GAP_LABEL', '资料不齐：{missing}'),
-  gapLinkLabel: readString(process.env, 'SCAN_PAGE_PRODUCT_GAP_LINK_LABEL', '去补全'),
-  gapLinkSeparator: readString(process.env, 'SCAN_PAGE_PRODUCT_GAP_LINK_SEPARATOR', ' · '),
+  // 资料不齐时的固定入口文案（不再拼接缺失明细）。
+  infoLabel: readString(process.env, 'SCAN_PAGE_PRODUCT_INFO_LABEL', '信息完善'),
   // 多个缺失项之间（缺样例图；缺商品信息：…；缺标签：…）—— 与货品资料页 chips 同一套口径。
   gapIssueSeparator: readString(process.env, 'SCAN_PAGE_PRODUCT_GAP_ISSUE_SEPARATOR', '；'),
 });

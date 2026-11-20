@@ -150,6 +150,7 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
       product_missing_text: dto.product_missing_text || '',
       product_record_url: dto.product_record_url || '',
       product_adjust_url: dto.product_adjust_url || '',
+      product_action_labels: dto.product_action_labels || null,
     };
   };
   const groups = [...groupsByKey.values()].map((group) => {

@@ -67,6 +67,7 @@ test('AC-SPA1 资料缺失：view 带缺失文案 + 记录链接 + 库存调整�
   assert.match(view.product_record_url, /record=prod_1/);
   assert.match(view.product_adjust_url, /product=prod_1/);
   assert.match(view.product_adjust_url, /module=inventory/);
+  assert.deepEqual(view.product_action_labels, { adjust: '库存调整', info: '信息完善' }, '两个入口文案来自同一份配置');
 });
 
 test('AC-SPA2 资料齐备：缺失文案为空（渲染层据此不画），库存调整链接仍在', async () => {
