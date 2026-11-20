@@ -63,12 +63,6 @@ const statsHtml = (tab, body, config) => {
   </section>`;
 };
 
-const legendHtml = (tab, config) => {
-  const items = (tab === 'replenish' ? config.legends.replenish : config.legends.newProducts)
-    .map((legend) => `<span><i class="pr-dot pr-dot-${legend.kind}"></i>${escapeHtml(legend.text)}</span>`).join('');
-  return `<div class="pr-legend">${items}</div>`;
-};
-
 const stepperHtml = ({ recordId, size, quantity, config }) => `<div class="pr-pick">
     <div class="pr-stepper">
       <button type="button" data-pr-step="-1" data-record="${escapeHtml(recordId)}" data-size="${escapeHtml(size)}">−</button>
@@ -185,4 +179,4 @@ export const shellHtml = (config) => {
   ${toastHtml()}`;
 };
 
-export { fill, statsHtml, legendHtml, totalTemplateHtml };
+export { fill, statsHtml, totalTemplateHtml };

@@ -6,7 +6,7 @@
  * 默认选中口径（2026-11-17 业务负责人）：**补货所有尺码默认 0，不自动填数量**
  * （预订 / 现货一致，与上新相同）；数量由她手填 / 点 ± 决定。
  */
-import { statsHtml, legendHtml, replenishGroupHtml, emptyHtml, totalTemplateHtml } from './render.js';
+import { statsHtml, replenishGroupHtml, emptyHtml, totalTemplateHtml } from './render.js';
 
 export const createReplenishPanel = (config) => {
   /** 拉数据 + 把「默认选中」并进草稿（只补不覆盖已改过的数量/勾选）。 */
@@ -21,7 +21,7 @@ export const createReplenishPanel = (config) => {
     const list = groups.length
       ? groups.map((group) => replenishGroupHtml(group, draft, store, config)).join('')
       : emptyHtml(config.texts.replenishEmpty);
-    return `${statsHtml('replenish', body, config)}${legendHtml('replenish', config)}${list}`;
+    return `${statsHtml('replenish', body, config)}${list}`;
   };
 
   /** 局部刷新每个分组的「需补 N 双」（不整块重渲染，避免输入框失焦）。 */

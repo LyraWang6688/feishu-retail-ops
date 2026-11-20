@@ -71,17 +71,6 @@ export const PROCUREMENT_UI = Object.freeze({
     visibilityRefreshMs: 0,    // 0 = 切回页面也不自动刷（默认关）
     manual: true,              // 保留手动「刷新」按钮
   }),
-  legends: Object.freeze({
-    replenish: Object.freeze([
-      // 2026-11-17（业务负责人）：「预定不用自动加数量了，和现货还有上新当前的逻辑一样」
-      Object.freeze({ kind: 'prepaid', text: '预订：按需自行选择' }),
-      Object.freeze({ kind: 'spot', text: '现货：按需自行选择' }),
-    ]),
-    newProducts: Object.freeze([
-      Object.freeze({ kind: 'spot', text: '普通码：默认 0，手动选择' }),
-      Object.freeze({ kind: 'prepaid', text: '特殊码：默认 0，自动折叠' }),
-    ]),
-  }),
   card: Object.freeze({
     // 卡片标题只显示「货号 · 颜色」（记录 ID 只内部用，页面不展示）
     titleTemplate: '{itemNo} · {color}',
