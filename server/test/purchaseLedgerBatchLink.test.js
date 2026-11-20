@@ -238,7 +238,6 @@ test('③-补 来源注册表：**只有**采购增加的来源被补了这一�
   const unchanged = {
     SALE_RETURN: 'salesDetail',
     SALE_COMPENSATION: 'salesDetail',
-    SALE_CASH: 'salesDetail',
     STOCK_MANUAL_INCREASE: null,
     STOCK_MANUAL_DECREASE: null,
     STOCK_FREEZE: null,

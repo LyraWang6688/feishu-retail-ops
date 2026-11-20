@@ -233,6 +233,8 @@ class AfterSalesExchangeService {
       state: EX.stock.restockState,
       quantity: EX.stock.quantity,
       sourceRecordId: newDetailRecordId,
+      // STOCK_SALE_DECREASE 的来源身份是「销售明细」；与正常销售出库同一把键。
+      salesDetailRecordId: newDetailRecordId,
       salesEntryRecordId: prepared.salesEntryRecordId,
     }, { correlation: options.correlation });
     await save({ status: 'stock_applied', stock: { restock, new: newStock } });

@@ -36,7 +36,6 @@ const BEHAVIOR_SAMPLE_PROMOTION = 'STOCK_TO_SAMPLE';
 // 两边靠「行为编码」对齐（编码改名必须同步这张注册表，中文名改了不受影响）。
 const MOVEMENT_SALE_RETURN = 'SALE_RETURN';
 const MOVEMENT_SALE_COMPENSATION = 'SALE_COMPENSATION';
-const MOVEMENT_SALE_CASH = 'SALE_CASH';
 // ⭐ 2026-10-29（业务负责人新口径）：售后「退货」的货流动作 = 「**销售增加**」——
 //    她在「行为管理」表新增的那条（编号 STOCK_SALE_INCREASE，方向=增加）。
 const MOVEMENT_SALE_INCREASE = String(process.env.AFTER_SALES_RETURN_BEHAVIOR_CODE || 'STOCK_SALE_INCREASE').trim();
@@ -217,14 +216,6 @@ const STOCK_MOVEMENTS = Object.freeze({
     consumes: ['门盒'],
     operationKey: Object.freeze({ kind: MOVEMENT_SALE_COMPENSATION, ...GIVEN_SOURCE }),
   },
-  // 现货销售：换货时新鞋出库走它，方向=减少。它同时是「交易类型」和「库存行为」。
-  [MOVEMENT_SALE_CASH]: {
-    direction: '减少',
-    ledgerSource: 'salesDetail',
-    consumes: ['门盒'],
-    operationKey: Object.freeze({ kind: MOVEMENT_SALE_CASH, ...GIVEN_SOURCE }),
-  },
-
   // ── 以下 6 条＝人工库存行为的引擎语义声明（2026-10-06 注册，入口未做）──────
   // ledgerSource 一律 null：「库存流水」现在只有「关联销售」「关联采购」两个来源列，
   // 手工调整既没有销售明细也没有采购入库可挂；硬往别的列写一个 id 会写出指错来源的流水。
@@ -339,7 +330,6 @@ module.exports = {
   MOVEMENT_PURCHASE_DECREASE,
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,
-  MOVEMENT_SALE_CASH,
   MOVEMENT_SALE_INCREASE,
   requireMovement,
   requireQuantityMovement

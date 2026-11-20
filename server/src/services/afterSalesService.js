@@ -53,7 +53,7 @@
 // InventoryService 用「库存操作键」在远端兜住了。
 //
 // ⚠️ 库存接线（已完成）：inventoryService 的 STOCK_MOVEMENTS 已声明
-//   SALE_RETURN（增加）/ SALE_COMPENSATION（减少·门盒）/ SALE_CASH（减少·门盒），
+//   SALE_RETURN（增加）/ SALE_COMPENSATION（减少·门盒）/ STOCK_SALE_DECREASE（减少·门盒），
 //   AfterSalesService 默认就用真的 InventoryService（见构造函数），
 //   同时保留端口注入：测试与需要共享实例的调用方可以传自己的库存服务。
 
@@ -1231,7 +1231,7 @@ class AfterSalesService {
           size,
           state,
           quantity: 1,
-          sourceRecordId,
+          sourceRecordId, ...(movement.behaviorCode === 'STOCK_SALE_DECREASE' ? { salesDetailRecordId: sourceRecordId } : {}),
           occurredAt: request.occurredAt,
         });
         results.push({
