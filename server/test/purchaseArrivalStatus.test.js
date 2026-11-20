@@ -107,7 +107,7 @@ test('⑧ 验收成功：发生行为改入库 + 写点击验收时间；不再�
   assert.equal(result.updated, true);
   const fields = (await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields;
   assert.deepEqual(fields['发生行为'], ['beh_inbound']);
-  assert.equal(fields['到货日'], '2026-11-20T07:00:00.000Z');
+  assert.equal(fields['到货日'], Date.parse('2026-11-20T07:00:00.000Z'), '飞书日期字段收毫秒时间戳');
   assert.equal('到货状态' in fields, false);
 });
 
@@ -117,6 +117,16 @@ test('⑧ 找不到批次：只 warn 不抛', async () => {
   const result = await service.markArrived('CGD-20261007-9999', { behaviorRecordId: 'beh_inbound', arrivalDate: 'x' });
   assert.equal(result.updated, false);
   assert.equal(result.reason, 'no_batch_record');
+});
+
+test('⑧ 到货日不是合法时间：不写半截，返回 invalid_arrival_date', async () => {
+  const records = { purchaseOrderBatch: [{ record_id: BATCH_RECORD_ID, fields: { 报货批次号: BATCH_NO, 发生行为: ['beh_report'] } }] };
+  const gateway = makeGateway(records);
+  const service = new PurchaseOrderBatchService({ gateway });
+  const result = await service.markArrived(BATCH_NO, { behaviorRecordId: 'beh_inbound', arrivalDate: 'not-a-date' });
+  assert.equal(result.updated, false);
+  assert.equal(result.reason, 'invalid_arrival_date');
+  assert.deepEqual((await gateway.get('purchaseOrderBatch', BATCH_RECORD_ID)).fields['发生行为'], ['beh_report']);
 });
 
 test('writeAcceptance：实际数量 / 货单金额 / 差异分析照写，不写到货状态', async () => {
