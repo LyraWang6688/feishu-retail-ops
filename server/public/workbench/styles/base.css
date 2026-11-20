@@ -281,6 +281,11 @@ th { color: var(--text-secondary); background: var(--surface-sunken); font-weigh
   font-weight: var(--weight-bold);
   text-align: center;
 }
+.workbench-toast.toast-danger {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
 
 /* 横向滚动提示：局部滚动容器右侧渐变，滚到底隐藏。 */
 .scroll-hint-wrap { position: relative; min-width: 0; max-width: 100%; }

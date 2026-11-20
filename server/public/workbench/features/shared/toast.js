@@ -37,6 +37,10 @@ export const showToast = (text, options = {}) => {
     document.body.appendChild(toast);
   }
   toast.textContent = content;
+  const danger = options.tone === 'danger';
+  toast.classList.toggle('toast-danger', danger);
+  toast.setAttribute('role', danger ? 'alert' : 'status');
+  toast.setAttribute('aria-live', danger ? 'assertive' : 'polite');
 
   const state = { timer: null, onViewChange: null, onReadStart: null, onReadIdle: null };
   current = state;
@@ -55,3 +59,5 @@ export const showToast = (text, options = {}) => {
     state.timer = setTimeout(remove, Number.isFinite(duration) && duration > 0 ? duration : 3000);
   }
 };
+
+export const showErrorToast = (text, options = {}) => showToast(text, { ...options, tone: 'danger' });
