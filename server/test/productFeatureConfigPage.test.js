@@ -38,7 +38,7 @@ test('AC-PF4 新增/修改/删除成功都有统一轻提示（#1205）', () => 
   assert.match(texts, /addedToast: '已添加'/);
   assert.match(texts, /updatedToast: '已修改'/);
   assert.match(texts, /removedToast: '已删除'/);
-  assert.ok(page.includes("import { showToast } from '../shared/toast.js'"), '复用统一 toast（不新写一套）');
+  assert.match(page, /import \{[^}]*showToast[^}]*\} from '\.\.\/shared\/toast\.js'/, '复用统一 toast（不新写一套）');
   assert.ok(page.includes('showToast(T.addedToast)'), '新增成功 → toast');
   assert.ok(page.includes('showToast(T.updatedToast)'), '修改成功 → toast');
   assert.ok(page.includes('showToast(T.removedToast)'), '删除成功 → toast');

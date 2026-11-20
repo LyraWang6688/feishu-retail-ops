@@ -203,7 +203,6 @@
 .pf-empty { color: var(--muted); font-size: 13px; margin: 4px 0; }
 .pf-add { display: flex; gap: 8px; margin-bottom: 10px; }
 .pf-add input { flex: 1; min-width: 0; }
-.pf-error { color: var(--danger); font-size: 12px; margin: 6px 0 0; }
 /* 货品完善：样例图 / 商品信息缺失 / 标签信息缺失 三个维度 */
 .pp-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
 .pp-tabs[hidden] { display: none; }
@@ -253,7 +252,6 @@
 .ac-upload { width: 84px; height: 84px; flex: 0 0 84px; display: grid; place-items: center; overflow: hidden; border: 1px dashed var(--control-border); border-radius: var(--radius-md); background: var(--surface-soft); color: var(--text-secondary); font-size: var(--font-size-xs); text-align: center; cursor: pointer; }
 .ac-upload img { width: 100%; height: 100%; object-fit: cover; }
 .ac-upload-row small { color: var(--text-muted); font-size: var(--font-size-xs); line-height: var(--line-height); }
-.ac-error { margin: 0; color: var(--danger); font-size: var(--font-size-sm); }
 .ac-actions { display: flex; gap: var(--space-2); align-items: center; }
 .ac-actions .btn { flex: 1 1 auto; }
 .ac-actions .btn:not(.primary) { flex: 0 0 auto; }

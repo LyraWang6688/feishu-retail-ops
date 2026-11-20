@@ -1,7 +1,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { PRODUCT_FEATURES_API, PRODUCT_FEATURES_TEXTS as T } from '../../config/productFeatures.js';
-import { showToast } from '../shared/toast.js';
+import { showToast, showErrorToast } from '../shared/toast.js';
 import { waitForAsyncJob } from '../shared/asyncJob.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
@@ -18,7 +18,6 @@ const sectionHtml = (dimension, editing) => `
   <section class="pf-section" data-feature-key="${escapeHtml(dimension.key)}">
     <div class="pf-add"><input data-feature-input="${escapeHtml(dimension.key)}" placeholder="${escapeHtml(T.addPlaceholder)}" autocomplete="off"><button class="btn small primary" type="button" data-feature-add="${escapeHtml(dimension.key)}">${escapeHtml(T.add)}</button></div>
     <div class="pf-list">${(dimension.items || []).map((item) => rowHtml(dimension, item, editing)).join('') || `<p class="pf-empty">${escapeHtml(T.empty)}</p>`}</div>
-    <p class="pf-error" data-feature-error="${escapeHtml(dimension.key)}" hidden></p>
   </section>`;
 
 const panelHtml = (dimensions, editing, deleting, activeKey) => {
@@ -64,10 +63,7 @@ export function openProductFeatureConfig(host) {
       panel.innerHTML = `<div class="pf-head"><h2>${escapeHtml(T.title)}</h2></div><p class="pf-empty">${escapeHtml(T.loadFailed)}</p>`;
     }
   };
-  const showError = (key, text) => {
-    const error = panel.querySelector(`[data-feature-error="${key}"]`);
-    if (error) { error.textContent = text; error.hidden = false; }
-  };
+  const showError = (_key, text) => showErrorToast(text);
   const dimensionOf = (key) => dimensions.find((item) => item.key === key);
   const duplicates = (key, value, exceptRecordId = '') => (dimensionOf(key)?.items || [])
     .some((item) => item.recordId !== exceptRecordId && item.tag.trim().toLowerCase() === value.trim().toLowerCase());

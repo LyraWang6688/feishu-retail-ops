@@ -1,6 +1,6 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
-import { showToast } from '../shared/toast.js';
+import { showToast, showErrorToast } from '../shared/toast.js';
 import { waitForAsyncJob } from '../shared/asyncJob.js';
 import { ACCESSORY_CONFIG_API as API, ACCESSORY_CONFIG_TEXTS as T } from '../../config/accessoryConfig.js';
 
@@ -23,7 +23,6 @@ const formHtml = () => `
       ${fieldHtml(T.stockQuantity, '<input class="input" data-ac-stock type="number" min="0" step="1" inputmode="numeric" placeholder="选填">')}
       <div class="ac-field ac-field-full"><span>${escapeHtml(T.sampleImage)}</span><div class="ac-upload-row"><label class="ac-upload"><input data-ac-image type="file" accept="image/*" hidden><img data-ac-preview hidden alt="样例图预览"><span data-ac-upload-text>${escapeHtml(T.upload)}</span></label><small>${escapeHtml(T.imageHint)}</small></div></div>
     </div>
-    <p class="ac-error" data-ac-error hidden></p>
     <div class="ac-actions"><button class="btn primary" type="submit" data-ac-submit>${escapeHtml(T.submit)}</button><button class="btn" type="button" data-ac-cancel hidden>${escapeHtml(T.cancelEdit)}</button></div>
   </form>`;
 
@@ -42,7 +41,6 @@ export function createAccessoryConfigModule() {
       const imageInput = form.querySelector('[data-ac-image]');
       const preview = form.querySelector('[data-ac-preview]');
       const uploadText = form.querySelector('[data-ac-upload-text]');
-      const errorBox = form.querySelector('[data-ac-error]');
       const submitButton = form.querySelector('[data-ac-submit]');
       const cancelButton = form.querySelector('[data-ac-cancel]');
       const title = form.querySelector('[data-ac-form-title]');
@@ -50,10 +48,7 @@ export function createAccessoryConfigModule() {
       let editingId = '';
       let imageToken = '';
 
-      const showError = (message) => {
-        errorBox.textContent = message;
-        errorBox.hidden = !message;
-      };
+      const showError = (message) => showErrorToast(message);
       const setBusy = (busy) => {
         submitButton.disabled = busy;
         submitButton.textContent = busy ? T.submitKey : (editingId ? T.save : T.submit);
