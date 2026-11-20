@@ -19,7 +19,7 @@ export const ACCESSORY_CONFIG_TEXTS = Object.freeze({
   cost: '成本',
   stockQuantity: '库存数量',
   sampleImage: '样例图',
-  imageHint: '支持 1 张，建议正方形',
+  imageHint: '支持 1 张',
   upload: '上传图片',
   uploading: '正在上传…',
   selectCategory: '请选择种类',
