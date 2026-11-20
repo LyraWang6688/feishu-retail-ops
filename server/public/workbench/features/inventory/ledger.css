@@ -1,5 +1,6 @@
-/* 库存流水：沿用工作台的 tokens / 卡片密度；五列在手机上也不横向滚动。 */
+/* 库存流水：沿用工作台的 tokens / 卡片密度；五列保持一行，表格内部横向滚动。 */
 .ledger-page { gap: var(--space-2); min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); }
+.ledger-scroll-wrap { width: 100%; min-width: 0; max-width: 100%; }
 .ledger-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 6px; margin-bottom: var(--space-3); width: 100%; min-width: 0; max-width: 100%; }
 .ledger-filter { display: flex; flex-direction: column; gap: 5px; min-width: 0; max-width: 100%; overflow: hidden; color: var(--text-secondary); font-size: var(--font-size-xs); }
 .ledger-filter input, .ledger-btn { box-sizing: border-box; min-width: 0; max-width: 100%; }
@@ -29,7 +30,7 @@
 .ledger-row--head .ledger-cell { text-align: center; white-space: nowrap; }
 .ledger-cell { min-width: 0; overflow-wrap: anywhere; }
 .ledger-cell.time, .ledger-cell[data-ledger-field="behavior"] { color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; overflow-wrap: normal; }
-.ledger-cell[data-ledger-field="number"] { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.ledger-cell[data-ledger-field="number"] { min-width: min-content; white-space: nowrap; overflow-wrap: normal; }
 .ledger-cell[data-ledger-field="quantity_change"] { text-align: right; font-variant-numeric: tabular-nums; }
 .ledger-row--head .ledger-cell:last-child { text-align: right; }
 .ledger-empty { margin: 0; padding: 12px; color: var(--text-muted); font-size: var(--font-size-sm); }

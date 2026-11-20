@@ -1,6 +1,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
+import { bindScrollHints } from '../shared/scrollHint.js';
 import { SALES_QUERY_PAGE as PAGE } from '../../config/salesQuery.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
@@ -63,14 +64,14 @@ function ordersHtml(orders) {
       <span class="sq-detail-amount">${escapeHtml(amountText(detail.actual_amount))}</span>
       <span class="sq-status ${statusClass(detail.fulfillment_status)}">${escapeHtml(detail.fulfillment_status || '')}</span>
     </div>`).join('');
-    return `<article class="sq-order">
+    return `<div class="sq-order-scroll scroll-hint-wrap" data-scroll-wrap><article class="sq-order" data-scroll-area>
       <div class="sq-order-head">
         <div class="sq-order-title"><b>${escapeHtml(order.order_no)}</b><span class="sq-order-time">${escapeHtml(timeOnlyText(order.recorded_at))}</span></div>
         <div class="sq-order-total">${order.total_amount == null ? '—' : escapeHtml(amountText(order.total_amount))}</div>
         <div class="sq-order-pays">${pays}</div>
       </div>
       ${details}
-    </article>`;
+    </article></div>`;
   }).join('');
 }
 
@@ -120,6 +121,7 @@ export function createSalesQueryModule() {
         </div>
         <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.orders)}</h2></div>
         <div class="sq-orders">${ordersHtml(data.orders || [])}</div>`;
+      bindScrollHints(body);
     } catch (error) {
       body.innerHTML = `<p class="sq-empty">${escapeHtml(PAGE.texts.failed)}</p>`;
       showPageError(String(error?.message || ''));

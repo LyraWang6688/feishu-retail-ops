@@ -1,6 +1,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
+import { bindScrollHints } from '../shared/scrollHint.js';
 import { INVENTORY_LEDGER_PAGE as PAGE } from '../../config/inventoryLedger.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
@@ -26,10 +27,10 @@ const rowHtml = (row) => `<div class="ledger-row" role="row">
   }).join('')}
 </div>`;
 
-const tableHtml = (rows) => `<div class="ledger-table" role="table" aria-label="${escapeHtml(PAGE.label)}">
+const tableHtml = (rows) => `<div class="ledger-scroll-wrap scroll-hint-wrap" data-scroll-wrap><div class="ledger-table" role="table" aria-label="${escapeHtml(PAGE.label)}" data-scroll-area>
   <div class="ledger-row ledger-row--head" role="row">${PAGE.columns.map((column) => `<span class="ledger-cell ${column.cls || ''}" role="columnheader">${escapeHtml(column.label)}</span>`).join('')}</div>
   ${rows.map(rowHtml).join('')}
-</div>`;
+</div></div>`;
 
 export function createInventoryLedgerModule() {
   const state = { host: null };
@@ -62,6 +63,7 @@ export function createInventoryLedgerModule() {
           : `${range} · ${fill(PAGE.texts.total, { total })}`;
       }
       body.innerHTML = rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
+      if (rows.length) bindScrollHints(body);
     } catch (error) {
       body.innerHTML = `<p class="ledger-empty">${escapeHtml(PAGE.texts.failed)}</p>`;
       showPageError(String(error?.message || ''));
