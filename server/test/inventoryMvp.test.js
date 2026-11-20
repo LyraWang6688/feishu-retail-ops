@@ -270,7 +270,6 @@ test('stock behavior lookup survives renaming the display name', async () => {
     behavior('behavior_return', 'SALE_RETURN', '销售退货（已改名）', '增加'),
     behavior('behavior_sale_increase', 'STOCK_SALE_INCREASE', '销售增加', '增加'),
     behavior('behavior_compensation', 'SALE_COMPENSATION', '销售赔货（已改名）', '减少'),
-    behavior('behavior_cash', 'SALE_CASH', '现货销售（已改名）', '减少'),
     // 采购退货（采购减少）同样是注册表里的一条：validateStockBehaviors 会遍历整张注册表。
     behavior('behavior_purchase_decrease', 'STOCK_PURCHASE_DECREASE', '采购减少（已改名）', '减少'),
     // 人工库存行为 6 条（2026-10-06 注册）：同样由 validateStockBehaviors 遍历。
@@ -317,10 +316,10 @@ test('状态类（方向=不影响）行为不许走 applyChange 数量通路', 
 });
 
 // 光有声明不够：这三条行为编码必须真的能被既有库存引擎执行（真 InventoryService，不是注入端口）。
-test('售后动作在真 InventoryService 里生效：退货加一行、现货出库从门盒减一行', async () => {
+test('售后动作在真 InventoryService 里生效：退货加一行、销售减少从门盒减一行', async () => {
   const gateway = gatewayFor([unit('door_1', '门盒')], [
     behavior('behavior_return', 'SALE_RETURN', '销售退货', '增加'),
-    behavior('behavior_cash', 'SALE_CASH', '现货销售', '减少'),
+    behavior('behavior_sale_decrease', 'STOCK_SALE_DECREASE', '销售减少', '减少'),
   ]);
   const inventory = new InventoryService({ gateway, store: store() });
 
@@ -340,8 +339,8 @@ test('售后动作在真 InventoryService 里生效：退货加一行、现货�
   assert.deepEqual(added[0].fields['编号'], [{ record_ids: ['product_1'] }]);
 
   const outgoing = await inventory.applyChange({
-    kind: 'SALE_CASH', productRecordId: 'product_1', size: 38, state: '门盒',
-    quantity: 1, sourceRecordId: 'detail_new_1',
+    kind: 'STOCK_SALE_DECREASE', productRecordId: 'product_1', size: 38, state: '门盒',
+    quantity: 1, sourceRecordId: 'detail_new_1', salesDetailRecordId: 'detail_new_1', salesEntryRecordId: 'entry_new_1',
   });
   assert.equal(outgoing.direction, '减少');
   assert.deepEqual(outgoing.liveRecordIds, ['door_1']);

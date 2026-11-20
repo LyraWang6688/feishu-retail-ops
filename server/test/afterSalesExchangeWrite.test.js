@@ -72,9 +72,11 @@ test('AC-EX1 换尺码：货/库存/主表都对，钱完全不动', async () =>
   assert.equal(h.inventoryCalls[0].input.kind, 'STOCK_SALE_INCREASE');
   assert.equal(h.inventoryCalls[0].input.productRecordId, 'product_old');
   assert.equal(h.inventoryCalls[0].input.salesEntryRecordId, 'entry_1', '库存挂原主表');
-  assert.equal(h.inventoryCalls[1].input.kind, 'SALE_CASH');
+  assert.equal(h.inventoryCalls[1].input.kind, 'STOCK_SALE_DECREASE', '新鞋出库必须用库存环节的「销售减少」');
   assert.equal(h.inventoryCalls[1].input.productRecordId, 'product_old', '换尺码新货品=原货品');
   assert.equal(h.inventoryCalls[1].input.size, 41);
+  assert.equal(h.inventoryCalls[1].input.salesEntryRecordId, 'entry_1', '新鞋流水必须挂原销售主表');
+  assert.equal(h.inventoryCalls[1].input.salesDetailRecordId, h.inventoryCalls[1].input.sourceRecordId, 'STOCK_SALE_DECREASE 的来源身份必须是新销售明细');
 
   assert.deepEqual(h.state.entry.fields['售后类型'], ['换货']);
   assert.equal(h.state.entry.fields['售后次数'], 2);

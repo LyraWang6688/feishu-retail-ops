@@ -20,13 +20,13 @@ const AFTER_SALES_ACTIONS = Object.freeze({
 // 「行为管理」表里的「行为编码」。编码是契约：表里改中文名不影响代码，
 // 但改编码必须同步这里（和 salesMovements / inventoryService 的做法一致）。
 //
-// ⚠️ 已核对过「行为管理」里这四个行为的**库存方向**：
-//   SALE_RETURN 增加 · SALE_EXCHANGE 不影响 · SALE_CASH 减少
-// 现货销售（SALE_CASH）同时是「交易类型」和「库存行为」：换货时新鞋出库走它，方向=减少。
+// ⚠️ 已核对过「行为管理」里这些行为的**库存方向**：
+//   SALE_RETURN 增加 · SALE_EXCHANGE 不影响 · STOCK_SALE_DECREASE 减少
+// 影响库存时必须从「行为管理」的**库存环节**取行为；SALE_CASH（现货）只是销售交易类型。
 const AFTER_SALES_BEHAVIORS = Object.freeze({
   SALE_RETURN: 'SALE_RETURN',
   SALE_EXCHANGE: 'SALE_EXCHANGE',
-  SALE_CASH: 'SALE_CASH',
+  STOCK_SALE_DECREASE: 'STOCK_SALE_DECREASE',
 });
 
 // 原「销售明细」的「履约状态」目标值。**原主表不动**（业务负责人明确要求）。
@@ -180,9 +180,9 @@ const isSettledAfterSalesPaymentStatus = (status) => AFTER_SALES_SETTLED_PAYMENT
 //
 // ⚠️ 这三个行为编码必须先在 inventoryService 的 STOCK_MOVEMENTS 里声明，applyChange 才会认；
 //    缺失时它抛「未在库存动作注册表中声明动作」。三条声明已加（2026-10-05 接线）：
-//      SALE_RETURN:       { direction: '增加', ledgerSource: 'salesDetail', consumes: null,     triggerSampleReplacement: false }
-//      SALE_COMPENSATION: { direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false }
-//      SALE_CASH:         { direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false }
+//      SALE_RETURN:          { direction: '增加', ledgerSource: 'salesDetail', consumes: null,     triggerSampleReplacement: false }
+//      SALE_COMPENSATION:    { direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false }
+//      STOCK_SALE_DECREASE:  { direction: '减少', ledgerSource: 'salesDetail', consumes: ['门盒'], triggerSampleReplacement: false }
 //    （新增 kind 后 validateStockBehaviors() 要求假 Base 里也有这三条行为，
 //      所以同步补了 inventoryMvp / validateV1Schema 两处测试 fixture —— 不补会红 2 条。）
 const AFTER_SALES_ACTION_SPECS = Object.freeze({
@@ -211,7 +211,7 @@ const AFTER_SALES_ACTION_SPECS = Object.freeze({
     movements: Object.freeze([
       // 旧鞋回来（+），新鞋出去（−）：两行流水方向相反，数量都是正数。
       Object.freeze({ source: 'returned', behaviorCode: AFTER_SALES_BEHAVIORS.SALE_RETURN, state: 'restockState' }),
-      Object.freeze({ source: 'new', behaviorCode: AFTER_SALES_BEHAVIORS.SALE_CASH, state: '门盒' }),
+      Object.freeze({ source: 'new', behaviorCode: AFTER_SALES_BEHAVIORS.STOCK_SALE_DECREASE, state: '门盒' }),
     ]),
   }),
 

@@ -32,7 +32,6 @@ const {
   MOVEMENT_PURCHASE_DECREASE,
   MOVEMENT_SALE_RETURN,
   MOVEMENT_SALE_COMPENSATION,
-  MOVEMENT_SALE_CASH,
   MOVEMENT_SALE_INCREASE,
   BEHAVIOR_SAMPLE_PROMOTION,
   ADJUSTMENT_BEHAVIORS,
@@ -132,12 +131,6 @@ const GOLDEN_CASES = [
     label: '售后退货 / 赔货 / 换货（SALE_COMPENSATION）',
     code: MOVEMENT_SALE_COMPENSATION,
     input: { sourceRecordId: 'detail_comp_1', productRecordId: 'product_1', size: 39 },
-    legacySource: (input) => String(input.sourceRecordId).trim(),
-  },
-  {
-    label: '售后退货 / 赔货 / 换货（SALE_CASH）',
-    code: MOVEMENT_SALE_CASH,
-    input: { sourceRecordId: 'detail_cash_1', productRecordId: 'product_1', size: 40 },
     legacySource: (input) => String(input.sourceRecordId).trim(),
   },
   {

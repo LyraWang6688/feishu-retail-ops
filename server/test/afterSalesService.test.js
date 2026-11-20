@@ -48,7 +48,7 @@ const seed = () => ({
     behaviorRow('behavior_return', 'SALE_RETURN', '销售退货', '增加'),
     behaviorRow('behavior_exchange', 'SALE_EXCHANGE', '销售换货', '不影响'),
     behaviorRow('behavior_compensation', 'SALE_COMPENSATION', '销售赔货', '减少'),
-    behaviorRow('behavior_cash', 'SALE_CASH', '现货销售', '减少'),
+    behaviorRow('behavior_sale_decrease', 'STOCK_SALE_DECREASE', '销售减少', '减少'),
   ],
   paymentMethod: [
     { record_id: 'method_wechat', fields: { 交易方式: '微信' } },
@@ -754,9 +754,9 @@ test('换货：旧鞋回库 + 新鞋出门盒，两条流水方向相反且数�
   assert.deepEqual(byBehavior.behavior_return['编号'], ['product_A']);
   assert.equal(byBehavior.behavior_return['变动数量'], 1);
   assert.deepEqual(byBehavior.behavior_return['关联销售'], ['detail_old_1']);
-  assert.deepEqual(byBehavior.behavior_cash['编号'], ['product_B']);
-  assert.equal(byBehavior.behavior_cash['变动数量'], 1);
-  assert.deepEqual(byBehavior.behavior_cash['关联销售'], [details[0].record_id]);
+  assert.deepEqual(byBehavior.behavior_sale_decrease['编号'], ['product_B']);
+  assert.equal(byBehavior.behavior_sale_decrease['变动数量'], 1);
+  assert.deepEqual(byBehavior.behavior_sale_decrease['关联销售'], [details[0].record_id]);
 
   // 实时库存：旧鞋加一行（样品）+ 新鞋从门盒减一行
   assert.equal(rowsOf(gateway, 'liveInventory').length, 2); // 2 + 1 - 1

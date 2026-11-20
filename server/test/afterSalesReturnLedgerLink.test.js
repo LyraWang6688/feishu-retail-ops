@@ -89,3 +89,33 @@ test('AC-RLL2 真 InventoryService：流水「关联销售」写销售主表 id�
   assert.equal(operations[0].sales_entry_record_id, 'entry_1', '本地任务也记下主表 id（排查用）');
   assert.equal(result.movementQuantity, 1);
 });
+
+test('AC-RLL3 换货新鞋：STOCK_SALE_DECREASE 的流水关联销售写销售主表，不写明细', async () => {
+  const live = [{
+    record_id: 'live_1',
+    fields: {
+      编号: [{ record_ids: ['product_1'] }],
+      尺码: [{ record_ids: ['size_40'] }],
+      所属状态: '门盒',
+    },
+  }];
+  const gateway = gatewayFor(live, [behavior('behavior_sale_decrease', 'STOCK_SALE_DECREASE', '销售减少', '减少')]);
+  const store = new JsonTaskStore({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'after-sales-exchange-ledger-')), idField: 'operation_id' });
+  const inventory = new InventoryService({ gateway, store });
+  await inventory.applyChange({
+    kind: 'STOCK_SALE_DECREASE',
+    productRecordId: 'product_1',
+    size: 40,
+    state: '门盒',
+    quantity: 1,
+    sourceRecordId: 'detail_new_1',
+    salesDetailRecordId: 'detail_new_1',
+    salesEntryRecordId: 'entry_1',
+  });
+  const ledger = gateway.records.get('inventoryLedger')[0];
+  assert.deepEqual(ledger.fields.关联销售, ['entry_1'], '新鞋流水必须挂销售主表');
+  assert.deepEqual(ledger.fields.库存行为, ['behavior_sale_decrease']);
+  const operations = await store.list();
+  assert.equal(operations[0].source_record_id, 'detail_new_1', '本地幂等键仍是新明细');
+  assert.equal(operations[0].sales_entry_record_id, 'entry_1');
+});
