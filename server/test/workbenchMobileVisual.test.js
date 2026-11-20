@@ -110,6 +110,7 @@ test('AC3 按钮 / 输入框 ≥44px · 主按钮占满一行 · 卡片整块可
     '次要操作收进 <details>：summary 也必须是 ≥44px 命中区');
   assert.match(ALL_CSS, /details/i, '次要操作要用 <details> 折叠（一屏一件事）');
   assert.match(base, /\.btn-primary\s*\{[^}]*width:\s*100%/, '主按钮占满一行');
+  assert.match(base, /\.btn\s*\{[^}]*text-decoration:\s*none/, '链接按钮不显示默认下划线');
   assert.match(domains, /\.card-button/, '「跳到另一个子页」的卡片 = 整块可点的按钮');
   assert.match(base, /\.entry-card\s*\{[^}]*display:\s*flex/s, '入口卡片整块可点（<a> 铺满卡片）');
   // 所有入口卡共用同一套 markup / 字号：旧的 entry-card-icon / body strong 不再使用
