@@ -50,5 +50,23 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
     }));
     expect(widths.doc).toBeLessThanOrEqual(widths.viewport);
     expect(widths.body).toBeLessThanOrEqual(widths.viewport);
+
+    const initial = await page.evaluate(() => {
+      const wrap = document.querySelector('[data-scroll-wrap]');
+      const area = document.querySelector('[data-scroll-area]');
+      return { wrapClass: wrap?.className || '', max: area ? area.scrollWidth - area.clientWidth : 0 };
+    });
+    expect(initial.max).toBeGreaterThan(0);
+    expect(initial.wrapClass).toContain('has-overflow');
+
+    const after = await page.evaluate(() => new Promise((resolve) => {
+      const wrap = document.querySelector('[data-scroll-wrap]');
+      const area = document.querySelector('[data-scroll-area]');
+      area.scrollLeft = area.scrollWidth;
+      setTimeout(() => resolve({ wrapClass: wrap?.className || '', scrollLeft: area.scrollLeft }), 100);
+    }));
+    expect(after.scrollLeft).toBeGreaterThan(0);
+    expect(after.wrapClass).toContain('at-end');
   }
+
 });

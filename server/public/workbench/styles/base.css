@@ -281,3 +281,22 @@ th { color: var(--text-secondary); background: var(--surface-sunken); font-weigh
   font-weight: var(--weight-bold);
   text-align: center;
 }
+
+/* 横向滚动提示：局部滚动容器右侧渐变，滚到底隐藏。 */
+.scroll-hint-wrap { position: relative; min-width: 0; max-width: 100%; }
+.scroll-hint-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 28px;
+  pointer-events: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: linear-gradient(90deg, transparent, var(--surface) 88%);
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.scroll-hint-wrap.has-overflow::after { opacity: 1; }
+.scroll-hint-wrap.at-end::after { opacity: 0; }
+.sq-order, .ledger-table, .sq-table-scroll { scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
