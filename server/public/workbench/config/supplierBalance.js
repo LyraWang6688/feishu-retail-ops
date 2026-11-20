@@ -1,4 +1,4 @@
-/** 「供应 → 往来款」页面文案 / API / 来源标签。 */
+/** 「供应 → 往来款」页面文案 / API。 */
 export const SUPPLIER_BALANCE_API = '/api/workbench/purchase/supplier-balances';
 
 export const SUPPLIER_BALANCE_TEXTS = Object.freeze({

@@ -79,21 +79,18 @@ test('供应商显示：长期合作固定显示；未勾选仅最新余额非 0
   assert.equal(result.suppliers.some((item) => item.name === '贵帝'), false, '未勾选且余额 0 ⇒ 不显示');
   const star = result.suppliers.find((item) => item.name === '三星');
   assert.equal(star.balance, 0);
-  assert.equal(star.balanceSource, 'initialization');
 });
 
 test('余额来源：有交易取最新交易日最新余额；没有交易取初始化', async () => {
   const result = await serviceOf({ suppliers: baseSuppliers, inits: baseInits, txs: baseTxs }).list();
   const qpl = result.suppliers.find((item) => item.name === '七匹狼/吉祥鸟');
   assert.equal(qpl.balance, 10430, '取 12:56 付款那条，不是 00:00 报货的 30430');
-  assert.equal(qpl.balanceSource, 'transactions');
   assert.equal(qpl.transactions[0].type, '付款');
   assert.equal(qpl.transactions[1].type, '报货');
   const xt = result.suppliers.find((item) => item.name === '信踏');
   assert.equal(xt.balance, 12372);
   assert.equal(xt.transactions[0].amount, 790, '报货取货单金额，即使交易额为空');
   const smt = result.suppliers.find((item) => item.name === '舒美特');
-  assert.equal(smt.balanceSource, 'initialization');
   assert.equal(smt.balance, 1230);
 });
 

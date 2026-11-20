@@ -27,14 +27,12 @@ const mockApi = async (page, { orders = [] } = {}) => {
         windowDays: 30,
         suppliers: [{
           recordId: 'sup1', name: '七匹狼/吉祥鸟', longTerm: true, balance: 10430,
-          balanceSource: 'transactions', latestTradeDate: '2026-11-20T12:56:47+08:00',
           transactions: [
             { recordId: 'tx1', type: '付款', tradeDate: '2026-11-20T12:56:47+08:00', amount: 20000, balance: 10430 },
             { recordId: 'tx2', type: '报货', tradeDate: '2026-11-20T00:00:00+08:00', amount: 2732, balance: 30430 },
           ],
         }, {
-          recordId: 'sup2', name: '恒安利', longTerm: false, balance: -60,
-          balanceSource: 'initialization', latestTradeDate: '', transactions: [],
+          recordId: 'sup2', name: '恒安利', longTerm: false, balance: -60, transactions: [],
         }],
       }));
     }

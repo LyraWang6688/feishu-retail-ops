@@ -45,7 +45,7 @@ const transactionHtml = (item) => `
   </div>`;
 
 const cardHtml = (supplier) => `
-  <article class="sb-card" data-sb-card data-name="${esc(supplier.name)}">
+  <article class="sb-card" data-sb-card data-sb-id="${esc(supplier.recordId)}" data-name="${esc(supplier.name)}">
     <div class="sb-card-head">
       <div class="sb-card-name">
         <h3>${esc(supplier.name)}</h3>

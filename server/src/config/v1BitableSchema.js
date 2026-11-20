@@ -216,7 +216,6 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         supplierName: '供应商名',
         initialBalance: '期初余额',
-        baselineDate: '基准日',
       },
     },
     salesEntry: {
