@@ -38,7 +38,7 @@
 采购页面有三个独立的飞书表单入口：货品上新、信息填写、到货验收。表单仍在飞书录入；页面只负责打开入口和查询进度。
 ⚠️ 2026-10-05：「采购到货 → 拍照识别」链路已整体退场（业务负责人删掉了那张表的「类型」「识别状态」「识别失败原因」三个字段，改为纯对话驱动）。到货验收表单与到货查询仍在，但**不再有任何识别状态/失败原因**。历史契约里「到货验收：上传到货鞋盒图片并触发识别」的说明已作废。
 
-`GET /api/workbench/purchase/requests` 返回 `{success, rows, total}`，支持 `batchNo`、`reportBehavior` 精确筛选。每行包含 `record_id`、`batch_no`、`product_number`、`product_record_id`、`size`、`quantity`、`behavior_code`、`behavior_name`、`reported_at`、`supplier_record_id`。
+`GET /api/workbench/purchase/requests` 返回 `{success, rows, total}`，支持 `batchNo`、`behaviorCode` 精确筛选。每行包含 `record_id`、`batch_no`、`product_number`、`product_record_id`、`size`、`quantity`、`behavior_code`、`behavior_name`、`reported_at`、`supplier_record_id`。
 
 到货判断只看供应主表的**发生行为**：`behavior_code = PURCHASE_IN` 即已入库；不再返回 `arrival_status` / `arrival_at` 兼容字段。
 

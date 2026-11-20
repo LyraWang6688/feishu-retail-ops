@@ -10,9 +10,8 @@ const createPurchaseQueryRouter = (options = {}) => {
     try {
       const rows = await service.listPurchaseRequests({
         batchNo: req.query.batchNo ? String(req.query.batchNo) : undefined,
-        // 'purchase_request'（采购申请）/ 'purchase_return'（采购退货）—— 工作台
-        // 「采购退货」子页用它把同一张「报货信息」表分成两栏。
-        reportBehavior: req.query.reportBehavior ? String(req.query.reportBehavior) : undefined,
+        // 行为编码精确筛选：PURCHASE_ORDER（报货）/ PURCHASE_RETURN（退货）。
+        behaviorCode: req.query.behaviorCode ? String(req.query.behaviorCode) : undefined,
       });
       return res.json({ success: true, rows, total: rows.length });
     } catch (error) {

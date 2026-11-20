@@ -51,6 +51,10 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
   assert.equal(filtered[0].batch_no, 'BH-001');
 
   assert.equal(all.find((row) => row.record_id === 'req_1').behavior_code, 'PURCHASE_IN');
+
+  const byBehavior = await service.listPurchaseRequests({ behaviorCode: 'PURCHASE_IN' });
+  assert.equal(byBehavior.length, 1);
+  assert.equal(byBehavior[0].record_id, 'req_1');
 });
 
 test('AC-BATCH1 按批次读：走「供应主表.采购明细」link + getBatch，不整表读 purchaseRequest', async () => {

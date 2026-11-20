@@ -8,7 +8,7 @@ export { arrivalLineKey, arrivalSubmitLines };
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
   SALES_SECTIONS, SALES_DELIVERY_PAGE,
-  PURCHASE_IN_BEHAVIOR_CODE,
+  PURCHASE_ORDER_BEHAVIOR_CODE, PURCHASE_IN_BEHAVIOR_CODE,
 } from '../../config/orders.js';
 
 // 工作台【订单列表】—— 一级 tab 的第三个（**只剩三条路径**，业务负责人 2026-10-29 定稿）。
@@ -483,10 +483,10 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     const host = $('[data-view="purchase-host"]');
     if (host) host.innerHTML = '<p class="section-loading">正在读取采购申请…</p>';
     try {
-      // ⚠️ 只读「采购申请」（采购退货单不在验收范围内）——用**既有** reportBehavior 过滤。
+      // 只读「报货」（采购退货单不在验收范围内）——按发生行为编码过滤。
       // ⭐ 2026-11-09：同时读「供应商管理」全部供应商（固定卡片）；它失败不影响验收列表。
       const [data, suppliers] = await Promise.allSettled([
-        api.get(`${ORDERS_API.purchaseRequests}?${new URLSearchParams({ reportBehavior: 'purchase_request' })}`),
+        api.get(`${ORDERS_API.purchaseRequests}?${new URLSearchParams({ behaviorCode: PURCHASE_ORDER_BEHAVIOR_CODE })}`),
         api.get(ORDERS_API.suppliers),
       ]);
       if (data.status !== 'fulfilled') throw data.reason;

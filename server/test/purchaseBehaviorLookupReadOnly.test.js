@@ -12,7 +12,7 @@
  *   · 撤：`purchaseWebhookService.js`（报货/采购申请那条）与 `purchaseReturnService.js`
  *     （扫码采购退货那条）里 `tableKey: 'purchaseRequest'` 的 create payload **都不再有** `behavior:`；
  *   · 留：`v1BitableSchema` 的映射 `purchaseRequest.fields.behavior = '发生行为'` 仍在（真表已改名）
- *     （工作台采购查询的分流判据 `purchaseQueryService.classifyReportBehavior` 还在**读**它）。
+ *     （工作台采购查询仍在读它，直接投影 behavior_code / behavior_name）。
  *
  * ⭐⭐ **她 2026-10-12 已确认「采购主表.采购行为」要写**（原话逐字：
  *   「**采购主表里面的采购行为确实是需要的，因为一个是报货，一个是退货**」）：
@@ -86,20 +86,20 @@ test('AC-B1 源码哨兵：建「采购明细」行的 payload 里不许再写�
 // AC-B2 读取必须还在（只撤写入）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-B2 读取照旧：schema 映射还在，工作台采购查询仍按这一列分流报货 / 退货', () => {
+test('AC-B2 读取照旧：schema 映射还在，工作台采购查询直接投影发生行为', () => {
   const schema = read('config/v1BitableSchema.js');
   // ⭐ 2026-10-17 成对迁移（依据 = 她逐字「采购主表里面的采购行为，目前字段名称改为了发生行为」）：
   //   改前逐字：`/behavior: '采购行为'/`；改后逐字：`/behavior: '发生行为'/`（真表已改名）。
   assert.match(schema, /behavior: '发生行为'/, 'schema 映射必须留着（读取靠它；真表列名 = 发生行为）');
-  // 分流判据的读取点（`purchaseQueryService`）：按关联 id 读行为记录，再 classifyReportBehavior
+  // 读取点（`purchaseQueryService`）：按关联 id 读行为记录，直接投影编码/名称
   const query = read('services/purchaseQueryService.js');
   // ⭐ 2026-10-17 成对迁移（依据 = 她逐字「直接去看采购主表里面的采购行为…只筛选出报货的状态」）：
   //   改前逐字：`asLinks('purchaseRequest', record, 'behavior')`（明细行 Lookup，一直空 ⇒ 全默认报货 ✗）
   //   改后逐字：`asLinks('purchaseOrderBatch', batch, 'behavior')`（读主表那一行的「发生行为」✓）
   assert.match(query, /asLinks\('purchaseOrderBatch', batch, 'behavior'\)/, '分流读取点 = 主表「发生行为」');
   assert.equal(/asLinks\('purchaseRequest', record, 'behavior'\)/.test(query), false, '不再读明细行那个 Lookup（它一直是空 ✗）');
-  assert.match(query, /classifyReportBehavior\(/, '分流判据还在');
-  assert.match(query, /report_behavior: classifyReportBehavior/, '分流的落点字段还在');
+  assert.match(query, /behavior_code: behavior \? asText\('behavior', behavior, 'code'\)/, '行为编码读取点还在');
+  assert.equal(/classifyReportBehavior|report_behavior/.test(query), false, '不再使用派生分流字段');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

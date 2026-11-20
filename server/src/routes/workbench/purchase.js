@@ -203,7 +203,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     const query = purchaseQueryForArrival();
     const rows = (typeof query.listPurchaseRequestsForBatch === 'function'
       ? await query.listPurchaseRequestsForBatch({ batchNo: key })
-      : await query.listPurchaseRequests({ batchNo: key, reportBehavior: 'purchase_request' })) || [];
+      : await query.listPurchaseRequests({ batchNo: key, behaviorCode: PURCHASE_BEHAVIORS.order })) || [];
     return cacheSet(arrivalReadCache, key, rows);
   };
   let arrivalSampleStateService = null;
@@ -423,7 +423,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       //   退货是发给别人的，也就不用验收」⇒ **硬闸门**：只有「发生行为 = 报货」的批次能验收；
       //   退货批次 ⇒ 400 ＋ 人话 ＋ **零写入**（`scanArrivalService` 自己不判行为，必须在这里挡）。
       const batchRows = await arrivalRowsOf(batchNo);
-      if (batchRows.some((row) => row.report_behavior === 'purchase_return')) {
+      if (batchRows.some((row) => String(row.behavior_code || '').trim() === PURCHASE_BEHAVIORS.return)) {
         return res.status(400).json({ success: false, error: arrivalTab.texts.notRequestBatch });
       }
       // ⭐⭐ 2026-11-09（业务负责人真机：「只展示未到货，不需要显示已到货」）：
