@@ -282,3 +282,36 @@
 .ac-row-actions .mini { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-secondary); min-height: 34px; padding: 0 8px; font-size: var(--font-size-xs); }
 .ac-row-actions .mini.danger { color: var(--danger); border-color: var(--danger-soft); background: var(--surface); }
 @media (max-width: 360px) { .ac-grid { grid-template-columns: 1fr; } .ac-field-full { grid-column: auto; } .ac-card { grid-template-columns: 56px minmax(0, 1fr) auto; } .ac-thumb { width: 56px; height: 56px; } }
+
+/* ── 供应 · 往来款（2026-11-20） ───────────────────────────────────────── */
+.sb-head{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.sb-head h2{margin:0;font-size:18px}
+.sb-card{border:1px solid var(--border-light);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-card);margin-bottom:10px;overflow:hidden}
+.sb-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 14px 12px}
+.sb-card-name{min-width:0;display:flex;flex-direction:column}
+.sb-card-name h3{margin:0;font-size:16px;line-height:1.35;overflow-wrap:anywhere}
+.sb-card-balance{flex:0 0 auto;text-align:right;display:flex;align-items:flex-end}
+.sb-card-balance strong{font-size:22px;line-height:1.15;letter-spacing:-.02em;white-space:nowrap}
+.sb-card-balance.is-positive strong{color:var(--danger)}
+.sb-card-balance.is-negative strong{color:var(--success)}
+.sb-card-balance.is-zero strong{color:var(--text-secondary)}
+.sb-txns{border-top:1px dashed var(--border-light);padding:10px 14px 12px;display:grid;gap:2px}
+.sb-txns-title{margin:0 0 6px;color:var(--text-secondary);font-size:11px;letter-spacing:.02em}
+.sb-txn{padding:8px 0;border-bottom:1px solid var(--surface-sunken)}
+.sb-txn:last-child{border-bottom:0;padding-bottom:0}
+.sb-txn-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sb-type{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:11px;line-height:1.5;font-weight:600}
+.sb-type.is-inbound{background:var(--primary-soft);color:var(--primary)}
+.sb-type.is-return{background:var(--danger-soft);color:var(--danger)}
+.sb-type.is-pay{background:var(--warning-soft);color:var(--warning-text)}
+.sb-type.is-receive{background:var(--success-soft);color:var(--success)}
+.sb-txn-amount{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.sb-txn-meta{display:flex;justify-content:space-between;gap:10px;margin-top:4px;color:var(--text-secondary);font-size:11px}
+.sb-txn-meta time{white-space:nowrap}
+.sb-txn-meta span{text-align:right}
+.sb-no-tx{margin:2px 0 0;color:var(--text-muted);font-size:12px;line-height:1.6}
+@media (max-width: 360px){
+  .sb-card-head{padding:12px}
+  .sb-txns{padding:9px 12px 11px}
+  .sb-card-balance strong{font-size:20px}
+}

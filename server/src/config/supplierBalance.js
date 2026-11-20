@@ -1,0 +1,58 @@
+'use strict';
+
+/**
+ * 「供应 → 往来款」配置：显示规则 / 余额来源 / 交易标签与金额字段。
+ * 业务口径变了只改这里，不在 service 里写业务 if-else。
+ */
+const { readInt } = require('./envValue');
+
+const SUPPLIER_BALANCE = Object.freeze({
+  // P交易明细的只读字段（公式 / Lookup / 关联字段不能混进可写 fields）。
+  transactionFields: Object.freeze({
+    supplierName: '供应商名',
+    tradeDate: '交易日',
+    tradeDirection: '交易方向',
+    transactionAmount: '交易额',
+    goodsAmount: '货单金额',
+    behavior: '发生行为',
+    rowChange: '本行变动额',
+    previousBalance: '上次余额',
+    latestBalance: '最新余额',
+    supplier: '供应商',
+  }),
+
+  // 最近交易明细窗口（天）。
+  windowDays: readInt(process.env, 'SUPPLIER_BALANCE_WINDOW_DAYS', 30, { min: 1, max: 365 }),
+
+  // 满足任意一条就显示供应商。
+  visibility: Object.freeze({
+    includeWhen: Object.freeze([
+      Object.freeze({ rule: 'flag', field: 'longTerm', equals: true }),
+      Object.freeze({ rule: 'numberNotZero', field: 'balance' }),
+    ]),
+  }),
+
+  // 余额来源：有交易取最新交易的最新余额；否则取初始化期初余额；兜底 0。
+  balanceRules: Object.freeze([
+    Object.freeze({ when: 'hasTransactions', source: 'transactions', field: 'latestBalance' }),
+    Object.freeze({ when: 'always', source: 'initialization', field: 'initialBalance' }),
+  ]),
+
+  // P 交易明细的两组字段，按顺序匹配。
+  transactionFamilies: Object.freeze([
+    Object.freeze({
+      code: 'payment',
+      match: Object.freeze({ field: 'tradeDirection', values: Object.freeze(['付', '收']) }),
+      labels: Object.freeze({ 付: '付款', 收: '收款' }),
+      amountField: 'transactionAmount',
+    }),
+    Object.freeze({
+      code: 'supply',
+      match: Object.freeze({ field: 'behavior', nonEmpty: true }),
+      labels: Object.freeze({ contains: Object.freeze({ 退货: '退货' }), default: '报货' }),
+      amountField: 'goodsAmount',
+    }),
+  ]),
+});
+
+module.exports = { SUPPLIER_BALANCE };

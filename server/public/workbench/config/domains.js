@@ -134,7 +134,7 @@ export const DOMAIN_TABS = [
       {
         id: 'purchase-supplier-money',
         label: '往来款',
-        kind: 'placeholder',
+        kind: 'supplier-balance',
       },
       {
         id: 'purchase-transactions',
