@@ -26,7 +26,7 @@ const path = require('node:path');
 const { InventoryService, STOCK_MOVEMENTS } = require('../src/services/inventoryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 const {
-  V1_SCHEMA_SCOPES, V1_SIZE_LINK_TABLES, getV1SelectOptionContracts,
+  V1_SCHEMA_SCOPES, V1_SIZE_LINK_TABLES,
 } = require('../src/config/v1SchemaScopes');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { PurchaseWebhookService } = require('../src/services/purchaseWebhookService');
@@ -507,16 +507,4 @@ test('F-补 ⭐ 工作台采购页的用户可见文案用的是**当下**的表
   ]) {
     assert.ok(copy.includes(expected), `活着的采购文案要用当下表名「采购明细」：${expected}`);
   }
-});
-
-test('G ⛔ 「报货批次.确认状态」整条退场 ⇒ 它的单选取值契约也删掉（契约只剩到货状态）', () => {
-  // 2026-10-09 只读核对生产真表：报货批次 12 列里**没有**「确认状态」⇒
-  // 契约留着 = 部署闸门去问一列不存在的字段、直接判红，所以它与
-  // `config/purchaseAcceptance.js` 一起退场。
-  const contracts = getV1SelectOptionContracts('purchase');
-  assert.equal(contracts.some((item) => item.fieldKey === 'confirmStatus'), false,
-    '确认状态那一列不存在了 ⇒ 契约里不许再有它');
-  assert.deepEqual(contracts, [], '到货状态字段删除后，不再有任何单选取值契约');
-  // inventory 范围不该被带上「报货批次」的任何契约。
-  assert.deepEqual(getV1SelectOptionContracts('inventory'), []);
 });

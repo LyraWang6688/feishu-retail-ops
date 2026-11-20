@@ -43,8 +43,8 @@ export const SALES_SECTIONS = [
   { key: 'draft', label: '草稿单', tag: '待建设', tone: 'info', icon: '📝' },
 ];
 
-export const ARRIVAL_STATUS_PENDING = '未到货';
-export const ARRIVAL_STATUS_ARRIVED = '已到货';
+// 验收到货的唯一判据：发生行为 = 入库（行为编码稳定，不按中文名判断）。
+export const PURCHASE_IN_BEHAVIOR_CODE = 'PURCHASE_IN';
 
 /**
  * 采购子 tab 的「验收到货」入口。

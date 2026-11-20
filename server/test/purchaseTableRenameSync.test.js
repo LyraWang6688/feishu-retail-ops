@@ -306,7 +306,7 @@ test('B5 「到货验收」表的读写点全清：全仓不再引用这个表�
     const rel = path.relative(SERVER_ROOT, file);
     // ⚠️ 只认**表键**与表 ID 配置，不认同名的 service / 卡片 / 配置模块
     //    （`purchaseArrivalConversationService` / `purchaseArrivalReconcileCard` /
-    //      `purchaseArrivalStatus` / `purchaseArrivalIntake` 都还在，它们是"到货核对"这条链路的名字）。
+    //      `purchaseArrivalIntake` 都还在，它们是"到货核对"这条链路的名字）。
     if (/'purchaseArrival'/.test(codeOnly)) offenders.push(`${rel}: 还在用 purchaseArrival 这个表键`);
     if (/tables\.purchaseArrival\b/.test(codeOnly)) offenders.push(`${rel}: 还在从 schema 取这张表`);
     if (/purchaseArrival\.fields\b/.test(codeOnly)) offenders.push(`${rel}: 还在读这张表的字段`);
@@ -355,12 +355,11 @@ test('B7 ⭐ 工作台采购页（= 现在的「采购 → 验收」子页）：
   const livingPage = codeOnly(page);
   const livingCopy = codeOnly(copy);
 
-  // ① 面板还在，列 = **当下的**（「报货批次」那一行的到货状态 ＋ 写进「验收原话」的说明）
-  //    ⚠️ 活页面上那列**由数据渲染**（`arrivalStatusOf` ＋ 两个配置取值），不是写死一句"到货状态" ✗
-  assert.ok(livingPage.includes('arrivalStatusOf'), '活着的验收面板仍在判「这一批到货了没有」');
-  assert.ok(livingPage.includes('ARRIVAL_STATUS_PENDING'), '卡片上那个到货状态小标签仍在（兜底取值来自配置）');
-  assert.ok(copy.includes("ARRIVAL_STATUS_PENDING = '未到货'") && copy.includes("ARRIVAL_STATUS_ARRIVED = '已到货'"),
-    '到货状态的两个取值仍是当下的那两个（原样来自既有 arrival_status 字段）');
+  // ① 面板还在，判据 = 供应主表的**发生行为**（不再翻译成「未到货 / 已到货」）
+  assert.ok(livingPage.includes('isArrivedBatch'), '活着的验收面板仍在判「这一批是否已入库」');
+  assert.ok(livingPage.includes('PURCHASE_IN_BEHAVIOR_CODE'), '验收判断直接读行为编码');
+  assert.ok(copy.includes("PURCHASE_IN_BEHAVIOR_CODE = 'PURCHASE_IN'"), '行为编码是唯一判据');
+  assert.equal(copy.includes('ARRIVAL_STATUS_PENDING'), false, '到货状态常量不许回来');
   // ⭐ 2026-10-17 成对迁移（依据 = 她逐字「数据库里已经没有这个字段了…要把这里删掉」）：
   //   改前逐字：`assert.ok(copy.includes('验收原话'), '「验收原话」这一列还在…')`
   //   改后逐字：**反向**钉住 —— 这个词 / 这一列**不许再回来** ✓
@@ -382,19 +381,20 @@ test('B7 ⭐ 工作台采购页（= 现在的「采购 → 验收」子页）：
   }
 });
 
-test('B8 工作台查询接口：到货面板的数据来自「报货批次」，不再有 purchaseArrival 读点', () => {
+test('B8 工作台查询接口：到货判断来自「发生行为」，不再有 purchaseArrival 读点', () => {
   const rel = 'src/services/purchaseQueryService.js';
   const source = fs.readFileSync(path.join(SERVER_ROOT, rel), 'utf8');
   const codeOnly = source
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '')
     .replace(/([^:])\/\/.*$/gm, '$1');
-  assert.equal(/'purchaseArrival'/.test(codeOnly), false, 'listPurchaseArrivals 必须改读「报货批次」');
+  assert.equal(/'purchaseArrival'/.test(codeOnly), false, '不再读已删除的 purchaseArrival 表');
   assert.match(codeOnly, /gateway\.listAll\('purchaseOrderBatch'\)/);
   // 投影出来的字段（前端就靠这个 + 批次号）。
-  // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**
-  //   （那两列在真表上没有了）⇒ 不许再出现；`arrival_status` 照旧。
-  assert.ok(codeOnly.includes('arrival_status'), '投影里必须有 arrival_status');
+  // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**；
+  // 2026-11-20：`arrival_status` 也删除，直接投影发生行为。
+  assert.ok(codeOnly.includes('behavior_code'), '投影里必须有 behavior_code');
+  assert.equal(/arrival_status/.test(codeOnly), false, '到货状态兼容字段已退场');
   assert.equal(/confirm_status/.test(codeOnly), false, '「确认状态」投影已退场');
   assert.equal(/acceptance_text/.test(codeOnly), false, '「验收原话」投影已退场');
 });

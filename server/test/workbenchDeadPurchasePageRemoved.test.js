@@ -163,7 +163,7 @@ test('AC-DL3 ⭐⭐ 判据迁移收口：两条**真判据**现在钉在活着�
     `${name} 的迁移必须指向**活着的**验收页 / 采购文案（不许删掉了事 ✗）`);
   }
   assert.ok(inboundRemoval.includes('采购明细'), '「当下表名 = 采购明细」这条判据仍在 ✓');
-  assert.ok(renameSync.includes('ARRIVAL_STATUS_PENDING'), '「到货状态取值」这条判据仍在 ✓');
+  assert.ok(renameSync.includes('PURCHASE_IN_BEHAVIOR_CODE'), '「发生行为 = 入库」这条判据仍在 ✓');
 
   // ③ AC-W4 的目录不存在已由本文件 AC-DL1/AC-DL2 覆盖。
 });

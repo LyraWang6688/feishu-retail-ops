@@ -82,12 +82,12 @@ function loadOrdersModule() {
 const SH_DAY = (y, m, d) => Date.UTC(y, m - 1, d - 1, 16);
 const BATCH_ROWS = [
   // 供应商甲 · 采购日 2026-10-12（两条明细 ⇒ 同一批）
-  { record_id: 'r1', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 40, quantity: 2, arrival_status: '未到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
-  { record_id: 'r2', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 41, quantity: 1, arrival_status: '未到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
+  { record_id: 'r1', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 40, quantity: 2, behavior_code: 'PURCHASE_ORDER', behavior_name: '报货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
+  { record_id: 'r2', batch_no: 'CGD-WAIT-1', product_number: 'N05', size: 41, quantity: 1, behavior_code: 'PURCHASE_ORDER', behavior_name: '报货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
   // 供应商乙 · 采购日 2026-10-11
-  { record_id: 'r3', batch_no: 'CGD-WAIT-2', product_number: 'X99', size: 43, quantity: 3, arrival_status: '未到货', supplier_record_id: 's2', supplier_name: '供应商乙', arrival_created_at: SH_DAY(2026, 10, 11) },
+  { record_id: 'r3', batch_no: 'CGD-WAIT-2', product_number: 'X99', size: 43, quantity: 3, behavior_code: 'PURCHASE_ORDER', behavior_name: '报货', supplier_record_id: 's2', supplier_name: '供应商乙', arrival_created_at: SH_DAY(2026, 10, 11) },
   // 已到货 ⇒ 验收页**不渲染**（连 data 属性都不该有）
-  { record_id: 'r4', batch_no: 'CGD-DONE-1', product_number: 'D1', size: 42, quantity: 1, arrival_status: '已到货', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
+  { record_id: 'r4', batch_no: 'CGD-DONE-1', product_number: 'D1', size: 42, quantity: 1, behavior_code: 'PURCHASE_IN', behavior_name: '入库', supplier_record_id: 's1', supplier_name: '供应商甲', arrival_created_at: SH_DAY(2026, 10, 12) },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -237,8 +237,8 @@ test('AC-RC6 ⭐ 明细**挂不上批次** ⇒ **不出现在页面**；**批次
   const html = orders.purchaseOrdersHtml([
     ...BATCH_ROWS,
     // 批次关联断掉的那些（#606 数据侧）—— 批次号空 / 旧的「（无批次号）」
-    { record_id: 'o1', batch_no: '', product_number: 'ORPHAN-1', size: 44, quantity: 1, arrival_status: '' },
-    { record_id: 'o2', batch_no: '（无批次号）', product_number: 'ORPHAN-2', size: 45, quantity: 1, arrival_status: '' },
+    { record_id: 'o1', batch_no: '', product_number: 'ORPHAN-1', size: 44, quantity: 1, behavior_code: '', behavior_name: '' },
+    { record_id: 'o2', batch_no: '（无批次号）', product_number: 'ORPHAN-2', size: 45, quantity: 1, behavior_code: '', behavior_name: '' },
   ]);
   assert.equal(html.includes('ORPHAN-1'), false, '⭐ 挂不上批次 ⇒ **不进页面**（能真红：把它渲染出来 ⇒ 红）');
   assert.equal(html.includes('ORPHAN-2'), false, '⭐「（无批次号）」组也不进页面 ✓');

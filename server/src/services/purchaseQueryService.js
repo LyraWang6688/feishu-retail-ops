@@ -2,11 +2,9 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
-const { classifyReportBehavior, REPORT_BEHAVIOR } = require('./purchaseBehaviorPolicy');
+const { classifyReportBehavior } = require('./purchaseBehaviorPolicy');
 const { getConfigRows } = require('./configTableCache');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
-const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
-const { resolvePurchaseArrivalStatusConfig } = require('../config/purchaseArrivalStatus');
 
 const asText = (tableKey, record, semanticKey) => {
   const fieldName = V1_BITABLE_SCHEMA.tables[tableKey]?.fields?.[semanticKey];
@@ -24,19 +22,12 @@ const asNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-// （原先这里有个 `asDate`，只被 `listPurchaseArrivals` 用来把「到货验收.到货日」转成 ISO。
-//  2026-10-07 晚：那张表已被业务负责人删除、面板改读「报货批次」，而批次行上**没有**可投影的
-//  到货时刻（「到货日」在真表上是自动的「更新时间」）⇒ 这个转换没有调用方了，随之删除，
-//  不留死代码。）
-
 const indexByRecordId = (records) => new Map(records.map((r) => [r.record_id, r]));
 
-const ARRIVAL_STATUS_LABELS = resolvePurchaseArrivalStatusConfig();
-const arrivalStatusOf = (behavior) => {
-  const code = String(textValue(behavior?.fields?.[V1_BITABLE_SCHEMA.tables.behavior.fields.code])).trim();
-  if (code === PURCHASE_BEHAVIORS.return) return '';
-  return code === PURCHASE_BEHAVIORS.inbound ? ARRIVAL_STATUS_LABELS.arrived : ARRIVAL_STATUS_LABELS.pending;
-};
+const behaviorInfoOf = (behavior) => ({
+  behavior_code: behavior ? asText('behavior', behavior, 'code') : '',
+  behavior_name: behavior ? asText('behavior', behavior, 'name') : '',
+});
 
 /**
  * ⭐⭐ 2026-10-14（她真机：工作台「采购 → 验收」显示"采购申请读取失败"，且那一屏很慢）：
@@ -137,7 +128,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         product_record_id: productIds[0] || '',
         size: size.size,
         quantity: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.quantity]),
-        arrival_status: arrivalStatusOf(behavior),
+        ...behaviorInfoOf(behavior),
         supplier_record_id: supplierIds[0] || '',
         product_item_no: product ? asText('product', product, 'itemNo') : '',
         product_color: product ? asText('product', product, 'color') : '',
@@ -147,7 +138,6 @@ const createPurchaseQueryService = (gateway, options = {}) => {
           name: behavior ? asText('behavior', behavior, 'name') : '',
           code: behavior ? asText('behavior', behavior, 'code') : '',
         }),
-        report_behavior_name: behavior ? asText('behavior', behavior, 'name') : '',
       };
     }));
     return rows.filter(Boolean).sort((a, b) => a.size - b.size);
@@ -193,11 +183,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         product_record_id: productIds[0] || '',
         size: size.size,
         quantity: asNumber(record?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseRequest.fields.quantity]),
-        // ⚠️ 2026-10-07：到货状态**不再读「报货信息」**（那一列业务负责人已从生产表删掉），
-        // 改读**「报货批次」**那一行上的同名语义键 —— 她的口径是
-        // 「采购批次这个数据表主要控制的是该批次的到货情况」。
-        // 批次行本来就已经解析出来了（`batch`），所以这是零额外请求的一次投影。
-        arrival_status: batch ? arrivalStatusOf(behavior) : '',
+        ...behaviorInfoOf(behavior),
         supplier_record_id: supplierIds[0] || '',
         // ⭐ 2026-11-09：验收页按「供应商 → 采购日」分组（不显示采购单号）——
         //   · supplier_name：供应商管理.供应商名称（空 ⇒ 前端显示"未标注供应商"，不编 ✗）
@@ -216,79 +202,17 @@ const createPurchaseQueryService = (gateway, options = {}) => {
           name: behavior ? asText('behavior', behavior, 'name') : '',
           code: behavior ? asText('behavior', behavior, 'code') : '',
         }),
-        report_behavior_name: behavior ? asText('behavior', behavior, 'name') : '',
       };
     }));
 
     return rows.filter((row) => {
       if (filters.batchNo && row.batch_no !== filters.batchNo) return false;
-      if (filters.arrivalStatus && row.arrival_status !== filters.arrivalStatus) return false;
       if (filters.reportBehavior && row.report_behavior !== filters.reportBehavior) return false;
       return true;
     }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)) || a.size - b.size);
   };
 
-  /**
-   * 工作台「到货验收情况」面板的数据源。
-   *
-   * ⭐ 2026-10-07 晚（到货落点大改）：**改读「报货批次」**，不再读「到货验收」——
-   *    那张表已被业务负责人**整个删除**（Base 里没有任何名字含「到货」/「验收」的表）。
-   *    为什么是"改读"而不是"摘掉面板"：
-   *      · 她要看的「这一批到货了没有」正好就是「报货批次」那一行的列，改读之后面板仍有信息量；
-   *      · 摘掉面板等于把一个能用的视图删掉（而且工作台其它子页与它共享筛选/渲染代码）。
-   *    投影口径：一行 = 「报货批次」的一条记录（原来是「到货验收」的一条记录）。
-   *    ⚠️ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**删除**
-   *      （那两列在真表上没有了）；现在一行 = 到货状态 + 批次号，
-   *      过滤掉"没有任何到货信息"的行（退货批次只写批次号 + 幂等键，永远不会出现在这里）。
-   *
-   * ⚠️ **不投影「到货日」「验收人」**：它们在真表上是飞书**自动字段**
-   *   （到货日=更新时间、验收人=创建人），schema 里刻意没有映射；
-   *   而且批次行的「更新时间」会被写附件等动作刷新，把它当"到货日"展示会误导。
-   *   （同一条口径也钉在 `v1BitableSchema` 的注释里。）
-   *
-   * ⚠️ 过滤掉"没有任何到货信息"的行：**退货批次**只写 批次号 + 幂等键
-   *   （业务负责人 2026-10-07 晚口径：退货**不写**「到货状态」），它既不进 9 点推送的
-   *   「未到货」候选，也不该出现在"到货验收情况"里（否则一行空白，看着像数据丢了）。
-   *   ⚠️ 2026-10-09 之后"有到货信息"的判据**只剩「到货状态」**（另两列已删）。
-   */
-  const listPurchaseArrivals = async (filters = {}) => {
-    const [batches, behaviors] = await Promise.all([
-      gateway.listAll('purchaseOrderBatch'),
-      getConfigRows({ gateway, tableKey: 'behavior' }),
-    ]);
-    const behaviorMap = indexByRecordId(behaviors || []);
-
-    const rows = (batches || []).map((record) => ({
-      // `record_id` / `batch_record_id` 都是**批次记录 id**（到货信息的落点）。
-      record_id: record.record_id,
-      batch_record_id: record.record_id,
-      batch_no: asText('purchaseOrderBatch', record, 'batchNo'),
-      arrival_status: (() => {
-        const behaviorIds = asLinks('purchaseOrderBatch', record, 'behavior');
-        const behavior = behaviorIds.length ? behaviorMap.get(behaviorIds[0]) : null;
-        return behavior ? arrivalStatusOf(behavior) : '';
-      })(),
-      // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**——
-      //   「确认状态」「到货文字说明（该列已从真表退场）」两列在生产真表上没有了（写入点也一起退场），
-      //   留着投影只会永远读出空串、把"没记"伪装成"记了但空"。
-      // 兼容字段（前端与既有调用方原先读它）：到货落点搬到批次行之后**没有**可投影的日期
-      // —— 批次行上那个「到货日」是自动的「更新时间」，不是真的到货时刻（见方法注释）。
-      arrival_at: (() => {
-        const field = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.arrivalDate;
-        const value = field ? record?.fields?.[field] : null;
-        return value === undefined || value === null || value === '' ? null : value;
-      })(),
-      supplier_record_id: '',
-    })).filter((row) => row.arrival_status);
-
-    return rows.filter((row) => {
-      if (filters.batchNo && row.batch_no !== filters.batchNo) return false;
-      if (filters.arrivalStatus && row.arrival_status !== filters.arrivalStatus) return false;
-      return true;
-    }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)));
-  };
-
-  return { listPurchaseRequests, listPurchaseRequestsForBatch, listPurchaseArrivals, listSuppliers };
+  return { listPurchaseRequests, listPurchaseRequestsForBatch, listSuppliers };
 };
 
-module.exports = { createPurchaseQueryService, REPORT_BEHAVIOR };
+module.exports = { createPurchaseQueryService };

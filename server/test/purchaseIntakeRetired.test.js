@@ -37,7 +37,7 @@ const { PurchasePendingBatchService } = require('../src/services/purchasePending
 const { PurchaseBatchNoGenerator } = require('../src/services/purchaseBatchNoGenerator');
 const { JsonTaskStore } = require('../src/infrastructure/jsonTaskStore');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { V1_SCHEMA_SCOPES, getV1SelectOptionContracts } = require('../src/config/v1SchemaScopes');
+const { V1_SCHEMA_SCOPES } = require('../src/config/v1SchemaScopes');
 const { CORRELATION_KEYS } = require('../src/utils/correlationFields');
 const { resolvePurchaseBatchNoConfig } = require('../src/config/purchaseBatchNo');
 
@@ -152,13 +152,7 @@ test('① schema 与闸门范围里都没有「信息填写」了（部署闸门
     assert.equal(V1_SCHEMA_SCOPES[scope].includes(DELETED_TABLE_KEY), false,
       `范围 ${scope} 里不许再有它（否则闸门会去问一张不存在的表 → TableIdNotFound）`);
   }
-  // 单选取值契约里也不许再指它的任何列（到货状态那条契约属于「报货批次」）。
-  for (const contract of getV1SelectOptionContracts('purchase')) {
-    assert.equal(contract.tableKey, 'purchaseOrderBatch');
-  }
-  // ⛔ 那两个"已删除的列"的契约也不许回来。
-  assert.equal(getV1SelectOptionContracts('purchase')
-    .some((item) => ['confirmStatus', 'acceptanceText'].includes(item.fieldKey)), false);
+
 });
 
 test('① 全仓（src/public/scripts/test）不再引用「信息填写」表键 / 环境变量 / schema 取表', () => {
@@ -323,7 +317,7 @@ test('⑤ 「报货批次」不再映射「验收原话 / 确认状态」；写�
   );
   assert.equal(/confirm_status/.test(querySource), false);
   assert.equal(/acceptance_text/.test(querySource), false);
-  assert.match(querySource, /arrival_status/);
+  assert.match(querySource, /behavior_code/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

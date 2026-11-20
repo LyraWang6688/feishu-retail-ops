@@ -463,7 +463,7 @@ const createScanArrivalService = (options = {}) => {
    *   ⇒ 验收领域**没带批次号**时要能**自己开工**：把**未到货的批次**列出来给她点。
    *
    * 取数**复用既有那一份**（`PurchasePendingBatchService` = 9 点推送【采购】区用的同一个
-   * 「到货状态 = 未到货」候选；取值来自 `config/purchaseArrivalStatus`，**不写死中文**）。
+   * 「发生行为不含 PURCHASE_IN」候选；不再使用到货状态配置）。
    *
    * ⚠️ **读表失败不抛**：如实返回 `{ ok: false, batches: [] }` —— 页面照旧能开（走手输兜底），
    *    由路由记一条 warn。**绝不**因为一次读表失败把她挡在门外。
