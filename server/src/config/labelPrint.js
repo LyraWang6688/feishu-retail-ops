@@ -281,7 +281,7 @@ const PRICE = Object.freeze({
 /**
  * 二维码的**出图参数**（内容 = 一个能扫的 URL）。
  * ⚠️ **URL 模板不在这里**：唯一真源是 `config/tagQrCode.js` 的 `SCAN_URL.recordIdTemplate`
- *    （**2026-10-12 起**：`https://hm.bamamei.online/r/{记录ID}`；旧 `/s/{编号}` 只作兼容），由 `services/tagQrCodeService.js`
+ *    （`https://hm.bamamei.online/r/{recordId}`；旧 `/s/{编号}` 已删除，不再兼容），由 `services/tagQrCodeService.js`
  *    的 记录 ID 二维码构造器 替换（**只编码值、不编码模板**）。
  *    本文件**刻意不放二维码 URL 模板** —— 抄第二份的下场是"两条链路各指一个域名"。
  */
@@ -363,7 +363,7 @@ const SCAN_PRINT = Object.freeze({
       + '请扫鞋盒上我们打印的标签。',
     // 记录 ID 读得到，但那一条「货品信息」已经不在了。
     recordMissing: '这个码对应的货品找不到了（记录可能已被删除）。'
-      + '请到「货品」里确认这一款，或改用「选择编号打印」。',
+      + '请到「货品」里确认这一款，或重新打印这张标签。',
     // 货品记录在，但「编号」列是空的 ⇒ 打不了标签（**不猜**）。
     recordNoNumber: '这个码对应的货品还没有「编号」，打不了标签。请先在「货品信息」里补上编号。',
     // 编号读到了，但这一款现在一张可打印的标签都没有（库存 0 / 所属状态为空）。
