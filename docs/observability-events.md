@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **520** 个事件。按前缀分组：
+共 **518** 个事件。按前缀分组：
 
 ## accessory
 
@@ -208,9 +208,7 @@
 | `label_print.queue.ready` | 1 | src/services/labelPrintQueueRuntime.js |
 | `label_print.request_log.created` | 1 | src/services/labelPrintRequestLogService.js |
 | `label_print.request_log.dispatch_failed` | 1 | src/services/labelPrintQueueService.js |
-| `label_print.request_log.duplicate_rows` | 1 | src/services/labelPrintRequestLogService.js |
-| `label_print.request_log.failed` | 3 | src/services/labelPrintRequestLogService.js |
-| `label_print.request_log.incremented` | 1 | src/services/labelPrintRequestLogService.js |
+| `label_print.request_log.failed` | 1 | src/services/labelPrintRequestLogService.js |
 | `label_print.request_log.skipped` | 4 | src/services/labelPrintRequestLogService.js |
 | `label_print.scan.report` | 1 | src/routes/workbench/labels.js |
 | `label_print.stream.backlog_failed` | 1 | src/routes/labelPrintDevice.js |
