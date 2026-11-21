@@ -66,13 +66,15 @@ test('配品 API：列表同步读，新增/修改/删除返回 202 + job_id', a
     assert.ok(categoriesAfter.categories.includes('新种类'));
     const created = await fetch(`http://127.0.0.1:${port}/products/accessories`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: '鞋垫', category: '鞋垫', price: 18, stockQuantity: 3, submitKey: 'k1' }),
+      body: JSON.stringify({ name: '鞋垫', category: '鞋垫', price: 18, stockQuantity: 3, isAccessory: true, submitKey: 'k1' }),
     });
     const body = await created.json();
     assert.equal(created.status, 202);
     assert.ok(body.job_id);
     await settle();
-    assert.equal(gateway.rows.some((row) => row.fields[fields.name] === '鞋垫'), true);
+    const createdRow = gateway.rows.find((row) => row.fields[fields.name] === '鞋垫');
+    assert.equal(createdRow.fields[fields.isAccessory], true, '赠品复选框必须透传到写链');
+    assert.equal(createdRow.fields[fields.category], '鞋垫', '种类必须透传到写链');
     const duplicate = await fetch(`http://127.0.0.1:${port}/products/accessories`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: '39元腰带', category: '腰带', price: 49, submitKey: 'k2' }),
