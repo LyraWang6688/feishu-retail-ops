@@ -7,6 +7,7 @@ const { createSalesDailyCashService } = require('../src/services/salesDailyCashS
 
 const F = V1_BITABLE_SCHEMA.tables.salesSummary;
 const R = F.readOnlyFields;
+const translate = (fields) => Object.fromEntries(Object.entries(fields).map(([key, value]) => [F.fields[key] || key, value]));
 
 const freshGateway = () => {
   const records = [];
@@ -19,14 +20,15 @@ const freshGateway = () => {
     },
     async create(tableKey, fields) {
       assert.equal(tableKey, 'salesSummary');
-      const record = { record_id: `rec_${next += 1}`, fields: { ...fields } };
+      assert.equal(Object.prototype.hasOwnProperty.call(fields, F.fields.saleDate), false, '写库不许传物理字段名');
+      const record = { record_id: `rec_${next += 1}`, fields: { ...translate(fields) } };
       records.push(record);
       return { recordId: record.record_id, record };
     },
     async update(tableKey, recordId, fields) {
       assert.equal(tableKey, 'salesSummary');
       const record = records.find((item) => item.record_id === recordId);
-      Object.assign(record.fields, fields);
+      Object.assign(record.fields, translate(fields));
       return { recordId };
     },
     async get(tableKey, recordId) {

@@ -79,17 +79,17 @@ const createAccessory = async (gateway, input = {}) => {
   const value = normalizeInput(input);
   const duplicate = await findDuplicate(gateway, value);
   if (duplicate) throw userError('同一种类下已经有同名配品');
-  const fields = fieldsOf();
   const patch = {
-    [fields.name]: value.name,
-    [fields.category]: value.category,
-    [fields.price]: value.price,
-    [fields.cost]: value.cost,
-    [fields.stockQuantity]: value.stockQuantity,
+    // 写库只传网关语义键；物理列名只用于读结果。
+    name: value.name,
+    category: value.category,
+    price: value.price,
+    cost: value.cost,
+    stockQuantity: value.stockQuantity,
     // 新增的配置默认进入配品候选；页面不展示/不编辑这个复选框。
-    [fields.isAccessory]: true,
+    isAccessory: true,
   };
-  if (input.sampleImageToken) patch[fields.sampleImage] = [{ file_token: String(input.sampleImageToken) }];
+  if (input.sampleImageToken) patch.sampleImage = [{ file_token: String(input.sampleImageToken) }];
   const created = await gateway.create('accessory', patch);
   invalidateConfigTable('giftAccessory');
   return mapAccessory(created);
@@ -103,16 +103,16 @@ const updateAccessory = async (gateway, recordId, input = {}) => {
   const value = normalizeInput(input);
   const duplicate = await findDuplicate(gateway, { ...value, exceptRecordId: id });
   if (duplicate) throw userError('同一种类下已经有同名配品');
-  const fields = fieldsOf();
   const patch = {
-    [fields.name]: value.name,
-    [fields.category]: value.category,
-    [fields.price]: value.price,
-    [fields.cost]: value.cost,
-    [fields.stockQuantity]: value.stockQuantity,
+    // 写库只传网关语义键；物理列名只用于读结果。
+    name: value.name,
+    category: value.category,
+    price: value.price,
+    cost: value.cost,
+    stockQuantity: value.stockQuantity,
   };
   if (input.sampleImageToken !== undefined) {
-    patch[fields.sampleImage] = input.sampleImageToken
+    patch.sampleImage = input.sampleImageToken
       ? [{ file_token: String(input.sampleImageToken) }] : [];
   }
   const updated = await gateway.update('accessory', id, patch);
