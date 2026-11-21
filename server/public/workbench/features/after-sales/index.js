@@ -444,7 +444,8 @@ export function mountAfterSalesPage(container, options = {}) {
   const loadCandidates = () => api.get(`${apiBase}${AFTER_SALES_PAGE.scanCandidatesApi}?${query}`)
     .then((data) => {
       const product = data?.product || {};
-      const productText = [product.item_no || product.number, product.color].filter(Boolean).join(' · ');
+      const productText = [product.item_no || product.number, product.color].filter(Boolean).join(' · ')
+        + (product.delisted ? `（${product.delisted_label || '已下架'}）` : '');
       if (productLine) productLine.textContent = productText;
       candidates = Array.isArray(data?.candidates) ? data.candidates : [];
       if (!candidates.length) {

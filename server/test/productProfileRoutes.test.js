@@ -17,7 +17,7 @@ const listen = (app) => new Promise((resolve) => {
   });
 });
 
-const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备', extra = '', status = '下架') => ({
+const product = (id, number, itemNo, color, category, missing, token = '', tagMissing = '齐备', extra = '', status = '无货', downlisted = false) => ({
   record_id: id,
   fields: {
     编号: [{ text: number, type: 'text' }],
@@ -25,6 +25,7 @@ const product = (id, number, itemNo, color, category, missing, token = '', tagMi
     颜色: [{ text: color, type: 'text' }],
     类别: [{ text: category, type: 'text' }],
     货品状态: status,
+    下架: downlisted,
     商品信息缺失: missing,
     标签信息缺失: tagMissing,
     样例图: token ? [{
@@ -115,18 +116,19 @@ test('AC-PP2 缺失分组：排除齐备，按缺失值动态分组、数量降�
 });
 
 
-test('AC-PP-D1 货品下架：只返回下架记录，按货号搜索，默认全部', async () => {
+test('AC-PP-D1 货品下架：只返回无货且未下架的货品，按货号搜索', async () => {
   const gateway = { listAll: async () => [
-    product('rec_down', 'A1|黑色|男', 'A1', '黑色', '男', '齐备', '', '齐备', '', '下架'),
-    product('rec_up', 'A2|黑色|男', 'A2', '黑色', '男', '齐备', '', '齐备', '', '在售'),
-    product('rec_down_2', 'B1|白色|女', 'B1', '白色', '女', '齐备', '', '齐备', '', '下架'),
+    product('rec_down', 'A1|黑色|男', 'A1', '黑色', '男', '齐备', '', '齐备', '', '无货', false),
+    product('rec_up', 'A2|黑色|男', 'A2', '黑色', '男', '齐备', '', '齐备', '', '有货', false),
+    product('rec_down_2', 'B1|白色|女', 'B1', '白色', '女', '齐备', '', '齐备', '', '无货', false),
+    product('rec_already', 'C1|红色|女', 'C1', '红色', '女', '齐备', '', '齐备', '', '无货', true),
   ] };
   const { server, port } = await listen(appWith(gateway));
   try {
     const all = await (await fetch(`http://127.0.0.1:${port}/products/delisted`)).json();
     assert.equal(all.success, true);
     assert.deepEqual(all.items.map((item) => item.recordId), ['rec_down', 'rec_down_2']);
-    assert.equal(all.items[0].status, '下架');
+    assert.equal(all.items[0].status, '无货');
     const searched = await (await fetch(`http://127.0.0.1:${port}/products/delisted?q=B1`)).json();
     assert.deepEqual(searched.items.map((item) => item.recordId), ['rec_down_2']);
   } finally { server.close(); }

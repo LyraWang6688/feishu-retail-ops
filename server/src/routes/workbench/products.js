@@ -17,6 +17,8 @@ const { getConfigRows } = require('../../services/configTableCache');
 const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
 const { recordUrl } = require('../../utils/feishuLinks');
 const { PRODUCT_PROFILE } = require('../../config/productProfile');
+const { PRODUCT_LIFECYCLE } = require('../../config/productLifecycle');
+const { isDelistedFields, filterActiveProductsFor } = require('../../services/productLifecycle');
 const { productGapsOf, gapItemsOf } = require('../../services/productGaps');
 const { extraOfAttachment } = require('../../services/driveApi');
 const { containsFormula } = require('../../services/bitableFilterFormula');
@@ -94,6 +96,8 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       color: textValue(fields[field('color')]).trim(),
       category: textValue(fields[field('category')]).trim(),
       status: textValue(fields[field('status')]).trim(),
+      delisted: isDelistedFields(fields),
+      delistedLabel: isDelistedFields(fields) ? PRODUCT_LIFECYCLE.labels.delisted : '',
       hasSampleImage: gaps.hasSampleImage,
       missingProduct: gaps.productText,
       missingTag: gaps.tagText,
@@ -134,7 +138,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
         throw snapshotError;
       }
     }
-    let items = rows
+    let items = filterActiveProductsFor(rows, 'productSearch')
       .map(itemOf)
       .filter((item) => item.itemNo.toLowerCase().includes(needle))
       .slice(0, PRODUCT_PROFILE.searchLimit);
@@ -145,7 +149,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
         const formula = containsFormula(field('itemNo'), q);
         if (formula) {
           const freshRows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
-          items = freshRows.map(itemOf);
+          items = filterActiveProductsFor(freshRows, 'productSearch').map(itemOf);
           if (items.length) invalidateProductSearchSnapshot();
         }
       } catch (filterError) {
@@ -177,6 +181,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       const rows = await getConfigRows({ gateway: getGateway(), tableKey: 'product' });
       const groups = new Map();
       for (const row of rows) {
+        if (isDelistedFields(row?.fields || {})) continue;
         const missing = textValue(row?.fields?.[PRODUCT_PROFILE.missingField]).trim();
         if (!missing || missing === PRODUCT_PROFILE.completeValue) continue;
         const item = itemOf(row);
@@ -305,7 +310,9 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       const rows = await getConfigRows({ gateway: getGateway(), tableKey: 'product' });
       const items = (rows || [])
         .map(itemOf)
-        .filter((item) => item.recordId && item.status === PRODUCT_PROFILE.delistedStatus)
+        .filter((item) => item.recordId
+          && item.status === PRODUCT_LIFECYCLE.delistPage.stockStatus
+          && item.delisted === PRODUCT_LIFECYCLE.delistPage.delisted)
         .filter((item) => !q || item.itemNo.toLowerCase().includes(q))
         .sort((a, b) => a.number.localeCompare(b.number, 'zh-CN'))
         .slice(0, PRODUCT_PROFILE.delistedLimit);

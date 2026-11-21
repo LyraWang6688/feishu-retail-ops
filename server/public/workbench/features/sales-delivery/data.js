@@ -35,6 +35,8 @@ export const normalizeDetail = (line = {}, fields = {}) => ({
   fulfillmentStatus: textOf(line[fields.fulfillmentStatus]).trim(),
   stockQuantity: numberOrNull(line[fields.stockQuantity]),
   actualAmount: numberOrNull(line[fields.actualAmount]),
+  ...(line[fields.delisted] === true
+    ? { delisted: true, delistedLabel: textOf(line[fields.delistedLabel]).trim() } : {}),
 });
 
 export const normalizePayment = (payment = {}, fields = {}) => ({

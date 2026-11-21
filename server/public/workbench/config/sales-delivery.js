@@ -78,6 +78,8 @@ export const SALES_DELIVERY_FIELDS = Object.freeze({
     fulfillmentStatus: 'fulfillment_status',
     stockQuantity: 'stock_quantity',
     actualAmount: 'actual_amount',
+    delisted: 'delisted',
+    delistedLabel: 'delisted_label',
   }),
   payment: Object.freeze({
     recordId: 'record_id',

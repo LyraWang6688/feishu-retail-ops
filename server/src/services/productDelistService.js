@@ -1,22 +1,23 @@
 'use strict';
 
 /**
- * 货品下架后的硬删除 + 样例图归档（2026-11-20）。
+ * 货品下架：软删除（「下架」复选框）+ 样例图归档（2026-11-21）。
  *
  * 口径：
- *   · 只允许删除「货品状态 = 下架」的记录；
  *   · 有样例图：优先把**在售样例图云盘**里的同名文件 move 到「历史货品」；
  *     在售云盘找不到 ⇒ 从 Bitable「样例图」附件补传一份到历史云盘；
  *   · 历史云盘同名 ⇒ 直接删除目标同名文件后再移动/上传（覆盖）；
  *   · 没有样例图：调用方传 allowNoSample=true 才删；
- *   · 归档失败 ⇒ 不删货品记录。
+ *   · 归档失败 ⇒ 不写下架标记。
+ *   · 绝不删除「货品信息」记录；货品状态是公式，代码不写。
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { textValue } = require('./v1BitableGateway');
 const { SAMPLE_IMAGE_DRIVE } = require('../config/sampleImageDrive');
 const { buildFileName, isImageAttachment } = require('./sampleImageDriveService');
 const { DRIVE_SYNC } = require('../config/driveSync');
-const { PRODUCT_PROFILE } = require('../config/productProfile');
+const { PRODUCT_LIFECYCLE } = require('../config/productLifecycle');
+const { isDelistedRecord } = require('./productLifecycle');
 const { createDriveFileSyncService } = require('./driveFileSyncService');
 const { invalidateConfigTable } = require('./configTableCache');
 const { invalidateProductSearchSnapshot } = require('./productSearchSnapshot');
@@ -24,13 +25,13 @@ const { logInfo, logWarn } = require('../utils/logger');
 
 const createProductDelistService = ({
   gateway,
-  config = PRODUCT_PROFILE,
   sampleConfig = SAMPLE_IMAGE_DRIVE,
   historyConfig = DRIVE_SYNC.destinations.productHistory,
 } = {}) => {
   if (!gateway) throw new Error('ProductDelistService requires gateway');
   const table = V1_BITABLE_SCHEMA.tables.product;
   const fields = table.fields;
+  if (!fields.delisted) throw new Error('「货品信息」schema 没有 delisted 字段映射');
   const drive = gateway.drive;
   if (!drive) throw new Error('ProductDelistService requires gateway.drive');
 
@@ -115,17 +116,16 @@ const createProductDelistService = ({
     if (!id) return { ok: false, reason: 'missing_record_id' };
     const record = await gateway.get('product', id);
     if (!record) return { ok: false, reason: 'product_not_found' };
-    const recordFields = record.fields || {};
-    const status = textValue(recordFields[fields.status]).trim();
-    if (status !== config.delistedStatus) {
-      return { ok: false, reason: 'product_not_delisted', status };
+    if (isDelistedRecord(record)) {
+      return { ok: true, record_id: id, already_delisted: true, archive: { archived: 0, moved: 0, uploaded: 0 } };
     }
+    const recordFields = record.fields || {};
     const images = imagesOf(recordFields);
     if (!images.length && allowNoSample !== true) {
       return { ok: false, reason: 'no_sample_image' };
     }
     let archive = { archived: 0, moved: 0, uploaded: 0 };
-    if (images.length) {
+    if (PRODUCT_LIFECYCLE.downlist.archiveSampleImages && images.length) {
       try {
         archive = await archiveImages({ recordId: id, recordFields });
       } catch (error) {
@@ -135,10 +135,12 @@ const createProductDelistService = ({
         return { ok: false, reason: 'archive_failed', error: String(error?.message || error).slice(0, 300) };
       }
     }
-    await gateway.delete('product', id, { correlation });
+    await gateway.update('product', id, {
+      [fields.delisted]: PRODUCT_LIFECYCLE.downlist.setDelisted,
+    }, { correlation });
     invalidateConfigTable('product');
     invalidateProductSearchSnapshot();
-    logInfo('product.delisted.deleted', {
+    logInfo('product.delisted.soft_deleted', {
       record_id: id,
       number: textValue(recordFields[fields.number]).trim(),
       operator_open_id: operatorOpenId || undefined,
@@ -147,7 +149,7 @@ const createProductDelistService = ({
       uploaded: archive.uploaded,
       ...correlation,
     });
-    return { ok: true, record_id: id, archive };
+    return { ok: true, record_id: id, soft_deleted: true, archive };
   };
 
   return { deleteDelistedProduct };

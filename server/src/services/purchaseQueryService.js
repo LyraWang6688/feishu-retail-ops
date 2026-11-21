@@ -3,6 +3,8 @@ const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
+const { isDelistedRecord } = require('./productLifecycle');
+const { PRODUCT_LIFECYCLE } = require('../config/productLifecycle');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
 const asText = (tableKey, record, semanticKey) => {
@@ -131,6 +133,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         supplier_record_id: supplierIds[0] || '',
         product_item_no: product ? asText('product', product, 'itemNo') : '',
         product_color: product ? asText('product', product, 'color') : '',
+        ...(product && isDelistedRecord(product) ? { product_delisted: true, product_delisted_label: PRODUCT_LIFECYCLE.labels.delisted } : {}),
         supplier_name: supplierIds[0] ? asText('supplier', supplierMap.get(supplierIds[0]), 'name') : '',
         arrival_created_at: asNumber(batch?.fields?.[V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.createdAt]),
       };
@@ -187,6 +190,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
         //   · 采购页显示的是「货号 · 颜色」⇒ 这里另补两个**只读**字段给明细分组用。
         product_item_no: product ? asText('product', product, 'itemNo') : '',
         product_color: product ? asText('product', product, 'color') : '',
+        ...(product && isDelistedRecord(product) ? { product_delisted: true, product_delisted_label: PRODUCT_LIFECYCLE.labels.delisted } : {}),
         supplier_name: supplierIds[0]
           ? asText('supplier', supplierMap.get(supplierIds[0]), 'name') : '',
         arrival_created_at: batch

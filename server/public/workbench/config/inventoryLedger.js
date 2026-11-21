@@ -23,6 +23,7 @@ export const INVENTORY_LEDGER_PAGE = Object.freeze({
     loading: '正在读取库存流水…',
     empty: '这个时间范围内没有库存流水。',
     failed: '库存流水读取失败，请稍后刷新。',
+    delisted: '已下架',
     total: '共 {total} 条',
     recent: '显示最近 {shown} 条',
     invalidRange: '开始日期不能晚于结束日期。',

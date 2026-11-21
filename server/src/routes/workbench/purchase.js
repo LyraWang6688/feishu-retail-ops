@@ -378,6 +378,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
             size: row.size ?? '',
             quantity: row.quantity ?? 0,
             product_record_id: row.product_record_id || '',
+            ...(row.product_delisted === true ? { delisted: true, delisted_label: row.product_delisted_label || '' } : {}),
           };
           // 2026-11-18：没有样品（含无库存）⇒ 前端必须让她选一个本次入库尺码做样品。
           const sampleState = sampleStates.get(String(row.product_record_id || '').trim());

@@ -23,7 +23,9 @@ const timeText = (value) => {
 const rowHtml = (row) => `<div class="ledger-row" role="row">
   ${PAGE.columns.map((column) => {
     const value = column.key === 'time' ? timeText(row.created_at) : cellText(row[column.key]);
-    return `<span class="ledger-cell ${column.cls || ''}" role="cell" data-ledger-field="${escapeHtml(column.key)}">${escapeHtml(value)}</span>`;
+    const badge = column.key === 'number' && row.delisted
+      ? ` <span class="ledger-delisted-tag">${escapeHtml(PAGE.texts.delisted)}</span>` : '';
+    return `<span class="ledger-cell ${column.cls || ''}" role="cell" data-ledger-field="${escapeHtml(column.key)}">${escapeHtml(value)}${badge}</span>`;
   }).join('')}
 </div>`;
 

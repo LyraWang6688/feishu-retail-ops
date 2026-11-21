@@ -180,7 +180,7 @@ const EVENTS = Object.freeze([
   'product_search.snapshot.warm.done',
   'product_search.snapshot.warm.skipped',
   'product.delisted.archive_failed',
-  'product.delisted.deleted',
+  'product.delisted.soft_deleted',
   'product.sample_image.drive.backfill.done',
   'product.sample_image.drive.backfill.failed',
   'product.sample_image.drive.backfill.retry',
