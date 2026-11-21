@@ -12,12 +12,14 @@ import { ensureProcurementAuth } from './auth.js';
 import { describeError } from '../../core/ui.js';
 import { PROCUREMENT_UI as config } from '../../config/procurement.js';
 import { createApi } from './api.js';
-import { createDraftStore, clampQuantity } from './store.js';
+import { createDraftStore } from './store.js';
 import { shellHtml, errorHtml, emptyHtml } from './render.js';
 import { createReplenishPanel } from './replenish.js';
 import { createNewProductsPanel } from './newProducts.js';
 import { createSubmitController } from './submit.js';
 import { createRefresher } from './refresh.js';
+import { customSizesValid, customSizeError, focusCustomSize } from './customSize.js';
+import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
 
 const TABS = ['replenish', 'new'];
 
@@ -26,7 +28,7 @@ export function mountProcurementPage(host) {
   host.innerHTML = shellHtml(config);
   const remote = createApi(config);
   const panels = { replenish: createReplenishPanel(config), new: createNewProductsPanel(config) };
-  const state = { tab: 'replenish', bodies: {}, errors: {}, loadedAt: {} };
+  const state = { tab: 'replenish', bodies: {}, errors: {}, loadedAt: {}, suppliers: { replenish: 'all', new: 'all' } };
   let store = null;
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
@@ -39,7 +41,7 @@ export function mountProcurementPage(host) {
     if (state.errors[tab]) { element.innerHTML = errorHtml(state.errors[tab], config); return; }
     const body = state.bodies[tab];
     element.innerHTML = body
-      ? panels[tab].render({ body, draft, store })
+      ? panels[tab].render({ body, draft, store, supplierId: state.suppliers[tab] || 'all' })
       : emptyHtml(config.texts.loading);
   };
 
@@ -55,37 +57,9 @@ export function mountProcurementPage(host) {
     state, setDraft: (next) => setDraft(next), paint, refreshNumbers, submitCtl,
   });
 
-  const metaOf = (recordId) => {
-    for (const tab of TABS) {
-      for (const group of state.bodies[tab]?.groups || []) {
-        if (group.productRecordId !== recordId) continue;
-        return {
-          productRecordId: recordId, source: tab, number: group.number,
-          itemNo: group.itemNo, color: group.color, supplierRecordId: group.supplierRecordId,
-        };
-      }
-    }
-    return { productRecordId: recordId, source: state.tab };
-  };
-
-  /** 现货行"首次选中"的数量 = 现货已售数（业务口径：现货按需选择、勾选后数量=现货数；现在没有勾选框，用第一次 + 代替）。 */
-  const spotSoldOf = (recordId, size) => {
-    for (const group of state.bodies.replenish?.groups || []) {
-      if (group.productRecordId !== recordId) continue;
-      const row = (group.sizes || []).find((one) => Number(one.size) === Number(size));
-      if (row) return Number(row.spotSold) || 0;
-    }
-    return 0;
-  };
-
-  const syncRow = (recordId, size) => {
-    const quantity = store.quantityOf(draft, recordId, size);
-    host.querySelectorAll('[data-pr-qty]').forEach((input) => {
-      if (input.dataset.record === recordId && Number(input.dataset.size) === Number(size)) {
-        input.value = String(quantity);
-      }
-    });
-  };
+  const metaOf = (recordId) => metaOfState(state, recordId);
+  const spotSoldOf = (recordId, size) => spotSoldOfState(state, recordId, size);
+  const syncRow = (recordId, size) => syncRowState(host, store, draft, recordId, size);
 
   const applyQuantity = (recordId, size, quantity) => {
     setDraft(store.setQuantity(draft, metaOf(recordId), size, quantity));
@@ -121,16 +95,16 @@ export function mountProcurementPage(host) {
     await load(tab, options.force === true);
   };
 
-  const onQuantityInput = (input) => {
-    const { record, size } = input.dataset;
-    const value = clampQuantity(input.value === '' ? 0 : input.value, config.defaults.maxQuantity);
-    applyQuantity(record, Number(size), value);
-    if (input.value !== String(value)) input.value = String(value);
-  };
 
   host.addEventListener('click', async (event) => {
     const tabButton = event.target.closest('[data-pr-tab]');
     if (tabButton) { await activate(tabButton.dataset.prTab); return; }
+    const supplier = event.target.closest('[data-pr-supplier]');
+    if (supplier) {
+      state.suppliers[state.tab] = supplier.dataset.prSupplier || 'all';
+      paint(state.tab);
+      return;
+    }
     const step = event.target.closest('[data-pr-step]');
     if (step) {
       const { record, size } = step.dataset;
@@ -141,9 +115,28 @@ export function mountProcurementPage(host) {
       applyQuantity(record, Number(size), spot > 0 ? spot : current + delta);
       return;
     }
+    const addSize = event.target.closest('[data-pr-add-size]');
+    if (addSize) {
+      const recordId = addSize.dataset.record;
+      setDraft(store.addCustomSize(draft, metaOf(recordId)));
+      paint(state.tab);
+      focusCustomSize(host, recordId);
+      return;
+    }
+    const removeSize = event.target.closest('[data-pr-custom-remove]');
+    if (removeSize) {
+      const recordId = removeSize.dataset.record;
+      setDraft(store.removeCustomSize(draft, metaOf(recordId), removeSize.dataset.size));
+      paint(state.tab);
+      refreshNumbers();
+      return;
+    }
     if (event.target.closest('[data-pr-retry]')) { await load(state.tab, true); return; }
     if (event.target.closest('[data-pr-refresh]')) { await refresher.refresh(); return; }
     if (event.target.closest('[data-pr-submit]')) {
+      if (!customSizesValid({ draft, bodies: state.bodies, tabs: TABS, store })) {
+        submitCtl.toast(host, config.texts.customSizeInvalid); return;
+      }
       const result = await submitCtl.submit(host, draft);
       if (result.ok) { setDraft(store.ensure()); paint(state.tab); refreshNumbers(); }
     }
@@ -151,7 +144,26 @@ export function mountProcurementPage(host) {
 
   host.addEventListener('input', (event) => {
     const input = event.target.closest('[data-pr-qty]');
-    if (input) onQuantityInput(input);
+    if (input) quantityInput({ input, config, store, draft, setDraft, applyQuantity });
+  });
+
+  host.addEventListener('change', (event) => {
+    const input = event.target.closest('[data-pr-custom-size]');
+    if (!input) return;
+    const recordId = input.dataset.record;
+    const row = input.closest('[data-pr-custom-row]');
+    const oldSize = String(row?.dataset.size || '');
+    const nextSize = String(input.value || '').trim();
+    const group = (state.bodies[state.tab]?.groups || []).find((item) => item.productRecordId === recordId);
+    const error = customSizeError({ group, draft, recordId, oldSize, nextSize, store });
+    if (error) {
+      submitCtl.toast(host, error === 'duplicate' ? config.texts.customSizeDuplicate : config.texts.customSizeInvalid);
+      input.value = oldSize;
+      return;
+    }
+    setDraft(store.renameCustomSize(draft, metaOf(recordId), oldSize, nextSize));
+    paint(state.tab);
+    focusCustomSize(host, recordId);
   });
 
   const start = async () => {

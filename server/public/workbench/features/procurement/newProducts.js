@@ -6,6 +6,7 @@
  * 顶部统计**只有「新增货品」**（业务负责人 2026-10-28 确认）。
  */
 import { statsHtml, newGroupHtml, emptyHtml, totalTemplateHtml } from './render.js';
+import { supplierFilteredBody, supplierTabsHtml } from './supplierFilter.js';
 
 const normalTotalOf = (group, draft, store) => (group.sizes?.normal || [])
   .reduce((sum, size) => sum + store.quantityOf(draft, group.productRecordId, size), 0);
@@ -16,13 +17,14 @@ export const createNewProductsPanel = (config) => {
     return { body, draft: store.seedDefaults(draft, 'new', body.groups || []) };
   };
 
-  const render = ({ body, draft, store }) => {
+  const render = ({ body, draft, store, supplierId = 'all' }) => {
     if (!body) return '';
-    const groups = body.groups || [];
+    const filtered = supplierFilteredBody('new', body, supplierId, config);
+    const groups = filtered.visible;
     const list = groups.length
       ? groups.map((group) => newGroupHtml(group, draft, store, config)).join('')
       : emptyHtml(config.texts.newProductsEmpty);
-    return `${statsHtml('new', body, config)}${list}`;
+    return `${statsHtml('new', filtered.body, config)}${supplierTabsHtml(filtered.groups, supplierId, config)}${list}`;
   };
 
   /** 局部刷新每个分组的「普通码 N 双」（只数普通码；特殊码没有合计）。 */

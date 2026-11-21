@@ -7,6 +7,7 @@
  * （预订 / 现货一致，与上新相同）；数量由她手填 / 点 ± 决定。
  */
 import { statsHtml, replenishGroupHtml, emptyHtml, totalTemplateHtml } from './render.js';
+import { supplierFilteredBody, supplierTabsHtml } from './supplierFilter.js';
 
 export const createReplenishPanel = (config) => {
   /** 拉数据 + 把「默认选中」并进草稿（只补不覆盖已改过的数量/勾选）。 */
@@ -15,13 +16,14 @@ export const createReplenishPanel = (config) => {
     return { body, draft: store.seedDefaults(draft, 'replenish', body.groups || []) };
   };
 
-  const render = ({ body, draft, store }) => {
+  const render = ({ body, draft, store, supplierId = 'all' }) => {
     if (!body) return '';
-    const groups = body.groups || [];
+    const filtered = supplierFilteredBody('replenish', body, supplierId, config);
+    const groups = filtered.visible;
     const list = groups.length
       ? groups.map((group) => replenishGroupHtml(group, draft, store, config)).join('')
       : emptyHtml(config.texts.replenishEmpty);
-    return `${statsHtml('replenish', body, config)}${list}`;
+    return `${statsHtml('replenish', filtered.body, config)}${supplierTabsHtml(filtered.groups, supplierId, config)}${list}`;
   };
 
   /** 局部刷新每个分组的「需补 N 双」（不整块重渲染，避免输入框失焦）。 */
@@ -29,9 +31,10 @@ export const createReplenishPanel = (config) => {
     for (const group of body?.groups || []) {
       const target = root.querySelector(`[data-pr-group-total="${group.productRecordId}"]`);
       if (!target) continue;
+      const customs = typeof store.customSizesOf === 'function' ? store.customSizesOf(draft, group.productRecordId) : [];
       const total = (group.sizes || []).reduce(
         (sum, row) => sum + store.quantityOf(draft, group.productRecordId, row.size), 0,
-      );
+      ) + customs.reduce((sum, size) => sum + store.quantityOf(draft, group.productRecordId, size), 0);
       target.innerHTML = totalTemplateHtml(config.card.replenishTotal, total);
     }
   };

@@ -51,6 +51,51 @@ test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切�
   expect(calls.writes).toHaveLength(0);
 });
 
+test('AC-P26 供应商筛选：标签在统计卡下、货品卡上；切换只过滤卡片并重算统计', async ({ page }) => {
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  const filter = page.locator('[data-pr-supplier]');
+  await expect(filter).toHaveCount(3);
+  await expect(filter.nth(0)).toHaveText('全部');
+  await expect(filter.nth(1)).toHaveText('供应商 A');
+  await expect(filter.nth(2)).toHaveText('供应商 B');
+  // 统计卡在供应商标签上面
+  const summary = await page.locator('.pr-summary').boundingBox();
+  const chips = await page.locator('.pr-supplier-filter').boundingBox();
+  expect(summary.y).toBeLessThan(chips.y);
+  await filter.nth(1).click();
+  await expect(page.getByText('86822 · 黑色')).toBeVisible();
+  await expect(page.getByText('92608 · 咖色')).toHaveCount(0);
+  await expect(page.locator('.pr-stat').first().locator('b')).toHaveText('5');
+  await filter.nth(0).click();
+  await expect(page.getByText('92608 · 咖色')).toBeVisible();
+  await tab(page, /上新/).click();
+  await expect(page.locator('[data-pr-supplier]')).toHaveCount(3);
+  await expect(page.locator('[data-pr-supplier]').nth(2)).toHaveText('供应商 B');
+});
+
+test('AC-P27 补货自定义尺码：在尺码管理范围内添加，进入草稿和提交 payload', async ({ page }) => {
+  const calls = await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  const group = page.locator('[data-pr-group="recProdA"]');
+  await group.locator('[data-pr-add-size]').click();
+  const customInput = group.locator('[data-pr-custom-size]').last();
+  await customInput.fill('45');
+  await customInput.press('Tab');
+  await expect(qtyOf(page, 'recProdA', 45)).toHaveValue('0');
+  await qtyOf(page, 'recProdA', 45).fill('2');
+  await page.waitForTimeout(100);
+  const draft = await draftInStorage(page);
+  expect(draft.products.recProdA.entries['45']).toBe(2);
+  await page.getByRole('button', { name: '提交' }).click();
+  await page.waitForURL(/\/workbench\/\?toast=/);
+  const payload = calls.submit[0];
+  const line = payload.items.find((item) => item.productRecordId === 'recProdA');
+  expect(line.entries).toContainEqual({ size: 45, quantity: 2 });
+});
+
 test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾选框）；手填/点 + 才选中', async ({ page }) => {
   await mockApi(page);
   await page.reload();

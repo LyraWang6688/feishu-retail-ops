@@ -96,6 +96,36 @@ test('AC-P18f 上新副标题：供应商为空时不出现孤立的「·」', (
   assert.match(read(`${PUBLIC}/features/procurement/render.js`), /supplier \? config\.card\.newSubtitle : config\.card\.newSubtitleNoSupplier/);
 });
 
+test('AC-P26 供应商筛选：全部 + 唯一供应商；筛选后统计按当前供应商重算', async () => {
+  const filter = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/supplierFilter.js')).href);
+  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
+  const groups = [
+    { productRecordId: 'a', supplierRecordId: 's1', supplierName: '供应商A', spotTotal: 2, prepaidTotal: 1, notArrivedTotal: 3 },
+    { productRecordId: 'b', supplierRecordId: 's2', supplierName: '供应商B', spotTotal: 5, prepaidTotal: 0, notArrivedTotal: 0 },
+    { productRecordId: 'c', supplierRecordId: '', supplierName: '', spotTotal: 1, prepaidTotal: 0, notArrivedTotal: 0 },
+  ];
+  assert.deepEqual(filter.supplierOptions(groups, config).map((item) => item.label), ['全部', '供应商A', '供应商B', '未标注']);
+  assert.deepEqual(filter.filterGroups(groups, 's2').map((item) => item.productRecordId), ['b']);
+  assert.deepEqual(filter.filteredStats('replenish', [groups[0]], config),
+    { spotSold: 2, prepaidPending: 1, notArrived: 3, productCount: 1 });
+});
+
+test('AC-P27 自定义尺码草稿：跨供应商/刷新保留，提交进入现有 items', async () => {
+  const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
+  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
+  const memory = new Map();
+  const storage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v), removeItem: (k) => memory.delete(k) };
+  const draftStore = store.createDraftStore({ openId: 'ou_custom', config, storage, now: () => 1761600000000 });
+  let draft = draftStore.ensure();
+  draft = draftStore.addCustomSize(draft, { productRecordId: 'recA', source: 'replenish' });
+  draft = draftStore.renameCustomSize(draft, { productRecordId: 'recA', source: 'replenish' }, '', '45');
+  draft = draftStore.setQuantity(draft, { productRecordId: 'recA', source: 'replenish' }, 45, 2);
+  assert.deepEqual(draftStore.customSizesOf(draft, 'recA'), ['45']);
+  assert.deepEqual(store.buildItems(draft), [{ productRecordId: 'recA', source: 'replenish', entries: [{ size: 45, quantity: 2 }] }]);
+  draft = draftStore.removeCustomSize(draft, { productRecordId: 'recA', source: 'replenish' }, '45');
+  assert.deepEqual(draftStore.customSizesOf(draft, 'recA'), []);
+});
+
 test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉已消失的已选行', async () => {
   const configSource = read(`${PUBLIC}/config/procurement.js`);
   assert.match(configSource, /replenish: '\{from\} 00:00 – 现在'/);
