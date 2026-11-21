@@ -95,7 +95,8 @@ const createAccessory = async (gateway, input = {}) => {
   const created = await gateway.create('accessory', patch);
   invalidateConfigTable('accessory');
   invalidateConfigTable('giftAccessory');
-  return mapAccessory(created);
+  // 网关 create 返回 { recordId, record }；map 需要 record 本体。
+  return mapAccessory(created?.record || created);
 };
 
 const updateAccessory = async (gateway, recordId, input = {}) => {

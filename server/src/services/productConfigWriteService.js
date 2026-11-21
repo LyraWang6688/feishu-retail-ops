@@ -104,7 +104,8 @@ const createProductConfigWriteService = ({ gateway, asyncJobs } = {}) => {
       setImmediate(() => {
         asyncJobs.run({
           jobId,
-          run: () => execute(payload),
+          // 通用异步层只把 ok:true 判为成功；业务结果必须包装。
+          run: async () => ({ ok: true, result: await execute(payload) }),
         }).catch(() => undefined);
       });
     }

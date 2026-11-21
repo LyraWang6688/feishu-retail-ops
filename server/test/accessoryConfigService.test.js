@@ -51,6 +51,7 @@ test('同一种类重名拒绝；不同种类允许同名', async () => {
     /同一种类下已经有同名配品/,
   );
   const created = await createAccessory(gateway, { name: '39元腰带', category: '鞋垫', price: 49 });
+  assert.ok(created.recordId, 'create 返回真实 recordId，不能是空结果');
   assert.equal(created.category, '鞋垫');
   assert.equal(created.isAccessory, false, '新建默认不勾选赠品');
   const gift = await createAccessory(gateway, { name: '赠品鞋垫', category: '鞋垫', price: 1, isAccessory: true });
