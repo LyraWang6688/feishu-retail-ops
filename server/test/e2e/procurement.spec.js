@@ -79,7 +79,7 @@ test('AC-P28 顶部 tab + 搜索框固定；搜索只筛当前供应商货号', 
   await openPage(page);
   const head = page.locator('.pr-sticky-head');
   await expect(head.locator('[data-pr-search]')).toBeVisible();
-  await page.evaluate(() => window.scrollTo(0, 900));
+  await page.evaluate(() => { document.body.style.minHeight = '2400px'; window.scrollTo(0, 900); });
   await page.waitForTimeout(50);
   const box = await head.boundingBox();
   expect(box.y).toBeLessThanOrEqual(2);
@@ -111,6 +111,19 @@ test('AC-P27 补货自定义尺码：在尺码管理范围内添加，进入草�
   const payload = calls.submit[0];
   const line = payload.items.find((item) => item.productRecordId === 'recProdA');
   expect(line.entries).toContainEqual({ size: 45, quantity: 2 });
+});
+
+test('AC-P29 补货四个统计卡在一行（不换行）', async ({ page }) => {
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  const boxes = await page.locator('.pr-stat').evaluateAll((nodes) => nodes.map((node) => {
+    const rect = node.getBoundingClientRect();
+    return { top: Math.round(rect.top), left: Math.round(rect.left), width: Math.round(rect.width) };
+  }));
+  expect(boxes).toHaveLength(4);
+  expect(new Set(boxes.map((box) => box.top)).size).toBe(1);
+  expect(boxes.every((box) => box.width > 50)).toBe(true);
 });
 
 test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾选框）；手填/点 + 才选中', async ({ page }) => {
