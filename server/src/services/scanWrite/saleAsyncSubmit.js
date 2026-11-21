@@ -55,13 +55,13 @@ const salePrintProductsOf = (lines = [], extra = null) => {
  * @returns {Promise<{ok:boolean,status?:number,code?:string,errors?:Array,jobId?:string,orderNo?:string,printPromptUrl?:string,reused?:boolean,lineCount?:number,paymentCount?:number}>}
  */
 const enqueueSaleAsync = async ({
-  salesAsync, writeService, openId, submitKey, orderNo, gift = '',
+  salesAsync, writeService, openId, submitKey, orderNo, gift = '', accessory = '', accessoryTotalCents = 0,
   lines = [], payments = [], tapId = '', printProducts = null, requestId = '',
 } = {}) => {
   if (!salesAsync || typeof salesAsync.enqueue !== 'function') {
     return { ok: false, status: 503, code: 'async_disabled', errors: [] };
   }
-  const built = buildSalePayload({ openId, orderNo, gift, lines, payments });
+  const built = buildSalePayload({ openId, orderNo, gift, accessory, accessoryTotalCents, lines, payments });
   if (!built.ok) {
     logWarn('scan.sale.async.invalid_payload', { request_id: requestId, errors: built.errors });
     return { ok: false, status: 400, code: 'invalid_payload', errors: built.errors };

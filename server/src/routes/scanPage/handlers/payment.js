@@ -146,6 +146,8 @@ async function handlePaymentPay(ctx) {
               submitKey: String(body[fields.submitKey] || ''),
               orderNo,
               gift: body[fields.gift],
+              accessory: payAccessory,
+              accessoryTotalCents: payAccessoryTotalCents,
               lines: payloadLines,
               payments: paidPayments,
               tapId: String(tapIdFromRequest(req).tap_id || ''),

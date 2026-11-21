@@ -128,6 +128,8 @@ const createSalesAsyncWorker = ({
       paymentStatus: paymentStatusOf(payload.derived),
       paidAmount: String(payload.derived?.paid_amount ?? ''),
       orderGift: payload.gift || '',
+      orderAccessory: payload.accessory || '',
+      orderAccessoryTotalCents: Math.max(0, Math.round(Number(payload.accessory_total || 0) * 100)),
       oneShot: true,
     }, { correlation: correlationOf(job) });
     const ok = result?.ok === true && !(Number(result?.stock?.failed || 0) > 0);
@@ -322,6 +324,8 @@ const createSalesAsyncWorker = ({
   const enqueue = async ({ submitKey, payload, tapId = '', operatorName = '' }) => {
     const built = buildSalePayload({
       openId: payload.open_id, orderNo: payload.order_no, gift: payload.gift,
+      accessory: payload.accessory || '',
+      accessoryTotalCents: Math.max(0, Math.round(Number(payload.accessory_total || 0) * 100)),
       lines: payload.lines, payments: payload.payments,
     });
     if (!built.ok) return { ok: false, errors: built.errors };

@@ -14,6 +14,20 @@ test('一单一货：金额/尺码必填，计算总额与已收齐', () => {
   assert.equal(out.payload.lines[0].trade_type, 'SPOT');
 });
 
+test('配品金额计入应收：鞋类 + 配品可以一起收款，超过合计才报 payment_over_total', () => {
+  const base = {
+    openId: 'ou_1', lines: [line()], accessory: '腰带×1', accessoryTotalCents: 5000,
+    payments: [{ method: '微信扫码', amount: 149 }],
+  };
+  const ok = buildSalePayload(base);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.payload.derived.total_amount, 149);
+  assert.equal(ok.payload.derived.accessory_total, 50);
+  assert.equal(ok.payload.accessory, '腰带×1');
+  const over = buildSalePayload({ ...base, payments: [{ method: '微信扫码', amount: 150 }] });
+  assert.ok(over.errors.some((e) => e.code === 'payment_over_total'));
+});
+
 test('一单多货：多行合计；部分收款 => 未收齐 + 欠款', () => {
   const out = buildSalePayload({
     openId: 'ou_1',
