@@ -11,6 +11,7 @@
 const crypto = require('node:crypto');
 const { ASYNC_JOB_TYPES } = require('../config/asyncJobs');
 const { SUBMIT_TOAST } = require('../config/submitToast');
+const { submitToastUrl } = require('../utils/submitToast');
 const { createSalesDailyCashService } = require('./salesDailyCashService');
 
 const createSalesDailyCashAsyncService = ({ gateway, asyncJobs } = {}) => {
@@ -56,6 +57,7 @@ const createSalesDailyCashAsyncService = ({ gateway, asyncJobs } = {}) => {
       reused: !created,
       status: job.status,
       toast: SUBMIT_TOAST.text,
+      redirect_url: submitToastUrl(),
     };
   };
 

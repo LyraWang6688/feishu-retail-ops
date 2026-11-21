@@ -21,6 +21,7 @@ test('每日现金异步入口：只 enqueue，返回统一 toast 和 job_id', a
   const result = await service.submit({ openingAmount: '500', submitKey: 'key_1' });
   assert.equal(result.jobId, 'sales_daily_cash_job_key_1');
   assert.equal(result.toast, SUBMIT_TOAST.text);
+  assert.match(result.redirect_url, /^\/workbench\/\?toast=/);
   assert.equal(calls.enqueued[0].type, ASYNC_JOB_TYPES.SALES_DAILY_CASH);
   assert.deepEqual(calls.enqueued[0].payload, { openingAmount: '500', withdrawalAmount: undefined });
   await new Promise((resolve) => setImmediate(resolve));
