@@ -86,6 +86,9 @@ const saleTagsHtml = (row, config) => {
   if (Number(row.prepaidSold) > 0) {
     parts.push(`<span><span class="pr-tag pr-tag-pre">${escapeHtml(config.card.tags.prepaid)}</span> <b>${row.prepaidSold}</b> ${escapeHtml(config.units.pair)}</span>`);
   }
+  if (Number(row.notArrived) > 0) {
+    parts.push(`<span><span class="pr-tag pr-tag-not">${escapeHtml(config.card.tags.notArrived)}</span> <b>${row.notArrived}</b> ${escapeHtml(config.units.pair)}</span>`);
+  }
   return `<div class="pr-sale">${parts.join('')}</div>`;
 };
 

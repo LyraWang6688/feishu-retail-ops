@@ -27,6 +27,14 @@ const PAGE_FILES = [
   ...FEATURE_FILES,
 ];
 
+test('AC-P24 前端补货标签：未到货用现货 / 预订同一套标签渲染', () => {
+  const render = read(`${PUBLIC}/features/procurement/render.js`);
+  const config = read(`${PUBLIC}/config/procurement.js`);
+  assert.match(render, /pr-tag-not/, '未到货标签必须走同一套 saleTagsHtml');
+  assert.match(render, /row\.notArrived/, '未到货数量来自后端 row.notArrived');
+  assert.match(config, /notArrived: '未到货'/, '标签文案走配置');
+});
+
 test('AC-P17 薄壳 + 模块化：procurement.html 只做壳，业务在 features/procurement/**', () => {
   const html = read(`${PUBLIC}/procurement.html`);
   assert.ok(lines(`${PUBLIC}/procurement.html`) <= 40, 'procurement.html 必须是薄壳（旧 398 行演示页整体替换）');

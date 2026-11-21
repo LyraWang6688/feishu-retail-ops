@@ -9,11 +9,14 @@
  *   · 分组 / 窗口 / 统计这些**纯逻辑**在 `services/procurementPageData.js`（本文件只做 I/O + 判据注入）；
  *   · 交易类型判据**复用 `config/salesMovements.js`**（行为表里认不出 ⇒ 不计入，不猜）。
  *
- * 已知口径（2026-10-28 业务负责人确认）：补货**只查「销售明细」一张表**（库存数量是它上面的公式列）。
+ * 补货读两个来源（2026-11-21）：
+ *   · 销售明细（近 3 天、库存数量=0、未报过货）→ 现货 / 预订；
+ *   · 采购明细（数量 - 已入库数量 > 0）→ 未到货。
  */
 
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { PROCUREMENT_PAGE } = require('../config/procurementPage');
+const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
 const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMovements');
 const { createProductEnricher } = require('./procurementProductEnricher');
 const { logInfo, logWarn } = require('../utils/logger');
@@ -38,14 +41,20 @@ const createProcurementPageService = (options = {}) => {
   if (!gateway) throw new Error('procurementPageService 需要 gateway');
 
   const salesFields = () => (schema.tables?.salesDetail?.fields) || {};
+  const purchaseBatchFields = () => (schema.tables?.purchaseOrderBatch?.fields) || {};
+  const purchaseFields = () => ({
+    ...(schema.tables?.purchaseRequest?.fields || {}),
+    ...Object.fromEntries(Object.entries(schema.tables?.purchaseRequest?.readOnlyFields || {})
+      .map(([key, value]) => [key, value?.name || value])),
+  });
   const enricher = options.enricher || createProductEnricher({ gateway, schema, logger });
   const productFields = () => (schema.tables?.product?.fields) || {};
   const readRetry = options.readRetry || resolveOrderReadRetryConfig();
   const sleep = options.sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
-  const listByFilterWithRetry = async (tableKey, filter) => {
+  const retryRead = async (tableKey, read) => {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await gateway.listByFilter(tableKey, filter);
+        return await read();
       } catch (error) {
         if (!isRetriableOrderReadError(error) || attempt >= readRetry.maxRetries) throw error;
         const delayMs = Math.max(0, Number(readRetry.delayMs)) * (attempt + 1);
@@ -56,6 +65,8 @@ const createProcurementPageService = (options = {}) => {
       }
     }
   };
+  const listByFilterWithRetry = (tableKey, filter) => retryRead(tableKey, () => gateway.listByFilter(tableKey, filter));
+  const listAllWithRetry = (tableKey) => retryRead(tableKey, () => gateway.listAll(tableKey));
 
   // ── 行为表索引（记录ID → 行为编码）—— 唯一用途：把「销售明细.交易类型」的关联解析成现货/预订 ──
   const loadBehaviorIndex = async () => {
@@ -86,14 +97,33 @@ const createProcurementPageService = (options = {}) => {
       stockField: fields.stockQuantity, dateField: fields.soldAt, days: config.window.replenishDays,
     });
     const records = await listByFilterWithRetry('salesDetail', filter);
-    const productIds = (records || []).flatMap((record) => linkedRecordIds(record?.fields?.[fields.product]));
+    // 补货来源 B：采购明细中「已入库数量 < 数量」的行；读失败如实让页面失败，不静默少来源。
+    const pendingFieldNames = purchaseFields();
+    const behaviorIndex = await loadBehaviorIndex();
+    const pendingRows = await listAllWithRetry('purchaseRequest');
+    const batches = await listAllWithRetry('purchaseOrderBatch');
+    const batchFields = purchaseBatchFields();
+    const batchById = new Map((batches || []).map((row) => [row.record_id, row]));
+    const pendingRecords = (pendingRows || []).filter((row) => {
+      const batchIds = linkedRecordIds(row?.fields?.[pendingFieldNames.batchNo]);
+      // 老行没有批次关联时保留；有批次的必须排除「采购退货」批次。
+      if (!batchIds.length) return true;
+      return !batchIds.some((id) => {
+        const batch = batchById.get(id);
+        const behaviorIds = linkedRecordIds(batch?.fields?.[batchFields.behavior]);
+        return behaviorIds.some((behaviorId) => behaviorIndex.get(behaviorId) === PURCHASE_BEHAVIORS.return);
+      });
+    });
+    const productIds = [
+      ...(records || []).flatMap((record) => linkedRecordIds(record?.fields?.[fields.product])),
+      ...(pendingRecords || []).flatMap((record) => linkedRecordIds(record?.fields?.[pendingFieldNames.product])),
+    ];
     // 补货卡片要用「货号 / 颜色」—— 从「货品信息」按记录 ID 批量反查并**归一化**
     // （getBatch 的形状与列表接口不同：颜色是关联列无显示文本 ⇒ 由 enricher 解析颜色名）
-    const products = await enricher.enrich(productIds);
-    const behaviorIndex = await loadBehaviorIndex();
+    const products = await enricher.enrich([...new Set(productIds.filter(Boolean))]);
     const view = buildReplenishView({
-      records, products, fields, productFields: productFields(), config, now: now(),
-      tradeTypeCodeOf: (cell) => tradeTypeCodeOf(cell, behaviorIndex),
+      records, pendingRecords, products, fields, productFields: productFields(), purchaseFields: pendingFieldNames,
+      config, now: now(), tradeTypeCodeOf: (cell) => tradeTypeCodeOf(cell, behaviorIndex),
     });
     // ⭐⭐ 2026-11-08（#950）：只有**真的认不出贸易类型**的行才记 `trade_type_unknown`。
     //   「已报过货（采购明细已关联）」是正常业务事实 ⇒ 单独计数、**不触发**这条 warn（#946 误报修复）。
@@ -111,6 +141,8 @@ const createProcurementPageService = (options = {}) => {
       groups: view.stats.productCount,
       spot_sold: view.stats.spotSold,
       prepaid_pending: view.stats.prepaidPending,
+      not_arrived: view.stats.notArrived,
+      pending_rows: (pendingRecords || []).length,
       // 只报事实：跳过多少、其中"已报过货"多少（排查"补货怎么少了"用）
       skipped_rows: view.skippedRows,
       already_reported_rows: view.alreadyReportedRows,

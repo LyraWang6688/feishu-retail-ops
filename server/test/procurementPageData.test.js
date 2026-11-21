@@ -161,7 +161,7 @@ test('AC-P4 交易类型：SALE_CASH → 现货已售，SALE_PREPAID → 预订�
     salesRow({ size: 41, trade: 'SALE_RETURN' }),
   ];
   const result = view(records);
-  assert.deepEqual(result.stats, { spotSold: 2, prepaidPending: 3, productCount: 1 });
+  assert.deepEqual(result.stats, { spotSold: 2, prepaidPending: 3, notArrived: 0, productCount: 1 });
   const sizes = result.groups[0].sizes;
   assert.deepEqual(sizes.map((row) => [row.size, row.spotSold, row.prepaidSold]), [
     [39, 2, 1], [40, 0, 2],
@@ -181,6 +181,51 @@ test('AC-P4 关联记录里认不出编码、显示文本是「现货/预订」�
     },
   });
   assert.equal(result.stats.prepaidPending, 1);
+});
+
+// ── 2026-11-21：采购明细「已入库数量」Lookup → 未到货 ─────────────────────
+const P = Object.freeze({ product: '编号', size: '尺码', quantity: '数量', arrivedQuantity: '已入库数量' });
+const pendingRow = ({ product = 'recA', size = 39, quantity = 1, arrived = '' } = {}) => ({
+  record_id: 'pd_' + Math.random().toString(36).slice(2, 8),
+  fields: {
+    [P.product]: link(product), [P.size]: size, [P.quantity]: quantity, [P.arrivedQuantity]: arrived,
+  },
+});
+
+test('AC-P24 采购明细未到货：数量 - 已入库数量；与销售同货品同尺码合并', () => {
+  const result = buildReplenishView({
+    records: [
+      salesRow({ size: 39, trade: 'SALE_CASH' }),
+      salesRow({ size: 39, trade: 'SALE_PREPAID' }),
+    ],
+    pendingRecords: [
+      pendingRow({ size: 39, quantity: 5, arrived: 2 }),
+      pendingRow({ size: 40, quantity: 3, arrived: '' }),
+      pendingRow({ size: 41, quantity: 2, arrived: [1, 1] }),
+      pendingRow({ size: 42, quantity: 2, arrived: 3 }),
+    ],
+    products: dtoMap([productDto()]),
+    fields: F, purchaseFields: P, config, now: NOW, tradeTypeCodeOf: tradeCode,
+  });
+  assert.deepEqual(result.stats, { spotSold: 1, prepaidPending: 1, notArrived: 6, productCount: 1 });
+  assert.deepEqual(result.groups[0].sizes.map((row) => [row.size, row.spotSold, row.prepaidSold, row.notArrived]), [
+    [39, 1, 1, 3],
+    [40, 0, 0, 3],
+  ]);
+  assert.equal(result.groups[0].notArrivedTotal, 6);
+});
+
+test('AC-P24b 采购明细全部到货 / 超额到货不进入补货；空已入库数量按 0', () => {
+  const result = buildReplenishView({
+    records: [], pendingRecords: [
+      pendingRow({ size: 39, quantity: 2, arrived: 2 }),
+      pendingRow({ size: 40, quantity: 2, arrived: 3 }),
+      pendingRow({ size: 41, quantity: 2, arrived: '' }),
+    ],
+    products: dtoMap([productDto()]), fields: F, purchaseFields: P, config, now: NOW, tradeTypeCodeOf: tradeCode,
+  });
+  assert.deepEqual(result.groups[0].sizes.map((row) => [row.size, row.notArrived]), [[41, 2]]);
+  assert.equal(result.stats.notArrived, 2);
 });
 
 // ── AC-P5 分组 / 排序 / 标题字段 ──────────────────────────────────────────

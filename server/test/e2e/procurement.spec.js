@@ -32,6 +32,7 @@ test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切�
   await page.reload();
   await openPage(page);
   await expect(page.getByText('现货已售')).toBeVisible();
+  await expect(page.getByText('未到货', { exact: true }).first()).toBeVisible();
   expect(calls.replenish).toBe(1);
   expect(calls.newProducts).toBe(0);
 

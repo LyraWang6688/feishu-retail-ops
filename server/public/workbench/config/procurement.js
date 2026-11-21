@@ -52,6 +52,7 @@ export const PROCUREMENT_UI = Object.freeze({
     replenish: Object.freeze([
       Object.freeze({ key: 'spotSold', label: '现货已售', unit: '双' }),
       Object.freeze({ key: 'prepaidPending', label: '预订待补', unit: '双' }),
+      Object.freeze({ key: 'notArrived', label: '未到货', unit: '双' }),
       Object.freeze({ key: 'productCount', label: '涉及货品', unit: '' }),
     ]),
     newProducts: Object.freeze([
@@ -80,7 +81,7 @@ export const PROCUREMENT_UI = Object.freeze({
     replenishTotal: '需补{total}双',
     newNormalTotal: '普通码 {total} 双',
     specialSummary: '特殊码 · {count} 个（默认 0 双，点开选择）',
-    tags: Object.freeze({ spot: '现货', prepaid: '预订' }),
+    tags: Object.freeze({ spot: '现货', prepaid: '预订', notArrived: '未到货' }),
   }),
   // 兜底文案；正常由服务端 `product_action_labels` 下发（与扫码页共用同一份配置）。
   productActions: Object.freeze({
