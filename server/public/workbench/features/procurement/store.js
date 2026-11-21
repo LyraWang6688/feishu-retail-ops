@@ -11,6 +11,8 @@
  *   · `submitKey` 一次草稿一把，**提交成功才换**（服务端幂等靠它）；
  *   · 纯函数（默认数量 / 合计 / items）都导出，供单测直接钉口径。
  */
+import { addCustomSizeDraft, renameCustomSizeDraft, removeCustomSizeDraft } from './customSizeStore.js';
+
 export const newSubmitKey = (prefix, now = () => Date.now(), random = () => Math.random()) => {
   const timestamp = Number(now()).toString(36);
   const noise = Math.floor(Number(random()) * 0xffffff).toString(36);
@@ -59,6 +61,7 @@ export const emptyDraft = (config, now) => ({
   version: config.storage.version,
   submitKey: newSubmitKey(config.submitKey.prefix, now),
   products: {},
+  customSizes: {},
 });
 
 export const createDraftStore = ({ openId, config, storage = window.localStorage, now = () => Date.now() }) => {
@@ -69,6 +72,7 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
       const parsed = JSON.parse(storage.getItem(storageKey) || 'null');
       if (!parsed || parsed.version !== config.storage.version || !parsed.products) return null;
       if (!parsed.submitKey) parsed.submitKey = newSubmitKey(config.submitKey.prefix, now);
+      if (!parsed.customSizes || typeof parsed.customSizes !== 'object') parsed.customSizes = {};
       return parsed;
     } catch {
       return null;
@@ -109,9 +113,14 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
         entries,
       },
     };
-    if (!Object.keys(entries).length) delete products[productRecordId];
+    const customSizes = draft.customSizes?.[productRecordId] || [];
+    if (!Object.keys(entries).length && !customSizes.length) delete products[productRecordId];
     return save({ ...draft, products });
   };
+
+  const addCustomSize = (draft, meta) => save(addCustomSizeDraft(draft, meta));
+  const renameCustomSize = (draft, meta, oldSize, nextSize) => save(renameCustomSizeDraft(draft, meta, oldSize, nextSize));
+  const removeCustomSize = (draft, meta, size) => save(removeCustomSizeDraft(draft, meta, size));
 
   /**
    * 把服务端数据里的**默认选中**并进草稿（只补不覆盖：她已经改过的数量/取消的勾选都保留）。
@@ -160,13 +169,19 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
     const products = { ...(draft.products || {}) };
     let changed = false;
     for (const [id, product] of Object.entries(products)) {
-      if (product.source === source && !keep.has(String(id))) { delete products[id]; changed = true; }
+      if (product.source === source && !keep.has(String(id))) {
+        delete products[id];
+        if (draft.customSizes?.[id]) delete draft.customSizes[id];
+        changed = true;
+      }
     }
     return changed ? save({ ...draft, products }) : draft;
   };
 
   return {
     storageKey, load, save, ensure, clear, rotateSubmitKey, setQuantity, seedDefaults, pruneSource,
+    addCustomSize, renameCustomSize, removeCustomSize,
+    customSizesOf: (draft, productRecordId) => [...(draft.customSizes?.[productRecordId] || [])],
     quantityOf: (draft, productRecordId, size) => Number(entriesOfProduct(draft, productRecordId)[size]) || 0,
     productOf: (draft, productRecordId) => draft.products?.[productRecordId] || null,
   };

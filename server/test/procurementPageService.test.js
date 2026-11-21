@@ -58,7 +58,7 @@ const productBatchRecord = ({ id = 'recA', number = '86822', itemNo = '86822', c
 });
 const colorRecord = (id, name) => ({ record_id: id, fields: { [CF.name]: [{ text: name, type: 'text' }] } });
 
-const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], colors = [], purchases = [], batches = [] } = {}) => {
+const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], colors = [], purchases = [], batches = [], suppliers = [] } = {}) => {
   const calls = [];
   return {
     calls,
@@ -73,6 +73,7 @@ const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], 
       if (tableKey === 'behavior') return behaviors;
       if (tableKey === 'purchaseRequest') return purchases;
       if (tableKey === 'purchaseOrderBatch') return batches;
+      if (tableKey === 'supplier') return suppliers;
       return [];
     },
     async getBatch(tableKey, ids) {
@@ -106,6 +107,20 @@ test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 =
   assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.soldAt}\\]`));
   // getBatch：先按记录 ID 读货品，再按颜色关联 ID 读颜色管理（解析显示名；Bug-2 修复）
   assert.deepEqual(gateway.calls.filter((call) => call.kind === 'getBatch').map((call) => call.tableKey), ['product', 'color']);
+});
+
+test('AC-P25 补货分组带供应商名称（来自供应商配置表）', async () => {
+  const gateway = makeGateway({
+    products: [productBatchRecord({ id: 'recA' })],
+    colors: [colorRecord('recColorBlack', '黑色')],
+    behaviors: [behavior('behCash', 'SALE_CASH', '现货')],
+    suppliers: [{ record_id: 'recSupplier', fields: { [V1_BITABLE_SCHEMA.tables.supplier.fields.name]: '供应商A' } }],
+    sales: [salesRecord({ id: 'recA', size: 39, code: 'SALE_CASH' })],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadReplenish({ requestId: 'r_supplier' });
+  assert.equal(result.groups[0].supplierRecordId, 'recSupplier');
+  assert.equal(result.groups[0].supplierName, '供应商A');
 });
 
 test('AC-P24 补货加入采购明细未到货：数量 - 已入库数量，和销售同尺码合并', async () => {

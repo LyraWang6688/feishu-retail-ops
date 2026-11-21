@@ -59,6 +59,17 @@
 .pr-tag-spot { background: var(--info-soft); color: var(--info); }
 .pr-tag-pre { background: var(--warning-soft); color: var(--warning); }
 .pr-tag-not { background: var(--danger-soft); color: var(--danger); }
+.pr-custom-size { flex-direction: row; align-items: center; gap: var(--space-2); }
+.pr-custom-size-input { width: 72px; min-height: var(--control-height); padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); text-align: center; }
+.pr-custom-size-remove { flex: 0 0 var(--control-height); width: var(--control-height); min-width: var(--control-height); padding: 0; }
+.pr-add-size { width: 100%; margin-top: var(--space-2); }
+
+/* 供应商筛选：放在统计卡与第一张货品卡之间；只影响显示，不改草稿 */
+.pr-supplier-filter { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0; overflow-x: auto; }
+.pr-supplier-label { flex: none; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.pr-supplier-tabs { display: flex; gap: var(--space-2); }
+.pr-supplier-tab { flex: none; min-height: var(--control-height); padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--text); font-size: var(--font-size-sm); }
+.pr-supplier-tab.active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
 
 /* 上新尺码格：一行两个；卡内「尺码 + 加减框」**同一行**（业务负责人 2026-10-29 批注） */
 .pr-new-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); width: 100%; }

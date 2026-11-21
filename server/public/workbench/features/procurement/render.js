@@ -106,14 +106,27 @@ const replenishRowHtml = (group, row, draft, store, config) => {
   </div>`;
 };
 
-export const replenishGroupHtml = (group, draft, store, config) => `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">
+const customSizeRowHtml = (group, size, draft, store, config) => {
+  const quantity = store.quantityOf(draft, group.productRecordId, size);
+  return '<div class="pr-size-row pr-custom-size" data-pr-custom-row data-record="' + escapeHtml(group.productRecordId) + '" data-size="' + escapeHtml(size) + '">'
+    + '<input class="pr-custom-size-input" inputmode="numeric" data-pr-custom-size data-record="' + escapeHtml(group.productRecordId) + '" value="' + escapeHtml(size) + '" placeholder="' + escapeHtml(config.texts.customSizePlaceholder) + '" aria-label="' + escapeHtml(config.texts.customSizePlaceholder) + '">'
+    + stepperHtml({ recordId: group.productRecordId, size, quantity, config })
+    + '<button type="button" class="btn pr-custom-size-remove" data-pr-custom-remove data-record="' + escapeHtml(group.productRecordId) + '" data-size="' + escapeHtml(size) + '" aria-label="' + escapeHtml(config.texts.customSizeRemove) + '">×</button>'
+    + '</div>';
+};
+export const replenishGroupHtml = (group, draft, store, config) => {
+  const customs = typeof store.customSizesOf === 'function' ? store.customSizesOf(draft, group.productRecordId) : [];
+  return `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">
   <div class="pr-group-head">
     <h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(config.card.replenishTotal, 0)}</div>
   </div>
   ${productActionsHtml(group, config)}
   ${(group.sizes || []).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}
+  ${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}
+  <button type="button" class="btn pr-add-size" data-pr-add-size data-record="${escapeHtml(group.productRecordId)}">${escapeHtml(config.texts.addCustomSize)}</button>
 </section>`;
+};
 
 const newRowHtml = (group, size, draft, store, config) => {
   const quantity = store.quantityOf(draft, group.productRecordId, size);

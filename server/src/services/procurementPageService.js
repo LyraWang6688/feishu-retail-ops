@@ -42,6 +42,17 @@ const createProcurementPageService = (options = {}) => {
 
   const salesFields = () => (schema.tables?.salesDetail?.fields) || {};
   const purchaseBatchFields = () => (schema.tables?.purchaseOrderBatch?.fields) || {};
+  const supplierFields = () => (schema.tables?.supplier?.fields) || {};
+  const loadSupplierNames = async () => {
+    const fields = supplierFields();
+    const rows = await getConfigRows({ gateway, tableKey: 'supplier' });
+    const map = new Map();
+    for (const row of rows || []) {
+      const name = textOf(row?.fields?.[fields.name]).trim();
+      if (row?.record_id && name) map.set(String(row.record_id), name);
+    }
+    return map;
+  };
   const purchaseFields = () => ({
     ...(schema.tables?.purchaseRequest?.fields || {}),
     ...Object.fromEntries(Object.entries(schema.tables?.purchaseRequest?.readOnlyFields || {})
@@ -121,8 +132,13 @@ const createProcurementPageService = (options = {}) => {
     // 补货卡片要用「货号 / 颜色」—— 从「货品信息」按记录 ID 批量反查并**归一化**
     // （getBatch 的形状与列表接口不同：颜色是关联列无显示文本 ⇒ 由 enricher 解析颜色名）
     const products = await enricher.enrich([...new Set(productIds.filter(Boolean))]);
+    const supplierNames = await loadSupplierNames();
+    const productsWithSupplier = new Map([...products].map(([id, dto]) => [id, {
+      ...dto,
+      supplierName: supplierNames.get(String(dto?.supplierRecordId || '')) || dto?.supplierName || '',
+    }]));
     const view = buildReplenishView({
-      records, pendingRecords, products, fields, productFields: productFields(), purchaseFields: pendingFieldNames,
+      records, pendingRecords, products: productsWithSupplier, fields, productFields: productFields(), purchaseFields: pendingFieldNames,
       config, now: now(), tradeTypeCodeOf: (cell) => tradeTypeCodeOf(cell, behaviorIndex),
     });
     // ⭐⭐ 2026-11-08（#950）：只有**真的认不出贸易类型**的行才记 `trade_type_unknown`。

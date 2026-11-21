@@ -14,12 +14,12 @@ const replenishBody = () => ({
   stats: { spotSold: 4, prepaidPending: 6, notArrived: 4, productCount: 2 },
   groups: [
     {
-      productRecordId: 'recProdA', number: '86822', itemNo: '86822', color: '黑色', supplierRecordId: 'recSupA',
+      productRecordId: 'recProdA', number: '86822', itemNo: '86822', color: '黑色', supplierRecordId: 'recSupA', supplierName: '供应商 A',
       sizes: [{ size: 39, spotSold: 2, prepaidSold: 1, notArrived: 4 }, { size: 41, spotSold: 0, prepaidSold: 2, notArrived: 0 }, { size: 42, spotSold: 3, prepaidSold: 0, notArrived: 0 }],
       prepaidTotal: 3, spotTotal: 5, notArrivedTotal: 4,
     },
     {
-      productRecordId: 'recProdB', number: '92608', itemNo: '92608', color: '咖色', supplierRecordId: 'recSupB',
+      productRecordId: 'recProdB', number: '92608', itemNo: '92608', color: '咖色', supplierRecordId: 'recSupB', supplierName: '供应商 B',
       sizes: [{ size: 43, spotSold: 0, prepaidSold: 2, notArrived: 0 }], prepaidTotal: 2, spotTotal: 0, notArrivedTotal: 0,
     },
   ],
