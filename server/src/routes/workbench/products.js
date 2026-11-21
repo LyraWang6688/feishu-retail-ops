@@ -27,7 +27,7 @@ const {
   listProductFeatures,
 } = require('../../services/productFeatureTagService');
 const { createProductConfigWriteService } = require('../../services/productConfigWriteService');
-const { createProductDelistService } = require('../../services/productDelistService');
+const { createProductDelistAsyncService } = require('../../services/productDelistAsyncService');
 const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 const { createWorkbenchAccessoryConfigRoutes } = require('./accessoryConfig');
 
@@ -46,7 +46,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     maxEntries: PRODUCT_PROFILE.sampleImageCacheMax,
   });
   let productConfigWrites = null;
-  let productDelist = null;
+  let productDelistAsync = null;
   const resolveProductConfigWrites = () => {
     if (!productConfigWrites) {
       productConfigWrites = createProductConfigWriteService({
@@ -56,11 +56,14 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     }
     return productConfigWrites;
   };
-  const resolveProductDelist = () => {
-    if (!productDelist) {
-      productDelist = options.productDelist || createProductDelistService({ gateway: getGateway() });
+  const resolveProductDelistAsync = () => {
+    if (!productDelistAsync) {
+      productDelistAsync = options.productDelistAsync || createProductDelistAsyncService({
+        gateway: getGateway(),
+        asyncJobs: options.asyncJobs || getAsyncJobService(),
+      });
     }
-    return productDelist;
+    return productDelistAsync;
   };
   const breaker = { failures: 0, lastFailureAt: 0, openUntil: 0 };
   const breakerConfig = PRODUCT_PROFILE.sampleImageBreaker;
@@ -303,7 +306,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     }
   });
 
-  /** 货品资料 → 货品下架：只读全部下架货品，按货号模糊筛选。 */
+  /** 货品资料 → 货品下架：只读「无货且未下架」的候选，按货号模糊筛选。 */
   router.get('/products/delisted', async (req, res) => {
     try {
       const q = String(req.query?.q || '').trim().toLowerCase();
@@ -323,28 +326,32 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
     }
   });
 
-  /** 货品资料 → 货品下架：硬删货品记录，删除前归档样例图。 */
+  /** 货品资料 → 货品下架：异步软下架（归档样例图 + 写下架复选框）。 */
   router.delete('/products/:recordId', async (req, res) => {
     const recordId = String(req.params?.recordId || '').trim();
     if (!recordId) return res.status(400).json({ success: false, error: 'missing_record_id' });
     try {
-      const result = await resolveProductDelist().deleteDelistedProduct({
+      const accepted = await resolveProductDelistAsync().submit({
         recordId,
         allowNoSample: req.body?.allowNoSample === true,
+        submitKey: req.body?.submitKey,
         operatorOpenId: req.workbenchUser?.open_id || '',
+        operatorName: req.workbenchUser?.name || '',
         correlation: { request_id: req.requestId },
       });
-      if (!result.ok) {
-        const status = result.reason === 'product_not_found' ? 404
-          : (result.reason === 'archive_failed' ? 502 : 400);
-        return res.status(status).json({ success: false, error: result.reason, status: result.status });
-      }
-      return res.json({ success: true, ...result });
+      return res.status(202).json({
+        success: true,
+        accepted: true,
+        reused: accepted.reused === true,
+        job_id: accepted.jobId,
+        toast: accepted.toast,
+      });
     } catch (error) {
-      logError('workbench.product_profile.delete_failed', {
+      const status = error?.statusCode === 400 ? 400 : 502;
+      logError('workbench.product_profile.delist_submit_failed', {
         request_id: req.requestId, record_id: recordId, error: error.message,
       });
-      return res.status(502).json({ success: false, error: 'product_delete_failed' });
+      return res.status(status).json({ success: false, error: error.message || 'product_delist_failed' });
     }
   });
 

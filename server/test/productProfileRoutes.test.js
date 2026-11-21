@@ -134,35 +134,43 @@ test('AC-PP-D1 货品下架：只返回无货且未下架的货品，按货号�
   } finally { server.close(); }
 });
 
-test('AC-PP-D2 删除接口：透传 allowNoSample / 操作人 / 请求编号', async () => {
+test('AC-PP-D2 下架接口：异步 202，透传 allowNoSample / 操作人 / submitKey', async () => {
   const calls = [];
-  const productDelist = {
-    deleteDelistedProduct: async (input) => {
+  const productDelistAsync = {
+    submit: async (input) => {
       calls.push(input);
-      return { ok: true, record_id: input.recordId, archive: { archived: 0 } };
+      return { jobId: 'product_delist_job_1', toast: '数据提交成功，后台自动写入' };
     },
   };
-  const { server, port } = await listen(appWith({ listAll: async () => [] }, { productDelist }));
+  const { server, port } = await listen(appWith({ listAll: async () => [] }, { productDelistAsync }));
   try {
     const response = await fetch(`http://127.0.0.1:${port}/products/rec_1`, {
       method: 'DELETE',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ allowNoSample: true }),
+      body: JSON.stringify({ allowNoSample: true, submitKey: 'submit_1' }),
     });
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 202);
     const body = await response.json();
     assert.equal(body.success, true);
+    assert.equal(body.accepted, true);
+    assert.equal(body.job_id, 'product_delist_job_1');
+    assert.equal(body.toast, '数据提交成功，后台自动写入');
     assert.equal(calls.length, 1);
     assert.equal(calls[0].recordId, 'rec_1');
     assert.equal(calls[0].allowNoSample, true);
+    assert.equal(calls[0].submitKey, 'submit_1');
     assert.ok(calls[0].correlation, '请求关联对象必须透传');
   } finally { server.close(); }
 });
 
-test('AC-PP-D3 删除失败：在售返回 400，归档失败返回 502', async () => {
-  let reason = 'product_not_delisted';
-  const productDelist = { deleteDelistedProduct: async () => ({ ok: false, reason }) };
-  const { server, port } = await listen(appWith({ listAll: async () => [] }, { productDelist }));
+test('AC-PP-D3 下架提交失败：业务拒绝 400，归档失败 502', async () => {
+  let reason = 'no_sample_image';
+  const productDelistAsync = {
+    submit: async () => {
+      throw Object.assign(new Error(reason), { statusCode: reason === 'archive_failed' ? 502 : 400 });
+    },
+  };
+  const { server, port } = await listen(appWith({ listAll: async () => [] }, { productDelistAsync }));
   try {
     const first = await fetch(`http://127.0.0.1:${port}/products/rec_1`, { method: 'DELETE' });
     assert.equal(first.status, 400);
