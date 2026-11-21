@@ -62,7 +62,9 @@ const normalizePayment = (row = {}, index) => {
 /**
  * @returns {{ok:boolean, errors:Array, payload?:object}}
  */
-const buildSalePayload = ({ openId, orderNo = '', gift = '', lines = [], payments = [] } = {}) => {
+const buildSalePayload = ({
+  openId, orderNo = '', gift = '', accessory = '', accessoryTotalCents = 0, lines = [], payments = [],
+} = {}) => {
   const errors = [];
   if (!asText(openId)) errors.push({ code: 'open_id_missing' });
   if (!Array.isArray(lines) || lines.length === 0) errors.push({ code: 'lines_empty' });
@@ -78,7 +80,9 @@ const buildSalePayload = ({ openId, orderNo = '', gift = '', lines = [], payment
     errors.push(...paymentErrors);
     if (payment) normalizedPayments.push(payment);
   }
-  const totalCents = normalizedLines.reduce((sum, line) => sum + (line.actual_amount_cents || 0), 0);
+  const shoeCents = normalizedLines.reduce((sum, line) => sum + (line.actual_amount_cents || 0), 0);
+  const accessoryCents = Math.max(0, Math.round(Number(accessoryTotalCents) || 0));
+  const totalCents = shoeCents + accessoryCents;
   const paidCents = normalizedPayments.reduce((sum, payment) => sum + payment.amount_cents, 0);
   if (paidCents > totalCents) errors.push({ code: 'payment_over_total' });
   if (errors.length) return { ok: false, errors };
@@ -89,10 +93,13 @@ const buildSalePayload = ({ openId, orderNo = '', gift = '', lines = [], payment
       open_id: asText(openId),
       order_no: asText(orderNo),
       gift: asText(gift),
+      accessory: asText(accessory),
+      accessory_total: centsToYuan(accessoryCents),
       lines: normalizedLines.map(({ actual_amount_cents, ...line }) => line),
       payments: normalizedPayments.map(({ amount_cents, ...payment }) => payment),
       derived: {
         total_amount: centsToYuan(totalCents),
+        accessory_total: centsToYuan(accessoryCents),
         paid_amount: centsToYuan(paidCents),
         owed_amount: centsToYuan(Math.max(0, totalCents - paidCents)),
         payment_status: totalCents > 0 && paidCents >= totalCents
