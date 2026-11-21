@@ -17,14 +17,14 @@ export const createNewProductsPanel = (config) => {
     return { body, draft: store.seedDefaults(draft, 'new', body.groups || []) };
   };
 
-  const render = ({ body, draft, store, supplierId = 'all' }) => {
+  const render = ({ body, draft, store, supplierId = '', search = '' }) => {
     if (!body) return '';
-    const filtered = supplierFilteredBody('new', body, supplierId, config);
+    const filtered = supplierFilteredBody('new', body, supplierId, config, search);
     const groups = filtered.visible;
     const list = groups.length
       ? groups.map((group) => newGroupHtml(group, draft, store, config)).join('')
       : emptyHtml(config.texts.newProductsEmpty);
-    return `${statsHtml('new', filtered.body, config)}${supplierTabsHtml(filtered.groups, supplierId, config)}${list}`;
+    return `${statsHtml('new', filtered.body, config)}${supplierTabsHtml(filtered.groups, filtered.supplierKey, config)}${list}`;
   };
 
   /** 局部刷新每个分组的「普通码 N 双」（只数普通码；特殊码没有合计）。 */

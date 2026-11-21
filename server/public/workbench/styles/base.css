@@ -17,7 +17,9 @@
  *   ③ 长文本一律 `overflow-wrap: anywhere`（单号 / 货号 / 链接不许把页面撑出横向滚动条）。
  */
 * { box-sizing: border-box; }
-html, body { max-width: 100%; overflow-x: hidden; }
+/* overflow-x:hidden 会把 body 变成滚动容器，导致子元素 position:sticky 失效；
+ * clip 同样禁止横向滚动，但不会创建滚动容器（老 WebView 保留 hidden 兜底）。 */
+html, body { max-width: 100%; overflow-x: hidden; overflow-x: clip; }
 body {
   margin: 0;
   color: var(--text);

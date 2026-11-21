@@ -47,13 +47,13 @@ export const PROCUREMENT_UI = Object.freeze({
     rangeLabel: '统计范围',
     authFailed: '工作台启动失败：',
     supplierLabel: '供应商',
-    supplierAll: '全部',
     supplierUnassigned: '未标注',
     addCustomSize: '＋ 添加尺码',
     customSizePlaceholder: '尺码',
     customSizeInvalid: '尺码要填正整数',
     customSizeDuplicate: '这个尺码已经存在',
     customSizeRemove: '删除这个尺码',
+    searchPlaceholder: '搜索货号',
   }),
   // 顶部统计（补货 3 项；上新**只有**「新增货品」一项）
   stats: Object.freeze({

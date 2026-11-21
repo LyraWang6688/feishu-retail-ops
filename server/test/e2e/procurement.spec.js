@@ -51,28 +51,45 @@ test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切�
   expect(calls.writes).toHaveLength(0);
 });
 
-test('AC-P26 供应商筛选：标签在统计卡下、货品卡上；切换只过滤卡片并重算统计', async ({ page }) => {
+test('AC-P26 供应商筛选：无「全部」，默认第一个供应商；统计随供应商变化', async ({ page }) => {
   await mockApi(page);
   await page.reload();
   await openPage(page);
   const filter = page.locator('[data-pr-supplier]');
-  await expect(filter).toHaveCount(3);
-  await expect(filter.nth(0)).toHaveText('全部');
-  await expect(filter.nth(1)).toHaveText('供应商 A');
-  await expect(filter.nth(2)).toHaveText('供应商 B');
-  // 统计卡在供应商标签上面
+  await expect(filter).toHaveCount(2);
+  await expect(filter.nth(0)).toHaveText('供应商 A');
+  await expect(filter.nth(1)).toHaveText('供应商 B');
   const summary = await page.locator('.pr-summary').boundingBox();
   const chips = await page.locator('.pr-supplier-filter').boundingBox();
   expect(summary.y).toBeLessThan(chips.y);
-  await filter.nth(1).click();
   await expect(page.getByText('86822 · 黑色')).toBeVisible();
   await expect(page.getByText('92608 · 咖色')).toHaveCount(0);
   await expect(page.locator('.pr-stat').first().locator('b')).toHaveText('5');
-  await filter.nth(0).click();
+  await filter.nth(1).click();
   await expect(page.getByText('92608 · 咖色')).toBeVisible();
+  await expect(page.getByText('86822 · 黑色')).toHaveCount(0);
   await tab(page, /上新/).click();
-  await expect(page.locator('[data-pr-supplier]')).toHaveCount(3);
-  await expect(page.locator('[data-pr-supplier]').nth(2)).toHaveText('供应商 B');
+  await expect(page.locator('[data-pr-supplier]')).toHaveCount(2);
+  await expect(page.locator('[data-pr-supplier]').nth(1)).toHaveText('供应商 B');
+});
+
+test('AC-P28 顶部 tab + 搜索框固定；搜索只筛当前供应商货号', async ({ page }) => {
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  const head = page.locator('.pr-sticky-head');
+  await expect(head.locator('[data-pr-search]')).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 900));
+  await page.waitForTimeout(50);
+  const box = await head.boundingBox();
+  expect(box.y).toBeLessThanOrEqual(2);
+  const search = head.locator('[data-pr-search]');
+  await page.locator('[data-pr-supplier]').nth(1).click();
+  await search.fill('92608');
+  await expect(page.getByText('92608 · 咖色')).toBeVisible();
+  await expect(page.getByText('86822 · 黑色')).toHaveCount(0);
+  await search.fill('86822');
+  await expect(page.getByText('92608 · 咖色')).toHaveCount(0);
 });
 
 test('AC-P27 补货自定义尺码：在尺码管理范围内添加，进入草稿和提交 payload', async ({ page }) => {
@@ -166,6 +183,7 @@ test('AC-P22 提交前 0 写请求；点提交只 1 次 POST 且 payload 正确�
   // 默认全 0 ⇒ 要手动选：A 两个码 + B 一个码（与下面 payload 断言对应）
   await qtyOf(page, 'recProdA', 39).fill('1');
   await qtyOf(page, 'recProdA', 41).fill('2');
+  await page.locator('[data-pr-supplier]').nth(1).click();
   await qtyOf(page, 'recProdB', 43).fill('2');
   await page.waitForTimeout(100);
   const draftBefore = await draftInStorage(page);
@@ -250,6 +268,7 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
 
   // 补货选一个码（另一个货品也手选一个码，补货默认已全 0）
   await qtyOf(page, 'recProdA', 39).fill('2');
+  await page.locator('[data-pr-supplier]').nth(1).click();
   await qtyOf(page, 'recProdB', 43).fill('2');
   await page.waitForTimeout(100);
 

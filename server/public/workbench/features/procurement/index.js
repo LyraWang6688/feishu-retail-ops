@@ -28,7 +28,9 @@ export function mountProcurementPage(host) {
   host.innerHTML = shellHtml(config);
   const remote = createApi(config);
   const panels = { replenish: createReplenishPanel(config), new: createNewProductsPanel(config) };
-  const state = { tab: 'replenish', bodies: {}, errors: {}, loadedAt: {}, suppliers: { replenish: 'all', new: 'all' } };
+  const state = { tab: 'replenish', bodies: {}, errors: {}, loadedAt: {},
+    suppliers: { replenish: '', new: '' }, search: { replenish: '', new: '' } };
+  const searchInput = host.querySelector('[data-pr-search]');
   let store = null;
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
@@ -41,7 +43,7 @@ export function mountProcurementPage(host) {
     if (state.errors[tab]) { element.innerHTML = errorHtml(state.errors[tab], config); return; }
     const body = state.bodies[tab];
     element.innerHTML = body
-      ? panels[tab].render({ body, draft, store, supplierId: state.suppliers[tab] || 'all' })
+      ? panels[tab].render({ body, draft, store, supplierId: state.suppliers[tab], search: state.search[tab] })
       : emptyHtml(config.texts.loading);
   };
 
@@ -88,6 +90,7 @@ export function mountProcurementPage(host) {
   const activate = async (tab, options = {}) => {
     if (!TABS.includes(tab)) return;
     state.tab = tab;
+    if (searchInput) searchInput.value = state.search[tab] || '';
     host.querySelectorAll('[data-pr-tab]').forEach((button) => {
       button.classList.toggle('active', button.dataset.prTab === tab);
     });
@@ -101,7 +104,7 @@ export function mountProcurementPage(host) {
     if (tabButton) { await activate(tabButton.dataset.prTab); return; }
     const supplier = event.target.closest('[data-pr-supplier]');
     if (supplier) {
-      state.suppliers[state.tab] = supplier.dataset.prSupplier || 'all';
+      state.suppliers[state.tab] = supplier.dataset.prSupplier || '';
       paint(state.tab);
       return;
     }
@@ -142,9 +145,11 @@ export function mountProcurementPage(host) {
     }
   });
 
+  searchInput?.addEventListener('input', () => { state.search[state.tab] = String(searchInput.value || ''); paint(state.tab); });
+
   host.addEventListener('input', (event) => {
     const input = event.target.closest('[data-pr-qty]');
-    if (input) quantityInput({ input, config, store, draft, setDraft, applyQuantity });
+    if (input) quantityInput({ input, config, applyQuantity });
   });
 
   host.addEventListener('change', (event) => {

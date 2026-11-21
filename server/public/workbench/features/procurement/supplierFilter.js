@@ -20,11 +20,14 @@ export const supplierOptions = (groups = [], config = {}) => {
         : String(group?.supplierName || config.texts?.supplierUnassigned || ''),
     });
   }
-  return [{ key: 'all', label: String(config.texts?.supplierAll || '') }, ...seen.values()];
+  return [...seen.values()];
 };
 
+export const firstSupplierKey = (groups = [], config = {}) => supplierOptions(groups, config)[0]?.key || '';
+
 export const supplierTabsHtml = (groups, active, config) => {
-  const tabs = supplierOptions(groups, config).map((item) => {
+  const options = supplierOptions(groups, config);
+  const tabs = options.map((item) => {
     const selected = item.key === active;
     return '<button type="button" class="pr-supplier-tab' + (selected ? ' active' : '')
       + '" data-pr-supplier="' + escapeHtml(item.key) + '" aria-selected="' + selected + '">'
@@ -36,8 +39,8 @@ export const supplierTabsHtml = (groups, active, config) => {
     + '<div class="pr-supplier-tabs">' + tabs + '</div></div>';
 };
 
-export const filterGroups = (groups = [], active = 'all') => (
-  active === 'all' ? groups : groups.filter((group) => keyOf(group) === active)
+export const filterGroups = (groups = [], active = '') => (
+  groups.filter((group) => keyOf(group) === active)
 );
 
 export const filteredStats = (tab, groups = [], config = {}) => {
@@ -53,12 +56,22 @@ export const filteredStats = (tab, groups = [], config = {}) => {
   return stats;
 };
 
-export const supplierFilteredBody = (tab, body, active, config) => {
+const searchMatch = (group, query) => {
+  const text = String(query || '').trim().toLowerCase();
+  if (!text) return true;
+  return String(group?.itemNo || '').toLowerCase().includes(text);
+};
+
+export const supplierFilteredBody = (tab, body, active, config, search = '') => {
   const groups = body?.groups || [];
-  const visible = filterGroups(groups, active);
+  const supplierKey = active || firstSupplierKey(groups, config);
+  const supplierGroups = filterGroups(groups, supplierKey);
+  const visible = supplierGroups.filter((group) => searchMatch(group, search));
   return {
-    body: { ...body, groups: visible, stats: filteredStats(tab, visible, config) },
+    body: { ...body, groups: visible, stats: filteredStats(tab, supplierGroups, config) },
     groups,
+    supplierGroups,
     visible,
+    supplierKey,
   };
 };

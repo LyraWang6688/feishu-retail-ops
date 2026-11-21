@@ -16,14 +16,14 @@ export const createReplenishPanel = (config) => {
     return { body, draft: store.seedDefaults(draft, 'replenish', body.groups || []) };
   };
 
-  const render = ({ body, draft, store, supplierId = 'all' }) => {
+  const render = ({ body, draft, store, supplierId = '', search = '' }) => {
     if (!body) return '';
-    const filtered = supplierFilteredBody('replenish', body, supplierId, config);
+    const filtered = supplierFilteredBody('replenish', body, supplierId, config, search);
     const groups = filtered.visible;
     const list = groups.length
       ? groups.map((group) => replenishGroupHtml(group, draft, store, config)).join('')
       : emptyHtml(config.texts.replenishEmpty);
-    return `${statsHtml('replenish', filtered.body, config)}${supplierTabsHtml(filtered.groups, supplierId, config)}${list}`;
+    return `${statsHtml('replenish', filtered.body, config)}${supplierTabsHtml(filtered.groups, filtered.supplierKey, config)}${list}`;
   };
 
   /** 局部刷新每个分组的「需补 N 双」（不整块重渲染，避免输入框失焦）。 */
