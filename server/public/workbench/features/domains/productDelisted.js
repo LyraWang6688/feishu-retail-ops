@@ -1,4 +1,6 @@
-/** 「货品资料 → 货品下架」子视图：搜索 / 加载更多 / 删除确认。 */
+/** 「货品资料 → 货品下架」子视图：搜索 / 加载更多 / 异步下架确认。 */
+import { waitForAsyncJob } from '../shared/asyncJob.js';
+
 export const createProductDelistedModule = ({
   api, PRODUCT_PROFILE_API, T, esc, fill, COMPLETE_PAGE_SIZE, thumbImgHtml, resetThumbs, observeThumbs, showToast, showPageError,
 }) => {
@@ -80,6 +82,7 @@ export const createProductDelistedModule = ({
       recordId: button.dataset.ppDelete || '',
       number: button.dataset.ppDeleteNumber || '',
       hasSampleImage: button.dataset.ppHasSample === '1',
+      submitKey: globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`,
     };
     if (!host.__ppDelete.recordId) return;
     host.querySelector('[data-pp-delete-number]').textContent = `编号：${host.__ppDelete.number}`;
@@ -98,10 +101,14 @@ export const createProductDelistedModule = ({
     button.disabled = true;
     button.textContent = T.delistedDeleting;
     try {
-      await api.delete(PRODUCT_PROFILE_API.product(item.recordId), { allowNoSample: !item.hasSampleImage });
+      const accepted = await api.delete(PRODUCT_PROFILE_API.product(item.recordId), {
+        allowNoSample: !item.hasSampleImage,
+        submitKey: item.submitKey,
+      });
+      if (accepted?.toast) showToast(accepted.toast);
       closeModal(host);
       host.__ppDelete = null;
-      showToast(T.delistedDeleted);
+      if (accepted?.job_id) await waitForAsyncJob(accepted.job_id);
       await load(host, host.__ppDelistedQuery || '');
     } catch (error) {
       const code = String(error?.message || '');

@@ -647,7 +647,7 @@
 | `workbench.product_features.list_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_features.update_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.completion_failed` | 1 | src/routes/workbench/products.js |
-| `workbench.product_profile.delete_failed` | 1 | src/routes/workbench/products.js |
+| `workbench.product_profile.delist_submit_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.delisted_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.incomplete_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_profile.product_failed` | 1 | src/routes/workbench/products.js |

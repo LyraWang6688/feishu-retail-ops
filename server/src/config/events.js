@@ -478,7 +478,7 @@ const EVENTS = Object.freeze([
   'workbench.product_features.list_failed',
   'workbench.product_features.update_failed',
   'workbench.product_profile.completion_failed',
-  'workbench.product_profile.delete_failed',
+  'workbench.product_profile.delist_submit_failed',
   'workbench.product_profile.delisted_failed',
   'workbench.product_profile.incomplete_failed',
   'workbench.product_profile.product_failed',
