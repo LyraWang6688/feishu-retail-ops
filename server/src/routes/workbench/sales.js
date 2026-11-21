@@ -113,7 +113,6 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
   const salesQuery = () => {
     if (!salesQueryInstance) salesQueryInstance = createSalesQueryService({
       gateway: options.gateway || followup.gateway,
-      dailyCash: options.salesDailyCash,
     });
     return salesQueryInstance;
   };

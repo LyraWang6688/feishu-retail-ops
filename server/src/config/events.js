@@ -514,7 +514,6 @@ const EVENTS = Object.freeze([
   'workbench.sales.orders.order_skipped',
   'workbench.sales.orders.read_retry',
   'workbench.sales.payment.failed',
-  'workbench.sales.query.daily_cash_failed',
   'workbench.sales.query.failed',
   'workbench.sales.query.filter_fallback',
   'workbench.size.unresolved',

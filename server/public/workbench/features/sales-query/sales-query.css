@@ -72,12 +72,3 @@
 .sq-table-scroll { width:100%; min-width:0; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
 .sq-table-scroll .sq-table { width:100%; min-width:100%; }
 
-.sq-daily-cash{margin-bottom:14px;padding:14px;border:1px solid var(--border-light);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-card)}
-.sq-daily-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px}
-.sq-daily-head h2{margin:0;font-size:16px}
-.sq-daily-head span{color:var(--text-secondary);font-size:var(--font-size-xs)}
-.sq-daily-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.sq-daily-grid div{display:grid;gap:4px;padding:10px;border-radius:var(--radius-sm);background:var(--surface-sunken)}
-.sq-daily-grid span{color:var(--text-secondary);font-size:var(--font-size-xs)}
-.sq-daily-grid b{font-size:20px;font-variant-numeric:tabular-nums}
-.sq-daily-note{margin:8px 0 0;color:var(--text-secondary);font-size:var(--font-size-xs)}
