@@ -207,6 +207,7 @@ export function mountAfterSalesPage(container, options = {}) {
       if (!recordId) { modalError(AFTER_SALES_PAGE.exchangeScanFailed); return; }
       const requestId = (globalThis.crypto?.randomUUID?.() || '').toString();
       const query = new URLSearchParams({
+        from: AFTER_SALES_PAGE.exchangeRealm,
         flow: 'afterSalesExchange',
         requestId,
         salesEntryRecordId: String(candidate.sales_entry_record_id || ''),
