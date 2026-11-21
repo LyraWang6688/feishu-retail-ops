@@ -14,7 +14,7 @@ const V1_SCHEMA_SCOPES = {
   // ⭐ 2026-10-17（同一条指令的追加）：「**团购券管理这个数据表也需要**」——
   //   它原来刻意不进闸门（"可选项不拦部署"），现在**进 sales**；schema 里有 5 个字段映射
   //   （券名称 / 售价 / 面值 / 平台结算款 / 销售状态）⇒ 闸门会**逐字段**验 ✓
-  sales: ['product', 'color', 'category', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord', 'groupBuyVoucher'],
+  sales: ['product', 'color', 'category', 'accessory', 'paymentMethod', 'salesEntry', 'salesDetail', 'paymentRecord', 'groupBuyVoucher', 'salesSummary'],
   purchase: [
     'product',
     'supplier',

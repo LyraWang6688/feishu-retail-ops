@@ -726,6 +726,12 @@ const V1_BITABLE_SCHEMA = {
         stockKey: '库存键',
       },
     },
+    salesSummary: {
+      tableName: '销售汇总',
+      tableId: getEnv('FEISHU_V1_SALES_SUMMARY_TABLE_ID'),
+      fields: { saleDate: '销售日', openingCash: '开门零钱', withdrawalCash: '拿走现金' },
+      readOnlyFields: { salesAmount: { name: '销售金额', type: 19, writable: false }, closingCash: { name: '关门零钱', type: 20, writable: false } },
+    },
     // ⭐⭐ 2026-11-09（业务负责人）：「点「批量打印」进的是飞书表单链接，后续就只用这个了」
     //   ⇒ 批量打印 = 她填这张表的飞书表单；后端监听该表**新增记录**自动打印（见
     //   `services/labelPrintFormIntakeService.js` + `routes/larkEvents.js` 的 table_id 分派）。

@@ -28,6 +28,18 @@ const timeOnlyText = (value) => {
 };
 const statusClass = (status) => (status === '已交付' ? 'ok' : (status === '未交付' ? 'wait' : 'back'));
 
+const dailyCashHtml = (dailyCash) => {
+  const record = dailyCash?.record || null;
+  return `<section class="sq-daily-cash" data-sq-daily-cash>
+    <div class="sq-daily-head"><h2>${escapeHtml(PAGE.texts.dailyCashTitle)}</h2><span>${escapeHtml(dailyCash?.date || '')}</span></div>
+    <div class="sq-daily-grid">
+      <div><span>${escapeHtml(PAGE.texts.dailyOpening)}</span><b>${escapeHtml(record ? amountText(record.opening_amount) : '—')}</b></div>
+      <div><span>${escapeHtml(PAGE.texts.dailyRealtime)}</span><b>${escapeHtml(record ? amountText(record.realtime_amount) : '—')}</b></div>
+    </div>
+    ${record ? '' : `<p class="sq-daily-note">${escapeHtml(PAGE.texts.dailyNotStarted)}</p>`}
+  </section>`;
+};
+
 function methodsHtml(methods, pendingMethods, revenue) {
   const max = Math.max(...methods.map((item) => Number(item.amount) || 0), 1);
   const normal = methods.map((item) => `<div class="sq-bar-row">
@@ -101,6 +113,7 @@ export function createSalesQueryModule() {
       const delivered = summary.delivered || { count: 0, amount: 0 };
       const undelivered = summary.undelivered || { count: 0, amount: 0 };
       body.innerHTML = `
+        ${dailyCashHtml(data.daily_cash)}
         <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.amountTitle)}</h2></div>
         <div class="sq-top">
           <div class="sq-revenue"><span>${escapeHtml(PAGE.texts.revenue)}</span><b>${escapeHtml(amountText(revenue))}</b></div>

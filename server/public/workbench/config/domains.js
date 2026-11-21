@@ -90,6 +90,11 @@ export const DOMAIN_TABS = [
         kind: 'sales-query',
       },
       {
+        id: 'sales-daily-cash',
+        label: '每日现金',
+        kind: 'sales-daily-cash',
+      },
+      {
         id: 'sales-customer-money',
         label: '客户往来款',
         kind: 'placeholder',

@@ -12,6 +12,16 @@ const mockApi = async (page, { orders = [] } = {}) => {
     if (path === '/api/auth/feishu/me') {
       return route.fulfill(json({ enabled: true, authenticated: true, user: { name: 'E2E' } }));
     }
+    if (path === '/api/workbench/sales/daily-cash') {
+      return route.fulfill(json({
+        success: true,
+        date: '2026-11-21',
+        record: {
+          record_id: 'dc1', date: '2026-11-21', opening_amount: 500,
+          withdrawal_amount: 0, realtime_amount: 1320, sales_amount: 820,
+        },
+      }));
+    }
     if (path === '/api/workbench/products/search') {
       return route.fulfill(json({
         success: true,
@@ -201,6 +211,16 @@ test('供应往来款：供应商余额 + 最近30天交易', async ({ page }) =
   await page.getByPlaceholder('搜索供应商').fill('恒安利');
   await expect(page.locator('[data-sb-card]')).toHaveCount(1);
   await expect(page.locator('[data-sb-card]')).toContainText('恒安利');
+});
+
+test('每日现金：展示期初现金和实时现金余额', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '销售', exact: true }).click();
+  await page.getByRole('button', { name: '每日现金', exact: true }).click();
+  await expect(page.locator('[data-page-kind="sales-daily-cash"]')).toBeVisible();
+  await expect(page.locator('[data-dc-realtime]')).toContainText('1,320.00');
+  await expect(page.locator('[data-dc-opening]')).toHaveValue('500');
 });
 
 test('货品下架：无货且未下架列表 + 按货号搜索 + 下架确认', async ({ page }) => {
