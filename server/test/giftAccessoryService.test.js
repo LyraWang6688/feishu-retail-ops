@@ -40,6 +40,11 @@ test('AC-GF3 配品候选返回全部其他配品（不按赠品过滤）', asyn
   const service = createGiftAccessoryService({ gateway, table: { ...V1_BITABLE_SCHEMA.tables.accessory, tableId: 'tbl_test_accessory' } });
   const items = await service.listAll();
   assert.deepEqual(items.map((item) => item.name), ['鞋油', '39元腰带']);
+  await service.listAll();
+  assert.equal(gateway.calls.n, 1, '添加配品候选整表读命中 accessory 缓存');
+  invalidateConfigTable('accessory');
+  await service.listAll();
+  assert.equal(gateway.calls.n, 2, '其他配品记录变更后重新读');
 });
 
 test('AC-GF2 赠品候选缓存被 record_changed 失效后会重读', async () => {
@@ -49,6 +54,7 @@ test('AC-GF2 赠品候选缓存被 record_changed 失效后会重读', async () 
   ]);
   const service = createGiftAccessoryService({ gateway, table: { ...V1_BITABLE_SCHEMA.tables.accessory, tableId: 'tbl_test_accessory' } });
   await service.list();
+  invalidateConfigTable('accessory');
   invalidateConfigTable('giftAccessory');
   await service.list();
   assert.equal(gateway.calls.n, 2);

@@ -9,7 +9,7 @@
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { textValue } = require('./v1BitableGateway');
-const { invalidateConfigTable } = require('./configTableCache');
+const { getConfigRows, invalidateConfigTable } = require('./configTableCache');
 const { ensureAccessoryCategory } = require('./accessoryCategoryService');
 
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -43,7 +43,7 @@ const mapAccessory = (record) => {
 };
 
 const listAccessories = async (gateway) => {
-  const records = await gateway.listAll('accessory');
+  const records = await getConfigRows({ gateway, tableKey: 'accessory' });
   return (Array.isArray(records) ? records : [])
     .map(mapAccessory)
     .filter((item) => item.recordId && item.name)
@@ -93,6 +93,7 @@ const createAccessory = async (gateway, input = {}) => {
   };
   if (input.sampleImageToken) patch.sampleImage = [{ file_token: String(input.sampleImageToken) }];
   const created = await gateway.create('accessory', patch);
+  invalidateConfigTable('accessory');
   invalidateConfigTable('giftAccessory');
   return mapAccessory(created);
 };
@@ -120,6 +121,7 @@ const updateAccessory = async (gateway, recordId, input = {}) => {
       ? [{ file_token: String(input.sampleImageToken) }] : [];
   }
   const updated = await gateway.update('accessory', id, patch);
+  invalidateConfigTable('accessory');
   invalidateConfigTable('giftAccessory');
   return mapAccessory(updated);
 };
@@ -128,6 +130,7 @@ const deleteAccessory = async (gateway, recordId) => {
   const id = String(recordId || '').trim();
   if (!id) throw userError('缺少配品记录 ID');
   await gateway.delete('accessory', id);
+  invalidateConfigTable('accessory');
   invalidateConfigTable('giftAccessory');
   return { recordId: id };
 };
