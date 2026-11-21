@@ -714,6 +714,8 @@ const createLabelPrintService = (gateway, options = {}) => {
         body: config.body,
         fields: config.fields,
         texts: config.texts,
+        // ⭐ 打印时间配置必须随 layout 一起返回，否则队列服务拿不到（标签上不会印日期）。
+        printTime: config.printTime,
       },
       qr: {
         url_template: SCAN_URL.recordIdTemplate,

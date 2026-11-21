@@ -119,6 +119,7 @@ test('二维码内容 = hm 的 /r/{记录 ID}（记录 ID 来自接口读到的�
   // 只编码值、不编码模板：域名与 `/r/` 必须原样在（整体 encodeURIComponent 会把 `://` 编掉）。
   assert.ok(data.labels[0].scan_url.startsWith('https://hm.bamamei.online/r/'));
   assert.equal(data.qr.url_template, SCAN_URL.recordIdTemplate, '模板来自 tagQrCode 的 SCAN_URL（不是本链路自己抄的）');
+  assert.equal(data.layout.printTime?.enabled, true, '打印时间配置必须随 layout 返回，否则队列不会传给渲染器');
   assert.equal(data.missing_qr_record_id, 0, '这一条拿到了记录 ID ⇒ 不算降级');
   assert.match(data.labels[0].qr_svg, /^<svg /);
   assert.ok(data.labels[0].qr_svg.includes('</svg>'));
