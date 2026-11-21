@@ -292,6 +292,17 @@ test('每日现金：录单子卡片、期初已填写状态', async ({ page }) 
   await page.getByRole('link', { name: /每日现金/ }).click();
   await expect(page.locator('[data-page-kind="sales-daily-cash"]')).toBeVisible();
   await expect(page.locator('[data-dc-summary]')).toContainText('¥500.00');
+  await expect(page.locator('[data-dc-summary]')).toContainText('实时现金');
+  await expect(page.locator('[data-dc-summary]')).toContainText('¥1,320.00');
+  const dateCentered = await page.locator('[data-dc-summary]').evaluate((summary) => {
+    const head = summary.querySelector('.dc-summary-head');
+    const date = head?.querySelector('span:last-child');
+    if (!head || !date) return false;
+    const box = head.getBoundingClientRect();
+    const dateBox = date.getBoundingClientRect();
+    return Math.abs((dateBox.left + dateBox.width / 2) - (box.left + box.width / 2)) < 2;
+  });
+  expect(dateCentered).toBe(true);
   await expect(page.locator('[data-dc-opening]')).toHaveValue('500');
   await expect(page.getByRole('button', { name: '已填写' })).toBeDisabled();
 });
