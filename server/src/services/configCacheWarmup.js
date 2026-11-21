@@ -11,7 +11,7 @@
  *   · 只在启动后后台跑，不阻塞 listen；
  *   · 失败只记 warn，服务照常；
  *   · 用 `getConfigRows` 同一个缓存入口，不另造缓存；
- *   · `giftAccessory` 是虚拟缓存（只存配品=true），由资金页自己按需加载，启动不预热。
+ *   · `giftAccessory` 是虚拟缓存（只存赠品=true），由资金页自己按需加载，启动不预热。
  */
 const { getConfigRows } = require('./configTableCache');
 const { CONFIG_TABLE_KEYS } = require('../config/configTables');

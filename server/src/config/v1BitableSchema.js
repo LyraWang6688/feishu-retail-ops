@@ -119,7 +119,7 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_CATEGORY_TABLE_ID'),
       fields: { name: '品类', category: '类别' },
     },
-    // 其他配品（腰带、鞋油、袜子、包等）：只用于资金页赠品候选（配品=true）。
+    // 其他配品（腰带、鞋油、袜子、包等）：只用于资金页赠品候选（赠品=true）。
     // 表 ID 没有默认值：不同租户这张表不同。
     accessory: {
       tableName: '其他配品',
@@ -130,7 +130,8 @@ const V1_BITABLE_SCHEMA = {
         price: '单价',
         cost: '成本',
         // 2026-11-11：业务负责人新增的复选框；资金页赠品候选只取 true。
-        isAccessory: '配品',
+        // 2026-11-21：生产表已把这列改名为「赠品」，字段映射同步。
+        isAccessory: '赠品',
         // 2026-11-19：配品配置页新增的库存数量（Number）；可维护。
         stockQuantity: '库存数量',
         // 2026-11-19：样例图（附件）；配品配置页支持上传一张。

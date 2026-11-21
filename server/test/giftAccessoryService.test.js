@@ -16,13 +16,13 @@ const makeGateway = (rows) => {
   };
 };
 
-test('AC-GF1 赠品候选只返回 配品=true，未勾选不进缓存', async () => {
+test('AC-GF1 赠品候选只返回 赠品=true，未勾选不进缓存', async () => {
   resetConfigTableCache();
   const gateway = makeGateway([
-    { record_id: 'r1', fields: { 名称: '鞋油', 种类: ['鞋油'], 配品: true } },
-    { record_id: 'r2', fields: { 名称: '39元腰带', 种类: ['腰带'], 配品: false } },
-    { record_id: 'r3', fields: { 名称: '袜子', 种类: ['袜子'], 配品: true } },
-    { record_id: 'r4', fields: { 名称: '未勾选', 种类: ['其他'], 配品: false } },
+    { record_id: 'r1', fields: { 名称: '鞋油', 种类: ['鞋油'], 赠品: true } },
+    { record_id: 'r2', fields: { 名称: '39元腰带', 种类: ['腰带'], 赠品: false } },
+    { record_id: 'r3', fields: { 名称: '袜子', 种类: ['袜子'], 赠品: true } },
+    { record_id: 'r4', fields: { 名称: '未勾选', 种类: ['其他'], 赠品: false } },
   ]);
   const service = createGiftAccessoryService({ gateway, table: { ...V1_BITABLE_SCHEMA.tables.accessory, tableId: 'tbl_test_accessory' } });
   const items = await service.list();
@@ -35,7 +35,7 @@ test('AC-GF1 赠品候选只返回 配品=true，未勾选不进缓存', async (
 test('AC-GF2 赠品候选缓存被 record_changed 失效后会重读', async () => {
   resetConfigTableCache();
   const gateway = makeGateway([
-    { record_id: 'r1', fields: { 名称: '鞋油', 种类: ['鞋油'], 配品: true } },
+    { record_id: 'r1', fields: { 名称: '鞋油', 种类: ['鞋油'], 赠品: true } },
   ]);
   const service = createGiftAccessoryService({ gateway, table: { ...V1_BITABLE_SCHEMA.tables.accessory, tableId: 'tbl_test_accessory' } });
   await service.list();
