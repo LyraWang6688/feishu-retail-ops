@@ -199,8 +199,8 @@ const V1_BITABLE_SCHEMA = {
         //       必须由**服务器侧只读核生产真表**确认（见 `docs/payment-method-voucher-link-2026-10-16.md`）
         //       —— 本机没有生产凭证，**我没有核过生产** ✗（如实标注，不猜 ✓）
         voucher: '团购券管理',
-        // 2026-11-21：生产表已删除「出现顺序」；候选顺序按表记录顺序。
         enabled: '是否启用',
+        salesAmount: '销售额',
       },
     },
     supplier: {
