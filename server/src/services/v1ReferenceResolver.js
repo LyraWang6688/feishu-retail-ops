@@ -1,6 +1,7 @@
 const { textValue } = require('./v1BitableGateway');
 const { getConfigRows } = require('./configTableCache');
 const { isSalesTradeType } = require('../config/salesMovements');
+const { isDelistedRecord, filterActiveProductsFor } = require('./productLifecycle');
 
 const normalizeText = (value) =>
   String(value || '')
@@ -81,6 +82,7 @@ class V1ReferenceResolver {
         ? await this.gateway.get('product', input.productRecordId, { retry: options.retry })
         : await this.gateway.get('product', input.productRecordId);
       if (!record) throw new Error(`找不到货品记录：${input.productRecordId}`);
+      if (isDelistedRecord(record)) throw new Error('product_delisted');
       return { recordId: input.productRecordId, record };
     }
     const table = this.gateway.table('product');
@@ -89,7 +91,7 @@ class V1ReferenceResolver {
     const wantedItemNo = normalizeText(input.itemNo);
     const wantedColor = normalizeColor(input.color);
 
-    const candidates = records.map((record) => {
+    const candidates = filterActiveProductsFor(records, 'salesPicker').map((record) => {
       const fields = record.fields || {};
       return {
         record,

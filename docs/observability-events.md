@@ -285,7 +285,7 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `product.delisted.archive_failed` | 1 | src/services/productDelistService.js |
-| `product.delisted.deleted` | 1 | src/services/productDelistService.js |
+| `product.delisted.soft_deleted` | 1 | src/services/productDelistService.js |
 | `product.sample_image.drive.backfill.done` | 1 | src/services/sampleImageBackfillService.js |
 | `product.sample_image.drive.backfill.failed` | 2 | src/services/sampleImageBackfillService.js |
 | `product.sample_image.drive.backfill.retry` | 1 | src/services/sampleImageBackfillService.js |

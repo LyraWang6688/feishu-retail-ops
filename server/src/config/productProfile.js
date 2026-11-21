@@ -14,8 +14,6 @@ const PRODUCT_PROFILE = Object.freeze({
   tagMissingField: readString(process.env, 'PRODUCT_PROFILE_TAG_MISSING_FIELD', '标签信息缺失').trim() || '标签信息缺失',
   // 这个值表示资料已齐备，不进入「货品完善」。
   completeValue: readString(process.env, 'PRODUCT_PROFILE_COMPLETE_VALUE', '齐备').trim() || '齐备',
-  // ⭐ 2026-11-20：货品下架卡片只认这个状态值（生产单选项：在售 / 下架）。
-  delistedStatus: readString(process.env, 'PRODUCT_PROFILE_DELISTED_STATUS', '下架').trim() || '下架',
   // ⭐ 2026-11-17：缺失项的**给用户看的标签**（与工作台货品资料页的缺失 chips 同一套文案）。
   //   扫码页「资料不齐」链接、货品资料页的 chips 都从这里取，避免两处各写一份。
   issueSample: readString(process.env, 'PRODUCT_PROFILE_ISSUE_SAMPLE', '缺样例图').trim() || '缺样例图',

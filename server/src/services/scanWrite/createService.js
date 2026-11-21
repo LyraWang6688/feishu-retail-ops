@@ -43,6 +43,7 @@ const { SalesStatusWriter } = require('../salesStatusWriter');
 const { SalesDeliveryService } = require('../salesDeliveryService');
 const { textValue } = require('../v1BitableGateway');
 const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
+const { isDelistedRecord } = require('../productLifecycle');
 // ⭐⭐ 2026-10-15（⑤ 模块化）：**后台那一半**（调度 + 失败标记 + "等它跑完"的登记簿）已剥成独立一件。
 //   ⚠️ 只**单向** require（新件不认识本文件 ⇒ **不会循环依赖** ✓）；
 //   ⚠️ `waitForPendingSaleBackgrounds` 继续从**本模块**导出（用例的 import **一个字都没改** ✓）。
@@ -261,13 +262,14 @@ const createScanWriteService = (options = {}) => {
     const id = String(productRecordId || '').trim();
     if (id) {
       const record = await gateway.get('product', id).catch(() => null);
-      if (record) return record;
+      if (record && !isDelistedRecord(record)) return record;
     }
     if (!number) return null;
     const numberField = fieldOf('product', 'number');
     if (!numberField) return null;
     const records = await getConfigRows({ gateway, tableKey: 'product' });
-    return records.find((record) => textValue(record?.fields?.[numberField]).trim() === String(number).trim()) || null;
+    return records.find((record) => !isDelistedRecord(record)
+      && textValue(record?.fields?.[numberField]).trim() === String(number).trim()) || null;
   };
 
   const salesEntryOrderNo = async (recordId, created) => {

@@ -59,3 +59,5 @@
     margin-right: 0;
   }
 }
+
+.ledger-delisted-tag { display:inline-block; margin-left:4px; padding:0 4px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:var(--font-size-xs); }

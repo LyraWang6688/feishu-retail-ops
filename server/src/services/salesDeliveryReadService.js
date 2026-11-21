@@ -22,6 +22,8 @@ const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 const { dateRangeFormula } = require('./bitableFilterFormula');
 const { logInfo, logWarn } = require('../utils/logger');
+const { isDelistedRecord } = require('./productLifecycle');
+const { PRODUCT_LIFECYCLE } = require('../config/productLifecycle');
 
 const richTextValue = (value) => {
   if (Array.isArray(value)) {
@@ -214,6 +216,8 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       number: richTextValue(item.fields?.[productFields.number]).trim(),
       productNo: textValue(item.fields?.[productFields.itemNo]).trim(),
       colorId: strictLinkedRecordIds(item.fields?.[productFields.color])[0] || '',
+      delisted: isDelistedRecord(item),
+      delistedLabel: isDelistedRecord(item) ? PRODUCT_LIFECYCLE.labels.delisted : '',
     }]));
 
     const detailRowOf = (detail) => {
@@ -225,6 +229,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
         record_id: detail.record_id,
         product: product?.productNo || '',
         product_record_id: productId,
+        ...(product?.delisted ? { delisted: true, delisted_label: product.delistedLabel || '' } : {}),
         color: product?.colorId ? (colorNameById.get(product.colorId) || '') : '',
         size: sizeText === '' ? null : (Number.isFinite(Number(sizeText)) ? Number(sizeText) : sizeText),
         fulfillment_status: textValue(detail.fields?.[detailFields.fulfillmentStatus]) || '',

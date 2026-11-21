@@ -34,6 +34,7 @@ const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
+const { isDelistedRecord, filterActiveProductsFor } = require('./productLifecycle');
 const { createScanPageCache } = require('./scanPageCache');
 const { createLiveInventorySnapshot } = require('./liveInventorySnapshot');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
@@ -563,7 +564,7 @@ const createScanPageService = (rawGateway, options = {}) => {
       });
       throw limitError(tableName('product'), products.length, limits.productRecords);
     }
-    const product = findProduct(products, number);
+    const product = findProduct(filterActiveProductsFor(products, 'salesPicker'), number);
     if (!product && warnOnEmptyFilteredRead) {
       logWarn(config.events.filteredEmpty, { request_id: requestId, table_key: 'product', number });
     }
@@ -808,7 +809,7 @@ const createScanPageService = (rawGateway, options = {}) => {
       // 与按编号那条路共用 configTableCache：整表只在 TTL 内读一次；
       // record_changed / TTL 失效后自然重读，不再维护第二套 productSnapshot。
       const products = await getConfigRows({ gateway, tableKey: 'product' });
-      return (products || []).find((record) => record?.record_id === recordId) || null;
+      return (products || []).find((record) => record?.record_id === recordId && !isDelistedRecord(record)) || null;
     } catch (error) {
       logWarn(config.events.recordLookupFailed, {
         request_id: requestId, product_record_id: recordId, error: error.message,

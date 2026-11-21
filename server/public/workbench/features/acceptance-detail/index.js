@@ -35,6 +35,8 @@ const groupRows = (rows) => {
         itemNo: row.itemNo,
         color: row.color,
         number: row.number,
+        delisted: row.delisted === true,
+        delistedLabel: row.delisted_label || '',
         rows: [],
       });
     }
@@ -48,8 +50,11 @@ const groupRows = (rows) => {
     .sort(compareArrivalProducts);
 };
 
-const groupLabel = (group) => [group.itemNo, group.color].filter(Boolean).join(' · ')
-  || group.number || ARRIVAL_FULL_TEXTS.detailGroupUnknown;
+const groupLabel = (group) => {
+  const label = [group.itemNo, group.color].filter(Boolean).join(' · ')
+    || group.number || ARRIVAL_FULL_TEXTS.detailGroupUnknown;
+  return group.delisted ? label + '（' + (group.delistedLabel || '已下架') + '）' : label;
+};
 
 const rowHtml = (row) => {
   const label = escapeHtml(String(row.size ?? ''));

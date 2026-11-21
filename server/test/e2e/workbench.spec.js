@@ -41,7 +41,7 @@ const mockApi = async (page, { orders = [] } = {}) => {
         success: true,
         total: 1,
         items: [{
-          recordId: 'down1', number: 'DOWN|黑|男', itemNo: 'DOWN', status: '下架',
+          recordId: 'down1', number: 'DOWN|黑|男', itemNo: 'DOWN', status: '无货', delisted: false,
           hasSampleImage: false, imageUrl: '',
         }],
       }));
@@ -203,19 +203,19 @@ test('供应往来款：供应商余额 + 最近30天交易', async ({ page }) =
   await expect(page.locator('[data-sb-card]')).toContainText('恒安利');
 });
 
-test('货品下架：默认列表 + 按货号搜索 + 删除确认', async ({ page }) => {
+test('货品下架：无货且未下架列表 + 按货号搜索 + 下架确认', async ({ page }) => {
   await mockApi(page);
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '配置', exact: true }).click();
   await page.getByRole('button', { name: '货品资料', exact: true }).click();
   await page.getByRole('button', { name: /货品下架/ }).click();
   await expect(page.locator('[data-pp-delisted-list]')).toContainText('DOWN|黑|男');
-  const input = page.getByPlaceholder('按货号搜索下架货品');
+  const input = page.getByPlaceholder('按货号搜索无货且未下架的货品');
   await input.fill('DOWN');
   await expect(page.locator('[data-pp-delisted-list]')).toContainText('DOWN|黑|男');
   await page.locator('[data-pp-delete]').click();
   await expect(page.locator('[data-pp-delete-modal]')).toBeVisible();
-  await expect(page.locator('[data-pp-delete-modal]')).toContainText('确认删除这个下架货品');
+  await expect(page.locator('[data-pp-delete-modal]')).toContainText('确认下架这个货品');
   await page.locator('[data-pp-delete-cancel]').click();
   await expect(page.locator('[data-pp-delete-modal]')).toBeHidden();
 });

@@ -4,6 +4,7 @@ const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
 const { getConfigRows } = require('./configTableCache');
+const { isDelistedRecord } = require('./productLifecycle');
 const { containsFormula, dateRangeFormula } = require('./bitableFilterFormula');
 const { SCAN_PAGE } = require('../config/scanPage');
 const { WORKBENCH_CATEGORY_LIMIT, WORKBENCH_PRODUCT_INVENTORY_LIMIT, WORKBENCH_LEDGER_LIMIT } = require('../config/workbenchQuery');
@@ -212,14 +213,21 @@ const createWorkbenchService = (gateway, options = {}) => {
     } else {
       records = await listAllWithRetry(gateway, 'inventoryLedger', requestId, { fieldNames });
     }
-    const rows = records.map((record) => ({
-      record_id: record.record_id,
-      behavior: asText(schema, 'inventoryLedger', record, 'behavior'),
-      number: asText(schema, 'inventoryLedger', record, 'product'),
-      size: asText(schema, 'inventoryLedger', record, 'size'),
-      quantity_change: asNumber(fieldValue(schema, 'inventoryLedger', record, 'quantityChange')),
-      created_at: asDate(fieldValue(schema, 'inventoryLedger', record, 'ledgerCreatedAt'))?.toISOString() || '',
-    })).filter((row) => row.created_at && shanghaiDay(new Date(row.created_at)) >= fromText
+    const productRows = await getConfigRows({ gateway, tableKey: 'product' });
+    const delistedIds = new Set((productRows || []).filter((record) => isDelistedRecord(record))
+      .map((record) => record.record_id));
+    const rows = records.map((record) => {
+      const productIds = asLinks(schema, 'inventoryLedger', record, 'product');
+      return {
+        record_id: record.record_id,
+        behavior: asText(schema, 'inventoryLedger', record, 'behavior'),
+        number: asText(schema, 'inventoryLedger', record, 'product'),
+        size: asText(schema, 'inventoryLedger', record, 'size'),
+        quantity_change: asNumber(fieldValue(schema, 'inventoryLedger', record, 'quantityChange')),
+        created_at: asDate(fieldValue(schema, 'inventoryLedger', record, 'ledgerCreatedAt'))?.toISOString() || '',
+        ...(productIds.some((id) => delistedIds.has(id)) ? { delisted: true } : {}),
+      };
+    }).filter((row) => row.created_at && shanghaiDay(new Date(row.created_at)) >= fromText
       && shanghaiDay(new Date(row.created_at)) <= toText)
       .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')
         || String(b.record_id).localeCompare(String(a.record_id)));

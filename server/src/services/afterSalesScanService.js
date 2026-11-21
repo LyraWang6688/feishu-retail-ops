@@ -32,6 +32,8 @@ const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { textValue } = require('./v1BitableGateway');
 const { salesLinkRecordIds } = require('./afterSalesLinkIds');
 const { withSalesReadRetry } = require('./salesReadRetry');
+const { isDelistedRecord } = require('./productLifecycle');
+const { PRODUCT_LIFECYCLE } = require('../config/productLifecycle');
 const { createScanPageCache } = require('./scanPageCache');
 const { lookupWindowStart } = require('../utils/salesDateWindows');
 
@@ -202,6 +204,10 @@ class AfterSalesScanService {
         number: asText(textValue(product.fields?.[productFields.number])),
         item_no: asText(textValue(product.fields?.[productFields.itemNo])),
         color: asText(textValue(product.fields?.[productFields.color])),
+        ...(isDelistedRecord(product) ? {
+          delisted: true,
+          delisted_label: PRODUCT_LIFECYCLE.labels.delisted,
+        } : {}),
       },
       days: windowDays,
       cutoff,

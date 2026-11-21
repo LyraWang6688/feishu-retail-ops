@@ -57,6 +57,7 @@
  */
 const QRCode = require('qrcode');
 const { getConfigRows } = require('./configTableCache');
+const { isDelistedRecord, filterActiveProductsFor } = require('./productLifecycle');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_PRINT, LABEL_PRINT_V5, resolveGrid } = require('../config/labelPrint');
 const { SCAN_URL } = require('../config/tagQrCode');
@@ -446,7 +447,14 @@ const createLabelPrintService = (gateway, options = {}) => {
 
     // 两张整表的短 TTL 缓存（只缓存原始记录；keyword 过滤每次现算）。
     const { records, productRecords } = await labelListCache.get();
-    return buildLabelsFromTables(records, productRecords, { keyword });
+    const delistedNumbers = new Set((productRecords || [])
+      .filter((record) => isDelistedRecord(record))
+      .map((record) => textValue(record?.fields?.[productFields.number]).trim())
+      .filter(Boolean));
+    const data = await buildLabelsFromTables(records, filterActiveProductsFor(productRecords, 'labelPrintList'), { keyword });
+    if (!delistedNumbers.size) return data;
+    const labels = (data.labels || []).filter((label) => !delistedNumbers.has(label.number));
+    return { ...data, labels, total_matched: labels.length, total_returned: labels.length };
   };
 
   /**
@@ -742,6 +750,7 @@ const createLabelPrintService = (gateway, options = {}) => {
       throw userError(texts.recordMissing);
     }
     if (!record) throw userError(texts.recordMissing);
+    if (isDelistedRecord(record)) throw userError(texts.delisted);
     const number = textValue(record?.fields?.[productFields.number]).trim();
     if (!number) throw userError(texts.recordNoNumber);
 
