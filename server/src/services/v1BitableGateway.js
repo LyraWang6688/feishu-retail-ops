@@ -106,6 +106,57 @@ class V1BitableGateway {
       return fields;
     }, options);
   }
+
+  /**
+   * 更新字段定义（全量 PUT 语义）。
+   *
+   * 2026-11-21：配品「种类」是单选字段，新增种类必须先把 option 写进字段定义，
+   * 否则记录写入会被飞书拒绝。字段写同样经统一写调度器；读/写仍只在本网关发生。
+   */
+  async updateFieldDefinition(tableKey, fieldName, definition = {}, options = {}) {
+    const table = this.tableWithId(tableKey);
+    const startedAt = Date.now();
+    const correlation = correlationFields(options.correlation);
+    const fields = await this.listFields(tableKey, { refresh: true });
+    const field = fields.find((item) => item.field_name === fieldName);
+    if (!field?.field_id) throw new Error(`“${table.tableName}”找不到字段: ${fieldName}`);
+    const data = {
+      field_name: definition.field_name || field.field_name,
+      type: definition.type ?? field.type,
+      ...(definition.property !== undefined ? { property: definition.property } : {}),
+    };
+    try {
+      const response = await this.scheduledWrite(tableKey, 'update_field', async () => {
+        const result = await this.client.bitable.appTableField.update({
+          path: { app_token: this.schema.appToken, table_id: table.tableId, field_id: field.field_id },
+          data,
+        });
+        this.assertSuccess(result, `update_field:${fieldName}`);
+        return result;
+      }, { correlation });
+      this.fieldCache.delete(tableKey);
+      logInfo('bitable.field.updated', {
+        table_key: tableKey,
+        table_id: table.tableId,
+        field_name: data.field_name,
+        field_type: data.type,
+        duration_ms: Date.now() - startedAt,
+        ...correlation,
+      });
+      return response.data?.field || response.data || {};
+    } catch (error) {
+      logError('bitable.field.update_failed', {
+        table_key: tableKey,
+        table_id: table.tableId,
+        field_name: fieldName,
+        duration_ms: Date.now() - startedAt,
+        error: error.message,
+        ...correlation,
+      });
+      throw error;
+    }
+  }
+
   async validateTable(tableKey) {
     const table = this.table(tableKey);
     const at = this.now();

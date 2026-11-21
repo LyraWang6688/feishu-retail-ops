@@ -8,8 +8,8 @@ const submitKey = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}_${M
 
 const fieldHtml = (label, input) => `<label class="ac-field"><span>${escapeHtml(label)}</span>${input}</label>`;
 
-const optionHtml = (selected = '') => ['<option value="">' + escapeHtml(T.selectCategory) + '</option>']
-  .concat(T.categories.map((name) => `<option${name === selected ? ' selected' : ''}>${escapeHtml(name)}</option>`))
+const optionHtml = (categories = T.categories, selected = '') => ['<option value="">' + escapeHtml(T.selectCategory) + '</option>']
+  .concat(categories.map((name) => `<option${name === selected ? ' selected' : ''}>${escapeHtml(name)}</option>`))
   .join('');
 
 const formHtml = () => `
@@ -17,20 +17,33 @@ const formHtml = () => `
     <h2 data-ac-form-title>${escapeHtml(T.addTitle)}</h2>
     <div class="ac-grid">
       ${fieldHtml(T.name + ' *', '<input class="input" data-ac-name autocomplete="off">')}
-      ${fieldHtml(T.category, `<select class="input" data-ac-category>${optionHtml()}</select>`)}
+      ${fieldHtml(T.category, `<div class="ac-category-row"><select class="input" data-ac-category>${optionHtml()}</select><button class="mini" type="button" data-ac-manage-categories>${escapeHtml(T.manageCategories)}</button></div>`)}
       ${fieldHtml(T.price + ' *', '<input class="input" data-ac-price type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00">')}
       ${fieldHtml(T.cost, '<input class="input" data-ac-cost type="number" min="0" step="0.01" inputmode="decimal" placeholder="选填">')}
       ${fieldHtml(T.stockQuantity, '<input class="input" data-ac-stock type="number" min="0" step="1" inputmode="numeric" placeholder="选填">')}
+      <div class="ac-field ac-field-full"><label class="ac-check"><input data-ac-gift type="checkbox"><span>${escapeHtml(T.giftField)}</span></label></div>
       <div class="ac-field ac-field-full"><span>${escapeHtml(T.sampleImage)}</span><div class="ac-upload-row"><label class="ac-upload"><input data-ac-image type="file" accept="image/*" hidden><img data-ac-preview hidden alt="样例图预览"><span data-ac-upload-text>${escapeHtml(T.upload)}</span></label><small>${escapeHtml(T.imageHint)}</small></div></div>
     </div>
     <div class="ac-actions"><button class="btn primary" type="submit" data-ac-submit>${escapeHtml(T.submit)}</button><button class="btn" type="button" data-ac-cancel hidden>${escapeHtml(T.cancelEdit)}</button></div>
   </form>`;
 
+const categoryModalHtml = () => `
+  <div class="ac-modal" data-ac-category-modal hidden>
+    <div class="ac-modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(T.categoryManageTitle)}">
+      <div class="ac-modal-head"><h2>${escapeHtml(T.categoryManageTitle)}</h2><button class="mini" type="button" data-ac-category-close aria-label="${escapeHtml(T.close)}">×</button></div>
+      <p class="ac-hint">${escapeHtml(T.categoryManageHint)}</p>
+      <div class="ac-category-list" data-ac-category-list></div>
+      <form class="ac-category-add" data-ac-category-form>
+        <input class="input" data-ac-category-new autocomplete="off" placeholder="${escapeHtml(T.categoryAddPlaceholder)}">
+        <button class="btn primary" type="submit">${escapeHtml(T.categoryAdd)}</button>
+      </form>
+    </div>
+  </div>`;
 export function createAccessoryConfigModule() {
   return {
     mount(host) {
       if (!host) return;
-      host.innerHTML = `<div class="ac-page">${formHtml()}<section class="ac-list" data-ac-list><p class="ac-empty">${escapeHtml(T.loading)}</p></section></div>`;
+      host.innerHTML = `<div class="ac-page">${formHtml()}${categoryModalHtml()}<section class="ac-list" data-ac-list><p class="ac-empty">${escapeHtml(T.loading)}</p></section></div>`;
       const form = host.querySelector('[data-ac-form]');
       const list = host.querySelector('[data-ac-list]');
       const nameInput = form.querySelector('[data-ac-name]');
@@ -38,6 +51,12 @@ export function createAccessoryConfigModule() {
       const priceInput = form.querySelector('[data-ac-price]');
       const costInput = form.querySelector('[data-ac-cost]');
       const stockInput = form.querySelector('[data-ac-stock]');
+      const giftInput = form.querySelector('[data-ac-gift]');
+      const manageCategoriesButton = form.querySelector('[data-ac-manage-categories]');
+      const categoryModal = host.querySelector('[data-ac-category-modal]');
+      const categoryList = host.querySelector('[data-ac-category-list]');
+      const categoryForm = host.querySelector('[data-ac-category-form]');
+      const categoryNewInput = host.querySelector('[data-ac-category-new]');
       const imageInput = form.querySelector('[data-ac-image]');
       const preview = form.querySelector('[data-ac-preview]');
       const uploadText = form.querySelector('[data-ac-upload-text]');
@@ -45,6 +64,7 @@ export function createAccessoryConfigModule() {
       const cancelButton = form.querySelector('[data-ac-cancel]');
       const title = form.querySelector('[data-ac-form-title]');
       let rows = [];
+      let categories = [...T.categories];
       let editingId = '';
       let imageToken = '';
 
@@ -57,6 +77,7 @@ export function createAccessoryConfigModule() {
         editingId = '';
         imageToken = '';
         form.reset();
+        giftInput.checked = false;
         imageInput.value = '';
         preview.hidden = true;
         preview.removeAttribute('src');
@@ -68,6 +89,39 @@ export function createAccessoryConfigModule() {
         showError('');
       };
       const categoryName = (row) => String(row.category || '').trim() || '未分类';
+      const renderCategoryOptions = (selected = categoryInput.value || '') => {
+        const names = [...categories];
+        if (selected && !names.includes(selected)) names.push(selected);
+        categoryInput.innerHTML = optionHtml(names, selected);
+      };
+      const renderCategoryManager = () => {
+        categoryList.innerHTML = categories.length
+          ? categories.map((name) => {
+            const count = rows.filter((row) => categoryName(row) === name).length;
+            return '<div class="ac-category-item"><span>' + escapeHtml(name) + '</span><small>' + count + ' 个配品</small></div>';
+          }).join('')
+          : '<p class="ac-empty">' + escapeHtml(T.empty) + '</p>';
+      };
+      const loadCategories = async () => {
+        try {
+          const data = await api.get(API.categories);
+          if (Array.isArray(data?.categories) && data.categories.length) categories = data.categories;
+        } catch {
+          // 读不到字段结构时保留内置候选，不阻断配品列表。
+        }
+        renderCategoryOptions();
+        renderCategoryManager();
+      };
+      const openCategoryManager = () => {
+        if (!categoryModal) return;
+        renderCategoryManager();
+        categoryModal.hidden = false;
+        categoryNewInput?.focus();
+      };
+      const closeCategoryManager = () => {
+        if (categoryModal) categoryModal.hidden = true;
+      };
+
       const renderList = () => {
         if (!rows.length) {
           list.innerHTML = `<p class="ac-empty">${escapeHtml(T.empty)}</p>`;
@@ -84,7 +138,7 @@ export function createAccessoryConfigModule() {
             <div class="ac-cards">${items.map((row) => `
               <article class="ac-card" data-ac-row="${escapeHtml(row.recordId)}">
                 <div class="ac-thumb">${row.hasSampleImage ? `<img src="${escapeHtml(row.sampleImageUrl)}" alt="" loading="lazy">` : '<span>🛍️</span>'}</div>
-                <div class="ac-main"><strong>${escapeHtml(row.name)}</strong><div class="ac-meta"><span>¥${escapeHtml(row.price ?? '—')}</span><span>${escapeHtml(T.stock.replace('{count}', row.stockQuantity ?? '—'))}</span></div></div>
+                <div class="ac-main"><strong>${escapeHtml(row.name)}${row.isAccessory ? ` <span class="ac-gift-tag">${escapeHtml(T.giftTag)}</span>` : ''}</strong><div class="ac-meta"><span>¥${escapeHtml(row.price ?? '—')}</span><span>${escapeHtml(T.stock.replace('{count}', row.stockQuantity ?? '—'))}</span></div></div>
                 <div class="ac-row-actions"><button class="mini" type="button" data-ac-edit="${escapeHtml(row.recordId)}">${escapeHtml(T.edit)}</button><button class="mini danger" type="button" data-ac-delete="${escapeHtml(row.recordId)}">${escapeHtml(T.remove)}</button></div>
               </article>`).join('')}</div>
           </section>`).join('');
@@ -109,10 +163,11 @@ export function createAccessoryConfigModule() {
         editingId = recordId;
         imageToken = '';
         nameInput.value = row.name || '';
-        categoryInput.value = row.category || '';
+        renderCategoryOptions(row.category || '');
         priceInput.value = row.price ?? '';
         costInput.value = row.cost ?? '';
         stockInput.value = row.stockQuantity ?? '';
+        giftInput.checked = row.isAccessory === true;
         title.textContent = T.editTitle;
         submitButton.textContent = T.save;
         cancelButton.hidden = false;
@@ -163,6 +218,7 @@ export function createAccessoryConfigModule() {
             price,
             cost: costInput.value,
             stockQuantity: stockInput.value,
+            isAccessory: giftInput.checked,
             submitKey: submitKey(),
           };
           if (imageToken) body.sampleImageToken = imageToken;
@@ -179,6 +235,30 @@ export function createAccessoryConfigModule() {
         }
       });
       cancelButton.addEventListener('click', () => resetForm());
+      manageCategoriesButton?.addEventListener('click', openCategoryManager);
+      categoryModal?.addEventListener('click', (event) => {
+        if (event.target === categoryModal || event.target.closest('[data-ac-category-close]')) closeCategoryManager();
+      });
+      categoryForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const name = categoryNewInput.value.trim();
+        if (!name) return showError(T.categoryRequired);
+        if (categories.some((item) => item.trim().toLowerCase() === name.toLowerCase())) return showError(T.categoryExists);
+        const button = categoryForm.querySelector('button[type="submit"]');
+        button.disabled = true;
+        try {
+          await waitAccepted(await api.post(API.categories, { category: name, submitKey: submitKey() }));
+          await loadCategories();
+          renderCategoryOptions(name);
+          closeCategoryManager();
+          showToast(T.categoryAdded);
+        } catch (error) {
+          showError(error?.message || T.saveFailed);
+        } finally {
+          button.disabled = false;
+        }
+      });
+
       host.addEventListener('click', async (event) => {
         const edit = event.target.closest?.('[data-ac-edit]');
         if (edit) { editRow(edit.dataset.acEdit); return; }
@@ -194,6 +274,7 @@ export function createAccessoryConfigModule() {
         }
       });
       void load();
+      void loadCategories();
     },
   };
 }

@@ -79,7 +79,14 @@ const CHAINS = Object.freeze({
     route: 'src/routes/workbench/accessoryConfig.js', routeKey: /router\.post\('\/products\/accessories'/,
     service: 'src/services/accessoryConfigService.js', serviceKey: /gateway\.create\('accessory'/,
     landing: [['accessory', 'name'], ['accessory', 'category'], ['accessory', 'price'],
-      ['accessory', 'cost'], ['accessory', 'stockQuantity']],
+      ['accessory', 'cost'], ['accessory', 'stockQuantity'], ['accessory', 'isAccessory']],
+  },
+
+  'API.categories': {
+    fe: 'features/domains/accessoryConfig.js', feKey: 'api.post(API.categories',
+    route: 'src/routes/workbench/accessoryConfig.js', routeKey: /router\.post\('\/products\/accessories\/categories'/,
+    service: 'src/services/accessoryCategoryService.js', serviceKey: /updateFieldDefinition\('accessory'/,
+    externalLanding: [{ tableName: '其他配品.种类（字段 options）', column: '种类' }],
   },
 
   'DATA_CONFIG_API.sampleImageSync': {

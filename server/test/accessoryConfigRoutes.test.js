@@ -23,8 +23,16 @@ const fakeAsyncJobs = () => ({
 
 const makeGateway = () => {
   const rows = [{ record_id: 'a1', fields: { [fields.name]: '39元腰带', [fields.category]: '腰带', [fields.price]: 39 } }];
+  let categoryOptions = ['腰带', '鞋油', '鞋垫'].map((name) => ({ name, color: 1 }));
   return {
     async listAll() { return rows; },
+    async listFields() {
+      return [{ field_id: 'fld_category', field_name: fields.category, type: 3, property: { options: categoryOptions } }];
+    },
+    async updateFieldDefinition(_table, _field, definition) {
+      categoryOptions = definition.property.options;
+      return definition;
+    },
     async get(_table, id) { return rows.find((row) => row.record_id === id) || null; },
     async create(_table, patch) { const row = { record_id: 'a2', fields: physical(patch) }; rows.push(row); return row; },
     async update(_table, id, patch) { const row = rows.find((item) => item.record_id === id); Object.assign(row.fields, physical(patch)); return row; },
@@ -46,6 +54,16 @@ test('配品 API：列表同步读，新增/修改/删除返回 202 + job_id', a
   try {
     const list = await (await fetch(`http://127.0.0.1:${port}/products/accessories`)).json();
     assert.equal(list.rows.length, 1);
+    const categoriesBefore = await (await fetch(`http://127.0.0.1:${port}/products/accessories/categories`)).json();
+    assert.deepEqual(categoriesBefore.categories, ['腰带', '鞋油', '鞋垫']);
+    const categoryAdded = await fetch(`http://127.0.0.1:${port}/products/accessories/categories`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ category: '新种类', submitKey: 'cat1' }),
+    });
+    assert.equal(categoryAdded.status, 202);
+    await settle();
+    const categoriesAfter = await (await fetch(`http://127.0.0.1:${port}/products/accessories/categories`)).json();
+    assert.ok(categoriesAfter.categories.includes('新种类'));
     const created = await fetch(`http://127.0.0.1:${port}/products/accessories`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: '鞋垫', category: '鞋垫', price: 18, stockQuantity: 3, submitKey: 'k1' }),
