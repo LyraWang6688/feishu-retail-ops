@@ -2,13 +2,10 @@
 export const SALES_DAILY_CASH_API = '/api/workbench/sales/daily-cash';
 
 export const SALES_DAILY_CASH_TEXTS = Object.freeze({
-  title: '每日现金',
   openingTitle: '期初现金',
-  openingHint: '每天营业前填写今天的期初现金。',
   withdrawalTitle: '关店拿走现金',
-  withdrawalHint: '关店时填写今天从现金里拿走的金额。',
-  realtimeTitle: '实时现金余额',
   saveOpening: '保存期初现金',
+  openingSaved: '已填写',
   saveWithdrawal: '保存拿走金额',
   saved: '已保存',
   loading: '正在读取今天的现金记录…',

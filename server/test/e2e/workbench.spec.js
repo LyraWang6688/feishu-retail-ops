@@ -213,14 +213,14 @@ test('供应往来款：供应商余额 + 最近30天交易', async ({ page }) =
   await expect(page.locator('[data-sb-card]')).toContainText('恒安利');
 });
 
-test('每日现金：展示期初现金和实时现金余额', async ({ page }) => {
+test('每日现金：录单子卡片、期初已填写状态', async ({ page }) => {
   await mockApi(page);
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '销售', exact: true }).click();
   await page.getByRole('link', { name: /每日现金/ }).click();
   await expect(page.locator('[data-page-kind="sales-daily-cash"]')).toBeVisible();
-  await expect(page.locator('[data-dc-realtime]')).toContainText('1,320.00');
   await expect(page.locator('[data-dc-opening]')).toHaveValue('500');
+  await expect(page.getByRole('button', { name: '已填写' })).toBeDisabled();
 });
 
 test('货品下架：无货且未下架列表 + 按货号搜索 + 下架确认', async ({ page }) => {

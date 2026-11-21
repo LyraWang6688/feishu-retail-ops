@@ -4,12 +4,6 @@ import { showPageError } from '../../core/ui.js';
 import { showToast } from '../shared/toast.js';
 import { SALES_DAILY_CASH_API, SALES_DAILY_CASH_TEXTS as T } from '../../config/salesDailyCash.js';
 
-const money = (value) => Number(value || 0).toLocaleString('zh-CN', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-const amountText = (value) => (value == null ? '—' : `¥${money(value)}`);
-
 export function createSalesDailyCashModule() {
   const state = { host: null, record: null, date: '' };
 
@@ -19,22 +13,18 @@ export function createSalesDailyCashModule() {
     const record = state.record;
     const hasRecord = Boolean(record);
     host.innerHTML = `<div class="domain-page dc-page" data-page-kind="sales-daily-cash">
-      <div class="dc-head"><h1 class="dc-title">${escapeHtml(T.title)}</h1><span class="dc-date">${escapeHtml(state.date || '')}</span></div>
+      <div class="dc-head"><span class="dc-date">${escapeHtml(state.date || '')}</span></div>
       <section class="dc-card dc-opening">
-        <div class="dc-card-head"><h2>${escapeHtml(T.openingTitle)}</h2><span class="dc-hint">${escapeHtml(T.openingHint)}</span></div>
+        <div class="dc-card-head"><h2>${escapeHtml(T.openingTitle)}</h2></div>
         <div class="dc-input-row">
           <label class="dc-field">${escapeHtml(T.openingLabel)}
             <input data-dc-opening type="number" inputmode="decimal" min="0" step="0.01" value="${hasRecord ? escapeHtml(String(record.opening_amount)) : ''}" placeholder="0.00">
           </label>
-          <button class="dc-btn" type="button" data-dc-save-opening>${escapeHtml(T.saveOpening)}</button>
+          <button class="dc-btn" type="button" data-dc-save-opening${hasRecord ? ' disabled' : ''}>${escapeHtml(hasRecord ? T.openingSaved : T.saveOpening)}</button>
         </div>
       </section>
-      <section class="dc-realtime">
-        <span>${escapeHtml(T.realtimeTitle)}</span>
-        <strong data-dc-realtime>${hasRecord ? escapeHtml(amountText(record.realtime_amount)) : '—'}</strong>
-      </section>
       <section class="dc-card dc-withdrawal"${hasRecord ? '' : ' hidden'}>
-        <div class="dc-card-head"><h2>${escapeHtml(T.withdrawalTitle)}</h2><span class="dc-hint">${escapeHtml(T.withdrawalHint)}</span></div>
+        <div class="dc-card-head"><h2>${escapeHtml(T.withdrawalTitle)}</h2></div>
         <div class="dc-input-row">
           <label class="dc-field">${escapeHtml(T.withdrawalLabel)}
             <input data-dc-withdrawal type="number" inputmode="decimal" min="0" step="0.01" value="${hasRecord ? escapeHtml(String(record.withdrawal_amount)) : ''}" placeholder="0.00">
