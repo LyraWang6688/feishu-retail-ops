@@ -229,7 +229,9 @@ class SalesOrderService {
         sum + (item.amountKnown ? cents(item.actualAmount, '实收金额') : 0)
       ), 0);
       const paidCents = payments.reduce((sum, payment) => sum + cents(payment.amount, '收款金额'), 0);
-      if (paidCents > totalCents) throw new Error('本次收款超过本单实收金额');
+      // 配品金额也属于本次应收；鞋类 totalAmount 仍只写鞋（下方 totalCents 不动）。
+      const payableCents = totalCents + Math.max(0, Math.round(Number(input.orderAccessoryTotalCents) || 0));
+      if (paidCents > payableCents) throw new Error('本次收款超过本单实收金额');
       if ((input.knownRecordIds?.details || []).slice(expected.length).some(Boolean)) {
         throw new Error('已保存的销售明细数量超过当前草稿，已停止重试');
       }
