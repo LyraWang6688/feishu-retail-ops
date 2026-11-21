@@ -32,7 +32,7 @@ export function createSalesDailyCashModule() {
           <button class="dc-btn" type="button" data-dc-save-opening${hasRecord ? ' disabled' : ''}>${escapeHtml(hasRecord ? T.openingSaved : T.saveOpening)}</button>
         </div>
       </section>
-      <section class="dc-card dc-withdrawal"${hasRecord ? '' : ' hidden'}>
+      <section class="dc-card"${hasRecord ? '' : ' hidden'}>
         <div class="dc-card-head"><h2>${escapeHtml(T.withdrawalTitle)}</h2></div>
         <div class="dc-input-row">
           <label class="dc-field">${escapeHtml(T.withdrawalLabel)}

@@ -495,7 +495,6 @@ module.exports = {
   BRAND,
   PRICE,
   QR,
-  PRINT_TIME,
   FOOTER,
   LIMITS,
   TEXTS,
