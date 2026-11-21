@@ -2,8 +2,6 @@
 
 const { createSalesDeliveryReadService } = require('./salesDeliveryReadService');
 const { SALES_QUERY } = require('../config/salesQuery');
-const { createSalesDailyCashService } = require('./salesDailyCashService');
-const { logWarn } = require('../utils/logger');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 const toDate = (value) => {
@@ -25,10 +23,9 @@ const inRange = (value, from, to) => {
   return key >= from && key <= to;
 };
 
-const createSalesQueryService = ({ gateway, deliveryRead, dailyCash, now = () => new Date() } = {}) => {
+const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date() } = {}) => {
   if (!gateway && !deliveryRead) throw new Error('SalesQueryService requires gateway');
   const reader = deliveryRead || createSalesDeliveryReadService({ gateway });
-  const dailyCashReader = dailyCash || (gateway ? createSalesDailyCashService({ gateway, now }) : null);
 
   const getSalesQuery = async ({ from = '', to = '' } = {}) => {
     const today = todayKey(toDate(now()) || new Date());
@@ -40,14 +37,6 @@ const createSalesQueryService = ({ gateway, deliveryRead, dailyCash, now = () =>
       throw error;
     }
     const data = await reader.listDeliveryData({ query: true, from: fromText, to: toText });
-    let dailyCashData = null;
-    if (dailyCashReader) {
-      try {
-        dailyCashData = await dailyCashReader.getToday();
-      } catch (error) {
-        logWarn('workbench.sales.query.daily_cash_failed', { error: error.message });
-      }
-    }
     const payments = (data.all_payments || []).filter((row) => (
       SALES_QUERY.paymentStatuses.includes(row.status)
       && row.received_at != null
@@ -148,7 +137,6 @@ const createSalesQueryService = ({ gateway, deliveryRead, dailyCash, now = () =>
         by_type: groupDetails('category_name'),
       },
       orders,
-      ...(dailyCashReader ? { daily_cash: dailyCashData } : {}),
     };
   };
 
