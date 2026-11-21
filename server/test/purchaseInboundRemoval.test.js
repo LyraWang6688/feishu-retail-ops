@@ -475,9 +475,11 @@ test('F 「具体信息」→「报货信息」→（2026-10-12）「采购明�
   );
   // ⚠️ 语义键名 `purchaseRequest` **可以不动**（brief 明确）——只改 tableName 与用户可见文案。
   assert.equal(V1_BITABLE_SCHEMA.tables.purchaseRequest, request);
-  for (const semanticKey of ['detailId', 'batchNo', 'behavior', 'product', 'size', 'quantity', 'idempotencyKey']) {
+  for (const semanticKey of ['detailId', 'batchNo', 'product', 'size', 'quantity', 'idempotencyKey']) {
     assert.ok(request.fields[semanticKey], `语义键 ${semanticKey} 必须还在（这次不动映射）`);
   }
+  // 2026-11-21：生产「采购明细」已删除「发生行为」列，明细不再映射 behavior。
+  assert.equal(Object.prototype.hasOwnProperty.call(request.fields, 'behavior'), false, '采购明细不再有行为映射');
 });
 
 test('F-补 ⭐ 工作台采购页的用户可见文案用的是**当下**的表名「采购明细」（旧名不许回来）', () => {
