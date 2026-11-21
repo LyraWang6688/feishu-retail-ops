@@ -70,7 +70,6 @@ export const supplierFilteredBody = (tab, body, active, config, search = '') => 
   return {
     body: { ...body, groups: visible, stats: filteredStats(tab, supplierGroups, config) },
     groups,
-    supplierGroups,
     visible,
     supplierKey,
   };
