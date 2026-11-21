@@ -209,6 +209,8 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     // 业务负责人 2026-10-29：应付 = 销售主表.总金额；同一单号取第一条非空总金额。
     const totalField = orderReadOnlyFields.orderTotal?.name || orderFields.totalAmount;
     const totalAmountById = new Map(orders.map((order) => [order.record_id, order.fields?.[totalField] ?? null]));
+    const accessoryAmountById = new Map(orders.map((order) => [order.record_id,
+      Number(textValue(order.fields?.[orderFields.accessoryAmount])) || 0]));
     const colorNameById = new Map(colors.map((item) => [item.record_id, textValue(item.fields?.[colorFields.name]).trim()]));
     const sizeValueById = new Map(sizes.map((item) => [item.record_id, textValue(item.fields?.[sizeFields.size]).trim()]));
     const methodRows = methodList?.ok ? methodList.items : [];
@@ -311,6 +313,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
         details: detailRows,
         payments: paymentRows,
         payable_amount: group.totalAmount == null || group.totalAmount === '' ? null : Number(group.totalAmount),
+        accessory_amount: accessoryAmountById.get(group.salesEntryRecordId) || 0,
         pending_amount: pendingAmount,
       });
     }
@@ -323,6 +326,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       trade_direction: textValue(payment.fields?.[paymentFields.tradeDirection]) || '',
       received_at: payment.fields?.[paymentFields.receivedAt] ?? null,
       created_at: payment.fields?.[gateway.table('paymentRecord').readOnlyFields?.createdTime?.name] ?? null,
+      receipt_id: textValue(payment.fields?.[paymentFields.receiptId]) || '',
       sales_entry_record_id: strictLinkedRecordIds(payment.fields?.[paymentFields.salesEntry])[0] || '',
     })) : [];
     // 销售数量仍按全部销售明细统计，不能因为「订单区块只显示主表关联」而漏掉未关联明细。

@@ -2,6 +2,7 @@
 
 const { createSalesDeliveryReadService } = require('./salesDeliveryReadService');
 const { SALES_QUERY } = require('../config/salesQuery');
+const { ACCESSORY_SALE_SYNC } = require('../config/accessorySaleSync');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 const toDate = (value) => {
@@ -108,8 +109,16 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
     const undelivered = salesDetails.filter((row) => row.fulfillment_status === SALES_QUERY.undeliveredStatus);
     const sumAmount = (rows) => Math.round(rows.reduce((sum, row) => sum + Number(row.actual_amount || 0), 0) * 100) / 100;
 
-    const orders = (data.orders || [])
-      .filter((order) => inRange(order.recorded_at, fromText, toText))
+    const ordersInRange = (data.orders || [])
+      .filter((order) => inRange(order.recorded_at, fromText, toText));
+    const bundledAccessoryAmount = ordersInRange.reduce((sum, order) => sum + Number(order.accessory_amount || 0), 0);
+    const accessoryReceiptPrefix = `${ACCESSORY_SALE_SYNC.receiptPrefix}-`;
+    const standaloneAccessoryAmount = payments
+      .filter((payment) => !payment.sales_entry_record_id
+        && String(payment.receipt_id || '').startsWith(accessoryReceiptPrefix))
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const accessorySalesAmount = Math.round((bundledAccessoryAmount + standaloneAccessoryAmount) * 100) / 100;
+    const orders = ordersInRange
       .sort((a, b) => (toDate(b.recorded_at)?.getTime() || 0) - (toDate(a.recorded_at)?.getTime() || 0))
       .slice(0, SALES_QUERY.defaultOrderLimit)
       .map((order) => ({
@@ -135,6 +144,7 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
       range: { from: fromText, to: toText },
       summary: {
         revenue,
+        accessory_sales: { amount: accessorySalesAmount },
         payment_methods: paymentMethods,
         pending_methods: pendingMethods,
         delivered: { count: delivered.length, amount: sumAmount(delivered) },

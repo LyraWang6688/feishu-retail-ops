@@ -96,6 +96,7 @@ export function createSalesQueryModule() {
       const data = await api.get(query.toString() ? `${PAGE.api}?${query}` : PAGE.api);
       const summary = data?.summary || {};
       const revenue = Number(summary.revenue || 0);
+      const accessorySales = Number(summary.accessory_sales?.amount || 0);
       const methods = Array.isArray(summary.payment_methods) ? summary.payment_methods : [];
       const pendingMethods = Array.isArray(summary.pending_methods) ? summary.pending_methods : [];
       const delivered = summary.delivered || { count: 0, amount: 0 };
@@ -103,7 +104,7 @@ export function createSalesQueryModule() {
       body.innerHTML = `
         <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.amountTitle)}</h2></div>
         <div class="sq-top">
-          <div class="sq-revenue"><span>${escapeHtml(PAGE.texts.revenue)}</span><b>${escapeHtml(amountText(revenue))}</b></div>
+          <div class="sq-revenue"><span>${escapeHtml(PAGE.texts.revenue)}</span><b>${escapeHtml(amountText(revenue))}</b><small>${escapeHtml(PAGE.texts.accessoryIncluded)}${escapeHtml(amountText(accessorySales))}</small></div>
           <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.methods)}</h2></div>${methodsHtml(methods, pendingMethods, revenue)}</div>
         </div>
         <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.volumeTitle)}</h2></div>

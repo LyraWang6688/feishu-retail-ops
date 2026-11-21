@@ -17,6 +17,7 @@
 .sq-revenue { display:flex; flex-direction:column; justify-content:center; }
 .sq-revenue span { color:var(--text-secondary); font-size:var(--font-size-xs); }
 .sq-revenue b { font-size:24px; line-height:1.2; font-variant-numeric:tabular-nums; }
+.sq-revenue small { color:var(--text-secondary); font-size:var(--font-size-xs); line-height:1.4; }
 .sq-bar-row { display:grid; grid-template-columns:96px minmax(0,1fr) 96px; gap:8px; align-items:center; margin:9px 0; font-size:var(--font-size-sm); }
 .sq-bar { height:8px; border-radius:999px; background:var(--primary-soft); overflow:hidden; }
 .sq-bar i { display:block; height:100%; border-radius:999px; background:var(--primary); }
