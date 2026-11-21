@@ -64,8 +64,8 @@ test('B1/B3 字段映射同步：具体信息删两列、报货批次加两列�
   assert.equal(Object.prototype.hasOwnProperty.call(request, 'attachment'), false,
     '「具体信息.采购申请单」已被她从生产表删除 → 映射必须删');
 
-  // ⭐ 2026-10-17：采购明细那一列也改名了（她逐字「采购明细里的采购行为字段名称改为了发生行为字段」）
-  assert.equal(request.behavior, '发生行为', '采购明细的行为列映射必须跟真表（发生行为）');
+  // 2026-11-21：生产「采购明细」已删除「发生行为」，改为「入库」复选框；明细不再有行为映射。
+  assert.equal(Object.prototype.hasOwnProperty.call(request, 'behavior'), false, '采购明细不再有行为映射');
   const batch = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
   assert.equal(batch.arrivalStatus, undefined, '到货状态字段已删除');
   assert.equal(batch.arrivalDate, '到货日', '到货日改为代码写入点击验收时间');
