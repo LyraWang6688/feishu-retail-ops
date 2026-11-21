@@ -71,7 +71,7 @@ const SCAN_FIELD_KEYS = Object.freeze({
   salesDetail: Object.freeze([
     'product', 'salesEntry', 'size', 'soldAt', 'fulfillmentStatus', 'actualAmount',
   ]),
-  salesEntry: Object.freeze(['orderNo', 'writeStatus', 'totalAmount']),
+  salesEntry: Object.freeze(['orderNo', 'writeStatus', 'orderTotal']),
 });
 
 /** 读侧的人话（错误 / 空态之外的都放前端配置；这里只放**后端会直接回给页面**的那几句）。 */

@@ -186,6 +186,9 @@ const FIELDS = Object.freeze({
   //    填了 ⇒ 必须 > 0（0 / 非数字照旧拦住，见 `line_amount_invalid`）。
   amount: 'amount',
   gift: 'gift',
+  // 资金页配品：文本（名称×数量）＋ 金额合计。
+  accessory: 'accessory',
+  accessoryTotal: 'accessory_total',
   // ⭐⭐ 2026-10-11：**总单层**的两个字段。
   //    ① 每件实收（提交表单里按本单顺序**逐行一个输入框**，同名重复 ⇒ body 里是有序数组，
   //       下标与本单的明细行**一一对应**）；
@@ -532,17 +535,15 @@ const TEXTS = Object.freeze({
   amountPlaceholder: '',
   // ⚠️ 2026-10-16：跳资金页前置判定**按她授权拆到第二刀（task-53）** ⇒ 当时加的两句文案
   //   一并**摘掉**（不许留孤儿 ✗；也不许再把旧列名字面量带回 config ✗ 见 `scanSaleTwoLayerMoney.test.js` 的 AC-11）
-  // ⭐⭐ 2026-10-12（业务负责人拍板，逐字）：「② 「备注」还是「赠品」（表列名 / 页面标签）⇒ **赠品**」
-  //    ⇒ **页面标签与表列名统一叫「赠品」**（改前页面写"备注"、表里写"赠品"，一列两个叫法）。
-  //    ⚠️ 改的**只有这一个显示串**：语义键仍是 `gift`、落点仍是**销售主表·「赠品」**那一列
-  //       （映射见 `v1BitableSchema.tables.salesEntry.fields.gift`）——读写行为一个字不动。
-  //    ⚠️ 它**不是**"备注"：这一列从 2026-10-08 起就是**赠品**（`config/salesGift.js` 的合并规则）。
-  // ⭐ 2026-11-08（业务负责人）：标签去掉「（可不填）」⇒ 只写「赠品」。
-  //   ⚠️ 语义**一个字没变**：仍然可不填（空的就不写主表「赠品」列）、落点仍是销售主表·赠品。
+  // 2026-10-12：页面标签与表列名统一叫「赠品」（语义键仍是 gift）。
   giftLabel: '赠品',
   giftAddButton: '＋ 添加赠品', giftSelectLabel: '选择赠品',
   giftSelectPlaceholder: '请选择赠品', giftQuantityLabel: '赠品数量', giftRemoveLabel: '删除赠品',
   giftLoadFailed: '赠品选项没读到，请稍后刷新',
+  accessoryLabel: '配品', accessoryAddButton: '＋ 添加配品', accessorySelectLabel: '选择配品',
+  accessorySelectPlaceholder: '请选择配品', accessoryQuantityLabel: '配品数量', accessoryAmountLabel: '配品金额',
+  accessoryRemoveLabel: '删除配品', accessoryLoadFailed: '配品选项没读到，请稍后刷新',
+  accessoryTotalLabel: '配品总额', collectTotalLabel: '本次应收', paymentDifferenceLabel: '还差',
   paymentRemoveLabel: '删除这一笔付款',
   // 异步入队成功后资金页顶部的提示（占位 {orderNo}；不放成功页）
   asyncAcceptedText: readString(process.env, 'SCAN_SALE_ASYNC_ACCEPTED_TEXT', '信息收集完毕，销售单号：{orderNo}'),

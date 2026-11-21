@@ -110,7 +110,7 @@ const makeGateway = ({ master = MASTER(), trades = [] } = {}) => {
 
 /** 一条最小 happy path 的 `confirm`（收款 / 进度 / 尺码 / 货品都是替身）。 */
 const runConfirm = async (gateway, {
-  items, payments = [], owed = undefined, knownRecordIds = undefined,
+  items, payments = [], owed = undefined, knownRecordIds = undefined, ...extra
 } = {}) => {
   const service = new SalesOrderService({
     gateway,
@@ -146,6 +146,7 @@ const runConfirm = async (gateway, {
     payments,
     ...(owed === undefined ? {} : { owed }),
     ...(knownRecordIds === undefined ? {} : { knownRecordIds }),
+    ...extra,
     operatorOpenId: 'ou_ta',
   }, { correlation: {} });
 };
@@ -188,7 +189,11 @@ const walkSrc = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-TA0 schema：「总金额」逐字映射在**销售主表**上；明细那侧没有它', () => {
-  assert.equal(TOTAL, '总金额', '字段名必须**逐字**是她给的那个（她 2026-10-16：「叫做「总金额」」）');
+  // 2026-11-21：原「总金额」数字列改名为「鞋类总额」，语义键仍是 totalAmount；
+  // 新「总金额」是公式 = 鞋类总额 + 配品总额，只读别名 orderTotal。
+  assert.equal(TOTAL, '鞋类总额', '代码里的 totalAmount = 鞋类总额');
+  assert.equal(V1_BITABLE_SCHEMA.tables.salesEntry.readOnlyFields.orderTotal.name, '总金额',
+    '公式总金额必须只读映射');
   assert.equal(V1_BITABLE_SCHEMA.tables.salesDetail.fields.totalAmount, undefined,
     '「总金额」是**整单**级的一列（累计金额）⇒ 明细那侧不许有同名映射（会写错地方）');
   // 同一个字段名不许在别的表上再映射一次（撞车 = 写错表）。
@@ -197,6 +202,19 @@ test('AC-TA0 schema：「总金额」逐字映射在**销售主表**上；明细
       && Object.values(table.fields || {}).includes('总金额'))
     .map(([key]) => key);
   assert.deepEqual(elsewhere, [], `「总金额」只属于销售主表（实际还出现在：${elsewhere.join('、')}）`);
+});
+
+test('AC-TA9 配品：文本和金额同一次写主表；鞋类总额仍只写鞋', async () => {
+  const gateway = makeGateway();
+  await runConfirm(gateway, {
+    items: [shoe(38, 250)],
+    orderAccessory: '39元腰带×2、袜子×1',
+    orderAccessoryTotalCents: 8790,
+  });
+  const fields = gateway.masterFields();
+  assert.equal(fields[F('salesEntry', 'totalAmount')], 250, 'totalAmount 仍写鞋类总额');
+  assert.equal(fields[F('salesEntry', 'accessory')], '39元腰带×2、袜子×1');
+  assert.equal(fields[F('salesEntry', 'accessoryAmount')], 87.9);
 });
 
 test('AC-TA1 多行 3 件（券调过的行 + 少付）⇒ 总金额 = 各行实收之和，且与「还差多少钱」自洽', async () => {

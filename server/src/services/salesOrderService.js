@@ -286,6 +286,9 @@ class SalesOrderService {
       //   幂等/回读比对也从"明细的赠品列"改成"主表的赠品串"：
       //   主表已有非空、且与这次草稿算出来的**不同** ⇒ 判不一致、停止重试（草稿变了要能被识别）。
       const orderGift = mergeGiftTexts(expected.map((item) => item.gift));
+      const orderAccessory = String(input.orderAccessory || '').trim();
+      const orderAccessoryTotalCents = Number(input.orderAccessoryTotalCents || 0);
+      const orderAccessoryAmount = Number((orderAccessoryTotalCents / 100).toFixed(2));
       const existingGift = textValue(entry?.fields?.[entryFields.gift]).trim();
       if (existingGift && existingGift !== orderGift && input.giftOverride !== true) {
         throw new Error('销售主表已记录的赠品与当前草稿不一致，已停止重试');
@@ -333,6 +336,8 @@ class SalesOrderService {
       if (!oneShot) {
         await this.gateway.update('salesEntry', salesEntryRecordId, {
           gift: orderGift,
+          accessory: orderAccessory,
+          accessoryAmount: orderAccessoryAmount,
           ...(orderAmountsKnown ? { totalAmount: totalCents / 100 } : {}),
         }, { correlation });
         if (orderAmountsKnown) {
@@ -552,6 +557,8 @@ class SalesOrderService {
           totalCents,
           orderAmountsKnown,
           giftText: orderGift,
+          accessoryText: orderAccessory,
+          accessoryTotalCents: orderAccessoryTotalCents,
           // 收口该写的那几个语义键（来自写计划配置；调用方按它取字段，不散写）。
           finalizeFields: TABLE_FIELDS.salesEntry.final,
         } : {}),

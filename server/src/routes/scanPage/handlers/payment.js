@@ -42,6 +42,8 @@ async function handlePaymentPay(ctx) {
           // ⭐ 2026-10-29：逐件实收的唯一真源 = 草稿行自己的 amount。
           //   货品页提交时已写回 sale.lines[].amount；资金页不再读第二份 submitPending.lineAmounts。
           const pendingLineAmounts = pendingLines.map((line) => String(line?.amount ?? '').trim());
+          const payAccessory = String(body[fields.accessory] || '').trim();
+          const payAccessoryTotalCents = Math.round(Number(String(body[fields.accessoryTotal] || '0').replace(/,/g, '')) * 100) || 0;
           // ⚠️ 与提交那一下**同一套**解析（`parsePaymentRows` / `asList` ✓ 不新造 ✗）
           //   ⭐ 资金页那张表单**不带**"每件实收"（`line_amount`）⇒ ⭐ **优先用她提交时就填好的那份** ✓
           //     （实测 `AC-E2E-8`："她填的实收照旧落表" 就是靠这一条 ✓ 拿不到就退回表单 ✓ 不编 ✗）
@@ -186,7 +188,9 @@ async function handlePaymentPay(ctx) {
           //   `services/scanWrite/paymentSettlement.js`（含历史口径注释），入口只拿结果。
           const {
             itemsCents, paymentsCents, pendingMode, effectivePaymentStatus, effectivePaidAmount, settlement,
-          } = resolvePaymentSettlement({ effectiveLineAmounts, paidPayments, pendingPaidAmount });
+          } = resolvePaymentSettlement({
+            effectiveLineAmounts, paidPayments, pendingPaidAmount, accessoryCents: payAccessoryTotalCents,
+          });
           if (settlement.action === 'block') {
             // ⭐ 2026-10-14 晚（她批准埋点补充③：「失败日志带**人话原因码**」）——
             //   今天真机上她点了 6 次「提交整单付款」都只看到 400、日志里**没有任何原因** ✗ ⇒
@@ -271,6 +275,8 @@ async function handlePaymentPay(ctx) {
             paidAmount: effectivePaidAmount,
             // 资金页赠品（非空时覆盖本单赠品；空则保留销售页填的那份）
             ...(payGift ? { orderGift: payGift } : {}),
+            ...(payAccessory ? { orderAccessory: payAccessory } : {}),
+            ...(payAccessoryTotalCents > 0 ? { orderAccessoryTotalCents: payAccessoryTotalCents } : {}),
             timing: payStepTiming,
             pendingLine: pendingView?.found ? {
               productRecordId: pendingView.product_record_id,

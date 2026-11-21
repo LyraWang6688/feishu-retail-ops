@@ -19,7 +19,7 @@ const { SALES_MOVEMENTS } = require('./salesMovements');
 const TABLE_FIELDS = Object.freeze({
   salesEntry: Object.freeze({
     main: Object.freeze(['orderNo', 'writeStatus']),
-    final: Object.freeze(['totalAmount', 'gift', 'writeStatus']),
+    final: Object.freeze(['totalAmount', 'accessory', 'accessoryAmount', 'gift', 'writeStatus']),
   }),
   salesDetail: Object.freeze([
     'salesEntry', 'product', 'size', 'actualAmount', 'fulfillmentStatus', 'tradeType',

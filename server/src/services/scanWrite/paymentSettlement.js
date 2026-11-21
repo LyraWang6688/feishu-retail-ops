@@ -26,9 +26,9 @@ const { sumCents } = require('../../utils/money');
  *   effectivePaymentStatus:string,effectivePaidAmount:any,settlement:object}}
  */
 const resolvePaymentSettlement = ({
-  effectiveLineAmounts = [], paidPayments = [], pendingPaidAmount = '',
+  effectiveLineAmounts = [], paidPayments = [], pendingPaidAmount = '', accessoryCents = 0,
 } = {}) => {
-  const itemsCents = sumCents(effectiveLineAmounts);
+  const itemsCents = sumCents(effectiveLineAmounts) + Math.max(0, Number(accessoryCents) || 0);
   const paymentsCents = sumCents(paidPayments.map((row) => row.amount));
   const auto = autoModeOf({ itemsCents, paymentsCents });
   const payStatusMap = PAYMENT_STATUS || {};

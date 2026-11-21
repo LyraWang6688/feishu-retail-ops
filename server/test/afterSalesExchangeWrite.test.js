@@ -80,7 +80,7 @@ test('AC-EX1 换尺码：货/库存/主表都对，钱完全不动', async () =>
 
   assert.deepEqual(h.state.entry.fields['售后类型'], ['换货']);
   assert.equal(h.state.entry.fields['售后次数'], 2);
-  assert.equal(h.state.entry.fields['总金额'], 180, '差价 0 ⇒ 总金额不变');
+  assert.equal(h.state.entry.fields['鞋类总额'], 180, '差价 0 ⇒ 总金额不变');
   assert.equal(result.newDetail.detail_id, 'XSD-20261111-0001-02');
   assert.equal(result.moneyMode, '');
 });
@@ -108,7 +108,7 @@ test('AC-EX2 换款式·补差价：新明细用她填的金额 + 新建收款�
   assert.deepEqual(pay['关联销售单'], ['entry_1'], '差价明细挂原主表');
   assert.deepEqual(pay['支付方式'], ['pm_cash']);
 
-  assert.equal(h.state.entry.fields['总金额'], 250, '180 + 70');
+  assert.equal(h.state.entry.fields['鞋类总额'], 250, '180 + 70');
   assert.equal(result.diffAmount, 70);
   assert.equal(result.moneyMode, 'collect');
 });
@@ -127,7 +127,7 @@ test('AC-EX3 换款式·退差价：退回明细 + 总金额按差价回填；�
   assert.equal(pay['收支方向'], '退回');
   assert.equal(pay['钱款状态'], '已退款');
   assert.equal(pay['交易金额'], 30);
-  assert.equal(h.state.entry.fields['总金额'], 150, '180 − 30');
+  assert.equal(h.state.entry.fields['鞋类总额'], 150, '180 − 30');
   assert.equal(result.moneyMode, 'refund');
 
   const bad = makeService();

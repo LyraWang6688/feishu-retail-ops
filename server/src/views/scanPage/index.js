@@ -162,6 +162,8 @@ const renderSalePaymentStepPage = ({
   // ⭐ 2026-10-16 A2a：**三档那一块不再渲染**（`paymentStatusHtml` 已退场 ✓ 见上面那条注释）——
   //    资金页现在只剩：**收款行**（`paymentRowsHtml`）＋ 赠品 ✓；档位由金额自动定（路由那一步 ✓）。
   const rowsBlock = paymentRowsHtml(write, { defaultAmount: totalAmountText });
+  const shoeTotalText = String(totalAmountText || '').trim();
+  const shoeTotalNumber = Number(shoeTotalText.replace(/[¥,，\s]/g, '')) || 0;
   // ⭐⭐ 2026-10-17 C（她逐字：「默认一行 ＋ ＋ 再加一种付款方式」）：
   //   加行 = **纯前端**（`data-payment-add`，克隆最后一行并清空值）——不提交、不写库 ✓。
   //   ⚠️ 文案走配置（`step.addRowButton`）；不写死中文 ✗。
@@ -177,17 +179,32 @@ const renderSalePaymentStepPage = ({
 <input type="hidden" name="${escapeHtml(fields.gift || 'gift')}" data-gift-value value="">
 <template data-gift-template><div class="form-row form-row--gift-row" data-gift-row><select data-gift-name aria-label="${escapeHtml(t.giftSelectLabel || '')}"></select><input type="number" min="1" step="1" value="1" inputmode="numeric" data-gift-quantity aria-label="${escapeHtml(t.giftQuantityLabel || '')}"><button type="button" class="btn" data-gift-remove aria-label="${escapeHtml(t.giftRemoveLabel || '')}">×</button></div></template>
 </div>`;
+  const accessoryFieldHtml = `<div class="form-row form-row--gift" data-accessory-section data-accessory-placeholder="${escapeHtml(t.accessorySelectPlaceholder || '')}">
+<div class="gift-head"><span class="gift-head__label">${escapeHtml(t.accessoryLabel || '')}</span><button type="button" class="btn gift-head__add" data-accessory-add>${escapeHtml(t.accessoryAddButton || '')}</button></div>
+<div data-accessory-rows></div>
+<div class="gift-head"><span class="gift-head__label">${escapeHtml(t.accessoryTotalLabel || '')}</span><b data-accessory-total>0</b></div>
+<p class="hint" data-accessory-error hidden>${escapeHtml(t.accessoryLoadFailed || '')}</p>
+<input type="hidden" name="${escapeHtml(fields.accessory || 'accessory')}" data-accessory-value value="">
+<input type="hidden" name="${escapeHtml(fields.accessoryTotal || 'accessory_total')}" data-accessory-total-value value="0">
+<template data-accessory-template><div class="form-row form-row--gift-row" data-accessory-row><select data-accessory-name aria-label="${escapeHtml(t.accessorySelectLabel || '')}"></select><input type="number" min="1" step="1" value="1" inputmode="numeric" data-accessory-quantity aria-label="${escapeHtml(t.accessoryQuantityLabel || '')}"><input type="number" min="0" step="0.01" inputmode="decimal" placeholder="${escapeHtml(t.accessoryAmountLabel || '')}" data-accessory-amount required aria-label="${escapeHtml(t.accessoryAmountLabel || '')}"><button type="button" class="btn" data-accessory-remove aria-label="${escapeHtml(t.accessoryRemoveLabel || '')}">×</button></div></template>
+</div>`;
+  const collectTotalHtml = `<div class="form-row form-row--gift" data-collect-total-row>
+<span class="gift-head__label">${escapeHtml(t.collectTotalLabel || '')}</span>
+<b data-collect-total>${escapeHtml(shoeTotalText || '0')}</b>
+<span class="hint" data-payment-diff data-diff-label="${escapeHtml(t.paymentDifferenceLabel || '')}" hidden></span>
+</div>`;
   // ⭐⭐ 2026-10-13 结构重排（**行为不变**）：三件套（三档 / 收款行 / 赠品）先攒成一块，
   //    由 `payForm` 统一放进"提交整单付款"那张表单里（**在表单外就是"提交上去什么都没有"** ✗）。
   //    ⚠️ 还没配 `payAction` 时 ⇒ 退化成原来那个 `<div class="payment-step">`（逐字同形 ✓ 不吃亏 ✓）
   //    ⭐ 2026-10-16 A2a：三件套里的**「三档」那件已退场** ⇒ 现在只有**收款行 + 赠品** ✓
-  const paymentFieldsHtml = `${rowsBlock}${addRowButtonHtml}${giftFieldHtml}`;
+  const paymentFieldsHtml = `${accessoryFieldHtml}${giftFieldHtml}${collectTotalHtml}${rowsBlock}${addRowButtonHtml}`;
   const payForm = (postAction && step.payAction)
     ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay">
 <input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.payAction)}">
 ${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'submit_key')}" value="${escapeHtml(submitKey)}">` : ''}
 <input type="hidden" name="order_no" value="${escapeHtml(orderNo)}">
 <input type="hidden" name="count" value="${escapeHtml(String(count))}">
+<input type="hidden" data-shoe-total value="${escapeHtml(String(shoeTotalNumber))}">
 ${salesEntryRecordId ? `<input type="hidden" name="sales_entry_record_id" value="${escapeHtml(salesEntryRecordId)}">` : ''}
 ${reused ? '<input type="hidden" name="reused" value="1">' : ''}
 ${paymentFieldsHtml}

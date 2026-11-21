@@ -31,6 +31,8 @@ const createScanWriteSales = ({
     openId, submitKey, payments: paymentRows = [], lineAmounts = [],
     paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null, timing = null,
     orderGift = '',
+    orderAccessory = '',
+    orderAccessoryTotalCents = 0,
     noDefer = false,
     sessionKey = '',
     deferFunds = false,
@@ -46,6 +48,8 @@ const createScanWriteSales = ({
     const saleRestInput = {
       openId, submitKey, payments: paymentRows, lineAmounts, paymentStatus, paidAmount, sessionKey,
       ...(String(orderGift || '').trim() ? { orderGift: String(orderGift).trim() } : {}),
+      ...(String(orderAccessory || '').trim() ? { orderAccessory: String(orderAccessory).trim() } : {}),
+      ...(Number(orderAccessoryTotalCents) > 0 ? { orderAccessoryTotalCents: Number(orderAccessoryTotalCents) } : {}),
       ...(fundsDeferred ? { deferFunds: true } : {}),
     };
     const sessionId = sessionKeyOf(openId, sessionKey);
@@ -161,6 +165,7 @@ const createScanWriteSales = ({
 
     const settlement = await resolveSaleSettlement({
       lines, lineAmounts, paymentRows, paymentStatus, paidAmount, openId,
+      accessoryCents: orderAccessoryTotalCents,
       sessionId, key, requestId, config, texts, sessions, fundsDeferred, goodsOnly,
       fail, userMessageFor, positiveAmount, toCents, moneyText, amountMismatchMessage, amountList,
     });
@@ -336,6 +341,8 @@ const createScanWriteSales = ({
         // ⭐⭐ 2026-10-18（第 4 步提速）：一次跑完那支（显式布尔；不传 ⇒ 入参逐字同今天 ✓）
         ...(singlePass ? oneShotPlan.confirmArgs : {}),
         ...(String(orderGift || '').trim() ? { giftOverride: true } : {}),
+        ...(String(orderAccessory || '').trim() ? { orderAccessory: String(orderAccessory).trim() } : {}),
+        ...(Number(orderAccessoryTotalCents) > 0 ? { orderAccessoryTotalCents: Number(orderAccessoryTotalCents) } : {}),
         ...(owedCents > 0 ? { owed: owedCents / 100 } : {}),
         operatorOpenId: openId,
         knownRecordIds: {
@@ -429,6 +436,7 @@ const createScanWriteSales = ({
           ? await finalizeSaleOnceWith({
             salesService: sales(), salesEntryRecordId, result,
             writeStatus: WRITE.writeStatus.partial, correlation, timing,
+            accessory: orderAccessory, accessoryTotalCents: orderAccessoryTotalCents,
           })
           : false;
         if (!finalizedPartial) {
@@ -463,6 +471,7 @@ const createScanWriteSales = ({
         ? await finalizeSaleOnceWith({
           salesService: sales(), salesEntryRecordId, result,
           writeStatus: WRITE.writeStatus.done, correlation, timing,
+          accessory: orderAccessory, accessoryTotalCents: orderAccessoryTotalCents,
         })
         : false;
       await sessions.completeSale(sessionId, { key, result: summary });

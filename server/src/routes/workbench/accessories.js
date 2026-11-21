@@ -19,6 +19,17 @@ const createWorkbenchAccessoryRoutes = ({ options = {} } = {}) => {
     return giftService;
   };
 
+  router.get('/accessories/options', async (req, res) => {
+    try {
+      return res.json({ success: true, items: await gifts().listAll() });
+    } catch (error) {
+      logError('workbench.accessories.options_failed', {
+        request_id: req.requestId, error: String(error?.message || error),
+      });
+      return res.status(502).json({ success: false, error: 'accessory_options_failed' });
+    }
+  });
+
   router.get('/accessories/gifts', async (req, res) => {
     try {
       return res.json({ success: true, items: await gifts().list() });

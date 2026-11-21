@@ -60,7 +60,9 @@ const badRequest = (message) => Object.assign(new Error(message), { statusCode: 
  * ⇒ 退回整表读：宁可慢，不许因为配置改名而少一列）。
  */
 const fieldNamesOf = (gateway, tableKey) => {
-  const fields = gateway.table?.(tableKey)?.fields || {};
+  const table = gateway.table?.(tableKey) || {};
+  const fields = { ...(table.fields || {}), ...Object.fromEntries(Object.entries(table.readOnlyFields || {})
+    .map(([key, value]) => [key, value?.name || value])) };
   const names = (SCAN_FIELD_KEYS[tableKey] || [])
     .map((key) => fields[key])
     .filter(Boolean);
@@ -122,7 +124,11 @@ class AfterSalesScanService {
     if (!product) throw badRequest(SCAN_TEXTS.productNotFound);
 
     const productFields = this.gateway.table('product').fields;
-    const entryFields = this.gateway.table('salesEntry').fields;
+    const entryTable = this.gateway.table('salesEntry');
+    const entryFields = {
+      ...(entryTable.fields || {}),
+      ...Object.fromEntries(Object.entries(entryTable.readOnlyFields || {}).map(([key, value]) => [key, value?.name || value])),
+    };
     const detailFields = this.gateway.table('salesDetail').fields;
 
     // 排除了多少条、为什么排除 —— 如实回给页面（页面据此说一句人话，不静默吞数据）。
@@ -183,7 +189,7 @@ class AfterSalesScanService {
         size: Number.isFinite(sizeNumber) && sizeNumber > 0 ? sizeNumber : null,
         // 关联 record_id 一起带上：以后换货/赔货要按尺码写库时直接用，不用再反查一次。
         size_record_id: salesLinkRecordIds(sizeCell)[0] || '',
-        total_amount: numberOf(entry.fields?.[entryFields.totalAmount]),
+        total_amount: numberOf(entry.fields?.[entryFields.orderTotal]),
         actual_amount: numberOf(fields[detailFields.actualAmount]),
         fulfillment_status: asText(textValue(fields[detailFields.fulfillmentStatus])),
       });
