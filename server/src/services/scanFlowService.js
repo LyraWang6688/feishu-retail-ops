@@ -57,6 +57,20 @@ const submitEndpointOf = (flow) => String(submitStep(flow)?.endpoint || '').trim
 const submitPayloadOf = (flow) => (Array.isArray(submitStep(flow)?.payload) ? submitStep(flow).payload : []);
 const contextFieldsOf = (flow) => (Array.isArray(flow?.context) ? flow.context : []);
 
+/** 把 flow + 售后上下文拼回 POST action，避免通用表单把非销售 flow 丢掉。 */
+const postContextQuery = (query = {}) => {
+  const flow = resolveFlowFromQuery(query);
+  if (flow.id === DEFAULT_SCAN_FLOW) return '';
+  const params = new URLSearchParams();
+  params.set('flow', flow.id);
+  for (const key of contextFieldsOf(flow)) {
+    const value = query?.[key];
+    if (value === undefined || value === null || value === '') continue;
+    params.set(key, String(value));
+  }
+  return params.toString();
+};
+
 /** 从来源对象里挑出这条 flow 需要的上下文（缺的键就是 undefined，由调用方校验）。 */
 const pickContext = (flow, source = {}) => {
   const picked = {};
@@ -76,5 +90,6 @@ module.exports = {
   submitEndpointOf,
   submitPayloadOf,
   contextFieldsOf,
+  postContextQuery,
   pickContext,
 };

@@ -7,7 +7,7 @@
  *         顶部出一句 flow 提示、售后上下文用隐藏字段原样带进 POST。
  * AC-FEP2 销售 flow 的货品页**一个字都不变**（金额输入、加一双按钮、既有提交文案都在）。
  * AC-FEP3 路由接线：GET 把 flow/上下文传给渲染层；POST 换款式货品页提交 **不跳资金页、
- *         不写库**（下一步未接 ⇒ 人话页，标记 flow_next_step_pending）。
+ *         不写库**（保留 flow；原生 POST 303 回原页）。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,7 +16,8 @@ const path = require('node:path');
 
 const { saleFormHtml } = require('../src/views/scanPage/paymentBlock');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
-const { getFlow } = require('../src/services/scanFlowService');
+const { getFlow, postContextQuery } = require('../src/services/scanFlowService');
+const { handlePendingExchangeSubmit } = require('../src/routes/scanPage/exchangeFlow');
 
 const VIEW = {
   number: 'XHB1|黑|男', item_no: 'XHB1', color: '黑',
@@ -49,12 +50,48 @@ test('AC-FEP2 销售 flow 的货品页一个字都不变（金额输入 / 加一
   assert.match(html, /value="submit_order"/, '销售提交按钮照旧');
 });
 
-test('AC-FEP3 路由接线：GET 传 flow；POST 换款式提交不跳资金页、不写库（下一步未接）', () => {
+test('AC-FEP3 路由接线：GET 传 flow；POST 保留 flow/上下文，不落普通销售', () => {
   const route = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage/index.js'), 'utf8');
+  const helpers = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage/flowHelpers.js'), 'utf8');
   const thin = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage/exchangeFlow.js'), 'utf8');
   assert.match(route, /renderFlowOf/, 'GET 要把 flow + 上下文交给渲染层（薄模块）');
-  assert.match(route, /handlePendingExchangeSubmit/, 'POST 换款式提交走薄模块');
-  assert.match(thin, /flow_next_step_pending/, 'POST 换款式提交要有独立标记（下一步未接）');
-  assert.match(thin, /sendHuman/, '不写库：只渲染人话页');
-  assert.match(thin, /flow\.id === 'sales'+/, '只对非销售 flow 生效');
+  assert.match(helpers, /postContextQuery/, '货品页 form action 要保留 flow + 上下文');
+  assert.match(helpers, /postActionFor/, '仍从原货品页地址生成');
+  assert.match(thin, /res\.redirect\(303/, '原生 POST 兜底回同一页，不写库');
+  assert.doesNotMatch(thin, /flow_next_step_pending/, '不再走“下一步未接”的人话页');
+});
+
+test('AC-FEP4 原生 POST 带售后上下文时 303 回原页，绝不建普通销售', () => {
+  let status = 0;
+  let location = '';
+  const res = { redirect(code, url) { status = code; location = url; } };
+  const handled = handlePendingExchangeSubmit({
+    req: {
+      query: { from: 'sales' },
+      body: {
+        ctx_requestId: 'r1', ctx_salesEntryRecordId: 'e1',
+        ctx_detailRecordId: 'd1', ctx_originalAmount: '79',
+      },
+      originalUrl: '/r/rec1?from=sales&flow=afterSalesExchange&requestId=r1',
+    },
+    res,
+    requestId: 'req1',
+    action: 'submit_order',
+    actions: { submitOrder: 'submit_order' },
+  });
+  assert.equal(handled, true);
+  assert.equal(status, 303);
+  assert.match(location, /flow=afterSalesExchange/);
+});
+
+test('AC-FEP5 flow 上下文查询串只对非销售 flow 生成', () => {
+  const query = postContextQuery({
+    flow: 'afterSalesExchange', requestId: 'r1', salesEntryRecordId: 'e1',
+    detailRecordId: 'd1', originalAmount: '79', productRecordId: 'p1', other: 'x',
+  });
+  assert.match(query, /flow=afterSalesExchange/);
+  assert.match(query, /requestId=r1/);
+  assert.match(query, /originalAmount=79/);
+  assert.equal(query.includes('other='), false, '不把无关参数带进 POST');
+  assert.equal(postContextQuery({ flow: 'sales', requestId: 'r1' }), '', '普通销售 action 不变');
 });
