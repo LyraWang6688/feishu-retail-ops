@@ -76,6 +76,9 @@ export const createProductDelistedModule = ({
     empty.textContent = host.__ppDelistedQuery ? T.delistedSearchEmpty : T.delistedEmpty;
     resetThumbs(host);
     observeThumbs(host, list);
+    for (const [recordId, status] of (host.__ppDelistedStates || [])) {
+      setRowState(host, recordId, status);
+    }
   };
 
   const closeModal = (host) => {
@@ -109,6 +112,8 @@ export const createProductDelistedModule = ({
     const row = host.querySelector('[data-pp-delisted-row="' + recordId + '"]');
     const button = row?.querySelector('[data-pp-delete]');
     if (!button) return;
+    host.__ppDelistedStates = host.__ppDelistedStates || new Map();
+    host.__ppDelistedStates.set(recordId, status);
     const done = status === 'succeeded';
     const pending = status === 'pending';
     button.disabled = pending || done;
