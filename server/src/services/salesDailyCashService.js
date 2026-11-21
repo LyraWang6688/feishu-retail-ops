@@ -42,12 +42,10 @@ const createSalesDailyCashService = ({
   const queue = new KeyedSerialQueue();
   const fieldName = (semantic) => fields[semantic] || readOnly[semantic]?.name || '';
 
-  const mapRecord = (record, date) => {
+  const mapRecord = (record) => {
     if (!record) return null;
     const values = record.fields || {};
     return {
-      record_id: record.record_id,
-      date,
       opening_amount: num(values[fieldName('openingCash')]),
       withdrawal_amount: num(values[fieldName('withdrawalCash')]),
       realtime_amount: num(values[fieldName('closingCash')]),
@@ -62,7 +60,7 @@ const createSalesDailyCashService = ({
   const getToday = async () => {
     const day = todayKeyOf(now(), config.timeZone);
     const record = await findToday(day);
-    return { date: day, record: mapRecord(record, day) };
+    return { date: day, record: mapRecord(record) };
   };
 
   const normalizeAmount = (value, label) => {
@@ -105,7 +103,7 @@ const createSalesDailyCashService = ({
         await gateway.update('salesSummary', record.record_id, patch);
       }
       const fresh = await gateway.get('salesSummary', record.record_id);
-      return { date: day, record: mapRecord(fresh || record, day) };
+      return { date: day, record: mapRecord(fresh || record) };
     });
   };
 
