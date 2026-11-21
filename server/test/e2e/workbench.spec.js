@@ -210,6 +210,65 @@ test('货品 → 货品资料：五张卡 + 货品完善分组', async ({ page }
   await expect(page.locator('[data-pp-complete-tabs]')).toBeVisible();
 });
 
+test('配品配置：赠品勾选、列表标签、种类动态新增', async ({ page }) => {
+  await mockApi(page);
+  const categories = ['腰带', '鞋油'];
+  const rows = [
+    { recordId: 'a1', name: '39元腰带', category: '腰带', price: 39, cost: null, stockQuantity: 4, isAccessory: true, hasSampleImage: false },
+    { recordId: 'a2', name: '鞋油', category: '鞋油', price: 15, cost: null, stockQuantity: 8, isAccessory: false, hasSampleImage: false },
+  ];
+  let submitted = null;
+  let categorySubmitted = null;
+  await page.route('**/api/workbench/products/accessories**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/api/workbench/products/accessories/categories') {
+      if (request.method() === 'POST') {
+        categorySubmitted = JSON.parse(request.postData() || '{}');
+        if (!categories.includes(categorySubmitted.category)) categories.push(categorySubmitted.category);
+        return route.fulfill(json({ success: true, accepted: true, job_id: 'job_cat', toast: '数据提交成功，后台自动写入' }, 202));
+      }
+      return route.fulfill(json({ success: true, categories }));
+    }
+    if (url.pathname === '/api/workbench/products/accessories' && request.method() === 'GET') {
+      return route.fulfill(json({ success: true, rows }));
+    }
+    if (url.pathname === '/api/workbench/products/accessories' && request.method() === 'POST') {
+      submitted = JSON.parse(request.postData() || '{}');
+      rows.push({ recordId: 'a3', name: submitted.name, category: submitted.category, price: submitted.price, cost: null, stockQuantity: null, isAccessory: submitted.isAccessory, hasSampleImage: false });
+      return route.fulfill(json({ success: true, accepted: true, job_id: 'job_acc', toast: '数据提交成功，后台自动写入' }, 202));
+    }
+    return route.fallback();
+  });
+
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '配置', exact: true }).click();
+  await page.getByRole('button', { name: '货品资料', exact: true }).click();
+  await page.getByRole('button', { name: /配品配置/ }).click();
+  await expect(page.locator('.ac-form')).toBeVisible();
+  await expect(page.locator('.ac-card')).toHaveCount(2);
+  await expect(page.locator('.ac-card').filter({ hasText: '39元腰带' })).toContainText('赠品');
+  await expect(page.locator('.ac-card').filter({ hasText: '鞋油' })).not.toContainText('赠品');
+
+  const gift = page.locator('[data-ac-gift]');
+  await expect(gift).not.toBeChecked();
+  await page.locator('[data-ac-name]').fill('新腰带');
+  await page.locator('[data-ac-category]').selectOption('腰带');
+  await page.locator('[data-ac-price]').fill('49');
+  await gift.check();
+  await page.getByRole('button', { name: '确认新增' }).click();
+  await expect(page.locator('.ac-card').filter({ hasText: '新腰带' })).toContainText('赠品');
+  expect(submitted.isAccessory).toBe(true);
+
+  await page.getByRole('button', { name: '管理种类' }).click();
+  await expect(page.locator('[data-ac-category-modal]')).toBeVisible();
+  await page.locator('[data-ac-category-new]').fill('新种类');
+  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await expect(page.locator('[data-ac-category-modal]')).toBeHidden();
+  await expect(page.locator('[data-ac-category]')).toContainText('新种类');
+  expect(categorySubmitted.category).toBe('新种类');
+});
+
 test('供应往来款：供应商余额 + 最近30天交易', async ({ page }) => {
   await mockApi(page);
   await page.goto('/workbench/');

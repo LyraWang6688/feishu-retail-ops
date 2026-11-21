@@ -11,6 +11,7 @@ const { PRODUCT_PROFILE } = require('../../config/productProfile');
 const { extraOfAttachment } = require('../../services/driveApi');
 const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 const { listAccessories } = require('../../services/accessoryConfigService');
+const { listAccessoryCategories } = require('../../services/accessoryCategoryService');
 const { createProductConfigWriteService } = require('../../services/productConfigWriteService');
 const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 
@@ -33,6 +34,35 @@ const createWorkbenchAccessoryConfigRoutes = ({ getGateway, asyncJobs } = {}) =>
     } catch (error) {
       logError('workbench.accessories.list_failed', { request_id: req.requestId, error: error.message });
       return res.status(502).json({ success: false, error: 'accessories_failed' });
+    }
+  });
+
+  router.get('/products/accessories/categories', async (req, res) => {
+    try {
+      return res.json({ success: true, categories: await listAccessoryCategories(getGateway()) });
+    } catch (error) {
+      logError('workbench.accessories.categories_failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: 'accessory_categories_failed' });
+    }
+  });
+
+  router.post('/products/accessories/categories', async (req, res) => {
+    try {
+      const accepted = await resolveWrites().submit({
+        resource: 'accessoryCategory',
+        action: 'create',
+        category: req.body?.category,
+        submitKey: req.body?.submitKey || req.query?.submitKey,
+        ownerOpenId: req.workbenchUser?.open_id,
+        operatorName: req.workbenchUser?.name,
+      });
+      return res.status(202).json({ success: true, accepted: true, job_id: accepted.jobId, toast: accepted.toast });
+    } catch (error) {
+      const status = error?.statusCode === 400 ? 400 : 502;
+      logError('workbench.accessories.category_add_failed', {
+        request_id: req.requestId, error: error.message,
+      });
+      return res.status(status).json({ success: false, error: error.message });
     }
   });
 

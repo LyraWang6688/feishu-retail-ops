@@ -13,8 +13,9 @@ const { listProductFeatures, addProductFeatureTag, updateProductFeatureTag, dele
 const {
   listAccessories, createAccessory, updateAccessory, deleteAccessory, nameKey,
 } = require('./accessoryConfigService');
+const { addAccessoryCategory, listAccessoryCategories } = require('./accessoryCategoryService');
 
-const RESOURCES = Object.freeze({ feature: 'feature', accessory: 'accessory' });
+const RESOURCES = Object.freeze({ feature: 'feature', accessory: 'accessory', accessoryCategory: 'accessoryCategory' });
 const ACTIONS = Object.freeze({ create: 'create', update: 'update', delete: 'delete' });
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
 
@@ -31,6 +32,15 @@ const validateBeforeEnqueue = async (gateway, payload) => {
     const duplicate = (dimension.items || []).some((item) => item.recordId !== data.recordId
       && featureKey(item.tag) === featureKey(value));
     if (duplicate) throw userError('这个标签已经存在，不要重复添加');
+    return;
+  }
+  if (data.resource === RESOURCES.accessoryCategory) {
+    if (data.action !== 'create') throw userError('种类只支持新增');
+    const value = String(data.category || '').trim();
+    if (!value) throw userError('种类名称不能为空');
+    if (value.length > 50) throw userError('种类名称不能超过 50 个字');
+    const listed = await listAccessoryCategories(gateway);
+    if (listed.some((item) => featureKey(item) === featureKey(value))) throw userError('这个种类已经存在');
     return;
   }
   if (data.action === 'delete') return;
@@ -68,6 +78,7 @@ const createProductConfigWriteService = ({ gateway, asyncJobs } = {}) => {
       if (data.action === ACTIONS.update) return updateProductFeatureTag(gateway, data.dimension, data.recordId, data.tag);
       return deleteProductFeatureTag(gateway, data.dimension, data.recordId);
     }
+    if (data.resource === RESOURCES.accessoryCategory) return addAccessoryCategory(gateway, data.category);
     if (data.action === ACTIONS.create) return createAccessory(gateway, data);
     if (data.action === ACTIONS.update) return updateAccessory(gateway, data.recordId, data);
     return deleteAccessory(gateway, data.recordId);

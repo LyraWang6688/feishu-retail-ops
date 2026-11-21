@@ -10,6 +10,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { textValue } = require('./v1BitableGateway');
 const { invalidateConfigTable } = require('./configTableCache');
+const { ensureAccessoryCategory } = require('./accessoryCategoryService');
 
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
 
@@ -72,13 +73,15 @@ const normalizeInput = (input = {}) => {
     && (stockQuantity === null || stockQuantity < 0 || !Number.isInteger(stockQuantity))) {
     throw userError('库存数量必须是非负整数');
   }
-  return { name, category, price, cost, stockQuantity };
+  const hasGift = Object.prototype.hasOwnProperty.call(input, 'isAccessory');
+  return { name, category, price, cost, stockQuantity, isAccessory: hasGift ? input.isAccessory === true : undefined };
 };
 
 const createAccessory = async (gateway, input = {}) => {
   const value = normalizeInput(input);
   const duplicate = await findDuplicate(gateway, value);
   if (duplicate) throw userError('同一种类下已经有同名配品');
+  if (value.category) await ensureAccessoryCategory(gateway, value.category);
   const patch = {
     // 写库只传网关语义键；物理列名只用于读结果。
     name: value.name,
@@ -86,8 +89,7 @@ const createAccessory = async (gateway, input = {}) => {
     price: value.price,
     cost: value.cost,
     stockQuantity: value.stockQuantity,
-    // 新增的配置默认进入配品候选；页面不展示/不编辑这个复选框。
-    isAccessory: true,
+    isAccessory: value.isAccessory === true,
   };
   if (input.sampleImageToken) patch.sampleImage = [{ file_token: String(input.sampleImageToken) }];
   const created = await gateway.create('accessory', patch);
@@ -103,6 +105,7 @@ const updateAccessory = async (gateway, recordId, input = {}) => {
   const value = normalizeInput(input);
   const duplicate = await findDuplicate(gateway, { ...value, exceptRecordId: id });
   if (duplicate) throw userError('同一种类下已经有同名配品');
+  if (value.category) await ensureAccessoryCategory(gateway, value.category);
   const patch = {
     // 写库只传网关语义键；物理列名只用于读结果。
     name: value.name,
@@ -111,6 +114,7 @@ const updateAccessory = async (gateway, recordId, input = {}) => {
     cost: value.cost,
     stockQuantity: value.stockQuantity,
   };
+  if (value.isAccessory !== undefined) patch.isAccessory = value.isAccessory;
   if (input.sampleImageToken !== undefined) {
     patch.sampleImage = input.sampleImageToken
       ? [{ file_token: String(input.sampleImageToken) }] : [];

@@ -18,8 +18,16 @@ const make = () => {
     fields: { [fields.name]: '鞋油', [fields.category]: '鞋油', [fields.price]: 15, [fields.cost]: 8, [fields.stockQuantity]: 12, [fields.isAccessory]: true },
   }];
   let seq = 0;
+  let categoryOptions = ['腰带', '鞋油', '鞋垫'].map((name) => ({ name, color: 1 }));
   const gateway = {
     async listAll() { return tables; },
+    async listFields() {
+      return [{ field_id: 'fld_category', field_name: fields.category, type: 3, property: { options: categoryOptions } }];
+    },
+    async updateFieldDefinition(_table, _field, definition) {
+      categoryOptions = definition.property.options;
+      return definition;
+    },
     async get(_table, id) { return tables.find((row) => row.record_id === id) || null; },
     async create(_table, patch) { seq += 1; const row = { record_id: `a_new_${seq}`, fields: physical(patch) }; tables.push(row); return row; },
     async update(_table, id, patch) { const row = tables.find((item) => item.record_id === id); Object.assign(row.fields, physical(patch)); return row; },
@@ -44,6 +52,30 @@ test('同一种类重名拒绝；不同种类允许同名', async () => {
   );
   const created = await createAccessory(gateway, { name: '39元腰带', category: '鞋垫', price: 49 });
   assert.equal(created.category, '鞋垫');
+  assert.equal(created.isAccessory, false, '新建默认不勾选赠品');
+  const gift = await createAccessory(gateway, { name: '赠品鞋垫', category: '鞋垫', price: 1, isAccessory: true });
+  assert.equal(gift.isAccessory, true);
+});
+
+test('新增种类：追加到飞书单选字段 options，保留已有选项', async () => {
+  const { gateway } = make();
+  const created = await createAccessory(gateway, { name: '新配品', category: '新种类', price: 10 });
+  assert.equal(created.category, '新种类');
+  const fields = await gateway.listFields();
+  const names = fields[0].property.options.map((item) => item.name);
+  assert.ok(names.includes('新种类'));
+  assert.ok(names.includes('腰带'));
+  assert.ok(names.includes('鞋油'));
+});
+
+test('新增种类服务：重复不重复追加', async () => {
+  const { addAccessoryCategory, listAccessoryCategories } = require('../src/services/accessoryCategoryService');
+  const { gateway } = make();
+  const first = await addAccessoryCategory(gateway, '新种类');
+  assert.equal(first.added, true);
+  const second = await addAccessoryCategory(gateway, '新种类');
+  assert.equal(second.added, false);
+  assert.deepEqual(await listAccessoryCategories(gateway), ['腰带', '鞋油', '鞋垫', '新种类']);
 });
 
 test('编辑排除当前记录；删除走 gateway', async () => {
@@ -51,6 +83,9 @@ test('编辑排除当前记录；删除走 gateway', async () => {
   const updated = await updateAccessory(gateway, 'a1', { name: '39元腰带', category: '腰带', price: 42, stockQuantity: 7 });
   assert.equal(updated.price, 42);
   assert.equal(updated.stockQuantity, 7);
+  assert.equal(updated.isAccessory, true, '没传赠品时不覆盖原值');
+  const unchecked = await updateAccessory(gateway, 'a1', { name: '39元腰带', category: '腰带', price: 42, stockQuantity: 7, isAccessory: false });
+  assert.equal(unchecked.isAccessory, false);
   await deleteAccessory(gateway, 'a1');
   const rows = await listAccessories(gateway);
   assert.equal(rows.some((row) => row.recordId === 'a1'), false);

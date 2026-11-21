@@ -53,6 +53,38 @@ test('V1 gateway schema validation reports renamed or missing fields', async () 
   await assert.rejects(() => gateway.validateTable('sample'), /缺少 V1 字段: 数量/);
 });
 
+test('字段更新走全量定义：保留已有 options 并追加新选项', async () => {
+  const calls = [];
+  const client = {
+    bitable: {
+      appTableField: {
+        list: async () => ({
+          code: 0,
+          data: {
+            items: [{
+              field_id: 'fld_category', field_name: '种类', type: 3,
+              property: { options: [{ name: '腰带', color: 1 }, { name: '鞋油', color: 2 }] },
+            }],
+            has_more: false,
+          },
+        }),
+        update: async (payload) => {
+          calls.push(payload);
+          return { code: 0, data: { field: payload.data } };
+        },
+      },
+    },
+  };
+  const gateway = new V1BitableGateway({ schema: { appToken: 'app', tables: { acc: { tableName: '其他配品', tableId: 'tbl_acc', fields: { category: '种类' } } } }, client, writeScheduler: null });
+  await gateway.updateFieldDefinition('acc', '种类', {
+    field_name: '种类', type: 3,
+    property: { options: [{ name: '腰带', color: 1 }, { name: '鞋油', color: 2 }, { name: '新种类' }] },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path.field_id, 'fld_category');
+  assert.deepEqual(calls[0].data.property.options.map((item) => item.name), ['腰带', '鞋油', '新种类']);
+});
+
 test('sales schema matches the live three-table field snapshot', () => {
   // ⚠️ 快照 = 生产「销售主表」**当前还存在的**列里我们关心的那些名字（2026-10-06 建四个状态维度、
   // 删「确认状态（旧）」「订单状态」；2026-10-08 加「赠品」「售后次数」；

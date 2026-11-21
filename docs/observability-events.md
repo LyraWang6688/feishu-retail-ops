@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **515** 个事件。按前缀分组：
+共 **519** 个事件。按前缀分组：
 
 ## accessory
 
@@ -39,6 +39,8 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `bitable.field.update_failed` | 1 | src/services/v1BitableGateway.js |
+| `bitable.field.updated` | 1 | src/services/v1BitableGateway.js |
 | `bitable.record.batch_create_failed` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
 | `bitable.record.batch_created` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
 | `bitable.record.batch_delete_failed` | 2 | src/config/alerts.js<br>src/config/batchWriteTelemetry.js |
@@ -601,6 +603,8 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `workbench.accessories.categories_failed` | 1 | src/routes/workbench/accessoryConfig.js |
+| `workbench.accessories.category_add_failed` | 1 | src/routes/workbench/accessoryConfig.js |
 | `workbench.accessories.gift_options_failed` | 1 | src/services/giftAccessoryService.js |
 | `workbench.accessories.gifts_failed` | 1 | src/routes/workbench/accessories.js |
 | `workbench.accessories.list_failed` | 1 | src/routes/workbench/accessoryConfig.js |
