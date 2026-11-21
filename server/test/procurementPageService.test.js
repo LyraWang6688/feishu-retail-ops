@@ -20,6 +20,9 @@ const config = buildProcurementPageConfig({});
 const SF = V1_BITABLE_SCHEMA.tables.salesDetail.fields;
 const PF = V1_BITABLE_SCHEMA.tables.product.fields;
 const BF = V1_BITABLE_SCHEMA.tables.behavior.fields;
+const PRF = V1_BITABLE_SCHEMA.tables.purchaseRequest.fields;
+const PRRO = V1_BITABLE_SCHEMA.tables.purchaseRequest.readOnlyFields;
+const PBF = V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields;
 const SH = (iso) => Date.parse(`${iso}+08:00`);
 const NOW = SH('2026-10-28T09:00:00');
 const link = (...ids) => ids.map((id) => ({ record_ids: [id], text: id }));
@@ -55,7 +58,7 @@ const productBatchRecord = ({ id = 'recA', number = '86822', itemNo = '86822', c
 });
 const colorRecord = (id, name) => ({ record_id: id, fields: { [CF.name]: [{ text: name, type: 'text' }] } });
 
-const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], colors = [] } = {}) => {
+const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], colors = [], purchases = [], batches = [] } = {}) => {
   const calls = [];
   return {
     calls,
@@ -67,7 +70,10 @@ const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], 
     },
     async listAll(tableKey) {
       calls.push({ kind: 'listAll', tableKey });
-      return tableKey === 'behavior' ? behaviors : [];
+      if (tableKey === 'behavior') return behaviors;
+      if (tableKey === 'purchaseRequest') return purchases;
+      if (tableKey === 'purchaseOrderBatch') return batches;
+      return [];
     },
     async getBatch(tableKey, ids) {
       calls.push({ kind: 'getBatch', tableKey, ids });
@@ -77,7 +83,7 @@ const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], 
   };
 };
 
-test('AC-P1 补货只查「销售明细」一张表：筛选公式 = 库存数量=0 + 销售日>=TODAY()-3；不读实时库存', async () => {
+test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 = 库存数量=0 + 销售日>=TODAY()-3；不读实时库存', async () => {
   const gateway = makeGateway({
     sales: [salesRecord({ id: 'recA', size: 39, code: 'SALE_CASH' }), salesRecord({ id: 'recA', size: 41, code: 'SALE_PREPAID' })],
     products: [productBatchRecord({ id: 'recA' })],
@@ -100,6 +106,48 @@ test('AC-P1 补货只查「销售明细」一张表：筛选公式 = 库存数�
   assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.soldAt}\\]`));
   // getBatch：先按记录 ID 读货品，再按颜色关联 ID 读颜色管理（解析显示名；Bug-2 修复）
   assert.deepEqual(gateway.calls.filter((call) => call.kind === 'getBatch').map((call) => call.tableKey), ['product', 'color']);
+});
+
+test('AC-P24 补货加入采购明细未到货：数量 - 已入库数量，和销售同尺码合并', async () => {
+  const gateway = makeGateway({
+    products: [productBatchRecord({ id: 'recA' })],
+    colors: [colorRecord('recColorBlack', '黑色')],
+    behaviors: [behavior('behCash', 'SALE_CASH', '现货')],
+    purchases: [{
+      record_id: 'pd_1',
+      fields: {
+        [PRF.product]: link('recA'),
+        [PRF.size]: 39,
+        [PRF.quantity]: 5,
+        [PRRO.arrivedQuantity.name]: 2,
+      },
+    }],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadReplenish({ requestId: 'r_pending' });
+  assert.equal(result.stats.notArrived, 3);
+  assert.deepEqual(result.groups[0].sizes.map((row) => [row.size, row.notArrived]), [[39, 3]]);
+  assert.ok(gateway.calls.some((call) => call.kind === 'listAll' && call.tableKey === 'purchaseRequest'));
+});
+
+test('AC-P24c 采购退货批次的明细不进入补货未到货', async () => {
+  const gateway = makeGateway({
+    products: [productBatchRecord({ id: 'recA' })],
+    colors: [colorRecord('recColorBlack', '黑色')],
+    behaviors: [behavior('behReturn', 'PURCHASE_RETURN', '退货')],
+    batches: [{ record_id: 'batch_ret', fields: { [PBF.behavior]: link('behReturn') } }],
+    purchases: [{
+      record_id: 'pd_ret',
+      fields: {
+        [PRF.product]: link('recA'), [PRF.size]: 39, [PRF.quantity]: 5,
+        [PRF.batchNo]: link('batch_ret'), [PRRO.arrivedQuantity.name]: 0,
+      },
+    }],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadReplenish({ requestId: 'r_return' });
+  assert.equal(result.stats.notArrived, 0);
+  assert.equal(result.groups.length, 0);
 });
 
 test('AC-P10（#950）`trade_type_unknown` 只对**真认不出交易类型**的行告警；已报过货不告警', async () => {

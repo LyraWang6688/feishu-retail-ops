@@ -4,8 +4,9 @@
  * 采购页读模型里的**纯函数**（无 I/O、无 gateway、无时钟副作用）——
  * 时间窗口 / 归一化 / 分组 / 统计全在这里，用例直接喂假记录就能钉住边界。
  *
- * 🔴 口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`）：
- *   · 补货：**只查「销售明细」一张表**；库存数量 = 0；销售日 = 今天 00:00 往前 3 个自然日（上海时区）；
+ * 🔴 口径（2026-10-28 业务负责人确认，2026-11-21 增加未到货）：
+ *   · 补货：销售明细（库存数量 = 0；销售日 = 今天 00:00 往前 3 个自然日，上海时区）
+ *     ＋ 采购明细（数量 - 已入库数量 > 0）；
  *   · 上新：`货品信息` 上架日期 = 最近 7 天（今天 + 往前 6 天）；按记录 ID 分组；普通码 1 / 特殊码 0；顶部统计只有「新增货品」；
  *   · 颜色只读字段；「品类」不读；「记录 ID」只作内部主键，不出现在展示文案里。
  */
@@ -70,6 +71,20 @@ const numberOf = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
+/** Lookup 原始值 → 数字合计；空值按 0，多个值求和。 */
+const sumNumbers = (value) => {
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + sumNumbers(item), 0);
+  if (value == null || value === '') return 0;
+  if (typeof value === 'object') {
+    if (Array.isArray(value.value)) return sumNumbers(value.value);
+    if (value.value != null) return sumNumbers(value.value);
+    if (value.text != null) return sumNumbers(value.text);
+    return 0;
+  }
+  const number = Number(String(value).replace(/,/g, '').trim());
+  return Number.isFinite(number) ? number : 0;
+};
+
 /** 一行销售明细 → 规整行；认不出（缺主键 / 尺码 / 编码）⇒ null（不猜）。 */
 const normalizeSalesRow = (record, fields) => {
   const fieldsOf = record?.fields || {};
@@ -100,7 +115,24 @@ const normalizeSalesRow = (record, fields) => {
  * @param {(cell:any)=>string} input.tradeTypeCodeOf 交易类型单元格 → `SALE_CASH` / `SALE_PREPAID` / ''（判据注入）
  * @param {number} input.now            epoch（毫秒）
  */
-const buildReplenishView = ({ records, products, fields, productFields = fields, config, tradeTypeCodeOf, now }) => {
+/** 采购明细 → 未到货行；缺货品 / 尺码 / 数量或已全部入库 ⇒ null。 */
+const normalizePendingRow = (record, fields = {}) => {
+  const fieldsOf = record?.fields || {};
+  const productIds = linkedRecordIds(fieldsOf[fields.product]);
+  const productRecordId = productIds[0] || '';
+  const size = numberOf(fieldsOf[fields.size]);
+  const requested = numberOf(fieldsOf[fields.quantity]);
+  if (!productRecordId || !Number.isInteger(size) || requested === null || requested <= 0) return null;
+  const arrived = sumNumbers(fieldsOf[fields.arrivedQuantity]);
+  const notArrived = Math.max(requested - arrived, 0);
+  if (notArrived <= 0) return null;
+  return { productRecordId, size, requested, arrived, notArrived };
+};
+
+const buildReplenishView = ({
+  records, pendingRecords = [], products, fields, productFields = fields,
+  purchaseFields = {}, config, tradeTypeCodeOf, now,
+}) => {
   const range = replenishWindow(now, config);
   const roles = config.behavior;
   const groupsByKey = new Map();
@@ -132,8 +164,18 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
       continue;
     }
     const group = groupsByKey.get(row.productRecordId) || { key: row.productRecordId, sizes: new Map() };
-    const entry = group.sizes.get(row.size) || { size: row.size, spotSold: 0, prepaidSold: 0 };
+    const entry = group.sizes.get(row.size) || { size: row.size, spotSold: 0, prepaidSold: 0, notArrived: 0 };
     if (code === roles.spot) entry.spotSold += 1; else entry.prepaidSold += 1;
+    group.sizes.set(row.size, entry);
+    groupsByKey.set(row.productRecordId, group);
+  }
+  // 补货来源 B：采购明细「数量 - 已入库数量」> 0 的未到货行。
+  for (const record of pendingRecords || []) {
+    const row = normalizePendingRow(record, purchaseFields);
+    if (!row) continue;
+    const group = groupsByKey.get(row.productRecordId) || { key: row.productRecordId, sizes: new Map() };
+    const entry = group.sizes.get(row.size) || { size: row.size, spotSold: 0, prepaidSold: 0, notArrived: 0 };
+    entry.notArrived += row.notArrived;
     group.sizes.set(row.size, entry);
     groupsByKey.set(row.productRecordId, group);
   }
@@ -158,7 +200,8 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
     const sizes = [...group.sizes.values()].sort((a, b) => a.size - b.size);
     const prepaidTotal = sizes.reduce((sum, entry) => sum + entry.prepaidSold, 0);
     const spotTotal = sizes.reduce((sum, entry) => sum + entry.spotSold, 0);
-    return { ...product, sizes, prepaidTotal, spotTotal };
+    const notArrivedTotal = sizes.reduce((sum, entry) => sum + (entry.notArrived || 0), 0);
+    return { ...product, sizes, prepaidTotal, spotTotal, notArrivedTotal };
   });
   const sortConfig = config.sort.replenishGroup;
   groups.sort((a, b) => {
@@ -172,6 +215,7 @@ const buildReplenishView = ({ records, products, fields, productFields = fields,
     stats: {
       spotSold: groups.reduce((sum, group) => sum + group.spotTotal, 0),
       prepaidPending: groups.reduce((sum, group) => sum + group.prepaidTotal, 0),
+      notArrived: groups.reduce((sum, group) => sum + group.notArrivedTotal, 0),
       productCount: groups.length,
     },
     groups,
@@ -189,6 +233,8 @@ module.exports = {
   replenishWindow,
   textOf,
   numberOf,
+  sumNumbers,
   normalizeSalesRow,
+  normalizePendingRow,
   buildReplenishView,
 };
