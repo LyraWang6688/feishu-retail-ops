@@ -99,6 +99,7 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
         reused: accepted.reused === true,
         job_id: accepted.jobId,
         toast: accepted.toast,
+        redirect_url: accepted.redirect_url || '',
       });
     } catch (error) {
       const status = error?.statusCode === 400 ? 400 : 502;

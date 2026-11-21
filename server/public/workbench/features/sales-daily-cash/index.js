@@ -79,9 +79,11 @@ export function createSalesDailyCashModule() {
     showPageError('');
     try {
       const accepted = await api.post(SALES_DAILY_CASH_API, { ...body, submitKey });
-      if (accepted?.toast) showToast(accepted.toast);
       if (accepted?.job_id) await waitForAsyncJob(accepted.job_id);
       state.submitKeys[kind] = '';
+      // 两个保存动作（期初 / 拿走）成功后都回工作台，由统一 toast 接回执。
+      if (accepted?.redirect_url) { window.location.assign(accepted.redirect_url); return; }
+      if (accepted?.toast) showToast(accepted.toast);
       await load();
     } catch (error) {
       const code = String(error?.message || '');
