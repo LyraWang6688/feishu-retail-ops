@@ -56,7 +56,7 @@ test('每日现金：首次保存创建一条；关店保存拿走金额更新�
   const first = await service.save({ openingAmount: '500' });
   assert.equal(first.record.opening_amount, 500);
   assert.equal(gateway.records.length, 1);
-  assert.equal(gateway.records[0].fields[F.fields.saleDate], '2026-11-21T00:00:00+08:00');
+  assert.equal(gateway.records[0].fields[F.fields.saleDate], Date.parse('2026-11-21T00:00:00+08:00'), 'DateTime 列必须写 epoch 毫秒');
   gateway.records[0].fields[R.closingCash.name] = 1300;
   const second = await service.save({ withdrawalAmount: 200 });
   assert.equal(gateway.records.length, 1, '同一天只更新，不新建第二条');
