@@ -137,9 +137,17 @@ export function mountAfterSalesPage(container, options = {}) {
   };
 
   /** 尺码卡（销售扫码页同一套：一行 4 个码、整块 ≥44px、选中高亮）。 */
-  const sizeChipsHtml = (items) => items.map((item) => Number(item.size ?? item)).filter((size) => Number.isFinite(size)).map((size) => `
-    <button class="as-size-chip${Number(modal.size) === Number(size) ? ' active' : ''}" type="button"
-      data-as-size-value="${escapeHtml(String(size))}">${escapeHtml(String(size))} 码</button>`).join('');
+  const sizeChipsHtml = (items) => items.map((item) => {
+    const size = Number(item.size ?? item);
+    if (!Number.isFinite(size)) return '';
+    const states = Array.isArray(item.states) ? item.states : [];
+    const tags = states.map((state) => '<span class="as-size-state">' + escapeHtml(state.label) + '</span>').join('');
+    const onlySample = states.length === 1 && states[0].key === AFTER_SALES_PAGE.sampleStateKey;
+    return '<button class="as-size-chip' + (Number(modal.size) === Number(size) ? ' active' : '')
+      + '" type="button" data-as-size-value="' + escapeHtml(String(size))
+      + '" data-as-sample-only="' + (onlySample ? '1' : '0') + '">'
+      + escapeHtml(String(size)) + ' 码' + tags + '</button>';
+  }).join('');
 
   /** 换尺码：按销售扫码页口径摆三组（现货 / 预定 / 特殊码折叠）。 */
   const sizeGroupsHtml = () => {
@@ -159,7 +167,24 @@ export function mountAfterSalesPage(container, options = {}) {
       <details class="as-size-group as-size-fold">
         <summary class="as-size-legend"><span>${escapeHtml(AFTER_SALES_PAGE.sizeGroupSpecial)}</span><span class="tag tag-warning">${escapeHtml(String(special.length))}</span></summary>
         <div class="as-size-chips">${sizeChipsHtml(special)}</div>
-      </details>` : ''}`;
+      </details>` : ''}` + samplePromotionHtml();
+  };
+
+  /** 换尺码选到「只有样品」时，要求选另一个有门盒库存的尺码补样品。 */
+  const samplePromotionHtml = () => {
+    if (!modal?.sampleOnly) return '';
+    const candidates = (modal.stock?.sampleCandidates || [])
+      .map((size) => String(size))
+      .filter((size) => size !== String(modal.size));
+    if (!candidates.length) {
+      return '<p class="as-modal-error">' + escapeHtml(AFTER_SALES_PAGE.samplePromotionUnavailable) + '</p>';
+    }
+    const options = candidates.map((size) => '<option value="' + escapeHtml(size) + '"'
+      + (String(modal.samplePromotionSize) === size ? ' selected' : '') + '>' + escapeHtml(size) + ' 码</option>').join('');
+    return '<label class="as-modal-line as-modal-field"><span class="as-modal-label">'
+      + escapeHtml(AFTER_SALES_PAGE.samplePromotionLabel)
+      + '</span><select class="as-modal-select" data-as-sample-size><option value="">'
+      + escapeHtml(AFTER_SALES_PAGE.select) + '</option>' + options + '</select></label>';
   };
 
   /** 读「这一款」的尺码分组（销售扫码页口径；只读接口）。 */
@@ -207,6 +232,7 @@ export function mountAfterSalesPage(container, options = {}) {
       if (!recordId) { modalError(AFTER_SALES_PAGE.exchangeScanFailed); return; }
       const requestId = (globalThis.crypto?.randomUUID?.() || '').toString();
       const query = new URLSearchParams({
+        from: AFTER_SALES_PAGE.exchangeRealm,
         flow: 'afterSalesExchange',
         requestId,
         salesEntryRecordId: String(candidate.sales_entry_record_id || ''),
@@ -267,6 +293,7 @@ export function mountAfterSalesPage(container, options = {}) {
           <input type="hidden" name="productRecordId" value="${escapeHtml(productRecordId)}">
           <input type="hidden" name="scenario" value="same">
           <input type="hidden" name="newSize" value="${escapeHtml(modal.size || '')}">
+          <input type="hidden" name="samplePromotionSize" value="${escapeHtml(modal.samplePromotionSize || '')}">
           <div class="as-modal-line as-modal-field">
             <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.exchangeModeLabel)}">
               <button class="as-segment${modal.kind === 'same' ? ' active' : ''}" type="button" data-as-exchange-kind="same">${escapeHtml(AFTER_SALES_PAGE.exchangeSameItem)}</button>
@@ -289,6 +316,7 @@ export function mountAfterSalesPage(container, options = {}) {
       }
       : {
         action: 'exchange', kind: '', size: '', method: '', scanned: false,
+        sampleOnly: false, samplePromotionSize: '',
         requestId: (globalThis.crypto?.randomUUID?.() || '').toString(),
       };
     modalError('');
@@ -318,10 +346,24 @@ export function mountAfterSalesPage(container, options = {}) {
         modalError(AFTER_SALES_PAGE.exchangeSizeLabel);
         return;
       }
+      if (modal.sampleOnly && !modal.samplePromotionSize) {
+        event.preventDefault();
+        modalError(AFTER_SALES_PAGE.samplePromotionRequired);
+        return;
+      }
       const button = exchangeForm.querySelector('button[type="submit"]');
       if (button) { button.disabled = true; button.textContent = SUBMIT_PENDING_TEXT; }
       return;
     }
+  });
+
+  // 换尺码选到样品时，把补样品尺码写回隐藏字段（select 的 change 不会进 click 处理）。
+  container.addEventListener('change', (event) => {
+    const sampleSize = event.target.closest('[data-as-sample-size]');
+    if (!sampleSize || modal?.action !== 'exchange') return;
+    modal.samplePromotionSize = sampleSize.value;
+    const hidden = container.querySelector('[data-as-exchange-form] input[name="samplePromotionSize"]');
+    if (hidden) hidden.value = modal.samplePromotionSize;
   });
 
   // 退货表单提交校验（浏览器原生提交；这里只补"退款必须选方式"那一道人话）
@@ -388,6 +430,8 @@ export function mountAfterSalesPage(container, options = {}) {
       }
       modal.kind = kind.dataset.asExchangeKind;
       modal.size = '';
+      modal.sampleOnly = false;
+      modal.samplePromotionSize = '';
       renderModal();
       if (modal.kind === 'same') void loadStockSizes();
       return;
@@ -395,7 +439,16 @@ export function mountAfterSalesPage(container, options = {}) {
     const sizeChip = event.target.closest('[data-as-size-value]');
     if (sizeChip && modal?.action === 'exchange' && modal.kind === 'same') {
       modal.size = sizeChip.dataset.asSizeValue;
+      modal.sampleOnly = sizeChip.dataset.asSampleOnly === '1';
+      modal.samplePromotionSize = '';
       renderModal();
+      return;
+    }
+    const sampleSize = event.target.closest('[data-as-sample-size]');
+    if (sampleSize && modal?.action === 'exchange') {
+      modal.samplePromotionSize = sampleSize.value;
+      const hidden = container.querySelector('[data-as-exchange-form] input[name="samplePromotionSize"]');
+      if (hidden) hidden.value = modal.samplePromotionSize;
       return;
     }
     if (event.target.closest('[data-as-scan]')) {

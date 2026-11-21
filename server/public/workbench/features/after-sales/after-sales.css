@@ -321,3 +321,17 @@
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
+
+/* 换尺码：尺码上的门盒 / 样品 / 空状态标签 */
+.as-size-state {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: var(--weight-bold);
+  line-height: 1.6;
+  vertical-align: middle;
+}

@@ -19,6 +19,7 @@ const { InventoryService } = require('./inventoryService');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { nextId, stateFor } = require('./salesRecordIds');
 const { createPaymentMethodsService } = require('./paymentMethodsService');
+const { createSamplePromotionService } = require('./samplePromotionService');
 const { AFTER_SALES_EXCHANGE: EX } = require('../config/afterSalesExchange');
 const { logInfo, logWarn } = require('../utils/logger');
 
@@ -48,6 +49,7 @@ class AfterSalesExchangeService {
     this.inventory = options.inventory || new InventoryService({ gateway: this.gateway });
     this.references = options.references || new V1ReferenceResolver(this.gateway);
     this.paymentMethods = options.paymentMethods || createPaymentMethodsService(this.gateway);
+    this.samples = options.samples || createSamplePromotionService({ inventory: this.inventory });
     this.now = options.now || (() => Date.now());
     this.store = options.store || new JsonTaskStore({
       dir: options.dir || EX.jobsDir || DEFAULT_STORE_DIR,
@@ -82,6 +84,14 @@ class AfterSalesExchangeService {
     const newSize = Number(String(payload.newSize ?? '').trim());
     if (!Number.isFinite(newSize) || newSize <= 0) throw badRequest(this.texts.needNewSize);
     out.newSize = newSize;
+    const samplePromotionRaw = String(payload.samplePromotionSize || payload.sample_promotion_size || '').trim();
+    if (samplePromotionRaw) {
+      const samplePromotionSize = Number(samplePromotionRaw);
+      if (!Number.isFinite(samplePromotionSize) || samplePromotionSize <= 0) throw badRequest(this.texts.samplePromotionInvalid);
+      out.samplePromotionSize = samplePromotionSize;
+    } else {
+      out.samplePromotionSize = 0;
+    }
     return out;
   }
 
@@ -138,6 +148,29 @@ class AfterSalesExchangeService {
       if (!newProduct) throw badRequest(this.texts.newProductNotFound);
       newAmount = shaped.newAmount;
       diff = Number((newAmount - originalAmount).toFixed(2));
+    }
+
+    // ⭐ 换到「只有样品」的尺码：必须让用户选另一个尺码补样品（复用销售补样品口径）。
+    let liveCandidates = [];
+    if (typeof this.inventory.sampleReplacementCandidates === 'function') {
+      const liveRecords = typeof this.inventory.readLiveInventoryForProduct === 'function'
+        ? await this.inventory.readLiveInventoryForProduct(newProductRecordId)
+        : null;
+      liveCandidates = await this.inventory.sampleReplacementCandidates(
+        newProductRecordId, liveRecords ? { liveRecords } : {},
+      );
+    }
+    const currentSize = (liveCandidates || []).find((item) => Number(item.size) === Number(newSize));
+    const sampleOnly = Boolean(currentSize
+      && Number(currentSize.sampleCount) > 0
+      && Number(currentSize.doorBoxCount) === 0);
+    if (sampleOnly) {
+      const chosen = Number(shaped.samplePromotionSize) || 0;
+      const allowed = (liveCandidates || [])
+        .filter((item) => Number(item.doorBoxCount) > 0 && Number(item.size) !== Number(newSize))
+        .map((item) => Number(item.size));
+      if (!chosen) throw badRequest(this.texts.needSamplePromotion);
+      if (!allowed.includes(chosen)) throw badRequest(this.texts.samplePromotionInvalid);
     }
 
     let method = null;
@@ -238,6 +271,38 @@ class AfterSalesExchangeService {
       salesEntryRecordId: prepared.salesEntryRecordId,
     }, { correlation: options.correlation });
     await save({ status: 'stock_applied', stock: { restock, new: newStock } });
+
+    // ③b 换到只有样品的尺码：扣掉样品后，按用户选的尺码补回一个样品。
+    //     补样品失败只 warn，不回滚已经成功的换货（与销售补样品同一口径）。
+    if (newStock && Number(newStock.sampleConsumedQuantity) > 0 && prepared.samplePromotionSize) {
+      try {
+        const promoted = await this.samples.promote({
+          productRecordId: prepared.newProductRecordId,
+          size: prepared.samplePromotionSize,
+          salesDetailRecordId: newDetailRecordId,
+          salesEntryRecordId: prepared.salesEntryRecordId,
+          operatorOpenId: payload.operatorOpenId || '',
+          requestId,
+        });
+        if (promoted && promoted.ok === false) {
+          logWarn('inventory.sample.promotion_failed', {
+            job_id: requestId,
+            product_record_id: prepared.newProductRecordId,
+            size: prepared.samplePromotionSize,
+            sales_detail_record_id: newDetailRecordId,
+            reason: promoted.code || 'failed',
+          });
+        }
+      } catch (error) {
+        logWarn('inventory.sample.promotion_failed', {
+          job_id: requestId,
+          product_record_id: prepared.newProductRecordId,
+          size: prepared.samplePromotionSize,
+          sales_detail_record_id: newDetailRecordId,
+          error: String(error?.message || error),
+        });
+      }
+    }
 
     // ④ 差价：补=收款 / 退=退款（差价 0 不建）
     let money = progress.money || null;

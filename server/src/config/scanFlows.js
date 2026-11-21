@@ -66,12 +66,12 @@ const SCAN_FLOWS = Object.freeze({
         endpoint: '/api/workbench/sales/after-sales/exchange/submit',
         payload: Object.freeze([
           'requestId', 'salesEntryRecordId', 'detailRecordId',
-          'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod',
+          'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod', 'samplePromotionSize',
         ]),
       }),
     ]),
     allowAddLine: false,
-    entry: '/r/{number}?flow=afterSalesExchange',
+    entry: '/r/{number}?from=sales&flow=afterSalesExchange',
     // 本步（货品页 → 下一步差价/提交）还没接线时的人话（配置先行；渲染/路由不写中文）
     // 换款式价格差弹窗（前台 JS 读这段 JSON；脚本里不写中文）
     exchange: Object.freeze({

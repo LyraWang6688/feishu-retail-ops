@@ -41,7 +41,7 @@ test('AC-FLOW2 afterSalesExchange flow：无资金页、不加一双、差价步
   assert.equal(submitEndpointOf(flow), '/api/workbench/sales/after-sales/exchange/submit');
   assert.deepEqual(submitPayloadOf(flow), [
     'requestId', 'salesEntryRecordId', 'detailRecordId',
-    'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod',
+    'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod', 'samplePromotionSize',
   ]);
   assert.deepEqual(flow.context, ['requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount', 'productRecordId']);
 });
