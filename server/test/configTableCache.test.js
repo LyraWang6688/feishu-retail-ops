@@ -21,7 +21,7 @@ const gatewayOf = (values, calls = { n: 0 }) => ({
 test('配置表 TTL 由统一注册表给定（调用方不再传）', () => {
   assert.ok(CONFIG_TABLE_KEYS.includes('paymentMethod'));
   assert.ok(CONFIG_TABLE_KEYS.includes('sizeManagement'));
-  assert.equal(CONFIG_TABLE_KEYS.length, 13, '注册表覆盖配置表 + 赠品候选 + 产品特点三张标签表（2026-11-14）');
+  assert.equal(CONFIG_TABLE_KEYS.length, 14, '注册表覆盖配置表 + 其他配品 + 赠品候选 + 产品特点三张标签表');
   assert.ok(CONFIG_TABLE_KEYS.includes('productAudience'));
   assert.ok(CONFIG_TABLE_KEYS.includes('productSellingPoint'));
   assert.ok(CONFIG_TABLE_KEYS.includes('productScene'));
@@ -31,6 +31,7 @@ test('配置表 TTL 由统一注册表给定（调用方不再传）', () => {
   assert.equal(CONFIG_TABLES.sizeManagement.ttlMs, 24 * 60 * 60 * 1000);
   assert.equal(CONFIG_TABLES.product.ttlMs, 24 * 60 * 60 * 1000);
   assert.equal(CONFIG_TABLES.liveInventory.ttlMs, 5 * 60 * 1000);
+  assert.equal(CONFIG_TABLES.accessory.ttlMs, 24 * 60 * 60 * 1000, '其他配品整表缓存 24h');
   assert.equal(CONFIG_TABLES.giftAccessory.ttlMs, 24 * 60 * 60 * 1000, '赠品候选缓存 24h');
 });
 

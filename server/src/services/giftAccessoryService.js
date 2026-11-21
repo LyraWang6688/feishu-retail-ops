@@ -26,7 +26,7 @@ const createGiftAccessoryService = ({ gateway, table: tableOverride } = {}) => {
         gateway,
         tableKey: 'giftAccessory',
         loader: async () => {
-          const all = await gateway.listAll('accessory');
+          const all = await getConfigRows({ gateway, tableKey: 'accessory' });
           return (all || []).filter((record) => record?.fields?.[table.fields.isAccessory] === true);
         },
       });
@@ -45,7 +45,7 @@ const createGiftAccessoryService = ({ gateway, table: tableOverride } = {}) => {
 
   const listAll = async () => {
     try {
-      const records = await gateway.listAll('accessory');
+      const records = await getConfigRows({ gateway, tableKey: 'accessory' });
       return (records || []).map((record) => ({
         record_id: record.record_id,
         name: textValue(record.fields?.[table.fields.name]).trim(),
