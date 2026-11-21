@@ -54,7 +54,7 @@ test('AC-PM5 ⭐ 按「出现顺序」排序（1 最前）；没序号/非数字
     { record_id: 'd', fields: { 交易方式: '无序号' } },
     { record_id: 'e', fields: { 交易方式: '非数字', 出现顺序: 'x' } },
   ];
-  const service = createPaymentMethodsService({ listAll: async () => rows });
+  const service = createPaymentMethodsService({ listAll: async () => rows }, { orderFieldName: '出现顺序' });
   const out = await service.list();
   assert.deepEqual(out.items, ['微信扫码', '现金', '工商银行', '无序号', '非数字'], '按出现顺序升序，无序号排最后且稳定');
 });
@@ -82,7 +82,7 @@ test('AC-PM7 ⭐ 「是否启用」列存在时：未勾选的方式不出现在
     { record_id: 'b', fields: { 交易方式: '微信', 出现顺序: 2, 是否启用: false } },
     { record_id: 'c', fields: { 交易方式: '现金', 出现顺序: 3, 是否启用: true } },
   ];
-  const service = createPaymentMethodsService({ listAll: async () => rows });
+  const service = createPaymentMethodsService({ listAll: async () => rows }, { orderFieldName: '出现顺序' });
   const out = await service.list();
   assert.deepEqual(out.items, ['支付宝', '现金'], '未勾选「是否启用」的方式被过滤');
 });
