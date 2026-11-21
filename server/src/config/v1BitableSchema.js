@@ -723,8 +723,12 @@ const V1_BITABLE_SCHEMA = {
     salesSummary: {
       tableName: '销售汇总',
       tableId: getEnv('FEISHU_V1_SALES_SUMMARY_TABLE_ID'),
-      fields: { saleDate: '销售日', openingCash: '开门零钱', withdrawalCash: '拿走现金' },
-      readOnlyFields: { closingCash: { name: '关门零钱', type: 20, writable: false } },
+      fields: { openingCash: '开门零钱', withdrawalCash: '拿走现金' },
+      // 2026-11-21：销售日由飞书自动生成，代码只读不写。
+      readOnlyFields: {
+        saleDate: { name: '销售日', type: 5, writable: false },
+        closingCash: { name: '关门零钱', type: 20, writable: false },
+      },
     },
     // ⭐⭐ 2026-11-09（业务负责人）：「点「批量打印」进的是飞书表单链接，后续就只用这个了」
     //   ⇒ 批量打印 = 她填这张表的飞书表单；后端监听该表**新增记录**自动打印（见
