@@ -42,7 +42,13 @@ export const createProductDelistedModule = ({
     try {
       const suffix = q ? `?q=${encodeURIComponent(q)}` : '';
       const data = await api.get(`${PRODUCT_PROFILE_API.delisted}${suffix}`);
-      host.__ppDelistedItems = Array.isArray(data?.items) ? data.items : [];
+      const remote = Array.isArray(data?.items) ? data.items : [];
+      const seen = new Set(remote.map((item) => item.recordId));
+      // 已提交但后端已下架的货品，在当前页面继续保留（直到用户刷新/离开）。
+      const local = [...(host.__ppDelistedLocal?.values() || [])]
+        .filter((item) => !seen.has(item.recordId))
+        .filter((item) => !q || String(item.itemNo || '').toLowerCase().includes(q.toLowerCase()));
+      host.__ppDelistedItems = remote.concat(local);
       render(host);
     } catch {
       host.__ppDelistedItems = [];
@@ -70,55 +76,77 @@ export const createProductDelistedModule = ({
     empty.textContent = host.__ppDelistedQuery ? T.delistedSearchEmpty : T.delistedEmpty;
     resetThumbs(host);
     observeThumbs(host, list);
+    for (const [recordId, status] of (host.__ppDelistedStates || [])) {
+      setRowState(host, recordId, status);
+    }
   };
 
   const closeModal = (host) => {
     const modal = host.querySelector('[data-pp-delete-modal]');
     if (modal) modal.hidden = true;
+    host.__ppDelistSelection = null;
   };
 
   const openModal = (host, button) => {
-    host.__ppDelete = {
+    const confirmButton = host.querySelector('[data-pp-delete-confirm]');
+    if (confirmButton) {
+      confirmButton.disabled = false;
+      confirmButton.textContent = T.delistedDeleteConfirm;
+    }
+    host.__ppDelistSelection = {
       recordId: button.dataset.ppDelete || '',
       number: button.dataset.ppDeleteNumber || '',
       hasSampleImage: button.dataset.ppHasSample === '1',
       submitKey: globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`,
     };
-    if (!host.__ppDelete.recordId) return;
-    host.querySelector('[data-pp-delete-number]').textContent = `编号：${host.__ppDelete.number}`;
+    if (!host.__ppDelistSelection.recordId) return;
+    host.querySelector('[data-pp-delete-number]').textContent = `编号：${host.__ppDelistSelection.number}`;
     host.querySelector('[data-pp-delete-warning]').textContent = `${T.delistedDeleteWarning}${T.delistedDeleteIrreversible}`;
-    host.querySelector('[data-pp-delete-sample]').textContent = host.__ppDelete.hasSampleImage
+    host.querySelector('[data-pp-delete-sample]').textContent = host.__ppDelistSelection.hasSampleImage
       ? T.delistedDeleteSample : T.delistedDeleteNoSample;
     const modal = host.querySelector('[data-pp-delete-modal]');
     if (modal) modal.hidden = false;
   };
 
+  const setRowState = (host, recordId, status) => {
+    const row = host.querySelector('[data-pp-delisted-row="' + recordId + '"]');
+    const button = row?.querySelector('[data-pp-delete]');
+    if (!button) return;
+    host.__ppDelistedStates = host.__ppDelistedStates || new Map();
+    host.__ppDelistedStates.set(recordId, status);
+    const done = status === 'succeeded';
+    const pending = status === 'pending';
+    button.disabled = pending || done;
+    button.textContent = pending ? T.delistedDeleting
+      : (done ? T.delistedDeleted
+        : (status === 'failed' ? T.delistedRetry : T.delistedDelete));
+    row.dataset.ppState = status;
+  };
+
   const confirm = async (host) => {
-    const item = host.__ppDelete;
-    const button = host.querySelector('[data-pp-delete-confirm]');
-    if (!item?.recordId || !button) return;
+    const item = host.__ppDelistSelection;
+    if (!item?.recordId) return;
+    host.__ppDelistSelection = null;
+    host.__ppDelistedLocal = host.__ppDelistedLocal || new Map();
+    host.__ppDelistedLocal.set(item.recordId, item);
+    closeModal(host);
+    setRowState(host, item.recordId, 'pending');
     showPageError('');
-    button.disabled = true;
-    button.textContent = T.delistedDeleting;
     try {
       const accepted = await api.delete(PRODUCT_PROFILE_API.product(item.recordId), {
         allowNoSample: !item.hasSampleImage,
         submitKey: item.submitKey,
       });
       if (accepted?.toast) showToast(accepted.toast);
-      closeModal(host);
-      host.__ppDelete = null;
       if (accepted?.job_id) await waitForAsyncJob(accepted.job_id);
-      await load(host, host.__ppDelistedQuery || '');
+      setRowState(host, item.recordId, 'succeeded');
     } catch (error) {
+      setRowState(host, item.recordId, 'failed');
       const code = String(error?.message || '');
       const message = code === 'product_not_delisted' ? T.delistedNotDelisted
         : (code === 'archive_failed' ? T.delistedArchiveFailed
           : (code === 'no_sample_image' ? T.delistedNoSample : T.delistedDeleteFailed));
       showPageError(message);
-    } finally {
-      button.disabled = false;
-      button.textContent = T.delistedDeleteConfirm;
     }
   };
 

@@ -57,6 +57,7 @@ export const PRODUCT_PROFILE_TEXTS = Object.freeze({
   delistedDeleteConfirm: '确认下架',
   delistedDeleteCancel: '取消',
   delistedDeleted: '已下架',
+  delistedRetry: '重试下架',
   delistedDeleteFailed: '下架失败，请稍后重试',
   delistedArchiveFailed: '样例图归档失败，货品没有下架，请稍后重试',
   delistedNotDelisted: '这个货品已经下架，不需要重复操作',
