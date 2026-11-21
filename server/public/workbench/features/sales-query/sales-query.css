@@ -17,13 +17,14 @@
 .sq-revenue { display:flex; flex-direction:column; justify-content:center; }
 .sq-revenue span { color:var(--text-secondary); font-size:var(--font-size-xs); }
 .sq-revenue b { font-size:24px; line-height:1.2; font-variant-numeric:tabular-nums; }
-.sq-bar-row { display:grid; grid-template-columns:96px minmax(0,1fr) 84px; gap:8px; align-items:center; margin:9px 0; font-size:var(--font-size-sm); }
+.sq-bar-row { display:grid; grid-template-columns:96px minmax(0,1fr) 96px; gap:8px; align-items:center; margin:9px 0; font-size:var(--font-size-sm); }
 .sq-bar { height:8px; border-radius:999px; background:var(--primary-soft); overflow:hidden; }
 .sq-bar i { display:block; height:100%; border-radius:999px; background:var(--primary); }
-.sq-bar-row b { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.sq-bar-row b, .sq-pending-row b { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.sq-bar-row b small, .sq-pending-row b small { color:var(--text-muted); font-size:var(--font-size-xs); font-weight:500; margin-left:3px; }
+.sq-pending-row b { font-weight:500; }
 .sq-pending-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:4px 8px; align-items:baseline; margin:9px 0 0; color:var(--text-muted); font-size:var(--font-size-sm); }
 .sq-pending-row em { font-style:normal; font-size:var(--font-size-xs); white-space:nowrap; }
-.sq-pending-row b { font-weight:500; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .sq-volume-cards { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:var(--space-3); }
 .sq-volume-card span { display:block; color:var(--text-secondary); font-size:var(--font-size-xs); }
 .sq-volume-card b { font-size:20px; line-height:1.3; font-variant-numeric:tabular-nums; }
@@ -60,7 +61,7 @@
 }
 @media (max-width:620px) {
   .sq-top { grid-template-columns:1fr; }
-  .sq-bar-row { grid-template-columns:88px minmax(0,1fr) 72px; font-size:var(--font-size-xs); }
+  .sq-bar-row { grid-template-columns:88px minmax(0,1fr) 88px; font-size:var(--font-size-xs); }
   .sq-detail-row { grid-template-columns:minmax(min-content,3fr) 34px 62px auto; gap:5px; font-size:var(--font-size-xs); }
   .sq-detail-row .sq-status { grid-column:auto; justify-self:end; margin-top:0; }
   .sq-btn { padding:0 12px; }

@@ -41,12 +41,13 @@ test('AC-SQ1 营业总额含已收款+待平台结算，按支付方式分组，
   const data = await svc.getSalesQuery({ from: '2026-11-18', to: '2026-11-18' });
   assert.equal(data.summary.revenue, 169);
   assert.deepEqual(data.summary.payment_methods, [
-    { method: '微信扫码', amount: 119 },
-    { method: '抖音团购券', amount: 50 },
+    { method: '微信扫码', amount: 119, count: 2 },
+    { method: '抖音团购券', amount: 50, count: 1 },
   ]);
   assert.deepEqual(data.summary.pending_methods, [
-    { method: '抖音团购券', amount: 30 },
+    { method: '抖音团购券', amount: 30, count: 1 },
   ], '没有收付日的待结算券只提示，不计入营业总额');
+  assert.equal(data.summary.payment_methods[0].count, 2, '同一交易方式按 S交易明细行数计笔数');
 });
 
 test('AC-SQ2 销售数量只算已交付/未交付，排除退货，并按品类/类别拆数量金额', async () => {

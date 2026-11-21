@@ -33,11 +33,11 @@ function methodsHtml(methods, pendingMethods, revenue) {
   const normal = methods.map((item) => `<div class="sq-bar-row">
     <span>${escapeHtml(item.method || '未标注方式')}</span>
     <div class="sq-bar"><i style="width:${Math.max(2, (Number(item.amount) || 0) / max * 100)}%"></i></div>
-    <b>${escapeHtml(amountText(item.amount))}</b>
+    <b>${escapeHtml(amountText(item.amount))} <small>${escapeHtml(`${Number(item.count) || 0} 笔`)}</small></b>
   </div>`).join('');
   const pending = (pendingMethods || []).map((item) => `<div class="sq-pending-row">
     <span>${escapeHtml(item.method || '未标注方式')}</span>
-    <b>${escapeHtml(amountText(item.amount))}</b>
+    <b>${escapeHtml(amountText(item.amount))} <small>${escapeHtml(`${Number(item.count) || 0} 笔`)}</small></b>
     <em>${escapeHtml(PAGE.texts.pendingExcluded)}</em>
   </div>`).join('');
   return normal + pending || `<p class="sq-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
