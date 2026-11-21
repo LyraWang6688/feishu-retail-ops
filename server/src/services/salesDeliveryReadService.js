@@ -17,7 +17,7 @@
 const {textValue} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = require('../config/salesDeliveryPage');
-const { createPaymentMethodsService, orderWithPreferred } = require('./paymentMethodsService');
+const { createPaymentMethodsService } = require('./paymentMethodsService');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 const { dateRangeFormula } = require('./bitableFilterFormula');
@@ -331,7 +331,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       return { ...detailRowOf(detail), recorded_at: recordedAtById.get(orderId) ?? null };
     }) : [];
     return {
-      methods: orderWithPreferred(methodRows.map((item) => item.name), SCAN_WRITE.sale.defaultPaymentMethod),
+      methods: methodRows.map((item) => item.name),
       orders: result,
       ...(query ? { all_payments: allPayments, all_details: allDetails } : {}),
     };

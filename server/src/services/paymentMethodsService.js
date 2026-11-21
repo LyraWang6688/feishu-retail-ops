@@ -16,20 +16,13 @@ const { getConfigRows } = require('./configTableCache');
 const { PAYMENT_METHODS } = require('../config/paymentMethods');
 const { CONFIG_TABLES } = require('../config/configTables');
 
-/** 配置默认方式**只在表里真实存在时**排第一；否则用表里第一项。 */
-const orderWithPreferred = (items = [], preferred = '') => {
-  const list = Array.isArray(items) ? items.filter(Boolean) : [];
-  return preferred && list.includes(preferred)
-    ? [preferred, ...list.filter((item) => item !== preferred)]
-    : list;
-};
-
 const createPaymentMethodsService = (gateway, options = {}) => {
   if (!gateway) throw new Error('PaymentMethodsService requires gateway');
   const tableKey = options.tableKey || 'paymentMethod';
   const fieldName = options.fieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.name || '';
   const voucherFieldName = options.voucherFieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.voucher || '';
-  const orderFieldName = options.orderFieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.order || '';
+  const salesAmountFieldName = options.salesAmountFieldName
+    || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.salesAmount || '';
   const enabledFieldName = options.enabledFieldName || V1_BITABLE_SCHEMA.tables?.[tableKey]?.fields?.enabled || '';
   // TTL 统一由 `config/configTables.js` 决定，调用方不再传。
   const ttlMs = CONFIG_TABLES.paymentMethod.ttlMs;
@@ -41,12 +34,12 @@ const createPaymentMethodsService = (gateway, options = {}) => {
   //   ⚠️ 列名可配（env `PAYMENT_METHOD_REFUNDABLE_FIELD`），代码里不绑死。
   const refundableFieldName = options.refundableFieldName || PAYMENT_METHODS.refundableField;
 
-  const orderOf = (row) => {
-    if (!orderFieldName) return Number.POSITIVE_INFINITY;
-    const raw = textValue(row?.fields?.[orderFieldName]).trim();
-    if (!raw) return Number.POSITIVE_INFINITY;
+  const salesAmountOf = (row) => {
+    if (!salesAmountFieldName) return 0;
+    const raw = textValue(row?.fields?.[salesAmountFieldName]).replace(/,/g, '').trim();
+    if (!raw) return 0;
     const number = Number(raw);
-    return Number.isFinite(number) ? number : Number.POSITIVE_INFINITY;
+    return Number.isFinite(number) ? number : 0;
   };
 
   const rowsToItems = (rows = []) => {
@@ -58,8 +51,8 @@ const createPaymentMethodsService = (gateway, options = {}) => {
     const seen = new Set();
     const enabledColumnExists = enabledFieldName && (rows || []).some((row) =>
       row?.fields && Object.prototype.hasOwnProperty.call(row.fields, enabledFieldName));
-    const ordered = (rows || []).map((row, index) => ({ row, index, order: orderOf(row) }))
-      .sort((a, b) => (a.order - b.order) || (a.index - b.index));
+    const ordered = (rows || []).map((row, index) => ({ row, index, salesAmount: salesAmountOf(row) }))
+      .sort((a, b) => (b.salesAmount - a.salesAmount) || (a.index - b.index));
     for (const { row } of ordered) {
       // 「是否启用」列存在时，未勾选的方式不出现在资金页 / 售后下拉里；列不存在 ⇒ 全部可用。
       if (enabledColumnExists && row?.fields?.[enabledFieldName] !== true) continue;
@@ -87,7 +80,7 @@ const createPaymentMethodsService = (gateway, options = {}) => {
     }
   };
 
-  /** 名称那份（去重、去空、按表顺序）。 */
+  /** 名称那份（去重、去空、按销售额降序；同额按表记录顺序）。 */
   const list = async () => {
     const loaded = await load();
     return loaded.ok
@@ -114,4 +107,4 @@ const createPaymentMethodsService = (gateway, options = {}) => {
   return { list, listWithVouchers, listRefundable, tableKey, fieldName, voucherFieldName, enabledFieldName, refundableFieldName, ttlMs };
 };
 
-module.exports = { createPaymentMethodsService, orderWithPreferred };
+module.exports = { createPaymentMethodsService };

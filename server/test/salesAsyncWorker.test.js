@@ -15,7 +15,7 @@ const waitFor = async (fn, { timeoutMs = 2000, intervalMs = 10 } = {}) => {
 
 const make = ({ fail = false, onSettled = null, samplePromotion = null, stock = null } = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sale-async-'));
-  const calls = { create: 0, submit: 0, lines: [], createOptions: null, submitOptions: null };
+  const calls = { create: 0, submit: 0, lines: [], createOptions: null, submitOptions: null, submitInput: null };
   const gateway = {
     table: () => ({ fields: { orderNo: '销售单号' } }),
     listByFilter: async () => [],
@@ -29,6 +29,7 @@ const make = ({ fail = false, onSettled = null, samplePromotion = null, stock = 
     sessions,
     submitSale: async (input, options) => {
       calls.submit += 1;
+      calls.submitInput = input;
       calls.submitOptions = options;
       if (fail) throw new Error('boom');
       return { ok: true, order_no: input.openId ? 'XSD-20261026-0001' : '', stock: stock || { failed: 0 } };
@@ -63,6 +64,23 @@ test('同一 submit_key 只建一个 job；worker 写成功后状态 succeeded',
     assert.equal(h.calls.submit, 1);
     assert.equal(h.calls.lines.length, 1);
     assert.equal(h.calls.lines[0].trade_type_code, 'SALE_CASH');
+  } finally { h.cleanup(); }
+});
+
+test('配品透传：worker 调 submitSale 时带上配品文本 / 金额', async () => {
+  const h = make();
+  try {
+    const a = await h.worker.enqueue({
+      submitKey: 'scan_sale:s:accessory',
+      payload: payload({
+        accessory: '39元腰带×2',
+        accessory_total: 87.9,
+        payments: [{ method: '微信扫码', amount: 186.9 }],
+      }),
+    });
+    await h.worker.process(a.job.job_id);
+    assert.equal(h.calls.submitInput.orderAccessory, '39元腰带×2');
+    assert.equal(h.calls.submitInput.orderAccessoryTotalCents, 8790);
   } finally { h.cleanup(); }
 });
 
