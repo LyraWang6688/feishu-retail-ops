@@ -2,18 +2,27 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { showToast } from '../shared/toast.js';
+import { waitForAsyncJob } from '../shared/asyncJob.js';
 import { SALES_DAILY_CASH_API, SALES_DAILY_CASH_TEXTS as T } from '../../config/salesDailyCash.js';
 
 export function createSalesDailyCashModule() {
-  const state = { host: null, record: null, date: '' };
+  const state = { host: null, record: null, date: '', busy: false, submitKeys: { opening: '', withdrawal: '' } };
 
   const render = () => {
     const host = state.host;
     if (!host) return;
     const record = state.record;
     const hasRecord = Boolean(record);
+    const opening = Number(record?.opening_amount || 0);
+    const realtime = Number(record?.realtime_amount || 0);
     host.innerHTML = `<div class="domain-page dc-page" data-page-kind="sales-daily-cash">
-      <div class="dc-head"><span class="dc-date">${escapeHtml(state.date || '')}</span></div>
+      <section class="dc-summary" data-dc-summary>
+        <div class="dc-summary-head"><span>${escapeHtml(T.summaryTitle)}</span><span>${escapeHtml(state.date || '')}</span></div>
+        <div class="dc-summary-grid">
+          <div><span>${escapeHtml(T.openingTitle)}</span><b>¥${opening.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+          <div><span>${escapeHtml(T.realtimeTitle)}</span><b>¥${realtime.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+        </div>
+      </section>
       <section class="dc-card dc-opening">
         <div class="dc-card-head"><h2>${escapeHtml(T.openingTitle)}</h2></div>
         <div class="dc-input-row">
@@ -60,19 +69,27 @@ export function createSalesDailyCashModule() {
       showPageError(body.openingAmount !== undefined ? T.openingInvalid : T.withdrawalInvalid);
       return;
     }
+    if (state.busy) return;
+    state.busy = true;
+    const kind = body.openingAmount !== undefined ? 'opening' : 'withdrawal';
+    const submitKey = state.submitKeys[kind] || (globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`);
+    state.submitKeys[kind] = submitKey;
     showPageError('');
     try {
-      const data = await api.post(SALES_DAILY_CASH_API, body);
-      state.date = String(data?.date || state.date);
-      state.record = data?.record || state.record;
-      showToast(T.saved);
-      render();
+      const accepted = await api.post(SALES_DAILY_CASH_API, { ...body, submitKey });
+      if (accepted?.toast) showToast(accepted.toast);
+      if (accepted?.job_id) await waitForAsyncJob(accepted.job_id);
+      state.submitKeys[kind] = '';
+      await load();
     } catch (error) {
       const code = String(error?.message || '');
       const message = code === 'opening_amount_required' ? T.openingRequired
         : (code.includes('opening') ? T.openingInvalid
           : (code.includes('withdrawal') ? T.withdrawalInvalid : T.saveFailed));
+      state.submitKeys[kind] = '';
       showPageError(message);
+    } finally {
+      state.busy = false;
     }
   };
 

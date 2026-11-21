@@ -18,6 +18,8 @@ const { createWorkbenchOrderActionsRouter } = require('../workbenchOrderActions'
 const { createWorkbenchSalesDeliveryRoutes } = require('../workbenchSalesDelivery');
 const { createSalesQueryService } = require('../../services/salesQueryService');
 const { createSalesDailyCashService } = require('../../services/salesDailyCashService');
+const { createSalesDailyCashAsyncService } = require('../../services/salesDailyCashAsyncService');
+const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 const { logError } = require('../../utils/logger');
 
 const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}) => {
@@ -54,6 +56,16 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
     }
   });
 
+  let salesDailyCashAsyncInstance = null;
+  const salesDailyCashAsync = () => {
+    if (!salesDailyCashAsyncInstance) {
+      salesDailyCashAsyncInstance = options.salesDailyCashAsync || createSalesDailyCashAsyncService({
+        gateway: options.gateway || followup.gateway,
+        asyncJobs: options.asyncJobs || getAsyncJobService(),
+      });
+    }
+    return salesDailyCashAsyncInstance;
+  };
   let salesDailyCashInstance = null;
   const salesDailyCash = () => {
     if (!salesDailyCashInstance) {
@@ -73,11 +85,21 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
   });
   router.post('/sales/daily-cash', async (req, res) => {
     try {
-      const result = await salesDailyCash().save({
+      const accepted = await salesDailyCashAsync().submit({
         openingAmount: req.body?.openingAmount,
         withdrawalAmount: req.body?.withdrawalAmount,
+        submitKey: req.body?.submitKey,
+        operatorOpenId: req.workbenchUser?.open_id || '',
+        operatorName: req.workbenchUser?.name || '',
+        correlation: { request_id: req.requestId },
       });
-      return res.json({ success: true, ...result });
+      return res.status(202).json({
+        success: true,
+        accepted: true,
+        reused: accepted.reused === true,
+        job_id: accepted.jobId,
+        toast: accepted.toast,
+      });
     } catch (error) {
       const status = error?.statusCode === 400 ? 400 : 502;
       logError('workbench.sales.daily_cash.save_failed', {

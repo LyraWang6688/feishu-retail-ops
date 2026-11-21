@@ -317,7 +317,13 @@
 
 /* ── 销售 · 每日现金（2026-11-21） ───────────────────────────────── */
 .dc-page{display:grid;gap:12px}
-.dc-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;color:var(--text-secondary);font-size:var(--font-size-sm)}
+.dc-summary{padding:14px;border:1px solid var(--border-light);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-card)}
+.dc-summary-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px;color:var(--text-secondary);font-size:var(--font-size-xs)}
+.dc-summary-head span:first-child{color:var(--text);font-size:var(--font-size-md);font-weight:var(--weight-bold)}
+.dc-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.dc-summary-grid div{display:grid;gap:4px;padding:10px;border-radius:var(--radius-sm);background:var(--surface-sunken)}
+.dc-summary-grid span{color:var(--text-secondary);font-size:var(--font-size-xs)}
+.dc-summary-grid b{font-size:20px;font-variant-numeric:tabular-nums}
 .dc-card{border:1px solid var(--border-light);border-radius:var(--radius-md);background:var(--surface);box-shadow:var(--shadow-card);padding:14px}
 .dc-card-head{display:grid;gap:4px;margin-bottom:10px}
 .dc-card-head h2{margin:0;font-size:16px}

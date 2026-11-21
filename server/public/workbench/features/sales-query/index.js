@@ -33,8 +33,8 @@ const dailyCashHtml = (dailyCash) => {
   return `<section class="sq-daily-cash" data-sq-daily-cash>
     <div class="sq-daily-head"><h2>${escapeHtml(PAGE.texts.dailyCashTitle)}</h2><span>${escapeHtml(dailyCash?.date || '')}</span></div>
     <div class="sq-daily-grid">
-      <div><span>${escapeHtml(PAGE.texts.dailyOpening)}</span><b>${escapeHtml(record ? amountText(record.opening_amount) : '—')}</b></div>
-      <div><span>${escapeHtml(PAGE.texts.dailyRealtime)}</span><b>${escapeHtml(record ? amountText(record.realtime_amount) : '—')}</b></div>
+      <div><span>${escapeHtml(PAGE.texts.dailyOpening)}</span><b>${escapeHtml(amountText(record ? record.opening_amount : 0))}</b></div>
+      <div><span>${escapeHtml(PAGE.texts.dailyRealtime)}</span><b>${escapeHtml(amountText(record ? record.realtime_amount : 0))}</b></div>
     </div>
     ${record ? '' : `<p class="sq-daily-note">${escapeHtml(PAGE.texts.dailyNotStarted)}</p>`}
   </section>`;
