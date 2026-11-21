@@ -232,8 +232,8 @@ class SalesDeliveryService {
     // 这条是**销售交付这一步**在说"该扣的都扣完了 ＋ 扣的是哪几条流水"。
     // ⚠️ 覆盖范围：**只覆盖销售出库（销售减少）这一条库存路径** —— 也就是本函数
     //    "逐条写库存流水 + 写「库存状态」"这一段。卖了样品而触发的**补样品（门盒转样品）**
-    //    由 `SampleReplacementService` → `InventoryService.promoteToSample` 在**之后**执行
-    //    （同一次确认里紧接着补掉，或之后由补选卡片补），它的证据是
+    //    由销售异步链路里的 `samplePromotionService` 在**销售成功后**按她选择的
+    //    `sample_promotion_size` 执行，它的证据是
     //    `inventory.sample.promoted`（带 ledger_record_id），**不在本事件里**；
     //    本事件用 `sample_consumed_detail_ids` 指出"这一单还有哪几条要补样品"。
     // ⚠️⚠️ 读法（正是这条日志要防的那种误读）：`ledger_ids` 为空**不等于**"没扣库存"——

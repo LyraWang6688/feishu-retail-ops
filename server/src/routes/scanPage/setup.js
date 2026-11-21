@@ -4,7 +4,7 @@ const { sumCents } = require('../../utils/money');
 /** 扫码页装配上下文（阶段 5c-2 从 index.js 搬出）。 */
 const createScanPageSetup = ({ options, deps }) => {
   const {
-    COOKIE_NAME, DEFAULT_REALM, ENTRY_RULE_TEXTS, FUNNEL, PURCHASE_RETURN_REALM, REALM_SCAN, SCAN_AUTH_REDIRECT, SCAN_PAGE, SCAN_WRITE, SalesFollowupService, TICKET, V1BitableGateway, asList, buildLoginStartUrl, buildPaymentRows, createFirstVisitKeyAdopter, createLarkJsapiService, createLegacySessionProbe, createMultiItemOrderService, createMultiItemPendingOf, createPageContext, createPageTokenMiddleware, createPaymentMethodsService, createPurchaseSchedulerOf, createPurchaseWriteBackgroundService, createSalesAsyncRuntime, createScanPageRouter, createScanPageService, createScanWriteService, createVoucherPaymentService, encodeSession, express, feishuAuthEnabled, fillWriteText, getSessionUser, handleAddLineOf, handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit, handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, handleUiTap, installScanPageRoutes, invalidateLiveInventorySnapshot, isDataNotReady, logError, logInfo, logWarn, markRealmUsedOf, markTapCode, mergeFirstItemEntries, mountedPathOf, orderWithPreferred, pageSessionKey, pageSessionKeyOfRequest, parseMultiItemGroups, parseNumberSegments, parsePaymentRows, parseReplenishEntries, parseReturnEntries, pathWithoutTicket, purchaseAmountInvalidOf, purchaseAmountMissingOf, purchaseAmountRequiredForOf, purchaseEntryViolation, purchaseWriteDisabledError, realmEntryParams, realmOfActionOf, redeemSessionTicket, renderFlowOf, renderMinimalPage, renderSalePaymentStepPage, renderSalesHome, renderScanMessagePage, renderScanPage, renderScanSkeleton, requireWorkbenchAccess, resolveMultiItemOrderConfig, resolvePurchaseReturnImageOptions, resolveRealm, resolveScanNext, roleOf, sellableSizeTexts, sendHtml, setTraceFields, sizesForCategory, uiTapResultMiddleware, withPageSession,
+    COOKIE_NAME, DEFAULT_REALM, ENTRY_RULE_TEXTS, FUNNEL, PURCHASE_RETURN_REALM, REALM_SCAN, SCAN_AUTH_REDIRECT, SCAN_PAGE, SCAN_WRITE, SalesFollowupService, TICKET, V1BitableGateway, asList, buildLoginStartUrl, buildPaymentRows, createFirstVisitKeyAdopter, createLarkJsapiService, createLegacySessionProbe, createMultiItemOrderService, createMultiItemPendingOf, createPageContext, createPageTokenMiddleware, createPaymentMethodsService, createPurchaseSchedulerOf, createPurchaseWriteBackgroundService, createSalesAsyncRuntime, createScanPageRouter, createScanPageService, createScanWriteService, createVoucherPaymentService, encodeSession, express, feishuAuthEnabled, fillWriteText, getSessionUser, handleAddLineOf, handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit, handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, handleUiTap, installScanPageRoutes, invalidateLiveInventorySnapshot, isDataNotReady, logError, logInfo, logWarn, markRealmUsedOf, markTapCode, mergeFirstItemEntries, mountedPathOf, pageSessionKey, pageSessionKeyOfRequest, parseMultiItemGroups, parseNumberSegments, parsePaymentRows, parseReplenishEntries, parseReturnEntries, pathWithoutTicket, purchaseAmountInvalidOf, purchaseAmountMissingOf, purchaseAmountRequiredForOf, purchaseEntryViolation, purchaseWriteDisabledError, realmEntryParams, realmOfActionOf, redeemSessionTicket, renderFlowOf, renderMinimalPage, renderSalePaymentStepPage, renderSalesHome, renderScanMessagePage, renderScanPage, renderScanSkeleton, requireWorkbenchAccess, resolveMultiItemOrderConfig, resolvePurchaseReturnImageOptions, resolveRealm, resolveScanNext, roleOf, sellableSizeTexts, sendHtml, setTraceFields, sizesForCategory, uiTapResultMiddleware, withPageSession,
   } = deps;
 
   // #948：统一异步任务（重试 / 失败发运营群）—— 适配器与单例都在这里 require（不塞进 index.js 的巨型 deps 列表）
@@ -57,8 +57,7 @@ const createScanPageSetup = ({ options, deps }) => {
    *      · **不许留白**（这一页是**展示** —— 候选为空 ⇒ 她"点不出来"，收款这一步就走不下去 ✗）。
    *   ⚠️ 与 `listAccessories`（`:181`）**口径不同**：配品读不到给**空清单**（少一个下拉项不挡卖鞋 ✓），
    *      收款方式读不到**必须退回配置**（挡的是"她能不能记账"✗）—— 这里刻意**不照抄**那一条。
-   *   ⚠️ 默认方式照旧**排在第一位**（`defaultPaymentMethod`，她 2026-10-08：「默认微信」）——
-   *      表里没有它时也保留：与改前那句 `[...new Set([default, ...config])]` 同口径 ✓。
+   *   ⭐ 2026-11-21（业务负责人）：严格按「销售额」降序；**不再把默认方式置顶**。
    */
   const paymentMethodsService = options.paymentMethodsService
     || createPaymentMethodsService(gateway, options.paymentMethodsServiceOptions);
@@ -81,8 +80,8 @@ const createScanPageSetup = ({ options, deps }) => {
       ok: false, items: [], reason: 'payment_methods_unreadable', error: error?.message || 'unknown',
     }));
     if (listed?.ok === true && Array.isArray(listed.items) && listed.items.length) {
-      // ⭐ 2026-10-18：表是唯一真源；配置默认方式只在表里存在时排第一（详见 orderWithPreferred）。
-      return [...new Set(orderWithPreferred(listed.items, writeConfig.sale.defaultPaymentMethod))];
+      // 2026-11-21：严格按「销售额」降序（service 已排序）；不再把默认方式置顶。
+      return [...new Set(listed.items)];
     }
     // ⭐ 2026-10-26：不再退回配置里的「微信/现金/支付宝/银行卡」——
     //   那份 fallback 与表里的真实值不一致（表里是「微信扫码 / 微信转账…」），
