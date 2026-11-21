@@ -1,6 +1,7 @@
 import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { createLabelPrintModule } from './features/labels/index.js';
+import { createSalesDailyCashModule } from './features/sales-daily-cash/index.js';
 import { TAP_TELEMETRY } from './config/telemetry.js';
 
 // 独立页面注册表：key = 页面的 <body data-view="...">，value = 该页面的模块工厂。
@@ -20,6 +21,7 @@ import { TAP_TELEMETRY } from './config/telemetry.js';
 // ⚠️ 留下来的就是**这两个**独立页；两个都**保留**（她要的）。
 const factories = {
   'label-print': () => createLabelPrintModule(),
+  'sales-daily-cash': () => createSalesDailyCashModule(),
 };
 
 async function start() {

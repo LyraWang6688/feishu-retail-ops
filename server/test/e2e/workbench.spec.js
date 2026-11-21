@@ -217,7 +217,7 @@ test('每日现金：展示期初现金和实时现金余额', async ({ page }) 
   await mockApi(page);
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '销售', exact: true }).click();
-  await page.getByRole('button', { name: '每日现金', exact: true }).click();
+  await page.getByRole('link', { name: /每日现金/ }).click();
   await expect(page.locator('[data-page-kind="sales-daily-cash"]')).toBeVisible();
   await expect(page.locator('[data-dc-realtime]')).toContainText('1,320.00');
   await expect(page.locator('[data-dc-opening]')).toHaveValue('500');
