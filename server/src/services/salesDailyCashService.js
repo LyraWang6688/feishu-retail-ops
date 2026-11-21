@@ -30,7 +30,7 @@ const dayKeyOf = (value, timeZone) => {
   return `${part('year')}-${part('month')}-${part('day')}`;
 };
 const todayKeyOf = (now, timeZone) => dayKeyOf(now, timeZone);
-const startOfDayIso = (day) => `${day}T00:00:00+08:00`;
+const startOfDayMs = (day) => Date.parse(`${day}T00:00:00+08:00`);
 
 const createSalesDailyCashService = ({
   gateway, config = SALES_DAILY_CASH, now = () => new Date(),
@@ -96,7 +96,8 @@ const createSalesDailyCashService = ({
           throw error;
         }
         const created = await gateway.create('salesSummary', {
-          saleDate: startOfDayIso(day),
+          // 飞书 DateTime 列接收 epoch 毫秒；ISO 字符串会 DatetimeFieldConvFail (1254064)。
+          saleDate: startOfDayMs(day),
           ...patch,
         });
         record = { record_id: created.recordId || created.record_id };
