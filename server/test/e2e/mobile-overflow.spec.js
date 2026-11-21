@@ -15,8 +15,8 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
           revenue: 1880,
           delivered: { count: 2, amount: 1880 },
           undelivered: { count: 0, amount: 0 },
-          payment_methods: [{ method: '微信扫码', amount: 1710 }, { method: '现金', amount: 170 }],
-          pending_methods: [{ method: '抖音代金券', amount: 256.2 }],
+          payment_methods: [{ method: '微信扫码', amount: 1710, count: 3 }, { method: '现金', amount: 170, count: 1 }],
+          pending_methods: [{ method: '抖音代金券', amount: 256.2, count: 1 }],
           by_category: [{ name: '休闲鞋', delivered_count: 2, delivered_amount: 1880, undelivered_count: 0, undelivered_amount: 0 }],
           by_type: [],
         },
@@ -42,6 +42,10 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
 
   for (const url of ['/workbench/?module=sales&page=sales-query', '/workbench/?module=inventory&page=inventory-ledger']) {
     await page.goto(url, { waitUntil: 'networkidle' });
+    if (url.includes('sales-query')) {
+      await expect(page.locator('.sq-bar-row').first()).toContainText('3 笔');
+      await expect(page.locator('.sq-pending-row')).toContainText('1 笔');
+    }
     await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
     const widths = await page.evaluate(() => ({
       viewport: document.documentElement.clientWidth,

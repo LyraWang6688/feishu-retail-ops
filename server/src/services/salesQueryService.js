@@ -45,10 +45,13 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
     const methodMap = new Map();
     for (const payment of payments) {
       const method = payment.method || SALES_QUERY.unknownMethod;
-      methodMap.set(method, (methodMap.get(method) || 0) + Number(payment.amount || 0));
+      const bucket = methodMap.get(method) || { amount: 0, count: 0 };
+      bucket.amount += Number(payment.amount || 0);
+      bucket.count += 1;
+      methodMap.set(method, bucket);
     }
     const paymentMethods = [...methodMap.entries()]
-      .map(([method, amount]) => ({ method, amount: Math.round(amount * 100) / 100 }))
+      .map(([method, bucket]) => ({ method, amount: Math.round(bucket.amount * 100) / 100, count: bucket.count }))
       .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method));
     const revenue = Math.round(paymentMethods.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
     const pendingMap = new Map();
@@ -56,10 +59,13 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
       if (payment.status !== SALES_QUERY.pendingStatus || payment.received_at != null) continue;
       if (!inRange(payment.created_at, fromText, toText)) continue;
       const method = payment.method || SALES_QUERY.unknownMethod;
-      pendingMap.set(method, (pendingMap.get(method) || 0) + Number(payment.amount || 0));
+      const bucket = pendingMap.get(method) || { amount: 0, count: 0 };
+      bucket.amount += Number(payment.amount || 0);
+      bucket.count += 1;
+      pendingMap.set(method, bucket);
     }
     const pendingMethods = [...pendingMap.entries()]
-      .map(([method, amount]) => ({ method, amount: Math.round(amount * 100) / 100 }))
+      .map(([method, bucket]) => ({ method, amount: Math.round(bucket.amount * 100) / 100, count: bucket.count }))
       .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method));
 
     const allDetailRows = Array.isArray(data.all_details)
