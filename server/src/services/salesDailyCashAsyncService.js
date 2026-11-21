@@ -41,7 +41,8 @@ const createSalesDailyCashAsyncService = ({ gateway, asyncJobs } = {}) => {
       setImmediate(() => {
         void asyncJobs.run({
           jobId,
-          run: async () => executor.save(payload),
+          // 通用异步层用 `ok:true` 判定成功；save() 返回的是业务结果，必须补上。
+          run: async () => ({ ok: true, ...(await executor.save(payload)) }),
           // 金额非法 / 没有期初记录属于业务拒绝，重试也不会变；由用户重新提交。
           classifyError: (error) => ({
             retryable: false,
