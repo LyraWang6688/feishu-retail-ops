@@ -53,7 +53,6 @@ const CHAINS = Object.freeze({
     route: 'src/routes/workbench/sales.js', routeKey: /router\.post\('\/sales\/daily-cash'/,
     service: 'src/services/salesDailyCashService.js', serviceKey: /gateway\.create\('salesSummary'/,
     landing: [
-      ['salesSummary', 'saleDate'],
       ['salesSummary', 'openingCash'],
       ['salesSummary', 'withdrawalCash'],
     ],

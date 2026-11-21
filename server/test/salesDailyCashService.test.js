@@ -20,8 +20,13 @@ const freshGateway = () => {
     },
     async create(tableKey, fields) {
       assert.equal(tableKey, 'salesSummary');
-      assert.equal(Object.prototype.hasOwnProperty.call(fields, F.fields.saleDate), false, '写库不许传物理字段名');
-      const record = { record_id: `rec_${next += 1}`, fields: { ...translate(fields) } };
+      assert.equal(Object.prototype.hasOwnProperty.call(fields, 'saleDate'), false, '销售日由飞书自动生成，代码不写');
+      const mapped = translate(fields);
+      // 模拟飞书自动字段：创建后「销售日」自动带当天。
+      if (!Object.prototype.hasOwnProperty.call(mapped, R.saleDate.name)) {
+        mapped[R.saleDate.name] = Date.parse('2026-11-21T00:00:00+08:00');
+      }
+      const record = { record_id: `rec_${next += 1}`, fields: mapped };
       records.push(record);
       return { recordId: record.record_id, record };
     },
@@ -56,7 +61,7 @@ test('每日现金：首次保存创建一条；关店保存拿走金额更新�
   const first = await service.save({ openingAmount: '500' });
   assert.equal(first.record.opening_amount, 500);
   assert.equal(gateway.records.length, 1);
-  assert.equal(gateway.records[0].fields[F.fields.saleDate], Date.parse('2026-11-21T00:00:00+08:00'), 'DateTime 列必须写 epoch 毫秒');
+  assert.equal(gateway.records[0].fields[R.saleDate.name], Date.parse('2026-11-21T00:00:00+08:00'), '销售日由飞书自动带出');
   gateway.records[0].fields[R.closingCash.name] = 1300;
   const second = await service.save({ withdrawalAmount: 200 });
   assert.equal(gateway.records.length, 1, '同一天只更新，不新建第二条');
