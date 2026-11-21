@@ -217,6 +217,19 @@ test('AC-TA9 配品：文本和金额同一次写主表；鞋类总额仍只写�
   assert.equal(fields[F('salesEntry', 'accessoryAmount')], 87.9);
 });
 
+test('AC-TA9b 配品金额计入本次应收：鞋类 + 配品可以一起收满', async () => {
+  const gateway = makeGateway();
+  await runConfirm(gateway, {
+    items: [shoe(38, 250)],
+    orderAccessory: '39元腰带×2、袜子×1',
+    orderAccessoryTotalCents: 8790,
+    payments: [{ amount: 337.9, method: '微信', operatorOpenId: 'ou_ta' }],
+  });
+  assert.equal(gateway.masterFields()[F('salesEntry', 'totalAmount')], 250, '鞋类总额仍只写鞋');
+  assert.equal(gateway.masterFields()[F('salesEntry', 'accessoryAmount')], 87.9);
+  assert.ok(gateway.tables.paymentRecord.some((row) => Number(row.fields['交易金额']) === 337.9), '配品那部分也能作为本次收款');
+});
+
 test('AC-TA1 多行 3 件（券调过的行 + 少付）⇒ 总金额 = 各行实收之和，且与「还差多少钱」自洽', async () => {
   const gateway = makeGateway();
   const result = await runConfirm(gateway, {
