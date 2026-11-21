@@ -81,6 +81,7 @@ const exchangeDiffBlock = (flow) => {
       newSize: size,
       newAmount: String(amount),
       diffPaymentMethod: method || '',
+      samplePromotionSize: String((form.querySelector('[data-sample-promotion-value]') || {}).value || ''),
     };
     Object.keys(fields).forEach(function (key) {
       var input = document.createElement('input');

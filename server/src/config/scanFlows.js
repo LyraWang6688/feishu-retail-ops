@@ -66,7 +66,7 @@ const SCAN_FLOWS = Object.freeze({
         endpoint: '/api/workbench/sales/after-sales/exchange/submit',
         payload: Object.freeze([
           'requestId', 'salesEntryRecordId', 'detailRecordId',
-          'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod',
+          'newProductRecordId', 'newSize', 'newAmount', 'diffPaymentMethod', 'samplePromotionSize',
         ]),
       }),
     ]),

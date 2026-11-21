@@ -144,7 +144,7 @@
 | `inventory.print.intent.request_failed` | 1 | src/routes/workbenchInventoryAdjustment.js |
 | `inventory.sample_candidates.failed` | 2 | src/services/inventory/executeOperation.js<br>src/services/inventory/saleBatch.js |
 | `inventory.sample.promoted` | 1 | src/services/samplePromotionService.js |
-| `inventory.sample.promotion_failed` | 2 | src/services/salesAsyncWorker.js |
+| `inventory.sample.promotion_failed` | 4 | src/services/afterSalesExchangeService.js<br>src/services/salesAsyncWorker.js |
 | `inventory.sample.promotion_skipped` | 2 | src/services/samplePromotionService.js |
 
 ## label

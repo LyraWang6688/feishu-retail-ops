@@ -88,6 +88,8 @@ const AFTER_SALES_EXCHANGE = Object.freeze({
     detailNotFound: '找不到这条销售明细',
     detailNotInEntry: '这条销售明细不属于这张销售单',
     detailNotExchangeable: '这条明细当前状态不能换货（只有「已交付」可以换）',
+    needSamplePromotion: '这一双只有样品，请选择另一个尺码补样品',
+    samplePromotionInvalid: '补样品尺码必须是其他有门盒库存的尺码',
     alreadyReturned: '这条明细已经退过货了',
     originalAmountMissing: '原明细没有「实收金额」，无法算差价',
     originalAmountInvalid: '原明细金额无效，无法算差价',

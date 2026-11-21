@@ -166,3 +166,41 @@ test('AC-EX5 非「已交付」明细 ⇒ 400，零写入', async () => {
   assert.equal(h.state.calls.create.length, 0);
   assert.equal(h.state.calls.update.length, 0);
 });
+test('AC-EX6 换到只有样品的尺码：要求选另一个尺码补样品，并在出库后执行补样品', async () => {
+  const h = makeExchangeGateway();
+  const promoted = [];
+  const inventoryCalls = [];
+  const inventory = {
+    readLiveInventoryForProduct: async () => [],
+    sampleReplacementCandidates: async () => [
+      { size: 40, doorBoxCount: 1, sampleCount: 0, warehouseCount: 0 },
+      { size: 41, doorBoxCount: 0, sampleCount: 1, warehouseCount: 0 },
+    ],
+    applyChange: async (input) => {
+      inventoryCalls.push(input);
+      return input.kind === 'STOCK_SALE_DECREASE'
+        ? { sampleConsumedQuantity: 1 }
+        : { sampleConsumedQuantity: 0 };
+    },
+  };
+  const service = new AfterSalesExchangeService({
+    gateway: h.gateway,
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'as-exchange-sample-')),
+    now: () => NOW,
+    paymentMethods: h.paymentMethods,
+    inventory,
+    samples: { promote: async (input) => { promoted.push(input); return { ok: true }; } },
+  });
+
+  await assert.rejects(service.execute(basePayload({ newSize: 41 })), (error) => (
+    error.statusCode === 400 && /补样品/.test(error.message)
+  ));
+  assert.equal(inventoryCalls.length, 0, '没选补样品尺码时零库存写入');
+
+  const result = await service.execute(basePayload({ newSize: 41, samplePromotionSize: 40 }));
+  assert.equal(result.newDetail.record_id, 'new_salesDetail_1');
+  assert.equal(promoted.length, 1, '扣掉样品后补一个样品');
+  assert.equal(promoted[0].productRecordId, 'product_old');
+  assert.equal(promoted[0].size, 40);
+  assert.equal(promoted[0].salesDetailRecordId, 'new_salesDetail_1');
+});

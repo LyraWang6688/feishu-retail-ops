@@ -19,6 +19,7 @@
  */
 const express = require('express');
 const { AfterSalesScanService } = require('../services/afterSalesScanService');
+const { SAMPLE_PROMOTION } = require('../config/samplePromotion');
 const { createScanPageService } = require('../services/scanPageService');
 const { saleSizeGroups } = require('../views/scanPageRealm');
 const { AfterSalesReturnService } = require('../services/afterSalesReturnService');
@@ -77,6 +78,8 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
   };
   const sizeItems = (items) => (items || []).map((item) => ({
     size: Number(item.size_text), count: Number(item.count) || 0,
+    // 把门盒 / 样品 / 空状态带到售后换尺码弹窗，不能只给尺码数字。
+    states: Array.isArray(item.states) ? item.states : [],
   }));
   router.get('/sales/after-sales/stock-sizes', async (req, res) => {
     const productRecordId = String(req.query?.productRecordId || req.query?.product_record_id || '').trim();
@@ -84,12 +87,20 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
     try {
       const view = await resolveScanPageService().lookup({ recordId: productRecordId, requestId: req.requestId });
       const groups = saleSizeGroups(view);
+      const all = [...groups.inStock, ...groups.prepaid, ...groups.folded];
+      const sampleCandidates = all
+        .filter((item) => (item.states || []).some((state) => (
+          (state.key === SAMPLE_PROMOTION.texts.tagDoorbox || state.key === '')
+          && Number(state.count) > 0
+        )))
+        .map((item) => String(item.size_text));
       return res.json({
         success: true,
         groups: {
           inStock: sizeItems(groups.inStock),
           reserve: sizeItems(groups.prepaid),
           special: sizeItems(groups.folded),
+          sampleCandidates,
         },
       });
     } catch (error) {
@@ -219,6 +230,7 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
       newSize: String(body.newSize || '').trim(),
       newAmount: String(body.newAmount || '').trim(),
       diffPaymentMethod: String(body.diffPaymentMethod || '').trim(),
+      samplePromotionSize: String(body.samplePromotionSize || body.sample_promotion_size || '').trim(),
       productRecordId,
     };
     try {
