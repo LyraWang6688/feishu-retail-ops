@@ -30,7 +30,7 @@ const CONFIG_TABLES = Object.freeze({
   // 实时库存是业务数据，不走 24h 配置 TTL；只给工作台批量调整做 5 分钟短快照，
   // 但复用同一套缓存/失效/lastGood 机制（写库存的 record_changed 会失效）。
   liveInventory: Object.freeze({ ttlMs: 5 * MINUTE, label: '实时库存' }),
-  // 不是独立 Base 表：只缓存「其他配品」里 配品=true 的候选（资金页赠品下拉）。
+  // 不是独立 Base 表：只缓存「其他配品」里 赠品=true 的候选（资金页赠品下拉）。
   giftAccessory: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '其他配品（赠品候选）' }),
   // 「产品特点配置」三个标签字典表（2026-11-14 登记；走 configTableCache 的 TTL/lastGood/失效）。
   productAudience: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '主推人群标签' }),

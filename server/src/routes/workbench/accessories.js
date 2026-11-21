@@ -1,6 +1,6 @@
 'use strict';
 
-/** 工作台「其他配品」只读接口：资金页赠品候选（仅 配品=true）。 */
+/** 工作台「其他配品」只读接口：资金页赠品候选（仅 赠品=true）。 */
 const express = require('express');
 const { V1BitableGateway } = require('../../services/v1BitableGateway');
 const { createGiftAccessoryService } = require('../../services/giftAccessoryService');
