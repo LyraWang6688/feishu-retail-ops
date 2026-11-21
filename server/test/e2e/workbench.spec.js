@@ -18,7 +18,7 @@ const mockApi = async (page, { orders = [] } = {}) => {
         date: '2026-11-21',
         record: {
           record_id: 'dc1', date: '2026-11-21', opening_amount: 500,
-          withdrawal_amount: 0, realtime_amount: 1320, sales_amount: 820,
+          withdrawal_amount: 0, received_amount: 900, realtime_amount: 1320, sales_amount: 820,
         },
       }));
     }
@@ -292,6 +292,8 @@ test('每日现金：录单子卡片、期初已填写状态', async ({ page }) 
   await page.getByRole('link', { name: /每日现金/ }).click();
   await expect(page.locator('[data-page-kind="sales-daily-cash"]')).toBeVisible();
   await expect(page.locator('[data-dc-summary]')).toContainText('¥500.00');
+  await expect(page.locator('[data-dc-summary]')).toContainText('入账现金');
+  await expect(page.locator('[data-dc-summary]')).toContainText('¥900.00');
   await expect(page.locator('[data-dc-summary]')).toContainText('实时现金');
   await expect(page.locator('[data-dc-summary]')).toContainText('¥1,320.00');
   const dateCentered = await page.locator('[data-dc-summary]').evaluate((summary) => {

@@ -14,12 +14,14 @@ export function createSalesDailyCashModule() {
     const record = state.record;
     const hasRecord = Boolean(record);
     const opening = Number(record?.opening_amount || 0);
+    const received = Number(record?.received_amount || 0);
     const realtime = Number(record?.realtime_amount || 0);
     host.innerHTML = `<div class="domain-page dc-page" data-page-kind="sales-daily-cash">
       <section class="dc-summary" data-dc-summary>
         <div class="dc-summary-head"><span>${escapeHtml(T.summaryTitle)}</span><span>${escapeHtml(state.date || '')}</span></div>
         <div class="dc-summary-grid">
           <div><span>${escapeHtml(T.openingTitle)}</span><b>¥${opening.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+          <div><span>${escapeHtml(T.receivedTitle)}</span><b>¥${received.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
           <div><span>${escapeHtml(T.realtimeTitle)}</span><b>¥${realtime.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
         </div>
       </section>

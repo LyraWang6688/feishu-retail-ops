@@ -4,10 +4,10 @@
  * 「销售 → 每日现金」读写服务。
  *
  * 口径（业务负责人 2026-11-21）：
- *   · 每天营业前填期初金额（写「开门零钱」）；
+ *   · 每天营业前填期初金额（写「开门现金」）；
  *   · 当天没有记录 ⇒ 创建一条，销售日 = 今天；
  *   · 当天已有记录 ⇒ 修改同一条（期初金额 / 关店时拿走现金）；
- *   · 「关门零钱」是公式，「销售金额」是 lookup，只读展示，不写。
+ *   · 「入账现金」是 lookup、「实时现金」是公式，只读展示，不写。
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_DAILY_CASH } = require('../config/salesDailyCash');
@@ -48,6 +48,7 @@ const createSalesDailyCashService = ({
     return {
       opening_amount: num(values[fieldName('openingCash')]),
       withdrawal_amount: num(values[fieldName('withdrawalCash')]),
+      received_amount: num(values[fieldName('receivedCash')]),
       realtime_amount: num(values[fieldName('closingCash')]),
     };
   };
