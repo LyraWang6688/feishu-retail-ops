@@ -9,6 +9,7 @@
 
 // ⭐⭐ 2026-10-29：提交成功 = 统一 toast 共用件（四条扫码提交链共用同一份实现）。
 const { redirectWithSubmitToast } = require('../../utils/submitToast');
+const { postContextQuery } = require('../../services/scanFlowService');
 
 const createFlowHelpers = ({
   DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
@@ -145,7 +146,11 @@ const createFlowHelpers = ({
         //   ⚠️ 形状见 `views/scanPageRenderer.js` 的 `multiItemBlockHtml`（渲染层缺一个键就不接线 ✓）。
         multiItem: multiItemWire,
         // ⭐⭐ `/r/{recordId}` 底下表单必须 POST 回 `/r/{recordId}`（否则提交会落到"按编号"那条路）。
-        postAction: postActionFor(backTargetFor(req, view.number), realm),
+        postAction: (() => {
+          const base = postActionFor(backTargetFor(req, view.number), realm);
+          const flowQuery = postContextQuery(req.query);
+          return flowQuery ? `${base}${base.includes('?') ? '&' : '?'}${flowQuery}` : base;
+        })(),
         sizes,
         draft: { lines },
         saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
