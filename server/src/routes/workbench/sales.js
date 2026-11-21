@@ -17,6 +17,9 @@ const express = require('express');
 const { createWorkbenchOrderActionsRouter } = require('../workbenchOrderActions');
 const { createWorkbenchSalesDeliveryRoutes } = require('../workbenchSalesDelivery');
 const { createSalesQueryService } = require('../../services/salesQueryService');
+const { createSalesDailyCashService } = require('../../services/salesDailyCashService');
+const { createSalesDailyCashAsyncService } = require('../../services/salesDailyCashAsyncService');
+const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 const { logError } = require('../../utils/logger');
 
 const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}) => {
@@ -53,10 +56,64 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
     }
   });
 
+  let salesDailyCashAsyncInstance = null;
+  const salesDailyCashAsync = () => {
+    if (!salesDailyCashAsyncInstance) {
+      salesDailyCashAsyncInstance = options.salesDailyCashAsync || createSalesDailyCashAsyncService({
+        gateway: options.gateway || followup.gateway,
+        asyncJobs: options.asyncJobs || getAsyncJobService(),
+      });
+    }
+    return salesDailyCashAsyncInstance;
+  };
+  let salesDailyCashInstance = null;
+  const salesDailyCash = () => {
+    if (!salesDailyCashInstance) {
+      salesDailyCashInstance = options.salesDailyCash || createSalesDailyCashService({
+        gateway: options.gateway || followup.gateway,
+      });
+    }
+    return salesDailyCashInstance;
+  };
+  router.get('/sales/daily-cash', async (req, res) => {
+    try {
+      return res.json({ success: true, ...await salesDailyCash().getToday() });
+    } catch (error) {
+      logError('workbench.sales.daily_cash.read_failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: 'sales_daily_cash_failed' });
+    }
+  });
+  router.post('/sales/daily-cash', async (req, res) => {
+    try {
+      const accepted = await salesDailyCashAsync().submit({
+        openingAmount: req.body?.openingAmount,
+        withdrawalAmount: req.body?.withdrawalAmount,
+        submitKey: req.body?.submitKey,
+        operatorOpenId: req.workbenchUser?.open_id || '',
+        operatorName: req.workbenchUser?.name || '',
+        correlation: { request_id: req.requestId },
+      });
+      return res.status(202).json({
+        success: true,
+        accepted: true,
+        reused: accepted.reused === true,
+        job_id: accepted.jobId,
+        toast: accepted.toast,
+      });
+    } catch (error) {
+      const status = error?.statusCode === 400 ? 400 : 502;
+      logError('workbench.sales.daily_cash.save_failed', {
+        request_id: req.requestId, error: error.message,
+      });
+      return res.status(status).json({ success: false, error: error.message || 'sales_daily_cash_failed' });
+    }
+  });
+
   let salesQueryInstance = null;
   const salesQuery = () => {
     if (!salesQueryInstance) salesQueryInstance = createSalesQueryService({
       gateway: options.gateway || followup.gateway,
+      dailyCash: options.salesDailyCash,
     });
     return salesQueryInstance;
   };

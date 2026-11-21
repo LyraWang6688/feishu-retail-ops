@@ -36,6 +36,8 @@ const ASYNC_JOB_TYPES = Object.freeze({
   PRODUCT_CONFIG_WRITE: 'product_config_write',
   // 2026-11-21：货品下架（软删除）异步任务
   PRODUCT_DELIST: 'product_delist',
+  // 2026-11-21：每日现金（销售汇总）异步写入
+  SALES_DAILY_CASH: 'sales_daily_cash',
 });
 
 /** 状态值域（#948 第 3.1 节）。`failed` 是唯一会触发群通知的终态（文档 6.1）。 */
@@ -76,6 +78,7 @@ const JOB_ID_PREFIX = Object.freeze({
   [ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT]: 'inventory_adjustment_job',
   [ASYNC_JOB_TYPES.PRODUCT_CONFIG_WRITE]: 'product_config_job',
   [ASYNC_JOB_TYPES.PRODUCT_DELIST]: 'product_delist_job',
+  [ASYNC_JOB_TYPES.SALES_DAILY_CASH]: 'sales_daily_cash_job',
 });
 
 const DEFAULT_TEXTS = Object.freeze({
@@ -103,6 +106,7 @@ const DEFAULT_TEXTS = Object.freeze({
     [ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT]: '库存手工调整',
     [ASYNC_JOB_TYPES.PRODUCT_CONFIG_WRITE]: '产品配置写入',
     [ASYNC_JOB_TYPES.PRODUCT_DELIST]: '货品下架',
+    [ASYNC_JOB_TYPES.SALES_DAILY_CASH]: '每日现金',
   }),
   unknownType: '未知任务',
   defaultStep: '后台写库',
@@ -123,6 +127,7 @@ const DEFAULT_TEXTS = Object.freeze({
     inventoryAdjustment: '库存手工调整写库',
     productConfig: '产品配置写库',
     productDelist: '货品下架写库',
+    salesDailyCash: '每日现金写库',
   }),
   // 排查提示（日志字段，不是群消息正文；同样不许散写在 service 里 ✗）
   hints: Object.freeze({

@@ -47,6 +47,18 @@ const CHAINS = Object.freeze({
   // ⭐ 2026-11-10（业务负责人）：数据配置页「同步存量样例图」按钮 = 存量写入。
   //   落点核过：只写「货品信息.已同步云盘」这一个复选框列（样例图本身进云盘文件，不是表列）。
   // ⭐ 2026-11-10：数据配置页「同步团购券数据」按钮 → 写回「团购券管理」的券目录字段。
+  // 2026-11-21：销售 tab「每日现金」的期初金额 / 拿走金额。
+  SALES_DAILY_CASH_API: {
+    fe: 'features/sales-daily-cash/index.js', feKey: 'api.post(SALES_DAILY_CASH_API',
+    route: 'src/routes/workbench/sales.js', routeKey: /router\.post\('\/sales\/daily-cash'/,
+    service: 'src/services/salesDailyCashService.js', serviceKey: /gateway\.create\('salesSummary'/,
+    landing: [
+      ['salesSummary', 'saleDate'],
+      ['salesSummary', 'openingCash'],
+      ['salesSummary', 'withdrawalCash'],
+    ],
+  },
+
   'DATA_CONFIG_API.voucherCatalogSync': {
     fe: 'features/domains/dataConfigAction.js', feKey: 'api.post(DATA_CONFIG_API.voucherCatalogSync',
     route: 'src/routes/workbench/douyin.js', routeKey: /router\.post\('\/douyin\/voucher-catalog-sync'/,

@@ -76,6 +76,7 @@ export const DOMAIN_TABS = [
         cards: [
           { icon: '👟', title: '鞋类', scanRealm: 'sales' },
           { icon: '🛒', title: '配品', href: ACCESSORY_SALE_FORM_URL },
+          { icon: '💵', title: '每日现金', href: '/workbench/sales-daily-cash.html' },
         ],
       },
       {

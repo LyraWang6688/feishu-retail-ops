@@ -30,7 +30,6 @@ const filterActiveProductsFor = (records = [], context = '') => (
 module.exports = {
   isDelistedFields,
   isDelistedRecord,
-  isActiveProduct,
   filterActiveProducts,
   filterActiveProductsFor,
 };
