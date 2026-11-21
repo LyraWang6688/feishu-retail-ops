@@ -51,7 +51,6 @@ const createSalesDailyCashService = ({
       opening_amount: num(values[fieldName('openingCash')]),
       withdrawal_amount: num(values[fieldName('withdrawalCash')]),
       realtime_amount: num(values[fieldName('closingCash')]),
-      sales_amount: num(values[fieldName('salesAmount')]),
     };
   };
 

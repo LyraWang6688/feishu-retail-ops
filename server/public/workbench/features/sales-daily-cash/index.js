@@ -19,7 +19,7 @@ export function createSalesDailyCashModule() {
     const record = state.record;
     const hasRecord = Boolean(record);
     host.innerHTML = `<div class="domain-page dc-page" data-page-kind="sales-daily-cash">
-      <div class="dc-head"><span class="dc-date">${escapeHtml(state.date || '')}</span></div>
+      <div class="dc-head"><h1 class="dc-title">${escapeHtml(T.title)}</h1><span class="dc-date">${escapeHtml(state.date || '')}</span></div>
       <section class="dc-card dc-opening">
         <div class="dc-card-head"><h2>${escapeHtml(T.openingTitle)}</h2><span class="dc-hint">${escapeHtml(T.openingHint)}</span></div>
         <div class="dc-input-row">
