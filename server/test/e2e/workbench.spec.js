@@ -219,6 +219,7 @@ test('每日现金：录单子卡片、期初已填写状态', async ({ page }) 
   await page.getByRole('button', { name: '销售', exact: true }).click();
   await page.getByRole('link', { name: /每日现金/ }).click();
   await expect(page.locator('[data-page-kind="sales-daily-cash"]')).toBeVisible();
+  await expect(page.locator('[data-dc-summary]')).toContainText('¥500.00');
   await expect(page.locator('[data-dc-opening]')).toHaveValue('500');
   await expect(page.getByRole('button', { name: '已填写' })).toBeDisabled();
 });
