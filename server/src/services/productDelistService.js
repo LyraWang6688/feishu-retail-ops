@@ -136,7 +136,7 @@ const createProductDelistService = ({
       }
     }
     await gateway.update('product', id, {
-      [fields.delisted]: PRODUCT_LIFECYCLE.downlist.setDelisted,
+      [PRODUCT_LIFECYCLE.fields.delisted]: PRODUCT_LIFECYCLE.downlist.setDelisted,
     }, { correlation });
     invalidateConfigTable('product');
     invalidateProductSearchSnapshot();

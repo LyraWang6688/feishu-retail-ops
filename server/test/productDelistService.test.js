@@ -27,7 +27,11 @@ const makeHarness = ({ record = makeRecord(), sourceFiles = null, targetFiles = 
     table: () => V1_BITABLE_SCHEMA.tables.product,
     get: async () => record,
     delete: async (tableKey, id) => { calls.deletedProducts.push({ tableKey, id }); },
-    update: async (tableKey, id, fields) => { calls.updatedProducts.push({ tableKey, id, fields }); },
+    update: async (tableKey, id, fields) => {
+      // 生产网关只认语义键；物理字段名（如「下架」）会直接报「未配置语义字段」。
+      if (Object.prototype.hasOwnProperty.call(fields, F.delisted)) throw new Error(`未配置语义字段: ${F.delisted}`);
+      calls.updatedProducts.push({ tableKey, id, fields });
+    },
     drive: {
       listDriveFolder: async (folder) => (folder === 'source-folder' ? (sourceFiles || []) : historyFiles),
       deleteDriveFile: async (token) => { calls.deletedTargets.push(token); },
@@ -72,7 +76,7 @@ test('PD2 下架且有样例图：先归档，再写下架复选框，不删货�
   assert.deepEqual(h.calls.deletedTargets, ['old_1']);
   assert.deepEqual(h.calls.moved, [{ token: 'src_1', folder: 'history-folder' }]);
   assert.equal(h.calls.updatedProducts[0].tableKey, 'product');
-  assert.deepEqual(h.calls.updatedProducts[0].fields, { [F.delisted]: true });
+  assert.deepEqual(h.calls.updatedProducts[0].fields, { delisted: true });
   assert.equal(h.calls.deletedProducts.length, 0);
 });
 
