@@ -25,7 +25,7 @@
 .pr-search__icon { color: var(--text-muted); font-size: var(--font-size-lg); }
 .pr-search input { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; }
 .pr-summary { margin-bottom: var(--space-3); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
-.pr-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.pr-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); }
 .pr-stat { padding: var(--space-2) 0; text-align: center; border-radius: var(--radius-md); background: var(--surface-soft); }
 .pr-stat b { display: block; font-size: var(--font-size-amount); line-height: var(--line-height-tight); }
 .pr-stat span { display: block; margin-top: 2px; font-size: var(--font-size-xs); color: var(--text-secondary); }
