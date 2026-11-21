@@ -98,7 +98,7 @@ const AFTER_SALES_EXCHANGE = Object.freeze({
     originalSizeUnreadable: '原明细的尺码读不到',
     newProductNotFound: '扫到的新货品在「货品信息」里找不到',
     newSizeNotFound: '新鞋的尺码在「尺码管理」里找不到',
-    totalNotReadable: '原销售主表「总金额」读不到，未回填总金额（其余已写入）',
+    totalNotReadable: '原销售主表「鞋类总额」读不到，未回填鞋类总额（其余已写入）',
     submitFailed: '换货提交失败，请稍后重试',
   }),
 });

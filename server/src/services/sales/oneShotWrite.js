@@ -65,6 +65,8 @@ const finalizeSalesEntryOnce = async (gateway, input = {}, options = {}) => {
   const declared = TABLE_FIELDS.salesEntry.final || [];
   const values = {};
   if (declared.includes('gift')) values.gift = String(input.gift ?? '');
+  if (declared.includes('accessory')) values.accessory = String(input.accessory ?? '');
+  if (declared.includes('accessoryAmount')) values.accessoryAmount = Number(input.accessoryAmount || 0);
   if (declared.includes('totalAmount') && input.totalAmountKnown === true
     && Number.isFinite(Number(input.totalAmount))) {
     values.totalAmount = Number(input.totalAmount);
@@ -100,12 +102,17 @@ const finalizeSalesEntryOnce = async (gateway, input = {}, options = {}) => {
  * `scanWriteService` 那一侧的收口入口：**只认真实业务层**回的 `oneShot` 结果。
  * 注入的假 sales（既有单测替身）没有这一支 ⇒ 返回 `false`，调用方退回旧收口（不硬造写入）。
  */
-const finalizeSaleOnce = async ({ salesService, salesEntryRecordId, result, writeStatus, correlation, timing }) => {
+const finalizeSaleOnce = async ({
+  salesService, salesEntryRecordId, result, writeStatus, correlation, timing,
+  accessory = '', accessoryTotalCents = 0,
+}) => {
   if (typeof salesService?.finalizeOneShot !== 'function') return false;
   const startedAt = Date.now();
   await salesService.finalizeOneShot({
     salesEntryRecordId,
     gift: String(result?.giftText ?? ''),
+    accessory: String(accessory || result?.accessoryText || ''),
+    accessoryAmount: Number(accessoryTotalCents || result?.accessoryTotalCents || 0) / 100,
     totalAmountKnown: result?.orderAmountsKnown === true,
     totalAmount: Number(result?.totalCents || 0) / 100,
     writeStatus,

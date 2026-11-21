@@ -7,7 +7,7 @@
 const { AFTER_SALES_EXCHANGE } = require('../../src/config/afterSalesExchange');
 
 const TABLES = {
-  salesEntry: { fields: { orderNo: '销售单号', afterSalesType: '售后类型', afterSalesCount: '售后次数', totalAmount: '总金额' } },
+  salesEntry: { fields: { orderNo: '销售单号', afterSalesType: '售后类型', afterSalesCount: '售后次数', totalAmount: '鞋类总额' } },
   salesDetail: {
     fields: {
       detailId: '销售明细ID', salesEntry: '销售单号', product: '编号', size: '尺码',
@@ -33,7 +33,7 @@ const makeExchangeGateway = (overrides = {}) => {
         销售单号: 'XSD-20261111-0001',
         售后类型: [],
         售后次数: 1,
-        总金额: 180,
+        鞋类总额: 180,
       },
     },
     detail: {

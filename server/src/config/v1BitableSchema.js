@@ -233,6 +233,7 @@ const V1_BITABLE_SCHEMA = {
         amountCheck: Object.freeze({
           name: '金额核对', type: 19, uiType: 'Lookup', writable: false,
         }),
+        orderTotal: Object.freeze({ name: '总金额', type: 20, uiType: 'Formula', writable: false }),
         // 2026-11-18 销售查询：销售主表上的双向关联；只读，用于按主表 record_id 取明细/收款。
         salesDetails: Object.freeze({
           name: '销售明细', type: 21, uiType: 'DuplexLink', writable: false,
@@ -303,7 +304,10 @@ const V1_BITABLE_SCHEMA = {
         //      名字=「总金额」· type=2（数字）· property={"currency_code":"CNY","formatter":"0"}。
         //      本机**没有生产凭证**（AGENTS 第 8 条）⇒ 这一行**我核不到生产**，
         //      按 Lead 给的只读事实写映射；真表缺这一列时闸门会当场红（不静默）。
-        totalAmount: '总金额',
+        // 2026-11-21：原「总金额」数字列改名「鞋类总额」（语义键仍 totalAmount）；总金额是只读公式 orderTotal。
+        totalAmount: '鞋类总额',
+        accessory: '配品',
+        accessoryAmount: '配品总额',
         // ─────────────────────────────────────────────────────────────────────
         // 🔴🔴 2026-10-09（**已拍板，已落地**）：**这 5 列她在生产表里删掉了，
         //    映射与写入点按老规矩【一起】删** —— 这里**刻意不再有**下面这 5 个映射：

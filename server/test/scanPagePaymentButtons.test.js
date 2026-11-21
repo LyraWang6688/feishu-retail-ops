@@ -108,12 +108,42 @@ test('AC-PB5 ⭐⭐ 资金页显示「总金额」（调用方给；拿不到就
   };
   const withTotal = renderSalePaymentStepPage({ ...base, totalAmountText: '399.5' });
   assert.ok(withTotal.includes('data-view="payment-step-total"'), '总金额那一行要在 ✓');
-  assert.ok(/<h1>总金额/.test(withTotal), '标题 = 总金额（金额与标题同一行）✓');
+  assert.ok(/<h1>鞋类总额/.test(withTotal), '标题 = 鞋类总额（金额与标题同一行）✓');
+  assert.ok(withTotal.includes('data-collect-total'), '资金页有本次应收钩子 ✓');
   assert.ok(withTotal.includes('￥399.5'), '金额那一行只显示金额 ✓');
   // 拿不到 ⇒ **不渲染那一行**（不编 ✗）
   const withoutTotal = renderSalePaymentStepPage(base);
   assert.equal(withoutTotal.includes('data-view="payment-step-total"'), false,
     '拿不到总金额 ⇒ 不渲染（不编 ✗）');
+});
+
+test('AC-PB7 资金页顺序：配品 → 赠品 → 本次应收 → 资金行；配品字段与脚本都在', () => {
+  const { renderSalePaymentStepPage } = require('../src/views/scanPageRenderer');
+  const html = renderSalePaymentStepPage({
+    write: {
+      texts: {}, fields: { gift: 'gift', accessory: 'accessory', accessoryTotal: 'accessory_total' },
+      paymentRows: [{ method: '微信', amount: '' }], paymentMethods: ['微信'],
+    },
+    orderNo: 'XSD-TEST-2', postAction: '/r/TEST', submitKey: 'k', count: 1, totalAmountText: '250',
+  });
+  const accessoryAt = html.indexOf('data-accessory-section');
+  const giftAt = html.indexOf('data-gift-section');
+  const collectAt = html.indexOf('data-collect-total-row');
+  const paymentAt = html.indexOf('data-payment-row');
+  assert.ok(accessoryAt >= 0 && giftAt > accessoryAt && collectAt > giftAt && paymentAt > collectAt,
+    '顺序必须是 配品 → 赠品 → 本次应收 → 资金行');
+  assert.ok(html.includes('name="accessory"') && html.includes('name="accessory_total"'));
+  assert.ok(html.includes('data-view="accessory-rows"'), '配品脚本必须注入');
+});
+
+test('AC-PB8 收款结算：本次应收 = 鞋类明细 + 配品金额', () => {
+  const { resolvePaymentSettlement } = require('../src/services/scanWrite/paymentSettlement');
+  const result = resolvePaymentSettlement({
+    effectiveLineAmounts: ['250'], paidPayments: [{ amount: '300' }], accessoryCents: 5000,
+  });
+  assert.equal(result.itemsCents, 30000);
+  assert.equal(result.settlement.action, 'allow');
+  assert.equal(result.effectivePaymentStatus, '全付');
 });
 
 // ── AC-PB2：成功页那颗**已整颗删掉**（成功页 = 零链接 ✗）─────────────────────────

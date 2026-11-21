@@ -280,8 +280,8 @@ test('AC-REG 其余字段一字未变：主表 / 明细 / 收款行的字段**�
   //     ⇒ 这一单（1 行、实收 240）写到的「总金额」= 240，**多出来的这一列是她的口径**，不是漂移。
   //   ⚠️ 本用例**没有放宽**：仍是 `deepEqual` 全等（少一列 / 多一列都红）。
   assert.deepEqual(Object.keys(entry.fields).sort(),
-    [ENTRY.orderNo, ENTRY.gift, ENTRY.totalAmount, ENTRY.writeStatus].sort(),
-    '主表这次写到的列：销售单号 / 赠品 / 总金额 / 写入状态 —— 没有多出来的列');
+    [ENTRY.orderNo, ENTRY.gift, ENTRY.totalAmount, ENTRY.accessory, ENTRY.accessoryAmount, ENTRY.writeStatus].sort(),
+    '主表这次写到的列：销售单号 / 赠品 / 鞋类总额 / 配品 / 配品总额 / 写入状态');
   assert.equal(cell(entry, ENTRY.totalAmount), 240, '「总金额」= 各行实收之和（这一单只有一行 240）');
   assert.deepEqual(Object.keys(detailsOf(h)[0].fields).sort(),
     [DETAIL.salesEntry, DETAIL.product, DETAIL.size, DETAIL.actualAmount, DETAIL.fulfillmentStatus, DETAIL.tradeType, DETAIL.detailId].sort(),

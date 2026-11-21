@@ -49,7 +49,7 @@ const fakeGateway = (overrides = {}) => {
     table(key) {
       const table = {
         product: { fields: { number: '编号', itemNo: '货号', color: '颜色' } },
-        salesEntry: { fields: { orderNo: '销售单号', writeStatus: '写入状态', recordedAt: '录单日', totalAmount: '总金额' } },
+        salesEntry: { fields: { orderNo: '销售单号', writeStatus: '写入状态', recordedAt: '录单日' }, readOnlyFields: { orderTotal: { name: '总金额' } } },
         salesDetail: { fields: { product: '编号', salesEntry: '销售单号', size: '尺码', soldAt: '销售日', fulfillmentStatus: '履约状态', actualAmount: '实收金额' } },
       }[key];
       if (!table) throw new Error(`Unknown table: ${key}`);

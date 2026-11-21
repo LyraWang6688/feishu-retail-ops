@@ -43,7 +43,23 @@ const createGiftAccessoryService = ({ gateway, table: tableOverride } = {}) => {
     }
   };
 
-  return { list };
+  const listAll = async () => {
+    try {
+      const records = await gateway.listAll('accessory');
+      return (records || []).map((record) => ({
+        record_id: record.record_id,
+        name: textValue(record.fields?.[table.fields.name]).trim(),
+        category: textValue(record.fields?.[table.fields.category]).trim(),
+      })).filter((item) => item.name);
+    } catch (error) {
+      logWarn('workbench.accessories.options_failed', {
+        error: String(error?.message || error).slice(0, 200),
+      });
+      return [];
+    }
+  };
+
+  return { list, listAll };
 };
 
 module.exports = { createGiftAccessoryService };

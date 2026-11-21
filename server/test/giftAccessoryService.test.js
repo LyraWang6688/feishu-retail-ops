@@ -32,6 +32,16 @@ test('AC-GF1 赠品候选只返回 赠品=true，未勾选不进缓存', async (
   assert.equal(gateway.calls.n, 1, '第二次读赠品候选命中缓存，不重读全表');
 });
 
+test('AC-GF3 配品候选返回全部其他配品（不按赠品过滤）', async () => {
+  const gateway = makeGateway([
+    { record_id: 'r1', fields: { 名称: '鞋油', 种类: ['鞋油'], 赠品: true } },
+    { record_id: 'r2', fields: { 名称: '39元腰带', 种类: ['腰带'], 赠品: false } },
+  ]);
+  const service = createGiftAccessoryService({ gateway, table: { ...V1_BITABLE_SCHEMA.tables.accessory, tableId: 'tbl_test_accessory' } });
+  const items = await service.listAll();
+  assert.deepEqual(items.map((item) => item.name), ['鞋油', '39元腰带']);
+});
+
 test('AC-GF2 赠品候选缓存被 record_changed 失效后会重读', async () => {
   resetConfigTableCache();
   const gateway = makeGateway([

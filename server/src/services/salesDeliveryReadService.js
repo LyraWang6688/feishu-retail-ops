@@ -207,7 +207,8 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       .filter(([, orderNo]) => orderNo !== ''));
     const recordedAtById = new Map(orders.map((order) => [order.record_id, order.fields?.[orderFields.recordedAt] ?? null]));
     // 业务负责人 2026-10-29：应付 = 销售主表.总金额；同一单号取第一条非空总金额。
-    const totalAmountById = new Map(orders.map((order) => [order.record_id, order.fields?.[orderFields.totalAmount] ?? null]));
+    const totalField = orderReadOnlyFields.orderTotal?.name || orderFields.totalAmount;
+    const totalAmountById = new Map(orders.map((order) => [order.record_id, order.fields?.[totalField] ?? null]));
     const colorNameById = new Map(colors.map((item) => [item.record_id, textValue(item.fields?.[colorFields.name]).trim()]));
     const sizeValueById = new Map(sizes.map((item) => [item.record_id, textValue(item.fields?.[sizeFields.size]).trim()]));
     const methodRows = methodList?.ok ? methodList.items : [];
