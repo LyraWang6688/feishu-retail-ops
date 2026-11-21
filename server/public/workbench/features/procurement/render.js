@@ -182,9 +182,10 @@ export const shellHtml = (config) => {
     }
     return `<button ${attrs.join(' ')}>${escapeHtml(tab.label)}<small>${escapeHtml(tab.hint)}</small></button>`;
   }).join('');
-  // 业务负责人 2026-10-29（对照交割单页）：**移动端页面不放登录态** —— 顶部直接是三个 tab，
-  // 省出宽度/高度（登录/退出由外层飞书容器处理，页面内不需要重复展示）。
-  return `<div class="pr-tabs" role="tablist" aria-label="${escapeHtml(config.title)}">${tabs}</div>
+  return `<div class="pr-sticky-head">
+    <div class="pr-tabs" role="tablist" aria-label="${escapeHtml(config.title)}">${tabs}</div>
+    <label class="pr-search"><span class="pr-search__icon" aria-hidden="true">⌕</span><input type="search" data-pr-search placeholder="${escapeHtml(config.texts.searchPlaceholder)}" aria-label="${escapeHtml(config.texts.searchPlaceholder)}"></label>
+  </div>
   <div class="pr-panel" data-pr-panel="replenish"></div>
   <div class="pr-panel hidden" data-pr-panel="new"></div>
   <div class="pr-bottom"><div class="pr-bottom-inner">

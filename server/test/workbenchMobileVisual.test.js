@@ -155,7 +155,7 @@ test('AC5 手机默认单列、桌面（≥761px）才多列；留白充足且�
   assert.match(base, /\.quick-entries,\s*\.domain-cards\s*\{\s*display:\s*grid;\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
     '手机默认单列');
   assert.match(base, /@media\s*\(min-width:\s*761px\)/, '桌面才有自适应那一层');
-  assert.match(base, /html,\s*body\s*\{\s*max-width:\s*100%;\s*overflow-x:\s*hidden;\s*\}/, '不横向滚动');
+  assert.match(base, /html,\s*body\s*\{[^}]*overflow-x:\s*(hidden|clip)/, '不横向滚动');
   // 留白：卡片 / 页面内边距走 --space-*（不是写死的 px）
   const paddings = ALL_CSS.match(/padding:\s*[^;]+;/g) || [];
   assert.ok(paddings.filter((item) => /var\(--space-/.test(item)).length >= 10, '留白要走 --space-* 令牌');

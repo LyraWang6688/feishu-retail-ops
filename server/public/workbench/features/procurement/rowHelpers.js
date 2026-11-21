@@ -30,7 +30,7 @@ export const syncRow = (host, store, draft, recordId, size) => {
   });
 };
 
-export const quantityInput = ({ input, config, store, draft, setDraft, applyQuantity }) => {
+export const quantityInput = ({ input, config, applyQuantity }) => {
   const { record, size } = input.dataset;
   const value = Math.min(Math.max(0, Math.round(Number(input.value === '' ? 0 : input.value))), Number(config.defaults.maxQuantity) || 99);
   applyQuantity(record, Number(size), value);

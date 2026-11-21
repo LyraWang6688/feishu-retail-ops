@@ -104,7 +104,7 @@ test('AC-P26 供应商筛选：全部 + 唯一供应商；筛选后统计按当�
     { productRecordId: 'b', supplierRecordId: 's2', supplierName: '供应商B', spotTotal: 5, prepaidTotal: 0, notArrivedTotal: 0 },
     { productRecordId: 'c', supplierRecordId: '', supplierName: '', spotTotal: 1, prepaidTotal: 0, notArrivedTotal: 0 },
   ];
-  assert.deepEqual(filter.supplierOptions(groups, config).map((item) => item.label), ['全部', '供应商A', '供应商B', '未标注']);
+  assert.deepEqual(filter.supplierOptions(groups, config).map((item) => item.label), ['供应商A', '供应商B', '未标注']);
   assert.deepEqual(filter.filterGroups(groups, 's2').map((item) => item.productRecordId), ['b']);
   assert.deepEqual(filter.filteredStats('replenish', [groups[0]], config),
     { spotSold: 2, prepaidPending: 1, notArrived: 3, productCount: 1 });

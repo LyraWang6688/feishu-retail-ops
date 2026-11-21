@@ -24,6 +24,10 @@ test('验收明细：应到/实到/多到 + 自定义尺码后固定底栏同步
   await page.goto('/workbench/purchase-acceptance-detail.html?batchNo=BH-1&supplierRecordId=s1&supplierName=%E4%BE%9B%E5%BA%94%E5%95%86');
   await expect(page.locator('[data-view="arrival-summary"]')).toContainText('应到 7 双 / 实到 7 双 / 多到 0 双');
   await expect(page.locator('.arrival-product').first()).toContainText('206');
+  await page.evaluate(() => window.scrollTo(0, 700));
+  await page.waitForTimeout(50);
+  const summaryBox = await page.locator('[data-view="arrival-summary"]').boundingBox();
+  expect(summaryBox.y).toBeLessThanOrEqual(24);
 
   const p1 = page.locator('.arrival-product').filter({ hasText: '1138-32' });
   await p1.locator('[data-add-size="p1"]').click();

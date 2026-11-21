@@ -11,8 +11,12 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 test('采购页固定 tab，库存调整 / 信息完善单独占一行', () => {
   const css = read('procurement.css');
   const config = read('config/procurement.js');
-  assert.match(css, /\.pr-tabs\s*\{[^}]*position:\s*sticky/, '补货/上新/扫一扫固定在顶部');
-  assert.match(css, /\.pr-tabs\s*\{[^}]*top:\s*env\(safe-area-inset-top/, '避开安全区');
+  assert.match(css, /\.pr-sticky-head\s*\{[^}]*position:\s*sticky/, 'tab + 搜索框固定在顶部');
+  assert.match(css, /\.pr-sticky-head\s*\{[^}]*top:\s*env\(safe-area-inset-top/, '避开安全区');
+  assert.match(css, /\.pr-search\s*\{/, '供应商页搜索框在固定头部');
+  const base = read('styles/base.css');
+  assert.match(base, /\.html, body|html, body/, '有全局横向约束');
+  assert.match(base, /overflow-x:\s*clip/, '不能再用 overflow-x:hidden 创建滚动容器');
   assert.match(css, /\.pr-product-actions\s*\{[^}]*width:\s*100%/, '操作区独占一行');
   assert.match(css, /\.pr-product-actions\s*\{[^}]*flex:\s*0 0 100%/, '不再和尺码卡抢同一行');
   assert.match(config, /infoLabel:\s*'信息完善'/, '资料不齐入口显示「信息完善」');
