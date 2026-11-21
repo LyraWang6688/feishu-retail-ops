@@ -21,7 +21,7 @@ const formHtml = () => `
       ${fieldHtml(T.price + ' *', '<input class="input" data-ac-price type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00">')}
       ${fieldHtml(T.cost, '<input class="input" data-ac-cost type="number" min="0" step="0.01" inputmode="decimal" placeholder="选填">')}
       ${fieldHtml(T.stockQuantity, '<input class="input" data-ac-stock type="number" min="0" step="1" inputmode="numeric" placeholder="选填">')}
-      <div class="ac-field ac-field-full"><label class="ac-check"><input data-ac-gift type="checkbox"><span>${escapeHtml(T.giftField)}</span></label></div>
+      <div class="ac-field ac-gift-field"><label class="ac-check"><input data-ac-gift type="checkbox"><span>${escapeHtml(T.giftField)}</span></label></div>
       <div class="ac-field ac-field-full"><span>${escapeHtml(T.sampleImage)}</span><div class="ac-upload-row"><label class="ac-upload"><input data-ac-image type="file" accept="image/*" hidden><img data-ac-preview hidden alt="样例图预览"><span data-ac-upload-text>${escapeHtml(T.upload)}</span></label><small>${escapeHtml(T.imageHint)}</small></div></div>
     </div>
     <div class="ac-actions"><button class="btn primary" type="submit" data-ac-submit>${escapeHtml(T.submit)}</button><button class="btn" type="button" data-ac-cancel hidden>${escapeHtml(T.cancelEdit)}</button></div>

@@ -252,6 +252,9 @@ test('配品配置：赠品勾选、列表标签、种类动态新增', async ({
 
   const gift = page.locator('[data-ac-gift]');
   await expect(gift).not.toBeChecked();
+  const stockBox = await page.locator('[data-ac-stock]').boundingBox();
+  const giftBox = await gift.boundingBox();
+  expect(Math.abs(giftBox.y - stockBox.y)).toBeLessThan(6, '赠品复选框与库存数量同一行');
   await page.locator('[data-ac-name]').fill('新腰带');
   await page.locator('[data-ac-category]').selectOption('腰带');
   await page.locator('[data-ac-price]').fill('49');
