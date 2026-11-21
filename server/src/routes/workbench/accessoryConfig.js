@@ -116,6 +116,7 @@ const createWorkbenchAccessoryConfigRoutes = ({ getGateway, asyncJobs } = {}) =>
         price: req.body?.price,
         cost: req.body?.cost,
         stockQuantity: req.body?.stockQuantity,
+        isAccessory: req.body?.isAccessory,
         sampleImageToken: req.body?.sampleImageToken,
         recordId: req.params?.recordId,
         submitKey: req.body?.submitKey || req.query?.submitKey,
