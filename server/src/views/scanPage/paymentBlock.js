@@ -441,8 +441,11 @@ const GIFT_ROW_STYLE = `/* gift rows: block section; one row = select + quantity
 .gift-head__add { flex: 0 0 auto; width: auto; min-height: var(--control-height); margin-top: 0; padding: 0 var(--space-3); }
 .form-row--gift [data-gift-rows] { margin-bottom: var(--space-2); }
 .form-row--gift-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-.form-row--gift-row select { flex: 1 1 55%; }
-.form-row--gift-row input { flex: 0 0 72px; text-align: center; }
+.form-row--gift-row select { flex: 1 1 auto; min-width: 0; }
+.form-row--gift-row input { min-width: 0; text-align: center; }
+.form-row--gift-row [data-accessory-quantity],
+.form-row--gift-row [data-gift-quantity] { flex: 0 0 15%; width: 15%; }
+.form-row--gift-row [data-accessory-amount] { flex: 0 0 30%; width: 30%; }
 .form-row--gift-row .btn { flex: 0 0 var(--control-height); width: var(--control-height); min-width: var(--control-height); margin-top: 0; padding: 0; }
 .payment-row__remove { flex: 0 0 var(--control-height); width: var(--control-height); min-width: var(--control-height); margin: 0; padding: 0; }`;
 

@@ -37,6 +37,9 @@ test('AC-GF3 资金页赠品：默认零行、添加按钮、隐藏 gift 字段'
   const beforeTemplate = html.slice(0, html.indexOf('data-gift-template'));
   assert.equal(/data-gift-row(?![s-])/.test(beforeTemplate), false, '初始没有默认赠品行');
   assert.match(html, /form-row--gift-row \.btn \{[^}]*width: var\(--control-height\)/, '删除按钮固定方形宽度，不能继承 .btn 的 width:100%');
+  assert.match(html, /\[data-accessory-quantity\][\s\S]*?flex: 0 0 15%/, '配品数量占 15%');
+  assert.match(html, /\[data-accessory-amount\][\s\S]*?flex: 0 0 30%/, '配品金额占 30%');
+  assert.match(html, /\[data-gift-quantity\][\s\S]*?flex: 0 0 15%/, '赠品数量占 15%');
 });
 
 test('AC-GF4 赠品候选接口路径/序列化规则钉在源码里', () => {
