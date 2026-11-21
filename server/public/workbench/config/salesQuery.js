@@ -24,6 +24,7 @@ export const SALES_QUERY_PAGE = Object.freeze({
     invalidRange: '开始日期不能晚于结束日期。',
     amountTitle: '销售金额',
     revenue: '营业总额',
+    accessoryIncluded: '其中包括配品销售：',
     methods: '交易方式',
     volumeTitle: '销售数量',
     delivered: '已交付',

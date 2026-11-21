@@ -13,6 +13,7 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
         success: true,
         summary: {
           revenue: 1880,
+          accessory_sales: { amount: 5 },
           delivered: { count: 2, amount: 1880 },
           undelivered: { count: 0, amount: 0 },
           payment_methods: [{ method: '微信扫码', amount: 1710, count: 3 }, { method: '现金', amount: 170, count: 1 }],
@@ -43,6 +44,7 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
   for (const url of ['/workbench/?module=sales&page=sales-query', '/workbench/?module=inventory&page=inventory-ledger']) {
     await page.goto(url, { waitUntil: 'networkidle' });
     if (url.includes('sales-query')) {
+      await expect(page.locator('.sq-revenue')).toContainText('其中包括配品销售：¥5');
       await expect(page.locator('.sq-bar-row').first()).toContainText('3 笔');
       await expect(page.locator('.sq-pending-row')).toContainText('1 笔');
     }

@@ -11,13 +11,13 @@ const fixture = () => ({
     { record_id: 'p_paid', status: '已收款', amount: 100, method: '微信扫码', received_at: at(18, 10), sales_entry_record_id: 'e1' },
     { record_id: 'p_pending', status: '待平台结算', amount: 50, method: '抖音团购券', received_at: at(18, 11), sales_entry_record_id: 'e1' },
     { record_id: 'p_pending_wait', status: '待平台结算', amount: 30, method: '抖音团购券', received_at: null, created_at: at(18, 14), sales_entry_record_id: 'e1' },
-    { record_id: 'p_noshoe', status: '已收款', amount: 19, method: '微信扫码', received_at: at(18, 12), sales_entry_record_id: '' },
+    { record_id: 'p_noshoe', status: '已收款', amount: 19, method: '微信扫码', received_at: at(18, 12), receipt_id: 'PX-p_noshoe', sales_entry_record_id: '' },
     { record_id: 'p_yesterday', status: '已收款', amount: 999, method: '现金', received_at: at(17, 12), sales_entry_record_id: 'e1' },
     { record_id: 'p_unpaid', status: '未收款', amount: 88, method: '现金', received_at: at(18, 13), sales_entry_record_id: 'e1' },
   ],
   orders: [
     {
-      order_no: 'A-1', recorded_at: at(18, 9), payable_amount: 150,
+      order_no: 'A-1', recorded_at: at(18, 9), payable_amount: 150, accessory_amount: 10,
       payments: [
         { method: '微信扫码', amount: 100, status: '已收款', trade_direction: '收入' },
         { method: '抖音团购券', amount: 50, status: '待平台结算', trade_direction: '收入' },
@@ -40,6 +40,7 @@ test('AC-SQ1 营业总额含已收款+待平台结算，按支付方式分组，
   const svc = createSalesQueryService({ gateway: {}, deliveryRead: { listDeliveryData: async () => fixture() }, now: () => TODAY });
   const data = await svc.getSalesQuery({ from: '2026-11-18', to: '2026-11-18' });
   assert.equal(data.summary.revenue, 169);
+  assert.deepEqual(data.summary.accessory_sales, { amount: 29 }, '配品总额 + 独立配品交易金额');
   assert.deepEqual(data.summary.payment_methods, [
     { method: '微信扫码', amount: 119, count: 2 },
     { method: '抖音团购券', amount: 50, count: 1 },
