@@ -7,6 +7,7 @@ const { createWorkbenchProductRoutes } = require('../src/routes/workbench/produc
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const fields = V1_BITABLE_SCHEMA.tables.accessory.fields;
+const physical = (patch) => Object.fromEntries(Object.entries(patch).map(([key, value]) => [fields[key] || key, value]));
 const listen = (app) => new Promise((resolve) => {
   const server = app.listen(0, '127.0.0.1', () => {
     server.keepAliveTimeout = 1;
@@ -25,8 +26,8 @@ const makeGateway = () => {
   return {
     async listAll() { return rows; },
     async get(_table, id) { return rows.find((row) => row.record_id === id) || null; },
-    async create(_table, patch) { const row = { record_id: 'a2', fields: patch }; rows.push(row); return row; },
-    async update(_table, id, patch) { const row = rows.find((item) => item.record_id === id); Object.assign(row.fields, patch); return row; },
+    async create(_table, patch) { const row = { record_id: 'a2', fields: physical(patch) }; rows.push(row); return row; },
+    async update(_table, id, patch) { const row = rows.find((item) => item.record_id === id); Object.assign(row.fields, physical(patch)); return row; },
     async delete(_table, id) { const i = rows.findIndex((row) => row.record_id === id); if (i >= 0) rows.splice(i, 1); },
     rows,
   };

@@ -8,6 +8,7 @@ const {
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
 
 const fields = V1_BITABLE_SCHEMA.tables.accessory.fields;
+const physical = (patch) => Object.fromEntries(Object.entries(patch).map(([key, value]) => [fields[key] || key, value]));
 const make = () => {
   const tables = [{
     record_id: 'a1',
@@ -20,8 +21,8 @@ const make = () => {
   const gateway = {
     async listAll() { return tables; },
     async get(_table, id) { return tables.find((row) => row.record_id === id) || null; },
-    async create(_table, patch) { seq += 1; const row = { record_id: `a_new_${seq}`, fields: patch }; tables.push(row); return row; },
-    async update(_table, id, patch) { const row = tables.find((item) => item.record_id === id); Object.assign(row.fields, patch); return row; },
+    async create(_table, patch) { seq += 1; const row = { record_id: `a_new_${seq}`, fields: physical(patch) }; tables.push(row); return row; },
+    async update(_table, id, patch) { const row = tables.find((item) => item.record_id === id); Object.assign(row.fields, physical(patch)); return row; },
     async delete(_table, id) { const index = tables.findIndex((row) => row.record_id === id); if (index >= 0) tables.splice(index, 1); },
   };
   return { gateway, tables };

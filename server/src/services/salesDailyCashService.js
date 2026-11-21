@@ -86,8 +86,9 @@ const createSalesDailyCashService = ({
     return queue.run(`sales-daily-cash:${day}`, async () => {
       let record = await findToday(day);
       const patch = {};
-      if (opening !== undefined) patch[fieldName('openingCash')] = opening;
-      if (withdrawal !== undefined) patch[fieldName('withdrawalCash')] = withdrawal;
+      // 写库只传网关语义键；物理列名只用于读结果。
+      if (opening !== undefined) patch.openingCash = opening;
+      if (withdrawal !== undefined) patch.withdrawalCash = withdrawal;
       if (!record) {
         if (opening === undefined) {
           const error = new Error('opening_amount_required');
@@ -95,7 +96,7 @@ const createSalesDailyCashService = ({
           throw error;
         }
         const created = await gateway.create('salesSummary', {
-          [fieldName('saleDate')]: startOfDayIso(day),
+          saleDate: startOfDayIso(day),
           ...patch,
         });
         record = { record_id: created.recordId || created.record_id };
