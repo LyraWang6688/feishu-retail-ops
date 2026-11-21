@@ -30,8 +30,10 @@ const accessoryRowsScriptHtml = () => `<script data-view="accessory-rows">
       var n = qty ? Math.max(1, Math.floor(Number(qty.value) || 1)) : 1;
       var a = amount ? Number(String(amount.value || '').replace(/,/g, '')) : 0;
       if (!Number.isFinite(a) || a < 0) a = 0;
-      if (name) parts.push(name + '×' + n);
-      total += a;
+      if (name) {
+        parts.push(name + '×' + n);
+        total += a;
+      }
     }
     total = Math.round(total * 100) / 100;
     value.value = parts.join('、');
