@@ -47,7 +47,9 @@ const epochOf = (value) => {
 
 /** 数字列（总金额 / 实收金额）：空 ⇒ null（**空与 0 是两件事**，不许拿 0 顶）。 */
 const numberOf = (value) => {
-  const text = asText(value).replace(/,/g, '').replace(/¥/g, '');
+  // batch_get 的数字/公式列会返回 { type, value: [...] }；textValue 负责解包，
+  // 直接 String(object) 会得到 "[object Object]"，最终显示成空。
+  const text = textValue(value).replace(/,/g, '').replace(/¥/g, '').trim();
   if (text === '') return null;
   const number = Number(text);
   return Number.isFinite(number) ? number : null;
