@@ -2,7 +2,6 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { showToast } from '../shared/toast.js';
-import { waitForAsyncJob } from '../shared/asyncJob.js';
 import { SALES_DAILY_CASH_API, SALES_DAILY_CASH_TEXTS as T } from '../../config/salesDailyCash.js';
 
 const money = (value) => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -88,12 +87,14 @@ export function createSalesDailyCashModule() {
     const kind = body.openingAmount !== undefined ? 'opening' : 'withdrawal';
     const submitKey = state.submitKeys[kind] || (globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`);
     state.submitKeys[kind] = submitKey;
+    const button = host.querySelector(kind === 'opening' ? '[data-dc-save-opening]' : '[data-dc-save-withdrawal]');
+    const buttonText = button?.textContent || '';
+    if (button) { button.disabled = true; button.textContent = T.submitting; }
     showPageError('');
     try {
       const accepted = await api.post(SALES_DAILY_CASH_API, { ...body, submitKey });
-      if (accepted?.job_id) await waitForAsyncJob(accepted.job_id);
       state.submitKeys[kind] = '';
-      // 两个保存动作（期初 / 拿走）成功后都回工作台，由统一 toast 接回执。
+      // POST 已受理 ⇒ 立刻回执；后台写入失败由统一异步层通知，不让页面干等。
       if (accepted?.redirect_url) { window.location.assign(accepted.redirect_url); return; }
       if (accepted?.toast) showToast(accepted.toast);
       await load();
@@ -106,6 +107,7 @@ export function createSalesDailyCashModule() {
       showPageError(message);
     } finally {
       state.busy = false;
+      if (button) { button.disabled = false; button.textContent = buttonText; }
     }
   };
 
