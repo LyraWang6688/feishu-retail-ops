@@ -33,6 +33,7 @@ test('销售查询三标签：概览 / 明细 / 趋势，查询条件和标签�
   });
   await page.goto('/workbench/?module=sales&page=sales-query', { waitUntil: 'networkidle' });
 
+  await expect(page.getByRole('button', { name: '销售分析' })).toBeVisible();
   await expect(page.locator('[data-sq-tab]')).toHaveText(['经营概览', '销售明细', '趋势分析']);
   await expect(page.getByRole('heading', { name: '销售金额' })).toBeVisible();
   await page.locator('[data-sq-tab="details"]').click();

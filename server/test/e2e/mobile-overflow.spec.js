@@ -52,6 +52,12 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
       await page.locator('[data-sq-tab="details"]').click();
       await expect(page.locator('.sq-order-head').first()).toBeVisible();
     }
+    if (url.includes('inventory-ledger')) {
+      await expect(page.locator('.ledger-filters .date-control')).toHaveCount(2);
+      await expect(page.locator('.ledger-filters .date-control__value').first()).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
+      await page.locator('[data-ledger-tab="ledger"]').click();
+      await expect(page.locator('.ledger-table')).toBeVisible();
+    }
     await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
     const widths = await page.evaluate(() => ({
       viewport: document.documentElement.clientWidth,
@@ -95,10 +101,6 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
     }));
     expect(after.scrollLeft).toBeGreaterThan(0);
     expect(after.wrapClass).toContain('at-end');
-    if (url.includes('inventory-ledger')) {
-      await expect(page.locator('.ledger-filters .date-control')).toHaveCount(2);
-      await expect(page.locator('.ledger-filters .date-control__value').first()).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
-    }
   }
 
 });

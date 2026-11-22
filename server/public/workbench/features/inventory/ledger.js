@@ -20,6 +20,7 @@ const timeText = (value) => {
   const get = (type) => (parts.find((part) => part.type === type) || {}).value || '';
   return `${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
 };
+const TABS = Array.isArray(PAGE.tabs) ? PAGE.tabs : [];
 
 const rowHtml = (row) => `<tr role="row">
   ${PAGE.columns.map((column) => {
@@ -31,46 +32,92 @@ const rowHtml = (row) => `<tr role="row">
 </tr>`;
 
 const tableHtml = (rows) => `<div class="ledger-scroll-wrap scroll-hint-wrap" data-scroll-wrap><div class="ledger-viewport" data-scroll-area>
-  <table class="ledger-table" role="table" aria-label="${escapeHtml(PAGE.label)}">
+  <table class="ledger-table" role="table" aria-label="${escapeHtml(PAGE.texts.ledgerTitle)}">
     <thead><tr role="row">${PAGE.columns.map((column) => `<th class="ledger-cell ${column.cls || ''}" role="columnheader">${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
     <tbody>${rows.map(rowHtml).join('')}</tbody>
   </table>
 </div></div>`;
 
+const tabsHtml = () => TABS.map((tab) => `<button class="ledger-tab${tab.id === 'overview' ? ' active' : ''}" type="button" role="tab" data-ledger-tab="${escapeHtml(tab.id)}" aria-selected="${tab.id === 'overview'}">${escapeHtml(tab.label)}</button>`).join('');
+
 export function createInventoryLedgerModule() {
-  const state = { host: null };
+  const state = { host: null, tab: 'overview', data: null, loading: false, error: '', from: '', to: '' };
+
+  function activeTab() {
+    return TABS.some((tab) => tab.id === state.tab) ? state.tab : (TABS[0]?.id || 'overview');
+  }
+
+  function renderTabs(host) {
+    const current = activeTab();
+    host.querySelectorAll('[data-ledger-tab]').forEach((button) => {
+      const selected = button.dataset.ledgerTab === current;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-selected', String(selected));
+    });
+  }
+
+  function summaryText(data) {
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    const total = Number.isFinite(Number(data?.total)) ? Number(data.total) : rows.length;
+    const range = data?.from === data?.to ? data.from : `${data?.from || state.from} 至 ${data?.to || state.to}`;
+    return data?.truncated
+      ? `${range} · ${fill(PAGE.texts.total, { total })} · ${fill(PAGE.texts.recent, { shown: rows.length })}`
+      : `${range} · ${fill(PAGE.texts.total, { total })}`;
+  }
+
+  function renderBody() {
+    const host = state.host;
+    const body = host?.querySelector('[data-ledger-body]');
+    const summary = host?.querySelector('[data-ledger-summary]');
+    if (!body) return;
+    const tab = activeTab();
+    if (tab === 'overview') {
+      if (summary) summary.textContent = '';
+      body.innerHTML = `<div class="ledger-placeholder"><p>${escapeHtml(PAGE.texts.overviewBuilding)}</p></div>`;
+      return;
+    }
+    if (summary) summary.textContent = state.data && !state.loading && !state.error ? summaryText(state.data) : '';
+    if (state.loading) { body.innerHTML = `<p class="ledger-empty">${escapeHtml(PAGE.texts.loading)}</p>`; return; }
+    if (state.error) { body.innerHTML = `<p class="ledger-empty">${escapeHtml(state.error)}</p>`; return; }
+    if (!state.data) { body.innerHTML = ''; return; }
+    const rows = Array.isArray(state.data.rows) ? state.data.rows : [];
+    body.innerHTML = rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
+    if (rows.length) bindScrollHints(body);
+  }
 
   async function load() {
     const host = state.host;
     const from = host?.querySelector('[data-ledger-from]')?.value || '';
     const to = host?.querySelector('[data-ledger-to]')?.value || '';
-    const summary = host?.querySelector('[data-ledger-summary]');
+    state.from = from;
+    state.to = to;
     const body = host?.querySelector('[data-ledger-body]');
     if (!body) return;
+    const summary = host?.querySelector('[data-ledger-summary]');
     if (from && to && from > to) {
+      state.loading = false;
+      state.error = PAGE.texts.invalidRange;
+      state.data = null;
       if (summary) summary.textContent = PAGE.texts.invalidRange;
       body.innerHTML = '';
       return;
     }
-    body.innerHTML = `<p class="ledger-empty">${escapeHtml(PAGE.texts.loading)}</p>`;
-    if (summary) summary.textContent = '';
+    state.loading = true;
+    state.error = '';
+    state.data = null;
+    renderBody();
     try {
       const query = new URLSearchParams();
       if (from) query.set('from', from);
       if (to) query.set('to', to);
       const data = await api.get(query.toString() ? `${PAGE.api}?${query}` : PAGE.api);
-      const rows = Array.isArray(data?.rows) ? data.rows : [];
-      const total = Number.isFinite(Number(data?.total)) ? Number(data.total) : rows.length;
-      const range = data?.from === data?.to ? data.from : `${data?.from || from} 至 ${data?.to || to}`;
-      if (summary) {
-        summary.textContent = data?.truncated
-          ? `${range} · ${fill(PAGE.texts.total, { total })} · ${fill(PAGE.texts.recent, { shown: rows.length })}`
-          : `${range} · ${fill(PAGE.texts.total, { total })}`;
-      }
-      body.innerHTML = rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
-      if (rows.length) bindScrollHints(body);
+      state.data = data;
+      state.loading = false;
+      renderBody();
     } catch (error) {
-      body.innerHTML = `<p class="ledger-empty">${escapeHtml(PAGE.texts.failed)}</p>`;
+      state.loading = false;
+      state.error = PAGE.texts.failed;
+      renderBody();
       showPageError(String(error?.message || ''));
     }
   }
@@ -78,17 +125,29 @@ export function createInventoryLedgerModule() {
   return {
     mount(host) {
       state.host = host;
+      state.tab = 'overview';
+      state.data = null;
+      state.loading = false;
+      state.error = '';
+      state.from = '';
+      state.to = '';
       showPageError('');
       const today = todayKey();
       host.innerHTML = `<div class="domain-page ledger-page">
-        <div class="ledger-filters">
-          ${dateFieldHtml({ label: PAGE.texts.startLabel, labelClass: 'ledger-filter', inputAttr: 'data-ledger-from', value: today, max: today })}
-          ${dateFieldHtml({ label: PAGE.texts.endLabel, labelClass: 'ledger-filter', inputAttr: 'data-ledger-to', value: today, min: today })}
-          <button class="ledger-btn" type="button" data-ledger-query>${escapeHtml(PAGE.texts.query)}</button>
+        <div class="ledger-sticky-head">
+          <div class="ledger-filters">
+            ${dateFieldHtml({ label: PAGE.texts.startLabel, labelClass: 'ledger-filter', inputAttr: 'data-ledger-from', value: today, max: today })}
+            ${dateFieldHtml({ label: PAGE.texts.endLabel, labelClass: 'ledger-filter', inputAttr: 'data-ledger-to', value: today, min: today })}
+            <button class="ledger-btn" type="button" data-ledger-query>${escapeHtml(PAGE.texts.query)}</button>
+          </div>
+          <div class="ledger-tabs" role="tablist" aria-label="${escapeHtml(PAGE.texts.tabsLabel)}">${tabsHtml()}</div>
         </div>
         <p class="ledger-summary" data-ledger-summary></p>
         <div data-ledger-body></div>
       </div>`;
+      const mainTabs = document.querySelector('.main-tabs');
+      if (mainTabs) host.style.setProperty('--ledger-main-tabs-height', `${Math.ceil(mainTabs.getBoundingClientRect().height)}px`);
+      renderTabs(host);
       const fromField = bindDateControl(host, '[data-ledger-from]');
       const toField = bindDateControl(host, '[data-ledger-to]');
       const fromInput = fromField.input;
@@ -110,6 +169,13 @@ export function createInventoryLedgerModule() {
         syncBounds();
       });
       host.querySelector('[data-ledger-query]')?.addEventListener('click', () => { void load(); });
+      host.querySelector('.ledger-tabs')?.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-ledger-tab]');
+        if (!button) return;
+        state.tab = button.dataset.ledgerTab || 'overview';
+        renderTabs(host);
+        renderBody();
+      });
       syncBounds();
       void load();
     },
