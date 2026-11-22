@@ -14,7 +14,7 @@ import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml, supplierNameMap } from './pending.js';
 import { createProcurementSearch } from './search.js';
 import { createModifyController } from './modify.js';
-import { buildSuggestedBody, suggestedHtml } from './suggested.js';
+import { buildSuggestedBody, suggestedHtml, rangeBarHtml } from './suggested.js';
 import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
 const DATA_TABS = ['replenish', 'new'];
 const TABS = ['suggested', 'pending'];
@@ -28,14 +28,14 @@ export function mountProcurementPage(host) {
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
   const modal = createCustomSizeModal({ host, config });
-  const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]');
+  const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]');
   const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft); };
   const mergedBody = () => buildSuggestedBody({ replenishBody: state.bodies.replenish, newBody: state.bodies.new, config });
   const paint = () => {
-    const element = panelEl(state.tab);
-    if (!element) return;
+    const element = panelEl(state.tab); if (!element) return;
     if (state.tab === 'pending') { element.innerHTML = pendingListHtml(draft, config, supplierNameMap(state.bodies), state.submitted); return; }
     const error = state.errors.suggested || state.errors.replenish || state.errors.new;
+    if (rangeHost) rangeHost.innerHTML = !error && state.bodies.replenish && state.bodies.new ? rangeBarHtml(mergedBody().range?.days, config) : '';
     if (error) { element.innerHTML = errorHtml(error, config); return; }
     element.innerHTML = state.bodies.replenish && state.bodies.new
       ? suggestedHtml({ body: mergedBody(), draft, store, supplierId: state.supplierId, config, modify: state.modify })
@@ -94,6 +94,7 @@ export function mountProcurementPage(host) {
     if (!TABS.includes(tab)) return;
     state.tab = tab;
     const searchWrap = host.querySelector('.pr-search'); if (searchWrap) searchWrap.hidden = tab === 'pending';
+    if (rangeHost) rangeHost.hidden = tab === 'pending';
     host.querySelectorAll('[data-pr-tab]').forEach((button) => button.classList.toggle('active', button.dataset.prTab === tab));
     TABS.forEach((id) => panelEl(id)?.classList.toggle('hidden', id !== tab));
     if (tab === 'pending') { paint(); void loadSubmitted(); return; }
