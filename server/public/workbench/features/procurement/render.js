@@ -117,10 +117,9 @@ export const replenishGroupHtml = (group, draft, store, config) => {
   const customs = typeof store.customSizesOf === 'function' ? store.customSizesOf(draft, group.productRecordId) : [];
   return `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">
   <div class="pr-group-head">
-    <h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>
+    <div class="pr-group-title-wrap"><h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>${productActionsHtml(group, config)}</div>
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(config.card.replenishTotal, 0)}</div>
   </div>
-  ${productActionsHtml(group, config)}
   ${(group.sizes || []).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}
   ${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}
   <button type="button" class="btn pr-add-size" data-pr-add-size data-record="${escapeHtml(group.productRecordId)}">${escapeHtml(config.texts.addCustomSize)}</button>

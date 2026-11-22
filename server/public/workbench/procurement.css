@@ -46,8 +46,9 @@
 
 /* 分组卡 */
 .pr-group { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); padding: 0 var(--space-3) var(--space-3); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
-.pr-group-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-1) var(--space-1); }
-.pr-group-name { margin: 0; font-size: var(--font-size-lg); font-weight: var(--weight-bold); overflow-wrap: anywhere; }
+.pr-group-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); width: 100%; padding: var(--space-3) var(--space-1) var(--space-1); }
+.pr-group-title-wrap { display: flex; align-items: center; gap: var(--space-1); flex: 1 1 auto; min-width: 0; }
+.pr-group-name { margin: 0; font-size: var(--font-size-lg); font-weight: var(--weight-bold); overflow-wrap: anywhere; flex: 0 1 auto; min-width: 0; }
 .pr-group-name small { display: block; margin-top: 2px; font-size: var(--font-size-xs); font-weight: var(--weight-normal); color: var(--text-secondary); }
 .pr-group-total { min-width: 56px; text-align: right; white-space: nowrap; font-size: var(--font-size-xs); color: var(--text-secondary); }
 .pr-group-total b { margin: 0 2px; font-size: var(--font-size-lg); color: var(--text); }
@@ -133,7 +134,7 @@
 .pr-submit:disabled { opacity: 0.65; cursor: wait; }
 
 /* 2026-11-19：补货卡片的库存调整 / 资料不齐入口 */
-.pr-product-actions { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); width:100%; flex:0 0 100%; box-sizing:border-box; padding:0 var(--space-4) var(--space-2); }
-.pr-product-action { display:inline-flex; align-items:center; flex:0 0 auto; min-height:36px; padding:0 var(--space-3); border:1px solid var(--border); border-radius:var(--radius-pill); color:var(--primary); font-size:var(--font-size-xs); white-space:nowrap; text-decoration:none; }
+.pr-product-actions { display:flex; flex-wrap:nowrap; align-items:center; gap:var(--space-1); width:auto; flex:0 1 auto; box-sizing:border-box; padding:0; }
+.pr-product-action { display:inline-flex; align-items:center; flex:0 0 auto; min-height:30px; padding:0 var(--space-2); border:1px solid var(--border); border-radius:var(--radius-pill); color:var(--primary); font-size:var(--font-size-xs); white-space:nowrap; text-decoration:none; }
 .pr-product-action--gap { max-width:100%; color:var(--warning-text); border-color:var(--warning-soft); background:var(--warning-soft); white-space:normal; overflow-wrap:anywhere; }
 .pr-product-action span { font-weight:var(--weight-bold); }
