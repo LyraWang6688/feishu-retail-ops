@@ -92,7 +92,7 @@ export const DOMAIN_TABS = [
       },
       {
         id: 'sales-customer-money',
-        label: '往来款',
+        label: '客户留存款',
         kind: 'placeholder',
       },
     ],

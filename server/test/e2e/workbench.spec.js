@@ -273,6 +273,15 @@ test('配品配置：赠品勾选、列表标签、种类动态新增', async ({
   expect(categorySubmitted.category).toBe('新种类');
 });
 
+test('销售子 tab：往来款改名为客户留存款', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '销售', exact: true }).click();
+  await expect(page.locator('[data-domain-page]:visible')).toHaveText(['录单', '订单列表', '销售分析', '客户留存款']);
+  await page.getByRole('button', { name: '客户留存款', exact: true }).click();
+  await expect(page.getByText('待建设')).toBeVisible();
+});
+
 test('供应分析：交易流水 / 供应总览，默认交易流水', async ({ page }) => {
   await mockApi(page);
   await page.goto('/workbench/');
