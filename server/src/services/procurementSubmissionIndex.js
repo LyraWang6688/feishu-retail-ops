@@ -10,6 +10,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
+const { SCAN_WRITE } = require('../config/scanWrite');
 const { dayStart } = require('./procurementPageData');
 
 const DEFAULT_DIR = path.join(__dirname, '../../data/procurement_submissions');
@@ -18,8 +19,10 @@ const idOf = (openId, batchNo) => 'procsub_'
 
 const createProcurementSubmissionIndex = (options = {}) => {
   const store = options.store || new JsonTaskStore({ dir: DEFAULT_DIR, idField: 'submission_id' });
-  const purchaseTaskStore = options.purchaseTaskStore || new JsonTaskStore({
-    dir: path.join(__dirname, '../../data/purchase_webhook_tasks'), idField: 'task_id',
+  // 2026-11-22 之前提交的采购批次没有归属索引；从既有采购任务目录补读。
+  // 采购页任务 id 含 `procurement_`，扫码补货任务也在这个目录，必须按它排除。
+  const replenishTaskStore = options.replenishTaskStore || new JsonTaskStore({
+    dir: SCAN_WRITE.replenish.taskDir, idField: 'task_id',
   });
   const now = options.now || (() => Date.now());
 
@@ -56,10 +59,10 @@ const createProcurementSubmissionIndex = (options = {}) => {
         return Number.isFinite(at) && at >= start && at < end;
       });
     const seen = new Set(rows.map((row) => String(row.batch_no)));
-    for (const task of await purchaseTaskStore.list().catch(() => [])) {
+    for (const task of await replenishTaskStore.list().catch(() => [])) {
       const draft = task?.draft || {};
       if (String(draft.open_id || draft.operator_open_id || '') !== open) continue;
-      if (!String(draft.order_key || '').startsWith('procurement_page:')) continue;
+      if (!String(task?.task_id || '').includes('procurement_')) continue;
       if (task?.status !== 'posted' || !task?.batch_no) continue;
       const at = Date.parse(String(task.updated_at || task.created_at || ''));
       if (!Number.isFinite(at) || at < start || at >= end || seen.has(String(task.batch_no))) continue;
