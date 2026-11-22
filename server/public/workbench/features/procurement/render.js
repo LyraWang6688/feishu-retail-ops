@@ -173,6 +173,7 @@ export const shellHtml = (config) => {
   return `<div class="pr-sticky-head">
     <div class="pr-tabs" role="tablist" aria-label="${escapeHtml(config.title)}">${tabs}</div>
     <label class="pr-search"><span class="pr-search__icon" aria-hidden="true">⌕</span><input type="search" data-pr-search placeholder="${escapeHtml(config.texts.searchPlaceholder)}" aria-label="${escapeHtml(config.texts.searchPlaceholder)}"></label>
+    <div class="pr-search-results-host" data-pr-search-results-host hidden></div>
   </div>
   <div class="pr-panel" data-pr-panel="replenish"></div>
   <div class="pr-panel hidden" data-pr-panel="new"></div>

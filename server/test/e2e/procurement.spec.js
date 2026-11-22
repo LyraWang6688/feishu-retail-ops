@@ -74,7 +74,7 @@ test('AC-P26 供应商筛选：无「全部」，默认第一个供应商；统�
   await expect(page.locator('[data-pr-supplier]:visible').nth(1)).toHaveText('供应商 B');
 });
 
-test('AC-P28 顶部 tab + 搜索框固定；搜索只筛当前供应商货号', async ({ page }) => {
+test('AC-P28 顶部搜索固定；全局搜索跨 tab/供应商并自动定位', async ({ page }) => {
   await mockApi(page);
   await page.reload();
   await openPage(page);
@@ -85,12 +85,15 @@ test('AC-P28 顶部 tab + 搜索框固定；搜索只筛当前供应商货号', 
   const box = await head.boundingBox();
   expect(box.y).toBeLessThanOrEqual(2);
   const search = head.locator('[data-pr-search]');
-  await page.locator('[data-pr-supplier]').nth(1).click();
-  await search.fill('92608');
-  await expect(page.getByText('92608 · 咖色')).toBeVisible();
-  await expect(page.getByText('86822 · 黑色')).toHaveCount(0);
-  await search.fill('86822');
-  await expect(page.getByText('92608 · 咖色')).toHaveCount(0);
+  await search.fill('LY002');
+  const results = page.locator('[data-pr-search-results]');
+  await expect(results).toContainText('LY002');
+  await expect(results).toContainText('供应商 B');
+  await expect(page.getByText('86822 · 黑色')).toBeVisible();
+  await results.getByRole('button', { name: /LY002/ }).click();
+  await expect(page.locator('[data-pr-tab="new"]')).toHaveClass(/active/);
+  await expect(page.getByText('LY002 · 米白')).toBeVisible();
+  await expect(search).toHaveValue('');
 });
 
 test('AC-P27 补货自定义尺码：多行弹窗保存后按原样式展示并进入 payload', async ({ page }) => {
