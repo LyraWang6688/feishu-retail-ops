@@ -277,6 +277,9 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
       : ''),
     scanNow: page.realmScan?.scanNow === true,
   });
+  const progressSubmitAttrs = flow?.id === 'afterSalesExchange'
+    ? ''
+    : ` data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}"`;
   return `<section class="card">${flowBanner ? `<p class="flow-banner">${escapeHtml(flowBanner)}</p>` : ''}
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-sample-candidates="${escapeHtml(JSON.stringify(sampleCandidates))}"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
@@ -294,7 +297,7 @@ ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
      先弹全屏遮罩再 fetch，响应回来 document.write 整页（成功页 / 资金页 / 400 提示页都照原样）。
      ⚠️ 只加**这一个属性**（按钮 name/value/文案一个字未动 ✓）；老环境没有 JS 照样走原生提交。
      ⚠️ 【再加一双】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
-${flowContextHtml}${exchangeDiffBlock(flow)}<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}" data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(submitLabel || countLabel)}</button>
+${flowContextHtml}${exchangeDiffBlock(flow)}<button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}"${progressSubmitAttrs}>${escapeHtml(submitLabel || countLabel)}</button>
 ${hideAddLine ? '' : `<button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>`}
 </form>
 ${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
