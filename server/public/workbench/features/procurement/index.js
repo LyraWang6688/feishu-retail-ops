@@ -23,7 +23,7 @@ export function mountProcurementPage(host) {
   host.innerHTML = shellHtml(config);
   const remote = createApi(config);
   const panels = { replenish: createReplenishPanel(config), new: createNewProductsPanel(config) };
-  const state = { tab: 'suggested', bodies: {}, errors: {}, loadedAt: {}, supplierId: '', submitted: [], modify: false };
+  const state = { tab: 'suggested', bodies: {}, errors: {}, loadedAt: {}, supplierId: '', submitted: [] };
   let store = null;
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
@@ -38,7 +38,7 @@ export function mountProcurementPage(host) {
     if (rangeHost) rangeHost.innerHTML = !error && state.bodies.replenish && state.bodies.new ? rangeBarHtml(mergedBody().range?.days, config) : '';
     if (error) { element.innerHTML = errorHtml(error, config); return; }
     element.innerHTML = state.bodies.replenish && state.bodies.new
-      ? suggestedHtml({ body: mergedBody(), draft, store, supplierId: state.supplierId, config, modify: state.modify })
+      ? suggestedHtml({ body: mergedBody(), draft, store, supplierId: state.supplierId, config })
       : emptyHtml(config.texts.loading);
   };
   const refreshNumbers = () => {
@@ -110,15 +110,10 @@ export function mountProcurementPage(host) {
     if (modifyButton) {
       const batch = state.submitted.find((row) => row.batch_no === modifyButton.dataset.prModifyBatch); const started = modifyCtl.start(batch);
       if (!started.ok) return submitCtl.toast(host, started.error);
-      state.modify = true; state.supplierId = batch.supplier_record_id || ''; await activate('suggested'); return;
+      state.supplierId = batch.supplier_record_id || ''; await activate('suggested'); return;
     }
     const supplier = event.target.closest('[data-pr-supplier]');
     if (supplier) { if (modifyCtl.active() && !modifyCtl.supplierAllowed(supplier.dataset.prSupplier)) return submitCtl.toast(host, config.texts.modifySupplierLocked); search.hide(); state.supplierId = supplier.dataset.prSupplier || ''; paint(); return; }
-    const removeProduct = event.target.closest('[data-pr-remove-product]');
-    if (removeProduct) {
-      const recordId = removeProduct.dataset.prRemoveProduct; let next = draft;
-      for (const size of Object.keys(draft.products?.[recordId]?.entries || {})) next = store.setQuantity(next, metaOf(recordId), Number(size), 0); setDraft(next); paint(); refreshNumbers(); return;
-    }
     const step = event.target.closest('[data-pr-step]');
     if (step) {
       const { record, size } = step.dataset;
@@ -155,7 +150,7 @@ export function mountProcurementPage(host) {
       }
       if (modifyCtl.active()) {
         const changed = await modifyCtl.submit(draft);
-        if (changed.ok) { state.modify = false; setDraft(store.ensure()); }
+        if (changed.ok) { setDraft(store.ensure()); }
         return;
       }
       const result = await submitCtl.submit(host, draft);

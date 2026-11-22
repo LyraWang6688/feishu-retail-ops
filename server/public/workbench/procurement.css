@@ -96,7 +96,6 @@
 .pr-pending-submitted-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
 .pr-pending-batch-no { margin: 0; font-size: var(--font-size-md); }
 .pr-pending-batch-meta, .pr-pending-batch-summary { margin: 4px 0 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
-.pr-remove-product { display: block; width: 100%; min-height: 36px; margin: calc(-1 * var(--space-2)) 0 var(--space-3); border: 1px dashed var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font-size: var(--font-size-xs); cursor: pointer; }
 .pr-pending-modify { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--primary); border-radius: var(--radius-pill); background: var(--surface); color: var(--primary); font-size: var(--font-size-sm); font-weight: var(--weight-bold); cursor: pointer; }
 .pr-pending-batch-products { margin-top: var(--space-2); }
 .pr-pending-total { margin:var(--space-2) 0 0; text-align:right; color:var(--text); font-size:var(--font-size-sm); font-weight:var(--weight-bold); }
