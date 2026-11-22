@@ -5,6 +5,7 @@
 .ledger-tab { flex:1 1 0; min-width:0; min-height:var(--control-height); padding:var(--space-2) var(--space-1); border:0; border-radius:var(--radius-md); background:transparent; color:var(--text-secondary); font:inherit; font-size:var(--font-size-sm); font-weight:var(--weight-medium); text-align:center; white-space:nowrap; cursor:pointer; }
 .ledger-tab.active { background:var(--primary-soft); color:var(--primary); font-weight:var(--weight-bold); }
 .ledger-placeholder { padding:var(--space-5) var(--space-4); border:1px dashed var(--border); border-radius:var(--radius-md); background:var(--surface-soft); color:var(--text-muted); text-align:center; font-size:var(--font-size-sm); }
+.ledger-page [data-ledger-body] > .ps-search { margin:0 0 var(--space-2); }
 .ledger-scroll-wrap { width: 100%; min-width: 0; max-width: 100%; }
 .ledger-viewport { width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); -webkit-overflow-scrolling: touch; }
 .ledger-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 6px; margin-bottom: var(--space-3); width: 100%; min-width: 0; max-width: 100%; }

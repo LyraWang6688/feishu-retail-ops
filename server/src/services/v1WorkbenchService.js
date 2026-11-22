@@ -189,7 +189,7 @@ const createWorkbenchService = (gateway, options = {}) => {
 
   // ⭐ 2026-11-18：库存流水（只读）。按「创建时间」倒序；日期按上海时区，默认今天，闭区间。
   const shanghaiDay = (date) => new Date(date.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
-  const getInventoryLedger = async ({ requestId, from = '', to = '', limit = WORKBENCH_LEDGER_LIMIT } = {}) => {
+  const getInventoryLedger = async ({ requestId, from = '', to = '', product = '', limit = WORKBENCH_LEDGER_LIMIT } = {}) => {
     const today = shanghaiDay(new Date());
     const fromText = String(from || today).trim();
     const toText = String(to || today).trim();
@@ -229,6 +229,7 @@ const createWorkbenchService = (gateway, options = {}) => {
       };
     }).filter((row) => row.created_at && shanghaiDay(new Date(row.created_at)) >= fromText
       && shanghaiDay(new Date(row.created_at)) <= toText)
+      .filter((row) => !String(product || '').trim() || row.number === String(product).trim())
       .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')
         || String(b.record_id).localeCompare(String(a.record_id)));
     const cap = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : WORKBENCH_LEDGER_LIMIT;

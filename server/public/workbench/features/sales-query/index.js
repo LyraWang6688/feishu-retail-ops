@@ -3,6 +3,7 @@ import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { bindScrollHints } from '../shared/scrollHint.js';
 import { bindDateControl, dateFieldHtml } from '../shared/dateField.js';
+import { bindProductSearch, productSearchHtml } from '../shared/productSearch.js';
 import { SALES_QUERY_PAGE as PAGE } from '../../config/salesQuery.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
@@ -106,8 +107,9 @@ function overviewHtml(data) {
     </div>`;
 }
 
-function detailsHtml(data) {
-  return `<div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.orders)}</h2></div>
+function detailsHtml(data, product) {
+  return `<div class="sq-detail-filter">${productSearchHtml({ mode: 'salesDetail', selected: product })}</div>
+    <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.orders)}</h2></div>
     <div class="sq-orders">${ordersHtml(data?.orders || [])}</div>`;
 }
 
@@ -120,7 +122,7 @@ function tabsHtml() {
 }
 
 export function createSalesQueryModule() {
-  const state = { host: null, tab: 'overview', data: null, loading: false, error: '' };
+  const state = { host: null, tab: 'overview', data: null, loading: false, error: '', product: null };
 
   function activeTab() {
     return TABS.some((tab) => tab.id === state.tab) ? state.tab : (TABS[0]?.id || 'overview');
@@ -143,10 +145,18 @@ export function createSalesQueryModule() {
     if (!state.data) { body.innerHTML = '<p class="sq-empty"></p>'; return; }
     const current = activeTab();
     body.innerHTML = current === 'details'
-      ? detailsHtml(state.data)
+      ? detailsHtml(state.data, state.product)
       : current === 'trend'
         ? trendHtml()
         : overviewHtml(state.data);
+    if (current === 'details') {
+      bindProductSearch(body, {
+        mode: 'salesDetail',
+        selected: state.product,
+        onSelect: (item) => { state.product = item; void load(); },
+        onClear: () => { state.product = null; void load(); },
+      });
+    }
     bindScrollHints(body);
   }
 
@@ -170,6 +180,7 @@ export function createSalesQueryModule() {
       const query = new URLSearchParams();
       if (from) query.set('from', from);
       if (to) query.set('to', to);
+      if (state.product?.number) query.set('product', state.product.number);
       const data = await api.get(query.toString() ? `${PAGE.api}?${query}` : PAGE.api);
       state.data = data;
       state.loading = false;
@@ -189,6 +200,7 @@ export function createSalesQueryModule() {
       state.data = null;
       state.loading = false;
       state.error = '';
+      state.product = null;
       showPageError('');
       const today = todayKey();
       host.innerHTML = `<div class="domain-page sq-page">

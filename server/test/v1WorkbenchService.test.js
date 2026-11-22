@@ -195,6 +195,10 @@ test('库存流水：按创建时间倒序，映射四列并可限制条数', as
   assert.deepEqual(limited.rows.map((row) => row.record_id), ['l_new', 'l_mid']);
   assert.equal(limited.total, 3);
   assert.equal(limited.truncated, true);
+
+  const filtered = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15', product: 'B|白|女' });
+  assert.deepEqual(filtered.rows.map((row) => row.record_id), ['l_new']);
+  assert.equal(filtered.total, 1, '过滤后统计按货品结果算');
 });
 
 test('库存流水按创建时间下推并带字段裁剪；过滤失败才回退整表', async () => {

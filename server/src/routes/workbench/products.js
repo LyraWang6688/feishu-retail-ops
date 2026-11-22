@@ -118,8 +118,9 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
    *   · 货品上新搜索、货品完善搜索框共用；
    *   · 不做「待完善」过滤，搜索范围就是货品信息全量。
    */
-  const searchProductItems = async (q, requestId) => {
+  const searchProductItems = async (q, requestId, { includeDelisted = false } = {}) => {
     const needle = q.toLowerCase();
+    const visibleRows = (list) => (includeDelisted ? list : filterActiveProductsFor(list, 'productSearch'));
     let rows;
     try {
       // 快照优先：只读内存，不被 record_changed / 样例图同步打穿；过期时后台刷新。
@@ -133,7 +134,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
       const formula = containsFormula(field('itemNo'), q);
       if (!formula) throw snapshotError;
       try {
-        return (await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit })).map(itemOf);
+        return visibleRows(await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit })).map(itemOf);
       } catch (filterError) {
         logError('workbench.product_profile.search_filter_failed', {
           request_id: requestId, error: filterError.message,
@@ -141,7 +142,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
         throw snapshotError;
       }
     }
-    let items = filterActiveProductsFor(rows, 'productSearch')
+    let items = visibleRows(rows)
       .map(itemOf)
       .filter((item) => item.itemNo.toLowerCase().includes(needle))
       .slice(0, PRODUCT_PROFILE.searchLimit);
@@ -152,7 +153,7 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
         const formula = containsFormula(field('itemNo'), q);
         if (formula) {
           const freshRows = await getGateway().listByFilter('product', formula, { maxRecords: PRODUCT_PROFILE.searchLimit });
-          items = filterActiveProductsFor(freshRows, 'productSearch').map(itemOf);
+          items = visibleRows(freshRows).map(itemOf);
           if (items.length) invalidateProductSearchSnapshot();
         }
       } catch (filterError) {
@@ -166,9 +167,10 @@ const createWorkbenchProductRoutes = ({ options = {} } = {}) => {
 
   router.get('/products/search', async (req, res) => {
     const q = String(req.query?.q || '').trim();
+    const includeDelisted = String(req.query?.includeDelisted || '') === '1';
     if (!q) return res.json({ success: true, query: '', items: [] });
     try {
-      const items = await searchProductItems(q, req.requestId);
+      const items = await searchProductItems(q, req.requestId, { includeDelisted });
       return res.json({ success: true, query: q, items });
     } catch (error) {
       logError('workbench.product_profile.search_failed', {

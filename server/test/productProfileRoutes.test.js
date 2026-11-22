@@ -63,6 +63,20 @@ test('AC-PP1 搜索：只按货号模糊匹配；空搜索不返回结果', asyn
   } finally { server.close(); }
 });
 
+test('AC-PP1c includeDelisted=1 时搜索包含已下架货品', async () => {
+  const gateway = { listAll: async () => [
+    product('rec_live', '906|黑色|男', '906', '黑色', '男', '齐备', '', '齐备', '', '无货', false),
+    product('rec_off', '906X|黑色|男', '906X', '黑色', '男', '齐备', '', '齐备', '', '无货', true),
+  ] };
+  const { server, port } = await listen(appWith(gateway));
+  try {
+    const active = await (await fetch(`http://127.0.0.1:${port}/products/search?q=906`)).json();
+    assert.deepEqual(active.items.map((item) => item.recordId), ['rec_live'], '默认仍排除已下架');
+    const all = await (await fetch(`http://127.0.0.1:${port}/products/search?q=906&includeDelisted=1`)).json();
+    assert.deepEqual(all.items.map((item) => item.recordId).sort(), ['rec_live', 'rec_off'], '历史场景可以搜到已下架');
+  } finally { server.close(); }
+});
+
 test('AC-PP14 货品完善搜索 q=货号全量：能搜到已齐备货品，不返回待完善分组', async () => {
   const gateway = { listAll: async () => [
     product('rec1', '906|黑色|男', '906', '黑色', '男', '成本'),
