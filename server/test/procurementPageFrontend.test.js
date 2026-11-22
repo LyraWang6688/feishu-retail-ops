@@ -116,9 +116,7 @@ test('AC-P27 自定义尺码草稿：跨供应商/刷新保留，提交进入现
   const storage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v), removeItem: (k) => memory.delete(k) };
   const draftStore = store.createDraftStore({ openId: 'ou_custom', config, storage, now: () => 1761600000000 });
   let draft = draftStore.ensure();
-  draft = draftStore.addCustomSize(draft, { productRecordId: 'recA', source: 'replenish' });
-  draft = draftStore.renameCustomSize(draft, { productRecordId: 'recA', source: 'replenish' }, '', '45');
-  draft = draftStore.setQuantity(draft, { productRecordId: 'recA', source: 'replenish' }, 45, 2);
+  draft = draftStore.addCustomSizes(draft, { productRecordId: 'recA', source: 'replenish' }, [{ size: '45', quantity: 2 }]);
   assert.deepEqual(draftStore.customSizesOf(draft, 'recA'), ['45']);
   assert.deepEqual(store.buildItems(draft), [{ productRecordId: 'recA', source: 'replenish', entries: [{ size: 45, quantity: 2 }] }]);
   draft = draftStore.removeCustomSize(draft, { productRecordId: 'recA', source: 'replenish' }, '45');

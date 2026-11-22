@@ -108,9 +108,9 @@ const replenishRowHtml = (group, row, draft, store, config) => {
 const customSizeRowHtml = (group, size, draft, store, config) => {
   const quantity = store.quantityOf(draft, group.productRecordId, size);
   return '<div class="pr-size-row pr-custom-size" data-pr-custom-row data-record="' + escapeHtml(group.productRecordId) + '" data-size="' + escapeHtml(size) + '">'
-    + '<input class="pr-custom-size-input" inputmode="numeric" data-pr-custom-size data-record="' + escapeHtml(group.productRecordId) + '" value="' + escapeHtml(size) + '" placeholder="' + escapeHtml(config.texts.customSizePlaceholder) + '" aria-label="' + escapeHtml(config.texts.customSizePlaceholder) + '">'
+    + '<div class="pr-size-row-head"><div class="pr-size">' + escapeHtml(size) + '</div>'
+    + '<button type="button" class="pr-custom-size-remove" data-pr-custom-remove data-record="' + escapeHtml(group.productRecordId) + '" data-size="' + escapeHtml(size) + '" aria-label="' + escapeHtml(config.texts.customSizeRemove) + '">×</button></div>'
     + stepperHtml({ recordId: group.productRecordId, size, quantity, config })
-    + '<button type="button" class="btn pr-custom-size-remove" data-pr-custom-remove data-record="' + escapeHtml(group.productRecordId) + '" data-size="' + escapeHtml(size) + '" aria-label="' + escapeHtml(config.texts.customSizeRemove) + '">×</button>'
     + '</div>';
 };
 export const replenishGroupHtml = (group, draft, store, config) => {

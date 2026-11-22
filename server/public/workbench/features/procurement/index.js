@@ -9,7 +9,7 @@ import { createReplenishPanel } from './replenish.js';
 import { createNewProductsPanel } from './newProducts.js';
 import { createSubmitController } from './submit.js';
 import { createRefresher } from './refresh.js';
-import { customSizesValid, customSizeError, customRowsError, focusCustomSize } from './customSize.js';
+import { customSizesValid, customRowsError } from './customSize.js';
 import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml } from './pending.js';
 import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
@@ -151,24 +151,6 @@ export function mountProcurementPage(host) {
   host.addEventListener('input', (event) => {
     const input = event.target.closest('[data-pr-qty]');
     if (input) quantityInput({ input, config, applyQuantity });
-  });
-  host.addEventListener('change', (event) => {
-    const input = event.target.closest('[data-pr-custom-size]');
-    if (!input) return;
-    const recordId = input.dataset.record;
-    const row = input.closest('[data-pr-custom-row]');
-    const oldSize = String(row?.dataset.size || '');
-    const nextSize = String(input.value || '').trim();
-    const group = (state.bodies[state.tab]?.groups || []).find((item) => item.productRecordId === recordId);
-    const error = customSizeError({ group, draft, recordId, oldSize, nextSize, store });
-    if (error) {
-      submitCtl.toast(host, error === 'duplicate' ? config.texts.customSizeDuplicate : config.texts.customSizeInvalid);
-      input.value = oldSize;
-      return;
-    }
-    setDraft(store.renameCustomSize(draft, metaOf(recordId), oldSize, nextSize));
-    paint(state.tab);
-    focusCustomSize(host, recordId);
   });
   const start = async () => {
     let user = null;

@@ -64,9 +64,8 @@
 .pr-tag-spot { background: var(--info-soft); color: var(--info); }
 .pr-tag-pre { background: var(--warning-soft); color: var(--warning); }
 .pr-tag-not { background: var(--danger-soft); color: var(--danger); }
-.pr-custom-size { flex-direction: row; align-items: center; gap: var(--space-2); }
-.pr-custom-size-input { width: 72px; min-height: var(--control-height); padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); text-align: center; }
-.pr-custom-size-remove { flex: 0 0 var(--control-height); width: var(--control-height); min-width: var(--control-height); padding: 0; }
+.pr-custom-size .pr-size-row-head { align-items: center; }
+.pr-custom-size-remove { flex: 0 0 30px; width: 30px; height: 30px; margin-left: auto; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text-secondary); font-size: var(--font-size-lg); line-height: 1; cursor: pointer; }
 .pr-add-size { width: 100%; margin-top: var(--space-2); }
 
 /* 自定义尺码多行弹窗 */

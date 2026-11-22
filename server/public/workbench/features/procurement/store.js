@@ -11,7 +11,7 @@
  *   · `submitKey` 一次草稿一把，**提交成功才换**（服务端幂等靠它）；
  *   · 纯函数（默认数量 / 合计 / items）都导出，供单测直接钉口径。
  */
-import { addCustomSizeDraft, addCustomSizesDraft, renameCustomSizeDraft, removeCustomSizeDraft } from './customSizeStore.js';
+import { addCustomSizesDraft, removeCustomSizeDraft } from './customSizeStore.js';
 
 export const newSubmitKey = (prefix, now = () => Date.now(), random = () => Math.random()) => {
   const timestamp = Number(now()).toString(36);
@@ -119,9 +119,7 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
     return save({ ...draft, products });
   };
 
-  const addCustomSize = (draft, meta) => save(addCustomSizeDraft(draft, meta));
   const addCustomSizes = (draft, meta, rows) => save(addCustomSizesDraft(draft, meta, rows));
-  const renameCustomSize = (draft, meta, oldSize, nextSize) => save(renameCustomSizeDraft(draft, meta, oldSize, nextSize));
   const removeCustomSize = (draft, meta, size) => save(removeCustomSizeDraft(draft, meta, size));
 
   /**
@@ -183,7 +181,7 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
 
   return {
     storageKey, load, save, ensure, clear, rotateSubmitKey, setQuantity, seedDefaults, pruneSource,
-    addCustomSize, addCustomSizes, renameCustomSize, removeCustomSize,
+    addCustomSizes, removeCustomSize,
     customSizesOf: (draft, productRecordId) => [...(draft.customSizes?.[productRecordId] || [])],
     quantityOf: (draft, productRecordId, size) => Number(entriesOfProduct(draft, productRecordId)[size]) || 0,
     productOf: (draft, productRecordId) => draft.products?.[productRecordId] || null,

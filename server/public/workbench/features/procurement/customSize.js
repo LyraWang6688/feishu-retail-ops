@@ -24,15 +24,6 @@ export const customSizesValid = ({ draft, bodies, tabs, store }) => {
   return true;
 };
 
-export const customSizeError = ({ group, draft, recordId, oldSize, nextSize, store }) => {
-  if (!nextSize) return '';
-  if (!/^[1-9]\d*$/.test(nextSize)) return 'invalid';
-  const standard = new Set((group?.sizes || []).map((item) => String(item.size)));
-  const others = store.customSizesOf(draft, recordId).filter((size) => String(size) !== String(oldSize));
-  if (standard.has(nextSize) || others.includes(nextSize)) return 'duplicate';
-  return '';
-};
-
 export const customRowsError = ({ group, draft, recordId, rows, store }) => {
   const standard = new Set((group?.sizes || []).map((item) => String(item.size)));
   const existing = new Set((store.customSizesOf(draft, recordId) || []).map(String));
@@ -48,7 +39,3 @@ export const customRowsError = ({ group, draft, recordId, rows, store }) => {
   return '';
 };
 
-export const focusCustomSize = (host, recordId) => {
-  const inputs = host.querySelectorAll('[data-pr-custom-size][data-record="' + recordId + '"]');
-  inputs[inputs.length - 1]?.focus();
-};
