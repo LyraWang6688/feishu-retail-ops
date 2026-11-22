@@ -24,7 +24,7 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
         orders: [{
           order_no: 'XSD-20261119-0013', recorded_at: '2026-11-19T15:10:00.000Z', total_amount: 1880,
           payments: [{ method: '微信扫码', amount: 1710, status: '已收' }],
-          details: [{ number: 'YA8902|黑色|女|37|超级长的商品描述', size: 37, actual_amount: 940, fulfillment_status: '已交付' }],
+          details: [{ number: 'YA8902|黑色|女|37|超级长的商品描述|加长货号用于滚动', size: 37, actual_amount: 940, fulfillment_status: '已交付' }],
         }],
       }));
     }
@@ -32,8 +32,8 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
       return route.fulfill(json({
         success: true, total: 2, from: '2026-11-19', to: '2026-11-19',
         rows: [
-          { created_at: '2026-11-19T15:10:00.000Z', behavior: '销售减少', number: 'YA8902|黑色|女', size: '37', quantity_change: -1 },
-          { created_at: '2026-11-19T15:09:00.000Z', behavior: '手工调减', number: '832-538|黑色|男', size: '39', quantity_change: 1 },
+          { created_at: '2026-11-19T15:10:00.000Z', behavior: '销售减少', number: 'YA8902|黑色|女|超长货号用于滚动测试', size: '37', quantity_change: -1 },
+          { created_at: '2026-11-19T15:09:00.000Z', behavior: '手工调减', number: '832-538|黑色|男|超长货号用于滚动测试', size: '39', quantity_change: 1 },
         ],
       }));
     }
@@ -66,6 +66,24 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
     });
     expect(initial.max).toBeGreaterThan(0);
     expect(initial.wrapClass).toContain('has-overflow');
+    if (url.includes('sales-query')) {
+      const aligned = await page.evaluate(() => {
+        const head = document.querySelector('.sq-order-head');
+        const table = head?.closest('.sq-order')?.querySelector('.sq-detail-table');
+        if (!head || !table) return false;
+        return Math.abs(head.getBoundingClientRect().width - table.getBoundingClientRect().width) < 2;
+      });
+      expect(aligned).toBe(true, '订单头与明细表同宽');
+    }
+    if (url.includes('inventory-ledger')) {
+      const columnsAligned = await page.evaluate(() => {
+        const th = document.querySelector('.ledger-table thead th:nth-child(3)');
+        const td = document.querySelector('.ledger-table tbody td:nth-child(3)');
+        if (!th || !td) return false;
+        return Math.abs(th.getBoundingClientRect().left - td.getBoundingClientRect().left) < 2;
+      });
+      expect(columnsAligned).toBe(true, '库存流水表头与数据行同列');
+    }
 
     const after = await page.evaluate(() => new Promise((resolve) => {
       const wrap = document.querySelector('[data-scroll-wrap]');

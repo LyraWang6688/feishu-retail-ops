@@ -1,6 +1,7 @@
-/* 库存流水：沿用工作台的 tokens / 卡片密度；五列保持一行，表格内部横向滚动。 */
+/* 库存流水：沿用工作台的 tokens / 卡片密度；表格整体横向滚动，表头与数据行共用列宽。 */
 .ledger-page { gap: var(--space-2); min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); }
 .ledger-scroll-wrap { width: 100%; min-width: 0; max-width: 100%; }
+.ledger-viewport { width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); -webkit-overflow-scrolling: touch; }
 .ledger-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 6px; margin-bottom: var(--space-3); width: 100%; min-width: 0; max-width: 100%; }
 .ledger-filter { display: flex; flex-direction: column; gap: 5px; min-width: 0; max-width: 100%; overflow: hidden; color: var(--text-secondary); font-size: var(--font-size-xs); }
 .ledger-filter input, .ledger-btn { box-sizing: border-box; min-width: 0; max-width: 100%; }
@@ -10,54 +11,19 @@
 .ledger-btn--ghost { border: 1px solid var(--control-border); background: var(--surface); color: var(--text-secondary); }
 .ledger-summary { margin: 0; min-height: 20px; color: var(--text-muted); font-size: var(--font-size-sm); }
 .ledger-summary:empty { display: none; }
-.ledger-table { width: calc(100% + var(--card-pad-mobile) * 2); max-width: calc(100% + var(--card-pad-mobile) * 2); min-width: 0; margin-left: calc(var(--card-pad-mobile) * -1); margin-right: calc(var(--card-pad-mobile) * -1); overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
-.ledger-row {
-  display: grid;
-  grid-template-columns: 68px 64px minmax(min-content, 1fr) 30px 40px;
-  gap: 8px;
-  align-items: start;
-  padding: 8px;
-  border-top: 1px solid var(--border-light);
-  font-size: var(--font-size-sm);
-}
-.ledger-row--head {
-  border-top: 0;
-  background: var(--surface-soft);
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-}
-.ledger-row--head .ledger-cell { text-align: center; white-space: nowrap; }
-.ledger-cell { min-width: 0; overflow-wrap: anywhere; }
-.ledger-cell.time, .ledger-cell[data-ledger-field="behavior"] { color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; overflow-wrap: normal; }
-.ledger-cell[data-ledger-field="number"] { min-width: min-content; white-space: nowrap; overflow-wrap: normal; }
-.ledger-cell[data-ledger-field="quantity_change"] { text-align: right; font-variant-numeric: tabular-nums; }
-.ledger-row--head .ledger-cell:last-child { text-align: right; }
+.ledger-table { width: max-content; min-width: 100%; border-collapse: collapse; background: var(--surface); font-size: var(--font-size-sm); }
+.ledger-table th, .ledger-table td { padding: 8px; border-top: 1px solid var(--border-light); text-align: left; white-space: nowrap; vertical-align: top; }
+.ledger-table thead th { border-top: 0; background: var(--surface-soft); color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: 600; text-align: center; }
+.ledger-table td.ledger-cell.time, .ledger-table td.ledger-cell[data-ledger-field="behavior"] { color: var(--text-muted); font-size: var(--font-size-xs); }
+.ledger-table td.ledger-cell[data-ledger-field="quantity_change"] { text-align: right; font-variant-numeric: tabular-nums; }
+.ledger-table th.ledger-cell:last-child { text-align: right; }
 .ledger-empty { margin: 0; padding: 12px; color: var(--text-muted); font-size: var(--font-size-sm); }
-@media (min-width: 761px) {
-  .ledger-table { width: calc(100% + var(--card-pad) * 2); margin-left: calc(var(--card-pad) * -1); margin-right: calc(var(--card-pad) * -1); }
-}
 @media (min-width: 700px) {
   .ledger-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .ledger-btn { grid-column: auto; }
 }
 @media (max-width: 420px) {
-  .ledger-row {
-    grid-template-columns: 64px 60px minmax(min-content, 1fr) 28px 40px;
-    gap: 8px;
-    padding: 7px 8px;
-    font-size: var(--font-size-xs);
-  }
+  .ledger-table th, .ledger-table td { padding: 7px 8px; font-size: var(--font-size-xs); }
   .ledger-btn { padding: 0 12px; }
 }
-
-@media (max-width: 760px) {
-  .ledger-table {
-    width: 100%;
-    max-width: 100%;
-    margin-left: 0;
-    margin-right: 0;
-  }
-}
-
 .ledger-delisted-tag { display:inline-block; margin-left:4px; padding:0 4px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:var(--font-size-xs); }

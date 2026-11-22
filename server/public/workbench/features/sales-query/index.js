@@ -59,20 +59,20 @@ function ordersHtml(orders) {
     const pays = (order.payments || []).length
       ? order.payments.map((payment) => `<span class="sq-pay-tag">${escapeHtml(payment.method)} <b>${escapeHtml(amountText(payment.amount))}</b> · ${escapeHtml(payment.status)}</span>`).join('')
       : `<span class="sq-pay-tag">未收款</span>`;
-    const details = (order.details || []).map((detail) => `<div class="sq-detail-row">
-      <span class="sq-detail-product">${escapeHtml(detail.number || '')}</span>
-      <span class="sq-detail-size">${escapeHtml(detail.size == null ? '' : detail.size)} 码</span>
-      <span class="sq-detail-amount">${escapeHtml(amountText(detail.actual_amount))}</span>
-      <span class="sq-status ${statusClass(detail.fulfillment_status)}">${escapeHtml(detail.fulfillment_status || '')}</span>
-    </div>`).join('');
-    return `<div class="sq-order-scroll scroll-hint-wrap" data-scroll-wrap><article class="sq-order" data-scroll-area>
+    const details = (order.details || []).map((detail) => `<tr class="sq-detail-row">
+      <td class="sq-detail-product">${escapeHtml(detail.number || '')}</td>
+      <td class="sq-detail-size">${escapeHtml(detail.size == null ? '' : detail.size)} 码</td>
+      <td class="sq-detail-amount">${escapeHtml(amountText(detail.actual_amount))}</td>
+      <td><span class="sq-status ${statusClass(detail.fulfillment_status)}">${escapeHtml(detail.fulfillment_status || '')}</span></td>
+    </tr>`).join('');
+    return `<div class="sq-order-scroll scroll-hint-wrap" data-scroll-wrap><div class="sq-order-viewport" data-scroll-area><article class="sq-order">
       <div class="sq-order-head">
         <div class="sq-order-title"><b>${escapeHtml(order.order_no)}</b><span class="sq-order-time">${escapeHtml(timeOnlyText(order.recorded_at))}</span></div>
         <div class="sq-order-total">${order.total_amount == null ? '—' : escapeHtml(amountText(order.total_amount))}</div>
         <div class="sq-order-pays">${pays}</div>
       </div>
-      ${details}
-    </article></div>`;
+      <table class="sq-detail-table"><tbody>${details}</tbody></table>
+    </article></div></div>`;
   }).join('');
 }
 
