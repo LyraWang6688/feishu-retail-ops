@@ -84,6 +84,7 @@ const SCAN_FLOWS = Object.freeze({
         refundTitle: '退差价',
         collectHint: '新鞋比原来贵，差额要收回来',
         refundHint: '新鞋比原来便宜，差额要退给她',
+        diffAmountLabel: '差价金额：',
         methodLabel: '差价方式',
         confirm: '确认提交',
         cancel: '取消',

@@ -45,6 +45,7 @@ test('售后换款式：有差价时选差价方式，提交售后接口而不�
   await page.locator('button[type="submit"]').click();
 
   await expect(page.locator('[data-exchange-modal]')).toBeVisible();
+  await expect(page.locator('[data-exchange-diff]')).toContainText('差价金额：¥20');
   await page.locator('[data-exchange-method]').selectOption('微信扫码');
   await page.locator('[data-exchange-confirm]').click();
 
