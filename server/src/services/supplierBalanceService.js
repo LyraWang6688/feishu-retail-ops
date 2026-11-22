@@ -3,7 +3,7 @@
 /**
  * 「供应 → 供应分析」只读聚合：
  *   · 供应商 / 初始化 / P交易明细三张表；
- *   · 只显示最新余额 != 0 的供应商；
+ *   · 显示最新余额 != 0、或最近窗口内有交易的供应商；
  *   · 余额：有 P 交易取最新交易日的最新余额，否则取初始化期初余额；
  *   · 交易明细：P交易明细，最近 N 天，按交易日倒序。
  */
@@ -129,8 +129,10 @@ const createSupplierBalanceService = ({
           break;
         }
       }
+      const recent = all.filter((tx) => Number.isFinite(tx._ms) && tx._ms >= cutoff);
       const visible = config.visibility.includeWhen.some((rule) => {
         if (rule.rule === 'numberNotZero') return rule.field === 'balance' && Number(balance) !== 0;
+        if (rule.rule === 'hasRecentTransactions') return recent.length > 0;
         return false;
       });
       if (!visible) continue;
@@ -138,9 +140,7 @@ const createSupplierBalanceService = ({
         recordId: entry.recordId,
         name: entry.name,
         balance,
-        transactions: all
-          .filter((tx) => Number.isFinite(tx._ms) && tx._ms >= cutoff)
-          .map(({ _ms, ...tx }) => tx),
+        transactions: recent.map(({ _ms, ...tx }) => tx),
       });
     }
 

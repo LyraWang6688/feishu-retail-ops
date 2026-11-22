@@ -71,14 +71,16 @@ const baseTxs = [
   }),
 ];
 
-test('供应商显示：只显示最新余额非 0 的供应商', async () => {
+test('供应商显示：余额非 0 或最近窗口内有交易', async () => {
   const result = await serviceOf({ suppliers: baseSuppliers, inits: baseInits, txs: baseTxs }).list();
   assert.deepEqual(result.suppliers.map((item) => item.name).sort(), [
-    '七匹狼/吉祥鸟', '信踏', '恒安利', '舒美特',
+    '七匹狼/吉祥鸟', '一代千金', '信踏', '恒安利', '舒美特',
   ].sort());
-  assert.equal(result.suppliers.some((item) => item.name === '贵帝'), false, '余额 0 ⇒ 不显示');
-  assert.equal(result.suppliers.some((item) => item.name === '三星'), false, '余额 0 ⇒ 不显示');
-  assert.equal(result.suppliers.some((item) => item.name === '一代千金'), false, '最新余额 0 ⇒ 不显示');
+  assert.equal(result.suppliers.some((item) => item.name === '贵帝'), false, '余额 0 且无交易 ⇒ 不显示');
+  assert.equal(result.suppliers.some((item) => item.name === '三星'), false, '余额 0 且无交易 ⇒ 不显示');
+  const yidai = result.suppliers.find((item) => item.name === '一代千金');
+  assert.equal(yidai.balance, 0);
+  assert.equal(yidai.transactions.length, 1, '余额 0 但有最近交易 ⇒ 交易流水仍显示');
 });
 
 test('余额来源：有交易取最新交易日最新余额；没有交易取初始化', async () => {
@@ -101,17 +103,21 @@ test('最近 30 天：旧交易不展示，但仍参与最新余额判断', asyn
   assert.equal(qpl.transactions.some((item) => item.recordId === 'old'), false);
 });
 
-test('有交易但最新余额 0 ⇒ 不显示', async () => {
+test('余额 0：最近有交易显示；只有窗口外旧交易不显示', async () => {
   const result = await serviceOf({
-    suppliers: [...baseSuppliers, supplier('s7', '零余额')],
+    suppliers: [...baseSuppliers, supplier('s7', '最近零余额'), supplier('s8', '旧零余额')],
     inits: [...baseInits],
-    txs: [...baseTxs, tx('zero', '零余额', '2026-11-20T18:00:00+08:00', {
-      [PF.behavior]: '入库',
-      [PF.goodsAmount]: 100,
-      [PF.latestBalance]: 0,
-    })],
+    txs: [...baseTxs,
+      tx('zero', '最近零余额', '2026-11-20T18:00:00+08:00', {
+        [PF.behavior]: '入库', [PF.goodsAmount]: 100, [PF.latestBalance]: 0,
+      }),
+      tx('oldzero', '旧零余额', '2026-09-01T18:00:00+08:00', {
+        [PF.behavior]: '入库', [PF.goodsAmount]: 100, [PF.latestBalance]: 0,
+      }),
+    ],
   }).list();
-  assert.equal(result.suppliers.some((item) => item.name === '零余额'), false);
+  assert.equal(result.suppliers.some((item) => item.name === '最近零余额'), true);
+  assert.equal(result.suppliers.some((item) => item.name === '旧零余额'), false);
 });
 
 test('交易标签：报货/退货看货单金额，付款/收款看交易额', async () => {
