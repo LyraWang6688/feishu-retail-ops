@@ -11,14 +11,13 @@
   padding-bottom: calc(128px + env(safe-area-inset-bottom));
 }
 
-/* 三个 tab（扫一扫本轮禁用：视觉保留、不可点） */
+/* 三个 tab：补货 / 上新 / 待提交列表 */
 .pr-sticky-head { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; padding: var(--space-2) 0 var(--space-3); background: var(--background); }
 .pr-tabs { display: flex; gap: var(--space-2); margin: 0 0 var(--space-2); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
 .pr-tab { flex: 1 1 0; min-width: 0; min-height: var(--control-height); border: 0; border-radius: var(--radius-md); padding: var(--space-2); background: transparent; color: var(--text-secondary); font-weight: var(--weight-medium); font-size: var(--font-size-sm); text-align: center; cursor: pointer; }
 .pr-tab small { display: block; margin-top: 2px; font-size: var(--font-size-xs); font-weight: var(--weight-normal); color: var(--text-muted); }
 .pr-tab.active { background: var(--primary-soft); color: var(--primary); }
 .pr-tab.active small { color: var(--primary); }
-.pr-tab-disabled { cursor: not-allowed; opacity: 0.6; }
 
 /* 顶部统计卡 */
 .pr-search { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }

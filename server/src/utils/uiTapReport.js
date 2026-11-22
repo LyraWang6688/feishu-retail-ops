@@ -123,11 +123,11 @@ const handleUiTap = ({ req, res, scope = 'scan', realm = '' }) => {
     if (step) logInfo(FUNNEL.events.stepEnter, funnelFields);
     return res.status(204).end();
   }
-  // 关键动作（客户端 beacon）：订单卡进入后渲染、采购扫一扫取消返回
+  // 关键动作（客户端 beacon）：订单卡进入后渲染
   if (String(req?.query?.kind || '') === 'action') {
     if (!UI_TAP.enabled) return res.status(204).end();
     const action = clip(req?.query?.action, 48);
-    const allowed = ['orders_section_rendered', 'procurement_scan_returned'];
+    const allowed = ['orders_section_rendered'];
     if (!allowed.includes(action)) return res.status(400).type('text').send('invalid action');
     logInfo('ui.action', {
       request_id: req?.requestId,

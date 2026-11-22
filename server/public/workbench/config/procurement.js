@@ -6,7 +6,7 @@
  *   · 补货：近 3 天销售（销售明细，库存数量=0）；现货/预订都默认 0，按需手选；
  *   · 上新：最近 7 天新增货品（今天 + 往前 6 天）；卡片「货号 · 颜色」+「M月D日 HH:mm 新增 · 供应商」；普通码 / 特殊码默认都 0（需手动选）；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
- *   · 扫一扫：**本轮只占位/禁用**（不扫码、不开会话、不提交）；
+ *   · 第三 tab：**待提交列表**（只读核对；采购页不接扫码）；
  *   · 提交：复用既有采购链路；成功后端返回**统一异步 toast 文案**（`config/submitToast.js` 唯一真源）。
  *
  * ⚠️ 渲染层不写死中文 / 数字 / 端点；颜色一律走 `styles/tokens.css` 的 token（本页 CSS 不写 hex/rgb）。
@@ -37,8 +37,6 @@ export const PROCUREMENT_UI = Object.freeze({
     refresh: '刷新',
     refreshing: '刷新中…',
     refreshed: '已更新到最新数据',
-    scanDisabled: '扫一扫本轮暂未开放，先用补货 / 上新。',
-    scanTabHint: '补货扫码',
     noSelection: '还没有选要采购的货品。',
     rangeLabel: '统计范围',
     authFailed: '工作台启动失败：',

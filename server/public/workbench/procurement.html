@@ -10,7 +10,7 @@
 </head>
 <body>
   <!-- 采购页薄壳：DOM 结构在 features/procurement/render.js，文案/端点在 config/procurement.js。
-       本轮只做「补货 / 上新」两个 tab；扫一扫 tab 仅占位/禁用（业务负责人 2026-10-28 决定）。 -->
+       采购页只做「补货 / 上新 / 待提交列表」；不接扫码链路。 -->
   <main id="procurement-app" class="shell pr-page"></main>
   <script src="/workbench/shared/ui-tap.js"></script>
   <script>if (window.dshUiTap) window.dshUiTap.bind({ path: '/api/workbench/ui-tap', page: 'workbench' });</script>
