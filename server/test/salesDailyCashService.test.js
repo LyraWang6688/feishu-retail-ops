@@ -55,6 +55,41 @@ test('每日现金：当天无记录返回 null', async () => {
   assert.equal(out.record, null);
 });
 
+test('每日现金：今天无记录时，只取昨天的留存资金作参考', async () => {
+  const gateway = freshGateway();
+  gateway.records.push({
+    record_id: 'yesterday',
+    fields: {
+      [R.saleDate.name]: Date.parse('2026-11-20T00:00:00+08:00'),
+      [R.closingCash.name]: 1200,
+      [F.fields.withdrawalCash]: 880,
+      [R.retainedCash.name]: 320,
+    },
+  });
+  gateway.records.push({
+    record_id: 'older',
+    fields: {
+      [R.saleDate.name]: Date.parse('2026-11-19T00:00:00+08:00'),
+      [R.retainedCash.name]: 999,
+    },
+  });
+  const out = await serviceOf(gateway).getToday();
+  assert.deepEqual(out.reference, { date: '2026-11-20', retained_amount: 320 });
+});
+
+test('每日现金：昨天没有记录 / 留存资金为空 ⇒ 不给参考', async () => {
+  const gateway = freshGateway();
+  const out = await serviceOf(gateway).getToday();
+  assert.equal(out.reference, null);
+
+  gateway.records.push({
+    record_id: 'yesterday_empty',
+    fields: { [R.saleDate.name]: Date.parse('2026-11-20T00:00:00+08:00') },
+  });
+  const empty = await serviceOf(gateway).getToday();
+  assert.equal(empty.reference, null);
+});
+
 test('每日现金：首次保存创建一条；关店保存拿走金额更新同一条', async () => {
   const gateway = freshGateway();
   const service = serviceOf(gateway);

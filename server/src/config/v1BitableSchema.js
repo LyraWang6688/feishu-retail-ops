@@ -730,7 +730,7 @@ const V1_BITABLE_SCHEMA = {
       readOnlyFields: {
         saleDate: { name: '销售日', type: 5, writable: false },
         receivedCash: { name: '入账现金', type: 19, writable: false },
-        closingCash: { name: '实时现金', type: 20, writable: false },
+        closingCash: { name: '实时现金', type: 20, writable: false }, retainedCash: { name: '留存资金', type: 20, writable: false },
       },
     },
     // ⭐⭐ 2026-11-09（业务负责人）：「点「批量打印」进的是飞书表单链接，后续就只用这个了」

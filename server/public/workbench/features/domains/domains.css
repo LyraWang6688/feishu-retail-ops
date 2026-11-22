@@ -359,4 +359,11 @@
 .dc-field input{min-height:var(--control-height);padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:var(--font-size-md)}
 .dc-btn{min-height:var(--control-height);padding:0 14px;border:1px solid var(--primary);border-radius:var(--radius-sm);background:var(--primary);color:var(--surface);cursor:pointer;font-weight:var(--weight-bold)}
 .dc-btn:disabled{opacity:.45;background:var(--surface-sunken);border-color:var(--border);color:var(--text-secondary);cursor:not-allowed}
+.dc-btn-secondary{flex:0 0 auto;min-height:var(--control-height);padding:0 12px;border:1px solid var(--primary);border-radius:var(--radius-sm);background:var(--surface);color:var(--primary);cursor:pointer;font-size:var(--font-size-sm);font-weight:var(--weight-bold)}
+.dc-reference{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-3);padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-sunken)}
+.dc-reference-copy{display:grid;gap:2px;min-width:0}
+.dc-reference-copy span{color:var(--text-secondary);font-size:var(--font-size-xs)}
+.dc-reference-copy strong{font-size:20px;line-height:1.2;font-variant-numeric:tabular-nums}
+.dc-hint,.dc-fill-status{margin:6px 0 0;color:var(--text-secondary);font-size:var(--font-size-xs)}
+.dc-fill-status{color:var(--primary)}
 .dc-empty,.dc-loading{margin:0;color:var(--text-secondary);font-size:var(--font-size-sm)}
