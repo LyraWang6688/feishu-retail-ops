@@ -21,18 +21,20 @@ const timeText = (value) => {
   return `${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
 };
 
-const rowHtml = (row) => `<div class="ledger-row" role="row">
+const rowHtml = (row) => `<tr role="row">
   ${PAGE.columns.map((column) => {
     const value = column.key === 'time' ? timeText(row.created_at) : cellText(row[column.key]);
     const badge = column.key === 'number' && row.delisted
       ? ` <span class="ledger-delisted-tag">${escapeHtml(PAGE.texts.delisted)}</span>` : '';
-    return `<span class="ledger-cell ${column.cls || ''}" role="cell" data-ledger-field="${escapeHtml(column.key)}">${escapeHtml(value)}${badge}</span>`;
+    return `<td class="ledger-cell ${column.cls || ''}" role="cell" data-ledger-field="${escapeHtml(column.key)}">${escapeHtml(value)}${badge}</td>`;
   }).join('')}
-</div>`;
+</tr>`;
 
-const tableHtml = (rows) => `<div class="ledger-scroll-wrap scroll-hint-wrap" data-scroll-wrap><div class="ledger-table" role="table" aria-label="${escapeHtml(PAGE.label)}" data-scroll-area>
-  <div class="ledger-row ledger-row--head" role="row">${PAGE.columns.map((column) => `<span class="ledger-cell ${column.cls || ''}" role="columnheader">${escapeHtml(column.label)}</span>`).join('')}</div>
-  ${rows.map(rowHtml).join('')}
+const tableHtml = (rows) => `<div class="ledger-scroll-wrap scroll-hint-wrap" data-scroll-wrap><div class="ledger-viewport" data-scroll-area>
+  <table class="ledger-table" role="table" aria-label="${escapeHtml(PAGE.label)}">
+    <thead><tr role="row">${PAGE.columns.map((column) => `<th class="ledger-cell ${column.cls || ''}" role="columnheader">${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(rowHtml).join('')}</tbody>
+  </table>
 </div></div>`;
 
 export function createInventoryLedgerModule() {
