@@ -2,6 +2,7 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { bindScrollHints } from '../shared/scrollHint.js';
+import { bindDateControl, dateFieldHtml } from '../shared/dateField.js';
 import { INVENTORY_LEDGER_PAGE as PAGE } from '../../config/inventoryLedger.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
@@ -79,15 +80,17 @@ export function createInventoryLedgerModule() {
       const today = todayKey();
       host.innerHTML = `<div class="domain-page ledger-page">
         <div class="ledger-filters">
-          <label class="ledger-filter"><span>${escapeHtml(PAGE.texts.startLabel)}</span><input type="date" value="${today}" max="${today}" data-ledger-from></label>
-          <label class="ledger-filter"><span>${escapeHtml(PAGE.texts.endLabel)}</span><input type="date" value="${today}" min="${today}" data-ledger-to></label>
+          ${dateFieldHtml({ label: PAGE.texts.startLabel, labelClass: 'ledger-filter', inputAttr: 'data-ledger-from', value: today, max: today })}
+          ${dateFieldHtml({ label: PAGE.texts.endLabel, labelClass: 'ledger-filter', inputAttr: 'data-ledger-to', value: today, min: today })}
           <button class="ledger-btn" type="button" data-ledger-query>${escapeHtml(PAGE.texts.query)}</button>
         </div>
         <p class="ledger-summary" data-ledger-summary></p>
         <div data-ledger-body></div>
       </div>`;
-      const fromInput = host.querySelector('[data-ledger-from]');
-      const toInput = host.querySelector('[data-ledger-to]');
+      const fromField = bindDateControl(host, '[data-ledger-from]');
+      const toField = bindDateControl(host, '[data-ledger-to]');
+      const fromInput = fromField.input;
+      const toInput = toField.input;
       const syncBounds = () => {
         if (!fromInput || !toInput) return;
         toInput.min = fromInput.value || '';
