@@ -2,7 +2,7 @@
  * 采购页前端判据（AC-P17 / P18 / P19 / P21 / P22 的静态部分）：
  *   · 薄壳 + 模块化 + 文件行数；文案/端点全在 config；不往旧演示页补逻辑；
  *   · 颜色只用 tokens（不写 hex/rgb、不写内联 style）；
- *   · 扫一扫本轮**只占位/禁用**（不 import 扫码模块、不发请求）；
+ *   · 采购页**不接扫码**（第三 tab 是待提交列表）；
  *   · 草稿纯函数（默认数量 / 合计 / items / submitKey 轮换）口径正确。
  *
  * ⚠️ 交互行为（切 tab / 刷新 / 提交次数）在 Playwright：`test/e2e/procurement.spec.js`。
@@ -86,8 +86,7 @@ test('AC-P9/P21 第三 tab 改为待提交列表；页面不接扫码模块', ()
     '仍然不接扫码模块');
   const html = read(`${PUBLIC}/procurement.html`);
   assert.equal(/scanCodeRaw|createScanCardsModule/.test(html), false);
-  // 服务端 ui-tap 仍允许这个 action（下一轮做扫一扫时不用再改服务端）
-  assert.match(read('src/utils/uiTapReport.js'), /procurement_scan_returned/);
+  assert.equal(/procurement_scan_returned/.test(read('src/utils/uiTapReport.js')), false, '采购扫码埋点 action 已清理');
 });
 
 test('AC-P18f 上新副标题：供应商为空时不出现孤立的「·」', () => {

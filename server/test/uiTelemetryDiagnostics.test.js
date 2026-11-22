@@ -41,7 +41,7 @@ test('client.resource.failed：去掉 URL query，保留事件类型与错误', 
   assert.equal(out.logs[0].event_type, 'resource');
 });
 
-test('ui.action：订单卡渲染 / 采购扫码返回可记录；未知动作 400', () => {
+test('ui.action：订单卡渲染可记录；未知动作 400', () => {
   const out = run({ kind: 'action', action: 'orders_section_rendered', realm: 'sales', result: 'ok', duration_ms: '21' });
   assert.equal(out.status, 204);
   assert.equal(out.logs[0].event, 'ui.action');
@@ -59,12 +59,11 @@ test('客户端接线：扫一扫生命周期与资源错误都有上报点', ()
   }
   const orders = fs.readFileSync(path.join(__dirname, '../public/workbench/features/orders/index.js'), 'utf8');
   assert.match(orders, /orders_section_rendered/);
-  // 2026-11-22：采购页第三 tab 改为待提交列表，页面不再调扫码；
-  // 服务端 action 白名单保留（以后若恢复扫码不用再改服务端）。
+  // 2026-11-22：采购页第三 tab 改为待提交列表，页面不再调扫码；对应 action 已删除。
   const procurementHtml = fs.readFileSync(path.join(__dirname, '../public/workbench/procurement.html'), 'utf8');
   assert.equal(/procurement_scan_returned|scanCodeRaw/.test(procurementHtml), false, '本轮采购页不接扫码');
   const procurementRender = fs.readFileSync(path.join(__dirname, '../public/workbench/features/procurement/render.js'), 'utf8');
   assert.equal(procurementRender.includes('data-pr-scan-disabled'), false, '扫一扫占位已移除');
   const uiTapReport = fs.readFileSync(path.join(__dirname, '../src/utils/uiTapReport.js'), 'utf8');
-  assert.match(uiTapReport, /procurement_scan_returned/, '服务端仍允许该 action（下一轮用）');
+  assert.equal(uiTapReport.includes('procurement_scan_returned'), false, '采购扫码埋点 action 已清理');
 });
