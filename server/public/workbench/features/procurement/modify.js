@@ -34,6 +34,7 @@ export const createModifyController = ({ host, config, api, getStore, getDraft, 
           color: product.color,
           supplierRecordId: nextBatch.supplier_record_id,
           supplierName: nextBatch.supplier_name,
+          locked: true,
         }, entry.size, entry.quantity);
       }
     }

@@ -95,6 +95,20 @@ test('AC-P18f 上新副标题：供应商为空时不出现孤立的「·」', (
   assert.match(read(`${PUBLIC}/features/procurement/render.js`), /supplier \? config\.card\.newSubtitle : config\.card\.newSubtitleNoSupplier/);
 });
 
+test('修改预填货品带 locked：补货/上新刷新裁剪时不被误删', async () => {
+  const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
+  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
+  const memory = new Map();
+  const storage = { getItem: (key) => (memory.has(key) ? memory.get(key) : null), setItem: (key, value) => memory.set(key, value), removeItem: (key) => memory.delete(key) };
+  const draftStore = store.createDraftStore({ openId: 'ou_modify', config, storage, now: () => 1761600000000 });
+  let draft = draftStore.ensure();
+  draft = draftStore.setQuantity(draft, { productRecordId: 'recLocked', source: 'replenish', locked: true }, 39, 2);
+  draft = draftStore.setQuantity(draft, { productRecordId: 'recNormal', source: 'replenish' }, 40, 1);
+  draft = draftStore.pruneSource(draft, 'replenish', []);
+  assert.equal(draftStore.quantityOf(draft, 'recLocked', 39), 2, '修改预填的货品不能被刷新裁掉');
+  assert.equal(draftStore.quantityOf(draft, 'recNormal', 40), 0, '普通刷新仍按原逻辑裁剪');
+});
+
 test('尺码区域：采购补货 / 采购上新 / 验收明细共用 .pr-size-grid 两列', () => {
   const css = read(`${PUBLIC}/procurement.css`);
   assert.match(css, /\.pr-size-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);

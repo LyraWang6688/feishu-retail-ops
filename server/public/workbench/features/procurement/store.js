@@ -111,6 +111,7 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
         color: meta.color || current.color || '',
         supplierRecordId: meta.supplierRecordId || current.supplierRecordId || '',
         supplierName: meta.supplierName || current.supplierName || '',
+        ...((meta.locked === true || current.locked === true) ? { locked: true } : {}),
         entries,
       },
     };
@@ -170,6 +171,7 @@ export const createDraftStore = ({ openId, config, storage = window.localStorage
     const products = { ...(draft.products || {}) };
     let changed = false;
     for (const [id, product] of Object.entries(products)) {
+      if (product.locked === true) continue;
       if (product.source === source && !keep.has(String(id))) {
         delete products[id];
         if (draft.customSizes?.[id]) delete draft.customSizes[id];
