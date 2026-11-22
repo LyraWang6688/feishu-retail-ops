@@ -23,8 +23,8 @@ test('事件新增记录：上新员 / 打印者写实际操作人', async () =>
   const actions = [{ action: 'record_added', record_id: 'rec_1', operator_id: { open_id: 'ou_1' } }];
   await service.handle('product', actions);
   await service.handle('labelPrintRequest', actions);
-  assert.deepEqual(writes[0].values, { [V1_BITABLE_SCHEMA.tables.product.fields.newStaff]: [{ id: 'ou_1' }] });
-  assert.deepEqual(writes[1].values, { [V1_BITABLE_SCHEMA.tables.labelPrintRequest.fields.printedBy]: [{ id: 'ou_1' }] });
+  assert.deepEqual(writes[0].values, { newStaff: [{ id: 'ou_1' }] });
+  assert.deepEqual(writes[1].values, { printedBy: [{ id: 'ou_1' }] });
 });
 
 test('只写 record_added；没有操作人就不猜', async () => {
