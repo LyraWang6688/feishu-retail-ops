@@ -277,7 +277,11 @@ test('供应分析：交易流水 / 供应总览，默认交易流水', async ({
   await mockApi(page);
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '供应', exact: true }).click();
-  await expect(page.locator('[data-domain-page]:visible')).toHaveText(['录单', '交易记录', '供应分析', '名录']);
+  await expect(page.locator('[data-domain-page]:visible')).toHaveText(['录单', '供应分析', '名录']);
+  await expect(page.getByRole('button', { name: '交易记录', exact: true })).toHaveCount(0);
+  const paymentCard = page.getByRole('link', { name: /货款/ });
+  await expect(paymentCard).toBeVisible();
+  await expect(paymentCard).toHaveAttribute('href', /form/);
   await page.getByRole('button', { name: '供应分析', exact: true }).click();
   await expect(page.locator('[data-page-kind="supplier-balance"]')).toBeVisible();
   await expect(page.locator('[data-sb-tab]')).toHaveText(['交易流水', '供应总览']);
