@@ -27,17 +27,14 @@ export const rangeBarHtml = (days, config) => {
     + `<button type="button" class="pr-refresh" data-pr-refresh>${escapeHtml(config.texts.refresh)}</button>`;
 };
 
-export const suggestedHtml = ({ body, draft, store, supplierId = '', config, modify = false }) => {
+export const suggestedHtml = ({ body, draft, store, supplierId = '', config }) => {
   if (!body) return '';
   const filtered = supplierFilteredBody('suggested', body, supplierId, config);
   const cards = filtered.visible.length
     ? filtered.visible.map((group) => {
-      const card = group.source === 'new'
+      return group.source === 'new'
         ? newGroupHtml(group, draft, store, config)
         : replenishGroupHtml(group, draft, store, config);
-      return modify
-        ? card + `<button type="button" class="pr-remove-product" data-pr-remove-product="${escapeHtml(group.productRecordId)}">${escapeHtml(config.texts.removeProduct)}</button>`
-        : card;
     }).join('')
     : `<div class="pr-empty">${escapeHtml(config.texts.suggestedEmpty)}</div>`;
   return `${supplierTabsHtml(filtered.groups, filtered.supplierKey, config)}${cards}`;
