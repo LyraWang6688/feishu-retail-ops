@@ -20,6 +20,7 @@ const exchangeDiffBlock = (flow) => {
   <div style="background:#fff;border-radius:12px;padding:16px;max-width:420px;width:100%">
     <h3 data-exchange-title style="margin:0 0 8px;font-size:18px"></h3>
     <p data-exchange-hint style="margin:0 0 12px;color:#666;font-size:14px"></p>
+    <p data-exchange-diff style="margin:0 0 12px;color:#1f2329;font-size:18px;font-weight:700"></p>
     <label data-exchange-label style="display:block;margin:0 0 6px;font-size:14px"></label>
     <select data-exchange-method style="width:100%;padding:10px;border:1px solid #ccc;border-radius:8px"></select>
     <p data-exchange-error hidden style="color:#d33;font-size:13px;margin:8px 0 0"></p>
@@ -37,6 +38,7 @@ const exchangeDiffBlock = (flow) => {
   var modal = document.querySelector('[data-exchange-modal]');
   var title = modal.querySelector('[data-exchange-title]');
   var hint = modal.querySelector('[data-exchange-hint]');
+  var diffLine = modal.querySelector('[data-exchange-diff]');
   var label = modal.querySelector('[data-exchange-label]');
   var select = modal.querySelector('[data-exchange-method]');
   var error = modal.querySelector('[data-exchange-error]');
@@ -96,6 +98,8 @@ const exchangeDiffBlock = (flow) => {
     var list = isCollect ? methods : refunds;
     title.textContent = isCollect ? cfg.texts.collectTitle : cfg.texts.refundTitle;
     hint.textContent = isCollect ? cfg.texts.collectHint : cfg.texts.refundHint;
+    var diffText = Number(Math.abs(diff)).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+    diffLine.textContent = String(cfg.texts.diffAmountLabel || '') + '¥' + diffText;
     label.textContent = cfg.texts.methodLabel;
     cancel.textContent = cfg.texts.cancel;
     confirm.textContent = cfg.texts.confirm;

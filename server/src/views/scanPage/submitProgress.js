@@ -29,8 +29,12 @@ const SUBMIT_PROGRESS_STYLE = `
 `;
 
 /** 页面里**真有**要拦截的提交时才发这一段（其余页面逐字节不变 ✓）。 */
-const hasProgressSubmit = (content) => String(content).includes('data-progress-submit="1"')
-  || String(content).includes('data-view="payment-pay"');
+const hasProgressSubmit = (content) => {
+  const html = String(content);
+  // 只认真实的 button/form 标签，避免 HTML 注释里的字样误触发脚本。
+  return /<button\b[^>]*\bdata-progress-submit="1"/.test(html)
+    || /<form\b[^>]*\bdata-view="payment-pay"/.test(html);
+};
 
 const submitProgressScriptHtml = (failureText = '') => `<script data-view="submit-progress">
 var SUBMIT_FAILURE_TEXT = ${JSON.stringify(String(failureText || ''))};

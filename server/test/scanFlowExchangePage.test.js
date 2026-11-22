@@ -18,6 +18,7 @@ const { saleFormHtml } = require('../src/views/scanPage/paymentBlock');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { getFlow, postContextQuery } = require('../src/services/scanFlowService');
 const { handlePendingExchangeSubmit } = require('../src/routes/scanPage/exchangeFlow');
+const { hasProgressSubmit } = require('../src/views/scanPage/submitProgress');
 
 const VIEW = {
   number: 'XHB1|黑|男', item_no: 'XHB1', color: '黑',
@@ -37,6 +38,9 @@ test('AC-FEP1 换款式货品页：要显示实收金额 / 无加一双 / 提交
   assert.match(html, /售后换款式/, '顶部提示来自 flow 配置');
   assert.match(html, /data-exchange-form="1"/, '换款式表单带差价弹窗钩子');
   assert.match(html, /data-view="exchange-diff"/, '换款式页要带「差价弹窗」脚本');
+  assert.doesNotMatch(html, /<button[^>]*data-progress-submit="1"/, '换款式不能被通用提交进度脚本先拦截');
+  assert.doesNotMatch(html, /<button[^>]*data-submit-feedback=/, '换款式由差价脚本负责提交反馈，不能被通用反馈脚本置灰');
+  assert.equal(hasProgressSubmit(html), false, '换款式页面不注入通用提交进度脚本');
   for (const key of ['requestId', 'salesEntryRecordId', 'detailRecordId', 'originalAmount', 'productRecordId']) {
     assert.match(html, new RegExp(`name="ctx_${key}"`), `上下文 ${key} 要用隐藏字段带进 POST`);
   }
@@ -48,6 +52,7 @@ test('AC-FEP2 销售 flow 的货品页一个字都不变（金额输入 / 加一
   assert.match(html, /value="add_line"/, '销售页仍可以"再加一双"');
   assert.equal(html.includes('ctx_'), false, '销售 flow 没有上下文隐藏字段');
   assert.match(html, /value="submit_order"/, '销售提交按钮照旧');
+  assert.match(html, /data-progress-submit="1"/, '销售提交仍走通用提交进度');
 });
 
 test('AC-FEP3 路由接线：GET 传 flow；POST 保留 flow/上下文，不落普通销售', () => {
