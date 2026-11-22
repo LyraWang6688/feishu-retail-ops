@@ -1,4 +1,4 @@
-/** 「供应 → 往来款」：供应商最新余额 + 最近 30 天 P 交易明细。 */
+/** 「供应 → 供应分析」：交易流水（供应商最新余额 + 最近 30 天 P 交易） / 供应总览占位。 */
 import { api } from '../../core/api-client.js';
 import { SUPPLIER_BALANCE_API, SUPPLIER_BALANCE_TEXTS as T } from '../../config/supplierBalance.js';
 import { showPageError } from '../../core/ui.js';
@@ -61,18 +61,31 @@ const cardHtml = (supplier) => `
     </div>
   </article>`;
 
+const TABS = Array.isArray(T.tabs) ? T.tabs : [];
+const tabsHtml = () => TABS.map((tab) => `<button class="sb-tab${tab.id === 'transactions' ? ' active' : ''}" type="button" role="tab" data-sb-tab="${esc(tab.id)}" aria-selected="${tab.id === 'transactions'}">${esc(tab.label)}</button>`).join('');
+
 export function createSupplierBalanceModule() {
   return {
     mount(host) {
       host.innerHTML = `
         <div class="domain-page" data-page-kind="supplier-balance">
-          <div class="pp-search">
-            <input data-sb-search type="search" placeholder="${esc(T.searchPlaceholder)}" autocomplete="off">
+          <div class="sb-sticky-head">
+            <div class="sb-tabs" role="tablist" aria-label="${esc(T.tabsLabel)}">${tabsHtml()}</div>
           </div>
-          <p class="pp-note" data-sb-count hidden></p>
-          <p class="pp-note" data-sb-empty hidden></p>
-          <div data-sb-list aria-live="polite"></div>
+          <div data-sb-panel="overview" hidden>
+            <div class="sb-placeholder"><p>${esc(T.overviewBuilding)}</p></div>
+          </div>
+          <div data-sb-panel="transactions">
+            <div class="pp-search">
+              <input data-sb-search type="search" placeholder="${esc(T.searchPlaceholder)}" autocomplete="off">
+            </div>
+            <p class="pp-note" data-sb-count hidden></p>
+            <p class="pp-note" data-sb-empty hidden></p>
+            <div data-sb-list aria-live="polite"></div>
+          </div>
         </div>`;
+      const mainTabs = document.querySelector('.main-tabs');
+      if (mainTabs) host.style.setProperty('--sb-main-tabs-height', `${Math.ceil(mainTabs.getBoundingClientRect().height)}px`);
       const list = host.querySelector('[data-sb-list]');
       const count = host.querySelector('[data-sb-count]');
       const empty = host.querySelector('[data-sb-empty]');
@@ -102,6 +115,19 @@ export function createSupplierBalanceModule() {
           showPageError(T.failed);
         }
       };
+      host.querySelector('.sb-tabs')?.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-sb-tab]');
+        if (!button) return;
+        const id = button.dataset.sbTab || 'transactions';
+        host.querySelectorAll('[data-sb-tab]').forEach((tab) => {
+          const selected = tab.dataset.sbTab === id;
+          tab.classList.toggle('active', selected);
+          tab.setAttribute('aria-selected', String(selected));
+        });
+        host.querySelectorAll('[data-sb-panel]').forEach((panel) => {
+          panel.hidden = panel.dataset.sbPanel !== id;
+        });
+      });
       input?.addEventListener('input', render);
       load();
     },
