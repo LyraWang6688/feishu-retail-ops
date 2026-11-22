@@ -59,6 +59,8 @@ export const PROCUREMENT_UI = Object.freeze({
     pendingTotal: '合计 {total} 双',
     pendingSizeLine: '{size} 码 × {quantity}',
     searchPlaceholder: '搜索货号',
+    searchLoading: '正在搜索货品…',
+    searchEmpty: '没有匹配的货品。',
   }),
   // 顶部统计（补货 3 项；上新**只有**「新增货品」一项）
   stats: Object.freeze({

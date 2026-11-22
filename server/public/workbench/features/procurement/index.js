@@ -11,7 +11,8 @@ import { createSubmitController } from './submit.js';
 import { createRefresher } from './refresh.js';
 import { customSizesValid, customRowsError } from './customSize.js';
 import { createCustomSizeModal } from './customSizeModal.js';
-import { pendingListHtml } from './pending.js';
+import { pendingListHtml, supplierNameMap } from './pending.js';
+import { createProcurementSearch } from './search.js';
 import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
 const DATA_TABS = ['replenish', 'new'];
 const TABS = [...DATA_TABS, 'pending'];
@@ -20,30 +21,21 @@ export function mountProcurementPage(host) {
   host.innerHTML = shellHtml(config);
   const remote = createApi(config);
   const panels = { replenish: createReplenishPanel(config), new: createNewProductsPanel(config) };
-  const state = { tab: 'replenish', bodies: {}, errors: {}, loadedAt: {},
-    suppliers: { replenish: '', new: '' }, search: { replenish: '', new: '' } };
-  const searchInput = host.querySelector('[data-pr-search]');
+  const state = { tab: 'replenish', bodies: {}, errors: {}, loadedAt: {}, suppliers: { replenish: '', new: '' } };
   let store = null;
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
   const modal = createCustomSizeModal({ host, config });
   const panelEl = (tab) => host.querySelector(`[data-pr-panel="${tab}"]`);
   const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft); };
-  const supplierNames = () => {
-    const map = {};
-    for (const body of Object.values(state.bodies)) {
-      for (const group of body?.groups || []) map[group.supplierRecordId || ''] = group.supplierName || '';
-    }
-    return map;
-  };
   const paint = (tab) => {
     const element = panelEl(tab);
     if (!element) return;
-    if (tab === 'pending') { element.innerHTML = pendingListHtml(draft, config, supplierNames()); return; }
+    if (tab === 'pending') { element.innerHTML = pendingListHtml(draft, config, supplierNameMap(state.bodies)); return; }
     if (state.errors[tab]) { element.innerHTML = errorHtml(state.errors[tab], config); return; }
     const body = state.bodies[tab];
     element.innerHTML = body
-      ? panels[tab].render({ body, draft, store, supplierId: state.suppliers[tab], search: state.search[tab] })
+      ? panels[tab].render({ body, draft, store, supplierId: state.suppliers[tab] })
       : emptyHtml(config.texts.loading);
   };
   const refreshNumbers = () => {
@@ -85,7 +77,6 @@ export function mountProcurementPage(host) {
   const activate = async (tab, options = {}) => {
     if (!TABS.includes(tab)) return;
     state.tab = tab;
-    if (searchInput) searchInput.value = state.search[tab] || '';
     const searchWrap = host.querySelector('.pr-search');
     if (searchWrap) searchWrap.hidden = tab === 'pending';
     host.querySelectorAll('[data-pr-tab]').forEach((button) => {
@@ -97,9 +88,10 @@ export function mountProcurementPage(host) {
   };
   host.addEventListener('click', async (event) => {
     const tabButton = event.target.closest('[data-pr-tab]');
-    if (tabButton) { await activate(tabButton.dataset.prTab); return; }
+    if (tabButton) { search.hide(); await activate(tabButton.dataset.prTab); return; }
     const supplier = event.target.closest('[data-pr-supplier]');
     if (supplier) {
+      search.hide();
       state.suppliers[state.tab] = supplier.dataset.prSupplier || '';
       paint(state.tab);
       return;
@@ -147,10 +139,22 @@ export function mountProcurementPage(host) {
       if (result.ok) { setDraft(store.ensure()); paint(state.tab); refreshNumbers(); }
     }
   });
-  searchInput?.addEventListener('input', () => { state.search[state.tab] = String(searchInput.value || ''); paint(state.tab); });
   host.addEventListener('input', (event) => {
     const input = event.target.closest('[data-pr-qty]');
     if (input) quantityInput({ input, config, applyQuantity });
+  });
+  const search = createProcurementSearch({
+    host, config,
+    getBodies: () => state.bodies,
+    ensureLoaded: async () => {
+      if (!state.bodies.replenish) await load('replenish');
+      if (!state.bodies.new) await load('new');
+    },
+    onSelect: async ({ tab, supplier, record }) => {
+      state.suppliers[tab] = supplier;
+      await activate(tab);
+      requestAnimationFrame(() => host.querySelector(`[data-pr-group="${record}"]`)?.scrollIntoView({ block: 'center' }));
+    },
   });
   const start = async () => {
     let user = null;

@@ -6,6 +6,14 @@ const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, 
 ));
 const productTitle = (product) => [product.itemNo || product.number, product.color].filter(Boolean).join(' · ');
 
+export const supplierNameMap = (bodies = {}) => {
+  const map = {};
+  for (const body of Object.values(bodies)) {
+    for (const group of body?.groups || []) map[group.supplierRecordId || ''] = group.supplierName || '';
+  }
+  return map;
+};
+
 export const pendingListHtml = (draft, config, supplierNames = {}) => {
   const suppliers = new Map();
   for (const product of Object.values(draft?.products || {})) {
