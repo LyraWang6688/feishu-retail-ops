@@ -1,0 +1,42 @@
+/* 统一日期控件：可见外框由页面控制；原生日期 input 透明覆盖，只负责打开系统选择器。 */
+.date-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height);
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+.date-control:focus-within {
+  outline: 2px solid var(--primary-soft);
+  border-color: var(--primary);
+}
+.date-control__value {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  pointer-events: none;
+}
+.date-control__native {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}

@@ -44,6 +44,8 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
   for (const url of ['/workbench/?module=sales&page=sales-query', '/workbench/?module=inventory&page=inventory-ledger']) {
     await page.goto(url, { waitUntil: 'networkidle' });
     if (url.includes('sales-query')) {
+      await expect(page.locator('.sq-filters .date-control')).toHaveCount(2);
+      await expect(page.locator('.sq-filters .date-control__value').first()).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
       await expect(page.locator('.sq-revenue')).toContainText('其中包括配品销售：¥5');
       await expect(page.locator('.sq-bar-row').first()).toContainText('3 笔');
       await expect(page.locator('.sq-pending-row')).toContainText('1 笔');
@@ -73,6 +75,10 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
     }));
     expect(after.scrollLeft).toBeGreaterThan(0);
     expect(after.wrapClass).toContain('at-end');
+    if (url.includes('inventory-ledger')) {
+      await expect(page.locator('.ledger-filters .date-control')).toHaveCount(2);
+      await expect(page.locator('.ledger-filters .date-control__value').first()).toHaveText(/^\d{4}-\d{2}-\d{2}$/);
+    }
   }
 
 });

@@ -2,6 +2,7 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { bindScrollHints } from '../shared/scrollHint.js';
+import { bindDateControl, dateFieldHtml } from '../shared/dateField.js';
 import { SALES_QUERY_PAGE as PAGE } from '../../config/salesQuery.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
@@ -136,15 +137,17 @@ export function createSalesQueryModule() {
       const today = todayKey();
       host.innerHTML = `<div class="domain-page sq-page">
         <div class="sq-filters">
-          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.startLabel)}</span><input type="date" value="${today}" max="${today}" data-sq-from></label>
-          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.endLabel)}</span><input type="date" value="${today}" min="${today}" data-sq-to></label>
+          ${dateFieldHtml({ label: PAGE.texts.startLabel, labelClass: 'sq-filter', inputAttr: 'data-sq-from', value: today, max: today })}
+          ${dateFieldHtml({ label: PAGE.texts.endLabel, labelClass: 'sq-filter', inputAttr: 'data-sq-to', value: today, min: today })}
           <label class="sq-filter"><span>${escapeHtml(PAGE.texts.quickRangeLabel)}</span><select data-sq-range>${PAGE.texts.quickRanges.map((item) => `<option value="${item.days}">${escapeHtml(item.label)}</option>`).join('')}</select></label>
           <button class="sq-btn" type="button" data-sq-query>${escapeHtml(PAGE.texts.query)}</button>
         </div>
         <div data-sq-body></div>
       </div>`;
-      const fromInput = host.querySelector('[data-sq-from]');
-      const toInput = host.querySelector('[data-sq-to]');
+      const fromField = bindDateControl(host, '[data-sq-from]');
+      const toField = bindDateControl(host, '[data-sq-to]');
+      const fromInput = fromField.input;
+      const toInput = toField.input;
       const syncBounds = () => {
         if (!fromInput || !toInput) return;
         toInput.min = fromInput.value || '';
@@ -168,6 +171,8 @@ export function createSalesQueryModule() {
         const start = new Date(end.getTime() - (days - 1) * 86400000);
         fromInput.value = dateKey(start);
         toInput.value = dateKey(end);
+        fromField.sync();
+        toField.sync();
         syncBounds();
         void load();
       });
