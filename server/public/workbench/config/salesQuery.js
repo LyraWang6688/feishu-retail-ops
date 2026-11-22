@@ -19,6 +19,13 @@ export const SALES_QUERY_PAGE = Object.freeze({
       { value: 'last30', days: 30, offset: 0, label: '近30天' },
     ]),
     query: '查询',
+    tabsLabel: '销售查询视图',
+    tabs: Object.freeze([
+      { id: 'overview', label: '经营概览' },
+      { id: 'details', label: '销售明细' },
+      { id: 'trend', label: '趋势分析' },
+    ]),
+    trendBuilding: '趋势分析正在建设中。',
     today: '今天',
     loading: '正在读取销售查询…',
     empty: '这个时间范围内没有销售数据。',
