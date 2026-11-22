@@ -19,13 +19,6 @@ const ensureProduct = (draft, meta) => {
   return { products, productRecordId };
 };
 
-export const addCustomSizeDraft = (draft, meta) => {
-  const base = ensureProduct(draft, meta);
-  if (!base) return draft;
-  const list = [...(draft.customSizes?.[base.productRecordId] || []), ''];
-  return { ...draft, products: base.products, customSizes: { ...(draft.customSizes || {}), [base.productRecordId]: list } };
-};
-
 export const addCustomSizesDraft = (draft, meta, rows = []) => {
   const base = ensureProduct(draft, meta);
   if (!base) return draft;
@@ -39,26 +32,6 @@ export const addCustomSizesDraft = (draft, meta, rows = []) => {
     entries[size] = quantity;
     if (!list.includes(size)) list.push(size);
   }
-  base.products[base.productRecordId] = { ...product, entries };
-  return { ...draft, products: base.products, customSizes: { ...(draft.customSizes || {}), [base.productRecordId]: list } };
-};
-
-export const renameCustomSizeDraft = (draft, meta, oldSize, nextSize) => {
-  const base = ensureProduct(draft, meta);
-  if (!base) return draft;
-  const product = base.products[base.productRecordId];
-  const entries = { ...(product.entries || {}) };
-  const oldKey = String(oldSize ?? '').trim();
-  const nextKey = String(nextSize ?? '').trim();
-  const list = [...(draft.customSizes?.[base.productRecordId] || [])];
-  const index = list.findIndex((size) => String(size) === oldKey);
-  if (index < 0) return draft;
-  if (oldKey && oldKey !== nextKey) {
-    const quantity = Number(entries[oldKey]) || 0;
-    delete entries[oldKey];
-    if (nextKey && quantity > 0) entries[nextKey] = quantity;
-  }
-  list[index] = nextKey;
   base.products[base.productRecordId] = { ...product, entries };
   return { ...draft, products: base.products, customSizes: { ...(draft.customSizes || {}), [base.productRecordId]: list } };
 };
