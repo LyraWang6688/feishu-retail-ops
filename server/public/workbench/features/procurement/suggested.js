@@ -1,4 +1,4 @@
-/** 采购页「建议补货清单」：合并补货 / 上新，统一按货号自然升序；上新同款优先。 */
+/** 采购页「建议报货清单」：合并补货 / 上新，统一按货号自然升序；上新同款优先。 */
 import { escapeHtml } from '../../core/formatters.js';
 import { newGroupHtml, replenishGroupHtml } from './render.js';
 import { supplierFilteredBody, supplierTabsHtml } from './supplierFilter.js';
@@ -21,6 +21,12 @@ export const buildSuggestedBody = ({ replenishBody, newBody, config }) => {
   return { groups, range: { days } };
 };
 
+export const rangeBarHtml = (days, config) => {
+  const range = String(config.range.suggested || '近 {days} 天（含今天）').replace('{days}', String(days || config.range?.days || 7));
+  return `<div class="pr-range-inline"><span>${escapeHtml(config.texts.rangeLabel)}</span><strong>${escapeHtml(range)}</strong></div>`
+    + `<button type="button" class="pr-refresh" data-pr-refresh>${escapeHtml(config.texts.refresh)}</button>`;
+};
+
 export const suggestedHtml = ({ body, draft, store, supplierId = '', config, modify = false }) => {
   if (!body) return '';
   const filtered = supplierFilteredBody('suggested', body, supplierId, config);
@@ -34,10 +40,5 @@ export const suggestedHtml = ({ body, draft, store, supplierId = '', config, mod
         : card;
     }).join('')
     : `<div class="pr-empty">${escapeHtml(config.texts.suggestedEmpty)}</div>`;
-  const range = String(config.range.suggested || '近 {days} 天（含今天）').replace('{days}', String(body.range?.days || 7));
-  return `<section class="pr-summary pr-summary-inline" aria-label="${escapeHtml(config.title)}">
-    <div class="pr-range-inline"><span>${escapeHtml(config.texts.rangeLabel)}</span><strong>${escapeHtml(range)}</strong></div>
-    <button type="button" class="pr-refresh" data-pr-refresh>${escapeHtml(config.texts.refresh)}</button>
-  </section>
-  ${supplierTabsHtml(filtered.groups, filtered.supplierKey, config)}${cards}`;
+  return `${supplierTabsHtml(filtered.groups, filtered.supplierKey, config)}${cards}`;
 };
