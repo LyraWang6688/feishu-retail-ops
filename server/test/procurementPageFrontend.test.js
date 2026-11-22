@@ -77,13 +77,13 @@ test('AC-P17 配置先行：端点 / 文案 / 默认值 / 尺码规则都在 con
   }
 });
 
-test('AC-P9/P21 扫一扫本轮占位：tab 视觉保留但禁用；页面不 import 扫码模块', () => {
+test('AC-P9/P21 第三 tab 改为待提交列表；页面不接扫码模块', () => {
   const render = read(`${PUBLIC}/features/procurement/render.js`);
-  assert.match(render, /data-pr-scan-disabled/, '扫一扫 tab 必须渲染成禁用/占位');
-  assert.match(render, /disabled/, '扫一扫 tab 必须用原生 disabled');
-  assert.match(render, /data-tap-target="\$\{escapeHtml\(tab\.tapTarget\)\}"/, 'tab 保留既有 scan:replenish 埋点属性');
+  const config = read(`${PUBLIC}/config/procurement.js`);
+  assert.match(config, /id: 'pending', label: '待提交列表'/, '第三 tab 必须是待提交列表');
+  assert.equal(render.includes('data-pr-scan-disabled'), false, '扫一扫占位已移除');
   assert.equal(/scanCodeRaw|createScanCardsModule|features\/scan\/launch/.test(read(`${PUBLIC}/features/procurement/index.js`)), false,
-    '本轮不接扫码模块');
+    '仍然不接扫码模块');
   const html = read(`${PUBLIC}/procurement.html`);
   assert.equal(/scanCodeRaw|createScanCardsModule/.test(html), false);
   // 服务端 ui-tap 仍允许这个 action（下一轮做扫一扫时不用再改服务端）

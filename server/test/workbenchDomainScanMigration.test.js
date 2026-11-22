@@ -29,18 +29,18 @@ test('新 IA：一级 tab = 销售 · 供应 · 库存 · 创作 · 配置，没
   }
 });
 
-test('新 IA：销售/库存/供应录单入口存在，供应录单有三张卡', () => {
+test('新 IA：销售/库存/供应录单入口存在，供应录单有四张卡', () => {
   const domains = read('public/workbench/config/domains.js');
   assert.ok(domains.includes("id: 'sales-entry'") && domains.includes("label: '录单'"), '销售缺录单');
   assert.ok(domains.includes("scanRealm: 'sales'"), '销售鞋类必须接领域扫码');
   assert.ok(domains.includes("title: '采购'") && domains.includes("href: '/workbench/procurement.html'"), '供应采购必须打开采购页');
   assert.match(read('public/workbench/features/domains/nav.js'), /data-tap-target=/, '领域子 tab 必须带点击埋点');
   assert.match(read('public/workbench/features/scan/launch.js'), /data-tap-target=/, '领域扫码卡片必须带点击埋点');
-  // ⭐ 2026-10-28（采购页进入生产）：扫一扫本轮只占位/禁用（业务负责人口径），
-  //    但**补货领域的埋点属性必须原样保留**（下一轮接扫一扫时不用再改埋点）——
-  //    该属性已随页面模块化搬到渲染层（procurement.html 现在是薄壳）。
-  assert.match(read('public/workbench/features/procurement/render.js'), /data-tap-target="\$\{escapeHtml\(tab\.tapTarget\)\}"/, '采购扫一扫必须带补货领域埋点');
-  assert.match(read('public/workbench/features/procurement/render.js'), /data-pr-scan-disabled/, '采购扫一扫本轮必须是占位/禁用');
+  // 2026-11-22：交易记录子 tab 改为录单卡片「货款」；扫一扫占位已移除。
+  assert.match(domains, /title: '货款'/, '供应录单必须有货款卡片');
+  assert.equal(domains.includes('purchase-transactions'), false, '交易记录子 tab 已移除');
+  const render = read('public/workbench/features/procurement/render.js');
+  assert.equal(render.includes('data-pr-scan-disabled'), false, '采购扫一扫占位已移除');
   assert.ok(domains.includes("scanRealm: 'purchase_return'"), '供应退货必须接领域扫码');
   assert.ok(domains.includes("href: '/workbench/purchase-acceptance.html'"), '验收卡必须跳独立验收页');
   assert.equal(domains.includes('hidden: true'), false, '不再有 hidden 子页');

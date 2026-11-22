@@ -27,7 +27,7 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(() => localStorage.clear());
 });
 
-test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切回不重复；扫一扫禁用', async ({ page }) => {
+test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切回不重复；待提交列表不请求', async ({ page }) => {
   const calls = await mockApi(page);
   await page.reload();
   await openPage(page);
@@ -44,10 +44,11 @@ test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切�
   expect(calls.replenish).toBe(1);
   expect(calls.newProducts).toBe(1);
 
-  const scanTab = page.locator('[data-pr-scan-disabled]');
-  await expect(scanTab).toBeDisabled();
-  await expect(scanTab).toHaveAttribute('aria-disabled', 'true');
-  await expect(scanTab).toHaveAttribute('data-tap-target', 'scan:replenish');
+  await tab(page, /待提交列表/).click();
+  await expect(page.getByText('还没有选要采购的货品。')).toBeVisible();
+  await expect(page.locator('.pr-search')).toBeHidden();
+  expect(calls.replenish).toBe(1);
+  expect(calls.newProducts).toBe(1);
   expect(calls.writes).toHaveLength(0);
 });
 
@@ -92,25 +93,57 @@ test('AC-P28 顶部 tab + 搜索框固定；搜索只筛当前供应商货号', 
   await expect(page.getByText('92608 · 咖色')).toHaveCount(0);
 });
 
-test('AC-P27 补货自定义尺码：在尺码管理范围内添加，进入草稿和提交 payload', async ({ page }) => {
+test('AC-P27 补货自定义尺码：多行弹窗保存后按原样式展示并进入 payload', async ({ page }) => {
   const calls = await mockApi(page);
   await page.reload();
   await openPage(page);
   const group = page.locator('[data-pr-group="recProdA"]');
   await group.locator('[data-pr-add-size]').click();
-  const customInput = group.locator('[data-pr-custom-size]').last();
-  await customInput.fill('45');
-  await customInput.press('Tab');
-  await expect(qtyOf(page, 'recProdA', 45)).toHaveValue('0');
-  await qtyOf(page, 'recProdA', 45).fill('2');
-  await page.waitForTimeout(100);
+  const modal = page.locator('[data-pr-custom-modal]');
+  await expect(modal).toBeVisible();
+  await expect(modal.locator('[data-pr-modal-qty]').first()).toHaveValue('1');
+  await modal.locator('[data-pr-modal-size]').first().fill('45');
+  await modal.locator('[data-pr-modal-qty]').first().fill('2');
+  await modal.locator('[data-pr-custom-add-row]').click();
+  await modal.locator('[data-pr-modal-size]').nth(1).fill('46');
+  await modal.locator('[data-pr-modal-qty]').nth(1).fill('1');
+  await modal.locator('[data-pr-custom-save]').click();
+  await expect(modal).toBeHidden();
+  await expect(qtyOf(page, 'recProdA', 45)).toHaveValue('2');
+  await expect(qtyOf(page, 'recProdA', 46)).toHaveValue('1');
+  await expect(group.locator('[data-pr-custom-row]')).toHaveCount(2);
+  await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="45"]').click();
+  await expect(qtyOf(page, 'recProdA', 45)).toHaveValue('3');
+  await page.locator('[data-pr-step="-1"][data-record="recProdA"][data-size="45"]').click();
+  await expect(qtyOf(page, 'recProdA', 45)).toHaveValue('2');
   const draft = await draftInStorage(page);
   expect(draft.products.recProdA.entries['45']).toBe(2);
+  expect(draft.products.recProdA.entries['46']).toBe(1);
   await page.getByRole('button', { name: '提交' }).click();
   await page.waitForURL(/\/workbench\/\?toast=/);
   const payload = calls.submit[0];
   const line = payload.items.find((item) => item.productRecordId === 'recProdA');
   expect(line.entries).toContainEqual({ size: 45, quantity: 2 });
+  expect(line.entries).toContainEqual({ size: 46, quantity: 1 });
+});
+
+test('AC-P30 待提交列表：按供应商分组、只读、隐藏搜索', async ({ page }) => {
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  await qtyOf(page, 'recProdA', 39).fill('2');
+  await page.locator('[data-pr-supplier]').nth(1).click();
+  await qtyOf(page, 'recProdB', 43).fill('1');
+  await tab(page, /待提交列表/).click();
+  const pending = page.locator('[data-pr-pending]');
+  await expect(pending).toBeVisible();
+  await expect(pending).toContainText('供应商：供应商 A');
+  await expect(pending).toContainText('供应商：供应商 B');
+  await expect(pending).toContainText('86822 · 黑色');
+  await expect(pending).toContainText('39 码 × 2');
+  await expect(pending).toContainText('92608 · 咖色');
+  await expect(pending.locator('input, button')).toHaveCount(0);
+  await expect(page.locator('.pr-search')).toBeHidden();
 });
 
 test('AC-P29 补货四个统计卡在一行（不换行）', async ({ page }) => {

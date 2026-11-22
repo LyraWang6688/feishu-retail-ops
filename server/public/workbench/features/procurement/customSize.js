@@ -33,6 +33,21 @@ export const customSizeError = ({ group, draft, recordId, oldSize, nextSize, sto
   return '';
 };
 
+export const customRowsError = ({ group, draft, recordId, rows, store }) => {
+  const standard = new Set((group?.sizes || []).map((item) => String(item.size)));
+  const existing = new Set((store.customSizesOf(draft, recordId) || []).map(String));
+  const seen = new Set();
+  if (!Array.isArray(rows) || !rows.length) return 'required';
+  for (const row of rows) {
+    const size = String(row?.size ?? '').trim();
+    const quantity = String(row?.quantity ?? '').trim();
+    if (!/^[1-9]\d*$/.test(size) || !/^[1-9]\d*$/.test(quantity)) return 'invalid';
+    if (standard.has(size) || existing.has(size) || seen.has(size)) return 'duplicate';
+    seen.add(size);
+  }
+  return '';
+};
+
 export const focusCustomSize = (host, recordId) => {
   const inputs = host.querySelectorAll('[data-pr-custom-size][data-record="' + recordId + '"]');
   inputs[inputs.length - 1]?.focus();
