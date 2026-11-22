@@ -49,6 +49,8 @@ test('360px 销售查询 / 库存流水不撑出页面', async ({ page }) => {
       await expect(page.locator('.sq-revenue')).toContainText('其中包括配品销售：¥5');
       await expect(page.locator('.sq-bar-row').first()).toContainText('3 笔');
       await expect(page.locator('.sq-pending-row')).toContainText('1 笔');
+      await page.locator('[data-sq-tab="details"]').click();
+      await expect(page.locator('.sq-order-head').first()).toBeVisible();
     }
     await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
     const widths = await page.evaluate(() => ({

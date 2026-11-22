@@ -28,6 +28,7 @@ const timeOnlyText = (value) => {
   return match ? match[0] : '';
 };
 const statusClass = (status) => (status === '已交付' ? 'ok' : (status === '未交付' ? 'wait' : 'back'));
+const TABS = Array.isArray(PAGE.texts.tabs) ? PAGE.texts.tabs : [];
 
 function methodsHtml(methods, pendingMethods, revenue) {
   const max = Math.max(...methods.map((item) => Number(item.amount) || 0), 1);
@@ -76,56 +77,107 @@ function ordersHtml(orders) {
   }).join('');
 }
 
+function overviewHtml(data) {
+  const summary = data?.summary || {};
+  const revenue = Number(summary.revenue || 0);
+  const accessorySales = Number(summary.accessory_sales?.amount || 0);
+  const methods = Array.isArray(summary.payment_methods) ? summary.payment_methods : [];
+  const pendingMethods = Array.isArray(summary.pending_methods) ? summary.pending_methods : [];
+  const delivered = summary.delivered || { count: 0, amount: 0 };
+  const undelivered = summary.undelivered || { count: 0, amount: 0 };
+  return `
+    <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.amountTitle)}</h2></div>
+    <div class="sq-top">
+      <div class="sq-revenue"><span>${escapeHtml(PAGE.texts.revenue)}</span><b>${escapeHtml(amountText(revenue))}</b><small>${escapeHtml(PAGE.texts.accessoryIncluded)}${escapeHtml(amountText(accessorySales))}</small></div>
+      <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.methods)}</h2></div>${methodsHtml(methods, pendingMethods, revenue)}</div>
+    </div>
+    <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.volumeTitle)}</h2></div>
+    <div class="sq-volume-cards">
+      <div class="sq-volume-card"><span>${escapeHtml(PAGE.texts.delivered)}</span><b>${delivered.count}</b><small>双 · ${escapeHtml(amountText(delivered.amount))}</small></div>
+      <div class="sq-volume-card"><span>${escapeHtml(PAGE.texts.undelivered)}</span><b>${undelivered.count}</b><small>双 · ${escapeHtml(amountText(undelivered.amount))}</small></div>
+    </div>
+    <div class="sq-breakdown">
+      <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.byCategory)}</h2></div>
+        <div class="sq-table-scroll"><table class="sq-table"><thead><tr><th>类别</th><th>已交付（双 / 元）</th><th>未交付（双 / 元）</th></tr></thead><tbody>${breakdownRows(summary.by_category || [])}</tbody></table></div>
+      </div>
+      <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.byType)}</h2></div>
+        <div class="sq-table-scroll"><table class="sq-table"><thead><tr><th>品类</th><th>已交付（双 / 元）</th><th>未交付（双 / 元）</th></tr></thead><tbody>${breakdownRows(summary.by_type || [])}</tbody></table></div>
+      </div>
+    </div>`;
+}
+
+function detailsHtml(data) {
+  return `<div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.orders)}</h2></div>
+    <div class="sq-orders">${ordersHtml(data?.orders || [])}</div>`;
+}
+
+function trendHtml() {
+  return `<div class="sq-placeholder"><p>${escapeHtml(PAGE.texts.trendBuilding)}</p></div>`;
+}
+
+function tabsHtml() {
+  return TABS.map((tab) => `<button class="sq-tab${tab.id === 'overview' ? ' active' : ''}" type="button" role="tab" data-sq-tab="${escapeHtml(tab.id)}" aria-selected="${tab.id === 'overview'}">${escapeHtml(tab.label)}</button>`).join('');
+}
+
 export function createSalesQueryModule() {
-  const state = { host: null };
+  const state = { host: null, tab: 'overview', data: null, loading: false, error: '' };
+
+  function activeTab() {
+    return TABS.some((tab) => tab.id === state.tab) ? state.tab : (TABS[0]?.id || 'overview');
+  }
+
+  function renderTabs(host) {
+    const current = activeTab();
+    host.querySelectorAll('[data-sq-tab]').forEach((button) => {
+      const selected = button.dataset.sqTab === current;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-selected', String(selected));
+    });
+  }
+
+  function renderBody() {
+    const body = state.host?.querySelector('[data-sq-body]');
+    if (!body) return;
+    if (state.loading) { body.innerHTML = `<p class="sq-empty">${escapeHtml(PAGE.texts.loading)}</p>`; return; }
+    if (state.error) { body.innerHTML = `<p class="sq-empty">${escapeHtml(state.error)}</p>`; return; }
+    if (!state.data) { body.innerHTML = '<p class="sq-empty"></p>'; return; }
+    const current = activeTab();
+    body.innerHTML = current === 'details'
+      ? detailsHtml(state.data)
+      : current === 'trend'
+        ? trendHtml()
+        : overviewHtml(state.data);
+    bindScrollHints(body);
+  }
 
   async function load() {
     const host = state.host;
     const from = host?.querySelector('[data-sq-from]')?.value || '';
     const to = host?.querySelector('[data-sq-to]')?.value || '';
-    const body = host?.querySelector('[data-sq-body]');
-    if (!body) return;
+    if (!host?.querySelector('[data-sq-body]')) return;
     if (from && to && from > to) {
-      body.innerHTML = `<p class="sq-empty">${escapeHtml(PAGE.texts.invalidRange)}</p>`;
+      state.loading = false;
+      state.error = PAGE.texts.invalidRange;
+      state.data = null;
+      renderBody();
       return;
     }
-    body.innerHTML = `<p class="sq-empty">${escapeHtml(PAGE.texts.loading)}</p>`;
+    state.loading = true;
+    state.error = '';
+    state.data = null;
+    renderBody();
     try {
       const query = new URLSearchParams();
       if (from) query.set('from', from);
       if (to) query.set('to', to);
       const data = await api.get(query.toString() ? `${PAGE.api}?${query}` : PAGE.api);
-      const summary = data?.summary || {};
-      const revenue = Number(summary.revenue || 0);
-      const accessorySales = Number(summary.accessory_sales?.amount || 0);
-      const methods = Array.isArray(summary.payment_methods) ? summary.payment_methods : [];
-      const pendingMethods = Array.isArray(summary.pending_methods) ? summary.pending_methods : [];
-      const delivered = summary.delivered || { count: 0, amount: 0 };
-      const undelivered = summary.undelivered || { count: 0, amount: 0 };
-      body.innerHTML = `
-        <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.amountTitle)}</h2></div>
-        <div class="sq-top">
-          <div class="sq-revenue"><span>${escapeHtml(PAGE.texts.revenue)}</span><b>${escapeHtml(amountText(revenue))}</b><small>${escapeHtml(PAGE.texts.accessoryIncluded)}${escapeHtml(amountText(accessorySales))}</small></div>
-          <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.methods)}</h2></div>${methodsHtml(methods, pendingMethods, revenue)}</div>
-        </div>
-        <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.volumeTitle)}</h2></div>
-        <div class="sq-volume-cards">
-          <div class="sq-volume-card"><span>${escapeHtml(PAGE.texts.delivered)}</span><b>${delivered.count}</b><small>双 · ${escapeHtml(amountText(delivered.amount))}</small></div>
-          <div class="sq-volume-card"><span>${escapeHtml(PAGE.texts.undelivered)}</span><b>${undelivered.count}</b><small>双 · ${escapeHtml(amountText(undelivered.amount))}</small></div>
-        </div>
-        <div class="sq-breakdown">
-          <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.byCategory)}</h2></div>
-            <div class="sq-table-scroll"><table class="sq-table"><thead><tr><th>类别</th><th>已交付（双 / 元）</th><th>未交付（双 / 元）</th></tr></thead><tbody>${breakdownRows(summary.by_category || [])}</tbody></table></div>
-          </div>
-          <div class="sq-card"><div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.byType)}</h2></div>
-            <div class="sq-table-scroll"><table class="sq-table"><thead><tr><th>品类</th><th>已交付（双 / 元）</th><th>未交付（双 / 元）</th></tr></thead><tbody>${breakdownRows(summary.by_type || [])}</tbody></table></div>
-          </div>
-        </div>
-        <div class="sq-section-head"><h2>${escapeHtml(PAGE.texts.orders)}</h2></div>
-        <div class="sq-orders">${ordersHtml(data.orders || [])}</div>`;
-      bindScrollHints(body);
+      state.data = data;
+      state.loading = false;
+      renderBody();
     } catch (error) {
-      body.innerHTML = `<p class="sq-empty">${escapeHtml(PAGE.texts.failed)}</p>`;
+      state.loading = false;
+      state.error = PAGE.texts.failed;
+      renderBody();
       showPageError(String(error?.message || ''));
     }
   }
@@ -133,17 +185,27 @@ export function createSalesQueryModule() {
   return {
     mount(host) {
       state.host = host;
+      state.tab = 'overview';
+      state.data = null;
+      state.loading = false;
+      state.error = '';
       showPageError('');
       const today = todayKey();
       host.innerHTML = `<div class="domain-page sq-page">
-        <div class="sq-filters">
-          ${dateFieldHtml({ label: PAGE.texts.startLabel, labelClass: 'sq-filter', inputAttr: 'data-sq-from', value: today, max: today })}
-          ${dateFieldHtml({ label: PAGE.texts.endLabel, labelClass: 'sq-filter', inputAttr: 'data-sq-to', value: today, min: today })}
-          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.quickRangeLabel)}</span><select data-sq-range>${PAGE.texts.quickRanges.map((item) => `<option value="${escapeHtml(item.value || item.days)}">${escapeHtml(item.label)}</option>`).join('')}</select></label>
-          <button class="sq-btn" type="button" data-sq-query>${escapeHtml(PAGE.texts.query)}</button>
+        <div class="sq-sticky-head">
+          <div class="sq-filters">
+            ${dateFieldHtml({ label: PAGE.texts.startLabel, labelClass: 'sq-filter', inputAttr: 'data-sq-from', value: today, max: today })}
+            ${dateFieldHtml({ label: PAGE.texts.endLabel, labelClass: 'sq-filter', inputAttr: 'data-sq-to', value: today, min: today })}
+            <label class="sq-filter"><span>${escapeHtml(PAGE.texts.quickRangeLabel)}</span><select data-sq-range>${PAGE.texts.quickRanges.map((item) => `<option value="${escapeHtml(item.value || item.days)}">${escapeHtml(item.label)}</option>`).join('')}</select></label>
+            <button class="sq-btn" type="button" data-sq-query>${escapeHtml(PAGE.texts.query)}</button>
+          </div>
+          <div class="sq-tabs" role="tablist" aria-label="${escapeHtml(PAGE.texts.tabsLabel)}">${tabsHtml()}</div>
         </div>
         <div data-sq-body></div>
       </div>`;
+      const mainTabs = document.querySelector('.main-tabs');
+      if (mainTabs) host.style.setProperty('--sq-main-tabs-height', `${Math.ceil(mainTabs.getBoundingClientRect().height)}px`);
+      renderTabs(host);
       const fromField = bindDateControl(host, '[data-sq-from]');
       const toField = bindDateControl(host, '[data-sq-to]');
       const fromInput = fromField.input;
@@ -165,6 +227,13 @@ export function createSalesQueryModule() {
         syncBounds();
       });
       host.querySelector('[data-sq-query]')?.addEventListener('click', () => { void load(); });
+      host.querySelector('.sq-tabs')?.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-sq-tab]');
+        if (!button) return;
+        state.tab = button.dataset.sqTab || 'overview';
+        renderTabs(host);
+        renderBody();
+      });
       host.querySelector('[data-sq-range]')?.addEventListener('change', (event) => {
         const selected = PAGE.texts.quickRanges.find((item) => String(item.value || item.days) === String(event.target.value));
         const days = Math.max(1, Number(selected?.days) || 1);
