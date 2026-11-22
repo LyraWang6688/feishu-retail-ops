@@ -73,6 +73,8 @@ class AfterSalesScanService {
   constructor(options = {}) {
     if (!options.gateway) throw new Error('AfterSalesScanService requires gateway');
     this.gateway = options.gateway;
+    // 可选：只为售后卡片补齐“整张订单”的明细/收款；不注入时保持旧的候选结构。
+    this.salesRead = options.salesRead || null;
     this.now = options.now || (() => Date.now());
     // ⭐ 读模型短 TTL 缓存：**复用扫码页那一份实现**（`scanPageCache`）。
     //   测试可注入（用例验"命中不再读表" / "关掉就真读"）。
@@ -193,6 +195,30 @@ class AfterSalesScanService {
         actual_amount: numberOf(fields[detailFields.actualAmount]),
         fulfillment_status: asText(textValue(fields[detailFields.fulfillmentStatus])),
       });
+    }
+
+    // 整单展示：复用销售查询的读模型，按销售主表 record_id 取完整明细/收款。
+    // 读失败只让卡片退回旧结构，不影响售后候选本身。
+    if (this.salesRead && candidates.length) {
+      try {
+        const dayOf = (epoch) => new Date(Number(epoch) + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const data = await this.salesRead.listDeliveryData({
+          query: true, from: dayOf(cutoff), to: dayOf(now),
+        });
+        const orderById = new Map((data.orders || []).map((order) => [order.sales_entry_record_id, {
+          ...order,
+          total_amount: order.total_amount ?? order.payable_amount ?? null,
+        }]));
+        for (const candidate of candidates) {
+          const order = orderById.get(candidate.sales_entry_record_id) || null;
+          // 只有整单里确实包含这条命中明细时才挂整单卡；否则退回旧候选卡，避免点不到售后行。
+          candidate.order = order && (order.details || []).some(
+            (row) => row.record_id === candidate.sales_detail_record_id,
+          ) ? order : null;
+        }
+      } catch (error) {
+        // 完整订单只是展示增强；候选/售后写入不受影响。
+      }
     }
 
     // 排序确定：销售日新→旧；同一天按单号新→旧，再按尺码小→大、明细 id（避免同输入两次顺序不同）。

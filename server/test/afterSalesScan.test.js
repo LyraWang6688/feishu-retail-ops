@@ -100,6 +100,28 @@ test('AC1/AC2 ⭐ 只回这款货品近 7 天已入账的销售明细，并带�
  *   列表 = **排除「未交付 / 已退货 / 已赔货」** ⇒ 已交付 和 已换货 在列表里。
  *   三种排除状态**各自如实计数**（配置里加一种状态会自动计数）。
  */
+test('售后卡片：候选附带整张订单，供前端复用销售明细卡片', async () => {
+  const gateway = fakeGateway();
+  const service = new AfterSalesScanService({
+    gateway, now: () => NOW,
+    salesRead: {
+      listDeliveryData: async () => ({
+        orders: [{
+          sales_entry_record_id: 'e1', order_no: 'XSD-1', recorded_at: NOW - DAY, payable_amount: 300,
+          payments: [{ method: '现金', amount: 300, status: '已收款' }],
+          details: [
+            { record_id: 'd1', number: 'XHB8095|全黑|男', size: 41, actual_amount: 100, fulfillment_status: '已交付' },
+            { record_id: 'd7', number: 'XHB8095|全黑|男', size: 42, actual_amount: 200, fulfillment_status: '已换货' },
+          ],
+        }],
+      }),
+    },
+  });
+  const out = await service.listCandidates({ productRecordId: 'p1' });
+  assert.equal(out.candidates[0].order.total_amount, 300);
+  assert.deepEqual(out.candidates[0].order.details.map((row) => row.record_id), ['d1', 'd7']);
+});
+
 test('AC1b ⭐⭐ 口径：未交付 / 已退货 / 已赔货 不列；已交付 和 已换货 要列', async () => {
   const out = await build().listCandidates({ productRecordId: 'p1' });
   const statuses = out.candidates.map((item) => item.fulfillment_status).sort();

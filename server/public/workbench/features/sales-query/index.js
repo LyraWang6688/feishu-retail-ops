@@ -5,29 +5,13 @@ import { bindScrollHints } from '../shared/scrollHint.js';
 import { bindDateControl, dateFieldHtml } from '../shared/dateField.js';
 import { bindProductSearch, productSearchHtml } from '../shared/productSearch.js';
 import { SALES_QUERY_PAGE as PAGE } from '../../config/salesQuery.js';
-
-const money = (value) => Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
-const amountText = (value) => `¥${money(value)}`;
+import { amountText, salesOrderCardHtml } from '../shared/salesOrderCard.js';
 const dateKey = (date) => {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
   const get = (type) => (parts.find((part) => part.type === type) || {}).value || '';
   return `${get('year')}-${get('month')}-${get('day')}`;
 };
 const todayKey = () => dateKey(new Date());
-const timeText = (value) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value || '');
-  const parts = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(date);
-  const get = (type) => (parts.find((part) => part.type === type) || {}).value || '';
-  return `${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
-};
-// 销售单头只展示时分，日期不再单独占一行。
-const timeOnlyText = (value) => {
-  const text = timeText(value);
-  const match = String(text).match(/\d{2}:\d{2}/);
-  return match ? match[0] : '';
-};
-const statusClass = (status) => (status === '已交付' ? 'ok' : (status === '未交付' ? 'wait' : 'back'));
 const TABS = Array.isArray(PAGE.texts.tabs) ? PAGE.texts.tabs : [];
 
 function methodsHtml(methods, pendingMethods, revenue) {
@@ -56,25 +40,7 @@ function breakdownRows(rows) {
 
 function ordersHtml(orders) {
   if (!orders.length) return `<p class="sq-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
-  return orders.map((order) => {
-    const pays = (order.payments || []).length
-      ? order.payments.map((payment) => `<span class="sq-pay-tag">${escapeHtml(payment.method)} <b>${escapeHtml(amountText(payment.amount))}</b> · ${escapeHtml(payment.status)}</span>`).join('')
-      : `<span class="sq-pay-tag">未收款</span>`;
-    const details = (order.details || []).map((detail) => `<tr>
-      <td class="sq-detail-product">${escapeHtml(detail.number || '')}</td>
-      <td class="sq-detail-size">${escapeHtml(detail.size == null ? '' : detail.size)} 码</td>
-      <td class="sq-detail-amount">${escapeHtml(amountText(detail.actual_amount))}</td>
-      <td><span class="sq-status ${statusClass(detail.fulfillment_status)}">${escapeHtml(detail.fulfillment_status || '')}</span></td>
-    </tr>`).join('');
-    return `<div class="sq-order-scroll scroll-hint-wrap" data-scroll-wrap><div class="sq-order-viewport" data-scroll-area><article class="sq-order">
-      <div class="sq-order-head">
-        <div class="sq-order-title"><b>${escapeHtml(order.order_no)}</b><span class="sq-order-time">${escapeHtml(timeOnlyText(order.recorded_at))}</span></div>
-        <div class="sq-order-total">${order.total_amount == null ? '—' : escapeHtml(amountText(order.total_amount))}</div>
-        <div class="sq-order-pays">${pays}</div>
-      </div>
-      <table class="sq-detail-table"><tbody>${details}</tbody></table>
-    </article></div></div>`;
-  }).join('');
+  return orders.map((order) => salesOrderCardHtml(order)).join('');
 }
 
 function overviewHtml(data) {
