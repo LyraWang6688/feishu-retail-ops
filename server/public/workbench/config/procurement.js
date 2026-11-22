@@ -67,6 +67,7 @@ export const PROCUREMENT_UI = Object.freeze({
     modifySuccess: '采购单已更新',
     modifyDraftConflict: '当前有未提交的采购草稿，请先提交或清空后再修改已提交批次。',
     modifySupplierLocked: '修改批次只能选择原供应商的货品。',
+    removeProduct: '删除货品',
     pendingSupplier: '供应商',
     pendingTotal: '合计 {total} 双',
     pendingSizeLine: '{size} 码 × {quantity}',

@@ -18,6 +18,9 @@ const idOf = (openId, batchNo) => 'procsub_'
 
 const createProcurementSubmissionIndex = (options = {}) => {
   const store = options.store || new JsonTaskStore({ dir: DEFAULT_DIR, idField: 'submission_id' });
+  const purchaseTaskStore = options.purchaseTaskStore || new JsonTaskStore({
+    dir: path.join(__dirname, '../../data/purchase_webhook_tasks'), idField: 'task_id',
+  });
   const now = options.now || (() => Date.now());
 
   const record = async ({ openId, batchNo, submittedAt = '', requestIds = [] } = {}) => {
@@ -46,14 +49,24 @@ const createProcurementSubmissionIndex = (options = {}) => {
     const offset = Number(options.offsetMinutes ?? 480);
     const start = dayStart(now(), offset);
     const end = start + 24 * 60 * 60 * 1000;
-    const rows = await store.list();
-    return rows
+    const rows = (await store.list())
       .filter((row) => String(row?.open_id || '') === open)
       .filter((row) => {
         const at = Date.parse(String(row?.submitted_at || ''));
         return Number.isFinite(at) && at >= start && at < end;
-      })
-      .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
+      });
+    const seen = new Set(rows.map((row) => String(row.batch_no)));
+    for (const task of await purchaseTaskStore.list().catch(() => [])) {
+      const draft = task?.draft || {};
+      if (String(draft.open_id || draft.operator_open_id || '') !== open) continue;
+      if (!String(draft.order_key || '').startsWith('procurement_page:')) continue;
+      if (task?.status !== 'posted' || !task?.batch_no) continue;
+      const at = Date.parse(String(task.updated_at || task.created_at || ''));
+      if (!Number.isFinite(at) || at < start || at >= end || seen.has(String(task.batch_no))) continue;
+      seen.add(String(task.batch_no));
+      rows.push({ open_id: open, batch_no: task.batch_no, submitted_at: new Date(at).toISOString(), request_ids: task.request_ids || [] });
+    }
+    return rows.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
   };
 
   return { record, listToday };

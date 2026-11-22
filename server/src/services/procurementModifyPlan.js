@@ -19,7 +19,10 @@ const flattenEntries = (items = []) => {
       const size = Number(entry?.size);
       const quantity = Number(entry?.quantity);
       if (!Number.isInteger(size) || !Number.isFinite(quantity) || quantity <= 0) continue;
-      rows.push({ productRecordId, size, quantity });
+      rows.push({
+        productRecordId, size, quantity,
+        source: item?.source === 'new' ? 'new' : 'replenish',
+      });
     }
   }
   return rows;
@@ -49,7 +52,7 @@ const planModification = ({ currentItems = [], finalItems = [] } = {}) => {
   for (const [key, row] of finalMap) {
     const existing = currentMap.get(key);
     if (!existing) creates.push(row);
-    else if (existing.quantity !== row.quantity) updates.push({ ...existing, quantity: row.quantity });
+    else if (existing.quantity !== row.quantity) updates.push({ ...existing, quantity: row.quantity, source: row.source });
   }
   for (const [key, row] of currentMap) {
     if (!finalMap.has(key)) deletes.push(row);

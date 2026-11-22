@@ -16,7 +16,7 @@ const reject = (code, message) => ({ ok: false, code, message });
 const productIdsOf = (items) => [...new Set(items.map((item) => item.productRecordId).filter(Boolean))];
 
 const createProcurementModifyService = ({
-  gateway, schema, config, submissionIndex, purchaseQuery, orderBatches, sizeReferences,
+  gateway, schema, config, submissionIndex, purchaseQuery, orderBatches, sizeReferences, salesLinks,
   deliverRevision, now = () => Date.now(), logger = {},
 } = {}) => {
   if (!gateway) throw new Error('procurementModifyService 需要 gateway');
@@ -81,7 +81,7 @@ const createProcurementModifyService = ({
       const size = await sizeReferences.resolveByNumber(row.size);
       if (!size?.recordId) return reject('size_missing', texts.sizeMissing);
       const key = 'purchase_modify:' + wantedBatch + ':' + row.productRecordId + ':' + row.size + ':' + String(submitKey || '');
-      await createOnceByKey({
+      const created = await createOnceByKey({
         gateway,
         tableKey: 'purchaseRequest',
         keyField: IDEMPOTENCY_KEY_FIELD,
@@ -97,6 +97,7 @@ const createProcurementModifyService = ({
       });
       createdItems.push({
         ...row,
+        record_id: created.recordId,
         supplier_record_id: supplierId || batchSupplier,
         supplier_name: batchSupplierName,
         product_item_no: String(product?.fields?.[productFields.itemNo] ?? ''),
@@ -104,7 +105,11 @@ const createProcurementModifyService = ({
         product_color: String(product?.fields?.[productFields.color] ?? ''),
       });
     }
+    const salesTargets = [];
     for (const row of plan.updates) {
+      const old = plan.current.find((item) => item.recordId === row.recordId);
+      const added = Number(row.quantity) - Number(old?.quantity || 0);
+      if (added > 0) salesTargets.push({ recordId: row.recordId, productRecordId: row.productRecordId, size: row.size, quantity: added, source: row.source });
       await gateway.update('purchaseRequest', row.recordId, { quantity: row.quantity });
       await trimSalesForQuantity(row.recordId, row.quantity);
     }
@@ -113,7 +118,9 @@ const createProcurementModifyService = ({
       await gateway.delete('purchaseRequest', row.recordId);
       await unlinkSales(salesIds);
     }
+    for (const row of createdItems) salesTargets.push({ recordId: row.record_id, productRecordId: row.productRecordId, size: row.size, quantity: row.quantity, source: row.source });
     await gateway.update('purchaseOrderBatch', batch.record_id, { quantity: plan.totalQuantity });
+    const salesResult = salesLinks ? await salesLinks.apply(salesTargets) : { linked: 0, unmatched: 0 };
 
     const finalRows = [
       ...currentRows.filter((row) => !plan.deletes.some((gone) => gone.recordId === row.record_id)),
@@ -131,7 +138,7 @@ const createProcurementModifyService = ({
         updatedAt: new Date(now()).toISOString(),
       });
     }
-    return { ok: true, plan, delivery };
+    return { ok: true, plan, delivery, sales: salesResult };
   };
 
   return { modify };

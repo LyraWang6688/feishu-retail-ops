@@ -43,6 +43,7 @@ const { createProcurementSubmissionIndex } = require('../../services/procurement
 const { createProcurementSubmittedService } = require('../../services/procurementSubmittedService');
 const { createProcurementModifyService } = require('../../services/procurementModifyService');
 const { createProcurementModifyDelivery } = require('../../services/procurementModifyDelivery');
+const { createProcurementModifySalesLinks } = require('../../services/procurementModifySalesLinks');
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 const { createPurchaseAcceptanceSampleService } = require('../../services/purchaseAcceptanceSampleService');
@@ -694,6 +695,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
         purchaseQuery: options.purchaseQuery || createPurchaseQueryService(gateway),
         orderBatches: webhooks.orderBatches,
         sizeReferences: new SizeReferenceService({ gateway }),
+        salesLinks: createProcurementModifySalesLinks({ gateway, schema: options.schema || V1_BITABLE_SCHEMA, config: PROCUREMENT_PAGE }),
         deliverRevision: delivery.deliver,
       });
     }
