@@ -34,21 +34,11 @@
 .pr-search__icon { color: var(--text-muted); font-size: var(--font-size-lg); }
 .pr-search input { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; }
 .pr-summary { margin-bottom: var(--space-3); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
-.pr-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); }
-.pr-stat { padding: var(--space-2) 0; text-align: center; border-radius: var(--radius-md); background: var(--surface-soft); }
-.pr-stat b { display: block; font-size: var(--font-size-amount); line-height: var(--line-height-tight); }
-.pr-stat span { display: block; margin-top: 2px; font-size: var(--font-size-xs); color: var(--text-secondary); }
 /* 上新（只有 1 个统计项）⇒ 统计 + 统计范围 + 刷新 排一行（业务负责人 2026-10-29 批注） */
 .pr-summary-inline { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
-.pr-stat-inline { display: flex; align-items: baseline; gap: var(--space-1); }
-.pr-stat-inline b { font-size: var(--font-size-amount); line-height: var(--line-height-tight); }
-.pr-stat-inline span { font-size: var(--font-size-sm); color: var(--text-secondary); }
 .pr-range-inline { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); margin-left: auto; font-size: var(--font-size-sm); color: var(--text-secondary); }
 .pr-range-inline strong { color: var(--text); font-weight: var(--weight-medium); }
 
-.pr-range { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-light); font-size: var(--font-size-sm); color: var(--text-secondary); }
-.pr-range > span { flex: 0 0 auto; }
-.pr-range strong { flex: 1; color: var(--text); font-weight: var(--weight-medium); text-align: right; }
 .pr-refresh { flex: 0 0 auto; min-height: var(--control-height); padding: 0 var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-pill); background: var(--surface); color: var(--primary); font-size: var(--font-size-sm); cursor: pointer; }
 .pr-refresh:disabled { opacity: 0.6; cursor: wait; }
 

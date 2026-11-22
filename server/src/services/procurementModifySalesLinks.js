@@ -13,7 +13,6 @@ const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, 
 
 const createProcurementModifySalesLinks = ({ gateway, schema, config }) => {
   const salesFields = schema?.tables?.salesDetail?.fields || {};
-  const productFields = schema?.tables?.product?.fields || {};
   const field = schema?.tables?.salesDetail?.fields?.purchaseDetail;
 
   const apply = async (targets = []) => {
@@ -53,7 +52,7 @@ const createProcurementModifySalesLinks = ({ gateway, schema, config }) => {
     return { linked, unmatched };
   };
 
-  return { apply, productFields };
+  return { apply };
 };
 
 module.exports = { createProcurementModifySalesLinks };

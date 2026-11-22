@@ -18,11 +18,6 @@ export const formatDay = (isoText, config) => {
   return fill(config.range.dayTemplate, { month: Number(parts[1]), day: Number(parts[2]) });
 };
 
-export const rangeText = (tab, range, config) => {
-  if (tab !== 'replenish') return fill(config.range.newProducts, { days: Number(range?.days) || 7 });
-  return fill(config.range.replenish, { from: formatDay(range?.from, config), to: formatDay(range?.to, config) });
-};
-
 export const formatClock = (epoch, offsetMinutes) => {
   if (!Number.isFinite(Number(epoch))) return '';
   const date = new Date(Number(epoch) + Number(offsetMinutes) * 60 * 1000);
@@ -40,26 +35,6 @@ export const titleOf = (product, config) => {
   const primary = product?.itemNo || product?.number;
   return primary ? fill(config.card.titleTemplate, { itemNo: primary, color: product?.color || '' })
     : fill(config.card.titleFallback, { number: product?.number || '', color: product?.color || '' });
-};
-
-const statsHtml = (tab, body, config) => {
-  const defs = tab === 'replenish' ? config.stats.replenish : config.stats.newProducts;
-  const refreshButton = `<button type="button" class="pr-refresh" data-pr-refresh>${escapeHtml(config.texts.refresh)}</button>`;
-  // 业务负责人 2026-10-29 批注：只有 1 个统计项（上新）时 ⇒ 统计 + 范围文案 + 刷新**放在一行**（不再大块留白）
-  if (defs.length === 1) {
-    const def = defs[0];
-    return `<section class="pr-summary pr-summary-inline" aria-label="${escapeHtml(config.title)}">
-      <div class="pr-stat-inline"><b>${escapeHtml(body?.stats?.[def.key] ?? 0)}</b><span>${escapeHtml(def.label)}</span></div>
-      <div class="pr-range-inline"><span>${escapeHtml(config.texts.rangeLabel)}</span><strong>${escapeHtml(rangeText(tab, body?.range, config))}</strong></div>
-      ${refreshButton}
-    </section>`;
-  }
-  const cells = defs.map((def) => `<div class="pr-stat"><b>${escapeHtml(body?.stats?.[def.key] ?? 0)}</b><span>${escapeHtml(def.label)}</span></div>`).join('');
-  return `<section class="pr-summary" aria-label="${escapeHtml(config.title)}">
-    <div class="pr-summary-grid">${cells}</div>
-    <div class="pr-range"><span>${escapeHtml(config.texts.rangeLabel)}</span><strong>${escapeHtml(rangeText(tab, body?.range, config))}</strong>
-      ${refreshButton}</div>
-  </section>`;
 };
 
 const stepperHtml = ({ recordId, size, quantity, config }) => `<div class="pr-pick">
@@ -187,4 +162,4 @@ export const shellHtml = (config) => {
   ${toastHtml()}`;
 };
 
-export { fill, statsHtml, totalTemplateHtml };
+export { fill, totalTemplateHtml };
