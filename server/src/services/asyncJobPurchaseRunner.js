@@ -22,6 +22,7 @@ const CHAIN_JOB_TYPES = Object.freeze({
   return: ASYNC_JOB_TYPES.PURCHASE_RETURN,
   purchase_return: ASYNC_JOB_TYPES.PURCHASE_RETURN,
   accept: ASYNC_JOB_TYPES.PURCHASE_ACCEPTANCE,
+  procurement_modify: ASYNC_JOB_TYPES.PROCUREMENT_MODIFY,
 });
 
 const jobTypeOfChain = (chain) => CHAIN_JOB_TYPES[String(chain || '').trim()] || '';

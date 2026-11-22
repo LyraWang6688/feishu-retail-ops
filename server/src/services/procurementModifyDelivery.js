@@ -4,8 +4,6 @@
  * 修改批次后的“重新出整批采购单 + 发回原话题”。
  * 只复用既有 PurchaseWebhookService.deliverSupplierImages，不另写一套发群/附件逻辑。
  */
-const { documentFileNameOf } = require('./supplierSplitService');
-
 const createProcurementModifyDelivery = ({ gateway, schema, config, purchaseWebhooks, orderBatches, batchLocator, now = () => Date.now() }) => {
   if (!gateway || !purchaseWebhooks || !orderBatches || !batchLocator) {
     throw new Error('procurementModifyDelivery 缺少依赖');
@@ -18,12 +16,18 @@ const createProcurementModifyDelivery = ({ gateway, schema, config, purchaseWebh
     const batch = await orderBatches.findByBatchNo(batchNo);
     if (!batch) throw new Error('找不到采购批次，无法更新单据');
     const supplierName = String(items[0]?.supplier_name || '').trim();
-    const fileName = documentFileNameOf(supplierName, modifyConfig.documentFileNameSuffix);
+    // 修改批次是整批替换：先清空当前「我方单据」，再写新图。
+    // 旧逻辑按精确文件名过滤，历史 image.png 之类的旧图会残留并和新图并存。
     const cell = Array.isArray(batch.fields?.[docField]) ? batch.fields[docField] : [];
-    const remaining = cell.filter((item) => String(item?.name || '') !== fileName)
+    const supplierDoc = (item) => {
+      const name = String(item?.name || item?.file_name || '');
+      const suffix = String(modifyConfig.documentFileNameSuffix || '');
+      return name === 'image.png' || (suffix && name.includes(suffix)) || (supplierName && name.includes(supplierName));
+    };
+    const remaining = cell.filter((item) => !supplierDoc(item))
       .map((item) => ({ file_token: item.file_token || item.fileToken || item.token }))
       .filter((item) => item.file_token);
-    await gateway.update('purchaseOrderBatch', batchRecordId || batch.record_id, { document: remaining });
+    if (cell.length) await gateway.update('purchaseOrderBatch', batchRecordId || batch.record_id, { document: remaining });
 
     const messages = await batchLocator.findByBatchNo(batchNo);
     const root = (messages || []).find((row) => row?.message_id);

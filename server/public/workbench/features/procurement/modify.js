@@ -1,5 +1,6 @@
 /** 采购已提交批次的修改上下文：预填原批次、提交 modify、成功后清空回待提交。 */
 import { buildItems } from './store.js';
+import { setSubmitButtonState } from './submit.js';
 
 const hasDraftItems = (draft) => Object.values(draft?.products || {}).some((product) => (
   Object.values(product.entries || {}).some((quantity) => Number(quantity) > 0)
@@ -7,6 +8,7 @@ const hasDraftItems = (draft) => Object.values(draft?.products || {}).some((prod
 
 export const createModifyController = ({ host, config, api, getStore, getDraft, setDraft, toast, onDone }) => {
   let batch = null;
+  let busy = false;
 
   const banner = (text = '') => {
     const node = host.querySelector('[data-pr-modify-banner]');
@@ -49,17 +51,31 @@ export const createModifyController = ({ host, config, api, getStore, getDraft, 
   };
 
   const submit = async (draft) => {
-    if (!batch) return { ok: false, error: '' };
+    if (!batch || busy) return { ok: false, error: '' };
     const items = buildItems(draft);
     if (!items.length) { toast(host, config.texts.noSelection); return { ok: false }; }
-    const response = await api.modify({ batchNo: batch.batch_no, submitKey: draft.submitKey, items });
-    const store = getStore();
-    store.clear();
-    store.rotateSubmitKey(store.ensure());
-    clear();
-    toast(host, response?.message || config.texts.modifySuccess);
-    onDone?.();
-    return { ok: true };
+    busy = true;
+    setSubmitButtonState(host, { disabled: true, text: config.texts.modifySubmitting });
+    try {
+      const response = await api.modify({ batchNo: batch.batch_no, submitKey: draft.submitKey, items });
+      const store = getStore();
+      store.clear();
+      store.rotateSubmitKey(store.ensure());
+      clear();
+      if (response?.redirect_url) {
+        window.location.assign(response.redirect_url);
+        return { ok: true };
+      }
+      toast(host, response?.message || config.texts.modifySuccess);
+      onDone?.();
+      return { ok: true };
+    } catch (error) {
+      toast(host, error?.message || config.texts.modifyFailed);
+      return { ok: false, error: String(error?.message || config.texts.modifyFailed) };
+    } finally {
+      busy = false;
+      setSubmitButtonState(host, { disabled: false, text: batch ? config.texts.modifySubmit : config.texts.submit });
+    }
   };
 
   const supplierAllowed = (supplierId) => !batch || String(supplierId || '') === String(batch.supplier_record_id || '');

@@ -62,6 +62,8 @@ export const PROCUREMENT_UI = Object.freeze({
     modifyEnabled: true,
     modifyBanner: '正在修改 {batchNo}',
     modifySubmit: '提交修改',
+    modifySubmitting: '提交修改中…',
+    modifyFailed: '修改没成功，请稍后重试。',
     modifySuccess: '采购单已更新',
     modifyDraftConflict: '当前有未提交的采购草稿，请先提交或清空后再修改已提交批次。',
     modifySupplierLocked: '修改批次只能选择原供应商的货品。',

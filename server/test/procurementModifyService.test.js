@@ -48,7 +48,9 @@ test('修改批次：更新数量 / 删除明细 / 新增明细 / 重算录入�
   assert.deepEqual(calls.deletes, [{ table: 'purchaseRequest', id: 'd2' }]);
   assert.equal(calls.creates.length, 1);
   assert.equal(calls.creates[0].values.quantity, 2);
+  assert.equal(calls.creates[0].values.detailId, 'CGD-1-01', '新增明细必须续排采购明细ID');
   assert.equal(calls.deliveries[0].batchNo, 'CGD-1');
+  assert.equal(calls.deliveries[0].items[1].product_item_no, 'B2', '新增明细展示字段必须走归一化');
   assert.equal(calls.deliveries[0].totalQuantity, 5);
   assert.equal(calls.deliveries[0].items.length, 2);
 });

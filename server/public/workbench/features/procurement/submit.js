@@ -9,6 +9,13 @@
 import { buildItems, computeTotals } from './store.js';
 import { fill } from './render.js';
 
+export const setSubmitButtonState = (root, { disabled = false, text = '' } = {}) => {
+  const button = root?.querySelector?.('[data-pr-submit]');
+  if (!button) return;
+  button.disabled = disabled;
+  if (text) button.textContent = text;
+};
+
 export const createSubmitController = ({ config, api, getStore }) => {
   let busy = false;
   let toastTimer = null;
@@ -36,10 +43,7 @@ export const createSubmitController = ({ config, api, getStore }) => {
 
   const setBusy = (root, value) => {
     busy = value;
-    const button = root.querySelector('[data-pr-submit]');
-    if (!button) return;
-    button.disabled = value;
-    button.textContent = value ? config.texts.submitting : config.texts.submit;
+    setSubmitButtonState(root, { disabled: value, text: value ? config.texts.submitting : config.texts.submit });
   };
 
   /**

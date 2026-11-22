@@ -9,6 +9,9 @@
 const { relation } = require('./v1ReferenceResolver');
 const { linkedRecordIds } = require('./v1Gateway/cells');
 const { createOnceByKey, IDEMPOTENCY_KEY_FIELD } = require('../infrastructure/idempotencyKey');
+const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
+const { createProductEnricher } = require('./procurementProductEnricher');
+const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 const { planModification } = require('./procurementModifyPlan');
 const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
 
@@ -17,7 +20,7 @@ const productIdsOf = (items) => [...new Set(items.map((item) => item.productReco
 
 const createProcurementModifyService = ({
   gateway, schema, config, submissionIndex, purchaseQuery, orderBatches, sizeReferences, salesLinks,
-  deliverRevision, now = () => Date.now(),
+  deliverRevision, now = () => Date.now(), productEnricher, detailIds,
 } = {}) => {
   if (!gateway) throw new Error('procurementModifyService 需要 gateway');
   if (!submissionIndex || !purchaseQuery || !orderBatches) throw new Error('procurementModifyService 缺少依赖');
@@ -25,6 +28,9 @@ const createProcurementModifyService = ({
   const salesFields = schema?.tables?.salesDetail?.fields || {};
   const modifyConfig = config?.modify || {};
   const texts = modifyConfig.texts || {};
+  const products = productEnricher || createProductEnricher({ gateway, schema });
+  const detailAllocator = detailIds || createPurchaseDetailIdAllocator({ gateway });
+  const queue = new KeyedSerialQueue();
 
   const linkedSalesOf = async (recordId) => {
     const cell = await gateway.get('purchaseRequest', recordId);
@@ -50,7 +56,7 @@ const createProcurementModifyService = ({
     await unlinkSales(ordered.slice(quantity));
   };
 
-  const modify = async ({ openId, batchNo, submitKey, items = [] } = {}) => {
+  const modifyOnce = async ({ openId, batchNo, submitKey, items = [] } = {}) => {
     const wantedBatch = String(batchNo || '').trim();
     if (!wantedBatch) return reject('batch_missing', texts.batchMissing);
     const today = await submissionIndex.listToday(openId);
@@ -66,15 +72,17 @@ const createProcurementModifyService = ({
     if (!plan.final.length) return reject('empty_batch', texts.emptyBatch);
 
     const productIds = productIdsOf(plan.creates);
-    const products = productIds.length ? await gateway.getBatch('product', productIds) : [];
-    const productMap = new Map((products || []).map((record) => [record.record_id, record]));
-    const productFields = schema?.tables?.product?.fields || {};
+    const productMap = productIds.length ? await products.enrich(productIds) : new Map();
     const batchSupplier = String(currentRows[0]?.supplier_record_id || '');
     const batchSupplierName = String(currentRows[0]?.supplier_name || '');
+    const detailCursor = await detailAllocator.open({
+      batchRecordId: batch.record_id, batchNo: wantedBatch,
+    });
     const createdItems = [];
     for (const row of plan.creates) {
       const product = productMap.get(row.productRecordId);
-      const supplierId = linkedRecordIds(product?.fields?.[productFields.supplier])[0] || '';
+      if (!product) return reject('product_missing', config?.texts?.productMissing || texts.notModifiable);
+      const supplierId = String(product.supplierRecordId || '');
       if (batchSupplier && supplierId && supplierId !== batchSupplier) {
         return reject('supplier_mismatch', texts.supplierMismatch);
       }
@@ -92,6 +100,7 @@ const createProcurementModifyService = ({
           product: relation(row.productRecordId),
           size: relation(size.recordId),
           quantity: row.quantity,
+          detailId: detailCursor.next(),
           idempotencyKey: key,
         },
       });
@@ -100,9 +109,9 @@ const createProcurementModifyService = ({
         record_id: created.recordId,
         supplier_record_id: supplierId || batchSupplier,
         supplier_name: batchSupplierName,
-        product_item_no: String(product?.fields?.[productFields.itemNo] ?? ''),
-        product_number: String(product?.fields?.[productFields.number] ?? ''),
-        product_color: String(product?.fields?.[productFields.color] ?? ''),
+        product_item_no: product.itemNo || '',
+        product_number: product.number || '',
+        product_color: product.color || '',
       });
     }
     const salesTargets = [];
@@ -140,6 +149,11 @@ const createProcurementModifyService = ({
     }
     return { ok: true, plan, delivery, sales: salesResult };
   };
+
+  const modify = (input = {}) => queue.run(
+    `procurement-modify:${String(input.batchNo || '')}`,
+    () => modifyOnce(input),
+  );
 
   return { modify };
 };

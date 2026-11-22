@@ -129,7 +129,7 @@ const CHAINS = Object.freeze({
   },
   'config.endpoints.modify': {
     fe: 'features/procurement/api.js', feKey: 'api.post(config.endpoints.modify',
-    route: 'src/routes/workbench/purchase.js', routeKey: /router\.post\(PROCUREMENT_PAGE\.endpoints\.modify/,
+    route: 'src/routes/workbench/procurementModify.js', routeKey: /router\.post\(PROCUREMENT_PAGE\.endpoints\.modify/,
     service: 'src/services/procurementModifyService.js', serviceKey: /planModification\(/,
     landing: [
       ['purchaseRequest', 'quantity'], ['purchaseOrderBatch', 'quantity'],
