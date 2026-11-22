@@ -18,6 +18,11 @@ const num = (value) => {
   const parsed = Number(textValue(value).replace(/,/g, '').replace(/¥/g, '').trim());
   return Number.isFinite(parsed) ? parsed : 0;
 };
+const optionalNum = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(textValue(value).replace(/,/g, '').replace(/¥/g, '').trim());
+  return Number.isFinite(parsed) ? parsed : null;
+};
 const dayKeyOf = (value, timeZone) => {
   if (value == null || value === '') return '';
   const date = value instanceof Date ? value : new Date(typeof value === 'number'
@@ -30,6 +35,13 @@ const dayKeyOf = (value, timeZone) => {
   return `${part('year')}-${part('month')}-${part('day')}`;
 };
 const todayKeyOf = (now, timeZone) => dayKeyOf(now, timeZone);
+const previousDayKeyOf = (day) => {
+  const [year, month, date] = String(day || '').split('-').map(Number);
+  if (!year || !month || !date) return '';
+  const value = new Date(Date.UTC(year, month - 1, date));
+  value.setUTCDate(value.getUTCDate() - 1);
+  return value.toISOString().slice(0, 10);
+};
 
 
 const createSalesDailyCashService = ({
@@ -50,6 +62,7 @@ const createSalesDailyCashService = ({
       withdrawal_amount: num(values[fieldName('withdrawalCash')]),
       received_amount: num(values[fieldName('receivedCash')]),
       realtime_amount: num(values[fieldName('closingCash')]),
+      retained_amount: optionalNum(values[fieldName('retainedCash')]),
     };
   };
 
@@ -60,8 +73,17 @@ const createSalesDailyCashService = ({
 
   const getToday = async () => {
     const day = todayKeyOf(now(), config.timeZone);
-    const record = await findToday(day);
-    return { date: day, record: mapRecord(record) };
+    const records = await gateway.listAll('salesSummary');
+    const byDay = (wanted) => (records || []).find((record) => dayKeyOf(record?.fields?.[fieldName('saleDate')], config.timeZone) === wanted) || null;
+    const record = byDay(day);
+    const yesterday = previousDayKeyOf(day);
+    const previous = yesterday ? byDay(yesterday) : null;
+    const retained = previous ? optionalNum(previous.fields?.[fieldName('retainedCash')]) : null;
+    return {
+      date: day,
+      record: mapRecord(record),
+      reference: retained === null ? null : { date: yesterday, retained_amount: retained },
+    };
   };
 
   const normalizeAmount = (value, label) => {

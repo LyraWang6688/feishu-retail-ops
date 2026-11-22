@@ -19,4 +19,8 @@ export const SALES_DAILY_CASH_TEXTS = Object.freeze({
   withdrawalInvalid: '拿走金额必须是大于等于 0 的数字。',
   openingLabel: '期初现金（元）',
   withdrawalLabel: '拿走金额（元）',
+  referenceTitle: '昨日留存资金',
+  fillReference: '填入 ¥{amount}',
+  openingHint: '可直接填入昨日留存，也可以手动填写今天的期初现金。',
+  filledReference: '已填入 ¥{amount}，保存后才会写入今天的现金记录。',
 });

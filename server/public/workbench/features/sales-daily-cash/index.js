@@ -5,8 +5,10 @@ import { showToast } from '../shared/toast.js';
 import { waitForAsyncJob } from '../shared/asyncJob.js';
 import { SALES_DAILY_CASH_API, SALES_DAILY_CASH_TEXTS as T } from '../../config/salesDailyCash.js';
 
+const money = (value) => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export function createSalesDailyCashModule() {
-  const state = { host: null, record: null, date: '', busy: false, submitKeys: { opening: '', withdrawal: '' } };
+  const state = { host: null, record: null, reference: null, date: '', busy: false, submitKeys: { opening: '', withdrawal: '' } };
 
   const render = () => {
     const host = state.host;
@@ -16,6 +18,12 @@ export function createSalesDailyCashModule() {
     const opening = Number(record?.opening_amount || 0);
     const received = Number(record?.received_amount || 0);
     const realtime = Number(record?.realtime_amount || 0);
+    const referenceAmount = Number(state.reference?.retained_amount || 0);
+    const showReference = !hasRecord && Boolean(state.reference);
+    const referenceHtml = showReference ? `<div class="dc-reference" data-dc-reference>
+        <div class="dc-reference-copy"><span>${escapeHtml(T.referenceTitle)}</span><strong>¥${money(referenceAmount)}</strong></div>
+        <button class="dc-btn-secondary" type="button" data-dc-fill-reference>${escapeHtml(T.fillReference.replace('{amount}', money(referenceAmount)))}</button>
+      </div>` : '';
     host.innerHTML = `<div class="domain-page dc-page" data-page-kind="sales-daily-cash">
       <section class="dc-summary" data-dc-summary>
         <div class="dc-summary-head"><span>${escapeHtml(T.summaryTitle)}</span><span>${escapeHtml(state.date || '')}</span></div>
@@ -27,12 +35,15 @@ export function createSalesDailyCashModule() {
       </section>
       <section class="dc-card dc-opening">
         <div class="dc-card-head"><h2>${escapeHtml(T.openingTitle)}</h2></div>
+        ${referenceHtml}
         <div class="dc-input-row">
           <label class="dc-field">${escapeHtml(T.openingLabel)}
             <input data-dc-opening type="number" inputmode="decimal" min="0" step="0.01" value="${hasRecord ? escapeHtml(String(record.opening_amount)) : ''}" placeholder="0.00">
           </label>
           <button class="dc-btn" type="button" data-dc-save-opening${hasRecord ? ' disabled' : ''}>${escapeHtml(hasRecord ? T.openingSaved : T.saveOpening)}</button>
         </div>
+        <p class="dc-hint">${escapeHtml(T.openingHint)}</p>
+        <p class="dc-fill-status" data-dc-fill-status aria-live="polite"></p>
       </section>
       <section class="dc-card"${hasRecord ? '' : ' hidden'}>
         <div class="dc-card-head"><h2>${escapeHtml(T.withdrawalTitle)}</h2></div>
@@ -56,6 +67,7 @@ export function createSalesDailyCashModule() {
       const data = await api.get(SALES_DAILY_CASH_API);
       state.date = String(data?.date || '');
       state.record = data?.record || null;
+      state.reference = data?.reference || null;
       render();
     } catch (error) {
       host.innerHTML = `<p class="dc-empty">${escapeHtml(T.failed)}</p>`;
@@ -102,6 +114,14 @@ export function createSalesDailyCashModule() {
     if (!host) return;
     const opening = host.querySelector('[data-dc-opening]');
     const withdrawal = host.querySelector('[data-dc-withdrawal]');
+    host.querySelector('[data-dc-fill-reference]')?.addEventListener('click', () => {
+      if (!opening || !state.reference) return;
+      const amount = money(state.reference.retained_amount);
+      opening.value = String(state.reference.retained_amount);
+      const status = host.querySelector('[data-dc-fill-status]');
+      if (status) status.textContent = T.filledReference.replace('{amount}', amount);
+      opening.focus();
+    });
     host.querySelector('[data-dc-save-opening]')?.addEventListener('click', () => {
       void save({ openingAmount: opening?.value }, opening);
     });

@@ -6,7 +6,10 @@ const json = (body, status = 200) => ({
   body: JSON.stringify(body),
 });
 
-const mockApi = async (page, { orders = [], dailyCashRecord = undefined, dailyCashPost = null } = {}) => {
+const mockApi = async (page, {
+  orders = [], dailyCashRecord = undefined, dailyCashPost = null,
+  dailyCashReference = { date: '2026-11-20', retained_amount: 320 },
+} = {}) => {
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/auth/feishu/me') {
@@ -21,6 +24,7 @@ const mockApi = async (page, { orders = [], dailyCashRecord = undefined, dailyCa
           record_id: 'dc1', date: '2026-11-21', opening_amount: 500,
           withdrawal_amount: 0, received_amount: 900, realtime_amount: 1320, sales_amount: 820,
         } : dailyCashRecord,
+        reference: dailyCashReference,
       }));
     }
     if (path === '/api/workbench/products/search') {
@@ -342,6 +346,18 @@ test('每日现金：录单子卡片、期初已填写状态', async ({ page }) 
   expect(dateCentered).toBe(true);
   await expect(page.locator('[data-dc-opening]')).toHaveValue('500');
   await expect(page.getByRole('button', { name: '已填写' })).toBeDisabled();
+});
+
+test('每日现金：昨日留存一键填入，但仍需手动保存', async ({ page }) => {
+  await mockApi(page, { dailyCashRecord: null });
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '销售', exact: true }).click();
+  await page.getByRole('link', { name: /每日现金/ }).click();
+  await expect(page.locator('[data-dc-reference]')).toContainText('昨日留存资金');
+  await expect(page.locator('[data-dc-reference]')).toContainText('¥320.00');
+  await page.getByRole('button', { name: '填入 ¥320.00' }).click();
+  await expect(page.locator('[data-dc-opening]')).toHaveValue('320');
+  await expect(page.getByRole('button', { name: '保存期初现金' })).toBeVisible();
 });
 
 test('每日现金保存成功后跳回工作台（期初 / 拿走同一逻辑）', async ({ page }) => {
