@@ -189,6 +189,7 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
       moneyMode: String(body.moneyMode || '').trim(),
       paymentMethod: String(body.paymentMethod || '').trim(),
       productRecordId,
+      operatorOpenId: req.workbenchUser?.open_id || '',
     };
     try {
       // 只做本地形状校验（缺字段 / 退款必选方式）——她当场能改；飞书侧校验交给 worker。
@@ -232,6 +233,7 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
       diffPaymentMethod: String(body.diffPaymentMethod || '').trim(),
       samplePromotionSize: String(body.samplePromotionSize || body.sample_promotion_size || '').trim(),
       productRecordId,
+      operatorOpenId: req.workbenchUser?.open_id || '',
     };
     try {
       const shaped = resolveExchangeService().validateShape(payload);

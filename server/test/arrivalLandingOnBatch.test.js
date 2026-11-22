@@ -444,15 +444,13 @@ test('⑥-补 到货确认**真的会**把这一批从 9 点候选里摘掉（�
 // □ ⑦ 不写飞书自动字段 · □ ⑧ 孤儿调用不阻塞
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('⑦ 到货日写点击验收时间；验收人仍不写', async () => {
+test('⑦ 到货日写点击验收时间；验收人写当前操作人', async () => {
   const harness = makeHarness({ parseResult: { complete: true, same: true, differences: [] } });
   await arriveAndConfirm(harness);
 
   const batchWrites = writesTo(harness.gateway, 'purchaseOrderBatch');
   assert.ok(batchWrites.some((write) => write.values?.['到货日']), '到货日必须写');
-  for (const write of harness.gateway.writes) {
-    assert.equal('验收人' in (write.values || {}), false, `不许写「验收人」：${write.tableKey}`);
-  }
+  assert.ok(batchWrites.some((write) => write.values?.['验收人']?.[0]?.id === 'ou_1'), '验收人必须写当前操作人');
 });
 
 test('⑧ 没有批次身份的孤儿调用：**不阻塞加库存**（既有能力），也不写批次行', async () => {

@@ -160,6 +160,8 @@ const EVENTS = Object.freeze([
   'log.event.unregistered.cache_hit',
   'log.event.unregistered.cache_miss',
   'perf.request.completed',
+  'person_stamp.label_print.failed',
+  'person_stamp.product.failed',
   'print_prompt.acceptance.failed',
   'print_prompt.acceptance.request_failed',
   'print_prompt.sale.intent_error',

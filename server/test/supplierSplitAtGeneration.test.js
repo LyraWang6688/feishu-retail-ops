@@ -285,6 +285,7 @@ test('AC-SS1 ⭐⭐ 一个批次号下 3 个供应商 ⇒ 报货单**按供应�
   assert.deepEqual(bySupplier.map((render) => render.lines), [2, 1, 2], '每组只带自己的行（顺序 = 明细里第一次出现的顺序）');
   // ② 三张图都挂在**同一个批次号**的主表行上（「单据」是附件列，支持多文件 ✓）
   assert.equal(h.gateway.tables.purchaseOrderBatch.length, 1, '主表只有一行 ✓');
+  assert.deepEqual(h.gateway.tables.purchaseOrderBatch[0].fields[V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.reportedBy], [{ id: 'ou_1' }], '报货人 = 当前操作人');
   const cell = h.gateway.tables.purchaseOrderBatch[0].fields[DOCUMENT_FIELD];
   assert.equal(attachmentNames(cell).length, 3, '「单据」里 3 张（每家一张）✓');
   // ③ 群消息也是每家一套（图 + @经办人那句）

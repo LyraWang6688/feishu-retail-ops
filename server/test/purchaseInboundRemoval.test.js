@@ -335,11 +335,11 @@ test('① 到货确认真实链路：一碰「采购入库」表就抛 —— �
     assert.equal('验收原话' in (write.values || {}), false, '「验收原话」已退场，不许再写');
     assert.equal('确认状态' in (write.values || {}), false, '「确认状态」已退场，不许再写');
   }
-  // ⚠️ 飞书自动字段一个字都不写（到货日 = 更新时间、验收人 = 创建人）。
+  // 到货日仍是飞书自动字段；验收人现在是可写人员字段，写当前操作人。
   for (const write of gateway.writes) {
     assert.equal('到货日' in (write.values || {}), false);
-    assert.equal('验收人' in (write.values || {}), false);
   }
+  assert.ok(batchWrites.some((item) => item.values?.['验收人']?.[0]?.id === 'ou_1'), '验收人要写当前操作人');
 });
 
 test('② 真实库存引擎：12 行 → 9 条流水 / 9 双实时库存；`inventory.change.applied` 9 条', async () => {

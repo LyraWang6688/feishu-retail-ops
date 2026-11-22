@@ -156,11 +156,11 @@ test('A3 schema 里**不再有**「到货验收」表；到货落点 = 「报货
   assert.equal(batch.actualQuantity, '实际数量');
   assert.equal(batch.actualAmount, '货单金额');
 
-  // ③ 「验收人」仍是创建人（自动，不写）；「到货日」现在是普通日期时间，由验收链路写。
+  // ③ 验收人现在是可写人员字段；到货日由验收链路写。
   assert.equal(Object.prototype.hasOwnProperty.call(batch, 'inspector'), false,
-    '「验收人」= 创建人（自动）→ 不许建映射（代码也不许写）');
+    '旧自动字段语义键 inspector 不许回来');
+  assert.equal(batch.acceptedBy, '验收人', '验收人映射到可写人员字段');
   assert.equal(batch.arrivalDate, '到货日');
-  assert.equal(Object.values(batch).includes('验收人'), false);
 
   // ④ ⭐ 2026-10-07 **深夜**：「采购入库」表被业务负责人**整表删除** ⇒ schema 里整段没了。
   //    （原先这里钉的是"少了「采购到货批次」这一列"。）

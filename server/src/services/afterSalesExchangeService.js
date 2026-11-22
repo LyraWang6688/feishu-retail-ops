@@ -16,7 +16,7 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { textValue } = require('./v1BitableGateway');
 const { salesLinkRecordIds } = require('./afterSalesLinkIds');
 const { InventoryService } = require('./inventoryService');
-const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
+const { V1ReferenceResolver, relation, appendPerson } = require('./v1ReferenceResolver');
 const { nextId, stateFor } = require('./salesRecordIds');
 const { createPaymentMethodsService } = require('./paymentMethodsService');
 const { createSamplePromotionService } = require('./samplePromotionService');
@@ -359,6 +359,7 @@ class AfterSalesExchangeService {
         [EX.master.typeField]: nextTypes,
         [EX.master.countField]: currentCount + EX.master.countDelta,
         ...(nextTotal == null ? {} : { [EX.master.totalField]: nextTotal }),
+        ...(payload.operatorOpenId ? { afterSalesBy: appendPerson(entryNow?.fields?.[masterFields.afterSalesBy], payload.operatorOpenId) } : {}),
       }, { correlation: options.correlation });
       if (nextTotal == null) logWarn('workbench.orders.after_sales.exchange.total_missing', {
         request_id: requestId, sales_entry_record_id: prepared.salesEntryRecordId,

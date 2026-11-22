@@ -87,6 +87,9 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
     const fileToken = event?.file_token || event?.fileToken;
     const tableId = event?.table_id || event?.tableId;
     const actionList = event?.action_list || event?.actionList || [];
+    const personActionList = actionList.map((action) => ({
+      ...action, operator_id: action.operator_id || event?.operator_id,
+    }));
 
     logInfo('lark.bitable.record_changed', {
       file_token: fileToken,
@@ -168,6 +171,13 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
     //    · 写库是**异步**的（`setImmediate`，沿用本文件既有形状），不阻塞事件响应。
     const productTableId = V1_BITABLE_SCHEMA.tables.product.tableId;
     if (productTableId && tableId === productTableId) {
+      if (service?.recordPersonStamps?.handle) {
+        setImmediate(() => {
+          service.recordPersonStamps.handle('product', personActionList).catch((error) => {
+            logWarn('person_stamp.product.failed', { table_id: tableId, error: error.message });
+          });
+        });
+      }
       // ⭐ 2026-11-17：新增货品 ⇒ 让货品搜索快照失效（下一次搜索等一次刷新）。
       //   只认 record_added：样例图同步等 record_edited 不能把快照打穿。
       if (actionList.some((item) => item?.action === 'record_added')) {
@@ -229,6 +239,13 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
     //      只认新增动作（判定在 service 的 config 里）；异步（`setImmediate`）不阻塞事件响应。
     const labelPrintRequestTableId = V1_BITABLE_SCHEMA.tables.labelPrintRequest?.tableId;
     if (labelPrintRequestTableId && tableId === labelPrintRequestTableId) {
+      if (service?.recordPersonStamps?.handle) {
+        setImmediate(() => {
+          service.recordPersonStamps.handle('labelPrintRequest', personActionList).catch((error) => {
+            logWarn('person_stamp.label_print.failed', { table_id: tableId, error: error.message });
+          });
+        });
+      }
       const intake = labelPrintFormIntake;
       if (intake && typeof intake.handleTableChanges === 'function') {
         setImmediate(() => {

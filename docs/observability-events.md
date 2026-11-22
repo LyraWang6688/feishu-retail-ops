@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **520** 个事件。按前缀分组：
+共 **522** 个事件。按前缀分组：
 
 ## accessory
 
@@ -249,6 +249,13 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `perf.request.completed` | 2 | src/config/alerts.js<br>src/utils/requestTiming.js |
+
+## person_stamp
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `person_stamp.label_print.failed` | 1 | src/routes/larkEvents.js |
+| `person_stamp.product.failed` | 1 | src/routes/larkEvents.js |
 
 ## print_prompt
 

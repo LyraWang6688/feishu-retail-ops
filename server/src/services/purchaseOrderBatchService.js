@@ -1,6 +1,6 @@
 const { textValue } = require('./v1BitableGateway');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
-const { relation } = require('./v1ReferenceResolver');
+const { relation, person } = require('./v1ReferenceResolver');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logInfo, logWarn } = require('../utils/logger');
 
@@ -342,7 +342,7 @@ class PurchaseOrderBatchService {
    *   因为"到货信息没有落点"等于她这次确认没被记下来）。
    */
   async writeAcceptance({
-    batchNo = '', batchRecordId = '', actualQuantity, actualAmount, differenceAnalysis, correlation = {},
+    batchNo = '', batchRecordId = '', actualQuantity, actualAmount, differenceAnalysis, operatorOpenId = '', correlation = {},
   }) {
     // 没有批次身份（两个都空）= "孤儿调用"（历史草稿 / 手工种的测试任务）：
     // 明确区分于"有身份但找不到行"，调用方对两者的处置不同（前者不阻塞、后者要报）。
@@ -362,6 +362,7 @@ class PurchaseOrderBatchService {
     const amountValue = numericOrNull(actualAmount);
     const differenceValue = String(differenceAnalysis ?? '').trim();
     const values = {};
+    if (operatorOpenId) values.acceptedBy = person(operatorOpenId);
     if (quantityValue !== null) values.actualQuantity = quantityValue;
     if (amountValue !== null) values.actualAmount = amountValue;
     if (differenceValue) values.differenceAnalysis = differenceValue;
@@ -385,10 +386,9 @@ class PurchaseOrderBatchService {
       wrote_actual_quantity: quantityValue !== null,
       wrote_actual_amount: amountValue !== null,
       wrote_difference_analysis: Boolean(differenceValue),
-      // 明写"没写到货日 / 验收人"：这是口径，也是将来别人改这段代码时的绊线
-      //（后两者是飞书自动字段；那条文字说明列 2026-10-09 已从真表消失）。
+      // 到货日仍是飞书自动字段；验收人现在是可写人员字段。
       wrote_arrival_date: false,
-      wrote_inspector: false,
+      wrote_inspector: Boolean(operatorOpenId),
     });
     return {
       updated: true,
