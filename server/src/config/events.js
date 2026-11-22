@@ -475,6 +475,7 @@ const EVENTS = Object.freeze([
   'workbench.orders.after_sales.exchange.completed',
   'workbench.orders.after_sales.exchange.total_missing',
   'workbench.orders.after_sales.failed',
+  'workbench.orders.after_sales.return.total_missing',
   'workbench.procurement.modify.failed',
   'workbench.procurement.new_products.failed',
   'workbench.procurement.replenish.failed',

@@ -32,7 +32,7 @@ const ORDER_NO = 'XSD-20261028-0005';
 
 const makeGateway = (overrides = {}) => {
   const tables = {
-    salesEntry: { fields: { orderNo: '销售单号', afterSalesType: '售后类型', afterSalesCount: '售后次数' } },
+    salesEntry: { fields: { orderNo: '销售单号', afterSalesType: '售后类型', afterSalesCount: '售后次数', totalAmount: '鞋类总额' } },
     salesDetail: {
       fields: {
         salesEntry: '销售单号', product: '编号', size: '尺码', fulfillmentStatus: '履约状态', actualAmount: '实收金额',
@@ -53,6 +53,7 @@ const makeGateway = (overrides = {}) => {
         销售单号: ORDER_NO,
         售后类型: ['换货'],
         售后次数: 1,
+        鞋类总额: 500,
       },
     },
     detail: {
@@ -167,6 +168,9 @@ test('AC-RW1 直接退款：明细已退货 + 库存销售增加落门盒 + 新�
 
   assert.deepEqual(state.entry.fields.售后类型, ['换货', '退货']);
   assert.equal(state.entry.fields.售后次数, 2);
+  assert.equal(state.entry.fields.鞋类总额, 320, '鞋类总额 = 500 - 180');
+  assert.equal(result.master.total_before, 500);
+  assert.equal(result.master.total_after, 320);
   assert.equal(result.money.receipt_id, `${ORDER_NO}-退款-02`);
 });
 
@@ -179,6 +183,15 @@ test('AC-RW2 货款留存：交易明细不填支付方式/收支方向，钱款
   assert.equal(created.fields.收支方向, undefined);
   assert.equal(created.fields.钱款状态, '已留存');
   assert.equal(created.fields.交易金额, 180);
+  assert.equal(state.entry.fields.鞋类总额, 320, '货款留存也扣减鞋类总额');
+});
+
+test('AC-RW2b 鞋类总额扣到 0 为止，不写负数', async () => {
+  const { service, state } = buildService({ state: { entry: { record_id: ENTRY, fields: {
+    销售单号: ORDER_NO, 售后类型: [], 售后次数: 0, 鞋类总额: 100,
+  } } } });
+  await service.execute(payloadOf());
+  assert.equal(state.entry.fields.鞋类总额, 0);
 });
 
 test('AC-RW3 幂等：同一 requestId 重放 ⇒ 零新增写入（返回上次结果）', async () => {

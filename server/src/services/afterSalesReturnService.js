@@ -22,7 +22,7 @@ const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { nextId, stateFor } = require('./salesRecordIds');
 const { createPaymentMethodsService } = require('./paymentMethodsService');
 const { AFTER_SALES_DERIVED } = require('../config/afterSalesDerived');
-const { logInfo } = require('../utils/logger');
+const { logInfo, logWarn } = require('../utils/logger');
 
 const DEFAULT_STORE_DIR = path.join(__dirname, '../../data/after_sales_returns');
 const REQUEST_ID_PATTERN = /^[0-9a-f-]{36}$/i;
@@ -37,6 +37,13 @@ const normalizeList = (value) => {
 };
 
 const badRequest = (message) => Object.assign(new Error(message), { statusCode: 400 });
+
+const numberOrNull = (value) => {
+  const text = textValue(value).trim();
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : null;
+};
 
 class AfterSalesReturnService {
   constructor(options = {}) {
@@ -224,6 +231,7 @@ class AfterSalesReturnService {
     const entryNow = await this.gateway.get('salesEntry', prepared.salesEntryRecordId);
     const currentTypes = normalizeList(entryNow?.fields?.[masterFields[AFTER_SALES_DERIVED.master.typeField]]);
     const currentCount = Number(textValue(entryNow?.fields?.[masterFields[AFTER_SALES_DERIVED.master.countField]])) || 0;
+    const currentTotal = numberOrNull(entryNow?.fields?.[masterFields[AFTER_SALES_DERIVED.master.totalField]]);
     let master = progress.master || null;
     const alreadyApplied = master
       && master.after_sales_count === currentCount
@@ -233,14 +241,25 @@ class AfterSalesReturnService {
         throw new Error(`原销售单的「售后次数」已被改动（期望 ${master.before_sales_count}，实际 ${currentCount}），请人工核对`);
       }
       const nextTypes = [...new Set([...currentTypes, typeValue])];
+      const nextTotal = currentTotal == null
+        ? null
+        : Math.max(0, Number((currentTotal - prepared.amount).toFixed(2)));
       await this.gateway.update('salesEntry', prepared.salesEntryRecordId, {
         [AFTER_SALES_DERIVED.master.typeField]: nextTypes,
         [AFTER_SALES_DERIVED.master.countField]: currentCount + AFTER_SALES_DERIVED.master.countDelta,
+        ...(nextTotal == null ? {} : { [AFTER_SALES_DERIVED.master.totalField]: nextTotal }),
       }, { correlation: options.correlation });
+      if (nextTotal == null) {
+        logWarn('workbench.orders.after_sales.return.total_missing', {
+          request_id: requestId, sales_entry_record_id: prepared.salesEntryRecordId,
+        });
+      }
       master = {
         before_sales_count: currentCount,
         after_sales_count: currentCount + AFTER_SALES_DERIVED.master.countDelta,
         after_sales_types: nextTypes,
+        total_before: currentTotal,
+        total_after: nextTotal,
       };
       await save({ status: 'master_enriched', master });
     }
