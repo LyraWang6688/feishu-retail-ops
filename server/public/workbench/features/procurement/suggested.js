@@ -21,13 +21,18 @@ export const buildSuggestedBody = ({ replenishBody, newBody, config }) => {
   return { groups, range: { days } };
 };
 
-export const suggestedHtml = ({ body, draft, store, supplierId = '', config }) => {
+export const suggestedHtml = ({ body, draft, store, supplierId = '', config, modify = false }) => {
   if (!body) return '';
   const filtered = supplierFilteredBody('suggested', body, supplierId, config);
   const cards = filtered.visible.length
-    ? filtered.visible.map((group) => (group.source === 'new'
-      ? newGroupHtml(group, draft, store, config)
-      : replenishGroupHtml(group, draft, store, config))).join('')
+    ? filtered.visible.map((group) => {
+      const card = group.source === 'new'
+        ? newGroupHtml(group, draft, store, config)
+        : replenishGroupHtml(group, draft, store, config);
+      return modify
+        ? card + `<button type="button" class="pr-remove-product" data-pr-remove-product="${escapeHtml(group.productRecordId)}">${escapeHtml(config.texts.removeProduct)}</button>`
+        : card;
+    }).join('')
     : `<div class="pr-empty">${escapeHtml(config.texts.suggestedEmpty)}</div>`;
   const range = String(config.range.suggested || '近 {days} 天（含今天）').replace('{days}', String(body.range?.days || 7));
   return `<section class="pr-summary pr-summary-inline" aria-label="${escapeHtml(config.title)}">

@@ -22,12 +22,16 @@ export const createApi = (config) => {
     cache.newProducts = body;
     return body;
   };
+  const loadSubmittedToday = async () => api.get(config.endpoints.submittedToday);
   const submit = async ({ submitKey, items }) => api.post(config.endpoints.submit, { submitKey, items });
+  const modify = async ({ batchNo, submitKey, items }) => api.post(config.endpoints.modify, { batchNo, submitKey, items });
 
   return {
     loadReplenish,
     loadNewProducts,
+    loadSubmittedToday,
     submit,
+    modify,
     invalidate: (tab) => {
       if (tab === 'replenish') cache.replenish = null;
       if (tab === 'new') cache.newProducts = null;

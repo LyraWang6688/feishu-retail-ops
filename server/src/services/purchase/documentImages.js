@@ -198,7 +198,8 @@ const documentImages = {
     const groupMessages = [];
     // 这一批在群里发的**第 1 条消息**（图）的 message_id = 话题根。
     // 它之后的每条消息都回复它（见下），于是整批只占一个话题。
-    let threadRootMessageId = '';
+    // 修改批次时由调用方传入**原批次的话题根** ⇒ 新图/文字仍回复到同一个话题。
+    let threadRootMessageId = String(options.threadRootMessageId || '');
     if (!operatorOpenId) {
       // 经办人没解析出来（报单记录没填/字段映射缺失）：照发正文，只是不 @ 人。
       // 记 warn 是为了排查"为什么这批单子没 @到经办人"，绝不退回 @所有人。
@@ -299,15 +300,21 @@ const documentImages = {
         // ⚠️ 2026-10-07（业务负责人逐字：「不用说几条，只给出多少双就可以了」）：
         //    文案从配置渲染 —— `{supplier} 这批 {pairs} 双，图可以直接转给供应商。`
         //    **没有「N 条」、也没有「共」**；`{pairs}` = 上面那个 `totalPairs`（口径未动）。
-        const noticeText = this.mentionOperatorText(
-          operatorOpenId,
-          renderPurchaseGroupNoticeText({ label, pairs: totalPairs }, noticeConfig),
-          noticeConfig,
-        );
+        const noticeText = options.noticeText
+          || this.mentionOperatorText(
+            operatorOpenId,
+            renderPurchaseGroupNoticeText({ label, pairs: totalPairs }, noticeConfig),
+            noticeConfig,
+          );
         const notificationEvent = options.notificationEvent
           || (/退货/.test(String(fileNameSuffix || '')) ? 'purchase_return_created' : 'purchase_request_created');
         let textResult;
-        if (this.notificationService && typeof this.notificationService.send === 'function') {
+        if (options.noticeText) {
+          textResult = await this.sendText(
+            target.chatId, noticeText, 'chat_id',
+            { replyToMessageId: threadRootMessageId, inThread: textInThread },
+          );
+        } else if (this.notificationService && typeof this.notificationService.send === 'function') {
           const sent = await this.notificationService.send(notificationEvent, { text: noticeText }, {
             target: { receiveIdType: 'chat_id', receiveId: target.chatId },
             replyToMessageId: threadRootMessageId,

@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **518** 个事件。按前缀分组：
+共 **520** 个事件。按前缀分组：
 
 ## accessory
 
@@ -644,9 +644,11 @@
 | `workbench.orders.after_sales.exchange.completed` | 1 | src/services/afterSalesExchangeService.js |
 | `workbench.orders.after_sales.exchange.total_missing` | 1 | src/services/afterSalesExchangeService.js |
 | `workbench.orders.after_sales.failed` | 6 | src/routes/workbenchOrderActions.js<br>src/services/afterSalesAsyncService.js |
+| `workbench.procurement.modify.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.new_products.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.replenish.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.submit.failed` | 1 | src/routes/workbench/purchase.js |
+| `workbench.procurement.submitted_today.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.product_features.add_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_features.delete_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_features.list_failed` | 1 | src/routes/workbench/products.js |

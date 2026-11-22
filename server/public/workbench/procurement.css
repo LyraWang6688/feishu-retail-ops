@@ -22,6 +22,7 @@
 /* 顶部统计卡 */
 .pr-search { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 .pr-search[hidden] { display: none; }
+.pr-modify-banner { margin: 0 var(--space-3) var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--primary); border-radius: var(--radius-sm); background: var(--primary-soft); color: var(--primary); font-size: var(--font-size-sm); font-weight: var(--weight-bold); }
 .pr-search-results-host { position: relative; }
 .pr-search-results { position: absolute; left: 0; right: 0; top: calc(100% + var(--space-1)); z-index: 30; max-height: 300px; overflow-y: auto; padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-pop); }
 .pr-search-result { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 44px; padding: var(--space-2) var(--space-3); border: 0; border-top: 1px solid var(--border-light); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
@@ -96,6 +97,15 @@
 .pr-pending-product { padding:var(--space-2) 0; border-top:1px dashed var(--border-light); }
 .pr-pending-product h4 { margin:0 0 var(--space-1); font-size:var(--font-size-sm); }
 .pr-pending-product ul { display:flex; flex-wrap:wrap; gap:var(--space-1) var(--space-3); margin:0; padding:0; list-style:none; color:var(--text-secondary); font-size:var(--font-size-sm); }
+.pr-pending-draft > h3, .pr-pending-submitted > h3 { margin: 0 0 var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: var(--weight-bold); }
+.pr-pending-submitted { margin-top: var(--space-4); }
+.pr-pending-submitted-batch { margin-bottom: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.pr-pending-submitted-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
+.pr-pending-batch-no { margin: 0; font-size: var(--font-size-md); }
+.pr-pending-batch-meta, .pr-pending-batch-summary { margin: 4px 0 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.pr-remove-product { display: block; width: 100%; min-height: 36px; margin: calc(-1 * var(--space-2)) 0 var(--space-3); border: 1px dashed var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font-size: var(--font-size-xs); cursor: pointer; }
+.pr-pending-modify { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--primary); border-radius: var(--radius-pill); background: var(--surface); color: var(--primary); font-size: var(--font-size-sm); font-weight: var(--weight-bold); cursor: pointer; }
+.pr-pending-batch-products { margin-top: var(--space-2); }
 .pr-pending-total { margin:var(--space-2) 0 0; text-align:right; color:var(--text); font-size:var(--font-size-sm); font-weight:var(--weight-bold); }
 
 /* 供应商筛选：放在统计卡与第一张货品卡之间；只影响显示，不改草稿 */

@@ -36,6 +36,7 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { createProcurementPurchaseWriters } = require('./procurementPurchaseWriters');
 const { createProductEnricher } = require('./procurementProductEnricher');
 const { createProcurementSalesLinkBackfill } = require('./procurementSalesLinkBackfill');
+const { createProcurementSubmissionIndex } = require('./procurementSubmissionIndex');
 const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
 
@@ -73,6 +74,7 @@ const createProcurementPageSubmitService = (options = {}) => {
   const writeService = options.writeService || null;
   const now = options.now || (() => Date.now());
   const logger = options.logger || { logInfo, logWarn };
+  const submissionIndex = options.submissionIndex || createProcurementSubmissionIndex();
   const info = typeof logger.logInfo === 'function' ? logger.logInfo : () => {};
   const warn = typeof logger.logWarn === 'function' ? logger.logWarn : () => {};
   const background = options.background || createPurchaseWriteBackgroundService({
@@ -274,6 +276,18 @@ const createProcurementPageSubmitService = (options = {}) => {
             openId, chain: chainConfig.id, orderKey: group.orderKey, submitKey: group.submitKey, requestId,
             behavior: { recordId: behavior.recordId || '', kind: chainConfig.behaviorCode || '' },
           });
+          if (result?.ok === true && result?.purchase?.batch_no) {
+            await submissionIndex.record({
+              openId,
+              batchNo: result.purchase.batch_no,
+              submittedAt: new Date(now()).toISOString(),
+              requestIds: result.purchase.request_ids || [],
+            }).catch((error) => {
+              warn('procurement.submission_index.record_failed', {
+                batch_no: result.purchase.batch_no, error: String(error?.message || error), request_id: requestId,
+              });
+            });
+          }
           if (result?.ok === true && salesLinkBackfill) {
             const taskId = chainConfig.taskIdPrefix + '_' + engine.sanitizeKey(group.submitKey);
             const backfillResult = await salesLinkBackfill.run({ taskId }).catch((error) => ({

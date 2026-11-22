@@ -54,6 +54,8 @@ const buildProcurementPageConfig = (env = process.env) => {
       replenish: '/procurement/replenish',
       newProducts: '/procurement/new-products',
       submit: '/procurement/submit',
+      submittedToday: '/procurement/submitted-today',
+      modify: '/procurement/modify',
     }),
     // 时间窗口（业务负责人 2026-10-29 口径）：
     //   补货 = [今天 00:00 - days 天, **现在**]（含今天已发生的销售；例：10-29 00:57 ⇒ [10-26 00:00, 10-29 00:57]）
@@ -117,6 +119,20 @@ const buildProcurementPageConfig = (env = process.env) => {
         example: '示例原因：{value}',
         unmatchedExample: '数量不足示例：{product} {size} 码还差 {remaining} 双',
         hint: '采购单已写成功；关联失败的销售明细下次补货可能重复出现，请人工核对。',
+      }),
+    }),
+    // 已提交批次修改：文案 / 单据后缀 / 群消息模板（中文只在这里）
+    modify: Object.freeze({
+      documentFileNameSuffix: '采购单',
+      noticeText: '采购单已更新',
+      detailLabel: '采购修改明细',
+      texts: Object.freeze({
+        batchMissing: '缺少报货批次号',
+        notModifiable: '只能修改当前登录人今天提交、且未到货的采购批次',
+        batchNotFound: '找不到这个采购批次',
+        emptyBatch: '至少要保留一件货品',
+        supplierMismatch: '修改批次不能加入其他供应商的货品',
+        sizeMissing: '尺码不存在',
       }),
     }),
     // 日志事件名（只报事实：数量 / 耗时 / 结果，不报 PII）

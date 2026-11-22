@@ -46,7 +46,7 @@ const newProductsBody = () => ({
 });
 
 export const mockApi = async (page, options = {}) => {
-  const calls = { replenish: 0, newProducts: 0, submit: [], writes: [] };
+  const calls = { replenish: 0, newProducts: 0, submit: [], modify: [], writes: [] };
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -62,6 +62,13 @@ export const mockApi = async (page, options = {}) => {
     if (pathname === '/api/workbench/procurement/new-products') {
       calls.newProducts += 1;
       return route.fulfill(json(newProductsBody()));
+    }
+    if (pathname === '/api/workbench/procurement/submitted-today') {
+      return route.fulfill(json({ success: true, batches: options.submittedBatches || [] }));
+    }
+    if (pathname === '/api/workbench/procurement/modify' && request.method() === 'POST') {
+      calls.modify.push(JSON.parse(request.postData() || '{}'));
+      return route.fulfill(json({ success: true, message: '采购单已更新' }));
     }
     if (pathname === '/api/workbench/procurement/submit' && request.method() === 'POST') {
       calls.submit.push(JSON.parse(request.postData() || '{}'));
