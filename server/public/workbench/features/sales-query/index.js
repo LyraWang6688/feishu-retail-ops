@@ -139,7 +139,7 @@ export function createSalesQueryModule() {
         <div class="sq-filters">
           ${dateFieldHtml({ label: PAGE.texts.startLabel, labelClass: 'sq-filter', inputAttr: 'data-sq-from', value: today, max: today })}
           ${dateFieldHtml({ label: PAGE.texts.endLabel, labelClass: 'sq-filter', inputAttr: 'data-sq-to', value: today, min: today })}
-          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.quickRangeLabel)}</span><select data-sq-range>${PAGE.texts.quickRanges.map((item) => `<option value="${item.days}">${escapeHtml(item.label)}</option>`).join('')}</select></label>
+          <label class="sq-filter"><span>${escapeHtml(PAGE.texts.quickRangeLabel)}</span><select data-sq-range>${PAGE.texts.quickRanges.map((item) => `<option value="${escapeHtml(item.value || item.days)}">${escapeHtml(item.label)}</option>`).join('')}</select></label>
           <button class="sq-btn" type="button" data-sq-query>${escapeHtml(PAGE.texts.query)}</button>
         </div>
         <div data-sq-body></div>
@@ -166,8 +166,10 @@ export function createSalesQueryModule() {
       });
       host.querySelector('[data-sq-query]')?.addEventListener('click', () => { void load(); });
       host.querySelector('[data-sq-range]')?.addEventListener('change', (event) => {
-        const days = Number(event.target.value) || 1;
-        const end = new Date();
+        const selected = PAGE.texts.quickRanges.find((item) => String(item.value || item.days) === String(event.target.value));
+        const days = Math.max(1, Number(selected?.days) || 1);
+        const offset = Math.max(0, Number(selected?.offset) || 0);
+        const end = new Date(Date.now() - offset * 86400000);
         const start = new Date(end.getTime() - (days - 1) * 86400000);
         fromInput.value = dateKey(start);
         toInput.value = dateKey(end);
