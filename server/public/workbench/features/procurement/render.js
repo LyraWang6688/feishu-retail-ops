@@ -95,8 +95,7 @@ export const replenishGroupHtml = (group, draft, store, config) => {
     <div class="pr-group-title-wrap"><h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>${productActionsHtml(group, config)}</div>
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(config.card.replenishTotal, 0)}</div>
   </div>
-  ${(group.sizes || []).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}
-  ${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}
+  <div class="pr-size-grid">${(group.sizes || []).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}</div>
   <button type="button" class="btn pr-add-size" data-pr-add-size data-record="${escapeHtml(group.productRecordId)}">${escapeHtml(config.texts.addCustomSize)}</button>
 </section>`;
 };
@@ -130,9 +129,9 @@ export const newGroupHtml = (group, draft, store, config) => {
   const normal = (group.sizes?.normal || []).map((size) => newRowHtml(group, size, draft, store, config)).join('');
   const special = (group.sizes?.special || []).map((size) => newRowHtml(group, size, draft, store, config)).join('');
   const specialBlock = special ? `<details class="pr-special"><summary>${escapeHtml(fill(config.card.specialSummary, { count: group.sizes.special.length }))}</summary>
-    <div class="pr-new-grid">${special}</div></details>` : '';
+    <div class="pr-size-grid">${special}</div></details>` : '';
   return `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">${head}
-    <div class="pr-new-grid">${normal}</div>${specialBlock}</section>`;
+    <div class="pr-size-grid">${normal}</div>${specialBlock}</section>`;
 };
 
 export const emptyHtml = (text) => `<div class="pr-empty">${escapeHtml(text)}</div>`;

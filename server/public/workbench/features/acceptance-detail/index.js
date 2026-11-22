@@ -87,7 +87,7 @@ const productsHtml = (groups) => groups.map((group) => {
     + '<div class="pr-group-head"><h2 class="pr-group-name">' + escapeHtml(groupLabel(group)) + '</h2>'
     + '<button class="btn small" type="button" data-add-size="' + escapeHtml(group.productId) + '">'
     + escapeHtml(ARRIVAL_FULL_TEXTS.addSize) + '</button></div>'
-    + '<div data-view="arrival-size-rows">' + rows + '</div></section>';
+    + '<div class="pr-size-grid" data-view="arrival-size-rows">' + rows + '</div></section>';
 }).join('');
 
 const shellHtml = () => '<section class="arrival-summary" data-view="arrival-summary" aria-live="polite"></section>'

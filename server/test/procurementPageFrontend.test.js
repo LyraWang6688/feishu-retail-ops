@@ -95,6 +95,13 @@ test('AC-P18f 上新副标题：供应商为空时不出现孤立的「·」', (
   assert.match(read(`${PUBLIC}/features/procurement/render.js`), /supplier \? config\.card\.newSubtitle : config\.card\.newSubtitleNoSupplier/);
 });
 
+test('尺码区域：采购补货 / 采购上新 / 验收明细共用 .pr-size-grid 两列', () => {
+  const css = read(`${PUBLIC}/procurement.css`);
+  assert.match(css, /\.pr-size-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
+  assert.match(read(`${PUBLIC}/features/procurement/render.js`), /class="pr-size-grid"/);
+  assert.match(read(`${PUBLIC}/features/acceptance-detail/index.js`), /class="pr-size-grid" data-view="arrival-size-rows"/);
+});
+
 test('AC-P26 供应商筛选：按供应商分组和筛选（统计卡已移除）', async () => {
   const filter = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/supplierFilter.js')).href);
   const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
