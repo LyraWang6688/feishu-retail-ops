@@ -74,3 +74,11 @@ test('AC-SQ3 销售单区块按录单日筛选、总金额取销售主表，明�
   assert.deepEqual(data.orders[0].details.map((detail) => detail.fulfillment_status), ['已交付', '未交付', '已退货']);
   assert.equal(data.orders[0].payments.length, 2);
 });
+
+test('AC-SQ4 货品筛选：保留包含该货品的整张订单，不裁剪其他明细，概览不改', async () => {
+  const svc = createSalesQueryService({ gateway: {}, deliveryRead: { listDeliveryData: async () => fixture() }, now: () => TODAY });
+  const data = await svc.getSalesQuery({ from: '2026-11-18', to: '2026-11-18', product: 'A|黑|男' });
+  assert.deepEqual(data.orders.map((order) => order.order_no), ['A-1'], '订单里只要有这个货品就保留整张订单');
+  assert.deepEqual(data.orders[0].details.map((detail) => detail.number), ['A|黑|男', 'B|白|女', 'C|红|女'], '其他货品明细不能被裁掉');
+  assert.equal(data.summary.revenue, 169, '经营概览仍按全部销售统计');
+});

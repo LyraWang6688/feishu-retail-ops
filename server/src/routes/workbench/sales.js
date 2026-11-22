@@ -120,7 +120,7 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
   router.get('/sales/query', async (req, res) => {
     try {
       return res.json({ success: true, ...await salesQuery().getSalesQuery({
-        from: req.query.from, to: req.query.to,
+        from: req.query.from, to: req.query.to, product: req.query.product,
       }) });
     } catch (error) {
       logError('workbench.sales.query.failed', { request_id: req.requestId, error: error.message });

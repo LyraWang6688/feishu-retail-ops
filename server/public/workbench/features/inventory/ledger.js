@@ -3,6 +3,7 @@ import { escapeHtml } from '../../core/formatters.js';
 import { showPageError } from '../../core/ui.js';
 import { bindScrollHints } from '../shared/scrollHint.js';
 import { bindDateControl, dateFieldHtml } from '../shared/dateField.js';
+import { bindProductSearch, productSearchHtml } from '../shared/productSearch.js';
 import { INVENTORY_LEDGER_PAGE as PAGE } from '../../config/inventoryLedger.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
@@ -41,7 +42,7 @@ const tableHtml = (rows) => `<div class="ledger-scroll-wrap scroll-hint-wrap" da
 const tabsHtml = () => TABS.map((tab) => `<button class="ledger-tab${tab.id === 'overview' ? ' active' : ''}" type="button" role="tab" data-ledger-tab="${escapeHtml(tab.id)}" aria-selected="${tab.id === 'overview'}">${escapeHtml(tab.label)}</button>`).join('');
 
 export function createInventoryLedgerModule() {
-  const state = { host: null, tab: 'overview', data: null, loading: false, error: '', from: '', to: '' };
+  const state = { host: null, tab: 'overview', data: null, loading: false, error: '', from: '', to: '', product: null };
 
   function activeTab() {
     return TABS.some((tab) => tab.id === state.tab) ? state.tab : (TABS[0]?.id || 'overview');
@@ -77,11 +78,19 @@ export function createInventoryLedgerModule() {
       return;
     }
     if (summary) summary.textContent = state.data && !state.loading && !state.error ? summaryText(state.data) : '';
-    if (state.loading) { body.innerHTML = `<p class="ledger-empty">${escapeHtml(PAGE.texts.loading)}</p>`; return; }
-    if (state.error) { body.innerHTML = `<p class="ledger-empty">${escapeHtml(state.error)}</p>`; return; }
-    if (!state.data) { body.innerHTML = ''; return; }
+    const filter = productSearchHtml({ mode: 'inventoryLedger', selected: state.product });
+    const bindFilter = () => bindProductSearch(body, {
+      mode: 'inventoryLedger',
+      selected: state.product,
+      onSelect: (item) => { state.product = item; void load(); },
+      onClear: () => { state.product = null; void load(); },
+    });
+    if (state.loading) { body.innerHTML = `${filter}<p class="ledger-empty">${escapeHtml(PAGE.texts.loading)}</p>`; bindFilter(); return; }
+    if (state.error) { body.innerHTML = `${filter}<p class="ledger-empty">${escapeHtml(state.error)}</p>`; bindFilter(); return; }
+    if (!state.data) { body.innerHTML = filter; bindFilter(); return; }
     const rows = Array.isArray(state.data.rows) ? state.data.rows : [];
-    body.innerHTML = rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
+    body.innerHTML = `${filter}${rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`}`;
+    bindFilter();
     if (rows.length) bindScrollHints(body);
   }
 
@@ -110,6 +119,7 @@ export function createInventoryLedgerModule() {
       const query = new URLSearchParams();
       if (from) query.set('from', from);
       if (to) query.set('to', to);
+      if (state.product?.number) query.set('product', state.product.number);
       const data = await api.get(query.toString() ? `${PAGE.api}?${query}` : PAGE.api);
       state.data = data;
       state.loading = false;
@@ -131,6 +141,7 @@ export function createInventoryLedgerModule() {
       state.error = '';
       state.from = '';
       state.to = '';
+      state.product = null;
       showPageError('');
       const today = todayKey();
       host.innerHTML = `<div class="domain-page ledger-page">

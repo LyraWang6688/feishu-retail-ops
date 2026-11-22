@@ -1,0 +1,19 @@
+/* 统一货品搜索：输入 + 候选 + 已选货品。 */
+.ps-search { display: grid; gap: 6px; min-width: 0; }
+.ps-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.ps-input-wrap { display: block; min-width: 0; }
+.ps-input { box-sizing: border-box; width: 100%; height: var(--control-height); padding: 0 10px; border: 1px solid var(--control-border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; font-size: var(--font-size-sm); }
+.ps-input:focus { outline: 2px solid var(--primary-soft); border-color: var(--primary); }
+.ps-selected { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
+.ps-selected[hidden] { display: none; }
+.ps-selected b { overflow: hidden; color: var(--text); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.ps-clear { flex: none; width: 28px; height: 28px; border: 0; border-radius: 50%; background: var(--surface-soft); color: var(--text-secondary); font-size: 18px; line-height: 1; cursor: pointer; }
+.ps-results { display: grid; max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-card); }
+.ps-results[hidden] { display: none; }
+.ps-result { display: flex; flex-direction: column; gap: 2px; min-height: 44px; padding: 8px 10px; border: 0; border-top: 1px solid var(--border-light); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.ps-result:first-child { border-top: 0; }
+.ps-result:hover { background: var(--surface-soft); }
+.ps-result b { font-size: var(--font-size-sm); font-weight: 500; }
+.ps-result small { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.ps-status { margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }
+.ps-status[hidden] { display: none; }
