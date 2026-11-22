@@ -30,6 +30,7 @@ const { createPurchaseTransactionService } = require('../../services/purchaseTra
 //     也自动带上父 router 的准入闸门 / no-store / ui-tap 结果事件（不新开鉴权）。
 //   🔴 提交走既有 `multiItemOrderService` → `publishPurchaseRequest`（不新建写库路径）。
 const { PROCUREMENT_PAGE } = require('../../config/procurementPage');
+const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
 const { submitToastUrl } = require('../../utils/submitToast');
 // ⭐ 2026-11-17：验收提交后的「是否打印」轻页 + 打印意图。
 const { SOURCES } = require('../../config/labelPrintQueue');
@@ -40,6 +41,8 @@ const { createProcurementPageService } = require('../../services/procurementPage
 const { createProcurementPageSubmitService } = require('../../services/procurementPageSubmitService');
 const { createProcurementSubmissionIndex } = require('../../services/procurementSubmissionIndex');
 const { createProcurementSubmittedService } = require('../../services/procurementSubmittedService');
+const { createProcurementModifyService } = require('../../services/procurementModifyService');
+const { createProcurementModifyDelivery } = require('../../services/procurementModifyDelivery');
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 const { createPurchaseAcceptanceSampleService } = require('../../services/purchaseAcceptanceSampleService');
@@ -48,16 +51,7 @@ const { createSupplierBalanceService } = require('../../services/supplierBalance
 
 const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
   const router = express.Router();
-  // ⭐ 2026-10-09（业务负责人当天 15:07：「**采购**，按照**采购订单**，有**验收到货**的按钮」）：
-  //   订单列表 · **采购**子 tab 那一行上的「验收到货」。
-  //   🔴 **不新开鉴权**：它就挂在这条 `requireWorkbenchAccess` 之后（与其它工作台接口同一道闸门）。
-  //   🔴 **不新写一套入库**：本路由只收 `{ batchNo, actualAmount }`（她 2026-10-16：「到货说明必须得删」），
-  //      原样交给 `WorkbenchPurchaseArrivalService` → 既有
-  //      `PurchaseArrivalConversationService.confirmBatchArrival` →
-  //      既有 `PurchaseWebhookService.confirmArrival`（逐条 `InventoryService.applyPurchase`）。
-  //   ⚠️ 「发生金额」是**既有必填口径**（业务负责人 2026-10-08：「金额这个是必填的」），
-  //      所以那个按钮点开的是一个小表单，不是一个"点了就入库"的裸按钮。
-  //   ⚠️ 依赖**延迟构建**：只想注入一个桩的调用方（测试）不必先配好飞书凭证。
+  // 采购/验收到货入口：挂既有鉴权，不新开入库路径；金额必填。
   let purchaseArrival = options.purchaseArrival || null;
   // ⭐ 2026-11-17：验收单（对方单据）要在**主体写完之后**再写这一批的附件 —— 必须与验收链路
   //   共用同一个 `PurchaseWebhookService` 实例（同一个 store / gateway）。用例可注入 `options.webhooks`。
@@ -642,12 +636,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       return res.status(status).json({ success: false, error: error.message });
     }
   });
-  // ── 采购页（供应 → 录单 → 采购）：补货 / 上新 两个 tab 的真实数据 + 统一提交 ────────────
-  //   业务口径（2026-10-28 业务负责人确认，见 `docs/procurement-page-real-2026-10-28.md`）：
-  //   · 补货：只查「销售明细」一张表（库存数量 = 0；销售日 = 今天 00:00 往前 3 个自然日）；
-  //   · 上新：货品信息 上架日期 = 今天；顶部统计只有「新增货品」；
-  //   · 扫一扫：本轮只占位（无接口）；提交复用既有采购链路（不新建草稿表/写库路径）。
-  //   ⚠️ 依赖**延迟构建**：只想注入一个桩的用例不必先配好飞书凭证。
+  // 采购页数据 / 提交 / 今日已提交修改。依赖延迟构建，便于测试注入。
   let procurementPage = options.procurementPage || null;
   const resolveProcurementPage = () => {
     if (!procurementPage) {
@@ -673,15 +662,42 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     return procurementSubmit;
   };
   const procurementTexts = PROCUREMENT_PAGE.texts;
+  const procurementSubmissionIndex = options.procurementSubmissionIndex || createProcurementSubmissionIndex();
   let procurementSubmitted = options.procurementSubmitted || null;
   const resolveProcurementSubmitted = () => {
     if (!procurementSubmitted) {
       procurementSubmitted = createProcurementSubmittedService({
-        submissionIndex: options.procurementSubmissionIndex || createProcurementSubmissionIndex(),
+        submissionIndex: procurementSubmissionIndex,
         purchaseQuery: options.purchaseQuery || createPurchaseQueryService(options.gateway || new V1BitableGateway()),
       });
     }
     return procurementSubmitted;
+  };
+  let procurementModify = options.procurementModify || null;
+  const resolveProcurementModify = () => {
+    if (!procurementModify) {
+      const gateway = options.gateway || new V1BitableGateway();
+      const webhooks = options.webhooks || new PurchaseWebhookService({ gateway });
+      const delivery = createProcurementModifyDelivery({
+        gateway,
+        schema: options.schema || V1_BITABLE_SCHEMA,
+        config: PROCUREMENT_PAGE,
+        purchaseWebhooks: webhooks,
+        orderBatches: webhooks.orderBatches,
+        batchLocator: webhooks.batchLocator,
+      });
+      procurementModify = createProcurementModifyService({
+        gateway,
+        schema: options.schema || V1_BITABLE_SCHEMA,
+        config: PROCUREMENT_PAGE,
+        submissionIndex: procurementSubmissionIndex,
+        purchaseQuery: options.purchaseQuery || createPurchaseQueryService(gateway),
+        orderBatches: webhooks.orderBatches,
+        sizeReferences: new SizeReferenceService({ gateway }),
+        deliverRevision: delivery.deliver,
+      });
+    }
+    return procurementModify;
   };
   router.get(PROCUREMENT_PAGE.endpoints.submittedToday, async (req, res) => {
     try {
@@ -689,6 +705,22 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       return res.json({ success: true, batches });
     } catch (error) {
       logError('workbench.procurement.submitted_today.failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: procurementTexts.loadFailed });
+    }
+  });
+  router.post(PROCUREMENT_PAGE.endpoints.modify, async (req, res) => {
+    try {
+      const result = await resolveProcurementModify().modify({
+        openId: req.workbenchUser?.open_id,
+        batchNo: req.body?.batchNo,
+        submitKey: req.body?.submitKey,
+        items: req.body?.items,
+        requestId: req.requestId,
+      });
+      if (!result.ok) return res.status(400).json({ success: false, code: result.code, error: result.message });
+      return res.json({ success: true, ...result });
+    } catch (error) {
+      logError('workbench.procurement.modify.failed', { request_id: req.requestId, error: error.message });
       return res.status(502).json({ success: false, error: procurementTexts.loadFailed });
     }
   });

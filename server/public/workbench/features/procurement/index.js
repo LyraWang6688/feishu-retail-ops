@@ -13,6 +13,7 @@ import { customSizesValid, customRowsError } from './customSize.js';
 import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml, supplierNameMap } from './pending.js';
 import { createProcurementSearch } from './search.js';
+import { createModifyController } from './modify.js';
 import { buildSuggestedBody, suggestedHtml } from './suggested.js';
 import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
 const DATA_TABS = ['replenish', 'new'];
@@ -94,19 +95,29 @@ export function mountProcurementPage(host) {
     state.tab = tab;
     const searchWrap = host.querySelector('.pr-search');
     if (searchWrap) searchWrap.hidden = tab === 'pending';
-    host.querySelectorAll('[data-pr-tab]').forEach((button) => {
-      button.classList.toggle('active', button.dataset.prTab === tab);
-    });
+    host.querySelectorAll('[data-pr-tab]').forEach((button) => button.classList.toggle('active', button.dataset.prTab === tab));
     TABS.forEach((id) => panelEl(id)?.classList.toggle('hidden', id !== tab));
     if (tab === 'pending') { paint(); void loadSubmitted(); return; }
     if (!state.bodies.replenish || !state.bodies.new) await loadAll(options.force === true);
     else paint();
   };
+  const modifyCtl = createModifyController({ host, config, api: remote, getStore: () => store, getDraft: () => draft, setDraft,
+    toast: submitCtl.toast, onDone: async () => { setDraft(store.ensure()); await loadSubmitted(); await activate('pending'); } });
   host.addEventListener('click', async (event) => {
     const tabButton = event.target.closest('[data-pr-tab]');
     if (tabButton) { search.hide(); await activate(tabButton.dataset.prTab); return; }
+    const modifyButton = event.target.closest('[data-pr-modify-batch]');
+    if (modifyButton) {
+      const batch = state.submitted.find((row) => row.batch_no === modifyButton.dataset.prModifyBatch);
+      const started = modifyCtl.start(batch);
+      if (!started.ok) { submitCtl.toast(host, started.error); return; }
+      state.supplierId = batch.supplier_record_id || ''; await activate('suggested'); return;
+    }
     const supplier = event.target.closest('[data-pr-supplier]');
-    if (supplier) { search.hide(); state.supplierId = supplier.dataset.prSupplier || ''; paint(); return; }
+    if (supplier) {
+      if (modifyCtl.active() && !modifyCtl.supplierAllowed(supplier.dataset.prSupplier)) { submitCtl.toast(host, config.texts.modifySupplierLocked); return; }
+      search.hide(); state.supplierId = supplier.dataset.prSupplier || ''; paint(); return;
+    }
     const step = event.target.closest('[data-pr-step]');
     if (step) {
       const { record, size } = step.dataset;
@@ -140,6 +151,11 @@ export function mountProcurementPage(host) {
     if (event.target.closest('[data-pr-submit]')) {
       if (!customSizesValid({ draft, bodies: state.bodies, tabs: DATA_TABS, store })) {
         submitCtl.toast(host, config.texts.customSizeInvalid); return;
+      }
+      if (modifyCtl.active()) {
+        const changed = await modifyCtl.submit(draft);
+        if (changed.ok) setDraft(store.ensure());
+        return;
       }
       const result = await submitCtl.submit(host, draft);
       if (result.ok) { setDraft(store.ensure()); paint(); refreshNumbers(); }

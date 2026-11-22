@@ -323,3 +323,27 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
   // 提交成功清空整张草稿（两个来源都清）
   expect((await draftInStorage(page)).products).toEqual({});
 });
+
+test('AC-P31 今日已提交：修改按钮打开原批次，预填数量并提交 modify', async ({ page }) => {
+  const calls = await mockApi(page, {
+    submittedBatches: [{
+      batch_no: 'CGD-E2E-0001', supplier_record_id: 'recSupA', supplier_name: '供应商 A',
+      submitted_at: '2026-10-28T08:25:00Z', product_count: 1, total_quantity: 1,
+      products: [{ product_record_id: 'recProdA', item_no: '86822', number: '86822', color: '黑色', entries: [{ size: 39, quantity: 1 }] }],
+    }],
+  });
+  await page.reload();
+  await openPage(page);
+  await tab(page, /待提交列表/).click();
+  await expect(page.getByText('CGD-E2E-0001')).toBeVisible();
+  await page.locator('[data-pr-modify-batch="CGD-E2E-0001"]').click();
+  await expect(page.locator('[data-pr-modify-banner]')).toContainText('正在修改 CGD-E2E-0001');
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
+  await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="39"]').click();
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('2');
+  await page.getByRole('button', { name: '提交修改' }).click();
+  await expect.poll(() => calls.modify.length).toBe(1);
+  const payload = calls.modify[0];
+  expect(payload.batchNo).toBe('CGD-E2E-0001');
+  expect(payload.items).toContainEqual({ productRecordId: 'recProdA', source: 'replenish', entries: [{ size: 39, quantity: 2 }] });
+});
