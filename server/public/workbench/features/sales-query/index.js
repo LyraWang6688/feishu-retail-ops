@@ -6,7 +6,6 @@ import { bindDateControl, dateFieldHtml } from '../shared/dateField.js';
 import { bindProductSearch, productSearchHtml } from '../shared/productSearch.js';
 import { SALES_QUERY_PAGE as PAGE } from '../../config/salesQuery.js';
 
-const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const money = (value) => Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
 const amountText = (value) => `¥${money(value)}`;
 const dateKey = (date) => {
@@ -61,7 +60,7 @@ function ordersHtml(orders) {
     const pays = (order.payments || []).length
       ? order.payments.map((payment) => `<span class="sq-pay-tag">${escapeHtml(payment.method)} <b>${escapeHtml(amountText(payment.amount))}</b> · ${escapeHtml(payment.status)}</span>`).join('')
       : `<span class="sq-pay-tag">未收款</span>`;
-    const details = (order.details || []).map((detail) => `<tr class="sq-detail-row">
+    const details = (order.details || []).map((detail) => `<tr>
       <td class="sq-detail-product">${escapeHtml(detail.number || '')}</td>
       <td class="sq-detail-size">${escapeHtml(detail.size == null ? '' : detail.size)} 码</td>
       <td class="sq-detail-amount">${escapeHtml(amountText(detail.actual_amount))}</td>

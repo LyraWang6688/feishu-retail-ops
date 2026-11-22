@@ -1,8 +1,13 @@
 /**
  * 统一货品搜索配置。
  *
- * 搜索阶段统一按「货号 itemNo」模糊匹配；选中具体货品后，页面按完整「编号 number」精确过滤。
- * 数据来源 / 结果渲染 / 采购页前端过滤仍由各页面自己决定，不强行合并。
+ * 当前真正生效的只有两种模式：salesDetail / inventoryLedger。
+ * 共同规则：搜索阶段按「货号 itemNo」模糊匹配；选中具体货品后，
+ * 页面按完整「编号 number」精确过滤。
+ *
+ * 预留字段（当前组件不读取，等现有搜索页迁移时再按需加回）：
+ *   source / matchField / matchType / filterField / limit
+ * 不在现在写死这些未消费字段，避免再次出现“配置存在但不生效”的死配置。
  */
 export const PRODUCT_SEARCH_TEXT = Object.freeze({
   label: '货品',
@@ -15,34 +20,14 @@ export const PRODUCT_SEARCH_TEXT = Object.freeze({
 });
 
 export const PRODUCT_SEARCH_MODES = Object.freeze({
-  productLookup: Object.freeze({
-    source: 'server', matchField: 'itemNo', matchType: 'contains',
-    includeDelisted: false, filterField: 'number', debounceMs: 250, limit: 50,
-  }),
-  productCompletion: Object.freeze({
-    source: 'server', matchField: 'itemNo', matchType: 'contains',
-    includeDelisted: false, filterField: 'number', debounceMs: 250, limit: 50,
-  }),
-  productDelisted: Object.freeze({
-    source: 'server', matchField: 'itemNo', matchType: 'contains',
-    includeDelisted: true, filterField: 'number', debounceMs: 250, limit: 2000,
-  }),
   salesDetail: Object.freeze({
-    source: 'server', matchField: 'itemNo', matchType: 'contains',
-    includeDelisted: true, filterField: 'number', debounceMs: 250, limit: 50,
+    includeDelisted: true,
+    debounceMs: 250,
   }),
   inventoryLedger: Object.freeze({
-    source: 'server', matchField: 'itemNo', matchType: 'contains',
-    includeDelisted: true, filterField: 'number', debounceMs: 250, limit: 50,
-  }),
-  procurement: Object.freeze({
-    source: 'client', matchField: 'itemNo', matchType: 'contains',
-    includeDelisted: false, filterField: 'number', withinSupplier: true, debounceMs: 0,
-  }),
-  salesDelivery: Object.freeze({
-    source: 'client', matchField: 'number', matchType: 'exact',
-    includeDelisted: false, filterField: 'number', control: 'select',
+    includeDelisted: true,
+    debounceMs: 250,
   }),
 });
 
-export const productSearchMode = (mode) => PRODUCT_SEARCH_MODES[mode] || PRODUCT_SEARCH_MODES.productLookup;
+export const productSearchMode = (mode) => PRODUCT_SEARCH_MODES[mode] || PRODUCT_SEARCH_MODES.salesDetail;
