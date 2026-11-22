@@ -25,6 +25,8 @@ const SUPPLIER_BALANCE = Object.freeze({
   visibility: Object.freeze({
     includeWhen: Object.freeze([
       Object.freeze({ rule: 'numberNotZero', field: 'balance' }),
+      // 余额刚好为 0、但最近窗口内有交易的供应商仍要出现在交易流水。
+      Object.freeze({ rule: 'hasRecentTransactions' }),
     ]),
   }),
 
