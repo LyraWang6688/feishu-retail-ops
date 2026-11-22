@@ -133,11 +133,6 @@ export const DOMAIN_TABS = [
         ],
       },
       {
-        id: 'purchase-supplier-money',
-        label: '往来款',
-        kind: 'supplier-balance',
-      },
-      {
         id: 'purchase-transactions',
         label: '交易记录',
         kind: 'links',
@@ -145,6 +140,11 @@ export const DOMAIN_TABS = [
         cards: [
           { icon: '📒', title: '交易记录', href: PURCHASE_TRANSACTION_FORM_URL },
         ],
+      },
+      {
+        id: 'purchase-supplier-money',
+        label: '供应分析',
+        kind: 'supplier-balance',
       },
       {
         id: 'purchase-suppliers',

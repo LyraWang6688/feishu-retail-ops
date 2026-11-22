@@ -273,12 +273,14 @@ test('配品配置：赠品勾选、列表标签、种类动态新增', async ({
   expect(categorySubmitted.category).toBe('新种类');
 });
 
-test('供应往来款：供应商余额 + 最近30天交易', async ({ page }) => {
+test('供应分析：交易流水 / 供应总览，默认交易流水', async ({ page }) => {
   await mockApi(page);
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '供应', exact: true }).click();
-  await page.getByRole('button', { name: '往来款', exact: true }).click();
+  await expect(page.locator('[data-domain-page]:visible')).toHaveText(['录单', '交易记录', '供应分析', '名录']);
+  await page.getByRole('button', { name: '供应分析', exact: true }).click();
   await expect(page.locator('[data-page-kind="supplier-balance"]')).toBeVisible();
+  await expect(page.locator('[data-sb-tab]')).toHaveText(['交易流水', '供应总览']);
   await expect(page.getByRole('heading', { name: '往来款', exact: true })).toHaveCount(0);
   await expect(page.locator('[data-sb-card]')).toHaveCount(2);
   await expect(page.locator('[data-sb-card]').first()).toContainText('七匹狼/吉祥鸟');
@@ -287,6 +289,22 @@ test('供应往来款：供应商余额 + 最近30天交易', async ({ page }) =
   await page.getByPlaceholder('搜索供应商').fill('恒安利');
   await expect(page.locator('[data-sb-card]')).toHaveCount(1);
   await expect(page.locator('[data-sb-card]')).toContainText('恒安利');
+  await page.locator('[data-sb-tab="overview"]').click();
+  await expect(page.getByText('供应总览正在建设中。')).toBeVisible();
+  await expect(page.locator('[data-sb-list]')).toBeHidden();
+  await page.locator('[data-sb-tab="transactions"]').click();
+  await page.evaluate(() => {
+    document.querySelector('[data-page-kind="supplier-balance"]').style.minHeight = '1600px';
+    document.body.style.minHeight = '2400px';
+    window.scrollTo(0, 700);
+  });
+  await page.waitForTimeout(80);
+  const sticky = await page.evaluate(() => {
+    const main = document.querySelector('.main-tabs')?.getBoundingClientRect();
+    const head = document.querySelector('.sb-sticky-head')?.getBoundingClientRect();
+    return { mainBottom: main ? main.bottom : 0, headTop: head ? head.top : 0 };
+  });
+  expect(sticky.headTop).toBeGreaterThanOrEqual(sticky.mainBottom - 2);
 });
 
 test('每日现金：录单子卡片、期初已填写状态', async ({ page }) => {

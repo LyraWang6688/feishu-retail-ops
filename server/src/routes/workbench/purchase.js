@@ -718,7 +718,7 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       return res.status(502).json({ success: false, error: procurementTexts.submitFailed });
     }
   });
-  // 「供应 → 往来款」只读：供应商最新余额 + 最近 30 天 P 交易明细。
+  // 「供应 → 供应分析」只读：供应商最新余额 + 最近 30 天 P 交易明细。
   let supplierBalance = options.supplierBalance || null;
   const resolveSupplierBalance = () => {
     if (!supplierBalance) {
