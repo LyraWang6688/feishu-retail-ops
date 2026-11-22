@@ -105,8 +105,6 @@ export const ORDERS_API = {
   afterSales: '/api/workbench/sales/after-sales',
   // 采购验收：读采购申请 + 按批次确认到货（既有路由）。
   purchaseRequests: '/api/workbench/purchase/requests',
-  // ⭐ 2026-11-09：验收页第一层 = 「供应商管理」全部供应商（只读；走配置表缓存 supplier）
-  suppliers: '/api/workbench/purchase/suppliers',
   arrivalConfirm: '/api/workbench/purchase/arrivals/confirm',
 };
 

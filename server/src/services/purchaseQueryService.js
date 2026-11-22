@@ -65,24 +65,6 @@ const createPurchaseQueryService = (gateway, options = {}) => {
   const cachedListAll = createTableReadCache({ ttlMs: tableTtlMs, now: options.now || (() => Date.now()) });
 
   /**
-   * ⭐ 2026-11-09（业务负责人）：验收页第一层 = **供应商管理里的全部供应商**（固定出现，
-   *   不管有没有未到货批次）。
-   *   · 只读：`getConfigRows({ tableKey: 'supplier' })` —— 走统一配置表缓存
-   *     （`config/configTables.js` 已登记 supplier，TTL 30 分钟；record_changed 会失效）；
-   *   · 顺序 = 配置表里的顺序（不自己排序，保证"固定出现"的稳定顺序）；
-   *   · 名称取「供应商名称」；空名字的行跳过（不显示无名卡片）。
-   */
-  const listSuppliers = async () => {
-    const suppliers = await getConfigRows({ gateway, tableKey: 'supplier' });
-    return (suppliers || [])
-      .map((record) => ({
-        record_id: String(record?.record_id || '').trim(),
-        name: asText('supplier', record, 'name').trim(),
-      }))
-      .filter((item) => item.name);
-  };
-
-  /**
    * 2026-11-19：按报货批次读**本批采购明细**（不再整表读后过滤）。
    * 「供应主表.采购明细」是双向关联，直接拿本批明细 record_id → getBatch。
    * 关联字段不能用于飞书 filter（项目已实测），所以走主表 link 是最稳的按批次下推。
@@ -206,7 +188,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
     }).sort((a, b) => String(b.batch_no).localeCompare(String(a.batch_no)) || a.size - b.size);
   };
 
-  return { listPurchaseRequests, listPurchaseRequestsForBatch, listSuppliers };
+  return { listPurchaseRequests, listPurchaseRequestsForBatch };
 };
 
 module.exports = { createPurchaseQueryService };

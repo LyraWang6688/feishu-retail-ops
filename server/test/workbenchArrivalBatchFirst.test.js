@@ -146,30 +146,23 @@ test('AC-RC1 ⭐⭐ 验收页第一层=供应商卡片；点供应商后按采�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-RC1c 第一层固定展示「供应商管理」全部供应商（没有未到货也出现）
+// AC-RC1c 第一层只展示当前有未到货批次的供应商
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RC1c ⭐ 第一层固定展示供应商管理全部供应商（没有未到货也出现 + 空态）', async () => {
+test('AC-RC1c ⭐ 第一层只出现有未到货批次的供应商', async () => {
   const orders = await loadOrdersModule();
   const suppliers = [
     { record_id: 's1', name: '供应商甲' },
     { record_id: 's2', name: '供应商乙' },
-    { record_id: 's3', name: '供应商丙' }, // 没有未到货批次 ⇒ 也要固定出现
+    { record_id: 's3', name: '供应商丙' }, // 没有未到货批次 ⇒ 不出现
   ];
   const html = orders.purchaseOrdersHtml(BATCH_ROWS, { suppliers });
-  assert.equal((html.match(/data-action="pick-supplier"/g) || []).length, 3,
-    '配置表 3 个供应商 ⇒ 3 张卡片（不管有没有未到货）✓');
-  assert.ok(html.includes('供应商丙'), '没有未到货的供应商也要出现 ✓');
-  assert.ok(html.includes('暂无未到货'), '没有未到货时卡片摘要 = 配置文案 ✓');
-  assert.ok(html.includes('供应商甲'), '有未到货的供应商照旧 ✓');
-  // 点进"没有未到货"的供应商 ⇒ 第二层空态（不渲染任何批次卡）
-  const empty = orders.purchaseOrdersHtml(BATCH_ROWS, { suppliers, supplierKey: 's3' });
-  assert.ok(empty.includes('供应商丙'), '空态里仍显示供应商名 ✓');
-  assert.ok(empty.includes('这个供应商暂时没有未到货的批次'), '空态人话走配置 ✓');
-  assert.equal(empty.includes('data-purchase-batch'), false, '没有未到货 ⇒ 不渲染批次卡 ✓');
-  // 配置表读不到（suppliers 为空）⇒ 退回原来的"有未到货的供应商"，页面不空白
+  assert.equal((html.match(/data-action="pick-supplier"/g) || []).length, 2,
+    '只有两家有未到货 ⇒ 两张卡片（不再显示全部供应商）✓');
+  assert.equal(html.includes('供应商丙'), false, '没有未到货的供应商不出现 ✓');
+  assert.ok(html.includes('供应商甲') && html.includes('供应商乙'), '有未到货的供应商照旧 ✓');
   const fallback = orders.purchaseOrdersHtml(BATCH_ROWS, { suppliers: [] });
-  assert.ok(fallback.includes('供应商甲') && fallback.includes('供应商乙'), '无配置表时按未到货供应商兜底 ✓');
+  assert.ok(fallback.includes('供应商甲') && fallback.includes('供应商乙'), '没有供应商配置时按未到货供应商出现 ✓');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

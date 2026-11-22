@@ -12,7 +12,7 @@ const PF = {
   ...F.paymentTransaction.fields,
   ...SUPPLIER_BALANCE.transactionFields,
 };
-const supplier = (id, name, longTerm) => ({ record_id: id, fields: { [F.supplier.fields.name]: name, [F.supplier.fields.longTerm]: longTerm } });
+const supplier = (id, name) => ({ record_id: id, fields: { [F.supplier.fields.name]: name } });
 const init = (name, amount) => ({ record_id: `init_${name}`, fields: { [F.supplierBalanceInit.fields.supplierName]: name, [F.supplierBalanceInit.fields.initialBalance]: amount } });
 const tx = (id, name, date, extra = {}) => ({
   record_id: id,
@@ -32,12 +32,12 @@ const serviceOf = (data) => createSupplierBalanceService({
 });
 
 const baseSuppliers = [
-  supplier('s1', '七匹狼/吉祥鸟', true),
-  supplier('s2', '一代千金', true),
-  supplier('s3', '三星', true),
-  supplier('s4', '恒安利', false),
-  supplier('s5', '舒美特', false),
-  supplier('s6', '贵帝', false),
+  supplier('s1', '七匹狼/吉祥鸟'),
+  supplier('s2', '一代千金'),
+  supplier('s3', '三星'),
+  supplier('s4', '恒安利'),
+  supplier('s5', '舒美特'),
+  supplier('s6', '贵帝'),
 ];
 const baseInits = [
   init('七匹狼/吉祥鸟', 27698), init('一代千金', 9450), init('三星', 0),
@@ -71,15 +71,14 @@ const baseTxs = [
   }),
 ];
 
-test('供应商显示：长期合作固定显示；未勾选仅最新余额非 0 显示', async () => {
+test('供应商显示：只显示最新余额非 0 的供应商', async () => {
   const result = await serviceOf({ suppliers: baseSuppliers, inits: baseInits, txs: baseTxs }).list();
   assert.deepEqual(result.suppliers.map((item) => item.name).sort(), [
-    '七匹狼/吉祥鸟', '一代千金', '三星', '信踏', '恒安利', '舒美特',
+    '七匹狼/吉祥鸟', '信踏', '恒安利', '舒美特',
   ].sort());
-  assert.equal(result.suppliers.some((item) => item.name === '贵帝'), false, '未勾选且余额 0 ⇒ 不显示');
-  assert.deepEqual(result.suppliers.slice(0, 3).map((item) => item.longTerm), [true, true, true], '长期合作优先排序');
-  const star = result.suppliers.find((item) => item.name === '三星');
-  assert.equal(star.balance, 0);
+  assert.equal(result.suppliers.some((item) => item.name === '贵帝'), false, '余额 0 ⇒ 不显示');
+  assert.equal(result.suppliers.some((item) => item.name === '三星'), false, '余额 0 ⇒ 不显示');
+  assert.equal(result.suppliers.some((item) => item.name === '一代千金'), false, '最新余额 0 ⇒ 不显示');
 });
 
 test('余额来源：有交易取最新交易日最新余额；没有交易取初始化', async () => {
@@ -102,9 +101,9 @@ test('最近 30 天：旧交易不展示，但仍参与最新余额判断', asyn
   assert.equal(qpl.transactions.some((item) => item.recordId === 'old'), false);
 });
 
-test('未勾选 + 有交易但最新余额 0 ⇒ 不显示', async () => {
+test('有交易但最新余额 0 ⇒ 不显示', async () => {
   const result = await serviceOf({
-    suppliers: [...baseSuppliers, supplier('s7', '零余额', false)],
+    suppliers: [...baseSuppliers, supplier('s7', '零余额')],
     inits: [...baseInits],
     txs: [...baseTxs, tx('zero', '零余额', '2026-11-20T18:00:00+08:00', {
       [PF.behavior]: '入库',
