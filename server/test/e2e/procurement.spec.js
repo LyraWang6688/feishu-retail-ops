@@ -56,7 +56,7 @@ test('AC-P26 供应商筛选：无「全部」，默认第一个供应商；统�
   await mockApi(page);
   await page.reload();
   await openPage(page);
-  const filter = page.locator('[data-pr-supplier]');
+  const filter = page.locator('[data-pr-supplier]:visible');
   await expect(filter).toHaveCount(2);
   await expect(filter.nth(0)).toHaveText('供应商 A');
   await expect(filter.nth(1)).toHaveText('供应商 B');
@@ -70,8 +70,8 @@ test('AC-P26 供应商筛选：无「全部」，默认第一个供应商；统�
   await expect(page.getByText('92608 · 咖色')).toBeVisible();
   await expect(page.getByText('86822 · 黑色')).toHaveCount(0);
   await tab(page, /上新/).click();
-  await expect(page.locator('[data-pr-supplier]')).toHaveCount(2);
-  await expect(page.locator('[data-pr-supplier]').nth(1)).toHaveText('供应商 B');
+  await expect(page.locator('[data-pr-supplier]:visible')).toHaveCount(2);
+  await expect(page.locator('[data-pr-supplier]:visible').nth(1)).toHaveText('供应商 B');
 });
 
 test('AC-P28 顶部 tab + 搜索框固定；搜索只筛当前供应商货号', async ({ page }) => {
