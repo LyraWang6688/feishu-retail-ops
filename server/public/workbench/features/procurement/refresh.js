@@ -7,7 +7,7 @@
  *   ③ 刷新失败**不白屏**：保留当前数据 + 一条提示；提交进行中不刷新（避免打断）。
  */
 export const createRefresher = ({
-  host, config, panels, remote, getStore, getDraft, state, setDraft, paint, refreshNumbers, submitCtl,
+  host, config, panels, remote, getStore, getDraft, state, setDraft, paint, refreshNumbers, submitCtl, reload,
 }) => {
   let busy = false;
   const buttonOf = () => host.querySelector('[data-pr-refresh]');
@@ -19,6 +19,11 @@ export const createRefresher = ({
     busy = true;
     const tab = state.tab;
     try {
+      if (typeof reload === 'function') {
+        await reload();
+        submitCtl.toast(host, config.texts.refreshed);
+        return;
+      }
       const store = getStore();
       const result = await panels[tab].load({ api: remote, store, draft: getDraft(), force: true });
       state.bodies[tab] = result.body;

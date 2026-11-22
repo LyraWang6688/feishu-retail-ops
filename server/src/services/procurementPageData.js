@@ -26,8 +26,8 @@ const dayIso = (epoch, offsetMinutes) => new Date(Number(epoch) + Number(offsetM
   .toISOString().slice(0, 10);
 
 /**
- * 补货窗口：默认 `[今天 00:00 - days 天, 今天 00:00)`（= 最近 days 个完整自然日，不含今天）。
- * `includeToday: true` 时改为 `[今天 - (days-1) 天, 现在]`。
+ * 补货窗口：默认 `[今天 - (days-1) 天 00:00, 今天 00:00)`（= 最近 days 个完整自然日，不含今天）。
+ * `includeToday: true` 时改为 `[今天 - (days-1) 天 00:00, 现在]`。
  */
 const replenishWindow = (now, config) => {
   const days = config.window.replenishDays;
@@ -35,7 +35,7 @@ const replenishWindow = (now, config) => {
   const today = dayStart(now, offset);
   // 业务负责人 2026-10-29 口径：开始 = **今天 00:00 - days 天**；结束 = **现在**
   // （例：10-29 00:57 ⇒ 10-26 00:00 ~ 10-29 00:57；跨月/跨年由 epoch 自动进位）
-  const start = today - days * DAY_MS;
+  const start = today - Math.max(0, days - 1) * DAY_MS;
   if (config.window.includeToday) {
     return { start, end: Number(now), days, from: dayIso(start, offset), to: dayIso(now, offset) };
   }

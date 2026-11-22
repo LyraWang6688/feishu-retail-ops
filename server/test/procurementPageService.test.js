@@ -3,7 +3,7 @@
  *
  * 口径（2026-10-28 业务负责人确认）：
  *   · **只查「销售明细」一张表**（业务负责人纠正：库存数量来自销售明细，不是实时库存）；
- *   · 补货筛选公式 = `库存数量 = 0` + `销售日 >= TODAY()-3`；
+ *   · 补货筛选公式 = `库存数量 = 0` + `销售日 >= TODAY()-7`；
  *   · 上新筛选公式 = `上架日期 >= TODAY()-6`（最近 7 天）；
  *   · 交易类型判据来自「行为管理.行为编码」（复用 salesMovements 的编码集合）。
  */
@@ -84,7 +84,7 @@ const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], 
   };
 };
 
-test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 = 库存数量=0 + 销售日>=TODAY()-3；不读实时库存', async () => {
+test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 = 库存数量=0 + 销售日>=TODAY()-7；不读实时库存', async () => {
   const gateway = makeGateway({
     sales: [salesRecord({ id: 'recA', size: 39, code: 'SALE_CASH' }), salesRecord({ id: 'recA', size: 41, code: 'SALE_PREPAID' })],
     products: [productBatchRecord({ id: 'recA' })],
@@ -103,7 +103,7 @@ test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 =
   const filters = gateway.calls.filter((call) => call.kind === 'listByFilter');
   assert.deepEqual(filters.map((call) => call.tableKey), ['salesDetail']);
   assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.stockQuantity}\\]=(0|"0")`));
-  assert.match(filters[0].filter, /TODAY\(\)-3/);
+  assert.match(filters[0].filter, /TODAY\(\)-7/);
   assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.soldAt}\\]`));
   // getBatch：先按记录 ID 读货品，再按颜色关联 ID 读颜色管理（解析显示名；Bug-2 修复）
   assert.deepEqual(gateway.calls.filter((call) => call.kind === 'getBatch').map((call) => call.tableKey), ['product', 'color']);

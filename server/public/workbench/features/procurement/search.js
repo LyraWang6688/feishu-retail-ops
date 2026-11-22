@@ -4,11 +4,18 @@ import { escapeHtml } from '../../core/formatters.js';
 export const searchResultsOf = (bodies, query) => {
   const text = String(query || '').trim().toLowerCase();
   if (!text) return [];
+  const newIds = new Set((bodies?.new?.groups || []).map((group) => group.productRecordId));
   const rows = [];
   for (const [tab, body] of Object.entries(bodies || {})) {
+    if (tab === 'replenish') {
+      for (const group of body?.groups || []) {
+        if (newIds.has(group.productRecordId)) continue;
+        if (String(group?.itemNo || '').toLowerCase().includes(text)) rows.push({ tab, group });
+      }
+      continue;
+    }
     for (const group of body?.groups || []) {
-      if (!String(group?.itemNo || '').toLowerCase().includes(text)) continue;
-      rows.push({ tab, group });
+      if (String(group?.itemNo || '').toLowerCase().includes(text)) rows.push({ tab, group });
     }
   }
   return rows;
@@ -65,11 +72,10 @@ export const searchResultsHtml = (results, config, { loading = false } = {}) => 
   if (loading) return `<div class="pr-search-results" data-pr-search-results><p class="pr-search-status">${escapeHtml(config.texts.searchLoading)}</p></div>`;
   if (!results.length) return `<div class="pr-search-results" data-pr-search-results><p class="pr-search-status">${escapeHtml(config.texts.searchEmpty)}</p></div>`;
   return `<div class="pr-search-results" data-pr-search-results>${results.slice(0, 40).map(({ tab, group }) => {
-    const tabLabel = (config.tabs.find((item) => item.id === tab) || {}).label || tab;
     const supplier = group.supplierName || config.texts.supplierUnassigned;
     return `<button type="button" class="pr-search-result" data-pr-search-result data-tab="${escapeHtml(tab)}" data-supplier="${escapeHtml(group.supplierRecordId || '')}" data-record="${escapeHtml(group.productRecordId || '')}">
       <span class="pr-search-result-main"><b>${escapeHtml(group.itemNo || group.number || '')}</b> · ${escapeHtml(group.color || '')}</span>
-      <span class="pr-search-result-meta">${escapeHtml(tabLabel)} · ${escapeHtml(supplier)}</span>
+      <span class="pr-search-result-meta">${escapeHtml(supplier)}</span>
     </button>`;
   }).join('')}</div>`;
 };

@@ -20,15 +20,14 @@ export const PROCUREMENT_UI = Object.freeze({
   }),
   title: '采购',
   tabs: Object.freeze([
-    Object.freeze({ id: 'replenish', label: '补货', hint: '近 3 天销售' }),
-    Object.freeze({ id: 'new', label: '上新', hint: '近期新增货品' }),
+    Object.freeze({ id: 'suggested', label: '建议补货清单', hint: '补货 + 上新' }),
     Object.freeze({ id: 'pending', label: '待提交列表', hint: '核对已选' }),
   ]),
   texts: Object.freeze({
     loading: '正在读取…',
     loadFailed: '数据没读到，请稍后重试。',
     retry: '重新加载',
-    replenishEmpty: '近 3 天没有需要补货的货品。',
+    replenishEmpty: '近 7 天没有需要补货的货品。',
     newProductsEmpty: '近期还没有新增货品。',
     categoryMissing: '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。',
     submitting: '提交中…',
@@ -58,24 +57,15 @@ export const PROCUREMENT_UI = Object.freeze({
     pendingSupplier: '供应商',
     pendingTotal: '合计 {total} 双',
     pendingSizeLine: '{size} 码 × {quantity}',
+    suggestedEmpty: '近 7 天没有需要补货或新增的货品。',
     searchPlaceholder: '搜索货号',
     searchLoading: '正在搜索货品…',
     searchEmpty: '没有匹配的货品。',
   }),
-  // 顶部统计（补货 3 项；上新**只有**「新增货品」一项）
-  stats: Object.freeze({
-    replenish: Object.freeze([
-      Object.freeze({ key: 'spotSold', label: '现货已售', unit: '双' }),
-      Object.freeze({ key: 'prepaidPending', label: '预订待补', unit: '双' }),
-      Object.freeze({ key: 'notArrived', label: '未到货', unit: '双' }),
-      Object.freeze({ key: 'productCount', label: '涉及货品', unit: '' }),
-    ]),
-    newProducts: Object.freeze([
-      Object.freeze({ key: 'productCount', label: '新增货品', unit: '' }),
-    ]),
-  }),
   range: Object.freeze({
-    // 业务负责人 2026-10-29 口径：补货窗口 = 今天 00:00 - 3 天 ~ **现在**（含今天已发生）
+    // 补货 / 上新统一近 7 天（含今天）
+    suggested: '近 {days} 天（含今天）',
+    days: 7,
     replenish: '{from} 00:00 – 现在',
     newProducts: '近 {days} 天（含今天）',
     dayTemplate: '{month}月{day}日',
