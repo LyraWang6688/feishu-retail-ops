@@ -429,6 +429,7 @@ const createMultiItemOrderService = (options = {}) => {
         draft: { ...draft, items: checked.normalized.items },
         chainConfig, submitKey: effectiveKey, behavior,
       });
+      let purchaseResult = null;
       {
         // **只调既有写入件** ✓（本模块连 gateway 都不认识 ✗）—— 没有影子/开关分支（2026-10-29 删净）。
         // 这一段缩进与顺序**逐字保留**（只是去掉了外层的 `if (shadow) … else` 壳）✓。
@@ -442,7 +443,7 @@ const createMultiItemOrderService = (options = {}) => {
           //   🔴 写入件（`publishPurchaseRequest`）**优先用它**、并**按草稿交叉核对**
           //      （对不上 ⇒ 当场 warn，不静默挑一个 ✗）—— 老写入件签名是 `(taskId, task)`，
           //      多一个可选实参**不影响**任何既有调用方 ✓（假写入件同理）。
-          await writer(plan.taskId, plan.payload, {
+          purchaseResult = await writer(plan.taskId, plan.payload, {
             supplierGroups: plan.supplierGroups,
           });
         } catch (error) {
@@ -479,7 +480,7 @@ const createMultiItemOrderService = (options = {}) => {
         return null;
       });
       void rotated;
-      return { ok: true, reused: false, plan, summary: plan.summary };
+      return { ok: true, reused: false, plan, summary: plan.summary, purchase: purchaseResult };
     })();
     inFlight.set(key, run);
     try {

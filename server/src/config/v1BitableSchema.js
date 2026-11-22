@@ -387,11 +387,9 @@ const V1_BITABLE_SCHEMA = {
         // 提前落映射是为了让 schema 闸门从今天起就盯住这个名字——名字漂移要当场失败，
         // 而不是等退换货上线时才在写入时静默 FieldNameNotFound。
         tradeType: '交易类型',
-        // ⭐⭐ 2026-11-08（业务负责人）：生产「销售明细」新增**单向关联**「采购明细」→「采购明细」表。
-        //   语义：这一条销售明细**已经被补货报过**（关联到那次生成的采购明细行）。
-        //   用途：① 补货读侧**排除已报过的行**（不再靠 3 天窗口猜，避免重复报货）；
-        //        ② 采购提交成功（异步）后**回填**：按「编号 + 尺码」匹配未关联的销售明细行，
-        //           关联到本次生成的采购明细记录。写库形状 = `relation(recordId)`（关联列只认 id 数组）。
+        // 2026-11-22：已由单向关联改为双向关联（DuplexLink），采购明细侧对应「销售明细」。
+        // 语义：这条销售明细已经被补货报过；读侧排除、提交后按编号+尺码回填。
+        // 删除采购明细时，双向关联会自动清空销售明细这一侧。
         purchaseDetail: '采购明细',
       },
       // 2026-11-18 销售查询：只读 lookup（品类/类别），**不进 fields 可写集**。
@@ -545,6 +543,8 @@ const V1_BITABLE_SCHEMA = {
       // 只读，补货用来算「数量 - 已入库数量」。
       readOnlyFields: Object.freeze({
         arrivedQuantity: Object.freeze({ name: '已入库数量', type: 19, uiType: 'Lookup', writable: false }),
+        // 双向关联反向字段；修改批次减少数量时读取已关联销售明细。
+        salesDetails: Object.freeze({ name: '销售明细', type: 21, uiType: 'DuplexLink', writable: false }),
       }),
     },
     // ⚠️ 这里原先有 `purchaseArrival`（表名「到货验收」，原「采购到货」，

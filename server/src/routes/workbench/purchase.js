@@ -38,6 +38,8 @@ const { printPromptUrlOf } = require('../../services/printPromptService');
 const { getInventoryPrintIntentService } = require('../../services/inventoryPrintIntentRuntime');
 const { createProcurementPageService } = require('../../services/procurementPageService');
 const { createProcurementPageSubmitService } = require('../../services/procurementPageSubmitService');
+const { createProcurementSubmissionIndex } = require('../../services/procurementSubmissionIndex');
+const { createProcurementSubmittedService } = require('../../services/procurementSubmittedService');
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 const { createPurchaseAcceptanceSampleService } = require('../../services/purchaseAcceptanceSampleService');
@@ -671,6 +673,25 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     return procurementSubmit;
   };
   const procurementTexts = PROCUREMENT_PAGE.texts;
+  let procurementSubmitted = options.procurementSubmitted || null;
+  const resolveProcurementSubmitted = () => {
+    if (!procurementSubmitted) {
+      procurementSubmitted = createProcurementSubmittedService({
+        submissionIndex: options.procurementSubmissionIndex || createProcurementSubmissionIndex(),
+        purchaseQuery: options.purchaseQuery || createPurchaseQueryService(options.gateway || new V1BitableGateway()),
+      });
+    }
+    return procurementSubmitted;
+  };
+  router.get(PROCUREMENT_PAGE.endpoints.submittedToday, async (req, res) => {
+    try {
+      const batches = await resolveProcurementSubmitted().listToday({ openId: req.workbenchUser?.open_id });
+      return res.json({ success: true, batches });
+    } catch (error) {
+      logError('workbench.procurement.submitted_today.failed', { request_id: req.requestId, error: error.message });
+      return res.status(502).json({ success: false, error: procurementTexts.loadFailed });
+    }
+  });
   router.get(PROCUREMENT_PAGE.endpoints.replenish, async (req, res) => {
     try {
       const result = await resolveProcurementPage().loadReplenish({ requestId: req.requestId });

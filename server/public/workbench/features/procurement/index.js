@@ -22,7 +22,7 @@ export function mountProcurementPage(host) {
   host.innerHTML = shellHtml(config);
   const remote = createApi(config);
   const panels = { replenish: createReplenishPanel(config), new: createNewProductsPanel(config) };
-  const state = { tab: 'suggested', bodies: {}, errors: {}, loadedAt: {}, supplierId: '' };
+  const state = { tab: 'suggested', bodies: {}, errors: {}, loadedAt: {}, supplierId: '', submitted: [] };
   let store = null;
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
@@ -33,7 +33,7 @@ export function mountProcurementPage(host) {
   const paint = () => {
     const element = panelEl(state.tab);
     if (!element) return;
-    if (state.tab === 'pending') { element.innerHTML = pendingListHtml(draft, config, supplierNameMap(state.bodies)); return; }
+    if (state.tab === 'pending') { element.innerHTML = pendingListHtml(draft, config, supplierNameMap(state.bodies), state.submitted); return; }
     const error = state.errors.suggested || state.errors.replenish || state.errors.new;
     if (error) { element.innerHTML = errorHtml(error, config); return; }
     element.innerHTML = state.bodies.replenish && state.bodies.new
@@ -80,6 +80,15 @@ export function mountProcurementPage(host) {
   };
   const groupOf = (recordId) => (state.bodies.replenish?.groups || []).find((item) => item.productRecordId === recordId)
     || (state.bodies.new?.groups || []).find((item) => item.productRecordId === recordId);
+  const loadSubmitted = async () => {
+    try {
+      const body = await remote.loadSubmittedToday();
+      state.submitted = body?.batches || [];
+    } catch {
+      state.submitted = [];
+    }
+    if (state.tab === 'pending') paint();
+  };
   const activate = async (tab, options = {}) => {
     if (!TABS.includes(tab)) return;
     state.tab = tab;
@@ -89,7 +98,7 @@ export function mountProcurementPage(host) {
       button.classList.toggle('active', button.dataset.prTab === tab);
     });
     TABS.forEach((id) => panelEl(id)?.classList.toggle('hidden', id !== tab));
-    if (tab === 'pending') { paint(); return; }
+    if (tab === 'pending') { paint(); void loadSubmitted(); return; }
     if (!state.bodies.replenish || !state.bodies.new) await loadAll(options.force === true);
     else paint();
   };

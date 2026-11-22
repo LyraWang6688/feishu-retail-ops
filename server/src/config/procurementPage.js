@@ -54,6 +54,7 @@ const buildProcurementPageConfig = (env = process.env) => {
       replenish: '/procurement/replenish',
       newProducts: '/procurement/new-products',
       submit: '/procurement/submit',
+      submittedToday: '/procurement/submitted-today',
     }),
     // 时间窗口（业务负责人 2026-10-29 口径）：
     //   补货 = [今天 00:00 - days 天, **现在**]（含今天已发生的销售；例：10-29 00:57 ⇒ [10-26 00:00, 10-29 00:57]）
