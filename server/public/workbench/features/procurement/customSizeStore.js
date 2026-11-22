@@ -4,7 +4,7 @@ const ensureProduct = (draft, meta) => {
   if (!productRecordId) return null;
   const products = { ...(draft.products || {}) };
   const current = products[productRecordId] || {
-    productRecordId, source: meta.source, number: '', itemNo: '', color: '', supplierRecordId: '', entries: {},
+    productRecordId, source: meta.source, number: '', itemNo: '', color: '', supplierRecordId: '', supplierName: '', entries: {},
   };
   products[productRecordId] = {
     ...current,
@@ -13,6 +13,7 @@ const ensureProduct = (draft, meta) => {
     itemNo: meta.itemNo || current.itemNo || '',
     color: meta.color || current.color || '',
     supplierRecordId: meta.supplierRecordId || current.supplierRecordId || '',
+    supplierName: meta.supplierName || current.supplierName || '',
     entries: { ...(current.entries || {}) },
   };
   return { products, productRecordId };
@@ -22,6 +23,23 @@ export const addCustomSizeDraft = (draft, meta) => {
   const base = ensureProduct(draft, meta);
   if (!base) return draft;
   const list = [...(draft.customSizes?.[base.productRecordId] || []), ''];
+  return { ...draft, products: base.products, customSizes: { ...(draft.customSizes || {}), [base.productRecordId]: list } };
+};
+
+export const addCustomSizesDraft = (draft, meta, rows = []) => {
+  const base = ensureProduct(draft, meta);
+  if (!base) return draft;
+  const product = base.products[base.productRecordId];
+  const entries = { ...(product.entries || {}) };
+  const list = [...(draft.customSizes?.[base.productRecordId] || [])];
+  for (const row of rows || []) {
+    const size = String(row?.size ?? '').trim();
+    const quantity = Number(row?.quantity) || 0;
+    if (!size || quantity <= 0) continue;
+    entries[size] = quantity;
+    if (!list.includes(size)) list.push(size);
+  }
+  base.products[base.productRecordId] = { ...product, entries };
   return { ...draft, products: base.products, customSizes: { ...(draft.customSizes || {}), [base.productRecordId]: list } };
 };
 

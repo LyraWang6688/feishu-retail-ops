@@ -1,12 +1,3 @@
-/**
- * 采购页入口（mount/facade）：**只做编排**，不写业务规则。
- *
- *   · 薄壳 `procurement.html` 只引本模块；DOM 结构 / 文案 / 端点全在 render.js + config；
- *   · 补货 / 上新两个 panel 各自负责自己的数据 + 渲染（扫一扫本轮只占位/禁用）；
- *   · 草稿：同一张 localStorage 草稿（key 带 open_id）；切 tab / 刷新 / 关掉重开都保留，
- *     只有**提交成功**才清空（`submit.js`）；
- *   · 懒加载：首屏只请求补货一次；点上新才请求；失败给「重新加载」。
- */
 import { showLoginButton } from '../../core/auth.js';
 import { ensureProcurementAuth } from './auth.js';
 import { describeError } from '../../core/ui.js';
@@ -18,11 +9,12 @@ import { createReplenishPanel } from './replenish.js';
 import { createNewProductsPanel } from './newProducts.js';
 import { createSubmitController } from './submit.js';
 import { createRefresher } from './refresh.js';
-import { customSizesValid, customSizeError, focusCustomSize } from './customSize.js';
+import { customSizesValid, customSizeError, customRowsError, focusCustomSize } from './customSize.js';
+import { createCustomSizeModal } from './customSizeModal.js';
+import { pendingListHtml } from './pending.js';
 import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
-
-const TABS = ['replenish', 'new'];
-
+const DATA_TABS = ['replenish', 'new'];
+const TABS = [...DATA_TABS, 'pending'];
 export function mountProcurementPage(host) {
   if (!host) return undefined;
   host.innerHTML = shellHtml(config);
@@ -34,21 +26,28 @@ export function mountProcurementPage(host) {
   let store = null;
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
+  const modal = createCustomSizeModal({ host, config });
   const panelEl = (tab) => host.querySelector(`[data-pr-panel="${tab}"]`);
   const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft); };
-
+  const supplierNames = () => {
+    const map = {};
+    for (const body of Object.values(state.bodies)) {
+      for (const group of body?.groups || []) map[group.supplierRecordId || ''] = group.supplierName || '';
+    }
+    return map;
+  };
   const paint = (tab) => {
     const element = panelEl(tab);
     if (!element) return;
+    if (tab === 'pending') { element.innerHTML = pendingListHtml(draft, config, supplierNames()); return; }
     if (state.errors[tab]) { element.innerHTML = errorHtml(state.errors[tab], config); return; }
     const body = state.bodies[tab];
     element.innerHTML = body
       ? panels[tab].render({ body, draft, store, supplierId: state.suppliers[tab], search: state.search[tab] })
       : emptyHtml(config.texts.loading);
   };
-
   const refreshNumbers = () => {
-    for (const tab of TABS) {
+    for (const tab of DATA_TABS) {
       if (!state.bodies[tab] || state.errors[tab]) continue;
       panels[tab].refresh(host, { body: state.bodies[tab], draft, store });
     }
@@ -58,17 +57,14 @@ export function mountProcurementPage(host) {
     host, config, panels, remote, getStore: () => store, getDraft: () => draft,
     state, setDraft: (next) => setDraft(next), paint, refreshNumbers, submitCtl,
   });
-
   const metaOf = (recordId) => metaOfState(state, recordId);
   const spotSoldOf = (recordId, size) => spotSoldOfState(state, recordId, size);
   const syncRow = (recordId, size) => syncRowState(host, store, draft, recordId, size);
-
   const applyQuantity = (recordId, size, quantity) => {
     setDraft(store.setQuantity(draft, metaOf(recordId), size, quantity));
     syncRow(recordId, size);
     refreshNumbers();
   };
-
   const load = async (tab, force = false) => {
     state.errors[tab] = '';
     if (!force && state.bodies[tab]) { paint(tab); return; }
@@ -86,19 +82,19 @@ export function mountProcurementPage(host) {
       paint(tab);
     }
   };
-
   const activate = async (tab, options = {}) => {
     if (!TABS.includes(tab)) return;
     state.tab = tab;
     if (searchInput) searchInput.value = state.search[tab] || '';
+    const searchWrap = host.querySelector('.pr-search');
+    if (searchWrap) searchWrap.hidden = tab === 'pending';
     host.querySelectorAll('[data-pr-tab]').forEach((button) => {
       button.classList.toggle('active', button.dataset.prTab === tab);
     });
     TABS.forEach((id) => panelEl(id)?.classList.toggle('hidden', id !== tab));
+    if (tab === 'pending') { paint(tab); return; }
     await load(tab, options.force === true);
   };
-
-
   host.addEventListener('click', async (event) => {
     const tabButton = event.target.closest('[data-pr-tab]');
     if (tabButton) { await activate(tabButton.dataset.prTab); return; }
@@ -121,9 +117,16 @@ export function mountProcurementPage(host) {
     const addSize = event.target.closest('[data-pr-add-size]');
     if (addSize) {
       const recordId = addSize.dataset.record;
-      setDraft(store.addCustomSize(draft, metaOf(recordId)));
-      paint(state.tab);
-      focusCustomSize(host, recordId);
+      const group = (state.bodies[state.tab]?.groups || []).find((item) => item.productRecordId === recordId);
+      modal.open(recordId, (id, rows) => {
+        const currentGroup = (state.bodies[state.tab]?.groups || []).find((item) => item.productRecordId === id);
+        const error = customRowsError({ group: currentGroup || group, draft, recordId: id, rows, store });
+        if (error) return { error: error === 'duplicate' ? config.texts.customSizeDuplicate : (error === 'required' ? config.texts.customSizeRequired : config.texts.customSizeInvalid) };
+        setDraft(store.addCustomSizes(draft, metaOf(id), rows));
+        paint(state.tab);
+        refreshNumbers();
+        return {};
+      });
       return;
     }
     const removeSize = event.target.closest('[data-pr-custom-remove]');
@@ -137,21 +140,18 @@ export function mountProcurementPage(host) {
     if (event.target.closest('[data-pr-retry]')) { await load(state.tab, true); return; }
     if (event.target.closest('[data-pr-refresh]')) { await refresher.refresh(); return; }
     if (event.target.closest('[data-pr-submit]')) {
-      if (!customSizesValid({ draft, bodies: state.bodies, tabs: TABS, store })) {
+      if (!customSizesValid({ draft, bodies: state.bodies, tabs: DATA_TABS, store })) {
         submitCtl.toast(host, config.texts.customSizeInvalid); return;
       }
       const result = await submitCtl.submit(host, draft);
       if (result.ok) { setDraft(store.ensure()); paint(state.tab); refreshNumbers(); }
     }
   });
-
   searchInput?.addEventListener('input', () => { state.search[state.tab] = String(searchInput.value || ''); paint(state.tab); });
-
   host.addEventListener('input', (event) => {
     const input = event.target.closest('[data-pr-qty]');
     if (input) quantityInput({ input, config, applyQuantity });
   });
-
   host.addEventListener('change', (event) => {
     const input = event.target.closest('[data-pr-custom-size]');
     if (!input) return;
@@ -170,7 +170,6 @@ export function mountProcurementPage(host) {
     paint(state.tab);
     focusCustomSize(host, recordId);
   });
-
   const start = async () => {
     let user = null;
     try {

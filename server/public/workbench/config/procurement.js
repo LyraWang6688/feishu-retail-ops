@@ -22,11 +22,7 @@ export const PROCUREMENT_UI = Object.freeze({
   tabs: Object.freeze([
     Object.freeze({ id: 'replenish', label: '补货', hint: '近 3 天销售' }),
     Object.freeze({ id: 'new', label: '上新', hint: '近期新增货品' }),
-    // 扫一扫本轮不做：保留视觉入口（禁用 + 不可点），不挂扫码模块
-    Object.freeze({
-      id: 'scan', label: '扫一扫', hint: '补货扫码', disabled: true,
-      disabledHint: '扫一扫本轮暂未开放，先用补货 / 上新。', tapTarget: 'scan:replenish',
-    }),
+    Object.freeze({ id: 'pending', label: '待提交列表', hint: '核对已选' }),
   ]),
   texts: Object.freeze({
     loading: '正在读取…',
@@ -53,6 +49,17 @@ export const PROCUREMENT_UI = Object.freeze({
     customSizeInvalid: '尺码要填正整数',
     customSizeDuplicate: '这个尺码已经存在',
     customSizeRemove: '删除这个尺码',
+    customSizeModalTitle: '添加自定义尺码',
+    customSizeSizeLabel: '尺码',
+    customSizeQtyLabel: '数量',
+    customSizeAddRow: '＋ 再添加一行',
+    customSizeCancel: '取消',
+    customSizeSave: '保存',
+    customSizeRequired: '请填写尺码和数量',
+    pendingEmpty: '还没有选要采购的货品。',
+    pendingSupplier: '供应商',
+    pendingTotal: '合计 {total} 双',
+    pendingSizeLine: '{size} 码 × {quantity}',
     searchPlaceholder: '搜索货号',
   }),
   // 顶部统计（补货 3 项；上新**只有**「新增货品」一项）

@@ -5,7 +5,7 @@ export const metaOf = (state, recordId) => {
       if (group.productRecordId !== recordId) continue;
       return {
         productRecordId: recordId, source: tab, number: group.number,
-        itemNo: group.itemNo, color: group.color, supplierRecordId: group.supplierRecordId,
+        itemNo: group.itemNo, color: group.color, supplierRecordId: group.supplierRecordId, supplierName: group.supplierName,
       };
     }
   }

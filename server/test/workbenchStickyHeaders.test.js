@@ -8,7 +8,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..', 'public', 'workbench');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-test('采购页固定 tab，库存调整 / 信息完善单独占一行', () => {
+test('采购页固定 tab，库存调整 / 信息完善与货品标题同一行', () => {
   const css = read('procurement.css');
   const config = read('config/procurement.js');
   assert.match(css, /\.pr-sticky-head\s*\{[^}]*position:\s*sticky/, 'tab + 搜索框固定在顶部');
@@ -17,8 +17,9 @@ test('采购页固定 tab，库存调整 / 信息完善单独占一行', () => {
   const base = read('styles/base.css');
   assert.match(base, /\.html, body|html, body/, '有全局横向约束');
   assert.match(base, /overflow-x:\s*clip/, '不能再用 overflow-x:hidden 创建滚动容器');
-  assert.match(css, /\.pr-product-actions\s*\{[^}]*width:\s*100%/, '操作区独占一行');
-  assert.match(css, /\.pr-product-actions\s*\{[^}]*flex:\s*0 0 100%/, '不再和尺码卡抢同一行');
+  assert.match(css, /\.pr-product-actions\s*\{[^}]*width:\s*auto/, '操作区跟随货品标题');
+  assert.match(css, /\.pr-product-actions\s*\{[^}]*flex:\s*0 1 auto/, '操作区与货品标题同一行');
+  assert.match(read('features/procurement/render.js'), /pr-group-title-wrap[\s\S]*productActionsHtml/, '操作区必须渲染在标题行内');
   assert.match(config, /infoLabel:\s*'信息完善'/, '资料不齐入口显示「信息完善」');
 });
 

@@ -8,11 +8,10 @@
  */
 import { escapeHtml } from '../../core/formatters.js';
 import { productActionsHtml } from './productActions.js';
-
+import { customSizeModalHtml } from './customSizeModal.js';
 const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
   Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
 ));
-
 export const formatDay = (isoText, config) => {
   const parts = String(isoText || '').split('-');
   if (parts.length !== 3) return String(isoText || '');
@@ -118,10 +117,9 @@ export const replenishGroupHtml = (group, draft, store, config) => {
   const customs = typeof store.customSizesOf === 'function' ? store.customSizesOf(draft, group.productRecordId) : [];
   return `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">
   <div class="pr-group-head">
-    <h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>
+    <div class="pr-group-title-wrap"><h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>${productActionsHtml(group, config)}</div>
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(config.card.replenishTotal, 0)}</div>
   </div>
-  ${productActionsHtml(group, config)}
   ${(group.sizes || []).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}
   ${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}
   <button type="button" class="btn pr-add-size" data-pr-add-size data-record="${escapeHtml(group.productRecordId)}">${escapeHtml(config.texts.addCustomSize)}</button>
@@ -171,23 +169,15 @@ export const toastHtml = () => '<div class="pr-toast" data-pr-toast role="status
 
 /** 页面骨架（薄壳之上的唯一一份 DOM 结构；tabs/底部条/各 panel 容器）。 */
 export const shellHtml = (config) => {
-  const tabs = config.tabs.map((tab) => {
-    const attrs = [`type="button"`, `class="pr-tab${tab.disabled ? ' pr-tab-disabled' : ''}"`];
-    if (tab.disabled) {
-      attrs.push('disabled', 'aria-disabled="true"', 'data-pr-scan-disabled',
-        `title="${escapeHtml(tab.disabledHint || '')}"`);
-      if (tab.tapTarget) attrs.push(`data-tap-target="${escapeHtml(tab.tapTarget)}"`);
-    } else {
-      attrs.push(`data-pr-tab="${escapeHtml(tab.id)}"`, 'role="tab"');
-    }
-    return `<button ${attrs.join(' ')}>${escapeHtml(tab.label)}<small>${escapeHtml(tab.hint)}</small></button>`;
-  }).join('');
+  const tabs = config.tabs.map((tab) => `<button type="button" class="pr-tab" data-pr-tab="${escapeHtml(tab.id)}" role="tab">${escapeHtml(tab.label)}<small>${escapeHtml(tab.hint)}</small></button>`).join('');
   return `<div class="pr-sticky-head">
     <div class="pr-tabs" role="tablist" aria-label="${escapeHtml(config.title)}">${tabs}</div>
     <label class="pr-search"><span class="pr-search__icon" aria-hidden="true">⌕</span><input type="search" data-pr-search placeholder="${escapeHtml(config.texts.searchPlaceholder)}" aria-label="${escapeHtml(config.texts.searchPlaceholder)}"></label>
   </div>
   <div class="pr-panel" data-pr-panel="replenish"></div>
   <div class="pr-panel hidden" data-pr-panel="new"></div>
+  <div class="pr-panel hidden" data-pr-panel="pending"></div>
+  ${customSizeModalHtml(config)}
   <div class="pr-bottom"><div class="pr-bottom-inner">
     <div class="pr-picked"><span>${escapeHtml(config.units.pickedLabel)}</span><b data-pr-total>0 ${escapeHtml(config.units.pair)}</b>
       <small data-pr-breakdown></small></div>
