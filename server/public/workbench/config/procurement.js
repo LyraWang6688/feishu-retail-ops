@@ -29,8 +29,6 @@ export const PROCUREMENT_UI = Object.freeze({
     loading: '正在读取…',
     loadFailed: '数据没读到，请稍后重试。',
     retry: '重新加载',
-    replenishEmpty: '近 7 天没有需要补货的货品。',
-    newProductsEmpty: '近期还没有新增货品。',
     categoryMissing: '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。',
     submitting: '提交中…',
     submit: '提交',
@@ -80,8 +78,6 @@ export const PROCUREMENT_UI = Object.freeze({
     // 补货 / 上新统一近 7 天（含今天）
     suggested: '近 {days} 天（含今天）',
     days: 7,
-    replenish: '{from} 00:00 – 现在',
-    newProducts: '近 {days} 天（含今天）',
     dayTemplate: '{month}月{day}日',
   }),
   // 数据刷新（业务负责人 2026-10-29）：「实时」= **打开页面时更新一次**；不要自动轮询。

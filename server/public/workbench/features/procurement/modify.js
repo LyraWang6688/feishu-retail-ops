@@ -65,7 +65,7 @@ export const createModifyController = ({ host, config, api, getStore, getDraft, 
   const supplierAllowed = (supplierId) => !batch || String(supplierId || '') === String(batch.supplier_record_id || '');
   const active = () => batch;
 
-  return { start, clear, submit, supplierAllowed, active };
+  return { start, submit, supplierAllowed, active };
 };
 
 const textOf = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (

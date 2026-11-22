@@ -17,7 +17,7 @@ const productIdsOf = (items) => [...new Set(items.map((item) => item.productReco
 
 const createProcurementModifyService = ({
   gateway, schema, config, submissionIndex, purchaseQuery, orderBatches, sizeReferences, salesLinks,
-  deliverRevision, now = () => Date.now(), logger = {},
+  deliverRevision, now = () => Date.now(),
 } = {}) => {
   if (!gateway) throw new Error('procurementModifyService 需要 gateway');
   if (!submissionIndex || !purchaseQuery || !orderBatches) throw new Error('procurementModifyService 缺少依赖');

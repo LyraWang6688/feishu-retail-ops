@@ -123,7 +123,6 @@ test('AC-P27 自定义尺码草稿：跨供应商/刷新保留，提交进入现
 
 test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉已消失的已选行', async () => {
   const configSource = read(`${PUBLIC}/config/procurement.js`);
-  assert.match(configSource, /replenish: '\{from\} 00:00 – 现在'/);
   assert.match(configSource, /autoMs: 0/, '默认不自动刷新（业务负责人：打开时更新一次就够）');
   assert.match(configSource, /visibilityRefreshMs: 0/);
   const refresh = read(`${PUBLIC}/features/procurement/refresh.js`);
@@ -131,7 +130,7 @@ test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉
   assert.match(refresh, /pruneSource/);
   assert.match(refresh, /visibilitychange/);
   assert.ok(lines(`${PUBLIC}/features/procurement/refresh.js`) <= 200);
-  assert.match(read(`${PUBLIC}/features/procurement/render.js`), /data-pr-refresh/);
+  assert.match(read(`${PUBLIC}/features/procurement/suggested.js`), /data-pr-refresh/);
 
   const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
   const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
@@ -152,17 +151,11 @@ test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉
   assert.equal(pruned.products.recGone, undefined, '刷新后已消失的货品要从草稿剔除（防提交看不见的行）');
 });
 
-test('底部提交条 + 空/错态 + 统计范围都在渲染层（与视觉稿一致）', async () => {
+test('底部提交条 + 空/错态都在渲染层（与视觉稿一致）', async () => {
   const render = read(`${PUBLIC}/features/procurement/render.js`);
-  for (const marker of ['data-pr-total', 'data-pr-breakdown', 'data-pr-submit', 'data-pr-toast', 'pr-summary-grid', 'pr-group', 'pr-stepper', 'data-pr-retry']) {
+  for (const marker of ['data-pr-total', 'data-pr-breakdown', 'data-pr-submit', 'data-pr-toast', 'pr-group', 'pr-stepper', 'data-pr-retry']) {
     assert.ok(render.includes(marker), `渲染层缺 ${marker}`);
   }
-  assert.match(render, /newProductsWindow|newProducts/);
-  // 文案跟随 range.days，不写死 7（改配置几天就显示几天）。
-  const { rangeText } = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/render.js')).href);
-  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
-  assert.equal(rangeText('new', { days: 7 }, config), '近 7 天（含今天）');
-  assert.equal(rangeText('new', { days: 3 }, config), '近 3 天（含今天）');
 });
 
 test('AC-P23 旧版草稿（version 1/2）在默认 0 上线后作废，不把旧自动数量带回来', async () => {

@@ -6,24 +6,13 @@
  * 默认选中口径（2026-11-17 业务负责人）：**补货所有尺码默认 0，不自动填数量**
  * （预订 / 现货一致，与上新相同）；数量由她手填 / 点 ± 决定。
  */
-import { statsHtml, replenishGroupHtml, emptyHtml, totalTemplateHtml } from './render.js';
-import { supplierFilteredBody, supplierTabsHtml } from './supplierFilter.js';
+import { totalTemplateHtml } from './render.js';
 
 export const createReplenishPanel = (config) => {
   /** 拉数据 + 把「默认选中」并进草稿（只补不覆盖已改过的数量/勾选）。 */
   const load = async ({ api, store, draft, force = false }) => {
     const body = await api.loadReplenish({ force });
     return { body, draft: store.seedDefaults(draft, 'replenish', body.groups || []) };
-  };
-
-  const render = ({ body, draft, store, supplierId = '', search = '' }) => {
-    if (!body) return '';
-    const filtered = supplierFilteredBody('replenish', body, supplierId, config, search);
-    const groups = filtered.visible;
-    const list = groups.length
-      ? groups.map((group) => replenishGroupHtml(group, draft, store, config)).join('')
-      : emptyHtml(config.texts.replenishEmpty);
-    return `${statsHtml('replenish', filtered.body, config)}${supplierTabsHtml(filtered.groups, filtered.supplierKey, config)}${list}`;
   };
 
   /** 局部刷新每个分组的「需补 N 双」（不整块重渲染，避免输入框失焦）。 */
@@ -39,5 +28,5 @@ export const createReplenishPanel = (config) => {
     }
   };
 
-  return { load, render, refresh };
+  return { load, refresh };
 };
