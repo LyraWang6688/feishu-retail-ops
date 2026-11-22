@@ -27,20 +27,12 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(() => localStorage.clear());
 });
 
-test('AC-P20 懒加载：首屏只请求补货一次；点上新才请求；切回不重复；待提交列表不请求', async ({ page }) => {
+test('AC-P20 首屏同时加载补货 + 上新；待提交列表不请求', async ({ page }) => {
   const calls = await mockApi(page);
   await page.reload();
   await openPage(page);
-  await expect(page.getByText('现货已售')).toBeVisible();
-  await expect(page.getByText('未到货', { exact: true }).first()).toBeVisible();
-  expect(calls.replenish).toBe(1);
-  expect(calls.newProducts).toBe(0);
-
-  await tab(page, /上新/).click();
-  await expect(page.getByText('LY001 · 黑色')).toBeVisible();
-  expect(calls.newProducts).toBe(1);
-  await tab(page, /补货/).click();
   await expect(page.getByText('86822 · 黑色')).toBeVisible();
+  await expect(page.getByText('LY001 · 黑色')).toBeVisible();
   expect(calls.replenish).toBe(1);
   expect(calls.newProducts).toBe(1);
 
@@ -65,12 +57,9 @@ test('AC-P26 供应商筛选：无「全部」，默认第一个供应商；统�
   expect(summary.y).toBeLessThan(chips.y);
   await expect(page.getByText('86822 · 黑色')).toBeVisible();
   await expect(page.getByText('92608 · 咖色')).toHaveCount(0);
-  await expect(page.locator('.pr-stat').first().locator('b')).toHaveText('5');
   await filter.nth(1).click();
   await expect(page.getByText('92608 · 咖色')).toBeVisible();
   await expect(page.getByText('86822 · 黑色')).toHaveCount(0);
-  await tab(page, /上新/).click();
-  await expect(page.locator('[data-pr-supplier]:visible')).toHaveCount(2);
   await expect(page.locator('[data-pr-supplier]:visible').nth(1)).toHaveText('供应商 B');
 });
 
@@ -91,7 +80,7 @@ test('AC-P28 顶部搜索固定；全局搜索跨 tab/供应商并自动定位',
   await expect(results).toContainText('供应商 B');
   await expect(page.getByText('86822 · 黑色')).toBeVisible();
   await results.getByRole('button', { name: /LY002/ }).click();
-  await expect(page.locator('[data-pr-tab="new"]')).toHaveClass(/active/);
+  await expect(page.locator('[data-pr-tab="suggested"]')).toHaveClass(/active/);
   await expect(page.getByText('LY002 · 米白')).toBeVisible();
   await expect(search).toHaveValue('');
 });
@@ -149,17 +138,14 @@ test('AC-P30 待提交列表：按供应商分组、只读、隐藏搜索', asyn
   await expect(page.locator('.pr-search')).toBeHidden();
 });
 
-test('AC-P29 补货四个统计卡在一行（不换行）', async ({ page }) => {
+test('AC-P29 只保留统计范围和刷新，不显示数字统计卡', async ({ page }) => {
   await mockApi(page);
   await page.reload();
   await openPage(page);
-  const boxes = await page.locator('.pr-stat').evaluateAll((nodes) => nodes.map((node) => {
-    const rect = node.getBoundingClientRect();
-    return { top: Math.round(rect.top), left: Math.round(rect.left), width: Math.round(rect.width) };
-  }));
-  expect(boxes).toHaveLength(4);
-  expect(new Set(boxes.map((box) => box.top)).size).toBe(1);
-  expect(boxes.every((box) => box.width > 50)).toBe(true);
+  await expect(page.locator('.pr-stat')).toHaveCount(0);
+  await expect(page.locator('.pr-summary')).toContainText('统计范围');
+  await expect(page.locator('.pr-summary')).toContainText('近 7 天（含今天）');
+  await expect(page.locator('[data-pr-refresh]')).toBeVisible();
 });
 
 test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾选框）；手填/点 + 才选中', async ({ page }) => {
@@ -176,11 +162,9 @@ test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾
   // 预订行手点「+」⇒ 从 0 开始加 1（不再按预订数起步）
   await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="41"]').click();
   await expect(qtyOf(page, 'recProdA', 41)).toHaveValue('1');
-  // 顶部统计（补货 3 项）+ 统计范围
-  await expect(page.getByText('预订待补')).toBeVisible();
-  await expect(page.getByText('涉及货品')).toBeVisible();
-  // 业务负责人 2026-10-29 口径：结束时间 = 现在（不是"截止昨天"）
-  await expect(page.getByText('10月25日 00:00 – 现在')).toBeVisible();
+  // 不再显示数字统计，只保留统一统计范围
+  await expect(page.locator('.pr-stat')).toHaveCount(0);
+  await expect(page.locator('.pr-summary')).toContainText('近 7 天（含今天）');
   // 记录 ID 只在 data-* 内部主键里，页面上不出现
   const bodyText = await page.locator('#procurement-app').innerText();
   expect(bodyText.includes('recProdA')).toBe(false);
@@ -211,9 +195,7 @@ test('AC-P19 切 tab / 刷新后草稿保留（同一用户同一浏览器）', 
   await openPage(page);
   await qtyOf(page, 'recProdA', 39).fill('5');
   await page.waitForTimeout(100);
-  await tab(page, /上新/).click();
   await expect(page.getByText('LY001 · 黑色')).toBeVisible();
-  await tab(page, /补货/).click();
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('5');
   // 刷新（重新加载数据）后仍是 5（只补默认、不覆盖她改过的数量）
   await page.reload();
@@ -272,12 +254,12 @@ test('AC-P22 提交失败：给人话 + 草稿保留（刷新还在）', async (
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1', { timeout: 5000 });
 });
 
-test('AC-P23b 三个子 tab 三等分（业务负责人 2026-10-29 批注）', async ({ page }) => {
+test('AC-P23b 两个子 tab 等分（业务负责人 2026-10-29 批注）', async ({ page }) => {
   await mockApi(page);
   await page.reload();
   await openPage(page);
   const widths = await page.locator('.pr-tabs .pr-tab').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
-  expect(widths).toHaveLength(3);
+  expect(widths).toHaveLength(2);
   expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
 });
 
@@ -300,8 +282,7 @@ test('AC-P23 无横向滚动 + 点击区 ≥44px（390 / 604 两个 project 都�
   const shot = path.join(SHOTS, `procurement-${testInfo.project.name}.png`);
   await page.screenshot({ path: shot, fullPage: true });
   await testInfo.attach(`采购页 ${testInfo.project.name}`, { path: shot, contentType: 'image/png' });
-  // 上新 tab 也留一张（卡片小字 / 特殊码折叠 / 只有「新增货品」一个统计）
-  await tab(page, /上新/).click();
+  // 合并清单里同时保留上新卡片（卡片小字 / 特殊码折叠）
   await expect(page.getByText('LY001 · 黑色')).toBeVisible();
   // 男、女两组现在都是 4 个特殊码 ⇒ 文本会命中两组；这里只要求至少有一组可见。
   await expect(page.getByText('特殊码 · 4 个（默认 0 双，点开选择）').last()).toBeVisible();
@@ -321,8 +302,8 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
   await qtyOf(page, 'recProdB', 43).fill('2');
   await page.waitForTimeout(100);
 
-  // 切到上新，选一个普通码
-  await tab(page, /上新/).click();
+  // 合并清单里直接选上新货品的普通码（切回供应商 A）
+  await page.locator('[data-pr-supplier]:visible').nth(0).click();
   await expect(page.getByText('LY001 · 黑色')).toBeVisible();
   await qtyOf(page, 'recNewA', 38).fill('2');
   await page.waitForTimeout(100);

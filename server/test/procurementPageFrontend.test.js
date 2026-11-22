@@ -67,12 +67,12 @@ test('AC-P17 配置先行：端点 / 文案 / 默认值 / 尺码规则都在 con
   for (const endpoint of ['/api/workbench/procurement/replenish', '/api/workbench/procurement/new-products', '/api/workbench/procurement/submit']) {
     assert.ok(config.includes(endpoint), `config 缺端点 ${endpoint}`);
   }
-  for (const key of ['endpoints', 'tabs', 'texts', 'stats', 'defaults', 'storage', 'card']) {
+  for (const key of ['endpoints', 'tabs', 'texts', 'defaults', 'storage', 'card', 'range']) {
     assert.ok(config.includes(key), `config 缺 ${key}`);
   }
   // 渲染层不写死中文文案（抽查几条：只允许出现在 config）
   const render = read(`${PUBLIC}/features/procurement/render.js`);
-  for (const text of ['已提交成功', '统计范围', '涉及货品', '缺类别', '暂未开放']) {
+  for (const text of ['已提交成功', '缺类别', '暂未开放']) {
     assert.equal(render.includes(text), false, `render.js 不许写死中文文案「${text}」（放 config）`);
   }
 });
@@ -95,7 +95,7 @@ test('AC-P18f 上新副标题：供应商为空时不出现孤立的「·」', (
   assert.match(read(`${PUBLIC}/features/procurement/render.js`), /supplier \? config\.card\.newSubtitle : config\.card\.newSubtitleNoSupplier/);
 });
 
-test('AC-P26 供应商筛选：全部 + 唯一供应商；筛选后统计按当前供应商重算', async () => {
+test('AC-P26 供应商筛选：按供应商分组和筛选（统计卡已移除）', async () => {
   const filter = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/supplierFilter.js')).href);
   const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
   const groups = [
@@ -105,8 +105,6 @@ test('AC-P26 供应商筛选：全部 + 唯一供应商；筛选后统计按当�
   ];
   assert.deepEqual(filter.supplierOptions(groups, config).map((item) => item.label), ['供应商A', '供应商B', '未标注']);
   assert.deepEqual(filter.filterGroups(groups, 's2').map((item) => item.productRecordId), ['b']);
-  assert.deepEqual(filter.filteredStats('replenish', [groups[0]], config),
-    { spotSold: 2, prepaidPending: 1, notArrived: 3, productCount: 1 });
 });
 
 test('AC-P27 自定义尺码草稿：跨供应商/刷新保留，提交进入现有 items', async () => {
