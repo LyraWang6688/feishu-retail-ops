@@ -9,6 +9,7 @@ const json = (body, status = 200) => ({
 const mockApi = async (page, {
   orders = [], dailyCashRecord = undefined, dailyCashPost = null,
   dailyCashReference = { date: '2026-11-20', retained_amount: 320 },
+  dailyCashPostDelayMs = 0,
 } = {}) => {
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -16,7 +17,10 @@ const mockApi = async (page, {
       return route.fulfill(json({ enabled: true, authenticated: true, user: { name: 'E2E' } }));
     }
     if (path === '/api/workbench/sales/daily-cash') {
-      if (route.request().method() === 'POST' && dailyCashPost) return route.fulfill(json(dailyCashPost, 202));
+      if (route.request().method() === 'POST' && dailyCashPost) {
+        if (dailyCashPostDelayMs > 0) await new Promise((resolve) => { setTimeout(resolve, dailyCashPostDelayMs); });
+        return route.fulfill(json(dailyCashPost, 202));
+      }
       return route.fulfill(json({
         success: true,
         date: '2026-11-21',
@@ -358,6 +362,28 @@ test('每日现金：昨日留存一键填入，但仍需手动保存', async ({
   await page.getByRole('button', { name: '填入 ¥320.00' }).click();
   await expect(page.locator('[data-dc-opening]')).toHaveValue('320');
   await expect(page.getByRole('button', { name: '保存期初现金' })).toBeVisible();
+});
+
+test('每日现金：点击后按钮立即变提交中，POST 返回后立刻跳转', async ({ page }) => {
+  await mockApi(page, {
+    dailyCashRecord: null,
+    dailyCashPostDelayMs: 500,
+    dailyCashPost: {
+      success: true, accepted: true, job_id: 'daily_job_immediate',
+      toast: '数据提交成功，后台自动写入',
+      redirect_url: '/workbench/?toast=' + encodeURIComponent('数据提交成功，后台自动写入'),
+    },
+  });
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '销售', exact: true }).click();
+  await page.getByRole('link', { name: /每日现金/ }).click();
+  await page.locator('[data-dc-opening]').fill('378');
+  const save = page.getByRole('button', { name: '保存期初现金' });
+  const saveButton = page.locator('[data-dc-save-opening]');
+  await save.click();
+  await expect(saveButton).toHaveText('提交中…');
+  await expect(saveButton).toBeDisabled();
+  await page.waitForURL(/\/workbench\/\?toast=/);
 });
 
 test('每日现金保存成功后跳回工作台（期初 / 拿走同一逻辑）', async ({ page }) => {

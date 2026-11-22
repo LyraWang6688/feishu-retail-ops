@@ -10,6 +10,7 @@ export const SALES_DAILY_CASH_TEXTS = Object.freeze({
   saveOpening: '保存期初现金',
   openingSaved: '已填写',
   saveWithdrawal: '保存拿走金额',
+  submitting: '提交中…',
   loading: '正在读取今天的现金记录…',
   failed: '每日现金读取失败，请稍后刷新。',
   saveFailed: '保存失败，请稍后重试。',
