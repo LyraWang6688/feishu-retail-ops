@@ -30,7 +30,7 @@
 export const SUPPLIER_DIRECTORY_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/webpage/shrcnpZB0eX27B773hsrsyYf3gb';
 
-// ⭐ 2026-11-19（业务负责人）：供应 → 交易记录 = 飞书表单外链，点击子 tab 直接跳转。
+// ⭐ 2026-11-19（业务负责人）：供应 → 录单 → 货款 = 飞书表单外链，点击卡片直接跳转。
 // URL 只在这里登记一处；config/domains.js 只 import，不复制字面量。
 export const PURCHASE_TRANSACTION_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnkw0A6W9JW9WKXo5cmPqNEb';

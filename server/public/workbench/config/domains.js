@@ -130,15 +130,7 @@ export const DOMAIN_TABS = [
           { icon: '📦', title: '采购', href: '/workbench/procurement.html' },
           { icon: '✅', title: '验收', href: '/workbench/purchase-acceptance.html' },
           { icon: '↩️', title: '退货', scanRealm: 'purchase_return' },
-        ],
-      },
-      {
-        id: 'purchase-transactions',
-        label: '交易记录',
-        kind: 'links',
-        directJump: true,
-        cards: [
-          { icon: '📒', title: '交易记录', href: PURCHASE_TRANSACTION_FORM_URL },
+          { icon: '💵', title: '货款', href: PURCHASE_TRANSACTION_FORM_URL },
         ],
       },
       {
