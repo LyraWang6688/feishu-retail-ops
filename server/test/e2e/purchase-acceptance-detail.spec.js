@@ -30,6 +30,14 @@ test('验收明细：应到/实到/多到 + 自定义尺码后固定底栏同步
   expect(summaryBox.y).toBeLessThanOrEqual(24);
 
   const p1 = page.locator('.arrival-product').filter({ hasText: '1138-32' });
+  const sizeBoxes = await p1.locator('.arrival-size-row').evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width };
+  }));
+  expect(sizeBoxes.length).toBeGreaterThanOrEqual(2);
+  expect(Math.abs(sizeBoxes[0].y - sizeBoxes[1].y)).toBeLessThan(4);
+  expect(sizeBoxes[1].x).toBeGreaterThan(sizeBoxes[0].x);
+  expect(sizeBoxes[0].width).toBeLessThan(320);
   await p1.locator('[data-add-size="p1"]').click();
   const customSize = p1.locator('[data-field="custom-size"]');
   await customSize.fill('42');
