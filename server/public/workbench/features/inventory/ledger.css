@@ -1,5 +1,10 @@
 /* 库存流水：沿用工作台的 tokens / 卡片密度；表格整体横向滚动，表头与数据行共用列宽。 */
 .ledger-page { gap: var(--space-2); min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); }
+.ledger-sticky-head { position:sticky; top:calc(env(safe-area-inset-top, 0px) + var(--ledger-main-tabs-height, 0px)); z-index:9; padding:0 0 var(--space-2); background:var(--background); }
+.ledger-tabs { display:flex; gap:var(--space-1); padding:var(--space-1); border:1px solid var(--border); border-radius:var(--radius-lg); background:var(--surface); box-shadow:var(--shadow-card); }
+.ledger-tab { flex:1 1 0; min-width:0; min-height:var(--control-height); padding:var(--space-2) var(--space-1); border:0; border-radius:var(--radius-md); background:transparent; color:var(--text-secondary); font:inherit; font-size:var(--font-size-sm); font-weight:var(--weight-medium); text-align:center; white-space:nowrap; cursor:pointer; }
+.ledger-tab.active { background:var(--primary-soft); color:var(--primary); font-weight:var(--weight-bold); }
+.ledger-placeholder { padding:var(--space-5) var(--space-4); border:1px dashed var(--border); border-radius:var(--radius-md); background:var(--surface-soft); color:var(--text-muted); text-align:center; font-size:var(--font-size-sm); }
 .ledger-scroll-wrap { width: 100%; min-width: 0; max-width: 100%; }
 .ledger-viewport { width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); -webkit-overflow-scrolling: touch; }
 .ledger-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 6px; margin-bottom: var(--space-3); width: 100%; min-width: 0; max-width: 100%; }
@@ -25,5 +30,6 @@
 @media (max-width: 420px) {
   .ledger-table th, .ledger-table td { padding: 7px 8px; font-size: var(--font-size-xs); }
   .ledger-btn { padding: 0 12px; }
+  .ledger-tab { font-size:var(--font-size-xs); padding:var(--space-2) 2px; }
 }
 .ledger-delisted-tag { display:inline-block; margin-left:4px; padding:0 4px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:var(--font-size-xs); }

@@ -4,7 +4,7 @@
  */
 export const SALES_QUERY_PAGE = Object.freeze({
   id: 'sales-query',
-  label: '销售查询',
+  label: '销售分析',
   api: '/api/workbench/sales/query',
   texts: Object.freeze({
     startLabel: '开始日期',

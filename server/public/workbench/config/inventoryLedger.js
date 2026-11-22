@@ -6,8 +6,12 @@
  */
 export const INVENTORY_LEDGER_PAGE = Object.freeze({
   id: 'inventory-ledger',
-  label: '库存流水',
+  label: '库存分析',
   api: '/api/workbench/inventory/ledger',
+  tabs: Object.freeze([
+    { id: 'overview', label: '库存总览' },
+    { id: 'ledger', label: '库存流水' },
+  ]),
   columns: Object.freeze([
     { key: 'time', label: '创建时间', cls: 'time' },
     { key: 'behavior', label: '库存行为' },
@@ -16,6 +20,9 @@ export const INVENTORY_LEDGER_PAGE = Object.freeze({
     { key: 'quantity_change', label: '数量', cls: 'qty' },
   ]),
   texts: Object.freeze({
+    tabsLabel: '库存分析视图',
+    overviewBuilding: '库存总览正在建设中。',
+    ledgerTitle: '库存流水',
     startLabel: '开始日期',
     endLabel: '结束日期',
     query: '查询',
