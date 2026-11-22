@@ -8,7 +8,6 @@ export function productSearchHtml({ mode = 'salesDetail', selected = null } = {}
   const label = selected?.number || selected?.itemNo || '';
   return `<div class="ps-search" data-ps-search data-ps-mode="${modeAttr(mode)}">
   <label class="ps-field">
-    <span class="ps-label">${escapeHtml(TEXT.label)}</span>
     <span class="ps-input-wrap">
       <input class="ps-input" type="search" data-ps-input placeholder="${escapeHtml(TEXT.placeholder)}" autocomplete="off" aria-label="${escapeHtml(TEXT.placeholder)}">
     </span>
