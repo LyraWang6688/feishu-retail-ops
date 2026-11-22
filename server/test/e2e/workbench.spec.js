@@ -37,13 +37,13 @@ const mockApi = async (page, { orders = [], dailyCashRecord = undefined, dailyCa
         success: true,
         windowDays: 30,
         suppliers: [{
-          recordId: 'sup1', name: '七匹狼/吉祥鸟', longTerm: true, balance: 10430,
+          recordId: 'sup1', name: '七匹狼/吉祥鸟', balance: 10430,
           transactions: [
             { recordId: 'tx1', type: '付款', tradeDate: '2026-11-20T12:56:47+08:00', amount: 20000, balance: 10430 },
             { recordId: 'tx2', type: '报货', tradeDate: '2026-11-20T00:00:00+08:00', amount: 2732, balance: 30430 },
           ],
         }, {
-          recordId: 'sup2', name: '恒安利', longTerm: false, balance: -60, transactions: [],
+          recordId: 'sup2', name: '恒安利', balance: -60, transactions: [],
         }],
       }));
     }

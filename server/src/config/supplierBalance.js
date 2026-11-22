@@ -24,7 +24,6 @@ const SUPPLIER_BALANCE = Object.freeze({
   // 满足任意一条就显示供应商。
   visibility: Object.freeze({
     includeWhen: Object.freeze([
-      Object.freeze({ rule: 'flag', field: 'longTerm', equals: true }),
       Object.freeze({ rule: 'numberNotZero', field: 'balance' }),
     ]),
   }),

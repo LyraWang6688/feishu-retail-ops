@@ -3,7 +3,7 @@
 /**
  * 「供应 → 供应分析」只读聚合：
  *   · 供应商 / 初始化 / P交易明细三张表；
- *   · 长期合作必显示；未勾选只显示最新余额 != 0 的；
+ *   · 只显示最新余额 != 0 的供应商；
  *   · 余额：有 P 交易取最新交易日的最新余额，否则取初始化期初余额；
  *   · 交易明细：P交易明细，最近 N 天，按交易日倒序。
  */
@@ -23,7 +23,6 @@ const dateMs = (value) => {
   return Number.isFinite(parsed) ? parsed : NaN;
 };
 const isoDate = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : '');
-const flagOn = (value) => value === true || value === 1 || String(value).toLowerCase() === 'true';
 
 const createSupplierBalanceService = ({
   gateway,
@@ -86,7 +85,7 @@ const createSupplierBalanceService = ({
     const byName = new Map();
     const ensure = (name) => {
       if (!name) return null;
-      if (!byName.has(name)) byName.set(name, { name, recordId: '', longTerm: false, initialBalance: 0 });
+      if (!byName.has(name)) byName.set(name, { name, recordId: '', initialBalance: 0 });
       return byName.get(name);
     };
 
@@ -94,7 +93,6 @@ const createSupplierBalanceService = ({
       const name = textValue(row?.fields?.[supplierFields.name]).trim();
       const entry = ensure(name);
       if (entry) entry.recordId = row.record_id || '';
-      if (entry) entry.longTerm = flagOn(row?.fields?.[supplierFields.longTerm]);
     }
 
     for (const row of initRows || []) {
@@ -132,7 +130,6 @@ const createSupplierBalanceService = ({
         }
       }
       const visible = config.visibility.includeWhen.some((rule) => {
-        if (rule.rule === 'flag') return rule.field === 'longTerm' && entry.longTerm === rule.equals;
         if (rule.rule === 'numberNotZero') return rule.field === 'balance' && Number(balance) !== 0;
         return false;
       });
@@ -140,7 +137,6 @@ const createSupplierBalanceService = ({
       suppliers.push({
         recordId: entry.recordId,
         name: entry.name,
-        longTerm: entry.longTerm,
         balance,
         transactions: all
           .filter((tx) => Number.isFinite(tx._ms) && tx._ms >= cutoff)
@@ -148,8 +144,7 @@ const createSupplierBalanceService = ({
       });
     }
 
-    suppliers.sort((a, b) => (Number(b.longTerm) - Number(a.longTerm))
-      || String(a.name).localeCompare(String(b.name), 'zh-CN'));
+    suppliers.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-CN'));
     return {
       asOf: new Date(now()).toISOString(),
       windowDays: config.windowDays,

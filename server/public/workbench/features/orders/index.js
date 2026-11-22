@@ -240,20 +240,8 @@ export function purchaseOrdersHtml(rows = [], options = {}) {
   //   每张批次卡只含**这个供应商**的明细子集（同一批次号可能出现在多家供应商卡下）。
   const pendingUnits = groupAcceptanceUnits(rows);
   const bySupplier = groupUnitsBySupplier(pendingUnits);
-  // ⭐ 2026-11-09（业务负责人）：第一层按「供应商管理」**固定出现全部供应商**（不管有没有未到货）；
-  //   配置表读不到时退回"有未到货的供应商"（页面不至于空白）。
-  const configured = (options.suppliers || [])
-    .map((item) => ({
-      key: String(item?.record_id || '').trim() || `name:${String(item?.name || '').trim()}`,
-      name: String(item?.name || '').trim(),
-    }))
-    .filter((item) => item.name);
-  const supplierList = configured.length ? [...configured] : [...bySupplier.values()].map((g) => ({ key: g.key, name: g.name }));
-  // 配置表里没有、但有未到货的供应商（数据异常兜底）：追加，别把批次弄丢
-  const knownKeys = new Set(supplierList.map((item) => item.key));
-  for (const [key, group] of bySupplier) {
-    if (!knownKeys.has(key)) supplierList.push({ key, name: group.name });
-  }
+  // 验收页第一层只出现**当前有未到货批次**的供应商；没有批次的不占卡片。
+  const supplierList = [...bySupplier.values()].map((group) => ({ key: group.key, name: group.name }));
   if (!pendingUnits.length && !supplierList.length) {
     return `<p class="empty" data-view="purchase-empty">${escapeHtml(P.arrivalEmpty)}</p>`;
   }
@@ -326,8 +314,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     ordersLoaded: false,
     ordersLoading: false,
     purchaseRows: [],
-    // ⭐ 2026-11-09：供应商管理里的**全部供应商**（固定出现；来自配置表缓存）
-    suppliers: [],
+
     // ⭐ 2026-11-09：验收页第二层的"当前选中的供应商"（空 = 显示供应商卡片层）
     activeSupplierKey: '',
   };
@@ -400,7 +387,6 @@ export function createOrdersModule({ mode = 'both' } = {}) {
   function renderPurchaseList() {
     $('[data-view="purchase-host"]').innerHTML = purchaseOrdersHtml(state.purchaseRows, {
       supplierKey: state.activeSupplierKey,
-      suppliers: state.suppliers,
     });
   }
 
@@ -484,15 +470,9 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     if (host) host.innerHTML = '<p class="section-loading">正在读取采购申请…</p>';
     try {
       // 只读「报货」（采购退货单不在验收范围内）——按发生行为编码过滤。
-      // ⭐ 2026-11-09：同时读「供应商管理」全部供应商（固定卡片）；它失败不影响验收列表。
-      const [data, suppliers] = await Promise.allSettled([
-        api.get(`${ORDERS_API.purchaseRequests}?${new URLSearchParams({ behaviorCode: PURCHASE_ORDER_BEHAVIOR_CODE })}`),
-        api.get(ORDERS_API.suppliers),
-      ]);
-      if (data.status !== 'fulfilled') throw data.reason;
-      state.purchaseRows = data.value.rows || [];
-      state.suppliers = suppliers.status === 'fulfilled' && Array.isArray(suppliers.value?.rows)
-        ? suppliers.value.rows : [];
+      // 验收页供应商卡片由未到货批次自己聚合，不再读「供应商管理」全量列表。
+      const data = await api.get(`${ORDERS_API.purchaseRequests}?${new URLSearchParams({ behaviorCode: PURCHASE_ORDER_BEHAVIOR_CODE })}`);
+      state.purchaseRows = data.rows || [];
       renderPurchaseList();
     } catch (error) {
       if (host) host.innerHTML = '<p class="empty">采购申请读取失败</p>';
