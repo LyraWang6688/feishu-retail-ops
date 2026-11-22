@@ -36,6 +36,7 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         number: '编号',
         itemNo: '货号',
+        newStaff: '上新员',
         color: '颜色',
         price: '单价',
         cost: '成本',
@@ -127,6 +128,7 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         name: '名称',
         category: '种类',
+        enteredBy: '录入员',
         price: '单价',
         cost: '成本',
         // 2026-11-11：业务负责人新增的复选框；资金页赠品候选只取 true。
@@ -245,6 +247,7 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         orderNo: '销售单号',
         sender: '录单人',
+        afterSalesBy: '售后人',
         // Automatic creation time: read-only fallback for workbench date filters.
         recordedAt: '录单日',
         // 四个状态维度：业务负责人 2026-10-06 在生产表新建，2026-10-06 晚又**把两个旧字段
@@ -592,6 +595,8 @@ const V1_BITABLE_SCHEMA = {
         // ⭐⭐ 2026-10-17（业务负责人逐字）：「采购主表里面的采购行为，目前字段名称改为了发生行为」
         //   ⇒ 生产真表已改名（只读核过：字段名 = 「发生行为」）⇒ 映射跟真表走，旧名 = 部署闸门判红。
         behavior: '发生行为',
+        reportedBy: '报货人',
+        acceptedBy: '验收人',
         // ⭐ 2026-10-07 深夜：业务负责人在生产表把这一列**改名**了 ——
         //   「创建时间」→ **「报货日」**（类型没变：仍是创建时间 `type=1001`，飞书自动字段）。
         //   语义键 `createdAt` 保持不变，只换物理列名；旧名留着 = 部署闸门判红
@@ -626,11 +631,6 @@ const V1_BITABLE_SCHEMA = {
         // ⛔ 「到货文字说明（该列已从真表退场）」(`acceptanceText`) 与「确认状态」(`confirmStatus`) 两行映射
         //    **已删除（2026-10-09）**。「到货验收」表被删之后它们曾搬到这张表上
         //    （2026-10-07 晚），但 2026-10-09 只读核对生产真表：**这两列也没有了**
-        //    （真表 12 列 = 报货批次号 / 报货日 / 幂等键 / 到货日 / 到货状态 / 单据 /
-        //      采购行为 / 供应商 / 验收人 / 录入数量 / 实际数量 / 发生金额；
-        //      全 Base 46 张表里也搜不到「到货文字说明（该列已从真表退场）」这个名字）。
-        //    ⇒ 按老规矩"**映射 + 写入点一起删**"：
-        //      · 写入点：`PurchaseOrderBatchService.writeAcceptance` 只再写
         //        「实际数量」「发生金额」；`markConfirmed`（写确认状态）**整个删除**；
         //        `config/purchaseAcceptance.js` 与它的单选取值契约一起退场；
         //      · 2026-11-20：`purchaseQueryService` 不再兼容「到货状态」，
@@ -746,8 +746,8 @@ const V1_BITABLE_SCHEMA = {
         //   **请求记录**时，也写这一列。单选值以生产表为准（当前 5 个选项，没有「按编号打印」）。
         //   ⚠️ 监听端只处理「来源为空 / 批量打印」的记录 —— 否则服务端写的记录会再次触发打印。
         source: '来源',
-        // 🔴 「打印日」是**飞书自动字段**（默认值 = 记录创建时间）—— 刻意**不映射**：
-        //   时间字段代码一行都不写（既有规矩），只由飞书填。
+        printedBy: '打印者',
+        // 🔴 「打印日」是**飞书自动字段**（默认值 = 记录创建时间）—— 刻意**不映射**。
       },
     },
     liveInventory: {
@@ -760,6 +760,7 @@ const V1_BITABLE_SCHEMA = {
       fields: {
         stockKey: '库存键',
         product: '编号',
+        warehouseStaff: '仓库员',
         size: '尺码',
         updatedAt: '更新时间',
         // 2026-11-11：状态**只做展示/统计**，不参与库存判断（有记录就是库存；空状态也算）。

@@ -8,6 +8,7 @@
  * 所有飞书写入仍走 gateway ⇒ feishuWriteScheduler。
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
+const { person } = require('./v1ReferenceResolver');
 const { textValue } = require('./v1BitableGateway');
 const { getConfigRows, invalidateConfigTable } = require('./configTableCache');
 const { ensureAccessoryCategory } = require('./accessoryCategoryService');
@@ -92,6 +93,7 @@ const createAccessory = async (gateway, input = {}) => {
     isAccessory: value.isAccessory === true,
   };
   if (input.sampleImageToken) patch.sampleImage = [{ file_token: String(input.sampleImageToken) }];
+  if (input.operatorOpenId) patch.enteredBy = person(input.operatorOpenId);
   const created = await gateway.create('accessory', patch);
   invalidateConfigTable('accessory');
   invalidateConfigTable('giftAccessory');

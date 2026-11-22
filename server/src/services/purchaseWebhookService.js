@@ -6,7 +6,7 @@ const lark = require('@larksuiteoapi/node-sdk');
 const { larkLogger } = require('../utils/larkLogger');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { V1BitableGateway, textValue } = require('./v1BitableGateway');
-const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
+const { V1ReferenceResolver, relation, person } = require('./v1ReferenceResolver');
 // ⚠️ 2026-10-07 深夜：`config/purchaseBehaviors`（采购环节的 `PURCHASE_IN`）**随入库行一起退场**——
 //    它的唯一消费者就是"入库行的「采购行为」"那一列，而「采购入库」表已被业务负责人整表删除。
 //    ⇒ 别再把它 require 回来，也别拿 `inventoryService` 的 `STOCK_PURCHASE_INCREASE` 顶替：
@@ -520,6 +520,7 @@ class PurchaseWebhookService {
         values: {
           batchNo: plan.batch_no,
           idempotencyKey: plan.batch_key,
+          reportedBy: person(draft.operator_open_id || task.operator_open_id),
           // ⭐⭐ 2026-10-12（业务负责人测出来的缺口，逐字：「这**录入数量**里面应该是 5 啊，
           //    但是对于我们的这个数据表里面，它是记录为空呀」）：
           //    「录入数量」= **这一批的录入数量合计**（明细数量求和）。

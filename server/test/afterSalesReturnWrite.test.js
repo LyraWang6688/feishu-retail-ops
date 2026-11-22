@@ -32,7 +32,7 @@ const ORDER_NO = 'XSD-20261028-0005';
 
 const makeGateway = (overrides = {}) => {
   const tables = {
-    salesEntry: { fields: { orderNo: '销售单号', afterSalesType: '售后类型', afterSalesCount: '售后次数', totalAmount: '鞋类总额' } },
+    salesEntry: { fields: { orderNo: '销售单号', afterSalesType: '售后类型', afterSalesCount: '售后次数', totalAmount: '鞋类总额', afterSalesBy: '售后人' } },
     salesDetail: {
       fields: {
         salesEntry: '销售单号', product: '编号', size: '尺码', fulfillmentStatus: '履约状态', actualAmount: '实收金额',
@@ -141,6 +141,13 @@ const payloadOf = (overrides = {}) => ({
   paymentMethod: '现金',
   productRecordId: PRODUCT,
   ...overrides,
+});
+
+test('售后人：追加当前操作人，保留历史操作人', async () => {
+  const { service, state } = buildService();
+  state.entry.fields.售后人 = [{ id: 'ou_old' }];
+  await service.execute(payloadOf({ operatorOpenId: 'ou_new' }));
+  assert.deepEqual(state.entry.fields.售后人, [{ id: 'ou_old' }, { id: 'ou_new' }]);
 });
 
 test('AC-RW1 直接退款：明细已退货 + 库存销售增加落门盒 + 新建退款交易明细 + 主表丰富', async () => {

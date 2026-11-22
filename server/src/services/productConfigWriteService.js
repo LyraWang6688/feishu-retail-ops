@@ -71,7 +71,7 @@ const createProductConfigWriteService = ({ gateway, asyncJobs } = {}) => {
   if (!gateway) throw new Error('ProductConfigWriteService requires gateway');
   if (!asyncJobs) throw new Error('ProductConfigWriteService requires asyncJobs');
 
-  const execute = async (payload = {}) => {
+  const execute = async (payload = {}, meta = {}) => {
     const data = normalize(payload);
     if (data.resource === RESOURCES.feature) {
       if (data.action === ACTIONS.create) return addProductFeatureTag(gateway, data.dimension, data.tag);
@@ -79,7 +79,7 @@ const createProductConfigWriteService = ({ gateway, asyncJobs } = {}) => {
       return deleteProductFeatureTag(gateway, data.dimension, data.recordId);
     }
     if (data.resource === RESOURCES.accessoryCategory) return addAccessoryCategory(gateway, data.category);
-    if (data.action === ACTIONS.create) return createAccessory(gateway, data);
+    if (data.action === ACTIONS.create) return createAccessory(gateway, { ...data, operatorOpenId: meta.ownerOpenId || '' });
     if (data.action === ACTIONS.update) return updateAccessory(gateway, data.recordId, data);
     return deleteAccessory(gateway, data.recordId);
   };
@@ -105,7 +105,7 @@ const createProductConfigWriteService = ({ gateway, asyncJobs } = {}) => {
         asyncJobs.run({
           jobId,
           // 通用异步层只把 ok:true 判为成功；业务结果必须包装。
-          run: async () => ({ ok: true, result: await execute(payload) }),
+          run: async () => ({ ok: true, result: await execute(payload, { ownerOpenId }) }),
         }).catch(() => undefined);
       });
     }

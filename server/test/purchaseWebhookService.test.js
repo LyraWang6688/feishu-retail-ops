@@ -417,9 +417,9 @@ test('到货确认：加库存 + 到货信息写到**批次行**（不回写采�
   assert.equal('确认状态' in batch.fields, false, '「确认状态」这一列已从真表删除，代码不许再写');
   assert.equal(batch.fields.实际数量, 1, '实际数量 = 草稿算出来的实际到货数合计');
   assert.equal(batch.fields.货单金额, 1680, '货单金额 = 她填的整批金额（原样照写，不重算）');
-  // 到货日 / 验收人是飞书自动字段（更新时间 / 创建人）—— 代码不写。
+  // 到货日仍是飞书自动字段；验收人现在是可写人员字段，写当前操作人。
   assert.equal('到货日' in batch.fields, false);
-  assert.equal('验收人' in batch.fields, false);
+  assert.deepEqual(batch.fields.验收人, [{ id: 'ou_1' }], '验收人 = 当前验收操作人');
   assert.equal(inventory.calls.length, 1, '库存要跟着加一次');
   assert.equal(inventory.calls[0].quantity, 1, '加的是**实际数**');
 });

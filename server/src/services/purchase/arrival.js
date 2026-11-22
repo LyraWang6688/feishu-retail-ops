@@ -69,7 +69,7 @@ const arrival = {
     //    两者都在草稿上、由到货核对那一步算好/校验好（本方法只"照草稿写，不重算"）：
     //      · `draft.actual_quantity` = 代码算出的实际到货数合计（与库存口径一致）；
     //      · `draft.actual_amount`   = 她在卡片表单里填的整批金额（提交时已校验必填/数字/非负）。
-    await this.writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation });
+    await this.writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation, operatorOpenId });
     //    放在这里（而不是只在扫码页那一层）是因为**任何**确认路径都经过这个方法
     //    （扫码验收 / 工作台 / 群话题核对）—— 否则她会看到"刚验收完还在列表里"。
     //    ⚠️ 纯内存失效，不写任何表；失败也不许影响入库（所以吞掉异常只记 warn）。
@@ -248,7 +248,7 @@ const arrival = {
    *   · **绝对不写**「到货日」「验收人」：它们在真表上是飞书自动字段
    *     （更新时间 / 创建人），写了会被自动覆盖或直接报错。
    */
-  async writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation }) {
+  async writeArrivalAcceptance({ taskId, batchNo, batchRecordId, draft, correlation, operatorOpenId = '' }) {
     if (!batchNo && !batchRecordId) {
       logWarn('purchase.arrival.acceptance.skipped', {
         task_id: taskId, reason: 'no_batch_identity',
@@ -263,6 +263,7 @@ const arrival = {
       actualQuantity: draft?.actual_quantity,
       actualAmount: draft?.actual_amount,
       differenceAnalysis: draft?.difference_analysis,
+      operatorOpenId,
       correlation,
     });
     if (!result.updated) {

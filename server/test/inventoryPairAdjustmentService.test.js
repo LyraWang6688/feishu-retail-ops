@@ -23,6 +23,7 @@ const fakeInventory = ({ counts = [], records = [] } = {}) => {
         fields: {
           category: '品类', season: '当季', product: '编号', size: '尺码', state: '所属状态',
           operator: '操作人', behavior: '库存行为', quantityChange: '变动数量', stockKey: '库存键',
+          warehouseStaff: '仓库员',
         },
       }),
       listAll: async () => effectiveRecords,
@@ -87,6 +88,23 @@ test('AC-PAIR-1b 总数不变、只改样品→门盒：原地改状态，不增
   const ledger = inventory.calls.find((call) => call.type === 'ledger');
   assert.ok(ledger, '状态调整必须写库存流水');
   assert.deepEqual(ledger.rows[0].behavior, ['behavior_STOCK_TO_DOORBOX']);
+});
+
+test('仓库员：人工调整写当前操作人', async () => {
+  const inventory = fakeInventory({
+    counts: [{ size: 42, doorBoxCount: 1, sampleCount: 1 }],
+    records: [
+      { record_id: 'l1', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: '门盒', 仓库员: [{ id: 'ou_old' }] } },
+      { record_id: 'l2', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['size42'] }], 所属状态: '样品', 仓库员: [{ id: 'ou_old' }] } },
+    ],
+  });
+  const service = new InventoryPairAdjustmentService({ inventory });
+  await service.adjustPairs({
+    productRecordId: 'p1', requestId: 'req', operatorOpenId: 'ou_new',
+    rows: [{ size: 42, state: '门盒', quantity: 2 }],
+  });
+  const update = inventory.calls.find((call) => call.type === 'update' && call.id === 'l2');
+  assert.deepEqual(update.values.warehouseStaff, [{ id: 'ou_new' }]);
 });
 
 test('AC-PAIR-1c 状态为空的行也能原地改成门盒', async () => {

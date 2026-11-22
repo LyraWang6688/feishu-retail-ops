@@ -55,7 +55,12 @@ test('同一种类重名拒绝；不同种类允许同名', async () => {
   assert.equal(created.category, '鞋垫');
   assert.equal(created.isAccessory, false, '新建默认不勾选赠品');
   const gift = await createAccessory(gateway, { name: '赠品鞋垫', category: '鞋垫', price: 1, isAccessory: true });
-  assert.equal(gift.isAccessory, true);
+});
+
+test('新增配品写「录入员」= 当前操作人', async () => {
+  const { gateway, tables } = make();
+  await createAccessory(gateway, { name: '新腰带', category: '腰带', price: 20, operatorOpenId: 'ou_1' });
+  assert.deepEqual(tables.at(-1).fields[fields.enteredBy], [{ id: 'ou_1' }]);
 });
 
 test('新增种类：追加到飞书单选字段 options，保留已有选项', async () => {

@@ -22,6 +22,15 @@ const relation = (recordId) => {
   return recordId ? [recordId] : undefined;
 };
 const person = (openId) => (openId ? [{ id: openId }] : undefined);
+// 人员字段是多选：追加新操作人，保留历史上已经出现的人（同一个人不重复加）。
+const appendPerson = (value, openId) => {
+  const current = Array.isArray(value) ? value : (value ? [value] : []);
+  const idOf = (item) => String(typeof item === 'string' ? item : (item?.id || item?.open_id || '')).trim();
+  const id = String(openId || '').trim();
+  if (!id) return current.length ? current : undefined;
+  if (current.some((item) => idOf(item) === id)) return current;
+  return [...current, { id }];
+};
 
 // OCR 相似字符映射：用于识别错误时的纠正
 // 注意：normalizeText 会转小写，所以这里只处理小写字母和数字
@@ -264,5 +273,6 @@ module.exports = {
   normalizeColor,
   normalizeText,
   person,
+  appendPerson,
   relation,
 };

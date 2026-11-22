@@ -19,6 +19,7 @@ const { createArrivalMarkHandler } = require('./purchase/arrivalBehavior');
 // 「货品信息.标签二维码」：表变更事件（新增 / 编号变更）→ 自动生成二维码并写回那一列。
 // 独立 service（一个 service 只干一件事），这里只负责把它接上（见构造函数）。
 const { createTagQrCodeService } = require('./tagQrCodeService');
+const { createRecordPersonStampService } = require('./recordPersonStampService');
 const { TAG_QR_CODE } = require('../config/tagQrCode');
 // ⭐ 2026-11-10（业务负责人：「样例图写入到云盘…只有新增…勾上复选框」）：
 //   「货品信息.样例图 → 云盘文件夹」同步 service（与标签二维码**两条独立链路**，同一个事件入口各分派一次）。
@@ -203,6 +204,8 @@ class LarkMvpService {
       gateway: this.gateway,
       config: TAG_QR_CODE,
     });
+    // 飞书表单创建记录时，用事件里的实际操作人补人员字段（上新员 / 打印者）。
+    this.recordPersonStamps = options.recordPersonStamps || createRecordPersonStampService({ gateway: this.gateway });
     // 「样例图 → 云盘」：与上面那条并列（各自 config / 各自失败域）。
     this.sampleImageDrive = options.sampleImageDrive || createSampleImageDriveService({
       gateway: this.gateway,
