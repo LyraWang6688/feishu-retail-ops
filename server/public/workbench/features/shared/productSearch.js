@@ -1,10 +1,10 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
-import { PRODUCT_SEARCH_MODES, PRODUCT_SEARCH_TEXT as TEXT, productSearchMode } from '../../config/productSearch.js';
+import { PRODUCT_SEARCH_TEXT as TEXT, productSearchMode } from '../../config/productSearch.js';
 
-const modeAttr = (mode) => escapeHtml(String(mode || 'productLookup'));
+const modeAttr = (mode) => escapeHtml(String(mode || 'salesDetail'));
 
-export function productSearchHtml({ mode = 'productLookup', selected = null } = {}) {
+export function productSearchHtml({ mode = 'salesDetail', selected = null } = {}) {
   const label = selected?.number || selected?.itemNo || '';
   return `<div class="ps-search" data-ps-search data-ps-mode="${modeAttr(mode)}">
   <label class="ps-field">
@@ -28,7 +28,7 @@ export function productSearchHtml({ mode = 'productLookup', selected = null } = 
  * 结果渲染和业务过滤由调用方决定；本组件只负责「搜什么、选中谁」。
  */
 export function bindProductSearch(root, {
-  mode = 'productLookup', selected = null, onSelect = () => {}, onClear = () => {},
+  mode = 'salesDetail', selected = null, onSelect = () => {}, onClear = () => {},
 } = {}) {
   const host = root?.querySelector?.('[data-ps-search]') || root;
   if (!host) return { selected: () => selected, destroy: () => {} };

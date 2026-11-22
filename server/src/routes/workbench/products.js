@@ -2,7 +2,7 @@
 
 /**
  * 工作台「货品资料」页的只读接口：
- *   · GET /products/search?q=       货号 / 编号模糊搜索（读 product 配置缓存）
+ *   · GET /products/search?q=       货号模糊搜索（读 product 配置缓存）
  *   · GET /products/incomplete      缺失信息按实际字段值动态分组（不硬编码分类）
  *   · GET /products/:id/sample-image 代理飞书附件（浏览器拿不到附件鉴权）
  *
