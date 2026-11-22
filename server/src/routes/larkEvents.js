@@ -124,6 +124,12 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
         break;
       }
     }
+    // 货品状态是实时库存的公式；库存清零/变更不一定会编辑货品记录本身，
+    // 若只等 product 表事件，货品快照会一直保留旧的「有货」，货品下架页就搜不到。
+    const liveInventoryTableId = V1_BITABLE_SCHEMA.tables?.liveInventory?.tableId;
+    if (liveInventoryTableId && liveInventoryTableId === tableId) {
+      invalidateConfigTable('product');
+    }
 
     // ⚠️ 2026-10-05：业务负责人把「采购到货」表的识别字段（类型/识别状态/识别失败原因）删了，
     // 并决定「拍照 → 识别 → 入库」这条链路整体退场（改成纯对话驱动）。
