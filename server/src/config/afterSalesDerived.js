@@ -40,6 +40,8 @@ const AFTER_SALES_DERIVED = Object.freeze({
     typeValueByAction: Object.freeze({ return: '退货', exchange: '换货' }),
     countField: 'afterSalesCount',
     countDelta: 1,
+    // 退货要扣减销售主表「鞋类总额」；退款 / 留存都按退货明细金额扣。
+    totalField: 'totalAmount',
   }),
   // 钱：两种都**新建一条 S交易明细**（不改原行）。
   money: Object.freeze({
