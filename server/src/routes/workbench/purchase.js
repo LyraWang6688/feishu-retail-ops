@@ -44,6 +44,7 @@ const { createProcurementSubmittedService } = require('../../services/procuremen
 const { createProcurementModifyService } = require('../../services/procurementModifyService');
 const { createProcurementModifyDelivery } = require('../../services/procurementModifyDelivery');
 const { createProcurementModifySalesLinks } = require('../../services/procurementModifySalesLinks');
+const { registerProcurementModifyRoute } = require('./procurementModify');
 const { createScanWriteService } = require('../../services/scanWriteService');
 const { uploadAcceptanceDocument, safeFileName } = require('../../services/acceptanceDocumentUploadService');
 const { createPurchaseAcceptanceSampleService } = require('../../services/purchaseAcceptanceSampleService');
@@ -710,21 +711,9 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
       return res.status(502).json({ success: false, error: procurementTexts.loadFailed });
     }
   });
-  router.post(PROCUREMENT_PAGE.endpoints.modify, async (req, res) => {
-    try {
-      const result = await resolveProcurementModify().modify({
-        openId: req.workbenchUser?.open_id,
-        batchNo: req.body?.batchNo,
-        submitKey: req.body?.submitKey,
-        items: req.body?.items,
-        requestId: req.requestId,
-      });
-      if (!result.ok) return res.status(400).json({ success: false, code: result.code, error: result.message });
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      logError('workbench.procurement.modify.failed', { request_id: req.requestId, error: error.message });
-      return res.status(502).json({ success: false, error: procurementTexts.loadFailed });
-    }
+  registerProcurementModifyRoute({
+    router, options, asyncJobs, resolveModify: resolveProcurementModify,
+    texts: procurementTexts, logError,
   });
   router.get(PROCUREMENT_PAGE.endpoints.replenish, async (req, res) => {
     try {

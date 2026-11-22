@@ -652,7 +652,7 @@
 | `workbench.orders.after_sales.exchange.total_missing` | 1 | src/services/afterSalesExchangeService.js |
 | `workbench.orders.after_sales.failed` | 6 | src/routes/workbenchOrderActions.js<br>src/services/afterSalesAsyncService.js |
 | `workbench.orders.after_sales.return.total_missing` | 1 | src/services/afterSalesReturnService.js |
-| `workbench.procurement.modify.failed` | 1 | src/routes/workbench/purchase.js |
+| `workbench.procurement.modify.failed` | 1 | src/routes/workbench/procurementModify.js |
 | `workbench.procurement.new_products.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.replenish.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.submit.failed` | 1 | src/routes/workbench/purchase.js |

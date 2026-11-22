@@ -68,7 +68,10 @@ export const mockApi = async (page, options = {}) => {
     }
     if (pathname === '/api/workbench/procurement/modify' && request.method() === 'POST') {
       calls.modify.push(JSON.parse(request.postData() || '{}'));
-      return route.fulfill(json({ success: true, message: '采购单已更新' }));
+      return route.fulfill(json({
+        success: true, accepted: true, message: '采购单已更新',
+        redirect_url: `/workbench/?toast=${encodeURIComponent('采购单已更新')}`,
+      }, 202));
     }
     if (pathname === '/api/workbench/procurement/submit' && request.method() === 'POST') {
       calls.submit.push(JSON.parse(request.postData() || '{}'));
