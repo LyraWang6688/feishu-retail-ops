@@ -10,7 +10,6 @@
  * 不在现在写死这些未消费字段，避免再次出现“配置存在但不生效”的死配置。
  */
 export const PRODUCT_SEARCH_TEXT = Object.freeze({
-  label: '货品',
   placeholder: '搜索货号',
   loading: '正在查找货品…',
   empty: '没有匹配的货品。',
