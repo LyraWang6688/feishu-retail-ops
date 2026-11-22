@@ -20,6 +20,7 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { SUBMIT_PENDING_TEXT } from '../../core/ui.js';
 import { AFTER_SALES_ACTIONS, AFTER_SALES_PAGE } from '../../config/afterSalesPage.js';
+import { salesOrderCardHtml } from '../shared/salesOrderCard.js';
 
 /** 毫秒时间戳 → `2026-10-29`（上海时区；取不到就空串，不编一个今天）。 */
 const formatDate = (value) => {
@@ -55,7 +56,7 @@ const candidateCardHtml = (item) => {
 
 /** 选中的那条卡片 ⇒ 原地变成两个按钮（换货 / 退货）。 */
 const candidateActionsHtml = () => `
-  <div class="candidate-card candidate-card-actions" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.actionLabel)}">
+  <div class="candidate-card-actions" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.actionLabel)}">
     ${AFTER_SALES_ACTIONS.map((action) => `
       <button class="candidate-action" type="button" data-action="${escapeHtml(action.value)}"
         >${escapeHtml(action.label)}</button>`).join('')}
@@ -130,7 +131,14 @@ export function mountAfterSalesPage(container, options = {}) {
     body.innerHTML = candidates.length
       ? `<p class="candidate-hint">${escapeHtml(AFTER_SALES_PAGE.chooseHint)}</p>
          <div class="candidate-list" data-view="after-sales-candidates">${candidates
-    .map((item) => candidateHtml(item, item.sales_detail_record_id === selectedDetailId))
+    .map((item) => (item.order
+      ? salesOrderCardHtml(item.order, {
+        highlightDetailId: item.sales_detail_record_id,
+        actionDetailId: item.sales_detail_record_id === selectedDetailId ? item.sales_detail_record_id : '',
+        actionHtml: candidateActionsHtml(),
+        matchDetailId: item.sales_detail_record_id,
+      })
+      : candidateHtml(item, item.sales_detail_record_id === selectedDetailId)))
     .join('')}</div>
          ${modalHtml()}`
       : '';
@@ -394,16 +402,16 @@ export function mountAfterSalesPage(container, options = {}) {
   });
 
   container.addEventListener('click', (event) => {
-    const candidate = event.target.closest('[data-detail]');
-    if (candidate) {
-      selectedDetailId = candidate.dataset.detail || '';
-      showStatus('');
-      renderCandidates();
-      return;
-    }
     const action = event.target.closest('[data-action]');
     if (action) {
       openModal(action.dataset.action);
+      return;
+    }
+    const candidate = event.target.closest('[data-as-match], [data-detail]');
+    if (candidate) {
+      selectedDetailId = candidate.dataset.asMatch || candidate.dataset.detail || '';
+      showStatus('');
+      renderCandidates();
       return;
     }
     if (event.target.closest('[data-as-modal-close]')) { closeModal(); return; }

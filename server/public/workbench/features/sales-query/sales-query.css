@@ -49,6 +49,10 @@
 .sq-order-head { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"title total" "pays pays"; gap:6px 10px; align-items:start; padding:12px; background:var(--surface-soft); border-bottom:1px solid var(--border-light); }
 .sq-order-title { grid-area:title; display:flex; align-items:baseline; gap:8px; min-width:0; white-space:nowrap; }
 .sq-order-title b { font-size:var(--font-size-sm); white-space:nowrap; }
+.sq-detail-highlight { background: var(--primary-soft); }
+.sq-detail-highlight td { font-weight: var(--weight-bold); }
+.sq-detail-action-row td { padding: var(--space-2); background: var(--primary-soft); }
+.sq-detail-action-row .candidate-card-actions { margin: 0; }
 .sq-order-total { grid-area:total; justify-self:end; font-size:var(--font-size-base); font-variant-numeric:tabular-nums; }
 .sq-order-time { color:var(--text-muted); font-size:var(--font-size-xs); white-space:nowrap; }
 .sq-order-pays { grid-area:pays; display:flex; flex-wrap:wrap; justify-content:flex-start; gap:4px; justify-self:start; max-width:100%; }

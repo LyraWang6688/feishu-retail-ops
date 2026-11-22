@@ -19,6 +19,7 @@
  */
 const express = require('express');
 const { AfterSalesScanService } = require('../services/afterSalesScanService');
+const { createSalesDeliveryReadService } = require('../services/salesDeliveryReadService');
 const { SAMPLE_PROMOTION } = require('../config/samplePromotion');
 const { createScanPageService } = require('../services/scanPageService');
 const { saleSizeGroups } = require('../views/scanPageRealm');
@@ -48,7 +49,12 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
   //      不新造事件（新事件要进 `config/events.js`，那是另一条任务的作用域）。
   let scanService = options.scanService || null;
   const resolveScanService = () => {
-    if (!scanService) scanService = new AfterSalesScanService({ gateway: options.gateway });
+    if (!scanService) {
+      scanService = new AfterSalesScanService({
+        gateway: options.gateway,
+        salesRead: options.salesRead || createSalesDeliveryReadService({ gateway: options.gateway }),
+      });
+    }
     return scanService;
   };
   router.get('/sales/after-sales/scan-candidates', async (req, res) => {
