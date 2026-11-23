@@ -84,6 +84,7 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
   router.get('/sales/after-sales/stock-sizes', async (req, res) => {
     const productRecordId = String(req.query?.productRecordId || req.query?.product_record_id || '').trim();
     if (!productRecordId) return res.status(400).json({ success: false, error: 'missing productRecordId' });
+    const originalSize = Number(req.query?.originalSize || 0);
     try {
       const view = await resolveScanPageService().lookup({ recordId: productRecordId, requestId: req.requestId });
       const groups = saleSizeGroups(view);
@@ -94,6 +95,11 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
           && Number(state.count) > 0
         )))
         .map((item) => String(item.size_text));
+      // ⭐ 换回来的原尺码即使只有样品也可作为候选；不能假设它一定回到门盒。
+      if (originalSize > 0 && all.some((item) => Number(item.size_text) === originalSize)) {
+        const text = String(originalSize);
+        if (!sampleCandidates.includes(text)) sampleCandidates.push(text);
+      }
       return res.json({
         success: true,
         groups: {

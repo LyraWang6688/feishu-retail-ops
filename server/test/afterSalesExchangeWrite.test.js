@@ -159,6 +159,25 @@ test('AC-EX4 同一 requestId 重放 ⇒ 零新增写入，结果一致', async 
   assert.equal(h.state.calls.update.length, updatesAfterFirst, '不重复写');
 });
 
+test('AC-EX5b 半写入后重试：progress.prepared 存在 ⇒ 不再被已退货原明细拦住', async () => {
+  const h = makeService();
+  const payload = basePayload();
+  const prepared = await h.service.prepare(payload);
+  await h.service.store.create({
+    request_id: `after_sales_exchange_${payload.requestId}`,
+    status: 'prepared',
+    payload,
+    prepared,
+  });
+  // 模拟第一次已经改了原明细、随后库存失败
+  h.state.detail.fields['履约状态'] = '已退货';
+  const result = await h.service.execute(payload);
+  assert.equal(h.state.detail.fields['履约状态'], '已退货');
+  assert.equal(h.state.details.length, 2, '复用已建的新明细，不再新建第二条');
+  assert.equal(h.inventoryCalls.length, 2, '从库存步骤继续执行');
+  assert.equal(result.newDetail.record_id, 'new_salesDetail_1');
+});
+
 test('AC-EX5 非「已交付」明细 ⇒ 400，零写入', async () => {
   const h = makeService();
   h.state.detail.fields['履约状态'] = '已退货';
@@ -166,6 +185,31 @@ test('AC-EX5 非「已交付」明细 ⇒ 400，零写入', async () => {
   assert.equal(h.state.calls.create.length, 0);
   assert.equal(h.state.calls.update.length, 0);
 });
+test('AC-EX6b 换回来的原尺码只有样品 ⇒ 仍允许作为补样品候选', async () => {
+  const h = makeExchangeGateway();
+  const promoted = [];
+  const service = new AfterSalesExchangeService({
+    gateway: h.gateway,
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'as-exchange-sample-original-')),
+    now: () => NOW,
+    paymentMethods: h.paymentMethods,
+    inventory: {
+      readLiveInventoryForProduct: async () => [],
+      sampleReplacementCandidates: async () => [
+        { size: 40, doorBoxCount: 0, sampleCount: 1, warehouseCount: 0 },
+        { size: 41, doorBoxCount: 0, sampleCount: 1, warehouseCount: 0 },
+      ],
+      applyChange: async (input) => (input.kind === 'STOCK_SALE_DECREASE'
+        ? { sampleConsumedQuantity: 1 } : { sampleConsumedQuantity: 0 }),
+    },
+    samples: { promote: async (input) => { promoted.push(input); return { ok: true }; } },
+  });
+  const result = await service.execute(basePayload({ newSize: 41, samplePromotionSize: 40 }));
+  assert.equal(result.newDetail.record_id, 'new_salesDetail_1');
+  assert.equal(promoted.length, 1);
+  assert.equal(promoted[0].size, 40, '换回来的原尺码 40 可作为补样品候选');
+});
+
 test('AC-EX6 换到只有样品的尺码：要求选另一个尺码补样品，并在出库后执行补样品', async () => {
   const h = makeExchangeGateway();
   const promoted = [];
