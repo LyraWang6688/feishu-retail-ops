@@ -80,14 +80,16 @@ const indexByRecordId = (records) => new Map(records.map((record) => [record.rec
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 /** 按日期过滤读；失败回退整表，结果正确优先。 */
-const listByFilterWithRetry = async (gateway, tableKey, filter, requestId, options = {}) => {
-  const retry = resolveOrderReadRetryConfig();
+const listByFilterWithRetry = async (gateway, tableKey, filter, requestId, options = {}, retryConfig = null) => {
+  const retry = retryConfig || resolveOrderReadRetryConfig();
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await gateway.listByFilter(tableKey, filter, { ...options, retry: false });
     } catch (error) {
       if (!isRetriableOrderReadError(error) || attempt >= retry.maxRetries) throw error;
-      const delayMs = Math.max(0, Number(retry.delayMs)) * (attempt + 1);
+      const delayMs = retry.baseDelayMs != null
+        ? Math.min(Math.round(retry.baseDelayMs * (retry.factor ** attempt)), retry.maxDelayMs)
+        : Math.max(0, Number(retry.delayMs)) * (attempt + 1);
       logWarn('workbench.query.retry', {
         request_id: requestId, table_key: tableKey, attempt: attempt + 1,
         of: retry.maxRetries + 1, delay_ms: delayMs, reason: 'transient_filter_read',
@@ -100,14 +102,17 @@ const listByFilterWithRetry = async (gateway, tableKey, filter, requestId, optio
 // 读表瞬时错误重试：判据与订单列表/扫码页同一份（config/orderReadRetry → pushRetry），
 // 不另写第二套。覆盖飞书 1254607、HTTP 429/5xx（含 504）与网络类错误。
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
-const listAllWithRetry = async (gateway, tableKey, requestId, options = {}) => {
-  const retry = resolveOrderReadRetryConfig();
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
+const listAllWithRetry = async (gateway, tableKey, requestId, options = {}, retryConfig = null) => {
+  const retry = retryConfig || resolveOrderReadRetryConfig();
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await gateway.listAll(tableKey, { ...options, retry: false });
     } catch (error) {
       if (!isRetriableOrderReadError(error) || attempt >= retry.maxRetries) throw error;
-      const delayMs = Math.max(0, Number(retry.delayMs)) * (attempt + 1);
+      const delayMs = retry.baseDelayMs != null
+        ? Math.min(Math.round(retry.baseDelayMs * (retry.factor ** attempt)), retry.maxDelayMs)
+        : Math.max(0, Number(retry.delayMs)) * (attempt + 1);
       logWarn('workbench.query.retry', {
         request_id: requestId,
         table_key: tableKey,
@@ -203,15 +208,15 @@ const createWorkbenchService = (gateway, options = {}) => {
     let records;
     if (filter && typeof gateway.listByFilter === 'function') {
       try {
-        records = await listByFilterWithRetry(gateway, 'inventoryLedger', filter, requestId, { fieldNames });
+        records = await listByFilterWithRetry(gateway, 'inventoryLedger', filter, requestId, { fieldNames }, CRITICAL_READ_RETRY);
       } catch (error) {
         logWarn('workbench.inventory.ledger_filter_fallback', {
           request_id: requestId, filter, error: String(error?.message || error).slice(0, 200),
         });
-        records = await listAllWithRetry(gateway, 'inventoryLedger', requestId, { fieldNames });
+        records = await listAllWithRetry(gateway, 'inventoryLedger', requestId, { fieldNames }, CRITICAL_READ_RETRY);
       }
     } else {
-      records = await listAllWithRetry(gateway, 'inventoryLedger', requestId, { fieldNames });
+      records = await listAllWithRetry(gateway, 'inventoryLedger', requestId, { fieldNames }, CRITICAL_READ_RETRY);
     }
     const wantedProductRecordId = String(productRecordId || '').trim();
     const productRows = await getConfigRows({ gateway, tableKey: 'product' });

@@ -217,6 +217,25 @@ test('库存流水按 productRecordId 精确过滤：同编号不同记录不合
   assert.equal(byId.rows[0].product_record_id, 'prod_a');
 });
 
+test('库存流水遇到 1254607 ⇒ 用关键读重试后成功（不再 2 次×300ms 就失败）', async () => {
+  let calls = 0;
+  const transient = Object.assign(new Error('Request failed with status code 400'), {
+    response: { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } },
+  });
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listByFilter: async () => {
+      calls += 1;
+      if (calls === 1) throw transient;
+      return [];
+    },
+    listAll: async () => [],
+  };
+  const result = await createWorkbenchService(gateway).getInventoryLedger({ from: '2026-11-19', to: '2026-11-19' });
+  assert.equal(result.rows.length, 0);
+  assert.equal(calls, 2, '第一次 1254607 后必须重试一次并成功');
+});
+
 test('库存流水按创建时间下推并带字段裁剪；过滤失败才回退整表', async () => {
   const calls = [];
   const rows = [
