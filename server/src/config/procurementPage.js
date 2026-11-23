@@ -95,9 +95,18 @@ const buildProcurementPageConfig = (env = process.env) => {
     behavior: Object.freeze({ spot: 'SALE_CASH', prepaid: 'SALE_PREPAID' }),
     // 尺码规则（复用 SIZE_SEGMENTS；类别缺失 ⇒ 不猜，见 texts.categoryMissing）
     sizes: resolveSizes(),
+    // 库存展示策略（2026-11-23 业务负责人）：
+    //   库存 0 的尺码 → 标准行；库存非 0/空 → 隐藏标准行；
+    //   整个货品没有 0 库存尺码 → 只出货品卡 + 自定义尺码。
+    stockPresentation: Object.freeze({
+      zero: 'standard',
+      positive: 'hidden',
+      blank: 'hidden',
+      noZeroProduct: 'custom-only',
+    }),
     // 筛选公式（列名由调用方按 schema 解析后填进来；这里只留公式骨架）
     filters: Object.freeze({
-      replenish: 'AND(CurrentValue.[{stockField}]=0,CurrentValue.[{dateField}]>=TODAY()-{days})',
+      replenish: 'CurrentValue.[{dateField}]>=TODAY()-{days}',
       // days 传「往前的天数」：7 个自然日（含今天）= TODAY()-6。
       newProducts: 'CurrentValue.[{dateField}]>=TODAY()-{days}',
     }),

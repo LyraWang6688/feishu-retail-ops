@@ -1,5 +1,6 @@
 /** 补货自定义尺码：纯校验 + 聚焦，不持有状态、不改草稿。 */
 const sizesOfGroup = (group) => {
+  if (Array.isArray(group?.standardSizes)) return group.standardSizes.map(String);
   if (Array.isArray(group?.sizes)) return group.sizes.map((row) => String(row?.size ?? row));
   return [...(group?.sizes?.normal || []), ...(group?.sizes?.special || [])].map(String);
 };

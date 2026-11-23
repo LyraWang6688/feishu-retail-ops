@@ -95,7 +95,8 @@ export const replenishGroupHtml = (group, draft, store, config) => {
     <div class="pr-group-title-wrap"><h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>${productActionsHtml(group, config)}</div>
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(config.card.replenishTotal, 0)}</div>
   </div>
-  <div class="pr-size-grid">${(group.sizes || []).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}</div>
+  ${group.stockMode === 'custom-only' ? `<p class="pr-hint">${escapeHtml(config.texts.stockCustomOnlyHint)}</p>` : ''}
+  <div class="pr-size-grid">${(group.stockMode === 'custom-only' ? [] : (group.sizes || [])).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}</div>
   <button type="button" class="btn pr-add-size" data-pr-add-size data-record="${escapeHtml(group.productRecordId)}">${escapeHtml(config.texts.addCustomSize)}</button>
 </section>`;
 };

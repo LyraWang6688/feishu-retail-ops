@@ -103,16 +103,28 @@ test('AC-P2b 跨月 / 跨年 / 闰年：日期运算自动进位（不手写月�
   }
 });
 
-// ── AC-P3 库存 = 0 过滤 ───────────────────────────────────────────────────
-test('AC-P3 库存数量 = 0 才计入：>0 / 空 / 认不出 一律不计入', () => {
+// ── AC-P3 库存 0 / 非 0 展示策略 ───────────────────────────────────────────
+test('AC-P3 库存 0 才出标准行；非 0/空仍出货品卡但标准行隐藏', () => {
   const rows = [
-    salesRow({ stock: 0 }), salesRow({ stock: 2 }),
-    { record_id: 'r1', fields: { [F.product]: link('recA'), [F.size]: 39, [F.soldAt]: NOW, [F.tradeType]: link('SALE_CASH') } },
-    { record_id: 'r2', fields: { [F.product]: link('recA'), [F.size]: 40, [F.soldAt]: NOW, [F.stockQuantity]: 'abc', [F.tradeType]: link('SALE_CASH') } },
+    salesRow({ size: 39, stock: 0 }), salesRow({ size: 40, stock: 2 }),
+    { record_id: 'r1', fields: { [F.product]: link('recA'), [F.size]: 41, [F.soldAt]: NOW - 1, [F.tradeType]: link('SALE_CASH') } },
+    { record_id: 'r2', fields: { [F.product]: link('recA'), [F.size]: 42, [F.soldAt]: NOW - 1, [F.stockQuantity]: 'abc', [F.tradeType]: link('SALE_CASH') } },
   ];
   const result = view(rows);
-  assert.equal(result.stats.spotSold, 1);
-  assert.equal(result.skippedRows, 3);
+  assert.equal(result.stats.spotSold, 1, '只有库存 0 计入现货已售');
+  assert.equal(result.skippedRows, 0, '非 0/空不再整行丢弃');
+  assert.deepEqual(result.groups[0].sizes.map((row) => row.size), [39], '只渲染库存 0 的尺码');
+  assert.deepEqual(result.groups[0].standardSizes, [39, 40, 41, 42], '完整尺码保留给自定义重复校验');
+  assert.equal(result.groups[0].stockMode, 'standard');
+});
+
+test('AC-P3b 整个货品没有库存 0 尺码 ⇒ custom-only，不出标准行', () => {
+  const result = view([salesRow({ size: 40, stock: 1 }), salesRow({ size: 41, stock: 3 })]);
+  assert.equal(result.groups.length, 1, '货品卡仍出现');
+  assert.deepEqual(result.groups[0].sizes, [], '不显示标准尺码行');
+  assert.deepEqual(result.groups[0].standardSizes, [40, 41]);
+  assert.equal(result.groups[0].stockMode, 'custom-only');
+  assert.equal(result.stats.spotSold, 0);
 });
 
 // ── AC-P4 现货 / 预订计数（判据来自 salesMovements）─────────────────────────
