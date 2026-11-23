@@ -5,8 +5,8 @@
  *
  * AC-SL1 真实形状（listAll/get，SingleLink 18 / DuplexLink 21 同形）⇒ 解析出 id。
  * AC-SL2 空关联（没有 record_ids 键）⇒ []（不是"猜"）。
- * AC-SL3 无证据形状（{id} / {record_id} / {recordId} / 裸字符串 / link_record_ids）⇒ 一律 []，
- *        不再"顺手兼容"。
+ * AC-SL3 无证据形状（{id} / {record_id} / {recordId} / 裸字符串）⇒ 一律 []，
+ *        不再"顺手兼容"；`link_record_ids` 是 getBatch 的真实形状（2026-11-23）⇒ 认。
  * AC-SL4 源码哨兵：售后链路只 import 严格版，不再用全局 `linkedRecordIds`。
  */
 const test = require('node:test');
@@ -27,6 +27,11 @@ test('AC-SL1 真实形状（record_ids）⇒ 解析出 id；数组/嵌套也认'
   assert.deepEqual(salesLinkRecordIds(null), []);
 });
 
+test('AC-SL1b getBatch 的 link_record_ids ⇒ 解析出 id', () => {
+  assert.deepEqual(salesLinkRecordIds({ link_record_ids: ['rec_1', 'rec_2'] }), ['rec_1', 'rec_2']);
+  assert.deepEqual(salesLinkRecordIds([{ link_record_ids: ['rec_1'] }]), ['rec_1']);
+});
+
 test('AC-SL2 空关联（只有 table_id/text_arr/type）⇒ []', () => {
   assert.deepEqual(salesLinkRecordIds([{ table_id: 'tblX', text_arr: [], type: 'text' }]), []);
 });
@@ -37,7 +42,6 @@ test('AC-SL3 无证据形状 ⇒ 一律 []（删掉的兜底不再生效）', ()
     [{ record_id: 'rec_1' }],
     [{ recordId: 'rec_1' }],
     ['rec_1'],
-    [{ link_record_ids: ['rec_1'] }],
   ]) {
     assert.deepEqual(salesLinkRecordIds(value), [], `不许再兼容：${JSON.stringify(value)}`);
   }

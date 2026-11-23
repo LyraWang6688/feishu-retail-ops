@@ -4,10 +4,10 @@
  * 售后链路**专用**的关联字段解析：只认 `{ record_ids: ['rec…'] }`（issue #1074）。
  *
  * 为什么单独一个函数（而不是用全局 `linkedRecordIds()`）：
- *   · 全局 helper 还兼容 `link_record_ids` / `{ id }` / `{ record_id }` / 裸字符串数组——
- *     那些分支在售后这条线上**没有任何真实样例**；
- *   · 售后读关联字段的接口只有 `listAll`（`appTableRecord.list`）与 `get`（`appTableRecord.get`）：
- *     2026-11-10 只读取证（测试 Base，项目代码 + 官方 SDK `appTableField.list`），
+ *   · 全局 helper 还兼容 `{ id }` / `{ record_id }` / 裸字符串数组——那些分支没有证据；
+ *   · 2026-11-23 售后候选改为 `getBatch` 读销售主表 / 收款明细，真实返回是
+ *     `{ link_record_ids: ["rec…"] }`（与 `get` / `listAll` 的 `[{ record_ids }]` 不同形）；
+ *   · 2026-11-10 只读取证（测试 Base，项目代码 + 官方 SDK `appTableField.list`），
  *     SingleLink(18) 与 DuplexLink(21) **同形**：
  *
  *       [{ "record_ids": ["rec…"], "table_id": "tbl…", "text": "…", "text_arr": ["…"], "type": "text" }]
@@ -23,8 +23,12 @@
 const salesLinkRecordIds = (value) => {
   if (Array.isArray(value)) return value.flatMap(salesLinkRecordIds);
   if (!value || typeof value !== 'object') return [];
-  if (!Array.isArray(value.record_ids)) return [];
-  return value.record_ids.flatMap((id) => {
+  const ids = [
+    ...(Array.isArray(value.record_ids) ? value.record_ids : []),
+    ...(Array.isArray(value.link_record_ids) ? value.link_record_ids : []),
+  ];
+  if (!ids.length) return [];
+  return ids.flatMap((id) => {
     if (typeof id === 'string') return id ? [id] : [];
     if (Array.isArray(id)) return salesLinkRecordIds(id);
     return [];
