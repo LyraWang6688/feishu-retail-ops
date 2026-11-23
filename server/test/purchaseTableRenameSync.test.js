@@ -385,7 +385,7 @@ test('B8 工作台查询接口：到货判断来自「发生行为」，不再�
     .replace(/^\s*\/\/.*$/gm, '')
     .replace(/([^:])\/\/.*$/gm, '$1');
   assert.equal(/'purchaseArrival'/.test(codeOnly), false, '不再读已删除的 purchaseArrival 表');
-  assert.match(codeOnly, /gateway\.listAll\('purchaseOrderBatch'\)/);
+  assert.match(codeOnly, /gateway\.listAll\('purchaseOrderBatch'/);
   // 投影出来的字段（前端就靠这个 + 批次号）。
   // ⛔ 2026-10-09：`confirm_status` / `acceptance_text` 两个投影**已删除**；
   // 2026-11-20：`arrival_status` 也删除，直接投影发生行为。

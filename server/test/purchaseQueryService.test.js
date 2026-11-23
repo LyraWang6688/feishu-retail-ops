@@ -2,15 +2,19 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createPurchaseQueryService } = require('../src/services/purchaseQueryService');
 const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
+const { CRITICAL_READ_RETRY } = require('../src/config/gatewayReadRetry');
 const { normalizeLinkFields } = require('./support/linkReadShape');
 
 // 「尺码」是指向「尺码管理」的关联字段，读取时要能从关联记录解析回整数。
 const SIZE_RECORDS = [36, 37].map((size) => ({ record_id: `size_${size}`, fields: { 尺码: size } }));
 const sizeLink = (size) => [`size_${size}`];
 
-const makeGateway = (records = {}) => ({
+const makeGateway = (records = {}, calls = []) => ({
   table: (key) => V1_BITABLE_SCHEMA.tables[key],
-  listAll: async (key) => (key === 'sizeManagement' ? SIZE_RECORDS : (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }))),
+  listAll: async (key, options) => {
+    calls.push({ key, options });
+    return key === 'sizeManagement' ? SIZE_RECORDS : (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
+  },
 });
 
 test('listPurchaseRequests maps fields and filters by batchNo', async () => {
@@ -55,6 +59,19 @@ test('listPurchaseRequests maps fields and filters by batchNo', async () => {
   const byBehavior = await service.listPurchaseRequests({ behaviorCode: 'PURCHASE_IN' });
   assert.equal(byBehavior.length, 1);
   assert.equal(byBehavior[0].record_id, 'req_1');
+});
+
+test('AC-BATCH2 验收读 purchaseOrderBatch 必须挂 CRITICAL_READ_RETRY（1254607 自动重试）', async () => {
+  const calls = [];
+  const gateway = makeGateway({
+    purchaseOrderBatch: [{ record_id: 'batch_1', fields: { 报货批次号: 'BH-001', 采购明细: [{ record_ids: ['req_1'] }] } }],
+    purchaseRequest: [{ record_id: 'req_1', fields: { 报货批次号: [{ record_ids: ['batch_1'] }], 尺码: sizeLink(36), 数量: 1 } }],
+  }, calls);
+  const service = createPurchaseQueryService(gateway);
+  await service.listPurchaseRequestsForBatch({ batchNo: 'BH-001' });
+  const batchReads = calls.filter((call) => call.key === 'purchaseOrderBatch');
+  assert.ok(batchReads.length > 0);
+  for (const call of batchReads) assert.deepEqual(call.options, { retry: CRITICAL_READ_RETRY });
 });
 
 test('AC-BATCH1 按批次读：走「供应主表.采购明细」link + getBatch，不整表读 purchaseRequest', async () => {
