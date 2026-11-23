@@ -164,7 +164,10 @@ export function mountAfterSalesPage(container, options = {}) {
     if (!modal || modal.action !== 'exchange' || modal.kind !== 'same') return;
     if (modal.stock || modal.stockError) return;
     try {
-      const data = await api.get(`${apiBase}${AFTER_SALES_PAGE.stockSizesApi}?${new URLSearchParams({ productRecordId })}`);
+      const originalSize = Number(selectedCandidate()?.size || 0);
+      const query = new URLSearchParams({ productRecordId });
+      if (originalSize > 0) query.set('originalSize', String(originalSize));
+      const data = await api.get(`${apiBase}${AFTER_SALES_PAGE.stockSizesApi}?${query.toString()}`);
       if (!modal) return;
       modal.stock = data?.groups || {};
     } catch {

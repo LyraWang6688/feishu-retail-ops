@@ -166,8 +166,10 @@ class AfterSalesExchangeService {
       && Number(currentSize.doorBoxCount) === 0);
     if (sampleOnly) {
       const chosen = Number(shaped.samplePromotionSize) || 0;
+      // ⭐ 换回来的原尺码本身也可作为样品候选：不假设它一定回到「门盒」状态。
       const allowed = (liveCandidates || [])
-        .filter((item) => Number(item.doorBoxCount) > 0 && Number(item.size) !== Number(newSize))
+        .filter((item) => Number(item.size) !== Number(newSize)
+          && (Number(item.doorBoxCount) > 0 || Number(item.size) === Number(originalSize)))
         .map((item) => Number(item.size));
       if (!chosen) throw badRequest(this.texts.needSamplePromotion);
       if (!allowed.includes(chosen)) throw badRequest(this.texts.samplePromotionInvalid);
@@ -200,9 +202,14 @@ class AfterSalesExchangeService {
     let progress = await this.store.get(storeId);
     if (progress?.status === 'completed' && progress.result) return progress.result;
 
-    const prepared = await this.prepare(payload);
     const save = (patch) => this.store.update(storeId, patch);
-    if (!progress) progress = await this.store.create({ request_id: storeId, status: 'preparing', payload });
+    // ⭐ 半写入恢复：prepare 成功就冻结快照；重试不再重新校验已被自己改成「已退货」的原明细。
+    let prepared = progress?.prepared || null;
+    if (!prepared) {
+      prepared = await this.prepare(payload);
+      if (!progress) progress = await this.store.create({ request_id: storeId, status: 'preparing', payload });
+      progress = await save({ status: 'prepared', prepared });
+    }
 
     const detailFields = this.gateway.table('salesDetail').fields;
 
