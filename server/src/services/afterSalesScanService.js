@@ -73,8 +73,6 @@ class AfterSalesScanService {
   constructor(options = {}) {
     if (!options.gateway) throw new Error('AfterSalesScanService requires gateway');
     this.gateway = options.gateway;
-    // 可选：只为售后卡片补齐“整张订单”的明细/收款；不注入时保持旧的候选结构。
-    this.salesRead = options.salesRead || null;
     this.now = options.now || (() => Date.now());
     // ⭐ 读模型短 TTL 缓存：**复用扫码页那一份实现**（`scanPageCache`）。
     //   测试可注入（用例验"命中不再读表" / "关掉就真读"）。
@@ -197,27 +195,87 @@ class AfterSalesScanService {
       });
     }
 
-    // 整单展示：复用销售查询的读模型，按销售主表 record_id 取完整明细/收款。
-    // 读失败只让卡片退回旧结构，不影响售后候选本身。
-    if (this.salesRead && candidates.length) {
-      try {
-        const dayOf = (epoch) => new Date(Number(epoch) + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
-        const data = await this.salesRead.listDeliveryData({
-          query: true, from: dayOf(cutoff), to: dayOf(now),
-        });
-        const orderById = new Map((data.orders || []).map((order) => [order.sales_entry_record_id, {
-          ...order,
-          total_amount: order.total_amount ?? order.payable_amount ?? null,
-        }]));
-        for (const candidate of candidates) {
-          const order = orderById.get(candidate.sales_entry_record_id) || null;
-          // 只有整单里确实包含这条命中明细时才挂整单卡；否则退回旧候选卡，避免点不到售后行。
-          candidate.order = order && (order.details || []).some(
-            (row) => row.record_id === candidate.sales_detail_record_id,
-          ) ? order : null;
+    // ── 整单卡片：只补候选订单，不读销售查询的全量读模型 ─────────────────────
+    // 候选明细已经全量读过；这里按候选主表 id 批量补货品/尺码/收款，
+    // 不再调用 salesDeliveryReadService（那是销售查询页的整套读模型，售后只补这几单）。
+    if (candidates.length) {
+      const detailsByEntry = new Map();
+      for (const detail of details) {
+        const entryId = salesLinkRecordIds(detail.fields?.[detailFields.salesEntry])[0] || '';
+        if (!entryId) continue;
+        if (!detailsByEntry.has(entryId)) detailsByEntry.set(entryId, []);
+        detailsByEntry.get(entryId).push(detail);
+      }
+      const productIds = new Set();
+      const sizeIds = new Set();
+      const paymentIds = new Set();
+      for (const entryId of entryIds) {
+        for (const detail of detailsByEntry.get(entryId) || []) {
+          const productId = salesLinkRecordIds(detail.fields?.[detailFields.product])[0] || '';
+          const sizeId = salesLinkRecordIds(detail.fields?.[detailFields.size])[0] || '';
+          if (productId) productIds.add(productId);
+          if (sizeId) sizeIds.add(sizeId);
         }
-      } catch (error) {
-        // 完整订单只是展示增强；候选/售后写入不受影响。
+        const entry = entryById.get(entryId);
+        for (const paymentId of salesLinkRecordIds(entry?.fields?.[entryFields.paymentRecords])) paymentIds.add(paymentId);
+      }
+      const [products, sizes, payments] = await Promise.all([
+        productIds.size ? this.gateway.getBatch('product', [...productIds]) : [],
+        sizeIds.size ? this.gateway.getBatch('sizeManagement', [...sizeIds]) : [],
+        paymentIds.size ? this.gateway.getBatch('paymentRecord', [...paymentIds]) : [],
+      ]);
+      const productById = new Map((products || []).map((row) => [row.record_id, row]));
+      const sizeById = new Map((sizes || []).map((row) => [row.record_id, row]));
+      const paymentById = new Map((payments || []).map((row) => [row.record_id, row]));
+      const paymentFields = this.gateway.table('paymentRecord').fields;
+      const paymentMethodFields = this.gateway.table('paymentMethod').fields;
+      const sizeFields = this.gateway.table('sizeManagement').fields;
+      const methodIds = [...new Set((payments || []).map((row) => salesLinkRecordIds(row.fields?.[paymentFields.method])[0]).filter(Boolean))];
+      const methods = methodIds.length ? await this.gateway.getBatch('paymentMethod', methodIds) : [];
+      const methodById = new Map((methods || []).map((row) => [row.record_id, row]));
+      const productNumber = (product) => asText(textValue(product?.fields?.[productFields.number]));
+      const sizeText = (detail) => {
+        const id = salesLinkRecordIds(detail.fields?.[detailFields.size])[0] || '';
+        const raw = asText(textValue(sizeById.get(id)?.fields?.[sizeFields.size]));
+        const number = Number(raw);
+        return raw !== '' && Number.isFinite(number) ? number : raw;
+      };
+      const orderByEntry = new Map();
+      for (const entryId of entryIds) {
+        const entry = entryById.get(entryId);
+        if (!entry) continue;
+        const orderDetails = (detailsByEntry.get(entryId) || []).map((detail) => {
+          const productId = salesLinkRecordIds(detail.fields?.[detailFields.product])[0] || '';
+          return {
+            record_id: detail.record_id,
+            number: productNumber(productById.get(productId)),
+            size: sizeText(detail),
+            actual_amount: numberOf(detail.fields?.[detailFields.actualAmount]),
+            fulfillment_status: asText(textValue(detail.fields?.[detailFields.fulfillmentStatus])),
+          };
+        });
+        const orderPayments = salesLinkRecordIds(entry.fields?.[entryFields.paymentRecords]).map((id) => {
+          const payment = paymentById.get(id);
+          if (!payment) return null;
+          const methodId = salesLinkRecordIds(payment.fields?.[paymentFields.method])[0] || '';
+          return {
+            method: asText(textValue(methodById.get(methodId)?.fields?.[paymentMethodFields.name])),
+            amount: numberOf(payment.fields?.[paymentFields.amount]),
+            status: asText(textValue(payment.fields?.[paymentFields.status])),
+          };
+        }).filter(Boolean);
+        orderByEntry.set(entryId, {
+          order_no: asText(textValue(entry.fields?.[entryFields.orderNo])) || entry.record_id,
+          recorded_at: entry.fields?.[entryFields.recordedAt] ?? null,
+          total_amount: numberOf(entry.fields?.[entryFields.orderTotal]),
+          payments: orderPayments,
+          details: orderDetails,
+        });
+      }
+      for (const candidate of candidates) {
+        const order = orderByEntry.get(candidate.sales_entry_record_id) || null;
+        candidate.order = order && order.details.some((row) => row.record_id === candidate.sales_detail_record_id)
+          ? order : null;
       }
     }
 

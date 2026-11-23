@@ -25,7 +25,7 @@ const fakeGateway = (overrides = {}) => {
       { record_id: 'p2', fields: { 编号: 'OTHER|米色|女', 货号: 'OTHER', 颜色: '米色' } },
     ],
     salesEntry: [
-      { record_id: 'e1', fields: { 销售单号: 'XSD-1', 写入状态: '成功', 录单日: NOW - DAY, 总金额: 300 } },
+      { record_id: 'e1', fields: { 销售单号: 'XSD-1', 写入状态: '成功', 录单日: NOW - DAY, 总金额: 300, 收款明细: [{ record_ids: ['pay1'] }] } },
       { record_id: 'e2', fields: { 销售单号: 'XSD-2', 写入状态: '失败', 录单日: NOW - DAY, 总金额: 200 } },
       { record_id: 'e3', fields: { 销售单号: 'XSD-3', 写入状态: '成功', 录单日: NOW - 40 * DAY, 总金额: 100 } },
     ],
@@ -40,6 +40,16 @@ const fakeGateway = (overrides = {}) => {
       { record_id: 'd7', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s42'], text: '42' }], 销售日: NOW - DAY, 履约状态: '已换货', 实收金额: 200 } },
       { record_id: 'd8', fields: { 销售单号: [{ record_ids: ['e1'] }], 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s42'], text: '42' }], 销售日: NOW - DAY, 履约状态: '已赔货', 实收金额: 200 } },
     ],
+    sizeManagement: [
+      { record_id: 's41', fields: { 尺码: '41' } },
+      { record_id: 's42', fields: { 尺码: '42' } },
+    ],
+    paymentMethod: [
+      { record_id: 'm1', fields: { 名称: '现金' } },
+    ],
+    paymentRecord: [
+      { record_id: 'pay1', fields: { 交易金额: 300, 支付方式: [{ record_ids: ['m1'] }], 钱款状态: '已收款' } },
+    ],
     ...overrides,
   };
   const calls = { get: [], listAll: [], getBatch: [] };
@@ -49,8 +59,14 @@ const fakeGateway = (overrides = {}) => {
     table(key) {
       const table = {
         product: { fields: { number: '编号', itemNo: '货号', color: '颜色' } },
-        salesEntry: { fields: { orderNo: '销售单号', writeStatus: '写入状态', recordedAt: '录单日' }, readOnlyFields: { orderTotal: { name: '总金额' } } },
+        salesEntry: {
+          fields: { orderNo: '销售单号', writeStatus: '写入状态', recordedAt: '录单日' },
+          readOnlyFields: { orderTotal: { name: '总金额' }, paymentRecords: { name: '收款明细' } },
+        },
         salesDetail: { fields: { product: '编号', salesEntry: '销售单号', size: '尺码', soldAt: '销售日', fulfillmentStatus: '履约状态', actualAmount: '实收金额' } },
+        sizeManagement: { fields: { size: '尺码' } },
+        paymentMethod: { fields: { name: '名称' } },
+        paymentRecord: { fields: { amount: '交易金额', method: '支付方式', status: '钱款状态' } },
       }[key];
       if (!table) throw new Error(`Unknown table: ${key}`);
       return table;
@@ -102,24 +118,12 @@ test('AC1/AC2 ⭐ 只回这款货品近 7 天已入账的销售明细，并带�
  */
 test('售后卡片：候选附带整张订单，供前端复用销售明细卡片', async () => {
   const gateway = fakeGateway();
-  const service = new AfterSalesScanService({
-    gateway, now: () => NOW,
-    salesRead: {
-      listDeliveryData: async () => ({
-        orders: [{
-          sales_entry_record_id: 'e1', order_no: 'XSD-1', recorded_at: NOW - DAY, payable_amount: 300,
-          payments: [{ method: '现金', amount: 300, status: '已收款' }],
-          details: [
-            { record_id: 'd1', number: 'XHB8095|全黑|男', size: 41, actual_amount: 100, fulfillment_status: '已交付' },
-            { record_id: 'd7', number: 'XHB8095|全黑|男', size: 42, actual_amount: 200, fulfillment_status: '已换货' },
-          ],
-        }],
-      }),
-    },
-  });
+  const service = new AfterSalesScanService({ gateway, now: () => NOW });
   const out = await service.listCandidates({ productRecordId: 'p1' });
   assert.equal(out.candidates[0].order.total_amount, 300);
-  assert.deepEqual(out.candidates[0].order.details.map((row) => row.record_id), ['d1', 'd7']);
+  assert.equal(out.candidates[0].order.recorded_at, NOW - DAY);
+  assert.deepEqual(out.candidates[0].order.payments, [{ method: '现金', amount: 300, status: '已收款' }]);
+  assert.deepEqual(out.candidates[0].order.details.map((row) => row.record_id), ['d1', 'd2', 'd5', 'd6', 'd7', 'd8']);
 });
 
 test('AC1b ⭐⭐ 口径：未交付 / 已退货 / 已赔货 不列；已交付 和 已换货 要列', async () => {
@@ -228,7 +232,7 @@ test('AC7 ⭐⭐ 缓存：同一货品 TTL 内第二次零读表；空结果不�
   await service.listCandidates({ productRecordId: 'p1' });
   const first = JSON.parse(JSON.stringify(gateway.calls));
   assert.equal(first.listAll.filter((key) => key === 'salesDetail').length, 1, '第一次：读 1 次销售明细');
-  assert.equal(first.getBatch.length, 1, '第一次：主表按 id 批量取 1 次');
+  assert.equal(first.getBatch.filter((key) => key.startsWith('salesEntry:')).length, 1, '第一次：主表按 id 批量取 1 次');
   assert.equal(first.get.length, 1, '第一次：货品 1 条');
 
   const again = await service.listCandidates({ productRecordId: 'p1' });
@@ -267,7 +271,9 @@ test('AC7b ⭐ 主表不再整表读：只按候选明细的主表 id 批量取�
   assert.ok(!gateway.calls.listAll.includes('salesEntry'), '不许再 listAll 销售主表（整表读 660 行）');
   // 先用明细就能判断的条件筛掉（未交付 / 已售后 / 超窗口），只剩 2 张主表要看
   // （e1 = d1 那张、e2 = 写入失败那张）⇒ 只批量取这 2 条，而不是整张表。
-  assert.deepEqual(gateway.calls.getBatch, ['salesEntry:2']);
+  assert.deepEqual(gateway.calls.getBatch, [
+    'salesEntry:2', 'product:2', 'sizeManagement:2', 'paymentRecord:1', 'paymentMethod:1',
+  ]);
 });
 
 test('AC4d ⭐⭐ 跨月不需要特殊逻辑：窗口起点按上海自然日算（11-02 看近 7 天 ⇒ 10-27 00:00）', async () => {
