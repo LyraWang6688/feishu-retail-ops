@@ -31,7 +31,9 @@ body[data-view="purchase-acceptance-detail"] { padding-bottom: 110px; }
 .arrival-product { position:relative; }
 .arrival-product.is-checked { background:var(--success-soft); border-color:var(--success); }
 .arrival-product .pr-group-head { align-items:center; }
-.arrival-verify { position:absolute; right:12px; bottom:4px; z-index:1; display:inline-flex; align-items:center; gap:4px; color:var(--text-secondary); font-size:var(--font-size-xs); line-height:1.2; cursor:pointer; }
-.arrival-verify input { width:14px; height:14px; margin:0; accent-color:var(--success); }
+.arrival-title-wrap { display:flex; flex:1 1 auto; min-width:0; align-items:center; gap:8px; }
+.arrival-title-wrap .pr-group-name { margin:0; min-width:0; }
+.arrival-verify { flex:none; display:inline-flex; align-items:center; cursor:pointer; }
+.arrival-verify input { width:16px; height:16px; margin:0; accent-color:var(--success); }
 .arrival-product .pr-group-head .btn { width:auto; flex:none; }
 .arrival-total-label { color:var(--text-secondary); font-size:var(--font-size-sm); }

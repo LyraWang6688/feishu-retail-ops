@@ -155,7 +155,7 @@ export const toastHtml = () => '<div class="pr-toast" data-pr-toast role="status
 
 /** 页面骨架（薄壳之上的唯一一份 DOM 结构；tabs/底部条/各 panel 容器）。 */
 export const shellHtml = (config) => {
-  const tabs = config.tabs.map((tab) => `<button type="button" class="pr-tab" data-pr-tab="${escapeHtml(tab.id)}" role="tab">${escapeHtml(tab.label)}<small>${escapeHtml(tab.hint)}</small></button>`).join('');
+  const tabs = config.tabs.map((tab) => `<button type="button" class="pr-tab" data-pr-tab="${escapeHtml(tab.id)}" role="tab">${escapeHtml(tab.label)}${tab.hint ? `<small>${escapeHtml(tab.hint)}</small>` : ''}</button>`).join('');
   return `<div class="pr-sticky-head">
     <div class="pr-tabs" role="tablist" aria-label="${escapeHtml(config.title)}">${tabs}</div>
     <div class="pr-query-row">
