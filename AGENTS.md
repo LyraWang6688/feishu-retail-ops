@@ -263,6 +263,16 @@ Schema Check 只回答「目标 Base 的字段与关联结构是否满足契约�
      回退到默认值，于是**关不掉**（`getEnv` 的表 ID 默认值就是这个形状）。
    - 检查法：**"这个数字/名字/开关，换一个值需要改代码吗？"** —— 需要改就是没做到。
 
+### 身份键约束（hard）
+
+- **货品身份 = `productRecordId`；销售明细身份 = `sales_detail_record_id`；销售单身份 = `sales_entry_record_id`。**
+- `number` / 货号只用于展示、排序、文本匹配，**不能作为唯一键或查询过滤键**。
+- 所有“选货品”的前端状态、后端请求、数据库关联都以 `productRecordId` 为准；重复登记时不得按 `number` 合并历史。
+- 售后退换货按销售明细 record ID 操作，不按货品 / 编号操作。
+- 历史查询（销售查询 / 库存流水）也必须按 record ID 过滤。
+
+完整契约、页面映射与待改造点见 [`docs/identity-key-contract.md`](docs/identity-key-contract.md)。
+
 ### 统一配置与基础设施（2026-11-08 定稿）
 
 改异步、写飞书、库存键、配置表缓存之前，先认这一组唯一真源：
