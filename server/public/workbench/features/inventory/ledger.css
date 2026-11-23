@@ -33,4 +33,3 @@
   .ledger-btn { padding: 0 12px; }
   .ledger-tab { font-size:var(--font-size-xs); padding:var(--space-2) 2px; }
 }
-.ledger-delisted-tag { display:inline-block; margin-left:4px; padding:0 4px; border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:var(--font-size-xs); }

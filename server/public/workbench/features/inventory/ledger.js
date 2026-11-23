@@ -26,9 +26,8 @@ const TABS = Array.isArray(PAGE.tabs) ? PAGE.tabs : [];
 const rowHtml = (row) => `<tr role="row">
   ${PAGE.columns.map((column) => {
     const value = column.key === 'time' ? timeText(row.created_at) : cellText(row[column.key]);
-    const badge = column.key === 'number' && row.delisted
-      ? ` <span class="ledger-delisted-tag">${escapeHtml(PAGE.texts.delisted)}</span>` : '';
-    return `<td class="ledger-cell ${column.cls || ''}" role="cell" data-ledger-field="${escapeHtml(column.key)}">${escapeHtml(value)}${badge}</td>`;
+    const delistedClass = column.key === 'number' && row.delisted ? ' product-delisted' : '';
+    return `<td class="ledger-cell ${column.cls || ''}${delistedClass}" role="cell" data-ledger-field="${escapeHtml(column.key)}">${escapeHtml(value)}</td>`;
   }).join('')}
 </tr>`;
 

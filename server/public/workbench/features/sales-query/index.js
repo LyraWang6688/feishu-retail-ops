@@ -40,7 +40,7 @@ function breakdownRows(rows) {
 
 function ordersHtml(orders) {
   if (!orders.length) return `<p class="sq-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
-  return orders.map((order) => salesOrderCardHtml(order)).join('');
+  return orders.map((order) => salesOrderCardHtml(order, { strikeDelisted: true })).join('');
 }
 
 function overviewHtml(data) {

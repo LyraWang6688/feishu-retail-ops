@@ -307,3 +307,6 @@ th { color: var(--text-secondary); background: var(--surface-sunken); font-weigh
 .scroll-hint-wrap.has-overflow::after { opacity: 1; }
 .scroll-hint-wrap.at-end::after { opacity: 0; }
 .sq-order, .ledger-table, .sq-table-scroll { scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+
+/* 下架货品统一展示：只加删除线，不改颜色。 */
+.product-delisted { text-decoration: line-through; text-decoration-thickness: 1px; }
