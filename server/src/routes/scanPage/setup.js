@@ -571,11 +571,10 @@ const createScanPageSetup = ({ options, deps }) => {
    * ⭐⭐ 2026-10-13 **口径变更**（她的原话，逐字）：
    *   「"提交这一单"就说明**这一单已经结了**呀，如果我再操作的话，**应该就跟这一单没关系了**，
    *     除非我是选"**再加一双**"呀」
-   *  ⇒ `/s`（**不带编号**）= **销售领域入口页**（= 她说的"销售首页" ✓）：
+   *  ⇒ `/r`（**不带记录 ID**）= **销售领域入口页**（= 她说的"销售首页" ✓）：
    *    · 提交成功后回跳这里（回跳 URL 带 `?done=<单号>` ⇒ 顶部"上一单已提交（单号）" ✓ 无状态）
-   *    · 手输编号 ⇒ **302 到 `/s/<编号>`**（兜底 ✓）
-   *  ⚠️ 改前这里是"缺编号 ⇒ 400 这个链接不对" ✗；**改后 `GET /s` 是有意义的入口** ✓
-   *     （**认不出的编号**仍走原来的 400 人话页 ✓ 那条没动 ✗）
+   *  ⛔ 旧 `/s/<编号>` 手输 / 按编号入口已于 2026-11-11 删除；当前只接受 `/r/{recordId}`。
+   *     （**认不出的记录 ID** 仍走原来的 400 人话页 ✓ 那条没动 ✗）
    */
 
   return { salesAsync, openIdOf, sessionIdOf, isRecordBase, scanTargetOf, backTargetFor, lookupInputOf, postActionFor, SUBMIT_TOAST, addBackPath, adoptFirstVisitSubmitKey, badNumberPage, candidatePaymentMethods, clearMultiItemPending, config, configuredPaymentMethods, gateway, larkJsapi, logFunnelPage, logRendered, multiItemChainOf, multiItemOrder, multiItemOrderConfig, multiItemOrderEngine, multiItemPendingKey, multiItemWire, notFoundPage, paymentMethodsService, purchaseAmountInvalidPage, purchaseAmountMissingPage, purchaseBackground, purchaseEntryInvalidPage, readMultiItemPending, realmScanActive, realmScanConfig, realmScanPageConfig, realmScanTriggered, renderContext, renderMessage, renderScan, resolveLarkJsapi, respondFailure, respondSettlementBlock, respondWriteFailure, responses, salesRuntime, schedulePurchaseWrite, sendHuman, sendPaymentStep, service, setDraftOrderAmount, step2WriteOf, unknownActionFailure, voucherPayments, withoutRealmQuery, writeConfig, writeMultiItemPending, writeService };
