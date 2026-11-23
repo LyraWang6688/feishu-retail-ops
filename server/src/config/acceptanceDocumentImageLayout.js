@@ -1,0 +1,55 @@
+'use strict';
+
+/**
+ * 验收单 PNG 的排版与文案（配置先行）。
+ * 只服务「验收完成后回填我方单据 / 发原采购话题」这一条链路。
+ */
+module.exports = Object.freeze({
+  title: '邯美皮鞋验收单',
+  fileNameSuffix: '验收单',
+  width: 1200,
+  margin: 40,
+  headerHeight: 70,
+  groupHeight: 42,
+  rowHeight: 42,
+  footerHeight: 70,
+  fontFamily: 'Noto Sans CJK SC, Noto Serif CJK SC, Noto Sans SC, WenQuanYi Zen Hei, sans-serif',
+  titleFontSize: 28,
+  subtitleFontSize: 18,
+  headerFontSize: 16,
+  bodyFontSize: 17,
+  footerFontSize: 18,
+  colors: Object.freeze({
+    background: '#ffffff',
+    text: '#1f2329',
+    muted: '#646a73',
+    line: '#dee0e3',
+    headerFill: '#f2f3f5',
+    groupFill: '#eef3ff',
+    match: '#1f8f4e',
+    matchFill: '#e8f6ee',
+    short: '#c4314b',
+    shortFill: '#fdecef',
+    extra: '#245bdb',
+    extraFill: '#eaf0ff',
+  }),
+  labels: Object.freeze({
+    supplier: '供应商：{value}',
+    batchNo: '采购批次：{value}',
+    acceptedAt: '验收时间：{value}',
+    size: '尺码',
+    expected: '采购',
+    actual: '实到',
+    extra: '多到',
+    status: '状态',
+    match: '一致',
+    short: '未到货',
+    extraStatus: '多到货',
+    custom: '自定义',
+    unknownItem: '未编号',
+    unknownSupplier: '未标注供应商',
+    unknownBatch: '未标批次',
+    completion: '{batchNo} 验收完成：应到 {expected} 双 / 实到 {actual} 双 / 多到 {extra} 双',
+    total: '应到 {expected} 双 / 实到 {actual} 双 / 多到 {extra} 双',
+  }),
+});
