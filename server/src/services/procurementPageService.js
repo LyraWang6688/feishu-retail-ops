@@ -25,7 +25,8 @@ const { getConfigRows } = require('./configTableCache');
 const { textOf, buildReplenishView } = require('./procurementPageData');
 const { linkedRecordIds } = require('./v1Gateway/cells');
 const { buildNewProductsView } = require('./procurementPageNewProductsData');
-const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
+const { isRetriableOrderReadError } = require('../config/orderReadRetry');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
 const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
   Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
@@ -61,7 +62,7 @@ const createProcurementPageService = (options = {}) => {
   });
   const enricher = options.enricher || createProductEnricher({ gateway, schema, logger });
   const productFields = () => (schema.tables?.product?.fields) || {};
-  const readRetry = options.readRetry || resolveOrderReadRetryConfig();
+  const readRetry = options.readRetry || CRITICAL_READ_RETRY;
   const sleep = options.sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
   const retryRead = async (tableKey, read) => {
     for (let attempt = 0; ; attempt += 1) {
@@ -69,7 +70,9 @@ const createProcurementPageService = (options = {}) => {
         return await read();
       } catch (error) {
         if (!isRetriableOrderReadError(error) || attempt >= readRetry.maxRetries) throw error;
-        const delayMs = Math.max(0, Number(readRetry.delayMs)) * (attempt + 1);
+        const delayMs = readRetry.baseDelayMs != null
+          ? Math.min(Math.round(readRetry.baseDelayMs * (readRetry.factor ** attempt)), readRetry.maxDelayMs)
+          : Math.max(0, Number(readRetry.delayMs)) * (attempt + 1);
         warn('workbench.procurement.read_retry', {
           table_key: tableKey, attempt: attempt + 1, of: readRetry.maxRetries + 1, delay_ms: delayMs,
         });
@@ -77,8 +80,9 @@ const createProcurementPageService = (options = {}) => {
       }
     }
   };
-  const listByFilterWithRetry = (tableKey, filter) => retryRead(tableKey, () => gateway.listByFilter(tableKey, filter));
-  const listAllWithRetry = (tableKey) => retryRead(tableKey, () => gateway.listAll(tableKey));
+  // 上层统一重试；gateway 内层必须关闭，避免 1254607 时嵌套成 4 次、每次十几秒。
+  const listByFilterWithRetry = (tableKey, filter) => retryRead(tableKey, () => gateway.listByFilter(tableKey, filter, { retry: false }));
+  const listAllWithRetry = (tableKey) => retryRead(tableKey, () => gateway.listAll(tableKey, { retry: false }));
 
   // ── 行为表索引（记录ID → 行为编码）—— 唯一用途：把「销售明细.交易类型」的关联解析成现货/预订 ──
   const loadBehaviorIndex = async () => {
