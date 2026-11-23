@@ -9,7 +9,7 @@ import { createReplenishPanel } from './replenish.js';
 import { createNewProductsPanel } from './newProducts.js';
 import { createSubmitController } from './submit.js';
 import { createRefresher } from './refresh.js';
-import { customSizesValid, customRowsError } from './customSize.js';
+import { customSizesValidation, pruneCustomSizes, customRowsError } from './customSize.js';
 import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml, supplierNameMap } from './pending.js';
 import { createProcurementSearch } from './search.js';
@@ -63,6 +63,8 @@ export function mountProcurementPage(host) {
   const loadAll = async (force = false) => {
     await Promise.all(DATA_TABS.map((tab) => loadData(tab, force)));
     state.loadedAt.suggested = Date.now();
+    const pruned = pruneCustomSizes({ draft, bodies: state.bodies, tabs: DATA_TABS });
+    if (pruned !== draft) setDraft(store.save(pruned));
     paint();
     refreshNumbers();
   };
@@ -146,8 +148,10 @@ export function mountProcurementPage(host) {
     if (event.target.closest('[data-pr-retry]')) { await loadAll(true); return; }
     if (event.target.closest('[data-pr-refresh]')) { await refresher.refresh(); return; }
     if (event.target.closest('[data-pr-submit]')) {
-      if (!customSizesValid({ draft, bodies: state.bodies, tabs: DATA_TABS, store })) {
-        submitCtl.toast(host, config.texts.customSizeInvalid); return;
+      const validation = customSizesValidation({ draft, bodies: state.bodies, tabs: DATA_TABS, store });
+      if (!validation.ok) {
+        submitCtl.toast(host, validation.reason === 'duplicate' ? config.texts.customSizeDuplicate : config.texts.customSizeInvalid);
+        return;
       }
       if (modifyCtl.active()) {
         const changed = await modifyCtl.submit(draft);
