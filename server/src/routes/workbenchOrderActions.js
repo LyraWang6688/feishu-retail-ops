@@ -24,6 +24,7 @@ const { createScanPageService } = require('../services/scanPageService');
 const { saleSizeGroups } = require('../views/scanPageRealm');
 const { AfterSalesReturnService } = require('../services/afterSalesReturnService');
 const { AfterSalesExchangeService } = require('../services/afterSalesExchangeService');
+const { AFTER_SALES_EXCHANGE } = require('../config/afterSalesExchange');
 const { createAfterSalesAsyncService } = require('../services/afterSalesAsyncService');
 const { getAsyncJobService } = require('../services/asyncJobRuntime');
 const { createPaymentMethodsService } = require('../services/paymentMethodsService');
@@ -89,14 +90,15 @@ const createWorkbenchOrderActionsRouter = (options = {}) => {
       const view = await resolveScanPageService().lookup({ recordId: productRecordId, requestId: req.requestId });
       const groups = saleSizeGroups(view);
       const all = [...groups.inStock, ...groups.prepaid, ...groups.folded];
+      const sampleCfg = AFTER_SALES_EXCHANGE.sampleReplacement || {};
+      const ordinaryStates = sampleCfg.candidateStates || [SAMPLE_PROMOTION.texts.tagDoorbox, ''];
       const sampleCandidates = all
         .filter((item) => (item.states || []).some((state) => (
-          (state.key === SAMPLE_PROMOTION.texts.tagDoorbox || state.key === '')
-          && Number(state.count) > 0
+          ordinaryStates.includes(state.key) && Number(state.count) > 0
         )))
         .map((item) => String(item.size_text));
-      // ⭐ 换回来的原尺码即使只有样品也可作为候选；不能假设它一定回到门盒。
-      if (originalSize > 0 && all.some((item) => Number(item.size_text) === originalSize)) {
+      // ⭐ 换回来的原尺码无条件作为候选：它当前可能还没有回库记录。
+      if (sampleCfg.includeOriginalSize !== false && originalSize > 0) {
         const text = String(originalSize);
         if (!sampleCandidates.includes(text)) sampleCandidates.push(text);
       }
