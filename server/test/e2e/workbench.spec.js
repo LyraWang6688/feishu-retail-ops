@@ -120,6 +120,11 @@ const mockApi = async (page, {
           total_amount: 300,
           actual_amount: 100,
           fulfillment_status: '已交付',
+          order: {
+            order_no: 'XSD-E2E-001', recorded_at: Date.now() - 3600000, total_amount: 300,
+            payments: [{ method: '现金', amount: 100, status: '已收款' }],
+            details: [{ record_id: 'd1', number: 'YD1|黑|男', size: 40, actual_amount: 100, fulfillment_status: '已交付' }],
+          },
         }, {
           sales_entry_record_id: 'o2',
           order_no: 'XSD-E2E-002',
@@ -131,6 +136,11 @@ const mockApi = async (page, {
           total_amount: 200,
           actual_amount: 200,
           fulfillment_status: '已交付',
+          order: {
+            order_no: 'XSD-E2E-002', recorded_at: Date.now() - 86400000, total_amount: 200,
+            payments: [{ method: '微信扫码', amount: 200, status: '已收款' }],
+            details: [{ record_id: 'd2', number: 'YD1|黑|男', size: 41, actual_amount: 200, fulfillment_status: '已交付' }],
+          },
         }],
         excluded: { byFulfillment: {}, notPosted: 0, outOfWindow: 0, missingSalesDate: 0 },
       }));
@@ -539,39 +549,32 @@ test('售后扫一扫落地页：选哪条卡片，那条卡片就变成换货/�
   expect(hintStyle.align).toBe('center');
   expect(Number(hintStyle.weight)).toBeGreaterThanOrEqual(600);
 
-  const cards = page.locator('.candidate-card');
+  const cards = page.locator('.sq-order');
   await expect(cards).toHaveCount(2);
   await expect(page.locator('.candidate-action')).toHaveCount(0);
 
   const first = cards.first();
-  // ⭐ 2026-10-29 HTML 批注：卡片**只有一行**「销售日 / 尺码 / 总金额」，**不显示销售单号**。
+  // 新卡复用销售订单卡：整单信息 + 命中明细高亮。
+  await expect(first).toContainText('XSD-E2E-001');
   await expect(first).toContainText('40 码');
   await expect(first).toContainText('¥300');
-  await expect(first).not.toContainText('XSD-E2E-001');
-  // 日期不突出 + 三样同字号。
-  const styles = await first.locator('.candidate-value').evaluateAll((nodes) => nodes.map((node) => {
-    const style = getComputedStyle(node);
-    return { size: style.fontSize, weight: style.fontWeight };
-  }));
-  expect(new Set(styles.map((item) => item.size)).size).toBe(1);
-  expect(styles[0].weight).not.toBe('600');
-  expect(styles[0].weight).not.toBe('700');
+  await expect(page.locator('.sq-detail-highlight')).toHaveCount(2);
 
-  // 选中哪条记录，**那条卡片上**就变成两个按钮（换货 · 退货）。
+  // 选中哪条记录，**那条卡片上**就出现两个按钮（换货 · 退货）。
   await first.click();
   const buttons = page.locator('.candidate-action');
   await expect(buttons).toHaveCount(2);
   await expect(buttons.nth(0)).toHaveText('换货');
   await expect(buttons.nth(1)).toHaveText('退货');
   await expect(page.getByText('换一双给她')).toHaveCount(0);
-  // 三个按钮出现在**被选中的那条卡片的位置**，其余记录仍是卡片。
   await expect(page.locator('.candidate-card-actions')).toHaveCount(1);
-  await expect(page.locator('.candidate-card:not(.candidate-card-actions)')).toHaveCount(1);
+  await expect(page.locator('.sq-detail-action-row')).toHaveCount(1);
 
   // 换选另一条 ⇒ 按钮跟着挪到新选中的那条卡片上（仍然是两个）。
-  await page.locator('.candidate-card:not(.candidate-card-actions)').click();
+  await cards.nth(1).click();
   await expect(page.locator('.candidate-card-actions')).toHaveCount(1);
   await expect(page.locator('.candidate-action')).toHaveCount(2);
+  await expect(page.locator('.sq-detail-highlight')).toHaveCount(2);
 
   // 点击「退货」⇒ 弹窗（只剩 退款 / 留存；选退款才出现退款方式）
   await page.locator('.candidate-action').nth(1).click();
@@ -590,7 +593,7 @@ test('售后扫一扫落地页：选哪条卡片，那条卡片就变成换货/�
   await expect(page).toHaveURL(/\/workbench\/$/);
   // 后端行为已由单测钉住；这里为了继续测「换货弹窗」再回到售后页（候选重新加载、无选中）
   await page.goto('/workbench/after-sales.html?productRecordId=p1');
-  await page.locator('.candidate-card').first().click();
+  await page.locator('.sq-order').first().click();
 
   // 点击「换货」→ 换尺码 ⇒ 尺码按销售扫码页口径分三组（现货 / 预订 / 特殊码折叠）
   await page.locator('.candidate-action').nth(0).click();

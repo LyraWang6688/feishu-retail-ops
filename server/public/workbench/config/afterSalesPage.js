@@ -48,15 +48,6 @@ export const AFTER_SALES_PAGE = {
   // ⭐ 2026-10-29（业务负责人定的交互）：选中哪条记录，就在**那条卡片上**变成三个按钮
   //   （换货 / 退货 / 赔货，**只有这三个词、不做解释**）；这个只用于读屏 group 的 aria-label。
   actionLabel: '售后处理方式',
-  // 字段名（页面上一律从这取，不在渲染代码里写死）
-  // ⭐ 2026-10-29（HTML 批注）：卡片上**不再显示销售单号** ⇒ `orderLabel` 一起删掉（不留无用配置）。
-  //   三个字段名现在只用在候选卡的 `aria-label`（读屏/自动化要能读出"这是销售日 / 尺码 / 总金额"）。
-  dateLabel: '销售日',
-  sizeLabel: '尺码',
-  totalLabel: '总金额',
-  amountEmpty: '—',
-  sizeEmpty: '—',
-  dateEmpty: '—',
   // 退货弹窗
   returnTitle: '退货',
   returnProductLabel: '这双鞋',

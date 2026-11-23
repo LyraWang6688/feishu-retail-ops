@@ -67,28 +67,21 @@ test('AC-LP1 ⭐ 落地页：动作顺序「换货 · 退货」，读 scan-candi
 
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
   assert.match(page, /scanCandidatesApi/, '落地页读 scan-candidates（销售日 + 总金额那条只读接口）');
-  assert.match(page, /AFTER_SALES_PAGE\.totalLabel|男FTER_SALES_PAGE\.sizeLabel/, '销售日 / 尺码 / 总金额 的字段名从配置取');
+  assert.match(page, /salesOrderCardHtml\(item\.order/, '候选卡复用共享销售订单卡');
   assert.doesNotMatch(page, /api\.post\(/, '这一版只做页面：不许有写请求（按钮处理逻辑还没接）');
 });
 
-/**
- * ⭐ 2026-10-29（HTML 批注）候选卡：**一行**「销售日 / 尺码 / 总金额」，
- *   **不显示销售单号**、日期不突出、三样同字号（颜色不变）。
- *   判据反向钉住：单号一旦被渲染回来 / `orderLabel` 配置一旦被加回来 ⇒ 红。
- */
-test('AC-LP2 ⭐ 候选卡：一行三值、无销售单号、同字号（批注反向钉住）', () => {
+/** 旧售后候选行已退场：候选卡必须是共享销售订单卡。 */
+test('AC-LP2 候选卡使用共享销售订单卡，旧候选行代码已删除', () => {
   const root = path.join(__dirname, '../public/workbench');
   const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
   const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
 
-  assert.doesNotMatch(page, /order\.order_no|item\.order_no/, '候选卡不许再渲染销售单号（她：不需要提供销售单号信息）');
-  assert.doesNotMatch(config, /orderLabel\s*:/, '`orderLabel` 配置一起删掉（不留无用配置）');
-  assert.match(page, /class="candidate-value"/, '三个值共用 candidate-value（同一套字号 / 颜色口径）');
-  // 一行：卡片是 row，且三个值同一个字号 token（不出现 date 单独放大 / 加粗）。
-  assert.match(css, /\.candidate-card\s*\{[^}]*flex-direction:\s*row/, '候选卡必须是横向一行');
-  assert.match(css, /\.candidate-value\s*\{[^}]*font-size:\s*var\(--font-size-base\)/, '三个值同字号');
-  assert.doesNotMatch(css, /\.candidate-date/, '日期不再单独放大/加粗（样式类删掉）');
+  assert.match(page, /salesOrderCardHtml\(item\.order/, '候选卡复用共享订单卡');
+  assert.doesNotMatch(page, /candidateCardHtml|candidate-value|data-detail=/, '旧候选行代码必须删干净');
+  assert.doesNotMatch(config, /dateLabel|sizeLabel|totalLabel|amountEmpty|sizeEmpty|dateEmpty/, '旧候选卡专用配置必须删干净');
+  assert.doesNotMatch(css, /\.candidate-card\s*\{|\.candidate-value/, '旧候选卡 CSS 必须删干净');
 });
 
 /**
@@ -125,11 +118,11 @@ test('AC-LP4 ⭐⭐ 选中的那条卡片原地变成换货 / 退货两个按钮
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
   const css = fs.readFileSync(path.join(root, 'features/after-sales/after-sales.css'), 'utf8');
 
-  // 选中 ⇒ 整张卡片换成"三个按钮"这一块（同一个 candidate-card 位置），而不是另起一块。
+  // 选中 ⇒ 共享订单卡里插入动作行，不再使用旧 candidateHtml 回退。
   assert.match(page, /candidateActionsHtml/, '要有"卡片变成按钮"的那一块');
-  assert.match(page, /const candidateHtml = \(item, selected\) => \(\s*selected \? candidateActionsHtml\(\) : candidateCardHtml\(item\)/,
-    '选中时整条卡片换成按钮、未选中仍是卡片');
-  assert.match(page, /data-detail=|data-action="\$\{escapeHtml\(action\.value\)\}"/, '按钮各自带动作');
+  assert.match(page, /salesOrderCardHtml\(item\.order/, '整单卡由共享组件渲染');
+  assert.doesNotMatch(page, /candidateHtml|candidateCardHtml/, '旧候选卡回退必须删干净');
+  assert.match(page, /data-as-match|data-action="\$\{escapeHtml\(action\.value\)\}"/, '按钮各自带动作');
   // 不再有"另起一块常驻动作区 / 灰置闸门"的旧实现。
   assert.doesNotMatch(page, /after-sales-actions|syncActionsState|action-button/, '旧的"常驻动作区"实现要删干净');
   // 按钮上只有动作词，没有解释小字。
