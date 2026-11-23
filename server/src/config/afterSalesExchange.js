@@ -18,6 +18,8 @@
  * 人话 / 编码全部在本文件（逻辑里不写中文、不写业务字面量）。
  */
 
+const { SAMPLE_PROMOTION } = require('./samplePromotion');
+
 const AFTER_SALES_EXCHANGE = Object.freeze({
   action: 'exchange',
   scenarios: Object.freeze({ SAME_ITEM: 'same', NEW_ITEM: 'new' }),
@@ -45,6 +47,21 @@ const AFTER_SALES_EXCHANGE = Object.freeze({
     returnedBehaviorCode: 'STOCK_SALE_INCREASE', // 销售增加（旧鞋回库）
     newBehaviorCode: 'STOCK_SALE_DECREASE', // 销售减少（新鞋出库，方向=减少）
     quantity: 1,
+  }),
+
+  // ⭐ 补样品：候选来源 / 原尺码回库状态全部配置化。
+  sampleReplacement: Object.freeze({
+    // 原尺码无条件作为候选：它当前可能还没有回库记录。
+    includeOriginalSize: true,
+    // 普通候选只取门盒 / 空状态。
+    candidateStates: Object.freeze([SAMPLE_PROMOTION.texts.tagDoorbox, '']),
+    // 选原尺码 ⇒ 回库直接是样品；没选 ⇒ 回库是门盒。
+    returnedState: Object.freeze({
+      selected: SAMPLE_PROMOTION.texts.tagSample,
+      notSelected: SAMPLE_PROMOTION.texts.tagDoorbox,
+    }),
+    // 已经按样品入库，不再重复 promote。
+    promoteOriginalWhenSelected: false,
   }),
 
   // 钱：只看差价；补=收款，退=退款。

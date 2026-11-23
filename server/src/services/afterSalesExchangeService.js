@@ -166,11 +166,14 @@ class AfterSalesExchangeService {
       && Number(currentSize.doorBoxCount) === 0);
     if (sampleOnly) {
       const chosen = Number(shaped.samplePromotionSize) || 0;
-      // ⭐ 换回来的原尺码本身也可作为样品候选：不假设它一定回到「门盒」状态。
+      const sampleCfg = EX.sampleReplacement || {};
+      // 普通候选：当前有门盒 / 空状态；原尺码无条件追加（它可能还没回库）。
       const allowed = (liveCandidates || [])
-        .filter((item) => Number(item.size) !== Number(newSize)
-          && (Number(item.doorBoxCount) > 0 || Number(item.size) === Number(originalSize)))
+        .filter((item) => Number(item.doorBoxCount) > 0 && Number(item.size) !== Number(newSize))
         .map((item) => Number(item.size));
+      if (sampleCfg.includeOriginalSize !== false && Number(originalSize) !== Number(newSize)) {
+        if (!allowed.includes(Number(originalSize))) allowed.push(Number(originalSize));
+      }
       if (!chosen) throw badRequest(this.texts.needSamplePromotion);
       if (!allowed.includes(chosen)) throw badRequest(this.texts.samplePromotionInvalid);
     }
@@ -255,16 +258,22 @@ class AfterSalesExchangeService {
     });
 
     // ③ 库存两条：旧鞋 +1（销售增加）、新鞋 −1（现货销售）；都挂原销售主表
+    const sampleCfg = EX.sampleReplacement || {};
+    const selectedOriginal = Number(prepared.samplePromotionSize) === Number(prepared.originalSize);
+    const restockState = selectedOriginal
+      ? (sampleCfg.returnedState?.selected || EX.stock.restockState)
+      : (sampleCfg.returnedState?.notSelected || EX.stock.restockState);
+    const restockOptions = { correlation: options.correlation, ...(selectedOriginal ? { statePolicy: 'explicit' } : {}) };
     const restock = await this.inventory.applyChange({
       kind: EX.stock.returnedBehaviorCode,
       productRecordId: prepared.originalProductId,
       size: prepared.originalSize,
-      // 仅作兜底；增加库存时由库存内核自动决定样品/门盒。
-      state: EX.stock.restockState,
+      // 选原尺码 ⇒ 回库直接样品；否则回库门盒。
+      state: restockState,
       quantity: EX.stock.quantity,
       sourceRecordId: prepared.detailRecordId,
       salesEntryRecordId: prepared.salesEntryRecordId,
-    }, { correlation: options.correlation });
+    }, restockOptions);
     const newStock = await this.inventory.applyChange({
       kind: EX.stock.newBehaviorCode,
       productRecordId: prepared.newProductRecordId,
@@ -281,7 +290,8 @@ class AfterSalesExchangeService {
 
     // ③b 换到只有样品的尺码：扣掉样品后，按用户选的尺码补回一个样品。
     //     补样品失败只 warn，不回滚已经成功的换货（与销售补样品同一口径）。
-    if (newStock && Number(newStock.sampleConsumedQuantity) > 0 && prepared.samplePromotionSize) {
+    const skipOriginalPromotion = selectedOriginal && sampleCfg.promoteOriginalWhenSelected === false;
+    if (newStock && Number(newStock.sampleConsumedQuantity) > 0 && prepared.samplePromotionSize && !skipOriginalPromotion) {
       try {
         const promoted = await this.samples.promote({
           productRecordId: prepared.newProductRecordId,
