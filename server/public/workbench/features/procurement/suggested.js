@@ -27,14 +27,14 @@ export const rangeBarHtml = (days, config) => {
     + `<button type="button" class="pr-refresh" data-pr-refresh>${escapeHtml(config.texts.refresh)}</button>`;
 };
 
-export const suggestedHtml = ({ body, draft, store, supplierId = '', config }) => {
+export const suggestedHtml = ({ body, draft, store, supplierId = '', config, modify = false }) => {
   if (!body) return '';
   const filtered = supplierFilteredBody('suggested', body, supplierId, config);
   const cards = filtered.visible.length
     ? filtered.visible.map((group) => {
       return group.source === 'new'
         ? newGroupHtml(group, draft, store, config)
-        : replenishGroupHtml(group, draft, store, config);
+        : replenishGroupHtml(group, draft, store, config, { modify });
     }).join('')
     : `<div class="pr-empty">${escapeHtml(config.texts.suggestedEmpty)}</div>`;
   return `${supplierTabsHtml(filtered.groups, filtered.supplierKey, config)}${cards}`;

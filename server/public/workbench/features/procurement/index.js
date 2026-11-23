@@ -36,7 +36,7 @@ export function mountProcurementPage(host) {
     if (rangeHost) rangeHost.innerHTML = !error && state.bodies.replenish && state.bodies.new ? rangeBarHtml(mergedBody().range?.days, config) : '';
     if (error) { element.innerHTML = errorHtml(error, config); return; }
     element.innerHTML = state.bodies.replenish && state.bodies.new
-      ? suggestedHtml({ body: mergedBody(), draft, store, supplierId: state.supplierId, config })
+      ? suggestedHtml({ body: mergedBody(), draft, store, supplierId: state.supplierId, config, modify: Boolean(modifyCtl.active()) })
       : emptyHtml(config.texts.loading);
   };
   const refreshNumbers = () => {

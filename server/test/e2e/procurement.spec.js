@@ -381,6 +381,34 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
   expect((await draftInStorage(page)).products).toEqual({});
 });
 
+test('AC-P31b 修改单强制显示原采购尺码：即使当前是 custom-only', async ({ page }) => {
+  const customOnlyBody = {
+    success: true,
+    range: { from: '2026-10-25', to: '2026-10-27', days: 3 },
+    stats: { spotSold: 0, prepaidPending: 0, notArrived: 0, productCount: 1 },
+    groups: [{
+      productRecordId: 'recProdA', number: '86822', itemNo: '86822', color: '黑色',
+      supplierRecordId: 'recSupA', supplierName: '供应商 A', sizes: [], standardSizes: [39, 40],
+      stockMode: 'custom-only', prepaidTotal: 0, spotTotal: 0, notArrivedTotal: 0,
+    }],
+  };
+  await mockApi(page, {
+    replenishBody: customOnlyBody,
+    submittedBatches: [{
+      batch_no: 'CGD-E2E-0002', supplier_record_id: 'recSupA', supplier_name: '供应商 A',
+      submitted_at: '2026-10-28T08:25:00Z', product_count: 1, total_quantity: 1,
+      products: [{ product_record_id: 'recProdA', item_no: '86822', number: '86822', color: '黑色', entries: [{ size: 39, quantity: 1 }] }],
+    }],
+  });
+  await page.reload();
+  await expect(page.locator('.pr-tabs')).toBeVisible();
+  await tab(page, /待提交列表/).click();
+  await page.locator('[data-pr-modify-batch="CGD-E2E-0002"]').click();
+  await expect(page.locator('[data-pr-modify-banner]')).toContainText('正在修改 CGD-E2E-0002');
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
+  await expect(page.getByText('当前尺码有库存，不显示标准尺码；需要补货请添加自定义尺码。')).toBeHidden();
+});
+
 test('AC-P31 今日已提交：修改按钮打开原批次，预填数量并提交 modify', async ({ page }) => {
   const calls = await mockApi(page, {
     submittedBatches: [{
