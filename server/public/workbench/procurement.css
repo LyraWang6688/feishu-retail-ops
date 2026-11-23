@@ -23,6 +23,7 @@
 .pr-search { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 .pr-search[hidden] { display: none; }
 .pr-query-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.pr-query-row[hidden] { display: none; }
 .pr-query-row .pr-search { flex: 1 1 auto; min-width: 0; }
 .pr-range-host { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
 .pr-range-host .pr-range-inline { flex-wrap: nowrap; margin-left: 0; white-space: nowrap; font-size: var(--font-size-xs); }

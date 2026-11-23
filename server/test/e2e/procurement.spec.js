@@ -136,6 +136,8 @@ test('AC-P30 待提交列表：按供应商分组、只读、隐藏搜索', asyn
   await expect(pending).toContainText('92608 · 咖色');
   await expect(pending.locator('input, button')).toHaveCount(0);
   await expect(page.locator('.pr-search')).toBeHidden();
+  await expect(page.locator('.pr-query-row')).toBeHidden();
+  await expect(page.locator('.pr-range-host')).toBeHidden();
 });
 
 test('AC-P29 只保留统计范围和刷新，不显示数字统计卡', async ({ page }) => {
