@@ -85,6 +85,23 @@ test('AC-P28 顶部搜索固定；全局搜索跨 tab/供应商并自动定位',
   await expect(search).toHaveValue('');
 });
 
+test('AC-P28b 短屏搜索定位：目标卡头在 sticky 头下方，不被滚出可视区', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 667 });
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  await page.locator('[data-pr-search]').fill('LY002');
+  const results = page.locator('[data-pr-search-results]');
+  await expect(results).toContainText('LY002');
+  await results.getByRole('button', { name: /LY002/ }).click();
+  await expect.poll(async () => page.evaluate(() => {
+    const card = document.querySelector('[data-pr-group="recNewB"]');
+    const sticky = document.querySelector('.pr-sticky-head');
+    if (!card || !sticky) return false;
+    return card.getBoundingClientRect().top >= sticky.getBoundingClientRect().bottom - 2;
+  })).toBe(true);
+});
+
 test('AC-P27 补货自定义尺码：多行弹窗保存后按原样式展示并进入 payload', async ({ page }) => {
   const calls = await mockApi(page);
   await page.reload();

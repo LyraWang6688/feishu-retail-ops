@@ -22,6 +22,18 @@ export const searchResultsOf = (bodies, query) => {
 };
 
 
+/** 搜索选中后把卡头滚到 sticky 头下方；不能居中，否则矮屏上卡片标题会被滚出可视区。 */
+export const scrollGroupBelowHeader = (host, record) => {
+  requestAnimationFrame(() => {
+    const el = host?.querySelector?.('[data-pr-group="' + record + '"]');
+    if (!el) return;
+    const sticky = host.querySelector('.pr-sticky-head');
+    const offset = (sticky?.getBoundingClientRect().height || 0) + 8;
+    const top = window.scrollY + el.getBoundingClientRect().top - offset;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  });
+};
+
 /** 把顶部搜索框接到全局结果面板；数据加载 / 跳转由调用方给。 */
 export function createProcurementSearch({ host, config, getBodies, ensureLoaded, onSelect }) {
   const input = host?.querySelector('[data-pr-search]');

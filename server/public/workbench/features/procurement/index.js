@@ -12,7 +12,7 @@ import { createRefresher } from './refresh.js';
 import { customSizeErrorMessage, pruneCustomSizes, customRowsError } from './customSize.js';
 import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml, supplierNameMap } from './pending.js';
-import { createProcurementSearch } from './search.js';
+import { createProcurementSearch, scrollGroupBelowHeader } from './search.js';
 import { createModifyController } from './modify.js';
 import { buildSuggestedBody, suggestedHtml, rangeBarHtml } from './suggested.js';
 import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
@@ -173,7 +173,7 @@ export function mountProcurementPage(host) {
     onSelect: async ({ supplier, record }) => {
       state.supplierId = supplier;
       await activate('suggested');
-      requestAnimationFrame(() => host.querySelector('[data-pr-group="' + record + '"]')?.scrollIntoView({ block: 'center' }));
+      scrollGroupBelowHeader(host, record);
     },
   });
   const start = async () => {
