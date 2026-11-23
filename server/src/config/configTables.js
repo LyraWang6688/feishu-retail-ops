@@ -23,6 +23,7 @@ const CONFIG_TABLES = Object.freeze({
   sizeManagement: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '尺码管理' }),
   behavior: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '行为管理' }),
   supplier: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '供应商管理' }),
+  supplierBalanceInit: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '供应商期初余额' }),
   groupBuyVoucher: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '团购券管理' }),
   product: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '货品信息' }),
   color: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '颜色管理' }),
