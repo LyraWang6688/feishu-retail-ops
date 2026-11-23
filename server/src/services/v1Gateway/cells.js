@@ -24,7 +24,13 @@ const textValue = (value) => {
   if (value == null) return '';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (Array.isArray(value)) return value.map(textValue).filter(Boolean).join(',');
-  if (typeof value === 'object') return String(value.text ?? value.name ?? value.value ?? '');
+  if (typeof value === 'object') {
+    // ⭐ getBatch 返回 {type:1,value:[{text,...}]}；必须递归拆 value，不能 String(array)。
+    if (value.text != null) return textValue(value.text);
+    if (value.name != null) return textValue(value.name);
+    if (value.value !== undefined) return textValue(value.value);
+    return '';
+  }
   return '';
 };
 /** 关联字段 cell → record_id 数组；只认 record_ids / link_record_ids（issue #1074）。 */

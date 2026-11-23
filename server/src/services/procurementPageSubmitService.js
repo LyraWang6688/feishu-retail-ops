@@ -35,18 +35,11 @@ const { SUBMIT_TOAST } = require('../config/submitToast');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { createProcurementPurchaseWriters } = require('./procurementPurchaseWriters');
 const { createProductEnricher } = require('./procurementProductEnricher');
-const { createProcurementSalesLinkBackfill } = require('./procurementSalesLinkBackfill');
 const { createProcurementSubmissionIndex } = require('./procurementSubmissionIndex');
 const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const reject = (code, message) => ({ ok: false, code, message });
-
-/** 通知行模板渲染（`{value}` 占位；配置先行，service 不写中文）。 */
-const fillText = (template, value) => String(template || '').replace(/\{value\}/g, String(value ?? ''));
-const fillTemplate = (template, values = {}) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
-  Object.prototype.hasOwnProperty.call(values, key) ? String(values[key] ?? '') : match
-));
 
 /** 2026-11-19：一次采购提交按供应商拆成独立任务/批次；未标注供应商单独一组。 */
 const supplierGroupKeyOf = (supplierRecordId) => {
@@ -105,45 +98,6 @@ const createProcurementPageSubmitService = (options = {}) => {
   const engine = options.engine || createMultiItemOrderService({
     sessions, config: orderConfig, writers,
   });
-  // ⭐ 2026-11-08：采购单写成功后，把「这次报过的销售明细」关联到本次生成的采购明细
-  //   （按「编号+尺码」匹配；读侧据此排除已报货行）。失败只记日志，不影响采购事实。
-  //   `options.salesLinkBackfill === false` = 用例/特殊情况显式关掉。
-  const salesLinkBackfill = options.salesLinkBackfill === false
-    ? null
-    : (options.salesLinkBackfill || createProcurementSalesLinkBackfill({ gateway, schema, config }));
-  // ⭐ 2026-11-10：回填失败/部分失败 → 走**统一通知链路**（config/notifications + notificationService）。
-  //   注意：只在真异常（写关联失败 / 销售记录数量不足 / 回填抛错）时发；上新/无候选已静默。
-  //   同一 task 只发一次（进程内去重；回填本身也只在写库成功的那一次跑）。
-  const notificationService = options.notificationService || null;
-  const notifiedBackfillFailures = new Set();
-  const notifyBackfillFailure = async ({ taskId, result }) => {
-    const texts = config.notifications?.salesLinkBackfillFailed;
-    if (!texts || !taskId) return false;
-    if (notifiedBackfillFailures.has(taskId)) return false;
-    const lines = [];
-    lines.push(fillText(texts.task, taskId));
-    if (result?.batch_no) lines.push(fillText(texts.batchNo, result.batch_no));
-    if (Number(result?.failed) > 0) lines.push(fillText(texts.failed, Number(result.failed)));
-    if (Number(result?.unmatched) > 0) lines.push(fillText(texts.unmatched, Number(result.unmatched)));
-    const sample = String(result?.error || result?.failures?.[0]?.error || '').trim();
-    if (sample) lines.push(fillText(texts.example, sample.slice(0, 160)));
-    const unmatchedDetail = result?.unmatched_details?.[0];
-    if (unmatchedDetail) lines.push(fillTemplate(texts.unmatchedExample, unmatchedDetail));
-    if (texts.hint) lines.push(texts.hint);
-    try {
-      const service = notificationService || require('./notificationService').createDefaultNotificationService();
-      const sent = await service.send('procurement_sales_link_backfill_failed', { lines });
-      if (sent?.ok) notifiedBackfillFailures.add(taskId);
-      return sent?.ok === true;
-    } catch (error) {
-      // 通知失败不影响采购事实（只记日志；下一条回填若重试还能再发）
-      warn(config.events.salesLinkBackfillFailed, {
-        task_id: taskId, reason: 'notify_failed', error: String(error?.message || error),
-      });
-      return false;
-    }
-  };
-
   const submitKeyOf = (raw) => {
     const text = String(raw ?? '').trim();
     if (text.length < config.limits.minSubmitKeyLength || text.length > config.limits.maxSubmitKeyLength) return '';
@@ -287,18 +241,6 @@ const createProcurementPageSubmitService = (options = {}) => {
                 batch_no: result.purchase.batch_no, error: String(error?.message || error), request_id: requestId,
               });
             });
-          }
-          if (result?.ok === true && salesLinkBackfill) {
-            const taskId = chainConfig.taskIdPrefix + '_' + engine.sanitizeKey(group.submitKey);
-            const backfillResult = await salesLinkBackfill.run({ taskId }).catch((error) => ({
-              ok: false, failed: 0, unmatched: 0, error: String(error?.message || error),
-            }));
-            const hasProblem = backfillResult && (
-              backfillResult.ok === false
-              || Number(backfillResult.failed) > 0
-              || Number(backfillResult.unmatched) > 0
-            );
-            if (hasProblem) await notifyBackfillFailure({ taskId, result: backfillResult });
           }
           return result;
         },

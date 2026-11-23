@@ -23,15 +23,15 @@ const fixture = () => ({
         { method: '抖音团购券', amount: 50, status: '待平台结算', trade_direction: '收入' },
       ],
       details: [
-        { number: 'A|黑|男', color: '黑', size: 40, actual_amount: 100, fulfillment_status: '已交付', sold_at: at(18, 9), category_name: '棉鞋', category_type: '男' },
-        { number: 'B|白|女', color: '白', size: 38, actual_amount: 30, fulfillment_status: '未交付', sold_at: at(18, 9), category_name: '单鞋', category_type: '女' },
-        { number: 'C|红|女', color: '红', size: 39, actual_amount: 20, fulfillment_status: '已退货', sold_at: at(18, 9), category_name: '单鞋', category_type: '女' },
+        { number: 'A|黑|男', product_record_id: 'recA', color: '黑', size: 40, actual_amount: 100, fulfillment_status: '已交付', sold_at: at(18, 9), category_name: '棉鞋', category_type: '男' },
+        { number: 'B|白|女', product_record_id: 'recB', color: '白', size: 38, actual_amount: 30, fulfillment_status: '未交付', sold_at: at(18, 9), category_name: '单鞋', category_type: '女' },
+        { number: 'C|红|女', product_record_id: 'recC', color: '红', size: 39, actual_amount: 20, fulfillment_status: '已退货', sold_at: at(18, 9), category_name: '单鞋', category_type: '女' },
       ],
     },
     {
       order_no: 'A-2', recorded_at: at(17, 9), payable_amount: 99,
       payments: [{ method: '现金', amount: 99, status: '已收款', trade_direction: '收入' }],
-      details: [{ number: 'D|黑|男', color: '黑', size: 41, actual_amount: 99, fulfillment_status: '已交付', sold_at: at(17, 9), category_name: '布鞋', category_type: '男' }],
+      details: [{ number: 'D|黑|男', product_record_id: 'recD', color: '黑', size: 41, actual_amount: 99, fulfillment_status: '已交付', sold_at: at(17, 9), category_name: '布鞋', category_type: '男' }],
     },
   ],
 });
@@ -75,9 +75,26 @@ test('AC-SQ3 销售单区块按录单日筛选、总金额取销售主表，明�
   assert.equal(data.orders[0].payments.length, 2);
 });
 
+test('AC-SQ4b recordId 优先：同货号同编号的两条记录不合并', async () => {
+  const data = fixture();
+  const base = data.orders[0].details[0];
+  const makeDelivery = () => {
+    data.orders = [
+      { ...data.orders[0], order_no: 'A-1', details: [{ ...base, product_record_id: 'recA' }] },
+      { ...data.orders[0], order_no: 'A-2', details: [{ ...base, product_record_id: 'recB' }] },
+    ];
+    return data;
+  };
+  const svc = createSalesQueryService({ gateway: {}, deliveryRead: { listDeliveryData: async () => makeDelivery() }, now: () => TODAY });
+  const result = await svc.getSalesQuery({
+    from: '2026-11-18', to: '2026-11-18', productRecordId: 'recA',
+  });
+  assert.deepEqual(result.orders.map((order) => order.order_no), ['A-1'], '只返回选中 recordId 的订单');
+});
+
 test('AC-SQ4 货品筛选：保留包含该货品的整张订单，不裁剪其他明细，概览不改', async () => {
   const svc = createSalesQueryService({ gateway: {}, deliveryRead: { listDeliveryData: async () => fixture() }, now: () => TODAY });
-  const data = await svc.getSalesQuery({ from: '2026-11-18', to: '2026-11-18', product: 'A|黑|男' });
+  const data = await svc.getSalesQuery({ from: '2026-11-18', to: '2026-11-18', productRecordId: 'recA' });
   assert.deepEqual(data.orders.map((order) => order.order_no), ['A-1'], '订单里只要有这个货品就保留整张订单');
   assert.deepEqual(data.orders[0].details.map((detail) => detail.number), ['A|黑|男', 'B|白|女', 'C|红|女'], '其他货品明细不能被裁掉');
   assert.equal(data.summary.revenue, 169, '经营概览仍按全部销售统计');

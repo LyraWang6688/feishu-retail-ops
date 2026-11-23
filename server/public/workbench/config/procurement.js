@@ -22,8 +22,8 @@ export const PROCUREMENT_UI = Object.freeze({
   }),
   title: '采购',
   tabs: Object.freeze([
-    Object.freeze({ id: 'suggested', label: '建议报货清单', hint: '补货 + 上新' }),
-    Object.freeze({ id: 'pending', label: '待提交列表', hint: '核对已选' }),
+    Object.freeze({ id: 'suggested', label: '报货区', hint: '补货 + 上新' }),
+    Object.freeze({ id: 'pending', label: '预览区', hint: '核对已选' }),
   ]),
   texts: Object.freeze({
     loading: '正在读取…',
@@ -32,6 +32,8 @@ export const PROCUREMENT_UI = Object.freeze({
     categoryMissing: '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。',
     submitting: '提交中…',
     submit: '提交',
+    clearDraft: '清空',
+    clearDraftConfirm: '清空本次已选采购？只会清空当前草稿，不会删除已提交的采购批次。',
     submitFailed: '提交没成功，请稍后重试。',
     refresh: '刷新',
     refreshing: '刷新中…',
@@ -42,6 +44,7 @@ export const PROCUREMENT_UI = Object.freeze({
     supplierLabel: '供应商',
     supplierUnassigned: '未标注',
     addCustomSize: '＋ 添加尺码',
+    stockCustomOnlyHint: '当前尺码有库存，不显示标准尺码；需要补货请添加自定义尺码。',
     customSizePlaceholder: '尺码',
     customSizeInvalid: '尺码要填正整数',
     customSizeDuplicate: '这个尺码已经存在',

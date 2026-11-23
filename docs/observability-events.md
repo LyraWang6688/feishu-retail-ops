@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **522** 个事件。按前缀分组：
+共 **525** 个事件。按前缀分组：
 
 ## accessory
 
@@ -282,8 +282,6 @@
 | --- | --- | --- |
 | `procurement.page.new_products_loaded` | 1 | src/config/procurementPage.js |
 | `procurement.page.replenish_loaded` | 1 | src/config/procurementPage.js |
-| `procurement.page.sales_link_backfill_failed` | 1 | src/config/procurementPage.js |
-| `procurement.page.sales_link_backfilled` | 1 | src/config/procurementPage.js |
 | `procurement.page.submit_accepted` | 1 | src/config/procurementPage.js |
 | `procurement.page.submit_rejected` | 1 | src/config/procurementPage.js |
 | `procurement.page.trade_type_unknown` | 1 | src/config/procurementPage.js |
@@ -336,6 +334,10 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `purchase.acceptance_document.failed` | 1 | src/services/acceptanceDocumentService.js |
+| `purchase.acceptance_document.group_send_failed` | 1 | src/services/acceptanceDocumentService.js |
+| `purchase.acceptance_document.sync_failed` | 1 | src/services/acceptanceDocumentService.js |
+| `purchase.acceptance_document.sync_skipped` | 1 | src/services/acceptanceDocumentService.js |
 | `purchase.acceptance.sample_state_failed` | 1 | src/services/purchaseAcceptanceSampleService.js |
 | `purchase.arrival.accept` | 1 | src/config/timing.js |
 | `purchase.arrival.acceptance.skipped` | 1 | src/services/purchase/arrival.js |
@@ -456,6 +458,7 @@
 | `scan.page.failed` | 1 | src/config/scanPage.js |
 | `scan.page.login_redirect` | 1 | src/config/scanAuthRedirect.js |
 | `scan.page.not_found` | 1 | src/config/scanPage.js |
+| `scan.page.record_delisted` | 1 | src/config/scanPageDelisted.js |
 | `scan.page.record_fallback` | 1 | src/config/scanPage.js |
 | `scan.page.record_lookup_failed` | 1 | src/config/scanPage.js |
 | `scan.page.record_missing` | 1 | src/config/scanPage.js |
@@ -679,7 +682,7 @@
 | `workbench.purchase.requests.failed` | 1 | src/routes/purchaseQuery.js |
 | `workbench.purchase.supplier_balances.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.query.retry` | 2 | src/services/v1WorkbenchService.js |
-| `workbench.sales.after_sales.candidates.failed` | 4 | src/routes/workbench/sales.js<br>src/routes/workbenchOrderActions.js |
+| `workbench.sales.after_sales.candidates.failed` | 3 | src/routes/workbenchOrderActions.js |
 | `workbench.sales.daily_cash.read_failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.daily_cash.save_failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.delivery.failed` | 3 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryAsyncService.js |

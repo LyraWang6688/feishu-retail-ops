@@ -38,14 +38,15 @@ const salesRecord = ({ id = 'recA', size = 39, code = 'SALE_CASH', stock = 0, so
 // ⚠️ 两种形状：`getBatch`（batch_get）与 `listByFilter`（GET list）返回的单元格形状**不同** ——
 // 2026-10-28 真测试 Base 验证发现的 Bug-2；读模型必须归一化 batch 形状。
 const CF = V1_BITABLE_SCHEMA.tables.color.fields;
-const productListRecord = ({ id = 'recA', number = '86822', itemNo = '86822', color = '黑色', category = 'A', createdAt = NOW }) => ({
+const productListRecord = ({ id = 'recA', number = '86822', itemNo = '86822', color = '黑色', category = 'A', createdAt = NOW, delisted = false }) => ({
   record_id: id,
   fields: {
     [PF.number]: link(number), [PF.itemNo]: itemNo, [PF.color]: link(color), [PF.category]: category,
     [PF.supplier]: link('recSupplier'), [PF.createdAt]: createdAt,
+    ...(delisted ? { [PF.delisted]: true } : {}),
   },
 });
-const productBatchRecord = ({ id = 'recA', number = '86822', itemNo = '86822', colorRecordId = 'recColorBlack', category = 'A', createdAt = NOW }) => ({
+const productBatchRecord = ({ id = 'recA', number = '86822', itemNo = '86822', colorRecordId = 'recColorBlack', category = 'A', createdAt = NOW, delisted = false }) => ({
   record_id: id,
   fields: {
     [PF.number]: { type: 1, value: [{ text: number }] },
@@ -54,6 +55,7 @@ const productBatchRecord = ({ id = 'recA', number = '86822', itemNo = '86822', c
     [PF.category]: category,
     [PF.supplier]: { link_record_ids: ['recSupplier'] },
     [PF.createdAt]: createdAt,
+    ...(delisted ? { [PF.delisted]: true } : {}),
   },
 });
 const colorRecord = (id, name) => ({ record_id: id, fields: { [CF.name]: [{ text: name, type: 'text' }] } });
@@ -84,7 +86,7 @@ const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], 
   };
 };
 
-test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 = 库存数量=0 + 销售日>=TODAY()-7；不读实时库存', async () => {
+test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 = 销售日>=TODAY()-7；不读实时库存', async () => {
   const gateway = makeGateway({
     sales: [salesRecord({ id: 'recA', size: 39, code: 'SALE_CASH' }), salesRecord({ id: 'recA', size: 41, code: 'SALE_PREPAID' })],
     products: [productBatchRecord({ id: 'recA' })],
@@ -102,11 +104,57 @@ test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 =
   assert.equal(result.groups[0].color, '黑色');
   const filters = gateway.calls.filter((call) => call.kind === 'listByFilter');
   assert.deepEqual(filters.map((call) => call.tableKey), ['salesDetail']);
-  assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.stockQuantity}\\]=(0|"0")`));
+  assert.equal(filters[0].filter.includes(SF.stockQuantity), false, '库存条件不能在 Bitable 过滤掉非 0 行');
   assert.match(filters[0].filter, /TODAY\(\)-7/);
   assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.soldAt}\\]`));
   // getBatch：先按记录 ID 读货品，再按颜色关联 ID 读颜色管理（解析显示名；Bug-2 修复）
   assert.deepEqual(gateway.calls.filter((call) => call.kind === 'getBatch').map((call) => call.tableKey), ['product', 'color']);
+});
+
+test('AC-P1d 已下架货品不进入补货建议（销售来源）', async () => {
+  const gateway = makeGateway({
+    sales: [salesRecord({ id: 'recA', size: 39, code: 'SALE_CASH' }), salesRecord({ id: 'recB', size: 39, code: 'SALE_CASH' })],
+    products: [
+      productBatchRecord({ id: 'recA' }),
+      productBatchRecord({ id: 'recB', number: '99999', itemNo: '99999', delisted: true }),
+    ],
+    colors: [colorRecord('recColorBlack', '黑色')],
+    behaviors: [behavior('behCash', 'SALE_CASH', '现货')],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadReplenish({ requestId: 'r_delisted_sales' });
+  assert.deepEqual(result.groups.map((group) => group.productRecordId), ['recA']);
+  assert.equal(result.delistedRows, 1);
+});
+
+test('AC-P1e 已下架货品不进入补货建议（未到货来源）', async () => {
+  const gateway = makeGateway({
+    products: [productBatchRecord({ id: 'recB', number: '99999', itemNo: '99999', delisted: true })],
+    colors: [colorRecord('recColorBlack', '黑色')],
+    purchases: [{
+      record_id: 'pd_delisted',
+      fields: {
+        [PRF.product]: link('recB'), [PRF.size]: 39, [PRF.quantity]: 5,
+        [PRRO.arrivedQuantity.name]: 0,
+      },
+    }],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadReplenish({ requestId: 'r_delisted_pending' });
+  assert.equal(result.groups.length, 0);
+  assert.equal(result.delistedRows, 1);
+});
+
+test('AC-P6b 已下架货品不进入上新建议', async () => {
+  const gateway = makeGateway({
+    products: [
+      productListRecord({ id: 'recActive', createdAt: SH('2026-10-28T08:00:00') }),
+      productListRecord({ id: 'recDelisted', number: '99999', itemNo: '99999', createdAt: SH('2026-10-28T08:30:00'), delisted: true }),
+    ],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadNewProducts({ requestId: 'r_delisted_new' });
+  assert.deepEqual(result.groups.map((group) => group.productRecordId), ['recActive']);
 });
 
 test('AC-P25 补货分组带供应商名称（来自供应商配置表）', async () => {
@@ -165,19 +213,12 @@ test('AC-P24c 采购退货批次的明细不进入补货未到货', async () => 
   assert.equal(result.groups.length, 0);
 });
 
-test('AC-P10（#950）`trade_type_unknown` 只对**真认不出交易类型**的行告警；已报过货不告警', async () => {
+test('AC-P10（#950）`trade_type_unknown` 只对**真认不出交易类型**的行告警', async () => {
   const warns = [];
   const logger = {
     logInfo() {},
     logWarn: (event, fields) => warns.push({ event, fields }),
     logError() {},
-  };
-  const alreadyReported = {
-    record_id: 'sd_reported',
-    fields: {
-      [SF.product]: link('recA'), [SF.size]: 40, [SF.soldAt]: SH('2026-10-27T10:00:00'),
-      [SF.stockQuantity]: 0, [SF.tradeType]: link('behCash'), [SF.purchaseDetail]: link('recDetail1'),
-    },
   };
   const unknownTrade = {
     record_id: 'sd_unknown',
@@ -187,35 +228,17 @@ test('AC-P10（#950）`trade_type_unknown` 只对**真认不出交易类型**的
     },
   };
   const gateway = makeGateway({
-    sales: [alreadyReported, unknownTrade],
+    sales: [unknownTrade],
     products: [productBatchRecord({ id: 'recA' })],
     colors: [colorRecord('recColorBlack', '黑色')],
-    behaviors: [behavior('behCash', 'SALE_CASH', '现货'), behavior('behReturn', 'SALE_RETURN', '退货')],
+    behaviors: [behavior('behReturn', 'SALE_RETURN', '退货')],
   });
   const service = createProcurementPageService({ gateway, config, now: () => NOW, logger });
   const result = await service.loadReplenish({ requestId: 'r950' });
-  assert.equal(result.alreadyReportedRows, 1);
   assert.equal(result.tradeTypeUnknownRows, 1);
   const tradeWarns = warns.filter((warn) => warn.event === config.events.tradeTypeUnknown);
   assert.equal(tradeWarns.length, 1, '只告警一次（且只因为那一条真认不出的行）');
   assert.equal(tradeWarns[0].fields.trade_type_unknown_rows, 1);
-  assert.equal(tradeWarns[0].fields.already_reported_rows, 1, '已报过货只作为事实附带，不触发告警');
-
-  // 只有"已报过货"的行 ⇒ **一条 trade_type_unknown 都不许有**（#946 误报就是这样来的 ✗）
-  const warns2 = [];
-  const gateway2 = makeGateway({
-    sales: [alreadyReported],
-    products: [productBatchRecord({ id: 'recA' })],
-    colors: [colorRecord('recColorBlack', '黑色')],
-    behaviors: [behavior('behCash', 'SALE_CASH', '现货')],
-  });
-  const service2 = createProcurementPageService({
-    gateway: gateway2, config, now: () => NOW,
-    logger: { logInfo() {}, logWarn: (event, fields) => warns2.push({ event, fields }), logError() {} },
-  });
-  await service2.loadReplenish({ requestId: 'r950b' });
-  assert.equal(warns2.filter((warn) => warn.event === config.events.tradeTypeUnknown).length, 0,
-    '已报过货的行**绝不能**再打 trade_type_unknown');
 });
 
 test('AC-P1 源码反向哨兵：读模型不碰实时库存，也不写任何表', () => {

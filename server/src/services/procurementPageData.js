@@ -89,7 +89,9 @@ const sumNumbers = (value) => {
 const normalizeSalesRow = (record, fields) => {
   const fieldsOf = record?.fields || {};
   const productIds = linkedRecordIds(fieldsOf[fields.product]);
-  const productRecordId = productIds[0] || '';
+  // 生产「销售明细.recordID」是公式列（= 编号关联货品的 record_id）；优先用它，旧数据回退关联列。
+  const formulaRecordId = textOf(fieldsOf[fields.recordId]).trim();
+  const productRecordId = formulaRecordId || productIds[0] || '';
   const size = numberOf(fieldsOf[fields.size]);
   const soldAt = numberOf(fieldsOf[fields.soldAt]);
   const stock = numberOf(fieldsOf[fields.stockQuantity]);
@@ -99,9 +101,6 @@ const normalizeSalesRow = (record, fields) => {
     soldAtMs: soldAt,
     // 交易类型单元格原样带着（编码解析交给调用方注入的判据）
     tradeTypeCell: fieldsOf[fields.tradeType],
-    // ⭐ 2026-11-08：这条销售明细是否**已经被补货报过**（关联到采购明细记录）。
-    //   读侧据此排除（默认），避免 3 天窗口重叠导致重复报货。
-    purchaseDetailIds: linkedRecordIds(fieldsOf[fields.purchaseDetail]),
   };
 };
 
@@ -137,46 +136,47 @@ const buildReplenishView = ({
   const roles = config.behavior;
   const groupsByKey = new Map();
   let skippedRows = 0;
-  // ⭐⭐ 2026-11-08（#950）：**跳过原因必须分开数** —— 以前是一个大 `skippedRows`，
-  //   于是"已经报过货（采购明细已关联）"的行也被算成"交易类型认不出" ⇒
-  //   `procurement.page.trade_type_unknown` 天天误报（#946 的遗留问题）。
-  //   现在：只有**真的认不出交易类型**的行才进 `tradeTypeUnknownRows`（那条 warn 只认它）。
+  let delistedRows = 0;
+  const delistedProduct = (id) => products instanceof Map && products.get(id)?.delisted === true;
+  // 只有**真的认不出交易类型**的行才进 tradeTypeUnknownRows。
   let tradeTypeUnknownRows = 0;
-  let alreadyReportedRows = 0;
   for (const record of records || []) {
     const row = normalizeSalesRow(record, fields);
     if (!row) { skippedRows += 1; continue; }
-    // 防御性再判一次（飞书 filter 已按库存=0 筛过；这里保证"公式返回非 0 / 空"绝不计入）
-    if (row.stock !== 0) { skippedRows += 1; continue; }
+    // 已下架货品不进入建议报货清单：用户看不到，也就选不到。
+    if (delistedProduct(row.productRecordId)) { skippedRows += 1; delistedRows += 1; continue; }
     if (!(row.soldAt >= range.start && row.soldAt < range.end)) { skippedRows += 1; continue; }
-    // ⭐ 2026-11-08：**已报过货的销售明细不再出现在补货里**（业务负责人新增「销售明细.采购明细」单向关联）。
-    //   ⚠️ 业务负责人明确：**不要开关**，就是这个功能 ⇒ 无条件排除（不做配置退化）。
-    //   ⚠️ 这是"已经报过货"这个**正常业务事实**，不是异常 ⇒ 单独计数（不打 trade_type_unknown）。
-    if (row.purchaseDetailIds.length > 0) {
-      skippedRows += 1;
-      alreadyReportedRows += 1;
-      continue;
-    }
     const code = tradeTypeCodeOf(row.tradeTypeCell);
     if (code !== roles.spot && code !== roles.prepaid) {
       skippedRows += 1;
       tradeTypeUnknownRows += 1;
       continue;
     }
-    const group = groupsByKey.get(row.productRecordId) || { key: row.productRecordId, sizes: new Map() };
-    const entry = group.sizes.get(row.size) || { size: row.size, spotSold: 0, prepaidSold: 0, notArrived: 0 };
-    if (code === roles.spot) entry.spotSold += 1; else entry.prepaidSold += 1;
-    group.sizes.set(row.size, entry);
+    const group = groupsByKey.get(row.productRecordId) || {
+      key: row.productRecordId, sizes: new Map(), standardSizes: new Set(), hasSales: false,
+    };
+    group.hasSales = true;
+    group.standardSizes.add(row.size);
+    if (row.stock === 0) {
+      const entry = group.sizes.get(row.size) || { size: row.size, spotSold: 0, prepaidSold: 0, notArrived: 0 };
+      if (code === roles.spot) entry.spotSold += 1; else entry.prepaidSold += 1;
+      group.sizes.set(row.size, entry);
+    }
     groupsByKey.set(row.productRecordId, group);
   }
   // 补货来源 B：采购明细「数量 - 已入库数量」> 0 的未到货行。
   for (const record of pendingRecords || []) {
     const row = normalizePendingRow(record, purchaseFields);
     if (!row) continue;
-    const group = groupsByKey.get(row.productRecordId) || { key: row.productRecordId, sizes: new Map() };
+    // 未到货来源同样按货品下架状态过滤，避免只过滤销售来源的半套效果。
+    if (delistedProduct(row.productRecordId)) { delistedRows += 1; continue; }
+    const group = groupsByKey.get(row.productRecordId) || {
+      key: row.productRecordId, sizes: new Map(), standardSizes: new Set(), hasSales: false,
+    };
     const entry = group.sizes.get(row.size) || { size: row.size, spotSold: 0, prepaidSold: 0, notArrived: 0 };
     entry.notArrived += row.notArrived;
     group.sizes.set(row.size, entry);
+    group.standardSizes.add(row.size);
     groupsByKey.set(row.productRecordId, group);
   }
   // products 的 value 是**已归一化**的 DTO（`procurementProductEnricher` 的产物）——
@@ -199,10 +199,12 @@ const buildReplenishView = ({
   const groups = [...groupsByKey.values()].map((group) => {
     const product = productOf(group.key);
     const sizes = [...group.sizes.values()].sort((a, b) => a.size - b.size);
+    const standardSizes = [...group.standardSizes].sort((a, b) => a - b);
     const prepaidTotal = sizes.reduce((sum, entry) => sum + entry.prepaidSold, 0);
     const spotTotal = sizes.reduce((sum, entry) => sum + entry.spotSold, 0);
     const notArrivedTotal = sizes.reduce((sum, entry) => sum + (entry.notArrived || 0), 0);
-    return { ...product, sizes, prepaidTotal, spotTotal, notArrivedTotal };
+    const stockMode = sizes.length ? (config.stockPresentation?.zero || 'standard') : (config.stockPresentation?.noZeroProduct || 'custom-only');
+    return { ...product, sizes, standardSizes, stockMode, prepaidTotal, spotTotal, notArrivedTotal };
   });
   const sortConfig = config.sort.replenishGroup;
   groups.sort((a, b) => {
@@ -221,9 +223,9 @@ const buildReplenishView = ({
     },
     groups,
     skippedRows,
+    delistedRows,
     // #950：跳过原因拆分（既有 `skippedRows` 保持总数，向后兼容）
     tradeTypeUnknownRows,
-    alreadyReportedRows,
   };
 };
 

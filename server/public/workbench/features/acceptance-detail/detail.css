@@ -1,4 +1,19 @@
 /* 2026-11-19：验收独立明细页 */
+.arrival-tabs { margin-bottom:var(--space-3); }
+.arrival-preview-group { margin-bottom:var(--space-4); }
+.arrival-preview-group .pr-group-name { margin:0 0 var(--space-2); }
+.arrival-preview-row { padding:10px 12px; margin-bottom:var(--space-2); border:1px solid var(--border); border-left:4px solid var(--border); border-radius:var(--radius-md); background:var(--surface); }
+.arrival-preview-row.is-match { border-left-color:var(--success); background:var(--success-soft); }
+.arrival-preview-row.is-short { border-left-color:var(--danger); background:var(--danger-soft); }
+.arrival-preview-row.is-extra { border-left-color:var(--primary); background:var(--primary-soft); }
+.arrival-preview-line { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); }
+.arrival-preview-line b { font-size:var(--font-size-md); color:var(--text); }
+.arrival-preview-tag { flex:none; padding:2px 8px; border-radius:999px; font-size:var(--font-size-xs); font-weight:var(--weight-medium); }
+.arrival-preview-row.is-match .arrival-preview-tag { color:var(--success); background:var(--surface); }
+.arrival-preview-row.is-short .arrival-preview-tag { color:var(--danger); background:var(--surface); }
+.arrival-preview-row.is-extra .arrival-preview-tag { color:var(--primary); background:var(--surface); }
+.arrival-preview-meta { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-top:4px; color:var(--text-secondary); font-size:var(--font-size-xs); }
+.pr-bottom[hidden] { display:none !important; }
 body[data-view="purchase-acceptance-detail"] { padding-bottom: 110px; }
 .arrival-summary { position:sticky; top:env(safe-area-inset-top, 0px); z-index:20; display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-2); margin:0 0 var(--space-3); padding:var(--space-3); border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); }
 .arrival-summary span { font-size:var(--font-size-sm); color:var(--text-secondary); }
@@ -13,6 +28,10 @@ body[data-view="purchase-acceptance-detail"] { padding-bottom: 110px; }
 .arrival-custom-row { grid-column:1 / -1; display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:var(--space-2); align-items:center; padding:8px 0; }
 .arrival-custom-row input { width:100%; min-height:var(--control-height); box-sizing:border-box; border:1px solid var(--control-border); border-radius:var(--radius-md); background:var(--surface); color:var(--text); text-align:center; font-size:var(--font-size-sm); }
 .arrival-custom-row .del { min-height:var(--control-height); border:0; border-radius:var(--radius-md); background:var(--danger-soft); color:var(--danger); padding:0 10px; }
+.arrival-product { position:relative; }
+.arrival-product.is-checked { background:var(--success-soft); border-color:var(--success); }
 .arrival-product .pr-group-head { align-items:center; }
+.arrival-verify { position:absolute; right:12px; bottom:4px; z-index:1; display:inline-flex; align-items:center; gap:4px; color:var(--text-secondary); font-size:var(--font-size-xs); line-height:1.2; cursor:pointer; }
+.arrival-verify input { width:14px; height:14px; margin:0; accent-color:var(--success); }
 .arrival-product .pr-group-head .btn { width:auto; flex:none; }
 .arrival-total-label { color:var(--text-secondary); font-size:var(--font-size-sm); }

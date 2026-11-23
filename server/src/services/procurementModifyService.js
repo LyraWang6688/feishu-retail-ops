@@ -7,7 +7,6 @@
  * 单据重出 / 群消息通过注入的 deliverRevision 完成，避免把出图/群发送逻辑复制一份。
  */
 const { relation } = require('./v1ReferenceResolver');
-const { linkedRecordIds } = require('./v1Gateway/cells');
 const { createOnceByKey, IDEMPOTENCY_KEY_FIELD } = require('../infrastructure/idempotencyKey');
 const { KeyedSerialQueue } = require('../infrastructure/keyedSerialQueue');
 const { createProductEnricher } = require('./procurementProductEnricher');
@@ -19,42 +18,17 @@ const reject = (code, message) => ({ ok: false, code, message });
 const productIdsOf = (items) => [...new Set(items.map((item) => item.productRecordId).filter(Boolean))];
 
 const createProcurementModifyService = ({
-  gateway, schema, config, submissionIndex, purchaseQuery, orderBatches, sizeReferences, salesLinks,
+  gateway, schema, config, submissionIndex, purchaseQuery, orderBatches, sizeReferences,
   deliverRevision, now = () => Date.now(), productEnricher, detailIds,
 } = {}) => {
   if (!gateway) throw new Error('procurementModifyService 需要 gateway');
   if (!submissionIndex || !purchaseQuery || !orderBatches) throw new Error('procurementModifyService 缺少依赖');
   if (!sizeReferences) throw new Error('procurementModifyService 需要 sizeReferences');
-  const salesFields = schema?.tables?.salesDetail?.fields || {};
   const modifyConfig = config?.modify || {};
   const texts = modifyConfig.texts || {};
   const products = productEnricher || createProductEnricher({ gateway, schema });
   const detailAllocator = detailIds || createPurchaseDetailIdAllocator({ gateway });
   const queue = new KeyedSerialQueue();
-
-  const linkedSalesOf = async (recordId) => {
-    const cell = await gateway.get('purchaseRequest', recordId);
-    const field = schema?.tables?.purchaseRequest?.readOnlyFields?.salesDetails?.name;
-    return linkedRecordIds(cell?.fields?.[field]).filter(Boolean);
-  };
-
-  const unlinkSales = async (salesIds) => {
-    for (const id of [...new Set(salesIds.filter(Boolean))]) {
-      await gateway.update('salesDetail', id, { purchaseDetail: [] });
-    }
-  };
-
-  const trimSalesForQuantity = async (recordId, quantity) => {
-    const ids = await linkedSalesOf(recordId);
-    if (ids.length <= quantity) return;
-    const records = await gateway.getBatch('salesDetail', ids);
-    const ordered = (records || [])
-      .map((record) => ({ record, soldAt: Number(record?.fields?.[salesFields.soldAt]) || 0 }))
-      .sort((a, b) => a.soldAt - b.soldAt)
-      .map((entry) => entry.record?.record_id)
-      .filter(Boolean);
-    await unlinkSales(ordered.slice(quantity));
-  };
 
   const modifyOnce = async ({ openId, batchNo, submitKey, items = [] } = {}) => {
     const wantedBatch = String(batchNo || '').trim();
@@ -114,22 +88,13 @@ const createProcurementModifyService = ({
         product_color: product.color || '',
       });
     }
-    const salesTargets = [];
     for (const row of plan.updates) {
-      const old = plan.current.find((item) => item.recordId === row.recordId);
-      const added = Number(row.quantity) - Number(old?.quantity || 0);
-      if (added > 0) salesTargets.push({ recordId: row.recordId, productRecordId: row.productRecordId, size: row.size, quantity: added, source: row.source });
       await gateway.update('purchaseRequest', row.recordId, { quantity: row.quantity });
-      await trimSalesForQuantity(row.recordId, row.quantity);
     }
     for (const row of plan.deletes) {
-      const salesIds = await linkedSalesOf(row.recordId).catch(() => []);
       await gateway.delete('purchaseRequest', row.recordId);
-      await unlinkSales(salesIds);
     }
-    for (const row of createdItems) salesTargets.push({ recordId: row.record_id, productRecordId: row.productRecordId, size: row.size, quantity: row.quantity, source: row.source });
     await gateway.update('purchaseOrderBatch', batch.record_id, { quantity: plan.totalQuantity });
-    const salesResult = salesLinks ? await salesLinks.apply(salesTargets) : { linked: 0, unmatched: 0 };
 
     const finalRows = [
       ...currentRows.filter((row) => !plan.deletes.some((gone) => gone.recordId === row.record_id)),
@@ -147,7 +112,7 @@ const createProcurementModifyService = ({
         updatedAt: new Date(now()).toISOString(),
       });
     }
-    return { ok: true, plan, delivery, sales: salesResult };
+    return { ok: true, plan, delivery };
   };
 
   const modify = (input = {}) => queue.run(

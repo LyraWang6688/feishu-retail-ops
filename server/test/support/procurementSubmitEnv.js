@@ -30,7 +30,7 @@ const colorRecord = (id = 'recColorBlack', name = '黑色') => ({
 });
 
 // 内存版 sessions store（与 JsonTaskStore 同形状：get / update / ensure）
-const makeEnv = ({ products, behavior, purchase, writers: customWriters, notificationService, backfillResult } = {}) => {
+const makeEnv = ({ products, behavior, purchase, writers: customWriters } = {}) => {
   const data = new Map();
   const store = {
     async get(id) { return data.get(id) || null; },
@@ -65,9 +65,6 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters, notific
     },
   };
   const scheduled = [];
-  const backfillCalls = [];
-  // 回填替身（真正的回填逻辑在 `procurementSalesLinkBackfill` 自己的用例里钉）
-  const salesLinkBackfill = { run: async (args) => { backfillCalls.push(args); return backfillResult || { ok: true, linked: 0 }; } };
   const background = {
     scheduleCustomRest: (args) => { scheduled.push(args); return Promise.resolve({ ok: true }); },
   };
@@ -84,8 +81,6 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters, notific
     writeService: { sessions, multiItemWriters: () => writers },
     writers,
     background,
-    salesLinkBackfill,
-    notificationService,
     config,
     now: () => NOW,
     logger: {},
@@ -96,7 +91,7 @@ const makeEnv = ({ products, behavior, purchase, writers: customWriters, notific
     const prefix = `${config.draft.orderKeyPrefix}:${key.replace(/[^a-zA-Z0-9_-]/g, '_')}:`;
     return Object.entries(orders).find(([orderKey]) => orderKey.startsWith(prefix))?.[1];
   };
-  return { service, data, draftOf, scheduled, purchaseCalls, behaviorCalls, backfillCalls, openId };
+  return { service, data, draftOf, scheduled, purchaseCalls, behaviorCalls, openId };
 };
 const itemsOf = (ids = ['recA']) => ids.map((id) => ({
   productRecordId: id, entries: [{ size: 39, quantity: 1 }, { size: 40, quantity: 2 }],

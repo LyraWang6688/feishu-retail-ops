@@ -38,8 +38,8 @@ const { isDelistedRecord, filterActiveProductsFor } = require('./productLifecycl
 const { createScanPageCache } = require('./scanPageCache');
 const { createLiveInventorySnapshot } = require('./liveInventorySnapshot');
 const { SCAN_PAGE, fillText } = require('../config/scanPage');
+const { SCAN_DELISTED } = require('../config/scanPageDelisted');
 const { logInfo, logWarn } = require('../utils/logger');
-
 const { shanghaiDateTimeText } = require('../utils/shanghaiDay');
 // ⭐ 2026-11-17：货品卡两个入口 / 金额文案都拆成小模块（本文件是存量超限件，只许变小）。
 const { resolveProductActions } = require('./scanPageProductActions');
@@ -809,12 +809,16 @@ const createScanPageService = (rawGateway, options = {}) => {
       // 与按编号那条路共用 configTableCache：整表只在 TTL 内读一次；
       // record_changed / TTL 失效后自然重读，不再维护第二套 productSnapshot。
       const products = await getConfigRows({ gateway, tableKey: 'product' });
-      return (products || []).find((record) => record?.record_id === recordId && !isDelistedRecord(record)) || null;
+      const record = (products || []).find((item) => item?.record_id === recordId) || null;
+      // 记录存在但已下架：返回可区分的 reason，页面给“已下架、不能新销售”的人话，
+      // 不能和“记录不存在”混在一起；也不允许再按 URL 上的编号回退到另一条重复记录。
+      if (record && isDelistedRecord(record)) return { record: null, delisted: true };
+      return { record, delisted: false };
     } catch (error) {
       logWarn(config.events.recordLookupFailed, {
         request_id: requestId, product_record_id: recordId, error: error.message,
       });
-      return null;
+      return { record: null, delisted: false };
     } finally {
       if (timing) timing.record_ms = elapsed(startedAt);
     }
@@ -906,8 +910,15 @@ const createScanPageService = (rawGateway, options = {}) => {
       //    ⇒ `product_snapshot_hit` 永远 false + 每次真读货品表（1.5~3.6 秒）⇒ 切换卡 ✗
       //    快照里就是原始记录（含 `record_id`）⇒ 按 record_id 命中 = **零额外读** ✓
       //    未就绪 / 没这一条 ⇒ **照旧真读**（`readProductByRecordId`，行为逐字不变 ✓ 不许猜 ✗）
-      const found = await readProductByRecordId({ recordId, requestId, timing });
+      const byRecordId = await readProductByRecordId({ recordId, requestId, timing });
+      const found = byRecordId.record;
       const numberField = fieldName(schema, 'product', 'number');
+      if (!found && byRecordId.delisted) {
+        logInfo(SCAN_DELISTED.logEvent, {
+          request_id: requestId, product_record_id: recordId, reason: 'delisted',
+        });
+        return { found: false, number: '', reason: 'delisted', delisted: true };
+      }
       if (found) {
         product = found;
         const tableNumber = numberField ? textValue(found?.fields?.[numberField]).trim() : '';

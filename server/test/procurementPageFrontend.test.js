@@ -80,7 +80,7 @@ test('AC-P17 配置先行：端点 / 文案 / 默认值 / 尺码规则都在 con
 test('AC-P9/P21 第三 tab 改为待提交列表；页面不接扫码模块', () => {
   const render = read(`${PUBLIC}/features/procurement/render.js`);
   const config = read(`${PUBLIC}/config/procurement.js`);
-  assert.match(config, /id: 'pending', label: '待提交列表'/, '第三 tab 必须是待提交列表');
+  assert.match(config, /id: 'pending', label: '预览区'/, '第二个 tab = 预览区');
   assert.equal(render.includes('data-pr-scan-disabled'), false, '扫一扫占位已移除');
   assert.equal(/scanCodeRaw|createScanCardsModule|features\/scan\/launch/.test(read(`${PUBLIC}/features/procurement/index.js`)), false,
     '仍然不接扫码模块');

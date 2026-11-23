@@ -170,6 +170,23 @@ const topicBatch = (overrides = {}) => ({
   ...overrides,
 });
 
+test('验收采购明细：一次 getBatch 读整批，缺记录才逐条回退', async () => {
+  const h = makeHarness();
+  let batchCalls = 0;
+  let singleCalls = 0;
+  h.gateway.getBatch = async (tableKey, ids, options) => {
+    batchCalls += 1;
+    assert.equal(tableKey, 'purchaseRequest');
+    assert.ok(options?.retry, '批量读必须带关键读重试');
+    return h.records.purchaseRequest.filter((row) => ids.includes(row.record_id));
+  };
+  h.gateway.get = async () => { singleCalls += 1; return null; };
+  const rows = await h.service.readPurchaseRequestRows(['req_38', 'req_39']);
+  assert.equal(rows.length, 2);
+  assert.equal(batchCalls, 1, '两条明细只允许一次批量读');
+  assert.equal(singleCalls, 0, '批量读齐全时不再逐条 get');
+});
+
 // ⭐⭐ 2026-10-08：「发生金额」是**必填**（业务负责人：「必须让用户填」）。
 // 🔴 2026-10-16（「与 AI 分析有关的都停掉」）**判据迁移**（逐字留痕）：
 //   · 删前逐字：`const arriveAndConfirm = async (harness, text = '都到了') => { await harness.service.handleTopicMessage({ batch: topicBatch(), text, messageId: 'om_1', threadId: 'omt_1', senderOpenId: 'ou_1' }); const taskId = taskIdForBatch(BATCH_NO); await seedActualAmount(harness); const result = await harness.service.handleCardAction({ action: ARRIVAL_CONVERSATION_ACTIONS.CONFIRM, draft_id: taskId }, { context: { open_message_id: 'om_card_1' } }, 'ou_1'); return { taskId, result }; };`

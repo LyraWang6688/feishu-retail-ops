@@ -8,7 +8,7 @@ const json = (body, status = 200) => ({
   status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body),
 });
 
-const replenishBody = () => ({
+const replenishBody = (overrides = {}) => ({
   success: true,
   range: { from: '2026-10-25', to: '2026-10-27', days: 3 },
   stats: { spotSold: 4, prepaidPending: 6, notArrived: 4, productCount: 2 },
@@ -23,6 +23,7 @@ const replenishBody = () => ({
       sizes: [{ size: 43, spotSold: 0, prepaidSold: 2, notArrived: 0 }], prepaidTotal: 2, spotTotal: 0, notArrivedTotal: 0,
     },
   ],
+  ...overrides,
 });
 
 const newProductsBody = () => ({
@@ -57,7 +58,7 @@ export const mockApi = async (page, options = {}) => {
     }
     if (pathname === '/api/workbench/procurement/replenish') {
       calls.replenish += 1;
-      return route.fulfill(json(replenishBody()));
+      return route.fulfill(json(options.replenishBody || replenishBody()));
     }
     if (pathname === '/api/workbench/procurement/new-products') {
       calls.newProducts += 1;

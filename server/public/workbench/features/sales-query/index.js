@@ -40,7 +40,7 @@ function breakdownRows(rows) {
 
 function ordersHtml(orders) {
   if (!orders.length) return `<p class="sq-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
-  return orders.map((order) => salesOrderCardHtml(order)).join('');
+  return orders.map((order) => salesOrderCardHtml(order, { strikeDelisted: true })).join('');
 }
 
 function overviewHtml(data) {
@@ -145,7 +145,7 @@ export function createSalesQueryModule() {
       const query = new URLSearchParams();
       if (from) query.set('from', from);
       if (to) query.set('to', to);
-      if (state.product?.number) query.set('product', state.product.number);
+      if (state.product?.recordId) query.set('productRecordId', state.product.recordId);
       const data = await api.get(query.toString() ? `${PAGE.api}?${query}` : PAGE.api);
       state.data = data;
       state.loading = false;

@@ -57,8 +57,9 @@ const createVoucherSettlementConfig = (env = process.env) => ({
   // 对账进度（已对平、未结完的批次）落盘目录：重启/下一轮据此只续做未结项。
   // ⚠️ 空串也回落到默认目录：空串 ⇒ 进程内 store ⇒ 重启就丢对账进度（静默）。
   batchDir: readString(env, 'VOUCHER_SETTLEMENT_BATCH_DIR', '').trim() || path.join(__dirname, '../../data/voucher_settlement'),
-  // 账单/提现分页：单页条数（来客接口最大 100）与页数上限（防上游死循环）。
-  pageSize: readInt(env, 'VOUCHER_SETTLEMENT_PAGE_SIZE', 100, { min: 1, max: 100 }),
+  // 账单/提现分页：单页条数（来客这两个接口实测 size=100 回 2100005，size<=50 正常）
+  // 与页数上限（防上游死循环）。
+  pageSize: readInt(env, 'VOUCHER_SETTLEMENT_PAGE_SIZE', 50, { min: 1, max: 50 }),
   pageLimit: readInt(env, 'VOUCHER_SETTLEMENT_MAX_PAGES', 50, { min: 1, max: 200 }),
   pendingStatus: '待平台结算',
   settledStatus: '已收款',

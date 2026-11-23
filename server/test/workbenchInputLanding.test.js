@@ -133,7 +133,7 @@ const CHAINS = Object.freeze({
     service: 'src/services/procurementModifyService.js', serviceKey: /planModification\(/,
     landing: [
       ['purchaseRequest', 'quantity'], ['purchaseOrderBatch', 'quantity'],
-      ['purchaseOrderBatch', 'document'], ['salesDetail', 'purchaseDetail'],
+      ['purchaseOrderBatch', 'document'],
     ],
   },
   "'/api/workbench/sales/delivery/deliveries'": {

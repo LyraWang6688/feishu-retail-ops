@@ -29,7 +29,7 @@ export const createSubmitController = ({ config, api, getStore }) => {
     toastTimer = setTimeout(() => node.classList.remove('show'), 3200);
   };
 
-  const renderBottom = (root, draft) => {
+  const renderBottom = (root, draft, { canClear = true } = {}) => {
     const totals = computeTotals(draft);
     const total = root.querySelector('[data-pr-total]');
     const breakdown = root.querySelector('[data-pr-breakdown]');
@@ -39,11 +39,15 @@ export const createSubmitController = ({ config, api, getStore }) => {
         replenish: totals.replenish, newProducts: totals.newProducts,
       });
     }
+    const clear = root.querySelector('[data-pr-clear]');
+    if (clear) clear.hidden = !canClear || totals.total <= 0;
   };
 
   const setBusy = (root, value) => {
     busy = value;
     setSubmitButtonState(root, { disabled: value, text: value ? config.texts.submitting : config.texts.submit });
+    const clear = root.querySelector('[data-pr-clear]');
+    if (clear) clear.disabled = value;
   };
 
   /**

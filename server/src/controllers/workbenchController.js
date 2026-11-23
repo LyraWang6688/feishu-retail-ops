@@ -41,8 +41,13 @@ const queryInventory = async (req, res) => {
 // 换季调整（按品类批量）：品类清单来自「实时库存」的「品类」公式列。
 const queryInventoryLedger = async (req, res) => {
   try {
+    // 旧 product=<number> 已禁用：number 不唯一，继续接受会返回未过滤结果。
+    if (req.query.product != null) {
+      throw Object.assign(new Error('product_filter_removed'), { statusCode: 400 });
+    }
     return res.json({ success: true, ...await service.getInventoryLedger({
-      requestId: req.requestId, from: req.query.from, to: req.query.to, product: req.query.product,
+      requestId: req.requestId, from: req.query.from, to: req.query.to,
+      productRecordId: req.query.productRecordId || req.query.product_record_id,
     }) });
   } catch (error) {
     return respondQueryFailure(res, error, {

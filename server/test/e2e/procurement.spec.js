@@ -36,7 +36,7 @@ test('AC-P20 首屏同时加载补货 + 上新；待提交列表不请求', asyn
   expect(calls.replenish).toBe(1);
   expect(calls.newProducts).toBe(1);
 
-  await tab(page, /待提交列表/).click();
+  await tab(page, /预览区/).click();
   await expect(page.getByText('还没有选要采购的货品。')).toBeVisible();
   await expect(page.locator('.pr-search')).toBeHidden();
   expect(calls.replenish).toBe(1);
@@ -85,6 +85,43 @@ test('AC-P28 顶部搜索固定；全局搜索跨 tab/供应商并自动定位',
   await expect(search).toHaveValue('');
 });
 
+test('AC-P28b 短屏搜索定位：目标卡头在 sticky 头下方，不被滚出可视区', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 667 });
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  await page.locator('[data-pr-search]').fill('LY002');
+  const results = page.locator('[data-pr-search-results]');
+  await expect(results).toContainText('LY002');
+  await results.getByRole('button', { name: /LY002/ }).click();
+  await expect.poll(async () => page.evaluate(() => {
+    const card = document.querySelector('[data-pr-group="recNewB"]');
+    const sticky = document.querySelector('.pr-sticky-head');
+    if (!card || !sticky) return false;
+    return card.getBoundingClientRect().top >= sticky.getBoundingClientRect().bottom - 2;
+  })).toBe(true);
+});
+
+test('AC-P3b 库存非 0 的货品：只显示货品卡 + 添加尺码，不显示标准行', async ({ page }) => {
+  const customOnlyBody = {
+    success: true,
+    range: { from: '2026-10-25', to: '2026-10-27', days: 3 },
+    stats: { spotSold: 0, prepaidPending: 0, notArrived: 0, productCount: 1 },
+    groups: [{
+      productRecordId: 'recStock', number: 'STOCK01', itemNo: 'STOCK01', color: '黑色',
+      supplierRecordId: 'recSupA', supplierName: '供应商 A', sizes: [], standardSizes: [39, 40],
+      stockMode: 'custom-only', prepaidTotal: 0, spotTotal: 0, notArrivedTotal: 0,
+    }],
+  };
+  await mockApi(page, { replenishBody: customOnlyBody });
+  await page.reload();
+  await expect(page.locator('.pr-tabs')).toBeVisible();
+  await expect(page.getByText('STOCK01 · 黑色')).toBeVisible();
+  await expect(page.getByText('当前尺码有库存，不显示标准尺码；需要补货请添加自定义尺码。')).toBeVisible();
+  await expect(page.locator('[data-pr-qty][data-record="recStock"]')).toHaveCount(0);
+  await expect(page.locator('[data-pr-add-size][data-record="recStock"]')).toBeVisible();
+});
+
 test('AC-P27 补货自定义尺码：多行弹窗保存后按原样式展示并进入 payload', async ({ page }) => {
   const calls = await mockApi(page);
   await page.reload();
@@ -126,7 +163,7 @@ test('AC-P30 待提交列表：按供应商分组、只读、隐藏搜索', asyn
   await qtyOf(page, 'recProdA', 39).fill('2');
   await page.locator('[data-pr-supplier]').nth(1).click();
   await qtyOf(page, 'recProdB', 43).fill('1');
-  await tab(page, /待提交列表/).click();
+  await tab(page, /预览区/).click();
   const pending = page.locator('[data-pr-pending]');
   await expect(pending).toBeVisible();
   await expect(pending).toContainText('供应商：供应商 A');
@@ -175,6 +212,24 @@ test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('3');
   await page.locator('[data-pr-step="-1"][data-record="recProdA"][data-size="42"]').click();
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('2');
+});
+
+test('AC-P18c 普通采购可清空草稿：数量归零、submitKey 重置；修改单不显示', async ({ page }) => {
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="41"]').click();
+  await expect(page.locator('[data-pr-total]')).toContainText('1 双');
+  const before = await draftInStorage(page);
+  await expect(page.locator('[data-pr-clear]')).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('[data-pr-clear]').click();
+  await expect(page.locator('[data-pr-total]')).toContainText('0 双');
+  await expect(page.locator('[data-pr-clear]')).toBeHidden();
+  await expect(qtyOf(page, 'recProdA', 41)).toHaveValue('0');
+  const after = await draftInStorage(page);
+  expect(after.products).toEqual({});
+  expect(after.submitKey).not.toBe(before.submitKey);
 });
 
 test('AC-P19b 手动「刷新」= 实时重新拉一次；已选数量保留；成功后提示已更新', async ({ page }) => {
@@ -326,6 +381,34 @@ test('AC-P22b 补货 + 上新共用一张草稿：一次提交只发一单，两
   expect((await draftInStorage(page)).products).toEqual({});
 });
 
+test('AC-P31b 修改单强制显示原采购尺码：即使当前是 custom-only', async ({ page }) => {
+  const customOnlyBody = {
+    success: true,
+    range: { from: '2026-10-25', to: '2026-10-27', days: 3 },
+    stats: { spotSold: 0, prepaidPending: 0, notArrived: 0, productCount: 1 },
+    groups: [{
+      productRecordId: 'recProdA', number: '86822', itemNo: '86822', color: '黑色',
+      supplierRecordId: 'recSupA', supplierName: '供应商 A', sizes: [], standardSizes: [39, 40],
+      stockMode: 'custom-only', prepaidTotal: 0, spotTotal: 0, notArrivedTotal: 0,
+    }],
+  };
+  await mockApi(page, {
+    replenishBody: customOnlyBody,
+    submittedBatches: [{
+      batch_no: 'CGD-E2E-0002', supplier_record_id: 'recSupA', supplier_name: '供应商 A',
+      submitted_at: '2026-10-28T08:25:00Z', product_count: 1, total_quantity: 1,
+      products: [{ product_record_id: 'recProdA', item_no: '86822', number: '86822', color: '黑色', entries: [{ size: 39, quantity: 1 }] }],
+    }],
+  });
+  await page.reload();
+  await expect(page.locator('.pr-tabs')).toBeVisible();
+  await tab(page, /预览区/).click();
+  await page.locator('[data-pr-modify-batch="CGD-E2E-0002"]').click();
+  await expect(page.locator('[data-pr-modify-banner]')).toContainText('正在修改 CGD-E2E-0002');
+  await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
+  await expect(page.getByText('当前尺码有库存，不显示标准尺码；需要补货请添加自定义尺码。')).toBeHidden();
+});
+
 test('AC-P31 今日已提交：修改按钮打开原批次，预填数量并提交 modify', async ({ page }) => {
   const calls = await mockApi(page, {
     submittedBatches: [{
@@ -336,10 +419,11 @@ test('AC-P31 今日已提交：修改按钮打开原批次，预填数量并提�
   });
   await page.reload();
   await openPage(page);
-  await tab(page, /待提交列表/).click();
+  await tab(page, /预览区/).click();
   await expect(page.getByText('CGD-E2E-0001')).toBeVisible();
   await page.locator('[data-pr-modify-batch="CGD-E2E-0001"]').click();
   await expect(page.locator('[data-pr-modify-banner]')).toContainText('正在修改 CGD-E2E-0001');
+  await expect(page.locator('[data-pr-clear]')).toBeHidden();
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
   await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="39"]').click();
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('2');

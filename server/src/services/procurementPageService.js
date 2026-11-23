@@ -10,7 +10,7 @@
  *   · 交易类型判据**复用 `config/salesMovements.js`**（行为表里认不出 ⇒ 不计入，不猜）。
  *
  * 补货读两个来源（2026-11-21）：
- *   · 销售明细（近 3 天、库存数量=0、未报过货）→ 现货 / 预订；
+ *   · 销售明细（近 7 天、库存数量=0）→ 现货 / 预订；
  *   · 采购明细（数量 - 已入库数量 > 0）→ 未到货。
  */
 
@@ -19,12 +19,14 @@ const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
 const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMovements');
 const { createProductEnricher } = require('./procurementProductEnricher');
+const { filterActiveProductsFor } = require('./productLifecycle');
 const { logInfo, logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
 const { textOf, buildReplenishView } = require('./procurementPageData');
 const { linkedRecordIds } = require('./v1Gateway/cells');
 const { buildNewProductsView } = require('./procurementPageNewProductsData');
-const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
+const { isRetriableOrderReadError } = require('../config/orderReadRetry');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
 const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
   Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
@@ -60,7 +62,7 @@ const createProcurementPageService = (options = {}) => {
   });
   const enricher = options.enricher || createProductEnricher({ gateway, schema, logger });
   const productFields = () => (schema.tables?.product?.fields) || {};
-  const readRetry = options.readRetry || resolveOrderReadRetryConfig();
+  const readRetry = options.readRetry || CRITICAL_READ_RETRY;
   const sleep = options.sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
   const retryRead = async (tableKey, read) => {
     for (let attempt = 0; ; attempt += 1) {
@@ -68,7 +70,9 @@ const createProcurementPageService = (options = {}) => {
         return await read();
       } catch (error) {
         if (!isRetriableOrderReadError(error) || attempt >= readRetry.maxRetries) throw error;
-        const delayMs = Math.max(0, Number(readRetry.delayMs)) * (attempt + 1);
+        const delayMs = readRetry.baseDelayMs != null
+          ? Math.min(Math.round(readRetry.baseDelayMs * (readRetry.factor ** attempt)), readRetry.maxDelayMs)
+          : Math.max(0, Number(readRetry.delayMs)) * (attempt + 1);
         warn('workbench.procurement.read_retry', {
           table_key: tableKey, attempt: attempt + 1, of: readRetry.maxRetries + 1, delay_ms: delayMs,
         });
@@ -76,8 +80,9 @@ const createProcurementPageService = (options = {}) => {
       }
     }
   };
-  const listByFilterWithRetry = (tableKey, filter) => retryRead(tableKey, () => gateway.listByFilter(tableKey, filter));
-  const listAllWithRetry = (tableKey) => retryRead(tableKey, () => gateway.listAll(tableKey));
+  // 上层统一重试；gateway 内层必须关闭，避免 1254607 时嵌套成 4 次、每次十几秒。
+  const listByFilterWithRetry = (tableKey, filter) => retryRead(tableKey, () => gateway.listByFilter(tableKey, filter, { retry: false }));
+  const listAllWithRetry = (tableKey) => retryRead(tableKey, () => gateway.listAll(tableKey, { retry: false }));
 
   // ── 行为表索引（记录ID → 行为编码）—— 唯一用途：把「销售明细.交易类型」的关联解析成现货/预订 ──
   const loadBehaviorIndex = async () => {
@@ -141,14 +146,12 @@ const createProcurementPageService = (options = {}) => {
       records, pendingRecords, products: productsWithSupplier, fields, productFields: productFields(), purchaseFields: pendingFieldNames,
       config, now: now(), tradeTypeCodeOf: (cell) => tradeTypeCodeOf(cell, behaviorIndex),
     });
-    // ⭐⭐ 2026-11-08（#950）：只有**真的认不出贸易类型**的行才记 `trade_type_unknown`。
-    //   「已报过货（采购明细已关联）」是正常业务事实 ⇒ 单独计数、**不触发**这条 warn（#946 误报修复）。
+    // ⭐ 只有**真的认不出贸易类型**的行才记 `trade_type_unknown`。
     if (view.tradeTypeUnknownRows > 0) {
       warn(config.events.tradeTypeUnknown, {
         request_id: requestId,
         skipped_rows: view.skippedRows,
         trade_type_unknown_rows: view.tradeTypeUnknownRows,
-        already_reported_rows: view.alreadyReportedRows,
       });
     }
     info(config.events.replenishLoaded, {
@@ -161,7 +164,6 @@ const createProcurementPageService = (options = {}) => {
       pending_rows: (pendingRecords || []).length,
       // 只报事实：跳过多少、其中"已报过货"多少（排查"补货怎么少了"用）
       skipped_rows: view.skippedRows,
-      already_reported_rows: view.alreadyReportedRows,
       duration_ms: Date.now() - startedAt,
     });
     return { ok: true, ...view };
@@ -175,7 +177,8 @@ const createProcurementPageService = (options = {}) => {
       // 7 个自然日（含今天）= 往前 6 天。
       days: Math.max(0, Number(config.window.newProductsDays || 1) - 1),
     });
-    const records = await listByFilterWithRetry('product', filter);
+    // 上新建议同样排除已下架货品（与补货建议同一份生命周期判据）。
+    const records = filterActiveProductsFor(await listByFilterWithRetry('product', filter), 'purchasePicker');
     const view = buildNewProductsView({ records, fields, config, now: now() });
     info(config.events.newProductsLoaded, {
       request_id: requestId,

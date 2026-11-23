@@ -116,8 +116,8 @@ test('sales schema matches the live three-table field snapshot', () => {
     salesEntry: ['收款状态', '录单日', '写入状态', '销售单号',
       '录单人', '待交付数量', '交付数量', '交易类型', '赠品',
       '售后次数', '总金额', '鞋类总额', '配品', '配品总额', '售后类型', '售后人'],
-    // ⭐ 2026-11-08：销售明细新增「采购明细」单向关联（采购报货后回填）
-    salesDetail: ['销售单价', '履约状态', '销售明细ID', '销售单号', '销售日', '尺码', '实收金额', '编号', '配品', '交易类型', '库存数量', '采购明细'],
+    // 2026-11-23：生产删除「采购明细」；新增公式列「recordID」= 编号关联货品的 record_id。
+    salesDetail: ['销售单价', '履约状态', '销售明细ID', '销售单号', '销售日', '尺码', '实收金额', '编号', '配品', '交易类型', '库存数量', 'recordID'],
     // 「支付方式」已被产品负责人改名为「收款方式」，并新增了「收支方向」。
     // ⭐ 2026-10-08：9 点推送【现货待收】按**收款明细的「交易类型」**筛
     //（她的口径：「未收款且**交易类型是现货**」）⇒ 映射加上这一列；
@@ -156,6 +156,10 @@ test('relation and display helpers only accept evidenced link shapes (#1074)', (
   assert.deepEqual(linkedRecordIds({ id: 'rec_3' }), []);
   assert.deepEqual(linkedRecordIds('rec_1'), []);
   assert.equal(textValue([{ text: 'A' }, { name: 'B' }]), 'A,B');
+  // ⭐ getBatch 的单元格不是 [{text}] 而是 {type,value:[{text}]}；必须拆开，不能 [object Object]
+  assert.equal(textValue({ type: 1, value: [{ text: '906|黑色|男', type: 'text' }] }), '906|黑色|男');
+  assert.equal(textValue({ type: 1, value: [{ text: 'A' }, { text: 'B' }] }), 'A,B');
+  assert.equal(textValue({ value: { text: '嵌套' } }), '嵌套');
 });
 
 // 2026-10-06 线上事故：没有硬编码兜底的表（「尺码管理」「其他配品」）在 .env 之前

@@ -5,7 +5,6 @@
  * 鉴权、no-store、ui-tap 仍由 `workbench.js` 的父 router 统一加。
  *
  * ⭐ 2026-10-29（业务负责人定稿：销售订单列表只剩三条路径）：本文件只保留
- *   · 售后扫一扫候选（`GET /sales/after-sales/candidates`，独立售后页在用读侧的另一条 `scan-candidates`）；
  *   · 订单列表读（`GET /sales/orders`，三卡入口的首屏缓存仍在用）；
  *   · 两个 sub-router：订单动作（售后 / 扫一扫候选）/ 交割单独立页（`/sales/delivery*`）。
  * 🔴 已删（旧订单列表前端退场，连带无人调用的后端路由；**业务服务层保留**）：
@@ -32,22 +31,6 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
   }));
   // 交割单独立页（只读 + 异步交付/收款）；**不属于**旧订单列表，保留。
   router.use(createWorkbenchSalesDeliveryRoutes({ options, followup, ordersCache }));
-  router.get('/sales/after-sales/candidates', async (req, res) => {
-    try {
-      const result = await followup.listAfterSalesCandidates({
-        productRecordId: req.query.productRecordId || req.query.product_record_id,
-        days: req.query.days,
-      });
-      return res.json({ success: true, ...result });
-    } catch (error) {
-      logError('workbench.sales.after_sales.candidates.failed', {
-        request_id: req.requestId, error: error.message,
-      });
-      return res.status(error?.statusCode === 400 ? 400 : 502)
-        .json({ success: false, error: error.message || 'after-sales candidates failed' });
-    }
-  });
-
   router.get('/sales/orders', async (req, res) => {
     try { return res.json({ success: true, ...await followup.listOrders() }); }
     catch (error) {
@@ -118,9 +101,14 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
     return salesQueryInstance;
   };
   router.get('/sales/query', async (req, res) => {
+    // 旧 product=<number> 已禁用：number 不唯一，继续接受会返回未过滤结果。
+    if (req.query.product != null) {
+      return res.status(400).json({ success: false, error: 'product_filter_removed' });
+    }
     try {
       return res.json({ success: true, ...await salesQuery().getSalesQuery({
-        from: req.query.from, to: req.query.to, product: req.query.product,
+        from: req.query.from, to: req.query.to,
+        productRecordId: req.query.productRecordId || req.query.product_record_id,
       }) });
     } catch (error) {
       logError('workbench.sales.query.failed', { request_id: req.requestId, error: error.message });

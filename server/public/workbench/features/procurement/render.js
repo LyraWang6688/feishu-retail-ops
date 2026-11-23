@@ -88,14 +88,26 @@ const customSizeRowHtml = (group, size, draft, store, config) => {
     + stepperHtml({ recordId: group.productRecordId, size, quantity, config })
     + '</div>';
 };
-export const replenishGroupHtml = (group, draft, store, config) => {
+export const replenishGroupHtml = (group, draft, store, config, options = {}) => {
   const customs = typeof store.customSizesOf === 'function' ? store.customSizesOf(draft, group.productRecordId) : [];
+  const standardRows = group.stockMode === 'custom-only' ? [] : (group.sizes || []);
+  const rowsBySize = new Map(standardRows.map((row) => [String(row.size), row]));
+  // 修改单：原采购单预填在 draft.entries 里的尺码必须显示，不受 stockMode 影响。
+  if (options.modify) {
+    const entries = store.productOf?.(draft, group.productRecordId)?.entries || {};
+    for (const [size, quantity] of Object.entries(entries)) {
+      if (Number(quantity) <= 0 || rowsBySize.has(String(size))) continue;
+      rowsBySize.set(String(size), { size: Number.isFinite(Number(size)) ? Number(size) : size, spotSold: 0, prepaidSold: 0, notArrived: 0 });
+    }
+  }
+  const rows = [...rowsBySize.values()].sort((a, b) => Number(a.size) - Number(b.size));
   return `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">
   <div class="pr-group-head">
     <div class="pr-group-title-wrap"><h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>${productActionsHtml(group, config)}</div>
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(config.card.replenishTotal, 0)}</div>
   </div>
-  <div class="pr-size-grid">${(group.sizes || []).map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}</div>
+  ${group.stockMode === 'custom-only' && !options.modify ? `<p class="pr-hint">${escapeHtml(config.texts.stockCustomOnlyHint)}</p>` : ''}
+  <div class="pr-size-grid">${rows.map((row) => replenishRowHtml(group, row, draft, store, config)).join('')}${customs.map((size) => customSizeRowHtml(group, size, draft, store, config)).join('')}</div>
   <button type="button" class="btn pr-add-size" data-pr-add-size data-record="${escapeHtml(group.productRecordId)}">${escapeHtml(config.texts.addCustomSize)}</button>
 </section>`;
 };
@@ -159,6 +171,7 @@ export const shellHtml = (config) => {
   <div class="pr-bottom"><div class="pr-bottom-inner">
     <div class="pr-picked"><span>${escapeHtml(config.units.pickedLabel)}</span><b data-pr-total>0 ${escapeHtml(config.units.pair)}</b>
       <small data-pr-breakdown></small></div>
+    <button type="button" class="pr-clear" data-pr-clear hidden>${escapeHtml(config.texts.clearDraft)}</button>
     <button type="button" class="pr-submit" data-pr-submit>${escapeHtml(config.texts.submit)}</button>
   </div></div>
   ${toastHtml()}`;

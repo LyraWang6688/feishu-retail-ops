@@ -81,16 +81,51 @@ const rowHtml = (row) => {
     + '</div>';
 };
 
-const productsHtml = (groups) => groups.map((group) => {
+const productsHtml = (groups, checkedProducts = new Set()) => groups.map((group) => {
   const rows = group.rows.map(rowHtml).join('');
-  return '<section class="pr-group arrival-product" data-product-id="' + escapeHtml(group.productId) + '">'
+  const checked = checkedProducts.has(group.productId);
+  return '<section class="pr-group arrival-product' + (checked ? ' is-checked' : '') + '" data-product-id="' + escapeHtml(group.productId) + '">'
     + '<div class="pr-group-head"><h2 class="pr-group-name">' + escapeHtml(groupLabel(group)) + '</h2>'
     + '<button class="btn small" type="button" data-add-size="' + escapeHtml(group.productId) + '">'
     + escapeHtml(ARRIVAL_FULL_TEXTS.addSize) + '</button></div>'
-    + '<div class="pr-size-grid" data-view="arrival-size-rows">' + rows + '</div></section>';
+    + '<div class="pr-size-grid" data-view="arrival-size-rows">' + rows + '</div>'
+    + '<label class="arrival-verify"><input type="checkbox" data-arrival-verify="' + escapeHtml(group.productId) + '"' + (checked ? ' checked' : '') + '> '
+    + escapeHtml(ARRIVAL_FULL_TEXTS.checkedLabel) + '</label></section>';
 }).join('');
 
-const shellHtml = () => '<section class="arrival-summary" data-view="arrival-summary" aria-live="polite"></section>'
+const previewStatusOf = (row) => {
+  const declared = Math.max(0, Number(row?.declared) || 0);
+  const arrived = Math.max(0, Number(row?.actual) || 0);
+  if (row?.custom) return { key: 'extra', expected: 0, actual: 0, extra: arrived };
+  if (arrived > declared) return { key: 'extra', expected: declared, actual: declared, extra: arrived - declared };
+  if (arrived < declared) return { key: 'short', expected: declared, actual: arrived, extra: 0 };
+  return { key: 'match', expected: declared, actual: arrived, extra: 0 };
+};
+
+const previewRowHtml = (row) => {
+  const status = previewStatusOf(row);
+  const size = sizeText(row.size);
+  const name = row.custom ? (size ? size + ' · ' + ARRIVAL_FULL_TEXTS.previewCustom : ARRIVAL_FULL_TEXTS.previewCustom) : size;
+  const label = { match: ARRIVAL_FULL_TEXTS.previewMatch, short: ARRIVAL_FULL_TEXTS.previewShort, extra: ARRIVAL_FULL_TEXTS.previewExtra }[status.key];
+  return '<div class="arrival-preview-row is-' + status.key + '" data-preview-status="' + status.key + '">'
+    + '<div class="arrival-preview-line"><b>' + escapeHtml(name) + '</b><span class="arrival-preview-tag">' + escapeHtml(label) + '</span></div>'
+    + '<div class="arrival-preview-meta"><span>' + escapeHtml(fill(ARRIVAL_FULL_TEXTS.previewExpected, { count: status.expected })) + '</span>'
+    + '<span>' + escapeHtml(fill(ARRIVAL_FULL_TEXTS.previewActual, { count: status.actual })) + '</span>'
+    + '<span>' + escapeHtml(fill(ARRIVAL_FULL_TEXTS.previewExtraCount, { count: status.extra })) + '</span></div>'
+    + '</div>';
+};
+
+const previewHtml = (groups) => (groups.length ? groups.map((group) => '<section class="arrival-preview-group" data-product-id="' + escapeHtml(group.productId) + '">'
+  + '<h2 class="pr-group-name">' + escapeHtml(groupLabel(group)) + '</h2>'
+  + group.rows.map(previewRowHtml).join('')
+  + '</section>').join('') : '<p class="empty">' + escapeHtml(ARRIVAL_FULL_TEXTS.previewEmpty) + '</p>');
+
+const shellHtml = () => '<nav class="pr-tabs arrival-tabs" role="tablist" aria-label="' + escapeHtml(ARRIVAL_FULL_TEXTS.acceptanceTabsLabel) + '">'
+  + '<button class="pr-tab active" type="button" role="tab" aria-selected="true" data-arrival-tab="accept">' + escapeHtml(ARRIVAL_FULL_TEXTS.acceptanceTab) + '</button>'
+  + '<button class="pr-tab" type="button" role="tab" aria-selected="false" data-arrival-tab="preview">' + escapeHtml(ARRIVAL_FULL_TEXTS.previewTab) + '</button>'
+  + '</nav>'
+  + '<div data-view="arrival-panel-accept">'
+  + '<section class="arrival-summary" data-view="arrival-summary" aria-live="polite"></section>'
   + '<div data-view="arrival-products"></div>'
   + '<form class="arrival-detail-form" data-arrival-form>'
   + '<label class="form-field">' + escapeHtml(ORDERS_TEXTS.arrivalAmount)
@@ -99,7 +134,12 @@ const shellHtml = () => '<section class="arrival-summary" data-view="arrival-sum
   + '<p class="arrival-amount-hint" data-view="arrival-amount-hint" hidden></p>'
   + arrivalDocFieldHtml({ escapeHtml, label: ARRIVAL_FULL_TEXTS.acceptanceDocLabel, hint: ARRIVAL_FULL_TEXTS.acceptanceDocHint })
   + '</form>'
-  + '<div class="pr-bottom"><div class="pr-bottom-inner">'
+  + '</div>'
+  + '<div data-view="arrival-panel-preview" hidden>'
+  + '<section class="arrival-summary" data-view="arrival-preview-summary" aria-live="polite"></section>'
+  + '<div data-view="arrival-preview-body"></div>'
+  + '</div>'
+  + '<div class="pr-bottom" data-view="arrival-bottom"><div class="pr-bottom-inner">'
   + '<div class="pr-picked"><span>' + escapeHtml(ARRIVAL_FULL_TEXTS.bottomArrival) + '</span>'
   + '<b data-view="arrival-total">0 双</b></div>'
   + '<button class="pr-submit" type="button" data-view="arrival-submit">' + escapeHtml(ORDERS_TEXTS.arrivalSubmit) + '</button>'
@@ -111,7 +151,7 @@ export function mountPurchaseAcceptanceDetail(host) {
   const batchNo = String(params.get('batchNo') || '').trim();
   const supplierRecordId = String(params.get('supplierRecordId') || '').trim();
   const supplierName = String(params.get('supplierName') || '').trim();
-  const state = { host, batchNo, supplierRecordId, supplierName, rows: [], submitting: false };
+  const state = { host, batchNo, supplierRecordId, supplierName, rows: [], submitting: false, activeTab: 'accept', checkedProducts: new Set() };
 
   const groups = () => groupRows(state.rows);
   const totalsOf = () => {
@@ -131,23 +171,45 @@ export function mountPurchaseAcceptanceDetail(host) {
     }
     return { expected, actual, extra, arrival: actual + extra };
   };
+  const summaryHtmlOf = (totals) => [
+    fill(ARRIVAL_FULL_TEXTS.summaryExpected, { count: totals.expected }),
+    fill(ARRIVAL_FULL_TEXTS.summaryActual, { count: totals.actual }),
+    fill(ARRIVAL_FULL_TEXTS.summaryExtra, { count: totals.extra }),
+  ].map((text) => '<span>' + escapeHtml(text) + '</span>').join(' / ');
+  const renderPreview = () => {
+    const totals = totalsOf();
+    const body = host.querySelector('[data-view="arrival-preview-body"]');
+    if (body) body.innerHTML = previewHtml(groups());
+    const summary = host.querySelector('[data-view="arrival-preview-summary"]');
+    if (summary) summary.innerHTML = summaryHtmlOf(totals);
+  };
   const renderSummary = () => {
     const totals = totalsOf();
     const box = host.querySelector('[data-view="arrival-summary"]');
-    if (box) {
-      box.innerHTML = [
-        fill(ARRIVAL_FULL_TEXTS.summaryExpected, { count: totals.expected }),
-        fill(ARRIVAL_FULL_TEXTS.summaryActual, { count: totals.actual }),
-        fill(ARRIVAL_FULL_TEXTS.summaryExtra, { count: totals.extra }),
-      ].map((text) => '<span>' + escapeHtml(text) + '</span>').join(' / ');
-    }
+    if (box) box.innerHTML = summaryHtmlOf(totals);
     const total = host.querySelector('[data-view="arrival-total"]');
     if (total) total.textContent = fill(ARRIVAL_FULL_TEXTS.arrivalTotalUnit, { count: totals.arrival });
+    renderPreview();
   };
   const renderProducts = () => {
     const box = host.querySelector('[data-view="arrival-products"]');
-    if (box) box.innerHTML = productsHtml(groups());
+    if (box) box.innerHTML = productsHtml(groups(), state.checkedProducts);
     renderSummary();
+  };
+  const applyTab = (tab) => {
+    state.activeTab = tab === 'preview' ? 'preview' : 'accept';
+    for (const button of host.querySelectorAll('[data-arrival-tab]')) {
+      const active = button.dataset.arrivalTab === state.activeTab;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    }
+    const acceptPanel = host.querySelector('[data-view="arrival-panel-accept"]');
+    const previewPanel = host.querySelector('[data-view="arrival-panel-preview"]');
+    const bottom = host.querySelector('[data-view="arrival-bottom"]');
+    if (acceptPanel) acceptPanel.hidden = state.activeTab !== 'accept';
+    if (previewPanel) previewPanel.hidden = state.activeTab !== 'preview';
+    if (bottom) bottom.hidden = state.activeTab !== 'accept';
+    if (state.activeTab === 'preview') renderPreview();
   };
   const rowOf = (uid) => state.rows.find((row) => row.uid === uid);
   const updateActual = (uid, value) => {
@@ -340,12 +402,23 @@ export function mountPurchaseAcceptanceDetail(host) {
         if (event.target.closest?.('[data-field="custom-size"]')) {
           const row = rowOf(event.target.closest('[data-field="custom-size"]').dataset.rowUid);
           if (row) row.size = String(event.target.value || '').trim();
+          renderPreview();
         }
         if (event.target.closest?.('[data-field="arrival-doc"]')) {
           updateArrivalDocHint(event.target, ARRIVAL_FULL_TEXTS);
         }
       });
+      host.addEventListener('change', (event) => {
+        const box = event.target.closest?.('[data-arrival-verify]');
+        if (!box) return;
+        const productId = box.dataset.arrivalVerify;
+        if (box.checked) state.checkedProducts.add(productId);
+        else state.checkedProducts.delete(productId);
+        box.closest('.arrival-product')?.classList.toggle('is-checked', box.checked);
+      });
       host.addEventListener('click', (event) => {
+        const tabButton = event.target.closest?.('[data-arrival-tab]');
+        if (tabButton) { applyTab(tabButton.dataset.arrivalTab); return; }
         const add = event.target.closest?.('[data-add-size]');
         if (add) { addSize(add.dataset.addSize); return; }
         const remove = event.target.closest?.('[data-remove-size]');

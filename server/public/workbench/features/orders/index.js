@@ -1,6 +1,6 @@
 import { api } from '../../core/api-client.js';
-import { escapeHtml, money, statusClass } from '../../core/formatters.js';
-import { describeError, runWriteAction, showPageError } from '../../core/ui.js';
+import { escapeHtml } from '../../core/formatters.js';
+import { describeError, showPageError } from '../../core/ui.js';
 import { arrivalLineKey, arrivalSubmitLines } from './acceptanceDoc.js';
 
 // 兼容既有调用方/用例：这两个纯函数仍从 index.js 导出。
@@ -78,9 +78,6 @@ export const createFirstPaintLoader = ({ load, storage, write = writeCachedOrder
     return rows;
   },
 });
-
-const amount = (value) => money(Number(value || 0));
-const sizeText = (size) => (size == null || size === '' ? '尺码待补' : `${escapeHtml(size)} 码`);
 
 /** 一张单的收款情况（她的第 3 项）。状态文案直接来自现有字段，不自己造词。 */
 function reportOrdersRendered(section, count) {

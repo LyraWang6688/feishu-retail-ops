@@ -15,7 +15,7 @@ const { createProductEnricher, batchTextOf } = require('../src/services/procurem
 const PF = V1_BITABLE_SCHEMA.tables.product.fields;
 const CF = V1_BITABLE_SCHEMA.tables.color.fields;
 
-const batchProduct = ({ id = 'recA', number = '66133-15|咖色|女', itemNo = '66133-15', colorId = 'recColorKa', supplierId = 'recSup' } = {}) => ({
+const batchProduct = ({ id = 'recA', number = '66133-15|咖色|女', itemNo = '66133-15', colorId = 'recColorKa', supplierId = 'recSup', delisted = false } = {}) => ({
   record_id: id,
   fields: {
     [PF.number]: { type: 1, value: [{ text: number }] },
@@ -24,6 +24,7 @@ const batchProduct = ({ id = 'recA', number = '66133-15|咖色|女', itemNo = '6
     [PF.category]: 'B',
     [PF.supplier]: { link_record_ids: [supplierId] },
     [PF.createdAt]: 1790573535000,
+    ...(delisted ? { [PF.delisted]: true } : {}),
   },
 });
 const colorRecord = (id, name) => ({ record_id: id, fields: { [CF.name]: [{ text: name, type: 'text' }] } });
@@ -49,7 +50,16 @@ test('AC-E1 batch 形状归一化：number/itemNo/颜色/供应商/类别/上架
   assert.equal(dto.category, 'B');
   assert.equal(dto.supplierRecordId, 'recSup');
   assert.equal(dto.createdAt, 1790573535000);
+  assert.equal(dto.delisted, false);
   assert.equal(JSON.stringify(dto).includes('[object Object]'), false);
+});
+
+test('AC-E1c 反查结果带下架标记，供采购建议过滤', async () => {
+  const enricher = createProductEnricher({
+    gateway: makeGateway({ products: [batchProduct({ delisted: true })] }), schema: V1_BITABLE_SCHEMA,
+  });
+  const dto = (await enricher.enrich(['recA'])).get('recA');
+  assert.equal(dto.delisted, true);
 });
 
 test('AC-E1b 颜色表读不到 ⇒ 颜色留空 + 一条 warn（不崩、不猜）', async () => {

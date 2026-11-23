@@ -170,7 +170,7 @@ test('实时库存读复用配置表快照：同一张表第二次不再整表�
 test('库存流水：按创建时间倒序，映射四列并可限制条数', async () => {
   const ledger = [
     { record_id: 'l_old', fields: { 创建时间: 1700000000000, 库存行为: [{ text: '手工调增' }], 编号: [{ text: 'A|黑|男' }], 尺码: [{ text: '38' }], 变动数量: '1' } },
-    { record_id: 'l_new', fields: { 创建时间: 1700000003000, 库存行为: [{ text: '销售减少' }], 编号: [{ text: 'B|白|女' }], 尺码: [{ text: '40' }], 变动数量: 2 } },
+    { record_id: 'l_new', fields: { 创建时间: 1700000003000, 库存行为: [{ text: '销售减少' }], 编号: [{ record_ids: ['prod_new'], text: 'B|白|女' }], 尺码: [{ text: '40' }], 变动数量: 2 } },
     { record_id: 'l_mid', fields: { 创建时间: 1700000002000, 库存行为: [{ text: '采购增加' }], 编号: [{ text: 'C|米|男' }], 尺码: [{ text: '42' }], 变动数量: 1 } },
   ];
   const gateway = {
@@ -183,6 +183,7 @@ test('库存流水：按创建时间倒序，映射四列并可限制条数', as
   assert.deepEqual(all.rows[0], {
     record_id: 'l_new',
     behavior: '销售减少',
+    product_record_id: 'prod_new',
     number: 'B|白|女',
     size: '40',
     quantity_change: 2,
@@ -196,9 +197,43 @@ test('库存流水：按创建时间倒序，映射四列并可限制条数', as
   assert.equal(limited.total, 3);
   assert.equal(limited.truncated, true);
 
-  const filtered = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15', product: 'B|白|女' });
+  const filtered = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15', productRecordId: 'prod_new' });
   assert.deepEqual(filtered.rows.map((row) => row.record_id), ['l_new']);
   assert.equal(filtered.total, 1, '过滤后统计按货品结果算');
+});
+
+test('库存流水按 productRecordId 精确过滤：同编号不同记录不合并', async () => {
+  const ledger = [
+    { record_id: 'l_a', fields: { 创建时间: 1700000000000, 库存行为: [{ text: '销售减少' }], 编号: [{ record_ids: ['prod_a'], text: 'SAME|黑|男' }], 尺码: [{ text: '39' }], 变动数量: 1 } },
+    { record_id: 'l_b', fields: { 创建时间: 1700000001000, 库存行为: [{ text: '销售减少' }], 编号: [{ record_ids: ['prod_b'], text: 'SAME|黑|男' }], 尺码: [{ text: '39' }], 变动数量: 1 } },
+  ];
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listAll: async (key) => (key === 'inventoryLedger' ? ledger : []),
+  };
+  const service = createWorkbenchService(gateway);
+  const byId = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15', productRecordId: 'prod_a' });
+  assert.deepEqual(byId.rows.map((row) => row.record_id), ['l_a']);
+  assert.equal(byId.rows[0].product_record_id, 'prod_a');
+});
+
+test('库存流水遇到 1254607 ⇒ 用关键读重试后成功（不再 2 次×300ms 就失败）', async () => {
+  let calls = 0;
+  const transient = Object.assign(new Error('Request failed with status code 400'), {
+    response: { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } },
+  });
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listByFilter: async () => {
+      calls += 1;
+      if (calls === 1) throw transient;
+      return [];
+    },
+    listAll: async () => [],
+  };
+  const result = await createWorkbenchService(gateway).getInventoryLedger({ from: '2026-11-19', to: '2026-11-19' });
+  assert.equal(result.rows.length, 0);
+  assert.equal(calls, 2, '第一次 1254607 后必须重试一次并成功');
 });
 
 test('库存流水按创建时间下推并带字段裁剪；过滤失败才回退整表', async () => {
