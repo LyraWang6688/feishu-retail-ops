@@ -81,13 +81,16 @@ const rowHtml = (row) => {
     + '</div>';
 };
 
-const productsHtml = (groups) => groups.map((group) => {
+const productsHtml = (groups, checkedProducts = new Set()) => groups.map((group) => {
   const rows = group.rows.map(rowHtml).join('');
-  return '<section class="pr-group arrival-product" data-product-id="' + escapeHtml(group.productId) + '">'
+  const checked = checkedProducts.has(group.productId);
+  return '<section class="pr-group arrival-product' + (checked ? ' is-checked' : '') + '" data-product-id="' + escapeHtml(group.productId) + '">'
     + '<div class="pr-group-head"><h2 class="pr-group-name">' + escapeHtml(groupLabel(group)) + '</h2>'
     + '<button class="btn small" type="button" data-add-size="' + escapeHtml(group.productId) + '">'
     + escapeHtml(ARRIVAL_FULL_TEXTS.addSize) + '</button></div>'
-    + '<div class="pr-size-grid" data-view="arrival-size-rows">' + rows + '</div></section>';
+    + '<div class="pr-size-grid" data-view="arrival-size-rows">' + rows + '</div>'
+    + '<label class="arrival-verify"><input type="checkbox" data-arrival-verify="' + escapeHtml(group.productId) + '"' + (checked ? ' checked' : '') + '> '
+    + escapeHtml(ARRIVAL_FULL_TEXTS.checkedLabel) + '</label></section>';
 }).join('');
 
 const previewStatusOf = (row) => {
@@ -148,7 +151,7 @@ export function mountPurchaseAcceptanceDetail(host) {
   const batchNo = String(params.get('batchNo') || '').trim();
   const supplierRecordId = String(params.get('supplierRecordId') || '').trim();
   const supplierName = String(params.get('supplierName') || '').trim();
-  const state = { host, batchNo, supplierRecordId, supplierName, rows: [], submitting: false, activeTab: 'accept' };
+  const state = { host, batchNo, supplierRecordId, supplierName, rows: [], submitting: false, activeTab: 'accept', checkedProducts: new Set() };
 
   const groups = () => groupRows(state.rows);
   const totalsOf = () => {
@@ -190,7 +193,7 @@ export function mountPurchaseAcceptanceDetail(host) {
   };
   const renderProducts = () => {
     const box = host.querySelector('[data-view="arrival-products"]');
-    if (box) box.innerHTML = productsHtml(groups());
+    if (box) box.innerHTML = productsHtml(groups(), state.checkedProducts);
     renderSummary();
   };
   const applyTab = (tab) => {
@@ -404,6 +407,14 @@ export function mountPurchaseAcceptanceDetail(host) {
         if (event.target.closest?.('[data-field="arrival-doc"]')) {
           updateArrivalDocHint(event.target, ARRIVAL_FULL_TEXTS);
         }
+      });
+      host.addEventListener('change', (event) => {
+        const box = event.target.closest?.('[data-arrival-verify]');
+        if (!box) return;
+        const productId = box.dataset.arrivalVerify;
+        if (box.checked) state.checkedProducts.add(productId);
+        else state.checkedProducts.delete(productId);
+        box.closest('.arrival-product')?.classList.toggle('is-checked', box.checked);
       });
       host.addEventListener('click', (event) => {
         const tabButton = event.target.closest?.('[data-arrival-tab]');
