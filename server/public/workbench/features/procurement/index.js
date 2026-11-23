@@ -3,21 +3,20 @@ import { ensureProcurementAuth } from './auth.js';
 import { describeError } from '../../core/ui.js';
 import { PROCUREMENT_UI as config } from '../../config/procurement.js';
 import { createApi } from './api.js';
-import { createDraftStore } from './store.js';
+import { computeTotals, createDraftStore } from './store.js';
 import { shellHtml, errorHtml, emptyHtml } from './render.js';
 import { createReplenishPanel } from './replenish.js';
 import { createNewProductsPanel } from './newProducts.js';
 import { createSubmitController } from './submit.js';
 import { createRefresher } from './refresh.js';
-import { customSizesValidation, pruneCustomSizes, customRowsError } from './customSize.js';
+import { customSizeErrorMessage, pruneCustomSizes, customRowsError } from './customSize.js';
 import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml, supplierNameMap } from './pending.js';
 import { createProcurementSearch } from './search.js';
 import { createModifyController } from './modify.js';
 import { buildSuggestedBody, suggestedHtml, rangeBarHtml } from './suggested.js';
 import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
-const DATA_TABS = ['replenish', 'new'];
-const TABS = ['suggested', 'pending'];
+const DATA_TABS = ['replenish', 'new']; const TABS = ['suggested', 'pending'];
 export function mountProcurementPage(host) {
   if (!host) return undefined;
   host.innerHTML = shellHtml(config);
@@ -28,8 +27,7 @@ export function mountProcurementPage(host) {
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
   const modal = createCustomSizeModal({ host, config });
-  const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]'); const queryRow = host.querySelector('.pr-query-row');
-  const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft); };
+  const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]'); const queryRow = host.querySelector('.pr-query-row'); const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft, { canClear: !modifyCtl?.active?.() }); };
   const mergedBody = () => buildSuggestedBody({ replenishBody: state.bodies.replenish, newBody: state.bodies.new, config });
   const paint = () => {
     const element = panelEl(state.tab); if (!element) return;
@@ -104,8 +102,7 @@ export function mountProcurementPage(host) {
     if (!state.bodies.replenish || !state.bodies.new) await loadAll(options.force === true);
     else paint();
   };
-  const modifyCtl = createModifyController({ host, config, api: remote, getStore: () => store, getDraft: () => draft, setDraft, toast: submitCtl.toast,
-    onDone: async () => { setDraft(store.ensure()); await loadSubmitted(); await activate('pending'); } });
+  const modifyCtl = createModifyController({ host, config, api: remote, getStore: () => store, getDraft: () => draft, setDraft, toast: submitCtl.toast, onDone: async () => { setDraft(store.ensure()); await loadSubmitted(); await activate('pending'); } });
   host.addEventListener('click', async (event) => {
     const tabButton = event.target.closest('[data-pr-tab]');
     if (tabButton) { search.hide(); await activate(tabButton.dataset.prTab); return; }
@@ -147,12 +144,15 @@ export function mountProcurementPage(host) {
     }
     if (event.target.closest('[data-pr-retry]')) { await loadAll(true); return; }
     if (event.target.closest('[data-pr-refresh]')) { await refresher.refresh(); return; }
-    if (event.target.closest('[data-pr-submit]')) {
-      const validation = customSizesValidation({ draft, bodies: state.bodies, tabs: DATA_TABS, store });
-      if (!validation.ok) {
-        submitCtl.toast(host, validation.reason === 'duplicate' ? config.texts.customSizeDuplicate : config.texts.customSizeInvalid);
-        return;
+    if (event.target.closest('[data-pr-clear]')) {
+      if (!modifyCtl.active() && computeTotals(draft).total > 0 && window.confirm(config.texts.clearDraftConfirm)) {
+        store.clear(); setDraft(store.ensure()); paint(); refreshNumbers();
       }
+      return;
+    }
+    if (event.target.closest('[data-pr-submit]')) {
+      const error = customSizeErrorMessage({ draft, bodies: state.bodies, tabs: DATA_TABS, store }, config);
+      if (error) { submitCtl.toast(host, error); return; }
       if (modifyCtl.active()) {
         const changed = await modifyCtl.submit(draft);
         if (changed.ok) { setDraft(store.ensure()); }

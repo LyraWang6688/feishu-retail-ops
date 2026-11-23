@@ -41,6 +41,11 @@ export const customSizesValidation = ({ draft, bodies, tabs, store }) => {
 
 export const customSizesValid = (input) => customSizesValidation(input).ok;
 
+export const customSizeErrorMessage = (input, config) => {
+  const result = customSizesValidation(input);
+  return result.ok ? '' : (result.reason === 'duplicate' ? config.texts.customSizeDuplicate : config.texts.customSizeInvalid);
+};
+
 /** 只保留当前可见货品的有效自定义尺码；失效/重复/格式错误的旧项在刷新时清掉。 */
 export const pruneCustomSizes = ({ draft, bodies, tabs }) => {
   const standard = visibleStandardSizes({ bodies, tabs });

@@ -177,6 +177,24 @@ test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('2');
 });
 
+test('AC-P18c 普通采购可清空草稿：数量归零、submitKey 重置；修改单不显示', async ({ page }) => {
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="41"]').click();
+  await expect(page.locator('[data-pr-total]')).toContainText('1 双');
+  const before = await draftInStorage(page);
+  await expect(page.locator('[data-pr-clear]')).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('[data-pr-clear]').click();
+  await expect(page.locator('[data-pr-total]')).toContainText('0 双');
+  await expect(page.locator('[data-pr-clear]')).toBeHidden();
+  await expect(qtyOf(page, 'recProdA', 41)).toHaveValue('0');
+  const after = await draftInStorage(page);
+  expect(after.products).toEqual({});
+  expect(after.submitKey).not.toBe(before.submitKey);
+});
+
 test('AC-P19b 手动「刷新」= 实时重新拉一次；已选数量保留；成功后提示已更新', async ({ page }) => {
   const calls = await mockApi(page);
   await page.reload();
@@ -340,6 +358,7 @@ test('AC-P31 今日已提交：修改按钮打开原批次，预填数量并提�
   await expect(page.getByText('CGD-E2E-0001')).toBeVisible();
   await page.locator('[data-pr-modify-batch="CGD-E2E-0001"]').click();
   await expect(page.locator('[data-pr-modify-banner]')).toContainText('正在修改 CGD-E2E-0001');
+  await expect(page.locator('[data-pr-clear]')).toBeHidden();
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
   await page.locator('[data-pr-step="1"][data-record="recProdA"][data-size="39"]').click();
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('2');

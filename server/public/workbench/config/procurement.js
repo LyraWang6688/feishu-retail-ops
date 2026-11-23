@@ -32,6 +32,8 @@ export const PROCUREMENT_UI = Object.freeze({
     categoryMissing: '这个货品的类别还没填（男鞋 / 女鞋），先补类别再采购。',
     submitting: '提交中…',
     submit: '提交',
+    clearDraft: '清空',
+    clearDraftConfirm: '清空本次已选采购？只会清空当前草稿，不会删除已提交的采购批次。',
     submitFailed: '提交没成功，请稍后重试。',
     refresh: '刷新',
     refreshing: '刷新中…',

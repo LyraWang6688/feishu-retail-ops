@@ -159,6 +159,7 @@ export const shellHtml = (config) => {
   <div class="pr-bottom"><div class="pr-bottom-inner">
     <div class="pr-picked"><span>${escapeHtml(config.units.pickedLabel)}</span><b data-pr-total>0 ${escapeHtml(config.units.pair)}</b>
       <small data-pr-breakdown></small></div>
+    <button type="button" class="pr-clear" data-pr-clear hidden>${escapeHtml(config.texts.clearDraft)}</button>
     <button type="button" class="pr-submit" data-pr-submit>${escapeHtml(config.texts.submit)}</button>
   </div></div>
   ${toastHtml()}`;

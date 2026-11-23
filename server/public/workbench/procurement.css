@@ -137,6 +137,8 @@
 .pr-picked { flex: 1; min-width: 0; font-size: var(--font-size-sm); color: var(--text-secondary); }
 .pr-picked b { display: block; font-size: var(--font-size-xl); line-height: var(--line-height-tight); color: var(--text); }
 .pr-picked small { display: block; margin-top: 1px; font-size: var(--font-size-xs); color: var(--text-muted); }
+.pr-clear { flex: 0 0 auto; min-height: 42px; padding: 0 var(--space-2); border: 0; background: transparent; color: var(--text-secondary); font-size: var(--font-size-sm); cursor: pointer; }
+.pr-clear:disabled { opacity: 0.5; cursor: wait; }
 .pr-submit { flex: 0 0 auto; min-height: 48px; padding: 0 var(--space-5); border: 0; border-radius: var(--radius-pill); background: var(--primary); color: var(--surface); font-size: var(--font-size-md); font-weight: var(--weight-bold); box-shadow: var(--shadow-pop); cursor: pointer; }
 .pr-submit:active { background: var(--primary-hover); }
 .pr-submit:disabled { opacity: 0.65; cursor: wait; }
