@@ -60,7 +60,7 @@
 .sq-pay-tag b { color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
 .sq-detail-table { width:max-content; min-width:100%; border-collapse:collapse; font-size:var(--font-size-sm); }
 .sq-detail-table td { padding:9px 12px; border-top:1px solid var(--border-light); white-space:nowrap; vertical-align:middle; }
-.sq-detail-product { white-space:nowrap; }
+.sq-detail-product { white-space:nowrap; font-weight:var(--weight-bold); }
 .sq-detail-size { color:var(--text-secondary); text-align:center; }
 .sq-detail-amount { text-align:right; font-variant-numeric:tabular-nums; }
 .sq-status { display:inline-block; border-radius:999px; padding:2px 8px; font-size:var(--font-size-xs); white-space:nowrap; }
