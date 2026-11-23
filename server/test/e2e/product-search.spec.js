@@ -21,7 +21,7 @@ const order = {
   details: [{ number: productNumber, size: 39, actual_amount: 258, fulfillment_status: '已交付' }],
 };
 
-test('销售明细 / 库存流水：统一货品搜索选中后按完整编号过滤', async ({ page }) => {
+test('销售明细按 recordId 过滤；库存流水暂按完整编号过滤（搜索候选带记录 ID）', async ({ page }) => {
   await page.setViewportSize({ width: 430, height: 800 });
   const requests = [];
   await page.route('**/api/**', async (route) => {
@@ -37,7 +37,7 @@ test('销售明细 / 库存流水：统一货品搜索选中后按完整编号�
       }] }));
     }
     if (path === '/api/workbench/sales/query') {
-      requests.push({ type: 'sales', product: url.searchParams.get('product') });
+      requests.push({ type: 'sales', productRecordId: url.searchParams.get('productRecordId') });
       return route.fulfill(json({ success: true, summary: salesSummary, orders: [order] }));
     }
     if (path === '/api/workbench/inventory/ledger') {
@@ -54,8 +54,9 @@ test('销售明细 / 库存流水：统一货品搜索选中后按完整编号�
   await page.locator('[data-sq-tab="details"]').click();
   await page.locator('[data-ps-input]').fill('1033');
   await expect(page.locator('[data-ps-result]')).toContainText(productNumber);
+  await expect(page.locator('[data-ps-result]')).toContainText('记录ID');
   await page.locator('[data-ps-result]').click();
-  await expect.poll(() => requests.filter((item) => item.type === 'sales' && item.product === productNumber).length).toBeGreaterThan(0);
+  await expect.poll(() => requests.filter((item) => item.type === 'sales' && item.productRecordId === 'rec_1033').length).toBeGreaterThan(0);
   await expect(page.locator('[data-ps-selected]')).toContainText(productNumber);
 
   await page.goto('/workbench/?module=inventory&page=inventory-ledger', { waitUntil: 'networkidle' });
