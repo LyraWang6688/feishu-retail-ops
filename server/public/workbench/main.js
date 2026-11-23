@@ -143,13 +143,13 @@ function installPanelFluency(container, moduleId) {
   if (!fluency || !container || container.dataset.fluencyBound === '1') return;
   container.dataset.fluencyBound = '1';
   let skeletonSeen = false;
-  let cardCount = container.querySelectorAll('.entry-card, .candidate-card, .sd-card, .pr-group').length;
+  let cardCount = container.querySelectorAll('.entry-card, .sd-card, .pr-group').length;
   const skeleton = () => container.querySelector('.section-loading, [data-view="orders-waiting"], [data-sd-status="loading"]');
   const scan = () => {
     const visible = Boolean(skeleton());
     if (visible && !skeletonSeen) { skeletonSeen = true; fluency.skeletonShown(); }
     if (!visible && skeletonSeen) { skeletonSeen = false; fluency.skeletonReplaced('dom'); }
-    const nextCount = container.querySelectorAll('.entry-card, .candidate-card, .sd-card, .pr-group').length;
+    const nextCount = container.querySelectorAll('.entry-card, .sd-card, .pr-group').length;
     if (nextCount !== cardCount) { cardCount = nextCount; fluency.cardSwapped(moduleId); }
     container.querySelectorAll('form').forEach((form) => {
       if (form.dataset.fluencySeen === '1') return;

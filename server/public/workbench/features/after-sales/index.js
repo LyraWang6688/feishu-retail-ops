@@ -22,38 +22,6 @@ import { SUBMIT_PENDING_TEXT } from '../../core/ui.js';
 import { AFTER_SALES_ACTIONS, AFTER_SALES_PAGE } from '../../config/afterSalesPage.js';
 import { salesOrderCardHtml } from '../shared/salesOrderCard.js';
 
-/** 毫秒时间戳 → `2026-10-29`（上海时区；取不到就空串，不编一个今天）。 */
-const formatDate = (value) => {
-  const time = Number(value);
-  if (!Number.isFinite(time) || time <= 0) return '';
-  const date = new Date(time + 8 * 60 * 60 * 1000);
-  return date.toISOString().slice(0, 10);
-};
-
-/** 金额：有数才显示（空与 0 是两件事 —— 空显示 `—`，0 显示 `¥0`）。 */
-const formatAmount = (value) => {
-  if (value == null || value === '') return AFTER_SALES_PAGE.amountEmpty;
-  const number = Number(value);
-  if (!Number.isFinite(number)) return AFTER_SALES_PAGE.amountEmpty;
-  return `¥${number.toLocaleString('zh-CN')}`;
-};
-
-/** 一条候选卡：**从左到右一行**摆「销售日 / 尺码 / 总金额」。 */
-const candidateCardHtml = (item) => {
-  const date = formatDate(item.sales_date) || AFTER_SALES_PAGE.dateEmpty;
-  const size = item.size == null ? AFTER_SALES_PAGE.sizeEmpty : `${item.size} 码`;
-  const amount = formatAmount(item.total_amount);
-  return `
-  <button class="entry-card candidate-card" type="button"
-    data-detail="${escapeHtml(item.sales_detail_record_id)}"
-    data-order="${escapeHtml(item.sales_entry_record_id)}"
-    aria-label="${escapeHtml(AFTER_SALES_PAGE.dateLabel)} ${escapeHtml(date)} · ${escapeHtml(AFTER_SALES_PAGE.sizeLabel)} ${escapeHtml(size)} · ${escapeHtml(AFTER_SALES_PAGE.totalLabel)} ${escapeHtml(amount)}">
-    <span class="candidate-value">${escapeHtml(date)}</span>
-    <span class="candidate-value">${escapeHtml(size)}</span>
-    <span class="candidate-value candidate-total">${escapeHtml(amount)}</span>
-  </button>`;
-};
-
 /** 选中的那条卡片 ⇒ 原地变成两个按钮（换货 / 退货）。 */
 const candidateActionsHtml = () => `
   <div class="candidate-card-actions" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.actionLabel)}">
@@ -61,8 +29,6 @@ const candidateActionsHtml = () => `
       <button class="candidate-action" type="button" data-action="${escapeHtml(action.value)}"
         >${escapeHtml(action.label)}</button>`).join('')}
   </div>`;
-
-const candidateHtml = (item, selected) => (selected ? candidateActionsHtml() : candidateCardHtml(item));
 
 /** 弹窗骨架（居中；确认只 toast —— 原型阶段不写库）。 */
 const modalHtml = () => `
@@ -131,14 +97,12 @@ export function mountAfterSalesPage(container, options = {}) {
     body.innerHTML = candidates.length
       ? `<p class="candidate-hint">${escapeHtml(AFTER_SALES_PAGE.chooseHint)}</p>
          <div class="candidate-list" data-view="after-sales-candidates">${candidates
-    .map((item) => (item.order
-      ? salesOrderCardHtml(item.order, {
-        highlightDetailId: item.sales_detail_record_id,
-        actionDetailId: item.sales_detail_record_id === selectedDetailId ? item.sales_detail_record_id : '',
-        actionHtml: candidateActionsHtml(),
-        matchDetailId: item.sales_detail_record_id,
-      })
-      : candidateHtml(item, item.sales_detail_record_id === selectedDetailId)))
+    .map((item) => salesOrderCardHtml(item.order, {
+      highlightDetailId: item.sales_detail_record_id,
+      actionDetailId: item.sales_detail_record_id === selectedDetailId ? item.sales_detail_record_id : '',
+      actionHtml: candidateActionsHtml(),
+      matchDetailId: item.sales_detail_record_id,
+    }))
     .join('')}</div>
          ${modalHtml()}`
       : '';
@@ -261,7 +225,6 @@ export function mountAfterSalesPage(container, options = {}) {
     if (!node || !modal) return;
     const item = selectedCandidate() || {};
     const host = modalBody();
-    const amount = Number(item.actual_amount);
     if (modal.action === 'return') {
       // ⭐ 2026-11-08：退货 = **原生表单 POST**（服务端同步校验 → 入队 → 303 统一 toast）——
       //   金额只读、由服务端按销售明细金额写；页面不传金额。
@@ -407,9 +370,9 @@ export function mountAfterSalesPage(container, options = {}) {
       openModal(action.dataset.action);
       return;
     }
-    const candidate = event.target.closest('[data-as-match], [data-detail]');
+    const candidate = event.target.closest('[data-as-match]');
     if (candidate) {
-      selectedDetailId = candidate.dataset.asMatch || candidate.dataset.detail || '';
+      selectedDetailId = candidate.dataset.asMatch || '';
       showStatus('');
       renderCandidates();
       return;
