@@ -73,7 +73,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
     const wanted = String(batchNo || '').trim();
     if (!wanted) return [];
     const [batches, products, behaviors, suppliers] = await Promise.all([
-      cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch')),
+      cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch', { retry: CRITICAL_READ_RETRY })),
       getConfigRows({ gateway, tableKey: 'product' }),
       getConfigRows({ gateway, tableKey: 'behavior' }),
       getConfigRows({ gateway, tableKey: 'supplier' }),
@@ -127,7 +127,7 @@ const createPurchaseQueryService = (gateway, options = {}) => {
     const [requests, products, batches, behaviors, suppliers] = await Promise.all([
       cachedListAll('purchaseRequest', () => gateway.listAll('purchaseRequest', { retry: CRITICAL_READ_RETRY })),
       getConfigRows({ gateway, tableKey: 'product' }),
-      cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch')),
+      cachedListAll('purchaseOrderBatch', () => gateway.listAll('purchaseOrderBatch', { retry: CRITICAL_READ_RETRY })),
       // ⚠️ 第 4 张（行为管理）也要缓存 ⇒ 否则"第二次快"不成立 ✗（4 张里漏 1 张 = 白等 ✗）
       getConfigRows({ gateway, tableKey: 'behavior' }),
       // ⭐ 2026-11-09（验收页按供应商分组）：供应商名称取自「供应商管理」（configTableCache ✓）
