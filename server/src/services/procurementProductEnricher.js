@@ -22,6 +22,7 @@ const { logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
 const { resolveProductActions } = require('./scanPageProductActions');
 const { PRODUCT_ACTIONS } = require('../config/scanPageProductActions');
+const { isDelistedRecord } = require('./productLifecycle');
 
 /** batch_get 形状 → 纯文本（兼容 `{type,value:[…]}` / `[{text}]` / 字符串 / 数字）。 */
 const batchTextOf = (value) => textOf(value);
@@ -83,6 +84,7 @@ const createProductEnricher = ({ gateway, schema, logger = { logWarn } } = {}) =
       supplierRecordId: linkedRecordIds(fields[mapping.supplier])[0] || '',
       category: batchTextOf(fields[mapping.category]).trim().toUpperCase(),
       createdAt: Number(batchTextOf(fields[mapping.createdAt])) || null,
+      delisted: isDelistedRecord(record),
       ...actions,
     };
   };
