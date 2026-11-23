@@ -10,6 +10,7 @@ export const SALES_DAILY_CASH_TEXTS = Object.freeze({
   saveOpening: '保存期初现金',
   openingSaved: '已填写',
   saveWithdrawal: '保存拿走金额',
+  withdrawalSaved: '已填写',
   submitting: '提交中…',
   loading: '正在读取今天的现金记录…',
   failed: '每日现金读取失败，请稍后刷新。',
@@ -21,7 +22,7 @@ export const SALES_DAILY_CASH_TEXTS = Object.freeze({
   openingLabel: '期初现金（元）',
   withdrawalLabel: '拿走金额（元）',
   referenceTitle: '昨日留存资金',
-  fillReference: '填入 ¥{amount}',
+  fillReference: '填入并提交 ¥{amount}',
   openingHint: '可直接填入昨日留存，也可以手动填写今天的期初现金。',
   filledReference: '已填入 ¥{amount}，保存后才会写入今天的现金记录。',
 });

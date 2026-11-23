@@ -57,9 +57,13 @@ const createSalesDailyCashService = ({
   const mapRecord = (record) => {
     if (!record) return null;
     const values = record.fields || {};
+    const withdrawalRaw = values[fieldName('withdrawalCash')];
     return {
       opening_amount: num(values[fieldName('openingCash')]),
-      withdrawal_amount: num(values[fieldName('withdrawalCash')]),
+      withdrawal_amount: num(withdrawalRaw),
+      // 空 = 还没保存过拿走金额；0 是用户明确保存过的值。
+      withdrawal_saved: withdrawalRaw !== undefined && withdrawalRaw !== null
+        && textValue(withdrawalRaw).trim() !== '',
       received_amount: num(values[fieldName('receivedCash')]),
       realtime_amount: num(values[fieldName('closingCash')]),
       retained_amount: optionalNum(values[fieldName('retainedCash')]),

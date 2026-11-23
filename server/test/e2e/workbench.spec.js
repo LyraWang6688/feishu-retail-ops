@@ -26,7 +26,7 @@ const mockApi = async (page, {
         date: '2026-11-21',
         record: dailyCashRecord === undefined ? {
           record_id: 'dc1', date: '2026-11-21', opening_amount: 500,
-          withdrawal_amount: 0, received_amount: 900, realtime_amount: 1320, sales_amount: 820,
+          withdrawal_amount: 0, withdrawal_saved: false, received_amount: 900, realtime_amount: 1320, sales_amount: 820,
         } : dailyCashRecord,
         reference: dailyCashReference,
       }));
@@ -362,16 +362,38 @@ test('每日现金：录单子卡片、期初已填写状态', async ({ page }) 
   await expect(page.getByRole('button', { name: '已填写' })).toBeDisabled();
 });
 
-test('每日现金：昨日留存一键填入，但仍需手动保存', async ({ page }) => {
-  await mockApi(page, { dailyCashRecord: null });
+test('每日现金：昨日留存一键填入并提交，走异步回执跳工作台', async ({ page }) => {
+  await mockApi(page, {
+    dailyCashRecord: null,
+    dailyCashPost: {
+      success: true, accepted: true, job_id: 'daily_reference_job',
+      toast: '数据提交成功，后台自动写入',
+      redirect_url: '/workbench/?toast=' + encodeURIComponent('数据提交成功，后台自动写入'),
+    },
+  });
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '销售', exact: true }).click();
   await page.getByRole('link', { name: /每日现金/ }).click();
   await expect(page.locator('[data-dc-reference]')).toContainText('昨日留存资金');
   await expect(page.locator('[data-dc-reference]')).toContainText('¥320.00');
-  await page.getByRole('button', { name: '填入 ¥320.00' }).click();
-  await expect(page.locator('[data-dc-opening]')).toHaveValue('320');
-  await expect(page.getByRole('button', { name: '保存期初现金' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '填入并提交 ¥320.00' })).toBeVisible();
+  await page.getByRole('button', { name: '填入并提交 ¥320.00' }).click();
+  await page.waitForURL(/\/workbench\/\?toast=/);
+});
+
+test('每日现金：拿走金额保存后按钮变已填写', async ({ page }) => {
+  await mockApi(page, {
+    dailyCashRecord: {
+      record_id: 'dc_saved', date: '2026-11-21', opening_amount: 500,
+      withdrawal_amount: 200, withdrawal_saved: true, received_amount: 900,
+      realtime_amount: 1200, sales_amount: 700,
+    },
+  });
+  await page.goto('/workbench/');
+  await page.getByRole('button', { name: '销售', exact: true }).click();
+  await page.getByRole('link', { name: /每日现金/ }).click();
+  await expect(page.locator('[data-dc-save-withdrawal]')).toHaveText('已填写');
+  await expect(page.locator('[data-dc-save-withdrawal]')).toBeDisabled();
 });
 
 test('每日现金：点击后按钮立即变提交中，POST 返回后立刻跳转', async ({ page }) => {

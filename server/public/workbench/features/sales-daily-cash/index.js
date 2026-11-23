@@ -15,6 +15,7 @@ export function createSalesDailyCashModule() {
     const record = state.record;
     const hasRecord = Boolean(record);
     const opening = Number(record?.opening_amount || 0);
+    const withdrawalSaved = Boolean(record?.withdrawal_saved);
     const received = Number(record?.received_amount || 0);
     const realtime = Number(record?.realtime_amount || 0);
     const referenceAmount = Number(state.reference?.retained_amount || 0);
@@ -50,7 +51,7 @@ export function createSalesDailyCashModule() {
           <label class="dc-field">${escapeHtml(T.withdrawalLabel)}
             <input data-dc-withdrawal type="number" inputmode="decimal" min="0" step="0.01" value="${hasRecord ? escapeHtml(String(record.withdrawal_amount)) : ''}" placeholder="0.00">
           </label>
-          <button class="dc-btn" type="button" data-dc-save-withdrawal>${escapeHtml(T.saveWithdrawal)}</button>
+          <button class="dc-btn" type="button" data-dc-save-withdrawal${withdrawalSaved ? ' disabled' : ''}>${escapeHtml(withdrawalSaved ? T.withdrawalSaved : T.saveWithdrawal)}</button>
         </div>
       </section>
       <p class="dc-empty" data-dc-empty${hasRecord ? ' hidden' : ''}>${escapeHtml(T.notStarted)}</p>
@@ -117,12 +118,14 @@ export function createSalesDailyCashModule() {
     const opening = host.querySelector('[data-dc-opening]');
     const withdrawal = host.querySelector('[data-dc-withdrawal]');
     host.querySelector('[data-dc-fill-reference]')?.addEventListener('click', () => {
-      if (!opening || !state.reference) return;
+      if (!opening || !state.reference || state.busy) return;
       const amount = money(state.reference.retained_amount);
       opening.value = String(state.reference.retained_amount);
       const status = host.querySelector('[data-dc-fill-status]');
       if (status) status.textContent = T.filledReference.replace('{amount}', amount);
       opening.focus();
+      // 一键填入并提交：和手动保存走同一个异步 / toast / 工作台回执。
+      void save({ openingAmount: opening.value }, opening);
     });
     host.querySelector('[data-dc-save-opening]')?.addEventListener('click', () => {
       void save({ openingAmount: opening?.value }, opening);
