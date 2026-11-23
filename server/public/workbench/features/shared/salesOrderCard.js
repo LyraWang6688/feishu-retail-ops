@@ -20,7 +20,7 @@ const statusClass = (status) => (status === TEXT.delivered ? 'ok' : (status === 
 
 /** 销售明细订单卡：销售查询与售后扫一扫共用同一份 DOM。 */
 export const salesOrderCardHtml = (order, {
-  highlightDetailId = '', actionDetailId = '', actionHtml = '', matchDetailId = '',
+  highlightDetailId = '', actionDetailId = '', actionHtml = '', matchDetailId = '', strikeDelisted = false,
 } = {}) => {
   const pays = (order.payments || []).length
     ? order.payments.map((payment) => `<span class="sq-pay-tag">${escapeHtml(payment.method)} <b>${escapeHtml(amountText(payment.amount))}</b> · ${escapeHtml(payment.status)}</span>`).join('')
@@ -29,8 +29,9 @@ export const salesOrderCardHtml = (order, {
     const recordId = String(detail.record_id || '');
     const highlighted = Boolean(highlightDetailId && recordId === highlightDetailId);
     const hasAction = Boolean(actionHtml && actionDetailId && recordId === actionDetailId);
+    const productClass = strikeDelisted && detail.delisted === true ? ' product-delisted' : '';
     const row = `<tr class="${highlighted ? 'sq-detail-highlight' : ''}" data-detail-id="${escapeHtml(recordId)}">
-      <td class="sq-detail-product">${escapeHtml(detail.number || detail.product || '')}</td>
+      <td class="sq-detail-product${productClass}">${escapeHtml(detail.number || detail.product || '')}</td>
       <td class="sq-detail-size">${escapeHtml(detail.size == null ? '' : detail.size)} ${TEXT.sizeSuffix}</td>
       <td class="sq-detail-amount">${escapeHtml(amountText(detail.actual_amount))}</td>
       <td><span class="sq-status ${statusClass(detail.fulfillment_status)}">${escapeHtml(detail.fulfillment_status || '')}</span></td>

@@ -32,8 +32,9 @@ const productRowHtml = (item, line, T, statuses) => {
   const action = canDeliver
     ? (hasStock ? deliveryButtonHtml(line, T, skuOfLine(line)) : `<span class="sd-stock-short">${escapeHtml(T.stockShort)}</span>`)
     : '';
+  const delistedClass = line.delisted ? ' product-delisted' : '';
   return `<div class="sd-product-row" data-sd-detail="${escapeHtml(line.recordId || '')}">
-      <span class="sd-item-main">${escapeHtml(detailTextOfLine(line, T))}${line.delisted ? ` <span class="sd-delisted-tag">${escapeHtml(line.delistedLabel || '已下架')}</span>` : ''}</span>
+      <span class="sd-item-main${delistedClass}">${escapeHtml(detailTextOfLine(line, T))}</span>
       ${action}
     </div>`;
 };

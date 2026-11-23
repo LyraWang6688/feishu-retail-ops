@@ -139,6 +139,7 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
         details: (order.details || []).map((detail) => ({
           number: detail.number || detail.product || '',
           color: detail.color || '',
+          delisted: detail.delisted === true,
           size: detail.size,
           actual_amount: Number(detail.actual_amount || 0),
           fulfillment_status: detail.fulfillment_status || '',
