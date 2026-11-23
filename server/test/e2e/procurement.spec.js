@@ -36,7 +36,7 @@ test('AC-P20 首屏同时加载补货 + 上新；待提交列表不请求', asyn
   expect(calls.replenish).toBe(1);
   expect(calls.newProducts).toBe(1);
 
-  await tab(page, /待提交列表/).click();
+  await tab(page, /预览区/).click();
   await expect(page.getByText('还没有选要采购的货品。')).toBeVisible();
   await expect(page.locator('.pr-search')).toBeHidden();
   expect(calls.replenish).toBe(1);
@@ -163,7 +163,7 @@ test('AC-P30 待提交列表：按供应商分组、只读、隐藏搜索', asyn
   await qtyOf(page, 'recProdA', 39).fill('2');
   await page.locator('[data-pr-supplier]').nth(1).click();
   await qtyOf(page, 'recProdB', 43).fill('1');
-  await tab(page, /待提交列表/).click();
+  await tab(page, /预览区/).click();
   const pending = page.locator('[data-pr-pending]');
   await expect(pending).toBeVisible();
   await expect(pending).toContainText('供应商：供应商 A');
@@ -402,7 +402,7 @@ test('AC-P31b 修改单强制显示原采购尺码：即使当前是 custom-only
   });
   await page.reload();
   await expect(page.locator('.pr-tabs')).toBeVisible();
-  await tab(page, /待提交列表/).click();
+  await tab(page, /预览区/).click();
   await page.locator('[data-pr-modify-batch="CGD-E2E-0002"]').click();
   await expect(page.locator('[data-pr-modify-banner]')).toContainText('正在修改 CGD-E2E-0002');
   await expect(qtyOf(page, 'recProdA', 39)).toHaveValue('1');
@@ -419,7 +419,7 @@ test('AC-P31 今日已提交：修改按钮打开原批次，预填数量并提�
   });
   await page.reload();
   await openPage(page);
-  await tab(page, /待提交列表/).click();
+  await tab(page, /预览区/).click();
   await expect(page.getByText('CGD-E2E-0001')).toBeVisible();
   await page.locator('[data-pr-modify-batch="CGD-E2E-0001"]').click();
   await expect(page.locator('[data-pr-modify-banner]')).toContainText('正在修改 CGD-E2E-0001');
