@@ -28,7 +28,7 @@ export function mountProcurementPage(host) {
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
   const modal = createCustomSizeModal({ host, config });
-  const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]');
+  const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]'); const queryRow = host.querySelector('.pr-query-row');
   const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft); };
   const mergedBody = () => buildSuggestedBody({ replenishBody: state.bodies.replenish, newBody: state.bodies.new, config });
   const paint = () => {
@@ -95,6 +95,7 @@ export function mountProcurementPage(host) {
     state.tab = tab;
     const searchWrap = host.querySelector('.pr-search'); if (searchWrap) searchWrap.hidden = tab === 'pending';
     if (rangeHost) rangeHost.hidden = tab === 'pending';
+    if (queryRow) queryRow.hidden = tab === 'pending';
     host.querySelectorAll('[data-pr-tab]').forEach((button) => button.classList.toggle('active', button.dataset.prTab === tab));
     TABS.forEach((id) => panelEl(id)?.classList.toggle('hidden', id !== tab));
     if (tab === 'pending') { paint(); void loadSubmitted(); return; }
