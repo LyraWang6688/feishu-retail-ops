@@ -102,6 +102,26 @@ test('AC-P28b 短屏搜索定位：目标卡头在 sticky 头下方，不被滚�
   })).toBe(true);
 });
 
+test('AC-P3b 库存非 0 的货品：只显示货品卡 + 添加尺码，不显示标准行', async ({ page }) => {
+  const customOnlyBody = {
+    success: true,
+    range: { from: '2026-10-25', to: '2026-10-27', days: 3 },
+    stats: { spotSold: 0, prepaidPending: 0, notArrived: 0, productCount: 1 },
+    groups: [{
+      productRecordId: 'recStock', number: 'STOCK01', itemNo: 'STOCK01', color: '黑色',
+      supplierRecordId: 'recSupA', supplierName: '供应商 A', sizes: [], standardSizes: [39, 40],
+      stockMode: 'custom-only', prepaidTotal: 0, spotTotal: 0, notArrivedTotal: 0,
+    }],
+  };
+  await mockApi(page, { replenishBody: customOnlyBody });
+  await page.reload();
+  await expect(page.locator('.pr-tabs')).toBeVisible();
+  await expect(page.getByText('STOCK01 · 黑色')).toBeVisible();
+  await expect(page.getByText('当前尺码有库存，不显示标准尺码；需要补货请添加自定义尺码。')).toBeVisible();
+  await expect(page.locator('[data-pr-qty][data-record="recStock"]')).toHaveCount(0);
+  await expect(page.locator('[data-pr-add-size][data-record="recStock"]')).toBeVisible();
+});
+
 test('AC-P27 补货自定义尺码：多行弹窗保存后按原样式展示并进入 payload', async ({ page }) => {
   const calls = await mockApi(page);
   await page.reload();

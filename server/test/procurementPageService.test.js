@@ -86,7 +86,7 @@ const makeGateway = ({ sales = [], products = [], listProducts, behaviors = [], 
   };
 };
 
-test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 = 库存数量=0 + 销售日>=TODAY()-7；不读实时库存', async () => {
+test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 = 销售日>=TODAY()-7；不读实时库存', async () => {
   const gateway = makeGateway({
     sales: [salesRecord({ id: 'recA', size: 39, code: 'SALE_CASH' }), salesRecord({ id: 'recA', size: 41, code: 'SALE_PREPAID' })],
     products: [productBatchRecord({ id: 'recA' })],
@@ -104,7 +104,7 @@ test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 =
   assert.equal(result.groups[0].color, '黑色');
   const filters = gateway.calls.filter((call) => call.kind === 'listByFilter');
   assert.deepEqual(filters.map((call) => call.tableKey), ['salesDetail']);
-  assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.stockQuantity}\\]=(0|"0")`));
+  assert.equal(filters[0].filter.includes(SF.stockQuantity), false, '库存条件不能在 Bitable 过滤掉非 0 行');
   assert.match(filters[0].filter, /TODAY\(\)-7/);
   assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.soldAt}\\]`));
   // getBatch：先按记录 ID 读货品，再按颜色关联 ID 读颜色管理（解析显示名；Bug-2 修复）

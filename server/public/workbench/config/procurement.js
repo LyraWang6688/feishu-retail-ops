@@ -44,6 +44,7 @@ export const PROCUREMENT_UI = Object.freeze({
     supplierLabel: '供应商',
     supplierUnassigned: '未标注',
     addCustomSize: '＋ 添加尺码',
+    stockCustomOnlyHint: '当前尺码有库存，不显示标准尺码；需要补货请添加自定义尺码。',
     customSizePlaceholder: '尺码',
     customSizeInvalid: '尺码要填正整数',
     customSizeDuplicate: '这个尺码已经存在',
