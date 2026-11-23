@@ -7,6 +7,7 @@ const { resolveArrivalConversationConfig } = require('../config/arrivalConversat
 // ⛔ 2026-10-28：`ARRIVAL_CONVERSATION_ACTIONS`（卡片上的「是」）随**卡片按钮回调**一起摘掉 ——
 //   到货验收的现行入口是**工作台发起 + 扫码录入**（`confirmBatchArrival`，本文件保留）。
 const { logError, logInfo, logWarn } = require('../utils/logger');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
 // 会话任务 id 只跟「哪一批」有关，不含时间：同一批单子（含她后来另开一个话题）
 // 永远是同一条核对记录，重复投递/重启都不会各起一份。
@@ -181,6 +182,28 @@ class PurchaseArrivalConversationService {
    * ⚠️ 方法名与注入依赖名（`this.markBatchArrived`）**必须不同**：
    *    同名的话构造函数里那个实例属性会**静默覆盖**原型方法（AGENTS.md 记过这个坑）。
    */
+  /** 一次批量读本批采购明细；批量口不可用/缺记录时逐条回退（逐条也带关键读重试）。 */
+  async readPurchaseRequestRows(requestIds = []) {
+    const wanted = [...new Set((requestIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+    if (!wanted.length) return [];
+    const byId = new Map();
+    if (typeof this.gateway.getBatch === 'function') {
+      try {
+        const rows = await this.gateway.getBatch('purchaseRequest', wanted, { retry: CRITICAL_READ_RETRY });
+        for (const row of Array.isArray(rows) ? rows : []) {
+          if (row?.record_id) byId.set(String(row.record_id), row);
+        }
+      } catch {
+        // 批量读失败 ⇒ 下面逐条回退；不允许因为一次批次读失败丢整批。
+      }
+    }
+    for (const id of wanted.filter((one) => !byId.has(one))) {
+      const row = await this.gateway.get('purchaseRequest', id, { retry: CRITICAL_READ_RETRY }).catch(() => null);
+      if (row) byId.set(id, row);
+    }
+    return wanted.map((id) => byId.get(id)).filter(Boolean);
+  }
+
   async notifyBatchArrived(batchNo, { correlation = {}, arrivalDate = '' } = {}) {
     const wanted = String(batchNo || '').trim();
     if (!wanted) {
@@ -267,11 +290,7 @@ class PurchaseArrivalConversationService {
     //        见 `loadRequestRows` / `readBatchRecordId`）——不需要第二个 id 来定位那一行；
     //      · 拿不到它时，`confirmArrival` 里的 `writeAcceptance` 会按**批次号**回查，
     //        所以这里不再有"先建行再记住 id"的幂等窗口。
-    const requests = [];
-    for (const requestId of task.request_ids) {
-      const record = await this.gateway.get('purchaseRequest', requestId).catch(() => null);
-      if (record) requests.push(record);
-    }
+    const requests = await this.readPurchaseRequestRows(task.request_ids || []);
     // ⚠️ 这里的形状就是 confirmArrival 一直在等的草稿形状：
     //    actual = 按实际调整完的明细（每行一条 货品+尺码+实际双数）
     //    requests = 申请行原样（⚠️ 2026-10-07 深夜起**不再**用来挂「采购入库」的「采购申请」——
@@ -667,11 +686,7 @@ class PurchaseArrivalConversationService {
     if (!requestIds.length) return { ok: false, reason: 'no_request_ids' };
     if (requestIds.length > this.config.maxRequestRows) return { ok: false, reason: 'too_many_request_rows' };
     const requestTable = this.gateway.table('purchaseRequest');
-    const raw = [];
-    for (const recordId of requestIds) {
-      const record = await this.gateway.get('purchaseRequest', recordId).catch(() => null);
-      if (record) raw.push(record);
-    }
+    const raw = await this.readPurchaseRequestRows(requestIds);
     if (!raw.length) return { ok: false, reason: 'request_rows_unreadable' };
     const rows = [];
     for (const record of raw) {
