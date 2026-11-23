@@ -105,6 +105,31 @@ test('AC-DR2 同一销售单号（不同销售主表记录）合并成一组（�
   assert.equal(data.orders[0].payments.length, 3);
 });
 
+test('AC-DR12 销售查询读表遇到 1254607 ⇒ 关键读重试后成功', async () => {
+  let filterCalls = 0;
+  const transient = Object.assign(new Error('Request failed with status code 400'), {
+    response: { status: 400, data: { code: 1254607, msg: 'Data not ready, please try again later' } },
+  });
+  const gateway = {
+    table,
+    listByFilter: async () => {
+      filterCalls += 1;
+      if (filterCalls === 1) throw transient;
+      return [];
+    },
+    listAll: async () => [],
+    getBatch: async () => [],
+  };
+  const service = createSalesDeliveryReadService({
+    gateway,
+    paymentMethods: { listWithVouchers: async () => ({ ok: true, items: [] }) },
+    sleep: async () => {},
+  });
+  const data = await service.listDeliveryData({ query: true, from: '2026-11-20', to: '2026-11-23' });
+  assert.equal(data.orders.length, 0);
+  assert.ok(filterCalls >= 2, '第一次 1254607 后必须重试');
+});
+
 test('AC-DR3 只读：不调用任何写入方法', async () => {
   const writes = [];
   const gateway = {

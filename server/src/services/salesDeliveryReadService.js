@@ -20,6 +20,7 @@ const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = re
 const { createPaymentMethodsService } = require('./paymentMethodsService');
 const { SCAN_WRITE } = require('../config/scanWrite');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 const { dateRangeFormula } = require('./bitableFilterFormula');
 const { logInfo, logWarn } = require('../utils/logger');
 const { isDelistedRecord } = require('./productLifecycle');
@@ -43,12 +44,14 @@ const shanghaiDayKey = (date = new Date()) => new Date(date.getTime() + SHANGHAI
 const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetry, sleep } = {}) => {
   if (!gateway) throw new Error('SalesDeliveryReadService requires gateway');
   const retry = orderReadRetry || resolveOrderReadRetryConfig();
+  // 销售查询是只读分析页：飞书 1254607 时给足退避；测试注入的 orderReadRetry 优先。
+  const queryRetry = orderReadRetry || CRITICAL_READ_RETRY;
   const wait = sleep || ((ms) => (ms > 0 ? new Promise((resolve) => { setTimeout(resolve, ms); }) : Promise.resolve()));
 
   /** 只读：瞬时错误按既有判据重试；确定性错误/次数用完 ⇒ 抛原错。 */
-  const listAllWithRetry = async (tableKey, options = {}) => {
-    const maxRetries = Math.max(0, Number(retry?.maxRetries) || 0);
-    const delayMs = Math.max(0, Number(retry?.delayMs) || 0);
+  const listAllWithRetry = async (tableKey, options = {}, retryConfig = retry) => {
+    const maxRetries = Math.max(0, Number(retryConfig?.maxRetries) || 0);
+    const delayMs = Math.max(0, Number(retryConfig?.delayMs) || 0);
     for (let attempt = 0; ; attempt += 1) {
       const startedAt = Date.now();
       try {
@@ -56,7 +59,9 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
       } catch (error) {
         const left = maxRetries - attempt;
         if (!isRetriableOrderReadError(error) || left <= 0) throw error;
-        const waitMs = delayMs * (attempt + 1);
+        const waitMs = retryConfig?.baseDelayMs != null
+          ? Math.min(Math.round(retryConfig.baseDelayMs * (retryConfig.factor ** attempt)), retryConfig.maxDelayMs)
+          : delayMs * (attempt + 1);
         logWarn('workbench.sales.orders.read_retry', {
           table_key: tableKey, reason: 'read_retry', operation: 'sales_delivery',
           attempt: attempt + 1, of: maxRetries + 1, delay_ms: waitMs,
@@ -68,16 +73,18 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
   };
 
   /** 按日期过滤读；过滤不可用/失败时回退整表，保证结果正确。 */
-  const listByFilterWithRetry = async (tableKey, filter, options = {}) => {
-    const maxRetries = Math.max(0, Number(retry?.maxRetries) || 0);
-    const delayMs = Math.max(0, Number(retry?.delayMs) || 0);
+  const listByFilterWithRetry = async (tableKey, filter, options = {}, retryConfig = retry) => {
+    const maxRetries = Math.max(0, Number(retryConfig?.maxRetries) || 0);
+    const delayMs = Math.max(0, Number(retryConfig?.delayMs) || 0);
     for (let attempt = 0; ; attempt += 1) {
       try {
         return await gateway.listByFilter(tableKey, filter, { ...options, retry: false });
       } catch (error) {
         const left = maxRetries - attempt;
         if (!isRetriableOrderReadError(error) || left <= 0) throw error;
-        const waitMs = delayMs * (attempt + 1);
+        const waitMs = retryConfig?.baseDelayMs != null
+          ? Math.min(Math.round(retryConfig.baseDelayMs * (retryConfig.factor ** attempt)), retryConfig.maxDelayMs)
+          : delayMs * (attempt + 1);
         logWarn('workbench.sales.orders.read_retry', {
           table_key: tableKey, reason: 'read_retry', operation: 'sales_delivery_filter',
           attempt: attempt + 1, of: maxRetries + 1, delay_ms: waitMs, duration_ms: 0, error: error?.message,
@@ -114,25 +121,26 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const productFieldsForRefs = gateway.table('product').fields;
     const todayKey = /^\d{4}-\d{2}-\d{2}$/.test(String(today || '').trim())
       ? String(today).trim() : shanghaiDayKey(new Date());
+    const activeRetry = query ? queryRetry : retry;
     const rangeValid = query
       && /^\d{4}-\d{2}-\d{2}$/.test(String(from || '').trim())
       && /^\d{4}-\d{2}-\d{2}$/.test(String(to || '').trim())
       && String(from).trim() <= String(to).trim()
       && String(to).trim() <= todayKey;
-    const readByDate = async (tableKey, filter) => {
+    const readByDate = async (tableKey, filter, retryConfig = activeRetry) => {
       const options = fieldOptions(tableKey);
-      if (!filter) return listAllWithRetry(tableKey, options);
+      if (!filter) return listAllWithRetry(tableKey, options, retryConfig);
       try {
-        return await listByFilterWithRetry(tableKey, filter, options);
+        return await listByFilterWithRetry(tableKey, filter, options, retryConfig);
       } catch (error) {
         logWarn('workbench.sales.query.filter_fallback', {
           table_key: tableKey, filter, error: String(error?.message || error).slice(0, 200),
         });
-        return listAllWithRetry(tableKey, options);
+        return listAllWithRetry(tableKey, options, retryConfig);
       }
     };
     const readPayments = async () => {
-      if (!rangeValid) return listAllWithRetry('paymentRecord', fieldOptions('paymentRecord'));
+      if (!rangeValid) return listAllWithRetry('paymentRecord', fieldOptions('paymentRecord'), activeRetry);
       const receivedFilter = dateRangeFormula(paymentFieldsForRefs.receivedAt, from, to, todayKey);
       const pendingFilter = dateRangeFormula(paymentReadOnlyFields.createdTime?.name, from, to, todayKey);
       const [received, pending] = await Promise.all([
@@ -145,10 +153,10 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const [orders, details, payments, methodList] = await Promise.all([
       timed('sales_entry', () => (rangeValid
         ? readByDate('salesEntry', dateRangeFormula(salesEntryFields.recordedAt, from, to, todayKey))
-        : listAllWithRetry('salesEntry', fieldOptions('salesEntry')))),
+        : listAllWithRetry('salesEntry', fieldOptions('salesEntry'), activeRetry))),
       timed('sales_detail', () => (rangeValid
         ? readByDate('salesDetail', dateRangeFormula(detailFieldsForRefs.soldAt, from, to, todayKey))
-        : listAllWithRetry('salesDetail', fieldOptions('salesDetail')))),
+        : listAllWithRetry('salesDetail', fieldOptions('salesDetail'), activeRetry))),
       timed('payment_record', readPayments),
       timed('payment_method', () => methodsService.listWithVouchers()),
     ]);
@@ -175,7 +183,7 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
         }
         return out;
       }
-      const all = await listAllWithRetry(tableKey, fieldOptions(tableKey));
+      const all = await listAllWithRetry(tableKey, fieldOptions(tableKey), activeRetry);
       const wanted = new Set(ids);
       return all.filter((row) => wanted.has(row.record_id));
     };
