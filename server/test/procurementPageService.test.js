@@ -38,14 +38,15 @@ const salesRecord = ({ id = 'recA', size = 39, code = 'SALE_CASH', stock = 0, so
 // ⚠️ 两种形状：`getBatch`（batch_get）与 `listByFilter`（GET list）返回的单元格形状**不同** ——
 // 2026-10-28 真测试 Base 验证发现的 Bug-2；读模型必须归一化 batch 形状。
 const CF = V1_BITABLE_SCHEMA.tables.color.fields;
-const productListRecord = ({ id = 'recA', number = '86822', itemNo = '86822', color = '黑色', category = 'A', createdAt = NOW }) => ({
+const productListRecord = ({ id = 'recA', number = '86822', itemNo = '86822', color = '黑色', category = 'A', createdAt = NOW, delisted = false }) => ({
   record_id: id,
   fields: {
     [PF.number]: link(number), [PF.itemNo]: itemNo, [PF.color]: link(color), [PF.category]: category,
     [PF.supplier]: link('recSupplier'), [PF.createdAt]: createdAt,
+    ...(delisted ? { [PF.delisted]: true } : {}),
   },
 });
-const productBatchRecord = ({ id = 'recA', number = '86822', itemNo = '86822', colorRecordId = 'recColorBlack', category = 'A', createdAt = NOW }) => ({
+const productBatchRecord = ({ id = 'recA', number = '86822', itemNo = '86822', colorRecordId = 'recColorBlack', category = 'A', createdAt = NOW, delisted = false }) => ({
   record_id: id,
   fields: {
     [PF.number]: { type: 1, value: [{ text: number }] },
@@ -54,6 +55,7 @@ const productBatchRecord = ({ id = 'recA', number = '86822', itemNo = '86822', c
     [PF.category]: category,
     [PF.supplier]: { link_record_ids: ['recSupplier'] },
     [PF.createdAt]: createdAt,
+    ...(delisted ? { [PF.delisted]: true } : {}),
   },
 });
 const colorRecord = (id, name) => ({ record_id: id, fields: { [CF.name]: [{ text: name, type: 'text' }] } });
@@ -107,6 +109,52 @@ test('AC-P1 补货读销售明细 + 采购明细未到货：销售筛选公式 =
   assert.match(filters[0].filter, new RegExp(`CurrentValue\\.\\[${SF.soldAt}\\]`));
   // getBatch：先按记录 ID 读货品，再按颜色关联 ID 读颜色管理（解析显示名；Bug-2 修复）
   assert.deepEqual(gateway.calls.filter((call) => call.kind === 'getBatch').map((call) => call.tableKey), ['product', 'color']);
+});
+
+test('AC-P1d 已下架货品不进入补货建议（销售来源）', async () => {
+  const gateway = makeGateway({
+    sales: [salesRecord({ id: 'recA', size: 39, code: 'SALE_CASH' }), salesRecord({ id: 'recB', size: 39, code: 'SALE_CASH' })],
+    products: [
+      productBatchRecord({ id: 'recA' }),
+      productBatchRecord({ id: 'recB', number: '99999', itemNo: '99999', delisted: true }),
+    ],
+    colors: [colorRecord('recColorBlack', '黑色')],
+    behaviors: [behavior('behCash', 'SALE_CASH', '现货')],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadReplenish({ requestId: 'r_delisted_sales' });
+  assert.deepEqual(result.groups.map((group) => group.productRecordId), ['recA']);
+  assert.equal(result.delistedRows, 1);
+});
+
+test('AC-P1e 已下架货品不进入补货建议（未到货来源）', async () => {
+  const gateway = makeGateway({
+    products: [productBatchRecord({ id: 'recB', number: '99999', itemNo: '99999', delisted: true })],
+    colors: [colorRecord('recColorBlack', '黑色')],
+    purchases: [{
+      record_id: 'pd_delisted',
+      fields: {
+        [PRF.product]: link('recB'), [PRF.size]: 39, [PRF.quantity]: 5,
+        [PRRO.arrivedQuantity.name]: 0,
+      },
+    }],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadReplenish({ requestId: 'r_delisted_pending' });
+  assert.equal(result.groups.length, 0);
+  assert.equal(result.delistedRows, 1);
+});
+
+test('AC-P6b 已下架货品不进入上新建议', async () => {
+  const gateway = makeGateway({
+    products: [
+      productListRecord({ id: 'recActive', createdAt: SH('2026-10-28T08:00:00') }),
+      productListRecord({ id: 'recDelisted', number: '99999', itemNo: '99999', createdAt: SH('2026-10-28T08:30:00'), delisted: true }),
+    ],
+  });
+  const service = createProcurementPageService({ gateway, config, now: () => NOW, logger: {} });
+  const result = await service.loadNewProducts({ requestId: 'r_delisted_new' });
+  assert.deepEqual(result.groups.map((group) => group.productRecordId), ['recActive']);
 });
 
 test('AC-P25 补货分组带供应商名称（来自供应商配置表）', async () => {

@@ -19,6 +19,7 @@ const { PROCUREMENT_PAGE } = require('../config/procurementPage');
 const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
 const { isSalesTradeType, tradeTypeCodeFromLabel } = require('../config/salesMovements');
 const { createProductEnricher } = require('./procurementProductEnricher');
+const { filterActiveProductsFor } = require('./productLifecycle');
 const { logInfo, logWarn } = require('../utils/logger');
 const { getConfigRows } = require('./configTableCache');
 const { textOf, buildReplenishView } = require('./procurementPageData');
@@ -175,7 +176,8 @@ const createProcurementPageService = (options = {}) => {
       // 7 个自然日（含今天）= 往前 6 天。
       days: Math.max(0, Number(config.window.newProductsDays || 1) - 1),
     });
-    const records = await listByFilterWithRetry('product', filter);
+    // 上新建议同样排除已下架货品（与补货建议同一份生命周期判据）。
+    const records = filterActiveProductsFor(await listByFilterWithRetry('product', filter), 'purchasePicker');
     const view = buildNewProductsView({ records, fields, config, now: now() });
     info(config.events.newProductsLoaded, {
       request_id: requestId,

@@ -137,6 +137,8 @@ const buildReplenishView = ({
   const roles = config.behavior;
   const groupsByKey = new Map();
   let skippedRows = 0;
+  let delistedRows = 0;
+  const delistedProduct = (id) => products instanceof Map && products.get(id)?.delisted === true;
   // ⭐⭐ 2026-11-08（#950）：**跳过原因必须分开数** —— 以前是一个大 `skippedRows`，
   //   于是"已经报过货（采购明细已关联）"的行也被算成"交易类型认不出" ⇒
   //   `procurement.page.trade_type_unknown` 天天误报（#946 的遗留问题）。
@@ -146,6 +148,8 @@ const buildReplenishView = ({
   for (const record of records || []) {
     const row = normalizeSalesRow(record, fields);
     if (!row) { skippedRows += 1; continue; }
+    // 已下架货品不进入建议报货清单：用户看不到，也就选不到。
+    if (delistedProduct(row.productRecordId)) { skippedRows += 1; delistedRows += 1; continue; }
     // 防御性再判一次（飞书 filter 已按库存=0 筛过；这里保证"公式返回非 0 / 空"绝不计入）
     if (row.stock !== 0) { skippedRows += 1; continue; }
     if (!(row.soldAt >= range.start && row.soldAt < range.end)) { skippedRows += 1; continue; }
@@ -173,6 +177,8 @@ const buildReplenishView = ({
   for (const record of pendingRecords || []) {
     const row = normalizePendingRow(record, purchaseFields);
     if (!row) continue;
+    // 未到货来源同样按货品下架状态过滤，避免只过滤销售来源的半套效果。
+    if (delistedProduct(row.productRecordId)) { delistedRows += 1; continue; }
     const group = groupsByKey.get(row.productRecordId) || { key: row.productRecordId, sizes: new Map() };
     const entry = group.sizes.get(row.size) || { size: row.size, spotSold: 0, prepaidSold: 0, notArrived: 0 };
     entry.notArrived += row.notArrived;
@@ -221,6 +227,7 @@ const buildReplenishView = ({
     },
     groups,
     skippedRows,
+    delistedRows,
     // #950：跳过原因拆分（既有 `skippedRows` 保持总数，向后兼容）
     tradeTypeUnknownRows,
     alreadyReportedRows,
