@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **522** 个事件。按前缀分组：
+共 **523** 个事件。按前缀分组：
 
 ## accessory
 
@@ -456,6 +456,7 @@
 | `scan.page.failed` | 1 | src/config/scanPage.js |
 | `scan.page.login_redirect` | 1 | src/config/scanAuthRedirect.js |
 | `scan.page.not_found` | 1 | src/config/scanPage.js |
+| `scan.page.record_delisted` | 1 | src/config/scanPageDelisted.js |
 | `scan.page.record_fallback` | 1 | src/config/scanPage.js |
 | `scan.page.record_lookup_failed` | 1 | src/config/scanPage.js |
 | `scan.page.record_missing` | 1 | src/config/scanPage.js |

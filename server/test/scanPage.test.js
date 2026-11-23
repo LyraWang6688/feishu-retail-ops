@@ -309,6 +309,17 @@ test('③ 没找到这个编号 / 空编号：`found:false`，不抛、不 500',
   assert.deepEqual(gateway.writes, [], '查不到也不许写任何东西');
 });
 
+test('③ 记录 ID 存在但货品已下架：回 delisted，不混成“记录不存在”', async () => {
+  const delistedProduct = {
+    ...PRODUCT,
+    fields: { ...PRODUCT.fields, [V1_BITABLE_SCHEMA.tables.product.fields.delisted]: true },
+  };
+  const view = await service({ products: [delistedProduct] }).lookup({ recordId: 'prod_1', requestId: 'req_delisted' });
+  assert.deepEqual(view, {
+    found: false, number: '', reason: 'delisted', delisted: true,
+  });
+});
+
 // ── ④ 只读 ─────────────────────────────────────────────────────────────────
 test('④ 只读：查询成功时一次写调用都没有（假网关的写方法一碰就抛）', async () => {
   const gateway = fakeGateway();
