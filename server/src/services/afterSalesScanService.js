@@ -47,7 +47,8 @@ const epochOf = (value) => {
 
 /** 数字列（总金额 / 实收金额）：空 ⇒ null（**空与 0 是两件事**，不许拿 0 顶）。 */
 const numberOf = (value) => {
-  const text = asText(value).replace(/,/g, '').replace(/¥/g, '');
+  // ⭐ getBatch 的公式单元格是 {type:20,value:[{text:'118'}]}；必须递归解包。
+  const text = textValue(value).replace(/,/g, '').replace(/¥/g, '').trim();
   if (text === '') return null;
   const number = Number(text);
   return Number.isFinite(number) ? number : null;

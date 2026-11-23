@@ -25,7 +25,7 @@ const fakeGateway = (overrides = {}) => {
       { record_id: 'p2', fields: { 编号: 'OTHER|米色|女', 货号: 'OTHER', 颜色: '米色' } },
     ],
     salesEntry: [
-      { record_id: 'e1', fields: { 销售单号: 'XSD-1', 写入状态: '成功', 录单日: NOW - DAY, 总金额: 300, 收款明细: [{ record_ids: ['pay1'] }] } },
+      { record_id: 'e1', fields: { 销售单号: 'XSD-1', 写入状态: '成功', 录单日: NOW - DAY, 总金额: { type: 20, value: [{ text: '300' }] }, 收款明细: [{ record_ids: ['pay1'] }] } },
       { record_id: 'e2', fields: { 销售单号: 'XSD-2', 写入状态: '失败', 录单日: NOW - DAY, 总金额: 200 } },
       { record_id: 'e3', fields: { 销售单号: 'XSD-3', 写入状态: '成功', 录单日: NOW - 40 * DAY, 总金额: 100 } },
     ],
