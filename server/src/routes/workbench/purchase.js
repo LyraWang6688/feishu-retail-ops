@@ -24,6 +24,7 @@ const { getAsyncJobService } = require('../../services/asyncJobRuntime');
 const { ASYNC_JOBS, ASYNC_JOB_TYPES } = require('../../config/asyncJobs');
 const { logError, logWarn } = require('../../utils/logger');
 const { createSupplyDocumentSyncService } = require('../../services/supplyDocumentSyncService');
+const { createAcceptanceDocumentService } = require('../../services/acceptanceDocumentService');
 const { createPurchaseTransactionService } = require('../../services/purchaseTransactionService');
 // ⭐ 2026-10-28（采购页进入生产）：采购页的**只读读模型 + 提交**端点。
 //   🔴 挂在本文件（= 既有 workbench 父 router 已挂载的子路由）⇒ **不改共享文件 `routes/workbench.js`**，
@@ -219,15 +220,16 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
     const states = await arrivalSampleStateService.stateOfProducts(ids);
     return cacheSet(sampleStateCache, key, states);
   };
+  let acceptanceDocument = options.acceptanceDocument || null;
+  const resolveAcceptanceDocument = () => acceptanceDocument || (acceptanceDocument = createAcceptanceDocumentService({
+    purchaseWebhooks: resolveArrivalWebhooks(),
+    batchLocator: resolveArrivalWebhooks().batchLocator,
+    supplyDocumentSync: resolveSupplyDocumentSync(),
+  }));
   let supplyDocumentSync = options.supplyDocumentSync || null;
-  const resolveSupplyDocumentSync = () => {
-    if (!supplyDocumentSync) {
-      supplyDocumentSync = createSupplyDocumentSyncService({
-        gateway: options.gateway || new V1BitableGateway(),
-      });
-    }
-    return supplyDocumentSync;
-  };
+  const resolveSupplyDocumentSync = () => supplyDocumentSync || (supplyDocumentSync = createSupplyDocumentSyncService({
+    gateway: options.gateway || new V1BitableGateway(),
+  }));
   const arrivalCacheInvalidate = (batchNo) => {
     arrivalReadCache.delete(String(batchNo || '').trim());
     sampleStateCache.clear();
@@ -303,8 +305,17 @@ const createWorkbenchPurchaseRoutes = ({ options = {}, ordersCache } = {}) => {
           correlation: { batch_no: restInput.batchNo || '' },
         });
       }
-      // 2026-11-18：验收完成 + 对方单据落表后，自动同步供应单据；失败不影响入库事实。
-      if (result?.ok) {
+      // ⭐ 验收单必须在本轮完成：先追加我方单据，再发原话题，最后同步云盘。
+      //    旧链路没有 taskId 时保持既有同步行为；新链路由 service 内部保证顺序。
+      if (result?.ok && result.taskId) {
+        await resolveAcceptanceDocument().deliverForTask({
+          requestId,
+          batchNo: restInput.batchNo || '',
+          batchRecordId: result.batch_record_id || '',
+          taskId: result.taskId,
+          correlation: { batch_no: restInput.batchNo || '', task_id: result.taskId },
+        });
+      } else if (result?.ok) {
         try {
           await resolveSupplyDocumentSync().syncBatch({
             batchNo: restInput.batchNo || '',
