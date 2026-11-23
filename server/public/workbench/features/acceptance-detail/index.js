@@ -85,12 +85,13 @@ const productsHtml = (groups, checkedProducts = new Set()) => groups.map((group)
   const rows = group.rows.map(rowHtml).join('');
   const checked = checkedProducts.has(group.productId);
   return '<section class="pr-group arrival-product' + (checked ? ' is-checked' : '') + '" data-product-id="' + escapeHtml(group.productId) + '">'
-    + '<div class="pr-group-head"><h2 class="pr-group-name">' + escapeHtml(groupLabel(group)) + '</h2>'
+    + '<div class="pr-group-head"><div class="arrival-title-wrap">'
+    + '<label class="arrival-verify"><input type="checkbox" data-arrival-verify="' + escapeHtml(group.productId) + '"'
+    + ' aria-label="' + escapeHtml(ARRIVAL_FULL_TEXTS.checkedLabel) + '"' + (checked ? ' checked' : '') + '></label>'
+    + '<h2 class="pr-group-name">' + escapeHtml(groupLabel(group)) + '</h2></div>'
     + '<button class="btn small" type="button" data-add-size="' + escapeHtml(group.productId) + '">'
     + escapeHtml(ARRIVAL_FULL_TEXTS.addSize) + '</button></div>'
-    + '<div class="pr-size-grid" data-view="arrival-size-rows">' + rows + '</div>'
-    + '<label class="arrival-verify"><input type="checkbox" data-arrival-verify="' + escapeHtml(group.productId) + '"' + (checked ? ' checked' : '') + '> '
-    + escapeHtml(ARRIVAL_FULL_TEXTS.checkedLabel) + '</label></section>';
+    + '<div class="pr-size-grid" data-view="arrival-size-rows">' + rows + '</div></section>';
 }).join('');
 
 const previewStatusOf = (row) => {

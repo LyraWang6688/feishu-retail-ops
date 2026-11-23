@@ -48,7 +48,7 @@ test('验收明细：应到/实到/多到 + 自定义尺码后固定底栏同步
   await expect(page.locator('[data-view="arrival-total"]')).toHaveText('9 双');
 });
 
-test('验收明细：货品卡右下角已核对复选框，勾选浅绿且不增加卡片高度', async ({ page }) => {
+test('验收明细：货号前已核对复选框，勾选浅绿且不增加卡片高度', async ({ page }) => {
   const rows = [
     { product_record_id: 'p1', item_no: '1138-32', color: '黑色', number: '1138-32|黑色|女', size: 38, quantity: 2 },
     { product_record_id: 'p1', item_no: '1138-32', color: '黑色', number: '1138-32|黑色|女', size: 39, quantity: 1 },
@@ -64,6 +64,9 @@ test('验收明细：货品卡右下角已核对复选框，勾选浅绿且不�
   const card = page.locator('.arrival-product').filter({ hasText: '1138-32' });
   const checkbox = card.locator('[data-arrival-verify="p1"]');
   await expect(checkbox).toBeVisible();
+  const titleBox = await card.locator('.pr-group-name').boundingBox();
+  const checkboxBox = await checkbox.boundingBox();
+  expect(checkboxBox.x).toBeLessThan(titleBox.x);
   const before = await card.boundingBox();
   await checkbox.check();
   await expect(card).toHaveClass(/is-checked/);
