@@ -95,12 +95,14 @@ test('每日现金：首次保存创建一条；关店保存拿走金额更新�
   const service = serviceOf(gateway);
   const first = await service.save({ openingAmount: '500' });
   assert.equal(first.record.opening_amount, 500);
+  assert.equal(first.record.withdrawal_saved, false, '还没保存拿走金额');
   assert.equal(gateway.records.length, 1);
   assert.equal(gateway.records[0].fields[R.saleDate.name], Date.parse('2026-11-21T00:00:00+08:00'), '销售日由飞书自动带出');
   gateway.records[0].fields[R.closingCash.name] = 1300;
   const second = await service.save({ withdrawalAmount: 200 });
   assert.equal(gateway.records.length, 1, '同一天只更新，不新建第二条');
   assert.equal(second.record.withdrawal_amount, 200);
+  assert.equal(second.record.withdrawal_saved, true, '保存过拿走金额');
   assert.equal(second.record.realtime_amount, 1300, '公式字段只读展示，不由本服务写');
   assert.equal(gateway.records[0].fields[F.fields.withdrawalCash], 200);
 });
