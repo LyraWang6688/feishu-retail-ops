@@ -71,7 +71,8 @@ const SCAN_FIELD_KEYS = Object.freeze({
   salesDetail: Object.freeze([
     'product', 'salesEntry', 'size', 'soldAt', 'fulfillmentStatus', 'actualAmount',
   ]),
-  salesEntry: Object.freeze(['orderNo', 'writeStatus', 'orderTotal']),
+  // ⭐ 2026-11-23：整单卡要展示收款，主表按 id 批量取时一并带回「收款明细」关联。
+  salesEntry: Object.freeze(['orderNo', 'writeStatus', 'orderTotal', 'recordedAt', 'paymentRecords']),
 });
 
 /** 读侧的人话（错误 / 空态之外的都放前端配置；这里只放**后端会直接回给页面**的那几句）。 */
