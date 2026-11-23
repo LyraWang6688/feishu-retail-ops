@@ -169,6 +169,7 @@ export const ARRIVAL_FULL_TEXTS = {
   acceptanceTab: '验收区',
   previewTab: '预览区',
   acceptanceTabsLabel: '验收明细',
+  checkedLabel: '已核对',
   previewMatch: '一致',
   previewShort: '未到货',
   previewExtra: '多到货',

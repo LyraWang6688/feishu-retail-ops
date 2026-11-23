@@ -48,6 +48,32 @@ test('验收明细：应到/实到/多到 + 自定义尺码后固定底栏同步
   await expect(page.locator('[data-view="arrival-total"]')).toHaveText('9 双');
 });
 
+test('验收明细：货品卡右下角已核对复选框，勾选浅绿且不增加卡片高度', async ({ page }) => {
+  const rows = [
+    { product_record_id: 'p1', item_no: '1138-32', color: '黑色', number: '1138-32|黑色|女', size: 38, quantity: 2 },
+    { product_record_id: 'p1', item_no: '1138-32', color: '黑色', number: '1138-32|黑色|女', size: 39, quantity: 1 },
+  ];
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/workbench/purchase/arrivals/detail') return route.fulfill(json({ success: true, rows }));
+    if (url.pathname === '/api/workbench/ui-tap') return route.fulfill({ status: 204, body: '' });
+    return route.fulfill(json({ success: true }));
+  });
+
+  await page.goto('/workbench/purchase-acceptance-detail.html?batchNo=BH-3&supplierRecordId=s1&supplierName=%E4%BE%9B%E5%BA%94%E5%95%86');
+  const card = page.locator('.arrival-product').filter({ hasText: '1138-32' });
+  const checkbox = card.locator('[data-arrival-verify="p1"]');
+  await expect(checkbox).toBeVisible();
+  const before = await card.boundingBox();
+  await checkbox.check();
+  await expect(card).toHaveClass(/is-checked/);
+  const after = await card.boundingBox();
+  expect(Math.abs(after.height - before.height)).toBeLessThan(0.5);
+  await expect(page.locator('[data-view="arrival-summary"]')).toContainText('应到 3 双 / 实到 3 双 / 多到 0 双');
+  await checkbox.uncheck();
+  await expect(card).not.toHaveClass(/is-checked/);
+});
+
 test('验收明细：验收区 / 预览区切换，三色状态实时跟随，自定义尺码算多到', async ({ page }) => {
   const rows = [
     { product_record_id: 'p1', item_no: '1138-32', color: '黑色', number: '1138-32|黑色|女', size: 38, quantity: 2 },
