@@ -23,7 +23,7 @@ test('共享订单卡：赠品/配品区展示数量与配品金额', async () =
   assert.match(html, /袜子×2/);
   assert.match(html, /配品/);
   assert.match(html, /鞋油×1、乳胶垫×2/);
-  assert.match(html, /共 3 件/);
+  assert.doesNotMatch(html, /共 3 件/);
   assert.match(html, /¥3/);
 });
 
