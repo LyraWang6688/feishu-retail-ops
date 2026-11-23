@@ -8,6 +8,25 @@ const { pathToFileURL } = require('node:url');
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC = path.join(ROOT, 'public/workbench');
 
+test('共享订单卡：赠品/配品区展示数量与配品金额', async () => {
+  const { salesOrderCardHtml } = await import(pathToFileURL(path.join(PUBLIC, 'features/shared/salesOrderCard.js')).href);
+  const html = salesOrderCardHtml({
+    order_no: 'XSD-BENEFIT',
+    total_amount: 100,
+    gift: '袜子×2',
+    accessory: '鞋油×1、乳胶垫×2',
+    accessory_amount: 3,
+    details: [{ record_id: 'd1', number: '8012|黑|男', size: 39, actual_amount: 100, fulfillment_status: '已交付' }],
+  });
+  assert.match(html, /sq-benefits/);
+  assert.match(html, /赠品/);
+  assert.match(html, /袜子×2/);
+  assert.match(html, /配品/);
+  assert.match(html, /鞋油×1、乳胶垫×2/);
+  assert.match(html, /共 3 件/);
+  assert.match(html, /¥3/);
+});
+
 test('共享订单卡：售后高亮/操作只落在命中明细，其他明细也展示', async () => {
   const { salesOrderCardHtml } = await import(pathToFileURL(path.join(PUBLIC, 'features/shared/salesOrderCard.js')).href);
   const html = salesOrderCardHtml({

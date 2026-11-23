@@ -25,6 +25,18 @@ export const salesOrderCardHtml = (order, {
   const pays = (order.payments || []).length
     ? order.payments.map((payment) => `<span class="sq-pay-tag">${escapeHtml(payment.method)} <b>${escapeHtml(amountText(payment.amount))}</b> · ${escapeHtml(payment.status)}</span>`).join('')
     : `<span class="sq-pay-tag">${TEXT.unpaid}</span>`;
+  const gift = String(order.gift || '').trim();
+  const accessory = String(order.accessory || '').trim();
+  const accessoryUnits = [...accessory.matchAll(/[×xX]\s*(\d+)/g)]
+    .reduce((sum, match) => sum + Number(match[1] || 0), 0);
+  const benefits = (gift || accessory)
+    ? '<div class="sq-benefits" data-sq-benefits>'
+      + (gift ? '<div class="sq-benefit-row"><span class="sq-benefit-label">' + escapeHtml(TEXT.gift) + '</span><span class="sq-benefit-value">' + escapeHtml(gift) + '</span></div>' : '')
+      + (accessory ? '<div class="sq-benefit-row"><span class="sq-benefit-label">' + escapeHtml(TEXT.accessory) + '</span><span class="sq-benefit-value">' + escapeHtml(accessory)
+        + (accessoryUnits > 0 ? '<em class="sq-benefit-count">' + escapeHtml(TEXT.accessoryCount.replace('{count}', String(accessoryUnits))) + '</em>' : '') + '</span>'
+        + '<b class="sq-benefit-amount">' + escapeHtml(amountText(order.accessory_amount)) + '</b></div>' : '')
+      + '</div>'
+    : '';
   const details = (order.details || []).map((detail) => {
     const recordId = String(detail.record_id || '');
     const highlighted = Boolean(highlightDetailId && recordId === highlightDetailId);
@@ -45,5 +57,6 @@ export const salesOrderCardHtml = (order, {
       <div class="sq-order-pays">${pays}</div>
     </div>
     <table class="sq-detail-table"><tbody>${details}</tbody></table>
+    ${benefits}
   </article></div></div>`;
 };

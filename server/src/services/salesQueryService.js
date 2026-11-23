@@ -131,6 +131,9 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
         order_no: order.order_no,
         recorded_at: order.recorded_at,
         total_amount: order.payable_amount,
+        gift: order.gift || '',
+        accessory: order.accessory || '',
+        accessory_amount: Number(order.accessory_amount || 0),
         payments: (order.payments || []).map((payment) => ({
           method: payment.method,
           amount: Number(payment.amount || 0),

@@ -3,4 +3,7 @@ export const SALES_ORDER_CARD = Object.freeze({
   sizeSuffix: '码',
   delivered: '已交付',
   undelivered: '未交付',
+  gift: '赠品',
+  accessory: '配品',
+  accessoryCount: '共 {count} 件',
 });
