@@ -10,6 +10,8 @@
 const { textValue } = require('./v1BitableGateway');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SUPPLIER_BALANCE } = require('../config/supplierBalance');
+const { getConfigRows } = require('./configTableCache');
+const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 
 const num = (value) => {
   const raw = textValue(value).replace(/,/g, '').trim();
@@ -76,10 +78,25 @@ const createSupplierBalanceService = ({
   };
 
   const list = async () => {
+    const supplierFieldNames = [...new Set([supplierFields.name])];
+    const initFieldNames = [...new Set([initFields.supplierName, initFields.initialBalance])];
+    const txFieldNames = [...new Set([
+      txFields.supplierName, txFields.tradeDate, txFields.tradeDirection, txFields.behavior,
+      txFields.latestBalance,
+      ...config.transactionFamilies.map((family) => txFields[family.amountField]),
+    ].filter(Boolean))];
     const [supplierRows, initRows, txRows] = await Promise.all([
-      gateway.listAll('supplier'),
-      gateway.listAll('supplierBalanceInit'),
-      gateway.listAll('paymentTransaction'),
+      // 供应商 / 期初余额是配置表：走统一缓存 + 关键读重试。
+      getConfigRows({
+        gateway, tableKey: 'supplier', fields: supplierFieldNames,
+        loader: () => gateway.listAll('supplier', { fieldNames: supplierFieldNames, retry: CRITICAL_READ_RETRY }),
+      }),
+      getConfigRows({
+        gateway, tableKey: 'supplierBalanceInit', fields: initFieldNames,
+        loader: () => gateway.listAll('supplierBalanceInit', { fieldNames: initFieldNames, retry: CRITICAL_READ_RETRY }),
+      }),
+      // 交易流水是业务表，只裁字段，不按 30 天过滤（余额要取全量最新一笔）。
+      gateway.listAll('paymentTransaction', { fieldNames: txFieldNames, retry: CRITICAL_READ_RETRY }),
     ]);
 
     const byName = new Map();

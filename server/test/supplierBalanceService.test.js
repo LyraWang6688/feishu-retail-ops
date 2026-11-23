@@ -71,6 +71,24 @@ const baseTxs = [
   }),
 ];
 
+test('供应分析读表：三张表都带关键读重试和字段裁剪', async () => {
+  const calls = [];
+  const gateway = {
+    table: (key) => F[key],
+    listAll: async (key, options) => {
+      calls.push({ key, options });
+      return [];
+    },
+  };
+  await createSupplierBalanceService({ gateway, now: () => Date.parse('2026-11-20T22:00:00+08:00') }).list();
+  const reads = calls.filter((call) => ['supplier', 'supplierBalanceInit', 'paymentTransaction'].includes(call.key));
+  assert.ok(reads.length >= 3);
+  for (const call of reads) {
+    assert.equal(call.options?.retry?.maxRetries, 5, `${call.key} 必须复用 CRITICAL_READ_RETRY`);
+    assert.ok(Array.isArray(call.options?.fieldNames) && call.options.fieldNames.length > 0, `${call.key} 必须裁字段`);
+  }
+});
+
 test('供应商显示：余额非 0 或最近窗口内有交易', async () => {
   const result = await serviceOf({ suppliers: baseSuppliers, inits: baseInits, txs: baseTxs }).list();
   assert.deepEqual(result.suppliers.map((item) => item.name).sort(), [
