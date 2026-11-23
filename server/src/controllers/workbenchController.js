@@ -43,6 +43,7 @@ const queryInventoryLedger = async (req, res) => {
   try {
     return res.json({ success: true, ...await service.getInventoryLedger({
       requestId: req.requestId, from: req.query.from, to: req.query.to, product: req.query.product,
+      productRecordId: req.query.productRecordId || req.query.product_record_id,
     }) });
   } catch (error) {
     return respondQueryFailure(res, error, {

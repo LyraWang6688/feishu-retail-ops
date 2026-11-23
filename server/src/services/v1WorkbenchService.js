@@ -189,7 +189,7 @@ const createWorkbenchService = (gateway, options = {}) => {
 
   // ⭐ 2026-11-18：库存流水（只读）。按「创建时间」倒序；日期按上海时区，默认今天，闭区间。
   const shanghaiDay = (date) => new Date(date.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
-  const getInventoryLedger = async ({ requestId, from = '', to = '', product = '', limit = WORKBENCH_LEDGER_LIMIT } = {}) => {
+  const getInventoryLedger = async ({ requestId, from = '', to = '', product = '', productRecordId = '', limit = WORKBENCH_LEDGER_LIMIT } = {}) => {
     const today = shanghaiDay(new Date());
     const fromText = String(from || today).trim();
     const toText = String(to || today).trim();
@@ -213,6 +213,8 @@ const createWorkbenchService = (gateway, options = {}) => {
     } else {
       records = await listAllWithRetry(gateway, 'inventoryLedger', requestId, { fieldNames });
     }
+    const wantedProductRecordId = String(productRecordId || '').trim();
+    const wantedProductNumber = String(product || '').trim();
     const productRows = await getConfigRows({ gateway, tableKey: 'product' });
     const delistedIds = new Set((productRows || []).filter((record) => isDelistedRecord(record))
       .map((record) => record.record_id));
@@ -221,6 +223,7 @@ const createWorkbenchService = (gateway, options = {}) => {
       return {
         record_id: record.record_id,
         behavior: asText(schema, 'inventoryLedger', record, 'behavior'),
+        product_record_id: productIds[0] || '',
         number: asText(schema, 'inventoryLedger', record, 'product'),
         size: asText(schema, 'inventoryLedger', record, 'size'),
         quantity_change: asNumber(fieldValue(schema, 'inventoryLedger', record, 'quantityChange')),
@@ -229,7 +232,10 @@ const createWorkbenchService = (gateway, options = {}) => {
       };
     }).filter((row) => row.created_at && shanghaiDay(new Date(row.created_at)) >= fromText
       && shanghaiDay(new Date(row.created_at)) <= toText)
-      .filter((row) => !String(product || '').trim() || row.number === String(product).trim())
+      .filter((row) => {
+        if (wantedProductRecordId) return row.product_record_id === wantedProductRecordId;
+        return !wantedProductNumber || row.number === wantedProductNumber;
+      })
       .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')
         || String(b.record_id).localeCompare(String(a.record_id)));
     const cap = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Number(limit) : WORKBENCH_LEDGER_LIMIT;
