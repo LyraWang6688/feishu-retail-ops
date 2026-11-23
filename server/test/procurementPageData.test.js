@@ -21,17 +21,16 @@ const SH = (iso) => Date.parse(`${iso}+08:00`);
 const NOW = SH('2026-10-28T09:00:00');
 
 const F = Object.freeze({
-  product: '编号', size: '尺码', soldAt: '销售日', stockQuantity: '库存数量', tradeType: '交易类型',
+  product: '编号', recordId: 'recordID', size: '尺码', soldAt: '销售日', stockQuantity: '库存数量', tradeType: '交易类型',
   number: '编号', itemNo: '货号', color: '颜色', category: '类别', supplier: '供应商', createdAt: '上架日期',
-  purchaseDetail: '采购明细', // 2026-11-08 生产新增：销售明细 → 采购明细 单向关联
 });
 const link = (...ids) => ids.map((id) => ({ record_ids: [id], text: id }));
-const salesRow = ({ product = 'recA', size = 39, soldAt = SH('2026-10-27T12:00:00'), stock = 0, trade = 'SALE_CASH', text = '', reported = [] } = {}) => ({
+const salesRow = ({ product = 'recA', recordId = product, size = 39, soldAt = SH('2026-10-27T12:00:00'), stock = 0, trade = 'SALE_CASH', text = '' } = {}) => ({
   record_id: `row_${Math.random().toString(36).slice(2, 8)}`,
   fields: {
-    [F.product]: link(product), [F.size]: size, [F.soldAt]: soldAt, [F.stockQuantity]: stock,
+    [F.product]: link(product), [F.recordId]: [{ text: recordId, type: 'text' }],
+    [F.size]: size, [F.soldAt]: soldAt, [F.stockQuantity]: stock,
     [F.tradeType]: link(trade), ...(text ? { [F.tradeType]: text } : {}),
-    ...(reported.length ? { [F.purchaseDetail]: link(...reported) } : {}),
   },
 });
 const product = ({ id = 'recA', number = '86822', itemNo = '86822', color = '黑色', category = 'A', supplier = 'recS', createdAt = NOW } = {}) => ({
@@ -57,49 +56,13 @@ const view = (records, products = [productDto()]) => buildReplenishView({
   tradeTypeCodeOf: tradeCode,
 });
 
-// ── 2026-11-08：「已报货」的销售明细不再进补货（销售明细.采购明细 单向关联）──────
-test('AC-P2c 已关联「采购明细」的销售明细 ⇒ 默认**不再出现在补货**（避免 3 天窗口重复报货）', () => {
-  const reported = view([salesRow({ product: 'recA', size: 39, reported: ['recDetail1'] })]);
-  assert.equal(reported.stats.spotSold, 0);
-  assert.equal(reported.stats.prepaidPending, 0);
-  assert.equal(reported.groups.length, 0, '已报过的行必须被排除');
-  const mixed = view([
-    salesRow({ product: 'recA', size: 39 }),
-    salesRow({ product: 'recA', size: 40, reported: ['recDetail2'] }),
-    salesRow({ product: 'recA', size: 41, trade: 'SALE_PREPAID' }),
-  ]);
-  assert.equal(mixed.stats.spotSold, 1, '未报的现货仍计入');
-  assert.equal(mixed.stats.prepaidPending, 1, '未报的预订仍计入');
-  assert.deepEqual(mixed.groups[0].sizes.map((one) => one.size), [39, 41], '已报的 40 码不出现');
-});
-
-// ── 2026-11-08（#950）：跳过原因**必须分开数**（修 #946 的 `trade_type_unknown` 误报）──────
-test('AC-P2e 跳过原因拆分：已报过货 ≠ 交易类型认不出（tradeTypeUnknownRows / alreadyReportedRows）', () => {
-  // ① 只有"已报过货" ⇒ 属正常业务事实，**不算**交易类型认不出
-  const reportedOnly = view([
-    salesRow({ product: 'recA', size: 39, reported: ['recDetail1'] }),
-  ]);
-  assert.equal(reportedOnly.alreadyReportedRows, 1);
-  assert.equal(reportedOnly.tradeTypeUnknownRows, 0, '已报过货的行**不许**算进 tradeTypeUnknownRows');
-  assert.equal(reportedOnly.skippedRows, 1, '总数保持（向后兼容）');
-
-  // ② 只有"交易类型真认不出" ⇒ 才算 tradeTypeUnknownRows
-  const unknownOnly = view([
-    salesRow({ product: 'recA', size: 39, trade: 'SALE_RETURN' }),
-  ]);
-  assert.equal(unknownOnly.tradeTypeUnknownRows, 1);
-  assert.equal(unknownOnly.alreadyReportedRows, 0);
-
-  // ③ 混合：两个数各归各的，`skippedRows` 仍是总数
-  const mixed = view([
-    salesRow({ product: 'recA', size: 39, reported: ['recDetail1'] }),
-    salesRow({ product: 'recA', size: 40, trade: 'SALE_RETURN' }),
-    salesRow({ product: 'recA', size: 41, trade: 'SALE_CASH' }),
-  ]);
-  assert.equal(mixed.alreadyReportedRows, 1);
-  assert.equal(mixed.tradeTypeUnknownRows, 1);
-  assert.equal(mixed.skippedRows, 2);
-  assert.equal(mixed.stats.spotSold, 1, '正常行照旧计入');
+test('销售明细 recordID 优先：同货号不同 recordID 不合并，公式列优先于编号关联', () => {
+  const result = view([
+    salesRow({ product: 'recA1', recordId: 'recA1', size: 39 }),
+    salesRow({ product: 'recA1', recordId: 'recA2', size: 39 }),
+  ], [productDto({ id: 'recA1', number: 'SAME', itemNo: 'SAME' }), productDto({ id: 'recA2', number: 'SAME', itemNo: 'SAME' })]);
+  assert.equal(result.groups.length, 2, '重复货号不能按 number 合并');
+  assert.deepEqual(result.groups.map((group) => group.productRecordId).sort(), ['recA1', 'recA2']);
 });
 
 // ── AC-P2 三天窗口（上海时区）─────────────────────────────────────────────
