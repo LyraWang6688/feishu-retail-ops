@@ -22,8 +22,8 @@ export const PROCUREMENT_UI = Object.freeze({
   }),
   title: '采购',
   tabs: Object.freeze([
-    Object.freeze({ id: 'suggested', label: '建议报货清单', hint: '补货 + 上新' }),
-    Object.freeze({ id: 'pending', label: '待提交列表', hint: '核对已选' }),
+    Object.freeze({ id: 'suggested', label: '报货区', hint: '补货 + 上新' }),
+    Object.freeze({ id: 'pending', label: '预览区', hint: '核对已选' }),
   ]),
   texts: Object.freeze({
     loading: '正在读取…',
