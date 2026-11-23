@@ -156,6 +156,10 @@ test('relation and display helpers only accept evidenced link shapes (#1074)', (
   assert.deepEqual(linkedRecordIds({ id: 'rec_3' }), []);
   assert.deepEqual(linkedRecordIds('rec_1'), []);
   assert.equal(textValue([{ text: 'A' }, { name: 'B' }]), 'A,B');
+  // ⭐ getBatch 的单元格不是 [{text}] 而是 {type,value:[{text}]}；必须拆开，不能 [object Object]
+  assert.equal(textValue({ type: 1, value: [{ text: '906|黑色|男', type: 'text' }] }), '906|黑色|男');
+  assert.equal(textValue({ type: 1, value: [{ text: 'A' }, { text: 'B' }] }), 'A,B');
+  assert.equal(textValue({ value: { text: '嵌套' } }), '嵌套');
 });
 
 // 2026-10-06 线上事故：没有硬编码兜底的表（「尺码管理」「其他配品」）在 .env 之前
