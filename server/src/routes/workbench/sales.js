@@ -121,6 +121,7 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
     try {
       return res.json({ success: true, ...await salesQuery().getSalesQuery({
         from: req.query.from, to: req.query.to, product: req.query.product,
+        productRecordId: req.query.productRecordId || req.query.product_record_id,
       }) });
     } catch (error) {
       logError('workbench.sales.query.failed', { request_id: req.requestId, error: error.message });

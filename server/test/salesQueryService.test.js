@@ -75,6 +75,27 @@ test('AC-SQ3 销售单区块按录单日筛选、总金额取销售主表，明�
   assert.equal(data.orders[0].payments.length, 2);
 });
 
+test('AC-SQ4b recordId 优先：同货号同编号的两条记录不合并', async () => {
+  const data = fixture();
+  const base = data.orders[0].details[0];
+  const makeDelivery = () => {
+    data.orders = [
+      { ...data.orders[0], order_no: 'A-1', details: [{ ...base, product_record_id: 'recA' }] },
+      { ...data.orders[0], order_no: 'A-2', details: [{ ...base, product_record_id: 'recB' }] },
+    ];
+    return data;
+  };
+  const svc = createSalesQueryService({ gateway: {}, deliveryRead: { listDeliveryData: async () => makeDelivery() }, now: () => TODAY });
+  const result = await svc.getSalesQuery({
+    from: '2026-11-18', to: '2026-11-18', productRecordId: 'recA',
+  });
+  assert.deepEqual(result.orders.map((order) => order.order_no), ['A-1'], '只返回选中 recordId 的订单');
+  const legacy = await svc.getSalesQuery({
+    from: '2026-11-18', to: '2026-11-18', product: base.number,
+  });
+  assert.deepEqual(legacy.orders.map((order) => order.order_no).sort(), ['A-1', 'A-2'], '旧 number 参数保留兼容');
+});
+
 test('AC-SQ4 货品筛选：保留包含该货品的整张订单，不裁剪其他明细，概览不改', async () => {
   const svc = createSalesQueryService({ gateway: {}, deliveryRead: { listDeliveryData: async () => fixture() }, now: () => TODAY });
   const data = await svc.getSalesQuery({ from: '2026-11-18', to: '2026-11-18', product: 'A|黑|男' });
