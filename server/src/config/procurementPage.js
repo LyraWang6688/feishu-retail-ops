@@ -4,7 +4,7 @@
  * 采购页（供应 → 录单 → 采购）的**全部可配参数** —— 配置先行，服务/路由里不写死数字与文案。
  *
  * 业务口径（2026-10-28 业务负责人逐条确认，见 `docs/procurement-page-real-2026-10-28.md`）：
- *   · 补货：**只查「销售明细」一张表**（库存数量 = 0，销售日 = 今天 00:00 往前 3 个自然日）；
+ *   · 补货：**只查「销售明细」一张表**（库存数量 = 0，销售日 = 今天 00:00 往前 7 个自然日）；
  *     ⭐ 2026-11-17（业务负责人）：**预订不再自动填数量**，与现货 / 上新一致，默认全 0（需手动选）；
  *   · 上新：`货品信息` 上架日期 = 最近 7 天（今天 + 往前 6 天）；按记录 ID 分组；普通码 / 特殊码默认都 0（需手动选）；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
@@ -107,20 +107,6 @@ const buildProcurementPageConfig = (env = process.env) => {
       sizeAsc: true,
       newProductCreatedAtAsc: true,
     }),
-    // ⭐ 2026-11-10（业务负责人）：「销售明细.采购明细」回填失败/部分失败要发运营群
-    //   （统一通知链路：`config/notifications.js` 注册事件 + `notificationService` 发送；
-    //   本块只放**行文案模板**，service 不写中文）。
-    notifications: Object.freeze({
-      salesLinkBackfillFailed: Object.freeze({
-        task: '任务：{value}',
-        batchNo: '批次号：{value}',
-        failed: '写关联失败：{value} 条',
-        unmatched: '销售记录数量不足：{value} 条',
-        example: '示例原因：{value}',
-        unmatchedExample: '数量不足示例：{product} {size} 码还差 {remaining} 双',
-        hint: '采购单已写成功；关联失败的销售明细下次补货可能重复出现，请人工核对。',
-      }),
-    }),
     // 已提交批次修改：文案 / 单据后缀 / 群消息模板（中文只在这里）
     modify: Object.freeze({
       documentFileNameSuffix: '采购单',
@@ -139,8 +125,6 @@ const buildProcurementPageConfig = (env = process.env) => {
     events: Object.freeze({
       replenishLoaded: readString(env, 'PROCUREMENT_EVENT_REPLENISH', 'procurement.page.replenish_loaded'),
       newProductsLoaded: readString(env, 'PROCUREMENT_EVENT_NEW_PRODUCTS', 'procurement.page.new_products_loaded'),
-      salesLinkBackfilled: readString(env, 'PROCUREMENT_EVENT_SALES_LINK_BACKFILLED', 'procurement.page.sales_link_backfilled'),
-      salesLinkBackfillFailed: readString(env, 'PROCUREMENT_EVENT_SALES_LINK_FAILED', 'procurement.page.sales_link_backfill_failed'),
       tradeTypeUnknown: readString(env, 'PROCUREMENT_EVENT_TRADE_TYPE_UNKNOWN', 'procurement.page.trade_type_unknown'),
       submitAccepted: readString(env, 'PROCUREMENT_EVENT_SUBMIT_ACCEPTED', 'procurement.page.submit_accepted'),
       submitRejected: readString(env, 'PROCUREMENT_EVENT_SUBMIT_REJECTED', 'procurement.page.submit_rejected'),

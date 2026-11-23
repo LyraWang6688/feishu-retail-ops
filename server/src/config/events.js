@@ -173,8 +173,6 @@ const EVENTS = Object.freeze([
   'process.unhandled_rejection',
   'procurement.page.new_products_loaded',
   'procurement.page.replenish_loaded',
-  'procurement.page.sales_link_backfill_failed',
-  'procurement.page.sales_link_backfilled',
   'procurement.page.submit_accepted',
   'procurement.page.submit_rejected',
   'procurement.page.trade_type_unknown',

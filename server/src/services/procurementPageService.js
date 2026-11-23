@@ -10,7 +10,7 @@
  *   · 交易类型判据**复用 `config/salesMovements.js`**（行为表里认不出 ⇒ 不计入，不猜）。
  *
  * 补货读两个来源（2026-11-21）：
- *   · 销售明细（近 3 天、库存数量=0、未报过货）→ 现货 / 预订；
+ *   · 销售明细（近 7 天、库存数量=0）→ 现货 / 预订；
  *   · 采购明细（数量 - 已入库数量 > 0）→ 未到货。
  */
 
@@ -142,14 +142,12 @@ const createProcurementPageService = (options = {}) => {
       records, pendingRecords, products: productsWithSupplier, fields, productFields: productFields(), purchaseFields: pendingFieldNames,
       config, now: now(), tradeTypeCodeOf: (cell) => tradeTypeCodeOf(cell, behaviorIndex),
     });
-    // ⭐⭐ 2026-11-08（#950）：只有**真的认不出贸易类型**的行才记 `trade_type_unknown`。
-    //   「已报过货（采购明细已关联）」是正常业务事实 ⇒ 单独计数、**不触发**这条 warn（#946 误报修复）。
+    // ⭐ 只有**真的认不出贸易类型**的行才记 `trade_type_unknown`。
     if (view.tradeTypeUnknownRows > 0) {
       warn(config.events.tradeTypeUnknown, {
         request_id: requestId,
         skipped_rows: view.skippedRows,
         trade_type_unknown_rows: view.tradeTypeUnknownRows,
-        already_reported_rows: view.alreadyReportedRows,
       });
     }
     info(config.events.replenishLoaded, {
@@ -162,7 +160,6 @@ const createProcurementPageService = (options = {}) => {
       pending_rows: (pendingRecords || []).length,
       // 只报事实：跳过多少、其中"已报过货"多少（排查"补货怎么少了"用）
       skipped_rows: view.skippedRows,
-      already_reported_rows: view.alreadyReportedRows,
       duration_ms: Date.now() - startedAt,
     });
     return { ok: true, ...view };

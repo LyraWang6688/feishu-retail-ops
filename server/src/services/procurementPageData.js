@@ -89,7 +89,9 @@ const sumNumbers = (value) => {
 const normalizeSalesRow = (record, fields) => {
   const fieldsOf = record?.fields || {};
   const productIds = linkedRecordIds(fieldsOf[fields.product]);
-  const productRecordId = productIds[0] || '';
+  // 生产「销售明细.recordID」是公式列（= 编号关联货品的 record_id）；优先用它，旧数据回退关联列。
+  const formulaRecordId = textOf(fieldsOf[fields.recordId]).trim();
+  const productRecordId = formulaRecordId || productIds[0] || '';
   const size = numberOf(fieldsOf[fields.size]);
   const soldAt = numberOf(fieldsOf[fields.soldAt]);
   const stock = numberOf(fieldsOf[fields.stockQuantity]);
@@ -99,9 +101,6 @@ const normalizeSalesRow = (record, fields) => {
     soldAtMs: soldAt,
     // 交易类型单元格原样带着（编码解析交给调用方注入的判据）
     tradeTypeCell: fieldsOf[fields.tradeType],
-    // ⭐ 2026-11-08：这条销售明细是否**已经被补货报过**（关联到采购明细记录）。
-    //   读侧据此排除（默认），避免 3 天窗口重叠导致重复报货。
-    purchaseDetailIds: linkedRecordIds(fieldsOf[fields.purchaseDetail]),
   };
 };
 
@@ -144,7 +143,6 @@ const buildReplenishView = ({
   //   `procurement.page.trade_type_unknown` 天天误报（#946 的遗留问题）。
   //   现在：只有**真的认不出交易类型**的行才进 `tradeTypeUnknownRows`（那条 warn 只认它）。
   let tradeTypeUnknownRows = 0;
-  let alreadyReportedRows = 0;
   for (const record of records || []) {
     const row = normalizeSalesRow(record, fields);
     if (!row) { skippedRows += 1; continue; }
@@ -153,14 +151,6 @@ const buildReplenishView = ({
     // 防御性再判一次（飞书 filter 已按库存=0 筛过；这里保证"公式返回非 0 / 空"绝不计入）
     if (row.stock !== 0) { skippedRows += 1; continue; }
     if (!(row.soldAt >= range.start && row.soldAt < range.end)) { skippedRows += 1; continue; }
-    // ⭐ 2026-11-08：**已报过货的销售明细不再出现在补货里**（业务负责人新增「销售明细.采购明细」单向关联）。
-    //   ⚠️ 业务负责人明确：**不要开关**，就是这个功能 ⇒ 无条件排除（不做配置退化）。
-    //   ⚠️ 这是"已经报过货"这个**正常业务事实**，不是异常 ⇒ 单独计数（不打 trade_type_unknown）。
-    if (row.purchaseDetailIds.length > 0) {
-      skippedRows += 1;
-      alreadyReportedRows += 1;
-      continue;
-    }
     const code = tradeTypeCodeOf(row.tradeTypeCell);
     if (code !== roles.spot && code !== roles.prepaid) {
       skippedRows += 1;
@@ -230,7 +220,6 @@ const buildReplenishView = ({
     delistedRows,
     // #950：跳过原因拆分（既有 `skippedRows` 保持总数，向后兼容）
     tradeTypeUnknownRows,
-    alreadyReportedRows,
   };
 };
 

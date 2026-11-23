@@ -213,19 +213,12 @@ test('AC-P24c 采购退货批次的明细不进入补货未到货', async () => 
   assert.equal(result.groups.length, 0);
 });
 
-test('AC-P10（#950）`trade_type_unknown` 只对**真认不出交易类型**的行告警；已报过货不告警', async () => {
+test('AC-P10（#950）`trade_type_unknown` 只对**真认不出交易类型**的行告警', async () => {
   const warns = [];
   const logger = {
     logInfo() {},
     logWarn: (event, fields) => warns.push({ event, fields }),
     logError() {},
-  };
-  const alreadyReported = {
-    record_id: 'sd_reported',
-    fields: {
-      [SF.product]: link('recA'), [SF.size]: 40, [SF.soldAt]: SH('2026-10-27T10:00:00'),
-      [SF.stockQuantity]: 0, [SF.tradeType]: link('behCash'), [SF.purchaseDetail]: link('recDetail1'),
-    },
   };
   const unknownTrade = {
     record_id: 'sd_unknown',
@@ -235,35 +228,17 @@ test('AC-P10（#950）`trade_type_unknown` 只对**真认不出交易类型**的
     },
   };
   const gateway = makeGateway({
-    sales: [alreadyReported, unknownTrade],
+    sales: [unknownTrade],
     products: [productBatchRecord({ id: 'recA' })],
     colors: [colorRecord('recColorBlack', '黑色')],
-    behaviors: [behavior('behCash', 'SALE_CASH', '现货'), behavior('behReturn', 'SALE_RETURN', '退货')],
+    behaviors: [behavior('behReturn', 'SALE_RETURN', '退货')],
   });
   const service = createProcurementPageService({ gateway, config, now: () => NOW, logger });
   const result = await service.loadReplenish({ requestId: 'r950' });
-  assert.equal(result.alreadyReportedRows, 1);
   assert.equal(result.tradeTypeUnknownRows, 1);
   const tradeWarns = warns.filter((warn) => warn.event === config.events.tradeTypeUnknown);
   assert.equal(tradeWarns.length, 1, '只告警一次（且只因为那一条真认不出的行）');
   assert.equal(tradeWarns[0].fields.trade_type_unknown_rows, 1);
-  assert.equal(tradeWarns[0].fields.already_reported_rows, 1, '已报过货只作为事实附带，不触发告警');
-
-  // 只有"已报过货"的行 ⇒ **一条 trade_type_unknown 都不许有**（#946 误报就是这样来的 ✗）
-  const warns2 = [];
-  const gateway2 = makeGateway({
-    sales: [alreadyReported],
-    products: [productBatchRecord({ id: 'recA' })],
-    colors: [colorRecord('recColorBlack', '黑色')],
-    behaviors: [behavior('behCash', 'SALE_CASH', '现货')],
-  });
-  const service2 = createProcurementPageService({
-    gateway: gateway2, config, now: () => NOW,
-    logger: { logInfo() {}, logWarn: (event, fields) => warns2.push({ event, fields }), logError() {} },
-  });
-  await service2.loadReplenish({ requestId: 'r950b' });
-  assert.equal(warns2.filter((warn) => warn.event === config.events.tradeTypeUnknown).length, 0,
-    '已报过货的行**绝不能**再打 trade_type_unknown');
 });
 
 test('AC-P1 源码反向哨兵：读模型不碰实时库存，也不写任何表', () => {
