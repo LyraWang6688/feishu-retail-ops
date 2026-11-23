@@ -99,18 +99,10 @@ recordId 不同
 | 售后候选卡 / 下单 | `sales_detail_record_id` + `sales_entry_record_id` | 同上 |
 | 扫码页标签 | `recordId` | [scanPageService.js](../server/src/services/scanPageService.js) |
 | 销售交付明细动作 | `sales_detail_record_id` | [sales-delivery/index.js](../server/public/workbench/features/sales-delivery/index.js) |
+| 销售查询货品筛选 | `productRecordId` | [sales-query/index.js](../server/public/workbench/features/sales-query/index.js) · [salesQueryService.js](../server/src/services/salesQueryService.js) |
+| 库存流水货品筛选 | `productRecordId` | [inventory/ledger.js](../server/public/workbench/features/inventory/ledger.js) · [v1WorkbenchService.js](../server/src/services/v1WorkbenchService.js) |
 
-### 待改造（当前仍按 number）
-
-| 页面 | 现状 | 目标 |
-|---|---|---|
-| 销售查询货品筛选 | 前端保存 `recordId`，请求只传 `product=<number>` | 传 `productRecordId`，后端按明细 `product_record_id` 过滤 |
-| 库存流水货品筛选 | 前端保存 `recordId`，请求只传 `product=<number>` | 传 `productRecordId`，后端按流水 `product_record_id` 过滤 |
-
-代码位置：
-
-- [sales-query/index.js](../server/public/workbench/features/sales-query/index.js) · [salesQueryService.js](../server/src/services/salesQueryService.js)
-- [inventory/ledger.js](../server/public/workbench/features/inventory/ledger.js) · [v1WorkbenchService.js](../server/src/services/v1WorkbenchService.js)
+> 2026-11-23：销售查询与库存流水已改为只认 `productRecordId`；旧 `product=<number>` 不再参与过滤。
 
 ## 4. API 契约
 
@@ -136,8 +128,6 @@ GET /api/workbench/products/search?q=货号
 
 ### 4.2 销售查询
 
-目标契约：
-
 ```text
 GET /api/workbench/sales/query?productRecordId=rec...
 ```
@@ -148,17 +138,9 @@ GET /api/workbench/sales/query?productRecordId=rec...
 销售明细.编号 关联记录 id === productRecordId
 ```
 
-兼容：
-
-```text
-旧链接可以继续带 product=<number>
-但新页面优先传 productRecordId
-两个都传时 productRecordId 优先
-```
+> 禁止再使用 `product=<number>` 作为筛选参数。
 
 ### 4.3 库存流水
-
-目标契约：
 
 ```text
 GET /api/workbench/inventory/ledger?productRecordId=rec...
@@ -242,7 +224,7 @@ product_record_id = number
 4. 选择 A 提交采购 / 售后 → payload 里是 A 的 `productRecordId`；
 5. 选择 B 不会被 A 的历史污染；
 6. 售后选中 d1 → 只操作 d1，不操作同货品的 d2；
-7. 旧 `product=number` 参数仍能兼容（如果保留兼容）。
+7. 请求里只出现 `productRecordId`，不得再以 `product=number` 过滤。
 
 ## 8. 相关历史口径
 
