@@ -28,7 +28,7 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
   if (!gateway && !deliveryRead) throw new Error('SalesQueryService requires gateway');
   const reader = deliveryRead || createSalesDeliveryReadService({ gateway });
 
-  const getSalesQuery = async ({ from = '', to = '', product = '', productRecordId = '' } = {}) => {
+  const getSalesQuery = async ({ from = '', to = '', productRecordId = '' } = {}) => {
     const today = todayKey(toDate(now()) || new Date());
     const fromText = String(from || today).trim();
     const toText = String(to || today).trim();
@@ -109,21 +109,14 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
     const undelivered = salesDetails.filter((row) => row.fulfillment_status === SALES_QUERY.undeliveredStatus);
     const sumAmount = (rows) => Math.round(rows.reduce((sum, row) => sum + Number(row.actual_amount || 0), 0) * 100) / 100;
 
-    const productNumber = String(product || '').trim();
     const productId = String(productRecordId || '').trim();
     const ordersInRange = (data.orders || [])
       .filter((order) => inRange(order.recorded_at, fromText, toText))
       // 销售明细按货品筛选时，保留包含该货品的整张订单（订单头与全部明细都不裁剪）。
-      // recordId 优先：同货号/同编号的重复记录只有 recordId 能区分。
-      .filter((order) => {
-        if (productId) {
-          return (order.details || []).some((detail) => detail.product_record_id === productId);
-        }
-        if (!productNumber) return true;
-        return (order.details || []).some(
-          (detail) => String(detail.number || detail.product || '').trim() === productNumber,
-        );
-      });
+      // 只认 recordId：同货号/同编号的重复记录只有 recordId 能区分；number 不参与过滤。
+      .filter((order) => !productId || (order.details || []).some(
+        (detail) => detail.product_record_id === productId,
+      ));
     const bundledAccessoryAmount = ordersInRange.reduce((sum, order) => sum + Number(order.accessory_amount || 0), 0);
     const accessoryReceiptPrefix = `${ACCESSORY_SALE_SYNC.receiptPrefix}-`;
     const standaloneAccessoryAmount = payments

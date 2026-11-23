@@ -118,9 +118,13 @@ const createWorkbenchSalesRoutes = ({ options = {}, followup, ordersCache } = {}
     return salesQueryInstance;
   };
   router.get('/sales/query', async (req, res) => {
+    // 旧 product=<number> 已禁用：number 不唯一，继续接受会返回未过滤结果。
+    if (req.query.product != null) {
+      return res.status(400).json({ success: false, error: 'product_filter_removed' });
+    }
     try {
       return res.json({ success: true, ...await salesQuery().getSalesQuery({
-        from: req.query.from, to: req.query.to, product: req.query.product,
+        from: req.query.from, to: req.query.to,
         productRecordId: req.query.productRecordId || req.query.product_record_id,
       }) });
     } catch (error) {
