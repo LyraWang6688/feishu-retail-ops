@@ -219,6 +219,8 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const totalAmountById = new Map(orders.map((order) => [order.record_id, order.fields?.[totalField] ?? null]));
     const accessoryAmountById = new Map(orders.map((order) => [order.record_id,
       Number(textValue(order.fields?.[orderFields.accessoryAmount])) || 0]));
+    const giftById = new Map(orders.map((order) => [order.record_id, textValue(order.fields?.[orderFields.gift]).trim()]));
+    const accessoryById = new Map(orders.map((order) => [order.record_id, textValue(order.fields?.[orderFields.accessory]).trim()]));
     const colorNameById = new Map(colors.map((item) => [item.record_id, textValue(item.fields?.[colorFields.name]).trim()]));
     const sizeValueById = new Map(sizes.map((item) => [item.record_id, textValue(item.fields?.[sizeFields.size]).trim()]));
     const methodRows = methodList?.ok ? methodList.items : [];
@@ -321,6 +323,8 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
         details: detailRows,
         payments: paymentRows,
         payable_amount: group.totalAmount == null || group.totalAmount === '' ? null : Number(group.totalAmount),
+        gift: giftById.get(group.salesEntryRecordId) || '',
+        accessory: accessoryById.get(group.salesEntryRecordId) || '',
         accessory_amount: accessoryAmountById.get(group.salesEntryRecordId) || 0,
         pending_amount: pendingAmount,
       });

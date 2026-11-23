@@ -18,6 +18,7 @@ const fixture = () => ({
   orders: [
     {
       order_no: 'A-1', recorded_at: at(18, 9), payable_amount: 150, accessory_amount: 10,
+      gift: '袜子×1', accessory: '鞋油×1、乳胶垫×1',
       payments: [
         { method: '微信扫码', amount: 100, status: '已收款', trade_direction: '收入' },
         { method: '抖音团购券', amount: 50, status: '待平台结算', trade_direction: '收入' },
@@ -71,6 +72,9 @@ test('AC-SQ3 销售单区块按录单日筛选、总金额取销售主表，明�
   const data = await svc.getSalesQuery({ from: '2026-11-18', to: '2026-11-18' });
   assert.deepEqual(data.orders.map((order) => order.order_no), ['A-1']);
   assert.equal(data.orders[0].total_amount, 150);
+  assert.equal(data.orders[0].gift, '袜子×1');
+  assert.equal(data.orders[0].accessory, '鞋油×1、乳胶垫×1');
+  assert.equal(data.orders[0].accessory_amount, 10);
   assert.deepEqual(data.orders[0].details.map((detail) => detail.fulfillment_status), ['已交付', '未交付', '已退货']);
   assert.equal(data.orders[0].payments.length, 2);
 });
