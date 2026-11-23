@@ -217,6 +217,7 @@ test('AC-DY15 ⭐ 账单详情按 bill_date 查（金额在 amount.goods）', as
   assert.match(call.url, /account_id=7365018427183990825/);
   assert.match(call.url, /bill_date=2026-10-26/);
   assert.match(call.url, /cursor=0/);
+  assert.match(call.url, /size=50/, '账单分页默认 50（size=100 会 2100005）');
 });
 
 test('AC-DY16 ⭐ 提现记录按日期区间查', async () => {
@@ -230,6 +231,7 @@ test('AC-DY16 ⭐ 提现记录按日期区间查', async () => {
   const call = calls.find((item) => item.url.includes('settle/withdraw/composite_query'));
   assert.match(call.url, /start_date=2026-10-31/);
   assert.match(call.url, /end_date=2026-10-31/);
+  assert.match(call.url, /size=50/, '提现分页默认 50（size=100 会 2100005）');
 });
 
 test('AC-DY17 ⭐ 日期格式非法 ⇒ param_invalid，不发请求', async () => {

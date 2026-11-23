@@ -290,6 +290,11 @@ test('AC-VS13 ⭐ 金额换算', () => {
   assert.equal(toCents(''), 0);
 });
 
+test('AC-VS22 ⭐ 平台分页默认 50（size=100 会 2100005）', () => {
+  const cfg = createVoucherSettlementConfig({});
+  assert.equal(cfg.pageSize, 50);
+});
+
 test('AC-VS14 ⭐ 配置默认 14:00（不再有全局结算天数）', () => {
   const cfg = createVoucherSettlementConfig({});
   assert.equal(cfg.hour, 14);

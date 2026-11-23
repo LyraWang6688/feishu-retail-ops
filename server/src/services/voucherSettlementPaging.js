@@ -11,10 +11,10 @@
  */
 const createSettlementPaging = ({
   logger = { logWarn: () => {} },
-  pageSize = 100,
+  pageSize = 50,
   pageLimit = 50,
 } = {}) => {
-  const size = Math.max(1, Math.min(100, Number(pageSize) || 100));
+  const size = Math.max(1, Math.min(50, Number(pageSize) || 50));
   const limit = Math.max(1, Number(pageLimit) || 50);
 
   return async ({ label, listKey, fetchPage }) => {

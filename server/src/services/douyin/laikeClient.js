@@ -217,7 +217,7 @@ const createLaikeClient = (options = {}) => {
    * 返回的每条 `ledger_records` 带 `ledger_id / sku_id / verify_id / settlement_time`，
    * `amount.goods` = 平台结算款（分）。
    */
-  const settleBill = async ({ accountId, billDate, cursor = 0, size = 100 } = {}) => {
+  const settleBill = async ({ accountId, billDate, cursor = 0, size = 50 } = {}) => {
     if (!isNonEmptyString(accountId)) return fail('param_missing', config.texts.verifyAccountRequired);
     if (!DATE_RE.test(String(billDate || ''))) return fail('param_invalid', config.texts.settleBillInvalid);
     const authorized = await token();
@@ -235,7 +235,7 @@ const createLaikeClient = (options = {}) => {
    * 提现记录：按日期区间查（yyyy-MM-dd）。
    * 每条带 `withdraw_id / amount / settle_account / withdraw_time / status`。
    */
-  const settleWithdraw = async ({ accountId, startDate, endDate, cursor = 0, size = 100 } = {}) => {
+  const settleWithdraw = async ({ accountId, startDate, endDate, cursor = 0, size = 50 } = {}) => {
     if (!isNonEmptyString(accountId)) return fail('param_missing', config.texts.verifyAccountRequired);
     if (!DATE_RE.test(String(startDate || '')) || !DATE_RE.test(String(endDate || ''))) {
       return fail('param_invalid', config.texts.settleWithdrawInvalid);
