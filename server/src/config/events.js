@@ -317,6 +317,7 @@ const EVENTS = Object.freeze([
   'scan.page.failed',
   'scan.page.login_redirect',
   'scan.page.not_found',
+  'scan.page.record_delisted',
   'scan.page.record_fallback',
   'scan.page.record_lookup_failed',
   'scan.page.record_missing',

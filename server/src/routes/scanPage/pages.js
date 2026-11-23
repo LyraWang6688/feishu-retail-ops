@@ -1,13 +1,15 @@
 'use strict';
 
 /** 扫码页 GET 页面处理（P4-2b 从 routes.js 搬出）。 */
+const { SCAN_DELISTED } = require('../../config/scanPageDelisted');
+
 const installScanPageGetRoutes = ({ router, ctx }) => {
   const {
     buildWriteContext, clearDraftForScanIfNeeded, PURCHASE_RETURN_REALM, SCAN_PAGE,
     SUBMIT_TOAST, badNumberPage, candidatePaymentMethods, config, logInfo, logRendered,
     logWarn, lookupInputOf, notFoundPage, openIdOf, readMultiItemPending, realmScanPageConfig,
     realmScanTriggered, renderFlowOf, renderScan, renderScanSkeleton, resolveRealm, respondFailure,
-    scanTargetOf, sendHtml, sendPaymentStep, service, sessionIdOf, writeConfig, writeService,
+    scanTargetOf, sendHtml, sendHuman, sendPaymentStep, service, sessionIdOf, writeConfig, writeService,
   } = ctx;
 
   const ROUTE_PATTERNS = [config.route.recordPath].filter(Boolean);
@@ -234,6 +236,19 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
             number: String(view.number || lookupInputOf(req).recordId || ''),
           });
           return badNumberPage(res, 400, requestId);
+        }
+        if (view.reason === 'delisted') {
+          service.logTiming?.(timing, { requestId, found: false });
+          logRendered(req, {
+            page: 'delisted',
+            trigger: 'lookup_delisted',
+            number: String(view.number || lookupInputOf(req).recordId || ''),
+          });
+          return sendHuman(res, 409, {
+            title: SCAN_DELISTED.title,
+            body: SCAN_DELISTED.body,
+            requestId,
+          });
         }
         service.logTiming?.(timing, { requestId, found: false });
         // ⭐ `/r/{recordId}` 那条路读不到记录（记录被删 / 跨 Base）⇒ **同一条人话出口**，不是 500。

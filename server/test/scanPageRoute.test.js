@@ -113,6 +113,19 @@ test('页面：200 出库存表（含缺码高亮、0 用「—」、单价与�
   assert.equal(app.calls[0].recordId, 'prod_1');
 });
 
+test('已下架货品的标签 → 409 + 明确说明不能新销售、引导去售后入口', async () => {
+  login();
+  await withServer(appFor(async () => ({ found: false, number: '', reason: 'delisted' })), async (base) => {
+    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    assert.equal(response.status, 409);
+    const html = await response.text();
+    assert.match(html, /这个货品已下架/);
+    assert.match(html, /不能用于新销售/);
+    assert.match(html, /如需售后，请从售后入口扫描/);
+    assert.doesNotMatch(html, /没找到这个编号/);
+  });
+});
+
 test('没找到这个编号 → 404 + 一张说清楚的页面（不白屏、不 500）', async () => {
   login();
   await withServer(appFor(async () => ({ found: false, number: 'NOPE|黑色|男', reason: 'unknown' })), async (base) => {
