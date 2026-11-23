@@ -33,7 +33,8 @@ export const customSizesValidation = ({ draft, bodies, tabs, store }) => {
       const text = String(size ?? '').trim();
       if (!text && !store.quantityOf(draft, recordId, text)) continue;
       if (!/^[1-9]\d*$/.test(text)) return { ok: false, reason: 'invalid' };
-      if (standard.get(recordId)?.has(text) || seen.has(text)) return { ok: false, reason: 'duplicate' };
+      // 自定义尺码只和自己的同类去重：标准尺码 / 库存不参与。
+      if (seen.has(text)) return { ok: false, reason: 'duplicate' };
       seen.add(text);
     }
   }
@@ -62,7 +63,7 @@ export const pruneCustomSizes = ({ draft, bodies, tabs }) => {
     const kept = (sizes || []).filter((size) => {
       const text = String(size ?? '').trim();
       if (!/^[1-9]\d*$/.test(text)) return false;
-      if (standard.get(recordId)?.has(text) || seen.has(text)) return false;
+      if (seen.has(text)) return false;
       seen.add(text);
       return true;
     });
@@ -73,7 +74,6 @@ export const pruneCustomSizes = ({ draft, bodies, tabs }) => {
 };
 
 export const customRowsError = ({ group, draft, recordId, rows, store }) => {
-  const standard = new Set(sizesOfGroup(group));
   const existing = new Set((store.customSizesOf(draft, recordId) || []).map(String));
   const seen = new Set();
   if (!Array.isArray(rows) || !rows.length) return 'required';
@@ -81,7 +81,8 @@ export const customRowsError = ({ group, draft, recordId, rows, store }) => {
     const size = String(row?.size ?? '').trim();
     const quantity = String(row?.quantity ?? '').trim();
     if (!/^[1-9]\d*$/.test(size) || !/^[1-9]\d*$/.test(quantity)) return 'invalid';
-    if (standard.has(size) || existing.has(size) || seen.has(size)) return 'duplicate';
+    // 只跟“自定义尺码”去重；标准尺码是否存在、有没有库存都不看。
+    if (existing.has(size) || seen.has(size)) return 'duplicate';
     seen.add(size);
   }
   return '';
