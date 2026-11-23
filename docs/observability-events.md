@@ -680,7 +680,7 @@
 | `workbench.purchase.requests.failed` | 1 | src/routes/purchaseQuery.js |
 | `workbench.purchase.supplier_balances.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.query.retry` | 2 | src/services/v1WorkbenchService.js |
-| `workbench.sales.after_sales.candidates.failed` | 4 | src/routes/workbench/sales.js<br>src/routes/workbenchOrderActions.js |
+| `workbench.sales.after_sales.candidates.failed` | 3 | src/routes/workbenchOrderActions.js |
 | `workbench.sales.daily_cash.read_failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.daily_cash.save_failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.delivery.failed` | 3 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryAsyncService.js |
