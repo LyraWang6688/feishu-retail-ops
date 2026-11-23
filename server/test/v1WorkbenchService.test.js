@@ -183,6 +183,7 @@ test('库存流水：按创建时间倒序，映射四列并可限制条数', as
   assert.deepEqual(all.rows[0], {
     record_id: 'l_new',
     behavior: '销售减少',
+    product_record_id: '',
     number: 'B|白|女',
     size: '40',
     quantity_change: 2,
@@ -199,6 +200,23 @@ test('库存流水：按创建时间倒序，映射四列并可限制条数', as
   const filtered = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15', product: 'B|白|女' });
   assert.deepEqual(filtered.rows.map((row) => row.record_id), ['l_new']);
   assert.equal(filtered.total, 1, '过滤后统计按货品结果算');
+});
+
+test('库存流水按 productRecordId 精确过滤：同编号不同记录不合并', async () => {
+  const ledger = [
+    { record_id: 'l_a', fields: { 创建时间: 1700000000000, 库存行为: [{ text: '销售减少' }], 编号: [{ record_ids: ['prod_a'], text: 'SAME|黑|男' }], 尺码: [{ text: '39' }], 变动数量: 1 } },
+    { record_id: 'l_b', fields: { 创建时间: 1700000001000, 库存行为: [{ text: '销售减少' }], 编号: [{ record_ids: ['prod_b'], text: 'SAME|黑|男' }], 尺码: [{ text: '39' }], 变动数量: 1 } },
+  ];
+  const gateway = {
+    table: (key) => V1_BITABLE_SCHEMA.tables[key],
+    listAll: async (key) => (key === 'inventoryLedger' ? ledger : []),
+  };
+  const service = createWorkbenchService(gateway);
+  const byId = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15', productRecordId: 'prod_a' });
+  assert.deepEqual(byId.rows.map((row) => row.record_id), ['l_a']);
+  assert.equal(byId.rows[0].product_record_id, 'prod_a');
+  const legacy = await service.getInventoryLedger({ from: '2023-11-15', to: '2023-11-15', product: 'SAME|黑|男' });
+  assert.deepEqual(legacy.rows.map((row) => row.record_id).sort(), ['l_a', 'l_b'], '旧 number 参数保留兼容');
 });
 
 test('库存流水按创建时间下推并带字段裁剪；过滤失败才回退整表', async () => {

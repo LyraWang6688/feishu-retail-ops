@@ -118,7 +118,8 @@ export function createInventoryLedgerModule() {
       const query = new URLSearchParams();
       if (from) query.set('from', from);
       if (to) query.set('to', to);
-      if (state.product?.number) query.set('product', state.product.number);
+      if (state.product?.recordId) query.set('productRecordId', state.product.recordId);
+      else if (state.product?.number) query.set('product', state.product.number);
       const data = await api.get(query.toString() ? `${PAGE.api}?${query}` : PAGE.api);
       state.data = data;
       state.loading = false;
