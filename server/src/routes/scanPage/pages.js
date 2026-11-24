@@ -44,6 +44,7 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
               lines: draft.lines,
               status: 'draft',
               paymentStep: draft.step === 'payment' ? 'pending' : undefined,
+              draft_payment: draft.step === 'payment' ? (draft.payment || {}) : undefined,
               draft_id: draftId,
             },
           }));
@@ -193,6 +194,8 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
               realm,
               submitKey: writeService?.sessions?.submitKeyFor?.(sessionIdOf(req), pendingSession, 'sale') || '',
               count: pendingLines.length,
+              paymentRows: Array.isArray(pendingSession?.sale?.draft_payment?.paymentRows)
+                ? pendingSession.sale.draft_payment.paymentRows : undefined,
               // ⭐⭐ task-58：**哪一条判据把她顶到了资金页** —— 就是上面那个三选一。
               //   （她真机再出现这个现象时，grep `scan.page.rendered` 一眼看出是哪种形状 ✓）
               renderedTrigger: pendingLines.length > 0

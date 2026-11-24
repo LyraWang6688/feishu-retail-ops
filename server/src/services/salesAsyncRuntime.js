@@ -23,6 +23,12 @@ const createSalesAsyncRuntime = ({ gateway, writeService, config, options = {}, 
       require('./inventoryPrintIntentRuntime').getInventoryPrintIntentService().flush(input.jobId),
       // 库存成功后再执行“清零下架”意图；没有意图时 flush 只读 job 返回 no_intent。
       require('./stockDelistIntentRuntime').getStockDelistIntentService().flush(input.jobId),
+      // 销售真正写成功后才删对应草稿。
+      (async () => {
+        const draftId = String(input.job?.payload?.draft_id || '').trim();
+        const owner = String(input.job?.owner_open_id || input.job?.payload?.open_id || '').trim();
+        if (draftId && owner) await require('./salesDraftRuntime').getSalesDraftService().remove({ openId: owner, draftId });
+      })(),
     ]);
   const worker = options.salesAsync || createSalesAsyncWorker({
     gateway, writeService, asyncJobs, onSettled,
