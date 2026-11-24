@@ -14,7 +14,7 @@ export const supplierNameMap = (bodies = {}) => {
   return map;
 };
 
-const draftSupplierHtml = (draft, config, supplierNames) => {
+const draftSupplierHtml = (draft, config, supplierNames, staleIds = new Set()) => {
   const suppliers = new Map();
   for (const product of Object.values(draft?.products || {})) {
     const entries = Object.entries(product.entries || {})
@@ -36,7 +36,7 @@ const draftSupplierHtml = (draft, config, supplierNames) => {
       ${supplier.products
         .sort((a, b) => productTitle(a.product).localeCompare(productTitle(b.product), 'zh-CN'))
         .map(({ product, entries }) => `<div class="pr-pending-product">
-          <h4>${escapeHtml(productTitle(product))}</h4>
+          <h4>${escapeHtml(productTitle(product))}${staleIds.has(product.productRecordId) ? ` <small class="pr-pending-stale">${escapeHtml(config.texts.draftStale)}</small>` : ''}</h4>
           <ul>${entries.map((row) => `<li>${escapeHtml(fill(config.texts.pendingSizeLine, { size: row.size, quantity: row.quantity }))}</li>`).join('')}</ul>
         </div>`).join('')}
       <p class="pr-pending-total">${escapeHtml(fill(config.texts.pendingTotal, { total: supplier.total }))}</p>
@@ -90,8 +90,20 @@ const groupHtml = (title, batches, config, state) => {
   </section>`;
 };
 
+const draftStatusText = (config, state) => {
+  const savedAt = String(state.draftSavedAt || '').trim();
+  if (state.draftDirty || !savedAt) return config.texts.draftUnsaved;
+  const date = new Date(savedAt);
+  const time = Number.isNaN(date.getTime()) ? savedAt : date.toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  return String(config.texts.draftSavedAt || '').replace('{time}', time);
+};
+
 export const pendingListHtml = (draft, config, supplierNames = {}, submitted = [], state = {}) => {
-  const draftHtml = draftSupplierHtml(draft, config, supplierNames);
+  const filterIds = state.filterIds instanceof Set ? state.filterIds : null;
+  const staleIds = new Set(filterIds ? Object.keys(draft?.products || {}).filter((id) => !filterIds.has(String(id))) : []);
+  const draftHtml = draftSupplierHtml(draft, config, supplierNames, staleIds);
   const today = (submitted || []).filter((batch) => batch.is_today);
   const history = (submitted || []).filter((batch) => !batch.is_today);
   const groups = groupHtml(config.texts.todayTitle, today, config, state)
@@ -103,5 +115,5 @@ export const pendingListHtml = (draft, config, supplierNames = {}, submitted = [
     ? `<section class="pr-pending-submitted"><h3>${escapeHtml(config.texts.submittedTitle)}</h3>${groups}${more}</section>`
     : '';
   if (!draftHtml && !submittedHtml) return `<div class="pr-empty">${escapeHtml(config.texts.pendingEmpty)}</div>`;
-  return `<div class="pr-pending" data-pr-pending>${draftHtml ? `<section class="pr-pending-draft"><h3>${escapeHtml(config.texts.unsubmittedTitle)}</h3>${draftHtml}</section>` : ''}${submittedHtml}</div>`;
+  return `<div class="pr-pending" data-pr-pending>${draftHtml ? `<section class="pr-pending-draft"><h3>${escapeHtml(config.texts.unsubmittedTitle)}<small class="pr-pending-status">${escapeHtml(draftStatusText(config, state))}</small></h3>${draftHtml}</section>` : ''}${submittedHtml}</div>`;
 };

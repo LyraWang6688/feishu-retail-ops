@@ -26,6 +26,9 @@ export const createApi = (config) => {
   const loadSubmittedDetail = async (batchNo) => api.get(`${config.endpoints.submitted}/${encodeURIComponent(batchNo)}`);
   const submit = async ({ submitKey, items }) => api.post(config.endpoints.submit, { submitKey, items });
   const modify = async ({ batchNo, submitKey, items }) => api.post(config.endpoints.modify, { batchNo, submitKey, items });
+  const loadDraft = async () => api.get(config.endpoints.draft);
+  const saveDraft = async (snapshot) => api.post(config.endpoints.draft, { snapshot });
+  const deleteDraft = async () => api.delete(config.endpoints.draft);
 
   return {
     loadReplenish,
@@ -34,6 +37,9 @@ export const createApi = (config) => {
     loadSubmittedDetail,
     submit,
     modify,
+    loadDraft,
+    saveDraft,
+    deleteDraft,
     invalidate: (tab) => {
       if (tab === 'replenish') cache.replenish = null;
       if (tab === 'new') cache.newProducts = null;

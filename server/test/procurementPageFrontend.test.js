@@ -95,20 +95,6 @@ test('AC-P18f 上新副标题：供应商为空时不出现孤立的「·」', (
   assert.match(read(`${PUBLIC}/features/procurement/render.js`), /supplier \? config\.card\.newSubtitle : config\.card\.newSubtitleNoSupplier/);
 });
 
-test('修改预填货品带 locked：补货/上新刷新裁剪时不被误删', async () => {
-  const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
-  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
-  const memory = new Map();
-  const storage = { getItem: (key) => (memory.has(key) ? memory.get(key) : null), setItem: (key, value) => memory.set(key, value), removeItem: (key) => memory.delete(key) };
-  const draftStore = store.createDraftStore({ openId: 'ou_modify', config, storage, now: () => 1761600000000 });
-  let draft = draftStore.ensure();
-  draft = draftStore.setQuantity(draft, { productRecordId: 'recLocked', source: 'replenish', locked: true }, 39, 2);
-  draft = draftStore.setQuantity(draft, { productRecordId: 'recNormal', source: 'replenish' }, 40, 1);
-  draft = draftStore.pruneSource(draft, 'replenish', []);
-  assert.equal(draftStore.quantityOf(draft, 'recLocked', 39), 2, '修改预填的货品不能被刷新裁掉');
-  assert.equal(draftStore.quantityOf(draft, 'recNormal', 40), 0, '普通刷新仍按原逻辑裁剪');
-});
-
 test('尺码区域：采购补货 / 采购上新 / 验收明细共用 .pr-size-grid 两列', () => {
   const css = read(`${PUBLIC}/procurement.css`);
   assert.match(css, /\.pr-size-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
@@ -142,13 +128,14 @@ test('AC-P27 自定义尺码草稿：跨供应商/刷新保留，提交进入现
   assert.deepEqual(draftStore.customSizesOf(draft, 'recA'), []);
 });
 
-test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉已消失的已选行', async () => {
+test('AC-P19b 实时刷新：不再裁掉已选行，刷新保留草稿', async () => {
   const configSource = read(`${PUBLIC}/config/procurement.js`);
   assert.match(configSource, /autoMs: 0/, '默认不自动刷新（业务负责人：打开时更新一次就够）');
   assert.match(configSource, /visibilityRefreshMs: 0/);
   const refresh = read(`${PUBLIC}/features/procurement/refresh.js`);
   assert.match(refresh, /data-pr-refresh/);
-  assert.match(refresh, /pruneSource/);
+  assert.doesNotMatch(refresh, /pruneSource/, '已选行不能因刷新消失');
+  assert.match(refresh, /setDraft\(result\.draft\)/);
   assert.match(refresh, /visibilitychange/);
   assert.ok(lines(`${PUBLIC}/features/procurement/refresh.js`) <= 200);
   assert.match(read(`${PUBLIC}/features/procurement/suggested.js`), /data-pr-refresh/);
@@ -159,17 +146,11 @@ test('AC-P19b 实时刷新：刷新按钮 + 自动刷新配置 + 刷新后裁掉
   const storage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v), removeItem: (k) => memory.delete(k) };
   const draftStore = store.createDraftStore({ openId: 'ou_refresh', config, storage, now: () => 1761600000000 });
   let draft = draftStore.ensure();
-  draft = draftStore.seedDefaults(draft, 'replenish', [
-    { productRecordId: 'recKeep', itemNo: 'A1', color: '黑', sizes: [{ size: 39, prepaidSold: 1, spotSold: 0 }] },
-    { productRecordId: 'recGone', itemNo: 'A2', color: '黑', sizes: [{ size: 40, prepaidSold: 2, spotSold: 0 }] },
-  ]);
-  // 2026-11-17：预订也不再自动填数量（默认 0）⇒ 她手填的行才进草稿
-  assert.equal(draftStore.quantityOf(draft, 'recGone', 40), 0, '预订行默认 0');
   draft = draftStore.setQuantity(draft, { productRecordId: 'recKeep', source: 'replenish' }, 39, 1);
   draft = draftStore.setQuantity(draft, { productRecordId: 'recGone', source: 'replenish' }, 40, 2);
-  const pruned = draftStore.pruneSource(draft, 'replenish', ['recKeep']);
-  assert.equal(draftStore.quantityOf(pruned, 'recKeep', 39), 1, '还在数据里的已选行保留');
-  assert.equal(pruned.products.recGone, undefined, '刷新后已消失的货品要从草稿剔除（防提交看不见的行）');
+  draft = draftStore.save(draft);
+  assert.equal(draftStore.quantityOf(draft, 'recKeep', 39), 1);
+  assert.equal(draftStore.quantityOf(draft, 'recGone', 40), 2, '当前筛选外也要留在草稿');
 });
 
 test('底部提交条 + 空/错态都在渲染层（与视觉稿一致）', async () => {
@@ -256,4 +237,20 @@ test('AC-P19/P22 草稿纯函数：默认选中 / 合计 / items / submitKey 轮
   const fresh = draftStore.rotateSubmitKey(draftStore.ensure());
   assert.notEqual(fresh.submitKey, firstKey);
   assert.deepEqual(Object.keys(fresh.products), []);
+});
+
+test('预览区：未提交草稿 / 已报货 两段，草稿有保存状态和筛选外标记', async () => {
+  const pending = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/pending.js')).href);
+  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
+  const draft = { products: {
+    rec_a: { productRecordId: 'rec_a', itemNo: 'A1', color: '黑', supplierName: '供应商A', entries: { 39: 2 } },
+  } };
+  const html = pending.pendingListHtml(draft, config, {}, [
+    { batch_no: 'CGD-1', supplier_name: '供应商A', is_today: true, product_count: 1, total_quantity: 2 },
+  ], { filterIds: new Set(['other']), draftSavedAt: '2026-11-25T02:30:00.000Z', draftDirty: false });
+  assert.match(html, /未提交草稿/);
+  assert.match(html, /已保存/);
+  assert.match(html, /当前筛选外/);
+  assert.match(html, /已报货/);
+  assert.match(html, /CGD-1/);
 });

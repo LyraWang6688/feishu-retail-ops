@@ -160,3 +160,7 @@
 .pr-product-action { display:inline-flex; align-items:center; flex:0 0 auto; min-height:30px; padding:0 var(--space-2); border:1px solid var(--border); border-radius:var(--radius-pill); color:var(--primary); font-size:var(--font-size-xs); white-space:nowrap; text-decoration:none; }
 .pr-product-action--gap { max-width:100%; color:var(--warning-text); border-color:var(--warning-soft); background:var(--warning-soft); white-space:normal; overflow-wrap:anywhere; }
 .pr-product-action span { font-weight:var(--weight-bold); }
+.pr-pending-status { margin-left: var(--space-2); color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--weight-normal); }
+.pr-pending-stale { margin-left: var(--space-1); padding: 1px var(--space-1); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning-text); font-size: var(--font-size-xs); font-weight: var(--weight-normal); }
+.pr-save { flex: 0 0 auto; min-height: 42px; padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--primary); font-size: var(--font-size-sm); cursor: pointer; }
+.pr-save:disabled { opacity: 0.5; cursor: wait; }
