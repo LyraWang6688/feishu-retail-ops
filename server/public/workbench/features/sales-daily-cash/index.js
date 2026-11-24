@@ -18,6 +18,9 @@ export function createSalesDailyCashModule() {
     const withdrawalSaved = Boolean(record?.withdrawal_saved);
     const received = Number(record?.received_amount || 0);
     const realtime = Number(record?.realtime_amount || 0);
+    const douyinAmount = Number(record?.douyin_settlement_amount || 0);
+    const douyinStatus = String(record?.douyin_settlement_status || '').trim() || T.douyinEmptyStatus;
+    const douyinStatusClass = douyinStatus === '已到账' ? 'ok' : (douyinStatus === '未到账' ? 'wait' : '');
     const referenceAmount = Number(state.reference?.retained_amount || 0);
     const showReference = !hasRecord && Boolean(state.reference);
     const referenceHtml = showReference ? `<div class="dc-reference" data-dc-reference>
@@ -31,6 +34,13 @@ export function createSalesDailyCashModule() {
           <div><span>${escapeHtml(T.openingTitle)}</span><b>¥${opening.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
           <div><span>${escapeHtml(T.receivedTitle)}</span><b>¥${received.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
           <div><span>${escapeHtml(T.realtimeTitle)}</span><b>¥${realtime.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+        </div>
+      </section>
+      <section class="dc-card dc-coupon" data-dc-douyin>
+        <div class="dc-card-head"><h2>${escapeHtml(T.douyinTitle)}</h2></div>
+        <div class="dc-coupon-grid">
+          <div><span>${escapeHtml(T.douyinAmountLabel)}</span><b>¥${money(douyinAmount)}</b></div>
+          <div><span>${escapeHtml(T.douyinStatusLabel)}</span><em class="dc-coupon-status ${douyinStatusClass}">${escapeHtml(douyinStatus)}</em></div>
         </div>
       </section>
       <section class="dc-card dc-opening">

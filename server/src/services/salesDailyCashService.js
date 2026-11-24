@@ -67,6 +67,8 @@ const createSalesDailyCashService = ({
       received_amount: num(values[fieldName('receivedCash')]),
       realtime_amount: num(values[fieldName('closingCash')]),
       retained_amount: optionalNum(values[fieldName('retainedCash')]),
+      douyin_settlement_amount: num(values[fieldName('douyinSettlement')]),
+      douyin_settlement_status: textValue(values[fieldName('settlementStatus')]).trim(),
     };
   };
 
