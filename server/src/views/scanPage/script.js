@@ -504,6 +504,20 @@ const salesDraftScriptHtml = () => `<script data-view="sales-draft">
       if (status) status.textContent = '';
       var data = new FormData(form);
       data.set('draft_step', button.getAttribute('data-draft-step') || 'goods');
+      var accessoryRows = form.querySelectorAll('[data-accessory-row]');
+      if (accessoryRows.length) {
+        var accessoryList = [];
+        for (var ar = 0; ar < accessoryRows.length; ar += 1) {
+          var nameField = accessoryRows[ar].querySelector('[data-accessory-name]');
+          if (!nameField || !nameField.value) continue;
+          accessoryList.push({
+            name: String(nameField.value),
+            quantity: String((accessoryRows[ar].querySelector('[data-accessory-quantity]') || {}).value || '1'),
+            amount: String((accessoryRows[ar].querySelector('[data-accessory-amount]') || {}).value || ''),
+          });
+        }
+        if (accessoryList.length) data.set('draft_accessory_rows', JSON.stringify(accessoryList));
+      }
       var action = form.getAttribute('action') || location.pathname;
       var url = new URL(action, location.origin);
       url.pathname = url.pathname.replace(/\\/$/, '') + '/draft';

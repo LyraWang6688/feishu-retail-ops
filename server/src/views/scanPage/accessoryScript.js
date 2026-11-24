@@ -72,20 +72,35 @@ const accessoryRowsScriptHtml = () => `<script data-view="accessory-rows">
       .catch(function () { options = []; return options; });
     return loading;
   }
-  function addRow() {
+  function addRow(initial) {
     load().then(function (items) {
-      if (!items.length) { if (error) error.hidden = false; return; }
+      if (!items.length && !initial) { if (error) error.hidden = false; return; }
       var row = tpl.content.firstElementChild.cloneNode(true);
       var select = row.querySelector('[data-accessory-name]');
       var placeholder = document.createElement('option');
       placeholder.value = '';
       placeholder.textContent = section.getAttribute('data-accessory-placeholder') || '';
       select.appendChild(placeholder);
+      var known = false;
       for (var i = 0; i < items.length; i++) {
         var option = document.createElement('option');
         option.value = String(items[i].name || '');
         option.textContent = String(items[i].name || '');
         select.appendChild(option);
+        if (initial && String(items[i].name || '') === String(initial.name)) known = true;
+      }
+      if (initial && initial.name && !known) {
+        var restored = document.createElement('option');
+        restored.value = String(initial.name);
+        restored.textContent = String(initial.name);
+        select.appendChild(restored);
+      }
+      if (initial && initial.name) select.value = String(initial.name);
+      if (initial) {
+        var q = row.querySelector('[data-accessory-quantity]');
+        var a = row.querySelector('[data-accessory-amount]');
+        if (q) q.value = String(initial.quantity || '1');
+        if (a) a.value = String(initial.amount || '');
       }
       row.querySelector('[data-accessory-remove]').addEventListener('click', function () {
         row.remove();
@@ -95,9 +110,16 @@ const accessoryRowsScriptHtml = () => `<script data-view="accessory-rows">
       recalc();
     });
   }
-  add.addEventListener('click', addRow);
+  add.addEventListener('click', function(){ addRow(null); });
   rows.addEventListener('input', recalc);
   rows.addEventListener('change', recalc);
+  var draftInput = section.querySelector('[data-accessory-draft]');
+  if (draftInput && draftInput.value) {
+    try {
+      var draftRows = JSON.parse(draftInput.value);
+      for (var d = 0; d < draftRows.length; d += 1) addRow(draftRows[d]);
+    } catch (err) { /* bad draft rows: keep empty */ }
+  }
   recalc();
 })();
 </script>`;
