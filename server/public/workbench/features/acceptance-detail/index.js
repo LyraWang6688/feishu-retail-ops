@@ -121,12 +121,15 @@ const previewHtml = (groups) => (groups.length ? groups.map((group) => '<section
   + group.rows.map(previewRowHtml).join('')
   + '</section>').join('') : '<p class="empty">' + escapeHtml(ARRIVAL_FULL_TEXTS.previewEmpty) + '</p>');
 
-const shellHtml = () => '<nav class="pr-tabs arrival-tabs" role="tablist" aria-label="' + escapeHtml(ARRIVAL_FULL_TEXTS.acceptanceTabsLabel) + '">'
+const shellHtml = () => '<div class="pr-sticky-head arrival-sticky-head">'
+  + '<nav class="pr-tabs arrival-tabs" role="tablist" aria-label="' + escapeHtml(ARRIVAL_FULL_TEXTS.acceptanceTabsLabel) + '">'
   + '<button class="pr-tab active" type="button" role="tab" aria-selected="true" data-arrival-tab="accept">' + escapeHtml(ARRIVAL_FULL_TEXTS.acceptanceTab) + '</button>'
   + '<button class="pr-tab" type="button" role="tab" aria-selected="false" data-arrival-tab="preview">' + escapeHtml(ARRIVAL_FULL_TEXTS.previewTab) + '</button>'
   + '</nav>'
-  + '<div data-view="arrival-panel-accept">'
   + '<section class="arrival-summary" data-view="arrival-summary" aria-live="polite"></section>'
+  + '<section class="arrival-summary" data-view="arrival-preview-summary" aria-live="polite" hidden></section>'
+  + '</div>'
+  + '<div data-view="arrival-panel-accept">'
   + '<div data-view="arrival-products"></div>'
   + '<form class="arrival-detail-form" data-arrival-form>'
   + '<label class="form-field">' + escapeHtml(ORDERS_TEXTS.arrivalAmount)
@@ -137,7 +140,6 @@ const shellHtml = () => '<nav class="pr-tabs arrival-tabs" role="tablist" aria-l
   + '</form>'
   + '</div>'
   + '<div data-view="arrival-panel-preview" hidden>'
-  + '<section class="arrival-summary" data-view="arrival-preview-summary" aria-live="polite"></section>'
   + '<div data-view="arrival-preview-body"></div>'
   + '</div>'
   + '<div class="pr-bottom" data-view="arrival-bottom"><div class="pr-bottom-inner">'
@@ -206,9 +208,13 @@ export function mountPurchaseAcceptanceDetail(host) {
     }
     const acceptPanel = host.querySelector('[data-view="arrival-panel-accept"]');
     const previewPanel = host.querySelector('[data-view="arrival-panel-preview"]');
+    const acceptSummary = host.querySelector('[data-view="arrival-summary"]');
+    const previewSummary = host.querySelector('[data-view="arrival-preview-summary"]');
     const bottom = host.querySelector('[data-view="arrival-bottom"]');
     if (acceptPanel) acceptPanel.hidden = state.activeTab !== 'accept';
     if (previewPanel) previewPanel.hidden = state.activeTab !== 'preview';
+    if (acceptSummary) acceptSummary.hidden = state.activeTab !== 'accept';
+    if (previewSummary) previewSummary.hidden = state.activeTab !== 'preview';
     if (bottom) bottom.hidden = state.activeTab !== 'accept';
     if (state.activeTab === 'preview') renderPreview();
   };

@@ -269,6 +269,10 @@ class AfterSalesScanService {
           order_no: asText(textValue(entry.fields?.[entryFields.orderNo])) || entry.record_id,
           recorded_at: entry.fields?.[entryFields.recordedAt] ?? null,
           total_amount: numberOf(entry.fields?.[entryFields.orderTotal]),
+          // 与销售查询共用同一张订单卡：赠品 / 配品 / 配品总额必须一起带出。
+          gift: asText(textValue(entry.fields?.[entryFields.gift])),
+          accessory: asText(textValue(entry.fields?.[entryFields.accessory])),
+          accessory_amount: numberOf(entry.fields?.[entryFields.accessoryAmount]),
           payments: orderPayments,
           details: orderDetails,
         });

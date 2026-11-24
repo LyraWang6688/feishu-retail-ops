@@ -23,12 +23,13 @@ test('采购页固定 tab，库存调整 / 信息完善与货品标题同一行'
   assert.match(config, /infoLabel:\s*'信息完善'/, '资料不齐入口显示「信息完善」');
 });
 
-test('验收明细不显示标题/批次/供应商，汇总条固定在顶部', () => {
+test('验收明细不显示标题/批次/供应商，tab + 汇总条一起固定在顶部', () => {
   const source = read('features/acceptance-detail/index.js');
   const css = read('features/acceptance-detail/detail.css');
   assert.equal(source.includes('arrival-detail-head'), false, '验收明细标题区已删除');
   assert.equal(source.includes('detailPageTitle'), false, '不再渲染验收明细标题');
   assert.equal(source.includes('arrival-batch-label'), false, '不再渲染批次号');
   assert.equal(source.includes('arrival-supplier-label'), false, '不再渲染供应商');
-  assert.match(css, /\.arrival-summary\s*\{[^}]*position:\s*sticky/, '应到/实到/多到固定在顶部');
+  assert.match(source, /pr-sticky-head arrival-sticky-head/, '验收区 / 预览区复用采购页固定头部');
+  assert.match(css, /\.arrival-summary\[hidden\]\s*\{[^}]*display:\s*none/, '切换 tab 时只显示对应汇总条');
 });

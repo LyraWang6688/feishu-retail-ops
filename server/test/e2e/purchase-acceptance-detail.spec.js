@@ -24,11 +24,14 @@ test('验收明细：应到/实到/多到 + 自定义尺码后固定底栏同步
   await page.goto('/workbench/purchase-acceptance-detail.html?batchNo=BH-1&supplierRecordId=s1&supplierName=%E4%BE%9B%E5%BA%94%E5%95%86');
   await expect(page.locator('[data-view="arrival-summary"]')).toContainText('应到 7 双 / 实到 7 双 / 多到 0 双');
   await expect(page.locator('.arrival-product').first()).toContainText('1138-32');
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await page.evaluate(() => { document.body.style.minHeight = '1800px'; window.scrollTo(0, 900); });
   await page.waitForTimeout(50);
+  const tabsBox = await page.locator('.arrival-tabs').boundingBox();
   const summaryBox = await page.locator('[data-view="arrival-summary"]').boundingBox();
-  // 顶部多了「验收区 / 预览区」tab；汇总条在 tab 下方吸顶
-  expect(summaryBox.y).toBeLessThanOrEqual(80);
+  expect(tabsBox.y).toBeLessThanOrEqual(2);
+  // 顶部「验收区 / 预览区」tab 与汇总条整体吸顶；汇总条在 tab 下方
+  expect(summaryBox.y).toBeGreaterThanOrEqual(tabsBox.y + tabsBox.height - 2);
+  expect(summaryBox.y).toBeLessThanOrEqual(120);
 
   const p1 = page.locator('.arrival-product').filter({ hasText: '1138-32' });
   const sizeBoxes = await p1.locator('.arrival-size-row').evaluateAll((nodes) => nodes.map((node) => {

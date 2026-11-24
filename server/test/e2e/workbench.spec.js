@@ -123,6 +123,7 @@ const mockApi = async (page, {
           fulfillment_status: '已交付',
           order: {
             order_no: 'XSD-E2E-001', recorded_at: Date.now() - 3600000, total_amount: 300,
+            gift: '袜子×1', accessory: '鞋油×1', accessory_amount: 10,
             payments: [{ method: '现金', amount: 100, status: '已收款' }],
             details: [{ record_id: 'd1', number: 'YD1|黑|男', size: 40, actual_amount: 100, fulfillment_status: '已交付' }],
           },
@@ -586,6 +587,9 @@ test('售后扫一扫落地页：选哪条卡片，那条卡片就变成换货/�
   await expect(first).toContainText('XSD-E2E-001');
   await expect(first).toContainText('40 码');
   await expect(first).toContainText('¥300');
+  await expect(first).toContainText('赠品：袜子×1');
+  await expect(first).toContainText('配品：鞋油×1');
+  await expect(first).toContainText('¥10');
   await expect(page.locator('.sq-detail-highlight')).toHaveCount(2);
 
   // 选中哪条记录，**那条卡片上**就出现两个按钮（换货 · 退货）。
