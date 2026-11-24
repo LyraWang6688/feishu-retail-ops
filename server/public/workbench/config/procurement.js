@@ -39,7 +39,7 @@ export const PROCUREMENT_UI = Object.freeze({
     refreshing: '刷新中…',
     refreshed: '已更新到最新数据',
     noSelection: '还没有选要采购的货品。',
-    rangeLabel: '统一范围',
+    rangeLabel: '筛选范围',
     authFailed: '工作台启动失败：',
     supplierLabel: '供应商',
     supplierUnassigned: '未标注',
