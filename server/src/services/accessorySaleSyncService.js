@@ -81,6 +81,13 @@ const createAccessorySaleSyncService = ({
 
       const fields = record.fields || {};
       const F = config.sourceFields;
+      // 新链路已经先写 S交易明细、明细回填「交易明细」⇒ 旧逐行同步不再重复记账。
+      if (F.payment && linkedRecordIds(fields[F.payment]).length) {
+        log.info('accessory.sale.sync.skipped', {
+          record_id: sourceRecordId, reason: 'already_linked_to_payment',
+        });
+        return { recordId: sourceRecordId, skipped: true, reason: 'already_linked_to_payment' };
+      }
       const nameIds = linkedRecordIds(fields[F.name]);
       const quantity = amountOf(fields[F.quantity]);
       const amount = amountOf(fields[F.amount]);

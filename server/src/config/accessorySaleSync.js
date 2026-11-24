@@ -28,6 +28,9 @@ const ACCESSORY_SALE_SYNC = Object.freeze({
   sourceFields: Object.freeze({
     name: '名称',
     quantity: '数量',
+    // 2026-11-24：自建配品销售先写 S交易明细，再把明细挂到「交易明细」；
+    // 旧逐行同步看到已关联的记录必须跳过，避免再次按行写收款。
+    payment: '交易明细',
     amount: '金额',
     method: '收款方式',
     // 收付日优先取它（业务负责人 2026-11-17：源表销售日比处理时刻准确）。
