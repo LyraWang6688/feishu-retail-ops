@@ -18,6 +18,7 @@ const { submitToastUrl } = require('../../utils/submitToast');
 const { logInfo, logWarn, logError } = require('../../utils/logger');
 const { ASYNC_JOB_TYPES } = require('../../config/asyncJobs');
 const { getStockDelistIntentService } = require('../stockDelistIntentRuntime');
+const { STOCK_DELIST } = require('../../config/stockDelist');
 
 /**
  * 本单涉及的鞋类货品（去重；配品/没有 product_record_id 的不进打印页）。
@@ -108,7 +109,20 @@ const enqueueSaleAsync = async ({
   }
   const products = Array.isArray(printProducts) ? printProducts : salePrintProductsOf(lines);
   // 用户选了“全部下架”时，不进入打印页；仍有其他未下架货品时，只打印剩余货品。
-  const printableProducts = products.filter((product) => !delistIds.includes(String(product.recordId || '')));
+  const stockAfter = new Map();
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const id = String(line.product_record_id || line.productRecordId || '').trim();
+    if (!id || line.kind === 'accessory') continue;
+    const stock = Number(line.stock_total);
+    if (!Number.isFinite(stock)) continue;
+    stockAfter.set(id, (stockAfter.get(id) ?? stock) - 1);
+  }
+  const printableProducts = products.filter((product) => {
+    const id = String(product.recordId || product.productRecordId || '');
+    if (STOCK_DELIST.print.excludeDelisted && delistIds.includes(id)) return false;
+    if (STOCK_DELIST.print.excludeZeroStock && stockAfter.has(id) && stockAfter.get(id) <= 0) return false;
+    return true;
+  });
   let printPromptUrl = '';
   if (saleJobId && printableProducts.length) {
     const prompt = getPrintPromptService().create({
