@@ -25,7 +25,7 @@ const fakeGateway = (overrides = {}) => {
       { record_id: 'p2', fields: { 编号: 'OTHER|米色|女', 货号: 'OTHER', 颜色: '米色' } },
     ],
     salesEntry: [
-      { record_id: 'e1', fields: { 销售单号: 'XSD-1', 写入状态: '成功', 录单日: NOW - DAY, 总金额: { type: 20, value: [{ text: '300' }] }, 收款明细: { link_record_ids: ['pay1'] } } },
+      { record_id: 'e1', fields: { 销售单号: 'XSD-1', 写入状态: '成功', 录单日: NOW - DAY, 总金额: { type: 20, value: [{ text: '300' }] }, 赠品: '袜子×1', 配品: '鞋油×1', 配品总额: 10, 收款明细: { link_record_ids: ['pay1'] } } },
       { record_id: 'e2', fields: { 销售单号: 'XSD-2', 写入状态: '失败', 录单日: NOW - DAY, 总金额: 200 } },
       { record_id: 'e3', fields: { 销售单号: 'XSD-3', 写入状态: '成功', 录单日: NOW - 40 * DAY, 总金额: 100 } },
     ],
@@ -60,7 +60,7 @@ const fakeGateway = (overrides = {}) => {
       const table = {
         product: { fields: { number: '编号', itemNo: '货号', color: '颜色' } },
         salesEntry: {
-          fields: { orderNo: '销售单号', writeStatus: '写入状态', recordedAt: '录单日' },
+          fields: { orderNo: '销售单号', writeStatus: '写入状态', recordedAt: '录单日', gift: '赠品', accessory: '配品', accessoryAmount: '配品总额' },
           readOnlyFields: { orderTotal: { name: '总金额' }, paymentRecords: { name: '收款明细' } },
         },
         salesDetail: { fields: { product: '编号', salesEntry: '销售单号', size: '尺码', soldAt: '销售日', fulfillmentStatus: '履约状态', actualAmount: '实收金额' } },
@@ -122,6 +122,9 @@ test('售后卡片：候选附带整张订单，供前端复用销售明细卡�
   const out = await service.listCandidates({ productRecordId: 'p1' });
   assert.equal(out.candidates[0].order.total_amount, 300);
   assert.equal(out.candidates[0].order.recorded_at, NOW - DAY);
+  assert.equal(out.candidates[0].order.gift, '袜子×1');
+  assert.equal(out.candidates[0].order.accessory, '鞋油×1');
+  assert.equal(out.candidates[0].order.accessory_amount, 10);
   assert.deepEqual(out.candidates[0].order.payments, [{ method: '现金', amount: 300, status: '已收款' }]);
   assert.deepEqual(out.candidates[0].order.details.map((row) => row.record_id), ['d1', 'd2', 'd5', 'd6', 'd7', 'd8']);
 });

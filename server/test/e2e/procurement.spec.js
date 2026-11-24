@@ -73,6 +73,8 @@ test('AC-P28 顶部搜索固定；全局搜索跨 tab/供应商并自动定位',
   await page.waitForTimeout(50);
   const box = await head.boundingBox();
   expect(box.y).toBeLessThanOrEqual(2);
+  const tabsBox = await head.locator('.pr-tabs').boundingBox();
+  expect(tabsBox.y).toBeLessThanOrEqual(2);
   const search = head.locator('[data-pr-search]');
   await search.fill('LY002');
   const results = page.locator('[data-pr-search-results]');
