@@ -1,5 +1,5 @@
 const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS, fillText } = require('../../config/scanPage');
-const { REALM_TEXTS, saleSizeGroups } = require('../scanPageRealm');
+const { REALM_TEXTS, saleSizeGroups, sellableCountOf } = require('../scanPageRealm');
 const { realmScanConfigHtml } = require('../scanRealmScan');
 const { escapeHtml } = require('./fields');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');
@@ -148,6 +148,12 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const t = write.texts;
   const fields = write.fields;
   const lines = write.draft?.lines || [];
+  const stockTotal = (Array.isArray(view?.rows) ? view.rows : [])
+    .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
+    .reduce((sum, row) => sum + Number(sellableCountOf(row, view?.columns) || 0), 0);
+  const singleProduct = lines.length > 0 && new Set(lines.map((line) => String(line.product_record_id || ''))).size === 1
+    && String(lines[0].product_record_id || '') === String(view?.product_record_id || '');
+  const delistSaleQty = singleProduct ? lines.length : null;
   const sizeInput = sizeGroupsHtml(view);
   // ⭐ 2026-10-29：扫码页「流程配置」（`config/scanFlows.js`）—— 换款式等流程只声明差异：
   //   · 不显示"这一双的金额"输入（金额按货品单价算）；
@@ -282,8 +288,13 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     : ` data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}"`;
   return `<section class="card">${flowBanner ? `<p class="flow-banner">${escapeHtml(flowBanner)}</p>` : ''}
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
-<form method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-sample-candidates="${escapeHtml(JSON.stringify(sampleCandidates))}"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
+<form method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-sample-candidates="${escapeHtml(JSON.stringify(sampleCandidates))}"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}
+data-delist-product-id="${delistSaleQty == null ? '' : escapeHtml(String(view?.product_record_id || ''))}"
+data-delist-stock-total="${delistSaleQty == null ? '' : escapeHtml(String(stockTotal))}"
+data-delist-sale-qty="${delistSaleQty == null ? '' : escapeHtml(String(delistSaleQty))}"
+data-delist-prompt="${escapeHtml(String(config.saleDelistPrompt || ''))}">
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
+${hiddenField(write.fields.delistProductIds, '')}
 ${samplePromotionHtml()}
 ${sizeInput}
 ${hideAmountInput ? '' : `<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"></div>`}
