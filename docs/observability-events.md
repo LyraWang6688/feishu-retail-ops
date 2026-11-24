@@ -13,7 +13,7 @@
 | `accessory.sale.sync.dispatch_failed` | 1 | src/routes/larkEvents.js |
 | `accessory.sale.sync.failed` | 4 | src/services/accessorySaleSyncService.js |
 | `accessory.sale.sync.not_wired` | 1 | src/routes/larkEvents.js |
-| `accessory.sale.sync.skipped` | 7 | src/services/accessorySaleSyncService.js |
+| `accessory.sale.sync.skipped` | 8 | src/services/accessorySaleSyncService.js |
 | `accessory.sample_image.drive.dispatch_failed` | 1 | src/routes/larkEvents.js |
 | `accessory.sample_image.drive.failed` | 2 | src/services/accessorySampleImageDriveService.js |
 | `accessory.sample_image.drive.name_exists` | 1 | src/services/accessorySampleImageDriveService.js |
