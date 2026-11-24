@@ -188,6 +188,7 @@ const buildReplenishView = ({
       number: textOf(dto.number),
       itemNo: textOf(dto.itemNo),
       color: textOf(dto.color),
+      category: textOf(dto.category),
       supplierRecordId: dto.supplierRecordId || '',
       supplierName: dto.supplierName || '',
       product_missing_text: dto.product_missing_text || '',
