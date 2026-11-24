@@ -120,6 +120,9 @@ const createScanPageSetup = ({ options, deps }) => {
     defaultPaymentStatus: writeConfig.sale.paymentStatus.default,
     paidAmount: String(opts.paidAmount || ''),
     ...(Array.isArray(opts.paymentRows) ? { paymentRows: opts.paymentRows } : {}),
+    giftValue: String(opts.gift || ''),
+    accessoryValue: String(opts.accessory || ''),
+    accessoryTotalValue: String(opts.accessoryTotal || ''),
     draft: { lines: [] },
   });
   /**
