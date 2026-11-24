@@ -90,10 +90,10 @@ test('AC-MIR1 🔴 补货 / 退货**两块都有**那个入口（去掉任一处
   assert.match(html, /data-view="multi-item-list"/, '那一块必须有"已加货品"的列表');
   assert.match(html, new RegExp(`name="${MULTI_ITEM_ORDER.field}"`),
     '必须有那个 hidden 字段（字段名来自配置 ✓）');
-  // 🔴 **零 JS**：扫码页有既有哨兵（`AC-W2` / `AC-6R5`）钉着"一行 `<script>` 都不许有" ⇒
-  //   这一块**必须是纯 HTML**（入口做成链接，提交时由路由侧去记草稿）✓
   assert.doesNotMatch(html, /<script/i, '这一块里**不许有任何 `<script>`**（扫码页零 JS 是既有判据 ✗ 不放宽）');
-  assert.match(html, /data-multi-add[^>]*href="/, '「再加一个货品」必须是一颗**链接**（零 JS 下唯一的"加"法 ✓）');
+  // 2026-11-24：旧 ?add=1 链接已删除，入口只剩表单 submit。
+  assert.match(html, /<button[^>]*data-multi-add/, '「再加一个货品」必须是表单 submit');
+  assert.equal(html.includes('href="?add=1"'), false, '旧链接不再出现');
   // 首件**由服务端**渲进 hidden 字段（形状 = §4.3；`entries` 由路由在提交时合并 ✓）
   const hiddenValue = html.match(new RegExp(`name="${MULTI_ITEM_ORDER.field}" value="([^"]*)"`))[1];
   const baked = JSON.parse(hiddenValue.replace(/&quot;/g, '"'));

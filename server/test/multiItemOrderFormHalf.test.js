@@ -185,10 +185,10 @@ test('AC-MI-F3 ⭐⭐ 隐藏字段 = `[首件, ...已加]`，已加那几件**�
   assert.equal(payload[2].product_record_id, 'recAdded2', '第 3 件逐字透传 ✓');
 });
 
-test('AC-MI-F3b ⭐ 接线关上时：隐藏字段**仍只渲首件**（接线半的语义不许泄漏到缺省页 ✓）', async () => {
+test('AC-MI-F3b ⭐ 旧链接删除后：隐藏字段始终包含首件 + 已加货品', async () => {
   const block = await fetchRealm('replenish', { multi_items: [...ALREADY] });
   const payload = payloadOf(block);
-  assert.equal(payload.length, 1, '🔴 没接线 ⇒ 只渲首件（与今天逐字一致 ✓ 零回归）');
+  assert.equal(payload.length, 3, '首件 + 已加两件（不再有“接线关只渲首件”分支）');
   assert.deepEqual(payload[0].entries, []);
 });
 
@@ -237,12 +237,10 @@ test('AC-MI-F5 🔴 零 JS 哨兵**未动**：本刀不加任何 `<script>`（�
     '那颗入口是 **submit 按钮**（不是脚本 ✓）');
 });
 
-test('AC-MI-F5b ⭐ 接线关 ⇒ 与今天**逐字一致**：入口仍是链接、没有删除按钮（零回归 ✓）', async () => {
+test('AC-MI-F5b ⭐ 旧链接删除后：入口始终是表单 submit', async () => {
   const block = await fetchRealm('replenish');
-  assert.match(block, /data-multi-add[^>]*href="/,
-    '⭐ 接线关 ⇒ 入口仍是那颗链接（既有判据 `Render:73` / `ReturnTrim:166` 原样绿 ✓ 零迁移 ✓）');
-  assert.equal(block.includes('data-multi-remove'), false, '接线关 ⇒ 没有删除按钮 ✓');
-  assert.equal(block.includes('multi_item_add'), false, '接线关 ⇒ 页面上不出现接线字段名 ✓');
+  assert.match(block, /<button[^>]*data-multi-add/, '入口固定是表单 submit');
+  assert.equal(block.includes('href="?add=1"'), false, '旧链接不再出现');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -253,8 +251,8 @@ test('AC-MI-F6 ⭐ 探针：缺 `addAction` ⇒ 退回链接；缺 `removeField`
   const onlyRemove = renderer.multiItemBlockHtml(
     { postAction: '/r/x', multiItem: { removeField: 'r' } }, { number: 'K1' },
   );
-  assert.match(onlyRemove, /data-multi-add[^>]*href="/,
-    '探针：缺 `addAction` ⇒ **退回链接** ✓（说明 F1 考的正是那个位）');
+  assert.match(onlyRemove, /<button[^>]*data-multi-add/,
+    '探针：缺 `addAction` 仍是 submit（旧链接已删）');
   const onlyAdd = renderer.multiItemBlockHtml(
     { postAction: '/r/x', multiItem: { addAction: 'a', addValue: 'v' } }, { number: 'K1' },
   );
@@ -264,5 +262,5 @@ test('AC-MI-F6 ⭐ 探针：缺 `addAction` ⇒ 退回链接；缺 `removeField`
   const noValue = renderer.multiItemBlockHtml(
     { postAction: '/r/x', multiItem: { addAction: 'a' } }, { number: 'K1' },
   );
-  assert.match(noValue, /data-multi-add[^>]*href="/, '探针：缺 `addValue` ⇒ 退回链接 ✓');
+  assert.match(noValue, /<button[^>]*data-multi-add/, '探针：缺 `addValue` 仍是 submit（旧链接已删）');
 });

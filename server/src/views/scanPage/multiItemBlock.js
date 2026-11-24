@@ -44,11 +44,15 @@ const MULTI_ITEM_ITEM_KEYS = Object.freeze([
 const MULTI_ITEM_ENTRY_KEYS = Object.freeze(['size', 'quantity']);
 
 /** 一单多货品的载荷 JSON（**纯函数**，用例直接钉它 ✓；形状 = 设计 §4.3）。 */
-const multiItemPayloadJson = (items = []) => JSON.stringify(
+const multiItemPayloadJson = (items = [], mode = '') => JSON.stringify(
   (Array.isArray(items) ? items : []).map((item) => {
     const out = {};
     for (const key of MULTI_ITEM_ITEM_KEYS) {
       out[key] = key === 'entries' ? undefined : String((item || {})[key] ?? '');
+    }
+    if (mode === 'return' && item && item.stock_total !== undefined && item.stock_total !== null
+      && Number.isFinite(Number(item.stock_total))) {
+      out.stock_total = Number(item.stock_total);
     }
     out.entries = (Array.isArray((item || {}).entries) ? item.entries : []).map((entry) => {
       const line = {};
@@ -115,10 +119,11 @@ const multiItemBlockHtml = (write, view = {}, mode = '', page = {}) => {
   const addAction = String((wire && wire.addAction) || '');
   const addValue = String((wire && wire.addValue) || '');
   const removeField = String((wire && wire.removeField) || '');
-  const wired = Boolean(addAction && addValue);
   const first = {
     product_record_id: view.product_record_id, number: view.number, item_no: view.item_no,
     color: view.color, supplier_record_id: view.supplier_record_id, entries: [],
+    ...(mode === 'return' && view.stock_total !== undefined && view.stock_total !== null
+      ? { stock_total: view.stock_total } : {}),
   };
   const already = Array.isArray(view.multi_items) ? view.multi_items : [];
   const attr = (name, value) => (value === undefined || value === null || value === ''
@@ -144,10 +149,7 @@ const multiItemBlockHtml = (write, view = {}, mode = '', page = {}) => {
   //     逐字钉着它，本刀**不动**它 ✓；
   //   · **接线开** ⇒ 改成**同一张表单里的第二颗 submit**：🔴 这是"她填的尺码/数量不丢"的**唯一**办法
   //     （GET 链接天生带不走表单字段 ✗ —— 只有 POST 会把她填的那些一起发出去 ✓）。
-  const addHref = `${escapeHtml(write.postAction || '')}${String(write.postAction || '').includes('?') ? '&' : '?'}add=1`;
-  const addEntry = wired
-    ? `<button type="submit" class="btn btn--primary" data-multi-add name="${escapeHtml(addAction)}" value="${escapeHtml(addValue)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton)}</button>`
-    : `<a class="btn btn--primary" data-multi-add href="${addHref}">${escapeHtml(t.addButton)}</a>`;
+  const addEntry = `<button type="submit" class="btn btn--primary" data-multi-add name="${escapeHtml(addAction)}" value="${escapeHtml(addValue)}"${submitFeedbackAttrs(write)}>${escapeHtml(t.addButton)}</button>`;
   // ⭐⭐ 隐藏字段：**首件 + 已加的每一件**（每件**带着它自己的 `entries`**）✓
   //   🔴 为什么要带上已加的：她点「＋ 再加一个货品」时，表单里**只有当前这一件**的尺码/数量控件
   //     ⇒ 已加那几件的数量**只能靠这个字段带走**（不然点一下"加"，前面加的就全丢 ✗）。
@@ -169,15 +171,15 @@ const multiItemBlockHtml = (write, view = {}, mode = '', page = {}) => {
   ).trim();
   const currentKey = keyOf(first);
   const others = currentKey ? already.filter((item) => keyOf(item) !== currentKey) : already;
-  //   ⚠️ 接线关 ⇒ 逐字仍是 `[first]`（既有判据 AC-MIR1 读的就是它 ✓ 零迁移 ✓）。
-  const payload = wired ? [first, ...others] : [first];
+  // 旧 ?add=1 链接已删除：加货入口只剩表单 POST，载荷始终是首件 + 已加货品。
+  const payload = [first, ...others];
   // 🔴 说明那一段 + 标题：**精简档（退货 / 补货）不渲染**（她那句"不必要的文字提示"）✓
   //   ⚠️ 拼法上把"删掉的行"做成**整行**（不是行内空串）—— 空串留在模板里会多出空行，
   //     "删掉"就应该是**那一行不在**（也让她截图里不会看到一段莫名的空隙 ✓）。
   const lines = [];
   if (!trimmed) lines.push(`<p class="hint">${escapeHtml(t.hint)}</p>`);
   lines.push(addEntry);
-  lines.push(`<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson(payload))}">`);
+  lines.push(`<input type="hidden" name="${escapeHtml(field)}" value="${escapeHtml(multiItemPayloadJson(payload, mode))}">`);
   if (!trimmed) lines.push(`<h3 class="multi-item__title">${escapeHtml(t.title)}</h3>`);
   // ⭐⭐ 2026-10-16（task-61 · 「本单已加的货品」列表）。**列表 + 载荷**两处都从那同一份 `already` 来
   //   ⇒ 只报一次即可（列表上看得见的货品号 ✓ 与她眼睛看到的那一份逐字同源 ✓）。
