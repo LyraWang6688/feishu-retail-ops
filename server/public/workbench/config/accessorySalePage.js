@@ -3,6 +3,7 @@ export const ACCESSORY_SALE_PAGE = {
   optionsApi: '/api/workbench/accessory-sales/options',
   title: '配品销售',
   subtitle: '一次收款，多条配品明细',
+  selectedTitle: '已选配品',
   searchPlaceholder: '搜索配品名称 / 种类',
   emptyAccessories: '没有可售配品。',
   cartEmpty: '还没有添加配品。',
