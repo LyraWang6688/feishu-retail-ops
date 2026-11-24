@@ -2,6 +2,7 @@ import { requireFeishuAuth, showLoginButton } from './core/auth.js';
 import { describeError, showPageError } from './core/ui.js';
 import { createLabelPrintModule } from './features/labels/index.js';
 import { createSalesDailyCashModule } from './features/sales-daily-cash/index.js';
+import { createAccessorySaleModule } from './features/accessory-sale/index.js';
 import { TAP_TELEMETRY } from './config/telemetry.js';
 
 // 独立页面注册表：key = 页面的 <body data-view="...">，value = 该页面的模块工厂。
@@ -22,6 +23,7 @@ import { TAP_TELEMETRY } from './config/telemetry.js';
 const factories = {
   'label-print': () => createLabelPrintModule(),
   'sales-daily-cash': () => createSalesDailyCashModule(),
+  'accessory-sale': () => createAccessorySaleModule(),
 };
 
 async function start() {

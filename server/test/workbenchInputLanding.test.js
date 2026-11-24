@@ -74,6 +74,18 @@ const CHAINS = Object.freeze({
     externalLanding: PRODUCT_FEATURE_DIMENSIONS.map((item) => ({ tableName: item.tableName, column: PRODUCT_FEATURE_TAG_FIELD })),
   },
 
+  'T.api': {
+    fe: 'features/accessory-sale/index.js', feKey: 'api.post(T.api',
+    route: 'src/routes/workbench/accessorySales.js', routeKey: /router\.post\('\/accessory-sales'/,
+    service: 'src/services/accessorySaleOrderService.js', serviceKey: /gateway\.create\('paymentRecord'[\s\S]*gateway\.createBatch\('accessorySale'/,
+    landing: [
+      ['paymentRecord', 'receiptId'], ['paymentRecord', 'amount'], ['paymentRecord', 'method'],
+      ['paymentRecord', 'status'], ['paymentRecord', 'receivedAt'], ['paymentRecord', 'tradeDirection'],
+      ['accessorySale', 'orderNo'], ['accessorySale', 'item'], ['accessorySale', 'quantity'],
+      ['accessorySale', 'payment'], ['accessorySale', 'operator'], ['accessorySale', 'saleDate'],
+    ],
+  },
+
   'API.create': {
     fe: 'features/domains/accessoryConfig.js', feKey: 'api.post(API.create',
     route: 'src/routes/workbench/accessoryConfig.js', routeKey: /router\.post\('\/products\/accessories'/,
