@@ -13,6 +13,7 @@
  *     （包括空状态改成门盒/样品）。
  */
 const { relation } = require('../v1ReferenceResolver');
+const { personPatch } = require('../personFieldService');
 
 const writeManualLedger = async ({
   inventory, changes = [], operatorOpenId = '', correlation,
@@ -25,21 +26,17 @@ const writeManualLedger = async ({
     const behavior = await inventory.resolveStockBehavior(code);
     behaviorIds.set(code, behavior.recordId);
   }
-  const fields = gateway.table('liveInventory').fields;
+  const operatorPatch = personPatch({
+    tableKey: 'inventoryLedger', fieldKey: 'operator', operatorOpenId,
+  });
   const rows = list.map((item) => ({
     product: relation(item.productRecordId),
     size: relation(item.sizeRecordId),
     quantityChange: 0,
     behavior: relation(behaviorIds.get(item.behaviorCode)),
     ...(item.salesEntryRecordId ? { salesDetail: relation(item.salesEntryRecordId) } : {}),
-    ...(operatorOpenId ? { operator: [{ id: operatorOpenId }] } : {}),
+    ...operatorPatch,
   }));
-  const table = gateway.table('inventoryLedger');
-  const fieldNames = table?.fields || {};
-  // 只写确实映射过的语义字段；operator 只在 schema 有映射时写。
-  for (const row of rows) {
-    if (!fieldNames.operator) delete row.operator;
-  }
   const options = correlation ? { correlation } : undefined;
   if (typeof gateway.createBatch === 'function') {
     const created = await gateway.createBatch('inventoryLedger', rows, options);

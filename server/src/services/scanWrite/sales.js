@@ -411,7 +411,7 @@ const createScanWriteSales = ({
       //     🔴 不是放宽：收口那一下失败 ⇒ 调用方如实回失败（不写「成功」）✓。
       const stock = await deliverStockLines({
         items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
-        salesEntryRecordId, correlation, allowUnposted: fundsDeferred || singlePass,
+        salesEntryRecordId, correlation, operatorOpenId: openId, allowUnposted: fundsDeferred || singlePass,
       });
       markStage('stock_ms', stockStartedAt);
       // 计划说"有 N 行要动库存"就必须真的请求 N 行（明细 id 缺失等 ⇒ 如实算失败，不许假成功）

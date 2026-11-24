@@ -7,7 +7,7 @@
  * worker 负责：建销售主表 → 复用既有 submitSale（明细/收款批量、库存批量、一次收口）。
  * 🔴 业务写表逻辑不在这里重写；这里只做“用冻结 payload 重建一个 job 专用会话”的接线。
  */
-const { person } = require('./v1ReferenceResolver');
+const { personPatch } = require('./personFieldService');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { SALES_STATUS_WRITE_VALUES } = require('../config/salesStatusDimensions');
 const { SCAN_WRITE } = require('../config/scanWrite');
@@ -74,7 +74,7 @@ const createSalesAsyncWorker = ({
     }
     const created = await gateway.create('salesEntry', {
       orderNo,
-      sender: person(job.payload.open_id),
+      ...personPatch({ tableKey: 'salesEntry', fieldKey: 'sender', operatorOpenId: job.payload.open_id }),
       writeStatus: SALES_STATUS_WRITE_VALUES.writeStatus.pending,
     }, { correlation: correlationOf(job) });
     const id = String(created?.recordId || created?.record_id || '').trim();

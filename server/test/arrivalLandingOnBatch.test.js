@@ -224,6 +224,8 @@ test('① 点「是」之后：到货信息的落点 = **「报货批次」那�
   const { result } = await arriveAndConfirm(harness, { acceptanceText: '都到了\n完毕' });
 
   assert.equal(result.ok, true, '验收成功（改前那一步是卡片 toast，现役入口是 ok）');
+  assert.ok(harness.inventory.calls.length > 0, '应写入库');
+  assert.ok(harness.inventory.calls.every((call) => call.operatorOpenId === 'ou_1'), '入库新增要带当前操作人');
   const fields = batchFields(harness.records);
   // ⛔ 2026-10-09：这两列在生产真表上已经被删掉 ⇒ **一个字都不许写**
   //   （不是"写了空值"，而是根本没进那次 values）。

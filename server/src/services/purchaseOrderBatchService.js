@@ -1,6 +1,7 @@
 const { textValue } = require('./v1BitableGateway');
 const { IDEMPOTENCY_KEY_FIELD, createOnceByKey } = require('../infrastructure/idempotencyKey');
-const { relation, person } = require('./v1ReferenceResolver');
+const { relation } = require('./v1ReferenceResolver');
+const { personPatch } = require('./personFieldService');
 const { batchQuantityFields } = require('../config/purchaseBatchQuantity');
 const { logInfo, logWarn } = require('../utils/logger');
 
@@ -362,7 +363,9 @@ class PurchaseOrderBatchService {
     const amountValue = numericOrNull(actualAmount);
     const differenceValue = String(differenceAnalysis ?? '').trim();
     const values = {};
-    if (operatorOpenId) values.acceptedBy = person(operatorOpenId);
+    Object.assign(values, personPatch({
+      tableKey: 'purchaseOrderBatch', fieldKey: 'acceptedBy', operatorOpenId,
+    }));
     if (quantityValue !== null) values.actualQuantity = quantityValue;
     if (amountValue !== null) values.actualAmount = amountValue;
     if (differenceValue) values.differenceAnalysis = differenceValue;

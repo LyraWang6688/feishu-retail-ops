@@ -18,7 +18,8 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { textValue } = require('./v1BitableGateway');
 const { salesLinkRecordIds } = require('./afterSalesLinkIds');
 const { InventoryService } = require('./inventoryService');
-const { V1ReferenceResolver, relation, appendPerson } = require('./v1ReferenceResolver');
+const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
+const { personPatch } = require('./personFieldService');
 const { nextId, stateFor } = require('./salesRecordIds');
 const { createPaymentMethodsService } = require('./paymentMethodsService');
 const { AFTER_SALES_DERIVED } = require('../config/afterSalesDerived');
@@ -178,6 +179,7 @@ class AfterSalesReturnService {
       kind: AFTER_SALES_DERIVED.stockBehaviorCode,
       productRecordId: prepared.productRecordId,
       size: prepared.size,
+      ...(payload.operatorOpenId ? { operatorOpenId: payload.operatorOpenId } : {}),
       // 仅作兜底；增加库存时由库存内核按「编号所有尺码合计」自动决定样品/门盒。
       state: AFTER_SALES_DERIVED.defaultRestockState,
       quantity: 1,
@@ -248,7 +250,12 @@ class AfterSalesReturnService {
         [AFTER_SALES_DERIVED.master.typeField]: nextTypes,
         [AFTER_SALES_DERIVED.master.countField]: currentCount + AFTER_SALES_DERIVED.master.countDelta,
         ...(nextTotal == null ? {} : { [AFTER_SALES_DERIVED.master.totalField]: nextTotal }),
-        ...(payload.operatorOpenId ? { afterSalesBy: appendPerson(entryNow?.fields?.[masterFields.afterSalesBy], payload.operatorOpenId) } : {}),
+        ...personPatch({
+          tableKey: 'salesEntry',
+          fieldKey: 'afterSalesBy',
+          operatorOpenId: payload.operatorOpenId,
+          existing: entryNow?.fields?.[masterFields.afterSalesBy],
+        }),
       }, { correlation: options.correlation });
       if (nextTotal == null) {
         logWarn('workbench.orders.after_sales.return.total_missing', {

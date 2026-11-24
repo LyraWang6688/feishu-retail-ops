@@ -260,3 +260,20 @@ test('AC-SAMPLE-BATCH2 没有样品且没指定尺码 ⇒ 整批拒绝，不静�
   assert.equal(fake.data.inventoryLedger.length, 0);
   assert.equal(fake.data.liveInventory.length, 0);
 });
+
+test('人员字段：采购批量入库同时写流水操作人 + 实时库存仓库员', async () => {
+  const fake = makeFake();
+  const inventory = makeService(fake);
+  const items = batchItems().map((item) => ({ ...item, operatorOpenId: 'ou_buyer' }));
+  await inventory.applyPurchaseBatch(items);
+  const ledgerOperator = F('inventoryLedger').operator;
+  const liveOperator = F('liveInventory').warehouseStaff;
+  assert.ok(fake.data.inventoryLedger.length > 0);
+  assert.ok(fake.data.liveInventory.length > 0);
+  for (const row of fake.data.inventoryLedger) {
+    assert.deepEqual(row.fields[ledgerOperator], [{ id: 'ou_buyer' }]);
+  }
+  for (const row of fake.data.liveInventory) {
+    assert.deepEqual(row.fields[liveOperator], [{ id: 'ou_buyer' }]);
+  }
+});

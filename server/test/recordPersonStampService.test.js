@@ -27,6 +27,13 @@ test('事件新增记录：上新员 / 打印者写实际操作人', async () =>
   assert.deepEqual(writes[1].values, { printedBy: [{ id: 'ou_1' }] });
 });
 
+test('标签打印：应用号 open_id 不写打印者', async () => {
+  const { gateway, writes } = make();
+  const service = createRecordPersonStampService({ gateway });
+  await service.handle('labelPrintRequest', [{ action: 'record_added', record_id: 'rec_bot', operator_id: { open_id: 'ou_dc362967efb60353902b7d7f43756c84' } }]);
+  assert.deepEqual(writes, []);
+});
+
 test('只写 record_added；没有操作人就不猜', async () => {
   const { gateway, writes } = make();
   const service = createRecordPersonStampService({ gateway });

@@ -21,6 +21,7 @@
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_PRINT_REQUEST_LOG } = require('../config/labelPrintRequestLog');
 const { relation } = require('./v1ReferenceResolver');
+const { personPatch } = require('./personFieldService');
 const { logInfo, logWarn } = require('../utils/logger');
 
 /**
@@ -86,11 +87,19 @@ const createLabelPrintRequestLogService = ({
     }
 
     try {
+      // 服务端打印请求的真实操作人在任务里（job.requested_by）；
+      // 批量表单任务没有 actor，由飞书 record_added 的人员补写服务按人工事件写入。
+      const printedByPatch = personPatch({
+        tableKey: config.tableKey,
+        fieldKey: 'printedBy',
+        operatorOpenId: job.requested_by,
+      });
       const created = await gateway.create(config.tableKey, {
         // 关联字段写入形状的唯一入口 = v1ReferenceResolver.relation。
         [config.fields.product]: relation(productRecordId),
         // 单选列写字符串，不包数组。
         [config.fields.source]: sourceLabel,
+        ...printedByPatch,
       });
       const recordId = String(created?.recordId || '').trim();
       log.info('label_print.request_log.created', {

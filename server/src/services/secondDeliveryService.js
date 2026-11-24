@@ -218,7 +218,7 @@ class SecondDeliveryService {
     let progress = null;
     if (undeliveredIds.length) {
       deliveryResult = await this.delivery.deliver({
-        salesEntryRecordId, detailRecordIds: undeliveredIds, paymentRecordIds: collectedIds,
+        salesEntryRecordId, detailRecordIds: undeliveredIds, paymentRecordIds: collectedIds, operatorOpenId,
       }, { correlation });
     } else {
       progress = await this.progress.sync(salesEntryRecordId, { paymentRecordIds: collectedIds });

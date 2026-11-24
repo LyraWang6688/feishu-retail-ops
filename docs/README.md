@@ -12,6 +12,7 @@
 |---|---|
 | [sample-image-drive-sync-2026-11-10.md](sample-image-drive-sync-2026-11-10.md) | ⭐⭐ **样例图 → 云盘自动同步**（业务负责人 2026-11-10 逐字：「样例图写入到云盘…**只有新增的时候**…**那个复选框勾选上**」）：只认 `record_added` · 下载样例图 → 上传云盘文件夹 · 成功后勾「已同步云盘」（幂等）· 命名 `{货号}{颜色}` 多张加序号 · 同名覆盖只删我们命名的文件 · 串行（5 QPS 限制）· AC-SD1..SD11（含「编号为空 ⇒ 重试直到有」）＋ 路由分派 3 条 ＋ **数据配置页「同步存量样例图」按钮卡 = 存量写入**（AC-BF1..5，后台跑/轮询进度） |
 | [README.md](README.md) | 文档索引 |
+| [person-fields-policy.md](person-fields-policy.md) | ⭐ **人员字段统一写入策略（2026-11-24）**：7 个字段（库存流水操作人 / 标签打印打印者 / 销售录单人 / 售后人 / 供应主表报货人 / 验收人 / 实时库存仓库员）· 真实操作人 open_id · 应用号禁止名单 · 库存变动写操作人 / 实时库存新增写仓库员 · 历史不回填 |
 | [identity-key-contract.md](identity-key-contract.md) | ⭐⭐ **身份键契约（hard）**：货品用 `productRecordId`、销售明细用 `sales_detail_record_id`、销售单用 `sales_entry_record_id`；`number` / 货号只做展示、排序、文本匹配。含当前页面实际使用矩阵、销售查询 / 库存流水待改造点、API 契约与重复记录测试要求 |
 | [field-write-map-2026-11-11.md](field-write-map-2026-11-11.md) | ⭐ **「字段清单」退役快照**（2026-11-11）：业务负责人决定删除 Base 表「字段清单」，字段名单唯一来源改为「数据表字段字典」，代码实际契约以 `v1BitableSchema` 的 13 张核心表为准；本文保存删除前 45 条写库字段说明（来源表 / 类型 / 页面 / 写入时点 / payload / 必填） |
 | [iphone-mirroring-e2e-2026-11-07.md](iphone-mirroring-e2e-2026-11-07.md) | ⭐⭐ **用 iPhone 镜像 + 相册二维码做真实端到端测试**（iPhone 镜像里相机不可用）：正确路径 = 工作台 → 销售 → 鞋类 → 扫一扫 → **相册** → 选二维码 → 扫码页；含 Mac 侧 `osascript`/`screencapture`/`cliclick` 坐标换算、录屏拆帧、提交后三重核对、**禁止自动删除手机照片**的边界 |
