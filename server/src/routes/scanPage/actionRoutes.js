@@ -41,8 +41,11 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
         lines: JSON.parse(JSON.stringify(lines)),
         payment: step === 'payment' ? {
           lineAmounts: body[fields.lineAmount],
-          paymentMethods: body[fields.paymentMethod],
-          paymentAmounts: body[fields.paymentAmount],
+          paymentRows: (Array.isArray(body[fields.paymentMethod]) ? body[fields.paymentMethod] : [body[fields.paymentMethod] || ''])
+            .map((method, index) => ({
+              method: String(method || ''),
+              amount: String((Array.isArray(body[fields.paymentAmount]) ? body[fields.paymentAmount] : [body[fields.paymentAmount] || ''])[index] || ''),
+            })).filter((row) => row.method || row.amount),
           gift: body[fields.gift] || '',
           accessory: body[fields.accessory] || '',
           accessoryTotal: body[fields.accessoryTotal] || '',

@@ -69,6 +69,12 @@ const enqueueSaleAsync = async ({
     logWarn('scan.sale.async.invalid_payload', { request_id: requestId, errors: built.errors });
     return { ok: false, status: 400, code: 'invalid_payload', errors: built.errors };
   }
+  let draftId = '';
+  try {
+    const current = await writeService.sessions.get(openId);
+    draftId = String(current?.sale?.draft_id || '').trim();
+  } catch (error) { /* 草稿关联读失败不阻塞销售 */ }
+  if (draftId) built.payload.draft_id = draftId;
   const enqueued = await salesAsync.enqueue({
     submitKey: String(submitKey || ''),
     payload: built.payload,
