@@ -173,6 +173,7 @@ async function handlePurchaseReturn(ctx) {
             req, res, requestId, chain: 'return', groups,
             // 同上：按真实动作名修正（原来恒 undefined）。
             action: writeConfig.actions.purchaseReturn,
+            delistProductIds: String(body[fields.delistProductIds] || '').split(',').map((id) => id.trim()).filter(Boolean),
           });
         }
         // 🔴 **同一把 `submitKey` 原样透传**（幂等责任在写层：本文件不拼、不加后缀 ✗）
