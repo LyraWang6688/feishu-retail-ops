@@ -23,7 +23,7 @@ const createScanWriteSession = ({
   const addSaleLine = async ({
     openId, kind = '', productRecordId = '', number = '', itemNo = '', color = '',
     size, amount = '', gift = '', inStock, requestId = '',
-    samplePromotionSize = '',
+    samplePromotionSize = '', stockTotal = null,
     sessionKey = '',
   }) => {
     const sessionId = sessionKeyOf(openId, sessionKey);
@@ -62,6 +62,7 @@ const createScanWriteSession = ({
       amount: parsedAmount.value,
       gift: giftText,
       sample_promotion_size: String(samplePromotionSize || '').trim(),
+      stock_total: Number.isFinite(Number(stockTotal)) ? Number(stockTotal) : null,
       added_at: new Date(now()).toISOString(),
     }));
     if (!added.ok) {
