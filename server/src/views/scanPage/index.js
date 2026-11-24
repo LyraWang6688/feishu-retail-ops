@@ -164,6 +164,19 @@ const renderSalePaymentStepPage = ({
   const rowsBlock = paymentRowsHtml(write, { defaultAmount: totalAmountText });
   const shoeTotalText = String(totalAmountText || '').trim();
   const shoeTotalNumber = Number(shoeTotalText.replace(/[¥,，\s]/g, '')) || 0;
+  const payLines = Array.isArray(write?.draft?.lines) ? write.draft.lines : [];
+  const payStock = new Map();
+  const payQty = new Map();
+  for (const line of payLines) {
+    const id = String(line.product_record_id || '').trim();
+    if (!id) continue;
+    const stock = Number(line.stock_total);
+    if (Number.isFinite(stock)) payStock.set(id, stock);
+    payQty.set(id, (payQty.get(id) || 0) + 1);
+  }
+  const payDelistIds = [...payStock.entries()]
+    .filter(([id, stock]) => stock > 0 && payQty.get(id) === stock)
+    .map(([id]) => id).join(',');
   // ⭐⭐ 2026-10-17 C（她逐字：「默认一行 ＋ ＋ 再加一种付款方式」）：
   //   加行 = **纯前端**（`data-payment-add`，克隆最后一行并清空值）——不提交、不写库 ✓。
   //   ⚠️ 文案走配置（`step.addRowButton`）；不写死中文 ✗。
@@ -199,8 +212,9 @@ const renderSalePaymentStepPage = ({
   //    ⭐ 2026-10-16 A2a：三件套里的**「三档」那件已退场** ⇒ 现在只有**收款行 + 赠品** ✓
   const paymentFieldsHtml = `${accessoryFieldHtml}${giftFieldHtml}${collectTotalHtml}${rowsBlock}${addRowButtonHtml}`;
   const payForm = (postAction && step.payAction)
-    ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay">
+    ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay" data-delist-product-ids="${escapeHtml(payDelistIds)}" data-delist-prompt="${escapeHtml(String(config.saleDelistPrompt || ''))}">
 <input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.payAction)}">
+<input type="hidden" name="${escapeHtml(fields.delistProductIds || 'delist_product_ids')}" value="">
 ${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'submit_key')}" value="${escapeHtml(submitKey)}">` : ''}
 <input type="hidden" name="order_no" value="${escapeHtml(orderNo)}">
 <input type="hidden" name="count" value="${escapeHtml(String(count))}">

@@ -78,14 +78,11 @@ ${UI_TAP_SHARED_SOURCE}
       var submitterName = String(button.name || '');
       var submitterValue = String(button.value || '');
       // Sale last pair: confirm only on the main submit button; never on add/clear.
-      var saleDelistId = form.getAttribute('data-delist-product-id') || '';
-      var saleStockTotal = parseInt(form.getAttribute('data-delist-stock-total') || '', 10);
-      var saleQty = parseInt(form.getAttribute('data-delist-sale-qty') || '', 10);
-      if (saleDelistId && button.hasAttribute('data-progress-submit')
-        && !isNaN(saleStockTotal) && !isNaN(saleQty) && saleStockTotal > 0 && saleQty === saleStockTotal) {
+      var saleDelistIds = form.getAttribute('data-delist-product-ids') || '';
+      if (saleDelistIds) {
         var saleDelistInput = form.querySelector('input[name="delist_product_ids"]');
         if (saleDelistInput) {
-          saleDelistInput.value = window.confirm(form.getAttribute('data-delist-prompt') || '') ? saleDelistId : '';
+          saleDelistInput.value = window.confirm(form.getAttribute('data-delist-prompt') || '') ? saleDelistIds : '';
         }
       }
       if (submitterName) {

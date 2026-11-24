@@ -1,5 +1,6 @@
 'use strict';
 const { SAMPLE_PROMOTION } = require('../../../config/samplePromotion');
+const { sellableCountOf } = require('../../../views/scanPageRealm');
 
 /**
  * 扫码路由深拆 P3a：剩余小动作分支（加货 / 清空）——从 `routes/scanPage/index.js` 搬出，**只搬不改**。
@@ -16,10 +17,14 @@ async function handleAddLine(ctx) {
             number: view.number, fallback: view.fallback, realm, target: scanTargetOf(req),
           });
         }
+        const stockTotal = (Array.isArray(view.rows) ? view.rows : [])
+          .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
+          .reduce((sum, row) => sum + Number(sellableCountOf(row, view.columns) || 0), 0);
         const result = await writeService.addSaleLine({
           openId,
           requestId,
           productRecordId: view.product_record_id,
+          stockTotal,
           number: view.number,
           itemNo: view.item_no,
           color: view.color,
