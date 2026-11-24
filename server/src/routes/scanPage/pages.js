@@ -30,6 +30,29 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
     //   `remembered` —— 裸扫 + 她最近一次做过写操作的领域（下面那一支）
     //   `default`    —— 裸扫且从没记过 ⇒ 缺省（销售）
     let realmSource = explicitRealm ? 'explicit' : 'default';
+    // 打开销售草稿：把快照灌回本页会话；资金页草稿保留 paymentStep 让她回到资金页。
+    const draftId = String(req.query?.draft || '').trim();
+    if (draftId && realm === 'sales' && writeService?.sessions) {
+      try {
+        const { getSalesDraftService } = require('../../services/salesDraftRuntime');
+        const draft = await getSalesDraftService().get({ openId: openIdOf(req), draftId });
+        if (draft && Array.isArray(draft.lines) && draft.lines.length) {
+          const session = await writeService.sessions.ensure(sessionIdOf(req));
+          await writeService.sessions.store.update(session.session_id, (current) => ({
+            sale: {
+              ...(current?.sale || {}),
+              lines: draft.lines,
+              status: 'draft',
+              paymentStep: draft.step === 'payment' ? 'pending' : undefined,
+              draft_id: draftId,
+            },
+          }));
+        }
+      } catch (error) {
+        logWarn('scan.sales_draft.open_failed', { request_id: requestId, draft_id: draftId, error: String(error?.message || error).slice(0, 200) });
+      }
+    }
+
     // ⭐ 分阶段耗时（出参）：失败 / 找不到时同样能看出卡在哪一步。
     // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（默认关 ⇒ 这一页与改动前逐字相同）。
     //   打开时：**先回骨架**（不读任何表）⇒ 她立刻有东西看；数据由骨架里那**同一段脚本**

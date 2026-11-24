@@ -383,6 +383,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
           <b>${escapeHtml(draft.number || draft.itemNo || draft.draftId)}</b>
           <span class="hint">${escapeHtml(draft.step === 'payment' ? T.draftStepPayment : T.draftStepGoods)} · ${escapeHtml(fill(T.draftItems, { count: draft.itemCount || 0 }))}</span>
         </div>
+        <button type="button" class="btn btn--ghost" data-draft-open="${escapeHtml(draft.draftId)}" data-draft-product="${escapeHtml(draft.productRecordId || '')}"${draft.productRecordId ? '' : ' disabled'}>${escapeHtml(T.draftOpen)}</button>
         <button type="button" class="btn btn--ghost" data-draft-delete="${escapeHtml(draft.draftId)}">${escapeHtml(T.draftDelete)}</button>
       </li>`).join('')}</ul>`;
   }
@@ -537,6 +538,13 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       }
       const deleteDraftButton = event.target.closest('[data-draft-delete]');
       if (deleteDraftButton) { void deleteDraft(deleteDraftButton.dataset.draftDelete); return; }
+      const openDraftButton = event.target.closest('[data-draft-open]');
+      if (openDraftButton && openDraftButton.dataset.draftProduct) {
+        const draftId = encodeURIComponent(openDraftButton.dataset.draftOpen || '');
+        const productId = encodeURIComponent(openDraftButton.dataset.draftProduct || '');
+        window.location.href = '/r/' + productId + '?from=sales&draft=' + draftId;
+        return;
+      }
       const pickSupplier = event.target.closest('[data-action="pick-supplier"]');
       if (pickSupplier) {
         state.activeSupplierKey = pickSupplier.dataset.supplierKey || '';

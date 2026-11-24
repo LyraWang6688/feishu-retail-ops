@@ -53,6 +53,11 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
         openId, draftId: String(body.draft_id || '').trim(), step, snapshot,
       });
       if (!result.ok) return res.status(400).json({ success: false, error: result.code || 'draft_save_failed' });
+      try {
+        await writeService.sessions.store.update(sessionId, (current) => ({
+          sale: { ...(current?.sale || {}), draft_id: result.draft.draft_id },
+        }));
+      } catch (error) { /* 草稿已存成功；关联当前会话失败不影响这次保存 */ }
       return res.json({ success: true, draftId: result.draft.draft_id, step: result.draft.step, updatedAt: result.draft.updated_at });
     } catch (error) {
       return res.status(502).json({ success: false, error: 'draft_save_failed' });
