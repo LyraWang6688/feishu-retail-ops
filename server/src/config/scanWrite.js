@@ -210,9 +210,7 @@ const FIELDS = Object.freeze({
   returnQuantityPrefix: 'return_qty_',
   // ⭐⭐ 2026-10-14 晚：**整单金额**（她：「**只写一个整单金额**（一次填一个总额，和补货一样～）」）
   //   —— 补货 / 退货**共用同一个 `name`**（唯一来源 = `PURCHASE_AMOUNT.field` ✓ 不抄两份 ✗）。
-  purchaseAmount: PURCHASE_AMOUNT.field,
-  // 库存清零后下架意图：随销售/退货提交一起带上（收款页/退货页由前端弹窗决定）。
-  delistProductIds: 'delist_product_ids',
+  purchaseAmount: PURCHASE_AMOUNT.field, delistProductIds: 'delist_product_ids',
   // 扫码验收：单选一个尺码 + 一个数量 + 最后一步的「发生金额」。
   acceptSize: 'accept_size',
   acceptQuantity: 'accept_quantity',
