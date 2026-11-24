@@ -196,6 +196,7 @@ async function handlePurchaseReturn(ctx) {
             number: view.number,
             orderAmount: returnOrderAmount,
             entries,
+            delistProductIds: String(body[fields.delistProductIds] || '').split(',').map((id) => id.trim()).filter(Boolean),
           },
         });
         // ⭐ 退货**真的动了库存** ⇒ 立刻作废「实时库存」内存快照（她：库存必须准确）。

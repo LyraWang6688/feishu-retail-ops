@@ -510,7 +510,7 @@ const createScanPageSetup = ({ options, deps }) => {
         });
       }
       if (chain === 'purchase_return') {
-        return writeService.submitPurchaseReturn({
+        const result = await writeService.submitPurchaseReturn({
           openId: restInput.openId,
           requestId,
           submitKey,
@@ -521,6 +521,27 @@ const createScanPageSetup = ({ options, deps }) => {
           // ⚠️ 同上：旧页面不带这个键（入参形状逐字不变 ✓）
           ...(sessionKey ? { sessionKey } : {}),
         });
+        // 退货库存写成功后，才排既有货品下架；失败只记 warn，不回滚退货事实。
+        if (result?.ok === true && Array.isArray(restInput.delistProductIds) && restInput.delistProductIds.length) {
+          try {
+            const { createProductDelistAsyncService } = require('../../services/productDelistAsyncService');
+            const delist = createProductDelistAsyncService({
+              gateway, asyncJobs: options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService(),
+            });
+            for (const recordId of restInput.delistProductIds) {
+              await delist.submit({
+                recordId, allowNoSample: true,
+                submitKey: `${submitKey}:delist:${recordId}`,
+                operatorOpenId: restInput.openId || '',
+              });
+            }
+          } catch (delistError) {
+            logWarn('product.delist.after_return.failed', {
+              request_id: requestId, submit_key: submitKey, error: String(delistError?.message || delistError).slice(0, 300),
+            });
+          }
+        }
+        return result;
       }
       return { ok: false, code: 'unknown_chain', message: String(chain || '') };
     },

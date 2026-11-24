@@ -132,6 +132,7 @@ ${UI_TAP_SHARED_SOURCE}
         var maxQuantity = parseInt(form.getAttribute('data-return-max-quantity') || '', 10);
         var qtyInputs = form.querySelectorAll('[name^="' + returnQtyPrefix + '"]');
         var qtyPicked = [];
+        var returnedTotal = 0;
         for (var q = 0; q < qtyInputs.length; q += 1) {
           var qtyRaw = String(qtyInputs[q].value || '').replace(/^\\s+|\\s+$/g, '');
           if (qtyRaw === '') continue;                      // blank = not returned (not an error)
@@ -141,6 +142,7 @@ ${UI_TAP_SHARED_SOURCE}
           }
           var qtyValue = parseInt(qtyRaw, 10);
           if (qtyValue === 0) continue;                     // explicit 0 = not returned
+          returnedTotal += qtyValue;
           if (maxQuantity > 0 && qtyValue > maxQuantity) {
             showReturnHint(form.getAttribute('data-return-quantity-text') || '', qtyInputs[q]);
             return;
@@ -166,6 +168,15 @@ ${UI_TAP_SHARED_SOURCE}
         if (maxSizes > 0 && qtyPicked.length > maxSizes) {
           showReturnHint(form.getAttribute('data-return-limit-text') || '', null);
           return;
+        }
+        var delistId = form.getAttribute('data-delist-product-id') || '';
+        var stockTotal = parseInt(form.getAttribute('data-delist-stock-total') || '', 10);
+        if (delistId && !isNaN(stockTotal) && stockTotal > 0 && returnedTotal === stockTotal) {
+          var delistInput = form.querySelector('input[name="delist_product_ids"]');
+          if (delistInput) {
+            var shouldDelist = window.confirm(form.getAttribute('data-delist-prompt') || '');
+            delistInput.value = shouldDelist ? delistId : '';
+          }
         }
       }
       button.disabled = true;

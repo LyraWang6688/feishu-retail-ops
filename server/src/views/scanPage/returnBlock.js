@@ -74,6 +74,8 @@ const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //   · `sellable` **不是数字** = **取不到 / 未确认** ⇒ ⭐ **仍然列出** + 标注"取不到" ✓
   //     🔴「**0**」与「**取不到**」**必须区分** —— 把"取不到"也当 0 藏掉会把**能退的码**藏了 ✗。
   const sizes = declaredSizes.filter((item) => !Number.isFinite(item.sellable) || item.sellable > 0);
+  const stockTotal = declaredSizes.length && declaredSizes.every((item) => Number.isFinite(item.sellable))
+    ? declaredSizes.reduce((sum, item) => sum + Number(item.sellable), 0) : null;
   // 整款都是 0（且有尺码这一读）⇒ 给她一句人话（**不是空白页** ✗）
   const noReturnableStock = declaredSizes.length > 0 && sizes.length === 0;
   // ⭐⭐ 2026-10-15（task-23 · 她逐字：「直接就是出来实时库存里的**尺码和数量**」）：
@@ -150,9 +152,13 @@ data-return-stock-text="${escapeHtml(rf.stockLimitText)}"
 data-return-hint-view="${escapeHtml(rf.hintView)}"
 data-amount-field="${escapeHtml(fields.purchaseAmount)}"
 data-amount-hint-view="${escapeHtml(rf.amountHintView)}"
-data-amount-hint-text="${escapeHtml(rf.amountRequiredText)}">
+data-amount-hint-text="${escapeHtml(rf.amountRequiredText)}"
+data-delist-product-id="${escapeHtml(String(view.product_record_id || ''))}"
+data-delist-stock-total="${stockTotal == null ? '' : escapeHtml(String(stockTotal))}"
+data-delist-prompt="${escapeHtml(rf.delistPrompt || '')}">
 ${hiddenField(fields.action, write.actions.purchaseReturn)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.returnKey)}
+${hiddenField(fields.delistProductIds, '')}
 ${sizesNotice}
 <p class="hint" data-view="${escapeHtml(rf.hintView)}" hidden></p>
 ${rows}
