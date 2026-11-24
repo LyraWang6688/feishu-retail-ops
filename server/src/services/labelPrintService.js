@@ -72,7 +72,7 @@ const { logInfo, logWarn } = require('../utils/logger');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
 // ⭐ 2026-11-11：瞬时错误（飞书 1254607 / 429 / 5xx / 网络）的通用小退避重试——
 //   项目里已有这一份（`config/pushRetry` 的 `withTransientRetry`），**不另写重试器**。
-const { resolveTransientRetryConfig } = require('../config/pushRetry');
+const { resolveTransientRetryConfig, isTransientLarkError } = require('../config/pushRetry');
 // 她填错了（400，原样回显）vs 远端出错（其余，页面只说"查询失败"）——与
 // `inventoryAdjustmentService` 同一条约定，控制器按 statusCode 分流。
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
@@ -745,10 +745,12 @@ const createLabelPrintService = (gateway, options = {}) => {
     }
     let record = null;
     try {
-      record = await gateway.get('product', id);
+      record = await gateway.get('product', id, { retry: transientRetry });
     } catch (error) {
-      // 读不到那一条（记录被删 / 跨 Base）⇒ **人话**，不是 500（与扫码页同一条口径）。
-      logWarn('workbench.labels.record_read_failed', { product_record_id: id, error: error.message });
+      // 读不到那一条（记录被删 / 跨 Base）⇒ 人话；瞬时读失败必须保留原错误，
+      // 否则会被批量打印层当成 400 永久错误，已有重试完全不生效。
+      logWarn('workbench.labels.record_read_failed', { product_record_id: id, retryable: isTransientLarkError(error, transientRetry), error: error.message });
+      if (isTransientLarkError(error, transientRetry)) throw error;
       throw userError(texts.recordMissing);
     }
     if (!record) throw userError(texts.recordMissing);

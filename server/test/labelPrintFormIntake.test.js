@@ -64,6 +64,15 @@ const fakeQueue = (behavior = {}) => {
         // 永久错误（不是 400 那种"她的数据问题"）：例如 403 / 飞书永久错误码 ⇒ 不重试、计失败。
         throw Object.assign(new Error('没有权限'), { statusCode: 403 });
       }
+      if (mode.startsWith('lark_temp:')) {
+        const times = Number(mode.split(':')[1]);
+        if (attempts[input.recordId] <= times) {
+          const error = new Error('Data not ready, please try again later');
+          error.statusCode = 400;
+          error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready' } };
+          throw error;
+        }
+      }
       if (mode.startsWith('temp:')) {
         const times = Number(mode.split(':')[1]);
         if (attempts[input.recordId] <= times) throw new Error('ECONNRESET');
@@ -194,6 +203,18 @@ test('AC-FF2 坏货号（400 没编号/没库存）⇒ 跳过、其他照打；�
   assert.match(body, /跳过 1 个/);
   assert.match(body, /rec_bad/, '跳过的是哪个货号要写出来');
   assert.match(body, /时间：/);
+});
+
+test('AC-FF3b 飞书 1254607（HTTP 400 + 可重试码）⇒ 不能被当成业务 400，必须走已有重试', async () => {
+  const { queue, notifications, sleeps, service } = build({
+    records: { rec_form_lark: formRecord('rec_form_lark', ['rec_flaky_lark']) },
+    behavior: { rec_flaky_lark: 'lark_temp:2' },
+  });
+  const result = await service.processRecord('rec_form_lark');
+  assert.equal(result.queued, 1);
+  assert.equal(queue.attempts.rec_flaky_lark, 3, '首次 + 重试 2 次后成功');
+  assert.deepEqual(sleeps, [800, 1600]);
+  assert.equal(notifications.sent.length, 0);
 });
 
 test('AC-FF3 临时错误重试 3 次后成功 ⇒ 共 4 次尝试、不通知；等间隔 0.8s → 1.6s → 3.2s', async () => {

@@ -143,25 +143,28 @@ const createLabelPrintFormIntakeService = (deps = {}) => {
         return { ok: true, reused: result?.reused === true, result };
       } catch (error) {
         const classified = classifyThrownError(error);
-        // 400 = 她的数据问题（没编号 / 没库存 / 记录没了）⇒ 跳过，不重试。
-        if (Number(error?.statusCode) === 400) {
+        // 飞书 1254607 / 504 等是「HTTP 400 + 可重试」：必须先判 retryable，
+        // 不能先按 400 判成她的数据问题；真正的业务 400 才跳过。
+        if (classified.retryable && attempt <= config.retries) {
+          log.warn('label_print.form.retry', {
+            form_record_id: formRecordId,
+            product_record_id: productRecordId,
+            attempt,
+            retries: config.retries,
+            error: classified.message,
+          });
+          await sleep(retryDelayMs(attempt));
+          continue;
+        }
+        if (!classified.retryable && Number(error?.statusCode) === 400) {
           return { ok: false, kind: 'skipped', reason: classified.message, statusCode: 400 };
         }
-        const canRetry = classified.retryable && attempt <= config.retries;
-        if (!canRetry) {
-          return {
-            ok: false, kind: 'failed', reason: classified.message, attempts: attempt,
-            exhausted: classified.retryable === true,
-          };
+        if (!classified.retryable) {
+          return { ok: false, kind: 'failed', reason: classified.message, attempts: attempt };
         }
-        log.warn('label_print.form.retry', {
-          form_record_id: formRecordId,
-          product_record_id: productRecordId,
-          attempt,
-          retries: config.retries,
-          error: classified.message,
-        });
-        await sleep(retryDelayMs(attempt));
+        return {
+          ok: false, kind: 'failed', reason: classified.message, attempts: attempt, exhausted: true,
+        };
       }
     }
   };
