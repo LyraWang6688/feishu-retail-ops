@@ -6,6 +6,7 @@ const { createWorkbenchProcurementDraftRoutes } = require('../src/routes/workben
 
 const listen = (app) => new Promise((resolve) => {
   const server = app.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+  server.keepAliveTimeout = 1;
 });
 
 test('采购草稿接口：GET / POST / DELETE 走当前登录人', async () => {
