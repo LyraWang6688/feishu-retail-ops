@@ -46,19 +46,21 @@ const shanghaiDateStamp = (now = new Date()) => {
  *
  * @returns {{ orderNo: string, sequence: number, dateStamp: string, todayCount: number }}
  */
-const nextSalesOrderNo = ({ existingNos = [], now = new Date() } = {}) => {
+const nextSalesOrderNo = ({ existingNos = [], now = new Date(), prefix = ORDER_NO_PREFIX } = {}) => {
   const dateStamp = shanghaiDateStamp(now);
+  const safePrefix = String(prefix || ORDER_NO_PREFIX).trim() || ORDER_NO_PREFIX;
+  const pattern = new RegExp(`^${safePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d{8})-(\\d{4})$`);
   let maxSequence = 0;
   let todayCount = 0;
   for (const raw of existingNos) {
-    const matched = ORDER_NO_PATTERN.exec(textValue(raw).trim());
+    const matched = pattern.exec(textValue(raw).trim());
     if (!matched || matched[1] !== dateStamp) continue;
     todayCount += 1;
     maxSequence = Math.max(maxSequence, Number(matched[2]));
   }
   const sequence = maxSequence + 1;
   return {
-    orderNo: `${ORDER_NO_PREFIX}-${dateStamp}-${String(sequence).padStart(4, '0')}`,
+    orderNo: `${safePrefix}-${dateStamp}-${String(sequence).padStart(4, '0')}`,
     sequence,
     dateStamp,
     todayCount,
@@ -85,13 +87,14 @@ const allocateSalesOrderNo = async ({
   now = new Date(),
   maxAttempts = ORDER_NO_MAX_ATTEMPTS,
   onCollision,
+  prefix = ORDER_NO_PREFIX,
 } = {}) => {
   if (typeof readExistingNos !== 'function' || typeof writeOrderNo !== 'function') {
     throw new Error('allocateSalesOrderNo 需要 readExistingNos 与 writeOrderNo');
   }
   let candidate = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    candidate = nextSalesOrderNo({ existingNos: await readExistingNos(), now });
+    candidate = nextSalesOrderNo({ existingNos: await readExistingNos(), now, prefix });
     await writeOrderNo(candidate.orderNo, { attempt });
     const afterWrite = await readExistingNos();
     if (countOrderNo(afterWrite, candidate.orderNo) <= 1) {

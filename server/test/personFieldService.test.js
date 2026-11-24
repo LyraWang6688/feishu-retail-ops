@@ -4,11 +4,12 @@ const assert = require('node:assert/strict');
 const { PERSON_FIELDS, DEFAULT_BLOCKED_OPEN_IDS } = require('../src/config/personFields');
 const { personPatch, appendPerson, isBlockedOperator } = require('../src/services/personFieldService');
 
-test('7 个人员字段全部登记，且模式正确', () => {
+test('8 个人员字段全部登记，且模式正确', () => {
   assert.deepEqual(Object.keys(PERSON_FIELDS).sort(), [
-    'inventoryLedger', 'labelPrintRequest', 'liveInventory',
+    'accessorySale', 'inventoryLedger', 'labelPrintRequest', 'liveInventory',
     'purchaseOrderBatch', 'salesEntry',
   ]);
+  assert.equal(PERSON_FIELDS.accessorySale.operator.mode, 'set');
   assert.equal(PERSON_FIELDS.inventoryLedger.operator.mode, 'set');
   assert.equal(PERSON_FIELDS.labelPrintRequest.printedBy.mode, 'set');
   assert.equal(PERSON_FIELDS.salesEntry.sender.mode, 'set');
