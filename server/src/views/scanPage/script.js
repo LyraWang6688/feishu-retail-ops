@@ -177,13 +177,34 @@ ${UI_TAP_SHARED_SOURCE}
           showReturnHint(form.getAttribute('data-return-limit-text') || '', null);
           return;
         }
+        var candidateIds = [];
         var delistId = form.getAttribute('data-delist-product-id') || '';
         var stockTotal = parseInt(form.getAttribute('data-delist-stock-total') || '', 10);
         if (delistId && !isNaN(stockTotal) && stockTotal > 0 && returnedTotal === stockTotal) {
+          candidateIds.push(delistId);
+        }
+        var multiRaw = form.querySelector('input[name="multi_items"]');
+        if (multiRaw && multiRaw.value) {
+          try {
+            var multiItems = JSON.parse(multiRaw.value);
+            for (var mi = 0; mi < multiItems.length; mi += 1) {
+              var item = multiItems[mi] || {};
+              var total = Number(item.stock_total);
+              var qty = 0;
+              var entries = Array.isArray(item.entries) ? item.entries : [];
+              for (var ei = 0; ei < entries.length; ei += 1) qty += Number(entries[ei].quantity) || 0;
+              if (item.product_record_id && isFinite(total) && total > 0 && qty === total
+                && candidateIds.indexOf(String(item.product_record_id)) < 0) {
+                candidateIds.push(String(item.product_record_id));
+              }
+            }
+          } catch (error) { /* malformed multi_items: no prompt */ }
+        }
+        if (candidateIds.length) {
           var delistInput = form.querySelector('input[name="delist_product_ids"]');
           if (delistInput) {
             var shouldDelist = window.confirm(form.getAttribute('data-delist-prompt') || '');
-            delistInput.value = shouldDelist ? delistId : '';
+            delistInput.value = shouldDelist ? candidateIds.join(',') : '';
           }
         }
       }

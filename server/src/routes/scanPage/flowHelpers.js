@@ -15,8 +15,24 @@ const createFlowHelpers = ({
   DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
 }) => {
     const submitMultiItemOrder = async ({
-      req, res, requestId, chain, groups, action,
+      req, res, requestId, chain, groups, action, delistProductIds = [],
     }) => {
+      const delistAfterReturn = async (submitKey) => {
+        if (chain !== 'return' || !Array.isArray(delistProductIds) || !delistProductIds.length) return;
+        try {
+          const { V1BitableGateway } = require('../../services/v1BitableGateway');
+          const { getAsyncJobService } = require('../../services/asyncJobRuntime');
+          const { createProductDelistAsyncService } = require('../../services/productDelistAsyncService');
+          const service = createProductDelistAsyncService({ gateway: new V1BitableGateway(), asyncJobs: getAsyncJobService() });
+          for (const recordId of delistProductIds) {
+            await service.submit({ recordId, allowNoSample: true, submitKey: `${submitKey}:delist:${recordId}` });
+          }
+        } catch (error) {
+          logWarn('product.delist.after_multi_return.failed', {
+            request_id: requestId, error: String(error?.message || error).slice(0, 300),
+          });
+        }
+      };
       const engine = multiItemOrder();
       if (!engine) {
         // 引擎不可用（写服务没挂 / 多货品开关关）：**宁可给人话 + 零写入**，
@@ -58,9 +74,13 @@ const createFlowHelpers = ({
         });
         if (!checked.ok) return respondWriteFailure(res, checked, requestId);
         // ② 后台那一跑（与单货品同一套登记簿/日志/失败落痕 ✓）：先回成功页 ✓
-        const runMultiItemSubmit = () => engine.submitDraft({
-          openId, chain, orderKey, submitKey: orderKey, requestId,
-        });
+        const runMultiItemSubmit = async () => {
+          const result = await engine.submitDraft({
+            openId, chain, orderKey, submitKey: orderKey, requestId,
+          });
+          if (result?.ok === true) await delistAfterReturn(orderKey);
+          return result;
+        };
         const markMultiItemFailed = async ({ result, error } = {}) => {
           const message = String(result?.message || error?.message || '').trim();
           try {
@@ -92,6 +112,7 @@ const createFlowHelpers = ({
           openId, chain, orderKey, submitKey: orderKey, requestId,
         });
         if (!result.ok) return respondWriteFailure(res, result, requestId);
+        await delistAfterReturn(orderKey);
       }
       // ⚠️ 理由串**只从配置取**（`config/multiItemOrder.js` 的 `invalidateReasons`；值与单货品那条路
       //   逐字同一串 ✓）—— **不在源码里再写一遍那两个既有字面量**：它们是既有邻近哨兵 `AC-SR4`
