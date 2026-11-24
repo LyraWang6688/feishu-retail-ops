@@ -54,7 +54,7 @@ const buildProcurementPageConfig = (env = process.env) => {
       replenish: '/procurement/replenish',
       newProducts: '/procurement/new-products',
       submit: '/procurement/submit',
-      submittedToday: '/procurement/submitted-today',
+      submitted: '/procurement/submitted',
       modify: '/procurement/modify',
     }),
     // 时间窗口（业务负责人 2026-10-29 口径）：

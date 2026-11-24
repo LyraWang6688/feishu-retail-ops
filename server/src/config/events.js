@@ -485,7 +485,7 @@ const EVENTS = Object.freeze([
   'workbench.procurement.new_products.failed',
   'workbench.procurement.replenish.failed',
   'workbench.procurement.submit.failed',
-  'workbench.procurement.submitted_today.failed',
+  'workbench.procurement.submitted.failed',
   'workbench.product_features.add_failed',
   'workbench.product_features.delete_failed',
   'workbench.product_features.list_failed',

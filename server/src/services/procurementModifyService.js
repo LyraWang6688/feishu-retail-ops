@@ -13,16 +13,24 @@ const { createProductEnricher } = require('./procurementProductEnricher');
 const { createPurchaseDetailIdAllocator } = require('./purchaseDetailId');
 const { planModification } = require('./procurementModifyPlan');
 const { PURCHASE_BEHAVIORS } = require('../config/purchaseBehaviors');
+const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 
 const reject = (code, message) => ({ ok: false, code, message });
 const productIdsOf = (items) => [...new Set(items.map((item) => item.productRecordId).filter(Boolean))];
 
+/** 人员字段的生产形状是 [{ id, name, ... }]；不要只认关联字段的 record_ids。 */
+const personIdsOf = (value) => {
+  if (Array.isArray(value)) return value.flatMap(personIdsOf);
+  if (!value || typeof value !== 'object') return [];
+  return typeof value.id === 'string' && value.id ? [value.id] : [];
+};
+
 const createProcurementModifyService = ({
-  gateway, schema, config, submissionIndex, purchaseQuery, orderBatches, sizeReferences,
+  gateway, schema, config, purchaseQuery, orderBatches, sizeReferences,
   deliverRevision, now = () => Date.now(), productEnricher, detailIds,
 } = {}) => {
   if (!gateway) throw new Error('procurementModifyService 需要 gateway');
-  if (!submissionIndex || !purchaseQuery || !orderBatches) throw new Error('procurementModifyService 缺少依赖');
+  if (!purchaseQuery || !orderBatches) throw new Error('procurementModifyService 缺少依赖');
   if (!sizeReferences) throw new Error('procurementModifyService 需要 sizeReferences');
   const modifyConfig = config?.modify || {};
   const texts = modifyConfig.texts || {};
@@ -33,15 +41,16 @@ const createProcurementModifyService = ({
   const modifyOnce = async ({ openId, batchNo, submitKey, items = [] } = {}) => {
     const wantedBatch = String(batchNo || '').trim();
     if (!wantedBatch) return reject('batch_missing', texts.batchMissing);
-    const today = await submissionIndex.listToday(openId);
-    if (!today.some((row) => String(row.batch_no) === wantedBatch)) {
+    const batch = await orderBatches.findByBatchNo(wantedBatch);
+    if (!batch) return reject('batch_missing', texts.batchNotFound);
+    const batchFields = (schema || V1_BITABLE_SCHEMA).tables?.purchaseOrderBatch?.fields || {};
+    const reporters = personIdsOf(batch.fields?.[batchFields.reportedBy]);
+    if (!String(openId || '').trim() || !reporters.includes(String(openId))) {
       return reject('not_modifiable', texts.notModifiable);
     }
     const currentRows = (await purchaseQuery.listPurchaseRequestsForBatch({ batchNo: wantedBatch }))
       .filter((row) => row.behavior_code === PURCHASE_BEHAVIORS.order);
     if (!currentRows.length) return reject('not_modifiable', texts.notModifiable);
-    const batch = await orderBatches.findByBatchNo(wantedBatch);
-    if (!batch) return reject('batch_missing', texts.batchNotFound);
     const plan = planModification({ currentItems: currentRows, finalItems: items });
     if (!plan.final.length) return reject('empty_batch', texts.emptyBatch);
 

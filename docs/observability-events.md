@@ -659,7 +659,7 @@
 | `workbench.procurement.new_products.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.replenish.failed` | 1 | src/routes/workbench/purchase.js |
 | `workbench.procurement.submit.failed` | 1 | src/routes/workbench/purchase.js |
-| `workbench.procurement.submitted_today.failed` | 1 | src/routes/workbench/purchase.js |
+| `workbench.procurement.submitted.failed` | 2 | src/routes/workbench/procurementSubmitted.js |
 | `workbench.product_features.add_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_features.delete_failed` | 1 | src/routes/workbench/products.js |
 | `workbench.product_features.list_failed` | 1 | src/routes/workbench/products.js |

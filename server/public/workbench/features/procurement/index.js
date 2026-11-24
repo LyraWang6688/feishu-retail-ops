@@ -14,6 +14,7 @@ import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml, supplierNameMap } from './pending.js';
 import { createProcurementSearch, scrollGroupBelowHeader } from './search.js';
 import { createModifyController } from './modify.js';
+import { createSubmittedController } from './submitted.js';
 import { buildSuggestedBody, suggestedHtml, rangeBarHtml } from './suggested.js';
 import { metaOf as metaOfState, spotSoldOf as spotSoldOfState, syncRow as syncRowState, quantityInput } from './rowHelpers.js';
 const DATA_TABS = ['replenish', 'new']; const TABS = ['suggested', 'pending'];
@@ -22,16 +23,21 @@ export function mountProcurementPage(host) {
   host.innerHTML = shellHtml(config);
   const remote = createApi(config);
   const panels = { replenish: createReplenishPanel(config), new: createNewProductsPanel(config) };
-  const state = { tab: 'suggested', bodies: {}, errors: {}, loadedAt: {}, supplierId: '', submitted: [] };
+  const state = { tab: 'suggested', bodies: {}, errors: {}, loadedAt: {}, supplierId: '', submitted: [], submittedTotal: 0, submittedExpanded: new Set(), submittedDetailLoading: new Set(), submittedListLoading: false };
   let store = null;
   let draft = null;
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
   const modal = createCustomSizeModal({ host, config });
+  let submittedCtl = null;
   const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]'); const queryRow = host.querySelector('.pr-query-row'); const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft, { canClear: !modifyCtl?.active?.() }); };
   const mergedBody = () => buildSuggestedBody({ replenishBody: state.bodies.replenish, newBody: state.bodies.new, config });
   const paint = () => {
     const element = panelEl(state.tab); if (!element) return;
-    if (state.tab === 'pending') { element.innerHTML = pendingListHtml(draft, config, supplierNameMap(state.bodies), state.submitted); return; }
+    if (state.tab === 'pending') {
+      const view = submittedCtl ? submittedCtl.view() : { expanded: state.submittedExpanded, detailLoading: state.submittedDetailLoading, hasMore: false };
+      element.innerHTML = pendingListHtml(draft, config, supplierNameMap(state.bodies), state.submitted, view);
+      return;
+    }
     const error = state.errors.suggested || state.errors.replenish || state.errors.new;
     if (rangeHost) rangeHost.innerHTML = !error && state.bodies.replenish && state.bodies.new ? rangeBarHtml(mergedBody().range?.days, config) : '';
     if (error) { element.innerHTML = errorHtml(error, config); return; }
@@ -66,11 +72,7 @@ export function mountProcurementPage(host) {
     paint();
     refreshNumbers();
   };
-  const refresher = createRefresher({
-    host, config, panels, remote, getStore: () => store, getDraft: () => draft,
-    state, setDraft: (next) => setDraft(next), paint, refreshNumbers, submitCtl,
-    reload: () => loadAll(true),
-  });
+  const refresher = createRefresher({ host, config, panels, remote, getStore: () => store, getDraft: () => draft, state, setDraft: (next) => setDraft(next), paint, refreshNumbers, submitCtl, reload: () => loadAll(true) });
   const metaOf = (recordId) => metaOfState(state, recordId);
   const spotSoldOf = (recordId, size) => spotSoldOfState(state, recordId, size);
   const syncRow = (recordId, size) => syncRowState(host, store, draft, recordId, size);
@@ -79,17 +81,8 @@ export function mountProcurementPage(host) {
     syncRow(recordId, size);
     refreshNumbers();
   };
-  const groupOf = (recordId) => (state.bodies.replenish?.groups || []).find((item) => item.productRecordId === recordId)
-    || (state.bodies.new?.groups || []).find((item) => item.productRecordId === recordId);
-  const loadSubmitted = async () => {
-    try {
-      const body = await remote.loadSubmittedToday();
-      state.submitted = body?.batches || [];
-    } catch {
-      state.submitted = [];
-    }
-    if (state.tab === 'pending') paint();
-  };
+  const groupOf = (recordId) => (state.bodies.replenish?.groups || []).find((item) => item.productRecordId === recordId) || (state.bodies.new?.groups || []).find((item) => item.productRecordId === recordId);
+  submittedCtl = createSubmittedController({ config, api: remote, state, paint, toast: (message) => submitCtl.toast(host, message) });
   const activate = async (tab, options = {}) => {
     if (!TABS.includes(tab)) return;
     state.tab = tab;
@@ -98,17 +91,23 @@ export function mountProcurementPage(host) {
     if (queryRow) queryRow.hidden = tab === 'pending';
     host.querySelectorAll('[data-pr-tab]').forEach((button) => button.classList.toggle('active', button.dataset.prTab === tab));
     TABS.forEach((id) => panelEl(id)?.classList.toggle('hidden', id !== tab));
-    if (tab === 'pending') { paint(); void loadSubmitted(); return; }
+    if (tab === 'pending') { paint(); void submittedCtl.load(); return; }
     if (!state.bodies.replenish || !state.bodies.new) await loadAll(options.force === true);
     else paint();
   };
-  const modifyCtl = createModifyController({ host, config, api: remote, getStore: () => store, getDraft: () => draft, setDraft, toast: submitCtl.toast, onDone: async () => { setDraft(store.ensure()); await loadSubmitted(); await activate('pending'); } });
+  const modifyCtl = createModifyController({ host, config, api: remote, getStore: () => store, getDraft: () => draft, setDraft, toast: submitCtl.toast, onDone: async () => { setDraft(store.ensure()); await submittedCtl.load(); await activate('pending'); } });
   host.addEventListener('click', async (event) => {
     const tabButton = event.target.closest('[data-pr-tab]');
     if (tabButton) { search.hide(); await activate(tabButton.dataset.prTab); return; }
+    const expandButton = event.target.closest('[data-pr-expand-batch]');
+    if (expandButton) { await submittedCtl.toggle(expandButton.dataset.prExpandBatch); return; }
+    if (event.target.closest('[data-pr-more]')) { await submittedCtl.load({ append: true }); return; }
     const modifyButton = event.target.closest('[data-pr-modify-batch]');
     if (modifyButton) {
-      const batch = state.submitted.find((row) => row.batch_no === modifyButton.dataset.prModifyBatch); const started = modifyCtl.start(batch);
+      const batchNo = modifyButton.dataset.prModifyBatch;
+      const batch = await submittedCtl.prepareModify(batchNo);
+      if (!batch) return;
+      const started = modifyCtl.start(batch);
       if (!started.ok) return submitCtl.toast(host, started.error);
       state.supplierId = batch.supplier_record_id || ''; await activate('suggested'); return;
     }

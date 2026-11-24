@@ -409,13 +409,51 @@ test('AC-P31b 修改单强制显示原采购尺码：即使当前是 custom-only
   await expect(page.getByText('当前尺码有库存，不显示标准尺码；需要补货请添加自定义尺码。')).toBeHidden();
 });
 
-test('AC-P31 今日已提交：修改按钮打开原批次，预填数量并提交 modify', async ({ page }) => {
+test('AC-P32 已报货：今天默认展开，历史默认折叠，点击后才加载明细', async ({ page }) => {
+  const day = (iso) => Date.parse(iso);
+  const todayDetail = {
+    batch_no: 'CGD-TODAY', supplier_name: '供应商 A', submitted_at: day('2026-10-28T08:25:00Z'),
+    product_count: 1, total_quantity: 1,
+    products: [{ product_record_id: 'recProdA', item_no: '86822', number: '86822', color: '黑色', entries: [{ size: 39, quantity: 1 }] }],
+  };
+  const historyDetail = {
+    batch_no: 'CGD-HISTORY', supplier_name: '供应商 B', submitted_at: day('2026-10-20T08:25:00Z'),
+    product_count: 1, total_quantity: 2,
+    products: [{ product_record_id: 'recProdB', item_no: '92608', number: '92608', color: '咖色', entries: [{ size: 43, quantity: 2 }] }],
+  };
+  const calls = await mockApi(page, {
+    submittedBatches: [
+      { batch_no: 'CGD-TODAY', supplier_name: '供应商 A', submitted_at: day('2026-10-28T08:25:00Z'), is_today: true },
+      { batch_no: 'CGD-HISTORY', supplier_name: '供应商 B', submitted_at: day('2026-10-20T08:25:00Z'), is_today: false },
+    ],
+    submittedDetails: { 'CGD-TODAY': todayDetail, 'CGD-HISTORY': historyDetail },
+  });
+  await page.reload();
+  await openPage(page);
+  await tab(page, /预览区/).click();
+  await expect(page.getByText('CGD-TODAY')).toBeVisible();
+  const todayBatch = page.locator('[data-pr-submitted-batch="CGD-TODAY"]');
+  const historyBatch = page.locator('[data-pr-submitted-batch="CGD-HISTORY"]');
+  await expect(todayBatch.getByText('86822 · 黑色')).toBeVisible();
+  await expect(historyBatch).toBeVisible();
+  await expect(historyBatch.getByText('92608 · 咖色')).toBeHidden();
+  expect(calls.submittedDetail).toEqual(['CGD-TODAY']);
+  await page.locator('[data-pr-expand-batch="CGD-HISTORY"]').click();
+  await expect(historyBatch.getByText('92608 · 咖色')).toBeVisible();
+  expect(calls.submittedDetail).toEqual(['CGD-TODAY', 'CGD-HISTORY']);
+});
+
+test('AC-P31 已报货：修改按钮打开原批次，预填数量并提交 modify', async ({ page }) => {
+  const detail = {
+    batch_no: 'CGD-E2E-0001', supplier_record_id: 'recSupA', supplier_name: '供应商 A',
+    submitted_at: '2026-10-28T08:25:00Z', product_count: 1, total_quantity: 1,
+    products: [{ product_record_id: 'recProdA', item_no: '86822', number: '86822', color: '黑色', entries: [{ size: 39, quantity: 1 }] }],
+  };
   const calls = await mockApi(page, {
     submittedBatches: [{
-      batch_no: 'CGD-E2E-0001', supplier_record_id: 'recSupA', supplier_name: '供应商 A',
-      submitted_at: '2026-10-28T08:25:00Z', product_count: 1, total_quantity: 1,
-      products: [{ product_record_id: 'recProdA', item_no: '86822', number: '86822', color: '黑色', entries: [{ size: 39, quantity: 1 }] }],
+      batch_no: 'CGD-E2E-0001', supplier_name: '供应商 A', submitted_at: '2026-10-28T08:25:00Z', is_today: false,
     }],
+    submittedDetails: { 'CGD-E2E-0001': detail },
   });
   await page.reload();
   await openPage(page);
