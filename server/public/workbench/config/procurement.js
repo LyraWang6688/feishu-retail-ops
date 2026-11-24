@@ -6,7 +6,7 @@
  *   · 补货：近 3 天销售（销售明细，库存数量=0）；现货/预订都默认 0，按需手选；
  *   · 上新：最近 7 天新增货品（今天 + 往前 6 天）；卡片「货号 · 颜色」+「M月D日 HH:mm 新增 · 供应商」；普通码 / 特殊码默认都 0（需手动选）；
  *     顶部统计**只有「新增货品」**；不展示/不筛选货品状态；
- *   · 第三 tab：**待提交列表**（只读核对；采购页不接扫码）；
+ *   · 第三 tab：**待提交列表**（只读核对；采购页扫码仅定位，不进入扫码写链路）；
  *   · 提交：复用既有采购链路；成功后端返回**统一异步 toast 文案**（`config/submitToast.js` 唯一真源）。
  *
  * ⚠️ 渲染层不写死中文 / 数字 / 端点；颜色一律走 `styles/tokens.css` 的 token（本页 CSS 不写 hex/rgb）。
@@ -85,6 +85,13 @@ export const PROCUREMENT_UI = Object.freeze({
     searchPlaceholder: '搜索货号',
     searchLoading: '正在搜索货品…',
     searchEmpty: '没有匹配的货品。',
+    scan: '扫码',
+    scanning: '扫码中…',
+    scanInvalid: '请扫货品标签二维码。',
+    scanNotFound: '这个货品不在本次采购列表（近 7 天补货 / 上新）。',
+    scanUnsupported: '这里不能扫码，请用飞书扫一扫。',
+    scanFailed: '扫码没有成功，请再试一次。',
+    scanCancelled: '已取消扫码。',
   }),
   range: Object.freeze({
     // 补货 / 上新统一近 7 天（含今天）
@@ -114,6 +121,10 @@ export const PROCUREMENT_UI = Object.freeze({
   productActions: Object.freeze({
     adjustLabel: '库存调整',
     infoLabel: '信息完善',
+  }),
+  scan: Object.freeze({
+    realm: 'procurement',
+    highlightMs: 2500,
   }),
   units: Object.freeze({
     pair: '双',

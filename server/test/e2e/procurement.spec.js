@@ -471,3 +471,33 @@ test('AC-P31 已报货：修改按钮打开原批次，预填数量并提交 mod
   expect(payload.batchNo).toBe('CGD-E2E-0001');
   expect(payload.items).toContainEqual({ productRecordId: 'recProdA', source: 'replenish', entries: [{ size: 39, quantity: 2 }] });
 });
+
+test('AC-P28c 扫码定位：搜索/扫码同一行，统计范围下一行，扫到后切换并高亮', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.h5sdk = {
+      config: async () => {},
+      ready: (done) => done(),
+    };
+    window.tt = {
+      scanCode: ({ success }) => success({ result: '/r/recNewB?from=procurement' }),
+    };
+  });
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+
+  const search = page.locator('[data-pr-search]');
+  const scan = page.locator('[data-pr-scan]');
+  const range = page.locator('[data-pr-range-row]');
+  await expect(scan).toBeVisible();
+  const searchBox = await search.boundingBox();
+  const scanBox = await scan.boundingBox();
+  const rangeBox = await range.boundingBox();
+  expect(Math.abs(searchBox.y - scanBox.y)).toBeLessThan(4);
+  expect(rangeBox.y).toBeGreaterThan(searchBox.y + searchBox.height - 4);
+
+  await scan.click();
+  await expect(page.getByText('LY002 · 米白')).toBeVisible();
+  await expect(page.locator('[data-pr-group="recNewB"]')).toHaveClass(/is-scan-target/);
+  await expect(search).toHaveValue('');
+});

@@ -1,5 +1,6 @@
 /** 采购页全局货品搜索：跨补货 / 上新、跨供应商，按货号模糊匹配。 */
 import { escapeHtml } from '../../core/formatters.js';
+import { scanCodeRaw, scanTargetUrl } from '../scan/launch.js';
 
 export const searchResultsOf = (bodies, query) => {
   const text = String(query || '').trim().toLowerCase();
@@ -34,8 +35,39 @@ export const scrollGroupBelowHeader = (host, record) => {
   });
 };
 
+/** 扫到的内容 → 采购定位用的 recordId；只认 /r/{recordId}，不猜。 */
+export const recordIdFromScanTarget = (target) => {
+  try {
+    const url = new URL(String(target || ''), 'https://procurement.local');
+    const match = url.pathname.match(/^\/r\/([^/]+)$/);
+    return match ? decodeURIComponent(match[1]) : '';
+  } catch {
+    return '';
+  }
+};
+
+/** 在当前采购数据里定位 recordId：上新优先，其次补货。 */
+export const findGroupByRecordId = (bodies, recordId) => {
+  const wanted = String(recordId || '').trim();
+  if (!wanted) return null;
+  for (const tab of ['new', 'replenish']) {
+    const group = (bodies?.[tab]?.groups || []).find((item) => String(item?.productRecordId || '') === wanted);
+    if (group) return { tab, group };
+  }
+  return null;
+};
+
+/** 扫码定位后的短暂高亮。 */
+export const highlightGroup = (host, record, durationMs = 2500) => {
+  const el = host?.querySelector?.('[data-pr-group="' + record + '"]');
+  if (!el) return;
+  el.classList.add('is-scan-target');
+  const timer = setTimeout(() => el.classList.remove('is-scan-target'), Math.max(0, Number(durationMs) || 0));
+  el.dataset.prScanHighlight = String(timer);
+};
+
 /** 把顶部搜索框接到全局结果面板；数据加载 / 跳转由调用方给。 */
-export function createProcurementSearch({ host, config, getBodies, ensureLoaded, onSelect }) {
+export function createProcurementSearch({ host, config, getBodies, ensureLoaded, onSelect, toast = () => {} }) {
   const input = host?.querySelector('[data-pr-search]');
   const resultsHost = host?.querySelector('[data-pr-search-results-host]');
   let timer = null;
@@ -77,7 +109,56 @@ export function createProcurementSearch({ host, config, getBodies, ensureLoaded,
     clear();
     onSelect?.(result);
   });
-  return { clear, hide, run };
+
+  const scanButton = host?.querySelector('[data-pr-scan]');
+  const scanLabel = config.texts.scan || '扫码';
+  let scanning = false;
+  const setScanning = (value) => {
+    scanning = value;
+    if (!scanButton) return;
+    scanButton.disabled = value;
+    scanButton.textContent = value ? (config.texts.scanning || scanLabel) : scanLabel;
+  };
+  const scan = async () => {
+    if (scanning || !scanButton) return;
+    setScanning(true);
+    hide();
+    try {
+      const scanned = await scanCodeRaw(config.scan?.realm || 'procurement');
+      const target = scanTargetUrl(scanned, config.scan?.realm || 'procurement');
+      const recordId = recordIdFromScanTarget(target);
+      if (!recordId) {
+        toast(config.texts.scanInvalid || config.texts.scanFailed);
+        return;
+      }
+      await ensureLoaded();
+      const hit = findGroupByRecordId(getBodies(), recordId);
+      if (!hit) {
+        toast(config.texts.scanNotFound || config.texts.searchEmpty);
+        return;
+      }
+      clear();
+      await onSelect?.({
+        tab: hit.tab,
+        supplier: hit.group.supplierRecordId || '',
+        record: recordId,
+        scanned: true,
+      });
+    } catch (error) {
+      const code = String(error?.message || '');
+      const errMsg = String(error?.errMsg || '');
+      if (/cancel/i.test(errMsg) || /cancel/i.test(code)) return;
+      if (['jssdk_missing', 'jssdk_load_failed', 'scan_unsupported', 'config_timeout', 'ready_timeout'].includes(code)) {
+        toast(config.texts.scanUnsupported || config.texts.scanFailed);
+      } else {
+        toast(config.texts.scanFailed);
+      }
+    } finally {
+      setScanning(false);
+    }
+  };
+  scanButton?.addEventListener('click', () => { void scan(); });
+  return { clear, hide, run, scan };
 }
 
 export const searchResultsHtml = (results, config, { loading = false } = {}) => {
