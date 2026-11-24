@@ -32,6 +32,9 @@ const PERSON_FIELDS = Object.freeze({
   liveInventory: Object.freeze({
     warehouseStaff: Object.freeze({ field: 'warehouseStaff', mode: 'set', source: 'inventory_operator' }),
   }),
+  accessorySale: Object.freeze({
+    operator: Object.freeze({ field: 'operator', mode: 'set', source: 'accessory_sale_actor' }),
+  }),
 });
 
 /**

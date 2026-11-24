@@ -2,10 +2,8 @@ const { readString } = require('./envValue');
 // ⭐ 2026-11-17：三张产品特点标签表的 tableId 唯一真源仍在 `productFeatures`（含环境变量/生产兜底），
 //   这里只引用，不在 schema 里再写一份硬编码兜底。
 const { PRODUCT_FEATURE_DIMENSIONS } = require('./productFeatures');
-
 const getEnv = (key, fallback = '') => process.env[key] || fallback;
 const featureTableIdOf = (cacheKey) => (PRODUCT_FEATURE_DIMENSIONS.find((item) => item.cacheKey === cacheKey) || {}).tableId || '';
-
 // 目标多维表格不再有硬编码兜底：读不到就明确报错。此前默认值指向生产 Base，
 // 任何漏配环境变量的场合都会静默写到生产，比如本地脚本和自动化测试。
 // 这里用取值函数而不是模块级常量，是为了不在 import 阶段就抛错——只有真正
@@ -20,7 +18,6 @@ const readAppToken = (env = process.env) => {
   }
   return token;
 };
-
 const V1_BITABLE_SCHEMA = {
   get appToken() {
     return readAppToken();
@@ -147,6 +144,12 @@ const V1_BITABLE_SCHEMA = {
         createdAt: Object.freeze({ name: '创建时间', type: 1001, uiType: 'CreatedTime', writable: false }),
         updatedAt: Object.freeze({ name: '更新时间', type: 1002, uiType: 'ModifiedTime', writable: false }),
       }),
+    },
+    accessorySale: {
+      tableName: '配品销售',
+      tableId: getEnv('FEISHU_V1_ACCESSORY_SALE_TABLE_ID'),
+      fields: { orderNo: '配品单号', item: '名称', quantity: '数量', payment: '交易明细', operator: '录单人', saleDate: '销售日' },
+      readOnlyFields: Object.freeze({ updatedAt: Object.freeze({ name: '更新时间', type: 1002, writable: false }) }),
     },
     behavior: {
       tableName: '行为管理',
@@ -785,13 +788,11 @@ const V1_BITABLE_SCHEMA = {
     },
   },
 };
-
 const getV1Table = (tableKey) => {
   const table = V1_BITABLE_SCHEMA.tables[tableKey];
   if (!table) throw new Error(`Unknown V1 table: ${tableKey}`);
   return table;
 };
-
 module.exports = {
   V1_BITABLE_SCHEMA,
   getV1Table,
