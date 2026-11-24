@@ -12,7 +12,7 @@ import { createRefresher } from './refresh.js';
 import { customSizeErrorMessage, pruneCustomSizes, customRowsError } from './customSize.js';
 import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml, supplierNameMap } from './pending.js';
-import { createProcurementSearch, scrollGroupBelowHeader } from './search.js';
+import { createProcurementSearch, scrollGroupBelowHeader, highlightGroup } from './search.js';
 import { createModifyController } from './modify.js';
 import { createSubmittedController } from './submitted.js';
 import { buildSuggestedBody, suggestedHtml, rangeBarHtml } from './suggested.js';
@@ -29,7 +29,7 @@ export function mountProcurementPage(host) {
   const submitCtl = createSubmitController({ config, api: remote, getStore: () => store });
   const modal = createCustomSizeModal({ host, config });
   let submittedCtl = null;
-  const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]'); const queryRow = host.querySelector('.pr-query-row'); const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft, { canClear: !modifyCtl?.active?.() }); };
+  const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]'); const rangeRow = host.querySelector('[data-pr-range-row]'); const queryRow = host.querySelector('.pr-query-row'); const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft, { canClear: !modifyCtl?.active?.() }); };
   const mergedBody = () => buildSuggestedBody({ replenishBody: state.bodies.replenish, newBody: state.bodies.new, config });
   const paint = () => {
     const element = panelEl(state.tab); if (!element) return;
@@ -87,7 +87,7 @@ export function mountProcurementPage(host) {
     if (!TABS.includes(tab)) return;
     state.tab = tab;
     const searchWrap = host.querySelector('.pr-search'); if (searchWrap) searchWrap.hidden = tab === 'pending';
-    if (rangeHost) rangeHost.hidden = tab === 'pending';
+    if (rangeHost) rangeHost.hidden = tab === 'pending'; if (rangeRow) rangeRow.hidden = tab === 'pending';
     if (queryRow) queryRow.hidden = tab === 'pending';
     host.querySelectorAll('[data-pr-tab]').forEach((button) => button.classList.toggle('active', button.dataset.prTab === tab));
     TABS.forEach((id) => panelEl(id)?.classList.toggle('hidden', id !== tab));
@@ -169,10 +169,12 @@ export function mountProcurementPage(host) {
     host, config,
     getBodies: () => state.bodies,
     ensureLoaded: async () => { await loadAll(false); },
-    onSelect: async ({ supplier, record }) => {
+    toast: (message) => submitCtl.toast(host, message),
+    onSelect: async ({ supplier, record, scanned }) => {
       state.supplierId = supplier;
       await activate('suggested');
       scrollGroupBelowHeader(host, record);
+      if (scanned) highlightGroup(host, record, config.scan?.highlightMs);
     },
   });
   const start = async () => {
@@ -193,6 +195,5 @@ export function mountProcurementPage(host) {
     await activate('suggested');
     refresher.startAuto();
   };
-  void start();
-  return { activate };
+  void start(); return { activate };
 }

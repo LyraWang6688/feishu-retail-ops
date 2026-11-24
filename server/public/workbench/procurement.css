@@ -25,7 +25,12 @@
 .pr-query-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
 .pr-query-row[hidden] { display: none; }
 .pr-query-row .pr-search { flex: 1 1 auto; min-width: 0; }
-.pr-range-host { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.pr-scan { flex: 0 0 auto; min-height: var(--control-height); padding: 0 var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-pill); background: var(--surface); color: var(--primary); font-size: var(--font-size-sm); font-weight: var(--weight-medium); white-space: nowrap; cursor: pointer; }
+.pr-scan:disabled { opacity: 0.6; cursor: wait; }
+.pr-range-row { display: flex; align-items: center; width: 100%; margin: 0 0 var(--space-2); }
+.pr-range-row[hidden] { display: none; }
+.pr-range-row .pr-range-host { display: flex; align-items: center; gap: var(--space-2); flex: 1 1 auto; width: 100%; }
+.pr-range-row .pr-range-inline { flex: 1 1 auto; }
 .pr-range-host .pr-range-inline { flex-wrap: nowrap; margin-left: 0; white-space: nowrap; font-size: var(--font-size-xs); }
 .pr-range-host .pr-refresh { min-height: 40px; }
 .pr-modify-banner { margin: 0 var(--space-3) var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--primary); border-radius: var(--radius-sm); background: var(--primary-soft); color: var(--primary); font-size: var(--font-size-sm); font-weight: var(--weight-bold); }
@@ -47,6 +52,7 @@
 
 /* 分组卡 */
 .pr-group { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); padding: 0 var(--space-3) var(--space-3); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
+.pr-group.is-scan-target { outline: 2px solid var(--primary); outline-offset: 2px; }
 .pr-group-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); width: 100%; padding: var(--space-3) var(--space-1) var(--space-1); }
 .pr-group-title-wrap { display: flex; align-items: center; gap: var(--space-1); flex: 1 1 auto; min-width: 0; }
 .pr-group-name { margin: 0; font-size: var(--font-size-lg); font-weight: var(--weight-bold); overflow-wrap: anywhere; flex: 0 1 auto; min-width: 0; }

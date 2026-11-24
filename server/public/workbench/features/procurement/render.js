@@ -160,8 +160,9 @@ export const shellHtml = (config) => {
     <div class="pr-tabs" role="tablist" aria-label="${escapeHtml(config.title)}">${tabs}</div>
     <div class="pr-query-row">
       <label class="pr-search"><span class="pr-search__icon" aria-hidden="true">⌕</span><input type="search" data-pr-search placeholder="${escapeHtml(config.texts.searchPlaceholder)}" aria-label="${escapeHtml(config.texts.searchPlaceholder)}"></label>
-      <div class="pr-range-host" data-pr-range-host></div>
+      <button type="button" class="pr-scan" data-pr-scan>${escapeHtml(config.texts.scan)}</button>
     </div>
+    <div class="pr-range-row" data-pr-range-row><div class="pr-range-host" data-pr-range-host></div></div>
     <div class="pr-search-results-host" data-pr-search-results-host hidden></div>
   </div>
   <div class="pr-modify-banner hidden" data-pr-modify-banner></div>
