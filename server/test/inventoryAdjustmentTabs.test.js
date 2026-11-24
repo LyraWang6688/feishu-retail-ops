@@ -47,6 +47,9 @@ test('AC-IA7 单双调整有显式「清零库存」入口 + 二次确认', () =
   assert.ok(html.includes('data-clear-confirm'), '有确认按钮');
   assert.ok(html.includes('clearAll: true'), '提交时显式带 clearAll');
   assert.ok(html.includes('clearConfirmBody'), '确认文案从 config 取');
+  assert.ok(html.includes('data-view="clear-delist-modal"'), '清零后有下架确认');
+  assert.ok(html.includes('data-clear-delist-confirm'), '下架确认按钮存在');
+  assert.ok(html.includes('delistProductIds'), '下架意图随清零请求提交');
 });
 
 test('AC-IA10 搜索货号复用货品上新的缺失信息：同一个接口 + 同一份 issue helper', () => {

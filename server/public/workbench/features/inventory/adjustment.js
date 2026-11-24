@@ -326,14 +326,16 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
     $(state.host, '[data-view="clear-modal"]').hidden = false;
   }
 
-  async function clearAll() {
+  async function clearAll(delist = false) {
     $(state.host, '[data-view="clear-modal"]').hidden = true;
+    $(state.host, '[data-view="clear-delist-modal"]').hidden = true;
     const requestId = state.pendingRequest || crypto.randomUUID();
     state.pendingRequest = requestId;
-    showToast(INVENTORY_MANUAL_TEXTS.clearSubmitted, { durationMs: 300000 });
+    showToast(delist ? INVENTORY_MANUAL_TEXTS.clearDelistSubmitted : INVENTORY_MANUAL_TEXTS.clearSubmitted, { durationMs: 300000 });
     try {
       const result = await api.post('/api/workbench/inventory/adjustments/pairs', {
         productRecordId: state.productId, rows: [], clearAll: true, requestId,
+        ...(delist ? { delistProductIds: [state.productId] } : {}),
       });
       state.pendingRequest = null;
       const jobId = String(result?.job_id || '').trim();
@@ -342,7 +344,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       state.rows = [];
       await loadSingleRows(state.productId);
       renderSingle(state.productId);
-      showToast(INVENTORY_MANUAL_TEXTS.clearedToast);
+      showToast(delist ? INVENTORY_MANUAL_TEXTS.clearDelistDone : INVENTORY_MANUAL_TEXTS.clearedToast);
     } catch (error) {
       showPageError(describeError(error));
     }
@@ -433,6 +435,11 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
           <div class="manual-modal-card"><h3>是否需要打印？</h3><p class="hint">库存调整已保存，可以继续打印这一款标签。</p>
             <div class="row-actions"><button class="btn" type="button" data-print="no">不打印</button><button class="btn primary" type="button" data-print="yes">打印</button></div>
           </div>
+        </div>
+        <div class="manual-modal" data-view="clear-delist-modal" hidden>
+          <div class="manual-modal-card"><h3>${escapeHtml(INVENTORY_MANUAL_TEXTS.clearDelistTitle)}</h3><p class="hint">${escapeHtml(INVENTORY_MANUAL_TEXTS.clearDelistBody)}</p>
+            <div class="row-actions"><button class="btn" type="button" data-clear-delist-cancel>${escapeHtml(INVENTORY_MANUAL_TEXTS.clearDelistCancel)}</button><button class="btn primary" type="button" data-clear-delist-confirm>${escapeHtml(INVENTORY_MANUAL_TEXTS.clearDelistConfirm)}</button></div>
+          </div>
         </div>`;
       renderCards();
       let singleTimer = null;
@@ -474,7 +481,14 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
         }
         if (event.target.closest?.('[data-clear-stock]')) { openClearConfirm(); return; }
         if (event.target.closest?.('[data-clear-cancel]')) { $(state.host, '[data-view="clear-modal"]').hidden = true; return; }
-        if (event.target.closest?.('[data-clear-confirm]')) { void clearAll(); return; }
+        if (event.target.closest?.('[data-clear-confirm]')) {
+          $(state.host, '[data-view="clear-modal"]').hidden = true;
+          if (!INVENTORY_MANUAL_TEXTS.clearDelistPrompt) { void clearAll(false); return; }
+          $(state.host, '[data-view="clear-delist-modal"]').hidden = false;
+          return;
+        }
+        if (event.target.closest?.('[data-clear-delist-cancel]')) { void clearAll(false); return; }
+        if (event.target.closest?.('[data-clear-delist-confirm]')) { void clearAll(true); return; }
         if (event.target.closest?.('[data-save]')) { void savePairs(); return; }
         const season = event.target.closest?.('[data-action="season-set"]');
         if (season) { void setSeason(season.dataset.season === 'true'); return; }

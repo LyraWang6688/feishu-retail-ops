@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **525** 个事件。按前缀分组：
+共 **530** 个事件。按前缀分组：
 
 ## accessory
 
@@ -549,6 +549,16 @@
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
 | `server.started` | 1 | src/app.js |
+
+## stock
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `stock.delist.intent.done` | 1 | src/services/stockDelistIntentService.js |
+| `stock.delist.intent.item_failed` | 2 | src/services/stockDelistIntentService.js |
+| `stock.delist.intent.recover_failed` | 1 | src/services/stockDelistIntentRuntime.js |
+| `stock.delist.intent.recovered` | 1 | src/services/stockDelistIntentRuntime.js |
+| `stock.delist.intent.request_failed` | 1 | src/routes/workbenchInventoryAdjustment.js |
 
 ## supplier
 
