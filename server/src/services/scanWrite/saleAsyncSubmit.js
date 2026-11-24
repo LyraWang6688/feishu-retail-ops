@@ -107,14 +107,16 @@ const enqueueSaleAsync = async ({
     }
   }
   const products = Array.isArray(printProducts) ? printProducts : salePrintProductsOf(lines);
+  // 用户选了“全部下架”时，不进入打印页；仍有其他未下架货品时，只打印剩余货品。
+  const printableProducts = products.filter((product) => !delistIds.includes(String(product.recordId || '')));
   let printPromptUrl = '';
-  if (saleJobId && products.length) {
+  if (saleJobId && printableProducts.length) {
     const prompt = getPrintPromptService().create({
       kind: 'sale',
       source: SOURCES.sale,
       operationId: saleJobId,
       ownerOpenId: openId,
-      products,
+      products: printableProducts,
       returnUrl: submitToastUrl({ orderNo }),
     });
     if (prompt) printPromptUrl = printPromptUrlOf(prompt.token);
