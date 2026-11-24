@@ -11,8 +11,6 @@ const { larkLogger } = require('../utils/larkLogger');
 const { LarkEventHeartbeat } = require('../infrastructure/larkEventHeartbeat');
 const { evaluateLarkEventHeartbeat, resolveStaleMinutes } = require('../config/larkEventHeartbeat');
 const { createLabelPrintFormIntakeService } = require('../services/labelPrintFormIntakeService');
-const { createAccessorySaleSyncService } = require('../services/accessorySaleSyncService');
-const { ACCESSORY_SALE_SYNC } = require('../config/accessorySaleSync');
 const { invalidateProductSearchSnapshot } = require('../services/productSearchSnapshot');
 
 // 事件入口的「最后一次收到事件」心跳（记录器见 infrastructure/larkEventHeartbeat）：
@@ -42,12 +40,6 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
   const labelPrintFormIntake = options.labelPrintFormIntake
     || service?.labelPrintFormIntake
     || createLabelPrintFormIntakeService();
-  // ⭐ 2026-11-17：配品销售新增 → S交易明细（把飞书工作流搬进代码）。
-  //   网关优先用显式注入，其次用 LarkMvpService 的网关；都没有时先不建（事件来了会 warn）。
-  const accessorySaleGateway = options.gateway || service?.gateway || null;
-  const accessorySaleSync = options.accessorySaleSync
-    || service?.accessorySaleSync
-    || (accessorySaleGateway ? createAccessorySaleSyncService({ gateway: accessorySaleGateway }) : null);
   return {
   'im.message.receive_v1': (event) => {
     recordBusinessHeartbeat(heartbeat);
@@ -262,22 +254,6 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
       } else {
         // 没接线时给一条**明确的**排查线索，而不是静默什么都不做。
         logWarn('label_print.form.not_wired', { table_id: tableId, action_count: actionList.length });
-      }
-    }
-
-    // ⭐ 2026-11-17：「配品销售」新增记录 → S交易明细（原飞书工作流 wkfJ6Uo7GihkbmGF 搬进代码）。
-    //   ⚠️ 按配置的源表 ID 分派；只认新增（service 再判一次）；异步不阻塞事件响应。
-    //   🔴 上线前先停飞书工作流，否则代码 + 工作流会双写。
-    const accessorySaleTableId = String(ACCESSORY_SALE_SYNC.sourceTableId || '').trim();
-    if (accessorySaleTableId && tableId === accessorySaleTableId) {
-      if (accessorySaleSync && typeof accessorySaleSync.handleTableChanges === 'function') {
-        setImmediate(() => {
-          accessorySaleSync.handleTableChanges(actionList).catch((error) => {
-            logError('accessory.sale.sync.dispatch_failed', { table_id: tableId, error: error.message });
-          });
-        });
-      } else {
-        logWarn('accessory.sale.sync.not_wired', { table_id: tableId, action_count: actionList.length });
       }
     }
 

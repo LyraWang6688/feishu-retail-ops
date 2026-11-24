@@ -2,7 +2,7 @@
 
 const { createSalesDeliveryReadService } = require('./salesDeliveryReadService');
 const { SALES_QUERY } = require('../config/salesQuery');
-const { ACCESSORY_SALE_SYNC } = require('../config/accessorySaleSync');
+const { ACCESSORY_SALE } = require('../config/accessorySale');
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
 const toDate = (value) => {
@@ -118,7 +118,7 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
         (detail) => detail.product_record_id === productId,
       ));
     const bundledAccessoryAmount = ordersInRange.reduce((sum, order) => sum + Number(order.accessory_amount || 0), 0);
-    const accessoryReceiptPrefix = `${ACCESSORY_SALE_SYNC.receiptPrefix}-`;
+    const accessoryReceiptPrefix = `${ACCESSORY_SALE.receiptPrefix}-`;
     const standaloneAccessoryAmount = payments
       .filter((payment) => !payment.sales_entry_record_id
         && String(payment.receipt_id || '').startsWith(accessoryReceiptPrefix))
