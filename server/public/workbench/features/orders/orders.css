@@ -382,3 +382,9 @@
   cursor: not-allowed;
   opacity: 0.7;
 }
+
+/* 2026-11-24：销售草稿单列表 */
+.draft-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.draft-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface); }
+.draft-row__main { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.draft-row__main b { overflow-wrap: anywhere; }

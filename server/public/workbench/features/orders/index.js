@@ -24,6 +24,7 @@ import {
 
 const P = ORDERS_PAGE;
 const T = ORDERS_TEXTS;
+const fill = (template, values = {}) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (values[key] === undefined || values[key] === null ? '' : String(values[key])));
 
 /** 收款方式候选：后端给的就用后端的（**不自己造选项**），一条都没有才用配置兜底。 */
 // ── ⭐⭐【首屏】先旧后新（stale-while-revalidate，只在前端展示层做）──────────────────────
@@ -307,6 +308,8 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     // ⚠️ 2026-10-29：老订单列表/详情已删（销售订单列表只剩三条路径：交割单 / 售后单 / 草稿箱）。
     //   这里保留 `orders` 只为**首屏缓存**（业务负责人要求保留"首屏缓存"）与草稿占位；不再渲染任何订单行。
     orders: [],
+    drafts: [],
+    draftsLoading: false,
     activeSection: null,
     ordersLoaded: false,
     ordersLoading: false,
@@ -371,15 +374,17 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       reportOrdersRendered('cards', SALES_SECTIONS.length);
       return;
     }
-    // 只有「草稿箱」会进这里（交割单在本页直接跳独立页；售后单直接起扫一扫）⇒ 显示显式占位。
-    // ⭐ 2026-11-08（业务负责人：「草稿页需要和其他占位前端一致」）：
-    //   占位页**统一成同一张虚线卡 + 「待建设」小标签**（与 货品→信息配置 同一套
-    //   `.placeholder-card` / `.tag-info`，样式在 `features/domains/domains.css`，index.html 已加载 ✓）。
-    //   ⚠️ 这里**不新增 import**（本文件被十余个 harness 拷贝 + 显式改写 import，多一条相对 import 会一起挂）。
-    // ⭐ 2026-11-08 业务负责人 HTML 批注：「← 返回订单列表」不需要 ⇒ 删掉（占位页只剩统一占位卡）。
-    host.innerHTML = `${notices}<div class="placeholder-card" data-view="section-placeholder" data-placeholder="draft">
-        <span class="tag tag-info">待建设</span>
-      </div>`;
+    // 草稿箱：真实列表。
+    if (state.draftsLoading) { host.innerHTML = '<p class="section-loading">正在读取草稿…</p>'; return; }
+    if (!state.drafts.length) { host.innerHTML = `<p class="section-loading">${escapeHtml(T.draftEmpty)}</p>`; return; }
+    host.innerHTML = `<ul class="draft-list">${state.drafts.map((draft) => `
+      <li class="draft-row" data-draft-id="${escapeHtml(draft.draftId)}">
+        <div class="draft-row__main">
+          <b>${escapeHtml(draft.number || draft.itemNo || draft.draftId)}</b>
+          <span class="hint">${escapeHtml(draft.step === 'payment' ? T.draftStepPayment : T.draftStepGoods)} · ${escapeHtml(fill(T.draftItems, { count: draft.itemCount || 0 }))}</span>
+        </div>
+        <button type="button" class="btn btn--ghost" data-draft-delete="${escapeHtml(draft.draftId)}">${escapeHtml(T.draftDelete)}</button>
+      </li>`).join('')}</ul>`;
   }
   function renderPurchaseList() {
     $('[data-view="purchase-host"]').innerHTML = purchaseOrdersHtml(state.purchaseRows, {
@@ -461,6 +466,36 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }
   }
 
+
+  async function loadDrafts() {
+    if (state.draftsLoading) return;
+    state.draftsLoading = true;
+    renderList();
+    try {
+      const data = await api.get(ORDERS_API.drafts);
+      state.drafts = Array.isArray(data?.drafts) ? data.drafts : [];
+      state.draftsLoading = false;
+      renderList();
+    } catch (error) {
+      state.draftsLoading = false;
+      const host = $('[data-view="orders-host"]');
+      if (host) host.innerHTML = '<p class="section-loading">' + escapeHtml(T.draftLoadFailed) + '</p>';
+      showPageError(describeError(error));
+    }
+  }
+
+  async function deleteDraft(draftId) {
+    if (!draftId || !window.confirm(T.draftDeleteConfirm)) return;
+    try {
+      await api.delete(ORDERS_API.drafts + '/' + encodeURIComponent(draftId));
+      state.drafts = state.drafts.filter((draft) => draft.draftId !== draftId);
+      renderList();
+      renderResult(T.draftDeleted);
+    } catch (error) {
+      renderResult(T.draftDeleteFailed, true);
+    }
+  }
+
   // ── ⭐ 2026-10-09：采购子 tab（读既有 /purchase/requests；验收走既有入库链路）────────
   async function loadPurchaseOrders() {
     const host = $('[data-view="purchase-host"]');
@@ -495,12 +530,13 @@ export function createOrdersModule({ mode = 'both' } = {}) {
           return;
         }
         state.activeSection = sectionCard.dataset.ordersSection;
+        if (state.activeSection === 'draft') { void loadDrafts(); return; }
         renderList();
-        // ⭐ 2026-11-11：点「草稿单」不拉订单列表（占位页不需要数据；以前会闪「刷新中…」，
-        //   飞书读表抖动时还会直接显示 400 报错）。交割单/售后单在更上面就分流 ⇒ 本页零调用。
-        if (state.activeSection !== 'draft' && !state.ordersLoaded && !state.ordersLoading) loadOrders();
+        if (!state.ordersLoaded && !state.ordersLoading) loadOrders();
         return;
       }
+      const deleteDraftButton = event.target.closest('[data-draft-delete]');
+      if (deleteDraftButton) { void deleteDraft(deleteDraftButton.dataset.draftDelete); return; }
       const pickSupplier = event.target.closest('[data-action="pick-supplier"]');
       if (pickSupplier) {
         state.activeSupplierKey = pickSupplier.dataset.supplierKey || '';
