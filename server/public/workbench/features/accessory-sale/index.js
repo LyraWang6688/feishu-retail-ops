@@ -40,19 +40,8 @@ export function createAccessorySaleModule() {
     host.innerHTML = `
       <div class="as-page" data-page-kind="accessory-sale">
         <header class="as-head"><div><h1>${escapeHtml(T.title)}</h1><p>${escapeHtml(T.subtitle)}</p></div></header>
-        <label class="as-search"><input data-as-search type="search" placeholder="${escapeHtml(T.searchPlaceholder)}" autocomplete="off"></label>
         <section class="as-card">
-          <div class="as-list" data-as-list>
-            ${state.accessories.length ? state.accessories.map((item) => `
-              <article class="as-item" data-as-item="${escapeHtml(item.recordId)}">
-                <div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.category || '')}</small></div>
-                <span class="as-price">¥${money(item.price)}</span>
-                <button class="as-add" type="button" data-as-add>加入</button>
-              </article>`).join('') : `<p class="as-empty">${escapeHtml(T.emptyAccessories)}</p>`}
-          </div>
-        </section>
-        <section class="as-card">
-          <h2>已选配品</h2>
+          <h2>${escapeHtml(T.selectedTitle)}</h2>
           <div data-as-cart></div>
           <div class="as-checkout">
             <label class="as-field">${escapeHtml(T.totalLabel)}
@@ -66,6 +55,17 @@ export function createAccessorySaleModule() {
           </div>
           <button class="as-submit" type="button" data-as-submit>${escapeHtml(T.submit)}</button>
           <p class="as-success" data-as-success hidden></p>
+        </section>
+        <label class="as-search"><input data-as-search type="search" placeholder="${escapeHtml(T.searchPlaceholder)}" autocomplete="off"></label>
+        <section class="as-card">
+          <div class="as-list" data-as-list>
+            ${state.accessories.length ? state.accessories.map((item) => `
+              <article class="as-item" data-as-item="${escapeHtml(item.recordId)}">
+                <div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.category || '')}</small></div>
+                <span class="as-price">¥${money(item.price)}</span>
+                <button class="as-add" type="button" data-as-add>加入</button>
+              </article>`).join('') : `<p class="as-empty">${escapeHtml(T.emptyAccessories)}</p>`}
+          </div>
         </section>
       </div>`;
     bind();
