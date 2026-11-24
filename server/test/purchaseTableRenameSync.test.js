@@ -265,6 +265,8 @@ test('A4 schema 同步「创建时间」→「报货日」；到货日由验收�
       //   **只读**「采购主表.报货日」（schema 语义键 `createdAt`，自动字段）→ 投影成
       //   `arrival_created_at` 给前端做「采购日」分组。**入参里没有 `createdAt:`**（不写这一列）✓
       'src/services/purchaseQueryService.js',
+      // ⭐ 2026-11-24：采购预览「已报货」只读「采购主表.报货日」排序；入参里没有 createdAt:。
+      'src/services/procurementSubmittedService.js',
       // ⭐ 2026-11-11：FIFO 只读「实时库存.创建时间」（自动字段），入参里没有 createdAt:。
       'src/services/inventory/liveStock.js',
     ];

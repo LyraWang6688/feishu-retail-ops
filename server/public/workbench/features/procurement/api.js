@@ -22,14 +22,16 @@ export const createApi = (config) => {
     cache.newProducts = body;
     return body;
   };
-  const loadSubmittedToday = async () => api.get(config.endpoints.submittedToday);
+  const loadSubmitted = async ({ offset = 0, limit = 20 } = {}) => api.get(`${config.endpoints.submitted}?offset=${encodeURIComponent(offset)}&limit=${encodeURIComponent(limit)}`);
+  const loadSubmittedDetail = async (batchNo) => api.get(`${config.endpoints.submitted}/${encodeURIComponent(batchNo)}`);
   const submit = async ({ submitKey, items }) => api.post(config.endpoints.submit, { submitKey, items });
   const modify = async ({ batchNo, submitKey, items }) => api.post(config.endpoints.modify, { batchNo, submitKey, items });
 
   return {
     loadReplenish,
     loadNewProducts,
-    loadSubmittedToday,
+    loadSubmitted,
+    loadSubmittedDetail,
     submit,
     modify,
     invalidate: (tab) => {

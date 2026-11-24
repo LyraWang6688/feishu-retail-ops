@@ -27,9 +27,9 @@ test('修改批次：更新数量 / 删除明细 / 新增明细 / 重算录入�
   const service = createProcurementModifyService({
     gateway,
     schema: V1_BITABLE_SCHEMA,
-    submissionIndex: { listToday: async () => [{ batch_no: 'CGD-1' }] },
+    submissionIndex: { listToday: async () => [] },
     purchaseQuery: { listPurchaseRequestsForBatch: async () => current },
-    orderBatches: { findByBatchNo: async () => ({ record_id: 'b1', fields: {} }) },
+    orderBatches: { findByBatchNo: async () => ({ record_id: 'b1', fields: { [V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.reportedBy]: [{ id: 'ou_a', name: '赵瑞玲' }] } }) },
     sizeReferences: { resolveByNumber: async (size) => ({ recordId: 'sz' + size }) },
     deliverRevision: async (payload) => { calls.deliveries.push(payload); return { sent: ['供应商A'] }; },
   });
@@ -55,15 +55,17 @@ test('修改批次：更新数量 / 删除明细 / 新增明细 / 重算录入�
   assert.equal(calls.deliveries[0].items.length, 2);
 });
 
-test('修改批次：非今天归属 / 空批次 / 跨供应商都拒绝', async () => {
+test('修改批次：非报货人 / 空批次都拒绝', async () => {
   const base = {
     gateway: { get: async () => ({ fields: { '销售明细': [] } }), getBatch: async () => [] },
     schema: V1_BITABLE_SCHEMA,
     submissionIndex: { listToday: async () => [] },
     purchaseQuery: { listPurchaseRequestsForBatch: async () => [] },
-    orderBatches: { findByBatchNo: async () => null },
+    orderBatches: { findByBatchNo: async () => ({ record_id: 'b1', fields: { [V1_BITABLE_SCHEMA.tables.purchaseOrderBatch.fields.reportedBy]: [{ id: 'ou_b' }] } }) },
     sizeReferences: {},
   };
   const service = createProcurementModifyService(base);
   assert.equal((await service.modify({ openId: 'ou_a', batchNo: 'x', items: [] })).code, 'not_modifiable');
+  base.orderBatches.findByBatchNo = async () => null;
+  assert.equal((await createProcurementModifyService(base).modify({ openId: 'ou_a', batchNo: 'x', items: [] })).code, 'batch_missing');
 });

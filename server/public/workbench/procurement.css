@@ -95,9 +95,15 @@
 .pr-pending-submitted { margin-top: var(--space-4); }
 .pr-pending-submitted-batch { margin-bottom: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 .pr-pending-submitted-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
-.pr-pending-batch-no { margin: 0; font-size: var(--font-size-md); }
+.pr-pending-submitted-title { min-width: 0; }
+.pr-pending-actions { display: flex; flex: none; gap: var(--space-1); }
+.pr-pending-batch-no { margin: 0; font-size: var(--font-size-md); overflow-wrap: anywhere; }
 .pr-pending-batch-meta, .pr-pending-batch-summary { margin: 4px 0 0; color: var(--text-secondary); font-size: var(--font-size-xs); }
-.pr-pending-modify { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--primary); border-radius: var(--radius-pill); background: var(--surface); color: var(--primary); font-size: var(--font-size-sm); font-weight: var(--weight-bold); cursor: pointer; }
+.pr-pending-modify, .pr-pending-expand, .pr-pending-more { min-height: 36px; padding: 0 var(--space-3); border: 1px solid var(--primary); border-radius: var(--radius-pill); background: var(--surface); color: var(--primary); font-size: var(--font-size-sm); font-weight: var(--weight-bold); cursor: pointer; }
+.pr-pending-expand { border-color: var(--border); color: var(--text-secondary); }
+.pr-pending-submitted-group { margin-top: var(--space-2); }
+.pr-pending-submitted-group > h3 { margin: 0 0 var(--space-2); color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: var(--weight-bold); }
+.pr-pending-more { width: 100%; margin-top: var(--space-2); }
 .pr-pending-batch-products { margin-top: var(--space-2); }
 .pr-pending-total { margin:var(--space-2) 0 0; text-align:right; color:var(--text); font-size:var(--font-size-sm); font-weight:var(--weight-bold); }
 

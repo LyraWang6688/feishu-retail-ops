@@ -47,7 +47,7 @@ const newProductsBody = () => ({
 });
 
 export const mockApi = async (page, options = {}) => {
-  const calls = { replenish: 0, newProducts: 0, submit: [], modify: [], writes: [] };
+  const calls = { replenish: 0, newProducts: 0, submit: [], modify: [], submittedDetail: [], writes: [] };
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -64,8 +64,18 @@ export const mockApi = async (page, options = {}) => {
       calls.newProducts += 1;
       return route.fulfill(json(newProductsBody()));
     }
-    if (pathname === '/api/workbench/procurement/submitted-today') {
-      return route.fulfill(json({ success: true, batches: options.submittedBatches || [] }));
+    if (pathname === '/api/workbench/procurement/submitted') {
+      const rows = options.submittedBatches || [];
+      return route.fulfill(json({ success: true, batches: rows, total: rows.length, limit: 20, offset: 0 }));
+    }
+    if (pathname.startsWith('/api/workbench/procurement/submitted/')) {
+      const batchNo = decodeURIComponent(pathname.split('/').pop() || '');
+      calls.submittedDetail.push(batchNo);
+      const detail = (options.submittedDetails || {})[batchNo]
+        || (options.submittedBatches || []).find((row) => row.batch_no === batchNo);
+      return detail
+        ? route.fulfill(json({ success: true, batch: detail }))
+        : route.fulfill(json({ success: false, error: 'not found' }, 404));
     }
     if (pathname === '/api/workbench/procurement/modify' && request.method() === 'POST') {
       calls.modify.push(JSON.parse(request.postData() || '{}'));
