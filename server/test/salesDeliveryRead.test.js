@@ -227,3 +227,31 @@ test('AC-DR11 销售查询把日期下推：主表/明细/收款走 listByFilter
     assert.ok(call.fields.length > 0, '过滤读也必须带 fieldNames');
   }
 });
+
+test('AC-DR13 销售查询必须读取主表赠品 / 配品字段', async () => {
+  const records = baseRecords();
+  records.salesEntry[0].fields['销售明细'] = [{ record_ids: ['detail_1'] }];
+  records.salesEntry[0].fields['收款明细'] = [{ record_ids: ['pay_1'] }];
+  records.salesEntry[0].fields['赠品'] = '袜子×1';
+  records.salesEntry[0].fields['配品'] = '鞋油×1';
+  records.salesEntry[0].fields['配品总额'] = 10;
+  const calls = [];
+  const gateway = {
+    ...fakeGateway(records),
+    listByFilter: async (key, filter, options = {}) => {
+      calls.push({ key, fields: options.fieldNames || [] });
+      return (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
+    },
+  };
+  const data = await createSalesDeliveryReadService({ gateway }).listDeliveryData({
+    query: true, from: '2026-10-18', to: '2026-10-19', today: '2026-10-19',
+  });
+  const salesEntryCall = calls.find((call) => call.key === 'salesEntry');
+  assert.ok(salesEntryCall, '销售主表必须走过滤读');
+  for (const field of ['赠品', '配品', '配品总额']) {
+    assert.ok(salesEntryCall.fields.includes(field), `销售主表 fieldNames 缺少 ${field}`);
+  }
+  assert.equal(data.orders[0].gift, '袜子×1');
+  assert.equal(data.orders[0].accessory, '鞋油×1');
+  assert.equal(data.orders[0].accessory_amount, 10);
+});

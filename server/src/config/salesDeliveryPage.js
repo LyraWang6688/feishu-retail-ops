@@ -35,7 +35,11 @@ const DELIVERY_PAYMENT = Object.freeze({
 });
 
 const TABLE_FIELD_KEYS = Object.freeze({
-  salesEntry: Object.freeze(['orderNo', 'recordedAt', 'orderTotal', 'salesDetails', 'paymentRecords']),
+  salesEntry: Object.freeze([
+    'orderNo', 'recordedAt', 'orderTotal', 'salesDetails', 'paymentRecords',
+    // 销售查询订单卡：赠品 / 配品 / 配品总额。漏掉这三列会让接口永远返回空。
+    'gift', 'accessory', 'accessoryAmount',
+  ]),
   salesDetail: Object.freeze([
     'salesEntry', 'product', 'size', 'fulfillmentStatus', 'stockQuantity',
     'actualAmount', 'soldAt', 'categoryName', 'categoryType',
