@@ -24,6 +24,7 @@ const { createWorkbenchAsyncJobRoutes } = require('./workbench/asyncJobs');
 const { createWorkbenchDataConfigRoutes } = require('./workbench/dataConfig');
 const { createWorkbenchProductRoutes } = require('./workbench/products');
 const { createWorkbenchAccessoryRoutes } = require('./workbench/accessories');
+const { createWorkbenchAccessorySaleRoutes } = require('./workbench/accessorySales');
 const { createWorkbenchWriteAuditRoutes } = require('./workbench/writeAudit');
 // ⭐⭐ 2026-10-16（task-56）：异步之后**金额这道校验留在同步路径** —— 规则与文案**都取既有那一份**
 //    （`parseActualAmount` 只有一处实现 ✓ `config/purchaseArrivalTexts` 的 `pageMessages` ✓）
@@ -172,6 +173,7 @@ const createWorkbenchRouter = (options = {}) => {
   router.use(createWorkbenchProductRoutes({ options }));
   router.use(createWorkbenchWriteAuditRoutes({ options }));
   router.use(createWorkbenchAccessoryRoutes({ options }));
+  router.use(createWorkbenchAccessorySaleRoutes({ options }));
   router.use(createWorkbenchDataConfigRoutes({ options }));
   router.use(createWorkbenchPurchaseRoutes({ options, ordersCache }));
   // 库存 / 标签打印：各自子 router（2026-10-28 拆分；鉴权与 no-store 仍由父 router 统一加）。

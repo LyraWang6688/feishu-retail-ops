@@ -59,7 +59,7 @@
 //   扫码页各自的领域里）⇒ 本文件**不 import 任何采购飞书表单 URL**（它们写的「信息填写」表
 //   已被业务负责人整表删除 ⇒ 是死链）。本文件里只留货品上新那一个表单外链。
 //      已经没有任何地方再引用它们了）。
-import { SUPPLIER_DIRECTORY_URL, PURCHASE_TRANSACTION_FORM_URL, ACCESSORY_SALE_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
+import { SUPPLIER_DIRECTORY_URL, PURCHASE_TRANSACTION_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
 import { INVENTORY_LEDGER_PAGE } from './inventoryLedger.js';
 import { SALES_QUERY_PAGE } from './salesQuery.js';
 
@@ -75,7 +75,7 @@ export const DOMAIN_TABS = [
         kind: 'scan-cards',
         cards: [
           { icon: '👟', title: '鞋类', scanRealm: 'sales' },
-          { icon: '🛒', title: '配品', href: ACCESSORY_SALE_FORM_URL },
+          { icon: '🛒', title: '配品', href: '/workbench/accessory-sale.html' },
           { icon: '💵', title: '每日现金', href: '/workbench/sales-daily-cash.html' },
         ],
       },
