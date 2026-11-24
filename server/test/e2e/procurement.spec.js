@@ -493,8 +493,10 @@ test('AC-P28c 扫码定位：搜索/扫码同一行，统计范围下一行，�
   const searchBox = await search.boundingBox();
   const scanBox = await scan.boundingBox();
   const rangeBox = await range.boundingBox();
+  const headBox = await page.locator('.pr-sticky-head').boundingBox();
   expect(Math.abs(searchBox.y - scanBox.y)).toBeLessThan(4);
   expect(rangeBox.y).toBeGreaterThan(searchBox.y + searchBox.height - 4);
+  expect(rangeBox.width).toBeGreaterThanOrEqual(headBox.width - 1);
 
   await scan.click();
   await expect(page.getByText('LY002 · 米白')).toBeVisible();
