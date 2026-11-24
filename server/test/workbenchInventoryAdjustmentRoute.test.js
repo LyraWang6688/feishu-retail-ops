@@ -121,3 +121,34 @@ test('库存调整异步 job：业务结果按成功分类，不能被当成 unk
   });
   assert.deepEqual(classified, { ok: true, retryable: false, message: '', code: '' });
 });
+
+test('清零库存：把下架意图挂到同一条库存任务，成功后才 flush', async () => {
+  const events = [];
+  const asyncJobs = {
+    jobIdFor: () => 'inventory_adjustment_delist_job',
+    enqueue: async (input) => { events.push({ kind: 'enqueue', payload: input.payload }); return { job: { job_id: input.jobId, status: 'queued' } }; },
+    run: async ({ run }) => { await run(); return { status: 'succeeded' }; },
+  };
+  const stockDelist = {
+    request: async (input) => { events.push({ kind: 'delist_request', input }); return { ok: true, deferred: true }; },
+    flush: async () => { events.push({ kind: 'delist_flush' }); return { ok: true }; },
+  };
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => { req.workbenchUser = { open_id: 'ou_clear' }; next(); });
+  app.use('/api/workbench/inventory/adjustments', createInventoryAdjustmentRouter({
+    asyncJobs, stockDelist,
+    pairService: { adjustPairs: async () => ({ changed: 1 }) },
+  }));
+  await withServer(app, async (base) => {
+    const response = await post(base, '/api/workbench/inventory/adjustments/pairs', {
+      productRecordId: 'p1', requestId: 'clear-with-delist', clearAll: true, rows: [], delistProductIds: ['p1'],
+    });
+    assert.equal(response.status, 202);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  const enqueue = events.find((event) => event.kind === 'enqueue');
+  assert.deepEqual(enqueue.payload.delistProductIds, ['p1']);
+  assert.equal(events.some((event) => event.kind === 'delist_request'), true);
+  assert.equal(events.some((event) => event.kind === 'delist_flush'), true);
+});

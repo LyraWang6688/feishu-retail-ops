@@ -266,6 +266,8 @@ if (require.main === module) {
     require('./services/asyncJobRuntime').startAsyncJobService()
       // #1210：进程重启/部署后补做"已成功但还没建打印任务"的打印意图（后台、异常只 warn）。
       .then(() => require('./services/inventoryPrintIntentRuntime').recoverInventoryPrintIntents())
+      // 库存成功后下架：进程重启/部署后补做“已成功还没执行”的下架意图。
+      .then(() => require('./services/stockDelistIntentRuntime').recoverStockDelistIntents())
       .catch((error) => logWarn('async_job.start.failed', { error: String(error?.message || error) }));
   });
 

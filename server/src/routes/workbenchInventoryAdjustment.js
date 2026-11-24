@@ -14,6 +14,9 @@ const { createAsyncJobService } = require('../services/asyncJobService');
 const { ASYNC_JOB_TYPES, ASYNC_JOB_STATUS } = require('../config/asyncJobs');
 const { PAIR_ADJUSTMENT_TEXTS } = require('../config/inventoryPairAdjustment');
 const { getInventoryPrintIntentService } = require('../services/inventoryPrintIntentRuntime');
+const { STOCK_DELIST } = require('../config/stockDelist');
+const { getStockDelistIntentService } = require('../services/stockDelistIntentRuntime');
+const { logWarn } = require('../utils/logger');
 
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
 
@@ -23,6 +26,7 @@ const createInventoryAdjustmentRouter = (options = {}) => {
   // 否则"只想注入一个桩"的调用方（测试、以及将来别的入口）会被迫先配好飞书凭证。
   let pairAdjustment = options.pairService || null;
   let asyncJobs = options.asyncJobs || null;
+  const stockDelist = () => options.stockDelist || getStockDelistIntentService();
   const resolveInventory = () => options.inventory || new InventoryService({ gateway: options.gateway || new V1BitableGateway() });
   const resolveAsyncJobs = () => {
     if (!asyncJobs) asyncJobs = createAsyncJobService();
@@ -40,13 +44,32 @@ const createInventoryAdjustmentRouter = (options = {}) => {
       const clearAll = req.body?.clearAll === true;
       const rows = clearAll ? [] : normalizeRows(req.body?.rows);
       const requestId = String(req.body?.requestId || '').trim();
+      const delistProductIds = clearAll && STOCK_DELIST.prompts.inventoryClear
+        ? [...new Set((Array.isArray(req.body?.delistProductIds) ? req.body.delistProductIds : [])
+          .map((id) => String(id || '').trim()).filter(Boolean))]
+        : [];
       if (!req.body?.productRecordId || !requestId) throw userError('缺少货品或请求编号');
+      if (delistProductIds.length && !clearAll) throw userError('只有清零库存才能同时下架货品');
       const jobs = resolveAsyncJobs();
       const jobId = jobs.jobIdFor(ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT, `pairs:${requestId}`);
       await jobs.enqueue({ jobId, type: ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT,
         ownerOpenId: req.workbenchUser?.open_id || '', operatorName: req.workbenchUser?.name || '',
         // ⭐ #1210：打印意图成功补做要用它（按记录 ID 打这一款，不依赖前端拿到的编号）。
-        payload: { productRecordId: req.body?.productRecordId || '' } });
+        payload: { productRecordId: req.body?.productRecordId || '', delistProductIds } });
+      if (delistProductIds.length) {
+        // 下架意图先挂到同一条库存任务；库存成功后才由 flush 执行。
+        try {
+          await stockDelist().request({
+            jobId, ownerOpenId: req.workbenchUser?.open_id || '',
+            productRecordIds: delistProductIds,
+            expectedType: ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT,
+          });
+        } catch (error) {
+          logWarn('stock.delist.intent.request_failed', {
+            job_id: jobId, error: String(error?.message || error).slice(0, 300),
+          });
+        }
+      }
       void jobs.run({
         jobId,
         run: () => resolvePairAdjustment().adjustPairs({
@@ -59,6 +82,9 @@ const createInventoryAdjustmentRouter = (options = {}) => {
         // ⭐ #1210：她点过「打印」⇒ 库存成功了由**后端**建打印任务（页面关掉也不丢）。
         if (job?.status === ASYNC_JOB_STATUS.SUCCEEDED) {
           void getInventoryPrintIntentService().flush(jobId).catch(() => {});
+          if (delistProductIds.length) {
+            void stockDelist().flush(jobId).catch(() => {});
+          }
         }
       }).catch(() => {});
       return res.status(202).json({ success: true, queued: true, job_id: jobId });
