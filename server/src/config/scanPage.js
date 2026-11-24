@@ -739,7 +739,7 @@ const RETURN_FORM = Object.freeze({
   //        ⇒ 放进来才是"配置先行 + 一处定义" ✓（下次她再改字，**只改这一行** ✓）。
   //   🔴 写侧那句 `returnButton` **一个字不动** ✗ —— 它还服务**提交异常页**里那句人话
   //      （「请再点一次【生成采购退货】」，`scanWrite.js:697` / `:731`），她这次**没点**那些 ✗。
-  submitLabel: '退货',
+  submitLabel: '退货', delistPrompt: '这一款退货后就没有库存了，是否同时下架？',
 });
 
 /**

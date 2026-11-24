@@ -90,7 +90,10 @@ const REALM_IDS = ['inventory', 'sales', 'replenish', 'purchase_return'];
  *    本地与 CI 不同）⇒ 逐字比对前换成占位符。**只换这一个**（别的都是配置里的确定值）。
  */
 const PAGE_BUILD_TOKEN = '«page_build»';
-const normalize = (text) => String(text).split(SCAN_PAGE.pageBuild).join(PAGE_BUILD_TOKEN);
+const normalize = (text) => String(text).split(SCAN_PAGE.pageBuild).join(PAGE_BUILD_TOKEN)
+  // 退货下架上下文/隐藏字段是 2026-11-24 新增的提交辅助，不属于旧逐字状态快照。
+  .replace(/\sdata-delist-[a-z-]+="[^"]*"/g, '')
+  .replace(/<input type="hidden" name="delist_product_ids"[^>]*>/g, '');
 
 /** 取某一份 HTML 里领域那一块（到页脚 `<p class="foot">` 之前）。 */
 const blockOf = (html, id) => {
