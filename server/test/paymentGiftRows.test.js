@@ -47,7 +47,7 @@ test('AC-GF4 赠品候选接口路径/序列化规则钉在源码里', () => {
   assert.match(script, /\/api\/workbench\/accessories\/gifts/);
   assert.match(script, /parts\.push\(name \+ '×' \+ n\)/);
   assert.match(script, /value\.value = parts\.join\('、'\)/);
-  assert.match(script, /qty\.value = '1'/);
+  assert.match(script, /qty\.value = String\(initialQty \|\| 1\)/);
 });
 
 
