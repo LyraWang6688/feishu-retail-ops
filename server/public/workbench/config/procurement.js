@@ -64,6 +64,7 @@ export const PROCUREMENT_UI = Object.freeze({
     expand: '展开',
     collapse: '收起',
     detailLoading: '正在读取采购明细…',
+    detailLoadFailed: '采购明细读取失败，请重试。',
     detailEmpty: '这一批没有可展示的报货明细。',
     loadMore: '加载更多',
     submittedAt: '提交时间',

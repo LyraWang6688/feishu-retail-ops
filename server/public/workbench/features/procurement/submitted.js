@@ -13,10 +13,8 @@ export const createSubmittedController = ({ config, api, state, paint, toast }) 
       : batch));
   };
 
-  const ensureDetail = async (batchNo, { silent = false } = {}) => {
-    const batch = state.submitted.find((row) => row.batch_no === batchNo);
-    if (batch?.products?.length) return batch;
-    if (state.submittedDetailLoading.has(batchNo)) return null;
+  const detailRequests = new Map();
+  const fetchDetail = async (batchNo, { silent = false } = {}) => {
     state.submittedDetailLoading.add(batchNo);
     if (state.tab === 'pending') paint();
     try {
@@ -30,6 +28,18 @@ export const createSubmittedController = ({ config, api, state, paint, toast }) 
       state.submittedDetailLoading.delete(batchNo);
       if (state.tab === 'pending') paint();
     }
+  };
+
+  const ensureDetail = (batchNo, options = {}) => {
+    const batch = state.submitted.find((row) => row.batch_no === batchNo);
+    if (batch?.products?.length) return Promise.resolve(batch);
+    // 同一个批次的详情请求已经在路上：复用同一个 Promise，
+    // 不能返回 null（那会让“直接点修改”静默不写草稿）。
+    if (detailRequests.has(batchNo)) return detailRequests.get(batchNo);
+    const request = fetchDetail(batchNo, options);
+    detailRequests.set(batchNo, request);
+    void request.finally(() => detailRequests.delete(batchNo));
+    return request;
   };
 
   const load = async ({ append = false } = {}) => {
@@ -63,7 +73,8 @@ export const createSubmittedController = ({ config, api, state, paint, toast }) 
   };
 
   const prepareModify = async (batchNo) => {
-    await ensureDetail(batchNo);
+    const detail = await ensureDetail(batchNo, { silent: true });
+    if (!detail) return null;
     return state.submitted.find((row) => row.batch_no === batchNo) || null;
   };
 

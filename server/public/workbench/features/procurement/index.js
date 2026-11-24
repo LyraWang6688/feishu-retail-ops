@@ -106,7 +106,7 @@ export function mountProcurementPage(host) {
     if (modifyButton) {
       const batchNo = modifyButton.dataset.prModifyBatch;
       const batch = await submittedCtl.prepareModify(batchNo);
-      if (!batch) return;
+      if (!batch) return submitCtl.toast(host, config.texts.detailLoadFailed);
       const started = modifyCtl.start(batch);
       if (!started.ok) return submitCtl.toast(host, started.error);
       state.supplierId = batch.supplier_record_id || ''; await activate('suggested'); return;
