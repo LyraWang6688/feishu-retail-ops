@@ -2,7 +2,7 @@
 
 /**
  * 关联字段读取的源码哨兵（2026-11-17）：
- *   · 采购 / 配品销售两条链路统一走 v1Gateway/cells.linkedRecordIds；
+ *   · 采购链路统一走 v1Gateway/cells.linkedRecordIds；
  *   · 不再各自写 linkedIdsOf / recordIdsOf 之类的宽容解析。
  *
  * ⚠️ 标签打印在 #1284 单独清理，等它合入后可把 labelPrintRequestLogService 加回这里。
@@ -15,7 +15,6 @@ const path = require('node:path');
 
 const SOURCES = [
   'procurementPageData.js',
-  'accessorySaleSyncService.js',
 ];
 
 const read = (name) => fs.readFileSync(path.join(__dirname, '..', 'src', 'services', name), 'utf8');

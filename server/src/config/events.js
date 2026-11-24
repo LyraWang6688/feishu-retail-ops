@@ -5,11 +5,6 @@
 
 /** 全仓日志事件名的唯一真源（由 scripts/observability-events.mjs 生成）。 */
 const EVENTS = Object.freeze([
-  'accessory.sale.sync.created',
-  'accessory.sale.sync.dispatch_failed',
-  'accessory.sale.sync.failed',
-  'accessory.sale.sync.not_wired',
-  'accessory.sale.sync.skipped',
   'accessory.sample_image.drive.dispatch_failed',
   'accessory.sample_image.drive.failed',
   'accessory.sample_image.drive.name_exists',

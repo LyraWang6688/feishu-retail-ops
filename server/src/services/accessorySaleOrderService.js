@@ -16,7 +16,7 @@ const { personPatch } = require('./personFieldService');
 const { relation } = require('./v1ReferenceResolver');
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { textValue } = require('./v1BitableGateway');
-const { ACCESSORY_SALE_SYNC } = require('../config/accessorySaleSync');
+const { ACCESSORY_SALE } = require('../config/accessorySale');
 
 const POSITIVE_INT = (value) => {
   const number = Number(value);
@@ -62,8 +62,8 @@ const createAccessorySaleOrderService = ({ gateway, now = () => Date.now() } = {
           const created = await gateway.create('paymentRecord', {
             method: relation(methodRecordId),
             amount: total,
-            tradeDirection: ACCESSORY_SALE_SYNC.direction,
-            status: ACCESSORY_SALE_SYNC.status,
+            tradeDirection: ACCESSORY_SALE.direction,
+            status: ACCESSORY_SALE.status,
             receivedAt: occurredAt,
             receiptId: candidate,
           }, { correlation });
