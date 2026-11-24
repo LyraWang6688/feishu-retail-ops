@@ -3,7 +3,7 @@
  *
  * 🔴 三条纪律：
  *   ① 刷新**不覆盖她的已选**：草稿里已改的数量保留，只补新增行（`seedDefaults` 只补不覆盖）；
- *   ② 刷新后**清掉已消失的已选行**（`pruneSource`）—— 防提交到页面上已经看不到的货品；
+ *   ② 刷新后**保留**已选行（跨筛选草稿）；不在当前列表的由预览区标「当前筛选外」；
  *   ③ 刷新失败**不白屏**：保留当前数据 + 一条提示；提交进行中不刷新（避免打断）。
  */
 export const createRefresher = ({
@@ -28,7 +28,8 @@ export const createRefresher = ({
       const result = await panels[tab].load({ api: remote, store, draft: getDraft(), force: true });
       state.bodies[tab] = result.body;
       state.loadedAt[tab] = Date.now();
-      setDraft(store.pruneSource(result.draft, tab, (result.body.groups || []).map((group) => group.productRecordId)));
+      // 草稿跨筛选保留：不在当前列表的已选行不裁剪，预览区标注「当前筛选外」。
+      setDraft(result.draft);
       paint(tab);
       refreshNumbers();
       submitCtl.toast(host, config.texts.refreshed);

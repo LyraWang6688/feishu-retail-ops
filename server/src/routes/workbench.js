@@ -14,6 +14,7 @@ const { readWorkbenchOrdersConfig } = require('../config/workbenchOrders');
 const { createWorkbenchLabelRoutes } = require('./workbench/labels');
 const { createWorkbenchInventoryRoutes } = require('./workbench/inventory');
 const { createWorkbenchPurchaseRoutes } = require('./workbench/purchase');
+const { createWorkbenchProcurementDraftRoutes } = require('./workbench/procurementDraft');
 const { createWorkbenchSalesRoutes } = require('./workbench/sales');
 const { createWorkbenchSalesDraftRoutes } = require('./workbench/salesDrafts');
 const { createWorkbenchDouyinRoutes } = require('./workbench/douyin');
@@ -175,6 +176,7 @@ const createWorkbenchRouter = (options = {}) => {
   router.use(createWorkbenchAccessoryRoutes({ options }));
   router.use(createWorkbenchAccessorySaleRoutes({ options }));
   router.use(createWorkbenchDataConfigRoutes({ options }));
+  router.use(createWorkbenchProcurementDraftRoutes({ options }));
   router.use(createWorkbenchPurchaseRoutes({ options, ordersCache }));
   // 库存 / 标签打印：各自子 router（2026-10-28 拆分；鉴权与 no-store 仍由父 router 统一加）。
   router.use(createWorkbenchInventoryRoutes(options));

@@ -74,6 +74,13 @@ const CHAINS = Object.freeze({
     externalLanding: PRODUCT_FEATURE_DIMENSIONS.map((item) => ({ tableName: item.tableName, column: PRODUCT_FEATURE_TAG_FIELD })),
   },
 
+  'config.endpoints.draft': {
+    fe: 'features/procurement/api.js', feKey: 'api.post(config.endpoints.draft',
+    route: 'src/routes/workbench/procurementDraft.js', routeKey: /router\.post\('\/procurement\/draft'/,
+    service: 'src/services/procurementDraftService.js', serviceKey: /taskStore\.(create|update)/,
+    externalLanding: [{ tableName: '本地采购草稿 JSON（data/procurement_drafts）', column: 'snapshot / saved_at' }],
+  },
+
   'T.api': {
     fe: 'features/accessory-sale/index.js', feKey: 'api.post(T.api',
     route: 'src/routes/workbench/accessorySales.js', routeKey: /router\.post\('\/accessory-sales'/,

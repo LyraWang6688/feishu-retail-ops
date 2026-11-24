@@ -41,6 +41,8 @@ export const createSubmitController = ({ config, api, getStore }) => {
     }
     const clear = root.querySelector('[data-pr-clear]');
     if (clear) clear.hidden = !canClear || totals.total <= 0;
+    const save = root.querySelector('[data-pr-save]');
+    if (save) save.disabled = totals.total <= 0;
   };
 
   const setBusy = (root, value) => {
@@ -48,6 +50,8 @@ export const createSubmitController = ({ config, api, getStore }) => {
     setSubmitButtonState(root, { disabled: value, text: value ? config.texts.submitting : config.texts.submit });
     const clear = root.querySelector('[data-pr-clear]');
     if (clear) clear.disabled = value;
+    const save = root.querySelector('[data-pr-save]');
+    if (save) save.disabled = value;
   };
 
   /**
@@ -63,6 +67,8 @@ export const createSubmitController = ({ config, api, getStore }) => {
     setBusy(root, true);
     try {
       const response = await api.submit({ submitKey: draft.submitKey, items });
+      // 成功就删掉服务端草稿；删失败不回滚已提交的采购，只保留 TTL 兜底。
+      await api.deleteDraft().catch(() => undefined);
       // 成功才清空（并换一把新 submitKey ⇒ 下一单不会被这一单吸收）
       const store = getStore();
       store.clear();

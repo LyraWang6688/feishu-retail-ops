@@ -9,7 +9,8 @@ import { createReplenishPanel } from './replenish.js';
 import { createNewProductsPanel } from './newProducts.js';
 import { createSubmitController } from './submit.js';
 import { createRefresher } from './refresh.js';
-import { customSizeErrorMessage, pruneCustomSizes, customRowsError } from './customSize.js';
+import { customSizeErrorMessage, customRowsError } from './customSize.js';
+import { restoreProcurementDraft, saveProcurementDraft } from './draftController.js';
 import { createCustomSizeModal } from './customSizeModal.js';
 import { pendingListHtml, supplierNameMap } from './pending.js';
 import { createProcurementSearch, scrollGroupBelowHeader, highlightGroup } from './search.js';
@@ -30,12 +31,13 @@ export function mountProcurementPage(host) {
   const modal = createCustomSizeModal({ host, config });
   let submittedCtl = null;
   const panelEl = (tab) => host.querySelector('[data-pr-panel="' + tab + '"]'); const rangeHost = host.querySelector('[data-pr-range-host]'); const rangeRow = host.querySelector('[data-pr-range-row]'); const queryRow = host.querySelector('.pr-query-row'); const setDraft = (next) => { draft = next; submitCtl.renderBottom(host, draft, { canClear: !modifyCtl?.active?.() }); };
+  const markDirty = (next) => store.save({ ...next, dirty: true }); const currentFilterIds = () => new Set(DATA_TABS.flatMap((tab) => (state.bodies[tab]?.groups || []).map((group) => String(group.productRecordId))));
   const mergedBody = () => buildSuggestedBody({ replenishBody: state.bodies.replenish, newBody: state.bodies.new, config });
   const paint = () => {
     const element = panelEl(state.tab); if (!element) return;
     if (state.tab === 'pending') {
       const view = submittedCtl ? submittedCtl.view() : { expanded: state.submittedExpanded, detailLoading: state.submittedDetailLoading, hasMore: false };
-      element.innerHTML = pendingListHtml(draft, config, supplierNameMap(state.bodies), state.submitted, view);
+      element.innerHTML = pendingListHtml(draft, config, supplierNameMap(state.bodies), state.submitted, { ...view, filterIds: state.bodies.replenish && state.bodies.new ? currentFilterIds() : null, draftSavedAt: draft?.savedAt || '', draftDirty: draft?.dirty === true });
       return;
     }
     const error = state.errors.suggested || state.errors.replenish || state.errors.new;
@@ -59,7 +61,7 @@ export function mountProcurementPage(host) {
       const result = await panels[tab].load({ api: remote, store, draft, force });
       state.bodies[tab] = result.body;
       state.loadedAt[tab] = Date.now();
-      setDraft(store.pruneSource(result.draft, tab, (result.body.groups || []).map((group) => group.productRecordId)));
+      setDraft(result.draft);
     } catch (error) {
       state.errors[tab] = error?.message || config.texts.loadFailed;
     }
@@ -67,8 +69,6 @@ export function mountProcurementPage(host) {
   const loadAll = async (force = false) => {
     await Promise.all(DATA_TABS.map((tab) => loadData(tab, force)));
     state.loadedAt.suggested = Date.now();
-    const pruned = pruneCustomSizes({ draft, bodies: state.bodies, tabs: DATA_TABS });
-    if (pruned !== draft) setDraft(store.save(pruned));
     paint();
     refreshNumbers();
   };
@@ -76,11 +76,7 @@ export function mountProcurementPage(host) {
   const metaOf = (recordId) => metaOfState(state, recordId);
   const spotSoldOf = (recordId, size) => spotSoldOfState(state, recordId, size);
   const syncRow = (recordId, size) => syncRowState(host, store, draft, recordId, size);
-  const applyQuantity = (recordId, size, quantity) => {
-    setDraft(store.setQuantity(draft, metaOf(recordId), size, quantity));
-    syncRow(recordId, size);
-    refreshNumbers();
-  };
+  const applyQuantity = (recordId, size, quantity) => { setDraft(markDirty(store.setQuantity(draft, metaOf(recordId), size, quantity))); syncRow(recordId, size); refreshNumbers(); };
   const groupOf = (recordId) => (state.bodies.replenish?.groups || []).find((item) => item.productRecordId === recordId) || (state.bodies.new?.groups || []).find((item) => item.productRecordId === recordId);
   submittedCtl = createSubmittedController({ config, api: remote, state, paint, toast: (message) => submitCtl.toast(host, message) });
   const activate = async (tab, options = {}) => {
@@ -129,7 +125,7 @@ export function mountProcurementPage(host) {
         const group = groupOf(id);
         const error = customRowsError({ group, draft, recordId: id, rows, store });
         if (error) return { error: error === 'duplicate' ? config.texts.customSizeDuplicate : (error === 'required' ? config.texts.customSizeRequired : config.texts.customSizeInvalid) };
-        setDraft(store.addCustomSizes(draft, metaOf(id), rows));
+        setDraft(markDirty(store.addCustomSizes(draft, metaOf(id), rows)));
         paint(); refreshNumbers();
         return {};
       });
@@ -137,14 +133,16 @@ export function mountProcurementPage(host) {
     }
     const removeSize = event.target.closest('[data-pr-custom-remove]');
     if (removeSize) {
-      setDraft(store.removeCustomSize(draft, metaOf(removeSize.dataset.record), removeSize.dataset.size));
+      setDraft(markDirty(store.removeCustomSize(draft, metaOf(removeSize.dataset.record), removeSize.dataset.size)));
       paint(); refreshNumbers();
       return;
     }
     if (event.target.closest('[data-pr-retry]')) { await loadAll(true); return; }
     if (event.target.closest('[data-pr-refresh]')) { await refresher.refresh(); return; }
+    if (event.target.closest('[data-pr-save]')) { await saveProcurementDraft({ host, draft, store, api: remote, config, toast: (message) => submitCtl.toast(host, message), setDraft }); return; }
     if (event.target.closest('[data-pr-clear]')) {
       if (!modifyCtl.active() && computeTotals(draft).total > 0 && window.confirm(config.texts.clearDraftConfirm)) {
+        await remote.deleteDraft().catch(() => undefined);
         store.clear(); setDraft(store.ensure()); paint(); refreshNumbers();
       }
       return;
@@ -190,7 +188,7 @@ export function mountProcurementPage(host) {
     const openId = String(user.open_id || '');
     if (!openId) { panelEl('suggested').innerHTML = errorHtml(config.texts.loadFailed, config); return; }
     store = createDraftStore({ openId, config });
-    setDraft(store.ensure());
+    setDraft(await restoreProcurementDraft({ store, api: remote }));
     submitCtl.renderBottom(host, draft);
     await activate('suggested');
     refresher.startAuto();
