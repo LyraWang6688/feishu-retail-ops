@@ -101,6 +101,7 @@ export const SALES_DELIVERY_PAGE = '/workbench/sales-delivery.html';
 export const ORDERS_API = {
   // 三卡入口的**首屏缓存**仍在读它（业务负责人点名保留"首屏缓存"）。
   orders: '/api/workbench/sales/orders',
+  drafts: '/api/workbench/sales/drafts',
   // 售后独立页的写入口（这次只做页面前半段，写库下一步接）。
   afterSales: '/api/workbench/sales/after-sales',
   // 采购验收：读采购申请 + 按批次确认到货（既有路由）。
@@ -119,6 +120,17 @@ export const ORDERS_API = {
  *       校验提示（校验句在 `features/orders/index.js` 里，原样保留）。
  */
 export const ORDERS_TEXTS = {
+  // ── 销售草稿单 ─────────────────────────────────────────
+  draftEmpty: '还没有保存的草稿',
+  draftLoadFailed: '草稿读取失败，请稍后重试',
+  draftOpen: '打开',
+  draftDelete: '删除',
+  draftDeleteConfirm: '删除这份草稿？',
+  draftDeleted: '草稿已删除',
+  draftDeleteFailed: '删除失败，请稍后重试',
+  draftStepGoods: '货品页',
+  draftStepPayment: '资金页',
+  draftItems: '{count} 件',
   // ── 采购验收（工作台「验收」页在用）──────────────────────────────────────
   verifyArrival: '验收到货',
   arrivalVerifyTitle: '验收到货',

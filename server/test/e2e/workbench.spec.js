@@ -103,6 +103,9 @@ const mockApi = async (page, {
     if (path === '/api/workbench/sales/orders') {
       return route.fulfill(json({ success: true, methods: [], orders }));
     }
+    if (path === '/api/workbench/sales/drafts') {
+      return route.fulfill(json({ success: true, drafts: [] }));
+    }
     if (path === '/api/workbench/sales/after-sales/scan-candidates') {
       // 2026-10-29：售后扫一扫落地页的只读候选（销售日 / 尺码 / 该单总金额）
       return route.fulfill(json({
@@ -518,7 +521,7 @@ test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) 
 //   且**不再有**「← 返回订单列表」那颗按钮。
 // ⭐ 2026-11-11（业务负责人真机）：点「草稿单」会闪「刷新中…」，飞书读表抖动时还会直接显示
 //   `Request failed with status code 400`。根因 = 点 section 卡会顺手 loadOrders()。
-//   草稿单只是占位卡 ⇒ 点它**不许**发 /api/workbench/sales/orders 请求、也不许出现「刷新中…」。
+//   草稿单只读草稿接口 ⇒ 点它**不许**发 /api/workbench/sales/orders 请求、也不许出现「刷新中…」。
 test('点「草稿单」不触发订单刷新（0 次 /sales/orders 请求、不出现「刷新中…」）', async ({ page }) => {
   const orderRequests = [];
   page.on('request', (request) => {
@@ -527,16 +530,16 @@ test('点「草稿单」不触发订单刷新（0 次 /sales/orders 请求、不
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await page.getByRole('button', { name: /草稿单/ }).click();
-  await expect(page.locator('[data-placeholder="draft"]')).toBeVisible();
+  await expect(page.getByText('还没有保存的草稿')).toBeVisible();
   await expect(page.getByText('刷新中…')).toHaveCount(0);
-  expect(orderRequests, '草稿单占位页不需要订单数据').toHaveLength(0);
+  expect(orderRequests, '草稿单不需要订单数据').toHaveLength(0);
 });
 
 test('切走再回到订单列表：回到三张入口卡，不保留草稿单占位', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await page.getByRole('button', { name: /草稿单/ }).click();
-  await expect(page.locator('[data-placeholder="draft"]')).toBeVisible();
+  await expect(page.getByText('还没有保存的草稿')).toBeVisible();
 
   await page.getByRole('button', { name: '录单', exact: true }).click();
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
@@ -547,17 +550,13 @@ test('切走再回到订单列表：回到三张入口卡，不保留草稿单�
   await expect(page.locator('[data-placeholder="draft"]')).toHaveCount(0);
 });
 
-test('草稿单占位页 = 统一占位卡（虚线卡 + 待建设标签），且没有「返回订单列表」按钮', async ({ page }) => {
+test('草稿单空态 = 一句人话，不再是待建设占位卡', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await page.getByRole('button', { name: /草稿单/ }).click();
 
-  const card = page.locator('[data-placeholder="draft"]');
-  await expect(card).toBeVisible();
-  await expect(card).toHaveClass(/placeholder-card/);
-  await expect(card.locator('.tag-info')).toHaveText('待建设');
-  const border = await card.evaluate((node) => getComputedStyle(node).borderTopStyle);
-  expect(border, '统一占位卡 = 虚线边框（与数据配置那张同款）').toBe('dashed');
+  await expect(page.getByText('还没有保存的草稿')).toBeVisible();
+  await expect(page.locator('[data-placeholder="draft"]')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /返回订单列表/ })).toHaveCount(0);
 });
 
