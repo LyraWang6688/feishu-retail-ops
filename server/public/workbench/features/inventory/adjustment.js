@@ -20,6 +20,23 @@ import { INVENTORY_MANUAL_CARDS, INVENTORY_MANUAL_TEXTS } from '../../config/inv
 const $ = (host, selector) => host.querySelector(selector);
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const STATES = ['门盒', '样品'];
+
+/** 同一货品的库存状态汇总；批量检查与保存前提醒共用这一份判据。 */
+export const sampleSummaryOf = (items = []) => {
+  const samples = (items || []).filter((row) => row.state === '样品');
+  const doorbox = (items || []).filter((row) => row.state === '门盒');
+  const sampleCount = samples.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+  const doorboxCount = doorbox.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+  const emptyCount = (items || []).filter((row) => !STATES.includes(row.state)).length;
+  const issueKey = emptyCount > 0 ? 'empty' : (sampleCount === 0 ? 'missing' : (sampleCount > 1 ? 'extra' : ''));
+  const issue = issueKey === 'empty'
+    ? INVENTORY_MANUAL_TEXTS.statusIssueEmpty
+    : (issueKey === 'missing'
+      ? INVENTORY_MANUAL_TEXTS.statusIssueMissing
+      : (issueKey === 'extra' ? fill(INVENTORY_MANUAL_TEXTS.statusIssueExtra, { count: sampleCount - 1 }) : ''));
+  return { samples, doorbox, sampleCount, doorboxCount, emptyCount, issueKey, issue };
+};
+
 // ⭐ 2026-11-17：深链带来的 record_id 先过形状检查（与审计里的 record_id 校验同一口径）。
 const PRODUCT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -200,24 +217,9 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(row);
     }
-    return [...groups.entries()].map(([productId, items]) => {
-      const samples = items.filter((row) => row.state === '样品');
-      const doorbox = items.filter((row) => row.state === '门盒');
-      const sampleCount = samples.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-      const doorboxCount = doorbox.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-      const emptyCount = items.filter((row) => !['门盒', '样品'].includes(row.state)).length;
-      const issueKey = emptyCount > 0
-        ? 'empty'
-        : (sampleCount === 0 ? 'missing'
-          : (sampleCount > 1 ? 'extra' : ''));
-      const issue = issueKey === 'empty'
-        ? INVENTORY_MANUAL_TEXTS.statusIssueEmpty
-        : (issueKey === 'missing'
-          ? INVENTORY_MANUAL_TEXTS.statusIssueMissing
-          : (issueKey === 'extra'
-            ? fill(INVENTORY_MANUAL_TEXTS.statusIssueExtra, { count: sampleCount - 1 }) : ''));
-      return { productId, items, samples, doorbox, sampleCount, doorboxCount, emptyCount, issueKey, issue };
-    }).filter((group) => group.issueKey);
+    return [...groups.entries()].map(([productId, items]) => ({
+      productId, items, ...sampleSummaryOf(items),
+    })).filter((group) => group.issueKey);
   }
 
   function renderViolations() {
@@ -282,10 +284,18 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       state.host.querySelector(`select[data-row="${index}"][data-k="state"]`)?.focus();
       return showPageError(INVENTORY_MANUAL_TEXTS.stateRequired);
     }
-    // 2026-11-19：没有样品只提醒，不阻断保存；用户可以选择仍然保存。
-    const hasSample = filled.some((row) => String(row.state) === '样品' && Number(row.quantity) > 0);
-    if (!hasSample && !skipSampleWarning) {
+    // 2026-11-24：样品数量 ≠ 1（0 双或缺多）都提醒，可继续保存；状态为空仍由上面硬拦。
+    const summary = sampleSummaryOf(filled);
+    if (summary.sampleCount !== 1 && !skipSampleWarning) {
       const modal = $(state.host, '[data-view="sample-modal"]');
+      const title = $(state.host, '[data-view="sample-title"]');
+      const body = $(state.host, '[data-view="sample-body"]');
+      if (title) title.textContent = summary.sampleCount === 0
+        ? INVENTORY_MANUAL_TEXTS.sampleRequiredTitle
+        : fill(INVENTORY_MANUAL_TEXTS.sampleExtraTitle, { count: summary.sampleCount });
+      if (body) body.textContent = summary.sampleCount === 0
+        ? INVENTORY_MANUAL_TEXTS.sampleRequiredBody
+        : fill(INVENTORY_MANUAL_TEXTS.sampleExtraBody, { count: summary.sampleCount });
       if (modal) modal.hidden = false;
       return;
     }
@@ -410,7 +420,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
             <div data-view="batch-violations"></div></div>
         </div>
         <div class="manual-modal" data-view="sample-modal" hidden>
-          <div class="manual-modal-card"><h3>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredTitle)}</h3><p class="hint">${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredBody)}</p>
+          <div class="manual-modal-card"><h3 data-view="sample-title">${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredTitle)}</h3><p class="hint" data-view="sample-body">${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleRequiredBody)}</p>
             <div class="row-actions"><button class="btn" type="button" data-sample-cancel>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleCancel)}</button><button class="btn primary" type="button" data-sample-continue>${escapeHtml(INVENTORY_MANUAL_TEXTS.sampleContinue)}</button></div>
           </div>
         </div>

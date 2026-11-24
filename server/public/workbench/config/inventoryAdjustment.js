@@ -29,6 +29,8 @@ export const INVENTORY_MANUAL_TEXTS = Object.freeze({
   stateRequired: '请先为每一行选择「所属状态」（门盒 / 样品）再保存',
   sampleRequiredTitle: '这一款没有样品',
   sampleRequiredBody: '这一款最终库存里没有「样品」，建议把其中一行改成「样品」。是否仍然保存？',
+  sampleExtraTitle: '这一款有 {count} 双样品',
+  sampleExtraBody: '正常应只有 1 双样品。请确认是否填错；如果这是正常业务情况，可以继续保存。',
   sampleContinue: '仍然保存',
   sampleCancel: '去调整',
   clearStock: '清零库存',
