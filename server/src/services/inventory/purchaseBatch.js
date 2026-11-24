@@ -6,6 +6,7 @@
 const { textValue } = require('../v1BitableGateway');
 const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { relation } = require('../v1ReferenceResolver');
+const { personPatch } = require('../personFieldService');
 const { normalizeSize } = require('../sizeReferenceService');
 const { OPERATION_ITEM_KEY_FIELD } = require('../../infrastructure/idempotencyKey');
 const { logInfo } = require('../../utils/logger');
@@ -211,6 +212,11 @@ async function applyPurchaseBatch(items = [], options = {}) {
               ? { [movement.ledgerSource]: relation(plan.item.sourceRecordId) }
               : {}),
             ...(ledgerLinkValue ? { [movement.ledgerLink.field]: relation(ledgerLinkValue) } : {}),
+            ...personPatch({
+              tableKey: 'inventoryLedger',
+              fieldKey: 'operator',
+              operatorOpenId: plan.operation.operator_open_id,
+            }),
           };
         });
         const created = await this.gateway.createBatch('inventoryLedger', rows, { correlation });
@@ -223,6 +229,11 @@ async function applyPurchaseBatch(items = [], options = {}) {
           product: relation(plan.item.input.productRecordId),
           size: relation(plan.sizeReference.recordId),
           state,
+          ...personPatch({
+            tableKey: 'liveInventory',
+            fieldKey: 'warehouseStaff',
+            operatorOpenId: plan.operation.operator_open_id,
+          }),
           operationItemKey: itemKey,
         }));
         const created = await this.gateway.createBatch('liveInventory', rows, { correlation });

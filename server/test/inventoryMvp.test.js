@@ -60,6 +60,28 @@ test('sale deducts one matching door-box unit, preserves sample, and is idempote
 
 ;
 
+test('实时库存新增：任何入库链路都写入当前操作人为仓库员', async () => {
+  const gateway = gatewayFor([]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await inventory.applyPurchase({
+    purchaseBatchRecordId: 'batch_operator', productRecordId: 'product_1', size: 38,
+    quantity: 1, state: '门盒', sampleSize: 38, operatorOpenId: 'ou_buyer',
+  });
+  const row = gateway.records.get('liveInventory')[0];
+  assert.deepEqual(row.fields['仓库员'], [{ id: 'ou_buyer' }]);
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields['操作人'], [{ id: 'ou_buyer' }]);
+});
+
+test('销售扣减：库存流水写当前销售操作人', async () => {
+  const gateway = gatewayFor([unit('door_1', '门盒')]);
+  const inventory = new InventoryService({ gateway, store: store() });
+  await inventory.applySale({
+    salesDetailRecordId: 'detail_operator', productRecordId: 'product_1', size: 38,
+    quantity: 1, state: '门盒', operatorOpenId: 'ou_seller',
+  });
+  assert.deepEqual(gateway.records.get('inventoryLedger')[0].fields['操作人'], [{ id: 'ou_seller' }]);
+});
+
 test('purchase adds one live record per pair', async () => {
   const gateway = gatewayFor([]);
   const inventory = new InventoryService({ gateway, store: store() });

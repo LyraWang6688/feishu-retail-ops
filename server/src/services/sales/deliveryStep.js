@@ -28,7 +28,7 @@ const createDeliveryStep = ({ delivery, now, events, logError }) => {
   };
 
   const deliverStockLines = async ({ items, detailRecordIds, paymentRecordIds, salesEntryRecordId, correlation,
-    allowUnposted = false, skipProgress = true }) => {
+    operatorOpenId = '', allowUnposted = false, skipProgress = true }) => {
     const deliverable = items
       .map((item, index) => ({ item, detailRecordId: String(detailRecordIds?.[index] || '') }))
       .filter(({ item, detailRecordId }) => detailRecordId && lineDeliversOnSubmit(item));
@@ -40,6 +40,7 @@ const createDeliveryStep = ({ delivery, now, events, logError }) => {
         salesEntryRecordId,
         detailRecordIds: detailIds,
         paymentRecordIds,
+        operatorOpenId,
         allowUnposted,
         skipProgress,
         occurredAt: now(),

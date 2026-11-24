@@ -140,6 +140,18 @@ test('AC-RL7 建行失败 ⇒ 只返回 ok:false，绝不抛错（不阻塞打�
   assert.match(result.error, /bitable down/);
 });
 
+test('AC-RL9 服务端打印任务带真实操作人 ⇒ 写打印者；应用号不写', async () => {
+  const gateway = fakeGateway();
+  const service = createLabelPrintRequestLogService({ gateway, logger: silent });
+  await service.record(job({ requested_by: 'ou_printer' }));
+  assert.deepEqual(gateway.records[0].fields[physical('printedBy')], [{ id: 'ou_printer' }]);
+
+  const botGateway = fakeGateway();
+  const botService = createLabelPrintRequestLogService({ gateway: botGateway, logger: silent });
+  await botService.record(job({ job_id: 'job_bot', requested_by: 'ou_dc362967efb60353902b7d7f43756c84' }));
+  assert.equal(botGateway.records[0].fields[physical('printedBy')], undefined);
+});
+
 test('AC-RL8 开关关掉 ⇒ 一次飞书都不打', async () => {
   const gateway = fakeGateway();
   const service = createLabelPrintRequestLogService({

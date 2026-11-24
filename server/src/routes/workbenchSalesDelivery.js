@@ -36,6 +36,7 @@ const createWorkbenchSalesDeliveryRoutes = ({ options = {}, followup, ordersCach
           const result = await followup.delivery.deliver({
             salesEntryRecordId: payload.salesEntryRecordId,
             detailRecordIds: payload.detailRecordIds,
+            operatorOpenId: payload.operatorOpenId,
           }, { correlation });
           return result;
         },

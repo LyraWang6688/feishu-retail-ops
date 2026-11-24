@@ -421,6 +421,9 @@ const createPurchaseReturnService = (options = {}) => {
       purchaseBatchRecordId: batchRecordId,
       purchaseBatchNo: plan.batch_no,
       returnTaskId: taskId,
+      // 2026-11-24：扣库存的流水操作人 = 发起退货的真实操作人。
+      ...(String(draft.operator_open_id || task.operator_open_id || '').trim()
+        ? { operatorOpenId: String(draft.operator_open_id || task.operator_open_id).trim() } : {}),
     }));
     const changes = typeof inventory.applyPurchaseReturnBatch === 'function'
       ? await inventory.applyPurchaseReturnBatch(stockPayloads, { correlation })

@@ -157,6 +157,8 @@ const arrival = {
         productRecordId: entry.item.product_record_id,
         size: entry.item.size,
         quantity: entry.item.quantity,
+        // 2026-11-24：实时库存新增要写仓库员；入库链路把当前操作人一起传下去。
+        ...(operatorOpenId ? { operatorOpenId } : {}),
         // 2026-11-18：没有库存 / 没有样品时，她选的「哪个入库尺码做样品」。
         ...(sampleChoices[entry.item.product_record_id]
           ? { sampleSize: Number(sampleChoices[entry.item.product_record_id]) } : {}),

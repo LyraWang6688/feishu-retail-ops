@@ -799,3 +799,17 @@ test('AC-SB6 源码哨兵：applySaleBatch 与 applyPurchaseReturnBatch 同形�
   assert.equal(/this\.inventory\.applySale\(/.test(deliverBody), false,
     '逐条回落只许在 `_applySalesInventory` 里有一份');
 });
+
+test('人员字段：销售批量扣减的库存流水写当前操作人', async () => {
+  const h = createHarness('three', { batchPorts: true });
+  try {
+    const payloads = h.scenario.details.map(([detailId, productRecordId, size]) => ({
+      salesDetailRecordId: detailId, salesEntryRecordId: ENTRY_ID, productRecordId, size, quantity: 1,
+      operatorOpenId: 'ou_seller',
+    }));
+    await h.inventory.applySaleBatch(payloads);
+    const rows = rowsOf(h, 'inventoryLedger');
+    assert.ok(rows.length > 0);
+    for (const row of rows) assert.deepEqual(row.fields[F('inventoryLedger', 'operator')], [{ id: 'ou_seller' }]);
+  } finally { h.cleanup(); }
+});

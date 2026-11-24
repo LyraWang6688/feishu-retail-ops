@@ -45,7 +45,7 @@ class SalesDeliveryService {
     return next;
   }
 
-  async _deliver({ salesEntryRecordId, detailRecordIds, paymentRecordIds = [], occurredAt,
+  async _deliver({ salesEntryRecordId, detailRecordIds, paymentRecordIds = [], occurredAt, operatorOpenId = '',
     // ⭐⭐ 2026-10-16（业务负责人 22:0x 逐字：「**啥叫钱没入账就不许出库存？不用呀。**」）：
     //    **只给"货那一跑（货品页建单）"开这道口子** ✓ —— 显式布尔 · **缺省 false** ✓
     //    ⇒ 其它调用方（资金页 / 工作台 / 二次交付）**行为一字不变** ✗。
@@ -161,7 +161,7 @@ class SalesDeliveryService {
       }
     }
     // 库存扣减：一次批量（没有批量口 / 批量写失败 ⇒ 逐条回落，见 `_applySalesInventory`）。
-    const outcomes = await this._applySalesInventory(pendingLines, correlation);
+    const outcomes = await this._applySalesInventory(pendingLines, correlation, operatorOpenId);
     const outcomeByDetail = new Map(pendingLines.map((line, position) => [line.detailRecordId, outcomes[position]]));
     const recordFailure = (entry) => {
       failures.push(entry);
@@ -294,7 +294,7 @@ class SalesDeliveryService {
    *   size:number, quantity:number, occurredAt:number}>} lines
    * @returns {Promise<Array<{ok:boolean, result?:object, error?:Error}>>}
    */
-  async _applySalesInventory(lines, correlation) {
+  async _applySalesInventory(lines, correlation, operatorOpenId = '') {
     if (!Array.isArray(lines) || !lines.length) return [];
     const payloads = lines.map((line) => ({
       salesDetailRecordId: line.detailRecordId,
@@ -303,6 +303,7 @@ class SalesDeliveryService {
       size: line.size,
       quantity: line.quantity,
       occurredAt: line.occurredAt,
+      ...(operatorOpenId ? { operatorOpenId } : {}),
     }));
     const perLine = async () => {
       const outcomes = [];

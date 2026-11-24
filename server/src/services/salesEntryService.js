@@ -17,7 +17,7 @@
  *    群聊入口与扫码入口**都**该走这里；不许在入口层另写一套建单 / 单号逻辑。
  */
 const { textValue } = require('./v1BitableGateway');
-const { person } = require('./v1ReferenceResolver');
+const { personPatch } = require('./personFieldService');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { allocateSalesOrderNo } = require('./salesOrderNo');
 const { SALES_STATUS_WRITE_VALUES: WRITE } = require('../config/salesStatusDimensions');
@@ -75,7 +75,7 @@ const createSalesEntryWithOrderNo = async ({ gateway } = {}, task = {}, options 
         //    `config/v1BitableSchema.js` 的 `salesEntry` 段。
         //    ⚠️ `task.original_text`（**本地**任务里她那句话）照旧留着：解析要读它、
         //      缺项文案要读它；只是**不再落业务表**。
-        sender: person(task.sender_open_id),
+        ...personPatch({ tableKey: 'salesEntry', fieldKey: 'sender', operatorOpenId: task.sender_open_id }),
         // ⭐ 2026-10-18：建单 = 流程还没走完（还没到资金页提交/批量写入）⇒「写入状态=未完成」。
         //   成功/部分失败/失败由最终收口写（scanWriteService / afterSalesService）。
         writeStatus: WRITE.writeStatus.pending,

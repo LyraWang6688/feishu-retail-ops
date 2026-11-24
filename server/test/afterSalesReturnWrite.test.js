@@ -144,10 +144,11 @@ const payloadOf = (overrides = {}) => ({
 });
 
 test('售后人：追加当前操作人，保留历史操作人', async () => {
-  const { service, state } = buildService();
+  const { service, state, inventory } = buildService();
   state.entry.fields.售后人 = [{ id: 'ou_old' }];
   await service.execute(payloadOf({ operatorOpenId: 'ou_new' }));
   assert.deepEqual(state.entry.fields.售后人, [{ id: 'ou_old' }, { id: 'ou_new' }]);
+  assert.equal(inventory.calls[0].input.operatorOpenId, 'ou_new', '库存新增要带操作人');
 });
 
 test('AC-RW1 直接退款：明细已退货 + 库存销售增加落门盒 + 新建退款交易明细 + 主表丰富', async () => {

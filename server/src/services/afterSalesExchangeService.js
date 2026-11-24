@@ -16,7 +16,8 @@ const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { textValue } = require('./v1BitableGateway');
 const { salesLinkRecordIds } = require('./afterSalesLinkIds');
 const { InventoryService } = require('./inventoryService');
-const { V1ReferenceResolver, relation, appendPerson } = require('./v1ReferenceResolver');
+const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
+const { personPatch } = require('./personFieldService');
 const { nextId, stateFor } = require('./salesRecordIds');
 const { createPaymentMethodsService } = require('./paymentMethodsService');
 const { createSamplePromotionService } = require('./samplePromotionService');
@@ -268,6 +269,7 @@ class AfterSalesExchangeService {
       kind: EX.stock.returnedBehaviorCode,
       productRecordId: prepared.originalProductId,
       size: prepared.originalSize,
+      ...(payload.operatorOpenId ? { operatorOpenId: payload.operatorOpenId } : {}),
       // 选原尺码 ⇒ 回库直接样品；否则回库门盒。
       state: restockState,
       quantity: EX.stock.quantity,
@@ -278,6 +280,7 @@ class AfterSalesExchangeService {
       kind: EX.stock.newBehaviorCode,
       productRecordId: prepared.newProductRecordId,
       size: prepared.newSize,
+      ...(payload.operatorOpenId ? { operatorOpenId: payload.operatorOpenId } : {}),
       // 减少库存时不参与选行；保留字段只为本地任务形状兼容。
       state: EX.stock.restockState,
       quantity: EX.stock.quantity,
@@ -376,7 +379,12 @@ class AfterSalesExchangeService {
         [EX.master.typeField]: nextTypes,
         [EX.master.countField]: currentCount + EX.master.countDelta,
         ...(nextTotal == null ? {} : { [EX.master.totalField]: nextTotal }),
-        ...(payload.operatorOpenId ? { afterSalesBy: appendPerson(entryNow?.fields?.[masterFields.afterSalesBy], payload.operatorOpenId) } : {}),
+        ...personPatch({
+          tableKey: 'salesEntry',
+          fieldKey: 'afterSalesBy',
+          operatorOpenId: payload.operatorOpenId,
+          existing: entryNow?.fields?.[masterFields.afterSalesBy],
+        }),
       }, { correlation: options.correlation });
       if (nextTotal == null) logWarn('workbench.orders.after_sales.exchange.total_missing', {
         request_id: requestId, sales_entry_record_id: prepared.salesEntryRecordId,

@@ -6,6 +6,7 @@
 const {textValue} = require('../v1BitableGateway');
 const { strictLinkedRecordIds } = require('../strictLinkIds');
 const { relation } = require('../v1ReferenceResolver');
+const { personPatch } = require('../personFieldService');
 const { normalizeSize } = require('../sizeReferenceService');
 const { logInfo } = require('../../utils/logger');
 const { stockShortage } = require('../../config/inventoryTexts');
@@ -216,6 +217,11 @@ async function applyPurchaseReturnBatch(items = [], options = {}) {
               ? { [movement.ledgerSource]: relation(plan.item.sourceRecordId) }
               : {}),
             ...(ledgerLinkValue ? { [movement.ledgerLink.field]: relation(ledgerLinkValue) } : {}),
+            ...personPatch({
+              tableKey: 'inventoryLedger',
+              fieldKey: 'operator',
+              operatorOpenId: plan.operation.operator_open_id,
+            }),
           };
         });
         const created = await this.gateway.createBatch('inventoryLedger', rows, { correlation });

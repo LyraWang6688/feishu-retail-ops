@@ -16,7 +16,7 @@ const { writeManualLedger } = require('./inventory/manualLedger');
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
 const { textValue } = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
-const { person } = require('./v1ReferenceResolver');
+const { personPatch } = require('./personFieldService');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const createSamplePromotionService = ({ inventory, logger = { logInfo, logWarn } } = {}) => {
@@ -67,7 +67,7 @@ const createSamplePromotionService = ({ inventory, logger = { logInfo, logWarn }
     const correlation = { task_id: String(requestId || ''), audit_domain: 'inventoryManual' };
     await inventory.gateway.update('liveInventory', target.record.record_id, {
       state: SAMPLE_PROMOTION.texts.tagSample,
-      ...(operatorOpenId ? { warehouseStaff: person(operatorOpenId) } : {}),
+      ...personPatch({ tableKey: 'liveInventory', fieldKey: 'warehouseStaff', operatorOpenId }),
     }, { correlation });
     await writeManualLedger({
       inventory,

@@ -20,7 +20,7 @@ const { logInfo } = require('../utils/logger');
 const { PAIR_STATES } = require('../config/inventoryPairAdjustment');
 const { writeManualLedger } = require('./inventory/manualLedger');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
-const { person } = require('./v1ReferenceResolver');
+const { personPatch } = require('./personFieldService');
 const { textValue } = require('./v1BitableGateway');
 const { invalidateLiveInventorySnapshot } = require('./liveInventorySnapshot');
 const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
@@ -196,7 +196,10 @@ class InventoryPairAdjustmentService {
           const current = textValue(record.fields?.[liveFields.state]);
           if (current !== state) {
             await this.inventory.gateway.update('liveInventory', record.record_id, {
-              state, ...(operatorOpenId ? { warehouseStaff: person(operatorOpenId) } : {}),
+              state,
+              ...personPatch({
+                tableKey: 'liveInventory', fieldKey: 'warehouseStaff', operatorOpenId,
+              }),
             }, { correlation });
             operations.push({ size: Number(size), state, record_id: record.record_id, from: current || '' });
             ledgerChanges.push({
@@ -254,7 +257,10 @@ class InventoryPairAdjustmentService {
       if (textValue(fields?.[table.fields.category]).trim() !== name) continue;
       if (fields[table.fields.season] === season) continue;
       updates.push({ recordId: record.record_id, values: {
-        season, ...(operatorOpenId ? { warehouseStaff: person(operatorOpenId) } : {}),
+        season,
+        ...personPatch({
+          tableKey: 'liveInventory', fieldKey: 'warehouseStaff', operatorOpenId,
+        }),
       } });
       operations.push({
         record_id: record.record_id,

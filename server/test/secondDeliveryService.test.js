@@ -200,6 +200,7 @@ test('预定单点「成交」：补收款 + 明细未交付转已交付 + 扣�
     salesDetailRecordId: 'detail_p1', salesEntryRecordId: 'order_prepaid',
     productRecordId: 'product_1', size: 38, quantity: 1,
     occurredAt: inventory.applySaleCalls[0].occurredAt,
+    operatorOpenId: 'ou_1',
   });
   assert.equal(result.delivery.deliveredQuantity, 1);
   assert.equal(result.delivery.failures.length, 0);
