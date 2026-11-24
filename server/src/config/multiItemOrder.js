@@ -36,22 +36,7 @@ const resolveShared = (env) => ({
   // ⭐ 2026-10-16（渲染半）：**提交时那个载荷的字段名** —— 配置先行（换名不用改代码 ✓）。
   //   ⚠️ 显式 `readString`（**禁 `||` 兜底** ✗）：空串 = 空字段名 ⇒ 下游按空处理，不会偷偷回落。
   field: readString(env, 'SCAN_MULTI_ITEM_FIELD', 'multi_items'),
-  // ⭐⭐ 2026-10-16（task-59 · **加/删货那一半**）：把「＋ 再加一个货品」那颗入口从
-  //   `<a href="…?add=1">`（GET —— **天生带不走**她刚填的尺码/数量 ✗）改成
-  //   **同一张表单里的第二颗 submit**（POST ⇒ 她填的那些一起到 ✓）。
-  //
-  //   🔴 **默认 `true`（2026-10-16 下半场 · Lead 裁决"手术刀 ①"：这一刀**必须与"排除当前件"同一刀**放开）**：
-  //     改前逐字：`addWireEnabled: readFlag(env, 'SCAN_MULTI_ITEM_ADD_WIRE', false),`
-  //     改后逐字：下面这一行。
-  //     依据：**关着 = 她那个 bug 还活着** ✗ —— 缺省 `false` 时那颗入口仍是 `?add=1` 的 **GET 链接**，
-  //       而 GET **天生带不走**她填的尺码/数量 ⇒ "填了值、点一下、值没了"在 `origin/main` 上仍然发生 ✗
-  //       （`#721` 那颗链接就是它）；两半（**渲染半**那颗同表单 submit ＋ **路由半**接住那个 POST）
-  //       都已在 main ✓（"排除当前这一件"那一刀 = `#727` ✓）、判据也齐 ✓ ⇒ **该放出来了** ✓。
-  //     🔴 **顺序不能反**：先有"排除当前这一件"（`views/scanPageRenderer.js` 的 `others` 过滤 · `#727` ✓），
-  //       **再**翻这个开关 —— 反过来的话，放开的正是那条**静默丢值**的载荷 ✗✗。
-  //   ⚠️ 仍然**显式布尔**（`readFlag` ✓）：她/运维把它配成 `false` / 空串 ⇒ **关得掉**
-  //     （逐字回到那颗 `<a href="?add=1">` ✓）；认不出的值**当场抛** ✗（不静默回退）。
-  addWireEnabled: readFlag(env, 'SCAN_MULTI_ITEM_ADD_WIRE', true),
+  // 2026-11-24：退货一单多货是固定能力，「加货」永远走表单 POST（旧 ?add=1 不再保留）。
   // 那两颗 submit 的**字段名 / 动作名**（配置先行 ⇒ 换名不用改代码 ✓）。
   //   ⚠️ **不能用既有的 `action` 字段名**：表单里已经有 `hidden action=…`，
   //     同名会被 `express.urlencoded({extended:true})` 变成**数组** ⇒ 既有 `String(body[action])` 坏掉 ✗

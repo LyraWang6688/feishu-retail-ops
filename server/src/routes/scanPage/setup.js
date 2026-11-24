@@ -269,7 +269,7 @@ const createScanPageSetup = ({ options, deps }) => {
   //   ⚠️ 用例可以注入一份假的（`options.multiItemWire`）—— 与 `options.writeService` 同一种注入法 ✓。
   const multiItemWire = options.multiItemWire !== undefined
     ? options.multiItemWire
-    : (multiItemOrderConfig.addWireEnabled === true ? multiItemOrderConfig.wire : null);
+    : multiItemOrderConfig.wire;
   /** 会话暂存那一条链的名字（`replenish` / `return`；认不出的领域 ⇒ `''` 不猜 ✗）。 */
   const multiItemChainOf = (realm) => {
     const safe = resolveRealm(realm);
