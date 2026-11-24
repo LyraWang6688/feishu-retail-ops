@@ -558,7 +558,7 @@
 | `stock.delist.intent.item_failed` | 2 | src/services/stockDelistIntentService.js |
 | `stock.delist.intent.recover_failed` | 1 | src/services/stockDelistIntentRuntime.js |
 | `stock.delist.intent.recovered` | 1 | src/services/stockDelistIntentRuntime.js |
-| `stock.delist.intent.request_failed` | 1 | src/routes/workbenchInventoryAdjustment.js |
+| `stock.delist.intent.request_failed` | 2 | src/routes/workbenchInventoryAdjustment.js<br>src/services/scanWrite/saleAsyncSubmit.js |
 
 ## supplier
 

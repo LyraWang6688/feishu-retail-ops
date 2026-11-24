@@ -153,6 +153,7 @@ async function handlePaymentPay(ctx) {
               tapId: String(tapIdFromRequest(req).tap_id || ''),
               printProducts: salePrintProducts,
               requestId,
+              delistProductIds: body[fields.delistProductIds],
             });
             if (!outcome.ok) {
               return sendHuman(res, outcome.status || 500, {

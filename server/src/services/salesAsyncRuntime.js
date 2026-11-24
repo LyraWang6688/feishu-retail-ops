@@ -19,7 +19,11 @@ const createSalesAsyncRuntime = ({ gateway, writeService, config, options = {}, 
   //   lazy require：只在真的成功收口时才加载库存打印意图件，避免扫描页启动路径变重。
   const onSettled = options.printIntentSettled === false || !asyncJobs
     ? null
-    : (input) => require('./inventoryPrintIntentRuntime').getInventoryPrintIntentService().flush(input.jobId);
+    : (input) => Promise.all([
+      require('./inventoryPrintIntentRuntime').getInventoryPrintIntentService().flush(input.jobId),
+      // 库存成功后再执行“清零下架”意图；没有意图时 flush 只读 job 返回 no_intent。
+      require('./stockDelistIntentRuntime').getStockDelistIntentService().flush(input.jobId),
+    ]);
   const worker = options.salesAsync || createSalesAsyncWorker({
     gateway, writeService, asyncJobs, onSettled,
   });
