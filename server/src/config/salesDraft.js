@@ -18,6 +18,7 @@ const SALES_DRAFT = Object.freeze({
   maxDrafts: readInt(process.env.SCAN_SALES_DRAFT_MAX, 20, 1, 200),
   ttlDays: readInt(process.env.SCAN_SALES_DRAFT_TTL_DAYS, 30, 1, 365),
   steps: Object.freeze({ goods: 'goods', payment: 'payment' }),
+  texts: Object.freeze({ save: '保存草稿', saved: '草稿已保存', failed: '保存失败，请稍后重试' }),
 });
 
 module.exports = { SALES_DRAFT };

@@ -2,6 +2,7 @@ const { multiItemBlockHtml, multiItemPayloadJson, MULTI_ITEM_ITEM_KEYS, MULTI_IT
 const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, RETURN_STEPPER_STYLE, SKELETON_STYLE, STYLE, SCAN_TOAST_STYLE } = require('./styles');
 const { buildPaymentRows, paymentRowsHtml, GIFT_ROW_STYLE } = require('./paymentBlock');
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
+const { SALES_DRAFT } = require('../../config/salesDraft');
 // ⭐⭐ 2026-10-29：**成功页整件退场**（业务负责人：「以后就没有成功页了」）——
 //   提交通一改成「303 回工作台 + toast」（`utils/submitToast.js`）⇒ 这里不再有成功页专属配置。
 const { DEFAULT_REALM, resolveRealm } = require('../scanPageRealm');
@@ -222,6 +223,7 @@ ${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'subm
 ${salesEntryRecordId ? `<input type="hidden" name="sales_entry_record_id" value="${escapeHtml(salesEntryRecordId)}">` : ''}
 ${reused ? '<input type="hidden" name="reused" value="1">' : ''}
 ${paymentFieldsHtml}
+<button type="button" class="btn" data-save-draft data-draft-step="payment" data-draft-saved="${escapeHtml(SALES_DRAFT.texts.saved)}" data-draft-failed="${escapeHtml(SALES_DRAFT.texts.failed)}">${escapeHtml(SALES_DRAFT.texts.save)}</button><span class="hint" data-draft-status></span>
 <button type="submit" class="btn btn--primary" data-tap-target="${escapeHtml(step.payAction || '')}"${submitFeedbackAttrs(write)} data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}">${escapeHtml(step.payButton || '')}</button>
 </form>`
     : `<div class="payment-step">${paymentFieldsHtml}</div>`;
