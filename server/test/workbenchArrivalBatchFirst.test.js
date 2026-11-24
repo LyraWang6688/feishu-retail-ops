@@ -67,7 +67,10 @@ function loadOrdersModule() {
   copy('core/formatters.js', 'formatters.mjs');
   copy('core/api-client.js', 'api-client.mjs');
   copy('core/ui.js', 'ui.mjs');
-  copy('features/orders/acceptanceDoc.js', 'acceptanceDoc.mjs');
+  copy('features/shared/productOrder.js', 'product-order.mjs');
+  copy('features/orders/acceptanceDoc.js', 'acceptanceDoc.mjs', [
+    ["from '../shared/productOrder.js'", "from './product-order.mjs'"],
+  ]);
   copy('features/orders/index.js', 'orders-index.mjs', [
     ["from '../../config/orders.js'", "from './orders-config.mjs'"],
     ["from '../../core/formatters.js'", "from './formatters.mjs'"],

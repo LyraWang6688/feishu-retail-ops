@@ -2,8 +2,7 @@
 import { escapeHtml } from '../../core/formatters.js';
 import { newGroupHtml, replenishGroupHtml } from './render.js';
 import { supplierFilteredBody, supplierTabsHtml } from './supplierFilter.js';
-
-const compareText = (left, right) => String(left || '').localeCompare(String(right || ''), 'zh-Hans-CN', { numeric: true });
+import { compareProductOrder } from '../shared/productOrder.js';
 
 export const buildSuggestedBody = ({ replenishBody, newBody, config }) => {
   const newGroups = Array.isArray(newBody?.groups) ? newBody.groups : [];
@@ -14,9 +13,7 @@ export const buildSuggestedBody = ({ replenishBody, newBody, config }) => {
       .filter((group) => !newIds.has(group.productRecordId))
       .map((group) => ({ ...group, source: 'replenish' }))),
   ];
-  groups.sort((a, b) => compareText(a.itemNo || a.number, b.itemNo || b.number)
-    || compareText(a.number, b.number)
-    || compareText(a.color, b.color));
+  groups.sort(compareProductOrder);
   const days = Number(config.range?.days || newBody?.range?.days || replenishBody?.range?.days) || 7;
   return { groups, range: { days } };
 };

@@ -26,9 +26,12 @@ async function loadOrders() {
     'core/formatters.js': 'formatters.mjs',
     'core/api-client.js': 'api-client.mjs',
     'core/ui.js': 'ui.mjs',
-    'features/orders/acceptanceDoc.js': 'acceptanceDoc.mjs',
+    'features/shared/productOrder.js': 'product-order.mjs',
   };
   for (const [from, to] of Object.entries(copies)) fs.copyFileSync(path.join(WORKBENCH, from), path.join(dir, to));
+  fs.writeFileSync(path.join(dir, 'acceptanceDoc.mjs'), read('features/orders/acceptanceDoc.js').replace(
+    "from '../shared/productOrder.js'", "from './product-order.mjs'",
+  ), 'utf8');
   let source = read('features/orders/index.js');
   for (const [needle, replacement] of [
     ["from '../../config/orders.js'", "from './orders-config.mjs'"],

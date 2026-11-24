@@ -2,6 +2,7 @@
  * ⭐ 2026-11-12（业务负责人）：验收单（拍照/选图）→ 主表「对方单据」。
  * 本模块只负责：渲染上传行、提示已选文件、上传拿 file_token（业务文案全由调用方传入）。
  */
+import { compareProductOrder } from '../shared/productOrder.js';
 
 export const arrivalDocFieldHtml = ({ escapeHtml, label, hint }) => `
             <!-- ⭐ 2026-11-12（业务负责人）：验收单 = 拍照/选图上传 ⇒ 主表「对方单据」 -->
@@ -105,15 +106,9 @@ export function arrivalSubmitLines({ rows = [], actuals = {} } = {}) {
  *
  * 返回：每个需要选的产品一段，候选只来自本次实际到货数量 > 0 的尺码。
  */
-const ARRIVAL_PRODUCT_COLLATOR = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
-
-/** 验收页与样品弹窗共用的产品顺序：货号 → 颜色 → 产品 recordId。 */
+/** 验收页与样品弹窗共用的产品顺序：货号 → 颜色 → 男女 → 产品 recordId。 */
 export function compareArrivalProducts(left = {}, right = {}) {
-  const leftId = left.productId || left.productRecordId || '';
-  const rightId = right.productId || right.productRecordId || '';
-  return ARRIVAL_PRODUCT_COLLATOR.compare(String(left.itemNo || ''), String(right.itemNo || ''))
-    || ARRIVAL_PRODUCT_COLLATOR.compare(String(left.color || ''), String(right.color || ''))
-    || ARRIVAL_PRODUCT_COLLATOR.compare(String(leftId), String(rightId));
+  return compareProductOrder(left, right);
 }
 
 export function sampleChoiceProducts({ rows = [], lines = [] } = {}) {
