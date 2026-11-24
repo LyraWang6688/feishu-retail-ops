@@ -153,6 +153,8 @@ const createMultiItemOrderService = (options = {}) => {
       item_no: String(item.item_no || '').trim(),
       color: String(item.color || '').trim(),
       supplier_record_id: String(item.supplier_record_id || '').trim(),
+      stock_total: item.stock_total !== null && Number.isFinite(Number(item.stock_total))
+        ? Number(item.stock_total) : null,
       entries: (Array.isArray(item.entries) ? item.entries : []).map((entry) => ({
         size: String(entry?.size ?? '').trim(), quantity: entry?.quantity ?? '',
       })),
@@ -510,6 +512,8 @@ const createMultiItemOrderService = (options = {}) => {
       item_no: String(group?.itemNo ?? group?.item_no ?? '').trim(),
       color: String(group?.color ?? '').trim(),
       supplier_record_id: String(group?.supplierRecordId ?? group?.supplier_record_id ?? '').trim(),
+      stock_total: group?.stock_total !== null && Number.isFinite(Number(group?.stock_total))
+        ? Number(group.stock_total) : null,
       entries: (Array.isArray(group?.entries) ? group.entries : []).map((entry) => ({
         size: String(entry?.size ?? '').trim(), quantity: entry?.quantity ?? '',
       })),

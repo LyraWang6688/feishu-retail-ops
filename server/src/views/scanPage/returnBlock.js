@@ -76,6 +76,7 @@ const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const sizes = declaredSizes.filter((item) => !Number.isFinite(item.sellable) || item.sellable > 0);
   const stockTotal = declaredSizes.length && declaredSizes.every((item) => Number.isFinite(item.sellable))
     ? declaredSizes.reduce((sum, item) => sum + Number(item.sellable), 0) : null;
+  view.stock_total = stockTotal;
   // 整款都是 0（且有尺码这一读）⇒ 给她一句人话（**不是空白页** ✗）
   const noReturnableStock = declaredSizes.length > 0 && sizes.length === 0;
   // ⭐⭐ 2026-10-15（task-23 · 她逐字：「直接就是出来实时库存里的**尺码和数量**」）：
