@@ -473,4 +473,31 @@ const giftRowsScriptHtml = () => `<script data-view="gift-rows">
 })();
 </script>`;
 
+
+const salesDraftScriptHtml = () => `<script data-view="sales-draft">
+(function(){
+  var buttons = document.querySelectorAll('[data-save-draft]');
+  for (var i = 0; i < buttons.length; i += 1) {
+    buttons[i].addEventListener('click', function(event){
+      var button = event.currentTarget;
+      var form = button.closest('form');
+      if (!form || button.disabled) return;
+      var status = form.querySelector('[data-draft-status]');
+      button.disabled = true;
+      if (status) status.textContent = '';
+      var data = new FormData(form);
+      data.set('draft_step', button.getAttribute('data-draft-step') || 'goods');
+      var action = form.getAttribute('action') || location.pathname;
+      var url = new URL(action, location.origin);
+      url.pathname = url.pathname.replace(/\\/$/, '') + '/draft';
+      fetch(url.toString(), { method: 'POST', body: new URLSearchParams(data), credentials: 'same-origin' })
+        .then(function(res){ return res.json().then(function(body){ return { ok: res.ok && body.success !== false, body: body }; }); })
+        .then(function(out){ if (status) status.textContent = out.ok ? (button.getAttribute('data-draft-saved') || '') : (button.getAttribute('data-draft-failed') || ''); })
+        .catch(function(){ if (status) status.textContent = button.getAttribute('data-draft-failed') || ''; })
+        .finally(function(){ button.disabled = false; });
+    });
+  }
+})();
+</script>`;
 module.exports.giftRowsScriptHtml = giftRowsScriptHtml;
+module.exports.salesDraftScriptHtml = salesDraftScriptHtml;

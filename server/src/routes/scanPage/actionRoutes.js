@@ -19,6 +19,46 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
     writeMultiItemPending, writeService, ROUTE_PATTERNS,
   } = ctx;
 
+  // 销售扫码页「保存草稿」：只保存当前会话 + 当前表单，不写销售 / 库存。
+  router.post('/:recordId/draft', async (req, res) => {
+    const openId = openIdOf(req);
+    const body = req.body || {};
+    if (!writeService?.sessions || !openId) return res.status(503).json({ success: false, error: 'draft_disabled' });
+    const pageToken = req?.scanPageTokenFromCookie === true ? String(req?.scanPageToken || '').trim() : '';
+    const sessionId = pageSessionKey(openId, pageToken);
+    try {
+      const session = await writeService.sessions.get(sessionId);
+      const lines = Array.isArray(session?.sale?.lines) ? session.sale.lines : [];
+      if (!lines.length) return res.status(400).json({ success: false, error: 'draft_empty' });
+      const first = lines[0] || {};
+      const fields = writeConfig.fields;
+      const step = String(body.draft_step || body.step || 'goods').trim() === 'payment' ? 'payment' : 'goods';
+      const snapshot = {
+        product_record_id: first.product_record_id || '',
+        number: first.number || '',
+        item_no: first.item_no || '',
+        color: first.color || '',
+        lines: JSON.parse(JSON.stringify(lines)),
+        payment: step === 'payment' ? {
+          lineAmounts: body[fields.lineAmount],
+          paymentMethods: body[fields.paymentMethod],
+          paymentAmounts: body[fields.paymentAmount],
+          gift: body[fields.gift] || '',
+          accessory: body[fields.accessory] || '',
+          accessoryTotal: body[fields.accessoryTotal] || '',
+        } : {},
+      };
+      const { getSalesDraftService } = require('../../services/salesDraftRuntime');
+      const result = await getSalesDraftService().save({
+        openId, draftId: String(body.draft_id || '').trim(), step, snapshot,
+      });
+      if (!result.ok) return res.status(400).json({ success: false, error: result.code || 'draft_save_failed' });
+      return res.json({ success: true, draftId: result.draft.draft_id, step: result.draft.step, updatedAt: result.draft.updated_at });
+    } catch (error) {
+      return res.status(502).json({ success: false, error: 'draft_save_failed' });
+    }
+  });
+
   router.post(ROUTE_PATTERNS, uiTapResultMiddleware('scan'), async (req, res) => {
     const requestId = req.requestId;
     const body = req.body || {};
