@@ -16,6 +16,8 @@ const { getPrintPromptService } = require('../printPromptRuntime');
 const { printPromptUrlOf } = require('../printPromptService');
 const { submitToastUrl } = require('../../utils/submitToast');
 const { logInfo, logWarn, logError } = require('../../utils/logger');
+const { ASYNC_JOB_TYPES } = require('../../config/asyncJobs');
+const { getStockDelistIntentService } = require('../stockDelistIntentRuntime');
 
 /**
  * 本单涉及的鞋类货品（去重；配品/没有 product_record_id 的不进打印页）。
@@ -56,7 +58,7 @@ const salePrintProductsOf = (lines = [], extra = null) => {
  */
 const enqueueSaleAsync = async ({
   salesAsync, writeService, openId, submitKey, orderNo, gift = '', accessory = '', accessoryTotalCents = 0,
-  lines = [], payments = [], tapId = '', printProducts = null, requestId = '',
+  lines = [], payments = [], tapId = '', printProducts = null, requestId = '', delistProductIds = [],
 } = {}) => {
   if (!salesAsync || typeof salesAsync.enqueue !== 'function') {
     return { ok: false, status: 503, code: 'async_disabled', errors: [] };
@@ -90,6 +92,20 @@ const enqueueSaleAsync = async ({
     payment_count: payments.length,
     reused: enqueued.created === false,
   });
+  const delistIds = [...new Set((Array.isArray(delistProductIds) ? delistProductIds : [])
+    .map((id) => String(id || '').trim()).filter(Boolean))];
+  if (saleJobId && delistIds.length) {
+    try {
+      await getStockDelistIntentService().request({
+        jobId: saleJobId, ownerOpenId: openId,
+        productRecordIds: delistIds, expectedType: ASYNC_JOB_TYPES.SALES,
+      });
+    } catch (error) {
+      logWarn('stock.delist.intent.request_failed', {
+        job_id: saleJobId, error: String(error?.message || error).slice(0, 300),
+      });
+    }
+  }
   const products = Array.isArray(printProducts) ? printProducts : salePrintProductsOf(lines);
   let printPromptUrl = '';
   if (saleJobId && products.length) {
