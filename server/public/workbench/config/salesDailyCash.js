@@ -3,6 +3,10 @@ export const SALES_DAILY_CASH_API = '/api/workbench/sales/daily-cash';
 
 export const SALES_DAILY_CASH_TEXTS = Object.freeze({
   summaryTitle: '今日现金',
+  douyinTitle: '抖音团购券',
+  douyinAmountLabel: '结算金额',
+  douyinStatusLabel: '到账状态',
+  douyinEmptyStatus: '—',
   openingTitle: '期初现金',
   receivedTitle: '入账现金',
   realtimeTitle: '实时现金',

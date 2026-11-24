@@ -48,6 +48,21 @@ const serviceOf = (gateway) => createSalesDailyCashService({
   now: () => new Date('2026-11-21T10:00:00+08:00'),
 });
 
+test('每日现金：只读展示抖音结算款 / 结算状态（公式单元格）', async () => {
+  const gateway = freshGateway();
+  gateway.records.push({
+    record_id: 'today_coupon',
+    fields: {
+      [R.saleDate.name]: Date.parse('2026-11-21T00:00:00+08:00'),
+      [R.douyinSettlement.name]: [{ text: '256.2' }],
+      [R.settlementStatus.name]: [{ text: '未到账' }],
+    },
+  });
+  const out = await serviceOf(gateway).getToday();
+  assert.equal(out.record.douyin_settlement_amount, 256.2);
+  assert.equal(out.record.douyin_settlement_status, '未到账');
+});
+
 test('每日现金：当天无记录返回 null', async () => {
   const gateway = freshGateway();
   const out = await serviceOf(gateway).getToday();

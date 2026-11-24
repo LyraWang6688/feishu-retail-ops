@@ -27,6 +27,7 @@ const mockApi = async (page, {
         record: dailyCashRecord === undefined ? {
           record_id: 'dc1', date: '2026-11-21', opening_amount: 500,
           withdrawal_amount: 0, withdrawal_saved: false, received_amount: 900, realtime_amount: 1320, sales_amount: 820,
+          douyin_settlement_amount: 256.2, douyin_settlement_status: '未到账',
         } : dailyCashRecord,
         reference: dailyCashReference,
       }));
@@ -349,6 +350,9 @@ test('每日现金：录单子卡片、期初已填写状态', async ({ page }) 
   await expect(page.locator('[data-dc-summary]')).toContainText('¥900.00');
   await expect(page.locator('[data-dc-summary]')).toContainText('实时现金');
   await expect(page.locator('[data-dc-summary]')).toContainText('¥1,320.00');
+  await expect(page.locator('[data-dc-douyin]')).toContainText('抖音团购券');
+  await expect(page.locator('[data-dc-douyin]')).toContainText('¥256.20');
+  await expect(page.locator('[data-dc-douyin]')).toContainText('未到账');
   const dateCentered = await page.locator('[data-dc-summary]').evaluate((summary) => {
     const head = summary.querySelector('.dc-summary-head');
     const date = head?.querySelector('span:last-child');
@@ -374,6 +378,8 @@ test('每日现金：昨日留存一键填入并提交，走异步回执跳工�
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '销售', exact: true }).click();
   await page.getByRole('link', { name: /每日现金/ }).click();
+  await expect(page.locator('[data-dc-douyin]')).toContainText('¥0.00');
+  await expect(page.locator('[data-dc-douyin]')).toContainText('—');
   await expect(page.locator('[data-dc-reference]')).toContainText('昨日留存资金');
   await expect(page.locator('[data-dc-reference]')).toContainText('¥320.00');
   await expect(page.getByRole('button', { name: '填入并提交 ¥320.00' })).toBeVisible();
