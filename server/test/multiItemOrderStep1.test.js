@@ -449,10 +449,9 @@ test('AC-MI8 ⭐⭐ 改配置即改行为 + **显式布尔**（空串 = 关掉�
     '🔴 不许 `readFlag(...) || 兜底`（那会让"清空变量想关掉"关不掉 ✗）');
   assert.equal(/process\.env\.\w+\s*\|\|/.test(configCode), false, '不许 `process.env.X || 兜底` ✗');
   const flags = configCode.match(/readFlag\(/g) || [];
-  // ⭐ 2026-10-29 **成对迁移**：总开关（`SCAN_MULTI_ITEM_ENABLED`）已删 ⇒ 本文件现在只剩
-  //   **两处**显式布尔：加/删货线上入口、退货「整单金额必填」（都沿用既有键名 ✓）。
+  // 2026-11-24：加货入口开关也删了 ⇒ 本文件只剩「整单金额必填」一处显式布尔。
   //   🔴 判据没放宽：**每一个布尔仍必须走 `readFlag`**（谁再写 `||` 兜底 / `process.env.X ||` ⇒ 上面两条红 ✓）。
-  assert.ok(flags.length >= 2, `布尔都必须走 readFlag（实际 ${flags.length} 处）✓`);
+  assert.ok(flags.length >= 1, `布尔都必须走 readFlag（实际 ${flags.length} 处）✓`);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
