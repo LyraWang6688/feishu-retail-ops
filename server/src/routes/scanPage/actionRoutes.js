@@ -33,6 +33,8 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       const first = lines[0] || {};
       const fields = writeConfig.fields;
       const step = String(body.draft_step || body.step || 'goods').trim() === 'payment' ? 'payment' : 'goods';
+      let accessoryRows = [];
+      try { accessoryRows = JSON.parse(String(body.draft_accessory_rows || '[]')); } catch (error) { accessoryRows = []; }
       const snapshot = {
         product_record_id: first.product_record_id || '',
         number: first.number || '',
@@ -49,6 +51,7 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
           gift: body[fields.gift] || '',
           accessory: body[fields.accessory] || '',
           accessoryTotal: body[fields.accessoryTotal] || '',
+          accessoryRows: Array.isArray(accessoryRows) ? accessoryRows : [],
         } : {},
       };
       const { getSalesDraftService } = require('../../services/salesDraftRuntime');

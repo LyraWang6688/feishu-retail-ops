@@ -199,6 +199,7 @@ const renderSalePaymentStepPage = ({
 <div class="gift-head"><span class="gift-head__label">${escapeHtml(t.accessoryTotalLabel || '')}</span><b data-accessory-total>0</b></div>
 <p class="hint" data-accessory-error hidden>${escapeHtml(t.accessoryLoadFailed || '')}</p>
 <input type="hidden" name="${escapeHtml(fields.accessory || 'accessory')}" data-accessory-value value="${escapeHtml(write.accessoryValue || '')}">
+<input type="hidden" data-accessory-draft value="${escapeHtml(JSON.stringify(write.accessoryRows || []))}">
 <input type="hidden" name="${escapeHtml(fields.accessoryTotal || 'accessory_total')}" data-accessory-total-value value="${escapeHtml(write.accessoryTotalValue || '0')}">
 <template data-accessory-template><div class="form-row form-row--gift-row" data-accessory-row><select data-accessory-name aria-label="${escapeHtml(t.accessorySelectLabel || '')}"></select><input type="number" min="1" step="1" value="1" inputmode="numeric" data-accessory-quantity aria-label="${escapeHtml(t.accessoryQuantityLabel || '')}"><input type="number" min="0" step="0.01" inputmode="decimal" placeholder="${escapeHtml(t.accessoryAmountLabel || '')}" data-accessory-amount required aria-label="${escapeHtml(t.accessoryAmountLabel || '')}"><button type="button" class="btn" data-accessory-remove aria-label="${escapeHtml(t.accessoryRemoveLabel || '')}">×</button></div></template>
 </div>`;

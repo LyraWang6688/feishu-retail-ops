@@ -123,6 +123,7 @@ const createScanPageSetup = ({ options, deps }) => {
     giftValue: String(opts.gift || ''),
     accessoryValue: String(opts.accessory || ''),
     accessoryTotalValue: String(opts.accessoryTotal || ''),
+    accessoryRows: Array.isArray(opts.accessoryRows) ? opts.accessoryRows : [],
     draft: { lines: [] },
   });
   /**
