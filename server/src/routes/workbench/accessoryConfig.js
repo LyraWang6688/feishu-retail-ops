@@ -5,7 +5,7 @@
  * 从 routes/workbench/products.js 拆出，避免单文件净增超过 100 行。
  */
 const express = require('express');
-const { logError } = require('../../utils/logger');
+const { logError, logInfo } = require('../../utils/logger');
 const { V1_BITABLE_SCHEMA } = require('../../config/v1BitableSchema');
 const { PRODUCT_PROFILE } = require('../../config/productProfile');
 const { extraOfAttachment } = require('../../services/driveApi');
@@ -75,6 +75,9 @@ const createWorkbenchAccessoryConfigRoutes = ({ getGateway, asyncJobs } = {}) =>
       const fileToken = await uploadAcceptanceDocument({
         gateway: getGateway(), buffer, fileName: rawName, operation: PRODUCT_PROFILE.accessoryUploadOperation,
       });
+      logInfo('workbench.accessories.sample_image_uploaded', {
+        request_id: req.requestId, file_name: safeFileName(rawName), token_length: String(fileToken || '').length,
+      });
       return res.json({ success: true, file: { file_token: fileToken, file_name: safeFileName(rawName) } });
     } catch (error) {
       logError('workbench.accessories.sample_image_failed', {
@@ -108,6 +111,11 @@ const createWorkbenchAccessoryConfigRoutes = ({ getGateway, asyncJobs } = {}) =>
 
   const submit = async (req, res, action) => {
     try {
+      const token = String(req.body?.sampleImageToken || '').trim();
+      logInfo('workbench.accessories.write_submitted', {
+        request_id: req.requestId, action,
+        has_sample_image_token: Boolean(token), token_length: token.length,
+      });
       const accepted = await resolveWrites().submit({
         resource: 'accessory',
         action,
@@ -117,7 +125,7 @@ const createWorkbenchAccessoryConfigRoutes = ({ getGateway, asyncJobs } = {}) =>
         cost: req.body?.cost,
         stockQuantity: req.body?.stockQuantity,
         isAccessory: req.body?.isAccessory,
-        sampleImageToken: req.body?.sampleImageToken,
+        sampleImageToken: token,
         recordId: req.params?.recordId,
         submitKey: req.body?.submitKey || req.query?.submitKey,
         ownerOpenId: req.workbenchUser?.open_id,

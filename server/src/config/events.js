@@ -455,6 +455,8 @@ const EVENTS = Object.freeze([
   'workbench.accessories.options_failed',
   'workbench.accessories.sample_image_failed',
   'workbench.accessories.sample_image_read_failed',
+  'workbench.accessories.sample_image_uploaded',
+  'workbench.accessories.write_submitted',
   'workbench.async_job.viewed',
   'workbench.auth.failed',
   'workbench.auth.provider_error',
