@@ -441,23 +441,32 @@ const giftRowsScriptHtml = () => `<script data-view="gift-rows">
     value.value = parts.join('、');
     if (error) error.hidden = true;
   }
-  function addRow() {
+  function addRow(initialName, initialQty) {
     load().then(function (items) {
-      if (!items.length) { if (error) error.hidden = false; return; }
+      if (!items.length && !initialName) { if (error) error.hidden = false; return; }
       var row = tpl.content.firstElementChild.cloneNode(true);
       var select = row.querySelector('[data-gift-name]');
       var placeholder = document.createElement('option');
       placeholder.value = '';
       placeholder.textContent = section.getAttribute('data-gift-placeholder') || '';
       select.appendChild(placeholder);
+      var known = false;
       for (var i = 0; i < items.length; i++) {
         var option = document.createElement('option');
         option.value = String(items[i].name || '');
         option.textContent = String(items[i].name || '');
         select.appendChild(option);
+        if (initialName && String(items[i].name || '') === String(initialName)) known = true;
       }
+      if (initialName && !known) {
+        var restored = document.createElement('option');
+        restored.value = String(initialName);
+        restored.textContent = String(initialName);
+        select.appendChild(restored);
+      }
+      if (initialName) select.value = String(initialName);
       var qty = row.querySelector('[data-gift-quantity]');
-      if (qty) qty.value = '1';
+      if (qty) qty.value = String(initialQty || 1);
       row.querySelector('[data-gift-remove]').addEventListener('click', function () {
         row.remove();
         refresh();
@@ -466,9 +475,17 @@ const giftRowsScriptHtml = () => `<script data-view="gift-rows">
       refresh();
     });
   }
-  add.addEventListener('click', addRow);
+  add.addEventListener('click', function(){ addRow('', 1); });
   rows.addEventListener('input', refresh);
   rows.addEventListener('change', refresh);
+  var restoredValue = String(value.value || '').trim();
+  if (restoredValue) {
+    var parts = restoredValue.split('、');
+    for (var p = 0; p < parts.length; p += 1) {
+      var match = parts[p].match(/^(.*)\u00d7([0-9]+)$/);
+      if (match) addRow(match[1], match[2]);
+    }
+  }
   refresh();
 })();
 </script>`;
