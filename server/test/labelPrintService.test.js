@@ -687,6 +687,29 @@ test('扫码打印「精确读」：只 get 一条产品 + filter 读这一款�
   assert.deepEqual(gateway.calls, ['get:product', 'filter:liveInventory']);
 });
 
+test('扫码打印读取货品遇 1254607 ⇒ 保留瞬时错误，不误报记录不存在', async () => {
+  let getCalls = 0;
+  const gateway = {
+    async get() {
+      getCalls += 1;
+      const error = new Error('Data not ready, please try again later');
+      error.response = { status: 400, data: { code: 1254607, msg: 'Data not ready' } };
+      throw error;
+    },
+    async listByFilter() { throw new Error('不该走到库存筛选'); },
+  };
+  const transientRetry = resolveTransientRetryConfig({
+    PUSH_TRANSIENT_RETRY_MAX_RETRIES: '0',
+  });
+  const service = createLabelPrintService(gateway, { transientRetry });
+  await assert.rejects(
+    () => service.labelForRecord('prod_flaky'),
+    (error) => error?.response?.data?.code === 1254607,
+    '瞬时错误必须原样抛出，交给批量打印层重试',
+  );
+  assert.equal(getCalls, 1);
+});
+
 test('扫码精确读 filter 遇到 1254607 ⇒ 复用 withTransientRetry 自动重试后成功', async () => {
   const inventory = [record('live1', { stockKey: '66133-15|咖色|女|37', state: '门盒' })];
   const products = [{ record_id: 'prod1', fields: { [P.number]: '66133-15|咖色|女' } }];
