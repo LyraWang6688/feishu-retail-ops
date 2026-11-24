@@ -28,7 +28,7 @@ const createScanWriteSales = ({
 }) => {
   const submitSale = async ({
     // 参数与金额/支付口径的逐字说明见 docs/scan-write-sales.md（为文件大小门禁搬出，未改逻辑）
-    openId, submitKey, payments: paymentRows = [], lineAmounts = [],
+    openId, operatorOpenId = '', submitKey, payments: paymentRows = [], lineAmounts = [],
     paymentStatus = '', paidAmount = '', requestId = '', pendingLine = null, timing = null,
     orderGift = '',
     orderAccessory = '',
@@ -39,6 +39,7 @@ const createScanWriteSales = ({
     masterOnly = false,
     oneShot = false,
   }, logOptions = {}) => {
+    const actorOpenId = String(operatorOpenId || openId || '').trim();
     const fundsDeferred = deferFunds === true;
     const goodsOnly = masterOnly === true;
     const singlePass = oneShot === true;
@@ -241,7 +242,7 @@ const createScanWriteSales = ({
             count: items.length,
             products: lines.map((line) => line.item_no || line.number).filter(Boolean).join('、'),
           }),
-          sender_open_id: openId,
+          sender_open_id: actorOpenId,
           task_id: key,
         }, { correlation: mergeCorrelation(logOptions.correlation, { task_id: key }) });
         salesEntryRecordId = String(created?.recordId || '').trim();
@@ -344,7 +345,7 @@ const createScanWriteSales = ({
         ...(String(orderAccessory || '').trim() ? { orderAccessory: String(orderAccessory).trim() } : {}),
         ...(Number(orderAccessoryTotalCents) > 0 ? { orderAccessoryTotalCents: Number(orderAccessoryTotalCents) } : {}),
         ...(owedCents > 0 ? { owed: owedCents / 100 } : {}),
-        operatorOpenId: openId,
+        operatorOpenId: actorOpenId,
         knownRecordIds: {
           details: sale.detail_ids || [],
           payments: sale.payment_ids || [],
@@ -411,7 +412,7 @@ const createScanWriteSales = ({
       //     🔴 不是放宽：收口那一下失败 ⇒ 调用方如实回失败（不写「成功」）✓。
       const stock = await deliverStockLines({
         items, detailRecordIds: result.detailRecordIds || [], paymentRecordIds: result.paymentRecordIds || [],
-        salesEntryRecordId, correlation, operatorOpenId: openId, allowUnposted: fundsDeferred || singlePass,
+        salesEntryRecordId, correlation, operatorOpenId: actorOpenId, allowUnposted: fundsDeferred || singlePass,
       });
       markStage('stock_ms', stockStartedAt);
       // 计划说"有 N 行要动库存"就必须真的请求 N 行（明细 id 缺失等 ⇒ 如实算失败，不许假成功）

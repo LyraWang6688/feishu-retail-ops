@@ -121,6 +121,7 @@ const createSalesAsyncWorker = ({
     const payload = job.payload || {};
     const result = await writeService.submitSale({
       openId,
+      operatorOpenId: String(payload.open_id || '').trim(),
       requestId: job.job_id,
       submitKey: `scan_sale:${openId}:1`,
       payments: payload.payments || [],
