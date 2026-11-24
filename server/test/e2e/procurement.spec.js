@@ -177,13 +177,13 @@ test('AC-P30 待提交列表：按供应商分组、只读、隐藏搜索', asyn
   await expect(page.locator('.pr-range-host')).toBeHidden();
 });
 
-test('AC-P29 只保留统计范围和刷新，不显示数字统计卡', async ({ page }) => {
+test('AC-P29 只保留统一范围和刷新，不显示数字统计卡', async ({ page }) => {
   await mockApi(page);
   await page.reload();
   await openPage(page);
   await expect(page.locator('.pr-stat')).toHaveCount(0);
-  await expect(page.locator('.pr-range-host')).toContainText('统计范围');
-  await expect(page.locator('.pr-range-host')).toContainText('近 7 天（含今天）');
+  await expect(page.locator('.pr-range-host')).toContainText('统一范围');
+  await expect(page.locator('.pr-range-host')).toContainText('近 7 天，包含销售、上新、验收未到货');
   await expect(page.locator('[data-pr-refresh]')).toBeVisible();
 });
 
@@ -203,7 +203,7 @@ test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾
   await expect(qtyOf(page, 'recProdA', 41)).toHaveValue('1');
   // 不再显示数字统计，只保留统一统计范围
   await expect(page.locator('.pr-stat')).toHaveCount(0);
-  await expect(page.locator('.pr-range-host')).toContainText('近 7 天（含今天）');
+  await expect(page.locator('.pr-range-host')).toContainText('近 7 天，包含销售、上新、验收未到货');
   // 记录 ID 只在 data-* 内部主键里，页面上不出现
   const bodyText = await page.locator('#procurement-app').innerText();
   expect(bodyText.includes('recProdA')).toBe(false);

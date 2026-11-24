@@ -39,7 +39,7 @@ export const PROCUREMENT_UI = Object.freeze({
     refreshing: '刷新中…',
     refreshed: '已更新到最新数据',
     noSelection: '还没有选要采购的货品。',
-    rangeLabel: '统计范围',
+    rangeLabel: '统一范围',
     authFailed: '工作台启动失败：',
     supplierLabel: '供应商',
     supplierUnassigned: '未标注',
@@ -94,8 +94,8 @@ export const PROCUREMENT_UI = Object.freeze({
     scanCancelled: '已取消扫码。',
   }),
   range: Object.freeze({
-    // 补货 / 上新统一近 7 天（含今天）
-    suggested: '近 {days} 天（含今天）',
+    // 补货 / 上新统一近 7 天，包含销售、上新、验收未到货
+    suggested: '近 {days} 天，包含销售、上新、验收未到货',
     days: 7,
     dayTemplate: '{month}月{day}日',
   }),

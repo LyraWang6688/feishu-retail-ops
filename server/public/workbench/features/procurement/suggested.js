@@ -19,7 +19,7 @@ export const buildSuggestedBody = ({ replenishBody, newBody, config }) => {
 };
 
 export const rangeBarHtml = (days, config) => {
-  const range = String(config.range.suggested || '近 {days} 天（含今天）').replace('{days}', String(days || config.range?.days || 7));
+  const range = String(config.range.suggested || '近 {days} 天，包含销售、上新、验收未到货').replace('{days}', String(days || config.range?.days || 7));
   return `<div class="pr-range-inline"><span>${escapeHtml(config.texts.rangeLabel)}</span><strong>${escapeHtml(range)}</strong></div>`
     + `<button type="button" class="pr-refresh" data-pr-refresh>${escapeHtml(config.texts.refresh)}</button>`;
 };
