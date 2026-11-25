@@ -12,6 +12,7 @@
  * 不直接复用 InventoryService.applyChange：它是数量通路，状态类行为会被 requireQuantityMovement 拦。
  * 复用它的操作日志思路、行为解析、实时库存读取、操作人、快照失效。
  */
+const crypto = require('node:crypto');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { personPatch } = require('./personFieldService');
 const { relation } = require('./v1ReferenceResolver');
@@ -102,6 +103,8 @@ const createSeasonAdjustmentService = ({ inventory, store, config = SEASON_ADJUS
           behavior_code: change.targetSeason ? config.behavior.release : config.behavior.freeze,
           live_applied: false,
           ledger_record_id: '',
+          // Feishu create 的 client_token：崩溃后重试同一 token ⇒ 飞书幂等返回同一条流水。
+          ledger_client_token: crypto.randomUUID(),
         });
       }
     }
@@ -166,7 +169,10 @@ const createSeasonAdjustmentService = ({ inventory, store, config = SEASON_ADJUS
         quantityChange: 0,
         behavior: relation(behavior.recordId),
         ...personPatch({ tableKey: 'inventoryLedger', fieldKey: 'operator', operatorOpenId: operation.operator_open_id }),
-      }, { correlation: { task_id: operation.request_id } });
+      }, {
+        correlation: { task_id: operation.request_id },
+        clientToken: item.ledger_client_token,
+      });
       item.ledger_record_id = String(created?.recordId || '');
       await mark(operationId, { items: operation.items });
     }

@@ -224,6 +224,7 @@ class V1BitableGateway {
         const result = await this.client.bitable.appTableRecord.create({
           path: { app_token: this.schema.appToken, table_id: table.tableId },
           data: { fields },
+          ...(options.clientToken ? { params: { client_token: String(options.clientToken) } } : {}),
         });
         this.assertSuccess(result, `新增“${table.tableName}”记录`);
         return result;
