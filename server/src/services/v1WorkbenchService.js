@@ -243,7 +243,7 @@ const createWorkbenchService = (gateway, options = {}) => {
     return { rows: rows.slice(0, cap), total: rows.length, truncated: rows.length > cap, from: fromText, to: toText };
   };
 
-  const inventoryRowsOf = async (records, productsById, { keyword = '', size = '' } = {}) => {
+  const inventoryRowsOf = async (records, productsById, { keyword = '', size = '', groupBy = '' } = {}) => {
     const normalizedKeyword = String(keyword).trim().toLowerCase();
     const rawRows = (await Promise.all((Array.isArray(records) ? records : []).map(async (record) => {
       const productIds = asLinks(schema, 'liveInventory', record, 'product');
@@ -268,7 +268,9 @@ const createWorkbenchService = (gateway, options = {}) => {
     });
     const grouped = new Map();
     rawRows.forEach((row) => {
-      const key = `${row.product_record_id}|${row.size}|${row.state}`;
+      const key = groupBy === 'season'
+        ? `${row.product_record_id}|${row.size}|${row.state}|${row.season}`
+        : `${row.product_record_id}|${row.size}|${row.state}`;
       const current = grouped.get(key);
       if (current) {
         current.quantity += 1;
@@ -284,7 +286,7 @@ const createWorkbenchService = (gateway, options = {}) => {
    * 单双调整：只读这一款。先读 1 条货品拿「编号」，按「库存键」前缀过滤读实时库存；
    * 过滤读不可用/失败才回退整表读（仍只返回这一款）。
    */
-  const readInventoryForProduct = async ({ productRecordId, requestId } = {}) => {
+  const readInventoryForProduct = async ({ productRecordId, requestId, groupBy = '' } = {}) => {
     const id = String(productRecordId || '').trim();
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
       const error = new Error('货品记录 ID 不合法');
@@ -316,12 +318,12 @@ const createWorkbenchService = (gateway, options = {}) => {
       });
     }
     const ownRows = records.filter((record) => asLinks(schema, 'liveInventory', record, 'product').includes(id));
-    return inventoryRowsOf(ownRows, new Map([[id, product]]));
+    return inventoryRowsOf(ownRows, new Map([[id, product]]), { groupBy });
   };
 
-  const getLiveInventory = async ({ keyword = '', size = '', productRecordId = '', requestId } = {}) => {
+  const getLiveInventory = async ({ keyword = '', size = '', productRecordId = '', groupBy = '', requestId } = {}) => {
     if (String(productRecordId || '').trim()) {
-      const rows = await readInventoryForProduct({ productRecordId, requestId });
+      const rows = await readInventoryForProduct({ productRecordId, requestId, groupBy });
       return { rows, duplicate_stock_keys: [] };
     }
     const [inventory, products] = await Promise.all([
