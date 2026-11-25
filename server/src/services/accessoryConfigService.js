@@ -6,6 +6,9 @@
  * 写入不是在这里直接做：HTTP 路由把 action 交给 PRODUCT_CONFIG_WRITE 异步任务，
  * 本文件只提供任务 worker 调用的纯业务函数。
  * 所有飞书写入仍走 gateway ⇒ feishuWriteScheduler。
+ *
+ * 2026-11-25：「赠品」的语义键由 isAccessory 改为 isGift，与物理列名对齐——
+ *   所有记录都是配品，这个键实际表达的是「是否作为赠品候选」。
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { person } = require('./v1ReferenceResolver');
@@ -26,6 +29,17 @@ const numberOrNull = (value) => {
   return number;
 };
 
+const categoryCellOf = (value) => (Array.isArray(value) ? value : []);
+const categoryNameOf = (value) => {
+  if (typeof value === 'string') return normalizeName(value);
+  const first = categoryCellOf(value)[0];
+  return normalizeName(first?.text || first?.name || textValue(first));
+};
+const categoryRecordIdOf = (value) => {
+  const first = categoryCellOf(value)[0] || {};
+  return String((Array.isArray(first.record_ids) ? first.record_ids[0] : '') || first.record_id || '').trim();
+};
+
 const mapAccessory = (record) => {
   const fields = fieldsOf();
   const row = record?.fields || {};
@@ -33,11 +47,12 @@ const mapAccessory = (record) => {
   return {
     recordId: String(record?.record_id || ''),
     name: normalizeName(row[fields.name]),
-    category: categoryOf(textValue(row[fields.category])),
+    category: categoryNameOf(row[fields.category]),
+    categoryRecordId: categoryRecordIdOf(row[fields.category]),
     price: numberOrNull(row[fields.price]),
     cost: numberOrNull(row[fields.cost]),
     stockQuantity: numberOrNull(row[fields.stockQuantity]),
-    isAccessory: row[fields.isAccessory] === true,
+    isGift: row[fields.isGift] === true,
     hasSampleImage: images.some((item) => item?.file_token || item?.fileToken),
     sampleImageUrl: record?.record_id ? `/api/workbench/products/accessories/${encodeURIComponent(record.record_id)}/sample-image` : '',
   };
@@ -74,23 +89,26 @@ const normalizeInput = (input = {}) => {
     && (stockQuantity === null || stockQuantity < 0 || !Number.isInteger(stockQuantity))) {
     throw userError('库存数量必须是非负整数');
   }
-  const hasGift = Object.prototype.hasOwnProperty.call(input, 'isAccessory');
-  return { name, category, price, cost, stockQuantity, isAccessory: hasGift ? input.isAccessory === true : undefined };
+  const hasGift = Object.prototype.hasOwnProperty.call(input, 'isGift');
+  return { name, category, price, cost, stockQuantity, isGift: hasGift ? input.isGift === true : undefined };
 };
 
 const createAccessory = async (gateway, input = {}) => {
   const value = normalizeInput(input);
   const duplicate = await findDuplicate(gateway, value);
   if (duplicate) throw userError('同一种类下已经有同名配品');
-  if (value.category) await ensureAccessoryCategory(gateway, value.category);
+  const category = value.category
+    ? await ensureAccessoryCategory(gateway, value.category)
+    : { category: '', recordId: '' };
   const patch = {
     // 写库只传网关语义键；物理列名只用于读结果。
     name: value.name,
-    category: value.category,
+    // 「种类」是关联字段：写 record_id 数组，不写中文名。
+    category: category.recordId ? [category.recordId] : [],
     price: value.price,
     cost: value.cost,
     stockQuantity: value.stockQuantity,
-    isAccessory: value.isAccessory === true,
+    isGift: value.isGift === true,
   };
   if (input.sampleImageToken) patch.sampleImage = [{ file_token: String(input.sampleImageToken) }];
   if (input.operatorOpenId) patch.enteredBy = person(input.operatorOpenId);
@@ -109,16 +127,19 @@ const updateAccessory = async (gateway, recordId, input = {}) => {
   const value = normalizeInput(input);
   const duplicate = await findDuplicate(gateway, { ...value, exceptRecordId: id });
   if (duplicate) throw userError('同一种类下已经有同名配品');
-  if (value.category) await ensureAccessoryCategory(gateway, value.category);
+  const category = value.category
+    ? await ensureAccessoryCategory(gateway, value.category)
+    : { category: '', recordId: '' };
   const patch = {
     // 写库只传网关语义键；物理列名只用于读结果。
     name: value.name,
-    category: value.category,
+    // 「种类」是关联字段：写 record_id 数组，不写中文名。
+    category: category.recordId ? [category.recordId] : [],
     price: value.price,
     cost: value.cost,
     stockQuantity: value.stockQuantity,
   };
-  if (value.isAccessory !== undefined) patch.isAccessory = value.isAccessory;
+  if (value.isGift !== undefined) patch.isGift = value.isGift;
   if (input.sampleImageToken !== undefined) {
     patch.sampleImage = input.sampleImageToken
       ? [{ file_token: String(input.sampleImageToken) }] : [];

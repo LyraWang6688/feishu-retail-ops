@@ -238,14 +238,21 @@ test('配品配置：赠品勾选、列表标签、种类动态新增', async ({
   await mockApi(page);
   const categories = ['腰带', '鞋油'];
   const rows = [
-    { recordId: 'a1', name: '39元腰带', category: '腰带', price: 39, cost: null, stockQuantity: 4, isAccessory: true, hasSampleImage: false },
-    { recordId: 'a2', name: '鞋油', category: '鞋油', price: 15, cost: null, stockQuantity: 8, isAccessory: false, hasSampleImage: false },
+    { recordId: 'a1', name: '39元腰带', category: '腰带', price: 39, cost: null, stockQuantity: 4, isGift: true, hasSampleImage: true, sampleImageUrl: '/api/workbench/products/accessories/a1/sample-image' },
+    { recordId: 'a2', name: '鞋油', category: '鞋油', price: 15, cost: null, stockQuantity: 8, isGift: false, hasSampleImage: false },
   ];
   let submitted = null;
   let categorySubmitted = null;
   await page.route('**/api/workbench/products/accessories**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname.endsWith('/sample-image')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
+      });
+    }
     if (url.pathname === '/api/workbench/products/accessories/categories') {
       if (request.method() === 'POST') {
         categorySubmitted = JSON.parse(request.postData() || '{}');
@@ -259,7 +266,7 @@ test('配品配置：赠品勾选、列表标签、种类动态新增', async ({
     }
     if (url.pathname === '/api/workbench/products/accessories' && request.method() === 'POST') {
       submitted = JSON.parse(request.postData() || '{}');
-      rows.push({ recordId: 'a3', name: submitted.name, category: submitted.category, price: submitted.price, cost: null, stockQuantity: null, isAccessory: submitted.isAccessory, hasSampleImage: false });
+      rows.push({ recordId: 'a3', name: submitted.name, category: submitted.category, price: submitted.price, cost: null, stockQuantity: null, isGift: submitted.isGift, hasSampleImage: false });
       return route.fulfill(json({ success: true, accepted: true, job_id: 'job_acc', toast: '数据提交成功，后台自动写入' }, 202));
     }
     return route.fallback();
@@ -274,6 +281,11 @@ test('配品配置：赠品勾选、列表标签、种类动态新增', async ({
   await expect(page.locator('.ac-card').filter({ hasText: '39元腰带' })).toContainText('赠品');
   await expect(page.locator('.ac-card').filter({ hasText: '鞋油' })).not.toContainText('赠品');
 
+  await page.locator('.ac-card').filter({ hasText: '39元腰带' }).locator('.ac-thumb img').click();
+  await expect(page.locator('[data-ac-image-modal]')).toBeVisible();
+  await page.locator('[data-ac-image-close]').click();
+  await expect(page.locator('[data-ac-image-modal]')).toBeHidden();
+
   const gift = page.locator('[data-ac-gift]');
   await expect(gift).not.toBeChecked();
   const stockBox = await page.locator('[data-ac-stock]').boundingBox();
@@ -285,7 +297,7 @@ test('配品配置：赠品勾选、列表标签、种类动态新增', async ({
   await gift.check();
   await page.getByRole('button', { name: '确认新增' }).click();
   await expect(page.locator('.ac-card').filter({ hasText: '新腰带' })).toContainText('赠品');
-  expect(submitted.isAccessory).toBe(true);
+  expect(submitted.isGift).toBe(true);
 
   await page.getByRole('button', { name: '管理种类' }).click();
   await expect(page.locator('[data-ac-category-modal]')).toBeVisible();

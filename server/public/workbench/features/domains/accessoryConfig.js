@@ -8,7 +8,7 @@ const submitKey = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}_${M
 
 const fieldHtml = (label, input) => `<label class="ac-field"><span>${escapeHtml(label)}</span>${input}</label>`;
 
-const optionHtml = (categories = T.categories, selected = '') => ['<option value="">' + escapeHtml(T.selectCategory) + '</option>']
+const optionHtml = (categories = [], selected = '') => ['<option value="">' + escapeHtml(T.selectCategory) + '</option>']
   .concat(categories.map((name) => `<option${name === selected ? ' selected' : ''}>${escapeHtml(name)}</option>`))
   .join('');
 
@@ -27,6 +27,14 @@ const formHtml = () => `
     <div class="ac-actions"><button class="btn primary" type="submit" data-ac-submit>${escapeHtml(T.submit)}</button><button class="btn" type="button" data-ac-cancel hidden>${escapeHtml(T.cancelEdit)}</button></div>
   </form>`;
 
+const imageModalHtml = () => `
+  <div class="ac-modal" data-ac-image-modal hidden>
+    <div class="ac-modal-card ac-image-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(T.sampleImage)}">
+      <button class="mini ac-image-close" type="button" data-ac-image-close aria-label="${escapeHtml(T.close)}">×</button>
+      <img data-ac-image-large alt="${escapeHtml(T.sampleImage)}">
+    </div>
+  </div>`;
+
 const categoryModalHtml = () => `
   <div class="ac-modal" data-ac-category-modal hidden>
     <div class="ac-modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(T.categoryManageTitle)}">
@@ -43,7 +51,7 @@ export function createAccessoryConfigModule() {
   return {
     mount(host) {
       if (!host) return;
-      host.innerHTML = `<div class="ac-page">${formHtml()}${categoryModalHtml()}<section class="ac-list" data-ac-list><p class="ac-empty">${escapeHtml(T.loading)}</p></section></div>`;
+      host.innerHTML = `<div class="ac-page">${formHtml()}${categoryModalHtml()}${imageModalHtml()}<section class="ac-list" data-ac-list><p class="ac-empty">${escapeHtml(T.loading)}</p></section></div>`;
       const form = host.querySelector('[data-ac-form]');
       const list = host.querySelector('[data-ac-list]');
       const nameInput = form.querySelector('[data-ac-name]');
@@ -63,12 +71,24 @@ export function createAccessoryConfigModule() {
       const submitButton = form.querySelector('[data-ac-submit]');
       const cancelButton = form.querySelector('[data-ac-cancel]');
       const title = form.querySelector('[data-ac-form-title]');
+      const imageModal = host.querySelector('[data-ac-image-modal]');
+      const imageLarge = host.querySelector('[data-ac-image-large]');
       let rows = [];
-      let categories = [...T.categories];
+      let categories = [];
       let editingId = '';
       let imageToken = '';
 
       const showError = (message) => showErrorToast(message);
+      const openImage = (src) => {
+        if (!src || !imageModal) return;
+        imageLarge.src = src;
+        imageModal.hidden = false;
+      };
+      const closeImage = () => {
+        if (!imageModal) return;
+        imageModal.hidden = true;
+        imageLarge?.removeAttribute('src');
+      };
       const setBusy = (busy) => {
         submitButton.disabled = busy;
         submitButton.textContent = busy ? T.submitKey : (editingId ? T.save : T.submit);
@@ -100,14 +120,16 @@ export function createAccessoryConfigModule() {
             const count = rows.filter((row) => categoryName(row) === name).length;
             return '<div class="ac-category-item"><span>' + escapeHtml(name) + '</span><small>' + count + ' 个配品</small></div>';
           }).join('')
-          : '<p class="ac-empty">' + escapeHtml(T.empty) + '</p>';
+          : '<p class="ac-empty">' + escapeHtml(T.categoryEmpty) + '</p>';
       };
       const loadCategories = async () => {
         try {
           const data = await api.get(API.categories);
-          if (Array.isArray(data?.categories) && data.categories.length) categories = data.categories;
+          categories = Array.isArray(data?.categories) ? data.categories : [];
         } catch {
-          // 读不到字段结构时保留内置候选，不阻断配品列表。
+          // 读不到就如实空着：不再用一份可能过期的内置清单冒充真实种类。
+          categories = [];
+          showToast(T.categoryLoadFailed);
         }
         renderCategoryOptions();
         renderCategoryManager();
@@ -137,8 +159,8 @@ export function createAccessoryConfigModule() {
           <section class="ac-group"><h3>${escapeHtml(category)} <span>${items.length}</span></h3>
             <div class="ac-cards">${items.map((row) => `
               <article class="ac-card" data-ac-row="${escapeHtml(row.recordId)}">
-                <div class="ac-thumb">${row.hasSampleImage ? `<img src="${escapeHtml(row.sampleImageUrl)}" alt="" loading="lazy">` : '<span>🛍️</span>'}</div>
-                <div class="ac-main"><strong>${escapeHtml(row.name)}${row.isAccessory ? ` <span class="ac-gift-tag">${escapeHtml(T.giftTag)}</span>` : ''}</strong><div class="ac-meta"><span>¥${escapeHtml(row.price ?? '—')}</span><span>${escapeHtml(T.stock.replace('{count}', row.stockQuantity ?? '—'))}</span></div></div>
+                <div class="ac-thumb">${row.hasSampleImage ? `<img src="${escapeHtml(row.sampleImageUrl)}" alt="" loading="lazy" data-ac-preview="${escapeHtml(row.sampleImageUrl)}">` : '<span>🛍️</span>'}</div>
+                <div class="ac-main"><strong>${escapeHtml(row.name)}${row.isGift ? ` <span class="ac-gift-tag">${escapeHtml(T.giftTag)}</span>` : ''}</strong><div class="ac-meta"><span>¥${escapeHtml(row.price ?? '—')}</span><span>${escapeHtml(T.stock.replace('{count}', row.stockQuantity ?? '—'))}</span></div></div>
                 <div class="ac-row-actions"><button class="mini" type="button" data-ac-edit="${escapeHtml(row.recordId)}">${escapeHtml(T.edit)}</button><button class="mini danger" type="button" data-ac-delete="${escapeHtml(row.recordId)}">${escapeHtml(T.remove)}</button></div>
               </article>`).join('')}</div>
           </section>`).join('');
@@ -152,8 +174,9 @@ export function createAccessoryConfigModule() {
           list.innerHTML = `<p class="ac-empty">${escapeHtml(T.loadFailed)}</p>`;
         }
       };
+      // 提交回执只认服务端那一句（SUBMIT_TOAST 唯一真源）；缺失才退回本地兜底。
       const waitAccepted = async (result) => {
-        if (result?.toast) showToast(result.toast);
+        showToast(String(result?.toast || '').trim() || T.submitted);
         const jobId = String(result?.job_id || '').trim();
         if (jobId) await waitForAsyncJob(jobId);
       };
@@ -167,7 +190,7 @@ export function createAccessoryConfigModule() {
         priceInput.value = row.price ?? '';
         costInput.value = row.cost ?? '';
         stockInput.value = row.stockQuantity ?? '';
-        giftInput.checked = row.isAccessory === true;
+        giftInput.checked = row.isGift === true;
         title.textContent = T.editTitle;
         submitButton.textContent = T.save;
         cancelButton.hidden = false;
@@ -210,7 +233,6 @@ export function createAccessoryConfigModule() {
         if (duplicate) return showError(T.duplicate);
         setBusy(true);
         showError('');
-        const wasEditing = Boolean(editingId);
         try {
           const body = {
             name,
@@ -218,7 +240,7 @@ export function createAccessoryConfigModule() {
             price,
             cost: costInput.value,
             stockQuantity: stockInput.value,
-            isAccessory: giftInput.checked,
+            isGift: giftInput.checked,
             submitKey: submitKey(),
           };
           if (imageToken) body.sampleImageToken = imageToken;
@@ -228,7 +250,6 @@ export function createAccessoryConfigModule() {
           await waitAccepted(result);
           await load();
           resetForm();
-          showToast(wasEditing ? T.updated : T.added);
         } catch (error) {
           setBusy(false);
           showError(error?.message || T.saveFailed);
@@ -251,7 +272,6 @@ export function createAccessoryConfigModule() {
           await loadCategories();
           renderCategoryOptions(name);
           closeCategoryManager();
-          showToast(T.categoryAdded);
         } catch (error) {
           showError(error?.message || T.saveFailed);
         } finally {
@@ -260,6 +280,9 @@ export function createAccessoryConfigModule() {
       });
 
       host.addEventListener('click', async (event) => {
+        const preview = event.target.closest?.('[data-ac-preview]');
+        if (preview) { openImage(preview.dataset.acPreview); return; }
+        if (event.target === imageModal || event.target.closest?.('[data-ac-image-close]')) { closeImage(); return; }
         const edit = event.target.closest?.('[data-ac-edit]');
         if (edit) { editRow(edit.dataset.acEdit); return; }
         const remove = event.target.closest?.('[data-ac-delete]');
@@ -268,7 +291,6 @@ export function createAccessoryConfigModule() {
         try {
           await waitAccepted(await api.delete(API.remove(remove.dataset.acDelete), { submitKey: submitKey() }));
           await load();
-          showToast(T.removed);
         } catch (error) {
           showError(error?.message || T.deleteFailed);
         }

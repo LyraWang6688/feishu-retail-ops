@@ -21,11 +21,12 @@ const gatewayOf = (values, calls = { n: 0 }) => ({
 test('配置表 TTL 由统一注册表给定（调用方不再传）', () => {
   assert.ok(CONFIG_TABLE_KEYS.includes('paymentMethod'));
   assert.ok(CONFIG_TABLE_KEYS.includes('sizeManagement'));
-  assert.equal(CONFIG_TABLE_KEYS.length, 15, '注册表覆盖配置表 + 其他配品 + 赠品候选 + 产品特点三张标签表 + 供应商期初余额');
+  assert.equal(CONFIG_TABLE_KEYS.length, 16, '注册表覆盖配置表 + 其他配品 + 其他配品种类 + 赠品候选 + 产品特点三张标签表 + 供应商期初余额');
   assert.ok(CONFIG_TABLE_KEYS.includes('supplierBalanceInit'));
   assert.ok(CONFIG_TABLE_KEYS.includes('productAudience'));
   assert.ok(CONFIG_TABLE_KEYS.includes('productSellingPoint'));
   assert.ok(CONFIG_TABLE_KEYS.includes('productScene'));
+  assert.ok(CONFIG_TABLE_KEYS.includes('accessoryCategory'));
   assert.equal(CONFIG_TABLES.productAudience.ttlMs, 24 * 60 * 60 * 1000);
   assert.equal(CONFIG_TABLES.category.ttlMs, 24 * 60 * 60 * 1000);
   assert.equal(CONFIG_TABLES.paymentMethod.ttlMs, 24 * 60 * 60 * 1000);
@@ -34,6 +35,7 @@ test('配置表 TTL 由统一注册表给定（调用方不再传）', () => {
   assert.equal(CONFIG_TABLES.liveInventory.ttlMs, 5 * 60 * 1000);
   assert.equal(CONFIG_TABLES.accessory.ttlMs, 24 * 60 * 60 * 1000, '其他配品整表缓存 24h');
   assert.equal(CONFIG_TABLES.giftAccessory.ttlMs, 24 * 60 * 60 * 1000, '赠品候选缓存 24h');
+  assert.equal(CONFIG_TABLES.accessoryCategory.ttlMs, 24 * 60 * 60 * 1000, '配品种类字典 24h');
 });
 
 test('TTL 内复用，过期重读', async () => {

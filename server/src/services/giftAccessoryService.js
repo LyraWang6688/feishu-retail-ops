@@ -17,7 +17,7 @@ const { logWarn } = require('../utils/logger');
 const createGiftAccessoryService = ({ gateway, table: tableOverride } = {}) => {
   if (!gateway) throw new Error('giftAccessoryService 需要 gateway');
   const table = tableOverride || V1_BITABLE_SCHEMA.tables.accessory;
-  const enabled = Boolean(table?.tableId && table?.fields?.isAccessory);
+  const enabled = Boolean(table?.tableId && table?.fields?.isGift);
 
   const list = async () => {
     if (!enabled) return [];
@@ -27,7 +27,7 @@ const createGiftAccessoryService = ({ gateway, table: tableOverride } = {}) => {
         tableKey: 'giftAccessory',
         loader: async () => {
           const all = await getConfigRows({ gateway, tableKey: 'accessory' });
-          return (all || []).filter((record) => record?.fields?.[table.fields.isAccessory] === true);
+          return (all || []).filter((record) => record?.fields?.[table.fields.isGift] === true);
         },
       });
       return (records || []).map((record) => ({

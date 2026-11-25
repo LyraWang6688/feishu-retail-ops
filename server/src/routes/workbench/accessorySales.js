@@ -42,7 +42,6 @@ const createWorkbenchAccessorySaleRoutes = ({ options = {} } = {}) => {
         items: req.body?.items,
         amount: req.body?.amount,
         methodRecordId: req.body?.methodRecordId,
-        saleDate: req.body?.saleDate,
         operatorOpenId: req.workbenchUser?.open_id,
         correlation: { request_id: req.requestId },
       });

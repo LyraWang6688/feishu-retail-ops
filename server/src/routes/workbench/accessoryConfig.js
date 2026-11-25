@@ -124,7 +124,8 @@ const createWorkbenchAccessoryConfigRoutes = ({ getGateway, asyncJobs } = {}) =>
         price: req.body?.price,
         cost: req.body?.cost,
         stockQuantity: req.body?.stockQuantity,
-        isAccessory: req.body?.isAccessory,
+        // 2026-11-25：键名改为 isGift（与「赠品」列对齐）；兼容刚部署时还开着的旧页面。
+        isGift: req.body?.isGift ?? req.body?.isAccessory,
         sampleImageToken: token,
         recordId: req.params?.recordId,
         submitKey: req.body?.submitKey || req.query?.submitKey,

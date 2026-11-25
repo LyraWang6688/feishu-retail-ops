@@ -104,7 +104,9 @@ const createLarkEventHandlers = (service, { heartbeat, ...options } = {}) => {
     recordBusinessHeartbeat(heartbeat);
     // ⭐ 2026-10-26：配置表记录变更 ⇒ 作废对应快照；下一次读取重读（读失败仍用 lastGood）。
     //   只按 table_id 分派，表名/字段名不写死；未命中的表（业务数据表）完全不受影响。
-    // 「其他配品」不再有整表配置缓存；它只影响资金页赠品候选（只缓存 赠品=true）。
+    // 「其他配品」整表缓存已登记在 config/configTables.js（accessory，24h TTL）：
+    //   它由下面 CONFIG_TABLE_KEYS 循环失效；这里额外失效 giftAccessory ——
+    //   赠品候选是从 accessory 派生的第二份缓存（只缓存 赠品=true）。
     const accessoryTableId = V1_BITABLE_SCHEMA.tables?.accessory?.tableId;
     if (accessoryTableId && accessoryTableId === tableId) {
       invalidateConfigTable('giftAccessory');

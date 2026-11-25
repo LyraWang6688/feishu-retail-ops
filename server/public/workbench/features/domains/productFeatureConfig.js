@@ -69,7 +69,7 @@ export function openProductFeatureConfig(host) {
     .some((item) => item.recordId !== exceptRecordId && item.tag.trim().toLowerCase() === value.trim().toLowerCase());
   const submitKey = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`);
   const waitAccepted = async (result) => {
-    if (result?.toast) showToast(result.toast);
+    showToast(String(result?.toast || '').trim() || T.submitted);
     const jobId = String(result?.job_id || '').trim();
     if (jobId) await waitForAsyncJob(jobId);
   };
@@ -106,7 +106,6 @@ export function openProductFeatureConfig(host) {
         const result = await api.patch(PRODUCT_FEATURES_API.update(key, saveButton.dataset.recordId), { tag: value, submitKey: submitKey() });
         await waitAccepted(result);
         await load();
-        showToast(T.updatedToast);
       } catch (err) {
         saveButton.disabled = false;
         saveButton.textContent = originalText;
@@ -126,7 +125,6 @@ export function openProductFeatureConfig(host) {
         const result = await api.delete(PRODUCT_FEATURES_API.remove(deleting.key, deleting.recordId), { submitKey: submitKey() });
         await waitAccepted(result);
         await load();
-        showToast(T.removedToast);
       } catch (err) {
         if (confirmButton) {
           confirmButton.disabled = false;
@@ -149,7 +147,6 @@ export function openProductFeatureConfig(host) {
       const result = await api.post(PRODUCT_FEATURES_API.add(key), { tag: value, submitKey: submitKey() });
       await waitAccepted(result);
       await load();
-      showToast(T.addedToast);
     } catch (err) {
       addButton.disabled = false;
       addButton.textContent = original;

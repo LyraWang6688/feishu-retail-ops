@@ -117,10 +117,10 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_CATEGORY_TABLE_ID'),
       fields: { name: '品类', category: '类别' },
     },
-    // 其他配品（腰带、鞋油、袜子、包等）：只用于资金页赠品候选（赠品=true）。
+    // 其他配品明细（腰带、鞋油、袜子、包等）：配品配置页 + 资金页赠品候选共用。
     // 表 ID 没有默认值：不同租户这张表不同。
     accessory: {
-      tableName: '其他配品',
+      tableName: '其他配品明细',
       tableId: getEnv('FEISHU_V1_ACCESSORY_TABLE_ID'),
       fields: {
         name: '名称',
@@ -128,9 +128,8 @@ const V1_BITABLE_SCHEMA = {
         enteredBy: '录入员',
         price: '单价',
         cost: '成本',
-        // 2026-11-11：业务负责人新增的复选框；资金页赠品候选只取 true。
-        // 2026-11-21：生产表已把这列改名为「赠品」，字段映射同步。
-        isAccessory: '赠品',
+        // 2026-11-11 新增复选框；2026-11-21 列改名「赠品」；资金页赠品候选只取 true。
+        isGift: '赠品',
         // 2026-11-19：配品配置页新增的库存数量（Number）；可维护。
         stockQuantity: '库存数量',
         // 2026-11-19：样例图（附件）；配品配置页支持上传一张。
@@ -149,10 +148,11 @@ const V1_BITABLE_SCHEMA = {
       tableId: getEnv('FEISHU_V1_PRODUCT_GROUP_TABLE_ID'),
       fields: { name: '货品组', products: '关联货品', price: '单价', color: '颜色', recordId: '记录ID' },
     },
+    accessoryCategory: { tableName: '其他配品种类', tableId: getEnv('FEISHU_V1_ACCESSORY_CATEGORY_TABLE_ID'), fields: { name: '种类' } },
     accessorySale: {
       tableName: '配品销售',
       tableId: getEnv('FEISHU_V1_ACCESSORY_SALE_TABLE_ID'),
-      fields: { orderNo: '配品单号', item: '名称', quantity: '数量', payment: '交易明细', operator: '录单人', saleDate: '销售日' },
+      fields: { orderNo: '配品单号', item: '名称', quantity: '数量', payment: '交易明细', operator: '录单人' },
       readOnlyFields: Object.freeze({ updatedAt: Object.freeze({ name: '更新时间', type: 1002, writable: false }) }),
     },
     behavior: {

@@ -114,7 +114,7 @@ export function createAccessorySaleModule() {
     if (button) { button.disabled = true; button.textContent = T.submitting; }
     showPageError('');
     try {
-      const result = await api.post(T.api, { items, amount, methodRecordId, saleDate: Date.now() });
+      const result = await api.post(T.api, { items, amount, methodRecordId });
       state.cart.clear();
       state.total = '';
       renderCart();
