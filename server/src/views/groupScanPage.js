@@ -1,6 +1,13 @@
 'use strict';
 
 const { GROUP_SCAN_PAGE } = require('../config/groupScanPage');
+const { SCAN_PAGE } = require('../config/scanPage');
+const { STYLE } = require('./scanPage/styles');
+const { identityHtml } = require('./scanPage/layout');
+const { stockTableHtml } = require('./scanPage/stockBlock');
+const { specialFactsHtml } = require('./scanPage/paymentBlock');
+const { foldedSpecialRowsOf, sellableCountOf, REALM_TEXTS } = require('./scanPageRealm');
+const { formatPrice } = require('../services/scanPagePrice');
 
 const esc = (value) => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -11,47 +18,66 @@ const fill = (template, values = {}) => String(template || '').replace(/\{(\w+)\
 ));
 
 const adjustmentUrl = (groupId, memberId, currentUrl) => {
-  const params = new URLSearchParams({
-    module: 'inventory',
-    page: 'inventory-adjust',
-    product: memberId,
-    return_to: currentUrl,
-  });
+  const params = new URLSearchParams({ module: 'inventory', page: 'inventory-adjust', product: memberId, return_to: currentUrl });
   return GROUP_SCAN_PAGE.adjustmentUrl + '&' + params.toString();
 };
 
-const style = [
-  ':root{--bg:#f6f7f9;--surface:#fff;--text:#1f2329;--muted:#646a73;--line:#e5e6eb;--primary:#3370ff;--radius:12px}',
-  '*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}',
-  '.page{max-width:720px;margin:0 auto;padding:16px 12px 40px}.card{background:var(--surface);border-radius:var(--radius);padding:16px;margin:0 0 12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}',
-  'h1{font-size:22px;margin:0 0 6px}h2{font-size:17px;margin:0 0 10px}.muted{color:var(--muted);font-size:13px}',
-  '.member-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.member-title{font-weight:700;font-size:16px}',
-  '.tag{display:inline-block;border-radius:99px;padding:2px 8px;font-size:12px;background:#f0f2f5;color:var(--muted)}.tag.warn{background:#fff1e8;color:#b54800}',
-  'table{width:100%;border-collapse:collapse;margin:4px 0 10px}th,td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:center}th{color:var(--muted);font-weight:500;font-size:12px}td:first-child,th:first-child{text-align:left}',
-  '.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-block;text-decoration:none;border-radius:8px;padding:9px 14px;background:var(--primary);color:#fff;font-weight:600}',
-  '.picker{margin-top:8px}.member-link{display:flex;align-items:center;justify-content:space-between;gap:10px;text-decoration:none;color:var(--text);padding:12px;border:1px solid var(--line);border-radius:10px;margin:8px 0}',
+const groupStyle = [
+  '.group-head { margin-bottom: 10px; }',
+  '.group-head .identity__meta { margin: 4px 0 0; }',
+  '.group-member { margin-top: 12px; }',
+  '.group-member .identity { margin-bottom: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }',
+  '.group-member .stock-card { border-radius: 0 0 var(--radius-lg) var(--radius-lg); margin-top: 0; }',
+  '.group-member .card { box-shadow: none; border: 1px solid var(--border); }',
+  '.group-empty { color: var(--text-secondary); padding: 12px 0; }',
+  '.muted { color: var(--text-secondary); font-size: var(--font-size-sm); }',
+  '.tag { display: inline-block; border-radius: 99px; padding: 2px 8px; font-size: var(--font-size-xs); background: var(--background-secondary); color: var(--text-secondary); }',
+  '.member-link { display: flex; align-items: center; justify-content: space-between; gap: 10px; text-decoration: none; color: var(--text); padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); margin: 8px 0; }',
 ].join('');
 
-const page = (title, body) => '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>' + esc(title) + '</title><style>' + style + '</style></head><body><main class="page">' + body + '</main></body></html>';
+const page = (title, body) => '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>' + esc(title) + '</title><style>' + STYLE + groupStyle + '</style></head><body><main class="page">' + body + '</main></body></html>';
 
-const groupHeader = (group) => '<div class="card"><h1>' + esc(group.name || group.recordId) + '</h1><div class="muted">' + esc(fill(GROUP_SCAN_PAGE.texts.total, { count: group.total })) + '</div></div>';
+const groupHeader = (group) => {
+  const meta = [group.color, fill(GROUP_SCAN_PAGE.texts.total, { count: group.total })].filter(Boolean).join(' · ');
+  const price = group.price === null || group.price === undefined ? '' : formatPrice(group.price, SCAN_PAGE);
+  return '<header class="card identity group-head"><div class="identity__main"><h1 class="identity__item">' + esc(group.name || group.recordId) + '</h1><p class="identity__meta">' + esc(meta) + '</p></div>' + (price ? '<div class="price"><span class="price__label">' + esc(SCAN_PAGE.texts.priceLabel) + '</span><span class="price__value">' + esc(price) + '</span></div>' : '') + '</header>';
+};
+
+const memberStockHtml = (member, group, currentUrl) => {
+  const view = member.view;
+  if (!view || view.found !== true) {
+    const adjust = adjustmentUrl(group.recordId, member.recordId, currentUrl);
+    return '<section class="card stock-card">'
+      + '<div class="identity__main"><h1 class="identity__item">' + esc(member.number || member.itemNo || member.recordId) + '</h1>'
+      + (member.color ? '<p class="identity__meta">' + esc(member.color) + '</p>' : '') + '</div>'
+      + '<div class="group-empty">' + esc(GROUP_SCAN_PAGE.texts.noStock) + '</div>'
+      + '<div class="identity__actions"><a class="btn" href="' + esc(adjust) + '">' + esc(GROUP_SCAN_PAGE.texts.adjust) + '</a></div>'
+      + '</section>';
+  }
+  const foldedRows = foldedSpecialRowsOf(view);
+  const foldedSizes = new Set(foldedRows.map((row) => String(row.size_text)));
+  const foldedInventory = foldedRows.map((row) => ({ size_text: String(row.size_text), sellable: sellableCountOf(row, view.columns) }));
+  const tableRows = (view.rows || []).filter((row) => !foldedSizes.has(String(row.size_text)));
+  const foot = '<p class="foot">' + esc(SCAN_PAGE.texts.footerNumberLabel) + ' <span class="mono">' + esc(view.number) + '</span>'
+    + (view.updated_at_text ? ' · ' + esc(SCAN_PAGE.texts.updatedAtLabel) + ' ' + esc(view.updated_at_text) : '') + '</p>';
+  return identityHtml(view, SCAN_PAGE, { realm: 'inventory' })
+    + stockTableHtml({ ...view, rows: tableRows }, SCAN_PAGE)
+    + specialFactsHtml(foldedInventory, REALM_TEXTS)
+    + foot;
+};
 
 const memberCard = (group, member, currentUrl) => {
-  const t = GROUP_SCAN_PAGE.texts;
-  const rows = (member.sizes || []).map((row) => '<tr><td>' + esc(row.size) + '</td><td>' + esc(row.states[t.doorboxKey] || 0) + '</td><td>' + esc(row.states[t.sampleKey] || 0) + '</td><td>' + esc(row.total) + '</td></tr>').join('');
-  const table = rows
-    ? '<table><thead><tr><th>' + esc(t.size) + '</th><th>' + esc(t.doorbox) + '</th><th>' + esc(t.sample) + '</th><th>' + esc(t.totalColumn) + '</th></tr></thead><tbody>' + rows + '</tbody></table>'
-    : '<div class="muted">' + esc(t.noStock) + '</div>';
-  const link = adjustmentUrl(group.recordId, member.recordId, currentUrl);
-  const delisted = member.delisted ? '<span class="tag warn">' + esc(t.delisted) + '</span>' : '';
-  return '<section class="card"><div class="member-head"><div><div class="member-title">' + esc(member.number || member.itemNo || member.recordId) + '</div>' + (member.color ? '<div class="muted">' + esc(member.color) + '</div>' : '') + '</div><div>' + delisted + '<span class="tag">' + esc(member.total) + '</span></div></div>' + table + '<div class="actions"><a class="btn" href="' + esc(link) + '">' + esc(t.adjust) + '</a></div></section>';
+  const adjust = adjustmentUrl(group.recordId, member.recordId, currentUrl);
+  const view = member.view ? { ...member.view, product_adjust_url: adjust } : null;
+  const body = memberStockHtml({ ...member, view }, group, currentUrl);
+  return '<section class="group-member">' + body + '</section>';
 };
 
 const renderGroupStockPage = (group, options = {}) => page(
   group?.name || GROUP_SCAN_PAGE.title,
   groupHeader(group) + (group.members?.length
     ? group.members.map((member) => memberCard(group, member, options.currentUrl)).join('')
-    : '<div class="card"><div class="muted">' + esc(GROUP_SCAN_PAGE.texts.noMembers) + '</div></div>'),
+    : '<div class="card"><div class="group-empty">' + esc(GROUP_SCAN_PAGE.texts.noMembers) + '</div></div>'),
 );
 
 const renderGroupPickerPage = (group, options = {}) => {

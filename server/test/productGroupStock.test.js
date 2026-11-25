@@ -49,3 +49,20 @@ test('组成员选择：销售全部显示，0 库存不隐藏、不置灰', asy
   assert.match(html, /\/r\/rec_b\?from=sales/);
   assert.match(html, /9573-45/);
 });
+
+test('组库存页复用货品库存卡：价格 / 尺码 / 缺码 / 调整入口都在', async () => {
+  const service = createProductGroupStockService({ gateway });
+  const group = await service.get('rec_g1');
+  group.members[0].view = {
+    found: true, item_no: '9573-28', color: '黑色', category_code: '女', category_name: '女',
+    price_text: '¥320', total: 2, updated_at_text: '2026-11-25 14:00',
+    columns: [{ key: 'doorbox', label: '门盒' }, { key: 'sample', label: '样品' }],
+    rows: [{ size_text: '35', cells: [{ count: 1 }, { count: 0 }], missing: false }],
+    notes: [], product_record_id: 'rec_a',
+  };
+  const html = renderGroupStockPage(group, { currentUrl: '/g/rec_g1' });
+  assert.match(html, /¥320/);
+  assert.match(html, /2026-11-25 14:00/);
+  assert.match(html, /data-view="product-adjust"/);
+  assert.match(html, /stock/);
+});

@@ -4,6 +4,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createProductGroupStockService } = require('../services/productGroupStockService');
+const { createScanPageService } = require('../services/scanPageService');
 const { GROUP_SCAN_PAGE } = require('../config/groupScanPage');
 const { SCAN_PAGE } = require('../config/scanPage');
 const { renderGroupStockPage, renderGroupPickerPage } = require('../views/groupScanPage');
@@ -20,6 +21,7 @@ const createGroupScanPageRouter = (options = {}) => {
   const router = express.Router();
   const gateway = options.gateway || new V1BitableGateway();
   const service = options.service || createProductGroupStockService({ gateway });
+  const scanPageService = options.scanPageService || createScanPageService(gateway);
 
   router.use(rateLimit({
     windowMs: SECURITY.rateLimit.windowMs,
@@ -43,6 +45,15 @@ const createGroupScanPageRouter = (options = {}) => {
       const group = await service.get(groupId);
       if (!group) return res.status(404).type('text').send(GROUP_SCAN_PAGE.texts.notFound);
       const from = String(req.query.from || '').trim();
+      if (!PICKER_REALMS.has(from) && group.members.length) {
+        group.members = await Promise.all(group.members.map(async (member) => {
+          try {
+            return { ...member, view: await scanPageService.lookup({ recordId: member.recordId }) };
+          } catch (_) {
+            return { ...member, view: null };
+          }
+        }));
+      }
       const currentUrl = SCAN_PAGE.route.groupBasePath + '/' + encodeURIComponent(groupId) + (from ? '?from=' + encodeURIComponent(from) : '');
       const html = PICKER_REALMS.has(from)
         ? renderGroupPickerPage(group, { from, currentUrl })

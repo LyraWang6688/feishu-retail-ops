@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { renderScanPage } = require('../src/views/scanPageRenderer');
+const { productActionsHtml } = require('../src/views/scanPage/productActions');
 const { SCAN_PAGE } = require('../src/config/scanPage');
 
 const VIEW = {
@@ -49,12 +50,15 @@ test('AC-PA1 销售 / 供应退货：两个入口都出现（库存调整 + 信�
   }
 });
 
-test('AC-PA2 其他领域逐字不多：库存 / 补货 / 货品页不出现这两个入口', () => {
-  for (const realm of ['inventory', 'replenish', 'product']) {
-    const html = render(realm);
-    assert.equal(html.includes('data-view="product-adjust"'), false, realm + ' 不许有库存调整');
-    assert.equal(html.includes('data-view="product-info"'), false, realm + ' 不许有信息完善链接');
-  }
+test('AC-PA2 库存页只多「库存调整」：补货 / 货品页不出现这两个入口', () => {
+  const inventory = render('inventory');
+  assert.ok(inventory.includes('data-view="product-adjust"'), '库存页必须有库存调整');
+  assert.equal(inventory.includes('data-view="product-info"'), false, '库存页不显示信息完善');
+  const replenish = render('replenish');
+  assert.equal(replenish.includes('data-view="product-adjust"'), false, 'replenish 不许有库存调整');
+  assert.equal(replenish.includes('data-view="product-info"'), false, 'replenish 不许有信息完善链接');
+  const product = productActionsHtml(VIEW, SCAN_PAGE, 'product');
+  assert.equal(product, '', 'product 领域不渲染货品卡入口');
 });
 
 test('AC-PA3 资料齐备：不出现「信息完善」（不留空壳），库存调整仍在', () => {

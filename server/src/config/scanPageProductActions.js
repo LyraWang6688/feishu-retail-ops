@@ -14,8 +14,11 @@
 const { readList, readString } = require('./envValue');
 
 const PRODUCT_ACTIONS = Object.freeze({
-  // 哪两个领域显示。以后要加到补货 / 库存，只改这里（不用改渲染层）。
-  realms: Object.freeze(readList(process.env, 'SCAN_PAGE_PRODUCT_ACTIONS_REALMS') ?? ['sales', 'purchase_return']),
+  // 哪些领域显示。库存页也要显示「库存调整」（2026-11-25 业务负责人）。
+  realms: Object.freeze(readList(process.env, 'SCAN_PAGE_PRODUCT_ACTIONS_REALMS') ?? ['sales', 'purchase_return', 'inventory']),
+  // 库存调整也出现在库存页；信息完善仍只在会建单的领域。
+  adjustRealms: Object.freeze(readList(process.env, 'SCAN_PAGE_PRODUCT_ADJUST_REALMS') ?? ['sales', 'purchase_return', 'inventory']),
+  infoRealms: Object.freeze(readList(process.env, 'SCAN_PAGE_PRODUCT_INFO_REALMS') ?? ['sales', 'purchase_return']),
   adjustLabel: readString(process.env, 'SCAN_PAGE_PRODUCT_ADJUST_LABEL', '库存调整'),
   adjustHrefTemplate: readString(
     process.env,
