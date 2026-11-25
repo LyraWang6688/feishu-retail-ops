@@ -22,7 +22,7 @@ const { createDriveApi } = require('./driveApi');
 //     1254002（Fail）留出余量（官方排查建议就是"单次减少数据量"）。
 const BATCH_GET_CHUNK_SIZE = 500;
 
-const { compact, recordIdOf, textValue, linkedRecordIds, singleLinked } = require('./v1Gateway/cells');
+const { compact, recordIdOf, textValue, personText, linkedRecordIds, singleLinked } = require('./v1Gateway/cells');
 const { listAllRecords, listByFilterRecords, getBatchRecords } = require('./v1Gateway/readRecords');
 const { runScheduledWrite, assertResponseSuccess } = require('./v1Gateway/writePath');
 
@@ -775,6 +775,7 @@ module.exports = {
   V1BitableGateway,
   compact,
   linkedRecordIds,
+  personText,
   recordIdOf,
   singleLinked,
   textValue,

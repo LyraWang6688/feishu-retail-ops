@@ -39,6 +39,8 @@ const TABLE_FIELD_KEYS = Object.freeze({
     'orderNo', 'recordedAt', 'orderTotal', 'salesDetails', 'paymentRecords',
     // 销售查询订单卡：赠品 / 配品 / 配品总额。漏掉这三列会让接口永远返回空。
     'gift', 'accessory', 'accessoryAmount',
+    // 订单卡第二行（2026-11-25 业务负责人定）：录单人 / 售后人。两列都是「人员」列。
+    'sender', 'afterSalesBy',
   ]),
   salesDetail: Object.freeze([
     'salesEntry', 'product', 'size', 'fulfillmentStatus', 'stockQuantity',

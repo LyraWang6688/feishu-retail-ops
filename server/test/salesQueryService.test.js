@@ -103,3 +103,17 @@ test('AC-SQ4 货品筛选：保留包含该货品的整张订单，不裁剪其�
   assert.deepEqual(data.orders[0].details.map((detail) => detail.number), ['A|黑|男', 'B|白|女', 'C|红|女'], '其他货品明细不能被裁掉');
   assert.equal(data.summary.revenue, 169, '经营概览仍按全部销售统计');
 });
+
+test('AC-SQ5 订单卡透传「录单人 / 售后人」：没售后人的订单是空串', async () => {
+  const data = fixture();
+  data.orders[0].sender = '赵瑞玲';
+  data.orders[0].after_sales_by = '王颖、邯美皮鞋2号';
+  const svc = createSalesQueryService({ gateway: {}, deliveryRead: { listDeliveryData: async () => data }, now: () => TODAY });
+  const out = await svc.getSalesQuery({ from: '2026-11-17', to: '2026-11-18' });
+  const withPeople = out.orders.find((order) => order.order_no === 'A-1');
+  assert.equal(withPeople.sender, '赵瑞玲');
+  assert.equal(withPeople.after_sales_by, '王颖、邯美皮鞋2号');
+  const withoutPeople = out.orders.find((order) => order.order_no === 'A-2');
+  assert.equal(withoutPeople.sender, '', '没录单人 ⇒ 空串，不拿别的补');
+  assert.equal(withoutPeople.after_sales_by, '', '没售后人 ⇒ 空串，前端据此不渲染');
+});

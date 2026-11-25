@@ -29,7 +29,7 @@ const {
   SCAN_CACHE, SCAN_EXCLUDED_FULFILLMENT, SCAN_FIELD_KEYS, SCAN_TEXTS, resolveScanWindowDays,
 } = require('../config/afterSalesScan');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
-const { textValue } = require('./v1BitableGateway');
+const { textValue, personText } = require('./v1BitableGateway');
 const { salesLinkRecordIds } = require('./afterSalesLinkIds');
 const { withSalesReadRetry } = require('./salesReadRetry');
 const { isDelistedRecord } = require('./productLifecycle');
@@ -271,6 +271,9 @@ class AfterSalesScanService {
           total_amount: numberOf(entry.fields?.[entryFields.orderTotal]),
           // 与销售查询共用同一张订单卡：赠品 / 配品 / 配品总额必须一起带出。
           gift: asText(textValue(entry.fields?.[entryFields.gift])),
+          // ⭐ 2026-11-25：卡片第二行的「录单人 / 售后人」（人员列，多人用「、」连）。
+          sender: personText(entry.fields?.[entryFields.sender]),
+          after_sales_by: personText(entry.fields?.[entryFields.afterSalesBy]),
           accessory: asText(textValue(entry.fields?.[entryFields.accessory])),
           accessory_amount: numberOf(entry.fields?.[entryFields.accessoryAmount]),
           payments: orderPayments,

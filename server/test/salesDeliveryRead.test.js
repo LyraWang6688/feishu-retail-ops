@@ -255,3 +255,36 @@ test('AC-DR13 销售查询必须读取主表赠品 / 配品字段', async () => 
   assert.equal(data.orders[0].accessory, '鞋油×1');
   assert.equal(data.orders[0].accessory_amount, 10);
 });
+
+test('AC-DR14 订单卡读「录单人 / 售后人」：人员列多人用「、」连，且列进 fieldNames', async () => {
+  const records = baseRecords();
+  records.salesEntry[0].fields['销售明细'] = [{ record_ids: ['detail_1'] }];
+  records.salesEntry[0].fields['收款明细'] = [{ record_ids: ['pay_1'] }];
+  records.salesEntry[0].fields['录单人'] = [{ id: 'ou_a', name: '赵瑞玲' }];
+  records.salesEntry[0].fields['售后人'] = [{ id: 'ou_b', name: '王颖' }, { id: 'ou_c', name: '邯美皮鞋2号' }];
+  const calls = [];
+  const gateway = {
+    ...fakeGateway(records),
+    listByFilter: async (key, filter, options = {}) => {
+      calls.push({ key, fields: options.fieldNames || [] });
+      return (records[key] || []).map((row) => ({ record_id: row.record_id, fields: normalizeLinkFields(row.fields) }));
+    },
+  };
+  const data = await createSalesDeliveryReadService({ gateway }).listDeliveryData({
+    query: true, from: '2026-10-18', to: '2026-10-19', today: '2026-10-19',
+  });
+  assert.equal(data.orders[0].sender, '赵瑞玲');
+  assert.equal(data.orders[0].after_sales_by, '王颖、邯美皮鞋2号', '多人用「、」连');
+  const salesEntryCall = calls.find((call) => call.key === 'salesEntry');
+  for (const field of ['录单人', '售后人']) {
+    assert.ok(salesEntryCall.fields.includes(field), `销售主表 fieldNames 缺少 ${field}`);
+  }
+});
+
+test('AC-DR15 没有售后人的订单：after_sales_by 是空串（前端据此不渲染这一项）', async () => {
+  const records = baseRecords();
+  records.salesEntry[0].fields['录单人'] = [{ name: '赵瑞鹏' }];
+  const data = await createSalesDeliveryReadService({ gateway: fakeGateway(records) }).listDeliveryData();
+  assert.equal(data.orders[0].sender, '赵瑞鹏');
+  assert.equal(data.orders[0].after_sales_by, '');
+});
