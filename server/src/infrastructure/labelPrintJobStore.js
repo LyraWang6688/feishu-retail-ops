@@ -104,7 +104,15 @@ class LabelPrintJobStore {
     }
     try {
       return await this.queue.run(`claim:${jobId}`, async () => {
-        const job = await this.jobs.get(jobId);
+        // 任务文件可能已被 cleanup 删除（claimed 超时后又被清理 / 事件与清理并发）：
+        // 这不是系统故障，按「已无可领任务」跳过，让 claimNext 继续试下一条。
+        let job;
+        try {
+          job = await this.jobs.get(jobId);
+        } catch (error) {
+          if (error.code === 'ENOENT') return { claimed: false, reason: 'not_found' };
+          throw error;
+        }
         if (!job) return { claimed: false, reason: 'not_found' };
         if (!LabelPrintJobStore.claimable(job, { now, claimTimeoutMs })) {
           return { claimed: false, reason: `not_claimable:${job.status}` };
