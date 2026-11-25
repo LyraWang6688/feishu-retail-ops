@@ -99,6 +99,12 @@ test('真 schema 源码：每张表都能解析到它读的环境变量名（新
     '「表 → 环境变量名」映射必须与 schema.tables 一一对应；对不上就说明解析器漏了表');
 });
 
+test('单行表登记也能解析出环境变量名（2026-11-25）', async () => {
+  const { parseTableEnvVars } = await load();
+  const parsed = parseTableEnvVars("    accessoryCategory: { tableName: '其他配品种类', tableId: getEnv('FEISHU_V1_ACCESSORY_CATEGORY_TABLE_ID'), fields: { name: '种类' } },\n");
+  assert.equal(parsed.get('accessoryCategory'), 'FEISHU_V1_ACCESSORY_CATEGORY_TABLE_ID');
+});
+
 test('AC①：表 ID 过期 ⇒ 该行 stale_id · 计入退出码 ⇒ 退出码非零', async () => {
   const { runSelfcheck, exitCodeFor } = await load();
   const result = await runSelfcheck({

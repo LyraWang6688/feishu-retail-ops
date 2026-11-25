@@ -2,7 +2,10 @@
  * 「配置 → 货品资料」页：
  *   · 货品上新：搜索替代自动查重；用户看结果和样例图自行判断，再去飞书表单；
  *   · 货品完善：按「商品信息缺失」实际值动态分组，选择分类查看记录；
- *   · 同步样例图：复用货品资料的存量同步动作（bindDomainAction）。
+ *   · 同步样例图：复用货品资料的存量同步动作（bindDomainAction）；
+ *   · 货品下架：软删除（2026-11-21），viewHtml/load 由 productDelisted 模块提供；
+ *   · 配品配置：2026-11-19 起完整增删改查（features/domains/accessoryConfig.js），
+ *     写操作进 PRODUCT_CONFIG_WRITE 异步任务。
  */
 import { api } from '../../core/api-client.js';
 import { PRODUCT_PROFILE_API, PRODUCT_PROFILE_TEXTS as T } from '../../config/productProfile.js';

@@ -89,7 +89,7 @@ const CHAINS = Object.freeze({
       ['paymentRecord', 'receiptId'], ['paymentRecord', 'amount'], ['paymentRecord', 'method'],
       ['paymentRecord', 'status'], ['paymentRecord', 'receivedAt'], ['paymentRecord', 'tradeDirection'],
       ['accessorySale', 'orderNo'], ['accessorySale', 'item'], ['accessorySale', 'quantity'],
-      ['accessorySale', 'payment'], ['accessorySale', 'operator'], ['accessorySale', 'saleDate'],
+      ['accessorySale', 'payment'], ['accessorySale', 'operator'],
     ],
   },
 
@@ -98,14 +98,14 @@ const CHAINS = Object.freeze({
     route: 'src/routes/workbench/accessoryConfig.js', routeKey: /router\.post\('\/products\/accessories'/,
     service: 'src/services/accessoryConfigService.js', serviceKey: /gateway\.create\('accessory'/,
     landing: [['accessory', 'name'], ['accessory', 'category'], ['accessory', 'price'],
-      ['accessory', 'cost'], ['accessory', 'stockQuantity'], ['accessory', 'isAccessory']],
+      ['accessory', 'cost'], ['accessory', 'stockQuantity'], ['accessory', 'isGift']],
   },
 
   'API.categories': {
     fe: 'features/domains/accessoryConfig.js', feKey: 'api.post(API.categories',
     route: 'src/routes/workbench/accessoryConfig.js', routeKey: /router\.post\('\/products\/accessories\/categories'/,
-    service: 'src/services/accessoryCategoryService.js', serviceKey: /updateFieldDefinition\('accessory'/,
-    externalLanding: [{ tableName: '其他配品.种类（字段 options）', column: '种类' }],
+    service: 'src/services/accessoryCategoryService.js', serviceKey: /create\('accessoryCategory'/,
+    externalLanding: [{ tableName: '其他配品种类', column: '种类' }],
   },
 
   'DATA_CONFIG_API.sampleImageSync': {

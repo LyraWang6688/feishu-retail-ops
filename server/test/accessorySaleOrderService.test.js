@@ -21,7 +21,7 @@ test('配品销售：一笔 S交易明细 + 多条明细，编号 PX 主号 + �
   const service = createAccessorySaleOrderService({ gateway, now: () => Date.parse('2026-11-24T14:00:00.000Z') });
   const result = await service.create({
     items: [{ accessoryRecordId: 'acc_belt', quantity: 1 }, { accessoryRecordId: 'acc_pad', quantity: 1 }],
-    amount: 58, methodRecordId: 'pm_wechat', saleDate: Date.parse('2026-11-24T13:00:00.000Z'), operatorOpenId: 'ou_a',
+    amount: 58, methodRecordId: 'pm_wechat', operatorOpenId: 'ou_a',
   });
   assert.equal(result.ok, true);
   assert.equal(result.orderNo, 'PX-20261124-0001');

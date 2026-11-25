@@ -5,7 +5,7 @@
  *
  * 结构：
  *   1 条 S交易明细（整单金额 / 收款方式 / 实际录单人）
- *   N 条「配品销售」明细（名称 / 数量 / 交易明细关联 / 录单人 / 销售日）
+ *   N 条「配品销售」明细（名称 / 数量 / 交易明细关联 / 录单人）
  *
  * 编号：
  *   S交易明细号 PX-YYYYMMDD-NNNN（复用 salesOrderNo 的日期 + 当天序号 + 撞号重试）
@@ -35,7 +35,7 @@ const createAccessorySaleOrderService = ({ gateway, now = () => Date.now() } = {
   };
 
   const create = async ({
-    items = [], amount, methodRecordId = '', saleDate = 0, operatorOpenId = '', correlation = {},
+    items = [], amount, methodRecordId = '', operatorOpenId = '', correlation = {},
   } = {}) => {
     const list = (Array.isArray(items) ? items : []).map((item) => ({
       accessoryRecordId: String(item?.accessoryRecordId || '').trim(),
@@ -49,7 +49,8 @@ const createAccessorySaleOrderService = ({ gateway, now = () => Date.now() } = {
     const total = Number(amount);
     if (!Number.isFinite(total) || total <= 0) return { ok: false, code: 'invalid_amount' };
     if (!methodRecordId) return { ok: false, code: 'method_missing' };
-    const occurredAt = Number(saleDate) > 0 ? Number(saleDate) : now();
+    // 销售日由飞书创建时间自动生成；occurredAt 只用于收款「收付日」。
+    const occurredAt = now();
 
     let paymentRecordId = '';
     let orderNo = '';
@@ -82,7 +83,7 @@ const createAccessorySaleOrderService = ({ gateway, now = () => Date.now() } = {
       item: relation(item.accessoryRecordId),
       quantity: item.quantity,
       payment: relation(paymentRecordId),
-      saleDate: occurredAt,
+      // 「销售日」是飞书自动字段（创建时间），代码**不写**；occurredAt 只写收款「收付日」。
       ...personPatch({
         tableKey: 'accessorySale', fieldKey: 'operator', operatorOpenId,
       }),
