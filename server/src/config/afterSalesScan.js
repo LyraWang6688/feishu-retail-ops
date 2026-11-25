@@ -6,7 +6,7 @@
 //   两者服务对象不同，混在一起以后改页面会碰到记账口径（模块化）。
 //
 // 页面口径（业务负责人 2026-10-29）：
-//   扫码 → 用二维码里的**货品记录 id** 找「近 7 天」的销售记录 →
+//   扫码 → 用二维码里的**货品记录 id** 找「近期」的销售记录（默认 14 天，`AFTER_SALES_SCAN_WINDOW_DAYS` 可配）→
 //   每条候选摆出「**销售日** / **尺码** / **销售主表总金额**」→ 她点一条再选售后动作。
 //   ⇒ 所以这里要读销售明细的「销售日、尺码」，和销售主表的「总金额」。
 //
@@ -30,9 +30,11 @@ const SCAN_EXCLUDED_FULFILLMENT = Object.freeze(['未交付', '已退货', '已�
 
 const { readFlag, readInt } = require('./envValue');
 
-/** 默认 / 最长的查找窗口（**上海自然日**，含今天）。与既有候选接口（`afterSalesPage.days = 7`）同一口径。 */
-const SCAN_WINDOW_DAYS_DEFAULT = 7;
+/** 默认 / 最长的查找窗口（**上海自然日**，含今天）。2026-11-25 起默认 14 天，可用 env 覆盖。 */
 const SCAN_WINDOW_DAYS_MAX = 30;
+const SCAN_WINDOW_DAYS_DEFAULT = readInt(process.env, 'AFTER_SALES_SCAN_WINDOW_DAYS', 14, {
+  min: 1, max: SCAN_WINDOW_DAYS_MAX,
+});
 
 /**
  * ⭐⭐ 2026-10-29（业务负责人：「页面响应速度也能更快一些」）：
