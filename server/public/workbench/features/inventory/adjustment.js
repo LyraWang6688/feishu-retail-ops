@@ -347,7 +347,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '', returnT
   async function printSaved(yes) {
     $(state.host, '[data-view="print-modal"]').hidden = true;
     if (!yes) {
-      if (state.returnTo) { window.location.assign(state.returnTo); return; }
+      // 不打印也必须回工作台（业务负责人 2026-11-25）。
       window.location.assign(`/workbench/?toast=${encodeURIComponent(INVENTORY_MANUAL_TEXTS.submittedToast)}`);
       return;
     }
@@ -355,7 +355,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '', returnT
       if (!state.inventoryJobId) throw new Error(INVENTORY_MANUAL_TEXTS.inventoryJobFailed);
       // ⭐ #1210：只发**一次**意图请求；库存成功后由后端建打印任务（页面可以直接走）。
       await api.post(`/api/workbench/inventory/adjustments/pairs/${encodeURIComponent(state.inventoryJobId)}/print-intent`, {});
-      if (state.returnTo) { window.location.assign(state.returnTo); return; }
+      // 打印与否统一回工作台；组库存页也不再作为返回落点。
       window.location.assign(`/workbench/?toast=${encodeURIComponent(INVENTORY_MANUAL_TEXTS.printQueuedToast)}`);
     } catch (error) {
       showPageError(describeError(error));
