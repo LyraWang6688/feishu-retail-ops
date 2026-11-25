@@ -2,7 +2,7 @@
  * 售后**扫一扫落地页** + 点动作后的**弹窗原型**（业务负责人 2026-10-29）。
  *
  * 用户路径：工作台「售后单」→ 飞书扫一扫 → 扫货品二维码 → 落到这一页：
- *   ① 读「近 7 天、这款货品、还没售后过」的销售明细；
+ *   ① 读「近期（默认 14 天，后端 env 可配）、这款货品、还没售后过」的销售明细；
  *   ② 每条候选摆「销售日 / 尺码 / 总金额」；
  *   ③ 选中一条 ⇒ 那条卡片原地变成两个按钮：**换货 · 退货**；
  *   ④ 点「退货 / 换货」⇒ 弹窗（居中，样式对齐交割单页付款弹窗）。
@@ -12,7 +12,7 @@
  *   源码哨兵钉住"本文件没有 api.post"。接异步写库是下一步。
  *
  * 数据来源（只读）：
- *   GET `/api/workbench/sales/after-sales/scan-candidates?productRecordId=…&days=7`
+ *   GET `/api/workbench/sales/after-sales/scan-candidates?productRecordId=…`（窗口吃后端默认）
  *   → `services/afterSalesScanService.js`
  */
 
@@ -466,7 +466,6 @@ export function mountAfterSalesPage(container, options = {}) {
 
   const query = new URLSearchParams({
     productRecordId,
-    days: String(AFTER_SALES_PAGE.days),
   });
   const loadCandidates = () => api.get(`${apiBase}${AFTER_SALES_PAGE.scanCandidatesApi}?${query}`)
     .then((data) => {

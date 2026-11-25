@@ -36,12 +36,13 @@ export const AFTER_SALES_PAGE = {
   sizesFailed: '尺码读取失败，请返回重试。',
   areaTagInStock: '现货',
   areaTagReserve: '预订',
-  days: 7,
-  loading: '正在查找近 7 天的销售记录…',
+  // ⚠️ 2026-11-25：窗口改由后端 `AFTER_SALES_SCAN_WINDOW_DAYS`（默认 14、上限 30）决定；
+  //   前端不再传 days，避免两处配置打架。
+  loading: '正在查找近期的销售记录…',
   productLoading: '正在读取货品…',
   productMissing: '没有扫到货品记录，请重新扫码。',
   failed: '销售记录读取失败，请返回重试。',
-  empty: '近 7 天没有这款货品的销售记录。',
+  empty: '近期没有这款货品的销售记录。',
   // ⭐ 2026-10-29（HTML 批注，逐字）：这句提示现在是「请选择售后单」
   //   （她先改成「请选择要售后单」，随后又批注「去掉要」⇒ 去掉那个「要」字）。
   chooseHint: '请选择售后单',
