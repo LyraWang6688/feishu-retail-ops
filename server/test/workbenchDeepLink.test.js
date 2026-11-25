@@ -36,14 +36,14 @@ test('AC-DL2 domains/index.js：page 只在 domain.pages 里取，product 传给
     'page 必须按 domain.pages 校验');
   assert.ok(src.includes('state.active = wantedPage ? wantedPage.id : domain.pages[0].id'),
     '认不出 page ⇒ 回落第一个子页');
-  assert.ok(src.includes('createInventoryAdjustmentModule({ initialProductId: state.initialProductId })'),
-    'product 要传给库存手工调整模块');
+  assert.ok(src.includes('createInventoryAdjustmentModule({ initialProductId: state.initialProductId, returnTo: state.returnTo })'),
+    'product / returnTo 要传给库存手工调整模块');
 });
 
 test('AC-DL3 adjustment.js：record_id 形状校验 + 只调既有 selectProduct（不新造入口）', () => {
   const src = read('public/workbench/features/inventory/adjustment.js');
   assert.ok(src.includes('const PRODUCT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/'), 'record_id 形状校验');
-  assert.ok(src.includes("createInventoryAdjustmentModule({ initialProductId = '' } = {})"), '模块接受初始货品');
+  assert.ok(src.includes("createInventoryAdjustmentModule({ initialProductId = '', returnTo = '' } = {})"), '模块接受初始货品与返回路径');
   assert.ok(src.includes('if (PRODUCT_ID_PATTERN.test(deepLinkProductId))'), '形状不对就不打接口');
   assert.ok(src.includes('void selectProduct(deepLinkProductId)'), '复用既有 selectProduct');
 });

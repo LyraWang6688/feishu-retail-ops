@@ -29,7 +29,6 @@ const { PRODUCT_ACTIONS } = require('./scanPageProductActions');
  *    走的是**工作台那一道飞书身份闸门**（未启用 503 / 未登录 401 / 白名单外 403）。
  */
 const ROUTE = Object.freeze({
-  // `app.js` 用 basePath 挂载，router 里用 path（两边不许各写一份）。
   // ⭐ 2026-10-12：**验收落地页**的路径模板（**唯一来源**）—— 路由用它拼跳转与表单目标，
   //    渲染层用它给「未到货批次」那几条链接（两边各写一份必然漂）。
   //    `{batchNo}` 会被 URL 编码后填进去；手输兜底那个 GET 表单用 `acceptPath`。
@@ -41,6 +40,8 @@ const ROUTE = Object.freeze({
   //   之后补上 ⇒ 旧码对不上（今天的 400 事故就是这么来的）。
   // ⇒ 唯一入口：`/r/{recordId}`（2026-11-11 起删掉 `/s/{编号}` 兼容）。
   recordBasePath: '/r',
+  // 货品组扫码：组库存 / 成员选择；不是新的写入口。
+  groupBasePath: '/g',
   recordPath: '/:recordId',
 });
 

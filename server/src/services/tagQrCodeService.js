@@ -35,6 +35,17 @@ const { CRITICAL_READ_RETRY } = require('../config/gatewayReadRetry');
 const RECORD_ID_PLACEHOLDER = '{recordId}';
 
 /** 二维码 URL（只认 recordId；模板没有占位符 / 有别的占位符 ⇒ 当场抛）。 */
+const buildGroupIdScanUrl = (groupId, config = TAG_QR_CODE) => {
+  const source = String(config?.scanUrl?.groupIdTemplate ?? '');
+  if (!source.includes('{groupId}')) throw new Error(`货品组二维码 URL 模板里没有 {groupId} 占位符：${source || '(空)'}`);
+  const id = String(groupId ?? '').trim();
+  if (!id) throw new Error('货品组没有 record_id，无法生成标签二维码');
+  const encoded = source.split('{groupId}').join(encodeURIComponent(id));
+  const stray = encoded.replace(encodeURIComponent(id), '').match(/\{(\w+)\}/);
+  if (stray) throw new Error(`货品组二维码 URL 模板里的占位符不认识：{${stray[1]}}（可用：{groupId}）`);
+  return encoded;
+};
+
 const buildRecordIdScanUrl = (recordId, config = TAG_QR_CODE) => {
   const source = String(config?.scanUrl?.recordIdTemplate ?? '');
   if (!source.includes(RECORD_ID_PLACEHOLDER)) {
@@ -234,6 +245,7 @@ const createTagQrCodeService = ({
 module.exports = {
   createTagQrCodeService,
   buildRecordIdScanUrl,
+  buildGroupIdScanUrl,
   buildFileName,
   attachmentsOf,
   findFieldValue,

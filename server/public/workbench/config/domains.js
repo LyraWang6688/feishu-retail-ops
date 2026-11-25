@@ -59,7 +59,7 @@
 //   扫码页各自的领域里）⇒ 本文件**不 import 任何采购飞书表单 URL**（它们写的「信息填写」表
 //   已被业务负责人整表删除 ⇒ 是死链）。本文件里只留货品上新那一个表单外链。
 //      已经没有任何地方再引用它们了）。
-import { SUPPLIER_DIRECTORY_URL, PURCHASE_TRANSACTION_FORM_URL, LABEL_BATCH_FORM_URL } from './links.js';
+import { SUPPLIER_DIRECTORY_URL, PURCHASE_TRANSACTION_FORM_URL, LABEL_BATCH_FORM_URL, LABEL_GROUP_FORM_URL } from './links.js';
 import { INVENTORY_LEDGER_PAGE } from './inventoryLedger.js';
 import { SALES_QUERY_PAGE } from './salesQuery.js';
 
@@ -174,32 +174,13 @@ export const DOMAIN_TABS = [
         //      也退了；2026-11-12 再加一层：一级「标签二维码 / 销售凭证」，标签二维码下才是扫码打印 · 批量打印。
         //   ⚠️ 旧的筛选批量页 / 编号选择器 / `targetTemplate` 都已物理删除，不再有表单入口。
         kind: 'label-print',
-        // 一级两张卡：标签二维码 / 销售凭证（占位）。
-        // 标签二维码点进去才是「扫码打印 / 批量打印」两个动作；卡片模板统一用 `.entry-card`。
+        // 四张独立卡：扫码打印 / 批量打印 / 货品组打印 / 销售凭证（占位）。
+        // 标签主体由后端按「货品组非空 → group，打印货号非空 → product」决定。
         cards: [
-          {
-            id: 'label-qr',
-            icon: '🏷️',
-            title: '标签二维码',
-            actions: [
-              {
-                icon: '📷',
-                title: '扫码打印',
-                href: '/workbench/label-print.html?scan=1',
-              },
-              {
-                icon: '🖨️',
-                title: '批量打印',
-                href: LABEL_BATCH_FORM_URL,
-              },
-            ],
-          },
-          {
-            id: 'sales-voucher',
-            icon: '🧾',
-            title: '销售凭证',
-            placeholder: true,
-          },
+          { id: 'label-scan', icon: '📷', title: '扫码打印', href: '/workbench/label-print.html?scan=1' },
+          { id: 'label-batch', icon: '🖨️', title: '批量打印', href: LABEL_BATCH_FORM_URL },
+          { id: 'label-group', icon: '🏷️', title: '货品组打印', href: LABEL_GROUP_FORM_URL },
+          { id: 'sales-voucher', icon: '🧾', title: '销售凭证', placeholder: true },
         ],
       },
       {

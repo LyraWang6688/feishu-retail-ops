@@ -47,6 +47,11 @@ const ISO = (ms) => new Date(ms).toISOString();
  */
 const normalizeRequest = (input = {}) => {
   const mode = String(input.mode || '').trim();
+  if (mode === 'group') {
+    const groupId = String(input.groupId || '').trim();
+    if (!groupId) throw userError('缺少「货品组」记录 ID');
+    return { mode: 'group', groupId };
+  }
   if (mode === 'single') {
     // ⭐ 「扫码打印」：记录 ID 优先（它比编号更准 —— 编号是会变的快照）。
     const recordId = String(input.recordId || '').trim();
@@ -75,6 +80,7 @@ const requestKeyOf = (request, rotate, canvas) => {
       ? `single|record:${request.recordId}${suffix}`
       : `single|${request.number}${suffix}`;
   }
+  if (request.mode === 'group') return `group|${request.groupId}${suffix}`;
 };
 
 const createLabelPrintQueueService = (deps = {}) => {
@@ -265,7 +271,15 @@ const createLabelPrintQueueService = (deps = {}) => {
     ({ data, rendered, labels } = built);
 
     async function buildArtifact() {
-    if (request.mode === 'single' && request.recordId) {
+    if (request.mode === 'group') {
+      if (typeof labelPrint.labelForGroup !== 'function') {
+        throw systemError('打印服务不支持「按货品组打印」（部署的版本太旧）');
+      }
+      data = await labelPrint.labelForGroup(request.groupId);
+      if ((data.labels || []).length !== 1) {
+        throw systemError(`按货品组应该恰好生成 1 张标签，实际 ${(data.labels || []).length} 张`);
+      }
+    } else if (request.mode === 'single' && request.recordId) {
       // ⭐ 「扫码打印」：**按记录 ID 精确一张** —— 解编号那件事归 `labelPrintService`
       //   （本文件"不懂标签长什么样"那条边界不破 ✓）；解不出来/没库存 ⇒ 它抛 400 的人话。
       if (typeof labelPrint.labelForRecord !== 'function') {
@@ -349,6 +363,8 @@ const createLabelPrintQueueService = (deps = {}) => {
       status: states.queued.id,
       source,
       request,
+      group_id: request.groupId || '',
+      group_name: request.mode === 'group' ? (labels[0]?.number || '') : '',
       // 这一批是哪些编号（页面显示 / 补打 / 排障都要它）。
       numbers: labels.map((label) => label.number),
       total_labels: labels.length,
@@ -398,6 +414,7 @@ const createLabelPrintQueueService = (deps = {}) => {
       mode: request.mode,
       // ⭐ 「扫码打印」按记录 ID 入队时留痕（排障时看得出"这一张是从哪个码来的"）。
       record_id: request.recordId || undefined,
+      group_id: request.groupId || undefined,
       total_labels: labels.length,
       page_count: rendered.meta.page_count,
       pdf_bytes: rendered.meta.pdf_bytes,

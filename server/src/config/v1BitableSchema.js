@@ -138,12 +138,16 @@ const V1_BITABLE_SCHEMA = {
         // 2026-11-19：配品样例图同步云盘完成标记（幂等 / 一眼看进度）。
         sampleImageSynced: '同步云盘',
       },
-      // 只读字段：不参与写入；时间字段由飞书自动生成。
       readOnlyFields: Object.freeze({
         salesQuantity: Object.freeze({ name: '销售数量', type: 19, uiType: 'Lookup', writable: false }),
         createdAt: Object.freeze({ name: '创建时间', type: 1001, uiType: 'CreatedTime', writable: false }),
         updatedAt: Object.freeze({ name: '更新时间', type: 1002, uiType: 'ModifiedTime', writable: false }),
       }),
+    },
+    productGroup: {
+      tableName: '货品组',
+      tableId: getEnv('FEISHU_V1_PRODUCT_GROUP_TABLE_ID'),
+      fields: { name: '货品组', products: '关联货品', price: '单价', color: '颜色', recordId: '记录ID' },
     },
     accessorySale: {
       tableName: '配品销售',
@@ -742,14 +746,10 @@ const V1_BITABLE_SCHEMA = {
       tableName: '标签打印',
       tableId: getEnv('FEISHU_V1_LABEL_PRINT_REQUEST_TABLE_ID'),
       fields: {
-        // 「打印货号」= 单向关联到「货品信息」（表单里可多选 ⇒ 一条记录可关联多个货品）。
         product: '打印货号',
-        // ⭐ 2026-11-17：服务端写「扫码打印 / 库存调整打印 / 销售录单打印 / 验收录单打印」的
-        //   **请求记录**时，也写这一列。单选值以生产表为准（当前 5 个选项，没有「按编号打印」）。
-        //   ⚠️ 监听端只处理「来源为空 / 批量打印」的记录 —— 否则服务端写的记录会再次触发打印。
         source: '来源',
+        group: '货品组',
         printedBy: '打印者',
-        // 🔴 「打印日」是**飞书自动字段**（默认值 = 记录创建时间）—— 刻意**不映射**。
       },
     },
     liveInventory: {

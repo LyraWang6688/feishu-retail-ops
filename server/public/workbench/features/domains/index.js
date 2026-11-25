@@ -103,7 +103,7 @@ export function createDomainModule(domainId) {
       }
       return;
     }
-    if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule({ initialProductId: state.initialProductId }).mount(host);
+    if (page.kind === 'inventory-adjustment') return void createInventoryAdjustmentModule({ initialProductId: state.initialProductId, returnTo: state.returnTo }).mount(host);
     if (page.kind === 'inventory-ledger') return void createInventoryLedgerModule().mount(host);
     if (page.kind === 'sales-query') return void createSalesQueryModule().mount(host);
     if (page.kind === 'product-profile') return void createProductProfileModule().mount(host);
@@ -136,6 +136,8 @@ export function createDomainModule(domainId) {
       const wantedPage = domain.pages.find((item) => item.id === String(initial.page || '').trim());
       state.active = wantedPage ? wantedPage.id : domain.pages[0].id;
       state.initialProductId = String(initial.productId || '').trim();
+      const returnTo = String(initial.returnTo || '').trim();
+      state.returnTo = /^\/(g|r)\//.test(returnTo) ? returnTo : '';
       // ⭐ 2026-10-10（业务负责人真机反馈：「我已经点到了采购，直接出来报货、退货、到货就行，
       //    下面的这些文字解释就不用了」）⇒ **一级领域的大标题与它下面那行描述整行删掉**：
       //    一级 tab 上已经写了领域名，页内再写一遍就是"说明书"。

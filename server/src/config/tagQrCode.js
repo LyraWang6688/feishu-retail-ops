@@ -35,6 +35,8 @@ const os = require('node:os');
 const SCAN_URL = Object.freeze({
   // ⭐ 唯一格式：/r/{recordId}（record_id 永不变；2026-11-11 起不再兼容 /s/{编号}）。
   recordIdTemplate: 'https://hm.bamamei.online/r/{recordId}',
+  // 货品组标签二维码：身份是 group record_id，不是成员货号。
+  groupIdTemplate: 'https://hm.bamamei.online/g/{groupId}',
 });
 
 /**

@@ -53,6 +53,10 @@ const fakeQueue = (behavior = {}) => {
   return {
     calls,
     attempts,
+    async enqueue(input, options = {}) {
+      calls.push({ ...options, mode: input.mode, groupId: input.groupId });
+      return { job_id: `job_${input.groupId}`, reused: false, total_labels: 1, numbers: [`组-${input.groupId}`] };
+    },
     async enqueueSingle(input) {
       calls.push(input);
       const mode = behavior[input.recordId] || 'ok';
@@ -112,6 +116,19 @@ const formRecord = (id, productIds, source) => {
   return { record_id: id, fields };
 };
 
+test('AC-FF1b 表单有货品组 ⇒ 走 group 主体，不按货号展开', async () => {
+  const table = V1_BITABLE_SCHEMA.tables.labelPrintRequest;
+  const record = { record_id: 'rec_group', fields: { [table.fields.group]: linkValue(['rec_g1']) } };
+  const { queue, service } = build({ records: { rec_group: record } });
+  const result = await service.processRecord('rec_group');
+  assert.equal(result.queued, 1);
+  assert.equal(queue.calls.length, 1);
+  assert.equal(queue.calls[0].mode, 'group');
+  assert.equal(queue.calls[0].groupId, 'rec_g1');
+  assert.equal(queue.calls[0].source, 'form');
+  assert.equal(queue.calls[0].submitKey, 'label_form:rec_group:group:rec_g1');
+});
+
 test('AC-FF1 一条表单勾多个货号 ⇒ 每个货号各排一次队（源 = form，幂等键按记录+货品各一把）', async () => {
   const { queue, service } = build({
     records: { rec_form1: formRecord('rec_form1', ['rec_p1', 'rec_p2', 'rec_p3']) },
@@ -144,10 +161,10 @@ test('AC-FF12 ⭐ 服务端写的请求记录（来源=扫码打印 / 库存调�
   assert.equal(notifications.sent.length, 0, '也不发「没勾选货号」之类的通知');
 });
 
-test('AC-FF13 来源=批量打印（或为空）⇒ 照常当真表单请求处理', async () => {
+test('AC-FF13 来源=表单打印（或为空）⇒ 照常当真表单请求处理', async () => {
   const { queue, service } = build({
     records: {
-      rec_batch: formRecord('rec_batch', ['rec_p1'], '批量打印'),
+      rec_batch: formRecord('rec_batch', ['rec_p1'], '表单打印'),
       rec_legacy: formRecord('rec_legacy', ['rec_p2']),
     },
   });
@@ -285,8 +302,8 @@ test('AC-FF7 只认「新增」动作：record_edited / record_deleted 不触发
 test('AC-FF8 「打印日」是飞书自动字段：schema 不映射、本链路没有任何写表路径', () => {
   const table = V1_BITABLE_SCHEMA.tables.labelPrintRequest;
   assert.equal(table.tableName, '标签打印');
-  assert.deepEqual(Object.keys(table.fields), ['product', 'source', 'printedBy'],
-    '映射「打印货号」「来源」「打印者」；「打印日」仍由飞书默认值填，刻意不映射');
+  assert.deepEqual(Object.keys(table.fields), ['product', 'source', 'group', 'printedBy'],
+    '映射「打印货号」「来源」「货品组」「打印者」；「打印日」仍由飞书默认值填，刻意不映射');
   assert.equal(table.fields.source, '来源', '来源字段是服务端请求记录与表单请求的区分键');
   const source = fs.readFileSync(path.join(SOURCE_DIR, 'services/labelPrintFormIntakeService.js'), 'utf8');
   for (const forbidden of ['gateway.update', 'gateway.create', 'bitable.record.created', 'bitable.record.updated']) {

@@ -21,6 +21,7 @@
  */
 const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { LABEL_FORM_INTAKE } = require('../config/labelPrintForm');
+const { SUBJECT_POLICY } = require('../config/subjectPolicy');
 const { textValue } = require('./v1Gateway/cells');
 const { classifyThrownError, retryDelayMs } = require('../config/asyncJobs');
 const { logError, logInfo, logWarn } = require('../utils/logger');
@@ -130,6 +131,34 @@ const createLabelPrintFormIntakeService = (deps = {}) => {
     return record;
   };
 
+  /** 把**一个货品组**排进打印队列；临时错误重试，永久错误交给调用方分类。 */
+  const enqueueOneGroup = async ({ formRecordId, groupRecordId }) => {
+    const submitKey = `${config.submitKeyPrefix}:${formRecordId}:group:${groupRecordId}`;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const result = await resolveQueue().enqueue(
+          { mode: 'group', groupId: groupRecordId },
+          { source: config.queueSource, submitKey },
+        );
+        return { ok: true, reused: result?.reused === true, result };
+      } catch (error) {
+        const classified = classifyThrownError(error);
+        if (classified.retryable && attempt <= config.retries) {
+          log.warn('label_print.form.retry', {
+            form_record_id: formRecordId, group_record_id: groupRecordId,
+            attempt, retries: config.retries, error: classified.message,
+          });
+          await sleep(retryDelayMs(attempt));
+          continue;
+        }
+        if (!classified.retryable && Number(error?.statusCode) === 400) {
+          return { ok: false, kind: 'skipped', reason: classified.message, statusCode: 400 };
+        }
+        return { ok: false, kind: 'failed', reason: classified.message, attempts: attempt, exhausted: classified.retryable };
+      }
+    }
+  };
+
   /** 把**一个货号**排进打印队列；临时错误重试，永久错误交给调用方分类。 */
   const enqueueOne = async ({ formRecordId, productRecordId }) => {
     const submitKey = `${config.submitKeyPrefix}:${formRecordId}:${productRecordId}`;
@@ -206,7 +235,7 @@ const createLabelPrintFormIntakeService = (deps = {}) => {
   /** 一条货号在通知里的样子：编号 / 记录 ID ＋ 原因。 */
   const describeItems = (items, texts) => {
     const list = items.slice(0, config.notifyMaxItems).map((item) => {
-      const label = item.number || item.productRecordId;
+      const label = item.number || item.productRecordId || item.groupRecordId;
       return item.reason ? `${label}${texts.reasonSeparator}${item.reason}` : String(label);
     });
     if (items.length > config.notifyMaxItems) {
@@ -236,12 +265,14 @@ const createLabelPrintFormIntakeService = (deps = {}) => {
         recordId, skipped: true, reason: 'not_a_form_request', source, outcomes: [],
       };
     }
+    const groupIds = linkRecordIdsOf(record?.fields?.[table.fields?.[SUBJECT_POLICY.label.groupField]]);
     const productIds = linkRecordIdsOf(record?.fields?.[table.fields.product]);
     log.info('label_print.form.received', {
       form_record_id: recordId,
+      group_count: groupIds.length,
       product_count: productIds.length,
     });
-    if (!productIds.length) {
+    if (!groupIds.length && !productIds.length) {
       processed.set(recordId, { at: now() });
       const lines = await notifySummary({ recordId, outcomes: [], numbers: [], queued: [] });
       return { recordId, outcomes: [], notified: true, lines };
@@ -249,19 +280,24 @@ const createLabelPrintFormIntakeService = (deps = {}) => {
 
     const outcomes = [];
     const numbers = [];
-    for (const productRecordId of productIds) {
+    const groupMode = groupIds.length > 0;
+    const subjectIds = groupMode ? groupIds : productIds;
+    for (const subjectId of subjectIds) {
       // eslint-disable-next-line no-await-in-loop
-      const outcome = await enqueueOne({ formRecordId: recordId, productRecordId });
+      const outcome = groupMode
+        ? await enqueueOneGroup({ formRecordId: recordId, groupRecordId: subjectId })
+        : await enqueueOne({ formRecordId: recordId, productRecordId: subjectId });
       const enriched = {
-        productRecordId,
+        ...(groupMode ? { groupRecordId: subjectId } : { productRecordId: subjectId }),
         number: outcome.result?.numbers?.[0] || '',
         ...outcome,
       };
       outcomes.push(enriched);
-      if (enriched.ok) numbers.push(enriched.number || productRecordId);
+      if (enriched.ok) numbers.push(enriched.number || subjectId);
       log.info('label_print.form.item', {
         form_record_id: recordId,
-        product_record_id: productRecordId,
+        group_record_id: groupMode ? subjectId : undefined,
+        product_record_id: groupMode ? undefined : subjectId,
         ok: enriched.ok === true,
         kind: enriched.kind,
         reused: enriched.reused === true,
