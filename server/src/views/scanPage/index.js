@@ -214,7 +214,7 @@ const renderSalePaymentStepPage = ({
   //    ⭐ 2026-10-16 A2a：三件套里的**「三档」那件已退场** ⇒ 现在只有**收款行 + 赠品** ✓
   const paymentFieldsHtml = `${accessoryFieldHtml}${giftFieldHtml}${collectTotalHtml}${rowsBlock}${addRowButtonHtml}`;
   const payForm = (postAction && step.payAction)
-    ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay" data-delist-product-ids="${escapeHtml(payDelistIds)}" data-delist-prompt="${escapeHtml(String(config.saleDelistPrompt || ''))}">
+    ? `<form method="post" action="${escapeHtml(postAction)}" data-view="payment-pay" data-delist-product-ids="${escapeHtml(payDelistIds)}" data-delist-prompt="${escapeHtml(String(config.saleDelistPrompt || ''))}" data-delist-confirm-label="${escapeHtml(String(config.delistConfirm || ''))}" data-delist-cancel-label="${escapeHtml(String(config.delistCancel || ''))}">
 <input type="hidden" name="${escapeHtml(fields.action || 'action')}" value="${escapeHtml(step.payAction)}">
 <input type="hidden" name="${escapeHtml(fields.delistProductIds || 'delist_product_ids')}" value="">
 ${submitKey ? `<input type="hidden" name="${escapeHtml(fields.submitKey || 'submit_key')}" value="${escapeHtml(submitKey)}">` : ''}
