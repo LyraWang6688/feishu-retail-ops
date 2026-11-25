@@ -33,6 +33,40 @@ const textValue = (value) => {
   }
   return '';
 };
+/**
+ * 人员字段（type 11）cell → 「赵瑞玲、王颖」。
+ *
+ * 飞书两种读法（GET list / POST batch_get）实测**同一个形状**：
+ * `[{ id, name, en_name, email }]`；getBatch 偶尔再包一层 `{ type: 11, value: [...] }`，
+ * 这里一并拆。取不到名字的行直接丢掉（不拿 ou_xxx 顶替）；多人用「、」连，
+ * **同名去重**（飞书可能返回重复的同一人）。
+ */
+const PERSON_NAME_SEPARATOR = '、';
+/** 人员 cell → 名字数组（递归解包 { type, value }；只有 id 没有名字的丢掉）。 */
+const personNames = (value) => {
+  const cells = Array.isArray(value) ? value : (value == null ? [] : [value]);
+  const names = [];
+  for (const cell of cells) {
+    if (cell == null) continue;
+    if (typeof cell === 'string' || typeof cell === 'number') {
+      const text = String(cell).trim();
+      if (text) names.push(text);
+      continue;
+    }
+    if (typeof cell !== 'object') continue;
+    const name = cell.name ?? cell.en_name ?? cell.text;
+    if (name != null) {
+      const text = String(name).trim();
+      if (text) names.push(text);
+      continue;
+    }
+    if (Array.isArray(cell.value)) names.push(...personNames(cell.value));
+  }
+  return names;
+};
+/** 人员 cell → 「赵瑞玲、王颖」（同名去重；没有名字 ⇒ 空串）。 */
+const personText = (value, separator = PERSON_NAME_SEPARATOR) => [...new Set(personNames(value))].join(separator);
+
 /** 关联字段 cell → record_id 数组；只认 record_ids / link_record_ids（issue #1074）。 */
 const linkedRecordIds = (value) => {
   if (Array.isArray(value)) return value.flatMap(linkedRecordIds);
@@ -52,4 +86,4 @@ const singleLinked = (cell, recordId) => {
   return ids.length === 1 && ids[0] === recordId;
 };
 
-module.exports = { compact, recordIdOf, textValue, linkedRecordIds, singleLinked };
+module.exports = { compact, recordIdOf, textValue, personText, linkedRecordIds, singleLinked };

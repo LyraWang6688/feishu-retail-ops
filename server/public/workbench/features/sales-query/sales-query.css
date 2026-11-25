@@ -47,6 +47,15 @@
 .sq-order-viewport { width:100%; min-width:0; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; }
 .sq-order { width:max-content; min-width:100%; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); overflow:hidden; }
 .sq-order-head { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"title total" "pays pays"; gap:6px 10px; align-items:start; padding:12px; background:var(--surface-soft); border-bottom:1px solid var(--border-light); }
+/* ⭐ 2026-11-25（业务负责人「增加一个录单人和售后人」）：卡片第二行的人员标签。
+ * ⚠️ 没有值时不渲染这一整行（售后人 3/122 有值），所以只有存在人员时才走 `--people` 的网格。 */
+.sq-order-head--people { grid-template-areas:"title total" "people people" "pays pays"; }
+.sq-order-people { grid-area:people; display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; min-width:0; color:var(--text-secondary); font-size:var(--font-size-xs); }
+.sq-person { display:inline-flex; align-items:baseline; gap:4px; min-width:0; }
+.sq-person-label { color:var(--text-muted); }
+.sq-person-value { color:var(--text); font-weight:var(--weight-medium); overflow-wrap:anywhere; }
+.sq-person--after { padding:1px 6px; border-radius:6px; background:var(--primary-soft); }
+.sq-person--after .sq-person-label, .sq-person--after .sq-person-value { color:var(--primary); }
 .sq-order-title { grid-area:title; display:flex; align-items:baseline; gap:8px; min-width:0; white-space:nowrap; }
 .sq-order-title b { color:var(--text-muted); font-size:var(--font-size-xs); font-weight:var(--weight-normal); white-space:nowrap; }
 .sq-detail-highlight { background: var(--primary-soft); }

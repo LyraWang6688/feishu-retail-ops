@@ -132,6 +132,9 @@ const createSalesQueryService = ({ gateway, deliveryRead, now = () => new Date()
         recorded_at: order.recorded_at,
         total_amount: order.payable_amount,
         gift: order.gift || '',
+        // 2026-11-25：卡片第二行「录单人 / 售后人」——只做透传，不参与任何统计口径。
+        sender: order.sender || '',
+        after_sales_by: order.after_sales_by || '',
         accessory: order.accessory || '',
         accessory_amount: Number(order.accessory_amount || 0),
         payments: (order.payments || []).map((payment) => ({

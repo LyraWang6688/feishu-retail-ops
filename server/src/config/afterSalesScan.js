@@ -78,6 +78,8 @@ const SCAN_FIELD_KEYS = Object.freeze({
     'orderNo', 'writeStatus', 'orderTotal', 'recordedAt', 'paymentRecords',
     // 售后整单卡复用销售查询卡片：赠品 / 配品 / 配品总额也要带出来。
     'gift', 'accessory', 'accessoryAmount',
+    // ⭐ 2026-11-25：卡片第二行「录单人 / 售后人」（与销售查询同一张卡，两列一起带出）。
+    'sender', 'afterSalesBy',
   ]),
 });
 

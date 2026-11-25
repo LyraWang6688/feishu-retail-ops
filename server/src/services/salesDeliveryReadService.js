@@ -14,7 +14,7 @@
  *
  * 🔴 只读：本文件没有任何写入方法，也不新增写库路径。
  */
-const {textValue} = require('./v1BitableGateway');
+const {textValue, personText} = require('./v1BitableGateway');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { TABLE_FIELD_KEYS, UNPAID_PAYMENT_STATUS, SALES_DETAIL_STOCK_FIELD } = require('../config/salesDeliveryPage');
 const { createPaymentMethodsService } = require('./paymentMethodsService');
@@ -220,6 +220,9 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
     const accessoryAmountById = new Map(orders.map((order) => [order.record_id,
       Number(textValue(order.fields?.[orderFields.accessoryAmount])) || 0]));
     const giftById = new Map(orders.map((order) => [order.record_id, textValue(order.fields?.[orderFields.gift]).trim()]));
+    // ⭐ 2026-11-25：订单卡第二行的「录单人 / 售后人」（人员列，多人用「、」连；空 ⇒ ''）。
+    const senderById = new Map(orders.map((order) => [order.record_id, personText(order.fields?.[orderFields.sender])]));
+    const afterSalesById = new Map(orders.map((order) => [order.record_id, personText(order.fields?.[orderFields.afterSalesBy])]));
     const accessoryById = new Map(orders.map((order) => [order.record_id, textValue(order.fields?.[orderFields.accessory]).trim()]));
     const colorNameById = new Map(colors.map((item) => [item.record_id, textValue(item.fields?.[colorFields.name]).trim()]));
     const sizeValueById = new Map(sizes.map((item) => [item.record_id, textValue(item.fields?.[sizeFields.size]).trim()]));
@@ -324,6 +327,8 @@ const createSalesDeliveryReadService = ({ gateway, paymentMethods, orderReadRetr
         payments: paymentRows,
         payable_amount: group.totalAmount == null || group.totalAmount === '' ? null : Number(group.totalAmount),
         gift: giftById.get(group.salesEntryRecordId) || '',
+        sender: senderById.get(group.salesEntryRecordId) || '',
+        after_sales_by: afterSalesById.get(group.salesEntryRecordId) || '',
         accessory: accessoryById.get(group.salesEntryRecordId) || '',
         accessory_amount: accessoryAmountById.get(group.salesEntryRecordId) || 0,
         pending_amount: pendingAmount,
