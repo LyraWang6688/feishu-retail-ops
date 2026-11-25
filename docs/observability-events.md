@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **537** 个事件。按前缀分组：
+共 **538** 个事件。按前缀分组：
 
 ## accessory
 
@@ -179,7 +179,7 @@
 | `label_print.form.processed` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.received` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.record_failed` | 1 | src/services/labelPrintFormIntakeService.js |
-| `label_print.form.retry` | 1 | src/services/labelPrintFormIntakeService.js |
+| `label_print.form.retry` | 2 | src/services/labelPrintFormIntakeService.js |
 | `label_print.form.skipped_source` | 1 | src/services/labelPrintFormIntakeService.js |
 | `label_print.job.claimed` | 1 | src/services/labelPrintQueueService.js |
 | `label_print.job.done` | 1 | src/services/labelPrintQueueService.js |
@@ -651,6 +651,7 @@
 | `workbench.label_print.scan.rejected` | 1 | src/routes/labelPrintQueue.js |
 | `workbench.labels.cache_hit` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.cache_miss` | 1 | src/services/labelPrintService.js |
+| `workbench.labels.group_resolved` | 1 | src/services/labelGroupPrintService.js |
 | `workbench.labels.listed` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.missing_price` | 1 | src/services/labelPrintService.js |
 | `workbench.labels.missing_qr_record_id` | 1 | src/services/labelPrintService.js |

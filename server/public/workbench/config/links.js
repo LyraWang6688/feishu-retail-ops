@@ -48,6 +48,10 @@ export const PRODUCT_NEW_FORM_URL =
 export const LABEL_BATCH_FORM_URL =
   'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnoFRAGvPyAWmSephrLpOvgh';
 
+/** 货品组标签打印表单：写「标签打印」表的「货品组」字段，后端按 group 主体出 /g 组标签。 */
+export const LABEL_GROUP_FORM_URL =
+  'https://scnzoiwpgxik.feishu.cn/share/base/form/shrcnvW0th1TWTQg7GW3jGu1fmg';
+
 
 /**
  * 飞书 **AppLink：在端内打开一个 web-view** 的基址 —— AGENTS §13 实查过的那条官方格式

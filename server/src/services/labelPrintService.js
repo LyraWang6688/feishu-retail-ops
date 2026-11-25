@@ -64,15 +64,12 @@ const { LABEL_PRINT, LABEL_PRINT_V5, resolveGrid } = require('../config/labelPri
 const { SCAN_URL } = require('../config/tagQrCode');
 const { buildSizeLines, planSizeTokens } = require('./labelSizePlan');
 const { buildRecordIdScanUrl } = require('./tagQrCodeService');
-const { textValue } = require('./v1BitableGateway');
+const { createGroupLabel } = require('./labelGroupPrintService');
+const { textValue, linkedRecordIds } = require('./v1BitableGateway');
 const { parseStockKey } = require('./liveInventoryIndex');
 const { equalsFormula } = require('./bitableFilterFormula');
-// ⭐⭐ task-15：飞书 `filter` 公式的拼装**只有那一处实现**（`bitableFilterFormula.js`）——
-//    这里只 import 复用（**值的安全字符检查也在它那里**），**不抄第二份** ✗。
 const { logInfo, logWarn } = require('../utils/logger');
 const { resolveOrderReadRetryConfig, isRetriableOrderReadError } = require('../config/orderReadRetry');
-// ⭐ 2026-11-11：瞬时错误（飞书 1254607 / 429 / 5xx / 网络）的通用小退避重试——
-//   项目里已有这一份（`config/pushRetry` 的 `withTransientRetry`），**不另写重试器**。
 const { resolveTransientRetryConfig, isTransientLarkError } = require('../config/pushRetry');
 // 她填错了（400，原样回显）vs 远端出错（其余，页面只说"查询失败"）——与
 // `inventoryAdjustmentService` 同一条约定，控制器按 statusCode 分流。
@@ -799,7 +796,10 @@ const createLabelPrintService = (gateway, options = {}) => {
     return { ...data, labels: exact, total_matched: exact.length, total_returned: exact.length };
   };
 
-  return { listLabels, labelForRecord };
+
+  const labelForGroup = createGroupLabel({ gateway, config, now, retry: transientRetry, helpers: { formatPrice, compareSizes, resolveGrid } });
+
+  return { listLabels, labelForRecord, labelForGroup };
 };
 
 module.exports = {

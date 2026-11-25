@@ -472,6 +472,7 @@ const EVENTS = Object.freeze([
   'workbench.label_print.scan.rejected',
   'workbench.labels.cache_hit',
   'workbench.labels.cache_miss',
+  'workbench.labels.group_resolved',
   'workbench.labels.listed',
   'workbench.labels.missing_price',
   'workbench.labels.missing_qr_record_id',

@@ -21,7 +21,7 @@ const stripComments = (source) => source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-test('AC-E1 标签打印子页：一级标签二维码/销售凭证，点标签二维码原地变动作按钮', () => {
+test('AC-E1 标签打印子页：四张独立卡（扫码 / 批量 / 货品组 / 销售凭证）', () => {
   const domains = readWorkbench('config/domains.js');
   const start = domains.indexOf("id: 'product-labels'");
   const end = domains.indexOf("id: 'product-info-config'");
@@ -31,11 +31,13 @@ test('AC-E1 标签打印子页：一级标签二维码/销售凭证，点标签�
   assert.match(block, /kind: 'label-print'/, '标签打印是两级卡片页');
   assert.equal(/targetTemplate|numberPicker|fieldLabel|buttonLabel/.test(block), false,
     '旧的「选择编号打印」入口字段（落点模板 / 编号选择器 / 输入框）必须删干净');
-  assert.match(block, /title: '标签二维码'/);
+  assert.equal(/title: '标签二维码'/.test(block), false, '不再保留标签二维码二级卡');
   assert.match(block, /title: '销售凭证'/);
   assert.match(block, /title: '扫码打印'/);
   assert.match(block, /href: '\/workbench\/label-print\.html\?scan=1'/);
   assert.match(block, /title: '批量打印'/);
+  assert.match(block, /title: '货品组打印'/);
+  assert.match(block, /href: LABEL_GROUP_FORM_URL/);
   assert.match(block, /placeholder: true/, '销售凭证是占位卡');
 
   const links = readWorkbench('config/links.js');
@@ -44,13 +46,11 @@ test('AC-E1 标签打印子页：一级标签二维码/销售凭证，点标签�
   assert.match(block, /href: LABEL_BATCH_FORM_URL/, '「批量打印」卡 = 飞书表单（URL 只从 links.js 引）');
 
   const hub = readWorkbench('features/labels/hub.js');
-  assert.match(hub, /data-label-card/, '一级卡片可点击');
-  assert.match(hub, /candidate-card-actions/, '选中后原卡片位置变成动作按钮组');
-  assert.match(hub, /candidate-action/, '复用售后单动作按钮样式');
-  assert.match(hub, /actionsHtml\(card\)/, '选中卡片原地换动作，不进入第二页');
-  assert.equal(/data-label-back/.test(hub), false, '不需要返回按钮');
-  assert.match(hub, /resetToCards/, '点动作/从页面返回后要恢复一级卡片');
-  assert.match(hub, /pageshow/, 'bfcache 返回也要恢复');
+  assert.match(hub, /data-label-card/, '卡片可点击');
+  assert.equal(/candidate-card-actions/.test(hub), false, '不再有二级动作展开');
+  assert.match(hub, /href="\$\{escapeHtml\(card\.href/, '有 href 的卡片直接是链接');
+  assert.match(hub, /resetToCards/, '兼容既有 resetToCards 调用');
+  assert.match(hub, /pageshow/, 'bfcache 返回也重绘');
   const domainIndex = readWorkbench('features/domains/index.js');
   assert.match(domainIndex, /resetToCards\?\.\(\)/, '切换子 tab 时恢复一级卡片');
   assert.match(hub, /PLACEHOLDER_STATUS/, '销售凭证占位使用统一占位标记');

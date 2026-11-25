@@ -10,10 +10,10 @@ importers:
     dependencies:
       '@larksuiteoapi/node-sdk':
         specifier: ^1.76.0
-        version: 1.76.0(debug@4.4.3(supports-color@5.5.0))(supports-color@5.5.0)
+        version: 1.76.0
       body-parser:
         specifier: 2.4.0
-        version: 2.4.0(supports-color@5.5.0)
+        version: 2.4.0
       cors:
         specifier: ^2.8.5
         version: 2.8.6
@@ -22,7 +22,10 @@ importers:
         version: 18.0.10
       express:
         specifier: ^4.22.3
-        version: 4.22.3(supports-color@5.5.0)
+        version: 4.22.3
+      express-rate-limit:
+        specifier: ^7.5.1
+        version: 7.5.1(express@4.22.3)
       multer:
         specifier: ^2.5.0
         version: 2.5.0
@@ -31,7 +34,7 @@ importers:
         version: 1.5.4
       sharp:
         specifier: ^0.35.5
-        version: 0.35.5(@types/node@26.6.4)
+        version: 0.35.5
     devDependencies:
       '@playwright/test':
         specifier: 1.65.1
@@ -443,6 +446,12 @@ packages:
   etag@1.8.1:
     resolution: {integrity: sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==}
     engines: {node: '>= 0.6'}
+
+  express-rate-limit@7.5.1:
+    resolution: {integrity: sha512-7iN8iPMDzOMHPUYllBEsQdWVB6fPDMPqwjBaFrgr4Jgr/+okjvzAy+UHlYYL/Vs0OsOrMkwS6PJDkFlJwoxUnw==}
+    engines: {node: '>= 16'}
+    peerDependencies:
+      express: '>= 4.11'
 
   express@4.22.3:
     resolution: {integrity: sha512-Bdcs4+3qlpVlx2NRn6fgX2Ue2/gGRaPeawebgclM0ERSCqDpA+owF1fdPwjJUTAJWMTuAaxjDf+hzb0/4eKvvw==}
@@ -1016,9 +1025,9 @@ snapshots:
   '@img/sharp-win32-x64@0.35.5':
     optional: true
 
-  '@larksuiteoapi/node-sdk@1.76.0(debug@4.4.3(supports-color@5.5.0))(supports-color@5.5.0)':
+  '@larksuiteoapi/node-sdk@1.76.0':
     dependencies:
-      axios: 1.20.0(debug@4.4.3(supports-color@5.5.0))(supports-color@5.5.0)
+      axios: 1.20.0
       lodash.identity: 3.0.0
       lodash.merge: 4.6.2
       lodash.pickby: 4.6.0
@@ -1064,7 +1073,7 @@ snapshots:
       mime-types: 2.1.35
       negotiator: 0.6.3
 
-  agent-base@6.0.2(supports-color@5.5.0):
+  agent-base@6.0.2:
     dependencies:
       debug: 4.4.3(supports-color@5.5.0)
     transitivePeerDependencies:
@@ -1087,11 +1096,11 @@ snapshots:
 
   asynckit@0.4.0: {}
 
-  axios@1.20.0(debug@4.4.3(supports-color@5.5.0))(supports-color@5.5.0):
+  axios@1.20.0:
     dependencies:
-      follow-redirects: 1.16.2(debug@4.4.3(supports-color@5.5.0))
+      follow-redirects: 1.16.2
       form-data: 4.0.6
-      https-proxy-agent: 5.0.1(supports-color@5.5.0)
+      https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
     transitivePeerDependencies:
       - debug
@@ -1101,11 +1110,11 @@ snapshots:
 
   binary-extensions@2.3.0: {}
 
-  body-parser@1.20.9(supports-color@5.5.0):
+  body-parser@1.20.9:
     dependencies:
       bytes: 3.1.2
       content-type: 1.0.5
-      debug: 2.6.9(supports-color@5.5.0)
+      debug: 2.6.9
       depd: 2.0.0
       destroy: 1.2.0
       http-errors: 2.0.1
@@ -1118,7 +1127,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  body-parser@2.4.0(supports-color@5.5.0):
+  body-parser@2.4.0:
     dependencies:
       bytes: 3.1.2
       content-type: 2.1.0
@@ -1203,11 +1212,9 @@ snapshots:
       object-assign: 4.1.1
       vary: 1.1.2
 
-  debug@2.6.9(supports-color@5.5.0):
+  debug@2.6.9:
     dependencies:
       ms: 2.0.0
-    optionalDependencies:
-      supports-color: 5.5.0
 
   debug@4.4.3(supports-color@5.5.0):
     dependencies:
@@ -1260,21 +1267,25 @@ snapshots:
 
   etag@1.8.1: {}
 
-  express@4.22.3(supports-color@5.5.0):
+  express-rate-limit@7.5.1(express@4.22.3):
+    dependencies:
+      express: 4.22.3
+
+  express@4.22.3:
     dependencies:
       accepts: 1.3.8
       array-flatten: 1.1.1
-      body-parser: 1.20.9(supports-color@5.5.0)
+      body-parser: 1.20.9
       content-disposition: 0.5.4
       content-type: 1.0.5
       cookie: 0.7.2
       cookie-signature: 1.0.7
-      debug: 2.6.9(supports-color@5.5.0)
+      debug: 2.6.9
       depd: 2.0.0
       encodeurl: 2.0.0
       escape-html: 1.0.3
       etag: 1.8.1
-      finalhandler: 1.3.2(supports-color@5.5.0)
+      finalhandler: 1.3.2
       fresh: 0.5.2
       http-errors: 2.0.1
       merge-descriptors: 1.0.3
@@ -1286,8 +1297,8 @@ snapshots:
       qs: 6.16.1
       range-parser: 1.2.1
       safe-buffer: 5.2.1
-      send: 0.19.2(supports-color@5.5.0)
-      serve-static: 1.16.3(supports-color@5.5.0)
+      send: 0.19.2
+      serve-static: 1.16.3
       setprototypeof: 1.2.0
       statuses: 2.0.2
       type-is: 1.6.18
@@ -1300,9 +1311,9 @@ snapshots:
     dependencies:
       to-regex-range: 5.0.1
 
-  finalhandler@1.3.2(supports-color@5.5.0):
+  finalhandler@1.3.2:
     dependencies:
-      debug: 2.6.9(supports-color@5.5.0)
+      debug: 2.6.9
       encodeurl: 2.0.0
       escape-html: 1.0.3
       on-finished: 2.4.2
@@ -1317,9 +1328,7 @@ snapshots:
       locate-path: 5.0.0
       path-exists: 4.0.0
 
-  follow-redirects@1.16.2(debug@4.4.3(supports-color@5.5.0)):
-    optionalDependencies:
-      debug: 4.4.3(supports-color@5.5.0)
+  follow-redirects@1.16.2: {}
 
   form-data@4.0.6:
     dependencies:
@@ -1384,9 +1393,9 @@ snapshots:
       statuses: 2.0.2
       toidentifier: 1.0.1
 
-  https-proxy-agent@5.0.1(supports-color@5.5.0):
+  https-proxy-agent@5.0.1:
     dependencies:
-      agent-base: 6.0.2(supports-color@5.5.0)
+      agent-base: 6.0.2
       debug: 4.4.3(supports-color@5.5.0)
     transitivePeerDependencies:
       - supports-color
@@ -1589,9 +1598,9 @@ snapshots:
 
   semver@7.8.5: {}
 
-  send@0.19.2(supports-color@5.5.0):
+  send@0.19.2:
     dependencies:
-      debug: 2.6.9(supports-color@5.5.0)
+      debug: 2.6.9
       depd: 2.0.0
       destroy: 1.2.0
       encodeurl: 2.0.0
@@ -1607,12 +1616,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  serve-static@1.16.3(supports-color@5.5.0):
+  serve-static@1.16.3:
     dependencies:
       encodeurl: 2.0.0
       escape-html: 1.0.3
       parseurl: 1.3.3
-      send: 0.19.2(supports-color@5.5.0)
+      send: 0.19.2
     transitivePeerDependencies:
       - supports-color
 
@@ -1620,7 +1629,7 @@ snapshots:
 
   setprototypeof@1.2.0: {}
 
-  sharp@0.35.5(@types/node@26.6.4):
+  sharp@0.35.5:
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -1651,7 +1660,6 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.5
       '@img/sharp-win32-ia32': 0.35.5
       '@img/sharp-win32-x64': 0.35.5
-      '@types/node': 26.6.4
 
   side-channel-list@1.0.1:
     dependencies:

@@ -194,7 +194,8 @@ function activateModule(moduleId, { userInitiated = false, deepLink = null } = {
  * 以前工作台**完全不读 URL** ⇒ 永远打开第一个 tab（销售）。这里只认这三个参数：
  *   · module 必须是 modules 里真实存在的键，否则忽略（回落到第一个 tab）；
  *   · page 由各领域模块自己按 domain.pages 校验；
- *   · product 只认 record_id 形状（features/inventory/adjustment.js 再校验一次）。
+ *   · product 只认 record_id 形状（features/inventory/adjustment.js 再校验一次）；
+ *   · return_to 只认站内 /g/ 或 /r/ 路径，避免开放跳转。
  * 解析失败（老 WebView / 坏 URL）⇒ 与改动前逐字一样，不影响正常打开。
  */
 function readDeepLink() {
@@ -204,6 +205,7 @@ function readDeepLink() {
       module: String(params.get('module') || '').trim(),
       page: String(params.get('page') || '').trim(),
       productId: String(params.get('product') || '').trim(),
+      returnTo: String(params.get('return_to') || '').trim(),
     };
   } catch {
     return { module: '', page: '', productId: '' };

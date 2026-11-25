@@ -166,11 +166,17 @@ app.get('/', (req, res) => res.sendFile(path.join(workbenchPath, 'index.html')))
 // ⭐ 2026-10-14：启动时预热「实时库存」快照（用**已有实例**，不新建 ✓ 见 services/scanPageService.js）
 const { warmLiveInventorySnapshot } = require('./services/scanPageService');
 const scanPageRouter = require('./routes/scanPage').createScanPageRouter();
+const groupScanPageRouter = require('./routes/groupScanPage').createGroupScanPageRouter();
 app.use(
   SCAN_PAGE.route.recordBasePath,
   createOriginGuard(),
   createRateLimit({ max: SECURITY.rateLimit.scanMax, name: 'scan_page' }),
   scanPageRouter,
+);
+app.use(
+  SCAN_PAGE.route.groupBasePath,
+  createOriginGuard(),
+  groupScanPageRouter,
 );
 
 // Health check route. Also answers "服务器上跑的是哪一版"——部署时由 deploy_run.sh

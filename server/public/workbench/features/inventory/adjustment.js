@@ -51,9 +51,9 @@ const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-c
   return `<button class="entry-card" type="button" data-manual="${card.id}"><span class="icon">${escapeHtml(card.icon)}</span><h3>${escapeHtml(card.label)}</h3></button>`;
 }).join('')}</div>`;
 
-export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) {
+export function createInventoryAdjustmentModule({ initialProductId = '', returnTo = '' } = {}) {
   // `rows` = 全量库存（批量调整用）；`singleRows` = 当前这一款（单双调整用，按产品过滤读）。
-  const state = { host: null, rows: [], singleRows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false };
+  const state = { host: null, rows: [], singleRows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false, returnTo: /^\/(g|r)\//.test(String(returnTo || '')) ? returnTo : '' };
   let seasonPage = null;
 
   async function loadRows(force = false) {
@@ -347,6 +347,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
   async function printSaved(yes) {
     $(state.host, '[data-view="print-modal"]').hidden = true;
     if (!yes) {
+      if (state.returnTo) { window.location.assign(state.returnTo); return; }
       window.location.assign(`/workbench/?toast=${encodeURIComponent(INVENTORY_MANUAL_TEXTS.submittedToast)}`);
       return;
     }
@@ -354,6 +355,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       if (!state.inventoryJobId) throw new Error(INVENTORY_MANUAL_TEXTS.inventoryJobFailed);
       // ⭐ #1210：只发**一次**意图请求；库存成功后由后端建打印任务（页面可以直接走）。
       await api.post(`/api/workbench/inventory/adjustments/pairs/${encodeURIComponent(state.inventoryJobId)}/print-intent`, {});
+      if (state.returnTo) { window.location.assign(state.returnTo); return; }
       window.location.assign(`/workbench/?toast=${encodeURIComponent(INVENTORY_MANUAL_TEXTS.printQueuedToast)}`);
     } catch (error) {
       showPageError(describeError(error));
