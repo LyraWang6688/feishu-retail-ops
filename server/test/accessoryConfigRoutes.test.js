@@ -23,7 +23,7 @@ const fakeAsyncJobs = () => ({
 
 const categoryFields = V1_BITABLE_SCHEMA.tables.accessoryCategory.fields;
 const makeGateway = () => {
-  const rows = [{ record_id: 'a1', fields: { [fields.name]: '39元腰带', [fields.category]: '腰带', [fields.price]: 39 } }];
+  const rows = [{ record_id: 'a1', fields: { [fields.name]: '39元腰带', [fields.category]: '腰带', [fields.price]: 39, [fields.sampleImage]: [{ file_token: 'img_1' }] } }];
   const categories = ['腰带', '鞋油', '鞋垫'].map((name, index) => ({
     record_id: 'c' + (index + 1),
     fields: { [categoryFields.name]: name },
@@ -89,5 +89,18 @@ test('配品 API：列表同步读，新增/修改/删除返回 202 + job_id', a
       body: JSON.stringify({ name: '39元腰带', category: '腰带', price: 49, submitKey: 'k2' }),
     });
     assert.equal(duplicate.status, 400);
+    const patched = await fetch(`http://127.0.0.1:${port}/products/accessories/a1`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '39元腰带', category: '腰带', price: 42, submitKey: 'u1' }),
+    });
+    assert.equal(patched.status, 202);
+    await settle();
+    const patchedRow = gateway.rows.find((row) => row.record_id === 'a1');
+    assert.deepEqual(
+      patchedRow.fields[fields.sampleImage],
+      [{ file_token: 'img_1' }],
+      '编辑请求不带 sampleImageToken ⇒ 样例图必须保留（2026-11-25 事故回归）',
+    );
   } finally { server.close(); }
 });

@@ -111,10 +111,14 @@ const createWorkbenchAccessoryConfigRoutes = ({ getGateway, asyncJobs } = {}) =>
 
   const submit = async (req, res, action) => {
     try {
-      const token = String(req.body?.sampleImageToken || '').trim();
+      // ⚠️ 只有请求体**显式带了** sampleImageToken 才传给写链路：
+      //   「没传」= 不动已有样例图；「传空串」= 明确清空。
+      //   2026-11-25 事故：这里把缺省归一化成 '' 再传，编辑配品时把已有样例图清掉了。
+      const rawToken = req.body?.sampleImageToken;
+      const token = rawToken === undefined ? undefined : String(rawToken || '').trim();
       logInfo('workbench.accessories.write_submitted', {
         request_id: req.requestId, action,
-        has_sample_image_token: Boolean(token), token_length: token.length,
+        has_sample_image_token: Boolean(token), token_length: token ? token.length : 0,
       });
       const accepted = await resolveWrites().submit({
         resource: 'accessory',
@@ -126,7 +130,7 @@ const createWorkbenchAccessoryConfigRoutes = ({ getGateway, asyncJobs } = {}) =>
         stockQuantity: req.body?.stockQuantity,
         // 2026-11-25：键名改为 isGift（与「赠品」列对齐）；兼容刚部署时还开着的旧页面。
         isGift: req.body?.isGift ?? req.body?.isAccessory,
-        sampleImageToken: token,
+        ...(token !== undefined ? { sampleImageToken: token } : {}),
         recordId: req.params?.recordId,
         submitKey: req.body?.submitKey || req.query?.submitKey,
         ownerOpenId: req.workbenchUser?.open_id,
