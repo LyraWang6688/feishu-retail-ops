@@ -18,6 +18,7 @@ const make = ({ failLedgerOnce = false } = {}) => {
   ];
   let ledgerFail = failLedgerOnce;
   const ledger = [];
+  const ledgerTokens = [];
   const mapLive = (values) => Object.fromEntries(Object.entries(values).map(([key, value]) => [V1_BITABLE_SCHEMA.tables.liveInventory.fields[key] || key, value]));
   const mapLedger = (values) => Object.fromEntries(Object.entries(values).map(([key, value]) => [V1_BITABLE_SCHEMA.tables.inventoryLedger.fields[key] || key, value]));
   const gateway = {
@@ -26,7 +27,8 @@ const make = ({ failLedgerOnce = false } = {}) => {
     get: async (table, id) => live.find((row) => row.record_id === id) || null,
     update: async (table, id, values) => { Object.assign(live.find((row) => row.record_id === id).fields, mapLive(values)); },
     updateBatch: async (table, updates) => { for (const update of updates) Object.assign(live.find((row) => row.record_id === update.recordId).fields, mapLive(update.values)); },
-    create: async (table, values) => {
+    create: async (table, values, options = {}) => {
+      if (table === 'inventoryLedger') ledgerTokens.push(options.clientToken);
       if (table === 'inventoryLedger' && ledgerFail) { ledgerFail = false; throw new Error('ledger down'); }
       const id = 'ledger_' + (ledger.length + 1);
       ledger.push({ record_id: id, fields: mapLedger(values) });
@@ -39,7 +41,7 @@ const make = ({ failLedgerOnce = false } = {}) => {
     resolveStockBehavior: async (code) => ({ recordId: 'b_' + code }),
     readLiveInventoryForProduct: async () => live,
   };
-  return { service: createSeasonAdjustmentService({ inventory, store }), live, ledger };
+  return { service: createSeasonAdjustmentService({ inventory, store }), live, ledger, ledgerTokens };
 };
 
 test('当季扫码调整：只改当季/仓库员，写转释放和转冻结流水', async () => {
@@ -63,11 +65,12 @@ test('当季扫码调整：只改当季/仓库员，写转释放和转冻结流�
 });
 
 test('当季扫码调整：流水失败后重试只补流水，不重复改当季', async () => {
-  const { service, live, ledger } = make({ failLedgerOnce: true });
+  const { service, live, ledger, ledgerTokens } = make({ failLedgerOnce: true });
   const changes = [{ productRecordId: 'p1', size: 39, state: '门盒', currentSeason: false, quantity: 2 }];
   await assert.rejects(() => service.submit({ requestId: 'req_2', operatorOpenId: 'ou_a', changes }), /ledger down/);
   assert.equal(live.find((row) => row.record_id === 'l1').fields['当季'], true);
   const again = await service.execute(service.operationIdOf('req_2'));
   assert.equal(again.ok, true);
   assert.equal(ledger.length, 2);
+  assert.equal(ledgerTokens[0], ledgerTokens[1], '同一行的重试必须复用同一个 client_token');
 });
