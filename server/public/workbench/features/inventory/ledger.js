@@ -86,20 +86,26 @@ export function createInventoryLedgerModule() {
       return;
     }
     if (summary) summary.textContent = state.data && !state.loading && !state.error ? summaryText(state.data) : '';
-    const filter = productSearchHtml({ mode: 'inventoryLedger', selected: state.product });
-    const bindFilter = () => bindProductSearch(body, {
-      mode: 'inventoryLedger',
-      selected: state.product,
-      onSelect: (item) => { state.product = item; void load(); },
-      onClear: () => { state.product = null; void load(); },
-    });
-    if (state.loading) { body.innerHTML = `${filter}<p class="ledger-empty">${escapeHtml(PAGE.texts.loading)}</p>`; bindFilter(); return; }
-    if (state.error) { body.innerHTML = `${filter}<p class="ledger-empty">${escapeHtml(state.error)}</p>`; bindFilter(); return; }
-    if (!state.data) { body.innerHTML = filter; bindFilter(); return; }
+    // 货品搜索框只建一次：查询/换 tab 时只换结果区，避免把用户正在输入的内容和
+    // 搜索防抖计时器一起重建（product-search e2e 曾在 CI 上抓到这一手）。
+    let results = body.querySelector('[data-ledger-results]');
+    if (!results) {
+      body.innerHTML = productSearchHtml({ mode: 'inventoryLedger', selected: state.product }) + '<div data-ledger-results></div>';
+      bindProductSearch(body, {
+        mode: 'inventoryLedger',
+        selected: state.product,
+        onSelect: (item) => { state.product = item; void loadLedger(); },
+        onClear: () => { state.product = null; void loadLedger(); },
+      });
+      results = body.querySelector('[data-ledger-results]');
+    }
+    if (!results) return;
+    if (state.loading) { results.innerHTML = `<p class="ledger-empty">${escapeHtml(PAGE.texts.loading)}</p>`; return; }
+    if (state.error) { results.innerHTML = `<p class="ledger-empty">${escapeHtml(state.error)}</p>`; return; }
+    if (!state.data) { results.innerHTML = ''; return; }
     const rows = Array.isArray(state.data.rows) ? state.data.rows : [];
-    body.innerHTML = `${filter}${rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`}`;
-    bindFilter();
-    if (rows.length) bindScrollHints(body);
+    results.innerHTML = rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
+    if (rows.length) bindScrollHints(results);
   }
 
   function currentRange() {
