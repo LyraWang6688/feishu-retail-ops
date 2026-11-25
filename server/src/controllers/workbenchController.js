@@ -1,8 +1,12 @@
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createWorkbenchService } = require('../services/v1WorkbenchService');
+const { createInventoryAnalysisService } = require('../services/inventoryAnalysisService');
 const { logError } = require('../utils/logger');
 
-const service = createWorkbenchService(new V1BitableGateway());
+// 两个只读服务共用同一个网关（字段缓存/重试节奏保持一份）。
+const gateway = new V1BitableGateway();
+const service = createWorkbenchService(gateway);
+const analysisService = createInventoryAnalysisService({ gateway });
 
 // 飞书偶发「数据未准备好」(1254607)：这类要回 503 + Retry-After，让页面提示"稍后刷新"，
 // 而不是当成系统错误回 500。剩下的库存类查询接口共用这一条判断。
@@ -57,6 +61,20 @@ const queryInventoryLedger = async (req, res) => {
   }
 };
 
+// 库存总览（只读）：A 段实时快照 + B 段流水区间聚合；日期只作用于 B 段。
+const queryInventoryOverview = async (req, res) => {
+  try {
+    return res.json({
+      success: true,
+      ...await analysisService.getOverview({ from: req.query.from, to: req.query.to }),
+    });
+  } catch (error) {
+    return respondQueryFailure(res, error, {
+      requestId: req.requestId, event: 'workbench.inventory.overview_failed', fallback: '库存总览查询失败',
+    });
+  }
+};
+
 const queryInventoryCategories = async (req, res) => {
   try {
     return res.json({ success: true, ...await service.listInventoryCategories({ requestId: req.requestId }) });
@@ -69,6 +87,7 @@ const queryInventoryCategories = async (req, res) => {
 
 module.exports = {
   queryInventory,
+  queryInventoryOverview,
   queryInventoryLedger,
   queryInventoryCategories,
   // 查询类接口的**失败口径**只有这一份实现（400 原样回显她填错的 / 503 飞书数据未准备好 /
