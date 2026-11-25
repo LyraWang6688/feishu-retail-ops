@@ -813,12 +813,11 @@ const SCAN_PAGE = Object.freeze({
    *     用户可以勾选退货的尺码及其对应的数量～用户填好之后，可以点击退货按钮，前端交互按照这个**」
    *   ⇒ 退货那一块**只补三件事**：① 每行显示**当前库存数量** ② 数量**默认值走配置**
    *      ③ **前端拦住"一个都没勾 / 数量非法"**（后端那道 `return_empty` **仍在** ⇒ 两层 ✓）
-   *   ⚠️ **默认数量与上限不在这一份里再抄一遍** —— 唯一真源是写侧配置
-   *      `SCAN_WRITE.purchaseReturn`（`defaultQuantity` / `maxQuantity` / `maxSizes`），
-   *      渲染层**直接读那一份** ✓（抄一份必漂 ✗）。
    *   ⚠️ 用户可见文案都在 `src/config/**`（中文的家）✓ —— 渲染层与那段脚本**一个汉字都不写** ✗。
    */
   returnForm: RETURN_FORM, saleDelistPrompt: '这一单卖完后库存为 0，是否同时下架？',
+  delistConfirm: '同时下架',
+  delistCancel: '暂不下架',
   // ⭐⭐ 2026-10-16（补货 tab 那三处 · 她真机截图 + 逐字）：按钮文案 ＋ 金额行开关（见上面 `REPLENISH_FORM`）。
   replenishForm: REPLENISH_FORM,
   SIZE_ROW_GROUPS: Object.freeze({ GROUPED: 'instock+reserve' }),

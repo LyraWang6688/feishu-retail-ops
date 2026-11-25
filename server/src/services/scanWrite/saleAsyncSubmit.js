@@ -101,6 +101,10 @@ const enqueueSaleAsync = async ({
   });
   const delistIds = [...new Set((Array.isArray(delistProductIds) ? delistProductIds : [])
     .map((id) => String(id || '').trim()).filter(Boolean))];
+  logInfo('scan.sale.delist_selection', {
+    request_id: requestId, job_id: saleJobId, line_count: lines.length,
+    delist_ids: delistIds.join(','), delist_count: delistIds.length,
+  });
   if (saleJobId && delistIds.length) {
     try {
       await getStockDelistIntentService().request({

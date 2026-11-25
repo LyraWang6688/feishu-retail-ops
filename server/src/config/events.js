@@ -359,6 +359,7 @@ const EVENTS = Object.freeze([
   'scan.sale.background_done',
   'scan.sale.background_failed',
   'scan.sale.background_queued',
+  'scan.sale.delist_selection',
   'scan.sale.draft_cleared',
   'scan.sale.interrupted_cleared',
   'scan.sale.interrupted_detected',

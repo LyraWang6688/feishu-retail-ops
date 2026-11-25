@@ -156,7 +156,7 @@ data-amount-hint-view="${escapeHtml(rf.amountHintView)}"
 data-amount-hint-text="${escapeHtml(rf.amountRequiredText)}"
 data-delist-product-id="${escapeHtml(String(view.product_record_id || ''))}"
 data-delist-stock-total="${stockTotal == null ? '' : escapeHtml(String(stockTotal))}"
-data-delist-prompt="${escapeHtml(rf.delistPrompt || '')}">
+data-delist-prompt="${escapeHtml(rf.delistPrompt || '')}" data-delist-confirm-label="${escapeHtml(SCAN_PAGE.delistConfirm || '')}" data-delist-cancel-label="${escapeHtml(SCAN_PAGE.delistCancel || '')}">
 ${hiddenField(fields.action, write.actions.purchaseReturn)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.returnKey)}
 ${hiddenField(fields.delistProductIds, '')}
