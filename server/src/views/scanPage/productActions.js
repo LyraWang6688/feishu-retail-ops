@@ -16,16 +16,17 @@ const { escapeHtml } = require('./fields');
 
 const productActionsHtml = (view, config, realm) => {
   const cfg = (config && config.productActions) || {};
-  const realms = Array.isArray(cfg.realms) ? cfg.realms : [];
-  if (!realms.includes(String(realm || ''))) return '';
+  const realmId = String(realm || '');
+  const adjustRealms = Array.isArray(cfg.adjustRealms) ? cfg.adjustRealms : (Array.isArray(cfg.realms) ? cfg.realms : []);
+  const infoRealms = Array.isArray(cfg.infoRealms) ? cfg.infoRealms : (Array.isArray(cfg.realms) ? cfg.realms : []);
   const adjustHref = String(view?.product_adjust_url || '').trim();
   const recordHref = String(view?.product_record_url || '').trim();
   const missing = String(view?.product_missing_text || '').trim();
-  const adjust = adjustHref
+  const adjust = adjustRealms.includes(realmId) && adjustHref
     ? `<a class="identity__action identity__action--adjust" href="${escapeHtml(adjustHref)}" data-view="product-adjust">${escapeHtml(cfg.adjustLabel || '')}</a>`
     : '';
   // ⚠️ 资料齐备 ⇒ 不渲染（`missing` 为空），不留空壳；记录 URL 取不到时也不给死链。
-  const info = missing && recordHref
+  const info = infoRealms.includes(realmId) && missing && recordHref
     ? `<a class="identity__action identity__action--gap" href="${escapeHtml(recordHref)}" target="_blank" rel="noopener" data-view="product-info">${escapeHtml(cfg.infoLabel || '')}</a>`
     : '';
   if (!adjust && !info) return '';
