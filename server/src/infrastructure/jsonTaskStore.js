@@ -137,7 +137,15 @@ class JsonTaskStore {
     const records = [];
     for (const file of await fs.promises.readdir(this.dir)) {
       if (!file.endsWith('.json')) continue;
-      records.push(JSON.parse(await fs.promises.readFile(path.join(this.dir, file), 'utf8')));
+      // cleanup 可能在 readdir 与 readFile 之间删掉文件：这不是错误，跳过即可。
+      let raw;
+      try {
+        raw = await fs.promises.readFile(path.join(this.dir, file), 'utf8');
+      } catch (error) {
+        if (error.code === 'ENOENT') continue;
+        throw error;
+      }
+      records.push(JSON.parse(raw));
     }
     const status = filter.status ? String(filter.status) : '';
     return records
