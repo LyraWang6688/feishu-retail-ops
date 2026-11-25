@@ -16,3 +16,16 @@ test('claim：任务文件已被 cleanup 删除 ⇒ not_found，不抛 ENOENT', 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('list：readdir 之后文件被 cleanup 删除 ⇒ 跳过，不抛 ENOENT', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'label-list-race-'));
+  const original = fs.promises.readdir;
+  try {
+    const store = new LabelPrintJobStore({ dir, artifactsDir: path.join(dir, 'artifacts') });
+    fs.promises.readdir = async () => ['gone.json'];
+    assert.deepEqual(await store.jobs.list(), []);
+  } finally {
+    fs.promises.readdir = original;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
