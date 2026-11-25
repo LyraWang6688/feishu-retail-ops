@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **539** 个事件。按前缀分组：
+共 **543** 个事件。按前缀分组：
 
 ## accessory
 
@@ -647,6 +647,10 @@
 | `workbench.inventory.ledger_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
 | `workbench.inventory.ledger_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
 | `workbench.inventory.ledger_filter_fallback` | 1 | src/services/v1WorkbenchService.js |
+| `workbench.inventory.overview_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.overview_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
+| `workbench.inventory.overview_filter_fallback` | 1 | src/services/inventoryAnalysisService.js |
+| `workbench.inventory.overview_snapshot_fallback` | 1 | src/services/inventoryAnalysisService.js |
 | `workbench.inventory.query_failed.cache_hit` | 1 | src/controllers/workbenchController.js |
 | `workbench.inventory.query_failed.cache_miss` | 1 | src/controllers/workbenchController.js |
 | `workbench.label_print.scan.rejected` | 1 | src/routes/labelPrintQueue.js |

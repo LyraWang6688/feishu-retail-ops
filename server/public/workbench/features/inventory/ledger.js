@@ -5,6 +5,7 @@ import { bindScrollHints } from '../shared/scrollHint.js';
 import { bindDateControl, dateFieldHtml } from '../shared/dateField.js';
 import { bindProductSearch, productSearchHtml } from '../shared/productSearch.js';
 import { INVENTORY_LEDGER_PAGE as PAGE } from '../../config/inventoryLedger.js';
+import { overviewHtml } from './overview.js';
 
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
 const cellText = (value) => (value === null || value === undefined ? '' : String(value));
@@ -41,7 +42,11 @@ const tableHtml = (rows) => `<div class="ledger-scroll-wrap scroll-hint-wrap" da
 const tabsHtml = () => TABS.map((tab) => `<button class="ledger-tab${tab.id === 'overview' ? ' active' : ''}" type="button" role="tab" data-ledger-tab="${escapeHtml(tab.id)}" aria-selected="${tab.id === 'overview'}">${escapeHtml(tab.label)}</button>`).join('');
 
 export function createInventoryLedgerModule() {
-  const state = { host: null, tab: 'overview', data: null, loading: false, error: '', from: '', to: '', product: null };
+  const state = {
+    host: null, tab: 'overview', data: null, loading: false, error: '',
+    overview: null, overviewLoading: false, overviewError: '',
+    from: '', to: '', product: null, seq: 0,
+  };
 
   function activeTab() {
     return TABS.some((tab) => tab.id === state.tab) ? state.tab : (TABS[0]?.id || 'overview');
@@ -73,35 +78,53 @@ export function createInventoryLedgerModule() {
     const tab = activeTab();
     if (tab === 'overview') {
       if (summary) summary.textContent = '';
-      body.innerHTML = `<div class="ledger-placeholder"><p>${escapeHtml(PAGE.texts.overviewBuilding)}</p></div>`;
+      if (state.overviewLoading) { body.innerHTML = `<p class="ledger-empty">${escapeHtml(PAGE.texts.overviewLoading)}</p>`; return; }
+      if (state.overviewError) { body.innerHTML = `<p class="ledger-empty">${escapeHtml(state.overviewError)}</p>`; return; }
+      body.innerHTML = state.overview
+        ? overviewHtml(state.overview)
+        : `<p class="ledger-empty">${escapeHtml(PAGE.texts.overviewLoading)}</p>`;
       return;
     }
     if (summary) summary.textContent = state.data && !state.loading && !state.error ? summaryText(state.data) : '';
-    const filter = productSearchHtml({ mode: 'inventoryLedger', selected: state.product });
-    const bindFilter = () => bindProductSearch(body, {
-      mode: 'inventoryLedger',
-      selected: state.product,
-      onSelect: (item) => { state.product = item; void load(); },
-      onClear: () => { state.product = null; void load(); },
-    });
-    if (state.loading) { body.innerHTML = `${filter}<p class="ledger-empty">${escapeHtml(PAGE.texts.loading)}</p>`; bindFilter(); return; }
-    if (state.error) { body.innerHTML = `${filter}<p class="ledger-empty">${escapeHtml(state.error)}</p>`; bindFilter(); return; }
-    if (!state.data) { body.innerHTML = filter; bindFilter(); return; }
+    // 货品搜索框只建一次：查询/换 tab 时只换结果区，避免把用户正在输入的内容和
+    // 搜索防抖计时器一起重建（product-search e2e 曾在 CI 上抓到这一手）。
+    let results = body.querySelector('[data-ledger-results]');
+    if (!results) {
+      body.innerHTML = productSearchHtml({ mode: 'inventoryLedger', selected: state.product }) + '<div data-ledger-results></div>';
+      bindProductSearch(body, {
+        mode: 'inventoryLedger',
+        selected: state.product,
+        onSelect: (item) => { state.product = item; void loadLedger(); },
+        onClear: () => { state.product = null; void loadLedger(); },
+      });
+      results = body.querySelector('[data-ledger-results]');
+    }
+    if (!results) return;
+    if (state.loading) { results.innerHTML = `<p class="ledger-empty">${escapeHtml(PAGE.texts.loading)}</p>`; return; }
+    if (state.error) { results.innerHTML = `<p class="ledger-empty">${escapeHtml(state.error)}</p>`; return; }
+    if (!state.data) { results.innerHTML = ''; return; }
     const rows = Array.isArray(state.data.rows) ? state.data.rows : [];
-    body.innerHTML = `${filter}${rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`}`;
-    bindFilter();
-    if (rows.length) bindScrollHints(body);
+    results.innerHTML = rows.length ? tableHtml(rows) : `<p class="ledger-empty">${escapeHtml(PAGE.texts.empty)}</p>`;
+    if (rows.length) bindScrollHints(results);
   }
 
-  async function load() {
+  function currentRange() {
     const host = state.host;
-    const from = host?.querySelector('[data-ledger-from]')?.value || '';
-    const to = host?.querySelector('[data-ledger-to]')?.value || '';
+    return {
+      from: host?.querySelector('[data-ledger-from]')?.value || '',
+      to: host?.querySelector('[data-ledger-to]')?.value || '',
+    };
+  }
+
+  async function loadLedger() {
+    const host = state.host;
+    const { from, to } = currentRange();
     state.from = from;
     state.to = to;
     const body = host?.querySelector('[data-ledger-body]');
     if (!body) return;
     const summary = host?.querySelector('[data-ledger-summary]');
+    const seq = ++state.seq;
     if (from && to && from > to) {
       state.loading = false;
       state.error = PAGE.texts.invalidRange;
@@ -120,15 +143,58 @@ export function createInventoryLedgerModule() {
       if (to) query.set('to', to);
       if (state.product?.recordId) query.set('productRecordId', state.product.recordId);
       const data = await api.get(query.toString() ? `${PAGE.api}?${query}` : PAGE.api);
+      if (seq !== state.seq) return;
       state.data = data;
       state.loading = false;
       renderBody();
     } catch (error) {
+      if (seq !== state.seq) return;
       state.loading = false;
       state.error = PAGE.texts.failed;
       renderBody();
       showPageError(String(error?.message || ''));
     }
+  }
+
+  // 库存总览：日期栏只作用于 B 段（库存变动）；A 段是实时快照。
+  async function loadOverview() {
+    const host = state.host;
+    const { from, to } = currentRange();
+    state.from = from;
+    state.to = to;
+    if (!host?.querySelector('[data-ledger-body]')) return;
+    const seq = ++state.seq;
+    if (from && to && from > to) {
+      state.overviewLoading = false;
+      state.overviewError = PAGE.texts.invalidRange;
+      state.overview = null;
+      renderBody();
+      return;
+    }
+    state.overviewLoading = true;
+    state.overviewError = '';
+    state.overview = null;
+    renderBody();
+    try {
+      const query = new URLSearchParams();
+      if (from) query.set('from', from);
+      if (to) query.set('to', to);
+      const data = await api.get(query.toString() ? `${PAGE.overviewApi}?${query}` : PAGE.overviewApi);
+      if (seq !== state.seq) return;
+      state.overview = data;
+      state.overviewLoading = false;
+      renderBody();
+    } catch (error) {
+      if (seq !== state.seq) return;
+      state.overviewLoading = false;
+      state.overviewError = PAGE.texts.overviewFailed;
+      renderBody();
+      showPageError(String(error?.message || ''));
+    }
+  }
+
+  function loadCurrent() {
+    return activeTab() === 'overview' ? loadOverview() : loadLedger();
   }
 
   return {
@@ -138,9 +204,13 @@ export function createInventoryLedgerModule() {
       state.data = null;
       state.loading = false;
       state.error = '';
+      state.overview = null;
+      state.overviewLoading = false;
+      state.overviewError = '';
       state.from = '';
       state.to = '';
       state.product = null;
+      state.seq = 0;
       showPageError('');
       const today = todayKey();
       host.innerHTML = `<div class="domain-page ledger-page">
@@ -178,16 +248,18 @@ export function createInventoryLedgerModule() {
         }
         syncBounds();
       });
-      host.querySelector('[data-ledger-query]')?.addEventListener('click', () => { void load(); });
+      host.querySelector('[data-ledger-query]')?.addEventListener('click', () => { void loadCurrent(); });
       host.querySelector('.ledger-tabs')?.addEventListener('click', (event) => {
         const button = event.target.closest('[data-ledger-tab]');
         if (!button) return;
         state.tab = button.dataset.ledgerTab || 'overview';
         renderTabs(host);
         renderBody();
+        // 切 tab 就重读当前视角：总览重算 B 段 + 刷新快照，流水按当前区间重查。
+        void loadCurrent();
       });
       syncBounds();
-      void load();
+      void loadCurrent();
     },
   };
 }
