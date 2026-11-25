@@ -54,7 +54,6 @@ export function createAccessorySaleModule() {
             </label>
           </div>
           <button class="as-submit" type="button" data-as-submit>${escapeHtml(T.submit)}</button>
-          <p class="as-success" data-as-success hidden></p>
         </section>
         <label class="as-search"><input data-as-search type="search" placeholder="${escapeHtml(T.searchPlaceholder)}" autocomplete="off"></label>
         <section class="as-card">
@@ -115,16 +114,9 @@ export function createAccessorySaleModule() {
     showPageError('');
     try {
       const result = await api.post(T.api, { items, amount, methodRecordId });
-      state.cart.clear();
-      state.total = '';
-      renderCart();
-      const success = host.querySelector('[data-as-success]');
-      if (success) {
-        success.hidden = false;
-        success.textContent = `${T.success}：${T.orderNoLabel} ${result.orderNo || ''}`;
-      }
-      showToast(T.success);
-      if (button) button.textContent = T.submit;
+      // 统一回执：直接回工作台，由 ?toast= 显示统一那句（单号只进 done，不显示）。
+      window.location.assign(String(result?.redirect || '/workbench/'));
+      return;
     } catch (error) {
       showToast(error?.message || T.failed);
       if (button) button.textContent = T.submit;

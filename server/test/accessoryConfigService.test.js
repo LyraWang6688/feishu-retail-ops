@@ -14,7 +14,7 @@ const categoryCell = (recordId, name) => [{ record_ids: [recordId], text: name, 
 const make = () => {
   const tables = [{
     record_id: 'a1',
-    fields: { [fields.name]: '39元腰带', [fields.category]: categoryCell('c1', '腰带'), [fields.price]: 39, [fields.cost]: null, [fields.stockQuantity]: 4, [fields.isGift]: true },
+    fields: { [fields.name]: '39元腰带', [fields.category]: categoryCell('c1', '腰带'), [fields.price]: 39, [fields.cost]: null, [fields.stockQuantity]: 4, [fields.isGift]: true, [fields.sampleImage]: [{ file_token: 'img_1', name: 'a.jpg' }] },
   }, {
     record_id: 'a2',
     fields: { [fields.name]: '鞋油', [fields.category]: categoryCell('c2', '鞋油'), [fields.price]: 15, [fields.cost]: 8, [fields.stockQuantity]: 12, [fields.isGift]: true },
@@ -118,6 +118,19 @@ test('编辑排除当前记录；删除走 gateway', async () => {
   assert.equal(updated.isGift, true, '没传赠品时不覆盖原值');
   const unchecked = await updateAccessory(gateway, 'a1', { name: '39元腰带', category: '腰带', price: 42, stockQuantity: 7, isGift: false });
   assert.equal(unchecked.isGift, false);
+  const kept = await updateAccessory(gateway, 'a1', { name: '39元腰带', category: '腰带', price: 42, stockQuantity: 7 });
+  assert.deepEqual(kept.sampleImage, undefined);
+  assert.deepEqual(
+    gateway.listAll && (await gateway.listAll('accessory')).find((row) => row.record_id === 'a1').fields[fields.sampleImage],
+    [{ file_token: 'img_1', name: 'a.jpg' }],
+    '不传 sampleImageToken ⇒ 样例图保留',
+  );
+  await updateAccessory(gateway, 'a1', { name: '39元腰带', category: '腰带', price: 42, stockQuantity: 7, sampleImageToken: '' });
+  assert.deepEqual(
+    (await gateway.listAll('accessory')).find((row) => row.record_id === 'a1').fields[fields.sampleImage],
+    [],
+    '显式传空串才清空样例图',
+  );
   await deleteAccessory(gateway, 'a1');
   const rows = await listAccessories(gateway);
   assert.equal(rows.some((row) => row.recordId === 'a1'), false);

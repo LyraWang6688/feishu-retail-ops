@@ -13,8 +13,6 @@ export const ACCESSORY_SALE_PAGE = {
   remove: '删除',
   submit: '提交销售',
   submitting: '正在提交…',
-  success: '销售已提交',
-  orderNoLabel: '交易明细号',
   failed: '提交失败，请稍后重试。',
   loadFailed: '配品或收款方式读取失败，请刷新重试。',
   invalidAmount: '请输入大于 0 的收款金额。',

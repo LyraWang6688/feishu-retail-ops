@@ -6,6 +6,7 @@ const { listAccessories } = require('../../services/accessoryConfigService');
 const { createAccessorySaleOrderService } = require('../../services/accessorySaleOrderService');
 const { V1BitableGateway, textValue } = require('../../services/v1BitableGateway');
 const { logError } = require('../../utils/logger');
+const { submitToastUrl } = require('../../utils/submitToast');
 
 const createWorkbenchAccessorySaleRoutes = ({ options = {} } = {}) => {
   const router = express.Router();
@@ -46,7 +47,12 @@ const createWorkbenchAccessorySaleRoutes = ({ options = {} } = {}) => {
         correlation: { request_id: req.requestId },
       });
       if (!result.ok) return res.status(400).json({ success: false, code: result.code, error: result.code });
-      return res.status(201).json({ success: true, ...result });
+      // 统一回执：文案 / 落点 / 参数全部由 utils/submitToast.js 生成，路由不写中文、不拼 URL。
+      return res.status(201).json({
+        success: true,
+        ...result,
+        redirect: submitToastUrl({ orderNo: result.orderNo }),
+      });
     } catch (error) {
       logError('workbench.accessory_sales.create_failed', { request_id: req.requestId, error: error.message });
       return res.status(502).json({ success: false, error: 'create_failed' });

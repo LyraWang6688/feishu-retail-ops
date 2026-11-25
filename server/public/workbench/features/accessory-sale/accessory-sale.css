@@ -21,5 +21,4 @@
 .as-field { display: grid; gap: var(--space-1); color: var(--text-secondary); font-size: var(--font-size-sm); }
 .as-submit { width: 100%; border: 0; border-radius: var(--radius-md); background: var(--primary); color: var(--surface); padding: var(--space-3); font-size: var(--font-size-base); font-weight: var(--weight-bold); min-height: var(--control-height); }
 .as-submit:disabled { opacity: .6; }
-.as-success { margin: 0; padding: var(--space-3); border-radius: var(--radius-sm); background: var(--success-soft); color: var(--success); font-size: var(--font-size-sm); }
 @media (max-width: 420px) { .as-checkout { grid-template-columns: 1fr; } .as-line { grid-template-columns: 1fr 54px auto; } .as-remove { grid-column: 3; } }
