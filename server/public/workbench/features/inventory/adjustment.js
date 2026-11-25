@@ -16,6 +16,7 @@ import { showToast } from '../shared/toast.js';
 import { productIssueChipsOf } from '../shared/productIssues.js';
 import { scanCodeRaw, scanTargetUrl } from '../scan/launch.js';
 import { INVENTORY_MANUAL_CARDS, INVENTORY_MANUAL_TEXTS } from '../../config/inventoryAdjustment.js';
+import { mountSeasonAdjustment } from './seasonAdjustment.js';
 
 const $ = (host, selector) => host.querySelector(selector);
 const fill = (text, values = {}) => String(text || '').replace(/\{(\w+)\}/g, (m, key) => (values[key] == null ? '' : String(values[key])));
@@ -53,6 +54,7 @@ const cardsHtml = (expandedSingle = false) => `<div class="domain-cards domain-c
 export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) {
   // `rows` = 全量库存（批量调整用）；`singleRows` = 当前这一款（单双调整用，按产品过滤读）。
   const state = { host: null, rows: [], singleRows: [], categories: [], view: 'cards', productId: '', editorRows: [], pendingRequest: null, inventoryJobId: '', productInfo: null, singleExpanded: false };
+  let seasonPage = null;
 
   async function loadRows(force = false) {
     if (state.rows.length && !force) return state.rows;
@@ -74,6 +76,7 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
     $(host, '[data-manual="cards"]')?.classList.toggle('hidden', view !== 'cards');
     $(host, '[data-view="manual-single"]')?.classList.toggle('hidden', view !== 'single');
     $(host, '[data-view="manual-batch"]')?.classList.toggle('hidden', view !== 'batch');
+    $(host, '[data-view="manual-season"]')?.classList.toggle('hidden', view !== 'season');
     $(host, '[data-view="manual-picker"]')?.classList.toggle('hidden', view !== 'picker');
   }
 
@@ -253,18 +256,9 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
 
   async function enterBatch() {
     const host = state.host;
-    const select = $(host, '[data-field="batch-category"]');
     showToast(INVENTORY_MANUAL_TEXTS.batchLoading, { sticky: true });
     try {
-      // 品类与库存并行：品类短请求不再串行挡住 1335 行的库存读取。
-      const categoriesPromise = state.categories.length
-        ? Promise.resolve(null)
-        : api.get('/api/workbench/inventory/categories');
-      const [data] = await Promise.all([categoriesPromise, loadRows()]);
-      if (data) {
-        state.categories = Array.isArray(data.rows) ? data.rows : [];
-        select.innerHTML = state.categories.map((row) => `<option value="${escapeHtml(row.category)}">${escapeHtml(row.category)}</option>`).join('');
-      }
+      await loadRows();
       renderViolations();
       show('batch');
     } catch (error) {
@@ -366,31 +360,6 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
     }
   }
 
-  async function setSeason(season) {
-    const category = $(state.host, '[data-field="batch-category"]')?.value || '';
-    if (!category) return showPageError(INVENTORY_MANUAL_TEXTS.categoryRequired);
-    const buttons = [...state.host.querySelectorAll('[data-action="season-set"]')];
-    buttons.forEach((button) => { button.disabled = true; });
-    // 非 sticky：轮询读请求不会把它撤掉；最长留 2 分钟，结束时会被结果 toast 替换。
-    showToast(INVENTORY_MANUAL_TEXTS.seasonApplying, { durationMs: 120000 });
-    try {
-      const result = await api.post('/api/workbench/inventory/adjustments/season-flag', {
-        category, season, requestId: crypto.randomUUID(),
-      });
-      const jobId = String(result?.job_id || '').trim();
-      // ⭐ 2026-11-14：后台逐条写可能要几十秒；**等它成功再刷新**，
-      //   否则页面立刻重读会看到旧值（她以为没生效）。
-      if (jobId) await waitForAsyncJob(jobId);
-      state.rows = [];
-      await loadRows(true);
-      renderViolations();
-      showToast(season ? INVENTORY_MANUAL_TEXTS.seasonApplied : INVENTORY_MANUAL_TEXTS.seasonCleared);
-    } catch (error) {
-      showPageError(String(error?.message || '') || INVENTORY_MANUAL_TEXTS.seasonUpdateFailed);
-    } finally {
-      buttons.forEach((button) => { button.disabled = false; });
-    }
-  }
 
   return {
     mount(host) {
@@ -411,12 +380,9 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
           <p class="pp-note" data-single-status></p>
           <div data-single-results></div>
         </div>
+        <div data-view="manual-season" class="hidden"></div>
         <div data-view="manual-batch" class="hidden">
-          <div class="page-head"><h2>批量调整</h2></div>
-          <div class="batch-section"><h3>当季调整</h3>
-            <label class="field"><select data-field="batch-category"></select></label>
-            <div class="row-actions"><button class="btn small primary" type="button" data-action="season-set" data-season="true">当季</button><button class="btn small" type="button" data-action="season-set" data-season="false">库存</button></div>
-          </div>
+          <div class="page-head"><h2>批量状态调整</h2></div>
           <div class="batch-section"><h3>状态调整</h3>
             <label class="field"><select data-field="status-filter" aria-label="${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterLabel)}"><option value="all">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusFilterAll)}</option><option value="extra">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueExtraGroup)}</option><option value="empty">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueEmpty)}</option><option value="missing">${escapeHtml(INVENTORY_MANUAL_TEXTS.statusIssueMissing)}</option></select></label>
             <div data-view="batch-violations"></div></div>
@@ -451,11 +417,16 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
       host.addEventListener('click', (event) => {
         const cancel = event.target.closest?.('[data-cancel]');
         if (cancel) { resetSingleEntry(); show('cards'); return; }
-        const manual = event.target.closest?.('[data-manual="single"], [data-manual="batch"]');
+        const manual = event.target.closest?.('[data-manual="single"], [data-manual="season"], [data-manual="batch"]');
         if (manual) {
           if (manual.dataset.manual === 'single') {
             state.singleExpanded = true;
             renderCards();
+            return;
+          }
+          if (manual.dataset.manual === 'season') {
+            if (!seasonPage) seasonPage = mountSeasonAdjustment($(state.host, '[data-view="manual-season"]'));
+            show('season');
             return;
           }
           void enterBatch().catch((error) => showPageError(describeError(error)));
@@ -490,8 +461,6 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
         if (event.target.closest?.('[data-clear-delist-cancel]')) { void clearAll(false); return; }
         if (event.target.closest?.('[data-clear-delist-confirm]')) { void clearAll(true); return; }
         if (event.target.closest?.('[data-save]')) { void savePairs(); return; }
-        const season = event.target.closest?.('[data-action="season-set"]');
-        if (season) { void setSeason(season.dataset.season === 'true'); return; }
         const print = event.target.closest?.('[data-print]');
         if (print) { void printSaved(print.dataset.print === 'yes'); return; }
         if (event.target.closest?.('[data-add-size]')) {
@@ -499,7 +468,6 @@ export function createInventoryAdjustmentModule({ initialProductId = '' } = {}) 
           renderEditor();
         }
       });
-      host.querySelector('[data-field="batch-category"]').addEventListener('change', () => renderViolations());
       host.querySelector('[data-field="status-filter"]')?.addEventListener('change', () => renderViolations());
       // ⭐⭐ 2026-11-17：深链（扫码页「库存调整」）—— 直接展开这一款的单双调整，不用再扫码/输货号。
       //   形状不对 ⇒ 什么都不做（不要拿一个坏 id 去打接口）；接口失败 ⇒ 人话错误，不留白屏。

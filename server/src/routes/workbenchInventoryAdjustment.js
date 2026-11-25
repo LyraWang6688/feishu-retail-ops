@@ -10,6 +10,7 @@ const express = require('express');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { InventoryService } = require('../services/inventoryService');
 const { InventoryPairAdjustmentService, normalizeRows } = require('../services/inventoryPairAdjustmentService');
+const { createSeasonAdjustmentService } = require('../services/seasonAdjustmentService');
 const { createAsyncJobService } = require('../services/asyncJobService');
 const { ASYNC_JOB_TYPES, ASYNC_JOB_STATUS } = require('../config/asyncJobs');
 const { PAIR_ADJUSTMENT_TEXTS } = require('../config/inventoryPairAdjustment');
@@ -25,6 +26,7 @@ const createInventoryAdjustmentRouter = (options = {}) => {
   // 默认依赖**延迟构建**：传了 service（或 inventory）就不要再去 new 一个网关 ——
   // 否则"只想注入一个桩"的调用方（测试、以及将来别的入口）会被迫先配好飞书凭证。
   let pairAdjustment = options.pairService || null;
+  let seasonAdjustment = options.seasonAdjustment || null;
   let asyncJobs = options.asyncJobs || null;
   const stockDelist = () => options.stockDelist || getStockDelistIntentService();
   const resolveInventory = () => options.inventory || new InventoryService({ gateway: options.gateway || new V1BitableGateway() });
@@ -35,6 +37,10 @@ const createInventoryAdjustmentRouter = (options = {}) => {
   const resolvePairAdjustment = () => {
     if (!pairAdjustment) pairAdjustment = new InventoryPairAdjustmentService({ inventory: resolveInventory() });
     return pairAdjustment;
+  };
+  const resolveSeasonAdjustment = () => {
+    if (!seasonAdjustment) seasonAdjustment = createSeasonAdjustmentService({ inventory: resolveInventory() });
+    return seasonAdjustment;
   };
 
   router.post('/pairs', async (req, res) => {
@@ -119,27 +125,31 @@ const createInventoryAdjustmentRouter = (options = {}) => {
     }
   });
 
-  router.post('/season-flag', async (req, res) => {
+  router.post('/season-scan', async (req, res) => {
     try {
-      const category = String(req.body?.category || '').trim();
-      const season = req.body?.season;
       const requestId = String(req.body?.requestId || '').trim();
-      if (!category || typeof season !== 'boolean' || !requestId) throw userError('品类 / 当季 / 请求编号不完整');
+      const changes = Array.isArray(req.body?.changes) ? req.body.changes : [];
+      if (!requestId || !changes.length) throw userError('缺少请求编号或调整行');
       const jobs = resolveAsyncJobs();
-      const jobId = jobs.jobIdFor(ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT, `season:${requestId}`);
+      const jobId = jobs.jobIdFor(ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT, `season:scan:${requestId}`);
       await jobs.enqueue({ jobId, type: ASYNC_JOB_TYPES.INVENTORY_ADJUSTMENT,
         ownerOpenId: req.workbenchUser?.open_id || '', operatorName: req.workbenchUser?.name || '' });
       void jobs.run({
         jobId,
-        run: () => resolvePairAdjustment().setSeason({
-          category, season, requestId, operatorOpenId: req.workbenchUser?.open_id,
+        run: () => resolveSeasonAdjustment().submit({
+          requestId, changes, operatorOpenId: req.workbenchUser?.open_id,
         }),
-        classifyResult: () => ({ ok: true, retryable: false, message: '', code: '' }),
+        classifyResult: (result) => ({
+          ok: result?.ok !== false,
+          retryable: false,
+          message: result?.code || '',
+          code: result?.code || '',
+        }),
       }).catch(() => {});
       return res.status(202).json({ success: true, queued: true, job_id: jobId });
     } catch (error) {
       const status = error?.statusCode === 400 ? 400 : 502;
-      return res.status(status).json({ success: false, error: error.message || PAIR_ADJUSTMENT_TEXTS.seasonFlagFailed });
+      return res.status(status).json({ success: false, error: error.message || PAIR_ADJUSTMENT_TEXTS.seasonScanFailed });
     }
   });
 

@@ -233,66 +233,6 @@ class InventoryPairAdjustmentService {
     };
   }
 
-  /** 公开入口：同一品类串行（与库存改动共用"先读后写"语义）。 */
-  async setSeason(input = {}) {
-    return adjustmentLock(`inventory-season:${String(input.category || '')}`, () => this._setSeason(input));
-  }
-
-  async _setSeason({ category, season, requestId, operatorOpenId } = {}) {
-    const name = String(category || '').trim();
-    if (!name) throw userError('请先选择品类');
-    if (typeof season !== 'boolean') throw userError('当季必须是布尔值');
-    const gateway = this.inventory.gateway;
-    const table = gateway.table('liveInventory');
-    const correlation = { audit_domain: 'inventoryManual', task_id: String(requestId || '') };
-    const records = await gateway.listAll('liveInventory', { retry: CRITICAL_READ_RETRY });
-    const updates = [];
-    const operations = [];
-    for (const record of records) {
-      const fields = record.fields || {};
-      // ⚠️ 2026-11-14 真机 + 线上数据取证：「品类」是**公式列**，读回来是
-      //   [{ text: '休闲鞋', type: 'text' }]（富文本数组），不是字符串。
-      //   旧写法 String(fields[...]) ⇒ "[object Object]" ≠ "休闲鞋" ⇒ **永远 updated:0**。
-      //   ⇒ 必须走统一取值器 textValue（与页面下拉/列表同一口径）。
-      if (textValue(fields?.[table.fields.category]).trim() !== name) continue;
-      if (fields[table.fields.season] === season) continue;
-      updates.push({ recordId: record.record_id, values: {
-        season,
-        ...personPatch({
-          tableKey: 'liveInventory', fieldKey: 'warehouseStaff', operatorOpenId,
-        }),
-      } });
-      operations.push({
-        record_id: record.record_id,
-        productRecordId: strictLinkedRecordIds(fields?.[table.fields.product])[0] || '',
-        sizeRecordId: strictLinkedRecordIds(fields?.[table.fields.size])[0] || '',
-        behaviorCode: season ? ADJUSTMENT_BEHAVIORS.UNFREEZE : ADJUSTMENT_BEHAVIORS.FREEZE,
-      });
-    }
-    if (updates.length) {
-      // ⚡ 2026-11-14：库存「当季」是整品类批量改（单鞋 472 条）——
-      //   逐条 gateway.update 要 16~24 分钟，页面 120s 超时。
-      //   ⇒ 复用网关已有的 updateBatch（内部按 500 条分片 + 语义字段映射 + 审计 correlation）。
-      //   老网关/测试桩没有 updateBatch 时回退逐条，语义不变。
-      if (typeof gateway.updateBatch === 'function') {
-        await gateway.updateBatch('liveInventory', updates, { correlation });
-      } else {
-        for (const update of updates) {
-          await gateway.update('liveInventory', update.recordId, update.values, { correlation });
-        }
-      }
-      await writeManualLedger({ inventory: this.inventory, changes: operations, operatorOpenId, correlation });
-      invalidateLiveInventorySnapshot('season_flag_adjust');
-    }
-    logInfo('inventory.adjustment.season_flag.applied', {
-      request_id: requestId,
-      category: name,
-      season,
-      updated: operations.length,
-      operator_open_id: operatorOpenId || undefined,
-    });
-    return { category: name, season, updated: operations.length, operations };
-  }
 }
 
 module.exports = { InventoryPairAdjustmentService, normalizeRows };

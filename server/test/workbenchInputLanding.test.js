@@ -167,11 +167,11 @@ const CHAINS = Object.freeze({
     service: 'src/services/inventoryPairAdjustmentService.js', serviceKey: /adjustPairs/,
     landing: [['liveInventory', 'stockKey'], ['inventoryLedger', 'quantityChange']],
   },
-  "'/api/workbench/inventory/adjustments/season-flag'": {
-    fe: 'features/inventory/adjustment.js', feKey: '/api/workbench/inventory/adjustments/season-flag',
-    route: 'src/routes/workbenchInventoryAdjustment.js', routeKey: /season-flag/,
-    service: 'src/services/inventoryPairAdjustmentService.js', serviceKey: /setSeason/,
-    landing: [['liveInventory', 'season']],
+  "'/api/workbench/inventory/adjustments/season-scan'": {
+    fe: 'features/inventory/seasonAdjustment.js', feKey: '/api/workbench/inventory/adjustments/season-scan',
+    route: 'src/routes/workbenchInventoryAdjustment.js', routeKey: /season-scan/,
+    service: 'src/services/seasonAdjustmentService.js', serviceKey: /inventoryLedger/,
+    landing: [['liveInventory', 'season'], ['inventoryLedger', 'quantityChange'], ['inventoryLedger', 'behavior'], ['inventoryLedger', 'operator']],
   },
   "'/api/workbench/sales/delivery/payments'": {
     fe: 'features/sales-delivery/index.js', feKey: "'/api/workbench/sales/delivery/payments'",

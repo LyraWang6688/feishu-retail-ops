@@ -29,6 +29,7 @@ const queryInventory = async (req, res) => {
       size: req.query.size,
       // ⭐ 2026-11-17：单双调整按产品只读这一款，不再把整仓库存传到前端。
       productRecordId: req.query.productRecordId,
+      groupBy: req.query.groupBy,
       requestId: req.requestId,
     }) });
   } catch (error) {

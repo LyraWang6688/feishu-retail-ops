@@ -374,3 +374,23 @@
 .dc-hint,.dc-fill-status{margin:6px 0 0;color:var(--text-secondary);font-size:var(--font-size-xs)}
 .dc-fill-status{color:var(--primary)}
 .dc-empty,.dc-loading{margin:0;color:var(--text-secondary);font-size:var(--font-size-sm)}
+
+/* 当季调整（扫码）：购物车式调整区 / 预览区 / 固定底部 */
+.season-page { display: grid; gap: var(--space-3); padding-bottom: 96px; }
+.season-tabs { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--border); }
+.season-tab { border: 0; background: transparent; padding: var(--space-2) var(--space-3); color: var(--text-secondary); font-size: var(--font-size-md); border-bottom: 2px solid transparent; }
+.season-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: var(--weight-bold); }
+.season-panel { display: grid; gap: var(--space-3); }
+.season-product, .season-preview-group { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3); display: grid; gap: var(--space-2); }
+.season-rows { display: grid; gap: var(--space-1); }
+.season-row { grid-template-columns: 28px minmax(0,.55fr) minmax(0,.8fr) minmax(0,.9fr) auto; margin: 0; }
+.season-row input[type="checkbox"] { width: 22px; height: 22px; justify-self: center; }
+.season-size, .season-state, .season-qty { text-align: center; font-size: var(--font-size-md); }
+.season-qty { font-weight: var(--weight-bold); }
+.season-scan-start { justify-self: start; }
+.season-bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; align-items: center; gap: var(--space-2); max-width: var(--page-max); margin: 0 auto; padding: var(--space-2) var(--space-4) calc(var(--space-2) + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -4px 16px var(--border-light); }
+.season-bottom-total { flex: 1; min-width: 0; font-size: var(--font-size-sm); font-weight: var(--weight-bold); }
+.season-bottom-total small { display: block; color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: var(--weight-normal); }
+.season-clear { flex: 0 0 auto; }
+.season-submit { flex: 0 0 auto; }
+.season-row input[type="checkbox"] { padding: 0; border: 0; background: transparent; accent-color: var(--primary); }

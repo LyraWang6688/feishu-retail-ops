@@ -129,7 +129,6 @@
 | --- | --- | --- |
 | `inventory.adjustment.pairs.applied` | 1 | src/services/inventoryPairAdjustmentService.js |
 | `inventory.adjustment.pairs.state_applied` | 1 | src/services/inventoryPairAdjustmentService.js |
-| `inventory.adjustment.season_flag.applied` | 1 | src/services/inventoryPairAdjustmentService.js |
 | `inventory.change.applied` | 4 | src/services/inventory/executeOperation.js<br>src/services/inventory/purchaseBatch.js<br>src/services/inventory/purchaseReturnBatch.js<br>…等 4 个文件 |
 | `inventory.change.failed` | 1 | src/config/alerts.js |
 | `inventory.print.intent.failed` | 1 | src/services/inventoryPrintIntentService.js |
@@ -143,6 +142,7 @@
 | `inventory.sample.promoted` | 1 | src/services/samplePromotionService.js |
 | `inventory.sample.promotion_failed` | 4 | src/services/afterSalesExchangeService.js<br>src/services/salesAsyncWorker.js |
 | `inventory.sample.promotion_skipped` | 2 | src/services/samplePromotionService.js |
+| `inventory.season.scan.applied` | 1 | src/services/seasonAdjustmentService.js |
 
 ## label
 

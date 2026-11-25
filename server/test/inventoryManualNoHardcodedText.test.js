@@ -24,8 +24,13 @@ test('AC-IMT1 页面里没有硬编码的用户可见文案', () => {
 });
 
 test('AC-IMT2 文案在 config，且页面确实引用了它们', () => {
-  for (const key of ['rowsRequired', 'submittedStock', 'seasonApplied', 'seasonCleared', 'categoryRequired', 'inventoryJobFailed', 'scanNoProduct', 'scanNoSdk', 'scanFailed']) {
+  for (const key of ['rowsRequired', 'submittedStock', 'inventoryJobFailed', 'scanNoProduct', 'scanNoSdk', 'scanFailed']) {
     assert.match(config, new RegExp(`${key}: '.+'`), `config 缺少 ${key}`);
     assert.ok(page.includes(`INVENTORY_MANUAL_TEXTS.${key}`), `页面没有使用 ${key}`);
+  }
+  const seasonPage = fs.readFileSync(path.join(ROOT, 'features/inventory/seasonAdjustment.js'), 'utf8');
+  for (const key of ['seasonTitle', 'seasonScan', 'seasonPreviewEmpty', 'seasonSubmitSuccess', 'seasonNoSelection']) {
+    assert.match(config, new RegExp(`${key}: '.+'`), `config 缺少 ${key}`);
+    assert.ok(seasonPage.includes(`T.${key}`), `当季页没有使用 ${key}`);
   }
 });

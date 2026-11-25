@@ -58,5 +58,4 @@ test('AC-KL-4 库存单双调整公开入口接了锁（源码哨兵）', () => 
     path.join(__dirname, '..', 'src', 'services', 'inventoryPairAdjustmentService.js'), 'utf8',
   );
   assert.match(source, /adjustmentLock\(`inventory-pair:/, 'adjustPairs 必须按货品加锁');
-  assert.match(source, /adjustmentLock\(`inventory-season:/, 'setSeason 必须按品类加锁');
 });
