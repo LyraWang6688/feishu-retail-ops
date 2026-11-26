@@ -207,6 +207,7 @@ const EVENTS = Object.freeze([
   'product.tag_qr.retry',
   'product.tag_qr.skipped_existing',
   'product.tag_qr.written',
+  'purchase.acceptance_document.attachment_failed',
   'purchase.acceptance_document.failed',
   'purchase.acceptance_document.group_send_failed',
   'purchase.acceptance_document.sync_failed',
