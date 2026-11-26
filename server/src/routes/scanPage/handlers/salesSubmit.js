@@ -41,6 +41,7 @@ return sendPaymentStep(res, req, {
             totalAmountText: 0,
             submitKey: writeService?.sessions?.submitKeyFor?.(openId, false, 'sale') || '',
             count: lineAmounts.length,
+            lines: pendingDraftLines,
           });
         }
         const paymentStatus = String(body[fields.paymentStatus] || '').trim();
@@ -294,6 +295,7 @@ return sendPaymentStep(res, req, {
           realm,
           submitKey: body[fields.submitKey],
           count: finalLines.length,
+          lines: finalLines,
           // ⭐ 2026-10-17 E（她逐字：「资金页要显示**总金额**」）：
           //   总金额 = 本单各行成交金额之和（**加完当前这一双之后的 finalLines**，不另算一份钱 ✗）。
           //   拿不到（全空 / 非数字）⇒ 空串 ⇒ 页面不渲染那一行（不编 ✓）。
@@ -417,6 +419,7 @@ return sendPaymentStep(res, req, {
             submitKey: body[fields.submitKey],
             orderNo: result.order_no || '',
             count: result.detail_count || 0,
+            lines: finalLines,
             reused: result.reused,
             // ⭐ 第 2 步的付款要写「收款明细」⇒ 用**这次提交就有**的主表 record_id（不反查 ✓）
             salesEntryRecordId: result.sales_entry_record_id || '',

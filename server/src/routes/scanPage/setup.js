@@ -124,7 +124,7 @@ const createScanPageSetup = ({ options, deps }) => {
     accessoryValue: String(opts.accessory || ''),
     accessoryTotalValue: String(opts.accessoryTotal || ''),
     accessoryRows: Array.isArray(opts.accessoryRows) ? opts.accessoryRows : [],
-    draft: { lines: [] },
+    draft: { lines: Array.isArray(opts.lines) ? opts.lines : [] },
   });
   /**
    * ⭐⭐ 2026-10-16（task-58 · 业务负责人真机 05:34，逐字）：
@@ -189,6 +189,7 @@ const createScanPageSetup = ({ options, deps }) => {
               realm,
               submitKey: body[fields.submitKey],
               count: pendingLines.length,
+              lines: pendingLines,
               notice: blockText,
               // ⭐ 她刚填的钱**原样带回**（她改一下就能再点 ✓ 这就是旧流程那条"值还在"的要求 ✓）
               // ⭐ 2026-10-16 A2a（接线）：档位改用**自动定出来的那一档**（`effectivePaymentStatus`）——
