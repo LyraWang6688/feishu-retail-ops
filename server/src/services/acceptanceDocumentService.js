@@ -48,13 +48,25 @@ const createAcceptanceDocumentService = ({
     });
     if (!Buffer.isBuffer(png) || !png.length) return { ok: false, reason: 'empty_image' };
 
-    // 先追加我方单据；同名文件已存在时 writeSupplierImageAttachment 会跳过上传/追加。
-    const written = await purchaseWebhooks.writeSupplierImageAttachment({
-      taskId, supplierName, png, batchNo: wantedNo,
-      fileNameSuffix: config.fileNameSuffix, correlation,
-    });
-    if (!written || (!written.written && !written.skipped)) {
-      return { ok: false, reason: written?.reason || 'document_not_written', written };
+    // 先追加我方单据；但**写附件失败不能挡住群聊提醒** ——
+    // 验收事实已经完成，验收单图也已经生成，群里的回执比“附件列有没有写回”更重要。
+    let written = null;
+    let attachmentError = '';
+    try {
+      written = await purchaseWebhooks.writeSupplierImageAttachment({
+        taskId, supplierName, png, batchNo: wantedNo,
+        fileNameSuffix: config.fileNameSuffix, correlation,
+      });
+      if (!written || (!written.written && !written.skipped)) {
+        attachmentError = written?.reason || 'document_not_written';
+      }
+    } catch (error) {
+      attachmentError = String(error?.message || error).slice(0, 300);
+    }
+    if (attachmentError) {
+      logWarn('purchase.acceptance_document.attachment_failed', {
+        batch_no: wantedNo, reason: attachmentError, task_id: taskId,
+      });
     }
 
     // 发到原采购申请话题。找不到映射只告警，不新开话题。
@@ -118,7 +130,8 @@ const createAcceptanceDocumentService = ({
       });
     }
     return {
-      ok: true, written, sent, sync,
+      ok: true, written, attachmentWritten: Boolean(written?.written || written?.skipped), sent, sync,
+      ...(attachmentError ? { attachmentError } : {}),
       ...(sendError ? { sendError } : {}),
       ...(syncError ? { syncError } : {}),
     };

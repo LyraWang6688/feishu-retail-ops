@@ -57,12 +57,37 @@ test('验收单：没有话题映射时只追加并同步，不发群', async ()
   assert.deepEqual(h.calls.map((call) => call[0]), ['write', 'sync']);
 });
 
-test('验收单：我方单据写失败时不同步云盘，返回失败原因', async () => {
+test('验收单：我方单据写失败仍发群聊提醒，并保留附件失败原因', async () => {
   const h = harness({ write: { written: false, reason: 'no_batch_record' } });
   const result = await h.service.deliver({
     batchNo: task.batch_no, batchRecordId: 'batch1', taskId: 'task1', task, supplierName: '信踏',
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'no_batch_record');
-  assert.deepEqual(h.calls.map((call) => call[0]), ['write']);
+  assert.equal(result.ok, true);
+  assert.equal(result.attachmentWritten, false);
+  assert.equal(result.attachmentError, 'no_batch_record');
+  assert.deepEqual(h.calls.map((call) => call[0]), ['write', 'image', 'mark', 'text', 'sync']);
 });
+
+test('验收单：上传附件抛错仍发群聊提醒', async () => {
+  const calls = [];
+  const webhooks = {
+    store: { get: async () => ({ acceptance_document: {} }), update: async () => null },
+    writeSupplierImageAttachment: async () => { throw new Error('上传采购原始图片成功但未返回 file_token'); },
+    sendImage: async () => { calls.push('image'); return { messageId: 'om_img' }; },
+    sendText: async () => { calls.push('text'); return { messageId: 'om_text' }; },
+  };
+  const service = createAcceptanceDocumentService({
+    purchaseWebhooks: webhooks,
+    batchLocator: { findByBatchNo: async () => [{ message_id: 'om_root', chat_id: 'oc_chat' }] },
+    supplyDocumentSync: { syncBatch: async () => ({ ok: true }) },
+    render: async () => Buffer.from('png'),
+  });
+  const result = await service.deliver({
+    batchNo: task.batch_no, batchRecordId: 'batch1', taskId: 'task1', task, supplierName: '信踏',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.sent, true);
+  assert.match(result.attachmentError, /file_token/);
+  assert.deepEqual(calls, ['image', 'text']);
+});
+
