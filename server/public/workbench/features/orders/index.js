@@ -381,7 +381,7 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       <li class="draft-row" data-draft-id="${escapeHtml(draft.draftId)}">
         <div class="draft-row__main">
           <b>${escapeHtml(draft.number || draft.itemNo || draft.draftId)}</b>
-          <span class="hint">${escapeHtml(draft.step === 'payment' ? T.draftStepPayment : T.draftStepGoods)} · ${escapeHtml(fill(T.draftItems, { count: draft.itemCount || 0 }))}</span>
+          <span class="hint">${escapeHtml(draft.step === 'payment' ? T.draftStepPayment : T.draftStepGoods)} · ${escapeHtml(draft.itemCount ? fill(T.draftItems, { count: draft.itemCount }) : (draft.hasCurrentForm ? T.draftCurrentPair : fill(T.draftItems, { count: 0 })))}</span>
         </div>
         <button type="button" class="btn btn--ghost" data-draft-open="${escapeHtml(draft.draftId)}" data-draft-product="${escapeHtml(draft.productRecordId || '')}"${draft.productRecordId ? '' : ' disabled'}>${escapeHtml(T.draftOpen)}</button>
         <button type="button" class="btn btn--ghost" data-draft-delete="${escapeHtml(draft.draftId)}">${escapeHtml(T.draftDelete)}</button>

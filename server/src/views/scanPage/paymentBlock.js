@@ -149,13 +149,15 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const t = write.texts;
   const fields = write.fields;
   const lines = write.draft?.lines || [];
+  const draftForm = write.draftForm || {};
+  const amountValueAttr = draftForm.amount ? ` value="${escapeHtml(draftForm.amount)}"` : '';
   const stockTotal = (Array.isArray(view?.rows) ? view.rows : [])
     .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
     .reduce((sum, row) => sum + Number(sellableCountOf(row, view?.columns) || 0), 0);
   const singleProduct = lines.length > 0 && new Set(lines.map((line) => String(line.product_record_id || ''))).size === 1
     && String(lines[0].product_record_id || '') === String(view?.product_record_id || '');
   const delistSaleQty = singleProduct ? lines.length : null;
-  const sizeInput = sizeGroupsHtml(view);
+  const sizeInput = sizeGroupsHtml(view, draftForm.size);
   // ⭐ 2026-10-29：扫码页「流程配置」（`config/scanFlows.js`）—— 换款式等流程只声明差异：
   //   · 不显示"这一双的金额"输入（金额按货品单价算）；
   //   · 不出现"再加一双"（固定 1 双）；
@@ -295,10 +297,11 @@ data-delist-stock-total="${delistSaleQty == null ? '' : escapeHtml(String(stockT
 data-delist-sale-qty="${delistSaleQty == null ? '' : escapeHtml(String(delistSaleQty))}"
 data-delist-prompt="${escapeHtml(String(config.saleDelistPrompt || ''))}">
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
+${hiddenField(SALES_DRAFT.hiddenFields?.number, view?.number || '')}${hiddenField(SALES_DRAFT.hiddenFields?.itemNo, view?.item_no || '')}${hiddenField(SALES_DRAFT.hiddenFields?.color, view?.color || '')}${hiddenField(SALES_DRAFT.hiddenFields?.productRecordId, view?.product_record_id || '')}
 ${hiddenField(write.fields.delistProductIds, '')}
 ${samplePromotionHtml()}
 ${sizeInput}
-${hideAmountInput ? '' : `<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"></div>`}
+${hideAmountInput ? '' : `<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"${amountValueAttr}></div>`}
 ${alert}
 ${multiItemTitleHtml}${draftLinesHtml(write)}
 ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
@@ -309,7 +312,7 @@ ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
      先弹全屏遮罩再 fetch，响应回来 document.write 整页（成功页 / 资金页 / 400 提示页都照原样）。
      ⚠️ 只加**这一个属性**（按钮 name/value/文案一个字未动 ✓）；老环境没有 JS 照样走原生提交。
      ⚠️ 【再加一双】/【清空本单】那颗**不带**这个钩子 ⇒ 照旧是原来的 303 跳转（很快、不用遮罩）✓ -->
-${flowContextHtml}${exchangeDiffBlock(flow)}<button type="button" class="btn" data-save-draft data-draft-step="goods" data-draft-saved="${escapeHtml(SALES_DRAFT.texts.saved)}" data-draft-failed="${escapeHtml(SALES_DRAFT.texts.failed)}"${lines.length ? '' : ' disabled'}>${escapeHtml(SALES_DRAFT.texts.save)}</button><span class="hint" data-draft-status></span>
+${flowContextHtml}${exchangeDiffBlock(flow)}<button type="button" class="btn" data-save-draft data-draft-step="goods" data-draft-saved="${escapeHtml(SALES_DRAFT.texts.saved)}" data-draft-failed="${escapeHtml(SALES_DRAFT.texts.failed)}" data-draft-empty="${escapeHtml(SALES_DRAFT.texts.empty)}">${escapeHtml(SALES_DRAFT.texts.save)}</button><span class="hint" data-draft-status></span>
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}"${progressSubmitAttrs}>${escapeHtml(submitLabel || countLabel)}</button>
 ${hideAddLine ? '' : `<button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>`}
 </form>
@@ -342,23 +345,24 @@ ${hiddenField(fields.submitKey, write.saleKey)}
  * 一个可选的尺码卡：尺码 + 状态标签（门盒/样品/空状态，不带数量）。
  * data-sample-only=1 只在**所有库存记录都是样品**时出现 ⇒ 弹窗脚本据此触发。
  */
-const sizeChipHtml = (item) => {
+const sizeChipHtml = (item, selectedSize = '') => {
   const states = Array.isArray(item?.states) ? item.states : [];
   const tags = states.map((state) => `<span class="size-chip__state" data-state="${escapeHtml(state.key)}">${escapeHtml(state.label)}</span>`).join('');
   const onlySample = states.length === 1 && states[0].key === SAMPLE_PROMOTION.texts.tagSample ? '1' : '0';
+  const checked = String(item.size_text) === String(selectedSize) ? ' checked' : '';
   return `<label class="size-chip" data-size="${escapeHtml(item.size_text)}" data-sample-only="${onlySample}">
-<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required>
+<input type="radio" name="size" value="${escapeHtml(item.size_text)}" required${checked}>
 <span class="size-chip__size">${escapeHtml(item.size_text)} 码</span>${tags ? `<span class="size-chip__states">${tags}</span>` : ''}
 </label>`;
 };
 
-const sizeGroupHtml = ({ id, heading, tag, tone, items, empty }) => `
+const sizeGroupHtml = ({ id, heading, tag, tone, items, empty, selectedSize = '' }) => `
 <fieldset class="size-group" data-stock-group="${escapeHtml(id)}">
 <legend class="size-group__legend">
 ${String(heading || '').trim() ? `<span class="size-group__title">${escapeHtml(heading)}</span>\n` : ''}<span class="tag tag--${escapeHtml(tone)}">${escapeHtml(tag)}</span>
 </legend>
 ${items.length
-    ? `<div class="size-chips">${items.map((item) => sizeChipHtml(item)).join('\n')}</div>`
+    ? `<div class="size-chips">${items.map((item) => sizeChipHtml(item, selectedSize)).join('\n')}</div>`
     : `<p class="hint">${escapeHtml(empty)}</p>`}
 </fieldset>`;
 
@@ -384,7 +388,7 @@ ${inner}
 };
 
 /** 销售页那一块（#515）：折叠块里是**能选的尺码卡**（与外面同规则：`name="size"` 的 radio ✓） */
-const specialFoldHtml = (items) => specialFoldShellHtml(items, `<div class="size-chips">${items.map((item) => sizeChipHtml(item)).join('\n')}</div>`);
+const specialFoldHtml = (items, selectedSize = '') => specialFoldShellHtml(items, `<div class="size-chips">${items.map((item) => sizeChipHtml(item, selectedSize)).join('\n')}</div>`);
 
 /** 库存 / 补货共用：折叠块里的条目**只是事实**（尺码 + 数量），不是可点的卡 ✓ */
 const specialFactsHtml = (items, v) => specialFoldShellHtml(items, `<ul class="size-fold__list">${items.map((item) => `
@@ -394,7 +398,7 @@ const specialFactsHtml = (items, v) => specialFoldShellHtml(items, `<ul class="s
 <span class="size-fold__count">${escapeHtml(fillText(v.saleCountTemplate, { count: item.sellable ?? 0 }))}</span>
 </li>`).join('')}</ul>`);
 
-const sizeGroupsHtml = (view) => {
+const sizeGroupsHtml = (view, selectedSize = '') => {
   const t = REALM_TEXTS;
   const groups = saleSizeGroups(view);
   const { inStock = [], prepaid = [], folded = [] } = groups || {};
@@ -417,6 +421,7 @@ const sizeGroupsHtml = (view) => {
     tone: 'success',
     items: inStock,
     empty: t.saleSizeEmpty,
+    selectedSize,
   }) + sizeGroupHtml({
     id: 'prepaid',
     heading: t.salePrepaidHeading,
@@ -424,7 +429,8 @@ const sizeGroupsHtml = (view) => {
     tone: 'warning',
     items: prepaid,
     empty: t.saleSizeEmpty,
-  }) + specialFoldHtml(folded);
+    selectedSize,
+  }) + specialFoldHtml(folded, selectedSize);
 };
 
 /**

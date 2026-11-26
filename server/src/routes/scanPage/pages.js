@@ -50,6 +50,7 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
               status: 'draft',
               paymentStep: draft.step === 'payment' ? 'pending' : undefined,
               draft_payment: draft.step === 'payment' ? (draft.payment || {}) : undefined,
+              draft_form: draft.currentForm || null,
               draft_id: draftId,
             },
           }));

@@ -582,7 +582,12 @@ const salesDraftScriptHtml = () => `<script data-view="sales-draft">
       url.pathname = url.pathname.replace(/\\/$/, '') + '/draft';
       fetch(url.toString(), { method: 'POST', body: new URLSearchParams(data), credentials: 'same-origin' })
         .then(function(res){ return res.json().then(function(body){ return { ok: res.ok && body.success !== false, body: body }; }); })
-        .then(function(out){ if (status) status.textContent = out.ok ? (button.getAttribute('data-draft-saved') || '') : (button.getAttribute('data-draft-failed') || ''); })
+        .then(function(out){
+          if (!status) return;
+          var emptyText = button.getAttribute('data-draft-empty') || '';
+          var failedText = button.getAttribute('data-draft-failed') || '';
+          status.textContent = out.ok ? (button.getAttribute('data-draft-saved') || '') : ((!out.ok && out.body && out.body.error === 'draft_empty' && emptyText) ? emptyText : failedText);
+        })
         .catch(function(){ if (status) status.textContent = button.getAttribute('data-draft-failed') || ''; })
         .finally(function(){ button.disabled = false; });
     });

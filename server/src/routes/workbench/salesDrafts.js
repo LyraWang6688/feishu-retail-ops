@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const { getSalesDraftService } = require('../../services/salesDraftRuntime');
+const { hasContent } = require('../../services/salesDraftSnapshotService');
 const { logWarn } = require('../../utils/logger');
 
 const createWorkbenchSalesDraftRoutes = ({ options = {} } = {}) => {
@@ -20,7 +21,7 @@ const createWorkbenchSalesDraftRoutes = ({ options = {} } = {}) => {
   router.post('/sales/drafts', async (req, res) => {
     const snapshot = req.body?.snapshot && typeof req.body.snapshot === 'object' ? req.body.snapshot : {};
     const lines = Array.isArray(snapshot.lines) ? snapshot.lines : [];
-    if (!lines.length) return res.status(400).json({ success: false, error: 'draft_empty' });
+    if (!hasContent({ lines, currentForm: snapshot.currentForm })) return res.status(400).json({ success: false, error: 'draft_empty' });
     try {
       const result = await service().save({
         openId: openIdOf(req),

@@ -93,7 +93,11 @@ const PAGE_BUILD_TOKEN = '«page_build»';
 const normalize = (text) => String(text).split(SCAN_PAGE.pageBuild).join(PAGE_BUILD_TOKEN)
   // 下架上下文/隐藏字段是 2026-11-24 新增的提交辅助，不属于旧逐字状态快照。
   .replace(/\n[^\n]*data-delist-[^\n]*/g, '')
-  .replace(/\n<input type="hidden" name="delist_product_ids"[^\n]*/g, '');
+  .replace(/\n<input type="hidden" name="delist_product_ids"[^\n]*/g, '')
+  // 2026-11-26：草稿 currentForm 的隐藏字段 / 空态提示 / 保存按钮启用，属于草稿交互，不进旧视觉快照。
+  .replace(/\n<input type="hidden" name="draft_[^"]*"[^\n]*/g, '')
+  .replace(/ data-draft-empty="[^"]*"/g, '')
+  .replace(/(data-save-draft[^>]*) disabled/g, '$1');
 
 /** 取某一份 HTML 里领域那一块（到页脚 `<p class="foot">` 之前）。 */
 const blockOf = (html, id) => {
@@ -424,7 +428,7 @@ test('AC-ST3 四 tab 的逐字快照：三种状态与「未标状态」两款�
     assert.deepEqual(Object.keys(golden[key] || {}).sort(), REALM_IDS.slice().sort(),
       `${label}：快照要四块齐全（库存 / 销售 / 补货 / 退货）`);
     for (const realm of REALM_IDS) {
-      assert.deepEqual(normalize(blockOf(htmlOf(view, realm), realm)), golden[key][realm],
+      assert.deepEqual(normalize(blockOf(htmlOf(view, realm), realm)), normalize(golden[key][realm]),
         `${label} · ${realm} tab 与诊断产物逐字一致`);
     }
   }

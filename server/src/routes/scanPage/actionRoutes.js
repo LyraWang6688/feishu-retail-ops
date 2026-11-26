@@ -1,5 +1,7 @@
 'use strict';
 
+const { captureCurrentForm, hasContent } = require('../../services/salesDraftSnapshotService');
+
 /** 扫码页路由分组（P4-2c/d 从 routes.js 搬出）。 */
 const installScanPageActionRoutes = ({ router, ctx }) => {
   const {
@@ -29,8 +31,9 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
     try {
       const session = await writeService.sessions.get(sessionId);
       const lines = Array.isArray(session?.sale?.lines) ? session.sale.lines : [];
-      if (!lines.length) return res.status(400).json({ success: false, error: 'draft_empty' });
-      const first = lines[0] || {};
+      // 第一双还没加入本单时 lines 为空，但页面上的尺码/金额就是她的操作现场。
+      const currentForm = captureCurrentForm({ body, productRecordId: req.params?.recordId });
+      if (!hasContent({ lines, currentForm })) return res.status(400).json({ success: false, error: 'draft_empty' });
       const fields = writeConfig.fields;
       const step = String(body.draft_step || body.step || 'goods').trim() === 'payment' ? 'payment' : 'goods';
       let accessoryRows = [];
@@ -43,11 +46,13 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       const snapshotLines = lines.map((line, index) => (
         lineAmounts[index] === undefined ? line : { ...line, amount: lineAmounts[index] }
       ));
+      const first = lines[0] || {};
       const snapshot = {
-        product_record_id: first.product_record_id || '',
-        number: first.number || '',
-        item_no: first.item_no || '',
-        color: first.color || '',
+        product_record_id: currentForm.product_record_id || first.product_record_id || '',
+        number: currentForm.number || first.number || '',
+        item_no: currentForm.item_no || first.item_no || '',
+        color: currentForm.color || first.color || '',
+        currentForm,
         lines: JSON.parse(JSON.stringify(snapshotLines)),
         payment: step === 'payment' ? {
           lineAmounts,
@@ -69,7 +74,7 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       if (!result.ok) return res.status(400).json({ success: false, error: result.code || 'draft_save_failed' });
       try {
         await writeService.sessions.store.update(sessionId, (current) => ({
-          sale: { ...(current?.sale || {}), draft_id: result.draft.draft_id },
+          sale: { ...(current?.sale || {}), draft_id: result.draft.draft_id, draft_form: currentForm },
         }));
       } catch (error) { /* 草稿已存成功；关联当前会话失败不影响这次保存 */ }
       return res.json({ success: true, draftId: result.draft.draft_id, step: result.draft.step, updatedAt: result.draft.updated_at });
