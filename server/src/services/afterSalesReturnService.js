@@ -158,8 +158,10 @@ class AfterSalesReturnService {
     const unpaidRows = (paymentState.rows || [])
       .filter((row) => AFTER_SALES_SETTLEMENT.statuses.unpaid.includes(statusOf(row)));
     const unpaidAmount = unpaidRows.reduce((sum, row) => sum + amountOf(row), 0);
-    const salesDetailsField = this.gateway.table('salesEntry').readOnlyFields?.salesDetails?.name || '销售明细';
-    const detailCount = salesLinkRecordIds(entry.fields?.[salesDetailsField]).length || 1;
+    const salesDetailsField = this.gateway.table('salesEntry').readOnlyFields?.salesDetails?.name;
+    const detailCount = salesDetailsField
+      ? (salesLinkRecordIds(entry.fields?.[salesDetailsField]).length || 1)
+      : 1;
 
     return {
       requestId, salesEntryRecordId, orderNo, detailRecordId, moneyMode, paymentMethod, method,

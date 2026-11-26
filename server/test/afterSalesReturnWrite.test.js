@@ -32,7 +32,10 @@ const ORDER_NO = 'XSD-20261028-0005';
 
 const makeGateway = (overrides = {}) => {
   const tables = {
-    salesEntry: { fields: { orderNo: '销售单号', afterSalesType: '售后类型', afterSalesCount: '售后次数', totalAmount: '鞋类总额', afterSalesBy: '售后人' } },
+    salesEntry: {
+      fields: { orderNo: '销售单号', afterSalesType: '售后类型', afterSalesCount: '售后次数', totalAmount: '鞋类总额', afterSalesBy: '售后人' },
+      readOnlyFields: { salesDetails: { name: '销售明细' } },
+    },
     salesDetail: {
       fields: {
         salesEntry: '销售单号', product: '编号', size: '尺码', fulfillmentStatus: '履约状态', actualAmount: '实收金额',
