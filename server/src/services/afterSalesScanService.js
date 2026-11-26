@@ -28,6 +28,8 @@
 const {
   SCAN_CACHE, SCAN_EXCLUDED_FULFILLMENT, SCAN_FIELD_KEYS, SCAN_TEXTS, resolveScanWindowDays,
 } = require('../config/afterSalesScan');
+const { AFTER_SALES_SETTLEMENT } = require('../config/afterSalesSettlement');
+const { planReturnSettlement } = require('./afterSalesSettlementPlan');
 const { postedOf, isPosted } = require('../config/salesStatusDimensions');
 const { textValue, personText } = require('./v1BitableGateway');
 const { salesLinkRecordIds } = require('./afterSalesLinkIds');
@@ -284,6 +286,23 @@ class AfterSalesScanService {
         const order = orderByEntry.get(candidate.sales_entry_record_id) || null;
         candidate.order = order && order.details.some((row) => row.record_id === candidate.sales_detail_record_id)
           ? order : null;
+        // 2026-11-26：把退货结算预览带给页面（前端只展示，不自己算）。
+        if (candidate.order) {
+          const statuses = AFTER_SALES_SETTLEMENT.statuses;
+          const payments = candidate.order.payments || [];
+          const paidAmount = payments
+            .filter((item) => statuses.paid.includes(String(item.status || '').trim()))
+            .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+          const unpaidAmount = payments
+            .filter((item) => statuses.unpaid.includes(String(item.status || '').trim()))
+            .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+          candidate.settlement = planReturnSettlement({
+            detailAmount: candidate.actual_amount,
+            paidAmount,
+            unpaidAmount,
+            detailCount: (candidate.order.details || []).length || 1,
+          });
+        }
       }
     }
 

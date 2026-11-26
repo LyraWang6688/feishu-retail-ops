@@ -142,8 +142,12 @@ test('AC-AS-ZERO 0 元单退货：不渲染「钱怎么走」，提示只退不�
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
   const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
   assert.match(config, /zeroAmountNotice/, '0 元单要有单独提示文案');
+  assert.match(config, /unpaidNotice/, '未收款单要有提示文案');
+  assert.match(config, /partialNotice/, '部分收款要有提示文案');
   assert.ok(page.includes('modal.zeroAmount'), '按候选金额判断是否显示钱选项');
+  assert.ok(page.includes('modal.hideMoney'), '未收款 / 0 元隐藏钱选项');
   assert.ok(page.includes('data-as-zero-note'), '0 元提示挂在弹窗里');
+  assert.ok(page.includes('data-as-unpaid-note'), '未收款提示挂在弹窗里');
 });
 
 test('AC-AS-SUBMIT 换货确认按钮必须走原生表单提交（不能被点击处理截胡）', () => {

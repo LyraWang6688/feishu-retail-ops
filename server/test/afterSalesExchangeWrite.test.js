@@ -99,6 +99,24 @@ test('AC-EX6 ⭐ 0 元原明细换尺码：只走货，不建钱行（2026-11-26
   assert.equal(h.state.entry.fields['鞋类总额'], 180, '总额不变');
 });
 
+test('AC-EX7 ⭐ 未收款换款式：不建差价行，原未收款行改成新金额（2026-11-26）', async () => {
+  const h = makeService();
+  h.state.payments[0].fields['钱款状态'] = '未收款';
+  const result = await h.service.execute(basePayload({
+    scenario: EXCHANGE.scenarios.NEW_ITEM,
+    newProductRecordId: 'product_new',
+    newAmount: 200,
+    newSize: 41,
+  }));
+
+  assert.equal(h.state.payments.length, 1, '不新建差价行');
+  const update = h.state.calls.update.find((item) => item.key === 'paymentRecord');
+  assert.ok(update, '要把未收款行改成新金额');
+  assert.equal(update.recordId, 'pay_1');
+  assert.equal(update.fields['交易金额'], 200);
+  assert.equal(result.money?.retargeted, true);
+});
+
 test('AC-EX2 换款式·补差价：新明细用她填的金额 + 新建收款明细 + 总金额回填', async () => {
   const h = makeService();
   const result = await h.service.execute(basePayload({

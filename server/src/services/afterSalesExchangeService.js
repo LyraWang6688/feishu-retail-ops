@@ -22,6 +22,7 @@ const { nextId, stateFor } = require('./salesRecordIds');
 const { createPaymentMethodsService } = require('./paymentMethodsService');
 const { createSamplePromotionService } = require('./samplePromotionService');
 const { AFTER_SALES_EXCHANGE: EX } = require('../config/afterSalesExchange');
+const { AFTER_SALES_SETTLEMENT } = require('../config/afterSalesSettlement');
 const { logInfo, logWarn } = require('../utils/logger');
 
 const DEFAULT_STORE_DIR = path.join(__dirname, '../../data/after_sales_exchanges');
@@ -183,8 +184,23 @@ class AfterSalesExchangeService {
       if (!allowed.includes(chosen)) throw badRequest(this.texts.samplePromotionInvalid);
     }
 
+    // 2026-11-26：读原单收款；未收款时换货不建差价行，原未收款行改成新鞋金额。
+    const paymentFields = this.gateway.table('paymentRecord').fields;
+    const paymentState = await stateFor({
+      gateway: this.gateway, tableKey: 'paymentRecord',
+      entryIds: [shaped.salesEntryRecordId], idField: paymentFields.receiptId,
+    });
+    const statusOf = (row) => textValue(row?.fields?.[paymentFields.status]).trim();
+    const amountOf = (row) => numberOrNull(row?.fields?.[paymentFields.amount]) || 0;
+    const paidAmount = (paymentState.rows || [])
+      .filter((row) => AFTER_SALES_SETTLEMENT.statuses.paid.includes(statusOf(row)))
+      .reduce((sum, row) => sum + amountOf(row), 0);
+    const unpaidRows = (paymentState.rows || [])
+      .filter((row) => AFTER_SALES_SETTLEMENT.statuses.unpaid.includes(statusOf(row)));
+
     let method = null;
-    if (diff !== 0) {
+    // 未收款：不补/退差价，也就不需要「差价方式」。
+    if (diff !== 0 && paidAmount > 0) {
       if (!shaped.diffMethodName) throw badRequest(this.texts.needDiffMethod);
       const listed = await this.paymentMethods.listWithVouchers();
       const detailed = listed?.detailed || listed?.items || [];
@@ -199,6 +215,7 @@ class AfterSalesExchangeService {
       newProductRecordId, newSizeRecordId, newSize, newAmount, diff, method,
       exchangeBehaviorRecordId: behavior.recordId,
       moneyMode: diff > 0 ? EX.money.collect : (diff < 0 ? EX.money.refund : ''),
+      paidAmount, unpaidRows,
     };
   }
 
@@ -328,9 +345,20 @@ class AfterSalesExchangeService {
       }
     }
 
-    // ④ 差价：补=收款 / 退=退款（差价 0 不建）
+    // ④ 钱：未收款 ⇒ 不建差价行，原未收款行改成新鞋金额；已收款 ⇒ 按差价补/退
     let money = progress.money || null;
-    if (prepared.diff !== 0 && !money?.payment_record_id) {
+    if (prepared.paidAmount <= 0) {
+      if (!money?.retargeted
+        && prepared.newAmount !== prepared.originalAmount
+        && prepared.unpaidRows.length) {
+        const row = prepared.unpaidRows[0];
+        await this.gateway.update('paymentRecord', row.record_id, {
+          amount: prepared.newAmount,
+        }, { correlation: options.correlation });
+        money = { retargeted: true, recordId: row.record_id, amount: prepared.newAmount };
+        await save({ status: 'unpaid_retargeted', money });
+      }
+    } else if (prepared.diff !== 0 && !money?.payment_record_id) {
       const paymentFields = this.gateway.table('paymentRecord').fields;
       const readPay = await stateFor({
         gateway: this.gateway, tableKey: 'paymentRecord',
