@@ -18,7 +18,7 @@
  *   两者唯一共享的是二维码 URL 模板，而那个模板**不在这里**（在 `tagQrCode.js`）。
  */
 
-const { readFlag, readInt, readList, readString } = require('./envValue');
+const { readFlag, readInt, readString } = require('./envValue');
 // ⭐ 2026-10-17（假配置接线）：领域条第 5 格文案的**唯一真源** = 五处登记表（不再在两边各写一份）。
 const { SCAN_ENTRIES } = require('./scanEntries');
 const { PRODUCT_ACTIONS } = require('./scanPageProductActions');
@@ -260,25 +260,10 @@ const SCAN_NEXT = Object.freeze({
   applink: readString(process.env, 'SCAN_NEXT_APPLINK', 'https://applink.feishu.cn/client/qrcode/main'),
 });
 
-/**
- * ⭐⭐ 2026-10-11（业务负责人）：「**提交这一单只在销售页显示**」。
- *
- * 那条【本单：N 双】在每个领域页顶部都有（她一单跨编号累积时随时看得到几双）；
- * 但**那颗真正的提交按钮**只在**她点名的领域**里出现 —— 其余领域页顶部只有
- * `本单：N 双` ＋【继续扫下一个】。
- *
- * ⚠️ 为什么进配置而不是在渲染层写死 `'sales'`：领域是活的（加减领域、哪个领域能提交都可能变），
- *    改它**不该动渲染层**（配置先行）。取值必须是 `views/scanPageRealm.js` 里 `REALMS[].id`；
- *    认不出的取值 = 那个领域页上不显示（**绝不猜**）。
- * ⚠️ 环境变量给了值就用它（逗号分隔）；**没给** = 只有 `sales`。
- */
-const DRAFT_BAR = Object.freeze({
-// ⚠️ **成对迁移（改前逐字 → 改后逐字 → 依据）**：改前 `readList(process.env, 'SCAN_DRAFT_' ＋ 'BAR_SUBMIT_REALMS')`（键名逐字就是这一族里那个）
-//   改后 `readList(process.env, 'SCAN_ORDER_BAR_SUBMIT_REALMS')` —— 依据：业务负责人 2026-10-16 22:0x
-//   「**存草稿的功能都删除吧……整个链路都删除**」⇒ 判据 AC-DEL1 禁掉整族 `SCAN_DRAFT_*`；
-//   而**本单条（一单多货）是要留的** ⇒ 只把**名字**挪出那一族（字段名 `submitRealms` / 缺省 `['sales']` 逐字不变 ✓）
-  submitRealms: readList(process.env, 'SCAN_ORDER_BAR_SUBMIT_REALMS') || ['sales'],
-});
+// ⛔ 2026-11-26（业务负责人确认）：`draftBar.submitRealms` 已删除。
+//   它只服务本单条里那条"去销售页提交"的指路链接；那条链接从未真正显示过，
+//   2026-10-27 默认领域改成库存后反而在销售页变成一个**空白色块**（详见 `views/scanPage/draftBlock.js`）。
+//   本单条现在只报数，不再有 `draftBar` 这一组配置。
 
 
 /** 价格格式（来自「货品信息.单价」）。整数不补零：`¥399`；带角分才显示小数。 */
@@ -896,7 +881,6 @@ const SCAN_PAGE = Object.freeze({
   // ⭐ 2026-10-11：【继续扫下一个】的手段（飞书扫一扫 AppLink，见上面的长注释）。
   scanNext: SCAN_NEXT,
   // ⭐ 2026-10-11：【提交这一单】出现在哪些领域（她：「只在「销售」页显示」）。
-  draftBar: DRAFT_BAR,
   // ⭐⭐ 2026-10-16（task-S2）：那三处入口 ＋ 提示条（**已整条退场** ✓）
   //   （文案 / 领域清单 / 查询键全在这里 ⇒ 改文案不动代码 ✓；见 `resolveDraftEntryConfig`）。
 });

@@ -1,28 +1,21 @@
 const { fillText } = require('../../config/scanPage');
-const { DEFAULT_REALM, REALM_TEXTS, resolveRealm } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { canScanNextWithFeishu } = require('./styles');
 
-const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}) => {
+/**
+ * 本单条（一单多货）：**只报数**（本单 N 双）+ 刚加入时那一句 + 非飞书设备的「再扫下一个」人话。
+ *
+ * ⛔ 2026-11-26（业务负责人确认删除）：这里原来还有一条`<a href="?from=sales">`的"指路链接"
+ *   （2026-10-12 真机丢钱之后，用来替代本单条自带的那颗**不带钱**的提交按钮）。
+ *   它从落地那天起就没有任何页面会显示（销售页有真表单 ⇒ 被 moneyFormOnPage 压掉；
+ *   其它领域又不在 submitRealms 里），文案键 `submitOnSalesRealmLabel` 也从未配置。
+ *   2026-10-27 裸扫默认领域改成库存后，销售页被判成"没有带钱的表单" ⇒ 它变成一个
+ *   **整条宽、没有字的蓝色空按钮**（点了只是 GET 回本页）。已按她 2026-11-26 的口径整段删除。
+ *   ⇒ **本单条里永远没有按钮/链接**：真正的提交只在销售页那张带钱表单里。
+ */
+const draftBarHtml = (write, config, userAgent) => {
   const texts = config.texts;
   const count = ((write && write.draft && write.draft.lines) || []).length;
-  const saleEnabled = Boolean(write) && write.enabled !== false && write.saleEnabled !== false;
-  // 【提交这一单】出现在哪些领域：配置说了算（缺省只有「销售」；认不出的领域 = 不显示）。
-  const submitRealms = Array.isArray(config?.draftBar?.submitRealms)
-    ? config.draftBar.submitRealms.map((item) => String(item).trim())
-    : [DEFAULT_REALM];
-  const canSubmitHere = submitRealms.includes(resolveRealm(realm));
-  // 🔴🔴 2026-10-12（真机丢钱之后**删掉**的那颗按钮）：本单条原来**自带一颗【提交这一单】**，
-  //    它的表单里**只有 action + 幂等键**（收款方式 / 金额一个都不带）。
-  //    真机现场：她在**销售块**填了「全付 + 微信 280」，却按了本单条这颗 ⇒
-  //    `payment_count: 0` —— 钱一行都没记（她：「我明确写了收款是微信 280，为什么收款明细没有」）。
-  //    ⇒ **一页只允许一颗提交按钮**，而且必须是**带钱的那一颗**（销售块那一个表单）。
-  //      这里只在"这一页没有带钱的提交表单"时给一条**指路链接**（GET，不带钱、也丢不了钱）：
-  //      没有链接、也没有第二颗按钮 ⇒ 不可能再"点了提交却没记钱"。
-  const moneyFormOnPage = page.moneyFormOnPage === true;
-  const submitHtml = canSubmitHere && saleEnabled && count > 0 && !moneyFormOnPage
-    ? `<a class="btn btn--primary" href="?from=${escapeHtml(REALM_TEXTS.defaultRealmId || 'sales')}" rel="noopener">${escapeHtml(texts.submitOnSalesRealmLabel || texts.submitButton)}</a>`
-    : '';
   // 【继续扫下一个】⭐⭐ 2026-10-15（业务负责人逐字：「…**库存、销售、补货、退货、扫一扫**」）：
   //   飞书客户端里这一颗**已经搬去顶部那一排做第 5 格**（`realmBarHtml` 的 `scanCellHtml`）⇒
   //   本单条**不再重复放它**（同一件事说两遍、还白占一行 ✗）；
@@ -31,8 +24,7 @@ const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}
   const scanNextHtml = canScanNextWithFeishu(userAgent)
     ? ''
     : `<p class="hint">${escapeHtml(texts.scanNextHint)}</p>`;
-  // ⭐ 2026-10-18：按钮文案改为「提交」（不再带双数）⇒「本单：N 双」回到本单条上，
-  //   一单多货的"现在共几双"仍然可见（配置文案 `draftBarCount`，唯一真源）。
+  // 「本单：N 双」：一单多货时"现在共几双"永远可见（配置文案 `draftBarCount`，唯一真源）。
   const lines = Array.isArray(write?.draft?.lines) ? write.draft.lines : [];
   const countHtml = lines.length
     ? `<p class="draft-bar__count">${escapeHtml(fillText(texts.draftBarCount, { count: lines.length }))}</p>`
@@ -44,11 +36,10 @@ const draftBarHtml = (write, config, userAgent, realm = DEFAULT_REALM, page = {}
   // ⭐⭐ 2026-10-15：条里**一件东西都没有时**（飞书 + 没草稿 + 没反馈）⇒ **整条不渲染** ——
   //   她的目的就是"少占地方" ✓ 一张空白卡（只剩内边距）比不渲染更占地方 ✗。
   //   ⚠️ 非飞书**永远有那句人话** ⇒ 照旧渲染（AC-DB1 那些"没草稿也有这条"的判据都走这条路 ✓）。
-  if (!countHtml && !noticeHtml && !submitHtml && !scanNextHtml) return '';
+  if (!countHtml && !noticeHtml && !scanNextHtml) return '';
   return `<section class="card draft-bar" data-view="draft-bar" aria-label="${escapeHtml(texts.draftBarLabel)}">
 ${countHtml}
 ${noticeHtml}
-${submitHtml}
 ${scanNextHtml}
 </section>`;
 };
