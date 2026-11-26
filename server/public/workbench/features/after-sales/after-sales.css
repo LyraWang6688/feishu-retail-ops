@@ -190,6 +190,7 @@
   min-height: var(--control-height);
   white-space: nowrap;
 }
+.as-modal-note { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--surface-sunken); color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
 .as-modal-error {
   margin: 0;
   color: var(--danger);

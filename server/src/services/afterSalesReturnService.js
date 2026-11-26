@@ -114,8 +114,9 @@ class AfterSalesReturnService {
     }
     const rawAmount = textValue(detail.fields?.[detailFields.actualAmount]).trim();
     if (!rawAmount) throw badRequest(this.texts.amountMissing);
+    // 2026-11-26：0 元单（赠送 / 补发 / 调换）允许退货 —— 只退「货」，不产生退款行。
     const amount = Number(rawAmount);
-    if (!Number.isFinite(amount) || amount <= 0) throw badRequest(this.texts.amountInvalid);
+    if (!Number.isFinite(amount) || amount < 0) throw badRequest(this.texts.amountInvalid);
     const productRecordId = salesLinkRecordIds(detail.fields?.[detailFields.product])[0] || '';
     if (!productRecordId) throw badRequest(this.texts.missingProduct);
     const sizeRecordId = salesLinkRecordIds(detail.fields?.[detailFields.size])[0] || '';
@@ -132,7 +133,8 @@ class AfterSalesReturnService {
 
     // 她选的退款方式必须真的在「支付方式管理」里（配置表唯一数据源）
     let method = null;
-    if (moneyMode === AFTER_SALES_DERIVED.money.modes.REFUND) {
+    // 0 元单没有钱可退 ⇒ 不要求也不校验退款方式。
+    if (moneyMode === AFTER_SALES_DERIVED.money.modes.REFUND && amount > 0) {
       const detailed = listed?.detailed || listed?.items || [];
       const hit = detailed.find((item) => item.name === paymentMethod && item.recordId);
       if (!hit) throw badRequest(this.texts.unknownPaymentMethod);
@@ -192,7 +194,8 @@ class AfterSalesReturnService {
 
     // ③ 钱：新建一条 S交易明细（退款 / 留存）
     let money = progress.money || null;
-    if (!money?.payment_record_id) {
+    // 2026-11-26：0 元单只退货，不建退款 / 留存行。
+    if (prepared.amount > 0 && !money?.payment_record_id) {
       const paymentFields = this.gateway.table('paymentRecord').fields;
       const read = await stateFor({
         gateway: this.gateway, tableKey: 'paymentRecord',
@@ -243,13 +246,13 @@ class AfterSalesReturnService {
         throw new Error(`原销售单的「售后次数」已被改动（期望 ${master.before_sales_count}，实际 ${currentCount}），请人工核对`);
       }
       const nextTypes = [...new Set([...currentTypes, typeValue])];
-      const nextTotal = currentTotal == null
-        ? null
+      const nextTotal = currentTotal == null || prepared.amount <= 0
+        ? currentTotal
         : Math.max(0, Number((currentTotal - prepared.amount).toFixed(2)));
       await this.gateway.update('salesEntry', prepared.salesEntryRecordId, {
         [AFTER_SALES_DERIVED.master.typeField]: nextTypes,
         [AFTER_SALES_DERIVED.master.countField]: currentCount + AFTER_SALES_DERIVED.master.countDelta,
-        ...(nextTotal == null ? {} : { [AFTER_SALES_DERIVED.master.totalField]: nextTotal }),
+        ...(prepared.amount > 0 && nextTotal != null ? { [AFTER_SALES_DERIVED.master.totalField]: nextTotal } : {}),
         ...personPatch({
           tableKey: 'salesEntry',
           fieldKey: 'afterSalesBy',
@@ -278,6 +281,7 @@ class AfterSalesReturnService {
       orderNo: prepared.orderNo,
       detailRecordId: prepared.detailRecordId,
       moneyMode: prepared.moneyMode,
+      moneySkipped: prepared.amount <= 0,
       money,
       stock,
       master,
@@ -289,10 +293,10 @@ class AfterSalesReturnService {
       sales_entry_record_id: prepared.salesEntryRecordId,
       order_no: prepared.orderNo,
       detail_record_id: prepared.detailRecordId,
-      money_mode: prepared.moneyMode,
-      payment_record_id: money.payment_record_id,
-      receipt_id: money.receipt_id,
-      payment_status: money.status,
+      money_mode: prepared.amount > 0 ? prepared.moneyMode : 'zero_amount_skipped',
+      payment_record_id: money?.payment_record_id || '',
+      receipt_id: money?.receipt_id || '',
+      payment_status: money?.status || '',
       after_sales_count: master?.after_sales_count ?? null,
     });
     return result;

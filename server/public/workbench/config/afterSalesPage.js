@@ -57,6 +57,8 @@ export const AFTER_SALES_PAGE = {
   returnRefund: '直接退款',
   returnRetain: '货款留存',
   returnMethodLabel: '退款方式',
+  // 0 元单（赠送 / 补发 / 调换）：只退货，不产生退款。
+  zeroAmountNotice: '这双鞋金额为 ¥0，退货只退「货」，不产生退款。',
   // 换货弹窗
   exchangeTitle: '换货',
   exchangeModeLabel: '怎么换',

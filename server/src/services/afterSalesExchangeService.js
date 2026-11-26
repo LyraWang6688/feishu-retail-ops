@@ -76,8 +76,11 @@ class AfterSalesExchangeService {
     if (scenario === EX.scenarios.NEW_ITEM) {
       out.newProductRecordId = String(payload.newProductRecordId || '').trim();
       if (!out.newProductRecordId) throw badRequest(this.texts.needNewProduct);
-      const amount = Number(String(payload.newAmount ?? '').trim());
-      if (!Number.isFinite(amount) || amount <= 0) throw badRequest(this.texts.needNewAmount);
+      const rawAmount = String(payload.newAmount ?? '').trim();
+      if (!rawAmount) throw badRequest(this.texts.needNewAmount);
+      const amount = Number(rawAmount);
+      // 2026-11-26：0 元换货（赠品 / 补发）允许；只按差价处理钱。
+      if (!Number.isFinite(amount) || amount < 0) throw badRequest(this.texts.needNewAmount);
       out.newAmount = amount;
       const method = String(payload.diffPaymentMethod || payload.paymentMethod || '').trim();
       out.diffMethodName = method;
@@ -118,7 +121,8 @@ class AfterSalesExchangeService {
     if (!EX.original.returnableStatuses.includes(status)) throw badRequest(this.texts.detailNotExchangeable);
     const originalAmount = numberOrNull(detail.fields?.[detailFields.actualAmount]);
     if (originalAmount == null) throw badRequest(this.texts.originalAmountMissing);
-    if (originalAmount <= 0) throw badRequest(this.texts.originalAmountInvalid);
+    // 2026-11-26：原明细金额 0（0 元单）允许换货；差价 = 新金额 − 0。
+    if (originalAmount < 0) throw badRequest(this.texts.originalAmountInvalid);
     const originalProductId = salesLinkRecordIds(detail.fields?.[detailFields.product])[0] || '';
     if (!originalProductId) throw badRequest(this.texts.missingOriginalProduct);
     const originalSizeRecordId = salesLinkRecordIds(detail.fields?.[detailFields.size])[0] || '';
