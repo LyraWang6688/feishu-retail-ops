@@ -27,3 +27,23 @@ test('下架确认不再用 window.confirm，改用站内弹层', () => {
   assert.ok(script.includes('data-delist-modal'), '要有站内确认弹层');
   assert.ok(script.includes('__scanDelistModal'), '提交脚本要能打开弹层');
 });
+
+test('资金页渲染必须把本单 lines 带进 write.draft，否则下架候选恒为空', () => {
+  const setup = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage/setup.js'), 'utf8');
+  assert.match(setup, /draft: \{ lines: Array\.isArray\(opts\.lines\) \? opts\.lines : \[\] \}/);
+  const files = [
+    '../src/routes/scanPage/setup.js',
+    '../src/routes/scanPage/pages.js',
+    '../src/routes/scanPage/handlers/payment.js',
+    '../src/routes/scanPage/handlers/salesSubmit.js',
+  ];
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(__dirname, file), 'utf8');
+    const starts = [...source.matchAll(/sendPaymentStep\(res, req, \{/g)].map((match) => match.index);
+    assert.ok(starts.length > 0, file + ' 应至少渲染一次资金页');
+    for (const start of starts) {
+      const block = source.slice(start, start + 700);
+      assert.match(block, /\n\s*lines:/, file + ' 的 sendPaymentStep 必须传 lines');
+    }
+  }
+});

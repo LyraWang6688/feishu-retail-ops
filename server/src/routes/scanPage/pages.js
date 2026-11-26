@@ -194,6 +194,7 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
               realm,
               submitKey: writeService?.sessions?.submitKeyFor?.(sessionIdOf(req), pendingSession, 'sale') || '',
               count: pendingLines.length,
+              lines: pendingLines,
               paymentRows: Array.isArray(pendingSession?.sale?.draft_payment?.paymentRows)
                 ? pendingSession.sale.draft_payment.paymentRows : undefined,
               gift: pendingSession?.sale?.draft_payment?.gift || '',

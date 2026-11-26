@@ -73,6 +73,7 @@ async function handlePaymentPay(ctx) {
               realm,
               submitKey: body[fields.submitKey],
               count: pendingLines.length,
+              lines: pendingLines,
               notice: voucherPayments.settings.unresolvedText,
               paymentRows: pendingPayments,
               status: 400,
@@ -97,6 +98,7 @@ async function handlePaymentPay(ctx) {
               realm,
               submitKey: body[fields.submitKey],
               count: pendingLines.length,
+              lines: pendingLines,
               notice: config.paymentStep?.amountRequiredNote || '',
               paymentRows: pendingPayments,
               status: 400,
@@ -301,6 +303,7 @@ async function handlePaymentPay(ctx) {
                 realm,
                 submitKey: body[fields.submitKey],
                 count: pendingLines.length,
+                lines: pendingLines,
                 notice: createdResult.message,
               });
             }
