@@ -292,8 +292,21 @@ const RETURN_STEPPER_STYLE = `.size-stepper { flex: 0 0 auto; margin-left: auto;
 
 const SCAN_TOAST_STYLE = `.scan-toast { position: fixed; left: 50%; top: var(--space-5); transform: translateX(-50%); z-index: 9999; max-width: calc(100vw - var(--space-8)); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--success-soft); color: var(--success); border: 1px solid var(--success); box-shadow: var(--shadow-pop); font-size: var(--font-size-md); font-weight: var(--weight-bold); }`;
 
+// ⭐ 2026-11-26（卖完下架确认）：服务端渲染的确认层（销售货品页提交时）。
+//   样式与工作台/扫码页同一套 tokens；覆盖层用 fixed 居中（与旧站内弹层同形）。
+const DELIST_CONFIRM_STYLE = `.delist-confirm { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; padding: var(--space-5); background: rgba(0,0,0,.38); }
+.delist-confirm__card { width: min(100%, 420px); max-height: calc(100dvh - var(--space-8)); overflow-y: auto; padding: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); }
+.delist-confirm__title { margin: 0 0 var(--space-2); font-size: var(--font-size-lg); }
+.delist-confirm__body { margin: 0 0 var(--space-3); color: var(--text-secondary); font-size: var(--font-size-sm); }
+.delist-confirm__rows { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: grid; gap: var(--space-2); }
+.delist-confirm__row label { display: flex; gap: var(--space-2); align-items: flex-start; min-height: var(--control-height); font-size: var(--font-size-md); }
+.delist-confirm__row input { width: 20px; height: 20px; margin-top: 2px; }
+.delist-confirm__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.delist-confirm__actions .btn { min-height: var(--control-height); }`;
+
 module.exports = {
   STYLE,
+  DELIST_CONFIRM_STYLE,
   SCAN_TOAST_STYLE,
   readThemeTokens,
   canScanNextWithFeishu,

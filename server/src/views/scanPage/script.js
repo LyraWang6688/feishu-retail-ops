@@ -65,50 +65,6 @@ const UI_TAP_SHARED_SOURCE = fs.readFileSync(
 const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
 ${UI_TAP_SHARED_SOURCE}
 (function () {
-  var delistModal = null;
-  var delistText = null;
-  var delistConfirm = null;
-  var delistCancel = null;
-  var delistPending = null;
-  var ensureDelistModal = function () {
-    if (delistModal) return;
-    delistModal = document.createElement('div');
-    delistModal.setAttribute('data-delist-modal', '');
-    delistModal.hidden = true;
-    delistModal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.38)';
-    delistModal.innerHTML = '<div style="width:100%;max-width:320px;background:var(--surface,#fff);border-radius:12px;padding:20px;box-shadow:0 12px 32px rgba(0,0,0,.2)"><p data-delist-text style="margin:0 0 18px;font-size:15px;line-height:1.6;color:var(--text,#1f2329)"></p><div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" data-delist-modal-cancel style="min-height:40px;padding:0 14px;border:1px solid var(--border,#e5e6eb);border-radius:8px;background:var(--surface,#fff);color:var(--text,#1f2329)"></button><button type="button" data-delist-modal-confirm style="min-height:40px;padding:0 14px;border:0;border-radius:8px;background:var(--primary,#3370ff);color:#fff;font-weight:600"></button></div></div>';
-    document.body.appendChild(delistModal);
-    delistText = delistModal.querySelector('[data-delist-text]');
-    delistConfirm = delistModal.querySelector('[data-delist-modal-confirm]');
-    delistCancel = delistModal.querySelector('[data-delist-modal-cancel]');
-    var closeDelist = function () {
-      delistModal.hidden = true;
-      delistPending = null;
-    };
-    delistCancel.addEventListener('click', closeDelist);
-    delistModal.addEventListener('click', function (event) {
-      if (event.target === delistModal) closeDelist();
-    });
-    delistConfirm.addEventListener('click', function () {
-      var pending = delistPending;
-      delistModal.hidden = true;
-      delistPending = null;
-      if (!pending || !pending.form) return;
-      var input = pending.form.querySelector('input[name="delist_product_ids"]');
-      if (input) input.value = pending.ids;
-      pending.form.submit();
-    });
-  };
-  var openDelist = function (form, ids) {
-    ensureDelistModal();
-    delistPending = { form: form, ids: ids };
-    delistText.textContent = form.getAttribute('data-delist-prompt') || '';
-    delistConfirm.textContent = form.getAttribute('data-delist-confirm-label') || '';
-    delistCancel.textContent = form.getAttribute('data-delist-cancel-label') || '';
-    delistModal.hidden = false;
-    delistConfirm.focus();
-  };
-  window.__scanDelistModal = { open: openDelist };
   var forms = document.querySelectorAll('form');
   for (var i = 0; i < forms.length; i += 1) {
     forms[i].addEventListener('submit', function (event) {
@@ -121,28 +77,6 @@ ${UI_TAP_SHARED_SOURCE}
       if (!button || button.disabled) return;
       var submitterName = String(button.name || '');
       var submitterValue = String(button.value || '');
-      // Sale last pair: confirm only on the main submit button; never on add/clear.
-      // Payment page carries plural ids; goods page carries singular id + stock + qty.
-      // Support both shapes, then show the in-page confirmation (native confirm is
-      // unreliable inside Feishu WebView).
-      var saleDelistIds = form.getAttribute('data-delist-product-ids') || '';
-      if (!saleDelistIds) {
-        var saleDelistId = form.getAttribute('data-delist-product-id') || '';
-        var saleStockTotal = parseInt(form.getAttribute('data-delist-stock-total') || '', 10);
-        var saleQty = parseInt(form.getAttribute('data-delist-sale-qty') || '', 10);
-        if (saleDelistId && !isNaN(saleStockTotal) && !isNaN(saleQty)
-          && saleStockTotal > 0 && saleQty >= saleStockTotal) {
-          saleDelistIds = saleDelistId;
-        }
-      }
-      if (saleDelistIds) {
-        var saleDelistInput = form.querySelector('input[name="delist_product_ids"]');
-        if (saleDelistInput) {
-          event.preventDefault();
-          window.__scanDelistModal.open(form, saleDelistIds);
-          return;
-        }
-      }
       if (submitterName) {
         var kept = document.createElement('input');
         kept.type = 'hidden';
@@ -234,37 +168,6 @@ ${UI_TAP_SHARED_SOURCE}
         if (maxSizes > 0 && qtyPicked.length > maxSizes) {
           showReturnHint(form.getAttribute('data-return-limit-text') || '', null);
           return;
-        }
-        var candidateIds = [];
-        var delistId = form.getAttribute('data-delist-product-id') || '';
-        var stockTotal = parseInt(form.getAttribute('data-delist-stock-total') || '', 10);
-        if (delistId && !isNaN(stockTotal) && stockTotal > 0 && returnedTotal === stockTotal) {
-          candidateIds.push(delistId);
-        }
-        var multiRaw = form.querySelector('input[name="multi_items"]');
-        if (multiRaw && multiRaw.value) {
-          try {
-            var multiItems = JSON.parse(multiRaw.value);
-            for (var mi = 0; mi < multiItems.length; mi += 1) {
-              var item = multiItems[mi] || {};
-              var total = Number(item.stock_total);
-              var qty = 0;
-              var entries = Array.isArray(item.entries) ? item.entries : [];
-              for (var ei = 0; ei < entries.length; ei += 1) qty += Number(entries[ei].quantity) || 0;
-              if (item.product_record_id && isFinite(total) && total > 0 && qty === total
-                && candidateIds.indexOf(String(item.product_record_id)) < 0) {
-                candidateIds.push(String(item.product_record_id));
-              }
-            }
-          } catch (error) { /* malformed multi_items: no prompt */ }
-        }
-        if (candidateIds.length) {
-          var delistInput = form.querySelector('input[name="delist_product_ids"]');
-          if (delistInput) {
-            event.preventDefault();
-            window.__scanDelistModal.open(form, candidateIds.join(','));
-            return;
-          }
         }
       }
       button.disabled = true;

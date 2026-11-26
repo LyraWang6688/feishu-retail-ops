@@ -87,6 +87,53 @@ const buildApp = ({ enqueued, completed }) => {
   return app;
 };
 
+test('AC-ZERO-ROUTE0 0 元单卖完最后一双 ⇒ 先出下架确认层（不入队、不建单）', async () => {
+  const enqueued = [];
+  const completed = [];
+  await withServer(buildApp({ enqueued, completed }), async (base) => {
+    const response = await fetch(`${base}/r/rec_zero_route?from=sales`, {
+      method: 'POST', redirect: 'manual',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        [SCAN_WRITE.fields.action]: SCAN_WRITE.actions.submitOrder,
+        [SCAN_WRITE.fields.submitKey]: 'scan_sale:test:1',
+        [SCAN_WRITE.fields.size]: '40',
+        [SCAN_WRITE.fields.amount]: '0',
+        [SCAN_WRITE.fields.stockSnapshot]: '1',
+      }).toString(),
+    });
+    assert.equal(response.status, 200, '确认层是 200 页面');
+    const html = await response.text();
+    assert.match(html, /data-delist-confirm/, '要出确认层');
+    assert.match(html, /name="delist_pick" value="prod_zero" checked/, '逐 recordId 一行、默认勾选');
+    assert.equal(enqueued.length, 0, '确认前不许入队');
+  });
+});
+
+test('AC-ZERO-ROUTE2 确认层提交（带勾选）⇒ 继续入队一次（不重复建单）', async () => {
+  const enqueued = [];
+  const completed = [];
+  await withServer(buildApp({ enqueued, completed }), async (base) => {
+    const response = await fetch(`${base}/r/rec_zero_route?from=sales`, {
+      method: 'POST', redirect: 'manual',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        [SCAN_WRITE.fields.action]: SCAN_WRITE.actions.submitOrder,
+        [SCAN_WRITE.fields.submitKey]: 'scan_sale:test:1',
+        [SCAN_WRITE.fields.size]: '40',
+        [SCAN_WRITE.fields.amount]: '0',
+        [SCAN_WRITE.fields.stockSnapshot]: '1',
+        [SCAN_WRITE.fields.delistConfirmed]: '1',
+        [SCAN_WRITE.fields.delistPick]: 'prod_zero',
+        delist_decision: 'confirm',
+      }).toString(),
+    });
+    assert.equal(response.status, 303, '确认后继续原流程');
+    assert.equal(enqueued.length, 1, '只入队一次');
+    assert.equal(completed.length, 1, '会话轮换一次');
+  });
+});
+
 test('AC-ZERO-ROUTE1 全 0 ⇒ 不跳资金页，直接入队（payments=[]）', async () => {
   const enqueued = [];
   const completed = [];
@@ -102,6 +149,8 @@ test('AC-ZERO-ROUTE1 全 0 ⇒ 不跳资金页，直接入队（payments=[]）',
         [SCAN_WRITE.fields.amount]: '0',
         [SCAN_WRITE.fields.gift]: '',
         [SAMPLE_PROMOTION.field]: '40',
+        // 2026-11-26：卖完下架确认是**第一提交先出确认层**、确认后再提交；这里模拟"已确认"那一发。
+        [SCAN_WRITE.fields.delistConfirmed]: '1',
       }).toString(),
     });
     assert.equal(response.status, 303);

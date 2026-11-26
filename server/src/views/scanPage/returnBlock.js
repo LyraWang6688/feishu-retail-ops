@@ -5,6 +5,7 @@ const { escapeHtml } = require('./fields');
 const { submitFeedbackAttrs } = require('./script');
 const { hiddenField, pageBuildField } = require('./paymentBlock');
 const { multiItemBlockHtml, purchaseAmountRowHtml } = require('./multiItemBlock');
+const { delistConfirmHtml } = require('./delistConfirm');
 
 const sizeRowsHtml = ({
   sizes, name = '', quantityPrefix, quantityLabel, checkedOf, defaultQuantity = 1, stockOf = null,
@@ -154,11 +155,10 @@ data-return-hint-view="${escapeHtml(rf.hintView)}"
 data-amount-field="${escapeHtml(fields.purchaseAmount)}"
 data-amount-hint-view="${escapeHtml(rf.amountHintView)}"
 data-amount-hint-text="${escapeHtml(rf.amountRequiredText)}"
-data-delist-product-id="${escapeHtml(String(view.product_record_id || ''))}"
-data-delist-stock-total="${stockTotal == null ? '' : escapeHtml(String(stockTotal))}"
-data-delist-prompt="${escapeHtml(rf.delistPrompt || '')}" data-delist-confirm-label="${escapeHtml(SCAN_PAGE.delistConfirm || '')}" data-delist-cancel-label="${escapeHtml(SCAN_PAGE.delistCancel || '')}">
+>
 ${hiddenField(fields.action, write.actions.purchaseReturn)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.returnKey)}
+${hiddenField(fields.stockSnapshot, stockTotal == null ? '' : String(stockTotal))}
 ${hiddenField(fields.delistProductIds, '')}
 ${sizesNotice}
 <p class="hint" data-view="${escapeHtml(rf.hintView)}" hidden></p>
@@ -166,7 +166,7 @@ ${rows}
 ${sizes.length ? `${purchaseAmountRowHtml(write)}
 ${multiItemBlockHtml(write, view, 'return', page)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rf.submitLabel)}</button>
-</form>
+</form>${delistConfirmHtml({ order: write.delistConfirm, fields, action: write.postAction, config: SCAN_PAGE })}
 ` : ''}
 </section>`;
 };

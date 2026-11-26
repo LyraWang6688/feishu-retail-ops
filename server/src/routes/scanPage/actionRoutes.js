@@ -16,7 +16,7 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
     purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage,
     purchaseEntryViolation, purchaseWriteDisabledError, readMultiItemPending, realmOfAction, renderScan,
     resolveRealm, respondFailure, respondSettlementBlock, respondWriteFailure,
-    salesRuntime, scanTargetOf, schedulePurchaseWrite, sellableSizeTexts, sendHuman, sendPaymentStep,
+    salesRuntime, scanTargetOf, schedulePurchaseWrite, sellableSizeTexts, sendHtml, sendHuman, sendPaymentStep,
     service, uiTapResultMiddleware, unknownActionFailure, voucherPayments, withPageSession, writeConfig,
     writeMultiItemPending, writeService, ROUTE_PATTERNS,
   } = ctx;
@@ -278,7 +278,7 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
         return handleSubmitOrderOf({
-          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHuman, sendPaymentStep, service, writeConfig, writeService: scopedWriteService, nextOrderNo: () => salesRuntime.orderNoCache.next(),
+          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHtml, sendHuman, sendPaymentStep, service, writeConfig, writeService: scopedWriteService, nextOrderNo: () => salesRuntime.orderNoCache.next(),
         });
       }
 
@@ -294,7 +294,7 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       //    写库（批次行 + 退货明细 + 扣库存 + 出退货单图）全在既有构件里。
       if (action === actions.purchaseReturn) {
         return handlePurchaseReturnOf({
-          action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed: markRealmUsedForPage, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite: schedulePurchaseWriteForPage, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, parseReturnEntries,
+          action, backTargetFor, body, buildWriteContext, config, fields, invalidateInventorySnapshot, markRealmUsed: markRealmUsedForPage, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite: schedulePurchaseWriteForPage, sendHtml, service, submitMultiItemOrder, writeConfig, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure, parseReturnEntries,
         });
       }
 

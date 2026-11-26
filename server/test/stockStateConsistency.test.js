@@ -94,6 +94,12 @@ const normalize = (text) => String(text).split(SCAN_PAGE.pageBuild).join(PAGE_BU
   // 下架上下文/隐藏字段是 2026-11-24 新增的提交辅助，不属于旧逐字状态快照。
   .replace(/\n[^\n]*data-delist-[^\n]*/g, '')
   .replace(/\n<input type="hidden" name="delist_product_ids"[^\n]*/g, '')
+  // 2026-11-26：下架属性已从表单删净，标签回到单行；历史快照里被剥掉的 `>` 这里补回来。
+  .replace(/(data-sample-candidates="[^"]*")\s*>?\s*\n?/g, '$1\n')
+  // 2026-11-26：表单标签的收尾 `>` 在历史快照里被剥掉过；这里统一按无 `>` 处理（内容判据不变）。
+  .replace(/\n>\n/g, '\n')
+  // ⭐ 2026-11-26：页面快照（卖完下架确认用）也是每次渲染都会带的值，不进逐字快照。
+  .replace(/\n<input type="hidden" name="stock_snapshot"[^\n]*/g, '')
   // 2026-11-26：草稿 currentForm 的隐藏字段 / 空态提示 / 保存按钮启用，属于草稿交互，不进旧视觉快照。
   .replace(/\n<input type="hidden" name="draft_[^"]*"[^\n]*/g, '')
   .replace(/ data-draft-empty="[^"]*"/g, '')

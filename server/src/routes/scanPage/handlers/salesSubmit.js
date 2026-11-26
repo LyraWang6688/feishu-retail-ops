@@ -8,6 +8,21 @@ const { resolveSaleSubmitPlan } = require('../../../services/scanWrite/saleSubmi
 const { enqueueSaleAsync, salePrintProductsOf } = require('../../../services/scanWrite/saleAsyncSubmit');
 const { SAMPLE_PROMOTION } = require('../../../config/samplePromotion');
 const { sellableCountOf } = require('../../../views/scanPageRealm');
+const { soldOutCandidates, saleItemsOf } = require('../../../services/stockDelistCandidates');
+const { STOCK_DELIST } = require('../../../config/stockDelist');
+
+/**
+ * ⭐ 2026-11-26（卖完下架确认）：本次提交用的库存快照。
+ * 口径（业务负责人定稿）：**不重新读库存** —— 用页面渲染时带回来的 `stock_snapshot`；
+ * 老页面 / 快照缺失时才退化为提交时 lookup 的数字，并如实打一条 warn（可观测，不静默）。
+ */
+const snapshotOfSubmit = ({ body, field, view, requestId, logWarn }) => {
+  const fromBody = Number(body?.[field]);
+  if (Number.isFinite(fromBody) && fromBody >= 0) return fromBody;
+  const fallback = stockTotalOfView(view);
+  logWarn('scan.delist.snapshot_missing', { request_id: requestId, value: fromBody, fallback });
+  return fallback;
+};
 
 /** 本单总库存（所有非未知尺码的可卖数之和）；资金页下架候选依赖这个值。 */
 const stockTotalOfView = (view) => (Array.isArray(view?.rows) ? view.rows : [])
@@ -20,7 +35,7 @@ const stockTotalOfView = (view) => (Array.isArray(view?.rows) ? view.rows : [])
  */
 
 async function handleSubmitOrder(ctx) {
-  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHuman, sendPaymentStep, service, writeConfig, writeService } = ctx;
+  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHtml, sendHuman, sendPaymentStep, service, writeConfig, writeService } = ctx;
         // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
         //    + ②**「付款情况」三档**（整单：全付（默认）/ 部分付 / 未付）
         //    + ③多笔收款（同名重复 ⇒ 两个数组按下标对齐）+ 「部分付」的实付多少。
@@ -157,6 +172,47 @@ return sendPaymentStep(res, req, {
           String(line?.product_record_id || '') === currentProductId
           && String(line?.size || '') === currentSize
         ));
+        // ⭐ 2026-11-26（卖完下架确认）：先按「页面快照 − 本单数量」判断，再决定是否落行。
+        //   判据在共用纯函数里（销售/退货同一份）；这里只负责凑两样东西：快照 + 本单数量。
+        const delistConfirmed = String(body[fields.delistConfirmed] || '').trim() === '1';
+        const delistDecision = String(body.delist_decision || '').trim();
+        const pickField = fields.delistPick || 'delist_pick';
+        const pickedRaw = body[pickField];
+        const pickedIds = (Array.isArray(pickedRaw) ? pickedRaw : String(pickedRaw || '').split(','))
+          .map((id) => String(id || '').trim()).filter(Boolean);
+        const submitSnapshot = submitView?.found
+          ? snapshotOfSubmit({ body, field: fields.stockSnapshot, view: submitView, requestId, logWarn })
+          : null;
+        const delistIds = delistConfirmed && delistDecision !== 'skip' ? pickedIds : [];
+        if (!delistConfirmed && submitView?.found && currentSize && STOCK_DELIST.prompts.saleSubmit) {
+          const items = saleItemsOf({
+            lines: finalLines,
+            current: { productRecordId: currentProductId, snapshotCount: submitSnapshot },
+            alreadyInDraft,
+          });
+          const candidates = soldOutCandidates(items).map((candidate) => ({
+            ...candidate,
+            number: candidate.productRecordId === currentProductId
+              ? String(submitView.number || '')
+              : String((finalLines.find((line) => String(line?.product_record_id || '') === candidate.productRecordId) || {}).number || ''),
+            selected: STOCK_DELIST.confirm.defaultSelected !== false,
+          }));
+          if (candidates.length) {
+            const confirmWrite = await buildWriteContext(req, submitView, 'sales', {
+              // 二次提交 = 原 body 原样回显（渲染层负责），确认层只多两个字段：
+              // delist_confirmed=1 + 勾中的 delist_pick。
+              delistConfirm: { candidates: candidates.slice(0, STOCK_DELIST.confirm.maxRows), body },
+            });
+            if (confirmWrite) {
+              logInfo('scan.sale.delist_confirm.shown', {
+                request_id: requestId, candidate_count: candidates.length,
+                product_ids: candidates.map((item) => item.productRecordId).join(','),
+              });
+              const html = renderScan(submitView, config, confirmWrite, 'sales', { userAgent: req.headers['user-agent'] });
+              return sendHtml(res, 200, html);
+            }
+          }
+        }
         if (!alreadyInDraft && submitView?.found && currentSize) {
           const inStock = sellableSizeTexts(submitView).has(currentSize);
           const added = await writeService.sessions.addLine(openId, {
@@ -168,7 +224,8 @@ return sendPaymentStep(res, req, {
             size: Number(currentSize),
             trade_type_code: salesTradeTypeForStock({ inStock }),
             amount: currentAmount,
-            stock_total: stockTotalOfView(submitView),
+            // ⭐ 2026-11-26：存**页面快照**（不是提交时重新 lookup 的数）—— 资金页/退货也要用同一份。
+            stock_total: Number.isFinite(submitSnapshot) ? submitSnapshot : stockTotalOfView(submitView),
             gift: String(body[fields.gift] ?? '').trim(),
             sample_promotion_size: String(body[SAMPLE_PROMOTION.field] || '').trim(),
             added_at: new Date().toISOString(),
@@ -283,6 +340,8 @@ return sendPaymentStep(res, req, {
             tapId: String(tapIdFromRequest(req).tap_id || ''),
             printProducts: salePrintProductsOf(finalLines),
             requestId,
+            // ⭐ 2026-11-26：0 元直达也要把货品页确认的下架意图带上（原来这里漏传 ⇒ 直接被丢弃）。
+            delistProductIds: delistIds,
           });
           if (!outcome.ok) {
             return sendHuman(res, outcome.status || 500, {
@@ -303,6 +362,8 @@ return sendPaymentStep(res, req, {
           submitKey: body[fields.submitKey],
           count: finalLines.length,
           lines: finalLines,
+          // ⭐ 2026-11-26：货品页已确认要下架的 recordId —— 带到资金页表单，付款提交时一起落意图。
+          delistProductIds: delistIds,
           // ⭐ 2026-10-17 E（她逐字：「资金页要显示**总金额**」）：
           //   总金额 = 本单各行成交金额之和（**加完当前这一双之后的 finalLines**，不另算一份钱 ✗）。
           //   拿不到（全空 / 非数字）⇒ 空串 ⇒ 页面不渲染那一行（不编 ✓）。
