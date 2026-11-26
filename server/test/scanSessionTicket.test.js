@@ -110,7 +110,7 @@ test('AC-TK6 ⭐ 端到端：无 cookie、只带票 ⇒ 兑换 ⇒ **两连请�
     assert.ok(cookie.startsWith('workbench_session='));
     for (const round of [1, 2]) {
       // eslint-disable-next-line no-await-in-loop
-      const page = await get(base, path, { cookie });
+      const page = await get(base, `${path}?from=inventory`, { cookie });
       // eslint-disable-next-line no-await-in-loop
       const html = await page.text();
       assert.equal(page.status, 200, `第 ${round} 次带同一 cookie 应 200（不再被弹 ✗）`);

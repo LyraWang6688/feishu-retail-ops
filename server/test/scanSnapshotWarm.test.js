@@ -87,6 +87,8 @@ test('AC-W5 ⭐ 骨架只服务「首次进入」：判据在配置 + 路由真�
   assert.equal(SCAN_PAGE.skeleton.firstEntryOnly, true, '缺省就该是"只首次进入"✓（显式布尔 ✓）');
   assert.match(route, /firstEntryOnly === true/, '路由必须读这个配置（不许写死 ✗）');
   assert.match(route, /hasRealmQuery/, '要按 `?from=` 判"是不是六格切换"');
-  assert.match(route, /config\.skeleton\?\.enabled === true[\s\S]{0,200}!?\(skeletonFirstEntryOnly && hasRealmQuery\)/,
+  assert.match(route, /String\(req\.query\?\.data \|\| ''\) !== '1'[\s\S]{0,200}skeletonFirstEntryOnly && hasRealmQuery/,
     '带 `?from=` 时**不许**出骨架 ✗');
+  assert.equal(/skeleton\?\.enabled/.test(route), false,
+    '2026-11-26 开关已删除（钉住"塞回即红"）');
 });

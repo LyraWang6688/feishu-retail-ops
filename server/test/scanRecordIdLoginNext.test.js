@@ -113,7 +113,7 @@ test('AC-RN4 ⭐ 登录后回到 `/r/<记录ID>` ⇒ **真的渲染那一款**�
   login_();
   lookups.length = 0;
   await withServer(buildApp(), async (base) => {
-    const response = await fetch(`${base}${SCAN_PAGE.route.recordBasePath}/${RECORD_ID}`, {
+    const response = await fetch(`${base}${SCAN_PAGE.route.recordBasePath}/${RECORD_ID}?from=inventory`, {
       headers: { cookie: cookieFor() },
     });
     const html = await response.text();
