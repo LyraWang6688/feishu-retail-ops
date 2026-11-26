@@ -10,11 +10,12 @@ const task = {
   plan: [{ product_record_id: 'p1', item_no: '888-1', color: '茶褐色', size: 38, quantity: 2, actual: 1 }],
 };
 
-const harness = ({ mapping = [{ message_id: 'om_root', chat_id: 'oc_chat' }], write = null } = {}) => {
+const harness = ({ mapping = [{ message_id: 'om_root', chat_id: 'oc_chat' }], write = null, mention = false } = {}) => {
   const calls = [];
   const store = { get: async () => ({ acceptance_document: {} }), update: async (_id, patch) => { calls.push(['mark', patch]); } };
   const webhooks = {
     store,
+    mentionOperatorText: (openId, text) => (mention && openId ? `<at>${openId}</at>${text}` : text),
     writeSupplierImageAttachment: async (input) => {
       calls.push(['write', input]);
       return write || { written: true, record_id: 'batch1', file_name: '信踏-验收单.png' };
@@ -45,6 +46,16 @@ test('验收单：先追加我方单据 → 发原话题 → 同步云盘', asyn
   assert.equal(h.calls[1][1], 'oc_chat');
   assert.equal(h.calls[1][4].inThread, true);
   assert.equal(h.calls[4][1].batchNo, task.batch_no);
+});
+
+test('验收单：完成文字 @ 具体操作人', async () => {
+  const h = harness({ mention: true });
+  const result = await h.service.deliver({
+    batchNo: task.batch_no, batchRecordId: 'batch1', taskId: 'task1', task, supplierName: '信踏', operatorOpenId: 'ou_operator',
+  });
+  assert.equal(result.ok, true);
+  const textCall = h.calls.find((call) => call[0] === 'text');
+  assert.match(textCall[2], /^<at>ou_operator<\/at>/);
 });
 
 test('验收单：没有话题映射时只追加并同步，不发群', async () => {

@@ -34,7 +34,7 @@ const createAcceptanceDocumentService = ({
   if (!batchLocator) throw new Error('acceptanceDocumentService requires batchLocator');
 
   const deliver = async ({
-    batchNo = '', batchRecordId = '', taskId = '', task = null, supplierName = '', correlation = {},
+    batchNo = '', batchRecordId = '', taskId = '', task = null, supplierName = '', operatorOpenId = '', correlation = {},
   } = {}) => {
     const wantedNo = String(batchNo || task?.batch_no || '').trim();
     if (!wantedNo) return { ok: false, reason: 'no_batch_no' };
@@ -78,11 +78,15 @@ const createAcceptanceDocumentService = ({
       ? await purchaseWebhooks.store.get(taskId).catch(() => null) : null;
     if (root && current?.acceptance_document?.sent !== true) {
       const totals = summarize(rows);
-      const text = LAYOUT.labels.completion
+      const completionText = LAYOUT.labels.completion
         .replace('{batchNo}', wantedNo)
         .replace('{expected}', totals.expected)
         .replace('{actual}', totals.actual)
         .replace('{extra}', totals.extra);
+      // 验收单也要 @ 具体操作人（与采购单同一条口径）；没有 open_id 时只发正文，不 @所有人。
+      const text = typeof purchaseWebhooks.mentionOperatorText === 'function'
+        ? purchaseWebhooks.mentionOperatorText(operatorOpenId, completionText)
+        : completionText;
       try {
         await purchaseWebhooks.sendImage(root.chat_id, png, 'chat_id', {
           replyToMessageId: root.message_id, inThread: true,
@@ -145,7 +149,9 @@ const createAcceptanceDocumentService = ({
       const supplierName = task?.supplier_record_id && typeof purchaseWebhooks.resolveSupplierName === 'function'
         ? await purchaseWebhooks.resolveSupplierName(task.supplier_record_id).catch(() => '') : '';
       const result = await deliver({
-        batchNo, batchRecordId, taskId, task, supplierName, correlation,
+        batchNo, batchRecordId, taskId, task, supplierName,
+        operatorOpenId: String(task?.operator_open_id || task?.accepted_by_open_id || '').trim(),
+        correlation,
       });
       if (!result.ok) {
         logWarn('purchase.acceptance_document.sync_skipped', {
