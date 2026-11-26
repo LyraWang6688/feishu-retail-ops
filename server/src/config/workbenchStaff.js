@@ -11,6 +11,7 @@ const STAFF_TEXTS = Object.freeze({
   roleForbidden: '当前角色没有这个操作权限',
   staffMissing: '花名册里没有这个人员',
   staffInactive: '该人员已离职',
+  staffNotAttending: '该人员未开启考勤',
   badRange: '日期范围不对',
   badTime: '开始/结束时间不对',
   badRole: '角色不存在',

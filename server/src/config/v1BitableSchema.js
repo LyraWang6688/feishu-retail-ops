@@ -145,7 +145,7 @@ const V1_BITABLE_SCHEMA = {
     },
     productGroup: { tableName: '货品组', tableId: getEnv('FEISHU_V1_PRODUCT_GROUP_TABLE_ID'), fields: { name: '货品组', products: '关联货品', price: '单价', color: '颜色', recordId: '记录ID' } },
     accessoryCategory: { tableName: '其他配品种类', tableId: getEnv('FEISHU_V1_ACCESSORY_CATEGORY_TABLE_ID'), fields: { name: '种类' } },
-    staff: { tableName: '花名册', tableId: getEnv('FEISHU_V1_STAFF_TABLE_ID'), fields: { name: '姓名', role: '角色', active: '在职' } }, staffRole: { tableName: '角色管理', tableId: getEnv('FEISHU_V1_STAFF_ROLE_TABLE_ID'), fields: { name: '角色', note: '权限说明' } }, attendance: { tableName: '考勤记录', tableId: getEnv('FEISHU_V1_ATTENDANCE_TABLE_ID'), fields: { date: '出勤日', hours: '工时', startAt: '开始时间', endAt: '结束时间', staff: '姓名', staffUser: '考勤人' } },
+    staff: { tableName: '花名册', tableId: getEnv('FEISHU_V1_STAFF_TABLE_ID'), fields: { name: '姓名', role: '角色', active: '在职', attendance: '是否考勤' } }, staffRole: { tableName: '角色管理', tableId: getEnv('FEISHU_V1_STAFF_ROLE_TABLE_ID'), fields: { name: '角色', note: '权限说明' } }, attendance: { tableName: '考勤记录', tableId: getEnv('FEISHU_V1_ATTENDANCE_TABLE_ID'), fields: { date: '出勤日', hours: '工时', startAt: '开始时间', endAt: '结束时间', staff: '姓名', staffUser: '考勤人' } },
     accessorySale: {
       tableName: '配品销售',
       tableId: getEnv('FEISHU_V1_ACCESSORY_SALE_TABLE_ID'),
