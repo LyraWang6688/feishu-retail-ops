@@ -18,7 +18,7 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
     const requestId = req.requestId;
     // ⚠️ 领域来自查询串（她给的参数名就是 `from`）；认不出来一律回落缺省，**不报错**。
     //    ⭐ 2026-10-11：六个领域（销售 · 补货 · 退货 · 验收 · 库存 · 货品）都是**真领域**，
-    //      统一走 `resolveRealm` 就够；已退役的 `purchase` 认不出来 ⇒ 回落销售（既有口径）。
+    //      统一走 `resolveRealm` 就够；已退役的 `purchase` 认不出来 ⇒ 回落缺省（库存）。
     //    ⚠️ `explicit` 区分"**裸扫**（一个 `from` 都没有，标签二维码就是这样）"与
     //      "她**点**了某个领域 tab（链接一定带 `?from=`）" —— 下面验收接管只对**裸扫**生效，
     //      这样"她点销售/库存…就能离开验收"才真的成立（`?from=sales` 不能被接管）。
@@ -26,9 +26,9 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
     const explicitRealm = askedRaw !== '';
     let realm = resolveRealm(askedRaw);
     // ⭐ task-58：**这一页的领域是怎么来的**（只为那条 `scan.page.rendered` 日志，不参与任何判定 ✗）：
-    //   `explicit`   —— URL 上带了 `?from=`（她点的那个 tab）
-    //   `remembered` —— 裸扫 + 她最近一次做过写操作的领域（下面那一支）
-    //   `default`    —— 裸扫且从没记过 ⇒ 缺省（销售）
+    //   `explicit` —— URL 上带了 `?from=`（工作台各领域入口 / 303 回跳）
+    //   `default`  —— 裸扫（不带 `?from=`）⇒ 缺省领域（库存）
+    //   （`remembered` 已于 2026-10-18 退场：不再按"上次用过的领域"记忆）
     let realmSource = explicitRealm ? 'explicit' : 'default';
     // 打开销售草稿：把快照灌回本页会话；资金页草稿保留 paymentStep 让她回到资金页。
     const draftId = String(req.query?.draft || '').trim();
@@ -380,7 +380,7 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
       //   在日志里一眼分得开 ✓（改前两条都只打 `scan.page.viewed`，长得一模一样 ✗）
       logRendered(req, {
         page: 'goods',
-        // `realm:<领域>:<explicit|remembered|default>` —— 说得出"这一页是哪个领域、怎么来的"
+        // `realm:<领域>:<explicit|default>` —— 说得出"这一页是哪个领域、怎么来的"
         trigger: `realm:${realm}:${realmSource}`,
         number: String(view.number || lookupInputOf(req).recordId || ''),
       });

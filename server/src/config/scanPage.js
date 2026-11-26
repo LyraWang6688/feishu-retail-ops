@@ -557,7 +557,7 @@ const EVENTS = Object.freeze({
   //   这一条补上"**到底渲染了哪一页 + 哪条条件命中**"（**只加日志，零判定改动** ✗）。
   //   字段：`page`（skeleton | pay | goods | success | not_found | bad_number | failed）·
   //        `trigger`（`skeleton_first_entry` / `pending_mark:lines|order|status_not_submitted` /
-  //        `realm:<领域>:<explicit|remembered|default>` / `write_ok` / `lookup_not_found` …）·
+  //        `realm:<领域>:<explicit|default>` / `write_ok` / `lookup_not_found` …）·
   //        `query_keys`（**只字段名** ✗ 不记值）· `number`。
   rendered: 'scan.page.rendered',
   // ⭐⭐ 2026-10-16（task-60 · 业务负责人**当日亲口选的方案 ②**，逐字）：
@@ -814,10 +814,11 @@ const SCAN_PAGE = Object.freeze({
   // ⭐⭐ 2026-10-15（业务负责人逐字，Lead 转达确认）：
   //   「第一个卡片包含：销售、补货、库存、退货，以及一个"继续扫下一个"的卡片，那么
   //    **我希望我们的排序可以改下，库存、销售、补货、退货、扫一扫**。默认还是销售页。」
-  //   ⇒ ① **显示顺序进配置**（改前逐字 = 渲染顺序就是 `scanPageRealm.js` 里 REALMS 的声明顺序
-  //        `销售 · 补货 · 库存 · 退货`；改后逐字 = 下面 `order`：**库存 · 销售 · 补货 · 退货**）
+  //   ⇒ ① **显示顺序进配置**（下面 `order`：**库存 · 销售 · 补货 · 退货**）
   //      ⚠️ `scanPageRealm.js` 只管「**有哪些领域**」（成员唯一真源），显示顺序是**视图参数** ⇒ 放这里 ✓
-  //      ⚠️ 默认领域**一个字没动**（仍是销售，`DEFAULT_REALM`）—— 她：「默认还是销售页」✓
+  //      ⚠️ 2026-10-27 起扫码页**不再渲染这一排领域条**（按领域入口扫，见 `scanPageRealm.js`）——
+  //        这份 order 只留作历史/兜底，不在页面上出现。
+  //      ⚠️ 缺省领域已于 **2026-10-27 改为「库存」**（`DEFAULT_REALM`）；她那句"默认还是销售页"是当时口径。
   //   ⇒ ② 那一格「扫一扫」= 原来独占一行的【继续扫下一个】AppLink ⇒ 做成条上**第 5 格** ✓
   //      文案**新键**（与领域名等长、一排好看；改文案只改配置 ✓）——
   //      ⚠️ 「继续扫下一个」那句**留在本单条**给**非飞书**设备（电脑上没有第 5 格 ⇒ 必须有人话 ✗ 不许死按钮）
