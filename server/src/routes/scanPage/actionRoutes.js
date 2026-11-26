@@ -35,14 +35,22 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       const step = String(body.draft_step || body.step || 'goods').trim() === 'payment' ? 'payment' : 'goods';
       let accessoryRows = [];
       try { accessoryRows = JSON.parse(String(body.draft_accessory_rows || '[]')); } catch (error) { accessoryRows = []; }
+      const rawLineAmounts = body[fields.lineAmount];
+      const lineAmounts = Array.isArray(rawLineAmounts)
+        ? rawLineAmounts
+        : (rawLineAmounts === undefined ? [] : [rawLineAmounts]);
+      // 资金页保存前她可能刚改过每件实收：快照以表单值为准，不只是会话里的旧值。
+      const snapshotLines = lines.map((line, index) => (
+        lineAmounts[index] === undefined ? line : { ...line, amount: lineAmounts[index] }
+      ));
       const snapshot = {
         product_record_id: first.product_record_id || '',
         number: first.number || '',
         item_no: first.item_no || '',
         color: first.color || '',
-        lines: JSON.parse(JSON.stringify(lines)),
+        lines: JSON.parse(JSON.stringify(snapshotLines)),
         payment: step === 'payment' ? {
-          lineAmounts: body[fields.lineAmount],
+          lineAmounts,
           paymentRows: (Array.isArray(body[fields.paymentMethod]) ? body[fields.paymentMethod] : [body[fields.paymentMethod] || ''])
             .map((method, index) => ({
               method: String(method || ''),

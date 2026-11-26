@@ -414,6 +414,7 @@ const createScanSessionService = (options = {}) => {
    */
   const completeSale = async (openId, { key, result }) => {
     const session = await ensure(openId);
+    const draftId = String(session?.sale?.draft_id || '').trim();
     // ⭐⭐ 2026-10-15（⑨b-2）：同上 —— **在 store 的锁内、基于最新记录**合成，
     //   不再拿锁外那份旧快照整份写回（那正是"标记被冲回 pending"的根因 ✓）。
     const next = await store.update(session[sessionConfig.idField], (current) => {
@@ -428,6 +429,8 @@ const createScanSessionService = (options = {}) => {
           seq: (sale.seq || 1) + 1,
           status: sessionConfig.statuses.submitted,
           lines: [],
+          // 这一单已提交 ⇒ 草稿已消费；不要在草稿箱里留一份可再次提交的副本。
+          draft_id: '',
           master_record_id: '',
           order_no: '',
           detail_ids: [],
@@ -437,6 +440,15 @@ const createScanSessionService = (options = {}) => {
         },
       };
     });
+    // 销售成功后才删草稿；失败路径保留草稿，用户还能回来接着改。
+    if (draftId) {
+      try {
+        const { getSalesDraftService } = require('./salesDraftRuntime');
+        await getSalesDraftService().remove({ openId: String(next?.open_id || session?.open_id || ''), draftId });
+      } catch (error) {
+        // 草稿删除失败不影响销售事实；下次列表仍会按 TTL 清理。
+      }
+    }
     return next;
   };
 

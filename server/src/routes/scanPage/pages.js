@@ -32,22 +32,28 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
     let realmSource = explicitRealm ? 'explicit' : 'default';
     // 打开销售草稿：把快照灌回本页会话；资金页草稿保留 paymentStep 让她回到资金页。
     const draftId = String(req.query?.draft || '').trim();
+    let draftOpened = false;
     if (draftId && realm === 'sales' && writeService?.sessions) {
       try {
         const { getSalesDraftService } = require('../../services/salesDraftRuntime');
         const draft = await getSalesDraftService().get({ openId: openIdOf(req), draftId });
         if (draft && Array.isArray(draft.lines) && draft.lines.length) {
           const session = await writeService.sessions.ensure(sessionIdOf(req));
+          const draftLineAmounts = Array.isArray(draft.payment?.lineAmounts) ? draft.payment.lineAmounts : [];
+          const draftLines = draft.lines.map((line, index) => (
+            draftLineAmounts[index] === undefined ? line : { ...line, amount: draftLineAmounts[index] }
+          ));
           await writeService.sessions.store.update(session.session_id, (current) => ({
             sale: {
               ...(current?.sale || {}),
-              lines: draft.lines,
+              lines: draftLines,
               status: 'draft',
               paymentStep: draft.step === 'payment' ? 'pending' : undefined,
               draft_payment: draft.step === 'payment' ? (draft.payment || {}) : undefined,
               draft_id: draftId,
             },
           }));
+          draftOpened = true;
         }
       } catch (error) {
         logWarn('scan.sales_draft.open_failed', { request_id: requestId, draft_id: draftId, error: String(error?.message || error).slice(0, 200) });
@@ -126,7 +132,8 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
        *     那条治"有 pending 但**没东西要付**"（2026-10-15 的 #598/#601）；这条治"**她主动重扫**"。
        */
       const explicitSalesScan = String(req.query?.from || '') === 'sales';
-      if (pendingMark === 'pending' && explicitSalesScan) {
+      // 打开草稿是“回到她保存前那一页”，不是“重扫销售”；不能清掉草稿刚写入的 paymentStep。
+      if (pendingMark === 'pending' && explicitSalesScan && !draftOpened) {
         const hadSubmitPending = Boolean(pendingSession?.sale?.submitPending);
         let reset = false;
         try {
@@ -195,6 +202,13 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
               submitKey: writeService?.sessions?.submitKeyFor?.(sessionIdOf(req), pendingSession, 'sale') || '',
               count: pendingLines.length,
               lines: pendingLines,
+              // 资金页草稿：总金额也从她保存前那份明细恢复（不重新猜）。
+              totalAmountText: (() => {
+                const cents = (Array.isArray(pendingLines) ? pendingLines : []).reduce(
+                  (sum, line) => sum + Math.round(Number(String(line?.amount ?? '').trim() || 0) * 100), 0,
+                );
+                return cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '';
+              })(),
               paymentRows: Array.isArray(pendingSession?.sale?.draft_payment?.paymentRows)
                 ? pendingSession.sale.draft_payment.paymentRows : undefined,
               gift: pendingSession?.sale?.draft_payment?.gift || '',

@@ -36,3 +36,19 @@ test('销售草稿接口：保存 / 列表 / 打开 / 删除', async () => {
   assert.equal(calls[0][1].openId, 'ou_a');
   assert.equal(calls[0][1].step, 'payment');
 });
+
+test('销售草稿删除是幂等的：目标已不在也返回成功', async () => {
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => { req.workbenchUser = { open_id: 'ou_a' }; next(); });
+  app.use('/api/workbench', createWorkbenchSalesDraftRoutes({
+    options: { salesDraft: { remove: async () => false, get: async () => null, list: async () => [], save: async () => ({ ok: false }) } },
+  }));
+  await withServer(app, async (base) => {
+    const response = await fetch(base + '/api/workbench/sales/drafts/gone', { method: 'DELETE' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.success, true);
+    assert.equal(body.removed, false);
+  });
+});
