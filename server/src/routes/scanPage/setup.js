@@ -319,11 +319,10 @@ const createScanPageSetup = ({ options, deps }) => {
     return {
       realm,
       origin,
-      // ⭐ 2026-10-17（假配置接线）：A 套真正读登记表的两个行为参数
+      // ⭐ 2026-10-17（假配置接线）：A 套真正读登记表的行为参数
       //   · returnsToRealm=false ⇒ 扫完不追加/回跳不带 `from=<领域>`
-      //   · keepDraft=false     ⇒ 扫完回来先清旧草稿（"不带之前的数据"）
+      //   （keepDraft 已于 2026-11-26 随"扫完自动清草稿"一起退场）
       returnsToRealm: realmEntryParams(realm, realmScanConfig).returnsToRealm !== false,
-      keepDraft: realmEntryParams(realm, realmScanConfig).keepDraft !== false,
       appendRealm: realmEntryParams(realm, realmScanConfig).returnsToRealm !== false,
       realmQueryKey: realmScanConfig.realmQueryKey,
       recordBasePath: realmScanConfig.recordBasePath,
@@ -446,11 +445,9 @@ const createScanPageSetup = ({ options, deps }) => {
    *   只放**已加的** —— 当前这一件是表单里那个**首件** ✓。否则提交时 `addItem` 会拿草稿里
    *   那份旧 `entries` 覆盖她**刚填的** = **静默丢值** ✗（她最恨的那种假成功）。
    */
-  /**
-   * ⭐ 2026-10-17（假配置接线）：扫完回来若 `keepDraft=false` ⇒ **先清掉这一领域的旧草稿**
-   *   （她定义的"不带之前的数据"）。默认 `true`（三处都带草稿）⇒ 线上行为与改前逐字节相同 ✓。
-   *   🔴 失败**不影响页面渲染**（只记 warn）—— 清草稿是"体验修正"，不是业务写入。
-   */
+  // ⛔ 2026-11-26（业务负责人选 B）：「扫完回来若 keepDraft=false ⇒ 先清旧草稿」整块退场。
+  //   她确认这个开关从没用过（所有入口都保留草稿）⇒ 功能与配置一起删除，
+  //   页面行为零变化；以后要恢复需重新实现（不要只翻一个开关）。
 
   /**
    * ⭐⭐ 「一单多货品」**提交**（**只有分组 > 1 才会进来**）—— 拒单 ⇒ 人话 + **零写入** ✓。

@@ -306,7 +306,6 @@ const EVENTS = Object.freeze([
   'scan.data.filter_fallback',
   'scan.data.filtered_empty',
   'scan.data.limit_exceeded',
-  'scan.entry.keep_draft_clear_failed',
   'scan.launch',
   'scan.lookup.timing',
   'scan.multi_item.add',

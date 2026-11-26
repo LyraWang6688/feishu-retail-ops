@@ -8,7 +8,8 @@
  *      有 `workbenchScanEntry.test.js` 钉着逐字相等 ✓）；
  *   · `test/scanFivePlaces.test.js` 的 **AC-5S3** 会把这两份**逐字对比**（改一边忘另一边 ⇒ 红 ✓）。
  *
- * ⚠️ 本文件**不写死任何行为**：C 套只从这里取**已经登记好的那两个参数**（`returnsToRealm` / `keepDraft`）
+ * ⚠️ 本文件**不写死任何行为**：C 套只从这里取**已经登记好的参数**（`returnsToRealm`；
+ *   `keepDraft` 已于 2026-11-26 随"扫完自动清草稿"退场）
  *   与文案 ⇒ 页面上**没有**"这一处要不要带草稿"的判断（判断在登记表里 ✓）。
  */
 
@@ -25,7 +26,6 @@ export const SCAN_PLACES = freeze([
     mechanism: MECHANISMS.jsapi,
     mode: MODES.standalone,
     returnsToRealm: false,
-    keepDraft: false,
   }),
   freeze({
     id: 'realm-bar',
@@ -34,7 +34,6 @@ export const SCAN_PLACES = freeze([
     mechanism: MECHANISMS.applink,
     mode: MODES.standalone,
     returnsToRealm: false,
-    keepDraft: false,
   }),
   freeze({
     id: 'workbench-scan',
@@ -43,7 +42,6 @@ export const SCAN_PLACES = freeze([
     mechanism: MECHANISMS.applink,
     mode: MODES.standalone,
     returnsToRealm: false,
-    keepDraft: false,
   }),
   freeze({
     id: 'sales-add',
@@ -52,7 +50,6 @@ export const SCAN_PLACES = freeze([
     mechanism: MECHANISMS.jsapi,
     mode: MODES.withinRealm,
     returnsToRealm: true,
-    keepDraft: true,
   }),
   freeze({
     id: 'replenish-add',
@@ -61,7 +58,6 @@ export const SCAN_PLACES = freeze([
     mechanism: MECHANISMS.jsapi,
     mode: MODES.withinRealm,
     returnsToRealm: true,
-    keepDraft: true,
   }),
   freeze({
     id: 'purchase-return-add',
@@ -70,7 +66,6 @@ export const SCAN_PLACES = freeze([
     mechanism: MECHANISMS.jsapi,
     mode: MODES.withinRealm,
     returnsToRealm: true,
-    keepDraft: true,
   }),
 ]);
 

@@ -1,12 +1,13 @@
 'use strict';
 
 /**
- * ⭐⭐ 2026-10-17（业务负责人选的方案 A）：把"五处扫一扫"登记表里两个**只登记、没接线**的参数
+ * ⭐⭐ 2026-10-17（业务负责人选的方案 A）：把"五处扫一扫"登记表里**只登记、没接线**的参数
  *   变成**真配置** —— 改配置即改行为：
  *     · `returnsToRealm=false` ⇒ 扫完**不回**本领域（地址 / 303 回跳都不带 `from=<领域>`）
- *     · `keepDraft=false`     ⇒ 扫完回来**不带之前的数据**（先清该领域旧草稿）
  *   ＋ 领域条第 5 格文案收敛成**单真源**（`scanEntries.texts.realmBarLabel`）。
  * ⚠️ 默认三个领域都是 `true` ⇒ 线上行为与改前**逐字节相同**（`salesRealmScan` 的 508,287 字节尺子仍绿）。
+ * ⛔ 2026-11-26（业务负责人选 B）：`keepDraft` / `clearDraftForScanIfNeeded` 整块退场
+ *   —— 下面用**反向哨兵**钉住"不许塞回来"。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -29,12 +30,12 @@ test('领域条第 5 格文案：唯一真源 = 五处登记表（scanPage 不�
   assert.match(scanPage, /SCAN_ENTRIES/, 'scanPage 必须从登记表取文案');
 });
 
-test('三个「再加一单」的 returnsToRealm / keepDraft 来自登记表（默认 true）', () => {
+test('三个「再加一单」的 returnsToRealm 来自登记表（默认 true）', () => {
   for (const realm of ['sales', 'replenish', 'purchase_return']) {
     const place = SCAN_PLACES.find((item) => item.realm === realm);
     assert.ok(place, `登记表里必须有 ${realm} 这一处`);
     assert.equal(realmEntryParams(realm).returnsToRealm, true, `${realm} 默认回本领域`);
-    assert.equal(realmEntryParams(realm).keepDraft, true, `${realm} 默认带草稿`);
+    assert.equal('keepDraft' in realmEntryParams(realm), false, 'keepDraft 已退场（2026-11-26）');
   }
   assert.equal(REALM_SCAN.realmEntries.sales.returnsToRealm, true, '运行期配置也读到了登记表');
 });
@@ -45,7 +46,7 @@ test('改配置即改行为：returnsToRealm=false ⇒ 扫完地址里不带 fro
   assert.ok(keep.includes('from=sales'), '默认（true）⇒ 落点带 from=<领域>');
   const injected = {
     ...REALM_SCAN,
-    realmEntries: { ...REALM_SCAN.realmEntries, sales: { returnsToRealm: false, keepDraft: true } },
+    realmEntries: { ...REALM_SCAN.realmEntries, sales: { returnsToRealm: false } },
   };
   const off = realmScanUrlFor({ scanned: 'rec123', realm: 'sales', origin: 'https://hm.bamamei.online', config: injected });
   assert.equal(off.includes('from='), false, 'returnsToRealm=false ⇒ 地址里不带 from');
@@ -59,8 +60,8 @@ test('A 套 / 客户端都接线了（源码哨兵：塞回"只登记不读"⇒ 
   assert.match(routes, /realmEntryParams\(/, '路由必须读登记参数（不再只看开关）');
   assert.match(routes, /entry\.returnsToRealm === false/, '303 回跳必须按 returnsToRealm 分支');
   assert.match(routes, /withoutRealmQuery\(/, 'returnsToRealm=false 时必须去掉 from=<领域>');
-  assert.match(routes, /clearDraftForScanIfNeeded\(/, 'keepDraft=false 时必须有"清旧草稿"的接线');
-  assert.match(routes, /realmScanTriggered\(req, realm\)\) await clearDraftForScanIfNeeded/, '只在"扫完回来"那一发清草稿');
+  assert.equal(/clearDraftForScanIfNeeded/.test(routes), false,
+    '⛔ 扫完自动清草稿已退场（2026-11-26 业务负责人选 B）—— 塞回即红');
   const client = read('views/scanRealmScan.js');
   assert.match(client, /appendRealm/, '客户端落点必须读 appendRealm');
   for (const relative of ['views/scanPage/paymentBlock.js', 'views/scanPage/multiItemBlock.js']) {

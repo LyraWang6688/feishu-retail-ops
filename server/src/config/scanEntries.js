@@ -10,11 +10,12 @@
  *    （销售 / 补货 / 退货）—— 也是弹二维码，**扫完回到当前领域 ＋ 带着之前的数据**。
  *    ⇒ **本质是一件事**：**点按钮 ⇒ 弹二维码框** ✓ **差别只有两处**：**① 扫完回到哪 ② 带不带之前的数据**」
  *
- * ⇒ 本文件的模型就是她那句：**每一处只登记两个参数** ——
+ * ⇒ 本文件的模型就是她那句：**每一处只登记一个行为参数** ——
  *    · `returnsToRealm`（**扫完回哪**：回当前领域 / 不回）
- *    · `keepDraft`（**带不带之前的数据**：本单草稿）
  *    ＋ 两个实现参数（`mechanism` = 用哪套机制、`mode` = 独立扫 / 领域内扫）**只用来对号入座**，
  *      不用来分叉业务语义 ✗。
+ *    ⛔ 2026-11-26（业务负责人选 B）：`keepDraft`（带不带上一单草稿）随"扫完自动清草稿"
+ *      一起退场 —— 所有入口本来都是"保留"，删掉后行为零变化。
  *
  * 🔴 四条纪律（Lead 2026-10-16 派活逐字）：
  *   ① **不许一个领域一个领域地补** ✗ —— 新入口一律走同一处件、只传上面那两个参数；
@@ -37,7 +38,7 @@ const MODES = Object.freeze({ standalone: 'standalone', withinRealm: 'withinReal
 
 /**
  * 六处登记表（①标签打印 ②扫码页领域条 ③工作台扫一扫 ④销售再加 ⑤补货再加 ⑥退货再加）。
- * ⚠️ 每一行都**必须**写明 `mechanism` / `mode` / `returnsToRealm` / `keepDraft` 四个键
+ * ⚠️ 每一行都**必须**写明 `mechanism` / `mode` / `returnsToRealm` 三个键
  *   —— 少了任何一个，`test/scanFivePlaces.test.js` 会红（"新入口忘了登记参数"）。
  */
 const PLACES = Object.freeze([
@@ -48,7 +49,6 @@ const PLACES = Object.freeze([
     mechanism: MECHANISMS.jsapi,
     mode: MODES.standalone,
     returnsToRealm: false,
-    keepDraft: false,
   }),
   Object.freeze({
     id: 'realm-bar',
@@ -57,7 +57,6 @@ const PLACES = Object.freeze([
     mechanism: MECHANISMS.applink,
     mode: MODES.standalone,
     returnsToRealm: false,
-    keepDraft: false,
   }),
   Object.freeze({
     id: 'workbench-scan',
@@ -66,7 +65,6 @@ const PLACES = Object.freeze([
     mechanism: MECHANISMS.applink,
     mode: MODES.standalone,
     returnsToRealm: false,
-    keepDraft: false,
   }),
   Object.freeze({
     id: 'sales-add',
@@ -75,7 +73,6 @@ const PLACES = Object.freeze([
     mechanism: MECHANISMS.jsapi,
     mode: MODES.withinRealm,
     returnsToRealm: true,
-    keepDraft: true,
   }),
   Object.freeze({
     id: 'replenish-add',
@@ -84,7 +81,6 @@ const PLACES = Object.freeze([
     mechanism: MECHANISMS.jsapi,
     mode: MODES.withinRealm,
     returnsToRealm: true,
-    keepDraft: true,
   }),
   Object.freeze({
     id: 'purchase-return-add',
@@ -93,7 +89,6 @@ const PLACES = Object.freeze([
     mechanism: MECHANISMS.jsapi,
     mode: MODES.withinRealm,
     returnsToRealm: true,
-    keepDraft: true,
   }),
 ]);
 
@@ -153,8 +148,6 @@ const resolveScanEntriesConfig = (env = process.env, base = SCAN_ENTRIES) => ({
   },
   places: base.places.map((place) => ({
     ...place,
-    // 每一处的 `keepDraft` 都可以从 env 显式覆盖（键名由 id 派生 ⇒ 加第六处不用改这里 ✓）。
-    keepDraft: readFlag(env, `SCAN_ENTRY_${place.id.replace(/-/g, '_').toUpperCase()}_KEEP_DRAFT`, place.keepDraft),
     returnsToRealm: readFlag(env, `SCAN_ENTRY_${place.id.replace(/-/g, '_').toUpperCase()}_RETURNS_TO_REALM`, place.returnsToRealm),
   })),
 });
