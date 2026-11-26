@@ -39,7 +39,7 @@ const staffCardHtml = (member, records, canWrite, canManage, roles, editing) => 
   const isAdmin = member.roleName === T.roleAdmin;
   const roleField = canManage
     ? (isAdmin
-      ? '<select class="staff-role-select" data-staff-role data-record-id="' + escapeHtml(member.recordId) + '">' + roleOptions + '</select>'
+      ? ''
       : '<label class="staff-active"><input type="checkbox" data-staff-active data-record-id="' + escapeHtml(member.recordId) + '"' + (member.active ? ' checked' : '') + '> ' + escapeHtml(T.active) + '</label>')
     : '<span class="staff-badge">' + escapeHtml(member.roleName || '-') + '</span>'
       + '<span class="staff-badge' + (member.active ? '' : ' muted') + '">' + escapeHtml(member.active ? T.active : T.inactive) + '</span>';
