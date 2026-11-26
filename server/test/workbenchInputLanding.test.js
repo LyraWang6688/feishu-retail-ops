@@ -101,6 +101,16 @@ const CHAINS = Object.freeze({
       ['accessory', 'cost'], ['accessory', 'stockQuantity'], ['accessory', 'isGift']],
   },
 
+  'T.api.attendance': {
+    fe: 'features/domains/staff.js', feKey: 'api.post(T.api.attendance',
+    route: 'src/routes/workbench/staff.js', routeKey: /router\.post\('\/attendance'/,
+    service: 'src/routes/workbench/staff.js', serviceKey: /gateway\.create\('attendance'/,
+    landing: [
+      ['attendance', 'date'], ['attendance', 'startAt'], ['attendance', 'endAt'],
+      ['attendance', 'hours'], ['attendance', 'staff'], ['attendance', 'staffUser'],
+    ],
+  },
+
   'API.categories': {
     fe: 'features/domains/accessoryConfig.js', feKey: 'api.post(API.categories',
     route: 'src/routes/workbench/accessoryConfig.js', routeKey: /router\.post\('\/products\/accessories\/categories'/,

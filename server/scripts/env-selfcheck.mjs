@@ -86,9 +86,9 @@ export const parseTableEnvVars = (source) => {
   let current = null;
   let sawTableName = false;
   for (const line of String(source || '').split('\n')) {
-    // 单行表登记也能解析（2026-11-25：「其他配品种类」为控制 schema 行数写成一行）。
-    const inline = line.match(/^ {4}([A-Za-z][A-Za-z0-9]*):\s*\{\s*tableName:\s*'[^']*'.*?tableId:\s*getEnv\('([A-Z0-9_]+)'/);
-    if (inline) { out.set(inline[1], inline[2]); current = null; sawTableName = false; continue; }
+    // 单行表登记也能解析（2026-11-25；2026-11-26 支持一行多张表）。
+    const inline = [...line.matchAll(/([A-Za-z][A-Za-z0-9]*):\s*\{\s*tableName:\s*'[^']*'[^}]*?tableId:\s*getEnv\('([A-Z0-9_]+)'/g)];
+    if (inline.length) { for (const match of inline) out.set(match[1], match[2]); current = null; sawTableName = false; continue; }
     const open = line.match(/^ {4}([A-Za-z][A-Za-z0-9]*):\s*\{\s*$/);
     if (open) { current = open[1]; sawTableName = false; continue; }
     if (/^ {4}\},?\s*$/.test(line)) { current = null; sawTableName = false; continue; }

@@ -35,6 +35,9 @@ const CONFIG_TABLES = Object.freeze({
   accessory: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '其他配品明细' }),
   // 「其他配品种类」字典表：配品配置页「管理种类」的唯一数据源（2026-11-25）。
   accessoryCategory: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '其他配品种类' }),
+  // 2026-11-26：花名册 + 角色管理是全工作台统一的人员/角色来源（考勤等板块共用）。
+  staff: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '花名册' }),
+  staffRole: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '角色管理' }),
   // 不是独立 Base 表：只缓存「其他配品」里 赠品=true 的候选（资金页赠品下拉）。
   giftAccessory: Object.freeze({ ttlMs: CONFIG_TTL_MS, label: '其他配品（赠品候选）' }),
   // 「产品特点配置」三个标签字典表（2026-11-14 登记；走 configTableCache 的 TTL/lastGood/失效）。

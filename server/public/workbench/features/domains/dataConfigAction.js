@@ -13,6 +13,7 @@ import { api } from '../../core/api-client.js';
 import { DATA_CONFIG_API, DATA_CONFIG_TEXTS } from '../../config/dataConfig.js';
 import { showToast } from '../shared/toast.js';
 import { openProductFeatureConfig } from './productFeatureConfig.js';
+import { openStaffPanel } from './staff.js';
 
 const fill = (template, values = {}) => String(template || '')
   .replace(/\{(\w+)\}/g, (match, key) => (values[key] === undefined || values[key] === null ? '' : String(values[key])));
@@ -61,6 +62,10 @@ export function bindDomainAction(host) {
     }
     if (event.target.closest?.('[data-domain-action="product-feature-config"]')) {
       openProductFeatureConfig(host);
+      return;
+    }
+    if (event.target.closest?.('[data-domain-action="staff-attendance"]')) {
+      openStaffPanel(host);
       return;
     }
     const voucherButton = event.target.closest?.('[data-domain-action="voucher-catalog-sync"]');
