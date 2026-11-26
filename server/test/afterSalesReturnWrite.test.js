@@ -202,6 +202,25 @@ test('AC-RW2b 鞋类总额扣到 0 为止，不写负数', async () => {
   assert.equal(state.entry.fields.鞋类总额, 0);
 });
 
+test('AC-RW7 ⭐ 0 元退货：只退货，不建退款/留存行，总额不变（2026-11-26）', async () => {
+  const { service, state, inventory } = buildService();
+  state.detail.fields.实收金额 = '0';
+  // 0 元单前端只提交「货款留存」（不进入钱选项）；后端也不要求退款方式。
+  const result = await service.execute(payloadOf({ moneyMode: 'retained', paymentMethod: '' }));
+
+  assert.equal(state.detail.fields.履约状态, '已退货', '货照退');
+  assert.equal(inventory.calls.length, 1, '库存照加 1');
+  assert.equal(
+    state.calls.create.filter((item) => item.key === 'paymentRecord').length,
+    0,
+    '0 元单不建任何交易明细',
+  );
+  assert.equal(state.entry.fields.售后次数, 2, '主表售后次数照 +1');
+  assert.equal(state.entry.fields.鞋类总额, 500, '总额不变（没有金额可扣）');
+  assert.equal(result.money, null);
+  assert.equal(result.moneySkipped, true);
+});
+
 test('AC-RW3 幂等：同一 requestId 重放 ⇒ 零新增写入（返回上次结果）', async () => {
   const { service, state } = buildService();
   const payload = payloadOf();

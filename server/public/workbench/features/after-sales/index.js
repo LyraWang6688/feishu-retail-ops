@@ -241,13 +241,14 @@ export function mountAfterSalesPage(container, options = {}) {
           <input type="hidden" name="detailRecordId" value="${escapeHtml(item.sales_detail_record_id || '')}">
           <input type="hidden" name="productRecordId" value="${escapeHtml(productRecordId)}">
           <input type="hidden" name="moneyMode" value="${escapeHtml(modal.moneyMode || '')}">
-          <div class="as-modal-line as-modal-field">
+          <p class="as-modal-note" data-as-zero-note${modal.zeroAmount ? '' : ' style="display:none"'}>${escapeHtml(AFTER_SALES_PAGE.zeroAmountNotice)}</p>
+          <div class="as-modal-line as-modal-field"${modal.zeroAmount ? ' style="display:none"' : ''}>
             <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.returnModeLabel)}">
               <button class="as-segment${modal.moneyMode === 'refund' ? ' active' : ''}" type="button" data-as-money-mode="refund">${escapeHtml(AFTER_SALES_PAGE.returnRefund)}</button>
               <button class="as-segment${modal.moneyMode === 'retained' ? ' active' : ''}" type="button" data-as-money-mode="retained">${escapeHtml(AFTER_SALES_PAGE.returnRetain)}</button>
             </div>
           </div>
-          ${modal.moneyMode === 'refund' ? `
+          ${modal.moneyMode === 'refund' && !modal.zeroAmount ? `
           <div class="as-modal-line as-modal-field">
             <span class="as-modal-label">${escapeHtml(AFTER_SALES_PAGE.returnMethodLabel)}</span>
             <select class="as-modal-select" name="paymentMethod" data-as-method>
@@ -255,9 +256,9 @@ export function mountAfterSalesPage(container, options = {}) {
               ${methodOptions}
             </select>
           </div>` : ''}
-          <button class="btn btn-primary as-submit" type="submit"${paymentMethodsError ? ' disabled' : ''}>${escapeHtml(AFTER_SALES_PAGE.confirm)}</button>
+          <button class="btn btn-primary as-submit" type="submit"${!modal.zeroAmount && paymentMethodsError ? ' disabled' : ''}>${escapeHtml(AFTER_SALES_PAGE.confirm)}</button>
         </form>`;
-      void loadPaymentMethods();
+      if (!modal.zeroAmount) void loadPaymentMethods();
     } else {
       host.innerHTML = `
         <form class="as-exchange-form" method="post" action="${escapeHtml(apiBase + AFTER_SALES_PAGE.exchangeSubmitApi)}" data-as-exchange-form>
@@ -283,9 +284,11 @@ export function mountAfterSalesPage(container, options = {}) {
 
   const openModal = (action) => {
     if (!selectedCandidate()) return;
+    // 2026-11-26：0 元单（赠送 / 补发 / 调换）只退货，不进入「钱怎么走」。
+    const zeroAmount = Number(selectedCandidate()?.actual_amount || 0) === 0;
     modal = action === 'return'
       ? {
-        action: 'return', moneyMode: '', method: '',
+        action: 'return', moneyMode: zeroAmount ? 'retained' : '', zeroAmount, method: '',
         requestId: (globalThis.crypto?.randomUUID?.() || '').toString(),
       }
       : {
@@ -297,7 +300,7 @@ export function mountAfterSalesPage(container, options = {}) {
     renderModal();
     const node = modalNode();
     if (node) node.hidden = false;
-    if (action === 'return') void loadPaymentMethods();
+    if (action === 'return' && !zeroAmount) void loadPaymentMethods();
   };
 
   const closeModal = () => {

@@ -137,6 +137,15 @@ test('AC-AS-UX 售后页：提交时显示「正在提交…」；viewport 禁�
  * 根因：确认按钮的 click 冒泡进老的原型处理（closeModal + toast「信息提交成功」）截胡，
  * 原生表单提交没发生。判据：提交按钮必须被显式放行（交给浏览器 submit）。
  */
+test('AC-AS-ZERO 0 元单退货：不渲染「钱怎么走」，提示只退不退款', () => {
+  const root = path.join(__dirname, '../public/workbench');
+  const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
+  const config = fs.readFileSync(path.join(root, 'config/afterSalesPage.js'), 'utf8');
+  assert.match(config, /zeroAmountNotice/, '0 元单要有单独提示文案');
+  assert.ok(page.includes('modal.zeroAmount'), '按候选金额判断是否显示钱选项');
+  assert.ok(page.includes('data-as-zero-note'), '0 元提示挂在弹窗里');
+});
+
 test('AC-AS-SUBMIT 换货确认按钮必须走原生表单提交（不能被点击处理截胡）', () => {
   const root = path.join(__dirname, '../public/workbench');
   const page = fs.readFileSync(path.join(root, 'features/after-sales/index.js'), 'utf8');
