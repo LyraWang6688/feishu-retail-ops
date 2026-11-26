@@ -36,9 +36,11 @@ const formHtml = (editing) => '<form class="staff-form" data-staff-form data-sta
 
 const staffCardHtml = (member, records, canWrite, canManage, roles, editing) => {
   const roleOptions = roles.map((role) => '<option value="' + escapeHtml(role.recordId) + '"' + (role.name === member.roleName ? ' selected' : '') + '>' + escapeHtml(role.name) + '</option>').join('');
+  const isAdmin = member.roleName === T.roleAdmin;
   const roleField = canManage
-    ? '<select class="staff-role-select" data-staff-role data-record-id="' + escapeHtml(member.recordId) + '">' + roleOptions + '</select>'
-      + '<label class="staff-active"><input type="checkbox" data-staff-active data-record-id="' + escapeHtml(member.recordId) + '"' + (member.active ? ' checked' : '') + '> ' + escapeHtml(T.active) + '</label>'
+    ? (isAdmin
+      ? '<select class="staff-role-select" data-staff-role data-record-id="' + escapeHtml(member.recordId) + '">' + roleOptions + '</select>'
+      : '<label class="staff-active"><input type="checkbox" data-staff-active data-record-id="' + escapeHtml(member.recordId) + '"' + (member.active ? ' checked' : '') + '> ' + escapeHtml(T.active) + '</label>')
     : '<span class="staff-badge">' + escapeHtml(member.roleName || '-') + '</span>'
       + '<span class="staff-badge' + (member.active ? '' : ' muted') + '">' + escapeHtml(member.active ? T.active : T.inactive) + '</span>';
   const addButton = canWrite && member.active
@@ -69,7 +71,6 @@ const panelHtml = (state) => {
     )).join('')
     : '<p class="staff-empty">' + escapeHtml(T.emptyStaff) + '</p>';
   return '<div class="staff-head"><h2>' + escapeHtml(T.title) + '</h2><span class="staff-badge">' + escapeHtml(state.actor.role || '') + '</span></div>'
-    + '<p class="staff-note">' + escapeHtml(T.subtitle) + '</p>'
     + '<div class="staff-filters">'
     + '<label>' + escapeHtml(T.from) + '<input type="date" data-staff-from value="' + escapeHtml(state.from) + '"></label>'
     + '<label>' + escapeHtml(T.to) + '<input type="date" data-staff-to value="' + escapeHtml(state.to) + '"></label>'
