@@ -21,6 +21,8 @@ const { InventoryService } = require('./inventoryService');
 const { V1ReferenceResolver, relation } = require('./v1ReferenceResolver');
 const { personPatch } = require('./personFieldService');
 const { nextId, stateFor } = require('./salesRecordIds');
+const { AFTER_SALES_SETTLEMENT } = require('../config/afterSalesSettlement');
+const { planReturnSettlement } = require('./afterSalesSettlementPlan');
 const { createPaymentMethodsService } = require('./paymentMethodsService');
 const { AFTER_SALES_DERIVED } = require('../config/afterSalesDerived');
 const { logInfo, logWarn } = require('../utils/logger');
@@ -142,9 +144,27 @@ class AfterSalesReturnService {
       if (hit.refundable === false) throw badRequest(this.texts.methodNotRefundable);
       method = hit;
     }
+    // 2026-11-26：按「原单实际收款」决定退货的钱怎么走（配置化，见 afterSalesSettlement）。
+    const paymentFields = this.gateway.table('paymentRecord').fields;
+    const paymentState = await stateFor({
+      gateway: this.gateway, tableKey: 'paymentRecord',
+      entryIds: [salesEntryRecordId], idField: paymentFields.receiptId,
+    });
+    const statusOf = (row) => textValue(row?.fields?.[paymentFields.status]).trim();
+    const amountOf = (row) => numberOrNull(row?.fields?.[paymentFields.amount]) || 0;
+    const paidAmount = (paymentState.rows || [])
+      .filter((row) => AFTER_SALES_SETTLEMENT.statuses.paid.includes(statusOf(row)))
+      .reduce((sum, row) => sum + amountOf(row), 0);
+    const unpaidRows = (paymentState.rows || [])
+      .filter((row) => AFTER_SALES_SETTLEMENT.statuses.unpaid.includes(statusOf(row)));
+    const unpaidAmount = unpaidRows.reduce((sum, row) => sum + amountOf(row), 0);
+    const salesDetailsField = this.gateway.table('salesEntry').readOnlyFields?.salesDetails?.name || '销售明细';
+    const detailCount = salesLinkRecordIds(entry.fields?.[salesDetailsField]).length || 1;
+
     return {
       requestId, salesEntryRecordId, orderNo, detailRecordId, moneyMode, paymentMethod, method,
       amount, productRecordId, size, fulfillmentStatus,
+      paymentState, paidAmount, unpaidRows, unpaidAmount, detailCount,
     };
   }
 
@@ -157,6 +177,12 @@ class AfterSalesReturnService {
     if (progress?.status === 'completed' && progress.result) return progress.result;
 
     const prepared = await this.prepare(payload);
+    const settlement = planReturnSettlement({
+      detailAmount: prepared.amount,
+      paidAmount: prepared.paidAmount,
+      unpaidAmount: prepared.unpaidAmount,
+      detailCount: prepared.detailCount,
+    });
     const save = (patch) => this.store.update(storeId, patch);
     if (!progress) {
       progress = await this.store.create({ request_id: storeId, status: 'preparing', payload });
@@ -194,8 +220,8 @@ class AfterSalesReturnService {
 
     // ③ 钱：新建一条 S交易明细（退款 / 留存）
     let money = progress.money || null;
-    // 2026-11-26：0 元单只退货，不建退款 / 留存行。
-    if (prepared.amount > 0 && !money?.payment_record_id) {
+    // 按结算计划：未收款 / 0 元单不建退款 / 留存行；部分收款只退已收部分。
+    if (settlement.createRefund && !money?.payment_record_id) {
       const paymentFields = this.gateway.table('paymentRecord').fields;
       const read = await stateFor({
         gateway: this.gateway, tableKey: 'paymentRecord',
@@ -214,7 +240,7 @@ class AfterSalesReturnService {
           ...(receiptId ? { receiptId } : {}),
           ...(isRefund && prepared.method ? { method: relation(prepared.method.recordId) } : {}),
           ...(isRefund ? { tradeDirection: AFTER_SALES_DERIVED.money.refundDirection } : {}),
-          amount: prepared.amount,
+          amount: settlement.refundAmount,
           status: AFTER_SALES_DERIVED.money.statusByMode[kind],
           receivedAt: this.now(),
         }, { correlation: options.correlation });
@@ -225,9 +251,31 @@ class AfterSalesReturnService {
         receipt_id: receiptId,
         kind,
         status: AFTER_SALES_DERIVED.money.statusByMode[kind],
-        amount: prepared.amount,
+        amount: settlement.refundAmount,
       };
       await save({ status: 'money_recorded', money });
+    }
+
+    // ⑤ 冲销未收款（未收 / 部分收；配置化：金额改 0 或删除）
+    let writeOff = progress.write_off || null;
+    if (!writeOff && settlement.writeOffAmount > 0 && prepared.unpaidRows.length) {
+      const paymentFields = this.gateway.table('paymentRecord').fields;
+      const row = prepared.unpaidRows[0];
+      const before = numberOrNull(row.fields?.[paymentFields.amount]) || 0;
+      const after = Math.max(0, before - settlement.writeOffAmount);
+      const remove = settlement.writeOffMode === 'delete' && after === 0;
+      if (remove) {
+        await this.gateway.delete('paymentRecord', row.record_id, { correlation: options.correlation });
+      } else {
+        await this.gateway.update('paymentRecord', row.record_id, { amount: after }, { correlation: options.correlation });
+      }
+      writeOff = {
+        mode: remove ? 'delete' : 'zero',
+        recordId: row.record_id,
+        before,
+        after,
+      };
+      await save({ status: 'unpaid_written_off', write_off: writeOff });
     }
 
     // ④ 原销售主表：售后类型多选累加 + 售后次数 +1（幂等：已经加过就跳过）
@@ -281,7 +329,9 @@ class AfterSalesReturnService {
       orderNo: prepared.orderNo,
       detailRecordId: prepared.detailRecordId,
       moneyMode: prepared.moneyMode,
-      moneySkipped: prepared.amount <= 0,
+      moneySkipped: !settlement.createRefund,
+      settlement,
+      writeOff,
       money,
       stock,
       master,
@@ -293,7 +343,10 @@ class AfterSalesReturnService {
       sales_entry_record_id: prepared.salesEntryRecordId,
       order_no: prepared.orderNo,
       detail_record_id: prepared.detailRecordId,
-      money_mode: prepared.amount > 0 ? prepared.moneyMode : 'zero_amount_skipped',
+      money_mode: settlement.createRefund ? prepared.moneyMode : 'settlement_skipped',
+      settlement_rule: settlement.rule,
+      refund_amount: settlement.refundAmount,
+      write_off_amount: settlement.writeOffAmount,
       payment_record_id: money?.payment_record_id || '',
       receipt_id: money?.receipt_id || '',
       payment_status: money?.status || '',

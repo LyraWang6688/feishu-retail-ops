@@ -219,6 +219,52 @@ test('AC-RW7 ⭐ 0 元退货：只退货，不建退款/留存行，总额不变
   assert.equal(state.entry.fields.鞋类总额, 500, '总额不变（没有金额可扣）');
   assert.equal(result.money, null);
   assert.equal(result.moneySkipped, true);
+  assert.equal(result.settlement.rule, 'zero_amount');
+});
+
+test('AC-RW8 ⭐ 未收款退货：不退款，未收款行冲销为 0（2026-11-26）', async () => {
+  const { service, state } = buildService();
+  state.payments[0].fields['钱款状态'] = '未收款';
+  const result = await service.execute(payloadOf({ moneyMode: 'retained', paymentMethod: '' }));
+
+  assert.equal(state.calls.create.filter((item) => item.key === 'paymentRecord').length, 0, '不建退款行');
+  const writeOff = state.calls.update.find((item) => item.key === 'paymentRecord');
+  assert.ok(writeOff, '要有冲销写入');
+  assert.equal(writeOff.recordId, 'pay_1');
+  assert.equal(writeOff.fields['交易金额'], 0, '未收款行金额改 0');
+  assert.equal(result.money, null);
+  assert.equal(result.settlement.rule, 'unpaid');
+  assert.equal(result.writeOff.after, 0);
+});
+
+test('AC-RW9 ⭐ 部分收款退货：只退已收部分，差额冲销（单明细）', async () => {
+  const { service, state } = buildService();
+  state.payments = [
+    { record_id: 'pay_1', fields: { 关联销售单: [{ record_ids: [ENTRY] }], 交易明细ID: `${ORDER_NO}-收款-01`, 交易金额: 100, 钱款状态: '已收款' } },
+    { record_id: 'pay_2', fields: { 关联销售单: [{ record_ids: [ENTRY] }], 交易明细ID: `${ORDER_NO}-收款-02`, 交易金额: 80, 钱款状态: '未收款' } },
+  ];
+  const result = await service.execute(payloadOf());
+
+  const created = state.calls.create.find((item) => item.key === 'paymentRecord');
+  assert.equal(created.fields['交易金额'], 100, '只退已收的 100');
+  const writeOff = state.calls.update.find((item) => item.key === 'paymentRecord');
+  assert.equal(writeOff.recordId, 'pay_2');
+  assert.equal(writeOff.fields['交易金额'], 0, '差额 80 冲销到 0');
+  assert.equal(result.settlement.rule, 'partial');
+});
+
+test('AC-RW10 ⭐ 部分收款 + 多明细：不冲销其他明细的未收款', async () => {
+  const { service, state } = buildService();
+  state.entry.fields['销售明细'] = [{ record_ids: ['detail_1', 'detail_2'] }];
+  state.payments = [
+    { record_id: 'pay_1', fields: { 关联销售单: [{ record_ids: [ENTRY] }], 交易明细ID: `${ORDER_NO}-收款-01`, 交易金额: 100, 钱款状态: '已收款' } },
+    { record_id: 'pay_2', fields: { 关联销售单: [{ record_ids: [ENTRY] }], 交易明细ID: `${ORDER_NO}-收款-02`, 交易金额: 80, 钱款状态: '未收款' } },
+  ];
+  const result = await service.execute(payloadOf());
+
+  assert.equal(state.calls.update.filter((item) => item.key === 'paymentRecord').length, 0, '多明细不动未收款');
+  assert.equal(result.settlement.writeOffAmount, 0);
+  assert.equal(result.settlement.refundAmount, 100);
 });
 
 test('AC-RW3 幂等：同一 requestId 重放 ⇒ 零新增写入（返回上次结果）', async () => {

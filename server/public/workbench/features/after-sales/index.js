@@ -234,6 +234,9 @@ export function mountAfterSalesPage(container, options = {}) {
       const methodOptions = paymentMethodsError
         ? `<option value="">${escapeHtml(AFTER_SALES_PAGE.paymentMethodsFailed)}</option>`
         : optionsHtml(paymentMethods || [], modal.method);
+      const partialNoticeText = String(AFTER_SALES_PAGE.partialNotice)
+        .replace('{paid}', String(modal.settlement?.paidAmount ?? 0))
+        .replace('{refund}', String(modal.settlement?.refundAmount ?? 0));
       host.innerHTML = `
         <form class="as-return-form" method="post" action="${escapeHtml(apiBase + AFTER_SALES_PAGE.submitApi)}" data-as-return-form>
           <input type="hidden" name="requestId" value="${escapeHtml(modal.requestId || '')}">
@@ -242,13 +245,15 @@ export function mountAfterSalesPage(container, options = {}) {
           <input type="hidden" name="productRecordId" value="${escapeHtml(productRecordId)}">
           <input type="hidden" name="moneyMode" value="${escapeHtml(modal.moneyMode || '')}">
           <p class="as-modal-note" data-as-zero-note${modal.zeroAmount ? '' : ' style="display:none"'}>${escapeHtml(AFTER_SALES_PAGE.zeroAmountNotice)}</p>
-          <div class="as-modal-line as-modal-field"${modal.zeroAmount ? ' style="display:none"' : ''}>
+          <p class="as-modal-note" data-as-unpaid-note${modal.unpaid ? '' : ' style="display:none"'}>${escapeHtml(AFTER_SALES_PAGE.unpaidNotice)}</p>
+          <p class="as-modal-note" data-as-partial-note${modal.partial ? '' : ' style="display:none"'}>${escapeHtml(partialNoticeText)}</p>
+          <div class="as-modal-line as-modal-field"${modal.hideMoney ? ' style="display:none"' : ''}>
             <div class="as-segmented" role="group" aria-label="${escapeHtml(AFTER_SALES_PAGE.returnModeLabel)}">
               <button class="as-segment${modal.moneyMode === 'refund' ? ' active' : ''}" type="button" data-as-money-mode="refund">${escapeHtml(AFTER_SALES_PAGE.returnRefund)}</button>
               <button class="as-segment${modal.moneyMode === 'retained' ? ' active' : ''}" type="button" data-as-money-mode="retained">${escapeHtml(AFTER_SALES_PAGE.returnRetain)}</button>
             </div>
           </div>
-          ${modal.moneyMode === 'refund' && !modal.zeroAmount ? `
+          ${modal.moneyMode === 'refund' && !modal.hideMoney ? `
           <div class="as-modal-line as-modal-field">
             <span class="as-modal-label">${escapeHtml(AFTER_SALES_PAGE.returnMethodLabel)}</span>
             <select class="as-modal-select" name="paymentMethod" data-as-method>
@@ -256,9 +261,9 @@ export function mountAfterSalesPage(container, options = {}) {
               ${methodOptions}
             </select>
           </div>` : ''}
-          <button class="btn btn-primary as-submit" type="submit"${!modal.zeroAmount && paymentMethodsError ? ' disabled' : ''}>${escapeHtml(AFTER_SALES_PAGE.confirm)}</button>
+          <button class="btn btn-primary as-submit" type="submit"${!modal.hideMoney && paymentMethodsError ? ' disabled' : ''}>${escapeHtml(AFTER_SALES_PAGE.confirm)}</button>
         </form>`;
-      if (!modal.zeroAmount) void loadPaymentMethods();
+      if (!modal.hideMoney) void loadPaymentMethods();
     } else {
       host.innerHTML = `
         <form class="as-exchange-form" method="post" action="${escapeHtml(apiBase + AFTER_SALES_PAGE.exchangeSubmitApi)}" data-as-exchange-form>
@@ -284,11 +289,17 @@ export function mountAfterSalesPage(container, options = {}) {
 
   const openModal = (action) => {
     if (!selectedCandidate()) return;
-    // 2026-11-26：0 元单（赠送 / 补发 / 调换）只退货，不进入「钱怎么走」。
-    const zeroAmount = Number(selectedCandidate()?.actual_amount || 0) === 0;
+    // 2026-11-26：按候选的结算预览决定「钱怎么走」——0 元 / 未收款只退货，不进入钱选项。
+    const candidate = selectedCandidate();
+    const settlement = candidate?.settlement || null;
+    const zeroAmount = Number(candidate?.actual_amount || 0) === 0;
+    const unpaid = settlement?.rule === 'unpaid';
+    const partial = settlement?.rule === 'partial';
+    const hideMoney = zeroAmount || unpaid;
     modal = action === 'return'
       ? {
-        action: 'return', moneyMode: zeroAmount ? 'retained' : '', zeroAmount, method: '',
+        action: 'return', moneyMode: hideMoney ? 'retained' : '', zeroAmount, settlement,
+        unpaid, partial, hideMoney, method: '',
         requestId: (globalThis.crypto?.randomUUID?.() || '').toString(),
       }
       : {
