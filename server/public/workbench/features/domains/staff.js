@@ -34,15 +34,7 @@ const formHtml = (editing) => '<form class="staff-form" data-staff-form data-sta
   + '<button class="btn small" type="button" data-staff-cancel>' + escapeHtml(T.cancel) + '</button>'
   + '</form>';
 
-const staffCardHtml = (member, records, canWrite, canManage, roles, editing) => {
-  const roleOptions = roles.map((role) => '<option value="' + escapeHtml(role.recordId) + '"' + (role.name === member.roleName ? ' selected' : '') + '>' + escapeHtml(role.name) + '</option>').join('');
-  const isAdmin = member.roleName === T.roleAdmin;
-  const roleField = canManage
-    ? (isAdmin
-      ? ''
-      : '<label class="staff-active"><input type="checkbox" data-staff-active data-record-id="' + escapeHtml(member.recordId) + '"' + (member.active ? ' checked' : '') + '> ' + escapeHtml(T.active) + '</label>')
-    : '<span class="staff-badge">' + escapeHtml(member.roleName || '-') + '</span>'
-      + '<span class="staff-badge' + (member.active ? '' : ' muted') + '">' + escapeHtml(member.active ? T.active : T.inactive) + '</span>';
+const staffCardHtml = (member, records, canWrite, editing) => {
   const addButton = canWrite && member.active
     ? '<button class="btn small primary" type="button" data-staff-add="' + escapeHtml(member.recordId) + '">' + escapeHtml(T.add) + '</button>'
     : '';
@@ -51,7 +43,7 @@ const staffCardHtml = (member, records, canWrite, canManage, roles, editing) => 
     : '<p class="staff-empty">' + escapeHtml(T.emptyAttendance) + '</p>';
   const form = editing && editing.staffRecordId === member.recordId ? formHtml(editing) : '';
   return '<section class="staff-card" data-staff-card="' + escapeHtml(member.recordId) + '">'
-    + '<div class="staff-card-head"><b>' + escapeHtml(member.name || '-') + '</b>' + roleField + addButton + '</div>'
+    + '<div class="staff-card-head"><b>' + escapeHtml(member.name || '-') + '</b>' + addButton + '</div>'
     + '<div class="staff-records">' + rows + '</div>'
     + form
     + '</section>';
@@ -59,14 +51,11 @@ const staffCardHtml = (member, records, canWrite, canManage, roles, editing) => 
 
 const panelHtml = (state) => {
   const canWrite = (state.actor.permissions || []).includes('attendance.write');
-  const canManage = (state.actor.permissions || []).includes('staff.write');
   const cards = state.staff.length
     ? state.staff.map((member) => staffCardHtml(
       member,
       state.attendance.filter((item) => item.staffRecordId === member.recordId),
       canWrite,
-      canManage,
-      state.roles,
       state.editing,
     )).join('')
     : '<p class="staff-empty">' + escapeHtml(T.emptyStaff) + '</p>';
@@ -184,28 +173,7 @@ export function openStaffPanel(host) {
     const fromInput = event.target.closest?.('[data-staff-from]');
     const toInput = event.target.closest?.('[data-staff-to]');
     if (fromInput) { state.from = String(fromInput.value || state.from); await load(); return; }
-    if (toInput) { state.to = String(toInput.value || state.to); await load(); return; }
-    const roleSelect = event.target.closest?.('[data-staff-role]');
-    if (roleSelect) {
-      try {
-        await api.patch(T.api.roster + '/' + encodeURIComponent(roleSelect.dataset.recordId), { roleRecordId: roleSelect.value });
-        showToast(T.roleSaved);
-        await load();
-      } catch (error) {
-        showErrorToast(T.saveFailed);
-      }
-      return;
-    }
-    const activeBox = event.target.closest?.('[data-staff-active]');
-    if (activeBox) {
-      try {
-        await api.patch(T.api.roster + '/' + encodeURIComponent(activeBox.dataset.recordId), { active: activeBox.checked });
-        showToast(T.activeSaved);
-        await load();
-      } catch (error) {
-        showErrorToast(T.saveFailed);
-      }
-    }
+    if (toInput) { state.to = String(toInput.value || state.to); await load(); }
   });
 
   void load();
