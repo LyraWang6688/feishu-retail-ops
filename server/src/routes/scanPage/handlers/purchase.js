@@ -7,7 +7,7 @@ const { STOCK_DELIST } = require('../../../config/stockDelist');
 const { sellableCountOf } = require('../../../views/scanPageRealm');
 
 /** 本款库存记录数（与销售侧同一个口径：门盒/样品/空状态都算记录）。 */
-const stockTotalOfView = (view) => (Array.isArray(view?.rows) ? view.rows : [])
+const returnStockTotalOfView = (view) => (Array.isArray(view?.rows) ? view.rows : [])
   .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
   .reduce((sum, row) => sum + Number(sellableCountOf(row, view.columns) || 0), 0);
 
@@ -199,7 +199,7 @@ async function handlePurchaseReturn(ctx) {
           } else {
             const qty = entries.reduce((sum, entry) => sum + (Number(entry?.quantity) || 0), 0);
             const fromBody = Number(body[fields.stockSnapshot]);
-            const snapshot = Number.isFinite(fromBody) ? fromBody : stockTotalOfView(view);
+            const snapshot = Number.isFinite(fromBody) ? fromBody : returnStockTotalOfView(view);
             if (view.product_record_id) {
               items.push({ productRecordId: String(view.product_record_id), snapshotCount: snapshot, qty });
             }
