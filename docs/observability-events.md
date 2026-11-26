@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **543** 个事件。按前缀分组：
+共 **555** 个事件。按前缀分组：
 
 ## accessory
 
@@ -29,6 +29,13 @@
 | `async_job.start.done` | 1 | src/services/asyncJobRuntime.js |
 | `async_job.start.failed` | 2 | src/app.js<br>src/services/asyncJobRuntime.js |
 | `async_job.stop.failed` | 1 | src/services/asyncJobRuntime.js |
+
+## attendance
+
+| 事件 | 次数 | 文件 |
+| --- | --- | --- |
+| `attendance.read.all` | 1 | src/config/permissions.js |
+| `attendance.read.self` | 1 | src/config/permissions.js |
 
 ## bitable
 
@@ -721,6 +728,16 @@
 | `workbench.sales.query.failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.query.filter_fallback` | 1 | src/services/salesDeliveryReadService.js |
 | `workbench.size.unresolved` | 1 | src/services/v1WorkbenchService.js |
+| `workbench.staff.attendance.create.failed` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.attendance.created` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.attendance.delete.failed` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.attendance.deleted` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.attendance.list.failed` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.attendance.update.failed` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.attendance.updated` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.list.failed` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.update.failed` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.updated` | 1 | src/routes/workbench/staff.js |
 
 ## write_audit
 

@@ -134,7 +134,7 @@ app.use('/api/label-print', require('./routes/labelPrintDevice').createLabelPrin
 app.use('/print-prompt', require('./routes/printPrompt').createPrintPromptRouter());
 // The workbench uses Feishu web sessions; its query and follow-up endpoints
 // never expose the service credentials to the browser.
-app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter());
+app.use('/api/workbench', require('./routes/workbench').createWorkbenchRouter({ gateway: new V1BitableGateway() }));
 // ⭐ 2026-11-11：`label-print.html` 只允许带 `?scan=1` 的扫码打印入口；
 // 不带参数的旧链接不再渲染空白页（直接 404）。扫描功能本身不变。
 app.get('/workbench/label-print.html', (req, res, next) => {
