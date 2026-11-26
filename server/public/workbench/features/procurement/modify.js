@@ -38,11 +38,32 @@ export const createModifyController = ({ host, config, api, getStore, getDraft, 
         }, entry.size, entry.quantity);
       }
     }
+    // 把“修改的是哪张单”一起存进采购草稿：刷新 / 重开页面后仍能走 /procurement/modify。
+    const context = {
+      batchNo: String(nextBatch.batch_no || ''),
+      submitKey: String(nextBatch.submit_key || nextBatch.submitKey || ''),
+      supplierRecordId: String(nextBatch.supplier_record_id || ''),
+    };
+    next = store.save({ ...next, modify: context });
     batch = nextBatch;
     setDraft(next);
     banner(textOf(config.texts.modifyBanner, { batchNo: nextBatch.batch_no }));
     setButton(config.texts.modifySubmit);
     return { ok: true };
+  };
+
+  /** 页面重新加载后，用草稿里保存的 modify 上下文恢复“正在修改哪张单”。 */
+  const restore = (draft) => {
+    const context = draft?.modify;
+    if (!context || !context.batchNo) return null;
+    batch = {
+      batch_no: String(context.batchNo || ''),
+      submit_key: String(context.submitKey || ''),
+      supplier_record_id: String(context.supplierRecordId || ''),
+    };
+    banner(textOf(config.texts.modifyBanner, { batchNo: batch.batch_no }));
+    setButton(config.texts.modifySubmit);
+    return context;
   };
 
   const clear = () => {
@@ -82,7 +103,7 @@ export const createModifyController = ({ host, config, api, getStore, getDraft, 
   const supplierAllowed = (supplierId) => !batch || String(supplierId || '') === String(batch.supplier_record_id || '');
   const active = () => batch;
 
-  return { start, submit, supplierAllowed, active };
+  return { start, restore, submit, supplierAllowed, active };
 };
 
 const textOf = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (

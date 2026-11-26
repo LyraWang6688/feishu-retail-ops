@@ -189,7 +189,9 @@ export function mountProcurementPage(host) {
     if (!openId) { panelEl('suggested').innerHTML = errorHtml(config.texts.loadFailed, config); return; }
     store = createDraftStore({ openId, config });
     setDraft(await restoreProcurementDraft({ store, api: remote }));
-    submitCtl.renderBottom(host, draft);
+    const restoredModify = modifyCtl.restore(draft);
+    if (restoredModify) state.supplierId = restoredModify.supplierRecordId || '';
+    submitCtl.renderBottom(host, draft, { canClear: !modifyCtl.active() });
     await activate('suggested');
     refresher.startAuto();
   };
