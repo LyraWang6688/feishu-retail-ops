@@ -63,10 +63,20 @@ test('销售页本单条：只报数，不出现任何按钮/链接（尤其没�
   assert.equal(bar.includes('?from=sales'), false, '不许再出现指回销售页的空链接');
 });
 
-test('销售页本单数据照旧逐行显示（删链接不影响数据）', () => {
+test('本单已加的货品：整块在本单条里（标题 + 两行 + 金额），且仍随销售表单提交', () => {
   const html = renderScanPage(VIEW, SCAN_PAGE, WRITE, 'sales', { userAgent: 'Mozilla/5.0 (Macintosh)' });
-  const lineCount = (html.match(/<div class="draft-line">/g) || []).length;
-  assert.equal(lineCount, 2, '两双要在销售表单里逐行显示');
-  assert.match(html, /测试款A/, '第一行货号要在');
-  assert.match(html, /测试款B/, '第二行货号要在');
+  const barStart = html.indexOf('data-view="draft-bar"');
+  const barEnd = html.indexOf('</section>', barStart);
+  const bar = html.slice(barStart, barEnd);
+  const lineCount = (bar.match(/<div class="draft-line">/g) || []).length;
+  assert.equal(lineCount, 2, '两双要在本单条里逐行显示');
+  assert.match(bar, /本单已加的货品/, '块标题跟着一起搬过来');
+  assert.match(bar, /测试款A/, '第一行货号要在');
+  assert.match(bar, /测试款B/, '第二行货号要在');
+  const inputCount = (bar.match(/form="scan-sale-form"/g) || []).length;
+  assert.equal(inputCount, 2, '两行金额输入都要用 form 属性挂回销售表单');
+  assert.ok(html.includes('id="scan-sale-form"'), '销售表单要有同一个 id');
+  const formStart = html.indexOf('id="scan-sale-form"');
+  const form = html.slice(formStart, html.indexOf('</form>', formStart));
+  assert.equal(form.includes('class="draft-line"'), false, '销售表单里不再重复一份（避免双提交）');
 });

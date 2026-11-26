@@ -27,6 +27,10 @@ const optionsHtml = (values, selected) => values
 /** 本单里一行的人话（`货号 · N 码`）。 */
 const draftLineText = (t, line) => fillText(t.draftItem, { itemNo: line.item_no || line.number || '', size: line.size });
 
+// 销售表单的 id：本单行金额输入框现在渲染在**表单外面**（顶部本单条），
+// 靠 HTML5 的 `form` 属性仍随这张表单提交 —— 表单与输入框必须用同一个 id。
+const SALE_FORM_ID = 'scan-sale-form';
+
 /**
  * ⭐⭐ 2026-10-11：**每件实收** —— 提交表单里**一行一双**，行尾一个数字输入框。
  *
@@ -47,10 +51,23 @@ const draftLinesHtml = (write) => {
     const value = line.amount === null || line.amount === undefined ? '' : String(line.amount);
     return `<div class="draft-line">
 <span class="draft-line__text">${escapeHtml(draftLineText(t, line))}</span>
-<input class="draft-line__amount" name="${escapeHtml(fields.lineAmount)}" inputmode="decimal" value="${escapeHtml(value)}" placeholder="${escapeHtml(t.lineAmountPlaceholder)}" aria-label="${escapeHtml(label || '')}">
+<input class="draft-line__amount" form="${SALE_FORM_ID}" name="${escapeHtml(fields.lineAmount)}" inputmode="decimal" value="${escapeHtml(value)}" placeholder="${escapeHtml(t.lineAmountPlaceholder)}" aria-label="${escapeHtml(label || '')}">
 </div>`;
   }).join('\n');
   return `<div class="draft-lines">${rows}</div>`;
+};
+
+/**
+ * 本单已加货品那一块（标题 + 每行金额输入）。
+ *
+ * 2026-11-26（业务负责人）：从销售表单里**整块搬到顶部本单条**（原"空白色块"的位置）。
+ * ⚠️ 输入框带 `form="${SALE_FORM_ID}"` ⇒ 在表单外面也照旧随销售表单提交，金额不会丢。
+ * ⚠️ 空本单 ⇒ 返回空串（那一块不渲染）。
+ */
+const draftLinesBlockHtml = (write) => {
+  const lines = write?.draft?.lines || [];
+  if (!lines.length) return '';
+  return `<h3 class="multi-item__title">${escapeHtml(MULTI_ITEM_RENDER_TEXTS.title)}</h3>\n${draftLinesHtml(write)}`;
 };
 
 /**
@@ -184,6 +201,9 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const alert = String(write.errorText || '').trim()
     ? `<p class="form-alert">${escapeHtml(write.errorText)}</p>`
     : '';
+  // 2026-11-26：本单已加的货品默认在**顶部本单条**（`page.draftLinesOnBar`）；只有本单条
+  // 不展示它时（个别流程/兜底）才退回表单里，保证金额输入永远在页面上、且随本表单提交。
+  const draftLinesInForm = page?.draftLinesOnBar === true ? '' : draftLinesBlockHtml(write);
   // 🔴🔴 2026-10-12（真机丢钱之后**合并**的）：原来这里是**两个 form** ——
   //    上面那个（尺码 + 加货）和下面那个（每件实收 + 付款情况 + 收款行 + 提交）。
   //    本单条还有**第三颗**不带钱的提交按钮 ⇒ 她在销售块填的钱被别的按钮吃掉 ⇒ `payment_count: 0`。
@@ -241,9 +261,6 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const sampleCandidates = (Array.isArray(view?.rows) ? view.rows : [])
     .filter((row) => !row?.unknown_size && Number(row?.total) > 0 && promotableCountOf(row) > 0)
     .map((row) => String(row.size_text));
-  const multiItemTitleHtml = multiItemAdd
-    ? `<h3 class="multi-item__title">${escapeHtml(MULTI_ITEM_RENDER_TEXTS.title)}</h3>\n`
-    : '';
   // 2026-10-29：销售页只有一种加货文案，不随本单是否已有货品变化。
   const addLineLabel = t.addAnotherButton;
   // ══════════════════════════════════════════════════════════════════════════
@@ -291,7 +308,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     : ` data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}"`;
   return `<section class="card">${flowBanner ? `<p class="flow-banner">${escapeHtml(flowBanner)}</p>` : ''}
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
-<form method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-sample-candidates="${escapeHtml(JSON.stringify(sampleCandidates))}"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}
+<form id="${SALE_FORM_ID}" method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-sample-candidates="${escapeHtml(JSON.stringify(sampleCandidates))}"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}
 data-delist-product-id="${delistSaleQty == null ? '' : escapeHtml(String(view?.product_record_id || ''))}"
 data-delist-stock-total="${delistSaleQty == null ? '' : escapeHtml(String(stockTotal))}"
 data-delist-sale-qty="${delistSaleQty == null ? '' : escapeHtml(String(delistSaleQty))}"
@@ -303,7 +320,7 @@ ${samplePromotionHtml()}
 ${sizeInput}
 ${hideAmountInput ? '' : `<div class="form-row"><label>${escapeHtml(t.amountLabel)}</label><input name="${escapeHtml(fields.amount)}" inputmode="decimal" required placeholder="${escapeHtml(t.amountPlaceholder)}"${amountValueAttr}></div>`}
 ${alert}
-${multiItemTitleHtml}${draftLinesHtml(write)}
+${draftLinesInForm}
 ${String(write.errorText || '').trim() ? `${paymentRowsHtml(write)}` : ''}
 <!-- ⭐⭐ 2026-10-13（金额两步走）：整单那一组（档位 / 收款行 / 备注）**整块挪到第 2 步页**
      ⇒ 录入页只留：每双 颜色 · 尺码 · 这一双的金额 ✓（那一组的字段名与标签字面量一个都不许留，否则 AC-2S1/AC-1 会打红） -->
@@ -473,6 +490,8 @@ const GIFT_ROW_STYLE = `/* gift rows: block section; one row = select + quantity
 
 module.exports = {
   buildPaymentRows,
+  draftLinesBlockHtml,
+  SALE_FORM_ID,
   hiddenField,
   pageBuildField,
   paymentRowsHtml,

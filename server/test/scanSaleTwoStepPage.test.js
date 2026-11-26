@@ -35,6 +35,7 @@ process.env.LARK_AGENT_APP_SECRET = process.env.LARK_AGENT_APP_SECRET || 'two_st
 const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { renderScanPage } = require('../src/views/scanPageRenderer');
+const { SALE_FORM_ID } = require('../src/views/scanPage/paymentBlock');
 
 const SERVER = path.join(__dirname, '..');
 const RENDERER_SRC = rendererSource();
@@ -79,17 +80,27 @@ test('AC-2S1 🔴 录入页（第 1 步）**不出现**整单付款字段与付�
   assert.equal(html.includes(`name="${SCAN_WRITE.fields.gift}"`), false, '赠品也挪到第 2 步');
 });
 
-test('AC-2S2 ✅ 每双显示 颜色 · 尺码 · **这一双的成交金额**（现成能力，只补断言）', () => {
+test('AC-2S2 ✅ 每双显示 颜色 · 尺码 · **这一双的成交金额**（2026-11-26 移到顶部本单条）', () => {
   const html = entryHtml();
-  const block = html.slice(html.indexOf('realm-block--sales'));
-  // 这一双的成交金额 = 每行一个输入（`fields.lineAmount`）
-  assert.ok(block.includes(`name="${SCAN_WRITE.fields.lineAmount}"`), '每双一个「这一双的成交金额」输入');
-  assert.ok(block.includes(SCAN_WRITE.texts.lineAmountLabel), `标签 = ${SCAN_WRITE.texts.lineAmountLabel}`);
+  // 2026-11-26（业务负责人）：这一块从销售表单里**整块搬到顶部本单条**（原空白色块位置）。
+  const barStart = html.indexOf('data-view="draft-bar"');
+  const barEnd = html.indexOf('</section>', barStart);
+  const bar = html.slice(barStart, barEnd);
+  // 这一双的成交金额 = 每行一个输入（`fields.lineAmount`），现在在本单条里
+  assert.ok(bar.includes(`name="${SCAN_WRITE.fields.lineAmount}"`), '每双一个「这一双的成交金额」输入（本单条）');
+  assert.ok(bar.includes(SCAN_WRITE.texts.lineAmountLabel), `标签 = ${SCAN_WRITE.texts.lineAmountLabel}`);
+  // 🔴 搬出表单后必须仍随销售表单提交：`form` 指向表单 id
+  assert.ok(bar.includes(`form="${SALE_FORM_ID}"`), '输入框用 form 属性挂回销售表单');
+  assert.ok(html.includes(`id="${SALE_FORM_ID}"`), '销售表单要有同一个 id');
   // 行上要有 颜色 / 尺码 的事实（本单行文案由配置给）
-  const line = block.slice(block.indexOf('draft-line'));
+  const line = bar.slice(bar.indexOf('draft-line'));
   assert.ok(line.includes('棕色') || line.includes('41'), '每行带颜色/尺码事实');
+  // 表单里**不再重复**一份（避免同名字段提交两次）
+  const formStart = html.indexOf(`id="${SALE_FORM_ID}"`);
+  const form = html.slice(formStart, html.indexOf('</form>', formStart));
+  assert.equal(form.includes(`name="${SCAN_WRITE.fields.lineAmount}"`), false, '表单里不重复渲染本单行输入');
   // ⚠️ §六：录入页**不涉及配品**（配品是扫码页另一个 tab）
-  assert.equal(block.includes('add_accessory'), false, '录入页没有配品控件（§六）');
+  assert.equal(html.includes('add_accessory'), false, '录入页没有配品控件（§六）');
 });
 
 test('AC-2S3 🔴 第二步页存在且能提交：三档（横向）+ 付款方式可加多行 + 赠品 + 「跳过」', () => {
