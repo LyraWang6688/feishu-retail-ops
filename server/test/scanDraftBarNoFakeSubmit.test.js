@@ -70,7 +70,7 @@ test('本单已加的货品：整块在本单条里（标题 + 两行 + 金额�
   const bar = html.slice(barStart, barEnd);
   const lineCount = (bar.match(/<div class="draft-line">/g) || []).length;
   assert.equal(lineCount, 2, '两双要在本单条里逐行显示');
-  assert.match(bar, /本单已加的货品/, '块标题跟着一起搬过来');
+  assert.match(bar, /已加的货品/, '块标题跟着一起搬过来');
   assert.match(bar, /测试款A/, '第一行货号要在');
   assert.match(bar, /测试款B/, '第二行货号要在');
   const inputCount = (bar.match(/form="scan-sale-form"/g) || []).length;

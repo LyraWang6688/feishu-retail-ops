@@ -61,7 +61,8 @@ const SCAN_WRITE_SRC = fs.readFileSync(
 
 // 改前逐字（她点掉的那三处的文案 —— **判据就是拿它们当"塞回即红"的锚**）：
 const OLD_HINT = '加进来的货品会和上面对着的这一个一起提交；每个货品的尺码与数量在它自己的块里填。';
-const OLD_TITLE = '本单已加的货品';
+// 标题的**当前值**来自配置（2026-11-26 她改成「已加的货品」）—— 判据跟配置走，改名不用改用例。
+const TITLE = MULTI_ITEM_RENDER_TEXTS.title;
 const OLD_EMPTY = '还没有加第二个货品。';
 const OLD_BUTTON = '生成采购退货';
 const NEW_BUTTON = '退货';
@@ -127,8 +128,8 @@ test('AC-RT1 🔴 退货块里**不许**再有那句说明（她逐字：删除�
 
 test('AC-RT2 🔴 退货块里**不许**再有「本单已加的货品」那个标题', async () => {
   const block = await fetchRealm('purchase_return');
-  assert.equal(block.includes(OLD_TITLE), false,
-    `🔴 那个标题必须删掉（塞回即红）：${OLD_TITLE}`);
+  assert.equal(block.includes(TITLE), false,
+    `🔴 那个标题必须删掉（塞回即红）：${TITLE}`);
   assert.equal(block.includes('multi-item__title'), false, '连那个标题元素一起删 ✓');
 });
 
@@ -227,7 +228,7 @@ test('AC-RT5b 🔴 她这次**没点**的几处一个字都不许动（尺码行
 test('AC-RT6 ⭐ 补货那一块**也**进精简档了（她 2026-10-16 点了它 ⇒ 那三处必须没有 ＋ 按钮 = 「补货」）', async () => {
   const block = await fetchRealm('replenish');
   assert.equal(block.includes(OLD_HINT), false, `补货块里那句说明必须**删掉**（塞回即红 ✓）：${OLD_HINT}`);
-  assert.equal(block.includes(OLD_TITLE), false, `补货块里那个标题必须**删掉**（塞回即红 ✓）：${OLD_TITLE}`);
+  assert.equal(block.includes(TITLE), false, `补货块里那个标题必须**删掉**（塞回即红 ✓）：${TITLE}`);
   assert.equal(block.includes(OLD_EMPTY), false, `补货块里那句空态必须**删掉**（塞回即红 ✓）：${OLD_EMPTY}`);
   assert.equal(block.includes('multi-item__title'), false, '那个标题元素也一起删 ✓');
   assert.equal(block.includes('data-view="multi-item-list"'), false, '空的时候那个列表元素**整块不渲染** ✓');
@@ -266,7 +267,7 @@ test('AC-RT6b 🔴 源码哨兵：`multiItemBlockHtml` 的**两处调用各自�
 test('AC-RT7 ⭐ 探针：三处"塞回"与"删过头"都**必须**被检出（证明上面几条不空跑）', () => {
   const offenders = {
     hint: (html) => html.includes(OLD_HINT),
-    title: (html) => html.includes(OLD_TITLE),
+    title: (html) => html.includes(TITLE),
     empty: (html) => html.includes(OLD_EMPTY),
     listMissing: (html) => !/data-view="multi-item-list"/.test(html),
     oldButton: (html) => html.includes(OLD_BUTTON),

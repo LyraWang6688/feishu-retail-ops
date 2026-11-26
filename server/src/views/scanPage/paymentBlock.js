@@ -201,7 +201,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const alert = String(write.errorText || '').trim()
     ? `<p class="form-alert">${escapeHtml(write.errorText)}</p>`
     : '';
-  // 2026-11-26：本单已加的货品默认在**顶部本单条**（`page.draftLinesOnBar`）；只有本单条
+  // 2026-11-26：已加的货品默认在**顶部本单条**（`page.draftLinesOnBar`）；只有本单条
   // 不展示它时（个别流程/兜底）才退回表单里，保证金额输入永远在页面上、且随本表单提交。
   const draftLinesInForm = page?.draftLinesOnBar === true ? '' : draftLinesBlockHtml(write);
   // 🔴🔴 2026-10-12（真机丢钱之后**合并**的）：原来这里是**两个 form** ——
@@ -236,7 +236,7 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //
   // ⚠️ 2026-10-29：**没有开关**了（她：「不应该有配置按钮」）⇒ 只要这一单有明细就给那颗入口 ✓
   //   ⇒ 既有页面判据（`scanSaleAccessoryAndRemark` 等）与"N=1 逐字不变"都靠这个闸门 ✓。
-  // ⚠️「本单已加的货品」标题**只在真的加了才出现**（本单为空时那一屏**逐字不变** ✓）；
+  // ⚠️「已加的货品」标题**只在真的加了才出现**（本单为空时那一屏**逐字不变** ✓）；
   //   列表本身沿用**既有** `draftLinesHtml`（每行一个 `line_amount` 输入框 ⇒ 她填的钱看得见、改得动 ✓）。
   // ⚠️ 属性顺序**刻意**是 `data-multi-add` 在 `type="submit"` **之前**：
   //   判据 AC-SM-A 从 `data-multi-add` 那一处切到下一个 `>` 再核 `type="submit"` / `name` / `value`

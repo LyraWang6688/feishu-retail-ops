@@ -899,7 +899,8 @@ const fillText = (template, values = {}, missing = TEXTS.missingValue) => String
  *   · 全部**配置先行**：改字不用改代码 ✓；`fillText` 占位由渲染层填 ✓
  */
 const MULTI_ITEM_RENDER_TEXTS = Object.freeze({
-  title: '本单已加的货品',
+  // 2026-11-26（业务负责人）：标题文字「本单已加的货品」→「已加的货品」。
+  title: '已加的货品',
   addButton: '＋ 再加一个货品',
   hint: '加进来的货品会和上面对着的这一个一起提交；每个货品的尺码与数量在它自己的块里填。',
   empty: '还没有加第二个货品。',

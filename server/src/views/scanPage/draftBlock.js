@@ -36,7 +36,7 @@ const draftBarHtml = (write, config, userAgent, { linesHtml = '' } = {}) => {
   // ⭐⭐ 2026-10-15：条里**一件东西都没有时**（飞书 + 没草稿 + 没反馈）⇒ **整条不渲染** ——
   //   她的目的就是"少占地方" ✓ 一张空白卡（只剩内边距）比不渲染更占地方 ✗。
   //   ⚠️ 非飞书**永远有那句人话** ⇒ 照旧渲染（AC-DB1 那些"没草稿也有这条"的判据都走这条路 ✓）。
-  // 2026-11-26（业务负责人）：销售页的「本单已加的货品」（标题 + 每行金额）搬到这里 ——
+  // 2026-11-26（业务负责人）：销售页的「已加的货品」（标题 + 每行金额）搬到这里 ——
   // 原来那个"空白色块"的位置。`linesHtml` 只在销售页有；其它领域传空串。
   if (!countHtml && !noticeHtml && !linesHtml && !scanNextHtml) return '';
   return `<section class="card draft-bar" data-view="draft-bar" aria-label="${escapeHtml(texts.draftBarLabel)}">

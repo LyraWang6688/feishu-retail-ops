@@ -61,7 +61,7 @@ ${toast}
 
 const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEFAULT_REALM, page = {}) => {
   const safeRealm = resolveRealm(realm);
-  // ⭐ 2026-11-26（业务负责人）：把「本单已加的货品」（标题 + 每行金额）从销售表单里
+  // ⭐ 2026-11-26（业务负责人）：把「已加的货品」（标题 + 每行金额）从销售表单里
   //   **整块搬到本单条**（原来空白色块的位置）。只搬销售页；其它领域不显示。
   //   ⚠️ 换款式等「金额按单价算」的流程（hideAmountInput）不搬 —— 那里本来就不让填每双金额。
   const goodsStep = (page?.flow?.steps || []).find((step) => step.type === 'goods') || null;
