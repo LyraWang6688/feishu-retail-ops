@@ -34,13 +34,13 @@ export const ORDERS_PAGE = {
 
 /**
  * ⭐⭐ 2026-10-29：销售订单列表**只剩三条路径**（业务负责人定稿）——
- *   交割单（跳独立页）/ 售后单（飞书扫一扫→售后落地页）/ 草稿箱（占位）。
- * ⚠️ 三张卡只显示 `label + icon`；`tag/tone` 是为将来需要时保留的字段（当前不渲染）。
+ *   交割单（跳独立页）/ 售后单（飞书扫一扫→售后落地页）/ 草稿箱（真实列表）。
+ * ⚠️ 三张卡只显示 `label + icon`；`tag/tone` 已删除（页面从未渲染，留着只会误导）。
  */
 export const SALES_SECTIONS = [
-  { key: 'pending', label: '交割单', tag: '待交割', tone: 'info', icon: '🧾' },
-  { key: 'afterSales', label: '售后单', tag: '待建设', tone: 'info', icon: '🛠️' },
-  { key: 'draft', label: '草稿单', tag: '待建设', tone: 'info', icon: '📝' },
+  { key: 'pending', label: '交割单', icon: '🧾' },
+  { key: 'afterSales', label: '售后单', icon: '🛠️' },
+  { key: 'draft', label: '草稿单', icon: '📝' },
 ];
 
 // 采购验收判据：发生行为编码稳定，不按中文名判断。

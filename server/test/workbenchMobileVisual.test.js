@@ -137,14 +137,12 @@ test('AC4 列表卡片化（一单一张卡，无表格）· 金额 / 数量大�
   assert.match(tokens, /--font-size-amount:\s*(2[0-9]|1[89])px;/, '要有一个"大数字"字号令牌');
   assert.match(ALL_CSS, /font-size:\s*var\(--font-size-amount\)/, '金额 / 数量用大字号令牌');
 
-  // ③ 状态彩色小标签：既有语义色 + 三组用例（待补充 / 待交割 / 已两清 · 现货 / 预订 · 待建设）
+  // ③ 状态彩色小标签：既有语义色 + 既有状态用例（标签通用样式仍被别处使用）
   for (const family of ['tag-success', 'tag-warning', 'tag-info']) {
     assert.match(base, new RegExp(`\\.${family}\\s*\\{[^}]*var\\(--`), `${family} 要用语义色令牌`);
   }
   assert.match(ALL_CSS, /\.tag\s*\{[^}]*border-radius:\s*var\(--radius-pill\)/s, '标签是小圆角胶囊');
-  // ⭐ 2026-10-17 成对迁移：她逐字「只保留二次交割以及售后」⇒「待补充」那个标签随「补充信息单」退场
-  assert.match(read('config/orders.js'), /tag: '待交割'/, '交割单 = 待交割标签');
-  assert.match(read('config/orders.js'), /tag: '待建设'/, '售后单/草稿单 = 待建设标签');
+  // 2026-11-26：三张卡只显示 label + icon；tag/tone 从未渲染，已从配置删除，不再断言。
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
