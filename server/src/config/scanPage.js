@@ -793,6 +793,13 @@ const SCAN_PAGE = Object.freeze({
   returnForm: RETURN_FORM, saleDelistPrompt: '这一单卖完后库存为 0，是否同时下架？',
   delistConfirm: '同时下架',
   delistCancel: '暂不下架',
+  // ⭐ 2026-11-26（卖完下架确认）：销售提交时的确认层文案（服务端渲染，配置先行）。
+  //   `{number}/{qty}/{stock}` 由渲染层填；改成别的说法只改这里。
+  delistConfirmTitle: '这一单卖完后库存为 0',
+  delistConfirmBody: '要同时下架哪些货品？（默认全选，可取消）',
+  delistConfirmRow: '{number} · 本单 {qty} 双 · 库存 {stock} 双',
+  delistConfirmYes: '同时下架并继续',
+  delistConfirmNo: '不下架，继续',
   // ⭐⭐ 2026-10-16（补货 tab 那三处 · 她真机截图 + 逐字）：按钮文案 ＋ 金额行开关（见上面 `REPLENISH_FORM`）。
   replenishForm: REPLENISH_FORM,
   SIZE_ROW_GROUPS: Object.freeze({ GROUPED: 'instock+reserve' }),

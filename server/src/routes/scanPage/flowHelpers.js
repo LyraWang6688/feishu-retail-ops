@@ -176,6 +176,9 @@ const createFlowHelpers = ({
         draft: { lines },
         // ⭐ 2026-11-26：货品页确认过的下架 id（资金页原样带到下一次提交）。
         delistProductIds: Array.isArray(extra.delistProductIds) ? extra.delistProductIds : [],
+        // ⭐ 2026-11-26：卖完下架确认层的数据（候选 + 原提交 body）—— 由提交路由在命中时传入，
+        //   渲染层有它就画确认层、没有就一个字都不多。
+        delistConfirm: extra.delistConfirm || null,
         draftForm: session?.sale?.draft_form || null,
         saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
         replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),

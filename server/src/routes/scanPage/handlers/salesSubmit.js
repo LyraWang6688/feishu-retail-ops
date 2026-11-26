@@ -35,7 +35,7 @@ const stockTotalOfView = (view) => (Array.isArray(view?.rows) ? view.rows : [])
  */
 
 async function handleSubmitOrder(ctx) {
-  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHuman, sendPaymentStep, service, writeConfig, writeService } = ctx;
+  const { asList, backTargetFor, body, buildWriteContext, nextOrderNo, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHtml, sendHuman, sendPaymentStep, service, writeConfig, writeService } = ctx;
         // ⭐⭐ 2026-10-11（**最终口径**）：总单层 = ①每件实收（同名重复 ⇒ 有序数组，下标 = 明细行）
         //    + ②**「付款情况」三档**（整单：全付（默认）/ 部分付 / 未付）
         //    + ③多笔收款（同名重复 ⇒ 两个数组按下标对齐）+ 「部分付」的实付多少。

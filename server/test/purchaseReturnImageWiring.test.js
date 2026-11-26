@@ -399,7 +399,8 @@ const submitThroughRoute = async (harness, { base, number = NUMBER_A, form = {},
   assert.ok(submitKey, '页面必须带 `submit_key`（服务端会话给的幂等键 ✓）');
   // ⚠️ 键名逐字是 `submit_key`（`config/scanWrite.js` 的 `FIELDS.submitKey` ✓）：
   //    写成 `submitKey` ⇒ 路由读不到 ⇒ 写层判"这一页放太久了"（真踩过一次 ✗）。
-  const response = await postReturn(base, { number, form: { ...form, submit_key: submitKey }, multiItems });
+  // 2026-11-26：退货也改为「提交时先确认下架」；这里模拟"已确认"那一发（不带勾选 ⇒ 不下架）。
+  const response = await postReturn(base, { number, form: { ...form, submit_key: submitKey, delist_confirmed: '1' }, multiItems });
   assertSubmitToast(response, '退货 ⇒ 先回统一 toast（2026-10-29 口径：没有成功页了）');
   await waitForPendingPurchaseBackgrounds();
   return submitKey;

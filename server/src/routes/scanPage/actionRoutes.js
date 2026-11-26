@@ -278,7 +278,7 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       // ── 提交销售单 ──────────────────────────────────────────────────────────
       if (action === actions.submitOrder) {
         return handleSubmitOrderOf({
-          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHuman, sendPaymentStep, service, writeConfig, writeService: scopedWriteService, nextOrderNo: () => salesRuntime.orderNoCache.next(),
+          asList, backTargetFor, body, buildWriteContext, candidatePaymentMethods, config, fields, fillWriteText, invalidateInventorySnapshot, logError, logInfo, logWarn, lookupInputOf, markRealmUsed: markRealmUsedForPage, openId, openIdOf, parsePaymentRows, postActionFor, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, salesAsync, sellableSizeTexts, sendHtml, sendHuman, sendPaymentStep, service, writeConfig, writeService: scopedWriteService, nextOrderNo: () => salesRuntime.orderNoCache.next(),
         });
       }
 

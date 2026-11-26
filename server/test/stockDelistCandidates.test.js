@@ -1,35 +1,49 @@
 'use strict';
+
+// 「卖完 → 下架候选」唯一判据：剩余 = 快照 − 前端数量（不查库存表）。
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { V1_BITABLE_SCHEMA } = require('../src/config/v1BitableSchema');
-const { stockTotalsOf, delistCandidatesOf, printableProductsOf } = require('../src/services/stockDelistCandidates');
+const { soldOutCandidates, remainingOf } = require('../src/services/stockDelistCandidates');
 
-const productField = V1_BITABLE_SCHEMA.tables.liveInventory.fields.product;
-const live = (id, productId) => ({ record_id: id, fields: { [productField]: [{ record_ids: [productId] }] } });
-
-test('库存清零候选：按整个货品所有尺码/状态汇总，扣到 0 才算', () => {
-  const records = [live('l1', 'p1'), live('l2', 'p1'), live('l3', 'p2')];
-  assert.deepEqual([...stockTotalsOf(records)], [['p1', 2], ['p2', 1]]);
-  const out = delistCandidatesOf({
-    liveRecords: records,
-    items: [{ productRecordId: 'p1', quantity: 2 }, { productRecordId: 'p2', quantity: 1 }],
-  });
-  assert.deepEqual(out.map((item) => item.productRecordId), ['p1', 'p2']);
-  assert.equal(out[0].currentStock, 2);
-  assert.equal(out[0].remaining, 0);
+test('AC-DC1 快照 − 数量 == 0 ⇒ 卖完；>0 ⇒ 不提示', () => {
+  assert.deepEqual(soldOutCandidates([{ productRecordId: 'p1', snapshotCount: 1, qty: 1 }]), [
+    { productRecordId: 'p1', snapshotCount: 1, qty: 1, remaining: 0 },
+  ]);
+  assert.deepEqual(soldOutCandidates([{ productRecordId: 'p1', snapshotCount: 2, qty: 1 }]), []);
 });
 
-test('库存清零候选：还有库存 / 已下架 / 数量超出都不算', () => {
-  const records = [live('l1', 'p1'), live('l2', 'p1')];
-  assert.deepEqual(delistCandidatesOf({ liveRecords: records, items: [{ productRecordId: 'p1', quantity: 1 }] }), []);
-  assert.deepEqual(delistCandidatesOf({
-    liveRecords: records, items: [{ productRecordId: 'p1', quantity: 2 }], delistedProductIds: ['p1'],
-  }), []);
-  assert.deepEqual(delistCandidatesOf({ liveRecords: records, items: [{ productRecordId: 'p1', quantity: 3 }] }), []);
+test('AC-DC2 同 recordId 多行合并成一条（数量相加，弹窗只出一行）', () => {
+  const out = soldOutCandidates([
+    { productRecordId: 'p1', snapshotCount: 2, qty: 1 },
+    { productRecordId: 'p1', snapshotCount: 2, qty: 1 },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].qty, 2);
 });
 
-test('打印候选：下架 / 无库存不打印', () => {
-  const products = [{ recordId: 'p1' }, { recordId: 'p2' }, { recordId: 'p3' }];
-  const stock = new Map([['p1', 1], ['p2', 0], ['p3', 2]]);
-  assert.deepEqual(printableProductsOf({ products, stock, delistedProductIds: ['p3'] }), [{ recordId: 'p1' }]);
+test('AC-DC3 样品也算库存记录：快照 2、卖 1 ⇒ 剩余 1 ⇒ 不提示', () => {
+  assert.deepEqual(soldOutCandidates([{ productRecordId: 'p1', snapshotCount: 2, qty: 1 }]), []);
+  assert.equal(remainingOf(2, 1), 1);
+});
+
+test('AC-DC4 快照本来就是 0 / 缺字段 ⇒ 不提示、不瞎猜', () => {
+  assert.deepEqual(soldOutCandidates([{ productRecordId: 'p1', snapshotCount: 0, qty: 1 }]), []);
+  assert.deepEqual(soldOutCandidates([{ productRecordId: '', snapshotCount: 1, qty: 1 }]), []);
+  assert.deepEqual(soldOutCandidates([{ productRecordId: 'p1', snapshotCount: NaN, qty: 1 }]), []);
+  assert.deepEqual(soldOutCandidates([{ productRecordId: 'p1', snapshotCount: 1, qty: 0 }]), []);
+  assert.deepEqual(soldOutCandidates([]), []);
+  assert.deepEqual(soldOutCandidates(null), []);
+});
+
+test('AC-DC5 超卖（数量 > 快照）也按卖完处理（剩余 0）', () => {
+  const out = soldOutCandidates([{ productRecordId: 'p1', snapshotCount: 1, qty: 2 }]);
+  assert.equal(out.length, 1);
+});
+
+test('AC-DC6 不同 recordId 各判各的（同货号但两条记录不合并）', () => {
+  const out = soldOutCandidates([
+    { productRecordId: 'recA', snapshotCount: 1, qty: 1 },
+    { productRecordId: 'recB', snapshotCount: 3, qty: 1 },
+  ]);
+  assert.deepEqual(out.map((c) => c.productRecordId), ['recA']);
 });
