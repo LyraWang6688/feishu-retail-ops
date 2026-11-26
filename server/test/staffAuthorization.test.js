@@ -58,7 +58,10 @@ const makeApp = (gateway) => {
 };
 
 const withServer = async (app, run) => {
-  const server = app.listen(0);
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    instance.on('error', reject);
+  });
   server.keepAliveTimeout = 1;
   try {
     const base = 'http://127.0.0.1:' + server.address().port;
