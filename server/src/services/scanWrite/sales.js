@@ -139,6 +139,7 @@ const createScanWriteSales = ({
           ? salesTradeTypeForStock({ inStock: pendingLine.inStock }) : '',
         amount: pendingLine.amount === undefined || pendingLine.amount === null || pendingLine.amount === ''
           ? null : Number(pendingLine.amount),
+        stock_total: Number.isFinite(Number(pendingLine.stockTotal)) ? Number(pendingLine.stockTotal) : null,
         gift: String(pendingLine.gift || ''),
         sample_promotion_size: String(pendingLine.samplePromotionSize || '').trim(),
         added_at: new Date(now()).toISOString(),

@@ -44,8 +44,9 @@ const createWorkbenchSalesDraftRoutes = ({ options = {} } = {}) => {
 
   router.delete('/sales/drafts/:draftId', async (req, res) => {
     const removed = await service().remove({ openId: openIdOf(req), draftId: String(req.params?.draftId || '') });
-    if (!removed) return res.status(404).json({ success: false, error: 'draft_not_found' });
-    return res.json({ success: true });
+    // 删除是幂等的：重复点 / 另一个标签已经删掉，都按“已删除”返回；
+    // 否则前端第二次请求会收到 404，把一次成功删除显示成“删除失败”。
+    return res.json({ success: true, removed: Boolean(removed) });
   });
 
   return router;

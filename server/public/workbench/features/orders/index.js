@@ -485,15 +485,24 @@ export function createOrdersModule({ mode = 'both' } = {}) {
     }
   }
 
+  const deletingDrafts = new Set();
   async function deleteDraft(draftId) {
-    if (!draftId || !window.confirm(T.draftDeleteConfirm)) return;
+    if (!draftId || deletingDrafts.has(draftId) || !window.confirm(T.draftDeleteConfirm)) return;
+    deletingDrafts.add(draftId);
     try {
-      await api.delete(ORDERS_API.drafts + '/' + encodeURIComponent(draftId));
+      try {
+        await api.delete(ORDERS_API.drafts + '/' + encodeURIComponent(draftId));
+      } catch (error) {
+        // 兼容旧服务端：草稿已经不在了 = 删除目标已达成，不再报“删除失败”。
+        if (error?.status !== 404) throw error;
+      }
       state.drafts = state.drafts.filter((draft) => draft.draftId !== draftId);
       renderList();
       renderResult(T.draftDeleted);
     } catch (error) {
       renderResult(T.draftDeleteFailed, true);
+    } finally {
+      deletingDrafts.delete(draftId);
     }
   }
 

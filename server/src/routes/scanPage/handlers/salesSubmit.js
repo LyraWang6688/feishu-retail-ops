@@ -7,6 +7,7 @@ const { prepareSubmitDraft } = require('../../../services/scanWrite/submitDraft'
 const { resolveSaleSubmitPlan } = require('../../../services/scanWrite/saleSubmitPlan');
 const { enqueueSaleAsync, salePrintProductsOf } = require('../../../services/scanWrite/saleAsyncSubmit');
 const { SAMPLE_PROMOTION } = require('../../../config/samplePromotion');
+const { sellableCountOf } = require('../../../views/scanPageRealm');
 
 /**
  * 扫码路由核心深拆 P2：销售提交（`submit_order`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -330,6 +331,10 @@ return sendPaymentStep(res, req, {
             samplePromotionSize: body[SAMPLE_PROMOTION.field],
             // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
             inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
+            // 让资金页/草稿恢复后仍能算下架候选（最后一双卖完 = 本单数量等于总库存）。
+            stockTotal: (Array.isArray(submitView.rows) ? submitView.rows : [])
+              .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
+              .reduce((sum, row) => sum + Number(sellableCountOf(row, submitView.columns) || 0), 0),
           } : null,
         }, { correlation: tapIdFromRequest(req) });
         // ⭐⭐ **一条**汇总（与 `scan.lookup.timing` 同一形状）：她按 `scan.sale.timing` grep
