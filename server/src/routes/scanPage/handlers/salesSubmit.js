@@ -9,6 +9,11 @@ const { enqueueSaleAsync, salePrintProductsOf } = require('../../../services/sca
 const { SAMPLE_PROMOTION } = require('../../../config/samplePromotion');
 const { sellableCountOf } = require('../../../views/scanPageRealm');
 
+/** 本单总库存（所有非未知尺码的可卖数之和）；资金页下架候选依赖这个值。 */
+const stockTotalOfView = (view) => (Array.isArray(view?.rows) ? view.rows : [])
+  .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
+  .reduce((sum, row) => sum + Number(sellableCountOf(row, view.columns) || 0), 0);
+
 /**
  * 扫码路由核心深拆 P2：销售提交（`submit_order`）分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
  * 调用方只传显式 ctx；分支体逐字搬移，调用顺序/日志/文案/状态一个未动。
@@ -163,6 +168,7 @@ return sendPaymentStep(res, req, {
             size: Number(currentSize),
             trade_type_code: salesTradeTypeForStock({ inStock }),
             amount: currentAmount,
+            stock_total: stockTotalOfView(submitView),
             gift: String(body[fields.gift] ?? '').trim(),
             sample_promotion_size: String(body[SAMPLE_PROMOTION.field] || '').trim(),
             added_at: new Date().toISOString(),
@@ -332,9 +338,7 @@ return sendPaymentStep(res, req, {
             // 「现货 / 预订」的判据与页面上那两个分组**同一份**（写服务按既有判据推编码）。
             inStock: sellableSizeTexts(submitView).has(String(body[fields.size] ?? '').trim()),
             // 让资金页/草稿恢复后仍能算下架候选（最后一双卖完 = 本单数量等于总库存）。
-            stockTotal: (Array.isArray(submitView.rows) ? submitView.rows : [])
-              .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
-              .reduce((sum, row) => sum + Number(sellableCountOf(row, submitView.columns) || 0), 0),
+            stockTotal: stockTotalOfView(submitView),
           } : null,
         }, { correlation: tapIdFromRequest(req) });
         // ⭐⭐ **一条**汇总（与 `scan.lookup.timing` 同一形状）：她按 `scan.sale.timing` grep

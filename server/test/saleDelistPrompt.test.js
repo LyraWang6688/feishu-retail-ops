@@ -52,5 +52,6 @@ test('单双提交把 stock_total 写进会话，草稿/资金页才能算最后
   const submit = fs.readFileSync(path.join(__dirname, '../src/routes/scanPage/handlers/salesSubmit.js'), 'utf8');
   const sales = fs.readFileSync(path.join(__dirname, '../src/services/scanWrite/sales.js'), 'utf8');
   assert.match(submit, /stockTotal:/, 'pendingLine 要带 stockTotal');
+  assert.match(submit, /stock_total: stockTotalOfView\(submitView\)/, '货品页提交 addLine 也要写 stock_total');
   assert.match(sales, /stock_total: Number\.isFinite\(Number\(pendingLine\.stockTotal\)\)/, '单双 addLine 要写 stock_total');
 });
