@@ -1,6 +1,6 @@
 export const STAFF_PAGE = Object.freeze({
   title: '人员管理',
-  subtitle: '按人员 / 日期 / 时间段查看与编辑考勤',
+  roleAdmin: '管理员',
   api: Object.freeze({
     me: '/api/workbench/staff/me',
     roster: '/api/workbench/staff',
