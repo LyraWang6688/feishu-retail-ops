@@ -410,6 +410,28 @@ const submitThroughRoute = async (harness, { base, number = NUMBER_A, form = {},
 // AC-RI1 ⭐⭐ 线上同路径：装配之后 `webhooks` 非空 ⇒ 不再 `no_image_pipeline`
 // ═══════════════════════════════════════════════════════════════════════════
 
+test('AC-RI0 退货提交把这一款退完 ⇒ 先出下架确认层（确认前零写入）', async () => {
+  login();
+  const h = createHarness();
+  try {
+    await withServer(h.app, async (base) => {
+      const page = await getReturnPage(base, NUMBER_A);
+      const submitKey = submitKeyOf(page.html);
+      assert.ok(submitKey, '页面必须带 submit_key');
+      const response = await postReturn(base, {
+        number: NUMBER_A,
+        form: { submit_key: submitKey, return_qty_41: '1' },
+      });
+      assert.equal(response.status, 200, '首次提交卖完 ⇒ 先出确认层（200），不是 303');
+      const html = await response.text();
+      assert.match(html, /data-delist-confirm/, '要出确认层');
+      assert.match(html, /name="delist_pick" value="prod_A" checked/, '逐 recordId 一行、默认勾选');
+      assert.equal(h.renders.length, 0, '确认前零写入（不出图）');
+      assert.equal(h.messages.length, 0, '确认前零通知');
+    });
+  } finally { h.cleanup(); }
+});
+
 test('AC-RI1 ⭐⭐ 扫码页退货 POST（真路由→真引擎→真写入件→真 deliverSupplierImages）⇒ 装配的 webhooks 非空 ⇒ 不再 no_image_pipeline', async () => {
   login();
   const h = createHarness();
