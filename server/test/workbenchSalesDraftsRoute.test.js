@@ -52,3 +52,18 @@ test('销售草稿删除是幂等的：目标已不在也返回成功', async ()
     assert.equal(body.removed, false);
   });
 });
+
+test('工作台草稿接口：没有 lines 但有 currentForm 也允许保存', async () => {
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => { req.workbenchUser = { open_id: 'ou_a' }; next(); });
+  app.use('/api/workbench', createWorkbenchSalesDraftRoutes({
+    options: { salesDraft: { save: async () => ({ ok: true, draft: { draft_id: 'd1', step: 'goods', updated_at: 'now' } }) } },
+  }));
+  await withServer(app, async (base) => {
+    const response = await post(base, '/api/workbench/sales/drafts', {
+      step: 'goods', snapshot: { lines: [], currentForm: { size: '40', amount: '149' } },
+    });
+    assert.equal(response.status, 200);
+  });
+});

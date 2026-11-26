@@ -174,6 +174,7 @@ const createFlowHelpers = ({
         })(),
         sizes,
         draft: { lines },
+        draftForm: session?.sale?.draft_form || null,
         saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
         replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
         // ⭐ 退货那把键（第三条链；与销售 / 补货**互不覆盖** —— 会话语义见 scanSessionService）

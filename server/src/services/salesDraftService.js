@@ -10,6 +10,7 @@
 const crypto = require('node:crypto');
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const { SALES_DRAFT } = require('../config/salesDraft');
+const { hasCurrentFormContent } = require('./salesDraftSnapshotService');
 
 const text = (value) => String(value ?? '').trim();
 const clone = (value) => JSON.parse(JSON.stringify(value ?? null));
@@ -25,11 +26,12 @@ const createSalesDraftService = ({ store, config = SALES_DRAFT, now = () => Date
   const summaryOf = (record) => ({
     draftId: record.draft_id,
     step: record.step,
-    productRecordId: record.product_record_id || '',
-    number: record.number || '',
-    itemNo: record.item_no || '',
-    color: record.color || '',
+    productRecordId: record.currentForm?.product_record_id || record.product_record_id || '',
+    number: record.number || record.currentForm?.number || '',
+    itemNo: record.item_no || record.currentForm?.item_no || '',
+    color: record.color || record.currentForm?.color || '',
     itemCount: Array.isArray(record.lines) ? record.lines.length : 0,
+    hasCurrentForm: hasCurrentFormContent(record.currentForm || {}),
     updatedAt: record.updated_at,
   });
 
@@ -42,6 +44,7 @@ const createSalesDraftService = ({ store, config = SALES_DRAFT, now = () => Date
       if (!existing || existing.owner_open_id !== owner) return { ok: false, code: 'not_found' };
       const next = await taskStore.update(id, {
         ...clone(snapshot),
+        schema_version: Number(config.schemaVersion) || 1,
         draft_id: id,
         owner_open_id: owner,
         step: step === config.steps.payment ? config.steps.payment : config.steps.goods,
@@ -53,6 +56,7 @@ const createSalesDraftService = ({ store, config = SALES_DRAFT, now = () => Date
     if (all.length >= Number(config.maxDrafts)) return { ok: false, code: 'too_many' };
     const draft = await taskStore.create({
       ...clone(snapshot),
+      schema_version: Number(config.schemaVersion) || 1,
       draft_id: draftIdOf(owner),
       owner_open_id: owner,
       step: step === config.steps.payment ? config.steps.payment : config.steps.goods,

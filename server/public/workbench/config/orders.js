@@ -131,6 +131,7 @@ export const ORDERS_TEXTS = {
   draftStepGoods: '货品页',
   draftStepPayment: '资金页',
   draftItems: '{count} 件',
+  draftCurrentPair: '当前待提交 1 双',
   // ── 采购验收（工作台「验收」页在用）──────────────────────────────────────
   verifyArrival: '验收到货',
   arrivalVerifyTitle: '验收到货',
