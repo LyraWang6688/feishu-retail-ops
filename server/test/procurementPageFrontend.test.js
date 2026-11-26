@@ -254,3 +254,32 @@ test('预览区：未提交草稿 / 已报货 两段，草稿有保存状态和�
   assert.match(html, /已报货/);
   assert.match(html, /CGD-1/);
 });
+
+test('AC-P28 采购修改上下文随草稿保存，刷新后可恢复 modify 模式', async () => {
+  const { createModifyController } = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/modify.js')).href);
+  const config = (await import(pathToFileURL(path.join(ROOT, PUBLIC, 'config/procurement.js')).href)).PROCUREMENT_UI;
+  let draft = { version: 1, submitKey: 'k1', products: {}, customSizes: {} };
+  const store = {
+    ensure: () => draft,
+    save: (next) => { draft = next; return next; },
+    setQuantity: (next, meta, size, quantity) => {
+      const products = { ...(next.products || {}) };
+      products[meta.productRecordId] = { ...(products[meta.productRecordId] || meta), entries: { [size]: quantity } };
+      return { ...next, products };
+    },
+  };
+  const banner = { textContent: '', classList: { toggle() {} } };
+  const button = { textContent: '', disabled: false };
+  const host = { querySelector: (selector) => (selector.includes('banner') ? banner : button) };
+  const setDraft = (next) => { draft = next; };
+  const ctl = createModifyController({ host, config, api: {}, getStore: () => store, getDraft: () => draft, setDraft, toast: () => {}, onDone: () => {} });
+  const started = ctl.start({ batch_no: 'CGD-OLD', submit_key: 'old-key', supplier_record_id: 's1', products: [{ product_record_id: 'p1', entries: [{ size: 40, quantity: 1 }] }] });
+  assert.equal(started.ok, true);
+  assert.equal(draft.modify.batchNo, 'CGD-OLD');
+  assert.equal(button.textContent, config.texts.modifySubmit);
+
+  const restored = createModifyController({ host, config, api: {}, getStore: () => store, getDraft: () => draft, setDraft, toast: () => {}, onDone: () => {} });
+  assert.deepEqual(restored.restore(draft), draft.modify);
+  assert.equal(restored.active().batch_no, 'CGD-OLD');
+  assert.equal(button.textContent, config.texts.modifySubmit);
+});
