@@ -77,14 +77,13 @@ const DEFAULT_REALM_CHAINS = Object.freeze({
   sales: 'sales',
 });
 
-/** 每个领域的登记参数（`returnsToRealm` / `keepDraft`）—— 唯一真源 = `config/scanEntries.js` 的五处登记表。 */
-const DEFAULT_REALM_ENTRY = Object.freeze({ returnsToRealm: true, keepDraft: true });
+/** 每个领域的登记参数（`returnsToRealm`）—— 唯一真源 = `config/scanEntries.js` 的五处登记表。 */
+const DEFAULT_REALM_ENTRY = Object.freeze({ returnsToRealm: true });
 const resolveRealmEntries = (chains) => Object.freeze(Object.fromEntries(
   Object.keys(chains || {}).map((realm) => {
     const place = (SCAN_PLACES || []).find((item) => item.realm === realm) || null;
     return [realm, Object.freeze({
       returnsToRealm: place ? place.returnsToRealm === true : DEFAULT_REALM_ENTRY.returnsToRealm,
-      keepDraft: place ? place.keepDraft === true : DEFAULT_REALM_ENTRY.keepDraft,
     })];
   })
 ));
@@ -148,7 +147,8 @@ const createRealmScanConfig = (env = process.env) => {
   // 领域 → 链（**三个领域各有各的本单草稿** ✓ 见上面 `DEFAULT_REALM_CHAINS`：
   //   补货 / 退货走多货品草稿，销售走它自己的 `session.sale.lines` —— **落点不同，入口同一个** ✓）。
   realms,
-  // ⭐ 2026-10-17：A 套真正读这两个参数（returnsToRealm：扫完回不回本领域；keepDraft：带不带之前的数据）
+  // ⭐ 2026-10-17：A 套真正读这个参数（returnsToRealm：扫完回不回本领域）
+  //   （keepDraft 已于 2026-11-26 随"扫完自动清草稿"一起退场）
   realmEntries: resolveRealmEntries(realms),
   // 全部用户可见文案（渲染层 / 脚本都不许散写中文 ✗；脚本拿到的是**这一份的 JSON** ✓）。
   texts: Object.freeze({

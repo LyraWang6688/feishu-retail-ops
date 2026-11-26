@@ -13,25 +13,24 @@ const installScanPageRoutes = ({ router, ctx }) => {
     DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods,
     clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo,
     logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf,
-    postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, renderMinimalPage,
+    postActionFor, purchaseBackground, realmOfAction, renderMinimalPage,
     respondWriteFailure, scanTargetOf, sendHtml, sessionIdOf, setDraftOrderAmount,
     writeConfig, writeService,
   } = ctx;
 
   const {
     submitMultiItemOrder, buildWriteContext, loadPendingBatches, invalidateInventorySnapshot: invalidateFlowSnapshot,
-    clearDraftForScanIfNeeded,
   } = require('./flowHelpers').createFlowHelpers({
     DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods,
     clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo,
     logRendered, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire,
-    openIdOf: sessionIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction,
-    realmScanConfig, renderMinimalPage, respondWriteFailure, router,
+    openIdOf: sessionIdOf, postActionFor, purchaseBackground, realmOfAction,
+    renderMinimalPage, respondWriteFailure, router,
     scanTargetOf, sendHtml, setDraftOrderAmount, writeConfig, writeService,
   });
   const routeCtx = {
     ...ctx, submitMultiItemOrder, buildWriteContext, loadPendingBatches,
-    invalidateInventorySnapshot: invalidateFlowSnapshot, clearDraftForScanIfNeeded,
+    invalidateInventorySnapshot: invalidateFlowSnapshot,
     ROUTE_PATTERNS: [config.route.recordPath].filter(Boolean),
   };
 

@@ -5,10 +5,10 @@ const { SCAN_DELISTED } = require('../../config/scanPageDelisted');
 
 const installScanPageGetRoutes = ({ router, ctx }) => {
   const {
-    buildWriteContext, clearDraftForScanIfNeeded, PURCHASE_RETURN_REALM, SCAN_PAGE,
+    buildWriteContext, PURCHASE_RETURN_REALM, SCAN_PAGE,
     SUBMIT_TOAST, badNumberPage, candidatePaymentMethods, config, logInfo, logRendered,
     logWarn, lookupInputOf, notFoundPage, openIdOf, readMultiItemPending, realmScanPageConfig,
-    realmScanTriggered, renderFlowOf, renderScan, renderScanSkeleton, resolveRealm, respondFailure,
+    renderFlowOf, renderScan, renderScanSkeleton, resolveRealm, respondFailure,
     scanTargetOf, sendHtml, sendHuman, sendPaymentStep, service, sessionIdOf, writeConfig, writeService,
   } = ctx;
 
@@ -310,13 +310,13 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
       }
       // ⭐⭐ 2026-10-18 修正（业务负责人：「全局和领域内的扫一扫逻辑不一样」）：
       //   五处扫一扫登记表（config/scanEntries.js）已经把两种入口分开：
-      //     · 领域条【扫一扫】= standalone / AppLink，**不带历史数据**（keepDraft=false）
+      //     · 领域条【扫一扫】= standalone / AppLink
       //     · 领域内【再加一单】= JSAPI，扫完回跳 URL **显式带 `?from=<领域>&scan=1`**
-      //   ⇒ 裸扫（无 `from=`）就是**全局入口**，必须固定落缺省领域（销售），
+      //   ⇒ 裸扫（无 `from=`）就是**全局入口**，固定落**缺省领域（库存，DEFAULT_REALM）**，
       //     不能再按 `last_realm` 记忆回补货 —— 那样全局入口会被上一笔补货"带偏"。
       //   ⚠️ 领域内回跳仍由 `?from=` 显式表达（不改）；`realmSource` 保持 default。
-      // ⭐ 2026-10-17（假配置接线）：扫完回来的这一发、且这一处登记 keepDraft=false ⇒ 先清旧草稿
-      if (realmScanTriggered(req, realm)) await clearDraftForScanIfNeeded(sessionIdOf(req), realm);
+      // ⛔ 2026-11-26（业务负责人选 B）：「扫完自动清上一单草稿」已整块退场
+      //   （清草稿函数与 keepDraft 配置一起删除）——这里不再有清草稿的调用。
       const write = await buildWriteContext(req, view, realm);
       // ⭐ 2026-10-29：扫码「流程」（配置驱动；换款式等差异都进配置，路由只接薄模块）
       const { flow: scanFlow, flowContext } = renderFlowOf(req.query);

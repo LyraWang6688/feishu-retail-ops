@@ -12,7 +12,7 @@ const { redirectWithSubmitToast } = require('../../utils/submitToast');
 const { postContextQuery } = require('../../services/scanFlowService');
 
 const createFlowHelpers = ({
-  DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmEntryParams, realmOfAction, realmScanConfig, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
+  DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmOfAction, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
 }) => {
     const submitMultiItemOrder = async ({
       req, res, requestId, chain, groups, action, delistProductIds = [],
@@ -225,26 +225,11 @@ const createFlowHelpers = ({
       }
     };
 
-    const clearDraftForScanIfNeeded = async (openId, realm) => {
-      const params = realmEntryParams(realm, realmScanConfig);
-      if (params.keepDraft !== false) return;
-      try {
-        if (realm === DEFAULT_REALM) {
-          if (writeService && typeof writeService.clearDraft === 'function') {
-            await writeService.clearDraft({ openId });
-          }
-          return;
-        }
-        const chain = String((realmScanConfig.realms && realmScanConfig.realms[realm]) || '').trim();
-        if (chain) await clearMultiItemPending(openId, chain);
-      } catch (error) {
-        logWarn('scan.entry.keep_draft_clear_failed', {
-          realm, error: String((error && error.message) || error).slice(0, 200),
-        });
-      }
-    };
+  // 2026-11-26（业务负责人选 B）：「扫完自动清上一单草稿」整块退场 ——
+  //   clearDraftForScanIfNeeded 与它的 keepDraft 配置一起删除（所有入口本来就是"保留"，
+  //   今天行为零变化；以后要恢复需重新实现）。
 
-  return { submitMultiItemOrder, buildWriteContext, loadPendingBatches, invalidateInventorySnapshot, clearDraftForScanIfNeeded };
+  return { submitMultiItemOrder, buildWriteContext, loadPendingBatches, invalidateInventorySnapshot };
 };
 
 module.exports = { createFlowHelpers };
