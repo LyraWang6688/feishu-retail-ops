@@ -23,7 +23,7 @@ test('货品页：标签打印左边是「货品资料」，配置审计有券�
   assert.equal(pages[profile].kind, 'product-profile');
   assert.equal(pages[config].label, '配置审计');
   assert.equal(pages[config].kind, 'action-cards');
-  assert.deepEqual(pages[config].cards.map((card) => card.action), ['voucher-catalog-sync', 'product-feature-config', 'write-audit']);
+  assert.deepEqual(pages[config].cards.map((card) => card.action), ['voucher-catalog-sync', 'product-feature-config', 'write-audit', 'staff-attendance']);
 });
 
 test('配置页：「消息通知」占位子 tab 在最右边（2026-11-09）', async () => {

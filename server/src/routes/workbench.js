@@ -16,6 +16,8 @@ const { createWorkbenchInventoryRoutes } = require('./workbench/inventory');
 const { createWorkbenchPurchaseRoutes } = require('./workbench/purchase');
 const { createWorkbenchProcurementDraftRoutes } = require('./workbench/procurementDraft');
 const { createWorkbenchSalesRoutes } = require('./workbench/sales');
+const { createWorkbenchStaffRoutes } = require('./workbench/staff');
+const { loadWorkbenchActor } = require('../services/authorizationService');
 const { createWorkbenchSalesDraftRoutes } = require('./workbench/salesDrafts');
 const { createWorkbenchDouyinRoutes } = require('./workbench/douyin');
 // ⭐ 2026-11-08（#948）：统一异步任务状态只读接口 —— 挂在**本文件既有**那道 `requireWorkbenchAccess`
@@ -87,6 +89,11 @@ const createWorkbenchRouter = (options = {}) => {
     next();
   });
   router.use(requireWorkbenchAccess);
+  // 2026-11-26：统一人员/角色闸门（生产走真实网关；测试的 mock gateway 不在这里强制）。
+  if (options.gateway instanceof require('../services/v1BitableGateway').V1BitableGateway) {
+    router.use(loadWorkbenchActor({ gateway: options.gateway }));
+  }
+  router.use('/staff', createWorkbenchStaffRoutes({ options }));
 
   /**
    * ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤）：**工作台接同一套上报**。
