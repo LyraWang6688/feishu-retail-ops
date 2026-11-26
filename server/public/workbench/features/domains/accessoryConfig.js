@@ -2,6 +2,7 @@ import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { showToast, showErrorToast } from '../shared/toast.js';
 import { waitForAsyncJob } from '../shared/asyncJob.js';
+import { compressImageFile } from '../shared/imageCompress.js';
 import { ACCESSORY_CONFIG_API as API, ACCESSORY_CONFIG_TEXTS as T } from '../../config/accessoryConfig.js';
 
 const submitKey = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`);
@@ -207,13 +208,15 @@ export function createAccessoryConfigModule() {
         uploadText.textContent = T.uploading;
         submitButton.disabled = true;
         try {
-          const result = await api.postRaw(API.upload, file);
+          // 2026-11-26：先压缩再传（Nginx 曾有 1MB 限制，iPhone 原图会 413）。
+          const uploadFile = await compressImageFile(file);
+          const result = await api.postRaw(API.upload, uploadFile);
           imageToken = String(result?.file?.file_token || '').trim();
           preview.src = URL.createObjectURL(file);
           preview.hidden = false;
           uploadText.hidden = true;
-        } catch {
-          showError(T.uploadFailed);
+        } catch (error) {
+          showError(error?.status === 413 ? T.uploadTooLarge : T.uploadFailed);
           imageInput.value = '';
         } finally {
           uploadText.textContent = T.upload;
