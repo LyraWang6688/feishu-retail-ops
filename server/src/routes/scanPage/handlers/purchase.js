@@ -2,6 +2,14 @@
 // ⭐⭐ 2026-10-29：提交成功 = 统一 toast 共用件（与销售/多货同一份实现）。
 const { redirectWithSubmitToast } = require('../../../utils/submitToast');
 const { ASYNC_JOBS } = require('../../../config/asyncJobs');
+const { soldOutCandidates } = require('../../../services/stockDelistCandidates');
+const { STOCK_DELIST } = require('../../../config/stockDelist');
+const { sellableCountOf } = require('../../../views/scanPageRealm');
+
+/** 本款库存记录数（与销售侧同一个口径：门盒/样品/空状态都算记录）。 */
+const stockTotalOfView = (view) => (Array.isArray(view?.rows) ? view.rows : [])
+  .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
+  .reduce((sum, row) => sum + Number(sellableCountOf(row, view.columns) || 0), 0);
 
 /**
  * 扫码路由核心深拆 P0：补货 / 退货两个提交分支（从 `routes/scanPage/index.js` 搬出，**只搬不改**）。
@@ -113,7 +121,7 @@ async function handleReplenish(ctx) {
 }
 
 async function handlePurchaseReturn(ctx) {
-  const { action, backTargetFor, body, fields, invalidateInventorySnapshot, markRealmUsed, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite, service, submitMultiItemOrder, writeConfig, parseReturnEntries, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure } = ctx;
+  const { action, backTargetFor, body, buildWriteContext, fields, invalidateInventorySnapshot, markRealmUsed, mergeFirstItemEntries, multiItemOrderConfig, notFoundPage, openId, openIdOf, parseMultiItemGroups, purchaseAmountInvalid, purchaseAmountInvalidPage, purchaseAmountMissing, purchaseAmountMissingPage, purchaseEntryInvalidPage, purchaseEntryViolation, purchaseWriteDisabledError, realm, realmOfAction, renderScan, req, requestId, res, respondWriteFailure, scanTargetOf, schedulePurchaseWrite, sendHtml, service, submitMultiItemOrder, writeConfig, config, parseReturnEntries, lookupInputOf, sendHuman, badNumberPage, respondFailure, unknownActionFailure } = ctx;
         const view = await service.lookup({ ...lookupInputOf(req), requestId });
         if (!view.found) {
           return notFoundPage(res, requestId, {
@@ -168,12 +176,57 @@ async function handlePurchaseReturn(ctx) {
         //     （那要新文案 ⇒ 越界 ✗）。
         //   · 🔴 **`≤1` 组一个字都不变** ⇒ 照旧走下面那条老路径 ✓。
         const groups = mergeFirstItemEntries(parseMultiItemGroups(body, multiItemOrderConfig), entries);
+        // ⭐ 2026-11-26（卖完下架确认）：与销售共用同一纯函数 —— 快照（页面首次读到的记录数）
+        //   减去本次退货数量；剩余 <= 0 才弹确认层。**不重新读库存**。
+        const delistConfirmed = String(body[fields.delistConfirmed] || '').trim() === '1';
+        const delistDecision = String(body.delist_decision || '').trim();
+        const pickField = fields.delistPick || 'delist_pick';
+        const pickedRaw = body[pickField];
+        const pickedIds = (Array.isArray(pickedRaw) ? pickedRaw : String(pickedRaw || '').split(','))
+          .map((id) => String(id || '').trim()).filter(Boolean);
+        const delistIds = delistConfirmed && delistDecision !== 'skip' ? pickedIds : [];
+        if (!delistConfirmed && STOCK_DELIST.prompts.purchaseReturn) {
+          const items = [];
+          if (groups.length > 1) {
+            for (const group of groups) {
+              const qty = (Array.isArray(group?.entries) ? group.entries : [])
+                .reduce((sum, entry) => sum + (Number(entry?.quantity) || 0), 0);
+              const snapshot = Number(group?.stock_total);
+              if (group?.product_record_id && Number.isFinite(snapshot)) {
+                items.push({ productRecordId: String(group.product_record_id), snapshotCount: snapshot, qty });
+              }
+            }
+          } else {
+            const qty = entries.reduce((sum, entry) => sum + (Number(entry?.quantity) || 0), 0);
+            const fromBody = Number(body[fields.stockSnapshot]);
+            const snapshot = Number.isFinite(fromBody) ? fromBody : stockTotalOfView(view);
+            if (view.product_record_id) {
+              items.push({ productRecordId: String(view.product_record_id), snapshotCount: snapshot, qty });
+            }
+          }
+          const candidates = soldOutCandidates(items).map((candidate) => ({
+            ...candidate,
+            number: candidate.productRecordId === String(view.product_record_id || '')
+              ? String(view.number || '')
+              : String((groups.find((group) => String(group?.product_record_id || '') === candidate.productRecordId) || {}).number || ''),
+            selected: STOCK_DELIST.confirm.defaultSelected !== false,
+          }));
+          if (candidates.length) {
+            const confirmWrite = await buildWriteContext(req, view, realm, {
+              delistConfirm: { candidates: candidates.slice(0, STOCK_DELIST.confirm.maxRows), body },
+            });
+            if (confirmWrite) {
+              const html = renderScan(view, config, confirmWrite, realm, { userAgent: req.headers['user-agent'] });
+              return sendHtml(res, 200, html);
+            }
+          }
+        }
         if (groups.length > 1) {
           return submitMultiItemOrder({
             req, res, requestId, chain: 'return', groups,
             // 同上：按真实动作名修正（原来恒 undefined）。
             action: writeConfig.actions.purchaseReturn,
-            delistProductIds: String(body[fields.delistProductIds] || '').split(',').map((id) => id.trim()).filter(Boolean),
+            delistProductIds: delistIds,
           });
         }
         // 🔴 **同一把 `submitKey` 原样透传**（幂等责任在写层：本文件不拼、不加后缀 ✗）
@@ -197,7 +250,7 @@ async function handlePurchaseReturn(ctx) {
             number: view.number,
             orderAmount: returnOrderAmount,
             entries,
-            delistProductIds: String(body[fields.delistProductIds] || '').split(',').map((id) => id.trim()).filter(Boolean),
+            delistProductIds: delistIds,
           },
         });
         // ⭐ 退货**真的动了库存** ⇒ 立刻作废「实时库存」内存快照（她：库存必须准确）。

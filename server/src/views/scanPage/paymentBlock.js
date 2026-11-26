@@ -2,6 +2,7 @@ const { SCAN_PAGE, MULTI_ITEM_RENDER_TEXTS, fillText } = require('../../config/s
 const { REALM_TEXTS, saleSizeGroups, sellableCountOf } = require('../scanPageRealm');
 const { realmScanConfigHtml } = require('../scanRealmScan');
 const { escapeHtml } = require('./fields');
+const { delistConfirmHtml } = require('./delistConfirm');
 const { submitFeedbackAttrs, submitSubmittingElapsedText, submitSubmittingText } = require('./script');
 const { exchangeDiffBlock } = require('./exchangeDiff');
 const { samplePromotionHtml } = require('./samplePromotion');
@@ -171,9 +172,9 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   const stockTotal = (Array.isArray(view?.rows) ? view.rows : [])
     .filter((row) => !row?.unknown_size && String(row?.size_text ?? '').trim())
     .reduce((sum, row) => sum + Number(sellableCountOf(row, view?.columns) || 0), 0);
-  const singleProduct = lines.length > 0 && new Set(lines.map((line) => String(line.product_record_id || ''))).size === 1
-    && String(lines[0].product_record_id || '') === String(view?.product_record_id || '');
-  const delistSaleQty = singleProduct ? lines.length : null;
+  // ⭐ 2026-11-26：下架判断不再由本页前端算（`singleProduct/delistSaleQty` 已删）——
+  //   改由 submit 路由按「页面快照 + 本单行」用共用纯函数判断，再把确认层渲染回来。
+
   const sizeInput = sizeGroupsHtml(view, draftForm.size);
   // ⭐ 2026-10-29：扫码页「流程配置」（`config/scanFlows.js`）—— 换款式等流程只声明差异：
   //   · 不显示"这一双的金额"输入（金额按货品单价算）；
@@ -308,12 +309,9 @@ const saleFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
     : ` data-progress-submit="1" data-submit-feedback="${escapeHtml(submitSubmittingText(write))}" data-submitting-elapsed="${escapeHtml(submitSubmittingElapsedText(write))}"`;
   return `<section class="card">${flowBanner ? `<p class="flow-banner">${escapeHtml(flowBanner)}</p>` : ''}
 <p class="draft-count">${escapeHtml(fillText(t.draftHeading, { count: lines.length }))}</p>
-<form id="${SALE_FORM_ID}" method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-sample-candidates="${escapeHtml(JSON.stringify(sampleCandidates))}"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}
-data-delist-product-id="${delistSaleQty == null ? '' : escapeHtml(String(view?.product_record_id || ''))}"
-data-delist-stock-total="${delistSaleQty == null ? '' : escapeHtml(String(stockTotal))}"
-data-delist-sale-qty="${delistSaleQty == null ? '' : escapeHtml(String(delistSaleQty))}"
-data-delist-prompt="${escapeHtml(String(config.saleDelistPrompt || ''))}">
+<form id="${SALE_FORM_ID}" method="post" action="${escapeHtml(write.postAction)}" class="write-form" data-sample-candidates="${escapeHtml(JSON.stringify(sampleCandidates))}"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
 ${hiddenField(write.fields.submitKey, write.saleKey)}${pageBuildField()}
+${hiddenField(write.fields.stockSnapshot, Number.isFinite(stockTotal) ? String(stockTotal) : '')}
 ${hiddenField(SALES_DRAFT.hiddenFields?.number, view?.number || '')}${hiddenField(SALES_DRAFT.hiddenFields?.itemNo, view?.item_no || '')}${hiddenField(SALES_DRAFT.hiddenFields?.color, view?.color || '')}${hiddenField(SALES_DRAFT.hiddenFields?.productRecordId, view?.product_record_id || '')}
 ${hiddenField(write.fields.delistProductIds, '')}
 ${samplePromotionHtml()}
@@ -333,7 +331,7 @@ ${flowContextHtml}${exchangeDiffBlock(flow)}<button type="button" class="btn" da
 <button type="submit" class="btn btn--primary" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.submitOrder)}"${progressSubmitAttrs}>${escapeHtml(submitLabel || countLabel)}</button>
 ${hideAddLine ? '' : `<button${multiItemAdd ? ' data-multi-add' : ''} type="submit" class="btn" name="${escapeHtml(fields.action)}" value="${escapeHtml(write.actions.addLine)}"${submitFeedbackAttrs(write)}>${escapeHtml(addLineLabel)}</button>`}
 </form>
-${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
+${delistConfirmHtml({ order: write.delistConfirm, fields: write.fields, action: write.postAction, config: SCAN_PAGE })}${lines.length ? `<form method="post" action="${escapeHtml(write.postAction)}" class="write-form"${flow?.id === 'afterSalesExchange' ? ' data-exchange-form="1"' : ''}>
 ${hiddenField(fields.action, write.actions.clearDraft)}${pageBuildField()}
 ${hiddenField(fields.submitKey, write.saleKey)}
 <button type="submit" class="btn btn--ghost"${submitFeedbackAttrs(write)}>${escapeHtml(t.clearButton)}</button>
