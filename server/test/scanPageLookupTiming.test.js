@@ -233,7 +233,7 @@ test('AC-T2 走完一次扫码只打一条 `scan.lookup.timing`（含 render_ms�
   }));
 
   const { entries } = await captureInfo(() => withServer(app, async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     return response.text();
   }));
@@ -274,7 +274,7 @@ test('AC-T3 没找到 / 取数抛错：照样一条 timing（found:false、rows:
     gateway: notFound, config: SCAN_PAGE, startSnapshot: false,
   }));
   const { entries } = await captureInfo(() => withServer(appNotFound, async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 404, '没找到还是 404 + 人话页（日志不许改变行为）');
     assert.match(await response.text(), /没找到这个编号/);
   }));
@@ -301,7 +301,7 @@ test('AC-T3 没找到 / 取数抛错：照样一条 timing（found:false、rows:
     gateway: broken, config: SCAN_PAGE, startSnapshot: false,
   }));
   const { entries: failed } = await captureInfo(() => withServer(appBroken, async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 404);
   }));
   const failedLines = failed.filter((entry) => entry.event === 'scan.lookup.timing');
@@ -424,7 +424,7 @@ test('AC-T6/T7/T8/T10 分段字典加厚：每段都有值 · 缺段显式 -1 ·
     paymentMethodsService: { list: async () => ({ ok: true, items: ['微信'] }) },
   }));
   const { entries } = await captureInfo(() => withServer(app, async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     return response.text();
   }));
@@ -507,7 +507,7 @@ test('AC-T12 哨兵：命中快照时 `inventory_ms` 必须很小（< 50ms）—
   app.use((req, res, next) => { req.requestId = 'req_t_snap'; next(); });
   app.use(SCAN_PAGE.route.recordBasePath, createScanPageRouter({ gateway, config: SCAN_PAGE, startSnapshot: false }));
   const { entries } = await captureInfo(() => withServer(app, async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     return response.text();
   }));
@@ -638,7 +638,7 @@ test('AC-PL1 `post_lookup_ms`：取数之后、渲染之前那一段（她「数
     paymentMethodsService: { list: async () => ({ ok: true, items: ['微信'] }) },
   }));
   const { entries: routed } = await captureInfo(() => withServer(app, async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     return response.text();
   }));

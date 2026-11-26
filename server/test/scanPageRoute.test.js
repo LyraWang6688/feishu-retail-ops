@@ -116,7 +116,7 @@ test('页面：200 出库存表（含缺码高亮、0 用「—」、单价与�
 test('已下架货品的标签 → 409 + 明确说明不能新销售、引导去售后入口', async () => {
   login();
   await withServer(appFor(async () => ({ found: false, number: '', reason: 'delisted' })), async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 409);
     const html = await response.text();
     assert.match(html, /这个货品已下架/);
@@ -129,7 +129,7 @@ test('已下架货品的标签 → 409 + 明确说明不能新销售、引导去
 test('没找到这个编号 → 404 + 一张说清楚的页面（不白屏、不 500）', async () => {
   login();
   await withServer(appFor(async () => ({ found: false, number: 'NOPE|黑色|男', reason: 'unknown' })), async (base) => {
-    const response = await fetch(`${base}/r/NOPE%7C%E9%BB%91%E8%89%B2%7CA`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/NOPE%7C%E9%BB%91%E8%89%B2%7CA?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 404);
     const html = await response.text();
     assert.match(html, /没找到这个编号/);
@@ -152,17 +152,17 @@ test('编号读不出来（只有空格 / 解码失败）→ 400 + 人话页；�
     assert.match(homeHtml, /data-view="sales-home"/);
     assert.equal(homeHtml.includes('data-view="draft-bar"'), false, '销售首页不带本单清单 ✗');
     for (const path of ['/r/%20']) {
-      const response = await fetch(`${base}${path}`, { headers: { cookie: sessionCookie() } });
+      const response = await fetch(`${base}${path}?from=inventory`, { headers: { cookie: sessionCookie() } });
       assert.equal(response.status, 400, path);
       assert.match(await response.text(), /这个链接不对/);
     }
     // `%zz` 在**进入 handler 之前**就被 Express 拒了（Failed to decode param）——
     // 由 router 级错误中间件接住，回的还是我们那张页
-    const malformed = await fetch(`${base}/r/%zz`, { headers: { cookie: sessionCookie() } });
+    const malformed = await fetch(`${base}/r/%zz?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(malformed.status, 400);
     assert.match(await malformed.text(), /这个链接不对/);
     // `50%OFF`：Express 解不开、handler 里也解不开 → 照样一张人话页
-    const literal = await fetch(`${base}/r/50%OFF`, { headers: { cookie: sessionCookie() } });
+    const literal = await fetch(`${base}/r/50%OFF?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(literal.status, 400);
     assert.match(await literal.text(), /这个链接不对/);
   });
@@ -171,7 +171,7 @@ test('编号读不出来（只有空格 / 解码失败）→ 400 + 人话页；�
 test('远端出错 → 500 不回显内部细节；飞书没准备好 → 503 + Retry-After', async () => {
   login();
   await withServer(appFor(async () => { throw new Error('App token 不合法（内部细节）'); }), async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 500);
     const html = await response.text();
     assert.match(html, /暂时打不开，请稍后再试/);
@@ -179,7 +179,7 @@ test('远端出错 → 500 不回显内部细节；飞书没准备好 → 503 + 
   });
 
   await withServer(appFor(async () => { throw new Error('飞书 1254607 data not ready'); }), async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 503);
     assert.equal(response.headers.get('retry-after'), '5');
     assert.match(await response.text(), /库存数据正在准备中/);
@@ -187,7 +187,7 @@ test('远端出错 → 500 不回显内部细节；飞书没准备好 → 503 + 
 
   const limit = Object.assign(new Error('超过本页本次可读上限'), { scanLimitExceeded: true });
   await withServer(appFor(async () => { throw limit; }), async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}`, { headers: { cookie: sessionCookie() } });
+    const response = await fetch(`${base}/r/${ENCODED}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 503);
     assert.match(await response.text(), /这次读的库存太多了/);
   });

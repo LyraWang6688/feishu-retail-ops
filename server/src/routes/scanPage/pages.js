@@ -69,10 +69,10 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
     //   ⚠️ 只覆盖**编号页/记录 ID 页**这一条；`GET /`（新首页）与所有写入口一个字不动 ✓
     // ⭐ 2026-10-14：骨架**只服务"首次进入"**（不带 `?from=`）——
     //   她「六格没问题、不要改动」+「中间态数据加载中」✗ ⇒ 点六格（带 `?from=`）**直接出整页** ✓
-    //   判据在配置里（`config.skeleton.firstEntryOnly` ✓ 显式布尔 ✓ 不写 `||` 兜底 ✗）
+    //   ⛔ 2026-11-26（她：「不需要这个开关」）：骨架**固定开启**，不再读 `SCAN_PAGE_SKELETON_ENABLED`。
     const skeletonFirstEntryOnly = config.skeleton?.firstEntryOnly === true;
     const hasRealmQuery = String(req.query?.from || '') !== '';
-    if (config.skeleton?.enabled === true && String(req.query?.data || '') !== '1'
+    if (String(req.query?.data || '') !== '1'
       && !(skeletonFirstEntryOnly && hasRealmQuery)
       && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
       logInfo(SCAN_PAGE.events?.skeletonServed || 'scan.page.skeleton', { request_id: requestId });

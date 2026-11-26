@@ -26,6 +26,21 @@ const { SCAN_PAGE } = require('../src/config/scanPage');
 const { SCAN_WRITE } = require('../src/config/scanWrite');
 const { createScanPageRouter } = require('../src/routes/scanPage');
 
+// 2026-11-26：骨架固定开启后，GET 裸扫只回骨架、`?data=1` 又跳过"支付中接管" ⇒
+//   为了仍从**真路由**进资金页，用既有的"打开草稿"路径（`?draft=`）：它绕过骨架（带 from）且
+//   不清 paymentStep（`draftOpened` 分支）。这里只把草稿服务换成内存里的假草稿。
+const draftRuntimePath = require.resolve('../src/services/salesDraftRuntime');
+require.cache[draftRuntimePath] = {
+  id: draftRuntimePath,
+  filename: draftRuntimePath,
+  loaded: true,
+  exports: {
+    getSalesDraftService: () => ({
+      get: async () => ({ lines: [{ item_no: 'JX505', size: '40', amount: '100' }], step: 'payment' }),
+    }),
+  },
+};
+
 const COOKIE = (() => {
   const crypto = require('node:crypto');
   const p = Buffer.from(JSON.stringify({ open_id: 'ou_pm', name: '自检', exp: Date.now() + 36e5 })).toString('base64url');
@@ -57,6 +72,8 @@ const withServer = async (gateway, run) => {
           sale: { paymentStep: 'pending', lines: [{ item_no: 'JX505', size: '40', amount: '100' }] },
         }),
         submitKeyFor: () => 'scan_sale:pm:1',
+        ensure: async () => ({ session_id: 'sess_pm' }),
+        store: { update: async () => {} },
       },
     },
   }));
@@ -82,7 +99,7 @@ const withServer = async (gateway, run) => {
 //     本文件主题是"**候选交易方式读表**"，与"从哪个 URL 进来"无关 ✓
 //     （改前靠 `?from=sales` 进来，只是因为当时那条接管也认 `?from=sales`；那条 URL 现在按她选的 ② 另有含义 ✓）。
 const getMoneyPage = async (base) => (await fetch(
-  `${base}/r/${encodeURIComponent(NUMBER)}`, { headers: { cookie: COOKIE } },
+  `${base}/r/${encodeURIComponent(NUMBER)}?from=sales&draft=d1`, { headers: { cookie: COOKIE } },
 )).text();
 
 /** 假的「交易方式管理」表（只回答这一个 tableKey ✓ 别的读一律空表）。 */

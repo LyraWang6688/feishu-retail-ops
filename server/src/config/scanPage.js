@@ -355,12 +355,8 @@ const READS = Object.freeze({
   // 总开关（**显式布尔**：空串 = 关掉，见 config/envValue 的规矩）。
   // 关掉 = 回到提速前的"整表读"，用于线上出问题时一键退回。
   filterEnabled: readFlag(process.env, 'SCAN_PAGE_FILTER_READ_ENABLED', true),
-  // ⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**。
-  //   · **默认 false** ⇒ `/r/<recordId>` 与改动前**逐字相同**（既有整页 AC 一条都不动 ✓ 不假绿 ✓）；
-  //   · 打开（线上 `.env` 由 Lead 拿到她授权后设 `SCAN_PAGE_SKELETON_ENABLED=true`）⇒
-  //     首屏立刻回骨架（占位 + 正在读取…），数据由**同一段脚本** `fetch('?data=1')` 拿回来；
-  //     ⚠️ `?data=1` **走的还是同一个 `service.lookup`**（不新增取数路径 ✗）。
-  //   ⚠️ **显式布尔**（`readFlag` 给缺省值），不写 `||` 兜底 —— 否则"清空变量"关不掉 ✗
+  // ⚠️ 骨架屏开关已于 2026-11-26 删除（她：「不需要这个开关」）⇒ 固定开启，
+  //    配置见 `SCAN_PAGE.skeleton`（只剩 firstEntryOnly）。
 
   // ⚠️ 按条件读的结果**一条都没有**时记一条 warn（见 events.filteredEmpty）：
   //    "库存真的为 0" 与 "filter 悄悄不生效" 在返回体上长得一样，
@@ -769,19 +765,13 @@ const REPLENISH_FORM = Object.freeze({
 });
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
-  // ⭐⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏开关**（**显式布尔**，缺省 false）。
-  //   · false（默认）⇒ `/r/<recordId>` 与改动前**逐字相同** ⇒ 既有整页 AC 一条不用改 ✓（不假绿）
-  //   · true（线上 `.env`：`SCAN_PAGE_SKELETON_ENABLED=true`，由 Lead 拿到她授权后打开）⇒
-  //     首屏立刻回骨架（占位 + 正在读取…），数据由骨架里**同一段脚本** `fetch('?data=1')` 拿回来；
-  //     ⚠️ `?data=1` 走的还是**同一个 `service.lookup`**（不新增取数路径 ✗）
-  //   ⚠️ 必须放在**这个**对象里 —— 上一版我插到了子配置对象里 ⇒ `SCAN_PAGE.skeleton` 是 undefined
-  //      ⇒ 真进程开关**根本没生效**（真墙钟那次因此作废 ✗）。这条教训由下面那条"真配置"AC 钉住 ✓
-  // ⭐ 2026-10-14（她：「六格没问题、不要改动」+「增加了一个新毛病…有中间态数据加载中」✗）：
-  //   骨架**只服务"首次进入"**（不带 `?from=`）；**点六格（带 `?from=`）直接出整页** ✗ 不再有中间态 ✓
-  //   **显式布尔**（缺省 true = 我们要的行为 ✓），不写 `||` 兜底 ✗
+  // ⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏**（首屏先给"数据加载中"，再取整页）。
+  //   ⛔ 2026-11-26（她：「为什么这个还要开关呢，不需要这个开关」）⇒ **去掉开关，固定开启**：
+  //      线上本来就是开的；代码不再读 `SCAN_PAGE_SKELETON_ENABLED` / `..._FIRST_ENTRY_ONLY`。
+  //   ⚠️ 仍只服务"首次进入"（不带 `?from=`）：点领域直接出整页，不出中间态。
+  //   ⚠️ `?data=1` 走的还是**同一个 `service.lookup`**（不新增取数路径 ✗）。
   skeleton: {
-    enabled: readFlag(process.env, 'SCAN_PAGE_SKELETON_ENABLED', false),
-    firstEntryOnly: readFlag(process.env, 'SCAN_PAGE_SKELETON_FIRST_ENTRY_ONLY', true),
+    firstEntryOnly: true,
   },
   // ⭐⭐ 2026-10-13（她最终顺序）：「上新」tab = **直达外链**（不是一个页面领域）。
   //   ⚠️ 工作台那份在 `public/workbench/config/links.js`（**我不碰那个文件** ✗ 只读它 ✓）——

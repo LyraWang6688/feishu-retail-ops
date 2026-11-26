@@ -307,7 +307,8 @@ test('⑦ 已登录且白名单内：扫码页照常 200（页面行为一个字
   login();
   const app = scanApp();
   await withServer(app, async (base) => {
-    const response = await fetch(`${base}${PAGE}`, { headers: { cookie: sessionCookie() } });
+    // 2026-11-26：骨架固定开启 ⇒ 带 ?from= 直达整页（只进一次的规则），这里测的是登录闸门，不是骨架
+    const response = await fetch(`${base}${PAGE}?from=inventory`, { headers: { cookie: sessionCookie() } });
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /text\/html/);
     assert.match(await response.text(), /YD6693-2/);
