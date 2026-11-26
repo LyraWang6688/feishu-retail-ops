@@ -37,6 +37,7 @@ class StaffDirectoryService {
         roleRecordId: linkedIds(row.fields?.[fields.role])[0] || '',
         roleName: linkedText(row.fields?.[fields.role]),
         active: row.fields?.[fields.active] === true,
+        attend: row.fields?.[fields.attendance] === true,
       };
     }).filter((staff) => staff.recordId);
   }

@@ -62,7 +62,8 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
     try {
       const all = await directory.listStaff();
       const actor = req.workbenchActor;
-      const staff = actor.role === ROLES.ADMIN ? all : all.filter((item) => item.recordId === actor.recordId);
+      const attending = all.filter((item) => item.attend);
+      const staff = actor.role === ROLES.ADMIN ? attending : attending.filter((item) => item.recordId === actor.recordId);
       const roles = actor.role === ROLES.ADMIN ? await directory.listRoles() : [];
       return res.json({ success: true, staff, roles });
     } catch (error) {
@@ -78,10 +79,12 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
       const to = isDay(req.query.to) ? req.query.to : shanghaiDay(0);
       if (from > to) throw badRequest(STAFF_TEXTS.badRange);
       const rows = await gateway.listAll('attendance');
+      const attendingIds = new Set((await directory.listStaff())
+        .filter((item) => item.attend).map((item) => item.recordId));
       const fromAt = epochOf(from, '00:00');
       const toAt = epochOf(to, '23:59');
       let list = (rows || []).map(mapAttendance)
-        .filter((row) => row.date >= fromAt && row.date <= toAt);
+        .filter((row) => row.date >= fromAt && row.date <= toAt && attendingIds.has(row.staffRecordId));
       if (actor.role !== ROLES.ADMIN) {
         list = list.filter((row) => row.staffRecordId === actor.recordId || row.staffOpenId === actor.openId);
       } else if (req.query.staffRecordId) {
@@ -112,6 +115,7 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
     const staff = (await directory.listStaff()).find((item) => item.recordId === String(recordId || ''));
     if (!staff) throw badRequest(STAFF_TEXTS.staffMissing);
     if (!staff.active) throw badRequest(STAFF_TEXTS.staffInactive);
+    if (!staff.attend) throw badRequest(STAFF_TEXTS.staffNotAttending);
     return staff;
   };
 

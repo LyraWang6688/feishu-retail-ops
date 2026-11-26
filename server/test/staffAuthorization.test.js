@@ -12,9 +12,10 @@ const AT = (value) => Date.parse(value + '+08:00');
 const makeGateway = () => {
   const calls = { create: [], update: [], delete: [] };
   const staffRows = [
-    { record_id: 'staff_admin', fields: { 姓名: [{ id: 'ou_admin', name: '管理员甲' }], 角色: [{ record_ids: ['role_admin'], text: '管理员' }], 在职: true } },
-    { record_id: 'staff_emp', fields: { 姓名: [{ id: 'ou_emp', name: '店员乙' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: true } },
-    { record_id: 'staff_off', fields: { 姓名: [{ id: 'ou_off', name: '离职丙' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: false } },
+    { record_id: 'staff_admin', fields: { 姓名: [{ id: 'ou_admin', name: '管理员甲' }], 角色: [{ record_ids: ['role_admin'], text: '管理员' }], 在职: true, 是否考勤: true } },
+    { record_id: 'staff_emp', fields: { 姓名: [{ id: 'ou_emp', name: '店员乙' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: true, 是否考勤: true } },
+    { record_id: 'staff_noatt', fields: { 姓名: [{ id: 'ou_noatt', name: '不考勤丁' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: true, 是否考勤: false } },
+    { record_id: 'staff_off', fields: { 姓名: [{ id: 'ou_off', name: '离职丙' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: false, 是否考勤: false } },
   ];
   const roleRows = [
     { record_id: 'role_admin', fields: { 角色: '管理员', 权限说明: '' } },
@@ -25,7 +26,7 @@ const makeGateway = () => {
     { record_id: 'att_emp', fields: { 姓名: [{ record_ids: ['staff_emp'] }], 考勤人: [{ id: 'ou_emp' }], 出勤日: DAY('2026-11-25'), 开始时间: AT('2026-11-25T10:00:00'), 结束时间: AT('2026-11-25T16:00:00'), 工时: 6 } },
   ];
   const tables = {
-    staff: { fields: { name: '姓名', role: '角色', active: '在职' } },
+    staff: { fields: { name: '姓名', role: '角色', active: '在职', attendance: '是否考勤' } },
     staffRole: { fields: { name: '角色', note: '权限说明' } },
     attendance: { fields: { date: '出勤日', hours: '工时', startAt: '开始时间', endAt: '结束时间', staff: '姓名', staffUser: '考勤人' } },
   };
@@ -98,6 +99,26 @@ test('店员只能看本人考勤；管理员看全员', async () => {
     const admin = await fetch(base + '/staff/attendance?from=2026-11-01&to=2026-11-30', { headers: { 'x-test-openid': 'ou_admin' } });
     const adminBody = await admin.json();
     assert.deepEqual(adminBody.attendance.map((row) => row.recordId).sort(), ['att_admin', 'att_emp']);
+  });
+});
+
+test('未勾选「是否考勤」⇒ 列表不返回、也不能加考勤', async () => {
+  const gateway = makeGateway();
+  await withServer(makeApp(gateway), async (base) => {
+    const roster = await fetch(base + '/staff', { headers: { 'x-test-openid': 'ou_admin' } });
+    const body = await roster.json();
+    const ids = body.staff.map((item) => item.recordId);
+    assert.ok(ids.includes('staff_admin') && ids.includes('staff_emp'));
+    assert.equal(ids.includes('staff_noatt'), false, '未勾选考勤的人不返回');
+    assert.equal(ids.includes('staff_off'), false, '离职的人不返回');
+
+    const denied = await fetch(base + '/staff/attendance', {
+      method: 'POST',
+      headers: { 'x-test-openid': 'ou_admin', 'content-type': 'application/json' },
+      body: JSON.stringify({ staffRecordId: 'staff_noatt', date: '2026-11-25', start: '09:00', end: '18:00' }),
+    });
+    assert.equal(denied.status, 400);
+    assert.match((await denied.json()).error, /未开启考勤/);
   });
 });
 
