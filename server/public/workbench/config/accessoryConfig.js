@@ -50,6 +50,7 @@ export const ACCESSORY_CONFIG_TEXTS = Object.freeze({
   deleteFailed: '删除失败，请稍后重试',
   saveFailed: '保存失败，请稍后重试',
   uploadFailed: '样例图上传失败，请稍后重试',
+  uploadTooLarge: '图片太大，请压缩或换一张再传',
   edit: '修改',
   remove: '删除',
   stock: '库存 {count}',
