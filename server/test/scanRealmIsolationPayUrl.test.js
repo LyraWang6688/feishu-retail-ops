@@ -104,6 +104,15 @@ test('/pay：有 pending ⇒ 资金页；刷新仍是资金页；没有 pending 
   });
 });
 
+test('/pay 保留货品页确认的下架 ID（否则付款提交会丢空）', async () => {
+  await withServer(async (base) => {
+    session.sale.delist_product_ids = ['prod_1'];
+    const pay = await get(base, '/r/prod_1/pay');
+    assert.equal(pay.status, 200);
+    assert.match(await pay.text(), /name="delist_product_ids" value="prod_1"/, '资金页必须原样带下架 ID');
+  });
+});
+
 test('销售入口重扫清 pending；售后换款式不清', async () => {
   await withServer(async (base, cleared) => {
     const sales = await get(base, '/r/prod_1?from=sales');

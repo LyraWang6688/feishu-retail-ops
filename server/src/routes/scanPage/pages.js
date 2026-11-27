@@ -43,6 +43,8 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
       count: lines.length,
       lines,
       totalAmountText: cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '',
+      // 2026-11-27：货品页确认的下架 ID 必须从会话带回资金页，否则付款提交时丢空。
+      delistProductIds: Array.isArray(sale.delist_product_ids) ? sale.delist_product_ids : [],
       paymentRows: Array.isArray(sale.draft_payment?.paymentRows) ? sale.draft_payment.paymentRows : undefined,
       gift: sale.draft_payment?.gift || '',
       accessory: sale.draft_payment?.accessory || '',
