@@ -563,8 +563,8 @@ test('AC-RI3b ⭐ 幂等：同一份提交重放 ⇒ 图 +0 · 群消息 +0 · �
       operator_open_id: OPEN_ID,
       order_amount: '399',
       items: [
-        { size: 41, quantity: 1, product_record_id: 'prod_A', product_number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a' },
-        { size: 41, quantity: 1, product_record_id: 'prod_B', product_number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a' },
+        { size: 41, quantity: 1, product_record_id: 'prod_A', product_number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 19900 },
+        { size: 41, quantity: 1, product_record_id: 'prod_B', product_number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 20000 },
       ],
     };
     const first = await purchaseReturn.submit('scan_return_image_replay_1', draft);

@@ -431,6 +431,13 @@ const createPurchaseReturnService = (options = {}) => {
     //    退货保留「报货批次」；库存流水通过「关联采购」指向该批次。
     // ⚠️ 出图不依赖 purchaseRequest 行：下面的 drawItems 直接由 plan/draft 生成。
     const drawnItems = plan.items.filter((item) => item.taken > 0);
+    // 2026-11-27：多货品批次每一件都必须有自己的金额；缺失时**绝不**用整批金额兜底
+    //（否则当前页 60 会显示成整批 180）。单货品仍沿用整批金额（两者相等）。
+    if (rowIdentity && drawnItems.some((item) => !Number.isInteger(item.amount_cents))) {
+      const error = new Error('purchase return item amount missing');
+      error.scanUserMessage = SCAN_WRITE.texts.purchaseReturnItemAmountMissingBody;
+      throw error;
+    }
     // ③ 扣库存（走 InventoryService；**本刀把它由"逐尺码"改成"一批一次"**）＋ 准备出图入参。
     //    ⭐ task-65（业务负责人 2026-10-16 逐字「退货也需要批量提速」）——
     //    **改前逐字**：`for (const item of drawnItems) { const change = await inventory.applyPurchaseReturn({...}) }`
@@ -485,7 +492,7 @@ const createPurchaseReturnService = (options = {}) => {
         // 多货品：计划里逐 record ID 冻了金额；单货品：整单金额就是这一款金额。
         amount_cents: Number.isInteger(item.amount_cents)
           ? item.amount_cents
-          : toCents(draft.order_amount),
+          : (rowIdentity ? null : toCents(draft.order_amount)),
         // ⭐ 每行**自带自己的供应商** ⇒ 既有出图链路（`deliverSupplierImages` →
         //   `supplierSplitService.groupItemsBySupplier`）据此按供应商分组 ✓（**不另造第二套** ✗）
         supplier_record_id: line.supplier_record_id,

@@ -731,7 +731,7 @@ const TEXTS = Object.freeze({
   saleRetryMismatchBody: '要重试的那一单和刚才提交的不是同一单：刷新一下再点。',
   saleRetryDoneBody: '已经接着写完了。',
   saleRetryFailedBody: '还是没写成功：请稍后再点一次重试。',
-  purchaseReturnAmountWriteFailedBody: '这一批的「整单金额」没写进表里，这次没算成功：请再点一次【生成采购退货】——会接着这一批写，不会重复退。',
+  purchaseReturnAmountWriteFailedBody: '这一批的「整单金额」没写进表里，这次没算成功：请再点一次【生成采购退货】——会接着这一批写，不会重复退。', purchaseReturnItemAmountMissingBody: '这一单里有一件没取到金额，请重新提交这一单（不要只填整单金额）。',
   // ── ⭐⭐ 扫码验收（方案A；只留能点、能做的事 + 事实）─────────────────────────
   // ⭐⭐ 2026-10-12（业务负责人真机，逐字）：「提交这一单我点了好多次，因为点完之后页面
   //    **一直没有任何反应**，我还以为没接收到……而且我现在还收到了 504 网关超时的提示」
