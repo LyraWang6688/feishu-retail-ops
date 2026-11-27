@@ -328,8 +328,6 @@ const EVENTS = Object.freeze([
   'scan.page.viewed',
   'scan.payment_step.reset_failed',
   'scan.payment_step.reset_on_scan',
-  'scan.payment_step.stale_clear_failed',
-  'scan.payment_step.stale_cleared',
   'scan.purchase_return.batch_created',
   'scan.purchase_return.image_failed',
   'scan.purchase_return.key_rotate_failed',
