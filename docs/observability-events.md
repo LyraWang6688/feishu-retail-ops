@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **555** 个事件。按前缀分组：
+共 **564** 个事件。按前缀分组：
 
 ## accessory
 
@@ -34,6 +34,11 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `attendance.clock_out_reminder.failed` | 1 | src/services/attendanceReminderService.js |
+| `attendance.clock_out_reminder.sent` | 1 | src/services/attendanceReminderService.js |
+| `attendance.clock_out_reminder.started` | 1 | src/app.js |
+| `attendance.clock_out_reminder.tick_failed` | 1 | src/app.js |
+| `attendance.clock.self` | 1 | src/config/permissions.js |
 | `attendance.read.all` | 1 | src/config/permissions.js |
 | `attendance.read.self` | 1 | src/config/permissions.js |
 
@@ -735,6 +740,10 @@
 | `workbench.staff.attendance.list.failed` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.attendance.update.failed` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.attendance.updated` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.clock.in` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.clock.in.failed` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.clock.out` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.clock.out.failed` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.list.failed` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.update.failed` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.updated` | 1 | src/routes/workbench/staff.js |

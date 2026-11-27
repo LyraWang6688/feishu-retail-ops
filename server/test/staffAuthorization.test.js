@@ -32,6 +32,7 @@ const makeGateway = () => {
   };
   return {
     calls,
+    attendance,
     table: (key) => tables[key],
     listAll: async (key) => {
       if (key === 'staff') return staffRows;
@@ -158,5 +159,63 @@ test('管理员改角色走 staff.write；店员 403', async () => {
     assert.equal(ok.status, 200);
     assert.equal(gateway.calls.update.length, 1);
     assert.equal(gateway.calls.update[0].fields.role[0], 'role_admin');
+  });
+});
+
+test('上班/下班：开始-only 创建、已有进行中拒绝', async () => {
+  const gateway = makeGateway();
+  await withServer(makeApp(gateway), async (base) => {
+    const created = await fetch(base + '/staff/attendance/clock-in', {
+      method: 'POST',
+      headers: { 'x-test-openid': 'ou_emp', 'content-type': 'application/json' },
+      body: JSON.stringify({ staffRecordId: 'staff_noatt' }),
+    });
+    assert.equal(created.status, 201, '店员只能给自己上班，body 里的别人被忽略');
+    assert.equal(gateway.calls.create.length, 1);
+    assert.equal(gateway.calls.create[0].fields.staff[0], 'staff_emp');
+    assert.equal(gateway.calls.create[0].fields.endAt, undefined, '开始-only 不写结束');
+    assert.equal(gateway.calls.create[0].fields.hours, undefined, '进行中工时不写');
+
+    gateway.attendance.push({
+      record_id: 'att_open',
+      fields: {
+        姓名: [{ record_ids: ['staff_emp'] }],
+        考勤人: [{ id: 'ou_emp' }],
+        出勤日: DAY('2026-11-25'),
+        开始时间: AT('2026-11-25T09:00:00'),
+      },
+    });
+    const again = await fetch(base + '/staff/attendance/clock-in', {
+      method: 'POST',
+      headers: { 'x-test-openid': 'ou_emp', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(again.status, 400);
+    assert.match((await again.json()).error, /进行中/);
+  });
+});
+
+test('下班：回填结束时间并算工时', async () => {
+  const gateway = makeGateway();
+  gateway.attendance.push({
+    record_id: 'att_open',
+    fields: {
+      姓名: [{ record_ids: ['staff_emp'] }],
+      考勤人: [{ id: 'ou_emp' }],
+      出勤日: DAY('2026-11-25'),
+      开始时间: AT('2026-11-25T09:00:00'),
+    },
+  });
+  await withServer(makeApp(gateway), async (base) => {
+    const done = await fetch(base + '/staff/attendance/clock-out', {
+      method: 'POST',
+      headers: { 'x-test-openid': 'ou_emp', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(done.status, 200);
+    const update = gateway.calls.update.find((item) => item.key === 'attendance' && item.id === 'att_open');
+    assert.ok(update, '要回填到进行中的那条记录');
+    assert.ok(update.fields.endAt > 0);
+    assert.ok(update.fields.hours > 0);
   });
 });

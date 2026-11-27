@@ -12,6 +12,8 @@ const STAFF_TEXTS = Object.freeze({
   staffMissing: '花名册里没有这个人员',
   staffInactive: '该人员已离职',
   staffNotAttending: '该人员未开启考勤',
+  alreadyClockedIn: '当前已有进行中的考勤，请先打下班卡',
+  noOpenAttendance: '还没有上班记录，请先打上班卡',
   badRange: '日期范围不对',
   badTime: '开始/结束时间不对',
   badRole: '角色不存在',

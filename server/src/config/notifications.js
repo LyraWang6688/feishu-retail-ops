@@ -53,6 +53,10 @@ const NOTIFICATION_EVENTS = Object.freeze({
     target: 'private',
     format: 'card', card: 'lark_event_heartbeat', title: '【飞书事件心跳】',
   }),
+  attendance_clock_out_reminder: Object.freeze({
+    target: 'private',
+    format: 'text', card: 'attendance_clock_out_reminder', title: '【考勤提醒】',
+  }),
   purchase_request_created: Object.freeze({
     target: 'group', format: 'text', card: 'purchase_request_created', title: '【采购申请】',
   }),
