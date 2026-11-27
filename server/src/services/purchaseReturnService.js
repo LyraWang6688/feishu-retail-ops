@@ -556,6 +556,7 @@ const createPurchaseReturnService = (options = {}) => {
       await supplyDocumentSync.syncBatch({
         batchNo: plan.batch_no,
         batchRecordId,
+        supplierName: returnSupplierNames[0] || '',
         supplierNames: returnSupplierNames,
       });
     } catch (error) {

@@ -134,8 +134,11 @@ const splitBySupplier = ({ items = [], batchNo = '', batchKey = '', taskId = '',
  *    去完为空（名字全是符号）或**压根没给名字** ⇒ 用 `supplier` 兜底，
  *    后面拼 `-{后缀}.png`。
  */
+const safeSupplierName = (supplierName) => String(supplierName || '')
+  .replace(/[^\w\u4e00-\u9fa5-]/g, '') || 'supplier';
+
 const documentFileNameOf = (supplierName, fileNameSuffix = '') => {
-  const safeName = String(supplierName || 'supplier').replace(/[^\w\u4e00-\u9fa5-]/g, '') || 'supplier';
+  const safeName = safeSupplierName(supplierName);
   return `${safeName}-${fileNameSuffix}.png`;
 };
 
@@ -145,6 +148,7 @@ module.exports = {
   supplierKeyOf,
   supplierRecordIdOf,
   documentFileNameOf,
+  safeSupplierName,
   pairCountOf,
   fillTemplate,
 };
