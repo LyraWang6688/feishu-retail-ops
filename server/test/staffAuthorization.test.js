@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
 const { createWorkbenchStaffRoutes } = require('../src/routes/workbench/staff');
 const { resolveActor, requirePermission } = require('../src/services/authorizationService');
@@ -20,6 +22,7 @@ const makeGateway = () => {
   const roleRows = [
     { record_id: 'role_admin', fields: { 角色: '管理员', 权限说明: '' } },
     { record_id: 'role_emp', fields: { 角色: '店员', 权限说明: '' } },
+    { record_id: 'role_guest', fields: { 角色: '店长', 权限说明: '还没接权限矩阵' } },
   ];
   const attendance = [
     { record_id: 'att_admin', fields: { 姓名: [{ record_ids: ['staff_admin'] }], 考勤人: [{ id: 'ou_admin' }], 出勤日: DAY('2026-11-25'), 开始时间: AT('2026-11-25T09:00:00'), 结束时间: AT('2026-11-25T18:00:00'), 工时: 9 } },
@@ -160,6 +163,25 @@ test('管理员改角色走 staff.write；店员 403', async () => {
     assert.equal(gateway.calls.update.length, 1);
     assert.equal(gateway.calls.update[0].fields.role[0], 'role_admin');
   });
+});
+
+test('分配未配置权限的角色 ⇒ 400 + 人话，且不写库（避免把人悄悄锁死）', async () => {
+  const gateway = makeGateway();
+  await withServer(makeApp(gateway), async (base) => {
+    const payload = JSON.stringify({ roleRecordId: 'role_guest' });
+    const denied = await fetch(base + '/staff/staff_emp', { method: 'PATCH', headers: { 'x-test-openid': 'ou_admin', 'content-type': 'application/json' }, body: payload });
+    assert.equal(denied.status, 400);
+    assert.match((await denied.json()).error, /还没有配置权限/);
+    assert.equal(gateway.calls.update.length, 0, '拒绝时不许写角色');
+  });
+});
+
+test('读接口走权限矩阵（源码哨兵：不许再写 actor.role === 管理员）', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'workbench', 'staff.js'), 'utf8');
+  assert.match(src, /can\(actor\.role, 'attendance\.read\.all'\)/, '读全员要读矩阵');
+  assert.match(src, /can\(actor\.role, 'attendance\.read\.self'\)/, '读本人要读矩阵');
+  const hardcoded = (src.match(/actor\.role === ROLES\.ADMIN/g) || []).length;
+  assert.equal(hardcoded, 1, '只允许 clock 目标那一处保留旧判据；读接口不许再硬编码');
 });
 
 test('上班/下班：开始-only 创建、已有进行中拒绝', async () => {
