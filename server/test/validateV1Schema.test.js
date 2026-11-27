@@ -127,6 +127,10 @@ test('哨兵：「客户往来货款」已随表删除，契约与 sales 范围�
   assert.equal(V1_SCHEMA_SCOPES.all.includes('customerCredit'), false);
   assert.deepEqual(getV1IdempotencyKeyTables('sales'), []);
   assert.equal(getV1SchemaScope('sales').tables.includes('customerCredit'), false);
+  for (const tableKey of ['staff', 'staffRole', 'attendance']) {
+    assert.ok(V1_SCHEMA_SCOPES.all.includes(tableKey), `${tableKey} 必须纳入 all 闸门`);
+    assert.ok(V1_SCHEMA_SCOPES.staff.includes(tableKey), `${tableKey} 必须在 staff 范围`);
+  }
 });
 
 test('purchase CLI scope validates the purchase-request size relation', async () => {

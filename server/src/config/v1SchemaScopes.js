@@ -39,6 +39,9 @@ const V1_SCHEMA_SCOPES = {
   inventory: ['product', 'behavior', 'sizeManagement', 'salesDetail', 'inventoryLedger', 'liveInventory'],
   // ⭐ 2026-11-09：「批量打印」飞书表单写的「标签打印」表（只映射「打印货号」）。
   labelPrint: ['labelPrintRequest'],
+  // 2026-11-27：人员管理三表纳入闸门（花名册 / 角色管理 / 考勤记录）。
+  //   ⚠️ 之前只在 schema 里登记、不在任何 scope ⇒ all 闸门不会问这三张表。
+  staff: ['staff', 'staffRole', 'attendance'],
 };
 
 V1_SCHEMA_SCOPES.all = [...new Set(Object.values(V1_SCHEMA_SCOPES).flat())];
