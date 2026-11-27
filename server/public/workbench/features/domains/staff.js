@@ -68,7 +68,7 @@ const panelHtml = (state) => {
       state.editing,
     )).join('')
     : '<p class="staff-empty">' + escapeHtml(T.emptyStaff) + '</p>';
-  return '<div class="staff-head"><h2>' + escapeHtml(T.title) + '</h2><span class="staff-badge">' + escapeHtml(state.actor.role || '') + '</span></div>'
+  return '<div class="staff-head"><h2>' + escapeHtml(T.title) + '</h2></div>'
     + '<div class="staff-filters">'
     + '<label>' + escapeHtml(T.from) + '<input type="date" data-staff-from value="' + escapeHtml(state.from) + '"></label>'
     + '<label>' + escapeHtml(T.to) + '<input type="date" data-staff-to value="' + escapeHtml(state.to) + '"></label>'
