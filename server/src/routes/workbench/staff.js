@@ -103,12 +103,36 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
     const start = String(body.start || '').trim();
     const end = String(body.end || '').trim();
     if (!isDay(date)) throw badRequest(STAFF_TEXTS.badRange);
-    if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) throw badRequest(STAFF_TEXTS.badTime);
+    if (!/^\d{2}:\d{2}$/.test(start)) throw badRequest(STAFF_TEXTS.badTime);
     const dateAt = epochOf(date, '00:00');
     const startAt = epochOf(date, start);
-    const endAt = epochOf(date, end);
-    if (dateAt == null || startAt == null || endAt == null || endAt <= startAt) throw badRequest(STAFF_TEXTS.badTime);
-    return { date, dateAt, startAt, endAt, hours: Math.round(((endAt - startAt) / 3600000) * 10) / 10 };
+    if (dateAt == null || startAt == null) throw badRequest(STAFF_TEXTS.badTime);
+    let endAt = 0;
+    let hours = 0;
+    if (end) {
+      if (!/^\d{2}:\d{2}$/.test(end)) throw badRequest(STAFF_TEXTS.badTime);
+      endAt = epochOf(date, end);
+      if (endAt == null || endAt <= startAt) throw badRequest(STAFF_TEXTS.badTime);
+      hours = Math.round(((endAt - startAt) / 3600000) * 10) / 10;
+    }
+    return { date, dateAt, startAt, endAt, hours };
+  };
+
+  const targetStaffOf = async (req, staffRecordId) => {
+    const actor = req.workbenchActor;
+    const id = actor.role === ROLES.ADMIN ? String(staffRecordId || actor.recordId) : actor.recordId;
+    const staff = (await directory.listStaff()).find((item) => item.recordId === id);
+    if (!staff) throw badRequest(STAFF_TEXTS.staffMissing);
+    if (!staff.active) throw badRequest(STAFF_TEXTS.staffInactive);
+    if (!staff.attend) throw badRequest(STAFF_TEXTS.staffNotAttending);
+    return staff;
+  };
+
+  const unfinishedOf = async (staffRecordId) => {
+    const rows = await gateway.listAll('attendance');
+    return (rows || []).map(mapAttendance)
+      .filter((row) => row.staffRecordId === staffRecordId && !row.endAt)
+      .sort((left, right) => right.startAt - left.startAt)[0] || null;
   };
 
   const activeStaffOf = async (recordId) => {
@@ -119,6 +143,42 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
     return staff;
   };
 
+  router.post('/attendance/clock-in', requirePermission('attendance.clock.self'), async (req, res) => {
+    try {
+      const staff = await targetStaffOf(req, req.body?.staffRecordId);
+      if (await unfinishedOf(staff.recordId)) throw badRequest(STAFF_TEXTS.alreadyClockedIn);
+      const now = Date.now();
+      const created = await gateway.create('attendance', {
+        staff: relation(staff.recordId),
+        staffUser: [{ id: staff.openId }],
+        date: epochOf(shanghaiDay(0), '00:00'),
+        startAt: now,
+      });
+      logInfo('workbench.staff.clock.in', { record_id: created.recordId, staff_record_id: staff.recordId });
+      return res.status(201).json({ success: true, recordId: created.recordId, startAt: now });
+    } catch (error) {
+      logError('workbench.staff.clock.in.failed', { error: error.message });
+      return res.status(error.statusCode || 502).json({ success: false, error: error.message });
+    }
+  });
+
+  router.post('/attendance/clock-out', requirePermission('attendance.clock.self'), async (req, res) => {
+    try {
+      const staff = await targetStaffOf(req, req.body?.staffRecordId);
+      const open = await unfinishedOf(staff.recordId);
+      if (!open) throw badRequest(STAFF_TEXTS.noOpenAttendance);
+      const now = Date.now();
+      if (now <= open.startAt) throw badRequest(STAFF_TEXTS.badTime);
+      const hours = Math.round(((now - open.startAt) / 3600000) * 10) / 10;
+      await gateway.update('attendance', open.recordId, { endAt: now, hours });
+      logInfo('workbench.staff.clock.out', { record_id: open.recordId, staff_record_id: staff.recordId, hours });
+      return res.json({ success: true, recordId: open.recordId, endAt: now, hours });
+    } catch (error) {
+      logError('workbench.staff.clock.out.failed', { error: error.message });
+      return res.status(error.statusCode || 502).json({ success: false, error: error.message });
+    }
+  });
+
   router.post('/attendance', requirePermission('attendance.write'), async (req, res) => {
     try {
       const staff = await activeStaffOf(req.body?.staffRecordId);
@@ -128,8 +188,7 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
         staffUser: [{ id: staff.openId }],
         date: payload.dateAt,
         startAt: payload.startAt,
-        endAt: payload.endAt,
-        hours: payload.hours,
+        ...(payload.endAt ? { endAt: payload.endAt, hours: payload.hours } : {}),
       });
       logInfo('workbench.staff.attendance.created', {
         record_id: created.recordId, staff_record_id: staff.recordId, date: payload.date, hours: payload.hours,
@@ -148,7 +207,8 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
       if (!existing) throw badRequest(STAFF_TEXTS.recordNotFound);
       const payload = readPayload(req.body);
       await gateway.update('attendance', recordId, {
-        date: payload.dateAt, startAt: payload.startAt, endAt: payload.endAt, hours: payload.hours,
+        date: payload.dateAt, startAt: payload.startAt,
+        ...(payload.endAt ? { endAt: payload.endAt, hours: payload.hours } : {}),
       });
       logInfo('workbench.staff.attendance.updated', {
         record_id: recordId, date: payload.date, hours: payload.hours,

@@ -46,6 +46,8 @@ const { createVoucherSettlementConfig } = require('./config/voucherSettlement');
 const { createVoucherSettlementService } = require('./services/voucherSettlementService');
 const { PaymentService } = require('./services/paymentService');
 const { createDefaultNotificationService } = require('./services/notificationService');
+const { createAttendanceReminderService } = require('./services/attendanceReminderService');
+const { ATTENDANCE_REMINDER } = require('./config/attendanceReminder');
 const { createLaikeClient } = require('./services/douyin');
 // 扫码页的挂载点（`/r`）与它的配置：**与二维码里的 URL 同源**
 // （`config/tagQrCode.js` 的 `scanUrl.recordIdTemplate` = `https://hm.bamamei.online/r/{recordId}`）。
@@ -263,6 +265,21 @@ if (require.main === module) {
     });
   } else {
     logInfo('voucher.settlement.disabled', { env: 'VOUCHER_SETTLEMENT_ENABLED' });
+  }
+
+  // 2026-11-27：18:00 后仍未打下班卡 → 私聊提醒本人（每天一次）。
+  if (ATTENDANCE_REMINDER.enabled) {
+    const attendanceReminder = createAttendanceReminderService({
+      gateway: new V1BitableGateway(),
+      notifications: createDefaultNotificationService(),
+      config: ATTENDANCE_REMINDER,
+    });
+    startShanghaiDailyScheduler({
+      run: () => attendanceReminder.run(),
+      eventPrefix: 'attendance.clock_out_reminder',
+      hour: ATTENDANCE_REMINDER.hour,
+      intervalMs: ATTENDANCE_REMINDER.intervalMs,
+    });
   }
 
   // ⭐ 2026-11-08（#948）：统一异步任务启动收尾 —— **补发**上一次进程里没发出去的失败通知

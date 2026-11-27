@@ -11,6 +11,7 @@ const ROLES = Object.freeze({ ADMIN: '管理员', STAFF: '店员' });
 const PERMISSIONS = Object.freeze({
   'attendance.read.all': Object.freeze([ROLES.ADMIN]),
   'attendance.read.self': Object.freeze([ROLES.ADMIN, ROLES.STAFF]),
+  'attendance.clock.self': Object.freeze([ROLES.ADMIN, ROLES.STAFF]),
   'attendance.write': Object.freeze([ROLES.ADMIN]),
   'staff.write': Object.freeze([ROLES.ADMIN]),
 });

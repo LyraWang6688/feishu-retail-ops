@@ -4,6 +4,8 @@ export const STAFF_PAGE = Object.freeze({
     me: '/api/workbench/staff/me',
     roster: '/api/workbench/staff',
     attendance: '/api/workbench/staff/attendance',
+    clockIn: '/api/workbench/staff/attendance/clock-in',
+    clockOut: '/api/workbench/staff/attendance/clock-out',
   }),
   loading: '正在读取人员与考勤…',
   loadFailed: '读取失败，请稍后重试',
@@ -32,4 +34,8 @@ export const STAFF_PAGE = Object.freeze({
   date: '日期',
   start: '开始',
   end: '结束',
+  ongoing: '进行中',
+  clockIn: '上班',
+  clockOut: '下班',
+  custom: '自定义',
 });
