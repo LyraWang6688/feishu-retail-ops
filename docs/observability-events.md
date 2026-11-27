@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **566** 个事件。按前缀分组：
+共 **568** 个事件。按前缀分组：
 
 ## accessory
 
@@ -38,6 +38,7 @@
 | `attendance.clock_out_reminder.sent` | 1 | src/services/attendanceReminderService.js |
 | `attendance.clock_out_reminder.started` | 1 | src/app.js |
 | `attendance.clock_out_reminder.tick_failed` | 1 | src/app.js |
+| `attendance.clock.any` | 1 | src/config/permissions.js |
 | `attendance.clock.self` | 1 | src/config/permissions.js |
 | `attendance.read.all` | 1 | src/config/permissions.js |
 | `attendance.read.self` | 1 | src/config/permissions.js |
@@ -754,6 +755,7 @@
 | `workbench.staff.clock.out` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.clock.out.failed` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.list.failed` | 1 | src/routes/workbench/staff.js |
+| `workbench.staff.prompt.failed` | 1 | src/routes/workbench/staff.js |
 
 ## write_audit
 

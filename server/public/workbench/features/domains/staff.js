@@ -57,8 +57,10 @@ const staffCardHtml = (member, records, canWrite, canClock, editing) => {
 };
 
 const panelHtml = (state) => {
-  const canWrite = (state.actor.permissions || []).includes('attendance.write');
-  const canClock = (state.actor.permissions || []).includes('attendance.clock.self');
+  const permissions = state.actor.permissions || [];
+  const canWrite = permissions.includes('attendance.write');
+  // 考勤人只给「看全员 + 代打卡」，没有 write；clock.any 也能让所有人的上下班按钮出现。
+  const canClock = permissions.includes('attendance.clock.self') || permissions.includes('attendance.clock.any');
   const cards = state.staff.length
     ? state.staff.map((member) => staffCardHtml(
       member,
