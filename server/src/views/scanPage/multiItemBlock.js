@@ -59,6 +59,10 @@ const multiItemPayloadJson = (items = [], mode = '') => JSON.stringify(
     if (mode === 'return' && Number.isInteger(item?.amount_cents) && item.amount_cents >= 0) {
       out.amount_cents = item.amount_cents;
     }
+    // 预览要按供应商显示名称；补货 / 缺省载荷形状不变（只在退货且有值时加）。
+    if (mode === 'return' && item && item.supplier_name) {
+      out.supplier_name = String(item.supplier_name);
+    }
     out.entries = (Array.isArray((item || {}).entries) ? item.entries : []).map((entry) => {
       const line = {};
       for (const key of MULTI_ITEM_ENTRY_KEYS) {
@@ -126,7 +130,8 @@ const multiItemBlockHtml = (write, view = {}, mode = '', page = {}) => {
   const removeField = String((wire && wire.removeField) || '');
   const first = {
     product_record_id: view.product_record_id, number: view.number, item_no: view.item_no,
-    color: view.color, supplier_record_id: view.supplier_record_id, entries: [],
+    color: view.color, supplier_record_id: view.supplier_record_id,
+    ...(mode === 'return' && view.supplier_name ? { supplier_name: view.supplier_name } : {}), entries: [],
     ...(mode === 'return' && view.stock_total !== undefined && view.stock_total !== null
       ? { stock_total: view.stock_total } : {}),
   };

@@ -106,7 +106,12 @@ const normalize = (text) => String(text).split(SCAN_PAGE.pageBuild).join(PAGE_BU
   // 2026-11-26：草稿 currentForm 的隐藏字段 / 空态提示 / 保存按钮启用，属于草稿交互，不进旧视觉快照。
   .replace(/\n<input type="hidden" name="draft_[^"]*"[^\n]*/g, '')
   .replace(/ data-draft-empty="[^"]*"/g, '')
-  .replace(/(data-save-draft[^>]*) disabled/g, '$1');
+  .replace(/(data-save-draft[^>]*) disabled/g, '$1')
+  // 2026-11-27：退货页新增「退货 / 预览」双区；逐字快照只保护原退货表单，
+  // 预览相关 DOM 不进历史快照（表单本身仍逐字比）。
+  .replace(/\n<div class="return-tabs"[\s\S]*?<\/div>\n/, '\n')
+  .replace(/\n<div data-return-panel="return">\n/, '\n')
+  .replace(/\n<\/div>\n<div data-return-panel="preview"[\s\S]*<\/div>\n<div hidden data-view="return-preview-data"[\s\S]*?<\/div>\n/, '\n');
 
 /** 取某一份 HTML 里领域那一块（到页脚 `<p class="foot">` 之前）。 */
 const blockOf = (html, id) => {

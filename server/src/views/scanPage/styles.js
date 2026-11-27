@@ -285,6 +285,20 @@ const PAYMENT_STEP_STYLE = `.pay-status__options { display: grid; grid-template-
 .payment-step { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }`;
 
 
+const RETURN_PREVIEW_STYLE = `.return-tabs { display: flex; gap: var(--space-2); margin: 0 0 var(--space-3); padding: 4px; border-radius: var(--radius-md); background: var(--surface-muted, #f3f4f6); }
+.return-tab { flex: 1; min-height: var(--control-height); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font-size: var(--font-size-md); }
+.return-tab.is-active { background: var(--surface); color: var(--primary); font-weight: var(--weight-bold); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,.08)); }
+.return-preview { display: grid; gap: var(--space-3); }
+.return-preview-supplier { padding: var(--space-3); border: 1px solid var(--control-border); border-radius: var(--radius-md); background: var(--surface); }
+.return-preview-supplier h3 { margin: 0 0 var(--space-2); font-size: var(--font-size-md); }
+.return-preview-supplier h3 small { color: var(--primary); font-weight: normal; margin-left: var(--space-2); }
+.return-preview-product { padding: var(--space-2) 0; border-top: 1px dashed var(--control-border); }
+.return-preview-product h4 { margin: 0 0 var(--space-1); font-size: var(--font-size-sm); }
+.return-preview-product p { margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+.return-preview-amount { color: var(--primary) !important; font-weight: var(--weight-bold); }
+.return-preview-subtotal { margin: var(--space-2) 0 0; font-size: var(--font-size-sm); color: var(--text-secondary); }
+.return-preview-total { margin: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--primary-soft, #eef2ff); color: var(--primary); font-weight: var(--weight-bold); text-align: right; }`;
+
 const RETURN_STEPPER_STYLE = `.size-stepper { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .size-stepper .size-qty { flex: 0 0 48px; width: 48px; padding: 0 var(--space-1); }
 .size-step { width: 40px; height: var(--control-height); padding: 0; border: 1px solid var(--control-border); border-radius: var(--radius-sm); background: var(--surface); color: var(--primary); font-size: 20px; line-height: 1; }
@@ -315,4 +329,5 @@ module.exports = {
   SCAN_TAB_MARKER,
   PAYMENT_STEP_STYLE,
   RETURN_STEPPER_STYLE,
+  RETURN_PREVIEW_STYLE,
 };

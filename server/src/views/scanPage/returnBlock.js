@@ -6,6 +6,38 @@ const { submitFeedbackAttrs } = require('./script');
 const { hiddenField, pageBuildField } = require('./paymentBlock');
 const { multiItemBlockHtml, purchaseAmountRowHtml } = require('./multiItemBlock');
 const { delistConfirmHtml } = require('./delistConfirm');
+const { buildReturnPreview } = require('../../services/returnPreviewService');
+
+
+const previewMoney = (cents) => {
+  const amount = Number(cents || 0) / 100;
+  return '¥' + (Number.isInteger(amount) ? amount.toLocaleString('en-US') : amount.toFixed(2));
+};
+
+/** 退货预览（服务端首屏 + 前端复用同一套类名/文案）。 */
+const returnPreviewHtmlOf = (model, rf) => {
+  const suppliers = Array.isArray(model?.suppliers) ? model.suppliers : [];
+  if (!suppliers.length) return `<p class="hint">${escapeHtml(rf.previewEmpty)}</p>`;
+  const cards = suppliers.map((supplier) => {
+    const name = supplier.supplierName || rf.previewUnassigned;
+    const products = (supplier.products || []).map((product) => {
+      const entries = (product.entries || []).map((entry) => String(rf.previewEntry)
+        .replace('{size}', String(entry.size)).replace('{qty}', String(entry.quantity)))
+        .join(rf.previewSeparator);
+      const amount = Number.isInteger(product.amountCents) ? product.amountCents : null;
+      return `<div class="return-preview-product"><h4>${escapeHtml([product.itemNo, product.color].filter(Boolean).join(' · '))}</h4>
+<p>${escapeHtml(entries || '—')}</p>
+${amount === null ? '' : `<p class="return-preview-amount">${escapeHtml(rf.previewAmount)}：${escapeHtml(previewMoney(amount))}</p>`}</div>`;
+    }).join('');
+    return `<section class="return-preview-supplier"><h3>${escapeHtml(rf.previewSupplier)}：${escapeHtml(name)} <small>${escapeHtml(rf.previewBatch)}</small></h3>
+${products}
+<p class="return-preview-subtotal">${escapeHtml(rf.previewSubtotal)}：${supplier.subtotalQty} ${escapeHtml(rf.previewQtyUnit)} / ${escapeHtml(previewMoney(supplier.subtotalAmountCents))}</p>
+</section>`;
+  }).join('');
+  return `<div class="return-preview"><h3>${escapeHtml(rf.previewTitle)}</h3><p class="hint">${escapeHtml(rf.previewHint)}</p>
+${cards}
+<p class="return-preview-total">${escapeHtml(rf.previewTotal)}：${model.totals.qty} ${escapeHtml(rf.previewQtyUnit)} / ${escapeHtml(previewMoney(model.totals.amountCents))}</p></div>`;
+};
 
 const sizeRowsHtml = ({
   sizes, name = '', quantityPrefix, quantityLabel, checkedOf, defaultQuantity = 1, stockOf = null,
@@ -88,6 +120,26 @@ const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //      （脚本里**不写死任何字段名/文字** ✗ —— 她 2026-10-09 白屏之后"只许一段脚本"那条规矩照旧 ✓）。
   const rf = SCAN_PAGE.returnForm;
   const returnConfig = SCAN_WRITE.purchaseReturn;
+  const previewItems = Array.isArray(view.multi_items) ? view.multi_items : [];
+  const previewModel = buildReturnPreview({ items: previewItems });
+  const previewData = {
+    items: previewItems,
+    current: {
+      product_record_id: view.product_record_id,
+      item_no: view.item_no,
+      color: view.color,
+      number: view.number,
+      supplier_record_id: view.supplier_record_id || '',
+      supplier_name: view.supplier_name || '',
+    },
+    labels: {
+      previewTitle: rf.previewTitle, previewHint: rf.previewHint, previewBatch: rf.previewBatch,
+      previewSupplier: rf.previewSupplier, previewUnassigned: rf.previewUnassigned,
+      previewEmpty: rf.previewEmpty, previewAmount: rf.previewAmount,
+      previewSubtotal: rf.previewSubtotal, previewTotal: rf.previewTotal, previewEntry: rf.previewEntry,
+      previewQtyUnit: rf.previewQtyUnit, previewSeparator: rf.previewSeparator,
+    },
+  };
   const rows = noReturnableStock ? '' : sizeRowsHtml({
     sizes,
     quantityPrefix: fields.returnQuantityPrefix,
@@ -142,6 +194,11 @@ const returnFormHtml = (view, write, page = {}, config = SCAN_PAGE) => {
   //      判据：`test/collapseSemanticsSentinel.test.js` ①（补货块**自己**的 `</details>` 必须在 ⇒ 少一个即红 ✓）
   //        ＋ `test/returnBlockFirstScreen.test.js` AC-RF1a（退货块里 `</details>` 也不许有 ✓）
   return `<section class="card">
+<div class="return-tabs" role="tablist" data-view="return-tabs">
+<button type="button" role="tab" class="return-tab is-active" aria-selected="true" data-return-tab="return">${escapeHtml(rf.returnTab)}</button>
+<button type="button" role="tab" class="return-tab" aria-selected="false" data-return-tab="preview">${escapeHtml(rf.previewTab)}</button>
+</div>
+<div data-return-panel="return">
 <form method="post" action="${escapeHtml(write.postAction)}" class="write-form"
 data-view="purchase-return"
 data-return-qty-prefix="${escapeHtml(fields.returnQuantityPrefix)}"
@@ -167,6 +224,11 @@ ${sizes.length ? `${purchaseAmountRowHtml(write)}
 ${multiItemBlockHtml(write, view, 'return', page)}
 <button type="submit" class="btn btn--primary"${submitFeedbackAttrs(write)}>${escapeHtml(rf.submitLabel)}</button>
 </form>${delistConfirmHtml({ order: write.delistConfirm, fields, action: write.postAction, config: SCAN_PAGE })}
+</div>
+<div data-return-panel="preview" hidden>
+<div data-view="return-preview-body">${returnPreviewHtmlOf(previewModel, rf)}</div>
+</div>
+<div hidden data-view="return-preview-data" data-json="${escapeHtml(JSON.stringify(previewData))}"></div>
 ` : ''}
 </section>`;
 };

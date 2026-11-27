@@ -724,6 +724,19 @@ const RETURN_FORM = Object.freeze({
   //   🔴 写侧那句 `returnButton` **一个字不动** ✗ —— 它还服务**提交异常页**里那句人话
   //      （「请再点一次【生成采购退货】」，`scanWrite.js:697` / `:731`），她这次**没点**那些 ✗。
   submitLabel: '退货', delistPrompt: '这一款退货后就没有库存了，是否同时下架？',
+  // 2026-11-27：退货 / 预览双区（供应商 → record ID → 尺码×数量 + 金额）。
+  returnTab: '退货', previewTab: '预览',
+  previewTitle: '本单退货预览',
+  previewHint: '每个供应商会生成一个独立的退货批次',
+  previewBatch: '将生成 1 个退货批次',
+  previewSupplier: '供应商',
+  previewUnassigned: '未标注供应商',
+  previewEmpty: '还没有可预览的退货货品',
+  previewAmount: '金额',
+  previewSubtotal: '小计',
+  previewTotal: '合计',
+  previewEntry: '{size}码×{qty}',
+  previewQtyUnit: '双', previewSeparator: '、',
 });
 
 // 🔴 2026-11-27：`REPLENISH_FORM`（补货 tab 的按钮文案 ＋ 金额行开关）随补货扫码页一起删除。

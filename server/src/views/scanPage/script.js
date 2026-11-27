@@ -1,4 +1,5 @@
 const { realmScanScriptSource } = require('../scanRealmScan');
+const { returnPreviewScriptSource } = require('./returnPreviewScript');
 const fs = require('node:fs');
 const path = require('node:path');
 const { escapeHtml } = require('./fields');
@@ -62,7 +63,7 @@ const UI_TAP_SHARED_SOURCE = fs.readFileSync(
  *   ⇒ 那两条哨兵按"**改前逐字 → 改后逐字 → 依据 = 她 2026-10-12 逐字**"成对迁移为
  *     「**不带 `?annotate=1` 时那一页仍然是零业务脚本；那一段标注脚本必须开头早退**」✓
  */
-const submitFeedbackScriptHtml = () => `<script data-view="submit-feedback">
+const submitFeedbackScriptHtml = (withReturnPreview = false) => `<script data-view="submit-feedback">
 ${UI_TAP_SHARED_SOURCE}
 (function () {
   var forms = document.querySelectorAll('form');
@@ -283,6 +284,7 @@ ${UI_TAP_SHARED_SOURCE}
     }
   }
 })();
+${withReturnPreview ? returnPreviewScriptSource() : ''}
 </script>`;
 
 /**
@@ -499,3 +501,5 @@ const salesDraftScriptHtml = () => `<script data-view="sales-draft">
 </script>`;
 module.exports.giftRowsScriptHtml = giftRowsScriptHtml;
 module.exports.salesDraftScriptHtml = salesDraftScriptHtml;
+
+
