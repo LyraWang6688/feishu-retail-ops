@@ -111,6 +111,7 @@ const sumReturnAmountCents = (groups, currentAmount) => {
     if (!firstByRecord.has(recordId)) firstByRecord.set(recordId, { group, index });
   });
   const byRecord = new Map();
+  const bySupplier = new Map();
   let missing = null;
   for (const [recordId, entry] of firstByRecord) {
     const stored = Number.isInteger(entry.group?.amount_cents) && entry.group.amount_cents >= 0
@@ -125,9 +126,12 @@ const sumReturnAmountCents = (groups, currentAmount) => {
       continue;
     }
     byRecord.set(recordId, cents);
+    // 2026-11-27：按供应商拆独立批次时，每组金额 = 本组 record ID 金额合计。
+    const supplierKey = String(entry.group?.supplier_record_id || '').trim() || '__unassigned__';
+    bySupplier.set(supplierKey, (bySupplier.get(supplierKey) || 0) + cents);
   }
   const totalCents = [...byRecord.values()].reduce((sum, cents) => sum + cents, 0);
-  return { ok: missing === null, totalCents, missing };
+  return { ok: missing === null, totalCents, missing, bySupplier };
 };
 
 module.exports = {

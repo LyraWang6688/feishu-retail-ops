@@ -135,11 +135,13 @@ const makeWriteService = ({ withWriters = true } = {}) => {
 const makeEngine = ({ ok = true, code = 'duplicate_line', message = '同一个货号的同一个尺码只能出现一次（K1 / 40 码重复了）。', sessions = null } = {}) => {
   const calls = [];
   const drafts = new Map();
+  let seq = 0;
   return {
     calls,
     drafts,
     async openDraft({ openId, chain, requestId }) {
-      const orderKey = `${chain}:${openId}:1`;
+      seq += 1;
+      const orderKey = `${chain}:${openId}:${seq}`;
       calls.push({ fn: 'openDraft', chain, orderKey, requestId });
       if (!drafts.has(orderKey)) drafts.set(orderKey, { items: [], order_amount: '', status: 'draft' });
       // ⭐ 真引擎的草稿**落在会话里**（`data/scan_sessions/` ✓）—— 这里照同一个位置种一份，
@@ -331,7 +333,7 @@ test('AC-MIRW-4 🔴 引擎拒单（重复行）⇒ 400 + 那句人话；引擎�
 // AC-MIRW-5 ⭐ 退货那条链：整单金额进草稿；空金额 ⇒ 同步 400 + 引擎 0 次
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MIRW-5 ⭐ 退货 · 分组 2：金额写进草稿 `order_amount`；空金额 ⇒ 400 + 引擎 0 次', async () => {
+test('AC-MIRW-5 ⭐ 退货 · 2 个供应商：各自草稿与金额；空金额 ⇒ 400 + 引擎 0 次', async () => {
   const returnBody = ({ amount }) => {
     const params = new URLSearchParams();
     params.append(SCAN_WRITE.fields.action, SCAN_WRITE.actions.purchaseReturn);
@@ -348,11 +350,12 @@ test('AC-MIRW-5 ⭐ 退货 · 分组 2：金额写进草稿 `order_amount`；空
   await withServer(formApp({ writeService, engine, background: makeBackground() }), async (base) => {
     const response = await postForm(base, returnBody({ amount: '399' }));
     assertSubmitToast(response, '退货多货 ⇒ 统一回执');
-    assert.equal(callsOf(engine, 'submitDraft').length, 1, '引擎提交 1 次 ✓');
+    assert.equal(callsOf(engine, 'submitDraft').length, 2, '按供应商拆 ⇒ 引擎提交 2 次 ✓');
     const sessionId = writeService.idOf(OPEN_ID);
     const session = await writeService.sessions.store.get(sessionId);
-    assert.equal(session.orders['return:' + OPEN_ID + ':1'].order_amount, '598',
-      '🔴 整单金额 = 当前页 399 + 第二件 199（空 ⇒ 引擎会按配置拦下这一单 ✗）');
+    const drafts = Object.values(session.orders);
+    assert.deepEqual(drafts.map((draft) => draft.order_amount).sort(), ['199', '399'],
+      '🔴 每个供应商一个草稿、金额只含本组 record ID（当前页 399 / 第二件 199）');
   });
 
   // ② 金额空 ⇒ **既有那道同步闸门**当场拦（400 + 人话 + 零写入 + 引擎 0 次 ✓）

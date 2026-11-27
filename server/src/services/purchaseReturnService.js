@@ -336,9 +336,16 @@ const createPurchaseReturnService = (options = {}) => {
     //    （明细那一列是它的 Lookup，只读，明细侧不写）。
     // ⭐ 2026-10-12：把这一批的**录入数量合计**（= 每码 `taken` 之和，上面已经算好）传给建行，
     //    写上「报货批次.录入数量」—— 她报货时填的数量，就是这一列。
+    // 2026-11-27：一个退货批次只应属于一个供应商；拆批之后用它写主表供应商。
+    const batchSupplierRecordId = String(
+      (Array.isArray(plan.items) ? plan.items : [])
+        .map((item) => String(item?.supplier_record_id || '').trim()).find(Boolean)
+      || draft.supplier_record_id || '',
+    ).trim();
     const batch = await orderBatches.createForReturnBatch(plan.batch_no,
       {
         correlation,
+        supplierRecordId: batchSupplierRecordId,
         // ⭐ task-64：草稿里没带行为时用**计划里冻结**的那一个（多货品那条引擎载荷的形状 ✓）；
         //   单货品那条老路草稿里本来就带着 ⇒ 逐字不变（`undefined` ⇒ 网关跳过该列 ✓）。
         behaviorRecordId: draft.behavior_record_id || plan.behavior_record_id,

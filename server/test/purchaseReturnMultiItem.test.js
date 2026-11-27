@@ -351,9 +351,8 @@ const entriesOf = (harness, tableKey) => harness.tables[tableKey] || [];
 const ledgerTotal = (harness) => entriesOf(harness, 'inventoryLedger')
   .reduce((sum, record) => sum + Number(record.fields['变动数量'] || 0), 0);
 const liveIds = (harness) => entriesOf(harness, 'liveInventory').map((record) => record.record_id).sort();
-const documentNamesOf = (harness) => attachmentNames(
-  (entriesOf(harness, 'purchaseOrderBatch')[0] || {}).fields?.['我方单据'],
-);
+const documentNamesOf = (harness) => entriesOf(harness, 'purchaseOrderBatch')
+  .flatMap((batch) => attachmentNames(batch.fields?.['我方单据']));
 /** 这一轮退货的幂等键（会话还没建时 = 第 1 轮那把，纯函数算出来 —— 与页面同一条口径）。 */
 const returnKey = async (harness, openId = OPEN_ID) => harness.write.sessions
   .submitKeyFor(openId, await harness.sessions.get(openId), 'purchase_return');
@@ -444,7 +443,7 @@ const documentSuffix = SCAN_WRITE.purchaseReturn.fileNameSuffix;
 // AC-RS1 一单退货 2 个货品（不同供应商）⇒ 出单按供应商分成 2 组
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按供应商分成 2 组**（每组只含该供应商的行）', async () => {
+test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ **2 个独立退货批次/单号**（每批只含该供应商的行）', async () => {
   login();
   const h = createHarness();
   try {
@@ -455,10 +454,10 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
         multiItems: [
           // ⚠️ 这是**扫码页真实给出的**形状：`supplier_record_id` 是空的（见 AC-RS3 的只读核查）
           {
-            product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', amount_cents: 39900, entries: [],
+            product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 39900, entries: [],
           },
           {
-            product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', amount_cents: 10000, entries: [{ size: '41', quantity: '1' }],
+            product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_b', amount_cents: 10000, entries: [{ size: '41', quantity: '1' }],
           },
         ],
       });
@@ -468,22 +467,31 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
       await waitForPendingPurchaseBackgrounds();
     });
 
-    // ① **一个批次号**（她选的 ⓐ：单内分组，不是每供应商一个新号 ✗）
+    // ① 2026-11-27：按供应商拆 ⇒ 两个独立批次号 / 两行主表
     const batches = entriesOf(h, 'purchaseOrderBatch');
-    assert.equal(batches.length, 1, '🔴 只许有**一行**主表（ⓑ 会变成 2 行 ⇒ 红）');
-    assert.equal(h.batchNoCalls(), 1, '🔴 号源**只许取一次**');
+    assert.equal(batches.length, 2, '2 个供应商 ⇒ 2 行主表');
+    assert.equal(h.batchNoCalls(), 2, '号源取两次（每供应商一个号）');
     assert.equal(SCAN_WRITE.purchaseReturn.behaviorCode, 'PURCHASE_RETURN');
-    // 「采购行为」= 退货那一档（引擎那条路草稿里没带 ⇒ **写入件自己按本链路的配置解析** ✓）
-    // ⭐ 2026-10-17：主表行为列真表已改名「发生行为」（她逐字）
-    assert.deepEqual(batches[0].fields['发生行为'], ['bh_return_purchase'],
-      '多货品退货的批次行也要有「采购行为」= 采购退货那一档（空 ⇒ 工作台会按"采购申请"分流 ✗）');
+    for (const batch of batches) {
+      assert.deepEqual(batch.fields['发生行为'], ['bh_return_purchase'],
+        '每行退货批次都要有「采购行为」= 采购退货那一档');
+    }
+    const batchNos = new Set(batches.map((batch) => batch.fields['报货批次号']));
+    assert.equal(batchNos.size, 2, '两个供应商不共用批次号');
+    assert.deepEqual(
+      batches.map((batch) => Number(batch.fields['货单金额'])).sort((a, b) => a - b),
+      [100, 399],
+      '每个批次只写本供应商 record ID 金额（399 / 100）',
+    );
 
     // ② 2026-11-18：退货不写采购明细；批次保留，库存流水关联退货批次。
     assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     const ledgers = entriesOf(h, 'inventoryLedger');
     assert.ok(ledgers.length > 0, '库存流水照常写');
+    const batchRecordIds = new Set(batches.map((batch) => batch.record_id));
     for (const record of ledgers) {
-      assert.deepEqual(record.fields['关联采购'], [batches[0].record_id], '库存流水关联退货批次');
+      assert.equal(record.fields['关联采购'].length, 1, '库存流水只关联自己那一批');
+      assert.ok(batchRecordIds.has(record.fields['关联采购'][0]), '关联的是本批批次行');
     }
 
     // ③ ⭐ 出单**分成 2 组**：每组只含该供应商的行
@@ -496,7 +504,7 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
     );
     assert.deepEqual(bySupplier.get('乙供应商').items.map((item) => item.item_no), ['KB']);
     for (const render of h.renders) {
-      assert.equal(render.batchNo, batches[0].fields['报货批次号'], '两张图共用**同一个批次号** ✓');
+      assert.ok(batchNos.has(render.batchNo), '每张图只属于自己那一批');
       assert.equal(render.items.length, 1);
       assert.equal(Number(render.items[0].quantity), 1, '图上写的是**实退数** ✓');
     }
@@ -515,6 +523,30 @@ test('AC-RS1 ⭐⭐ 一单退货 2 个货品（不同供应商）⇒ 出单**按
 // ═══════════════════════════════════════════════════════════════════════════
 // AC-RS2 单货品退货 ⇒ 与今天逐字一致（硬红线）
 // ═══════════════════════════════════════════════════════════════════════════
+
+
+test('AC-RS1b ⭐ 未标注供应商单独一个退货批次（不塞进有供应商的批次）', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const submitKey = await returnKey(h);
+    await withServer(formApp(h), async (base) => {
+      await postReturn(base, {
+        form: { submitKey, return_qty_41: '1' },
+        multiItems: [
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 39900, entries: [] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', amount_cents: 10000, entries: [{ size: '41', quantity: '1' }] },
+        ],
+      });
+      await waitForPendingPurchaseBackgrounds();
+    });
+    const batches = entriesOf(h, 'purchaseOrderBatch');
+    assert.equal(batches.length, 2, '有供应商 + 未标注 ⇒ 2 个独立批次');
+    const supplierValues = batches.map((batch) => batch.fields['供应商']).filter(Boolean).flat();
+    assert.deepEqual(supplierValues, ['sup_a'], '未标注那一批不写供应商，单独成批');
+    assert.equal(h.renders.length, 2, '两批各自出图');
+  } finally { h.cleanup(); }
+});
 
 test('AC-RS2 🔴 单货品退货 ⇒ 与今天**逐字一致**（载荷 `deepEqual` ＋ 渲染/主表/单据各 1 ＋ 明细幂等键逐字）', async () => {
   const h = createHarness();
@@ -644,8 +676,8 @@ test('AC-RS3 ⭐ 混供应商**不再**落到「未标注供应商」（每行�
     // 2026-11-18：退货不写采购明细。
     assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
     assert.deepEqual(
-      Object.keys(entriesOf(h, 'purchaseOrderBatch')[0].fields).includes('供应商'), false,
-      '主表「供应商」是 SingleLink、**代码只读不写**（她自己维护）✓',
+      entriesOf(h, 'purchaseOrderBatch')[0].fields['供应商'], ['sup_a'],
+      '2026-11-27：退货批次写本批供应商（拆批后一行一个供应商）✓',
     );
 
     // 同一次提交里：批次号只有一个（她选的 ⓐ）

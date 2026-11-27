@@ -1173,7 +1173,7 @@ const createScanPageService = (rawGateway, options = {}) => {
       scope_reason: scope.reason,
       notes,
       updated_at_text: updatedAt ? shanghaiDateTimeText(updatedAt) : config.texts.updatedAtUnknown,
-      product_record_id: productId,
+      product_record_id: productId, supplier_record_id: strictLinkedRecordIds(readField(schema, 'product', product, 'supplier'))[0] || '', supplier_name: productText('supplier'),
       ...productActions,
     };
 

@@ -15,7 +15,7 @@ const createFlowHelpers = ({
   DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmOfAction, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
 }) => {
     const submitMultiItemOrder = async ({
-      req, res, requestId, chain, groups, action, orderAmount,
+      req, res, requestId, chain, groups, action, orderAmount, supplierGroups, idempotencyBase,
       delistProductIds = [],
     }) => {
       const delistAfterReturn = async (submitKey) => {
@@ -43,6 +43,67 @@ const createFlowHelpers = ({
         );
       }
       const openId = openIdOf(req);
+      // ⭐ 2026-11-27：一次退货提交按供应商拆成独立草稿/任务/批次（复用采购页
+      //   `procurementPageSubmitService` 的 “一次提交按供应商拆” 粒度）。
+      //   单供应商调用方不传 `supplierGroups` ⇒ 下面老路径一个字不变。
+      if (Array.isArray(supplierGroups) && supplierGroups.length > 1) {
+        const prepared = [];
+        const baseKey = String(idempotencyBase || requestId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+        for (let index = 0; index < supplierGroups.length; index += 1) {
+          const supplierGroup = supplierGroups[index];
+          const supplierKey = String(supplierGroup.supplierRecordId || 'unassigned')
+            .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+          const orderKey = `${chain}:${openId}:${baseKey}:${supplierKey || index}`;
+          const opened = await engine.openDraft({ openId, chain, requestId, orderKey });
+          if (!opened.ok) return respondWriteFailure(res, opened, requestId);
+          const groupOrderKey = opened.orderKey;
+          if (multiItemOrderConfig.chains[chain]?.amountRequired === true) {
+            await setDraftOrderAmount(openId, groupOrderKey, String((supplierGroup.amountCents || 0) / 100));
+          }
+          for (const group of supplierGroup.groups || []) {
+            const added = await engine.addItem({ openId, chain, orderKey: groupOrderKey, item: group, requestId });
+            if (!added.ok) return respondWriteFailure(res, added, requestId);
+          }
+          // 真引擎：先同步校验全部组，再统一排后台；假引擎（老用例）没有这两个口
+          // ⇒ 退回同步提交（与单组老路径同一条兜底）。
+          if (typeof engine.readDraft === 'function' && typeof engine.validateDraft === 'function') {
+            const loaded = await engine.readDraft({ openId, chain, orderKey: groupOrderKey });
+            if (!loaded.ok) return respondWriteFailure(res, loaded, requestId);
+            const checked = engine.validateDraft({
+              draft: loaded.draft, chainConfig: multiItemOrderConfig.chains[chain],
+            });
+            if (!checked.ok) return respondWriteFailure(res, checked, requestId);
+          }
+          prepared.push({ orderKey: groupOrderKey, supplierGroup });
+        }
+        const schedule = async (preparedGroup) => engine.submitDraft({
+          openId, chain, orderKey: preparedGroup.orderKey, submitKey: preparedGroup.orderKey, requestId,
+        });
+        const supportsAsync = typeof engine.readDraft === 'function' && typeof engine.validateDraft === 'function';
+        if (supportsAsync && typeof purchaseBackground.scheduleCustomRest === 'function') {
+          for (const preparedGroup of prepared) {
+            purchaseBackground.scheduleCustomRest({
+              chain, requestId, submitKey: preparedGroup.orderKey,
+              context: { openId, requestId },
+              run: async () => {
+                const result = await schedule(preparedGroup);
+                if (result?.ok === true) await delistAfterReturn(preparedGroup.orderKey);
+                return result;
+              },
+            });
+          }
+        } else {
+          for (const preparedGroup of prepared) {
+            const result = await schedule(preparedGroup);
+            if (!result.ok) return respondWriteFailure(res, result, requestId);
+            await delistAfterReturn(preparedGroup.orderKey);
+          }
+        }
+        invalidateInventorySnapshot(requestId, multiItemOrderConfig.invalidateReasons[chain]);
+        markRealmUsed(openId, realmOfAction(action));
+        await clearMultiItemPending(openId, chain).catch(() => {});
+        return redirectWithSubmitToast(res, {});
+      }
       const opened = await engine.openDraft({ openId, chain, requestId });
       if (!opened.ok) return respondWriteFailure(res, opened, requestId);
       const orderKey = opened.orderKey;

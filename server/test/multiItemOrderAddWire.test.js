@@ -311,7 +311,7 @@ test('AC-MI-A4 🔴 加货时她填错了 ⇒ **400 + 人话 + 零写入**（不
 // ⭐⭐ AC-MI-B —— 两件一起提交 ⇒ 引擎 1 次 · groups = 2 · 首件数量正确
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MI-B ⭐⭐ 两件一起提交 ⇒ 引擎 **1 次** · `groups.length === 2` · **首件数量正确**', async () => {
+test('AC-MI-B ⭐⭐ 两件（不同供应商）一起提交 ⇒ 引擎 2 个独立批次 · 首件数量正确', async () => {
   const writeService = makeWriteService();
   await withServer(makeApp({ writeService }), async (base) => {
     // ① 先扫 K2 填 41 码 1 双、点"加"（⇒ 草稿里记下 K2）
@@ -328,10 +328,9 @@ test('AC-MI-B ⭐⭐ 两件一起提交 ⇒ 引擎 **1 次** · `groups.length =
     // ③ **假写入件被调 1 次**（一批明细 = 一次落库 ✓ 不是两次 ✗）
     // 🔴 2026-11-27：迁到退货页 ⇒ 引擎落库走的是**退货**写入件（fn = 'purchaseReturn'）
     const purchases = writeService.writes.filter((write) => write.fn === 'purchaseReturn');
-    assert.equal(purchases.length, 1, `🔴 引擎那条路**只落一次**（实得 ${purchases.length} 次）`);
-    const payloadWritten = purchases[0].payload;
-    // ④ **`groups.length === 2` 的落库侧证据**：载荷明细里**两件都在**（`items` = 扁平行 ✓ 引擎形状）
-    const lineItems = Array.isArray(payloadWritten.items) ? payloadWritten.items : [];
+    assert.equal(purchases.length, 2, `🔴 2 个供应商 ⇒ 2 个独立批次（实得 ${purchases.length} 次）`);
+    // ④ 两个批次的扁平行合起来仍然**两件都在**（`items` = 扁平行 ✓ 引擎形状）
+    const lineItems = purchases.flatMap((write) => (Array.isArray(write.payload?.items) ? write.payload.items : []));
     const linesOf = (id) => lineItems
       .filter((line) => String(line.product_record_id || '') === id)
       // ⚠️ 落库那一份是**刮过表的那一行**（`size` 可能是数字 / `quantity` 是数字 ✓）⇒ 归一化再比 ✓
@@ -343,8 +342,9 @@ test('AC-MI-B ⭐⭐ 两件一起提交 ⇒ 引擎 **1 次** · `groups.length =
       '第二件 = 她先前填的 41 码 1 双 ✓（两件都在 ⇒ `groups.length === 2` ✓）');
     assert.equal(new Set(lineItems.map((line) => line.product_record_id)).size, 2,
       '🔴 落库的行覆盖**两个货品**（只剩一件 ⇒ 引擎没拿到 2 组 ⇒ 红 ✓）');
-    // ⑤ 一单一把批次：`taskId` 只有一把（两件**不是两个批次** ✓）
+    // ⑤ 两个独立批次：taskId 各自有值且不同
     assert.equal(String(purchases[0].taskId || '').length > 0, true, '批次 id 有值 ✓');
+    assert.equal(new Set(purchases.map((write) => write.taskId)).size, 2, '两个供应商各自一个批次 id ✓');
   });
 });
 

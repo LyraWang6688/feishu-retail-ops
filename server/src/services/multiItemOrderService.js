@@ -104,7 +104,7 @@ const createMultiItemOrderService = (options = {}) => {
   });
 
   // ── ① 草稿读写 ───────────────────────────────────────────────────────────
-  const openDraft = async ({ openId, chain, requestId = '' } = {}) => {
+  const openDraft = async ({ openId, chain, requestId = '', orderKey: requestedKey = '' } = {}) => {
     const chainConfig = chainOf(chain);
     if (!chainConfig) return reject('chain_unknown', texts.chainUnknown);
     const session = await sessions.ensure(openId);
@@ -112,7 +112,10 @@ const createMultiItemOrderService = (options = {}) => {
     const seqField = 'orders_seq';
     const seqs = { ...(session[seqField] || {}) };
     const seq = positiveInteger(seqs[chainConfig.id]) || 1;
-    const orderKey = `${chainConfig.orderKeyPrefix}:${sessionId}:${seq}`;
+    // 2026-11-27：按供应商拆提交时，调用方给**稳定且每组唯一**的 orderKey
+    // （同一把提交键重试仍是同一把，不会退化成“两组共用 seq=1”）。
+    const orderKey = String(requestedKey || '').trim()
+      || `${chainConfig.orderKeyPrefix}:${sessionId}:${seq}`;
     const ordersField = config.session.ordersField;
     let draft = (session[ordersField] || {})[orderKey] || null;
     if (!draft) {
