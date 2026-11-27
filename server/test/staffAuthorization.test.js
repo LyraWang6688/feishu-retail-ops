@@ -22,7 +22,6 @@ const makeGateway = () => {
   const roleRows = [
     { record_id: 'role_admin', fields: { 角色: '管理员', 权限说明: '' } },
     { record_id: 'role_emp', fields: { 角色: '店员', 权限说明: '' } },
-    { record_id: 'role_guest', fields: { 角色: '店长', 权限说明: '还没接权限矩阵' } },
   ];
   const attendance = [
     { record_id: 'att_admin', fields: { 姓名: [{ record_ids: ['staff_admin'] }], 考勤人: [{ id: 'ou_admin' }], 出勤日: DAY('2026-11-25'), 开始时间: AT('2026-11-25T09:00:00'), 结束时间: AT('2026-11-25T18:00:00'), 工时: 9 } },
@@ -149,30 +148,6 @@ test('店员写考勤 403；管理员写考勤 201 且工时自动算', async ()
     assert.equal(gateway.calls.create[0].fields.staff[0], 'staff_emp');
     assert.equal(gateway.calls.create[0].fields.staffUser[0].id, 'ou_emp');
     assert.equal(gateway.calls.create[0].fields.hours, 9);
-  });
-});
-
-test('管理员改角色走 staff.write；店员 403', async () => {
-  const gateway = makeGateway();
-  await withServer(makeApp(gateway), async (base) => {
-    const payload = JSON.stringify({ roleRecordId: 'role_admin' });
-    const denied = await fetch(base + '/staff/staff_emp', { method: 'PATCH', headers: { 'x-test-openid': 'ou_emp', 'content-type': 'application/json' }, body: payload });
-    assert.equal(denied.status, 403);
-    const ok = await fetch(base + '/staff/staff_emp', { method: 'PATCH', headers: { 'x-test-openid': 'ou_admin', 'content-type': 'application/json' }, body: payload });
-    assert.equal(ok.status, 200);
-    assert.equal(gateway.calls.update.length, 1);
-    assert.equal(gateway.calls.update[0].fields.role[0], 'role_admin');
-  });
-});
-
-test('分配未配置权限的角色 ⇒ 400 + 人话，且不写库（避免把人悄悄锁死）', async () => {
-  const gateway = makeGateway();
-  await withServer(makeApp(gateway), async (base) => {
-    const payload = JSON.stringify({ roleRecordId: 'role_guest' });
-    const denied = await fetch(base + '/staff/staff_emp', { method: 'PATCH', headers: { 'x-test-openid': 'ou_admin', 'content-type': 'application/json' }, body: payload });
-    assert.equal(denied.status, 400);
-    assert.match((await denied.json()).error, /还没有配置权限/);
-    assert.equal(gateway.calls.update.length, 0, '拒绝时不许写角色');
   });
 });
 

@@ -565,8 +565,6 @@ const EVENTS = Object.freeze([
   'workbench.staff.clock.out',
   'workbench.staff.clock.out.failed',
   'workbench.staff.list.failed',
-  'workbench.staff.update.failed',
-  'workbench.staff.updated',
   'write_audit.append_failed',
   'write_audit.cache_hit',
   'write_audit.cache_miss',
