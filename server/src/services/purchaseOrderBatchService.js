@@ -110,7 +110,7 @@ class PurchaseOrderBatchService {
    *    ⇒ **按原实现恢复**（只写两列 + 两步幂等），报货那条链路的批次键仍在
    *    `ensurePostingPlan`（`purchase_batch:<task_id>`），两者互不影响。
    */
-  async createForReturnBatch(batchNo, { correlation = {}, behaviorRecordId = '', quantity = 0 } = {}) {
+  async createForReturnBatch(batchNo, { correlation = {}, behaviorRecordId = '', quantity = 0, supplierRecordId = '' } = {}) {
     const wanted = String(batchNo || '').trim();
     if (!wanted) {
       // 没有号就**不编**：调用方自己决定怎么提示。
@@ -146,6 +146,8 @@ class PurchaseOrderBatchService {
         batchNo: wanted,
         idempotencyKey: key,
         behavior: relation(behaviorRecordId),
+        // 2026-11-27：按供应商拆独立批次后，每一行写本批供应商；旧单供应商为空则不写。
+        supplier: relation(supplierRecordId),
         // ⭐⭐ 2026-10-12（她测出来的缺口）：「录入数量」= 这一批的**录入数量合计**。
         //    ⚠️ 拿不到 / 0 ⇒ `batchQuantityFields` 返空对象 ⇒ **这一列不写**（不写空、也不写 0）。
         ...batchQuantityFields([{ quantity }]),

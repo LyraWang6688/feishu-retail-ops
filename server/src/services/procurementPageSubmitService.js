@@ -36,28 +36,11 @@ const { V1_BITABLE_SCHEMA } = require('../config/v1BitableSchema');
 const { createProcurementPurchaseWriters } = require('./procurementPurchaseWriters');
 const { createProductEnricher } = require('./procurementProductEnricher');
 const { createProcurementSubmissionIndex } = require('./procurementSubmissionIndex');
-const crypto = require('node:crypto');
 const { logInfo, logWarn } = require('../utils/logger');
+const { groupItemsBySupplier } = require('./supplierSubmissionSplit');
 
 const reject = (code, message) => ({ ok: false, code, message });
 
-/** 2026-11-19：一次采购提交按供应商拆成独立任务/批次；未标注供应商单独一组。 */
-const supplierGroupKeyOf = (supplierRecordId) => {
-  const id = String(supplierRecordId || '').trim();
-  if (!id) return 'unassigned';
-  return `s_${crypto.createHash('sha256').update(id).digest('hex').slice(0, 12)}`;
-};
-
-const groupItemsBySupplier = (items = []) => {
-  const groups = new Map();
-  for (const item of items) {
-    const supplierRecordId = String(item.supplier_record_id || '').trim();
-    const key = supplierGroupKeyOf(supplierRecordId);
-    if (!groups.has(key)) groups.set(key, { key, supplierRecordId, items: [] });
-    groups.get(key).items.push(item);
-  }
-  return [...groups.values()];
-};
 
 const createProcurementPageSubmitService = (options = {}) => {
   const gateway = options.gateway || null;

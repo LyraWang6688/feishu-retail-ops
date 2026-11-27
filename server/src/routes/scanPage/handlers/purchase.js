@@ -3,6 +3,7 @@
 const { redirectWithSubmitToast } = require('../../../utils/submitToast');
 const { sumReturnAmountCents } = require('../multiItem');
 const { toCents } = require('../../../utils/money');
+const { groupItemsBySupplier } = require('../../../services/supplierSubmissionSplit');
 const { ASYNC_JOBS } = require('../../../config/asyncJobs');
 const { soldOutCandidates } = require('../../../services/stockDelistCandidates');
 const { STOCK_DELIST } = require('../../../config/stockDelist');
@@ -186,6 +187,16 @@ async function handlePurchaseReturn(ctx) {
           : { ok: true, totalCents: toCents(currentReturnAmount) };
         if (!amountSum.ok) return purchaseAmountMissingPage(req, res, requestId, realm);
         const returnOrderAmount = String(amountSum.totalCents / 100);
+        // 2026-11-27：多供应商 ⇒ 按采购页同一套“一次提交拆独立批次”逻辑分组；
+        // 单供应商仍走原路径（行为尽量不变）。
+        const supplierBuckets = groups.length > 1 ? groupItemsBySupplier(groups) : [];
+        const supplierGroups = supplierBuckets.length > 1
+          ? supplierBuckets.map((bucket) => ({
+            supplierRecordId: bucket.supplierRecordId,
+            groups: bucket.items,
+            amountCents: amountSum.bySupplier?.get(bucket.supplierRecordId || '__unassigned__') || 0,
+          }))
+          : null;
         // ⭐ 2026-11-26（卖完下架确认）：与销售共用同一纯函数 —— 快照（页面首次读到的记录数）
         //   减去本次退货数量；剩余 <= 0 才弹确认层。**不重新读库存**。
         const delistConfirmed = String(body[fields.delistConfirmed] || '').trim() === '1';
@@ -237,6 +248,8 @@ async function handlePurchaseReturn(ctx) {
             // 同上：按真实动作名修正（原来恒 undefined）。
             action: writeConfig.actions.purchaseReturn,
             orderAmount: returnOrderAmount,
+            supplierGroups,
+            idempotencyBase: body[fields.submitKey],
             delistProductIds: delistIds,
           });
         }
