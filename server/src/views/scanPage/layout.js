@@ -1,7 +1,7 @@
 const { SCAN_PAGE } = require('../../config/scanPage');
 const { REALM_TABS, DEFAULT_REALM, REALM_TEXTS } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
-const { DELIST_CONFIRM_STYLE, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, RETURN_STEPPER_STYLE, SCAN_TAB_MARKER, SKELETON_STYLE, STYLE, canScanNextWithFeishu } = require('./styles');
+const { DELIST_CONFIRM_STYLE, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, RETURN_PREVIEW_STYLE, RETURN_STEPPER_STYLE, SCAN_TAB_MARKER, SKELETON_STYLE, STYLE, canScanNextWithFeishu } = require('./styles');
 const { realmScanScriptTagHtml, paymentAddRowScriptHtml, submitFeedbackScriptHtml, giftRowsScriptHtml, salesDraftScriptHtml } = require('./script');
 const { accessoryRowsScriptHtml } = require('./accessoryScript');
 // ⭐ 2026-10-18（第 4 步提速 · 提交不再白屏）：提交进度遮罩的样式/脚本搬到 `views/scanPage/submitProgress.js`
@@ -19,14 +19,14 @@ const renderDocument = ({ title, content, requestId, config = SCAN_PAGE, head = 
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>
 ${head}
-<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}${RETURN_STEPPER_STYLE}${content.includes('data-sample-promotion') ? SAMPLE_PROMOTION_STYLE : ''}${content.includes('data-delist-confirm') ? DELIST_CONFIRM_STYLE : ''}${hasProgressSubmit(content) ? SUBMIT_PROGRESS_STYLE : ''}</style>
+<style>${STYLE}${PAYMENT_STEP_STYLE}${REALM_BAR_STYLE}${SKELETON_STYLE}${RETURN_STEPPER_STYLE}${content.includes('data-view="return-tabs"') ? RETURN_PREVIEW_STYLE : ''}${content.includes('data-sample-promotion') ? SAMPLE_PROMOTION_STYLE : ''}${content.includes('data-delist-confirm') ? DELIST_CONFIRM_STYLE : ''}${hasProgressSubmit(content) ? SUBMIT_PROGRESS_STYLE : ''}</style>
 </head>
 <body>
 <main class="page">
 ${content}
 </main>
 ${requestId ? `<p class="foot">${escapeHtml(config.texts.requestIdLabel)} <span class="mono">${escapeHtml(requestId)}</span></p>` : ''}
-${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml() : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}${content.includes('data-payment-add') ? `\n${paymentAddRowScriptHtml()}` : ''}${content.includes('data-gift-add') ? `\n${giftRowsScriptHtml()}` : ''}${content.includes('data-accessory-add') ? `\n${accessoryRowsScriptHtml()}` : ''}${content.includes('data-save-draft') ? `\n${salesDraftScriptHtml()}` : ''}${content.includes('data-sample-promotion') ? `\n${samplePromotionScriptHtml()}` : ''}${hasProgressSubmit(content) ? `\n${submitProgressScriptHtml(config.texts.submitFailureText)}` : ''}
+${content.includes('data-submit-feedback=') ? submitFeedbackScriptHtml(content.includes('data-view="return-tabs"')) : ''}${content.includes('data-view="realm-scan-config"') ? `\n${realmScanScriptTagHtml()}` : ''}${content.includes('data-payment-add') ? `\n${paymentAddRowScriptHtml()}` : ''}${content.includes('data-gift-add') ? `\n${giftRowsScriptHtml()}` : ''}${content.includes('data-accessory-add') ? `\n${accessoryRowsScriptHtml()}` : ''}${content.includes('data-save-draft') ? `\n${salesDraftScriptHtml()}` : ''}${content.includes('data-sample-promotion') ? `\n${samplePromotionScriptHtml()}` : ''}${hasProgressSubmit(content) ? `\n${submitProgressScriptHtml(config.texts.submitFailureText)}` : ''}
 </body>
 </html>
 `;
