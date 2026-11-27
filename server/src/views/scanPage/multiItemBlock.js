@@ -54,6 +54,11 @@ const multiItemPayloadJson = (items = [], mode = '') => JSON.stringify(
       && Number.isFinite(Number(item.stock_total))) {
       out.stock_total = Number(item.stock_total);
     }
+    // 2026-11-27：退货金额按 record ID（货号+颜色）保存；随这一件一起带到下一页面。
+    // 补货不写金额 ⇒ 载荷形状一个字都不变。
+    if (mode === 'return' && Number.isInteger(item?.amount_cents) && item.amount_cents >= 0) {
+      out.amount_cents = item.amount_cents;
+    }
     out.entries = (Array.isArray((item || {}).entries) ? item.entries : []).map((entry) => {
       const line = {};
       for (const key of MULTI_ITEM_ENTRY_KEYS) {

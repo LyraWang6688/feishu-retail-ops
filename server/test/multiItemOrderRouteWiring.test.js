@@ -223,11 +223,11 @@ const replenishBody = ({ items, sizes = ['40'], quantity = '2', key = 'scan_repl
 
 const FIRST = {
   product_record_id: 'rec_K1', number: NUMBER, item_no: 'K1', color: '黑色',
-  supplier_record_id: 'sup_K1', entries: [],
+  supplier_record_id: 'sup_K1', entries: [], amount_cents: 20000,
 };
 const SECOND = {
   product_record_id: 'rec_K2', number: 'K2|白色|男', item_no: 'K2', color: '白色',
-  supplier_record_id: 'sup_K2', entries: [],
+  supplier_record_id: 'sup_K2', entries: [], amount_cents: 19900,
 };
 
 const callsOf = (engine, fn) => engine.calls.filter((call) => call.fn === fn);
@@ -338,7 +338,7 @@ test('AC-MIRW-5 ⭐ 退货 · 分组 2：金额写进草稿 `order_amount`；空
     params.append(SCAN_WRITE.fields.submitKey, 'scan_return:scan_session_mirw:1');
     params.append(`${SCAN_WRITE.fields.returnQuantityPrefix}41`, '1');
     if (amount !== null) params.append(SCAN_WRITE.fields.purchaseAmount, amount);
-    params.append('multi_items', multiItemPayloadJson([FIRST, SECOND]));
+    params.append('multi_items', multiItemPayloadJson([FIRST, SECOND], 'return'));
     return params;
   };
 
@@ -351,8 +351,8 @@ test('AC-MIRW-5 ⭐ 退货 · 分组 2：金额写进草稿 `order_amount`；空
     assert.equal(callsOf(engine, 'submitDraft').length, 1, '引擎提交 1 次 ✓');
     const sessionId = writeService.idOf(OPEN_ID);
     const session = await writeService.sessions.store.get(sessionId);
-    assert.equal(session.orders['return:' + OPEN_ID + ':1'].order_amount, '399',
-      '🔴 整单金额**进了草稿**（空 ⇒ 引擎会按配置拦下这一单 ✗）');
+    assert.equal(session.orders['return:' + OPEN_ID + ':1'].order_amount, '598',
+      '🔴 整单金额 = 当前页 399 + 第二件 199（空 ⇒ 引擎会按配置拦下这一单 ✗）');
   });
 
   // ② 金额空 ⇒ **既有那道同步闸门**当场拦（400 + 人话 + 零写入 + 引擎 0 次 ✓）

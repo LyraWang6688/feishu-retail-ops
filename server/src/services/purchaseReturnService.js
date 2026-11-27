@@ -256,6 +256,9 @@ const createPurchaseReturnService = (options = {}) => {
           product_number: String(item?.product_number || draft.product_number || ''),
           item_no: String(item?.item_no || draft.item_no || ''),
           color: String(item?.color || draft.color || ''),
+          // 2026-11-27：每个 record ID 的退货金额（分）；同一 record ID 多尺码时重复携带，
+          // 出图按 record ID 去重，不会乘尺码数。
+          ...(Number.isInteger(item?.amount_cents) ? { amount_cents: item.amount_cents } : {}),
         } : {}),
         size: Number(item.size), declared, available, taken, shortfall: declared - taken,
       });

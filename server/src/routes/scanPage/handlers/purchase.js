@@ -1,6 +1,8 @@
 'use strict';
 // ⭐⭐ 2026-10-29：提交成功 = 统一 toast 共用件（与销售/多货同一份实现）。
 const { redirectWithSubmitToast } = require('../../../utils/submitToast');
+const { sumReturnAmountCents } = require('../multiItem');
+const { toCents } = require('../../../utils/money');
 const { ASYNC_JOBS } = require('../../../config/asyncJobs');
 const { soldOutCandidates } = require('../../../services/stockDelistCandidates');
 const { STOCK_DELIST } = require('../../../config/stockDelist');
@@ -176,6 +178,14 @@ async function handlePurchaseReturn(ctx) {
         //     （那要新文案 ⇒ 越界 ✗）。
         //   · 🔴 **`≤1` 组一个字都不变** ⇒ 照旧走下面那条老路径 ✓。
         const groups = mergeFirstItemEntries(parseMultiItemGroups(body, multiItemOrderConfig), entries);
+        // 2026-11-27：多货品退货按唯一 record ID 汇总各页金额（分）；
+        // 缺任何一件 ⇒ 当场 400，绝不按 0 或只取最后一页。
+        const currentReturnAmount = String(body[fields.purchaseAmount] ?? '').trim();
+        const amountSum = groups.length > 1
+          ? sumReturnAmountCents(groups, currentReturnAmount)
+          : { ok: true, totalCents: toCents(currentReturnAmount) };
+        if (!amountSum.ok) return purchaseAmountMissingPage(req, res, requestId, realm);
+        const returnOrderAmount = String(amountSum.totalCents / 100);
         // ⭐ 2026-11-26（卖完下架确认）：与销售共用同一纯函数 —— 快照（页面首次读到的记录数）
         //   减去本次退货数量；剩余 <= 0 才弹确认层。**不重新读库存**。
         const delistConfirmed = String(body[fields.delistConfirmed] || '').trim() === '1';
@@ -226,6 +236,7 @@ async function handlePurchaseReturn(ctx) {
             req, res, requestId, chain: 'return', groups,
             // 同上：按真实动作名修正（原来恒 undefined）。
             action: writeConfig.actions.purchaseReturn,
+            orderAmount: returnOrderAmount,
             delistProductIds: delistIds,
           });
         }
@@ -233,7 +244,6 @@ async function handlePurchaseReturn(ctx) {
         const returnSubmitKey = body[fields.submitKey];
         //   ⚠️ 金额入参**逐字不带**：金额闸门在**上面**已经判过（空 / 非数字当场 400 + 零写入 ✓），
         //      这里仍按改前的形状把金额透传给写层（它要落「发生金额」✓）。
-        const returnOrderAmount = String(body[fields.purchaseAmount] ?? '').trim();
         schedulePurchaseWrite({
           chain: 'purchase_return',
           requestId,

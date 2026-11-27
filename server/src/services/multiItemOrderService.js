@@ -155,6 +155,9 @@ const createMultiItemOrderService = (options = {}) => {
       supplier_record_id: String(item.supplier_record_id || '').trim(),
       stock_total: item.stock_total !== null && Number.isFinite(Number(item.stock_total))
         ? Number(item.stock_total) : null,
+      // 2026-11-27：退货按 record ID 记录金额；补货不传 ⇒ null（不参与任何逻辑）。
+      amount_cents: Number.isInteger(item.amount_cents) && item.amount_cents >= 0
+        ? item.amount_cents : null,
       entries: (Array.isArray(item.entries) ? item.entries : []).map((entry) => ({
         size: String(entry?.size ?? '').trim(), quantity: entry?.quantity ?? '',
       })),
@@ -320,6 +323,8 @@ const createMultiItemOrderService = (options = {}) => {
           supplier_record_id: item.supplier_record_id || '',
           size: entry.size,
           quantity: entry.quantity,
+          ...(chainConfig.payload?.withItemAmount && Number.isInteger(item.amount_cents)
+            ? { amount_cents: item.amount_cents } : {}),
           ...(withBehavior && behavior.recordId ? { behavior_record_id: behavior.recordId } : {}),
           ...(withBehavior && behavior.kind ? { behavior_kind: behavior.kind } : {}),
         };

@@ -1,6 +1,7 @@
 'use strict';
 
 const { captureCurrentForm, hasContent } = require('../../services/salesDraftSnapshotService');
+const { toCents } = require('../../utils/money');
 
 /** 扫码页路由分组（P4-2c/d 从 routes.js 搬出）。 */
 const installScanPageActionRoutes = ({ router, ctx }) => {
@@ -210,6 +211,17 @@ const installScanPageActionRoutes = ({ router, ctx }) => {
       if (violation) return purchaseEntryInvalidPage(req, res, requestId, realm, violation);
       // 把"已经加进来的"与"刚加的这件"接上（同一货品 ⇒ 覆盖那一件 ✓ 与引擎的 `addItem` 同口径）
       const added = groups[0];
+      // 2026-11-27：退货这一页的金额属于当前 record ID，必须随这一件一起暂存；
+      // 否则跳到下一款后，上一款金额就丢了（最终只写进最后一款）。
+      if (draftChain === 'return') {
+        const rawAmount = String(body[fields.purchaseAmount] ?? '').trim();
+        // 空金额不在这里拦（最终提交统一 400）；非空但不是数字仍当场拦，避免存一个脏值。
+        const amountCents = rawAmount === '' ? null : toCents(rawAmount);
+        if (rawAmount !== '' && amountCents === null) {
+          return purchaseAmountInvalidPage(req, res, requestId, realm);
+        }
+        added.amount_cents = amountCents;
+      }
       const at = pending.items.findIndex((item) => keyOfItem(item) === keyOfItem(added));
       const items = pending.items.slice();
       if (at >= 0) items[at] = added; else items.push(added);
