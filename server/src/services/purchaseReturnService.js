@@ -67,6 +67,7 @@
  */
 const { JsonTaskStore } = require('../infrastructure/jsonTaskStore');
 const {textValue} = require('./v1BitableGateway');
+const { toCents } = require('../utils/money');
 const { strictLinkedRecordIds } = require('./strictLinkIds');
 const { relation, V1ReferenceResolver } = require('./v1ReferenceResolver');
 const { createSizeReferenceAccess } = require('./sizeReferenceService');
@@ -454,6 +455,10 @@ const createPurchaseReturnService = (options = {}) => {
         color: line.color,
         size: item.size,
         quantity: item.taken,
+        // 多货品：计划里逐 record ID 冻了金额；单货品：整单金额就是这一款金额。
+        amount_cents: Number.isInteger(item.amount_cents)
+          ? item.amount_cents
+          : toCents(draft.order_amount),
         // ⭐ 每行**自带自己的供应商** ⇒ 既有出图链路（`deliverSupplierImages` →
         //   `supplierSplitService.groupItemsBySupplier`）据此按供应商分组 ✓（**不另造第二套** ✗）
         supplier_record_id: line.supplier_record_id,
@@ -485,7 +490,12 @@ const createPurchaseReturnService = (options = {}) => {
       try {
         await webhooks.deliverSupplierImages(taskId, updated, {
           batch_no: plan.batch_no, batch_record_id: batchRecordId, request_ids: requestIds,
-        }, { title: config.imageTitle, fileNameSuffix: config.fileNameSuffix, notificationEvent: 'purchase_return_created' });
+        }, {
+          title: config.imageTitle, fileNameSuffix: config.fileNameSuffix,
+          notificationEvent: 'purchase_return_created',
+          // 2026-11-27：退货单启用颜色行金额 + 合计金额；采购申请单不传。
+          showAmounts: true,
+        });
       } catch (error) {
         logWarn(events.returnImageFailed, {
           task_id: taskId, batch_no: plan.batch_no, error: error.message,

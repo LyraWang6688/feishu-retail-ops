@@ -72,6 +72,8 @@ const SUBTITLE_FIELDS = [
   { key: 'date', label: '日期：' },
   { key: 'totalPairs', label: '合计：', format: (totalPairs) => `${totalPairs} 双`, hideWhenEmpty: true },
 ];
+// 退货单额外一行合计金额；采购申请单不追加（showAmounts=false）。
+const AMOUNT_SUBTITLE_FIELD = { key: 'totalAmount', label: '合计金额：', hideWhenEmpty: true };
 // 字段之间的分隔符：全角空格 ×2（与 2026-10-06 那一版逐字节相同）。
 const SUBTITLE_SEPARATOR = '　　';
 // 副标题字号、以及"单个字段最长画多宽"（超了截断加「…」）——与改前同款，
@@ -116,6 +118,14 @@ const detailRowHeight = (lineCount) => {
 // ⚠️ 截断按**像素宽度**而不是字符数：一个汉字在 22px 字号下就占 22px，
 // 按字符数限制会让 12 个汉字的颜色轻松捅进第二列（真机渲染验证时踩到过）。
 const CELL_PADDING = 16;
+// ⭐ 2026-11-27：退货单专用三列（颜色 / 尺码×数量 / 金额）——**采购申请单仍用下面两列**，
+//   只有退货出图传 showAmounts:true 才换这一份。金额按 record ID（货号+颜色）落在颜色行。
+const RETURN_COLUMNS = [
+  { key: 'color', label: '颜色', width: 180, align: 'start' },
+  { key: 'sizeQuantity', label: SIZE_QUANTITY_LABEL, width: 480, align: 'start', wrap: true },
+  { key: 'amount', label: '金额', width: 160, align: 'end' },
+].map((column) => ({ ...column, maxWidth: column.width - CELL_PADDING * 2 }));
+
 const COLUMNS = [
   { key: 'color', label: '货号', width: 240, align: 'start' },
   // ⚠️ `wrap: true`（2026-10-06 第三轮）：这一格的「尺码×数量」**装不下就换行**，
@@ -177,6 +187,8 @@ module.exports = {
   detailRowHeight,
   // 列与配色
   COLUMNS,
+  RETURN_COLUMNS,
+  AMOUNT_SUBTITLE_FIELD,
   COLORS,
   // 🔴 底部「合计」那一套（SHOW_TOTAL / TOTAL_LABEL / FOOTER_*）**已于 2026-10-07 删除**，
   //    不要再导出、也不要再加回来 —— 口径与回滚方式见本文件里「底部『合计』行（已删）」一节。

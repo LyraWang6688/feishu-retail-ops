@@ -694,15 +694,15 @@ test('AC-RB6 出退货单图：链路被调用一次、入参与改前逐字相�
     assert.deepStrictEqual(delivery.draft.items, [
       {
         product_record_id: 'prod_1', product_number: NUMBER, item_no: ITEM_NO,
-        color: '黑色', size: 40, quantity: 2, supplier_record_id: 'sup_1',
+        color: '黑色', size: 40, quantity: 2, amount_cents: 39900, supplier_record_id: 'sup_1',
       },
       {
         product_record_id: 'prod_1', product_number: NUMBER, item_no: ITEM_NO,
-        color: '黑色', size: 41, quantity: 3, supplier_record_id: 'sup_1',
+        color: '黑色', size: 41, quantity: 3, amount_cents: 39900, supplier_record_id: 'sup_1',
       },
       {
         product_record_id: 'prod_1', product_number: NUMBER, item_no: ITEM_NO,
-        color: '黑色', size: 42, quantity: 1, supplier_record_id: 'sup_1',
+        color: '黑色', size: 42, quantity: 1, amount_cents: 39900, supplier_record_id: 'sup_1',
       },
     ]);
     assert.equal(delivery.taskStatus, 'posted', '出图前任务已置 posted');
