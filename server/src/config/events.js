@@ -86,6 +86,7 @@ const EVENTS = Object.freeze([
   'inventory.sample.promoted',
   'inventory.sample.promotion_failed',
   'inventory.sample.promotion_skipped',
+  'inventory.season.inherit_failed',
   'inventory.season.scan.applied',
   'label_print.canvas.fitting_equals_no_rotation',
   'label_print.canvas.portrait_prerequisite',

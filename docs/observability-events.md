@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **566** 个事件。按前缀分组：
+共 **567** 个事件。按前缀分组：
 
 ## accessory
 
@@ -155,6 +155,7 @@
 | `inventory.sample.promoted` | 1 | src/services/samplePromotionService.js |
 | `inventory.sample.promotion_failed` | 4 | src/services/afterSalesExchangeService.js<br>src/services/salesAsyncWorker.js |
 | `inventory.sample.promotion_skipped` | 2 | src/services/samplePromotionService.js |
+| `inventory.season.inherit_failed` | 3 | src/services/inventory/seasonInheritance.js |
 | `inventory.season.scan.applied` | 1 | src/services/seasonAdjustmentService.js |
 
 ## label

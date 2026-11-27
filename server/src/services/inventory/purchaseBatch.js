@@ -13,6 +13,7 @@ const { logInfo } = require('../../utils/logger');
 const { correlationFields } = require('../../utils/correlationFields');
 const { invalidateLiveInventorySnapshot } = require('../liveInventorySnapshot');
 const { requireMovement, MOVEMENT_PURCHASE_INCREASE, LIVE_STATES } = require('./movements');
+const { seasonForNewRows } = require('./seasonInheritance');
 const {
   operationSourceIdOf,
   operationIdOf,
@@ -91,6 +92,16 @@ async function applyPurchaseBatch(items = [], options = {}) {
         for (const record of records || []) allLiveById.set(record.record_id, record);
       }
       const allLive = [...allLiveById.values()];
+      // ⭐ 2026-11-27：入库继承货品「当季」——同一批按货品只读一次货品（getBatch）。
+      const seasonByProduct = await seasonForNewRows({
+        gateway: this.gateway,
+        correlation,
+        products: productIds.map((id) => ({
+          productRecordId: id,
+          hasLiveRows: allLive.some((record) =>
+            strictLinkedRecordIds(record.fields?.[liveFields.product]).includes(id)),
+        })),
+      });
       // 2026-11-18：验收必须显式指定「哪个入库尺码做样品」；不再有“合计 0 自动第一双”。
       //   已有样品 ⇒ 不需要指定，本次全部门盒；没有样品且没指定 ⇒ 整批拒绝（不静默写错）。
       const chosenByProduct = new Map();
@@ -235,6 +246,8 @@ async function applyPurchaseBatch(items = [], options = {}) {
             operatorOpenId: plan.operation.operator_open_id,
           }),
           operationItemKey: itemKey,
+          // ⭐ 2026-11-27：只有 true 才写（false / undefined 一律不写，保持空 = 非当季）。
+          ...(seasonByProduct.get(plan.item.input.productRecordId) === true ? { season: true } : {}),
         }));
         const created = await this.gateway.createBatch('liveInventory', rows, { correlation });
         liveNeeded.forEach((entry, index) => { entry.plan.liveRecordIds.push(created[index]?.recordId || ''); });
