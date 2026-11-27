@@ -343,9 +343,11 @@ const createMultiItemOrderService = (options = {}) => {
     //      她选的 ⓐ 是"单内分组"，**不是**"每个供应商各开一个新批次号"✗（判据 AC-SS3 钉着）。
     //   ⚠️ 这里**只给"哪几家、哪些行"**（`supplier_key` / `indexes`）——
     //      **组键 / 单据键由写入口生成**（它才知道批次号与批次幂等键那些身份 ✓ 不在这里编 ✗）。
-    const supplierSplit = splitBySupplier({
-      items: flatItems, taskId, config: SUPPLIER_SPLIT,
-    });
+    // 2026-11-27：只有仍按“同批次多供应商”处理的链路才计算分组；退货已拆独立批次。
+    const withSupplierGroups = chainConfig.payload?.withSupplierGroups === true;
+    const supplierSplit = withSupplierGroups
+      ? splitBySupplier({ items: flatItems, taskId, config: SUPPLIER_SPLIT })
+      : null;
     const payload = {
       // 补货那条链的老形状里有它（"这一次是一批明细"）✓；退货那条链没有 —— **由配置说** ✓
       ...(chainConfig.payload?.isBatch === true ? { is_batch: true } : {}),
@@ -366,22 +368,27 @@ const createMultiItemOrderService = (options = {}) => {
       payload,
       details,
       // ⭐ 供应商分组（**写入口之前**算好的那一份；写入口会拿它交叉核对，见 `publishPurchaseRequest`）
-      supplierGroups: supplierSplit.groups.map((group) => ({
-        supplier_key: group.supplier_key,
-        supplier_record_id: group.supplier_record_id,
-        indexes: group.indexes,
-        detail_count: group.detail_count,
-        pair_count: group.pair_count,
-      })),
+      //    退货已按供应商拆独立批次 ⇒ 本批次无需再分组（配置 withSupplierGroups:false）。
+      ...(withSupplierGroups ? {
+        supplierGroups: supplierSplit.groups.map((group) => ({
+          supplier_key: group.supplier_key,
+          supplier_record_id: group.supplier_record_id,
+          indexes: group.indexes,
+          detail_count: group.detail_count,
+          pair_count: group.pair_count,
+        })),
+      } : {}),
       summary: {
         chain: chainConfig.id,
         order_key: String(draft?.order_key || ''),
         batch_count: 1,
         product_count: items.length,
         detail_count: details.length,
-        // 分了几组（单供应商 = 1 ⇒ 与今天**逐字等价** ✓）
-        supplier_group_count: supplierSplit.groupCount,
-        supplier_keys: supplierSplit.summary.supplier_keys,
+        // 供应商分组只属于仍按“同批次多供应商”处理的链路；退货已拆独立批次 ⇒ 不出现。
+        ...(withSupplierGroups ? {
+          supplier_group_count: supplierSplit.groupCount,
+          supplier_keys: supplierSplit.summary.supplier_keys,
+        } : {}),
         detail_keys: details.map((detail) => detail.idempotency_key),
       },
     };

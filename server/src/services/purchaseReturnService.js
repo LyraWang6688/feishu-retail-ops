@@ -79,7 +79,6 @@ const { PurchaseOrderBatchService } = require('./purchaseOrderBatchService');
 const { PurchaseBatchNoGenerator } = require('./purchaseBatchNoGenerator');
 const { createSupplyDocumentSyncService } = require('./supplyDocumentSyncService');
 const { createPurchaseTransactionService } = require('./purchaseTransactionService');
-const { groupItemsBySupplier } = require('./supplierSplitService');
 const {
   InventoryService, MOVEMENT_PURCHASE_DECREASE, STOCK_MOVEMENTS,
 } = require('./inventoryService');
@@ -112,7 +111,7 @@ const rowSupplierIdOf = (item, draft) => String(
 ).trim();
 
 /**
- * ⭐ 这一次要不要**逐行**带身份（货品 + 供应商）——
+ * ⭐ 这一次要不要**逐行**带身份（货品）——
  *   · **批次级没有货品**（= 引擎的多货品载荷 `planSubmission` 在 `single === false` 时留空 ✓）⇒ 要；
  *   · 或逐行真的是**多个货品** ⇒ 要；
  *   · 单货品那条老路（`scanWriteService.submitPurchaseReturn`）两个都不满足 ⇒ **不要**
@@ -231,6 +230,18 @@ const createPurchaseReturnService = (options = {}) => {
     const states = purchaseReturnStates();
     // 这一次要不要逐行带身份（多货品 ⇒ 要；单货品 ⇒ 不要，逐字走今天那条 ✓）
     const withRowIdentity = needsRowIdentity(items, draft);
+    // 2026-11-27：扫码退货已按供应商拆独立批次 ⇒ 一个批次只允许一个供应商。
+    // 这里保留一次兜底解析（旧单货品草稿 / 直接调用），但不再逐行解析供应商。
+    const itemSuppliers = [...new Set(items
+      .map((item) => String(item?.supplier_record_id || '').trim())
+      .filter(Boolean))];
+    if (itemSuppliers.length > 1) {
+      throw new Error('采购退货批次只能包含一个供应商，请按供应商拆开后再提交');
+    }
+    const batchSupplierRecordId = String(
+      draft.supplier_record_id || itemSuppliers[0]
+      || await resolveSupplierByProduct(rowProductIdOf(items[0], draft)) || '',
+    ).trim();
     const planned = [];
     for (const item of items) {
       const sizeRef = await resolveSize(item.size);
@@ -245,17 +256,12 @@ const createPurchaseReturnService = (options = {}) => {
       )).length;
       const declared = Number(item.quantity);
       const taken = Math.min(declared, available);
-      // 逐行供应商：**行上带的**优先（引擎 / 别的调用方 ✓）⇒ 没有才由**代码**读
-      // 「货品信息.供应商」（扫码页那条载荷正是这一种 ✓）⇒ 再拿不到才回落批次级。
-      const supplierRecordId = withRowIdentity
-        ? (String(item?.supplier_record_id || '').trim()
-          || await resolveSupplierByProduct(productRecordId)
-          || String(draft.supplier_record_id || '').trim())
-        : '';
+      // 一个批次一个供应商：所有行共用上面解析出的批次供应商。
+      // （旧单货品计划的形状不变；多货品仍逐行带 product_record_id。）
       planned.push({
         ...(withRowIdentity ? {
           product_record_id: productRecordId,
-          supplier_record_id: supplierRecordId,
+          supplier_record_id: batchSupplierRecordId,
           // ⚠️ 出图要用的那几个**展示字段**也冻进计划：重放时逐字复用（不回头读草稿 ——
           //    草稿在第一跑收尾时会被换成 `drawItems`，第二跑再读它就成了另一份形状 ✗）。
           product_number: String(item?.product_number || draft.product_number || ''),
@@ -378,7 +384,7 @@ const createPurchaseReturnService = (options = {}) => {
      */
     const lineOf = (item) => ({
       product_record_id: rowProductIdOf(item, draft),
-      supplier_record_id: rowSupplierIdOf(item, draft),
+      supplier_record_id: batchSupplierRecordId,
       product_number: String(item?.product_number || draft.product_number || ''),
       item_no: String(item?.item_no || draft.item_no || ''),
       color: String(item?.color || draft.color || ''),
@@ -478,14 +484,13 @@ const createPurchaseReturnService = (options = {}) => {
 
     // 2026-11-20：退货也写 P交易明细，只写交易明细ID + 报货批次号；不再写金额。
     // 放在 posted 之前：写失败 ⇒ 任务保持 posting，异步 job 重试；P交易明细按交易明细ID幂等。
-    for (const group of groupItemsBySupplier(drawItems)) {
-      await paymentTransactions.writeForSupplier({
-        batchNo: plan.batch_no,
-        batchRecordId,
-        supplierRecordId: group.supplierRecordId,
-        correlation,
-      });
-    }
+    // 一个批次只有一个供应商 ⇒ 只写一条 P 交易明细。
+    await paymentTransactions.writeForSupplier({
+      batchNo: plan.batch_no,
+      batchRecordId,
+      supplierRecordId: batchSupplierRecordId,
+      correlation,
+    });
 
     // 明细与库存都落地了 ⇒ 把这次要画的图（只有真的退掉的尺码）写进任务草稿，
     // 交给既有出图链路（它按供应商分组、按 `quantity` 求和画图）。
@@ -521,12 +526,11 @@ const createPurchaseReturnService = (options = {}) => {
     }
 
     // 2026-11-18：退货单落表后自动同步「我方单据」到云盘；失败不影响退货事实。
-    // 2026-11-19：把这次分组的供应商名传下去；多供应商时按附件名逐个匹配，避免统一读主表空供应商。
+    // 2026-11-27：一个批次只有一个供应商 ⇒ 只解析这一个供应商名。
     let returnSupplierNames = [];
     if (webhooks && typeof webhooks.resolveSupplierName === 'function') {
       try {
-        returnSupplierNames = await Promise.all(groupItemsBySupplier(drawItems)
-          .map((group) => webhooks.resolveSupplierName(group.supplierRecordId).catch(() => '')));
+        returnSupplierNames = [await webhooks.resolveSupplierName(batchSupplierRecordId).catch(() => '')];
       } catch (error) {
         returnSupplierNames = [];
       }
