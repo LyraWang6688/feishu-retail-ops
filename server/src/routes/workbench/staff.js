@@ -11,7 +11,7 @@ const { V1BitableGateway, textValue } = require('../../services/v1BitableGateway
 const { relation } = require('../../services/v1ReferenceResolver');
 const { StaffDirectoryService } = require('../../services/staffDirectoryService');
 const { requirePermission } = require('../../services/authorizationService');
-const { ROLES } = require('../../config/permissions');
+const { ROLES, can, permissionsOf } = require('../../config/permissions');
 const { STAFF_TEXTS } = require('../../config/workbenchStaff');
 const { logInfo, logError } = require('../../utils/logger');
 
@@ -62,9 +62,14 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
     try {
       const all = await directory.listStaff();
       const actor = req.workbenchActor;
+      const readAll = can(actor.role, 'attendance.read.all');
+      const readSelf = can(actor.role, 'attendance.read.self');
+      if (!readAll && !readSelf) {
+        return res.status(403).json({ success: false, error: STAFF_TEXTS.roleForbidden });
+      }
       const attending = all.filter((item) => item.attend);
-      const staff = actor.role === ROLES.ADMIN ? attending : attending.filter((item) => item.recordId === actor.recordId);
-      const roles = actor.role === ROLES.ADMIN ? await directory.listRoles() : [];
+      const staff = readAll ? attending : attending.filter((item) => item.recordId === actor.recordId);
+      const roles = readAll ? await directory.listRoles() : [];
       return res.json({ success: true, staff, roles });
     } catch (error) {
       logError('workbench.staff.list.failed', { error: error.message });
@@ -83,9 +88,14 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
         .filter((item) => item.attend).map((item) => item.recordId));
       const fromAt = epochOf(from, '00:00');
       const toAt = epochOf(to, '23:59');
+      const readAll = can(actor.role, 'attendance.read.all');
+      const readSelf = can(actor.role, 'attendance.read.self');
+      if (!readAll && !readSelf) {
+        return res.status(403).json({ success: false, error: STAFF_TEXTS.roleForbidden });
+      }
       let list = (rows || []).map(mapAttendance)
         .filter((row) => row.date >= fromAt && row.date <= toAt && attendingIds.has(row.staffRecordId));
-      if (actor.role !== ROLES.ADMIN) {
+      if (!readAll) {
         list = list.filter((row) => row.staffRecordId === actor.recordId || row.staffOpenId === actor.openId);
       } else if (req.query.staffRecordId) {
         list = list.filter((row) => row.staffRecordId === String(req.query.staffRecordId));
@@ -241,6 +251,9 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
       if (req.body?.roleRecordId !== undefined) {
         const role = await directory.findRole(req.body.roleRecordId);
         if (!role) throw badRequest(STAFF_TEXTS.badRole);
+        // 2026-11-27：角色表可新增，但权限矩阵里没登记的角色会让人“登录后什么都不能做”；
+        // 分配时明确拒绝，避免悄悄锁死（完整配置化见 Issue #1605）。
+        if (!permissionsOf(role.name).length) throw badRequest(STAFF_TEXTS.roleWithoutPermissions);
         fields.role = relation(role.recordId);
       }
       if (req.body?.active !== undefined) fields.active = req.body.active === true;
