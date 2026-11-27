@@ -64,6 +64,33 @@ test('当季扫码调整：只改当季/仓库员，写转释放和转冻结流�
   assert.ok(ledger.every((row) => row.fields['变动数量'] === 0));
 });
 
+test('AC-SEASON-BLANK 空值行（没勾过「当季」）按非当季匹配，能翻成当季', async () => {
+  const { service, live, ledger } = make();
+  // 真表现状：334 条行的「当季」是**空**（null），不是 false。
+  live.push({ record_id: 'l4', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s41'] }], 所属状态: '门盒' } });
+  assert.equal(live.find((row) => row.record_id === 'l4').fields['当季'], undefined, '夹具必须是空值，不是 false');
+  const result = await service.submit({
+    requestId: 'req_blank', operatorOpenId: 'ou_a',
+    changes: [{ productRecordId: 'p1', size: 41, state: '门盒', currentSeason: false, quantity: 1 }],
+  });
+  assert.equal(result.ok, true, '空值行必须能调（改前报 stock_shortage）');
+  assert.equal(live.find((row) => row.record_id === 'l4').fields['当季'], true);
+  assert.equal(ledger.filter((row) => row.fields['库存行为'][0] === 'b_STOCK_RELEASE').length, 1);
+});
+
+test('AC-SEASON-BLANK-2 当季=true 的行不会被「非当季」的提交误伤', async () => {
+  const { service, live } = make();
+  // 一条空值行（41 门盒）+ 原本就有 l3（40 样品 · 当季=true）
+  live.push({ record_id: 'l5', fields: { 编号: [{ record_ids: ['p1'] }], 尺码: [{ record_ids: ['s41'] }], 所属状态: '门盒' } });
+  const result = await service.submit({
+    requestId: 'req_blank2', operatorOpenId: 'ou_a',
+    changes: [{ productRecordId: 'p1', size: 41, state: '门盒', currentSeason: false, quantity: 1 }],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(live.find((row) => row.record_id === 'l5').fields['当季'], true, '空值行被翻成当季');
+  assert.equal(live.find((row) => row.record_id === 'l3').fields['当季'], true, '原本 true 的行必须原样');
+});
+
 test('当季扫码调整：流水失败后重试只补流水，不重复改当季', async () => {
   const { service, live, ledger, ledgerTokens } = make({ failLedgerOnce: true });
   const changes = [{ productRecordId: 'p1', size: 39, state: '门盒', currentSeason: false, quantity: 2 }];
