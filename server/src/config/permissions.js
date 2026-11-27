@@ -14,6 +14,8 @@ const PERMISSIONS = Object.freeze({
   'attendance.clock.self': Object.freeze([ROLES.ADMIN, ROLES.STAFF]),
   'attendance.write': Object.freeze([ROLES.ADMIN]),
   'staff.write': Object.freeze([ROLES.ADMIN]),
+  // 2026-11-27：库存裸扫页的成本只给管理员看；店员/未知角色默认没有。
+  'inventory.cost.read': Object.freeze([ROLES.ADMIN]),
 });
 
 const can = (role, permission) => (PERMISSIONS[permission] || []).includes(String(role || '').trim());

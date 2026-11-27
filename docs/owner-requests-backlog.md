@@ -36,6 +36,7 @@
 
 | # | 她的原话（逐字） | 日期（上海） | 状态 | owner | 判据（能真红） | 落点（文件:行 / PR） |
 | --- | --- | --- | --- | --- | --- | --- |
+| **R-51** | 「库存裸扫页面，按照角色，管理员角色显示货品的成本、店员不显示货品的成本，进行一个差异化配置」 | **2026-11-27** | **已上线（未部署）** | Lead | 管理员在库存裸扫页看到「成本 ¥168」（单价下方）；店员/其他角色默认看不到；销售/退货页不显示；成本不进共享缓存，服务端按权限读 | **PR #1609**；config/permissions.js；config/scanPage.js；services/scanPageCost.js；routes/scanPage/pages.js；views/scanPage/layout.js；test/scanInventoryCostRole.test.js |
 | **R-50** | 「空就是不是当季的意思啊，很正常」（当季调整：空值行必须按非当季匹配） | **2026-11-27** | **已上线（未部署）** | Lead | 服务端挑行由 `===` 改 `Boolean()`：空 / false 都算非当季、true 才算；生产 334 条空值行可翻成当季并写 STOCK_RELEASE；原本 true 的行不被误伤；去掉 Boolean ⇒ 两条判据当场红 | **PR #1607**；services/seasonAdjustmentService.js；test/seasonAdjustmentService.test.js |
 | **R-49** | 「采购页扫一扫要有；其他的补货不需要」——A2：连补货扫码页文件一起删 | **2026-11-27** | **已上线（未部署）** | Lead | REALMS/replenishBlock/realmScan/REPLENISH_FORM 全部退场；采购页扫一扫与冻结写库件未动；相关测试迁到 purchase_return 或删只测补货页的判据；全量 2757 pass | **PR #1601**；views/scanPageRealm.js；views/scanPage/{realmBlock,replenishBlock}.js；config/{realmScan,scanPage}.js；19 个测试文件 |
 | **R-48** | 「好的，我同意这个方案，你创建目标推进吧」（资金页独立 URL + 领域/flow 隔离 + 售后保护 + 草稿箱改道） | **2026-11-27** | **已上线（未部署）** | Lead | 裸扫=库存页且无销售本单条；/r/{id}/pay 是唯一资金页（刷新仍在）；提交成功 303 到 /pay；删支付中接管；重扫清 pending 只限销售建单 flow（售后换款式不清）；付款步草稿 303 /pay | **PR #1599**；config/scanPage.js；routes/scanPage/{pages,setup}.js；views/scanPage/index.js；handlers/salesSubmit.js |

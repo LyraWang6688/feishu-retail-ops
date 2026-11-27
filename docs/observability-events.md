@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **564** 个事件。按前缀分组：
+共 **566** 个事件。按前缀分组：
 
 ## accessory
 
@@ -143,6 +143,7 @@
 | `inventory.adjustment.pairs.state_applied` | 1 | src/services/inventoryPairAdjustmentService.js |
 | `inventory.change.applied` | 4 | src/services/inventory/executeOperation.js<br>src/services/inventory/purchaseBatch.js<br>src/services/inventory/purchaseReturnBatch.js<br>…等 4 个文件 |
 | `inventory.change.failed` | 1 | src/config/alerts.js |
+| `inventory.cost.read` | 2 | src/config/permissions.js<br>src/config/scanPage.js |
 | `inventory.print.intent.failed` | 1 | src/services/inventoryPrintIntentService.js |
 | `inventory.print.intent.item_failed` | 1 | src/services/inventoryPrintIntentService.js |
 | `inventory.print.intent.missing_product` | 1 | src/services/inventoryPrintIntentService.js |
@@ -458,6 +459,7 @@
 | `scan.data.filtered_empty` | 1 | src/config/scanPage.js |
 | `scan.data.limit_exceeded` | 1 | src/config/scanPage.js |
 | `scan.delist.snapshot_missing` | 1 | src/routes/scanPage/handlers/salesSubmit.js |
+| `scan.inventory.cost.read_failed` | 1 | src/routes/scanPage/pages.js |
 | `scan.launch` | 1 | src/utils/uiTapReport.js |
 | `scan.lookup.timing` | 1 | src/config/scanPage.js |
 | `scan.multi_item.add` | 1 | src/config/multiItemOrder.js |

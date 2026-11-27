@@ -731,6 +731,9 @@ const RETURN_FORM = Object.freeze({
 //   ⚠️ 写侧 `config/scanWrite.js` 的 `REPLENISH` / `replenishButton` **一个字不动**（冻结写库件）。
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
+  // 2026-11-27：库存裸扫页的「成本」行（权限键在 config/permissions.js）。
+  //   · 只有命中权限的角色才在服务端读成本；店员响应里根本不会有这个值。
+  inventoryCost: Object.freeze({ label: '成本', permission: 'inventory.cost.read' }),
   // 2026-11-27：本单条只属于「销售建单」这一个 realm+flow；别的领域/售后换款式一律不渲染。
   realmUi: Object.freeze({
     draftBar: Object.freeze({ realms: Object.freeze(['sales']), flows: Object.freeze(['sales']) }),

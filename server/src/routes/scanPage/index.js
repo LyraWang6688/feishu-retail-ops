@@ -260,7 +260,7 @@ const createScanPageRouter = (options = {}) => {
 
   const routeContext = { salesAsync, DEFAULT_REALM, PURCHASE_RETURN_REALM, SCAN_PAGE,
     SUBMIT_TOAST, SalesFollowupService, addBackPath, arrival, asList, backTargetFor, badNumberPage,
-    buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, handleAddLineOf,
+    buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, gateway, handleAddLineOf,
     handleClearDraftOf, handlePaymentPayOf, handlePendingExchangeSubmit,
     handlePurchaseReturnOf, handleReplenishOf, handleSubmitOrderOf, handleUiTap,
     invalidateLiveInventorySnapshot, isDataNotReady, logError, logInfo, logRendered, logWarn,
