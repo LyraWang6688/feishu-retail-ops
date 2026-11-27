@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const rateLimit = require('express-rate-limit');
+const { createRateLimit } = require('../middleware/security');
 const { V1BitableGateway } = require('../services/v1BitableGateway');
 const { createProductGroupStockService } = require('../services/productGroupStockService');
 const { createScanPageService } = require('../services/scanPageService');
@@ -11,6 +11,7 @@ const { renderGroupStockPage, renderGroupPickerPage } = require('../views/groupS
 const { requireWorkbenchAccess } = require('./workbench');
 const { enabled: feishuAuthEnabled, getSessionUser, buildLoginStartUrl } = require('./feishuWebAuth');
 const { SECURITY } = require('../config/security');
+const { logInfo } = require('../utils/logger');
 
 
 
@@ -23,12 +24,10 @@ const createGroupScanPageRouter = (options = {}) => {
   const service = options.service || createProductGroupStockService({ gateway });
   const scanPageService = options.scanPageService || createScanPageService(gateway);
 
-  router.use(rateLimit({
-    windowMs: SECURITY.rateLimit.windowMs,
-    limit: SECURITY.rateLimit.scanMax,
-    standardHeaders: true,
-    legacyHeaders: false,
-  }));
+  // 2026-11-27：与 /r 扫码页共用项目自己的限流器。
+  //   直接用的 express-rate-limit 在 Nginx 传 X-Forwarded-For、Express trust proxy=false 时
+  //   会抛 ERR_ERL_UNEXPECTED_X_FORWARDED_FOR（第一次打开货品组可能 500）。
+  router.use(createRateLimit({ max: SECURITY.rateLimit.scanMax, name: 'group_scan_page' }));
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     next();
@@ -55,6 +54,12 @@ const createGroupScanPageRouter = (options = {}) => {
         }));
       }
       const currentUrl = SCAN_PAGE.route.groupBasePath + '/' + encodeURIComponent(groupId) + (from ? '?from=' + encodeURIComponent(from) : '');
+      logInfo('group.scan.viewed', {
+        group_id: groupId,
+        from: from || '',
+        member_count: group.members.length,
+        mode: PICKER_REALMS.has(from) ? 'picker' : 'stock',
+      });
       const html = PICKER_REALMS.has(from)
         ? renderGroupPickerPage(group, { from, currentUrl })
         : renderGroupStockPage(group, { currentUrl });
