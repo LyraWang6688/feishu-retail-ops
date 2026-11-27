@@ -7,6 +7,11 @@ export const ACCESSORY_CONFIG_API = Object.freeze({
   remove: (recordId) => `/api/workbench/products/accessories/${encodeURIComponent(recordId)}`,
 });
 
+export const ACCESSORY_CONFIG_REDIRECT = Object.freeze({
+  path: '/workbench/',
+  toastParam: 'toast',
+});
+
 export const ACCESSORY_CONFIG_TEXTS = Object.freeze({
   title: '配品配置',
   loading: '正在读取配品…',
