@@ -136,6 +136,7 @@ const documentImages = {
           batchNo,
           items: group.items,
           title: options.title,
+          showAmounts: options.showAmounts === true,
         });
         prepared.set(group.groupKey, png);
       }));
@@ -259,6 +260,7 @@ const documentImages = {
           items: group.items,
           // 不传就是采购申请单（渲染器里的默认标题），退货传「邯美皮鞋退货单」。
           title: options.title,
+          showAmounts: options.showAmounts === true,
         });
         // ⚠️ 一条开话题、后面的回复它（业务负责人 2026-10-06 拍板）：
         // 以前图一条、文字一条都是**顶层消息**，飞书里顶层消息各成一个话题，

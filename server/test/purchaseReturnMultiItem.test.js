@@ -570,7 +570,7 @@ test('AC-RS2 🔴 单货品退货 ⇒ 与今天**逐字一致**（载荷 `deepEq
   } finally { h.cleanup(); }
 });
 
-test('AC-RS2b 🔴 单货品退货（**真链路**：扫码页 POST）⇒ 递给出图那一步的载荷 `deepEqual` 逐字不变', async () => {
+test('AC-RS2b 🔴 单货品退货（**真链路**：扫码页 POST）⇒ 递给出图那一步的载荷 deepEqual（新增金额键）', async () => {
   login();
   const h = createHarness();
   try {
@@ -597,8 +597,9 @@ test('AC-RS2b 🔴 单货品退货（**真链路**：扫码页 POST）⇒ 递给
         color: '黑色',
         size: 41,
         quantity: 1,
+        amount_cents: 39900,
         supplier_record_id: 'sup_a',
-      }], '🔴 `drawItems` 的形状/键**逐字**与今天相同（多一个键 ⇒ 红 ✓）');
+      }], '🔴 `drawItems` 新增 amount_cents（单货品取整单金额）；其余键逐字不变 ✓');
       assert.equal(delivery.draft.supplier_record_id, 'sup_a', '批次级供应商照旧在（既有判据钉着 ✓）');
     });
   } finally { h.cleanup(); }

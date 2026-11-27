@@ -60,8 +60,10 @@ const {
   LINE_HEIGHT,
   detailRowHeight,
   COLUMNS,
+  RETURN_COLUMNS,
   COLORS,
   SUBTITLE_FIELDS,
+  AMOUNT_SUBTITLE_FIELD,
   SUBTITLE_SEPARATOR,
   SUBTITLE_FONT_SIZE,
   SUBTITLE_FIELD_MAX_WIDTH,
@@ -203,19 +205,46 @@ const formatQuantity = (value) => {
  * 明细 → 可读的行。货号优先用「货号」字段，缺失时退回「编号」（货号+颜色），
  * 保证图上永远有东西能认出是哪双鞋。
  */
-const normalizeItems = (items) => (Array.isArray(items) ? items : [])
+const formatAmountCents = (cents) => {
+  if (!Number.isInteger(cents) || cents < 0) return '';
+  const amount = cents / 100;
+  return '¥' + (Number.isInteger(amount)
+    ? amount.toLocaleString('en-US')
+    : amount.toFixed(2));
+};
+
+const normalizeItems = (items, { showAmounts = false } = {}) => (Array.isArray(items) ? items : [])
   .map((item) => ({
     item_no: String(item?.item_no || item?.itemNo || item?.product_number || item?.productNumber || '').trim(),
     color: String(item?.color || '').trim(),
     size: formatSize(item?.size),
     quantity: formatQuantity(item?.quantity),
+    // 2026-11-27：只在退货单启用金额；按 record ID（货号+颜色）取值。
+    ...(showAmounts ? {
+      product_record_id: String(item?.product_record_id || item?.record_id || '').trim(),
+      amount_cents: Number.isInteger(item?.amount_cents) ? item.amount_cents : null,
+      amount: formatAmountCents(item?.amount_cents),
+    } : {}),
   }))
   .filter((item) => item.item_no || item.size);
 
-const summarize = (items) => ({
-  rowCount: items.length,
-  totalPairs: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
-});
+const summarize = (items) => {
+  const list = Array.isArray(items) ? items : [];
+  const amountByRecord = new Map();
+  list.forEach((item) => {
+    if (!Number.isInteger(item?.amount_cents) || item.amount_cents < 0) return;
+    const key = String(item?.product_record_id || item?.item_no || item?.size || '').trim();
+    if (key) amountByRecord.set(key, item.amount_cents);
+  });
+  const totalAmountCents = [...amountByRecord.values()].reduce((sum, cents) => sum + cents, 0);
+  return {
+    rowCount: list.length,
+    totalPairs: list.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+    // 采购申请单没有金额字段 ⇒ 不新增这个键（既有形状逐字不变）。
+    ...(list.some((item) => Object.prototype.hasOwnProperty.call(item || {}, 'amount_cents'))
+      ? { totalAmountCents } : {}),
+  };
+};
 
 // ─── 分组与组内排序（「🅱️ 分组版」的排版规则）────────────────────────────────
 // 全部是纯函数：同样的输入永远得到同样的分组与顺序，可以脱离 sharp 单测。
@@ -335,6 +364,9 @@ const mergeSizesByColor = (rows) => {
     const sizeQuantities = ordered.map((row) => formatSizeQuantity(row.size, row.quantity));
     return {
       color,
+      // 2026-11-27：同一颜色（record ID）多尺码共用一个金额；不按行相加。
+      ...(ordered.some((row) => Object.prototype.hasOwnProperty.call(row, 'amount'))
+        ? { amount: ordered.map((row) => row.amount).find(Boolean) || '' } : {}),
       sizeQuantity: sizeQuantities.join(SIZE_QUANTITY_SEPARATOR),
       sizeQuantities,
     };
@@ -343,16 +375,16 @@ const mergeSizesByColor = (rows) => {
 
 const textAnchorOf = (align) => (align === 'center' ? 'middle' : align === 'end' ? 'end' : 'start');
 
-const cellX = (index, align) => {
-  const left = MARGIN + COLUMNS.slice(0, index).reduce((sum, column) => sum + column.width, 0);
-  if (align === 'center') return left + COLUMNS[index].width / 2;
-  if (align === 'end') return left + COLUMNS[index].width - CELL_PADDING;
+const cellX = (index, align, columns = COLUMNS) => {
+  const left = MARGIN + columns.slice(0, index).reduce((sum, column) => sum + column.width, 0);
+  if (align === 'center') return left + columns[index].width / 2;
+  if (align === 'end') return left + columns[index].width - CELL_PADDING;
   return left + CELL_PADDING;
 };
 
-const cellText = (column, index, value, y, options = {}) => {
+const cellText = (column, index, value, y, options = {}, columns = COLUMNS) => {
   const fontSize = options.fontSize || BODY_FONT_SIZE;
-  return `<text x="${cellX(index, column.align)}" y="${y}" ` +
+  return `<text x="${cellX(index, column.align, columns)}" y="${y}" ` +
     `font-family="${FONT_FAMILY}" font-size="${fontSize}" fill="${options.fill || COLORS.ink}" ` +
     `${options.bold ? 'font-weight="bold" ' : ''}text-anchor="${textAnchorOf(column.align)}">` +
     `${escapeXml(truncateToWidth(value, column.maxWidth, fontSize))}</text>`;
@@ -373,8 +405,8 @@ const cellText = (column, index, value, y, options = {}) => {
  * ⚠️ 行高按**这一行里最多的行数**算（不是按每一格各算各的）：一行是一条横带，
  * 斑马纹、边框、竖线都按同一个高度画，不然格子会错位。
  */
-const layoutColorRows = (colorRows) => (Array.isArray(colorRows) ? colorRows : []).map((row) => {
-  const cellLines = COLUMNS.map((column) => {
+const layoutColorRows = (colorRows, columns = COLUMNS) => (Array.isArray(colorRows) ? colorRows : []).map((row) => {
+  const cellLines = columns.map((column) => {
     if (column.wrap) {
       // ⚠️ 优先用**整块列表**（mergeSizesByColor 给的 sizeQuantities），
       // 拿不到才退回"把整格文本当成一块"——这样纯函数被单独调用时也不会崩。
@@ -395,10 +427,10 @@ const layoutColorRows = (colorRows) => (Array.isArray(colorRows) ? colorRows : [
  * 一条竖线穿过去会把它切成两半，看着像「货号只属于第一列」。
  * 所以按段调用：列头一段，每个货号的分组明细各一段。
  */
-const pushColumnLines = (parts, top, bottom) => {
+const pushColumnLines = (parts, top, bottom, columns = COLUMNS) => {
   let x = MARGIN;
-  for (let index = 0; index < COLUMNS.length - 1; index += 1) {
-    x += COLUMNS[index].width;
+  for (let index = 0; index < columns.length - 1; index += 1) {
+    x += columns[index].width;
     parts.push(`<line x1="${x}" y1="${top}" x2="${x}" y2="${bottom}" ` +
       `stroke="${COLORS.line}" stroke-width="1"/>`);
   }
@@ -429,10 +461,14 @@ const formatDate = (value) => {
  *   · `batchNo` —— ⚠️ **刻意不在表里**：报货批次 2026-10-07 起不显示。
  *      它仍由调用方传进来（留痕/排查用），但**图上一个字都不画**。
  */
-const subtitleValuesOf = ({ supplierName = '', generatedAt = new Date(), totalPairs = 0 } = {}) => ({
+const subtitleValuesOf = ({
+  supplierName = '', generatedAt = new Date(), totalPairs = 0, totalAmountCents = 0,
+  includeAmount = false,
+} = {}) => ({
   supplier: String(supplierName || '').trim(),
   date: formatDate(generatedAt),
   totalPairs: Number(totalPairs) > 0 ? String(totalPairs) : '',
+  ...(includeAmount ? { totalAmount: formatAmountCents(totalAmountCents) } : {}),
 });
 
 /**
@@ -441,7 +477,7 @@ const subtitleValuesOf = ({ supplierName = '', generatedAt = new Date(), totalPa
  * 逐字段按配置来：`label` 是前缀、`format` 决定值的写法、`hideWhenEmpty` 决定空值要不要省掉，
  * 字段之间用配置的 `SUBTITLE_SEPARATOR` 连起来。**本函数里没有任何业务字符串**。
  */
-const buildSubtitle = (values = {}) => SUBTITLE_FIELDS
+const buildSubtitle = (values = {}, fields = SUBTITLE_FIELDS) => fields
   .map((field) => {
     const raw = values[field.key];
     if (field.hideWhenEmpty && (raw === '' || raw === undefined || raw === null)) return '';
@@ -457,15 +493,17 @@ const buildSubtitle = (values = {}) => SUBTITLE_FIELDS
  * 因此排版规则（标题、尺码×数量的写法、列宽/截断）都能在没有网络、没有 sharp 的情况下单测。
  */
 const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], generatedAt = new Date(),
-  title = TITLE } = {}) => {
-  const rows = normalizeItems(items);
+  title = TITLE, showAmounts = false } = {}) => {
+  // 2026-11-27：只有退货单启用金额三列；采购申请单继续用原来的两列。
+  const columns = showAmounts ? RETURN_COLUMNS : COLUMNS;
+  const rows = normalizeItems(items, { showAmounts });
   // 三层排版：① 按货号分组 → ② 组内把**同颜色**并成图上的一行（`colorRows`）
   //          → ③ 把每行按格子折成一行行文本、并算出行高（`layoutRows`）。
   // ⚠️ 后两层分开放：②决定"哪些明细同属一行"，③决定"这一行画几条 text、占多高"。
   // 表高 / 斑马纹 / 竖线一律按 ③ 的 `layoutRows` 算（折了行的那一行更高）。
   const groups = groupRowsByItemNo(rows).map((group) => {
     const colorRows = mergeSizesByColor(group.rows);
-    const layoutRows = layoutColorRows(colorRows);
+    const layoutRows = layoutColorRows(colorRows, columns);
     return {
       ...group,
       colorRows,
@@ -480,7 +518,7 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
   //    就可以了」），所以 `rowCount`（= 明细行数）**图上、群文字都不出现**了 ——
   //    它仍由 `summarize` 提供（并有用例钉着这个形状），只是**没有生产读取点**；
   //    本次**不动它**（删它属于渲染器契约的改动，不在这次"只改文案"的范围里）。
-  const { totalPairs } = summarize(rows);
+  const { totalPairs, totalAmountCents } = summarize(rows);
   // 表高 = 列头 + Σ（分组行 + 该组**折行后**的明细段高）。空明细时仍然留一行正文的高度，
   // 给「本批次没有明细」那句话站脚。
   const bodyHeight = rows.length === 0
@@ -503,15 +541,18 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
   // 「没维护供应商的货品，也应该能正常出单」）。以前这里写「供应商：未填写」，
   // 看着像一条警告、像这张单有问题；留空才是"正常出单"的样子。
   // 2026-10-07 起这段由 `SUBTITLE_FIELDS` 的 `hideWhenEmpty` 表达，**不是**在本文件里写 if。
-  const subtitle = buildSubtitle(subtitleValuesOf({ supplierName, generatedAt, totalPairs }));
+  const subtitleFields = showAmounts ? [...SUBTITLE_FIELDS, AMOUNT_SUBTITLE_FIELD] : SUBTITLE_FIELDS;
+  const subtitle = buildSubtitle(
+    subtitleValuesOf({ supplierName, generatedAt, totalPairs, totalAmountCents, includeAmount: showAmounts }), subtitleFields,
+  );
   parts.push(`<text x="${WIDTH / 2}" y="${SUBTITLE_BASELINE}" font-family="${FONT_FAMILY}" font-size="${SUBTITLE_FONT_SIZE}" ` +
     `fill="${COLORS.muted}" text-anchor="middle">${escapeXml(subtitle)}</text>`);
 
   // 表头
   parts.push(`<rect x="${MARGIN}" y="${TABLE_TOP}" width="${TABLE_WIDTH}" height="${HEADER_ROW_HEIGHT}" fill="${COLORS.headerBg}"/>`);
   const headerTextY = TABLE_TOP + HEADER_ROW_HEIGHT / 2 + 7;
-  COLUMNS.forEach((column, index) => {
-    parts.push(cellText(column, index, column.label, headerTextY, { fontSize: HEADER_FONT_SIZE, bold: true }));
+  columns.forEach((column, index) => {
+    parts.push(cellText(column, index, column.label, headerTextY, { fontSize: HEADER_FONT_SIZE, bold: true }, columns));
   });
 
   // 明细：**按货号分组**——每个货号一条跨满整张表的「分组行」（底色 + 加粗 + 字号 24），
@@ -554,10 +595,10 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
         // 多行时整块**垂直居中**：n 行文字的总高 = n*LINE_HEIGHT，上下各留 (rowHeight - n*LINE_HEIGHT)/2。
         // 单行时正好退化成改前的「行中线 + 7」（42 - 30)/2 + 15 + 7 = 28 = ROW_HEIGHT/2 + 7）。
         const blockTop = rowTop + (row.height - row.lineCount * LINE_HEIGHT) / 2;
-        COLUMNS.forEach((column, index) => {
+        columns.forEach((column, index) => {
           row.cellLines[index].forEach((line, lineIndex) => {
             const y = blockTop + lineIndex * LINE_HEIGHT + LINE_HEIGHT / 2 + 7;
-            parts.push(cellText(column, index, line, y));
+            parts.push(cellText(column, index, line, y, {}, columns));
           });
         });
         rowTop += row.height;
@@ -565,7 +606,7 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
 
       // 竖线只画在**明细行那一段**：分组行是跨列的，横穿一条竖线会把它切开。
       // 长度按**折行后的明细段高**算，否则折行的那一段会露出一截没有竖线。
-      pushColumnLines(parts, detailTop, detailTop + group.detailHeight);
+      pushColumnLines(parts, detailTop, detailTop + group.detailHeight, columns);
       cursorY = detailTop + group.detailHeight;
     });
   }
@@ -574,7 +615,7 @@ const buildPurchaseRequestSvg = ({ supplierName, batchNo = '', items = [], gener
   parts.push(`<rect x="${MARGIN}" y="${TABLE_TOP}" width="${TABLE_WIDTH}" height="${tableHeight}" ` +
     `fill="none" stroke="${COLORS.border}" stroke-width="1.5"/>`);
   // 列头那一段的竖线照旧画满——列头仍然是一行格子的表头。
-  pushColumnLines(parts, TABLE_TOP, TABLE_TOP + HEADER_ROW_HEIGHT);
+  pushColumnLines(parts, TABLE_TOP, TABLE_TOP + HEADER_ROW_HEIGHT, columns);
   parts.push(`<line x1="${MARGIN}" y1="${TABLE_TOP + HEADER_ROW_HEIGHT}" x2="${MARGIN + TABLE_WIDTH}" ` +
     `y2="${TABLE_TOP + HEADER_ROW_HEIGHT}" stroke="${COLORS.line}" stroke-width="1"/>`);
 
