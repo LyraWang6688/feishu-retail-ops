@@ -3,11 +3,8 @@
 const { StaffDirectoryService } = require('./staffDirectoryService');
 const { linkedRecordIds } = require('./v1BitableGateway');
 const { ATTENDANCE_REMINDER } = require('../config/attendanceReminder');
+const { shanghaiDayOf, shanghaiDayStart } = require('../utils/shanghaiDay');
 const { logInfo, logWarn } = require('../utils/logger');
-
-const shanghaiDay = (epoch) => new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
-}).format(new Date(epoch));
 
 const createAttendanceReminderService = ({
   gateway, notifications, config = ATTENDANCE_REMINDER, now = () => Date.now(),
@@ -25,14 +22,17 @@ const createAttendanceReminderService = ({
     const staff = (await directory.listStaff())
       .filter((item) => item.active && item.attend && item.openId);
     const fields = gateway.table('attendance').fields;
+    const today = shanghaiDayOf(now());
+    const todayStart = shanghaiDayStart(today);
     const rows = await gateway.listAll('attendance');
     const openStaffIds = new Set();
     for (const row of rows || []) {
       if ((Number(row.fields?.[fields.endAt]) || 0) > 0) continue;
+      // 只看今天：昨天忘了下班不应该每天继续催，也不应该把文案说成“今天”。
+      if (Number(row.fields?.[fields.date]) !== todayStart) continue;
       const staffId = linkedRecordIds(row.fields?.[fields.staff])[0] || '';
       if (staffId) openStaffIds.add(staffId);
     }
-    const today = shanghaiDay(now());
     let sent = 0;
     for (const person of staff) {
       if (!openStaffIds.has(person.recordId)) continue;
