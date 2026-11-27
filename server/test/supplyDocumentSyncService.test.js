@@ -100,6 +100,21 @@ test('AC-SDS4 同名文件覆盖：先删旧文件再上传', async () => {
   assert.equal(h.uploaded.length, 1);
 });
 
+
+test('AC-SDS6 供应商名含斜杠：云盘文件名与图片文件名同一套清洗', async () => {
+  const h = makeGateway({
+    报货批次号: 'CGD-20261127-0001', 发生行为: '退货', 供应商: '七匹狼/吉祥鸟',
+    我方单据: [{ file_token: 'f_my', name: '七匹狼吉祥鸟-采购退货单.png' }],
+    单据同步: false,
+  });
+  await createSupplyDocumentSyncService({ gateway: h.gateway }).syncBatch({
+    batchNo: 'CGD-20261127-0001', supplierNames: ['七匹狼/吉祥鸟'], supplierName: '七匹狼/吉祥鸟',
+  });
+  assert.deepEqual(h.uploaded.map((item) => item.fileName), [
+    '2026-11-27_七匹狼吉祥鸟_退货_七匹狼吉祥鸟-采购退货单.png',
+  ]);
+});
+
 test('AC-SDS5 多供应商退货：按附件名的供应商逐个生成文件名，不统一用主表空供应商', async () => {
   const h = makeGateway({
     报货批次号: 'CGD-20261119-0002', 发生行为: '退货',

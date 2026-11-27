@@ -12,6 +12,7 @@
 const { textValue } = require('./v1BitableGateway');
 const { extraOfAttachment } = require('./driveApi');
 const { createDriveFileSyncService } = require('./driveFileSyncService');
+const { safeSupplierName } = require('./supplierSplitService');
 const { logInfo, logWarn } = require('../utils/logger');
 const CONFIG = require('../config/supplyDocumentSync');
 
@@ -82,10 +83,12 @@ const createSupplyDocumentSyncService = ({ gateway, config = CONFIG } = {}) => {
       return { ok: true, skipped: 'no_documents', batch_no: wantedNo, behavior };
     }
     const dateKey = dayKeyOfBatchNo(wantedNo) || config.texts.unknownDate;
-    const baseSupplier = safePart(supplierName || textValue(fields[config.fields.supplier]).trim())
+    // 供应商名必须与 documentFileNameOf 用同一套清洗（斜杠等去掉，而不是换成下划线），
+    // 否则附件名匹配不上，会回退成「未标注供应商」。
+    const baseSupplier = safeSupplierName(supplierName || textValue(fields[config.fields.supplier]).trim())
       || config.texts.unknownSupplier;
     const knownSuppliers = [...new Set((Array.isArray(supplierNames) ? supplierNames : [])
-      .map((name) => safePart(name)).filter(Boolean))];
+      .map((name) => safeSupplierName(name)).filter(Boolean))];
     // 多供应商退货：附件名以「供应商名-」开头；逐个匹配，不再统一用主表空供应商。
     const supplierFor = (doc) => knownSuppliers.find((name) => String(doc.name || '').startsWith(`${name}-`))
       || baseSupplier;
