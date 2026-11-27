@@ -11,7 +11,7 @@ const { V1BitableGateway, textValue } = require('../../services/v1BitableGateway
 const { relation } = require('../../services/v1ReferenceResolver');
 const { StaffDirectoryService } = require('../../services/staffDirectoryService');
 const { requirePermission } = require('../../services/authorizationService');
-const { ROLES, can, permissionsOf } = require('../../config/permissions');
+const { ROLES, can } = require('../../config/permissions');
 const { STAFF_TEXTS } = require('../../config/workbenchStaff');
 const { logInfo, logError } = require('../../utils/logger');
 
@@ -69,8 +69,7 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
       }
       const attending = all.filter((item) => item.attend);
       const staff = readAll ? attending : attending.filter((item) => item.recordId === actor.recordId);
-      const roles = readAll ? await directory.listRoles() : [];
-      return res.json({ success: true, staff, roles });
+      return res.json({ success: true, staff });
     } catch (error) {
       logError('workbench.staff.list.failed', { error: error.message });
       return res.status(502).json({ success: false, error: error.message });
@@ -238,31 +237,6 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
       return res.json({ success: true });
     } catch (error) {
       logError('workbench.staff.attendance.delete.failed', { error: error.message });
-      return res.status(error.statusCode || 502).json({ success: false, error: error.message });
-    }
-  });
-
-  router.patch('/:recordId', requirePermission('staff.write'), async (req, res) => {
-    try {
-      const recordId = String(req.params.recordId || '');
-      const existing = await gateway.get('staff', recordId);
-      if (!existing) throw badRequest(STAFF_TEXTS.staffMissing);
-      const fields = {};
-      if (req.body?.roleRecordId !== undefined) {
-        const role = await directory.findRole(req.body.roleRecordId);
-        if (!role) throw badRequest(STAFF_TEXTS.badRole);
-        // 2026-11-27：角色表可新增，但权限矩阵里没登记的角色会让人“登录后什么都不能做”；
-        // 分配时明确拒绝，避免悄悄锁死（完整配置化见 Issue #1605）。
-        if (!permissionsOf(role.name).length) throw badRequest(STAFF_TEXTS.roleWithoutPermissions);
-        fields.role = relation(role.recordId);
-      }
-      if (req.body?.active !== undefined) fields.active = req.body.active === true;
-      if (!Object.keys(fields).length) throw badRequest(STAFF_TEXTS.roleForbidden);
-      await gateway.update('staff', recordId, fields);
-      logInfo('workbench.staff.updated', { record_id: recordId, fields: Object.keys(fields) });
-      return res.json({ success: true });
-    } catch (error) {
-      logError('workbench.staff.update.failed', { error: error.message });
       return res.status(error.statusCode || 502).json({ success: false, error: error.message });
     }
   });

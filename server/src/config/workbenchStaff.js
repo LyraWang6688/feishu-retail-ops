@@ -16,8 +16,6 @@ const STAFF_TEXTS = Object.freeze({
   noOpenAttendance: '还没有上班记录，请先打上班卡',
   badRange: '日期范围不对',
   badTime: '开始/结束时间不对',
-  badRole: '角色不存在',
-  roleWithoutPermissions: '这个角色还没有配置权限，请先在角色管理里配置',
   needStaff: '请选择人员',
   recordNotFound: '考勤记录不存在',
 });

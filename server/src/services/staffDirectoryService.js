@@ -48,23 +48,6 @@ class StaffDirectoryService {
     const staff = await this.listStaff();
     return staff.find((item) => item.openId === id) || null;
   }
-
-  async listRoles() {
-    const fields = this.gateway.table('staffRole').fields;
-    const rows = await getConfigRows({ gateway: this.gateway, tableKey: 'staffRole' });
-    return (rows || []).map((row) => ({
-      recordId: row.record_id,
-      name: plainText(row.fields?.[fields.name]),
-      note: plainText(row.fields?.[fields.note]),
-    })).filter((role) => role.recordId);
-  }
-
-  async findRole(recordId) {
-    const id = plainText(recordId);
-    if (!id) return null;
-    const roles = await this.listRoles();
-    return roles.find((role) => role.recordId === id) || null;
-  }
 }
 
 module.exports = { StaffDirectoryService };
