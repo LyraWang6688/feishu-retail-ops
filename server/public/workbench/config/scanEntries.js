@@ -52,14 +52,6 @@ export const SCAN_PLACES = freeze([
     returnsToRealm: true,
   }),
   freeze({
-    id: 'replenish-add',
-    label: '补货 · 再加一单',
-    realm: 'replenish',
-    mechanism: MECHANISMS.jsapi,
-    mode: MODES.withinRealm,
-    returnsToRealm: true,
-  }),
-  freeze({
     id: 'purchase-return-add',
     label: '退货 · 再加一单',
     realm: 'purchase_return',

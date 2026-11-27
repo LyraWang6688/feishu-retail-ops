@@ -30,8 +30,8 @@ test('领域条第 5 格文案：唯一真源 = 五处登记表（scanPage 不�
   assert.match(scanPage, /SCAN_ENTRIES/, 'scanPage 必须从登记表取文案');
 });
 
-test('三个「再加一单」的 returnsToRealm 来自登记表（默认 true）', () => {
-  for (const realm of ['sales', 'replenish', 'purchase_return']) {
+test('两个「再加一单」的 returnsToRealm 来自登记表（默认 true）', () => {
+  for (const realm of ['sales', 'purchase_return']) {
     const place = SCAN_PLACES.find((item) => item.realm === realm);
     assert.ok(place, `登记表里必须有 ${realm} 这一处`);
     assert.equal(realmEntryParams(realm).returnsToRealm, true, `${realm} 默认回本领域`);
