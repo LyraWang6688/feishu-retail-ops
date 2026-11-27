@@ -643,48 +643,27 @@ test('AC-RS2b 🔴 单货品退货（**真链路**：扫码页 POST）⇒ 递给
 // AC-RS3 ⭐ 混供应商不再落到「未标注供应商」
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RS3 ⭐ 混供应商**不再**落到「未标注供应商」（每行的供应商由代码从「货品信息.供应商」读）', async () => {
+test('AC-RS3 🔴 直接调用 service 混供应商 ⇒ 拒绝（扫码路由已按供应商拆批）', async () => {
   const h = createHarness();
   try {
-    // 载荷**逐字**就是引擎 `planSubmission` 给的形状：批次级那两个字段留空（N>1 没有"一个"）
     const plan = h.engine.planSubmission({
       draft: {
         open_id: OPEN_ID,
         order_key: 'scan_return:x:1',
         order_amount: '399',
         items: [
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', entries: [{ size: 41, quantity: 1 }] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_b', entries: [{ size: 41, quantity: 1 }] },
         ],
       },
       chainConfig: MULTI_ITEM_ORDER.chains.return,
       submitKey: 'scan_return:x:1',
     });
-    assert.equal(plan.payload.product_record_id, '', '引擎的多货品载荷：批次级货品**留空**（形状一行没改 ✗）');
-    assert.equal(plan.payload.supplier_record_id, '', '批次级供应商也留空 ✓');
-    assert.ok(plan.payload.items.every((item) => item.supplier_record_id === ''),
-      '逐行供应商此刻还是空的 —— 这正是"未标注供应商"的入口（见下）');
-
-    await h.purchaseReturn.submit(plan.taskId, plan.payload);
-
-    // 🔴 供应商只能从**已经有的**那条关联列读（「货品信息.供应商」）；**不发明列** ✗
-    assert.deepEqual(
-      h.gateway.calls.listAll.includes('product') || h.gateway.calls.create.some((call) => call.table === 'product'),
-      false, '不许写「货品信息」（只读那一条关联列 ✓）',
-    );
-    assert.deepEqual(groupNames(h), ['乙供应商', '甲供应商'], '🔴 两家各一组（退回旧写法 ⇒ 全落「未标注供应商」⇒ 红）');
-    assert.equal(h.renders.some((render) => render.supplierName === '未标注供应商'), false,
-      '🔴 **混供应商的退货不许落到「未标注供应商」那一张**（错账级后果 ✗）');
-    // 2026-11-18：退货不写采购明细。
-    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
-    assert.deepEqual(
-      entriesOf(h, 'purchaseOrderBatch')[0].fields['供应商'], ['sup_a'],
-      '2026-11-27：退货批次写本批供应商（拆批后一行一个供应商）✓',
-    );
-
-    // 本用例直接调 service（旧路径）：一个批次；扫码路由的新路径见 AC-RS1/1b
-    assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1);
-    assert.equal(h.batchNoCalls(), 1);
+    await assert.rejects(() => h.purchaseReturn.submit(plan.taskId, plan.payload),
+      /只能包含一个供应商/, '旧“同批多供应商”分支已删：直接调用也必须按供应商拆开');
+    assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 0, '拒绝 ⇒ 零批次');
+    assert.equal(h.renders.length, 0, '拒绝 ⇒ 零出图');
+    assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货仍不写采购明细');
   } finally { h.cleanup(); }
 });
 
@@ -701,8 +680,8 @@ test('AC-RS4 🔴 幂等：同一组重复生成 ⇒ 图 +0 · 群消息 +0 · �
         order_key: 'scan_return:x:rs4',
         order_amount: '399',
         items: [
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', entries: [{ size: 41, quantity: 1 }] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
         ],
       },
       chainConfig: MULTI_ITEM_ORDER.chains.return,
@@ -713,8 +692,8 @@ test('AC-RS4 🔴 幂等：同一组重复生成 ⇒ 图 +0 · 群消息 +0 · �
     const messagesAfter = h.messages.length;
     const uploadsAfter = h.gateway.calls.upload.length;
     const documentsAfter = documentNamesOf(h).length;
-    assert.deepEqual([rendersAfter, messagesAfter, uploadsAfter, documentsAfter], [2, 4, 2, 2],
-      '第一次：2 张图 / 4 条群消息 / 2 个附件 / 2 张单据');
+    assert.deepEqual([rendersAfter, messagesAfter, uploadsAfter, documentsAfter], [1, 2, 1, 1],
+      '一个批次一个供应商：1 张图 / 2 条群消息 / 1 个附件 / 1 张单据');
     const liveAfterFirst = liveIds(h);
 
     // 重放同一次提交（同一个 task ⇒ 同一份冻结计划；与 `supplierSplitAtGeneration.test.js` 的 AC-SS4 同形）
@@ -722,7 +701,7 @@ test('AC-RS4 🔴 幂等：同一组重复生成 ⇒ 图 +0 · 群消息 +0 · �
     assert.equal(h.renders.length, rendersAfter, '🔴 重放**一张图都不许再出**（去掉"已经出过"那一步 ⇒ 红）');
     assert.equal(h.messages.length, messagesAfter, '🔴 群里也不许再发一遍 ✗');
     assert.equal(h.gateway.calls.upload.length, uploadsAfter, '附件也不用再传一次 ✓');
-    assert.equal(documentNamesOf(h).length, documentsAfter, '「单据」里还是那 2 张、不重复 ✗');
+    assert.equal(documentNamesOf(h).length, documentsAfter, '「单据」里还是那 1 张、不重复 ✗');
     assert.deepEqual(liveIds(h), liveAfterFirst, '库存也不重复扣 ✓');
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '重放也不会多一行主表 ✓');
     assert.equal(entriesOf(h, 'purchaseRequest').length, 0, '退货不写采购明细');
@@ -739,24 +718,24 @@ test('AC-RS4b 探针：判据不是空跑 —— 把「单据」里那张图拿�
         order_key: 'scan_return:x:rs4b',
         order_amount: '399',
         items: [
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', entries: [{ size: 41, quantity: 1 }] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
         ],
       },
       chainConfig: MULTI_ITEM_ORDER.chains.return,
       submitKey: 'scan_return:x:rs4b',
     });
     await h.purchaseReturn.submit(plan.taskId, plan.payload);
-    assert.equal(h.renders.length, 2);
+    assert.equal(h.renders.length, 1);
     const rendersBefore = h.renders.length;
-    // 手动把"已经出过"的证据拿掉（= 其实那一张根本没出过）⇒ 必须重出，否则就是静默少发一家 ✗
+    // 手动把"已经出过"的证据拿掉（= 其实那一张根本没出过）⇒ 必须重出，否则就是静默少发 ✗
     const batch = entriesOf(h, 'purchaseOrderBatch')[0];
-    batch.fields['我方单据'] = batch.fields['我方单据'].filter((item) => !String(item.name).startsWith('乙供应商'));
+    batch.fields['我方单据'] = [];
     await h.purchaseReturn.submit(plan.taskId, plan.payload);
     assert.equal(h.renders.length, rendersBefore + 1, '证据不在了 ⇒ 照旧要出（判据读的是**已经落库的事实** ✓）');
-    assert.deepEqual(h.renders.slice(rendersBefore).map((render) => render.supplierName), ['乙供应商'],
-      '只补那一组（甲那组的单据还在 ⇒ 不再重出 ✓）');
-    assert.equal(documentNamesOf(h).length, 2, '补回来之后单据还是 2 张（不重复 ✗）');
+    assert.deepEqual(h.renders.slice(rendersBefore).map((render) => render.supplierName), ['甲供应商'],
+      '只补这一组（单据没了 ⇒ 重出 ✓）');
+    assert.equal(documentNamesOf(h).length, 1, '补回来之后单据还是 1 张（不重复 ✗）');
   } finally { h.cleanup(); }
 });
 

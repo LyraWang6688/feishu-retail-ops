@@ -309,9 +309,8 @@ const createHarness = (options = {}) => {
 };
 
 const entriesOf = (harness, tableKey) => harness.tables[tableKey] || [];
-const documentNamesOf = (harness) => attachmentNames(
-  (entriesOf(harness, 'purchaseOrderBatch')[0] || {}).fields?.['我方单据'],
-);
+const documentNamesOf = (harness) => entriesOf(harness, 'purchaseOrderBatch')
+  .flatMap((batch) => attachmentNames(batch.fields?.['我方单据']));
 const documentSuffix = SCAN_WRITE.purchaseReturn.fileNameSuffix;
 
 // ── 路由夹具（真链路：GET 拿页面给出的 submit_key ⇒ POST 提交）────────────────
@@ -500,7 +499,7 @@ test('AC-RI2 单货品退货（1 件）⇒ 1 张图 ＋ 「单据」1 张 ＋ �
 // AC-RI3 多货品 / 多供应商：2 家 ⇒ 2 组 · 2 张图；同一份提交重放 ⇒ +0
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RI3a ⭐ 旧载荷（无 supplier_record_id）⇒ 回退一个批次 + 2 张供应商图（兼容路径）', async () => {
+test('AC-RI3a ⭐ 2 个供应商 ⇒ 2 个独立退货批次 + 2 张供应商图', async () => {
   login();
   const h = createHarness();
   const logs = captureLogs();
@@ -510,9 +509,9 @@ test('AC-RI3a ⭐ 旧载荷（无 supplier_record_id）⇒ 回退一个批次 + 
         base,
         form: { return_qty_41: '1' },
         multiItems: [
-          // ⚠️ 扫码页真实给出的形状：`supplier_record_id` 是空的（供应商由**代码**从货品行读 ✓）
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', amount_cents: 39900, entries: [] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', amount_cents: 10000, entries: [{ size: '41', quantity: '1' }] },
+          // 2026-11-27：扫码页按供应商拆批 ⇒ 载荷必须带供应商 id（空 id 不能再靠 service 逐行猜）
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 39900, entries: [] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_b', amount_cents: 10000, entries: [{ size: '41', quantity: '1' }] },
         ],
       });
     });
@@ -528,7 +527,11 @@ test('AC-RI3a ⭐ 旧载荷（无 supplier_record_id）⇒ 回退一个批次 + 
       '「单据」每组一张、文件名用同一个拼法 ✓',
     );
     assert.equal(h.messages.length, 4, '2 组 ×（图 + @文字）= 4 条 ✓');
-    assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '旧载荷没有供应商 id ⇒ 无法拆批，回退同一批次下两组图（新路径见 AC-RS1）');
+    assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 2, '2 个供应商 ⇒ 2 个独立退货批次');
+    assert.deepEqual(
+      entriesOf(h, 'purchaseOrderBatch').map((batch) => batch.fields['货单金额']).sort(),
+      [100, 399], '每批只写本供应商金额',
+    );
     assert.equal(logs.lines.some((line) => line.includes('"reason":"no_image_pipeline"')), false);
   } finally { logs.restore(); h.cleanup(); }
 });
@@ -561,7 +564,7 @@ test('AC-RI3b ⭐ 幂等：同一份提交重放 ⇒ 图 +0 · 群消息 +0 · �
       order_amount: '399',
       items: [
         { size: 41, quantity: 1, product_record_id: 'prod_A', product_number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a' },
-        { size: 41, quantity: 1, product_record_id: 'prod_B', product_number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_b' },
+        { size: 41, quantity: 1, product_record_id: 'prod_B', product_number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a' },
       ],
     };
     const first = await purchaseReturn.submit('scan_return_image_replay_1', draft);
@@ -570,15 +573,15 @@ test('AC-RI3b ⭐ 幂等：同一份提交重放 ⇒ 图 +0 · 群消息 +0 · �
     const messagesAfter = h.messages.length;
     const uploadsAfter = gateway.calls.upload.length;
     const documentsAfter = documentNamesOf(h).length;
-    assert.deepEqual([rendersAfter, messagesAfter, uploadsAfter, documentsAfter], [2, 4, 2, 2],
-      '第一次：2 家 ⇒ 2 张图 / 4 条群消息 / 2 个附件 / 2 张单据 ✓');
+    assert.deepEqual([rendersAfter, messagesAfter, uploadsAfter, documentsAfter], [1, 2, 1, 1],
+      '一个批次一个供应商 ⇒ 1 张图 / 2 条群消息 / 1 个附件 / 1 张单据 ✓');
 
     // 重放**同一份提交**（同一个 task ⇒ 同一份冻结计划；与 AC-RS4 同形 ✓）
     await purchaseReturn.submit('scan_return_image_replay_1', draft);
     assert.equal(h.renders.length, rendersAfter, '🔴 重放**一张图都不许再出**（去掉"已经出过"那一步 ⇒ 红 ✓）');
     assert.equal(h.messages.length, messagesAfter, '🔴 群里也不许再发一遍 ✗');
     assert.equal(gateway.calls.upload.length, uploadsAfter, '附件不用再传一次 ✓');
-    assert.equal(documentNamesOf(h).length, documentsAfter, '「单据」还是那 2 张、不重复 ✗');
+    assert.equal(documentNamesOf(h).length, documentsAfter, '「单据」还是那 1 张、不重复 ✗');
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '重放不会多一行主表 ✓');
     Object.values(dirs).forEach(rmDir);
   } finally { h.cleanup(); }

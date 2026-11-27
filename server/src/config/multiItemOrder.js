@@ -107,6 +107,8 @@ const resolveChains = (env) => ({
       isBatch: true,
       // 补货的明细带「采购行为」两列；退货**不写行为列**（与 `AC-R2` 同口径 ✓）
       withBehavior: true,
+      // 采购申请仍需要“同批次按供应商分组”（一组一张图）。
+      withSupplierGroups: true,
     }),
   }),
   return: Object.freeze({
@@ -130,6 +132,9 @@ const resolveChains = (env) => ({
       withBehavior: false,
       // 2026-11-27：退货的多货品载荷带「每个 record ID 的金额（分）」；补货不带。
       withItemAmount: true,
+      // 2026-11-27：退货已在路由层按供应商拆独立批次，本批次只有一个供应商，
+      // 不再计算/传递 supplierGroups（旧的同批多供应商分支已删）。
+      withSupplierGroups: false,
     }),
   }),
   /**
