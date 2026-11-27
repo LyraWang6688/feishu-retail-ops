@@ -6,7 +6,9 @@ const { assertSubmitToast } = require('./support/submitToastAssert');
  * ── 她的口径（逐字，**唯一权威**；别自己解释 ✗）────────────────────────────────
  *   · 2026-10-16 15:12（问"退货的多货品 + 供应商拆分为要不要做"）：
  *     「**退货的多货品 + 供应商拆分要做**」✓
- *   · 2026-10-16 14:32（供应商拆分的形状）：⭐ **同一批次号下按供应商分组** ✓
+ *   · 2026-10-16 14:32：⭐ 旧口径「同一批次号下按供应商分组」；
+ *   · 2026-11-27：扫码退货改为**按供应商拆独立批次/单号**（本文件 AC-RS1/1b 钉新口径；
+ *     直接调 service 的旧用例仍保留单批次 fallback 覆盖）
  *     （**不是** ⓑ「每个供应商各开一个新批次号」✗）
  *   ⇒ 组的那一半**复用** `services/supplierSplitService.js`（纯函数 ✓）＋
  *     `config/supplierSplit.js`（`batchNoPolicy: 'same_batch_no'` ✓）—— **不另造第二套** ✗。
@@ -14,7 +16,7 @@ const { assertSubmitToast } = require('./support/submitToastAssert');
  * ── 本卡要做的四件事 ─────────────────────────────────────────────────────────
  *   ① **退货也支持一单多货**（复用补货那套：`multiItemOrderService` 的 `chains.return`）
  *      —— 先只读核清它**到底有没有真正接线**（结论在下面 AC-RS1 的注释里 ✓）；
- *   ② **退货出单也按供应商分组**（同一个批次号下 ✓）；每条退货明细的**供应商**从
+ *   ② **退货按供应商拆独立批次**（2026-11-27 起）；每条退货明细的**供应商**从
  *      「**货品信息.供应商**」那条**既有关联列**由**代码**读出来（与单货品那条路同一个字段 ✓）——
  *      🔴 **不发明列、不写表** ✗；
  *   ③ **单货品退货 ⇒ 与今天逐字一致**（硬红线：本次提交给写入口的载荷 / 回给页面的话 /
@@ -680,7 +682,7 @@ test('AC-RS3 ⭐ 混供应商**不再**落到「未标注供应商」（每行�
       '2026-11-27：退货批次写本批供应商（拆批后一行一个供应商）✓',
     );
 
-    // 同一次提交里：批次号只有一个（她选的 ⓐ）
+    // 本用例直接调 service（旧路径）：一个批次；扫码路由的新路径见 AC-RS1/1b
     assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1);
     assert.equal(h.batchNoCalls(), 1);
   } finally { h.cleanup(); }
@@ -809,7 +811,7 @@ test('AC-RS6 🔴 冻结件 `services/scanWriteService.js` **逐字节没动**�
     '🔴 scanWriteService.js 的 sha256 必须与 main 一致（改一个字节 ⇒ 红 ✓）');
   // 退货这条链的"多货品"必须复用既有引擎（不是另写一套）
   assert.equal(MULTI_ITEM_ORDER.chains.return.writer, 'purchaseReturn');
-  assert.equal(SUPPLIER_SPLIT.batchNoPolicy, 'same_batch_no', '分组仍是她选的 ⓐ（同一批次号下分组 ✓）');
+  assert.equal(SUPPLIER_SPLIT.batchNoPolicy, 'same_batch_no', '供应商分组配置仍供采购申请使用（退货扫码已按供应商拆批，不复用该批次策略）');
 });
 
 test('AC-RS6b 🔴 退货 service 仍然**不直连写库**，分组也**只用那一处**（不另造第二套口径）', () => {

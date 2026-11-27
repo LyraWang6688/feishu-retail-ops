@@ -500,7 +500,7 @@ test('AC-RI2 单货品退货（1 件）⇒ 1 张图 ＋ 「单据」1 张 ＋ �
 // AC-RI3 多货品 / 多供应商：2 家 ⇒ 2 组 · 2 张图；同一份提交重放 ⇒ +0
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RI3a ⭐ 一单退货 2 个货品（2 家供应商）⇒ 按供应商**分 2 组 · 2 张图**（真路由 ⇒ 真出图链路）', async () => {
+test('AC-RI3a ⭐ 旧载荷（无 supplier_record_id）⇒ 回退一个批次 + 2 张供应商图（兼容路径）', async () => {
   login();
   const h = createHarness();
   const logs = captureLogs();
@@ -528,7 +528,7 @@ test('AC-RI3a ⭐ 一单退货 2 个货品（2 家供应商）⇒ 按供应商**
       '「单据」每组一张、文件名用同一个拼法 ✓',
     );
     assert.equal(h.messages.length, 4, '2 组 ×（图 + @文字）= 4 条 ✓');
-    assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '她选的 ⓐ：**同一个批次号**下分组（不是 2 行 ✗）');
+    assert.equal(entriesOf(h, 'purchaseOrderBatch').length, 1, '旧载荷没有供应商 id ⇒ 无法拆批，回退同一批次下两组图（新路径见 AC-RS1）');
     assert.equal(logs.lines.some((line) => line.includes('"reason":"no_image_pipeline"')), false);
   } finally { logs.restore(); h.cleanup(); }
 });

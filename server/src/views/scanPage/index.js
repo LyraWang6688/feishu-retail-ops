@@ -1,5 +1,5 @@
 const { multiItemBlockHtml, multiItemPayloadJson, MULTI_ITEM_ITEM_KEYS, MULTI_ITEM_ENTRY_KEYS } = require('./multiItemBlock');
-const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, RETURN_PREVIEW_STYLE, RETURN_STEPPER_STYLE, SKELETON_STYLE, STYLE, SCAN_TOAST_STYLE } = require('./styles');
+const { readThemeTokens, canScanNextWithFeishu, PAYMENT_STEP_STYLE, REALM_BAR_STYLE, RETURN_STEPPER_STYLE, SKELETON_STYLE, STYLE, SCAN_TOAST_STYLE } = require('./styles');
 const { buildPaymentRows, paymentRowsHtml, GIFT_ROW_STYLE } = require('./paymentBlock');
 const { SCAN_PAGE, fillText } = require('../../config/scanPage');
 const { SALES_DRAFT } = require('../../config/salesDraft');

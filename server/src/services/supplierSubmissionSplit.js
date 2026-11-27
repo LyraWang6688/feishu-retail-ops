@@ -26,4 +26,4 @@ const groupItemsBySupplier = (items = []) => {
   return [...groups.values()];
 };
 
-module.exports = { supplierGroupKeyOf, supplierRecordIdOf, groupItemsBySupplier };
+module.exports = { groupItemsBySupplier };
