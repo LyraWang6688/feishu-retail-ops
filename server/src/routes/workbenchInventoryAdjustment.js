@@ -17,7 +17,7 @@ const { PAIR_ADJUSTMENT_TEXTS } = require('../config/inventoryPairAdjustment');
 const { getInventoryPrintIntentService } = require('../services/inventoryPrintIntentRuntime');
 const { STOCK_DELIST } = require('../config/stockDelist');
 const { getStockDelistIntentService } = require('../services/stockDelistIntentRuntime');
-const { logWarn } = require('../utils/logger');
+const { logWarn, logError } = require('../utils/logger');
 
 const userError = (message) => Object.assign(new Error(message), { statusCode: 400 });
 
