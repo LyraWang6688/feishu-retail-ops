@@ -238,6 +238,16 @@ const createPurchaseReturnService = (options = {}) => {
     if (itemSuppliers.length > 1) {
       throw new Error('采购退货批次只能包含一个供应商，请按供应商拆开后再提交');
     }
+    // 旧载荷（行上没带 supplier_record_id）也不能把不同供应商静默并成一批：
+    // 逐货品反查一次，超过一个供应商就拒绝（新扫码载荷不会走这里）。
+    if (!itemSuppliers.length && withRowIdentity) {
+      const productIds = [...new Set(items.map((item) => rowProductIdOf(item, draft)).filter(Boolean))];
+      const resolvedSuppliers = new Set((await Promise.all(productIds.map(resolveSupplierByProduct)))
+        .map((supplier) => String(supplier || '').trim()).filter(Boolean));
+      if (resolvedSuppliers.size > 1) {
+        throw new Error('采购退货批次只能包含一个供应商，请按供应商拆开后再提交');
+      }
+    }
     const batchSupplierRecordId = String(
       draft.supplier_record_id || itemSuppliers[0]
       || await resolveSupplierByProduct(rowProductIdOf(items[0], draft)) || '',
