@@ -3,7 +3,7 @@ import { escapeHtml } from '../../core/formatters.js';
 import { showToast, showErrorToast } from '../shared/toast.js';
 import { waitForAsyncJob } from '../shared/asyncJob.js';
 import { compressImageFile } from '../shared/imageCompress.js';
-import { ACCESSORY_CONFIG_API as API, ACCESSORY_CONFIG_TEXTS as T } from '../../config/accessoryConfig.js';
+import { ACCESSORY_CONFIG_API as API, ACCESSORY_CONFIG_REDIRECT, ACCESSORY_CONFIG_TEXTS as T } from '../../config/accessoryConfig.js';
 
 const submitKey = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`);
 
@@ -176,10 +176,15 @@ export function createAccessoryConfigModule() {
         }
       };
       // 提交回执只认服务端那一句（SUBMIT_TOAST 唯一真源）；缺失才退回本地兜底。
+      // 2026-11-27：后台写入完成后统一回工作台（与配品销售同一条回执链路）。
       const waitAccepted = async (result) => {
-        showToast(String(result?.toast || '').trim() || T.submitted);
+        const text = String(result?.toast || '').trim() || T.submitted;
+        showToast(text);
         const jobId = String(result?.job_id || '').trim();
         if (jobId) await waitForAsyncJob(jobId);
+        const params = new URLSearchParams();
+        params.set(ACCESSORY_CONFIG_REDIRECT.toastParam, text);
+        window.location.assign(ACCESSORY_CONFIG_REDIRECT.path + '?' + params.toString());
       };
       const editRow = (recordId) => {
         const row = rows.find((item) => item.recordId === recordId);
@@ -251,8 +256,6 @@ export function createAccessoryConfigModule() {
             ? await api.patch(API.update(editingId), body)
             : await api.post(API.create, body);
           await waitAccepted(result);
-          await load();
-          resetForm();
         } catch (error) {
           setBusy(false);
           showError(error?.message || T.saveFailed);
@@ -272,9 +275,6 @@ export function createAccessoryConfigModule() {
         button.disabled = true;
         try {
           await waitAccepted(await api.post(API.categories, { category: name, submitKey: submitKey() }));
-          await loadCategories();
-          renderCategoryOptions(name);
-          closeCategoryManager();
         } catch (error) {
           showError(error?.message || T.saveFailed);
         } finally {
@@ -293,7 +293,6 @@ export function createAccessoryConfigModule() {
         if (!window.confirm(T.deleteConfirm)) return;
         try {
           await waitAccepted(await api.delete(API.remove(remove.dataset.acDelete), { submitKey: submitKey() }));
-          await load();
         } catch (error) {
           showError(error?.message || T.deleteFailed);
         }
