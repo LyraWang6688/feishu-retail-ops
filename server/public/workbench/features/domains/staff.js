@@ -19,31 +19,38 @@ const recordHtml = (record, canWrite) => {
     ? '<button class="staff-mini" type="button" data-staff-edit="' + escapeHtml(record.recordId) + '">' + escapeHtml(T.edit) + '</button>'
       + '<button class="staff-mini danger" type="button" data-staff-delete="' + escapeHtml(record.recordId) + '">' + escapeHtml(T.remove) + '</button>'
     : '';
+  const range = timeText(record.startAt) + ' - ' + (record.endAt ? timeText(record.endAt) : T.ongoing);
+  const hours = record.endAt ? '<span class="staff-hours">' + escapeHtml(hoursText(record.hours)) + '</span>' : '';
   return '<div class="staff-row">'
     + '<span class="staff-day">' + escapeHtml(dayText(record.date)) + '</span>'
-    + '<span class="staff-range">' + escapeHtml(timeText(record.startAt)) + ' - ' + escapeHtml(timeText(record.endAt)) + '</span>'
-    + '<span class="staff-hours">' + escapeHtml(hoursText(record.hours)) + '</span>'
-    + actions + '</div>';
+    + '<span class="staff-range">' + escapeHtml(range) + '</span>'
+    + hours + actions + '</div>';
 };
 
 const formHtml = (editing) => '<form class="staff-form" data-staff-form data-staff-id="' + escapeHtml(editing.staffRecordId) + '" data-record-id="' + escapeHtml(editing.recordId || '') + '">'
   + '<input type="date" name="date" value="' + escapeHtml(editing.date) + '" required>'
   + '<input type="time" name="start" value="' + escapeHtml(editing.start) + '" required>'
-  + '<input type="time" name="end" value="' + escapeHtml(editing.end) + '" required>'
+  + '<input type="time" name="end" value="' + escapeHtml(editing.end) + '">'
   + '<button class="btn small primary" type="submit">' + escapeHtml(T.save) + '</button>'
   + '<button class="btn small" type="button" data-staff-cancel>' + escapeHtml(T.cancel) + '</button>'
   + '</form>';
 
-const staffCardHtml = (member, records, canWrite, editing) => {
+const staffCardHtml = (member, records, canWrite, canClock, editing) => {
+  const openRecord = records.find((record) => !record.endAt);
+  const clockButton = canClock && member.active
+    ? (openRecord
+      ? '<button class="btn small primary" type="button" data-staff-clock-out="' + escapeHtml(member.recordId) + '">' + escapeHtml(T.clockOut) + '</button>'
+      : '<button class="btn small primary" type="button" data-staff-clock-in="' + escapeHtml(member.recordId) + '">' + escapeHtml(T.clockIn) + '</button>')
+    : '';
   const addButton = canWrite && member.active
-    ? '<button class="btn small primary" type="button" data-staff-add="' + escapeHtml(member.recordId) + '">' + escapeHtml(T.add) + '</button>'
+    ? '<button class="btn small" type="button" data-staff-add="' + escapeHtml(member.recordId) + '">' + escapeHtml(T.custom) + '</button>'
     : '';
   const rows = records.length
     ? records.map((record) => recordHtml(record, canWrite)).join('')
     : '<p class="staff-empty">' + escapeHtml(T.emptyAttendance) + '</p>';
   const form = editing && editing.staffRecordId === member.recordId ? formHtml(editing) : '';
   return '<section class="staff-card" data-staff-card="' + escapeHtml(member.recordId) + '">'
-    + '<div class="staff-card-head"><b>' + escapeHtml(member.name || '-') + '</b>' + addButton + '</div>'
+    + '<div class="staff-card-head"><b>' + escapeHtml(member.name || '-') + '</b>' + clockButton + addButton + '</div>'
     + '<div class="staff-records">' + rows + '</div>'
     + form
     + '</section>';
@@ -51,11 +58,13 @@ const staffCardHtml = (member, records, canWrite, editing) => {
 
 const panelHtml = (state) => {
   const canWrite = (state.actor.permissions || []).includes('attendance.write');
+  const canClock = (state.actor.permissions || []).includes('attendance.clock.self');
   const cards = state.staff.length
     ? state.staff.map((member) => staffCardHtml(
       member,
       state.attendance.filter((item) => item.staffRecordId === member.recordId),
       canWrite,
+      canClock,
       state.editing,
     )).join('')
     : '<p class="staff-empty">' + escapeHtml(T.emptyStaff) + '</p>';
@@ -122,6 +131,28 @@ export function openStaffPanel(host) {
   };
 
   panel.addEventListener('click', async (event) => {
+    const clockIn = event.target.closest?.('[data-staff-clock-in]');
+    if (clockIn) {
+      try {
+        await api.post(T.api.clockIn, { staffRecordId: clockIn.dataset.staffClockIn });
+        showToast(T.saved);
+        await load();
+      } catch (error) {
+        showErrorToast(error?.message || T.saveFailed);
+      }
+      return;
+    }
+    const clockOut = event.target.closest?.('[data-staff-clock-out]');
+    if (clockOut) {
+      try {
+        await api.post(T.api.clockOut, { staffRecordId: clockOut.dataset.staffClockOut });
+        showToast(T.saved);
+        await load();
+      } catch (error) {
+        showErrorToast(error?.message || T.saveFailed);
+      }
+      return;
+    }
     const add = event.target.closest?.('[data-staff-add]');
     if (add) {
       state.editing = { staffRecordId: add.dataset.staffAdd, recordId: '', date: state.to, start: '09:00', end: '18:00' };

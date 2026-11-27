@@ -111,6 +111,22 @@ const CHAINS = Object.freeze({
     ],
   },
 
+  'T.api.clockIn': {
+    fe: 'features/domains/staff.js', feKey: 'api.post(T.api.clockIn',
+    route: 'src/routes/workbench/staff.js', routeKey: /router\.post\('\/attendance\/clock-in'/,
+    service: 'src/routes/workbench/staff.js', serviceKey: /gateway\.create\('attendance'/,
+    landing: [
+      ['attendance', 'date'], ['attendance', 'startAt'], ['attendance', 'staff'], ['attendance', 'staffUser'],
+    ],
+  },
+
+  'T.api.clockOut': {
+    fe: 'features/domains/staff.js', feKey: 'api.post(T.api.clockOut',
+    route: 'src/routes/workbench/staff.js', routeKey: /router\.post\('\/attendance\/clock-out'/,
+    service: 'src/routes/workbench/staff.js', serviceKey: /gateway\.update\('attendance'/,
+    landing: [['attendance', 'endAt'], ['attendance', 'hours']],
+  },
+
   'API.categories': {
     fe: 'features/domains/accessoryConfig.js', feKey: 'api.post(API.categories',
     route: 'src/routes/workbench/accessoryConfig.js', routeKey: /router\.post\('\/products\/accessories\/categories'/,
