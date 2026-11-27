@@ -65,7 +65,11 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   //   **整块搬到本单条**（原来空白色块的位置）。只搬销售页；其它领域不显示。
   //   ⚠️ 换款式等「金额按单价算」的流程（hideAmountInput）不搬 —— 那里本来就不让填每双金额。
   const goodsStep = (page?.flow?.steps || []).find((step) => step.type === 'goods') || null;
-  const showDraftLines = safeRealm === 'sales'
+  // 2026-11-27：本单条只属于「销售建单」这一个 realm+flow；库存/退货/售后换款式一律不渲染。
+  const draftBarCfg = config.realmUi?.draftBar || { realms: ['sales'], flows: ['sales'] };
+  const flowId = String(page?.flow?.id || 'sales');
+  const showDraftBar = draftBarCfg.realms.includes(safeRealm) && draftBarCfg.flows.includes(flowId);
+  const showDraftLines = showDraftBar
     && Boolean(write) && write.enabled !== false && write.saleEnabled !== false
     && goodsStep?.hideAmountInput !== true;
   // 告诉销售表单"这一块已经搬到本单条"，避免表单里再渲染一份（同名字段会提交两次）。
@@ -76,11 +80,9 @@ const renderScanPage = (view = {}, config = SCAN_PAGE, write = null, realm = DEF
   } catch (error) {
     block = `<div class="realm-block realm-block--${escapeHtml(safeRealm)}">${realmEmptyHtml(safeRealm, config)}</div>`;
   }
-  // ⚠️ 验收模式下**不挂销售本单条**：那一条讲的是"销售本单几双"，与"这次验收扫了几双"
-  //    是两件事，同屏出现只会让她看错数（验收自己的本单条在验收块里）。
   // 本单条只报数；真正的提交按钮只在销售页那张带钱表单里（2026-11-26 删掉了那条空链接）。
   const barLines = showDraftLines ? draftLinesBlockHtml(write) : '';
-  const bar = draftBarHtml(write, config, page?.userAgent, { linesHtml: barLines });
+  const bar = showDraftBar ? draftBarHtml(write, config, page?.userAgent, { linesHtml: barLines }) : '';
   // ⛔ 2026-10-16 22:0x（业务负责人逐字：「**存草稿的功能都删除吧……整个链路都删除**」）——
   //   改前逐字：`const draftNotice = draftNotice` ＋ `Html(safeRealm, config, page);`（「你有一份草稿，接着录吗？」那张卡）
   //   改后逐字：**这一处不渲染任何东西**（恒为空串 ✓；`${draftNotice}` 那个占位随之失效但**不改变页面输出** ✓）

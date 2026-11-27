@@ -14,6 +14,41 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
 
   const ROUTE_PATTERNS = [config.route.recordPath].filter(Boolean);
 
+  // 2026-11-27：资金页独立地址 /r/{id}/pay —— 刷新/回退都只认它，不再靠会话劫持其它 GET。
+  //   只认「会话里确实在付款步」；否则 303 回销售货品页（不报错、不白屏）。
+  router.get(config.route.payPath, async (req, res) => {
+    const requestId = req.requestId;
+    const recordId = decodeURIComponent(String(req.params.recordId || ''));
+    const goodsUrl = `${req.baseUrl}/${encodeURIComponent(recordId)}?from=sales`;
+    const session = await writeService?.sessions?.get?.(sessionIdOf(req)).catch(() => null);
+    const sale = session?.sale || {};
+    const lines = Array.isArray(sale.lines) ? sale.lines : [];
+    const hasOrder = Boolean(String(sale.order_no || '').trim()) || Boolean(String(sale.master_record_id || '').trim());
+    const submittedStatus = String(writeConfig?.session?.statuses?.submitted || 'submitted');
+    const saleStatus = String(sale.status || '').trim();
+    const hasSomethingToPay = lines.length > 0 || hasOrder || saleStatus !== submittedStatus;
+    if (String(sale.paymentStep || '') !== 'pending' || !hasSomethingToPay) {
+      return res.redirect(303, goodsUrl);
+    }
+    const cents = lines.reduce((sum, line) => sum + Math.round(Number(String(line?.amount ?? '').trim() || 0) * 100), 0);
+    // /pay 是销售资金页：漏斗/渲染日志按 sales 记（地址本身不带 from）。
+    req.query.from = 'sales';
+    return sendPaymentStep(res, req, {
+      paymentMethods: await candidatePaymentMethods(req),
+      realm: 'sales',
+      submitKey: writeService?.sessions?.submitKeyFor?.(sessionIdOf(req), session, 'sale') || '',
+      count: lines.length,
+      lines,
+      totalAmountText: cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '',
+      paymentRows: Array.isArray(sale.draft_payment?.paymentRows) ? sale.draft_payment.paymentRows : undefined,
+      gift: sale.draft_payment?.gift || '',
+      accessory: sale.draft_payment?.accessory || '',
+      accessoryTotal: sale.draft_payment?.accessoryTotal || '',
+      accessoryRows: Array.isArray(sale.draft_payment?.accessoryRows) ? sale.draft_payment.accessoryRows : [],
+      renderedTrigger: 'pay_route',
+    });
+  });
+
   router.get(ROUTE_PATTERNS, async (req, res) => {
     const requestId = req.requestId;
     // ⚠️ 领域来自查询串（她给的参数名就是 `from`）；认不出来一律回落缺省，**不报错**。
@@ -55,6 +90,10 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
             },
           }));
           draftOpened = true;
+          // 2026-11-27：付款步草稿直接去独立资金页（刷新也稳）；货品步草稿照旧留在货品页。
+          if (draft.step === 'payment') {
+            return res.redirect(303, `${req.baseUrl}/${encodeURIComponent(lookupInputOf(req).recordId)}/pay`);
+          }
         }
       } catch (error) {
         logWarn('scan.sales_draft.open_failed', { request_id: requestId, draft_id: draftId, error: String(error?.message || error).slice(0, 200) });
@@ -85,54 +124,15 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
       });
       return sendHtml(res, 200, renderScanSkeleton(lookupInputOf(req), config));
     }
-    // ⭐⭐ 2026-10-14（业务负责人：**点「提交这一单」只到资金页**）：她**刷新**这一页时，
-    //   如果会话里记着"已经走到资金这一步"（`paymentStep === 'pending'`）⇒ ⭐ **仍给资金页** ✓
-    //   （否则刷新会掉回普通录入页 ⇒ 她会以为"白填了"✗）。其它情况**一个字都不改** ✓走老逻辑。
-    //   ⚠️ 只认会话标记（**不认任何查询串** ✗）⇒ 别人/别的情况下拿不到这一页 ✓
+    // 2026-11-27：支付中接管整块删除（资金页只走 /r/{id}/pay）。
+    //   仅保留「重扫销售建单入口 ⇒ 清未完成支付」，且只认 sales flow（售后换款式不清）。
     if (String(req.query?.data || '') !== '1'
       && (lookupInputOf(req).number || lookupInputOf(req).recordId)) {
       const pendingSession = await writeService?.sessions?.get?.(sessionIdOf(req)).catch(() => null);
-      // ⚠️ task-60：`const` → **`let`** —— 她选的 ② 要在下面把这条标记**清成"没有"**
-      //    （`pendingMark = ''`）⇒ 那条既有接管**不再命中**（它的那一行**逐字未动** ✓）。
-      let pendingMark = pendingSession?.sale?.paymentStep || pendingSession?.paymentStep;
-      // 🔴 2026-10-14 晚（她真机：扫了码之后点「库存 / 补货 / 退货」**全都变成资金页**）：
-      //   ⭐ 根因 = 上面这段"刷新仍给资金页"**没按领域限制** ✗ ⇒ 只要会话里还有 `pending`，
-      //     她点**任何**领域都被资金页接管 ✗。
-      //   ⇒ 修法（**只收紧、不改别的** ✓）：只在**销售**这一块才允许接管 ——
-      //     · `from=sales`（她刷新销售页 ⇒ 仍给资金页 ✓ 不丢她刚填的 ✓）
-      //     · 或**没带 `from`**（裸扫通常就是销售入口 ✓ 保持原有体验 ✓）
-      //     · **其它领域**（库存/补货/退货/…）⇒ ⭐ **一律不接管**（照旧给那一块 ✓）
-      const salesContext = renderFlowOf(req.query).flow.id === 'sales'
-        && (String(req.query?.from || '') === '' || String(req.query?.from) === 'sales');
-      /**
-       * ⭐⭐ 2026-10-16（task-60 · 她真机 05:34「扫货品码却出现资金页」＋ **她当日亲口选的方案 ②**）：
-       *   我给的选项（逐字）：「① 接管前先核对"是不是这个货品" 还是 ② 重扫同一个货品就从头开始
-       *   （清掉那条未完成）？」⇒ 她答（逐字）：**「② 还是重扫同一个货品就从头开始（清掉那条未完成 ✓）」**。
-       *
-       * ⇒ **扫到货品、点「销售」那一发**（= 显式 `?from=sales`；realm tab 的链接就是它，
-       *   `views/scanPageRenderer.js` 的 `href="?from=<领域>"` ✓）**先把那条"未完成"的标记清掉**
-       *   ⇒ 这一发**从货品页开始** ✓（不再被"上一单的资金页"顶掉 ✗ —— 那正是她的截图）。
-       *
-       * 🔴 **清的范围（她逐字"清掉那条未完成"，别清过头 ✗）**：
-       *   · 只清 **`paymentStep`** ＋ 与它同笔的 **`submitPending`**（那是她 2026-10-15 定下的
-       *     "点按钮那一刻要写的那一双"pay 载荷 ⇒ `paymentStep` 一清它就没有读点，同笔清是纯卫生 ✓）；
-       *   · **`lines` / `order_no` / `master_record_id` / `status` / `completed` / `seq` 一个字都不碰** ✗
-       *     ⇒ 会话里那笔"已建单 / 已提交"的事实**原样留着**（她还能在工作台查到那一单 ✓）；
-       *   · **只写她这条会话**（`openIdOf(req)` 来自**签名 cookie** ⇒ 别人的会话碰不到 ✗）；
-       *   · **零业务表写入**：这一段只调 `sessions.saveDraftLines`（本地会话）—— 飞书一个字节都不写 ✓。
-       *
-       * ⚠️ **为什么只认显式 `?from=sales`、**裸扫不清** ✗**（这是本刀最容易做错的一处）：
-       *   裸扫那条路挂着她 2026-10-14 定的**「资金页刷新不丢」**（"点提交 ⇒ 到资金页 ⇒ 刷新仍在资金页"）
-       *   —— 判据是 `test/scanSalePayFront.test.js` 的 AC-PF4 ＋ `test/scanPaymentStepStale.test.js` 的
-       *   AC-SM2/SM3/SM7/SM8（那几条**一条都没改** ✓）。在裸扫上清 ⇒ 把她**刚填完、正停在资金页**
-       *   的那一单打回录入页 ✗ = **清过头**。
-       *   ⭐ **线上（骨架屏开 + `firstEntryOnly`）裸扫先回骨架、`?data=1` 又绕过接管**
-       *     ⇒ 能落到资金页的入口**只有她点「销售」这一发** ✓ ⇒ **就在这一发清** = 正好治她那一下 ✓
-       *     （上一任的只读诊断 §2.3/§3.1 已证；骨架屏**关**时裸扫也会到资金页，那也照旧不动 ✓）。
-       *   ⚠️ 与"**残标记自清理**"（下面那一段，**逐字未动** ✓）**各司其职**：
-       *     那条治"有 pending 但**没东西要付**"（2026-10-15 的 #598/#601）；这条治"**她主动重扫**"。
-       */
-      const explicitSalesScan = String(req.query?.from || '') === 'sales';
+      const pendingMark = pendingSession?.sale?.paymentStep || pendingSession?.paymentStep;
+      const { flow: scanFlowForReset } = renderFlowOf(req.query);
+      const explicitSalesScan = String(req.query?.from || '') === 'sales'
+        && scanFlowForReset.id === 'sales';
       // 打开草稿是“回到她保存前那一页”，不是“重扫销售”；不能清掉草稿刚写入的 paymentStep。
       if (pendingMark === 'pending' && explicitSalesScan && !draftOpened) {
         const hadSubmitPending = Boolean(pendingSession?.sale?.submitPending);
@@ -162,101 +162,7 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
           had_submit_pending: hadSubmitPending,
           reset,
         });
-        // ⚠️ **这一句才是"别再接管"的开关**：把本地那份标记置空 ⇒ 下面那条
-        //    "刷新仍给资金页"的接管（`pendingMark === 'pending' && salesContext`，**逐字未动** ✓）
-        //    **不再命中** ⇒ 这一发继续走**正常整页渲染** ⇒ `page:'goods'` ✓（正是她选的 ②）。
-        pendingMark = '';
-      }
-      if (pendingMark === 'pending' && salesContext) {
-        const pendingView = await service.lookup({ ...lookupInputOf(req), requestId }).catch(() => null);
-        if (pendingView?.found) {
-          const pendingLines = Array.isArray(pendingSession?.sale?.lines) ? pendingSession.sale.lines : [];
-          // ⭐⭐ 2026-10-15 晚（task-21 · 她真机 20:22：「我扫码一双鞋点击销售，出来的是**资金页面**」）：
-          //   🔴 上面那半（10-14 晚）只把接管**限到销售上下文**，**没看"有没有东西要付"** ✗ ——
-          //      她那次的会话是 `paymentStep:'pending'` + 草稿 **0 行** + 没有已建单号
-          //      ＋ **`sale.status:'submitted'`**（**那一单早就交出去了**）⇒ 照样被顶到
-          //      「整单付款（可填可不填）」，而且**之后每次扫码都这样** ✗✗。
-          //   ⚠️ **光看"0 行"是不够的**（我第一版就是"0 行 + 没单号 ⇒ 残标记"，被全量挡下 ✓）：
-          //      **刚点过「提交这一单」、正停在资金页**时，草稿**本来就是 0 行** —— 扫码那一双是走
-          //      `submitPending`（提交那一步存下来的尺码/金额/收款）在**点按钮时**才落单的
-          //      （见上面提交分支的 `lines: pendingDraftLines` ＋ 下面 pay 分支用 `pendingInfo`）✓
-          //      ⇒ 拿"0 行"判残标记会把**正常**的资金页清掉 ⇒ 她点按钮就建不了单 ✗
-          //        （`test/scanSalePayFront.test.js` 的 AC-PF1/PF2/PF4 正是这么挡住我的第一版 ✓）。
-          //   ⇒ 判据收成她**真机那个状态**才有的特征：0 行 + 没单号 + **这一单已经 `submitted`**
-          //      （`completeSale` 把 `status` 落成 submitted，它清的是 `lines`/`order_no`，
-          //       **没清** `paymentStep` ⇒ 标记留成了残的 —— 正是她那次的形状 ✓）。
-          const hasOrder = Boolean(String(pendingSession?.sale?.order_no || '').trim())
-            || Boolean(String(pendingSession?.sale?.master_record_id || '').trim());
-          const saleStatus = String(pendingSession?.sale?.status || '').trim();
-          // ⚠️ 2026-10-15 晚（task-22 顺带修正）：改前逐字 `writeConfig?.statuses?.submitted || 'submitted'`
-          //    —— `writeConfig.statuses` **不存在**（真路径是 `writeConfig.session.statuses`）⇒ 一直靠
-          //    **字面量兜底**在跑（值恰好相同 ⇒ 行为没变 ✓，但那是"配置先行"没做到 ✗）。
-          //    改后逐字：读**真路径**，兜底只在"配置竟然缺了"时保命（不改变任何现有行为 ✓）。
-          const submittedStatus = String(writeConfig?.session?.statuses?.submitted || 'submitted');
-          // 「有东西要付」= 草稿有行 ∨ **已经建过单**（order_no / master_record_id）∨
-          //                **这一单还没交出去**（status 不是 submitted ⇒ 她刚点过提交、正停在资金页 ✓）
-          if (pendingLines.length > 0 || hasOrder || saleStatus !== submittedStatus) {
-            return sendPaymentStep(res, req, {
-              // ⭐ 2026-10-16 A2a ③：候选收款方式 = 读表那一份（读不到 ⇒ 退回配置 + warn ✓ 见工厂里那份注释）
-              paymentMethods: await candidatePaymentMethods(req),
-              realm,
-              submitKey: writeService?.sessions?.submitKeyFor?.(sessionIdOf(req), pendingSession, 'sale') || '',
-              count: pendingLines.length,
-              lines: pendingLines,
-              // 资金页草稿：总金额也从她保存前那份明细恢复（不重新猜）。
-              totalAmountText: (() => {
-                const cents = (Array.isArray(pendingLines) ? pendingLines : []).reduce(
-                  (sum, line) => sum + Math.round(Number(String(line?.amount ?? '').trim() || 0) * 100), 0,
-                );
-                return cents > 0 ? (cents / 100).toFixed(2).replace(/\.00$/, '') : '';
-              })(),
-              paymentRows: Array.isArray(pendingSession?.sale?.draft_payment?.paymentRows)
-                ? pendingSession.sale.draft_payment.paymentRows : undefined,
-              gift: pendingSession?.sale?.draft_payment?.gift || '',
-              accessory: pendingSession?.sale?.draft_payment?.accessory || '',
-              accessoryTotal: pendingSession?.sale?.draft_payment?.accessoryTotal || '',
-              accessoryRows: Array.isArray(pendingSession?.sale?.draft_payment?.accessoryRows)
-                ? pendingSession.sale.draft_payment.accessoryRows : [],
-              // ⭐⭐ task-58：**哪一条判据把她顶到了资金页** —— 就是上面那个三选一。
-              //   （她真机再出现这个现象时，grep `scan.page.rendered` 一眼看出是哪种形状 ✓）
-              renderedTrigger: pendingLines.length > 0
-                ? 'pending_mark:lines'
-                : (hasOrder ? 'pending_mark:order' : 'pending_mark:status_not_submitted'),
-            });
-          }
-          // 🔴 **残标记**（0 行 + 没单号 + 已 `submitted`）⇒ **不给资金页**，并把标记清成"**没走到资金这一步**"
-          //   的**既有表示** = 这个键**不在**（`services/scanSessionService.js` 的默认 `sale` 里就**没有**
-          //   `paymentStep` ✓）⇒ 清成 `undefined`：`saveSaleProgress` 是 `{...当前 sale, ...patch}`、
-          //   store 是 `JSON.stringify`（`jsonTaskStore`）⇒ 这个键就**没了** ✓。
-          //   ⚠️ **不是** `'created'`（那是"**这一单已经建过**"的既有含义，写上去就是撒谎 ✗）；
-          //   ⚠️ **不是**空串（那是**另造一个值**，注释里也点名过不许 ✗）；
-          //   ⚠️ 清标记**失败不许破她的页面**（这是 GET 渲染路径）⇒ 只 warn，照旧出正常页 ✓。
-          //   ⭐⭐ 2026-10-15 晚（task-22）：**`submitPending` 同一笔清掉**（纯卫生 ✓）——
-          //      `paymentStep` 一清，它在代码里就**再没有读点**（pay / skip 两处都在
-          //      `paymentStep === 'pending'` 的门内 ⇒ 这颗残留 payload 只会误导下次真机排查；
-          //      Lead 手工清她会话时也把它一起清了 ✓）。
-          //      🔴 **顺序不能反**：必须在"提交那一步把 `status` 落回 `draft`"（见提交分支）**之后**才敢这么清 ✗
-          //         —— 否则第 2 单刚提交那一下也会命中这条残标记分支 ⇒ 把她**点按钮要写的那一双**抹掉 ⇒ 建不了单 ✗。
-          const hadSubmitPending = Boolean(pendingSession?.sale?.submitPending);
-          const clearing = writeService.saveDraftLines?.(
-            sessionIdOf(req), { paymentStep: undefined, submitPending: undefined },
-          );
-          await Promise.resolve(clearing).catch((error) => {
-            logWarn('scan.payment_step.stale_clear_failed', {
-              request_id: requestId, error: error.message,
-            });
-          });
-          // **不静默**：真机排查时这一条说明"那次残标记是被我们清掉的，不是她自己清掉的"。
-          logWarn('scan.payment_step.stale_cleared', {
-            request_id: requestId,
-            open_id: openIdOf(req),
-            raw: String(pendingMark).slice(0, 32),
-            lines: pendingLines.length,
-            has_order: hasOrder,
-            sale_status: saleStatus,
-            had_submit_pending: hadSubmitPending,
-          });
-        }
+        // 2026-11-27：只清标记；不再有"支付中接管"，这一发正常渲染货品页。
       }
     }
     const timing = {};

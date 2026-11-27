@@ -357,6 +357,7 @@ return sendPaymentStep(res, req, {
           return redirectWithSubmitToast(res, { orderNo: goodsOrderNo });
         }
         return sendPaymentStep(res, req, {
+          redirectToPay: true,
           paymentMethods: await candidatePaymentMethods(req),
           realm,
           submitKey: body[fields.submitKey],

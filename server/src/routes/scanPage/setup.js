@@ -212,6 +212,10 @@ const createScanPageSetup = ({ options, deps }) => {
       number: String(scanTargetOf(req)?.value || ''),
     });
     const target = backTargetFor(req, decodeURIComponent(String(req.params.recordId || '')));
+    // 2026-11-27：首次提交成功 ⇒ 303 到独立资金页（PRG）；校验失败仍原地渲染。
+    if (opts.redirectToPay === true && req.method === 'POST') {
+      return res.redirect(303, `${req.baseUrl}/${encodeURIComponent(target.value)}/pay`);
+    }
     // ⚠️ 默认 200 ✓；⭐ 结算没过那一次要 **400**（"她能改"的那一类 ⇒ 与既有口径一致 ✓ 旧行为也是 400 ✓）
     const status = Number(opts.status) === 400 ? 400 : 200;
     // 资金页要知道哪些收款方式是券 ⇒ 券行金额不 required（后端仍按平台结算款覆盖）。

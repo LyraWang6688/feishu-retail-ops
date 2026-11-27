@@ -43,6 +43,8 @@ const ROUTE = Object.freeze({
   // 货品组扫码：组库存 / 成员选择；不是新的写入口。
   groupBasePath: '/g',
   recordPath: '/:recordId',
+  // 2026-11-27：资金页独立地址（挂在 /r 下）——刷新/收藏都只认它，不靠会话猜。
+  payPath: '/:recordId/pay',
 });
 
 /**
@@ -765,6 +767,10 @@ const REPLENISH_FORM = Object.freeze({
 });
 const SCAN_PAGE = Object.freeze({
   route: ROUTE,
+  // 2026-11-27：本单条只属于「销售建单」这一个 realm+flow；别的领域/售后换款式一律不渲染。
+  realmUi: Object.freeze({
+    draftBar: Object.freeze({ realms: Object.freeze(['sales']), flows: Object.freeze(['sales']) }),
+  }),
   // ⭐ 2026-10-13（她：加载到中间一直白屏）：**骨架屏**（首屏先给"数据加载中"，再取整页）。
   //   ⛔ 2026-11-26（她：「为什么这个还要开关呢，不需要这个开关」）⇒ **去掉开关，固定开启**：
   //      线上本来就是开的；代码不再读 `SCAN_PAGE_SKELETON_ENABLED` / `..._FIRST_ENTRY_ONLY`。

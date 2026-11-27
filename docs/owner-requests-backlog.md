@@ -36,6 +36,8 @@
 
 | # | 她的原话（逐字） | 日期（上海） | 状态 | owner | 判据（能真红） | 落点（文件:行 / PR） |
 | --- | --- | --- | --- | --- | --- | --- |
+| **R-48** | 「好的，我同意这个方案，你创建目标推进吧」（资金页独立 URL + 领域/flow 隔离 + 售后保护 + 草稿箱改道） | **2026-11-27** | **已上线（未部署）** | Lead | 裸扫=库存页且无销售本单条；/r/{id}/pay 是唯一资金页（刷新仍在）；提交成功 303 到 /pay；删支付中接管；重扫清 pending 只限销售建单 flow（售后换款式不清）；付款步草稿 303 /pay | **PR #1599**；config/scanPage.js；routes/scanPage/{pages,setup}.js；views/scanPage/index.js；handlers/salesSubmit.js |
+| **R-47** | 「是的，需要有这个（采购页扫一扫），其他的补货不需要」 | **2026-11-27** | **已上线（未部署）** | Lead | 五处登记表删除 replenish-add（服务端+工作台镜像）；生产不再有任何补货扫码入口；采购页扫一扫保留 | **PR #1598**（已合并）；页面文件暂留（multiItem 测试耦合），单独迁移后再删 |
 | **R-46** | 「为什么这个还要开关呢，不需要这个开关」＋「是的。」（选 A：删开关、骨架固定开启，保留"只首次进入"） | **2026-11-26** | **已上线（未部署）** | Lead | 代码不再读 SCAN_PAGE_SKELETON_ENABLED / ..._FIRST_ENTRY_ONLY；裸扫首屏骨架、带 ?from= 直接整页；env=false 也关不掉（反向哨兵） | **PR #1591**；config/scanPage.js；routes/scanPage/pages.js；test/scanPageSkeletonRoute.test.js |
 | **R-45** | 「好的，我选择B，你来删除吧」（删掉「扫完自动清上一单草稿」整块功能与 keepDraft 配置） | **2026-11-26** | **已上线（未部署）** | Lead | 全仓不再有 clearDraftForScanIfNeeded / keepDraft / SCAN_ENTRY_*_KEEP_DRAFT 的代码读取点；反向哨兵（塞回即红）在 scanEntryParamsWired；今天所有入口本来就保留草稿 ⇒ 行为零变化 | **PR #1588**；routes/scanPage/{flowHelpers,pages,routes,index,setup}.js；config/{scanEntries,realmScan}.js；public/workbench/config/scanEntries.js；test/scanEntryParamsWired.test.js |
 | **R-44** | 「好的，可以」（删掉本单条里那条指路链接）＋「是的，我需要把截图的内容放在你删除蓝色横条的地方，移动一下」＋「把本单已加的货品，文字改为已加的货品，其他没有问题了」 | **2026-11-26** | **已上线（未部署）** | Lead | 销售页本单条不再出现空白「提交」色块；「已加的货品」（标题 + 每行金额输入）**整块在本单条**（不是复制）；输入框用 HTML5 form 属性随销售表单提交（FormData 取到两行金额）；表单内不重复渲染 ⇒ 能真红 | **PR #1585**；server/src/views/scanPage/{draftBlock,paymentBlock,index}.js；server/src/config/scanPage.js；server/test/scanDraftBarNoFakeSubmit.test.js |
