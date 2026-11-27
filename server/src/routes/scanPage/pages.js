@@ -2,11 +2,14 @@
 
 /** 扫码页 GET 页面处理（P4-2b 从 routes.js 搬出）。 */
 const { SCAN_DELISTED } = require('../../config/scanPageDelisted');
+const { resolveActor } = require('../../services/authorizationService');
+const { costTextOf } = require('../../services/scanPageCost');
+const { can } = require('../../config/permissions');
 
 const installScanPageGetRoutes = ({ router, ctx }) => {
   const {
     buildWriteContext, PURCHASE_RETURN_REALM, SCAN_PAGE,
-    SUBMIT_TOAST, badNumberPage, candidatePaymentMethods, config, logInfo, logRendered,
+    SUBMIT_TOAST, badNumberPage, candidatePaymentMethods, config, gateway, logInfo, logRendered,
     logWarn, lookupInputOf, notFoundPage, openIdOf, readMultiItemPending, realmScanPageConfig,
     renderFlowOf, renderScan, renderScanSkeleton, resolveRealm, respondFailure,
     scanTargetOf, sendHtml, sendHuman, sendPaymentStep, service, sessionIdOf, writeConfig, writeService,
@@ -249,7 +252,21 @@ const installScanPageGetRoutes = ({ router, ctx }) => {
       //    是"飞书客户端内的扫一扫 AppLink"还是那句如实的人话（`canScanNextWithFeishu`）。
       // ⭐⭐ 2026-10-16（task-61 · ① 日志）：`renderLogs` 是渲染层**只读登记**用的（见下）。
       const renderLogs = [];
-      const html = renderScan(view, config, writeForRender, realm, {
+      // 2026-11-27：库存裸扫页的成本只给有权限的角色；在共享 cache 之外按请求补，店员响应里不会有值。
+      let viewForRender = view;
+      if (view.found && realm === 'inventory' && view.product_record_id) {
+        try {
+          const actor = req.workbenchActor
+            || (gateway ? await resolveActor({ gateway, openId: openIdOf(req) }) : null);
+          if (actor && can(actor.role, config.inventoryCost.permission)) {
+            const costText = await costTextOf({ gateway, productRecordId: view.product_record_id });
+            if (costText) viewForRender = { ...view, cost_text: costText };
+          }
+        } catch (error) {
+          logWarn('scan.inventory.cost.read_failed', { request_id: requestId, error: String(error?.message || error).slice(0, 200) });
+        }
+      }
+      const html = renderScan(viewForRender, config, writeForRender, realm, {
         userAgent: req.headers['user-agent'],
         // ⭐⭐ 2026-10-13：提交后回跳带过来的单号 ⇒ 顶部那条"上一单已提交"的指引（没有就不显示 ✓）
         justSubmittedOrderNo: String(req.query?.[SUBMIT_TOAST.noticeKey || 'done'] || '').slice(0, 40),

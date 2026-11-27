@@ -66,6 +66,9 @@ ${meta ? `<p class="identity__meta">${escapeHtml(meta)}</p>` : ''}
 <div class="price">
 <span class="price__label">${escapeHtml(config.texts.priceLabel)}</span>
 <span class="price__value">${escapeHtml(view.price_text)}</span>
+${options.realm === 'inventory' && view.cost_text
+  ? `<span class="price__cost" data-view="product-cost" style="display:block;margin-top:2px;color:var(--warning);font-size:var(--font-size-sm);font-weight:600;font-variant-numeric:tabular-nums">${escapeHtml(config.inventoryCost.label)} ${escapeHtml(view.cost_text)}</span>`
+  : ''}
 </div>
 ${productActionsHtml(view, config, options.realm)}
 </header>`;
