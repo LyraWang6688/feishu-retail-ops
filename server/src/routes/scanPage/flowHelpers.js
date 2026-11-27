@@ -153,7 +153,10 @@ const createFlowHelpers = ({
       //   以前这里无条件读「收款方式管理」（冷缓存时一次飞书读，实测让扫码页 post_lookup ≈5.4s）。
       //   ⇒ 这里不再读；资金页由 `step2WriteOf` 的调用方显式传入候选（那才是它唯一的使用者）。
       const paymentMethods = [];
-      const lines = session?.sale?.lines || [];
+      // 2026-11-27：销售草稿只属于「销售建单」这个 realm+flow —— 库存/退货/售后换款式不读它。
+      const flowId = String(req.query?.flow || 'sales');
+      const showSaleDraft = realm === 'sales' && flowId === 'sales';
+      const lines = showSaleDraft ? (session?.sale?.lines || []) : [];
       return {
         enabled: true,
         saleEnabled: writeConfig.sale.enabled !== false,
@@ -179,7 +182,7 @@ const createFlowHelpers = ({
         // ⭐ 2026-11-26：卖完下架确认层的数据（候选 + 原提交 body）—— 由提交路由在命中时传入，
         //   渲染层有它就画确认层、没有就一个字都不多。
         delistConfirm: extra.delistConfirm || null,
-        draftForm: session?.sale?.draft_form || null,
+        draftForm: showSaleDraft ? (session?.sale?.draft_form || null) : null,
         saleKey: writeService.sessions.submitKeyFor(openId, session, 'sale'),
         replenishKey: writeService.sessions.submitKeyFor(openId, session, 'replenish'),
         // ⭐ 退货那把键（第三条链；与销售 / 补货**互不覆盖** —— 会话语义见 scanSessionService）
