@@ -373,6 +373,7 @@ const multiItemsJson = (groups) => JSON.stringify(groups.map((group) => ({
   item_no: String(group.item_no || ''),
   color: String(group.color || ''),
   supplier_record_id: String(group.supplier_record_id || ''),
+  ...(Number.isInteger(group.amount_cents) ? { amount_cents: group.amount_cents } : {}),
   entries: (group.entries || []).map((entry) => ({ size: String(entry.size), quantity: Number(entry.quantity) })),
 })));
 const postReturn = async (base, {
@@ -510,8 +511,8 @@ test('AC-RI3a ⭐ 一单退货 2 个货品（2 家供应商）⇒ 按供应商**
         form: { return_qty_41: '1' },
         multiItems: [
           // ⚠️ 扫码页真实给出的形状：`supplier_record_id` 是空的（供应商由**代码**从货品行读 ✓）
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', entries: [] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', entries: [{ size: '41', quantity: '1' }] },
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', amount_cents: 39900, entries: [] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', amount_cents: 10000, entries: [{ size: '41', quantity: '1' }] },
         ],
       });
     });

@@ -15,7 +15,8 @@ const createFlowHelpers = ({
   DEFAULT_REALM, arrival, backTargetFor, buildPaymentRows, candidatePaymentMethods, clearMultiItemPending, config, fillWriteText, invalidateLiveInventorySnapshot, logError, logInfo, logWarn, markRealmUsed, multiItemOrder, multiItemOrderConfig, multiItemWire, openIdOf, postActionFor, purchaseBackground, realmOfAction, respondWriteFailure, router, setDraftOrderAmount, writeConfig, writeService,
 }) => {
     const submitMultiItemOrder = async ({
-      req, res, requestId, chain, groups, action, delistProductIds = [],
+      req, res, requestId, chain, groups, action, orderAmount,
+      delistProductIds = [],
     }) => {
       const delistAfterReturn = async (submitKey) => {
         if (chain !== 'return' || !Array.isArray(delistProductIds) || !delistProductIds.length) return;
@@ -51,7 +52,11 @@ const createFlowHelpers = ({
       // ⚠️ **判据来自配置**（`chains[chain].amountRequired` ✓）—— 路由里**不写 `if (补货) … else …`** ✗
       //   （与引擎同一条口径：两条链**只差配置** ✓）。
       if (multiItemOrderConfig.chains[chain]?.amountRequired === true) {
-        await setDraftOrderAmount(openId, orderKey, String(req?.body?.[writeConfig.fields.purchaseAmount] ?? ''));
+        // 2026-11-27：调用方已按 record ID 汇总时以它为准；单货品/其他调用方仍回退当前页。
+        const amount = orderAmount !== undefined && orderAmount !== null
+          ? orderAmount
+          : req?.body?.[writeConfig.fields.purchaseAmount];
+        await setDraftOrderAmount(openId, orderKey, String(amount ?? ''));
       }
       for (const group of groups) {
         const added = await engine.addItem({ openId, chain, orderKey, item: group, requestId });

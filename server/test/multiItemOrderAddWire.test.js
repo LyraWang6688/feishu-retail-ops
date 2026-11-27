@@ -174,11 +174,11 @@ const hiddenItemsOf = (html) => JSON.parse(
 
 const K1 = Object.freeze({
   product_record_id: 'rec_K1', number: NUMBER, item_no: 'K1', color: '黑色',
-  supplier_record_id: 'sup_K1', entries: [],
+  supplier_record_id: 'sup_K1', entries: [], amount_cents: 100,
 });
 const K2 = Object.freeze({
   product_record_id: 'rec_K2', number: 'K2|白色|男', item_no: 'K2', color: '白色',
-  supplier_record_id: 'sup_K2', entries: [],
+  supplier_record_id: 'sup_K2', entries: [], amount_cents: 100,
 });
 
 /**
@@ -194,9 +194,11 @@ const addBody = ({
   const params = new URLSearchParams();
   // ⭐ 那颗按钮的 name/value（= 接线给的那份配置 ✓ 不写死）
   params.append(WIRE.addAction, WIRE.addValue);
+  // 2026-11-27：退货每一页都要填金额（当前 record ID 的金额随这一件暂存）。
+  params.append(SCAN_WRITE.fields.purchaseAmount, '100');
   for (const size of sizes) params.append(`${SCAN_WRITE.fields.returnQuantityPrefix}${size}`, quantity);
   // 页面渲出来的 hidden = `[首件, ...已加]`
-  params.append('multi_items', multiItemPayloadJson([first, ...already]));
+  params.append('multi_items', multiItemPayloadJson([first, ...already], 'return'));
   return params;
 };
 
@@ -212,7 +214,7 @@ const submitBody = ({
   params.append(SCAN_WRITE.fields.delistConfirmed, '1');
   params.append('delist_decision', 'skip');
   for (const size of sizes) params.append(`${SCAN_WRITE.fields.returnQuantityPrefix}${size}`, quantity);
-  params.append('multi_items', multiItemPayloadJson(items));
+  params.append('multi_items', multiItemPayloadJson(items, 'return'));
   return params;
 };
 

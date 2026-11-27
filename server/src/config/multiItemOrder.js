@@ -128,6 +128,8 @@ const resolveChains = (env) => ({
     payload: Object.freeze({
       isBatch: false,
       withBehavior: false,
+      // 2026-11-27：退货的多货品载荷带「每个 record ID 的金额（分）」；补货不带。
+      withItemAmount: true,
     }),
   }),
   /**

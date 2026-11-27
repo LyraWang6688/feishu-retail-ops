@@ -1,6 +1,7 @@
 'use strict';
 
 const { asList } = require('./shared');
+const { toCents } = require('../../utils/money');
 
 /**
  * ⭐⭐ 2026-10-16 拆分（阶段二 · 纯搬运 ✓）：多货品相关的纯函数。
@@ -94,4 +95,41 @@ const positiveSize = (value) => {
 const purchaseWriteDisabledError = (chainConfig, texts) => (chainConfig?.enabled === false
   ? { code: 'disabled', message: texts.writeDisabledBody }
   : null);
-module.exports = { parseMultiItemGroups, mergeFirstItemEntries, purchaseWriteDisabledError };
+/**
+ * 多货品退货：按**唯一 record ID**把每页金额（分）汇总。
+ *   · 当前页金额优先（它可能刚被改过）；
+ *   · 其余 record ID 用加货时存下的 amount_cents；
+ *   · 同一 record ID 多尺码只算一次；重复出现取最后一次；
+ *   · 任何一件缺失/非法 ⇒ 返回 missing（调用方 400，不静默按 0）。
+ */
+const sumReturnAmountCents = (groups, currentAmount) => {
+  const list = Array.isArray(groups) ? groups : [];
+  const firstByRecord = new Map();
+  list.forEach((group, index) => {
+    const recordId = String(group?.product_record_id || group?.number || group?.item_no || '').trim()
+      || '#row' + index;
+    if (!firstByRecord.has(recordId)) firstByRecord.set(recordId, { group, index });
+  });
+  const byRecord = new Map();
+  let missing = null;
+  for (const [recordId, entry] of firstByRecord) {
+    const stored = Number.isInteger(entry.group?.amount_cents) && entry.group.amount_cents >= 0
+      ? entry.group.amount_cents
+      : null;
+    const current = entry.index === 0 && String(currentAmount ?? '').trim() !== ''
+      ? toCents(currentAmount)
+      : null;
+    const cents = current === null ? stored : current;
+    if (cents === null) {
+      if (!missing) missing = { index: entry.index, product_record_id: recordId };
+      continue;
+    }
+    byRecord.set(recordId, cents);
+  }
+  const totalCents = [...byRecord.values()].reduce((sum, cents) => sum + cents, 0);
+  return { ok: missing === null, totalCents, missing };
+};
+
+module.exports = {
+  parseMultiItemGroups, mergeFirstItemEntries, purchaseWriteDisabledError, sumReturnAmountCents,
+};
