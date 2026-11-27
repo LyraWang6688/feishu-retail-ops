@@ -92,7 +92,7 @@ export function openStaffPanel(host) {
   panel.innerHTML = '<p class="staff-empty">' + escapeHtml(T.loading) + '</p>';
 
   const state = {
-    actor: { role: '', permissions: [] }, staff: [], roles: [], attendance: [],
+    actor: { role: '', permissions: [] }, staff: [], attendance: [],
     from: dayOf(-13), to: dayOf(0), editing: null,
   };
   const render = () => { panel.innerHTML = panelHtml(state); };
@@ -102,7 +102,6 @@ export function openStaffPanel(host) {
       state.actor = me?.actor || state.actor;
       const roster = await api.get(T.api.roster);
       state.staff = Array.isArray(roster?.staff) ? roster.staff : [];
-      state.roles = Array.isArray(roster?.roles) ? roster.roles : [];
       const list = await api.get(T.api.attendance + '?from=' + encodeURIComponent(state.from) + '&to=' + encodeURIComponent(state.to));
       state.attendance = Array.isArray(list?.attendance) ? list.attendance : [];
       state.editing = null;
