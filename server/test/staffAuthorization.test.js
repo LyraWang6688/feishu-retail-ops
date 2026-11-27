@@ -4,76 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const express = require('express');
-const { createWorkbenchStaffRoutes } = require('../src/routes/workbench/staff');
-const { resolveActor, requirePermission } = require('../src/services/authorizationService');
-
-const DAY = (value) => Date.parse(value + 'T00:00:00+08:00');
-const AT = (value) => Date.parse(value + '+08:00');
-
-const makeGateway = () => {
-  const calls = { create: [], update: [], delete: [] };
-  const staffRows = [
-    { record_id: 'staff_admin', fields: { 姓名: [{ id: 'ou_admin', name: '管理员甲' }], 角色: [{ record_ids: ['role_admin'], text: '管理员' }], 在职: true, 是否考勤: true } },
-    { record_id: 'staff_emp', fields: { 姓名: [{ id: 'ou_emp', name: '店员乙' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: true, 是否考勤: true } },
-    { record_id: 'staff_noatt', fields: { 姓名: [{ id: 'ou_noatt', name: '不考勤丁' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: true, 是否考勤: false } },
-    { record_id: 'staff_off', fields: { 姓名: [{ id: 'ou_off', name: '离职丙' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: false, 是否考勤: false } },
-  ];
-  const roleRows = [
-    { record_id: 'role_admin', fields: { 角色: '管理员', 权限说明: '' } },
-    { record_id: 'role_emp', fields: { 角色: '店员', 权限说明: '' } },
-  ];
-  const attendance = [
-    { record_id: 'att_admin', fields: { 姓名: [{ record_ids: ['staff_admin'] }], 考勤人: [{ id: 'ou_admin' }], 出勤日: DAY('2026-11-25'), 开始时间: AT('2026-11-25T09:00:00'), 结束时间: AT('2026-11-25T18:00:00'), 工时: 9 } },
-    { record_id: 'att_emp', fields: { 姓名: [{ record_ids: ['staff_emp'] }], 考勤人: [{ id: 'ou_emp' }], 出勤日: DAY('2026-11-25'), 开始时间: AT('2026-11-25T10:00:00'), 结束时间: AT('2026-11-25T16:00:00'), 工时: 6 } },
-  ];
-  const tables = {
-    staff: { fields: { name: '姓名', role: '角色', active: '在职', attendance: '是否考勤' } },
-    staffRole: { fields: { name: '角色', note: '权限说明' } },
-    attendance: { fields: { date: '出勤日', hours: '工时', startAt: '开始时间', endAt: '结束时间', staff: '姓名', staffUser: '考勤人' } },
-  };
-  return {
-    calls,
-    attendance,
-    table: (key) => tables[key],
-    listAll: async (key) => {
-      if (key === 'staff') return staffRows;
-      if (key === 'staffRole') return roleRows;
-      if (key === 'attendance') return attendance;
-      return [];
-    },
-    get: async (key, id) => {
-      if (key === 'staff') return staffRows.find((row) => row.record_id === id) || null;
-      if (key === 'attendance') return attendance.find((row) => row.record_id === id) || null;
-      return null;
-    },
-    create: async (key, fields) => { calls.create.push({ key, fields }); return { recordId: 'att_new' }; },
-    update: async (key, id, fields) => { calls.update.push({ key, id, fields }); return { record_id: id }; },
-    delete: async (key, id) => { calls.delete.push({ key, id }); return { record_id: id }; },
-  };
-};
-
-const makeApp = (gateway) => {
-  const app = express();
-  app.use(express.json());
-  app.use((req, res, next) => { req.workbenchUser = { open_id: req.get('x-test-openid') || 'ou_emp' }; next(); });
-  app.use('/staff', createWorkbenchStaffRoutes({ options: { gateway } }));
-  return app;
-};
-
-const withServer = async (app, run) => {
-  const server = await new Promise((resolve, reject) => {
-    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
-    instance.on('error', reject);
-  });
-  server.keepAliveTimeout = 1;
-  try {
-    const base = 'http://127.0.0.1:' + server.address().port;
-    await run(base);
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
-};
+const { resolveActor } = require('../src/services/authorizationService');
+const { DAY, todayStart, makeGateway, makeApp, withServer } = require('./support/staffFixtures');
 
 test('人员目录：管理员/店员/离职/不在花名册', async () => {
   const gateway = makeGateway();
@@ -81,14 +13,6 @@ test('人员目录：管理员/店员/离职/不在花名册', async () => {
   assert.equal((await resolveActor({ gateway, openId: 'ou_emp' })).role, '店员');
   assert.equal(await resolveActor({ gateway, openId: 'ou_off' }), null, '离职拒绝');
   assert.equal(await resolveActor({ gateway, openId: 'ou_missing' }), null, '不在花名册拒绝');
-});
-
-test('权限矩阵：店员不能写考勤', () => {
-  const res = { statusCode: 0, body: null, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
-  let called = false;
-  requirePermission('attendance.write')({ workbenchActor: { role: '店员' } }, res, () => { called = true; });
-  assert.equal(res.statusCode, 403);
-  assert.equal(called, false);
 });
 
 test('店员只能看本人考勤；管理员看全员', async () => {
@@ -135,7 +59,7 @@ test('不在花名册/离职 ⇒ 403', async () => {
   });
 });
 
-test('店员写考勤 403；管理员写考勤 201 且工时自动算', async () => {
+test('店员写考勤 403；管理员写考勤 201，考勤人字段写实际操作人', async () => {
   const gateway = makeGateway();
   await withServer(makeApp(gateway), async (base) => {
     const body = JSON.stringify({ staffRecordId: 'staff_emp', date: '2026-11-25', start: '09:00', end: '18:00' });
@@ -146,20 +70,21 @@ test('店员写考勤 403；管理员写考勤 201 且工时自动算', async ()
     assert.equal(created.status, 201);
     assert.equal(gateway.calls.create.length, 1);
     assert.equal(gateway.calls.create[0].fields.staff[0], 'staff_emp');
-    assert.equal(gateway.calls.create[0].fields.staffUser[0].id, 'ou_emp');
+    assert.equal(gateway.calls.create[0].fields.staffUser[0].id, 'ou_admin', '谁点的就写谁');
     assert.equal(gateway.calls.create[0].fields.hours, 9);
   });
 });
 
 test('读接口走权限矩阵（源码哨兵：不许再写 actor.role === 管理员）', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'workbench', 'staff.js'), 'utf8');
-  assert.match(src, /can\(actor\.role, 'attendance\.read\.all'\)/, '读全员要读矩阵');
-  assert.match(src, /can\(actor\.role, 'attendance\.read\.self'\)/, '读本人要读矩阵');
-  const hardcoded = (src.match(/actor\.role === ROLES\.ADMIN/g) || []).length;
-  assert.equal(hardcoded, 1, '只允许 clock 目标那一处保留旧判据；读接口不许再硬编码');
+  assert.match(src, /canAny\(actor\.roleNames, 'attendance\.read\.all'\)/);
+  assert.match(src, /canAny\(actor\.roleNames, 'attendance\.read\.self'\)/);
+  assert.match(src, /canAny\(roles, 'attendance\.clock\.any'\)/);
+  assert.match(src, /Array\.isArray\(actor\.roleNames\) && actor\.roleNames\.length/);
+  assert.equal((src.match(/actor\.role === ROLES\.ADMIN/g) || []).length, 0, '不再按单角色硬编码');
 });
 
-test('上班/下班：开始-only 创建、已有进行中拒绝', async () => {
+test('上班：开始-only 创建、已有今天进行中拒绝', async () => {
   const gateway = makeGateway();
   await withServer(makeApp(gateway), async (base) => {
     const created = await fetch(base + '/staff/attendance/clock-in', {
@@ -170,6 +95,8 @@ test('上班/下班：开始-only 创建、已有进行中拒绝', async () => {
     assert.equal(created.status, 201, '店员只能给自己上班，body 里的别人被忽略');
     assert.equal(gateway.calls.create.length, 1);
     assert.equal(gateway.calls.create[0].fields.staff[0], 'staff_emp');
+    assert.equal(gateway.calls.create[0].fields.staffUser[0].id, 'ou_emp');
+    assert.equal(gateway.calls.create[0].fields.date, todayStart());
     assert.equal(gateway.calls.create[0].fields.endAt, undefined, '开始-only 不写结束');
     assert.equal(gateway.calls.create[0].fields.hours, undefined, '进行中工时不写');
 
@@ -178,8 +105,8 @@ test('上班/下班：开始-only 创建、已有进行中拒绝', async () => {
       fields: {
         姓名: [{ record_ids: ['staff_emp'] }],
         考勤人: [{ id: 'ou_emp' }],
-        出勤日: DAY('2026-11-25'),
-        开始时间: AT('2026-11-25T09:00:00'),
+        出勤日: todayStart(),
+        开始时间: todayStart() + 60000,
       },
     });
     const again = await fetch(base + '/staff/attendance/clock-in', {
@@ -192,15 +119,15 @@ test('上班/下班：开始-only 创建、已有进行中拒绝', async () => {
   });
 });
 
-test('下班：回填结束时间并算工时', async () => {
+test('下班：只回填今天的记录并算工时', async () => {
   const gateway = makeGateway();
   gateway.attendance.push({
     record_id: 'att_open',
     fields: {
       姓名: [{ record_ids: ['staff_emp'] }],
       考勤人: [{ id: 'ou_emp' }],
-      出勤日: DAY('2026-11-25'),
-      开始时间: AT('2026-11-25T09:00:00'),
+      出勤日: todayStart(),
+      开始时间: todayStart() + 60000,
     },
   });
   await withServer(makeApp(gateway), async (base) => {
@@ -211,8 +138,9 @@ test('下班：回填结束时间并算工时', async () => {
     });
     assert.equal(done.status, 200);
     const update = gateway.calls.update.find((item) => item.key === 'attendance' && item.id === 'att_open');
-    assert.ok(update, '要回填到进行中的那条记录');
+    assert.ok(update, '要回填到今天的记录');
     assert.ok(update.fields.endAt > 0);
     assert.ok(update.fields.hours > 0);
+    assert.equal(update.fields.staffUser, undefined, '下班不覆盖上班打卡的操作人');
   });
 });

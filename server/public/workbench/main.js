@@ -4,6 +4,7 @@ import { mainTabsHtml, MAIN_TABS } from './core/tabs.js';
 import { TAP_TELEMETRY, FLUENCY_TELEMETRY } from './config/telemetry.js';
 import { createFluencyTracker, installFluencyObservers } from './shared/ui-fluency.js';
 import { createDomainModule } from './features/domains/index.js';
+import { maybeShowAttendancePrompt } from './features/domains/attendancePrompt.js';
 
 /**
  * ⭐⭐ 2026-10-14 晚（埋点 P0 ⑤「工作台接同一套上报」）：
@@ -230,6 +231,8 @@ async function start() {
     const ready = await requireFeishuAuth();
     if (!ready) return;
     activateModule(initialModule, { deepLink });
+    // 9 点后的考勤弹窗：不阻塞首屏；失败静默（弹窗模块自己兜住）。
+    void maybeShowAttendancePrompt();
   } catch (error) {
     showPageError(`工作台启动失败：${describeError(error)}`);
     // 401 已经在 requireFeishuAuth 里自动跳登录了；这里是兜底（跳不过去 / 403 账号

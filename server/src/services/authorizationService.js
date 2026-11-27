@@ -10,17 +10,22 @@
  */
 const { StaffDirectoryService } = require('./staffDirectoryService');
 const { V1BitableGateway } = require('./v1BitableGateway');
-const { can, permissionsOf } = require('../config/permissions');
+const { canAny, permissionsOfRoles } = require('../config/permissions');
 const { STAFF_TEXTS } = require('../config/workbenchStaff');
 
 const resolveActor = async ({ gateway, openId }) => {
   const directory = new StaffDirectoryService({ gateway });
   const staff = await directory.findActor(openId);
   if (!staff || !staff.active) return null;
+  const roleNames = Array.isArray(staff.roleNames) && staff.roleNames.length
+    ? staff.roleNames
+    : [staff.roleName].filter(Boolean);
   return {
     ...staff,
-    role: staff.roleName,
-    permissions: permissionsOf(staff.roleName),
+    // role 保留第一个角色名，兼容只看单角色的旧代码；权限按全部角色取并集。
+    role: roleNames[0] || '',
+    roleNames,
+    permissions: permissionsOfRoles(roleNames),
   };
 };
 
@@ -39,7 +44,8 @@ const loadWorkbenchActor = ({ gateway } = {}) => async (req, res, next) => {
 const requirePermission = (permission) => (req, res, next) => {
   const actor = req.workbenchActor;
   if (!actor) return res.status(403).json({ success: false, error: STAFF_TEXTS.forbidden });
-  if (!can(actor.role, permission)) {
+  const roles = Array.isArray(actor.roleNames) && actor.roleNames.length ? actor.roleNames : actor.role;
+  if (!canAny(roles, permission)) {
     return res.status(403).json({ success: false, error: STAFF_TEXTS.roleForbidden });
   }
   return next();

@@ -421,3 +421,15 @@
 .staff-form{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-light)}
 .staff-form input{border:1px solid var(--control-border);border-radius:8px;padding:8px;font-size:14px;background:var(--surface);color:var(--text)}
 .staff-empty{font-size:13px;color:var(--text-secondary);padding:8px 0;margin:0}
+
+/* 2026-11-27 9 点考勤弹窗 */
+.staff-prompt{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:var(--space-4);background:color-mix(in srgb,var(--text) 45%,transparent)}
+.staff-prompt-card{width:100%;max-width:420px;max-height:calc(100vh - var(--space-8));overflow:auto;padding:var(--space-5);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-pop)}
+.staff-prompt-section + .staff-prompt-section{margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--border-light)}
+.staff-prompt-section h3{margin:0 0 var(--space-2);font-size:var(--font-size-lg)}
+.staff-prompt-section p{margin:0 0 var(--space-3);color:var(--text-secondary);font-size:var(--font-size-md)}
+.staff-prompt-actions{display:flex;gap:var(--space-2);justify-content:flex-end;flex-wrap:wrap}
+.staff-prompt-row{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-2);padding:var(--space-2) 0;border-top:1px solid var(--border-light)}
+.staff-prompt-row b{flex:1;min-width:80px;font-size:var(--font-size-md)}
+.staff-prompt-error{margin:var(--space-2) 0 0;color:var(--danger);font-size:var(--font-size-sm)}
+.staff-prompt-footer{display:flex;justify-content:flex-end;margin-top:var(--space-3)}

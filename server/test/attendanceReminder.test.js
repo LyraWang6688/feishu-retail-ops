@@ -54,7 +54,7 @@ test('18:00 后只提醒仍有进行中记录、且勾选考勤的人；当天�
 
   assert.deepEqual(await service.run(), { sent: 0 }, '同一天不重复');
   now = Date.parse('2026-11-28T18:10:00+08:00');
-  assert.deepEqual(await service.run(), { sent: 1 }, '次日重新提醒');
+  assert.deepEqual(await service.run(), { sent: 0 }, '昨天的未下班记录不再每天催');
 });
 
 test('已下班/未勾选考勤的人不提醒', async () => {
@@ -68,6 +68,29 @@ test('已下班/未勾选考勤的人不提醒', async () => {
     if (key === 'attendance') return [
       { record_id: 'att_done', fields: { 姓名: [{ record_ids: ['staff_admin'] }], 出勤日: Date.parse('2026-11-27T00:00:00+08:00'), 开始时间: Date.parse('2026-11-27T09:00:00+08:00'), 结束时间: Date.parse('2026-11-27T18:00:00+08:00'), 工时: 9 } },
       { record_id: 'att_wang', fields: { 姓名: [{ record_ids: ['staff_wang'] }], 出勤日: Date.parse('2026-11-27T00:00:00+08:00'), 开始时间: Date.parse('2026-11-27T09:00:00+08:00') } },
+    ];
+    return [];
+  };
+  const notifier = makeNotifier();
+  const service = createAttendanceReminderService({
+    gateway, notifications: notifier, now: () => Date.parse('2026-11-27T18:10:00+08:00'),
+  });
+  assert.deepEqual(await service.run(), { sent: 0 });
+  assert.equal(notifier.sent.length, 0);
+});
+
+test('昨天有未结束记录：今天不再提醒', async () => {
+  const gateway = makeGateway();
+  gateway.listAll = async (key) => {
+    if (key === 'staff') return [
+      { record_id: 'staff_peng', fields: { 姓名: [{ id: 'ou_peng', name: '赵瑞鹏' }], 角色: [{ record_ids: ['role_emp'], text: '店员' }], 在职: true, 是否考勤: true } },
+    ];
+    if (key === 'staffRole') return [
+      { record_id: 'role_admin', fields: { 角色: '管理员' } },
+      { record_id: 'role_emp', fields: { 角色: '店员' } },
+    ];
+    if (key === 'attendance') return [
+      { record_id: 'att_old', fields: { 姓名: [{ record_ids: ['staff_peng'] }], 考勤人: [{ id: 'ou_peng' }], 出勤日: Date.parse('2026-11-26T00:00:00+08:00'), 开始时间: Date.parse('2026-11-26T09:00:00+08:00') } },
     ];
     return [];
   };
