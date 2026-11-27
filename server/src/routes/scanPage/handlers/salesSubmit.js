@@ -356,6 +356,10 @@ return sendPaymentStep(res, req, {
           }
           return redirectWithSubmitToast(res, { orderNo: goodsOrderNo });
         }
+        // 2026-11-27：货品页确认的下架 ID 先落会话；/pay 是独立 GET，只有会话能把它带回资金页。
+        if (writeService?.sessions?.saveSaleProgress) {
+          await writeService.sessions.saveSaleProgress(openIdOf(req), { delist_product_ids: delistIds });
+        }
         return sendPaymentStep(res, req, {
           redirectToPay: true,
           paymentMethods: await candidatePaymentMethods(req),
