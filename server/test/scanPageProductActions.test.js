@@ -50,13 +50,12 @@ test('AC-PA1 销售 / 供应退货：两个入口都出现（库存调整 + 信�
   }
 });
 
-test('AC-PA2 库存页只多「库存调整」：补货 / 货品页不出现这两个入口', () => {
+test('AC-PA2 库存页只多「库存调整」：货品页不出现这两个入口', () => {
   const inventory = render('inventory');
   assert.ok(inventory.includes('data-view="product-adjust"'), '库存页必须有库存调整');
   assert.equal(inventory.includes('data-view="product-info"'), false, '库存页不显示信息完善');
-  const replenish = render('replenish');
-  assert.equal(replenish.includes('data-view="product-adjust"'), false, 'replenish 不许有库存调整');
-  assert.equal(replenish.includes('data-view="product-info"'), false, 'replenish 不许有信息完善链接');
+  // 🔴 2026-11-27：补货扫码页整体删除 ⇒ 原来那两条「replenish 不许有…」只测补货页，
+  //   随页面一起退场；等价判据仍在：AC-PA1（销售 / 退货都有那两个入口）＋ 本条的库存页 ✓。
   const product = productActionsHtml(VIEW, SCAN_PAGE, 'product');
   assert.equal(product, '', 'product 领域不渲染货品卡入口');
 });

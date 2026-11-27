@@ -596,22 +596,5 @@ test('AC-RT7b ⭐ 库存**取不到**的行：**不许拿 0 当库存**拦住她
   assert.ok(html.includes(SCAN_PAGE.returnForm.stockUnknown), '但页面上要如实说"库存取不到"✓');
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AC-RT6 既有判据没放宽（补货那一块逐字不变）
-// ═══════════════════════════════════════════════════════════════════════════
-
-test('AC-RT6 补货那一块**逐字不变**（`value="1"` 照旧、没有数量列）—— 视觉对齐不等于"顺手改它" ✗', async () => {
-  const write = fakeWriteService();
-  let replenishBlock;
-  await withServer(appFor(write), async (base) => {
-    const response = await fetch(`${base}/r/${ENCODED}?from=replenish`, { headers: { cookie: COOKIE } });
-    const html = await response.text();
-    const start = html.indexOf('realm-block--replenish');
-    replenishBlock = html.slice(start, html.indexOf('</section>', start) + 10);
-  });
-  assert.ok(replenishBlock.includes(`name="${SCAN_WRITE.fields.replenishSizes}"`), '补货勾选框名照旧 ✓');
-  assert.equal(replenishBlock.includes('data-view="return-stock"'), false, '补货块**不许**多出退货的数量列 ✗');
-  assert.ok(replenishBlock.includes(
-    `name="${SCAN_WRITE.fields.replenishQuantityPrefix}40" value="1"`,
-  ), `补货数量默认值**逐字**还是 1 ✓（字段名走配置：${SCAN_WRITE.fields.replenishQuantityPrefix}40）`);
-});
+// 🔴 2026-11-27：补货扫码页整体删除 ⇒ 原来这条「补货块逐字不变」的判据**只测补货页**
+//   ⇒ 随页面一起删除（提交信息里写明）。退货那一块的判据（AC-RT1..RT7b）**一条没动** ✓。

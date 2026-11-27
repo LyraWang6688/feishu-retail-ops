@@ -404,20 +404,22 @@ test('AC-UT4c ⑤ **同一份实现**：两个路由都 require 同一个 util�
   const view = {
     number: NUMBER, item_no: 'YD6693-2', color: '黑色', category_name: '休闲鞋', category_code: '男',
     price_text: '¥399', total: 1, columns: [{ key: '门盒', label: '门盒' }],
-    rows: [{ size_text: '41', cells: [{ key: '门盒', count: 0 }], total: 0, missing: true }],
-    missing_count: 1, sizes_degraded: false, notes: [], updated_at_text: '2026-10-14 23:00',
+    // 🔴 2026-11-27：补货扫码页已删除 ⇒ 这里改用**退货**那一块渲染（它也有「带反馈属性的提交按钮」）。
+    //   退货页只列"有数量的码"（2026-10-15 口径）⇒ 41 码给 1 双，表单才画得出来。
+    rows: [{ size_text: '41', cells: [{ key: '门盒', count: 1 }], total: 1, missing: false }],
+    missing_count: 0, sizes_degraded: false, notes: [], updated_at_text: '2026-10-14 23:00',
     product_record_id: 'prod_1',
   };
   const writeLike = {
     enabled: true, saleEnabled: false, replenishEnabled: true, returnEnabled: true,
     texts: SCAN_WRITE.texts, fields: SCAN_WRITE.fields, actions: SCAN_WRITE.actions,
-    postAction: `/r/${encodeURIComponent(NUMBER)}?from=replenish`,
+    postAction: `/r/${encodeURIComponent(NUMBER)}?from=purchase_return`,
     replenishKey: 'scan_replenish:key:1', returnKey: 'scan_return:key:1',
     sizes: [{ size_text: '41', missing: true, checked: true }],
     draft: { lines: [] }, accessories: [], paymentRows: [], notice: '', errorText: '',
     paymentStatus: '', defaultPaymentStatus: '', paymentMethods: [], defaultPaymentMethod: '',
   };
-  const html = renderScanPage(view, SCAN_PAGE, writeLike, 'replenish', {});
+  const html = renderScanPage(view, SCAN_PAGE, writeLike, 'purchase_return', {});
   // 扫码页那一页：脚本**还是只有一段**（业务脚本），而共享实现被**内联**进去了
   // ⭐ 2026-10-16 成对迁移（逐字对照见本文件 `businessScriptCountOf` 上面那段注释）
   assert.equal((html.match(/<script[\s>]/gi) || []).length, 1, '整页仍然只有一段**业务**脚本 ✓');

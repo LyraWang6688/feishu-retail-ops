@@ -181,7 +181,8 @@ const makeApp = ({ writeService, backgroundCalls = [] }) => {
   return app;
 };
 
-const getPage = async (base, { from = 'replenish', number = NUMBER } = {}) => {
+// 🔴 2026-11-27：补货扫码页已删除 ⇒ 这份判据迁到**退货**页（同一个多货品引擎 / 同一套接线）。
+const getPage = async (base, { from = 'purchase_return', number = NUMBER } = {}) => {
   const response = await fetch(
     `${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(number)}?from=${from}`,
     { headers: { cookie: sessionCookie() }, signal: AbortSignal.timeout(15_000) },
@@ -190,7 +191,7 @@ const getPage = async (base, { from = 'replenish', number = NUMBER } = {}) => {
   return response.text();
 };
 
-const postForm = (base, body, { from = 'replenish', number = NUMBER } = {}) => fetch(
+const postForm = (base, body, { from = 'purchase_return', number = NUMBER } = {}) => fetch(
   `${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(number)}?from=${from}`,
   {
     method: 'POST', redirect: 'manual',
@@ -205,8 +206,8 @@ const postForm = (base, body, { from = 'replenish', number = NUMBER } = {}) => f
 const addBody = ({ sizes = ['40'], quantity = '2' } = {}) => {
   const params = new URLSearchParams();
   params.append(WIRE.addAction, WIRE.addValue);
-  for (const size of sizes) params.append(SCAN_WRITE.fields.replenishSizes, size);
-  params.append(`${SCAN_WRITE.fields.replenishQuantityPrefix}${sizes[0]}`, quantity);
+  // ⭐ 退货没有勾选框字段 ⇒ 每码一个数量（数量即选择 ✓）
+  for (const size of sizes) params.append(`${SCAN_WRITE.fields.returnQuantityPrefix}${size}`, quantity);
   params.append(FIELD, renderer.multiItemPayloadJson([firstOf(VIEW_A)]));
   return params;
 };
@@ -214,10 +215,13 @@ const addBody = ({ sizes = ['40'], quantity = '2' } = {}) => {
 /** 提交那一次 POST：`items` = 页面上那份 hidden 载荷（浏览器就是这么送的 ✓）。 */
 const submitBody = ({ items, sizes = ['41'], quantity = '1' } = {}) => {
   const params = new URLSearchParams();
-  params.append(SCAN_WRITE.fields.action, SCAN_WRITE.actions.replenish);
-  params.append(SCAN_WRITE.fields.submitKey, 'scan_replenish:mid:1');
-  for (const size of sizes) params.append(SCAN_WRITE.fields.replenishSizes, size);
-  params.append(`${SCAN_WRITE.fields.replenishQuantityPrefix}${sizes[0]}`, quantity);
+  params.append(SCAN_WRITE.fields.action, SCAN_WRITE.actions.purchaseReturn);
+  params.append(SCAN_WRITE.fields.submitKey, 'scan_return:mid:1');
+  // ⭐ 退货「整单金额」必填（requiredByRealm.return === true）＋ 可能的下架确认层
+  params.append(SCAN_WRITE.fields.purchaseAmount, '100');
+  params.append(SCAN_WRITE.fields.delistConfirmed, '1');
+  params.append('delist_decision', 'skip');
+  for (const size of sizes) params.append(`${SCAN_WRITE.fields.returnQuantityPrefix}${size}`, quantity);
   params.append(FIELD, renderer.multiItemPayloadJson(items));
   return params;
 };
@@ -226,12 +230,13 @@ const submitBody = ({ items, sizes = ['41'], quantity = '1' } = {}) => {
 const pendingOf = async (writeService) => {
   const session = await writeService.sessions.store.get(writeService.sessions.idOf(OPEN_ID));
   const ordersField = MULTI_ITEM_ORDER.session.ordersField;
-  return ((session || {})[ordersField] || {})['replenish:pending'] || null;
+  return ((session || {})[ordersField] || {})['return:pending'] || null;
 };
 
 /** 落库明细里 `rec_K1` 那几行（引擎那条路）—— 归一化成 `{size, quantity}` ✓。 */
 const landedLinesOf = (writeService) => writeService.writes
-  .filter((write) => write.fn === 'purchase')
+  // 🔴 2026-11-27：迁到退货页 ⇒ 引擎落库走退货写入件（fn = 'purchaseReturn'）
+  .filter((write) => write.fn === 'purchaseReturn')
   .flatMap((write) => (Array.isArray(write.payload?.items) ? write.payload.items : []))
   .filter((line) => String(line.product_record_id) === 'rec_K1')
   .map((line) => ({ size: String(line.size), quantity: Number(line.quantity) }));
@@ -240,11 +245,12 @@ const landedLinesOf = (writeService) => writeService.writes
 // ⭐ AC-MID-1 —— 缺省（= 线上形状）⇒ 那颗入口**放出来了**，而且 POST 真的被接住
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MID-1 ⭐ `SCAN_MULTI_ITEM_ADD_WIRE` **缺省**（没人配）⇒ 补货 / 退货那两块那颗入口都是**按钮**、POST 被 303 接住', async () => {
+test('AC-MID-1 ⭐ `SCAN_MULTI_ITEM_ADD_WIRE` **缺省**（没人配）⇒ 退货那块那颗入口是**按钮**、POST 被 303 接住', async () => {
   const writeService = makeWriteService();
   const backgroundCalls = [];
   await withServer(makeApp({ writeService, backgroundCalls }), async (base) => {
-    for (const from of ['replenish', 'purchase_return']) {
+    // 🔴 2026-11-27：补货扫码页已删除 ⇒ 只剩**退货**这一块还用多货品草稿
+    for (const from of ['purchase_return']) {
       const html = await getPage(base, { from });
       assert.match(html, /<button type="submit"[^>]*data-multi-add/,
         `🔴 ?from=${from}：缺省（没人配那个开关）⇒ 那颗入口必须是**同表单的 submit 按钮**`

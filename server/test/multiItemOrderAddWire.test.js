@@ -145,7 +145,9 @@ const makeApp = ({ writeService, backgroundCalls = [] }) => {
   return app;
 };
 
-const postForm = (base, body, { query = 'from=replenish', number = NUMBER } = {}) => fetch(
+// 🔴 2026-11-27：补货扫码页已删除 ⇒ 这份「加/删货」判据迁到**退货**页（同一个多货品引擎、
+//   同一套接线；退货就是现在唯一还用多货品草稿的领域）—— **判据强度一个字没降** ✓。
+const postForm = (base, body, { query = 'from=purchase_return', number = NUMBER } = {}) => fetch(
   `${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(number)}?${query}`,
   {
     method: 'POST', redirect: 'manual',
@@ -156,7 +158,7 @@ const postForm = (base, body, { query = 'from=replenish', number = NUMBER } = {}
   },
 );
 
-const getPage = async (base, { query = 'from=replenish', number = NUMBER } = {}) => {
+const getPage = async (base, { query = 'from=purchase_return', number = NUMBER } = {}) => {
   const response = await fetch(
     `${base}${SCAN_PAGE.route.recordBasePath}/${encodeURIComponent(number)}?${query}`,
     { headers: { cookie: sessionCookie() }, signal: AbortSignal.timeout(15_000) },
@@ -184,39 +186,37 @@ const K2 = Object.freeze({
  * ⚠️ 真实流程是**两页**：先扫 K1 填 40 码 2 双再点"加" ⇒ 303 回 K1 页；
  *    再扫 **K2** 那一页（该页 hidden = `[K2, K1]`）填 41 码 3 双再点"加" ✓。
  */
+// 🔴 2026-11-27：只走**退货**链（补货扫码页已删除）。退货没有勾选框字段 ⇒ 每码只提交数量
+//   （数量即选择 ✓，2026-11-08 口径）。
 const addBody = ({
-  number = NUMBER, first = K1, already = [], sizes = ['40'], quantity = '2', chain = 'replenish',
+  number = NUMBER, first = K1, already = [], sizes = ['40'], quantity = '2',
 } = {}) => {
   const params = new URLSearchParams();
   // ⭐ 那颗按钮的 name/value（= 接线给的那份配置 ✓ 不写死）
   params.append(WIRE.addAction, WIRE.addValue);
-  const qtyPrefix = chain === 'replenish'
-    ? SCAN_WRITE.fields.replenishQuantityPrefix : SCAN_WRITE.fields.returnQuantityPrefix;
-  if (chain === 'replenish') {
-    for (const size of sizes) params.append(SCAN_WRITE.fields.replenishSizes, size);
-    params.append(`${qtyPrefix}${sizes[0]}`, quantity);
-  } else {
-    // ⭐ 2026-11-08（「不需要做兼容」）：退货没有勾选框字段 ⇒ 每码只提交数量（数量即选择 ✓）
-    for (const size of sizes) params.append(`${qtyPrefix}${size}`, quantity);
-  }
+  for (const size of sizes) params.append(`${SCAN_WRITE.fields.returnQuantityPrefix}${size}`, quantity);
   // 页面渲出来的 hidden = `[首件, ...已加]`
   params.append('multi_items', multiItemPayloadJson([first, ...already]));
   return params;
 };
 
 const submitBody = ({
-  items, number = NUMBER, sizes = ['41'], quantity = '3', key = 'scan_replenish:x:1',
+  items, number = NUMBER, sizes = ['41'], quantity = '3', key = 'scan_return:x:1',
 } = {}) => {
   const params = new URLSearchParams();
-  params.append(SCAN_WRITE.fields.action, SCAN_WRITE.actions.replenish);
+  params.append(SCAN_WRITE.fields.action, SCAN_WRITE.actions.purchaseReturn);
   params.append(SCAN_WRITE.fields.submitKey, key);
-  for (const size of sizes) params.append(SCAN_WRITE.fields.replenishSizes, size);
-  params.append(`${SCAN_WRITE.fields.replenishQuantityPrefix}${sizes[0]}`, quantity);
+  // ⭐ 退货「整单金额」必填（purchaseAmount.requiredByRealm.return === true）⇒ 判据照旧
+  params.append(SCAN_WRITE.fields.purchaseAmount, '100');
+  // ⭐ 退货可能触发「卖完下架」确认层（本单不退完 ⇒ 这里显式跳过，判据仍只测提交那一路）
+  params.append(SCAN_WRITE.fields.delistConfirmed, '1');
+  params.append('delist_decision', 'skip');
+  for (const size of sizes) params.append(`${SCAN_WRITE.fields.returnQuantityPrefix}${size}`, quantity);
   params.append('multi_items', multiItemPayloadJson(items));
   return params;
 };
 
-const pendingOf = async (writeService, chain = 'replenish') => {
+const pendingOf = async (writeService, chain = 'return') => {
   const session = await writeService.sessions.store.get(writeService.sessions.idOf(OPEN_ID));
   const ordersField = resolveMultiItemOrderConfig({}).session.ordersField;
   return ((session || {})[ordersField] || {})[`${chain}:pending`] || null;
@@ -324,7 +324,8 @@ test('AC-MI-B ⭐⭐ 两件一起提交 ⇒ 引擎 **1 次** · `groups.length =
     const posted = await postForm(base, submitBody({ items: payload, sizes: ['41'], quantity: '3' }));
     assertSubmitToast(posted, '提交要成功');
     // ③ **假写入件被调 1 次**（一批明细 = 一次落库 ✓ 不是两次 ✗）
-    const purchases = writeService.writes.filter((write) => write.fn === 'purchase');
+    // 🔴 2026-11-27：迁到退货页 ⇒ 引擎落库走的是**退货**写入件（fn = 'purchaseReturn'）
+    const purchases = writeService.writes.filter((write) => write.fn === 'purchaseReturn');
     assert.equal(purchases.length, 1, `🔴 引擎那条路**只落一次**（实得 ${purchases.length} 次）`);
     const payloadWritten = purchases[0].payload;
     // ④ **`groups.length === 2` 的落库侧证据**：载荷明细里**两件都在**（`items` = 扁平行 ✓ 引擎形状）

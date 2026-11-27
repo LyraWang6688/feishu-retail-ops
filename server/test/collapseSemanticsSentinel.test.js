@@ -38,21 +38,8 @@ const strip = (source) => source
 const tagsOf = (source, needle) => [...strip(source).matchAll(new RegExp(`<details[^>]*${needle}[^>]*>`, 'g'))]
   .map((match) => match[0]);
 
-test('① 一键补货 `one-tap-replenish`：🔴 **默认收起是她的口径**（外观一个字不改 ✗）', () => {
-  const tags = tagsOf(RAW_SCAN, 'data-view="one-tap-replenish"');
-  assert.equal(tags.length, 1, '恰一处（改结构 ⇒ 红 ✓）');
-  assert.equal(/\sopen(\s|>)/.test(tags[0]), false,
-    '🔴 它**就该是收起**（她 2026-10-16：「补货不用动，因为补货和退货的页面不一样」）⇒ 加 open ⇒ 红 ✓');
-  // ⭐ **闭合标签也要在**（2026-10-16 晚收尾补 · 反向哨兵）—— `tagsOf` 只看**开始标签**，
-  //   少一个 `</details>` 它抓不到：WIP 那一版就把 `</details>` **删错了地方**
-  //   （退货块的没删、**补货块的被删了** ✗）—— 判据取**这一块自己的模板**
-  //   （从它那个 `<details>` 到**本块**的 `</section>`）⇒ 别处有闭合标签**顶不了** ✓
-  const stripped = strip(RAW_SCAN);
-  const at = stripped.indexOf('<details class="disclosure" data-view="one-tap-replenish">');
-  assert.notEqual(at, -1, '开始标签要在（结构变了 ⇒ 红 ✓）');
-  assert.equal(stripped.slice(at, stripped.indexOf('</section>', at)).includes('</details>'), true,
-    '🔴 这一块**自己**的 `</details>` 必须在（少一个 ⇒ 标签不闭合 ⇒ 红 ✓；塞到别处也顶不了 ✓）');
-});
+// 🔴 2026-11-27：补货扫码页整体删除 ⇒ 这条「一键补货 `<details>` 默认收起」的哨兵**只针对补货页**，
+//   随页面一起删除（提交信息里写明）。其余折叠语义判据（退货 / 特殊码 / 已到货 / 工作台）**一条没动** ✓。
 
 test('① 退货 `purchase-return`：**已不再是折叠块**（0 处 `<details>` ⇒ 表单恒可见 ✓ 没有折叠状态可言）', () => {
   // 改前逐字（task-47 那一刀的判据）：

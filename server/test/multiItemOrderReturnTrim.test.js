@@ -206,58 +206,27 @@ test('AC-RT5b 🔴 她这次**没点**的几处一个字都不许动（尺码行
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ⑥ 范围：**退货**那一半逐字不变 —— ⭐⭐ 2026-10-16 **成对迁移**
+// ⑥ 范围：**退货**那一半逐字不变 ＋ 补货那一处已随页面退场（2026-11-27）
 //
-//   改前逐字（本节的用意 = 「她这次**只点了退货** ⇒ 补货那块一个字不许动 ✗」）：
-//     · AC-RT6  『补货块里那句说明 / 那个标题 / 那句空态 **必须还在**』＋
-//                『补货那颗按钮文案照旧 = `生成报货订单`』；
-//     · AC-RT6b 『补货那一处**不传 mode**』（`multiItemBlockHtml(write, view)`）。
-//   改后逐字（依据 = **她 2026-10-16 又点了补货那三处**，逐字：
-//     「这个是**报货的页面，还是需要填写金额啊**，以及**不需要的文字说明给删除**，
-//       **生成报货订单按钮文字改为补货**」）：
-//     ⚠️ 那个"只动退货"的**前提**已经不成立了（她**这一次**点的就是补货 ✓）
-//       ⇒ 本节**翻成"补货也进精简档"**（**不是删掉判据、也不是放宽** ✗ ——
-//         补货那三处与旧按钮名**从"必须有"翻成"必须没有"** = **变强** ✓）。
-//     · AC-RT6  → 补货块：那三处**必须没有** ✓ ＋ 那颗按钮 = 「**补货**」✓；
-//     · AC-RT6b → 两处调用**各自显式传自己那一档** ✓（补货 `'replenish'` / 退货 `'return'`）。
-//   ⭐ 退货那一半的判据（AC-RT1..RT5）**一个字没动**、仍逐字生效 ✓；
-//     补货那三处的**强反向哨兵**（连字段名 / 标签都塞回即红）在**新文件**
-//     `test/replenishTrimThreeFixes.test.js`（AC-RP1 / AC-RP3 / AC-RP4 / AC-RP5）✓。
+//   🔴 2026-11-27：补货扫码页整体删除 ⇒ 原来钉「补货那块也进精简档」的 AC-RT6
+//     **只测补货页** ⇒ 随页面一起删除（提交信息里写明）。退货那一半的判据
+//     AC-RT1..RT5 **一个字没动**、仍逐字生效 ✓。
+//   剩下的源码哨兵 AC-RT6b 翻成**只剩退货一处**，并**反向**钉住「补货那一处不许回来」✓。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-RT6 ⭐ 补货那一块**也**进精简档了（她 2026-10-16 点了它 ⇒ 那三处必须没有 ＋ 按钮 = 「补货」）', async () => {
-  const block = await fetchRealm('replenish');
-  assert.equal(block.includes(OLD_HINT), false, `补货块里那句说明必须**删掉**（塞回即红 ✓）：${OLD_HINT}`);
-  assert.equal(block.includes(TITLE), false, `补货块里那个标题必须**删掉**（塞回即红 ✓）：${TITLE}`);
-  assert.equal(block.includes(OLD_EMPTY), false, `补货块里那句空态必须**删掉**（塞回即红 ✓）：${OLD_EMPTY}`);
-  assert.equal(block.includes('multi-item__title'), false, '那个标题元素也一起删 ✓');
-  assert.equal(block.includes('data-view="multi-item-list"'), false, '空的时候那个列表元素**整块不渲染** ✓');
-  // 改前逐字：`assert.match(block, /生成报货订单/, '补货那颗按钮文案照旧 ✓');`
-  // 改后逐字（依据 = 她 2026-10-16 逐字「**生成报货订单按钮文字改为补货**」）：
-  assert.equal(block.includes('生成报货订单'), false, '🔴 旧按钮名必须没有（塞回即红 ✓）');
-  assert.match(block, /补货<\/button>/, '补货那颗按钮文案 = 「补货」✓（配置里那一句 ✓）');
-});
-
-test('AC-RT6b 🔴 源码哨兵：`multiItemBlockHtml` 的**两处调用各自显式传自己那一档**', () => {
+test('AC-RT6b 🔴 源码哨兵：multiItemBlockHtml 只剩**退货一处**、且显式传自己那一档', () => {
   const calls = RENDERER_SRC.match(/multiItemBlockHtml\(write, view[^)]*\)/g) || [];
-  // 改前逐字：`['multiItemBlockHtml(write, view)', "multiItemBlockHtml(write, view, 'return')"]`
-  //   （补货那一处**不传 mode** = 走缺省 = 那三句照旧画 ✗）
-  // 改后逐字：下面这一行（补货那一处**显式传** `'replenish'` ✓）
-  //   ⚠️ 依据 = 她 2026-10-16 逐字（补货页要删那三句）；**缺省档本身没动** ✓
-  //     （`mode` 缺省 `''` 仍是老形状 ⇒ AC-RT7 的探针照旧靠它 ✓）
-  // ⭐⭐ 2026-10-16（task-61 · **领域内扫一扫**）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
-  //   改前逐字：`assert.deepEqual(calls, ["multiItemBlockHtml(write, view, 'replenish')", "multiItemBlockHtml(write, view, 'return')"])`
-  //   改后逐字：下面这一行 —— 只把**第四个实参 `page`** 算进去（第三个 `mode` **逐字不变** ✓）
-  //   依据 = 她 2026-10-16 14:38 逐字「加一单改为这个领域的扫一扫，与全局扫一扫不同」
-  //     ⇒ 那一发要把**本页领域 / 落点**交给渲染层 ✓
-  //   ⚠️ **不是放宽**：两处、**恰好两处**、每一处**显式传自己那一档**，一个字都没松 ✓
+  // 补货那一处随页面退场（2026-11-27）⇒ 只剩退货这一处，且必须显式传 'return'（走退货的精简档）。
+  // 判据强度不降：数量从 2 翻成 1 的同时，**新增**一条反向哨兵（把补货那一处塞回 ⇒ 红 ✓）。
   assert.deepEqual(calls,
-    ["multiItemBlockHtml(write, view, 'replenish', page)", "multiItemBlockHtml(write, view, 'return', page)"],
-    '补货 / 退货各自显式传自己那一档 ✓ —— 谁把补货那一处改回"不传"（= 又画那三句）⇒ 红 ✓');
+    ["multiItemBlockHtml(write, view, 'return', page)"],
+    '只剩退货一处、且显式传自己那一档 ✓（传空 / 传补货那一档 / 塞回第二处 ⇒ 红 ✓）');
+  assert.equal(RENDERER_SRC.includes("multiItemBlockHtml(write, view, 'replenish'"), false,
+    '🔴 补货扫码页已删除 ⇒ 渲染层不许再有补货那一处调用（塞回 ⇒ 红 ✓）');
   // 配置一处定义：那三句中文只该在 **config** 里（渲染层不许散写 ✗）
   assert.equal(RENDERER_SRC.includes(OLD_HINT), false, '渲染层不许散写那句说明 ✗（走配置 ✓）');
   assert.equal(RENDERER_SRC.includes(OLD_EMPTY), false, '渲染层不许散写那句空态 ✗（走配置 ✓）');
-  assert.equal(MULTI_ITEM_RENDER_TEXTS.hint, OLD_HINT, '配置里那句说明**仍在**（一处定义 ✓ 只是两块都不渲染它 ✓）');
+  assert.equal(MULTI_ITEM_RENDER_TEXTS.hint, OLD_HINT, '配置里那句说明**仍在**（一处定义 ✓ 只是那块不渲染它 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

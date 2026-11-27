@@ -366,12 +366,8 @@ test('AC-R1 【退货】领域里是退货表单：同一 POST 端点 / **填数
       assert.equal(returnHtml.includes(`name="action" value="${SCAN_WRITE.actions.replenish}"`), false,
         '退货那一块里不许混进补货表单（两块已分开）');
 
-      // ② 补货领域（`?from=replenish`）：补货那半照旧（同一个 POST 端点、同形）
-      const replenishHtml = await (await fetch(`${pageUrl}?from=replenish`, { headers: cookie })).text();
-      assert.match(replenishHtml, new RegExp(`name="action" value="${SCAN_WRITE.actions.replenish}"`));
-      assert.match(replenishHtml, /name="sizes" value="41"/);
-      assert.equal(replenishHtml.includes(`name="action" value="${SCAN_WRITE.actions.purchaseReturn}"`), false,
-        '补货那一块里不许混进退货表单（两块已分开）');
+      // 🔴 2026-11-27：补货扫码页整体删除 ⇒ 原来 ② 那半「补货页照旧」**只测补货页**，
+      //   随页面一起退场（提交信息里写明）；退货这一块的判据（① 与下面几条）一条没动 ✓。
     });
   } finally { h.cleanup(); }
 });

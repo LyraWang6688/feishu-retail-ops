@@ -39,51 +39,26 @@ const VIEW = Object.freeze({
   supplier_record_id: 'recSupplierForRenderTest',
 });
 
-test('AC-MIR1 🔴 补货 / 退货**两块都有**那个入口（去掉任一处 ⇒ 红）', () => {
-  // ⭐⭐ 2026-10-16 **成对迁移**（依据：业务负责人真机截图 + 逐字「把最下面的蓝色按钮改为「退货」」
-  //   ＋ 弹窗选择「说明 + 整块都删」）：
-  //   改前逐字：
-  //     `const callSites = rendererSrcText.split('multiItemBlockHtml(write, view)').length - 1;`
-  //   改后逐字：下面这一行（**改指向、不放宽** ✓）——
-  //     ⚠️ 退货那一处现在多传一个 `'return'`（**退货 tab 专用**的精简那一版），
-  //       所以字面量 `multiItemBlockHtml(write, view)` **只剩补货那一处**；
-  //       旧写法把"退货那一处"也数进去 ⇒ 现在会数成 1 ⇒ **假红** ✗。
-  //   ⚠️ 这条的原意一个字没改：**"两块各接一次、少一处就是某一块加不了第二个货品"** ✓
-  //     ⇒ 用**带参数的正则**把两种形状都数上（`[^)]*` 只含 `view` / `, 'return'`，不会跨到别的调用 ✗）。
+test('AC-MIR1 🔴 退货那一块**有**那个入口（去掉 ⇒ 红）＋ 补货那一处**已删**（塞回 ⇒ 红）', () => {
+  // 🔴 2026-11-27：补货扫码页整体删除（业务负责人：「采购页扫一扫要有；其他的补货不需要」）
+  //   ⇒ 这份渲染半判据**只剩退货这一处**：
+  //     · 原意不变：**"那一块必须接上这个入口，不然就加不了第二个货品"** ✓；
+  //     · 调用数从 2 翻成 **1**（补货那一处随页面一起退场）；**反向**钉住"补货那一处不许回来" ✓
+  //       （塞回 ⇒ 红，比原来只数 2 处**多一条**判据）。
   const callSites = (rendererSrcText.match(/multiItemBlockHtml\(write, view[^)]*\)/g) || []).length;
-  assert.equal(callSites, 2,
-    `补货/退货**各一处**调用（实得 ${callSites} 处）—— 少一处就是"某一块加不了第二个货品" ✗`);
-  // 补货块与退货块各自的函数体里都要有（防止两处都塞在同一块里 ✗）
-  const replenish = rendererSrcText.slice(rendererSrcText.indexOf('const replenishFormHtml'),
-    rendererSrcText.indexOf('const sizeRowsHtml'));
+  assert.equal(callSites, 1,
+    `退货**恰一处**调用（实得 ${callSites} 处）—— 退货那块少一处就是"加不了第二个货品" ✗`);
+  assert.equal(rendererSrcText.includes("multiItemBlockHtml(write, view, 'replenish'"), false,
+    '🔴 补货扫码页已删除 ⇒ 渲染层**不许**再有补货那一处调用（塞回 ⇒ 红 ✓）');
   const ret = rendererSrcText.slice(rendererSrcText.indexOf('const returnFormHtml'));
-  assert.ok(/multiItemBlockHtml\(write, view[^)]*\)/.test(replenish), '补货块里必须接这个入口');
   assert.ok(/multiItemBlockHtml\(write, view[^)]*\)/.test(ret), '退货块里必须接这个入口');
-  // 🔴 补货那一处**只许传它自己那一档**（`'replenish'`）——
-  //   ⭐⭐ 2026-10-16 **成对迁移**（依据 = 业务负责人真机截图 · 补货 tab · 货品 832-500 ＋ 逐字：
-  //     「这个是报货的页面，还是需要填写金额啊，以及**不需要的文字说明给删除**，
-  //       **生成报货订单按钮文字改为补货**」）：
-  //   改前逐字：
-  //     `assert.ok(replenish.includes('multiItemBlockHtml(write, view)'),
-  //        '补货那一处**不传 mode** ⇒ 走缺省 = 逐字不变 ✓（传上 \\'return\\' ⇒ 红）');`
-  //     （那时缺省档 = 把说明 / 标题 / 空态**照旧画出来** ⇒ 补货那边要的正是"不传" ✗）
-  //   改后逐字：下面这一行 —— 补货那一处**显式传 `'replenish'`**（= 走**补货自己的**精简档 ✓
-  //     她这一次点的就是补货那三处 ✓）。⚠️ **不是放宽**：原来禁的是"传成 `'return'`"，
-  //     现在钉的是"**必须恰好传 `'replenish'`**"（传空 / 传 `'return'` / 乱传 ⇒ 都红 ✓ 更严 ✓）。
-  //     ⚠️ `mode` 的**缺省档 `''` 本身一个字没动**（仍是老形状 ⇒ AC-RT7 / 本文件 AC-MIR3 的
-  //       子进程探针照旧靠它 ✓）。
-  // ⭐⭐ 2026-10-16（task-61 · **领域内扫一扫**）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
-  //   改前逐字：`assert.ok(rendererSrcText.includes("multiItemBlockHtml(write, view, 'replenish')"))`
-  //     （那一处**只有三个实参**；第三个 = `mode`）
-  //   改后逐字：下面这一行（第三个仍是 `mode` **逐字不变** ✓，只多一个**第四个**实参 `page`）
-  //   依据 = 业务负责人 2026-10-16 14:38 逐字「**加一单改为这个领域的扫一扫，与全局扫一扫不同**」
-  //     ⇒ 「加货回来那一发接着扫」这件事**必须**把这一页的领域 / 落点交给渲染层（`page.realmScan` ✓）。
-  //   ⚠️ **不是放宽**：钉住的仍是"**补货那一处显式传 `'replenish'`**"（传空 / 传 `'return'` ⇒ 红 ✓），
-  //     只是把"紧跟右括号"放宽成"右括号前可能还有一个实参" ✓。
-  assert.match(replenish, /multiItemBlockHtml\(write, view, 'replenish'[^)]*\)/,
-    '补货那一处**显式传自己那一档** `\'replenish\'` ⇒ 走补货的精简版 ✓（传空 / 传 `\'return\'` ⇒ 红 ✓）');
-  assert.equal(/multiItemBlockHtml\(write, view, 'return'/.test(replenish), false,
-    '🔴 补货那一处**绝不许**传 `\'return\'`（那是退货 tab 的档 ⇒ 传错就是"顺手把补货按退货办" ✗）');
+  // 🔴 退货那一处**必须显式传自己那一档** 'return'（= 走退货的精简版；传空 / 传别的 ⇒ 红 ✓）——
+  //   判据原意不变（2026-10-16 真机：退货按钮改字 ＋ 删那三句说明 ⇒ 走 'return' 档），
+  //   只是**补货那一处随页面退场**（2026-11-27）⇒ 这里只钉剩下那一处。
+  assert.match(ret, /multiItemBlockHtml\(write, view, 'return'[^)]*\)/,
+    '退货那一处**显式传自己那一档** \'return\' ⇒ 走退货的精简版 ✓（传空 / 传 \'replenish\' ⇒ 红 ✓）');
+  assert.equal(/multiItemBlockHtml\(write, view, 'replenish'/.test(ret), false,
+    '🔴 退货那一处**绝不许**传 \'replenish\'（补货扫码页已删除 ⇒ 更没有这一档 ✗）');
 
   const html = renderer.multiItemBlockHtml({}, VIEW);
   assert.match(html, /data-multi-add/, '那一块必须有「再加一个货品」的按钮');
@@ -122,7 +97,8 @@ test('AC-MIR2 🔴 载荷是合法 JSON 且形状 = 设计 §4.3（改一个键�
     '键名清单**只此一份**（服务端纯函数与页面脚本共用 ✓）');
 });
 
-test('AC-MIR3 ⭐ N=1 逐字不变：**没有开关** ⇒ 那一块永远渲染、两个表单其余字节不变', () => {
+// 🔴 2026-11-27：补货扫码页已删除 ⇒ 本判据只剩**退货**那一个表单（判据强度不变 ✓）。
+test('AC-MIR3 ⭐ N=1 逐字不变：**没有开关** ⇒ 那一块永远渲染、退货表单其余字节不变', () => {
   // ① ⭐ 2026-10-29 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
   //   改前逐字：`assert.match(rendererSrcText, /if \(!MULTI_ITEM_ORDER\.enabled\) return '';/, …)`
   //   改后逐字：**那道门闸必须不在** ✗（她：「不应该有配置按钮」）＋ 配置上也没有 `enabled` 键
@@ -131,41 +107,32 @@ test('AC-MIR3 ⭐ N=1 逐字不变：**没有开关** ⇒ 那一块永远渲染�
     '🔴 渲染层**不许**再有"开关关 ⇒ 空串"那道门（开关已整件退场 ✗）');
   assert.equal('enabled' in MULTI_ITEM_ORDER, false,
     '🔴 配置上不许再有 `enabled`（一单多货永远开 ✓）');
-  // ② 旧字段**逐字还在**、顺序不变（多货品块仍**插**在"金额行那一格"与提交按钮之间 ✓
-  //    ⚠️ 那一格现在**按配置**渲染 —— 缺省 false ⇒ 页面上看不到金额行，但**位置留着** ✓
-  //      ⇒ 她哪天打开那个开关，金额行仍回到原位（见下面那两条逐字断言 ✓））
+  // ② 退货块旧字段**逐字还在**、顺序不变（多货品块仍**插**在"整单金额行"与提交按钮之间 ✓）
   for (const line of [
-    '${hiddenField(fields.action, write.actions.replenish)}${pageBuildField()}',
-    '${hiddenField(fields.submitKey, write.replenishKey)}',
+    '${hiddenField(fields.action, write.actions.purchaseReturn)}${pageBuildField()}',
+    '${hiddenField(fields.submitKey, write.returnKey)}',
     '${rows}',
   ]) {
-    assert.ok(rendererSrcText.includes(line), `补货块既有字段必须逐字还在：${line}`);
+    assert.ok(rendererSrcText.includes(line), `退货块既有字段必须逐字还在：${line}`);
   }
-  // ⭐⭐ 2026-10-16 **成对迁移**（同一句依据：她真机截图 + 逐字「还是需要填写金额啊」✗
-  //   ＋「不需要的文字说明给删除」）：
-  //   改前逐字（那一行**同时**钉住了"金额行在"＋"入口紧跟在它后面"）：
-  //     `assert.ok(rendererSrcText.includes('${rows}\n${purchaseAmountRowHtml(write)}\n${multiItemBlockHtml(write, view)}\n<button type="submit"'),
-  //        '新块必须**插在**金额行之后、提交按钮之前（既有顺序不动）');`
-  //   改后逐字：下面两行 —— 把"顺序"与"金额行"**拆开**钉（**更严** ✓）：
-  //     ① 补货表单里 **`rows` → 那个多货品块 → 提交按钮** 的**相对顺序**逐字不动 ✓
-  //        （只是中间那一格从"金额行"换成"**按配置的金额行插槽**"—— 缺省 `false` ⇒ 渲染出来是空 ✗
-  //          但**源码里那一格还在**：她哪天把 `SCAN_PAGE_REPLENISH_AMOUNT_ROW_ENABLED` 打开，
-  //          金额行仍然**回到原位**（在 `rows` 之后、多货品块之前）✓ —— 这就是"顺序不动"的真意 ✓）；
-  //     ② 补货块的**金额行插槽确实按配置**（不是被删掉了 ✗）。
-  //   ⚠️ 依据里的"既有顺序不动"**一个字没放宽**：上面①把三件的相对顺序逐字钉住了 ✓。
-  // ⭐⭐ 2026-10-16（task-61 · **领域内扫一扫**）**成对迁移**（改前逐字 → 改后逐字 → 依据）：
-  //   改前逐字：`assert.ok(rendererSrcText.includes("multiItemBlockHtml(write, view, 'replenish')"))`
-  //     （那一处**只有三个实参**；第三个 = `mode`）
-  //   改后逐字：下面这一行（第三个仍是 `mode` **逐字不变** ✓，只多一个**第四个**实参 `page`）
-  //   依据 = 业务负责人 2026-10-16 14:38 逐字「**加一单改为这个领域的扫一扫，与全局扫一扫不同**」
-  //     ⇒ 「加货回来那一发接着扫」这件事**必须**把这一页的领域 / 落点交给渲染层（`page.realmScan` ✓）。
-  //   ⚠️ **不是放宽**：钉住的仍是"**补货那一处显式传 `'replenish'`**"（传空 / 传 `'return'` ⇒ 红 ✓），
-  //     只是把"紧跟右括号"放宽成"右括号前可能还有一个实参" ✓。
-  assert.match(rendererSrcText,
-    /\$\{rows\}\n\$\{rp\.amountRow \? purchaseAmountRowHtml\(write\) : ''\}\n\$\{multiItemBlockHtml\(write, view, 'replenish'[^)]*\)\}\n<button type="submit"/,
-    '补货表单的顺序必须仍是 **`rows` → 金额行那一格 → 多货品块 → 提交按钮**（既有顺序不动 ✓）');
-  assert.ok(rendererSrcText.includes("${rp.amountRow ? purchaseAmountRowHtml(write) : ''}"),
-    '⭐ 中间那一格必须**按配置**决定画不画（缺省 false ⇒ 她截图上那个框不再出现 ✓）');
+  // 🔴 2026-11-27：补货扫码页已删除 ⇒ 补货那套字段（actions.replenish / replenishKey）**不许回来**
+  for (const gone of [
+    '${hiddenField(fields.action, write.actions.replenish)}${pageBuildField()}',
+    '${hiddenField(fields.submitKey, write.replenishKey)}',
+  ]) {
+    assert.equal(rendererSrcText.includes(gone), false, `补货块已删除 ⇒ 这段字段不许回来：${gone}`);
+  }
+  // ③ 顺序：退货表单里 **rows → 整单金额行 → 多货品块 → 提交按钮**（相对顺序不动 ✓）
+  const returnSrc = rendererSrcText.slice(rendererSrcText.indexOf('const returnFormHtml'));
+  const atRows = returnSrc.indexOf('${rows}');
+  const atAmount = returnSrc.indexOf('${purchaseAmountRowHtml(write)}');
+  const atMulti = returnSrc.indexOf("multiItemBlockHtml(write, view, 'return'");
+  const atButton = returnSrc.indexOf('<button type="submit"');
+  assert.ok(atRows >= 0 && atAmount > atRows && atMulti > atAmount && atButton > atMulti,
+    '退货表单的顺序必须仍是 **rows → 整单金额行 → 多货品块 → 提交按钮**（既有顺序不动 ✓）');
+  // 🔴 补货那套"按配置的画不画"随页面退场 ⇒ 渲染层不许再有 rp.amountRow
+  assert.equal(rendererSrcText.includes('rp.amountRow'), false,
+    '补货扫码页已删除 ⇒ 渲染层不许再有那个补货专用的金额行开关（塞回 ⇒ 红 ✓）');
   // ③ ⭐⭐ 2026-10-29 **成对迁移**（改前逐字 → 改后逐字 → 依据）：
   //   改前逐字：子进程 `SCAN_MULTI_ITEM_ENABLED=false` ⇒ `out.html === ''`（开关关 = 空串）
   //   改后逐字：子进程里**没有开关** ⇒ 配置上没有 `enabled` 键、那一块**照常渲染**（非空）
