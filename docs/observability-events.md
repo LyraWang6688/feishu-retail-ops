@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **568** 个事件。按前缀分组：
+共 **566** 个事件。按前缀分组：
 
 ## accessory
 
@@ -754,8 +754,6 @@
 | `workbench.staff.clock.out` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.clock.out.failed` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.list.failed` | 1 | src/routes/workbench/staff.js |
-| `workbench.staff.update.failed` | 1 | src/routes/workbench/staff.js |
-| `workbench.staff.updated` | 1 | src/routes/workbench/staff.js |
 
 ## write_audit
 
