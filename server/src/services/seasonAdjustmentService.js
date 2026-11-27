@@ -86,7 +86,10 @@ const createSeasonAdjustmentService = ({ inventory, store, config = SEASON_ADJUS
         return strictLinkedRecordIds(f[liveFields().product]).includes(change.productRecordId)
           && strictLinkedRecordIds(f[liveFields().size]).includes(ref.recordId)
           && textValue(f[liveFields().state]).trim() === change.state
-          && f[liveFields().season] === change.currentSeason;
+          // ⭐ 2026-11-27（业务负责人确认）：**空 = 非当季** —— 「当季」复选框在真表里没勾过就是
+          //   空值（null），不是 false。严格 `=== false` 会把这批行全漏掉 ⇒ 她勾了也报「库存不足」。
+          //   ⇒ 按**布尔语义**比：空 / false 都算非当季，true 才算当季。
+          && Boolean(f[liveFields().season]) === change.currentSeason;
       });
       if (matched.length < change.quantity) {
         return { ok: false, code: 'stock_shortage', details: { size: change.size, state: change.state, need: change.quantity, have: matched.length } };
