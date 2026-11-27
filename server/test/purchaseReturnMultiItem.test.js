@@ -550,6 +550,36 @@ test('AC-RS1b ⭐ 未标注供应商单独一个退货批次（不塞进有供�
   } finally { h.cleanup(); }
 });
 
+
+test('AC-RS1c ⭐ 当前页最后一双直接提交：60 + 已加 120 = 180，图片逐件 60 / 120', async () => {
+  login();
+  const h = createHarness();
+  try {
+    const submitKey = await returnKey(h);
+    await withServer(formApp(h), async (base) => {
+      await postReturn(base, {
+        form: { submitKey, return_qty_41: '1', purchase_amount: '60' },
+        multiItems: [
+          // 当前页（最后一双）不点加货；金额只来自 purchase_amount=60
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', entries: [] },
+          // 之前加货时存的金额
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 12000, entries: [{ size: '41', quantity: '1' }] },
+        ],
+      });
+      await waitForPendingPurchaseBackgrounds();
+    });
+    const batches = entriesOf(h, 'purchaseOrderBatch');
+    assert.equal(batches.length, 1, '同一供应商 ⇒ 一个批次');
+    assert.equal(Number(batches[0].fields['货单金额']), 180, '整批 = 当前页 60 + 已加 120');
+    assert.equal(h.renders.length, 1);
+    assert.deepEqual(
+      h.renders[0].items.map((item) => [item.item_no, item.amount_cents]),
+      [['KA', 6000], ['KB', 12000]],
+      '图片逐件取自己的金额，不用整批金额兜底',
+    );
+  } finally { h.cleanup(); }
+});
+
 test('AC-RS2 🔴 单货品退货 ⇒ 与今天**逐字一致**（载荷 `deepEqual` ＋ 渲染/主表/单据各 1 ＋ 明细幂等键逐字）', async () => {
   const h = createHarness();
   try {
@@ -680,8 +710,8 @@ test('AC-RS4 🔴 幂等：同一组重复生成 ⇒ 图 +0 · 群消息 +0 · �
         order_key: 'scan_return:x:rs4',
         order_amount: '399',
         items: [
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 19900, entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 20000, entries: [{ size: 41, quantity: 1 }] },
         ],
       },
       chainConfig: MULTI_ITEM_ORDER.chains.return,
@@ -718,8 +748,8 @@ test('AC-RS4b 探针：判据不是空跑 —— 把「单据」里那张图拿�
         order_key: 'scan_return:x:rs4b',
         order_amount: '399',
         items: [
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 19900, entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 20000, entries: [{ size: 41, quantity: 1 }] },
         ],
       },
       chainConfig: MULTI_ITEM_ORDER.chains.return,
@@ -754,8 +784,8 @@ test('AC-RS5 🔴 多货品退货 ⇒ 扣库存**逐条正确**（每个货品�
         items: [
           // A：41 码退 2（库存恰好 2）、42 码退 1（库存 1）；B：41 码退 1（库存 1）
           // 2026-11-27：一个批次一个供应商 ⇒ 两个货品同属甲供应商。
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 2 }, { size: 42, quantity: 1 }] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 20000, entries: [{ size: 41, quantity: 2 }, { size: 42, quantity: 1 }] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', amount_cents: 10000, entries: [{ size: 41, quantity: 1 }] },
         ],
       },
       chainConfig: MULTI_ITEM_ORDER.chains.return,

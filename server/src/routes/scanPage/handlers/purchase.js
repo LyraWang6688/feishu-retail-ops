@@ -182,6 +182,13 @@ async function handlePurchaseReturn(ctx) {
         // 2026-11-27：多货品退货按唯一 record ID 汇总各页金额（分）；
         // 缺任何一件 ⇒ 当场 400，绝不按 0 或只取最后一页。
         const currentReturnAmount = String(body[fields.purchaseAmount] ?? '').trim();
+        // 2026-11-27：当前页是最后一双时，她不会点「加货」，直接提交。
+        // 必须把当前页金额写回**当前 record ID**；只写整批 order_amount 会让出图
+        // 对当前这件取不到金额，回退成整批合计（如 60182 应 60，却显示 180）。
+        if (groups.length > 1 && String(currentReturnAmount).trim() !== '') {
+          const currentCents = toCents(currentReturnAmount);
+          if (currentCents !== null) groups[0].amount_cents = currentCents;
+        }
         const amountSum = groups.length > 1
           ? sumReturnAmountCents(groups, currentReturnAmount)
           : { ok: true, totalCents: toCents(currentReturnAmount) };

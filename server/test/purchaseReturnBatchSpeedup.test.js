@@ -731,7 +731,7 @@ test('AC-RB0 旧任务（无商品身份）不允许复用：同 ID 新退货草
       plan: { version: 1, batch_no: 'CGD-OLD-0001', items: [{ size: 41, declared: 1, available: 1, taken: 1, shortfall: 0 }] },
     });
     const newDraft = draftFor([[41, 1]], {
-      product_record_id: '', items: [{ size: 41, quantity: 1, product_record_id: 'prod_1' }], order_amount: '399',
+      product_record_id: '', items: [{ size: 41, quantity: 1, product_record_id: 'prod_1', amount_cents: 39900 }], order_amount: '399',
     });
     const result = await h.purchaseReturn.submit(taskId, newDraft);
     assert.notEqual(result.batch_no, 'CGD-OLD-0001', '必须用新计划/新批次，不许复用旧任务');
