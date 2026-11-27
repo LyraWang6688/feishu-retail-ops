@@ -19,7 +19,7 @@
  *
  * 🔴 四条纪律（Lead 2026-10-16 派活逐字）：
  *   ① **不许一个领域一个领域地补** ✗ —— 新入口一律走同一处件、只传上面那两个参数；
- *      要加第 6 处 ⇒ **先在本表登记**（`placeById` 认不出就**当场抛**，不猜 ✗）；
+ *      要加新的一处 ⇒ **先在本表登记**（`placeById` 认不出就**当场抛**，不猜 ✗）；
  *   ② **配置先行**：哪处用哪套 / 带不带 / 文案 ⇒ 全在这里（**显式布尔** ✓ **禁 `||` 兜底** ✗，
  *      取值走 `config/envValue.js` 那一套规则）；
  *   ③ 本文件**不认识打印 / 采购 / 销售**这些词 —— 它只回答"这一处是怎么个扫法" ✓
@@ -37,7 +37,7 @@ const MECHANISMS = Object.freeze({ jsapi: 'jsapi', applink: 'applink' });
 const MODES = Object.freeze({ standalone: 'standalone', withinRealm: 'withinRealm' });
 
 /**
- * 六处登记表（①标签打印 ②扫码页领域条 ③工作台扫一扫 ④销售再加 ⑤补货再加 ⑥退货再加）。
+ * 五处登记表（①标签打印 ②扫码页领域条 ③工作台扫一扫 ④销售再加 ⑤退货再加）。
  * ⚠️ 每一行都**必须**写明 `mechanism` / `mode` / `returnsToRealm` 三个键
  *   —— 少了任何一个，`test/scanFivePlaces.test.js` 会红（"新入口忘了登记参数"）。
  */
@@ -70,14 +70,6 @@ const PLACES = Object.freeze([
     id: 'sales-add',
     label: '销售 · 再加一单',
     realm: 'sales',
-    mechanism: MECHANISMS.jsapi,
-    mode: MODES.withinRealm,
-    returnsToRealm: true,
-  }),
-  Object.freeze({
-    id: 'replenish-add',
-    label: '补货 · 再加一单',
-    realm: 'replenish',
     mechanism: MECHANISMS.jsapi,
     mode: MODES.withinRealm,
     returnsToRealm: true,
