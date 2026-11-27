@@ -77,7 +77,11 @@ const SIZE_GROUP_RANGES = SCAN_STOCK_POLICY.sizes.ranges;
 const REALMS = Object.freeze([
   // ⭐⭐ 2026-10-14（业务负责人最终口径，逐字）：「销售 · 补货 · 库存 · 退货 · 配品 · 上新」
   Object.freeze({ id: 'sales', label: '销售' }),
-  Object.freeze({ id: 'replenish', label: '补货' }),
+  // 🔴 2026-11-27：**补货扫码页整体删除**（业务负责人：「采购页扫一扫要有；其他的补货不需要」）
+  //   ⇒ REALMS 里的 `replenish` 项、`REPLENISH_REALM`、`REALM_EMPTY_TEXT_KEYS.replenish`
+  //     与 `views/scanPage/replenishBlock.js` 一起退场；旧 `?from=replenish` 按既有口径
+  //     「认不出的值一律回落缺省（库存）」✓（不报错、不白屏）。
+  //   ⚠️ `REALM_SIZE_BEHAVIOR.replenish` **保留** —— 退货（`returnBlock`）还在用 `purchaseSizeLines`。
   Object.freeze({ id: 'inventory', label: '库存' }),
   // ⭐ 「退货」**回到条上**（内部 id `purchase_return` 保留 ✓ 原来 label 被"配品"占着 ⇒ 改回"退货" ✓）
   Object.freeze({ id: 'purchase_return', label: '退货' }),
@@ -117,14 +121,14 @@ const DEFAULT_REALM = 'inventory';
 //   改后逐字：**这一行删掉**（注释同步改成"两个"）
 //   依据：`accept` 已从 REALMS 退场（她：「`/s/accept` 这条路要彻底拆掉」）⇒ 这个常量**没有活引用**
 //        （只在这句注释与一句测试注释里出现过）⇒ 留着就是"指向一个不存在的领域"✗。
-const REPLENISH_REALM = 'replenish';
+// 🔴 2026-11-27：`REPLENISH_REALM` 随补货扫码页一起删除（领域已退场）。
 const PURCHASE_RETURN_REALM = 'purchase_return';
 const NEW_REALM = 'new'; // ⭐ 2026-10-13：「上新」= **外链 tab**（不是页面领域）
 
 /** 领域 id → 它"空态"时那句人话的配置键（`config/scanPage.js` 的文案）。 */
 const REALM_EMPTY_TEXT_KEYS = Object.freeze({
   sales: 'realmEmptySalesBody',
-  replenish: 'realmEmptyPurchaseBody',
+  // 🔴 2026-11-27：`replenish: 'realmEmptyPurchaseBody'` 随补货扫码页一起删除（领域已退场）。
   // ⭐ 2026-10-14 晚：退货用自己的人话 ✓（配品那句随配品一起搬去工作台 ✓）
   purchase_return: 'realmEmptyReturnBody',
   // ⭐⭐ 2026-10-14 晚 cut B：`accept: 'realmEmptyAcceptanceBody'` **删掉**（改前逐字即这一行）
@@ -374,7 +378,6 @@ const resolveRealm = (value) => {
 module.exports = {
   REALMS,
   DEFAULT_REALM,
-  REPLENISH_REALM,
   PURCHASE_RETURN_REALM,
   REALM_TABS,
   NEW_REALM,

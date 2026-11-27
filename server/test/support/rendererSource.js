@@ -3,7 +3,7 @@
  *
  * 为什么需要它：`views/scanPageRenderer.js` 被拆进了 `views/scanPage/*.js`，
  *   而**几十条判据是按"源码文本"钉行为的**（例：数 `multiItemBlockHtml(write, view…)` 出现几次、
- *   从 `indexOf('const multiItemBlockHtml')` 切到 `indexOf('const replenishFormHtml')`、
+ *   从 `indexOf('const multiItemBlockHtml')` 切到 `indexOf('const returnFormHtml')`、
  *   正则找某条 CSS 规则、`includes("require('./scanPageRealm')")`…）。
  *
  * 🔴 那些判据**一条都不许放宽**（拆分是**纯搬运** ⇒ 它们本来就该照旧成立 ✓）。
@@ -30,7 +30,6 @@ const ORDER = [
   'script.js',
   'paymentBlock.js',
   'multiItemBlock.js',
-  'replenishBlock.js',
   'returnBlock.js',
   'realmBlock.js',
   'index.js',

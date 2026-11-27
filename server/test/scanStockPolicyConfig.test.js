@@ -156,8 +156,10 @@ test('AC-STP3 ⭐⭐ 「有货」判定只有一处：视图层只转发，一�
     'realm 里只有**两处调用**同一个判据（销售分组 ＋ 补货/退货清单）');
   const returnBlock = stripComments(readSrc('views/scanPage/returnBlock.js'));
   assert.match(returnBlock, /purchaseSizeLines\(view\)/, '退货页的清单也从同一处来（`purchaseSizeLines`）');
-  const replenishBlock = stripComments(readSrc('views/scanPage/replenishBlock.js'));
-  assert.match(replenishBlock, /purchaseSizeLines\(view\)/, '补货页的清单也从同一处来（`purchaseSizeLines`）');
+  // 🔴 2026-11-27：补货扫码页整体删除 ⇒ `replenishBlock.js` 不再存在（读它会抛错）——
+  //   本判据**反向**钉住"那份文件不许回来"；正向的等价判据 = 上面退货那一行（同一处 `purchaseSizeLines`）✓。
+  assert.equal(fs.existsSync(path.join(SRC, 'views', 'scanPage', 'replenishBlock.js')), false,
+    '补货扫码页已删除 ⇒ `views/scanPage/replenishBlock.js` 不许回来（塞回 ⇒ 红 ✓）');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

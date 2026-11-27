@@ -14,7 +14,7 @@ const { rendererSource } = require('./support/rendererSource');
  * 判据（能真红）：
  *   AC-RF1a 🔴 渲染出来的退货块那个 `<details>` **必须带 `open`**（去掉 ⇒ 红 ✓）
  *   AC-RF1b 🔴 **首屏**就能在自己的板块里看到：尺码行 + 整单金额 + 生成按钮 ✓
- *   AC-RF1c ⭐ **不改别人**：`一键补货` 那个同形 `<details>` **仍按原样**（这一刀不动它 ✗）
+ *   AC-RF1c 🔴 退货那个 `<details>` 已删（塞回 ⇒ 红）✓
  */
 
 const test = require('node:test');
@@ -112,10 +112,10 @@ test('AC-RF1b 🔴 **首屏**即见：尺码行 + 整单金额 + 生成按钮（
   assert.match(block, /data-view="return-stock"/, '每行那个"当前库存数量"列也在 ✓');
 });
 
-test('AC-RF1c ⭐ 这一刀**只动退货那一个**：一键补货的同形 `<details>` 仍按原样（不改它 ✗）', () => {
+test('AC-RF1c ⭐ 这一刀**只动退货那一个**：退货那个 `<details>` 已删（塞回 ⇒ 红 ✓）', () => {
   const source = rendererSource();
-  assert.match(source, /<details class="disclosure" data-view="one-tap-replenish">/,
-    '「一键补货」那个 `<details>` 这一刀**不许动** ✗（Lead 另去问她要不要一起改 ✓）');
+  // 🔴 2026-11-27：补货扫码页整体删除 ⇒ 原来那句「一键补货的 `<details>` 不许动」**只针对补货页**，
+  //   随页面一起退场；本判据剩下的那一半（退货那个 `<details>` 已删 ⇒ 塞回即红）**原样保留** ✓。
   // 改前逐字（上一刀）：assert.match(source, /<details class="disclosure" data-view="purchase-return" open>/,
   //   '退货那个才是本刀改的 ✓');
   // 改前逐字（本刀第一版 · **假红**）：

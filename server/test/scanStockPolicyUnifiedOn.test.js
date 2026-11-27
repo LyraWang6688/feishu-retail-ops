@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * ⭐⭐⭐ **四页统一库存口径 —— 开关「开着」那条路的证据用例**（业务负责人 2026-10-16 20:5x 亲口定的口径）。
+ * ⭐⭐⭐ **三页统一库存口径 —— 开关「开着」那条路的证据用例**（业务负责人 2026-10-16 20:5x 亲口定的口径）。
  *
  *   「既然四个页面用的都是**实时库存**，那就**统一不用看状态**，只要在实时库存里
  *    **这个编号有尺码记录，就都是有货**……也就是说**口径和库存是一样的了**。
@@ -9,12 +9,12 @@
  *    我们之前有个规定要分**普通码和特殊码**：**普通码有货无货都要展示出来，特殊码无货时则折叠**」
  *
  * ─────────────────────────────────────────────────────────────────────────
- *  AC-ST5 **一致性（核心）**：**同一份实时库存** ⇒ 四页的「有货」集合**完全一致**
- *          （库存页那一行的合计 ＝ 销售页现货段 ＝ 补货页现货 tag ＝ 退货页列出的尺码）。
- *  AC-ST6 **她那把 44 码复刻**：44 码只有「未标状态」= 1 ⇒ **四页都必须认为它有货**
+ *  AC-ST5 **一致性（核心）**：**同一份实时库存** ⇒ 三页的「有货」集合**完全一致**
+ *          （库存页那一行的合计 ＝ 销售页现货段 ＝ 退货页列出的尺码）。
+ *  AC-ST6 **她那把 44 码复刻**：44 码只有「未标状态」= 1 ⇒ **三页都必须认为它有货**
  *          （销售页把它放进「有货（现货）」；补货页不再 `0 双/缺码`；退货页允许退）。
  *  AC-ST8 **展示规则**：**普通码有货无货都展示** · **特殊码无货折叠**（有货的特殊码照旧全展示）。
- *  AC-ST9 **同一份数据的 total 相同**：库存页标题「共 N 双」＝ 补货页逐格「N 双」之和 ＝ 视图模型 `total`。
+ *  AC-ST9 **同一份数据的 total 相同**：库存页标题「共 N 双」＝ 退货页各行库存数量之和 ＝ 视图模型 `total`。
  *
  * 🔴 **本文件在 require 之前把 `SCAN_STOCK_POLICY_ENABLED` 设成 `true`** ——
  *    `node --test` 每个测试文件跑在**独立进程**里 ⇒ 不会污染别的文件（缺省那条路见
@@ -49,24 +49,8 @@ const salesGroupSizes = (html, group) => {
   return [...b.slice(start, end).matchAll(/name="size" value="(\d+)"/g)].map((m) => m[1]);
 };
 
-/** 补货页每个格子的「尺码 → 数量」（主列表 + 折叠块都算）。 */
-const replenishCells = (html) => {
-  const b = fx.blockOf(html, 'replenish');
-  const cells = [...b.matchAll(/<li class="purchase-size-cell[^"]*" data-purchase-size="(\d+)">([\s\S]*?)<\/li>/g)];
-  return cells.map((m) => {
-    const amount = /<span class="purchase-size__times">×<\/span>(\d+) 双/.exec(m[2]);
-    const tag = /<span class="tag tag--\w+">([^<]+)<\/span>/.exec(m[2]);
-    return { size: m[1], count: Number(amount ? amount[1] : NaN), tag: tag ? tag[1] : '' };
-  });
-};
+// 🔴 2026-11-27：补货扫码页整体删除 ⇒ 原来那两个只读补货页 HTML 的 helper（replenishCells / replenishFoldedSizes）随页面一起退场。
 
-/** 补货页折叠块里的尺码（`data-special-fold` 那一段）。 */
-const replenishFoldedSizes = (html) => {
-  const b = fx.blockOf(html, 'replenish');
-  const start = b.indexOf('data-special-fold');
-  if (start < 0) return [];
-  return [...b.slice(start, b.indexOf('</details>', start)).matchAll(/data-purchase-size="(\d+)"/g)].map((m) => m[1]);
-};
 
 /** 库存页表体：尺码 → 那一行数字格之和（`—` 记 0）。 */
 const inventoryRows = (html) => {
@@ -175,40 +159,34 @@ test('AC-ST5-pre ⭐ **已经没有任何开关**（所以本文件不再需要"
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-ST5 ⭐⭐ 核心：同一份实时库存 ⇒ 四页「有货」集合完全一致
+// AC-ST5 ⭐⭐ 核心：同一份实时库存 ⇒ 三页「有货」集合完全一致
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ST5 ⭐⭐ 同一份实时库存 ⇒ 四页的"有货"集合**完全一致**（含仓库 + 未标状态）', () => {
+test('AC-ST5 ⭐⭐ 同一份实时库存 ⇒ 三页的"有货"集合**完全一致**（含仓库 + 未标状态）', () => {
   const view = MIXED_A_VIEW;
   // ① 判据集合 = 实时库存里有记录的尺码（**不看状态**）
   const criterion = setOf(view.rows.filter((row) => countInStockOf(row, view.columns) > 0).map((row) => row.size_text));
   assert.deepEqual(criterion, ['40', '42', '43', '44', '46'],
     '判据：40/42（门盒样品）+ 43（**仓库**）+ 44（**未标状态**）+ 46（特殊码有货）—— 统一不看状态 ✓');
 
-  // ② 四页各自渲染出来的「有货」集合
+  // ② 三页各自渲染出来的「有货」集合
   const salesHtml = page(view, 'sales');
-  const replenishHtml = page(view, 'replenish');
   const returnHtml = page(view, 'purchase_return');
   const inventoryHtml = page(view, 'inventory');
 
   const inventoryInStock = setOf(inventoryRows(inventoryHtml).filter((row) => row.total > 0).map((row) => row.size));
   assert.deepEqual(inventoryInStock, criterion, '库存页：那一行四种状态的合计 > 0 ⇒ 有货（**基线**）');
   assert.deepEqual(setOf(salesGroupSizes(salesHtml, 'in_stock')), criterion, '销售页「有货（现货）」段');
-  assert.deepEqual(setOf(replenishCells(replenishHtml).filter((cell) => cell.tag === '现货').map((cell) => cell.size)),
-    criterion, '补货页带「现货」tag 的格子');
   assert.deepEqual(setOf(returnSizes(returnHtml)), criterion, '退货页列出的尺码（可退）');
 
-  // ③ 🔴 四页**必须**彼此相同（这才是她说的"口径和库存是一样的了"）
+  // ③ 🔴 三页**必须**彼此相同（这才是她说的"口径和库存是一样的了"）
   assert.deepEqual(setOf(salesGroupSizes(salesHtml, 'in_stock')), inventoryInStock, '销售 ⇔ 库存');
-  assert.deepEqual(setOf(replenishCells(replenishHtml).filter((c) => c.tag === '现货').map((c) => c.size)),
-    inventoryInStock, '补货 ⇔ 库存');
   assert.deepEqual(setOf(returnSizes(returnHtml)), inventoryInStock, '退货 ⇔ 库存');
 
-  // ④ 「仓库」那一行（43）与「未标状态」那一行（44）**四页都必须算它有货**
+  // ④ 「仓库」那一行（43）与「未标状态」那一行（44）**三页都必须算它有货**
   //    （这正是她 2026-10-16 要的；旧口径下这两行三页都说"没有" ⇒ 打架 ✗）
   for (const [label, set] of [
     ['销售页', setOf(salesGroupSizes(salesHtml, 'in_stock'))],
-    ['补货页', setOf(replenishCells(replenishHtml).filter((c) => c.tag === '现货').map((c) => c.size))],
     ['退货页', setOf(returnSizes(returnHtml))],
     ['库存页', inventoryInStock],
   ]) {
@@ -235,13 +213,12 @@ test('AC-ST5 ⭐⭐ 同一份实时库存 ⇒ 四页的"有货"集合**完全一
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-ST6 ⭐⭐ 她那把 44 码复刻（只有「未标状态」= 1 ⇒ 四页都必须认为它有货）
+// AC-ST6 ⭐⭐ 她那把 44 码复刻（只有「未标状态」= 1 ⇒ 三页都必须认为它有货）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ST6 ⭐⭐ 她的 44 码（只有「未标状态」= 1）⇒ 四页都说有货', () => {
+test('AC-ST6 ⭐⭐ 她的 44 码（只有「未标状态」= 1）⇒ 三页都说有货', () => {
   const view = HER_44_VIEW;
   const salesHtml = page(view, 'sales');
-  const replenishHtml = page(view, 'replenish');
   const returnHtml = page(view, 'purchase_return');
   const inventoryHtml = page(view, 'inventory');
 
@@ -251,14 +228,7 @@ test('AC-ST6 ⭐⭐ 她的 44 码（只有「未标状态」= 1）⇒ 四页都�
   assert.equal(salesGroupSizes(salesHtml, 'prepaid').includes('44'), false, '44 **不再**在预订段');
   assert.equal(salesHtml.includes('这一款现在没有可选的尺码'), false, '**不再**写"这一款现在没有可选的尺码"');
 
-  // ② 补货页：44 显示 `1 双` + 「现货」tag（改前是 `0 双` + 「缺码」✗）
-  const cell44 = replenishCells(replenishHtml).find((cell) => cell.size === '44');
-  assert.deepEqual(cell44, { size: '44', count: 1, tag: '现货' }, '补货页 44 = `1 双` + 现货 tag');
-  // ⚠️ 只查 **44 那一格**（不许拿"44 之后还有没有 `0 双`"当判据 —— 45/46/47/48 本来就有 ✓）
-  const cell44Html = /<li class="purchase-size-cell[^"]*" data-purchase-size="44">([\s\S]*?)<\/li>/
-    .exec(fx.blockOf(replenishHtml, 'replenish'))[1];
-  assert.equal(cell44Html.includes('0 双'), false, '44 那一格不许再出现 `0 双`');
-  assert.equal(cell44Html.includes('>缺码<'), false, '44 那一格不许再标「缺码」');
+  // 🔴 2026-11-27：补货扫码页已删除 ⇒ 补货页 44 那一格的断言随页面退场；销售 / 退货 / 库存三条判据一条没动 ✓。
 
   // ③ 退货页：允许退 44（改前整款写"没有可退的库存" ✗）
   assert.deepEqual(setOf(returnSizes(returnHtml)), ['44'], '退货页列出 44（有数量 ⇒ 可退 ✓）');
@@ -273,7 +243,7 @@ test('AC-ST6 ⭐⭐ 她的 44 码（只有「未标状态」= 1）⇒ 四页都�
 
   // ⑤ 判据集合 = {44}
   assert.deepEqual(setOf(view.rows.filter((row) => countInStockOf(row, view.columns) > 0).map((row) => row.size_text)),
-    ['44'], '四页共用的判据：只有 44 有货');
+    ['44'], '三页共用的判据：只有 44 有货');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -290,36 +260,29 @@ test('AC-ST8 ⭐⭐ 普通码（A 38–44 / B 36–41）**有货无货都展示*
     const normal = normalSizesOf(code).map(String);
     const special = specialSizesOf(code).map(String);
     const salesHtml = page(view, 'sales');
-    const replenishHtml = page(view, 'replenish');
     const inventoryHtml = page(view, 'inventory');
 
     // ① **普通码：有货无货都展示** —— 一个都不许消失 ✗（销售：现货段 ∪ 预订段）
     const salesVisible = setOf([...salesGroupSizes(salesHtml, 'in_stock'), ...salesGroupSizes(salesHtml, 'prepaid')]);
-    const replenishVisible = setOf(replenishCells(replenishHtml).filter((c) => !replenishFoldedSizes(replenishHtml).includes(c.size)).map((c) => c.size));
     const inventoryVisible = setOf([...inventoryRows(inventoryHtml).map((r) => r.size), ...inventoryFoldedSizes(inventoryHtml)]);
     for (const size of normal) {
       assert.ok(salesVisible.includes(size), `${code} 普通码 ${size} 必须在销售页可见（有货无货都展示 ✓）`);
-      assert.ok(replenishVisible.includes(size), `${code} 普通码 ${size} 必须在补货页可见`);
       assert.ok(inventoryVisible.includes(size), `${code} 普通码 ${size} 必须在库存页可见`);
     }
     // 无货的普通码**不进折叠块**（它们要"摆出来"）
     for (const size of normal.filter((size) => !stocked.includes(size))) {
       assert.equal(salesGroupSizes(salesHtml, 'folded').includes(size), false, `无货普通码 ${size} 不进销售折叠块`);
-      assert.equal(replenishFoldedSizes(replenishHtml).includes(size), false, `无货普通码 ${size} 不进补货折叠块`);
       assert.equal(inventoryFoldedSizes(inventoryHtml).includes(size), false, `无货普通码 ${size} 不进库存折叠块`);
       assert.ok(salesGroupSizes(salesHtml, 'prepaid').includes(size), `无货普通码 ${size} 在"预订"段（展示出来 ✓）`);
     }
 
-    // ② **特殊码：无货时折叠**（三页都有它的折叠块），**有货的照旧全展示**
+    // ② **特殊码：无货时折叠**（销售 / 库存两页都有它的折叠块），**有货的照旧全展示**
     const specialOutOfStock = special.filter((size) => !stocked.includes(size));
     const specialInStock = special.filter((size) => stocked.includes(size));
     assert.deepEqual(setOf(salesGroupSizes(salesHtml, 'folded')), setOf(specialOutOfStock), '销售页折叠块 = 无货的特殊码');
-    assert.deepEqual(setOf(replenishFoldedSizes(replenishHtml)), setOf(specialOutOfStock), '补货页折叠块 = 无货的特殊码');
     assert.deepEqual(setOf(inventoryFoldedSizes(inventoryHtml)), setOf(specialOutOfStock), '库存页折叠块 = 无货的特殊码');
     for (const size of specialInStock) {
       assert.ok(salesGroupSizes(salesHtml, 'in_stock').includes(size), `有货的特殊码 ${size} 在销售现货段（不许折 ✗）`);
-      assert.ok(replenishCells(replenishHtml).find((c) => c.size === size && c.tag === '现货'),
-        `有货的特殊码 ${size} 在补货页带现货 tag`);
       assert.ok(inventoryRows(inventoryHtml).some((r) => r.size === size && r.total > 0),
         `有货的特殊码 ${size} 在库存页表体里（不许折 ✗）`);
       assert.equal(inventoryFoldedSizes(inventoryHtml).includes(size), false, `有货的特殊码 ${size} 不许出现在折叠块`);
@@ -335,10 +298,10 @@ test('AC-ST8 ⭐⭐ 普通码（A 38–44 / B 36–41）**有货无货都展示*
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-ST9 ⭐⭐ 同一份数据：库存页的 total ＝ 另外三页的数之和
+// AC-ST9 ⭐⭐ 同一份数据：库存页的 total ＝ 另外两页的数之和
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ST9 ⭐⭐ 库存页与另外三页对同一份数据的 total 必须相同', () => {
+test('AC-ST9 ⭐⭐ 库存页与另外两页对同一份数据的 total 必须相同', () => {
   for (const view of [MIXED_A_VIEW, MIXED_B_VIEW, HER_44_VIEW]) {
     const columns = view.columns;
     // ① 逐行：判据 = 那一行所有状态格之和（**同一个数** —— 库存页显示的就是它）
@@ -352,11 +315,8 @@ test('AC-ST9 ⭐⭐ 库存页与另外三页对同一份数据的 total 必须�
 
     // ③ 页面上的两个数也要对得上：库存页标题「共 N 双」= 补货页逐格「N 双」之和
     const inventoryHtml = page(view, 'inventory');
-    const replenishHtml = page(view, 'replenish');
     const heading = new RegExp(`<h2 class="stock__heading">${SCAN_PAGE.texts.stockHeading.replace('{total}', String(view.total))}</h2>`);
     assert.match(inventoryHtml, heading, `库存页标题必须写「共 ${view.total} 双」`);
-    const replenishSum = replenishCells(replenishHtml).reduce((sum, cell) => sum + cell.count, 0);
-    assert.equal(replenishSum, view.total, `补货页逐格之和（${replenishSum}）必须 = 库存页 total（${view.total}）`);
     // ④ 退货页列出的数量列之和也要 = total（"退货展示实时库存里所有的数据" ✓）
     const returnCounts = [...fx.blockOf(returnHtmlOf(view), 'purchase_return')
       .matchAll(/data-view="return-stock">(\d+)</g)].map((m) => Number(m[1]));
@@ -371,10 +331,10 @@ function returnHtmlOf(view) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AC-ST5b 四页装配自证：四页都真的渲染出来了（防"某页是空串"的假绿）
+// AC-ST5b 三页装配自证：三页都真的渲染出来了（防"某页是空串"的假绿）
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ST5b ⭐ 四个领域都被渲染出来（防空串假绿 ✓）', () => {
+test('AC-ST5b ⭐ 三个领域都被渲染出来（防空串假绿 ✓）', () => {
   for (const realm of REALMS) {
     const html = page(MIXED_A_VIEW, realm);
     assert.ok(block(MIXED_A_VIEW, realm).length > 100, `${realm} 那一块要有内容`);

@@ -71,8 +71,9 @@ const { SCAN_PAGE } = require('./scanPage');
  *   ⚠️ **不是放宽**：认不出的领域照旧"不发这个入口"（不猜 ✗）；`SCAN_REALM_SCAN_CHAINS`
  *     一配就以它为准（缺省串只是把 `sales` 一起写上 ✓）。
  */
+// 🔴 2026-11-27：`replenish: 'replenish'` 随补货扫码页一起删除（业务负责人：
+//   「采购页扫一扫要有；其他的补货不需要」）⇒ 领域内「再加一单」只服务 **销售 / 退货**。
 const DEFAULT_REALM_CHAINS = Object.freeze({
-  replenish: 'replenish',
   purchase_return: 'return',
   sales: 'sales',
 });
@@ -93,11 +94,11 @@ const realmEntryParams = (realm, config = REALM_SCAN) => (
 );
 
 const resolveRealmChains = (env) => {
-  // 形状：`replenish:replenish,purchase_return:return,sales:sales`
+  // 形状：`purchase_return:return,sales:sales`
   //   （空串 = 没有领域能用 ⇒ 这个入口整块不发 ✓）
   // ⚠️ 缺省串与 `DEFAULT_REALM_CHAINS` **必须同一个集合**（两处不一致 ⇒ 配了空串时行为会与读代码的人以为的不同 ✗）。
   const raw = readString(env, 'SCAN_REALM_SCAN_CHAINS',
-    'replenish:replenish,purchase_return:return,sales:sales');
+    'purchase_return:return,sales:sales');
   const out = {};
   for (const pair of String(raw || '').split(',')) {
     const [realm, chain] = String(pair || '').split(':').map((part) => String(part || '').trim());

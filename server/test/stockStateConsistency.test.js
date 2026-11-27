@@ -1,5 +1,7 @@
 /**
- * ⭐⭐ **扫码页四个 tab 的"库存口径一致性"证据用例**（2026-10-16 · 业务负责人真机报的不一致）。
+ * ⭐⭐ **扫码页三个 tab 的"库存口径一致性"证据用例**（2026-10-16 · 业务负责人真机报的不一致）。
+ *   🔴 2026-11-27：补货扫码页整体删除 ⇒ 原来的「四 tab」变**三 tab**（库存 / 销售 / 退货）；
+ *     补货那一格的断言随页面退场，其余判据一条没动（详见提交信息与各条注释）。
  *
  * 她看到的现象（逐字要点，货品 8516 · 黑色 · 凉鞋 · 男 · ¥99 · 2026-10-16 20:35 上海）：
  *   · **库存** tab：`库存（共 1 双）`，表 4 列 = 门盒 / 样品 / 仓库 / **未标状态**；
@@ -83,7 +85,8 @@ const { sellableCountOf, saleSizeGroups, purchaseSizeLines } = require('../src/v
 const realm = require('../src/views/scanPageRealm');
 
 /** 四个 tab（渲染入口 = `?from=`；`realmBlockHtml` 只拼当前那一块）。 */
-const REALM_IDS = ['inventory', 'sales', 'replenish', 'purchase_return'];
+// 🔴 2026-11-27：补货扫码页整体删除 ⇒ 四个 tab 变**三个**（库存 / 销售 / 退货）。
+const REALM_IDS = ['inventory', 'sales', 'purchase_return'];
 
 /**
  * ⚠️ `page_build` 是**动态位**（`config/scanPage.js` 的 `PAGE_BUILD` = `APP_VERSION@APP_COMMIT`，
@@ -141,11 +144,7 @@ const sellableSizesOf = (html, realm) => {
     const end = block.indexOf('</fieldset>', start);
     return [...block.slice(start, end).matchAll(/name="size" value="(\d+)"/g)].map((m) => m[1]);
   }
-  if (realm === 'replenish') {
-    // 「现货」tag 的那一格（`<li … data-purchase-size="NN">` 里带 `>现货<`）
-    return [...block.matchAll(/data-purchase-size="(\d+)"[\s\S]*?<\/li>/g)]
-      .filter((m) => m[0].includes('>现货<')).map((m) => m[1]);
-  }
+  // 🔴 2026-11-27：补货扫码页已删除 ⇒ 不再有 replenish 那一块可读。
   // 退货：列出来 = 有数量可退（⭐ 2026-10-29：改成"数量输入即选择" ⇒ 每行 `<input … data-size="NN">`；
   //   勾选框已退场，但"列出来 = 有数量"这条口径**一个字没变** ✓）
   return [...block.matchAll(/data-size="(\d+)"/g)].map((m) => m[1]);
@@ -266,7 +265,7 @@ const htmlOf = (view, realm) => renderScanPage(view, SCAN_PAGE, WRITE, realm);
 // AC-ST1 一致性：同一份库存数据 ⇒ 四个 tab 对"能不能卖"必须一致
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"有货"判据必须一致', () => {
+test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 三个 tab 的"有货"判据必须一致', () => {
   // ⭐⭐ 2026-10-16 晚（本刀）**前提自证**：本文件钉的是**开关关着（= 今天）那条路**。
   //   她 20:5x 改口后的新口径（"实时库存里有记录 = 有货"）钉在
   //   `test/scanStockPolicyUnifiedOn.test.js` **AC-ST5/AC-ST6**（那个文件自己设 env ⇒ 独立进程 ✓）。
@@ -328,8 +327,6 @@ test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"
   assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'sales'), 'sales'), ['40', '43', '44'],
     '销售页「有货（现货）」段当前只有 40；44 不在里面');
   // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：⭐ 同上：`['40']` ⇒ `['40', '43', '44']`（实测 ✓）
-  assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'replenish'), 'replenish'), ['40', '43', '44'],
-    '补货页当前只有 40 带「现货」tag');
   // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：⭐ 同上：`['40']` ⇒ `['40', '43', '44']`（实测 ✓）
   assert.deepEqual(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, 'purchase_return'), 'purchase_return'), ['40', '43', '44'],
     '退货页当前只列出 40（可退 = 有可卖数量）');
@@ -337,7 +334,7 @@ test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"
     '库存页 44 那一行：门盒/样品/仓库 三格都没有，只有「未标状态」= 1（**她看到的那一行**）');
 
   // ④ 「仓库」那一行（43）也不许被任何一个 tab 说成有货（她 2026-10-09 的口径，回归）
-  for (const realm of ['sales', 'replenish', 'purchase_return']) {
+  for (const realm of ['sales', 'purchase_return']) {
     assert.equal(sellableSizesOf(htmlOf(BLANK_STATE_FIXTURE, realm), realm).includes('43'), true,
       `${realm} tab 不许把「仓库」有货的 43 说成有货`);
   }
@@ -347,7 +344,7 @@ test('AC-ST1 同一份数据（含 1 双「未标状态」）⇒ 四个 tab 的"
 // AC-ST2 她的真实现象（44 码 1 双在「未标状态」）—— 四个 tab 逐字钉死
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-ST2 44 码 1 双在「未标状态」⇒ 四个 tab 的显示逐字钉死（就是她截图那一幕）', () => {
+test('AC-ST2 44 码 1 双在「未标状态」⇒ 三个 tab 的显示逐字钉死（就是她截图那一幕）', () => {
   const inventory = htmlOf(FULL_SIZES_BLANK_FIXTURE, 'inventory');
   // 库存页：共 1 双（记录条数口径）—— 就是她看到的那句
   assert.ok(inventory.includes(`<h2 class="stock__heading">${SCAN_PAGE.texts.stockHeading.replace('{total}', '1')}</h2>`),
@@ -385,13 +382,8 @@ test('AC-ST2 44 码 1 双在「未标状态」⇒ 四个 tab 的显示逐字钉�
   assert.ok(!prepaidGroup.includes('name="size" value="44"'),
     '44 落在「现在没有（预订）」段 ⇒ 这一单会被记成预订（**当前口径的后果，必须让她看到**）');
 
-  const replenish = htmlOf(FULL_SIZES_BLANK_FIXTURE, 'replenish');
-  // ⭐ 2026-10-16 23:1x 我（Lead）先误改成 doesNotMatch ⇒ 实测**补货页 44 仍显示 `0 双`** ✗（补货页口径≠销售页「现货」✓）
-  //   ⇒ ⭐ 如实撤回：这一处**不改**（原断言正确 ✓ 强度不变 ✓）—— 记一笔：**不是所有页面都跟着「有货」变** ✗
-  assert.match(replenish, /data-purchase-size="44"[\s\S]*?0 双/,
-    '补货页 44 显示 `0 双`（**她截图里的那一格**）');
-  assert.match(replenish, /data-purchase-size="44"[\s\S]*?>0 双</,
-    '补货页 44 的 tag 是「无」而不是「缺码」—— 它**有 1 双**，只是那 1 双不在可卖状态里（这处细节必须留着，不能糊成"缺码"）');
+  // 🔴 2026-11-27：补货扫码页整体删除 ⇒ 原来那两条「补货页 44 那一格」的断言**只测补货页**，
+  //   随页面一起退场（提交信息里写明）；销售 / 退货 / 库存三条判据一条没动 ✓。
 
   const purchaseReturn = htmlOf(FULL_SIZES_BLANK_FIXTURE, 'purchase_return');
   // ⭐ 2026-10-16 23:1x 成对迁移（改前逐字 → 改后逐字 → 依据 = 她 20:5x「统一不用看状态」＋ 22:5x「不需要开关」）：⭐ 44 已算有货 ⇒ 退货页不再写「没有可退的库存」⇒ 断言反转（强度不降 ✗）
@@ -430,11 +422,11 @@ const GOLDEN_CASES = [
   { key: 'blankStateThreeSizeBlocks', view: BLANK_STATE_FIXTURE, label: '未标状态 + 仓库 + 门盒样品 混在一款上' },
 ];
 
-test('AC-ST3 四 tab 的逐字快照：三种状态与「未标状态」两款都必须与诊断时逐一字节相同', () => {
+test('AC-ST3 三 tab 的逐字快照：三种状态与「未标状态」两款都必须与诊断时逐一字节相同', () => {
   const golden = JSON.parse(fs.readFileSync(GOLDEN_PATH, 'utf8'));
   for (const { key, view, label } of GOLDEN_CASES) {
     assert.deepEqual(Object.keys(golden[key] || {}).sort(), REALM_IDS.slice().sort(),
-      `${label}：快照要四块齐全（库存 / 销售 / 补货 / 退货）`);
+      `${label}：快照要三块齐全（库存 / 销售 / 退货）`);
     for (const realm of REALM_IDS) {
       assert.deepEqual(normalize(blockOf(htmlOf(view, realm), realm)), normalize(golden[key][realm]),
         `${label} · ${realm} tab 与诊断产物逐字一致`);
@@ -489,7 +481,7 @@ const fakeGateway = () => ({
   delete: async () => { throw new Error('扫码页不许写'); },
 });
 
-test('AC-ST4 端到端：她那一款（1 条记录、所属状态为空）⇒ 视图模型与四个 tab 逐字复现', async () => {
+test('AC-ST4 端到端：她那一款（1 条记录、所属状态为空）⇒ 视图模型与三个 tab 逐字复现', async () => {
   const service = createScanPageService(fakeGateway(), { config: SCAN_PAGE });
   const view = await service.lookup({ number: SERVICE_NUMBER, requestId: 'ac_st4' });
 
@@ -542,8 +534,6 @@ test('AC-ST0 判据自证：`sellableSizesOf` 真从 HTML 里读（改一行渲�
   };
   assert.deepEqual(sellableSizesOf(htmlOf(moved, 'sales'), 'sales').sort(), ['40', '43', '44'],
     '44 进了门盒 ⇒ 销售页必须把它放进现货段');
-  assert.deepEqual(sellableSizesOf(htmlOf(moved, 'replenish'), 'replenish').sort(), ['40', '43', '44'],
-    '44 进了门盒 ⇒ 补货页必须给它「现货」tag');
   assert.deepEqual(sellableSizesOf(htmlOf(moved, 'purchase_return'), 'purchase_return').sort(), ['40', '43', '44'],
     '44 进了门盒 ⇒ 退货页必须列出它');
   assert.deepEqual(inventoryCellsOf(htmlOf(moved, 'inventory'), '44'), ['1', '—', '—', '—'],

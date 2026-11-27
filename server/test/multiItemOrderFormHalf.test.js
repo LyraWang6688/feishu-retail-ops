@@ -135,7 +135,8 @@ const payloadOf = (block) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-MI-F1 ⭐ 接线后：入口**不再是链接**，而是 submit 按钮（塞回 href ⇒ 红）', async () => {
-  for (const realm of ['replenish', 'purchase_return']) {
+  // 🔴 2026-11-27：补货扫码页已删除 ⇒ 只剩**退货**这一块（判据原意与强度不变 ✓）
+  for (const realm of ['purchase_return']) {
     const block = await fetchRealm(realm, { wire: true });
     assert.match(block, /<button type="submit"[^>]*data-multi-add/,
       `${realm}：那颗入口必须是一颗 **submit 按钮** ✓`);
@@ -147,10 +148,10 @@ test('AC-MI-F1 ⭐ 接线后：入口**不再是链接**，而是 submit 按钮�
 });
 
 test('AC-MI-F2 ⭐⭐ 那颗 submit 与她的尺码/数量在**同一张 `<form>` 里**（挪出去 ⇒ 红）', async () => {
-  // 补货那张：`sizes` + `qty_41`（她要填的）；退货那张：**数量输入即选择**（2026-10-29 起勾选框退场）
-  //   ⇒ 判据不变的是"她填的那些与按钮在**同一张表单**里"（`return_qty_40` + 表单级 `data-return-qty-prefix` ✓）
+  // 退货那张：**数量输入即选择**（2026-10-29 起勾选框退场）——
+  //   🔴 2026-11-27：补货扫码页已删除 ⇒ 补货那一条夹具退场；判据不变的是
+  //   "她填的那些与按钮在**同一张表单**里"（`return_qty_40` + 表单级 `data-return-qty-prefix` ✓）
   const cases = [
-    ['replenish', ['name="sizes"', 'name="qty_41"', 'name="qty_40"']],
     ['purchase_return', ['data-return-qty-prefix="return_qty_"', 'name="return_qty_40"']],
   ];
   for (const [realm, needles] of cases) {
@@ -173,7 +174,7 @@ test('AC-MI-F2 ⭐⭐ 那颗 submit 与她的尺码/数量在**同一张 `<form>
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-MI-F3 ⭐⭐ 隐藏字段 = `[首件, ...已加]`，已加那几件**带着自己的 entries**（去掉拼接 ⇒ 红）', async () => {
-  const block = await fetchRealm('replenish', { wire: true, multi_items: [...ALREADY] });
+  const block = await fetchRealm('purchase_return', { wire: true, multi_items: [...ALREADY] });
   const payload = payloadOf(block);
   assert.equal(payload.length, 3, '🔴 必须是 `[首件, ...已加]` = 3 件（只渲首件 ⇒ 已加的全丢 ✗）');
   assert.deepEqual(payload[0].entries, [],
@@ -186,7 +187,7 @@ test('AC-MI-F3 ⭐⭐ 隐藏字段 = `[首件, ...已加]`，已加那几件**�
 });
 
 test('AC-MI-F3b ⭐ 旧链接删除后：隐藏字段始终包含首件 + 已加货品', async () => {
-  const block = await fetchRealm('replenish', { multi_items: [...ALREADY] });
+  const block = await fetchRealm('purchase_return', { multi_items: [...ALREADY] });
   const payload = payloadOf(block);
   assert.equal(payload.length, 3, '首件 + 已加两件（不再有“接线关只渲首件”分支）');
   assert.deepEqual(payload[0].entries, []);
@@ -197,7 +198,8 @@ test('AC-MI-F3b ⭐ 旧链接删除后：隐藏字段始终包含首件 + 已加
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('AC-MI-F4 ⭐ 每行一颗删除按钮：`name` 走接线 · `value` = 该件 record_id（去掉 ⇒ 红）', async () => {
-  for (const realm of ['replenish', 'purchase_return']) {
+  // 🔴 2026-11-27：只剩**退货**这一块（补货扫码页已删除）—— 判据原意不变 ✓
+  for (const realm of ['purchase_return']) {
     const block = await fetchRealm(realm, { wire: true, multi_items: [...ALREADY] });
     assert.match(block,
       /<button type="submit"[^>]*data-multi-remove[^>]*name="multi_item_remove"[^>]*value="recAdded1"/,
@@ -207,7 +209,7 @@ test('AC-MI-F4 ⭐ 每行一颗删除按钮：`name` 走接线 · `value` = 该�
       '按钮文字来自既有的 `MULTI_ITEM_RENDER_TEXTS.remove`（配置先行 ✓）');
   }
   // 接线关 ⇒ 一个删除按钮都不许有（零回归 ✓）
-  const off = await fetchRealm('replenish', { multi_items: [...ALREADY] });
+  const off = await fetchRealm('purchase_return', { multi_items: [...ALREADY] });
   assert.equal(off.includes('data-multi-remove'), false, '接线关 ⇒ 不渲染删除按钮 ✓');
 });
 
@@ -226,9 +228,11 @@ test('AC-MI-F5 🔴 零 JS 哨兵**未动**：本刀不加任何 `<script>`（�
   // ② ⚠️ **零 JS 哨兵的准确口径**（既有 `AC-W2` / `AC-6R5` 钉的是**那一块**）：
   //   扫码页别处**本来就有**两段既有脚本（`submit-feedback` / `annotate`，另有哨兵钉着 ✓）
   //   ⇒ 本刀要证的是「**多货品这一块**一个 `<script>` 都不新增」✓（不是"整个文件没有 script" ✗）。
+  // 🔴 2026-11-27：补货块已删除 ⇒ 切片终点改成紧随其后的 returnBlock.js
+  //   （判据仍只数 multiItemBlockHtml 这一段里的 script 标签 ✓）
   const blockSrc = RENDERER_SRC.slice(
     RENDERER_SRC.indexOf('const multiItemBlockHtml'),
-    RENDERER_SRC.indexOf('const replenishFormHtml'),
+    RENDERER_SRC.indexOf('const returnFormHtml'),
   );
   assert.equal((blockSrc.match(/<script/gi) || []).length, 0,
     '🔴 `multiItemBlockHtml` 里一个 `<script>` 都不许有（零 JS 哨兵 ✓ 本刀不动它 ✓）');
@@ -238,7 +242,7 @@ test('AC-MI-F5 🔴 零 JS 哨兵**未动**：本刀不加任何 `<script>`（�
 });
 
 test('AC-MI-F5b ⭐ 旧链接删除后：入口始终是表单 submit', async () => {
-  const block = await fetchRealm('replenish');
+  const block = await fetchRealm('purchase_return');
   assert.match(block, /<button[^>]*data-multi-add/, '入口固定是表单 submit');
   assert.equal(block.includes('href="?add=1"'), false, '旧链接不再出现');
 });

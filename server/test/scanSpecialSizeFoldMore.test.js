@@ -104,8 +104,9 @@ test('AC-MF2 ⭐ 库存页：缺货的特殊码出现在**折叠块**里（默�
   assert.ok(table.includes('>37<') || table.includes('37 码'), '缺货的普通码 37 照旧在库存表里 ✓');
 });
 
-test('AC-MF3 ⭐ 补货页：缺货的特殊码进折叠块；缺货的普通码照旧在列表里（语义不变）', () => {
-  const html = pageOf('replenish');
+test('AC-MF3 ⭐ 补货清单的分组语义（缺货特殊码折叠 · 普通码照旧在列表里）', () => {
+  // 🔴 2026-11-27：补货扫码页已删除 ⇒ 原来"补货页也画折叠块"的渲染半边随页面退场；
+  //   分组判据（purchaseSizeGroups，退货页仍用同一份 purchaseSizeLines）**一条没删** ✓。
   // 展示清单 = `purchaseSizeGroups().lines`（已把缺货特殊码移出主列表）；
   // `purchaseSizeLines()` 是原始全量行，不能拿来断言"普通码" ✗。
   const groups = purchaseSizeGroups(femaleView());
@@ -113,57 +114,20 @@ test('AC-MF3 ⭐ 补货页：缺货的特殊码进折叠块；缺货的普通码
   for (const size of ['37', '38', '39', '40', '41']) {
     assert.ok(lines.includes(size), `缺货的普通码 ${size} 照旧在补货清单里 ✓`);
   }
-  const foldStart = html.indexOf('data-special-fold');
-  assert.ok(foldStart > -1, '补货页也要有「特殊码」折叠块 ✓');
-  const fold = html.slice(foldStart, html.indexOf('</details>', foldStart));
-  for (const size of ['34', '35', '42', '43']) {
-    assert.ok(fold.includes(size), `缺货的特殊码 ${size} 要在补货折叠块里`);
-  }
+  assert.deepEqual(groups.folded.map((item) => item.size_text), ['34', '35', '42', '43'],
+    '缺货的特殊码 34/35/42/43 归折叠组（不混进普通码清单 ✓）');
 });
 
-test('AC-MF4 ⭐ 折叠块仍按**男女各自一块**（女鞋块里不许出现男鞋的特殊码）', () => {
-  const male = { ...femaleView(), number: 'MK31|黑|男', rows: [
-    { size_text: '40', cells: [{ key: '门盒', count: 1 }], total: 1, missing: false },
-    ...[45, 46, 47, 48].map((size) => ({ size_text: String(size), cells: [{ key: '门盒', count: 0 }], total: 0, missing: true })),
-  ] };
-  const femaleFold = pageOf('replenish').slice(pageOf('replenish').indexOf('data-special-fold'));
-  assert.equal(femaleFold.includes('>46<') || femaleFold.includes('>46 码<'), false, '女鞋页不许出现男鞋特殊码 46 ✗');
-  const maleHtml = pageOf('replenish', male);
-  const maleFold = maleHtml.slice(maleHtml.indexOf('data-special-fold'));
-  assert.ok(maleFold.includes('45') && maleFold.includes('46') && maleFold.includes('47') && maleFold.includes('48'),
-    '男鞋页折叠块 = 45/46/47/48');
-});
+// 🔴 2026-11-27：AC-MF4（补货页折叠块按男女各一块）**只测补货页** ⇒ 随补货扫码页一起删除；
+//   等价判据仍在 AC-MF2（库存页折叠块）与 AC-MF8（销售页折叠组）✓。
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 补货版式：尺码 × 数量 · 一行 3 个 · 自动换行 · ≥44px · 列数走配置
+// 补货页的版式判据（一行 3 个 / 尺码 × 数量 / ≥44px）已随补货扫码页删除（2026-11-27）。
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('AC-MF5 ⭐⭐ 补货版式：**一行 3 个**（列数走配置 `purchaseSizes.columnsPerRow`）· 自动换行', () => {
-  const cfg = SCAN_PAGE.purchaseSizes || {};
-  assert.equal(cfg.columnsPerRow, 3, '`purchaseSizes.columnsPerRow` = 3（**显式数字** ✓ 不许 || 兜底 ✗）');
-  // CSS：固定列数 + 每列自适应（minmax(0,1fr) ⇒ 内容再长也不撑爆 ⇒ 不会变 2 个 ✗）
-  assert.match(RENDERER_SRC, /\.purchase-size-grid \{[^}]*grid-template-columns: repeat\(var\(--size-cols, 3\), minmax\(0, 1fr\)\)/,
-    'CSS 必须 `repeat(var(--size-cols, 3), minmax(0, 1fr))` ✓');
-  // ⚠️ 只在**那条 CSS 规则**里判（注释里出现这四个字不算 ✗ —— 我自己就写了"不用 auto-fit"的注释）
-  const gridRule = (RENDERER_SRC.match(/\.purchase-size-grid \{[^}]*\}/) || [''])[0];
-  assert.ok(gridRule.length > 0, '`.purchase-size-grid` 规则存在 ✓');
-  assert.equal(/auto-fit|auto-fill/.test(gridRule), false, '🔴 规则里不许用 auto-fit / auto-fill（那会变 2/4 列 ✗）');
-  // 渲染层把配置写进 CSS 变量（以后改配置就行 ⇒ 一行代码不动 ✓）
-  const html = pageOf('replenish');
-  assert.match(html, /--size-cols:\s*3/, '渲染出的 CSS 变量来自配置（`--size-cols: 3`）✓');
-  // ⚠️ 类名与既有的 `.purchase-sizes` 共存（旧选择器/旧断言照旧 ✓）⇒ 不能要求引号紧跟其后
-  assert.match(html, /class="purchase-size-grid\b/, '补货列表用新网格类名 ✓');
-});
+// 🔴 2026-11-27：AC-MF5（补货版式一行 3 个 / CSS 变量 / 列数走配置）**只测补货页的版式** ⇒ 随补货扫码页一起删除。
 
-test('AC-MF6 ⭐⭐ 每格 = 「**尺码 × 数量**」· 命中区 ≥44px · 数量 0 照旧显示 0', () => {
-  assert.match(RENDERER_SRC, /\.purchase-size-cell \{[^}]*min-height: var\(--control-height\)/,
-    '每格 ≥44px（`--control-height` = 44px ✓ 她的老规矩 ✓）');
-  const html = pageOf('replenish');
-  const grid = html.slice(html.indexOf('purchase-size-grid'), html.indexOf('</ul>', html.indexOf('purchase-size-grid')));
-  assert.ok(grid.includes('37'), '缺货的普通码 37 在格子里 ✓');
-  assert.ok(/\u00d7|×/.test(grid), '格子里要有「尺码 × 数量」的乘号 ✓（她逐字要求）');
-  assert.match(grid, /0 双|>0</, '数量 0 ⇒ 照旧显示 0（不藏 ✗）');
-});
+// 🔴 2026-11-27：AC-MF6（每格「尺码 × 数量」、≥44px）**只测补货页的格子版式** ⇒ 随补货扫码页一起删除。
 
 test('AC-MF7 ⭐ 回归：**缺码默认勾**语义不变（补货要补的就是缺的那些）', () => {
   const lines = purchaseSizeLines(femaleView());
@@ -184,9 +148,8 @@ test('AC-MF7 ⭐ 回归：**缺码默认勾**语义不变（补货要补的就�
     assert.ok(lines.some((item) => item.size_text === size), `特殊码 ${size} 仍在清单里（要显示 ✓）`);
     assert.equal(lines.find((item) => item.size_text === size).checked, false, `特殊码 ${size} 默认不勾 ✓`);
   }
-  // 渲染上：**非特殊码的缺码**那一格仍默认勾着
-  const html = pageOf('replenish');
-  assert.match(html, /value="37"[^>]*checked|checked[^>]*value="37"/, '缺码 37（非特殊码）仍默认勾 ✓');
+  // 🔴 2026-11-27：补货扫码页已删除 ⇒ 原来"渲染上那一格默认勾"的页面断言随页面退场；
+  //   缺码默认勾的**数据判据**（上面那几条 purchaseSizeLines 断言）一条没删 ✓。
 });
 
 test('AC-MF8 ⭐ 哨兵：可录范围本体 + 销售页（#515）**一字不动**', () => {

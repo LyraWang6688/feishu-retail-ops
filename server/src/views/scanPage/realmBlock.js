@@ -1,9 +1,8 @@
 const { SCAN_PAGE } = require('../../config/scanPage');
-const { NEW_REALM, REALMS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, REPLENISH_REALM, PURCHASE_RETURN_REALM, foldedSpecialRowsOf, sellableCountOf } = require('../scanPageRealm');
+const { NEW_REALM, REALMS, DEFAULT_REALM, REALM_TEXTS, REALM_EMPTY_TEXT_KEYS, PURCHASE_RETURN_REALM, foldedSpecialRowsOf, sellableCountOf } = require('../scanPageRealm');
 const { escapeHtml } = require('./fields');
 const { stockTableHtml } = require('./stockBlock');
 const { saleFormHtml, specialFactsHtml } = require('./paymentBlock');
-const { replenishFormHtml } = require('./replenishBlock');
 const { returnFormHtml } = require('./returnBlock');
 
 const realmEmptyHtml = (realm, config) => {
@@ -21,7 +20,6 @@ const realmEmptyHtml = (realm, config) => {
  *
  * **六个领域**各自的正文（每个都带 `realm-block--<领域>` 标记，方便对照 / 断言）：
  *   · `sales`            —— 销售建单表单；
- *   · `replenish`        —— 补货（原「采购」领域里的【一键补货】）；
  *   · `purchase_return`  —— 退货；
  *   · `inventory`        —— 库存表；
  *   · `product`          —— 货品标签（**不上条**，旧 `?from=product` 照旧能开 ✓）。
@@ -62,13 +60,9 @@ const realmBlockHtml = (realm, view, config, write, page = {}) => {
       .filter((row) => !foldedSizes.has(String(row.size_text)));
     return wrap(stockTableHtml({ ...view, rows: tableRows }, config) + specialFactsHtml(foldedInventory, REALM_TEXTS));
   }
-  if (id === REPLENISH_REALM) {
-    // ⭐ 2026-10-11：**补货**从原「采购」领域里独立成一块（内容一个字没变）。
-    const form = write && write.enabled !== false && write.replenishEnabled !== false
-      ? replenishFormHtml(view, write, page, config)
-      : '';
-    return wrap(form || realmEmptyHtml(REPLENISH_REALM, config));
-  }
+  // 🔴 2026-11-27：**补货领域（`replenish`）整块退场** —— 业务负责人：
+  //   「采购页扫一扫要有；其他的补货不需要」⇒ 补货扫码页（`/r/…?from=replenish`）连页面一起删。
+  //   ⚠️ 旧 `?from=replenish` 按既有口径回落缺省（库存）✓；`views/scanPage/replenishBlock.js` 已删除。
   if (id === PURCHASE_RETURN_REALM) {
     // ⭐⭐ 2026-10-14（业务负责人最终口径 · 见 `docs/scan-page-tabs-2026-10-14.md`）：
     //   「退货」**回到条上** ✓ ⇒ 本块 = **退货表单**（`returnFormHtml` 一直在 ✓

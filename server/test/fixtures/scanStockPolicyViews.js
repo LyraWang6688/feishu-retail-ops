@@ -18,8 +18,12 @@ const { SCAN_WRITE } = require(path.join(__dirname, '..', '..', 'src', 'config',
 const { SCAN_PAGE } = require(path.join(__dirname, '..', '..', 'src', 'config', 'scanPage'));
 const { renderScanPage } = require(path.join(__dirname, '..', '..', 'src', 'views', 'scanPageRenderer'));
 
-/** 四个 tab（渲染入口 = `?from=`）。 */
-const REALM_IDS = ['inventory', 'sales', 'replenish', 'purchase_return'];
+/**
+ * 现在**三个** tab（渲染入口 = `?from=`）。
+ * 🔴 2026-11-27：补货扫码页整体删除 ⇒ 原 `replenish` 那一格退场（业务负责人：
+ *   「采购页扫一扫要有；其他的补货不需要」）；旧的 `?from=replenish` 按既有口径回落缺省（库存）。
+ */
+const REALM_IDS = ['inventory', 'sales', 'purchase_return'];
 
 /** 空白状态列（服务层按 `config.states.emptyLabel` 追加的那一列）。 */
 const BLANK_COLUMN = { key: '', label: SCAN_PAGE.states.emptyLabel };
