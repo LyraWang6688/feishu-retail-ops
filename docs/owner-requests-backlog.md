@@ -36,6 +36,7 @@
 
 | # | 她的原话（逐字） | 日期（上海） | 状态 | owner | 判据（能真红） | 落点（文件:行 / PR） |
 | --- | --- | --- | --- | --- | --- | --- |
+| **R-49** | 「采购页扫一扫要有；其他的补货不需要」——A2：连补货扫码页文件一起删 | **2026-11-27** | **已上线（未部署）** | Lead | REALMS/replenishBlock/realmScan/REPLENISH_FORM 全部退场；采购页扫一扫与冻结写库件未动；相关测试迁到 purchase_return 或删只测补货页的判据；全量 2757 pass | **PR #1601**；views/scanPageRealm.js；views/scanPage/{realmBlock,replenishBlock}.js；config/{realmScan,scanPage}.js；19 个测试文件 |
 | **R-48** | 「好的，我同意这个方案，你创建目标推进吧」（资金页独立 URL + 领域/flow 隔离 + 售后保护 + 草稿箱改道） | **2026-11-27** | **已上线（未部署）** | Lead | 裸扫=库存页且无销售本单条；/r/{id}/pay 是唯一资金页（刷新仍在）；提交成功 303 到 /pay；删支付中接管；重扫清 pending 只限销售建单 flow（售后换款式不清）；付款步草稿 303 /pay | **PR #1599**；config/scanPage.js；routes/scanPage/{pages,setup}.js；views/scanPage/index.js；handlers/salesSubmit.js |
 | **R-47** | 「是的，需要有这个（采购页扫一扫），其他的补货不需要」 | **2026-11-27** | **已上线（未部署）** | Lead | 五处登记表删除 replenish-add（服务端+工作台镜像）；生产不再有任何补货扫码入口；采购页扫一扫保留 | **PR #1598**（已合并）；页面文件暂留（multiItem 测试耦合），单独迁移后再删 |
 | **R-46** | 「为什么这个还要开关呢，不需要这个开关」＋「是的。」（选 A：删开关、骨架固定开启，保留"只首次进入"） | **2026-11-26** | **已上线（未部署）** | Lead | 代码不再读 SCAN_PAGE_SKELETON_ENABLED / ..._FIRST_ENTRY_ONLY；裸扫首屏骨架、带 ?from= 直接整页；env=false 也关不掉（反向哨兵） | **PR #1591**；config/scanPage.js；routes/scanPage/pages.js；test/scanPageSkeletonRoute.test.js |
