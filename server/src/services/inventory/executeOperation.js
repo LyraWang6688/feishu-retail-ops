@@ -17,6 +17,7 @@ const {
   movementLedgerLinkValue,
   stockKeyLabelOfOperation,
 } = require('./keys');
+const { seasonForNewRows } = require('./seasonInheritance');
 
 async function executeOperation(operation) {
     if (operation.status === 'completed') return operation.result;
@@ -36,11 +37,13 @@ async function executeOperation(operation) {
     if (operation.schema_version === 2 && !ledger) {
       throw new Error(`旧版库存操作 ${operation.operation_id} 未能确认已有流水，请人工核对，不能自动恢复`);
     }
+    let existingLiveRows = [];
     if (operation.direction === '增加') {
+      existingLiveRows = await this.readLiveInventoryForProduct(operation.product_record_id);
       // 先确认远端没有「同一个键出现两条」这种已经重复的事实，再写流水：
       // 已经重复时应该停下来让人核对，而不是再补一条流水把差异藏起来。
       await this.assertNoDuplicateOperationItems(operation, (operation.created_live_record_ids || []).length + 1,
-        operation.quantity, await this.readLiveInventoryForProduct(operation.product_record_id));
+        operation.quantity, existingLiveRows);
     }
     if (!ledger) {
       // 远端关联值：注册表声明的"只写不查"关联列（`ledgerLink`）。取不到就**整列不写**。
@@ -93,6 +96,15 @@ async function executeOperation(operation) {
         operation = await this.store.update(operation.operation_id, { removed_live_record_ids: removedIds });
       }
     } else {
+      // ⭐ 2026-11-27：入库继承货品「当季」（是 ⇒ true；否 + 有库存 ⇒ 不写；否 + 0 行 ⇒ true）。
+      const newRowSeason = (await seasonForNewRows({
+        gateway: this.gateway,
+        correlation,
+        products: [{
+          productRecordId: operation.product_record_id,
+          hasLiveRows: existingLiveRows.length > 0,
+        }],
+      })).get(operation.product_record_id);
       const expectedCreates = operation.quantity;
       while (createdIds.length < expectedCreates) {
         // 第 N 双先按「库存操作键」回查远端，再决定是否创建：
@@ -120,6 +132,8 @@ async function executeOperation(operation) {
               operatorOpenId: operation.operator_open_id,
             }),
             operationItemKey: itemKey,
+            // ⭐ 2026-11-27：只有 true 才写；false/undefined 一律不写（保持空 = 非当季）。
+            ...(newRowSeason === true ? { season: true } : {}),
           },
         });
         createdIds.push(created.recordId);

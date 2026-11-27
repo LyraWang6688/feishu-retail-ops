@@ -26,6 +26,8 @@ const V1_BITABLE_SCHEMA = {
     product: {
       tableName: '货品信息',
       tableId: getEnv('FEISHU_V1_PRODUCT_TABLE_ID'),
+      // ⭐ 2026-11-27：入库继承当季要读它（飞书公式，只读、不写）。
+      readOnlyFields: Object.freeze({ season: Object.freeze({ name: '当季', type: 20, writable: false }) }),
       // ⭐ 2026-11-14（业务负责人）：「记录链接用『货品信息填写』这个视图」——
       //   该视图无筛选/无排序（2026-11-14 核实），全部货品都在 ⇒ 记录链接统一带它。
       //   换视图 / 换租户时用 FEISHU_V1_PRODUCT_VIEW_ID 覆盖；设成**空串** ⇒ 链接不带 view。
