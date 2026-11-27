@@ -62,6 +62,7 @@ const EVENTS = Object.freeze([
   'feishu.write.applied',
   'feishu.write.failed',
   'feishu.write.retry',
+  'group.scan.viewed',
   'hm.bamamei.online',
   'http.request.completed',
   'http.unhandled_error',
