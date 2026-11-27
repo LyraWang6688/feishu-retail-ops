@@ -296,16 +296,24 @@ test('配品配置：赠品勾选、列表标签、种类动态新增', async ({
   await page.locator('[data-ac-price]').fill('49');
   await gift.check();
   await page.getByRole('button', { name: '确认新增' }).click();
-  await expect(page.locator('.ac-card').filter({ hasText: '新腰带' })).toContainText('赠品');
+  // 2026-11-27：配品配置提交后统一回工作台并带 toast（与配品销售同一条回执）。
+  await page.waitForURL(/\/workbench\/\?toast=/, { timeout: 8000 });
   expect(submitted.isGift).toBe(true);
+  await page.getByRole('button', { name: '配置', exact: true }).click();
+  await page.getByRole('button', { name: '货品资料', exact: true }).click();
+  await page.getByRole('button', { name: /配品配置/ }).click();
+  await expect(page.locator('.ac-card').filter({ hasText: '新腰带' })).toContainText('赠品');
 
   await page.getByRole('button', { name: '管理种类' }).click();
   await expect(page.locator('[data-ac-category-modal]')).toBeVisible();
   await page.locator('[data-ac-category-new]').fill('新种类');
   await page.getByRole('button', { name: '添加', exact: true }).click();
-  await expect(page.locator('[data-ac-category-modal]')).toBeHidden();
-  await expect(page.locator('[data-ac-category]')).toContainText('新种类');
+  await page.waitForURL(/\/workbench\/\?toast=/, { timeout: 8000 });
   expect(categorySubmitted.category).toBe('新种类');
+  await page.getByRole('button', { name: '配置', exact: true }).click();
+  await page.getByRole('button', { name: '货品资料', exact: true }).click();
+  await page.getByRole('button', { name: /配品配置/ }).click();
+  await expect(page.locator('[data-ac-category]')).toContainText('新种类');
 });
 
 test('销售子 tab：往来款改名为客户留存款', async ({ page }) => {
