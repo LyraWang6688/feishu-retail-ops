@@ -753,8 +753,9 @@ test('AC-RS5 🔴 多货品退货 ⇒ 扣库存**逐条正确**（每个货品�
         order_amount: '399',
         items: [
           // A：41 码退 2（库存恰好 2）、42 码退 1（库存 1）；B：41 码退 1（库存 1）
-          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: '', entries: [{ size: 41, quantity: 2 }, { size: 42, quantity: 1 }] },
-          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: '', entries: [{ size: 41, quantity: 1 }] },
+          // 2026-11-27：一个批次一个供应商 ⇒ 两个货品同属甲供应商。
+          { product_record_id: 'prod_A', number: NUMBER_A, item_no: 'KA', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 2 }, { size: 42, quantity: 1 }] },
+          { product_record_id: 'prod_B', number: NUMBER_B, item_no: 'KB', color: '黑色', supplier_record_id: 'sup_a', entries: [{ size: 41, quantity: 1 }] },
         ],
       },
       chainConfig: MULTI_ITEM_ORDER.chains.return,
