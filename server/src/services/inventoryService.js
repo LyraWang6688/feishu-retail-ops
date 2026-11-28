@@ -53,6 +53,7 @@ const {
   movementLedgerLinkPatch,
 } = require('./inventory/keys');
 const { applySaleBatch } = require('./inventory/saleBatch');
+const { correctSaleDetailSize } = require('./inventory/correction');
 const { applyPurchaseBatch } = require('./inventory/purchaseBatch');
 const { applyPurchaseReturnBatch } = require('./inventory/purchaseReturnBatch');
 const { executeOperation } = require('./inventory/executeOperation');
@@ -429,6 +430,7 @@ class InventoryService {
 // 所以"实例方法被替身 / 子类覆盖"的既有测试语义与拆分前相同。
 for (const [name, method] of Object.entries({
   applySaleBatch,
+  correctSaleDetailSize,
   applyPurchaseBatch,
   applyPurchaseReturnBatch,
   executeOperation,

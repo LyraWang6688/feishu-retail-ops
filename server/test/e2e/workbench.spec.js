@@ -520,11 +520,11 @@ test('货品完善：搜索按货品全量，不限制待完善；清空恢复�
   await expect(tabs).toBeVisible();
 });
 
-test('订单三卡同宽、横向居中，且无横向滚动', async ({ page }) => {
+test('订单四卡同宽、横向居中，且无横向滚动', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   const cards = page.locator('.orders-section-card');
-  await expect(cards).toHaveCount(3);
+  await expect(cards).toHaveCount(4);
   const boxes = await cards.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
   expect(Math.max(...boxes) - Math.min(...boxes)).toBeLessThanOrEqual(1);
   const align = await cards.first().evaluate((node) => {

@@ -41,6 +41,8 @@ export const SALES_SECTIONS = [
   { key: 'pending', label: '交割单', icon: '🧾' },
   { key: 'afterSales', label: '售后单', icon: '🛠️' },
   { key: 'draft', label: '草稿单', icon: '📝' },
+  // 2026-11-28：最近 5 天销售单核对 / 更正。
+  { key: 'confirm', label: '确认单', icon: '✅' },
 ];
 
 // 采购验收判据：发生行为编码稳定，不按中文名判断。
@@ -90,6 +92,7 @@ export const ARRIVAL_SCAN = {
  * ⚠️ URL 只在这里写一次；`features/orders/index.js` 读取它，不复制字面量。
  */
 export const SALES_DELIVERY_PAGE = '/workbench/sales-delivery.html';
+export const SALES_CONFIRM_PAGE = '/workbench/sales-confirm.html';
 
 /**
  * 接口路径（**唯一来源**：渲染层不写死 URL）。

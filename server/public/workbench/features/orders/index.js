@@ -7,7 +7,7 @@ import { arrivalLineKey, arrivalSubmitLines } from './acceptanceDoc.js';
 export { arrivalLineKey, arrivalSubmitLines };
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
-  SALES_SECTIONS, SALES_DELIVERY_PAGE,
+  SALES_SECTIONS, SALES_DELIVERY_PAGE, SALES_CONFIRM_PAGE,
   PURCHASE_ORDER_BEHAVIOR_CODE, PURCHASE_IN_BEHAVIOR_CODE,
 } from '../../config/orders.js';
 
@@ -532,6 +532,11 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       if (sectionCard) {
         if (sectionCard.dataset.ordersSection === 'afterSales') {
           void scanAfterSales();
+          return;
+        }
+        // 2026-11-28：确认单 → 独立核对页（只读列表 + 整单更正）。
+        if (sectionCard.dataset.ordersSection === 'confirm') {
+          window.location.href = SALES_CONFIRM_PAGE;
           return;
         }
         // ⭐ 2026-10-28：「交割单」卡片 → 独立预览页（v1 只读；供应验收 mode=purchase 不渲染这三张卡，行为不变）。

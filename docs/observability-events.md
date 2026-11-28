@@ -3,7 +3,7 @@
 > ⚠️ 本文件由 `server/scripts/observability-events.mjs` 生成，**不要手改**。
 > 新增/改名日志事件后跑：`cd server && pnpm run observability:events`。
 
-共 **568** 个事件。按前缀分组：
+共 **575** 个事件。按前缀分组：
 
 ## accessory
 
@@ -427,6 +427,10 @@
 
 | 事件 | 次数 | 文件 |
 | --- | --- | --- |
+| `sales.correction.any` | 2 | src/config/permissions.js<br>src/config/salesCorrection.js |
+| `sales.correction.applied` | 1 | src/services/salesCorrectionService.js |
+| `sales.correction.failed` | 1 | src/services/salesCorrectionService.js |
+| `sales.correction.self` | 2 | src/config/permissions.js<br>src/config/salesCorrection.js |
 | `sales.delivery.completed` | 1 | src/services/salesDeliveryService.js |
 | `sales.delivery.inventory_batch_fallback` | 1 | src/services/salesDeliveryService.js |
 | `sales.delivery.line.failed` | 1 | src/services/salesDeliveryService.js |
@@ -728,6 +732,8 @@
 | `workbench.sales_drafts.list_failed` | 1 | src/routes/workbench/salesDrafts.js |
 | `workbench.sales_drafts.save_failed` | 1 | src/routes/workbench/salesDrafts.js |
 | `workbench.sales.after_sales.candidates.failed` | 3 | src/routes/workbenchOrderActions.js |
+| `workbench.sales.correction.failed` | 1 | src/routes/workbench/salesCorrection.js |
+| `workbench.sales.corrections.failed` | 1 | src/routes/workbench/salesCorrection.js |
 | `workbench.sales.daily_cash.read_failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.daily_cash.save_failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.delivery.failed` | 3 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryAsyncService.js |
@@ -742,6 +748,7 @@
 | `workbench.sales.payment.failed` | 2 | src/routes/workbenchSalesDelivery.js<br>src/services/salesDeliveryPaymentService.js |
 | `workbench.sales.query.failed` | 1 | src/routes/workbench/sales.js |
 | `workbench.sales.query.filter_fallback` | 1 | src/services/salesDeliveryReadService.js |
+| `workbench.sales.size_groups.failed` | 1 | src/routes/workbench/salesCorrection.js |
 | `workbench.size.unresolved` | 1 | src/services/v1WorkbenchService.js |
 | `workbench.staff.attendance.create.failed` | 1 | src/routes/workbench/staff.js |
 | `workbench.staff.attendance.created` | 1 | src/routes/workbench/staff.js |
