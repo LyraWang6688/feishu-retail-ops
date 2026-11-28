@@ -283,3 +283,18 @@ test('AC-P28 采购修改上下文随草稿保存，刷新后可恢复 modify �
   assert.equal(restored.active().batch_no, 'CGD-OLD');
   assert.equal(button.textContent, config.texts.modifySubmit);
 });
+
+test('AC-P32 货品合计数量 > 0 自动绿色（标准码 + 自定义码都算）', async () => {
+  const store = await import(pathToFileURL(path.join(ROOT, PUBLIC, 'features/procurement/store.js')).href);
+  const draft = { products: { recA: { entries: { 39: 1, 45: 2 }, source: 'replenish' } } };
+  assert.equal(store.quantityOfProduct(draft, 'recA'), 3, '标准码 1 + 自定义码 2');
+  assert.equal(store.quantityOfProduct({ products: { recA: { entries: { 39: 0 } } } }, 'recA'), 0);
+  assert.equal(store.quantityOfProduct(draft, 'recMissing'), 0);
+
+  const css = read(`${PUBLIC}/procurement.css`);
+  assert.match(css, /\.pr-group\.is-picked/, '绿色卡片样式');
+  const render = read(`${PUBLIC}/features/procurement/render.js`);
+  assert.match(render, /is-picked/, '渲染时按合计数量加类');
+  const row = read(`${PUBLIC}/features/procurement/rowHelpers.js`);
+  assert.match(row, /syncGroupPicked/, '数量变化时实时同步卡片颜色');
+});

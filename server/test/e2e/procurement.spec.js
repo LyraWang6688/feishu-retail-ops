@@ -216,6 +216,33 @@ test('AC-P18/P22 默认全 0：预订/现货都不自动填数量（不显示勾
   await expect(qtyOf(page, 'recProdA', 42)).toHaveValue('2');
 });
 
+test('AC-P32 货品合计数量 > 0 自动绿色：标准码和自定义码都算，归零恢复', async ({ page }) => {
+  await mockApi(page);
+  await page.reload();
+  await openPage(page);
+  const group = page.locator('[data-pr-group="recProdA"]');
+  await expect(group).not.toHaveClass(/is-picked/);
+
+  await qtyOf(page, 'recProdA', 41).fill('1');
+  await expect(group).toHaveClass(/is-picked/);
+  await qtyOf(page, 'recProdA', 41).fill('0');
+  await expect(group).not.toHaveClass(/is-picked/);
+
+  await group.locator('[data-pr-add-size]').click();
+  const modal = page.locator('[data-pr-custom-modal]');
+  await expect(modal).toBeVisible();
+  await modal.locator('[data-pr-modal-size]').first().fill('45');
+  await modal.locator('[data-pr-modal-qty]').first().fill('1');
+  await modal.locator('[data-pr-custom-save]').click();
+  await expect(modal).toBeHidden();
+  await expect(qtyOf(page, 'recProdA', 45)).toHaveValue('1');
+  await expect(group).toHaveClass(/is-picked/);
+
+  await group.locator('[data-pr-custom-remove][data-size="45"]').click();
+  await expect(group.locator('[data-pr-custom-row]')).toHaveCount(0);
+  await expect(group).not.toHaveClass(/is-picked/);
+});
+
 test('AC-P18c 普通采购可清空草稿：数量归零、submitKey 重置；修改单不显示', async ({ page }) => {
   await mockApi(page);
   await page.reload();
