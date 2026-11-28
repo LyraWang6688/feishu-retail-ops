@@ -46,3 +46,17 @@ test('确认单异步回执：前端用 redirect_url 主动回工作台', () => 
   assert.match(js, /result\?\.redirect_url/);
   assert.match(js, /window\.location\.href = result\.redirect_url/);
 });
+
+test('确认单支持货号与录单人组合筛选，货号复用统一货品搜索', () => {
+  const html = read('sales-confirm.html');
+  const js = read('features/sales-confirm/index.js');
+  const cfg = read('config/salesCorrection.js');
+  assert.match(html, /sales-confirm-product-filter/);
+  assert.match(html, /sales-confirm-sender-filter/);
+  assert.match(js, /productSearchHtml/);
+  assert.match(js, /bindProductSearch/);
+  assert.match(js, /detail\.product_record_id/);
+  assert.match(js, /order\.sender/);
+  assert.match(cfg, /allSenders/);
+  assert.match(cfg, /noMatch/);
+});

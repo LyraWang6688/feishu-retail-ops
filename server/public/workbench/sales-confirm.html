@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/workbench/styles/base.css">
   <link rel="stylesheet" href="/workbench/features/sales-query/sales-query.css">
   <link rel="stylesheet" href="/workbench/features/after-sales/after-sales.css">
+  <link rel="stylesheet" href="/workbench/features/shared/productSearch.css">
   <link rel="stylesheet" href="/workbench/features/sales-confirm/sales-confirm.css">
 </head>
 <body data-view="sales-confirm">
@@ -16,6 +17,10 @@
       <h1>确认单 · 最近 5 天</h1>
     </header>
     <p class="sales-confirm-status" data-view="sales-confirm-status" role="status"></p>
+    <section class="sales-confirm-filters">
+      <div data-view="sales-confirm-product-filter"></div>
+      <label class="sales-confirm-sender"><span data-view="sales-confirm-sender-label"></span><select data-view="sales-confirm-sender-filter"></select></label>
+    </section>
     <section class="sales-confirm-body" data-view="sales-confirm-body"></section>
   </main>
   <div class="as-modal" data-correction-modal hidden>
