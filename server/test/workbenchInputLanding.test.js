@@ -58,6 +58,19 @@ const CHAINS = Object.freeze({
     ],
   },
 
+  // 2026-11-28：销售「确认单」整单更正 —— 原地改明细 / 收款 / 主表 / 库存流水。
+  'SALES_CORRECTION_API.save': {
+    fe: 'features/sales-confirm/index.js', feKey: 'api.post(SALES_CORRECTION_API.save',
+    route: 'src/routes/workbench/salesCorrection.js', routeKey: /router\.post\('\/sales\/corrections'/,
+    service: 'src/services/salesCorrectionService.js', serviceKey: /gateway\.update\('salesDetail'/,
+    landing: [
+      ['salesDetail', 'size'], ['salesDetail', 'actualAmount'], ['salesDetail', 'tradeType'],
+      ['paymentRecord', 'method'], ['paymentRecord', 'amount'],
+      ['salesEntry', 'totalAmount'], ['salesEntry', 'gift'], ['salesEntry', 'accessory'], ['salesEntry', 'accessoryAmount'],
+      ['inventoryLedger', 'size'],
+    ],
+  },
+
   'DATA_CONFIG_API.voucherCatalogSync': {
     fe: 'features/domains/dataConfigAction.js', feKey: 'api.post(DATA_CONFIG_API.voucherCatalogSync',
     route: 'src/routes/workbench/douyin.js', routeKey: /router\.post\('\/douyin\/voucher-catalog-sync'/,

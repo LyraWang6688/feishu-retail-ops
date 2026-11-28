@@ -16,6 +16,7 @@ const { createWorkbenchInventoryRoutes } = require('./workbench/inventory');
 const { createWorkbenchPurchaseRoutes } = require('./workbench/purchase');
 const { createWorkbenchProcurementDraftRoutes } = require('./workbench/procurementDraft');
 const { createWorkbenchSalesRoutes } = require('./workbench/sales');
+const { createWorkbenchSalesCorrectionRoutes } = require('./workbench/salesCorrection');
 const { createWorkbenchStaffRoutes } = require('./workbench/staff');
 const { loadWorkbenchActor } = require('../services/authorizationService');
 const { createWorkbenchSalesDraftRoutes } = require('./workbench/salesDrafts');
@@ -190,6 +191,7 @@ const createWorkbenchRouter = (options = {}) => {
   router.use(createWorkbenchLabelRoutes(options));
   router.use(createWorkbenchSalesDraftRoutes({ options }));
   router.use(createWorkbenchSalesRoutes({ options, followup, ordersCache }));
+  router.use(createWorkbenchSalesCorrectionRoutes({ options, followup }));
   // 抖音团购券目录同步（数据配置页按钮触发；不是定时任务）。
   router.use(createWorkbenchDouyinRoutes(options));
   return router;

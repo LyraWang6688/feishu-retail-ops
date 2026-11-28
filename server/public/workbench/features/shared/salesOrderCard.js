@@ -21,6 +21,8 @@ const statusClass = (status) => (status === TEXT.delivered ? 'ok' : (status === 
 /** 销售明细订单卡：销售查询与售后扫一扫共用同一份 DOM。 */
 export const salesOrderCardHtml = (order, {
   highlightDetailId = '', actionDetailId = '', actionHtml = '', matchDetailId = '', strikeDelisted = false,
+  // 2026-11-28：确认单才需要颜色与合计摘要；默认关闭，售后 / 销售查询一个字节不变。
+  showColor = false, summaryHtml = '',
 } = {}) => {
   const pays = (order.payments || []).length
     ? order.payments.map((payment) => `<span class="sq-pay-tag">${escapeHtml(payment.method)} <b>${escapeHtml(amountText(payment.amount))}</b> · ${escapeHtml(payment.status)}</span>`).join('')
@@ -50,7 +52,7 @@ export const salesOrderCardHtml = (order, {
     const hasAction = Boolean(actionHtml && actionDetailId && recordId === actionDetailId);
     const productClass = strikeDelisted && detail.delisted === true ? ' product-delisted' : '';
     const row = `<tr class="${highlighted ? 'sq-detail-highlight' : ''}" data-detail-id="${escapeHtml(recordId)}">
-      <td class="sq-detail-product${productClass}">${escapeHtml(detail.number || detail.product || '')}</td>
+      <td class="sq-detail-product${productClass}">${escapeHtml(detail.number || detail.product || '')}${showColor && detail.color ? `<span class="sq-detail-color"> · ${escapeHtml(detail.color)}</span>` : ''}</td>
       <td class="sq-detail-size">${escapeHtml(detail.size == null ? '' : detail.size)} ${TEXT.sizeSuffix}</td>
       <td class="sq-detail-amount">${escapeHtml(amountText(detail.actual_amount))}</td>
       <td><span class="sq-status ${statusClass(detail.fulfillment_status)}">${escapeHtml(detail.fulfillment_status || '')}</span></td>
@@ -65,6 +67,7 @@ export const salesOrderCardHtml = (order, {
       <div class="sq-order-pays">${pays}</div>
     </div>
     <table class="sq-detail-table"><tbody>${details}</tbody></table>
+    ${summaryHtml ? `<div class="sq-order-summary" data-sq-summary>${summaryHtml}</div>` : ''}
     ${benefits}
   </article></div></div>`;
 };

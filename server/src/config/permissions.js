@@ -22,6 +22,9 @@ const PERMISSIONS = Object.freeze({
   'attendance.write': Object.freeze([ROLES.ADMIN]),
   // 2026-11-27：库存裸扫页的成本只给管理员看；店员/考勤人/未知角色默认没有。
   'inventory.cost.read': Object.freeze([ROLES.ADMIN]),
+  // 2026-11-28：销售「确认单」——本人改自己的单；管理员可改任意单。
+  'sales.correction.self': Object.freeze([ROLES.ADMIN, ROLES.STAFF]),
+  'sales.correction.any': Object.freeze([ROLES.ADMIN]),
 });
 
 const can = (role, permission) => (PERMISSIONS[permission] || []).includes(String(role || '').trim());

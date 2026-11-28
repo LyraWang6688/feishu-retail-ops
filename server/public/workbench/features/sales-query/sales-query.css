@@ -70,6 +70,9 @@
 .sq-detail-table { width:max-content; min-width:100%; border-collapse:collapse; font-size:var(--font-size-sm); }
 .sq-detail-table td { padding:9px 12px; border-top:1px solid var(--border-light); white-space:nowrap; vertical-align:middle; }
 .sq-detail-product { white-space:nowrap; font-weight:var(--weight-bold); }
+.sq-detail-color { color:var(--text-secondary); font-weight:var(--weight-normal); }
+.sq-order-summary { display:flex; flex-wrap:wrap; gap:6px 14px; padding:10px 12px; border-top:1px solid var(--border-light); color:var(--text-secondary); font-size:var(--font-size-xs); }
+.sq-order-summary b { color:var(--text); font-variant-numeric:tabular-nums; }
 .sq-detail-size { color:var(--text-secondary); text-align:center; }
 .sq-detail-amount { text-align:right; font-variant-numeric:tabular-nums; }
 .sq-benefits { display:flex; flex-wrap:nowrap; align-items:baseline; gap:12px; padding:10px 12px; border-top:1px solid var(--border-light); background:var(--surface-soft); font-size:var(--font-size-xs); line-height:1.45; white-space:nowrap; overflow-x:auto; }

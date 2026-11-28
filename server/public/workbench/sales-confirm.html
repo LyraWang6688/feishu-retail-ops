@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <title>确认单</title>
+  <link rel="stylesheet" href="/workbench/styles/tokens.css">
+  <link rel="stylesheet" href="/workbench/styles/base.css">
+  <link rel="stylesheet" href="/workbench/features/sales-query/sales-query.css">
+  <link rel="stylesheet" href="/workbench/features/after-sales/after-sales.css">
+  <link rel="stylesheet" href="/workbench/features/sales-confirm/sales-confirm.css">
+</head>
+<body data-view="sales-confirm">
+  <main class="shell sales-confirm-page" id="sales-confirm-app">
+    <header class="sales-confirm-head">
+      <a class="btn btn--ghost" href="/workbench">← 返回订单列表</a>
+      <h1>确认单 · 最近 5 天</h1>
+    </header>
+    <p class="sales-confirm-status" data-view="sales-confirm-status" role="status"></p>
+    <section class="sales-confirm-body" data-view="sales-confirm-body"></section>
+  </main>
+  <div class="as-modal" data-correction-modal hidden>
+    <div class="as-modal-backdrop" data-correction-close></div>
+    <div class="as-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="correction-title">
+      <div class="as-modal-body" data-correction-body></div>
+      <p class="as-modal-error" data-correction-error hidden></p>
+    </div>
+  </div>
+  <script src="/workbench/shared/toast.js"></script>
+  <script type="module">
+    import { mountSalesConfirmPage } from '/workbench/features/sales-confirm/index.js';
+    mountSalesConfirmPage(document.getElementById('sales-confirm-app'));
+  </script>
+</body>
+</html>
