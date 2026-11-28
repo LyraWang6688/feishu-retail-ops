@@ -191,7 +191,8 @@ test('五个领域 tab + 订单列表懒加载', async ({ page }) => {
 
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await expect(page.getByRole('button', { name: /交割单/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /售后单/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /售后单·扫描二维码/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /售后单·输入货号/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /草稿单/ })).toBeVisible();
   expect(orderRequests).toHaveLength(0);
 
@@ -520,11 +521,11 @@ test('货品完善：搜索按货品全量，不限制待完善；清空恢复�
   await expect(tabs).toBeVisible();
 });
 
-test('订单四卡同宽、横向居中，且无横向滚动', async ({ page }) => {
+test('订单五卡同宽、横向居中，且无横向滚动', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   const cards = page.locator('.orders-section-card');
-  await expect(cards).toHaveCount(4);
+  await expect(cards).toHaveCount(5);
   const boxes = await cards.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
   expect(Math.max(...boxes) - Math.min(...boxes)).toBeLessThanOrEqual(1);
   const align = await cards.first().evaluate((node) => {
@@ -555,7 +556,7 @@ test('点「草稿单」不触发订单刷新（0 次 /sales/orders 请求、不
   expect(orderRequests, '草稿单不需要订单数据').toHaveLength(0);
 });
 
-test('切走再回到订单列表：回到三张入口卡，不保留草稿单占位', async ({ page }) => {
+test('切走再回到订单列表：回到五张入口卡，不保留草稿单占位', async ({ page }) => {
   await page.goto('/workbench/');
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await page.getByRole('button', { name: /草稿单/ }).click();
@@ -565,7 +566,8 @@ test('切走再回到订单列表：回到三张入口卡，不保留草稿单�
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
 
   await expect(page.getByRole('button', { name: /交割单/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /售后单/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /售后单·扫描二维码/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /售后单·输入货号/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /草稿单/ })).toBeVisible();
   await expect(page.locator('[data-placeholder="draft"]')).toHaveCount(0);
 });

@@ -67,6 +67,7 @@ export function bindProductSearch(root, {
     results.innerHTML = items.map((item) => {
       const number = String(item.number || item.itemNo || '');
       const meta = [item.itemNo, item.color,
+        item.delisted ? TEXT.delisted : '',
         item.recordId ? `${TEXT.recordIdLabel} ${String(item.recordId).slice(-6)}` : '',
       ].filter(Boolean).join(' · ');
       return `<button class="ps-result" type="button" role="option" data-ps-result data-ps-number="${escapeHtml(number)}" data-ps-record="${escapeHtml(item.recordId || '')}">

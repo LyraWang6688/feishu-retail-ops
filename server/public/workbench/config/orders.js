@@ -33,13 +33,16 @@ export const ORDERS_PAGE = {
 };
 
 /**
- * ⭐⭐ 2026-10-29：销售订单列表**只剩三条路径**（业务负责人定稿）——
- *   交割单（跳独立页）/ 售后单（飞书扫一扫→售后落地页）/ 草稿箱（真实列表）。
- * ⚠️ 三张卡只显示 `label + icon`；`tag/tone` 已删除（页面从未渲染，留着只会误导）。
+ * ⭐⭐ 2026-10-29：销售订单列表的入口卡（业务负责人定稿）——
+ *   交割单（跳独立页）/ 售后单（扫码或输入货号→售后落地页）/ 草稿箱（真实列表）。
+ * ⚠️ 卡片只显示 `label + icon`；`tag/tone` 已删除（页面从未渲染，留着只会误导）。
  */
+export const AFTER_SALES_MANUAL_PAGE = '/workbench/manual-entry.html?realm=afterSales';
+
 export const SALES_SECTIONS = [
   { key: 'pending', label: '交割单', icon: '🧾' },
-  { key: 'afterSales', label: '售后单', icon: '🛠️' },
+  { key: 'afterSales', label: '售后单·扫描二维码', icon: '🛠️' },
+  { key: 'afterSalesManual', label: '售后单·输入货号', icon: '⌨️' },
   { key: 'draft', label: '草稿单', icon: '📝' },
   // 2026-11-28：最近 5 天销售单核对 / 更正。
   { key: 'confirm', label: '确认单', icon: '✅' },

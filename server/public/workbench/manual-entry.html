@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <title>输入货号</title>
+  <link rel="stylesheet" href="/workbench/styles/tokens.css">
+  <link rel="stylesheet" href="/workbench/styles/base.css">
+  <link rel="stylesheet" href="/workbench/features/shared/productSearch.css">
+  <link rel="stylesheet" href="/workbench/features/manual-entry/manual-entry.css">
+</head>
+<body data-view="manual-entry">
+  <main class="shell manual-entry-page" id="manual-entry-app">
+    <h1 class="title" data-view="manual-title">输入货号</h1>
+    <p class="notice" data-view="manual-hint"></p>
+    <section class="card" data-view="manual-search"></section>
+    <p class="hint" data-view="manual-status" role="status" aria-live="polite"></p>
+  </main>
+  <script type="module">
+    import { mountManualEntryPage } from '/workbench/features/manual-entry/index.js';
+    mountManualEntryPage(document.getElementById('manual-entry-app'));
+  </script>
+</body>
+</html>

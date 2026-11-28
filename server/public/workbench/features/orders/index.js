@@ -7,7 +7,7 @@ import { arrivalLineKey, arrivalSubmitLines } from './acceptanceDoc.js';
 export { arrivalLineKey, arrivalSubmitLines };
 import {
   ORDERS_API, ORDERS_PAGE, ORDERS_TEXTS,
-  SALES_SECTIONS, SALES_DELIVERY_PAGE, SALES_CONFIRM_PAGE,
+  SALES_SECTIONS, SALES_DELIVERY_PAGE, SALES_CONFIRM_PAGE, AFTER_SALES_MANUAL_PAGE,
   PURCHASE_ORDER_BEHAVIOR_CODE, PURCHASE_IN_BEHAVIOR_CODE,
 } from '../../config/orders.js';
 
@@ -532,6 +532,10 @@ export function createOrdersModule({ mode = 'both' } = {}) {
       if (sectionCard) {
         if (sectionCard.dataset.ordersSection === 'afterSales') {
           void scanAfterSales();
+          return;
+        }
+        if (sectionCard.dataset.ordersSection === 'afterSalesManual') {
+          window.location.href = AFTER_SALES_MANUAL_PAGE;
           return;
         }
         // 2026-11-28：确认单 → 独立核对页（只读列表 + 整单更正）。

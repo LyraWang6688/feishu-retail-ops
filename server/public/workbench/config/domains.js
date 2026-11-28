@@ -74,7 +74,8 @@ export const DOMAIN_TABS = [
         label: '录单',
         kind: 'scan-cards',
         cards: [
-          { icon: '👟', title: '鞋类', scanRealm: 'sales' },
+          { icon: '👟', title: '鞋类·扫描二维码', scanRealm: 'sales' },
+          { icon: '⌨️', title: '鞋类·输入货号', href: '/workbench/manual-entry.html?realm=sales' },
           { icon: '🛒', title: '配品', href: '/workbench/accessory-sale.html' },
           { icon: '💵', title: '每日现金', href: '/workbench/sales-daily-cash.html' },
         ],

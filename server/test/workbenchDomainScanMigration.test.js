@@ -33,6 +33,8 @@ test('新 IA：销售/库存/供应录单入口存在，供应录单有四张卡
   const domains = read('public/workbench/config/domains.js');
   assert.ok(domains.includes("id: 'sales-entry'") && domains.includes("label: '录单'"), '销售缺录单');
   assert.ok(domains.includes("scanRealm: 'sales'"), '销售鞋类必须接领域扫码');
+  assert.ok(domains.includes("title: '鞋类·扫描二维码'"), '销售扫码卡文案');
+  assert.ok(domains.includes("title: '鞋类·输入货号'"), '销售输入货号卡文案');
   assert.ok(domains.includes("title: '采购'") && domains.includes("href: '/workbench/procurement.html'"), '供应采购必须打开采购页');
   assert.match(read('public/workbench/features/domains/nav.js'), /data-tap-target=/, '领域子 tab 必须带点击埋点');
   assert.match(read('public/workbench/features/scan/launch.js'), /data-tap-target=/, '领域扫码卡片必须带点击埋点');
@@ -48,6 +50,10 @@ test('新 IA：销售/库存/供应录单入口存在，供应录单有四张卡
   const page = read('public/workbench/purchase-acceptance.html');
   assert.ok(page.includes('createOrdersModule({ mode: \'purchase\' })'), '验收独立页必须复用既有订单模块');
   assert.equal(domains.includes("id: 'sales-accessory'"), false, '配品不再是独立子 tab');
+  const orders = read('public/workbench/config/orders.js');
+  assert.ok(orders.includes("label: '售后单·扫描二维码'"), '售后扫码卡文案');
+  assert.ok(orders.includes("label: '售后单·输入货号'"), '售后输入货号卡文案');
+  assert.ok(read('public/workbench/manual-entry.html').includes('manual-entry-app'), '输入货号页存在');
 });
 
 test('领域扫码入口：真实 JSAPI + 扫完带 from 跳转', () => {
