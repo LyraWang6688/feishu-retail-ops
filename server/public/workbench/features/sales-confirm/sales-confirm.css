@@ -3,7 +3,11 @@
 .sales-confirm-head h1 { margin:0; font-size:18px; }
 .sales-confirm-status { margin:0; color:var(--text-secondary); }
 .sales-confirm-status.error { color:var(--danger); }
+.sales-confirm-filters { display:grid; gap:8px; grid-template-columns:minmax(0,1fr) minmax(130px,180px); align-items:end; }
+.sales-confirm-sender { display:grid; gap:4px; font-size:12px; color:var(--text-secondary); }
+.sales-confirm-sender select { width:100%; min-height:40px; }
 .sales-confirm-body { display:grid; gap:10px; }
+@media (max-width:520px) { .sales-confirm-filters { grid-template-columns:minmax(0,1fr); } }
 .sales-confirm-card-wrap { display:grid; gap:8px; }
 .sales-confirm-edit { min-height:40px; }
 .sales-confirm-block { display:grid; gap:10px; margin:0 0 16px; }

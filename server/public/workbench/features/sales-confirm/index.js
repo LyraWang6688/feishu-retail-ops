@@ -4,6 +4,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { salesOrderCardHtml } from '../shared/salesOrderCard.js';
+import { bindProductSearch, productSearchHtml } from '../shared/productSearch.js';
 import { SALES_CORRECTION_API, SALES_CORRECTION_PAYMENT_STATUS, SALES_CORRECTION_TEXTS as T } from '../../config/salesCorrection.js';
 
 const money = (value) => '¥' + Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
@@ -15,7 +16,14 @@ export function mountSalesConfirmPage(container) {
   const modal = document.querySelector('[data-correction-modal]');
   const modalBody = document.querySelector('[data-correction-body]');
   const modalError = document.querySelector('[data-correction-error]');
-  const state = { orders: [], methods: [], sizes: new Map(), current: null, saving: false };
+  const state = {
+    orders: [], methods: [], sizes: new Map(), current: null, saving: false,
+    filterProduct: null, filterSender: '', filtersBound: false,
+  };
+  const productFilter = container.querySelector('[data-view="sales-confirm-product-filter"]');
+  const senderFilter = container.querySelector('[data-view="sales-confirm-sender-filter"]');
+  const senderLabel = container.querySelector('[data-view="sales-confirm-sender-label"]');
+  if (senderLabel) senderLabel.textContent = T.senderLabel;
 
   const setStatus = (text, error) => {
     status.textContent = text || '';
@@ -45,13 +53,50 @@ export function mountSalesConfirmPage(container) {
     return '';
   };
 
+  const filteredOrders = () => state.orders.filter((order) => {
+    if (state.filterSender && String(order.sender || '') !== state.filterSender) return false;
+    if (state.filterProduct) {
+      return (order.details || []).some((detail) => String(detail.product_record_id || '') === state.filterProduct.recordId);
+    }
+    return true;
+  });
+
+  const renderSenderOptions = () => {
+    if (!senderFilter) return;
+    const senders = [...new Set(state.orders.map((order) => String(order.sender || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    senderFilter.innerHTML = '<option value="">' + escapeHtml(T.allSenders) + '</option>'
+      + senders.map((sender) => '<option value="' + escapeHtml(sender) + '"' + (sender === state.filterSender ? ' selected' : '') + '>'
+        + escapeHtml(sender) + '</option>').join('');
+  };
+
+  const bindFilters = () => {
+    if (state.filtersBound || !productFilter) return;
+    state.filtersBound = true;
+    productFilter.innerHTML = productSearchHtml({ mode: 'salesDetail' });
+    bindProductSearch(productFilter, {
+      mode: 'salesDetail',
+      onSelect: (item) => { state.filterProduct = item || null; renderList(); },
+      onClear: () => { state.filterProduct = null; renderList(); },
+    });
+    senderFilter?.addEventListener('change', () => {
+      state.filterSender = String(senderFilter.value || '');
+      renderList();
+    });
+  };
+
   const renderList = () => {
     if (!state.orders.length) {
       body.innerHTML = '<p class="empty">' + escapeHtml(T.empty) + '</p>';
       return;
     }
+    const orders = filteredOrders();
+    if (!orders.length) {
+      body.innerHTML = '<p class="empty">' + escapeHtml(T.noMatch) + '</p>';
+      return;
+    }
     let html = '';
-    for (const order of state.orders) {
+    for (const order of orders) {
       const first = (order.details || [])[0];
       const blocked = blockedText(order);
       const action = blocked
@@ -75,6 +120,8 @@ export function mountSalesConfirmPage(container) {
       const result = await api.get(SALES_CORRECTION_API.list);
       state.orders = Array.isArray(result && result.orders) ? result.orders : [];
       state.methods = Array.isArray(result && result.methods) ? result.methods : [];
+      renderSenderOptions();
+      bindFilters();
       renderList();
       setStatus(state.orders.length ? '' : T.empty);
     } catch (error) {
