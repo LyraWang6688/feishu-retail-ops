@@ -1,0 +1,8 @@
+.manual-entry-page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4);
+}
+.manual-entry-page .card { margin-top: var(--space-4); }
+.manual-entry-page .title { margin-bottom: var(--space-2); }
+.manual-entry-page .notice { margin-bottom: 0; }

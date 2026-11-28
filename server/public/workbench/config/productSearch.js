@@ -15,11 +15,20 @@ export const PRODUCT_SEARCH_TEXT = Object.freeze({
   empty: '没有匹配的货品。',
   failed: '货品搜索失败，请重试。',
   selected: '已选货品',
+  delisted: '已下架',
   recordIdLabel: '记录ID',
   clear: '清除',
 });
 
 export const PRODUCT_SEARCH_MODES = Object.freeze({
+  salesEntry: Object.freeze({
+    includeDelisted: false,
+    debounceMs: 250,
+  }),
+  afterSales: Object.freeze({
+    includeDelisted: true,
+    debounceMs: 250,
+  }),
   salesDetail: Object.freeze({
     includeDelisted: true,
     debounceMs: 250,
