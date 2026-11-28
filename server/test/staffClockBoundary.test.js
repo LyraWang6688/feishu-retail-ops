@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { todayStart, yesterdayStart, makeGateway, makeApp, withServer } = require('./support/staffFixtures');
+const { todayKey, todayStart, yesterdayStart, makeGateway, makeApp, withServer } = require('./support/staffFixtures');
 
 const post = (base, path, openId, body) => fetch(base + path, {
   method: 'POST',
@@ -30,6 +30,45 @@ test('纯考勤人没有 attendance.write：不能手工新增考勤', async () 
     });
     assert.equal(denied.status, 403);
     assert.equal(gateway.calls.create.length, 0);
+  });
+});
+
+test('自定义新增：结束留空 => 只记上班（进行中），不写默认下班时间', async () => {
+  const gateway = makeGateway();
+  await withServer(makeApp(gateway), async (base) => {
+    const created = await post(base, '/staff/attendance', 'ou_admin', {
+      staffRecordId: 'staff_emp', date: todayKey(), start: '09:00', end: '',
+    });
+    assert.equal(created.status, 201);
+    assert.equal(gateway.calls.create[0].fields.endAt, undefined);
+    assert.equal(gateway.calls.create[0].fields.hours, undefined);
+  });
+});
+
+test('编辑清空结束时间 => 真正改回进行中（endAt/hours 置空）', async () => {
+  const gateway = makeGateway();
+  gateway.attendance.push({
+    record_id: 'att_closed',
+    fields: {
+      姓名: [{ record_ids: ['staff_emp'] }],
+      考勤人: [{ id: 'ou_emp' }],
+      出勤日: todayStart(),
+      开始时间: todayStart() + 9 * 3600000,
+      结束时间: todayStart() + 18 * 3600000,
+      工时: 9,
+    },
+  });
+  await withServer(makeApp(gateway), async (base) => {
+    const res = await fetch(base + '/staff/attendance/att_closed', {
+      method: 'PATCH',
+      headers: { 'x-test-openid': 'ou_admin', 'content-type': 'application/json' },
+      body: JSON.stringify({ staffRecordId: 'staff_emp', date: todayKey(), start: '09:00', end: '' }),
+    });
+    assert.equal(res.status, 200);
+    const update = gateway.calls.update.find((item) => item.key === 'attendance' && item.id === 'att_closed');
+    assert.ok(update);
+    assert.equal(update.fields.endAt, null, '结束时间要真正清空');
+    assert.equal(update.fields.hours, null, '工时也要清空');
   });
 });
 

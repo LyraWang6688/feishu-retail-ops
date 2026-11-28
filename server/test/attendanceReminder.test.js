@@ -79,6 +79,18 @@ test('已下班/未勾选考勤的人不提醒', async () => {
   assert.equal(notifier.sent.length, 0);
 });
 
+test('18:00 只发提醒，不写结束时间', async () => {
+  const gateway = makeGateway();
+  const writes = [];
+  gateway.update = async (...args) => { writes.push(args); };
+  const notifier = makeNotifier();
+  const service = createAttendanceReminderService({
+    gateway, notifications: notifier, now: () => Date.parse('2026-11-27T18:10:00+08:00'),
+  });
+  assert.deepEqual(await service.run(), { sent: 1 });
+  assert.equal(writes.length, 0, '提醒不是下班动作，不能写任何时间');
+});
+
 test('昨天有未结束记录：今天不再提醒', async () => {
   const gateway = makeGateway();
   gateway.listAll = async (key) => {
