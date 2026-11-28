@@ -268,6 +268,7 @@ if (require.main === module) {
   }
 
   // 2026-11-27：18:00 后仍未打下班卡 → 私聊提醒本人（每天一次）。
+  // ⚠️ 18:00 只是提醒阈值：不写结束时间，也不代表默认 18:00 下班。
   if (ATTENDANCE_REMINDER.enabled) {
     const attendanceReminder = createAttendanceReminderService({
       gateway: new V1BitableGateway(),

@@ -36,7 +36,9 @@ const formHtml = (editing) => '<form class="staff-form" data-staff-form data-sta
   + '</form>';
 
 const staffCardHtml = (member, records, canWrite, canClock, editing) => {
-  const openRecord = records.find((record) => !record.endAt);
+  // 只把【今天】的未结束记录算作可下班；昨天的旧记录由管理员补卡，
+  // 否则按钮会显示「下班」，点了却被后端拒绝。
+  const openRecord = records.find((record) => !record.endAt && dayText(record.date) === dayOf(0));
   const clockButton = canClock && member.active
     ? (openRecord
       ? '<button class="btn small primary" type="button" data-staff-clock-out="' + escapeHtml(member.recordId) + '">' + escapeHtml(T.clockOut) + '</button>'
@@ -127,7 +129,8 @@ export function openStaffPanel(host) {
       showToast(T.saved);
       await load();
     } catch (error) {
-      showErrorToast(T.saveFailed);
+      // 直接把服务端的人话带出来（例如“开始/结束时间不对”），不要只报“保存失败”。
+      showErrorToast(error?.message || T.saveFailed);
     }
   };
 
@@ -156,7 +159,8 @@ export function openStaffPanel(host) {
     }
     const add = event.target.closest?.('[data-staff-add]');
     if (add) {
-      state.editing = { staffRecordId: add.dataset.staffAdd, recordId: '', date: state.to, start: '09:00', end: '18:00' };
+      // 自定义时间：上下班分开填，不预填任何时间（18:00 只是提醒阈值，不是默认下班时间）。
+      state.editing = { staffRecordId: add.dataset.staffAdd, recordId: '', date: state.to, start: '', end: '' };
       render();
       return;
     }

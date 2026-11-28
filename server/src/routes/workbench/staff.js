@@ -268,14 +268,22 @@ const createWorkbenchStaffRoutes = ({ options = {} } = {}) => {
       const existing = await gateway.get('attendance', recordId);
       if (!existing) throw badRequest(STAFF_TEXTS.recordNotFound);
       const payload = readPayload(req.body);
-      await gateway.update('attendance', recordId, {
-        date: payload.dateAt, startAt: payload.startAt,
-        ...(payload.endAt ? { endAt: payload.endAt, hours: payload.hours } : {}),
-      });
+      const hasEndField = Object.prototype.hasOwnProperty.call(req.body || {}, 'end');
+      const patch = { date: payload.dateAt, startAt: payload.startAt };
+      if (payload.endAt) {
+        patch.endAt = payload.endAt;
+        patch.hours = payload.hours;
+      } else if (hasEndField) {
+        // 编辑时把结束时间清空 ⇒ 真正改回“进行中”，不能沿用旧的 endAt/hours。
+        // 飞书「更新记录」把字段设为 null 即清空（日期/数字都适用）。
+        patch.endAt = null;
+        patch.hours = null;
+      }
+      await gateway.update('attendance', recordId, patch);
       logInfo('workbench.staff.attendance.updated', {
-        record_id: recordId, date: payload.date, hours: payload.hours,
+        record_id: recordId, date: payload.date, hours: patch.hours,
       });
-      return res.json({ success: true, recordId, hours: payload.hours });
+      return res.json({ success: true, recordId, hours: patch.hours });
     } catch (error) {
       logError('workbench.staff.attendance.update.failed', { error: error.message });
       return res.status(error.statusCode || 502).json({ success: false, error: error.message });

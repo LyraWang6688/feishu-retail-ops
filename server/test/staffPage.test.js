@@ -27,6 +27,10 @@ test('人员管理页面：按权限判断编辑，不写死角色', () => {
   assert.ok(page.includes('data-staff-from') && page.includes('data-staff-to'), '日期范围');
   assert.ok(page.includes('data-staff-form'), '时间段编辑表单');
   assert.ok(page.includes('api.delete'), '删除考勤');
+  // 自定义时间：上下班分开填，不预填下班时间；只有今天的未结束记录才算可下班。
+  assert.ok(page.includes("start: '', end: ''"), '自定义不预填时间');
+  assert.equal(page.includes("end: '18:00'"), false, '不再有默认 18:00 下班时间');
+  assert.ok(page.includes('dayText(record.date) === dayOf(0)'), '下班按钮只看今天');
 });
 
 test('9 点考勤弹窗：主入口调用 + 代打卡权限 + 文案', () => {
