@@ -30,6 +30,8 @@ test('AC-DP2 确认层：逐 recordId 一行、默认勾选、回显原提交、
   }));
   assert.match(html, /data-delist-confirm/, '\u8981\u6709\u786e\u8ba4\u5c42');
   assert.match(html, /name="delist_pick" value="recA" checked/, '\u9ed8\u8ba4\u5168\u9009');
+  assert.match(html, /name="delist_picked" value="recA"/, '\u9690\u85cf\u5df2\u9009\u5217\u8868\u8981\u5e26\u4e0a');
+  assert.match(html, /data-view="delist-confirm-picked"/, '\u786e\u8ba4\u5c42\u8981\u6709\u540c\u6b65\u5c0f\u811a\u672c');
   assert.match(html, /name="delist_confirmed" value="1"/);
   assert.match(html, /value="confirm"/);
   assert.match(html, /value="skip"/);

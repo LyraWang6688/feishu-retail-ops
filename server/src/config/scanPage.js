@@ -786,6 +786,7 @@ const SCAN_PAGE = Object.freeze({
   delistConfirmRow: '{number} · 本单 {qty} 双 · 库存 {stock} 双',
   delistConfirmYes: '同时下架并继续',
   delistConfirmNo: '不下架，继续',
+  delistConfirmEmpty: '点了「同时下架」但没有勾选任何货品。请至少勾选一个，或点「不下架，继续」。',
   // 🔴 2026-11-27：`replenishForm: REPLENISH_FORM` 随补货扫码页一起删除。
   SIZE_ROW_GROUPS: Object.freeze({ GROUPED: 'instock+reserve' }),
   REALM_SIZE_BEHAVIOR: Object.freeze({

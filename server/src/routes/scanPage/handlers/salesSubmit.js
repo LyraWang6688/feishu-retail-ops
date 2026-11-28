@@ -177,12 +177,25 @@ return sendPaymentStep(res, req, {
         const delistConfirmed = String(body[fields.delistConfirmed] || '').trim() === '1';
         const delistDecision = String(body.delist_decision || '').trim();
         const pickField = fields.delistPick || 'delist_pick';
-        const pickedRaw = body[pickField];
+        const pickedStoredField = fields.delistPicked || 'delist_picked';
+        const pickedStoredRaw = body[pickedStoredField];
+        // 优先读页面同步的隐藏列表；老页面没有它时仍兼容逐个 checkbox 的 name。
+        const pickedRaw = (pickedStoredRaw !== undefined && pickedStoredRaw !== '')
+          ? pickedStoredRaw
+          : body[pickField];
         const pickedIds = (Array.isArray(pickedRaw) ? pickedRaw : String(pickedRaw || '').split(','))
           .map((id) => String(id || '').trim()).filter(Boolean);
         const submitSnapshot = submitView?.found
           ? snapshotOfSubmit({ body, field: fields.stockSnapshot, view: submitView, requestId, logWarn })
           : null;
+        // 点了“同时下架”却一个都没勾：不许静默当成“不下架”继续，必须让她看见。
+        if (delistConfirmed && delistDecision !== 'skip' && !pickedIds.length) {
+          return sendHuman(res, 400, {
+            title: writeConfig.texts.failedTitle,
+            body: config.delistConfirmEmpty,
+            requestId,
+          });
+        }
         const delistIds = delistConfirmed && delistDecision !== 'skip' ? pickedIds : [];
         if (!delistConfirmed && submitView?.found && currentSize && STOCK_DELIST.prompts.saleSubmit) {
           const items = saleItemsOf({
