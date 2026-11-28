@@ -151,6 +151,7 @@ test('AC-ZERO-ROUTE1 全 0 ⇒ 不跳资金页，直接入队（payments=[]）',
         [SAMPLE_PROMOTION.field]: '40',
         // 2026-11-26：卖完下架确认是**第一提交先出确认层**、确认后再提交；这里模拟"已确认"那一发。
         [SCAN_WRITE.fields.delistConfirmed]: '1',
+        [SCAN_WRITE.fields.delistPicked]: 'prod_zero',
       }).toString(),
     });
     assert.equal(response.status, 303);
@@ -166,5 +167,51 @@ test('AC-ZERO-ROUTE1 全 0 ⇒ 不跳资金页，直接入队（payments=[]）',
     assert.equal(payload.derived.owed_amount, 0);
     assert.equal(payload.order_no, 'XSD-20261118-0009');
     assert.equal(completed.length, 1, 'completeSale 轮换提交键');
+  });
+});
+
+// ⭐ 2026-11-28：确认层真实提交带的是隐藏的已选列表（浏览器 checkbox 丢了也不能静默丢下架）。
+test('AC-ZERO-ROUTE3 确认层只带隐藏已选列表 ⇒ 下架意图仍入队', async () => {
+  const enqueued = [];
+  const completed = [];
+  await withServer(buildApp({ enqueued, completed }), async (base) => {
+    const response = await fetch(`${base}/r/rec_zero_route?from=sales`, {
+      method: 'POST', redirect: 'manual',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        [SCAN_WRITE.fields.action]: SCAN_WRITE.actions.submitOrder,
+        [SCAN_WRITE.fields.submitKey]: 'scan_sale:test:1',
+        [SCAN_WRITE.fields.size]: '40',
+        [SCAN_WRITE.fields.amount]: '0',
+        [SCAN_WRITE.fields.stockSnapshot]: '1',
+        [SCAN_WRITE.fields.delistConfirmed]: '1',
+        [SCAN_WRITE.fields.delistPicked]: 'prod_zero',
+        delist_decision: 'confirm',
+      }).toString(),
+    });
+    assert.equal(response.status, 303, '确认后继续原流程');
+    assert.equal(enqueued.length, 1, '只入队一次');
+  });
+});
+
+test('AC-ZERO-ROUTE4 确认下架却一个都没勾 ⇒ 400，不静默继续', async () => {
+  const enqueued = [];
+  const completed = [];
+  await withServer(buildApp({ enqueued, completed }), async (base) => {
+    const response = await fetch(`${base}/r/rec_zero_route?from=sales`, {
+      method: 'POST', redirect: 'manual',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        [SCAN_WRITE.fields.action]: SCAN_WRITE.actions.submitOrder,
+        [SCAN_WRITE.fields.submitKey]: 'scan_sale:test:1',
+        [SCAN_WRITE.fields.size]: '40',
+        [SCAN_WRITE.fields.amount]: '0',
+        [SCAN_WRITE.fields.stockSnapshot]: '1',
+        [SCAN_WRITE.fields.delistConfirmed]: '1',
+        delist_decision: 'confirm',
+      }).toString(),
+    });
+    assert.equal(response.status, 400, '不能静默当成不下架');
+    assert.equal(enqueued.length, 0, '不入队');
   });
 });
