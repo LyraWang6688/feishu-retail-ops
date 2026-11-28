@@ -26,3 +26,13 @@ test('确认单尺码 = 实时库存 + 原单尺码，原单默认选中且不�
   assert.match(js, /selected>'s*\n\s*\+ escapeHtml\(T\.original\)/);
   assert.match(js, /if \(String\(item\.size\) === String\(currentSize\)\) continue;/);
 });
+
+test('确认单：未收款行不显示支付方式，避免默认成第一个方式', () => {
+  const js = read('features/sales-confirm/index.js');
+  const cfg = read('config/salesCorrection.js');
+  assert.match(cfg, /SALES_CORRECTION_PAYMENT_STATUS/);
+  assert.match(cfg, /unpaid: '未收款'/);
+  assert.match(js, /payment\.status === SALES_CORRECTION_PAYMENT_STATUS\.unpaid/);
+  assert.match(js, /sales-confirm-unpaid/);
+  assert.match(js, /if \(payment\.status === SALES_CORRECTION_PAYMENT_STATUS\.unpaid\) \{\s*\n\s*paymentHtml/);
+});

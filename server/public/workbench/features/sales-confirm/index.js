@@ -4,7 +4,7 @@
 import { api } from '../../core/api-client.js';
 import { escapeHtml } from '../../core/formatters.js';
 import { salesOrderCardHtml } from '../shared/salesOrderCard.js';
-import { SALES_CORRECTION_API, SALES_CORRECTION_TEXTS as T } from '../../config/salesCorrection.js';
+import { SALES_CORRECTION_API, SALES_CORRECTION_PAYMENT_STATUS, SALES_CORRECTION_TEXTS as T } from '../../config/salesCorrection.js';
 
 const money = (value) => '¥' + Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
 const amountOf = (value) => String(value ?? '').trim();
@@ -114,7 +114,7 @@ export function mountSalesConfirmPage(container) {
     total += Number(modalBody.querySelector('[data-correction-accessory-amount]')?.value || 0);
     let paid = 0;
     for (const payment of order.payments || []) {
-      if (payment.status === '未收款') continue;
+      if (payment.status === SALES_CORRECTION_PAYMENT_STATUS.unpaid) continue;
       paid += Number(modalBody.querySelector('[data-payment-amount="' + payment.record_id + '"]')?.value || 0);
     }
     const pending = Math.max(0, total - paid);
@@ -142,6 +142,14 @@ export function mountSalesConfirmPage(container) {
     }
     let paymentHtml = '';
     for (const payment of order.payments || []) {
+      // 未收款行只是待收占位：没有支付方式，不能默认成第一个方式。
+      if (payment.status === SALES_CORRECTION_PAYMENT_STATUS.unpaid) {
+        paymentHtml += '<div class="form-row sales-confirm-row" data-payment-row="' + escapeHtml(payment.record_id) + '">'
+          + '<div><span class="sales-confirm-unpaid">' + escapeHtml(SALES_CORRECTION_PAYMENT_STATUS.unpaid) + '</span></div>'
+          + '<input readonly value="' + escapeHtml(amountOf(payment.amount)) + '" aria-label="' + escapeHtml(T.pendingLabel) + '">'
+          + '</div>';
+        continue;
+      }
       const methods = [payment.method].concat(state.methods || []).filter((value, index, arr) => value && arr.indexOf(value) === index);
       let options = '';
       for (const method of methods) {
