@@ -191,8 +191,8 @@ test('五个领域 tab + 订单列表懒加载', async ({ page }) => {
 
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
   await expect(page.getByRole('button', { name: /交割单/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: '售后单·扫描二维码', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '售后单·输入货号', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /售后单·扫描二维码/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /售后单·输入货号/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /草稿单/ })).toBeVisible();
   expect(orderRequests).toHaveLength(0);
 
@@ -566,8 +566,8 @@ test('切走再回到订单列表：回到五张入口卡，不保留草稿单�
   await page.getByRole('button', { name: '订单列表', exact: true }).click();
 
   await expect(page.getByRole('button', { name: /交割单/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: '售后单·扫描二维码', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '售后单·输入货号', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /售后单·扫描二维码/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /售后单·输入货号/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /草稿单/ })).toBeVisible();
   await expect(page.locator('[data-placeholder="draft"]')).toHaveCount(0);
 });
