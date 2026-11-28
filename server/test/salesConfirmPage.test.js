@@ -40,3 +40,9 @@ test('确认单：未收款行不显示支付方式，避免默认成第一个�
 test('确认单列表按钮文案 = 修改', () => {
   assert.match(read('config/salesCorrection.js'), /edit: '修改'/);
 });
+
+test('确认单异步回执：前端用 redirect_url 主动回工作台', () => {
+  const js = read('features/sales-confirm/index.js');
+  assert.match(js, /result\?\.redirect_url/);
+  assert.match(js, /window\.location\.href = result\.redirect_url/);
+});
