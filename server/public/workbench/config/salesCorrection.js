@@ -17,7 +17,7 @@ export const SALES_CORRECTION_TEXTS = Object.freeze({
   loading: '正在读取最近 5 天的销售单…',
   empty: '最近 5 天没有可确认的销售单',
   failed: '确认单读取失败，请稍后刷新',
-  edit: '核对 / 修改',
+  edit: '修改',
   readonly: '只读',
   blockedAfterSales: '已发生售后，不能修改',
   blockedStatus: '未写入成功，不能修改',
