@@ -12,7 +12,7 @@ const installScanPagePublicRoutes = ({ router, ctx }) => {
     const requestId = req.requestId;
     const noticeKey = SUBMIT_TOAST.noticeKey || 'done';
     const orderNo = String(req.query?.[noticeKey] || '').trim().slice(0, 40);
-    return sendHtml(res, 200, renderSalesHome({ config, orderNo, basePath: req.baseUrl }));
+    return sendHtml(res, 200, renderSalesHome({ config, orderNo }));
   });
 
   /**

@@ -151,8 +151,6 @@ const TEXTS = Object.freeze({
   // 资金页提交后：toast 停留后自动回工作台（她 2026-10-27 的口径）
   salesHomeToastMs: 5000,
   salesHomeReturnPath: '/workbench',
-  salesHomeManualLabel: '编号（货号|颜色|尺码）',
-  salesHomeManualSubmit: '打开这一款',
   degradedSizesNote: '暂时读不到该类别在「尺码管理」里的全部尺码，本页只显示有库存的尺码。',
   unknownStateNote: '有 {count} 双的「所属状态」不在预期取值里，已按原值另列。',
   unknownSizeNote: '有 {count} 双读不出尺码，单独列在最后一行。',

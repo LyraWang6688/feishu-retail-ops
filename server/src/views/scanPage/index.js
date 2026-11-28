@@ -28,12 +28,12 @@ const { realmBlockHtml, realmEmptyHtml } = require('./realmBlock');
  *   **应该就跟这一单没关系了**，除非我是选"**再加一双**"呀」
  *  ⇒ **销售领域入口页**（= 她说的"销售首页"）：**不带任何编号/货号** ✗，只有
  *     ①（可选）「上一单已提交（单号）」（来自回跳 URL 的 `?done=` ✓ 无状态）
- *     ②「请扫下一个标签」+ ③ 手输编号兜底框
+ *     ②「请扫下一个标签」
  *  ⚠️ 文案全走 config（模板里不写中文 ✓）；**不含本单清单**（那是"同一单"才有的东西 ✗）。
+ *  ⚠️ 2026-11-28：删掉手输编号框（根路由已不认 `?number=`，留着只会让人以为能用）。
  */
-const renderSalesHome = ({ config = SCAN_PAGE, orderNo = '', basePath = '' } = {}) => {
+const renderSalesHome = ({ config = SCAN_PAGE, orderNo = '' } = {}) => {
   const texts = config.texts || {};
-  const prefix = String(basePath || '');
   const submittedNo = String(orderNo || '').trim();
   const toastMs = Number(config.salesHomeToastMs) || 5000;
   const returnPath = String(config.salesHomeReturnPath || '').trim();
@@ -50,11 +50,6 @@ const renderSalesHome = ({ config = SCAN_PAGE, orderNo = '', basePath = '' } = {
 ${toast}
 <h1 class="title">${escapeHtml(texts.salesHomeTitle || '')}</h1>
 <p class="notice">${escapeHtml(texts.salesHomeHint || '')}</p>
-<form method="get" action="${escapeHtml(prefix)}/" class="write-form" data-view="sales-home-manual">
-<label class="field"><span>${escapeHtml(texts.salesHomeManualLabel || '')}</span>
-<input type="text" name="number" value="" autocomplete="off" inputmode="text"></label>
-<button type="submit" class="btn btn--primary">${escapeHtml(texts.salesHomeManualSubmit || '')}</button>
-</form>
 </main>`,
   });
 };
