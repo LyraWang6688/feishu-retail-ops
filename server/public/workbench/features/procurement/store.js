@@ -34,6 +34,11 @@ const entriesOfProduct = (draft, productRecordId) => (
   draft.products?.[productRecordId]?.entries || {}
 );
 
+/** 某个货品的已选合计（标准码 + 自定义码都在 entries 里）。 */
+export const quantityOfProduct = (draft, productRecordId) => Object.values(
+  draft?.products?.[productRecordId]?.entries || {},
+).reduce((sum, quantity) => sum + (Number(quantity) || 0), 0);
+
 /** 合计：总数 = 补货 + 上新（按草稿里的 source 归类）。 */
 export const computeTotals = (draft) => {
   const totals = { total: 0, replenish: 0, newProducts: 0 };
