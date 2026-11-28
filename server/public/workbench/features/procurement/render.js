@@ -7,6 +7,7 @@
  * 🔴 记录 ID 只作 `data-*` 内部主键，**不出现在展示文本里**。
  */
 import { escapeHtml } from '../../core/formatters.js';
+import { quantityOfProduct } from './store.js';
 import { productActionsHtml } from './productActions.js';
 import { customSizeModalHtml } from './customSizeModal.js';
 const fill = (template, values) => String(template || '').replace(/\{(\w+)\}/g, (match, key) => (
@@ -101,7 +102,8 @@ export const replenishGroupHtml = (group, draft, store, config, options = {}) =>
     }
   }
   const rows = [...rowsBySize.values()].sort((a, b) => Number(a.size) - Number(b.size));
-  return `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">
+  const picked = quantityOfProduct(draft, group.productRecordId) > 0;
+  return `<section class="pr-group${picked ? ' is-picked' : ''}" data-pr-group="${escapeHtml(group.productRecordId)}">
   <div class="pr-group-head">
     <div class="pr-group-title-wrap"><h2 class="pr-group-name">${escapeHtml(titleOf(group, config))}</h2>${productActionsHtml(group, config)}</div>
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(config.card.replenishTotal, 0)}</div>
@@ -123,6 +125,7 @@ const newRowHtml = (group, size, draft, store, config) => {
 };
 
 export const newGroupHtml = (group, draft, store, config) => {
+  const picked = quantityOfProduct(draft, group.productRecordId) > 0;
   const supplier = String(group.supplierName || '').trim();
   // 供应商为空 ⇒ 用无「·」的模板（否则卡片小字会多一个孤零零的「·」）
   const subtitle = fill(supplier ? config.card.newSubtitle : config.card.newSubtitleNoSupplier, {
@@ -135,14 +138,14 @@ export const newGroupHtml = (group, draft, store, config) => {
     <div class="pr-group-total" data-pr-group-total="${escapeHtml(group.productRecordId)}">${totalTemplateHtml(group.categoryMissing ? '' : config.card.newNormalTotal, 0)}</div>
   </div>`;
   if (group.categoryMissing) {
-    return `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">${head}
+    return `<section class="pr-group${picked ? ' is-picked' : ''}" data-pr-group="${escapeHtml(group.productRecordId)}">${head}
       <p class="pr-hint">${escapeHtml(config.texts.categoryMissing)}</p></section>`;
   }
   const normal = (group.sizes?.normal || []).map((size) => newRowHtml(group, size, draft, store, config)).join('');
   const special = (group.sizes?.special || []).map((size) => newRowHtml(group, size, draft, store, config)).join('');
   const specialBlock = special ? `<details class="pr-special"><summary>${escapeHtml(fill(config.card.specialSummary, { count: group.sizes.special.length }))}</summary>
     <div class="pr-size-grid">${special}</div></details>` : '';
-  return `<section class="pr-group" data-pr-group="${escapeHtml(group.productRecordId)}">${head}
+  return `<section class="pr-group${picked ? ' is-picked' : ''}" data-pr-group="${escapeHtml(group.productRecordId)}">${head}
     <div class="pr-size-grid">${normal}</div>${specialBlock}</section>`;
 };
 

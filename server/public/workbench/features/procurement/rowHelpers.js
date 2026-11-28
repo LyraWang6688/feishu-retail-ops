@@ -1,4 +1,5 @@
 /** 采购页行级纯工具（从 index.js 拆出，保持入口模块 ≤200 行）。 */
+import { quantityOfProduct } from './store.js';
 export const metaOf = (state, recordId) => {
   for (const tab of ['replenish', 'new']) {
     for (const group of state.bodies[tab]?.groups || []) {
@@ -21,6 +22,12 @@ export const spotSoldOf = (state, recordId, size) => {
   return 0;
 };
 
+export const syncGroupPicked = (host, draft, recordId) => {
+  const group = [...host.querySelectorAll('[data-pr-group]')]
+    .find((node) => node.dataset.prGroup === String(recordId));
+  if (group) group.classList.toggle('is-picked', quantityOfProduct(draft, recordId) > 0);
+};
+
 export const syncRow = (host, store, draft, recordId, size) => {
   const quantity = store.quantityOf(draft, recordId, size);
   host.querySelectorAll('[data-pr-qty]').forEach((input) => {
@@ -28,6 +35,7 @@ export const syncRow = (host, store, draft, recordId, size) => {
       input.value = String(quantity);
     }
   });
+  syncGroupPicked(host, draft, recordId);
 };
 
 export const quantityInput = ({ input, config, applyQuantity }) => {
