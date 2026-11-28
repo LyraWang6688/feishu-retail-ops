@@ -6,6 +6,9 @@
  */
 const express = require('express');
 const { SalesCorrectionService } = require('../../services/salesCorrectionService');
+const { createSalesCorrectionAsyncService } = require('../../services/salesCorrectionAsyncService');
+const { getAsyncJobService } = require('../../services/asyncJobRuntime');
+const { submitToastUrl } = require('../../utils/submitToast');
 const { InventoryService } = require('../../services/inventoryService');
 const { createScanPageService } = require('../../services/scanPageService');
 const { saleSizeGroups } = require('../../views/scanPageRealm');
@@ -34,6 +37,16 @@ const createWorkbenchSalesCorrectionRoutes = ({ options = {}, followup } = {}) =
     return service;
   };
   const actorOf = (req) => options.actor || req.workbenchActor || {};
+  let correctionJobs = options.salesCorrectionJobs || null;
+  const resolveCorrectionJobs = () => {
+    if (!correctionJobs) {
+      correctionJobs = createSalesCorrectionAsyncService({
+        correctionService: resolveService(),
+        asyncJobs: options.asyncJobs !== undefined ? options.asyncJobs : getAsyncJobService(),
+      });
+    }
+    return correctionJobs;
+  };
 
   router.get('/sales/corrections', async (req, res) => {
     try {
@@ -47,7 +60,7 @@ const createWorkbenchSalesCorrectionRoutes = ({ options = {}, followup } = {}) =
 
   router.post('/sales/corrections', async (req, res) => {
     try {
-      const result = await resolveService().correct({
+      const payload = {
         submitKey: req.body?.submitKey,
         salesEntryRecordId: req.body?.salesEntryRecordId,
         details: req.body?.details,
@@ -55,10 +68,20 @@ const createWorkbenchSalesCorrectionRoutes = ({ options = {}, followup } = {}) =
         gift: req.body?.gift,
         accessory: req.body?.accessory,
         accessoryTotal: req.body?.accessoryTotal,
-      }, { actor: actorOf(req), requestId: req.requestId });
-      return res.json({ success: true, ...result });
+      };
+      const actor = actorOf(req);
+      const result = await resolveCorrectionJobs().submit({
+        payload,
+        actor,
+        operatorOpenId: actor.openId || actor.open_id || '',
+        operatorName: actor.name || '',
+        correlation: { request_id: req.requestId },
+      });
+      // 统一回执：前端拿 redirect_url 主动回工作台，由工作台 toast 显示结果。
+      return res.status(202).json({ success: true, ...result, redirect_url: result.redirect_url || submitToastUrl() });
     } catch (error) {
-      const status = /只能|不能|超过|不属于|缺少|没有|已经|请|要填|不一致|待核对/.test(String(error.message || '')) ? 400 : 502;
+      const status = error.statusCode === 400
+        || /只能|不能|超过|不属于|缺少|没有|已经|请|要填|不一致|待核对/.test(String(error.message || '')) ? 400 : 502;
       logError('workbench.sales.correction.failed', { request_id: req.requestId, error: error.message });
       return res.status(status).json({ success: false, error: error.message });
     }

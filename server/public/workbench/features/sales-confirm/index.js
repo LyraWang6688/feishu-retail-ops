@@ -240,11 +240,15 @@ export function mountSalesConfirmPage(container) {
     const button = modalBody.querySelector('[data-correction-save]');
     if (button) button.textContent = T.saving;
     try {
-      await api.post(SALES_CORRECTION_API.save, payload);
+      const result = await api.post(SALES_CORRECTION_API.save, payload);
       state.saving = false;
+      // 统一异步回执：入队成功就主动回工作台，由工作台 toast 显示“已提交”。
+      if (result?.redirect_url) {
+        window.location.href = result.redirect_url;
+        return;
+      }
       closeModal();
       await load();
-      window.dispatchEvent(new CustomEvent('workbench:toast', { detail: { text: T.saved } }));
     } catch (error) {
       state.saving = false;
       if (button) button.textContent = T.save;
