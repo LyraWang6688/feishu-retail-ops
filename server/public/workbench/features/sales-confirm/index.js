@@ -85,18 +85,19 @@ export function mountSalesConfirmPage(container) {
   const sizeOptionsOf = (detail, currentSize) => {
     const groups = state.sizes.get(detail.product_record_id) || {};
     let html = '';
+    // ⭐ 2026-11-28：实时库存 + 原单尺码。
+    //   原单尺码固定第一项并默认选中；实时库存里的同尺码不再重复出现。
+    if (currentSize) {
+      html += '<option value="' + escapeHtml(String(currentSize)) + '" selected>'
+        + escapeHtml(T.original) + ' ' + escapeHtml(String(currentSize)) + ' 码</option>';
+    }
     const add = (label, items) => {
       for (const item of items || []) {
-        html += '<option value="' + escapeHtml(String(item.size)) + '"'
-          + (String(item.size) === String(currentSize) ? ' selected' : '') + '>'
+        if (String(item.size) === String(currentSize)) continue;
+        html += '<option value="' + escapeHtml(String(item.size)) + '">'
           + escapeHtml(label) + ' ' + escapeHtml(String(item.size)) + ' 码</option>';
       }
     };
-    const all = (groups.inStock || []).concat(groups.reserve || [], groups.special || []);
-    if (currentSize && !all.some((item) => String(item.size) === String(currentSize))) {
-      html += '<option value="' + escapeHtml(String(currentSize)) + '" selected>当前 '
-        + escapeHtml(String(currentSize)) + ' 码</option>';
-    }
     add(T.inStock, groups.inStock);
     add(T.reserve, groups.reserve);
     add(T.special, groups.special);

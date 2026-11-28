@@ -9,7 +9,6 @@ export const SALES_CORRECTION_API = Object.freeze({
 
 export const SALES_CORRECTION_TEXTS = Object.freeze({
   pageTitle: '确认单 · 最近 5 天',
-  back: '返回订单列表',
   loading: '正在读取最近 5 天的销售单…',
   empty: '最近 5 天没有可确认的销售单',
   failed: '确认单读取失败，请稍后刷新',
@@ -34,6 +33,7 @@ export const SALES_CORRECTION_TEXTS = Object.freeze({
   inStock: '现货',
   reserve: '预订',
   special: '特殊码',
+  original: '原单',
   save: '确认修改',
   saving: '正在保存…',
   cancel: '取消',
