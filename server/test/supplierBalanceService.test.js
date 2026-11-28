@@ -89,6 +89,11 @@ test('供应分析读表：三张表都带关键读重试和字段裁剪', async
   }
 });
 
+test('供应分析供应商字段与生产 P交易明细 对齐：使用「供应商合并」', () => {
+  assert.equal(SUPPLIER_BALANCE.transactionFields.supplierName, '供应商合并');
+  assert.notEqual(SUPPLIER_BALANCE.transactionFields.supplierName, '供应商名');
+});
+
 test('供应商显示：余额非 0 或最近窗口内有交易', async () => {
   const result = await serviceOf({ suppliers: baseSuppliers, inits: baseInits, txs: baseTxs }).list();
   assert.deepEqual(result.suppliers.map((item) => item.name).sort(), [

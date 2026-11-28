@@ -9,7 +9,10 @@ const { readInt } = require('./envValue');
 const SUPPLIER_BALANCE = Object.freeze({
   // P交易明细的只读字段（公式 / Lookup / 关联字段不能混进可写 fields）。
   transactionFields: Object.freeze({
-    supplierName: '供应商名',
+    // 2026-11-27：生产「P交易明细」已无「供应商名」列；用「供应商合并」公式
+    //（关联供应商 → Lookup → 交易明细ID 兜底）取展示名。请求不存在的列会让整次读取
+    // 报 FieldNameNotFound(1254045)，供应分析直接 502。
+    supplierName: '供应商合并',
     tradeDate: '交易日',
     tradeDirection: '交易方向',
     transactionAmount: '交易额',
