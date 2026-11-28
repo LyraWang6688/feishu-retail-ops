@@ -19,4 +19,5 @@
 .sales-confirm-actions { display:flex; gap:8px; justify-content:flex-end; }
 .sales-confirm-actions .btn { min-height:44px; }
 .sales-confirm-note { margin:0; color:var(--text-secondary); font-size:12px; }
+.sales-confirm-unpaid { display:inline-flex; align-items:center; min-height:40px; color:var(--text-secondary); font-size:13px; }
 @media (max-width:520px) { .sales-confirm-row { grid-template-columns:minmax(0,1fr) 76px; } }

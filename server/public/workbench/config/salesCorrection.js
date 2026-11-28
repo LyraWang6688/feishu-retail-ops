@@ -7,6 +7,11 @@ export const SALES_CORRECTION_API = Object.freeze({
   sizeGroups: '/api/workbench/sales/size-groups',
 });
 
+export const SALES_CORRECTION_PAYMENT_STATUS = Object.freeze({
+  paid: '已收款',
+  unpaid: '未收款',
+});
+
 export const SALES_CORRECTION_TEXTS = Object.freeze({
   pageTitle: '确认单 · 最近 5 天',
   loading: '正在读取最近 5 天的销售单…',
