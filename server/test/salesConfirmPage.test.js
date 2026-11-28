@@ -36,3 +36,7 @@ test('确认单：未收款行不显示支付方式，避免默认成第一个�
   assert.match(js, /sales-confirm-unpaid/);
   assert.match(js, /if \(payment\.status === SALES_CORRECTION_PAYMENT_STATUS\.unpaid\) \{\s*\n\s*paymentHtml/);
 });
+
+test('确认单列表按钮文案 = 修改', () => {
+  assert.match(read('config/salesCorrection.js'), /edit: '修改'/);
+});
