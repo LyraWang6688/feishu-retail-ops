@@ -60,6 +60,7 @@ async function correctSaleDetailSize(input = {}) {
     // 现货 → 预订：原尺码回库；原出库流水删除。
     if (fromInStock && !toInStock) {
       const key = `correction:${input.correctionId || salesDetailRecordId}:restore`;
+      const liveFields = this.gateway.table('liveInventory').fields;
       await createOnceByKey({
         gateway: this.gateway,
         tableKey: 'liveInventory',
@@ -72,9 +73,10 @@ async function correctSaleDetailSize(input = {}) {
           size: relation(oldSize.recordId),
           state: '门盒',
           operationItemKey: key,
-          ...personPatch({
+          // 测试 Base 可能还没有「仓库员」列；生产有。没有映射就不写，不能让整条更正失败。
+          ...(liveFields.warehouseStaff ? personPatch({
             tableKey: 'liveInventory', fieldKey: 'warehouseStaff', operatorOpenId: input.operatorOpenId,
-          }),
+          }) : {}),
         },
       });
       if (ledger) await this.gateway.delete('inventoryLedger', ledger.record_id).catch(() => undefined);
